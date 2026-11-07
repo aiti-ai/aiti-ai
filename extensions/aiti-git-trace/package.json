@@ -25,10 +25,11 @@
   "contentHash": "2e950e345fc9d989",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-git-trace.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-git-trace"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-git-trace#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-git-trace/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
