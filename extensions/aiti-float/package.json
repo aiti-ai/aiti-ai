@@ -17,10 +17,11 @@
   "contentHash": "efde622e243e2a3d",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-float.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-float"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-float#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-float/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
