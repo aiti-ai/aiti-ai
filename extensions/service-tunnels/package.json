@@ -32,5 +32,12 @@
     ]
   },
   "aitiExtProtocol": "1.0",
-  "contentHash": "f320e361394bd56f"
+  "contentHash": "f320e361394bd56f",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/service-tunnels.git"
+  },
+  "bugs": {
+    "url": "https://github.com/aiti-ai/service-tunnels/issues"
+  }
 }
