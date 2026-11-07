@@ -65,8 +65,8 @@ function relTime(ts?: number | null): string {
   return Math.round(diff / 86400e3) + "d 前";
 }
 function statusBadge(t: any): [string, string] {
-  if (!t.triggerEnabled && t.enabled) return ["待触发(调度关)", "#f59e0b"];
-  if (!t.enabled) return t.autoApprove === false ? ["待确认", "#f59e0b"] : ["已停用", "#8a8a8a"];
+  if (!t.triggerEnabled && t.enabled) return ["待触发(调度关)", "var(--warn, #f59e0b)"];
+  if (!t.enabled) return t.autoApprove === false ? ["待确认", "var(--warn, #f59e0b)"] : ["已停用", "#8a8a8a"];
   if (t.running) return ["执行中…", "#3b82f6"];
   return ["启用", "#10b981"];
 }
@@ -416,8 +416,8 @@ function SchedHelp() {
 // ---------- 模型下拉选择器（对齐 pi-web ModelSelector「新建 session 同款」：provider 分组 + 搜索过滤 + 缺省/默认模型 + 可用性提示点） ----------
 const AVAIL_DOT: Record<string, [string, string]> = {
   ok: ["#10b981", "可用"],
-  rl: ["#f59e0b", "限流(429)"],
-  err: ["#ef4444", "不可用"],
+  rl: ["var(--warn, #f59e0b)", "限流(429)"],
+  err: ["var(--danger, #ef4444)", "不可用"],
   unprobed: ["#9ca3af", "未探测"],
 };
 function ModelDot({ avail }: { avail?: string }) {
@@ -552,7 +552,7 @@ function ModelPicker({ value, onChange, cwd }: { value: string; onChange: (v: st
           )}
           <div style={{ maxHeight: 264, overflowY: "auto" }}>
             {list === null && !err && <div style={{ padding: 8, fontSize: 12, color: "var(--text-muted)" }}>加载中…</div>}
-            {err && <div style={{ padding: 8, fontSize: 12, color: "#ef4444" }}>{err}</div>}
+            {err && <div style={{ padding: 8, fontSize: 12, color: "var(--danger, #ef4444)" }}>{err}</div>}
             {list !== null && (
               <>
                 <div className="mp-row" onClick={() => pick("")}
@@ -675,7 +675,7 @@ function RefPicker({ anchor, placeholder, loadItems, onPick, onClose }: {
         style={{ ...inputStyle, border: "none", borderBottom: "1px solid var(--border)", borderRadius: "6px 6px 0 0", flexShrink: 0 }} />
       <div style={{ maxHeight: 264, overflowY: "auto" }}>
         {items === null && <div style={{ padding: 8, fontSize: 12, color: "var(--text-muted)" }}>加载中…</div>}
-        {err && items !== null && items.length === 0 && <div style={{ padding: 8, fontSize: 12, color: "#ef4444" }}>{err}</div>}
+        {err && items !== null && items.length === 0 && <div style={{ padding: 8, fontSize: 12, color: "var(--danger, #ef4444)" }}>{err}</div>}
         {!err && items !== null && items.length === 0 && (
           <div style={{ padding: 8, fontSize: 12, color: "var(--text-muted)" }}>无匹配</div>
         )}
@@ -762,7 +762,7 @@ function CcChannelPicker({ anchor, onPick, onClose }: {
       boxShadow: "0 8px 24px rgba(0,0,0,.3)", display: "flex", flexDirection: "column", gap: 6, padding: 8 }}>
       <style>{`.ref-row:hover{background:var(--bg-hover)}`}</style>
       <div style={{ fontSize: 11, color: "var(--text-muted)" }}>项目（cc-connect）</div>
-      {err && <div style={{ fontSize: 11.5, color: "#ef4444" }}>{err}</div>}
+      {err && <div style={{ fontSize: 11.5, color: "var(--danger, #ef4444)" }}>{err}</div>}
       {projects === null && !err && <div style={{ fontSize: 12, color: "var(--text-muted)" }}>加载中…</div>}
       {projects !== null && (
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -951,8 +951,8 @@ function EditForm({ initial, onDone }: { initial: any; onDone: (saved: boolean) 
           <textarea value={sched} onChange={(e) => { setSched(e.target.value); setSchedErr(""); }} onBlur={checkSched} rows={2}
             placeholder={t("sh.placeholder")}
             title={t("sh.textareaTitle")}
-            style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit", ...(schedErr ? { borderColor: "#ef4444" } : {}) }} />
-          {schedErr && <div style={{ fontSize: 11, color: "#ef4444", lineHeight: 1.4 }}>⚠ {schedErr}</div>}
+            style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit", ...(schedErr ? { borderColor: "var(--danger, #ef4444)" } : {}) }} />
+          {schedErr && <div style={{ fontSize: 11, color: "var(--danger, #ef4444)", lineHeight: 1.4 }}>⚠ {schedErr}</div>}
         </div>
       ))}
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -966,9 +966,9 @@ function EditForm({ initial, onDone }: { initial: any; onDone: (saved: boolean) 
             placeholder="目标 + 验收标准（给到点执行的 AI 看的完整指令）"
             style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
           <div ref={refBtnRef} style={{ display: "flex", gap: 6, marginTop: 4, alignItems: "center", flexWrap: "wrap" }}>
-            <button style={btnStyle("var(--bg-hover)", "var(--text-muted)")} onClick={() => setPicker(picker === "prompt" ? null : "prompt")}>📌 收藏</button>
-            <button style={btnStyle("var(--bg-hover)", "var(--text-muted)")} onClick={() => setPicker(picker === "cmd" ? null : "cmd")}>⚡ 命令</button>
-            <button style={btnStyle("var(--bg-hover)", "var(--text-muted)")} onClick={() => setPicker(picker === "doc" ? null : "doc")}>📄 文档</button>
+            <button style={btnStyle("var(--bg-hover)", "var(--text-muted)")} onClick={() => setPicker(picker === "prompt" ? null : "prompt")}>收藏</button>
+            <button style={btnStyle("var(--bg-hover)", "var(--text-muted)")} onClick={() => setPicker(picker === "cmd" ? null : "cmd")}>命令</button>
+            <button style={btnStyle("var(--bg-hover)", "var(--text-muted)")} onClick={() => setPicker(picker === "doc" ? null : "doc")}>文档</button>
             <span style={{ fontSize: 10.5, color: "var(--text-muted)" }}>插入到提示词光标处</span>
           </div>
           {picker && (
@@ -999,7 +999,7 @@ function EditForm({ initial, onDone }: { initial: any; onDone: (saved: boolean) 
             onKeyDown={(e) => { if (e.key === "Enter") setCcOpen(!ccOpen); }}
             style={{ ...inputStyle, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
             <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: ccSessionKey ? undefined : "var(--text-muted)" }}>
-              {ccSessionKey ? `💬 ${ccProject} · ${ccLabel || ccSessionKey.slice(0, 28) + "…"}` : "不发送（点选 cc-connect 通道）"}
+              {ccSessionKey ? `${ccProject} · ${ccLabel || ccSessionKey.slice(0, 28) + "…"}` : "不发送（点选 cc-connect 通道）"}
             </span>
             {ccSessionKey && (
               <span role="button" title="清除"
@@ -1072,7 +1072,7 @@ function RunsPanel({ onClose }: { onClose: () => void }) {
                 <tr key={r.id}>
                   <td style={tdStyle} title={r.at}>{new Date(r.at).toLocaleString()}</td>
                   <td style={tdStyle}>{r.name}</td>
-                  <td style={{ ...tdStyle, color: r.status === "ok" ? "#10b981" : r.status === "error" ? "#ef4444" : r.status === "missed" ? "#f59e0b" : "inherit" }}>
+                  <td style={{ ...tdStyle, color: r.status === "ok" ? "#10b981" : r.status === "error" ? "var(--danger, #ef4444)" : r.status === "missed" ? "var(--warn, #f59e0b)" : "inherit" }}>
                     {r.status}{r.retry ? "·重试" : ""}
                   </td>
                   <td style={tdStyle}>{r.ms != null ? r.ms + "ms" : ""}</td>
@@ -1080,12 +1080,12 @@ function RunsPanel({ onClose }: { onClose: () => void }) {
                     title={r.error || r.text || ""}>
                     {r.error ? "⚠ " + r.error : (r.text || "")}
                     {r.ccSent && (
-                      <span style={{ color: ccOk ? "#10b981" : "#ef4444", marginLeft: 6 }}
-                        title={ccOk ? "IM 已送达" : "IM 送达失败：" + r.ccSent}>{ccOk ? "💬已送达" : "💬送达失败"}</span>
+                      <span style={{ color: ccOk ? "#10b981" : "var(--danger, #ef4444)", marginLeft: 6 }}
+                        title={ccOk ? "IM 已送达" : "IM 送达失败：" + r.ccSent}>{ccOk ? "已送达" : "送达失败"}</span>
                     )}
                     {r.mailSent && (
-                      <span style={{ color: mailOk ? "#10b981" : "#ef4444", marginLeft: 6 }}
-                        title={mailOk ? "邮件已送达" : "邮件送达失败：" + r.mailSent}>{mailOk ? "✉已送达" : "✉送达失败"}</span>
+                      <span style={{ color: mailOk ? "#10b981" : "var(--danger, #ef4444)", marginLeft: 6 }}
+                        title={mailOk ? "邮件已送达" : "邮件送达失败：" + r.mailSent}>{mailOk ? "已送达" : "送达失败"}</span>
                     )}
                   </td>
                 </tr>
@@ -1218,7 +1218,7 @@ function ScheduleDialog({ onClose, initialEditing, embedded, dockItemKey }: { on
           <Ic size={15} paths={ICONS.clock} />定时任务与计划
         </span>
         {config && (
-          <span style={{ fontSize: 11.5, color: config.active ? "#10b981" : "#f59e0b", cursor: "pointer", marginLeft: 4 }}
+          <span style={{ fontSize: 11.5, color: config.active ? "#10b981" : "var(--warn, #f59e0b)", cursor: "pointer", marginLeft: 4 }}
             onClick={() => act("/config")} title="点击切换运行时暂停（env 门控不变）">
             {config.active ? "● 触发开" : "● 已暂停"}
           </span>
@@ -1256,21 +1256,21 @@ function ScheduleDialog({ onClose, initialEditing, embedded, dockItemKey }: { on
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
                     <div style={{ display: "flex", gap: 8, alignItems: "center", minWidth: 0 }}>
                       <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 5, background: isAi ? "rgba(59,130,246,.15)" : "rgba(122,122,122,.15)", color: isAi ? "#60a5fa" : "var(--text-muted)" }}>
-                        {isAi ? (task.createdBy === "agent" ? "🤖 AI计划" : "AI计划") : "扩展任务"}
+                        {isAi ? (task.createdBy === "agent" ? "AI计划" : "AI计划") : "扩展任务"}
                       </span>
                       <strong style={{ fontSize: 13.5 }}>{task.name}</strong>
                       <span style={{ fontSize: 11, padding: "1px 6px", borderRadius: 5, background: badgeColor + "22", color: badgeColor }}>{badgeText}</span>
                     </div>
                     <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                       {isAi && task.autoApprove === false && task.enabled === false && (
-                        <button style={btnStyle("rgba(16,185,129,.15)", "#10b981")} onClick={() => act("/plans/" + task.id + "/approve")} title="批准该 AI 创建的计划生效">✓ 批准</button>
+                        <button style={btnStyle("rgba(16,185,129,.15)", "#10b981")} onClick={() => act("/plans/" + task.id + "/approve")} title="批准该 AI 创建的计划生效">批准</button>
                       )}
                       <button style={btnStyle("var(--bg-hover)", "var(--text)")}
                         onClick={() => act(isAi ? "/plans/" + task.id + "/run" : "/schedules/" + encodeURIComponent(task.id) + "/run")}
                         disabled={task.running}>{task.running ? "…" : "▶ 执行"}</button>
                       {isAi && <button style={btnStyle("transparent", "var(--text-muted)")} onClick={() => act("/plans/" + task.id + "/" + (task.enabled ? "disable" : "enable"))}>{task.enabled ? "暂停" : "启用"}</button>}
                       {isAi && <button style={btnStyle("transparent", "var(--text-muted)")} onClick={() => setEditing(task)}>编辑</button>}
-                      {isAi && <button style={btnStyle("transparent", "#ef4444")} onClick={async () => { if (await uiConfirm({ message: "删除计划「" + task.name + "」？", danger: true })) act("/plans/" + task.id, "DELETE"); }}>删除</button>}
+                      {isAi && <button style={btnStyle("transparent", "var(--danger, #ef4444)")} onClick={async () => { if (await uiConfirm({ message: "删除计划「" + task.name + "」？", danger: true })) act("/plans/" + task.id, "DELETE"); }}>删除</button>}
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 14, marginTop: 6, fontSize: 11.5, color: "var(--text-muted)", flexWrap: "wrap" }}>
