@@ -371,7 +371,7 @@ function SloganBar(props: { onSlogan: () => void; onEditPrompt: () => void }): a
           borderRadius: 8, padding: "3px 10px", fontSize: 11.5, cursor: "pointer", color: "inherit",
         }}
       >
-        <span aria-hidden>⚡</span>
+        <span aria-hidden style={{ display: "flex" }}><svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg></span>
         <span style={{ fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t("pf.slogan")}</span>
         <span style={{ color: "var(--text-dim)", whiteSpace: "nowrap", flexShrink: 0 }}>{t("pf.sloganAction")}</span>
       </button>
@@ -476,10 +476,10 @@ export function PlanRowMeta(props?: any): any {
       <span
         style={{
           display: "inline-flex", alignItems: "center", justifyContent: "center",
-          flexShrink: 0, width: 13, height: 13, fontSize: 8, color: "#3fb950",
-          border: "1px solid #3fb95055", borderRadius: 4,
+          flexShrink: 0, width: 13, height: 13, color: "var(--ok, #3fb950)",
+          border: "1px solid color-mix(in srgb, var(--ok, #3fb950) 33%, transparent)", borderRadius: 4,
         }}
-      >📋</span>
+      ><svg width={9} height={9} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></svg></span>
       {tags.map((tg: string) => (
         <span
           key={tg}
@@ -913,12 +913,12 @@ function MainView(props: { status: any; remind: any; onBind: (abs: string, rel?:
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
               <button onClick={onOpenPlan} title={(status?.plan || status?.planRel || "") + (status?.plan ? "\n" + t("pf.openFileTip") : t("pf.openFileTip"))} style={docLinkStyle}>{status?.planRel || ""}</button>
               <button onClick={onAt} title={t("pf.atTip")} aria-label={t("pf.atTip")} style={atBtnStyle}>@</button>
-              <button onClick={onAddTags} title="插入「添加 tags（含方案状态规则）」提示词" style={atBtnStyle}>🏷</button>
+              <button onClick={onAddTags} title="插入「添加 tags（含方案状态规则）」提示词" style={atBtnStyle}><svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r="0.5" fill="currentColor"/></svg></button>
               <Btn onClick={onPick}>{t("pf.choose")}</Btn>
               <Btn kind="ghost" onClick={onUnbind}>{t("pf.unbind")}</Btn>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
-              <span style={{ color: "var(--text-dim)", fontSize: 11 }}>🏷</span>
+              <span style={{ color: "var(--text-dim)", fontSize: 11, display: "flex" }}><svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r="0.5" fill="currentColor"/></svg></span>
               {(status?.planTags || []).map((tg: string) => (
                 <span key={tg} style={tagChipStyle}>
                   {tg}
