@@ -82,3 +82,7 @@ export function t(key: string, params?: Record<string, unknown>): string {
   const fn = _ctx?.t as ((key: string, params?: Record<string, unknown>) => string) | undefined;
   return typeof fn === "function" ? fn(key, params) : key;
 }
+/** 跨扩展客户端服务读取（ctx.getExtService；提供方懒加载/缺席 → undefined，消费方必须降级）。 */
+export function extSvc<T = unknown>(key: string): T | undefined {
+  return (_ctx as any)?.getExtService?.(key) as T | undefined;
+}
