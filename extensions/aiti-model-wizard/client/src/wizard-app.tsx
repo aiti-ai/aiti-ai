@@ -99,7 +99,7 @@ const summarizeFills = (fills: any): string => {
     return f.id + "（" + srcs + "）";
   });
   const more = fills.length > 4 ? " 等 " + fills.length + " 个" : "";
- return ("🪄 自动反填：" + parts.join(", ") + more).slice(0, 220);
+ return ("自动反填：" + parts.join(", ") + more).slice(0, 220);
 };
 
 /** 弹出 ai-helper（model-params-fill skill 预选 + 提示词预填），让用户点击让 AI 上网查权威数据补全缺参数的模型。
@@ -174,7 +174,7 @@ function CheckupDialog({ st, onClose, onFix, onRerun }: { st: any; onClose: () =
       } as any)} onClick={(e) => e.stopPropagation()} className="amw-float-panel" style={{ width: "min(600px, 100%)", maxHeight: "84dvh", padding: 14, display: "flex", flexDirection: "column" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
           <Ic size={14} paths={ICONS.stethoscope} />
-          <span style={{ fontWeight: 700, fontSize: 13, flex: 1 }}>{"🩺 一键体检" + (st?.running ? " · 进行中…" : "")}</span>
+          <span style={{ fontWeight: 700, fontSize: 13, flex: 1 }}>{"一键体检" + (st?.running ? " · 进行中…" : "")}</span>
           <button className="amw-btn" onClick={onClose} aria-label="关闭"><Ic size={12} paths={ICONS.x} /></button>
         </div>
         {st?.running ? (
@@ -257,7 +257,7 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
     setSaving(true); setErr(""); setMsg("");
     try {
       const d = await (await api("/config", { method: "POST", ...jsonBody({ set: cfg }) })).json();
-      if (d && d.ok) { setMsg("✅ 已保存，即时生效"); setTimeout(onClose, 700); }
+      if (d && d.ok) { setMsg("已保存，即时生效"); setTimeout(onClose, 700); }
       else setErr((d && d.error) || "保存失败");
     } catch (e: any) { setErr(String(e.message || e)); }
     setSaving(false);
@@ -266,7 +266,7 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
     setCatBusy(true); setMsg(""); setErr("");
     try {
       const d = await (await api("/refresh-catalog", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).json();
-      setMsg(d && d.ok ? "✅ 目录已刷新（" + (d.providers ?? "?") + " 家 · " + (d.source || "?") + " · " + fmtLat(d.elapsedMs) + "）" : "❌ " + ((d && d.error) || "刷新失败"));
+      setMsg(d && d.ok ? "目录已刷新（" + (d.providers ?? "?") + " 家 · " + (d.source || "?") + " · " + fmtLat(d.elapsedMs) + "）" : "❌ " + ((d && d.error) || "刷新失败"));
     } catch (e: any) { setErr(String(e.message || e)); }
     setCatBusy(false);
   };
@@ -275,7 +275,7 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
     <>
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
         <Ic size={14} paths={ICONS.settings} />
-        <span style={{ fontWeight: 700, fontSize: 13, flex: 1 }}>⚙ 向导设置</span>
+        <span style={{ fontWeight: 700, fontSize: 13, flex: 1 }}>向导设置</span>
         <button className="amw-btn" onClick={onClose} aria-label="关闭"><Ic size={12} paths={ICONS.x} /></button>
       </div>
       {err ? <div className="amw-note is-err" style={{ marginBottom: 6 }}>{"❌ " + err}</div> : null}
@@ -283,7 +283,7 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
       {!cfg ? <div style={{ color: "var(--text-subtle,#666)", fontSize: 12 }}>加载中…</div> : (
         <div style={{ overflow: "auto", display: "flex", flexDirection: "column", gap: 12 }}>
           <div>
-            <div className="amw-section" style={{ margin: "0 0 5px" }}>🔔 新模型检测与提醒</div>
+            <div className="amw-section" style={{ margin: "0 0 5px" }}>新模型检测与提醒</div>
             <label style={{ fontSize: 12, display: "inline-flex", gap: 5, alignItems: "center", marginBottom: 6 }}>
               <input type="checkbox" checked={r?.enabled !== false} onChange={(e) => upd("reminder", "enabled", e.target.checked)} />启用后台扫描与提醒
             </label>
@@ -296,7 +296,7 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
             </div>
           </div>
           <div>
-            <div className="amw-section" style={{ margin: "0 0 5px" }}>📖 目录（models.dev）</div>
+            <div className="amw-section" style={{ margin: "0 0 5px" }}>目录（models.dev）</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               <div><label style={lbl}>主源 URL</label><input className="amw-input" style={{ width: "100%", fontFamily: "ui-monospace,monospace" }} value={cat?.primaryUrl ?? ""} onChange={(e) => upd("catalog", "primaryUrl", e.target.value)} /></div>
               <div><label style={lbl}>镜像 URL（竞速兜底）</label><input className="amw-input" style={{ width: "100%", fontFamily: "ui-monospace,monospace" }} value={cat?.mirrorUrl ?? ""} onChange={(e) => upd("catalog", "mirrorUrl", e.target.value)} /></div>
@@ -307,7 +307,7 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
             </div>
           </div>
           <div>
-            <div className="amw-section" style={{ margin: "0 0 5px" }}>🔍 探测与测试</div>
+            <div className="amw-section" style={{ margin: "0 0 5px" }}>探测与测试</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
               <SetNum label="连接测试超时（秒）" hint="一键体检同用" value={ts ? Math.round((ts.timeoutMs || 12000) / 1000) : ""} onChange={(v) => upd("test", "timeoutMs", Math.max(1, Math.floor(Number(v) || 0)) * 1000)} />
               <SetNum label="端点探测超时（秒）" value={pr ? Math.round((pr.timeoutMs || 12000) / 1000) : ""} onChange={(v) => upd("probe", "timeoutMs", Math.max(1, Math.floor(Number(v) || 0)) * 1000)} />
@@ -318,7 +318,7 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
       )}
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 10, flexShrink: 0 }}>
         <button className="amw-btn" onClick={onClose}>取消</button>
-        <button className="amw-btn is-ok" disabled={!cfg || saving} onClick={save}>{saving ? "保存中…" : "💾 保存"}</button>
+        <button className="amw-btn is-ok" disabled={!cfg || saving} onClick={save}>{saving ? "保存中…" : "保存"}</button>
       </div>
     </>
   );
@@ -437,7 +437,7 @@ function ProbeOut({ r }: { r: any }) {
     <span style={{ minWidth: 0, display: "inline-flex", flexDirection: "column", gap: 1 }}>
       {r.ok ? (
         <span style={{ color: "#16a34a", fontWeight: 650, fontSize: 11.5 }}>
-          {"✅ 可用" + (r.status ? " · HTTP " + r.status : "") + (r.latencyMs != null ? " · " + fmtMs(r.latencyMs) : "")}
+          {"可用" + (r.status ? " · HTTP " + r.status : "") + (r.latencyMs != null ? " · " + fmtMs(r.latencyMs) : "")}
         </span>
       ) : r.status === 429 ? (
         <span style={{ color: "#d97706", fontWeight: 650, fontSize: 11.5 }}>
@@ -522,7 +522,7 @@ function ParamPanel({ data, onClose, onSaved, dialogEl, embedded }: { data: any;
           : <div style={{ color: "var(--text-subtle,#666)", fontSize: 12 }}>{data.readOnly ? "目录未收录该模型的详细参数（仅 id 清单）。" : "未取到该模型参数——provider 的模型清单为空或模型已被移除。"}</div>}
         {!data.loading && !data.error && data.readOnly ? (
           <div style={{ marginTop: 10 }}>
-            <button className="amw-btn is-ok" onClick={() => invokeAiHelperForMissing(data.provider, [{ id: data.id }], dialogEl || null)}>🤖 AI 帮我补参数（查权威数据 → 写 models-store）</button>
+            <button className="amw-btn is-ok" onClick={() => invokeAiHelperForMissing(data.provider, [{ id: data.id }], dialogEl || null)}>AI 帮我补参数（查权威数据 → 写 models-store）</button>
           </div>
         ) : null}
       </>
@@ -614,12 +614,12 @@ function ParamPanel({ data, onClose, onSaved, dialogEl, embedded }: { data: any;
           <Ic size={14} paths={ICONS.card} />
           <span className="amw-mono" style={{ fontWeight: 700, fontSize: 13, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{(edit ? "编辑模型 · " : "模型参数 · ") + (draft.id || data.id)}</span>
           {data.readOnly ? <span className="amw-tag is-ro">只读 · 目录反填</span>
-            : !edit ? <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} onClick={() => setEdit(true)}>✎ 编辑</button> : null}
+            : !edit ? <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} onClick={() => setEdit(true)}>编辑</button> : null}
           {!embedded ? (
             <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11, fontWeight: 650 }}
               disabled={!!(probeSt && probeSt.busy)} onClick={doModelProbe}
               title="发起可用性探测（与「检查」页同款探针，结果写入同一份状态/历史，树上 可用/限流/异常 标记同步更新）——测完立即就地展示">
-              {(probeSt && probeSt.busy) ? "⏳ 测试中…" : "🩺 测试"}
+              {(probeSt && probeSt.busy) ? "测试中…" : "测试"}
             </button>
           ) : null}
           {embedded
@@ -636,7 +636,7 @@ function ParamPanel({ data, onClose, onSaved, dialogEl, embedded }: { data: any;
         ) : null}
         <div style={{ overflow: "auto", flex: 1, display: "flex", flexDirection: "column", gap: 10 }}>
           <div className="amw-mono" style={{ fontSize: 11, color: "var(--text-subtle,#666)", wordBreak: "break-all" }}>{"provider: " + data.provider + " · api: " + (data.api || "—")}</div>
-          {data.crossFrom ? <div style={{ padding: "4px 8px", borderRadius: 8, background: "rgba(245,158,11,.12)", color: "#b45309", fontSize: 11 }}>{"⚠️ 本 provider 目录未收录该模型，参数借其它网关同 id 条目互证（来源：" + data.crossFrom + "）—— 价格以该网关为准"}</div> : null}
+          {data.crossFrom ? <div style={{ padding: "4px 8px", borderRadius: 8, background: "rgba(245,158,11,.12)", color: "#b45309", fontSize: 11 }}>{"本 provider 目录未收录该模型，参数借其它网关同 id 条目互证（来源：" + data.crossFrom + "）—— 价格以该网关为准"}</div> : null}
         {edit ? (
           <>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
@@ -711,7 +711,7 @@ function ParamPanel({ data, onClose, onSaved, dialogEl, embedded }: { data: any;
         ) : (() => {
           const fmtVal = (v: any): string | null => {
             if (v === undefined || v === null) return null;
-            if (typeof v === "boolean") return v ? "✅ 是" : "⬜ 否";
+            if (typeof v === "boolean") return v ? "是" : "否";
             if (typeof v === "number") return v.toLocaleString();
             if (Array.isArray(v)) return v.join("，") || "（空）";
             if (typeof v === "object") return Object.keys(v).length ? JSON.stringify(v) : null;
@@ -740,7 +740,7 @@ function ParamPanel({ data, onClose, onSaved, dialogEl, embedded }: { data: any;
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 10, alignItems: "center", flexShrink: 0 }}>
             {errMsg ? <span style={{ color: "#dc2626", fontSize: 11, flex: 1 }}>{errMsg}</span> : <span style={{ flex: 1 }} />}
             <button className="amw-btn" disabled={saving} onClick={() => { setDraft(data.params ? JSON.parse(JSON.stringify(data.params)) : null); setHdrRows(Object.entries((data.params && data.params.headers) || {}).map(([k, v]: any) => ({ k, v: String(v) }))); setErrMsg(""); setEdit(false); }}>取消</button>
-            <button className="amw-btn is-ok" disabled={saving} onClick={save}>{saving ? "保存中…" : "💾 保存修改"}</button>
+            <button className="amw-btn is-ok" disabled={saving} onClick={save}>{saving ? "保存中…" : "保存修改"}</button>
           </div>
         ) : null}
     </>
@@ -830,7 +830,7 @@ function EditHeadersEditor({ initialHeaders, initialMasked, onChange }: {
     <>
       <HeaderRowsEditor rows={rows} onChange={apply} hint="敏感头（Authorization/Key/Token…）打码回显：不修改则保存时保留原值；删除行=删除该头" />
       <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11, marginTop: 6 }} title="清空本 provider 的全部已存请求头（保存后生效）"
-        onClick={() => apply([])}>🗑 清除已存请求头</button>
+        onClick={() => apply([])}>清除已存请求头</button>
     </>
   );
 }
@@ -962,7 +962,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     return { icon: "⚠️", label: s ? "HTTP " + s : "异常", color: "#d97706" };
   }, []);
   const rtTip = useCallback((rt: any) =>
-    "⚡ 运行期错误观测（带外 · 代理真实流量非 2xx/3xx，非主动探测）：近 1 小时 " + rt.count1h + " 次 / 24 小时 " + rt.count24h + " 次"
+    "运行期错误观测（带外 · 代理真实流量非 2xx/3xx，非主动探测）：近 1 小时 " + rt.count1h + " 次 / 24 小时 " + rt.count24h + " 次"
     + Object.entries(rt.byStatus || {}).map(([s, b]: any) => "\n  " + rtErrInfo(Number(s)).icon + " " + rtErrInfo(Number(s)).label + " ×" + b.count24h).join("")
     + (rt.lastAt ? "\n最近 " + new Date(rt.lastAt).toLocaleString("zh-CN", { hour12: false }) + (rt.lastKey ? " · key " + rt.lastKey : "") : "")
     + "——可能仍处于故障中，建议重检确认", [rtErrInfo]);
@@ -989,10 +989,10 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       const d = await (await api("/checkup", { method: "POST", ...jsonBody({}) })).json();
       setCheckupSt({ running: false, res: d });
       if (d && d.ok) {
-        setMsg("🩺 体检完成：" + d.pass + " 可用 · " + (d.rateLimited || 0) + " 限流 · " + (d.fail || 0) + " 失败" + (d.skip ? " · " + d.skip + " 跳过" : ""));
+        setMsg("体检完成：" + d.pass + " 可用 · " + (d.rateLimited || 0) + " 限流 · " + (d.fail || 0) + " 失败" + (d.skip ? " · " + d.skip + " 跳过" : ""));
         loadLastTest();
-      } else setMsg("❌ 体检失败：" + ((d && d.error) || ""));
-    } catch (e: any) { setCheckupSt({ running: false, res: null }); setMsg("❌ 体检失败：" + (e?.message || e)); }
+      } else setMsg("体检失败：" + ((d && d.error) || ""));
+    } catch (e: any) { setCheckupSt({ running: false, res: null }); setMsg("体检失败：" + (e?.message || e)); }
   };
   // 余额健康条（aiti-provider-usage 服务，服务端软依赖）：provider → {phase, entry?, capturedAt?, error?}
   const [usageMap, setUsageMap] = useState<any>({});
@@ -1037,9 +1037,9 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         setSubActive(null);
         await loadSubs(); loadStatus();
         try { window.dispatchEvent(new CustomEvent("pi-web:models-changed")); } catch {}
-        setToast({ msg: "🔓 已登出 " + (pname || pid), ok: true }); setTimeout(() => setToast(null), 4000);
-      } else { setToast({ msg: "❌ 登出失败：" + ((d && d.error) || ""), ok: false }); setTimeout(() => setToast(null), 5000); }
-    } catch (e: any) { setToast({ msg: "❌ 登出失败：" + (e?.message || e), ok: false }); setTimeout(() => setToast(null), 5000); }
+        setToast({ msg: "已登出 " + (pname || pid), ok: true }); setTimeout(() => setToast(null), 4000);
+      } else { setToast({ msg: "登出失败：" + ((d && d.error) || ""), ok: false }); setTimeout(() => setToast(null), 5000); }
+    } catch (e: any) { setToast({ msg: "登出失败：" + (e?.message || e), ok: false }); setTimeout(() => setToast(null), 5000); }
     setLogoutBusy("");
   };
   // 设置面板（P1-C）：开关 + 组件自取 /config
@@ -1051,13 +1051,13 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     setProbeBusy((prev) => ({ ...prev, [key]: true }));
     try {
       const d = await (await fetch(apiUrl("/api/extensions/aiti-model-check/probe"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(model ? { provider, model } : { provider }) })).json();
-      setMsg(d.ok ? "🩺 探测完成：" + (d.probed ?? "?") + " 项，树上标记已更新" : "❌ 探测失败：" + (d.error || ""));
+      setMsg(d.ok ? "探测完成：" + (d.probed ?? "?") + " 项，树上标记已更新" : "探测失败：" + (d.error || ""));
       await loadCheck(); await loadBalances();
-    } catch (e: any) { setMsg("❌ 探测失败：" + (e?.message || e)); }
+    } catch (e: any) { setMsg("探测失败：" + (e?.message || e)); }
     finally { setProbeBusy((prev) => { const n = { ...prev }; delete n[key]; return n; }); }
   };
   const checkDot = (provider: string, id: string) => {
-    if (probeBusy[provider + "/" + id]) return <span style={{ fontSize: 9, color: "#f59e0b", flexShrink: 0 }} title="探测中…">⏳</span>;
+    if (probeBusy[provider + "/" + id]) return <span style={{ fontSize: 9, color: "var(--warn, #f59e0b)", flexShrink: 0 }} title="探测中…">⏳</span>;
     const ck = chk && chk.state && chk.state.models ? chk.state.models[provider + "/" + id] : null;
     const rt = rtOf(provider, id); // 运行期错误观测（带外）：真实流量出错，未探测也可能故障中
     const rtDot = rt && rt.count24h > 0 ? (
@@ -1065,8 +1065,8 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     ) : null;
     const dot = !ck ? null
       : ck.lastOk ? <span className="amw-vdot" style={{ background: "#16a34a" }} title="可用（最近探测通过）" />
-      : ck.rateLimited ? <span className="amw-vdot" style={{ background: "#f59e0b" }} title="限流中（429）——key 额度/速率受限" />
-      : <span className="amw-vdot" style={{ background: "#ef4444" }} title="异常（非 429）——可能欠费/失效，建议重检" />;
+      : ck.rateLimited ? <span className="amw-vdot" style={{ background: "var(--warn, #f59e0b)" }} title="限流中（429）——key 额度/速率受限" />
+      : <span className="amw-vdot" style={{ background: "var(--danger, #ef4444)" }} title="异常（非 429）——可能欠费/失效，建议重检" />;
     if (!dot && !rtDot) return null;
     return <span style={{ display: "inline-flex", alignItems: "center", gap: 2, flexShrink: 0 }}>{dot}{rtDot}</span>;
   };
@@ -1112,10 +1112,10 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     try {
       const d = await (await api("/refresh", { method: "POST", ...jsonBody(provider ? { provider } : {}) })).json();
       const names = ((d && d.refreshed) || []).length ? "：" + (d.refreshed || []).join(", ") : "";
-      setToast({ msg: (d && d.ok ? "🔄 已刷新代理" : "❌ 刷新失败：" + ((d && d.error) || "未知错误")) + (d && d.ok ? names : ""), ok: !!(d && d.ok) });
+      setToast({ msg: (d && d.ok ? "已刷新代理" : "刷新失败：" + ((d && d.error) || "未知错误")) + (d && d.ok ? names : ""), ok: !!(d && d.ok) });
       setTimeout(() => setToast(null), 4000);
     } catch (e: any) {
-      setToast({ msg: "❌ 刷新代理失败：" + ((e && e.message) || e), ok: false });
+      setToast({ msg: "刷新代理失败：" + ((e && e.message) || e), ok: false });
       setTimeout(() => setToast(null), 4000);
     }
     setBusy(false);
@@ -1127,7 +1127,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     try {
       const d = await (await api("/model-enable", { method: "POST", ...jsonBody({ provider, model, enabled }) })).json();
       if (d.ok) {
-        setToast({ msg: (enabled ? "▶ 已启用 " : "⏸ 已禁用 ") + provider + "/" + model + "（临时，未删除配置）", ok: true });
+        setToast({ msg: (enabled ? "▶ 已启用 " : "已禁用 ") + provider + "/" + model + "（临时，未删除配置）", ok: true });
         try { window.dispatchEvent(new CustomEvent("pi-web:models-changed")); } catch {}
         // 同步草稿缓存的 enabled 标记（若有缓存），详情面板视觉即时更新
         setEditModels((prev: any) => {
@@ -1138,7 +1138,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       } else setToast({ msg: "❌ " + (d.error || "操作失败"), ok: false });
       setTimeout(() => setToast(null), 4000);
     } catch (e: any) {
-      setToast({ msg: "❌ 操作失败：" + (e.message || e), ok: false });
+      setToast({ msg: "操作失败：" + (e.message || e), ok: false });
       setTimeout(() => setToast(null), 4000);
     }
     setBusy(false);
@@ -1150,12 +1150,12 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     try {
       const d = await (await api("/enable", { method: "POST", ...jsonBody({ provider, enabled }) })).json();
       if (d.ok) {
-        setToast({ msg: (enabled ? "▶ 已启用 " : "⏸ 已禁用 ") + provider + "（临时，未删除配置）", ok: true });
+        setToast({ msg: (enabled ? "▶ 已启用 " : "已禁用 ") + provider + "（临时，未删除配置）", ok: true });
         try { window.dispatchEvent(new CustomEvent("pi-web:models-changed")); } catch {}
       } else setToast({ msg: "❌ " + (d.error || "操作失败"), ok: false });
       setTimeout(() => setToast(null), 4000);
     } catch (e: any) {
-      setToast({ msg: "❌ 操作失败：" + (e.message || e), ok: false });
+      setToast({ msg: "操作失败：" + (e.message || e), ok: false });
       setTimeout(() => setToast(null), 4000);
     }
     setBusy(false);
@@ -1214,9 +1214,9 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         setNmSel((prev: any) => { if (!(prov in prev)) return prev; const n = { ...prev }; delete n[prov]; return n; });
         invalidateNewModels();
         await Promise.all([loadStatus(), loadCheck()]);
-        setMsg("✅ 已启用 " + prov + " 的 " + selIds.length + " 个新模型，刷新页面后生效");
-      } else setMsg("❌ 启用失败：" + ((d && d.error) || ""));
-    } catch (e) { setMsg("❌ 启用失败：" + e); }
+        setMsg("已启用 " + prov + " 的 " + selIds.length + " 个新模型，刷新页面后生效");
+      } else setMsg("启用失败：" + ((d && d.error) || ""));
+    } catch (e) { setMsg("启用失败：" + e); }
     setNmBusy("");
   }, [st, loadStatus, loadCheck]);
 
@@ -1247,8 +1247,8 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       const r = await (await api("/refresh-catalog", { method: "POST" })).json();
       if (!r.ok) throw new Error(r.error || "下载失败");
       await loadCatalog();
-      setCatMsg("✅ 目录已刷新" + (r.providers ? " · " + r.providers + " 家 · " + Math.round((r.bytes || 0) / 1024) + "KB" : ""));
-    } catch (e: any) { setCatMsg("❌ 刷新失败：" + ((e && e.message) || e)); }
+      setCatMsg("目录已刷新" + (r.providers ? " · " + r.providers + " 家 · " + Math.round((r.bytes || 0) / 1024) + "KB" : ""));
+    } catch (e: any) { setCatMsg("刷新失败：" + ((e && e.message) || e)); }
     finally { setCatRefreshing(false); }
   }, [loadCatalog]);
   // ── 浏览目录：全部 models.dev 提供商按名称首字符分组展开（models.dev 顶层即提供商、无更细分类），
@@ -1415,13 +1415,13 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           // 目录精确命中（归一化含端点尾巴剥净后比对 100 分）→ 自动选中该品牌，不落「自定义」
           setSel({ id: top.id, name: top.name, cnName: top.cnName || "", baseUrl: db, apiType: res.detect.api, doc: top.doc || "", signupUrl: top.signupUrl || "", tokenUrl: top.tokenUrl || "", register: top.register || "", env: top.env || "", models: top.models || [] });
           setKnown([...new Set([...(top.models || []).map((m: any) => m.id || m), ...(res.detect.models || []).map((m: any) => m.id)])]);
-          setMsg("✅ 已识别为「" + (top.cnName || top.name) + "」（地址精确命中）：" + db + "（api=" + res.detect.api + "）—— 填 token 后点「测试连接」");
+          setMsg("已识别为「" + (top.cnName || top.name) + "」（地址精确命中）：" + db + "（api=" + res.detect.api + "）—— 填 token 后点「测试连接」");
         } else {
           setSel({ id: "custom", name: "自定义端点（自动探测）", cnName: "", baseUrl: db, apiType: res.detect.api, doc: "", signupUrl: "", tokenUrl: "", register: "", models: [] });
           if (res.detect.models && res.detect.models.length) setKnown(res.detect.models.map((m: any) => m.id));
           setMsg(res.usedKey
-            ? "✅ 已带 key 探测端点：" + db + "（api=" + res.detect.api + "）—— 填 token 后点「测试连接」即可保存"
-            : "✅ 已探测端点：" + db + "（api=" + res.detect.api + "）—— ⚠️ 无 key 仅判断 api 类型，建议填 key 精探确认");
+            ? "已带 key 探测端点：" + db + "（api=" + res.detect.api + "）—— 填 token 后点「测试连接」即可保存"
+            : "已探测端点：" + db + "（api=" + res.detect.api + "）—— ⚠️ 无 key 仅判断 api 类型，建议填 key 精探确认");
         }
       } else {
         setMsg((res.detect && res.detect.hint) ? "探测未识别端点：" + String(res.detect.hint).slice(0, 90) : "反向匹配与自动探测均未命中 —— 检查地址（可去掉 /v1 /v2 再试），或点最下方「🛠 自定义端点」手工接入");
@@ -1445,11 +1445,11 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           // 同上：精确命中 → 切换到该品牌（保留用户已勾模型与已填 token）
           setSel((prev: any) => ({ ...(prev || {}), id: top.id, name: top.name, cnName: top.cnName || "", baseUrl: db, apiType: res.detect.api, doc: top.doc || "", signupUrl: top.signupUrl || "", tokenUrl: top.tokenUrl || "", register: top.register || "", env: top.env || "", models: top.models || [] }));
           setKnown((prev: any) => [...new Set([...prev, ...(top.models || []).map((m: any) => m.id || m), ...(res.detect.models || []).map((m: any) => m.id)])]);
-          setMsg("✅ 带 key 探测确认：「" + (top.cnName || top.name) + "」· " + db + "（" + res.detect.api + "）—— 继续测试/保存即可");
+          setMsg("带 key 探测确认：「" + (top.cnName || top.name) + "」· " + db + "（" + res.detect.api + "）—— 继续测试/保存即可");
         } else {
           setSel((prev: any) => ({ ...(prev || {}), id: "custom", name: "自定义端点（带 key 探测）", cnName: "", baseUrl: db, apiType: res.detect.api, doc: "", signupUrl: "", tokenUrl: "", register: "", models: [] }));
           if (res.detect.models && res.detect.models.length) setKnown(res.detect.models.map((m: any) => m.id));
-          setMsg("✅ 带 key 探测确认端点：" + db + "（" + res.detect.api + "）—— 继续填 token / 测试即可");
+          setMsg("带 key 探测确认端点：" + db + "（" + res.detect.api + "）—— 继续填 token / 测试即可");
         }
       } else {
         setMsg((res.detect && res.detect.hint) ? "带 key 探测未识别：" + String(res.detect.hint).slice(0, 90) : "带 key 探测仍未命中 —— 检查 key 和地址，或点最下方「🛠 自定义端点」手工接入");
@@ -1506,10 +1506,10 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         const before = known.length;
         const fresh = d.models.map((m: any) => m.id).filter((id: string) => !ids.includes(id));
         setKnown((prev) => { const all = [...ids, ...d.models.map((m: any) => m.id)]; return [...new Set(all)]; });
-        if (!silent) setDiscMsg("✅ 已拉取 /models " + d.models.length + " 个（新增 " + fresh.length + " · 原 " + before + " 个），目录旧模型已补全");
-      } else if (!silent) setDiscMsg("❌ 拉取失败：" + (d.error || "未返回模型（检查 token 或地址）"));
+        if (!silent) setDiscMsg("已拉取 /models " + d.models.length + " 个（新增 " + fresh.length + " · 原 " + before + " 个），目录旧模型已补全");
+      } else if (!silent) setDiscMsg("拉取失败：" + (d.error || "未返回模型（检查 token 或地址）"));
       return d;
-    } catch (e: any) { if (!silent) setDiscMsg("❌ 拉取失败：" + (e.message || e)); return null; }
+    } catch (e: any) { if (!silent) setDiscMsg("拉取失败：" + (e.message || e)); return null; }
     finally { if (!silent) setDiscBusy(false); }
   };
   // 刷新模型（多 key 感知）：token + 多 key 行依次试，任一把成功即停；全部失败才报错
@@ -1521,12 +1521,12 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     for (let i = 0; i < creds.length; i++) {
       last = await doDiscover(baseUrl, apiType, creds[i], true, headers);
       if (last && last.ok && last.models && last.models.length) {
-        setDiscMsg("✅ 已拉取 /models " + last.models.length + " 个（用第 " + (i + 1) + " 把凭据" + (creds.length > 1 ? " · 共 " + creds.length + " 把" : "") + "），目录旧模型已补全");
+        setDiscMsg("已拉取 /models " + last.models.length + " 个（用第 " + (i + 1) + " 把凭据" + (creds.length > 1 ? " · 共 " + creds.length + " 把" : "") + "），目录旧模型已补全");
         setDiscBusy(false);
         return;
       }
     }
-    setDiscMsg("❌ 拉取失败：" + ((last && last.error) || "全部凭据均未拉到模型") + (creds.length > 1 ? "（已依次试 " + creds.length + " 把 key）" : "（检查 key 或地址）"));
+    setDiscMsg("拉取失败：" + ((last && last.error) || "全部凭据均未拉到模型") + (creds.length > 1 ? "（已依次试 " + creds.length + " 把 key）" : "（检查 key 或地址）"));
     setDiscBusy(false);
   };
   const doTest = async (baseUrl: string, apiType: string, key: string, model?: string | null, headers?: Record<string, string>) => {
@@ -1593,7 +1593,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       if (d.ok) {
         const fillTxt = summarizeFills(d.fills);
         const miss = Array.isArray(d.missingParams) ? d.missingParams.filter((m: any) => m && m.id) : [];
-        const okMsg = "✅ 已保存 " + d.provider + " · " + d.modelCount + " 个模型" + (fillTxt ? " · " + fillTxt : "") + (miss.length ? " · ⚠️ " + miss.length + " 个模型缺参数" : "");
+        const okMsg = "已保存 " + d.provider + " · " + d.modelCount + " 个模型" + (fillTxt ? " · " + fillTxt : "") + (miss.length ? " · ⚠️ " + miss.length + " 个模型缺参数" : "");
         setSavedMsg(okMsg);
         setToast({ msg: okMsg + " → 已写入 models.json，立即生效", ok: true });
         setTimeout(() => setToast(null), 4000);
@@ -1617,12 +1617,12 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         setTab("status");
         selectNode({ type: "provider", provider: d.provider });
       } else {
-        const err = "❌ 保存失败：" + (d.error || "未知错误");
+        const err = "保存失败：" + (d.error || "未知错误");
         setSavedMsg(err);
         setToast({ msg: err, ok: false });
       }
     } catch (e: any) {
-      const err = "❌ 保存失败：" + (e.message || e);
+      const err = "保存失败：" + (e.message || e);
       setSavedMsg(err);
       setToast({ msg: err, ok: false });
     }
@@ -1736,8 +1736,8 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         setEditAvail((prev: any) => ({ ...prev, [provider]: { models: available, objs: d.models, checked: curChecked, newModels: newOnes } }));
         setAvailFilter((prev: any) => ({ ...prev, [provider]: "" }));
         setMsg(newOnes.length
-          ? "✅ 已拉取 " + available.length + " 个可选模型 —— ✨ 发现 " + newOnes.length + " 个新模型，已自动勾选（带「新」标），点保存即可启用"
-          : "✅ 已拉取 " + available.length + " 个可选模型（已保留原勾选 " + curChecked.length + " 个）—— 勾选后点保存");
+          ? "已拉取 " + available.length + " 个可选模型 —— ✨ 发现 " + newOnes.length + " 个新模型，已自动勾选（带「新」标），点保存即可启用"
+          : "已拉取 " + available.length + " 个可选模型（已保留原勾选 " + curChecked.length + " 个）—— 勾选后点保存");
       } else setMsg("刷新模型失败：" + (d.error || ""));
     } catch (e: any) { setMsg("刷新模型失败：" + (e.message || e)); }
     setRefreshBusy((prev: any) => ({ ...prev, [provider]: false }));
@@ -1796,8 +1796,8 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     });
     const nRemove = plan.reduce((s: number, e: any) => s + (e.remove || []).length, 0);
     setMsg(nRemove
-      ? "🛠 一键整理就绪：已按检查结果取消勾选 " + nRemove + " 个硬性异常模型（key 不对/欠费/不存在等）——核对后点「保存」生效；限流/未测/暂时性错误默认保留"
-      : "🛠 一键整理：没有发现硬性异常模型（限流/未测/暂时性错误均保留）——如需调整可逐家「编辑」");
+      ? "一键整理就绪：已按检查结果取消勾选 " + nRemove + " 个硬性异常模型（key 不对/欠费/不存在等）——核对后点「保存」生效；限流/未测/暂时性错误默认保留"
+      : "一键整理：没有发现硬性异常模型（限流/未测/暂时性错误均保留）——如需调整可逐家「编辑」");
   };
   // 有改动的家数（预选了移除且仍有保留、尚未保存）——「全部保存」按钮文案与可用性
   const cleanupPending = cleanupEdit ? cleanupEdit.plan.filter((e: any) => !e.skip && !e.saved && e.remove.length && e.keep.length) : [];
@@ -1824,7 +1824,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     }
     setCleanupBusy(null);
     setCleanupEdit(null);
-    setToast({ msg: "✅ 一键整理完成：" + targets.length + " 个 provider 已保存，移除 " + removed + " 个异常模型（代理已刷新，立即生效）", ok: true });
+    setToast({ msg: "一键整理完成：" + targets.length + " 个 provider 已保存，移除 " + removed + " 个异常模型（代理已刷新，立即生效）", ok: true });
     setTimeout(() => setToast(null), 6000);
   };
   const cleanupCancel = () => {
@@ -1950,9 +1950,9 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       try {
         const d = await (await api("/refresh", { method: "POST", ...jsonBody({ provider: p.provider }) })).json();
         const names = ((d && d.refreshed) || []).length ? "（" + (d.refreshed || []).join(", ") + "）" : "";
-        setE({ busy: false, refreshOut: d && d.ok ? "🔄 列表已刷新 · 代理已刷新" + names : "⚠️ 列表已刷新，代理刷新失败：" + ((d && d.error) || "未知错误") });
+        setE({ busy: false, refreshOut: d && d.ok ? "列表已刷新 · 代理已刷新" + names : "列表已刷新，代理刷新失败：" + ((d && d.error) || "未知错误") });
       } catch (e2: any) {
-        setE({ busy: false, refreshOut: "⚠️ 列表已刷新，代理刷新失败：" + ((e2 && e2.message) || e2) });
+        setE({ busy: false, refreshOut: "列表已刷新，代理刷新失败：" + ((e2 && e2.message) || e2) });
       }
       loadStatus();
     };
@@ -1960,7 +1960,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       <div style={{ marginTop: 10, borderTop: "1px solid var(--border,#eee)", paddingTop: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 6, padding: "7px 10px", border: "1px solid rgba(99,102,241,.4)", borderRadius: 9, background: "rgba(99,102,241,.05)", flexWrap: "wrap" }}>
           <button className="amw-btn" style={{ padding: "3px 11px", fontSize: 11, fontWeight: 650 }} onClick={() => { if (!open) loadEditKeys(p.provider); setE({ show: !open }); }}>
-            {open ? "▾ 收起" : "🔑 多 Key 轮转" + (list.length ? "（" + list.length + " 把）" : "")}
+            {open ? "▾ 收起" : "多 Key 轮转" + (list.length ? "（" + list.length + " 把）" : "")}
           </button>
           <button className="amw-btn" style={{ padding: "3px 11px", fontSize: 11 }} disabled={e.busy} title="① 重新读取 models.json 的 key 列表（外部改动立即可见）② 刷新运行中代理（立即生效）"
             onClick={doKeysRefresh}>
@@ -1984,7 +1984,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                   <input className="amw-input" disabled={k.enabled === false} style={{width: 56, flexShrink: 0}} type="number" min={1} placeholder="rpm" title="每分钟请求上限（可选）" value={row.rpm !== undefined ? row.rpm : (k.rpm || "")} onChange={(ev) => rowSet({ rpm: ev.target.value })} />
                   <input className="amw-input" disabled={k.enabled === false} style={{width: 72, flexShrink: 0}} placeholder="间隔ms·0=突发" title="等间距节流（默认匀速）三种填法：\n① 留空 = auto：按 rpm 自动折算（60000÷rpm，rpm30→每2s一个），默认\n② 0 = 关闭匀速：仅 rpm 滑动窗口（突发模式，允许瞬间打满配额）\n③ 数字 = 固定间隔毫秒（如 2000 = 每2s一个）\n与 rpm 同时生效，取最大等待" value={row.minIntervalMs !== undefined ? row.minIntervalMs : (k.minIntervalMs ?? "")} onChange={(ev) => rowSet({ minIntervalMs: ev.target.value })} />
                   <button className="amw-btn" style={{ padding: "2px 8px", flexShrink: 0 }} title={dirty ? "保存修改（改名/换 key/改 rpm/改间隔，立即写入 models.json）" : "无改动"} disabled={e.busy || !dirty} onClick={() => editKeySave(p.provider, k)}>💾</button>
-                  <button className="amw-btn" style={{ padding: "2px 8px", flexShrink: 0, ...(k.enabled === false ? { color: "#b45309", borderColor: "#f59e0b", background: "rgba(245,158,11,.12)" } : {}) }}
+                  <button className="amw-btn" style={{ padding: "2px 8px", flexShrink: 0, ...(k.enabled === false ? { color: "#b45309", borderColor: "var(--warn, #f59e0b)", background: "rgba(245,158,11,.12)" } : {}) }}
                     title={k.enabled === false ? "临时禁用中（不参与轮转，配置未删除）——点击重新启用" : "临时禁用此 key（不参与轮转，配置未删除，随时可一键启用）"}
                     disabled={e.busy} onClick={() => editKeyToggle(p.provider, k.name, k.enabled === false)}>
                     {k.enabled === false ? "▶" : "⏸"}
@@ -2010,9 +2010,9 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     const cp = capProbes[provider + "/" + id];
     if (!cp) return null;
     const t = cp.phase === "probing"
-      ? <span title="实测验证 maxTokens 上限…" style={{ color: "#f59e0b" }}>⏳</span>
-      : cp.corrected ? <span title={cp.detail || "元数据虚报，已自动下调并回写"} style={{ color: "#10b981", fontWeight: 700 }}>✓↓</span>
-      : cp.error || (!cp.skipped && !cp.corrected) ? <span title={cp.detail || cp.error || "实测失败"} style={{ color: "#ef4444" }}>!</span>
+      ? <span title="实测验证 maxTokens 上限…" style={{ color: "var(--warn, #f59e0b)" }}>⏳</span>
+      : cp.corrected ? <span title={cp.detail || "元数据虚报，已自动下调并回写"} style={{ color: "#10b981", fontWeight: 700 }}>↓</span>
+      : cp.error || (!cp.skipped && !cp.corrected) ? <span title={cp.detail || cp.error || "实测失败"} style={{ color: "var(--danger, #ef4444)" }}>!</span>
       : null;
     return t;
   };
@@ -2051,7 +2051,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             {refreshBusy[p.provider] ? "刷新中…" : (<><Ic size={12} paths={ICONS.refresh} />{" "}刷新可选模型</>)}
           </button>
           {avail ? <button className="amw-btn" onClick={() => setEditAvail((prev: any) => { const { [p.provider]: _drop, ...rest } = prev; return rest; })}>收起列表</button> : null}
-          {avail ? <input className="amw-input" style={{flex: 1, minWidth: 140}} placeholder="🔍 过滤可选模型" value={availFilter[p.provider] || ""} onChange={(e) => setAvailFilter((prev: any) => ({ ...prev, [p.provider]: e.target.value }))} /> : null}
+          {avail ? <input className="amw-input" style={{flex: 1, minWidth: 140}} placeholder="过滤可选模型" value={availFilter[p.provider] || ""} onChange={(e) => setAvailFilter((prev: any) => ({ ...prev, [p.provider]: e.target.value }))} /> : null}
           {avail ? <button className="amw-btn" style={{ padding: "2px 10px" }} title="勾选当前筛选出的全部（保留筛选外已选）" onClick={() => setEditAvail((prev: any) => ({ ...prev, [p.provider]: { ...prev[p.provider], checked: [...new Set([...availChecked, ...availIds])] } }))}>全选</button> : null}
           {avail ? <button className="amw-btn" style={{ padding: "2px 10px" }} title="当前筛选范围内反选" onClick={() => setEditAvail((prev: any) => {
             const av = prev[p.provider];
@@ -2085,9 +2085,9 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                 const mid = typeof id === "string" ? id : (id && id.id);
                 const mEn = !(typeof id === "object" && id && id.enabled === false);
                 return (
-                <span key={mid} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 8, border: mEn ? "1px solid var(--border,#e0e0e0)" : "1px dashed #f59e0b", background: mEn ? "var(--bg-subtle,#f5f5f5)" : "rgba(245,158,11,.10)", fontSize: 11, fontFamily: "ui-monospace,monospace", ...(mEn ? {} : { color: "#b45309" }) }}>
+                <span key={mid} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 8, border: mEn ? "1px solid var(--border,#e0e0e0)" : "1px dashed var(--warn, #f59e0b)", background: mEn ? "var(--bg-subtle,#f5f5f5)" : "rgba(245,158,11,.10)", fontSize: 11, fontFamily: "ui-monospace,monospace", ...(mEn ? {} : { color: "#b45309" }) }}>
                   {mid}
-                  {!mEn ? <span style={{ fontSize: 9, color: "#b45309", fontWeight: 700 }}>⏸ 禁用</span> : null}
+                  {!mEn ? <span style={{ fontSize: 9, color: "#b45309", fontWeight: 700 }}>禁用</span> : null}
                   {capBadge(p.provider, mid)}
                   <EyeBtn title="查看/编辑完整参数（窗口/上下文/成本等）" onClick={() => viewModelParams(p.provider, mid)} />
                   <button style={{ border: "none", background: "none", cursor: "pointer", color: "#d97706", padding: 0, fontSize: 12, lineHeight: 1 }}
@@ -2120,7 +2120,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         {/* ── 连接测试（用已配置的全部 key，逐个测）── */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
           <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff", padding: "3px 10px" }} disabled={!!(keyTests[p.provider] && keyTests[p.provider].busy)} onClick={() => doTestStored(p)}>
-            {(keyTests[p.provider] && keyTests[p.provider].busy) ? "测试中…" : (<>🔌 测试连接（全部已存 key）</>)}
+            {(keyTests[p.provider] && keyTests[p.provider].busy) ? "测试中…" : (<>测试连接（全部已存 key）</>)}
           </button>
           <span style={{ color: "var(--text-subtle,#666)", fontSize: 10 }}>逐个串行测 models.json 已配的多把 key（非只第一个），每把单独出结果</span>
         </div>
@@ -2129,7 +2129,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         {renderEditKeys(p)}
         {/* ── 操作 ── */}
         <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-          <button className="amw-btn is-ok" onClick={() => doSaveEdit(p.provider, p)} disabled={busy}>💾 保存（模型 + 配置）</button>
+          <button className="amw-btn is-ok" onClick={() => doSaveEdit(p.provider, p)} disabled={busy}>保存（模型 + 配置）</button>
           <button className="amw-btn" onClick={() => { setEditFields((prev: any) => { const { [p.provider]: _drop, ...rest } = prev; return rest; }); setEditAvail((prev: any) => { const { [p.provider]: _drop2, ...rest } = prev; return rest; }); setEditModels((prev: any) => { const { [p.provider]: _drop3, ...rest } = prev; return rest; }); }}>取消</button>
         </div>
       </div>
@@ -2231,8 +2231,8 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       );
     }
     return t.pass
-      ? <div className={"amw-note " + (t.rateLimited ? "is-warn" : "is-ok")}>{t.rateLimited ? "🟡 通过（429 限流）——key/端点正确，稍后重试即可 · " + t.detail : "✅ 通过（HTTP " + t.status + " · " + t.detail + " · " + (t.latencyMs != null ? t.latencyMs + "ms" : "") + "）"}</div>
-      : <div className="amw-note is-err">{"❌ 失败（HTTP " + (t.status || "net") + "）· " + (t.detail || t.error || "")}</div>;
+      ? <div className={"amw-note " + (t.rateLimited ? "is-warn" : "is-ok")}>{t.rateLimited ? "🟡 通过（429 限流）——key/端点正确，稍后重试即可 · " + t.detail : "通过（HTTP " + t.status + " · " + t.detail + " · " + (t.latencyMs != null ? t.latencyMs + "ms" : "") + "）"}</div>
+      : <div className="amw-note is-err">{"失败（HTTP " + (t.status || "net") + "）· " + (t.detail || t.error || "")}</div>;
   };
 
   /** 订阅登录型（authType=oauth）面板：替代 token 输入流 */
@@ -2257,14 +2257,14 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   const [akMsg, setAkMsg] = useState<Record<string, string>>({});  // pid → 行内反馈
   const saveAuthKey = async (id: string, key: string): Promise<boolean> => {
     const k = (key || "").trim();
-    if (!k) { setAkMsg((m) => ({ ...m, [id]: "❌ 先填 API Key" })); return false; }
+    if (!k) { setAkMsg((m) => ({ ...m, [id]: "先填 API Key" })); return false; }
     setAkBusy(id); setAkMsg((m) => ({ ...m, [id]: "" }));
     try {
       const r = await fetch(apiUrl("/api/auth/api-key/" + encodeURIComponent(id)), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ apiKey: k }) });
       const d = await r.json() as { success?: boolean; error?: string };
       if (!r.ok || d.error) { setAkMsg((m) => ({ ...m, [id]: "❌ " + (d.error || "HTTP " + r.status) })); return false; }
       setAkDraft((prev) => { const { [id]: _drop, ...rest } = prev; return rest; });
-      setAkMsg((m) => ({ ...m, [id]: "✅ 已保存（auth.json）——模型清单已生效" }));
+      setAkMsg((m) => ({ ...m, [id]: "已保存（auth.json）——模型清单已生效" }));
       try { window.dispatchEvent(new CustomEvent("pi-web:models-changed")); } catch {}
       void loadStatus();
       return true;
@@ -2277,7 +2277,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       const r = await fetch(apiUrl("/api/auth/api-key/" + encodeURIComponent(id)), { method: "DELETE" });
       const d = await r.json() as { success?: boolean; error?: string };
       if (!r.ok || d.error) { setAkMsg((m) => ({ ...m, [id]: "❌ " + (d.error || "HTTP " + r.status) })); return false; }
-      setAkMsg((m) => ({ ...m, [id]: "✅ 已移除——该 provider 模型已下线" }));
+      setAkMsg((m) => ({ ...m, [id]: "已移除——该 provider 模型已下线" }));
       try { window.dispatchEvent(new CustomEvent("pi-web:models-changed")); } catch {}
       void loadStatus();
       return true;
@@ -2287,7 +2287,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   // apiKey 型行内编辑器（订阅页 / 状态页 api_key 详情共用）
   const apiKeyRow = (id: string, displayName: string, configured: boolean, compact?: boolean) => (
     <div style={compact ? { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 6 } : { display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>
-      <span style={{ width: 7, height: 7, borderRadius: "50%", background: configured ? "#4ade80" : "var(--border,#ddd)", flexShrink: 0 }} title={configured ? "已配置" : "未配置"} />
+      <span style={{ width: 7, height: 7, borderRadius: "50%", background: configured ? "var(--ok, #4ade80)" : "var(--border,#ddd)", flexShrink: 0 }} title={configured ? "已配置" : "未配置"} />
       <input className="amw-input" style={{ flex: 1, minWidth: 160, fontFamily: "ui-monospace,monospace" }} type="password"
         placeholder={configured ? "输入新 key 更换…" : "sk-…"} value={akDraft[id] || ""}
         onChange={(e) => setAkDraft((prev) => ({ ...prev, [id]: e.target.value }))}
@@ -2357,7 +2357,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         {oauthEmpty ? <div className="amw-note">未发现订阅登录型提供商。</div> : (
         <>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-          <span className="amw-section" style={{margin: 0, flex: 1}}>{"🔐 订阅登录型提供商（" + subList.length + "）—— 无需 API token，点登录获取凭据"}</span>
+          <span className="amw-section" style={{margin: 0, flex: 1}}>{"订阅登录型提供商（" + subList.length + "）—— 无需 API token，点登录获取凭据"}</span>
           <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} onClick={() => { loadSubs(); checkOauthStatus(subActive ? [subActive] : []); }}>刷新列表</button>
         </div>
         <div className="amw-note">这些提供商走订阅/OAuth 登录（凭据存 auth.json 自动刷新），与 token 型 provider 并列使用。仅限本人账号自用，禁止共享/转售。</div>
@@ -2396,7 +2396,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
               </div>
               {(info?.loggedIn || pr.loggedIn) ? (
                 <div className="amw-note is-ok" style={{marginTop: 6, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center"}}>
-                  <span>✅ 已登录</span>
+                  <span>已登录</span>
                   {info?.account?.name ? <span>👤 {info.account.name}{info.account.plan ? " · " + info.account.plan : ""}</span> : null}
                   {cr ? <span><b>{cr.remaining}</b> / {cr.total} {cr.unit}{cr.expiresAt ? " · 到期 " + new Date(cr.expiresAt).toLocaleDateString() : ""}</span> : null}
                   {info?.addOn ? <span title="额外购买的加量包">➕ 加量包 {info.addOn.remaining}/{info.addOn.total}{info.addOn.used != null ? "（已用 " + info.addOn.used + "）" : ""}</span> : null}
@@ -2419,7 +2419,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         {/* ── G3：API Key 型内置 provider（auth.json key 托管）——凭据管理段（docs/aiti-model-wizard-settings-takeover-plan.md）── */}
         <div style={{ marginTop: 14, borderTop: "1px solid var(--border,#eee)", paddingTop: 10 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-            <span className="amw-section" style={{ margin: 0, flex: 1 }}>{"🔑 API Key 型提供商（" + ((akList && akList.length) || 0) + "）—— key 存 auth.json（pi 托管）"}</span>
+            <span className="amw-section" style={{ margin: 0, flex: 1 }}>{"API Key 型提供商（" + ((akList && akList.length) || 0) + "）—— key 存 auth.json（pi 托管）"}</span>
             <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} onClick={loadSubs}>刷新列表</button>
           </div>
           <div className="amw-note">pi 内置 provider（openai / anthropic / google 等）的 API key 管理入口：保存后模型清单由 pi 内置目录自动加载，与订阅登录型并列；已配置的在左树/选择器直接可见。</div>
@@ -2455,7 +2455,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     const msrc = (d?.models && d.models.length) ? (d.modelsSource || "catalog") : "catalog";
     return (
       <div>
-        <div className="amw-section">🔐 订阅登录型 · 无需 API token</div>
+        <div className="amw-section">订阅登录型 · 无需 API token</div>
         <div className="amw-note">订阅制提供商：点「登录」获取凭据（自动存入 auth.json 并刷新，无需手动保存）。仅限本人账号自用，禁止共享/转售。</div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
           <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff" }} onClick={() => startOauthLogin(pid)} disabled={working}>
@@ -2470,14 +2470,14 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
               {logoutBusy === pid ? "登出中…" : "登出"}
             </button>
           ) : null}
-          {info ? (info.loggedIn ? <span className="amw-note is-ok">✅ 已登录</span> : <span className="amw-note is-warn">未登录</span>) : null}
+          {info ? (info.loggedIn ? <span className="amw-note is-ok">已登录</span> : <span className="amw-note is-warn">未登录</span>) : null}
         </div>
         {info?.loggedIn ? (
           <div className="amw-note is-ok" style={{display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center"}}>
             {info.account?.name ? <span>👤 {info.account.name}{info.account.plan ? " · " + info.account.plan : ""}</span> : null}
             {info.account?.email ? <span>{info.account.email}</span> : null}
             {cr ? <span><b>{cr.remaining}</b> / {cr.total} {cr.unit}{cr.used != null ? "（已用 " + cr.used + "）" : ""}{cr.expiresAt ? " · 到期 " + new Date(cr.expiresAt).toLocaleDateString() : ""}</span> : null}
-            {info?.addOn ? <span title="额外购买的加量包">➕ 加量包 <b>{info.addOn.remaining}</b> / {info.addOn.total} {info.addOn.unit}{info.addOn.used != null ? "（已用 " + info.addOn.used + "）" : ""}</span> : null}
+            {info?.addOn ? <span title="额外购买的加量包">加量包 <b>{info.addOn.remaining}</b> / {info.addOn.total} {info.addOn.unit}{info.addOn.used != null ? "（已用 " + info.addOn.used + "）" : ""}</span> : null}
             {info?.packages?.length ? <span title="专属资源包（选定系列模型时优先抵扣）">🎁 {info.packages.map((p: any) => p.name + " " + p.remaining + "/" + p.total).join(" · ")}</span> : null}
             {cr?.exceeded ? <span style={{ color: "#dc2626", fontWeight: 700 }}>额度已用完</span> : null}
           </div>
@@ -2520,7 +2520,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             </div>
           </div>
         ) : null}
-        {ls.phase === "success" ? <div className="amw-note is-ok">✅ 登录成功！上方已显示账号与可用模型。</div> : null}
+        {ls.phase === "success" ? <div className="amw-note is-ok">登录成功！上方已显示账号与可用模型。</div> : null}
         {ls.phase === "error" ? <div className="amw-note is-err">❌ {ls.message}</div> : null}
       </div>
     );
@@ -2547,13 +2547,13 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     <div>
       {p.id === "custom" ? (
         <>
-          <div className="amw-section" style={{ margin: "12px 0 6px" }}>🔧 连接配置（自定义端点）</div>
+          <div className="amw-section" style={{ margin: "12px 0 6px" }}>连接配置（自定义端点）</div>
           <label style={{ fontSize: 11, color: "var(--text-subtle,#666)", display: "block", marginBottom: 3 }}>Base URL</label>
           <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
             <input className="amw-input" style={{ flex: 1, fontFamily: "ui-monospace,monospace" }} placeholder="https://api.example.com/v1" value={p.baseUrl || ""}
               onChange={(e) => setSel((prev: any) => ({ ...(prev || {}), baseUrl: e.target.value }))} />
             <button className="amw-btn" style={{ flexShrink: 0 }} disabled={!p.baseUrl?.trim() || customDetecting}
-              title="用当前地址 + token/请求头重新探测 api 类型与真实地址（漏 /v1 /v2 也能补）" onClick={detectCustom}>{customDetecting ? "探测中…" : "🔍 探测"}</button>
+              title="用当前地址 + token/请求头重新探测 api 类型与真实地址（漏 /v1 /v2 也能补）" onClick={detectCustom}>{customDetecting ? "探测中…" : "探测"}</button>
           </div>
           <label style={{ fontSize: 11, color: "var(--text-subtle,#666)", display: "block", marginBottom: 3 }}>API 类型</label>
           <select className="amw-input" style={{ width: "100%", marginBottom: 8 }} value={p.apiType || "openai-completions"}
@@ -2561,7 +2561,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             {["openai-completions", "anthropic-messages", "openai-responses", "google-generative-ai"].map((o) => <option key={o} value={o}>{o}</option>)}
           </select>
           {p.apiType === "anthropic-messages" && /\/v1\/?$/i.test(String(p.baseUrl || "")) ? (
-            <div className="amw-note is-warn" style={{ marginBottom: 6 }} title="pi 的 Anthropic 请求 = baseUrl + /v1/messages；base 带 /v1 会变成 /v1/v1/messages（404）。建议去掉尾部 /v1。">⚠️ Anthropic 的 Base URL 不要带尾部 /v1（运行时会在其后拼 /v1/messages）</div>
+            <div className="amw-note is-warn" style={{ marginBottom: 6 }} title="pi 的 Anthropic 请求 = baseUrl + /v1/messages；base 带 /v1 会变成 /v1/v1/messages（404）。建议去掉尾部 /v1。">Anthropic 的 Base URL 不要带尾部 /v1（运行时会在其后拼 /v1/messages）</div>
           ) : null}
           <div className="amw-section" style={{ margin: "0 0 6px" }}>请求头（可选）</div>
           <HeaderRowsEditor rows={provHeaders} hint="仅本 provider 的请求携带（如 User-Agent / x-opencode-session）；空行忽略"
@@ -2575,7 +2575,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
 
       <StepHead n={2} title="凭据与连接测试"
         hint="支持字面量（sk-…）· 环境变量名 · !命令"
-        right={testRes ? <span style={{ fontSize: 11, fontWeight: 700, color: testRes.pass ? "#16a34a" : "#dc2626", whiteSpace: "nowrap" }}>{testRes.pass ? "✅ 已连通" : "❌ 未通过"}</span> : null} />
+        right={testRes ? <span style={{ fontSize: 11, fontWeight: 700, color: testRes.pass ? "#16a34a" : "#dc2626", whiteSpace: "nowrap" }}>{testRes.pass ? "已连通" : "未通过"}</span> : null} />
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <input className="amw-input" style={{flex: 1, height: 32, fontFamily: "ui-monospace,monospace"}} type="password" placeholder="粘贴 API token —— 仅用于测试/保存，不回显" value={token} onChange={(e) => setToken(e.target.value)} />
         <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff", height: 32, flexShrink: 0 }} title="顶部 token + 下方多 key 行一起逐个串行测，每把单独出结果"
@@ -2589,7 +2589,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       <div style={{ marginTop: 12, border: "1px solid rgba(99,102,241,.45)", borderRadius: 10, background: "rgba(99,102,241,.05)", padding: "10px 12px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
           <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontWeight: 700, fontSize: 12.5, color: "#4f46e5" }}><Ic size={14} paths={ICONS.key} />多 Key 自动轮转</span>
-          <span style={{ padding: "1px 8px", borderRadius: 999, background: "#4f46e5", color: "#fff", fontSize: 9.5, fontWeight: 700 }}>✨ 亮点</span>
+          <span style={{ padding: "1px 8px", borderRadius: 999, background: "#4f46e5", color: "#fff", fontSize: 9.5, fontWeight: 700 }}>亮点</span>
           {validKeyRows.length ? <span style={{ padding: "1px 8px", borderRadius: 999, background: "rgba(79,70,229,.14)", color: "#4f46e5", fontSize: 10.5, fontWeight: 700 }}>{validKeyRows.length + " 把"}</span> : null}
           <span style={{ fontSize: 10.5, color: "var(--text-subtle,#777)", flex: 1, minWidth: 180 }}>多把 key 分摊限流、用尽自动切换 · 每把可设 rpm 上限 + 等间距间隔（留空=auto · 0=突发 · 数字=毫秒）</span>
         </div>
@@ -2618,7 +2618,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       {known.length ? (
         <div>
           <div style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center", flexWrap: "wrap" }}>
-            <input className="amw-input" style={{flex: 1, minWidth: 180}} placeholder="🔍 搜索过滤模型（如 glm / flash / free…）" value={modelFilter} onChange={(e) => setModelFilter(e.target.value)} />
+            <input className="amw-input" style={{flex: 1, minWidth: 180}} placeholder="搜索过滤模型（如 glm / flash / free…）" value={modelFilter} onChange={(e) => setModelFilter(e.target.value)} />
             <button className="amw-btn" style={{ padding: "3px 11px" }} onClick={() => setChecked([...new Set([...checked, ...filteredModels()])])}>全选</button>
             <button className="amw-btn" style={{ padding: "3px 11px" }} onClick={() => setChecked((prev) => [...prev.filter((id) => !filteredModels().includes(id)), ...filteredModels().filter((id) => !prev.includes(id))])}>反选</button>
             <button className="amw-btn" style={{ padding: "3px 11px" }} onClick={() => setChecked((prev) => prev.filter((id) => !filteredModels().includes(id)))}>清空</button>
@@ -2654,7 +2654,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         <button className="amw-btn is-ok" style={{ height: 36, padding: "0 20px", fontSize: 13.5, fontWeight: 700, flexShrink: 0 }}
           onClick={() => { setSaveForce(false); setSaveDlg({ name: (provName || genName(p.baseUrl) || "custom"), baseUrl: p.baseUrl, api: p.apiType, modelCount: checked.length }); }}
           disabled={saving || !checked.length}>
-          {saving ? "保存中…" : checked.length ? "💾 保存 " + checked.length + " 个模型" : "💾 保存到配置"}
+          {saving ? "保存中…" : checked.length ? "保存 " + checked.length + " 个模型" : "保存到配置"}
         </button>
       </div>
       {savedMsg ? <div className={"amw-note " + (savedMsg.startsWith("✅") ? "is-ok" : "is-err")} style={{ marginTop: 8 }}>{savedMsg}</div> : null}
@@ -2676,7 +2676,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 0);
       const cnt = Object.keys(d.providers || {}).length;
-      setToast({ msg: "✅ 已导出 " + cnt + " 个 provider（无明文 key）" + (Array.isArray(d.skippedCombos) && d.skippedCombos.length ? " · 聚合组 " + d.skippedCombos.length + " 个未含" : ""), ok: true });
+      setToast({ msg: "已导出 " + cnt + " 个 provider（无明文 key）" + (Array.isArray(d.skippedCombos) && d.skippedCombos.length ? " · 聚合组 " + d.skippedCombos.length + " 个未含" : ""), ok: true });
       setTimeout(() => setToast(null), 4000);
     } catch (e: any) {
       setToast({ msg: "导出失败：" + (e.message || e), ok: false });
@@ -2706,7 +2706,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       setImpDlg(null);
       if (d && d.ok) {
         const okN = (d.results || []).filter((x: any) => x.ok).length;
-        setToast({ msg: "✅ 已导入 " + okN + " 个 provider（/undo 可一步回整批）", ok: true });
+        setToast({ msg: "已导入 " + okN + " 个 provider（/undo 可一步回整批）", ok: true });
         setTimeout(() => setToast(null), 4500);
         loadStatus();
       } else {
@@ -2722,7 +2722,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   const renderImportDlg = () => {
     const rows: any[] = impDlg?.rows || [];
     const kindColor: any = { new: "#16a34a", same: "#b45309", conflict: "#dc2626" };
-    const kindLabel: any = { new: "新增", same: "覆盖", conflict: "⚠ 冲突" };
+    const kindLabel: any = { new: "新增", same: "覆盖", conflict: "冲突" };
     return (
       <div className="amw-overlay" onClick={(e) => { if (e.target === e.currentTarget) setImpDlg(null); }}>
         <div {...{ "data-ext-float": "1", "data-ext-float-key": "aiti-model-wizard:import-dialog", "data-ext-float-w": 560, "data-ext-float-autoh": "1" }} onClick={(e) => e.stopPropagation()} className="amw-float-panel" style={{ width: "min(560px, 100%)", padding: 14 }}>
@@ -2800,7 +2800,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           <div style={{ ...barStyle, background: "rgba(22,163,74,.12)", color: "#16a34a" }}>✅ 最近测试通过{lt.latencyMs != null ? "（" + lt.latencyMs + "ms）" : ""}——可保存</div>
         ) : ltFail ? (
           <div style={{ ...barStyle, background: "rgba(220,38,38,.12)", color: "#dc2626" }}>
-            <span style={{ minWidth: 0, flex: "1 1 auto", overflow: "hidden", textOverflow: "ellipsis" }}>{"❌ 最近测试失败：" + String(lt.detail || "").slice(0, 80)}</span>
+            <span style={{ minWidth: 0, flex: "1 1 auto", overflow: "hidden", textOverflow: "ellipsis" }}>{"最近测试失败：" + String(lt.detail || "").slice(0, 80)}</span>
             <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", flexShrink: 0, color: "var(--text,#333)" }}>
               <input type="checkbox" checked={saveForce} onChange={(e) => setSaveForce(e.target.checked)} />
               仍要保存（禁用态）
@@ -2808,7 +2808,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           </div>
         ) : (
           <div style={{ ...barStyle, background: "rgba(245,158,11,.14)", color: "#b45309" }}>
-            <span style={{ flex: "1 1 auto" }}>⚠️ 尚未测试——保存后立即生效，建议先测一次</span>
+            <span style={{ flex: "1 1 auto" }}>尚未测试——保存后立即生效，建议先测一次</span>
             <button
               className="amw-btn"
               style={{ flexShrink: 0, padding: "3px 10px" }}
@@ -2828,7 +2828,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
               setSaveForce(false); setSaveDlg(null);
               doSave(nm, saveDlg.baseUrl, saveDlg.api, token, !token, force ? false : undefined);
             }}
-          >{saving ? "保存中…" : ltFail && saveForce ? "💾 仍要保存（禁用态）" : "💾 确认保存"}</button>
+          >{saving ? "保存中…" : ltFail && saveForce ? "仍要保存（禁用态）" : "确认保存"}</button>
         </div>
       </div>
     </div>
@@ -2855,7 +2855,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             <span style={{ color: "var(--text-subtle,#666)", fontSize: 11 }}>{r.src}</span>
           </div>
         ))}
-        {cd.models && cd.models.length ? <div style={{ marginBottom: 4, fontSize: 12, color: "#16a34a" }}>{"📦 模型列表已拉取（" + cd.modelCount + " 个）—— 在下方「③ 选择模型」勾选即可"}</div>
+        {cd.models && cd.models.length ? <div style={{ marginBottom: 4, fontSize: 12, color: "#16a34a" }}>{"模型列表已拉取（" + cd.modelCount + " 个）—— 在下方「③ 选择模型」勾选即可"}</div>
           : cd.modelsError ? <div style={{ marginBottom: 4, fontSize: 11, color: "var(--text-subtle,#666)" }}>{"模型列表：" + cd.modelsError.slice(0, 90)}</div> : null}
         <div style={{ display: "flex", gap: 6, margin: "8px 0", alignItems: "center", flexWrap: "wrap" }}>
           {cd.baseUrl ? <span className="amw-mono" style={{ padding: "3px 8px", borderRadius: 8, background: "var(--bg-subtle,#f5f5f5)" }}>{"api=" + cd.api + " · baseUrl=" + cd.baseUrl}</span> : null}
@@ -2893,8 +2893,8 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     if (!total) return <div className="amw-note">无匹配提供商</div>;
     return (
       <div style={{ marginBottom: 4 }}>
-        <div className="amw-section" style={{marginTop: 4}}>{"📚 全部目录（" + cat.count + " 家 · models.dev 无细分分类，按首字符分组；点「＋ 添加」直接接入）"}</div>
-        <input className="amw-input" style={{width: "100%", marginBottom: 8}} placeholder="🔍 过滤提供商（中英文名 / ID / API 地址）" value={browseQ} onChange={(e) => setBrowseQ(e.target.value)} />
+        <div className="amw-section" style={{marginTop: 4}}>{"全部目录（" + cat.count + " 家 · models.dev 无细分分类，按首字符分组；点「＋ 添加」直接接入）"}</div>
+        <input className="amw-input" style={{width: "100%", marginBottom: 8}} placeholder="过滤提供商（中英文名 / ID / API 地址）" value={browseQ} onChange={(e) => setBrowseQ(e.target.value)} />
         <div style={{ maxHeight: "min(52dvh, 460px)", overflow: "auto", border: "1px solid var(--border,#eee)", borderRadius: 10, padding: "0 8px" }}>
           {groups.map(([g, provs]: any) => (
             <div key={g}>
@@ -2928,9 +2928,9 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                           : det.error ? <div className="amw-note is-err" style={{fontSize: 11}}>{"❌ " + det.error}</div> : null}
                         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", fontSize: 11, marginBottom: 3, alignItems: "center" }}>
                           {p.apiType ? <span className="amw-mono" style={{color: "var(--text-subtle,#666)"}}>{"api: " + p.apiType}</span> : null}
-                          {p.doc ? <a href={LINK(p.doc)} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid var(--border,#e0e0e0)", background: "var(--bg,#fff)", color: "var(--accent,#2563eb)", fontSize: 12, textDecoration: "none" }} title="打开官网/文档（新窗口）">🌐 官网/文档</a> : null}
-                          {p.signupUrl ? <a href={LINK(p.signupUrl)} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid rgba(34,197,94,.4)", background: "rgba(34,197,94,.06)", color: "#15803d", fontSize: 12, fontWeight: 600, textDecoration: "none" }} title="打开注册页（新窗口）">📝 注册</a> : null}
-                          {p.tokenUrl ? <a href={LINK(p.tokenUrl)} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid rgba(99,102,241,.4)", background: "rgba(99,102,241,.06)", color: "#4f46e5", fontSize: 12, fontWeight: 600, textDecoration: "none" }} title="打开取 token 页（新窗口）">🔑 取 token</a> : null}
+                          {p.doc ? <a href={LINK(p.doc)} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid var(--border,#e0e0e0)", background: "var(--bg,#fff)", color: "var(--accent,#2563eb)", fontSize: 12, textDecoration: "none" }} title="打开官网/文档（新窗口）">官网/文档</a> : null}
+                          {p.signupUrl ? <a href={LINK(p.signupUrl)} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid rgba(34,197,94,.4)", background: "rgba(34,197,94,.06)", color: "#15803d", fontSize: 12, fontWeight: 600, textDecoration: "none" }} title="打开注册页（新窗口）">注册</a> : null}
+                          {p.tokenUrl ? <a href={LINK(p.tokenUrl)} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid rgba(99,102,241,.4)", background: "rgba(99,102,241,.06)", color: "#4f46e5", fontSize: 12, fontWeight: 600, textDecoration: "none" }} title="打开取 token 页（新窗口）">取 token</a> : null}
                         </div>
                         {p.register ? <div style={{ fontSize: 11, color: "var(--text-subtle,#555)", margin: "2px 0" }}>{String(p.register).slice(0, 160)}</div> : null}
                         {det.models && det.models.length ? (
@@ -2987,7 +2987,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                     + (c.stale && c.from !== "none" ? " · ⚠ 已超 TTL（保存未知模型时会自动强刷，或点右侧手动刷新）" : "")
                     + (c.from === "none" ? "（搜索为空时点右侧按钮拉取）" : "")}</span>,
                   <button key="btn" className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} disabled={catRefreshing} onClick={doRefreshCatalog} title="重新下载 models.dev 目录（官方 + Gitee 镜像竞速）">{catRefreshing ? "刷新中…" : "↻ 刷新目录"}</button>,
-                  <button key="browse" className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} onClick={() => setBrowse((v) => !v)} title="浏览目录全部提供商（按首字符分组展开，点添加直接接入）">{browse ? "▾ 收起目录" : "📖 浏览目录"}</button>,
+                  <button key="browse" className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} onClick={() => setBrowse((v) => !v)} title="浏览目录全部提供商（按首字符分组展开，点添加直接接入）">{browse ? "▾ 收起目录" : "浏览目录"}</button>,
                 ]; })()}
               {catMsg ? <span style={{ color: catMsg.startsWith("✅") ? "#15803d" : "#b91c1c" }}>{catMsg}</span> : null}
             </div>
@@ -2995,7 +2995,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           {/* 浏览目录开启 → 替换热门推荐区位置；关闭时未搜索才展示推荐卡片。 */}
           {!results && browse ? renderBrowse() : (!results && rec && rec.length ? (
             <div style={{ marginBottom: 4 }}>
-              <div className="amw-section" style={{marginTop: 4}}>✨ 热门提供商（点下方套餐直接接入；多形态选对应套餐）</div>
+              <div className="amw-section" style={{marginTop: 4}}>热门提供商（点下方套餐直接接入；多形态选对应套餐）</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(228px,1fr))", gap: 7 }}>
                 {rec.map((c: any) => {
                   const logo = (c.main.cnName || c.main.name || "?").trim().charAt(0).toUpperCase();
@@ -3012,9 +3012,9 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                       </div>
                       <div style={{ fontSize: 10.5, color: "var(--text-subtle,#777)", margin: "0 0 5px", lineHeight: 1.4, height: 29, overflow: "hidden" }}>{(c.main.register || "点选下方套餐接入").slice(0, 110)}</div>
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
-                        {c.main.doc ? <a href={LINK(c.main.doc)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid var(--border,#e0e0e0)", background: "var(--bg,#fff)", color: "var(--accent,#2563eb)", fontSize: 12, textDecoration: "none" }} title={"打开官网/文档（新窗口）"}>🌐 官网</a> : null}
-                        {c.main.signupUrl ? <a href={LINK(c.main.signupUrl)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid rgba(34,197,94,.4)", background: "rgba(34,197,94,.06)", color: "#15803d", fontSize: 12, fontWeight: 600, textDecoration: "none" }} title={"打开注册页（新窗口）"}>📝 注册</a> : null}
-                        {c.main.tokenUrl ? <a href={LINK(c.main.tokenUrl)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid rgba(99,102,241,.4)", background: "rgba(99,102,241,.06)", color: "#4f46e5", fontSize: 12, fontWeight: 600, textDecoration: "none" }} title={"打开取 token 页（新窗口）"}>🔑 取 token</a> : null}
+                        {c.main.doc ? <a href={LINK(c.main.doc)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid var(--border,#e0e0e0)", background: "var(--bg,#fff)", color: "var(--accent,#2563eb)", fontSize: 12, textDecoration: "none" }} title={"打开官网/文档（新窗口）"}>官网</a> : null}
+                        {c.main.signupUrl ? <a href={LINK(c.main.signupUrl)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid rgba(34,197,94,.4)", background: "rgba(34,197,94,.06)", color: "#15803d", fontSize: 12, fontWeight: 600, textDecoration: "none" }} title={"打开注册页（新窗口）"}>注册</a> : null}
+                        {c.main.tokenUrl ? <a href={LINK(c.main.tokenUrl)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid rgba(99,102,241,.4)", background: "rgba(99,102,241,.06)", color: "#4f46e5", fontSize: 12, fontWeight: 600, textDecoration: "none" }} title={"打开取 token 页（新窗口）"}>取 token</a> : null}
                       </div>
                       <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
                         {c.plans.map((pl: any) => (
@@ -3024,7 +3024,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                             title={pl.provider.baseUrl + "（" + pl.provider.apiType + "）"} onClick={() => pickPlan(pl)}>{pl.label}</button>
                         ))}
                         {aff && aff[c.id] && aff[c.id].link ? (
-                          <a key={"aff-" + c.id} href={aff[c.id].link} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", padding: "3px 10px", fontSize: 11, fontWeight: 600, borderRadius: 7, background: "rgba(34,197,94,.08)", border: "1px solid rgba(34,197,94,.35)", color: "#15803d", textDecoration: "none" }} title={aff[c.id].note || "通过本链接注册，双方得免费额度（新窗口）"}>🎁 有礼</a>
+                          <a key={"aff-" + c.id} href={aff[c.id].link} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", padding: "3px 10px", fontSize: 11, fontWeight: 600, borderRadius: 7, background: "rgba(34,197,94,.08)", border: "1px solid rgba(34,197,94,.35)", color: "#15803d", textDecoration: "none" }} title={aff[c.id].note || "通过本链接注册，双方得免费额度（新窗口）"}>有礼</a>
                         ) : null}
                       </div>
                     </div>
@@ -3061,10 +3061,10 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
               {reverseRes.detect ? <div style={{ marginTop: 6 }}>{renderDetectCard(reverseRes.detect, applyReverseDetect)}</div> : null}
               {!reverseRes.usedKey ? (
                 <div style={{ marginTop: 8, padding: 10, border: "1px dashed var(--border,#e0e0e0)", borderRadius: 8 }}>
-                  <div style={{ fontSize: 12, marginBottom: 6, color: "var(--text-subtle,#666)" }} title="无 key 探测只能判断 api 类型，真实版本路径（/v1 /v2 /v3）可能不准；key 只用于探测，不回传">⚠️ 无 key 仅判断 api 类型，填 key 精探更准</div>
+                  <div style={{ fontSize: 12, marginBottom: 6, color: "var(--text-subtle,#666)" }} title="无 key 探测只能判断 api 类型，真实版本路径（/v1 /v2 /v3）可能不准；key 只用于探测，不回传">无 key 仅判断 api 类型，填 key 精探更准</div>
                   <div style={{ display: "flex", gap: 8 }}>
                     <input className="amw-input" style={{flex: 1, fontFamily: "ui-monospace,monospace"}} type="password" placeholder="API key / token" value={probeKey} onChange={(e) => setProbeKey(e.target.value)} />
-                    <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff" }} onClick={doReverseWithKey} disabled={reprobing || !probeKey.trim()}>{reprobing ? "精探中…" : "🔍 带 key 精探"}</button>
+                    <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff" }} onClick={doReverseWithKey} disabled={reprobing || !probeKey.trim()}>{reprobing ? "精探中…" : "带 key 精探"}</button>
                   </div>
                 </div>
               ) : null}
@@ -3075,7 +3075,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             title="不搜索也能直接进入自定义端点面板（Base URL / API 类型 / 请求头）">
             <span style={{ width: 28, height: 28, borderRadius: 8, background: "var(--bg-subtle,#f5f5f5)", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Ic size={14} paths={ICONS.plus} /></span>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 600 }}>🛠 自定义端点（手工配置）</div>
+              <div style={{ fontWeight: 600 }}>自定义端点（手工配置）</div>
               <div style={{ fontSize: 11, color: "var(--text-subtle,#666)" }}>{"目录没收录？贴过地址？都从这里进：手工填 Base URL / API 类型 / 请求头，无需目录匹配"}</div>
             </div>
             <span className="amw-btn" style={{ flexShrink: 0 }}>进入</span>
@@ -3119,7 +3119,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     <aside className="amw-sidebar">
       <div className="amw-sidebar-search">
         <div style={{ position: "relative" }}>
-          <input className="amw-input" style={{ width: "100%", paddingRight: 26 }} placeholder="🔍 搜索 provider / 模型 id…（多词空格分隔）"
+          <input className="amw-input" style={{ width: "100%", paddingRight: 26 }} placeholder="搜索 provider / 模型 id…（多词空格分隔）"
             value={treeQ} onChange={(e) => setTreeQ(e.target.value)} />
           {treeQ ? (
             <button className="amw-close" style={{ position: "absolute", right: 3, top: "50%", transform: "translateY(-50%)", width: 20, height: 20, fontSize: 13 }}
@@ -3129,21 +3129,21 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         <button className="amw-btn" style={{ width: "100%", justifyContent: "center", marginTop: 6 }} disabled={!!(checkupSt && checkupSt.running)}
           title="逐个已配置 provider 发一个真实探针（跳过聚合组/禁用/无凭据；结论留存，树上/详情显示延迟）"
           onClick={runCheckup}>
-          {(checkupSt && checkupSt.running) ? "⏳ 体检中…" : "🩺 一键体检"}
+          {(checkupSt && checkupSt.running) ? "体检中…" : "一键体检"}
         </button>
       </div>
       <div className="amw-sidebar-list">
         <div className="amw-group-label">{"已配置 · " + st.providers.length + (kws.length ? " · 过滤 " + provs.length + "/" + st.providers.length + " provider" : "")}</div>
         {checkAvail === false ? (
           <div style={{ padding: "0 8px 4px", fontSize: 11, color: "#d97706", lineHeight: 1.5, display: "flex", alignItems: "flex-start", gap: 4 }}>
-            <span>⚠️ 检查未启用——可用性/余额不可见。请在「扩展管理」启用 aiti-model-check 后刷新。</span>
+            <span>检查未启用——可用性/余额不可见。请在「扩展管理」启用 aiti-model-check 后刷新。</span>
           </div>
         ) : chk ? (
           <div style={{ padding: "0 8px 4px", fontSize: 11, color: "var(--text-dim,#9ca3af)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", whiteSpace: "nowrap" }}>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span className="amw-vdot" style={{ background: "#16a34a" }} />可用</span>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span className="amw-vdot" style={{ background: "#f59e0b" }} />限流</span>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span className="amw-vdot" style={{ background: "#ef4444" }} />异常/欠费</span>
-            <span title="运行期错误观测（带外）：代理真实流量里的非 2xx/3xx（429 限流/402 欠费/401 key 无效/5xx 等，带 key 归因），未探测也能看到">⚡ 运行异常</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span className="amw-vdot" style={{ background: "var(--warn, #f59e0b)" }} />限流</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span className="amw-vdot" style={{ background: "var(--danger, #ef4444)" }} />异常/欠费</span>
+            <span title="运行期错误观测（带外）：代理真实流量里的非 2xx/3xx（429 限流/402 欠费/401 key 无效/5xx 等，带 key 归因），未探测也能看到">运行异常</span>
             <span>无标 = 未测</span>
           </div>
         ) : null}
@@ -3165,12 +3165,12 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                 onClick={() => selectNode({ type: "provider", provider: p.provider })}>
                 <ProviderAvatar id={p.provider} name={p.provider} size={16} radius={5} />
                 <span className="amw-sb-text is-grow">{p.provider}</span>
-                {probeBusy[p.provider] ? <span style={{ fontSize: 11, color: "#f59e0b", flexShrink: 0 }} title="探测中…">⏳</span>
+                {probeBusy[p.provider] ? <span style={{ fontSize: 11, color: "var(--warn, #f59e0b)", flexShrink: 0 }} title="探测中…">⏳</span>
                   : agg && (agg.ok || agg.rl || agg.err) ? (
                   <span style={{ fontSize: 11, display: "inline-flex", gap: 3, flexShrink: 0 }}>
                     {agg.ok > 0 ? <span style={{ color: "#16a34a", fontWeight: 600 }}>{agg.ok}✓</span> : null}
-                    {agg.rl > 0 ? <span style={{ color: "#f59e0b", fontWeight: 600 }}>{agg.rl}限</span> : null}
-                    {agg.err > 0 ? <span style={{ color: "#ef4444", fontWeight: 600 }}>{agg.err}✗</span> : null}
+                    {agg.rl > 0 ? <span style={{ color: "var(--warn, #f59e0b)", fontWeight: 600 }}>{agg.rl}限</span> : null}
+                    {agg.err > 0 ? <span style={{ color: "var(--danger, #ef4444)", fontWeight: 600 }}>{agg.err}✗</span> : null}
                   </span>
                 ) : null}
                 {(() => {
@@ -3206,7 +3206,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                     title={rtTip({ count1h: c1h, count24h: c24, byStatus: null, lastAt, lastStatus })}>{info.icon}{c24}</span>;
                 })()}
                 {p.combo ? <span className="amw-tag is-combo">🧩</span> : null}
-                {p.enabled === false ? <span className="amw-tag" style={{ color: "#b45309", borderColor: "#f59e0b", background: "rgba(245,158,11,.14)" }} title="临时禁用中（配置未删除，点击详情页可重新启用）">⏸ 禁用</span> : null}
+                {p.enabled === false ? <span className="amw-tag" style={{ color: "#b45309", borderColor: "var(--warn, #f59e0b)", background: "rgba(245,158,11,.14)" }} title="临时禁用中（配置未删除，点击详情页可重新启用）">禁用</span> : null}
                 {(() => {
                   // 树上禁用 key 数徽标：不点详情也能看到有 key 处于禁用态
                   const dis = (p.keys || []).filter((k: any) => k && k.enabled === false).length;
@@ -3215,7 +3215,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                     title={dis + " 把 key 临时禁用中（详情页「多 Key 轮转」可启用）"}>🔑⏸{dis}</span>;
                 })()}
                 {p.authType === "oauth" ? <span className="amw-tag is-oauth">🔐</span> : null}
-                {p.runtime ? <span className="amw-tag is-ro">⚡ 运行时</span> : null}
+                {p.runtime ? <span className="amw-tag is-ro">运行时</span> : null}
                 {ni && ni.count > 0 ? <span className="amw-tag is-new">{"+" + ni.count}</span> : null}
               </button>
               {ids.map((id: string) => {
@@ -3229,9 +3229,9 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                     <span className="amw-sb-text is-grow" style={{ color: mEn ? "var(--text-muted)" : "#b45309", ...(mEn ? {} : { textDecoration: "line-through", opacity: 0.55 }) }}>{id}</span>
                     {!mEn ? <span style={{ fontSize: 9, color: "#b45309", flexShrink: 0 }} title="临时禁用中（未删除，详情页可重新启用）">⏸</span> : null}
                     {checkDot(p.provider, id)}
-                    {probe?.phase === "probing" ? <span style={{ fontSize: 9, color: "#f59e0b", flexShrink: 0 }} title="实测最大输出中">⏳</span> : null}
-                    {probe?.phase === "done" && !probe.error ? <span style={{ fontSize: 9, color: "#10b981", flexShrink: 0 }} title={probe.corrected ? "实测已校正 maxTokens" : "实测通过"}>{probe.corrected ? "✓↓" : "✓"}</span> : null}
-                    {probe?.phase === "done" && probe.error ? <span style={{ fontSize: 9, color: "#ef4444", flexShrink: 0 }} title={probe.error}>!</span> : null}
+                    {probe?.phase === "probing" ? <span style={{ fontSize: 9, color: "var(--warn, #f59e0b)", flexShrink: 0 }} title="实测最大输出中">⏳</span> : null}
+                    {probe?.phase === "done" && !probe.error ? <span style={{ fontSize: 9, color: "#10b981", flexShrink: 0 }} title={probe.corrected ? "实测已校正 maxTokens" : "实测通过"}>{probe.corrected ? "↓" : "✓"}</span> : null}
+                    {probe?.phase === "done" && probe.error ? <span style={{ fontSize: 9, color: "var(--danger, #ef4444)", flexShrink: 0 }} title={probe.error}>!</span> : null}
                   </button>
                 );
               })}
@@ -3270,9 +3270,9 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           {back}
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderBottom: "1px solid var(--border,#eee)", flexShrink: 0 }}>
             <span className="amw-mono" style={{ fontWeight: 650, fontSize: 12.5 }}>{selNode.id}</span>
-            {probing ? <span style={{ fontSize: 11, color: "#f59e0b" }}>⏳ 探测中…</span>
-              : checkAvail === false ? <span style={{ fontSize: 11, color: "#d97706" }}>⚠️ 检查未启用</span>
-              : ck ? <span style={{ fontSize: 11, fontWeight: 600, color: ck.lastOk ? "#16a34a" : ck.rateLimited ? "#f59e0b" : "#ef4444" }}>{ck.lastOk ? "● 可用" : ck.rateLimited ? "● 限流" : "● 异常（可能欠费/失效）"}</span>
+            {probing ? <span style={{ fontSize: 11, color: "var(--warn, #f59e0b)" }}>探测中…</span>
+              : checkAvail === false ? <span style={{ fontSize: 11, color: "#d97706" }}>检查未启用</span>
+              : ck ? <span style={{ fontSize: 11, fontWeight: 600, color: ck.lastOk ? "#16a34a" : ck.rateLimited ? "var(--warn, #f59e0b)" : "var(--danger, #ef4444)" }}>{ck.lastOk ? "● 可用" : ck.rateLimited ? "● 限流" : "● 异常（可能欠费/失效）"}</span>
               : <span style={{ fontSize: 11, color: "var(--text-dim,#999)" }}>未测</span>}
             {(() => {
               const rt = rtOf(selNode.provider, selNode.id);
@@ -3288,7 +3288,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
  })()}
             <div style={{ flex: 1 }} />
             <button className="amw-btn" style={{ padding: "3px 8px" }} disabled={checkAvail === false || probing} title={checkAvail === false ? "需先启用 aiti-model-check（扩展管理）" : "探测此模型可用性"} onClick={() => void runCheck(selNode.provider, selNode.id)}>
-              {probing ? "⏳ 探测中…" : (<><Ic size={12} paths={ICONS.stethoscope} /> 重检</>)}
+              {probing ? "探测中…" : (<><Ic size={12} paths={ICONS.stethoscope} /> 重检</>)}
             </button>
           </div>
           <ParamPanel
@@ -3344,20 +3344,20 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <span className="amw-detail-title">{p.provider}</span>
-                {p.combo ? <span className="amw-tag is-combo">🧩 模型聚合</span> : null}
-                {p.authType === "oauth" ? <span className="amw-tag is-oauth">🔐 订阅登录</span> : null}
-                {p.runtime ? <span className="amw-tag is-ro">⚡ 运行时注册</span> : null}
-                {ni && ni.count > 0 ? <span className="amw-tag is-new">{"✨ +" + ni.count}</span> : null}
+                {p.combo ? <span className="amw-tag is-combo">模型聚合</span> : null}
+                {p.authType === "oauth" ? <span className="amw-tag is-oauth">订阅登录</span> : null}
+                {p.runtime ? <span className="amw-tag is-ro">运行时注册</span> : null}
+                {ni && ni.count > 0 ? <span className="amw-tag is-new">{"+" + ni.count}</span> : null}
               </div>
               <div style={{ fontSize: 11, display: "flex", gap: 6, flexWrap: "wrap", marginTop: 2 }}>
-                {segs.length ? segs.map((s, i) => <span key={i} style={{ color: s.c, fontWeight: 600 }}>{(i ? " · " : "") + s.t}</span>) : checkAvail === false ? <span style={{ color: "#d97706" }}>⚠️ 检查未启用（启用 aiti-model-check 后显示可用性）</span> : <span style={{ color: "var(--text-subtle,#999)" }}>未检查</span>}
-                <span style={{ color: "var(--text-subtle,#999)" }}>{p.runtime ? ids.length + " 模型 · 扩展动态注册（只读）" : ids.length + " 模型 · " + (p.hasKey ? (p.keyCount > 1 ? p.keyCount + " keys" : "已配 key") : "⚠️ 无 key")}</span>
+                {segs.length ? segs.map((s, i) => <span key={i} style={{ color: s.c, fontWeight: 600 }}>{(i ? " · " : "") + s.t}</span>) : checkAvail === false ? <span style={{ color: "#d97706" }}>检查未启用（启用 aiti-model-check 后显示可用性）</span> : <span style={{ color: "var(--text-subtle,#999)" }}>未检查</span>}
+                <span style={{ color: "var(--text-subtle,#999)" }}>{p.runtime ? ids.length + " 模型 · 扩展动态注册（只读）" : ids.length + " 模型 · " + (p.hasKey ? (p.keyCount > 1 ? p.keyCount + " keys" : "已配 key") : "无 key")}</span>
                 {(() => {
                   // 禁用 key 计数徽标：禁用态只在「多 Key 轮转」折叠区可见，摘要层面
                   // 不提示的话"是否禁用"完全不可知（keys 由 /status 带出，maskKeyEntry 保留 enabled）
                   const dis = (p.keys || []).filter((k: any) => k && k.enabled === false).length;
                   if (!dis) return null;
-                  return <span className="amw-tag" style={{ color: "#b45309", borderColor: "#f59e0b", background: "rgba(245,158,11,.14)" }}
+                  return <span className="amw-tag" style={{ color: "#b45309", borderColor: "var(--warn, #f59e0b)", background: "rgba(245,158,11,.14)" }}
                     title={"有 " + dis + " 把 key 临时禁用中（不参与轮转，配置未删除）——展开下方「多 Key 轮转」可查看 / 一键启用"}>🔑⏸ {dis} 禁用</span>;
                 })()}
                 {(() => {
@@ -3377,7 +3377,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                   if (!hasAny) {
                     return (
                       <span style={{ width: "100%", display: "inline-flex", alignItems: "center", gap: 8, color: "var(--text-subtle,#999)", flexWrap: "wrap" }}>
-                        <span>🩺 尚未测试连接（点右侧「测试」验证 key/端点，结论将留存）</span>
+                        <span>尚未测试连接（点右侧「测试」验证 key/端点，结论将留存）</span>
                       </span>
                     );
                   }
@@ -3387,11 +3387,11 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
                         <span style={{ color: !lt ? "var(--text-subtle,#999)" : lt.pass ? (lt.rateLimited ? "#d97706" : "#16a34a") : lt.partial ? "#d97706" : "#dc2626", fontWeight: 600 }}
                           title={lt ? ("上次向导测试：" + (lt.detail || "") + (lt.ts ? " · 测于 " + fmtTimeStr(lt.ts) : "") + (lt.keyName ? " · key " + lt.keyName : "")) : "尚未用向导测过该 provider"}>
-                          {"🩺 " + (!lt ? "未测" : lt.pass && !lt.partial ? (lt.rateLimited ? "🟡 429 通过" : "✓ 通过") : lt.partial ? "🟡 部分 key 失败" : "✗ 失败") + (lt && lt.latencyMs != null ? " · " + fmtLat(lt.latencyMs) : "")}
+                          {"🩺 " + (!lt ? "未测" : lt.pass && !lt.partial ? (lt.rateLimited ? "🟡 429 通过" : "通过") : lt.partial ? "🟡 部分 key 失败" : "失败") + (lt && lt.latencyMs != null ? " · " + fmtLat(lt.latencyMs) : "")}
                         </span>
                         <button className="amw-btn" style={{ padding: "1px 8px", fontSize: 10.5 }} disabled={!!(qt && qt.busy)}
                           title="用已存凭据发一个真实探针（多 key 逐把测）；结论自动留存并更新树上徽标"
-                          onClick={() => void runQuickTest(p)}>{qt && qt.busy ? "⏳ 测试中…" : "重测"}</button>
+                          onClick={() => void runQuickTest(p)}>{qt && qt.busy ? "测试中…" : "重测"}</button>
                       </span>
                       {/* ② 余额：provider-usage 优先；qt.res 测试反馈行内展示 */}
                       {us && us.phase === "ok" && us.entry && us.entry.status === "ready" && uText ? (
@@ -3400,10 +3400,10 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                             + (us.capturedAt ? "\n更新于 " + fmtTimeStr(us.capturedAt) + "（服务端缓存 5 分钟）" : "")}>
                           {"💰 " + (uBad ? "额度受限：" : "余额：") + uText}
                         </span>
-                      ) : us && us.phase === "loading" ? <span style={{ color: "var(--text-subtle,#999)" }}>💰 余额查询中…</span>
+                      ) : us && us.phase === "loading" ? <span style={{ color: "var(--text-subtle,#999)" }}>余额查询中…</span>
                         : us && (us.phase === "err" || (us.phase === "ok" && us.error)) ? (
                           <span style={{ display: "inline-flex", gap: 5, alignItems: "center", color: "#d97706" }}>
-                            <span title={us.message || us.error}>💰 余额暂不可用</span>
+                            <span title={us.message || us.error}>余额暂不可用</span>
                             <button className="amw-btn" style={{ padding: "1px 8px", fontSize: 10.5 }} onClick={() => void loadUsage(p.provider, true)}>重查</button>
                           </span>
                         ) : us && us.phase === "na" ? null
@@ -3419,32 +3419,32 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
               </div>
             </div>
             <button className="amw-btn" style={{ padding: "3px 8px" }} disabled={checkAvail === false || !!probeBusy[p.provider]} title={checkAvail === false ? "需先启用 aiti-model-check（扩展管理）" : "发起可用性探测（更新树上的 可用/限流/异常 标记，可能需数十秒）"} onClick={() => void runCheck(p.provider)}>
-              {probeBusy[p.provider] ? "⏳ 探测中…" : (<><Ic size={12} paths={ICONS.stethoscope} /> 重检</>)}
+              {probeBusy[p.provider] ? "探测中…" : (<><Ic size={12} paths={ICONS.stethoscope} /> 重检</>)}
             </button>
             {p.runtime ? null : <button className="amw-btn" style={{ padding: "3px 8px" }} title="刷新该 provider 的运行中代理（改 models.json / 多 key 后立即生效，不重启会话）" onClick={() => doRefreshProxies(p.provider)}><Ic size={12} paths={ICONS.refresh} /></button>}
             {p.runtime || p.authType === "oauth" ? null : (
-              <button className="amw-btn" style={{ padding: "3px 8px", ...(p.enabled === false ? { color: "#b45309", borderColor: "#f59e0b", background: "rgba(245,158,11,.12)" } : {}) }}
+              <button className="amw-btn" style={{ padding: "3px 8px", ...(p.enabled === false ? { color: "#b45309", borderColor: "var(--warn, #f59e0b)", background: "rgba(245,158,11,.12)" } : {}) }}
                 title={p.enabled === false ? "临时禁用中——模型已从列表隐藏、代理已停（配置未删除）。点击重新启用" : "临时禁用（不删除配置）：模型从列表隐藏、代理停止，随时可一键启用"}
                 onClick={() => doToggleProvider(p.provider, p.enabled === false)}>
-                {p.enabled === false ? "▶ 启用" : "⏸ 禁用"}
+                {p.enabled === false ? "▶ 启用" : "禁用"}
               </button>
             )}
             {p.runtime ? null : <button className="amw-btn is-danger" style={{ padding: "3px 8px" }} title="删除 provider" onClick={() => doDelete(p.provider)}><Ic size={12} paths={ICONS.trash} /></button>}
           </div>
           {p.combo ? (
             <div className="amw-note" style={{ marginBottom: 0, display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ flex: 1 }}>🧩 聚合组成员 / 权重 / 粘性在「模型聚合」页编辑</span>
+              <span style={{ flex: 1 }}>聚合组成员 / 权重 / 粘性在「模型聚合」页编辑</span>
               <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} onClick={() => { setTab("combo"); loadCombos(); }}>去编辑</button>
             </div>
           ) : null}
           {p.authType === "oauth" ? (
             <div className="amw-note" style={{ marginBottom: 0, display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ flex: 1 }}>🔐 登录态 / 账号额度在「订阅服务」页管理</span>
+              <span style={{ flex: 1 }}>登录态 / 账号额度在「订阅服务」页管理</span>
               <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} onClick={() => { setTab("subs"); loadSubs(); }}>去管理</button>
             </div>
           ) : null}
           {p.runtime ? (
-            <div className="amw-note" style={{ marginBottom: 0 }}>⚡ 运行时注册 provider：由 pi 扩展（如 pi-freeflow）动态注册，模型经 /api/models 实时可见；不受 models.json 管理，这里只读展示。</div>
+            <div className="amw-note" style={{ marginBottom: 0 }}>运行时注册 provider：由 pi 扩展（如 pi-freeflow）动态注册，模型经 /api/models 实时可见；不受 models.json 管理，这里只读展示。</div>
           ) : null}
           {p.authType === "api_key" ? (
             <div className="amw-note" style={{ marginBottom: 0 }}>
@@ -3512,15 +3512,15 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           <div style={{ marginBottom: 10, padding: "10px 12px", borderRadius: 10, background: "rgba(37,99,235,.08)", border: "1px solid rgba(37,99,235,.4)" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <span style={{ fontWeight: 700, fontSize: 13, color: "var(--accent,#2563eb)", flex: 1, minWidth: 220 }}>
-                {"🛠 一键整理（基于 " + new Date(cleanupEdit.ts).toLocaleTimeString("zh-CN", { hour12: false }) + " 模型检查）：已按探测结果预选——硬性异常取消勾选，限流/未测/暂时性错误保留"}
+                {"一键整理（基于 " + new Date(cleanupEdit.ts).toLocaleTimeString("zh-CN", { hour12: false }) + " 模型检查）：已按探测结果预选——硬性异常取消勾选，限流/未测/暂时性错误保留"}
               </span>
               {cleanupBusy ? (
-                <span style={{ fontSize: 12, color: "var(--accent,#2563eb)", fontWeight: 600 }}>{"💾 保存中 " + (cleanupBusy.done + 1) + "/" + cleanupBusy.total + " · " + cleanupBusy.cur + "…"}</span>
+                <span style={{ fontSize: 12, color: "var(--accent,#2563eb)", fontWeight: 600 }}>{"保存中 " + (cleanupBusy.done + 1) + "/" + cleanupBusy.total + " · " + cleanupBusy.cur + "…"}</span>
               ) : (
                 <>
                   <button className="amw-btn is-ok" disabled={busy || !cleanupPending.length}
                     title={cleanupPending.length ? "逐个保存有改动的 provider（写 models.json + 刷新代理，立即生效）" : "没有需要保存的改动（无硬性异常模型）"}
-                    onClick={cleanupSaveAll}>{"💾 全部保存（" + cleanupPending.length + " 家有改动）"}</button>
+                    onClick={cleanupSaveAll}>{"全部保存（" + cleanupPending.length + " 家有改动）"}</button>
                   <button className="amw-btn" disabled={busy || !!cleanupBusy} title="放弃本次预选（不保存任何改动）" onClick={cleanupCancel}>取消</button>
                 </>
               )}
@@ -3529,10 +3529,10 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
               {cleanupEdit.plan.map((e: any) => (
                 <div key={e.provider} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 11.5, padding: "2px 0" }}>
                   <span style={{ fontWeight: 650 }}>{e.provider}</span>
-                  {e.skip === "combo" ? <span style={{ color: "var(--text-subtle,#666)" }}>🧩 聚合组——不参与（在「聚合」页管理）</span>
-                    : e.skip === "oauth" ? <span style={{ color: "var(--text-subtle,#666)" }}>🔐 订阅登录——不参与（凭据由登录流程管理）</span>
-                    : e.skip === "runtime" ? <span style={{ color: "var(--text-subtle,#666)" }}>⚡ 运行时注册——不参与（由扩展动态注册，只读）</span>
-                    : e.saved ? <span style={{ color: "#16a34a", fontWeight: 600 }}>✅ 已保存</span>
+                  {e.skip === "combo" ? <span style={{ color: "var(--text-subtle,#666)" }}>聚合组——不参与（在「聚合」页管理）</span>
+                    : e.skip === "oauth" ? <span style={{ color: "var(--text-subtle,#666)" }}>订阅登录——不参与（凭据由登录流程管理）</span>
+                    : e.skip === "runtime" ? <span style={{ color: "var(--text-subtle,#666)" }}>运行时注册——不参与（由扩展动态注册，只读）</span>
+                    : e.saved ? <span style={{ color: "#16a34a", fontWeight: 600 }}>已保存</span>
                     : <>
                       <span style={{ color: "#16a34a" }}>{"保留 " + e.keep.length}</span>
                       {e.remove.length ? (
@@ -3542,16 +3542,16 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                       ) : null}
                       {e.soft.length ? (
                         <span style={{ color: "#d97706" }} title={"暂时性错误（服务端/网络/超时类），默认保留——如确认不再需要，可在编辑区手工取消勾选：" + e.soft.map((r: any) => r.id + "（" + r.label + "）").join("、")}>
-                          {"⚠️ 暂时异常 " + e.soft.length + " 保留"}
+                          {"暂时异常 " + e.soft.length + " 保留"}
                         </span>
                       ) : null}
                       {e.remove.length && !e.keep.length ? (
-                        <span style={{ color: "#dc2626", fontWeight: 600 }} title="该 provider 下所有模型都是硬性异常：请检查 key/余额后重测，或确认后整家删除">⚠️ 全部硬性异常——未预选（编辑区手工处理）</span>
+                        <span style={{ color: "#dc2626", fontWeight: 600 }} title="该 provider 下所有模型都是硬性异常：请检查 key/余额后重测，或确认后整家删除">全部硬性异常——未预选（编辑区手工处理）</span>
                       ) : null}
                       <span style={{ marginLeft: "auto", display: "inline-flex", gap: 6 }}>
                         <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} title="展开该 provider 编辑区（已按预选勾好，可再调整后保存）" onClick={() => openEdit(e.provider)}>编辑</button>
                         {e.remove.length && e.keep.length ? (
-                          <button className="amw-btn is-ok" style={{ padding: "2px 10px", fontSize: 11 }} disabled={busy || !!cleanupBusy} onClick={() => cleanupSaveOne(e)}>💾 保存</button>
+                          <button className="amw-btn is-ok" style={{ padding: "2px 10px", fontSize: 11 }} disabled={busy || !!cleanupBusy} onClick={() => cleanupSaveOne(e)}>保存</button>
                         ) : null}
                       </span>
                     </>}
@@ -3566,7 +3566,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         {niRows.length ? (
           <div style={{ marginBottom: 10, padding: "10px 12px", borderRadius: 10, background: "rgba(34,197,94,.1)", border: "1px solid rgba(34,197,94,.4)" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontWeight: 700, fontSize: 13, color: "#15803d", flex: 1 }}>{"✨ 发现 " + niTotal + " 个新模型"}</span>
+              <span style={{ fontWeight: 700, fontSize: 13, color: "#15803d", flex: 1 }}>{"发现 " + niTotal + " 个新模型"}</span>
               <button className="amw-btn" style={{ padding: "3px 10px", fontSize: 11 }} title="清除提醒，不再标注这些新模型" onClick={() => ackNew()}>知道了</button>
             </div>
             {niRows.map(([name, v]: any) => {
@@ -3581,7 +3581,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                     <button disabled={nmBusy === name || !all.length}
                       onClick={() => enableNewModels(name, nmSel[name] !== undefined ? nmSel[name] : all)}
                       className="amw-btn" style={{ background: nmBusy === name ? "#9ca3af" : "#16a34a", color: "#fff", border: "none", borderRadius: 6, padding: "3px 10px", fontSize: 11, fontWeight: 650, cursor: "pointer" }}>
-                      {nmBusy === name ? "启用中…" : "⚡ 启用所选"}
+                      {nmBusy === name ? "启用中…" : "启用所选"}
                     </button>
                     <button onClick={() => openEdit(name)} title="展开编辑该 provider（可看全部模型/改 key）" className="amw-btn" style={{ padding: "3px 10px", fontSize: 11 }}>编辑</button>
                     <button disabled={nmBusy === name || !all.length}
@@ -3701,7 +3701,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       try {
         const d = await (await api("/combo-save", { method: "POST", ...jsonBody({ provider: String(ed.provider || "").trim() || String(ed.displayName || "").trim(), displayName: ed.displayName, renameFrom: ed.renameFrom, models: ed.models }) })).json();
         if (!d.ok) { setMsg("❌ " + (d.error || "保存失败")); return; }
-        setComboEditor(null); setMsg("✅ 聚合组已保存：" + d.provider + "（" + d.modelCount + " 个虚拟模型）——已刷新运行中代理，新会话模型列表立即可见");
+        setComboEditor(null); setMsg("聚合组已保存：" + d.provider + "（" + d.modelCount + " 个虚拟模型）——已刷新运行中代理，新会话模型列表立即可见");
         await loadCombos(); loadStatus();
         // 广播模型变更 → pi-web 刷新模型列表（新会话 dropdown 立即出现聚合模型）
         try { window.dispatchEvent(new CustomEvent("pi-web:models-changed")); } catch {}
@@ -3755,11 +3755,11 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                       模型列表中将显示：<b className="amw-mono" style={{ color: "#4f46e5" }}>{(String(ed.provider || "").trim() || String(ed.displayName || "").trim())}/{String(vm.id).trim()}</b>
                     </span>
                   ) : null}
-                  <span style={{ fontSize: 11, color: "var(--text-subtle,#888)", flex: 1 }}>{apis.length === 1 ? "协议 " + apis[0] : apis.length ? "⚠️ 混合协议" : ""}</span>
-                  <button className="amw-btn" style={{ padding: "3px 8px", ...(vm.enabled === false ? { color: "#16a34a", borderColor: "#22c55e" } : { color: "#d97706", borderColor: "#f59e0b" }) }}
+                  <span style={{ fontSize: 11, color: "var(--text-subtle,#888)", flex: 1 }}>{apis.length === 1 ? "协议 " + apis[0] : apis.length ? "混合协议" : ""}</span>
+                  <button className="amw-btn" style={{ padding: "3px 8px", ...(vm.enabled === false ? { color: "#16a34a", borderColor: "var(--ok, #22c55e)" } : { color: "#d97706", borderColor: "var(--warn, #f59e0b)" }) }}
                     title={vm.enabled === false ? "临时禁用中（此虚拟模型从列表隐藏，配置未删除）——点击重新启用" : "临时禁用此虚拟模型（从模型列表隐藏，不删除配置，随时可启用）"}
                     onClick={() => setVm(i, { enabled: vm.enabled === false ? undefined : false })}>
-                    {vm.enabled === false ? "▶ 启用" : "⏸ 禁用"}
+                    {vm.enabled === false ? "▶ 启用" : "禁用"}
                   </button>
                   {ed.models.length > 1 ? <button className="amw-btn is-danger" style={{ padding: "3px 8px" }} onClick={() => setComboEditor({ ...ed, models: ed.models.filter((_: any, j: number) => j !== i) })}>删模型</button> : null}
                 </div>
@@ -3796,9 +3796,9 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                     const abnormal = isCtxMin || isOutMin || noVision;
                     return (
                     <div key={mi} title={!rEn ? "临时禁用中（不参与路由，配置未删除）" : abnormal
-                      ? (isCtxMin ? "⚠️ 上下文最短：把组合 contextWindow 拉低到 " + fmtK(cw) + "（长会话可能提前裁剪）" : "")
-                        + (isOutMin ? " ⚠️ 最大输出最小：" + fmtK(ot) : "")
-                        + (noVision ? " ⚠️ 无 vision：带图请求会自动避开它" : "")
+                      ? (isCtxMin ? "上下文最短：把组合 contextWindow 拉低到 " + fmtK(cw) + "（长会话可能提前裁剪）" : "")
+                        + (isOutMin ? "最大输出最小：" + fmtK(ot) : "")
+                        + (noVision ? "无 vision：带图请求会自动避开它" : "")
                       : "ctx=" + fmtK(cw) + " · out=" + fmtK(ot)}
                       style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", borderRadius: 8, background: "rgba(127,127,127,.06)", marginBottom: 4, flexWrap: small ? "wrap" : "nowrap",
                         ...(abnormal && rEn ? { boxShadow: "inset 0 0 0 1.5px rgba(217,119,6,.55)", background: "rgba(217,119,6,.06)" } : {}),
@@ -3806,12 +3806,12 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                       <ProviderAvatar id={r.provider} name={r.provider} size={20} radius={6} />
                       <span style={{ fontSize: 12, fontWeight: 600, flex: "0 0 auto", ...(!rEn ? { color: "#b45309" } : {}) }}>{r.provider}</span>
                       <span className="amw-mono" style={{ fontSize: 12, flex: 1, minWidth: small ? 140 : 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", ...(!rEn ? { color: "#b45309", textDecoration: "line-through", opacity: 0.7 } : {}) }} title={meta ? "ctx=" + (meta.contextWindow ?? "?") + " · out=" + (meta.maxTokens ?? "?") + " · keys=" + meta.keyCount : "已失效"}>{r.model}</span>
-                      {!rEn ? <span style={{ fontSize: 9, color: "#b45309", fontWeight: 700, flexShrink: 0 }}>⏸ 禁用</span> : null}
+                      {!rEn ? <span style={{ fontSize: 9, color: "#b45309", fontWeight: 700, flexShrink: 0 }}>禁用</span> : null}
                       {meta ? <>
                         <span title="上下文窗口" className="amw-mono" style={{ fontSize: 10, color: isCtxMin ? "#d97706" : "var(--text-subtle,#888)", fontWeight: isCtxMin ? 700 : 400, background: isCtxMin ? "rgba(217,119,6,.14)" : "transparent", padding: "0 4px", borderRadius: 6, flexShrink: 0 }}>{"ctx " + fmtK(cw)}{isCtxMin ? " ⚠" : ""}</span>
                         <span title="最大输出" className="amw-mono" style={{ fontSize: 10, color: isOutMin ? "#d97706" : "var(--text-subtle,#888)", fontWeight: isOutMin ? 700 : 400, background: isOutMin ? "rgba(217,119,6,.14)" : "transparent", padding: "0 4px", borderRadius: 6, flexShrink: 0 }}>{"out " + fmtK(ot)}{isOutMin ? " ⚠" : ""}</span>
-                        {(meta.input || []).includes("image") ? <span style={{ fontSize: 10, color: "#15803d", fontWeight: 650, flexShrink: 0 }}>👁 vision</span> : noVision ? <span style={{ fontSize: 10, color: "#d97706", fontWeight: 700, flexShrink: 0 }}>无 vision ⚠</span> : null}
-                        {meta.reasoning ? <span style={{ fontSize: 10, color: "#7c3aed", fontWeight: 650, flexShrink: 0 }}>🧠 推理</span> : null}
+                        {(meta.input || []).includes("image") ? <span style={{ fontSize: 10, color: "#15803d", fontWeight: 650, flexShrink: 0 }}>vision</span> : noVision ? <span style={{ fontSize: 10, color: "#d97706", fontWeight: 700, flexShrink: 0 }}>无 vision ⚠</span> : null}
+                        {meta.reasoning ? <span style={{ fontSize: 10, color: "#7c3aed", fontWeight: 650, flexShrink: 0 }}>推理</span> : null}
                         <span style={{ fontSize: 10, color: "var(--text-subtle,#999)", flexShrink: 0 }}>{meta.keyCount + " key"}</span>
                       </> : <span style={{ fontSize: 10, color: "#dc2626", fontWeight: 650 }}>已失效</span>}
                       <span style={{ fontSize: 11, color: "var(--text-subtle,#777)", whiteSpace: "nowrap", flexShrink: 0 }}>权重</span>
@@ -3851,7 +3851,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                       {!(Array.isArray(r.types) && r.types.length > 0)
                         ? <span style={{ fontSize: 10, color: "var(--text-subtle,#999)", whiteSpace: "nowrap", flexShrink: 0 }} title="全部可勾类别已勾选 = 承接全部请求（与不限定等价；将来新增类别自动承接）">全收</span>
                         : null}
-                      <button className="amw-btn" style={{ padding: "2px 7px", flexShrink: 0, ...(rEn ? { color: "#d97706", borderColor: "#f59e0b" } : { color: "#16a34a", borderColor: "#22c55e" }) }}
+                      <button className="amw-btn" style={{ padding: "2px 7px", flexShrink: 0, ...(rEn ? { color: "#d97706", borderColor: "var(--warn, #f59e0b)" } : { color: "#16a34a", borderColor: "var(--ok, #22c55e)" }) }}
                         title={rEn ? "临时禁用此成员（不参与路由，配置未删除，随时可启用）" : "重新启用此成员（恢复参与路由）"}
                         onClick={() => setVm(i, { members: vm.members.map((x: any, j: number) => j === mi ? { ...x, enabled: !rEn } : x) })}>{rEn ? "⏸" : "▶"}</button>
                       <button className="amw-btn is-danger" style={{ padding: "2px 7px", flexShrink: 0 }} onClick={() => setVm(i, { members: vm.members.filter((_: any, j: number) => j !== mi) })}>✕</button>
@@ -3886,7 +3886,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             <button className="amw-btn" onClick={() => setComboEditor({ ...ed, models: [...ed.models, { id: "", members: [], confirmDiff: false }] })}>＋ 加一个虚拟模型</button>
             <div style={{ flex: 1 }} />
             {allWarn.length ? <span style={{ fontSize: 11, color: "#d97706" }}>{allWarn.length} 项差异待确认</span> : null}
-            <button className="amw-btn is-primary" style={{ opacity: canSave ? 1 : 0.45 }} disabled={!canSave || busy} onClick={doSaveCombo}>💾 保存聚合组</button>
+            <button className="amw-btn is-primary" style={{ opacity: canSave ? 1 : 0.45 }} disabled={!canSave || busy} onClick={doSaveCombo}>保存聚合组</button>
           </div>
         </div>
       );
@@ -3900,7 +3900,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <button className="amw-btn is-primary" onClick={() => setComboEditor({ provider: "", displayName: "", models: [{ id: "", members: [] }] })}>＋ 新建聚合组</button>
             <button className="amw-btn" title="从 models.json 重新加载所有运行中代理的槽位配置（聚合/多key 改动后立即生效，不重启会话）"
-              onClick={async () => { setBusy(true); try { const d = await (await api("/refresh", { method: "POST" })).json(); setMsg(d.ok ? "🔄 已刷新代理：" + ((d.refreshed || []).join(", ") || "(无)") : "❌ " + (d.error || "刷新失败")); try { window.dispatchEvent(new CustomEvent("pi-web:models-changed")); } catch {} } catch (e: any) { setMsg("❌ 刷新失败: " + (e?.message || e)); } finally { setBusy(false); } }}>
+              onClick={async () => { setBusy(true); try { const d = await (await api("/refresh", { method: "POST" })).json(); setMsg(d.ok ? "已刷新代理：" + ((d.refreshed || []).join(", ") || "(无)") : "❌ " + (d.error || "刷新失败")); try { window.dispatchEvent(new CustomEvent("pi-web:models-changed")); } catch {} } catch (e: any) { setMsg("刷新失败: " + (e?.message || e)); } finally { setBusy(false); } }}>
               <Ic size={12} paths={ICONS.refresh} /> 刷新代理</button>
             <div style={{ flex: 1 }} />
             <MultiKeyStatusSummary onOpen={() => setSStatusOpen(true)} />
@@ -3915,7 +3915,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <span style={{ fontWeight: 650, fontSize: 13 }}>{cb.name}</span>
-                  {cb.enabled === false ? <span style={{ fontSize: 10, color: "#b45309", border: "1px solid rgba(245,158,11,.5)", borderRadius: 999, padding: "0 8px", fontWeight: 700 }}>⏸ 已禁用</span> : null}
+                  {cb.enabled === false ? <span style={{ fontSize: 10, color: "#b45309", border: "1px solid rgba(245,158,11,.5)", borderRadius: 999, padding: "0 8px", fontWeight: 700 }}>已禁用</span> : null}
                   <span className="amw-mono" style={{fontSize: 10, color: "var(--text-subtle,#999)"}}>{cb.providerId}</span>
                 </div>
                 <div style={{ fontSize: 11, color: "var(--text-subtle,#888)", marginTop: 3 }}>
@@ -3926,20 +3926,20 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                 provider: cb.providerId, displayName: cb.name, renameFrom: cb.providerId,
                 models: cb.models.map((m: any) => ({ id: m.id, stickyTtlMin: m.stickyTtlMin ?? undefined, ...(m.enabled === false ? { enabled: false } : {}), members: (m.members || []).map((r: any) => ({ provider: r.provider, model: r.model, weight: r.weight, ...(Array.isArray(r.types) && r.types.length > 0 ? { types: r.types } : {}), ...(r.enabled === false ? { enabled: false } : {}) })) })),
               })}>编辑</button>
-              <button className="amw-btn" style={{ padding: "3px 8px", ...(cb.enabled === false ? { color: "#16a34a", borderColor: "#22c55e" } : { color: "#d97706", borderColor: "#f59e0b" }) }}
+              <button className="amw-btn" style={{ padding: "3px 8px", ...(cb.enabled === false ? { color: "#16a34a", borderColor: "var(--ok, #22c55e)" } : { color: "#d97706", borderColor: "var(--warn, #f59e0b)" }) }}
                 title={cb.enabled === false ? "临时禁用中（模型从列表隐藏、代理已停，配置未删除）——点击重新启用" : "临时禁用整个聚合组（不删除配置，模型从列表隐藏、代理停止，随时可一键启用）"}
                 onClick={() => doToggleProvider(cb.providerId, cb.enabled === false)}>
-                {cb.enabled === false ? "▶ 启用" : "⏸ 禁用"}
+                {cb.enabled === false ? "▶ 启用" : "禁用"}
               </button>
               <button className="amw-btn is-danger" style={{ padding: "3px 8px" }} title="删除聚合组" onClick={() => doDelete(cb.providerId)}><Ic size={12} paths={ICONS.trash} /></button>
             </div>
             {cb.models.map((m: any) => (
               <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 7, padding: "6px 8px", borderRadius: 8, background: "rgba(127,127,127,.06)", ...(m.enabled === false ? { opacity: 0.62, boxShadow: "inset 0 0 0 1.5px rgba(245,158,11,.45)" } : {}) }}>
                 <span className="amw-mono" style={{fontSize: 12, fontWeight: 700, color: m.enabled === false ? "#b45309" : "#4f46e5"}}>{cb.providerId}/{m.id}</span>
-                {m.enabled === false ? <span style={{ fontSize: 10, color: "#b45309", fontWeight: 700 }}>⏸ 已禁用</span> : null}
+                {m.enabled === false ? <span style={{ fontSize: 10, color: "#b45309", fontWeight: 700 }}>已禁用</span> : null}
                 <span style={{ color: "var(--text-subtle,#aaa)", fontSize: 11 }}>＝</span>
                 {(m.members || []).map((r: any, j: number) => (
-                  <span key={j} className="amw-mono" style={{ padding: "2px 8px", borderRadius: 999, background: r.enabled === false ? "rgba(245,158,11,.10)" : "rgba(127,127,127,.09)", border: r.enabled === false ? "1px dashed #f59e0b" : "1px solid rgba(127,127,127,.18)", fontSize: 11, ...(r.enabled === false ? { color: "#b45309", textDecoration: "line-through" } : {}) }}>
+                  <span key={j} className="amw-mono" style={{ padding: "2px 8px", borderRadius: 999, background: r.enabled === false ? "rgba(245,158,11,.10)" : "rgba(127,127,127,.09)", border: r.enabled === false ? "1px dashed var(--warn, #f59e0b)" : "1px solid rgba(127,127,127,.18)", fontSize: 11, ...(r.enabled === false ? { color: "#b45309", textDecoration: "line-through" } : {}) }}>
                     {r.provider}/{r.model}{r.enabled === false ? " ⏸" : ""}{r.weight != null && r.weight !== 10 ? <b style={{ color: "#4f46e5" }}> ×{r.weight}</b> : null}
                     {Array.isArray(r.types) && r.types.length > 0
                       ? <span style={{ fontSize: 10, color: "#0891b2", fontWeight: 650 }}> [{r.types.map((x: string) => x === "text" ? "文本" : x === "vision" ? "图形" : "媒体").join("/")}]</span>
@@ -3959,8 +3959,8 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   const renderFree = () => (
     <div>
       <div className="amw-note" style={{ marginBottom: 10 }}>
-        <div>🎁 免费模型来自第三方 pi 扩展，安装即用、无需 API Key；安装后<b>新会话</b>生效。</div>
-        <div style={{ marginTop: 4 }}>⚠️ 免费 AI 通常是<b>限流</b>或<b>降级</b>了的，除非赶上新模型测试大放送，一般效果不好——适合试用与轻量任务，重要工作请用付费模型。</div>
+        <div>免费模型来自第三方 pi 扩展，安装即用、无需 API Key；安装后<b>新会话</b>生效。</div>
+        <div style={{ marginTop: 4 }}>免费 AI 通常是<b>限流</b>或<b>降级</b>了的，除非赶上新模型测试大放送，一般效果不好——适合试用与轻量任务，重要工作请用付费模型。</div>
       </div>
       {freeMsg && <div className="amw-note" style={{ marginBottom: 8 }}>{freeMsg}</div>}
       {freeLoading && <div className="amw-note">加载中…</div>}
@@ -4035,8 +4035,8 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     const CheckApp = extSvc<any>("aiti-model-check.app") || window.__aitiModelCheckApp || null; // DI 方案 P2 双轨
     if (typeof CheckApp !== "function") {
       return checkExtState === "loading"
-        ? <div className="amw-note">⏳ 正在加载模型检查（aiti-model-check）…</div>
-        : <div className="amw-note">⚠️ 未能加载模型检查（aiti-model-check 拉起失败，请刷新页面重试）</div>;
+        ? <div className="amw-note">正在加载模型检查（aiti-model-check）…</div>
+        : <div className="amw-note">未能加载模型检查（aiti-model-check 拉起失败，请刷新页面重试）</div>;
     }
     // t 可选：模型检查「去启用」传 "status" → 关闭检查浮层回主视图并选中新模型 provider；"add" → 打开添加浮层。
     return <CheckApp open={true} embedded={true} onGotoWizard={(t?: string) => { setTab(typeof t === "string" ? t : "status"); setMsg(""); }} onCleanupEdit={(payload: any) => applyCleanupEdit(payload)} />;
@@ -4139,7 +4139,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                 {missingInfo.models.map((m: any) => (
                   <button key={m.id} className="amw-btn" style={{ padding: "2px 9px", fontSize: 11 }} onClick={() => void viewModelParams(missingInfo.provider, m.id, true)}>✎ {m.id}</button>
                 ))}
-                <button className="amw-btn" style={{ padding: "2px 9px", fontSize: 11 }} title="重新弹出 AI 助手" onClick={() => invokeAiHelperForMissing(missingInfo.provider, missingInfo.models, rootRef.current)}>🤖 重新唤 AI</button>
+                <button className="amw-btn" style={{ padding: "2px 9px", fontSize: 11 }} title="重新弹出 AI 助手" onClick={() => invokeAiHelperForMissing(missingInfo.provider, missingInfo.models, rootRef.current)}>重新唤 AI</button>
                 <button className="amw-btn" style={{ padding: "2px 9px", fontSize: 11 }} onClick={() => setMissingInfo(null)}>收起</button>
               </div>
             </div>
@@ -4400,7 +4400,7 @@ export function ReminderToast() {
       const names = entries.map(([name, v]: any) => name + "+" + v.count).join("、");
       const sum = entries.reduce((s: number, [, v]: any) => s + v.count, 0);
       // 常驻提示：不自动消失，直到用户点击（进向导）或 ✕（知道了）
-      setToast("✨ 发现 " + d.total + " 个新模型（" + names + (d.total > sum ? "…" : "") + "）· 点击查看");
+      setToast("发现 " + d.total + " 个新模型（" + names + (d.total > sum ? "…" : "") + "）· 点击查看");
       return true;
     };
     const visibleAtMount = document.visibilityState === "visible";

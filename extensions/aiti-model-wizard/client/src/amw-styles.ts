@@ -126,7 +126,7 @@ export const STYLES = `
 }
 .amw-btn.is-ok { background: #16a34a; border-color: #16a34a; color: #fff; font-weight: 600; }
 .amw-btn.is-ok:not(:disabled):hover { background: #15803d; border-color: #15803d; }
-.amw-btn.is-danger { background: rgba(239, 68, 68, 0.06); border-color: rgba(239, 68, 68, 0.35); color: #ef4444; }
+.amw-btn.is-danger { background: rgba(239, 68, 68, 0.06); border-color: rgba(239, 68, 68, 0.35); color: var(--danger, #ef4444); }
 .amw-btn.is-danger:not(:disabled):hover { background: rgba(239, 68, 68, 0.12); border-color: rgba(239, 68, 68, 0.5); }
 
 /* ===== 输入（对标 ModelsConfig inputStyle：panel 底 + border + 5px 圆角） ===== */
