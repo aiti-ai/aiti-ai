@@ -4442,7 +4442,7 @@ export function ReminderToast() {
         background: "rgba(22,163,74,.97)", color: "#fff", boxShadow: "0 10px 32px rgba(0,0,0,.3)",
         display: "flex", alignItems: "center", gap: 8, animation: "aitiToastIn .25s ease" }}
     >
-      <span style={{ fontSize: 15 }}>✨</span>
+      <Ic size={15} paths={ICONS.sparkles} />
       <span>{toast}</span>
       <span style={{ fontSize: 11, fontWeight: 500, opacity: .85, whiteSpace: "nowrap" }}>点击查看</span>
       <button
