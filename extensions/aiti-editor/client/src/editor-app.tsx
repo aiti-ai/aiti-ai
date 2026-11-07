@@ -1269,7 +1269,7 @@ useEffect(() => {
     const s = document.createElement("style");
     s.id = "aiti-editor-chg-css";
     s.textContent = ".aiti-ed-chg-bar{background:var(--ok, #22c55e);width:3px!important;border-radius:2px;margin-left:3px;}"
-      + ".aiti-ed-chg-line{background:rgba(34,197,94,.08)!important;}";
+      + ".aiti-ed-chg-line{background:color-mix(in srgb, var(--ok, #22c55e) 8%, transparent)!important;}";
     document.head.appendChild(s);
   }, []);
   useEffect(() => {
@@ -1289,7 +1289,7 @@ useEffect(() => {
             isWholeLine: true,
             className: "aiti-ed-chg-line",
             linesDecorationsClassName: "aiti-ed-chg-bar",
-            overviewRuler: { color: "rgba(34,197,94,0.7)", position: ((window as any).monaco && (window as any).monaco.editor && (window as any).monaco.editor.OverviewRulerLane.Full) || 7 },
+            overviewRuler: { color: "color-mix(in srgb, var(--ok, #22c55e) 70%, transparent)", position: ((window as any).monaco && (window as any).monaco.editor && (window as any).monaco.editor.OverviewRulerLane.Full) || 7 },
           },
         });
       }

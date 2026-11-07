@@ -191,7 +191,7 @@ export function HtmlPreviewPane(props: HtmlPreviewPaneProps) {
         <button type="button" style={btnS} title={mode === "served" ? "重新拉取磁盘文档（换破缓存参数）" : "用当前缓冲重建预览"}
           onClick={() => { if (mode === "served") freshTicket(); setBust((v) => v + 1); }}>↻ 刷新</button>
         {props.dirty && mode === "served" && (
-          <button type="button" style={{ ...btnS, borderColor: "rgba(245,158,11,.6)", color: "#b45309" }}
+          <button type="button" style={{ ...btnS, borderColor: "color-mix(in srgb, var(--warn, #f59e0b) 60%, transparent)", color: "#b45309" }}
             title="真预览读的是磁盘文件，当前有未保存修改"
             onClick={() => { props.onSave(); freshTicket(); setBust((v) => v + 1); }}>保存并刷新</button>
         )}
