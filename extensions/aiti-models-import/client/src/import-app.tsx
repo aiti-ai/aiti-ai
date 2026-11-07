@@ -152,7 +152,7 @@ export function ImportDialogSlot() {
         <div style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8, paddingRight: 2 }}>
           {error && <div style={{ fontSize: 12, color: "#dc2626" }}>扫描失败：{error}</div>}
           {result && (
-            <div style={{ fontSize: 12, color: result.ok ? "#059669" : "#dc2626", padding: "6px 8px", borderRadius: 6, background: result.ok ? "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 10%, transparent)" : "rgba(220,38,38,.08)" }}>
+            <div style={{ fontSize: 12, color: result.ok ? "#059669" : "#dc2626", padding: "6px 8px", borderRadius: 6, background: result.ok ? "color-mix(in srgb, var(--ok, #10b981) 10%, transparent)" : "rgba(220,38,38,.08)" }}>
               {result.text}
             </div>
           )}
