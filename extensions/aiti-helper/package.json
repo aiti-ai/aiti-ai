@@ -22,10 +22,11 @@
   "contentHash": "dfb3ce663203ba4f",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-helper.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-helper"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-helper#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-helper/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
