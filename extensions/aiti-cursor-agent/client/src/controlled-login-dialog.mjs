@@ -199,7 +199,7 @@ export function registerControlledLoginClient(ctx, config) {
       );
     } else if (st === "success") {
       statusLine = h("div", { className: "clg-status success" },
-        "✅ 登录成功", status?.user ? h("span", { style: { fontWeight: 700 } }, status.user) : null,
+        "登录成功", status?.user ? h("span", { style: { fontWeight: 700 } }, status.user) : null,
         config.successHint ? h("span", { className: "clg-hint", style: { color: "inherit" } }, config.successHint) : null,
       );
     } else if (st === "failed" || st === "timeout" || st === "cancelled") {
@@ -228,7 +228,7 @@ export function registerControlledLoginClient(ctx, config) {
           // ── URL 区（waiting 且已抓到链接）──
           st === "waiting" && status?.url
             ? h("div", { className: "clg-urlrow" },
-                h("a", { className: "clg-open", href: status.url, target: "_blank", rel: "noopener noreferrer" }, "🔗 打开授权页"),
+                h("a", { className: "clg-open", href: status.url, target: "_blank", rel: "noopener noreferrer" }, "打开授权页"),
                 h("span", { className: "clg-url", title: "点击复制链接", onClick: copyUrl }, status.url),
                 copied ? h("span", { className: "clg-copied" }, "已复制") : null,
               )
