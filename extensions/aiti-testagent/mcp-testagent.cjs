@@ -198,19 +198,19 @@ const TOOLS = [
   {"name": "ta_spring", "description": "【Spring 运行时组件热操作】不重启调运行时：caches/cache_evict/cache_ttl=缓存清单/清空/Caffeine TTL 热调；pools/pool_set=Hikari 连接池查看/热调 maxPoolSize/minIdle；executors/executor_set=线程池查看/热调 corePoolSize/maxPoolSize；scheds/sched_set=@Scheduled 定时任务清单/热重排（n1=cron 或 n2=周期毫秒）；jobs/job_set/job_trigger/job_pause=Quartz 任务清单/热改 cron/手动触发一次/暂停恢复；dubbos/dubbo_invoke=Dubbo 服务清单/进程内泛化调用（走完整 filter 链，args 为参数 JSON 数组）；xxljobs/xxljob_trigger=XXL-Job handler 清单/直调；hcaches/hcache_evict=Hibernate 二级缓存 region 清理；containers/container_set=消息监听容器暂停恢复。", "inputSchema": {"type": "object", "properties": {"action": {"type": "string", "enum": ["caches", "cache_evict", "cache_ttl", "pools", "pool_set", "executors", "executor_set", "scheds", "sched_set", "jobs", "job_set", "job_trigger", "job_pause", "dubbos", "dubbo_invoke", "xxljobs", "xxljob_trigger", "hcaches", "hcache_evict", "containers", "container_set"]}, "name": {"type": "string", "description": "目标名：cache 名 / bean 名 / 类.方法 / job 或 trigger 名 / 接口名；cache_evict 与 hcache_evict 用 * 全清"}, "n1": {"description": "pool_set=maxPoolSize(数字)；executor_set=corePoolSize(数字)；sched_set=cron 表达式(字符串)；job_set=cron 表达式(字符串)；dubbo_invoke=方法名"}, "n2": {"type": "number", "description": "pool_set=minIdle；executor_set=maxPoolSize；sched_set/cache_ttl=秒"}, "flag": {"type": "boolean", "description": "job_pause=false 暂停/true 恢复"}, "args": {"type": "string", "description": "dubbo_invoke 参数 JSON 数组字符串，元素按接口方法类型自动转换，如 \"[\\\"world\\\"]\" 或 \"[2,3]\""}, "port": {"type": "number"}}, "required": ["action"]}},
   { name: "ta_history", description: "操作历史审计/回放：每次 API 操作自动记录（type/name/params+结果）。search=搜历史（q 关键字全文/type 过滤/ok 成败）；save=另存当前操作为可复用配置；load=回放历史操作（还原+reload）；delete=删除历史文件。AI 自审计：改了什么/怎么还原。", inputSchema: { type: "object", properties: { action: { type: "string", enum: ["search", "save", "load", "delete"] }, q: { type: "string", description: "search 关键字（name/params/conf 全文）" }, type: { type: "string", description: "type 过滤（method/conf/mock-url/mock-method/sql/bean/xml/code/classwatch）" }, ok: { type: "string", enum: ["true", "false"], description: "成败过滤" }, name: { type: "string", description: "save 时的名字" }, file: { type: "string", description: "load/delete 时的历史文件名（如 2026-08-15/xxx.json）" }, port: { type: "number" } }, required: ["action"] } },
   { name: "ta_tunnel", description: "【tunnel 隧道管理（TaBridge 反向隧道，区别于 ta_bridge 的 attach 接通）】端点 JVM 经 WS 长连接注册到 TaBridge 后，所有 ta_* 工具经桥转发（X-TA-Endpoint 寻址）。status=端点侧隧道状态（state/endpointId/lastError）；connect=运行时补连（url=ws://bridge-host:8667；启动未连桥的端点事后接入；经桥带 endpoint 参数=远程补连）；disconnect=断开并停止重连。", inputSchema: { type: "object", properties: { action: { type: "string", enum: ["status", "connect", "disconnect"], description: "缺省 status" }, url: { type: "string", description: "connect 必填：桥 WS 地址 ws://host:8667（注意是端点视角——端点需网络可达该地址）" }, port: { type: "number" } } } },
-  { name: "ta_native_modules", description: "枚举指定 Windows 进程的已加载模块（native 层：exe/dll 偏移/大小）。对应 wintrace proc.modules。", inputSchema: { type: "object", properties: { session_id: { type: "string", description: "wintrace 会话 ID（先通过 ta_native_attach 或 pi-web 面板获取）" } }, required: ["session_id"] } },
-  { name: "ta_native_watch", description: "挂钩指定 Windows 进程的 native API（Detours inline hook）。返回事件流订阅 ID，后续通过 ta_native_events 读取。对应 wintrace watch.set。", inputSchema: { type: "object", properties: { session_id: { type: "string" }, module: { type: "string", description: "模块名（如 kernel32）" }, func_glob: { type: "string", description: "函数通配（如 CreateFile*|ReadFile）" } }, required: ["session_id", "module", "func_glob"] } },
-  { name: "ta_native_stack", description: "抓取指定 Windows 进程的线程栈帧（含导出表最近符号解析的具名帧）。对应 wintrace proc.stack。", inputSchema: { type: "object", properties: { session_id: { type: "string" }, max_frames: { type: "number", description: "最大帧数（默认 30）" } }, required: ["session_id"] } },
-  { name: "ta_native_detach", description: "卸载 wintrace agent 并还原全部钩挂（eject=true 零残留）。对应 wintrace proc.detach。", inputSchema: { type: "object", properties: { session_id: { type: "string" } }, required: ["session_id"] } },
+  { name: "ta_native_modules", description: "枚举指定 Windows 进程的已加载模块（native 层：exe/dll 偏移/大小）。对应 tan proc.modules。", inputSchema: { type: "object", properties: { session_id: { type: "string", description: "tan 会话 ID（先通过 ta_native_attach 或 pi-web 面板获取）" } }, required: ["session_id"] } },
+  { name: "ta_native_watch", description: "挂钩指定 Windows 进程的 native API（Detours inline hook）。返回事件流订阅 ID，后续通过 ta_native_events 读取。对应 tan watch.set。", inputSchema: { type: "object", properties: { session_id: { type: "string" }, module: { type: "string", description: "模块名（如 kernel32）" }, func_glob: { type: "string", description: "函数通配（如 CreateFile*|ReadFile）" } }, required: ["session_id", "module", "func_glob"] } },
+  { name: "ta_native_stack", description: "抓取指定 Windows 进程的线程栈帧（含导出表最近符号解析的具名帧）。对应 tan proc.stack。", inputSchema: { type: "object", properties: { session_id: { type: "string" }, max_frames: { type: "number", description: "最大帧数（默认 30）" } }, required: ["session_id"] } },
+  { name: "ta_native_detach", description: "卸载 tan agent 并还原全部钩挂（eject=true 零残留）。对应 tan proc.detach。", inputSchema: { type: "object", properties: { session_id: { type: "string" } }, required: ["session_id"] } },
 
 ];
 
 // ---------------- 工具暴露控制（白名单/黑名单；组或单个工具名） ----------------
-// ---- wintrace ta_native_* 薄代理（bridge-integration-plan BR4）----
-// HTTP 调 wintrace broker 8766 /api/rpc，4 个工具对标 TestAgent 惯用名
-const WINTRACE_BROKER = process.env.WINTRACE_BROKER_HTTP || "http://127.0.0.1:8766";
-async function wintraceRpc(method, params) {
-  const res = await fetch(WINTRACE_BROKER + "/api/rpc", {
+// ---- ta_native_* 薄代理（TestAgent Native 面）（bridge-integration-plan BR4（改名后：testagent-native））----
+// HTTP 调 testagent-native broker 8766 /api/rpc，4 个工具对标 TestAgent 惯用名
+const TAN_BROKER = process.env.TAN_BROKER_HTTP || "http://127.0.0.1:8766";
+async function tanRpc(method, params) {
+  const res = await fetch(TAN_BROKER + "/api/rpc", {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ method, params: params || {} }),
   });
@@ -528,20 +528,20 @@ async function callTool(name, args) {
     }
     case "ta_status": return JSON.stringify(await api("GET", "/api/status", null, args.port, args.basePath), null, 2);
     case "ta_native_modules": {
-      const wr = await wintraceRpc("proc.modules", { session_id: args.session_id });
+      const wr = await tanRpc("proc.modules", { session_id: args.session_id });
       return JSON.stringify(wr, null, 2);
     }
     case "ta_native_watch": {
-      const wr = await wintraceRpc("watch.set", { session_id: args.session_id, watches: [{ module: args.module, func_glob: args.func_glob }] });
-      const sub = await wintraceRpc("events.subscribe", { session_id: args.session_id });
+      const wr = await tanRpc("watch.set", { session_id: args.session_id, watches: [{ module: args.module, func_glob: args.func_glob }] });
+      const sub = await tanRpc("events.subscribe", { session_id: args.session_id });
       return JSON.stringify({ ...wr, sub_id: sub.sub_id }, null, 2);
     }
     case "ta_native_stack": {
-      const wr = await wintraceRpc("proc.stack", { session_id: args.session_id, max_frames: args.max_frames || 30 });
+      const wr = await tanRpc("proc.stack", { session_id: args.session_id, max_frames: args.max_frames || 30 });
       return JSON.stringify(wr, null, 2);
     }
     case "ta_native_detach": {
-      const wr = await wintraceRpc("proc.detach", { session_id: args.session_id, eject: true });
+      const wr = await tanRpc("proc.detach", { session_id: args.session_id, eject: true });
       return JSON.stringify(wr, null, 2);
     }
     case "ta_metrics": return JSON.stringify(await api("GET", "/api/metrics", null, args.port, args.basePath), null, 2);
