@@ -111,7 +111,7 @@ function renderWTPanel(face: "float" | { dock: "right-panel" }) {
 
   const header = (
     <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderBottom: "1px solid var(--border)" }}>
-      <span style={{ width: 9, height: 9, borderRadius: 99, background: up === null ? "#6b7280" : up ? "#10b981" : "#ef4444", display: "inline-block" }} />
+      <span style={{ width: 9, height: 9, borderRadius: 99, background: up === null ? "#6b7280" : up ? "#10b981" : "var(--danger, #ef4444)", display: "inline-block" }} />
       <b style={{ fontSize: 13 }}>{t("wt.title")}</b>
       <span style={{ fontSize: 11, color: "var(--text-dim)" }}>{t("wt.broker")}: 127.0.0.1:8766</span>
       <span style={{ flex: 1 }} />
@@ -123,7 +123,7 @@ function renderWTPanel(face: "float" | { dock: "right-panel" }) {
 
   const body = (
     <div style={{ flex: 1, overflow: "auto", padding: "8px 10px", display: "flex", flexDirection: "column", gap: 10 }}>
-      {up === false && <div style={{ fontSize: 12, color: "#ef4444" }}>{t("wt.offline")}</div>}
+      {up === false && <div style={{ fontSize: 12, color: "var(--danger, #ef4444)" }}>{t("wt.offline")}</div>}
 
       <div>
         <div style={{ fontSize: 11, color: "var(--text-dim)", margin: "2px 0 4px" }}>{t("wt.sessions")}</div>
