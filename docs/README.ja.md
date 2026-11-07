@@ -10,6 +10,8 @@
 
 エンジンは pi のまま（JSONL セッションとローカル設定を共有）なので、上流のドキュメントの内容はそのまま適用されます。ドキュメント、プロダクトマップ、フォークの経緯は [aiti.pw](https://aiti.pw/) をご覧ください。
 
+プロジェクトの起源も一度読んでみる価値があります：15 年にわたる二つのプロジェクト——[TestAgent](https://aiti.pw/extensions/aiti-testagent.html)（Java ランタイムデバッガ）と [JustDB](https://justdb.ai)（データベース IDE）——が AI 時代に出会い、日常の開発は pi-web に移り、機能を追加するたびに上流から離れていき、aiti は独自ディストリビューションとして始まりました。すべては実際の日常利用から生まれたものです：通勤時間のコーディング、持ち運びデバイスでの開発、ひとつのかけらのトークンも無駄にしないこと。詳細は [aiti.pw/guide/origin.html](https://aiti.pw/guide/origin.html)。
+
 ![構造化された Markdown、ツール呼び出し、プロジェクトナビゲーションとともに pi セッションを表示する AITI Web](https://raw.githubusercontent.com/agegr/pi-web/main/docs/screenshot2.png)
 
 ### バンドル拡張機能（ハイライト）
