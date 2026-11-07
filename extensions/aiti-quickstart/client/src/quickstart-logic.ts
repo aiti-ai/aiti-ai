@@ -41,7 +41,10 @@ export interface QuickstartWidgetMeta {
  * 布局语义见宿主 lib/new-session-widgets.ts（normalizeWidgetItem 越界钳制 + ⚙ 自定义偏好）。
  */
 export const WIDGET_METAS: QuickstartWidgetMeta[] = [
-  { id: "guide", areas: ["top"], defaultArea: "top", w: 8, h: 2, priority: 0 },
+  // guide h=1（非 2）：w8 已独占整行，h2 会把 recent/shortcuts 挤到第三行、top 区
+  // 超过 min(300px,38vh) 内滚上限 → 快捷操作卡裁切需滚动（2026-11-07 用户实测）。
+  // 宿主网格 gridAutoRows: minmax(64px,auto)，h1 行高按 guide 内容（2×2 步骤格）自动撑开。
+  { id: "guide", areas: ["top"], defaultArea: "top", w: 8, h: 1, priority: 0 },
   { id: "shortcuts", areas: ["top"], defaultArea: "top", w: 4, h: 1, priority: 10 },
   { id: "examples", areas: ["bottom"], defaultArea: "bottom", w: 8, h: 1, priority: 20 },
 ];
