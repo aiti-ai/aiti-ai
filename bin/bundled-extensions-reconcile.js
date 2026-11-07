@@ -73,6 +73,22 @@ function reconcileBundledExtensions(pkgDir) {
     }
   }
   const sharedRoot = path.join(webRootFor(pkgDir), "node_modules");
+
+  // walk-up 命中保障（所有路径都要做——包括指纹命中秒过路径）：npm 主包场景扩展位于
+  // <pkgDir>/extensions/<id>/，其依赖解析 walk-up 链为 extensions/<id> → extensions →
+  // <pkgDir> → …，不经过 ~/.pi/web。在 extensions/ 下放一个 node_modules symlink 指向
+  // 共享根——该位点就在链上，Node/jiti 的模块解析对祖先 node_modules 的目录 symlink
+  // 是跟随的（monorepo workspace 同原理）。已存在（上次创建/用户自管）则跳过。
+  const linkPath = path.join(pkgDir, "extensions", "node_modules");
+  try {
+    if (!fs.existsSync(linkPath)) {
+      fs.symlinkSync(sharedRoot, linkPath, "dir");
+      process.stderr.write(`[pi-web] extensions/node_modules → ${sharedRoot} (symlink)\n`);
+    }
+  } catch (e) {
+    process.stderr.write(`[pi-web] extensions/node_modules symlink 创建失败（全局 root 安装场景请手动链接或设 NODE_PATH）: ${e.message}\n`);
+  }
+
   const markerPath = path.join(sharedRoot, MARKER);
   const fingerprint = depsFingerprint(depsUnion);
   let prev = null;
@@ -92,21 +108,6 @@ function reconcileBundledExtensions(pkgDir) {
     return { ran: true, installed: false, skipped: "failed", count: withDeps };
   }
   try { fs.writeFileSync(markerPath, JSON.stringify({ fingerprint, at: new Date().toISOString(), count: names.length })); } catch {}
-
-  // walk-up 命中保障：npm 主包场景扩展位于 <pkgDir>/extensions/<id>/，其依赖解析
-  // walk-up 链为 extensions/<id> → extensions → <pkgDir> → …，不经过 ~/.pi/web。
-  // 在 extensions/ 下放一个 node_modules symlink 指向共享根——该位点就在链上，
-  // Node/jiti 的模块解析对祖先 node_modules 的目录 symlink 是跟随的（monorepo
-  // workspace 同原理）。已存在（上次创建/用户自管）则跳过。
-  const linkPath = path.join(pkgDir, "extensions", "node_modules");
-  try {
-    if (!fs.existsSync(linkPath)) {
-      fs.symlinkSync(sharedRoot, linkPath, "dir");
-      process.stderr.write(`[pi-web] extensions/node_modules → ${sharedRoot} (symlink)\n`);
-    }
-  } catch (e) {
-    process.stderr.write(`[pi-web] extensions/node_modules symlink 创建失败（全局 root 安装场景请手动链接或设 NODE_PATH）: ${e.message}\n`);
-  }
   return { ran: true, installed: true, skipped: "", count: withDeps, deps: names.length };
 }
 
