@@ -102,6 +102,7 @@ jobs:
       - name: npm pack (authoritative files filter)
         run: |
           rm -f extensions/node_modules   # 构建 symlink，勿入包（files 排除为双保险）
+          mkdir -p dist-tgz               # --pack-destination 目录必须预存在
           npm pack --pack-destination dist-tgz
 
       - uses: actions/upload-artifact@v4
