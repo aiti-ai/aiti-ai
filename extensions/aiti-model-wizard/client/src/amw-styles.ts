@@ -126,8 +126,8 @@ export const STYLES = `
 }
 .amw-btn.is-ok { background: #16a34a; border-color: #16a34a; color: #fff; font-weight: 600; }
 .amw-btn.is-ok:not(:disabled):hover { background: #15803d; border-color: #15803d; }
-.amw-btn.is-danger { background: rgba(239, 68, 68, 0.06); border-color: rgba(239, 68, 68, 0.35); color: var(--danger, #ef4444); }
-.amw-btn.is-danger:not(:disabled):hover { background: rgba(239, 68, 68, 0.12); border-color: rgba(239, 68, 68, 0.5); }
+.amw-btn.is-danger { background: color-mix(in srgb, var(--danger, #ef4444) 6%, transparent); border-color: color-mix(in srgb, var(--danger, #ef4444) 35%, transparent); color: var(--danger, #ef4444); }
+.amw-btn.is-danger:not(:disabled):hover { background: color-mix(in srgb, var(--danger, #ef4444) 12%, transparent); border-color: color-mix(in srgb, var(--danger, #ef4444) 50%, transparent); }
 
 /* ===== 输入（对标 ModelsConfig inputStyle：panel 底 + border + 5px 圆角） ===== */
 .amw-input {
@@ -168,9 +168,9 @@ export const STYLES = `
   background: var(--bg-panel, #f5f5f5); color: var(--text-muted, #374151);
   font-size: 12px; line-height: 1.5;
 }
-.amw-note.is-ok { background: rgba(34, 197, 94, 0.12); border-color: rgba(34, 197, 94, 0.35); color: #16a34a; }
-.amw-note.is-warn { background: rgba(245, 158, 11, 0.14); border-color: rgba(245, 158, 11, 0.35); color: #b45309; }
-.amw-note.is-err { background: rgba(239, 68, 68, 0.12); border-color: rgba(239, 68, 68, 0.3); color: #dc2626; }
+.amw-note.is-ok { background: color-mix(in srgb, var(--ok, #22c55e) 12%, transparent); border-color: color-mix(in srgb, var(--ok, #22c55e) 35%, transparent); color: #16a34a; }
+.amw-note.is-warn { background: color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent); border-color: color-mix(in srgb, var(--warn, #f59e0b) 35%, transparent); color: #b45309; }
+.amw-note.is-err { background: color-mix(in srgb, var(--danger, #ef4444) 12%, transparent); border-color: color-mix(in srgb, var(--danger, #ef4444) 30%, transparent); color: #dc2626; }
 
 /* ===== 标签 / 徽标 / 芯片 ===== */
 .amw-tag {
@@ -180,7 +180,7 @@ export const STYLES = `
 }
 .amw-tag.is-combo { background: rgba(217, 119, 6, 0.14); color: #d97706; border-color: rgba(217, 119, 6, 0.35); }
 .amw-tag.is-oauth { background: rgba(99, 102, 241, 0.14); color: #4f46e5; border-color: rgba(99, 102, 241, 0.35); }
-.amw-tag.is-new { background: rgba(34, 197, 94, 0.14); color: #15803d; border-color: rgba(34, 197, 94, 0.35); }
+.amw-tag.is-new { background: color-mix(in srgb, var(--ok, #22c55e) 14%, transparent); color: #15803d; border-color: color-mix(in srgb, var(--ok, #22c55e) 35%, transparent); }
 .amw-tag.is-ro { background: rgba(99, 102, 241, 0.14); color: #4f46e5; border-color: rgba(99, 102, 241, 0.35); }
 .amw-chip {
   display: inline-flex; align-items: center; gap: 3px;
@@ -189,9 +189,9 @@ export const STYLES = `
 }
 .amw-chip.is-key { background: rgba(37, 99, 235, 0.10); color: var(--accent, #2563eb); }
 .amw-chip.is-combo { background: rgba(217, 119, 6, 0.14); color: #d97706; }
-.amw-chip.is-ok { background: rgba(34, 197, 94, 0.12); color: #16a34a; }
-.amw-chip.is-warn { background: rgba(245, 158, 11, 0.16); color: #b45309; }
-.amw-chip.is-err { background: rgba(239, 68, 68, 0.14); color: #dc2626; }
+.amw-chip.is-ok { background: color-mix(in srgb, var(--ok, #22c55e) 12%, transparent); color: #16a34a; }
+.amw-chip.is-warn { background: color-mix(in srgb, var(--warn, #f59e0b) 16%, transparent); color: #b45309; }
+.amw-chip.is-err { background: color-mix(in srgb, var(--danger, #ef4444) 14%, transparent); color: #dc2626; }
 .amw-pill {
   display: inline-flex; align-items: center; gap: 3px;
   padding: 2px 8px; border-radius: 999px;
