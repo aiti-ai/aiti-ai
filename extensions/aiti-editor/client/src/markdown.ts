@@ -255,9 +255,9 @@ export function markdownPreviewHtml(
   .toc-item a:hover{text-decoration:underline}
   h1,h2,h3,h4,h5,h6{scroll-margin-top:12px}
   /* git 变更块标注：左绿条 + 浅绿底；定位跳转时闪一下 */
-  .md-chg{box-shadow:inset 3px 0 0 var(--ok, #22c55e);background:rgba(34,197,94,.07);border-radius:4px}
+  .md-chg{box-shadow:inset 3px 0 0 var(--ok, #22c55e);background:color-mix(in srgb, var(--ok, #22c55e) 7%, transparent);border-radius:4px}
   .md-chg-flash{animation:mdchg 1.1s ease-out 1}
-  @keyframes mdchg{0%{background:rgba(34,197,94,.32)}100%{background:rgba(34,197,94,.07)}}
+  @keyframes mdchg{0%{background:color-mix(in srgb, var(--ok, #22c55e) 32%, transparent)}100%{background:color-mix(in srgb, var(--ok, #22c55e) 7%, transparent)}}
   /* 弹层主题变量：msg-smart 卡片/按钮读 var(--bg) 等，iframe 内无宿主变量须自带 */
   :root{--bg:${bg};--border:${bd};--accent:${ac};--text-muted:${mu};--bg-hover:${hv}}
   /* 可点击提示：语义块 hover 左侧细条（不换 cursor，避免整篇像链接） */
