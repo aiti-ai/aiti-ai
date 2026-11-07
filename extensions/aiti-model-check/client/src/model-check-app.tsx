@@ -143,9 +143,9 @@ const badge = (m: any) => {
   if (m.subscription) return { ...C.badge, background: "rgba(99,102,241,.13)", color: "#4f46e5" };
   const s = m.lastOk ? "ok" : m.rateLimited ? "rl" : m.lastProbedAt ? "err" : "never";
   const hot = m.pending ? { bg: "rgba(156,163,175,.18)", fg: "#6b7280" }
-    : s === "ok" ? { bg: "rgba(34,197,94,.15)", fg: "#16a34a" }
-    : s === "rl" || (s === "err" && (m.lastKind === "auth" || m.lastKind === "billing")) ? { bg: "rgba(239,68,68,.15)", fg: "#dc2626" }
-    : { bg: "rgba(245,158,11,.15)", fg: "#d97706" };
+    : s === "ok" ? { bg: "color-mix(in srgb, var(--ok, #22c55e) 15%, transparent)", fg: "#16a34a" }
+    : s === "rl" || (s === "err" && (m.lastKind === "auth" || m.lastKind === "billing")) ? { bg: "color-mix(in srgb, var(--danger, #ef4444) 15%, transparent)", fg: "#dc2626" }
+    : { bg: "color-mix(in srgb, var(--warn, #f59e0b) 15%, transparent)", fg: "#d97706" };
   return { ...C.badge, background: hot.bg, color: hot.fg };
 };
 
@@ -461,7 +461,7 @@ export function App({ open, onClose, embedded, onGotoWizard, onCleanupEdit, hide
       + "\n可能仍处于故障中——点「测」重检确认当前可用性";
     const label = kind.icon + " " + kind.label + " ×" + (has429 && kind.icon === "⚡" && rt.byStatus["429"].count1h > 0 ? rt.byStatus["429"].count1h + "/1h" : rt.count24h + "/24h" + capped);
     return (
-      <span style={{ ...C.badge, background: hot ? "rgba(220,38,38,.15)" : "rgba(245,158,11,.15)", color: hot ? "#dc2626" : kind.color, cursor: "default" }} title={tip}>
+      <span style={{ ...C.badge, background: hot ? "rgba(220,38,38,.15)" : "color-mix(in srgb, var(--warn, #f59e0b) 15%, transparent)", color: hot ? "#dc2626" : kind.color, cursor: "default" }} title={tip}>
         {label}
       </span>
     );
@@ -514,7 +514,7 @@ export function App({ open, onClose, embedded, onGotoWizard, onCleanupEdit, hide
     return (
       <div style={{ marginBottom: 8 }}>
         {pending.length ? (
-          <div style={{ padding: "6px 10px", borderRadius: 8, marginBottom: 6, fontSize: 12, background: "rgba(245,158,11,.1)", border: "1px solid rgba(245,158,11,.4)", color: "#b45309" }}>
+          <div style={{ padding: "6px 10px", borderRadius: 8, marginBottom: 6, fontSize: 12, background: "color-mix(in srgb, var(--warn, #f59e0b) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--warn, #f59e0b) 40%, transparent)", color: "#b45309" }}>
             <div style={{ fontWeight: 700, marginBottom: 2 }}>{"限流到期待验证 " + pending.length + " 个（已过记录的预计恢复时间；纯时间提示，尚未探测）："}</div>
             {pending.slice(0, 6).map((d: any) => (
               <div key={d.provider + "/" + d.model} style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 1 }}>
@@ -620,11 +620,11 @@ export function App({ open, onClose, embedded, onGotoWizard, onCleanupEdit, hide
             {isProbing(m)
               ? <span style={{ ...C.badge, background: "rgba(37,99,235,.15)", color: "#2563eb" }} title="正在探测…（每条最长 10s）">测试中</span>
               : m.runtimeOnly
-                ? <span style={{ ...C.badge, background: "rgba(156,163,175,.18)", color: "#6b7280" }} title="该模型不在当前配置里（可能已删除），但代理真实流量仍观测到 429">未配置</span>
+                ? <span style={{ ...C.badge, background: "rgba(156,163,175,.18)", color: "var(--text-muted, #6b7280)" }} title="该模型不在当前配置里（可能已删除），但代理真实流量仍观测到 429">未配置</span>
                 : <span style={badge(m)}>{statusLabel(m)}</span>}
             {rtBadge(m)}
             {m.blockedAt ? <span style={{ ...C.badge, background: "rgba(220,38,38,.15)", color: "#dc2626" }} title={"运行中被大量 429 阻断标记为不可用（" + new Date(m.blockedAt).toLocaleString("zh-CN", { hour12: false }) + " · " + (m.blockedCount || 1) + " 次）"}>⛔ 运行阻断</span> : null}
-            {alertDue(m) ? <span style={{ ...C.badge, background: "rgba(245,158,11,.18)", color: "#b45309" }} title={"记录的预计恢复时间 " + new Date(m.alertAt).toLocaleString("zh-CN", { hour12: false }) + " 已到点（纯时间提示，未探测验证）——点「测」验证"}>预计已恢复 · 待验证</span> : null}
+            {alertDue(m) ? <span style={{ ...C.badge, background: "color-mix(in srgb, var(--warn, #f59e0b) 18%, transparent)", color: "#b45309" }} title={"记录的预计恢复时间 " + new Date(m.alertAt).toLocaleString("zh-CN", { hour12: false }) + " 已到点（纯时间提示，未探测验证）——点「测」验证"}>预计已恢复 · 待验证</span> : null}
             <span style={{ fontWeight: 600, cursor: "pointer" }} title="看历史" onClick={() => { setHistFilter({ provider: m.provider, model: m.model }); setTab("history"); loadHist(m.provider, m.model); }}>{m.model}</span>
             {!m.runtimeOnly ? <EyeBtn title={"查看 " + m.model + " 模型信息（探测状态 / 参数 / 分 key）"} onClick={() => openInfo(m)} /> : null}
             {m.combo ? (
@@ -716,7 +716,7 @@ export function App({ open, onClose, embedded, onGotoWizard, onCleanupEdit, hide
                 const hot = (k: string) => k === "auth" || k === "billing" || k === "rate";
                 for (const k of Object.keys(errKinds)) segs.push({ key: k, text: errKinds[k].n + " " + errKinds[k].label, color: hot(k) ? colorOf.auth : "#d97706" });
                 const pendN = g.filter((m) => m.pending).length;
-                if (pendN) segs.push({ key: "pending", text: pendN + " 待测试", color: "#9ca3af" });
+                if (pendN) segs.push({ key: "pending", text: pendN + " 待测试", color: "var(--text-dim, #9ca3af)" });
                 if (cnt("never") - pendN) segs.push({ key: "never", text: (cnt("never") - pendN) + " 未探测", color: colorOf.never });
               }
               const sumParts = segs.map((s, i) => [
@@ -787,7 +787,7 @@ export function App({ open, onClose, embedded, onGotoWizard, onCleanupEdit, hide
       .map(([s, b]: any) => { const i = rtErrInfo(Number(s)); return i.icon + (rtErrMeta[String(s)] ? rtErrMeta[String(s)].label : "HTTP " + s) + "×" + b.count24h; })
       .join(" · ");
     return (
-      <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 8, background: "rgba(245,158,11,.06)", border: "1px solid rgba(245,158,11,.25)", fontSize: 11.5 }}>
+      <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 8, background: "color-mix(in srgb, var(--warn, #f59e0b) 6%, transparent)", border: "1px solid color-mix(in srgb, var(--warn, #f59e0b) 25%, transparent)", fontSize: 11.5 }}>
         <div style={{ fontWeight: 600, color: "#b45309", marginBottom: 4 }}>运行期错误观测（带外 · 多 key/聚合代理真实流量的非 2xx/3xx，带 key 归因；只提示不标记，权威确认请点「测」或 model_probe）：</div>
         {list.slice(0, 8).map((m: any) => {
           const capped = m.count24h >= 80 ? "+" : "";
@@ -884,7 +884,7 @@ export function App({ open, onClose, embedded, onGotoWizard, onCleanupEdit, hide
             // 已配置但未查询余额 → 待查（灰）
             return (
               <div key={"b" + i} style={C.row}>
-                <span style={{ display: "flex", color: "#9ca3af" }}><Ic size={14} paths={"icons/radio-dot.svg"} /></span>
+                <span style={{ display: "flex", color: "var(--text-dim, #9ca3af)" }}><Ic size={14} paths={"icons/radio-dot.svg"} /></span>
                 <span style={{ fontWeight: 600 }}>{b.provider}</span>
                 <span style={{ background: "var(--bg-subtle,#f5f5f5)", borderRadius: 6, padding: "0 6px", color: "var(--text-subtle,#666)", fontSize: 11 }}>待查</span>
                 <span style={{ color: "var(--text-subtle,#666)" }}>尚未查询余额</span>
@@ -951,7 +951,7 @@ export function App({ open, onClose, embedded, onGotoWizard, onCleanupEdit, hide
 
           <div style={{ fontWeight: 650, fontSize: 12, margin: "10px 0 4px" }}>模型参数</div>
           {info.loading ? <div style={{ color: "var(--text-subtle,#666)", fontSize: 12 }}>加载中…（模型管理五源反填）</div>
-            : info.error ? <div style={{ padding: "6px 9px", borderRadius: 8, background: "rgba(245,158,11,.1)", border: "1px solid rgba(245,158,11,.35)", color: "#b45309", fontSize: 12 }}>{"⚠️ " + info.error}</div>
+            : info.error ? <div style={{ padding: "6px 9px", borderRadius: 8, background: "color-mix(in srgb, var(--warn, #f59e0b) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--warn, #f59e0b) 35%, transparent)", color: "#b45309", fontSize: 12 }}>{"⚠️ " + info.error}</div>
             : p ? (
               <>
                 {info.crossFrom ? <div style={{ marginBottom: 4, fontSize: 11, color: "#b45309" }}>{"本 provider 未收录该模型，参数借其它网关同 id 条目互证（" + info.crossFrom + "）—— 价格以该网关为准"}</div> : null}
@@ -1004,7 +1004,7 @@ export function App({ open, onClose, embedded, onGotoWizard, onCleanupEdit, hide
       {busy ? <div style={{ color: "var(--text-subtle,#666)", marginBottom: 6 }}>处理中…</div> : null}
       {msg ? <div style={C.msg}>{msg}</div> : null}
       {nmTip ? (
-        <div style={{ padding: "6px 10px", borderRadius: 8, marginBottom: 8, fontSize: 12, background: "rgba(34,197,94,.1)", border: "1px solid rgba(34,197,94,.35)", color: "#15803d", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ padding: "6px 10px", borderRadius: 8, marginBottom: 8, fontSize: 12, background: "color-mix(in srgb, var(--ok, #22c55e) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--ok, #22c55e) 35%, transparent)", color: "#15803d", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <span style={{ flex: 1, minWidth: 0 }}>{"检查时发现 " + nmTip.total + " 个未启用的新模型：" + nmTip.text}</span>
           <button style={{ ...C.btn, flexShrink: 0 }} onClick={() => gotoWizard("status")} title="打开模型向导 · 已配置页查看并启用">去启用</button>
           <button style={{ ...C.btn, flexShrink: 0, padding: "2px 8px" }} onClick={() => setNmTip(null)} aria-label="关闭">✕</button>
