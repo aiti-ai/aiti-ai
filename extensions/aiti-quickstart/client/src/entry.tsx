@@ -11,7 +11,7 @@
  *     `aiti-quickstart.open`（跨扩展开 Hub）。
  */
 import { __setCtx, regSvc, t } from "./host-shim";
-import { QuickstartFiller, QuickstartFooterButton, WorkspacePickerAcquireEntry, openQuickstart, renderWidget } from "./quickstart";
+import { QuickstartFiller, WorkspacePickerAcquireEntry, openQuickstart, renderWidget } from "./quickstart";
 import { WorkspaceHubRoot } from "./workspace-hub";
 import { SERVICE_KEY, FOOTER_ITEM_ID, WIDGET_METAS, WIDGET_TITLE_KEYS } from "./quickstart-logic";
 
@@ -33,10 +33,14 @@ export default function register(ctx: Record<string, unknown>): () => void {
     },
   })));
 
-  // 侧栏底部「快速上手」（meta.onClick = 重返欢迎页；物化前由静态条目转发器直达此行为）
+  // sidebarFooter「快速上手」：**只作 app center 收编源**（2026-11-07 用户拍板：左下工具条
+  // 与 extman 同排不放按钮，应用中心有卡就够）。render = null 接管静态条目（宿主底部行
+  // 不渲染任何东西），meta.onClick 保留 → app center buildApps 仍收编为 manage 卡
+  // （已钉住的 `manage:aiti-quickstart:quickstart-open` id 不变）。物化前静态条目短暂
+  // 渲染标准按钮，session-manager ensureMaterialized 挂载即拉起、接管后消失。
   ctx.registerItems?.("sidebarFooter", [{
     id: FOOTER_ITEM_ID,
-    render: QuickstartFooterButton,
+    render: () => null,
     meta: { label: t("qs.footer.label"), title: t("qs.footer.title"), icon: "icons/rocket.svg", onClick: () => { void openQuickstart(); } },
   }]);
 

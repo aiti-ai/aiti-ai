@@ -20,8 +20,9 @@
  * [URL 规范] cwd 不进 URL：重返走 tab-session/window.__piWebCwd/最近项目解析，
  * 导航 = pi-web.newSession.setCwd。
  *
- * 常用「重返」入口：manifest sidebarFooter 静态条目 → 宿主底部行标准按钮 +
- * 应用中心自动收编为可钉住卡片；物化后同 id 注册条目接管。
+ * 常用「重返」入口：manifest sidebarFooter 静态条目**只作应用中心收编源**（可钉住
+ * 卡片）；client 物化后同 id 注册条目 render=null 接管——左下工具条（与 extman 同排）
+ * 不渲染按钮（2026-11-07 用户拍板：app center 有卡就够了）。
  *
  * 软依赖：session-manager（filler 消费 + upload 复用）、aiti-event-bus（clone 进度帧）、
  * aiti-model-wizard（配置模型深链，client 服务缺席降级）。
@@ -70,7 +71,7 @@ export default {
         "qs.sc.newSession": "Ctrl+Alt+N 新建会话",
         "qs.sc.at": "@ 引用文件",
         "qs.sc.slash": "/ 命令菜单",
-        "qs.sc.enter": "Enter 发送 · Shift+Enter 换行",
+        "qs.sc.enter": "Enter 发送消息",
         "qs.examplesTitle": "试试这样问",
         "qs.ex.1": "分析这个项目的目录结构，给出模块依赖关系",
         "qs.ex.2": "帮我实现一个新功能：先给方案，我确认后再写代码",
@@ -132,7 +133,7 @@ export default {
         "qs.sc.newSession": "Ctrl+Alt+N New session",
         "qs.sc.at": "@ Reference files",
         "qs.sc.slash": "/ Command menu",
-        "qs.sc.enter": "Enter send · Shift+Enter newline",
+        "qs.sc.enter": "Enter to send",
         "qs.examplesTitle": "Try asking",
         "qs.ex.1": "Analyze this project's structure and map module dependencies",
         "qs.ex.2": "Build a new feature: propose a plan first, code after I confirm",
