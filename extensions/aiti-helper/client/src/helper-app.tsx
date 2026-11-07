@@ -1091,7 +1091,7 @@ export function AiHelperDialog(props: Record<string, any>) {
               <input value={skillForm.summary} onInput={(e: any) => setSkillForm((f) => ({ ...f, summary: e.target.value }))} placeholder="这个 skill 能做什么" style={inputStyle()} />
               <label style={{ fontSize: 12, opacity: 0.8 }}>正文手册（可空；可让 AI 帮你写）</label>
               <textarea value={skillForm.body} onInput={(e: any) => setSkillForm((f) => ({ ...f, body: e.target.value }))} placeholder="SKILL.md 正文（任务说明、API、输出格式…）。留空则先建骨架，再用「AI 帮我新增/修改 skill」补全。" style={{ ...inputStyle(), minHeight: 90, resize: "vertical", lineHeight: 1.5 }} />
-              {skillMsg ? <div style={{ fontSize: 12, padding: "7px 10px", borderRadius: 6, background: skillMsg.status === "ok" ? "rgba(16,185,129,.12)" : "rgba(239,68,68,.12)", color: skillMsg.status === "ok" ? "#16a34a" : "#dc2626" }}>{skillMsg.msg}</div> : null}
+              {skillMsg ? <div style={{ fontSize: 12, padding: "7px 10px", borderRadius: 6, background: skillMsg.status === "ok" ? "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)" : "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)", color: skillMsg.status === "ok" ? "#16a34a" : "#dc2626" }}>{skillMsg.msg}</div> : null}
               <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
                 <button onClick={() => saveUserSkill()} disabled={savingSkill} style={btnStyle("primary")}>{savingSkill ? "保存中…" : "保存"}</button>
                 <button onClick={() => { setShowSkillForm(false); setSelHelper(helpers && helpers.find((x) => x.id === "skill-manage") || null); }} style={{ ...btnStyle(), display: "inline-flex", alignItems: "center", gap: 5 }}>
@@ -1104,7 +1104,7 @@ export function AiHelperDialog(props: Record<string, any>) {
               {/* 恢复提示 + 后台任务提示 */}
               {restoreNote ? <div style={{ fontSize: 11, padding: "5px 10px", borderRadius: 6, background: "rgba(37,99,235,.10)", border: "1px solid rgba(37,99,235,.3)", color: "inherit" }}>↩ {restoreNote}</div> : null}
               {bgActive && bgActive.length ? (
-                <div style={{ fontSize: 11, padding: "5px 10px", borderRadius: 6, background: "rgba(245,158,11,.10)", border: "1px solid rgba(245,158,11,.35)", color: "inherit", display: "flex", flexDirection: "column", gap: 2 }}>
+                <div style={{ fontSize: 11, padding: "5px 10px", borderRadius: 6, background: "color-mix(in srgb, var(--warn, #f59e0b) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--warn, #f59e0b) 35%, transparent)", color: "inherit", display: "flex", flexDirection: "column", gap: 2 }}>
                   <span>{bgActive.length} 个后台任务执行中</span>
                   {bgActive.slice(0, 3).map((t: any) => (
                     <button key={t.sessionId} onClick={() => restoreActive(t)} title="接回此会话的实时进度"
@@ -1225,7 +1225,7 @@ export function AiHelperDialog(props: Record<string, any>) {
                 </div>
               ) : null}
               {/* 错误 */}
-              {err ? <div style={{ color: "var(--danger, #ef4444)", fontSize: 12, padding: "7px 10px", background: "rgba(239,68,68,.1)", borderRadius: 6 }}>❌ {err}</div> : null}
+              {err ? <div style={{ color: "var(--danger, #ef4444)", fontSize: 12, padding: "7px 10px", background: "color-mix(in srgb, var(--danger, #ef4444) 10%, transparent)", borderRadius: 6 }}>❌ {err}</div> : null}
               {/* 结果预览 */}
               {result ? (
                 <div>
@@ -1260,7 +1260,7 @@ export function AiHelperDialog(props: Record<string, any>) {
                   ) : null}
                   {/* 落地状态 */}
                   {landing ? (
-                    <div style={{ marginTop: 8, fontSize: 12, padding: "7px 10px", borderRadius: 6, background: landing.status === "ok" ? "rgba(16,185,129,.12)" : "rgba(239,68,68,.12)", color: landing.status === "ok" ? "#16a34a" : "#dc2626" }}>{landing.msg}</div>
+                    <div style={{ marginTop: 8, fontSize: 12, padding: "7px 10px", borderRadius: 6, background: landing.status === "ok" ? "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)" : "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)", color: landing.status === "ok" ? "#16a34a" : "#dc2626" }}>{landing.msg}</div>
                   ) : null}
                 </div>
               ) : null}
