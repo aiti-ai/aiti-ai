@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-doc-center",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "type": "module",
   "description": "文档中心扩展（workspace md 收集/整理/FTS5 trigram 全文检索 + tag 六来源两层 + PageRank）—— 方案 docs/aiti-doc-center-plan.md",
   "scripts": {
@@ -17,5 +17,5 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "fa15d6ca879c571a"
+  "contentHash": "83dd41170ea755e8"
 }
