@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-folder",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "pi-web 文件夹浏览器扩展（fileViewer folder 接管 + pathPicker 目录选择器）—— JSX + vite 构建 client bundle",
   "type": "module",
   "scripts": {
