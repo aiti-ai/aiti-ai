@@ -80,7 +80,7 @@ function fmtDuration(ms?: number): string {
 function statusMeta(status?: RunStatus): string {
   return ({
     pending: "#a0a0a0", running: "#00d4ff",
-    completed: "#10b981", failed: "#ef4444", cancelled: "#a0a0a0",
+    completed: "#10b981", failed: "var(--danger, #ef4444)", cancelled: "#a0a0a0",
   } as Record<string, string>)[status as string] || "#888";
 }
 
@@ -356,7 +356,7 @@ function AgentsManagerBody({ embedded }: { embedded?: boolean }) {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
     });
     const d = await r.json();
-    if (d?.ok) { setMsg("✅ 已保存（覆盖内置需同名）"); setEditing(null); load(); }
+    if (d?.ok) { setMsg("已保存（覆盖内置需同名）"); setEditing(null); load(); }
     else setMsg("❌ " + (d?.error || "保存失败"));
   };
 
@@ -365,14 +365,14 @@ function AgentsManagerBody({ embedded }: { embedded?: boolean }) {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }),
     });
     const d = await r.json();
-    setMsg(d?.ok ? `✅ ${name} 已由 pi-web 后端 ${d.backend} 接管（删除自定义可恢复 fork 直启）` : "❌ " + (d?.error || "接管失败"));
+    setMsg(d?.ok ? `${name} 已由 pi-web 后端 ${d.backend} 接管（删除自定义可恢复 fork 直启）` : "❌ " + (d?.error || "接管失败"));
     load();
   };
 
   const del = async (name: string) => {
     const r = await fetch(apiUrl(`/api/extensions/aiti-subagents/agents/${encodeURIComponent(name)}`), { method: "DELETE" });
     const d = await r.json();
-    setMsg(d?.ok ? (d?.restored ? "✅ 已删除自定义，恢复默认" : "✅ 已删除") : "❌ " + (d?.error || "删除失败"));
+    setMsg(d?.ok ? (d?.restored ? "已删除自定义，恢复默认" : "已删除") : "❌ " + (d?.error || "删除失败"));
     load();
   };
 
@@ -448,7 +448,7 @@ function AgentsManagerBody({ embedded }: { embedded?: boolean }) {
       <div style={{ padding: "8px 12px", display: "flex", gap: 6, alignItems: "center" }}>
         <span style={{ fontSize: 11, color: "var(--text-dim)", flex: 1 }}>{`${agents.length} 个 agent（用户自定义覆盖内置，编辑保存即生效）`}</span>
         {embedded && (
-          <button onClick={() => setFleetOpen(true)} title="打开子代理舰队（运行总览 / 检查器 / 委派）" style={{ background: "rgba(0,212,255,0.12)", border: "1px solid rgba(0,212,255,0.3)", color: "#00d4ff", borderRadius: 6, padding: "3px 12px", fontSize: 12, cursor: "pointer", fontWeight: 600 }}>{"🚀 子代理舰队"}</button>
+          <button onClick={() => setFleetOpen(true)} title="打开子代理舰队（运行总览 / 检查器 / 委派）" style={{ background: "rgba(0,212,255,0.12)", border: "1px solid rgba(0,212,255,0.3)", color: "#00d4ff", borderRadius: 6, padding: "3px 12px", fontSize: 12, cursor: "pointer", fontWeight: 600 }}>{"子代理舰队"}</button>
         )}
         <button onClick={load} title="重新加载列表" style={{ background: "none", border: "1px solid var(--border)", color: "var(--text-muted)", borderRadius: 6, padding: "3px 10px", fontSize: 12, cursor: "pointer" }}>{"↻ 刷新"}</button>
         <button onClick={() => startEdit(null)} style={{ background: "rgba(0,212,255,0.12)", border: "1px solid rgba(0,212,255,0.3)", color: "#00d4ff", borderRadius: 6, padding: "3px 12px", fontSize: 12, cursor: "pointer" }}>{"＋ 新建"}</button>
@@ -479,12 +479,12 @@ function AgentsManagerBody({ embedded }: { embedded?: boolean }) {
                   onClick={() => takeOver(a.name)}
                   style={{ background: ready ? "rgba(16,185,129,0.12)" : "none", border: `1px solid ${ready ? "rgba(16,185,129,0.4)" : "var(--border)"}`, color: ready ? "#10b981" : "var(--text-dim)", borderRadius: 4, padding: "1px 8px", fontSize: 11, cursor: ready ? "pointer" : "not-allowed", flexShrink: 0, opacity: ready ? 1 : 0.55 }}
                 >
-                  {"⚡接管"}
+                  {"接管"}
                 </button>
               );
             })()}
             <button onClick={() => startEdit(a)} style={{ background: "none", border: "1px solid var(--border)", color: "var(--text-muted)", borderRadius: 4, padding: "1px 8px", fontSize: 11, cursor: "pointer", flexShrink: 0 }}>{"编辑"}</button>
-            {a.isUserDefined && <button onClick={() => del(a.name)} title="删除自定义（恢复默认）" style={{ background: "none", border: "1px solid #ef4444", color: "#ef4444", borderRadius: 4, padding: "1px 8px", fontSize: 11, cursor: "pointer", flexShrink: 0 }}>{"删除"}</button>}
+            {a.isUserDefined && <button onClick={() => del(a.name)} title="删除自定义（恢复默认）" style={{ background: "none", border: "1px solid var(--danger, #ef4444)", color: "var(--danger, #ef4444)", borderRadius: 4, padding: "1px 8px", fontSize: 11, cursor: "pointer", flexShrink: 0 }}>{"删除"}</button>}
           </div>
         ))}
       </div>
@@ -588,7 +588,7 @@ function ConcurrencyDialog() {
       });
       const d = await r.json();
       if (!r.ok || d.ok === false) setMsg("❌ " + (d.error || `HTTP ${r.status}`));
-      else { setMsg("✅ 已保存，对新启动的子代理立即生效"); load(); }
+      else { setMsg("已保存，对新启动的子代理立即生效"); load(); }
     } catch (e) { setMsg("❌ " + e); }
     setBusy(false);
   };
@@ -611,7 +611,7 @@ function ConcurrencyDialog() {
         </div>
         <div style={{ flex: 1, overflowY: "auto", padding: "8px 14px", minHeight: 0 }}>
           {data?.readable === false ? (
-            <div style={{ fontSize: 12, color: "#ef4444", lineHeight: 1.6 }}>{`配置文件损坏，拒绝读写：${data.path}（${data.error}）——先手工修复后再试`}</div>
+            <div style={{ fontSize: 12, color: "var(--danger, #ef4444)", lineHeight: 1.6 }}>{`配置文件损坏，拒绝读写：${data.path}（${data.error}）——先手工修复后再试`}</div>
           ) : (
             <>
               <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.5, marginBottom: 8 }}>
@@ -657,10 +657,10 @@ function ConcurrencyDialog() {
                 const s = String(vals[m.key] ?? "").trim();
                 if (s === "") continue;
                 if (m.type === "capacitySlotMs") {
-                  if (s !== "false" && !Number.isFinite(Number(s))) { setMsg(`❌ 「${m.label}」请输入分钟数或 false`); return; }
+                  if (s !== "false" && !Number.isFinite(Number(s))) { setMsg(`「${m.label}」请输入分钟数或 false`); return; }
                   config[m.key] = s === "false" ? false : Number(s) * 60000;
                 } else {
-                  if (!Number.isFinite(Number(s))) { setMsg(`❌ 「${m.label}」请输入数字`); return; }
+                  if (!Number.isFinite(Number(s))) { setMsg(`「${m.label}」请输入数字`); return; }
                   config[m.key] = Number(s);
                 }
               }
@@ -769,7 +769,7 @@ function FleetBody(props?: { dockItemKey?: string }) {
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: "flex", gap: 6, alignItems: "baseline", minWidth: 0 }}>
                           <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", flexShrink: 0 }}>{run.agent}</span>
-                          {wsBase && <span title={run.cwd} style={{ fontSize: 10, padding: "0 6px", borderRadius: 8, background: "rgba(0,212,255,0.10)", border: "1px solid rgba(0,212,255,0.25)", color: "#00d4ff", flexShrink: 0, maxWidth: 110, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{`📂${wsBase}`}</span>}
+                          {wsBase && <span title={run.cwd} style={{ fontSize: 10, padding: "0 6px", borderRadius: 8, background: "rgba(0,212,255,0.10)", border: "1px solid rgba(0,212,255,0.25)", color: "#00d4ff", flexShrink: 0, maxWidth: 110, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{`${wsBase}`}</span>}
                           <span style={{ fontSize: 11, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{metaBits}</span>
                         </div>
                         <div title={run.task || ""} style={{ fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -789,7 +789,7 @@ function FleetBody(props?: { dockItemKey?: string }) {
                               body: JSON.stringify({ id: run.id, action: "abort" }),
                             }).then((r) => r.json()).then((r) => { if (!r.ok) alert("中止失败: " + (r.error || "未知")); }).catch(() => {});
                           }}
-                          style={{ background: "none", border: "1px solid var(--border)", color: "#ef4444", borderRadius: 4, padding: "1px 6px", fontSize: 11, cursor: "pointer", flexShrink: 0 }}
+                          style={{ background: "none", border: "1px solid var(--border)", color: "var(--danger, #ef4444)", borderRadius: 4, padding: "1px 6px", fontSize: 11, cursor: "pointer", flexShrink: 0 }}
                         >
                           {"■"}
                         </button>
@@ -811,7 +811,7 @@ function FleetBody(props?: { dockItemKey?: string }) {
           {FLEET_ICON(11)}
           {"Agent 管理"}
         </button>
-        <button onClick={() => setCfgOpen(true)} title="并发配置（单 run 并发 / 累计预算 / 跨 run 活跃顶层 async 数）" style={{ background: "none", border: "1px solid var(--border)", color: "var(--text-muted)", borderRadius: 4, padding: "1px 8px", fontSize: 11, cursor: "pointer" }}>{"⚙ 并发"}</button>
+        <button onClick={() => setCfgOpen(true)} title="并发配置（单 run 并发 / 累计预算 / 跨 run 活跃顶层 async 数）" style={{ background: "none", border: "1px solid var(--border)", color: "var(--text-muted)", borderRadius: 4, padding: "1px 8px", fontSize: 11, cursor: "pointer" }}>{"并发"}</button>
         <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
           <span style={{ width: 6, height: 6, borderRadius: 3, background: "#10b981", display: "inline-block" }} />
           {"SSE 实时"}
@@ -909,10 +909,10 @@ function SteerRow({ runId, active }: { runId: string; active: boolean }) {
     })
       .then((r) => r.json())
       .then((r) => {
-        setMsg(r.ok ? "✓ 已投递" : "✕ " + (r.error || "失败"));
+        setMsg(r.ok ? "已投递" : "✕ " + (r.error || "失败"));
         if (r.ok) setText("");
       })
-      .catch(() => setMsg("✕ 网络错误"))
+      .catch(() => setMsg("网络错误"))
       .finally(() => setSending(false));
   };
   return (
@@ -933,7 +933,7 @@ function SteerRow({ runId, active }: { runId: string; active: boolean }) {
       >
         {sending ? "…" : "发送"}
       </button>
-      {msg && <span style={{ fontSize: 11, color: msg.startsWith("✓") ? "#10b981" : "#ef4444", flexShrink: 0 }}>{msg}</span>}
+      {msg && <span style={{ fontSize: 11, color: msg.startsWith("✓") ? "#10b981" : "var(--danger, #ef4444)", flexShrink: 0 }}>{msg}</span>}
     </div>
   );
 }
@@ -1018,7 +1018,7 @@ function InspectorDialog() {
             <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
               {(run.sessionFile || run.childSessionFile) && (
                 <button onClick={() => openSessionByFile((run.childSessionFile || run.sessionFile) as string, "子代理会话")} style={{ background: "none", border: "1px solid #00d4ff", color: "#00d4ff", borderRadius: 4, padding: "2px 10px", fontSize: 11, cursor: "pointer" }}>
-                  {"📨 打开子代理消息窗口"}
+                  {"打开子代理消息窗口"}
                 </button>
               )}
               {(run.parentSessionFile || (run as { asyncDetail?: { parentSessionFile?: string } }).asyncDetail?.parentSessionFile) && (
@@ -1043,7 +1043,7 @@ function InspectorDialog() {
               </div>
             );
           })()}
-          {run.error ? <div style={{ color: "#ef4444" }}><b>{"错误: "}</b>{String(run.error)}</div> : null}
+          {run.error ? <div style={{ color: "var(--danger, #ef4444)" }}><b>{"错误: "}</b>{String(run.error)}</div> : null}
         </div>
       );
     } else if (tab === "report") {
