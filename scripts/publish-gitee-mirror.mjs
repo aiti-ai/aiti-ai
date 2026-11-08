@@ -24,7 +24,7 @@ if (!TAG) {
   process.exit(1);
 }
 const GH_REPO = opt("--repo") || "aiti-ai/aiti-ai";
-const GE_REPO = opt("--gitee") || "justdb-mirrors/aiti-web";
+const GE_REPO = opt("--gitee") || "aiti-ai/aiti-ai";
 const TOKEN = process.env.AITI_GITEE_TOKEN;
 if (!TOKEN) {
   console.error("AITI_GITEE_TOKEN env required (gitee personal access token)");
