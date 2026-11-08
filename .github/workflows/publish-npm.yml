@@ -103,9 +103,10 @@ jobs:
             cp "$pj" "$pj.orig"
             node scripts/inject-vendor-deps.mjs "$pj" "$PWD/vendor/npm"
             (cd "$d" && npm install --legacy-peer-deps --no-audit --no-fund --loglevel=error)
-            mv "$pj.orig" "$pj"   # 还原（node_modules 保留）
-            # esbuild 兜底：部分包无 deps 字段（esbuild 隐式靠仓根，CI 树无）——prepublishOnly/build 需要
+            # esbuild 兜底（在还原前：file 态下 npm 全树可解析；还原后重算会撞精确 spec 的 npmjs 404）——
+            # 部分包无 deps 字段（esbuild 隐式靠仓根），prepublishOnly/build 需要
             [ -x "${d}node_modules/.bin/esbuild" ] || (cd "$d" && npm install --no-save esbuild --legacy-peer-deps --no-audit --no-fund --loglevel=error)
+            mv "$pj.orig" "$pj"   # 还原（node_modules 保留）
           done
           # dist 直塞：vendor tgz（48 构建的同版本产物）解出 dist 覆盖进包目录——
           # publish-all 对非空 dist 跳过构建（绕开各包 build 脚本的 esbuild 解析差异）
