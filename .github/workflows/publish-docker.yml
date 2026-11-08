@@ -1,14 +1,14 @@
-# publish-docker.yml —— Docker Hub 发布（aitiai/pi-web）。
+# publish-docker.yml — Docker Hub publishing (aitiai/pi-web).
 #
-# 触发：
-#   - push tag v*（与 GitHub Releases 同步：镜像随版本发布）
-#   - workflow_dispatch（手动，可指定版本标签）
+# Trigger:
+#   - push tag v* (synced with GitHub Releases: images ship with each version)
+#   - workflow_dispatch (manual, optional version tag)
 #
-# 产物：aitiai/pi-web:{core,full} + aitiai/pi-web:v<ver>-{core,full} + latest
-# 依赖 secrets：DOCKERHUB_USERNAME（=aitiai）、DOCKERHUB_TOKEN（hub.docker.com Access Token）
+# Artifacts: aitiai/pi-web:{core,full} + aitiai/pi-web:v<ver>-{core,full} + latest
+# Required secrets: DOCKERHUB_USERNAME (=aitiai), DOCKERHUB_TOKEN (hub.docker.com access token)
 #
-# 构建复用 docker/build.sh（本仓自足组装 staging）；full 的 FROM 基座经
-# CORE_IMAGE 别名解析（build.sh 已参数化，docker/Dockerfile.full ARG CORE_IMAGE）。
+# Builds reuse docker/build.sh (the repo assembles its own staging context); the full image's FROM base is
+# resolved via the CORE_IMAGE alias (parameterized in build.sh; see docker/Dockerfile.full ARG CORE_IMAGE).
 
 name: Docker Publish
 
