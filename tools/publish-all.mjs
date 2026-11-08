@@ -307,6 +307,10 @@ for (const { dir, pkgDir, pjPath, p } of pkgs) {
   console.log(`\n==> ${fullName}@${version} ${DRY ? "[dry-run]" : ""} ${tag}`);
   if (DRY) { published++; report.push(`D  ${dir}@${version}: 将发布 ${fullName}`); continue; }
 
+  // aliyun 专有：上游聚合仓 packument 只回本地缓存（新包名=空），PUT 却校验上游——
+  // 同版本撞「已存在该版本」403 时 bump patch 重试一次（新版本号必然可进）
+  let _aliyunRetried = false;
+  while (true) {
   try {
     // 有构建脚本先构建：扩展走 build:client（"true" 占位跳过）；packages/ 侧走 build
     const isPackages = pkgDir.startsWith(join(REPO, "packages") + sep);
@@ -343,7 +347,7 @@ for (const { dir, pkgDir, pjPath, p } of pkgs) {
       if (!existsSync(distDir) || readdirSync(distDir).length === 0) {
         failed++;
         report.push(`!  ${dir}@${version}: dist/ 为空（${buildScript} 未产出）——跳过发布`);
-        continue;
+        break;
       }
     }
     const provenance = TARGET === "official" ? " --provenance" : "";
@@ -353,9 +357,20 @@ for (const { dir, pkgDir, pjPath, p } of pkgs) {
     published++;
     report.push(`+  ${dir}@${version}: 已发布为 ${fullName}`);
   } catch (e) {
+    const emsg = e.message || "";
+    if (TARGET === "aliyun" && !_aliyunRetried && /已存在|不允许被覆盖/.test(emsg)) {
+      _aliyunRetried = true;
+      version = bump(version, "patch");
+      p.version = version;
+      writeFileSync(pjPath, JSON.stringify(p, null, 2) + "\n");
+      report.push(`^  ${dir}: aliyun 同版本撞上游缓存，bump → ${version} 重试`);
+      continue;   // while 顶重试（dist 已存在 → 直发新版本号）
+    }
     failed++;
-    report.push(`!  ${dir}@${version}: 发布失败 — ${e.message.split("\n")[0]}`);
+    report.push(`!  ${dir}@${version}: 发布失败 — ${emsg.split("\n")[0]}`);
+    break;   // 跳出 while，继续外层下一包
   }
+  }   // aliyun 重试 while
 }
 
 console.log("\n===== 发布报告 =====");
