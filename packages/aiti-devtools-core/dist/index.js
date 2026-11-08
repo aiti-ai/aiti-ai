@@ -3139,7 +3139,7 @@ function aitiMiddleware(opts = {}) {
 function patchProcessHttp(opts = {}) {
   const prefix = (opts.prefix || "/aiti").replace(/\/+$/, "") || "/aiti";
   const log = opts.log || ((l) => console.log(l));
-  const sym = Symbol.for("aiti-devtools.process-patched");
+  const sym = /* @__PURE__ */ Symbol.for("aiti-devtools.process-patched");
   if (globalThis[sym]) {
     log(`[aiti-devtools] \u8FDB\u7A0B\u7EA7 patch \u5DF2\u5B58\u5728\uFF0C\u8DF3\u8FC7`);
     return { bridge: globalThis.__aitiBridge };
