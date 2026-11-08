@@ -167,14 +167,22 @@ jobs:
       - name: Native binary glibc compatibility gate (max GLIBC_2.31)
         shell: bash
         run: |
+          # GLIBC is an ELF-only concern — Mach-O (darwin) / PE (windows) binaries
+          # cannot require it by definition, so the gate runs on Linux runners only
+          # (this also sidesteps tar/unzip format differences per platform).
+          if [ "$RUNNER_OS" != "Linux" ]; then
+            echo "skip: non-Linux platform — GLIBC gate is ELF-only"
+            exit 0
+          fi
           mkdir -p /tmp/aiti-gate && tar xzf aiti-web-v*.tar.gz -C /tmp/aiti-gate
           # 守门：tarball 内所有 ELF 的最高 GLIBC 符号需求不得超过 2.31（Ubuntu 20.04/Debian 11 级）。
           # 全依赖均为上游 prebuilt 时自动通过；未来引入 node-gyp 现场编译/高版本工具链构建的包
-          # 会在此 fail（否则静默打包出仅在最新发行版可跑的二进制）。darwin/win 走同一 gate
-          # （darwin 无 GLIBC 符号 → 自动通过）。
+          # 会在此 fail（否则静默打包出仅在最新发行版可跑的二进制）。
           BAD=0
           for f in $(find /tmp/aiti-gate -type f \( -name "*.node" -o -name "*.so" -o -name "*.so.*" \) 2>/dev/null); do
-            MAX=$(objdump -T "$f" 2>/dev/null | grep -oE "GLIBC_2\.[0-9]+" | sort -V | tail -1)
+            # || true: pipefail + set -e — an ELF with NO GLIBC symbols (musl builds)
+            # makes grep exit 1, which must not kill the step
+            MAX=$(objdump -T "$f" 2>/dev/null | grep -oE "GLIBC_2\.[0-9]+" | sort -V | tail -1 || true)
             [ -z "$MAX" ] && continue
             NEED=$(echo "$MAX" | sed "s/GLIBC_2\.//")
             echo "$f → $MAX"
