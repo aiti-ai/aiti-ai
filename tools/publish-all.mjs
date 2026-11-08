@@ -314,7 +314,15 @@ for (const { dir, pkgDir, pjPath, p } of pkgs) {
       ? "build:client"
       : isPackages && p.scripts?.build ? "build" : null;
     if (buildScript) {
-      execSync(`npm run ${buildScript}`, { cwd: pkgDir, stdio: "inherit" });
+      // dist 已存在（非空）则跳过构建——发布源可预置同版本构建产物（CI 对 packages 侧
+      // 用 vendor tgz 解出 dist 直塞，绕开各包 build 脚本的自定义 esbuild 解析差异）；
+      // 本地常规路径 dist 由发布前构建产出，语义不变
+      const _dist = join(pkgDir, "dist");
+      if (existsSync(_dist) && readdirSync(_dist).length > 0) {
+        console.log(`[publish] ${dir}: dist 已存在，跳过 ${buildScript}`);
+      } else {
+        execSync(`npm run ${buildScript}`, { cwd: pkgDir, stdio: "inherit" });
+      }
     }
     // official 目标：发布前 lock 重写（私源 resolved → 官方源；staging 源即私域不改）
     if (TARGET === "official") {
