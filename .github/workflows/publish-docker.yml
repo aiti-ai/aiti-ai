@@ -75,6 +75,8 @@ jobs:
         run: |
           ./docker/build.sh --target core \
             --tag "${IMAGE}:${{ steps.ver.outputs.version }}-core"
+          # rolling tag 立即打（Build full 的 CORE_IMAGE 别名解析依赖它）
+          docker tag "${IMAGE}:${{ steps.ver.outputs.version }}-core" "${IMAGE}:core"
 
       - name: Build full (FROM core via CORE_IMAGE alias)
         run: |
