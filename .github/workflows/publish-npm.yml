@@ -106,9 +106,9 @@ jobs:
             [ -f "$pj" ] || continue
             cp "$pj" "$pj.orig"
             for VN in "${!VMAP[@]}"; do
-              node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));const [dep,tgz]=process.argv.slice(2);if(p.dependencies&&p.dependencies[dep])p.dependencies[dep]='file:'+tgz;fs.writeFileSync(process.argv[1],JSON.stringify(p,null,2))" "$pj" "$VN" "${VMAP[$VN]}" || true
+              node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));const [dep,tgz]=process.argv.slice(2);for(const sec of [p.dependencies,p.devDependencies,p.peerDependencies])if(sec&&sec[dep])sec[dep]='file:'+tgz;fs.writeFileSync(process.argv[1],JSON.stringify(p,null,2))" "$pj" "$VN" "${VMAP[$VN]}" || true
             done
-            (cd "$d" && npm install --legacy-peer-deps --no-audit --no-fund --loglevel=error) || true
+            (cd "$d" && npm install --legacy-peer-deps --no-audit --no-fund --loglevel=error)
             mv "$pj.orig" "$pj"   # 还原（node_modules 保留）
           done
 
