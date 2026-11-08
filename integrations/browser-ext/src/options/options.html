@@ -7,39 +7,52 @@
 </head>
 <body>
   <div class="wrap">
-    <h1>🛠 aiti devtools 设置</h1>
-    <p class="sub">任意网页（无需目标应用改造）注入页面内 AI 调试助手。配置保存后<b>刷新页面</b>生效。</p>
+    <h1><img src="../icons/logo.svg" alt="aiti" class="logo-img">aiti devtools 设置</h1>
+    <p class="sub">任意网页（无需目标应用改造）注入页面内 AI 调试助手。<b>默认关闭</b>——通过白名单站点自动注入，或在 popup 里按需启用。配置保存后<b>刷新页面</b>生效。</p>
 
     <div class="card">
+      <h2>AI 目标</h2>
+      <label class="field"><span class="k"><input type="radio" name="aiKind" value="pi-web" id="aiKindPiweb"> pi-web 工作台（推荐——AI 窗直接落在你的工作台会话页）</span></label>
+      <label class="field"><span class="k"><input type="radio" name="aiKind" value="agent" id="aiKindAgent"> 兼容 agent 宿主（其它启用了 aiti-devtools 的 agent）</span></label>
+      <label class="field"><span class="k"><input type="radio" name="aiKind" value="cockpit" id="aiKindCockpit"> cockpit 操作台（兜底，v1 行为）</span></label>
       <label class="field">
-        <span class="k">全局注入</span>
-        <span class="switch"><input type="checkbox" id="enabled"><span class="slider"></span></span>
+        <span class="k">目标地址（pi-web / agent 宿主 origin）</span>
+        <input type="text" id="aiBaseUrl" placeholder="http://127.0.0.1:30141" spellcheck="false">
       </label>
+      <label class="field" id="cockpitUrlField">
+        <span class="k">cockpit 地址（覆盖）</span>
+        <input type="text" id="cockpitUrl" placeholder="缺省 = 桥同源 /cockpit.html" spellcheck="false">
+      </label>
+      <div class="actions">
+        <button class="btn" id="probe">🔍 探测本机 pi-web</button>
+        <span class="status" id="probeStatus"></span>
+      </div>
+      <p class="tip">选中 pi-web 时自动预填桥地址 = 目标地址 + /aiti（pi-web 同源桥）。首次保存后刷新页面生效。</p>
     </div>
 
     <div class="card">
+      <h2>站点规则</h2>
+      <label class="field">
+        <span class="k"><input type="checkbox" id="defaultEnabled"> 默认在所有页面注入（<b>不推荐</b>——默认关闭，按下方白名单或 popup 按需启用）</span>
+      </label>
+      <label class="field">
+        <span class="k">白名单站点（每行一个正则；默认关时命中的站点自动注入）</span>
+        <textarea id="allowSites" rows="4" placeholder="例如：&#10;https://github.com/.*" spellcheck="false"></textarea>
+      </label>
+      <label class="field">
+        <span class="k">排除站点（每行一个正则；优先级最高——白名单命中也不注入）</span>
+        <textarea id="denySites" rows="4" placeholder="例如：&#10;https://.*\.bank\.com/.*" spellcheck="false"></textarea>
+      </label>
+      <p class="tip">popup 的「⚡ 本页启用（本次）」不受规则限制——任何页面都可手动按需注入。</p>
+    </div>
+
+    <div class="card">
+      <h2>高级</h2>
       <label class="field">
         <span class="k">桥地址（MCP bridge base）</span>
         <input type="text" id="bridgeUrl" placeholder="http://127.0.0.1:8777/aiti" spellcheck="false">
       </label>
-      <p class="tip">launcher 连接的 MCP 桥基地址。默认本地独立桥（aiti-bridge，127.0.0.1:8777/aiti）；可填远程 pi-web 桥。</p>
-
-      <label class="field">
-        <span class="k">AI 窗地址</span>
-        <input type="text" id="aiUrl" placeholder="http://127.0.0.1:8777/cockpit.html" spellcheck="false">
-      </label>
-      <p class="tip">AI 调试窗 URL。默认与桥同源的 cockpit（本地桥自带）；可指向 pi-web AI 窗。</p>
-    </div>
-
-    <div class="card">
-      <label class="field">
-        <span class="k">排除站点（每行一个正则）</span>
-        <textarea id="excludes" rows="5" placeholder="例如：&#10;https:\\/\\/.*\\.bank\\.com\\/.*" spellcheck="false"></textarea>
-      </label>
-      <p class="tip">命中任一正则的 URL 不注入 launcher。</p>
-    </div>
-
-    <div class="card">
+      <p class="tip">launcher 连接的 MCP 桥基地址。默认本地独立桥（aiti-bridge，127.0.0.1:8777/aiti）；pi-web 目标通常为「目标地址 + /aiti」（同源桥）。</p>
       <label class="field">
         <span class="k">agent 端接入（AITI_BRIDGE_URL）</span>
         <div class="mono-row"><code id="shimUrl">—</code><button class="btn mini" id="copyShim">复制</button></div>
@@ -49,7 +62,7 @@
 
     <div class="actions">
       <button class="btn primary" id="save">保存</button>
-      <button class="btn" id="reset">恢复默认</button>
+      <button class="btn" id="reset">恢复默认（v2：默认关）</button>
       <span class="status" id="status"></span>
     </div>
   </div>

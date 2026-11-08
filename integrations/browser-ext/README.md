@@ -1,67 +1,81 @@
-# aiti-devtools 浏览器扩展（Chrome / Edge / Firefox）
+# aiti-devtools browser extension (Chrome / Edge / Firefox)
 
-任意网页——**无需目标应用任何改造**——注入 aiti-devtools 页面内 AI 调试助手
-（FAB 💬+🎯、Inspector 点选、AI 窗），配合 aiti-devtools 桥（本地独立桥或 pi-web）
-即可用 pi / claude / opencode 等 agent 操作任意页面。
+> ✅ **v2 shipped (P0)**: **off by default** — popup "⚡ Enable on this page (once)" for one-click on-demand injection / "★ Always enable this site" allowlist; the AI window defaults to **pi-web** (auto-probed and prefilled on the options page) or any compatible agent host, with cockpit as the explicit fallback. P1/P2 (shortcuts, per-site targets) are specified in `docs/aiti-devtools-browser-ext-v2-plan.md`.
+>
+> 🇨🇳 中文：见 [README.zh-CN.md](README.zh-CN.md)
 
-方案设计见 `docs/aiti-devtools-browser-ext-plan.md`（同仓）。
+Inject the aiti-devtools in-page AI debugging assistant into any webpage **on demand — with zero changes to the target app** (FAB 💬 AI + crosshair Inspector, element picking, AI window). The AI window defaults to the **pi-web workbench**; together with the aiti-devtools bridge (local standalone bridge or pi-web), pi / claude / opencode agents can operate any page.
 
-## 快速开始
+Design: `docs/aiti-devtools-browser-ext-plan.md`; v2 enhancement plan: `docs/aiti-devtools-browser-ext-v2-plan.md` (same repo).
+
+## Origin · aiti ecosystem
+
+This package is part of the **aiti** ecosystem — a personal AI development workbench powered by [pi](https://pi.dev): **aiti-agent** (a self-hosted web workbench built on the open-source [pi-web](https://github.com/aiti-ai/pi-web)) plus debug injection into mainstream dev tools (aiti-devtools) and a rich extension system.
+
+- Workbench / workbench: <https://github.com/aiti-ai/pi-web>
+- Ecosystem monorepo / monorepo: <https://github.com/aiti-ai/aiti-ai>
+- Site / site: <https://aiti.pw>
+
+## Quick start
 
 ```bash
 cd browser-ext
 npm run build       # → dist/chrome dist/edge dist/firefox
-npm run package     # → dist/*.zip（需系统 zip）
+npm run package     # → dist/*.zip + dist/aiti-devtools-firefox.xpi (needs system zip)
 
-# 前置：确保 aiti-devtools 桥在跑（默认本地独立桥 127.0.0.1:8777）
-#   systemctl start aiti-bridge      # 或 node packages/aiti-bridge/bin/aiti-bridge.mjs
+# Prerequisite: an aiti-devtools bridge must be running (default local standalone bridge 127.0.0.1:8777)
+#   systemctl start aiti-bridge      # or: node packages/aiti-bridge/bin/aiti-bridge.mjs
 ```
 
-### 安装
+### Install
 
-- **Chrome/Edge**：`chrome://extensions`（或 `edge://extensions`）→ 开启「开发者模式」→
-  「加载已解压的扩展程序」→ 选 `dist/chrome`（Edge 选 `dist/edge`）
-- **Firefox**：`about:debugging#/runtime/this-firefox` → 「临时载入附加组件」→ 选
-  `dist/firefox/manifest.json`
-- **Firefox for Android（Fenix）**：`dist/firefox`（需 Firefox ≥ 120；永久安装需签名的
-  稳定 gecko id `aiti-devtools@aiti.ai`）
+- **Chrome/Edge**: `chrome://extensions` (or `edge://extensions`) → enable Developer mode →
+  "Load unpacked" → pick `dist/chrome` (Edge: `dist/edge`)
+- **Firefox (temporary load)**: `about:debugging#/runtime/this-firefox` → "Load Temporary Add-on" →
+  pick `dist/firefox/manifest.json` (gone on restart; the build swaps in the Firefox event-page background.scripts)
+- **Firefox (permanent xpi)**: `npm run package` → `dist/aiti-devtools-firefox.xpi` —
+  on ESR / DevEdition / Nightly, set `xpinstall.signatures.required=false` in about:config and
+  "Install Add-on From File" works permanently (signature-free); release / Android permanent installs need AMO signing
+  (`web-ext sign --channel=unlisted` or upload the xpi on AMO as unlisted; the stable gecko id `aiti-devtools@aiti.ai` is pinned)
 
-## 使用
+## Usage (v2: off by default)
 
-1. 装好后，任意网页自动出现右下角 FAB（💬 AI + 🎯 Inspector）。
-2. 点 💬 打开 AI 窗（默认 = 桥同源的 cockpit 操作台）。
-3. agent 端接入（三选一）：
-   - **pi**：装 aiti-devtools-pi，会话内直接调 `aiti_*` 工具（连同一桥）
-   - **stdio shim**：env `AITI_BRIDGE_URL=http://127.0.0.1:8777/aiti`（见 options 页复制地址）
-   - **MCP**：mcp.json 加 `{ type: "http", url: "<bridgeUrl>/mcp/mcp" }`
+1. After installing, **nothing is injected** on any page — the toolbar popup shows this page's state.
+2. **On-demand**: popup "⚡ Enable on this page (once)" injects into the current page immediately (gone on navigation); or "★ Always enable this site" adds it to the allowlist, after which navigation to that site auto-injects.
+3. Once enabled, the FAB (💬 AI + crosshair Inspector) appears bottom-right on the page.
+4. Click 💬 to open the AI window (default = the configured AI target: pi-web workbench / compatible agent / cockpit fallback).
+5. Connect the agent side (pick one):
+   - **pi**: install aiti-devtools-pi to call `aiti_*` tools in-session (same bridge)
+   - **stdio shim**: env `AITI_BRIDGE_URL=http://127.0.0.1:8777/aiti` (one-click copy on the options page)
+   - **MCP**: add `{ type: "http", url: "<bridgeUrl>/mcp/mcp" }` to mcp.json
 
-## 配置（options 页）
+## Options (v2)
 
-- **桥地址**：默认 `http://127.0.0.1:8777/aiti`（本地独立桥）；可填远程 pi-web 桥
-- **AI 窗地址**：默认 `http://127.0.0.1:8777/cockpit.html`；可指向 pi-web AI 窗
-- **全局开关** / **排除站点**（每行一个正则）
-- **AITI_BRIDGE_URL**：agent 端 stdio shim 接入用，一键复制
+- **AI target, three kinds**: pi-web workbench (recommended) / compatible agent host / cockpit fallback; target address + **🔍 one-click local pi-web probe** (ports 30141/30142 auto-prefill; selecting pi-web also prefills the same-origin bridge address)
+- **Site rules**: off by default + **allowlist** (one regex per line; matching sites auto-inject) + **denylist** (highest priority — wins even over the allowlist)
+- **Advanced**: bridge address / agent-side shim (AITI_BRIDGE_URL one-click copy)
 
-> 配置保存后**刷新页面**生效（stable 语义，见方案 D1）。
+> Settings take effect after a **page refresh** (stable semantics; see plan D1).
 
-## 实现要点
+## Implementation notes
 
-- 注入 = `world:"MAIN"` content script（Chrome/Edge 111+、Firefox 128+），launcher 源码
-  构建时内联进 `content/main.js`（文件顶层执行，**不受页面 CSP 约束**）
-- 配置 = isolated world（`content/bridge.js`）读 storage.sync → 写 localStorage（跨 world
-  共享）→ MAIN world document_idle 同步读 → 注入
-- 防重复：`window.__dbgLauncherInstalled` 守卫（页面本身有 launcher，如 pi-web，时不双注入）
-- 小屏：Firefox for Android 完整支持（MV3）；launcher 小屏物理适配内置，注入即用
+- Injection = `world:"MAIN"` content script (Chrome/Edge 111+, Firefox 128+); the launcher source is
+  inlined into `content/main.js` at build time (file top-level execution, **unconstrained by page CSP**)
+- Config = isolated world (`content/bridge.js`) reads storage.sync → **evaluates site rules** (denySites first) →
+  writes localStorage (shared across worlds) → the MAIN world reads it synchronously at document_idle → injects
+- Double-injection guard: `window.__dbgLauncherInstalled` (no double injection when the page already runs a launcher, e.g. pi-web)
+- Small screens: full Firefox for Android support (MV3); the launcher's small-screen physical adaptation is built in
 
-## 目录
+## Layout
 
 ```
 browser-ext/
 ├── src/
-│   ├── content/   bridge.js(隔离世界配置) + main.js(主世界注入)
-│   ├── background/ sw.js
-│   ├── popup/     popup.html/css/js
-│   └── options/   options.html/css/js
+│   ├── content/   bridge.js (isolated-world config + rule evaluation) + main.js (MAIN-world injection)
+│   ├── background/ sw.js (install init + v1 migration)
+│   ├── popup/     popup.html/css/js (this-page state + on-demand enable / allowlist)
+│   └── options/   options.html/css/js (AI target + site rules + advanced)
 ├── scripts/       build.mjs + package.mjs
-└── dist/          chrome/ edge/ firefox/（构建产物）
+├── icons/         brand icons (aiti-docs logo.svg + PNG family)
+└── dist/          chrome/ edge/ firefox/ (build output)
 ```

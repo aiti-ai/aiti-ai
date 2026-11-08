@@ -43,6 +43,10 @@ function buildTarget(target) {
   writeFileSync(join(out, "content", "main.js"), mainOut);
 
   const copy = (rel) => copyFileSync(join(src, rel), join(out, rel));
+  // brand icons (same logo.svg as aiti-docs + rendered PNG family) — manifest icons / action.default_icon / popup & options header
+  mkdirSync(join(out, "icons"), { recursive: true });
+  for (const icon of ["logo.svg", "icon16.png", "icon32.png", "icon48.png", "icon128.png"])
+    copyFileSync(join(root, "icons", icon), join(out, "icons", icon));
   copy("content/bridge.js");
   copy("background/sw.js");
   for (const f of ["popup.html", "popup.css", "popup.js"]) copy(join("popup", f));
@@ -53,6 +57,8 @@ function buildTarget(target) {
     name: "aiti devtools",
     version: pkg.version,
     description: pkg.description,
+    author: "aiti-ai",
+    homepage_url: "https://aiti.pw",
     permissions: ["storage", "activeTab", "scripting"],
     host_permissions: ["<all_urls>"],
     background: { service_worker: "background/sw.js" },
@@ -60,10 +66,22 @@ function buildTarget(target) {
       { matches: ["<all_urls>"], js: ["content/bridge.js"], run_at: "document_start", world: "ISOLATED" },
       { matches: ["<all_urls>"], js: ["content/main.js"], run_at: "document_idle", world: "MAIN" },
     ],
-    action: { default_popup: "popup/popup.html", default_title: "aiti devtools" },
+    action: {
+      default_popup: "popup/popup.html",
+      default_title: "aiti devtools",
+      default_icon: { "16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
+    },
+    icons: { "16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
     options_ui: { page: "options/options.html", open_in_tab: true },
   };
+  if (target === "chrome" || target === "edge") {
+    // world:"MAIN" content scripts need Chromium 111+; older versions fail silently — declare explicitly
+    // (firefox uses gecko strict_min_version 128 instead of minimum_chrome_version)
+    manifest.minimum_chrome_version = "111";
+  }
   if (target === "firefox") {
+    // Firefox MV3 has no service_worker (Chromium-only) — event page model (background.scripts array)
+    manifest.background = { scripts: ["background/sw.js"] };
     manifest.browser_specific_settings = {
       gecko: { id: "aiti-devtools@aiti.ai", strict_min_version: "128.0" },
       gecko_android: { strict_min_version: "128.0" },

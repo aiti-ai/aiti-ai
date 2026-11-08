@@ -1,10 +1,13 @@
 /*
- * aiti-devtools 浏览器扩展 · isolated world 配置桥（Chrome / Edge / Firefox）
+ * aiti-devtools browser extension · isolated-world config bridge (Chrome / Edge / Firefox)
  *
- * 职责：读 storage.sync 配置 → 站点排除匹配 → 写 localStorage（MAIN world 同步读）+ postMessage
- *      （实时通知同页 MAIN world 注入器）。
- * 说明：localStorage 是跨 world（isolated/MAIN）共享的——本脚本异步读回配置后写入，MAIN world
- *      （document_idle）随后同步读到的即最新缓存（稳定态）；首次换配置有一轮延迟（见方案 D1）。
+ * v2 role: read storage.sync config (incl. v1 migration) → **site-rule evaluation**
+ *          (denySites > defaultEnabled||allowSites) → write the **resolved** result
+ *          (enabled/bridgeUrl/aiUrl) to localStorage (synchronous read by MAIN world) + postMessage live update.
+ * On-demand: popup "Enable on this page (once)" → runtime.onMessage('aiti-ext:once') → posts a single
+ *          enabled:true override cfg (**pure runtime message, nothing persisted**) — the always-on listener
+ *          in MAIN-world main.js injects immediately; every new document re-evaluates the rules, which is
+ *          the natural "once" semantics (dies on hard navigation, survives SPA soft routing).
  */
 (function () {
   'use strict';
@@ -12,46 +15,91 @@
   window.__aitiExtBridgeLoaded = true;
 
   const LS_KEY = 'aiti-ext:cfg';
-  const DEFAULTS = {
-    enabled: true,
+  const V2_DEFAULTS = {
+    v: 2,
+    defaultEnabled: false,        // ★ v2: default off
+    allowSites: [],
+    denySites: [],
+    aiTarget: { kind: 'cockpit', baseUrl: '', cockpitUrl: '' },
     bridgeUrl: 'http://127.0.0.1:8777/aiti',
-    aiUrl: 'http://127.0.0.1:8777/cockpit.html',
-    excludes: [],
   };
+  const LEGACY_AI_DEFAULT = 'http://127.0.0.1:8777/cockpit.html';
   const api = globalThis.browser || globalThis.chrome;
-  if (!api || !api.runtime || !api.runtime.id) return; // 非扩展运行时（理论不达）
+  if (!api || !api.runtime || !api.runtime.id) return;
 
-  function save(cfg) { try { localStorage.setItem(LS_KEY, JSON.stringify(cfg)); } catch (e) {} }
-  function publish(cfg) { try { window.postMessage({ __aitiExt: 1, type: 'cfg', cfg: cfg }, '*'); } catch (e) {} }
-  function excluded(url, patterns) {
+  function migrate(stored) { /* same as sw.js (no shared module across isolated runtimes) */
+    stored = stored || {};
+    const cfg = {
+      v: 2,
+      defaultEnabled: typeof stored.defaultEnabled === 'boolean' ? stored.defaultEnabled : V2_DEFAULTS.defaultEnabled,
+      allowSites: Array.isArray(stored.allowSites) ? stored.allowSites : [],
+      denySites: Array.isArray(stored.denySites) ? stored.denySites : [],
+      aiTarget: stored.aiTarget && stored.aiTarget.kind ? stored.aiTarget : { kind: 'cockpit', baseUrl: '', cockpitUrl: '' },
+      bridgeUrl: stored.bridgeUrl || V2_DEFAULTS.bridgeUrl,
+    };
+    if (stored.v !== 2) {
+      if (typeof stored.enabled === 'boolean' && stored.defaultEnabled === undefined)
+        cfg.defaultEnabled = stored.enabled;
+      if ((!stored.denySites || !stored.denySites.length) && Array.isArray(stored.excludes) && stored.excludes.length && !cfg.allowSites.length)
+        cfg.denySites = stored.excludes;
+      if (stored.aiUrl && stored.aiUrl !== LEGACY_AI_DEFAULT && (!stored.aiTarget || !stored.aiTarget.kind))
+        cfg.aiTarget = { kind: 'cockpit', baseUrl: '', cockpitUrl: stored.aiUrl };
+    }
+    return cfg;
+  }
+
+  function matchesAny(url, patterns) {
     for (let i = 0; i < (patterns || []).length; i++) {
       try { if (new RegExp(patterns[i]).test(url)) return true; } catch (e) {}
     }
     return false;
   }
+  // site-rule evaluation (denySites wins over everything; with default-off, allowlist hit enables)
+  function autoEnabled(href, cfg) {
+    if (matchesAny(href, cfg.denySites)) return false;
+    return cfg.defaultEnabled || matchesAny(href, cfg.allowSites);
+  }
+  // AI window URL resolution: pi-web/agent → baseUrl; cockpit → explicit cockpitUrl or derived from bridgeUrl origin
+  function resolveAiUrl(cfg) {
+    const t = cfg.aiTarget || { kind: 'cockpit' };
+    if ((t.kind === 'pi-web' || t.kind === 'agent') && t.baseUrl) return t.baseUrl;
+    return t.cockpitUrl || cfg.bridgeUrl.replace(/\/+$/, '').replace(/\/aiti$/, '') + '/cockpit.html';
+  }
+  // rule evaluation → the resolved result the MAIN world needs
+  function resolve(href, cfg) {
+    return { v: 2, enabled: autoEnabled(href, cfg), bridgeUrl: cfg.bridgeUrl, aiUrl: resolveAiUrl(cfg) };
+  }
+
+  function save(cfg) { try { localStorage.setItem(LS_KEY, JSON.stringify(cfg)); } catch (e) {} }
+  function publish(cfg) { try { window.postMessage({ __aitiExt: 1, type: 'cfg', cfg: cfg }, '*'); } catch (e) {} }
 
   const read = () => new Promise((resolve) => {
-    try { api.storage.sync.get(DEFAULTS, resolve); }
-    catch (e) { resolve(Object.assign({}, DEFAULTS)); }
+    try { api.storage.sync.get(null, (items) => resolve(items || {})); }
+    catch (e) { resolve({}); }
   });
 
-  read().then((items) => {
-    const cfg = Object.assign({}, DEFAULTS, items || {});
-    if (excluded(location.href, cfg.excludes)) cfg.enabled = false;
-    save(cfg);
-    publish(cfg);
+  function apply(stored) {
+    const cfg = migrate(stored);
+    const resolved = resolve(location.href, cfg);
+    save(resolved);
+    publish(resolved);
+  }
+
+  read().then(apply);                                                          // first evaluation
+  if (api.storage.onChanged) api.storage.onChanged.addListener((ch, area) => { // re-evaluate live on config change
+    if (area === 'sync') read().then(apply);
   });
 
-  // options/popup 保存后主动推送：更新同页 localStorage 缓存 + 通知 MAIN world（launcher 已 boot 则刷新后生效）
-  try {
-    api.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-      if (msg && msg.__aitiExt === 1 && msg.type === 'cfg' && msg.cfg) {
-        const cfg = Object.assign({}, DEFAULTS, msg.cfg);
-        if (excluded(location.href, cfg.excludes)) cfg.enabled = false;
-        save(cfg);
-        publish(cfg);
-        sendResponse({ ok: true });
-      }
-    });
-  } catch (e) { /* Firefox 某些版本 onMessage 语义差异，忽略 */ }
+  // popup on-demand enable (once): pure runtime override, nothing persisted
+  api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (!msg || msg.__aitiExt !== 1) return;
+    if (msg.type === 'aiti-ext:once') {
+      read().then((stored) => {
+        const cfg = migrate(stored);
+        publish({ v: 2, enabled: true, bridgeUrl: cfg.bridgeUrl, aiUrl: resolveAiUrl(cfg) });
+        try { sendResponse({ ok: true }); } catch (e) {}
+      });
+      return true; // async sendResponse
+    }
+  });
 })();
