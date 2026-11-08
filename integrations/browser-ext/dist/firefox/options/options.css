@@ -1,43 +1,75 @@
+/* aiti-devtools 浏览器扩展 · options（v2）——深浅色跟随系统，aiti 品牌紫，卡片式 */
 :root {
   --bg: #0f172a; --panel: #1e293b; --panel2: #111827; --border: #334155;
-  --text: #e2e8f0; --muted: #94a3b8; --accent: #4f46e5; --accent-2: #6366f1; --green: #34d399; --red: #ef4444;
+  --text: #e2e8f0; --muted: #94a3b8;
+  --accent: #7c3aed; --accent-2: #a78bfa; --green: #34d399; --red: #f87171;
   color-scheme: dark;
 }
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f8fafc; --panel: #ffffff; --panel2: #f1f5f9; --border: #e2e8f0;
+    --text: #0f172a; --muted: #64748b;
+    --accent: #7c3aed; --accent-2: #8b5cf6; --green: #059669; --red: #dc2626;
+    color-scheme: light;
+  }
+}
 * { box-sizing: border-box; }
-body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); font-size: 14px; }
-.wrap { max-width: 640px; margin: 0 auto; padding: 32px 24px 64px; }
-h1 { font-size: 18px; margin: 0 0 6px; }
+body {
+  margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--bg); color: var(--text); font-size: 14px;
+}
+.wrap { max-width: 660px; margin: 0 auto; padding: 36px 24px 64px; }
+h1 { font-size: 18px; margin: 0 0 6px; display: flex; align-items: center; gap: 10px; }
+h1 .logo-img { width: 24px; height: 24px; border-radius: 6px; display: block; }
 .sub { color: var(--muted); font-size: 13px; margin: 0 0 24px; line-height: 1.6; }
-.card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; margin-bottom: 16px; }
+.card {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 18px 20px; margin-bottom: 16px;
+}
+.card h2 { font-size: 14px; margin: 0 0 14px; letter-spacing: .2px; }
 .field { display: block; margin-bottom: 14px; }
 .field:last-child { margin-bottom: 0; }
 .k { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
 input[type=text], textarea {
   width: 100%; background: var(--panel2); color: var(--text); border: 1px solid var(--border);
-  border-radius: 8px; padding: 8px 10px; font: inherit; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 13px; outline: none;
+  border-radius: 8px; padding: 8px 10px; font: inherit; font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 13px; outline: none; transition: border-color .15s, box-shadow .15s;
 }
-input[type=text]:focus, textarea:focus { border-color: var(--accent-2); }
+input[type=text]:focus, textarea:focus {
+  border-color: var(--accent-2);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
 textarea { resize: vertical; }
+input[type=radio], input[type=checkbox] { accent-color: var(--accent); }
 .tip { font-size: 12px; color: var(--muted); margin: 6px 0 0; line-height: 1.6; }
 code { background: var(--panel2); padding: 1px 6px; border-radius: 4px; font-size: 12px; color: var(--accent-2); }
 .mono-row { display: flex; gap: 8px; align-items: center; }
 .mono-row code { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 7px 10px; }
-.actions { display: flex; align-items: center; gap: 10px; }
+.actions { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
 .btn {
   background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 8px;
   padding: 8px 16px; cursor: pointer; font: inherit;
+  transition: background .15s, border-color .15s, transform .06s;
 }
-.btn:hover { background: var(--panel); border-color: var(--accent-2); }
+.btn:hover:not(:disabled) { background: var(--panel); border-color: var(--accent-2); }
+.btn:active:not(:disabled) { transform: scale(.98); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-.btn.primary:hover { background: var(--accent-2); }
+.btn.primary:hover:not(:disabled) { background: var(--accent-2); border-color: var(--accent-2); }
 .btn.mini { padding: 6px 12px; font-size: 12px; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
 .status { font-size: 13px; }
 .status.ok { color: var(--green); }
 .status.err { color: var(--red); }
-/* 开关 */
-.switch { position: relative; display: inline-block; width: 40px; height: 22px; }
-.switch input { opacity: 0; width: 0; height: 0; }
-.slider { position: absolute; inset: 0; background: var(--border); border-radius: 999px; transition: .2s; cursor: pointer; }
-.slider::before { content: ''; position: absolute; width: 18px; height: 18px; left: 2px; top: 2px; background: #fff; border-radius: 50%; transition: .2s; }
-.switch input:checked + .slider { background: var(--green); }
-.switch input:checked + .slider::before { transform: translateX(18px); }
+/* AI 目标单选：radio-card 效果（不支持 :has 的浏览器优雅降级为普通单选） */
+label.field:has(input[name="aiKind"]) {
+  display: flex; align-items: baseline; gap: 8px;
+  border: 1px solid var(--border); border-radius: 8px; padding: 9px 12px;
+  margin-bottom: 8px; cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+label.field:has(input[name="aiKind"]):hover { background: var(--panel2); }
+label.field:has(input[name="aiKind"]:checked) { border-color: var(--accent-2); background: color-mix(in srgb, var(--accent) 10%, var(--panel)); }
+label.field:has(input[name="aiKind"]) .k { color: var(--text); font-size: 13px; margin: 0; }
+/* 默认注入 checkbox 行 */
+label.field:has(#defaultEnabled) { display: flex; align-items: baseline; gap: 8px; }
+label.field:has(#defaultEnabled) .k { color: var(--text); font-size: 13px; margin: 0; }

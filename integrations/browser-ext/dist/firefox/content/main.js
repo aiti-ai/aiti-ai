@@ -12,7 +12,7 @@
   'use strict';
   const LS_KEY = 'aiti-ext:cfg';
   const DEFAULTS = {
-    enabled: true,
+    enabled: false,   // ★ v2 默认关（bridge.js 按站点规则解析后才为 true；「本次启用」经 postMessage 覆盖）
     bridgeUrl: 'http://127.0.0.1:8777/aiti',
     aiUrl: 'http://127.0.0.1:8777/cockpit.html',
   };
@@ -48,7 +48,7 @@
     return a;
   };
 
-  // src/launcher/config.js
+  // packages/aiti-devtools-inject/src/launcher/config.js
   var VERSION = "0.2.1";
   var DEFAULTS = {
     endpoint: "",
@@ -66,7 +66,7 @@
     iframeHeight: "min(560px, 80vh)"
   };
 
-  // src/launcher/dom.js
+  // packages/aiti-devtools-inject/src/launcher/dom.js
   function el(tag, attrs, children) {
     var node = document.createElement(tag);
     if (attrs) for (var k in attrs) node.setAttribute(k, attrs[k]);
@@ -394,26 +394,22 @@
       .dbg-ai-bar .dbg-ai-title { font-weight: 600; margin-right: auto; color: #374151; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 38vw; flex-shrink: 1; display: flex; align-items: center; gap: 5px; }
       .dbg-ai-bar .dbg-ai-favicon { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; }
       .dbg-ai-bar button {
-        border: 1px solid #d1d5db; background: #fff; border-radius: 12px;
-        padding: 1px 8px; min-height: 24px; cursor: pointer; font: inherit; font-size: 11px; color: #4b5563;
-      }
-      .dbg-ai-bar button:not(.dbg-ai-size) { padding: 0; width: 26px; height: 26px; border-radius: 50%; } /* 图标按钮（dock/重置/设置/关闭）正圆 */
+        border: 1px solid #d1d5db; background: #fff;
+        padding: 0; width: 26px; height: 26px; border-radius: 50%;
+        cursor: pointer; font: inherit; font-size: 11px; color: #4b5563;
+      } /* 图标按钮（最大化/新窗口/设置/关闭）正圆 */
       .dbg-ai-bar button:hover { background: #eef2ff; border-color: #c7d2fe; }
       .dbg-ai-bar .dbg-ai-close { color: #dc2626; }
-      /* 小屏：AI 窗标题栏精简——尺寸按钮（−宽/+宽/−高/+高）隐藏（小屏全宽贴边，尺寸自适应），贴边/关闭按钮缩小 */
+      /* 小屏：AI 窗标题栏精简——默认全屏贴边（最大化），仅 最大化/新窗口/设置/关闭 四钮 */
       #__dbg_launcher.dbg-phys-small .dbg-ai-bar { height: 34px; padding: 0 6px; font-size: 12px; gap: 4px; }
       #__dbg_launcher.dbg-phys-small .dbg-ai-bar .dbg-ai-title { font-size: 12px; }
       #__dbg_launcher.dbg-phys-small .dbg-ai-bar button { min-width: 26px; min-height: 26px; font-size: 12px; padding: 1px 5px; }
-      #__dbg_launcher.dbg-phys-small .dbg-ai-bar .dbg-ai-dock-x { display: none; } /* 小屏全宽：左右贴边无意义 */
-      #__dbg_launcher.dbg-phys-small .dbg-ai-bar .dbg-ai-size-w { display: none; } /* 小屏全宽：宽度不可调 */
-      /* 分组间距：dock 组（▲▼）后、右侧固定组（⧉⚙✕）前留白——小屏 7 按钮不再挤成一团（原 gap 2px 触屏易误触） */
-      #__dbg_launcher.dbg-phys-small .dbg-ai-bar .dbg-ai-size { margin-left: 10px; }
+      /* 分组间距：右侧固定组（⛶⧉⚙✕）前留白（不再挤成一团，触屏不易误触） */
+      #__dbg_launcher.dbg-phys-small .dbg-ai-bar .dbg-ai-max { margin-left: 10px; }
       #__dbg_launcher.dbg-phys-small .dbg-ai-bar .dbg-ai-pop { margin-left: 10px; }
-      /* 小屏保留 dock-y(▲▼ 贴上/下) + size-h(−高/+高 缩小高度) + close */
-      #__dbg_launcher.dbg-phys-small .dbg-ai-resize { display: none; } /* 全宽贴边尺寸用按钮调，无角柄 */
+      #__dbg_launcher.dbg-phys-small .dbg-ai-resize { display: none; } /* 小屏全宽贴边，尺寸自适应，无角柄 */
       /* 小屏：resize 边缘拖条（右/下/左）隐藏——小屏手势已被 filter:!small 禁用（拖不动），
-         却仍覆盖 iframe 对应边缘（底部 24px 命中区挡住内容点击、点击无效）→ 纯遮挡，隐藏释放边缘。
-         高度/宽度改用 bar 上 −高/+高 按钮调节（小屏宽度恒全宽，左右缘条无意义） */
+         却仍覆盖 iframe 对应边缘（底部 24px 命中区挡住内容点击、点击无效）→ 纯遮挡，隐藏释放边缘 */
       #__dbg_launcher.dbg-phys-small .dbg-ai-resize-r,
       #__dbg_launcher.dbg-phys-small .dbg-ai-resize-b,
       #__dbg_launcher.dbg-phys-small .dbg-ai-resize-l { display: none; }
@@ -509,11 +505,13 @@
         position: fixed; inset: 0; z-index: 2147483645; display: none;
         background: rgba(17,24,39,.45); align-items: center; justify-content: center;
       }
-      /* 点选面板（pick_element）：右下角小面板——不覆盖全屏（页面可点选）、可最小化 */
+      /* 点选/问答/通知面板（aiti-user-*）：右下角浮层——不覆盖全屏、可拖拽可最小化；
+       * 宽度运行时由 placePhysPanel 内联接管（问答面板 520、小屏自动 w-24），CSS 值仅挂载前瞬间生效 */
       .dbg-pick-dialog {
-        position: fixed; right: 12px; bottom: 12px; z-index: 2147483646; width: 360px; max-width: 92vw;
-        background: rgba(17,24,39,.96); color: #e5e7eb; border-radius: 12px;
-        box-shadow: 0 8px 30px rgba(0,0,0,.4); font-size: 14px; overflow: hidden;
+        position: fixed; right: 12px; bottom: 12px; z-index: 2147483646; width: 520px; max-width: 92vw;
+        background: linear-gradient(180deg, rgba(30,41,59,.98), rgba(17,24,39,.98)); color: #e5e7eb; border-radius: 14px;
+        border: 1px solid rgba(148,163,184,.22);
+        box-shadow: 0 12px 40px rgba(0,0,0,.5); font-size: 14px; overflow: hidden;
       }
       /* 短暂提示（toast）：交互到达时提示用户，几秒自动消失——不阻塞、不弹确认窗 */
       .dbg-pick-toast {
@@ -522,20 +520,35 @@
         box-shadow: 0 8px 30px rgba(0,0,0,.4); text-align: center; pointer-events: none;
         transition: opacity .4s; word-break: break-all;
       }
-      .dbg-pick-head { padding: 8px 12px; font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 6px; cursor: grab; touch-action: none; } /* cursor grab + touch-action:none：头部可拖拽（makePointerDrag，AI 窗同款） */
+      .dbg-pick-head { padding: 10px 14px; font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 8px; cursor: grab; touch-action: none; background: rgba(255,255,255,.045); border-bottom: 1px solid rgba(148,163,184,.16); } /* cursor grab + touch-action:none：头部可拖拽（makePointerDrag，AI 窗同款） */
       .dbg-pick-dialog.dbg-dragging { cursor: grabbing; opacity: .92; box-shadow: 0 14px 44px rgba(0,0,0,.55); }
       .dbg-pick-head .dbg-pick-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .dbg-pick-head button { border: 0; background: rgba(255,255,255,.12); color: #e5e7eb; border-radius: 5px; padding: 2px 8px; cursor: pointer; font: inherit; font-size: 13px; }
-      .dbg-pick-body { padding: 10px 12px 12px; font-size: 14px; color: #cbd5e1; }
+      .dbg-pick-head button { border: 1px solid transparent; background: rgba(255,255,255,.12); color: #e5e7eb; border-radius: 6px; padding: 3px 10px; cursor: pointer; font: inherit; font-size: 13px; }
+      .dbg-pick-head button:hover { background: rgba(255,255,255,.2); }
+      .dbg-pick-body { padding: 14px; font-size: 14px; color: #d3d9e0; line-height: 1.6; }
+      .dbg-pick-body input::placeholder { color: #64748b; }
       .dbg-pick-body .dbg-pick-sel { margin: 6px 0; font-size: 14px; color: #93c5fd; word-break: break-all; }
       .dbg-pick-body button { border: 0; border-radius: 7px; padding: 9px 14px; cursor: pointer; font: inherit; font-size: 15px; }
-      /* 问答面板选项按钮：等宽整齐排列 + 统一底色（用户实测透明文字看不清、跨面板样式不一致）
-       * 次要选项（dbg-ghost）浅底；主操作（dbg-primary 如 ✅ 是/确认、选项）靛蓝强调 */
-      .dbg-ask-opt { flex: 1 1 auto; min-width: 100px; background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.12); color: #e5e7eb; }
-      .dbg-ask-opt.dbg-primary { background: #4f46e5; border-color: #4f46e5; color: #fff; font-weight: 700; }
+      /* ---- 问答面板（aiti-user-*）视觉契约（2026-09 优化：可读性/配色/宽度/编号/小屏） ----
+       * 问题区（.dbg-ask-prompt）：大字号高对比 + 左侧强调条——AI 的问题是面板最重要信息
+       * 选项区：垂直全宽列表（长文案不挤压换行）+ 数字徽标（1/2/3…，与键盘快捷键 1-9 对应）
+       * 语义配色：主操作（是/确认/我在）绿色渐变；否定/取消红字浅红 hover；「都不适合」虚线灰 */
+      .dbg-ask-prompt { white-space: pre-wrap; font-size: 15px; font-weight: 600; color: #f8fafc; line-height: 1.7; word-break: break-word; background: rgba(96,165,250,.08); border-left: 3px solid #60a5fa; border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; }
+      .dbg-pick-body .dbg-ask-opt { display: flex; align-items: center; gap: 9px; width: 100%; min-width: 0; justify-content: flex-start; text-align: left; padding: 10px 12px; border-radius: 9px; background: rgba(255,255,255,.07); border: 1px solid rgba(148,163,184,.28); color: #eef2f7; transition: background .12s, border-color .12s; }
+      .dbg-pick-body .dbg-ask-opt:hover { background: rgba(255,255,255,.13); border-color: rgba(165,180,252,.6); }
+      .dbg-ask-num { flex: 0 0 auto; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 6px; background: rgba(99,102,241,.22); border: 1px solid rgba(129,140,248,.5); color: #c7d2fe; font-size: 12px; font-weight: 700; line-height: 1; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; }
+      .dbg-pick-body .dbg-ask-opt.dbg-primary { background: linear-gradient(135deg, #22c55e, #16a34a); border-color: transparent; color: #fff; font-weight: 700; box-shadow: 0 2px 12px rgba(34,197,94,.35); }
+      .dbg-pick-body .dbg-ask-opt.dbg-primary:hover { background: linear-gradient(135deg, #16a34a, #15803d); }
+      .dbg-ask-opt.dbg-primary .dbg-ask-num { background: rgba(255,255,255,.22); border-color: rgba(255,255,255,.5); color: #fff; }
+      .dbg-pick-body .dbg-ask-opt.dbg-ask-no { color: #fca5a5; }
+      .dbg-pick-body .dbg-ask-opt.dbg-ask-no:hover { background: rgba(248,113,113,.12); border-color: rgba(248,113,113,.55); }
+      .dbg-pick-body .dbg-ask-opt.dbg-ask-opt-custom { border-style: dashed; color: #c3cad4; }
       .dbg-ask-opt.dbg-on { outline: 2px solid #a5b4fc; outline-offset: 1px; }
-      .dbg-ask-opt.dbg-on.dbg-primary { background: #4338ca; }
+      .dbg-pick-body .dbg-ask-opt.dbg-on.dbg-primary { background: linear-gradient(135deg, #16a34a, #15803d); }
       .dbg-ask-label { display: block; font-size: 13px; color: #94a3b8; margin-top: 10px; }
+      /* 「现在无法处理」拒绝区按钮（原 inline 样式收编进 CSS：跨面板统一） */
+      .dbg-ask-reject { font-size: 13px; padding: 8px 12px; background: rgba(255,255,255,.06); border: 1px solid rgba(148,163,184,.3); color: #e5e7eb; border-radius: 8px; cursor: pointer; }
+      .dbg-ask-reject:hover { background: rgba(255,255,255,.13); }
       .dbg-pick-ok { background: #4f46e5; color: #fff; }
       .dbg-pick-cancel { background: rgba(255,255,255,.12); color: #e5e7eb; margin-right: 6px; }
       /* 问答面板发送按钮（手写输入/多选发送）：亮绿高亮——原无底色透明、深色面板上几乎看不见（用户实测） */
@@ -653,7 +666,7 @@
     return a;
   };
 
-  // src/client/index.js
+  // packages/aiti-devtools-inject/src/client/index.js
   (function() {
     "use strict";
     if (window.__dbg && window.__dbg.__version__ && typeof window.__dbg.getSelectionPayload === "function") return;
@@ -3513,7 +3526,7 @@
 })();
 `;
 
-  // src/launcher/viewport.js
+  // packages/aiti-devtools-inject/src/launcher/viewport.js
   function getPhysViewport() {
     var scale = 1, hasVV = false;
     try {
@@ -3768,7 +3781,7 @@
     });
   }
 
-  // src/launcher/constants.js
+  // packages/aiti-devtools-inject/src/launcher/constants.js
   var DANGER_COMMANDS = {
     "DOM.removeNode": "删除页面元素（不可恢复）",
     "Page.reload": "重载目标页面",
@@ -3809,7 +3822,7 @@
   var AI_WIN_KEY = "__dbg_ai_win__";
   var DBG_SHOW_KEY = "__dbg_show_debug__";
 
-  // src/launcher/storage.js
+  // packages/aiti-devtools-inject/src/launcher/storage.js
   function lsGetJSON(key, fallback) {
     try {
       return JSON.parse(localStorage.getItem(key)) || fallback;
@@ -3837,7 +3850,7 @@
     }
   }
 
-  // src/launcher/drag.js
+  // packages/aiti-devtools-inject/src/launcher/drag.js
   function makePointerDrag(opts) {
     var handle = opts.handle;
     var threshold = opts.threshold || 0;
@@ -3968,12 +3981,12 @@
     });
   }
 
-  // src/launcher/protocol.js
+  // packages/aiti-devtools-inject/src/launcher/protocol.js
   function dbgMsg(extra) {
     return __spreadValues({ __dbg: 1 }, extra);
   }
 
-  // src/launcher/state.js
+  // packages/aiti-devtools-inject/src/launcher/state.js
   function initState(ctx) {
     ctx.loadDbgState = function() {
       return lsGetJSON(DBG_STATE_KEY, {});
@@ -3983,7 +3996,7 @@
     };
   }
 
-  // src/launcher/fab.js
+  // packages/aiti-devtools-inject/src/launcher/fab.js
   function initFab(ctx) {
     ctx.persistFabPos = function() {
       try {
@@ -4160,7 +4173,7 @@
     };
   }
 
-  // src/launcher/nav.js
+  // packages/aiti-devtools-inject/src/launcher/nav.js
   function initNav(ctx) {
     ctx.doNav = function(dir) {
       ctx.navHoldT = Date.now() + 400;
@@ -4168,7 +4181,7 @@
     };
   }
 
-  // src/launcher/target.js
+  // packages/aiti-devtools-inject/src/launcher/target.js
   function initTarget(ctx) {
     ctx.ensureClientFresh = function(win, doc) {
       try {
@@ -4611,7 +4624,7 @@
     };
   }
 
-  // src/launcher/help.js
+  // packages/aiti-devtools-inject/src/launcher/help.js
   function initHelp(ctx) {
     ctx.helpDialogOpen = function() {
       return !!(ctx.helpDialog && ctx.helpDialog.parentNode);
@@ -4718,7 +4731,7 @@
     };
   }
 
-  // src/launcher/options.js
+  // packages/aiti-devtools-inject/src/launcher/options.js
   function initOptions(ctx) {
     ctx.loadOptState = function() {
       return lsGetJSON(OPT_KEY, {});
@@ -5158,7 +5171,7 @@
     };
   }
 
-  // src/launcher/danger.js
+  // packages/aiti-devtools-inject/src/launcher/danger.js
   function initDanger(ctx) {
     ctx.handleAiCommand = function(p2) {
       var sendResult = function(ok, result) {
@@ -5820,7 +5833,22 @@
     };
   }
 
-  // src/launcher/interact.js
+  // packages/aiti-devtools-inject/src/launcher/interact.js
+  function describeAnswer(kind, v) {
+    v = v || {};
+    if (kind === "confirm") return v.approved === false ? "❌ 否" : "✅ 是";
+    if (kind === "choose") {
+      if (Array.isArray(v.indexes)) return v.labels && v.labels.length ? v.labels.join("、") : v.indexes.length + " 项";
+      return v.custom || v.index === -1 ? "✍️ 都不适合" : String(v.label != null ? v.label : v.index);
+    }
+    if (kind === "input") return String(v.text || "");
+    if (kind === "presence") return v.present === false ? "⏳ 稍后" : "🙋 我在";
+    if (kind === "pick_element") {
+      if (v.tag || v.text) return "🎯 <" + (v.tag || "?") + ">" + (v.text ? " " + String(v.text).trim().slice(0, 40) : "");
+      return "🎯 已选元素";
+    }
+    return "✅ 已作答";
+  }
   function initInteract(ctx) {
     ctx.hudSmallOffset = 0;
     try {
@@ -6097,7 +6125,7 @@
       dialog.appendChild(body);
       ctx.root.appendChild(dialog);
       dialog.style.zIndex = "2147483648";
-      placePhysPanel(dialog, { visW: Math.min(340, Math.round(getPhysViewport().w) - 24), dock: "bottom", gap: 12, offsetY: 64, minH: 40, maxWidth: "340px", overflowY: "auto" });
+      placePhysPanel(dialog, { visW: Math.min(420, Math.round(getPhysViewport().w) - 24), dock: "bottom", gap: 12, offsetY: 64, minH: 40, maxWidth: "420px", overflowY: "auto" });
       try {
         ctx.dodgeToolbarAboveDialog(dialog);
       } catch (e) {
@@ -6133,7 +6161,7 @@
         var hidden = body.style.display === "none";
         body.style.display = hidden ? "" : "none";
         minBtn.textContent = hidden ? "👁 隐藏" : "👁 显示";
-        if (dialog.parentNode) placePhysPanel(dialog, { visW: Math.min(340, Math.round(getPhysViewport().w) - 24), dock: "bottom", gap: 12, offsetY: 64, minH: 40, maxWidth: "340px", overflowY: "auto" });
+        if (dialog.parentNode) placePhysPanel(dialog, { visW: Math.min(420, Math.round(getPhysViewport().w) - 24), dock: "bottom", gap: 12, offsetY: 64, minH: 40, maxWidth: "420px", overflowY: "auto" });
       });
       function startInspect() {
         ctx.hideAiForPick();
@@ -6197,9 +6225,15 @@
       var kind = it.kind || "confirm";
       var timeoutMs = parseInt(it.timeoutMs, 10) > 0 ? parseInt(it.timeoutMs, 10) : 0;
       var startedAt = Date.now();
+      var seq = ctx.askPanelSeq = (ctx.askPanelSeq || 0) + 1;
+      function reflowPanel() {
+        var w = Math.min(520, Math.round(getPhysViewport().w) - 24);
+        placePhysPanel(dialog, { visW: w, dock: "bottom", gap: 12, offsetY: 64, minH: 40, maxWidth: w + "px", overflowY: "auto" });
+      }
       var dialog = el("div", { class: "dbg-pick-dialog" });
       var head = el("div", { class: "dbg-pick-head" });
-      head.appendChild(el("span", { class: "dbg-pick-title" }, ["🤖 AI 需要你回答"]));
+      var kindTitle = { confirm: "🤖 AI 需要你确认", choose: "🤖 AI 请你选择", input: "✍️ AI 请你输入", presence: "🙋 AI 问你是否在场" };
+      head.appendChild(el("span", { class: "dbg-pick-title" }, [kindTitle[kind] || "🤖 AI 需要你回答"]));
       var noTimeout = !(timeoutMs > 0);
       var timerSpan = el("span", { style: "font-weight:400;color:#93c5fd;font-size:11px" }, [noTimeout ? "♾ 等待操作" : "⏱ " + Math.ceil(timeoutMs / 1e3) + "s"]);
       var pauseBtn = el("button", { title: "暂停倒计时" }, ["⏸"]);
@@ -6215,13 +6249,13 @@
       head.appendChild(cancelHead);
       dialog.appendChild(head);
       var body = el("div", { class: "dbg-pick-body" });
-      body.appendChild(el("div", { style: "white-space:pre-wrap;margin-bottom:6px;font-size:13px;font-weight:600;color:#f8fafc" }, [it.prompt || ""]));
+      body.appendChild(el("div", { class: "dbg-ask-prompt" }, [it.prompt || ""]));
       minBtn.addEventListener("click", function() {
         var hidden = body.style.display === "none";
         body.style.display = hidden ? "" : "none";
         minBtn.textContent = hidden ? "👁 隐藏" : "👁 显示";
         try {
-          placePhysPanel(dialog, { visW: Math.min(360, Math.round(getPhysViewport().w) - 24), dock: "bottom", gap: 12, offsetY: 64, minH: 40, maxWidth: "360px", overflowY: "auto" });
+          reflowPanel();
         } catch (e) {
         }
       });
@@ -6229,9 +6263,9 @@
       var multiple = !!it.multiple;
       var singleShot = !(kind === "choose" && multiple);
       if (kind !== "input") {
-        ctl.appendChild(el("div", { class: "dbg-ask-label" }, [singleShot ? "点击选项立即作答：" : "勾选后点「发送」："]));
+        ctl.appendChild(el("div", { class: "dbg-ask-label" }, [singleShot ? "点选项或按数字键 1-9 立即作答：" : "勾选（可多选）后点「发送」："]));
       }
-      var optWrap = el("div", { style: "display:flex;gap:6px;flex-wrap:wrap" });
+      var optWrap = el("div", { style: "display:flex;flex-direction:column;gap:8px;margin-top:8px" });
       var sel = { v: null, idxs: {}, custom: false };
       function finishAskCustom() {
         var comment = commentInp ? commentInp.value.trim() : "";
@@ -6272,33 +6306,36 @@
           else finishAsk({ status: "answered", value: Object.assign({ present: true }, cv) });
         }
       }
+      function askNum(n) {
+        return el("span", { class: "dbg-ask-num" }, [String(n)]);
+      }
       if (kind === "confirm") {
-        optWrap.appendChild(el("button", { class: "dbg-ghost dbg-ask-opt", "data-v": "no" }, ["❌ 否 / 拒绝"]));
-        optWrap.appendChild(el("button", { class: "dbg-ghost dbg-ask-opt dbg-ask-opt-custom", "data-custom": "1" }, ["💬 都不适合"]));
-        optWrap.appendChild(el("button", { class: "dbg-primary dbg-ask-opt", "data-v": "yes" }, ["✅ 是 / 确认"]));
+        optWrap.appendChild(el("button", { class: "dbg-primary dbg-ask-opt", "data-v": "yes" }, [askNum(1), "是 / 确认"]));
+        optWrap.appendChild(el("button", { class: "dbg-ghost dbg-ask-opt dbg-ask-no", "data-v": "no" }, [askNum(2), "否 / 取消"]));
+        optWrap.appendChild(el("button", { class: "dbg-ghost dbg-ask-opt dbg-ask-opt-custom", "data-custom": "1" }, [askNum(3), "都不适合（输入回答）"]));
       } else if (kind === "choose") {
         var choices = it.choices && it.choices.length ? it.choices : ["选项 A", "选项 B"];
         choices.forEach(function(c, i) {
-          optWrap.appendChild(el("button", { class: "dbg-primary dbg-ask-opt", "data-i": String(i) }, [String(c)]));
+          optWrap.appendChild(el("button", { class: "dbg-ghost dbg-ask-opt", "data-i": String(i) }, [askNum(i + 1), String(c)]));
         });
-        optWrap.appendChild(el("button", { class: "dbg-ghost dbg-ask-opt dbg-ask-opt-custom", "data-custom": "1" }, ["✍️ 这些都不适合"]));
+        optWrap.appendChild(el("button", { class: "dbg-ghost dbg-ask-opt dbg-ask-opt-custom", "data-custom": "1" }, [askNum(choices.length + 1), "这些都不适合（输入回答）"]));
       } else if (kind === "presence") {
-        optWrap.appendChild(el("button", { class: "dbg-ghost dbg-ask-opt", "data-v": "later" }, ["⏳ 稍后"]));
-        optWrap.appendChild(el("button", { class: "dbg-primary dbg-ask-opt", "data-v": "yes" }, ["🙋 我在，继续"]));
+        optWrap.appendChild(el("button", { class: "dbg-primary dbg-ask-opt", "data-v": "yes" }, [askNum(1), "我在，继续"]));
+        optWrap.appendChild(el("button", { class: "dbg-ghost dbg-ask-opt dbg-ask-no", "data-v": "later" }, [askNum(2), "稍后 / 不在"]));
       }
       if (kind !== "input") ctl.appendChild(optWrap);
       var commentInp = null, sendBtn = null;
       if (kind === "confirm" || kind === "choose" || kind === "presence") {
         ctl.appendChild(el("div", { class: "dbg-ask-label" }, ["📝 补充说明（可选）"]));
         var commentRow = el("div", { style: "display:flex;gap:6px" });
-        commentInp = el("input", { type: "text", placeholder: singleShot ? "📝 补充说明（可选，填好后点选项一并发送）" : "📝 补充说明（可选）", style: "border:1px solid #a5b4fc;border-radius:8px;padding:7px 9px;font:inherit;flex:1" });
+        commentInp = el("input", { type: "text", placeholder: singleShot ? "📝 补充说明（可选，填好后点选项一并发送）" : "📝 补充说明（可选）", style: "background:rgba(255,255,255,.06);border:1px solid rgba(148,163,184,.35);color:#f1f5f9;border-radius:8px;padding:9px 11px;font:inherit;flex:1" });
         sendBtn = multiple ? null : el("button", { class: "dbg-primary dbg-ask-send", style: (singleShot ? "display:none;" : "") + "flex:1;font-weight:700;font-size:13px;padding:9px 12px" }, ["✓ 发送"]);
         commentRow.appendChild(commentInp);
         if (sendBtn) commentRow.appendChild(sendBtn);
         ctl.appendChild(commentRow);
       }
       if (kind === "input") {
-        var inp = el("input", { type: "text", value: it.defaultValue || "", placeholder: "输入你的回答…", style: "border:1px solid #a5b4fc;border-radius:8px;padding:7px 9px;font:inherit;flex:1" });
+        var inp = el("input", { type: "text", value: it.defaultValue || "", placeholder: "输入你的回答…", style: "background:rgba(255,255,255,.06);border:1px solid rgba(148,163,184,.35);color:#f1f5f9;border-radius:8px;padding:9px 11px;font:inherit;flex:1" });
         var send = el("button", { class: "dbg-primary dbg-ask-send" }, ["发送"]);
         var r3 = el("div", { style: "display:flex;gap:6px" });
         r3.appendChild(inp);
@@ -6382,13 +6419,13 @@
         det2.appendChild(el("summary", { style: "cursor:pointer;font-size:13px;color:#cbd5e1;margin-top:10px;padding:4px 0;user-select:none" }, ["✕ 现在无法处理（告诉 AI 原因）"]));
         var rr2 = el("div", { style: "display:flex;flex-wrap:wrap;gap:8px;margin-top:6px" });
         ["我暂时无法满足你的要求", "暂时找不到/选不了", "等会再处理"].forEach(function(r) {
-          rr2.appendChild(el("button", { class: "dbg-ghost dbg-ask-reject", "data-reason": r, style: "font-size:13px;padding:8px 14px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);color:#e5e7eb;border-radius:8px;cursor:pointer" }, [r]));
+          rr2.appendChild(el("button", { class: "dbg-ask-reject", "data-reason": r }, [r]));
         });
         det2.appendChild(rr2);
         body.appendChild(det2);
         det2.addEventListener("toggle", function() {
           try {
-            placePhysPanel(dialog, { visW: Math.min(360, Math.round(getPhysViewport().w) - 24), dock: "bottom", gap: 12, offsetY: 64, minH: 40, maxWidth: "360px", overflowY: "auto" });
+            reflowPanel();
           } catch (e) {
           }
         });
@@ -6405,7 +6442,10 @@
       }
       ctx.root.appendChild(dialog);
       dialog.style.zIndex = "2147483648";
-      placePhysPanel(dialog, { visW: Math.min(360, Math.round(getPhysViewport().w) - 24), dock: "bottom", gap: 12, offsetY: 64, minH: 40, maxWidth: "360px", overflowY: "auto" });
+      try {
+        reflowPanel();
+      } catch (e) {
+      }
       try {
         ctx.dodgeToolbarAboveDialog(dialog);
       } catch (e) {
@@ -6444,6 +6484,7 @@
         done = true;
         delete ctx.hostAskPanels[requestId];
         clearInterval(timer);
+        document.removeEventListener("keydown", keyHandler);
         res.tookMs = Date.now() - startedAt;
         dialog.classList.remove("dbg-open");
         setTimeout(function() {
@@ -6494,6 +6535,20 @@
         }
         ctx.sendInteractionControl(requestId, paused ? "pause" : "resume");
       });
+      var keyHandler = function(e) {
+        if (done) return;
+        if (seq !== ctx.askPanelSeq) return;
+        var t = e.target;
+        if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+        var n = parseInt(e.key, 10);
+        if (!(n >= 1) || n > 9) return;
+        var btns = optWrap.querySelectorAll(".dbg-ask-opt");
+        if (btns[n - 1]) {
+          btns[n - 1].click();
+          e.preventDefault();
+        }
+      };
+      document.addEventListener("keydown", keyHandler);
       dialog.addEventListener("click", function(e) {
         var t = e.target.closest("button");
         if (!t) return;
@@ -6534,7 +6589,7 @@
       head.appendChild(closeBtn);
       dialog.appendChild(head);
       var body = el("div", { class: "dbg-pick-body" });
-      body.appendChild(el("div", { style: "white-space:pre-wrap;font-size:13px;line-height:1.7;color:#e5e7eb;word-break:break-all" }, [it.body || ""]));
+      body.appendChild(el("div", { style: "white-space:pre-wrap;font-size:14px;line-height:1.7;color:#e5e7eb;word-break:break-word;overflow-wrap:anywhere" }, [it.body || ""]));
       dialog.appendChild(body);
       try {
         makePointerDrag({
@@ -6590,7 +6645,7 @@
       closeBtn.addEventListener("click", closeCard);
       ctx.root.appendChild(dialog);
       try {
-        placePhysPanel(dialog, { visW: Math.min(360, Math.round(getPhysViewport().w) - 24), dock: "bottom", gap: 12, offsetY: 64, minH: 40, maxWidth: "360px", overflowY: "auto" });
+        placePhysPanel(dialog, { visW: Math.min(520, Math.round(getPhysViewport().w) - 24), dock: "bottom", gap: 12, offsetY: 64, minH: 40, maxWidth: "520px", overflowY: "auto" });
       } catch (e) {
       }
     };
@@ -6613,7 +6668,7 @@
     };
   }
 
-  // src/launcher/profiles.js
+  // packages/aiti-devtools-inject/src/launcher/profiles.js
   function initProfiles(ctx) {
     ctx.loadUserProfiles = function() {
       return lsGetJSON(PROFILES_KEY, []);
@@ -6661,7 +6716,7 @@
     };
   }
 
-  // src/launcher/hud.js
+  // packages/aiti-devtools-inject/src/launcher/hud.js
   function initHud(ctx) {
     ctx.attachHudDrag = function() {
       if (!ctx.hud || ctx.hud.__dragBound) return;
@@ -6856,7 +6911,7 @@
     };
   }
 
-  // src/launcher/toolbar.js
+  // packages/aiti-devtools-inject/src/launcher/toolbar.js
   function initToolbar(ctx) {
     ctx.floatToolbar = function(x, y, w, h) {
       var tb = ctx.root.querySelector(".dbg-toolbar");
@@ -7030,7 +7085,7 @@
     };
   }
 
-  // src/launcher/inject.js
+  // packages/aiti-devtools-inject/src/launcher/inject.js
   function initInject(ctx) {
     ctx.mountRoot = function() {
       if (!document.body) {
@@ -7117,7 +7172,7 @@
     };
   }
 
-  // src/launcher/aiwin.js
+  // packages/aiti-devtools-inject/src/launcher/aiwin.js
   function initAiwin(ctx) {
     ctx.loadAiState = function() {
       return lsGetJSON(AI_WIN_KEY, {});
@@ -7226,8 +7281,54 @@
       ctx.aiState.height = AI_WIN_DEFAULTS.height;
       ctx.aiState.smallDock = void 0;
       ctx.aiState.smallHeightPct = 0;
+      ctx.aiState.__max = null;
+      if (ctx.aiSyncMaxBtn) ctx.aiSyncMaxBtn();
       ctx.applyAiState();
       ctx.saveAiState();
+    };
+    ctx.aiToggleMax = function() {
+      if (!ctx.aiWin || !ctx.aiState) return;
+      if (detectScreenMode().small) {
+        var cur = ctx.aiState.smallHeightPct > 0 ? ctx.aiState.smallHeightPct : 100;
+        ctx.aiState.smallHeightPct = cur >= 100 ? 70 : 100;
+      } else if (ctx.aiState.__max) {
+        var m = ctx.aiState.__max;
+        ctx.aiState.width = m.w;
+        ctx.aiState.height = m.h;
+        ctx.aiState.left = m.l;
+        ctx.aiState.top = m.t;
+        ctx.aiState.dock = m.dock;
+        ctx.aiState.__max = null;
+      } else {
+        ctx.aiState.__max = {
+          w: ctx.aiState.width,
+          h: ctx.aiState.height,
+          l: ctx.aiState.left != null ? ctx.aiState.left : ctx.aiWin.offsetLeft,
+          t: ctx.aiState.top != null ? ctx.aiState.top : ctx.aiWin.offsetTop,
+          dock: ctx.aiState.dock
+        };
+        ctx.aiState.dock = "free";
+        ctx.aiState.width = window.innerWidth;
+        ctx.aiState.height = window.innerHeight;
+        ctx.aiState.left = 0;
+        ctx.aiState.top = 0;
+      }
+      if (ctx.aiSyncMaxBtn) ctx.aiSyncMaxBtn();
+      ctx.applyAiState();
+      ctx.saveAiState();
+      ctx.saveDbgState();
+    };
+    ctx.aiSyncMaxBtn = function() {
+      if (!ctx.aiMaxBtn || !ctx.aiState) return;
+      var maxed = detectScreenMode().small ? (ctx.aiState.smallHeightPct > 0 ? ctx.aiState.smallHeightPct : 100) >= 100 : !!ctx.aiState.__max;
+      ctx.aiMaxBtn.textContent = maxed ? "❐" : "⛶";
+      ctx.aiMaxBtn.title = maxed ? "还原窗口（退出最大化）" : "最大化窗口（铺满页面；再点还原）";
+    };
+    ctx.aiDropMax = function() {
+      if (ctx.aiState && ctx.aiState.__max) {
+        ctx.aiState.__max = null;
+        if (ctx.aiSyncMaxBtn) ctx.aiSyncMaxBtn();
+      }
     };
     ctx.pageIdentity = function() {
       var id = "";
@@ -7647,44 +7748,14 @@
       var bar = el("div", { class: "dbg-ai-bar" });
       ctx.aiTitleEl = el("span", { class: "dbg-ai-title" }, ["🤖 AI"]);
       bar.appendChild(ctx.aiTitleEl);
-      [["▲", "top", "贴到顶部，左右位置保持"], ["▼", "bottom", "贴到底部，左右位置保持"], ["◀", "left", "贴到左侧，上下位置保持"], ["▶", "right", "贴到右侧，上下位置保持"]].forEach(function(b) {
-        var _y = b[1] === "top" || b[1] === "bottom";
-        var btn = el("button", { class: "dbg-ai-dock " + (_y ? "dbg-ai-dock-y" : "dbg-ai-dock-x"), title: b[2] + "（可在 Inspector 模式随时调整）" }, [b[0]]);
-        btn.addEventListener("click", function() {
-          if (detectScreenMode().small) {
-            if (_y) ctx.aiState.smallDock = b[1];
-          } else {
-            try {
-              var _r = ctx.aiWin.getBoundingClientRect();
-              if (_y) ctx.aiState.left = Math.round(_r.left);
-              else ctx.aiState.top = Math.round(_r.top);
-            } catch (e) {
-            }
-            ctx.aiState.dock = b[1];
-          }
-          ctx.saveAiState();
-          ctx.applyAiState();
-        });
-        bar.appendChild(btn);
+      var maxBtn = el("button", { class: "dbg-ai-max" }, ["⛶"]);
+      ctx.aiMaxBtn = maxBtn;
+      maxBtn.addEventListener("click", function(e) {
+        e.stopPropagation();
+        ctx.aiToggleMax();
       });
-      [["−宽", "w", -24], ["+宽", "w", 24], ["−高", "h", -10], ["+高", "h", 10]].forEach(function(b) {
-        var btn = el("button", { class: "dbg-ai-size " + (b[1] === "w" ? "dbg-ai-size-w" : "dbg-ai-size-h"), title: b[0] }, [b[0]]);
-        btn.addEventListener("click", function() {
-          if (detectScreenMode().small) {
-            if (b[1] === "h") {
-              ctx.aiState.smallHeightPct = Math.min(Math.max((ctx.aiState.smallHeightPct > 0 ? ctx.aiState.smallHeightPct : 100) + b[2], 30), 100);
-            }
-          } else {
-            if (b[1] === "w") ctx.aiState.width += b[2];
-            else ctx.aiState.height += b[2];
-            ctx.aiState.dock = "free";
-            ctx.clampAiWindow();
-          }
-          ctx.saveAiState();
-          ctx.applyAiState();
-        });
-        bar.appendChild(btn);
-      });
+      bar.appendChild(maxBtn);
+      ctx.aiSyncMaxBtn();
       var popBtn = el("button", { class: "dbg-ai-pop", title: "AI 新窗口布局：浮动 / 左·右并排 / 底·顶横排（关闭新窗口即回到内嵌模式）" }, ["⧉"]);
       popBtn.addEventListener("click", function(e) {
         e.stopPropagation();
@@ -7739,12 +7810,13 @@
       if (_wasSmall && !ctx.__aiWasSmall) {
         try {
           delete ctx.aiState.smallDock;
-          delete ctx.aiState.__fullW;
+          delete ctx.aiState.__max;
           if (ctx.aiState.width >= window.innerWidth - 4) {
             ctx.aiState.width = Math.min(AI_WIN_DEFAULTS.width, window.innerWidth - 16);
           }
           ctx.aiState.dock = "free";
           if (ctx.aiState.left == null) ctx.aiState.left = 16;
+          if (ctx.aiSyncMaxBtn) ctx.aiSyncMaxBtn();
           ctx.saveAiState();
           ctx.applyAiState();
         } catch (e) {
@@ -7762,6 +7834,7 @@
           return true;
         },
         onStart: function(e) {
+          ctx.aiDropMax();
           ctx.aiWin.classList.add("dbg-dragging");
           ctx.aiWin.style.willChange = "left, top";
           if (ctx.aiIframe) ctx.aiIframe.style.pointerEvents = "none";
@@ -7798,6 +7871,7 @@
         // 小屏不 resize（全宽贴边尺寸自适应）
         onStart: function(e) {
           e.stopPropagation();
+          ctx.aiDropMax();
           ctx.aiWin.classList.add("dbg-resizing");
           ctx.aiWin.style.willChange = "width, height";
           if (ctx.aiIframe) ctx.aiIframe.style.pointerEvents = "none";
@@ -7830,6 +7904,7 @@
       };
       var edgeStart = function(e) {
         e.stopPropagation();
+        ctx.aiDropMax();
         ctx.aiWin.classList.add("dbg-resizing");
         ctx.aiWin.style.willChange = "width, height";
         if (ctx.aiIframe) ctx.aiIframe.style.pointerEvents = "none";
@@ -7868,6 +7943,7 @@
         preventStart: true,
         onStart: function(e) {
           e.stopPropagation();
+          ctx.aiDropMax();
           ctx.aiWin.classList.add("dbg-resizing");
           ctx.aiWin.style.willChange = "width, left";
           if (ctx.aiIframe) ctx.aiIframe.style.pointerEvents = "none";
@@ -7898,21 +7974,7 @@
         if (now - barLastTap.t < 350 && Math.abs(e.clientX - barLastTap.x) < 30 && Math.abs(e.clientY - barLastTap.y) < 30) {
           barLastTap.t = 0;
           try {
-            if (ctx.aiState.__fullW) {
-              ctx.aiState.width = ctx.aiState.__fullW.w;
-              ctx.aiState.height = ctx.aiState.__fullW.h;
-              ctx.aiState.left = ctx.aiState.__fullW.l;
-              ctx.aiState.top = ctx.aiState.__fullW.t;
-              ctx.aiState.__fullW = null;
-            } else {
-              ctx.aiState.__fullW = { w: ctx.aiState.width, h: ctx.aiState.height, l: ctx.aiState.left != null ? ctx.aiState.left : ctx.aiWin.offsetLeft, t: ctx.aiState.top != null ? ctx.aiState.top : ctx.aiWin.offsetTop };
-              ctx.aiState.width = window.innerWidth;
-              ctx.aiState.left = 0;
-            }
-            ctx.aiState.dock = "free";
-            ctx.applyAiState();
-            ctx.saveAiState();
-            ctx.saveDbgState();
+            ctx.aiToggleMax();
           } catch (err) {
           }
           return;
@@ -7936,6 +7998,12 @@
         if (winResizeFrame) return;
         winResizeFrame = requestAnimationFrame(function() {
           winResizeFrame = null;
+          if (ctx.aiState && ctx.aiState.__max && !detectScreenMode().small) {
+            ctx.aiState.width = window.innerWidth;
+            ctx.aiState.height = window.innerHeight;
+            ctx.aiState.left = 0;
+            ctx.aiState.top = 0;
+          }
           ctx.clampAiWindow();
         });
       });
@@ -8457,7 +8525,7 @@
     };
   }
 
-  // src/launcher/routing.js
+  // packages/aiti-devtools-inject/src/launcher/routing.js
   function initRouting(ctx) {
     ctx.captureSceneSend = function() {
       var tw = (ctx.listFrames()[0] || {}).win;
@@ -9622,7 +9690,7 @@
     };
   }
 
-  // src/launcher/inspector.js
+  // packages/aiti-devtools-inject/src/launcher/inspector.js
   function initInspector(ctx) {
     ctx.applyToolbarCompact = function() {
       var tb = ctx.root.querySelector(".dbg-toolbar");
@@ -9799,7 +9867,7 @@
     };
   }
 
-  // src/launcher/dialog.js
+  // packages/aiti-devtools-inject/src/launcher/dialog.js
   function initDialog(ctx) {
     function escAttr(s) {
       return escapeHtml(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
@@ -10024,7 +10092,7 @@
     };
   }
 
-  // src/launcher/picks.js
+  // packages/aiti-devtools-inject/src/launcher/picks.js
   function initPicks(ctx) {
     ctx.picksErrSeen = {};
     ctx.picksErrCount = 0;
@@ -10231,7 +10299,7 @@
     };
   }
 
-  // src/launcher/debug.js
+  // packages/aiti-devtools-inject/src/launcher/debug.js
   function initDebug(ctx) {
     ctx.loadShowDebug = function() {
       return lsGetString(DBG_SHOW_KEY, "") === "on";
@@ -10394,7 +10462,7 @@
     };
   }
 
-  // src/launcher/launcher.js
+  // packages/aiti-devtools-inject/src/launcher/launcher.js
   function aiWindowMarkers() {
     try {
       return window.name === "aiti-ai-popup" || /[?&]_dbg=/.test(location.search) || /[?&]_dbg=/.test(location.hash) || !!window.__AITI_AI_WIN__;
@@ -10885,11 +10953,11 @@
     return ctx.root.__dbgLauncher;
   }
 
-  // src/launcher/index.js
+  // packages/aiti-devtools-inject/src/launcher/index.js
   window.createDbgLauncher = createDbgLauncher;
   window.__dbgLauncherVersion = VERSION;
 
-  // src/standalone.js
+  // packages/aiti-devtools-inject/src/standalone.js
   (function() {
     const myScript = (function() {
       try {
