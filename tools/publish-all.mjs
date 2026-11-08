@@ -13,7 +13,8 @@
 // 首次使用先把各包 package.json 的 name 改为 @aiti-ai/<name> 并去掉需要发布的包的 private：
 //   node tools/publish-all.mjs --adopt   # 只做改名/去 private 预处理，不发布（private 包不动）
 
-import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, readdirSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, basename, dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execSync, spawnSync } from "node:child_process";
@@ -85,16 +86,36 @@ function contentHash(pkgDir) {
 //   staging：registry.npmjs.org —— 测试发布源（预发布 -beta 验证 + 私有件 pi-subagents）
 const TARGET = (() => {
   const ti = args.indexOf("--target");
-  if (ti >= 0 && ["staging", "official"].includes(args[ti + 1])) return args[ti + 1];
+  if (ti >= 0 && ["staging", "official", "aliyun"].includes(args[ti + 1])) return args[ti + 1];
   const env = process.env.AITI_NPM_TARGET;
-  if (["staging", "official"].includes(env)) return env;
+  if (["staging", "official", "aliyun"].includes(env)) return env;
   return "official";
 })();
 const REGISTRIES = {
   staging: "https://registry.npmjs.org/",
   official: "https://registry.npmjs.org/",
+  // 阿里云制品库（正式仓备选）：独立凭据 env（ALIYUN_NPM_USERNAME/ALIYUN_NPM_PASSWORD），
+  // publish 时生成临时 userconfig 注入；私有源可覆盖重发，不跑 official 门禁
+  aliyun: "https://packages.aliyun.com/63a415398d9a873a30aae528/npm/npm-registry/",
 };
+
+// aliyun 凭据 → 临时 userconfig（NPM_CONFIG_USERCONFIG 注入全部 npm 子命令）；
+// 凭据只进 tmp 文件（进程结束即弃），不入仓不入 ~/.npmrc
+function aliyunUserconfig() {
+  const u = process.env.ALIYUN_NPM_USERNAME, p = process.env.ALIYUN_NPM_PASSWORD;
+  if (!u || !p) throw new Error("target=aliyun 需要环境变量 ALIYUN_NPM_USERNAME / ALIYUN_NPM_PASSWORD");
+  const hostPath = REGISTRY.replace(/^https?:\/\//, "").replace(/\/$/, "");
+  const f = join(mkdtempSync(join(tmpdir(), "aliyun-npmrc-")), "npmrc");
+  writeFileSync(f, [
+    `//${hostPath}/:username=${u}`,
+    `//${hostPath}/:_password=${Buffer.from(p).toString("base64")}`,
+    `//${hostPath}/:always-auth=true`,
+    `registry=${REGISTRY}`,
+  ].join("\n") + "\n");
+  return f;
+}
 const REGISTRY = REGISTRIES[TARGET];
+const NPM_ENV_EXTRA = TARGET === "aliyun" ? { NPM_CONFIG_USERCONFIG: aliyunUserconfig() } : {};
 // official 门禁：单包机械审核（--fix 关闭——门禁只拦不改；要改用 release-audit --fix 先行）
 const AUDIT_SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "release-audit.mjs");
 function officialAuditGate(dir) {
@@ -222,7 +243,7 @@ for (const { dir, pkgDir, pjPath, p } of pkgs) {
   let publishedHash = null;
   try {
     publishedHash = execSync(`npm view ${JSON.stringify(fullName)} contentHash --json --registry ${REGISTRY}`, {
-      encoding: "utf8", timeout: 30_000,
+      encoding: "utf8", timeout: 30_000, env: { ...process.env, ...NPM_ENV_EXTRA },
     }).trim().replace(/^"/, "").replace(/"$/, "");
   } catch { publishedHash = null; }
   if (!publishedHash || publishedHash === "undefined" || publishedHash === "") publishedHash = null;
@@ -233,7 +254,7 @@ for (const { dir, pkgDir, pjPath, p } of pkgs) {
   let metaOnRegistry = "";
   try {
     metaOnRegistry = execSync(`npm view ${JSON.stringify(fullName)} repository.url --json --registry ${REGISTRY}`, {
-      encoding: "utf8", timeout: 30_000,
+      encoding: "utf8", timeout: 30_000, env: { ...process.env, ...NPM_ENV_EXTRA },
     }).trim().replace(/^"/, "").replace(/"$/, "");
   } catch { metaOnRegistry = ""; }
   const metaOk = metaOnRegistry.includes("github.com/aiti-ai/aiti-ai");
@@ -311,7 +332,7 @@ for (const { dir, pkgDir, pjPath, p } of pkgs) {
     }
     const provenance = TARGET === "official" ? " --provenance" : "";
     execSync(`npm publish --registry ${REGISTRY} --access public${provenance}`, {
-      cwd: pkgDir, stdio: "inherit",
+      cwd: pkgDir, stdio: "inherit", env: { ...process.env, ...NPM_ENV_EXTRA },
     });
     published++;
     report.push(`+  ${dir}@${version}: 已发布为 ${fullName}`);

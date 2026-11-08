@@ -13,6 +13,9 @@ FROM ubuntu:26.04
 ARG APT_MIRROR=""
 ARG NPM_MIRROR=https://registry.npmjs.org
 ARG AITI_NPM_REGISTRY=""
+# scope 私仓认证（阿里云制品库等；空=匿名/公网。凭据只在构建期 root .npmrc，镜像尾部清除）
+ARG AITI_NPM_REGISTRY_USER=""
+ARG AITI_NPM_REGISTRY_PASS=""
 ARG NODE_MAJOR=22
 ARG TARGETPLATFORM
 
@@ -43,6 +46,12 @@ RUN curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
     && npm config set registry "${NPM_MIRROR}" \
     # 私仓仅在测试期注入（AITI_NPM_REGISTRY 非空才写 scope 配置；正式发布为空=公网 npm）
     && if [ -n "${AITI_NPM_REGISTRY}" ]; then npm config set "@aiti-ai:registry" "${AITI_NPM_REGISTRY}"; fi \
+    # scope 认证（registry 非空且凭据非空才写；host 路径从 registry URL 推导）
+    && if [ -n "${AITI_NPM_REGISTRY}" ] && [ -n "${AITI_NPM_REGISTRY_USER}" ]; then \
+         SCOPE_PATH=$(echo "${AITI_NPM_REGISTRY}" | sed -e "s|^https\?://||" -e "s|/$||") \
+         && npm config set "//${SCOPE_PATH}/:username" "${AITI_NPM_REGISTRY_USER}" \
+         && npm config set "//${SCOPE_PATH}/:_password" "$(printf %s "${AITI_NPM_REGISTRY_PASS}" | base64 -w0)" \
+         && npm config set "//${SCOPE_PATH}/:always-auth" "true"; fi \
     && node -v
 
 # ── ② 运行用户 aiti（可经 UID/GID env 覆盖；entrypoint 兜底重建）＋ 免密 sudo ──
@@ -143,6 +152,9 @@ ENV PI_WEB_EXTENSIONS_DIR=/opt/aiti/extensions \
 
 # 层标记：entrypoint/full 以此探测模式（方案 §3.3 MODE）
 RUN touch /opt/aiti/.aiti-core
+# 镜像尾部清构建期凭据（root .npmrc 的 scope 私仓密码不进发布镜像；
+# aiti 用户的运行时 .npmrc 本就无凭据，走公源）
+RUN rm -f /root/.npmrc || true
 
 WORKDIR /workspace
 EXPOSE 30142 8777

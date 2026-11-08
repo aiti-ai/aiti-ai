@@ -30,7 +30,14 @@ on:
       only:
         description: "Comma-separated dir names to publish (empty = all)"
         required: false
-        default: ""
+        default: ""      registry:
+        description: "Target registry (aliyun needs ALIYUN_NPM_USERNAME/PASSWORD secrets)"
+        required: false
+        default: "npmjs"
+        type: choice
+        options:
+          - "npmjs"
+          - "aliyun"
 
 permissions:
   contents: read
@@ -47,18 +54,30 @@ jobs:
           node-version: 22
           registry-url: "https://registry.npmjs.org" # 写入 ~/.npmrc（NODE_AUTH_TOKEN 占位）
 
-      - name: Preflight — npm identity
+      - name: Preflight — registry identity
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          ALIYUN_NPM_USERNAME: ${{ secrets.ALIYUN_NPM_USERNAME }}
+          ALIYUN_NPM_PASSWORD: ${{ secrets.ALIYUN_NPM_PASSWORD }}
         run: |
-          npm whoami --registry https://registry.npmjs.org
-          echo "org packages:"; npm access list packages aiti-ai --registry https://registry.npmjs.org 2>/dev/null | head -5 || true
+          if [[ "${{ inputs.registry }}" == "aliyun" ]]; then
+            npm ping --registry https://packages.aliyun.com/63a415398d9a873a30aae528/npm/npm-registry/
+          else
+            npm whoami --registry https://registry.npmjs.org
+          fi
 
       - name: Publish (official, gated)
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          ALIYUN_NPM_USERNAME: ${{ secrets.ALIYUN_NPM_USERNAME }}
+          ALIYUN_NPM_PASSWORD: ${{ secrets.ALIYUN_NPM_PASSWORD }}
         run: |
-          ARGS="--target official"
+          ARGS="--target ${{ inputs.registry || 'npmjs' }}"
+          if [[ "${{ inputs.registry }}" != "aliyun" ]]; then
+            ARGS="--target official"
+          fi
           if [[ "${{ inputs.dry_run }}" != "false" ]]; then ARGS="$ARGS --dry-run"; fi
           if [[ -n "${{ inputs.only }}" ]]; then ARGS="$ARGS --only ${{ inputs.only }}"; fi
           node tools/publish-all.mjs $ARGS 2>&1 | tee publish-report.txt
