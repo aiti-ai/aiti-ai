@@ -107,6 +107,12 @@ elif [ -f "$REPO_ROOT/vendor/npm/justget-0.2.4.tgz" ]; then
 else
   echo "[build] ⚠ 无 justget 源且无 vendor tgz——Dockerfile COPY justget 将失败（fail-fast）"
 fi
+# ②.5 @aiti-ai/* 官方源就绪前的依赖面（官方发布后本段与 Dockerfile /opt/vendor 可退役）：
+#  vendor tgz 传递链重写 + staged package.json deps 改写为容器内 file:/opt/vendor——
+#  容器内 npm install（bridge/扩展 deps/运行时 reconcile）全部命中本地路径，零 registry
+mkdir -p "$STAGE/vendor/npm"
+rsync -a "$REPO_ROOT/vendor/npm/" "$STAGE/vendor/npm/"
+node "$HERE/scripts/rewrite-vendor.mjs" "$STAGE" "pi-web-ext pi-ext packages"
 
 # ③ 构建（full 依赖 core 先行：docker build 的 FROM aiti/aiti:core 取本地镜像）
 PLATFORM_ARG=(); [[ -n "$PLATFORM" ]] && PLATFORM_ARG=(--platform "$PLATFORM")
