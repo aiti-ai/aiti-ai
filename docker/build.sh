@@ -99,6 +99,13 @@ rsync -a --delete \
   "$HERE/" "$STAGE/docker/"
 if [ -d "$JUSTGET_SRC" ]; then
   rsync -a --delete --exclude 'node_modules' --exclude '.git' "$JUSTGET_SRC/" "$STAGE/justget/"
+elif [ -f "$REPO_ROOT/vendor/npm/justget-0.2.4.tgz" ]; then
+  # CI/无源环境兜底：vendor 的已发布形态（package.json + dist/cli.js 齐全，满足 Dockerfile ⑦）
+  echo "[build] JUSTGET_SRC 缺失 → 解包 vendor/npm/justget tgz"
+  mkdir -p "$STAGE/justget"
+  tar xzf "$REPO_ROOT/vendor/npm/justget-0.2.4.tgz" -C "$STAGE/justget" --strip-components=1
+else
+  echo "[build] ⚠ 无 justget 源且无 vendor tgz——Dockerfile COPY justget 将失败（fail-fast）"
 fi
 
 # ③ 构建（full 依赖 core 先行：docker build 的 FROM aiti/aiti:core 取本地镜像）
