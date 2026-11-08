@@ -90,6 +90,7 @@ if (FROM_TGZ && existsSync(abs(FROM_TGZ))) {
   }
   if (failed.length) throw new Error(`扩展构建失败: ${failed.join(", ")}`);
   console.log(`[release] 扩展 dist: built ${built}`);
+  run(`node ${JSON.stringify(join(REPO, "scripts", "materialize-shared.mjs"))}`, stage, "materialize _shared sibling copies");
   run("npm pack --pack-destination " + JSON.stringify(stage), stage, "npm pack（主包）");
   tgzPath = join(stage, `aiti-ai-pi-web-${VERSION}.tgz`);
 }
@@ -133,14 +134,17 @@ if (bad) throw new Error("产物自检失败——构件缺失");
 
 writeFileSync(join(appDir, "RELEASE.txt"), [
   `version=${VERSION}`,
-  `platform=${OS}-${ARCH}`,
+  `platform=${platName}-${ARCH}`,
   `builtAt=${new Date().toISOString()}`,
   `node=${process.version}`,
 ].join("\n") + "\n");
 
 // ---- 5) archive：顶层目录固定 aiti-web/。linux/darwin tgz；windows zip（Expand-Archive 只认 zip）----
 const ext = OS === "win32" ? "zip" : "tar.gz";
-const outName = `aiti-web-v${VERSION}-${OS}-${ARCH}.${ext}`;
+// 资产名平台段用 install.sh / install.ps1 / release.yml 预期的短名：process.platform 的
+// win32 → win（否则 release 上资产叫 win32-x64.zip，安装器按 win-x64.zip 找必 404）
+const platName = OS === "win32" ? "win" : OS;
+const outName = `aiti-web-v${VERSION}-${platName}-${ARCH}.${ext}`;
 const outPath = OUT || join(REPO, outName);
 if (ext === "zip") {
   run(`powershell -NoProfile -Command "Compress-Archive -Path '${appDir.replace(/'/g, "''")}' -DestinationPath '${resolve(outPath).replace(/'/g, "''")}' -Force"`, stage, `zip → ${outName}`);
