@@ -103,6 +103,9 @@ jobs:
           done
           if [ -n "$failed" ]; then echo "::error::extension build failed:$failed"; exit 1; fi
 
+      - name: Materialize _shared sibling copies (deploy.mjs parity — npm pack excludes _shared)
+        run: node scripts/materialize-shared.mjs
+
       - name: npm pack (authoritative files filter)
         run: |
           rm -f extensions/node_modules   # 构建 symlink，勿入包（files 排除为双保险）
