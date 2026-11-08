@@ -67,9 +67,7 @@ jobs:
             npm whoami --registry https://registry.npmjs.org
           fi
 
-      - name: Publish (official, gated)
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish (registry target, gated)
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           ALIYUN_NPM_USERNAME: ${{ secrets.ALIYUN_NPM_USERNAME }}
