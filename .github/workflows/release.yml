@@ -1,13 +1,13 @@
-# release.yml —— GitHub Releases 发布流水线（v* tag 触发，开源惯例）。
+# release.yml — GitHub Releases pipeline (triggered by v* tags, standard OSS convention).
 #
-# 触发：git tag v0.15.7 && git push origin v0.15.7
-# 产物：aiti-web-v<ver>-{linux,darwin}-{x64,arm64}.tar.gz + aiti-web-v<ver>-win-x64.zip
-#        + checksums.txt（install.sh / install.ps1 下载时 sha256 校验）
-# 结构：prepare（linux，平台无关构建：.next + 49 扩展 dist → npm tgz）
-#       → archive（4 平台 matrix：npm tgz + 各自生产依赖闭包 → 平台压缩包）
-#       → release（汇总上传 + gh release create --generate-notes）
+# Trigger: git tag v0.15.7 && git push origin v0.15.7
+# Artifacts: aiti-web-v<ver>-{linux,darwin}-{x64,arm64}.tar.gz + aiti-web-v<ver>-win-x64.zip
+#        + checksums.txt (sha256-verified by install.sh / install.ps1 at download time)
+# Layout: prepare (linux, platform-agnostic build: .next + 49 extension dists → npm tgz)
+#       → archive (4-platform matrix: npm tgz + each platform's production closure → per-platform archives)
+#       → release (collect uploads + gh release create --generate-notes)
 #
-# 注：npm 渠道（publish-all）与本流水线相互独立——GitHub Releases 走本文件。
+# Note: the npm channel (publish-all) is independent of this pipeline — GitHub Releases is handled here.
 
 name: Release
 

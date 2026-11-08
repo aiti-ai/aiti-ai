@@ -1,18 +1,18 @@
-# publish-npm.yml —— npm 官方源（registry.npmjs.org，@aiti-ai scope）发布。
+# publish-npm.yml — publish to the npm official registry (registry.npmjs.org, @aiti-ai scope).
 #
-# 触发：workflow_dispatch（手动）
-#   dry_run: true（默认）—— 全量跑 official 门禁（release-audit 15 项机械审核）+
-#   contentHash 决策矩阵，只审不发；false —— 真发布。
-#   only: 可选逗号分隔目录名过滤（如 "aiti-cmd,session-manager"）。
+# Trigger: workflow_dispatch (manual)
+#   dry_run: true (default) — run the full official gate (the 15-item release-audit) +
+#   the contentHash decision matrix, audit only; false — publish for real.
+#   only: optional comma-separated dir name filter (e.g. "aiti-cmd,session-manager").
 #
-# 发布范围：extensions/（63+ 扩展）+ pi-plugins/ + packages/（aiti-devtools 全家桶）。
-# 决策矩阵（tools/publish-all.mjs）：内容未变跳过 / 变更 auto-bump patch / 官方源旧版
-# 无 contentHash 视为变更收敛；official 每包发布前强制过 release-audit 门禁，FAIL 拒发。
+# Publish scope: extensions/ (63+ extensions) + pi-plugins/ + packages/ (the aiti-devtools family).
+# Decision matrix (tools/publish-all.mjs): unchanged content skips; changed content auto-bumps the patch version; official-registry versions
+# without a contentHash count as changed and converge; every official publish is gated by release-audit, FAIL blocks it.
 #
-# 认证：NPM_TOKEN secret（granular automation token，packages read/write @aiti-ai）——
-# 由 setup-node 写入 ~/.npmrc（//registry.npmjs.org/:_authToken）。
-# 升级路径（token-free）：npmjs Trusted Publishing（OIDC）——需在 npmjs.com 逐包绑定
-# GitHub 仓库 + workflow 文件，绑定完成前先用 NPM_TOKEN。
+# Auth: NPM_TOKEN secret (granular automation token, packages read/write on @aiti-ai) —
+# written into ~/.npmrc by setup-node (//registry.npmjs.org/:_authToken).
+# Upgrade path (token-free): npmjs Trusted Publishing (OIDC) — requires binding each package on npmjs.com to
+# the GitHub repo + workflow file; until that is done, NPM_TOKEN is used.
 
 name: NPM Publish
 
