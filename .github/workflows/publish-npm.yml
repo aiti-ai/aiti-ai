@@ -30,7 +30,8 @@ on:
       only:
         description: "Comma-separated dir names to publish (empty = all)"
         required: false
-        default: ""      registry:
+        default: ""
+      registry:
         description: "Target registry (aliyun needs ALIYUN_NPM_USERNAME/PASSWORD secrets)"
         required: false
         default: "npmjs"
