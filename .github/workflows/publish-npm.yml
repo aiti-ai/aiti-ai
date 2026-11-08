@@ -104,6 +104,17 @@ jobs:
             (cd "$d" && npm install --legacy-peer-deps --no-audit --no-fund --loglevel=error)
             mv "$pj.orig" "$pj"   # 还原（node_modules 保留）
           done
+          # dist 直塞：vendor tgz（48 构建的同版本产物）解出 dist 覆盖进包目录——
+          # publish-all 对非空 dist 跳过构建（绕开各包 build 脚本的 esbuild 解析差异）
+          for d in packages/*/; do
+            name=$(node -p "try{require('./${d}package.json').name.replace(/^@/,'').replace('/','-')}catch{}" 2>/dev/null || echo "")
+            tgz="vendor/npm/${name}.tgz"
+            [ -f "$tgz" ] || continue
+            mkdir -p /tmp/pkgdist "$d/dist"
+            rm -rf /tmp/pkgdist/* && tar xzf "$tgz" -C /tmp/pkgdist
+            if [ -d /tmp/pkgdist/package/dist ]; then cp -r /tmp/pkgdist/package/dist/. "$d/dist/"; fi
+            rm -rf /tmp/pkgdist
+          done
 
 
       - name: Publish (registry target, gated)
