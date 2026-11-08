@@ -1,0 +1,73 @@
+# publish-npm.yml —— npm 官方源（registry.npmjs.org，@aiti-ai scope）发布。
+#
+# 触发：workflow_dispatch（手动）
+#   dry_run: true（默认）—— 全量跑 official 门禁（release-audit 15 项机械审核）+
+#   contentHash 决策矩阵，只审不发；false —— 真发布。
+#   only: 可选逗号分隔目录名过滤（如 "aiti-cmd,session-manager"）。
+#
+# 发布范围：extensions/（63+ 扩展）+ pi-plugins/ + packages/（aiti-devtools 全家桶）。
+# 决策矩阵（tools/publish-all.mjs）：内容未变跳过 / 变更 auto-bump patch / 官方源旧版
+# 无 contentHash 视为变更收敛；official 每包发布前强制过 release-audit 门禁，FAIL 拒发。
+#
+# 认证：NPM_TOKEN secret（granular automation token，packages read/write @aiti-ai）——
+# 由 setup-node 写入 ~/.npmrc（//registry.npmjs.org/:_authToken）。
+# 升级路径（token-free）：npmjs Trusted Publishing（OIDC）——需在 npmjs.com 逐包绑定
+# GitHub 仓库 + workflow 文件，绑定完成前先用 NPM_TOKEN。
+
+name: NPM Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (audit + decision matrix, no publish)"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      only:
+        description: "Comma-separated dir names to publish (empty = all)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write # npm provenance（official 发布自动带 --provenance）
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org" # 写入 ~/.npmrc（NODE_AUTH_TOKEN 占位）
+
+      - name: Preflight — npm identity
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm whoami --registry https://registry.npmjs.org
+          echo "org packages:"; npm access list packages aiti-ai --registry https://registry.npmjs.org 2>/dev/null | head -5 || true
+
+      - name: Publish (official, gated)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          ARGS="--target official"
+          if [[ "${{ inputs.dry_run }}" != "false" ]]; then ARGS="$ARGS --dry-run"; fi
+          if [[ -n "${{ inputs.only }}" ]]; then ARGS="$ARGS --only ${{ inputs.only }}"; fi
+          node tools/publish-all.mjs $ARGS 2>&1 | tee publish-report.txt
+          grep -qE "失败 [1-9]" publish-report.txt && echo "::error::有包发布失败，详见上方报告" && exit 1
+          true
+
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: publish-report
+          path: publish-report.txt
+          retention-days: 30

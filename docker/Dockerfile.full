@@ -1,7 +1,8 @@
 # aiti/aiti:full —— all-in-one 版（aiti-docker-image-plan §3.2）
 # core + GUI（Xvfb/openbox/x11vnc/noVNC/dbus/at-spi/xdotool）+ Chromium + ASR（faster-whisper/FunASR）
 # + edge-tts + 隧道二进制（cloudflared/ngrok/frpc）+ ttyd。构建参数与 core 同源。
-FROM aiti/aiti:core
+ARG CORE_IMAGE=aiti/aiti:core
+FROM ${CORE_IMAGE}
 
 # 镜像源默认官方（GitHub 直用）；国内本地构建经 build.sh --cn 注入（与 core 同源）
 ARG APT_MIRROR=""
