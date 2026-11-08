@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-devtools-vite",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "aiti-devtools Vite 插件：应用 dev server 上内置 MCP（launcher 注入 + 桥 + MCP 端点 + 操作台，同源 /aiti/），启动自动注册到常见 agent 工具",
   "type": "module",
   "main": "dist/index.js",

@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-devtools-core",
-  "version": "0.3.11",
+  "version": "0.3.12",
   "description": "aiti-devtools MCP server 核心（桥）：页面连接/SSE/工具执行/MCP JSON-RPC，供 pi-web 扩展与 pi 扩展 aiti-devtools-pi 共用",
   "type": "module",
   "main": "dist/index.js",
@@ -27,5 +27,5 @@
   "bugs": {
     "url": "https://github.com/aiti-ai/aiti-ai/issues"
   },
-  "contentHash": "68c48ae54db0ed8e"
+  "contentHash": "a29b68dbcb31de03"
 }
