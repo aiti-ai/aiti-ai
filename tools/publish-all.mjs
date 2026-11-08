@@ -146,17 +146,23 @@ for (const rel of PLUGIN_ROOTS) {
   }
 }
 
-function registryInfo(fullName) {
-  // 返回 { versions:Set, latest } 或 null（未发布）
+// registry 信息：curl 拉完整 packument（npm view 的 install-v1 缩略 Accept 在阿里云 lazy
+// proxy 上不触发上游拉取恒 404——完整 JSON 才 200）。aliyun target 带 Basic 认证。
+function registryPackument(fullName) {
+  const url = REGISTRY + fullName.replace("/", "%2f");
+  const auth = TARGET === "aliyun"
+    ? `-H ${JSON.stringify("Authorization: Basic " + Buffer.from(`${process.env.ALIYUN_NPM_USERNAME}:${process.env.ALIYUN_NPM_PASSWORD}`).toString("base64"))}`
+    : "";
   try {
-    const out = execSync(`npm view ${JSON.stringify(fullName)} versions latest --json --registry ${REGISTRY} 2>nul`, {
-      encoding: "utf8", shell: process.platform === "win32",
-    });
+    const out = execSync(`curl -s --max-time 30 ${auth} ${JSON.stringify(url)}`, {
+      encoding: "utf8", shell: true, timeout: 45_000 }
+    );
     const j = JSON.parse(out);
-    if (!j || j.error || j.length === 0 && !Array.isArray(j)) return null;
-    const versions = Array.isArray(j) ? j : j.versions || [];
-    const latest = Array.isArray(j) ? versions[versions.length - 1] : j.latest;
-    return { versions: new Set(versions), latest };
+    if (!j || j.error || !j.versions) return null;
+    const versions = Object.keys(j.versions);
+    const latest = j["dist-tags"] && j["dist-tags"].latest;
+    const latestManifest = latest && j.versions[latest];
+    return { versions: new Set(versions), latest, latestHash: (latestManifest && latestManifest.contentHash) || null };
   } catch {
     return null;
   }
@@ -232,7 +238,8 @@ for (const { dir, pkgDir, pjPath, p } of pkgs) {
   }
   const fullName = p.name.startsWith(SCOPE + "/") ? p.name : `${SCOPE}/${p.name}`;
   let version = p.version;
-  const info = registryInfo(fullName);
+  // aliyun lazy proxy 下 npm view 恒 404——直接走 curl 完整 packument
+  const info = TARGET === "aliyun" ? registryPackument(fullName) : registryInfo(fullName);
 
   // v3 内容哈希变更检测：源码变了→自动 bump patch→发布；没变→跳过。
   // 哈希以 contentHash 字段写进发布的 package.json → **npm registry 即为唯一事实源**
@@ -247,6 +254,7 @@ for (const { dir, pkgDir, pjPath, p } of pkgs) {
     }).trim().replace(/^"/, "").replace(/"$/, "");
   } catch { publishedHash = null; }
   if (!publishedHash || publishedHash === "undefined" || publishedHash === "") publishedHash = null;
+  if (TARGET === "aliyun") publishedHash = (info && info.latestHash) || null;
   const versionOnRegistry = info && info.versions.has(version);
   // 元数据收敛检查：npm 版本不可变 → 元数据修正只能随新版本发布。源上 latest 的
   // repository 未指向真实公开仓 aiti-ai/aiti-ai（缺失或旧死链形态
