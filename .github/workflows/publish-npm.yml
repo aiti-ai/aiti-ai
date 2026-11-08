@@ -93,21 +93,17 @@ jobs:
             [ -d "$ext" ] || continue
             ln -sfn "$BUILD/node_modules" "${ext}node_modules"
           done
-          # packages/ 侧（npm run build 需要 node_modules；@aiti-ai/* 依赖走 vendor file 注入——
-          # npmjs 无此 scope。install 后还原 package.json（发布内容保持 semver deps），
-          # 已装 node_modules 供 publish-all 阶段的 build 使用
-          declare -A VMAP
-          for t in vendor/npm/*.tgz; do
-            VN=$(tar xzf "$t" -O package/package.json 2>/dev/null | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{try{console.log(JSON.parse(d).name||'')}catch{}})")
-            [ -n "$VN" ] && VMAP[$VN]="$PWD/$t"
-          done
+          # packages/ 侧（npm run build 需要 node_modules；@aiti-ai/* 依赖经 inject 脚本改为
+          # vendor file + overrides 传递闭环——npmjs 无该 scope。install 后还原 package.json
+          # （发布内容保持 semver deps），已装 node_modules 供 publish-all 阶段的 build 使用
           for d in packages/*/; do
             pj="${d}package.json"
             [ -f "$pj" ] || continue
             cp "$pj" "$pj.orig"
-            for VN in "${!VMAP[@]}"; do
-              node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));const [dep,tgz]=process.argv.slice(1);for(const sec of [p.dependencies,p.devDependencies,p.peerDependencies])if(sec&&sec[dep])sec[dep]='file:'+tgz;fs.writeFileSync(process.argv[1],JSON.stringify(p,null,2))" "$pj" "$VN" "${VMAP[$VN]}" || true
-            done
+            node scripts/inject-vendor-deps.mjs "$pj" "$PWD/vendor/npm"
+            (cd "$d" && npm install --legacy-peer-deps --no-audit --no-fund --loglevel=error)
+            mv "$pj.orig" "$pj"   # 还原（node_modules 保留）
+          done
             (cd "$d" && npm install --legacy-peer-deps --no-audit --no-fund --loglevel=error)
             mv "$pj.orig" "$pj"   # 还原（node_modules 保留）
           done
