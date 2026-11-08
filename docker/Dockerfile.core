@@ -103,6 +103,9 @@ COPY docker/scripts/30-install-pi.sh /tmp/30-install-pi.sh
 RUN /tmp/30-install-pi.sh "${NPM_MIRROR}" && rm /tmp/30-install-pi.sh \
     && chown -R aiti:aiti /opt/aiti/agent
 
+# ── ⑥.5 vendor tgz（@aiti-ai/* 官方源就绪前的 file: 依赖基座）────────────────
+COPY vendor/rewritten /opt/vendor
+
 # ── ⑦ justget 工具市场 + aiti-bridge → /usr/local/bin ────────────────────────
 COPY justget /opt/aiti/src-justget
 # ⚠ 用 wrapper 不用 symlink（冒烟实证）：justget 是 ESM 主模块守卫
