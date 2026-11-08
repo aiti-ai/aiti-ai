@@ -51,7 +51,7 @@ RUN curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
          SCOPE_PATH=$(echo "${AITI_NPM_REGISTRY}" | sed -e "s|^https\?://||" -e "s|/$||") \
          && npm config set "//${SCOPE_PATH}/:username" "${AITI_NPM_REGISTRY_USER}" \
          && npm config set "//${SCOPE_PATH}/:_password" "$(printf %s "${AITI_NPM_REGISTRY_PASS}" | base64 -w0)" \
-         && npm config set "//${SCOPE_PATH}/:always-auth" "true"; fi \
+         && npm config set "//${SCOPE_PATH}/:always-auth" "true" 2>/dev/null || npm config delete "//${SCOPE_PATH}/:always-auth" >/dev/null 2>&1 || true; fi \
     && node -v
 
 # ── ② 运行用户 aiti（可经 UID/GID env 覆盖；entrypoint 兜底重建）＋ 免密 sudo ──
