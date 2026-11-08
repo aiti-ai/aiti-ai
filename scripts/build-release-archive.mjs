@@ -30,6 +30,10 @@ const FROM_TGZ = opt("--from-tgz"); // CI 复用 prepare job 的 npm tgz
 const LOCK = opt("--lock"); // package-lock.json（npm pack 硬排除 lock，闭包 npm ci 需单独传入）
 const OS = opt("--os") || nodePlatform;
 const ARCH = opt("--arch") || nodeArch;
+// 资产名/RELEASE.txt 平台段用 install.sh / install.ps1 / release.yml 预期的短名：
+// process.platform 的 win32 → win（否则 release 上资产叫 win32-x64.zip，安装器按
+// win-x64.zip 找必 404）
+const platName = OS === "win32" ? "win" : OS;
 const REGISTRY = process.env.AITI_PACK_REGISTRY || "";
 const NODE_OPTIONS = process.env.NODE_OPTIONS || "--max-old-space-size=8192";
 
@@ -141,9 +145,6 @@ writeFileSync(join(appDir, "RELEASE.txt"), [
 
 // ---- 5) archive：顶层目录固定 aiti-web/。linux/darwin tgz；windows zip（Expand-Archive 只认 zip）----
 const ext = OS === "win32" ? "zip" : "tar.gz";
-// 资产名平台段用 install.sh / install.ps1 / release.yml 预期的短名：process.platform 的
-// win32 → win（否则 release 上资产叫 win32-x64.zip，安装器按 win-x64.zip 找必 404）
-const platName = OS === "win32" ? "win" : OS;
 const outName = `aiti-web-v${VERSION}-${platName}-${ARCH}.${ext}`;
 const outPath = OUT || join(REPO, outName);
 if (ext === "zip") {
