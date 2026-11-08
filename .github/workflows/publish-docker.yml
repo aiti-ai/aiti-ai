@@ -21,7 +21,8 @@ on:
       version_tag:
         description: "Version tag (e.g. v0.15.7) for image tags; default: ref name"
         required: false
-        default: ""      npm_registry:
+        default: ""
+      npm_registry:
         description: "@aiti-ai/* dependency registry for in-image installs (aliyun needs secrets)"
         required: false
         default: "npmjs"
