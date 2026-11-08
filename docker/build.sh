@@ -69,6 +69,11 @@ if [[ -n "$PRIVREG" ]]; then
   EXTRA_ARGS+=(--build-arg "AITI_NPM_REGISTRY=${PRIVREG}")
   echo "[build] 私仓测试模式：@aiti-ai/* ← ${PRIVREG}（临时；正式发布不带此参数）"
 fi
+# scope 私仓认证（--private-registry 搭配；凭据 env 独立维护，不落命令行）
+if [[ -n "$PRIVREG" ]]; then
+  [[ -n "${AITI_NPM_REGISTRY_USER:-}" ]] && EXTRA_ARGS+=(--build-arg "AITI_NPM_REGISTRY_USER=${AITI_NPM_REGISTRY_USER}")
+  [[ -n "${AITI_NPM_REGISTRY_PASS:-}" ]] && EXTRA_ARGS+=(--build-arg "AITI_NPM_REGISTRY_PASS=${AITI_NPM_REGISTRY_PASS}")
+fi
 
 # ② 组装 staging 构建上下文（git 无关文件已由 rsync exclude 控制）
 STAGE="${REPO_ROOT}/.docker-build-context"
@@ -107,12 +112,18 @@ elif [ -f "$REPO_ROOT/vendor/npm/justget-0.2.4.tgz" ]; then
 else
   echo "[build] ⚠ 无 justget 源且无 vendor tgz——Dockerfile COPY justget 将失败（fail-fast）"
 fi
-# ②.5 @aiti-ai/* 官方源就绪前的依赖面（官方发布后本段与 Dockerfile /opt/vendor 可退役）：
-#  vendor tgz 传递链重写 + staged package.json deps 改写为容器内 file:/opt/vendor——
-#  容器内 npm install（bridge/扩展 deps/运行时 reconcile）全部命中本地路径，零 registry
-mkdir -p "$STAGE/vendor/npm"
-rsync -a "$REPO_ROOT/vendor/npm/" "$STAGE/vendor/npm/"
-node "$HERE/scripts/rewrite-vendor.mjs" "$STAGE" "pi-web-ext pi-ext packages"
+# ②.5 依赖来源选择（正式链路 = registry：先 npm publish → 容器构建从同一 registry 拉依赖；
+#  临时测试链路 = vendor rewrite（file:/opt/vendor 零 registry），env AITI_DOCKER_VENDOR_REWRITE=1 开启；
+#  默认关 = 正式仓路径。@aiti-ai/* 官方源发布后本段与 Dockerfile /opt/vendor 可整体退役）
+mkdir -p "$STAGE/vendor/rewritten"   # 空目录兜底：Dockerfile COPY 始终可命中
+if [[ "${AITI_DOCKER_VENDOR_REWRITE:-0}" == "1" ]]; then
+  echo "[build] 临时链路：vendor rewrite 开启（file:/opt/vendor，不走 registry）"
+  mkdir -p "$STAGE/vendor/npm"
+  rsync -a "$REPO_ROOT/vendor/npm/" "$STAGE/vendor/npm/"
+  node "$HERE/scripts/rewrite-vendor.mjs" "$STAGE" "pi-web-ext pi-ext packages"
+else
+  echo "[build] 正式链路：依赖走 registry（NPM_MIRROR / AITI_NPM_REGISTRY scope）"
+fi
 
 # ③ 构建（full 依赖 core 先行：docker build 的 FROM aiti/aiti:core 取本地镜像）
 PLATFORM_ARG=(); [[ -n "$PLATFORM" ]] && PLATFORM_ARG=(--platform "$PLATFORM")
