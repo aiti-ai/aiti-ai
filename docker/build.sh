@@ -37,6 +37,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 TAG="${TAG:-aiti/aiti:${TARGET}}"
+CORE_IMAGE="${CORE_IMAGE:-aiti/aiti:core}"   # full 的 FROM 基座（tag 别名，见 ③）
 
 # ① 预检（方案 §4.1 步骤 1）：基础镜像可达性（48 主机经 registry-mirror 已实证 26.04 可拉）
 if ! docker image inspect ubuntu:26.04 >/dev/null 2>&1; then
@@ -103,6 +104,11 @@ fi
 # ③ 构建（full 依赖 core 先行：docker build 的 FROM aiti/aiti:core 取本地镜像）
 PLATFORM_ARG=(); [[ -n "$PLATFORM" ]] && PLATFORM_ARG=(--platform "$PLATFORM")
 echo "[build] docker build --target ${TARGET} -> ${TAG}"
+if [[ "$TARGET" == "full" ]]; then
+  # full 的 FROM 基座按镜像名解析：TAG 若已改仓（如 aitiai/pi-web:core）则把刚构建的 core 别名回默认名
+  docker tag "${TAG%:*}:core" "${CORE_IMAGE}" 2>/dev/null || docker tag "aiti/aiti:core" "${CORE_IMAGE}" || true
+  EXTRA_ARGS+=(--build-arg "CORE_IMAGE=${CORE_IMAGE}")
+fi
 docker build ${PLATFORM_ARG+"${PLATFORM_ARG[@]}"} "${EXTRA_ARGS[@]}" \
   -f "$STAGE/docker/Dockerfile.${TARGET}" \
   -t "$TAG" \
