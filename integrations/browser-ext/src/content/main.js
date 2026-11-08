@@ -1,18 +1,21 @@
 /*
- * aiti-devtools 浏览器扩展 · MAIN world 注入器（Chrome / Edge / Firefox，含 Firefox Android）
+ * aiti-devtools browser extension · MAIN-world injector (Chrome / Edge / Firefox, incl. Firefox Android)
  *
- * 职责：把 aiti-devtools launcher 注入任意页面（目标应用零改造）。
- *  - 注入方式：本 content script 以 world:"MAIN" 运行（manifest 声明），launcher 源码在
- *    构建时内联进本文件（LAUNCHER_CODE 占位符被替换为 launcher 源码），作为文件顶层代码执行——
- *    非 eval/Function，不受页面 CSP 约束（content script 文件代码由浏览器直接执行）。
- *  - 配置来源：localStorage 缓存（bridge.js isolated 写入）+ 默认值兜底 + postMessage 实时更新。
- *  - 防重复：window.__dbgLauncherInstalled（launcher 自带守卫，页面本身有 launcher 时不双注入）。
+ * Role: inject the aiti-devtools launcher into any page (zero changes to the target app).
+ *  - Injection: this content script runs with world:"MAIN" (declared in the manifest); the launcher
+ *    source is inlined into this file at build time (the LAUNCHER_CODE placeholder is replaced with
+ *    the launcher source) and executes as file top-level code — not eval/Function, unconstrained
+ *    by page CSP (content script files are executed directly by the browser).
+ *  - Config source: localStorage cache (written by bridge.js in the isolated world) + default
+ *    fallback + live updates via postMessage.
+ *  - Double-injection guard: window.__dbgLauncherInstalled (the launcher's own sentinel — no double
+ *    injection when the page already runs a launcher).
  */
 (function () {
   'use strict';
   const LS_KEY = 'aiti-ext:cfg';
   const DEFAULTS = {
-    enabled: true,
+    enabled: false,   // ★ v2 default off (true only after bridge.js resolves the site rules; 'once' overrides via postMessage)
     bridgeUrl: 'http://127.0.0.1:8777/aiti',
     aiUrl: 'http://127.0.0.1:8777/cockpit.html',
   };
@@ -25,17 +28,17 @@
   }
 
   function inject(cfg) {
-    if (window.__dbgLauncherInstalled) return;   // 页面已有 launcher（如 pi-web）→ 不双注入
-    if (!cfg || cfg.enabled === false) return;   // 站点被排除 / 开关关闭
+    if (window.__dbgLauncherInstalled) return;   // page already has a launcher (e.g. pi-web) → no double injection
+    if (!cfg || cfg.enabled === false) return;   // site denied / switch off
     if (cfg.bridgeUrl) window.__AITI_BRIDGE_URL = cfg.bridgeUrl;
     if (cfg.aiUrl) window.__AITI_AI_URL = cfg.aiUrl;
     /*__LAUNCHER_CODE__*/
   }
 
-  // 1) 同步注入：优先 localStorage 缓存（bridge.js isolated 已写入），无缓存用默认值
+  // 1) synchronous inject: prefer the localStorage cache (written by bridge.js in the isolated world); fall back to defaults
   inject(readCfg() || DEFAULTS);
 
-  // 2) 异步配置（storage.sync 读回后 postMessage / options 保存后）→ 尚未注入则补注
+  // 2) async config (storage.sync read-back posted via postMessage / options save) → inject now if not yet injected
   window.addEventListener('message', function (e) {
     const d = e && e.data;
     if (d && d.__aitiExt === 1 && d.type === 'cfg') inject(d.cfg);

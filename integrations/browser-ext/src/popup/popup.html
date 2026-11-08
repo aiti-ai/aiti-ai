@@ -8,27 +8,31 @@
 <body>
   <div class="wrap">
     <div class="head">
-      <span class="logo">🛠 aiti devtools</span>
-      <label class="switch" title="全局注入开关">
-        <input type="checkbox" id="enabled">
-        <span class="slider"></span>
-      </label>
+      <span class="logo"><img src="../icons/logo.svg" alt="aiti" class="logo-img">aiti devtools</span>
+      <button class="btn mini" id="openOptions">⚙ 设置</button>
     </div>
 
     <div class="rows">
       <div class="row">
-        <span class="k">桥地址</span>
-        <span class="v mono" id="bridgeUrl" title="MCP 桥基地址">—</span>
+        <span class="k">本页状态</span>
+        <span class="v" id="siteState">—</span>
       </div>
       <div class="row">
-        <span class="k">AI 窗</span>
-        <span class="v mono" id="aiUrl" title="AI 调试窗地址">—</span>
+        <span class="k">AI 目标</span>
+        <span class="v" id="aiTarget">—</span>
+      </div>
+      <div class="row">
+        <span class="k">桥地址</span>
+        <span class="v mono" id="bridgeUrl" title="MCP 桥基地址">—</span>
       </div>
     </div>
 
     <div class="actions">
+      <button class="btn primary" id="once">⚡ 本页启用（本次）</button>
+      <button class="btn" id="always">★ 总是启用此站点</button>
+    </div>
+    <div class="actions">
       <button class="btn primary" id="openAi">💬 打开 AI 窗</button>
-      <button class="btn" id="openOptions">⚙ 设置</button>
     </div>
 
     <div class="foot" id="hint"></div>
