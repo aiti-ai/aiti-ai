@@ -67,6 +67,33 @@ jobs:
             npm whoami --registry https://registry.npmjs.org
           fi
 
+      # 扩展 build:client 的依赖根（CI checkout 树无扩展 node_modules；dry-run 不跑构建所以
+      # 只在实发暴露）——共享构建根 + 每扩展 symlink，同 release.yml prepare 机制
+      - name: Prepare shared build root (extension devDeps)
+        run: |
+          set -e
+          BUILD=/tmp/aiti-build-root
+          PKGS=/tmp/aiti-local-pkgs
+          mkdir -p "$PKGS"
+          (cd extensions/_shared && npm pack --pack-destination "$PKGS")
+          (cd packages/aiti-bridge && npm pack --pack-destination "$PKGS")
+          (cd packages/aiti-devtools-core && npm pack --pack-destination "$PKGS")
+          SHARED_TGZ=$(ls "$PKGS"/aiti-ai-ext-shared-*.tgz | head -1)
+          BRIDGE_TGZ=$(ls "$PKGS"/aiti-ai-aiti-bridge-*.tgz | head -1)
+          CORE_TGZ=$(ls "$PKGS"/aiti-ai-aiti-devtools-core-*.tgz | head -1)
+          node scripts/collect-extension-deps.mjs --out "$BUILD/package.json" \
+            --file "@aiti-ai/ext-shared=$SHARED_TGZ" \
+            --file "@aiti-ai/aiti-bridge=$BRIDGE_TGZ" \
+            --file "@aiti-ai/aiti-devtools-core=$CORE_TGZ" \
+            --file "justget=$PWD/vendor/npm/justget-0.2.4.tgz" \
+            --file "service-tunnels=$PWD/vendor/npm/service-tunnels-0.3.76.tgz" \
+            --file "@aiti-ti/ddns=$PWD/vendor/npm/aiti-ti-ddns-0.2.0.tgz"
+          npm install --prefix "$BUILD" --legacy-peer-deps --no-audit --no-fund --loglevel=error
+          for ext in extensions/*/; do
+            [ -d "$ext" ] || continue
+            ln -sfn "$BUILD/node_modules" "${ext}node_modules"
+          done
+
       - name: Publish (registry target, gated)
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
