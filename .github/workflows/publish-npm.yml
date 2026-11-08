@@ -93,6 +93,18 @@ jobs:
             [ -d "$ext" ] || continue
             ln -sfn "$BUILD/node_modules" "${ext}node_modules"
           done
+          # packages/ 侧（aiti-devtools-* 的 npm run build 需要 node_modules；core 依赖走 vendor
+          # file 注入——npmjs 无 @aiti-ai/*。install 后还原 package.json（发布内容保持 semver deps），
+          # 已装 node_modules 供 publish-all 阶段的 build 使用
+          CORE_TGZ="$PWD/vendor/npm/aiti-ai-aiti-devtools-core-0.3.11.tgz"
+          for d in packages/*/; do
+            pj="${d}package.json"
+            [ -f "$pj" ] || continue
+            cp "$pj" "$pj.orig"
+            node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));if(p.dependencies&&p.dependencies['@aiti-ai/aiti-devtools-core'])p.dependencies['@aiti-ai/aiti-devtools-core']='file:'+process.argv[2];fs.writeFileSync(process.argv[1],JSON.stringify(p,null,2))" "$pj" "$CORE_TGZ" || true
+            (cd "$d" && npm install --legacy-peer-deps --no-audit --no-fund --loglevel=error) || true
+            mv "$pj.orig" "$pj"   # 还原（node_modules 保留）
+          done
 
       - name: Publish (registry target, gated)
         env:
