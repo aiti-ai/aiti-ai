@@ -99,6 +99,7 @@ jobs:
           for d in packages/*/; do
             pj="${d}package.json"
             [ -f "$pj" ] || continue
+            rm -f "${d}package-lock.json"   # 构建注入态下 lock 与改写不符（精确 spec 撞 npmjs 404），发布包不需要它
             cp "$pj" "$pj.orig"
             node scripts/inject-vendor-deps.mjs "$pj" "$PWD/vendor/npm"
             (cd "$d" && npm install --legacy-peer-deps --no-audit --no-fund --loglevel=error)
