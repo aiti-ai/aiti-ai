@@ -510,3 +510,11 @@ This version has breaking changes — APIs, conventions, and file structure may 
 This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
 
 <!-- END:nextjs-agent-rules -->
+
+## Language discipline (commits & comments, effective 2026-11-08)
+
+- **Commit messages are English-only** across all repos (aiti-ai / aiti-ai-internal / mirrors and work branches). Technical terms, commit hashes, version numbers and file paths stay verbatim; no Chinese in subjects or bodies.
+- **Code comments default to English** for new code and rewritten sections. Formal localized content documents (README.zh-CN.md, Chinese pages under aiti-docs, Chinese SKILL.md bodies) are exempt — content language follows the document's purpose.
+- **The public surface** (github.com/aiti-ai/aiti-ai, aiti-ai-internal, and the aitiai/pi-web Docker Hub) is the public face: commit messages, code comments, workflow and tooling comments are English-only. Legacy Chinese comments in extensions/ are cleaned up opportunistically (whichever file you touch, anglicize its comments as you go) — no one-shot bulk translation planned.
+- **History was rewritten on 2026-11-08** (git filter-repo): every Chinese commit authored by Wind Li/wind was anglicized (71 precisely translated; the rest had Chinese lines stripped). Upstream community authors (TossPig, 谢凯文, 将军, …) keep their original PR squashes out of respect for attribution — same for their Co-authored-by trailers. Pre-rewrite backup: `/tmp/aiti-ai-backup-pre-rewrite.bundle` (36M, all refs).
+- **Upstream-inherited commits are untouched**: the agegr/pi-web fork history (including its 2000+ Chinese commits) belongs to the upstream community and is neither rewritten nor translated.
