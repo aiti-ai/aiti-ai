@@ -67,7 +67,7 @@ jobs:
       - name: Registry env (aliyun scope + credentials)
         run: |
           if [[ "${{ inputs.npm_registry }}" == "aliyun" ]]; then
-            echo "PRIVREG=https://packages.aliyun.com/63a415398d9a873a30aae528/npm/npm-registry/" >> "$GITHUB_ENV"
+            echo "AITI_PRIVATE_REGISTRY=https://packages.aliyun.com/63a415398d9a873a30aae528/npm/npm-registry/" >> "$GITHUB_ENV"   # build.sh 读取名
             echo "AITI_NPM_REGISTRY_USER=${{ secrets.ALIYUN_NPM_USERNAME }}" >> "$GITHUB_ENV"
             echo "AITI_NPM_REGISTRY_PASS=${{ secrets.ALIYUN_NPM_PASSWORD }}" >> "$GITHUB_ENV"
           fi
