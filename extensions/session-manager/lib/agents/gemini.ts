@@ -39,11 +39,11 @@ function msgText(m: GeminiMessage): string {
   return "";
 }
 
-export function createGeminiAdapter(): AgentAdapter {
-  const root = () => join(homedir(), ".gemini", "tmp");
-  return {
-    id: "gemini",
-    label: "Gemini CLI",
+export function createGeminiAdapter(dirName = ".gemini", id = "gemini", label = "Gemini CLI"): AgentAdapter {
+	const root = () => join(homedir(), dirName, "tmp");
+	return {
+		id,
+		label,
     roots() {
       const r = root();
       return existsSync(r) ? [r] : [];
