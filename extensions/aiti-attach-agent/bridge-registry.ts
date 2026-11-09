@@ -69,9 +69,10 @@ export async function writeBridgeEntry(sessionFile: string, entry: BridgeEntry):
 }
 
 /**
- * 原子替换写（tmp + rename）：非原子直写会让并发读者（dev/prod 两个 pi-web +
- * 多个 TUI 进程共享同一份 registry）见到半截 JSON——readBridgeRegistry 解析失败
- * 当空表，随后任何一次 read-modify-write 都会把全部条目抹掉（attach 全体失效）。
+ * Atomic replace-write (tmp + rename): a non-atomic direct write lets concurrent
+ * readers (dev/prod pi-web instances + several TUI processes all sharing this registry)
+ * see a half-written JSON — readBridgeRegistry would then parse-fail to an empty table,
+ * and the next read-modify-write would wipe every entry (all attaches break).
  */
 async function atomicWriteJson(file: string, reg: Registry): Promise<void> {
   const tmp = `${file}.${process.pid}.tmp`;
@@ -89,7 +90,7 @@ export async function removeBridgeEntry(sessionFile: string): Promise<void> {
   } catch { /* best-effort */ }
 }
 
-/** 注册表声明占用但桥不可达——调用方必须报错而非回退本地打开（单写者红线）。 */
+/** Registry claims ownership but the bridge is unreachable — callers must error out, never fall back to a local open (single-writer rule). */
 export class BridgeOccupiedError extends Error {
   readonly sessionFile: string;
   constructor(sessionFile: string, detail: string) {
@@ -106,7 +107,7 @@ export function bridgeSocketName(pid: number): string {
     : `/tmp/pi-tui-bridge-${pid}`;
 }
 
-/** 主动探测 socket 可连接性（权威存活信号——pid 会复用、进程可能假死）。 */
+/** Actively probe socket connectability (authoritative liveness — pids get reused, processes can hang). */
 function probeSocketAlive(socketPath: string, timeoutMs = 1000): Promise<boolean> {
   return new Promise((resolve) => {
     const s = createConnection({ path: socketPath });
@@ -136,7 +137,7 @@ export async function findBridgeSocketForSession(sessionFile: string): Promise<s
   const reg = await readBridgeRegistry();
   const entry = reg[sessionFile];
   if (!entry) return undefined;
-  // 二次确认（readBridgeRegistry 只查了 pid）：socket 连不上 = 桥已死
+  // Double-check (readBridgeRegistry only checked the pid): an unconnectable socket = dead bridge
   if (!(await probeSocketAlive(entry.socket))) {
     await removeBridgeEntry(sessionFile).catch(() => {});
     return undefined;
@@ -144,7 +145,7 @@ export async function findBridgeSocketForSession(sessionFile: string): Promise<s
   return entry.socket;
 }
 
-/** 活桥条目（含 pid），供 ownsFile/createSession 复用。 */
+/** Live bridge entry (with pid), reused by ownsFile/createSession. */
 export async function findLiveBridgeEntry(
   sessionFile: string,
 ): Promise<{ socket: string; pid: number } | undefined> {
@@ -154,7 +155,7 @@ export async function findLiveBridgeEntry(
   return reg[sessionFile] ? { socket, pid: reg[sessionFile].pid } : undefined;
 }
 
-/** TUI 桥启动：登记（socket 名按 pid 跨平台生成）。 */
+/** TUI bridge startup: register (socket name derived from pid, cross-platform). */
 export async function registerBridge(sessionFile: string): Promise<void> {
   await writeBridgeEntry(sessionFile, {
     socket: bridgeSocketName(process.pid),
@@ -163,7 +164,7 @@ export async function registerBridge(sessionFile: string): Promise<void> {
   });
 }
 
-/** TUI 桥关闭：注销。 */
+/** TUI bridge shutdown: unregister. */
 export async function unregisterBridge(sessionFile: string): Promise<void> {
   await removeBridgeEntry(sessionFile);
 }

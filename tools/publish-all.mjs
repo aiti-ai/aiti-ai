@@ -238,8 +238,9 @@ for (const { dir, pkgDir, pjPath, p } of pkgs) {
   }
   const fullName = p.name.startsWith(SCOPE + "/") ? p.name : `${SCOPE}/${p.name}`;
   let version = p.version;
-  // aliyun lazy proxy 下 npm view 恒 404——直接走 curl 完整 packument
-  const info = TARGET === "aliyun" ? registryPackument(fullName) : registryInfo(fullName);
+  // aliyun lazy proxy 下 npm view 恒 404——直接走 curl 完整 packument（npmjs 同样支持，
+  // 两分支统一走一个实现——旧的 registryInfo 在 packument 化重构后未清理，已删除）
+  const info = registryPackument(fullName);
 
   // v3 内容哈希变更检测：源码变了→自动 bump patch→发布；没变→跳过。
   // 哈希以 contentHash 字段写进发布的 package.json → **npm registry 即为唯一事实源**
@@ -356,6 +357,7 @@ for (const { dir, pkgDir, pjPath, p } of pkgs) {
     });
     published++;
     report.push(`+  ${dir}@${version}: 已发布为 ${fullName}`);
+    break;   // 成功即出 retry 循环（缺此 break 会空转第二轮、撞同版本 409 假报失败）
   } catch (e) {
     const emsg = e.message || "";
     if (TARGET === "aliyun" && !_aliyunRetried && /已存在|不允许被覆盖/.test(emsg)) {
