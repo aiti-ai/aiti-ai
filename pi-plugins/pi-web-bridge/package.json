@@ -1,0 +1,53 @@
+{
+  "name": "@aiti-ai/pi-web-bridge",
+  "version": "0.1.0",
+  "description": "Bridge a pi TUI session to the browser with /web — live view + bidirectional IO against pi-web (aiti-agent). A pi package.",
+  "keywords": [
+    "pi",
+    "pi-package",
+    "pi-extension",
+    "pi-coding-agent",
+    "pi-web",
+    "tui",
+    "bridge",
+    "multi-agent"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "sync-src": "node tools/sync-src.mjs",
+    "prepack": "node tools/sync-src.mjs",
+    "test": "node --test"
+  },
+  "files": [
+    "src",
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": "./src/pi-web-bridge.ts"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./src/pi-web-bridge.ts",
+      "./dist/aiti-devtools-pi.js"
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "pi-plugins/pi-web-bridge"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  },
+  "contentHash": "693441d9546328b9"
+}
