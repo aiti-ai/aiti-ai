@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-attach-agent",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Socket-attached agent backend — connect pi-web to a running agent process (pi TUI bridge)",
   "soul": "不抢方向盘——agent 已经在跑，附着上去看就好。",
   "aitiExtProtocol": "1.0",
