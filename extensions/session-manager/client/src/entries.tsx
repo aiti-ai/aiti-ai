@@ -7,7 +7,7 @@ import { createPortal } from "react-dom";
 import { t } from "./host-shim";
 import {
   store, useStore, panelOpen, kanbanOpen,
-  refreshRunning, refreshSessions, emit, setPendingSearch, displayCwd,
+  refreshRunning, refreshSessions, refreshWorkspaces, emit, setPendingSearch, displayCwd,
   applyRunningFrame, subscribeRunningFrames, isRunningSseHealthy,
 } from "./store";
 import { sessionTitle, agentBadge, fmtRelative } from "./helpers";
@@ -44,7 +44,14 @@ export function SidebarEntry() {
           if (!bootGrace) {
             const hasNewId = (frame.runningSessionIds as string[]).some((id) => !store.running.has(id));
             const changed = applyRunningFrame(frame.runningSessionIds as string[]);
-            if (changed) void refreshSessions({ refresh: hasNewId });
+            if (changed) {
+              void refreshSessions({ refresh: hasNewId });
+              // Running-set change → refill the project aggregate (runningCount badges;
+              // server-authoritative lastModified alignment). 5s throttle + ETag 304 →
+              // zero payload in steady state; parameterless call reuses the last unread
+              // set (cached in store).
+              void refreshWorkspaces();
+            }
           } else {
             // 宽限内只落地运行集（running 转圈/蓝点需要），不联动列表刷新
             applyRunningFrame(frame.runningSessionIds as string[]);

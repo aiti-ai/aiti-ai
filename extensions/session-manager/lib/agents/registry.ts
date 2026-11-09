@@ -27,6 +27,10 @@ import { createWindsurfAdapter } from "./windsurf.ts";
 import { createZcodeAdapter } from "./zcode.ts";
 import { createCodebuddyAdapter } from "./codebuddy.ts";
 import { createGooseAdapter, createAmpAdapter, createFactoryAdapter } from "./simple-cli.ts";
+// ACP 家族补齐（2026-11-08，acp-agents.ts）：omp/kiro/auggie/vibe 直读 + qwen 复用 gemini 形状。
+// grok/junie/hermes 暂缺——CLI 在开发机被墙/未登录，store 形状不可观测；首次真实装机后照
+// acp-agents.ts 先例补（acp-agents.ts 头注有各自证据链）。
+import { createOmpAdapter, createKiroAdapter, createAuggieAdapter, createVibeAdapter } from "./acp-agents.ts";
 
 export function builtinAdapters(): AgentAdapter[] {
   return [
@@ -36,6 +40,8 @@ export function builtinAdapters(): AgentAdapter[] {
     createClaudeLikeAdapter("qodercn", "QoderCN", ".qoder-cn", "projects"),
     createCodexAdapter(),
     createGeminiAdapter(),
+    // Qwen Code（gemini-cli fork）：store 同构 ~/.qwen/tmp/<hash>/chats/ —— id "qwen" 对齐 aiti-acp-agent 后端
+    createGeminiAdapter(".qwen", "qwen", "Qwen Code"),
     createOpencodeAdapter(),
     // Cursor Agent CLI（cursor-agent）会话 —— id "cursor" 对齐 aiti-cursor-agent 后端（open-live 接管直通 --resume）
     createCursorCliAdapter(),
@@ -57,6 +63,11 @@ export function builtinAdapters(): AgentAdapter[] {
     // ZCode（智谱桌面端内嵌 CLI）：id "zcode" 对齐 aiti-zcode-agent 后端（open-live 接管直通 --resume）；
     // 本 adapter 也是 zcode 会话的唯一读取实现（services.sessions 出口消费）
     createZcodeAdapter(),
+    // ACP 家族 2026-11-08 批次：id 对齐 aiti-acp-agent 后端 agentKey（open-live 接管走 session/load）
+    createOmpAdapter(),
+    createKiroAdapter(),
+    createAuggieAdapter(),
+    createVibeAdapter(),
     // CodeBuddy Code（腾讯 cbc）：行形状与 claude 非同构（顶层 role/content + 数字毫秒），
     // 独立实现见 codebuddy.ts；id "codebuddy" 对齐 aiti-codebuddy-agent 后端（open-live 直通 --resume）
     createCodebuddyAdapter(),
