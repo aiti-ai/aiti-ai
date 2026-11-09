@@ -13,6 +13,7 @@ import type { SessionInfo } from "./sidebar/pure";
 import {
   PIN_TAG_NAME, findPinTagId, isSessionPinned,
   isProjectPinned, projectPinId, reorderPinnedFavorites,
+  normalizeWorkspaceKey,
 } from "./sidebar/pure";
 
 // 空标签数据兜底（稳定引用——useEffect 依赖比较用;若用对象字面量,
@@ -527,8 +528,58 @@ function applyActivityRow(row: Record<string, unknown>): void {
   else { archById.delete(id); byId.set(id, row); }
   store.sessions = [...byId.values()] as any[];
   store.archived = [...archById.values()] as any[];
+  syncWorkspacesFromRow(row); // keep the project aggregate in step with live row changes (block comment below)
   reconcileLocalNames(); // 乐观改名套回（防在途旧名广播盖回；与 refreshSessions 同 stance）
   emit();
+}
+
+/* ── Row-level sync into the workspaces aggregate ([通道拆分] follow-up, 2026-11-09) ──
+ * The project list channel (/workspaces) is a snapshot aggregate endpoint: it only
+ * updates when refreshWorkspaces fetches. Before the channel split, project order was
+ * derived from full rows via getRecentProjects on every render, so activity-frame row
+ * patches re-sorted it naturally. After the split, the list is driven by the
+ * store.workspaces array, while activity frames / incremental patches only touch the
+ * row buckets — a running project stopped floating to the top (user report:
+ * "workspace dropdown no longer sorts; justdb clearly has an active session").
+ * These helpers mirror row changes into the aggregate: lastModified takes max
+ * (monotonic, never regresses), missing projects are appended. Counts
+ * (sessionCount/runningCount/unreadCount) are NOT maintained here — they stay
+ * server-authoritative via refreshWorkspaces (triggered by entries.tsx on running-set
+ * changes; parameterless calls reuse the last known unread set). */
+
+/** Upsert one row into store.workspaces (live rows only; archived rows never affect order). */
+function upsertWorkspaceRow(row: Record<string, unknown>): void {
+  if (row.archived) return;
+  const root = String(row.projectRoot ?? row.cwd ?? "");
+  const key = normalizeWorkspaceKey(String(row.projectKey ?? root));
+  const modified = String(row.modified ?? "");
+  if (!root || !key || !modified) return;
+  const list = [...(store.workspaces ?? [])];
+  let hit = list.find((w) => w.key === key);
+  if (!hit) {
+    hit = {
+      key, root,
+      name: root.split(/[\\/]/).filter(Boolean).pop() || undefined,
+      lastModified: modified, sessionCount: 0, runningCount: 0, unreadCount: 0,
+    };
+    list.push(hit);
+  }
+  if (!hit.lastModified || modified > hit.lastModified) hit.lastModified = modified;
+  list.sort((a, b) => String(b.lastModified ?? "").localeCompare(String(a.lastModified ?? "")));
+  store.workspaces = list;
+}
+
+/** Single-row sync from an activity data frame (applyActivityRow; zero-request ordering). */
+function syncWorkspacesFromRow(row: Record<string, unknown>): void {
+  upsertWorkspaceRow(row);
+}
+
+/** Alignment after a list lands (refreshSessionsInner tail): mirror row buckets into the
+ *  aggregate (new projects appear immediately + ordering floor self-heals). Same scope as
+ *  the server aggregate (activeExt superset; placeholders represented by their pi row).
+ *  O(n) idempotent upserts; steady state (no new data) produces zero change. */
+function syncWorkspacesFromRows(): void {
+  for (const row of (store.sessions ?? []) as Record<string, unknown>[]) upsertWorkspaceRow(row);
 }
 
 let sessionsEtag = "";
@@ -544,6 +595,10 @@ const WORKSPACES_MIN_INTERVAL_MS = 5000;
 let workspacesInFlight: Promise<void> | null = null;
 let workspacesLastAt = 0;
 let workspacesEtag = "";
+/** Last unread set passed by a caller: parameterless calls (entries.tsx running-frame path)
+ *  reuse it — the server treats a missing unread param as an empty set, and a zeroed
+ *  unreadCount refill would wipe the project-row red dots. */
+let workspacesLastUnreadIds: Set<string> | undefined;
 /** 通道是否已成功落地过一次（空数组也算）。节流凭据（不能用 length>0——真·零项目会退化成
  *  每次渲染都发请求）+ 下拉据此区分「还在拉」与「真的没有项目」。 */
 let workspacesLanded = false;
@@ -554,9 +609,11 @@ export async function refreshWorkspaces(unreadIds?: Set<string>, force = false):
   if (workspacesInFlight) return workspacesInFlight;
   const since = Date.now() - workspacesLastAt;
   if (!force && workspacesLanded && since < WORKSPACES_MIN_INTERVAL_MS) return;
+  if (unreadIds) workspacesLastUnreadIds = unreadIds;
+  const effectiveUnread = unreadIds ?? workspacesLastUnreadIds;
   workspacesInFlight = (async () => {
     try {
-      const unreadParam = unreadIds && unreadIds.size > 0 ? [...unreadIds].join(",") : "";
+      const unreadParam = effectiveUnread && effectiveUnread.size > 0 ? [...effectiveUnread].join(",") : "";
       const url = apiUrl("/api/extensions/session-manager/workspaces" + (unreadParam ? `?unread=${encodeURIComponent(unreadParam)}` : ""));
       // etag 是「客户端已持有这份数据」的凭据；force（下拉打开补拉 / 刷新按钮）用途正是
       // 从「数据没落地」中恢复，照发必被 304 挡回、store 永远空着（手机端一次中断的请求
@@ -836,6 +893,7 @@ async function refreshSessionsInner(opts?: { refresh?: boolean }): Promise<void>
     prunePendingRemovals();
     reconcilePendingDrafts();
     reconcileLocalNames(); // 乐观改名套回（防在途旧响应盖回；服务端一致即确认清除）
+    syncWorkspacesFromRows(); // mirror row buckets into the project aggregate (new projects + ordering floor)
     if (runRes.ok) {
       const r = await runRes.json();
       // emit 由下方列表变更统一触发；快照仅在比帧新时才可能写入（内容差异才写）
