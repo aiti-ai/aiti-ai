@@ -3,7 +3,7 @@
 A small [pi package](https://pi.dev/packages) that keeps your model list tidy
 and rotates API keys to prevent 429 rate limits.
 
-> 🇨🇳 中文版：[README.zh-CN.md](https://github.com/aiti-ai/pi-models-combo/blob/main/README.zh-CN.md)
+> 🇨🇳 中文版：[README.zh-CN.md](https://github.com/aiti-ai/aiti-ai/blob/main/pi-plugins/pi-models-combo/README.zh-CN.md)
 
 ## About aiti
 
@@ -88,7 +88,7 @@ provider in `models.json` with `"combo": true` and a `combo.members` list per
 virtual model (optional `weight`, default 10). The local proxy routes requests
 with **sticky sessions** (same member within an idle TTL — maximizes upstream
 prompt cache hits), 429-cooldown failover, vision-aware routing, and
-weight-based member selection. See the [Chinese README](https://github.com/aiti-ai/pi-models-combo/blob/main/README.zh-CN.md)
+weight-based member selection. See the [Chinese README](https://github.com/aiti-ai/aiti-ai/blob/main/pi-plugins/pi-models-combo/README.zh-CN.md)
 section 3 for the full config format and rationale.
 
 **Content-class routing (`types`, v0.4.4)** — a member can declare which request
@@ -115,7 +115,7 @@ a structured 504. Any timeout (TTFB/idle/total) also **halves that member's
 weight** (frozen via the usual error cooldown) until its next real success.
 Persistently slow slots (median TTFB of last 8 requests > 30s) are skipped
 immediately even while their sticky TTL is still valid. Any >=400 response
-expires the sticky pointer. See the [Chinese README](https://github.com/aiti-ai/pi-models-combo/blob/main/README.zh-CN.md) section 4 for details.
+expires the sticky pointer. See the [Chinese README](https://github.com/aiti-ai/aiti-ai/blob/main/pi-plugins/pi-models-combo/README.zh-CN.md) section 4 for details.
 
 ### 4.1 i18n (v0.4.3)
 
@@ -137,11 +137,7 @@ relies on it) and the `upstream timeout` / `upstream error` log anchors.
 pi install npm:@aiti-ai/pi-models-combo
 ```
 
-Or point pi at this repository directly:
-
-```sh
-pi install git:github.com/aiti-ai/pi-models-combo
-```
+Source (the aiti-ai monorepo): <https://github.com/aiti-ai/aiti-ai/tree/main/pi-plugins/pi-models-combo>
 
 ## How it works
 
