@@ -49,7 +49,7 @@ Commands:
   status                     List running Pi Web servers
   stop [--port <port>]       Stop a running server
   open [--port <port>]       Open a running server in the browser
-  update [--check]           Update a global npm install to the latest version
+  update [--check]           Self-update via the install channel (npm global / release archive)
 
 Options:
   -p, --port <port>          Server port (default: 30141, or PORT)
