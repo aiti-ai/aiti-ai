@@ -22,8 +22,13 @@ const path = require("node:path");
 let bridge = null;
 let dataDirCache = ""; // 扩展 cacheDir（startup 存）：截屏大图落盘目录用（数据分层：可再生 → cache）
 let fedFeatures: any = null; // startup 捕获 ctx.features（pairFed.* 配置读取）
+const pairFedModGen = ((globalThis as any).__aitiPairFedGenCounter = (((globalThis as any).__aitiPairFedGenCounter || 0) + 1)); // 模块加载时 +1（reload 检测）；调用不自增——否则每次 pair 请求都重建实例（实测坑）
 function getOrCreatePairFed(cacheDir: string) {
   const g = globalThis as any;
+  if (g.__aitiPairFed && g.__aitiPairFed.modGen !== pairFedModGen) {
+    try { g.__aitiPairFed.stop(); } catch {}
+    g.__aitiPairFed = null; // 旧模块闭包实例（可能持挂死 fetch 循环）→ 重建
+  }
   if (!g.__aitiPairFed) {
     g.__aitiPairFed = createPairFed({
       TAG: "[aiti-devtools]",
@@ -33,12 +38,15 @@ function getOrCreatePairFed(cacheDir: string) {
         const b = bridge;
         if (!b) return 0;
         let n = 0;
-        try { for (const p of b.pair().listPeers()) if (p.online && b.pair().deliverToPeer(p.id, env)) n++; } catch {}
+        // 全量投递（不过滤 online）：在线走 SSE、离线进 inbox（重连/刷新恢复）——入站广播语义
+        try { for (const p of b.pair().listPeers()) if (b.pair().deliverToPeer(p.id, env)) n++; } catch {}
         return n;
       },
     });
   }
-  return g.__aitiPairFed;
+  const inst = g.__aitiPairFed;
+  inst.modGen = pairFedModGen;
+  return inst;
 }
 function fedFeatureValue(fid: string): string {
   try {
@@ -177,11 +185,14 @@ export default {
 
       // 诊断：globalThis 上的注入注册状态
       if (p[0] === "diag" && bridge) {
+        const fedState = (() => { try { const g = globalThis as any; const inst = g.__aitiPairFed; return { hasInst: !!inst, modGen: inst ? inst.modGen : null, curGen: pairFedModGen, enabled: readFedConfig().enabled, url: readFedConfig().url, fedFeaturesType: typeof fedFeatures, featuresGetProbe: (() => { try { const v = fedFeatures?.get?.("aiti-devtools", "pairFed.enabled"); return { v, t: typeof v }; } catch (e: any) { return { err: String(e && e.message) }; } })() }; } catch (e: any) { return { err: String(e && e.message) }; } })();
+        void fedState; // 在下方 JSON 里一并返回
         const g = globalThis;
         return new Response(JSON.stringify({
           aitiInject: typeof g.__aitiInject,
           hasEnabledFor: !!(g.__aitiInject && typeof g.__aitiInject.enabledFor === "function"),
           piTunnels: typeof g.__piServiceTunnels,
+          pairFed: fedState,
         }), { headers: { "content-type": "application/json" } });
       }
       // launcher 内容哈希版本号：与 inject.ts 的 src?v=<hash> 同机制（文件改动 → hash 变 → 浏览器强制拉新）。
