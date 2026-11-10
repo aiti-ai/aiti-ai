@@ -16,23 +16,38 @@ const DEFAULT_RELEASE_REPO = "aiti-ai/aiti-ai";
 const DOWNLOAD_TIMEOUT_MS = 10 * 60_000; // archives are ~170-200 MB
 
 // Port of lib/app-update.ts (bin cannot import TypeScript).
-function parseStableVersion(version) {
-  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
+// Fork version scheme (Debian/Ubuntu style): "0.15.7" (legacy) / "0.16.0-aiti.1" (fork build
+// of upstream 0.16.0, rebuilds -aiti.2 …). Tags/npm share the same string as `v<version>`.
+// Ordering is dpkg-style: the X.Y.Z core dominates; the suffix only breaks ties against the
+// bare version ("0.16.0-aiti.1" > "0.16.0" — NOT semver prerelease ordering; we own every consumer).
+const APP_VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)(?:-aiti\.(\d+))?$/;
+
+function parseAppVersion(version) {
+  const match = APP_VERSION_PATTERN.exec(version);
   if (!match) return null;
-  const parts = match.slice(1).map(Number);
-  return parts.every(Number.isSafeInteger) ? parts : null;
+  const parts = match.slice(1, 4).map(Number);
+  if (!parts.every(Number.isSafeInteger)) return null;
+  const forkRaw = match[4];
+  const fork = forkRaw === undefined ? 0 : Number(forkRaw);
+  return Number.isSafeInteger(fork) ? { parts, fork } : null;
+}
+
+// Kept as parseStableVersion for the exported name stability; accepts bare and fork-suffixed.
+function parseStableVersion(version) {
+  return parseAppVersion(version);
 }
 
 function isNewerStableVersion(candidate, current) {
-  const candidateParts = parseStableVersion(candidate);
-  const currentParts = parseStableVersion(current);
-  if (!candidateParts || !currentParts) return false;
-  for (let index = 0; index < candidateParts.length; index += 1) {
-    if (candidateParts[index] !== currentParts[index]) {
-      return candidateParts[index] > currentParts[index];
+  const candidateParsed = parseAppVersion(candidate);
+  const currentParsed = parseAppVersion(current);
+  if (!candidateParsed || !currentParsed) return false;
+  for (let index = 0; index < candidateParsed.parts.length; index += 1) {
+    if (candidateParsed.parts[index] !== currentParsed.parts[index]) {
+      return candidateParsed.parts[index] > currentParsed.parts[index];
     }
   }
-  return false;
+  // Same upstream core — fork build suffix decides ("-aiti.2" > "-aiti.1" > bare).
+  return candidateParsed.fork > currentParsed.fork;
 }
 
 async function fetchLatestVersion() {
