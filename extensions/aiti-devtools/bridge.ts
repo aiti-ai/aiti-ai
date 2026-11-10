@@ -26,6 +26,8 @@ export function createBridgeExt(cacheDir = "", busPublish?: (type: string, data?
     registerAgent: bridge.registerAgent,
     setAgentSink: bridge.setAgentSink,
     answer: bridge.answer,
+    // pair 设备互连（fed 联邦代理要读本桥 peers/files registry）
+    pair: bridge.pair,
     // 绑定 agent 默认目标页（交互工具 pageId 未指定时定向到它）
     bindAgentPage: bridge.bindAgentPage,
     // 清理 agent 所有绑定数据（session 结束时调）

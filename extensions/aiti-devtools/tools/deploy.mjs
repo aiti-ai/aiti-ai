@@ -53,6 +53,8 @@ for (const t of TARGETS) {
     copyFileSync(resolve(extSrc, f), resolve(extDir, f));
   }
   copyFileSync(resolve(coreSrc, 'bridge.ts'), resolve(extDir, 'bridge-core.ts'));
+  copyFileSync(resolve(coreSrc, 'pair.ts'), resolve(extDir, 'pair.ts')); // pair 设备互连模块（bridge-core.ts 相对导入）
+  copyFileSync(resolve(extSrc, 'server', 'pair-fed.ts'), resolve(extDir, 'pair-fed.ts')); // 跨桥联邦代理（index.ts 相对导入）
   // 图标文件拷贝（icon: "icons/<name>.svg" → 宿主加载时内嵌；库在 _shared/icons/）
   copyIcons(resolve(extDir, 'icons'), ["wrench"], { log: (m) => console.log('[deploy] ' + m) });
 
@@ -67,6 +69,8 @@ for (const t of TARGETS) {
   copyFileSync(resolve(injectDist, 'bridge-client.js'), resolve(extDir, 'assets', 'bridge-client.js'));
   copyFileSync(resolve(injectDist, 'cdp-core.js'), resolve(extDir, 'assets', 'cdp-core.js'));
   copyFileSync(resolve(coreSrc, 'host-protocol.js'), resolve(extDir, 'assets', 'host-protocol.js'));
+  copyFileSync(resolve(coreSrc, 'pair-client.js'), resolve(extDir, 'assets', 'pair-client.js')); // pair 公共库（widget）
+  copyFileSync(resolve(coreSrc, 'pair.html'), resolve(extDir, 'assets', 'pair.html')); // pair 手机独立页
   console.log('[deploy] ' + t.name + ' → ' + extDir + '（源码/bridge-core/client/assets）');
 }
 console.log('[deploy] 完成。pi-web 热重载：POST /api/extensions/reload（dev basePath /dev 前缀）；或重启 pi-web');
