@@ -1,7 +1,9 @@
 # release.yml — GitHub Releases pipeline (triggered by v* tags, standard OSS convention).
 #
-# Trigger: git tag v0.15.7 && git push origin v0.15.7
+# Trigger: node scripts/release-tag.mjs   （守卫：package.json 必须 X.Y.Z-aiti.N，tag 固定 v<version>）
+#          → git tag v0.16.0-aiti.1 && git push origin v0.16.0-aiti.1
 # Artifacts: aiti-web-v<ver>-{linux,darwin}-{x64,arm64}.tar.gz + aiti-web-v<ver>-win-x64.zip
+#        + checksums.txt (sha256-verified by install.sh / install.ps1 at download time)
 #        + checksums.txt (sha256-verified by install.sh / install.ps1 at download time)
 # Layout: prepare (linux, platform-agnostic build: .next + 49 extension dists → npm tgz)
 #       → archive (4-platform matrix: npm tgz + each platform's production closure → per-platform archives)
@@ -32,10 +34,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify tag matches package.json version
+      - name: Verify tag matches package.json version (fork build suffix required)
         id: ver
         run: |
           VERSION=$(node -p "require('./package.json').version")
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-aiti\.[0-9]+$ ]]; then
+            echo "::error::package.json version ${VERSION} must be X.Y.Z-aiti.N — bare versions collide with upstream tags (scripts/release-tag.mjs enforces this locally too)"
+            exit 1
+          fi
           if [ "v${VERSION}" != "${GITHUB_REF_NAME}" ]; then
             echo "::error::tag ${GITHUB_REF_NAME} != package.json version ${VERSION} — bump the version before tagging"
             exit 1

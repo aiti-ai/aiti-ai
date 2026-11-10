@@ -7,7 +7,7 @@
 // checksum-verify against checksums.txt exactly as on GitHub.
 //
 // Usage:
-//   node scripts/publish-gitee-mirror.mjs --tag v0.15.7 [--assets-dir DIR] [--repo ghOwner/ghRepo] [--gitee owner/repo]
+//   node scripts/publish-gitee-mirror.mjs --tag v0.16.0-aiti.1 [--assets-dir DIR] [--repo ghOwner/ghRepo] [--gitee owner/repo]
 // Env: AITI_GITEE_TOKEN (required), GITHUB_TOKEN (optional, raises GH rate limits)
 // --assets-dir DIR reuses pre-downloaded release files instead of downloading
 // from GitHub (large archives: prefer aria2 -x16 beforehand).
@@ -20,7 +20,7 @@ const args = process.argv.slice(2);
 const opt = (f) => (args.includes(f) ? args[args.indexOf(f) + 1] : null);
 const TAG = opt("--tag");
 if (!TAG) {
-  console.error("usage: publish-gitee-mirror.mjs --tag v0.15.7 [--assets-dir DIR]");
+  console.error("usage: publish-gitee-mirror.mjs --tag v0.16.0-aiti.1 [--assets-dir DIR]");
   process.exit(1);
 }
 const GH_REPO = opt("--repo") || "aiti-ai/aiti-ai";

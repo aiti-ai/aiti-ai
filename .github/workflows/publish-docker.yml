@@ -19,7 +19,7 @@ on:
   workflow_dispatch:
     inputs:
       version_tag:
-        description: "Version tag (e.g. v0.15.7) for image tags; default: ref name"
+        description: "Version tag (e.g. v0.16.0-aiti.1) for image tags; default: ref name"
         required: false
         default: ""
       npm_registry:
