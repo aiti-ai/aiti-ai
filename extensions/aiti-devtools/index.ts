@@ -14,12 +14,49 @@
  */
 import { createBridgeExt as createBridge } from "./bridge.js"; // 薄适配层 → core（bridge-core.ts）
 import { createInjector } from "./inject.js";
+import { createPairFed } from "./pair-fed.js"; // pair 跨桥联邦代理（M3.2；feature 门控默认关）
 
 const fs = require("node:fs");
 const path = require("node:path");
 
 let bridge = null;
 let dataDirCache = ""; // 扩展 cacheDir（startup 存）：截屏大图落盘目录用（数据分层：可再生 → cache）
+let fedFeatures: any = null; // startup 捕获 ctx.features（pairFed.* 配置读取）
+function getOrCreatePairFed(cacheDir: string) {
+  const g = globalThis as any;
+  if (!g.__aitiPairFed) {
+    g.__aitiPairFed = createPairFed({
+      TAG: "[aiti-devtools]",
+      cacheDir,
+      log: (m: string) => console.log(m),
+      deliverToAllLocalPeers: (env: unknown) => {
+        const b = bridge;
+        if (!b) return 0;
+        let n = 0;
+        try { for (const p of b.pair().listPeers()) if (p.online && b.pair().deliverToPeer(p.id, env)) n++; } catch {}
+        return n;
+      },
+    });
+  }
+  return g.__aitiPairFed;
+}
+function fedFeatureValue(fid: string): string {
+  try {
+    const v = fedFeatures?.get?.("aiti-devtools", fid);
+    if (typeof v === "string") return v.trim();
+  } catch {}
+  return "";
+}
+/** pairFed 配置现读（feature 改动即时生效；enabled 兜底 false——联邦默认关） */
+function readFedConfig() {
+  let enabled = false;
+  try {
+    const v = fedFeatures?.get?.("aiti-devtools", "pairFed.enabled");
+    if (typeof v === "boolean") enabled = v;
+    else { const reg = (globalThis as any).__piWebExt; enabled = reg?.featureEnabled ? !!reg.featureEnabled("aiti-devtools", "pairFed.enabled") : false; }
+  } catch {}
+  return { enabled, url: fedFeatureValue("pairFed.url"), filesDir: fedFeatureValue("pairFed.filesDir") };
+}
 
 // 跨 reload 桥单例：挂 globalThis（按 cacheDir 分 key）。
 // 背景：POST /api/extensions/reload 会重新 import 扩展模块——若每次 startup 都 createBridge，
@@ -46,6 +83,8 @@ const ASSETS = {
   "bridge-client.js": "application/javascript",
   "host-protocol.js": "application/javascript",
   "cdp-core.js": "application/javascript",
+  "pair-client.js": "application/javascript",
+  "pair.html": "text/html; charset=utf-8",
 };
 
 function serveAsset(ctx, name) {
@@ -69,6 +108,10 @@ export default {
   // core 在 collectAgentTools 时自动过滤禁用项并包装 execute（注入不出现 + 调用即拒绝）。
   // 与 bridge TOOLS（packages/aiti-devtools-core/src/bridge.ts）保持同步：新增/改名工具时更新此处。
   features: [
+    // ── pair 设备互连（跨桥联邦，默认关）──
+    { id: "pairFed.enabled", type: "boolean", label: "pairFed · 跨桥联邦", group: "pair 设备互连", description: "开启后本实例 pair 面板/agent 工具可见并发消息/文件给权威桥（默认 127.0.0.1:8777）的设备（fed: 前缀）；权威桥用户经「pi-web 桥」设备向本实例广播", default: false },
+    { id: "pairFed.url", type: "string", label: "pairFed · 权威桥 pair base", group: "pair 设备互连", description: "默认 http://127.0.0.1:8777/aiti", placeholder: "http://127.0.0.1:8777/aiti" },
+    { id: "pairFed.filesDir", type: "string", label: "pairFed · 权威桥文件目录", group: "pair 设备互连", description: "同机直读 fed 文件用；默认 ~/.pi/aiti-bridge/aiti-bridge/pair-files（跨机部署 fed 文件下载不可用）" },
     // ── 页面调试 ──
     { id: "tool.aiti_page_exec", label: "page_exec · 页面执行", group: "页面调试", description: "在已连接页面执行类 CDP 命令（DOM/CSS/Input/Page/Runtime/Storage/Performance/Browser 域）" },
     { id: "tool.aiti_page_snapshot", label: "page_snapshot · 页面现场", group: "页面调试", description: "拉取已连接页面基础现场（URL/选区/模拟条件）" },
@@ -105,6 +148,8 @@ export default {
         try { (ctx.services as any)?.get?.("aiti-event-bus.publish")?.publish?.(type, data); } catch { /* 总线缺席：客户端 fallback 自带 SSE */ }
       };
       bridge = getOrCreateBridge(ctx.cacheDir); // globalThis 单例：reload 复用，页面 SSE 连接不丢
+      fedFeatures = ctx.features || null;
+      getOrCreatePairFed(ctx.cacheDir).configure(readFedConfig()); // 联邦 feature 即时态（改 extman 开关即生效/停止）
       // 跨扩展服务出口（DI 方案 P1）：桥表只读获取（getOrCreateBridge 单例复用语义不变；
       // globalThis.__aitiBridges 双轨保留至消费方 [aiti-attach-agent] 迁完）
       ctx.services?.provide?.("aiti-devtools.bridges", {
@@ -159,6 +204,50 @@ export default {
           return new Response(JSON.stringify({ exists: false, isFile: false, isDirectory: false }), { headers: { "content-type": "application/json" } });
         }
       }
+      // pair 跨桥联邦（M3.2，feature pairFed.enabled 门控）：devices 并集 / fed: 出站转发 / fed 文件同机代理
+      if (p[0] === "mcp" && p[1] === "bridge" && p[2] === "pair" && bridge) {
+        getOrCreatePairFed(dataDirCache).configure(readFedConfig()); // feature 现读（extman 改开关即生效）
+        const fed = getOrCreatePairFed(dataDirCache);
+        const seg = p[3] || "";
+        if (req.method === "GET" && seg === "devices") {
+          const local = await (await bridge.handle(req, p.slice(1), ctx.searchParams)).json();
+          const rows = (local.devices || []).concat(await fed.fedDevices());
+          return new Response(JSON.stringify({ ok: true, devices: rows }), { headers: { "content-type": "application/json", "cache-control": "no-store" } });
+        }
+        if (req.method === "POST" && seg === "message") {
+          const body = await req.json().catch(() => null);
+          if (body && typeof body.to === "string" && fed.isFed(body.to)) {
+            try {
+              const r = await fed.fedSendText(body.to, String(body.text || ""));
+              return new Response(JSON.stringify(r), { status: r.ok ? 200 : 400, headers: { "content-type": "application/json" } });
+            } catch (e: any) {
+              return new Response(JSON.stringify({ ok: false, error: String((e && e.message) || e) }), { status: 502, headers: { "content-type": "application/json" } });
+            }
+          }
+          // 非 fed 目标：重建请求过本桥（body 已被消费）
+          req = new Request(req.url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+        }
+        if (req.method === "POST" && seg === "file" && (p[4] || "") === "complete") {
+          const fileId = p[5] || "";
+          const resp = await bridge.handle(req, p.slice(1), ctx.searchParams);
+          try {
+            const info = bridge.pair().getFileInfo(fileId);
+            if (info && info.status === "ready" && fed.isFed(info.to)) {
+              await fed.fedSendFile({ path: info.path, name: info.name, size: info.size, mime: info.mime }, info.to)
+                .then((r: any) => console.log("[aiti-devtools] fed 文件已重放 → " + info.to + " (" + r.fileId + ")"))
+                .catch((e: any) => console.error("[aiti-devtools] fed 文件重放失败:", (e && e.message) || e));
+            }
+          } catch {}
+          return resp;
+        }
+        if (req.method === "GET" && seg === "file" && p[4]) {
+          const info = bridge.pair().getFileInfo(p[4]);
+          if (!info) {
+            const proxy = fed.fedFileProxy(p[4]);
+            if (proxy) return fed.fileStreamResponse(proxy.path, proxy.meta.name || p[4], proxy.meta.size || 0, proxy.meta.mime || "application/octet-stream");
+          }
+        }
+      }
       // 静态资源（单段路径）
       if (p.length === 1 && ASSETS[p[0]]) return serveAsset(ctx, p[0]);
       // 桥端点（mcp 前缀）
@@ -194,6 +283,34 @@ export default {
             // execute 第三个参数 = SDK 本轮 AbortSignal（pi-web 点停止 → abort）→ 透传桥 callTool：
             // 桥侧挂起请求立即结算为已取消（不再等 15s/180s/60s 服务器超时），agent 循环收到错误结果后随即停止。
             async execute(_toolCallId, params, signal) {
+              // pair 跨桥联邦（M3.2）：fed: 目标的 pair 工具走权威桥转发；bridge_status 追加 fed 设备
+              const fed = getOrCreatePairFed(dataDirCache);
+              fed.configure(readFedConfig());
+              const toArg = params && typeof params.to === "string" ? params.to : "";
+              if (fed && fed.isFed(toArg) && (t.name === "aiti_pair_send" || t.name === "aiti_pair_file")) {
+                try {
+                  if (t.name === "aiti_pair_send") {
+                    const r = await fed.fedSendText(toArg, String(params.text || ""));
+                    return { content: [{ type: "text", text: JSON.stringify(r) }], isError: !r.ok };
+                  }
+                  const fp = String(params.path || "");
+                  let st: any = null;
+                  try { st = fs.statSync(fp); } catch {}
+                  if (!st || !st.isFile()) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "文件不存在: " + fp }) }], isError: true };
+                  const r = await fed.fedSendFile({ path: fp, name: (fp.split("/").pop() as string) || "file", size: st.size, mime: "application/octet-stream" }, toArg);
+                  return { content: [{ type: "text", text: JSON.stringify({ ok: true, ...r }) }], isError: false };
+                } catch (e: any) {
+                  return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: String((e && e.message) || e) }) }], isError: true };
+                }
+              }
+              if (fed && t.name === "bridge_status") {
+                const r0 = await b.callTool(t.name, params || {}, session(), signal || undefined);
+                try {
+                  const j = JSON.parse((r0.content && r0.content[0] && r0.content[0].text) || "{}");
+                  j.devices = (j.devices || []).concat(await fed.fedDevices());
+                  return { content: [{ type: "text", text: JSON.stringify(j) }], isError: false };
+                } catch { return r0; }
+              }
               const r = await b.callTool(t.name, params || {}, session(), signal || undefined);
               let text = (r && r.content && r.content[0] && r.content[0].text) || JSON.stringify(r);
               // 截屏大图落盘（适配层，热重载即生效）：工具结果里内联 dataUrl 超大（>120KB base64）→ 存文件、
