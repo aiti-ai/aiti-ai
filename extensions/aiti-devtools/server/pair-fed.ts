@@ -21,6 +21,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, openSync, readSync, closeSync, createReadStream } from "node:fs";
 import { Readable } from "node:stream";
+import { get as httpGet } from "node:http";
 
 const FED_NS = "fed:";
 
@@ -37,6 +38,7 @@ export function createPairFed(opts: {
   const state = { alive: false, loopRunning: false, attempt: 0 };
   let cfg = { enabled: false, url: "", filesDir: "" };
   let cred: { peerId: string; token: string } | null = null;
+  let ac: AbortController | null = null; // 入站流中止（configure 启停共用）
 
   function configure(next: { enabled: boolean; url?: string; filesDir?: string }) {
     cfg = {
@@ -44,12 +46,14 @@ export function createPairFed(opts: {
       url: (next.url || "http://127.0.0.1:8777/aiti").replace(/\/+$/, ""),
       filesDir: next.filesDir || join(homedir(), ".pi", "aiti-bridge", "aiti-bridge", "pair-files"),
     };
-    if (cfg.enabled && !state.loopRunning) { state.loopRunning = true; state.alive = true; void inboundLoop(); }
-    if (!cfg.enabled) state.alive = false; // 关闭：入站循环自然退出（退出即复位 loopRunning，下次开启重启）
+    if (cfg.enabled && !state.loopRunning) { state.loopRunning = true; state.alive = true; ac = new AbortController(); void inboundLoop(ac.signal); }
+    if (!cfg.enabled) { state.alive = false; try { ac?.abort(); } catch {} } // 关闭：中止流 + 循环退出（复位 loopRunning，下次开启重启）
     return cfg;
   }
 
-  const fedFetch = (path: string, init?: RequestInit) => fetch(cfg.url + path, init);
+  // cache: no-store —— Next 服务端对全局 fetch 注入缓存语义，SSE GET 流会被缓存层挂起
+  //（连接建立但 reader.read() 永不返回，实测坑）；no-store 走原生直连流。
+  const fedFetch = (path: string, init?: RequestInit) => fetch(cfg.url + path, { ...init, cache: "no-store" });
 
   // ---- relay 凭据（持久化 + 幂等注册） ----
   function loadCred(): { peerId: string; token: string } | null {
@@ -72,29 +76,40 @@ export function createPairFed(opts: {
   }
 
   // ---- 入站中继（SSE 流读；断线退避重连——事件驱动，非轮询） ----
-  async function inboundLoop() {
+  async function inboundLoop(signal: AbortSignal) {
     while (state.alive) {
       try {
         const c = await ensureCred();
-        const resp = await fedFetch("/bridge/pair/events?peer=" + encodeURIComponent(c.peerId) + "&token=" + encodeURIComponent(c.token));
-        if (!resp.ok || !resp.body) throw new Error("fed events HTTP " + resp.status);
-        const reader = (resp.body as ReadableStream<Uint8Array>).getReader();
-        const dec = new TextDecoder();
-        let buf = "";
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done || !state.alive) break;
-          buf += dec.decode(value, { stream: true });
-          let idx: number;
-          while ((idx = buf.indexOf("\n\n")) >= 0) {
-            const frame = buf.slice(0, idx);
-            buf = buf.slice(idx + 2);
-            const dataLine = frame.split("\n").find((l) => l.startsWith("data: "));
-            if (!dataLine) continue;
-            try { onEnvelope(JSON.parse(dataLine.slice(6))); } catch {}
-          }
-        }
-        if (state.alive) log(TAG + " fed 入站流断开，重连中");
+        // node:http 原生 GET——Next 对全局 fetch 的缓存包装会挂起 SSE 流（no-store 也不吐，实测坑），
+        // 8777 联邦桥默认 http；跨机 https 场景届时再引入 node:https 分支。
+        await new Promise<void>((resolve) => {
+          let settled = false;
+          const finish = () => { if (!settled) { settled = true; resolve(); } };
+          const u = new URL(cfg.url + "/bridge/pair/events?peer=" + encodeURIComponent(c.peerId) + "&token=" + encodeURIComponent(c.token));
+          const rq = httpGet({ hostname: u.hostname, port: u.port || 80, path: u.pathname + u.search, headers: { accept: "text/event-stream" } }, (res) => {
+            if ((res.statusCode || 0) >= 300) { res.resume(); finish(); return; }
+            log(TAG + " fed 入站流建立（peer " + c.peerId + "）");
+            let buf = "";
+            res.setEncoding("utf8");
+            res.on("data", (chunk: string) => {
+              if (!state.alive || signal.aborted) { rq.destroy(); finish(); return; }
+              buf += chunk;
+              let idx: number;
+              while ((idx = buf.indexOf("\n\n")) >= 0) {
+                const frame = buf.slice(0, idx);
+                buf = buf.slice(idx + 2);
+                const dataLine = frame.split("\n").find((l) => l.startsWith("data: "));
+                if (!dataLine) continue;
+                try { onEnvelope(JSON.parse(dataLine.slice(6))); } catch {}
+              }
+            });
+            res.on("end", finish);
+            res.on("error", finish);
+          });
+          rq.on("error", finish);
+          signal.addEventListener("abort", () => { try { rq.destroy(); } catch {} finish(); });
+        });
+        if (state.alive && !signal.aborted) log(TAG + " fed 入站流断开，重连中");
       } catch (e: any) {
         if (state.alive) log(TAG + " fed 入站异常：" + String((e && e.message) || e) + "（退避重连）");
       }
@@ -192,5 +207,5 @@ export function createPairFed(opts: {
     });
   }
 
-  return { configure, fedDevices, fedSendText, fedSendFile, fedFileProxy, fileStreamResponse, isFed: (to: string) => String(to || "").startsWith(FED_NS), strip: (to: string) => String(to || "").slice(FED_NS.length) };
+  return { configure, stop: () => { state.alive = false; state.loopRunning = false; try { ac?.abort(); } catch {} }, fedDevices, fedSendText, fedSendFile, fedFileProxy, fileStreamResponse, isFed: (to: string) => String(to || "").startsWith(FED_NS), strip: (to: string) => String(to || "").slice(FED_NS.length) };
 }

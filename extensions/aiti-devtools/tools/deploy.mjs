@@ -14,7 +14,7 @@
  *       node tools/deploy.mjs --dev    # 仅 dev 实例
  * 说明：pi-web 的 /api/extensions/reload 可热加载扩展；assets 拷贝后刷新页面即可
  */
-import { copyFileSync, mkdirSync } from 'node:fs';
+import { copyFileSync, mkdirSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
@@ -55,6 +55,11 @@ for (const t of TARGETS) {
   copyFileSync(resolve(coreSrc, 'bridge.ts'), resolve(extDir, 'bridge-core.ts'));
   copyFileSync(resolve(coreSrc, 'pair.ts'), resolve(extDir, 'pair.ts')); // pair 设备互连模块（bridge-core.ts 相对导入）
   copyFileSync(resolve(extSrc, 'server', 'pair-fed.ts'), resolve(extDir, 'pair-fed.ts')); // 跨桥联邦代理（index.ts 相对导入）
+  // jiti 转译缓存对内容变化不失效（实测坑：deploy 后 reload/restart 仍跑旧转译产物）——服务端源码有变时清之
+  const jitiCache = resolve(process.env.PI_WEB_DEV_WEBROOT || resolve(homedir(), '.pi', 'web-dev'), '.cache', 'jiti');
+  try { rmSync(jitiCache, { recursive: true, force: true }); console.log('[deploy] jiti 缓存已清（' + jitiCache + '）'); } catch {}
+  const jitiCacheProd = resolve(process.env.PI_WEB_WEBROOT || resolve(homedir(), '.pi', 'web'), '.cache', 'jiti');
+  try { rmSync(jitiCacheProd, { recursive: true, force: true }); console.log('[deploy] jiti 缓存已清（' + jitiCacheProd + '）'); } catch {}
   // 图标文件拷贝（icon: "icons/<name>.svg" → 宿主加载时内嵌；库在 _shared/icons/）
   copyIcons(resolve(extDir, 'icons'), ["wrench"], { log: (m) => console.log('[deploy] ' + m) });
 
