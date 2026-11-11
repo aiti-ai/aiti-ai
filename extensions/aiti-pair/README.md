@@ -16,6 +16,10 @@
 | cockpit 操作台 | 工具条 ✉ 按钮 → 弹层 widget |
 | agent（MCP） | `bridge_status`（devices 统一设备视图）+ `aiti_pair_send` / `aiti_pair_file` / `aiti_pair_fetch` |
 
+## 跨桥联邦（M3，feature 门控默认关）
+
+可达域默认 = 单个桥实例。开启 aiti-devtools 扩展的 `pairFed.enabled` 后，本实例面板/agent 工具可见并发消息/文件给**权威桥**（默认 `http://127.0.0.1:8777/aiti`，`pairFed.url` 可配）的设备（`fed:` 前缀命名空间）；权威桥用户向「pi-web 桥」设备发送 = 广播进本桥全部 pair 设备（v1 非对称语义）。fed 文件下载经权威桥同机直读（跨机部署不可用）。
+
 ## 安全模型
 
 - pair 消息/文件下载需 peer token（注册时下发，浏览器 localStorage 记忆）
