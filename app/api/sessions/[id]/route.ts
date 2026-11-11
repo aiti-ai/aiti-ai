@@ -121,6 +121,12 @@ export async function GET(
         const phHeader = readSessionHeader(fpEarly) as unknown as { agent?: string; extId?: string } | null;
         // real placeholder title (registry extId → name; written at open-live/replay)
         const phName = phHeader?.extId ? getPlaceholder(phHeader.extId)?.name : undefined;
+        // cwd fallback (2026-11-09): a freshly-attached handle may still carry its
+        // constructor-default cwd ("" — start() not yet run / ACP spawn race), which
+        // poisoned the selected-session identity (workspaceKeyOf("") → teardown to the
+        // welcome composer on takeover/URL-restore). The placeholder registry always
+        // knows the session's workspace (written at open-live/wireExternalPlaceholder).
+        const phMeta = phHeader?.extId ? getPlaceholder(phHeader.extId) : undefined;
         // placeholder-uuid requests are canonicalized to the real composite id too: in takeover
         // mode, list rows are identified by the composite id, and selecting the uuid would pin an
         // extra Draft row in the dock (the same backend session appearing twice).
@@ -131,7 +137,7 @@ export async function GET(
           info: {
             path: "",
             id: cid,
-            cwd: ph.cwd ?? "",
+            cwd: ph.cwd || phMeta?.cwd || "",
             name: phName,
             created: new Date().toISOString(),
             modified: new Date().toISOString(),
