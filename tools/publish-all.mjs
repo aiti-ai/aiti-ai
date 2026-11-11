@@ -292,6 +292,24 @@ for (const { dir, pkgDir, pjPath, p } of pkgs) {
       : `^  ${dir}: 内容变更，版本自动 bump → ${version}`);
   }
   // else：版本未被占用（首次发布/新版本）→ 按当前版本直接发布
+  // 构建（门禁前）：official 门禁含 C9（dist 存在性）——构建必须先于门禁，否则首次发布
+  // 的扩展（树内无 dist）一律被 C9 拒发（2026-11-11 CI 实测 64/75 假拒）。构建成功后
+  // dist 非空，发布块内的同款检查自然跳过（幂等）。DRY 也构建——让 dry-run 报告反映
+  // 真实可发布性。
+  {
+    const isPackages0 = pkgDir.startsWith(join(REPO, "packages") + sep);
+    const buildScript0 = p.scripts?.["build:client"] && p.scripts["build:client"].trim() !== "true"
+      ? "build:client"
+      : isPackages0 && p.scripts?.build ? "build" : null;
+    if (buildScript0) {
+      const _dist0 = join(pkgDir, "dist");
+      if (existsSync(_dist0) && readdirSync(_dist0).length > 0) {
+        console.log(`[publish] ${dir}: dist 已存在，跳过 ${buildScript0}`);
+      } else {
+        execSync(`npm run ${buildScript0}`, { cwd: pkgDir, stdio: "inherit" });
+      }
+    }
+  }
   // official 门禁（v3）：正式发布前跑单包机械审核（脱敏/lock/LICENSE/入口对齐/依赖可解析），
   // FAIL 即拒发——公开不可撤回。--force 可越过门禁（应急），staging 不跑门禁。
   if (TARGET === "official" && !FORCE) {
