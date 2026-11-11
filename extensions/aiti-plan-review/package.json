@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-plan-review",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "type": "module",
   "description": "Plan-Sandbox 采认收尾 UI —— 读 review.json 契约（声明 vs 其他），点选采认/回滚/销毁",
   "scripts": {

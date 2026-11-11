@@ -9,7 +9,7 @@
  */
 import { api } from "./server/api.ts";
 import { readTagData } from "./server/tags-store.ts";
-import { runtime, syncIndex, runArchive, loadSettings, saveSettings } from "./server/runtime.ts";
+import { runtime, syncIndex, runArchive, loadSettings, saveSettings, closeRuntime, type ExtCoreLike } from "./server/runtime.ts";
 import { bindActivityPublisher, publishSessionActivity, resetActivityBusState } from "./server/activity-bus.ts";
 import { ensureProviders, resolveExtId } from "./server/ext-sources.ts";
 import { requestIndexVacuum } from "./lib/session-index-async.ts";
@@ -17,6 +17,160 @@ import { dirname, join } from "node:path";
 
 let archiveTimer: ReturnType<typeof setInterval> | null = null;
 let smConfigDir = ""; // services.tags 出口用（startup 时填充）
+let smCoreRef: ExtCoreLike | null = null; // agentTools 懒同步用（startup 存 / shutdown 清）
+let lastToolSyncAt = 0; // agentTools 懒同步节流（5s 内不重复 sync）
+
+// ── session-search tools（docs/pi-session-search-tools-plan.md §4）────────────
+// 给 pi 会话注入的只读检索工具：scope 三档（current/pi/all）+ 单/多 session id。
+// 数据 = session-manager 全家桶索引（SQLite FTS5 trigram，readOnly 查询，永不写）。
+// execute 每次现取 runtime(smConfigDir).index（不固化 db 句柄，reload 后 closed-db
+// 安全）；查前懒同步（syncIndex 增量 stat，5s 节流）保证刚压缩的内容可搜。
+
+/** Execute 闭包内现取索引门面（runtime Map 缓存；closeRuntime 后惰性重建）。 */
+function toolIndex() {
+  return runtime(smConfigDir).index;
+}
+
+/** 懒同步：5s 节流的增量 stat 比对（core.listSessions 自带 5s 扫描缓存，轻量）；
+ *  core 缺席（shutdown 后）或失败静默——检索退化为索引快照，不致命。 */
+async function lazySync(): Promise<void> {
+  if (!smConfigDir || !smCoreRef) return;
+  if (Date.now() - lastToolSyncAt < 5000) return;
+  try {
+    await syncIndex(smConfigDir, smCoreRef);
+    lastToolSyncAt = Date.now();
+  } catch { /* 快照语义，同步失败不阻塞查询 */ }
+}
+
+/** scope 参数归一（契约 §3）："current"|"pi"|"all"|单 id（uuid/前缀/path）|id 数组。 */
+function resolveScope(raw: unknown, currentSid: string): { ok: true; agents?: string[]; ids?: string[] } | { ok: false; error: string } {
+  const idx = toolIndex();
+  const scope = raw === undefined || raw === null || raw === "" ? "all" : raw;
+  if (Array.isArray(scope)) {
+    const r = idx.resolveSessionRefs(scope.map(String));
+    if (!r.ids.length) return { ok: false, error: `no session matched: ${r.unresolved.join(", ") || "(empty)"}` };
+    if (r.unresolved.length) return { ok: false, error: `ambiguous or unknown session refs: ${r.unresolved.join(", ")}（resolved: ${r.ids.join(", ")}）` };
+    return { ok: true, ids: r.ids };
+  }
+  const s = String(scope);
+  if (s === "current") {
+    if (!currentSid) return { ok: false, error: "scope=current unavailable: no session id bound to this conversation" };
+    return { ok: true, ids: [currentSid] };
+  }
+  if (s === "pi") return { ok: true, agents: ["pi"] };
+  if (s === "all") return { ok: true };
+  // 单 ref：uuid / uuid 前缀 / jsonl 绝对路径
+  const r = idx.resolveSessionRefs([s]);
+  if (r.ids.length === 1) return { ok: true, ids: r.ids };
+  return { ok: false, error: r.unresolved.length ? `no unique session matched "${s}"（ambiguous prefix or unknown id/path）` : `no session matched "${s}"` };
+}
+
+function sessionSearchTool(currentSid: string) {
+  return {
+    name: "session_search",
+    label: "session_search",
+    promptSnippet: "Search past sessions (session_search) and read their messages (session_read)",
+    promptGuidelines: [
+      "Use session_search when earlier conversation context was compacted away and you need details or decisions from the compacted part — search scope \"current\" first.",
+      "Use session_search when the user refers to previous sessions or past work (\"上次\", \"之前\", \"we discussed ...\").",
+      "Narrow iteratively: search scope \"all\" to locate candidates, then scope [ids] to refine, then session_read to pull the user's original requests.",
+    ],
+    description:
+      "Search past conversation history across all agents on this machine (pi, claude, codex, opencode, zcode, kimi, gemini, cursor, ...) by keyword. " +
+      "Use it when earlier context was compacted away, when the user refers to previous discussions or past work, or to find out how something was done before. " +
+      "Returns one hit per matching session (session id, agent, title, time, snippet). Follow up with session_read to pull full messages. " +
+      "CJK queries need >= 3 characters (trigram index); shorter queries fall back to substring match.",
+    parameters: {
+      type: "object",
+      properties: {
+        q: { type: "string", description: "Keyword or phrase; multi-word natural language and \"quoted exact phrases\" work. Chinese needs >= 3 chars." },
+        scope: {
+          type: ["string", "array"],
+          description: "Search range: \"current\" (this conversation only — use for recovering compacted-away context) | \"pi\" (pi sessions only) | \"all\" (default, every agent) | one session id (uuid, uuid prefix, or session jsonl path) | array of session ids to narrow a previous search",
+          items: { type: "string" },
+        },
+        agent: { type: "string", description: "Optional agent family filter: pi | claude | codex | opencode | zcode | kimi | gemini | cursor | ..." },
+        cwd: { type: "string", description: "Optional project directory prefix filter" },
+        role: { type: "string", enum: ["user", "assistant"], description: "Optional message role filter" },
+        limit: { type: "number", description: "Max sessions in result (default 8, cap 50)" },
+      },
+      required: ["q"],
+    },
+    async execute(_id: string, params: { q: string; scope?: unknown; agent?: string; cwd?: string; role?: string; limit?: number }) {
+      await lazySync();
+      const idx = toolIndex();
+      const scoped = resolveScope(params.scope, currentSid);
+      if (!scoped.ok) return { content: [{ type: "text", text: `session_search failed: ${scoped.error}` }], isError: true } as never;
+      const agents = scoped.agents ?? (params.agent ? [params.agent] : undefined);
+      const hits = idx.searchSessions(String(params.q ?? ""), {
+        agents,
+        sessionIds: scoped.ids,
+        role: params.role,
+        cwdPrefix: params.cwd ? String(params.cwd) : undefined,
+        limit: params.limit,
+      });
+      if (!hits.length) {
+        return { content: [{ type: "text", text: `no session matched query "${params.q}"（scope=${Array.isArray(params.scope) ? "[ids]" : String(params.scope ?? "all")}${agents ? `, agent=${agents.join("/")}` : ""}）. Try a different keyword, scope "all", or a >= 3-char Chinese phrase.` }] } as never;
+      }
+      const lines = hits.map((h, i) =>
+        `${i + 1}. ${h.sessionId} [${h.agent ?? "?"}]${h.title ? ` «${h.title}»` : ""} ${h.modified}${h.archived ? " (archived)" : ""}\n   cwd: ${h.cwd}\n   ${h.role}@${h.ts ?? "?"}: ${h.text.replace(/\s+/g, " ").slice(0, 200)}\n   entry: ${h.entryId}`);
+      const text = `session_search: ${hits.length} hit(s)${scoped.ids ? ` in ${scoped.ids.length} scoped session(s)` : ""}（index synced ${new Date(lastToolSyncAt).toISOString() || "snapshot"}）\n${lines.join("\n")}\n(use session_read with the session id above; pass entry to anchor a single message)`;
+      return { content: [{ type: "text", text }] } as never;
+    },
+  };
+}
+
+function sessionReadTool(currentSid: string) {
+  return {
+    name: "session_read",
+    label: "session_read",
+    promptSnippet: "Read a past session's original messages (session_read)",
+    description:
+      "Read full messages of one past session (any agent family). Default returns the user's original messages — the fastest way to recover the user's exact earlier requests after context compaction. " +
+      "Pass entry (from session_search results) to anchor a single message; long texts are truncated at maxChars and can be continued with offset. " +
+      "session accepts \"current\" (this conversation), a session id / uuid prefix, or a session jsonl path.",
+    parameters: {
+      type: "object",
+      properties: {
+        session: { type: "string", description: '"current" | session id | uuid prefix | session jsonl absolute path' },
+        role: { type: "string", enum: ["user", "assistant", "all"], description: 'Message role filter, default "user"' },
+        limit: { type: "number", description: "Max messages per call (default 20, cap 200)" },
+        offset: { type: "number", description: "Skip first N messages (for paging through long sessions)" },
+        maxChars: { type: "number", description: "Per-message character cap before truncation (default 4000)" },
+        entry: { type: "string", description: "Anchor a single message by entry id (from session_search hits)" },
+      },
+      required: ["session"],
+    },
+    async execute(_id: string, params: { session: string; role?: string; limit?: number; offset?: number; maxChars?: number; entry?: string }) {
+      await lazySync();
+      const idx = toolIndex();
+      let ref = String(params.session ?? "").trim();
+      if (ref === "current") {
+        if (!currentSid) return { content: [{ type: "text", text: "session_read failed: \"current\" unavailable — no session id bound to this conversation" }], isError: true } as never;
+        ref = currentSid;
+      }
+      const res = idx.sessionMessages(ref, {
+        role: params.role ?? "user", // 工具契约：默认读用户输入（找回原始请求主场景）；数据层不传才返回全部
+        limit: params.limit,
+        offset: params.offset,
+        maxChars: params.maxChars,
+        entryId: params.entry,
+      });
+      if (!res) return { content: [{ type: "text", text: `session_read failed: no unique session matched "${params.session}"（use session_search to find exact ids）` }], isError: true } as never;
+      const { row, messages, total } = res;
+      if (!messages.length) return { content: [{ type: "text", text: `session ${row.id} has no matching messages（role=${params.role ?? "user"}, total=${total}）` }] } as never;
+      const head = `session ${row.id} [${row.agent ?? "pi"}]${row.name ? ` «${row.name}»` : ""} cwd=${row.cwd} modified=${row.modified}`;
+      const body = messages.map((m, i) => {
+        const label = params.entry ? "" : `[${(params.offset ?? 0) + i + 1}/${total}] `;
+        const meta = m.toolName ? ` (tool:${m.toolName})` : "";
+        const more = m.truncated ? " …continue with offset/maxChars" : "";
+        return `${label}${m.ts ?? "?"} ${m.role}${meta}: ${m.text}${more}`;
+      });
+      const text = `${head}\n${body.join("\n\n")}`;
+      return { content: [{ type: "text", text }] } as never;
+    },
+  };
+}
 
 // ── 会话活动广播（列表行数据实时化，2026-09-14；数据帧化 2026-09-15）──────────
 // 背景（用户实测「最新状态没及时更新，始终显示停止之前的状态」）：左栏列表此前只在
@@ -65,6 +219,8 @@ const ext = {
     { id: "behavior.session-timeline", label: "会话行时间线按钮", description: "侧栏会话行悬停操作里显示「⎇ 时间线」按钮（aiti-git-trace 打开该会话的变更时间线）；全部会话面板行「⋯」菜单的时间线入口不受此开关影响", group: "界面", default: false },
     { id: "behavior.folder-quota", type: "string", label: "左栏文件夹区块保留数", group: "界面", value: "3", placeholder: "3",
       description: "切换项目时自动打开的文件夹区块数量上限（未钉住的先进先出；钉住的不占配额）。默认 3，可填 1-9，非法值回落 3。在 extman「功能管理」里改。" },
+    { id: "agentTools.enabled", label: "会话检索工具（session_search / session_read）", group: "AI", default: true,
+      description: "给新建的 pi 会话注入两个只读工具：全文检索本机全部 agent 的历史会话、按会话读原始消息（压缩找回/翻旧账）。关闭后仅新建会话不再获得工具（存量会话在 wrapper 重建前仍持有）。" },
   ],
 
   // 跨扩展服务出口（additive，方案 aiti-doc-center-plan §4.7）：tag 词表 + 会话挂 tag 快照
@@ -175,6 +331,8 @@ const ext = {
     /** startup: open the index, kick the first sync off in the background, start the auto-archive timer. */
     async startup(ctx) {
       smConfigDir = ctx.configDir || "";
+      smCoreRef = ctx.core as ExtCoreLike | null;
+      lastToolSyncAt = 0;
       // 活动数据帧发布通道（总线缺席静默；帧构造/节流/行缓存见 server/activity-bus.ts）
       bindActivityPublisher((type, data) => {
         try {
@@ -214,8 +372,11 @@ const ext = {
         clearInterval(archiveTimer);
         archiveTimer = null;
       }
+      smCoreRef = null;
       try {
-        runtime(ctx.configDir).index.close();
+        // closeRuntime = close + runtimes.delete：agentTools 的 execute 每次现取
+        // runtime()，不驱逐的话 reload 后会拿到已 close 的 SQLite 句柄（SQLITE_MISUSE）。
+        closeRuntime(ctx.configDir);
       } catch { /* already closed */ }
       // 活动广播清理：退订发布口 + 清行缓存/节流计时器（reload 后由新 startup 重注入）
       bindActivityPublisher(null);
@@ -223,6 +384,14 @@ const ext = {
     },
 
     agent: {
+      /** 会话检索工具注入（docs/pi-session-search-tools-plan.md §4）：宿主在会话创建
+       *  时收集（agentTools.enabled feature 总开关，默认开）。返回的两个工具闭包只捕获
+       *  currentSid（字符串），db 句柄每次 execute 现取——会话存续期扩展 reload 安全。 */
+      agentTools(info?: { sessionId?: string; cwd?: string }) {
+        const sid = typeof info?.sessionId === "string" ? info.sessionId : "";
+        return [sessionSearchTool(sid), sessionReadTool(sid)];
+      },
+
       /** 会话消息落盘 → 广播 sm:session-activity（列表行实时刷新，见 publishSessionActivity）。
        *  ⚠ 可能被重复调用（idle GC → wrapper 重建 / 扩展 reload 重挂）——宿主订阅纪元
        *  账本先回收上一轮订阅，本实现无需自行退订（幂等）。 */

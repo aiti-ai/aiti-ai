@@ -17,9 +17,13 @@ import { join } from "node:path";
 import { tmpdir, homedir } from "node:os";
 
 const ROOT = mkdtempSync(join(tmpdir(), "acp-agents-test-"));
+// Sandbox must set HOME + USERPROFILE: Windows os.homedir() reads USERPROFILE only.
+// With HOME alone every ~/.omp/.grok/.vibe/.hermes/.augment/.kiro fixture would leak
+// into the real home dir (lessons §2 incident pattern; adapters call homedir() lazily).
 process.env.HOME = ROOT;
+process.env.USERPROFILE = ROOT;
 delete process.env.KIRO_HOME;
-const { createOmpAdapter, createKiroAdapter, createAuggieAdapter, createVibeAdapter } = await import("./acp-agents.ts");
+const { createOmpAdapter, createKiroAdapter, createAuggieAdapter, createVibeAdapter, createGrokAdapter, createHermesAdapter } = await import("./acp-agents.ts");
 const { createGeminiAdapter } = await import("./gemini.ts");
 
 test.after(() => { try { rmSync(ROOT, { recursive: true, force: true }); } catch { /* temp */ } });
@@ -148,4 +152,111 @@ test("qwen: ~/.qwen/tmp/<hash>/chats/session-*.json（gemini 形状复用）", (
 	assert.ok(p);
 	assert.equal(p.meta.messageCount, 2);
 	assert.equal(p.messages[1].role, "assistant");
+});
+
+/* ── grok（真机 2026-11-09 登录会话形状）── */
+test("grok: <enc-cwd>/<uuid>/summary.json + updates.jsonl ACP 帧（thought 不进文本）", () => {
+	const sid = "01a1c031-57a9-7682-806f-0746d8f3c23f";
+	const dir = join(homedir(), ".grok", "sessions", "%2Ftmp%2Fproj", sid);
+	mkdirSync(dir, { recursive: true });
+	writeFileSync(join(dir, "summary.json"), JSON.stringify({
+		info: { id: sid, cwd: "/tmp/proj" },
+		session_summary: "",
+		created_at: "2026-11-09T12:03:41.616592Z",
+		updated_at: "2026-11-09T12:03:45.516723Z",
+		num_messages: 3,
+		current_model_id: "grok-4.7",
+	}));
+	writeFileSync(join(dir, "updates.jsonl"), [
+		JSON.stringify({ timestamp: 1794225822, method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "user_message_chunk", content: { type: "text", text: "Reply with exactly one word: PONG" } } } }),
+		JSON.stringify({ timestamp: 1794225825, method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "should not count" } } } }),
+		JSON.stringify({ timestamp: 1794225825, method: "session/update", params: { sessionId: sid, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "PONG" } } } }),
+	].join("\n") + "\n");
+	const a = createGrokAdapter();
+	const ref = a.list().find((r) => r.sid === sid);
+	assert.ok(ref, "session listed");
+	const p = a.parse(ref);
+	assert.ok(p);
+	assert.equal(p.meta.cwd, "/tmp/proj", "cwd 来自 summary.info（真实路径非编码目录名）");
+	assert.equal(p.meta.messageCount, 2, "thought 块不计入");
+	assert.equal(p.messages[1].text, "PONG");
+});
+
+/* ── hermes（state.db SQLite，真机 2026-11-09 PONG 会话形状）── */
+test("hermes: ~/.hermes/state.db sessions+messages 双表（只读打开，空会话跳过）", async () => {
+	const { DatabaseSync } = await import("node:sqlite");
+	const dbPath = join(ROOT, ".hermes", "state.db");
+	mkdirSync(join(ROOT, ".hermes"), { recursive: true });
+	const db = new DatabaseSync(dbPath);
+	db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, cwd TEXT, title TEXT, display_name TEXT, model TEXT, started_at REAL, last_activity_at REAL, message_count INTEGER);
+CREATE TABLE messages (id TEXT PRIMARY KEY, session_id TEXT, role TEXT, content TEXT, timestamp REAL, active INTEGER DEFAULT 1);`);
+	db.prepare("INSERT INTO sessions (id, cwd, title, started_at, last_activity_at, message_count) VALUES (?, ?, ?, ?, ?, ?)").run("local-abc123", "/tmp/proj", "pong title", 1794225594.3, 1794225846.9, 2);
+	db.prepare("INSERT INTO sessions (id, cwd, started_at, message_count) VALUES (?, ?, ?, ?)").run("local-empty", "/tmp/proj", 1794225590.0, 0);
+	const ins = db.prepare("INSERT INTO messages (id, session_id, role, content, timestamp) VALUES (?, ?, ?, ?, ?)");
+	ins.run("m1", "local-abc123", "user", "Reply with exactly one word: PONG", 1794225835.7);
+	ins.run("m2", "local-abc123", "assistant", "PONG", 1794225846.9);
+	ins.run("m3", "local-abc123", "system", "system prompt row — not session text", 1794225594.4);
+	db.close();
+	const a = createHermesAdapter();
+	const refs = a.list();
+	assert.equal(refs.length, 2, "两个会话都列出（空会话也在）");
+	const ref = refs.find((r) => r.sid === "local-abc123");
+	assert.ok(ref, "PONG 会话 listed");
+	assert.ok(ref.rev > 0, "rev = last_activity_at ms");
+	const p = a.parse(ref);
+	assert.ok(p);
+	assert.equal(p.meta.cwd, "/tmp/proj");
+	assert.equal(p.meta.name, "pong title");
+	assert.equal(p.meta.messageCount, 2, "system 行不计入");
+	assert.equal(p.messages[0].text, "Reply with exactly one word: PONG");
+	assert.equal(p.messages[1].role, "assistant");
+	const empty = a.parse(refs.find((r) => r.sid === "local-empty"));
+	assert.equal(empty, null, "空会话 parse → null");
+	const probe = a.probe();
+	assert.ok(probe.ok && probe.count === 2 && probe.watermarkMs > 0);
+});
+
+
+/* ── junie（JetBrains：index.jsonl 索引 + transcript.md markdown 轮次）── */
+test("junie: index.jsonl 元数据 + transcript.md 轮次（Error 节跳过）", async () => {
+	const { createJunieAdapter } = await import("./acp-agents.ts");
+	const sessDir = join(ROOT, ".junie", "sessions", "session-test-1");
+	mkdirSync(sessDir, { recursive: true });
+	writeFileSync(join(ROOT, ".junie", "sessions", "index.jsonl"),
+		JSON.stringify({ sessionId: "session-test-1", createdAt: 1794327755528, updatedAt: 1794327855528, projectDir: "/tmp/jproj" }) + "\n" +
+		JSON.stringify({ sessionId: "session-empty", createdAt: 1794327755000 }) + "\n");
+	writeFileSync(join(sessDir, "transcript.md"), [
+		"# Session transcript",
+		"",
+		"## User",
+		"",
+		"fix the bug in login",
+		"",
+		"## Junie",
+		"",
+		"Fixed. The null check was missing.",
+		"",
+		"## Error",
+		"",
+		"task stopped due to an error",
+		"",
+	].join("\n") + "\n");
+	const a = createJunieAdapter();
+	const ref = a.list().find((r) => r.sid === "session-test-1");
+	assert.ok(ref, "session listed");
+	assert.ok(ref.rev === 1794327855528, "rev = updatedAt");
+	const p = a.parse(ref);
+	assert.ok(p);
+	assert.equal(p.meta.cwd, "/tmp/jproj", "cwd 从 index projectDir");
+	assert.equal(p.meta.messageCount, 2, "Error 节不进文本面");
+	assert.equal(p.messages[0].role, "user");
+	assert.equal(p.messages[0].text, "fix the bug in login");
+	assert.equal(p.messages[1].role, "assistant");
+	assert.equal(p.messages[1].text, "Fixed. The null check was missing.");
+	// 空 index 行（无 transcript 的目录）→ parse null
+	const emptyRef = a.list().find((r) => r.sid === "session-empty");
+	const pe = a.parse(emptyRef);
+	assert.equal(pe, null, "无 transcript 的会话 → null");
+	const probe = a.probe();
+	assert.ok(probe.ok && probe.count === 2 && probe.watermarkMs === 1794327855528);
 });

@@ -3,8 +3,10 @@
 # 用法: ./e2e-mcp-tools.sh   退出码: 0=全过 1=有失败
 
 set -u
-APP_JAR="${APP_JAR:-/home/pi/workspace/aiti-ai/TestAgent/tests/spring-test/target/spring-test-1.0.jar}"
-MCP_SERVER="${MCP_SERVER:-/home/pi/workspace/aiti-ai/pi-web-ext/aiti-testagent/mcp-testagent.cjs}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$HERE/../.." && pwd)"
+APP_JAR="${APP_JAR:-$ROOT/TestAgent/tests/spring-test/target/spring-test-1.0.jar}"
+MCP_SERVER="${MCP_SERVER:-$HERE/mcp-testagent.cjs}"
 pick_port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])'; }
 PORT_HTTP=$(pick_port)
 PORT_APP=$(pick_port)
@@ -24,7 +26,7 @@ cleanup() {
 trap cleanup EXIT
 
 [ -f "$APP_JAR" ] || { echo "缺少 $APP_JAR"; exit 1; }
-cp /home/pi/workspace/aiti-ai/TestAgent/extensions/testagent-spring/target/testagent-spring-1.0.jar /home/pi/workspace/aiti-ai/TestAgent/TestAgent/target/ 2>/dev/null
+cp $ROOT/TestAgent/extensions/testagent-spring/target/testagent-spring-1.0.jar $ROOT/TestAgent/TestAgent/target/ 2>/dev/null
 
 say "MCP 启动工具（ta_run 启动 / ta_discover 发现）"
 # ta_run 启动应用（httpPort=18596）
@@ -32,7 +34,10 @@ printf '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ta_run",
 RUN=$(node $MCP_SERVER < /tmp/e2e-mcpt-run.json 2>&1)
 # 等应用 + agent 就绪
 for i in $(seq 1 60); do sleep 1; curl -s --max-time 1 http://127.0.0.1:$PORT_HTTP/api/ping >/dev/null 2>&1 && break; done
-for i in $(seq 1 8); do sleep 1; curl -s --max-time 1 http://127.0.0.1:$PORT_APP/existing >/dev/null 2>&1 && break; done
+# 应用就绪硬门（120s）：短窗口纯竞态（ta_run 冷启同 e2e-mcp.sh 破案口径）
+APP_READY=0
+for i in $(seq 1 120); do sleep 1; R=$(curl -s --max-time 2 http://127.0.0.1:$PORT_APP/existing 2>/dev/null); [ -n "$R" ] && { APP_READY=1; break; }; done
+[ "$APP_READY" = "1" ] || { echo "✗ ta_run 应用 120s 未就绪"; exit 1; }
 check "ta_run 启动的 agent 可用" "curl -s http://127.0.0.1:$PORT_HTTP/testagent/api/ping" '"pong":true'
 check "ta_run 启动的应用 HTTP 生效" "curl -s http://127.0.0.1:$PORT_APP/existing" 'existing-controller'
 

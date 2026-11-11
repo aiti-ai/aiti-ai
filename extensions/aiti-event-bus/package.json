@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-event-bus",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "页面事件总线归口（链式接管 __piPageEvents + 全帧 SSE + publish/subscribe 服务出口）",
   "soul": "一条总线，全部帧。",
   "scripts": {

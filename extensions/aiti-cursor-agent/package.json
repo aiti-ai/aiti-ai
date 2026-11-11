@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-cursor-agent",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Drive Cursor Agent CLI sessions (agentKey: cursor) — stream-json print mode, --resume multi-turn",
   "soul": "把 Cursor 的 agent 也接进 pi-web 的会话宇宙。",
   "scripts": {

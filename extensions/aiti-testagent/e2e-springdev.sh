@@ -5,8 +5,10 @@
 # 退出码: 0=全过 1=有失败
 
 set -u
-APP_JAR="${APP_JAR:-/home/pi/workspace/aiti-ai/TestAgent/tests/spring-test/target/spring-test-1.0.jar}"
-AGENT_JAR="${TESTAGENT_JAR:-/home/pi/workspace/aiti-ai/TestAgent/TestAgent/target/testagent-1.0.jar}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$HERE/../.." && pwd)"
+APP_JAR="${APP_JAR:-$ROOT/TestAgent/tests/spring-test/target/spring-test-1.0.jar}"
+AGENT_JAR="${TESTAGENT_JAR:-$ROOT/TestAgent/TestAgent/target/testagent-1.0.jar}"
 pick_port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])'; }
 PORT_HTTP=$(pick_port); PORT_APP=$(pick_port)
 WORK=/tmp/e2e-springdev; CONF=$WORK/conf
@@ -42,6 +44,8 @@ EOF
 chmod +x "$WORK/run.sh"
 setsid "$WORK/run.sh" < /dev/null &
 for i in $(seq 1 40); do sleep 1; curl -s --max-time 1 "$API/ping" >/dev/null 2>&1 && break; done
+# 应用本体就绪门（120s）：agent ping 只代表 JVM 早期就绪，/pcheck 等跑在 app 上（Quartz 冷启可达 ~90s）
+for i in $(seq 1 120); do sleep 1; R=$(curl -s --max-time 2 "$APP/existing" 2>/dev/null); [ -n "$R" ] && break; done
 sleep 8   # 等 startup-cmds(3s)+propwatch 自动拉起(5s)
 
 say "总开关（环境变量 TESTAGENT_SPRINGBOOT=true）"

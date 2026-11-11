@@ -1,5 +1,18 @@
 # aiti-event-bus · 页面事件总线
 
+## 来源 · Origin
+
+本包是 **aiti** 生态的组成部分——以 [pi](https://pi.dev) 为引擎的个人 AI 开发工作台与本地调试注入生态：**aiti-agent**（自托管 Web 工作台，基于开源项目 [pi-web](https://github.com/aiti-ai/pi-web) 构建，浏览器为主操作面）+ 各开发工具内的调试注入（aiti-devtools）+ 丰富的扩展体系。
+
+This package is part of the **aiti** ecosystem — a personal AI development workbench powered by [pi](https://pi.dev): **aiti-agent** (a self-hosted web workbench built on the open-source [pi-web](https://github.com/aiti-ai/pi-web)) plus debug injection into mainstream dev tools (aiti-devtools) and a rich extension system.
+
+**English**: The page event bus for pi-web: takes over __piPageEvents, v0.2 topic subscriptions with server-side filtering, publish-local for high-frequency frames, load-priority guarantee and STALE_CONN silent rebuild.
+
+- 工作台 / workbench: <https://github.com/aiti-ai/pi-web>
+- 生态仓库 / monorepo: <https://github.com/aiti-ai/aiti-ai>
+- 官网 / site: <https://aiti.pw>
+
+
 > ❝ 一条总线，全部帧。 ❞
 
 页面事件总线归口扩展（依赖注入方案 **P0.5**，`docs/pi-web-ext-dependency-injection-plan.md` §4-E，2026-09-06 拍板）：总线实现归本扩展持有，core `lib/agent-page-events.ts` 不删不改、退为兜底宿主 + core 自用通道（SessionSidebar running）。
@@ -71,3 +84,9 @@ ctx.services?.get("aiti-event-bus.publish")?.publish("my:evt", { ... });
 ```
 
 稳态拓扑：2 条 SSE——core route（SessionSidebar 自用 running）+ 本扩展 `/events`（其余页面消费，含 aiti-cmd 终端流的主题订阅）；消费方全部迁 ctx 后 core route 仅剩 SessionSidebar 自用。
+
+## 文档 · Documentation
+
+- 中文完整文档（aiti-docs）: <https://aiti.pw/extensions/aiti-event-bus.html>
+- English docs: <https://aiti.pw/en/extensions/aiti-event-bus.html>
+- 扩展注册表 / registry: <https://aiti.pw/extensions.html> · machine-readable <https://aiti.pw/extensions.json>
