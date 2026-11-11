@@ -1,5 +1,18 @@
 # aiti-cpu-meter
 
+## 来源 · Origin
+
+本包是 **aiti** 生态的组成部分——以 [pi](https://pi.dev) 为引擎的个人 AI 开发工作台与本地调试注入生态：**aiti-agent**（自托管 Web 工作台，基于开源项目 [pi-web](https://github.com/aiti-ai/pi-web) 构建，浏览器为主操作面）+ 各开发工具内的调试注入（aiti-devtools）+ 丰富的扩展体系。
+
+This package is part of the **aiti** ecosystem — a personal AI development workbench powered by [pi](https://pi.dev): **aiti-agent** (a self-hosted web workbench built on the open-source [pi-web](https://github.com/aiti-ai/pi-web)) plus debug injection into mainstream dev tools (aiti-devtools) and a rich extension system.
+
+**English**: Main-thread smoothness meter (0-100 score, freeze stopwatch, LoAF attribution) shipped as a pi-web extension or injectable into any website via the standalone build; one-click ask-AI hands a full field report to a debugging session.
+
+- 工作台 / workbench: <https://github.com/aiti-ai/pi-web>
+- 生态仓库 / monorepo: <https://github.com/aiti-ai/aiti-ai>
+- 官网 / site: <https://aiti.pw>
+
+
 主线程流畅度检测器 —— 读秒 + **0-100 流畅度分** + **颜色分层** + **最小化** + **AI 卡顿调试**。一个功能做**内部版/外部版双产物**，
 可注册/注入到**其他网站**评估开发者自己的站点。
 
@@ -107,7 +120,7 @@ frameHealth = min(gapScore(ewmaGap), gapScore(recentMax))     # 持续(EWMA)与�
 
 | feature | type | 默认 | 说明 |
 |---|---|---|---|
-| `enabled` | boolean | true | 本实例显示检测器 |
+| `enabled` | boolean | false | 本实例显示检测器（aiti-ai 版默认关，extman「功能管理」打开） |
 | `pos` | string | left-bottom | 默认位置（可拖动后以拖动位置为准） |
 | `score` | boolean | true | 流畅度评分行（关 = 纯读秒） |
 | `minimize` | boolean | true | 支持最小化（关 = 只有展开态 + ✕） |
@@ -136,3 +149,9 @@ aiti-float 未装时静态停角位）、FAB 与外部版全自带。
 - 首载 2s 门控：只采集不评分，避开首帧布局大 gap。
 - localStorage 键带 `aiti-cpu-meter:` 前缀，第三方网站各站域名隔离，无冲突。
 - 协议唯一来源：注入注册点（`__stInjectRegistry`）归 service-tunnels，本扩展经其注册（软依赖：未装则跳过）。
+
+## 文档 · Documentation
+
+- 中文完整文档（aiti-docs）: <https://aiti.pw/extensions/aiti-cpu-meter.html>
+- English docs: <https://aiti.pw/en/extensions/aiti-cpu-meter.html>
+- 扩展注册表 / registry: <https://aiti.pw/extensions.html> · machine-readable <https://aiti.pw/extensions.json>
