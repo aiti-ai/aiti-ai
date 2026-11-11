@@ -58,7 +58,7 @@ export default {
       label: "启用检测器",
       group: "主线程诊断",
       description: "在本实例页面显示 CPU 流畅度检测器（rAF 读秒 + 0-100 流畅度分 + 颜色分层 + 最小化）。主线程卡死时读秒冻结、分数暴跌。",
-      default: true,
+      default: false,
     },
     {
       id: "pos",

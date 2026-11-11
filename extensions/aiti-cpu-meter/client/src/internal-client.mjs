@@ -4,7 +4,7 @@
 // 面板一律 core 自带拖动（内部版/外部版同一份；不再接 aiti-float——Android 实测其接管
 // 导致交互延迟数秒 + 评分被操作拉低）。
 // 读 extman features：
-//   - enabled（bool，默认 true）：本实例页面显示检测器
+//   - enabled（bool，默认 false——aiti-ai 镜像侧；aiti-ai 内部版 true）：本实例页面显示检测器
 //   - pos（string，默认 left-bottom）
 //   - score（bool，默认 true）：流畅度评分行
 //   - minimize（bool，默认 true）：支持最小化
