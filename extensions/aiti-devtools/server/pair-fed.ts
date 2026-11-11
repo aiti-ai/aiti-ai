@@ -130,7 +130,9 @@ export function createPairFed(opts: {
   async function fedDevices(): Promise<any[]> {
     if (!cfg.enabled) return [];
     try {
-      const d = await fedFetch("/bridge/pair/devices").then((x) => x.json());
+      const resp = await fedFetch("/bridge/pair/devices");
+      const d = await resp.json();
+      if (!resp.ok) log(TAG + " fed devices HTTP " + resp.status);
       const rows = (d && d.devices) || [];
       return rows
         .filter((x: any) => x && x.id)
@@ -144,6 +146,7 @@ export function createPairFed(opts: {
   // ---- 出站：文本 ----
   async function fedSendText(toFed: string, text: string) {
     const c = await ensureCred();
+    log(TAG + " fedSendText → " + cfg.url + "/bridge/pair/message to=" + toFed.slice(FED_NS.length));
     const r = await fedFetch("/bridge/pair/message", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ peer: c.peerId, token: c.token, to: toFed.slice(FED_NS.length), text }),
