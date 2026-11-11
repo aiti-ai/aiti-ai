@@ -717,6 +717,8 @@ test("工作区追踪开关：enabled=false 彻底不追踪；会话中实时关
   assert.equal(fs.existsSync(path.join(fx.repo, ".aiti-trace", "HEAD")), false); // 不建仓
   // 会话中实时开启
   fs.writeFileSync(cfgFile, JSON.stringify({ enabled: true, autoDiscover: true, paths: [] }));
+  const bump = new Date(Date.now() + 2_000);
+  fs.utimesSync(cfgFile, bump, bump); // Windows mtime 粗粒度（~15ms tick）：同 tick 内两次写 mtime 相同，mtime 门检测不到切换——显式抬时间戳（2026-11-07 实证）
   await e.onToolCall("w1", "write", { path: "x.txt" }); // 触发 checkWorkspaceSwitch → 重 init
   assert.equal(e.tracked, true);
   fx.write("x.txt", "x\n");
@@ -725,6 +727,8 @@ test("工作区追踪开关：enabled=false 彻底不追踪；会话中实时关
   assert.equal(rows.length, 1); // 开启后的 op 正常入账
   // 会话中实时关闭：下一 op 前停止
   fs.writeFileSync(cfgFile, JSON.stringify({ enabled: false, autoDiscover: true, paths: [] }));
+  const bump2 = new Date(Date.now() + 3_000);
+  fs.utimesSync(cfgFile, bump2, bump2); // 同上：显式抬 mtime 保证开关检测
   await e.onToolCall("w2", "write", { path: "y.txt" });
   fx.write("y.txt", "y\n");
   await e.onToolExecutionEnd("w2", false);

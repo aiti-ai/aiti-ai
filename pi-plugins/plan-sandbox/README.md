@@ -1,5 +1,18 @@
 # pi-plan-sandbox — Plan-Sandbox 模式
 
+## 来源 · Origin
+
+本包是 **aiti** 生态的组成部分——以 [pi](https://pi.dev) 为引擎的个人 AI 开发工作台与本地调试注入生态：**aiti-agent**（自托管 Web 工作台，基于开源项目 [pi-web](https://github.com/aiti-ai/pi-web) 构建，浏览器为主操作面）+ 各开发工具内的调试注入（aiti-devtools）+ 丰富的扩展体系。
+
+This package is part of the **aiti** ecosystem — a personal AI development workbench powered by [pi](https://pi.dev): **aiti-agent** (a self-hosted web workbench built on the open-source [pi-web](https://github.com/aiti-ai/pi-web)) plus debug injection into mainstream dev tools (aiti-devtools) and a rich extension system.
+
+**English**: pi CLI extension: plan-sandbox mode — all tools allowed but execution happens in a disposable snapshot; declare_deliverables hard-protocol acceptance, everything else destroyed. Linux (overlayfs) / macOS (clonefile+seatbelt) / Windows (robocopy).
+
+- 工作台 / workbench: <https://github.com/aiti-ai/pi-web>
+- 生态仓库 / monorepo: <https://github.com/aiti-ai/aiti-ai>
+- 官网 / site: <https://aiti.pw>
+
+
 全工具放行 + 执行发生在可丢弃快照 + declare_deliverables 硬协议采认 + 其余销毁。
 平台：Linux(overlayfs, 已验证) / macOS(clonefile+seatbelt) / Windows(robocopy)。
 
@@ -50,3 +63,7 @@ mkdir -p ~/.pi/agent/extensions && ln -sfn $PWD ~/.pi/agent/extensions/plan-sand
 ```
 
 测试：`node test/e2e-*.ts`（README 列表见上，Linux 需 overlay 权限）。
+
+## 相关 · Related
+
+- 扩展注册表 / registry: <https://aiti.pw/extensions.html> · machine-readable <https://aiti.pw/extensions.json>
