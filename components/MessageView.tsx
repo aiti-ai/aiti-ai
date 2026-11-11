@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, memo, useState, useRef, useEffect, useMemo, type CSSProperties } from "react";
+import { Fragment, memo, useState, useRef, useEffect, useMemo, type CSSProperties, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import { MarkdownBody } from "./MarkdownBody";
 import { ImagePreview } from "./ImagePreview";
@@ -11,7 +11,7 @@ import { fmtMoney, useMoneySynced } from "@/lib/money";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
-import { getAssistantErrorMessage, getThinkingPreview, getThinkingTailPreview, hasAssistantAnswer, isAssistantTruncated, isEmptyThinkingBlock, splitThinkingPieces } from "@/lib/message-display";
+import { getAssistantErrorMessage, getThinkingPreview, getThinkingTailPreview, hasAssistantAnswer, isAssistantAborted, isAssistantTruncated, isEmptyThinkingBlock, splitThinkingPieces } from "@/lib/message-display";
 import { formatTurnDuration } from "@/lib/turn-duration";
 import { diffGapLabel, parseUnifiedPatch, unifiedDiffLines, type SplitDiffCell, type SplitDiffFile, type SplitDiffGap, type UnifiedDiffLine } from "@/lib/patch";
 import { applyPatchPreviewToFiles, applyPatchResultHasFailures, extractApplyPatchPaths, getApplyPatchFailurePaths, getApplyPatchInputText, parseApplyPatchInput } from "@/lib/apply-patch";
@@ -25,7 +25,7 @@ import { skillExpansionContent, skillExpansionToCommand } from "@/lib/slash-disp
 import type { SubagentToolDetails } from "@/lib/subagent-extension";
 import { CODEMODE_TOOL_NAME, codemodeCalls, codemodeScript, codemodeScriptPreview, stripCodemodeHeader } from "@/lib/codemode-view";
 import { CodemodeCallList } from "./CodemodeToolView";
-import { toolFieldsOfInput, type ToolField } from "@/lib/tool-fields";
+import { toolFieldsOfInput, toolInputPreview, type ToolField } from "@/lib/tool-fields";
 import { parseStreamingJson } from "@earendil-works/pi-ai/utils/json-parse";
 import { mcpToolLabel, prettyMcpResultText } from "@/lib/mcp-tool-display";
 import { streamRateKey, streamRateStart, streamTokensPerSecond, type StreamRateStart } from "@/lib/stream-token-rate";
@@ -207,7 +207,8 @@ interface Props {
   onOpenSubagent?: (sessionId: string, label: string) => void;
   entryId?: string;
   searchBlock?: AssistantContentBlock;
-  onFork?: (entryId: string) => void;
+  /** `message` as the composer takes it back: pi's /fork puts the forked message in the editor. */
+  onFork?: (entryId: string, message: UserMessage) => void;
   forking?: boolean;
   onNavigate?: (entryId: string) => Promise<boolean>;
   prevAssistantEntryId?: string;
@@ -386,7 +387,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
   cwd?: string;
   onOpenFile?: (filePath: string, page?: number) => void;
   entryId?: string;
-  onFork?: (entryId: string) => void;
+  onFork?: (entryId: string, message: UserMessage) => void;
   forking?: boolean;
   onNavigate?: (entryId: string) => Promise<boolean>;
   prevAssistantEntryId?: string;
@@ -707,7 +708,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
               )}
               {canFork && (
                 <button
-                  onClick={() => { onFork!(entryId!); }}
+                  onClick={() => { onFork!(entryId!, editTarget); }}
                   disabled={forking}
                    title={forking ? t("i18n.creatingSession") : t("i18n.newSessionTitle")}
                   style={{
@@ -820,6 +821,7 @@ function AssistantMessageView({
     .filter(({ block }) => !isEmptyThinkingBlock(block, { isStreaming })), [message.content, isStreaming]);
   const blocks = useMemo(() => blockItems.map(({ block }) => block), [blockItems]);
   const providerError = getAssistantErrorMessage(message, { isStreaming });
+  const aborted = isAssistantAborted(message, { isStreaming });
   const truncated = isAssistantTruncated(message, { isStreaming });
   const unansweredTruncation = truncated && !hasAssistantAnswer(message);
   const [hovered, setHovered] = useState(false);
@@ -944,7 +946,7 @@ function AssistantMessageView({
     return () => clearInterval(id);
   }, [isStreaming]);
 
-  if (blocks.length === 0 && !isStreaming && !providerError && !truncated) return null;
+  if (blocks.length === 0 && !isStreaming && !providerError && !truncated && !aborted) return null;
 
   return (
     <div
@@ -970,9 +972,16 @@ function AssistantMessageView({
         {(message.provider || message.model) && (
           <span>{getModelDisplayName(message.provider, message.model, modelNames)}</span>
         )}
-        {message.usage && !isStreaming && (() => {
-          const usageStr = formatUsage(message.usage);
-          return usageStr ? <span style={{ fontVariantNumeric: "tabular-nums" }}>{usageStr}</span> : null;
+        {!isStreaming && (message.usage || aborted) && (() => {
+          const usageStr = message.usage ? formatUsage(message.usage) : "";
+          return (usageStr || aborted) ? (
+            // A stop leads the line it ended on: "Stopped · ↑1.2k ↓567" (upstream #1533's marker,
+            // drawn in this fork's merged model+usage meta row).
+            <span style={{ fontVariantNumeric: "tabular-nums" }}>
+              {aborted && <>{t("chat.operationAborted")}{usageStr ? " · " : ""}</>}
+              {usageStr}
+            </span>
+          ) : null;
         })()}
         {isStreaming && (() => {
           const est = Math.round(estimatedTokens);
@@ -1384,7 +1393,9 @@ export function formatToolDuration(ms: number): string {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m ${remainder}s`;
 }
 
-function ToolCallBlock({ block, result, duration, onOpenSubagent }: { block: ToolCallContent; result?: ToolResultMessage; duration?: number; onOpenSubagent?: (sessionId: string, label: string) => void }) {
+// `resultFooter` is drawn under the result, so only while the card is expanded:
+// what it offers acts on the result the reader is looking at.
+function ToolCallBlock({ block, result, duration, onOpenSubagent, resultFooter }: { block: ToolCallContent; result?: ToolResultMessage; duration?: number; onOpenSubagent?: (sessionId: string, label: string) => void; resultFooter?: ReactNode }) {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(() => isToolCallExpanded(block.toolCallId));
   const toggleExpanded = () => {
@@ -1481,7 +1492,7 @@ function ToolCallBlock({ block, result, duration, onOpenSubagent }: { block: Too
           <span style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
             {isStreamingInput
               ? t("chat.generatingToolInput")
-              : (patchLabel ?? (codemode ? codemodeScriptPreview(codemode.code) : getToolPreview(block, t, resultPatchPath)))}
+              : (patchLabel ?? (codemode ? codemodeScriptPreview(codemode.code) : toolInputPreview(block.input, resultPatchPath)))}
           </span>
           {codemodeCallCount > 0 && (
             <span style={{ fontSize: 11, color: "var(--text-dim)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
@@ -1579,6 +1590,7 @@ function ToolCallBlock({ block, result, duration, onOpenSubagent }: { block: Too
           />
         )
       )}
+      {expanded && result && resultFooter}
     </div>
   );
 }
@@ -2534,30 +2546,6 @@ function formatCustomType(type: string): string {
 }
 
 
-function getToolPreview(block: ToolCallContent, t: Translate, resultPatchPath: string | null): string {
-  const input = block.input;
-  if (!input || typeof input !== "object") return "";
-  const keys = Object.keys(input);
-  if (keys.length === 0) return "";
-
-  // Common tool input patterns
-  if (block.toolName === "ExitPlanMode") return input.plan ? t("chat.submitPlan") : t("chat.exitPlan");
-  if (block.toolName === "AskUserQuestion") {
-    const qs = Array.isArray(input.questions) ? input.questions as Array<Record<string, unknown>> : [];
-    const firstQ = qs.find((q) => typeof q?.question === "string")?.question as string | undefined;
-    return firstQ ? firstQ.slice(0, 120) : t("chat.askUser");
-  }
-  if ("command" in input) return String(input.command).slice(0, 120);
-  if ("path" in input) return String(input.path).slice(0, 120);
-  if ("file_path" in input) return String(input.file_path).slice(0, 120);
-  if (resultPatchPath) return resultPatchPath.slice(0, 120);
-  if ("pattern" in input) return String(input.pattern).slice(0, 120);
-  if ("query" in input) return String(input.query).slice(0, 120);
-
-  const first = input[keys[0]];
-  return String(first).slice(0, 120);
-}
-
 function formatUsage(usage: {
   input: number;
   output: number;
@@ -2585,7 +2573,7 @@ function BashExecutionView({ message, sessionId }: { message: BashExecutionMessa
   const isError = message.cancelled || (message.exitCode !== undefined && message.exitCode !== 0);
   // The path goes in the POST body, not the URL (keeps it out of access/proxy logs)
   const canFetchFullOutput = Boolean(sessionId && message.fullOutputPath);
-  const showFullButton = message.truncated && canFetchFullOutput && fullOutput === null;
+  const fullShown = fullOutput !== null;
   const displayOutput = fullOutput ?? message.output;
 
   async function fetchFullOutput(download: boolean): Promise<Response | null> {
@@ -2612,7 +2600,8 @@ function BashExecutionView({ message, sessionId }: { message: BashExecutionMessa
       if (d.success) {
         setFullOutput(d.data?.output ?? "");
       } else {
-        setFullError(d.error ?? "failed");
+        // 413: past the inline limit, the download still streams it.
+        setFullError(t(res.status === 413 ? "chat.fullOutputTooLarge" : "chat.fullOutputUnavailable"));
       }
     } catch (e) {
       setFullError(String(e));
@@ -2663,30 +2652,51 @@ function BashExecutionView({ message, sessionId }: { message: BashExecutionMessa
         timestamp: message.timestamp,
       };
 
+  // pi keeps the end of a long output (2000 lines or 50KB) and writes all of it
+  // to a temp file. The card's result is that end, so the line under it says so
+  // and offers the rest. It sits inside the expanded card: loading the file
+  // changes the text right above it.
+  const linkStyle: CSSProperties = { color: "var(--accent)", fontSize: 11, textDecoration: "underline" };
+  const fullOutputFooter = message.truncated && canFetchFullOutput ? (
+    <div
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "baseline",
+        gap: "2px 10px",
+        padding: "5px 10px",
+        fontSize: 11,
+        color: "var(--text-dim)",
+        borderTop: `1px solid ${isError ? "rgba(248,113,113,0.3)" : "rgba(34,197,94,0.15)"}`,
+      }}
+    >
+      <span role="status">
+        {fullError ?? t(fullShown ? "chat.fullOutputShown" : "chat.outputTruncated")}
+      </span>
+      {!fullShown && (
+        <button
+          type="button"
+          onClick={loadFullOutput}
+          disabled={loadingFull}
+          style={{ ...linkStyle, background: "none", border: "none", cursor: loadingFull ? "default" : "pointer", padding: 0 }}
+        >
+          {loadingFull ? t("chat.loadingFullOutput") : t("chat.viewFullOutput")}
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={() => { void downloadFullOutput(); }}
+        disabled={downloading}
+        style={{ ...linkStyle, background: "none", border: "none", cursor: downloading ? "default" : "pointer", padding: 0 }}
+      >
+        {downloading ? t("chat.loadingFullOutput") : t("chat.downloadFullOutput")}
+      </button>
+    </div>
+  ) : null;
+
   return (
     <div style={{ margin: "6px 0" }}>
-      <ToolCallBlock block={block} result={result} />
-      {message.truncated && canFetchFullOutput && (
-        <div style={{ padding: "4px 10px", fontSize: 11, marginTop: -1 }}>
-          {showFullButton && (
-            <button
-              onClick={loadFullOutput}
-              disabled={loadingFull}
-              style={{ background: "none", border: "none", color: "var(--accent)", cursor: loadingFull ? "default" : "pointer", fontSize: 11, padding: 0, textDecoration: "underline" }}
-            >
-              {loadingFull ? t("chat.loadingFullOutput") : t("chat.viewFullOutput")}
-            </button>
-          )}
-          <a
-            href="#"
-            onClick={(e) => { e.preventDefault(); void downloadFullOutput(); }}
-            style={{ marginLeft: showFullButton ? 10 : 0, color: "var(--accent)", fontSize: 11, textDecoration: "underline", cursor: downloading ? "default" : "pointer" }}
-          >
-            {downloading ? t("chat.loadingFullOutput") : t("chat.downloadFullOutput")}
-          </a>
-          {fullError && <span style={{ marginLeft: 6, color: "var(--text-dim)", fontSize: 11 }}>({fullError})</span>}
-        </div>
-      )}
+      <ToolCallBlock block={block} result={result} resultFooter={fullOutputFooter} />
     </div>
   );
 }

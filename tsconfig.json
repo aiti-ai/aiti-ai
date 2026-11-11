@@ -57,7 +57,9 @@
     ".next-prod/dev/types/**/*.ts",
     ".next-prod/dev/dev/types/**/*.ts",
     ".next-termdebug/types/**/*.ts",
-    ".next-termdebug/dev/types/**/*.ts"
+    ".next-termdebug/dev/types/**/*.ts",
+    ".next-fresh/types/**/*.ts",
+    ".next-fresh/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",
