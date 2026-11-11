@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/service-tunnels",
-  "version": "0.3.9",
+  "version": "0.3.10",
   "type": "module",
   "aiti": {
     "kind": "ext",
@@ -13,9 +13,6 @@
   "description": "pi-web 扩展：服务端口发现 / 虚拟主机代理 / 隧道 / 认证 / 自暴露（从 pi-web core 剥离的完整载体）",
   "homepage": "https://aiti.pw/extensions/service-tunnels.html",
   "license": "MIT",
-  "dependencies": {
-    "service-tunnels": "^0.3.78"
-  },
   "scripts": {
     "build:client": "node tools/build-client.mjs",
     "deploy": "node tools/deploy.mjs",

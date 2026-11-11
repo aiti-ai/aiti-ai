@@ -236,38 +236,37 @@ export function PortsTab({
                   >
                     <span style={{ fontFamily: "var(--font-mono)", fontSize: 14, fontWeight: 600, color: "var(--accent)", minWidth: 52 }}>{s.port}</span>
                     {(() => {
-                      // P2 服务识别主行：label > title（identityView 单源规则）+ favicon + tooltip；
-                      // 无能力/无数据 → 回落 cmdline（旧行为）。
-                      if (!caps?.portIdentity) return null;
-                      const idv = identityView(s.identity);
-                      const tooltip = [idv.detected ? `${t("ui.ports.detected")}: ${idv.detected}` : null, idv.tooltip].filter(Boolean).join(" · ");
-                      const main = idv.title ?? s.cmdline ?? s.process ?? `pid ${s.pid}`;
+                      // 折叠行主信息区：默认展示 pid 徽标 + 进程名/识别名 + 完整命令行
+                      //（clamp 2 行，悬浮看全量，点击展开区看完整 pre-wrap）——旧版单行
+                      // ellipsis 导致长命令（如 -javaagent 路径）信息不可读。
+                      const idv = caps?.portIdentity ? identityView(s.identity) : null;
+                      const tooltip = idv ? [idv.detected ? `${t("ui.ports.detected")}: ${idv.detected}` : null, idv.tooltip].filter(Boolean).join(" · ") : undefined;
                       return (
-                        <>
-                          {idv.icon && <img src={idv.icon} alt="" loading="lazy" title={tooltip || undefined}
-                            style={{ width: 18, height: 18, borderRadius: 4, objectFit: "contain", background: "var(--bg-hover)", flexShrink: 0 }}
-                            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />}
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div title={tooltip || undefined} style={{ fontSize: 12, fontWeight: idv.hasLabel ? 600 : 400, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {main}
-                            </div>
-                            <div style={{ fontSize: 11, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {t("services.listenOn")} {s.addresses.join(", ")} · pid {s.pid}
-                            </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, overflow: "hidden" }}>
+                            {idv?.icon && <img src={idv.icon} alt="" loading="lazy" title={tooltip || undefined}
+                              style={{ width: 18, height: 18, borderRadius: 4, objectFit: "contain", background: "var(--bg-hover)", flexShrink: 0 }}
+                              onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />}
+                            <span title={tooltip || undefined}
+                              style={{ fontSize: 12, fontWeight: idv?.hasLabel ? 600 : 400, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {idv?.title ?? s.process ?? `pid ${s.pid}`}
+                            </span>
+                            <span title={`pid ${s.pid}`}
+                              style={{ flexShrink: 0, padding: "0 6px", background: "var(--bg-hover)", borderRadius: 4, fontSize: 10, color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
+                              pid {s.pid}
+                            </span>
                           </div>
-                        </>
+                          {s.cmdline && (
+                            <div title={s.cmdline} style={{ fontSize: 10, color: "var(--text-dim)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", wordBreak: "break-all", lineHeight: 1.4, margin: "2px 0" }}>
+                              {s.cmdline}
+                            </div>
+                          )}
+                          <div style={{ fontSize: 11, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {t("services.listenOn")} {s.addresses.join(", ")}
+                          </div>
+                        </div>
                       );
-                    })()}
-                    {(!caps?.portIdentity || !identityView(s.identity).title) && (
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 12, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {s.cmdline || s.process || `pid ${s.pid}`}
-                        </div>
-                        <div style={{ fontSize: 11, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {t("services.listenOn")} {s.addresses.join(", ")} · pid {s.pid}
-                        </div>
-                      </div>
-                    )}
+ })()}
                     {caps?.portIdentity && (
                       <button onClick={(e) => { e.stopPropagation(); setRenameFor(renameFor === s.port ? null : s.port); setRenameDraft(s.identity?.label ?? ""); }}
                         title={t("ui.ports.rename")}
@@ -294,6 +293,16 @@ export function PortsTab({
                   {/* Expanded area — access methods */}
                   {isOpen && (
                     <div style={{ borderTop: "1px solid var(--border)", padding: "10px 12px", background: "var(--bg-panel)" }}>
+                      {/* 进程详情：pid/进程名/完整命令行（折叠行 clamp 2 行，展开看全量） */}
+                      <div style={{ marginBottom: 10, padding: "6px 9px", border: "1px solid var(--border)", borderRadius: 6, background: "var(--bg)" }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>{t("services.procDetail")}</div>
+                        <div style={{ fontSize: 11, color: "var(--text)", marginBottom: 2 }}>
+                          pid {s.pid}{s.process ? <span style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}> · {s.process}</span> : null}
+                        </div>
+                        {s.cmdline && (
+                          <pre style={{ margin: 0, fontSize: 10, fontFamily: "var(--font-mono)", whiteSpace: "pre-wrap", wordBreak: "break-all", color: "var(--text-dim)", maxHeight: 140, overflowY: "auto", lineHeight: 1.45 }}>{s.cmdline}</pre>
+                        )}
+                      </div>
                       {directUrls.length > 0 && (
                         <>
                           <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", margin: "4px 0 6px" }}>{t("services.direct")}</div>
@@ -373,13 +382,21 @@ export function PortsTab({
                       <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {extMain ?? <span title={t("services.enrolledExtHint")} style={{ padding: "0 5px", background: "var(--bg-hover)", borderRadius: 4, fontSize: 10, color: "var(--text-muted)", flexShrink: 0 }}>🔌 {t("services.enrolledExtNotTree")}</span>}
                       </span>
+                      {svc?.pid !== undefined && (
+                        <span style={{ flexShrink: 0, padding: "0 6px", background: "var(--bg-hover)", borderRadius: 4, fontSize: 10, color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>pid {svc.pid}</span>
+                      )}
                       {e.basePath && <span title={t("services.enrolledBasePathHint")} style={{ padding: "0 5px", background: "var(--bg-hover)", borderRadius: 4, fontSize: 10, color: "var(--text-muted)", fontFamily: "var(--font-mono)", flexShrink: 0 }}>base {e.basePath}</span>}
                     </div>
+                    {/* 完整命令行（检测到进程时，clamp 2 行；展开区看全量） */}
+                    {svc?.cmdline ? (
+                      <div title={svc.cmdline} style={{ fontSize: 10, color: "var(--text-dim)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", wordBreak: "break-all", lineHeight: 1.4, margin: "2px 0" }}>
+                        {svc.cmdline}
+                      </div>
+                    ) : null}
                     <div style={{ fontSize: 11, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {det?.loading ? `${t("services.extDetecting")}` : (extMain
                         ? [
                             svc?.addresses?.length ? `${t("services.listenOn")} ${svc.addresses.join(", ")}` : null,
-                            svc?.pid !== undefined ? `pid ${svc.pid}` : null,
                             det?.data?.identity ? (det.data.identity as { protocol?: string }).protocol || null : null,
                           ].filter(Boolean).join(" · ") || vhostUrl
                         : vhostUrl)}
