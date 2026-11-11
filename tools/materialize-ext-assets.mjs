@@ -14,7 +14,7 @@
 //
 // Wired as the root package.json `prepack` — every npm pack/publish gets a complete
 // tree. Idempotent; untracked output (gitignored).
-import { readdirSync, readFileSync, existsSync, mkdirSync, copyFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, existsSync, mkdirSync, copyFileSync, statSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -68,6 +68,16 @@ for (const name of readdirSync(extRoot)) {
   }
 }
 
-console.log(`[materialize] ${copied} files materialized into extensions/` +
+// 4. strip extension package-lock.json files — they pin private-registry resolutions
+//    (@aiti-ti/ddns etc. via lockfile-only references) that 404 on the official registry
+//    and break the runtime dependency reconcile; the runtime installs from the
+//    package.json ranges alone
+let locks = 0;
+for (const name of readdirSync(extRoot)) {
+  const lock = join(extRoot, name, "package-lock.json");
+  if (existsSync(lock)) { rmSync(lock); locks++; }
+}
+
+console.log(`[materialize] ${copied} files materialized, ${locks} package-lock.json stripped from extensions/` +
   (missing.length ? ` — MISSING: ${missing.join(", ")}` : ""));
 if (missing.length) process.exitCode = 1;
