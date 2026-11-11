@@ -93,6 +93,16 @@ jobs:
             [ -d "$ext" ] || continue
             ln -sfn "$BUILD/node_modules" "${ext}node_modules"
           done
+          # Pre-build every extension client bundle BEFORE publish-all runs: the
+          # release-audit --only match is substring-based (dir.includes), so a gate on
+          # "aiti-testagent" also audits "aiti-testagent-native" — sibling dists must
+          # exist at each gate or C9 false-rejects (2026-11-11 run 43047588826).
+          for ext in extensions/*/; do
+            [ -f "${ext}package.json" ] || continue
+            S=$(node -p "try{require('./${ext}package.json').scripts['build:client']||''}catch{}" 2>/dev/null) || true
+            [ -n "$S" ] && [ "$S" != "true" ] || continue
+            (cd "$ext" && npm run build:client --loglevel=error) || echo "::warning::build:client failed for $ext"
+          done
           # packages/ 侧（npm run build 需要 node_modules；@aiti-ai/* 依赖经 inject 脚本改为
           # vendor file + overrides 传递闭环——npmjs 无该 scope。install 后还原 package.json
           # （发布内容保持 semver deps），已装 node_modules 供 publish-all 阶段的 build 使用
