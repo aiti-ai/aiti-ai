@@ -84,11 +84,20 @@ function reconcileBundledExtensions(pkgDir) {
   const linkPath = path.join(pkgDir, "extensions", "node_modules");
   try {
     if (!fs.existsSync(linkPath)) {
-      fs.symlinkSync(sharedRoot, linkPath, "dir");
-      process.stderr.write(`[pi-web] extensions/node_modules → ${sharedRoot} (symlink)\n`);
+      // Windows: "dir" symlinks require SeCreateSymbolicLinkPrivilege (admin
+      // process or Developer Mode) — a plain user shell gets EPERM. A junction
+      // needs no privilege, resolves identically for Node/jiti module walking,
+      // and libuv accepts a dangling (not-yet-created) target, which matters
+      // because the shared root below may not exist on first launch.
+      const type = process.platform === "win32" ? "junction" : "dir";
+      fs.symlinkSync(sharedRoot, linkPath, type);
+      process.stderr.write(`[pi-web] extensions/node_modules → ${sharedRoot} (${type})\n`);
     }
   } catch (e) {
-    process.stderr.write(`[pi-web] extensions/node_modules symlink 创建失败（全局 root 安装场景请手动链接或设 NODE_PATH）: ${e.message}\n`);
+    const hint = process.platform === "win32"
+      ? `manual fix: cmd /c mklink /J "${linkPath}" "${sharedRoot}"`
+      : `manual fix: ln -s "${sharedRoot}" "${linkPath}" (or set NODE_PATH=${sharedRoot})`;
+    process.stderr.write(`[pi-web] extensions/node_modules link 创建失败（${hint}）: ${e.message}\n`);
   }
 
   const markerPath = path.join(sharedRoot, MARKER);
