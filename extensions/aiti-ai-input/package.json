@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-ai-input",
-  "version": "0.4.10",
+  "version": "0.4.11",
   "type": "module",
   "aiti": {
     "kind": "ext",

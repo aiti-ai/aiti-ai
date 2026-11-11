@@ -162,9 +162,14 @@ function runTool(cmd: string, args: string[], label: string, timeoutMs = 10 * 60
   });
 }
 
-/** tar 系解压（系统 tar；GNU/bsdtar 默认拒绝绝对路径与 ".." 条目）。 */
+/** tar-family extraction (system tar; GNU/bsdtar refuse absolute paths and ".." entries by default).
+ *  win32 appends --force-local: GNU tar parses the drive-letter colon in `-f C:\...` as a
+ *  remote host ("Cannot connect to C:", Git usr/bin GNU tar; bsdtar accepts the option too).
+ *  Separate option style (-x/-z/-f each standalone): with clustered -xzf the token after f
+ *  becomes the archive name, so --force-local in between would be treated as the file. */
 function extractTar(file: string, kind: ArchiveKind, dest: string): Promise<void> {
-  return runTool("tar", [...tarFlags(kind, false), file, "-C", dest], "tar 解压");
+  const comp = kind === "tar" ? [] : kind === "tar.gz" ? ["-z"] : kind === "tar.bz2" ? ["-j"] : ["-J"];
+  return runTool("tar", ["-x", ...comp, ...(IS_WIN ? ["--force-local"] : []), "-f", file, "-C", dest], "tar 解压");
 }
 
 /** unrar 通道解压（x 全路径 + -y 全确认；目标须以分隔符结尾 unrar 才按目录处理）。 */

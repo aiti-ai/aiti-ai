@@ -1,5 +1,18 @@
 # Queue Keeper（aiti-queue-keeper）
 
+## 来源 · Origin
+
+本包是 **aiti** 生态的组成部分——以 [pi](https://pi.dev) 为引擎的个人 AI 开发工作台与本地调试注入生态：**aiti-agent**（自托管 Web 工作台，基于开源项目 [pi-web](https://github.com/aiti-ai/pi-web) 构建，浏览器为主操作面）+ 各开发工具内的调试注入（aiti-devtools）+ 丰富的扩展体系。
+
+This package is part of the **aiti** ecosystem — a personal AI development workbench powered by [pi](https://pi.dev): **aiti-agent** (a self-hosted web workbench built on the open-source [pi-web](https://github.com/aiti-ai/pi-web)) plus debug injection into mainstream dev tools (aiti-devtools) and a rich extension system.
+
+**English**: Full queue panel for the composer (queuePanel-slot takeover): banners, row operations (move / drag / steer-send / to-followUp / recall / delete) and a recycle bin — fully client-side.
+
+- 工作台 / workbench: <https://github.com/aiti-ai/pi-web>
+- 生态仓库 / monorepo: <https://github.com/aiti-ai/aiti-ai>
+- 官网 / site: <https://aiti.pw>
+
+
 pi-web 去 fork 化 P3 的产物（`docs/pi-web-queue-cluster-ext-plan.md`）：把 ChatInput 内
 ~900–1000 行队列增强 UI 外迁为独立扩展；core 回到「上游同形机制 + 薄接入」。
 
@@ -58,3 +71,8 @@ node tools/deploy.mjs  # 构建 + 拷贝到 ~/.pi/web{,-dev}/extensions/ + git �
 - `ctx.registerQueuePanelController`
 - `lib/composer/queue-api.ts`（QueueEntryView / QueueLiveView / QueuePanelActions /
   QueuePanelController / QueuePanelProps）
+## 文档 · Documentation
+
+- 中文完整文档（aiti-docs）: <https://aiti.pw/extensions/aiti-queue-keeper.html>
+- English docs: <https://aiti.pw/en/extensions/aiti-queue-keeper.html>
+- 扩展注册表 / registry: <https://aiti.pw/extensions.html> · machine-readable <https://aiti.pw/extensions.json>

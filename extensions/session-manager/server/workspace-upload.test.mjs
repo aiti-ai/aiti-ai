@@ -274,7 +274,8 @@ test("上传 tar.gz（带单根）：tar 通道解压落位", { skip: !hasTar() 
     writeFileSync(join(src, "tarproj", "a.txt"), "tar\n");
     writeFileSync(join(src, "tarproj", "b", "c.txt"), "tar2\n");
     const tgz = join(src, "tarproj.tar.gz");
-    const r = spawnSync("tar", ["-czf", tgz, "-C", src, "tarproj"], { encoding: "utf8", timeout: 15000 });
+    // Relative output name + cwd=src: GNU tar parses the drive colon in `-f C:\...` as a remote host
+    const r = spawnSync("tar", ["-czf", "tarproj.tar.gz", "-C", src, "tarproj"], { encoding: "utf8", timeout: 15000, cwd: src });
     assert.equal(r.status, 0, `tar 打包失败: ${r.stderr}`);
     const buf = readFileSync(tgz);
 
@@ -297,7 +298,7 @@ test("上传 tar.gz（散文件）：按包名建目录", { skip: !hasTar() ? "�
     writeFileSync(join(src, "loose.txt"), "x");
     writeFileSync(join(src, "loose2.txt"), "y");
     const tgz = join(src, "loose-bundle.tar.gz");
-    const r = spawnSync("tar", ["-czf", tgz, "-C", src, "loose.txt", "loose2.txt"], { encoding: "utf8", timeout: 15000 });
+    const r = spawnSync("tar", ["-czf", "loose-bundle.tar.gz", "-C", src, "loose.txt", "loose2.txt"], { encoding: "utf8", timeout: 15000, cwd: src });
     assert.equal(r.status, 0, `tar 打包失败: ${r.stderr}`);
     const buf = readFileSync(tgz);
 

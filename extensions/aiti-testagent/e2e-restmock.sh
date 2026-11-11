@@ -4,7 +4,9 @@
 # 前置: tools/build-all.sh
 
 set -u
-APP_JAR="${APP_JAR:-/home/pi/workspace/aiti-ai/TestAgent/tests/mybatis-test/target/mybatis-test-1.0.jar}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$HERE/../.." && pwd)"
+APP_JAR="${APP_JAR:-$ROOT/TestAgent/tests/mybatis-test/target/mybatis-test-1.0.jar}"
 pick_port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])'; }
 PORT_HTTP=$(pick_port)
 PORT_APP=$(pick_port)
@@ -41,13 +43,14 @@ cat > /tmp/e2e-restmock-run.sh <<EOF
 #!/bin/bash
 cd /tmp
 export TESTAGENT_ENABLE=1 TESTAGENT_HTTP_PORT=$PORT_HTTP TESTAGENT_BASEPATH= TESTAGENT_CONF=$CONF
-exec /home/pi/workspace/aiti-ai/pi-web-ext/aiti-testagent/testagent-java java -jar $APP_JAR --server.port=$PORT_APP >> /tmp/e2e-restmock.log 2>&1
+exec $HERE/testagent-java java -jar $APP_JAR --server.port=$PORT_APP >> /tmp/e2e-restmock.log 2>&1
 EOF
 chmod +x /tmp/e2e-restmock-run.sh; rm -f /tmp/e2e-restmock.log
 setsid /tmp/e2e-restmock-run.sh < /dev/null &
 for i in $(seq 1 50); do sleep 1; curl -s --max-time 1 http://127.0.0.1:$PORT_HTTP/api/ping >/dev/null 2>&1 && break; done
-for i in $(seq 1 15); do sleep 1; curl -s --max-time 1 http://127.0.0.1:$PORT_APP/users >/dev/null 2>&1 && break; done
-API="http://127.0.0.1:$PORT_HTTP/testagent"; APP="http://127.0.0.1:$PORT_APP"
+for i in $(seq 1 120); do sleep 1; curl -s --max-time 1 http://127.0.0.1:$PORT_APP/users >/dev/null 2>&1 && break; done
+# basePath 已全局切换为根路径（125438d3 起 TESTAGENT_BASEPATH=，agent 服务在 / 不带 /testagent 前缀）
+API="http://127.0.0.1:$PORT_HTTP"; APP="http://127.0.0.1:$PORT_APP"
 
 say "REST API URL mock（按 URL 模拟接口返回值）"
 jcheck "注册前 /users 真实 2 条" "isinstance(d,list) and len(d)==2" "$(curl -s $APP/users)"

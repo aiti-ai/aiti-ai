@@ -142,6 +142,10 @@ export function createIndexFacade(dbPath: string, opts: { workerPath?: string } 
     markArchived: (packageRef, sessionIds) => local.markArchived(packageRef, sessionIds),
     setExtArchived: (id, archived) => local.setExtArchived(id, archived),
     search: (q, limit, filters?: SearchFilters) => local.search(q, limit, filters),
+    // session-search tools (docs/pi-session-search-tools-plan.md): read-only, main thread is fine (fts queries are ms-level)
+    searchSessions: (q, opts) => local.searchSessions(q, opts),
+    resolveSessionRefs: (refs) => local.resolveSessionRefs(refs),
+    sessionMessages: (ref, opts) => local.sessionMessages(ref, opts),
     stats: (runningSessionIds, days?) => local.stats(runningSessionIds, days) as SessionStats,
     lastMeta: (sessionId) => local.lastMeta(sessionId),
     lastMetaBatch: (sessionIds) => local.lastMetaBatch(sessionIds),

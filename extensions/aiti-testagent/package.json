@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-testagent",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "type": "module",
   "description": "TestAgent Java 调试适配器 —— IDE 面板：Java 进程扫描 / 一键 Attach / 连桥状态",
   "scripts": {
@@ -12,7 +12,7 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "13afbc1002e438ea",
+  "contentHash": "56cf049f90284c05",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

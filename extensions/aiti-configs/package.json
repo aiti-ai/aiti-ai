@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-configs",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "type": "module",
   "description": "配置版本化 + 崩溃自检扩展（安全盾 UI）—— JSX + vite 构建 client bundle",
   "scripts": {

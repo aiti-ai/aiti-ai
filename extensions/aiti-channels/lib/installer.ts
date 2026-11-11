@@ -61,7 +61,9 @@ export async function currentVersion(): Promise<{ version: string | null; bin: s
     if (!fs.existsSync(bin)) continue;
     try {
       const out = await execFileAsync(bin, ["--version"], { timeoutMs: 5000 });
-      const m = out.match(/v[\d.]+/);
+      // keep the prerelease suffix (v1.5.2-beta.1): /v[\d.]+/ alone truncates it to
+      // "v1.5.2", which breaks needUpdate comparisons against a stable latest tag
+      const m = out.match(/v[\d.]+(?:-[0-9A-Za-z.-]+)?/);
       return { version: m ? m[0] : out.trim().split("\n")[0] || null, bin };
     } catch { /* 继续找下一个 */ }
   }

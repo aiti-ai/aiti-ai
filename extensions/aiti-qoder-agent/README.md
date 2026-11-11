@@ -1,5 +1,18 @@
 # aiti-qoder-agent
 
+## 来源 · Origin
+
+本包是 **aiti** 生态的组成部分——以 [pi](https://pi.dev) 为引擎的个人 AI 开发工作台与本地调试注入生态：**aiti-agent**（自托管 Web 工作台，基于开源项目 [pi-web](https://github.com/aiti-ai/pi-web) 构建，浏览器为主操作面）+ 各开发工具内的调试注入（aiti-devtools）+ 丰富的扩展体系。
+
+This package is part of the **aiti** ecosystem — a personal AI development workbench powered by [pi](https://pi.dev): **aiti-agent** (a self-hosted web workbench built on the open-source [pi-web](https://github.com/aiti-ai/pi-web)) plus debug injection into mainstream dev tools (aiti-devtools) and a rich extension system.
+
+**English**: Exclusive Qoder CLI session backend (qodercli/qoderclicn): credits/quota (getUsage), WASM-signed model catalog (listModels), task-list mirror and run-queue management.
+
+- 工作台 / workbench: <https://github.com/aiti-ai/pi-web>
+- 生态仓库 / monorepo: <https://github.com/aiti-ai/aiti-ai>
+- 官网 / site: <https://aiti.pw>
+
+
 Qoder CLI 专属会话后端（多 agent 前端 / All Sessions 接入）。qodercli/qoderclicn 是
 claude-code 协议族成员，驱动层与 aiti-claude-code-agent 同构；本扩展**独占** qoder 两个
 成员（CC 族清单已摘除），在其之上增加：
@@ -79,3 +92,9 @@ IDE 启动命令 `qoder`——非 agent CLI，勿混）。
 # 整目录拷到 ~/.pi/web{,-dev}/extensions/aiti-qoder-agent/
 POST /api/extensions/reload   # 热重载
 ```
+
+## 文档 · Documentation
+
+- 中文完整文档（aiti-docs）: <https://aiti.pw/extensions/aiti-qoder-agent.html>
+- English docs: <https://aiti.pw/en/extensions/aiti-qoder-agent.html>
+- 扩展注册表 / registry: <https://aiti.pw/extensions.html> · machine-readable <https://aiti.pw/extensions.json>

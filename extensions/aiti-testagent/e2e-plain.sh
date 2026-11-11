@@ -3,7 +3,9 @@
 # 用法: ./e2e-plain.sh   退出码: 0=全过 1=有失败
 
 set -u
-APP_DIR="${APP_DIR:-/home/pi/workspace/aiti-ai/TestAgent/tests/plain-app}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$HERE/../.." && pwd)"
+APP_DIR="${APP_DIR:-$ROOT/TestAgent/tests/plain-app}"
 pick_port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])'; }
 PORT_HTTP=$(pick_port)
 CONF=/tmp/e2e-pl-conf
@@ -30,7 +32,7 @@ cat > /tmp/e2e-pl-run.sh <<EOF
 #!/bin/bash
 cd /tmp
 export TESTAGENT_ENABLE=1 TESTAGENT_HTTP_PORT=$PORT_HTTP TESTAGENT_BASEPATH= TESTAGENT_CONF=$CONF
-exec /home/pi/workspace/aiti-ai/pi-web-ext/aiti-testagent/testagent-java java -cp $APP_DIR PlainApp >> /tmp/e2e-pl.log 2>&1
+exec $HERE/testagent-java java -cp $APP_DIR PlainApp >> /tmp/e2e-pl.log 2>&1
 EOF
 chmod +x /tmp/e2e-pl-run.sh; rm -f /tmp/e2e-pl.log
 setsid /tmp/e2e-pl-run.sh < /dev/null &
