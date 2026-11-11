@@ -37,5 +37,8 @@
   },
   "bugs": {
     "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  },
+  "dependencies": {
+    "service-tunnels": "^0.3.80"
   }
 }
