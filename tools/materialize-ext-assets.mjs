@@ -54,6 +54,18 @@ for (const name of readdirSync(extRoot)) {
     copyFileSync(src, join(extRoot, name, file));
     copied++;
   }
+  // 3. intra-extension copies: resolve(extSrc, ..., "<file>") → resolve(extDir, "<name>")
+  //    (e.g. aiti-devtools resolve(extSrc, 'server', 'pair-fed.ts') → pair-fed.ts;
+  //    index.ts imports it as "./pair-fed.js" and jiti resolves the .ts)
+  for (const m of text.matchAll(/resolve\(extSrc,([^)]*)\),\s*resolve\(extDir,\s*["']([^"']+)["']\)/g)) {
+    const segs = [...m[1].matchAll(/["']([^"']+)["']/g)].map((x) => x[1]);
+    if (!segs.length) continue;
+    const rel = segs[segs.length - 1];
+    const src = join(extRoot, name, ...segs);
+    if (!existsSync(src) || !statSync(src).isFile()) { missing.push(`${name}: ${segs.join("/")}`); continue; }
+    copyFileSync(src, join(extRoot, name, rel));
+    copied++;
+  }
 }
 
 console.log(`[materialize] ${copied} files materialized into extensions/` +
