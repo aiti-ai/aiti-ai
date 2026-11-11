@@ -15,6 +15,11 @@ export default {
   icon: "icon.svg",
   client: "dist/aiti-pair-client.mjs",
 
+  ai: {
+    intro: "AI 能帮我给其他设备（手机/浏览器/agent 会话）发消息、推文件，或查看在线设备",
+    skills: "skills",
+  },
+
   server: {
     startup() {
       console.log("[aiti-pair] 就绪（薄载体：widget/协议由 aiti-devtools pair-client.js 公共资产提供）");
