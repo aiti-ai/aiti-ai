@@ -484,6 +484,56 @@ test("renders partial assistant content before the provider error", () => {
   assert.match(html, /Error: Connection closed/);
 });
 
+test("a stopped reply says Stopped, never the abort error its provider's client threw", () => {
+  for (const errorMessage of ["Request aborted", "This operation was aborted", "OpenAI Responses stream ended before a terminal response event"]) {
+    const html = renderMessage({
+      role: "assistant",
+      provider: "openai",
+      model: "gpt-test",
+      content: [{ type: "text", text: "Partial response" }],
+      stopReason: "aborted",
+      errorMessage,
+    });
+    assert.match(html, /Partial response/);
+    assert.match(html, />Stopped</);
+    assert.ok(!html.includes(errorMessage), errorMessage);
+  }
+
+  // Stopped while it streamed a tool call's arguments: the call never ran, so
+  // its card has no result. Upstream draws the mark on a stats line under the
+  // content; this fork renders usage (and the mark) in the compact top meta row
+  // (docs/releases/2026-11-04-v0.15.0-aiti.md decision #4), so it leads the row
+  // above the card instead.
+  const html = renderMessage({
+    role: "assistant",
+    provider: "anthropic",
+    model: "claude-test",
+    content: [
+      { type: "text", text: "Writing the file." },
+      { type: "toolCall", toolCallId: "call-stopped-write", toolName: "write", input: { path: "a.txt" } },
+    ],
+    stopReason: "aborted",
+    errorMessage: "This operation was aborted",
+  }, { toolResults: new Map() });
+  assert.ok(html.indexOf(">Stopped<") < html.indexOf("a.txt"));
+});
+
+test("a stopped reply's mark leads its usage line instead of a line of its own", () => {
+  const html = renderMessage({
+    role: "assistant",
+    provider: "anthropic",
+    model: "claude-test",
+    content: [{ type: "text", text: "Partial response" }],
+    stopReason: "aborted",
+    errorMessage: "This operation was aborted",
+    usage: { input: 1200, output: 34, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+  }, { turnDurationMs: 12_000 });
+  // Fork's meta row renders the mark and the usage in one span (upstream splits
+  // them into per-part spans with arrows); the mark still leads the usage, once.
+  assert.match(html, /<span style="font-variant-numeric:tabular-nums">Stopped · 1,200 in · 34 out<\/span>/);
+  assert.equal((html.match(/Stopped/g) ?? []).length, 1);
+});
+
 test("marks persisted assistant messages with their source entry", () => {
   const html = renderMessage({
     role: "assistant",

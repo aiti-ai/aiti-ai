@@ -19,7 +19,9 @@ const { buildSessionContext } = await jiti.import("@/lib/session-reader");
 test("context route parses ?tail and ?before, excluding the boundary on paging", () => {
   assert.match(routeSrc, /const tail = Number\.isFinite\(rawTail\) && rawTail > 0 \? Math\.min\(rawTail, 1000\) : 50/);
   assert.match(routeSrc, /const before = url\.searchParams\.get\("before"\)/);
-  assert.match(routeSrc, /buildSessionContext\((entries|sm\.getEntries\(\)) as never, before \?\? leafId, \{[^}]*excludeLeaf: Boolean\(before\)/);
+  // 2026-11-12 merge: the route resolves the effective leaf into branchLeafId
+  // (leafId ?? sm.getLeafId()) and pages from it — same semantics, new name.
+  assert.match(routeSrc, /buildSessionContext\((entries|sm\.getEntries\(\)) as never, before \?\? branchLeafId, \{[^}]*excludeLeaf: Boolean\(before\)/);
 });
 
 test("context route: ?before pages upward without duplicating the boundary", () => {

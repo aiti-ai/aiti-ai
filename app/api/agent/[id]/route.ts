@@ -4,6 +4,7 @@ import { getOfflineSessionStats, startRpcSession, getRpcSession, setRpcSessionTo
 import { cwdMissingBody, missingCwdFromBody } from "@/lib/missing-cwd";
 import { resolveAnySession, resolveAttachBySessionId, attachIfBridged, resolvePlaceholderSession, resolveExternalCompositeSession } from "@/lib/session";
 import { sendWithAcceptWindow } from "@/lib/agent-command-accept";
+import { EXTENSION_REPORTED_CODE } from "@/lib/agent-client";
 
 /**
  * Accept-style sending for prompt-family commands: settles within the window → original-semantics
@@ -155,6 +156,7 @@ export async function POST(
     return NextResponse.json({
       error: error instanceof Error ? error.message : String(error),
       ...(missingCwd ? cwdMissingBody(missingCwd) : {}),
+      ...((error as { code?: unknown } | null)?.code === EXTENSION_REPORTED_CODE ? { code: EXTENSION_REPORTED_CODE } : {}),
       ...(commandType === "prompt" && !promptAccepted
         ? { code: "prompt_rejected", accepted: false }
         : {}),
