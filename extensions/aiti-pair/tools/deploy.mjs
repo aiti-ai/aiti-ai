@@ -3,7 +3,7 @@
  * aiti-pair · 部署到 ~/.pi/web{,-dev}/extensions/（pi-web 双实例）——照 aiti-debug-inject 最小范式
  * 生效：deploy 末尾自动双实例 reload；client no-store 刷新页面即新
  */
-import { copyFileSync, mkdirSync } from "node:fs";
+import { copyFileSync, mkdirSync, readdirSync, statSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
@@ -29,6 +29,18 @@ for (const extDir of targets) {
   const dist = resolve(extDir, "dist");
   mkdirSync(dist, { recursive: true });
   copyFileSync(resolve(root, "client/src/aiti-pair-client.mjs"), resolve(dist, "aiti-pair-client.mjs"));
+  // skills/ 递归拷贝（ai-helper 聚合帮助点；漏了会扫不到）
+  const skillsDir = resolve(root, "skills");
+  if (existsSync(skillsDir)) {
+    const cpDir = (src, dst) => {
+      mkdirSync(dst, { recursive: true });
+      for (const f of readdirSync(src)) {
+        const sf = resolve(src, f), df = resolve(dst, f);
+        if (statSync(sf).isDirectory()) cpDir(sf, df); else copyFileSync(sf, df);
+      }
+    };
+    cpDir(skillsDir, resolve(extDir, "skills"));
+  }
   console.log("[deploy] → " + extDir);
 }
 
