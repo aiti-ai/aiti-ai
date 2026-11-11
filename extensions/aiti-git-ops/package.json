@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-git-ops",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Git 操作共享引擎扩展 — 白名单写命令 / checkout 预检 / stash / plan 断点 / 审计 / changed topic（零 UI，folder 与 session-manager 消费）",
   "soul": "一处写仓，处处安全。",
   "aitiExtProtocol": "1.0",

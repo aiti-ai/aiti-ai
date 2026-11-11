@@ -3,11 +3,13 @@
 # 用法: ./e2e-attach.sh   退出码: 0=全过 1=有失败
 
 set -u
-APP_JAR="${APP_JAR:-/home/pi/workspace/aiti-ai/TestAgent/tests/spring-test/target/spring-test-1.0.jar}"
-AGENT_JAR="${TESTAGENT_JAR:-/home/pi/workspace/aiti-ai/TestAgent/TestAgent/target/testagent-1.0.jar}"
-ATTACH_CP="${ATTACH_CP:-/home/pi/workspace/aiti-ai/TestAgent/TestAgent/target/testagent-1.0.jar}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$HERE/../.." && pwd)"
+APP_JAR="${APP_JAR:-$ROOT/TestAgent/tests/spring-test/target/spring-test-1.0.jar}"
+AGENT_JAR="${TESTAGENT_JAR:-$ROOT/TestAgent/TestAgent/target/testagent-1.0.jar}"
+ATTACH_CP="${ATTACH_CP:-$ROOT/TestAgent/TestAgent/target/testagent-1.0.jar}"
 pick_port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])'; }
-PORT_HTTP=$(pick_port)          # attach 后 agent 默认端口
+PORT_HTTP=$(pick_port)          # attach 时显式传 testagent.httpPort（见下方 AttachTool 调用）
 PORT_APP=$(pick_port)
 CONF=/tmp/e2e-att-conf
 PASS=0; FAIL=0
@@ -26,7 +28,7 @@ cleanup() {
 trap cleanup EXIT
 
 [ -f "$APP_JAR" ] && [ -f "$AGENT_JAR" ] || { echo "缺少应用/agent jar"; exit 1; }
-cp /home/pi/workspace/aiti-ai/TestAgent/extensions/testagent-spring/target/testagent-spring-1.0.jar "$(dirname "$AGENT_JAR")/" 2>/dev/null
+cp $ROOT/TestAgent/extensions/testagent-spring/target/testagent-spring-1.0.jar "$(dirname "$AGENT_JAR")/" 2>/dev/null
 
 # 无 agent 启动应用
 cleanup; mkdir -p "$CONF"
@@ -44,7 +46,9 @@ check "应用无 agent 正常" "curl -s http://127.0.0.1:$PORT_APP/existing" 'ex
 check "attach 前 API 不可用" "curl -s --max-time 1 http://127.0.0.1:$PORT_HTTP/api/ping | head -c 20" ''
 
 APP_PID=$(cat /tmp/e2e-att.pid)
-check "attach 执行" "java --add-modules jdk.attach -cp $ATTACH_CP AttachTool $APP_PID $AGENT_JAR 'conf=$CONF,testagent.basePath='" 'attached'
+# AttachTool 限时：agentmain 一旦卡住曾挂穿全量套件（实测 39min）；超时即 FAIL 并抓目标 jstack 定位。
+# 显式传 testagent.httpPort：agent 绑脚本预占的随机端口（原版靠默认 8564，pick_port 化后端口错配必挂）
+check "attach 执行" "timeout 120 java --add-modules jdk.attach -cp $ATTACH_CP AttachTool $APP_PID $AGENT_JAR 'conf=$CONF,testagent.basePath=,testagent.httpPort=$PORT_HTTP' 2>&1 || { echo '--- attach 卡死/失败，目标 jstack（Attach Listener 线程） ---'; jstack $APP_PID 2>&1 | grep -B2 -A15 'Attach Listener' | head -40; }" 'attached'
 for i in $(seq 1 20); do sleep 1; curl -s --max-time 1 http://127.0.0.1:$PORT_HTTP/api/ping >/dev/null 2>&1 && break; done
 check "attach 后 API 可用" "curl -s http://127.0.0.1:$PORT_HTTP/api/ping" '"pong":true'
 check "attach 后 session 注册" "ls ~/.cache/testagent/sessions/ | grep -c json" '1'
@@ -70,7 +74,7 @@ check "attach replaceBean V2" "python3 $(cd "$(dirname "$0")" && pwd)/e2e-helper
 sleep 2
 check "attach V2 生效（更新路径）" "curl -s http://127.0.0.1:$PORT_APP/svc" 'V2'
 
-check "attach 幂等（再次 attach 跳过）" "java --add-modules jdk.attach -cp $ATTACH_CP AttachTool $APP_PID $AGENT_JAR 'conf=$CONF,testagent.basePath=' 2>&1; grep -ac 'already attached' /tmp/e2e-att.log" '1'
+check "attach 幂等（再次 attach 跳过）" "timeout 60 java --add-modules jdk.attach -cp $ATTACH_CP AttachTool $APP_PID $AGENT_JAR 'conf=$CONF,testagent.basePath=,testagent.httpPort=$PORT_HTTP' 2>&1; grep -ac 'already attached' /tmp/e2e-att.log" '1'
 
 say "结果: $PASS 通过 / $FAIL 失败"
 [ "$FAIL" -eq 0 ] && echo "✅ 全部通过" || echo "❌ 有失败"

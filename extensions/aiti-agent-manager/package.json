@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-agent-manager",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "description": "统一 Agent 管理界面 —— 聚合 6 家外部 agent 登录态 + 登录操作代理 + 多账号档（备份/别名/一键切换/自动保险）",
   "soul": "六家 agent 登录态，一屏看尽；多账号穿换，一键切换。",
   "scripts": {

@@ -30,7 +30,7 @@ import { createGooseAdapter, createAmpAdapter, createFactoryAdapter } from "./si
 // ACP 家族补齐（2026-11-08，acp-agents.ts）：omp/kiro/auggie/vibe 直读 + qwen 复用 gemini 形状。
 // grok/junie/hermes 暂缺——CLI 在开发机被墙/未登录，store 形状不可观测；首次真实装机后照
 // acp-agents.ts 先例补（acp-agents.ts 头注有各自证据链）。
-import { createOmpAdapter, createKiroAdapter, createAuggieAdapter, createVibeAdapter } from "./acp-agents.ts";
+import { createOmpAdapter, createKiroAdapter, createAuggieAdapter, createVibeAdapter, createGrokAdapter, createHermesAdapter, createJunieAdapter } from "./acp-agents.ts";
 
 export function builtinAdapters(): AgentAdapter[] {
   return [
@@ -64,6 +64,9 @@ export function builtinAdapters(): AgentAdapter[] {
     // 本 adapter 也是 zcode 会话的唯一读取实现（services.sessions 出口消费）
     createZcodeAdapter(),
     // ACP 家族 2026-11-08 批次：id 对齐 aiti-acp-agent 后端 agentKey（open-live 接管走 session/load）
+    createGrokAdapter(),
+    createJunieAdapter(),
+    createHermesAdapter(),
     createOmpAdapter(),
     createKiroAdapter(),
     createAuggieAdapter(),

@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-session-cards",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "会话请求卡扩展：交互元语（方案审批/问答/OAuth/兜底）与工具授权卡——自 pi-web core 外迁（agent 能力 UI 去核化 P1）",
   "soul": "agent 求你作答的卡片，长什么样由扩展说了算。",
   "scripts": {

@@ -4,10 +4,15 @@
  * ACP 是 Zed 主导的 agent↔编辑器 JSON-RPC stdio 标准。一个驱动覆盖所有
  * ACP 兼容 agent，无需逐个适配：
  *
- *   已知后端（启动时探测 PATH，装了才注册——装机才接原则）：
+ *   已知后端（启动时探测 PATH，装了才注册——装机才接原则，25 家，
+ *   对齐 xenodium/agent-shell 全量清单 + 自有接入）：
  *     claude-code  claude-agent-acp          agentKey "claude"（0.16 旧包名 claude-code-acp 兜底）
  *     gemini       gemini --experimental-acp agentKey "gemini"
  *     opencode     opencode acp              agentKey "opencode"
+ *     codex        codex-acp                 agentKey "codex"（官方 npm 桥 @agentclientprotocol/codex-acp）
+ *     cursor       cursor-agent acp          agentKey "cursor"
+ *     antigravity/grok/auggie/deepseek/droid/hermes/junie/kiro/mistral/
+ *     omp/openclaw/pi/qoder — 命令详见下方 ACP_AGENTS 注释（agent-shell 同款）
  *
  * 协议面（v1，2026-08 经 claude-code-acp 0.16 实测；2026-11-05 复测
  * @agentclientprotocol/claude-agent-acp 0.100.0 全握手通过——initialize
@@ -110,7 +115,7 @@ function permissionAskTimeoutMs(): number {
 }
 
 /** 已知 ACP 后端注册表：name → 启动配置。resolve 缺省 = which(bin)；非 PATH 直装后端可自带解析器。 */
-const ACP_AGENTS: Array<{
+export const ACP_AGENTS: Array<{
   name: string;
   bin: string;
   args: string[];
@@ -148,6 +153,46 @@ const ACP_AGENTS: Array<{
   // Cline CLI（npm cline 3.0.62，需官方源安装；2026-09-16 接入）：
   // `cline --acp` initialize ✓（session/new 需先 authenticate——cline login 账号登录）。
   { name: "cline", bin: "cline", args: ["--acp"], agentKey: "cline" },
+  // Codex ACP 适配器（OpenAI，npm @agentclientprotocol/codex-acp；2026-11-08 接入）：
+  // codex CLI 0.166 无原生 acp 子命令——经官方 codex-acp 桥（2.6.0 裸握手实证
+  // initialize/session/new 全通：loadSession:true、image=true、session/new 返回
+  // availableModels）。auth 走 codex 自身网关（openrouter 等，非 ACP auth 流）；
+  // `_auth/status_update` 非标通知（无 id）被通知分支安全忽略。PATH 直装优先，npx 兜底。
+  { name: "codex", bin: "codex-acp", args: [], agentKey: "codex", resolve: resolveCodexAcp },
+  // Cursor CLI（cursor-agent；2026-11-08 接入）：`cursor-agent acp` 原生 ACP server
+  // （2026.10.22 裸握手实证 initialize 通：loadSession:true、image=true；未登录时
+  // session/new 报 Authentication required——需先 `cursor-agent login` 浏览器 OAuth，
+  // 与 qwen 同款装机才接 + 用户自登录模式）。
+  { name: "cursor", bin: "cursor-agent", args: ["acp"], agentKey: "cursor" },
+  // ── 以下 13 家对齐 agent-shell（xenodium/agent-shell，Emacs ACP 客户端）2026-11-08 全量清单 ──
+  // Antigravity（Google）：`agy acp`（登录 `agy acp --login`）。antigravity.google
+  { name: "antigravity", bin: "agy", args: ["acp"], agentKey: "antigravity" },
+  // Grok Build（xAI）：`grok agent stdio`；CLI 登录一次存 ~/.grok/auth.json。docs.x.ai
+  { name: "grok", bin: "grok", args: ["agent", "stdio"], agentKey: "grok" },
+  // Auggie（Augment Code）：`auggie --acp`（npm @augmentcode/auggie）。docs.augmentcode.com
+  { name: "auggie", bin: "auggie", args: ["--acp"], agentKey: "auggie" },
+  // DeepSeek Harness：`dsh --profile acp`（npm @deepseek-ai/dsh；DEEPSEEK_API_KEY）。
+  { name: "deepseek", bin: "dsh", args: ["--profile", "acp"], agentKey: "deepseek" },
+  // Factory Droid：`droid exec --output-format acp`（app.factory.ai 装机脚本）。
+  { name: "droid", bin: "droid", args: ["exec", "--output-format", "acp"], agentKey: "droid" },
+  // Hermes（Nous Research）：`hermes acp`（npm hermes-agent）。
+  { name: "hermes", bin: "hermes", args: ["acp"], agentKey: "hermes" },
+  // Junie（JetBrains）：`junie --acp true`（junie.jetbrains.com；注意 true 是参数非 flag）。
+  { name: "junie", bin: "junie", args: ["--acp", "true"], agentKey: "junie" },
+  // Kiro（AWS）：`kiro-cli acp`（cli.kiro.dev 装机脚本）。kiro.dev/docs/cli/acp
+  { name: "kiro", bin: "kiro-cli", args: ["acp"], agentKey: "kiro" },
+  // Mistral Vibe：`vibe-acp`（mistralai/vibe-acp，Python/uv 装机；bin 无参数）。
+  { name: "mistral", bin: "vibe-acp", args: [], agentKey: "mistral" },
+  // Oh My Pi（omp，pi 最大 fork）：`omp acp` 子命令（本机 18.16；native aiti-omp-agent 并存同 claude 先例）。
+  { name: "omp", bin: "omp", args: ["acp"], agentKey: "omp" },
+  // OpenClaw：`openclaw acp`（npm openclaw；gateway 未起时握手/会话行为见 README）。
+  { name: "openclaw", bin: "openclaw", args: ["acp"], agentKey: "openclaw" },
+  // Pi（pi-mono coding-agent）：`pi-acp` 适配器（npm pi-acp——pi CLI 本体无 acp 子命令，
+  // 适配器包一层；native aiti-pi-agent 并存）。
+  { name: "pi", bin: "pi-acp", args: [], agentKey: "pi" },
+  // Qoder CLI（国际版）：`qoder --acp`（native aiti-qoder-agent 双区域并存；CN 版可经
+  // 自定义后端面板自行加 qoder-cn 条目）。
+  { name: "qoder", bin: "qoder", args: ["--acp"], agentKey: "qoder" },
 ];
 
 /** npm 的 npx-cli.js：nvm/unix 布局 <node目录>/../lib/node_modules/npm/bin/npx-cli.js；
@@ -177,6 +222,17 @@ function resolveClaudeCodeAcp(): { bin: string; args: string[] } | null {
   if (next) return { bin: next, args: [] };
   const legacy = which("claude-code-acp");
   return legacy ? { bin: legacy, args: [] } : null;
+}
+
+/** Codex ACP 解析：PATH 上的 codex-acp → npx 兜底（零安装；首用有下载延迟）。 */
+export function resolveCodexAcp(): { bin: string; args: string[] } | null {
+  const direct = which("codex-acp");
+  if (direct) return { bin: direct, args: [] };
+  const npxCli = npxCliJsPath();
+  if (existsSync(npxCli)) {
+    return { bin: process.execPath, args: [npxCli, "-y", "@agentclientprotocol/codex-acp"] };
+  }
+  return null;
 }
 
 interface UserAcpAgent {
@@ -353,7 +409,7 @@ export class AcpHandle {
       command: ov?.command?.trim() || spawnCommand("aiti-acp-agent") || undefined,
       argsPrefix: ov?.argsPrefix?.length ? ov.argsPrefix : parseArgsLines(spawnArgsPrefix("aiti-acp-agent")).args,
       driverArgs: this.binArgs,
-      env: agentSpawnEnv({ cli: "acp", governance: governanceEnv, extId: "aiti-acp-agent", envList: spawnEnvList("aiti-acp-agent") }),
+      env: agentSpawnEnv({ cli: governanceCliFor(this.agentName), governance: governanceEnv, extId: "aiti-acp-agent", envList: spawnEnvList("aiti-acp-agent") }),
       memberEnv: ov?.env,
       bridge: ov?.bridge,
       cwd,
@@ -1190,6 +1246,16 @@ function probeSpawnEnv(): Record<string, string> {
   return agentSpawnEnv({ cli: "acp", governance: governanceEnv, extId: "aiti-acp-agent", envList: spawnEnvList("aiti-acp-agent") });
 }
 
+/**
+ * 治理键按后端映射（env 白名单选择）：家族缺省 "acp"（仅 ACP_* 前缀 + 基础键）；
+ * codex 例外——codex-acp 走 ~/.codex/config.toml 自定义 provider（openrouter 等），
+ * 缺 OPENROUTER_API_KEY 轮次直接失败（2026-11-08 实测），映射到 governanceEnv 的
+ * "codex" 白名单（native aiti-codex-agent 同款）。
+ */
+function governanceCliFor(agentName: string): string {
+  return agentName === "codex" ? "codex" : "acp";
+}
+
 type ProbeAgentDesc = { name: string; bin: string; args: string[]; agentKey?: string };
 
 /** CLI 目录探测：cbc --help（共享解析器）/ opencode models。 */
@@ -1445,10 +1511,12 @@ export default {
           listModels: () => catalogListModels(agent.name, agent.agentKey ?? agent.name),
           refreshModels: () => catalogRefreshModels(agent.name, agent.agentKey ?? agent.name),
           async createSession(options) {
-            const handle = new AcpHandle(agent.name, resolved.bin, resolved.args, agent.agentKey ?? agent.name);
-            // 接管既有会话：以原 cwd 优先（session/load）；新会话用宿主 cwd
+            // 接管既有会话：以原 cwd 优先（session/load）；新会话用宿主 cwd。
+            // cwd 先算后构造：handle 信息面（/api/sessions info.cwd）在 start 完成前的
+            // 观察窗口也能拿到真实 cwd（2026-11-09 接管/URL 恢复拆除根因之一）。
             const restored = options.sessionId ? await restoreCwdFn?.(agent.agentKey ?? agent.name, options.sessionId) : undefined;
             const cwd = restored ?? options.cwd ?? process.cwd();
+            const handle = new AcpHandle(agent.name, resolved.bin, resolved.args, agent.agentKey ?? agent.name, cwd);
             await handle.start(cwd);
             if (options.sessionId) await handle.loadSession(options.sessionId, cwd);
             else await handle.newSession(cwd);
@@ -1486,10 +1554,10 @@ export default {
           ) => {
             const hit = (launch.target && launchAgents.find((x) => x.agent.name === launch.target)) || pickDefault;
             if (!hit) throw new Error("[aiti-acp-agent] launch 委托：无可委托成员（agent 未安装）");
-            const handle = new AcpHandle(hit.agent.name, hit.resolved.bin, hit.resolved.args, hit.agent.agentKey ?? hit.agent.name);
-            handle.launchOverride = launch;
             const restored = options.sessionId ? await restoreCwdFn?.(hit.agent.agentKey ?? hit.agent.name, options.sessionId) : undefined;
             const cwd = restored ?? options.cwd ?? process.cwd();
+            const handle = new AcpHandle(hit.agent.name, hit.resolved.bin, hit.resolved.args, hit.agent.agentKey ?? hit.agent.name, cwd);
+            handle.launchOverride = launch;
             await handle.start(cwd);
             if (options.sessionId) await handle.loadSession(options.sessionId, cwd);
             else await handle.newSession(cwd);

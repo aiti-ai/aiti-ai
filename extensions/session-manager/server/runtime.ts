@@ -99,6 +99,17 @@ export function settingsPath(configDir: string): string {
   return join(configDir, "settings.json");
 }
 
+/** Close and evict the cached runtime for this configDir (shutdown/reload path).
+ *  Without the eviction a later runtime() reuse would hand out a closed SQLite
+ *  handle (prepare/step throws SQLITE_MISUSE) — extension agentTools closures
+ *  call runtime() per execute, so eviction is what makes reload safe. */
+export function closeRuntime(configDir: string): void {
+  const r = runtimes.get(configDir);
+  if (!r) return;
+  runtimes.delete(configDir);
+  try { r.index.close(); } catch { /* already closed */ }
+}
+
 export function loadSettings(configDir: string): Settings {
   try {
     const raw = JSON.parse(readFileSync(settingsPath(configDir), "utf8")) as Partial<Settings>;

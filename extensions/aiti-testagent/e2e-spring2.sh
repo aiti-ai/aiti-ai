@@ -3,12 +3,13 @@
 # 用法: ./e2e-spring2.sh   退出码: 0=全过 1=有失败
 
 set -u
-APP_JAR="${APP_JAR:-/home/pi/workspace/aiti-ai/TestAgent/tests/spring2-test/target/spring2-test-1.0.jar}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$HERE/../.." && pwd)"
+APP_JAR="${APP_JAR:-$ROOT/TestAgent/tests/spring2-test/target/spring2-test-1.0.jar}"
 pick_port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])'; }
 PORT_HTTP=$(pick_port)
 PORT_APP=$(pick_port)
 CONF=/tmp/e2e-s2-conf
-HERE="$(cd "$(dirname "$0")" && pwd)"
 PASS=0; FAIL=0
 
 say() { echo; echo "═══ $1 ═══"; }
@@ -26,14 +27,14 @@ trap cleanup EXIT
 
 [ -f "$APP_JAR" ] || { echo "缺少 $APP_JAR（cd tests/spring2-test && mvn package）"; exit 1; }
 # 确保 spring 适配 jar（防 target 清理丢失）
-cp /home/pi/workspace/aiti-ai/TestAgent/extensions/testagent-spring/target/testagent-spring-1.0.jar /home/pi/workspace/aiti-ai/TestAgent/TestAgent/target/ 2>/dev/null
+cp $ROOT/TestAgent/extensions/testagent-spring/target/testagent-spring-1.0.jar $ROOT/TestAgent/TestAgent/target/ 2>/dev/null
 
 cleanup; mkdir -p "$CONF"
 cat > /tmp/e2e-s2-run.sh <<EOF
 #!/bin/bash
 cd /tmp
 export TESTAGENT_ENABLE=1 TESTAGENT_HTTP_PORT=$PORT_HTTP TESTAGENT_BASEPATH= TESTAGENT_CONF=$CONF
-exec /home/pi/workspace/aiti-ai/pi-web-ext/aiti-testagent/testagent-java java -jar $APP_JAR --server.port=$PORT_APP >> /tmp/e2e-s2.log 2>&1
+exec $HERE/testagent-java java -jar $APP_JAR --server.port=$PORT_APP >> /tmp/e2e-s2.log 2>&1
 EOF
 chmod +x /tmp/e2e-s2-run.sh; rm -f /tmp/e2e-s2.log
 setsid /tmp/e2e-s2-run.sh < /dev/null &

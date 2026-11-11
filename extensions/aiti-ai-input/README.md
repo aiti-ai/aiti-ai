@@ -1,5 +1,18 @@
 # AI input（aiti-ai-input）
 
+## 来源 · Origin
+
+本包是 **aiti** 生态的组成部分——以 [pi](https://pi.dev) 为引擎的个人 AI 开发工作台与本地调试注入生态：**aiti-agent**（自托管 Web 工作台，基于开源项目 [pi-web](https://github.com/aiti-ai/pi-web) 构建，浏览器为主操作面）+ 各开发工具内的调试注入（aiti-devtools）+ 丰富的扩展体系。
+
+This package is part of the **aiti** ecosystem — a personal AI development workbench powered by [pi](https://pi.dev): **aiti-agent** (a self-hosted web workbench built on the open-source [pi-web](https://github.com/aiti-ai/pi-web)) plus debug injection into mainstream dev tools (aiti-devtools) and a rich extension system.
+
+**English**: Input enhancement for the aiti-agent chat box: L0/L1 autocomplete (local prefix match + AI next sentence), favorites suggest with one-click run, streaming ASR voice input with pluggable engines / hotwords / 2-pass refinement, and dictation-detection repair.
+
+- 工作台 / workbench: <https://github.com/aiti-ai/pi-web>
+- 生态仓库 / monorepo: <https://github.com/aiti-ai/aiti-ai>
+- 官网 / site: <https://aiti.pw>
+
+
 AI 聊天输入框的输入增强扩展（**长期保留，非临时测试**）。
 
 ## 当前能力（语音来源标记 + 自动补全 + 收藏联想 + L2 ASR + 热词系统）
@@ -170,3 +183,9 @@ bash start-stream.sh status / stop / restart
 fetch('/api/extensions/aiti-ai-input/voice-asr2', {method:'POST', body: new FormData().append('audio', file)}).then(r=>r.json()).then(console.log)
 window.__aitiVoiceInputL2?.start() / .stop() / .recording()
 ```
+
+## 文档 · Documentation
+
+- 中文完整文档（aiti-docs）: <https://aiti.pw/extensions/aiti-ai-input.html>
+- English docs: <https://aiti.pw/en/extensions/aiti-ai-input.html>
+- 扩展注册表 / registry: <https://aiti.pw/extensions.html> · machine-readable <https://aiti.pw/extensions.json>

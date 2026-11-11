@@ -3,10 +3,12 @@
 # 用法: ./e2e-multi.sh   退出码: 0=全过 1=有失败
 
 set -u
+HERE="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$HERE/../.." && pwd)"
 # 桥配置隔离：bridge.json（aiti-testagent 扩展桥管理写入）会让 MCP 自动走桥模式——e2e 是独立直连环境，指向不存在的文件强制直连
 export TESTAGENT_BRIDGE_FILE=/tmp/e2e-1948753-no-bridge.json
-APP_JAR="${APP_JAR:-/home/pi/workspace/aiti-ai/TestAgent/tests/spring-test/target/spring-test-1.0.jar}"
-MCP_SERVER="${MCP_SERVER:-/home/pi/workspace/aiti-ai/pi-web-ext/aiti-testagent/mcp-testagent.cjs}"
+APP_JAR="${APP_JAR:-$ROOT/TestAgent/tests/spring-test/target/spring-test-1.0.jar}"
+MCP_SERVER="${MCP_SERVER:-$HERE/mcp-testagent.cjs}"
 P1_HTTP=18598; P1_APP=18104
 P2_HTTP=18599; P2_APP=18105
 CONF1=/tmp/e2e-multi-c1; CONF2=/tmp/e2e-multi-c2
@@ -26,7 +28,7 @@ cleanup() {
 trap cleanup EXIT
 
 [ -f "$APP_JAR" ] || { echo "缺少 $APP_JAR"; exit 1; }
-cp /home/pi/workspace/aiti-ai/TestAgent/extensions/testagent-spring/target/testagent-spring-1.0.jar /home/pi/workspace/aiti-ai/TestAgent/TestAgent/target/ 2>/dev/null
+cp $ROOT/TestAgent/extensions/testagent-spring/target/testagent-spring-1.0.jar $ROOT/TestAgent/TestAgent/target/ 2>/dev/null
 
 cleanup
 for i in 1 2; do
@@ -36,7 +38,7 @@ for i in 1 2; do
 #!/bin/bash
 cd /tmp
 export TESTAGENT_ENABLE=1 TESTAGENT_HTTP_PORT=${!HTTP} TESTAGENT_CONF=${!CONF}
-exec /home/pi/workspace/aiti-ai/pi-web-ext/aiti-testagent/testagent-java java -jar $APP_JAR --server.port=${!APP} >> /tmp/e2e-multi$i.log 2>&1
+exec $HERE/testagent-java java -jar $APP_JAR --server.port=${!APP} >> /tmp/e2e-multi$i.log 2>&1
 EOF
   chmod +x /tmp/e2e-multi-run$i.sh; rm -f /tmp/e2e-multi$i.log
   setsid /tmp/e2e-multi-run$i.sh < /dev/null &
@@ -45,7 +47,7 @@ for i in $(seq 1 50); do
   curl -s --max-time 1 http://127.0.0.1:$P1_HTTP/testagent/api/ping >/dev/null 2>&1 && curl -s --max-time 1 http://127.0.0.1:$P2_HTTP/testagent/api/ping >/dev/null 2>&1 && break
   sleep 1
 done
-for i in $(seq 1 8); do
+for i in $(seq 1 150); do
   curl -s --max-time 1 http://127.0.0.1:$P1_APP/existing >/dev/null 2>&1 && curl -s --max-time 1 http://127.0.0.1:$P2_APP/existing >/dev/null 2>&1 && break
   sleep 1
 done

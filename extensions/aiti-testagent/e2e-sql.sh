@@ -3,7 +3,9 @@
 # 用法: ./e2e-sql.sh   退出码: 0=全过 1=有失败
 
 set -u
-APP_JAR="${APP_JAR:-/home/pi/workspace/aiti-ai/TestAgent/tests/mybatis-test/target/mybatis-test-1.0.jar}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$HERE/../.." && pwd)"
+APP_JAR="${APP_JAR:-$ROOT/TestAgent/tests/mybatis-test/target/mybatis-test-1.0.jar}"
 pick_port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])'; }
 PORT_HTTP=$(pick_port)
 PORT_APP=$(pick_port)
@@ -24,14 +26,14 @@ cleanup() {
 trap cleanup EXIT
 
 [ -f "$APP_JAR" ] || { echo "缺少 $APP_JAR"; exit 1; }
-cp /home/pi/workspace/aiti-ai/TestAgent/extensions/testagent-spring/target/testagent-spring-1.0.jar /home/pi/workspace/aiti-ai/TestAgent/TestAgent/target/ 2>/dev/null
+cp $ROOT/TestAgent/extensions/testagent-spring/target/testagent-spring-1.0.jar $ROOT/TestAgent/TestAgent/target/ 2>/dev/null
 
 cleanup; mkdir -p "$CONF"
 cat > /tmp/e2e-sql-run.sh <<EOF
 #!/bin/bash
 cd /tmp
 export TESTAGENT_ENABLE=1 TESTAGENT_HTTP_PORT=$PORT_HTTP TESTAGENT_CONF=$CONF
-exec /home/pi/workspace/aiti-ai/pi-web-ext/aiti-testagent/testagent-java java -jar $APP_JAR --server.port=$PORT_APP >> /tmp/e2e-sql.log 2>&1
+exec $HERE/testagent-java java -jar $APP_JAR --server.port=$PORT_APP >> /tmp/e2e-sql.log 2>&1
 EOF
 chmod +x /tmp/e2e-sql-run.sh; rm -f /tmp/e2e-sql.log
 setsid /tmp/e2e-sql-run.sh < /dev/null &

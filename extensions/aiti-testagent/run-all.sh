@@ -5,8 +5,9 @@
 
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
-AGENT_JAR="${TESTAGENT_JAR:-/home/pi/workspace/aiti-ai/TestAgent/TestAgent/target/testagent-1.0.jar}"
-SPRING_JAR=/home/pi/workspace/aiti-ai/TestAgent/extensions/testagent-spring/target/testagent-spring-1.0.jar
+ROOT="$(cd "$HERE/../.." && pwd)"
+AGENT_JAR="${TESTAGENT_JAR:-$ROOT/TestAgent/TestAgent/target/testagent-1.0.jar}"
+SPRING_JAR=$ROOT/TestAgent/extensions/testagent-spring/target/testagent-spring-1.0.jar
 TOTAL_FAIL=0
 
 [ -f "$AGENT_JAR" ] || { echo "缺少 agent jar，先: cd TestAgent && ./tools/build-all.sh"; exit 1; }
@@ -41,7 +42,7 @@ run_one "SpringBoot 开发模式（总开关/props/springops）" "$HERE/e2e-spri
 
 echo
 echo "════════════════════════════════════════"
-if [ $TOTAL_FAIL -eq 0 ]; then echo "✅ 全部场景通过（120 + restmock 9 = 129 断言）";
+if [ $TOTAL_FAIL -eq 0 ]; then echo "✅ 全部场景通过";
 else echo "❌ $TOTAL_FAIL 个场景失败"; fi
 echo "════════════════════════════════════════"
 exit $TOTAL_FAIL

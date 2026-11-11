@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-debug-inject",
-  "version": "0.3.7",
+  "version": "0.3.8",
   "description": "可配置远程调试注入",
   "soul": "调试器该穿在哪件衣服里，由你说了算。",
   "scripts": {

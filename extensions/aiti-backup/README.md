@@ -1,5 +1,18 @@
 # aiti-backup · pi-web 数据备份扩展
 
+## 来源 · Origin
+
+本包是 **aiti** 生态的组成部分——以 [pi](https://pi.dev) 为引擎的个人 AI 开发工作台与本地调试注入生态：**aiti-agent**（自托管 Web 工作台，基于开源项目 [pi-web](https://github.com/aiti-ai/pi-web) 构建，浏览器为主操作面）+ 各开发工具内的调试注入（aiti-devtools）+ 丰富的扩展体系。
+
+This package is part of the **aiti** ecosystem — a personal AI development workbench powered by [pi](https://pi.dev): **aiti-agent** (a self-hosted web workbench built on the open-source [pi-web](https://github.com/aiti-ai/pi-web)) plus debug injection into mainstream dev tools (aiti-devtools) and a rich extension system.
+
+**English**: Snapshot backup for large pi-web state data (session archives, git-trace ledger, agent sessions): hard-link incremental snapshots, out-of-process execution, crash-safe temp files, keepCount rotation. Complements aiti-configs, which versions small configs in git.
+
+- 工作台 / workbench: <https://github.com/aiti-ai/pi-web>
+- 生态仓库 / monorepo: <https://github.com/aiti-ai/aiti-ai>
+- 官网 / site: <https://aiti.pw>
+
+
 state 层大数据（会话归档 `.pwarc` / git-trace ops / `~/.pi/agent/sessions`）的**快照备份**——与 aiti-configs 互补：configs 管「小配置 git 版本化」，本扩展管「大数据快照」（方案：`docs/pi-web-ext-data-backup-extension-plan.md`，§7 已全拍板）。
 
 ## 机制（M1+M2 已实施）
@@ -25,3 +38,9 @@ curl -s localhost:3001$base/runs                                     # 运行历
 
 - 源开关：`POST config {"sourceOverrides":{"pi-sessions":{"enabled":false}}}`；自定义源：`custom:[{id,path}]`。
 - 目的地由用户自选（外接盘/NAS），**备份内容未加密**；备份会话内容含隐私，请放在自己控制的盘上。
+
+## 文档 · Documentation
+
+- 中文完整文档（aiti-docs）: <https://aiti.pw/extensions/aiti-backup.html>
+- English docs: <https://aiti.pw/en/extensions/aiti-backup.html>
+- 扩展注册表 / registry: <https://aiti.pw/extensions.html> · machine-readable <https://aiti.pw/extensions.json>

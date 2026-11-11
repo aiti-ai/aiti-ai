@@ -4,8 +4,10 @@
 # 退出码: 0=全过 1=有失败
 
 set -u
-APP_JAR="${APP_JAR:-/home/pi/workspace/aiti-ai/TestAgent/tests/spring-test/target/spring-test-1.0.jar}"
-AGENT_JAR="${TESTAGENT_JAR:-/home/pi/workspace/aiti-ai/TestAgent/TestAgent/target/testagent-1.0.jar}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$HERE/../.." && pwd)"
+APP_JAR="${APP_JAR:-$ROOT/TestAgent/tests/spring-test/target/spring-test-1.0.jar}"
+AGENT_JAR="${TESTAGENT_JAR:-$ROOT/TestAgent/TestAgent/target/testagent-1.0.jar}"
 pick_port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])'; }
 PORT_HTTP=$(pick_port)
 PORT_APP=$(pick_port)
@@ -36,12 +38,15 @@ cat > /tmp/e2e-run.sh <<EOF
 #!/bin/bash
 cd /tmp; echo \$\$ > /tmp/e2e.pid
 export TESTAGENT_ENABLE=1 TESTAGENT_HTTP_PORT=$PORT_HTTP TESTAGENT_BASEPATH= TESTAGENT_CONF=$CONF
-exec /home/pi/workspace/aiti-ai/pi-web-ext/aiti-testagent/testagent-java java -jar $APP_JAR --server.port=$PORT_APP >> /tmp/e2e.log 2>&1
+exec $HERE/testagent-java java -jar $APP_JAR --server.port=$PORT_APP >> /tmp/e2e.log 2>&1
 EOF
 chmod +x /tmp/e2e-run.sh; rm -f /tmp/e2e.log /tmp/e2e.pid
 setsid /tmp/e2e-run.sh < /dev/null &
 for i in $(seq 1 40); do sleep 1; curl -s --max-time 1 http://127.0.0.1:$PORT_HTTP/api/ping >/dev/null 2>&1 && break; done
-for i in $(seq 1 8); do sleep 1; curl -s --max-time 1 http://127.0.0.1:$PORT_APP/existing >/dev/null 2>&1 && break; done
+# 应用就绪硬门（120s）：spring-test 带 Quartz 冷启可达 ~90s，短窗口纯竞态（同 e2e-mcp.sh 破案口径）
+APP_READY=0
+for i in $(seq 1 120); do sleep 1; R=$(curl -s --max-time 2 http://127.0.0.1:$PORT_APP/existing 2>/dev/null); [ -n "$R" ] && { APP_READY=1; break; }; done
+[ "$APP_READY" = "1" ] || { echo "✗ spring-test 应用 120s 未就绪（看 /tmp/e2e.log 尾部）"; exit 1; }
 say "基础"
 check "ping" 'curl -s http://127.0.0.1:'$PORT_HTTP'/api/ping' '"pong":true'
 check "discover 注册" 'ls ~/.cache/testagent/sessions/' '\.json'
@@ -80,7 +85,7 @@ check "jad 反编译" 'curl -s -X POST http://127.0.0.1:'$PORT_HTTP'/api/jad -H 
 
 say "attach 幂等（premain 已挂载 → attach 跳过）"
 P=$(cat /tmp/e2e.pid)
-check "attach 返回" 'java --add-modules jdk.attach -cp /home/pi/workspace/aiti-ai/TestAgent/TestAgent/target/testagent-1.0.jar AttachTool '$P' '$AGENT_JAR' "conf='$CONF'" 2>&1' 'attached'
+check "attach 返回" 'timeout 120 java --add-modules jdk.attach -cp '$AGENT_JAR' AttachTool '$P' '$AGENT_JAR' "conf='$CONF'" 2>&1' 'attached'
 sleep 1
 check "already attached 标记" 'grep -ac "already attached" /tmp/e2e.log' '1'
 check "无第二 reload 监听" 'grep -ac "for refreshing configuration" /tmp/e2e.log' '1'
@@ -105,7 +110,6 @@ check "fs pwd" 'curl -s -X POST http://127.0.0.1:'$PORT_HTTP'/api/fs -H "Content
 check "eval 改状态" 'curl -s -X POST http://127.0.0.1:'$PORT_HTTP'/api/eval -H "Content-Type: application/json" -d "{\"code\":\"return \\\"eval-ok-\\\" + (1+1);\"}"' '"result":"eval-ok-2"'
 
 say "Bean 替换 + 引用重定向"
-HERE="$(cd "$(dirname "$0")" && pwd)"
 cat > /tmp/e2e-isvc.json <<'JEOF'
 {"source": "package com.demo;\npublic interface ISvc { String who(); }"}
 JEOF

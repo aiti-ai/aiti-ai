@@ -247,7 +247,7 @@ test("writeProviderConfigFile: 合并桌面 personal config（保留其它 provi
     models: [{ modelId: "GLM-5.3-Flash", contextWindow: 1000000 }], defaultModelRef: "bigmodel/GLM-5.3-Flash",
     desktopPersonalPath: desktop,
   });
-  assert.equal(statSync(file).mode & 0o777, 0o600, "含 apiKey 必须 0600");
+  if (process.platform !== "win32") assert.equal(statSync(file).mode & 0o777, 0o600, "含 apiKey 必须 0600 (POSIX mode-bit semantics; Windows has no 0600)");
   const doc = JSON.parse(readFileSync(file, "utf8"));
   const rules = doc.config.providerConfigRules.providerRules;
   assert.deepEqual(rules.map((r) => r.providerId).sort(), ["bigmodel", "other"]);

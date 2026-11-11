@@ -51,6 +51,13 @@ export interface SessionIndex {
    *  ext 同步 GC 靠 path 判活，置 NULL 会让 archived 行被 GC 误删、随后源同步复活。 */
   setExtArchived(id: string, archived: boolean): number;
   search(q: string, limit: number, filters?: SearchFilters): SearchHit[];
+  /** session-search tools (docs/pi-session-search-tools-plan.md): scoped full-text search.
+   *  Read-only; queries fts/messages directly, never writes. */
+  searchSessions(q: string, opts?: SessionSearchOpts): SessionSearchHit[];
+  /** Resolve user-provided session refs (exact id / uuid prefix / jsonl path) to exact ids. */
+  resolveSessionRefs(refs: string[]): { ids: string[]; unresolved: string[] };
+  /** Read a session's indexed messages (session_read tool). Returns null when the ref matches nothing or is ambiguous. */
+  sessionMessages(ref: string, opts?: SessionMessagesOpts): { row: IndexedSessionRow & { agent: string | null }; messages: SessionMessageRow[]; total: number } | null;
   /** §14.3: aggregated stats (totals / model distribution / heatmap). */
   stats(runningSessionIds: string[], days?: number): import("./session-stats.ts").SessionStats;
   /** §14.4: last message's role + model for row badges/filters. */
@@ -112,6 +119,59 @@ export interface SearchHit {
   archived: boolean;
   text: string;
   role: string;
+}
+
+/** session_search tool options (docs/pi-session-search-tools-plan.md §3). */
+export interface SessionSearchOpts {
+  /** Agent family filter ("pi"/"claude"/…); sessions.agent values. */
+  agents?: string[];
+  /** Exact session-id set (already resolved); narrows the search to these sessions. */
+  sessionIds?: string[];
+  /** Message role filter ("user"/"assistant"). */
+  role?: string;
+  /** Project directory prefix filter — applied IN the SQL so LIMIT counts only
+   *  matching sessions (post-filtering after LIMIT would silently drop hits). */
+  cwdPrefix?: string;
+  /** Max hits (one per session). Default 8. */
+  limit?: number;
+}
+
+/** Sanitize a numeric tool parameter: non-finite input (NaN from bad LLM JSON)
+ *  falls back to the default instead of poisoning LIMIT/OFFSET arithmetic. */
+function num(v: unknown, def: number, min: number, max: number): number {
+  const n = typeof v === "number" && Number.isFinite(v) ? Math.floor(v) : def;
+  return Math.max(min, Math.min(max, n));
+}
+
+export interface SessionSearchHit {
+  sessionId: string;
+  agent: string | null;
+  title: string;
+  cwd: string;
+  modified: string;
+  archived: boolean;
+  entryId: string;
+  role: string;
+  ts: string | null;
+  text: string;
+}
+
+export interface SessionMessagesOpts {
+  role?: string;
+  limit?: number;
+  offset?: number;
+  maxChars?: number;
+  entryId?: string;
+}
+
+export interface SessionMessageRow {
+  entryId: string;
+  role: string;
+  ts: string | null;
+  model: string | null;
+  toolName: string | null;
+  text: string;
+  truncated: boolean;
 }
 
 /** 只读文件头部 n 字节（自愈嗅探用，避免大文件全量读取）。 */
@@ -566,6 +626,179 @@ export function openSessionIndex(dbPath: string): SessionIndex {
         });
       }
       return out;
+    },
+
+    /** session_search tool: scoped FTS/LIKE search, one hit per session, read-only.
+     *  Mirrors search()'s SQL shape plus agents/sessionIds narrowing; ≥3 chars → FTS
+    *  MATCH (trigram), shorter → LIKE fallback (same threshold as search()). */
+    searchSessions(q, opts) {
+      const ql = (q ?? "").trim();
+      if (!ql) return [];
+      const limit = num(opts?.limit, 8, 1, 50);
+      const ids = (opts?.sessionIds ?? []).filter((s) => typeof s === "string" && s.length > 0);
+      const agents = (opts?.agents ?? []).filter((s) => typeof s === "string" && s.length > 0);
+      const roleFilter = typeof opts?.role === "string" && opts.role ? opts.role : null;
+      const cwdFilter = typeof opts?.cwdPrefix === "string" && opts.cwdPrefix ? opts.cwdPrefix : null;
+
+      const conds: string[] = [];
+      const params: Array<string | number> = [];
+      if (ids.length) {
+        conds.push(`f.session_id IN (${ids.map(() => "?").join(",")})`);
+        params.push(...ids);
+      }
+      if (agents.length) {
+        conds.push(`s.agent IN (${agents.map(() => "?").join(",")})`);
+        params.push(...agents);
+      }
+      if (roleFilter) {
+        conds.push("f.role = ?");
+        params.push(roleFilter);
+      }
+      if (cwdFilter) {
+        conds.push("s.cwd LIKE ? ESCAPE '\\'");
+        params.push(cwdFilter.replace(/[\\%_]/g, (c) => "\\" + c) + "%");
+      }
+      const where = conds.length ? "AND " + conds.join(" AND ") : "";
+
+      let rows: Array<{ session_id: string; text: string; role: string; entry_id: string | null; ts: string | null }>;
+      if (ql.length >= 3) {
+        const safe = ql.replace(/"/g, '""');
+        try {
+          // fts 表只有 session_id/role/text 三列（无 entry_id/ts——存量 model 分支的
+          // f.entry_id JOIN 因此一直静默空结果，见方案遗留节）；entry_id/ts 从 messages
+          // 回查（text 精确匹配取首条，锚定 read 语义足够）。
+          rows = db.prepare(
+            `SELECT f.session_id, f.text, f.role FROM fts f
+             JOIN sessions s ON s.id = f.session_id
+             WHERE f.fts MATCH ? ${where}
+             ORDER BY bm25(fts) LIMIT ?`,
+          ).all(`"${safe}"`, ...params, limit) as typeof rows;
+          const anchor = db.prepare("SELECT entry_id, ts FROM messages WHERE session_id = ? AND text = ? ORDER BY rowid LIMIT 1");
+          for (const r of rows) {
+            const m = anchor.get(r.session_id, r.text) as { entry_id: string; ts: string | null } | undefined;
+            r.entry_id = m?.entry_id ?? null;
+            r.ts = m?.ts ?? null;
+          }
+        } catch {
+          rows = [];
+        }
+      } else {
+        // short-query fallback: LIKE on messages, one row per session (same shape as search())
+        const likeConds = ["m.text LIKE ?"];
+        const likeParams: Array<string | number> = [`%${ql}%`];
+        if (ids.length) {
+          likeConds.push(`m.session_id IN (${ids.map(() => "?").join(",")})`);
+          likeParams.push(...ids);
+        }
+        if (roleFilter) {
+          likeConds.push("m.role = ?");
+          likeParams.push(roleFilter);
+        }
+        if (cwdFilter) {
+          likeConds.push("s.cwd LIKE ? ESCAPE '\\'");
+          likeParams.push(cwdFilter.replace(/[\\%_]/g, (c) => "\\" + c) + "%");
+        }
+        const agentJoin = agents.length ? `AND s.agent IN (${agents.map(() => "?").join(",")})` : "";
+        if (agents.length) likeParams.push(...agents);
+        rows = db.prepare(
+          `SELECT m.session_id, m.entry_id, m.text, m.role, m.ts AS ts
+           FROM messages m JOIN sessions s ON s.id = m.session_id
+           WHERE ${likeConds.join(" AND ")} ${agentJoin}
+           GROUP BY m.session_id
+           ORDER BY s.modified DESC LIMIT ?`,
+        ).all(...likeParams, limit) as typeof rows;
+      }
+
+      const out: SessionSearchHit[] = [];
+      const seen = new Set<string>();
+      const getRow = db.prepare("SELECT id, agent, cwd, name, modified, archived FROM sessions WHERE id = ?");
+      for (const r of rows) {
+        if (seen.has(r.session_id)) continue;
+        const s = getRow.get(r.session_id) as { id: string; agent: string | null; cwd: string; name: string | null; modified: string; archived: number } | undefined;
+        if (!s) continue;
+        seen.add(r.session_id);
+        const idx = r.text.toLowerCase().indexOf(ql.toLowerCase());
+        const start = Math.max(0, idx - 40);
+        const snippet = (start > 0 ? "…" : "") + r.text.slice(start, start + 120) + (start + 120 < r.text.length ? "…" : "");
+        out.push({
+          sessionId: s.id,
+          agent: s.agent ?? null,
+          title: s.name ?? "",
+          cwd: s.cwd,
+          modified: s.modified,
+          archived: s.archived === 1,
+          entryId: r.entry_id ?? "",
+          role: r.role,
+          ts: r.ts,
+          text: snippet,
+        });
+      }
+      return out;
+    },
+
+    /** Resolve refs (exact id / uuid prefix / jsonl path) to exact session ids.
+    *  Ambiguous prefixes count as unresolved (caller reports them back). */
+    resolveSessionRefs(refs) {
+      const ids = new Set<string>();
+      const unresolved: string[] = [];
+      const byId = db.prepare("SELECT id FROM sessions WHERE id = ?");
+      const byPath = db.prepare("SELECT id FROM sessions WHERE path = ?");
+      const byPrefix = db.prepare("SELECT id FROM sessions WHERE id LIKE ? ESCAPE '\\' LIMIT 2");
+      for (const raw of refs) {
+        const ref = String(raw ?? "").trim();
+        if (!ref) continue;
+        if (byId.get(ref)) { ids.add(ref); continue; }
+        if (byPath.get(ref)) { ids.add((byPath.get(ref) as { id: string }).id); continue; }
+        const esc = ref.replace(/[\\%_]/g, (c) => "\\" + c);
+        const hits = byPrefix.all(`${esc}%`) as Array<{ id: string }>;
+        if (hits.length === 1) ids.add(hits[0].id);
+        else unresolved.push(ref);
+      }
+      return { ids: [...ids], unresolved };
+    },
+
+    /** session_read tool: read a session's indexed messages (single session), read-only.
+    *  Ordering = rowid (insertion order ≈ chronological). entryId anchors one row
+    *  (offset ignored); maxChars truncates long texts with a truncated flag. */
+    sessionMessages(ref, opts) {
+      const resolved = this.resolveSessionRefs([ref ?? ""]);
+      if (resolved.ids.length !== 1) return null;
+      const id = resolved.ids[0];
+      const row = db.prepare("SELECT * FROM sessions WHERE id = ?").get(id) as
+        (IndexedSessionRow & { agent: string | null }) | undefined;
+      if (!row) return null;
+
+      const limit = num(opts?.limit, 20, 1, 200);
+      const offset = num(opts?.offset, 0, 0, Number.MAX_SAFE_INTEGER);
+      const maxChars = num(opts?.maxChars, 4000, 200, 20000);
+      const roleFilter = typeof opts?.role === "string" && opts.role && opts.role !== "all" ? opts.role : null;
+
+      const where: string[] = ["session_id = ?"];
+      const params: Array<string | number> = [id];
+      if (roleFilter) { where.push("role = ?"); params.push(roleFilter); }
+      if (opts?.entryId) { where.push("entry_id = ?"); params.push(opts.entryId); }
+      const whereSql = "WHERE " + where.join(" AND ");
+
+      const total = (db.prepare(`SELECT COUNT(*) AS n FROM messages ${whereSql}`).get(...params) as { n: number }).n;
+      const rows = db.prepare(
+        `SELECT entry_id, role, ts, model, tool_name, text FROM messages ${whereSql}
+         ORDER BY rowid LIMIT ? OFFSET ?`,
+      ).all(...params, opts?.entryId ? 1 : limit, opts?.entryId ? 0 : offset) as
+        Array<{ entry_id: string; role: string; ts: string | null; model: string | null; tool_name: string | null; text: string }>;
+
+      const messages: SessionMessageRow[] = rows.map((r) => {
+        const truncated = r.text.length > maxChars;
+        return {
+          entryId: r.entry_id,
+          role: r.role,
+          ts: r.ts,
+          model: r.model,
+          toolName: r.tool_name,
+          text: truncated ? r.text.slice(0, maxChars) + "…[truncated]" : r.text,
+          truncated,
+        };
+      });
+      return { row, messages, total };
     },
 
     stats(runningSessionIds, days) {

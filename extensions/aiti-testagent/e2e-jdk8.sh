@@ -4,9 +4,11 @@
 # 前置: tools/build-all.sh（agent+扩展 Java 8 编译）；tests/spring2-test JDK8 构建（Boot 2.7 + H2）
 
 set -u
+HERE="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$HERE/../.." && pwd)"
 JAVA8="${JAVA8:-/usr/lib/jvm/java-1.8.0-openjdk-amd64/bin/java}"
-AGENT_JAR=/home/pi/workspace/aiti-ai/TestAgent/TestAgent/target/testagent-1.0.jar
-APP_JAR=/home/pi/workspace/aiti-ai/TestAgent/tests/spring2-test/target/spring2-test-1.0.jar
+AGENT_JAR=$ROOT/TestAgent/TestAgent/target/testagent-1.0.jar
+APP_JAR=$ROOT/TestAgent/tests/spring2-test/target/spring2-test-1.0.jar
 pick_port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])'; }
 PORT_HTTP=$(pick_port)
 PORT_APP=$(pick_port)
@@ -14,8 +16,8 @@ CONF=/tmp/e2e-jdk8-conf-$$
 PASS=0; FAIL=0
 
 # 确保扩展 jar 在 agent 同目录（agent 重建后需拷回）
-cp /home/pi/workspace/aiti-ai/TestAgent/extensions/testagent-calcite/target/testagent-calcite-1.0.jar /home/pi/workspace/aiti-ai/TestAgent/TestAgent/target/ 2>/dev/null
-cp /home/pi/workspace/aiti-ai/TestAgent/extensions/testagent-spring/target/testagent-spring-1.0.jar /home/pi/workspace/aiti-ai/TestAgent/TestAgent/target/ 2>/dev/null
+cp $ROOT/TestAgent/extensions/testagent-calcite/target/testagent-calcite-1.0.jar $ROOT/TestAgent/TestAgent/target/ 2>/dev/null
+cp $ROOT/TestAgent/extensions/testagent-spring/target/testagent-spring-1.0.jar $ROOT/TestAgent/TestAgent/target/ 2>/dev/null
 [ -x "$JAVA8" ] || { echo "缺少 JDK 8: $JAVA8"; exit 1; }
 [ -f "$APP_JAR" ] || { echo "缺少 spring2-test（JDK8 构建）"; exit 1; }
 echo "JDK8: $("$JAVA8" -version 2>&1 | head -1) | 端口: $PORT_HTTP/$PORT_APP"

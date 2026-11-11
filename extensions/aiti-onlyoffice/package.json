@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-onlyoffice",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "OnlyOffice DocumentServer 深度保真编辑档（Docker 后端）",
   "main": "index.ts",
   "scripts": {
@@ -20,7 +20,7 @@
     ]
   },
   "aitiExtProtocol": "1.0",
-  "contentHash": "abab0275eca12c0f",
+  "contentHash": "4234a2c9a15abe72",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

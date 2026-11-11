@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-sheet-univer",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Excel 表格编辑器（exceljs + Univer）",
   "main": "index.ts",
   "scripts": {

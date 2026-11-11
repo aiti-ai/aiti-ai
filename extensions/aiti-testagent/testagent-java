@@ -24,8 +24,9 @@ if [ -n "${TESTAGENT_JAR:-}" ]; then
 elif [ -f "$SCRIPT_DIR/testagent-1.0.jar" ]; then
   AGENT_JAR="$SCRIPT_DIR/testagent-1.0.jar"
 else
-  AGENT_JAR="/home/pi/workspace/aiti-ai/TestAgent/TestAgent/target/testagent-1.0.jar"
+  AGENT_JAR="$SCRIPT_DIR/../../TestAgent/TestAgent/target/testagent-1.0.jar"
 fi
+[ -f "$AGENT_JAR" ] || { echo "[testagent-java] 找不到 agent jar: $AGENT_JAR（设 TESTAGENT_JAR 指定，或先构建 TestAgent）" >&2; exit 1; }
 CONF="${TESTAGENT_CONF:-/tmp/testagent-conf}"
 ENABLED="${TESTAGENT_ENABLE:-0}"
 
