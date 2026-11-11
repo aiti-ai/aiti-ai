@@ -282,6 +282,10 @@ interface Props {
 
 export interface ChatInputHandle {
   insertText: (text: string) => void;
+  /** An extension's `setEditorText()`: the draft becomes `text`, as pi's editor `setText()` does (undoable). */
+  setText: (text: string) => void;
+  /** An extension's `pasteToEditor()`: `text` at the caret as typed, like a paste. */
+  pasteText: (text: string) => void;
   /** Insert at the caret as a paragraph of its own: a blockquote must start a line. */
   insertQuote: (text: string) => void;
   insertIfEmpty: (text: string) => void;
@@ -1887,6 +1891,32 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }, []);
 
   useImperativeHandle(ref, () => ({
+    setText(text: string) {
+      const ta = textareaRef.current;
+      if (!ta) {
+        valueRef.current = text;
+        setValue(text);
+        return;
+      }
+      // Selected whole, the draft goes in one undoable insert; a collapsed caret
+      // would delete it character by character.
+      ta.setSelectionRange(0, ta.value.length);
+      replaceTextareaRange(ta, 0, ta.value.length, text);
+      setAtQuery(null);
+      requestAnimationFrame(() => autoGrowTextarea(ta));
+    },
+    pasteText(text: string) {
+      // An empty paste inserts nothing, as in the TUI; over a selection it would delete it.
+      if (!text) return;
+      const ta = textareaRef.current;
+      if (!ta) {
+        setValue((v) => v + text);
+        return;
+      }
+      replaceTextareaRange(ta, ta.selectionStart ?? ta.value.length, ta.selectionEnd ?? ta.value.length, text);
+      setAtQuery(null);
+      requestAnimationFrame(() => autoGrowTextarea(ta));
+    },
     insertIfEmpty(text: string) {
       const ta = textareaRef.current;
       const current = ta ? ta.value : value;
@@ -2691,7 +2721,11 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     // admits the bare /mcp command (opens Settings › MCP).
     const builtinAllowed = !isStreaming || offersBuiltinSlashCommandWhileStreaming(msg);
     if (builtinAllowed && await runBuiltinCommand(msg)) return;
-    if (isStreaming) return;
+    // A `!` command runs beside the run, as in pi's TUI; anything else queues
+    // (upstream #1541 — this fork's streaming Enter routes steer/follow-up through
+    // sendQueued, whose `!` guard sends shell drafts back here; the fork pipeline
+    // below then applies to the admitted `!` draft too).
+    if (isStreaming && !(msg.startsWith("!") && !attachedImages.length)) return;
     // Composer enhancement contract: pre-send chained hooks → extension chat hooks (the existing [element N]/[answer N]/[error N] replacement)
     const submittedMsg = runComposerSubmit(msg, attachedImages.length);
     const finalMsg = applyChatHooks(submittedMsg);
@@ -3170,6 +3204,11 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       }
       return;
     }
+    if (msg.startsWith("!") && !attachedImages.length) {
+      // A shell command is never steered into the run as text (upstream #1541).
+      void handleSend();
+      return;
+    }
     onAudioUnlock?.();
     if (!attachedImages.length && onBuiltinCommand && canRunBuiltinSlashCommandWhileStreaming(msg)) {
       void runBuiltinCommand(msg);
@@ -3206,7 +3245,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       return;
     }
     dispatch();
-  }, [value, attachedImages, queuedMessages, onPromptWithStreamingBehavior, onSteer, onFollowUp, onQueueSteerSend, handleRemoveQueueItem, clearInput, onAudioUnlock, applyChatHooks, onBuiltinCommand, runBuiltinCommand]);
+  }, [value, attachedImages, queuedMessages, onPromptWithStreamingBehavior, onSteer, onFollowUp, onQueueSteerSend, handleRemoveQueueItem, clearInput, onAudioUnlock, applyChatHooks, onBuiltinCommand, runBuiltinCommand, handleSend]);
 
   const getNextSlashIndex = useCallback((direction: "up" | "down" | "left" | "right") => {
     const lastIndex = displayedSlashCommands.length - 1;
@@ -5061,7 +5100,10 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               </div>
             </div>
           )}
-          {!isMobile && (isStreaming ? (
+          {!isMobile && (isStreaming && !bashMode ? (
+            // upstream #1541: a `!` draft beside a running agent shows the idle
+            // group (Send runs the command via handleSend) instead of steer/follow-up
+            // — a shell command is never steered into the run as text.
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, alignSelf: "flex-end", marginLeft: "auto" }}>
               {/* Fork new session (silent background, current session untouched):
                   shown left of steer/queue when there is content;

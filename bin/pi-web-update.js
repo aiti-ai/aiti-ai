@@ -12,23 +12,35 @@ const FETCH_TIMEOUT_MS = 10_000;
 const MANUAL_COMMAND = "npm install -g @aiti-ai/pi-web@latest";
 
 // Port of lib/app-update.ts (bin cannot import TypeScript).
-function parseStableVersion(version) {
-  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
+// Fork build suffix support (aiti-ai npm dist-tags "X.Y.Z-aiti.N", Debian/Ubuntu style).
+// dpkg-style ordering: the X.Y.Z core dominates; the suffix only breaks ties against the
+// bare version ("0.16.0-aiti.1" > "0.16.0").
+const APP_VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)(?:-aiti\.(\d+))?$/;
+
+function parseAppVersion(version) {
+  const match = APP_VERSION_PATTERN.exec(version);
   if (!match) return null;
-  const parts = match.slice(1).map(Number);
-  return parts.every(Number.isSafeInteger) ? parts : null;
+  const parts = match.slice(1, 4).map(Number);
+  if (!parts.every(Number.isSafeInteger)) return null;
+  const forkRaw = match[4];
+  const fork = forkRaw === undefined ? 0 : Number(forkRaw);
+  return Number.isSafeInteger(fork) ? { parts, fork } : null;
+}
+
+function parseStableVersion(version) {
+  return parseAppVersion(version);
 }
 
 function isNewerStableVersion(candidate, current) {
-  const candidateParts = parseStableVersion(candidate);
-  const currentParts = parseStableVersion(current);
-  if (!candidateParts || !currentParts) return false;
-  for (let index = 0; index < candidateParts.length; index += 1) {
-    if (candidateParts[index] !== currentParts[index]) {
-      return candidateParts[index] > currentParts[index];
+  const candidateParsed = parseAppVersion(candidate);
+  const currentParsed = parseAppVersion(current);
+  if (!candidateParsed || !currentParsed) return false;
+  for (let index = 0; index < candidateParsed.parts.length; index += 1) {
+    if (candidateParsed.parts[index] !== currentParsed.parts[index]) {
+      return candidateParsed.parts[index] > currentParsed.parts[index];
     }
   }
-  return false;
+  return candidateParsed.fork > currentParsed.fork;
 }
 
 async function fetchLatestVersion() {

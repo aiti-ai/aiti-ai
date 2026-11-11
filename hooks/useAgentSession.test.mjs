@@ -222,8 +222,11 @@ test("only the session-mount load probes disk for external appends", () => {
   assert.match(source, /await loadSession\(sid\)/);
   // fork: the count is narrowed to the loadSession call shape —
   // scrollToBottom("instant", { force: true }) is a lookalike literal in the fork
-  // scroll code and outside this "probe disk only on mount" guard's scope
-  assert.equal([...source.matchAll(/loadSession\([^)]*\{ force: true \}\)/g)].length, 1);
+  // scroll code and outside this "probe disk only on mount" guard's scope.
+  // 2026-11-12 merge: upstream's idle-message read forces a disk probe after a
+  // run ends (to see entries written beyond the window), so the legitimate
+  // sites are now two: the session mount and that run-end read.
+  assert.equal([...source.matchAll(/loadSession\([^)]*\{ force: true \}\)/g)].length, 2);
 });
 
 test("forking stays available during a run while in-session branch switches wait for it", () => {
@@ -238,8 +241,10 @@ test("forking stays available during a run while in-session branch switches wait
 
   // Fork copies into a new file, so only a shell command blocks it; the
   // in-session edit still waits because pi refuses navigate_tree mid-run.
-  // 合并适配：本地能力门（sessionCap("fork")）与上游 bashRunning 门槛并存
-  assert.match(chatWindowSource, /onFork=\{bashRunning \|\| isNew \|\| !sessionCap\("fork"\) \? undefined : handleFork\}/);
+  // 合并适配：本地能力门（sessionCap("fork")）与上游 bashRunning 门槛并存；
+  // 2026-11-12 merge: handler is forkFromMessage (upstream #1539 prefills the
+  // composer with the forked message) behind the same combined gate.
+  assert.match(chatWindowSource, /onFork=\{bashRunning \|\| isNew \|\| !sessionCap\("fork"\) \? undefined : forkFromMessage\}/);
   assert.match(chatWindowSource, /onEditContent=\{sessionBusy \? undefined : handleEditContent\}/);
   assert.match(chatWindowSource, /onAskInNewChat && quotedSelection\.sourceEntryId && !bashRunning &&/);
   assert.match(forkSource, /addNotice\(\{ type: "error", message:/);
@@ -262,8 +267,9 @@ test("first user messages expose both branch actions and edit before their own e
   // variant is forbidden by the ChatWindow edit-from-here red test).
   // 2026-09-18: added the fork capability gate (local sessions without caps unchanged;
   // external backends without fork support hide the button).
-  // 合并适配：同一调用点，融合形态 = 本地能力门 ∪ 上游 bashRunning 门槛
-  assert.match(chatWindowSource, /onFork=\{bashRunning \|\| isNew \|\| !sessionCap\("fork"\) \? undefined : handleFork\}/);
+  // 合并适配：同一调用点，融合形态 = 本地能力门 ∪ 上游 bashRunning 门槛；
+  // 2026-11-12 merge: handler is forkFromMessage (upstream #1539 composer prefill)
+  assert.match(chatWindowSource, /onFork=\{bashRunning \|\| isNew \|\| !sessionCap\("fork"\) \? undefined : forkFromMessage\}/);
   assert.doesNotMatch(chatWindowSource, /idx === 0 && msg\.role === "user" \? undefined : handleFork/);
   // Edit-from-here for fork relies on prevAssistantEntryId to locate the branch point (upstream has no such mechanism, so the old doesNotMatch no longer applies).
   assert.match(navigateSource, /type: "navigate_tree",\s*targetId: entryId/);
@@ -401,7 +407,10 @@ test("built-in clone switches to the independent child session", () => {
   );
 
   assert.match(builtinSource, /case "clone"/);
-  assert.match(builtinSource, /type: "clone",\s+leafId: activeLeafId/);
+  // 2026-11-12 merge: upstream's idle-message-aware leaf pick — when the clone's
+  // leaf is the appended-leaf view, clone that leaf so the copy matches what the
+  // view shows; otherwise the branch point stays activeLeafId (fork's old shape).
+  assert.match(builtinSource, /type: "clone",\s+leafId: appended\?\.base === activeLeafId/);
   assert.match(builtinSource, /agentRunningRef\.current \|\| bashRunningRef\.current/);
   assert.match(builtinSource, /onSessionForked\?\.\(result\.newSessionId\)/);
 });
@@ -1154,13 +1163,16 @@ test("queued continuation after stop never sticks on \"stopping\": aborting move
   const retSource = source.slice(source.indexOf("    dispatch, setAgentRunning, setForkingEntryId,"));
   assert.match(retSource, /aborting,/);
 
-  // Clicking stop → handleAbort sets it (before both the bash and agent paths)
+  // Clicking stop → handleAbort sets it (before both the bash and agent paths).
+  // 2026-11-12 merge: upstream refined the bash branch to
+  // `bashRunningRef.current && !agentRunningRef.current` (Stop beside a run
+  // aborts the run first) — match the branch by prefix, not the old literal.
   const abortSource = source.slice(
     source.indexOf("  const handleAbort = useCallback"),
     source.indexOf("  const handleFork = useCallback"),
   );
   assert.ok(
-    abortSource.indexOf("setAborting(true);") < abortSource.indexOf('if (bashRunningRef.current)'),
+    abortSource.indexOf("setAborting(true);") < abortSource.indexOf("if (bashRunningRef.current"),
     "setAborting(true) must precede the bash/agent branches (both stop kinds enter the waiting state)",
   );
 
