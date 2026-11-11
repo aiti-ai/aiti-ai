@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/pi-git-trace",
-  "version": "0.1.0",
+  "version": "0.1.7",
   "description": "编外 AI 变更追踪：.aiti-trace 独立追踪仓，op 编号 before/after 双 commit，文件⇄消息⇄操作全链路（pi 扩展，M0 追踪核心）",
   "keywords": [
     "pi",
@@ -28,5 +28,15 @@
     "extensions": [
       "./src/index.ts"
     ]
+  },
+  "contentHash": "b0cc0f169add856b",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "pi-plugins/pi-git-trace"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }

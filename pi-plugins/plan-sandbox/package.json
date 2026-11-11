@@ -1,9 +1,23 @@
 {
   "name": "@aiti-ai/pi-plan-sandbox",
-  "version": "0.1.0",
+  "version": "0.1.7",
   "description": "Plan-Sandbox mode for pi: full tool access inside a discardable sandbox; deliverables declared via hard protocol, cherry-picked on accept, everything else destroyed. [aiti]",
   "type": "module",
   "main": "index.ts",
-  "files": ["*.ts", "README.md"],
-  "pi-extension": true
+  "files": [
+    "*.ts",
+    "README.md"
+  ],
+  "pi-extension": true,
+  "license": "MIT",
+  "contentHash": "5d1caad406e307c4",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "pi-plugins/plan-sandbox"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  }
 }

@@ -19,7 +19,9 @@ try { mc = require(CHK); } catch (e) { console.error("找不到 aiti-model-check
 const { ok, finish } = Tester();
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pmc-integ-"));
 const modelsFile = path.join(dir, "models.json");
-const cfg = { modelsPath: modelsFile };
+// 密闭：禁目录自动刷新 —— 裸 cfg 下 unknown 模型会触发 models.dev 下载（裸 cfg.catalog 崩），
+// 且 known 集合会漏进全局 ~/.pi/agent/models-store.json（依赖操作员机器真实数据，新环境必挂）
+const cfg = { modelsPath: modelsFile, catalog: { autoRefresh: false } };
 
 // ① wizard 保存 provider + 3 key（重复名 k2→k2-2、空 key 过滤、rpm、minIntervalMs）
 const save = await wz.upsertProvider(dir, cfg, {

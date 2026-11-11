@@ -160,14 +160,15 @@ test("isWithinPath 基本语义", () => {
 
 test("win32 词法：反斜杠是字面字符（路径不被吃）；POSIX 仍转义", () => {
   if (process.platform === "win32") {
-    const cmd = String.raw`git add C:\repos\demo\x.ts`;
-    const r = parseBashTargets(cmd, String.raw`C:\repos\demo`, { home: String.raw`C:\Users\t` });
-    // \ 未被吃：add 目标保持完整反斜杠路径形态（至少不能再退化成 C:reposdemox.ts）
+    // win32 词法：\ 是字面字符。用 cp（writeLastArgCmds）让目标词真正落进 writeTargets，
+    // 断言反斜杠路径完整保留、未退化成 C:reposdemox.ts（git add 不在写目标规则表，词不落盘，断言会空洞通过）
+    const r = parseBashTargets(String.raw`cp src C:\repos\demo\x.ts`, String.raw`C:\repos\demo`, { home: String.raw`C:\Users\t` });
     const joined = JSON.stringify(r);
+    assert.ok(r.writeTargets.length > 0, `win32 词法未产出写目标：${joined.slice(0, 200)}`);
     assert.ok(!joined.includes("C:repos"), `反斜杠被转义吃掉：${joined.slice(0, 200)}`);
   } else {
-    // POSIX：\ 转义空格 → 单词 foo bar
-    const r = parseBashTargets("git add foo\\ bar", CWD, OPTS);
+    // POSIX：\ 转义空格 → 单词 foo bar（cp 尾参 = 写目标；git add 不在写目标规则表，词不落盘）
+    const r = parseBashTargets("cp src foo\\ bar", CWD, OPTS);
     const joined = JSON.stringify(r);
     assert.ok(joined.includes("foo bar"), `POSIX 转义语义被破坏：${joined.slice(0, 200)}`);
   }
