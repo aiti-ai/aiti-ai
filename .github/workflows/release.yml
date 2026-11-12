@@ -94,17 +94,19 @@ jobs:
             pj="$ext/package.json"
             [ -f "$pj" ] || continue
             bc=$(node -p "try{require('./$pj').scripts?.['build:client']||''}catch{}" 2>/dev/null || echo "")
-            [ -n "$bc" ] && [ "$bc" != "true" ] || continue
+            bs=$(node -p "try{require('./$pj').scripts?.['build:server']||''}catch{}" 2>/dev/null || echo "")
+            [ -n "$bc" ] && [ "$bc" != "true" ] || [ -n "$bs" ] || continue
             echo "::group::build ${ext}"
             # 每扩展 node_modules → 共享根（/tmp 构建根）：build-client.mjs 的
             # node_modules/vite/bin/vite.js 探测直接命中，require 解析同点命中
             ln -sfn /tmp/aiti-build-root/node_modules "${ext}node_modules"
-            if (cd "$ext" && npm run build:client); then
-              echo "::endgroup::"
-            else
-              echo "::endgroup::"
-              failed="$failed ${ext}"
-            fi
+            ok=1
+            if [ -n "$bc" ] && [ "$bc" != "true" ]; then (cd "$ext" && npm run build:client) || ok=0; fi
+            # server worker bundles（esbuild）：node_modules 下 Node 拒绝 strip-types，
+            # 必须预构建（aiti-ai-usage dist/ingest-worker.mjs）
+            if [ -n "$bs" ] && [ $ok -eq 1 ]; then (cd "$ext" && npm run build:server) || ok=0; fi
+            echo "::endgroup::"
+            [ $ok -eq 1 ] || failed="$failed ${ext}"
           done
           if [ -n "$failed" ]; then echo "::error::extension build failed:$failed"; exit 1; fi
 
