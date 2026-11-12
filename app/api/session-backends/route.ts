@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { isApiRequestAllowed } from "@/lib/request-security";
+import { getRegistry } from "@/lib/ext/registry";
 import {
   listProviderInfos,
   createSessionHandle,
@@ -64,7 +65,14 @@ export async function GET(req: Request) {
       return { ...p, ...(profiles ? { profiles } : {}) };
     }),
   );
-  return NextResponse.json({ providers: infos });
+  // rescanable = any loaded extension declares server.rescanBackends (the
+  // frontend shows the dropdown's "rescan" entry only then; old hosts / no
+  // probed backends → absent and the frontend keeps its existing behavior).
+  let rescanable = false;
+  try {
+    rescanable = getRegistry().hasBackendRescan();
+  } catch { /* registry not ready (early boot) → treat as absent */ }
+  return NextResponse.json({ providers: infos, rescanable });
 }
 
 export async function POST(req: Request) {

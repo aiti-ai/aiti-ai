@@ -38,8 +38,9 @@ test("render-point DOM order: Workspace < newSessionSelectors < Backend", () => 
   assert.ok(workspaceAt < selectorsAt && selectorsAt < backendAt, "slot should render between Workspace and Backend");
   // extra only carries data {cwd,isMobile}
   assert.match(chatWindow, /extra=\{\{ cwd: newSessionCwd, isMobile \}\}/);
-  // the selector-row render gate includes the slot (the selector stays visible with no workspace/backend options)
-  assert.match(chatWindow, /backendExtraOptions\.length > 0 \|\| hasNewSessionSelectors/);
+  // the selector-row render gate includes the slot (the selector stays visible with no workspace/backend options);
+  // backendRescanable keeps the row (and the Backend dropdown) visible when only the rescan entry exists
+  assert.match(chatWindow, /backendExtraOptions\.length > 0 \|\| backendRescanable \|\| hasNewSessionSelectors/);
 });
 
 test("preparer collection and pass-through: ChatWindow collects meta.prepare → useAgentSession pipeline", () => {

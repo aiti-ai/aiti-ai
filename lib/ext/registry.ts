@@ -12,6 +12,7 @@ import type {
   ExtAgentEndReason,
   ExtAgentHooks,
   ExtApiContext,
+  ExtBackendRescanReport,
   ExtCoreApi,
   ExtDepResolution,
   ExtFeature,
@@ -1476,6 +1477,40 @@ export class ExtRegistryImpl {
     // re-provides them); listeners are cleared with the old cycle's closures
     this.services.clear();
     this.featureListeners.clear();
+  }
+
+  /**
+   * Rescan session backends: invoke server.rescanBackends on every loaded
+   * extension that declares it. Picks up CLIs installed after the host booted
+   * (startup only scans once) and lets extensions drop entries whose CLI is
+   * gone. Best-effort per extension; reports are aggregated by extension id.
+   */
+  async rescanBackends(): Promise<{
+    ok: boolean;
+    reports: Record<string, ExtBackendRescanReport & { error?: string }>;
+  }> {
+    const reports: Record<string, ExtBackendRescanReport & { error?: string }> = {};
+    for (const ext of this.extensions.values()) {
+      const hook = ext.ext.server?.rescanBackends;
+      if (typeof hook !== "function") continue;
+      try {
+        const r = await hook(this.serverContext(ext));
+        if (r) reports[ext.id] = r;
+      } catch (e) {
+        reports[ext.id] = { error: e instanceof Error ? e.message : String(e) };
+        console.error(`[ext] ${ext.id} rescanBackends failed:`, e instanceof Error ? e.message : e);
+      }
+    }
+    return { ok: true, reports };
+  }
+
+  /** Whether any loaded extension declares a backend rescan hook (the frontend
+   *  only then shows the dropdown's "rescan" entry). */
+  hasBackendRescan(): boolean {
+    for (const ext of this.extensions.values()) {
+      if (typeof ext.ext.server?.rescanBackends === "function") return true;
+    }
+    return false;
   }
 
   /** Hot reload: shutdown → reload entries → startup. */

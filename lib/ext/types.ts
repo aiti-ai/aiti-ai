@@ -266,6 +266,15 @@ export type ExtMiddlewareResult =
   | { handled: false }
   ;
 
+/** Report returned by a backend rescan (server.rescanBackends). Both fields
+ *  optional; the host aggregates them into the rescan API response. */
+export interface ExtBackendRescanReport {
+  /** Registry keys ("<extId>/<type>") (re)registered by this scan. */
+  registered?: string[];
+  /** Registry keys removed because their dependency (e.g. CLI binary) is gone. */
+  removed?: string[];
+}
+
 export interface ExtServerHooks {
   startup?(ctx: ExtServerContext): Promise<void> | void;
   shutdown?(ctx: ExtServerContext): Promise<void> | void;
@@ -273,6 +282,15 @@ export interface ExtServerHooks {
   api?(req: Request, ctx: ExtApiContext): Promise<Response | null | undefined> | Response | null | undefined;
   /** Optional; runs for every request in the middleware, before core DNS-rebinding gate. */
   middleware?(req: Request): Promise<ExtMiddlewareResult> | ExtMiddlewareResult;
+  /**
+   * Rescan session backends (POST /api/session-backends/rescan): re-run the
+   * probe+register pass so CLIs installed after the host booted get picked up
+   * (the startup hook only scans once). Idempotent — re-registering the same
+   * key overwrites; entries whose dependency (CLI binary) disappeared should
+   * be removed via ctx.sessionProviders.remove. Extensions that register
+   * unconditionally (no install probe) don't need this hook.
+   */
+  rescanBackends?(ctx: ExtServerContext): Promise<ExtBackendRescanReport | void> | ExtBackendRescanReport | void;
 }
 
 /**

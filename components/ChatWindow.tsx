@@ -156,6 +156,11 @@ const LAST_BACKEND_KEY = "pi-web:last-session-backend";
  *  new-session Backend dropdown. Selecting one runs the entry's action (e.g. opening
  *  ACP agent management) without changing the current backend selection. */
 const BACKEND_EXT_OPTION_PREFIX = "__ext_opt__:";
+/** Option value for the dropdown's built-in "rescan backends" entry: re-runs
+ *  backend registration scans (POST /api/session-backends/rescan) to pick up
+ *  CLIs installed after the host booted, without changing the current
+ *  backend selection (same mechanics as BACKEND_EXT_OPTION_PREFIX entries). */
+const BACKEND_RESCAN_OPTION_VALUE = "__rescan_backends__";
 /** Shared look for the new-session Workspace / Backend dropdowns. */
 const NEW_SESSION_SELECT_STYLE: CSSProperties = {
   padding: "4px 8px",
@@ -356,6 +361,14 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   // null = local pi (the default; absent from the list and needs no request).
   // The last chosen backend is kept in localStorage and preselected on the next new session.
   const [backendOptions, setBackendOptions] = useState<Array<{ type: string; label: string; agentKey?: string }>>([]);
+  // Whether any extension declares a backend rescan hook (GET response field).
+  // When true the dropdown renders even with zero extension backends ("Pi (local)"
+  // + the rescan entry) so newly installed CLIs can be picked up without a restart.
+  const [backendRescanable, setBackendRescanable] = useState(false);
+  const [backendsRescanning, setBackendsRescanning] = useState(false);
+  // Transient result note shown next to the dropdown after a rescan (auto-cleared).
+  const [backendRescanNote, setBackendRescanNote] = useState<string | null>(null);
+  const backendRescanNoteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Extension entries inside the new-session Backend dropdown (newSessionBackendOptions),
   // e.g. an ACP agent management entry. Declarative static items get meta.onClick wired
   // by the host forwarder after materialization; entries without onClick don't render
@@ -1362,9 +1375,10 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     // dedupeFetch: StrictMode double effect / remounts share one request (the backend list is stable; 2.5s micro-cache).
     dedupeFetch(apiUrl("/api/session-backends"))
       .then((r) => (r.ok ? r.json() : { providers: [] }))
-      .then((d: { providers?: Array<{ type: string; label: string; agentKey?: string }> }) => {
+      .then((d: { providers?: Array<{ type: string; label: string; agentKey?: string }>; rescanable?: boolean }) => {
         if (cancelled) return;
         setBackendOptions(d.providers ?? []);
+        setBackendRescanable(Boolean(d.rescanable));
         // Fall back to local pi when the remembered backend no longer exists (extension uninstalled/renamed)
         setSessionBackend((cur) => (cur && (d.providers ?? []).some((p) => p.type === cur) ? cur : null));
       })
@@ -1373,6 +1387,46 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       cancelled = true;
     };
   }, [isNew, backendOptions.length]);
+  // Rescan backend registrations (POST /api/session-backends/rescan): re-runs
+  // every extension's probe+register pass so CLIs installed after the host
+  // booted appear without a restart. Updates the dropdown in place and shows a
+  // transient note with the outcome next to it.
+  const rescanBackends = useCallback(async () => {
+    if (backendsRescanning) return;
+    setBackendsRescanning(true);
+    try {
+      const r = await fetch(apiUrl("/api/session-backends/rescan"), { method: "POST" });
+      const d = await r.json().catch(() => null) as
+        | { ok?: boolean; providers?: Array<{ type: string; label: string; agentKey?: string }>; reports?: Record<string, { registered?: string[]; removed?: string[] }> }
+        | null;
+      if (d?.ok) {
+        setBackendOptions(d.providers ?? []);
+        setBackendRescanable(true);
+        setSessionBackend((cur) => (cur && (d.providers ?? []).some((p) => p.type === cur) ? cur : null));
+        const added = Object.values(d.reports ?? {}).reduce((n, rep) => n + (rep.registered?.length ?? 0), 0);
+        const removed = Object.values(d.reports ?? {}).reduce((n, rep) => n + (rep.removed?.length ?? 0), 0);
+        const note = added > 0
+          ? `rescan: +${added} backend${added > 1 ? "s" : ""}${removed > 0 ? `, -${removed}` : ""}`
+          : removed > 0
+            ? `rescan: ${removed} backend${removed > 1 ? "s" : ""} removed`
+            : "rescan: no new backends";
+        if (backendRescanNoteTimer.current) clearTimeout(backendRescanNoteTimer.current);
+        setBackendRescanNote(note);
+        backendRescanNoteTimer.current = setTimeout(() => setBackendRescanNote(null), 8000);
+      } else {
+        if (backendRescanNoteTimer.current) clearTimeout(backendRescanNoteTimer.current);
+        setBackendRescanNote("rescan failed");
+        backendRescanNoteTimer.current = setTimeout(() => setBackendRescanNote(null), 8000);
+      }
+    } catch {
+      // network failure: keep the current list, note the failure transiently
+      if (backendRescanNoteTimer.current) clearTimeout(backendRescanNoteTimer.current);
+      setBackendRescanNote("rescan failed");
+      backendRescanNoteTimer.current = setTimeout(() => setBackendRescanNote(null), 8000);
+    } finally {
+      setBackendsRescanning(false);
+    }
+  }, [backendsRescanning]);
   useScrollbarVisibility(scrollContainerRef, Boolean(session?.id) || !isEmptyNew);
   const hasStreamingContent = Boolean(streamState.streamingMessage?.content.length);
   const messageCwd = session?.cwd ?? newSessionCwd ?? undefined;
@@ -2206,7 +2260,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
             </div>
           </div>
         )}
-        {isEmptyNew && (workspaceOptions.length > 0 || backendOptions.length > 0 || backendExtraOptions.length > 0 || hasNewSessionSelectors) && (
+        {isEmptyNew && (workspaceOptions.length > 0 || backendOptions.length > 0 || backendExtraOptions.length > 0 || backendRescanable || hasNewSessionSelectors) && (
           <div className="mx-auto mb-3 w-full" style={{ maxWidth: "var(--chat-content-max-width, 820px)", paddingLeft: 32, paddingRight: isMobile ? 32 : 68 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontFamily: "var(--font-mono)", fontSize: 12 }}>
               {/* Workspace selection (before Backend): defaults to the current cwd; choosing
@@ -2238,13 +2292,21 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
               {hasNewSessionSelectors && (
                 <ExtSlot name="newSessionSelectors" extra={{ cwd: newSessionCwd, isMobile }} />
               )}
-              {(backendOptions.length > 0 || backendExtraOptions.length > 0) && (
+              {(backendOptions.length > 0 || backendExtraOptions.length > 0 || backendRescanable) && (
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0, maxWidth: "100%" }}>
                   <span style={{ color: "var(--text-muted)" }}>Backend</span>
                   <select
                     value={sessionBackend ?? ""}
                     onChange={(e) => {
                       const raw = e.target.value;
+                      // Built-in "rescan backends" entry: re-runs backend registration
+                      // scans (newly installed CLIs) without changing the current
+                      // backend selection — same mechanics as extension entries.
+                      if (raw === BACKEND_RESCAN_OPTION_VALUE) {
+                        e.target.value = sessionBackend ?? "";
+                        void rescanBackends();
+                        return;
+                      }
                       // Extension entry (e.g. "Manage ACP Agents…"): not a backend option —
                       // after running its action, reset the dropdown; the current backend
                       // selection is unchanged.
@@ -2278,8 +2340,19 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                         {item.meta?.label ?? item.id}
                       </option>
                     ))}
+                    {/* Built-in last entry: re-run backend registration scans to pick up
+                        CLIs installed after the host booted (core knows nothing about
+                        specific backends — extensions opt in via server.rescanBackends). */}
+                    {backendRescanable && (
+                      <option value={BACKEND_RESCAN_OPTION_VALUE} disabled={backendsRescanning}>
+                        {backendsRescanning ? "Rescanning backends…" : "⟳ Rescan backends (pick up new CLIs)"}
+                      </option>
+                    )}
                   </select>
                 </span>
+              )}
+              {backendRescanNote && (
+                <span style={{ color: "var(--text-dim)", fontSize: 11 }}>{backendRescanNote}</span>
               )}
               {sessionBackend && (
                 <span style={{ color: "var(--text-dim)", fontSize: 11 }}>
