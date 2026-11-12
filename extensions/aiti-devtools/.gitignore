@@ -1,0 +1,5 @@
+# build:client artifacts (tools/build-client.mjs / deploy.mjs outputs; regenerable)
+/assets/
+/pair.ts
+# local npm install residue (deps come from repo root / shared reconcile; lock not shipped)
+/package-lock.json

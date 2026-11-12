@@ -5,7 +5,8 @@
   "main": "index.ts",
   "scripts": {
     "build": "vite build --config vite.config.ts",
-    "deploy": "node tools/deploy.mjs"
+    "deploy": "node tools/deploy.mjs",
+    "build:client": "vite build --config vite.config.ts"
   },
   "keywords": [],
   "author": "",
