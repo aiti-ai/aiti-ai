@@ -3,9 +3,10 @@
  *
  * 覆盖 pi-web「完全空白」面 + 初次使用全流程（v2 Workspace Hub，方案
  * docs/aiti-quickstart-hub-plan.md）：
- *   1) 新建会话欢迎页：newSessionWidgets 插槽 3 枚 widget——guide 是状态机开始卡
+ *   1) 新建会话欢迎页：newSessionWidgets 插槽 4 枚 widget——guide 是状态机开始卡
  *      （fresh=获取工作区/配置模型大按钮流；hasWorkspace=上次工作区+配置模型引导；
- *      full=v1 四步卡），shortcuts/examples 照旧；
+ *      full=v1 四步卡），shortcuts（快捷键 8 项）/ streaming（任务运行时概念卡：
+ *      排队/插队/侧聊/fork/继续，图标复刻宿主流式按钮区）/ examples 照旧；
  *   2) 左栏 DockStack 全折叠空白：引导卡经 client 服务 `aiti-quickstart.api` 交付
  *      session-manager 编排器（可选消费），与 aiti-app-center 同屏共存；无 cwd 态
  *      引导卡出「获取工作区/配置模型」两按钮；
@@ -32,7 +33,7 @@ import { api } from "./server/api.ts";
 export default {
   id: "aiti-quickstart",
   name: "快速上手",
-  version: "0.2.0",
+  version: "0.3.0",
   icon: "icons/rocket.svg",
   client: "dist/aiti-quickstart-client.mjs",
 
@@ -54,6 +55,7 @@ export default {
     newSessionWidgets: [
       { id: "guide", meta: { title: "快速上手", areas: ["top", "bottom"], defaultArea: "top", w: 8, h: 1, priority: -1 } },
       { id: "shortcuts", meta: { title: "快捷操作", areas: ["top", "bottom"], defaultArea: "top", w: 8, h: 1, priority: 10 } },
+      { id: "streaming", meta: { title: "任务运行时", areas: ["top", "bottom"], defaultArea: "top", w: 8, h: 1, priority: 15 } },
       { id: "examples", meta: { title: "试试这样问", areas: ["top", "bottom"], defaultArea: "bottom", w: 8, h: 1, priority: 20 } },
     ],
     sidebarFooter: [{ id: "quickstart-open", label: "快速上手", title: "快速上手：回到欢迎页引导", icon: "icons/rocket.svg" }],
@@ -69,9 +71,24 @@ export default {
         "qs.guideHint": "⚙ 可隐藏/移动这些卡片",
         "qs.shortcutsTitle": "快捷操作",
         "qs.sc.newSession": "Ctrl+Alt+N 新建会话",
+        "qs.sc.enter": "Enter 发送消息/空输入时执行插队",
+        "qs.sc.shiftEnter": "Shift+Enter 换行",
+        "qs.sc.escStop": "Esc 停止生成",
         "qs.sc.at": "@ 引用文件",
         "qs.sc.slash": "/ 命令菜单",
-        "qs.sc.enter": "Enter 发送消息",
+        "qs.sc.upRecall": "↑ 召回上次输入",
+        "qs.sc.upHistory": "Shift+↑ 输入历史",
+        "qs.rt.title": "任务运行时",
+        "qs.rt.fork": "新会话",
+        "qs.rt.forkDesc": "带全部上下文 fork 新会话",
+        "qs.rt.sideChat": "侧聊",
+        "qs.rt.sideChatDesc": "转到 fork 出的侧聊问，不自动合回",
+        "qs.rt.steer": "插队",
+        "qs.rt.steerDesc": "打断当前尽快处理（Alt+Enter）",
+        "qs.rt.followUp": "排队",
+        "qs.rt.followUpDesc": "本轮结束自动接着发（Enter）",
+        "qs.rt.continue": "继续",
+        "qs.rt.continueDesc": "AI 停止后一键续跑",
         "qs.examplesTitle": "试试这样问",
         "qs.ex.1": "分析这个项目的目录结构，给出模块依赖关系",
         "qs.ex.2": "帮我实现一个新功能：先给方案，我确认后再写代码",
@@ -134,9 +151,24 @@ export default {
         "qs.guideHint": "⚙ Hide or rearrange these cards",
         "qs.shortcutsTitle": "Shortcuts",
         "qs.sc.newSession": "Ctrl+Alt+N New session",
+        "qs.sc.enter": "Enter to send / empty input steers",
+        "qs.sc.shiftEnter": "Shift+Enter New line",
+        "qs.sc.escStop": "Esc Stop generating",
         "qs.sc.at": "@ Reference files",
         "qs.sc.slash": "/ Command menu",
-        "qs.sc.enter": "Enter to send",
+        "qs.sc.upRecall": "↑ Recall last input",
+        "qs.sc.upHistory": "Shift+↑ Input history",
+        "qs.rt.title": "While it runs",
+        "qs.rt.fork": "Fork",
+        "qs.rt.forkDesc": "Standalone session with full context",
+        "qs.rt.sideChat": "Side chat",
+        "qs.rt.sideChatDesc": "Ask in a forked chat; no auto merge-back",
+        "qs.rt.steer": "Steer",
+        "qs.rt.steerDesc": "Interrupt now (Alt/Option+Enter)",
+        "qs.rt.followUp": "Follow-up",
+        "qs.rt.followUpDesc": "Sent when the run ends (Enter)",
+        "qs.rt.continue": "Continue",
+        "qs.rt.continueDesc": "Resume the stopped agent",
         "qs.examplesTitle": "Try asking",
         "qs.ex.1": "Analyze this project's structure and map module dependencies",
         "qs.ex.2": "Build a new feature: propose a plan first, code after I confirm",
