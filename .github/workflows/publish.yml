@@ -50,6 +50,53 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      - name: Build shared build root (outside extensions/ — must not enter the package)
+        run: |
+          set -e
+          # Same scheme as release.yml prepare: /tmp scaffold, deps+devDeps union shared root,
+          # @aiti-ai/* via locally packed tgzs, vendor tgzs for internal-only packages
+          BUILD=/tmp/aiti-build-root
+          PKGS=/tmp/aiti-local-pkgs
+          mkdir -p "$PKGS"
+          (cd extensions/_shared && npm pack --pack-destination "$PKGS")
+          (cd packages/aiti-bridge && npm pack --pack-destination "$PKGS")
+          (cd packages/aiti-devtools-core && npm pack --pack-destination "$PKGS")
+          SHARED_TGZ=$(ls "$PKGS"/aiti-ai-ext-shared-*.tgz | head -1)
+          BRIDGE_TGZ=$(ls "$PKGS"/aiti-ai-aiti-bridge-*.tgz | head -1)
+          CORE_TGZ=$(ls "$PKGS"/aiti-ai-aiti-devtools-core-*.tgz | head -1)
+          node scripts/collect-extension-deps.mjs --out "$BUILD/package.json" \
+            --file "@aiti-ai/ext-shared=$SHARED_TGZ" \
+            --file "@aiti-ai/aiti-bridge=$BRIDGE_TGZ" \
+            --file "@aiti-ai/aiti-devtools-core=$CORE_TGZ" \
+            --file "justget=$PWD/vendor/npm/justget-0.2.4.tgz" \
+            --file "service-tunnels=$PWD/vendor/npm/service-tunnels-0.3.76.tgz" \
+            --file "@aiti-ti/ddns=$PWD/vendor/npm/aiti-ti-ddns-0.2.0.tgz"
+          npm install --prefix "$BUILD" --legacy-peer-deps --no-audit --no-fund --loglevel=error
+          ln -s "$BUILD/node_modules" extensions/node_modules
+      - name: Build extension dists (client + server worker bundles, walk-up resolve)
+        run: |
+          failed=""
+          for ext in extensions/*/; do
+            pj="${ext}package.json"
+            [ -f "$pj" ] || continue
+            bc=$(node -p "try{require('./$pj').scripts?.['build:client']||''}catch{}" 2>/dev/null || echo "")
+            bs=$(node -p "try{require('./$pj').scripts?.['build:server']||''}catch{}" 2>/dev/null || echo "")
+            [ -n "$bc" ] && [ "$bc" != "true" ] || [ -n "$bs" ] || continue
+            echo "::group::build ${ext}"
+            # per-ext node_modules -> the shared /tmp build root: vite/esbuild bin probes and
+            # require resolution all hit the shared tree
+            ln -sfn /tmp/aiti-build-root/node_modules "${ext}node_modules"
+            ok=1
+            if [ -n "$bc" ] && [ "$bc" != "true" ]; then (cd "$ext" && npm run build:client) || ok=0; fi
+            if [ -n "$bs" ] && [ $ok -eq 1 ]; then (cd "$ext" && npm run build:server) || ok=0; fi
+            echo "::endgroup::"
+            [ $ok -eq 1 ] || failed="$failed ${ext}"
+          done
+          if [ -n "$failed" ]; then echo "::error::extension build failed:$failed"; exit 1; fi
+      - name: Materialize _shared sibling copies (deploy.mjs parity — npm pack excludes _shared)
+        run: node scripts/materialize-shared.mjs
+      - name: Remove build symlinks before publish
+        run: rm -f extensions/node_modules
       - run: npm publish --tag latest --access public
 
   container:
