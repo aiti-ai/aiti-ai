@@ -2,7 +2,7 @@
 /**
  * aiti-channels · 部署到 ~/.pi/web/extensions/ 和 ~/.pi/web-dev/extensions/
  *
- * 源码在 aiti-ai pi-web-ext/aiti-channels/（权威源码位置）；
+ * 源码在 pi-work pi-web-ext/aiti-channels/（权威源码位置）；
  * 部署 = 整目录同步到两个扩展根 + git 提交部署状态。
  * 用法：node tools/deploy.mjs
  * 生效：POST /api/extensions/reload（或重启 pi-web）；client no-store 刷新页面即新
