@@ -5,7 +5,9 @@
  *   - GuideWidget：状态机开始卡——fresh（无 cwd 无历史）= 获取工作区/配置模型大按钮流；
  *     hasWorkspace（有工作区无模型）= 上次工作区 chips + 配置模型引导；full = v1 四步卡。
  *     id 不变（"guide"）保住宿主 widget 偏好。
- *   - ShortcutsWidget / ExamplesWidget：照 v1。
+ *   - ShortcutsWidget：快捷键卡（8 项：新建会话/发送/换行/停止 + @/斜杠/历史召回）。
+ *   - RuntimeWidget：任务运行时概念卡（fork/侧聊/插队/排队/继续，图标复刻宿主流式按钮）。
+ *   - ExamplesWidget：照 v1。
  *   - QuickstartFiller：DockStack 全折叠空白引导卡 v2——无 cwd 态出「获取工作区 +
  *     配置模型」两按钮；有 cwd → 原 3 步 + 打开快速上手页。
  *   - QuickstartFooterButton / WorkspacePickerAcquireEntry：底部行 / Workspace 下拉
@@ -18,16 +20,17 @@
  * extra 只读数据（slot-extra 红线）：widget 收 { cwd, isMobile, area }；动作全走服务。
  */
 import { useState, useEffect, t, extSvc, apiUrl, onExtServiceChange } from "./host-shim";
-import { readSidebarDismissed, writeSidebarDismissed, resolveQuickstartCwd, topRecentRoot, deriveOnboardingState, splitKbdHint, type OnboardingState } from "./quickstart-logic";
+import { readSidebarDismissed, writeSidebarDismissed, resolveQuickstartCwd, topRecentRoot, deriveOnboardingState, splitKbdHint, RUNTIME_ROWS, type OnboardingState } from "./quickstart-logic";
 
-/* ── 公共样式（CSS vars 带兜底，照 app-center 卡片写法） ── */
+/* ── 公共样式（CSS vars 带兜底，照 app-center 卡片写法；紧凑化 2026-11-12——
+ *   三张 top 卡合计须 ≤ 宿主顶区上限 min(300px,38vh)，矮窗口不内滚） ── */
 const cardStyle: Record<string, unknown> = {
   width: "100%",
   height: "100%",
   display: "flex",
   flexDirection: "column",
-  gap: 6,
-  padding: "8px 11px",
+  gap: 4,
+  padding: "6px 10px",
   border: "1px solid var(--border, #3a3a3a)",
   borderRadius: 10,
   boxSizing: "border-box",
@@ -38,7 +41,7 @@ const titleStyle: Record<string, unknown> = {
   display: "flex",
   alignItems: "center",
   gap: 6,
-  fontSize: 13,
+  fontSize: 12,
   fontWeight: 600,
   color: "var(--text, #ddd)",
   flexShrink: 0,
@@ -49,8 +52,8 @@ const chipBase: Record<string, unknown> = {
   gap: 5,
   border: "1px solid var(--border, #3a3a3a)",
   borderRadius: 999,
-  padding: "2px 9px",
-  fontSize: 11,
+  padding: "1px 8px",
+  fontSize: 10.5,
   color: "var(--text-muted, #999)",
   background: "none",
   cursor: "pointer",
@@ -238,7 +241,12 @@ function useVitals(cwdFromExtra?: string | null): Vitals {
 /* ── 欢迎页 widget ── */
 
 const FULL_STEP_KEYS = ["qs.step1", "qs.step2", "qs.step3", "qs.step4"] as const;
-const SHORTCUT_KEYS = ["qs.sc.newSession", "qs.sc.at", "qs.sc.slash", "qs.sc.enter"] as const;
+/** 快捷操作卡 8 项（桌面 4 列 ×2 行、手机 2 列）：基础行（会话/发送/换行/停止）
+ *  + 输入行（@、/、历史召回）。语义对照宿主 ChatInput handleKeyDown。 */
+const SHORTCUT_KEYS = [
+  "qs.sc.newSession", "qs.sc.enter", "qs.sc.shiftEnter", "qs.sc.escStop",
+  "qs.sc.at", "qs.sc.slash", "qs.sc.upRecall", "qs.sc.upHistory",
+] as const;
 const EXAMPLE_KEYS = ["qs.ex.1", "qs.ex.2", "qs.ex.3", "qs.ex.4"] as const;
 
 /** 「上次工作区」chips 数据：/api/sessions distinct projectRoot（modified 降序 top3）。 */
@@ -368,11 +376,11 @@ export function GuideWidget(props: { cwd?: string | null; isMobile?: boolean; ar
             </>
           ) : null}
         </div>
-        <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "4px 12px", alignContent: "center" }}>
+        <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "3px 12px", alignContent: "center" }}>
           {FULL_STEP_KEYS.slice(2).map((key, i) => (
             <div key={key} style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
               <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, width: 16, height: 16, borderRadius: 999, fontSize: 10.5, fontWeight: 600, color: "var(--accent, #2563eb)", border: "1px solid var(--accent, #2563eb)" }}>{i + 3}</span>
-              <span style={{ fontSize: 11.5, color: "var(--text-muted, #999)", lineHeight: 1.45, minWidth: 0 }}>{t(key)}</span>
+              <span style={{ fontSize: 11, color: "var(--text-muted, #999)", lineHeight: 1.45, minWidth: 0 }}>{t(key)}</span>
             </div>
           ))}
         </div>
@@ -392,7 +400,7 @@ export function GuideWidget(props: { cwd?: string | null; isMobile?: boolean; ar
   return (
     <div style={cardStyle}>
       {head}
-      <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "4px 12px", alignContent: "center" }}>
+      <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "3px 12px", alignContent: "center" }}>
         {FULL_STEP_KEYS.map((key, i) => (
           <div key={key} style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
             <span style={{
@@ -400,11 +408,11 @@ export function GuideWidget(props: { cwd?: string | null; isMobile?: boolean; ar
               width: 16, height: 16, borderRadius: 999, fontSize: 10.5, fontWeight: 600,
               color: "var(--accent, #2563eb)", border: "1px solid var(--accent, #2563eb)",
             }}>{i + 1}</span>
-            <span style={{ fontSize: 11.5, color: "var(--text-muted, #999)", lineHeight: 1.45, minWidth: 0 }}>{t(key)}</span>
+            <span style={{ fontSize: 11, color: "var(--text-muted, #999)", lineHeight: 1.45, minWidth: 0 }}>{t(key)}</span>
           </div>
         ))}
       </div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, flexShrink: 0, paddingTop: 2, borderTop: "1px dashed var(--border, #3a3a3a)" }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 5, flexShrink: 0, paddingTop: 2, borderTop: "1px dashed var(--border, #3a3a3a)" }}>
         {actionChip(<FolderPlusIcon />, t("qs.open.hub"), openWorkspaceHub, "hub")}
         {actionChip(<GearIcon />, t("qs.start.configureModel"), openModelConfig, "model")}
         {importReady ? actionChip(<ImportIcon />, t("qs.start.importModels"), openModelsImport, "import") : null}
@@ -470,19 +478,119 @@ const kbdStyle: Record<string, unknown> = {
 };
 
 /** 快捷操作卡（w8 全宽，与快速上手同行宽——2026-11-07 用户拍板）：kbd 胶囊 + 描述行式；
- *  桌面单行 4 列（全宽放得下）、手机 1 列。与 guide 步骤行同节奏。 */
+ *  桌面 4 列 ×2 行（8 项）、手机 2 列（8 行过长）。与 guide 步骤行同节奏。 */
 export function ShortcutsWidget(props: { cwd?: string | null; isMobile?: boolean; area?: string }) {
   const isMobile = props.isMobile === true;
   return (
     <div style={cardStyle}>
       <div style={titleStyle}>{t("qs.shortcutsTitle")}</div>
-      <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(4, minmax(0, 1fr))", gap: "4px 12px", alignContent: "center" }}>
+      <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, minmax(0, 1fr))", gap: "3px 12px", alignContent: "center" }}>
         {SHORTCUT_KEYS.map((key) => {
           const { kbd, desc } = splitKbdHint(t(key));
           return (
             <div key={key} style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
               <kbd style={kbdStyle}>{kbd}</kbd>
-              <span style={{ fontSize: 11, color: "var(--text-muted, #999)", lineHeight: 1.45, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{desc}</span>
+              <span style={{ fontSize: 10.5, color: "var(--text-muted, #999)", lineHeight: 1.45, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{desc}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ── 任务运行时概念卡（streaming widget）：图标/配色复刻宿主 ChatInput 流式按钮区——
+ *   卡片即按钮图例（用户在欢迎页看到的图标 = 运行中真实按钮的样子）。 */
+
+/** 与宿主流式按钮同款 fg 色（ChatInput.tsx StreamingActionButton 同值）。 */
+const RT_COLOR = {
+  fork: "rgba(37,99,235,1)",
+  sideChat: "rgba(37,99,235,0.9)",
+  steer: "rgba(180,130,0,1)",
+  followUp: "rgba(99,102,241,1)",
+  continue: "rgba(5,150,105,1)",
+} as const;
+
+/** 新会话（宿主 ForkNewIcon 同款路径）。 */
+function RtForkIcon({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
+      <circle cx="12" cy="18" r="3" />
+      <circle cx="6" cy="6" r="3" />
+      <circle cx="18" cy="6" r="3" />
+      <path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9" />
+      <path d="M12 12v3" />
+    </svg>
+  );
+}
+
+/** 侧聊（宿主流式按钮区同款气泡+）。 */
+function RtSideChatIcon({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
+      <path d="M21 12a8 8 0 0 1-8 8H5.5a2 2 0 0 1-1.4-3.4A8 8 0 1 1 21 12z" />
+      <path d="M13 8.5v7M9.5 12h7" />
+    </svg>
+  );
+}
+
+/** 插队（宿主流式按钮区同款箭头）。 */
+function RtSteerIcon({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
+      <path d="M5 1 L9 5 L5 9" />
+      <line x1="1" y1="5" x2="9" y2="5" />
+    </svg>
+  );
+}
+
+/** 排队（宿主流式按钮区同款双箭头流）。 */
+function RtFollowUpIcon({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
+      <line x1="2" y1="1.5" x2="8" y2="1.5" />
+      <path d="M2 1.5 L2 2.5 L5 5 L2 7.5 L2 8.5" />
+      <path d="M8 1.5 L8 2.5 L5 5 L8 7.5 L8 8.5" />
+      <line x1="2" y1="8.5" x2="8" y2="8.5" />
+    </svg>
+  );
+}
+
+/** 继续（宿主 Continue 按钮同款双 V）。 */
+function RtContinueIcon({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
+      <polyline points="1.5 2.5 5.5 6 1.5 9.5" />
+      <polyline points="6.5 2.5 10.5 6 6.5 9.5" />
+    </svg>
+  );
+}
+
+/** 运行时行（key/descKey 见 quickstart-logic RUNTIME_ROWS；行序 = 流式按钮出现序 + 继续）。 */
+const RUNTIME_ROW_META: Record<string, { color: string; Icon: (p: { size?: number }) => unknown }> = {
+  "qs.rt.fork": { color: RT_COLOR.fork, Icon: RtForkIcon },
+  "qs.rt.sideChat": { color: RT_COLOR.sideChat, Icon: RtSideChatIcon },
+  "qs.rt.steer": { color: RT_COLOR.steer, Icon: RtSteerIcon },
+  "qs.rt.followUp": { color: RT_COLOR.followUp, Icon: RtFollowUpIcon },
+  "qs.rt.continue": { color: RT_COLOR.continue, Icon: RtContinueIcon },
+};
+
+/** 任务运行时卡（top，w8，p15）：排队/插队/侧聊/fork/继续概念行——图标与配色与
+ *  宿主流式按钮一致；桌面 3 列 ×2 行（5 项）、手机 1 列。 */
+export function RuntimeWidget(props: { isMobile?: boolean; area?: string }) {
+  const isMobile = props.isMobile === true;
+  return (
+    <div style={cardStyle}>
+      <div style={titleStyle}>{t("qs.rt.title")}</div>
+      <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, minmax(0, 1fr))", gap: "3px 16px", alignContent: "center" }}>
+        {RUNTIME_ROWS.map((row) => {
+          const meta = RUNTIME_ROW_META[row.key];
+          const Icon = meta.Icon;
+          return (
+            <div key={row.key} style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+              <span style={{ color: meta.color, display: "inline-flex", flexShrink: 0 }}><Icon size={12} /></span>
+              <span style={{ fontSize: 11, fontWeight: 600, color: meta.color, flexShrink: 0 }}>{t(row.key)}</span>
+              <span style={{ fontSize: 10.5, color: "var(--text-muted, #999)", lineHeight: 1.45, minWidth: 0 }}>{t(row.descKey)}</span>
             </div>
           );
         })}
@@ -524,6 +632,7 @@ export function renderWidget(id: string, props: Record<string, unknown>): unknow
   switch (id) {
     case "guide": return <GuideWidget {...(props as any)} />;
     case "shortcuts": return <ShortcutsWidget {...(props as any)} />;
+    case "streaming": return <RuntimeWidget {...(props as any)} />;
     case "examples": return <ExamplesWidget {...(props as any)} />;
     default: return null;
   }
