@@ -811,11 +811,19 @@ export interface ProjectTrustUnreadableResponse extends ProjectMcpListing {
   reason: "trust-unreadable";
 }
 
+export type AppInstallMode = "archive" | "docker" | "git" | "npm-global" | "npx" | "other";
+
+export interface AppInstallInfo {
+  supported: boolean; // true when `pi-web update` can upgrade this install in place
+  mode: AppInstallMode;
+}
+
 export interface AppUpdateResponse {
   currentVersion: string;
   latestVersion: string;
   updateAvailable: boolean;
   releaseUrl: string;
+  install?: AppInstallInfo;
 }
 
 export interface PushConfigResponse {
