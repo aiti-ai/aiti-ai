@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/pi-web",
-  "version": "0.15.15-aiti.1",
+  "version": "0.15.15-aiti.2",
   "description": "Web UI for the pi coding agent",
   "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "repository": {
@@ -13,6 +13,9 @@
   "license": "MIT",
   "engines": {
     "node": ">=22.19.0"
+  },
+  "publishConfig": {
+    "tag": "latest"
   },
   "bin": {
     "pi-web": "bin/pi-web.js"
