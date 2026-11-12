@@ -414,7 +414,7 @@ function expandTildePath(p: string): string {
 
 /** 宿主 file-access 门禁（pi-web allowed-roots：session cwd/projectRoot 动态集合；ctx.core 注入，
  *  M3 对齐——与 aiti-folder/doc-center/git-trace 同一安全面）。修复 Windows 项目根不在 home 下
- *  （如 155：项目在 C:\workspace 而 home 在 C:\Users）时静态名单误杀「路径不在白名单内」；
+ *  （如 155：项目在 D:\workspace 而 home 在 C:\Users）时静态名单误杀「路径不在白名单内」；
  *  缺席（独立测试环境/旧宿主）→ 静态名单兜底。 */
 let _hostIsAllowed: ((p: string) => Promise<boolean>) | null = null;
 function bindHostFileAccess(ctx: any): void {
