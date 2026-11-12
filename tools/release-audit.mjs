@@ -18,6 +18,7 @@ import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, rmSync,
 import { join, dirname, resolve, relative, basename } from "node:path";
 import { execSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
 import { extProtocolInfo } from "../extensions/_shared/ext-protocol.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "extensions");
@@ -37,37 +38,34 @@ if (!["staging", "official"].includes(TARGET)) {
 }
 const REGISTRY = TARGET === "official"
   ? "https://registry.npmjs.org/"
-  : (process.env.AITI_STAGING_REGISTRY || "https://registry.npmjs.org/"); // staging registry is internal — inject via env, never commit the URL
+  : (PRIV?.stagingRegistry || process.env.AITI_STAGING_REGISTRY || "https://registry.npmjs.org/"); // staging registry is internal — loaded from the machine-local config, never committed
 
 // ---- 发布范围（与 publish-all.mjs 同口径）----
 const EXCLUDE = new Set(["demo", "demo-lazy", "sm-demo-source", "templates", "shared"]);
 const PLUGIN_ROOTS = ["pi-plugins", "packages"];
 
-// ---- 敏感字面量碎片化（本仓公开——审核规则自身不得以源码字面量携带内部值）----
-const frag = (...parts) => parts.join("");
-const PRIV_DOMAIN = frag("alot", ".pw"); // 内部根域
-const PRIV_REGISTRY_URL = frag("https://npm.", PRIV_DOMAIN); // 私仓 URL
-const WIND_HOME = frag("/home/wi", "nd"); // 开发机家目录
-const PRIV_USER = frag("key", "ea"); // 内部用户名
-const PRIV_LAN = frag("192.168.", "5."); // 内网拓扑段
+// ---- 敏感规则从本机持久化配置加载（~/.aiti/release-redact.json，不进任何仓库；CI 用 env AITI_RELEASE_REDACT 注入等价 JSON）。----
+// 规则缺失时脱敏/扫描退化为空（非敏感检查不受影响；本机发布请确保配置存在）。
 const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function loadPrivConfig() {
+  const raw = process.env.AITI_RELEASE_REDACT;
+  if (raw) {
+    try { return JSON.parse(raw); } catch { console.error("[release-audit] AITI_RELEASE_REDACT 不是合法 JSON——忽略"); }
+  }
+  try {
+    return JSON.parse(readFileSync(join(process.env.HOME || homedir(), ".aiti", "release-redact.json"), "utf8"));
+  } catch {
+    return null;
+  }
+}
+const PRIV = loadPrivConfig();
+if (!PRIV) console.warn("[release-audit] 未找到 ~/.aiti/release-redact.json（且未设 AITI_RELEASE_REDACT）——内部值脱敏/扫描规则为空");
 
 // ---- 脱敏规则（与 sync-extensions-to-aiti-ai.mjs 同口径 + 官方源补充）----
-const REDACT = [
-  [new RegExp(escRe(WIND_HOME), "g"), "/home/pi"],
-  [new RegExp(escRe(PRIV_LAN), "g"), "192.168.122."],
-  [new RegExp(escRe(PRIV_REGISTRY_URL), "g"), "https://registry.npmjs.org"],
-  [new RegExp(`([a-z0-9-]+\\.)*${escRe(PRIV_DOMAIN)}`, "g"), (m) => m.replace(new RegExp(`\\.${escRe(PRIV_DOMAIN)}$`), ".example.com").replace(new RegExp(`^${escRe(PRIV_DOMAIN)}$`), "example.com")],
-  [new RegExp(escRe(PRIV_USER), "g"), "user"],
-];
+const REDACT = (PRIV?.redact ?? []).map((r) => [new RegExp(r.find, r.flags || "g"), r.replace]);
 
 // A1 扫描的额外敏感形态（官方源口径：私源引用本身也是违规）
-const SCAN_PATTERNS = [
-  [new RegExp(escRe(PRIV_DOMAIN), "i"), frag("内部域名 ", PRIV_DOMAIN)],
-  [new RegExp(escRe(WIND_HOME), "g"), frag("真实用户路径 ", WIND_HOME)],
-  [new RegExp(escRe(PRIV_LAN), "g"), frag("内网拓扑段 ", PRIV_LAN, ".*")],
-  [new RegExp(`\\b${escRe(PRIV_USER)}\\b`, "i"), frag("内部用户名 ", PRIV_USER)],
-];
+const SCAN_PATTERNS = (PRIV?.scan ?? []).map((r) => [new RegExp(r.pattern, r.flags || "g"), r.label]);
 
 const MIT_LICENSE = `MIT License
 

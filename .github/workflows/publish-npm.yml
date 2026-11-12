@@ -50,6 +50,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Write private redact config (from AITI_RELEASE_REDACT secret; empty = rules degrade)
+        if: ${{ secrets.AITI_RELEASE_REDACT != '' }}
+        run: |
+          mkdir -p ~/.aiti
+          printf '%s' "${{ secrets.AITI_RELEASE_REDACT }}" > ~/.aiti/release-redact.json
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
