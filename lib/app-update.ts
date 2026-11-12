@@ -1,3 +1,5 @@
+import type { AppInstallInfo, AppInstallMode } from "./api-types";
+
 // App update version helpers.
 //
 // Version scheme (fork convention, Debian/Ubuntu style):
@@ -47,4 +49,33 @@ export function isNewerStableVersion(candidate: string, current: string): boolea
 export function getPiWebReleaseUrl(version: string): string | null {
   if (!parseAppVersion(version)) return null;
   return `https://github.com/aiti-ai/aiti-ai/releases/tag/v${version}`;
+}
+
+// ---- Install-shape detection (pure decision part; the IO lives in
+// app/api/app-update/route.ts and reuses bin/pi-web-update.js for npm kinds).
+
+export interface AppInstallShape {
+  hasReleaseTxt: boolean; // RELEASE.txt in pkgDir — written by release-archive installs only
+  hasDockerEnv: boolean; // /.dockerenv present — running inside a container
+  hasGitDir: boolean; // pkgDir/.git present — source checkout deployment
+  npmKind: "global" | "npx" | "other"; // bin/pi-web-update.js getInstallKind() result
+}
+
+export function resolveInstallMode(shape: AppInstallShape): AppInstallMode {
+  if (shape.hasReleaseTxt) return "archive";
+  if (shape.hasDockerEnv) return "docker";
+  if (shape.hasGitDir) return "git";
+  if (shape.npmKind === "global") return "npm-global";
+  if (shape.npmKind === "npx") return "npx";
+  return "other";
+}
+
+// Modes `pi-web update` can upgrade in place; the rest get manual guidance.
+export function isSelfUpdatableMode(mode: AppInstallMode): boolean {
+  return mode === "archive" || mode === "npm-global";
+}
+
+export function buildInstallInfo(shape: AppInstallShape): AppInstallInfo {
+  const mode = resolveInstallMode(shape);
+  return { supported: isSelfUpdatableMode(mode), mode };
 }

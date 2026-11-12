@@ -20,6 +20,7 @@ import { buildQuotedSelection } from "@/lib/quoted-selection";
 import { dropMentionText, splitDroppedItems, uploadFiles, type DroppedItem } from "@/lib/file-upload-client";
 import { buildFileAtMentionsText } from "@/lib/file-fuzzy";
 import { MessageView, estimateTokens } from "./MessageView";
+import { UpdateGuideDialog } from "./UpdateGuideDialog";
 import { SessionRequestCardHost } from "./SessionRequestSlot";
 import { MarkdownBody } from "./MarkdownBody";
 import { ChatInput, getUserMessageDraftImages, getUserMessageText, type AttachedImage, type ChatInputHandle } from "./ChatInput";
@@ -205,7 +206,9 @@ function NewSessionUpdateLink({
 }: {
   label: (version: string) => string;
 }) {
+  const { t } = useI18n();
   const [update, setUpdate] = useState<AppUpdateResponse | null>(() => appUpdateFound);
+  const [guideOpen, setGuideOpen] = useState(false);
 
   useEffect(() => {
     if (appUpdateFound) return;
@@ -220,6 +223,7 @@ function NewSessionUpdateLink({
   const accessibleLabel = label(update.latestVersion);
 
   return (
+    <>
     <a
       href={update.releaseUrl}
       target="_blank"
@@ -253,6 +257,40 @@ function NewSessionUpdateLink({
         <path d="M7 7h10v10" />
       </svg>
     </a>
+    <button
+      type="button"
+      title={t("appUpdate.dialogTitle")}
+      aria-label={t("appUpdate.updateButton")}
+      onClick={() => setGuideOpen(true)}
+      onMouseEnter={(event) => { event.currentTarget.style.background = "var(--bg-hover)"; }}
+      onMouseLeave={(event) => { event.currentTarget.style.background = "transparent"; }}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        alignSelf: "center",
+        gap: 4,
+        minHeight: 32,
+        padding: "0 6px",
+        border: "none",
+        background: "transparent",
+        borderRadius: 5,
+        color: "var(--accent)",
+        fontSize: 12,
+        fontWeight: 600,
+        lineHeight: 1.2,
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
+        <path d="M12 3v12" />
+        <path d="m6 11 6 6 6-6" />
+        <path d="M5 21h14" />
+      </svg>
+      {t("appUpdate.updateButton")}
+    </button>
+    {guideOpen && <UpdateGuideDialog update={update} onClose={() => setGuideOpen(false)} />}
+    </>
   );
 }
 
