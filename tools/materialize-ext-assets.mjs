@@ -2,7 +2,7 @@
 // materialize-ext-assets.mjs — materialize deploy-time copies into extensions/ so the
 // npm package (@aiti-ai/pi-web) is self-contained.
 //
-// The aiti-ai deploy.mjs scripts do three kinds of "deploy-time materialization" that
+// The source-repo deploy.mjs scripts do three kinds of "deploy-time materialization" that
 // the git-mirrored extensions/ tree lacks (deploy materializes INTO the runtime dir,
 // while the repo tree stays lean):
 //   1. per-extension icons — copyIcons(dest/"icons", [names]) from _shared/icons/*.svg

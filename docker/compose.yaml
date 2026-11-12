@@ -1,30 +1,30 @@
-# compose.yaml —— aiti 容器一键起（aiti-docker-image-plan §3.4）
-# 用法：docker compose -f docker/compose.yaml up -d
+# compose.yaml — one-command aiti container start (aiti-docker-image-plan §3.4)
+# Usage: docker compose -f docker/compose.yaml up -d
 services:
   aiti:
-    image: aiti/aiti:full        # 或 :core
+    image: aiti/aiti:full        # or :core (base)
     container_name: aiti
     ports:
-      - "30142:30142"            # pi-web（必开）
-      - "8777:8777"              # aiti-bridge（可选，外部 MCP）
-      # GUI/CDP/RDP/隧道端口默认不映射（安全默认，方案 §5 R5），按需打开：
+      - "30142:30142"            # pi-web (required)
+      - "8777:8777"              # aiti-bridge (optional, external MCP)
+      # GUI/CDP/RDP/tunnel ports are not mapped by default (secure defaults, design §5 R5); open as needed:
       # - "6080:6080"  noVNC · "5900:5900" VNC · "9222:9222" CDP · "3389:3389" RDP · "7681:7681" ttyd
     volumes:
-      # ⚠ 只挂可变子路径，绝不挂 /opt/aiti 整根（O22，冒烟实证）：命名卷只在首次
-      # populate 一次，之后旧卷会遮蔽新镜像——挂整根 = 镜像升级后扩展永不更新。
-      - aiti_data:/opt/aiti/data    # 扩展运行时数据（configs 仓/索引/缓存等）
-      - aiti_agent:/opt/aiti/agent  # pi 会话 JSONL/models/mcp-cache（护城河，必须持久）
-      - ./workspace:/workspace      # 真实项目（必须；容器内固定路径，启动默认进入）
-      # 可选：继承宿主 pi 配置 → - ~/.pi:/home/aiti/.pi
-      # 可选：缓存 → - cache:/home/aiti/.cache
-    working_dir: /workspace      # 容器启动默认工作目录
+      # ⚠ Mount only mutable sub-paths, never the whole /opt/aiti root (O22, smoke-verified): a named volume
+      # populates once on first use; afterwards the old volume shadows the new image — mounting the root means extensions never update across image upgrades.
+      - aiti_data:/opt/aiti/data    # extension runtime data (config store / indexes / caches)
+      - aiti_agent:/opt/aiti/agent  # pi session JSONL/models/mcp-cache (the moat — always persist)
+      - ./workspace:/workspace      # real projects (required; fixed in-container path, default cwd at startup)
+      # optional: inherit host pi config → - ~/.pi:/home/aiti/.pi
+      # optional: cache → - cache:/home/aiti/.cache
+    working_dir: /workspace      # default cwd at container startup
     environment:
-      PUID: "1000"              # 运行用户 uid（对齐宿主用户则挂载目录权限一致；不能用 UID——bash 只读内建）
+      PUID: "1000"              # runtime uid (align with the host user so mounts just work; do not use UID — read-only bash builtin)
       PGID: "1000"
-      AITI_MODE: full           # core | full | auto（缺省按镜像层标记探测）
-      AITI_PHASES: piweb,bridge # gui,asr,term 按需追加
+      AITI_MODE: full           # core | full | auto (default probes the image-layer marker)
+      AITI_PHASES: piweb,bridge # append gui,asr,term as needed
       TZ: Asia/Shanghai
-    init: true                   # 信号转发（不依赖 systemd）
+    init: true                   # signal forwarding (no systemd dependency)
     restart: unless-stopped
 
 volumes:

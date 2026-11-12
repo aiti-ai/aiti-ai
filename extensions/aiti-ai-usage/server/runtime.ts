@@ -6,7 +6,7 @@
  * 防抖 flushDaily）与 API。worker 不可用时回退主线程异步分批（保底可用）。
  */
 import path from "node:path";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { Worker } from "node:worker_threads";
 import { openUsageDb, type UsageDb } from "../lib/db.ts";
@@ -38,9 +38,16 @@ function runSyncInWorker(job: IngestJob): Promise<void> {
   return new Promise((resolve, reject) => {
     let worker: Worker;
     try {
-      worker = new Worker(new URL("./ingest-worker.ts", import.meta.url), {
+      // When running from an npm install the extension lives under node_modules, where
+      // Node refuses to strip types from .ts files ("Stripping types is currently
+      // unsupported for files under node_modules"). Prefer the bundled
+      // dist/ingest-worker.mjs (esbuild output, no strip-types needed) when present.
+      const distWorker = new URL("../dist/ingest-worker.mjs", import.meta.url);
+      const useDist = existsSync(distWorker);
+      worker = new Worker(useDist ? distWorker : new URL("./ingest-worker.ts", import.meta.url), {
         workerData: job,
-        // Node 22.6–22.17 需显式开启；≥22.18 默认开启且 flag 兼容（no-op 接受）
+        // Node 22.6–22.17 needs the flag explicitly; ≥22.18 enables it by default and
+        // accepts the flag as a no-op. Harmless for the dist bundle too, so pass it unconditionally.
         execArgv: ["--experimental-strip-types"],
       });
     } catch (err) {

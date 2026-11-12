@@ -12,7 +12,7 @@
 //   node scripts/build-bundled-package.mjs                    # 打包 HEAD → tgz 输出到仓根
 //   node scripts/build-bundled-package.mjs --out /tmp/x.tgz   # 指定输出路径
 //   node scripts/build-bundled-package.mjs --keep             # 保留 staging 目录（调试）
-//   AITI_PACK_REGISTRY=https://registry.npmjs.org/ ...               # 构建装依赖用的 registry
+//   AITI_PACK_REGISTRY=<private-registry-url> ...             # 构建装依赖用的 registry（内部值不入仓）
 //
 // 耗时：~10-15 分钟（主包 install ~2min + next build ~3min + 49 扩展 install+build ~8min，
 // npm cache 热时显著加速）。产物 = 完整 bundled npm 包（63+ 扩展 dist 随包）。
@@ -59,7 +59,12 @@ console.log(`[pack] staging: ${stageDir}`);
 run(`git archive HEAD | tar -x -C ${stageDir}`, REPO, "git archive HEAD → staging");
 
 // 2) 主包依赖 + .next 构建
-run("npm install --no-audit --no-fund --loglevel=error", stageDir, "npm install（主包依赖）");
+// npm ci（严格按 lock 重装）：npm 11.6.2 的 npm install 在全新树上会 exit 0 却只装部分包
+//（实测稳定 186/762 顶层目录），npm ci 无此问题且构建可复现语义更正确。
+run("npm ci --include=dev --no-audit --no-fund --loglevel=error", stageDir, "npm ci（主包依赖）");
+if (!existsSync(join(stageDir, "node_modules", "next", "package.json"))) {
+  throw new Error("npm ci incomplete: node_modules/next missing");
+}
 run("npm run build", stageDir, "next build（.next）");
 
 // 3) 扩展 dist：有真实 build:client 的逐个 install + build（跳过 "true" 占位）
@@ -74,10 +79,31 @@ for (const ext of exts) {
   let p;
   try { p = JSON.parse(readFileSync(pjPath, "utf8")); } catch { continue; }
   const bc = p.scripts?.["build:client"];
-  if (!bc || bc.trim() === "true") { skipped++; continue; }
+  const bs = p.scripts?.["build:server"];
+  if ((!bc || bc.trim() === "true") && !bs) { skipped++; continue; }
   try {
-    run("npm install --no-audit --no-fund --loglevel=error", join(extRoot, ext), `install ${ext}`);
-    run("npm run build:client", join(extRoot, ext), `build ${ext}`);
+    if (bc && bc.trim() !== "true") {
+      run("npm install --include=dev --no-audit --no-fund --loglevel=error", join(extRoot, ext), `install ${ext}`);
+      // npm 11.6.2 fresh-tree install can silently skip packages (main-package install
+      // settled at 186/762 top-level dirs). Only vite-based builds need the vite devDep;
+      // plain node copy scripts (e.g. aiti-agent-manager) legitimately have no vite.
+      const needsVite = /\bvite\b/.test(bc);
+      if (needsVite && !existsSync(join(extRoot, ext, "node_modules", "vite", "package.json"))) {
+        run("npm install --include=dev --no-audit --no-fund --loglevel=error", join(extRoot, ext), `install ${ext} (top-up)`);
+        if (!existsSync(join(extRoot, ext, "node_modules", "vite", "package.json"))) {
+          throw new Error(`npm install incomplete: vite missing in ${ext}`);
+        }
+      }
+      run("npm run build:client", join(extRoot, ext), `build ${ext}`);
+    }
+    if (bs) {
+      // Server-side runtime bundles (e.g. worker_threads .ts sources that Node refuses to
+      // strip-types under node_modules) — emitted into the same dist/ as build:client
+      if (!existsSync(join(extRoot, ext, "node_modules"))) {
+        run("npm install --no-audit --no-fund --loglevel=error", join(extRoot, ext), `install ${ext} (server)`);
+      }
+      run("npm run build:server", join(extRoot, ext), `build:server ${ext}`);
+    }
     built++;
     console.log(`[pack] ✓ ${ext} dist`);
   } catch (e) {
@@ -110,12 +136,26 @@ const checks = {
   "_shared 残留（应 0）": count("^package/extensions/_shared/"),
   "extensions/node_modules 残留（应 0）": count("^package/extensions/node_modules/"),
   ".next 条目": count("^package/\\.next/"),
+  ".next/trace 残留（应 0）": count("^package/\\.next/trace"),
+  ".next/diagnostics 残留（应 0）": count("^package/\\.next/diagnostics"),
 };
 console.log(`\n[pack] 自检:`);
 for (const [k, v] of Object.entries(checks)) {
   const bad = (k.includes("残留") ) ? v !== 0 : v === 0;
   console.log(`  ${bad ? "✗" : "✓"} ${k}: ${v}`);
   if (bad) process.exitCode = 1;
+}
+
+// 6) 隐私终检：包内不得残留构建机家目录路径——prepack 清洗脚本的兜底校验（字面量碎片化，本仓公开）
+const windHits = execSync(
+  `tar xzOf ${JSON.stringify(outPath)} | grep -c ${JSON.stringify(["home/wi", "nd"].join(""))} || true`,
+  { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 },
+).trim();
+if (windHits !== "0") {
+  console.error(`[pack] ✗ 隐私终检失败：tarball 内仍有 ${windHits} 处构建机家目录路径（prepack 清洗未生效？）`);
+  process.exitCode = 1;
+} else {
+  console.log(`  ✓ 构建机路径残留（应 0）: 0`);
 }
 
 if (!KEEP) {

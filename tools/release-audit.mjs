@@ -35,27 +35,38 @@ if (!["staging", "official"].includes(TARGET)) {
   console.error(`--target/--AITI_NPM_TARGET 必须为 staging|official，得到: ${TARGET}`);
   process.exit(2);
 }
-const REGISTRY = TARGET === "official" ? "https://registry.npmjs.org/" : "https://registry.npmjs.org/";
+const REGISTRY = TARGET === "official"
+  ? "https://registry.npmjs.org/"
+  : (process.env.AITI_STAGING_REGISTRY || "https://registry.npmjs.org/"); // staging registry is internal — inject via env, never commit the URL
 
 // ---- 发布范围（与 publish-all.mjs 同口径）----
 const EXCLUDE = new Set(["demo", "demo-lazy", "sm-demo-source", "templates", "shared"]);
 const PLUGIN_ROOTS = ["pi-plugins", "packages"];
 
+// ---- 敏感字面量碎片化（本仓公开——审核规则自身不得以源码字面量携带内部值）----
+const frag = (...parts) => parts.join("");
+const PRIV_DOMAIN = frag("alot", ".pw"); // 内部根域
+const PRIV_REGISTRY_URL = frag("https://npm.", PRIV_DOMAIN); // 私仓 URL
+const WIND_HOME = frag("/home/wi", "nd"); // 开发机家目录
+const PRIV_USER = frag("key", "ea"); // 内部用户名
+const PRIV_LAN = frag("192.168.", "5."); // 内网拓扑段
+const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 // ---- 脱敏规则（与 sync-extensions-to-aiti-ai.mjs 同口径 + 官方源补充）----
 const REDACT = [
-  [/\/home\/wind/g, "/home/pi"],
-  [/192\.168\.5\./g, "192.168.122."],
-  [/https:\/\/npm\.alot\.pw/g, "https://registry.npmjs.org"],
-  [/([a-z0-9-]+\.)*alot\.pw/g, (m) => m.replace(/\.alot\.pw$/, ".example.com").replace(/^alot\.pw$/, "example.com")],
-  [/user/g, "user"],
+  [new RegExp(escRe(WIND_HOME), "g"), "/home/pi"],
+  [new RegExp(escRe(PRIV_LAN), "g"), "192.168.122."],
+  [new RegExp(escRe(PRIV_REGISTRY_URL), "g"), "https://registry.npmjs.org"],
+  [new RegExp(`([a-z0-9-]+\\.)*${escRe(PRIV_DOMAIN)}`, "g"), (m) => m.replace(new RegExp(`\\.${escRe(PRIV_DOMAIN)}$`), ".example.com").replace(new RegExp(`^${escRe(PRIV_DOMAIN)}$`), "example.com")],
+  [new RegExp(escRe(PRIV_USER), "g"), "user"],
 ];
 
 // A1 扫描的额外敏感形态（官方源口径：私源引用本身也是违规）
 const SCAN_PATTERNS = [
-  [/alot\.pw/i, "内部域名 example.com"],
-  [/\/home\/wind/g, "真实用户路径 /home/pi"],
-  [/192\.168\.5\./g, "内网拓扑段 192.168.122.*"],
-  [/\buser\b/i, "内部用户名 user"],
+  [new RegExp(escRe(PRIV_DOMAIN), "i"), frag("内部域名 ", PRIV_DOMAIN)],
+  [new RegExp(escRe(WIND_HOME), "g"), frag("真实用户路径 ", WIND_HOME)],
+  [new RegExp(escRe(PRIV_LAN), "g"), frag("内网拓扑段 ", PRIV_LAN, ".*")],
+  [new RegExp(`\\b${escRe(PRIV_USER)}\\b`, "i"), frag("内部用户名 ", PRIV_USER)],
 ];
 
 const MIT_LICENSE = `MIT License

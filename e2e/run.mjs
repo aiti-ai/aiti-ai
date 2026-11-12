@@ -493,7 +493,7 @@ try {
       // [fork] SKIP-FORK: the sidebar's sessions region is taken over by the session-manager
       // extension dock (SidebarContentDock) — upstream row selectors do not apply. The fork
       // covers session-list/open/search behaviour with its own browser checks (see
-      // aiti-ai docs/pi-web-upstream-sync-2026-10-20-analysis.md §七).
+      // internal upstream-sync analysis note, §7).
       try {
       // A session row of the sidebar's sessions, found by its visible title
         // (the row's tooltip adds message count and time, so no exact title match).

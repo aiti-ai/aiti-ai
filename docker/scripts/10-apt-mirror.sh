@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# 10-apt-mirror.sh —— apt 源切国内镜像（构建期注入，aiti-docker-image-plan §4.3）
-# Ubuntu 26.04 起源配置为 deb822 格式（/etc/apt/sources.list.d/ubuntu.sources）。
-# MIRROR 为空 = 保持官方源（GitHub 等境外网络直用）；本地（国内）构建传镜像域。
+# 10-apt-mirror.sh — switch apt sources to a CN mirror (injected at build time, aiti-docker-image-plan §4.3)
+# Ubuntu 26.04+ uses the deb822 sources format (/etc/apt/sources.list.d/ubuntu.sources).
+# Empty MIRROR = keep official sources (GitHub and other non-CN networks use them directly); local (CN) builds pass the mirror domain.
 set -euo pipefail
 MIRROR="${1:-}"
 SRC=/etc/apt/sources.list.d/ubuntu.sources
 if [ -z "$MIRROR" ]; then
-  echo "[10-apt-mirror] MIRROR 为空——保持官方源"
+  echo "[10-apt-mirror] MIRROR empty — keeping official sources"
   exit 0
 fi
 if [ -f "$SRC" ]; then
   sed -i "s|http://archive.ubuntu.com/ubuntu|http://${MIRROR}/ubuntu|g; s|http://security.ubuntu.com/ubuntu|http://${MIRROR}/ubuntu|g; s|http://cn.archive.ubuntu.com/ubuntu|http://${MIRROR}/ubuntu|g" "$SRC"
 else
-  # 兜底：传统 one-line 格式（代号从 os-release 取，勿硬编码——noble=24.04，26.04 已换代）
+  # Fallback: the traditional one-line format (codename read from os-release, never hardcoded — noble=24.04, superseded in 26.04)
   CODENAME="$(. /etc/os-release && echo "${VERSION_CODENAME:-noble}")"
   cat > /etc/apt/sources.list <<EOF
 deb http://${MIRROR}/ubuntu ${CODENAME} main restricted universe multiverse

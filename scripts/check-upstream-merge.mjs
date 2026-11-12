@@ -13,7 +13,7 @@
 //   • fork-intentional  → note it in the PR/commit message, move on
 //   • merge loss        → restore the upstream form (and check the demo mirror)
 // Pair it with the pins: ChatInput.mobile-send / ChatInput.composer-shrink-chain /
-// AppShell.topbar-dedup / AppShell.mobile-toolbar — see docs/upstream-merge-guardrails.md.
+// AppShell.topbar-dedup / AppShell.mobile-toolbar — see the merge guard notes in the private source workspace.
 
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -86,5 +86,5 @@ for (const file of files) {
 }
 
 console.log(hadMissing
-  ? "\nReview each MISS: fork-intentional rewrite vs merge loss (see docs/upstream-merge-guardrails.md)."
+  ? "\nReview each MISS: fork-intentional rewrite vs merge loss (see the merge guard notes in the private source workspace)."
   : "\nAll upstream net-new lines are present in the working tree.");

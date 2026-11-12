@@ -9,7 +9,7 @@ import type { UsageAdapter, UsageAuth, UsageBucket, UsageMetric, UsageReport } f
 // with a random per-session dummy token (`sk-dummy-…`), so the runtime credential
 // a usage query receives is that dummy — sending it upstream yields 401. The real
 // key set lives in models.json, so usage reads the pool here and fans out one
-// query per key, labeling every window with its key (`Rolling · liyong`) so a
+// query per key, labeling every window with its key (`Rolling · <key-name>`) so a
 // pool spread over several accounts stays readable. Rules mirror the engine:
 // `apiKeys[]` wins over the single `apiKey`, `enabled:false` entries are skipped.
 

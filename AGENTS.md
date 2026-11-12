@@ -26,7 +26,7 @@ pi's packages up to 1.2.0 depend on each other with `^` ranges (1.3.0 pins them 
 
 ### Merging upstream (MUST READ before any origin/main merge)
 
-This fork carries intentional divergences (custom-drawn top bar, WeChat-style mobile send, mobile composer v4, provider names …). Four regression classes have already shipped to users from past merges (duplicated buttons, a collapsed composer, a Send key that inserted newlines). Before merging origin/main, read `docs/upstream-merge-guardrails.md` and follow its SOP: whole-commit conflict resolution (never mix hunks of one upstream commit), the single-owner table, then the post-merge checks — full test run plus `node scripts/check-upstream-merge.mjs --base <old-tip> --upstream origin/main`, triaging every reported line as fork-intentional or merge-loss. The guard pins (`AppShell.topbar-dedup`, `ChatInput.composer-shrink-chain`, `ChatInput.mobile-send`) go red on reintroduction — a red pin means the merge is wrong, not the test.
+This fork carries intentional divergences (custom-drawn top bar, WeChat-style mobile send, mobile composer v4, provider names …). Four regression classes have already shipped to users from past merges (duplicated buttons, a collapsed composer, a Send key that inserted newlines). Before merging origin/main, follow the merge SOP: whole-commit conflict resolution (never mix hunks of one upstream commit), the single-owner table (each guarded UI region has exactly one owner), then the post-merge checks — full test run plus `node scripts/check-upstream-merge.mjs --base <old-tip> --upstream origin/main`, triaging every reported line as fork-intentional or merge-loss. The full written SOP lives in the private source workspace, not in this repo. The guard pins (`AppShell.topbar-dedup`, `ChatInput.composer-shrink-chain`, `ChatInput.mobile-send`) go red on reintroduction — a red pin means the merge is wrong, not the test.
 
 ---
 
@@ -80,12 +80,12 @@ app/api/
   subagents/settings/route.ts      GET/PUT built-in subagent feature setting
   worktrees/route.ts               GET/POST/DELETE git worktrees
   web-auth/route.ts                GET status | POST login | DELETE logout (browser password)
-  extensions/[...path]/route.ts    GET/POST/PUT/DELETE/PATCH extension api dispatch + assets（门禁后分发，asset 防穿越）
-  extensions/manifest/route.ts     GET client manifest（ui 元数据 + clientUrl + i18n）
-  extensions/status/route.ts       GET 全量状态（含禁用/失败条目 + 插入点/钩子/依赖）；管理操作在 aiti-extman 扩展
-  extensions/reload/route.ts       POST hot reload（shutdown→loadAll→startAll）
-  （扩展管理 UI/安装/在线注册表已迁出 core → 外部 aiti-extman 扩展：
-    /api/extensions/aiti-extman/{status,registry,ops}）
+  extensions/[...path]/route.ts    GET/POST/PUT/DELETE/PATCH extension api dispatch + assets (dispatched behind the security gates; asset traversal protection)
+  extensions/manifest/route.ts     GET client manifest (UI metadata + clientUrl + i18n)
+  extensions/status/route.ts       GET full status (disabled/failed entries + insertion points/hooks/deps); management ops live in the aiti-extman extension
+  extensions/reload/route.ts       POST hot reload (shutdown→loadAll→startAll)
+  (extension management UI/install/online registry moved out of core → the external aiti-extman extension:
+    /api/extensions/aiti-extman/{status,registry,ops})
   sessions/[id]/auto-name/route.ts POST generate a session title
   sessions/search/route.ts         GET session search
   agent/new/route.ts               POST { cwd, type: prompt|ensure_session (start only), message?, toolNames?, provider?, modelId?, thinkingLevel? }
@@ -296,29 +296,29 @@ hooks/
   usePrismLanguages.ts     true once the Prism languages are loaded; starts the load for a highlighter
   useTheme.ts              theme state
   useTerminalTheme.ts      the terminal's own dark/light choice (localStorage), apart from the app theme
-  ext/types.ts         PiWebExtension contract（server hooks + ui 元数据 + ExtCoreApi 数据契约）
-  ext/loader.ts        jiti 加载 ~/.pi/web/extensions/<id>/（moduleCache:false 支持 reload）
-  ext/registry.ts      globalThis.__piWebExt 单例：loadAll/startAll/shutdown/reload/api 分发/middleware 链/manifest/assetPath 防穿越
-  ext/core.ts          makeExtCore()：listSessions/getRunningSessionIds/getHomeDir
-  ext/data-dir.ts      代码 ~/.pi/web/extensions、数据 ~/.pi/web/data/<extId>/（PI_WEB_EXTENSIONS_DIR/PI_WEB_DATA_DIR 覆盖）
-  ext-ui-store.ts      client 插槽注册表（window.__piWebExtUI + subscribe 版本号）
+  ext/types.ts         PiWebExtension contract (server hooks + UI metadata + ExtCoreApi data contract)
+  ext/loader.ts        loads ~/.pi/web/extensions/<id>/ via jiti (moduleCache:false enables reload)
+  ext/registry.ts      globalThis.__piWebExt singleton: loadAll/startAll/shutdown/reload/api dispatch/middleware chain/manifest/assetPath traversal protection
+  ext/core.ts          makeExtCore(): listSessions/getRunningSessionIds/getHomeDir
+  ext/data-dir.ts      code at ~/.pi/web/extensions, data at ~/.pi/web/data/<extId>/ (overridable via PI_WEB_EXTENSIONS_DIR/PI_WEB_DATA_DIR)
+  ext-ui-store.ts      client slot registry (window.__piWebExtUI + subscribe revision)
   base-path.ts         client-side basePath helpers (NEXT_PUBLIC_BASE_PATH)
-（注：草稿持久化已迁出 core → aiti-draft-keeper 扩展（composer 契约 v2）；startup-preferences.ts 已随上游改名 default-preferences.ts）
+(note: draft persistence moved out of core → the aiti-draft-keeper extension (composer contract v2); startup-preferences.ts was renamed default-preferences.ts upstream)
 
-components/（aiti 扩展插槽，合入上游组件清单之后）：
-  ExtSlots.tsx         ExtSlotsProvider（拉 manifest + 动态 import client bundle + register(ctx)）+ <ExtSlot name=.../>（sidebar/sessionRowActions 在 SessionSidebar 内）
+components/ (aiti extension slots, appended after the upstream components list):
+  ExtSlots.tsx         ExtSlotsProvider (fetches manifest + dynamic-imports client bundles + register(ctx)) + <ExtSlot name=.../> (sidebar/sessionRowActions inside SessionSidebar)
 ```
 
 ---
 
-## extensions/（移植的 pi-web 扩展包）
+## extensions/ (ported pi-web extension packages)
 
-`extensions/` 是从内部开发仓 aiti-ai（`pi-web-ext/`）单向镜像来的 pi-web 扩展包集合（aiti 生态：外部 agent 接入、service-tunnels、session-manager、编辑器、终端等），供 extman 以本地路径/git 来源安装。**不是本 Next.js 应用的一部分**：tsc/eslint 均已排除（`tsconfig.json` exclude、`eslint.config.mjs` ignores），`next build` 不触及。
+`extensions/` is a one-way mirror of the pi-web extension packages from the private source repo (`pi-web-ext/`) (the aiti ecosystem: external agent adapters, service-tunnels, session-manager, editors, terminals, …), for extman to install from local paths / git sources. **Not part of this Next.js app**: excluded from tsc/eslint (`tsconfig.json` exclude, `eslint.config.mjs` ignores); `next build` never touches it.
 
-- **单向快照，禁止手改**：修 bug 一律回 aiti-ai 源仓改，再跑其 `scripts/sync-extensions-to-aiti-ai.mjs` 重新镜像（同步时自动做机械脱敏：私有 registry URL、内部域名/IP/端口/用户路径中性化）。
-- **目录形态**：每扩展独立 package（`node_modules`/`dist` 已 gitignore）；使用前先在各扩展目录 `npm install && npm run build:client`（如有 client）。
-- `_shared/` 是扩展共享层（`@aiti-ai/ext-shared`，多扩展运行时依赖），`sm-demo-source/` 是 session-manager 第三方 agent source 接入模板。
-- service-tunnels 曾约定不入本仓，已随 master-plan M0④「公开化」解除。
+- **One-way snapshot, do not edit**: fix bugs in the private source repo, then re-run its `scripts/sync-extensions-to-aiti-ai.mjs` to re-mirror (the sync applies mechanical redaction automatically: private registry URLs, internal domains/IPs/ports/user paths neutralized).
+- **Layout**: each extension is an independent package (`node_modules`/`dist` are gitignored); before use run `npm install && npm run build:client` (if it has a client) in the extension directory.
+- `_shared/` is the extension shared layer (`@aiti-ai/ext-shared`, runtime deps of multiple extensions); `sm-demo-source/` is the session-manager third-party agent source template.
+- service-tunnels was once excluded from this repo; that constraint was lifted when the extension sources went public.
 
 ---
 
@@ -400,7 +400,7 @@ pi keeps steer/follow-up queues in memory only — a server restart would lose t
 - A UNC cwd (`\\host\share\dir`) must survive the `/api/files/[...path]` round-trip. `encodeFilePathForApi()` folds the `//` root into the first segment (`%2F%2Fhost`) because a literal `//` URL prefix is 308-normalized away before routing; `filePathFromApiSegments()` decodes it back. Never split UNC paths into segments and rejoin them — that silently turns `\\host\share` into the relative-looking `host/share` and every allow-check fails with 403.
 
 ### Plugins and skills
-- **扩展能力接管（ui.provides）**：扩展在 `ui.provides: string[]` 声明接管内置能力（能力名见 `lib/ext/types.ts` 的 `EXT_PROVIDES`，如 `"session-delete"`）。manifest 原样下发，客户端用 `useExtProvides()` 查询——有人声明时侧栏隐藏内置删除按钮（删除流由扩展接管，如 session-manager 的先归档再删），没人声明则内置按钮照常显示。新增能力：登记进 `EXT_PROVIDES` + 对应内置 UI 加门控。 已登记能力：`session-delete`（会话删除接管）、`session-agent-source`（外部 agent 会话源，session-manager §4.8 slot 契约：manifest/list/session 三端点归一化拉取）。
+- **Extension capability takeover (`ui.provides`)**: an extension declares the built-in capabilities it takes over in `ui.provides: string[]` (capability names live in `EXT_PROVIDES` in `lib/ext/types.ts`, e.g. `"session-delete"`). The manifest ships as-is and the client queries it with `useExtProvides()` — when a capability is declared, the sidebar hides the built-in delete button (the delete flow belongs to the extension, e.g. session-manager's archive-then-delete); with no declarer the built-in button shows as usual. Adding a capability: register it in `EXT_PROVIDES` + gate the corresponding built-in UI. Registered capabilities: `session-delete` (session deletion takeover), `session-agent-source` (external agent session source; session-manager §4.8 slot contract: normalized pulls across the manifest/list/session endpoints).
 - `/api/plugins` uses pi's `SettingsManager` + `DefaultPackageManager` for global/project package install, remove, update, enable, and disable. Disabling writes empty `extensions/skills/prompts/themes` arrays for that package entry.
 - `/api/skills` uses `DefaultResourceLoader` so settings paths, package skills, and project `.agents/skills` are listed the same way the runtime sees them.
 - Skill toggling edits only the `disable-model-invocation` frontmatter key on the target `SKILL.md`; keep that surgical so user formatting survives.
@@ -462,45 +462,51 @@ Location: `~/.pi/agent/sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`
 --font-mono
 ```
 
-## Service port proxy & expose（已抽离为 service-tunnels 扩展）
+## Service port proxy & expose (extracted into the service-tunnels extension)
 
-服务端口发现 / 虚拟主机代理 / 隧道 / 认证 / 自暴露已全部迁出 core，由
-`service-tunnels` 扩展承载（源码在外部私有工作区，不入本仓库；部署到
-`~/.pi/web/extensions/service-tunnels/`；私有源地址与升级流程属部署环境配置，
-见内部工作区文档）：
+Service port discovery / virtual-host proxying / tunnels / auth / self-exposure have all moved out of core into the
+`service-tunnels` extension (source lives in the external private workspace, not in this repo; deployed to
+`~/.pi/web/extensions/service-tunnels/`; the private registry address and upgrade flow are deployment-environment
+configuration — see the internal workspace docs):
 
-- 扩展 `server.startup` 创建库单例（`globalThis.__piServiceTunnels`）；`server.middleware`
-  在核心门禁前处理服务 vhost（`st.proxy.parseHost/resolve`）与 allowlocal 直连门禁；
-  `server.api` 提供 `/api/extensions/service-tunnels/*`（发现/暴露/隧道/用户/TOTP/自暴露）。
-- 扩展依赖走标准 npm（`node_modules` 随扩展目录）；加载器按扩展目录解析裸说明符
-  （`lib/ext/loader.ts` jiti id = 扩展入口），扩展可带标准 node_modules。
-  私有源地址属部署环境配置，不入仓库。
-- **源码公开化（master-plan M0④，2026-10-30 落实）**：源码已随 aiti-ai 发布仓
-  `extensions/service-tunnels/` 公开（脱敏镜像，单向同步自 aiti-ai，见其
-  `scripts/sync-extensions-to-aiti-ai.mjs` 与 `docs/aiti-ai-extensions-port-plan.md`）；
-  本仓仍不含 service-tunnels 源码，本段注记代替原「不入本仓库」约束。
-- core 只保留通用安全门禁（DNS-rebinding + `PI_WEB_PASSWORD`）；`request-security.ts`
-  仍读扩展写入的 `globalThis.__piWebExposeConfig`/`__piWebAllowHostsOverride` 做 allowHost 例外。
-- 测试服务虚拟主机 `<port><suffix>`（默认 `.pi.localhost`）行为与迁移前一致；扩展未
-  加载时无 vhost/自暴露功能（`/api/extensions/service-tunnels/*` 404），核心不受影响。
+- The extension's `server.startup` creates the library singleton (`globalThis.__piServiceTunnels`); `server.middleware`
+  handles service vhosts (`st.proxy.parseHost/resolve`) and the allowlocal direct-access gate ahead of the core gates;
+  `server.api` serves `/api/extensions/service-tunnels/*` (discovery/expose/tunnels/users/TOTP/self-exposure).
+- Extension deps use standard npm (`node_modules` alongside the extension dir); the loader resolves bare specifiers
+  against the extension directory (`lib/ext/loader.ts` jiti id = extension entry), so extensions can carry standard
+  node_modules. The private registry address is deployment-environment configuration, not committed here.
+- **Source public release (landed 2026-10-30)**: the source is now public via the aiti-ai release
+  repo `extensions/service-tunnels/` (redacted mirror, one-way sync from the private source repo — see its
+  `scripts/sync-extensions-to-aiti-ai.mjs` and `docs/aiti-ai-extensions-port-plan.md`);
+  the repo still does not carry the full service-tunnels sources; this note replaces the original "not in this repo" constraint.
+- core keeps only the generic security gates (DNS-rebinding + `PI_WEB_PASSWORD`); `request-security.ts`
+  still reads the extension-written `globalThis.__piWebExposeConfig`/`__piWebAllowHostsOverride` for allowHost exceptions.
+- The test-services virtual host `<port><suffix>` (default `.pi.localhost`) behaves as before the migration; with the
+  extension not loaded there is no vhost/self-exposure (`/api/extensions/service-tunnels/*` 404s) and core is unaffected.
 - WebSocket upgrades are NOT proxied by the middleware (Next no-ops non-HMR upgrades) — Vite HMR etc. need direct localhost or a tunnel.
 - `GET /api/services?refresh=1` lists discovered ports + `serviceHostSuffixes`; `GET /api/service-tunnels` returns exposes/status/provider order/default provider/user managers/tool status/allow-download. The top-toolbar globe opens `ServicesDialog` (10s auto-refresh): **Ports** tab = per-port access methods (direct + virtual-host URLs, `window.open` with `noopener,noreferrer`), protocol auto-detect (http/https/tcp), expose form (tunnel type + auth provider, schema-driven), active exposes (stop, nginx logs), allow-tool-download toggle; **Users** tab = provider user management + TOTP 2FA enroll/activate.
 - **Provider knowledge lives in the library**: pi-web consumes `providerOrder`/`defaultProvider`/`userManagers`/`tunnelSchemas`/`tunnelTcpSupport` — no provider names hardcoded in pi-web (tcp exposes carry no auth: the library's tcp path ignores the provider).
 - Tests: `node --test lib/service-ports.test.mjs lib/request-security.test.mjs lib/web-auth.test.mjs` (middleware-safe helpers, discovery cache, gates).
 
-## 代码中禁止出现内部地址
+## No internal addresses in code
 
-- **代码/测试/注释里一律不得出现真实部署地址**（内网 IP、内部部署域名、
-  生产端口号等）——仓库对外可见（含推送到外部镜像），泄露内部拓扑。
-- 需要示例主机名时用 RFC 2606 保留域名（`example.com`、`web.example.com`、
-  `attacker.example` 等）；端口用通用值（3000/8443/443）；回环 `127.0.0.1`
-  与 RFC 1918 私有网段（`192.168.x.x`）仅作通用示例可用。
-- 部署相关配置只存在于运行时环境（systemd unit 的 `Environment=`、nginx
-  配置、`~/.pi/service-tunnels` 等），不进仓库。
-- 本条同样适用于 AGENTS.md 自身——记录规则时不得点名内部域名。
+- **Real deployment addresses must never appear in code/tests/comments** (internal IPs, internal deployment domains,
+  production ports, …) — the repo is publicly visible (including external mirrors) and would leak the internal topology.
+- For example hostnames use RFC 2606 reserved domains (`example.com`, `web.example.com`,
+  `attacker.example`, …); use generic ports (3000/8443/443); loopback `127.0.0.1`
+  and RFC 1918 private ranges (`192.168.x.x`) are acceptable only as generic examples.
+- Deployment-specific configuration lives only in the runtime environment (systemd unit `Environment=`, nginx
+  configs, `~/.pi/service-tunnels`, …), never in the repo.
+- This applies to AGENTS.md itself — these rules must not name internal domains either.
+- The discipline also covers the rules/tools themselves (settled by the 2026-11-12 audit): sensitive patterns and
+  private-registry URLs in audit/redaction scripts such as release-audit and publish-all are assembled at runtime or
+  injected via env (`AITI_STAGING_REGISTRY`); source must never carry them as literals.
+- Published npm tarballs must not carry build-machine absolute paths: pi-web relies on the prepack scrubber
+  (`scripts/sanitize-npm-package.mjs`) + `files` excluding `.next/trace|trace-build|diagnostics` + the pack self-check
+  as a backstop — do not bypass them when changing the release flow.
+- Official npmjs publishes go only through the GitHub Actions workflows (`publish.yml` / `publish-npm.yml`);
+  local machines publish to the private registry for verification only, never straight to the official registry.
 
-=======
->>>>>>> origin/main
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know
@@ -516,5 +522,5 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - **Commit messages are English-only** across all repos (aiti-ai / aiti-ai-internal / mirrors and work branches). Technical terms, commit hashes, version numbers and file paths stay verbatim; no Chinese in subjects or bodies.
 - **Code comments default to English** for new code and rewritten sections. Formal localized content documents (README.zh-CN.md, Chinese pages under aiti-docs, Chinese SKILL.md bodies) are exempt — content language follows the document's purpose.
 - **The public surface** (github.com/aiti-ai/aiti-ai, aiti-ai-internal, and the aitiai/pi-web Docker Hub) is the public face: commit messages, code comments, workflow and tooling comments are English-only. Legacy Chinese comments in extensions/ are cleaned up opportunistically (whichever file you touch, anglicize its comments as you go) — no one-shot bulk translation planned.
-- **History was rewritten on 2026-11-08** (git filter-repo): every Chinese commit authored by Wind Li/wind was anglicized (71 precisely translated; the rest had Chinese lines stripped). Upstream community authors (TossPig, 谢凯文, 将军, …) keep their original PR squashes out of respect for attribution — same for their Co-authored-by trailers. Pre-rewrite backup: `/tmp/aiti-ai-backup-pre-rewrite.bundle` (36M, all refs).
+- **History was rewritten on 2026-11-08** (git filter-repo): every Chinese commit authored by Wind Li/wind was anglicized (71 precisely translated; the rest had Chinese lines stripped). Upstream community authors (TossPig, Xie Kaiwen, Jiang Jun, …) keep their original PR squashes out of respect for attribution — same for their Co-authored-by trailers. Pre-rewrite backup: `/tmp/aiti-ai-backup-pre-rewrite.bundle` (36M, all refs).
 - **Upstream-inherited commits are untouched**: the agegr/pi-web fork history (including its 2000+ Chinese commits) belongs to the upstream community and is neither rewritten nor translated.

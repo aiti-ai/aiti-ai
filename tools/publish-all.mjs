@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// publish-all.mjs（aiti-ai 发布快照仓适配版）——源自 aiti-ai/pi-web-ext/tools/publish-all.mjs，
+// publish-all.mjs（aiti-ai 发布快照仓适配版）——源自私有源仓同名脚本（pi-web-ext/tools/publish-all.mjs），
 // 目录映射适配本仓布局：ROOT=extensions、插件根=pi-plugins+packages、_shared 不发布。
-// 双源注意：aiti-ai 侧逻辑变更需同步本副本（发布域以本仓为自治事实源）。
+// 双源注意：私有源仓侧逻辑变更需同步本副本（发布域以本仓为自治事实源）。
 // 增量语义：本地 package.json version 未在 registry versions 中 → 构建 + 发布；已存在 → 跳过。
 // 范围（2026-09-09 起）：
 //   - pi-web-ext/* 全部扩展
@@ -83,7 +83,7 @@ function contentHash(pkgDir) {
 // v3 双目标源：AITI_NPM_TARGET=official|staging（env）或 --target <t>（CLI 覆盖）
 //   official（默认）：registry.npmjs.org —— 正式发布主渠道；每包发布前强制跑审核门禁
 //     （release-audit.mjs 机械项，FAIL 即拒发——公开不可撤回）
-//   staging：registry.npmjs.org —— 测试发布源（预发布 -beta 验证 + 私有件 pi-subagents）
+//   staging：内部私仓 —— 测试发布源（预发布 -beta 验证 + 私有件 pi-subagents）；URL 属内部值，env 注入
 const TARGET = (() => {
   const ti = args.indexOf("--target");
   if (ti >= 0 && ["staging", "official", "aliyun"].includes(args[ti + 1])) return args[ti + 1];
@@ -92,7 +92,7 @@ const TARGET = (() => {
   return "official";
 })();
 const REGISTRIES = {
-  staging: "https://registry.npmjs.org/",
+  staging: process.env.AITI_STAGING_REGISTRY || "https://registry.npmjs.org/", // staging registry is internal — inject via env
   official: "https://registry.npmjs.org/",
   // 阿里云制品库（正式仓备选）：独立凭据 env（ALIYUN_NPM_USERNAME/ALIYUN_NPM_PASSWORD），
   // publish 时生成临时 userconfig 注入；私有源可覆盖重发，不跑 official 门禁

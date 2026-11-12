@@ -6,6 +6,7 @@
   "description": "AI token 用量统计扩展（provider/model/key/session 四维报表，日/月双粒度）",
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
+    "build:server": "esbuild server/ingest-worker.ts --bundle --platform=node --format=esm --outfile=dist/ingest-worker.mjs --log-level=warning",
     "watch": "vite build --watch --config vite.config.ts",
     "deploy": "node tools/deploy.mjs"
   },

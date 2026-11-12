@@ -110,8 +110,23 @@ function reconcileBundledExtensions(pkgDir) {
 
   fs.mkdirSync(sharedRoot, { recursive: true });
   const names = Object.keys(depsUnion).sort();
-  const shell = spawnSync("npm", ["install", "--prefix", path.dirname(sharedRoot), "--omit=dev", "--legacy-peer-deps", "--no-audit", "--no-fund", "--loglevel=error", ...names.map((n) => `${n}@${depsUnion[n]}`)], {
-    encoding: "utf8", timeout: 10 * 60_000, shell: process.platform === "win32",
+  // Windows cannot use an args array with shell:true here: the array is joined
+  // with spaces and handed to cmd.exe, which eats the "^" in semver ranges as an
+  // escape character (^0.2.4 → 0.2.4), degrading the range into an exact version.
+  // When the registry lacks that exact version the whole shared-root install fails
+  // (ETARGET). Build a single command-line string instead, double-quoting every
+  // argument: cmd and sh treat "^" inside quotes literally, so npm receives the
+  // full range; this also removes the DEP0190 deprecation warning (no more args
+  // array combined with shell:true).
+  const SAFE_SPEC = /^[A-Za-z0-9@/._^~><=*+-]+$/; // name@range whitelist: keep dirty package.json data out of the shell
+  const specs = names.map((n) => {
+    const spec = `${n}@${depsUnion[n]}`;
+    if (!SAFE_SPEC.test(spec)) throw new Error(`unsafe dependency spec skipped install: ${spec}`);
+    return `"${spec}"`;
+  });
+  const cmdLine = `npm install --prefix "${path.dirname(sharedRoot)}" --omit=dev --legacy-peer-deps --no-audit --no-fund --loglevel=error ${specs.join(" ")}`;
+  const shell = spawnSync(cmdLine, {
+    encoding: "utf8", timeout: 10 * 60_000, shell: true,
     env: { ...process.env, npm_config_update_notifier: "false" },
   });
   if (shell.status !== 0) {
