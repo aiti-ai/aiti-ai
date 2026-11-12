@@ -1150,7 +1150,7 @@ function removeSessionSidecarFiles(extConfigDir: string, short: string): number 
 /** 该会话的全部 tag 引用（refs/tags/aiti/<short>/...）。
  *  缺口背景（2026-09-13 审计）：compact 原只删分支不删 tag——tag 是 git 可达性根，
  *  被引用的 commit/tree/blob 永远 gc 不掉（对象回收形同虚设），且 packed-refs 随 op
- *  无限膨胀（aiti-ai 实测 13 天 11.3 万 tag / packed-refs 8.3MB / 10 万行）。
+ *  无限膨胀（pi-work 实测 13 天 11.3 万 tag / packed-refs 8.3MB / 10 万行）。
  *  须与分支同批清（保留窗一致：都只动过期已删会话）。 */
 async function listSessionTags(store, short: string): Promise<string[]> {
   const prefix = "refs/tags/aiti/" + short;
