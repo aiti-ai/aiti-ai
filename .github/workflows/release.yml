@@ -11,6 +11,14 @@
 #       → release (collect uploads + gh release create --generate-notes)
 #
 # Note: the npm channel (publish-all) is independent of this pipeline — GitHub Releases is handled here.
+#
+# RELEASE ORDER (enforced by the deps-on-registry guard below):
+#   1. "NPM Publish" (publish-npm.yml) — extensions/ + pi-plugins/ + packages/ → staging,
+#      verify, promote to npmjs.
+#   2. THIS workflow — the bundled extension dists are built against the shared deps
+#      (@aiti-ai/ext-shared, aiti-bridge, aiti-devtools-core, justget, service-tunnels)
+#      resolved from the npm registry, i.e. the versions published in step 1. Run it
+#      AFTER the main npm publish (publish.yml) so the archives carry a released version.
 
 name: Release
 
@@ -21,12 +29,35 @@ permissions:
   contents: write # gh release create / upload
 
 jobs:
+  # Gate: the bundled extension dists are built against the shared deps resolved
+  # from the npm registry (the versions "NPM Publish" published) — not local tgzs.
+  # Fail fast with an actionable message when step 1 of the release order was skipped.
+  deps-on-registry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify shared extension deps are on the npm registry
+        run: |
+          missing=0
+          for spec in "@aiti-ai/ext-shared" "@aiti-ai/aiti-bridge" "@aiti-ai/aiti-devtools-core" "justget" "service-tunnels"; do
+            if npm view "$spec" version --registry https://registry.npmjs.org >/dev/null 2>&1; then
+              echo "ok: $spec"
+            else
+              echo "::error::$spec is not on the npm registry — run the 'NPM Publish' workflow first (step 1 of the release order: extensions + pi-plugins + packages)"
+              missing=1
+            fi
+          done
+          exit $missing
   prepare:
     # 平台无关构建层：.next + 扩展 dist 只构建一次（产物是纯 JS，平台 matrix 直接复用）。
-    # 依赖策略：私仓 registry 解析到内网 IP（GH runner 不可达），@aiti-ai/* 与 justget/
-    # service-tunnels 新版在 npmjs 缺失/过旧——扩展依赖走「共享构建根 + 本地 vendor
-    # tgz（vendor/npm/ + 仓内 pack）」：扩展目录零 install，Node/vite walk-up 命中
-    # extensions/node_modules (same layout as the dev machine). The vendor layer can retire once the official registry is complete.
+    # 依赖策略（2026-11-13 vendor 层退役）：扩展共享依赖（@aiti-ai/ext-shared、aiti-bridge、
+    # aiti-devtools-core、justget、service-tunnels）全部从 npm registry 解析——即 "NPM Publish"
+    # 工作流发布的版本；装机 reconcile 拉到的与构建用的同源。唯一例外 @aiti-ti/ddns（npmjs 无）
+    # 仍走 vendor tgz。deps-on-registry 守卫在依赖未发布时快速失败。
+    needs: deps-on-registry
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.ver.outputs.version }}
@@ -66,24 +97,12 @@ jobs:
           # 脚手架全部放 /tmp：.build-root 的 package.json 含 CI 绝对路径 file: 依赖，
           # 若落在 extensions/ 下会被打进主包、且用户机 reconcile 会把它当扩展读 deps → ENOENT
           BUILD=/tmp/aiti-build-root
-          PKGS=/tmp/aiti-local-pkgs
-          mkdir -p "$PKGS"
-          (cd extensions/_shared && npm pack --pack-destination "$PKGS")
-          (cd packages/aiti-bridge && npm pack --pack-destination "$PKGS")
-          (cd packages/aiti-devtools-core && npm pack --pack-destination "$PKGS")
-          SHARED_TGZ=$(ls "$PKGS"/aiti-ai-ext-shared-*.tgz | head -1)
-          BRIDGE_TGZ=$(ls "$PKGS"/aiti-ai-aiti-bridge-*.tgz | head -1)
-          CORE_TGZ=$(ls "$PKGS"/aiti-ai-aiti-devtools-core-*.tgz | head -1)
+          mkdir -p "$BUILD"
           node scripts/collect-extension-deps.mjs --out "$BUILD/package.json" \
-            --file "@aiti-ai/ext-shared=$SHARED_TGZ" \
-            --file "@aiti-ai/aiti-bridge=$BRIDGE_TGZ" \
-            --file "@aiti-ai/aiti-devtools-core=$CORE_TGZ" \
-            --file "justget=$PWD/vendor/npm/justget-0.2.4.tgz" \
-            --file "service-tunnels=$PWD/vendor/npm/service-tunnels-0.3.76.tgz" \
             --file "@aiti-ti/ddns=$PWD/vendor/npm/aiti-ti-ddns-0.2.0.tgz"
-          # service-tunnels 0.3.76：vendor 自开发机已发布形态——exports 含 ./i18n ./ui-shared
-          # （私仓上的同名 0.3.9 是旧 exports，子路径 import 会挂），服务端自引用的
-          # service-tunnels/i18n 等由它解析
+          # @aiti-ai/ext-shared / aiti-bridge / aiti-devtools-core / justget / service-tunnels
+          # 走 registry 解析（NPM Publish 发布的版本；service-tunnels@0.3.76 exports 含
+          # ./i18n ./ui-shared，子路径 import 正常——旧私仓 0.3.9 的问题不再适用）
           npm install --prefix "$BUILD" --legacy-peer-deps --no-audit --no-fund --loglevel=error
           ln -s "$BUILD/node_modules" extensions/node_modules
 

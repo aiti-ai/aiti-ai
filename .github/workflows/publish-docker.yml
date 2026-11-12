@@ -8,6 +8,13 @@
 #
 # Builds reuse docker/build.sh (the repo assembles its own staging context); the full image's FROM base is
 # resolved via the CORE_IMAGE alias (parameterized in build.sh; see docker/Dockerfile.full ARG CORE_IMAGE).
+#
+# RELEASE ORDER (step 3; enforced by the deps-on-registry guard below):
+#   1. "NPM Publish" (publish-npm.yml) — extensions/ + pi-plugins/ + packages/ first.
+#   2. "Release" (publish.yml) — the main package @aiti-ai/pi-web on npmjs + GHCR.
+#   3. THIS workflow — core/full builds pull the @aiti-ai/* dependency closure from the
+#      registry (build.sh official chain), so the guard verifies both the exact main
+#      package version (full installs it) and the shared extension deps (step 1).
 
 name: Docker Publish
 
@@ -34,7 +41,41 @@ env:
   IMAGE: aitiai/pi-web
 
 jobs:
+  # Gate (step 3 of the release order): the official build chain pulls the main
+  # package (full installs @aiti-ai/pi-web@<version>) and the shared extension
+  # deps (core/full dependency closure) from the npm registry — both must already
+  # be published, otherwise fail fast with an actionable message.
+  deps-on-registry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify the main package version and shared deps are on the npm registry
+        run: |
+          V="${{ inputs.version_tag }}"
+          [ -n "$V" ] || V="${GITHUB_REF_NAME}"
+          VERSION=${V#v}
+          if npm view "@aiti-ai/pi-web@$VERSION" version --registry https://registry.npmjs.org >/dev/null 2>&1; then
+            echo "ok: @aiti-ai/pi-web@$VERSION"
+          else
+            echo "::error::@aiti-ai/pi-web@$VERSION is not on the npm registry — run the 'Release' workflow (publish.yml, step 2 of the release order) for this version first"
+            exit 1
+          fi
+          missing=0
+          for spec in "@aiti-ai/ext-shared" "@aiti-ai/aiti-bridge" "@aiti-ai/aiti-devtools-core" "justget" "service-tunnels"; do
+            if npm view "$spec" version --registry https://registry.npmjs.org >/dev/null 2>&1; then
+              echo "ok: $spec"
+            else
+              echo "::error::$spec is not on the npm registry — run the 'NPM Publish' workflow first (step 1 of the release order: extensions + pi-plugins + packages)"
+              missing=1
+            fi
+          done
+          exit $missing
+
   build-push:
+    needs: deps-on-registry
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

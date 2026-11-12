@@ -1,6 +1,6 @@
 name: Release
 
-# Publishes @agegr/pi-web to npm and the Docker image to GHCR.
+# Publishes @aiti-ai/pi-web to npm and the Docker image to GHCR.
 # MANUAL ONLY: dispatch from the Actions tab with the v* tag ref selected (the
 # tag must match package.json — verified below). Auto-run on tag push is
 # suspended: ship npm packages to the staging registry first, verify, then run
@@ -8,6 +8,17 @@ name: Release
 # npm uses Trusted Publishing (OIDC): no npm token. The package's Trusted
 # Publisher on npmjs.com names this repository and this file (publish.yml), so
 # keep its name.
+#
+# RELEASE ORDER (enforced by the deps-on-registry guard below):
+#   1. "NPM Publish" (publish-npm.yml) — extensions/ + pi-plugins/ + packages/
+#      first: staging (default) → verify → promote to npmjs.
+#   2. THIS workflow — the main package and its bundled extension dists are
+#      built against the shared deps (@aiti-ai/ext-shared, aiti-bridge,
+#      aiti-devtools-core, justget, service-tunnels) resolved from the npm
+#      registry, i.e. the versions published in step 1.
+#   3. "Docker Publish" (publish-docker.yml) — Docker Hub; guard verifies the
+#      main package version from step 2 is on the registry.
+#   (release.yml — GitHub Releases archives — runs after step 1 like this one.)
 
 on:
   workflow_dispatch:
@@ -20,7 +31,31 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Gate: the bundled extension dists are built against the shared deps resolved
+  # from the npm registry (the versions "NPM Publish" published) — not local tgzs.
+  # Fail fast with an actionable message when step 1 of the release order was skipped.
+  deps-on-registry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify shared extension deps are on the npm registry
+        run: |
+          missing=0
+          for spec in "@aiti-ai/ext-shared" "@aiti-ai/aiti-bridge" "@aiti-ai/aiti-devtools-core" "justget" "service-tunnels"; do
+            if npm view "$spec" version --registry https://registry.npmjs.org >/dev/null 2>&1; then
+              echo "ok: $spec"
+            else
+              echo "::error::$spec is not on the npm registry — run the 'NPM Publish' workflow first (step 1 of the release order: extensions + pi-plugins + packages)"
+              missing=1
+            fi
+          done
+          exit $missing
+
   check-tag:
+    needs: deps-on-registry
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -53,23 +88,13 @@ jobs:
       - name: Build shared build root (outside extensions/ — must not enter the package)
         run: |
           set -e
-          # Same scheme as release.yml prepare: /tmp scaffold, deps+devDeps union shared root,
-          # @aiti-ai/* via locally packed tgzs, vendor tgzs for internal-only packages
+          # Same scheme as release.yml prepare: /tmp scaffold, deps+devDeps union shared root.
+          # Dependency source = the npm registry (versions published by "NPM Publish"), so the
+          # bundled dists are built against what installs will resolve at runtime. The only
+          # exception is @aiti-ti/ddns (not on npmjs) — still served from the vendor tgz.
           BUILD=/tmp/aiti-build-root
-          PKGS=/tmp/aiti-local-pkgs
-          mkdir -p "$PKGS"
-          (cd extensions/_shared && npm pack --pack-destination "$PKGS")
-          (cd packages/aiti-bridge && npm pack --pack-destination "$PKGS")
-          (cd packages/aiti-devtools-core && npm pack --pack-destination "$PKGS")
-          SHARED_TGZ=$(ls "$PKGS"/aiti-ai-ext-shared-*.tgz | head -1)
-          BRIDGE_TGZ=$(ls "$PKGS"/aiti-ai-aiti-bridge-*.tgz | head -1)
-          CORE_TGZ=$(ls "$PKGS"/aiti-ai-aiti-devtools-core-*.tgz | head -1)
+          mkdir -p "$BUILD"
           node scripts/collect-extension-deps.mjs --out "$BUILD/package.json" \
-            --file "@aiti-ai/ext-shared=$SHARED_TGZ" \
-            --file "@aiti-ai/aiti-bridge=$BRIDGE_TGZ" \
-            --file "@aiti-ai/aiti-devtools-core=$CORE_TGZ" \
-            --file "justget=$PWD/vendor/npm/justget-0.2.4.tgz" \
-            --file "service-tunnels=$PWD/vendor/npm/service-tunnels-0.3.76.tgz" \
             --file "@aiti-ti/ddns=$PWD/vendor/npm/aiti-ti-ddns-0.2.0.tgz"
           npm install --prefix "$BUILD" --legacy-peer-deps --no-audit --no-fund --loglevel=error
           ln -s "$BUILD/node_modules" extensions/node_modules
