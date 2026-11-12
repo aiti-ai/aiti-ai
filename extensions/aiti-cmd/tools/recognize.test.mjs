@@ -92,14 +92,14 @@ test("splitCdPrefix: cd xxx && … → workdir/action", async () => {
 test("resolveWorkdir: 结合会话 cwd 解析为绝对路径", async () => {
   const { resolveWorkdir } = await loadRecognize();
   // 相对路径 + cwd → 绝对
-  assert.equal(pathResolve(resolveWorkdir("pi-web-ext/aiti-helper", "/home/pi/workspace/aiti-ai")), pathResolve("/home/pi/workspace/aiti-ai/pi-web-ext/aiti-helper"));
+  assert.equal(pathResolve(resolveWorkdir("pi-web-ext/aiti-helper", "/home/pi/workspace/pi-work")), pathResolve("/home/pi/workspace/pi-work/pi-web-ext/aiti-helper"));
   // 含 ../ 规范化
-  assert.equal(pathResolve(resolveWorkdir("../pi-web", "/home/pi/workspace/aiti-ai")), pathResolve("/home/pi/workspace/aiti-ai/../pi-web"));
+  assert.equal(pathResolve(resolveWorkdir("../pi-web", "/home/pi/workspace/pi-work")), pathResolve("/home/pi/workspace/pi-work/../pi-web"));
   // 绝对路径原样
-  assert.equal(pathResolve(resolveWorkdir("/tmp", "/home/pi/workspace/aiti-ai")), pathResolve("/tmp"));
+  assert.equal(pathResolve(resolveWorkdir("/tmp", "/home/pi/workspace/pi-work")), pathResolve("/tmp"));
   // ~ 展开
-  assert.equal(pathResolve(resolveWorkdir("~/proj", "/home/pi/workspace/aiti-ai")), pathResolve(homedir() + "/proj"));
-  assert.equal(pathResolve(resolveWorkdir("~", "/home/pi/workspace/aiti-ai")), pathResolve(homedir()));
+  assert.equal(pathResolve(resolveWorkdir("~/proj", "/home/pi/workspace/pi-work")), pathResolve(homedir() + "/proj"));
+  assert.equal(pathResolve(resolveWorkdir("~", "/home/pi/workspace/pi-work")), pathResolve(homedir()));
   // 无 cwd（行内 code 场景）→ 保持相对，不臆造基准
   assert.equal(resolveWorkdir("pi-web-ext/aiti-helper", undefined), "pi-web-ext/aiti-helper");
   // 空/undefined
@@ -108,11 +108,11 @@ test("resolveWorkdir: 结合会话 cwd 解析为绝对路径", async () => {
 
 test("checkCommand: cd 相对路径 → workdir 结合 cwd 解析", async () => {
   const { checkCommand } = await loadRecognize();
-  const r = await checkCommand("cd pi-web-ext/aiti-helper && node tools/deploy.mjs", "/home/pi/workspace/aiti-ai");
-  assert.equal(pathResolve(r.workdir), pathResolve("/home/pi/workspace/aiti-ai/pi-web-ext/aiti-helper"));
+  const r = await checkCommand("cd pi-web-ext/aiti-helper && node tools/deploy.mjs", "/home/pi/workspace/pi-work");
+  assert.equal(pathResolve(r.workdir), pathResolve("/home/pi/workspace/pi-work/pi-web-ext/aiti-helper"));
   assert.equal(r.action, "node tools/deploy.mjs");
   // 绝对路径 cd 不受 cwd 影响
-  const r2 = await checkCommand("cd /tmp && ls", "/home/pi/workspace/aiti-ai");
+  const r2 = await checkCommand("cd /tmp && ls", "/home/pi/workspace/pi-work");
   assert.equal(pathResolve(r2.workdir), pathResolve("/tmp"));
 });
 
