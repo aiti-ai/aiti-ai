@@ -269,10 +269,10 @@ export type ExtMiddlewareResult =
 /** Report returned by a backend rescan (server.rescanBackends). Both fields
  *  optional; the host aggregates them into the rescan API response. */
 export interface ExtBackendRescanReport {
-  /** Registry keys ("<extId>/<type>") (re)registered by this scan. */
+  /** Registry keys ("<extId>/<type>") (re)registered available by this scan. */
   registered?: string[];
-  /** Registry keys removed because their dependency (e.g. CLI binary) is gone. */
-  removed?: string[];
+  /** Registry keys that stayed/turned unavailable (dependency still missing). */
+  unavailable?: string[];
 }
 
 export interface ExtServerHooks {
@@ -286,9 +286,9 @@ export interface ExtServerHooks {
    * Rescan session backends (POST /api/session-backends/rescan): re-run the
    * probe+register pass so CLIs installed after the host booted get picked up
    * (the startup hook only scans once). Idempotent — re-registering the same
-   * key overwrites; entries whose dependency (CLI binary) disappeared should
-   * be removed via ctx.sessionProviders.remove. Extensions that register
-   * unconditionally (no install probe) don't need this hook.
+   * key overwrites with a fresh availability snapshot. Backend extensions
+   * should register unconditionally (available:false + installHint when the
+   * CLI is missing) and re-run this same scan here.
    */
   rescanBackends?(ctx: ExtServerContext): Promise<ExtBackendRescanReport | void> | ExtBackendRescanReport | void;
 }
