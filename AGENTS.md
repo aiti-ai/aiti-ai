@@ -28,6 +28,17 @@ pi's packages up to 1.2.0 depend on each other with `^` ranges (1.3.0 pins them 
 
 This fork carries intentional divergences (custom-drawn top bar, WeChat-style mobile send, mobile composer v4, provider names …). Four regression classes have already shipped to users from past merges (duplicated buttons, a collapsed composer, a Send key that inserted newlines). Before merging origin/main, follow the merge SOP: whole-commit conflict resolution (never mix hunks of one upstream commit), the single-owner table (each guarded UI region has exactly one owner), then the post-merge checks — full test run plus `node scripts/check-upstream-merge.mjs --base <old-tip> --upstream origin/main`, triaging every reported line as fork-intentional or merge-loss. The full written SOP lives in the private source workspace, not in this repo. The guard pins (`AppShell.topbar-dedup`, `ChatInput.composer-shrink-chain`, `ChatInput.mobile-send`) go red on reintroduction — a red pin means the merge is wrong, not the test.
 
+### Releases & version scheme (MUST READ before tagging/publishing)
+
+Fork releases use the Debian/Ubuntu-style build suffix, never bare versions:
+
+- Fork version = `X.Y.Z-aiti.N` where `X.Y.Z` is the **upstream core version** the build is based on; rebuilds increment `N` (`-aiti.1` → `-aiti.2`). Bare `X.Y.Z` is legacy and rejected by the release guard.
+- Ordering is dpkg semantics, not semver: the upstream core dominates and the suffix only breaks ties (`0.16.0-aiti.2 > 0.16.0-aiti.1 > 0.16.0`; `0.16.1 > 0.16.0-aiti.3`). All consumers (update checks, tags, npm) implement this ordering — do not "fix" it to strict semver.
+- tag = `v<version>`; the npm package version and the `latest` dist-tag carry the same string.
+- The **sole release entry point** is `node scripts/release-tag.mjs` (guard: version must be `X.Y.Z-aiti.N`, tag must not exist anywhere, working tree must be clean; `--dry-run` / `--suggest` / `--force` to exempt a dirty tree). Never `git tag` by hand.
+- npm publishing: the official registry (registry.npmjs.org) goes through GitHub Actions (`publish.yml`, OIDC trusted publishing); the private registry (npm.alot.pw) is published locally — always with `--tag latest`, since npm otherwise refuses to let a prerelease-looking version take over `latest`.
+- Full design and rationale: `docs/aiti-ai-fork-build-suffix-versioning-plan.md` lives in the private source workspace.
+
 ---
 
 ## Architecture
