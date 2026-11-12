@@ -1,4 +1,5 @@
-# release.yml — GitHub Releases pipeline (triggered by v* tags, standard OSS convention).
+# release.yml — GitHub Releases pipeline (manual dispatch on a v* tag ref; the
+# auto-run on tag push is suspended — publishing pipelines start deliberately only).
 #
 # Trigger: node scripts/release-tag.mjs   （守卫：package.json 必须 X.Y.Z-aiti.N，tag 固定 v<version>）
 #          → git tag v0.16.0-aiti.1 && git push origin v0.16.0-aiti.1
@@ -14,9 +15,7 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write # gh release create / upload

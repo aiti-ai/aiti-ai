@@ -1,18 +1,29 @@
-# publish-npm.yml — publish to the npm official registry (registry.npmjs.org, @aiti-ai scope).
+# publish-npm.yml — publish @aiti-ai packages.
 #
-# Trigger: workflow_dispatch (manual)
-#   dry_run: true (default) — run the full official gate (the 15-item release-audit) +
-#   the contentHash decision matrix, audit only; false — publish for real.
+# Trigger: workflow_dispatch (manual; no automatic publish anywhere in this repo).
+#
+# STAGING-FIRST POLICY (default): registry=staging publishes to the internal
+# private registry first — verify installability/content there, then re-run with
+# registry=npmjs to promote to the official registry. The contentHash decision
+# matrix converges versions on promotion (content already on staging publishes
+# to official without an extra bump). The staging registry URL resolves at
+# runtime from the AITI_RELEASE_REDACT secret (stagingRegistry field); auth uses
+# the AITI_STAGING_NPM_TOKEN secret. Neither value may be hardcoded here.
+#
+# Inputs:
+#   registry: "staging" (default, no audit gate — test channel) | "npmjs" (mapped to
+#     publish-all --target official: full release-audit gate + provenance + lock
+#     rewrite) | "aliyun" (needs ALIYUN_NPM_USERNAME/PASSWORD secrets).
+#   dry_run: true (default) — run the gates + contentHash decision matrix, audit only;
+#     false — publish for real.
 #   only: optional comma-separated dir name filter (e.g. "aiti-cmd,session-manager").
 #
 # Publish scope: extensions/ (63+ extensions) + pi-plugins/ + packages/ (the aiti-devtools family).
 # Decision matrix (tools/publish-all.mjs): unchanged content skips; changed content auto-bumps the patch version; official-registry versions
 # without a contentHash count as changed and converge; every official publish is gated by release-audit, FAIL blocks it.
 #
-# Auth: NPM_TOKEN secret (granular automation token, packages read/write on @aiti-ai) —
-# written into ~/.npmrc by setup-node (//registry.npmjs.org/:_authToken).
-# Upgrade path (token-free): npmjs Trusted Publishing (OIDC) — requires binding each package on npmjs.com to
-# the GitHub repo + workflow file; until that is done, NPM_TOKEN is used.
+# Required secrets: NPM_TOKEN (npmjs), AITI_STAGING_NPM_TOKEN (staging publish),
+# AITI_RELEASE_REDACT (redact rules + stagingRegistry URL).
 
 name: NPM Publish
 
@@ -32,11 +43,12 @@ on:
         required: false
         default: ""
       registry:
-        description: "Target registry (aliyun needs ALIYUN_NPM_USERNAME/PASSWORD secrets)"
+        description: "Target registry — staging first (default); npmjs promotes to official"
         required: false
-        default: "npmjs"
+        default: "staging"
         type: choice
         options:
+          - "staging"
           - "npmjs"
           - "aliyun"
 
@@ -61,17 +73,52 @@ jobs:
           node-version: 22
           registry-url: "https://registry.npmjs.org" # 写入 ~/.npmrc（NODE_AUTH_TOKEN 占位）
 
+      # Staging auth: write the private-registry token into ~/.npmrc. The host is
+      # resolved at runtime from AITI_RELEASE_REDACT.stagingRegistry — never hardcoded.
+      - name: Staging auth (token → ~/.npmrc, host from redact config)
+        if: ${{ inputs.registry == 'staging' }}
+        env:
+          STAGING_NPM_TOKEN: ${{ secrets.AITI_STAGING_NPM_TOKEN }}
+          AITI_RELEASE_REDACT: ${{ secrets.AITI_RELEASE_REDACT }}
+        run: |
+          if [ -z "$STAGING_NPM_TOKEN" ]; then
+            echo "::error::secret AITI_STAGING_NPM_TOKEN is not set (staging publish token)"
+            exit 1
+          fi
+          URL=$(node -e "const c=JSON.parse(process.env.AITI_RELEASE_REDACT||'null');process.stdout.write((c&&c.stagingRegistry)||'')")
+          if [ -z "$URL" ]; then
+            echo "::error::secret AITI_RELEASE_REDACT is missing or has no stagingRegistry — cannot resolve the staging registry"
+            exit 1
+          fi
+          HOST=${URL#*://}; HOST=${HOST%%/*}
+          echo "::add-mask::$URL"
+          echo "::add-mask::$STAGING_NPM_TOKEN"
+          printf '//%s/:_authToken=%s\n' "$HOST" "$STAGING_NPM_TOKEN" >> ~/.npmrc
+
       - name: Preflight — registry identity
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           ALIYUN_NPM_USERNAME: ${{ secrets.ALIYUN_NPM_USERNAME }}
           ALIYUN_NPM_PASSWORD: ${{ secrets.ALIYUN_NPM_PASSWORD }}
+          AITI_RELEASE_REDACT: ${{ secrets.AITI_RELEASE_REDACT }}
         run: |
-          if [[ "${{ inputs.registry }}" == "aliyun" ]]; then
-            npm ping --registry https://packages.aliyun.com/63a415398d9a873a30aae528/npm/npm-registry/
-          else
-            npm whoami --registry https://registry.npmjs.org
-          fi
+          case "${{ inputs.registry }}" in
+            aliyun)
+              npm ping --registry https://packages.aliyun.com/63a415398d9a873a30aae528/npm/npm-registry/
+              ;;
+            staging)
+              URL=$(node -e "const c=JSON.parse(process.env.AITI_RELEASE_REDACT||'null');process.stdout.write((c&&c.stagingRegistry)||'')")
+              echo "::add-mask::$URL"
+              if ! npm whoami --registry "$URL" >/dev/null 2>&1; then
+                echo "::error::staging registry identity check failed — AITI_STAGING_NPM_TOKEN invalid or AITI_RELEASE_REDACT.stagingRegistry unset"
+                exit 1
+              fi
+              echo "staging registry identity ok"
+              ;;
+            *)
+              npm whoami --registry https://registry.npmjs.org
+              ;;
+          esac
 
       # 扩展 build:client 的依赖根（CI checkout 树无扩展 node_modules；dry-run 不跑构建所以
       # 只在实发暴露）——共享构建根 + 每扩展 symlink，同 release.yml prepare 机制
@@ -143,10 +190,11 @@ jobs:
           ALIYUN_NPM_USERNAME: ${{ secrets.ALIYUN_NPM_USERNAME }}
           ALIYUN_NPM_PASSWORD: ${{ secrets.ALIYUN_NPM_PASSWORD }}
         run: |
-          ARGS="--target ${{ inputs.registry || 'npmjs' }}"
-          if [[ "${{ inputs.registry }}" != "aliyun" ]]; then
-            ARGS="--target official"
-          fi
+          # staging (default) is the first hop — verify on the private registry, then
+          # re-run with registry=npmjs to promote. "npmjs" maps to publish-all's
+          # "official" (audit gate + provenance + lock rewrite); aliyun keeps its path.
+          ARGS="--target ${{ inputs.registry || 'staging' }}"
+          if [[ "${{ inputs.registry || 'staging' }}" == "npmjs" ]]; then ARGS="--target official"; fi
           if [[ "${{ inputs.dry_run }}" != "false" ]]; then ARGS="$ARGS --dry-run"; fi
           if [[ -n "${{ inputs.only }}" ]]; then ARGS="$ARGS --only ${{ inputs.only }}"; fi
           node tools/publish-all.mjs $ARGS 2>&1 | tee publish-report.txt

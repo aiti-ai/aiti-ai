@@ -1,13 +1,16 @@
 name: Release
 
-# Publishes a pushed v* tag: @agegr/pi-web to npm and the Docker image to GHCR.
+# Publishes @agegr/pi-web to npm and the Docker image to GHCR.
+# MANUAL ONLY: dispatch from the Actions tab with the v* tag ref selected (the
+# tag must match package.json — verified below). Auto-run on tag push is
+# suspended: ship npm packages to the staging registry first, verify, then run
+# this deliberately. Auto-publishing produced wrong releases more than once.
 # npm uses Trusted Publishing (OIDC): no npm token. The package's Trusted
 # Publisher on npmjs.com names this repository and this file (publish.yml), so
 # keep its name.
 
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: read
