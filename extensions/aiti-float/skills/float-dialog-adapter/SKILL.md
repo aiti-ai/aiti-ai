@@ -6,7 +6,7 @@ placeholder: 描述你的弹窗（哪个扩展、什么布局、要不要小屏�
 
 # float-dialog-adapter · 扩展弹窗接入 aiti-float 浮动契约
 
-你要帮用户把一个扩展弹窗（面板）接入 aiti-float 浮动契约。权威文档：`docs/aiti-web-ext-float-dialogs.md`（aiti-ai 仓）；参考实现：`pi-web-ext/aiti-ui-env/client/src/ui-env-app.tsx`、`pi-web-ext/demo`、`pi-web-ext/templates/ext-jsx-client`。
+你要帮用户把一个扩展弹窗（面板）接入 aiti-float 浮动契约。权威文档：`docs/aiti-web-ext-float-dialogs.md`（pi-work 仓）；参考实现：`pi-web-ext/aiti-ui-env/client/src/ui-env-app.tsx`、`pi-web-ext/demo`、`pi-web-ext/templates/ext-jsx-client`。
 
 ## 标准接入（最小改动）
 

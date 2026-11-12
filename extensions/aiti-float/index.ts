@@ -45,7 +45,7 @@
  * 自动获得：拖拽移动（鼠标/触屏，交互元素上按下不触发）/ 右下左缘+右下角缩放 /
  * 位置尺寸 localStorage 持久化 / 点按置前（连带遮罩层）/ 视口夹紧 / 双击把手复位。
  *
- * 契约文档：aiti-ai docs/aiti-web-ext-float-dialogs.md。
+ * 契约文档：pi-work docs/aiti-web-ext-float-dialogs.md。
  * 参考实现：aiti-ui-env 弹窗、demo（双写法）、templates/ext-jsx-client。
  *
  * AI 自管理：skills/float-dialog-adapter —— 帮 AI 把扩展弹窗接入本契约
