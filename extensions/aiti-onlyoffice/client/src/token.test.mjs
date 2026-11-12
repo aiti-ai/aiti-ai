@@ -16,7 +16,7 @@ const SECRET = "test-secret";
 
 test("签发→校验往返：原始路径（含点号/中文/多级目录）", () => {
   for (const fp of [
-    "/home/pi/workspace/aiti-ai/demos/demo-doc.docx",
+    "/home/pi/workspace/pi-work/demos/demo-doc.docx",
     "/home/pi/文档/名.字.带.点.docx",
     "/home/pi/x/y/z/empty.pptx",
   ]) {
