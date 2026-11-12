@@ -196,6 +196,6 @@ V5 代码已按方案实施并实测，黑名单根全量收（`agent/**` 127 �
 ## 7. 参考
 
 - 既有设计：`docs/aiti-configs-extension-plan.md`
-- 经验来源：`/home/pi/workspace/aiti-ai/pi-web-ext/aiti-git-trace`
+- 经验来源：`/home/pi/workspace/pi-work/pi-web-ext/aiti-git-trace`
   - `trace-core.ts`：`BUILTIN_EXCLUDES_V1`、`countFilesWithBudget`、`looseDecision`
   - `index.ts`：`trace.maxFileKB=2048`、`trace.autoInitMaxFiles=2000`
