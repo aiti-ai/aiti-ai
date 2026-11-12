@@ -245,7 +245,7 @@ agent 回复输出中（message_update 事件）
 ## 四、扩展工程结构（源码 → 部署）
 
 ```
-aiti-ai/pi-web-ext/aiti-ai-speek/            ← 源码（git）
+pi-work/pi-web-ext/aiti-ai-speek/            ← 源码（git）
 ├── index.ts                            ← 扩展对象（server.agent.onAgentSettled + api + ui 声明）
 ├── server/
 │   ├── pending.ts                      ← per-session 待读列表（内存，{id, text, ts}）+ 过滤
