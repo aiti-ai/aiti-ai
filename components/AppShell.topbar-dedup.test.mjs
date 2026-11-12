@@ -83,7 +83,7 @@ test("the \"⋯\" more button sits after the session stats (existing layout orde
 //                            抵消容器预留 padding，容器为其 reserve 44px）
 //   renderChatToolbarActions → 仅窄屏 More 浮层面板内（medium 档由 fork 自绘行
 //                            renderTopbarItem + 测量溢出覆盖，无需上游行内平铺）
-// 详见 docs/upstream-merge-guardrails.md §一 单一 owner 清单。
+// The written merge SOP lives in the private source workspace; the single-owner list is enforced here.
 // ════════════════════════════════════════════════════════════════════════════
 
 // 剥掉块注释与行注释后的代码行（调用点统计用；块注释续行如 "renderMainFileToggle(true),
@@ -111,7 +111,7 @@ test("top-bar render helpers have exactly one call site each (merge-stacking gua
     assert.equal(
       sites.length, 1,
       `${fn} 调用点应恰 1 处（单一 owner = ${owner}，形态 ${want}）。` +
-      `实际 ${sites.length} 处：${JSON.stringify(sites)}。若为合并带入，请对照 docs/upstream-merge-guardrails.md §一 单一 owner 清单裁决去留，不要两边都留。`,
+      `Found ${sites.length} occurrence(s): ${JSON.stringify(sites)}. If a merge reintroduced this, keep exactly one owner per the single-owner rule — never both.`,
     );
     assert.match(sites[0].line, new RegExp(want.replace("(", "\\(").replace(")", "\\)")));
   }

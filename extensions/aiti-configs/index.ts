@@ -31,7 +31,11 @@ function reloadCfg() {
     // 首次：落一个默认配置模板（含系统级 includes + 分层兜底 excludes），AI 可编辑
     try {
       const fsm = require("node:fs");
+      const fspath = require("node:path");
       fsm.mkdirSync(configDir, { recursive: true });
+      // _file lives outside configDir (self-config dir ~/.pi/configs-self) — create its parent too,
+      // otherwise first launch fails with ENOENT when the self dir does not exist yet
+      fsm.mkdirSync(fspath.dirname(cfg._file), { recursive: true });
       fsm.writeFileSync(cfg._file, JSON.stringify({
         // 搬仓重构（§4.1）：备份仓 ~/.pi/configs（新起历史）；自身配置经 configs-self include 防自丢
         repo: "~/.pi/configs",

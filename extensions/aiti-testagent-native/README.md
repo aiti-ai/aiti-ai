@@ -25,8 +25,8 @@ Visual panel for testagent-native (live Windows-native process control) — brok
 ## 安装 / 部署
 
 ```bash
-# 1) 常驻 tan broker（155：Startup 文件夹 start-tan.vbs——broker 8765/8766 + MCP HTTP 8767）
-#    手动：C:\workspace\testagent-native\native\build\win64-release\bin\<current-broker.txt> --port 8765 --http-port 8766
+# 1) 常驻 tan broker（Windows：Startup 文件夹放 start-tan.vbs 自启——broker 8765/8766 + MCP HTTP 8767）
+#    手动：<repo>/native/build/win64-release/bin/<current-broker.txt> --port 8765 --http-port 8766
 # 2) 本面板随 pi-web 扩展部署自动生效（工具条「Win」入口）；数据源 broker HTTP 8766（env TAN_BROKER_HTTP 可改）
 # 3) AI 侧走 testagent-native-mcp：node mcp/testagent-native-mcp/register.js（38 tan_* + 7 app_* 工具）
 ```
