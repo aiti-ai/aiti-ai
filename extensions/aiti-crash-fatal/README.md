@@ -6,7 +6,7 @@
 |---|---|---|---|
 | ① 💥 崩页面 | `app/page.tsx` 写入 render throw 版 | SSR 渲染期 throw → `app/global-error.tsx` 🚑 急救页 | crash-rescue 场景② |
 | ② 🧨 崩扩展 startup | dataDir 写崩溃标志 → reload 后 startup throw | 左下角 ⚠「启动失败」指示器（部分崩，页面/API/client 全活） | — |
-| ③ 🧱 崩编译 | `components/AppShell.tsx` 顶部注入不存在导出的 import | Turbopack Build Error overlay 全屏接管（编译错发生在 React 树建立前，global-error **接不住**）→ `rescue-hook.js` 检测 overlay → 🚑 横幅自动引导进 `/rescue.html`（public/ 静态页，不进编译图，模块图坏时依然可达） | crash-rescue 场景③ → `aiti-ai/docs/aiti-web-crash-rescue-build-error-plan.md` |
+| ③ 🧱 崩编译 | `components/AppShell.tsx` 顶部注入不存在导出的 import | Turbopack Build Error overlay 全屏接管（编译错发生在 React 树建立前，global-error **接不住**）→ `rescue-hook.js` 检测 overlay → 🚑 横幅自动引导进 `/rescue.html`（public/ 静态页，不进编译图，模块图坏时依然可达） | crash-rescue 场景③ → `pi-work/docs/aiti-web-crash-rescue-build-error-plan.md` |
 
 ## 使用
 
