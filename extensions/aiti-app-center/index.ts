@@ -8,7 +8,7 @@
  * 定制走 localStorage；经 client 服务 `aiti-app-center.api` 交付 session-manager 编排器，
  * 渲染进 DockStack filler（全部区块折叠时呈现）。
  *
- * 方案：aiti-ai docs/aiti-app-center-plan.md + docs/aiti-app-center-refactor-plan.md；
+ * 方案：pi-work docs/aiti-app-center-plan.md + docs/aiti-app-center-refactor-plan.md；
  * 消费方 session-manager（optionalDependsOn）。
  */
 export default {
