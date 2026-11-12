@@ -14,6 +14,12 @@ RUN npm run build
 # What the npm package holds, as `files` in package.json: no build cache, no dev dependencies.
 RUN rm -rf .next/cache && find .next -name '*.js.map' -delete && npm prune --omit=dev
 
+# Bake the first-party pi plugins into the image: declarations go into the baked
+# settings.json and the packages install into the managed npm dir, so the first
+# container start is a fingerprint no-op (PI_CODING_AGENT_DIR keeps it out of
+# root's home; the runtime stage copies it to the node user's home).
+RUN PI_CODING_AGENT_DIR=/home/node/.pi node bin/pi-plugins-provision.js
+
 FROM node:22-bookworm-slim AS runtime
 ENV NODE_ENV=production \
     HOME=/home/node \
@@ -34,6 +40,8 @@ COPY --from=build --chown=node:node /app/.next ./.next
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/public ./public
 COPY --from=build --chown=node:node /app/next.config.ts /app/package.json ./
+COPY --from=build --chown=node:node /app/pi-plugins.manifest.json ./pi-plugins.manifest.json
+COPY --from=build --chown=node:node /home/node/.pi /home/node/.pi
 USER node
 
 EXPOSE 30141
