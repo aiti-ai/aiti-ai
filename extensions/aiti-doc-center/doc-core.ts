@@ -281,7 +281,7 @@ export function isRandomDirName(name: string): boolean {
 
 /**
  * 路径派生 tag（v2，迭代 2026-08-31）：**逐段单名、倒排**——离文件越近越优先。
- * 例 aiti-ai/docs/plans/x.md → ["plans", "docs", "aiti-ai"]（docs/design/plan 类名字直接可过滤）；
+ * 例 pi-work/docs/plans/x.md → ["plans", "docs", "pi-work"]（docs/design/plan 类名字直接可过滤）；
  * 随机目录名（isRandomDirName）与非法字符段跳过；去重；上限 maxDepth 段。
  */
 export function derivePathTags(rel: string, maxDepth = 6): string[] {
