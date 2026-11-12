@@ -18,10 +18,11 @@ export const FOOTER_ITEM_ID = "quickstart-open";
 /** 引导卡关闭态（客户端偏好，与 dock 折叠键同范式：pi:<ext>:<purpose>）。 */
 export const DISMISS_KEY = "pi:quickstart:sidebar-dismissed";
 
-/** widget 多语标题 key（qs.guideTitle / qs.shortcutsTitle / qs.examplesTitle）。 */
+/** widget 多语标题 key（qs.guideTitle / qs.shortcutsTitle / qs.rt.title / qs.examplesTitle）。 */
 export const WIDGET_TITLE_KEYS: Record<string, string> = {
   guide: "qs.guideTitle",
   shortcuts: "qs.shortcutsTitle",
+  streaming: "qs.rt.title",
   examples: "qs.examplesTitle",
 };
 
@@ -48,9 +49,22 @@ export const WIDGET_METAS: QuickstartWidgetMeta[] = [
   // areas 全开双区（2026-11-07 用户问「能否移动」）：⚙ 面板可跨 top/bottom 挪动，
   // defaultArea 保持各自语义默认（挪动后 pref 持久化）。
   { id: "guide", areas: ["top", "bottom"], defaultArea: "top", w: 8, h: 1, priority: -1 },
-  // shortcuts w8（2026-11-07 用户拍板：与快速上手同宽整行）；单行 4 列 kbd 行式。
+  // shortcuts w8（2026-11-07 用户拍板：与快速上手同宽整行）；4 列 kbd 行式 ×2 行（8 项）。
   { id: "shortcuts", areas: ["top", "bottom"], defaultArea: "top", w: 8, h: 1, priority: 10 },
+  // streaming p15（shortcuts 10 与 examples 20 之间）：任务运行时概念卡——图标/配色
+  // 复刻宿主 ChatInput 流式按钮区（fork/侧聊/插队/排队/继续），卡片即按钮图例。
+  { id: "streaming", areas: ["top", "bottom"], defaultArea: "top", w: 8, h: 1, priority: 15 },
   { id: "examples", areas: ["top", "bottom"], defaultArea: "bottom", w: 8, h: 1, priority: 20 },
+];
+
+/** 任务运行时卡行 key（descKey 为对应描述 key；图标/配色在组件层与宿主流式按钮对齐）。
+ *  行序 = 流式按钮出现序（fork → 侧聊 → 插队 → 排队）+ 继续。 */
+export const RUNTIME_ROWS: Array<{ key: string; descKey: string }> = [
+  { key: "qs.rt.fork", descKey: "qs.rt.forkDesc" },
+  { key: "qs.rt.sideChat", descKey: "qs.rt.sideChatDesc" },
+  { key: "qs.rt.steer", descKey: "qs.rt.steerDesc" },
+  { key: "qs.rt.followUp", descKey: "qs.rt.followUpDesc" },
+  { key: "qs.rt.continue", descKey: "qs.rt.continueDesc" },
 ];
 
 /* ── 引导卡关闭态（localStorage 单一事实源；无事件广播——filler 重渲染时现读） ── */

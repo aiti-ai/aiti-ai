@@ -70,20 +70,30 @@ test("readSidebarDismissed/writeSidebarDismissed：roundtrip + false 清键", ()
 
 /* ── widget 元数据 ── */
 
-test("WIDGET_METAS：3 枚、布局与方案一致、尺寸在宿主 clamp 范围内", () => {
-  assert.deepEqual(logic.WIDGET_METAS.map((m) => m.id), ["guide", "shortcuts", "examples"]);
+test("WIDGET_METAS：4 枚、布局与方案一致、尺寸在宿主 clamp 范围内", () => {
+  assert.deepEqual(logic.WIDGET_METAS.map((m) => m.id), ["guide", "shortcuts", "streaming", "examples"]);
   const byId = new Map(logic.WIDGET_METAS.map((m) => [m.id, m]));
   // guide p=-1 + h=1：先于 builtin:recent(p0) 占行1 独占整行——曾因同 p0 注册序在后
   // 掉行2/3 三行叠加致 top 区内滚裁切（快捷操作卡显示不全）
   // shortcuts w8（与 guide 同宽整行）；areas 全开双区（⚙ 可跨 top/bottom 挪动）
+  // streaming p15：任务运行时概念卡（图标复刻宿主流式按钮区，卡片即按钮图例）
   const BOTH = ["top", "bottom"];
   assert.deepEqual(byId.get("guide"), { id: "guide", areas: BOTH, defaultArea: "top", w: 8, h: 1, priority: -1 });
   assert.deepEqual(byId.get("shortcuts"), { id: "shortcuts", areas: BOTH, defaultArea: "top", w: 8, h: 1, priority: 10 });
+  assert.deepEqual(byId.get("streaming"), { id: "streaming", areas: BOTH, defaultArea: "top", w: 8, h: 1, priority: 15 });
   assert.deepEqual(byId.get("examples"), { id: "examples", areas: BOTH, defaultArea: "bottom", w: 8, h: 1, priority: 20 });
   for (const m of logic.WIDGET_METAS) {
     assert.ok(m.w >= 1 && m.w <= 8, `w 越界: ${m.id}`);
     assert.ok(m.h >= 1 && m.h <= 3, `h 越界: ${m.id}`);
     assert.ok(m.areas.includes(m.defaultArea), `defaultArea 必须在 areas 内: ${m.id}`);
+  }
+});
+
+test("RUNTIME_ROWS：5 行（fork/侧聊/插队/排队/继续）、descKey 成对", () => {
+  assert.deepEqual(logic.RUNTIME_ROWS.map((r) => r.key), ["qs.rt.fork", "qs.rt.sideChat", "qs.rt.steer", "qs.rt.followUp", "qs.rt.continue"]);
+  for (const r of logic.RUNTIME_ROWS) {
+    assert.ok(r.descKey === `${r.key}Desc`, `descKey 命名约定: ${r.key}`);
+    assert.ok(r.key && r.descKey);
   }
 });
 
