@@ -30,7 +30,7 @@ import { notifyReconcile } from "../../_shared/reconcile-deps.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pkg = resolve(here, "..");                       // pi-web-ext/aiti-attach-agent
-const repo = resolve(pkg, "..", "..");                 // aiti-ai 仓库根
+const repo = resolve(pkg, "..", "..");                 // pi-work 仓库根
 const coreBridge = resolve(repo, "packages", "aiti-devtools-core", "src", "bridge.ts");
 const piPkg = resolve(repo, "packages", "aiti-devtools-pi");
 const bundleSrc = resolve(piPkg, "dist", "aiti-devtools-pi.js");
