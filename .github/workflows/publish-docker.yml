@@ -1,8 +1,7 @@
 # publish-docker.yml — Docker Hub publishing (aitiai/pi-web).
 #
-# Trigger:
-#   - push tag v* (synced with GitHub Releases: images ship with each version)
-#   - workflow_dispatch (manual, optional version tag)
+# Trigger: workflow_dispatch (manual only — the auto-run on tag push is suspended,
+# like the other publish pipelines). Optional version tag input.
 #
 # Artifacts: aitiai/pi-web:{core,full} + aitiai/pi-web:v<ver>-{core,full} + latest
 # Required secrets: DOCKERHUB_USERNAME (=aitiai), DOCKERHUB_TOKEN (hub.docker.com access token)
@@ -13,9 +12,6 @@
 name: Docker Publish
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       version_tag:
