@@ -2634,7 +2634,7 @@ function resolveShimPathAuto(cwdCandidates) {
     process.env.AITI_SHIM_PATH,
     ...installedCandidates,
     ...cwdCandidates || [],
-    join2(homeDir(), "workspace", "aiti-ai", "packages", "aiti-bridge", "bin", "aiti-mcp-shim.cjs")
+    join2(homeDir(), "workspace", "pi-work", "packages", "aiti-bridge", "bin", "aiti-mcp-shim.cjs")
   ].filter((p) => !!p);
   for (const p of candidates) {
     try {
@@ -2971,7 +2971,7 @@ function bridgeScriptPath() {
   const candidates = [
     resolve(here, "../../aiti-bridge/bin/aiti-bridge.mjs"),
     // 源码/产物目录 → packages/aiti-bridge/bin
-    resolve(homedir2(), "workspace/aiti-ai/packages/aiti-bridge/bin/aiti-bridge.mjs")
+    resolve(homedir2(), "workspace/pi-work/packages/aiti-bridge/bin/aiti-bridge.mjs")
     // 开发环境绝对兜底
   ];
   for (const p of candidates) if (existsSync3(p)) return p;

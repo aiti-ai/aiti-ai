@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // sync-src.mjs — assemble the published package sources from the single-owner sources.
 //
-// The development sources live inside the private source monorepo (pi-web-ext/aiti-attach-agent);
+// The development sources live inside the pi-work monorepo (pi-web-ext/aiti-attach-agent);
 // this package is the publishable view of them. One-way generation, always safe to re-run:
 //
 //   pi-web-ext/aiti-attach-agent/pi-tui/pi-web-bridge.ts  → src/pi-web-bridge.ts
@@ -26,7 +26,7 @@ const bundleSrc = join(repo, "packages", "aiti-devtools-pi", "dist", "aiti-devto
 
 // Mirror-repo guard: inside the aiti-ai publish snapshot (pi-plugins/pi-web-bridge) the
 // monorepo sources are absent by design — src/dist are committed there already and were
-// assembled by the source-repo sync before mirroring. Skip silently when they exist; only
+// assembled by the pi-work sync before mirroring. Skip silently when they exist; only
 // fail if the package is incomplete.
 if (!existsSync(tuiSrc)) {
   if (existsSync(join(pkg, "src", "pi-web-bridge.ts")) && existsSync(join(pkg, "dist", "aiti-devtools-pi.js"))) {
