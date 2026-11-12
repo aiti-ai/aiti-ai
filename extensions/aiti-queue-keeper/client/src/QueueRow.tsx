@@ -208,7 +208,7 @@ export function QueueRow({ kind, text, images, hasImages, hasFiles, index, total
           cursor: ro ? "help" : undefined,
         }}
       >
-        {kind}
+        {kind === "steer" ? t("chat.steer") : t("chat.followUp")}
       </span>
       <AttachIcons hasImages={hasImages || (images && images.length > 0)} hasFiles={hasFiles} />
       <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{text}</span>
