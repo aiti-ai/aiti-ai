@@ -70,10 +70,10 @@ function collectText(node) {
 }
 
 test("render: extra 数据流——cwd ~ 缩写 + area 透传", () => {
-  const text = collectText(WidgetDemoCard({ cwd: "/home/pi/workspace/aiti-ai", isMobile: false, area: "top" }));
+  const text = collectText(WidgetDemoCard({ cwd: "/home/pi/workspace/pi-work", isMobile: false, area: "top" }));
   assert.ok(text.includes("示例小组件（demo）"), `标题缺失: ${text}`);
   assert.ok(text.includes("area=top"), `area 缺失: ${text}`);
-  assert.ok(text.includes("cwd=~/workspace/aiti-ai"), `cwd 应缩写为 ~: ${text}`);
+  assert.ok(text.includes("cwd=~/workspace/pi-work"), `cwd 应缩写为 ~: ${text}`);
   assert.ok(!text.includes("/home/pi"), "home 前缀不应明文出现");
 });
 
