@@ -386,7 +386,7 @@ async function workspacesEndpoint(ctx: ExtApiCtx, req?: Request): Promise<Respon
   const activeExt = activeAgents(ctx.configDir);
   // 与 /sessions 同一行口径：已由 pi 站位行接管（placeholder）的 ext 行从列表剔除、
   // 由 pi 行代表——workspaces 也须排除，否则该 ext 行的 cwd 会多出一个幽灵项目、
-  // 且在共享目录下重复计数（实测 aiti-ai sessionCount 1227 虚高到 1085、
+  // 且在共享目录下重复计数（实测 pi-work sessionCount 1227 虚高到 1085、
   //   /tmp/cbc/e2e 幽灵项目）。placeholder 来源：注册表（external-session-placeholders.json）
   // + pi live 行索引 ext_id（getSessionBatch）。
   const placeholderExtIds = new Set<string>();
@@ -556,7 +556,7 @@ async function mergedSessionsEndpoint(ctx: ExtApiCtx, req?: Request): Promise<Re
   // relation：fork 子代理可见化（2026-09-07）后 dock 需要区分 subagent/分支图标与
   // 折叠 title——透传宿主行的 relation（仅带 parentSessionId 的行有值，~KB 级）。
   // projectKey：Windows 项目 key 过滤必需（2026-09-08）。服务端 projectIdentityKey
-  // 的 win32 语义是 normalize+lowercase（如 d:\workspace\aiti-ai），与 projectRoot/cwd
+  // 的 win32 语义是 normalize+lowercase（如 d:\workspace\pi-work），与 projectRoot/cwd
   // 原始形态不同形——曾因「客户端零读取」被丢弃，dock sessionsForProject 精确 ===
   // 过滤全部不匹配 → 列表闪现后被清空。dock 已加 normalizeWorkspaceKey 兜底，
   // 此处恢复宿主同构（getRecentProjects 也不再因形态差分裂重复项目条目）。

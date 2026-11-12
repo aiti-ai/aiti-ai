@@ -143,7 +143,7 @@ export function parseSessionFile(filePath: string, raw: string): ParsedSessionFi
     let ts = filePath.match(/(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z?)/)?.[1];
     if (ts) ts = ts.replace(/^(\d{4}-\d{2}-\d{2}T)(\d{2})-(\d{2})-(\d{2})-(\d{3})Z?$/, "$1$2:$3:$4.$5Z");
     ts ??= new Date().toISOString();
-    // cwd dir: "--home-wind-workspace-aiti-ai--" → "/home/pi/workspace/aiti-ai"
+    // cwd dir: "--home-wind-workspace-pi-work--" → "/home/pi/workspace/pi-work"
     const dir = filePath.match(/sessions\/--([a-z0-9.-]+)--\//)?.[1] ?? "";
     const cwd = dir ? "/" + dir.replace(/-/g, "/") : "";
     return { id: m[1], cwd, timestamp: ts };

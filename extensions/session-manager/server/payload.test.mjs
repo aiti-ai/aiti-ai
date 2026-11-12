@@ -15,22 +15,22 @@ const ISO = (s) => new Date(s).toISOString();
 test("encode → decode round-trip 还原标准行（cwd/projectRoot/ISO 时间戳逐字段相等）", () => {
   const rows = [
     {
-      id: "a1", cwd: "/home/pi/workspace/aiti-ai", projectRoot: "/home/pi/workspace/aiti-ai",
+      id: "a1", cwd: "/home/pi/workspace/pi-work", projectRoot: "/home/pi/workspace/pi-work",
       created: "2026-09-07T02:04:14.183Z", modified: "2026-09-07T02:05:14.039Z",
       messageCount: 12, firstMessage: "你好".repeat(30) + "截断", lastMessage: "hi",
       name: undefined, parentSessionId: undefined, agent: "pi", lastRole: "assistant",
       model: "glm-4.7", archived: false, extId: undefined, planFirst: true,
     },
     {
-      id: "b2", cwd: "/home/pi/workspace/pi-web", projectRoot: "/home/pi/workspace/aiti-ai",
+      id: "b2", cwd: "/home/pi/workspace/pi-web", projectRoot: "/home/pi/workspace/pi-work",
       created: "2026-09-01T00:00:00.000Z", modified: "2026-09-06T10:00:00.000Z",
       messageCount: 0, firstMessage: "", lastMessage: "",
     },
   ];
   const enc = encodeSessionsV2(rows);
   assert.equal(enc.fmt, 2);
-  // 枚举表去重：aiti-ai 与 pi-web 两个 cwd + projectRoot 复用 aiti-ai
-  assert.deepEqual([...enc.cwds].sort(), ["/home/pi/workspace/pi-web", "/home/pi/workspace/aiti-ai"].sort());
+  // 枚举表去重：pi-work 与 pi-web 两个 cwd + projectRoot 复用 pi-work
+  assert.deepEqual([...enc.cwds].sort(), ["/home/pi/workspace/pi-web", "/home/pi/workspace/pi-work"].sort());
   // 紧凑行不再携带长键/长值
   const r0 = enc.sessions[0];
   assert.equal(r0.c, 0); // 第一行的 cwd 先入表

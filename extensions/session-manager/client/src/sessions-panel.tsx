@@ -43,7 +43,7 @@ import { truncateRunErrorText } from "./sidebar/pure";
 const PAGE_SIZE = 20;
 
 /** 目录过滤匹配：cwd 是否精确等于所选目录（root）—— 只匹配该目录本身的会话，
- * 不包含其子目录（如选 ~/workspace 不覆盖 ~/workspace/aiti-ai）；兼容 \\ 与 / 。 */
+ * 不包含其子目录（如选 ~/workspace 不覆盖 ~/workspace/pi-work）；兼容 \\ 与 / 。 */
 const normDir = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "") + "/";
 const underRoot = (cwd: string | undefined, root: string) =>
   !!cwd && !!root && normDir(cwd) === normDir(root);

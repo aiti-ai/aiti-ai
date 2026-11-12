@@ -79,7 +79,7 @@ test("parseSessionFile: headerless (truncated) session still parses via filename
     JSON.stringify(userMsg("m1", "2026-01-01T00:00:01.000Z", "orphan message")),
   ].join("\n") + "\n";
   const p = parseSessionFile(
-    "/home/pi/.pi/agent/sessions/--home-wind-workspace-aiti-ai--/2026-01-01T00-00-00-000Z_019fc755-5be7-7dff-9652-3437fce129bb.jsonl",
+    "/home/pi/.pi/agent/sessions/--home-wind-workspace-pi-work--/2026-01-01T00-00-00-000Z_019fc755-5be7-7dff-9652-3437fce129bb.jsonl",
     raw,
   );
   assert.ok(p, "headerless file should still parse");

@@ -2,7 +2,7 @@
 /**
  * session-manager · 部署到 ~/.pi/web/extensions/ 和 ~/.pi/web-dev/extensions/
  *
- * 源码已迁入 aiti-ai pi-web-ext/session-manager/（本目录为权威源码位置）；
+ * 源码已迁入 pi-work pi-web-ext/session-manager/（本目录为权威源码位置）；
  * 部署 = client bundle 构建（vite）→ 整目录同步到两个扩展根 + git 提交部署状态。
  * 用法：node tools/deploy.mjs
  * 生效：POST /api/extensions/reload（或重启 pi-web）；client no-store 刷新页面即新
