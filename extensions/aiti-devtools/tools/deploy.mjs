@@ -29,7 +29,7 @@ import { notifyReconcile } from '../../_shared/reconcile-deps.mjs';
   checkClientDir(fileURLToPath(new URL("../client", import.meta.url)), { log: (m) => console.log("[deploy] " + m) });
 }
 
-const root = resolve(import.meta.dirname, '..', '..', '..'); // 仓库根（aiti-ai）
+const root = resolve(import.meta.dirname, '..', '..', '..'); // 仓库根（pi-work）
 const injectRoot = resolve(root, 'packages/aiti-devtools-inject');
 const injectDist = resolve(injectRoot, 'dist');
 const coreSrc = resolve(root, 'packages/aiti-devtools-core/src');
