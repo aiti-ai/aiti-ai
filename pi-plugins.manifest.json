@@ -1,0 +1,13 @@
+{
+  "plugins": [
+    { "pkg": "@aiti-ai/pi-models-combo", "version": "0.4.12" },
+    { "pkg": "@aiti-ai/pi-git-trace", "version": "0.1.7" },
+    { "pkg": "@aiti-ai/pi-web-bridge", "version": "0.1.0" },
+    {
+      "pkg": "@aiti-ai/pi-plan-sandbox",
+      "version": "0.1.7",
+      "auto": false,
+      "note": "In development; not auto-provisioned. Install manually with: pi install npm:@aiti-ai/pi-plan-sandbox@0.1.7"
+    }
+  ]
+}
