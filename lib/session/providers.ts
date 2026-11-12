@@ -103,6 +103,22 @@ export interface SessionProvider {
   readonly maxCapabilities: SessionCapabilities;
 
   /**
+   * Availability snapshot for UI pickers (Backend dropdown): false = the
+   * dependency (CLI binary) was not found at scan time — the entry renders
+   * greyed out/disabled and createSession would fail. Registered providers
+   * stay in the registry either way (unconditional registration + status);
+   * the snapshot refreshes on server.rescanBackends (the dropdown's rescan
+   * entry). Absent/true = available (built-ins without an install probe).
+   */
+  readonly available?: boolean;
+
+  /**
+   * How to install the missing dependency (install command / download URL),
+   * shown next to greyed-out entries. Only meaningful when available is false.
+   */
+  readonly installHint?: string;
+
+  /**
    * Static model catalog (fetchable without a session; feeds the picker when
    * choosing a backend on the new-session page). Optional: when absent the
    * catalog is bound to a session (e.g. ACP requires session/new) and the

@@ -88,6 +88,10 @@ export type ProviderInfo = {
   /** External agent key this backend can drive (all-sessions join key), if any. */
   agentKey?: string;
   maxCapabilities: SessionCapabilities;
+  /** false = dependency (CLI) missing at scan time — entry renders greyed out. */
+  available?: boolean;
+  /** Install command / download URL shown for unavailable entries. */
+  installHint?: string;
 };
 
 export function listProviderInfos(): ProviderInfo[] {
@@ -96,6 +100,8 @@ export function listProviderInfos(): ProviderInfo[] {
     label: p.label,
     ...(p.agentKey ? { agentKey: p.agentKey } : {}),
     maxCapabilities: p.maxCapabilities,
+    ...(p.available === false ? { available: false } : {}),
+    ...(p.available === false && p.installHint ? { installHint: p.installHint } : {}),
   }));
 }
 

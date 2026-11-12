@@ -398,7 +398,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   // (extension-registered backends appear automatically).
   // null = local pi (the default; absent from the list and needs no request).
   // The last chosen backend is kept in localStorage and preselected on the next new session.
-  const [backendOptions, setBackendOptions] = useState<Array<{ type: string; label: string; agentKey?: string }>>([]);
+  const [backendOptions, setBackendOptions] = useState<Array<{ type: string; label: string; agentKey?: string; available?: boolean; installHint?: string }>>([]);
   // Whether any extension declares a backend rescan hook (GET response field).
   // When true the dropdown renders even with zero extension backends ("Pi (local)"
   // + the rescan entry) so newly installed CLIs can be picked up without a restart.
@@ -407,6 +407,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   // Transient result note shown next to the dropdown after a rescan (auto-cleared).
   const [backendRescanNote, setBackendRescanNote] = useState<string | null>(null);
   const backendRescanNoteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Last-seen unavailable backend types (for the rescan outcome note: "picked up" vs "still missing").
+  const backendUnavailableRef = useRef<Set<string>>(new Set());
   // Extension entries inside the new-session Backend dropdown (newSessionBackendOptions),
   // e.g. an ACP agent management entry. Declarative static items get meta.onClick wired
   // by the host forwarder after materialization; entries without onClick don't render
@@ -1413,12 +1415,14 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     // dedupeFetch: StrictMode double effect / remounts share one request (the backend list is stable; 2.5s micro-cache).
     dedupeFetch(apiUrl("/api/session-backends"))
       .then((r) => (r.ok ? r.json() : { providers: [] }))
-      .then((d: { providers?: Array<{ type: string; label: string; agentKey?: string }>; rescanable?: boolean }) => {
+      .then((d: { providers?: Array<{ type: string; label: string; agentKey?: string; available?: boolean; installHint?: string }>; rescanable?: boolean }) => {
         if (cancelled) return;
         setBackendOptions(d.providers ?? []);
         setBackendRescanable(Boolean(d.rescanable));
-        // Fall back to local pi when the remembered backend no longer exists (extension uninstalled/renamed)
-        setSessionBackend((cur) => (cur && (d.providers ?? []).some((p) => p.type === cur) ? cur : null));
+        backendUnavailableRef.current = new Set((d.providers ?? []).filter((p) => p.available === false).map((p) => p.type));
+        // Fall back to local pi when the remembered backend no longer exists or is unavailable (extension
+        // uninstalled/renamed, or its CLI is missing — creating would fail at send time)
+        setSessionBackend((cur) => (cur && (d.providers ?? []).some((p) => p.type === cur && p.available !== false) ? cur : null));
       })
       .catch(() => {});
     return () => {
@@ -1435,22 +1439,29 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     try {
       const r = await fetch(apiUrl("/api/session-backends/rescan"), { method: "POST" });
       const d = await r.json().catch(() => null) as
-        | { ok?: boolean; providers?: Array<{ type: string; label: string; agentKey?: string }>; reports?: Record<string, { registered?: string[]; removed?: string[] }> }
+        | { ok?: boolean; providers?: Array<{ type: string; label: string; agentKey?: string; available?: boolean; installHint?: string }> }
         | null;
       if (d?.ok) {
         setBackendOptions(d.providers ?? []);
         setBackendRescanable(true);
-        setSessionBackend((cur) => (cur && (d.providers ?? []).some((p) => p.type === cur) ? cur : null));
-        const added = Object.values(d.reports ?? {}).reduce((n, rep) => n + (rep.registered?.length ?? 0), 0);
-        const removed = Object.values(d.reports ?? {}).reduce((n, rep) => n + (rep.removed?.length ?? 0), 0);
-        const note = added > 0
-          ? `rescan: +${added} backend${added > 1 ? "s" : ""}${removed > 0 ? `, -${removed}` : ""}`
-          : removed > 0
-            ? `rescan: ${removed} backend${removed > 1 ? "s" : ""} removed`
-            : "rescan: no new backends";
+        setSessionBackend((cur) => (cur && (d.providers ?? []).some((p) => p.type === cur && p.available !== false) ? cur : null));
+        // Outcome note: newly picked-up entries first (was unavailable, now ready),
+        // then the still-missing ones with their install hint (full text on hover).
+        const nowMissing = (d.providers ?? []).filter((p) => p.available === false);
+        const missingTypes = new Set(nowMissing.map((p) => p.type));
+        const pickedUp = [...backendUnavailableRef.current].filter((t) => !missingTypes.has(t))
+          .map((t) => (d.providers ?? []).find((p) => p.type === t)?.label ?? t);
+        backendUnavailableRef.current = missingTypes;
+        const missText = nowMissing.map((p) => `${p.label}${p.installHint ? ` (${p.installHint})` : ""}`).join(", ");
+        const note = pickedUp.length > 0
+          ? `rescan: ${pickedUp.join(", ")} now available${nowMissing.length ? ` — ${nowMissing.length} still not installed` : ""}`
+          : nowMissing.length > 0
+            ? `rescan: ${nowMissing.length} not installed — ${missText}`
+            : "rescan: all backends ready";
         if (backendRescanNoteTimer.current) clearTimeout(backendRescanNoteTimer.current);
         setBackendRescanNote(note);
-        backendRescanNoteTimer.current = setTimeout(() => setBackendRescanNote(null), 8000);
+        // Install hints need reading time: keep the note longer when something is missing.
+        backendRescanNoteTimer.current = setTimeout(() => setBackendRescanNote(null), nowMissing.length ? 15000 : 8000);
       } else {
         if (backendRescanNoteTimer.current) clearTimeout(backendRescanNoteTimer.current);
         setBackendRescanNote("rescan failed");
@@ -2364,8 +2375,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                   >
                     <option value="">Pi (local)</option>
                     {backendOptions.map((b) => (
-                      <option key={b.type} value={b.type}>
-                        {b.label}
+                      <option key={b.type} value={b.type} disabled={b.available === false} title={b.installHint}>
+                        {b.available === false ? `${b.label} — not installed` : b.label}
                       </option>
                     ))}
                     {/* Backend management entries are an extension point: each backend
