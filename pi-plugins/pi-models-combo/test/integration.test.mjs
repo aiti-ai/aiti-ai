@@ -8,7 +8,7 @@ import { ProxyServer } from "../src/proxy.ts";
 import { freeP, Tester } from "./util.mjs";
 
 const require = createRequire(import.meta.url);
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".."); // aiti-ai/
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".."); // repo root/
 const WIZ = process.env.AITI_WIZARD_CORE || path.join(root, "pi-web-ext", "aiti-model-wizard", "core.cjs");
 const CHK = process.env.AITI_CHECK_CORE || path.join(root, "pi-web-ext", "aiti-model-check", "core.cjs");
 

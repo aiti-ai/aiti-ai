@@ -24,10 +24,10 @@ permissions:
 jobs:
   prepare:
     # 平台无关构建层：.next + 扩展 dist 只构建一次（产物是纯 JS，平台 matrix 直接复用）。
-    # 依赖策略：registry.npmjs.org 解析到内网 IP（GH runner 不可达），@aiti-ai/* 与 justget/
+    # 依赖策略：私仓 registry 解析到内网 IP（GH runner 不可达），@aiti-ai/* 与 justget/
     # service-tunnels 新版在 npmjs 缺失/过旧——扩展依赖走「共享构建根 + 本地 vendor
     # tgz（vendor/npm/ + 仓内 pack）」：扩展目录零 install，Node/vite walk-up 命中
-    # extensions/node_modules（开发机开发模式同款）。官方源补齐后 vendor 可退役。
+    # extensions/node_modules (same layout as the dev machine). The vendor layer can retire once the official registry is complete.
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.ver.outputs.version }}
@@ -82,8 +82,8 @@ jobs:
             --file "justget=$PWD/vendor/npm/justget-0.2.4.tgz" \
             --file "service-tunnels=$PWD/vendor/npm/service-tunnels-0.3.76.tgz" \
             --file "@aiti-ti/ddns=$PWD/vendor/npm/aiti-ti-ddns-0.2.0.tgz"
-          # service-tunnels 0.3.76：vendor 自 开发机已发布形态——exports 含 ./i18n ./ui-shared
-          # （registry.npmjs.org 上的同名 0.3.9 是旧 exports，子路径 import 会挂），服务端自引用的
+          # service-tunnels 0.3.76：vendor 自开发机已发布形态——exports 含 ./i18n ./ui-shared
+          # （私仓上的同名 0.3.9 是旧 exports，子路径 import 会挂），服务端自引用的
           # service-tunnels/i18n 等由它解析
           npm install --prefix "$BUILD" --legacy-peer-deps --no-audit --no-fund --loglevel=error
           ln -s "$BUILD/node_modules" extensions/node_modules

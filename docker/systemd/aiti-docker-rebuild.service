@@ -1,9 +1,9 @@
-# aiti-docker-rebuild.service / .timer —— 每日镜像重建 + 冒烟（CI 脚手架，方案 §6-6）
+# aiti-docker-rebuild.service / .timer — daily image rebuild + smoke (CI scaffolding, design §6-6)
 #
-# 安装（本机定时重建，未默认启用——按需执行）：
+# Install (local scheduled rebuild; not enabled by default — run as needed):
 #   sudo cp docker/systemd/aiti-docker-rebuild.{service,timer} /etc/systemd/system/
 #   sudo systemctl daemon-reload && sudo systemctl enable --now aiti-docker-rebuild.timer
-# 查看状态/日志：
+# Status / logs:
 #   systemctl list-timers aiti-docker-rebuild.timer
 #   journalctl -u aiti-docker-rebuild.service -n 50
 
@@ -15,9 +15,9 @@ After=network-online.target
 [Service]
 Type=oneshot
 User=%i
-# 本机（国内网络）走镜像源；GitHub 等境外 CI 不设此 env（官方源直用）
+# Local (CN network) uses mirrors; GitHub and other non-CN CI omit this env (official sources directly)
 Environment=AITI_CN=1
-# 私仓为临时测试通道：@aiti-ai/* 发公网 npm 后删除此行
-Environment=AITI_PRIVATE_REGISTRY=https://registry.npmjs.org/
+# The private registry is a temporary testing channel: delete this line once @aiti-ai/* is on public npm (fill in the URL as needed)
+Environment=AITI_PRIVATE_REGISTRY=<private-registry-url>
 ExecStart=/home/pi/workspace/aiti-ai/docker/scripts/rebuild-and-smoke.sh core full
 TimeoutStartSec=4h

@@ -47,7 +47,7 @@ composer 插 [元素N] ──用户发送──▶ 插件 messages.transform：
 ```bash
 # 1) npm 包（npm.example.com）
 #    opencode.json: { "plugin": ["@aiti-ai/aiti-devtools-opencode"] }
-# 2) 本地：cd ~/workspace/aiti-ai/opencode-ext/aiti-devtools-opencode && npm run deploy
+# 2) 本地：cd ~/workspace/aiti-ai/integrations/opencode-ext/aiti-devtools-opencode && npm run deploy
 ```
 
 桥默认 `http://127.0.0.1:8777/aiti`（`AITI_BRIDGE_URL` 覆盖）。
@@ -65,7 +65,7 @@ nginx `opencode.conf`（`opencode.pi.example.com` → 127.0.0.1:19870，用户 `
 19870，剥 CSP + 注入 client + `/aiti/` 同源挂桥——nginx 同款语义；127.0.0.1 源免 Authelia）。
 
 > ⚠ 生产入口 `opencode.pi.example.com:8443` 有 Authelia（仅 127.0.0.1 源豁免）：浏览器从本机访问时源 IP 是
-> 内网地址（非 127.0.0.1），会被 302 到登录页——demo 页 launcher 拉不到。本地 E2E 用 8443 proxy 或先登录 Authelia。
+> Non-loopback addresses get 302'd to the reverse proxy's login page, so the demo page's launcher cannot attach. For local E2E use the 8443 proxy or sign in first.
 
 ## E2E 验证（2026-08-24，opencode 1.1.51 / glm-4.7 / 真实 Chrome）
 

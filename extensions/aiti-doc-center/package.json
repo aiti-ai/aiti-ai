@@ -7,6 +7,7 @@
     "test": "node --experimental-strip-types --test doc-core.test.mjs",
     "deploy": "node tools/deploy.mjs",
     "build:client": "vite build --config vite.config.ts",
+    "postbuild:client": "node -e \"const fs=require('node:fs');fs.mkdirSync('dist',{recursive:true});fs.copyFileSync('client/src/doc-worker.mjs','dist/doc-worker.mjs')\"",
     "watch": "vite build --watch --config vite.config.ts"
   },
   "devDependencies": {

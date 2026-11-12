@@ -502,7 +502,7 @@ test("a stopped reply says Stopped, never the abort error its provider's client 
   // Stopped while it streamed a tool call's arguments: the call never ran, so
   // its card has no result. Upstream draws the mark on a stats line under the
   // content; this fork renders usage (and the mark) in the compact top meta row
-  // (docs/releases/2026-11-04-v0.15.0-aiti.md decision #4), so it leads the row
+  // (fork decision: rewrite-first ordering), so it leads the row
   // above the card instead.
   const html = renderMessage({
     role: "assistant",

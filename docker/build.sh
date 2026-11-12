@@ -1,22 +1,23 @@
 #!/usr/bin/env bash
-# build.sh —— aiti Docker 镜像构建入口（aiti-docker-image-plan §3/§4.1；2026-10-30 起本仓自足版）
-# 用法：
+# build.sh — aiti Docker image build entry (aiti-docker-image-plan §3/§4.1; self-sufficient-repo edition since 2026-10-30)
+# Usage:
 #   ./docker/build.sh --target core --tag aiti/aiti:core
 #   ./docker/build.sh --target full --tag aiti/aiti:full
-# 机制：本仓（aiti-ai）即发布仓——app 源码 = 仓根、extensions/ = 移植扩展、packages/ = aiti-bridge
-# 链、pi-plugins/ = pi 插件源；组装 staging 构建上下文后 docker build（BuildKit）。
-# staging 布局与历史版一致（pi-web/、pi-web-ext/、packages/、pi-ext/）——Dockerfile 零改动。
-# 外部依赖（env 可覆盖，均有合理默认）：
-#   JUSTGET_SRC（缺省 ~/workspace/justget，独立仓 justdb/justget；缺失则镜像无 justget，其余照常）
-#   PI_SUBAGENTS_NOTE：@aiti-ai/pi-subagents 走 npm 私源安装（源码仓 aiti-ai/pi-subagents-private，不入本仓）
+# Mechanism: this repo (aiti-ai) IS the release repo — app sources = repo root, extensions/ = the ported
+# extensions, packages/ = the aiti-bridge chain, pi-plugins/ = the pi plugin sources; assemble the staging
+# build context, then docker build (BuildKit).
+# The staging layout matches the historical one (pi-web/, pi-web-ext/, packages/, pi-ext/) — zero Dockerfile changes.
+# External dependency (env-overridable, with a sensible default):
+#   JUSTGET_SRC (default ~/workspace/justget, the standalone justdb/justget repo; if missing the image ships without justget, everything else proceeds)
+#   PI_SUBAGENTS_NOTE: @aiti-ai/pi-subagents installs from the private npm source (source repo aiti-ai/pi-subagents-private, not this repo)
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$HERE/.." && pwd)"
-# 本仓自足：app/扩展/桥/插件全部来自本仓；justget 仍为外部源（独立仓）
-PI_WEB_SRC="${PI_WEB_SRC:-$REPO_ROOT}"           # app 源码 = 本仓根
-PI_WEB_EXT_SRC="${PI_WEB_EXT_SRC:-$REPO_ROOT/extensions}"  # 扩展 = 本仓移植镜像
-PACKAGES_SRC="${PACKAGES_SRC:-$REPO_ROOT/packages}"        # aiti-bridge 链
-PI_EXT_SRC="${PI_EXT_SRC:-$REPO_ROOT/pi-plugins}"          # pi 插件（models-combo/git-trace/plan-sandbox；qoder 系私有插件保留在 aiti-ai，不入本仓）
+# Self-sufficient repo: app/extensions/bridge/plugins all come from this repo; justget remains an external source (standalone repo)
+PI_WEB_SRC="${PI_WEB_SRC:-$REPO_ROOT}"           # app sources = repo root
+PI_WEB_EXT_SRC="${PI_WEB_EXT_SRC:-$REPO_ROOT/extensions}"  # extensions = the ported mirror in this repo
+PACKAGES_SRC="${PACKAGES_SRC:-$REPO_ROOT/packages}"        # the aiti-bridge chain
+PI_EXT_SRC="${PI_EXT_SRC:-$REPO_ROOT/pi-plugins}"          # pi plugins (models-combo/git-trace/plan-sandbox; the qoder-family private plugins stay in the private source repo, not here)
 JUSTGET_SRC="${JUSTGET_SRC:-$HOME/workspace/justget}"
 
 TARGET="core"
@@ -24,7 +25,7 @@ TAG=""
 PLATFORM=""
 CN=0
 PRIVREG="${AITI_PRIVATE_REGISTRY:-}"
-NPM_REG="${NPM_REG:-}"   # 覆盖全局 registry（私源为代理型仓库时可直指，覆盖公共+私有全部依赖）
+NPM_REG="${NPM_REG:-}"   # override the global registry (when the private source is a proxying repo it can be used directly, covering public + private deps)
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --target) TARGET="$2"; shift 2;;
@@ -37,17 +38,17 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 TAG="${TAG:-aiti/aiti:${TARGET}}"
-CORE_IMAGE="${CORE_IMAGE:-aiti/aiti:core}"   # full 的 FROM 基座（tag 别名，见 ③）
+CORE_IMAGE="${CORE_IMAGE:-aiti/aiti:core}"   # the FROM base for full (tag alias, see ③)
 
-# ① 预检（方案 §4.1 步骤 1）：基础镜像可达性（48 主机经 registry-mirror 已实证 26.04 可拉）
+# ① Preflight (design §4.1 step 1): base image reachability (26.04 pull via registry-mirror verified on the dev machine)
 if ! docker image inspect ubuntu:26.04 >/dev/null 2>&1; then
-  echo "[build] 预检：拉取 ubuntu:26.04 ..."
+  echo "[build] preflight: pulling ubuntu:26.04 ..."
   docker pull ubuntu:26.04
 fi
 
-# ①a 镜像源策略：默认官方源（GitHub 等境外 CI/正式发布直用）；--cn（或 env AITI_CN=1）注入国内镜像。
-# 私仓（--private-registry / env AITI_PRIVATE_REGISTRY）为**临时**测试通道：@aiti-ai/* 私包
-# 尚未发公网 npm 时本地测试用；正式发布不传 = @aiti-ai/* 走公网 npm，无需任何配置。
+# ①a Mirror policy: official sources by default (GitHub and other non-CN CI / official releases); --cn (or env AITI_CN=1) injects CN mirrors.
+# The private registry (--private-registry / env AITI_PRIVATE_REGISTRY) is a **temporary** testing channel for
+# @aiti-ai/* packages not yet on public npm; at release time omit it = @aiti-ai/* from public npm, no configuration needed.
 EXTRA_ARGS=()
 if [[ "$CN" = "1" || "${AITI_CN:-0}" = "1" ]]; then
   EXTRA_ARGS=(
@@ -56,29 +57,29 @@ if [[ "$CN" = "1" || "${AITI_CN:-0}" = "1" ]]; then
     --build-arg HF_ENDPOINT=https://hf-mirror.com
     --build-arg PIP_MIRROR=https://pypi.tuna.tsinghua.edu.cn/simple
   )
-  echo "[build] 国内镜像源模式（--cn）：apt=tuna npm=npmmirror hf=hf-mirror pypi=tuna"
+  echo "[build] CN mirror mode (--cn): apt=tuna npm=npmmirror hf=hf-mirror pypi=tuna"
 else
-  echo "[build] 官方源模式（境外网络/GitHub/正式发布；国内构建请加 --cn）"
+  echo "[build] official-source mode (non-CN network / GitHub / releases; add --cn for CN builds)"
 fi
 if [[ -n "$NPM_REG" ]]; then
   EXTRA_ARGS+=(--build-arg "NPM_MIRROR=${NPM_REG}")
-  echo "[build] 全局 registry 覆盖：${NPM_REG}"
+  echo "[build] global registry override: ${NPM_REG}"
 fi
 PRIV_ARGS=()
 if [[ -n "$PRIVREG" ]]; then
   EXTRA_ARGS+=(--build-arg "AITI_NPM_REGISTRY=${PRIVREG}")
-  echo "[build] 私仓测试模式：@aiti-ai/* ← ${PRIVREG}（临时；正式发布不带此参数）"
+  echo "[build] private-registry test mode: @aiti-ai/* ← ${PRIVREG} (temporary; omitted for official releases)"
 fi
-# scope 私仓认证（--private-registry 搭配；凭据 env 独立维护，不落命令行）
+# scope private-registry auth (paired with --private-registry; credentials kept in a separate env, never on the command line)
 if [[ -n "$PRIVREG" ]]; then
   [[ -n "${AITI_NPM_REGISTRY_USER:-}" ]] && EXTRA_ARGS+=(--build-arg "AITI_NPM_REGISTRY_USER=${AITI_NPM_REGISTRY_USER}")
   [[ -n "${AITI_NPM_REGISTRY_PASS:-}" ]] && EXTRA_ARGS+=(--build-arg "AITI_NPM_REGISTRY_PASS=${AITI_NPM_REGISTRY_PASS}")
 fi
 
-# ② 组装 staging 构建上下文（git 无关文件已由 rsync exclude 控制）
+# ② Assemble the staging build context (git-irrelevant files handled by rsync excludes)
 STAGE="${REPO_ROOT}/.docker-build-context"
-# 每次清空重建：rsync --exclude 会保护（不删）接收端已存在的排除文件，旧 staging
-# 的大目录（.next-*/.venv/ai-configs）会永久残留进构建上下文（首跑实测 20GB 教训）
+# Wipe and rebuild every time: rsync --exclude protects (does not delete) pre-existing excluded files on the
+# receiving side, so stale staging dirs (.next-*/.venv/ai-configs) would permanently leak into the build context (20GB first-run lesson)
 rm -rf "$STAGE"
 mkdir -p "$STAGE"
 cp "$HERE/.dockerignore" "$STAGE/.dockerignore"
@@ -105,31 +106,31 @@ rsync -a --delete \
 if [ -d "$JUSTGET_SRC" ]; then
   rsync -a --delete --exclude 'node_modules' --exclude '.git' "$JUSTGET_SRC/" "$STAGE/justget/"
 elif [ -f "$REPO_ROOT/vendor/npm/justget-0.2.4.tgz" ]; then
-  # CI/无源环境兜底：vendor 的已发布形态（package.json + dist/cli.js 齐全，满足 Dockerfile ⑦）
-  echo "[build] JUSTGET_SRC 缺失 → 解包 vendor/npm/justget tgz"
+  # CI / source-less fallback: the published form of vendor (package.json + dist/cli.js complete, satisfying Dockerfile ⑦)
+  echo "[build] JUSTGET_SRC missing → unpacking the vendor/npm/justget tgz"
   mkdir -p "$STAGE/justget"
   tar xzf "$REPO_ROOT/vendor/npm/justget-0.2.4.tgz" -C "$STAGE/justget" --strip-components=1
 else
-  echo "[build] ⚠ 无 justget 源且无 vendor tgz——Dockerfile COPY justget 将失败（fail-fast）"
+  echo "[build] ⚠ no justget source and no vendor tgz — the Dockerfile COPY justget will fail (fail-fast)"
 fi
-# ②.5 依赖来源选择（正式链路 = registry：先 npm publish → 容器构建从同一 registry 拉依赖；
-#  临时测试链路 = vendor rewrite（file:/opt/vendor 零 registry），env AITI_DOCKER_VENDOR_REWRITE=1 开启；
-#  默认关 = 正式仓路径。@aiti-ai/* 官方源发布后本段与 Dockerfile /opt/vendor 可整体退役）
-mkdir -p "$STAGE/vendor/rewritten"   # 空目录兜底：Dockerfile COPY 始终可命中
+# ②.5 dependency source selection (official chain = registry: npm publish first → the container build pulls deps from the same registry;
+#  temporary test chain = vendor rewrite (file:/opt/vendor, zero registry), enabled with env AITI_DOCKER_VENDOR_REWRITE=1;
+#  default off = the official-repo path. Once @aiti-ai/* is on the official registry this section and the Dockerfile /opt/vendor can retire together)
+mkdir -p "$STAGE/vendor/rewritten"   # empty-dir backstop: the Dockerfile COPY always matches
 if [[ "${AITI_DOCKER_VENDOR_REWRITE:-0}" == "1" ]]; then
-  echo "[build] 临时链路：vendor rewrite 开启（file:/opt/vendor，不走 registry）"
+  echo "[build] temporary chain: vendor rewrite enabled (file:/opt/vendor, no registry)"
   mkdir -p "$STAGE/vendor/npm"
   rsync -a "$REPO_ROOT/vendor/npm/" "$STAGE/vendor/npm/"
   node "$HERE/scripts/rewrite-vendor.mjs" "$STAGE" "pi-web-ext pi-ext packages"
 else
-  echo "[build] 正式链路：依赖走 registry（NPM_MIRROR / AITI_NPM_REGISTRY scope）"
+  echo "[build] official chain: deps from the registry (NPM_MIRROR / AITI_NPM_REGISTRY scope)"
 fi
 
-# ③ 构建（full 依赖 core 先行：docker build 的 FROM aiti/aiti:core 取本地镜像）
+# ③ Build (full requires core first: the docker build FROM aiti/aiti:core resolves the local image)
 PLATFORM_ARG=(); [[ -n "$PLATFORM" ]] && PLATFORM_ARG=(--platform "$PLATFORM")
 echo "[build] docker build --target ${TARGET} -> ${TAG}"
 if [[ "$TARGET" == "full" ]]; then
-  # full 的 FROM 基座按镜像名解析：TAG 若已改仓（如 aitiai/pi-web:core）则把刚构建的 core 别名回默认名
+  # The FROM base for full resolves by image name: if TAG moved repos (e.g. aitiai/pi-web:core), alias the freshly built core back to the default name
   docker tag "${TAG%:*}:core" "${CORE_IMAGE}" 2>/dev/null || docker tag "aiti/aiti:core" "${CORE_IMAGE}" || true
   EXTRA_ARGS+=(--build-arg "CORE_IMAGE=${CORE_IMAGE}")
 fi
@@ -139,5 +140,5 @@ docker build ${PLATFORM_ARG+"${PLATFORM_ARG[@]}"} "${EXTRA_ARGS[@]}" \
   "$STAGE"
 
 echo "[build] done: ${TAG}"
-echo "[build] 冒烟（方案 §4.1 步骤 4）："
+echo "[build] smoke (design §4.1 step 4):"
 echo "  docker run --rm -p 30142:30142 -v aiti-data:/opt/aiti -v ~/workspace:/workspace ${TAG}"

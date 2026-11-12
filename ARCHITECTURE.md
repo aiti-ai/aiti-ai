@@ -203,6 +203,6 @@ registry latest → skip (stale WIP); local above → publish as-is.
 | Suite | Scope | Run |
 |---|---|---|
 | `lib/*.test.mjs`, `components/*.test.mjs`, `hooks/*.test.mjs` (node:test, jiti) | core units + source-pattern contracts (base-path sweep, upstream-merge guard pins) | `npm test` |
-| `extensions/_shared/*.test.mjs` (+ per-extension tests, collected by `test-web-ext` runner) | extension units, entry contracts, mirror/gate behavior | `node scripts/test-web-ext.mjs` (from the aiti-ai source repo) |
+| `extensions/_shared/*.test.mjs` (+ per-extension tests, collected by `test-web-ext` runner) | extension units, entry contracts, mirror/gate behavior | `node scripts/test-web-ext.mjs` (from the private source repo) |
 | `e2e/*.mjs` | browser scenarios (sessions, model selector, file panel, appearance) | `node e2e/run.mjs` |
 | docker smoke | production image boot, 63/63 extensions loaded, reload clean | `docker/scripts/smoke.sh` |

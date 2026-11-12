@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/pi-web",
-  "version": "0.15.14",
+  "version": "0.15.15-aiti.1",
   "description": "Web UI for the pi coding agent",
   "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "repository": {
@@ -28,6 +28,9 @@
     "!.next/cache",
     "!.next/dev",
     "!.next/**/*.js.map",
+    "!.next/trace",
+    "!.next/trace-build",
+    "!.next/diagnostics",
     "public",
     "next.config.ts",
     "patches",
@@ -50,7 +53,7 @@
     "test:e2e": "node e2e/run.mjs",
     "test": "node --experimental-strip-types --test --test-force-exit \"app/**/*.test.mjs\" \"components/**/*.test.mjs\" \"hooks/**/*.test.mjs\" \"lib/**/*.test.mjs\" \"public/**/*.test.mjs\" \"scripts/**/*.test.mjs\"",
     "release": "npm version patch --no-git-tag-version && npm run build && npm publish --access public",
-    "prepack": "node tools/materialize-ext-assets.mjs"
+    "prepack": "node tools/materialize-ext-assets.mjs && node scripts/sanitize-npm-package.mjs"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "1.5.0",
