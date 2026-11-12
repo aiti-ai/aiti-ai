@@ -22,7 +22,7 @@ import { I18N } from "./server/i18n.ts";
 export default {
   id: "service-tunnels",
   name: "Service Tunnels",
-  version: "0.4.0",
+  version: "0.4.1",
   icon: "icon.svg",
   client: "dist/service-tunnels.mjs",
 
