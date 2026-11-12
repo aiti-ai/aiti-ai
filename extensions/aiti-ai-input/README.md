@@ -175,7 +175,7 @@ bash start-stream.sh status / stop / restart
    （🎤 按钮由顶级开关 `voice.enabled` 控制，未测好默认关——extman 打开后输入框上才出现按钮）
 3. extman 打开「语音识别服务器管理」（顶级 `toolbar.enabled`）→ 工具条 🎙️ → 弹窗内
    状态/启停/**模型下拉切换**/热词统计/用户热词增删改；启动后状态自动刷新到运行中；
-4. 多 workspace 切换（如 aiti-ai ↔ pi-prod）→ 弹窗「最终生效（当前 workspace）」随当前会话变化。
+4. 多 workspace 切换（如 pi-work ↔ pi-prod）→ 弹窗「最终生效（当前 workspace）」随当前会话变化。
 
 ## 手动测试（浏览器 console）
 

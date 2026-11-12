@@ -19,7 +19,7 @@ import websockets
 
 PORT_BASE = "http://127.0.0.1:3002/api/extensions/aiti-ai-input"
 WSS = "wss://pi.example.com:8443/aiti-ai-input/asr/ws/vad"
-CWD = "/home/pi/workspace/aiti-ai"
+CWD = "/home/pi/workspace/pi-work"
 WAVS = [
     "/home/pi/.pi/web/data/aiti-ai-input/recordings/vad_20260905_161442.wav",  # 5.3s
     "/home/pi/.pi/web/data/aiti-ai-input/recordings/vad_20260905_211933.wav",  # 4.4s 热词素材
