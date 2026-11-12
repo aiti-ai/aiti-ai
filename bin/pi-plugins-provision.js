@@ -204,6 +204,7 @@ async function provisionPiPlugins(options = {}) {
         // P1: already provided (user's entry, any version/local copy) — never touch.
         if (!existingIsNpm && owned[p.pkg]) delete owned[p.pkg]; // user switched to a local copy
         skipped.push(`${p.pkg} (already provided: ${existing})`);
+        log(`[pi-web] pi plugins: ${p.pkg} already provided by settings (${existing}) — skipping`);
       }
       continue;
     }

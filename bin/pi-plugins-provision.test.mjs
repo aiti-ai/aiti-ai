@@ -135,10 +135,11 @@ test("fingerprint match is a no-op", async () => {
 
 test("P1: an existing npm entry of the same name (any version) is left alone", async () => {
   const { hooks, calls } = makeHooks({ configured: ["npm:@aiti-ai/pi-models-combo@9.9.9"] });
-  const { res, ledger } = await run({ hooks });
+  const { res, ledger, lines } = await run({ hooks });
   assert.ok(!calls.added.includes("@aiti-ai/pi-models-combo@0.4.12"), "user's entry must not be touched");
   assert.ok(calls.added.includes("@aiti-ai/pi-git-trace@0.1.7"));
   assert.ok(res.skipped.some((s) => s.includes("pi-models-combo") && s.includes("already provided")));
+  assert.ok(lines.some((l) => l.includes("already provided by settings") && l.includes("pi-models-combo")));
   assert.ok(!ledger.owned["@aiti-ai/pi-models-combo"]);
   assert.deepEqual(calls.batch[0], ["@aiti-ai/pi-git-trace@0.1.7", "@aiti-ai/pi-web-bridge@0.1.0"]);
 });
@@ -147,9 +148,10 @@ test("P1: an existing local-path entry of the same package name is left alone", 
   const local = tmpDir();
   fs.writeFileSync(path.join(local, "package.json"), JSON.stringify({ name: "@aiti-ai/pi-models-combo" }));
   const { hooks, calls } = makeHooks({ configured: [local] });
-  const { res } = await run({ hooks });
+  const { res, lines } = await run({ hooks });
   assert.ok(!calls.added.includes("@aiti-ai/pi-models-combo@0.4.12"));
   assert.ok(res.skipped.some((s) => s.includes("already provided") && s.includes(local)));
+  assert.ok(lines.some((l) => l.includes("already provided by settings") && l.includes(local)));
 });
 
 test("P2: an owned entry removed by the user is not re-added", async () => {
