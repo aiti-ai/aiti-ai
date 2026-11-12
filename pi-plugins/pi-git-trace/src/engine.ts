@@ -138,7 +138,28 @@ function buildMessage(meta: CommitMeta, summary: string): string {
     `Repo-Root: ${meta.repoRoot}`,
     `User-Head: ${meta.userHead}`,
   ];
-  return body.join("\n");
+  return clampArgvString(body.join("\n"));
+}
+
+/** Single-argv hard cap for strings handed to execFile.
+ * Linux imposes a per-string kernel limit on execve arguments/env entries:
+ * MAX_ARG_STRLEN = 32 * PAGE_SIZE = 128 KiB. Exceeding it makes spawn fail with
+ * E2BIG regardless of the total argv budget (stack rlimit/4 ≈ 2 MB), which is
+ * exactly what happened on large workspaces: the _turn_flush checkpoint once
+ * inlined ~3k changed-file paths into one commit-tree -m message and the spawn
+ * died with E2BIG. 64 KiB leaves ample headroom for env + the other git args;
+ * truncation only trims the display layer — the full path list stays in the
+ * ledger / trace store objects. */
+export const MAX_MESSAGE_BYTES = 64 * 1024;
+
+export function clampArgvString(s: string): string {
+  const buf = Buffer.from(s, "utf8");
+  if (buf.length <= MAX_MESSAGE_BYTES) return s;
+  const marker = "\n…(truncated: single-argv kernel limit)";
+  let keep = MAX_MESSAGE_BYTES - Buffer.byteLength(marker, "utf8");
+  // Back off to a valid UTF-8 boundary (multi-byte sequences are at most 4 bytes).
+  while (keep > 0 && (buf[keep] & 0xc0) === 0x80) keep--;
+  return buf.subarray(0, keep).toString("utf8") + marker;
 }
 
 export class TraceEngine {
@@ -672,7 +693,9 @@ export class TraceEngine {
         if (pre.paths.length === 0) return; // 干净（相对会话分支，由 commitOn 判定）或全部被过滤
         // 安全预算：argv+env 总量受 execve ARG_MAX 限制（Linux ~2MB），
         // 预留 64KB 给 env+git 剩余参数，summary 上限 ~2MB
-        const MAX_SUMMARY_BYTES = 2 * 1024 * 1024 - 64 * 1024;
+        // Early cut so the huge join never materializes; buildMessage clamps
+        // again (single-argv kernel limit) as the authoritative backstop.
+        const MAX_SUMMARY_BYTES = 48 * 1024;
         let cutCount = pre.paths.length;
         {
           let bytes = 0;
