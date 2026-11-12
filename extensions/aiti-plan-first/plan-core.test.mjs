@@ -211,15 +211,47 @@ test("规则 A′：未绑定 + 已改文件 + 无非忽略 md → lead；冷却
   // 改的是 md（非忽略）→ suggest 优先于 lead
   const r5 = evalTurn({ sessionId: "s", newOps: [op(1, MD, ["docs/new.md"])], state: base(), cfg: CFG2, now: NOW });
   assert.equal(r5.event.kind, "suggest-md");
-  // 重触已建议过的 md → 属非忽略文件改动 → 弹 lead
+  // Re-touching an already-suggested md still counts as a non-ignored file change → lead
+  // (with candidates: suggestedMd NOT filtered, dismissed files get a second chance)
   // 种子由产品自己产出（suggestedMd 存的是 resolve 后的平台形态，测试不得钉 POSIX 串）
   const pre = evalTurn({ sessionId: "s", newOps: [op(1, MD, ["docs/old.md"])], state: base(), cfg: CFG2, now: NOW });
   const st6 = base({ suggestedMd: pre.next.suggestedMd });
   const r6 = evalTurn({ sessionId: "s", newOps: [op(1, MD, ["docs/old.md"], { M: 1 })], state: st6, cfg: CFG2, now: NOW });
   assert.equal(r6.event.kind, "lead");
+  assert.equal(r6.event.mdPaths?.length, 1);
+  assert.equal(N(r6.event.mdPaths[0].abs), "/repo/docs/old.md");
   // 只改忽略文件（CHANGELOG）→ 不计 → 不弹
   const r7 = evalTurn({ sessionId: "s", newOps: [op(1, MD, ["CHANGELOG.md"], { M: 1 })], state: base(), cfg: CFG2, now: NOW });
   assert.equal(r7.event, null);
+});
+
+test("lead carries candidates: this turn's likely plan docs listed (plan-like first / agent-instruction filtered / lastSuggest coupled)", () => {
+  const CFG2 = { ...CFG, leadRemind: true };
+  // suggest cooldown active + design.md already dismissed (suggestedMd memory) → fresh is
+  // down to plain mds, suppressed by the cooldown → both suggest-md branches miss → lead
+  // steps in and lists all likely plan candidates of this turn
+  const st = base({ cooldownUntil: NOW + 30 * 60 * 1000, suggestedMd: ["/repo/docs/design.md"] });
+  const r = evalTurn({
+    sessionId: "s",
+    newOps: [op(1, MD, ["src/a.ts"], { M: 1 }), op(2, MD, ["AGENTS.md"], { M: 1 }), op(3, MD, ["notes.md"], { A: 1 }), op(4, MD, ["docs/design.md"], { M: 1 })],
+    state: st, cfg: CFG2, now: NOW,
+  });
+  assert.equal(r.event.kind, "lead");
+  // Candidates = this turn's md minus isNonPlanMd (AGENTS.md excluded), suggestedMd NOT
+  // filtered; plan-like (design) first
+
+  assert.deepEqual(r.event.mdPaths.map((m) => N(m.abs)), ["/repo/docs/design.md", "/repo/notes.md"]);
+  // lastSuggest synced: still visible one-click bindable in /status candidates / dropdown after close
+
+  assert.deepEqual((r.next.lastSuggest || []).map((m) => N(m.abs)), ["/repo/docs/design.md", "/repo/notes.md"]);
+  // suggestedMd untouched: showing is not "asked", later turns keep suggest-md asking rights
+
+  assert.ok(!hasPath(r.next.suggestedMd, "/repo/notes.md"));
+  // Pure code / agent-instruction mds only → empty candidates (client renders no list)
+
+  const r2 = evalTurn({ sessionId: "s", newOps: [op(1, MD, ["AGENTS.md"], { M: 1 })], state: base(), cfg: CFG2, now: NOW });
+  assert.equal(r2.event.kind, "lead");
+  assert.deepEqual(r2.event.mdPaths, []);
 });
 
 test("方案命名优先：design/plan/方案 绕过冷却与去重，新生成即弹；同文件不重复问", () => {
