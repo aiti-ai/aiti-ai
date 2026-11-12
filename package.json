@@ -42,6 +42,7 @@
     "next.config.ts",
     "patches",
     "package.json",
+    "pi-plugins.manifest.json",
     "!extensions/_shared",
     "!extensions/_shared/**",
     "package-lock.json",
@@ -58,7 +59,7 @@
     "lint": "eslint .",
     "test:terminal": "node e2e/terminal.mjs",
     "test:e2e": "node e2e/run.mjs",
-    "test": "node --experimental-strip-types --test --test-force-exit \"app/**/*.test.mjs\" \"components/**/*.test.mjs\" \"hooks/**/*.test.mjs\" \"lib/**/*.test.mjs\" \"public/**/*.test.mjs\" \"scripts/**/*.test.mjs\"",
+    "test": "node --experimental-strip-types --test --test-force-exit \"app/**/*.test.mjs\" \"bin/**/*.test.mjs\" \"components/**/*.test.mjs\" \"hooks/**/*.test.mjs\" \"lib/**/*.test.mjs\" \"public/**/*.test.mjs\" \"scripts/**/*.test.mjs\"",
     "release": "npm version patch --no-git-tag-version && npm run build && npm publish --access public",
     "prepack": "node tools/materialize-ext-assets.mjs && node scripts/sanitize-npm-package.mjs"
   },

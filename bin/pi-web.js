@@ -49,7 +49,10 @@ if (launchOptions.help) {
 }
 
 if (launchOptions.command === "start") {
-  startServer(launchOptions);
+  startServer(launchOptions).catch((error) => {
+    console.error(error && error.stack ? error.stack : error);
+    process.exitCode = 1;
+  });
 } else {
   runCommand(launchOptions).then(
     exitWhenIdle,
@@ -70,7 +73,7 @@ function exitWhenIdle(code) {
   setTimeout(() => process.exit(code), 2_000).unref();
 }
 
-function startServer({ port, hostname, openBrowser }) {
+async function startServer({ port, hostname, openBrowser }) {
 
   const pkgDir = path.join(__dirname, "..");
   const nextDir = path.join(pkgDir, ".next");
@@ -90,6 +93,24 @@ function startServer({ port, hostname, openBrowser }) {
       }
     } catch (error) {
       console.warn(`[pi-web] bundled 扩展依赖 reconcile 失败（不影响启动；缺失依赖的扩展将降级）: ${error.message}`);
+    }
+  }
+
+  // Bundled pi plugins provision (v4): register the first-party
+  // pi plugins in the user's pi settings via the official package manager so the
+  // same install is shared by the pi TUI, pi-web RPC sessions and spawned pi CLI
+  // sessions. npm runs only on first startup or when the manifest pins change;
+  // every other startup is a fingerprint no-op. Failures never block startup.
+  if (process.env.AITI_SKIP_PI_PLUGINS !== "1") {
+    try {
+      const t0 = Date.now();
+      const { provisionPiPlugins } = require("./pi-plugins-provision");
+      const res = await provisionPiPlugins({ pkgDir });
+      if (res && res.changed) {
+        console.log(`[pi-web] pi plugins provisioned (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+      }
+    } catch (error) {
+      console.warn(`[pi-web] pi plugins provision failed (non-blocking; declarations and installs self-heal on the next start): ${error.message}`);
     }
   }
 

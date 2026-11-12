@@ -145,6 +145,32 @@ npx @aiti-ai/pi-web@latest
 - **File access boundary**: the file browser is limited to working directories selected in Pi Web and project or session roots it already knows about; it is not a general filesystem browser.
 - **Git worktrees**: see [Worktrees in Pi Web](https://github.com/aiti-ai/aiti-ai/blob/main/docs/worktrees.md) for switcher visibility, worktree creation, and removal behavior.
 
+### Bundled pi plugins
+
+On first startup, Pi Web registers three first-party pi plugins in your pi settings
+(`~/.pi/agent/settings.json` → `packages`, pinned versions from `pi-plugins.manifest.json`)
+and installs them into pi's managed npm directory (`~/.pi/agent/npm`) via pi's own package
+manager:
+
+- `@aiti-ai/pi-models-combo` — model aggregation and multi-key rotation
+- `@aiti-ai/pi-git-trace` — AI change tracing in git
+- `@aiti-ai/pi-web-bridge` — pi ↔ aiti-bridge connectivity
+
+Because the declarations live in your pi settings, the same install is loaded by the pi
+TUI, Pi Web sessions and spawned pi CLI sessions alike — one install, every surface.
+Subsequent startups skip npm entirely (a fingerprint ledger makes it a no-op); npm runs
+again only when a Pi Web upgrade changes the pinned versions. The install streams progress
+to the terminal and never blocks startup: if it fails (offline, registry unreachable) the
+declarations persist and pi retries the install on its next start.
+
+The provisioner never touches package entries it did not add (an entry resolving to the
+same package name is left alone, in any version or local-path form), and an entry you
+removed via `pi remove` is not re-added until the next Pi Web upgrade. To opt out
+entirely, set `AITI_SKIP_PI_PLUGINS=1`; `AITI_PI_PLUGINS_REGISTRY` overrides the npm
+registry for the installs. `@aiti-ai/pi-plan-sandbox` is in development and ships in the
+manifest with `auto: false` — install it manually with
+`pi install npm:@aiti-ai/pi-plan-sandbox@0.1.7` if you want to try it.
+
 ### Downstream Session Context Menu
 
 Electron wrappers and other downstream integrations can provide a session-row
