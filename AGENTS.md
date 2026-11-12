@@ -499,8 +499,10 @@ configuration — see the internal workspace docs):
   configs, `~/.pi/service-tunnels`, …), never in the repo.
 - This applies to AGENTS.md itself — these rules must not name internal domains either.
 - The discipline also covers the rules/tools themselves (settled by the 2026-11-12 audit): sensitive patterns and
-  private-registry URLs in audit/redaction scripts such as release-audit and publish-all are assembled at runtime or
-  injected via env (`AITI_STAGING_REGISTRY`); source must never carry them as literals.
+  private-registry URLs live in the machine-local `~/.aiti/release-redact.json` (CI injects the same JSON via the
+  `AITI_RELEASE_REDACT` secret/env) and are loaded at runtime by release-audit, publish-all, the prepack scrubber
+  and the pack self-check. Never commit them as source literals — and never as fragmented/obfuscated forms either:
+  obfuscation is not redaction.
 - Published npm tarballs must not carry build-machine absolute paths: pi-web relies on the prepack scrubber
   (`scripts/sanitize-npm-package.mjs`) + `files` excluding `.next/trace|trace-build|diagnostics` + the pack self-check
   as a backstop — do not bypass them when changing the release flow.

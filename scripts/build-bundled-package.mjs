@@ -146,16 +146,32 @@ for (const [k, v] of Object.entries(checks)) {
   if (bad) process.exitCode = 1;
 }
 
-// 6) 隐私终检：包内不得残留构建机家目录路径——prepack 清洗脚本的兜底校验（字面量碎片化，本仓公开）
-const windHits = execSync(
-  `tar xzOf ${JSON.stringify(outPath)} | grep -c ${JSON.stringify(["home/wi", "nd"].join(""))} || true`,
-  { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 },
-).trim();
-if (windHits !== "0") {
-  console.error(`[pack] ✗ 隐私终检失败：tarball 内仍有 ${windHits} 处构建机家目录路径（prepack 清洗未生效？）`);
-  process.exitCode = 1;
-} else {
-  console.log(`  ✓ 构建机路径残留（应 0）: 0`);
+// 6) 隐私终检：包内不得残留本机敏感路径——prepack 清洗的兜底校验
+//    检索串来自 ~/.aiti/release-redact.json 的 treeGrep（CI 用 env AITI_RELEASE_REDACT）；未配置则跳过并告警
+{
+  let priv;
+  const raw = process.env.AITI_RELEASE_REDACT;
+  if (raw) { try { priv = JSON.parse(raw); } catch {} }
+  if (!priv) { try { priv = JSON.parse(readFileSync(join(homedir(), ".aiti", "release-redact.json"), "utf8")); } catch {} }
+  const greps = priv?.treeGrep ?? [];
+  if (!greps.length) {
+    console.log(`  ⚠ 隐私终检跳过（未配置 ~/.aiti/release-redact.json 的 treeGrep）`);
+  } else {
+    let total = 0;
+    for (const g of greps) {
+      const hits = execSync(
+        `tar xzOf ${JSON.stringify(outPath)} | grep -c ${JSON.stringify(g)} || true`,
+        { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 },
+      ).trim();
+      total += Number(hits) || 0;
+    }
+    if (total !== 0) {
+      console.error(`[pack] ✗ 隐私终检失败：tarball 内仍有 ${total} 处本机敏感路径（prepack 清洗未生效？）`);
+      process.exitCode = 1;
+    } else {
+      console.log(`  ✓ 本机敏感路径残留（应 0）: 0`);
+    }
+  }
 }
 
 if (!KEEP) {

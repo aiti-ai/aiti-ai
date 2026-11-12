@@ -15,6 +15,7 @@
 // excluded from the package via package.json `files` and needs no rewriting here.
 
 import { readdirSync, readFileSync, writeFileSync, statSync, existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 const root = process.cwd();
@@ -29,14 +30,25 @@ const TEXT_EXT = new Set([".js", ".mjs", ".cjs", ".json", ".ts", ".tsx", ".map",
 const TEXT_NAME = new Set(["trace", "trace-build", "BUILD_ID"]);
 const MAX_BYTES = 32 * 1024 * 1024;
 
-// Order matters: the exact repo-root path first, then the generic dev-home fallbacks.
+// Order matters: structural rules built-in (repo root / staging / generic homes), machine-specific values
+// loaded from ~/.aiti/release-redact.json (CI: env AITI_RELEASE_REDACT). Missing config → structural rules only.
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function loadPrivConfig() {
+  const raw = process.env.AITI_RELEASE_REDACT;
+  if (raw) {
+    try { return JSON.parse(raw); } catch { console.error("[sanitize] AITI_RELEASE_REDACT 不是合法 JSON——忽略"); }
+  }
+  try { return JSON.parse(readFileSync(join(homedir(), ".aiti", "release-redact.json"), "utf8")); }
+  catch { return null; }
+}
+const PRIV = loadPrivConfig();
+if (!PRIV) console.warn("[sanitize] 未找到 ~/.aiti/release-redact.json——机器特定路径规则为空（结构性规则仍生效）");
 const replacements = [
   { re: new RegExp(esc(root), "g"), to: "/home/pi/workspace/aiti-ai" },
-  { re: new RegExp("/home/wi" + "nd", "g"), to: "/home/pi" }, // fragment-literal: this repo is public
   { re: /\/home\/runner/g, to: "/home/pi" },
   { re: /\/root\/workspace/g, to: "/home/pi/workspace" },
   { re: /\/tmp\/aiti-pack-[^"'`)\s,;:)]*/g, to: "/home/pi/workspace/aiti-ai" },
+  ...(PRIV?.redact ?? []).map((r) => ({ re: new RegExp(r.find, r.flags || "g"), to: r.replace })),
 ];
 
 let scanned = 0;
