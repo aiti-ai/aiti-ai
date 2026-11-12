@@ -68,12 +68,20 @@ if (!existsSync(join(stageDir, "node_modules", "next", "package.json"))) {
 run("npm run build", stageDir, "next build（.next）");
 
 // 3) 扩展 dist：有真实 build:client 的逐个 install + build（跳过 "true" 占位）
+// files 白名单排除的扩展（demo 等，不进 tgz）直接跳过：不白装依赖，声明对照也不检查
+const excludedExts = new Set(
+  (JSON.parse(readFileSync(join(stageDir, "package.json"), "utf8")).files || [])
+    .filter((f) => f.startsWith("!extensions/"))
+    .map((f) => f.replace("!extensions/", "").split("/")[0])
+    .filter((n) => n && n !== "node_modules" && n !== "_shared"),
+);
 const extRoot = join(stageDir, "extensions");
 const exts = readdirSync(extRoot, { withFileTypes: true })
   .filter((e) => e.isDirectory())
   .map((e) => e.name);
 let built = 0, skipped = 0, failed = [];
 for (const ext of exts) {
+  if (excludedExts.has(ext)) { skipped++; continue; }
   const pjPath = join(extRoot, ext, "package.json");
   if (!existsSync(pjPath)) continue;
   let p;
@@ -151,6 +159,7 @@ for (const [k, v] of Object.entries(checks)) {
 {
   const missing = [];
   for (const ext of exts) {
+    if (excludedExts.has(ext)) continue; // files 白名单排除的扩展（demo 等）不在 tgz 内，不检查
     const idxPath = join(extRoot, ext, "index.ts");
     if (!existsSync(idxPath)) continue;
     const src = readFileSync(idxPath, "utf8");
