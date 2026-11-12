@@ -4,5 +4,8 @@
   "private": true,
   "type": "module",
   "description": "pi-web 扩展：追加系统提示词管理（全局 ~/.pi/agent/APPEND_SYSTEM.md + 项目 <cwd>/.pi/APPEND_SYSTEM.md 在线编辑）",
-  "aitiExtProtocol": "1.0"
+  "aitiExtProtocol": "1.0",
+  "scripts": {
+    "build:client": "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});fs.copyFileSync('client/src/aiti-append-system-client.mjs','dist/aiti-append-system-client.mjs')\""
+  }
 }
