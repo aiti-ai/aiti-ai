@@ -824,7 +824,7 @@ function FallbackQueueRow({ kind, text, hasImages }: { kind: "steer" | "follow-u
           color: kind === "steer" ? "var(--accent)" : "var(--text-dim)",
         }}
       >
-        {kind}
+        {kind === "steer" ? t("chat.steer") : t("chat.followUp")}
       </span>
       <QueueAttachIcons hasImages={hasImages} imageTitle={t("chat.queueHasImages")} fileTitle={t("chat.queueHasFiles")} />
       <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{text}</span>
