@@ -2,7 +2,7 @@
 /**
  * aiti-ui-env · 部署到 ~/.pi/web/extensions/ 和 ~/.pi/web-dev/extensions/
  *
- * 源码在 aiti-ai pi-web-ext/aiti-ui-env/（权威源码位置）；
+ * 源码在 pi-work pi-web-ext/aiti-ui-env/（权威源码位置）；
  * 部署 = 整目录同步到两个扩展根 + git 提交部署状态。
  * 用法：node tools/deploy.mjs
  * 生效：POST /api/extensions/reload（或重启 pi-web）；client no-store 刷新页面即新
@@ -80,7 +80,7 @@ for (const [srcName, dstName] of [
 const GRDPWASM_SRC = [
   process.env.UI_ENV_GRDPWASM_DIR || "",
   resolve(homedir(), "grdpwasm", "static"),         // 标准安装位置
-  resolve("C:/workspace/grdpwasm/static"),           // Windows 仓库盘常见位置
+  resolve("D:/workspace/grdpwasm/static"),           // Windows 仓库盘常见位置
   resolve(homedir(), "workspace", "grdpwasm", "static"),  // 源码目录
   resolve("/opt", "grdpwasm", "static"),
   resolve("/opt", "grdpwasm"),
