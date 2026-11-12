@@ -5,7 +5,8 @@
   "main": "index.ts",
   "scripts": {
     "build": "vite build --config vite.config.ts",
-    "deploy": "node tools/deploy.mjs"
+    "deploy": "node tools/deploy.mjs",
+    "build:client": "vite build --config vite.config.ts"
   },
   "keywords": [],
   "author": "",
@@ -20,7 +21,10 @@
     "rxjs": "^7.8.1"
   },
   "devDependencies": {
-    "vite": "^6.4.3"
+    "vite": "^6.4.3",
+    "@univerjs/core": "0.25.1",
+    "@univerjs/preset-sheets-core": "0.25.1",
+    "@univerjs/themes": "0.25.1"
   },
   "aitiExtProtocol": "1.0",
   "contentHash": "39890fa66397f528",

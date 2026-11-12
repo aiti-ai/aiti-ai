@@ -5,7 +5,8 @@
   "soul": "主线程一卡，读秒就停；流畅度一分，忙闲立见——挂在工作页角落，收工点开看平均。",
   "scripts": {
     "build": "node tools/build.mjs",
-    "deploy": "node tools/deploy.mjs"
+    "deploy": "node tools/deploy.mjs",
+    "build:client": "node tools/build.mjs"
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
@@ -18,5 +19,8 @@
   "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
     "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.2"
   }
 }

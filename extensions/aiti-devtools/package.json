@@ -9,5 +9,11 @@
   "aitiExtProtocol": "1.0",
   "dependencies": {
     "@aiti-ai/aiti-bridge": "^0.2.4"
+  },
+  "scripts": {
+    "build:client": "node tools/build-client.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.2"
   }
 }

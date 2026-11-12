@@ -146,6 +146,30 @@ for (const [k, v] of Object.entries(checks)) {
   if (bad) process.exitCode = 1;
 }
 
+// 5.5) client 声明 ↔ 产物对照：index.ts 声明 client:"dist/…" 的扩展，tgz 内必须存在对应文件。
+//（防「package.json 缺 build:client → 打包跳过 → 装机后 client 404」这类缺口再发）
+{
+  const missing = [];
+  for (const ext of exts) {
+    const idxPath = join(extRoot, ext, "index.ts");
+    if (!existsSync(idxPath)) continue;
+    const src = readFileSync(idxPath, "utf8");
+    for (const m of src.matchAll(/(?<![\w$])client\s*:\s*"([^"]+)"/g)) {
+      const target = m[1];
+      if (!target.startsWith("dist/")) continue;
+      const re = new RegExp(`^package/extensions/${ext}/${target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m");
+      if (!re.test(listing)) missing.push(`${ext}: ${target}`);
+    }
+  }
+  if (missing.length) {
+    console.error(`\n[pack] ✗ client 声明缺产物（${missing.length} 条，声明了 client:"dist/…" 但 tgz 内无此文件）:`);
+    for (const m of missing) console.error("  - " + m);
+    process.exitCode = 1;
+  } else {
+    console.log("\n[pack] ✓ client 声明 ↔ 产物对照全通过");
+  }
+}
+
 // 6) 隐私终检：包内不得残留本机敏感路径——prepack 清洗的兜底校验
 //    检索串来自 ~/.aiti/release-redact.json 的 treeGrep（CI 用 env AITI_RELEASE_REDACT）；未配置则跳过并告警
 {

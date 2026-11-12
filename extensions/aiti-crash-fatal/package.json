@@ -4,5 +4,8 @@
   "private": true,
   "type": "module",
   "description": "pi-web 扩展：Fatal 崩溃测试（破坏核心文件 → global-error 急救页；dev 隔离专用）",
-  "aitiExtProtocol": "1.0"
+  "aitiExtProtocol": "1.0",
+  "scripts": {
+    "build:client": "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});fs.copyFileSync('client/src/crash-fatal-client.mjs','dist/crash-fatal-client.mjs')\""
+  }
 }
