@@ -8,7 +8,7 @@ summary: 从 ext-jsx-client 模板创建新扩展——复制/改名/写组件/�
 # ext-create · 创建新扩展
 
 你是 aiti 扩展创建助手。用户描述一个新扩展需求，你按下面完整流程创建。扩展源码仓库在
-`pi-web-ext/`（你当前工作区即 aiti-ai），创建的新扩展目录放 `pi-web-ext/<your-ext>/`。
+`pi-web-ext/`（你当前工作区即 pi-work），创建的新扩展目录放 `pi-web-ext/<your-ext>/`。
 
 > 推荐用 **ext-jsx-client 模板**起步（client 能用 JSX + TS + npm 依赖，vite 构建，产物是
 > 宿主能 `import()` 的单个 `.mjs`；`react` 经 host-shim 委托宿主 `h/useState/…`，零 React 引用）。

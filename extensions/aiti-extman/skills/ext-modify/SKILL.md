@@ -14,7 +14,7 @@ summary: 定位扩展源码→改 entry/client/server/i18n/skills→重建 JSX c
 
 1. **已装扩展状态**：`GET {basePath}/api/extensions/aiti-extman/status` →
    目标扩展的 `dir`（部署目录，**只读参考**——别直接改部署产物，改了 deploy 会被覆盖）、`loaded`、`clientState`。
-2. **权威源码**：`pi-web-ext/<id>/`（你当前工作区 aiti-ai 下）。改这里 → deploy → 同步到部署根。
+2. **权威源码**：`pi-web-ext/<id>/`（你当前工作区 pi-work 下）。改这里 → deploy → 同步到部署根。
    - 改 `examples/dbg-widget/src/**`（aiti-devtools launcher）**必须 deploy 才生效**（见该扩展 `tools/deploy-ext.mjs`）。
 3. **原理/契约**：`docs/aiti-ext-jsx-vite-plan.md`（JSX client）、`docs/aiti-ai-helper-plan.md`（skills 契约 §3.2/§4.2）。
 4. **可参考同类扩展**：`pi-web-ext/demo/`（JSX + skills 双演示）、`pi-web-ext/aiti-cmd/`（命令面板 + skills）、`pi-web-ext/aiti-configs/`（AI 自管理 + 崩溃自检）。
