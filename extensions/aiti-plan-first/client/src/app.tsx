@@ -842,6 +842,15 @@ function MainView(props: { status: any; remind: any; onBind: (abs: string, rel?:
           <>
             <RemindBanner tone="warn" icon="⚠" title={t("pf.leadTitle")} />
             <div style={dimStyle}>{t("pf.leadHow")}</div>
+            {/* Likely plan docs touched this turn (≤5, plan-like names first), rendered
+                same as suggest-md: one-click bind fixes it directly without going through
+                the inserted prompt first; file names open the doc for inspection */}
+            {ev.mdPaths?.length ? (
+              <>
+                <div style={{ ...dimStyle, marginTop: 2 }}>{t("pf.candidatesCap")}</div>
+                <CandidateList items={ev.mdPaths} onBind={onBind} onOpen={onOpenMd} />
+              </>
+            ) : null}
             <div style={rowStyle}>
               <Btn kind="pri" onClick={onSlogan} title={t("pf.sloganTip")}>{t("pf.leadPrompt")}</Btn>
               <Btn onClick={onPick}>{t("pf.choose")}</Btn>

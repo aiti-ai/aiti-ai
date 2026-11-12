@@ -50,7 +50,7 @@ export interface EvalCfg {
 
 export type PlanEvent =
   | { kind: "suggest-md"; sessionId: string; mdPaths: { abs: string; rel: string; root: string }[] }
-  | { kind: "lead"; sessionId: string }
+  | { kind: "lead"; sessionId: string; mdPaths?: { abs: string; rel: string; root: string }[] }
   | { kind: "stale"; sessionId: string; files: number; ops: number; sample: string[]; plan: string; planRel: string | null }
   | { kind: "followed"; sessionId: string };
 
@@ -322,7 +322,20 @@ export function evalTurn(input: EvalInput): EvalResult {
       // 实际有修改才算“开始改代码”（调研/查询修改 0 文件不触发 lead）
       if (touched.size >= 1 && countFiles(pending) > 0) {
         state.leadCooldownUntil = now + SUGGEST_COOLDOWN_MS;
-        return finish({ kind: "lead", sessionId });
+        // Lead events carry candidates: likely plan docs touched this turn are listed for
+        // one-click binding — when suggest-md is suppressed (suggestedMd memory after "not
+        // now", or its cooldown), lead is the only channel that shows them. Scope = md
+        // (already ignore-filtered) minus isNonPlanMd (agent-instruction/boilerplate files
+        // must not mislead); suggestedMd is NOT filtered (dismissed files get a second
+        // chance; lead's own 30min cooldown prevents nagging); plan-like names first, cap 5.
+        // Syncs state.lastSuggest (/status candidates coupling: still visible in the
+        // dropdown after the popup closes); does NOT write suggestedMd — showing here is
+        // not "asked", later turns keep their suggest-md asking rights.
+        const leadCands = md.filter((p) => !isNonPlanMd(p.rel, cfg.mdIgnores));
+        leadCands.sort((a, b) => Number(isPlanLikeMd(b.rel)) - Number(isPlanLikeMd(a.rel)));
+        const candidates = leadCands.slice(0, 5);
+        if (candidates.length) state.lastSuggest = candidates;
+        return finish({ kind: "lead", sessionId, mdPaths: candidates });
       }
     }
     return finish(null);
