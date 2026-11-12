@@ -14,7 +14,7 @@
 //   node tools/publish-all.mjs --adopt   # 只做改名/去 private 预处理，不发布（private 包不动）
 
 import { readFileSync, writeFileSync, existsSync, readdirSync, mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { join, basename, dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execSync, spawnSync } from "node:child_process";
@@ -91,8 +91,19 @@ const TARGET = (() => {
   if (["staging", "official", "aliyun"].includes(env)) return env;
   return "official";
 })();
+// ---- 本机私有配置（staging 私仓 URL 等；~/.aiti/release-redact.json，CI 用 env AITI_RELEASE_REDACT 注入）----
+function loadPrivConfig() {
+  const raw = process.env.AITI_RELEASE_REDACT;
+  if (raw) {
+    try { return JSON.parse(raw); } catch { console.error("[publish-all] AITI_RELEASE_REDACT 不是合法 JSON——忽略"); }
+  }
+  try { return JSON.parse(readFileSync(join(homedir(), ".aiti", "release-redact.json"), "utf8")); }
+  catch { return null; }
+}
+const PRIV = loadPrivConfig();
+if (!PRIV) console.warn("[publish-all] 未找到 ~/.aiti/release-redact.json——staging 私仓回退官方源/env");
 const REGISTRIES = {
-  staging: process.env.AITI_STAGING_REGISTRY || "https://registry.npmjs.org/", // staging registry is internal — inject via env
+  staging: PRIV?.stagingRegistry || process.env.AITI_STAGING_REGISTRY || "https://registry.npmjs.org/", // staging 私仓从本机 ~/.aiti/release-redact.json 加载（CI 用 env AITI_RELEASE_REDACT）
   official: "https://registry.npmjs.org/",
   // 阿里云制品库（正式仓备选）：独立凭据 env（ALIYUN_NPM_USERNAME/ALIYUN_NPM_PASSWORD），
   // publish 时生成临时 userconfig 注入；私有源可覆盖重发，不跑 official 门禁
