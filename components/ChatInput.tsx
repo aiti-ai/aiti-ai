@@ -162,6 +162,10 @@ interface Props {
   isStreaming: boolean;
   /** Text-only composer without the session controls or outer spacing. */
   compact?: boolean;
+  /** Welcome-page mode: the chat minimap is not rendered, so the fieldset drops the
+   *  36px right inset that centers the inner 820px column on the content centerline
+   *  (same left edge as the widget cards / selectors). Session view keeps the inset. */
+  centerColumn?: boolean;
   model?: { provider: string; modelId: string } | null;
   isAutoModelSelection?: boolean;
   modelNames?: Record<string, string>;
@@ -1447,6 +1451,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   onDismissCompactError,
   savedDefaultThinkingLevel, onSetDefaultThinkingLevel,
   compact = false,
+  centerColumn = false,
 }: Props, ref) {
   const { t } = useI18n();
   // Context urgency (lib/context-urgency.ts is the single source): colors the
@@ -3832,7 +3837,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
         border: 0,
         background: "transparent",
         padding: compact ? 0 : "0 16px 8px",
-        paddingRight: compact ? 0 : isMobile || isCompact ? 16 : 52, // desktop: 16px base + 36px for ChatMinimap alignment
+        paddingRight: compact ? 0 : isMobile || isCompact || centerColumn ? 16 : 52, // desktop: 16px base + 36px for ChatMinimap alignment
         opacity: builtinCommandPending ? 0.5 : 1,
         transition: "opacity 0.15s",
       }}
