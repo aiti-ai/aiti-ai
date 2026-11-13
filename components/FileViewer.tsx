@@ -1,6 +1,6 @@
 "use client";
 
-import { lazy, Suspense, useEffect, useState, useRef, useCallback, useMemo, useSyncExternalStore, type CSSProperties, type MouseEvent } from "react";
+import { lazy, memo, Suspense, useEffect, useState, useRef, useCallback, useMemo, useSyncExternalStore, type CSSProperties, type MouseEvent } from "react";
 import { apiUrl } from "@/lib/base-path";
 
 // Subpath imports (not via the main entry): the main entry re-exports the full Prism
@@ -26,7 +26,7 @@ import {
 } from "@/lib/file-types";
 import { usePrismLanguages } from "@/hooks/usePrismLanguages";
 import { encodeFilePathForApi, getFileDirectory, getFileName, getRelativeFilePath } from "@/lib/file-paths";
-import { fileVersion, fileVersionChanged } from "@/lib/file-version";
+import { FILE_WATCH_HEARTBEAT_MS, fileVersion, fileVersionChanged } from "@/lib/file-version";
 import { injectSandboxedHtmlPolyfill } from "@/lib/html-sandbox-polyfill";
 import { HIDDEN_PAGE_GRACE_MS, usePageHiddenFor } from "@/hooks/usePageHidden";
 import { pageId, trackEventSource } from "@/lib/page-debug";
@@ -359,7 +359,76 @@ function diffLines(patch: string): Array<DiffLine | DiffGap> {
   return files.flatMap(unifiedDiffLines);
 }
 
-function DiffView({ patch, wrapLines }: { patch: string; wrapLines: boolean }) {
+/**
+ * One diff line's code through the same Prism pipeline the source view uses
+ * (upstream v0.16.0's per-line highlighter). Memoized per line: a re-render of
+ * the view for any other reason reuses each line's tokens instead of running
+ * Prism on every line again. Plain text until Prism languages are loaded.
+ */
+const DiffLineCode = memo(function DiffLineCode({
+  text,
+  language,
+  prismReady,
+  isDark,
+  wrapLines,
+}: {
+  text: string;
+  language: string;
+  prismReady: boolean;
+  isDark: boolean;
+  wrapLines: boolean;
+}) {
+  if (!prismReady || language === "text" || !text) {
+    return <>{text || "\u00a0"}</>;
+  }
+  return (
+    <Suspense fallback={<>{text}</>}>
+      <SyntaxHighlighter
+        language={language}
+        style={isDark ? fileViewerDarkTheme : vs}
+        showLineNumbers={false}
+        wrapLongLines={wrapLines}
+        PreTag="span"
+        CodeTag="span"
+        customStyle={{
+          margin: 0,
+          padding: 0,
+          border: 0,
+          backgroundColor: "transparent",
+          display: "inline",
+          overflow: "visible",
+          fontFamily: "inherit",
+          fontSize: "inherit",
+          lineHeight: "inherit",
+          whiteSpace: "inherit",
+          overflowWrap: "inherit",
+        }}
+        codeTagProps={{
+          style: {
+            fontFamily: "var(--font-mono)",
+            fontWeight: "var(--font-mono-weight)",
+          },
+        }}
+      >
+        {text}
+      </SyntaxHighlighter>
+    </Suspense>
+  );
+});
+
+function DiffView({
+  patch,
+  wrapLines,
+  language = "text",
+  prismReady = false,
+  isDark = false,
+}: {
+  patch: string;
+  wrapLines: boolean;
+  language?: string;
+  prismReady?: boolean;
+  isDark?: boolean;
+}) {
   const { t } = useI18n();
   const diff = diffLines(patch);
 
@@ -385,6 +454,10 @@ function DiffView({ patch, wrapLines }: { patch: string; wrapLines: boolean }) {
   const lineNumberStyle = visible.size <= SOURCE_HIGHLIGHT_MAX_LINES
     ? FILE_PINNED_LINE_NUMBER_STYLE
     : FILE_LINE_NUMBER_STYLE;
+  // Highlight code tokens on every visible line once Prism languages are
+  // loaded, but fall back to plain text for oversized diffs (same ceiling as
+  // the source view, where the highlighter is replaced by a row renderer).
+  const highlight = language !== "text" && prismReady && visible.size <= SOURCE_HIGHLIGHT_MAX_LINES;
 
   // Collapsed lines and the lines the patch leaves out between hunks share one
   // marker; its count is unknown when a gap's is.
@@ -495,7 +568,7 @@ function DiffView({ patch, wrapLines }: { patch: string; wrapLines: boolean }) {
                   color: "var(--text)",
                 }}
               >
-                {line.text || "\u00a0"}
+                <DiffLineCode text={line.text} language={language} prismReady={highlight} isDark={isDark} wrapLines={wrapLines} />
               </span>
             </div>
           );
@@ -504,6 +577,47 @@ function DiffView({ patch, wrapLines }: { patch: string; wrapLines: boolean }) {
       })}
     </div>
   );
+}
+
+const MemoizedDiffView = memo(DiffView);
+
+/**
+ * Watch-recovery supervisor (upstream v0.16.0's useWatchRecovery, ported onto
+ * the fork's ticket-URL watch). A direct per-file EventSource has no other
+ * reconnection: a dropped SSE (phone off the network, an idle cut, a server
+ * restart) left the viewer stale until a manual refresh. The watch route's
+ * heartbeats ("connected"/"change"/"ping", one every FILE_WATCH_HEARTBEAT_MS)
+ * keep the supervision alive; silence past 2.5 heartbeats, or an error that
+ * closed the source, reopens it with an exponential backoff (capped at one
+ * heartbeat) by bumping `attempt`, which re-runs the watch effect and builds a
+ * fresh EventSource. The page's bus watch path is not supervised here: the
+ * event bus reconnects itself and reports so through its own status callback.
+ */
+function useWatchRecovery(): [number, (es: EventSource) => () => void] {
+  const [attempt, setAttempt] = useState(0);
+  const failures = useRef(0);
+  const superviseWatch = useCallback((es: EventSource) => {
+    let stale: ReturnType<typeof setTimeout> | undefined;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const reopen = () => {
+      clearTimeout(stale);
+      es.close();
+      retry ??= setTimeout(
+        () => setAttempt((n) => n + 1),
+        Math.min(1000 * 2 ** failures.current++, FILE_WATCH_HEARTBEAT_MS),
+      );
+    };
+    const alive = () => {
+      clearTimeout(stale);
+      stale = setTimeout(reopen, FILE_WATCH_HEARTBEAT_MS * 2.5);
+    };
+    es.addEventListener("connected", () => { failures.current = 0; });
+    for (const name of ["connected", "change", "ping"]) es.addEventListener(name, alive);
+    es.addEventListener("error", () => { if (es.readyState === EventSource.CLOSED) reopen(); });
+    alive();
+    return () => { clearTimeout(stale); clearTimeout(retry); };
+  }, []);
+  return [attempt, superviseWatch];
 }
 
 function ImageViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Props) {
@@ -530,6 +644,8 @@ function ImageViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
     setWatching(false);
     shownVersionRef.current = null;
   }, [filePath, sourceSessionId]);
+
+  const [watchAttempt, superviseWatch] = useWatchRecovery();
 
   useEffect(() => {
     setWatching(false);
@@ -567,6 +683,7 @@ function ImageViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
     };
 
     let es: EventSource | null = null;
+    let stopSupervisingWatch: (() => void) | null = null;
       buildTicketUrl(filePath, "watch").then((watchUrl) => {
         if (!active) return;
         const busWatch = openFileWatchBus(filePath);
@@ -578,6 +695,7 @@ function ImageViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
         }
         es = new EventSource(watchUrl);
         esRef.current = es;
+        stopSupervisingWatch = superviseWatch(es);
 
       es.addEventListener("connected", () => {
         setWatching(true);
@@ -604,10 +722,11 @@ function ImageViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
 
     return () => {
       active = false;
+      stopSupervisingWatch?.();
       if (es) es.close();
       if (esRef.current === es) esRef.current = null;
     };
-  }, [filePath, sourceSessionId, watchEnabled, connStarved, connEpoch]);
+  }, [filePath, sourceSessionId, watchEnabled, connStarved, connEpoch, watchAttempt]);
 
   const src = useTicketUrl(filePath, "read", bust ? { v: bust } : {});
 
@@ -727,6 +846,8 @@ function AudioViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
     shownVersionRef.current = null;
   }, [filePath, sourceSessionId]);
 
+  const [watchAttempt, superviseWatch] = useWatchRecovery();
+
   useEffect(() => {
     setWatching(false);
 
@@ -763,6 +884,7 @@ function AudioViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
     };
 
     let es: EventSource | null = null;
+    let stopSupervisingWatch: (() => void) | null = null;
       buildTicketUrl(filePath, "watch").then((watchUrl) => {
         if (!active) return;
         const busWatch = openFileWatchBus(filePath);
@@ -774,6 +896,7 @@ function AudioViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
         }
         es = new EventSource(watchUrl);
         esRef.current = es;
+        stopSupervisingWatch = superviseWatch(es);
 
       es.addEventListener("connected", () => {
         setWatching(true);
@@ -800,10 +923,11 @@ function AudioViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
 
     return () => {
       active = false;
+      stopSupervisingWatch?.();
       if (es) es.close();
       if (esRef.current === es) esRef.current = null;
     };
-  }, [filePath, sourceSessionId, watchEnabled, connStarved, connEpoch]);
+  }, [filePath, sourceSessionId, watchEnabled, connStarved, connEpoch, watchAttempt]);
 
   const src = useTicketUrl(filePath, "read", bust ? { v: bust } : {});
 
@@ -902,6 +1026,8 @@ function VideoViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
     shownVersionRef.current = null;
   }, [filePath, sourceSessionId]);
 
+  const [watchAttempt, superviseWatch] = useWatchRecovery();
+
   useEffect(() => {
     setWatching(false);
 
@@ -938,6 +1064,7 @@ function VideoViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
     };
 
     let es: EventSource | null = null;
+    let stopSupervisingWatch: (() => void) | null = null;
     buildTicketUrl(filePath, "watch").then((watchUrl) => {
       if (!active) return;
       const busWatch = openFileWatchBus(filePath);
@@ -949,6 +1076,7 @@ function VideoViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
       }
       es = new EventSource(watchUrl);
       esRef.current = es;
+      stopSupervisingWatch = superviseWatch(es);
 
       es.addEventListener("connected", () => {
         setWatching(true);
@@ -975,10 +1103,11 @@ function VideoViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
 
     return () => {
       active = false;
+      stopSupervisingWatch?.();
       if (es) es.close();
       if (esRef.current === es) esRef.current = null;
     };
-  }, [filePath, sourceSessionId, watchEnabled, connStarved, connEpoch]);
+  }, [filePath, sourceSessionId, watchEnabled, connStarved, connEpoch, watchAttempt]);
 
   const src = useTicketUrl(filePath, "read", bust ? { v: bust } : {});
 
@@ -1104,6 +1233,8 @@ function DocumentViewer({ filePath, cwd, sourceSessionId, initialPage, watchEnab
     };
   }, [filePath, isPdf, sourceSessionId]);
 
+  const [watchAttempt, superviseWatch] = useWatchRecovery();
+
   useEffect(() => {
     setWatching(false);
 
@@ -1145,6 +1276,7 @@ function DocumentViewer({ filePath, cwd, sourceSessionId, initialPage, watchEnab
     };
 
     let es: EventSource | null = null;
+    let stopSupervisingWatch: (() => void) | null = null;
       buildTicketUrl(filePath, "watch").then((watchUrl) => {
         if (!active) return;
         const busWatch = openFileWatchBus(filePath);
@@ -1156,6 +1288,7 @@ function DocumentViewer({ filePath, cwd, sourceSessionId, initialPage, watchEnab
         }
         es = new EventSource(watchUrl);
         esRef.current = es;
+        stopSupervisingWatch = superviseWatch(es);
 
       es.addEventListener("connected", () => {
         setWatching(true);
@@ -1187,10 +1320,11 @@ function DocumentViewer({ filePath, cwd, sourceSessionId, initialPage, watchEnab
 
     return () => {
       active = false;
+      stopSupervisingWatch?.();
       if (es) es.close();
       if (esRef.current === es) esRef.current = null;
     };
-  }, [filePath, isPdf, sourceSessionId, watchEnabled, connStarved, connEpoch]);
+  }, [filePath, isPdf, sourceSessionId, watchEnabled, connStarved, connEpoch, watchAttempt]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -1520,6 +1654,8 @@ function TextFileViewer({
     };
   }, [filePath, fetchContent, sourceSessionId]);
 
+  const [watchAttempt, superviseWatch] = useWatchRecovery();
+
   useEffect(() => {
     setWatching(false);
 
@@ -1538,6 +1674,7 @@ function TextFileViewer({
     };
 
     let es: EventSource | null = null;
+    let stopSupervisingWatch: (() => void) | null = null;
     buildTicketUrl(filePath, "watch").then((watchUrl) => {
       const busWatch = openFileWatchBus(filePath);
       if (busWatch) {
@@ -1548,6 +1685,7 @@ function TextFileViewer({
       }
       es = new EventSource(watchUrl);
       esRef.current = es;
+      stopSupervisingWatch = superviseWatch(es);
 
       es.addEventListener("connected", () => {
         setWatching(true);
@@ -1583,10 +1721,11 @@ function TextFileViewer({
 
     return () => {
       active = false;
+      stopSupervisingWatch?.();
       if (es) es.close();
       if (esRef.current === es) esRef.current = null;
     };
-  }, [filePath, fetchContent, fetchGitDiff, sourceSessionId, watchEnabled, connStarved, connEpoch]);
+  }, [filePath, fetchContent, fetchGitDiff, sourceSessionId, watchEnabled, connStarved, connEpoch, watchAttempt]);
 
   useEffect(() => {
     void fetchGitDiff(filePath);
@@ -2059,7 +2198,7 @@ function TextFileViewer({
         style={{ flex: 1, overflow: "auto", background: "var(--bg)", paddingBottom: showLoadMore ? 48 : undefined }}
       >
         {effectiveDisplayMode === "diff" && hasGitDiff ? (
-          <DiffView patch={gitDiff.patch!} wrapLines={wrapLines} />
+          <MemoizedDiffView patch={gitDiff.patch!} wrapLines={wrapLines} language={language} prismReady={prismReady} isDark={isDark} />
         ) : isHtml && effectiveDisplayMode === "preview" && data?.truncated && !htmlFull?.text ? (
           <div style={{ padding: 24, color: "var(--text-dim)", fontSize: 12 }}>
             {htmlFull?.error ?? t("i18n.loading")}
