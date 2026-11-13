@@ -35,13 +35,41 @@ export default function register(ctx) {
   const { h, useState, useEffect, apiUrl } = ctx;
 
   /* ── 深链：?pair=1 打开工作台即弹出本面板（QR/复制链接指向工作台 URL，与桌面「先开 pi-web → 点设备互连」同体验） ──
-     一次性消费：开面板后从地址栏去掉参数（刷新不再自动弹；配对态在 localStorage，重开点工具条即可） */
+     一次性消费：开面板后从地址栏去掉参数（刷新不再自动弹；配对态在 localStorage，重开点工具条即可）。
+     兜底：移动端无会话时 shell 不挂 dialogs 槽（面板组件不渲染）——800ms 内没看到 .apair 就用独立
+     全屏浮层直挂 widget（自带关闭；点遮罩同关），保证扫码场景必达。 */
   try {
     const u = new URL(globalThis.location.href);
     if (u.searchParams.get("pair") === "1") {
       setPanelOpen(true);
       u.searchParams.delete("pair");
       globalThis.history?.replaceState?.(null, "", u.pathname + (u.searchParams.toString() ? "?" + u.searchParams : "") + u.hash);
+      setTimeout(() => {
+        try {
+          if (!panelOpen || document.querySelector(".apair")) return;
+          const host = document.createElement("div");
+          host.style.cssText = "position:fixed;inset:0;z-index:310;background:rgba(0,0,0,0.35);display:flex;align-items:center;justify-content:center";
+          const box = document.createElement("div");
+          box.style.cssText = "position:relative;width:min(460px,94vw);height:min(560px,86vh);border-radius:12px;overflow:hidden;background:var(--bg-panel);border:1px solid var(--border);color:var(--text);box-shadow:0 10px 40px rgba(0,0,0,0.35)";
+          const bar = document.createElement("div");
+          bar.style.cssText = "display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;flex-shrink:0";
+          bar.innerHTML = '<span style="flex:1">✉ 设备互连</span>';
+          const closeBtn = document.createElement("button");
+          closeBtn.textContent = "✕";
+          closeBtn.setAttribute("aria-label", "关闭");
+          closeBtn.style.cssText = "background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:2px 6px";
+          closeBtn.onclick = () => { host.remove(); setPanelOpen(false); };
+          bar.appendChild(closeBtn);
+          box.appendChild(bar);
+          const inner = document.createElement("div");
+          inner.style.cssText = "position:absolute;top:41px;bottom:0;left:0;right:0";
+          box.appendChild(inner);
+          host.appendChild(box);
+          host.addEventListener("click", (e) => { if (e.target === host) { host.remove(); setPanelOpen(false); } });
+          document.body.appendChild(host);
+          ensureWidget(inner).catch(() => {});
+        } catch {}
+      }, 800);
     }
   } catch {}
 
