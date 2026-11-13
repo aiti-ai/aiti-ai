@@ -444,6 +444,25 @@ export function currentUiLocale(): string {
   return "en";
 }
 
+/**
+ * Static-item text i18n: text prefixed with "i18n:" is resolved against the declaring
+ * extension's manifest i18n table (same cascade as makeClientContext's t(): current
+ * locale → short code → en → first available table). Non-prefixed text passes through
+ * unchanged; a missing key falls back to the bare key. The host renders static
+ * (zero-bundle) entries verbatim, so this is the only way a lazy extension's
+ * pre-materialization label can follow the UI locale.
+ */
+export function translateExtItemText(extId: string | undefined, text: string | undefined): string {
+  if (!text) return "";
+  if (!extId || !text.startsWith("i18n:")) return text;
+  const key = text.slice("i18n:".length);
+  const ui18n = manifestCache.get(extId)?.ui?.i18n;
+  if (!ui18n) return key;
+  const loc = currentUiLocale();
+  const table = ui18n[loc] ?? ui18n[loc.split("-")[0]] ?? ui18n.en ?? Object.values(ui18n)[0];
+  return table?.[key] ?? key;
+}
+
 function makeClientContext(ext: ManifestExt): ExtClientContext {
   // The i18n table is resolved dynamically by current locale (t() takes effect
   // immediately after a locale switch):
