@@ -253,14 +253,15 @@ test("option rows show the provider suffix consistently on desktop and small scr
     /isMobile\s*\?\s*undefined\s*:\s*option\.provider/,
     "the mobile-hidden provider-suffix branch must stay removed",
   );
-  // Recent rows keep the pure provider suffix (they span providers); grouped rows prefer the
-  // ext-agent catalog hint (e.g. qoder billing "0.5x") and fall back to the provider id.
-  const recentHint = modelSelectorSource.match(/hint=\{option\.provider\}/g) ?? [];
-  assert.ok(recentHint.length >= 1, "recent rows must keep the provider suffix");
-  const groupedHints = modelSelectorSource.match(/hint=\{option\.hint \?\? option\.provider\}/g) ?? [];
+  // Recent and provider-grouped rows render the ext-agent catalog hint (e.g. qoder billing
+  // "0.5x", pi cost "$0.6/$2.2 per M") with the provider id as fallback — no bare
+  // hint={option.provider} may remain (recents used to pin the provider, dropping hints).
+  const bareProviderHints = modelSelectorSource.match(/hint=\{option\.provider\}/g) ?? [];
+  assert.equal(bareProviderHints.length, 0, `all option rows must prefer the catalog hint with provider fallback (found ${bareProviderHints.length} bare provider hint(s))`);
+  const fallbackHints = modelSelectorSource.match(/hint=\{option\.hint \?\? option\.provider\}/g) ?? [];
   assert.ok(
-    groupedHints.length >= 1,
-    `provider-grouped rows must render hint with provider fallback (found ${groupedHints.length})`,
+    fallbackHints.length >= 2,
+    `recent + provider grouping must both render hint with provider fallback (found ${fallbackHints.length})`,
   );
 });
 
