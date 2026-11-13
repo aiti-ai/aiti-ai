@@ -11,6 +11,8 @@ export interface ModelsData {
     avail?: "ok" | "rl" | "err" | "unprobed";
     /** Whether this provider is rate-limited as a whole (all models currently 429) — display hint only, not auto-disabled */
     providerRL?: boolean;
+    /** Catalog cost rates as the picker row's dim hint ("$0.6/$2.2 per M", in/out); absent → provider fallback */
+    hint?: string;
   }[];
   defaultModel: { provider: string; modelId: string } | null;
   /** Resolved thinking level a new session starts with when the user has not picked one. */
