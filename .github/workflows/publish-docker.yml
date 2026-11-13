@@ -2,6 +2,8 @@
 #
 # Trigger: workflow_dispatch (manual only — the auto-run on tag push is suspended,
 # like the other publish pipelines). Optional version tag input.
+# readme_only=true skips the registry gate and builds and only syncs the Hub README
+# (docker/MANUAL.md → hub.docker.com/r/aitiai/pi-web overview).
 #
 # Artifacts: aitiai/pi-web:{core,full} + aitiai/pi-web:v<ver>-{core,full} + latest
 # Required secrets: DOCKERHUB_USERNAME (=aitiai), DOCKERHUB_TOKEN (hub.docker.com access token)
@@ -33,6 +35,11 @@ on:
         options:
           - "npmjs"
           - "aliyun"
+      readme_only:
+        description: "Only sync the Docker Hub README (skip gate + builds)"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -46,6 +53,7 @@ jobs:
   # deps (core/full dependency closure) from the npm registry — both must already
   # be published, otherwise fail fast with an actionable message.
   deps-on-registry:
+    if: ${{ inputs.readme_only != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -76,6 +84,7 @@ jobs:
 
   build-push:
     needs: deps-on-registry
+    if: ${{ inputs.readme_only != true }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -139,3 +148,22 @@ jobs:
           echo "### Docker Hub 发布完成" >> "$GITHUB_STEP_SUMMARY"
           echo "- \`${IMAGE}:${{ steps.ver.outputs.version }}-core\` / \`-full\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- \`core\` / \`full\` / \`latest\`（rolling）" >> "$GITHUB_STEP_SUMMARY"
+
+  # Hub overview sync (docker/MANUAL.md → hub.docker.com/r/aitiai/pi-web).
+  # Independent of the image build (idempotent, no registry side effects), so it runs
+  # even when the gate/builds were skipped by readme_only=true.
+  sync-readme:
+    needs: build-push
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sync Docker Hub README
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}   # PAT with read/write scope
+          repository: aitiai/pi-web
+          short-description: "AITI Web — browser workbench for the pi coding agent (core / full Docker images)"
+          readme-filepath: ./docker/MANUAL.md
