@@ -196,7 +196,8 @@ test("the section is mounted for built-in and api-key providers", () => {
   );
   assert.match(
     modelsConfigSource,
-    /provider\.configured && <EnabledModelsSection providerId=\{provider\.id\} controller=\{enabledModels\} contextSettings=\{contextSettings\} \/>/,
+    // [fork-merge] llama.cpp's empty-catalog hint rides the api-key mount (upstream #1629).
+    /provider\.configured && \(\s*<EnabledModelsSection\s*providerId=\{provider\.id\}\s*controller=\{enabledModels\}\s*contextSettings=\{contextSettings\}\s*emptyCatalogHint=\{llama \? t\("models\.llamaEmptyCatalog"\) : undefined\}\s*\/>\s*\)/,
   );
   assert.match(modelsConfigSource, /<EnabledModelsBanner controller=\{enabledModels\} \/>/);
   // A models.json provider gets the header switch instead of a section.

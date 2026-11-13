@@ -319,7 +319,7 @@ test("the tab chosen last is shown again after hydration, not in the first rende
   assert.doesNotMatch(source, /useState[^;\n]*\(\(\) => load(?:SidebarTab|GroupExpansion|PinnedCollapsed|ShowIgnoredFiles)\(\)\)/);
   assert.match(
     source,
-    /useEffect\(\(\) => \{\s*const tab = loadSidebarTab\(\);\s*if \(tab !== "sessions"\) setSidebarTab\(tab\);\s*const groups = loadGroupExpansion\(\);\s*if \(Object\.keys\(groups\)\.length > 0\) setGroupExpansion\(groups\);\s*if \(loadPinnedCollapsed\(\)\) setPinnedCollapsed\(true\);\s*(?:const archiveFolds = loadArchiveCollapsed\(\);\s*if \(archiveFolds\.length > 0\) setArchiveCollapsed\(archiveFolds\);\s*)?if \(loadShowIgnoredFiles\(\)\) setShowIgnoredFiles\(true\);\s*forgetRetiredSidebarKeys\(\);\s*\}, \[\]\);/,
+    /useEffect\(\(\) => \{\s*const tab = loadSidebarTab\(\);\s*if \(tab !== "sessions"\) setSidebarTab\(tab\);\s*const groups = loadGroupExpansion\(\);\s*if \(Object\.keys\(groups\)\.length > 0\) setGroupExpansion\(groups\);\s*if \(loadPinnedCollapsed\(\)\) setPinnedCollapsed\(true\);\s*(?:const archiveFolds = loadArchiveCollapsed\(\);\s*if \(archiveFolds\.length > 0\) setArchiveCollapsed\(archiveFolds\);\s*)?if \(loadShowIgnoredFiles\(\)\) setShowIgnoredFiles\(true\);\s*(?:setSidebarPrefsRestored\(true\);\s*)?forgetRetiredSidebarKeys\(\);\s*\}, \[\]\);/,
   );
 });
 
@@ -377,7 +377,7 @@ test("subagent completion stays silent and never becomes unread", () => {
     source,
     /completedWithNotifications = finishedInBackground\.filter\([\s\S]*?!previousSuppressedCompletionSessionIdsRef\.current\.has\(id\)[\s\S]*?!knownSubagentIds\.has\(id\)/,
   );
-  assert.match(source, /completedWithNotifications\.forEach\(\(id\) => next\.add\(id\)\)/);
+  assert.match(source, /completedWithNotifications\.forEach\(\(id\) => next\.set\(id, markedAt\)\)/);
   assert.match(source, /if \(completedWithNotifications\.length > 0\) \{\s*onBackgroundTaskDone\?\.\(\)/);
   assert.match(
     source,
@@ -565,9 +565,11 @@ test("archive keeps an undo snapshot and clears unread markers", () => {
   assert.match(body, /label: t\("sidebar\.undo"\),[\s\S]*?for \(const entries of chunkForSessionUiRequests\(snapshot\)\) \{\s*void applyUiState\(\{ action: "restore", entries \}\);\s*\}\s*restoreUnread\(unreadBefore\);/);
   assert.doesNotMatch(body, /const ids = archivable\.map|entries: snapshot \}/, "never one request for every family");
   // A refused part rolls back, and its unread markers come back with it.
-  assert.match(body, /\.then\(\(ok\) => \{\s*\/\/[^\n]*\n\s*if \(ok \|\| unreadBefore\.length === 0\) return;\s*const partIds = new Set\(part\.flatMap\(\(family\) => familyIds\(family\)\)\);\s*restoreUnread\(unreadBefore\.filter\(\(id\) => partIds\.has\(id\)\)\);/);
+  assert.match(body, /\.then\(\(ok\) => \{\s*\/\/[^\n]*\n\s*if \(ok \|\| unreadBefore\.length === 0\) return;\s*const partIds = new Set\(part\.flatMap\(\(family\) => familyIds\(family\)\)\);\s*restoreUnread\(unreadBefore\.filter\(\(\[id\]\) => partIds\.has\(id\)\)\);/);
   // The session open by then has been read: its marker stays off.
-  assert.match(callbackBody("restoreUnread"), /if \(id !== selectedSessionIdRef\.current\) next\.add\(id\);/);
+  // [fork-merge] unread markers are [id, markedAt] entries now: a Map write, and
+  // a re-restore must not bump an existing marker's timestamp.
+  assert.match(callbackBody("restoreUnread"), /if \(id !== selectedSessionIdRef\.current && !next\.has\(id\)\) next\.set\(id, at\);/);
   assert.match(body, /\{ id: "view", label: t\("sidebar\.viewArchive"\), onClick: openArchiveView \}/);
   assert.match(callbackBody("archiveFamily"), /if \(familyIds\(family\)\.some\(\(id\) => runningSessionIds\.has\(id\)\)\) return;/);
   assert.match(callbackBody("restoreFamily"), /void applyUiState\(\{ action: "set", ids, archived: false \}\);[\s\S]*?t\("sidebar\.restoredToast"/);
@@ -743,7 +745,8 @@ test("Fork copies the row's session on the server and opens the copy where its r
   // The user moved on meanwhile: they stay; the copy waits unread and the toast offers it.
   const movedOn = fork.slice(fork.indexOf("if (selectedSessionIdRef.current !== selectedAtClick) {"), fork.indexOf("openForkedRef.current(forked, row.key);"));
   assert.match(movedOn, /setAllSessions\(\(current\) => \(current\.some\(\(session\) => session\.id === forked\.id\) \? current : \[forked, \.\.\.current\]\)\);/);
-  assert.match(movedOn, /setUnreadSessionIds\(\(prev\) => new Set\(prev\)\.add\(forked\.id\)\);/);
+  // [fork-merge] unread markers are server-clocked entries now (lib/unread-markers.ts).
+  assert.match(movedOn, /setUnreadMarks\(\(prev\) => new Map\(prev\)\.set\(forked\.id, forkMarkedAt\)\);/);
   assert.match(movedOn, /void loadSessions\(\);/);
   assert.match(movedOn, /showToast\(message, \[\{ id: "open", label: t\("sidebar\.open"\), onClick: \(\) => openForkedRef\.current\(forked, null\) \}\], tail\);\s*return;/);
   assert.match(source, /const openForkedRef = useRef\(openForked\);\s*openForkedRef\.current = openForked;/);
@@ -764,7 +767,11 @@ test("Fork copies the row's session on the server and opens the copy where its r
   assert.match(source, /export interface SelectSessionOptions \{[\s\S]*?keepSidebarOpen\?: boolean;\s*\}/);
   // Every request has a new id (a counter, not the last request's, which is
   // gone once handled) and its time, so the tree can drop it when stale.
-  assert.match(open, /treeRevealIdRef\.current \+= 1;\s*setTreeReveal\(\{\s*id: treeRevealIdRef\.current,\s*at: Date\.now\(\),\s*rowKey: `session:group:\$\{forked\.id\}`,\s*takeFocusFrom: \(active\) => \(fromRow !== null && active\.closest\(fromRow\) !== null\) \|\| active === archiveCloseFocusRef\.current,/);
+  // [fork-merge] the reveal moved into the selected-id-keyed effect (#1595):
+  // openForked only records the fork's focus rule; the effect locates the row
+  // and reveals it (rowKey from locateSessionRow, block "nearest").
+  assert.match(open, /openRevealFocusRef\.current = \{\s*sessionId: forked\.id,\s*takeFocusFrom: \(active\) => \(fromRow !== null && active\.closest\(fromRow\) !== null\) \|\| active === archiveCloseFocusRef\.current,\s*\};/);
+  assert.match(source, /rowKey: location\.rowKey,\s*block: "nearest",\s*\.\.\.\(focus\?\.sessionId === sessionId \? \{ takeFocusFrom: focus\.takeFocusFrom \} : \{\}\),/);
   // The tree hands a request back once it has scrolled to it or dropped it:
   // kept, a tree mounted again after a search would run it a second time.
   assert.match(source, /const handleRevealHandled = useCallback\(\(id: number\) => \{\s*setTreeReveal\(\(current\) => \(current\?\.id === id \? null : current\)\);\s*\}, \[\]\);/);
@@ -843,39 +850,44 @@ test("a project's Rename… and Reset name change its display name only, from it
   assert.match(source, /onRenameProjectCommit: commitProjectRename,\s*onRenameProjectCancel: \(\) => \{ if \(renamingProjectKey\) endProjectRename\(renamingProjectKey\); \},/);
 });
 
-test("a read or a mark in another tab reaches this one: the storage handler adopts that tab's write", () => {
-  const parse = between("function parseUnreadSessionIds(", "\nfunction loadUnreadSessionIds");
+test("a read or a mark in another tab reaches this one: the storage handler adopts that tab's write", async () => {
+  const { parseUnreadMarks, sameMarksOr } = await jiti.import("@/lib/unread-markers.ts");
   const handler = between("const onStorage = (event: StorageEvent) => {", '\n    window.addEventListener("storage", onStorage);');
-  const code = ts.transpileModule(`${parse}\n${handler}`, {
+  const code = ts.transpileModule(handler, {
     compilerOptions: { target: ts.ScriptTarget.ES2020 },
   }).outputText;
   const updaters = [];
   const onStorage = vm.runInNewContext(`${code}\nonStorage`, {
     UNREAD_SESSIONS_STORAGE_KEY: "pi-web:unread-session-ids",
-    sameIdsOr,
-    setUnreadSessionIds: (updater) => updaters.push(updater),
+    parseUnreadMarks,
+    sameMarksOr,
+    setUnreadMarks: (updater) => updaters.push(updater),
   });
+  const marks = (entries) => new Map(entries);
 
   // Another key's write never touches the unread markers.
-  onStorage({ key: "pi-web:terminal-theme", newValue: '["a"]' });
+  onStorage({ key: "pi-web:terminal-theme", newValue: '{"a":1}' });
   assert.equal(updaters.length, 0);
 
   // The other tab read the session: the key (or all of storage) went away.
   onStorage({ key: "pi-web:unread-session-ids", newValue: null });
-  assert.deepEqual([...updaters.pop()(new Set(["a", "b"]))], []);
+  assert.deepEqual([...updaters.pop()(marks([["a", 1], ["b", 2]]))], []);
 
   // The other tab wrote a newer set; it replaces this tab's, stale markers and all.
-  onStorage({ key: "pi-web:unread-session-ids", newValue: '["a","b","b","c"]' });
-  assert.deepEqual([...updaters.pop()(new Set(["a", "d"]))].sort(), ["a", "b", "c"]);
+  onStorage({ key: "pi-web:unread-session-ids", newValue: '{"a":1,"b":2,"c":3}' });
+  assert.deepEqual([...updaters.pop()(marks([["a", 1], ["d", 4]]))], [["a", 1], ["b", 2], ["c", 3]]);
 
-  // The same set keeps the same Set: no re-render, so no echo of the write back.
-  onStorage({ key: "pi-web:unread-session-ids", newValue: '["a"]' });
-  const unchanged = new Set(["a"]);
+  // The same markers keep the same Map: no re-render, so no echo of the write back.
+  onStorage({ key: "pi-web:unread-session-ids", newValue: '{"a":1}' });
+  const unchanged = marks([["a", 1]]);
   assert.equal(updaters.pop()(unchanged), unchanged);
+  // A marker's time is part of it: a later mark of the same session is adopted.
+  onStorage({ key: "pi-web:unread-session-ids", newValue: '{"a":5}' });
+  assert.deepEqual([...updaters.pop()(unchanged)], [["a", 5]]);
 
   // A malformed write means no markers, not a crash.
   onStorage({ key: "pi-web:unread-session-ids", newValue: "{not json" });
-  assert.deepEqual([...updaters.pop()(new Set(["a"]))], []);
+  assert.deepEqual([...updaters.pop()(marks([["a", 1]]))], []);
 
   // The listener is registered for the storage event and taken off again.
   assert.match(source, /window\.addEventListener\("storage", onStorage\);/);
@@ -891,4 +903,32 @@ test("the favicon counts sessions that finished while the tab was hidden (#1484)
     source,
     /\}, \[awaitingInputSessionIds, unreadSessionIds, hiddenFinishedSessionIds\]\);/,
   );
+});
+
+test("every way of opening a session reveals its row through one effect keyed on the selected id (#1595)", () => {
+  const effect = between("const mainTreeShown = ", "\n  // Fork (the row menu's F)");
+  // The tree is on the page: its tab (or no tabs), no archive view and no search results over it.
+  // [fork-merge] no stacked layout state in this fork: the tabs' own state gates the tree.
+  assert.match(effect, /\(sidebarTab === "sessions"\)\s+&& !archiveView\s+&& !\(sessionSearchOpen && sessionSearchQuery\.trim\(\) !== ""\)/);
+  // A new selection is noted once, and revealed once when the tree can show it.
+  assert.match(effect, /if \(selectedSessionId !== openRevealSessionIdRef\.current\) \{/);
+  assert.match(effect, /if \(!sessionId \|\| loading \|\| !uiStateLoaded \|\| !sidebarPrefsRestored \|\| !mainTreeShown\) return;\n    openRevealRef\.current = null;/);
+  assert.match(effect, /locateSessionRow\(\{/);
+  // The folds are back first: the restore sets this flag in the same batch.
+  assert.match(source, /if \(loadShowIgnoredFiles\(\)\) setShowIgnoredFiles\(true\);\n    setSidebarPrefsRestored\(true\);/);
+  // It scrolls only as far as needed and moves focus only where a fork allows it.
+  assert.match(effect, /block: "nearest",/);
+  assert.match(effect, /focus\?\.sessionId === sessionId \? \{ takeFocusFrom: focus\.takeFocusFrom \} : \{\}/);
+  // A fold over the row is opened as the user's own choice would be.
+  assert.match(effect, /savePinnedCollapsed\(false\);/);
+  // [fork-merge] the fold choice rides the fork's group-expansion state and saver.
+  assert.match(effect, /setGroupExpansion\(next\);\s*saveGroupExpansion\(next\);/);
+
+  // The fork has no reveal of its own any more: it hands its focus rule to the effect.
+  const fork = callbackBody("openForked");
+  assert.doesNotMatch(fork, /setTreeReveal/);
+  assert.doesNotMatch(fork, /saveGroupChoices/);
+  assert.match(fork, /openRevealFocusRef\.current = \{\s+sessionId: forked\.id,/);
+  // Only the open session's effect and a moved group ask the main tree for a row.
+  assert.equal(source.match(/\bsetTreeReveal\(\{/g)?.length, 2);
 });

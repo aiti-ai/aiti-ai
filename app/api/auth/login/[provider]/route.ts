@@ -1,5 +1,5 @@
 import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
-import { getModelRuntimeWithExtensions } from "@/lib/model-runtime-ext";
+import { getModelRuntimeWithExtensions } from "@/lib/model-runtime";
 import { randomUUID } from "node:crypto";
 import { invalidateModelsCache } from "@/lib/models-cache";
 import { createLoginOptions, createModelRuntimeWithExtensions } from "@/lib/model-runtime";
@@ -52,8 +52,22 @@ export async function GET(
   const { provider } = await params;
 
   const encoder = new TextEncoder();
+  // An extension's login can report progress from a timer or a server event
+  // after this stream closed (login settled, or the client went away). Enqueue
+  // then throws outside any await of ours: an uncaughtException in the log.
+  let closed = false;
   const send = (controller: ReadableStreamDefaultController, data: unknown) => {
-    controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+    if (closed) return;
+    try {
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+    } catch {
+      closed = true;
+    }
+  };
+  const close = (controller: ReadableStreamDefaultController) => {
+    if (closed) return;
+    closed = true;
+    try { controller.close(); } catch { /* already closed */ }
   };
 
   // AbortController propagates client disconnect into ModelRuntime.login().
@@ -65,7 +79,7 @@ export async function GET(
       const modelRuntime = await getModelRuntimeWithExtensions();
       if (!modelRuntime.getProvider(provider)?.auth.oauth) {
         send(controller, { type: "error", message: `Unknown provider: ${provider}` });
-        controller.close();
+        close(controller);
         return;
       }
 
@@ -181,10 +195,11 @@ export async function GET(
       } finally {
         cleanup();
         await loginOptions.flush();
-        controller.close();
+        close(controller);
       }
     },
     cancel() {
+      closed = true;
       abort.abort();
     },
   });
