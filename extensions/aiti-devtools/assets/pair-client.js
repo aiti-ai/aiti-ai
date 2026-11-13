@@ -2569,7 +2569,7 @@ if (__QRCodeLib && __QRCodeLib.stringToBytesFuncs && __QRCodeLib.stringToBytesFu
       try { if (es) es.close(); } catch (e) {}
     }
 
-    return { start: start, stop: stop, on: on, sendText: sendText, sendFile: sendFile, fileUrl: fileUrl, pairPageUrl: pairPageUrl, qrSvgTag: qrSvgTag, setName: setName, getName: getName, getDevices: getDevices, getHistory: getHistory, getPeerId: function () { return peerId; }, isConnected: function () { return sseReady; } };
+    return { start: start, stop: stop, on: on, sendText: sendText, sendFile: sendFile, fileUrl: fileUrl, pairPageUrl: pairPageUrl, qrSvgTag: qrSvgTag, setName: setName, getName: getName, getDevices: getDevices, getHistory: getHistory, getPeerId: function () { return peerId; }, isConnected: function () { return sseReady; }, refreshDevices: refreshDevices };
   }
 
   // ================= widget UI（mount；pair.html / cockpit / pi-web 扩展共用） =================
@@ -2819,7 +2819,7 @@ if (__QRCodeLib && __QRCodeLib.stringToBytesFuncs && __QRCodeLib.stringToBytesFu
     }
     sideEl.addEventListener('click', function (e) {
       var rfr = e.target.closest && e.target.closest('[data-act=refresh]');
-      if (rfr) { refreshDevices(); return; }
+      if (rfr) { p.refreshDevices(); return; }
       var flt = e.target.closest && e.target.closest('[data-act=flt]');
       if (flt) { setShowOffline(!showOffline); return; }
       var row = e.target.closest && e.target.closest('.apair-dev');
@@ -2936,7 +2936,7 @@ if (__QRCodeLib && __QRCodeLib.stringToBytesFuncs && __QRCodeLib.stringToBytesFu
     el.querySelector('[data-act=send]').addEventListener('click', doSend);
     el.querySelector('[data-act=phone]').addEventListener('click', toggleQrPanel);
     el.querySelector('[data-act=export]').addEventListener('click', exportMd);
-    el.querySelector('[data-act=side]').addEventListener('click', function () { root.classList.toggle('side-open'); refreshDevices(); });
+    el.querySelector('[data-act=side]').addEventListener('click', function () { root.classList.toggle('side-open'); p.refreshDevices(); });
     // 小屏抽屉：选中设备即收起（matchMedia 与 CSS 媒体块同阈值）
     var mobileMq = global.matchMedia ? global.matchMedia('(max-width:640px)') : null;
     ta.addEventListener('keydown', function (e) {
