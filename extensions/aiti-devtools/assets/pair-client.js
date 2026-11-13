@@ -2802,6 +2802,8 @@ if (__QRCodeLib && __QRCodeLib.stringToBytesFuncs && __QRCodeLib.stringToBytesFu
       if (flt) { setShowOffline(!showOffline); return; }
       var row = e.target.closest && e.target.closest('.apair-dev');
       if (!row) return;
+      // QR 占位行不是发送目标——误点会把 target 静默改成 __qr__（消息从此发丢）
+      if (row.getAttribute('data-id') === '__qr__') return;
       target = row.getAttribute('data-id');
       renderDevices();
       // 小屏抽屉：选中设备即收起（mobileMq 与 CSS 媒体块同阈值；非小屏 no-op）
@@ -2898,7 +2900,9 @@ if (__QRCodeLib && __QRCodeLib.stringToBytesFuncs && __QRCodeLib.stringToBytesFu
       var text = ta.value.trim();
       if (!text) return;
       ta.value = '';
-      p.sendText(target, text).then(function (r) {
+      // 防御：QR 占位 id 混进 target 时回退群发（正常流已在点击侧排除）
+      var to = target === '__qr__' ? 'all' : target;
+      p.sendText(to, text).then(function (r) {
         if (!r) { progEl.classList.add('show'); progT.textContent = '⚠ 发送失败（网络）'; progBar.style.width = '0%'; return; }
         if (r.candidates && r.candidates.length) {
           progEl.classList.add('show');
@@ -2926,7 +2930,7 @@ if (__QRCodeLib && __QRCodeLib.stringToBytesFuncs && __QRCodeLib.stringToBytesFu
         progEl.classList.add('show');
         progT.textContent = '⬆ ' + f.name;
         progBar.style.width = '0%';
-        p.sendFile(target, f, function (done, total) {
+        p.sendFile(target === '__qr__' ? 'all' : target, f, function (done, total) {
           progBar.style.width = Math.round((done / total) * 100) + '%';
         }).then(function () { progBar.style.width = '100%'; renderMsgs(); sendNext(); })
           .catch(function (e) { progT.textContent = '⚠ ' + f.name + '：' + (e.message || e); });
