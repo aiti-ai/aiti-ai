@@ -2769,10 +2769,16 @@ if (__QRCodeLib && __QRCodeLib.stringToBytesFuncs && __QRCodeLib.stringToBytesFu
       renderDevices();
     }
 
+    /** 当前工作台会话 id（URL ?session= 随会话切换由 AppShell 维护）——用于给「自己」的 agent 打标 */
+    function currentSessionId() {
+      try { return new URLSearchParams(global.location.search).get('session') || ''; } catch (e) { return ''; }
+    }
+
     function renderDevices() {
       var all = p.getDevices().filter(function (d) { return d.id !== p.getPeerId(); });
       var online = all.filter(function (d) { return d.online !== false; });
       countEl.textContent = online.length + ' / ' + all.length + ' 台在线';
+      var mySession = currentSessionId();
       // 默认只显在线；"显示离线"开启才列出。选中的目标即使离线/被过滤也保持可见（发送目标上下文不丢）
       var list = showOffline ? all : all.filter(function (d) { return d.online !== false || d.id === target; });
       var rows = ['<div class="apair-sidehd"><span class="t">设备</span>'
@@ -2796,6 +2802,9 @@ if (__QRCodeLib && __QRCodeLib.stringToBytesFuncs && __QRCodeLib.stringToBytesFu
           var info = d.deviceLabel || d.cwd || '';
           var dup = nameCount[d.name] > 1;
           var nm = d.name + (dup ? ' <span style="color:var(--ap-dim);font-weight:400">·' + esc(String(d.id).slice(-4)) + '</span>' : '');
+          // 「自己」：当前工作台会话的 agent（id/name 含 URL 里的 sessionId）
+          var isSelf = !!(mySession && d.kind === 'agent' && (String(d.id).indexOf(mySession) !== -1 || String(d.name).indexOf(mySession) !== -1));
+          if (isSelf) nm += ' <span style="background:var(--ap-accent-soft);color:var(--ap-accent);border-radius:6px;padding:1px 5px;font-size:9px;font-weight:600">自己</span>';
           rows.push('<div class="apair-dev' + (d.id === target ? ' sel' : '') + (!on ? ' off' : '') + '" data-id="' + esc(d.id) + '" title="' + esc(d.name) + (info ? ' · ' + info : '') + (on ? '' : '（离线）') + '">'
             + '<span class="ic">' + (icon[d.kind] || '•') + '</span>'
             + '<span class="nmc"><span class="nm">' + nm + '</span>'
