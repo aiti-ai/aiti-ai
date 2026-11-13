@@ -291,6 +291,17 @@ jobs:
           AITI_GITEE_TOKEN: ${{ secrets.AITI_GITEE_TOKEN }}
         run: node scripts/publish-gitee-mirror.mjs --tag "${{ github.ref_name }}" --assets-dir release-assets
 
+      # Release creation on Gitee auto-tags its main with the release tag
+      # (pointing at whatever main has there); overwrite it with the real
+      # annotated tag from GitHub so tag && code stay meaningful on the mirror.
+      - name: Sync release tag to Gitee
+        env:
+          AITI_GITEE_TOKEN: ${{ secrets.AITI_GITEE_TOKEN }}
+        run: |
+          git fetch --no-tags --depth=1 origin "refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}"
+          git push "https://windliyong:${AITI_GITEE_TOKEN}@gitee.com/aiti-ai/aiti-ai.git" \
+            "+refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}"
+
       - name: Failure note
         if: failure()
         run: |
