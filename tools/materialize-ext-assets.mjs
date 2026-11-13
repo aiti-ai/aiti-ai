@@ -17,12 +17,14 @@
 import { readdirSync, readFileSync, existsSync, mkdirSync, copyFileSync, statSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const extRoot = join(root, "extensions");
 const shared = join(extRoot, "_shared");
 
 let copied = 0, missing = [];
+let monacoExts = 0;
 
 // 1. icons: parse `copyIcons(..., ["a", "b"], ...)` from each extension's deploy.mjs
 for (const name of readdirSync(extRoot)) {
@@ -66,6 +68,23 @@ for (const name of readdirSync(extRoot)) {
     copyFileSync(src, join(extRoot, name, rel));
     copied++;
   }
+  // 4. Monaco AMD assets — deploy.mjs syncMonaco copies node_modules/monaco-editor/min/vs
+  //    into <ext>/monaco/vs at deploy time (24MB, gitignored). Bundled trees carry no
+  //    extension node_modules, so without this step a stock npm install 404s on
+  //    /assets/monaco/vs/loader.js ("Monaco loader.js fetch fail" — editor + git-review).
+  //    Each monaco-using extension carries its own tools/materialize-monaco.mjs (source
+  //    resolution + fingerprint stamping live there); invoke it against the mirrored dir.
+  if (text.includes("monaco-editor/min/vs")) {
+    const script = join(extRoot, name, "tools", "materialize-monaco.mjs");
+    if (existsSync(script)) {
+      const r = spawnSync(process.execPath, [script, join(extRoot, name)], { encoding: "utf8" });
+      const tail = ((r.stdout || "") + (r.stderr || "")).trim().split("\n").filter(Boolean).pop() || "";
+      if (r.status !== 0) missing.push(`${name}: monaco assets (${tail})`);
+      else { monacoExts++; console.log(`[materialize] ${tail}`); }
+    } else {
+      missing.push(`${name}: tools/materialize-monaco.mjs (sync the extension first)`);
+    }
+  }
 }
 
 // 4. strip extension package-lock.json files — they pin private-registry resolutions
@@ -78,6 +97,6 @@ for (const name of readdirSync(extRoot)) {
   if (existsSync(lock)) { rmSync(lock); locks++; }
 }
 
-console.log(`[materialize] ${copied} files materialized, ${locks} package-lock.json stripped from extensions/` +
+console.log(`[materialize] ${copied} files materialized, ${monacoExts} monaco asset dir(s), ${locks} package-lock.json stripped from extensions/` +
   (missing.length ? ` — MISSING: ${missing.join(", ")}` : ""));
 if (missing.length) process.exitCode = 1;
