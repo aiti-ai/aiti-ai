@@ -307,6 +307,7 @@
     </div>
     <button class="btn ghost" id="helpBtn" title="帮助与引导">❓</button>
     <button class="btn ghost" id="settingsBtn" title="设置：注入代码 / MCP 配置 / 连接端点">⚙</button>
+    <button class="btn ghost" id="pairBtn" style="position:relative" title="设备互连：临时聊天 / 互传文件（连同一桥的设备，手机打开 /aiti/pair.html 即上线）">✉<span id="pairDot" style="display:none;position:absolute;top:4px;right:4px;width:8px;height:8px;border-radius:50%;background:#ef4444;pointer-events:none"></span></button>
     <div class="dd-wrap" id="frameSelWrap">
       <button class="status" id="status" title="调试帧：主页/iframe（下拉树形选择；选择后发消息携带该帧 pageId）">未连接</button>
       <div class="dd frame-dd" id="frameDd">
@@ -418,6 +419,14 @@
   </div>
 </div>
 
+<!-- 设备互连弹窗（pair widget：临时聊天 / 互传文件；手机端独立页 = /aiti/pair.html） -->
+<div class="modal-mask" id="pairModal">
+  <div class="modal" style="height:min(78vh,620px);display:flex;flex-direction:column;overflow:hidden">
+    <h3>✉ 设备互连 <span style="font-size:10px;color:var(--muted);font-weight:400">连同一桥即互发 · 手机打开 <b>/aiti/pair.html</b></span> <button class="btn ghost close" onclick="closePair()">✕</button></h3>
+    <div id="pairHost" style="flex:1;min-height:0"></div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 <script src="./bridge-client.js"></script>
 <script src="./host-protocol.js"></script>
@@ -467,6 +476,30 @@ function copyFallbackAgain() {
 $('settingsBtn').onclick = () => $('settingsModal').classList.add('show');
 $('settingsModal').onclick = (e) => { if (e.target === $('settingsModal')) closeSettings(); };
 function closeSettings() { $('settingsModal').classList.remove('show'); }
+
+// ---- 设备互连（pair widget 懒挂载：首开才 mount，收发全在 pair-client 公共库） ----
+let pairInstance = null;
+function loadPairLib() {
+  if (window.AitiPair) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = './pair-client.js?v=' + Date.now(); // cache-bust 同 aiti-pair
+    s.onload = resolve; s.onerror = () => reject(new Error('pair-client.js 加载失败'));
+    document.head.appendChild(s);
+  });
+}
+$('pairBtn').onclick = () => {
+  $('pairModal').classList.add('show');
+  $('pairDot').style.display = 'none';
+  if (!pairInstance) {
+    loadPairLib().then(() => {
+      pairInstance = window.AitiPair.mount($('pairHost'), { base });
+      pairInstance.on('message', () => { if (!$('pairModal').classList.contains('show')) $('pairDot').style.display = 'block'; }); // 面板外收到消息 → ✉ 亮红点
+    }).catch((e) => { $('pairHost').textContent = '⚠ ' + e.message; });
+  }
+};
+$('pairModal').onclick = (e) => { if (e.target === $('pairModal')) closePair(); };
+function closePair() { $('pairModal').classList.remove('show'); }
 
 // ---- aiti-agent 地址设置（第一推荐）：设置弹窗统一在宿主层打开（与 copy fallback 同机制——cockpit 只发消息，宿主弹） ----
 function setupAiAgent() {

@@ -11,7 +11,6 @@
 export default {
   id: "aiti-pair",
   name: "设备互连（临时聊天 / 互传文件）",
-  version: "0.1.0",
   icon: "icon.svg",
   client: "dist/aiti-pair-client.mjs",
 

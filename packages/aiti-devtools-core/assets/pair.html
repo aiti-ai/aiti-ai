@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<!--
+  pair.html —— pair 设备互连手机/外部浏览器独立轻页（方案 docs/aiti-bridge-pair-plan.md）
+  widget 宿主：pair-client.js 的 AitiPair.mount 铺满视口；桥静态 serve（staticFiles 映射 /pair.html）。
+  经 nginx 即 https://<host>/aiti/pair.html——手机打开即成为桥上一台设备（互发消息/互传文件）。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>设备互连 · Pair</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #f8fafc; }
+  #app { position: fixed; inset: 0; padding: env(safe-area-inset-top, 0) env(safe-area-inset-right, 0) env(safe-area-inset-bottom, 0) env(safe-area-inset-left, 0); display: flex; flex-direction: column; }
+  .tip { flex-shrink: 0; text-align: center; padding: 5px 12px; font: 11px/1.4 sans-serif; color: #94a3b8; background: #f1f5f9; border-bottom: 1px solid #e2e8f0; }
+  #host { flex: 1; min-height: 0; width: 100%; display: flex; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="tip">打开即上线 · 关页即下线 · 消息/文件经自有桥中转，不落第三方</div>
+  <div id="host"></div>
+</div>
+<script>
+(function () {
+  'use strict';
+  // 动态注入 pair-client（?v=时间戳防子资源顽固缓存——serveAsset 虽 no-store，实测部分浏览器仍命中旧版）
+  var s = document.createElement('script');
+  s.src = './pair-client.js?v=' + Date.now();
+  s.onload = boot;
+  document.head.appendChild(s);
+
+  function boot() {
+  // base 自动推断（pair-client inferBase 同规则，此处显式算好传入）：
+  //   独立桥 nginx 集成 = origin + /aiti；pi-web 扩展内嵌 = origin + /api/extensions/<extId>/aiti-devtools/mcp；裸桥根 = origin
+  var path = location.pathname;
+  var i = path.indexOf('/api/extensions/aiti-devtools/');
+  var base = i >= 0 ? location.origin + path.slice(0, i) + '/api/extensions/aiti-devtools/mcp'
+    : location.origin + (path.indexOf('/aiti/') === 0 ? '/aiti' : '');
+    window.AitiPair.mount(document.getElementById('host'), { base: base });
+  }
+})();
+</script>
+</body>
+</html>
