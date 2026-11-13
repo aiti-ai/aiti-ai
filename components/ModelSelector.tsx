@@ -655,7 +655,9 @@ export function ModelSelector({
                       key={`recent:${option.provider}:${option.modelId}`}
                       active={option.modelId === value?.modelId && option.provider === value?.provider}
                       label={option.name}
-                      hint={option.provider}
+                      // Same hint as the grouped rows (ext catalogs / cost rates); provider fallback
+                      // keeps cross-provider same-named recents identifiable.
+                      hint={option.hint ?? option.provider}
                       status={option.status}
                       disabled={refreshing}
                       gutter={Boolean(onSetDefault)}
