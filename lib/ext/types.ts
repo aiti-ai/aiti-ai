@@ -985,7 +985,14 @@ export interface ExtUiDefinition {
 export interface PiWebExtension {
   id: string;
   name: string;
-  version: string;
+  /**
+   * Deprecated as a hand-written field: the version source of truth is
+   * package.json (the release flow maintains it). The registry falls back to
+   * this entry value only when package.json has none — new extensions must
+   * not declare it (hand-written values historically drifted stale vs the
+   * package version).
+   */
+  version?: string;
   server?: ExtServerHooks & { agent?: ExtAgentHooks };
   ui?: ExtUiDefinition;
   /** Relative path (from the extension dir) to a prebuilt ESM client bundle. */
@@ -1070,7 +1077,8 @@ export type ExtensionSource = "user" | "extra" | "dev" | "bundled";
 export interface LoadedExtension {
   id: string;
   name: string;
-  version: string;
+  /** package.json version when available, else the entry-declared fallback; undefined when neither exists. */
+  version?: string;
   dir: string;
   /** Config area (root of dataRoot/<id>/). */
   configDir: string;
@@ -1087,7 +1095,7 @@ export interface LoadedExtension {
 export interface ManifestExtension {
   id: string;
   name: string;
-  version: string;
+  version?: string;
   clientUrl: string | null;
   ui: ExtUiDefinition | null;
   source?: ExtensionSource;

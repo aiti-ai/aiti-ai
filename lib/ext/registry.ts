@@ -134,7 +134,7 @@ export interface ExtStatusEntry {
 /** One entry of statusPayload.capabilities: capability name → providers/effective/consumers (data source for the extension manager's capability view). */
 export interface CapabilityViewEntry {
   /** All providers (provides ∪ takeover declarers, with version/source and whether declared via takeover). */
-  providers: Array<{ id: string; version: string; source?: ExtensionSource; takeover: boolean }>;
+  providers: Array<{ id: string; version?: string; source?: ExtensionSource; takeover: boolean }>;
   /** Effective provider (resolution: pin > takeover > newest semver > id lexicographic); null when no provider exists (missing). */
   effective: string | null;
   /** User-pinned provider (absent when unpinned or the pin is stale). */
@@ -259,7 +259,7 @@ export class ExtRegistryImpl {
   /** Multi-source candidate groups for the same id (filled by loadAll, only ids with >1 candidates; multiSource panel data source). */
   private candidates = new Map<string, MultiSourceGroup["candidates"]>();
   /** Capability registry (rebuilt by loadAll): capability name → all providers (provides ∪ takeover declarers). Input to the resolver. */
-  private _caps = new Map<string, Array<{ id: string; version: string; source?: ExtensionSource; takeover: boolean }>>();
+  private _caps = new Map<string, Array<{ id: string; version?: string; source?: ExtensionSource; takeover: boolean }>>();
   private errors = new Map<string, string>();
   private loaded = false;
 
@@ -722,7 +722,13 @@ export class ExtRegistryImpl {
         if (!existsSync(stateDir)) mkdirSync(stateDir, { recursive: true });
         const cacheDir = join(extRoot, "cache");
         if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true });
-        this.extensions.set(ext.id, { id: ext.id, name: ext.name, version: ext.version, dir, configDir, stateDir, cacheDir, source, ext });
+        // Version source of truth = package.json (the release flow maintains it);
+        // the entry-declared version is only a fallback for package.json-less
+        // extensions. Hand-written entry versions historically drifted stale
+        // (frozen at their initial value while package.json kept bumping), so
+        // extensions must no longer declare the field.
+        const pkgVersion = readPackageInfo(dir).version;
+        this.extensions.set(ext.id, { id: ext.id, name: ext.name, version: pkgVersion ?? ext.version, dir, configDir, stateDir, cacheDir, source, ext });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`[ext] ${id} failed to load:`, msg);
@@ -772,7 +778,7 @@ export class ExtRegistryImpl {
    * disabled/failed extensions are not in the set (they provide nothing).
    */
   private buildCapabilityIndex(): void {
-    const caps = new Map<string, Array<{ id: string; version: string; source?: ExtensionSource; takeover: boolean }>>();
+    const caps = new Map<string, Array<{ id: string; version?: string; source?: ExtensionSource; takeover: boolean }>>();
     for (const ext of this.extensions.values()) {
       const provides = Array.isArray(ext.ext.provides) ? ext.ext.provides : [];
       const takeover = Array.isArray(ext.ext.takeover) ? ext.ext.takeover : [];
@@ -797,7 +803,7 @@ export class ExtRegistryImpl {
    * provider set is ignored (soft validation back to auto; stale pins after
    * uninstall/reinstall cause no trouble).
    */
-  private effectiveProvider(name: string, providers: Array<{ id: string; version: string; takeover: boolean }>): string | null {
+  private effectiveProvider(name: string, providers: Array<{ id: string; version?: string; takeover: boolean }>): string | null {
     if (!providers || providers.length === 0) return null;
     const pinTo = this.extPins().pins?.["capability:" + name];
     if (pinTo && providers.some((p) => p.id === pinTo)) return pinTo;
