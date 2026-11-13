@@ -2776,6 +2776,7 @@ if (__QRCodeLib && __QRCodeLib.stringToBytesFuncs && __QRCodeLib.stringToBytesFu
       // 默认只显在线；"显示离线"开启才列出。选中的目标即使离线/被过滤也保持可见（发送目标上下文不丢）
       var list = showOffline ? all : all.filter(function (d) { return d.online !== false || d.id === target; });
       var rows = ['<div class="apair-sidehd"><span class="t">设备</span>'
+        + '<button class="apair-flt" data-act="refresh" title="刷新设备列表">🔄</button>'
         + '<button class="apair-flt' + (showOffline ? ' on' : '') + '" data-act="flt" title="' + (showOffline ? '隐藏离线设备' : '显示离线设备') + '">' + (showOffline ? '全部' : '在线') + '</button></div>'];
       rows.push('<div class="apair-dev' + (target === 'all' ? ' sel' : '') + '" data-id="all" title="群发：全部 pair 设备与 agent">'
         + '<span class="ic">📡</span><span class="nm">全部</span></div>');
@@ -2808,6 +2809,8 @@ if (__QRCodeLib && __QRCodeLib.stringToBytesFuncs && __QRCodeLib.stringToBytesFu
       ta.placeholder = '发消息给 ' + targetName(target) + '…';
     }
     sideEl.addEventListener('click', function (e) {
+      var rfr = e.target.closest && e.target.closest('[data-act=refresh]');
+      if (rfr) { refreshDevices(); return; }
       var flt = e.target.closest && e.target.closest('[data-act=flt]');
       if (flt) { setShowOffline(!showOffline); return; }
       var row = e.target.closest && e.target.closest('.apair-dev');
@@ -2924,7 +2927,7 @@ if (__QRCodeLib && __QRCodeLib.stringToBytesFuncs && __QRCodeLib.stringToBytesFu
     el.querySelector('[data-act=send]').addEventListener('click', doSend);
     el.querySelector('[data-act=phone]').addEventListener('click', toggleQrPanel);
     el.querySelector('[data-act=export]').addEventListener('click', exportMd);
-    el.querySelector('[data-act=side]').addEventListener('click', function () { root.classList.toggle('side-open'); });
+    el.querySelector('[data-act=side]').addEventListener('click', function () { root.classList.toggle('side-open'); refreshDevices(); });
     // 小屏抽屉：选中设备即收起（matchMedia 与 CSS 媒体块同阈值）
     var mobileMq = global.matchMedia ? global.matchMedia('(max-width:640px)') : null;
     ta.addEventListener('keydown', function (e) {
