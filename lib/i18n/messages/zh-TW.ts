@@ -522,6 +522,7 @@ export const zhTWLocale: LocalePlugin = {
     "files.scrollLeft": "向左捲動頁籤",
     "files.scrollRight": "向右捲動頁籤",
     "files.expandPanel": "全寬顯示檔案面板",
+    "files.expandPanelWide": "收起側欄並放大面板",
     "files.restorePanelWidth": "還原檔案面板寬度",
     "files.showPanel": "顯示檔案面板",
     "files.noneOpen": "沒有開啟的檔案",

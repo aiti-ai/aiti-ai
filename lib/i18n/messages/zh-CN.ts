@@ -556,6 +556,7 @@ export const zhCNLocale: LocalePlugin = {
     "files.posSidebar": "左栏 · 区块",
     "files.posPanel": "右栏 · 面板",
     "files.expandPanel": "全宽展示文件面板",
+    "files.expandPanelWide": "收起侧栏并放大面板",
     "files.restorePanelWidth": "还原文件面板宽度",
     "files.showPanel": "显示文件面板",
     "files.openFolder": "打开文件夹",

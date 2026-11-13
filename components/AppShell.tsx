@@ -168,6 +168,7 @@ import {
   SIDEBAR_DEFAULT_WIDTH,
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
+  SPLIT_PANEL_MIN_WIDTH,
 } from "@/lib/panel-layout";
 import type { BlockingExtensionUiRequest, SessionInfo, SessionTreeNode } from "@/lib/types";
 import type { McpErrorResponse, ProjectTrustStatus } from "@/lib/api-types";
@@ -593,11 +594,20 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   const [sidebarOpen, setSidebarOpen] = useState(() => !initialNavigation.sidebarCollapsed);
   const desktopSidebarOpenRef = useRef(!initialNavigation.sidebarCollapsed);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
-  const [rightPanelExpanded, setRightPanelExpanded] = useState(false);
-  const rightPanelFullWidth = rightPanelOpen && rightPanelExpanded && !isMobile;
-  useEffect(() => {
-    if (!rightPanelOpen || isMobile) setRightPanelExpanded(false);
-  }, [rightPanelOpen, isMobile]);
+  // Right-panel layout size mode (tri-state expand button): "dock" (three-column
+  // default) → "wide" (sidebar collapsed, the right panel absorbs its width, chat
+  // width unchanged) → "full" (full-width overlay) → back to "dock". Plan:
+  // pi-work docs/pi-web-right-panel-tri-state-expand-plan.md.
+  const [rightPanelSizeMode, setRightPanelSizeMode] = useState<"dock" | "wide" | "full">("dock");
+  const rightPanelFullWidth = rightPanelOpen && rightPanelSizeMode === "full" && !isMobile;
+  // Snapshot taken when entering "wide"; restored when leaving it (sidebar open
+  // state + the user's right-panel width) so the wide layout never persists.
+  const wideSnapshotRef = useRef<{ sidebarOpen: boolean; rightWidth: number } | null>(null);
+  // Two-step wide entry: the target width is applied in an effect after the
+  // sidebarOpen=false commit so the resizer's max clamp already sees the sidebar
+  // as closed — same-batch it would clamp against the stale open-sidebar max and
+  // shrink the target width, which would change the chat width.
+  const widePendingWidthRef = useRef<number | null>(null);
   // A narrow phone folds the Agents button into More: the folded button says that subagents run.
   const foldedMoreAgentsBadge = isNarrowMobile ? getFoldedMoreAgentsBadge(agentsBadge, mobileToolbarMoreOpen) : null;
   const moreControlsLabel = mobileToolbarMoreOpen
@@ -673,6 +683,52 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     reclampSidebarWidth();
     reclampRightPanelWidth();
   }, [reclampRightPanelWidth, reclampSidebarWidth, rightPanelOpen]);
+  // ── Tri-state right-panel expand (dock → wide → full → dock) ──
+  // Leaves the wide layout: restores the snapshot (the user's right-panel width,
+  // and the sidebar when it was open before entering). forcePersist writes the
+  // user's size back over any wide width a drag or window resize stored meanwhile.
+  const exitRightPanelWide = useCallback((restoreSidebar: boolean) => {
+    const snapshot = wideSnapshotRef.current;
+    wideSnapshotRef.current = null;
+    widePendingWidthRef.current = null;
+    if (snapshot) {
+      rightPanelResizer.setWidth(snapshot.rightWidth, { persist: true, forcePersist: true });
+      if (restoreSidebar && snapshot.sidebarOpen && !isMobileViewport()) setSidebarOpen(true);
+    }
+    setRightPanelSizeMode("dock");
+  }, [rightPanelResizer]);
+  // Wide entry step two: apply the pending width now that sidebarOpen=false has
+  // committed (see widePendingWidthRef for why this must not be same-batch).
+  useEffect(() => {
+    if (rightPanelSizeMode !== "wide" || widePendingWidthRef.current === null) return;
+    const target = widePendingWidthRef.current;
+    widePendingWidthRef.current = null;
+    rightPanelResizer.setWidth(target);
+  }, [rightPanelSizeMode, rightPanelResizer]);
+  // Panel closed or the mobile band while wide/full: restore the snapshot and
+  // fall back to dock — those layouts only exist for an open panel on desktop.
+  useEffect(() => {
+    if (rightPanelOpen && !isMobile) return;
+    exitRightPanelWide(true);
+  }, [exitRightPanelWide, isMobile, rightPanelOpen]);
+  // The user re-opens the sidebar while wide: they want the three columns back.
+  // Drops the wide width (the sidebar stays as the user just set it).
+  useEffect(() => {
+    if (rightPanelSizeMode !== "wide" || !sidebarOpen) return;
+    exitRightPanelWide(false);
+  }, [exitRightPanelWide, rightPanelSizeMode, sidebarOpen]);
+  // Shrinking below the split-layout band while wide: the right panel becomes an
+  // overlay there — restore the snapshot immediately. Uses the window resize
+  // event (the path the panel resizer itself proves reliable here) rather than a
+  // matchMedia change listener; exit is idempotent, so repeated resize events
+  // below the band are harmless.
+  useEffect(() => {
+    const onResize = () => {
+      if (window.innerWidth < SPLIT_PANEL_MIN_WIDTH) exitRightPanelWide(true);
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [exitRightPanelWide]);
   // Panel expansion immediately restores the files/folders the last session had open (aiti-editor session
   // tombstone restore; the extension-side _sessionRestored one-shot guard prevents repeats and
   // openFileTab/openFolderTab are idempotent). This logic was once inlined in the file-panel toggle button's
@@ -950,10 +1006,30 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     setRightPanelOpen((open) => !open);
   }, [isMobile]);
 
+  // Tri-state expand button: dock → wide (collapse sidebar, right panel absorbs
+  // its width, chat width unchanged) → full → dock (restore the snapshot).
+  // Outside the split band, or with the sidebar already closed, dock jumps
+  // straight to full (the legacy two-state loop).
   const handleRightPanelExpandToggle = useCallback(() => {
     setActiveTopPanel(null);
-    setRightPanelExpanded((expanded) => !expanded);
-  }, []);
+    if (rightPanelSizeMode === "wide") {
+      setRightPanelSizeMode("full");
+      return;
+    }
+    if (rightPanelSizeMode === "full") {
+      exitRightPanelWide(true);
+      return;
+    }
+    const splitBand = typeof window !== "undefined" && window.innerWidth >= SPLIT_PANEL_MIN_WIDTH;
+    if (splitBand && sidebarOpen) {
+      wideSnapshotRef.current = { sidebarOpen: true, rightWidth: rightPanelWidthRef.current };
+      widePendingWidthRef.current = sidebarWidthRef.current + rightPanelWidthRef.current;
+      setSidebarOpen(false);
+      setRightPanelSizeMode("wide");
+      return;
+    }
+    setRightPanelSizeMode("full");
+  }, [exitRightPanelWide, rightPanelSizeMode, sidebarOpen]);
 
 
   useEffect(() => {
@@ -6208,12 +6284,22 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
             className="file-panel-expand-button"
             onClick={handleRightPanelExpandToggle}
             aria-controls="file-panel"
-            aria-pressed={rightPanelFullWidth}
-            title={translate(rightPanelFullWidth ? "files.restorePanelWidth" : "files.expandPanel")}
-            aria-label={translate(rightPanelFullWidth ? "files.restorePanelWidth" : "files.expandPanel")}
+            aria-pressed={rightPanelSizeMode !== "dock"}
+            title={translate(rightPanelSizeMode === "wide"
+              ? "files.expandPanel"
+              : rightPanelSizeMode === "full"
+                ? "files.restorePanelWidth"
+                : "files.expandPanelWide")}
+            aria-label={translate(rightPanelSizeMode === "wide"
+              ? "files.expandPanel"
+              : rightPanelSizeMode === "full"
+                ? "files.restorePanelWidth"
+                : "files.expandPanelWide")}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d={rightPanelFullWidth
+              {/* One icon for both growing steps: dock → wide → full reads as a single
+                continuous enlargement; only the restore action gets the collapse icon. */}
+              <path d={rightPanelSizeMode === "full"
                 ? "M9 3v6H3m12-6v6h6M9 21v-6H3m12 6v-6h6M3 3l6 6m12-6-6 6M3 21l6-6m12 6-6-6"
                 : "M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M3 3l6 6m12-6-6 6M3 21l6-6m12 6-6-6"} />
             </svg>

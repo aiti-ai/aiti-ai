@@ -301,6 +301,10 @@ export function useResizablePanel(options: UseResizablePanelOptions) {
     panelRef,
     reclampWidth,
     resetWidth,
+    /** Programmatic resize (layout modes like the right-panel wide state): same
+     * commit path as a drag (clamped, live CSS variable + widthRef), with
+     * persist:false by default so layout modes never overwrite the user's size. */
+    setWidth: (candidate: number, commitOptions: CommitOptions = {}) => commitWidth(candidate, { persist: false, ...commitOptions }),
     separatorProps: {
       "aria-label": ariaLabel,
       "aria-orientation": axis === "vertical" ? "horizontal" as const : "vertical" as const,
