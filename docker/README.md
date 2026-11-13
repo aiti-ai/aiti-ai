@@ -1,43 +1,12 @@
 # AITI Web — official Docker images (core / full)
 
-[中文文档](https://github.com/aiti-ai/aiti-ai/blob/main/docs/README.zh-CN.md) | [日本語](https://github.com/aiti-ai/aiti-ai/blob/main/docs/README.ja.md) | [Русский](https://github.com/aiti-ai/aiti-ai/blob/main/docs/README.ru.md)
+English | [中文](https://github.com/aiti-ai/aiti-ai/blob/main/docker/README.zh-CN.md) | [日本語](https://github.com/aiti-ai/aiti-ai/blob/main/docker/README.ja.md) | [Русский](https://github.com/aiti-ai/aiti-ai/blob/main/docker/README.ru.md)
 
-**AITI Web** (`@aiti-ai/pi-web`) is a browser workbench for the [pi coding agent](https://github.com/earendil-works/pi) — and the base of the [aiti](https://aiti.pw/) tooling ecosystem: page-injected debugging tools, an MCP bridge for AI agents, and a growing library of bundled extensions. This image ships the whole workbench in one container: pi-web with all bundled extensions, the pi engine, Node/git tooling, and the aiti-bridge — and in `full`, a web desktop with Chrome/CDP, voice and tunnels on top.
+**AITI Web** (`@aiti-ai/pi-web`) is a browser workbench for the [pi coding agent](https://github.com/earendil-works/pi). It is a fork of upstream [pi-web](https://github.com/agegr/pi-web) that grew into its own distribution — **aiti** — built for real daily use: 63+ bundled extensions (sessions & queues, git toolchain, page-injected debugging, multi-agent backends, tunnels, voice) with zero per-extension installs, while the engine stays pi (shared JSONL sessions, same local configuration).
 
-## Why this fork?
+This image is the fastest way to run all of it: pi-web + every bundled extension + the pi engine + Node/git + the aiti-bridge in one container; `full` adds a web desktop (noVNC, Chrome/CDP), speech and tunnels on top. The story behind the fork: [aiti.pw/guide/origin.html](https://aiti.pw/guide/origin.html).
 
-Upstream [pi-web](https://github.com/agegr/pi-web) is an excellent local UI for pi — but a full AI development workbench needs more than a UI: an extension runtime, session tooling around git and queues, service tunnels for sharing local ports, page-level debugging injection, and deep AI ↔ page ↔ IDE collaboration. Upstream's architecture didn't leave room for those layers, so this fork ships them as **bundled extensions that come with the package** — nothing to install per-extension, and the Docker images are the fastest way to run all of it. The engine stays pi (shared JSONL sessions, same local configuration), so everything upstream documents still applies.
-
-## Where it comes from
-
-Two 15-year-old projects — [TestAgent](https://aiti.pw/extensions/aiti-testagent.html), a Java runtime debugger, and [JustDB](https://justdb.ai), a database IDE — met the AI era. Daily development moved onto pi-web, feature by feature it drifted from upstream, and **aiti** began as its own distribution, built for real daily use first: commute-time coding, spare-device development, making every spare token count. The full story lives at [aiti.pw/guide/origin.html](https://aiti.pw/guide/origin.html).
-
-## Documentation & links
-
-| | |
-|---|---|
-| Docs home (EN / 中文 / 日本語 / Русский) | **[aiti.pw](https://aiti.pw/)** |
-| Source code | [github.com/aiti-ai/aiti-ai](https://github.com/aiti-ai/aiti-ai) |
-| 中文文档 | [README.zh-CN.md](https://github.com/aiti-ai/aiti-ai/blob/main/docs/README.zh-CN.md) |
-| 日本語ドキュメント | [README.ja.md](https://github.com/aiti-ai/aiti-ai/blob/main/docs/README.ja.md) |
-| Русская документация | [README.ru.md](https://github.com/aiti-ai/aiti-ai/blob/main/docs/README.ru.md) |
-| Origin story | [aiti.pw/guide/origin.html](https://aiti.pw/guide/origin.html) |
-| Prefer npm? | `npm i -g @aiti-ai/pi-web` · [package page](https://www.npmjs.com/package/@aiti-ai/pi-web) |
-| License | [MIT](https://github.com/aiti-ai/aiti-ai/blob/main/LICENSE) |
-
-## What's bundled (highlights)
-
-The upstream UI remains; everything below ships as bundled extensions, pre-deployed inside the image.
-
-- **Sessions & queues** — cross-project session manager (kanban, tags, archives, full-text search, forking), queue editing, restart-recovery wizard
-- **Git toolchain** — commit graph with AI-grouped commit plans and rollback, Monaco diff review workspace, AI change-tracking timeline
-- **Page-injected debugging (aiti-devtools)** — AI debugging inside any local web app: HUD/Inspector, a CDP-like command set, and the MCP bridge that lets AI agents talk to the page
-- **Multi-agent backends** — Claude Code, Codex, Cursor, Qoder, ZCode, OpenCode, Kimi, Gemini, iFlow and more (CLI + ACP drivers), with unified login management
-- **Models & usage** — model wizard (catalog search, multi-key rotation, aggregation), availability probing with 429 detection, provider balance/usage reports
-- **Ops infrastructure** — service tunnels with auth, extension manager with online registry, config versioning + crash self-check, backups, event bus, VNC UI environments, docs center
-- **Reading & interaction** — speech in/out, floating dialogs, prompt library, plan-first workflow, document viewers (docx/xlsx/pdf/pptx), and ~40 more
-
-Prefer npm over Docker? `npm i -g @aiti-ai/pi-web` — see the [GitHub README](https://github.com/aiti-ai/aiti-ai#readme).
+Docs: [aiti.pw](https://aiti.pw/) (EN / 中文) · Source: [aiti-ai/aiti-ai](https://github.com/aiti-ai/aiti-ai) · Prefer npm? `npm i -g @aiti-ai/pi-web` · License: [MIT](https://github.com/aiti-ai/aiti-ai/blob/main/LICENSE)
 
 ---
 
