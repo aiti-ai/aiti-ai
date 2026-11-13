@@ -5,9 +5,9 @@
 ## TL;DR
 
 ```bash
-docker run -p 30142:30142 -v aiti-data:/opt/aiti -v ~/workspace:/workspace aiti/aiti:core
+docker run -p 30142:30142 -v aiti-data:/opt/aiti -v ~/workspace:/workspace aitiai/pi-web:core
 # open http://localhost:30142 — the pi-web fork + all extensions + node/git + the justget tool market
-# GUI / voice / tunnels → aiti/aiti:full
+# GUI / voice / tunnels → aitiai/pi-web:full
 ```
 
 The default working directory is `/workspace`; the container runs as the unprivileged user `aiti` (sudo available). Data is kept separate from `~/.pi` (`PI_WEB_EXTENSIONS_DIR` / `PI_WEB_DATA_DIR` / `PI_CODING_AGENT_DIR` all point into `/opt/aiti`).
@@ -15,8 +15,8 @@ The default working directory is `/workspace`; the container runs as the unprivi
 ## Building
 
 ```bash
-./docker/build.sh --target core --tag aiti/aiti:core   # core first; full after core passes smoke
-./docker/build.sh --target full --tag aiti/aiti:full
+./docker/build.sh --target core --tag aitiai/pi-web:core   # core first; full after core passes smoke
+./docker/build.sh --target full --tag aitiai/pi-web:full
 ```
 
 - The build context is assembled by `build.sh` (staging: pi-web sources + the extension mirror + justget); git metadata and build artifacts stay out.
