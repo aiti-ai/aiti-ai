@@ -121,6 +121,7 @@ test("only completed assistant messages trigger an immediate usage read", () => 
       isSystemMessageEvent: (event) => event.message.role === "system",
       normalizeToolCalls: (message) => message, userMessageKey: () => "user", setMessages() {}, dispatch() {}, setAgentPhase() {},
       dispatchStream() {}, closeEvents() {}, maintainEventsConnected() {}, applyQueuedSnapshot() {}, setPendingRecovery() {},
+      setToolClocks() {}, withoutToolClock: (clocks) => clocks,
       refreshContextUsage: (sid) => reads.push(sid),
     });
     assert.deepEqual(reads, role === "assistant" ? ["a"] : []);
@@ -138,8 +139,9 @@ test("each event stream connection reads usage, since connecting resumes an idle
       dispatch() {}, cancelEventStreamGrace() {}, setAgentRunning() {}, setAgentPhase() {},
       dispatchStream() {}, closeEvents() {}, maintainEventsConnected() {}, applyQueuedSnapshot() {}, setPendingRecovery() {}, apiUrl: (p) => p,
       canonicalizeSessionId: (id) => id,
-      apiUrl: (p) => p, fetch: () => Promise.reject(new Error("unused")),
-      adoptRunStartedAt() {}, syncLiveModel() {}, setIsCompacting() {}, setAutoCompactionEnabled() {}, applyQueuedSnapshot() {}, setPendingRecovery() {},
+      fetch: () => Promise.reject(new Error("unused")),
+      adoptRunStartedAt() {}, syncLiveModel() {}, setIsCompacting() {}, setAutoCompactionEnabled() {},
+      setToolClocks() {}, endedToolClocks: (clocks) => clocks, NO_TOOL_CLOCKS: new Map(),
       refreshContextUsage: (id) => reads.push(id),
     });
     assert.deepEqual(reads, sid ? [sid] : []);

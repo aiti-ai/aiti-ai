@@ -11,10 +11,9 @@ const jiti = createJiti(import.meta.url, {
 });
 const React = await jiti.import("react");
 const { renderToStaticMarkup } = await jiti.import("react-dom/server");
-const { adjacentQueueTarget, autoGrowTextarea, buildExtContextSnapshot, canClearBuiltinCommandInput, canRestoreUserMessage, canRunBuiltinSlashCommandWhileStreaming, ChatInput, cycleListIndex, filterModelOptions, getUpwardMenuMaxHeight, getUserMessageDraftImages, getUserMessageText, isExactSlashCommand, isRunEndStrayClick, mergeSubmission, mergeText, ModelErrorBanner, ModelScopeWarningBanner, modelSupportsImageInput, offersBuiltinSlashCommandWhileStreaming, readImageFile, replaceLinksWithMarkdown, replaceTextareaRange, RUN_END_CLICK_GUARD_MS, stacksComposerLayout, submitsSlashCommandOnEnter } = await jiti.import("./ChatInput.tsx");
+const { adjacentQueueTarget, autoGrowTextarea, scrollTextareaCaretIntoView, buildExtContextSnapshot, canClearBuiltinCommandInput, canRestoreUserMessage, canRunBuiltinSlashCommandWhileStreaming, ChatInput, cycleListIndex, filterModelOptions, getUpwardMenuMaxHeight, getUserMessageDraftImages, getUserMessageText, isExactSlashCommand, isRunEndStrayClick, mergeSubmission, mergeText, ModelErrorBanner, ModelScopeWarningBanner, modelSupportsImageInput, offersBuiltinSlashCommandWhileStreaming, readImageFile, replaceLinksWithMarkdown, replaceTextareaRange, RUN_END_CLICK_GUARD_MS, stacksComposerLayout, submitsSlashCommandOnEnter } = await jiti.import("./ChatInput.tsx");
 const { isBareMcpCommand } = await jiti.import("@/lib/mcp-command.ts");const { ModelSelector } = await jiti.import("./ModelSelector.tsx");
 const { I18nProvider } = await jiti.import("../hooks/useI18n.tsx");
-
 test("preserves pasted HTML links as Markdown without changing plain text layout", () => {
   const link = (label, href, occurrence = 0) => ({ label, href, occurrence });
 
@@ -680,6 +679,9 @@ test("locks built-in command submission until it settles", async () => {
     attachedImages: [],
     attachedImagesRef: { current: [] },
     builtinCommandPendingRef: { current: false },
+    builtinCommandFocusRef: { current: null },
+    textareaRef: { current: null },
+    document: { activeElement: {} },
     canClearBuiltinCommandInput,
     clearInput() {},
     onBuiltinCommand: async () => new Promise((resolve) => { callback.resolve = resolve; }),
@@ -1186,7 +1188,6 @@ test("selector rows keep the default star and the floating save button in one gu
   assert.doesNotMatch(active, /border-left/);
 });
 
-
 test("the live model selector can reapply its current model without changing draft-field selection behavior", () => {
   const source = ts.createSourceFile("ModelSelector.tsx", readFileSync(new URL("./ModelSelector.tsx", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   function findChoose(node) {
@@ -1235,3 +1236,60 @@ test("filters model options by name, id, provider and provider/id", () => {
   assert.equal(filterModelOptions(options, "missing").length, 0);
   assert.equal(filterModelOptions(options, "  "), options);
 })
+
+test("grows the composer to its text and hides the scrollbar until the text is taller than the box", () => {
+  const fake = (value, scrollHeight, clientHeight) => ({
+    value,
+    style: { height: "", overflowY: "" },
+    scrollTop: 0,
+    get scrollHeight() { return scrollHeight; },
+    clientHeight,
+  });
+
+  const tall = fake("lots", 320, 24);
+  autoGrowTextarea(tall);
+  assert.equal(tall.style.height, "200px", "the box caps at 200 px");
+  assert.equal(tall.style.overflowY, "auto", "capped text scrolls");
+});
+
+test("a capped composer keeps its scroll while it regrows, so a caret at the end stays visible", () => {
+  // As a browser does: an "auto" height fits the whole text, which clamps
+  // scrollTop to 0.
+  const fake = (value, scrollHeight, clientHeight) => {
+    let height = "";
+    const ta = {
+      value,
+      style: {
+        overflowY: "",
+        get height() { return height; },
+        set height(next) { height = next; if (next === "auto") ta.scrollTop = 0; },
+      },
+      scrollTop: 40,
+      get scrollHeight() { return scrollHeight; },
+      clientHeight,
+    };
+    return ta;
+  };
+
+  const tall = fake("lots of lines", 320, 24);
+  autoGrowTextarea(tall);
+  assert.equal(tall.style.height, "200px");
+  assert.equal(tall.scrollTop, 40, "the auto-height reset does not leave the box scrolled back to the top");
+});
+
+test("a programmatic caret at the end scrolls an overflowing box to its bottom, a mid-text caret does not", () => {
+  const fake = (value, selectionEnd, scrollHeight) => ({
+    value,
+    selectionEnd,
+    scrollTop: 0,
+    get scrollHeight() { return scrollHeight; },
+  });
+
+  const atEnd = fake("many\nlines", 10, 320);
+  scrollTextareaCaretIntoView(atEnd);
+  assert.equal(atEnd.scrollTop, 320, "a caret at the very end scrolls to the bottom");
+
+  const mid = fake("many\nlines", 3, 320);
+  scrollTextareaCaretIntoView(mid);
+  assert.equal(mid.scrollTop, 0, "a mid-text caret leaves the scroll alone");
+});

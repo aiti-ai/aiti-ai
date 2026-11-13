@@ -145,6 +145,7 @@ export async function POST(
   } catch (error) {
     // Read by its fields: the wrapper that threw may come from another route's bundle.
     const missingCwd = missingCwdFromBody(error);
+    const status = (error as { status?: number })?.status;
     // single-writer hard rule: an occupancy rejection is a semantic conflict, not a server fault
     if ((error as { name?: string }).name === "BridgeOccupiedError") {
       return NextResponse.json({
@@ -160,7 +161,7 @@ export async function POST(
       ...(commandType === "prompt" && !promptAccepted
         ? { code: "prompt_rejected", accepted: false }
         : {}),
-    }, { status: 500 });
+    }, { status: status === 404 ? status : 500 });
   }
 }
 
