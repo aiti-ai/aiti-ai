@@ -589,6 +589,7 @@ export const enLocale: LocalePlugin = {
     "files.posSidebar": "Left sidebar · block",
     "files.posPanel": "Right panel · tab",
     "files.expandPanel": "Expand file panel",
+    "files.expandPanelWide": "Collapse sidebar & widen panel",
     "files.restorePanelWidth": "Restore file panel width",
     "files.showPanel": "Show file panel",
     "files.openFolder": "Open Folder",

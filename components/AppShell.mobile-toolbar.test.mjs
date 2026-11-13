@@ -184,10 +184,28 @@ test("[fork] theme/language dual entries coexist: kept in the top bar (fork deci
 test("closes top-bar dropdowns when the file panel expands to full width", () => {
   assert.match(
     source,
-    /const handleRightPanelExpandToggle = useCallback\(\(\) => \{\s*setActiveTopPanel\(null\);\s*setRightPanelExpanded\(\(expanded\) => !expanded\);/,
+    /const handleRightPanelExpandToggle = useCallback\(\(\) => \{\s*setActiveTopPanel\(null\);\s*if \(rightPanelSizeMode === "wide"\) \{\s*setRightPanelSizeMode\("full"\);/,
   );
   assert.match(source, /onClick=\{handleRightPanelExpandToggle\}/);
   assert.match(source, /if \(rightPanelFullWidth\) setActiveTopPanel\(null\);/);
+});
+
+test("[fork] tri-state right-panel expand: wide snapshot + two-step width + restore-on-exit", () => {
+  // dock → wide: collapse the sidebar and queue the absorbed width (two-step).
+  assert.match(source, /wideSnapshotRef\.current = \{ sidebarOpen: true, rightWidth: rightPanelWidthRef\.current \};/);
+  assert.match(source, /widePendingWidthRef\.current = sidebarWidthRef\.current \+ rightPanelWidthRef\.current;/);
+  // Step two applies the width only after the sidebarOpen=false commit (same-batch
+  // would clamp against the stale open-sidebar max and change the chat width).
+  assert.match(source, /if \(rightPanelSizeMode !== "wide" \|\| widePendingWidthRef\.current === null\) return;/);
+  // Leaving wide restores the user's width over any wide width stored meanwhile.
+  assert.match(source, /rightPanelResizer\.setWidth\(snapshot\.rightWidth, \{ persist: true, forcePersist: true \}\);/);
+  // Sidebar re-opened while wide → back to dock (user wants the three columns).
+  assert.match(source, /if \(rightPanelSizeMode !== "wide" \|\| !sidebarOpen\) return;/);
+  // Panel closed / mobile band while wide → restore snapshot, fall back to dock.
+  assert.match(source, /exitRightPanelWide\(true\);\s*\}, \[exitRightPanelWide, isMobile, rightPanelOpen\]\);/);
+  // Shrinking below the split band while wide restores immediately (window resize
+  // listener — the event path the panel resizer itself uses).
+  assert.match(source, /if \(window\.innerWidth < SPLIT_PANEL_MIN_WIDTH\) exitRightPanelWide\(true\);/);
 });
 
 test("a sidebar pick closes the phone's drawer unless it asks to stay open (the sidebar's Fork)", () => {
