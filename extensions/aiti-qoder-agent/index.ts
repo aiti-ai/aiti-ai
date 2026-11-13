@@ -301,6 +301,21 @@ async function restoredCwdFor(sessionId?: string): Promise<string | null> {
 }
 
 /**
+ * 计费系数（price_factor，服务端目录下发）→ 选择器行右侧弱化文本（"0.5x"）。
+ * 尾零裁剪对齐 CLI 截图观感（0.5→"0.5x"、1→"1x"）；非有限数一律无 hint（不编数据）。
+ * original_price_factor 更高（限时降价）时附原价："0.1x→0.5x"（现价→原价，locale 中立）。
+ */
+function priceFactorHint(m: { price_factor?: unknown; original_price_factor?: unknown }): string | undefined {
+  const f = typeof m.price_factor === "number" && Number.isFinite(m.price_factor) ? m.price_factor : null;
+  if (f === null) return undefined;
+  const trim = (n: number) => n.toFixed(2).replace(/\.?0+$/, "");
+  const orig = typeof m.original_price_factor === "number" && Number.isFinite(m.original_price_factor) && m.original_price_factor > f
+    ? m.original_price_factor
+    : null;
+  return orig !== null ? `${trim(f)}x→${trim(orig)}x` : `${trim(f)}x`;
+}
+
+/**
  * 模型目录核心（handle 方法与注册级静态 listModels 共用）：
  * 网关目录（WASM 签名拉取，client 可为 null——未就绪时静默降级为仅 pi 目录）
  * + pi 目录（models.json 实时扁平化，"pi" 分组）。当前模型置顶。
@@ -311,7 +326,8 @@ async function qoderCatalog(client: QoderClient | null, current?: { id: string; 
     try {
       for (const m of await client.listModels()) {
         if (m.enable === false) continue;
-        external.push({ id: m.key, provider: "qoder", label: m.display_name || m.key, source: "ext" });
+        const hint = priceFactorHint(m);
+        external.push({ id: m.key, provider: "qoder", label: m.display_name || m.key, source: "ext", ...(hint ? { hint } : {}) });
       }
     } catch (e) {
       console.warn("[aiti-qoder-agent] listModels failed:", e instanceof Error ? e.message : e);
@@ -1696,6 +1712,88 @@ async function quotaView(force: boolean): Promise<Response> {
   }
 }
 
+// ── Backend scan (shared by startup + rescanBackends) ─────────────────────
+// Probe + register pass for both qoder variants — unconditional registration:
+// a missing CLI still registers the entry (available:false + installHint, the
+// dropdown greys it out); re-running the scan flips the snapshot (POST
+// /api/session-backends/rescan, host-invoked after boot).
+type QoderScanSlot = {
+  register(provider: {
+    type: string;
+    label: string;
+    agentKey?: string;
+    priority?: number;
+    maxCapabilities: SessionCapabilitiesLike;
+    available?: boolean;
+    installHint?: string;
+    listModels?: () => Promise<Array<{ id: string; provider: string; label?: string }>>;
+    createSession(options: {
+      sessionId?: string;
+      cwd?: string;
+      extraArgs?: string[];
+      model?: { provider: string; id: string };
+    }): Promise<QoderHandle>;
+  }): string;
+};
+
+// Shown next to the greyed-out dropdown entry when the CLI is not on PATH nor
+// in the known install locations.
+const QODER_INSTALL_HINT = "Qoder standalone CLI (qodercli / qoderclicn — CC-protocol headless agent; `qoder` is the IDE launcher, not this CLI)";
+
+const mkQoderProvider = (v: QoderVariantInfo, bin: string | null) => ({
+  type: v.type,
+  label: v.label,
+  agentKey: v.agentKey,
+  priority: 20, // 高于通用 CC 族驱动的 10：同 agentKey 时优先由本扩展认领
+  // 该二进制的实际能力表（steer 只在探针 pass 时开放；宿主按它门控按钮/降级）
+  maxCapabilities: qoderCapabilitiesFor(bin),
+  // Availability snapshot: false = CLI missing → dropdown entry greyed out;
+  // refreshed on rescan. createSession fails with an install pointer when
+  // invoked without the binary.
+  ...(bin ? {} : { available: false as const, installHint: QODER_INSTALL_HINT }),
+  // 静态目录（新建页选后端时给选择器供数据；无会话即可取，WASM 未就绪时仅 pi 目录）——上次使用的模型置顶
+  listModels: () => qoderStaticCatalog(sharedClient, v.stateKey),
+  createSession: (options: { sessionId?: string; cwd?: string; extraArgs?: string[]; model?: { provider: string; id: string } }) =>
+    QoderHandle.start({ ...options, variant: v.variant, client: sharedClient }),
+});
+
+function scanQoderBackends(
+  slot: QoderScanSlot,
+  provide?: <T>(key: string, impl: T) => () => void,
+): { registered: string[]; unavailable: string[] } {
+  const registered: string[] = [];
+  const unavailable: string[] = [];
+  const installedVariants = new Set<QoderVariant>();
+  for (const v of QODER_VARIANTS) {
+    const bin = resolveQoderCli(v.variant);
+    const key = slot.register(mkQoderProvider(v, bin));
+    if (bin) {
+      installedVariants.add(v.variant);
+      registered.push(`${key}(${bin})`);
+      console.log(`[aiti-qoder-agent] ${v.agentKey}: ${describeSteerGate(steerProbeBook, bin)}`);
+    } else {
+      unavailable.push(key); // PATH 与安装位均无 → 条目常驻但灰显（装机后 rescan 自动点亮）
+    }
+  }
+  // P2 协议委托：launch 服务（intl 优先，未装则 cn；均未装时 agentKey 仍给 qoder——注册侧按需消费）
+  // agentKey 一律是「All Sessions join key」= 复合 id 前缀（CN = qodercn），不是 provider type。
+  const primary = qoderVariant(installedVariants.has("cn") && !installedVariants.has("intl") ? "cn" : "intl");
+  provide?.("aiti-qoder-agent.launch", {
+    agentKey: primary.agentKey,
+    capabilities: qoderCapabilitiesFor(resolveQoderCli(primary.variant)),
+    // name = provider type（custom-agent 存进 agents.json 的 target，勿改）
+    members: QODER_VARIANTS.map((v) => ({ name: v.type, agentKey: v.agentKey, label: v.label })),
+    createSessionFromLaunch: (launch: LaunchOverride, options: { sessionId?: string; cwd?: string; extraArgs?: string[]; model?: { provider: string; id: string } }) =>
+      QoderHandle.start({
+        ...options,
+        variant: QODER_VARIANTS.find((v) => v.type === launch.target)?.variant ?? primary.variant,
+        client: sharedClient,
+        launchOverride: launch,
+      }),
+  });
+  return { registered, unavailable };
+}
+
 export default {
   id: "aiti-qoder-agent",
   name: "Qoder CLI (国际/CN 独立 CLI·非 IDE)",
@@ -1776,29 +1874,9 @@ export default {
       // 变体键全部来自 variants.ts（type=注册键 / agentKey=All Sessions join key=复合 id
       // 前缀 / stateKey=模型状态命名空间）——agentKey 必须等于 session-manager 适配器 id，
       // 否则 findProvidersForAgent 精确匹配落空，该变体的历史行既不能直开也不能接管。
-      const mk = (v: QoderVariantInfo, bin: string) => ({
-        type: v.type,
-        label: v.label,
-        agentKey: v.agentKey,
-        priority: 20, // 高于通用 CC 族驱动的 10：同 agentKey 时优先由本扩展认领
-        // 该二进制的实际能力表（steer 只在探针 pass 时开放；宿主按它门控按钮/降级）
-        maxCapabilities: qoderCapabilitiesFor(bin),
-        // 静态目录（新建页选后端时给选择器供数据；无会话即可取，WASM 未就绪时仅 pi 目录）——上次使用的模型置顶
-        listModels: () => qoderStaticCatalog(sharedClient, v.stateKey),
-        createSession: (options: { sessionId?: string; cwd?: string; extraArgs?: string[]; model?: { provider: string; id: string } }) =>
-          QoderHandle.start({ ...options, variant: v.variant, client: sharedClient }),
-      });
-
-      const registered: string[] = [];
-      const installedVariants = new Set<QoderVariant>();
-      for (const v of QODER_VARIANTS) {
-        const bin = resolveQoderCli(v.variant);
-        if (!bin) continue; // PATH 与安装位均无 → 不注册（装机才接）
-        const key = ctx.sessionProviders.register(mk(v, bin));
-        installedVariants.add(v.variant);
-        registered.push(`${key}(${bin})`);
-        console.log(`[aiti-qoder-agent] ${v.agentKey}: ${describeSteerGate(steerProbeBook, bin)}`);
-      }
+      // 变体探测+注册+launch 服务（可重入；装机后无需重启，经 rescanBackends 重扫）
+      const qoderScan = scanQoderBackends(ctx.sessionProviders, ctx.services?.provide);
+      console.log(`[aiti-qoder-agent] registered: ${qoderScan.registered.join(", ") || "(no qoder CLI on PATH)"} + launch service`);
       // agent 描述符：agent 管理面（aiti-agent-manager）动态发现用——manager 不写死各家
       ctx.services?.provide?.("aiti-qoder-agent.agent", {
         agent: "qoder",
@@ -1815,23 +1893,19 @@ export default {
           { key: "qoder-cn-user", label: "凭据（中国版）", path: join(c.home, ".qoder-cn", ".auth", "user") },
         ],
       });
-      // P2 协议委托：launch 服务（intl 优先，未装则 cn；均未装时 agentKey 仍给 qoder——注册侧按需消费）
-      // agentKey 一律是「All Sessions join key」= 复合 id 前缀（CN = qodercn），不是 provider type。
-      const primary = qoderVariant(installedVariants.has("cn") && !installedVariants.has("intl") ? "cn" : "intl");
-      ctx.services?.provide?.("aiti-qoder-agent.launch", {
-        agentKey: primary.agentKey,
-        capabilities: qoderCapabilitiesFor(resolveQoderCli(primary.variant)),
-        // name = provider type（custom-agent 存进 agents.json 的 target，勿改）
-        members: QODER_VARIANTS.map((v) => ({ name: v.type, agentKey: v.agentKey, label: v.label })),
-        createSessionFromLaunch: (launch: LaunchOverride, options: { sessionId?: string; cwd?: string; extraArgs?: string[]; model?: { provider: string; id: string } }) =>
-          QoderHandle.start({
-            ...options,
-            variant: QODER_VARIANTS.find((v) => v.type === launch.target)?.variant ?? primary.variant,
-            client: sharedClient,
-            launchOverride: launch,
-          }),
-      });
-      console.log(`[aiti-qoder-agent] registered: ${registered.join(", ") || "(no qoder CLI on PATH)"} + launch service`);
+      // P2 协议委托 launch 服务已并入 scanQoderBackends（rescan 重扫时同样刷新）
+    },
+
+    /** Backend rescan (POST /api/session-backends/rescan): re-run the probe pass —
+     *  CLIs installed after host boot light up without a restart; missing ones stay
+     *  greyed out with the install hint. */
+    rescanBackends(ctx: {
+      sessionProviders: QoderScanSlot;
+      services?: { provide<T>(key: string, impl: T): () => void };
+    }) {
+      const r = scanQoderBackends(ctx.sessionProviders, ctx.services?.provide);
+      console.log(`[aiti-qoder-agent] rescan: ${r.registered.length} available / ${r.unavailable.length} not installed`);
+      return r;
     },
 
     /** credits 也暴露为扩展级 API（无需先开会话即可查询）；受控登录 /login/* 优先（未登录时 sharedClient 为 null 也要可达）。 */

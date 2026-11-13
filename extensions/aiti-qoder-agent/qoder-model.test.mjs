@@ -111,6 +111,27 @@ test("qoderStaticCatalog: 无 last-used 时保持目录原序", async () => {
   assert.deepEqual(list.map((m) => m.id), ["auto", "qmodel_38max", "qfmodel"]);
 });
 
+test("qoderStaticCatalog: price_factor 映射为选择器 hint（尾零裁剪；非有限数/缺失不编数据）", async () => {
+  rmSync(join(stateDir, STATE_KEY, "_last-model.json"), { force: true });
+  resetAgentLastModelCacheForTests();
+  const client = {
+    listModels: async () => [
+      { key: "auto", display_name: "Auto", enable: true, price_factor: 0.5 },
+      { key: "promo", display_name: "Promo", enable: true, price_factor: 0.1, original_price_factor: 0.5 },
+      { key: "one", display_name: "One", enable: true, price_factor: 1 },
+      { key: "nofee", display_name: "NoFee", enable: true },
+      { key: "bad", display_name: "Bad", enable: true, price_factor: "x" },
+    ],
+  };
+  const list = await qoderStaticCatalog(client, STATE_KEY);
+  const byId = Object.fromEntries(list.map((m) => [m.id, m]));
+  assert.equal(byId.auto.hint, "0.5x");
+  assert.equal(byId.promo.hint, "0.1x→0.5x", "限时降价附原价（现价→原价）");
+  assert.equal(byId.one.hint, "1x");
+  assert.equal(byId.nofee.hint, undefined);
+  assert.equal(byId.bad.hint, undefined);
+});
+
 test.after(() => {
   rmSync(stateDir, { recursive: true, force: true });
 });
