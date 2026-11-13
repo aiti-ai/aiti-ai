@@ -114,7 +114,7 @@ docker run -d --name aiti --init \
 | 网页桌面 | noVNC `:6080/vnc.html`（RFB 经 websockify→x11vnc→Xvfb :99） |
 | CDP 调试 | Chrome `:9222`（headful，`--user-data-dir=/opt/aiti/data/chrome-profile`） |
 | 语音输入 | ASR `ws://<host>:8767/ws/stream`（实时）/ `/voice/quick`（快捷）/ `/voice/transcribe`（精转）/ `/ws/vad`（分段）——aiti-ai-input 扩展经 `AITI_ASR_STREAM_BASE` 自动接线 |
-| 语音朗读 | 已装 edge-tts；在 aiti-ai-speak 扩展启用 `tts.edge` feature |
+| 语音朗读 | 已装 edge-tts；在 aiti-ai-speek 扩展启用 `tts.edge` feature |
 | 网页终端 | ttyd `:7681` |
 | 隧道 | 容器内可用 `cloudflared` / `ngrok` / `frpc`（ngrok 需自带 authtoken） |
 | 下载工具 | `justget <url> -o <file> -m <mirror-url>` 多源竞速 |
@@ -163,5 +163,5 @@ node docker/scripts/gen-deps.mjs                         # S3 依赖矩阵（读
 | `/api/models` 403 | 正常——只放行既有会话 cwd；健康检查走 `/api/home` |
 | x11vnc 连上但无画面 / 极慢 | NOFILE 死锁（O20）——确认没调大 `AITI_GUI_NOFILE` 并用镜像自带 50-gui-start |
 | CDP 9222 不可达 | 确认 flag 里有 `--user-data-dir`（Chrome 136+ 默认 profile 忽略 CDP）+ 首启 EULA 已跳过 |
-| ASR 首响慢 | 模型懒加载（full 已预下载 2.7GB，零重复下载；切模型增量下载） |
+| ASR 首响慢 | 模型懒加载（full 已预下载模型，零重复下载；切模型增量下载） |
 | OOM | full + 语音需 ≥8GB 内存（实测 2–6GB 会 OOM，测试报告 T-H5） |

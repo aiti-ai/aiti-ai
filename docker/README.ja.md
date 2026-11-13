@@ -114,7 +114,7 @@ docker run -d --name aiti --init \
 | ウェブデスクトップ | noVNC `:6080/vnc.html`（websockify→x11vnc→Xvfb :99 経由の RFB） |
 | CDP デバッグ | Chrome `:9222`（headful、`--user-data-dir=/opt/aiti/data/chrome-profile`） |
 | 音声入力 | ASR `ws://<host>:8767/ws/stream`（リアルタイム）/ `/voice/quick`（クイック）/ `/voice/transcribe`（高精度）/ `/ws/vad`（セグメンテーション）——aiti-ai-input 拡張が `AITI_ASR_STREAM_BASE` 経由で自動接続 |
-| 音声読み上げ | edge-tts 同梱；aiti-ai-speak 拡張で `tts.edge` feature を有効化 |
+| 音声読み上げ | edge-tts 同梱；aiti-ai-speek 拡張で `tts.edge` feature を有効化 |
 | ウェブ端末 | ttyd `:7681` |
 | トンネル | コンテナ内で `cloudflared` / `ngrok` / `frpc` が利用可能（ngrok は自分の authtoken が必要） |
 | ダウンロードツール | `justget <url> -o <file> -m <mirror-url>` マルチソースレーシング |
@@ -163,5 +163,5 @@ node docker/scripts/gen-deps.mjs                         # S3 依存マトリク
 | `/api/models` 403 | 正常——既存セッション cwd のみ許可；ヘルスチェックは `/api/home` を使用 |
 | x11vnc は接続するが画面が出ない /極端に遅い | NOFILE デッドロック（O20）——`AITI_GUI_NOFILE` が上げられていないことを確認し、イメージ同梱の 50-gui-start を使用 |
 | CDP 9222 に到達しない | フラグに `--user-data-dir` があることを確認（Chrome 136+ はデフォルトプロファイルで CDP を無視）+ 初回 EULA スキップ済み |
-| ASR の初回応答が遅い | モデルは遅延ロード（full は 2.7GB を事前ダウンロード済み、再ダウンロードゼロ；モデル切替は増分ダウンロード） |
+| ASR の初回応答が遅い | モデルは遅延ロード（full はモデルを事前ダウンロード済み、再ダウンロードゼロ；モデル切替は増分ダウンロード） |
 | OOM | full + 音声には ≥8GB メモリが必要（実測 2–6GB で OOM、テストレポート T-H5） |
