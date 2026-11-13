@@ -61,14 +61,19 @@ const ENTRY_NAMES = ["index.ts", "index.mjs", "index.js", "index.cjs"];
 export function scanExtensionDirs(root: string): string[] {
   if (!existsSync(root)) return [];
   return readdirSync(root)
-    .filter((name) => !name.startsWith(".") && name !== "node_modules") // skip hidden dirs (.git etc.) and npm link dirs (extensions/node_modules → shared root)
+    .filter((name) => !name.startsWith(".") && name !== "node_modules" && name !== "_shared") // skip hidden dirs, npm link dirs (extensions/node_modules → shared root), and the _shared runtime-dep layer (never an extension)
     .map((name) => join(root, name))
     .filter((p) => {
       try {
-        return statSync(p).isDirectory();
+        if (!statSync(p).isDirectory()) return false;
       } catch {
         return false;
       }
+      // Non-extension asset dirs (scaffolds like templates/, packaging leftovers):
+      // neither a package.json nor an entry script — loading one would only produce
+      // a noisy "no extension entry" error. Skip them as candidates entirely.
+      if (existsSync(join(p, "package.json"))) return true;
+      return resolveExtensionEntry(p) !== null;
     });
 }
 
