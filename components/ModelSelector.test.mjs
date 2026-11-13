@@ -253,10 +253,14 @@ test("option rows show the provider suffix consistently on desktop and small scr
     /isMobile\s*\?\s*undefined\s*:\s*option\.provider/,
     "the mobile-hidden provider-suffix branch must stay removed",
   );
-  const providerHints = modelSelectorSource.match(/hint=\{option\.provider\}/g) ?? [];
+  // Recent rows keep the pure provider suffix (they span providers); grouped rows prefer the
+  // ext-agent catalog hint (e.g. qoder billing "0.5x") and fall back to the provider id.
+  const recentHint = modelSelectorSource.match(/hint=\{option\.provider\}/g) ?? [];
+  assert.ok(recentHint.length >= 1, "recent rows must keep the provider suffix");
+  const groupedHints = modelSelectorSource.match(/hint=\{option\.hint \?\? option\.provider\}/g) ?? [];
   assert.ok(
-    providerHints.length >= 2,
-    `recent + provider grouping must both pass the provider suffix (found ${providerHints.length})`,
+    groupedHints.length >= 1,
+    `provider-grouped rows must render hint with provider fallback (found ${groupedHints.length})`,
   );
 });
 

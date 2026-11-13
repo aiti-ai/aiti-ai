@@ -16,6 +16,8 @@ export interface ModelSelectorOption {
   status?: "ok" | "rl" | "err" | "unprobed";
   /** This provider is rate-limited as a whole (all its models currently 429) — group-header hint, no auto-disable */
   providerRL?: boolean;
+  /** Right-aligned dim row text override (ext-agent catalogs, e.g. qoder billing "0.5x"); absent → provider id. */
+  hint?: string;
 }
 
 export interface ModelSelectorGroup {
@@ -685,7 +687,7 @@ export function ModelSelector({
                       key={`${option.provider}:${option.modelId}`}
                       active={option.modelId === value?.modelId && option.provider === value?.provider}
                       label={option.name}
-                      hint={option.provider}
+                      hint={option.hint ?? option.provider}
                       status={option.status}
                       disabled={refreshing}
                       gutter={Boolean(onSetDefault)}

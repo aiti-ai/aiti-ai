@@ -165,7 +165,7 @@ interface Props {
   model?: { provider: string; modelId: string } | null;
   isAutoModelSelection?: boolean;
   modelNames?: Record<string, string>;
-  modelList?: { id: string; name: string; provider: string; providerName?: string; input?: string[]; avail?: "ok" | "rl" | "err" | "unprobed"; providerRL?: boolean }[];
+  modelList?: { id: string; name: string; provider: string; providerName?: string; input?: string[]; avail?: "ok" | "rl" | "err" | "unprobed"; providerRL?: boolean; hint?: string }[];
   modelError?: string | null;
   /** The session's folder, when it no longer exists (moved or renamed): said instead of a model error (#1422). */
   missingCwd?: string | null;
@@ -3688,7 +3688,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   // Build model options: prefer modelList (has provider info), fallback to modelNames
   const modelOptions: ModelSelectorOption[] = (() => {
     if (modelList && modelList.length > 0) {
-      return modelList.map((m) => ({ provider: m.provider, providerName: m.providerName, modelId: m.id, name: m.name, status: m.avail, ...(m.providerRL ? { providerRL: true } : {}) }));
+      return modelList.map((m) => ({ provider: m.provider, providerName: m.providerName, modelId: m.id, name: m.name, status: m.avail, ...(m.providerRL ? { providerRL: true } : {}), ...(m.hint ? { hint: m.hint } : {}) }));
     }
     return Object.entries(modelNames ?? {}).map(([modelId, name]) => ({
       provider: model?.provider ?? "unknown",
