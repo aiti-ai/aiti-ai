@@ -1,8 +1,339 @@
 // src/bridge.ts
-import { randomBytes, randomInt } from "node:crypto";
+import { randomBytes as randomBytes2, randomInt } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdirSync, appendFileSync, readdirSync, readFileSync, existsSync, statSync, rmSync, writeFileSync, renameSync } from "node:fs";
+import { mkdirSync as mkdirSync2, appendFileSync as appendFileSync2, readdirSync as readdirSync2, readFileSync, existsSync as existsSync2, statSync as statSync2, rmSync as rmSync2, writeFileSync, renameSync, openSync, readSync, closeSync } from "node:fs";
+import { join as join2, dirname as dirname2 } from "node:path";
+
+// src/pair.ts
+import { randomBytes } from "node:crypto";
 import { join, dirname } from "node:path";
+import { mkdirSync, appendFileSync, existsSync, statSync, rmSync, unlinkSync, readdirSync, createReadStream } from "node:fs";
+import { Readable } from "node:stream";
+var PAIR_PEER_TTL = parseInt(process.env.AITI_PAIR_PEER_TTL || "3600000", 10);
+var PAIR_FILE_TTL = parseInt(process.env.AITI_PAIR_FILE_TTL || "3600000", 10);
+var PAIR_FILE_MAX = parseInt(process.env.AITI_PAIR_FILE_MAX || String(200 * 1024 * 1024), 10);
+var CHUNK_MAX = 2 * 1024 * 1024;
+var INBOX_MAX = 200;
+function createPairModule(deps) {
+  const { TAG, dataDir, cors, json, sseResponse } = deps;
+  const peers = /* @__PURE__ */ new Map();
+  const files = /* @__PURE__ */ new Map();
+  const filesDir = dataDir ? join(dataDir, "aiti-bridge", "pair-files") : "";
+  if (filesDir) {
+    try {
+      mkdirSync(filesDir, { recursive: true });
+    } catch {
+    }
+  }
+  const genId = (p) => p + randomBytes(6).toString("hex");
+  const safeName = (s) => String(s || "file").replace(/[/\\:*?"<>|\x00-\x1f]/g, "_").slice(0, 120) || "file";
+  const pairPublic = process.env.AITI_PAIR_PUBLIC === "1";
+  const pairToken = process.env.AITI_PAIR_TOKEN || "";
+  const PRIVATE_IP = /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1|fc|fd)/;
+  function gateAdmission(req, regToken) {
+    if (pairPublic) return null;
+    if ((req.headers.get("remote-user") || "").trim()) return null;
+    const ip = (req.headers.get("x-real-ip") || "").trim();
+    if (!ip || PRIVATE_IP.test(ip)) return null;
+    if (pairToken && regToken && regToken === pairToken) return null;
+    return json({ ok: false, error: "pair \u4E0A\u7EBF\u9650\u5185\u7F51\uFF08\u5916\u7F51\u5F00\u653E\uFF1A\u8FC7 Authelia / AITI_PAIR_PUBLIC=1 / AITI_PAIR_TOKEN+regToken\uFF09" }, 403);
+  }
+  function broadcastToPeers(env) {
+    for (const [, p] of peers) {
+      if (!p.writer) continue;
+      if (!p.writer.write(env)) {
+        p.writer = null;
+        if (!p.offlineAt) p.offlineAt = Date.now();
+      }
+    }
+  }
+  function register(msg) {
+    const now = Date.now();
+    const name = safeName(String(msg && msg.name || "")).slice(0, 40) || "\u8BBE\u5907";
+    const pid = msg && msg.peerId && String(msg.peerId) || genId("p_");
+    const dev = msg && msg.device && typeof msg.device === "object" ? msg.device : null;
+    const devLabel = dev ? [dev.browser || "?", dev.os || "", dev.screen || ""].filter(Boolean).join(" \xB7 ") : null;
+    let p = peers.get(pid);
+    if (!p) {
+      if (devLabel) console.log(TAG + "   \u8BBE\u5907\uFF1A" + devLabel + (dev && dev.lang ? " \xB7 " + dev.lang : ""));
+      p = { peerId: pid, token: "t_" + randomBytes(18).toString("hex"), name, ua: String(msg && msg.ua || "").slice(0, 200), device: dev, deviceLabel: devLabel, lastSeen: now, writer: null, offlineAt: null, inbox: [] };
+      peers.set(pid, p);
+      console.log(TAG + " pair \u8BBE\u5907\u6CE8\u518C\uFF1A" + name + " (" + pid + ")");
+      broadcastToPeers({ type: "peer-join", peer: { id: pid, kind: "pair", name } });
+      deps.getDevices().length;
+    } else {
+      p.name = name;
+      p.lastSeen = now;
+      p.offlineAt = null;
+      if (msg && msg.ua) p.ua = String(msg.ua).slice(0, 200);
+      if (dev) {
+        p.device = dev;
+        p.deviceLabel = devLabel;
+      }
+    }
+    return { peerId: p.peerId, token: p.token, name: p.name };
+  }
+  function checkPeer(peerId, token) {
+    const p = peers.get(String(peerId || ""));
+    return p && p.token && token && p.token === String(token) ? p : null;
+  }
+  function listPeers() {
+    const now = Date.now();
+    return [...peers.values()].map((p) => ({
+      kind: "pair",
+      id: p.peerId,
+      name: p.name,
+      ua: p.ua || null,
+      deviceLabel: p.deviceLabel || null,
+      online: !!p.writer,
+      offlineAt: p.offlineAt || null,
+      lastSeen: p.lastSeen,
+      pending: p.inbox.filter((m) => m.status === "pending").length,
+      _now: now
+    })).map(({ _now, ...row }) => row);
+  }
+  function deliverToPeer(peerId, env) {
+    const p = peers.get(String(peerId || ""));
+    if (!p) return false;
+    const rec = { ...env, status: "pending" };
+    p.inbox.push(rec);
+    if (p.inbox.length > INBOX_MAX) p.inbox.splice(0, p.inbox.length - INBOX_MAX);
+    if (p.writer && p.writer.write(env)) {
+      rec.status = "delivered";
+    }
+    return true;
+  }
+  function resolvePeerFuzzy(to) {
+    const q = String(to || "").trim();
+    if (!q) return { none: true };
+    const list = [...peers.values()];
+    if (peers.has(q)) return { hit: peers.get(q) };
+    const byName = list.filter((p) => p.name === q);
+    if (byName.length === 1) return { hit: byName[0] };
+    const fuzzy = list.filter((p) => (p.name || "").includes(q) || p.peerId.includes(q));
+    if (fuzzy.length === 1) return { hit: fuzzy[0] };
+    if (fuzzy.length > 1) return { multiple: fuzzy.map((p) => ({ kind: "pair", id: p.peerId, name: p.name })) };
+    return { none: true };
+  }
+  function fileInit(from, to, name, size, mime) {
+    if (!filesDir) return { error: "\u6865\u672A\u914D\u7F6E dataDir\uFF08\u6587\u4EF6\u4E2D\u8F6C\u4E0D\u53EF\u7528\uFF09" };
+    if (!size || size <= 0) return { error: "bad size" };
+    if (size > PAIR_FILE_MAX) return { error: "\u6587\u4EF6\u8D85\u8FC7\u4E0A\u9650 " + Math.round(PAIR_FILE_MAX / 1024 / 1024) + "MB" };
+    const fileId = genId("f_");
+    const path = join(filesDir, fileId);
+    const rec = { fileId, name: safeName(name), size, mime: String(mime || "application/octet-stream").slice(0, 100), from, to: String(to || ""), path, bytes: 0, status: "uploading", at: Date.now() };
+    try {
+      rmSync(path, { force: true });
+    } catch {
+    }
+    files.set(fileId, rec);
+    return { fileId, name: rec.name, size, chunkMax: CHUNK_MAX };
+  }
+  function fileChunk(fileId, buf) {
+    const f = files.get(String(fileId || ""));
+    if (!f) return { error: "unknown fileId" };
+    if (f.status !== "uploading") return { error: "upload already completed" };
+    if (!buf || !buf.length) return { error: "empty chunk" };
+    if (buf.length > CHUNK_MAX) return { error: "chunk too large (\u2264" + CHUNK_MAX + "B)" };
+    if (f.bytes + buf.length > f.size) return { error: "exceeds declared size" };
+    try {
+      appendFileSync(f.path, buf);
+      f.bytes += buf.length;
+      return { ok: true, bytes: f.bytes };
+    } catch (e) {
+      return { error: String(e && e.message || e) };
+    }
+  }
+  function fileComplete(fileId) {
+    const f = files.get(String(fileId || ""));
+    if (!f) return { error: "unknown fileId" };
+    if (f.status !== "uploading") return { ok: true, file: publicFile(f) };
+    if (f.bytes !== f.size) return { error: "size mismatch\uFF08\u5DF2\u6536 " + f.bytes + "/" + f.size + "B\uFF0C\u8865\u4F20\u7F3A\u5931\u5757\u540E\u518D complete\uFF09" };
+    f.status = "ready";
+    return { ok: true, file: publicFile(f) };
+  }
+  const publicFile = (f) => ({ fileId: f.fileId, name: f.name, size: f.size, mime: f.mime, from: f.from, to: f.to, at: f.at });
+  function fileDownload(p, fileId) {
+    if (!p) return json({ ok: false, error: "bad peer/token" }, 401);
+    const f = files.get(String(fileId || ""));
+    if (!f) return json({ ok: false, error: "unknown fileId" }, 404);
+    if (f.status !== "ready") return json({ ok: false, error: "file not ready" }, 409);
+    if (f.to && f.to !== "all" && f.to !== p.peerId && f.to !== p.name) return json({ ok: false, error: "not the receiver" }, 403);
+    if (!existsSync(f.path)) return json({ ok: false, error: "file expired" }, 410);
+    let stream;
+    try {
+      stream = Readable.toWeb(createReadStream(f.path));
+    } catch (e) {
+      return json({ ok: false, error: String(e && e.message || e) }, 500);
+    }
+    return new Response(stream, {
+      headers: {
+        ...cors,
+        "content-type": f.mime || "application/octet-stream",
+        "content-length": String(f.size),
+        "cache-control": "no-store",
+        "content-disposition": 'attachment; filename="pair-' + f.fileId.slice(2, 10) + `"; filename*=UTF-8''` + encodeURIComponent(f.name)
+      }
+    });
+  }
+  function getFileInfo(fileId) {
+    const f = files.get(String(fileId || ""));
+    return f ? { ...publicFile(f), path: f.path, status: f.status } : null;
+  }
+  async function fetchToFile(fileId, savePath) {
+    const f = files.get(String(fileId || ""));
+    if (!f) return { error: "unknown fileId" };
+    if (f.status !== "ready") return { error: "file not ready" };
+    if (!existsSync(f.path)) return { error: "file expired" };
+    if (!savePath) {
+      const dir = join(dataDir, "aiti-bridge", "pair-inbox");
+      try {
+        mkdirSync(dir, { recursive: true });
+      } catch (e) {
+        return { error: String(e && e.message || e) };
+      }
+      const dest = join(dir, safeName(f.name));
+      try {
+        if (existsSync(dest)) unlinkSync(dest);
+        await (await import("node:fs/promises")).copyFile(f.path, dest);
+      } catch (e) {
+        return { error: String(e && e.message || e) };
+      }
+      return { ok: true, path: dest, name: f.name, size: f.size };
+    }
+    try {
+      const { copyFile, mkdir } = await import("node:fs/promises");
+      await mkdir(dirname(savePath), { recursive: true });
+      await copyFile(f.path, savePath);
+    } catch (e) {
+      return { error: String(e && e.message || e) };
+    }
+    return { ok: true, path: savePath, name: f.name, size: f.size };
+  }
+  function sweep(now) {
+    for (const [pid, p] of [...peers]) {
+      if (p.writer) {
+        p.offlineAt = null;
+        continue;
+      }
+      if (now - p.lastSeen <= 12e4) continue;
+      if (!p.offlineAt) p.offlineAt = p.lastSeen;
+      if (now - p.offlineAt > PAIR_PEER_TTL) {
+        console.log(TAG + " pair \u8BBE\u5907\u6E05\u7406\uFF08\u6389\u7EBF\u8D85\u65F6\uFF09\uFF1A" + p.name + " (" + pid + ")");
+        peers.delete(pid);
+        broadcastToPeers({ type: "peer-leave", peer: { id: pid, name: p.name } });
+      }
+    }
+    if (filesDir) {
+      for (const [fid, f] of [...files]) {
+        if (now - f.at > PAIR_FILE_TTL) {
+          try {
+            rmSync(f.path, { force: true });
+          } catch {
+          }
+          files.delete(fid);
+        }
+      }
+      try {
+        if (existsSync(filesDir)) {
+          for (const name of readdirSync(filesDir)) {
+            try {
+              const p = join(filesDir, name);
+              if (statSync(p).isFile() && now - statSync(p).mtimeMs > PAIR_FILE_TTL) {
+                rmSync(p, { force: true });
+                files.delete(name);
+              }
+            } catch {
+            }
+          }
+        }
+      } catch {
+      }
+    }
+  }
+  async function handle(req, path, searchParams) {
+    const seg = path.slice(2);
+    const method = req.method;
+    if (seg[0] === "register" && method === "POST") {
+      const msg = await req.json().catch(() => null);
+      const denied = gateAdmission(req, msg && msg.regToken || null);
+      if (denied) return denied;
+      const r = register(msg);
+      return json({ ok: true, ...r });
+    }
+    if (seg[0] === "devices" && method === "GET") {
+      return json({ ok: true, devices: deps.getDevices() });
+    }
+    if (seg[0] === "events" && method === "GET") {
+      const denied = gateAdmission(req, searchParams.get("reg"));
+      if (denied) return denied;
+      const p = checkPeer(searchParams.get("peer"), searchParams.get("token"));
+      if (!p) return json({ ok: false, error: "bad peer/token" }, 401);
+      const { response, writer, cleanup } = sseResponse(() => {
+        if (p.writer === writer) {
+          p.writer = null;
+          if (!p.offlineAt) p.offlineAt = Date.now();
+        }
+        cleanup();
+      });
+      p.writer = writer;
+      p.lastSeen = Date.now();
+      p.offlineAt = null;
+      writer.write({ type: "ready", peerId: p.peerId, name: p.name });
+      return response;
+    }
+    if (seg[0] === "message" && method === "POST") {
+      const msg = await req.json().catch(() => null);
+      const p = checkPeer(msg && msg.peer, msg && msg.token);
+      if (!p) return json({ ok: false, error: "bad peer/token" }, 401);
+      const text = String(msg && msg.text || "").slice(0, 64e3);
+      if (!text.trim()) return json({ ok: false, error: "bad request\uFF08\u9700\u8981 text\uFF09" }, 400);
+      const r = deps.routeSend({ id: p.peerId, name: p.name }, String(msg && msg.to || "all"), { text });
+      return json(r, r.ok ? 200 : r.candidates ? 300 : 400);
+    }
+    if (seg[0] === "file") {
+      if (seg[1] === "init" && method === "POST") {
+        const msg = await req.json().catch(() => null);
+        const p = checkPeer(msg && msg.peer, msg && msg.token);
+        if (!p) return json({ ok: false, error: "bad peer/token" }, 401);
+        const r = fileInit({ id: p.peerId, name: p.name }, String(msg && msg.to || ""), String(msg && msg.name || ""), Number(msg && msg.size || 0), String(msg && msg.mime || ""));
+        return r.error ? json({ ok: false, error: r.error }, 400) : json({ ok: true, ...r });
+      }
+      if (seg[1] === "chunk" && method === "POST") {
+        const fileId = String(seg[2] || "");
+        const buf = Buffer.from(await req.arrayBuffer());
+        const r = fileChunk(fileId, buf);
+        return r.ok ? json(r) : json(r, 400);
+      }
+      if (seg[1] === "complete" && method === "POST") {
+        const fileId = String(seg[2] || "");
+        const r = fileComplete(fileId);
+        if (!r.ok) return json(r, 400);
+        const f = getFileInfo(fileId);
+        deps.routeSend(f.from, f.to || "all", { file: { fileId: f.fileId, name: f.name, size: f.size, mime: f.mime, from: f.from, fromName: f.from.name } });
+        return json(r);
+      }
+      if (seg.length === 2 && method === "GET") {
+        return fileDownload(checkPeer(searchParams.get("peer"), searchParams.get("token")), String(seg[1] || ""));
+      }
+    }
+    if (seg[0] === "inbox" && method === "GET") {
+      const p = checkPeer(searchParams.get("peer"), searchParams.get("token"));
+      if (!p) return json({ ok: false, error: "bad peer/token" }, 401);
+      p.lastSeen = Date.now();
+      const pending = p.inbox.filter((m) => m.status === "pending");
+      for (const m of pending) m.status = "delivered";
+      return json({ ok: true, peerId: p.peerId, name: p.name, pending: pending.map(({ status, ...m }) => m) });
+    }
+    return null;
+  }
+  return { handle, listPeers, deliverToPeer, resolvePeerFuzzy, register, checkPeer, fileInit, fileChunk, fileComplete, fileDownload, getFileInfo, fetchToFile, sweep, close: () => {
+    peers.clear();
+    files.clear();
+  } };
+}
+
+// src/bridge.ts
 var ID_TTL = parseInt(process.env.AITI_BRIDGE_TTL || "600000", 10);
 var AGENT_TTL = parseInt(process.env.AITI_AGENT_TTL || "3600000", 10);
 var BROADCAST_TTL = parseInt(process.env.AITI_BROADCAST_TTL || "600000", 10);
@@ -10,6 +341,176 @@ var AGENT_GRACE_TTL = parseInt(process.env.AITI_AGENT_GRACE_TTL || "120000", 10)
 var AGENT_HISTORY_TTL = parseInt(process.env.AITI_AGENT_HISTORY_TTL || String(7 * 24 * 3600 * 1e3), 10);
 var SWEEP_MS = parseInt(process.env.AITI_SWEEP_MS || "60000", 10);
 var LEGACY_TOKEN = "dev";
+var BRIDGE_TOOLS = [
+  {
+    name: "page_exec",
+    description: "\u5728\u5DF2\u8FDE\u63A5\u9875\u9762\u6267\u884C\u7C7B CDP \u547D\u4EE4\uFF08DOM/CSS/Input/Page/Runtime/Storage/Performance/Browser \u57DF\uFF09\u3002pageId \u7F3A\u7701=\u6700\u65B0 AI \u4E3B\u7A97\u53E3\uFF08self:true\uFF09\uFF1B\u663E\u5F0F pageId \u4F18\u5148\u3002\u5371\u9669\u547D\u4EE4/\u6D4F\u89C8\u5668\u53D7\u9650\u64CD\u4F5C\u4F1A\u81EA\u52A8\u5F39\u7528\u6237\u786E\u8BA4\uFF1BPage.captureScreenshot \u622A\u5C4F\u4F1A\u5148\u5F39\u51C6\u5907\u5361\u5C55\u793A\u622A\u53D6\u610F\u56FE\uFF08args.reason\uFF0C\u8BF7\u52A1\u5FC5\u7528\u4E00\u53E5\u8BDD\u8BF4\u660E\u60F3\u622A\u4EC0\u4E48\uFF09\uFF0C\u7528\u6237\u8C03\u6574\u597D\u9875\u9762\u624D\u5F00\u59CB\u622A\u5C4F\uFF0C\u622A\u5B8C\u518D\u5F39\u9884\u89C8\u786E\u8BA4\uFF08\u5927\u56FE\u81EA\u52A8\u843D\u76D8\u8FD4\u56DE\u6587\u4EF6\u8DEF\u5F84\uFF09\uFF1B\u786E\u8BA4\u5361\u5012\u8BA1\u65F6\u53EF\u7528 args.timeout\uFF08ms\uFF09\u8C03\u6574\uFF08\u9ED8\u8BA4 280000\uFF0C\u670D\u52A1\u7AEF\u5B89\u5168\u7F51\u81EA\u52A8\u540C\u6B65 +30s \u4F59\u91CF\uFF09\u3002\u8C03\u8BD5\u4F1A\u8BDD\u4E2D\u4ECE\u88AB\u8C03\u8BD5\u9875\u9762\uFF08inject\uFF09\u53D1\u51FA\u7684\u6D88\u606F\u7EDF\u4E00\u5E26 [\u53D1\u81EA: <pageId> \xB7 <url>] \u6765\u6E90\u6807\u6CE8\u2014\u2014\u628A pageId \u503C\u4F20\u7ED9 pageId \u53C2\u6570\u5373\u64CD\u4F5C\u8BE5\u9875\u9762\u3002\n\niframe \u652F\u6301\uFF1APage.getFrameTree \u67E5\u770B frame \u6811\uFF08iframe src/name/title\uFF0C\u540C\u57DF\u542B url/readyState\uFF09\uFF1BRuntime.evaluate \u4F20 contextId\uFF08iframe \u7D22\u5F15\u4ECE 1 \u8D77\uFF0C\u540C\u57DF\u53EF eval\uFF09\u8FDB iframe \u4E0A\u4E0B\u6587\u6267\u884C\u3002",
+    inputSchema: { type: "object", properties: {
+      cmd: { type: "string" },
+      args: { type: "object" },
+      pageId: { type: "string", description: "\u76EE\u6807\u9875\u9762\u5B8C\u6574 ID\u2014\u2014\u6765\u81EA AI \u6D88\u606F\u7684 [\u53D1\u81EA: xxx]\uFF08\u5982 30142/host\uFF09\uFF1B\u4E5F\u53EF /bridge/sessions \u67E5\u8BE2" }
+    }, required: ["cmd"] }
+  },
+  { name: "page_snapshot", description: "\u62C9\u53D6\u5DF2\u8FDE\u63A5\u9875\u9762\u57FA\u7840\u73B0\u573A\uFF08URL/\u9009\u533A/\u6A21\u62DF\u6761\u4EF6\uFF09\u3002pageId \u7F3A\u7701=\u6700\u65B0 AI \u4E3B\u7A97\u53E3\uFF08self:true\uFF09\uFF1B\u663E\u5F0F pageId \u4F18\u5148\u3002", inputSchema: { type: "object", properties: { pageId: { type: "string" } } } },
+  { name: "self_ui", description: "\u626B\u63CF\u76EE\u6807\u9875\u9762\uFF08\u7F3A\u7701 AI \u4E3B\u7A97\u53E3 xxx/ai\uFF09\u5F53\u524D\u6253\u5F00\u7684\u5F39\u7A97/dialog/\u8868\u5355\u5B57\u6BB5/\u6309\u94AE\u6E05\u5355\u2014\u2014ai-helper \u56DE\u586B\u5B9A\u4F4D\u7528\u3002\u8FD4\u56DE {dialogs:[{title, fields:[{label,selector,type}], buttons}]}\uFF0C\u65E0\u5F39\u7A97\u65F6 dialogs \u4E3A\u7A7A\u6570\u7EC4\u3002", inputSchema: { type: "object", properties: { pageId: { type: "string", description: "\u7F3A\u7701\u7528 AI \u4E3B\u7A97\u53E3\uFF08xxx/ai\uFF09\uFF1B\u4E5F\u53EF\u6307\u5B9A\u5176\u4ED6\u9875\u9762" } } } },
+  { name: "form_fill", description: "\u5728\u76EE\u6807\u9875\u9762\uFF08\u7F3A\u7701 AI \u4E3B\u7A97\u53E3 xxx/ai\uFF09\u7684\u5F39\u7A97/\u8868\u5355\u91CC\u56DE\u586B\u5B57\u6BB5\u503C\u2014\u2014AI \u7ED3\u679C\u76F4\u63A5\u64CD\u4F5C\u6269\u5C55\u5F39\u7A97\u8868\u5355\uFF08React \u517C\u5BB9\uFF1A\u539F\u751F value setter + dispatch input/change\uFF09\u3002\u914D\u5408 self_ui \u4F7F\u7528\uFF1A\u5148 self_ui \u62FF\u5B57\u6BB5 label/selector\uFF0C\u518D form_fill \u586B\u503C\u3002\u53C2\u6570\uFF1Adialog\uFF08\u5F39\u7A97\u6807\u8BC6\uFF1A\u6807\u9898\u5B50\u4E32\u6216\u5E8F\u53F7 0 \u8D77\uFF0C\u7F3A\u7701\u53D6\u9762\u79EF\u6700\u5927\u7684\u53EF\u89C1\u5F39\u7A97\uFF09\u3001fields[{selector|label, value}]\u3001button\uFF08\u53EF\u9009\uFF0C\u56DE\u586B\u540E\u70B9\u51FB\u7684\u6309\u94AE\u6587\u672C\u5982\u300E\u4FDD\u5B58\u300F\uFF09\u3002\u8FD4\u56DE {foundDialog, title, filled, missed, clicked}\u3002", inputSchema: { type: "object", properties: {
+    pageId: { type: "string", description: "\u7F3A\u7701\u7528 AI \u4E3B\u7A97\u53E3\uFF08xxx/ai\uFF09\uFF1B\u4E5F\u53EF\u6307\u5B9A\u5176\u4ED6\u9875\u9762" },
+    dialog: { type: "string", description: "\u5F39\u7A97\u6807\u8BC6\uFF1A\u6807\u9898\u5B50\u4E32\u6216\u5E8F\u53F7\uFF080 \u8D77\uFF09\uFF1B\u7F3A\u7701\u53D6\u9762\u79EF\u6700\u5927\u7684\u53EF\u89C1\u5F39\u7A97" },
+    fields: { type: "array", items: { type: "object", properties: { selector: { type: "string", description: "CSS \u9009\u62E9\u5668\uFF08\u4F18\u5148\uFF09" }, label: { type: "string", description: "\u5F39\u7A97\u5185\u6587\u672C\u5339\u914D\uFF08label[for]/\u5305\u88F9/\u6587\u672C\u5305\u542B\uFF09" }, value: { type: "string", description: "\u8981\u586B\u7684\u503C" } }, required: ["value"] }, description: "\u8981\u586B\u7684\u5B57\u6BB5\u5217\u8868" },
+    button: { type: "string", description: "\u56DE\u586B\u540E\u70B9\u51FB\u7684\u6309\u94AE\u6587\u672C\uFF08\u5982\u300E\u4FDD\u5B58\u300F\u300E\u786E\u5B9A\u300F\uFF09" }
+  } } },
+  { name: "bridge_status", description: "\u67E5\u8BE2\u6865\u4E0A\u5168\u90E8\u8BBE\u5907\uFF08devices \u7EDF\u4E00\u89C6\u56FE\uFF1Akind=page \u6CE8\u5165\u9875\u9762\uFF08\u542B pageId/url/title + device \u6D4F\u89C8\u5668\xB7OS\xB7\u5C4F\u5E55\uFF09/kind=agent agent \u4F1A\u8BDD\uFF08\u542B cwd\uFF09/kind=pair web \u8BBE\u5907\u5982\u624B\u673A\uFF09+ \u5DF2\u8FDE\u63A5\u9875\u9762\u660E\u7EC6\uFF08sessions\uFF09\u4E0E\u6302\u8D77\u8BF7\u6C42\u3002\u7528\u6237\u63D0\u5230\u9875\u9762\u6807\u9898\u6216 URL \u65F6\u6309 title/url \u5339\u914D pageId\uFF1B\u63D0\u5230\u624B\u673A/\u8BBE\u5907\u65F6\u5728 devices \u91CC\u9009\uFF08id \u6216\u540D\u5B57\u4F20\u7ED9 aiti_pair_send/aiti_pair_file \u5373\u53EF\u4E92\u53D1\u6D88\u606F\u4E92\u4F20\u6587\u4EF6\uFF09\u3002", inputSchema: { type: "object", properties: {} } },
+  {
+    name: "page_logs",
+    description: "\u4ECE\u76EE\u6807\u9875\u9762\u62C9\u53D6\u672C\u5730\u7F13\u51B2\u7684 console \u65E5\u5FD7\uFF08log/debug/info/warn/error \u5168\u91CF\uFF0CCDP Runtime.evaluate \u8BFB\u53D6 window.__dbg.__consoleRing\uFF09\u3002pageId \u7F3A\u7701=\u6700\u65B0 AI \u4E3B\u7A97\u53E3\uFF08self:true\uFF09\uFF1B\u663E\u5F0F pageId \u4F18\u5148\u3002\u9875\u9762\u62A5\u9519\u6392\u67E5\u9996\u9009\uFF1A\u5148\u67E5 warn/error \u518D\u9010\u6B65\u653E\u5F00\u3002\u8FD4\u56DE {logs:[{ts,level,text,count}], bufferSize}\u3002",
+    inputSchema: { type: "object", properties: {
+      pageId: { type: "string", description: "\u76EE\u6807\u9875\u9762\u5B8C\u6574 ID\uFF08[\u53D1\u81EA: xxx] \u6216 /bridge/sessions\uFF09" },
+      level: { type: "string", description: "\u8FC7\u6EE4\u7EA7\u522B\uFF1Adebug/log/info/warn/error\uFF08\u9ED8\u8BA4\u5168\u90E8\uFF09" },
+      since: { type: "string", description: "ISO \u65F6\u95F4\uFF1A\u53EA\u8FD4\u56DE\u6B64\u65F6\u95F4\u4E4B\u540E\u7684\u65E5\u5FD7" },
+      limit: { type: "number", description: "\u6761\u6570\u4E0A\u9650\uFF08\u2264200\uFF0C\u9ED8\u8BA4 50\uFF0C\u53D6\u6700\u65B0\uFF09" },
+      token: { type: "string" }
+    } }
+  },
+  {
+    name: "page_network",
+    description: "\u4ECE\u76EE\u6807\u9875\u9762\u62C9\u53D6\u672C\u5730\u7F13\u51B2\u7684 ajax/fetch \u8BF7\u6C42\u5B8C\u6210\u6001\uFF08CDP Runtime.evaluate \u8BFB\u53D6 window.__dbg.__netRing\uFF09\u3002pageId \u7F3A\u7701=\u6700\u65B0 AI \u4E3B\u7A97\u53E3\uFF08self:true\uFF09\uFF1B\u663E\u5F0F pageId \u4F18\u5148\u3002\u5931\u8D25\u6392\u67E5\uFF1Astatus \u4F20 400 \u6216 errorOnly:true\u3002\u6CE8\u610F\uFF1A\u4E0D\u542B\u9759\u6001\u8D44\u6E90\u52A0\u8F7D\uFF08\u90A3\u662F CDP Network \u7684\u80FD\u529B\uFF09\u3002\u8FD4\u56DE {requests:[{kind,method,url,status,statusText,durationMs,size,error,ts}], bufferSize}\u3002",
+    inputSchema: { type: "object", properties: {
+      pageId: { type: "string" },
+      url: { type: "string", description: "URL \u5B50\u4E32\u8FC7\u6EE4" },
+      status: { type: "number", description: "status >= \u6B64\u503C\u624D\u8FD4\u56DE\uFF08\u5982 400 \u53EA\u770B\u5931\u8D25\uFF09" },
+      errorOnly: { type: "boolean", description: "\u53EA\u770B\u5931\u8D25\uFF08error \u975E\u7A7A \u6216 status>=400\uFF09" },
+      limit: { type: "number", description: "\u6761\u6570\u4E0A\u9650\uFF08\u2264100\uFF0C\u9ED8\u8BA4 30\uFF0C\u53D6\u6700\u65B0\uFF09" },
+      token: { type: "string" }
+    } }
+  },
+  // ---- 用户交互型工具：AI 与人在页面上协作（AI 提问 → 人在 AI 窗口/页面作答或拒绝 → 结果回 AI） ----
+  // 统一机制：prompt 显示给人看；timeout 为可选——不传=永久等待（面板常驻直到用户操作，不读秒不超时）；
+  //   传了才显示读秒倒计时（可暂停）且服务器强制到点返回“用户无响应/不在线”；
+  //   交互消息到达时页面走浏览器 Notification（+标题闪烁/提示音）通知用户；人可拒绝（rejectable）。
+  // 响应信封：{ status:'answered'|'rejected'|'timeout'|'error', value?, reason?, error?, tookMs, timeoutMs }
+  {
+    name: "user_pick_element",
+    description: "\u8BF7\u5F53\u524D\u9875\u9762\u7684\u4EBA\u7C7B\u7528\u6237\u70B9\u9009\u4E00\u4E2A\u9875\u9762\u5143\u7D20\uFF08\u81EA\u52A8\u8FDB\u5165 Inspector \u70B9\u9009\u6A21\u5F0F\u3001\u6536\u8D77 AI \u7A97\u53E3\u3001\u5F39\u70B9\u9009\u9762\u677F\uFF1B\u7528\u6237\u53EF\u786E\u8BA4\u9009\u4E2D\u6216\u62D2\u7EDD\uFF09\u3002\u8FD4\u56DE\u5143\u7D20\u8F7D\u8377 {tag,rect,xpath,text,attributes,framework,selector}\u3002",
+    inputSchema: { type: "object", properties: {
+      prompt: { type: "string", description: "\u7ED9\u7528\u6237\u770B\u7684\u8BF4\u660E\uFF08\u4E3A\u4EC0\u4E48\u9700\u8981\u70B9\u9009\u8FD9\u4E2A\u5143\u7D20\uFF09" },
+      timeout: { type: "number", description: "\u53EF\u9009\u8D85\u65F6 ms\uFF085000-600000\uFF09\u3002\u4E0D\u4F20=\u6C38\u4E45\u7B49\u5F85\uFF1A\u9762\u677F\u5E38\u9A7B\u76F4\u5230\u7528\u6237\u64CD\u4F5C\uFF0C\u65E0\u8BFB\u79D2\uFF1B\u4F20\u4E86\u624D\u663E\u793A\u8BFB\u79D2\u5012\u8BA1\u65F6\uFF08\u53EF\u6682\u505C\uFF09\uFF0C\u5230\u70B9\u81EA\u52A8\u8FD4\u56DE timeout" },
+      rejectable: { type: "boolean", description: "\u662F\u5426\u5141\u8BB8\u7528\u6237\u62D2\u7EDD\uFF08\u9ED8\u8BA4 true\uFF09" },
+      async: { type: "boolean", description: "true=\u5F02\u6B65\uFF1A\u7ACB\u5373\u8FD4\u56DE\u5DF2\u5F02\u6B65\u53D1\u51FA\uFF0C\u7528\u6237\u4F5C\u7B54\u7ED3\u679C\u7ECF AI \u6D88\u606F\u7A97\u53D1\u9001\uFF1B\u7F3A\u7701=\u540C\u6B65\u7B49\u5F85" },
+      pageId: { type: "string", description: "\u76EE\u6807\u9875\u9762\u5B8C\u6574 ID\uFF08instanceId/frameId\uFF09" }
+    }, required: ["prompt"] }
+  },
+  {
+    name: "user_confirm",
+    description: "\u5728 AI \u7A97\u53E3\u5185\u5411\u4EBA\u7C7B\u7528\u6237\u63D0\u4E00\u4E2A\u662F/\u5426\u95EE\u9898\uFF08\u5982\u201C\u786E\u8BA4\u6267\u884C\u6B64\u64CD\u4F5C\uFF1F\u201D\u201C\u662F\u5426\u7EE7\u7EED\uFF1F\u201D\uFF09\uFF0C\u7528\u6237\u70B9 \u2705/\u274C \u4F5C\u7B54\uFF0C\u5E76\u53EF\u9644\u300C\u8865\u5145\u8BF4\u660E\u300D\u81EA\u7531\u6587\u672C\uFF08value.comment\uFF09\uFF1B\u53E6\u6709\u56FA\u5B9A\u9009\u9879\u300C\u90FD\u4E0D\u9002\u5408\u300D\u2192 \u81EA\u5B9A\u4E49\u56DE\u7B54\uFF08approved:null, custom\uFF09\u3002\u8FD4\u56DE {status, approved, comment?, custom?, reason?}\u3002",
+    inputSchema: { type: "object", properties: {
+      prompt: { type: "string", description: "\u95EE\u9898\u5185\u5BB9" },
+      timeout: { type: "number", description: "\u53EF\u9009\u8D85\u65F6 ms\uFF085000-600000\uFF09\u3002\u4E0D\u4F20=\u6C38\u4E45\u7B49\u5F85\uFF1A\u9762\u677F\u5E38\u9A7B\u76F4\u5230\u7528\u6237\u64CD\u4F5C\uFF0C\u65E0\u8BFB\u79D2\uFF1B\u4F20\u4E86\u624D\u663E\u793A\u8BFB\u79D2\u5012\u8BA1\u65F6\uFF08\u53EF\u6682\u505C\uFF09\uFF0C\u5230\u70B9\u81EA\u52A8\u8FD4\u56DE timeout" },
+      rejectable: { type: "boolean", description: "\u662F\u5426\u5141\u8BB8\u7528\u6237\u4EE5\u201C\u6682\u65F6\u65E0\u6CD5\u5904\u7406\u201D\u62D2\u7EDD\uFF08\u9ED8\u8BA4 true\uFF09" },
+      async: { type: "boolean", description: "true=\u5F02\u6B65\uFF1A\u7ACB\u5373\u8FD4\u56DE\u5DF2\u5F02\u6B65\u53D1\u51FA\uFF0C\u7528\u6237\u4F5C\u7B54\u7ED3\u679C\u7ECF AI \u6D88\u606F\u7A97\u53D1\u9001\uFF08\u4E0D\u963B\u585E\u672C\u8C03\u7528\uFF09\uFF1B\u7F3A\u7701=\u540C\u6B65\u7B49\u5F85" },
+      pageId: { type: "string" }
+    }, required: ["prompt"] }
+  },
+  {
+    name: "user_choose",
+    description: "\u5728 AI \u7A97\u53E3\u5185\u7ED9\u4EBA\u7C7B\u7528\u6237\u4E00\u7EC4\u9009\u9879\u8BA9\u5176\u9009\u62E9\uFF08\u5982\u4FEE\u590D\u65B9\u6848 A/B/C\uFF09\u3002\u5355\u9009\uFF08\u9ED8\u8BA4\uFF09\u2192 value:{index,label}\uFF1Bmultiple:true \u591A\u9009 \u2192 value:{indexes,labels}\u3002\u7528\u6237\u53EF\u9644\u300C\u8865\u5145\u8BF4\u660E\u300D\u81EA\u7531\u6587\u672C\uFF08value.comment\uFF09\uFF1B\u53E6\u6709\u56FA\u5B9A\u9009\u9879\u300C\u8FD9\u4E9B\u90FD\u4E0D\u9002\u5408\u300D\u2192 \u81EA\u5B9A\u4E49\u7B54\u6848\uFF08index:-1, custom:true\uFF09\u3002\u8FD4\u56DE {status, value, reason?}\u3002",
+    inputSchema: { type: "object", properties: {
+      prompt: { type: "string" },
+      choices: { type: "array", items: { type: "string" }, description: "\u9009\u9879\u5217\u8868\uFF082-8 \u4E2A\uFF09" },
+      multiple: { type: "boolean", description: "\u662F\u5426\u5141\u8BB8\u591A\u9009\uFF08\u9ED8\u8BA4 false\uFF1Btrue \u65F6\u8FD4\u56DE indexes/labels\uFF09" },
+      timeout: { type: "number", description: "\u53EF\u9009\u8D85\u65F6 ms\uFF085000-600000\uFF09\u3002\u4E0D\u4F20=\u6C38\u4E45\u7B49\u5F85\uFF1A\u9762\u677F\u5E38\u9A7B\u76F4\u5230\u7528\u6237\u64CD\u4F5C\uFF0C\u65E0\u8BFB\u79D2\uFF1B\u4F20\u4E86\u624D\u663E\u793A\u8BFB\u79D2\u5012\u8BA1\u65F6\uFF08\u53EF\u6682\u505C\uFF09\uFF0C\u5230\u70B9\u81EA\u52A8\u8FD4\u56DE timeout" },
+      rejectable: { type: "boolean", description: "\u662F\u5426\u5141\u8BB8\u7528\u6237\u62D2\u7EDD\uFF08\u9ED8\u8BA4 true\uFF09" },
+      async: { type: "boolean", description: "true=\u5F02\u6B65\uFF1A\u7ACB\u5373\u8FD4\u56DE\u5DF2\u5F02\u6B65\u53D1\u51FA\uFF0C\u7528\u6237\u4F5C\u7B54\u7ED3\u679C\u7ECF AI \u6D88\u606F\u7A97\u53D1\u9001\uFF1B\u7F3A\u7701=\u540C\u6B65\u7B49\u5F85" },
+      pageId: { type: "string" }
+    }, required: ["prompt", "choices"] }
+  },
+  {
+    name: "user_input",
+    description: "\u5728 AI \u7A97\u53E3\u5185\u8BF7\u4EBA\u7C7B\u7528\u6237\u8F93\u5165\u4E00\u6BB5\u6587\u672C\uFF08\u5982\u671F\u671B\u6587\u6848\u3001\u914D\u7F6E\u503C\u3001\u573A\u666F\u63CF\u8FF0\uFF09\uFF0C\u56DE\u8F66/\u70B9\u51FB\u5373\u53D1\u9001\u3002\u8FD4\u56DE {status, value:{text}, reason?}\u3002",
+    inputSchema: { type: "object", properties: {
+      prompt: { type: "string" },
+      defaultValue: { type: "string", description: "\u9884\u586B\u9ED8\u8BA4\u503C\uFF08\u53EF\u9009\uFF09" },
+      timeout: { type: "number", description: "\u53EF\u9009\u8D85\u65F6 ms\uFF085000-600000\uFF09\u3002\u4E0D\u4F20=\u6C38\u4E45\u7B49\u5F85\uFF1A\u9762\u677F\u5E38\u9A7B\u76F4\u5230\u7528\u6237\u64CD\u4F5C\uFF0C\u65E0\u8BFB\u79D2\uFF1B\u4F20\u4E86\u624D\u663E\u793A\u8BFB\u79D2\u5012\u8BA1\u65F6\uFF08\u53EF\u6682\u505C\uFF09\uFF0C\u5230\u70B9\u81EA\u52A8\u8FD4\u56DE timeout" },
+      rejectable: { type: "boolean", description: "\u662F\u5426\u5141\u8BB8\u7528\u6237\u62D2\u7EDD\uFF08\u9ED8\u8BA4 true\uFF09" },
+      async: { type: "boolean", description: "true=\u5F02\u6B65\uFF1A\u7ACB\u5373\u8FD4\u56DE\u5DF2\u5F02\u6B65\u53D1\u51FA\uFF0C\u7528\u6237\u4F5C\u7B54\u7ED3\u679C\u7ECF AI \u6D88\u606F\u7A97\u53D1\u9001\uFF1B\u7F3A\u7701=\u540C\u6B65\u7B49\u5F85" },
+      pageId: { type: "string" }
+    }, required: ["prompt"] }
+  },
+  {
+    name: "user_presence",
+    description: "\u63A2\u6D4B\u4EBA\u7C7B\u7528\u6237\u662F\u5426\u5728\u573A/\u5728\u7EBF\uFF08AI \u9700\u8981\u7528\u6237\u914D\u5408\u957F\u4EFB\u52A1\u524D\u5148\u786E\u8BA4\uFF09\uFF0C\u7528\u6237\u70B9\u300C\u6211\u5728/\u7A0D\u540E\u300D\uFF0C\u53EF\u9644\u300C\u8865\u5145\u8BF4\u660E\u300D\uFF08value.comment\uFF09\u3002\u8FD4\u56DE {status, present, comment?}\uFF1B\u8D85\u65F6\u5373\u89C6\u4E3A\u4E0D\u5728\u7EBF\u3002",
+    inputSchema: { type: "object", properties: {
+      prompt: { type: "string", description: "\u8BE2\u95EE\u6587\u6848\uFF08\u9ED8\u8BA4\u201C\u4F60\u5728\u5417\uFF1F\u9700\u8981\u4F60\u914D\u5408\u7EE7\u7EED\u5F00\u53D1\u201D\uFF09" },
+      timeout: { type: "number", description: "\u53EF\u9009\u8D85\u65F6 ms\uFF085000-600000\uFF09\u3002\u4E0D\u4F20=\u6C38\u4E45\u7B49\u5F85\uFF1A\u9762\u677F\u5E38\u9A7B\u76F4\u5230\u7528\u6237\u4F5C\u7B54\uFF1B\u4F20\u4E86\u624D\u663E\u793A\u8BFB\u79D2\u5012\u8BA1\u65F6\uFF08\u53EF\u6682\u505C\uFF09\uFF0C\u5230\u70B9\u8FD4\u56DE status:'timeout'\uFF08\u89C6\u4E3A\u4E0D\u5728\u7EBF\uFF09\u2014\u2014\u9700\u8981\u5FEB\u901F\u63A2\u6D4B\u5728\u573A/\u9650\u65F6\u7B49\u5F85\u65F6\u624D\u663E\u5F0F\u4F20" },
+      async: { type: "boolean", description: "true=\u5F02\u6B65\uFF1A\u7ACB\u5373\u8FD4\u56DE\u5DF2\u5F02\u6B65\u53D1\u51FA\uFF0C\u7528\u6237\u4F5C\u7B54\u7ED3\u679C\u7ECF AI \u6D88\u606F\u7A97\u53D1\u9001\uFF1B\u7F3A\u7701=\u540C\u6B65\u7B49\u5F85" },
+      pageId: { type: "string" }
+    }, required: [] }
+  },
+  {
+    name: "user_notify",
+    description: "\u975E\u963B\u585E\u901A\u77E5\uFF1A\u901A\u8FC7\u6D4F\u89C8\u5668 Notification \u544A\u8BC9\u7528\u6237\u4E00\u6761\u6D88\u606F\uFF08\u5982\u201C\u4FEE\u590D\u5B8C\u6210\uFF0C\u8BF7\u5237\u65B0\u9A8C\u8BC1\u201D\uFF09\uFF0C\u4E0D\u7B49\u5F85\u56DE\u7B54\u3002\u8FD4\u56DE {notified:true}\u3002",
+    inputSchema: { type: "object", properties: {
+      title: { type: "string", description: "\u901A\u77E5\u6807\u9898" },
+      body: { type: "string", description: "\u901A\u77E5\u5185\u5BB9" },
+      timeout: { type: "number", description: "\u53EF\u9009\uFF1A\u901A\u77E5\u5361\u81EA\u52A8\u5173\u95ED\u65F6\u9650 ms\uFF085000-600000\uFF09\u3002\u4E0D\u4F20=\u5E38\u9A7B\u76F4\u5230\u7528\u6237\u5173\u95ED" },
+      async: { type: "boolean", description: "true=\u5F02\u6B65\uFF1A\u7ACB\u5373\u8FD4\u56DE\u5DF2\u5F02\u6B65\u53D1\u51FA\uFF0C\u7528\u6237\u4F5C\u7B54\u7ED3\u679C\u7ECF AI \u6D88\u606F\u7A97\u53D1\u9001\uFF1B\u7F3A\u7701=\u540C\u6B65\u7B49\u5F85" },
+      pageId: { type: "string" }
+    }, required: ["body"] }
+  },
+  // ---- 方案 G · P2：agent 接入 + 消息主通道 ----
+  {
+    name: "aiti_hello",
+    description: "agent \u81EA\u6211\u4ECB\u7ECD/\u6CE8\u518C\uFF1A\u8986\u76D6 agentId\uFF08\u9ED8\u8BA4 clientInfo.name\uFF09\u4E0E sessionId\uFF08\u9ED8\u8BA4 Mcp-Session-Id \u6216\u6865\u968F\u673A\uFF09\u3001\u7ED1\u5B9A\u9ED8\u8BA4\u76EE\u6807\u9875 pageId\u3001\u8BA2\u9605\u9875\u9762\u4E8B\u4EF6\uFF08page_error\uFF09\u3002\u6CE8\u610F\uFF1Apage_log/page_network \u4E0D\u518D\u5B9E\u65F6\u63A8\u9001\uFF0C\u6539\u7528 page_logs/page_network \u5DE5\u5177\u6309\u9700\u62C9\u53D6\u3002\u5EFA\u8BAE\u4F1A\u8BDD\u5F00\u59CB\u65F6\u8C03\u7528\u4E00\u6B21\u2014\u2014\u6CE8\u518C\u540E\u6D88\u606F\u53EF\u5B9A\u5411\u5230\u672C\u4F1A\u8BDD\uFF08agentKey=agentId/sessionId\uFF09\u3002",
+    inputSchema: { type: "object", properties: {
+      agentId: { type: "string", description: "\u81EA\u5B9A\u4E49 agent \u6807\u8BC6\uFF08\u5982 pi / cc / qoder\uFF1B\u7F3A\u7701\u7528 clientInfo.name\uFF09" },
+      sessionId: { type: "string", description: "\u672C\u5B9E\u4F8B\u4F1A\u8BDD\u6807\u8BC6\uFF08\u591A\u5B9E\u4F8B/\u591A\u4F1A\u8BDD\u65F6\u533A\u5206\uFF1B\u7F3A\u7701\u7528 Mcp-Session-Id\uFF0C\u65E0\u5219\u6865\u751F\u6210\u968F\u673A\uFF09" },
+      name: { type: "string", description: "\u663E\u793A\u540D\uFF08\u53EF\u9009\uFF0C\u5982 'pi \xB7 \u5DE5\u4F5C\u533AA'\uFF09" },
+      cwd: { type: "string", description: "\u5DE5\u4F5C\u76EE\u5F55\uFF08\u53EF\u9009\uFF0C\u663E\u793A CWD . name (id)\uFF0C\u65B9\u4FBF\u8BC6\u522B agent \u8EAB\u4EFD\uFF09" },
+      pageId: { type: "string", description: "\u7ED1\u5B9A\u9ED8\u8BA4\u8C03\u8BD5\u76EE\u6807\u9875\uFF08pageId/url/title \u5747\u53EF\uFF0C\u7559\u7A7A\u4E0D\u7ED1\uFF09" },
+      subEvents: { type: "array", items: { type: "string" }, description: "\u8BA2\u9605\u5B9E\u65F6\u4E8B\u4EF6\uFF1Apage_error\uFF08\u9ED8\u8BA4\u4E0D\u6295\u9012\uFF0C\u663E\u5F0F\u8BA2\u9605\u624D\u63A8\uFF1Bpage_log/page_network \u4E0D\u518D\u5B9E\u65F6\u63A8\u9001\uFF0C\u6539\u7528 page_logs/page_network \u5DE5\u5177\u6309\u9700\u62C9\u53D6\uFF09" }
+    } }
+  },
+  {
+    name: "file_stat",
+    description: "\u67E5\u8BE2\u6587\u4EF6\u5B58\u5728\u6027/\u7C7B\u578B/\u5927\u5C0F/\u4FEE\u6539\u65F6\u95F4\uFF08\u7EDD\u5BF9\u8DEF\u5F84\uFF1B\u7EC4\u4EF6\u6E90\u7801/\u8C03\u7528\u4F4D\u7F6E\u5B9A\u4F4D\u3001AI \u7A97\u300E\u540E\u7AEF\u6253\u5F00/\u524D\u7AEF\u6253\u5F00\u300F\u524D\u7F6E\u6821\u9A8C\u7528\uFF09\u3002\u4E0D\u5B58\u5728\u6216\u975E\u6CD5\u8DEF\u5F84\u8FD4\u56DE {exists:false}\u3002",
+    inputSchema: { type: "object", properties: {
+      path: { type: "string", description: "\u7EDD\u5BF9\u8DEF\u5F84\uFF08\u5982 /home/user/src/App.vue\uFF09" }
+    }, required: ["path"] }
+  },
+  {
+    name: "aiti_inbox",
+    description: "\u6D88\u606F\u4E3B\u901A\u9053\uFF1A\u62C9\u53D6\u53D1\u7ED9\u672C agent \u4F1A\u8BDD\u7684\u6D88\u606F\uFF08\u4EBA\u4E3B\u52A8\u53D1\u8BDD user_message / \u5F02\u6B65 user_* \u4F5C\u7B54 user_answer / \u8BA2\u9605\u7684\u9875\u9762\u4E8B\u4EF6\uFF09\u3002\u5F00\u59CB\u65B0\u4E00\u8F6E\u6216\u9700\u8981\u6700\u65B0\u4FE1\u606F\u65F6\u5148\u8C03\u7528\uFF1B\u5904\u7406\u5B8C\u628A\u6D88\u606F id \u653E ack \u53C2\u6570\u786E\u8BA4\uFF08\u6807\u8BB0 consumed\uFF0C\u5386\u53F2\u4FDD\u7559\uFF09\u3002\u8FD4\u56DE agentKey\uFF08agentId/sessionId\uFF09\uFF0C\u672A\u6CE8\u518C\u65F6\u63D0\u793A\u8C03 aiti_hello \u6CE8\u518C\u3002",
+    inputSchema: { type: "object", properties: {
+      agentId: { type: "string", description: "agent \u6807\u8BC6\uFF08\u7F3A\u7701\u7528 aiti_hello \u6CE8\u518C\u503C\u6216 clientInfo.name\uFF09" },
+      sessionId: { type: "string", description: "\u672C\u5B9E\u4F8B\u4F1A\u8BDD\u6807\u8BC6\uFF08\u7F3A\u7701\u7528 Mcp-Session-Id \u6216 aiti_hello \u6CE8\u518C\u503C\uFF09" },
+      ack: { description: "\u5DF2\u5904\u7406\u6D88\u606F id \u5217\u8868\uFF0C\u6216 { ids: [...], summary: '\u6267\u884C\u603B\u7ED3' }\u2014\u2014summary\uFF08\u5FC5\u5E26\uFF09\u4F1A\u4F5C\u4E3A agent \u5904\u7406\u8BB0\u5F55\u663E\u793A\u5728\u64CD\u4F5C\u53F0\u6D88\u606F\u6D41", oneOf: [{ type: "array", items: { type: "string" } }, { type: "object", properties: { ids: { type: "array", items: { type: "string" } }, summary: { type: "string" } } }] }
+    } }
+  },
+  // ---- pair 设备互连（临时聊天/互传文件；设备发现走 bridge_status 的 devices 统一视图） ----
+  {
+    name: "aiti_pair_send",
+    description: "\u7ED9\u6865\u4E0A\u53E6\u4E00\u53F0\u8BBE\u5907\u53D1\u6587\u672C\u6D88\u606F\uFF08pair web \u8BBE\u5907\u5982\u624B\u673A / \u5176\u4ED6 agent \u4F1A\u8BDD / \u6CE8\u5165\u9875\u9762\uFF09\u3002to \u4F20\u8BBE\u5907 id \u6216\u540D\u5B57\uFF08\u6A21\u7CCA\u5339\u914D\uFF0C\u552F\u4E00\u547D\u4E2D\u5373\u53D1\uFF0C\u591A\u4E2A/\u65E0\u547D\u4E2D\u8FD4\u56DE\u5019\u9009\u6E05\u5355\u2014\u2014\u7167\u5019\u9009\u91CD\u8C03\u5373\u53EF\uFF09\uFF1Bto \u7701\u7565\u6216\u4F20 'all' \u7FA4\u53D1\u5168\u90E8 pair \u8BBE\u5907\u4E0E agent\u3002\u5BF9\u65B9\u662F agent \u65F6\u6D88\u606F\u8FDB\u5176 aiti_inbox\uFF08\u5E26 [\u53D1\u81EA pair: <\u540D>] \u6807\u6CE8\uFF09\u3002\u6587\u4EF6\u4F20\u8F93\u7528 aiti_pair_file\u3002",
+    inputSchema: { type: "object", properties: {
+      to: { type: "string", description: "\u76EE\u6807\u8BBE\u5907 id \u6216\u540D\u5B57\uFF08bridge_status \u7684 devices \u91CC\u9009\uFF1B\u7F3A\u7701=\u7FA4\u53D1\uFF09" },
+      text: { type: "string", description: "\u6D88\u606F\u6587\u672C" }
+    }, required: ["text"] }
+  },
+  {
+    name: "aiti_pair_file",
+    description: "\u628A\u6865\u6240\u5728\u673A\u5668\u4E0A\u7684\u672C\u5730\u6587\u4EF6\u63A8\u7ED9\u53E6\u4E00\u53F0\u8BBE\u5907\uFF08pair web \u8BBE\u5907\u5728\u6D4F\u89C8\u5668\u91CC\u76F4\u63A5\u4E0B\u8F7D\uFF1Bagent \u6536\u5230 file-meta \u540E\u7528 aiti_pair_fetch \u53D6\u56DE\uFF09\u3002to \u4F20\u8BBE\u5907 id \u6216\u540D\u5B57\u3002\u5355\u6587\u4EF6\u4E0A\u9650 200MB\uFF0C\u4E2D\u8F6C\u6682\u5B58 1 \u5C0F\u65F6\u3002",
+    inputSchema: { type: "object", properties: {
+      to: { type: "string", description: "\u76EE\u6807\u8BBE\u5907 id \u6216\u540D\u5B57" },
+      path: { type: "string", description: "\u672C\u5730\u6587\u4EF6\u7EDD\u5BF9\u8DEF\u5F84" }
+    }, required: ["to", "path"] }
+  },
+  {
+    name: "aiti_pair_fetch",
+    description: "\u628A\u6536\u5230\u7684 pair \u6587\u4EF6\u53D6\u56DE\u5230\u6865\u6240\u5728\u673A\u5668\u78C1\u76D8\uFF08fileId \u6765\u81EA aiti_inbox \u6D88\u606F payload.file.fileId\uFF09\u3002\u7F3A\u7701\u843D dataDir/aiti-bridge/pair-inbox/<\u539F\u6587\u4EF6\u540D>\uFF0C\u8FD4\u56DE\u53EF\u8BFB\u8DEF\u5F84\uFF1B\u4F20 savePath \u81EA\u5B9A\u4E49\u843D\u70B9\u3002",
+    inputSchema: { type: "object", properties: {
+      fileId: { type: "string", description: "\u6587\u4EF6 id\uFF08aiti_inbox \u6D88\u606F payload.file.fileId\uFF09" },
+      savePath: { type: "string", description: "\u843D\u76D8\u7EDD\u5BF9\u8DEF\u5F84\uFF08\u7F3A\u7701 pair-inbox \u76EE\u5F55 + \u539F\u6587\u4EF6\u540D\uFF09" }
+    }, required: ["fileId"] }
+  }
+];
 function createBridge(dataDir = "", opts = {}) {
   const BRIDGE_NAME = opts.name || "aiti-mcp";
   const DISPLAY_NAME = opts.name || "aiti-devtools";
@@ -120,18 +621,18 @@ function createBridge(dataDir = "", opts = {}) {
     const a = agents.get(key);
     if (a && !agentOnline(a) && !a.offlineAt) a.offlineAt = Date.now();
   };
-  const agentKey = (aid, sid) => safeId(aid) + "/" + safeId(sid || "s_" + randomBytes(3).toString("hex"));
-  const randomSessionId = () => "s_" + randomBytes(3).toString("hex");
+  const agentKey = (aid, sid) => safeId(aid) + "/" + safeId(sid || "s_" + randomBytes2(3).toString("hex"));
+  const randomSessionId = () => "s_" + randomBytes2(3).toString("hex");
   const OUTBOX_MAX = 200;
   const safeId = (s) => String(s || "unknown").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 48);
-  const msgSessionDir = (agentId) => join(dataDir, "aiti-bridge", "sessions", safeId(agentId));
+  const msgSessionDir = (agentId) => join2(dataDir, "aiti-bridge", "sessions", safeId(agentId));
   const msgSessionFile = (agentId) => {
     const dir = msgSessionDir(agentId);
-    const files = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".jsonl")).sort() : [];
+    const files = existsSync2(dir) ? readdirSync2(dir).filter((f) => f.endsWith(".jsonl")).sort() : [];
     if (files.length) {
-      const latest = join(dir, files[files.length - 1]);
+      const latest = join2(dir, files[files.length - 1]);
       try {
-        if (statSync(latest).size > 2 * 1024 * 1024) return newMsgSessionFile(agentId);
+        if (statSync2(latest).size > 2 * 1024 * 1024) return newMsgSessionFile(agentId);
       } catch {
       }
       return latest;
@@ -140,14 +641,14 @@ function createBridge(dataDir = "", opts = {}) {
   };
   const newMsgSessionFile = (agentId) => {
     const dir = msgSessionDir(agentId);
-    mkdirSync(dir, { recursive: true });
-    return join(dir, (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-") + "_" + randomBytes(8).toString("hex") + ".jsonl");
+    mkdirSync2(dir, { recursive: true });
+    return join2(dir, (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-") + "_" + randomBytes2(8).toString("hex") + ".jsonl");
   };
   const appendMsgEvent = (agentId, evt) => {
     try {
       const file = msgSessionFile(agentId);
-      if (!existsSync(file)) appendFileSync(file, JSON.stringify({ type: "session", version: 1, id: randomBytes(8).toString("hex"), timestamp: (/* @__PURE__ */ new Date()).toISOString(), kind: "aiti-bridge" }) + "\n");
-      appendFileSync(file, JSON.stringify(evt) + "\n");
+      if (!existsSync2(file)) appendFileSync2(file, JSON.stringify({ type: "session", version: 1, id: randomBytes2(8).toString("hex"), timestamp: (/* @__PURE__ */ new Date()).toISOString(), kind: "aiti-bridge" }) + "\n");
+      appendFileSync2(file, JSON.stringify(evt) + "\n");
     } catch (e) {
     }
   };
@@ -155,9 +656,9 @@ function createBridge(dataDir = "", opts = {}) {
     const rows = [];
     try {
       const dir = msgSessionDir(agentId);
-      if (!existsSync(dir)) return rows;
-      for (const f of readdirSync(dir).filter((x) => x.endsWith(".jsonl")).sort()) {
-        for (const line of readFileSync(join(dir, f), "utf8").split("\n")) {
+      if (!existsSync2(dir)) return rows;
+      for (const f of readdirSync2(dir).filter((x) => x.endsWith(".jsonl")).sort()) {
+        for (const line of readFileSync(join2(dir, f), "utf8").split("\n")) {
           if (!line.trim()) continue;
           const evt = JSON.parse(line);
           if (evt.type === "message") rows.push({ id: evt.id, ...evt.message || {}, at: evt.timestamp });
@@ -236,7 +737,7 @@ function createBridge(dataDir = "", opts = {}) {
         if (um) srcUrl = um[1].trim();
       }
     }
-    const m = { id: randomBytes(4).toString("hex"), ...msg, pageId: srcPageId, url: srcUrl, source: msg.source || msg.payload && msg.payload.source || null, sourceLabel: msg.sourceLabel || msg.payload && msg.payload.sourceLabel || null, agentId: key, at: (/* @__PURE__ */ new Date()).toISOString(), status: "pending" };
+    const m = { id: randomBytes2(4).toString("hex"), ...msg, pageId: srcPageId, url: srcUrl, source: msg.source || msg.payload && msg.payload.source || null, sourceLabel: msg.sourceLabel || msg.payload && msg.payload.sourceLabel || null, agentId: key, at: (/* @__PURE__ */ new Date()).toISOString(), status: "pending" };
     a.outbox.push(m);
     if (a.outbox.length > OUTBOX_MAX) a.outbox.splice(0, a.outbox.length - OUTBOX_MAX);
     appendMsgEvent(key, { type: "message", id: m.id, parentId: null, timestamp: m.at, message: m });
@@ -272,28 +773,28 @@ function createBridge(dataDir = "", opts = {}) {
   };
   const pruneSessionDirs = (now) => {
     if (!dataDir) return;
-    const rootDir = join(dataDir, "aiti-bridge", "sessions");
+    const rootDir = join2(dataDir, "aiti-bridge", "sessions");
     let dirs = [];
     try {
-      dirs = existsSync(rootDir) ? readdirSync(rootDir) : [];
+      dirs = existsSync2(rootDir) ? readdirSync2(rootDir) : [];
     } catch {
       return;
     }
     for (const d of dirs) {
       try {
-        const p = join(rootDir, d);
-        const st = statSync(p);
+        const p = join2(rootDir, d);
+        const st = statSync2(p);
         if (!st.isDirectory()) continue;
-        const files = readdirSync(p).filter((f) => f.endsWith(".jsonl"));
+        const files = readdirSync2(p).filter((f) => f.endsWith(".jsonl"));
         let mtime = st.mtimeMs;
         for (const f of files) {
           try {
-            mtime = Math.max(mtime, statSync(join(p, f)).mtimeMs);
+            mtime = Math.max(mtime, statSync2(join2(p, f)).mtimeMs);
           } catch {
           }
         }
         if (now - mtime > AGENT_HISTORY_TTL) {
-          rmSync(p, { recursive: true, force: true });
+          rmSync2(p, { recursive: true, force: true });
           console.log(TAG + " \u6E05\u7406\u5386\u53F2 session\uFF08> " + Math.round(AGENT_HISTORY_TTL / 864e5) + " \u5929\u65E0\u6D3B\u52A8\uFF09\uFF1A" + d);
         }
       } catch {
@@ -323,6 +824,10 @@ function createBridge(dataDir = "", opts = {}) {
       }
     }
     for (const [k, v] of lastEventPush) if (now - v.ts > 36e5) lastEventPush.delete(k);
+    try {
+      pair.sweep(now);
+    } catch {
+    }
     for (const [iid, p] of [...pages]) {
       if (p.writer?.viaBus && now - (p.writer.lastSeen || 0) > BUS_CONN_TTL) {
         pages.delete(iid);
@@ -342,6 +847,10 @@ function createBridge(dataDir = "", opts = {}) {
   if (typeof sweepTimer.unref === "function") sweepTimer.unref();
   const close = () => {
     clearInterval(sweepTimer);
+    try {
+      pair.close();
+    } catch {
+    }
   };
   const pendingSampling = /* @__PURE__ */ new Map();
   const SAMPLING_TIMEOUT_MS = 45e3;
@@ -392,7 +901,7 @@ function createBridge(dataDir = "", opts = {}) {
         if (srcTitle) parts.push(clipMid(srcTitle, 40));
         tText = tText + "\n[\u53D1\u81EA: " + parts.join(" \xB7 ") + "\uFF08" + srcLabel + "\uFF1ApageId \u53C2\u6570\u7528\u5B83\uFF09]";
       }
-      payload = { ...payload || {}, source: a && a.source || null, sourceLabel: srcLabel, pageId: srcPageId, url: srcUrl, title: srcTitle };
+      payload = { ...payload || {}, source: payload.source || a && a.source || null, sourceLabel: payload.sourceLabel || srcLabel, pageId: srcPageId, url: srcUrl, title: srcTitle };
       const canSample = !!(a && a.stream && a.capabilities && a.capabilities.sampling && (kind === "user_message" || kind === "chat"));
       if (canSample) {
         const rid = "smp_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
@@ -427,7 +936,7 @@ function createBridge(dataDir = "", opts = {}) {
           const m0 = q && q.msg;
           if (m0 && m0.status === "pending") {
             m0.status = "delivered";
-            appendMsgEvent(t, { type: "status_change", id: randomBytes(4).toString("hex"), msgId: m0.id, status: "delivered", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
+            appendMsgEvent(t, { type: "status_change", id: randomBytes2(4).toString("hex"), msgId: m0.id, status: "delivered", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
             for (const w of aiConns) w.write({ type: "msg_status", agentKey: t, msgId: m0.id, status: "delivered" });
           }
           delivered.push({ agentKey: t, agentId: a.agentId, sessionId: a.sessionId, status: "inprocess" });
@@ -436,7 +945,7 @@ function createBridge(dataDir = "", opts = {}) {
           const m = q && q.msg;
           if (m && m.status === "pending") {
             m.status = "delivered";
-            appendMsgEvent(t, { type: "status_change", id: randomBytes(4).toString("hex"), msgId: m.id, status: "delivered", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
+            appendMsgEvent(t, { type: "status_change", id: randomBytes2(4).toString("hex"), msgId: m.id, status: "delivered", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
             for (const w of aiConns) w.write({ type: "msg_status", agentKey: t, msgId: m.id, status: "delivered" });
           }
           delivered.push({ agentKey: t, agentId: a.agentId, sessionId: a.sessionId, status: "stream+delivered" });
@@ -503,9 +1012,9 @@ ${String(pl.stack).slice(0, 400)}` : "");
   });
   const cors = { "access-control-allow-origin": "*", "access-control-allow-methods": "GET,POST,OPTIONS", "access-control-allow-headers": "Content-Type" };
   const pickedReports = /* @__PURE__ */ new Map();
-  const pickedFile = dataDir ? join(dataDir, "picked.json") : "";
+  const pickedFile = dataDir ? join2(dataDir, "picked.json") : "";
   try {
-    if (pickedFile && existsSync(pickedFile)) {
+    if (pickedFile && existsSync2(pickedFile)) {
       const saved = JSON.parse(readFileSync(pickedFile, "utf8"));
       if (saved && typeof saved === "object") {
         for (const [k, v] of Object.entries(saved)) if (Array.isArray(v)) pickedReports.set(k, v);
@@ -516,7 +1025,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
   const persistPicked = () => {
     if (!pickedFile) return;
     try {
-      mkdirSync(dirname(pickedFile), { recursive: true });
+      mkdirSync2(dirname2(pickedFile), { recursive: true });
       const tmp = pickedFile + ".tmp";
       writeFileSync(tmp, JSON.stringify(Object.fromEntries(pickedReports)));
       renameSync(tmp, pickedFile);
@@ -529,7 +1038,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
     return letters[randomInt(26)] + letters[randomInt(26)] + String(randomInt(100, 1e3));
   }
   function genSecret() {
-    return randomBytes(12).toString("hex");
+    return randomBytes2(12).toString("hex");
   }
   function portFromHostUrl(hostUrl) {
     if (!hostUrl || typeof hostUrl !== "string") return null;
@@ -712,151 +1221,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
     }
     return out;
   }
-  const TOOLS = [
-    {
-      name: "page_exec",
-      description: "\u5728\u5DF2\u8FDE\u63A5\u9875\u9762\u6267\u884C\u7C7B CDP \u547D\u4EE4\uFF08DOM/CSS/Input/Page/Runtime/Storage/Performance/Browser \u57DF\uFF09\u3002pageId \u7F3A\u7701=\u6700\u65B0 AI \u4E3B\u7A97\u53E3\uFF08self:true\uFF09\uFF1B\u663E\u5F0F pageId \u4F18\u5148\u3002\u5371\u9669\u547D\u4EE4/\u6D4F\u89C8\u5668\u53D7\u9650\u64CD\u4F5C\u4F1A\u81EA\u52A8\u5F39\u7528\u6237\u786E\u8BA4\uFF1BPage.captureScreenshot \u622A\u5C4F\u4F1A\u5148\u5F39\u51C6\u5907\u5361\u5C55\u793A\u622A\u53D6\u610F\u56FE\uFF08args.reason\uFF0C\u8BF7\u52A1\u5FC5\u7528\u4E00\u53E5\u8BDD\u8BF4\u660E\u60F3\u622A\u4EC0\u4E48\uFF09\uFF0C\u7528\u6237\u8C03\u6574\u597D\u9875\u9762\u624D\u5F00\u59CB\u622A\u5C4F\uFF0C\u622A\u5B8C\u518D\u5F39\u9884\u89C8\u786E\u8BA4\uFF08\u5927\u56FE\u81EA\u52A8\u843D\u76D8\u8FD4\u56DE\u6587\u4EF6\u8DEF\u5F84\uFF09\uFF1B\u786E\u8BA4\u5361\u5012\u8BA1\u65F6\u53EF\u7528 args.timeout\uFF08ms\uFF09\u8C03\u6574\uFF08\u9ED8\u8BA4 280000\uFF0C\u670D\u52A1\u7AEF\u5B89\u5168\u7F51\u81EA\u52A8\u540C\u6B65 +30s \u4F59\u91CF\uFF09\u3002\u8C03\u8BD5\u4F1A\u8BDD\u4E2D\u4ECE\u88AB\u8C03\u8BD5\u9875\u9762\uFF08inject\uFF09\u53D1\u51FA\u7684\u6D88\u606F\u7EDF\u4E00\u5E26 [\u53D1\u81EA: <pageId> \xB7 <url>] \u6765\u6E90\u6807\u6CE8\u2014\u2014\u628A pageId \u503C\u4F20\u7ED9 pageId \u53C2\u6570\u5373\u64CD\u4F5C\u8BE5\u9875\u9762\u3002\n\niframe \u652F\u6301\uFF1APage.getFrameTree \u67E5\u770B frame \u6811\uFF08iframe src/name/title\uFF0C\u540C\u57DF\u542B url/readyState\uFF09\uFF1BRuntime.evaluate \u4F20 contextId\uFF08iframe \u7D22\u5F15\u4ECE 1 \u8D77\uFF0C\u540C\u57DF\u53EF eval\uFF09\u8FDB iframe \u4E0A\u4E0B\u6587\u6267\u884C\u3002",
-      inputSchema: { type: "object", properties: {
-        cmd: { type: "string" },
-        args: { type: "object" },
-        pageId: { type: "string", description: "\u76EE\u6807\u9875\u9762\u5B8C\u6574 ID\u2014\u2014\u6765\u81EA AI \u6D88\u606F\u7684 [\u53D1\u81EA: xxx]\uFF08\u5982 3001/host\uFF09\uFF1B\u4E5F\u53EF /bridge/sessions \u67E5\u8BE2" }
-      }, required: ["cmd"] }
-    },
-    { name: "page_snapshot", description: "\u62C9\u53D6\u5DF2\u8FDE\u63A5\u9875\u9762\u57FA\u7840\u73B0\u573A\uFF08URL/\u9009\u533A/\u6A21\u62DF\u6761\u4EF6\uFF09\u3002pageId \u7F3A\u7701=\u6700\u65B0 AI \u4E3B\u7A97\u53E3\uFF08self:true\uFF09\uFF1B\u663E\u5F0F pageId \u4F18\u5148\u3002", inputSchema: { type: "object", properties: { pageId: { type: "string" } } } },
-    { name: "self_ui", description: "\u626B\u63CF\u76EE\u6807\u9875\u9762\uFF08\u7F3A\u7701 AI \u4E3B\u7A97\u53E3 xxx/ai\uFF09\u5F53\u524D\u6253\u5F00\u7684\u5F39\u7A97/dialog/\u8868\u5355\u5B57\u6BB5/\u6309\u94AE\u6E05\u5355\u2014\u2014ai-helper \u56DE\u586B\u5B9A\u4F4D\u7528\u3002\u8FD4\u56DE {dialogs:[{title, fields:[{label,selector,type}], buttons}]}\uFF0C\u65E0\u5F39\u7A97\u65F6 dialogs \u4E3A\u7A7A\u6570\u7EC4\u3002", inputSchema: { type: "object", properties: { pageId: { type: "string", description: "\u7F3A\u7701\u7528 AI \u4E3B\u7A97\u53E3\uFF08xxx/ai\uFF09\uFF1B\u4E5F\u53EF\u6307\u5B9A\u5176\u4ED6\u9875\u9762" } } } },
-    { name: "form_fill", description: "\u5728\u76EE\u6807\u9875\u9762\uFF08\u7F3A\u7701 AI \u4E3B\u7A97\u53E3 xxx/ai\uFF09\u7684\u5F39\u7A97/\u8868\u5355\u91CC\u56DE\u586B\u5B57\u6BB5\u503C\u2014\u2014AI \u7ED3\u679C\u76F4\u63A5\u64CD\u4F5C\u6269\u5C55\u5F39\u7A97\u8868\u5355\uFF08React \u517C\u5BB9\uFF1A\u539F\u751F value setter + dispatch input/change\uFF09\u3002\u914D\u5408 self_ui \u4F7F\u7528\uFF1A\u5148 self_ui \u62FF\u5B57\u6BB5 label/selector\uFF0C\u518D form_fill \u586B\u503C\u3002\u53C2\u6570\uFF1Adialog\uFF08\u5F39\u7A97\u6807\u8BC6\uFF1A\u6807\u9898\u5B50\u4E32\u6216\u5E8F\u53F7 0 \u8D77\uFF0C\u7F3A\u7701\u53D6\u9762\u79EF\u6700\u5927\u7684\u53EF\u89C1\u5F39\u7A97\uFF09\u3001fields[{selector|label, value}]\u3001button\uFF08\u53EF\u9009\uFF0C\u56DE\u586B\u540E\u70B9\u51FB\u7684\u6309\u94AE\u6587\u672C\u5982\u300E\u4FDD\u5B58\u300F\uFF09\u3002\u8FD4\u56DE {foundDialog, title, filled, missed, clicked}\u3002", inputSchema: { type: "object", properties: {
-      pageId: { type: "string", description: "\u7F3A\u7701\u7528 AI \u4E3B\u7A97\u53E3\uFF08xxx/ai\uFF09\uFF1B\u4E5F\u53EF\u6307\u5B9A\u5176\u4ED6\u9875\u9762" },
-      dialog: { type: "string", description: "\u5F39\u7A97\u6807\u8BC6\uFF1A\u6807\u9898\u5B50\u4E32\u6216\u5E8F\u53F7\uFF080 \u8D77\uFF09\uFF1B\u7F3A\u7701\u53D6\u9762\u79EF\u6700\u5927\u7684\u53EF\u89C1\u5F39\u7A97" },
-      fields: { type: "array", items: { type: "object", properties: { selector: { type: "string", description: "CSS \u9009\u62E9\u5668\uFF08\u4F18\u5148\uFF09" }, label: { type: "string", description: "\u5F39\u7A97\u5185\u6587\u672C\u5339\u914D\uFF08label[for]/\u5305\u88F9/\u6587\u672C\u5305\u542B\uFF09" }, value: { type: "string", description: "\u8981\u586B\u7684\u503C" } }, required: ["value"] }, description: "\u8981\u586B\u7684\u5B57\u6BB5\u5217\u8868" },
-      button: { type: "string", description: "\u56DE\u586B\u540E\u70B9\u51FB\u7684\u6309\u94AE\u6587\u672C\uFF08\u5982\u300E\u4FDD\u5B58\u300F\u300E\u786E\u5B9A\u300F\uFF09" }
-    } } },
-    { name: "bridge_status", description: "\u67E5\u8BE2\u5DF2\u8FDE\u63A5\u9875\u9762\uFF08sessions\uFF1A\u542B pageId/url/title/frameworks + device/deviceLabel\u2014\u2014\u6D4F\u89C8\u5668\xB7OS\xB7\u5C4F\u5E55\xB7dpr\xB7\u5728\u7EBF\xB7\u8BED\u8A00\xB7\u65F6\u533A\u7B49\u8BBE\u5907\u4FE1\u606F\uFF0C\u4FBF\u4E8E\u533A\u5206\u591A\u53F0\u673A\u5668/\u6807\u7B7E\u9875\uFF09\u4E0E\u6302\u8D77\u8BF7\u6C42\u3002\u7528\u6237\u63D0\u5230\u9875\u9762\u6807\u9898\u6216 URL \u65F6\uFF0C\u6309 title/url \u5339\u914D pageId\uFF08\u5982 refresh\u300E\u67D0\u6807\u9898\u9875\u9762\u300F\u6216\u300E\u67D0\u4E2A url \u9875\u9762\u300F\uFF09\u3002", inputSchema: { type: "object", properties: {} } },
-    {
-      name: "page_logs",
-      description: "\u4ECE\u76EE\u6807\u9875\u9762\u62C9\u53D6\u672C\u5730\u7F13\u51B2\u7684 console \u65E5\u5FD7\uFF08log/debug/info/warn/error \u5168\u91CF\uFF0CCDP Runtime.evaluate \u8BFB\u53D6 window.__dbg.__consoleRing\uFF09\u3002pageId \u7F3A\u7701=\u6700\u65B0 AI \u4E3B\u7A97\u53E3\uFF08self:true\uFF09\uFF1B\u663E\u5F0F pageId \u4F18\u5148\u3002\u9875\u9762\u62A5\u9519\u6392\u67E5\u9996\u9009\uFF1A\u5148\u67E5 warn/error \u518D\u9010\u6B65\u653E\u5F00\u3002\u8FD4\u56DE {logs:[{ts,level,text,count}], bufferSize}\u3002",
-      inputSchema: { type: "object", properties: {
-        pageId: { type: "string", description: "\u76EE\u6807\u9875\u9762\u5B8C\u6574 ID\uFF08[\u53D1\u81EA: xxx] \u6216 /bridge/sessions\uFF09" },
-        level: { type: "string", description: "\u8FC7\u6EE4\u7EA7\u522B\uFF1Adebug/log/info/warn/error\uFF08\u9ED8\u8BA4\u5168\u90E8\uFF09" },
-        since: { type: "string", description: "ISO \u65F6\u95F4\uFF1A\u53EA\u8FD4\u56DE\u6B64\u65F6\u95F4\u4E4B\u540E\u7684\u65E5\u5FD7" },
-        limit: { type: "number", description: "\u6761\u6570\u4E0A\u9650\uFF08\u2264200\uFF0C\u9ED8\u8BA4 50\uFF0C\u53D6\u6700\u65B0\uFF09" },
-        token: { type: "string" }
-      } }
-    },
-    {
-      name: "page_network",
-      description: "\u4ECE\u76EE\u6807\u9875\u9762\u62C9\u53D6\u672C\u5730\u7F13\u51B2\u7684 ajax/fetch \u8BF7\u6C42\u5B8C\u6210\u6001\uFF08CDP Runtime.evaluate \u8BFB\u53D6 window.__dbg.__netRing\uFF09\u3002pageId \u7F3A\u7701=\u6700\u65B0 AI \u4E3B\u7A97\u53E3\uFF08self:true\uFF09\uFF1B\u663E\u5F0F pageId \u4F18\u5148\u3002\u5931\u8D25\u6392\u67E5\uFF1Astatus \u4F20 400 \u6216 errorOnly:true\u3002\u6CE8\u610F\uFF1A\u4E0D\u542B\u9759\u6001\u8D44\u6E90\u52A0\u8F7D\uFF08\u90A3\u662F CDP Network \u7684\u80FD\u529B\uFF09\u3002\u8FD4\u56DE {requests:[{kind,method,url,status,statusText,durationMs,size,error,ts}], bufferSize}\u3002",
-      inputSchema: { type: "object", properties: {
-        pageId: { type: "string" },
-        url: { type: "string", description: "URL \u5B50\u4E32\u8FC7\u6EE4" },
-        status: { type: "number", description: "status >= \u6B64\u503C\u624D\u8FD4\u56DE\uFF08\u5982 400 \u53EA\u770B\u5931\u8D25\uFF09" },
-        errorOnly: { type: "boolean", description: "\u53EA\u770B\u5931\u8D25\uFF08error \u975E\u7A7A \u6216 status>=400\uFF09" },
-        limit: { type: "number", description: "\u6761\u6570\u4E0A\u9650\uFF08\u2264100\uFF0C\u9ED8\u8BA4 30\uFF0C\u53D6\u6700\u65B0\uFF09" },
-        token: { type: "string" }
-      } }
-    },
-    // ---- 用户交互型工具：AI 与人在页面上协作（AI 提问 → 人在 AI 窗口/页面作答或拒绝 → 结果回 AI） ----
-    // 统一机制：prompt 显示给人看；timeout 为可选——不传=永久等待（面板常驻直到用户操作，不读秒不超时）；
-    //   传了才显示读秒倒计时（可暂停）且服务器强制到点返回“用户无响应/不在线”；
-    //   交互消息到达时页面走浏览器 Notification（+标题闪烁/提示音）通知用户；人可拒绝（rejectable）。
-    // 响应信封：{ status:'answered'|'rejected'|'timeout'|'error', value?, reason?, error?, tookMs, timeoutMs }
-    {
-      name: "user_pick_element",
-      description: "\u8BF7\u5F53\u524D\u9875\u9762\u7684\u4EBA\u7C7B\u7528\u6237\u70B9\u9009\u4E00\u4E2A\u9875\u9762\u5143\u7D20\uFF08\u81EA\u52A8\u8FDB\u5165 Inspector \u70B9\u9009\u6A21\u5F0F\u3001\u6536\u8D77 AI \u7A97\u53E3\u3001\u5F39\u70B9\u9009\u9762\u677F\uFF1B\u7528\u6237\u53EF\u786E\u8BA4\u9009\u4E2D\u6216\u62D2\u7EDD\uFF09\u3002\u8FD4\u56DE\u5143\u7D20\u8F7D\u8377 {tag,rect,xpath,text,attributes,framework,selector}\u3002",
-      inputSchema: { type: "object", properties: {
-        prompt: { type: "string", description: "\u7ED9\u7528\u6237\u770B\u7684\u8BF4\u660E\uFF08\u4E3A\u4EC0\u4E48\u9700\u8981\u70B9\u9009\u8FD9\u4E2A\u5143\u7D20\uFF09" },
-        timeout: { type: "number", description: "\u53EF\u9009\u8D85\u65F6 ms\uFF085000-600000\uFF09\u3002\u4E0D\u4F20=\u6C38\u4E45\u7B49\u5F85\uFF1A\u9762\u677F\u5E38\u9A7B\u76F4\u5230\u7528\u6237\u64CD\u4F5C\uFF0C\u65E0\u8BFB\u79D2\uFF1B\u4F20\u4E86\u624D\u663E\u793A\u8BFB\u79D2\u5012\u8BA1\u65F6\uFF08\u53EF\u6682\u505C\uFF09\uFF0C\u5230\u70B9\u81EA\u52A8\u8FD4\u56DE timeout" },
-        rejectable: { type: "boolean", description: "\u662F\u5426\u5141\u8BB8\u7528\u6237\u62D2\u7EDD\uFF08\u9ED8\u8BA4 true\uFF09" },
-        async: { type: "boolean", description: "true=\u5F02\u6B65\uFF1A\u7ACB\u5373\u8FD4\u56DE\u5DF2\u5F02\u6B65\u53D1\u51FA\uFF0C\u7528\u6237\u4F5C\u7B54\u7ED3\u679C\u7ECF AI \u6D88\u606F\u7A97\u53D1\u9001\uFF1B\u7F3A\u7701=\u540C\u6B65\u7B49\u5F85" },
-        pageId: { type: "string", description: "\u76EE\u6807\u9875\u9762\u5B8C\u6574 ID\uFF08instanceId/frameId\uFF09" }
-      }, required: ["prompt"] }
-    },
-    {
-      name: "user_confirm",
-      description: "\u5728 AI \u7A97\u53E3\u5185\u5411\u4EBA\u7C7B\u7528\u6237\u63D0\u4E00\u4E2A\u662F/\u5426\u95EE\u9898\uFF08\u5982\u201C\u786E\u8BA4\u6267\u884C\u6B64\u64CD\u4F5C\uFF1F\u201D\u201C\u662F\u5426\u7EE7\u7EED\uFF1F\u201D\uFF09\uFF0C\u7528\u6237\u70B9 \u2705/\u274C \u4F5C\u7B54\uFF0C\u5E76\u53EF\u9644\u300C\u8865\u5145\u8BF4\u660E\u300D\u81EA\u7531\u6587\u672C\uFF08value.comment\uFF09\uFF1B\u53E6\u6709\u56FA\u5B9A\u9009\u9879\u300C\u90FD\u4E0D\u9002\u5408\u300D\u2192 \u81EA\u5B9A\u4E49\u56DE\u7B54\uFF08approved:null, custom\uFF09\u3002\u8FD4\u56DE {status, approved, comment?, custom?, reason?}\u3002",
-      inputSchema: { type: "object", properties: {
-        prompt: { type: "string", description: "\u95EE\u9898\u5185\u5BB9" },
-        timeout: { type: "number", description: "\u53EF\u9009\u8D85\u65F6 ms\uFF085000-600000\uFF09\u3002\u4E0D\u4F20=\u6C38\u4E45\u7B49\u5F85\uFF1A\u9762\u677F\u5E38\u9A7B\u76F4\u5230\u7528\u6237\u64CD\u4F5C\uFF0C\u65E0\u8BFB\u79D2\uFF1B\u4F20\u4E86\u624D\u663E\u793A\u8BFB\u79D2\u5012\u8BA1\u65F6\uFF08\u53EF\u6682\u505C\uFF09\uFF0C\u5230\u70B9\u81EA\u52A8\u8FD4\u56DE timeout" },
-        rejectable: { type: "boolean", description: "\u662F\u5426\u5141\u8BB8\u7528\u6237\u4EE5\u201C\u6682\u65F6\u65E0\u6CD5\u5904\u7406\u201D\u62D2\u7EDD\uFF08\u9ED8\u8BA4 true\uFF09" },
-        async: { type: "boolean", description: "true=\u5F02\u6B65\uFF1A\u7ACB\u5373\u8FD4\u56DE\u5DF2\u5F02\u6B65\u53D1\u51FA\uFF0C\u7528\u6237\u4F5C\u7B54\u7ED3\u679C\u7ECF AI \u6D88\u606F\u7A97\u53D1\u9001\uFF08\u4E0D\u963B\u585E\u672C\u8C03\u7528\uFF09\uFF1B\u7F3A\u7701=\u540C\u6B65\u7B49\u5F85" },
-        pageId: { type: "string" }
-      }, required: ["prompt"] }
-    },
-    {
-      name: "user_choose",
-      description: "\u5728 AI \u7A97\u53E3\u5185\u7ED9\u4EBA\u7C7B\u7528\u6237\u4E00\u7EC4\u9009\u9879\u8BA9\u5176\u9009\u62E9\uFF08\u5982\u4FEE\u590D\u65B9\u6848 A/B/C\uFF09\u3002\u5355\u9009\uFF08\u9ED8\u8BA4\uFF09\u2192 value:{index,label}\uFF1Bmultiple:true \u591A\u9009 \u2192 value:{indexes,labels}\u3002\u7528\u6237\u53EF\u9644\u300C\u8865\u5145\u8BF4\u660E\u300D\u81EA\u7531\u6587\u672C\uFF08value.comment\uFF09\uFF1B\u53E6\u6709\u56FA\u5B9A\u9009\u9879\u300C\u8FD9\u4E9B\u90FD\u4E0D\u9002\u5408\u300D\u2192 \u81EA\u5B9A\u4E49\u7B54\u6848\uFF08index:-1, custom:true\uFF09\u3002\u8FD4\u56DE {status, value, reason?}\u3002",
-      inputSchema: { type: "object", properties: {
-        prompt: { type: "string" },
-        choices: { type: "array", items: { type: "string" }, description: "\u9009\u9879\u5217\u8868\uFF082-8 \u4E2A\uFF09" },
-        multiple: { type: "boolean", description: "\u662F\u5426\u5141\u8BB8\u591A\u9009\uFF08\u9ED8\u8BA4 false\uFF1Btrue \u65F6\u8FD4\u56DE indexes/labels\uFF09" },
-        timeout: { type: "number", description: "\u53EF\u9009\u8D85\u65F6 ms\uFF085000-600000\uFF09\u3002\u4E0D\u4F20=\u6C38\u4E45\u7B49\u5F85\uFF1A\u9762\u677F\u5E38\u9A7B\u76F4\u5230\u7528\u6237\u64CD\u4F5C\uFF0C\u65E0\u8BFB\u79D2\uFF1B\u4F20\u4E86\u624D\u663E\u793A\u8BFB\u79D2\u5012\u8BA1\u65F6\uFF08\u53EF\u6682\u505C\uFF09\uFF0C\u5230\u70B9\u81EA\u52A8\u8FD4\u56DE timeout" },
-        rejectable: { type: "boolean", description: "\u662F\u5426\u5141\u8BB8\u7528\u6237\u62D2\u7EDD\uFF08\u9ED8\u8BA4 true\uFF09" },
-        async: { type: "boolean", description: "true=\u5F02\u6B65\uFF1A\u7ACB\u5373\u8FD4\u56DE\u5DF2\u5F02\u6B65\u53D1\u51FA\uFF0C\u7528\u6237\u4F5C\u7B54\u7ED3\u679C\u7ECF AI \u6D88\u606F\u7A97\u53D1\u9001\uFF1B\u7F3A\u7701=\u540C\u6B65\u7B49\u5F85" },
-        pageId: { type: "string" }
-      }, required: ["prompt", "choices"] }
-    },
-    {
-      name: "user_input",
-      description: "\u5728 AI \u7A97\u53E3\u5185\u8BF7\u4EBA\u7C7B\u7528\u6237\u8F93\u5165\u4E00\u6BB5\u6587\u672C\uFF08\u5982\u671F\u671B\u6587\u6848\u3001\u914D\u7F6E\u503C\u3001\u573A\u666F\u63CF\u8FF0\uFF09\uFF0C\u56DE\u8F66/\u70B9\u51FB\u5373\u53D1\u9001\u3002\u8FD4\u56DE {status, value:{text}, reason?}\u3002",
-      inputSchema: { type: "object", properties: {
-        prompt: { type: "string" },
-        defaultValue: { type: "string", description: "\u9884\u586B\u9ED8\u8BA4\u503C\uFF08\u53EF\u9009\uFF09" },
-        timeout: { type: "number", description: "\u53EF\u9009\u8D85\u65F6 ms\uFF085000-600000\uFF09\u3002\u4E0D\u4F20=\u6C38\u4E45\u7B49\u5F85\uFF1A\u9762\u677F\u5E38\u9A7B\u76F4\u5230\u7528\u6237\u64CD\u4F5C\uFF0C\u65E0\u8BFB\u79D2\uFF1B\u4F20\u4E86\u624D\u663E\u793A\u8BFB\u79D2\u5012\u8BA1\u65F6\uFF08\u53EF\u6682\u505C\uFF09\uFF0C\u5230\u70B9\u81EA\u52A8\u8FD4\u56DE timeout" },
-        rejectable: { type: "boolean", description: "\u662F\u5426\u5141\u8BB8\u7528\u6237\u62D2\u7EDD\uFF08\u9ED8\u8BA4 true\uFF09" },
-        async: { type: "boolean", description: "true=\u5F02\u6B65\uFF1A\u7ACB\u5373\u8FD4\u56DE\u5DF2\u5F02\u6B65\u53D1\u51FA\uFF0C\u7528\u6237\u4F5C\u7B54\u7ED3\u679C\u7ECF AI \u6D88\u606F\u7A97\u53D1\u9001\uFF1B\u7F3A\u7701=\u540C\u6B65\u7B49\u5F85" },
-        pageId: { type: "string" }
-      }, required: ["prompt"] }
-    },
-    {
-      name: "user_presence",
-      description: "\u63A2\u6D4B\u4EBA\u7C7B\u7528\u6237\u662F\u5426\u5728\u573A/\u5728\u7EBF\uFF08AI \u9700\u8981\u7528\u6237\u914D\u5408\u957F\u4EFB\u52A1\u524D\u5148\u786E\u8BA4\uFF09\uFF0C\u7528\u6237\u70B9\u300C\u6211\u5728/\u7A0D\u540E\u300D\uFF0C\u53EF\u9644\u300C\u8865\u5145\u8BF4\u660E\u300D\uFF08value.comment\uFF09\u3002\u8FD4\u56DE {status, present, comment?}\uFF1B\u8D85\u65F6\u5373\u89C6\u4E3A\u4E0D\u5728\u7EBF\u3002",
-      inputSchema: { type: "object", properties: {
-        prompt: { type: "string", description: "\u8BE2\u95EE\u6587\u6848\uFF08\u9ED8\u8BA4\u201C\u4F60\u5728\u5417\uFF1F\u9700\u8981\u4F60\u914D\u5408\u7EE7\u7EED\u5F00\u53D1\u201D\uFF09" },
-        timeout: { type: "number", description: "\u53EF\u9009\u8D85\u65F6 ms\uFF085000-600000\uFF09\u3002\u4E0D\u4F20=\u6C38\u4E45\u7B49\u5F85\uFF1A\u9762\u677F\u5E38\u9A7B\u76F4\u5230\u7528\u6237\u4F5C\u7B54\uFF1B\u4F20\u4E86\u624D\u663E\u793A\u8BFB\u79D2\u5012\u8BA1\u65F6\uFF08\u53EF\u6682\u505C\uFF09\uFF0C\u5230\u70B9\u8FD4\u56DE status:'timeout'\uFF08\u89C6\u4E3A\u4E0D\u5728\u7EBF\uFF09\u2014\u2014\u9700\u8981\u5FEB\u901F\u63A2\u6D4B\u5728\u573A/\u9650\u65F6\u7B49\u5F85\u65F6\u624D\u663E\u5F0F\u4F20" },
-        async: { type: "boolean", description: "true=\u5F02\u6B65\uFF1A\u7ACB\u5373\u8FD4\u56DE\u5DF2\u5F02\u6B65\u53D1\u51FA\uFF0C\u7528\u6237\u4F5C\u7B54\u7ED3\u679C\u7ECF AI \u6D88\u606F\u7A97\u53D1\u9001\uFF1B\u7F3A\u7701=\u540C\u6B65\u7B49\u5F85" },
-        pageId: { type: "string" }
-      }, required: [] }
-    },
-    {
-      name: "user_notify",
-      description: "\u975E\u963B\u585E\u901A\u77E5\uFF1A\u901A\u8FC7\u6D4F\u89C8\u5668 Notification \u544A\u8BC9\u7528\u6237\u4E00\u6761\u6D88\u606F\uFF08\u5982\u201C\u4FEE\u590D\u5B8C\u6210\uFF0C\u8BF7\u5237\u65B0\u9A8C\u8BC1\u201D\uFF09\uFF0C\u4E0D\u7B49\u5F85\u56DE\u7B54\u3002\u8FD4\u56DE {notified:true}\u3002",
-      inputSchema: { type: "object", properties: {
-        title: { type: "string", description: "\u901A\u77E5\u6807\u9898" },
-        body: { type: "string", description: "\u901A\u77E5\u5185\u5BB9" },
-        timeout: { type: "number", description: "\u53EF\u9009\uFF1A\u901A\u77E5\u5361\u81EA\u52A8\u5173\u95ED\u65F6\u9650 ms\uFF085000-600000\uFF09\u3002\u4E0D\u4F20=\u5E38\u9A7B\u76F4\u5230\u7528\u6237\u5173\u95ED" },
-        async: { type: "boolean", description: "true=\u5F02\u6B65\uFF1A\u7ACB\u5373\u8FD4\u56DE\u5DF2\u5F02\u6B65\u53D1\u51FA\uFF0C\u7528\u6237\u4F5C\u7B54\u7ED3\u679C\u7ECF AI \u6D88\u606F\u7A97\u53D1\u9001\uFF1B\u7F3A\u7701=\u540C\u6B65\u7B49\u5F85" },
-        pageId: { type: "string" }
-      }, required: ["body"] }
-    },
-    // ---- 方案 G · P2：agent 接入 + 消息主通道 ----
-    {
-      name: "aiti_hello",
-      description: "agent \u81EA\u6211\u4ECB\u7ECD/\u6CE8\u518C\uFF1A\u8986\u76D6 agentId\uFF08\u9ED8\u8BA4 clientInfo.name\uFF09\u4E0E sessionId\uFF08\u9ED8\u8BA4 Mcp-Session-Id \u6216\u6865\u968F\u673A\uFF09\u3001\u7ED1\u5B9A\u9ED8\u8BA4\u76EE\u6807\u9875 pageId\u3001\u8BA2\u9605\u9875\u9762\u4E8B\u4EF6\uFF08page_error\uFF09\u3002\u6CE8\u610F\uFF1Apage_log/page_network \u4E0D\u518D\u5B9E\u65F6\u63A8\u9001\uFF0C\u6539\u7528 page_logs/page_network \u5DE5\u5177\u6309\u9700\u62C9\u53D6\u3002\u5EFA\u8BAE\u4F1A\u8BDD\u5F00\u59CB\u65F6\u8C03\u7528\u4E00\u6B21\u2014\u2014\u6CE8\u518C\u540E\u6D88\u606F\u53EF\u5B9A\u5411\u5230\u672C\u4F1A\u8BDD\uFF08agentKey=agentId/sessionId\uFF09\u3002",
-      inputSchema: { type: "object", properties: {
-        agentId: { type: "string", description: "\u81EA\u5B9A\u4E49 agent \u6807\u8BC6\uFF08\u5982 pi / cc / qoder\uFF1B\u7F3A\u7701\u7528 clientInfo.name\uFF09" },
-        sessionId: { type: "string", description: "\u672C\u5B9E\u4F8B\u4F1A\u8BDD\u6807\u8BC6\uFF08\u591A\u5B9E\u4F8B/\u591A\u4F1A\u8BDD\u65F6\u533A\u5206\uFF1B\u7F3A\u7701\u7528 Mcp-Session-Id\uFF0C\u65E0\u5219\u6865\u751F\u6210\u968F\u673A\uFF09" },
-        name: { type: "string", description: "\u663E\u793A\u540D\uFF08\u53EF\u9009\uFF0C\u5982 'pi \xB7 \u5DE5\u4F5C\u533AA'\uFF09" },
-        cwd: { type: "string", description: "\u5DE5\u4F5C\u76EE\u5F55\uFF08\u53EF\u9009\uFF0C\u663E\u793A CWD . name (id)\uFF0C\u65B9\u4FBF\u8BC6\u522B agent \u8EAB\u4EFD\uFF09" },
-        pageId: { type: "string", description: "\u7ED1\u5B9A\u9ED8\u8BA4\u8C03\u8BD5\u76EE\u6807\u9875\uFF08pageId/url/title \u5747\u53EF\uFF0C\u7559\u7A7A\u4E0D\u7ED1\uFF09" },
-        subEvents: { type: "array", items: { type: "string" }, description: "\u8BA2\u9605\u5B9E\u65F6\u4E8B\u4EF6\uFF1Apage_error\uFF08\u9ED8\u8BA4\u4E0D\u6295\u9012\uFF0C\u663E\u5F0F\u8BA2\u9605\u624D\u63A8\uFF1Bpage_log/page_network \u4E0D\u518D\u5B9E\u65F6\u63A8\u9001\uFF0C\u6539\u7528 page_logs/page_network \u5DE5\u5177\u6309\u9700\u62C9\u53D6\uFF09" }
-      } }
-    },
-    {
-      name: "file_stat",
-      description: "\u67E5\u8BE2\u6587\u4EF6\u5B58\u5728\u6027/\u7C7B\u578B/\u5927\u5C0F/\u4FEE\u6539\u65F6\u95F4\uFF08\u7EDD\u5BF9\u8DEF\u5F84\uFF1B\u7EC4\u4EF6\u6E90\u7801/\u8C03\u7528\u4F4D\u7F6E\u5B9A\u4F4D\u3001AI \u7A97\u300E\u540E\u7AEF\u6253\u5F00/\u524D\u7AEF\u6253\u5F00\u300F\u524D\u7F6E\u6821\u9A8C\u7528\uFF09\u3002\u4E0D\u5B58\u5728\u6216\u975E\u6CD5\u8DEF\u5F84\u8FD4\u56DE {exists:false}\u3002",
-      inputSchema: { type: "object", properties: {
-        path: { type: "string", description: "\u7EDD\u5BF9\u8DEF\u5F84\uFF08\u5982 /home/user/src/App.vue\uFF09" }
-      }, required: ["path"] }
-    },
-    {
-      name: "aiti_inbox",
-      description: "\u6D88\u606F\u4E3B\u901A\u9053\uFF1A\u62C9\u53D6\u53D1\u7ED9\u672C agent \u4F1A\u8BDD\u7684\u6D88\u606F\uFF08\u4EBA\u4E3B\u52A8\u53D1\u8BDD user_message / \u5F02\u6B65 user_* \u4F5C\u7B54 user_answer / \u8BA2\u9605\u7684\u9875\u9762\u4E8B\u4EF6\uFF09\u3002\u5F00\u59CB\u65B0\u4E00\u8F6E\u6216\u9700\u8981\u6700\u65B0\u4FE1\u606F\u65F6\u5148\u8C03\u7528\uFF1B\u5904\u7406\u5B8C\u628A\u6D88\u606F id \u653E ack \u53C2\u6570\u786E\u8BA4\uFF08\u6807\u8BB0 consumed\uFF0C\u5386\u53F2\u4FDD\u7559\uFF09\u3002\u8FD4\u56DE agentKey\uFF08agentId/sessionId\uFF09\uFF0C\u672A\u6CE8\u518C\u65F6\u63D0\u793A\u8C03 aiti_hello \u6CE8\u518C\u3002",
-      inputSchema: { type: "object", properties: {
-        agentId: { type: "string", description: "agent \u6807\u8BC6\uFF08\u7F3A\u7701\u7528 aiti_hello \u6CE8\u518C\u503C\u6216 clientInfo.name\uFF09" },
-        sessionId: { type: "string", description: "\u672C\u5B9E\u4F8B\u4F1A\u8BDD\u6807\u8BC6\uFF08\u7F3A\u7701\u7528 Mcp-Session-Id \u6216 aiti_hello \u6CE8\u518C\u503C\uFF09" },
-        ack: { description: "\u5DF2\u5904\u7406\u6D88\u606F id \u5217\u8868\uFF0C\u6216 { ids: [...], summary: '\u6267\u884C\u603B\u7ED3' }\u2014\u2014summary\uFF08\u5FC5\u5E26\uFF09\u4F1A\u4F5C\u4E3A agent \u5904\u7406\u8BB0\u5F55\u663E\u793A\u5728\u64CD\u4F5C\u53F0\u6D88\u606F\u6D41", oneOf: [{ type: "array", items: { type: "string" } }, { type: "object", properties: { ids: { type: "array", items: { type: "string" } }, summary: { type: "string" } } }] }
-      } }
-    }
-  ];
+  const TOOLS = BRIDGE_TOOLS;
   const settlePending = (requestId, ok, result) => {
     const r = pendingRequests.get(requestId);
     if (!r) return false;
@@ -1321,12 +1686,13 @@ ${String(pl.stack).slice(0, 400)}` : "");
           instructions: [
             "aiti-devtools\uFF1A\u9875\u9762\u5185 AI \u8C03\u8BD5\u52A9\u624B\uFF08\u6D4F\u89C8\u5668\u6865\uFF09\u3002",
             "\u5DE5\u4F5C\u6D41\uFF1A\u9875\u9762\u53D1\u6765\u7684\u6D88\u606F\u901A\u5E38\u5E26 pageId\u3002\u6CA1\u6709\u4E5F\u53EF\u4EE5\u5148\u7528 bridge_status \u53D1\u73B0\u5DF2\u8FDE\u63A5\u9875\u9762\uFF08\u8FD4\u56DE sessions\uFF0C\u542B pageId/url/title/frameworks/device\u2014\u2014deviceLabel \u4E00\u884C\u7684\u6D4F\u89C8\u5668\xB7\u5C4F\u5E55\xB7\u5728\u7EBF\xB7\u8BED\u8A00\u53EF\u5FEB\u901F\u8BC6\u522B\u662F\u54EA\u53F0\u673A\u5668\u54EA\u4E2A\u6807\u7B7E\uFF09\u2192 \u628A pageId \u4F20\u7ED9\u76EE\u6807\u5DE5\u5177\u3002",
-            "pageId \u683C\u5F0F\u4E3A instanceId/frameId\uFF08\u5982 3001/host\uFF09\uFF1B\u4E5F\u53EF\u76F4\u63A5\u4F20 url \u6216\u9875\u9762\u6807\u9898\uFF1B\u547D\u4E2D\u591A\u4E2A\u65F6\u9700\u5177\u4F53 pageId \u6307\u5B9A\u3002",
+            "pageId \u683C\u5F0F\u4E3A instanceId/frameId\uFF08\u5982 30142/host\uFF09\uFF1B\u4E5F\u53EF\u76F4\u63A5\u4F20 url \u6216\u9875\u9762\u6807\u9898\uFF1B\u547D\u4E2D\u591A\u4E2A\u65F6\u9700\u5177\u4F53 pageId \u6307\u5B9A\u3002",
             "page_exec\uFF1A\u5728\u5DF2\u8FDE\u63A5\u9875\u9762\u6267\u884C\u7C7B CDP \u547D\u4EE4\uFF08DOM/CSS/Input/Page/Runtime/Storage/Performance/Browser \u57DF\uFF09\u3002args \u4E3A\u547D\u4EE4\u53C2\u6570\u5BF9\u8C61\u3002\u5371\u9669\u547D\u4EE4\uFF08\u5BFC\u822A/\u4E0B\u8F7D/\u5BF9\u8BDD\u6846\u7B49\uFF09\u4F1A\u81EA\u52A8\u5F39\u7528\u6237\u786E\u8BA4\u3002\u622A\u5C4F\uFF08Page.captureScreenshot\uFF09\u52A1\u5FC5\u5728 args \u5E26 reason\uFF08\u4E00\u53E5\u8BDD\u5411\u7528\u6237\u8BF4\u660E\u60F3\u622A\u4EC0\u4E48\uFF0C\u9875\u9762\u4F1A\u5148\u5F39\u51C6\u5907\u5361\u5C55\u793A\u8BE5\u8BF4\u660E\u3001\u7528\u6237\u8C03\u6574\u597D\u9875\u9762\u624D\u5F00\u59CB\u622A\u5C4F\uFF09\u3002",
             "page_snapshot\uFF1A\u62C9\u53D6\u76EE\u6807\u9875\u9762\u57FA\u7840\u73B0\u573A\uFF08URL/\u9009\u533A/\u6A21\u62DF\u6761\u4EF6\uFF09\u3002",
             "page_logs / page_network\uFF1A\u6392\u67E5\u9875\u9762\u62A5\u9519/\u8BF7\u6C42\u5931\u8D25\u9996\u9009\u2014\u2014page_logs \u67E5 console\uFF08\u53EF level/since/limit \u8FC7\u6EE4\uFF0C\u5148\u770B warn/error\uFF09\uFF1Bpage_network \u67E5 ajax/fetch \u5B8C\u6210\u6001\uFF08status\u2265400 \u6216 errorOnly:true \u53EA\u770B\u5931\u8D25\uFF09\u3002\u4E24\u8005\u5747\u8BFB\u9875\u9762\u672C\u5730\u7F13\u51B2\uFF08CDP Runtime.evaluate \u6309\u9700\u62C9\u53D6\uFF0C\u4E0D\u518D\u5B9E\u65F6\u4E0A\u62A5\uFF09\u3002",
             "user_confirm / user_choose / user_input / user_pick_element / user_presence\uFF1AAI \u4E0E\u4EBA\u7C7B\u7528\u6237\u5728\u9875\u9762\u4E0A\u534F\u4F5C\u2014\u2014prompt \u7ED9\u7528\u6237\u770B\uFF0C\u9ED8\u8BA4\u540C\u6B65\u7B49\u5F85\u4E14\u6C38\u4E45\u7B49\u5F85\uFF08\u4E0D\u4F20 timeout\uFF1A\u9762\u677F\u5E38\u9A7B\u76F4\u5230\u7528\u6237\u4F5C\u7B54\uFF0C\u65E0\u8BFB\u79D2\uFF1B\u4EC5\u5728\u786E\u9700\u9650\u65F6\u50AC\u4FC3\u65F6\u4F20 timeout ms\uFF0C\u9762\u677F\u663E\u793A\u8BFB\u79D2\u5012\u8BA1\u65F6\u53EF\u6682\u505C\uFF0C\u5230\u70B9\u8FD4\u56DE status:'timeout'\uFF09\uFF0C\u54CD\u5E94\u4FE1\u5C01 {status:'answered'|'rejected'|'timeout'|'error', value?, reason?, tookMs, timeoutMs}\u3002\u4F20 async:true \u53EF\u7ACB\u5373\u8FD4\u56DE\uFF08\u7ED3\u679C\u7ECF AI \u6D88\u606F\u7A97\u9001\u8FBE\uFF09\u3002",
             "user_notify\uFF1A\u975E\u963B\u585E\u6D4F\u89C8\u5668\u901A\u77E5\uFF0C\u4E0D\u7B49\u5F85\u56DE\u7B54\u3002",
+            "\u8BBE\u5907\u4E92\u8FDE\uFF1Abridge_status \u8FD4\u56DE devices\uFF08kind=page/agent/pair \u7EDF\u4E00\u8BBE\u5907\u89C6\u56FE\uFF09\u2014\u2014aiti_pair_send \u7ED9\u4EFB\u610F\u8BBE\u5907\u53D1\u6587\u672C\u3001aiti_pair_file \u63A8\u672C\u5730\u6587\u4EF6\u3001aiti_pair_fetch \u53D6\u56DE\u6536\u5230\u7684\u6587\u4EF6\uFF08fileId \u5728 aiti_inbox \u6D88\u606F payload.file\uFF09\uFF1B\u624B\u673A\u7B49\u6D4F\u89C8\u5668\u8BBE\u5907\u6253\u5F00\u6865\u7684 pair.html \u5373\u4E0A\u7EBF\u3002",
             "\u5E38\u89C1\u7528\u6CD5\uFF1A\u9875\u9762\u62A5\u9519\u2192page_logs(level:warn/error) \u6216 page_network(errorOnly:true)\uFF1B\u64CD\u4F5C\u9875\u9762\u2192page_exec(cmd:'Runtime.evaluate', args:{expression:'...'})\uFF1B\u5B9A\u4F4D\u5143\u7D20\u2192page_snapshot \u540E\u518D page_exec \u6216\u8BF7\u7528\u6237 user_pick_element\u3002"
           ].join("\n")
         };
@@ -1370,7 +1736,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
         const recAgentKey = session && session.agentKey || (session && session.agentId ? session.agentId + (session.id ? "/" + session.id : "") : null) || null;
         const recToolCall = (text, ok, detail) => {
           if (!recAgentKey) return;
-          const m = { id: randomBytes(4).toString("hex"), kind: "agent_tool", from: "agent", agentKey: recAgentKey, agentId: recAgentKey.split("/")[0], sessionId: recAgentKey.split("/").slice(1).join("/") || null, source: (agents.get(recAgentKey) || {}).source || "unknown", text: String(text).slice(0, 2e3), detail: detail === void 0 ? null : typeof detail === "string" ? detail : JSON.stringify(detail).slice(0, 4e3), at: (/* @__PURE__ */ new Date()).toISOString(), status: ok ? "ok" : "error" };
+          const m = { id: randomBytes2(4).toString("hex"), kind: "agent_tool", from: "agent", agentKey: recAgentKey, agentId: recAgentKey.split("/")[0], sessionId: recAgentKey.split("/").slice(1).join("/") || null, source: (agents.get(recAgentKey) || {}).source || "unknown", text: String(text).slice(0, 2e3), detail: detail === void 0 ? null : typeof detail === "string" ? detail : JSON.stringify(detail).slice(0, 4e3), at: (/* @__PURE__ */ new Date()).toISOString(), status: ok ? "ok" : "error" };
           appendMsgEvent(recAgentKey, { type: "message", id: m.id, parentId: null, timestamp: m.at, message: m });
           for (const w of aiConns) w.write({ type: "agent_answer", agentKey: recAgentKey, agentId: recAgentKey.split("/")[0], ok, text: m.text, at: m.at, detail: m.detail });
         };
@@ -1378,16 +1744,79 @@ ${String(pl.stack).slice(0, 400)}` : "");
           const curAgentKey = session && session.agentKey || (session && session.agentId ? session.agentId + (session.id ? "/" + session.id : "") : null) || null;
           const boundPageId = curAgentKey && agents.get(curAgentKey) && agents.get(curAgentKey).boundPageId || null;
           const sess = listSessions(boundPageId);
-          const resp = { sessions: sess, activePageId: boundPageId || null };
-          recToolCall("\u{1F6E0} bridge_status \u2192 " + sess.length + " \u4E2A\u5DF2\u8FDE\u63A5\u9875\u9762" + (boundPageId ? " \xB7 \u5F53\u524D\u7ED1\u5B9A: " + boundPageId : ""), true, resp);
+          const devices = listDevices();
+          const resp = { sessions: sess, activePageId: boundPageId || null, devices };
+          recToolCall("\u{1F6E0} bridge_status \u2192 " + sess.length + " \u4E2A\u5DF2\u8FDE\u63A5\u9875\u9762 \xB7 " + devices.length + " \u53F0\u8BBE\u5907" + (boundPageId ? " \xB7 \u5F53\u524D\u7ED1\u5B9A: " + boundPageId : ""), true, resp);
           return { content: [{ type: "text", text: JSON.stringify(resp) }], isError: false };
+        }
+        if (params.name === "aiti_pair_send") {
+          const text = String(a.text || "").slice(0, 64e3);
+          if (!text.trim()) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "bad request\uFF08\u9700\u8981 text\uFF09" }) }], isError: true };
+          const me = { id: recAgentKey || "agent", name: (recAgentKey && agents.get(recAgentKey) || {}).name || recAgentKey || "agent", kind: "agent" };
+          const r = routePairSend(me, a.to ? String(a.to) : "all", { text });
+          recToolCall("\u{1F6E0} aiti_pair_send(" + (a.to || "all") + ") \u2192 " + (r.ok ? "\u5DF2\u6295\u9012 " + (r.delivered || []).length + " \u7AEF" : r.error || "\u5931\u8D25"), !!r.ok, r);
+          return { content: [{ type: "text", text: JSON.stringify(r.ok ? { ok: true, delivered: r.delivered } : r) }], isError: !r.ok };
+        }
+        if (params.name === "aiti_pair_file") {
+          const fp = String(a.path || "").trim();
+          const to = String(a.to || "").trim();
+          if (!fp || !to) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "bad request\uFF08\u9700\u8981 to/path\uFF09" }) }], isError: true };
+          let st = null;
+          try {
+            st = statSync2(fp);
+          } catch {
+          }
+          if (!st || !st.isFile()) {
+            recToolCall("\u{1F6E0} aiti_pair_file \u2192 \u6587\u4EF6\u4E0D\u5B58\u5728: " + fp, false);
+            return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "\u6587\u4EF6\u4E0D\u5B58\u5728: " + fp }) }], isError: true };
+          }
+          const me = { id: recAgentKey || "agent", name: (recAgentKey && agents.get(recAgentKey) || {}).name || recAgentKey || "agent", kind: "agent" };
+          const pf0 = pair.resolvePeerFuzzy(to);
+          const toId = pf0.hit && pf0.hit.peerId || to;
+          const init = pair.fileInit(me, toId, fp.split(/[\\/]/).pop() || "file", st.size, "application/octet-stream");
+          if (init.error) {
+            recToolCall("\u{1F6E0} aiti_pair_file \u2192 " + init.error, false);
+            return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: init.error }) }], isError: true };
+          }
+          const CHUNK = 1024 * 1024;
+          const buf = Buffer.allocUnsafe(CHUNK);
+          const fd = openSync(fp, "r");
+          try {
+            let off = 0;
+            while (off < st.size) {
+              const n = readSync(fd, buf, 0, Math.min(CHUNK, st.size - off), off);
+              const r2 = pair.fileChunk(init.fileId, buf.subarray(0, n));
+              if (r2.error) throw new Error(r2.error);
+              off += n;
+            }
+          } finally {
+            closeSync(fd);
+          }
+          const done = pair.fileComplete(init.fileId);
+          if (done.error) {
+            recToolCall("\u{1F6E0} aiti_pair_file \u2192 " + done.error, false);
+            return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: done.error }) }], isError: true };
+          }
+          const meta = done.file;
+          const r = routePairSend(me, to, { file: { ...meta, fromName: me.name } });
+          recToolCall("\u{1F6E0} aiti_pair_file(" + to + ") \u2192 " + meta.name + "\uFF08" + Math.round(st.size / 1024) + "KB\uFF09" + (r.ok ? " \u5DF2\u6295\u9012" : " \u6295\u9012\u5931\u8D25: " + (r.error || "")), !!r.ok, r);
+          return { content: [{ type: "text", text: JSON.stringify(r.ok ? { ok: true, fileId: meta.fileId, name: meta.name, size: meta.size, delivered: r.delivered } : r) }], isError: !r.ok };
+        }
+        if (params.name === "aiti_pair_fetch") {
+          const fileId = String(a.fileId || "").trim();
+          if (!fileId) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "bad request\uFF08\u9700\u8981 fileId\uFF09" }) }], isError: true };
+          const info = pair.getFileInfo(fileId);
+          return pair.fetchToFile(fileId, a.savePath ? String(a.savePath) : null).then((r) => {
+            recToolCall("\u{1F6E0} aiti_pair_fetch(" + fileId + (info ? " \xB7 " + info.name : "") + ") \u2192 " + (r.ok ? r.path : r.error), !!r.ok, r);
+            return { content: [{ type: "text", text: JSON.stringify(r.ok ? { ...r, name: info ? info.name : null } : r) }], isError: !r.ok };
+          });
         }
         if (params.name === "file_stat") {
           const fp = String(a.path || "").trim();
           const out = { path: fp || null, exists: false, isFile: false, isDirectory: false, size: null, mtime: null };
           if (fp) {
             try {
-              const st = statSync(fp);
+              const st = statSync2(fp);
               out.exists = true;
               out.isFile = st.isFile();
               out.isDirectory = st.isDirectory();
@@ -1566,12 +1995,12 @@ ${String(pl.stack).slice(0, 400)}` : "");
                 m.ackedAt = Date.now();
                 m.summary = summary || null;
                 ackedAny = true;
-                appendMsgEvent(key, { type: "status_change", id: randomBytes(4).toString("hex"), msgId: id, status: "consumed", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
+                appendMsgEvent(key, { type: "status_change", id: randomBytes2(4).toString("hex"), msgId: id, status: "consumed", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
               }
             }
             if (ackedAny) {
               const text = summary || `\u2705 \u5DF2\u5904\u7406 ${ackIds.length} \u6761\u6D88\u606F\uFF08\u672A\u9644\u603B\u7ED3\u2014\u2014\u5EFA\u8BAE ack \u65F6\u5E26 summary\uFF09`;
-              const rid = randomBytes(4).toString("hex");
+              const rid = randomBytes2(4).toString("hex");
               const rec = { id: rid, kind: "agent_summary", from: "agent", agentKey: key, agentId, sessionId: agent.sessionId, text, ackedIds: ackIds, at: (/* @__PURE__ */ new Date()).toISOString(), status: "ok" };
               agent.outbox.push(rec);
               appendMsgEvent(key, { type: "message", id: rid, parentId: null, timestamp: rec.at, message: rec });
@@ -1583,7 +2012,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
             if (m.status === "consumed") continue;
             if (m.status === "pending") {
               m.status = "delivered";
-              appendMsgEvent(key, { type: "status_change", id: randomBytes(4).toString("hex"), msgId: m.id, status: "delivered", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
+              appendMsgEvent(key, { type: "status_change", id: randomBytes2(4).toString("hex"), msgId: m.id, status: "delivered", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
             }
             out.push({ id: m.id, kind: m.kind, from: m.from, agentKey: key, agentId, sessionId: agent.sessionId, pageId: m.pageId || m.payload && m.payload.pageId || null, url: m.url || m.payload && m.payload.url || null, text: m.text ?? null, payload: m.payload || null, at: m.at, status: m.status });
           }
@@ -1617,7 +2046,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       const uid = typeof process.getuid === "function" ? process.getuid() : null;
       const home = process.env.HOME || "";
       try {
-        const xs = readdirSync("/tmp/.X11-unix").filter((f) => /^X\d+$/.test(f)).sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
+        const xs = readdirSync2("/tmp/.X11-unix").filter((f) => /^X\d+$/.test(f)).sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
         if (xs.length && !out.DISPLAY) out.DISPLAY = ":" + xs[0].slice(1);
       } catch {
       }
@@ -1626,7 +2055,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       authCands.push(`${home}/.Xauthority`);
       for (const a of authCands) {
         try {
-          if (a && existsSync(a)) {
+          if (a && existsSync2(a)) {
             out.XAUTHORITY = a;
             break;
           }
@@ -1635,12 +2064,12 @@ ${String(pl.stack).slice(0, 400)}` : "");
       }
       if (uid != null) {
         try {
-          const ws = readdirSync(`/run/user/${uid}`).filter((f) => /^wayland-\d+$/.test(f)).sort();
+          const ws = readdirSync2(`/run/user/${uid}`).filter((f) => /^wayland-\d+$/.test(f)).sort();
           if (ws.length) out.WAYLAND_DISPLAY = ws[0];
         } catch {
         }
         try {
-          if (existsSync(`/run/user/${uid}/bus`)) {
+          if (existsSync2(`/run/user/${uid}/bus`)) {
             out.XDG_RUNTIME_DIR = `/run/user/${uid}`;
             out.DBUS_SESSION_BUS_ADDRESS = `unix:path=/run/user/${uid}/bus`;
           }
@@ -1743,11 +2172,111 @@ ${String(pl.stack).slice(0, 400)}` : "");
     };
     return { response: new Response(stream, { headers: { "content-type": "text/event-stream", "cache-control": "no-cache", "x-accel-buffering": "no", ...cors } }), writer, cleanup };
   }
+  const pair = createPairModule({
+    TAG,
+    dataDir,
+    cors,
+    json,
+    sseResponse: (onClose, opts2) => sseResponse(onClose, opts2),
+    getDevices: () => listDevices(),
+    routeSend: (fromDev, to, payload) => routePairSend(fromDev, to, payload)
+  });
+  function listDevices() {
+    const out = [];
+    for (const [instanceId, page] of pages) {
+      out.push({ kind: "page", id: instanceId, name: page.title || page.url || instanceId, url: page.url || null, title: page.title || null, device: page.device || null, deviceLabel: page.deviceLabel || null, online: true, lastSeen: Date.now() });
+    }
+    for (const [key, a] of agents) {
+      if (!a.registered && !agentOnline(a) && !a.outbox.length) continue;
+      out.push({ kind: "agent", id: key, name: a.name || a.agentId, cwd: a.cwd || null, source: a.source || "unknown", transportKind: a.transportKind, online: agentOnline(a), offlineAt: a.offlineAt || null, lastSeen: a.lastSeen });
+    }
+    for (const p of pair.listPeers()) out.push(p);
+    return out.sort((x, y) => (y.lastSeen || 0) - (x.lastSeen || 0));
+  }
+  function routePairSend(fromDev, to, payload) {
+    const q = String(to || "all").trim() || "all";
+    const from = { id: fromDev.id, kind: fromDev.kind || "pair", name: fromDev.name };
+    const env = (type, extra) => ({ id: randomBytes2(4).toString("hex"), type, from, to: q, ts: Date.now(), ...extra });
+    const delivered = [];
+    const pushPair = (pid) => {
+      if (pair.deliverToPeer(pid, env(payload.file ? "file" : "text", payload.file ? { file: payload.file } : { text: payload.text }))) delivered.push({ kind: "pair", id: pid });
+    };
+    const pushAgent = (target) => {
+      const label = "[\u53D1\u81EA pair: " + fromDev.name + "]";
+      let text;
+      const pl = { source: "pair", sourceLabel: "Pair \xB7 " + fromDev.name, fromDevice: from };
+      if (payload.file) {
+        const f = payload.file;
+        text = "\u{1F4CE} \u6536\u5230\u6587\u4EF6\uFF1A" + f.name + "\uFF08" + Math.max(1, Math.round((f.size || 0) / 1024)) + "KB\uFF09\u2014 \u8C03 aiti_pair_fetch {fileId:'" + f.fileId + "'} \u53D6\u56DE\n" + label;
+        pl.file = { fileId: f.fileId, name: f.name, size: f.size, mime: f.mime };
+      } else {
+        text = String(payload.text || "") + "\n" + label;
+      }
+      const r = pushToAgents(target, text, payload.file ? "pair_file" : "user_message", pl);
+      for (const d of r && r.delivered || []) delivered.push({ kind: "agent", id: d.agentKey, status: d.status });
+    };
+    const pushPage = (instanceId) => {
+      const msg = env(payload.file ? "file" : "text", payload.file ? { file: payload.file } : { text: payload.text });
+      let n = 0;
+      for (const [w, rec] of aiSelfReg) {
+        if (instanceId && String(rec.instanceId) !== instanceId) continue;
+        if (w.write({ type: "pair_msg", ...msg })) n++;
+      }
+      if (n) delivered.push({ kind: "page", id: instanceId });
+      return n;
+    };
+    if (q === "all") {
+      const peers = pair.listPeers();
+      for (const p of peers) {
+        if (p.id === fromDev.id) continue;
+        pushPair(p.id);
+      }
+      const label = "[\u53D1\u81EA pair: " + fromDev.name + "]";
+      const pl = { source: "pair", sourceLabel: "Pair \xB7 " + fromDev.name, fromDevice: from };
+      const text = payload.file ? "\u{1F4CE} \u6536\u5230\u6587\u4EF6\uFF1A" + payload.file.name + " \u2014 \u8C03 aiti_pair_fetch {fileId:'" + payload.file.fileId + "'} \u53D6\u56DE\n" + label : String(payload.text || "") + "\n" + label;
+      const ra = pushToAgents("all", text, payload.file ? "pair_file" : "user_message", pl);
+      for (const d of ra && ra.delivered || []) delivered.push({ kind: "agent", id: d.agentKey, status: d.status });
+      return { ok: delivered.length > 0, delivered };
+    }
+    const pf = pair.resolvePeerFuzzy(q);
+    if (pf.hit) {
+      if (pf.hit.peerId !== fromDev.id) pushPair(pf.hit.peerId);
+      return { ok: true, delivered };
+    }
+    if (agents.has(q) || agentIdx.has(q)) {
+      pushAgent(q);
+      return { ok: delivered.length > 0, delivered };
+    }
+    if (pages.has(q)) {
+      const n = pushPage(q);
+      return n ? { ok: true, delivered } : { ok: false, error: "\u9875\u9762\u8FDE\u63A5\u5DF2\u65AD\u5F00" };
+    }
+    if (pf.multiple) return { ok: false, candidates: pf.multiple, error: "pair \u8BBE\u5907\u540D\u5339\u914D\u591A\u4E2A" };
+    const agentRows = listAgentSessions().filter((a) => (a.name || "").includes(q) || a.agentKey.includes(q));
+    if (agentRows.length === 1) {
+      pushAgent(agentRows[0].agentKey);
+      return { ok: delivered.length > 0, delivered };
+    }
+    if (agentRows.length > 1) return { ok: false, candidates: agentRows.map((a) => ({ kind: "agent", id: a.agentKey, name: a.name })), error: "agent \u540D\u5339\u914D\u591A\u4E2A" };
+    const resolved = resolvePageId(q);
+    if (resolved.pageId) {
+      const inst = String(resolved.pageId).split("/")[0];
+      const n = pushPage(inst);
+      if (n) return { ok: true, delivered };
+    }
+    if (resolved.multiple) return { ok: false, candidates: resolved.multiple.map((pid) => ({ kind: "page", id: pid })), error: "\u9875\u9762\u5339\u914D\u591A\u4E2A" };
+    return { ok: false, error: "\u65E0\u5339\u914D\u8BBE\u5907\uFF08to \u652F\u6301\u8BBE\u5907 id/\u540D\u5B57\uFF1Bbridge_status \u6216 /bridge/pair/devices \u67E5\u770B\u5728\u7EBF\u8BBE\u5907\uFF09" };
+  }
   async function handle(req, path, searchParams) {
     if (path[0] === "aiti") path = path.slice(1);
     const endpoint = path[0];
     const sub = path.slice(1)[0] || "";
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
+    if (endpoint === "bridge" && sub === "pair") {
+      const r = await pair.handle(req, path, searchParams);
+      if (r) return r;
+      return new Response("not found: " + endpoint + "/" + sub, { status: 404 });
+    }
     if (endpoint === "bridge" && sub === "claim" && req.method === "POST") {
       const msg = await req.json().catch(() => null);
       const r = claimInstanceId(msg && msg.instanceId, msg && msg.secret, msg && msg.pageKey, msg && msg.hostUrl);
@@ -1893,11 +2422,11 @@ ${String(pl.stack).slice(0, 400)}` : "");
         if (om.status !== "consumed" && (om.kind === "user_message" || om.kind === "user_answer" || om.kind === "chat")) {
           om.status = "consumed";
           om.ackedAt = Date.now();
-          appendMsgEvent(resolvedKey, { type: "status_change", id: randomBytes(4).toString("hex"), msgId: om.id, status: "consumed", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
+          appendMsgEvent(resolvedKey, { type: "status_change", id: randomBytes2(4).toString("hex"), msgId: om.id, status: "consumed", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
           for (const w of aiConns) w.write({ type: "msg_status", agentKey: resolvedKey, msgId: om.id, status: "consumed" });
         }
       }
-      const m = { id: randomBytes(4).toString("hex"), kind: msg.kind || "agent_answer", from: "agent", agentId: parts[0], pageId: null, text: String(msg.text).slice(0, 4e3), payload: msg.payload || null, at: (/* @__PURE__ */ new Date()).toISOString(), status: "consumed" };
+      const m = { id: randomBytes2(4).toString("hex"), kind: msg.kind || "agent_answer", from: "agent", agentId: parts[0], pageId: null, text: String(msg.text).slice(0, 4e3), payload: msg.payload || null, at: (/* @__PURE__ */ new Date()).toISOString(), status: "consumed" };
       appendMsgEvent(resolvedKey, { type: "message", id: m.id, parentId: null, timestamp: m.at, message: m });
       for (const w of aiConns) w.write({ type: "agent_answer", agentKey: resolvedKey, agentId: parts[0], text: m.text, at: m.at });
       console.log(TAG + " agent \u56DE\u7B54 \u2192 " + resolvedKey + " \xB7 " + String(m.text).slice(0, 80) + "\uFF08\u5DF2\u6D88\u8D39\u5F85\u5904\u7406\u6D88\u606F " + a.outbox.filter((x) => x.status === "consumed").length + " \u6761\uFF09");
@@ -2078,9 +2607,9 @@ ${String(pl.stack).slice(0, 400)}` : "");
         const r0 = msg.result;
         if (r0 && typeof r0 === "object" && typeof r0.dataUrl === "string" && r0.dataUrl.length > 12e4) {
           const ext = r0.format === "png" ? "png" : "jpg";
-          const dir = join(dataDir, "aiti-bridge", "shots");
-          mkdirSync(dir, { recursive: true });
-          const file = join(dir, (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-") + "-" + String(msg.requestId).replace(/[^\w-]/g, "").slice(0, 12) + "." + ext);
+          const dir = join2(dataDir, "aiti-bridge", "shots");
+          mkdirSync2(dir, { recursive: true });
+          const file = join2(dir, (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-") + "-" + String(msg.requestId).replace(/[^\w-]/g, "").slice(0, 12) + "." + ext);
           writeFileSync(file, Buffer.from(r0.dataUrl.slice(r0.dataUrl.indexOf(",") + 1), "base64"));
           msg.result = { file, width: r0.width, height: r0.height, format: r0.format, bytes: r0.bytes || 0, note: "\u622A\u5C4F\u5DF2\u5B58\u6587\u4EF6\uFF08dataUrl \u8FC7\u5927\u4E0D\u5185\u8054\uFF09\uFF1B\u524D\u7AEF\u6587\u4EF6\u6807\u7B7E\u9875\u53EF\u76F4\u63A5\u6253\u5F00\u67E5\u770B" };
           console.log(TAG + " \u622A\u5C4F\u843D\u76D8\uFF1A" + file + "\uFF08" + Math.round((r0.bytes || 0) / 1024) + "KB\uFF09");
@@ -2253,7 +2782,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       const isInit = msg.method === "initialize";
       if (isInit) {
         if (!session) {
-          const newId = randomBytes(16).toString("hex");
+          const newId = randomBytes2(16).toString("hex");
           session = { id: newId, writer: null, agentId: null, clientInfo: null, capabilities: null, lastSeen: Date.now(), open: false, source: "mcp" };
           mcpSessions.set(newId, session);
         }
@@ -2288,6 +2817,20 @@ ${String(pl.stack).slice(0, 400)}` : "");
     if (r && typeof r.then === "function") return r;
     return Promise.resolve(r);
   }
+  const bindAgentFromAiSelfReverse = (agentKey2, agent) => {
+    const agSid = agent.sessionId || String(agentKey2).split("/").slice(1).join("/");
+    if (!agSid || agent.activeBoundPageId) return;
+    for (const [, rec] of aiSelfReg) {
+      const m = String(rec.url || "").match(/[?&]session=([^&#]+)/);
+      if (!m) continue;
+      const sid = decodeURIComponent(m[1]);
+      if (sid === agSid) {
+        agent.boundPageId = String(rec.instanceId) + "/ai";
+        console.log(TAG + " agent \u6CE8\u518C\u65F6\u53CD\u5411\u7ED1\u5B9A AI \u4E3B\u7A97\u53E3\uFF1A" + agentKey2 + " \u2192 " + agent.boundPageId);
+        break;
+      }
+    }
+  };
   const registerAgent = (key, opts2 = {}) => {
     const k = String(key || "");
     if (!k) return { ok: false, error: "bad key" };
@@ -2298,20 +2841,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
     a.lastSeen = Date.now();
     if (opts2.pageId) a.boundPageId = String(opts2.pageId);
     if (Array.isArray(opts2.subEvents)) a.subEvents = new Set(opts2.subEvents.map(String));
-    if (!a.boundPageId && !a.activeBoundPageId) {
-      const agSid = a.sessionId || String(k).split("/").slice(1).join("/");
-      if (agSid) {
-        for (const [, rec] of aiSelfReg) {
-          const m = String(rec.url || "").match(/[?&]session=([^&#]+)/);
-          if (!m) continue;
-          const sid = decodeURIComponent(m[1]);
-          if (sid === agSid) {
-            a.boundPageId = String(rec.instanceId) + "/ai";
-            break;
-          }
-        }
-      }
-    }
+    if (!a.boundPageId) bindAgentFromAiSelfReverse(k, a);
     return { ok: true, agentKey: k, agentId: k };
   };
   const setAgentSink = (key, fn) => {
@@ -2341,12 +2871,12 @@ ${String(pl.stack).slice(0, 400)}` : "");
         if (om.status !== "consumed" && (om.kind === "user_message" || om.kind === "user_answer" || om.kind === "chat")) {
           om.status = "consumed";
           om.ackedAt = Date.now();
-          appendMsgEvent(k, { type: "status_change", id: randomBytes(4).toString("hex"), msgId: om.id, status: "consumed", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
+          appendMsgEvent(k, { type: "status_change", id: randomBytes2(4).toString("hex"), msgId: om.id, status: "consumed", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
           for (const w of aiConns) w.write({ type: "msg_status", agentKey: k, msgId: om.id, status: "consumed" });
         }
       }
     }
-    const m = { id: randomBytes(4).toString("hex"), kind: "agent_summary", from: "agent", agentKey: k, agentId: k, sessionId: k.split("/").slice(1).join("/") || null, text: t.slice(0, 4e3), payload: null, at, status: "consumed" };
+    const m = { id: randomBytes2(4).toString("hex"), kind: "agent_summary", from: "agent", agentKey: k, agentId: k, sessionId: k.split("/").slice(1).join("/") || null, text: t.slice(0, 4e3), payload: null, at, status: "consumed" };
     appendMsgEvent(k, { type: "message", id: m.id, parentId: null, timestamp: at, message: m });
     for (const w of aiConns) w.write({ type: "agent_answer", agentKey: k, agentId: k, ok: true, text: m.text, at });
     return { ok: true, message: m };
@@ -2369,7 +2899,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
     }
     return { ok: true, delivered: n };
   };
-  return { handle, sessions: () => listSessions(), tools: () => TOOLS, callTool, registerAgent, bindAgentPage, setAgentSink, answer, clearAgent, pushAiEvent, close };
+  return { handle, sessions: () => listSessions(), devices: () => listDevices(), routePairSend, pair: () => pair, tools: () => TOOLS, callTool, registerAgent, bindAgentPage, setAgentSink, answer, clearAgent, pushAiEvent, close };
 }
 
 // src/send-rewrite.ts
@@ -2512,7 +3042,8 @@ function startHttpServer(bridge, opts = {}) {
     server.once("error", reject);
     server.listen(port, host, () => {
       server.on("error", onError);
-      const url = `http://${host}:${port}`;
+      const realPort = server.address()?.port ?? port;
+      const url = `http://${host}:${realPort}`;
       resolve({
         server,
         url,
@@ -2695,16 +3226,16 @@ async function probeBridge(bridgeBase, timeoutMs = 1500) {
 
 // src/mcp-config.ts
 import { homedir } from "node:os";
-import { join as join2, dirname as dirname2 } from "node:path";
-import { existsSync as existsSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2, renameSync as renameSync2, mkdirSync as mkdirSync2, rmSync as rmSync2 } from "node:fs";
+import { join as join3, dirname as dirname3 } from "node:path";
+import { existsSync as existsSync3, readFileSync as readFileSync2, writeFileSync as writeFileSync2, renameSync as renameSync2, mkdirSync as mkdirSync3, rmSync as rmSync3 } from "node:fs";
 var homeDir = () => homedir();
 var MCP_TARGETS = {
   // pi 实际读取 getAgentDir()/mcp.json（getAgentDir = $PI_CODING_AGENT_DIR，默认 ~/.pi/agent）；
   // ~/.config/mcp/mcp.json 是历史误记——默认 pi 不读它（探针实证 2026-09-10，见执行记录 P17）
-  pi: [{ path: () => join2(process.env.PI_CODING_AGENT_DIR || join2(homeDir(), ".pi", "agent"), "mcp.json"), key: "mcpServers" }],
-  zcode: [{ path: () => join2(homeDir(), ".zcode", "cli", "config.json"), key: "mcpServers", keyPath: ["mcp", "servers"] }],
+  pi: [{ path: () => join3(process.env.PI_CODING_AGENT_DIR || join3(homeDir(), ".pi", "agent"), "mcp.json"), key: "mcpServers" }],
+  zcode: [{ path: () => join3(homeDir(), ".zcode", "cli", "config.json"), key: "mcpServers", keyPath: ["mcp", "servers"] }],
   opencode: [{
-    path: () => join2(homeDir(), ".config", "opencode", "opencode.json"),
+    path: () => join3(homeDir(), ".config", "opencode", "opencode.json"),
     key: "mcpServers",
     keyPath: ["mcp"],
     shimEntry: (shimPath) => ({ type: "local", command: ["node", shimPath], enabled: true }),
@@ -2714,19 +3245,19 @@ var MCP_TARGETS = {
     // D23：http 类型对 opencode 非法
   }],
   claude: [
-    { path: () => join2(homeDir(), ".claude.json"), key: "mcpServers" },
-    { path: (p) => join2(p, ".mcp.json"), key: "mcpServers", project: true }
+    { path: () => join3(homeDir(), ".claude.json"), key: "mcpServers" },
+    { path: (p) => join3(p, ".mcp.json"), key: "mcpServers", project: true }
   ],
   // CodeBuddy Code（腾讯 cbc）：用户级 ~/.codebuddy/.mcp.json（官方 mcp.md：.mcp.json 推荐 /
   // mcp.json 已废弃；条目形状 mcpServers+stdio 与 claude 同构，2026-09-11 cbc mcp add 实测钉死）。
   // 项目级 .mcp.json 与 claude 同文件（claude 目标已覆盖），不重复注册。
-  codebuddy: [{ path: () => join2(homeDir(), ".codebuddy", ".mcp.json"), key: "mcpServers" }],
-  cursor: [{ path: () => join2(homeDir(), ".cursor", "mcp.json"), key: "mcpServers" }],
-  windsurf: [{ path: () => join2(homeDir(), ".codeium", "windsurf", "mcp_config.json"), key: "mcpServers" }],
-  vscode: [{ path: (p) => join2(p, ".vscode", "mcp.json"), key: "servers", project: true }],
+  codebuddy: [{ path: () => join3(homeDir(), ".codebuddy", ".mcp.json"), key: "mcpServers" }],
+  cursor: [{ path: () => join3(homeDir(), ".cursor", "mcp.json"), key: "mcpServers" }],
+  windsurf: [{ path: () => join3(homeDir(), ".codeium", "windsurf", "mcp_config.json"), key: "mcpServers" }],
+  vscode: [{ path: (p) => join3(p, ".vscode", "mcp.json"), key: "servers", project: true }],
   zed: [
-    { path: () => join2(homeDir(), ".config", "zed", "settings.json"), key: "mcp" },
-    { path: (p) => join2(p, ".zed", "settings.json"), key: "mcp", project: true }
+    { path: () => join3(homeDir(), ".config", "zed", "settings.json"), key: "mcp" },
+    { path: (p) => join3(p, ".zed", "settings.json"), key: "mcp", project: true }
   ]
 };
 function detectStructureKey(cfg) {
@@ -2798,7 +3329,7 @@ function resolveContainer(cfg, keyPath) {
   return cur;
 }
 function patchFile(path, key, serverName, url, dryRun, log, keyPath, httpEntry) {
-  if (!existsSync2(path)) return { changed: false, error: "\u6587\u4EF6\u4E0D\u5B58\u5728" };
+  if (!existsSync3(path)) return { changed: false, error: "\u6587\u4EF6\u4E0D\u5B58\u5728" };
   const r = readJson(path);
   if (r.error) return { changed: false, error: "JSON \u89E3\u6790\u5931\u8D25\uFF1A" + r.error };
   let cfg = r.cfg;
@@ -2837,9 +3368,9 @@ function patchFile(path, key, serverName, url, dryRun, log, keyPath, httpEntry) 
 function writeAtomic(path, cfg) {
   const tmp = path + ".tmp";
   const bak = path + ".bak";
-  mkdirSync2(dirname2(path), { recursive: true });
+  mkdirSync3(dirname3(path), { recursive: true });
   writeFileSync2(tmp, JSON.stringify(cfg, null, 2) + "\n");
-  if (existsSync2(path)) {
+  if (existsSync3(path)) {
     try {
       renameSync2(path, bak);
     } catch {
@@ -2848,14 +3379,14 @@ function writeAtomic(path, cfg) {
   try {
     renameSync2(tmp, path);
   } catch (e) {
-    if (existsSync2(bak) && !existsSync2(path)) {
+    if (existsSync3(bak) && !existsSync3(path)) {
       try {
         renameSync2(bak, path);
       } catch {
       }
     }
     try {
-      rmSync2(tmp, { force: true });
+      rmSync3(tmp, { force: true });
     } catch {
     }
     throw e;
@@ -2873,8 +3404,8 @@ function listPlannedWrites(opts) {
       if (!files) continue;
       for (const f of files) {
         const p = f.path(projectDir);
-        if (auto && !existsSync2(p)) continue;
-        out.push({ target: t, path: p, key: f.key, exists: existsSync2(p), keyPath: f.keyPath, shimEntry: f.shimEntry, envKey: f.envKey, httpEntry: f.httpEntry });
+        if (auto && !existsSync3(p)) continue;
+        out.push({ target: t, path: p, key: f.key, exists: existsSync3(p), keyPath: f.keyPath, shimEntry: f.shimEntry, envKey: f.envKey, httpEntry: f.httpEntry });
       }
     }
   }
@@ -2884,13 +3415,13 @@ function listPlannedWrites(opts) {
     for (const [t, files] of Object.entries(MCP_TARGETS)) {
       for (const f of files) {
         if (f.path(projectDir) === abs) {
-          matched = { target: t, path: abs, key: f.key, exists: existsSync2(abs), keyPath: f.keyPath, shimEntry: f.shimEntry, envKey: f.envKey, httpEntry: f.httpEntry };
+          matched = { target: t, path: abs, key: f.key, exists: existsSync3(abs), keyPath: f.keyPath, shimEntry: f.shimEntry, envKey: f.envKey, httpEntry: f.httpEntry };
           break;
         }
       }
       if (matched) break;
     }
-    out.push(matched ?? { target: abs, path: abs, key: "mcpServers", exists: existsSync2(abs) });
+    out.push(matched ?? { target: abs, path: abs, key: "mcpServers", exists: existsSync3(abs) });
   }
   return out;
 }
@@ -2936,12 +3467,12 @@ function unregisterMcp(opts) {
     for (const t of Object.keys(MCP_TARGETS)) {
       for (const f of MCP_TARGETS[t]) {
         const p = f.path(opts.projectDir || process.cwd());
-        if (existsSync2(p)) files.set(p, f.keyPath);
+        if (existsSync3(p)) files.set(p, f.keyPath);
       }
     }
   }
   for (const [p, keyPath] of files) {
-    if (!existsSync2(p)) continue;
+    if (!existsSync3(p)) continue;
     const det = detectStructureKey(readJson(p).cfg);
     const r = patchFile(p, det.key, serverName, null, dryRun, log, keyPath);
     results.push({ target: p, path: p, changed: r.changed, error: r.error });
@@ -2973,7 +3504,7 @@ function registerAitiShim(opts) {
   for (const w of listPlannedWrites(opts)) {
     const outcome = (() => {
       let cfg;
-      if (!existsSync2(w.path)) {
+      if (!existsSync3(w.path)) {
         cfg = {};
       } else {
         const r = readJson(w.path);
@@ -3033,7 +3564,7 @@ function unregisterAitiShim(opts) {
   const results = [];
   let changed = false;
   const planned = listPlannedWrites({ targets: opts.targets, configPaths: opts.configPaths, projectDir: opts.projectDir });
-  const files = planned.filter((w) => existsSync2(w.path));
+  const files = planned.filter((w) => existsSync3(w.path));
   for (const w of files) {
     const r = patchFile(w.path, w.key, serverName, null, dryRun, log, w.keyPath);
     results.push({ target: w.target, path: w.path, changed: r.changed, error: r.error });
@@ -3046,15 +3577,15 @@ function unregisterAitiShim(opts) {
 }
 function resolveShimPathAuto(cwdCandidates) {
   const installedCandidates = [
-    process.env.AITI_WEB_ROOT && join2(process.env.AITI_WEB_ROOT, "node_modules"),
-    join2(homeDir(), ".pi", "web", "node_modules"),
-    join2(homeDir(), ".pi", "web-dev", "node_modules")
-  ].filter((p) => !!p).map((nm) => join2(nm, "@aiti-ai", "aiti-bridge", "bin", "aiti-mcp-shim.cjs"));
+    process.env.AITI_WEB_ROOT && join3(process.env.AITI_WEB_ROOT, "node_modules"),
+    join3(homeDir(), ".pi", "web", "node_modules"),
+    join3(homeDir(), ".pi", "web-dev", "node_modules")
+  ].filter((p) => !!p).map((nm) => join3(nm, "@aiti-ai", "aiti-bridge", "bin", "aiti-mcp-shim.cjs"));
   const candidates = [
     process.env.AITI_SHIM_PATH,
     ...installedCandidates,
     ...cwdCandidates || [],
-    join2(homeDir(), "workspace", "aiti-ai", "packages", "aiti-bridge", "bin", "aiti-mcp-shim.cjs")
+    join3(homeDir(), "workspace", "aiti-ai", "packages", "aiti-bridge", "bin", "aiti-mcp-shim.cjs")
   ].filter((p) => !!p);
   for (const p of candidates) {
     try {
@@ -3092,18 +3623,18 @@ function autoRegisterAitiShim(opts) {
 
 // src/assets.ts
 import { readFileSync as readFileSync3 } from "node:fs";
-import { join as join3 } from "node:path";
-var ASSET_NAMES = ["aiti-launcher.js", "bridge-client.js", "cockpit.html", "aiwin.js", "host-protocol.js"];
+import { join as join4 } from "node:path";
+var ASSET_NAMES = ["aiti-launcher.js", "bridge-client.js", "cockpit.html", "aiwin.js", "host-protocol.js", "pair-client.js", "pair.html"];
 function loadAssets(assetsDir) {
   const dir = assetsDir || new URL("../assets/", import.meta.url).pathname;
   const out = {};
   for (const name of ASSET_NAMES) {
     try {
-      const content = readFileSync3(join3(dir, name), "utf8");
+      const content = readFileSync3(join4(dir, name), "utf8");
       const type = name.endsWith(".js") ? "application/javascript; charset=utf-8" : "text/html; charset=utf-8";
       out["/" + name] = { type, content };
     } catch (e) {
-      console.warn(`[aiti-devtools] \u26A0 \u8D44\u4EA7\u7F3A\u5931\uFF1A${join3(dir, name)}\uFF08${e.message}\uFF09\u2014\u2014\u5148\u8DD1 packages/aiti-devtools-core/tools/build-assets.mjs \u6216\u4F20 assetsDir`);
+      console.warn(`[aiti-devtools] \u26A0 \u8D44\u4EA7\u7F3A\u5931\uFF1A${join4(dir, name)}\uFF08${e.message}\uFF09\u2014\u2014\u5148\u8DD1 packages/aiti-devtools-core/tools/build-assets.mjs \u6216\u4F20 assetsDir`);
     }
   }
   return out;
@@ -3139,7 +3670,7 @@ function aitiMiddleware(opts = {}) {
 function patchProcessHttp(opts = {}) {
   const prefix = (opts.prefix || "/aiti").replace(/\/+$/, "") || "/aiti";
   const log = opts.log || ((l) => console.log(l));
-  const sym = /* @__PURE__ */ Symbol.for("aiti-devtools.process-patched");
+  const sym = Symbol.for("aiti-devtools.process-patched");
   if (globalThis[sym]) {
     log(`[aiti-devtools] \u8FDB\u7A0B\u7EA7 patch \u5DF2\u5B58\u5728\uFF0C\u8DF3\u8FC7`);
     return { bridge: globalThis.__aitiBridge };
@@ -3304,6 +3835,7 @@ function htmlInjectMiddleware(opts = {}) {
 }
 export {
   ASSET_NAMES,
+  BRIDGE_TOOLS,
   MCP_TARGETS,
   ORPHAN_NOTICE,
   PLACEHOLDER_RE,

@@ -219,10 +219,26 @@
     }
     function getTargetPage() { return targetPageId; }
 
+    // ================= pair 设备互连（可选 hook：opts.pair = { enabled, name? }） =================
+    // 适配端声明启用 → start() 时自动拉起 headless pair 实例（连同一桥的设备互发消息/互传文件；
+    // 协议+widget 全在 pair-client.js 公共库）。消息经 render.onPairMsg(m) 回调透出；
+    // 需要 UI 的适配端直接 window.AitiPair.mount(el, { base })，不经此 hook。
+    var pairInst = null;
+    function getPair() {
+      if (!global.AitiPair) return null;
+      if (!pairInst) {
+        pairInst = global.AitiPair.create({ base: base, name: (opts.pair && opts.pair.name) || null });
+        if (r.onPairMsg) pairInst.on('message', function (m) { r.onPairMsg(m); });
+        pairInst.start();
+      }
+      return pairInst;
+    }
+
     // ================= 生命周期 =================
     function start() {
       if (started) return;
       started = true;
+      if (opts.pair && opts.pair.enabled) getPair(); // 设备互连启用：自动上线本端为 pair 设备
       if (global.BridgeClient) {
         // instanceId 统一走公共库（hp.getAiInstanceId）——SSE 连接与 ai/page POST 必须同身份，否则桥查不到连接（404）
         if (!aiInstanceId) aiInstanceId = (hp && hp.getAiInstanceId) ? hp.getAiInstanceId() : 'ai-' + Math.random().toString(36).slice(2, 10);
@@ -260,6 +276,7 @@
       timers.forEach(function (t) { global.clearInterval(t); });
       timers = [];
       started = false;
+      if (pairInst) { try { pairInst.stop(); } catch (e) {} pairInst = null; }
       if (global.BridgeClient) { try { global.BridgeClient.disconnect(); } catch (e) {} }
     }
 
@@ -271,6 +288,7 @@
       getSessions: function () { return sessions; }, getAgents: function () { return agents; },
       getHostTarget: function () { return (hp && hp.getDebugTarget) ? hp.getDebugTarget() : null; }, // 宿主页身份（无桥 session 时仍可知页面）
       getHost: function () { return hp; }, // host-protocol 实例（候选/占位符等）
+      getPair: getPair, // pair 设备互连实例（opts.pair 启用或首调时懒建；headless 协议实例）
     };
   }
 

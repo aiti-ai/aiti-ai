@@ -17,11 +17,11 @@
     return a;
   };
 
-  // packages/aiti-devtools-inject/src/launcher/config.js
+  // src/launcher/config.js
   var VERSION = "0.2.1";
   var DEFAULTS = {
     endpoint: "",
-    // AI 桥前缀（aiUrl 为空时的后备，如 'http://localhost:3000/api/dbg'）
+    // AI 桥前缀（aiUrl 为空时的后备，如 'http://localhost:30141/api/dbg'）
     sessionId: "",
     dbgToken: "",
     aiUrl: "",
@@ -35,7 +35,7 @@
     iframeHeight: "min(560px, 80vh)"
   };
 
-  // packages/aiti-devtools-inject/src/launcher/dom.js
+  // src/launcher/dom.js
   function el(tag, attrs, children) {
     var node = document.createElement(tag);
     if (attrs) for (var k in attrs) node.setAttribute(k, attrs[k]);
@@ -635,7 +635,7 @@
     return a;
   };
 
-  // packages/aiti-devtools-inject/src/client/index.js
+  // src/client/index.js
   (function() {
     "use strict";
     if (window.__dbg && window.__dbg.__version__ && typeof window.__dbg.getSelectionPayload === "function") return;
@@ -3495,7 +3495,7 @@
 })();
 `;
 
-  // packages/aiti-devtools-inject/src/launcher/viewport.js
+  // src/launcher/viewport.js
   function getPhysViewport() {
     var scale = 1, hasVV = false;
     try {
@@ -3750,7 +3750,7 @@
     });
   }
 
-  // packages/aiti-devtools-inject/src/launcher/constants.js
+  // src/launcher/constants.js
   var DANGER_COMMANDS = {
     "DOM.removeNode": "删除页面元素（不可恢复）",
     "Page.reload": "重载目标页面",
@@ -3791,7 +3791,7 @@
   var AI_WIN_KEY = "__dbg_ai_win__";
   var DBG_SHOW_KEY = "__dbg_show_debug__";
 
-  // packages/aiti-devtools-inject/src/launcher/storage.js
+  // src/launcher/storage.js
   function lsGetJSON(key, fallback) {
     try {
       return JSON.parse(localStorage.getItem(key)) || fallback;
@@ -3819,7 +3819,7 @@
     }
   }
 
-  // packages/aiti-devtools-inject/src/launcher/drag.js
+  // src/launcher/drag.js
   function makePointerDrag(opts) {
     var handle = opts.handle;
     var threshold = opts.threshold || 0;
@@ -3950,12 +3950,12 @@
     });
   }
 
-  // packages/aiti-devtools-inject/src/launcher/protocol.js
+  // src/launcher/protocol.js
   function dbgMsg(extra) {
     return __spreadValues({ __dbg: 1 }, extra);
   }
 
-  // packages/aiti-devtools-inject/src/launcher/state.js
+  // src/launcher/state.js
   function initState(ctx) {
     ctx.loadDbgState = function() {
       return lsGetJSON(DBG_STATE_KEY, {});
@@ -3965,7 +3965,7 @@
     };
   }
 
-  // packages/aiti-devtools-inject/src/launcher/fab.js
+  // src/launcher/fab.js
   function initFab(ctx) {
     ctx.persistFabPos = function() {
       try {
@@ -4142,7 +4142,7 @@
     };
   }
 
-  // packages/aiti-devtools-inject/src/launcher/nav.js
+  // src/launcher/nav.js
   function initNav(ctx) {
     ctx.doNav = function(dir) {
       ctx.navHoldT = Date.now() + 400;
@@ -4150,7 +4150,7 @@
     };
   }
 
-  // packages/aiti-devtools-inject/src/launcher/target.js
+  // src/launcher/target.js
   function initTarget(ctx) {
     ctx.ensureClientFresh = function(win, doc) {
       try {
@@ -4593,7 +4593,7 @@
     };
   }
 
-  // packages/aiti-devtools-inject/src/launcher/help.js
+  // src/launcher/help.js
   function initHelp(ctx) {
     ctx.helpDialogOpen = function() {
       return !!(ctx.helpDialog && ctx.helpDialog.parentNode);
@@ -4700,7 +4700,7 @@
     };
   }
 
-  // packages/aiti-devtools-inject/src/launcher/options.js
+  // src/launcher/options.js
   function initOptions(ctx) {
     ctx.loadOptState = function() {
       return lsGetJSON(OPT_KEY, {});
@@ -5140,7 +5140,7 @@
     };
   }
 
-  // packages/aiti-devtools-inject/src/launcher/danger.js
+  // src/launcher/danger.js
   function initDanger(ctx) {
     ctx.handleAiCommand = function(p2) {
       var sendResult = function(ok, result) {
@@ -5802,7 +5802,7 @@
     };
   }
 
-  // packages/aiti-devtools-inject/src/launcher/interact.js
+  // src/launcher/interact.js
   function describeAnswer(kind, v) {
     v = v || {};
     if (kind === "confirm") return v.approved === false ? "❌ 否" : "✅ 是";
@@ -6637,7 +6637,7 @@
     };
   }
 
-  // packages/aiti-devtools-inject/src/launcher/profiles.js
+  // src/launcher/profiles.js
   function initProfiles(ctx) {
     ctx.loadUserProfiles = function() {
       return lsGetJSON(PROFILES_KEY, []);
@@ -6685,7 +6685,7 @@
     };
   }
 
-  // packages/aiti-devtools-inject/src/launcher/hud.js
+  // src/launcher/hud.js
   function initHud(ctx) {
     ctx.attachHudDrag = function() {
       if (!ctx.hud || ctx.hud.__dragBound) return;
@@ -6880,7 +6880,7 @@
     };
   }
 
-  // packages/aiti-devtools-inject/src/launcher/toolbar.js
+  // src/launcher/toolbar.js
   function initToolbar(ctx) {
     ctx.floatToolbar = function(x, y, w, h) {
       var tb = ctx.root.querySelector(".dbg-toolbar");
@@ -7054,7 +7054,7 @@
     };
   }
 
-  // packages/aiti-devtools-inject/src/launcher/inject.js
+  // src/launcher/inject.js
   function initInject(ctx) {
     ctx.mountRoot = function() {
       if (!document.body) {
@@ -7141,7 +7141,7 @@
     };
   }
 
-  // packages/aiti-devtools-inject/src/launcher/aiwin.js
+  // src/launcher/aiwin.js
   function initAiwin(ctx) {
     ctx.loadAiState = function() {
       return lsGetJSON(AI_WIN_KEY, {});
@@ -8494,7 +8494,7 @@
     };
   }
 
-  // packages/aiti-devtools-inject/src/launcher/routing.js
+  // src/launcher/routing.js
   function initRouting(ctx) {
     ctx.captureSceneSend = function() {
       var tw = (ctx.listFrames()[0] || {}).win;
@@ -8719,6 +8719,7 @@
       ctx._aiSwapUrl = url;
       ctx._aiSwapPrev = prevCustom;
       ctx._aiSwapSource = popupMode ? ctx.aiPopup : ctx.aiIframe ? ctx.aiIframe.contentWindow : null;
+      var swapTimeout = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(String(url)) ? 1e4 : 2e4;
       ctx._aiSwapT = setTimeout(function() {
         if (!ctx._aiSwapUrl) return;
         if (ctx._aiSwapPrev) ctx.saveCustomAiUrl(ctx._aiSwapPrev);
@@ -8734,10 +8735,10 @@
         }
         ctx.aiReady = false;
         try {
-          if (ctx.addMsg) ctx.addMsg("sys", "⚠ AI 地址连接失败（10s 无响应）——已回退本窗口，请确认地址后重试");
+          if (ctx.addMsg) ctx.addMsg("sys", "⚠ AI 地址连接失败（" + Math.round(swapTimeout / 1e3) + "s 无响应）——已回退本窗口，请确认地址后重试");
         } catch (e) {
         }
-      }, 1e4);
+      }, swapTimeout);
     };
     ctx.realUrl = function() {
       var isTop = false;
@@ -9659,7 +9660,7 @@
     };
   }
 
-  // packages/aiti-devtools-inject/src/launcher/inspector.js
+  // src/launcher/inspector.js
   function initInspector(ctx) {
     ctx.applyToolbarCompact = function() {
       var tb = ctx.root.querySelector(".dbg-toolbar");
@@ -9836,7 +9837,7 @@
     };
   }
 
-  // packages/aiti-devtools-inject/src/launcher/dialog.js
+  // src/launcher/dialog.js
   function initDialog(ctx) {
     function escAttr(s) {
       return escapeHtml(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
@@ -10061,7 +10062,7 @@
     };
   }
 
-  // packages/aiti-devtools-inject/src/launcher/picks.js
+  // src/launcher/picks.js
   function initPicks(ctx) {
     ctx.picksErrSeen = {};
     ctx.picksErrCount = 0;
@@ -10268,7 +10269,7 @@
     };
   }
 
-  // packages/aiti-devtools-inject/src/launcher/debug.js
+  // src/launcher/debug.js
   function initDebug(ctx) {
     ctx.loadShowDebug = function() {
       return lsGetString(DBG_SHOW_KEY, "") === "on";
@@ -10431,7 +10432,7 @@
     };
   }
 
-  // packages/aiti-devtools-inject/src/launcher/launcher.js
+  // src/launcher/launcher.js
   function aiWindowMarkers() {
     try {
       return window.name === "aiti-ai-popup" || /[?&]_dbg=/.test(location.search) || /[?&]_dbg=/.test(location.hash) || !!window.__AITI_AI_WIN__;
@@ -10922,11 +10923,11 @@
     return ctx.root.__dbgLauncher;
   }
 
-  // packages/aiti-devtools-inject/src/launcher/index.js
+  // src/launcher/index.js
   window.createDbgLauncher = createDbgLauncher;
   window.__dbgLauncherVersion = VERSION;
 
-  // packages/aiti-devtools-inject/src/standalone.js
+  // src/standalone.js
   (function() {
     const myScript = (function() {
       try {

@@ -14,7 +14,7 @@
  *   resolveEndpoints(...)          —— 地址协商解析（bridge/aiUrl/裸地址 → 端点）
  *   registerMcp / unregisterMcp    —— MCP 配置注册（常见 agent 工具；vite/CLI/扩展三处复用）
  */
-export { createBridge } from "./bridge.ts";
+export { createBridge, BRIDGE_TOOLS } from "./bridge.ts";
 export {
   rewriteMessage, withSourceTag, stripOrphanTags, replaceTag, clipUrl,
   PLACEHOLDER_RE, ORPHAN_NOTICE,
