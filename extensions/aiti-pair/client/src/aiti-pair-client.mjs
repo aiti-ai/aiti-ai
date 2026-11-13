@@ -34,6 +34,17 @@ let mountPromise = null; // 在途挂载（异步加载竞态去重：ref 回调
 export default function register(ctx) {
   const { h, useState, useEffect, apiUrl } = ctx;
 
+  /* ── 深链：?pair=1 打开工作台即弹出本面板（QR/复制链接指向工作台 URL，与桌面「先开 pi-web → 点设备互连」同体验） ──
+     一次性消费：开面板后从地址栏去掉参数（刷新不再自动弹；配对态在 localStorage，重开点工具条即可） */
+  try {
+    const u = new URL(globalThis.location.href);
+    if (u.searchParams.get("pair") === "1") {
+      setPanelOpen(true);
+      u.searchParams.delete("pair");
+      globalThis.history?.replaceState?.(null, "", u.pathname + (u.searchParams.toString() ? "?" + u.searchParams : "") + u.hash);
+    }
+  } catch {}
+
   const ASSET_BASE = "/api/extensions/aiti-devtools";
   const LIB_URL = () => apiUrl(ASSET_BASE + "/pair-client.js");
   const BRIDGE_BASE = () => apiUrl(ASSET_BASE + "/mcp"); // 内嵌桥端点（bridge-client 同款）
