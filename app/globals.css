@@ -2452,8 +2452,8 @@ span.token.table {
     transition: width 0.2s ease, min-width 0.2s ease;
   }
   .sidebar-container.sidebar-open {
-    width: var(--sidebar-width, 260px);
-    min-width: var(--sidebar-width, 260px);
+    width: var(--sidebar-width, 300px);
+    min-width: var(--sidebar-width, 300px);
   }
   .sidebar-container.sidebar-closed {
     width: 0;
@@ -2462,8 +2462,8 @@ span.token.table {
   }
   /* keep inner content at fixed width so it doesn't reflow during animation */
   .sidebar-container > * {
-    width: var(--sidebar-width, 260px);
-    min-width: var(--sidebar-width, 260px);
+    width: var(--sidebar-width, 300px);
+    min-width: var(--sidebar-width, 300px);
   }
   .sidebar-container.sidebar-resizing,
   .sidebar-container.sidebar-resizing > * {
