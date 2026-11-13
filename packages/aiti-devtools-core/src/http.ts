@@ -112,7 +112,9 @@ export function startHttpServer(bridge: HttpBridgeHandle, opts: HttpBridgeOption
     server.once("error", reject);
     server.listen(port, host, () => {
       server.on("error", onError);
-      const url = `http://${host}:${port}`;
+      // port 0（系统分配）时用 server.address().port 汇报真实端口——url 指向实际监听地址
+      const realPort = (server.address() as any)?.port ?? port;
+      const url = `http://${host}:${realPort}`;
       resolve({
         server,
         url,

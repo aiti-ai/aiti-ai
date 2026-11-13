@@ -194,6 +194,8 @@ export function initRouting(ctx) {
     ctx._aiSwapUrl = url;
     ctx._aiSwapPrev = prevCustom;
     ctx._aiSwapSource = popupMode ? ctx.aiPopup : (ctx.aiIframe ? ctx.aiIframe.contentWindow : null);
+    // 探测窗口：本机地址 10s；远端地址 20s（Authelia 认证跳转 + SSR 冷启动首载常超 10s——实测「首次无效再设一次才生效」的根因）
+    var swapTimeout = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(String(url)) ? 10000 : 20000;
     ctx._aiSwapT = setTimeout(function () {
       if (!ctx._aiSwapUrl) return; // 已成功，忽略
       // 失败：恢复之前验证过的 custom（无则清除）→ 回退对应地址
@@ -206,8 +208,8 @@ export function initRouting(ctx) {
         else if (ctx.aiIframe) ctx.aiIframe.src = backUrl;
       } catch (e) {}
       ctx.aiReady = false;
-      try { if (ctx.addMsg) ctx.addMsg('sys', '⚠ AI 地址连接失败（10s 无响应）——已回退本窗口，请确认地址后重试'); } catch (e) {}
-    }, 10000);
+      try { if (ctx.addMsg) ctx.addMsg('sys', '⚠ AI 地址连接失败（' + Math.round(swapTimeout / 1000) + 's 无响应）——已回退本窗口，请确认地址后重试'); } catch (e) {}
+    }, swapTimeout);
   };
 
   // 真实 URL 探测（前端发回用户地址栏 URL）：顶层时 location.href 即地址栏；iframe 内（如 pi-web 预览壳嵌站点）

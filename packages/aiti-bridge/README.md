@@ -1,5 +1,18 @@
 # @aiti-ai/aiti-bridge
 
+## 来源 · Origin
+
+本包是 **aiti** 生态的组成部分——以 [pi](https://pi.dev) 为引擎的个人 AI 开发工作台与本地调试注入生态：**aiti-agent**（自托管 Web 工作台，基于开源项目 [pi-web](https://github.com/aiti-ai/pi-web) 构建，浏览器为主操作面）+ 各开发工具内的调试注入（aiti-devtools）+ 丰富的扩展体系。
+
+This package is part of the **aiti** ecosystem — a personal AI development workbench powered by [pi](https://pi.dev): **aiti-agent** (a self-hosted web workbench built on the open-source [pi-web](https://github.com/aiti-ai/pi-web)) plus debug injection into mainstream dev tools (aiti-devtools) and a rich extension system.
+
+**English**: Standalone bridge service for aiti-devtools + the aiti stdio MCP shim: page connections / SSE / tool execution / MCP JSON-RPC on one port (default 127.0.0.1:8777), plus a zero-dependency stdio⇄HTTP MCP forwarder configured via the AITI_BRIDGE_URL environment variable.
+
+- 工作台 / workbench: <https://github.com/aiti-ai/pi-web>
+- 生态仓库 / monorepo: <https://github.com/aiti-ai/aiti-ai>
+- 官网 / site: <https://aiti.pw>
+
+
 aiti-devtools 独立桥服务 + aiti stdio MCP shim（统一 `AITI_BRIDGE_URL` 环境变量接入）。
 
 > 方案详解：`docs/aiti-mcp-shim-stdio-env-url-plan.md` ｜ 测试报告：`docs/aiti-mcp-shim-test-report.md` ｜ 执行全程：`docs/aiti-mcp-shim-execution-record.md`
@@ -87,3 +100,9 @@ node --test tests/robustness.test.mjs     # 健壮性 4
 node --test tests/register-cli.test.mjs   # 注册 CLI 11
 node --test tests/shim-e2e.test.mjs       # e2e 12（需真实桥 8777 / pi-web 3001·3002）
 ```
+
+## 文档 · Documentation
+
+- 中文完整文档（aiti-docs）: <https://aiti.pw/products/aiti-bridge.html>
+- English docs: <https://aiti.pw/en/products/aiti-bridge.html>
+- 扩展注册表 / registry: <https://aiti.pw/extensions.html> · machine-readable <https://aiti.pw/extensions.json>

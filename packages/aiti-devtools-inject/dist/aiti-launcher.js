@@ -8719,6 +8719,7 @@
       ctx._aiSwapUrl = url;
       ctx._aiSwapPrev = prevCustom;
       ctx._aiSwapSource = popupMode ? ctx.aiPopup : ctx.aiIframe ? ctx.aiIframe.contentWindow : null;
+      var swapTimeout = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(String(url)) ? 1e4 : 2e4;
       ctx._aiSwapT = setTimeout(function() {
         if (!ctx._aiSwapUrl) return;
         if (ctx._aiSwapPrev) ctx.saveCustomAiUrl(ctx._aiSwapPrev);
@@ -8734,10 +8735,10 @@
         }
         ctx.aiReady = false;
         try {
-          if (ctx.addMsg) ctx.addMsg("sys", "⚠ AI 地址连接失败（10s 无响应）——已回退本窗口，请确认地址后重试");
+          if (ctx.addMsg) ctx.addMsg("sys", "⚠ AI 地址连接失败（" + Math.round(swapTimeout / 1e3) + "s 无响应）——已回退本窗口，请确认地址后重试");
         } catch (e) {
         }
-      }, 1e4);
+      }, swapTimeout);
     };
     ctx.realUrl = function() {
       var isTop = false;
