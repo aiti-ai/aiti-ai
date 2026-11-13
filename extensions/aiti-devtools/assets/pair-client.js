@@ -2576,7 +2576,7 @@ if (__QRCodeLib && __QRCodeLib.stringToBytesFuncs && __QRCodeLib.stringToBytesFu
   // 主题自适配：mount 时从宿主 documentElement 读 CSS 变量（pi-web --text/--bg-panel/--accent、
   // cockpit --text/--panel 同名命中；独立 pair.html 无宿主变量 → 内置浅色兜底）。
   var WIDGET_CSS = [
-    '.apair{position:relative;display:flex;flex-direction:column;height:100%;min-height:0;font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;color:var(--ap-fg);background:var(--ap-panel)}',
+    '.apair{position:relative;width:100%;display:flex;flex-direction:column;height:100%;min-height:0;font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;color:var(--ap-fg);background:var(--ap-panel)}',
     '.apair *,.apair *::before,.apair *::after{box-sizing:border-box}',
     '.apair ::-webkit-scrollbar{width:8px;height:8px}',
     '.apair ::-webkit-scrollbar-thumb{background:var(--ap-line);border-radius:4px}',
