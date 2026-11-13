@@ -11,7 +11,10 @@ const path = require("path");
 
 const NPM_LATEST_URL = "https://registry.npmjs.org/@aiti-ai%2Fpi-web/latest";
 const FETCH_TIMEOUT_MS = 10_000;
-const MANUAL_COMMAND = "npm install -g @aiti-ai/pi-web@latest";
+// npm ≥11.16 gates install scripts behind an allowScripts approval; without the
+// `--allow-scripts` flag, esbuild/node-pty platform binaries and pi-web's own
+// postinstall (patch-package) silently don't run. Older npm ignores the flag.
+const MANUAL_COMMAND = "npm install -g @aiti-ai/pi-web@latest --allow-scripts";
 const DEFAULT_RELEASE_REPO = "aiti-ai/aiti-ai";
 const DOWNLOAD_TIMEOUT_MS = 10 * 60_000; // archives are ~170-200 MB
 
@@ -106,7 +109,7 @@ function getGlobalNpmRoot() {
 }
 
 function runNpmInstall(version) {
-  const invocation = findNpmInvocation(["install", "-g", `@aiti-ai/pi-web@${version}`]);
+  const invocation = findNpmInvocation(["install", "-g", "--allow-scripts", `@aiti-ai/pi-web@${version}`]);
   if (!invocation) return null;
   const result = spawnSync(invocation.command, invocation.args, { stdio: "inherit" });
   return result.status ?? 1;

@@ -249,7 +249,7 @@ export const zhCNLocale: LocalePlugin = {
     "appUpdate.installTypeGit": "安装形态：源码部署",
     "appUpdate.installTypeOther": "安装形态：自定义部署",
     "appUpdate.stepsArchive": "1. 停止服务：\n   pi-web stop\n2. 更新：\n   pi-web update\n   （从 GitHub Release 下载新版本归档并校验 sha256，Gitee 镜像自动兜底，更新后自动切换版本目录）\n3. 启动服务：\n   pi-web",
-    "appUpdate.stepsNpmGlobal": "1. 停止服务：\n   pi-web stop\n2. 更新：\n   pi-web update\n   （等效于 npm install -g @aiti-ai/pi-web@latest）\n3. 启动服务：\n   pi-web start",
+    "appUpdate.stepsNpmGlobal": "1. 停止服务：\n   pi-web stop\n2. 更新：\n   pi-web update\n   （等效于 npm install -g @aiti-ai/pi-web@latest --allow-scripts）\n3. 启动服务：\n   pi-web start",
     "appUpdate.stepsNpx": "直接运行新版本：\n   npx @aiti-ai/pi-web@latest",
     "appUpdate.stepsDocker": "1. docker pull aitiai/pi-web:latest\n2. 按原启动方式重建容器",
     "appUpdate.stepsGit": "源码部署——在仓库里更新代码后重新构建：\n   git pull\n然后按惯常方式重启（dev 模式改码即生效）。",

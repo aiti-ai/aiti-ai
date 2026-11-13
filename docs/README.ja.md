@@ -49,7 +49,7 @@ npx @aiti-ai/pi-web@latest
 `pi-web` コマンドをグローバルにインストールする場合：
 
 ```bash
-npm install -g @aiti-ai/pi-web@latest
+npm install -g @aiti-ai/pi-web@latest --allow-scripts
 pi-web
 ```
 

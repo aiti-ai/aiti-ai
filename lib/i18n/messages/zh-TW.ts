@@ -214,7 +214,7 @@ export const zhTWLocale: LocalePlugin = {
     "appUpdate.installTypeGit": "安裝形態：原始碼部署",
     "appUpdate.installTypeOther": "安裝形態：自訂部署",
     "appUpdate.stepsArchive": "1. 停止服務：\n   pi-web stop\n2. 更新：\n   pi-web update\n   （從 GitHub Release 下載新版歸檔並校驗 sha256，Gitee 鏡像自動兜底，更新後自動切換版本目錄）\n3. 啟動服務：\n   pi-web",
-    "appUpdate.stepsNpmGlobal": "1. 停止服務：\n   pi-web stop\n2. 更新：\n   pi-web update\n   （等效於 npm install -g @aiti-ai/pi-web@latest）\n3. 啟動服務：\n   pi-web start",
+    "appUpdate.stepsNpmGlobal": "1. 停止服務：\n   pi-web stop\n2. 更新：\n   pi-web update\n   （等效於 npm install -g @aiti-ai/pi-web@latest --allow-scripts）\n3. 啟動服務：\n   pi-web start",
     "appUpdate.stepsNpx": "直接執行新版本：\n   npx @aiti-ai/pi-web@latest",
     "appUpdate.stepsDocker": "1. docker pull aitiai/pi-web:latest\n2. 按原啟動方式重建容器",
     "appUpdate.stepsGit": "原始碼部署——在儲存庫裡更新程式碼後重新建置：\n   git pull\n然後按慣常方式重啟（dev 模式改碼即生效）。",

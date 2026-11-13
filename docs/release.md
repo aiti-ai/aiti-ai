@@ -158,7 +158,7 @@ Write the release notes from those commits, not from memory. Include both Chines
 
 - Check commands, flags and setting names against `README.md` and the code before writing them down.
 - Thank outside contributors by name: `git log --format='%h %an | %s' v<previous>..v<version>` lists authors, and the previous release's notes show the style.
-- Open with the install/upgrade command (`npm install -g @aiti-ai/pi-web@latest`), as earlier releases did.
+- Open with the install/upgrade command (`npm install -g @aiti-ai/pi-web@latest --allow-scripts`), as earlier releases did.
 - Write the notes to a file outside the repo (for example `NOTES=$(mktemp)`), or pass them through stdin as shown below. A `release-notes.md` in the repo root is an untracked file in the next release's `git status`.
 
 Suggested structure:
