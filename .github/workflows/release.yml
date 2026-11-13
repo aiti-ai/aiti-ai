@@ -257,3 +257,47 @@ jobs:
             --title "aiti-web ${{ github.ref_name }}" \
             --generate-notes \
             release-assets/*
+
+  # Mirror the release into the Gitee repo — the fallback download channel the
+  # installers and `pi-web update` use when GitHub is unreachable (CN networks).
+  # Best-effort by design: a failed mirror marks this job red but never fails
+  # the release itself; catch up by re-running just this job, or locally with
+  # `node scripts/publish-gitee-mirror.mjs --tag <tag>` (needs AITI_GITEE_TOKEN).
+  gitee-mirror:
+    needs: release
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts
+
+      # Same artifacts the release job uploaded — strictly identical assets,
+      # zero re-download from GitHub (~720 MB).
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: archive-*
+          merge-multiple: true
+          path: release-assets
+
+      - name: Merge checksums
+        run: |
+          cd release-assets
+          cat *.sha256 > checksums.txt
+          rm -f *.sha256
+
+      - name: Publish Gitee mirror
+        env:
+          AITI_GITEE_TOKEN: ${{ secrets.AITI_GITEE_TOKEN }}
+        run: node scripts/publish-gitee-mirror.mjs --tag "${{ github.ref_name }}" --assets-dir release-assets
+
+      - name: Failure note
+        if: failure()
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## Gitee mirror failed
+          The Gitee mirror release was not fully updated (missing secret
+          `AITI_GITEE_TOKEN`, upload rejection, or API outage). Catch up with:
+          `node scripts/publish-gitee-mirror.mjs --tag <tag>` (env AITI_GITEE_TOKEN),
+          or re-run this job from the Actions UI.
+          EOF
