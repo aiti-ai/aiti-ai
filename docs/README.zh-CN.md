@@ -53,7 +53,7 @@ npx @aiti-ai/pi-web@latest
 如需全局安装 `pi-web` 命令：
 
 ```bash
-npm install -g @aiti-ai/pi-web@latest
+npm install -g @aiti-ai/pi-web@latest --allow-scripts
 pi-web
 ```
 

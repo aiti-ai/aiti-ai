@@ -282,7 +282,7 @@ export const enLocale: LocalePlugin = {
     "appUpdate.installTypeGit": "Install type: source checkout",
     "appUpdate.installTypeOther": "Install type: custom deployment",
     "appUpdate.stepsArchive": "1. Stop the server:\n   pi-web stop\n2. Update:\n   pi-web update\n   (downloads the new archive from GitHub Releases / Gitee mirror, verifies sha256, and switches to the new version directory)\n3. Start the server:\n   pi-web",
-    "appUpdate.stepsNpmGlobal": "1. Stop the server:\n   pi-web stop\n2. Update:\n   pi-web update\n   (= npm install -g @aiti-ai/pi-web@latest)\n3. Start the server:\n   pi-web start",
+    "appUpdate.stepsNpmGlobal": "1. Stop the server:\n   pi-web stop\n2. Update:\n   pi-web update\n   (= npm install -g @aiti-ai/pi-web@latest --allow-scripts)\n3. Start the server:\n   pi-web start",
     "appUpdate.stepsNpx": "Run the new version directly:\n   npx @aiti-ai/pi-web@latest",
     "appUpdate.stepsDocker": "1. docker pull aitiai/pi-web:latest\n2. Recreate the container the same way it was originally started",
     "appUpdate.stepsGit": "Source deployment — update the repo, then rebuild / restart as usual:\n   git pull\n(dev mode picks changes up automatically.)",
