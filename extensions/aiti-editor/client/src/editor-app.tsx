@@ -11,6 +11,7 @@ import { ENCODINGS, encDisplay, formatSize, mdSlug, sourceLinesForText, isDarkTh
 import { detectLanguage, mdFenceDescriptors } from "./registry";
 import { markdownPreviewHtml, markdownRenderHtml } from "./markdown";
 import { previewKindOf, defaultViewModeOf, previewModeItems } from "./preview";
+import { sameDiskSig, shouldAutoReload, throttleOk, sigOfFrame, type DiskSig } from "./disk-refresh";
 import { getPopover, previewClickInfo, closePreviewPopover, mdSmartEnabled } from "./md-smart";
 import { openViewerWindow } from "../../../_shared/open-viewer-window";
 import { openNewSessionWithExtSvc } from "../../../_shared/new-session-cwd";
@@ -171,12 +172,20 @@ export function EditorApp(props: Record<string, any>) {
     return () => { alive = false; };
   }, [filePath]);
   // watch 走 pi-web 页面事件流（globalThis.__piPageEvents 广播的 ed-watch 帧，帧带
-  // 随机 watchId，浏览器按 id 过滤；路径/句柄不进 URL）。仅播放中启用（连接池保护）；
-  // 页面事件流客户端缺席（core 过旧）→ 静态预览降级。
+  // 随机 watchId，浏览器按 id 过滤；路径/句柄不进 URL）。全类型文件打开期间常开
+  // （总线共享连接，零新增 socket；服务端 30min 无事件自动停兜底）。
+  // 页面事件流客户端缺席（core 过旧）→ 静态预览降级 + ⋯菜单「重新加载」手动兜底。
+  // 帧分派决策（回环抑制/节流/视图路由）见 ./disk-refresh（方案 §3.1）。
+  const diskSigRef = useRef<DiskSig | null>(null);      // 最近已知磁盘签名（自己保存的回声抑制）
+  const lastDiskReloadRef = useRef(0);                   // 文本自动重载节流游标
+  const archiveTickRef = useRef(0);                      // 压缩包列表刷新 tick（帧到 → 重拉列表）
+  const [archiveTick, setArchiveTick] = useState(0);
   useEffect(() => {
     setMediaBust(0);
     setMediaDuration(null);
-    if (!isMediaFile || props.watchEnabled === false) return; // 总线共享连接，不占额外 socket——媒体打开期间常开
+    diskSigRef.current = null;
+    lastDiskReloadRef.current = 0;
+    if (props.watchEnabled === false) return;
     let dead = false;
     let unsub: (() => void) | null = null;
     let watchId: string | null = null;
@@ -199,14 +208,74 @@ export function EditorApp(props: Record<string, any>) {
         if (!watchId) return;
         unsub = client.subscribePageFrames((frame: any) => {
           if (dead || frame.type !== "ed-watch" || frame.id !== watchId) return;
-          setMediaBust((v: number) => v + 1);
+          try { diskFrameRef.current(frame); } catch { /* 帧处理异常不扩散 */ }
         });
         setWatchLive(true);
       } catch { /* 静默降级为静态预览 */ }
     };
     open();
     return () => { dead = true; setWatchLive(false); stop(); try { unsub?.(); } catch { /* noop */ } };
-  }, [filePath, isMediaFile, props.watchEnabled]);
+  }, [filePath, props.watchEnabled]);
+
+  // 从磁盘重读文本并重置编辑缓冲（watch 帧 clean 自动刷新 / ⋯菜单「重新加载」共用）。
+  // setValue → onDidChangeModelContent → bumpPreview 自动联动预览刷新；基线签名同步
+  // diskSigRef（下一次自己保存前的帧不再误报）。
+  const reloadFromDisk = useCallback((sig?: DiskSig | null) => {
+    const encU = meta && meta.encoding ? "&encoding=" + encodeURIComponent(meta.encoding) : "";
+    const statP = api("/stat?filePath=" + encodeURIComponent(filePath)).then((r) => r.json()).catch(() => null);
+    const rawP = api("/raw?filePath=" + encodeURIComponent(filePath) + encU).then((r) => r.json());
+    Promise.all([statP, rawP]).then(([m, d]) => {
+      if (d.error) { setNotice({ kind: "warn", text: "刷新失败：" + d.error }); return; }
+      const content = d.content || "";
+      const mtimeMs = (m && m.ok && typeof m.mtimeMs === "number") ? m.mtimeMs : (sig ? sig.mtimeMs : Date.now());
+      const size = (m && m.ok && typeof m.size === "number") ? m.size : (sig ? sig.size : content.length);
+      const ed = editorRef.current;
+      if (ed) ed.setValue(content);
+      initialContentRef.current = content;
+      setMeta((prev: any) => (prev ? { ...prev, content, size } : prev));
+      const cache = (window as any).__aitiEditor._cacheGet(filePath);
+      if (cache) { cache.content = content; cache.original = content; cache.baseMtimeMs = mtimeMs; cache.size = size; }
+      baseMtimeRef.current = mtimeMs;
+      diskSigRef.current = { mtimeMs, size };
+      setDirty(false);
+      (window as any).__aitiEditor._setDirty(filePath, false);
+      setExtChange(null);
+    }).catch(() => { /* 下一次帧/渲染期磁盘检查兜底 */ });
+  }, [filePath, meta, bumpPreview]);
+
+  // ⋯菜单「重新加载」：clean 直接重读磁盘；dirty 不丢编辑 → 拉真实磁盘签名后弹
+  // 「磁盘已修改」条（三路合并/加载磁盘版/保留当前）；二进制 → bust 强制重载。
+  const doReload = useCallback(() => {
+    if (fileType !== "text") { setMediaBust((v: number) => v + 1); if (fileType === "archive") { archiveTickRef.current += 1; setArchiveTick(archiveTickRef.current); } return; }
+    if (dirty) {
+      api("/stat?filePath=" + encodeURIComponent(filePath)).then((r) => r.json())
+        .then((m) => setExtChange({ diskMtimeMs: (m && m.ok && typeof m.mtimeMs === "number") ? m.mtimeMs : Date.now(), diskSize: (m && m.ok && typeof m.size === "number") ? m.size : 0 }))
+        .catch(() => setExtChange({ diskMtimeMs: Date.now(), diskSize: 0 }));
+      return;
+    }
+    reloadFromDisk(null);
+  }, [filePath, fileType, dirty, reloadFromDisk]);
+
+  // 帧分派（每渲染重挂 ref——闭包始终拿最新 dirty/meta/fileType；订阅本身不随渲染重启）
+  const diskFrameRef = useRef<(frame: any) => void>(() => {});
+  useEffect(() => {
+    diskFrameRef.current = (frame: any) => {
+      if (frame.gone) { setNotice({ kind: "warn", text: "磁盘上的文件已不存在（可能被移动或删除）" }); return; }
+      const sig = sigOfFrame(frame);
+      if (!sig) return;
+      if (sameDiskSig(sig, diskSigRef.current)) return; // 自己保存的回声 / 已知状态，忽略
+      diskSigRef.current = sig;
+      if (fileType !== "text") {
+        setMediaBust((v: number) => v + 1); // 图片/PDF/媒体：bust 换缓存指纹重载
+        if (fileType === "archive") { archiveTickRef.current += 1; setArchiveTick(archiveTickRef.current); } // 压缩包列表重拉
+        return;
+      }
+      if (!shouldAutoReload("text", dirty)) { setExtChange({ diskMtimeMs: sig.mtimeMs, diskSize: sig.size }); return; }
+      if (!throttleOk(lastDiskReloadRef.current, Date.now(), 1000)) return; // 高频写节流，下一帧/菜单兜底
+      lastDiskReloadRef.current = Date.now();
+      reloadFromDisk(sig);
+    };
+  }); // 无依赖数组：每渲染更新
   const isMarkdown = language === "markdown";
   // 预览面能力判定（方案 §3.1）：`isMarkdown` 此后只管 markdown 专属功能（md-smart 弹层、TOC
   // 滚动同步、表格格式化、导出 HTML/PDF），预览壳/分栏/模式切换器一律看 canPreview
@@ -221,7 +290,7 @@ export function EditorApp(props: Record<string, any>) {
       .then((r) => r.json())
       .then((d) => { if (d.ok) setArchiveFiles(d.files); else setArchiveErr(d.error || "解析失败"); })
       .catch((e) => setArchiveErr(String(e)));
-  }, [filePath, fileType]);
+  }, [filePath, fileType, archiveTick]); // archiveTick：ed-watch 帧到 → 重拉列表（磁盘上包被换了）
 
   // ── 同目录文件遍历（‹ ›）：服务端深度遍历（DFS、按名排序），仅文件不含文件夹 ──
   // 遍历根：优先项目根 cwd（子树走到头自然接上父级的下一个子树，不会卡在叶节点）；
@@ -349,6 +418,7 @@ export function EditorApp(props: Record<string, any>) {
         .then((m) => {
           if (m && m.ok && typeof m.mtimeMs === "number") {
             baseMtimeRef.current = m.mtimeMs;
+            diskSigRef.current = { mtimeMs: m.mtimeMs, size: m.size || 0 };
             if (Math.abs(m.mtimeMs - cache.baseMtimeMs) > 1) {
               // 磁盘变了，静默合并
               const original = cache.original || "";
@@ -437,6 +507,7 @@ export function EditorApp(props: Record<string, any>) {
           .then((m) => {
             const mtimeMs = m && m.ok && typeof m.mtimeMs === "number" ? m.mtimeMs : Date.now();
             baseMtimeRef.current = mtimeMs;
+            diskSigRef.current = { mtimeMs, size: (m && m.ok && typeof m.size === "number") ? m.size : 0 };
             // 缓存已建 → 只更新 baseMtime，不覆盖 content/original
             const ec = (window as any).__aitiEditor._cacheGet(filePath);
             if (ec) { ec.baseMtimeMs = mtimeMs; }
@@ -993,6 +1064,7 @@ export function EditorApp(props: Record<string, any>) {
           }
           if (!r.ok) { setNotice({ kind: "err", text: d.error || "\u4FDD\u5B58\u5931\u8D25 (" + r.status + ")" }); return; }
           baseMtimeRef.current = d.mtimeMs;
+          diskSigRef.current = { mtimeMs: d.mtimeMs, size: typeof d.size === "number" ? d.size : editor.getValue().length }; // 回环抑制：自己保存触发的帧不再误报
           if (encOverride) {
             const c2 = (window as any).__aitiEditor._cacheGet(filePath);
             if (c2) { c2.encoding = encOverride.encoding; c2.hasBOM = encOverride.hasBOM === true; }
@@ -1789,7 +1861,7 @@ useEffect(() => {
   ) : null;
 
   const renderBinaryBar = (typeLabel: string) => {
-    const live = isMediaFile && watchLive;
+    const live = watchLive; // 全类型二进制视图都显示「实时」徽标（watch 已泛化到所有文件）
     const info = (
       <span style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0, flexShrink: 1, overflow: "hidden",
         color: "var(--text-dim,#888)", fontSize: 11, fontFamily: "var(--font-mono, ui-monospace, monospace)" }}>
@@ -1821,6 +1893,7 @@ useEffect(() => {
         onMove={doMove}
         onNewWindow={openInNewWindow}
         onTerminal={openTerminal}
+        onReload={doReload}
         menuTop={[...extMenuTop, ...menuTopExtra]}
         infoAfterNav={info}
       />
@@ -1928,8 +2001,8 @@ useEffect(() => {
         <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", background: "var(--bg,#fff)", position: "relative" }}>
           {renderBinaryBar(typeLabel)}
           <div style={{ flex: 1, minHeight: 0, minWidth: 0, position: "relative" }}>
-            {fileUrl
-              ? <ImageViewer src={fileUrl} filePath={filePath} fileSize={meta ? meta.size : undefined} mtimeMs={meta ? meta.mtimeMs : undefined} onSrcError={recoverMedia} />
+            {mediaSrc
+              ? <ImageViewer src={mediaSrc} filePath={filePath} fileSize={meta ? meta.size : undefined} mtimeMs={meta ? meta.mtimeMs : undefined} onSrcError={recoverMedia} />
               : <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim,#888)", fontSize: 13 }}>正在加载…</div>}
             {hasNav && (
               <>
@@ -1950,7 +2023,7 @@ useEffect(() => {
       // 调用会抛 ReferenceError 使整个视频/音频预览崩溃（2026-09-06 实测）。
       : fileType === "video" ? <video key={mediaSrc} src={mediaSrc} controls playsInline preload="metadata" onPlay={() => { mediaErrRef.current = 0; }} onLoadedMetadata={(e: any) => { mediaErrRef.current = 0; setMediaDuration(e.currentTarget.duration); }} onError={recoverMedia} style={{ maxWidth: "100%", maxHeight: "100%" }} />
       : fileType === "audio" ? <audio key={mediaSrc} src={mediaSrc} controls preload="metadata" onPlay={() => { mediaErrRef.current = 0; }} onLoadedMetadata={(e: any) => { mediaErrRef.current = 0; setMediaDuration(e.currentTarget.duration); }} onError={recoverMedia} style={{ width: "90%", maxWidth: 480 }} />
-      : fileType === "pdf" ? <iframe src={fileUrl} style={{ width: "100%", height: "100%", border: "none" }} />
+      : fileType === "pdf" ? <iframe key={mediaSrc} src={mediaSrc} style={{ width: "100%", height: "100%", border: "none" }} />
       : <div style={{ color: "var(--text-dim,#888)", fontSize: 14, textAlign: "center", padding: 40 }}>暂不支持预览此类型文件</div>;
     return (
       <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", background: "var(--bg,#fff)", position: "relative" }}>
@@ -1974,6 +2047,7 @@ useEffect(() => {
         about={aboutProp}
         onSave={!isReadOnly ? () => doSave(false) : undefined}
         onSaveAs={!isReadOnly ? () => doSaveAsText() : undefined}
+        onReload={doReload}
         dot={{ title: dirty ? "\u6709\u672A\u4FDD\u5B58\u4FEE\u6539" : "\u5DF2\u540C\u6B65", color: dirty ? "var(--warn, #f59e0b)" : "var(--border,#e0e0e0)" }}
         nav={navProps}
         closeActions={closeActions}
@@ -2224,6 +2298,7 @@ useEffect(() => {
                         const c = (window as any).__aitiEditor._cacheGet(filePath);
                         if (c) { c.content = merged; c.original = merged; c.baseMtimeMs = (extChange && extChange.diskMtimeMs) || Date.now(); }
                         baseMtimeRef.current = (extChange && extChange.diskMtimeMs) || Date.now();
+                        diskSigRef.current = { mtimeMs: baseMtimeRef.current, size: (extChange && extChange.diskSize) || merged.length };
                         setDirty(false); (window as any).__aitiEditor._setDirty(filePath, false);
                         setExtChange(null);
                         const msg = failCount > 0 ? "\u5408\u5E76\u5B8C\u6210\uFF08" + (results.length - failCount) + "/" + results.length + " \u6210\u529F\uFF09" : "\u5DF2\u5408\u5E76\uFF08\u7528\u6237\u6539\u52A8\u5DF2\u5E94\u7528\u4E8E\u65B0\u7248\u672C\uFF09";
@@ -2247,6 +2322,7 @@ useEffect(() => {
                           const cache = (window as any).__aitiEditor._cacheGet(filePath);
                           if (cache) { cache.content = content; cache.original = content; cache.baseMtimeMs = (extChange && extChange.diskMtimeMs) || Date.now(); }
                           baseMtimeRef.current = (extChange && extChange.diskMtimeMs) || Date.now();
+                          diskSigRef.current = { mtimeMs: baseMtimeRef.current, size: (extChange && extChange.diskSize) || content.length };
                           setDirty(false); (window as any).__aitiEditor._setDirty(filePath, false);
                           setExtChange(null); setNotice({ kind: "ok", text: "\u5DF2\u52A0\u8F7D\u78C1\u76D8\u7248\u672C" });
                         })

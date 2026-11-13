@@ -55,6 +55,7 @@ export const MiCloseRight = mkMenuIcon(() => <><line x1="21" y1="4" x2="21" y2="
 export const MiCloseAll = mkMenuIcon(() => <><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></>);
 export const MiSave = mkMenuIcon(() => <><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></>);
 export const MiSaveAs = mkMenuIcon(() => <><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><line x1="12" y1="16" x2="12" y2="10"/></>);
+export const MiRefresh = mkMenuIcon(() => <><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></>);
 
 const S: Record<string, any> = {
   bar: { display: "flex", alignItems: "center", gap: 8, padding: "5px 12px",
@@ -129,6 +130,8 @@ export function FileToolbar(props: {
   onMove?: () => void;
   /** 在独立窗口打开（pi-web /viewer：只含文件查看器的浏览器窗口）；不传则不显示 */
   onNewWindow?: () => void;
+  /** 重新加载（⋯ 菜单项）：从磁盘重读最新内容；不传则不显示（aiti-folder 等其他使用方零影响） */
+  onReload?: () => void;
   /** 关闭动作组（2026-09-15 拍板）：提供即渲染一排 4 图标（关闭左侧/自己/右侧/全部）；
    *  大屏在工具条右端常驻，compact 收进 ⋯ 菜单（同款图标排，名称+图标右对齐）。 */
   closeActions?: { left?: () => void; self?: () => void; right?: () => void; all?: () => void };
@@ -251,10 +254,11 @@ export function FileToolbar(props: {
           {divider}
         </>
       )}
-      {/* 保存组：保存 / 另存为 / 下载 */}
+      {/* 保存组：保存 / 另存为 / 下载 / 重新加载 */}
       {onSave && menuItem({ label: "保存", title: "保存当前编辑内容（Ctrl+S）", icon: <MiSave />, onClick: onSave })}
       {onSaveAs && menuItem({ label: "另存为…", title: "把当前内容保存为新文件", icon: <MiSaveAs />, onClick: onSaveAs })}
       {props.onDownload && menuItem({ label: "下载文件", icon: <MiDownload />, onClick: props.onDownload })}
+      {props.onReload && menuItem({ label: "重新加载", title: "从磁盘重读最新内容（有未保存编辑时会先询问：合并/加载磁盘/保留）", icon: <MiRefresh />, onClick: props.onReload })}
       {(onSave || onSaveAs || props.onDownload) && divider}
       {/* @ 组：当前会话 / 新会话 */}
       {onMention && menuItem({ label: "@ 提及", title: mentionTitle || "提及文件——将当前文件写入聊天输入框", icon: <MiAt />, onClick: onMention })}
