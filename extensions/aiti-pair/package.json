@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-pair",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "type": "module",
   "description": "pair 设备互连面板 —— 连同一桥的设备（手机/其他浏览器/agent 会话）互发消息、互传文件；widget 与协议来自 aiti-devtools 公共资产（pair-client.js）",
   "scripts": {
