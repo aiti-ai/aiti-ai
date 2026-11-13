@@ -4092,9 +4092,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const loadModels = useCallback(async (signal?: AbortSignal) => {
     // ── New-session page + backend selected: the model catalog comes from the provider's static listModels
-    //    (available without a session). Missing static catalog (models:null) or failure → keep the local list as
-    //    fallback. (Forced refresh uses refreshModels' separate path: the route's &refresh=1; not coupled to this
-    //    function.)
+    //    (available without a session).
+    //    - models: non-empty array → show it (the backend owns the model universe from here on).
+    //    - models: empty array → the provider answered but has nothing usable (CLI missing / not logged
+    //      in): show an empty picker with a hint instead of silently falling back to the pi list — the
+    //      composer would otherwise advertise pi models that the chosen backend will never use.
+    //    - models: null (no static catalog — the pi-family backends share pi's model universe) or network
+    //      failure → fall back to the local list. (Forced refresh uses refreshModels' separate path: the
+    //      route's &refresh=1; not coupled to this function.)
     if (isNew && newSessionBackend && !sessionIdRef.current) {
       try {
         const res = await fetch(
@@ -4103,13 +4108,22 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         );
         const d = await res.json() as { models?: Array<{ id: string; provider: string; label?: string; hint?: string }> | null; refreshable?: boolean };
         setModelsRefreshable(Boolean(d.refreshable));
-        if (d.models && d.models.length > 0) {
-          const list = d.models.map((m) => ({ id: m.id, name: m.label ?? m.id, provider: m.provider, ...(m.hint ? { hint: m.hint } : {}) }));
-          setModelList(list);
-          setModelNames(Object.fromEntries(list.map((m) => [m.id, m.name])));
-          setModelError(null);
+        if (Array.isArray(d.models)) {
+          if (d.models.length > 0) {
+            const list = d.models.map((m) => ({ id: m.id, name: m.label ?? m.id, provider: m.provider, ...(m.hint ? { hint: m.hint } : {}) }));
+            setModelList(list);
+            setModelNames(Object.fromEntries(list.map((m) => [m.id, m.name])));
+            setModelError(null);
+            setModelScopeWarnings([]);
+            setNewSessionDefaultModel({ provider: list[0].provider, modelId: list[0].id });
+            return;
+          }
+          // Provider answered with an empty catalog: not a pi-model situation.
+          setModelList([]);
+          setModelNames({});
+          setModelError("No models available for this backend — check that its CLI is installed and logged in.");
           setModelScopeWarnings([]);
-          setNewSessionDefaultModel({ provider: list[0].provider, modelId: list[0].id });
+          setNewSessionDefaultModel(null);
           return;
         }
       } catch { /* network failure → fall back to the local list */ }
