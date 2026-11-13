@@ -19,7 +19,7 @@
  *   panel actions only write localStorage prefs + dispatch events (no
  *   polling).
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { apiUrl } from "@/lib/base-path";
 import { ExtSlot, useExtMetas, useExtSlotItems } from "./ExtSlots";
@@ -41,9 +41,11 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import { openSessionById } from "@/lib/pi-web-session-store";
 
 /** Grid row-height baseline (minimum single-row height for h=1; content can grow taller). */
-const GRID_ROW_MIN = 64;
-/** Max content height for the top zone (scrolls internally so the composer stays visible on the welcome page). */
-const TOP_ZONE_MAX_HEIGHT = "min(300px, 38vh)";
+const GRID_ROW_MIN = 58;
+/* Top zone layout (2026-11-15): the zone flex-grows to absorb ALL free space above the
+ * composer (no fixed cap; overflowY keeps short windows safe — the composer is never
+ * squeezed). Cards sit at natural height, hugging the top; the space below them stays
+ * naturally empty. Bottom zone is shrink-0: natural height, tight under the composer. */
 
 // ── Builtin entries ──
 
@@ -53,9 +55,9 @@ function builtinWidgetItems(t: (key: string) => string): NewSessionWidgetItem[] 
     normalizeWidgetItem({
       id: "builtin:recent",
       title: t("nsw.recentTitle"),
-      // 默认放底部（composer 下方——历史记录与「发第一条消息」的场景更贴近，2026-11-07 用户拍板）；
-      // areas 未限制（normalize 空数组 → 双区），⚙ 面板可挪回顶部；老用户显式 pref 优先、不受影响。
-      defaultArea: "bottom",
+      // 默认放顶部（2026-11-15 用户拍板：与上手三卡同区，上重下轻更平衡；卡片化与扩展卡同款边框标题）；
+      // areas 未限制（normalize 空数组 → 双区），⚙ 面板可挪到 composer 下方；老用户显式 pref 优先、不受影响。
+      defaultArea: "top",
       priority: 0,
       w: 8,
       h: 1,
@@ -115,6 +117,52 @@ function cwdLabel(cwd: string): string {
   return base || trimmed;
 }
 
+/** Card chrome shared with the aiti-quickstart extension cards (same paddings/radii, 2026-11-15) —
+ *  the top zone reads as one consistent card set instead of three framed cards plus a naked chip row. */
+const TOP_CARD_STYLE: CSSProperties = {
+  width: "100%",
+  height: "100%",
+  display: "flex",
+  flexDirection: "column",
+  gap: 2,
+  padding: "3px 10px",
+  border: "1px solid var(--border)",
+  borderRadius: 10,
+  boxSizing: "border-box",
+  overflow: "hidden",
+};
+const TOP_CARD_TITLE_STYLE: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 6,
+  fontSize: 12,
+  fontWeight: 600,
+  color: "var(--text)",
+  flexShrink: 0,
+};
+
+/** lucide history（时钟+回箭头，与扩展卡 rocket 同款线图语言，accent 色呼应）。 */
+function HistoryIcon() {
+  return (
+    <svg
+      width={13}
+      height={13}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      style={{ color: "var(--accent)", flexShrink: 0 }}
+    >
+      <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+      <path d="M3 3v5h5" />
+      <path d="M12 7v5l4 2" />
+    </svg>
+  );
+}
+
 function RecentSessionsWidget() {
   const { t } = useI18n();
   const [sessions, setSessions] = useState<Pick<SessionInfo, "id" | "cwd" | "name" | "firstMessage">[] | null>(null);
@@ -140,23 +188,25 @@ function RecentSessionsWidget() {
     };
   }, []);
 
-  const mutedStyle = { fontSize: 11, color: "var(--text-dim)", fontFamily: "var(--font-mono)", padding: "6px 2px" } as const;
+  const mutedStyle = { fontSize: 11, color: "var(--text-dim)", fontFamily: "var(--font-mono)", padding: "2px 0" } as const;
 
-  if (sessions === null) return <span style={mutedStyle}>…</span>;
-  if (sessions.length === 0) return <span style={mutedStyle}>{t("nsw.recentEmpty")}</span>;
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
-        overflowX: "auto",
-        overflowY: "hidden",
-        scrollbarWidth: "none",
-        height: "100%",
-        padding: "2px 0",
-      }}
-    >
+  const body = (() => {
+    if (sessions === null) return <span style={mutedStyle}>…</span>;
+    if (sessions.length === 0) return <span style={mutedStyle}>{t("nsw.recentEmpty")}</span>;
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          overflowX: "auto",
+          overflowY: "hidden",
+          scrollbarWidth: "none",
+          flex: 1,
+          minHeight: 0,
+          padding: "2px 0",
+        }}
+      >
       {sessions.map((s) => (
         <button
           key={s.id}
@@ -173,7 +223,7 @@ function RecentSessionsWidget() {
             borderRadius: 999,
             background: "transparent",
             color: "var(--text)",
-            padding: "5px 12px",
+            padding: "4px 11px",
             fontSize: 12,
             fontFamily: "var(--font-mono)",
             cursor: "pointer",
@@ -188,6 +238,17 @@ function RecentSessionsWidget() {
           )}
         </button>
       ))}
+      </div>
+    );
+  })();
+
+  return (
+    <div style={TOP_CARD_STYLE}>
+      <div style={TOP_CARD_TITLE_STYLE}>
+        <HistoryIcon />
+        {t("nsw.recentTitle")}
+      </div>
+      {body}
     </div>
   );
 }
@@ -214,41 +275,43 @@ export function NewSessionWidgetZone({
   const cols = isMobile ? 4 : 8;
   const ids = layout[area];
 
+  // Edit button: in normal flow, right-aligned to the content column (same widened max +
+  // gutters as the grid). It used to be absolutely positioned in the zone corner, which
+  // overlapped the first card's title row as soon as the content column touched the zone
+  // edge (narrow windows / mobile, 2026-11-15).
   const editButton = (
-    <button
-      type="button"
-      onClick={onEdit}
-      title={t("nsw.customize")}
-      aria-label={t("nsw.customize")}
-      style={{
-        position: "absolute",
-        top: 0,
-        right: 10,
-        zIndex: 5,
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 4,
-        opacity: 0.35,
-        border: "none",
-        background: "transparent",
-        color: "var(--text-muted)",
-        fontSize: 11,
-        padding: "3px 6px",
-        cursor: "pointer",
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.opacity = "1";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.opacity = "0.35";
-      }}
-    >
-      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <circle cx="12" cy="12" r="3" />
-        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
-      </svg>
-      {t("nsw.edit")}
-    </button>
+    <div style={{ maxWidth: "calc(var(--chat-content-max-width, 820px) + 32px)", margin: "0 auto", padding: "0 16px", display: "flex", justifyContent: "flex-end" }}>
+      <button
+        type="button"
+        onClick={onEdit}
+        title={t("nsw.customize")}
+        aria-label={t("nsw.customize")}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 4,
+          opacity: 0.35,
+          border: "none",
+          background: "transparent",
+          color: "var(--text-muted)",
+          fontSize: 11,
+          padding: "3px 6px",
+          cursor: "pointer",
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.opacity = "1";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.opacity = "0.35";
+        }}
+      >
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
+        </svg>
+        {t("nsw.edit")}
+      </button>
+    </div>
   );
 
   const grid = (
@@ -256,9 +319,13 @@ export function NewSessionWidgetZone({
       style={{
         display: "grid",
         gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+        // 820px content column + symmetric 16px gutters (inside the widened max) → card
+        // borders land on the same centerline as the composer/selectors. Rows stay at
+        // natural height (no stretch): the top zone keeps flex-1 for breathing room, cards
+        // hug the top and the zone below them stays naturally empty (2026-11-15).
         gridAutoRows: `minmax(${GRID_ROW_MIN}px, auto)`,
         gap: 8,
-        maxWidth: "var(--chat-content-max-width, 820px)",
+        maxWidth: "calc(var(--chat-content-max-width, 820px) + 32px)",
         margin: "0 auto",
         padding: "0 16px",
       }}
@@ -337,8 +404,8 @@ export function NewSessionWidgetZone({
 
   return (
     <div
-      className={`relative w-full ${area === "bottom" ? "min-h-0 flex-1" : "shrink-0"}`}
-      style={area === "top" ? { maxHeight: TOP_ZONE_MAX_HEIGHT, overflowY: "auto", paddingTop: 8 } : { overflowY: "auto", paddingTop: 8 }}
+      className={`relative w-full ${area === "top" ? "min-h-0 flex-1" : "min-h-0 shrink-0"}`}
+      style={{ overflowY: "auto", padding: area === "top" ? "4px 0 8px" : "8px 0 0" }}
     >
       {editButton}
       {grid}
