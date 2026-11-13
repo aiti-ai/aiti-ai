@@ -108,7 +108,6 @@ function serveAsset(ctx, name) {
 export default {
   id: "aiti-devtools",
   name: "aiti devtools（页面内 AI 调试助手）",
-  version: "0.2.2",
   icon: "icon.svg",
   client: "dist/aiti-client.mjs",
 
