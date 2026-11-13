@@ -139,6 +139,7 @@ const checks = {
   "quickstart dist": count("^package/extensions/aiti-quickstart/dist/"),
   "bridge-core.ts（部署拷贝）": count("^package/extensions/aiti-devtools/bridge-core"),
   "convert-saveas.ts（部署拷贝）": count("^package/extensions/aiti-editor/convert-saveas"),
+  "monaco/vs/loader.js（编辑器资产）": count("^package/extensions/aiti-editor/monaco/vs/loader\\.js$"),
   "check-client.mjs（部署拷贝）": count("^package/extensions/aiti-extman/check-client"),
   "onlyoffice token（部署拷贝）": count("^package/extensions/aiti-onlyoffice/token"),
   "_shared 残留（应 0）": count("^package/extensions/_shared/"),

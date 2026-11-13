@@ -7,14 +7,15 @@
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",
     "deploy": "node tools/deploy.mjs",
-    "check:vendor": "node tools/check-vendor-version.mjs"
+    "check:vendor": "node tools/check-vendor-version.mjs",
+    "prepack": "node tools/materialize-monaco.mjs"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "@aiti-ai/ext-shared": "^0.1.3",
+    "@aiti-ai/ext-shared": "^0.1.12",
     "exifr": "^7.1.3",
     "js-yaml": "^5.3.0",
     "sql-formatter": "^15.8.2",
