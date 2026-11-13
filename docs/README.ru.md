@@ -49,7 +49,7 @@ npx @aiti-ai/pi-web@latest
 Чтобы установить команду `pi-web` глобально:
 
 ```bash
-npm install -g @aiti-ai/pi-web@latest
+npm install -g @aiti-ai/pi-web@latest --allow-scripts
 pi-web
 ```
 
