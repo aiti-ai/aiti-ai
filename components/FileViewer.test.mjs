@@ -114,7 +114,11 @@ test("the diff view wraps when the viewer wraps, and the key reaches the diff", 
   // Unwrapped stays exactly as before: one line per row, sideways scroll. The
   // +/- marker column never shrinks either way.
   assert.match(diffView, /padding: "0 6px",[\s\S]{0,160}flexShrink: 0/);
-  assert.match(source, /<DiffView patch=\{gitDiff\.patch!\} wrapLines=\{wrapLines\} \/>/);
+  // [fork-merge] per-line Prism highlighting (upstream v0.16.0): memoized per
+  // line and a memoized whole view, fed from the source view's readiness.
+  assert.match(source, /const DiffLineCode = memo\(function DiffLineCode/);
+  assert.match(source, /const MemoizedDiffView = memo\(DiffView\);/);
+  assert.match(source, /<MemoizedDiffView patch=\{gitDiff\.patch!\} wrapLines=\{wrapLines\} language=\{language\} prismReady=\{prismReady\} isDark=\{isDark\} \/>/);
 
   // The wrap control is offered for the diff as well as the source, never for a
   // rendered preview (markdown, HTML, table), where there are no lines to wrap.
@@ -192,8 +196,10 @@ test("the line-number gutter is pinned only in views of at most SOURCE_HIGHLIGHT
   const { outputText: diffOutput } = ts.transpileModule(`return ${diffView.getText(file)}`, { compilerOptions: { jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2022 } });
   const diffNumberStyle = (rowCount) => {
     const added = Array.from({ length: rowCount }, (_, index) => ({ type: "added", text: "line", oldLineNo: null, newLineNo: index + 1 }));
-    const DiffView = new Function("React", "useI18n", "diffLines", "SOURCE_HIGHLIGHT_MAX_LINES", "FILE_CODE_STYLE", "FILE_LINE_NUMBER_STYLE", "FILE_PINNED_LINE_NUMBER_STYLE", diffOutput)(
-      React, () => ({ t: (key) => key }), () => added, maxRows, codeStyle, gutterStyle, pinnedStyle,
+    // [fork-merge] DiffLineCode is the memoized per-line highlighter; the gutter
+    // assertions only read the row's number span, so a null stub suffices.
+    const DiffView = new Function("React", "useI18n", "diffLines", "SOURCE_HIGHLIGHT_MAX_LINES", "FILE_CODE_STYLE", "FILE_LINE_NUMBER_STYLE", "FILE_PINNED_LINE_NUMBER_STYLE", "DiffLineCode", diffOutput)(
+      React, () => ({ t: (key) => key }), () => added, maxRows, codeStyle, gutterStyle, pinnedStyle, () => null,
     );
     return DiffView({ patch: "" }).props.children[0].props.children[0].props.children[0].props.style;
   };
