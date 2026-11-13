@@ -78,6 +78,24 @@ export function parseDisabledModels(providers: Record<string, unknown>): {
  * @param modelsCfg models.json (consumed by parseDisabledModels)
  * @param avail     provider/model → availability (model-check extension state.json; empty Map = no state)
  */
+/**
+ * Model catalog cost → the model picker's right-aligned dim hint, e.g. "$0.6/$2.2 per M"
+ * (input/output USD per million tokens — pi's ModelCost rates). Cache rates are omitted
+ * (narrow slot); tiered pricing shows base rates only. Absent or all-zero cost → no hint
+ * (credits-style models with no dollar pricing simply keep the provider fallback).
+ */
+export function formatModelCostHint(
+  cost?: { input?: number; output?: number } | null,
+): string | undefined {
+  const inRate = typeof cost?.input === "number" && Number.isFinite(cost.input) ? cost.input : null;
+  const outRate = typeof cost?.output === "number" && Number.isFinite(cost.output) ? cost.output : null;
+  if (inRate === null && outRate === null) return undefined;
+  if ((inRate ?? 0) === 0 && (outRate ?? 0) === 0) return undefined;
+  // Trim trailing zeros after the decimal point only ("10.000"→"10", "0.435"→"0.435").
+  const trim = (n: number) => n.toFixed(3).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
+  return `$${trim(inRate ?? 0)}/$${trim(outRate ?? 0)} per M`;
+}
+
 export function annotateVisibleModels<T extends { id: string; name: string; provider: string; input?: string[] }>(
   visible: readonly T[],
   modelsCfg: Record<string, unknown> | undefined | null,

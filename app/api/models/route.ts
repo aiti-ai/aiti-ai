@@ -13,7 +13,7 @@ import { orderSelectorModels, resolveVisibleModels, selectInitialModelScope } fr
 import { getAllowedFileRoots, isExistingFilePathAllowed } from "@/lib/file-access";
 import { projectTrustReloadOptions } from "@/lib/project-trust";
 import { readModelsConfig } from "@/lib/models-config-store";
-import { annotateVisibleModels, parseModelCheckState, type AvailKind } from "@/lib/model-visibility";
+import { annotateVisibleModels, formatModelCostHint, parseModelCheckState, type AvailKind } from "@/lib/model-visibility";
 import { providerDisplayNames, rememberProviderModels, withDeferredProviderModels } from "@/lib/deferred-provider-models";
 import { inferRemovedWorktree } from "@/lib/worktree";
 import { cwdMissingBody } from "@/lib/missing-cwd";
@@ -83,6 +83,8 @@ async function loadModels(cwd: string, scopeAll = false): Promise<ModelsData> {
       // name; models.json providers get theirs from `name` too.
       providerName: providerNames.get(m.provider) ?? m.provider,
       input: m.input,
+      // Catalog cost rates as the row's dim hint ("$0.6/$2.2 per M"); absent → provider fallback in the picker.
+      hint: formatModelCostHint(m.cost),
     })),
     providersCfg,
     readModelCheckAvail(),
