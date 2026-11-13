@@ -114,15 +114,22 @@ for (const f of files) {
 
 // ---- drop existing attachments whose names collide (idempotent re-publish) ----
 const existing = (await (await api(`/releases/${rel.id}/attach_files?access_token=${TOKEN}`)).json()) || [];
+let deleteFailed = 0;
 for (const a of existing) {
   if (uploads.some((u) => u.name === a.name)) {
     console.log(`[gitee] replacing existing attachment: ${a.name}`);
     const dr = await api(`/releases/${rel.id}/attach_files/${a.id}?access_token=${TOKEN}`, { method: "DELETE" });
-    if (!dr.ok) console.error(`  delete ${a.name} failed: HTTP ${dr.status}`);
+    if (!dr.ok) {
+      // A leftover attachment makes the re-upload below fail too, so this must
+      // not slip through silently in CI — counted into the exit code.
+      deleteFailed++;
+      console.error(`  delete ${a.name} failed: HTTP ${dr.status}`);
+    }
   }
 }
 
 // ---- upload ----
+let uploadFailed = 0;
 for (const u of uploads) {
   process.stdout.write(`[gitee] upload ${u.name} (${(statSync(u.path).size / 1048576).toFixed(1)} MB) ... `);
   const buf = readFileSync(u.path);
@@ -132,6 +139,16 @@ for (const u of uploads) {
   const r = await api(`/releases/${rel.id}/attach_files`, { method: "POST", body: form });
   const j = await r.json().catch(() => ({}));
   if (r.ok && j.name === u.name) console.log("ok");
-  else console.log(`FAIL: ${r.status} ${JSON.stringify(j).slice(0, 200)}`);
+  else {
+    uploadFailed++;
+    console.log(`FAIL: ${r.status} ${JSON.stringify(j).slice(0, 200)}`);
+  }
 }
-console.log("[gitee] done");
+
+// Non-zero exit on any failure so CI (release.yml gitee-mirror job) surfaces
+// partial syncs instead of silently shipping a broken mirror.
+if (deleteFailed > 0 || uploadFailed > 0) {
+  console.error(`[gitee] FAILED: ${deleteFailed} delete(s) + ${uploadFailed} upload(s) failed`);
+  process.exit(1);
+}
+console.log(`[gitee] done: ${uploads.length} asset(s) synced`);
