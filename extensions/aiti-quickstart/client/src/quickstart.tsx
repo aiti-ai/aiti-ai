@@ -22,15 +22,16 @@
 import { useState, useEffect, t, extSvc, apiUrl, onExtServiceChange } from "./host-shim";
 import { readSidebarDismissed, writeSidebarDismissed, resolveQuickstartCwd, topRecentRoot, deriveOnboardingState, splitKbdHint, RUNTIME_ROWS, type OnboardingState } from "./quickstart-logic";
 
-/* ── 公共样式（CSS vars 带兜底，照 app-center 卡片写法；紧凑化 2026-11-12——
- *   三张 top 卡合计须 ≤ 宿主顶区上限 min(300px,38vh)，矮窗口不内滚） ── */
+/* ── 公共样式（CSS vars 带兜底，照 app-center 卡片写法；紧凑化 2026-11-12；
+ *   2026-11-15 宿主顶区改 flex 自适应——吃掉 composer 上方全部空白，卡片自然高度
+ *   贴顶堆叠、下方自然留白；矮窗口 overflowY 内滚兜底） ── */
 const cardStyle: Record<string, unknown> = {
   width: "100%",
   height: "100%",
   display: "flex",
   flexDirection: "column",
-  gap: 4,
-  padding: "6px 10px",
+  gap: 2,
+  padding: "3px 10px",
   border: "1px solid var(--border, #3a3a3a)",
   borderRadius: 10,
   boxSizing: "border-box",
@@ -240,7 +241,62 @@ function useVitals(cwdFromExtra?: string | null): Vitals {
 
 /* ── 欢迎页 widget ── */
 
-const FULL_STEP_KEYS = ["qs.step1", "qs.step2", "qs.step3", "qs.step4"] as const;
+const FULL_STEP_KEYS = ["qs.step1", "qs.step2", "qs.step3", "qs.step4", "qs.step5"] as const;
+/** devtools 5 分钟教程（第 5 步外链落点；aiti.pw 上线地址）。 */
+const QUICKSTART_DOC_URL = "https://aiti.pw/devtools/quick-start.html";
+const STEP_DOC_KEY = "qs.step5";
+const stepNumStyle: Record<string, unknown> = {
+  display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+  width: 16, height: 16, borderRadius: 999, fontSize: 10.5, fontWeight: 600,
+  color: "var(--accent, #2563eb)", border: "1px solid var(--accent, #2563eb)",
+};
+const stepLabelStyle: Record<string, unknown> = { fontSize: 11, color: "var(--text-muted, #999)", lineHeight: 1.35, minWidth: 0 };
+function openQuickstartDoc(): void {
+  try { window.open(QUICKSTART_DOC_URL, "_blank", "noopener"); } catch { /* ignore */ }
+}
+/** lucide crosshair（准星，与 aiti-client InspectButton 同款线图）——第 5 步网页调试图标。 */
+function CrosshairIcon({ size = 12, color }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color || "currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
+      <circle cx="12" cy="12" r="10" />
+      <line x1="22" x2="18" y1="12" y2="12" />
+      <line x1="6" x2="2" y1="12" y2="12" />
+      <line x1="12" x2="12" y1="6" y2="2" />
+      <line x1="12" x2="12" y1="22" y2="18" />
+    </svg>
+  );
+}
+/** 单条步骤行：普通步骤纯文本；qs.step5 可点击（devtools 功能曝光位）——横跨全宽一行
+ *  （grid-column: 1/-1，避免 2 列格内换行局促），crosshair 图标 + 新窗打开 aiti.pw 5 分钟教程。 */
+function StepRow({ k, num }: { k: string; num: number }) {
+  const [hov, setHov] = useState(false);
+  if (k !== STEP_DOC_KEY) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+        <span style={stepNumStyle}>{num}</span>
+        <span style={stepLabelStyle}>{t(k)}</span>
+      </div>
+    );
+  }
+  return (
+    <div
+      title={t("qs.step5.title")}
+      role="button"
+      tabIndex={0}
+      onClick={openQuickstartDoc}
+      onKeyDown={(e: any) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openQuickstartDoc(); } }}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
+      style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, cursor: "pointer", borderRadius: 6, outline: "none", gridColumn: "1 / -1", whiteSpace: "nowrap" }}
+    >
+      <span style={stepNumStyle}>{num}</span>
+      <span style={{ ...stepLabelStyle, display: "inline-flex", alignItems: "center", gap: 5, color: hov ? "var(--accent, #2563eb)" : (stepLabelStyle.color as string), overflow: "hidden", textOverflow: "ellipsis" }}>
+        <CrosshairIcon size={12} color={hov ? "var(--accent, #2563eb)" : "var(--text-muted, #999)"} />
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", minWidth: 0, flexShrink: 1 }}>{t(k)}</span>
+      </span>
+    </div>
+  );
+}
 /** 快捷操作卡 8 项（桌面 4 列 ×2 行、手机 2 列）：基础行（会话/发送/换行/停止）
  *  + 输入行（@、/、历史召回）。语义对照宿主 ChatInput handleKeyDown。 */
 const SHORTCUT_KEYS = [
@@ -249,26 +305,39 @@ const SHORTCUT_KEYS = [
 ] as const;
 const EXAMPLE_KEYS = ["qs.ex.1", "qs.ex.2", "qs.ex.3", "qs.ex.4"] as const;
 
-/** 「上次工作区」chips 数据：/api/sessions distinct projectRoot（modified 降序 top3）。 */
+/** 「上次工作区」chips 数据：双源合并——/api/sessions 派生（projectRoot distinct）+
+ *  扩展 workspace history（获取过的目录在无会话时也有记录）。单靠 sessions 源时，
+ *  「获取过 workspace 但还没发消息」的用户刷新后落在 Get started 页且无路可走
+ *  （侧栏自动选中也依赖非空会话表）——history 源补上这条回路（2026-11-15）。 */
 function useRecentRoots(): Array<{ root: string; name: string }> {
   const [roots, setRoots] = useState<Array<{ root: string; name: string }>>([]);
   useEffect(() => {
     let alive = true;
     const scan = async () => {
+      const best = new Map<string, number>();
       try {
         const res = await fetch(apiUrl("/api/sessions"), { headers: { accept: "application/json" } });
         const d = (await res.json()) as { sessions?: Array<{ cwd?: string; projectRoot?: string | null; modified?: string }> };
-        const best = new Map<string, number>();
         for (const s of d.sessions ?? []) {
           const r = (s.projectRoot && String(s.projectRoot).trim()) || (s.cwd && String(s.cwd).trim()) || "";
           if (!r) continue;
           const tm = s.modified ? Date.parse(s.modified) : 0;
           if ((best.get(r) ?? -1) < tm) best.set(r, tm);
         }
-        const list = [...best.entries()].sort((x, y) => y[1] - x[1]).slice(0, 3)
-          .map(([root]) => ({ root, name: root.split(/[\\/]/).filter(Boolean).pop() ?? root }));
-        if (alive) setRoots(list);
       } catch { /* ignore */ }
+      try {
+        const res = await fetch(apiUrl("/api/extensions/aiti-quickstart/workspace/history"), { headers: { accept: "application/json" } });
+        const d = (await res.json()) as { ok?: boolean; workspaces?: Array<{ root?: string; time?: number }> };
+        for (const w of d.workspaces ?? []) {
+          const r = (w.root && String(w.root).trim()) || "";
+          if (!r) continue;
+          const tm = typeof w.time === "number" ? w.time : 0;
+          if ((best.get(r) ?? -1) < tm) best.set(r, tm);
+        }
+      } catch { /* ignore */ }
+      const list = [...best.entries()].sort((x, y) => y[1] - x[1]).slice(0, 3)
+        .map(([root]) => ({ root, name: root.split(/[\\/]/).filter(Boolean).pop() ?? root }));
+      if (alive) setRoots(list);
     };
     void scan();
     const refresh = () => { void scan(); };
@@ -378,44 +447,49 @@ export function GuideWidget(props: { cwd?: string | null; isMobile?: boolean; ar
         </div>
         <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "3px 12px", alignContent: "center" }}>
           {FULL_STEP_KEYS.slice(2).map((key, i) => (
-            <div key={key} style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-              <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, width: 16, height: 16, borderRadius: 999, fontSize: 10.5, fontWeight: 600, color: "var(--accent, #2563eb)", border: "1px solid var(--accent, #2563eb)" }}>{i + 3}</span>
-              <span style={{ fontSize: 11, color: "var(--text-muted, #999)", lineHeight: 1.45, minWidth: 0 }}>{t(key)}</span>
-            </div>
+            <StepRow key={key} k={key} num={i + 3} />
           ))}
         </div>
       </div>
     );
   }
 
-  // full：四步卡 + 初始化动作行（工作区/模型齐备后仍保留一键入口——重开 Hub / 配置模型）
-  const actionChip = (icon: unknown, label: string, onClick: () => void, key: string) => (
-    <button key={key} type="button" style={{ ...chipBase, color: "var(--text-muted, #999)" }} onClick={onClick}
+  // full：四步卡 + 标题行 icon 动作（2026-11-15：动作 chips 并入标题行 icon-only + tooltip，
+  // hint 保留——矮窗口顶区不再裁切第三卡；宽行 820px 内标题+3 chips+hint 余量充足）
+  const iconChip = (icon: unknown, title: string, onClick: () => void, key: string) => (
+    <button key={key} type="button" title={title} aria-label={title} onClick={onClick}
+      style={{
+        display: "inline-flex", alignItems: "center", justifyContent: "center",
+        width: 24, height: 20, flexShrink: 0, border: "1px solid var(--border, #3a3a3a)",
+        borderRadius: 6, background: "none", color: "var(--text-muted, #999)",
+        cursor: "pointer", padding: 0,
+      }}
       onMouseEnter={(e: any) => { e.currentTarget.style.borderColor = "var(--accent, #2563eb)"; e.currentTarget.style.color = "var(--accent, #2563eb)"; }}
       onMouseLeave={(e: any) => { e.currentTarget.style.borderColor = "var(--border, #3a3a3a)"; e.currentTarget.style.color = "var(--text-muted, #999)"; }}>
       {icon}
-      <span>{label}</span>
     </button>
+  );
+  const headFull = (
+    <div style={{ ...titleStyle, justifyContent: "space-between" }}>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+        <RocketIcon />{t("qs.guideTitle")}
+      </span>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+        {iconChip(<FolderPlusIcon />, t("qs.open.hub"), openWorkspaceHub, "hub")}
+        {iconChip(<CpuIcon />, t("qs.start.configureModel"), openModelConfig, "model")}
+        {importReady ? iconChip(<ImportIcon />, t("qs.start.importModels"), openModelsImport, "import") : null}
+        {/* hint 桌面保留（引导发现 ⚙）；小屏标题行窄，隐藏防挤压（⚙ 面板仍可从 edit 行进入） */}
+        {!isMobile && <span style={{ fontSize: 11, fontWeight: 400, color: "var(--text-dim, #888)", marginLeft: 2 }}>{t("qs.guideHint")}</span>}
+      </span>
+    </div>
   );
   return (
     <div style={cardStyle}>
-      {head}
+      {headFull}
       <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "3px 12px", alignContent: "center" }}>
         {FULL_STEP_KEYS.map((key, i) => (
-          <div key={key} style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-            <span style={{
-              display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-              width: 16, height: 16, borderRadius: 999, fontSize: 10.5, fontWeight: 600,
-              color: "var(--accent, #2563eb)", border: "1px solid var(--accent, #2563eb)",
-            }}>{i + 1}</span>
-            <span style={{ fontSize: 11, color: "var(--text-muted, #999)", lineHeight: 1.45, minWidth: 0 }}>{t(key)}</span>
-          </div>
+          <StepRow key={key} k={key} num={i + 1} />
         ))}
-      </div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 5, flexShrink: 0, paddingTop: 2, borderTop: "1px dashed var(--border, #3a3a3a)" }}>
-        {actionChip(<FolderPlusIcon />, t("qs.open.hub"), openWorkspaceHub, "hub")}
-        {actionChip(<GearIcon />, t("qs.start.configureModel"), openModelConfig, "model")}
-        {importReady ? actionChip(<ImportIcon />, t("qs.start.importModels"), openModelsImport, "import") : null}
       </div>
     </div>
   );
@@ -457,14 +531,14 @@ function openModelsImport(): void {
   try { modelsImportService()?.open(); } catch { /* ignore */ }
 }
 
-/** lucide settings-2 风格齿轮（配置模型动作 chip；不引图库，内联同款线图）。 */
-function GearIcon() {
+/** lucide cpu——与宿主设置「模型」section 同款图标（配置模型动作统一用本图标；
+ *  原 settings-2 齿轮是宿主「通用」section 的图形，语义不符 2026-11-15 用户指出）。 */
+function CpuIcon({ size = 12 }: { size?: number }) {
   return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
-      <path d="M20 7h-9" />
-      <path d="M14 17H5" />
-      <circle cx="17" cy="17" r="3" />
-      <circle cx="7" cy="7" r="3" />
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
+      <rect x="4" y="4" width="16" height="16" rx="2" />
+      <rect x="9" y="9" width="6" height="6" />
+      <path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 15h3M1 9h3M1 15h3" />
     </svg>
   );
 }
@@ -490,7 +564,7 @@ export function ShortcutsWidget(props: { cwd?: string | null; isMobile?: boolean
           return (
             <div key={key} style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
               <kbd style={kbdStyle}>{kbd}</kbd>
-              <span style={{ fontSize: 10.5, color: "var(--text-muted, #999)", lineHeight: 1.45, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{desc}</span>
+              <span style={{ fontSize: 10.5, color: "var(--text-muted, #999)", lineHeight: 1.35, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{desc}</span>
             </div>
           );
         })}
@@ -590,7 +664,7 @@ export function RuntimeWidget(props: { isMobile?: boolean; area?: string }) {
             <div key={row.key} style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
               <span style={{ color: meta.color, display: "inline-flex", flexShrink: 0 }}><Icon size={12} /></span>
               <span style={{ fontSize: 11, fontWeight: 600, color: meta.color, flexShrink: 0 }}>{t(row.key)}</span>
-              <span style={{ fontSize: 10.5, color: "var(--text-muted, #999)", lineHeight: 1.45, minWidth: 0 }}>{t(row.descKey)}</span>
+              <span style={{ fontSize: 10.5, color: "var(--text-muted, #999)", lineHeight: 1.35, minWidth: 0 }}>{t(row.descKey)}</span>
             </div>
           );
         })}
@@ -676,7 +750,7 @@ export function FreshGuidePage(props: { isMobile?: boolean }) {
       </div>
       <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 10 }}>
         {bigBtn(<FolderPlusIcon size={16} />, t("qs.start.acquire"), t("qs.start.acquireHint"), openWorkspaceHub, "hub", true)}
-        {bigBtn(<GearIcon />, t("qs.start.configureModel"), vitals.modelsOk && vitals.modelCount > 0 ? t("qs.start.modelOk") : t("qs.start.modelMissing"), openModelConfig, "model")}
+        {bigBtn(<CpuIcon size={16} />, t("qs.start.configureModel"), vitals.modelsOk && vitals.modelCount > 0 ? t("qs.start.modelOk") : t("qs.start.modelMissing"), openModelConfig, "model")}
         {importReady ? bigBtn(<ImportIcon size={16} />, t("qs.start.importModels"), t("qs.start.importModelsHint"), openModelsImport, "import") : null}
       </div>
       {recents.length > 0 ? (
