@@ -114,7 +114,7 @@ Measured behavior (test reports T-E/T-H): listed Hosts answer 200, unlisted 403;
 | Web desktop | noVNC `:6080/vnc.html` (RFB via websockify→x11vnc→Xvfb :99) |
 | CDP debugging | Chrome `:9222` (headful, `--user-data-dir=/opt/aiti/data/chrome-profile`) |
 | Voice input | ASR `ws://<host>:8767/ws/stream` (realtime) / `/voice/quick` (quick) / `/voice/transcribe` (refined) / `/ws/vad` (segmentation) — the aiti-ai-input extension wires up automatically via `AITI_ASR_STREAM_BASE` |
-| Voice readout | edge-tts installed; enable the `tts.edge` feature in the aiti-ai-speak extension |
+| Voice readout | edge-tts installed; enable the `tts.edge` feature in the aiti-ai-speek extension |
 | Web terminal | ttyd `:7681` |
 | Tunnels | `cloudflared` / `ngrok` / `frpc` usable inside the container (ngrok needs your own authtoken) |
 | Download tool | `justget <url> -o <file> -m <mirror-url>` multi-source racing |
@@ -164,5 +164,5 @@ node docker/scripts/gen-deps.mjs                         # S3 dependency matrix 
 | `/api/models` 403 | Normal — it only allows existing session cwds; the health check uses `/api/home` |
 | x11vnc connects but no picture / very slow | NOFILE deadlock (O20) — confirm `AITI_GUI_NOFILE` was not raised and use the image's own 50-gui-start |
 | CDP 9222 unreachable | Confirm `--user-data-dir` is among the flags (Chrome 136+ ignores CDP on the default profile) + first-run EULA skipped |
-| ASR first response slow | Models load lazily (full pre-downloaded 2.7GB, zero re-download; switching models downloads incrementally) |
+| ASR first response slow | Models load lazily (full pre-downloads its models, zero re-download; switching models downloads incrementally) |
 | OOM | full + voice needs ≥8GB memory (2–6GB OOMs in practice, test report T-H5) |
