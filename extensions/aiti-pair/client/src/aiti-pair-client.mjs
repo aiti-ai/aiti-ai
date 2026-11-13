@@ -47,10 +47,11 @@ export default function register(ctx) {
       setTimeout(() => {
         try {
           if (!panelOpen || document.querySelector(".apair")) return;
+          const sz = pairWindowSize();
           const host = document.createElement("div");
           host.style.cssText = "position:fixed;inset:0;z-index:310;background:rgba(0,0,0,0.35);display:flex;align-items:center;justify-content:center";
           const box = document.createElement("div");
-          box.style.cssText = "position:relative;width:min(460px,94vw);height:min(560px,86vh);border-radius:12px;overflow:hidden;background:var(--bg-panel);border:1px solid var(--border);color:var(--text);box-shadow:0 10px 40px rgba(0,0,0,0.35)";
+          box.style.cssText = `position:relative;width:min(${sz.w}px,94vw);height:min(${sz.h}px,86vh);border-radius:12px;overflow:hidden;background:var(--bg-panel);border:1px solid var(--border);color:var(--text);box-shadow:0 10px 40px rgba(0,0,0,0.35)`;
           const bar = document.createElement("div");
           bar.style.cssText = "display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;flex-shrink:0";
           bar.innerHTML = '<span style="flex:1">✉ 设备互连</span>';
@@ -125,6 +126,7 @@ export default function register(ctx) {
     }, [open]);
 
     if (!open) return null;
+    const sz = pairWindowSize();
     return h("div", {
       style: {
         position: "fixed", inset: 0, zIndex: 310, background: "rgba(0,0,0,0.35)",
@@ -135,10 +137,10 @@ export default function register(ctx) {
       h("div", {
         "data-ext-float": "1",      // aiti-float 接管：拖拽/缩放/持久化/置前
         "data-ext-float-full": "1", // 小屏（≤640px）铺满视口
-        "data-ext-float-w": "460",
-        "data-ext-float-h": "560",
+        "data-ext-float-w": String(sz.w),
+        "data-ext-float-h": String(sz.h),
         style: {
-          width: "min(460px, 94vw)", height: "min(560px, 86vh)", padding: 0, overflow: "hidden",
+          width: `min(${sz.w}px, 94vw)`, height: `min(${sz.h}px, 86vh)`, padding: 0, overflow: "hidden",
           borderRadius: 12, background: "var(--bg-panel)", border: "1px solid var(--border)",
           color: "var(--text)", boxShadow: "0 10px 40px rgba(0,0,0,0.35)", position: "relative",
         },
@@ -172,8 +174,18 @@ export default function register(ctx) {
     );
   }
 
-  let hostRef = null;
-  const hostEl = () => hostRef;
+let hostRef = null;
+const hostEl = () => hostRef;
+
+/* ── 面板尺寸（响应式）：大屏给对话更多空间 ──
+   ≥1536px 900×740 · ≥1024px 720×680 · 其余 460×560（aiti-float 持久化优先——
+   拖/缩过的用户保留自调尺寸，双击标题复位到这组新默认） */
+function pairWindowSize() {
+  const mq = (q) => { try { return globalThis.matchMedia(q).matches; } catch { return false; } };
+  if (mq("(min-width:1536px)")) return { w: 900, h: 740 };
+  if (mq("(min-width:1024px)")) return { w: 720, h: 680 };
+  return { w: 460, h: 560 };
+}
 
   /* ── toolbar 按钮（lucide message-circle，36×36 同系统内建） ── */
   function PairToolbarButton() {
