@@ -2752,8 +2752,12 @@ if (__QRCodeLib && __QRCodeLib.stringToBytesFuncs && __QRCodeLib.stringToBytesFu
     }
     function targetName(id) {
       if (id === 'all') return '全部设备';
-      var d = p.getDevices().filter(function (x) { return x.id === id; })[0];
-      return d ? d.name : String(id || '').slice(0, 12);
+      var all = p.getDevices();
+      var d = all.filter(function (x) { return x.id === id; })[0];
+      if (!d) return String(id || '').slice(0, 12);
+      // 同名歧义时占位符也带 id 尾标（与列表消歧一致）
+      var same = all.filter(function (x) { return x.name === d.name; }).length;
+      return d.name + (same > 1 ? ' ·' + String(d.id).slice(-4) : '');
     }
 
     // 离线显示偏好（默认只显在线；持久化 localStorage）
@@ -2782,12 +2786,18 @@ if (__QRCodeLib && __QRCodeLib.stringToBytesFuncs && __QRCodeLib.stringToBytesFu
           + '<span style="font-size:9px;color:var(--ap-dim);word-break:break-all;text-align:center">' + esc(p.pairPageUrl()) + '</span>'
           + '</div></div>');
       } else {
+        // 同名消歧：同默认名的设备（多标签/多来源/同 CLI 多会话）追加 id 尾标区分，
+        // 否则列表看起来全是重复项（name 相同时 cwd 副标题窄屏又看不见）
+        var nameCount = {};
+        list.forEach(function (d) { nameCount[d.name] = (nameCount[d.name] || 0) + 1; });
         list.forEach(function (d) {
           var on = d.online !== false;
           var info = d.deviceLabel || d.cwd || '';
+          var dup = nameCount[d.name] > 1;
+          var nm = d.name + (dup ? ' <span style="color:var(--ap-dim);font-weight:400">·' + esc(String(d.id).slice(-4)) + '</span>' : '');
           rows.push('<div class="apair-dev' + (d.id === target ? ' sel' : '') + (!on ? ' off' : '') + '" data-id="' + esc(d.id) + '" title="' + esc(d.name) + (info ? ' · ' + info : '') + (on ? '' : '（离线）') + '">'
             + '<span class="ic">' + (icon[d.kind] || '•') + '</span>'
-            + '<span class="nmc"><span class="nm">' + esc(d.name) + '</span>'
+            + '<span class="nmc"><span class="nm">' + nm + '</span>'
             + (info ? '<span class="nm-info">' + esc(info.slice(0, 40)) + '</span>' : '')
             + '</span>'
             + '<span class="dot' + (!on ? ' off' : '') + '"></span>'
