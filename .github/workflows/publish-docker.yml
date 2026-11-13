@@ -3,7 +3,7 @@
 # Trigger: workflow_dispatch (manual only — the auto-run on tag push is suspended,
 # like the other publish pipelines). Optional version tag input.
 # readme_only=true skips the registry gate and builds and only syncs the Hub README
-# (docker/MANUAL.md → hub.docker.com/r/aitiai/pi-web overview).
+# (docker/README.md → hub.docker.com/r/aitiai/pi-web overview).
 #
 # Artifacts: aitiai/pi-web:{core,full} + aitiai/pi-web:v<ver>-{core,full} + latest
 # Required secrets: DOCKERHUB_USERNAME (=aitiai), DOCKERHUB_TOKEN (hub.docker.com access token)
@@ -149,7 +149,7 @@ jobs:
           echo "- \`${IMAGE}:${{ steps.ver.outputs.version }}-core\` / \`-full\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- \`core\` / \`full\` / \`latest\`（rolling）" >> "$GITHUB_STEP_SUMMARY"
 
-  # Hub overview sync (docker/MANUAL.md → hub.docker.com/r/aitiai/pi-web).
+  # Hub overview sync (docker/README.md → hub.docker.com/r/aitiai/pi-web).
   # Independent of the image build (idempotent, no registry side effects), so it runs
   # even when the gate/builds were skipped by readme_only=true.
   sync-readme:
@@ -166,4 +166,4 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}   # PAT with read/write scope
           repository: aitiai/pi-web
           short-description: "AITI Web — browser workbench for the pi coding agent (core / full Docker images)"
-          readme-filepath: ./docker/MANUAL.md
+          readme-filepath: ./docker/README.md
