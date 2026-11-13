@@ -16,7 +16,7 @@
   "license": "MIT",
   "contentHash": "5230ae563f61036d",
   "dependencies": {
-    "@aiti-ai/ext-shared": "^0.1.7"
+    "@aiti-ai/ext-shared": "^0.1.12"
   },
   "repository": {
     "type": "git",
