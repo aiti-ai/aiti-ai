@@ -20,7 +20,7 @@ import { movePanelTab, orderPanelTabs } from "@/lib/panel-tab-order";
 import { openFileTab, openFolderTab, saveFileViewerState, findDormantFileFacePath, saveParkedFileViewerState, switchFileWorkspace, type ParkedFileWorkspace } from "./file-tab-state";
 import { SettingsPanel, SettingsSectionIcon } from "./SettingsPanel";
 import dynamic from "next/dynamic";
-import { ExtSlotsProvider, ExtSlot, TakeoverSlot, useExtSlotItems, useExtMetas, dispatchChatSend, ExtItemBoundary, registerExtClientService, ensureExtMaterialized } from "./ExtSlots";
+import { ExtSlotsProvider, ExtSlot, TakeoverSlot, useExtSlotItems, useExtMetas, dispatchChatSend, ExtItemBoundary, registerExtClientService, ensureExtMaterialized, translateExtItemText } from "./ExtSlots";
 import { ProviderUsagePanel } from "./ProviderUsagePanel";
 /** Lazy-loaded SessionSidebar (unified dock plan §7-2): in takeover mode (sidebarContent
  *  has a taker) this component is not rendered at all and the chunk never loads, keeping
@@ -4216,14 +4216,16 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
           meta.onClick and runs its original behavior (e.g. the extension manager
           opening its management panel). */}
       {sidebarFooterStaticItems.map((it) => {
-        const label = it.meta?.label ?? it.meta?.title ?? it.extId ?? "?";
+        // label/title support an "i18n:<key>" prefix resolved against the declaring
+        // extension's manifest i18n table (translateExtItemText); plain text passes through.
+        const label = translateExtItemText(it.extId, it.meta?.label) || translateExtItemText(it.extId, it.meta?.title) || it.extId || "?";
         return (
           <button
             key={it.id}
             type="button"
             onClick={(event) => it.meta?.onClick?.(event)}
             disabled={it.pending === true}
-            title={it.meta?.title ?? label}
+            title={translateExtItemText(it.extId, it.meta?.title) || label}
             aria-label={label}
             style={{
               flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
