@@ -286,7 +286,7 @@ export const enLocale: LocalePlugin = {
     "appUpdate.stepsNpx": "Run the new version directly:\n   npx @aiti-ai/pi-web@latest",
     "appUpdate.stepsDocker": "1. docker pull aitiai/pi-web:latest\n2. Recreate the container the same way it was originally started",
     "appUpdate.stepsGit": "Source deployment — update the repo, then rebuild / restart as usual:\n   git pull\n(dev mode picks changes up automatically.)",
-    "appUpdate.stepsOther": "Custom deployment — update manually following the docs of your deployment method.",
+    "appUpdate.stepsOther": "1. Stop the server:\n   pi-web stop\n2. Update:\n   pi-web update\n   (If pi-web update does not fit your setup, update the package manually per your deployment method's docs.)\n3. Start the server:\n   pi-web start",
     "appUpdate.managedNote": "If the server is managed by systemd / launchd / similar, use the manager's commands to stop and start (e.g. systemctl restart <unit>) — the update itself is still pi-web update.",
     "appUpdate.releaseNotesLink": "Release notes",
     "sidebar.hide": "Hide sidebar",

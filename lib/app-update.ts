@@ -46,9 +46,16 @@ export function isNewerStableVersion(candidate: string, current: string): boolea
   return candidateParts.fork > currentParts.fork;
 }
 
-export function getPiWebReleaseUrl(version: string): string | null {
+// Update-notice links point at the public update guide (version scheme +
+// per-install-shape steps) on the docs site. The version argument is still
+// validated so callers can keep using a null return as a format check; the
+// page itself covers every version. Changelogs remain on GitHub Releases and
+// are linked from the guide.
+export const PI_WEB_UPDATE_GUIDE_URL = "https://aiti.pw/guide/update.html";
+
+export function getPiWebUpdateGuideUrl(version: string): string | null {
   if (!parseAppVersion(version)) return null;
-  return `https://github.com/aiti-ai/aiti-ai/releases/tag/v${version}`;
+  return PI_WEB_UPDATE_GUIDE_URL;
 }
 
 // ---- Install-shape detection (pure decision part; the IO lives in

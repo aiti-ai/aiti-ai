@@ -43,7 +43,10 @@ export function UpdateGuideDialog({ update, onClose }: Props) {
 
   const mode = update.install?.mode ?? "other";
   const steps = t(STEPS_KEY[mode]);
-  const showManagedNote = update.install?.supported === true;
+  // Managed deployments (systemd/launchd) show up as archive/npm-global
+  // (supported) or as "other" custom setups — both need the reminder that
+  // the manager owns stop/start while the update itself stays pi-web update.
+  const showManagedNote = update.install?.supported === true || mode === "other";
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {

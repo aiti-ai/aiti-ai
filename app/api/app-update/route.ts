@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { NextResponse } from "next/server";
 import type { AppInstallInfo, AppUpdateResponse } from "@/lib/api-types";
-import { buildInstallInfo, getPiWebReleaseUrl, isNewerStableVersion } from "@/lib/app-update";
+import { buildInstallInfo, getPiWebUpdateGuideUrl, isNewerStableVersion } from "@/lib/app-update";
 
 export const dynamic = "force-dynamic";
 
@@ -135,7 +135,7 @@ async function fetchLatestVersion(): Promise<AppUpdateResponse> {
       currentVersion: CURRENT_VERSION,
       latestVersion,
       updateAvailable: isNewerStableVersion(latestVersion, CURRENT_VERSION),
-      releaseUrl: getPiWebReleaseUrl(latestVersion) ?? "",
+      releaseUrl: getPiWebUpdateGuideUrl(latestVersion) ?? "",
     };
   }
 
@@ -148,7 +148,7 @@ async function fetchLatestVersion(): Promise<AppUpdateResponse> {
 
   const body = await response.json() as { version?: unknown };
   const latestVersion = typeof body.version === "string" ? body.version : "";
-  const releaseUrl = getPiWebReleaseUrl(latestVersion);
+  const releaseUrl = getPiWebUpdateGuideUrl(latestVersion);
   if (!releaseUrl) throw new Error("npm registry returned an invalid version");
 
   return {
