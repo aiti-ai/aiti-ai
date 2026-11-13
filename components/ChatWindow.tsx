@@ -1572,6 +1572,9 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       onConvertQueueItem={convertQueuedMessage}
       isStreaming={sessionBusy}
       canContinue={!isEmptyNew}
+      // Welcome page: no minimap is rendered, so the composer column centers on the
+      // same 820px line as the widget cards / selectors (session view keeps the inset).
+      centerColumn={isEmptyNew}
       onContinue={handleContinue}
       model={displayModelValue}
       isAutoModelSelection={isAutoModelSelection}
@@ -1763,10 +1766,11 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       )}
 
       {/* New-session welcome-page widget zone · top (newSessionWidgets; renders only on
-          isEmptyNew, zero footprint otherwise). The Zone brings its own height-capped
-          scrolling (TOP_ZONE_MAX_HEIGHT) and shrink-0 so it never squeezes the message
-          area/composer. extra only feeds data {cwd,isMobile,area}; panel state lives in
-          this component (nswCustomizeOpen). */}
+          isEmptyNew, zero footprint otherwise). The zone flex-grows to absorb ALL free space
+          above the composer (cards stay at natural height and hug the top, leaving natural
+          breathing room below; overflowY keeps short windows safe — the composer is never
+          squeezed). extra only feeds data {cwd,isMobile,area}; panel state lives in this
+          component (nswCustomizeOpen). */}
       {isEmptyNew && (
         <NewSessionWidgetZone
           area="top"
@@ -1775,7 +1779,10 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
         />
       )}
 
-      <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
+      {/* flex-1 only in session view (hosts the message scroll box); on the welcome page
+          the box would be empty yet still claim half the free flex space, squeezing the
+          top widget zone (2026-11-15: top zone is flex-1 now). */}
+      <div className={`relative flex min-h-0 min-w-0 overflow-hidden${isEmptyNew ? "" : " flex-1"}`}>
         {extensionDialog && (
           <ExtensionDialog key={extensionDialog.id} request={extensionDialog} waitingCount={waitingExtensionDialogCount} onRespond={respondToExtensionUi} />
         )}
@@ -2290,7 +2297,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
           </div>
         )}
         {isEmptyNew && (
-          <div className="mb-3 w-full" style={{ paddingLeft: 16, paddingRight: isMobile ? 16 : 52 }}>
+          <div className="mb-3 w-full" style={{ paddingLeft: 16, paddingRight: 16 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, maxWidth: "var(--chat-content-max-width, 820px)", margin: "0 auto", fontFamily: "var(--font-mono)" }}>
               <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 7 : 10, minWidth: 0, flex: 1, lineHeight: 1.4, overflow: "hidden" }}>
                 <Image src={withBasePath("/icons/apple-touch-icon.png")} width={32} height={32} alt="" priority style={{ flexShrink: 0 }} />
@@ -2310,7 +2317,9 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
           </div>
         )}
         {isEmptyNew && (workspaceOptions.length > 0 || backendOptions.length > 0 || backendExtraOptions.length > 0 || backendRescanable || hasNewSessionSelectors) && (
-          <div className="mx-auto mb-3 w-full" style={{ maxWidth: "var(--chat-content-max-width, 820px)", paddingLeft: 32, paddingRight: isMobile ? 32 : 68 }}>
+          // 820px content column + symmetric 16px gutters (inside the widened max) → inner
+          // content left edge lands on the same centerline as the composer/cards (2026-11-15).
+          <div className="mx-auto mb-3 w-full" style={{ maxWidth: "calc(var(--chat-content-max-width, 820px) + 32px)", paddingLeft: 16, paddingRight: 16 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontFamily: "var(--font-mono)", fontSize: 12 }}>
               {/* Workspace selection (before Backend): defaults to the current cwd; choosing
                   only stages a target and doesn't switch immediately — after sending creates
