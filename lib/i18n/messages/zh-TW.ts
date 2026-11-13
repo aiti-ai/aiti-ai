@@ -218,7 +218,7 @@ export const zhTWLocale: LocalePlugin = {
     "appUpdate.stepsNpx": "直接執行新版本：\n   npx @aiti-ai/pi-web@latest",
     "appUpdate.stepsDocker": "1. docker pull aitiai/pi-web:latest\n2. 按原啟動方式重建容器",
     "appUpdate.stepsGit": "原始碼部署——在儲存庫裡更新程式碼後重新建置：\n   git pull\n然後按慣常方式重啟（dev 模式改碼即生效）。",
-    "appUpdate.stepsOther": "自訂部署——請按所用部署方式的文件手動更新。",
+    "appUpdate.stepsOther": "1. 停止服務：\n   pi-web stop\n2. 更新：\n   pi-web update\n   （若 update 不適用於你的部署方式，請按所用部署方式的文件手動更新套件本體）\n3. 啟動服務：\n   pi-web start",
     "appUpdate.managedNote": "若服務由 systemd / launchd 等程序管理器託管，啟停請用管理器命令（如 systemctl restart <unit>），更新本身仍是 pi-web update。",
     "appUpdate.releaseNotesLink": "查看版本資訊",
     "sidebar.hide": "隱藏側邊欄",
