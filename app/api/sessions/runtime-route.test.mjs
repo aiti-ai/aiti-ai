@@ -3,7 +3,6 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { gunzipSync } from "node:zlib";
 import test from "node:test";
 import { createJiti } from "jiti";
 
@@ -127,7 +126,7 @@ test("the running poll carries the sidebar state revision and deleting a session
   assert.equal(await revision(), 2);
 });
 
-test("session listing returns a gzip-compressed response when the client accepts it", async (t) => {
+test("session listing returns plain JSON even when the client accepts gzip", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "pi-web-list-gzip-"));
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = dir;
@@ -150,9 +149,10 @@ test("session listing returns a gzip-compressed response when the client accepts
   }));
 
   assert.equal(response.status, 200);
-  assert.equal(response.headers.get("Content-Encoding"), "gzip");
-  assert.match(response.headers.get("Vary") ?? "", /(?:^|,\s*)Accept-Encoding(?:\s*,|$)/i);
-  const payload = JSON.parse(gunzipSync(Buffer.from(await response.arrayBuffer())).toString("utf8"));
+  // No Next-layer gzip: Next 16.4.6 strips route-handler Content-Encoding headers (body kept),
+  // which made the edge re-compression layer double-gzip the payload. See lib/json-response.ts.
+  assert.equal(response.headers.get("Content-Encoding"), null);
+  const payload = await response.json();
   assert.equal(payload.sessions[0].firstMessage, firstMessage);
 });
 
@@ -377,7 +377,7 @@ test("live detail and state routes work without a persisted JSONL file", async (
   });
 });
 
-test("session detail returns a gzip-compressed response when the client accepts it", async (t) => {
+test("session detail returns plain JSON even when the client accepts gzip", async (t) => {
   const previousRegistry = globalThis.__piSessions;
   const id = "live-route-gzip-test";
   const timestamp = "2026-09-05T00:00:00.000Z";
@@ -417,7 +417,8 @@ test("session detail returns a gzip-compressed response when the client accepts 
   );
 
   assert.equal(response.status, 200);
-  assert.equal(response.headers.get("Content-Encoding"), "gzip");
-  const payload = JSON.parse(gunzipSync(Buffer.from(await response.arrayBuffer())).toString("utf8"));
+  // No Next-layer gzip — see lib/json-response.ts for the Next 16.4.6 regression.
+  assert.equal(response.headers.get("Content-Encoding"), null);
+  const payload = await response.json();
   assert.equal(payload.info.firstMessage, firstMessage);
 });
