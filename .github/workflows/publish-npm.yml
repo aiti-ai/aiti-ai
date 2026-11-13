@@ -63,10 +63,16 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Write private redact config (from AITI_RELEASE_REDACT secret; empty = rules degrade)
-        if: ${{ secrets.AITI_RELEASE_REDACT != '' }}
+        # NB: `secrets` is NOT available in `if:` conditionals — gate inside the shell via env instead.
+        env:
+          AITI_RELEASE_REDACT: ${{ secrets.AITI_RELEASE_REDACT }}
         run: |
+          if [ -z "$AITI_RELEASE_REDACT" ]; then
+            echo "AITI_RELEASE_REDACT not set — redact rules degrade (structural rules only)"
+            exit 0
+          fi
           mkdir -p ~/.aiti
-          printf '%s' "${{ secrets.AITI_RELEASE_REDACT }}" > ~/.aiti/release-redact.json
+          printf '%s' "$AITI_RELEASE_REDACT" > ~/.aiti/release-redact.json
 
       - uses: actions/setup-node@v4
         with:
