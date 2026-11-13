@@ -203,6 +203,31 @@ test("summarizeSegment: long text head…tail within budget", () => {
   assert.ok(out.length > 12, `expected a fairly long summary, got ${out}`);
 });
 
+test("summarizeSegment: larger budget shows more text (viewport-aware caller)", () => {
+  const text = "这是一段非常长的段落内容需要被截断成头部和尾部摘要的形式来适应按钮宽度预算，因此在窄屏上显示会偏短，宽屏则应当保留更多原文内容方便区分与选择";
+  const narrow = summarizeSegment(text, 32);
+  const wide = summarizeSegment(text, 64);
+  assert.ok(!narrow.includes("\n"), "no newlines in summary");
+  assert.ok(wide.length > narrow.length, `wider budget should keep more: narrow=${narrow} wide=${wide}`);
+  assert.ok(wide.length < text.length, `still truncated at 64: ${wide}`);
+  // 超大预算完整显示（不截断）
+  assert.equal(summarizeSegment(text, 999), text);
+  // 非法预算兑底默认 32
+  assert.equal(summarizeSegment(text, -1), narrow);
+  assert.equal(summarizeSegment(text, NaN), narrow);
+});
+
+test("parseParagraph: labelMax option widens option labels (viewport-aware caller)", () => {
+  const segs = parseParagraph("要我帮你修改这个非常长的文件路径并且完成所有关联的配置项吗？");
+  const opts = segs[0].options;
+  assert.ok(opts && opts.length === 2);
+  assert.ok(opts[0].label.includes("…"), `narrow label truncated: ${opts[0].label}`);
+  const wideSegs = parseParagraph("要我帮你修改这个非常长的文件路径并且完成所有关联的配置项吗？", { labelMax: 30 });
+  const wideOpts = wideSegs[0].options;
+  assert.ok(!wideOpts[0].label.includes("…"), `wide label untruncated: ${wideOpts[0].label}`);
+  assert.ok(wideOpts[0].label.length > opts[0].label.length);
+});
+
 test("encodeFilePathForApi: keeps / separators (no leading slash)", () => {
   assert.equal(encodeFilePathForApi("/home/user/a b.ts"), "home/user/a%20b.ts");
 });

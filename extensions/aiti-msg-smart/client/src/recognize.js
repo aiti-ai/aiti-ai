@@ -20,15 +20,16 @@ export function encodeFilePathForApi(filePath) {
   return String(filePath).split("/").filter(Boolean).map(encodeURIComponent).join("/");
 }
 
-/** 引用兜底按钮的摘要：全角≈1 单位、半角≈0.55，预算 11 单位；超长取 头3…尾3 逐步扩展。 */
+/** 引用兜底按钮的摘要：全角≈1 单位、半角≈0.55，预算 budget（默认 32）单位；超长取 头N…尾N 逐步扩展。
+ *  budget 可由调用方按视口宽度动态传入（宽屏多显示，窄屏保守）。 */
 function unitWidth(s) {
   let w = 0;
   for (const ch of s) w += /[\u3000-\u9FFF\uFF00-\uFFEF\u2014\u2018\u2019\u201C\u201D\u2026]/u.test(ch) ? 1 : 0.55;
   return w;
 }
-export function summarizeSegment(text) {
+export function summarizeSegment(text, budget = 32) {
   const t = text.trim();
-  const BUDGET = 32;
+  const BUDGET = Number.isFinite(budget) && budget >= 8 ? budget : 32;
   if (unitWidth(t) <= BUDGET) return t;
   let head = 3;
   let tail = 3;
@@ -80,9 +81,10 @@ function cleanOption(s) {
 }
 
 /** 识别段内选项；无清晰选项返回 null（调用方退回纯引用回复）。 */
-export function detectOptions(seg) {
+export function detectOptions(seg, labelMax = 12) {
   const t = seg.trim();
   if (!t) return null;
+  const maxL = Number.isFinite(labelMax) && labelMax >= 4 ? labelMax : 12;
 
   // 1) 显式选择："A 还是 B" / "A 或者 B" / "A or B"（\bor\b 防 store/word 内拆）。
   //    最长备选在前（或者还是 > 还是/或者），否则 "A 或者还是 B" 的 b 会解析成 "还是 B"。
@@ -92,8 +94,8 @@ export function detectOptions(seg) {
     const b = cleanOption(choice[2]);
     if (a && b && a !== b) {
       return [
-        { label: truncate(a, 12), value: a },
-        { label: truncate(b, 12), value: b },
+        { label: truncate(a, maxL), value: a },
+        { label: truncate(b, maxL), value: b },
       ];
     }
   }
@@ -113,7 +115,7 @@ export function detectOptions(seg) {
       // 这里会得到 "好，Should I p…"/"不用" 混搭，应落入英文 Yes/No 分支。
       // label 截断显示（摘要带上下文），value 完整预填。
       return [
-        { label: `好，${truncate(action, 12)}`, value: "是的" },
+        { label: `好，${truncate(action, maxL)}`, value: "是的" },
         { label: "不用", value: "不用了" },
       ];
     }
@@ -142,9 +144,11 @@ export function formatQuote(seg, value) {
   return value ? `${quote}\n${value}` : `${quote}\n`;
 }
 
-/** 段落级解析：逐段 → { text, options }（弹层每段一行按钮用）。 */
-export function parseParagraph(text) {
-  return splitQuestions(text).map((seg) => ({ text: seg, options: detectOptions(seg) }));
+/** 段落级解析：逐段 → { text, options }（弹层每段一行按钮用）。
+ *  opts.labelMax：选项按钮 label 截断预算（缺省 12；宽屏调用方可传更大值多显示文本）。 */
+export function parseParagraph(text, opts = {}) {
+  const labelMax = opts && typeof opts === "object" ? opts.labelMax : undefined;
+  return splitQuestions(text).map((seg) => ({ text: seg, options: detectOptions(seg, labelMax) }));
 }
 
 // ── 跨仓分辨根（aiti-git-trace 协作）──┐

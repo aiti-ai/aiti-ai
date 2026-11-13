@@ -21,7 +21,6 @@
 export default {
   id: "aiti-msg-smart",
   name: "消息智能（段落点击识别）",
-  version: "0.1.0",
   icon: "icon.svg",
   client: "dist/aiti-msg-smart-client.mjs",
 
