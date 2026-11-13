@@ -138,5 +138,12 @@
     "firefox 111",
     "safari 16.2",
     "ios_saf 16.2"
+  ],
+  "keywords": [
+    "pi-web",
+    "pi-coding-agent",
+    "web-ui",
+    "ai-agent",
+    "nextjs"
   ]
 }
