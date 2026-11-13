@@ -2,7 +2,7 @@
 # Usage: docker compose -f docker/compose.yaml up -d
 services:
   aiti:
-    image: aiti/aiti:full        # or :core (base)
+    image: aitiai/pi-web:full        # or :core (base)
     container_name: aiti
     ports:
       - "30142:30142"            # pi-web (required)

@@ -1,6 +1,6 @@
 # aiti Docker Manual
 
-> Images: `aiti/aiti:core` (base, 2.13GB) / `aiti/aiti:full` (all-in-one, 7.76GB).
+> Images: `aitiai/pi-web:core` (base, 2.13GB) / `aitiai/pi-web:full` (all-in-one, 7.76GB).
 
 ## 1. Quick start
 
@@ -11,7 +11,7 @@ docker run -d --name aiti --init \
   -v aiti_data:/opt/aiti/data \
   -v aiti_agent:/opt/aiti/agent \
   -v ~/my-project:/workspace \
-  aiti/aiti:core
+  aitiai/pi-web:core
 ```
 
 - First launch: sidebar "Select project → Use default directory" (= /workspace) → "New session" → "Settings" at the bottom to configure a model key → chat.
@@ -80,7 +80,7 @@ docker run -d --name aiti --init \
   -e AITI_BASE_URL="https://aiti.pi.example.com:8443" \
   -e API_ALLOW_ORIGINS="*" \
   -v aiti_data:/opt/aiti/data -v aiti_agent:/opt/aiti/agent \
-  aiti/aiti:core
+  aitiai/pi-web:core
 ```
 
 Measured behavior (test reports T-E/T-H): listed Hosts answer 200, unlisted 403; adding subdomains under a `*.pi.example.com` wildcard + wildcard certificate needs no extra work.
@@ -126,11 +126,11 @@ docker volume rm aiti_data aiti_agent   # remove the data too (careful)
 
 ```bash
 # Non-CN network / GitHub CI: official mirrors directly
-./docker/build.sh --target core --tag aiti/aiti:core
-./docker/build.sh --target full --tag aiti/aiti:full     # requires core first
+./docker/build.sh --target core --tag aitiai/pi-web:core
+./docker/build.sh --target full --tag aitiai/pi-web:full     # requires core first
 
 # CN local builds: --cn injects mirrors (apt=tuna / npm=npmmirror / hf=hf-mirror / pypi=tuna)
-./docker/build.sh --target core --tag aiti/aiti:core --cn
+./docker/build.sh --target core --tag aitiai/pi-web:core --cn
 # Equivalent env: AITI_CN=1 (pre-set in the systemd unit template)
 
 ./docker/scripts/smoke.sh full [--keep]                  # 22-check smoke suite (exit = failure count)
