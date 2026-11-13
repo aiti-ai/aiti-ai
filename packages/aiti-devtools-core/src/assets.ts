@@ -1,7 +1,7 @@
 /**
  * aiti-devtools-core · 公共资产加载（载体无关）
  *
- * 构建产物（aiti-launcher.js / cockpit.html / bridge-client.js / aiwin.js / host-protocol.js）
+ * 构建产物（aiti-launcher.js / cockpit.html / bridge-client.js / aiwin.js / host-protocol.js / pair-client.js / pair.html）
  * 统一构建进本包 assets/（tools/build-assets.mjs），vite / webpack / 其他载体从这里读，
  * 一份资产多处复用（避免各载体包各自拷贝、漂移）。
  */
@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { StaticFile } from "./http.ts";
 
-export const ASSET_NAMES = ["aiti-launcher.js", "bridge-client.js", "cockpit.html", "aiwin.js", "host-protocol.js"] as const;
+export const ASSET_NAMES = ["aiti-launcher.js", "bridge-client.js", "cockpit.html", "aiwin.js", "host-protocol.js", "pair-client.js", "pair.html"] as const;
 
 /** 读取资产 → 路径映射（键如 /aiti-launcher.js；剥挂载前缀后匹配，同独立桥/connect 语义） */
 export function loadAssets(assetsDir?: string): Record<string, StaticFile> {
