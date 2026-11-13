@@ -14,7 +14,7 @@
  *       node tools/deploy.mjs --dev    # 仅 dev 实例
  * 说明：pi-web 的 /api/extensions/reload 可热加载扩展；assets 拷贝后刷新页面即可
  */
-import { copyFileSync, mkdirSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
@@ -22,6 +22,14 @@ import { execSync } from 'node:child_process';
 import { deployCommit } from '../../_shared/deploy-commit.mjs';
 import { copyIcons } from '../../_shared/ext-icons-deploy.mjs';
 import { notifyReconcile } from '../../_shared/reconcile-deps.mjs';
+
+// 容忍拷贝：发布仓（aiti-ai）的 packages/aiti-devtools-core 镜像不含 pair 三件
+// （pair.ts / pair-client.js / pair.html）——npm/docker 形态缺源时降级跳过（pair 手机页不可用），
+// 不让整个 aiti-devtools 扩展部署失败；本仓（pi-work）core/src 有源，行为不变。
+const copyIfPresent = (src, dst, note) => {
+  if (existsSync(src)) { copyFileSync(src, dst); return; }
+  console.log('[deploy] ⚠ 源缺失，跳过 ' + note + '（发布仓 core 镜像不含 pair 三件 → pair 功能降级）');
+};
 
 // client TS 残留检查（.mjs 里是合法 JS 语法检查不报、运行时必炸；FAIL 即部署失败）
 {
@@ -53,7 +61,7 @@ for (const t of TARGETS) {
     copyFileSync(resolve(extSrc, f), resolve(extDir, f));
   }
   copyFileSync(resolve(coreSrc, 'bridge.ts'), resolve(extDir, 'bridge-core.ts'));
-  copyFileSync(resolve(coreSrc, 'pair.ts'), resolve(extDir, 'pair.ts')); // pair 设备互连模块（bridge-core.ts 相对导入）
+  copyIfPresent(resolve(coreSrc, 'pair.ts'), resolve(extDir, 'pair.ts'), 'pair.ts'); // pair 设备互连模块（bridge-core.ts 相对导入）
   copyFileSync(resolve(extSrc, 'server', 'pair-fed.ts'), resolve(extDir, 'pair-fed.ts')); // 跨桥联邦代理（index.ts 相对导入）
   // jiti 转译缓存对内容变化不失效（实测坑：deploy 后 reload/restart 仍跑旧转译产物）——服务端源码有变时清之
   const jitiCache = resolve(process.env.PI_WEB_DEV_WEBROOT || resolve(homedir(), '.pi', 'web-dev'), '.cache', 'jiti');
@@ -74,8 +82,8 @@ for (const t of TARGETS) {
   copyFileSync(resolve(injectDist, 'bridge-client.js'), resolve(extDir, 'assets', 'bridge-client.js'));
   copyFileSync(resolve(injectDist, 'cdp-core.js'), resolve(extDir, 'assets', 'cdp-core.js'));
   copyFileSync(resolve(coreSrc, 'host-protocol.js'), resolve(extDir, 'assets', 'host-protocol.js'));
-  copyFileSync(resolve(coreSrc, 'pair-client.js'), resolve(extDir, 'assets', 'pair-client.js')); // pair 公共库（widget）
-  copyFileSync(resolve(coreSrc, 'pair.html'), resolve(extDir, 'assets', 'pair.html')); // pair 手机独立页
+  copyIfPresent(resolve(coreSrc, 'pair-client.js'), resolve(extDir, 'assets', 'pair-client.js'), 'assets/pair-client.js'); // pair 公共库（widget）
+  copyIfPresent(resolve(coreSrc, 'pair.html'), resolve(extDir, 'assets', 'pair.html'), 'assets/pair.html'); // pair 手机独立页
   console.log('[deploy] ' + t.name + ' → ' + extDir + '（源码/bridge-core/client/assets）');
 }
 console.log('[deploy] 完成。pi-web 热重载：POST /api/extensions/reload（dev basePath /dev 前缀）；或重启 pi-web');
