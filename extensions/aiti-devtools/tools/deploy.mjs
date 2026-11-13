@@ -57,7 +57,7 @@ for (const t of TARGETS) {
   const extDir = resolve(t.extRepo, 'aiti-devtools');
   // 2) 拷贝扩展源码（bridge.ts 是薄适配层；桥核心来自 core，拷为 bridge-core.ts 同目录相对导入——不依赖宿主装 aiti-devtools-core）
   mkdirSync(extDir, { recursive: true });
-  for (const f of ['index.ts', 'bridge.ts', 'inject.ts', 'icon.svg', 'package.json']) {
+  for (const f of ['index.ts', 'bridge.ts', 'inject.ts', 'icon.svg', 'package.json', 'DESC.md']) {
     copyFileSync(resolve(extSrc, f), resolve(extDir, f));
   }
   copyFileSync(resolve(coreSrc, 'bridge.ts'), resolve(extDir, 'bridge-core.ts'));

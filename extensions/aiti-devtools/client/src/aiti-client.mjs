@@ -842,6 +842,15 @@ export default function register(ctx) {
             style: { background: "none", border: "none", cursor: "pointer", color: "inherit", opacity: 0.75, padding: "0 2px", fontSize: 11, lineHeight: 1, flexShrink: 0 },
             title: "清除该候选（同步删输入框里的 " + el.tag + "）",
           }, "✕"))),
+      // 📖 教程链接（devtools 功能曝光位）：候选区出现即可见——点选元素/页面调试 5 分钟教程直达 aiti.pw
+      h("a", {
+        href: "https://aiti.pw/devtools/quick-start.html",
+        target: "_blank",
+        rel: "noopener noreferrer",
+        onClick: (e) => { e.stopPropagation(); },
+        title: "点选元素 / 页面调试 5 分钟教程（aiti.pw）",
+        style: { color: "var(--accent, #4f46e5)", textDecoration: "none", fontSize: 11, flexShrink: 0, whiteSpace: "nowrap" },
+      }, "📖 教程"),
       h("button", {
         onClick: () => {
           // 清除候选：host-protocol 记录指纹（宿主延迟重发不"复活"）+ 输入框同步摘掉占位符。
