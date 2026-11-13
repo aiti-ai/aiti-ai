@@ -42,10 +42,11 @@ export interface QuickstartWidgetMeta {
  * 布局语义见宿主 lib/new-session-widgets.ts（normalizeWidgetItem 越界钳制 + ⚙ 自定义偏好）。
  */
 export const WIDGET_METAS: QuickstartWidgetMeta[] = [
-  // guide priority -1（非 0）：宿主 builtin:recent 同为 p0 且注册序在前——recent(w4)
-  // 先占行1 后 guide(w8) 掉行2、shortcuts 掉行3，三行叠加超 top 区 min(300px,38vh)
-  // 内滚上限 → 快捷操作卡裁切需滚动（2026-11-07 用户实测）。-1 让 guide 先占行1
-  // 独占整行；h=1：宿主网格 gridAutoRows: minmax(64px,auto)，行高按内容自动撑开。
+  // guide priority -1（非 0）：2026-11-07 起 guide 先占行 1 独占整行（宿主 builtin:recent
+  // 同为 p0 且注册序在前；2026-11-15 recent defaultArea 移 top，top 排序 = guide → recent →
+  // shortcuts → streaming，priority 序不变）。宿主顶区 2026-11-15 起 flex 自适应
+  // （吃掉 composer 上方全部空白，卡片自然高度贴顶、下方自然留白），不再有固定上限。
+  // h=1：宿主网格 gridAutoRows: minmax(58px,auto)，行高按内容自动撑开。
   // areas 全开双区（2026-11-07 用户问「能否移动」）：⚙ 面板可跨 top/bottom 挪动，
   // defaultArea 保持各自语义默认（挪动后 pref 持久化）。
   { id: "guide", areas: ["top", "bottom"], defaultArea: "top", w: 8, h: 1, priority: -1 },
