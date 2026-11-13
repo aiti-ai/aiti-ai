@@ -768,7 +768,6 @@ function findProvider(ext: string, filePath: string): FileProvider | null {
 export default {
   id: "aiti-editor",
   name: "aiti-editor",
-  version: "1.0.0",
   description: "文件编辑器：Monaco 在线编辑（接管文本文件；非文本回退核心查看器）。设计 docs/pi-web-file-editor-design.md",
   client: "dist/aiti-editor-client.mjs",
   icon: "icon.svg",

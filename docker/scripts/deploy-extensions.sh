@@ -61,6 +61,11 @@ done
 if [ -d "$BUILD_HOME/.pi/web/extensions" ]; then
   cp -a "$BUILD_HOME/.pi/web/extensions/." "$DEST/"
   echo "[deploy-ext] deployed -> $DEST ($(ls "$DEST" | wc -l) extensions)"
+  # aiti-editor Monaco gate: syncMonaco copies from the dev-installed monaco-editor — a
+  # silently failed deps install would ship an editor that 404s on loader.js
+  if [ -f "$DEST/aiti-editor/index.ts" ] && [ ! -f "$DEST/aiti-editor/monaco/vs/loader.js" ]; then
+    echo "[deploy-ext] ERROR: aiti-editor deployed without monaco/vs assets (editor would 404 on loader.js)"; exit 1
+  fi
   rm -rf "$BUILD_HOME" /root/.npm
 else
   echo "[deploy-ext] ERROR: deployment artifacts not found at $BUILD_HOME/.pi/web/extensions"; exit 1

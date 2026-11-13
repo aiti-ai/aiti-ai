@@ -78,3 +78,6 @@ extensions/**/*.tsbuildinfo
 extensions/aiti-devtools/assets/
 extensions/aiti-devtools/pair.ts
 extensions/aiti-devtools/package-lock.json
+# Monaco AMD assets (materialize-ext-assets.mjs / tools/materialize-monaco.mjs; 24MB
+# copy of node_modules/monaco-editor/min/vs — regenerable, never in git)
+extensions/**/monaco/
