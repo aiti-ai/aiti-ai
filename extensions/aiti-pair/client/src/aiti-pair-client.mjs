@@ -11,10 +11,15 @@
  * 协议唯一来源：packages/aiti-devtools-core/src/pair-client.js（本文件零协议实现）。
  */
 let panelOpen = false;
+// aiti-float present store 全局面（零构建驱动停靠/浮回；浮窗增强未装时为 null）
+const PAIR_KEY = "aiti-pair:pair";
+const PAIR_DOCK_STATE = "dock:sidebar:aiti-pair:pair";
+function floatApi() { const api = globalThis.__piweFloat; return api && typeof api.present === "function" ? api : null; }
 const listeners = new Set();
 function setPanelOpen(v) {
   panelOpen = v;
   if (v) setUnread(0); // 开面板即清未读
+  if (!v && face === "dialog") setFace(null); // 弹窗关闭 → 侧栏区块收回 widget
   for (const l of listeners) l();
 }
 
@@ -30,6 +35,16 @@ function bumpUnread() { setUnread(unread + 1); }
 // widget 挂载去重（React 重渲染/StrictMode ref 双触发不重复 mount；AitiPair 实例模块级保活）
 let mounted = null; // { el, instance }
 let mountPromise = null; // 在途挂载（异步加载竞态去重：ref 回调可能并发触发多次）
+
+// widget 当前宿主面：'dialog'（弹窗/兜底浮层）| 'dock'（侧栏区块）| null（未挂载）
+// ——弹窗与侧栏两面共用单实例，换面 = 重挂（SSE 同 peerId 重连无感）；面变化广播给
+// 侧栏区块（弹窗打开时侧栏让位显示引导，关弹窗自动收回侧栏，杜绝两面拉锯）
+let face = null;
+const faceListeners = new Set();
+function setFace(v) {
+  face = v;
+  for (const l of faceListeners) l();
+}
 
 export default function register(ctx) {
   const { h, useState, useEffect, apiUrl } = ctx;
@@ -54,7 +69,9 @@ export default function register(ctx) {
           box.style.cssText = `position:relative;width:min(${sz.w}px,94vw);height:min(${sz.h}px,86vh);border-radius:12px;overflow:hidden;background:var(--bg-panel);border:1px solid var(--border);color:var(--text);box-shadow:0 10px 40px rgba(0,0,0,0.35)`;
           const bar = document.createElement("div");
           bar.style.cssText = "display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;flex-shrink:0";
-          bar.innerHTML = '<span style="flex:1">✉ 设备互连</span>';
+          bar.innerHTML = '<span style="flex:1">✉ 设备互连</span>'
+            + '<button title="停靠到侧栏" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:12px;padding:2px 6px">⇱</button>';
+          bar.querySelector('button').onclick = () => { const api = floatApi(); if (api) { api.present(PAIR_KEY, PAIR_DOCK_STATE); host.remove(); setPanelOpen(false); } };
           const closeBtn = document.createElement("button");
           closeBtn.textContent = "✕";
           closeBtn.setAttribute("aria-label", "关闭");
@@ -68,7 +85,7 @@ export default function register(ctx) {
           host.appendChild(box);
           host.addEventListener("click", (e) => { if (e.target === host) { host.remove(); setPanelOpen(false); } });
           document.body.appendChild(host);
-          ensureWidget(inner).catch(() => {});
+          ensureWidget(inner, "dialog").catch(() => {});
         } catch {}
       }, 800);
     }
@@ -89,19 +106,20 @@ export default function register(ctx) {
     });
   }
 
-  function ensureWidget(host) {
-    if (mounted && mounted.el && mounted.el.isConnected) return Promise.resolve(mounted);
+  function ensureWidget(host, faceTag) {
+    if (mounted && mounted.el && mounted.el.isConnected) { setFace(faceTag ?? face); return Promise.resolve(mounted); }
     if (mountPromise) return mountPromise;
     // 重开面板 = React 重建 host DOM（旧 el 已摘除）→ 先停旧实例再重挂（AitiPair 实例同 peerId 幂等，SSE 重连无感）
-    if (mounted) { try { mounted.instance.stop(); } catch (e) {} mounted = null; }
+    if (mounted) { try { mounted.instance.stop(); } catch (e) {} mounted = null; setFace(null); }
     mountPromise = loadPairLib().then((AitiPair) => {
       const el = document.createElement("div");
       el.style.cssText = "position:absolute;inset:0;display:flex;min-height:0";
       host.innerHTML = ""; // 防御：同 host 重复挂载时清旧（幂等）
       host.appendChild(el);
       const instance = AitiPair.mount(el, { base: BRIDGE_BASE() });
-      instance.on('message', () => { if (!panelOpen) bumpUnread(); }); // 面板外收到消息 → 未读 +1
+      instance.on('message', () => { if (!face) bumpUnread(); }); // 面板外（未挂载面）收到消息 → 未读 +1
       mounted = { el, instance };
+      setFace(faceTag ?? "dialog");
       mountPromise = null; // 成功即清：下次面板重开（DOM 已换）必须重新挂载，不能返回旧 promise
       return mounted;
     }).catch((e) => { mountPromise = null; throw e; }); // 失败也允许重试
@@ -121,7 +139,7 @@ export default function register(ctx) {
     useEffect(() => {
       if (!open || ready || mounted) { if (open && mounted) setReady(true); return; }
       let dead = false;
-      ensureWidget(hostEl()).then(() => { if (!dead) setReady(true); }).catch((e) => { if (!dead) setErr(String((e && e.message) || e)); });
+      ensureWidget(hostEl(), "dialog").then(() => { if (!dead) setReady(true); }).catch((e) => { if (!dead) setErr(String((e && e.message) || e)); });
       return () => { dead = true; };
     }, [open]);
 
@@ -153,6 +171,11 @@ export default function register(ctx) {
           },
         },
           h("h3", { style: { margin: 0, fontSize: 13, fontWeight: 600, flex: 1 } }, "✉ 设备互连"),
+          h("button", {
+            title: "停靠到侧栏（面板常驻左栏，可随时拉回浮窗）",
+            onClick: () => { const api = floatApi(); if (api) { api.present(PAIR_KEY, PAIR_DOCK_STATE); setPanelOpen(false); } },
+            style: { background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 12, padding: "2px 6px" },
+          }, "⇱"),
           h("span", { style: { fontSize: 10, color: "var(--text-dim)", fontWeight: 400 } }, "连同一桥即互发"),
           h("button", {
             onClick: () => setPanelOpen(false), "aria-label": "关闭",
@@ -163,7 +186,7 @@ export default function register(ctx) {
           ref: (el) => {
             hostRef = el;
             if (open && el && !mounted && !mountPromise) {
-              ensureWidget(el).then(() => setReady(true)).catch((e) => setErr(String((e && e.message) || e)));
+              ensureWidget(el, "dialog").then(() => setReady(true)).catch((e) => setErr(String((e && e.message) || e)));
             } else if (open && mounted) setReady(true);
           },
           style: { position: "absolute", top: 41, bottom: 0, left: 0, right: 0, display: ready ? "block" : "none" },
@@ -219,6 +242,39 @@ function pairWindowSize() {
       }));
   }
 
+  /* ── 侧栏 dock 区块（默认弹窗，可选停靠）：widget 双面共用单实例 ──
+     弹窗打开时侧栏让位（显示收回引导），关弹窗自动收回侧栏；host 统一 chrome（⋮ 折叠/排序）勿自写 */
+  function PairDockBlock() {
+    const [, force] = useState(0);
+    useEffect(() => {
+      const l = () => force((n) => n + 1);
+      faceListeners.add(l);
+      return () => faceListeners.delete(l);
+    }, []);
+    if (face === "dialog") {
+      return h("div", { style: { padding: "14px 12px", fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 } },
+        "设备互连已在弹窗中打开。",
+        h("div", { style: { marginTop: 10 } },
+          h("button", {
+            onClick: () => setPanelOpen(false),
+            style: { background: "var(--bg-hover, rgba(0,0,0,.06))", border: "1px solid var(--border)", borderRadius: 8, color: "var(--text)", cursor: "pointer", font: "inherit", padding: "5px 12px" },
+          }, "收回侧栏")));
+    }
+    return h("div", { style: { display: "flex", flexDirection: "column", height: "100%", minHeight: 0 } },
+      h("div", { style: { display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderBottom: "1px solid var(--border)", flexShrink: 0, fontSize: 12, fontWeight: 600 } },
+        h("span", { style: { flex: 1 } }, "✉ 设备互连"),
+        h("button", {
+          title: "拉回浮窗（弹窗形态）",
+          onClick: () => { const api = floatApi(); if (api) api.present(PAIR_KEY, "float"); setPanelOpen(true); },
+          style: { background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 12, padding: "2px 6px" },
+        }, "⇱")),
+      h("div", {
+        ref: (el) => { if (el && face !== "dock") { hostRef = el; ensureWidget(el, "dock").catch(() => {}); } },
+        style: { position: "relative", flex: 1, minHeight: 300, overflow: "hidden", background: "var(--bg-panel)" },
+      }));
+  }
+
   ctx.registerItems?.("toolbar", [{ id: "pair", render: PairToolbarButton, meta: { label: "设备互连" } }]);
   ctx.registerItems?.("dialogs", [{ id: "pair", render: PairDialog, meta: { label: "设备互连面板" } }]);
+  ctx.registerItems?.("sidebarExplorerDock", [{ id: "pair", render: PairDockBlock, meta: { label: "设备互连", title: "设备互连", priority: 30 } }]);
 }
