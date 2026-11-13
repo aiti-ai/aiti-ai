@@ -11,8 +11,9 @@
  */
 import { randomBytes, randomInt } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdirSync, appendFileSync, readdirSync, readFileSync, existsSync, statSync, rmSync, writeFileSync, renameSync } from "node:fs";
+import { mkdirSync, appendFileSync, readdirSync, readFileSync, existsSync, statSync, rmSync, writeFileSync, renameSync, openSync, readSync, closeSync, unlinkSync, copyFileSync } from "node:fs";
 import { join, dirname } from "node:path";
+import { createPairModule } from "./pair.ts";
 
 const ID_TTL = parseInt(process.env.AITI_BRIDGE_TTL || "600000", 10); // 断开后保留（ms）
 // ---- agent 会话治理：历史 agent 清理 / 群发排除 / 显示用 CWD ----
@@ -22,6 +23,133 @@ const AGENT_GRACE_TTL = parseInt(process.env.AITI_AGENT_GRACE_TTL || "120000", 1
 const AGENT_HISTORY_TTL = parseInt(process.env.AITI_AGENT_HISTORY_TTL || String(7 * 24 * 3600 * 1000), 10); // 磁盘消息 session 历史保留期（超过自动删除，默认 7 天）
 const SWEEP_MS = parseInt(process.env.AITI_SWEEP_MS || "60000", 10); // 清理扫描周期
 const LEGACY_TOKEN = "dev";
+
+// ---------------- MCP 工具清单（模块级静态，桥 tools/list 数据源；宿主 adapter 冷启动占位复用同一份，勿在别处复制协议） ----------------
+export const BRIDGE_TOOLS = [
+  { name: "page_exec", description: "在已连接页面执行类 CDP 命令（DOM/CSS/Input/Page/Runtime/Storage/Performance/Browser 域）。pageId 缺省=最新 AI 主窗口（self:true）；显式 pageId 优先。危险命令/浏览器受限操作会自动弹用户确认；Page.captureScreenshot 截屏会先弹准备卡展示截取意图（args.reason，请务必用一句话说明想截什么），用户调整好页面才开始截屏，截完再弹预览确认（大图自动落盘返回文件路径）；确认卡倒计时可用 args.timeout（ms）调整（默认 280000，服务端安全网自动同步 +30s 余量）。调试会话中从被调试页面（inject）发出的消息统一带 [发自: <pageId> · <url>] 来源标注——把 pageId 值传给 pageId 参数即操作该页面。\n\niframe 支持：Page.getFrameTree 查看 frame 树（iframe src/name/title，同域含 url/readyState）；Runtime.evaluate 传 contextId（iframe 索引从 1 起，同域可 eval）进 iframe 上下文执行。", 
+    inputSchema: { type: "object", properties: {
+      cmd: { type: "string" }, args: { type: "object" },
+      pageId: { type: "string", description: "目标页面完整 ID——来自 AI 消息的 [发自: xxx]（如 30142/host）；也可 /bridge/sessions 查询" },
+    }, required: ["cmd"] } },
+  { name: "page_snapshot", description: "拉取已连接页面基础现场（URL/选区/模拟条件）。pageId 缺省=最新 AI 主窗口（self:true）；显式 pageId 优先。", inputSchema: { type: "object", properties: { pageId: { type: "string" } } } },
+  { name: "self_ui", description: "扫描目标页面（缺省 AI 主窗口 xxx/ai）当前打开的弹窗/dialog/表单字段/按钮清单——ai-helper 回填定位用。返回 {dialogs:[{title, fields:[{label,selector,type}], buttons}]}，无弹窗时 dialogs 为空数组。", inputSchema: { type: "object", properties: { pageId: { type: "string", description: "缺省用 AI 主窗口（xxx/ai）；也可指定其他页面" } } } },
+  { name: "form_fill", description: "在目标页面（缺省 AI 主窗口 xxx/ai）的弹窗/表单里回填字段值——AI 结果直接操作扩展弹窗表单（React 兼容：原生 value setter + dispatch input/change）。配合 self_ui 使用：先 self_ui 拿字段 label/selector，再 form_fill 填值。参数：dialog（弹窗标识：标题子串或序号 0 起，缺省取面积最大的可见弹窗）、fields[{selector|label, value}]、button（可选，回填后点击的按钮文本如『保存』）。返回 {foundDialog, title, filled, missed, clicked}。", inputSchema: { type: "object", properties: {
+      pageId: { type: "string", description: "缺省用 AI 主窗口（xxx/ai）；也可指定其他页面" },
+      dialog: { type: "string", description: "弹窗标识：标题子串或序号（0 起）；缺省取面积最大的可见弹窗" },
+      fields: { type: "array", items: { type: "object", properties: { selector: { type: "string", description: "CSS 选择器（优先）" }, label: { type: "string", description: "弹窗内文本匹配（label[for]/包裹/文本包含）" }, value: { type: "string", description: "要填的值" } }, required: ["value"] }, description: "要填的字段列表" },
+      button: { type: "string", description: "回填后点击的按钮文本（如『保存』『确定』）" },
+    } } },
+  { name: "bridge_status", description: "查询桥上全部设备（devices 统一视图：kind=page 注入页面（含 pageId/url/title + device 浏览器·OS·屏幕）/kind=agent agent 会话（含 cwd）/kind=pair web 设备如手机）+ 已连接页面明细（sessions）与挂起请求。用户提到页面标题或 URL 时按 title/url 匹配 pageId；提到手机/设备时在 devices 里选（id 或名字传给 aiti_pair_send/aiti_pair_file 即可互发消息互传文件）。", inputSchema: { type: "object", properties: {} } },
+  { name: "page_logs", description: "从目标页面拉取本地缓冲的 console 日志（log/debug/info/warn/error 全量，CDP Runtime.evaluate 读取 window.__dbg.__consoleRing）。pageId 缺省=最新 AI 主窗口（self:true）；显式 pageId 优先。页面报错排查首选：先查 warn/error 再逐步放开。返回 {logs:[{ts,level,text,count}], bufferSize}。",
+    inputSchema: { type: "object", properties: {
+      pageId: { type: "string", description: "目标页面完整 ID（[发自: xxx] 或 /bridge/sessions）" },
+      level: { type: "string", description: "过滤级别：debug/log/info/warn/error（默认全部）" },
+      since: { type: "string", description: "ISO 时间：只返回此时间之后的日志" },
+      limit: { type: "number", description: "条数上限（≤200，默认 50，取最新）" },
+      token: { type: "string" },
+    } } },
+  { name: "page_network", description: "从目标页面拉取本地缓冲的 ajax/fetch 请求完成态（CDP Runtime.evaluate 读取 window.__dbg.__netRing）。pageId 缺省=最新 AI 主窗口（self:true）；显式 pageId 优先。失败排查：status 传 400 或 errorOnly:true。注意：不含静态资源加载（那是 CDP Network 的能力）。返回 {requests:[{kind,method,url,status,statusText,durationMs,size,error,ts}], bufferSize}。",
+    inputSchema: { type: "object", properties: {
+      pageId: { type: "string" },
+      url: { type: "string", description: "URL 子串过滤" },
+      status: { type: "number", description: "status >= 此值才返回（如 400 只看失败）" },
+      errorOnly: { type: "boolean", description: "只看失败（error 非空 或 status>=400）" },
+      limit: { type: "number", description: "条数上限（≤100，默认 30，取最新）" },
+      token: { type: "string" },
+    } } },
+  // ---- 用户交互型工具：AI 与人在页面上协作（AI 提问 → 人在 AI 窗口/页面作答或拒绝 → 结果回 AI） ----
+  // 统一机制：prompt 显示给人看；timeout 为可选——不传=永久等待（面板常驻直到用户操作，不读秒不超时）；
+  //   传了才显示读秒倒计时（可暂停）且服务器强制到点返回“用户无响应/不在线”；
+  //   交互消息到达时页面走浏览器 Notification（+标题闪烁/提示音）通知用户；人可拒绝（rejectable）。
+  // 响应信封：{ status:'answered'|'rejected'|'timeout'|'error', value?, reason?, error?, tookMs, timeoutMs }
+  { name: "user_pick_element", description: "请当前页面的人类用户点选一个页面元素（自动进入 Inspector 点选模式、收起 AI 窗口、弹点选面板；用户可确认选中或拒绝）。返回元素载荷 {tag,rect,xpath,text,attributes,framework,selector}。",
+    inputSchema: { type: "object", properties: {
+      prompt: { type: "string", description: "给用户看的说明（为什么需要点选这个元素）" },
+      timeout: { type: "number", description: "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户操作，无读秒；传了才显示读秒倒计时（可暂停），到点自动返回 timeout" },
+      rejectable: { type: "boolean", description: "是否允许用户拒绝（默认 true）" },
+      async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送；缺省=同步等待" },
+      pageId: { type: "string", description: "目标页面完整 ID（instanceId/frameId）" },
+    }, required: ["prompt"] } },
+  { name: "user_confirm", description: "在 AI 窗口内向人类用户提一个是/否问题（如“确认执行此操作？”“是否继续？”），用户点 ✅/❌ 作答，并可附「补充说明」自由文本（value.comment）；另有固定选项「都不适合」→ 自定义回答（approved:null, custom）。返回 {status, approved, comment?, custom?, reason?}。",
+    inputSchema: { type: "object", properties: {
+      prompt: { type: "string", description: "问题内容" },
+      timeout: { type: "number", description: "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户操作，无读秒；传了才显示读秒倒计时（可暂停），到点自动返回 timeout" },
+      rejectable: { type: "boolean", description: "是否允许用户以“暂时无法处理”拒绝（默认 true）" },
+      async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送（不阻塞本调用）；缺省=同步等待" },
+      pageId: { type: "string" },
+    }, required: ["prompt"] } },
+  { name: "user_choose", description: "在 AI 窗口内给人类用户一组选项让其选择（如修复方案 A/B/C）。单选（默认）→ value:{index,label}；multiple:true 多选 → value:{indexes,labels}。用户可附「补充说明」自由文本（value.comment）；另有固定选项「这些都不适合」→ 自定义答案（index:-1, custom:true）。返回 {status, value, reason?}。",
+    inputSchema: { type: "object", properties: {
+      prompt: { type: "string" },
+      choices: { type: "array", items: { type: "string" }, description: "选项列表（2-8 个）" },
+      multiple: { type: "boolean", description: "是否允许多选（默认 false；true 时返回 indexes/labels）" },
+      timeout: { type: "number", description: "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户操作，无读秒；传了才显示读秒倒计时（可暂停），到点自动返回 timeout" },
+      rejectable: { type: "boolean", description: "是否允许用户拒绝（默认 true）" },
+      async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送；缺省=同步等待" },
+      pageId: { type: "string" },
+    }, required: ["prompt", "choices"] } },
+  { name: "user_input", description: "在 AI 窗口内请人类用户输入一段文本（如期望文案、配置值、场景描述），回车/点击即发送。返回 {status, value:{text}, reason?}。",
+    inputSchema: { type: "object", properties: {
+      prompt: { type: "string" },
+      defaultValue: { type: "string", description: "预填默认值（可选）" },
+      timeout: { type: "number", description: "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户操作，无读秒；传了才显示读秒倒计时（可暂停），到点自动返回 timeout" },
+      rejectable: { type: "boolean", description: "是否允许用户拒绝（默认 true）" },
+      async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送；缺省=同步等待" },
+      pageId: { type: "string" },
+    }, required: ["prompt"] } },
+  { name: "user_presence", description: "探测人类用户是否在场/在线（AI 需要用户配合长任务前先确认），用户点「我在/稍后」，可附「补充说明」（value.comment）。返回 {status, present, comment?}；超时即视为不在线。",
+    inputSchema: { type: "object", properties: {
+      prompt: { type: "string", description: "询问文案（默认“你在吗？需要你配合继续开发”）" },
+      timeout: { type: "number", description: "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户作答；传了才显示读秒倒计时（可暂停），到点返回 status:'timeout'（视为不在线）——需要快速探测在场/限时等待时才显式传" },
+      async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送；缺省=同步等待" },
+      pageId: { type: "string" },
+    }, required: [] } },
+  { name: "user_notify", description: "非阻塞通知：通过浏览器 Notification 告诉用户一条消息（如“修复完成，请刷新验证”），不等待回答。返回 {notified:true}。",
+    inputSchema: { type: "object", properties: {
+      title: { type: "string", description: "通知标题" },
+      body: { type: "string", description: "通知内容" },
+      timeout: { type: "number", description: "可选：通知卡自动关闭时限 ms（5000-600000）。不传=常驻直到用户关闭" },
+      async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送；缺省=同步等待" },
+      pageId: { type: "string" },
+    }, required: ["body"] } },
+  // ---- 方案 G · P2：agent 接入 + 消息主通道 ----
+  { name: "aiti_hello", description: "agent 自我介绍/注册：覆盖 agentId（默认 clientInfo.name）与 sessionId（默认 Mcp-Session-Id 或桥随机）、绑定默认目标页 pageId、订阅页面事件（page_error）。注意：page_log/page_network 不再实时推送，改用 page_logs/page_network 工具按需拉取。建议会话开始时调用一次——注册后消息可定向到本会话（agentKey=agentId/sessionId）。",
+    inputSchema: { type: "object", properties: {
+      agentId: { type: "string", description: "自定义 agent 标识（如 pi / cc / qoder；缺省用 clientInfo.name）" },
+      sessionId: { type: "string", description: "本实例会话标识（多实例/多会话时区分；缺省用 Mcp-Session-Id，无则桥生成随机）" },
+      name: { type: "string", description: "显示名（可选，如 'pi · 工作区A'）" },
+      cwd: { type: "string", description: "工作目录（可选，显示 CWD . name (id)，方便识别 agent 身份）" },
+      pageId: { type: "string", description: "绑定默认调试目标页（pageId/url/title 均可，留空不绑）" },
+      subEvents: { type: "array", items: { type: "string" }, description: "订阅实时事件：page_error（默认不投递，显式订阅才推；page_log/page_network 不再实时推送，改用 page_logs/page_network 工具按需拉取）" },
+    } } },
+  { name: "file_stat", description: "查询文件存在性/类型/大小/修改时间（绝对路径；组件源码/调用位置定位、AI 窗『后端打开/前端打开』前置校验用）。不存在或非法路径返回 {exists:false}。",
+    inputSchema: { type: "object", properties: {
+      path: { type: "string", description: "绝对路径（如 /home/user/src/App.vue）" },
+    }, required: ["path"] } },
+  { name: "aiti_inbox", description: "消息主通道：拉取发给本 agent 会话的消息（人主动发话 user_message / 异步 user_* 作答 user_answer / 订阅的页面事件）。开始新一轮或需要最新信息时先调用；处理完把消息 id 放 ack 参数确认（标记 consumed，历史保留）。返回 agentKey（agentId/sessionId），未注册时提示调 aiti_hello 注册。",
+    inputSchema: { type: "object", properties: {
+      agentId: { type: "string", description: "agent 标识（缺省用 aiti_hello 注册值或 clientInfo.name）" },
+      sessionId: { type: "string", description: "本实例会话标识（缺省用 Mcp-Session-Id 或 aiti_hello 注册值）" },
+      ack: { description: "已处理消息 id 列表，或 { ids: [...], summary: '执行总结' }——summary（必带）会作为 agent 处理记录显示在操作台消息流", oneOf: [ { type: "array", items: { type: "string" } }, { type: "object", properties: { ids: { type: "array", items: { type: "string" } }, summary: { type: "string" } } } ] },
+    } } },
+  // ---- pair 设备互连（临时聊天/互传文件；设备发现走 bridge_status 的 devices 统一视图） ----
+  { name: "aiti_pair_send", description: "给桥上另一台设备发文本消息（pair web 设备如手机 / 其他 agent 会话 / 注入页面）。to 传设备 id 或名字（模糊匹配，唯一命中即发，多个/无命中返回候选清单——照候选重调即可）；to 省略或传 'all' 群发全部 pair 设备与 agent。对方是 agent 时消息进其 aiti_inbox（带 [发自 pair: <名>] 标注）。文件传输用 aiti_pair_file。",
+    inputSchema: { type: "object", properties: {
+      to: { type: "string", description: "目标设备 id 或名字（bridge_status 的 devices 里选；缺省=群发）" },
+      text: { type: "string", description: "消息文本" },
+    }, required: ["text"] } },
+  { name: "aiti_pair_file", description: "把桥所在机器上的本地文件推给另一台设备（pair web 设备在浏览器里直接下载；agent 收到 file-meta 后用 aiti_pair_fetch 取回）。to 传设备 id 或名字。单文件上限 200MB，中转暂存 1 小时。",
+    inputSchema: { type: "object", properties: {
+      to: { type: "string", description: "目标设备 id 或名字" },
+      path: { type: "string", description: "本地文件绝对路径" },
+    }, required: ["to", "path"] } },
+  { name: "aiti_pair_fetch", description: "把收到的 pair 文件取回到桥所在机器磁盘（fileId 来自 aiti_inbox 消息 payload.file.fileId）。缺省落 dataDir/aiti-bridge/pair-inbox/<原文件名>，返回可读路径；传 savePath 自定义落点。",
+    inputSchema: { type: "object", properties: {
+      fileId: { type: "string", description: "文件 id（aiti_inbox 消息 payload.file.fileId）" },
+      savePath: { type: "string", description: "落盘绝对路径（缺省 pair-inbox 目录 + 原文件名）" },
+    }, required: ["fileId"] } },
+];
+
 
 export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (type: string, data?: Record<string, unknown>) => void } = {}) {
   const BRIDGE_NAME = opts.name || "aiti-mcp"; // 标识名（日志前缀；默认兼容旧 aiti-mcp）
@@ -313,6 +441,8 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
     }
     // 事件去重表裁剪（防无限增长）
     for (const [k, v] of lastEventPush) if (now - v.ts > 3600000) lastEventPush.delete(k);
+    // pair 设备/文件清理（pair 模块自带 TTL；零新增定时器，挂本 sweep）
+    try { pair.sweep(now); } catch {}
     // 总线型连接超时清理（统一 SSE 端口适配）：无 SSE 断连信号，靠客户端心跳保鲜；
     // 超时 = 页面已死/总线丢失 → 摘除（同 SSE onClose 的清理语义）。
     for (const [iid, p] of [...pages]) {
@@ -336,6 +466,7 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
   // 重复扫描/写盘）。SSE 连接的 ping/清理由各自 cleanup 负责，close 不碰（断连自然触发 write 失败路径）。
   const close = () => {
     clearInterval(sweepTimer);
+    try { pair.close(); } catch {}
   };
   // 人 → AI 推路由（P2 queue 主通道；P3 sampling 推：有流 + sampling 能力的 agent 直接经 GET 流推，模型立即作答）
   const pendingSampling = new Map(); // rid -> { agentId, done, at }（客户端对 sampling/createMessage 的响应经 POST 回）
@@ -386,7 +517,9 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
         if (srcTitle) parts.push(clipMid(srcTitle, 40));
         tText = tText + "\n[发自: " + parts.join(" · ") + "（" + srcLabel + "：pageId 参数用它）]";
       }
-      payload = { ...(payload || {}), source: (a && a.source) || null, sourceLabel: srcLabel, pageId: srcPageId, url: srcUrl, title: srcTitle };
+      // 调用方显式带的 source/sourceLabel（如 pair 设备 'Pair · 手机A'、AI 窗 'AI 窗'）优先保留——
+      // 只在未提供时才落接收 agent 自身 transport（旧行为），不冲掉真实来源
+      payload = { ...(payload || {}), source: payload.source || (a && a.source) || null, sourceLabel: payload.sourceLabel || srcLabel, pageId: srcPageId, url: srcUrl, title: srcTitle };
       // sampling 推：仅"人主动发话"（user_message/chat）且 agent 有流 + 声明 sampling 能力（如 pi）
       const canSample = !!(a && a.stream && a.capabilities && a.capabilities.sampling && (kind === "user_message" || kind === "chat"));
       if (canSample) {
@@ -671,114 +804,7 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
   }
 
   // ---------------- MCP 工具 ----------------
-  const TOOLS = [
-    { name: "page_exec", description: "在已连接页面执行类 CDP 命令（DOM/CSS/Input/Page/Runtime/Storage/Performance/Browser 域）。pageId 缺省=最新 AI 主窗口（self:true）；显式 pageId 优先。危险命令/浏览器受限操作会自动弹用户确认；Page.captureScreenshot 截屏会先弹准备卡展示截取意图（args.reason，请务必用一句话说明想截什么），用户调整好页面才开始截屏，截完再弹预览确认（大图自动落盘返回文件路径）；确认卡倒计时可用 args.timeout（ms）调整（默认 280000，服务端安全网自动同步 +30s 余量）。调试会话中从被调试页面（inject）发出的消息统一带 [发自: <pageId> · <url>] 来源标注——把 pageId 值传给 pageId 参数即操作该页面。\n\niframe 支持：Page.getFrameTree 查看 frame 树（iframe src/name/title，同域含 url/readyState）；Runtime.evaluate 传 contextId（iframe 索引从 1 起，同域可 eval）进 iframe 上下文执行。", 
-      inputSchema: { type: "object", properties: {
-        cmd: { type: "string" }, args: { type: "object" },
-        pageId: { type: "string", description: "目标页面完整 ID——来自 AI 消息的 [发自: xxx]（如 3001/host）；也可 /bridge/sessions 查询" },
-      }, required: ["cmd"] } },
-    { name: "page_snapshot", description: "拉取已连接页面基础现场（URL/选区/模拟条件）。pageId 缺省=最新 AI 主窗口（self:true）；显式 pageId 优先。", inputSchema: { type: "object", properties: { pageId: { type: "string" } } } },
-    { name: "self_ui", description: "扫描目标页面（缺省 AI 主窗口 xxx/ai）当前打开的弹窗/dialog/表单字段/按钮清单——ai-helper 回填定位用。返回 {dialogs:[{title, fields:[{label,selector,type}], buttons}]}，无弹窗时 dialogs 为空数组。", inputSchema: { type: "object", properties: { pageId: { type: "string", description: "缺省用 AI 主窗口（xxx/ai）；也可指定其他页面" } } } },
-    { name: "form_fill", description: "在目标页面（缺省 AI 主窗口 xxx/ai）的弹窗/表单里回填字段值——AI 结果直接操作扩展弹窗表单（React 兼容：原生 value setter + dispatch input/change）。配合 self_ui 使用：先 self_ui 拿字段 label/selector，再 form_fill 填值。参数：dialog（弹窗标识：标题子串或序号 0 起，缺省取面积最大的可见弹窗）、fields[{selector|label, value}]、button（可选，回填后点击的按钮文本如『保存』）。返回 {foundDialog, title, filled, missed, clicked}。", inputSchema: { type: "object", properties: {
-        pageId: { type: "string", description: "缺省用 AI 主窗口（xxx/ai）；也可指定其他页面" },
-        dialog: { type: "string", description: "弹窗标识：标题子串或序号（0 起）；缺省取面积最大的可见弹窗" },
-        fields: { type: "array", items: { type: "object", properties: { selector: { type: "string", description: "CSS 选择器（优先）" }, label: { type: "string", description: "弹窗内文本匹配（label[for]/包裹/文本包含）" }, value: { type: "string", description: "要填的值" } }, required: ["value"] }, description: "要填的字段列表" },
-        button: { type: "string", description: "回填后点击的按钮文本（如『保存』『确定』）" },
-      } } },
-    { name: "bridge_status", description: "查询已连接页面（sessions：含 pageId/url/title/frameworks + device/deviceLabel——浏览器·OS·屏幕·dpr·在线·语言·时区等设备信息，便于区分多台机器/标签页）与挂起请求。用户提到页面标题或 URL 时，按 title/url 匹配 pageId（如 refresh『某标题页面』或『某个 url 页面』）。", inputSchema: { type: "object", properties: {} } },
-    { name: "page_logs", description: "从目标页面拉取本地缓冲的 console 日志（log/debug/info/warn/error 全量，CDP Runtime.evaluate 读取 window.__dbg.__consoleRing）。pageId 缺省=最新 AI 主窗口（self:true）；显式 pageId 优先。页面报错排查首选：先查 warn/error 再逐步放开。返回 {logs:[{ts,level,text,count}], bufferSize}。",
-      inputSchema: { type: "object", properties: {
-        pageId: { type: "string", description: "目标页面完整 ID（[发自: xxx] 或 /bridge/sessions）" },
-        level: { type: "string", description: "过滤级别：debug/log/info/warn/error（默认全部）" },
-        since: { type: "string", description: "ISO 时间：只返回此时间之后的日志" },
-        limit: { type: "number", description: "条数上限（≤200，默认 50，取最新）" },
-        token: { type: "string" },
-      } } },
-    { name: "page_network", description: "从目标页面拉取本地缓冲的 ajax/fetch 请求完成态（CDP Runtime.evaluate 读取 window.__dbg.__netRing）。pageId 缺省=最新 AI 主窗口（self:true）；显式 pageId 优先。失败排查：status 传 400 或 errorOnly:true。注意：不含静态资源加载（那是 CDP Network 的能力）。返回 {requests:[{kind,method,url,status,statusText,durationMs,size,error,ts}], bufferSize}。",
-      inputSchema: { type: "object", properties: {
-        pageId: { type: "string" },
-        url: { type: "string", description: "URL 子串过滤" },
-        status: { type: "number", description: "status >= 此值才返回（如 400 只看失败）" },
-        errorOnly: { type: "boolean", description: "只看失败（error 非空 或 status>=400）" },
-        limit: { type: "number", description: "条数上限（≤100，默认 30，取最新）" },
-        token: { type: "string" },
-      } } },
-    // ---- 用户交互型工具：AI 与人在页面上协作（AI 提问 → 人在 AI 窗口/页面作答或拒绝 → 结果回 AI） ----
-    // 统一机制：prompt 显示给人看；timeout 为可选——不传=永久等待（面板常驻直到用户操作，不读秒不超时）；
-    //   传了才显示读秒倒计时（可暂停）且服务器强制到点返回“用户无响应/不在线”；
-    //   交互消息到达时页面走浏览器 Notification（+标题闪烁/提示音）通知用户；人可拒绝（rejectable）。
-    // 响应信封：{ status:'answered'|'rejected'|'timeout'|'error', value?, reason?, error?, tookMs, timeoutMs }
-    { name: "user_pick_element", description: "请当前页面的人类用户点选一个页面元素（自动进入 Inspector 点选模式、收起 AI 窗口、弹点选面板；用户可确认选中或拒绝）。返回元素载荷 {tag,rect,xpath,text,attributes,framework,selector}。",
-      inputSchema: { type: "object", properties: {
-        prompt: { type: "string", description: "给用户看的说明（为什么需要点选这个元素）" },
-        timeout: { type: "number", description: "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户操作，无读秒；传了才显示读秒倒计时（可暂停），到点自动返回 timeout" },
-        rejectable: { type: "boolean", description: "是否允许用户拒绝（默认 true）" },
-        async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送；缺省=同步等待" },
-        pageId: { type: "string", description: "目标页面完整 ID（instanceId/frameId）" },
-      }, required: ["prompt"] } },
-    { name: "user_confirm", description: "在 AI 窗口内向人类用户提一个是/否问题（如“确认执行此操作？”“是否继续？”），用户点 ✅/❌ 作答，并可附「补充说明」自由文本（value.comment）；另有固定选项「都不适合」→ 自定义回答（approved:null, custom）。返回 {status, approved, comment?, custom?, reason?}。",
-      inputSchema: { type: "object", properties: {
-        prompt: { type: "string", description: "问题内容" },
-        timeout: { type: "number", description: "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户操作，无读秒；传了才显示读秒倒计时（可暂停），到点自动返回 timeout" },
-        rejectable: { type: "boolean", description: "是否允许用户以“暂时无法处理”拒绝（默认 true）" },
-        async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送（不阻塞本调用）；缺省=同步等待" },
-        pageId: { type: "string" },
-      }, required: ["prompt"] } },
-    { name: "user_choose", description: "在 AI 窗口内给人类用户一组选项让其选择（如修复方案 A/B/C）。单选（默认）→ value:{index,label}；multiple:true 多选 → value:{indexes,labels}。用户可附「补充说明」自由文本（value.comment）；另有固定选项「这些都不适合」→ 自定义答案（index:-1, custom:true）。返回 {status, value, reason?}。",
-      inputSchema: { type: "object", properties: {
-        prompt: { type: "string" },
-        choices: { type: "array", items: { type: "string" }, description: "选项列表（2-8 个）" },
-        multiple: { type: "boolean", description: "是否允许多选（默认 false；true 时返回 indexes/labels）" },
-        timeout: { type: "number", description: "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户操作，无读秒；传了才显示读秒倒计时（可暂停），到点自动返回 timeout" },
-        rejectable: { type: "boolean", description: "是否允许用户拒绝（默认 true）" },
-        async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送；缺省=同步等待" },
-        pageId: { type: "string" },
-      }, required: ["prompt", "choices"] } },
-    { name: "user_input", description: "在 AI 窗口内请人类用户输入一段文本（如期望文案、配置值、场景描述），回车/点击即发送。返回 {status, value:{text}, reason?}。",
-      inputSchema: { type: "object", properties: {
-        prompt: { type: "string" },
-        defaultValue: { type: "string", description: "预填默认值（可选）" },
-        timeout: { type: "number", description: "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户操作，无读秒；传了才显示读秒倒计时（可暂停），到点自动返回 timeout" },
-        rejectable: { type: "boolean", description: "是否允许用户拒绝（默认 true）" },
-        async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送；缺省=同步等待" },
-        pageId: { type: "string" },
-      }, required: ["prompt"] } },
-    { name: "user_presence", description: "探测人类用户是否在场/在线（AI 需要用户配合长任务前先确认），用户点「我在/稍后」，可附「补充说明」（value.comment）。返回 {status, present, comment?}；超时即视为不在线。",
-      inputSchema: { type: "object", properties: {
-        prompt: { type: "string", description: "询问文案（默认“你在吗？需要你配合继续开发”）" },
-        timeout: { type: "number", description: "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户作答；传了才显示读秒倒计时（可暂停），到点返回 status:'timeout'（视为不在线）——需要快速探测在场/限时等待时才显式传" },
-        async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送；缺省=同步等待" },
-        pageId: { type: "string" },
-      }, required: [] } },
-    { name: "user_notify", description: "非阻塞通知：通过浏览器 Notification 告诉用户一条消息（如“修复完成，请刷新验证”），不等待回答。返回 {notified:true}。",
-      inputSchema: { type: "object", properties: {
-        title: { type: "string", description: "通知标题" },
-        body: { type: "string", description: "通知内容" },
-        timeout: { type: "number", description: "可选：通知卡自动关闭时限 ms（5000-600000）。不传=常驻直到用户关闭" },
-        async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送；缺省=同步等待" },
-        pageId: { type: "string" },
-      }, required: ["body"] } },
-    // ---- 方案 G · P2：agent 接入 + 消息主通道 ----
-    { name: "aiti_hello", description: "agent 自我介绍/注册：覆盖 agentId（默认 clientInfo.name）与 sessionId（默认 Mcp-Session-Id 或桥随机）、绑定默认目标页 pageId、订阅页面事件（page_error）。注意：page_log/page_network 不再实时推送，改用 page_logs/page_network 工具按需拉取。建议会话开始时调用一次——注册后消息可定向到本会话（agentKey=agentId/sessionId）。",
-      inputSchema: { type: "object", properties: {
-        agentId: { type: "string", description: "自定义 agent 标识（如 pi / cc / qoder；缺省用 clientInfo.name）" },
-        sessionId: { type: "string", description: "本实例会话标识（多实例/多会话时区分；缺省用 Mcp-Session-Id，无则桥生成随机）" },
-        name: { type: "string", description: "显示名（可选，如 'pi · 工作区A'）" },
-        cwd: { type: "string", description: "工作目录（可选，显示 CWD . name (id)，方便识别 agent 身份）" },
-        pageId: { type: "string", description: "绑定默认调试目标页（pageId/url/title 均可，留空不绑）" },
-        subEvents: { type: "array", items: { type: "string" }, description: "订阅实时事件：page_error（默认不投递，显式订阅才推；page_log/page_network 不再实时推送，改用 page_logs/page_network 工具按需拉取）" },
-      } } },
-    { name: "file_stat", description: "查询文件存在性/类型/大小/修改时间（绝对路径；组件源码/调用位置定位、AI 窗『后端打开/前端打开』前置校验用）。不存在或非法路径返回 {exists:false}。",
-      inputSchema: { type: "object", properties: {
-        path: { type: "string", description: "绝对路径（如 /home/user/src/App.vue）" },
-      }, required: ["path"] } },
-    { name: "aiti_inbox", description: "消息主通道：拉取发给本 agent 会话的消息（人主动发话 user_message / 异步 user_* 作答 user_answer / 订阅的页面事件）。开始新一轮或需要最新信息时先调用；处理完把消息 id 放 ack 参数确认（标记 consumed，历史保留）。返回 agentKey（agentId/sessionId），未注册时提示调 aiti_hello 注册。",
-      inputSchema: { type: "object", properties: {
-        agentId: { type: "string", description: "agent 标识（缺省用 aiti_hello 注册值或 clientInfo.name）" },
-        sessionId: { type: "string", description: "本实例会话标识（缺省用 Mcp-Session-Id 或 aiti_hello 注册值）" },
-        ack: { description: "已处理消息 id 列表，或 { ids: [...], summary: '执行总结' }——summary（必带）会作为 agent 处理记录显示在操作台消息流", oneOf: [ { type: "array", items: { type: "string" } }, { type: "object", properties: { ids: { type: "array", items: { type: "string" } }, summary: { type: "string" } } } ] },
-      } } },
-  ];
+  const TOOLS = BRIDGE_TOOLS;
 
   // ---- 挂起请求结算/取消（exec + interaction 共用；agent 停止/客户端取消 → 立即结算，不等服务器超时） ----
   const settlePending = (requestId, ok, result) => {
@@ -1220,12 +1246,13 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
         instructions: [
           "aiti-devtools：页面内 AI 调试助手（浏览器桥）。",
           "工作流：页面发来的消息通常带 pageId。没有也可以先用 bridge_status 发现已连接页面（返回 sessions，含 pageId/url/title/frameworks/device——deviceLabel 一行的浏览器·屏幕·在线·语言可快速识别是哪台机器哪个标签）→ 把 pageId 传给目标工具。",
-          "pageId 格式为 instanceId/frameId（如 3001/host）；也可直接传 url 或页面标题；命中多个时需具体 pageId 指定。",
+          "pageId 格式为 instanceId/frameId（如 30142/host）；也可直接传 url 或页面标题；命中多个时需具体 pageId 指定。",
           "page_exec：在已连接页面执行类 CDP 命令（DOM/CSS/Input/Page/Runtime/Storage/Performance/Browser 域）。args 为命令参数对象。危险命令（导航/下载/对话框等）会自动弹用户确认。截屏（Page.captureScreenshot）务必在 args 带 reason（一句话向用户说明想截什么，页面会先弹准备卡展示该说明、用户调整好页面才开始截屏）。",
           "page_snapshot：拉取目标页面基础现场（URL/选区/模拟条件）。",
           "page_logs / page_network：排查页面报错/请求失败首选——page_logs 查 console（可 level/since/limit 过滤，先看 warn/error）；page_network 查 ajax/fetch 完成态（status≥400 或 errorOnly:true 只看失败）。两者均读页面本地缓冲（CDP Runtime.evaluate 按需拉取，不再实时上报）。",
           "user_confirm / user_choose / user_input / user_pick_element / user_presence：AI 与人类用户在页面上协作——prompt 给用户看，默认同步等待且永久等待（不传 timeout：面板常驻直到用户作答，无读秒；仅在确需限时催促时传 timeout ms，面板显示读秒倒计时可暂停，到点返回 status:'timeout'），响应信封 {status:'answered'|'rejected'|'timeout'|'error', value?, reason?, tookMs, timeoutMs}。传 async:true 可立即返回（结果经 AI 消息窗送达）。",
           "user_notify：非阻塞浏览器通知，不等待回答。",
+          "设备互连：bridge_status 返回 devices（kind=page/agent/pair 统一设备视图）——aiti_pair_send 给任意设备发文本、aiti_pair_file 推本地文件、aiti_pair_fetch 取回收到的文件（fileId 在 aiti_inbox 消息 payload.file）；手机等浏览器设备打开桥的 pair.html 即上线。",
           "常见用法：页面报错→page_logs(level:warn/error) 或 page_network(errorOnly:true)；操作页面→page_exec(cmd:'Runtime.evaluate', args:{expression:'...'})；定位元素→page_snapshot 后再 page_exec 或请用户 user_pick_element。",
         ].join("\n"),
       };
@@ -1262,9 +1289,63 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
           const curAgentKey = (session && session.agentKey) || (session && session.agentId ? session.agentId + (session.id ? "/" + session.id : "") : null) || null;
           const boundPageId = (curAgentKey && agents.get(curAgentKey) && agents.get(curAgentKey).boundPageId) || null;
           const sess = listSessions(boundPageId);
-          const resp = { sessions: sess, activePageId: boundPageId || null };
-          recToolCall("🛠 bridge_status → " + sess.length + " 个已连接页面" + (boundPageId ? " · 当前绑定: " + boundPageId : ""), true, resp);
+          const devices = listDevices();
+          const resp = { sessions: sess, activePageId: boundPageId || null, devices };
+          recToolCall("🛠 bridge_status → " + sess.length + " 个已连接页面 · " + devices.length + " 台设备" + (boundPageId ? " · 当前绑定: " + boundPageId : ""), true, resp);
           return { content: [{ type: "text", text: JSON.stringify(resp) }], isError: false };
+        }
+        // ---- pair 设备互连（跨 kind 路由统一走 routePairSend） ----
+        if (params.name === "aiti_pair_send") {
+          const text = String(a.text || "").slice(0, 64000);
+          if (!text.trim()) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "bad request（需要 text）" }) }], isError: true };
+          const me = { id: recAgentKey || "agent", name: ((recAgentKey && agents.get(recAgentKey)) || {}).name || recAgentKey || "agent", kind: "agent" };
+          const r = routePairSend(me, a.to ? String(a.to) : "all", { text });
+          recToolCall("🛠 aiti_pair_send(" + (a.to || "all") + ") → " + (r.ok ? "已投递 " + (r.delivered || []).length + " 端" : (r.error || "失败")), !!r.ok, r);
+          return { content: [{ type: "text", text: JSON.stringify(r.ok ? { ok: true, delivered: r.delivered } : r) }], isError: !r.ok };
+        }
+        if (params.name === "aiti_pair_file") {
+          const fp = String(a.path || "").trim();
+          const to = String(a.to || "").trim();
+          if (!fp || !to) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "bad request（需要 to/path）" }) }], isError: true };
+          let st: any = null;
+          try { st = statSync(fp); } catch {}
+          if (!st || !st.isFile()) { recToolCall("🛠 aiti_pair_file → 文件不存在: " + fp, false); return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "文件不存在: " + fp }) }], isError: true }; }
+          const me = { id: recAgentKey || "agent", name: ((recAgentKey && agents.get(recAgentKey)) || {}).name || recAgentKey || "agent", kind: "agent" };
+          // pair 目标先归一成 peerId（下载接收方校验按 peerId 精确比对）；agent/page 目标原样传（file-meta 路由再解析）
+          const pf0 = pair.resolvePeerFuzzy(to);
+          const toId = (pf0.hit && pf0.hit.peerId) || to;
+          // Split the name on both separators (Windows paths have no "/" — split("/").pop()
+          // would send the whole path as the file name)
+          const init = pair.fileInit(me, toId, fp.split(/[\\/]/).pop() || "file", st.size, "application/octet-stream");
+          if ((init as any).error) { recToolCall("🛠 aiti_pair_file → " + (init as any).error, false); return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: (init as any).error }) }], isError: true }; }
+          // 分块读（≤1MB/块同步读，不触 >8MB 同步读红线）→ 追加中转
+          const CHUNK = 1024 * 1024;
+          const buf = Buffer.allocUnsafe(CHUNK);
+          const fd = openSync(fp, "r");
+          try {
+            let off = 0;
+            while (off < st.size) {
+              const n = readSync(fd, buf, 0, Math.min(CHUNK, st.size - off), off);
+              const r = pair.fileChunk((init as any).fileId, buf.subarray(0, n));
+              if ((r as any).error) throw new Error((r as any).error);
+              off += n;
+            }
+          } finally { closeSync(fd); }
+          const done = pair.fileComplete((init as any).fileId);
+          if ((done as any).error) { recToolCall("🛠 aiti_pair_file → " + (done as any).error, false); return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: (done as any).error }) }], isError: true }; }
+          const meta = (done as any).file;
+          const r = routePairSend(me, to, { file: { ...meta, fromName: me.name } });
+          recToolCall("🛠 aiti_pair_file(" + to + ") → " + meta.name + "（" + Math.round(st.size / 1024) + "KB）" + (r.ok ? " 已投递" : " 投递失败: " + (r.error || "")), !!r.ok, r);
+          return { content: [{ type: "text", text: JSON.stringify(r.ok ? { ok: true, fileId: meta.fileId, name: meta.name, size: meta.size, delivered: r.delivered } : r) }], isError: !r.ok };
+        }
+        if (params.name === "aiti_pair_fetch") {
+          const fileId = String(a.fileId || "").trim();
+          if (!fileId) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "bad request（需要 fileId）" }) }], isError: true };
+          const info = pair.getFileInfo(fileId);
+          return pair.fetchToFile(fileId, a.savePath ? String(a.savePath) : null).then((r: any) => {
+            recToolCall("🛠 aiti_pair_fetch(" + fileId + (info ? " · " + info.name : "") + ") → " + (r.ok ? r.path : r.error), !!r.ok, r);
+            return { content: [{ type: "text", text: JSON.stringify(r.ok ? { ...r, name: info ? info.name : null } : r) }], isError: !r.ok };
+          });
         }
         // file_stat：文件存在性/类型/大小（无页面依赖；组件源码/调用位置定位 + AI 窗打开前置校验）
         if (params.name === "file_stat") {
@@ -1596,6 +1677,99 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
     return { response: new Response(stream, { headers: { "content-type": "text/event-stream", "cache-control": "no-cache", "x-accel-buffering": "no", ...cors } }), writer, cleanup };
   }
 
+  // ---------------- pair 模块（设备互连：临时聊天 / 互发消息 / 互传文件；方案 docs/aiti-bridge-pair-plan.md） ----------------
+  const pair = createPairModule({
+    TAG, dataDir, cors, json,
+    sseResponse: (onClose, opts) => sseResponse(onClose, opts),
+    getDevices: () => listDevices(),
+    routeSend: (fromDev, to, payload) => routePairSend(fromDev, to, payload),
+  });
+
+  /** 统一设备视图：桥上一切连接端 = 设备（page 注入页 / agent 会话 / pair web 设备）——
+   *  bridge_status 与 /bridge/pair/devices 同源（本函数）。pair 不另造设备宇宙。 */
+  function listDevices() {
+    const out: any[] = [];
+    for (const [instanceId, page] of pages) {
+      out.push({ kind: "page", id: instanceId, name: page.title || page.url || instanceId, url: page.url || null, title: page.title || null, device: (page as any).device || null, deviceLabel: (page as any).deviceLabel || null, online: true, lastSeen: Date.now() });
+    }
+    for (const [key, a] of agents) {
+      if (!a.registered && !agentOnline(a) && !a.outbox.length) continue; // 未注册且无消息的占位 agent 不进设备视图
+      out.push({ kind: "agent", id: key, name: a.name || a.agentId, cwd: a.cwd || null, source: a.source || "unknown", transportKind: a.transportKind, online: agentOnline(a), offlineAt: a.offlineAt || null, lastSeen: a.lastSeen });
+    }
+    for (const p of pair.listPeers()) out.push(p);
+    return out.sort((x, y) => (y.lastSeen || 0) - (x.lastSeen || 0));
+  }
+
+  /** pair 跨 kind 投递：to 解析（精确 pair peerId / agentKey / agentId / page instanceId → 名字模糊）+ 分发。
+   *  消费方：pair REST message/complete（浏览器发起）与 MCP aiti_pair_send/aiti_pair_file（agent 发起）。 */
+  function routePairSend(fromDev: { id: string; name: string; kind?: string }, to: string, payload: { text?: string; file?: Record<string, unknown> }) {
+    const q = String(to || "all").trim() || "all";
+    const from = { id: fromDev.id, kind: fromDev.kind || "pair", name: fromDev.name };
+    const env = (type: string, extra: Record<string, unknown>) => ({ id: randomBytes(4).toString("hex"), type, from, to: q, ts: Date.now(), ...extra });
+    const delivered: any[] = [];
+    const pushPair = (pid: string) => { if (pair.deliverToPeer(pid, env(payload.file ? "file" : "text", payload.file ? { file: payload.file } : { text: payload.text }))) delivered.push({ kind: "pair", id: pid }); };
+    const pushAgent = (target: string) => {
+      // agent 方向：走既有消息主通道（outbox/agentStream/inProcessSink）；文本带 [发自 pair: <名>] 标注（agent 会话可见，照页面消息来源标注先例）
+      const label = "[发自 pair: " + fromDev.name + "]";
+      let text: string;
+      const pl: Record<string, unknown> = { source: "pair", sourceLabel: "Pair · " + fromDev.name, fromDevice: from };
+      if (payload.file) {
+        const f = payload.file as any;
+        text = "📎 收到文件：" + f.name + "（" + Math.max(1, Math.round((f.size || 0) / 1024)) + "KB）— 调 aiti_pair_fetch {fileId:'" + f.fileId + "'} 取回\n" + label;
+        pl.file = { fileId: f.fileId, name: f.name, size: f.size, mime: f.mime };
+      } else {
+        text = String(payload.text || "") + "\n" + label;
+      }
+      const r = pushToAgents(target, text, payload.file ? "pair_file" : "user_message", pl);
+      for (const d of (r && r.delivered) || []) delivered.push({ kind: "agent", id: d.agentKey, status: d.status });
+    };
+    const pushPage = (instanceId: string) => {
+      // page 方向：aiConns SSE pair_msg（bridge-client onPairMsg 分发；aiwin/cockpit 渲染）
+      const msg = env(payload.file ? "file" : "text", payload.file ? { file: payload.file } : { text: payload.text });
+      let n = 0;
+      for (const [w, rec] of aiSelfReg) {
+        if (instanceId && String(rec.instanceId) !== instanceId) continue;
+        if (w.write({ type: "pair_msg", ...msg })) n++;
+      }
+      if (n) delivered.push({ kind: "page", id: instanceId });
+      return n;
+    };
+
+    if (q === "all") {
+      const peers = pair.listPeers();
+      for (const p of peers) { if (p.id === fromDev.id) continue; pushPair(p.id); } // 跳过发送者自身（本端已本地回显，防重复）
+      // 群发 agent：带标注文本（pushToAgents 内部处理 all 目标解析与掉线过滤）
+      const label = "[发自 pair: " + fromDev.name + "]";
+      const pl: Record<string, unknown> = { source: "pair", sourceLabel: "Pair · " + fromDev.name, fromDevice: from };
+      const text = payload.file
+        ? "📎 收到文件：" + (payload.file as any).name + " — 调 aiti_pair_fetch {fileId:'" + (payload.file as any).fileId + "'} 取回\n" + label
+        : String(payload.text || "") + "\n" + label;
+      const ra = pushToAgents("all", text, payload.file ? "pair_file" : "user_message", pl);
+      for (const d of (ra && ra.delivered) || []) delivered.push({ kind: "agent", id: d.agentKey, status: d.status });
+      return { ok: delivered.length > 0, delivered };
+    }
+
+    // 精确命中：pair peer / agentKey / agentId / page instanceId
+    const pf = pair.resolvePeerFuzzy(q);
+    if (pf.hit) { if (pf.hit.peerId !== fromDev.id) pushPair(pf.hit.peerId); return { ok: true, delivered }; } // 发给自己=本地已回显，幂等跳过
+    if (agents.has(q) || agentIdx.has(q)) { pushAgent(q); return { ok: delivered.length > 0, delivered }; }
+    if (pages.has(q)) { const n = pushPage(q); return n ? { ok: true, delivered } : { ok: false, error: "页面连接已断开" }; }
+
+    // 名字模糊：pair → agent → page 三层
+    if (pf.multiple) return { ok: false, candidates: pf.multiple, error: "pair 设备名匹配多个" };
+    const agentRows = listAgentSessions().filter((a) => (a.name || "").includes(q) || a.agentKey.includes(q));
+    if (agentRows.length === 1) { pushAgent(agentRows[0].agentKey); return { ok: delivered.length > 0, delivered }; }
+    if (agentRows.length > 1) return { ok: false, candidates: agentRows.map((a) => ({ kind: "agent", id: a.agentKey, name: a.name })), error: "agent 名匹配多个" };
+    const resolved = resolvePageId(q);
+    if (resolved.pageId) {
+      const inst = String(resolved.pageId).split("/")[0];
+      const n = pushPage(inst);
+      if (n) return { ok: true, delivered };
+    }
+    if (resolved.multiple) return { ok: false, candidates: resolved.multiple.map((pid: string) => ({ kind: "page", id: pid })), error: "页面匹配多个" };
+    return { ok: false, error: "无匹配设备（to 支持设备 id/名字；bridge_status 或 /bridge/pair/devices 查看在线设备）" };
+  }
+
   // ---------------- 桥端点处理 ----------------
   async function handle(req, path, searchParams) {
     // 正式路径带 /aiti/ 前缀（避免冲突、方便 nginx 集成 location /aiti/）；旧路径 /bridge /mcp 兼容
@@ -1603,6 +1777,13 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
     const endpoint = path[0]; // bridge / mcp
     const sub = path.slice(1)[0] || "";
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
+
+    // pair 模块路由（/bridge/pair/*；register/devices/events/message/file/inbox）——未命中的 pair 路径落 404
+    if (endpoint === "bridge" && sub === "pair") {
+      const r = await pair.handle(req, path, searchParams);
+      if (r) return r;
+      return new Response("not found: " + endpoint + "/" + sub, { status: 404 });
+    }
 
     // POST /bridge/claim { instanceId?, secret?, pageKey?, hostUrl? } → { instanceId, secret }
     if (endpoint === "bridge" && sub === "claim" && req.method === "POST") {
@@ -2158,6 +2339,21 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
   // 与 callTool 同级的进程内扩展点：宿主（pi-web 等）把 agent 会话接进程内（不经 HTTP/MCP）——
   //   registerAgent(key, opts)：登记会话（幂等）；setAgentSink(key, fn)：消息直推回调（入参 pushToAgents 文本/kind/payload）；
   //   answer(key, text)：agent 完成回答 → 消息流落盘（cockpit 等窗口可查历史）；返回结构供宿主上层用。
+  // 从已注册 AI 主窗口反向匹配 agent：AI 窗 URL 的 ?session= 命中 agent sessionId → 设 boundPageId
+  const bindAgentFromAiSelfReverse = (agentKey: string, agent: any) => {
+    const agSid = agent.sessionId || String(agentKey).split("/").slice(1).join("/");
+    if (!agSid || agent.activeBoundPageId) return;   // 已有活跃绑定不重绑（HEAD 口径）
+    for (const [, rec] of aiSelfReg) {
+      const m = String(rec.url || "").match(/[?&]session=([^&#]+)/);
+      if (!m) continue;
+      const sid = decodeURIComponent(m[1]);
+      if (sid === agSid) {
+        agent.boundPageId = String(rec.instanceId) + "/ai";
+        console.log(TAG + " agent 注册时反向绑定 AI 主窗口：" + agentKey + " → " + agent.boundPageId);
+        break;
+      }
+    }
+  };
   // key 为宿主自定义 agentKey（如 "pi-web/<sessionId>"）；与桥自动登记的 agentKey 空间独立。
   const registerAgent = (key, opts = {}) => {
     const k = String(key || "");
@@ -2171,20 +2367,7 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
     if (opts.pageId) a.boundPageId = String(opts.pageId);
     if (Array.isArray(opts.subEvents)) a.subEvents = new Set(opts.subEvents.map(String));
     // 反向匹配：AI 主窗口 URL 的 ?session= 可能已在（AI 窗早于 agent 注册），直接绑定
-    if (!a.boundPageId && !a.activeBoundPageId) {
-      const agSid = a.sessionId || String(k).split("/").slice(1).join("/");
-      if (agSid) {
-        for (const [, rec] of aiSelfReg) {
-          const m = String(rec.url || "").match(/[?&]session=([^&#]+)/);
-          if (!m) continue;
-          const sid = decodeURIComponent(m[1]);
-          if (sid === agSid) {
-            a.boundPageId = String(rec.instanceId) + "/ai";
-            break;
-          }
-        }
-      }
-    }
+    if (!a.boundPageId) bindAgentFromAiSelfReverse(k, a);
     return { ok: true, agentKey: k, agentId: k };
   };
   const setAgentSink = (key, fn) => {
@@ -2239,5 +2422,5 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
     return { ok: true, delivered: n };
   };
 
-  return { handle, sessions: () => listSessions(), tools: () => TOOLS, callTool, registerAgent, bindAgentPage, setAgentSink, answer, clearAgent, pushAiEvent, close };
+  return { handle, sessions: () => listSessions(), devices: () => listDevices(), routePairSend, pair: () => pair, tools: () => TOOLS, callTool, registerAgent, bindAgentPage, setAgentSink, answer, clearAgent, pushAiEvent, close };
 }

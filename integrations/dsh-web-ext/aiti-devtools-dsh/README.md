@@ -1,5 +1,18 @@
 # @aiti-ai/aiti-devtools-dsh
 
+## 来源 · Origin
+
+本包是 **aiti** 生态的组成部分——以 [pi](https://pi.dev) 为引擎的个人 AI 开发工作台与本地调试注入生态：**aiti-agent**（自托管 Web 工作台，基于开源项目 [pi-web](https://github.com/aiti-ai/pi-web) 构建，浏览器为主操作面）+ 各开发工具内的调试注入（aiti-devtools）+ 丰富的扩展体系。
+
+This package is part of the **aiti** ecosystem — a personal AI development workbench powered by [pi](https://pi.dev): **aiti-agent** (a self-hosted web workbench built on the open-source [pi-web](https://github.com/aiti-ai/pi-web)) plus debug injection into mainstream dev tools (aiti-devtools) and a rich extension system.
+
+**English**: DSH (DeepSeek Harness) host adapter for aiti-devtools: one package with the host bundle (in-process bridge on the DSH port + 16 aiti_* tools + placeholder rewriting) and the client plugin (the DSH web UI as the AI window with candidate bar / element picking).
+
+- 工作台 / workbench: <https://github.com/aiti-ai/pi-web>
+- 生态仓库 / monorepo: <https://github.com/aiti-ai/aiti-ai>
+- 官网 / site: <https://aiti.pw>
+
+
 > aiti-devtools 的 **DSH（DeepSeek Harness）宿主 adapter**（npm `@aiti-ai/` scope，发布到 npm.example.com）。
 > 一个包同时提供 **host bundle**（服务端 Cordis 插件）+ **client plugin**（浏览器前端）：
 > - host：进程内桥挂 DSH 同端口 `/aiti`（launcher/cockpit/bridge/mcp）+ 16 个 `aiti_*` 工具 + 占位符替换。
@@ -72,3 +85,9 @@ npm publish --access public # @aiti-ai/aiti-devtools-dsh（registry = npm.exampl
 | `@aiti-ai/aiti-devtools-agent` | 接线层：AgentBridgeClient + AgentHost + mapBridgeTools（复用）|
 | `@aiti-ai/aiti-devtools-core` | 桥核心 `createBridge` + 浏览器协议（host-protocol）+ `assets/` 产物 |
 | `packages/aiti-devtools-inject` | launcher 页面内 UI + client（复用不改）|
+
+## 文档 · Documentation
+
+- 中文完整文档（aiti-docs）: <https://aiti.pw/extensions/aiti-devtools-dsh.html>
+- English docs: <https://aiti.pw/en/extensions/aiti-devtools-dsh.html>
+- 扩展注册表 / registry: <https://aiti.pw/extensions.html> · machine-readable <https://aiti.pw/extensions.json>

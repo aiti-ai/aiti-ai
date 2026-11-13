@@ -66,8 +66,14 @@ e2e_*.mjs
 # --- end aiti managed (loose trace) ---
 
 # ported extension packages (extensions/) build artifacts
+extensions/node_modules
 extensions/**/node_modules/
 integrations/**/node_modules/
+
+# npm pack artifacts & scratch dirs (regenerable / local-only)
+/*.tgz
+/tmp/
+/lib/i18n.ts
 extensions/**/dist/
 extensions/**/*.tsbuildinfo
 

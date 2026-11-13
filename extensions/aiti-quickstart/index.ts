@@ -33,7 +33,6 @@ import { api } from "./server/api.ts";
 export default {
   id: "aiti-quickstart",
   name: "快速上手",
-  version: "0.3.0",
   icon: "icons/rocket.svg",
   client: "dist/aiti-quickstart-client.mjs",
 
@@ -58,16 +57,20 @@ export default {
       { id: "streaming", meta: { title: "任务运行时", areas: ["top", "bottom"], defaultArea: "top", w: 8, h: 1, priority: 15 } },
       { id: "examples", meta: { title: "试试这样问", areas: ["top", "bottom"], defaultArea: "bottom", w: 8, h: 1, priority: 20 } },
     ],
-    sidebarFooter: [{ id: "quickstart-open", label: "快速上手", title: "快速上手：回到欢迎页引导", icon: "icons/rocket.svg" }],
+    sidebarFooter: [{ id: "quickstart-open", label: "i18n:qs.sidebarLabel", title: "i18n:qs.sidebarTitle", icon: "icons/rocket.svg" }],
     // Workspace 下拉底部动作区（上传/管理旁）：获取工作区 Hub 入口（日常可达，不只首用）
     workspacePickerActions: [{ id: "acquire", label: "获取工作区…", title: "获取工作区：Git 克隆 / 上传 / 本地目录 / 新建", icon: "icons/rocket.svg" }],
     i18n: {
       "zh-CN": {
         "qs.guideTitle": "快速上手",
+        "qs.sidebarLabel": "快速上手",
+        "qs.sidebarTitle": "快速上手：回到欢迎页引导",
         "qs.step1": "选择项目目录——左栏项目行或上方 Workspace 下拉",
         "qs.step2": "输入第一条消息，回车即开始会话",
         "qs.step3": "@ 引用文件，/ 调出命令菜单",
         "qs.step4": "底部选择器切换模型",
+        "qs.step5": "让 AI 常驻你的网页——点选页面元素，AI 直达现场（教程 ↗）",
+        "qs.step5.title": "打开 5 分钟教程：aiti.pw/devtools/quick-start",
         "qs.guideHint": "⚙ 可隐藏/移动这些卡片",
         "qs.shortcutsTitle": "快捷操作",
         "qs.sc.newSession": "Ctrl+Alt+N 新建会话",
@@ -144,10 +147,14 @@ export default {
       },
       en: {
         "qs.guideTitle": "Quickstart",
+        "qs.sidebarLabel": "Quickstart",
+        "qs.sidebarTitle": "Quickstart: back to the welcome guide",
         "qs.step1": "Pick a project directory — the sidebar project row or the Workspace dropdown above",
         "qs.step2": "Type your first message and press Enter to start",
         "qs.step3": "@ to reference files, / for the command menu",
         "qs.step4": "Switch models in the selector below",
+        "qs.step5": "Put AI on your pages — pick elements, debug on-site (guide ↗)",
+        "qs.step5.title": "Open the 5-min quick start: aiti.pw/devtools/quick-start",
         "qs.guideHint": "⚙ Hide or rearrange these cards",
         "qs.shortcutsTitle": "Shortcuts",
         "qs.sc.newSession": "Ctrl+Alt+N New session",
