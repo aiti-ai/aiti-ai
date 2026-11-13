@@ -90,6 +90,19 @@ const nextConfig: NextConfig = {
     // up to 100 MB per request, so raise the buffer above that or large uploads
     // are truncated and fail with "Failed to parse body as FormData."
     proxyClientMaxBodySize: "128mb",
+    // Disable the Turbopack persistent FS cache for dev (2026-11-14).
+    // Root cause of an endless full-page-reload loop seen repeatedly on this
+    // instance: a stale/inconsistent persistent journal gets replayed on the
+    // next dev start, after which Turbopack re-emits a `restart`-grade update
+    // for the entry chunk list on EVERY page load (hmrVersion bump per load),
+    // so the page reloads itself in a tight loop until the journal happens to
+    // be re-written into a consistent state (or forever). Clearing
+    // .next-dev/dev/cache/turbopack reliably fixed it each time (4
+    // occurrences on 2026-11-13/14, incl. under next 16.4.6 with the
+    // "GC fixes" backport), while clean-cache restarts never reproduced.
+    // With the cache off, dev starts pay a full ~15-90s cold compile instead
+    // — trivial next to a broken dev server. Build cache is unaffected.
+    turbopackFileSystemCacheForDev: false,
   },
   // next/image is only used for the static logo, so the /_next/image optimizer
   // (and its sharp/libheif attack surface, see GHSA-2xp9-vwfh-vxw4) is not needed.
