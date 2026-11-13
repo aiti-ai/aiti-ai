@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-editor",
-  "version": "1.0.8",
+  "version": "1.0.11",
   "description": "文件编辑器 —— 接管 fileViewer 插槽的可扩展编辑器（Monaco 编辑文本类文件，非文本交回核心查看器）+ 保存冲突 409 与白名单/大小校验",
   "main": "index.ts",
   "scripts": {
@@ -35,7 +35,7 @@
     ]
   },
   "aitiExtProtocol": "1.0",
-  "contentHash": "94883be8aadac42a",
+  "contentHash": "e88d932183e9e268",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",
