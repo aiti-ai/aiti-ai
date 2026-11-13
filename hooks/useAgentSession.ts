@@ -582,7 +582,7 @@ type UnconfirmedSend = {
 };
 /** `clear_queue` and `abort`: queued texts, plus the images of prompts parked behind a compaction. */
 type RecalledPrompts = { steering?: string[]; followUp?: string[]; images?: Array<{ data: string; mimeType: string }> };
-type ModelEntry = { id: string; name: string; provider: string; providerName?: string; avail?: "ok" | "rl" | "err" | "unprobed"; providerRL?: boolean };
+type ModelEntry = { id: string; name: string; provider: string; providerName?: string; avail?: "ok" | "rl" | "err" | "unprobed"; providerRL?: boolean; /** Right-aligned dim picker text from ext-agent catalogs (e.g. qoder billing "0.5x"); absent → provider id. */ hint?: string };
 type ModelsResponse = {
   models: Record<string, string>;
   modelList?: ModelEntry[];
@@ -4101,10 +4101,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           apiUrl(`/api/session-backends?provider=${encodeURIComponent(newSessionBackend)}`),
           signal ? { signal } : undefined,
         );
-        const d = await res.json() as { models?: Array<{ id: string; provider: string; label?: string }> | null; refreshable?: boolean };
+        const d = await res.json() as { models?: Array<{ id: string; provider: string; label?: string; hint?: string }> | null; refreshable?: boolean };
         setModelsRefreshable(Boolean(d.refreshable));
         if (d.models && d.models.length > 0) {
-          const list = d.models.map((m) => ({ id: m.id, name: m.label ?? m.id, provider: m.provider }));
+          const list = d.models.map((m) => ({ id: m.id, name: m.label ?? m.id, provider: m.provider, ...(m.hint ? { hint: m.hint } : {}) }));
           setModelList(list);
           setModelNames(Object.fromEntries(list.map((m) => [m.id, m.name])));
           setModelError(null);
@@ -4118,11 +4118,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     //    local /api/models. Switching reuses the existing set_model command (adapter mapping).
     if (!isNew && session?.agent && sessionIdRef.current) {
       try {
-        const d = await sendAgentCommand<{ models?: Array<{ id: string; provider: string; label?: string }> }>(
+        const d = await sendAgentCommand<{ models?: Array<{ id: string; provider: string; label?: string; hint?: string }> }>(
           sessionIdRef.current,
           { type: "list_models" },
         );
-        const list = (d.models ?? []).map((m) => ({ id: m.id, name: m.label ?? m.id, provider: m.provider }));
+        const list = (d.models ?? []).map((m) => ({ id: m.id, name: m.label ?? m.id, provider: m.provider, ...(m.hint ? { hint: m.hint } : {}) }));
         setModelList(list);
         setModelNames(Object.fromEntries(list.map((m) => [m.id, m.name])));
         setModelError(null);
