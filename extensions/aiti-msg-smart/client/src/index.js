@@ -19,6 +19,18 @@ import { openNewSession } from "../../../_shared/new-session-cwd";
 
 const state = { opening: null };
 
+// ── 弹层按钮文本预算随视口宽度缩放（宽屏多显示，窄屏保守）──
+// factor = 1（≤900px 手机/窄分屏）→ 2（≥1700px 宽屏）线性插值；
+// 各截断预算（引用摘要 32 单位 / 选项 label 12 字 / URL 40 字符 / 动作按钮 maxWidth 220px）
+// 原为硬编码常量——宽屏上按钮文本显示偏短（用户反馈），现统一按 factor 放宽。
+function budgetFactor() {
+  try {
+    const vw = (rcx.win || window).innerWidth || 0;
+    const t = Math.max(0, Math.min(1, (vw - 900) / (1700 - 900)));
+    return 1 + t;
+  } catch (e) { return 1; }
+}
+
 // ── 渲染上下文（跨文档渲染支持，aiti-editor markdown 预览集成用）──
 // 弹层的 DOM 宿主默认是顶层文档/窗口（聊天路径行为零变化）；info.doc / info.win 可把它整体
 // 搬到另一个同源文档（如预览 iframe）——弹层渲染进 iframe 内，坐标/滚动跟随/层叠全部自洽，
@@ -304,22 +316,25 @@ export default function register(ctx) {
     (rcx.win || window).addEventListener("resize", update);
   }
 
-  // 浮层卡片就位：先落锚点下方，再按实测尺寸做视口内钳制（放不下则翻到锚点上方）。
-  // 仅 framed（info.doc 指向另一文档，如预览 iframe）启用——iframe 内没有父页那么大的余量，
-  // 靠下/靠右的锚点不钳制会被预览区边界裁掉；聊天路径保持原行为不变。
+  // 浮层卡片就位：先落锚点下方，再按实测尺寸做视口内钳制。水平钳制对 framed/聊天路径都生效
+  // （按钮预算随视口放宽后，fixed 卡片可远超初始定位用的 240px 估宽——右侧锚点不按实测钳制
+  // 会右溢出视口）；垂直翻转（放不下翻到锚点上方）仅 framed 启用（iframe 内余量小），
+  // 聊天路径保持原行为不变。
   function placeFixedCard(cardEl, r, info) {
     const framed = !!(info && info.doc && info.doc !== document);
     const vw = (rcx.win || window).innerWidth;
     const vh = (rcx.win || window).innerHeight;
     let left = Math.max(8, Math.min(r.left, vw - 240));
     let top = r.bottom + 4;
-    if (framed && cardEl) {
+    if (cardEl) {
       const cw = cardEl.offsetWidth || 0;
-      const ch = cardEl.offsetHeight || 0;
       if (cw) left = Math.max(8, Math.min(left, vw - 8 - cw));
-      if (ch && top + ch > vh - 8) {
-        const up = r.top - ch - 8;
-        top = up >= 8 ? up : Math.max(8, vh - 8 - ch);
+      if (framed) {
+        const ch = cardEl.offsetHeight || 0;
+        if (ch && top + ch > vh - 8) {
+          const up = r.top - ch - 8;
+          top = up >= 8 ? up : Math.max(8, vh - 8 - ch);
+        }
       }
     }
     cardEl.style.top = top + "px";
@@ -365,6 +380,8 @@ export default function register(ctx) {
   // 卡片内容（不含定位包装）；overlayStyle 为 null 时 in-flow 渲染
   function buildCardNode(info, view, overlayStyle) {
     const nodes = [];
+    // 动作按钮 maxWidth 随视口放宽（220..440）：长 URL/文件路径/命令名在宽屏多显示，窄屏保守
+    const abStyle = { ...actionBtnStyle, maxWidth: Math.round(220 * budgetFactor()) };
 
     // ── 顶部固定：复制全文 + 引用全文 + 新会话引用（三按钮统一——点击段落/行/划选场景一致，
     //    永远最前，异步识别到达重渲染时位置不跳动）；代码块行 → 复制/引用该行；
@@ -372,15 +389,15 @@ export default function register(ctx) {
     //    （通道收口 _shared/openNewSession，见 docs/pi-web-at-new-session-cwd-plan.md §4.5）
     nodes.push(h("span", { key: "top-actions", style: { display: "flex", flexWrap: "wrap", gap: 4 } },
       h("button", {
-        key: "copy-full", type: "button", title: view.isThought ? "复制该行思考" : view.isCode ? "复制该行代码" : view.isSelection ? "复制选中片段" : "复制整段文本", style: actionBtnStyle,
+        key: "copy-full", type: "button", title: view.isThought ? "复制该行思考" : view.isCode ? "复制该行代码" : view.isSelection ? "复制选中片段" : "复制整段文本", style: abStyle,
         onClick: (e) => { e.stopPropagation(); try { navigator.clipboard.writeText(view.fullText); } catch (err) {} view.close(); },
       }, "复制"),
       h("button", {
-        key: "quote-full", type: "button", title: view.isThought ? "把该行思考引用到输入框" : view.isCode ? "把该行引用到输入框" : view.isSelection ? "把选中片段引用到当前会话输入框" : "把整段引用到输入框", style: actionBtnStyle,
+        key: "quote-full", type: "button", title: view.isThought ? "把该行思考引用到输入框" : view.isCode ? "把该行引用到输入框" : view.isSelection ? "把选中片段引用到当前会话输入框" : "把整段引用到输入框", style: abStyle,
         onClick: (e) => { e.stopPropagation(); view.onPick(formatQuote(view.fullText)); },
       }, "引用"),
       view.onNewSession && h("button", {
-        key: "quote-new-session", type: "button", title: "把该内容引用到新建会话的输入框（15 秒内有效）", style: actionBtnStyle,
+        key: "quote-new-session", type: "button", title: "把该内容引用到新建会话的输入框（15 秒内有效）", style: abStyle,
         onClick: (e) => { e.stopPropagation(); view.onNewSession(formatQuote(view.fullText)); },
       }, "新会话"),
     ));
@@ -401,7 +418,7 @@ export default function register(ctx) {
             !isDir && h("button", {
               key: "open", type: "button",
               onClick: (e) => { e.stopPropagation(); ctx.openFile(abs, abs.split("/").pop() ?? abs); view.close(); },
-              title: T.openFile, style: actionBtnStyle,
+              title: T.openFile, style: abStyle,
             }, h(FolderOpenIcon), `${T.openFile}: ${abs.split("/").pop()}`),
             h("button", {
               key: "reveal", type: "button",
@@ -413,7 +430,7 @@ export default function register(ctx) {
                 openFolderReveal(abs, isDir);
                 view.close();
               },
-              title: isDir ? T.openFolder : `${T.revealDir}: ${abs}`, style: actionBtnStyle,
+              title: isDir ? T.openFolder : `${T.revealDir}: ${abs}`, style: abStyle,
             }, h(FolderIcon), isDir
               ? `${T.openFolder}: ${abs.split("/").pop()}`
               : `${T.revealDir}: ${abs.split("/").pop()}`),
@@ -434,7 +451,7 @@ export default function register(ctx) {
             // hover 高亮：优先 provider 给的精确匹配文本（match），无则退回 label（截断时可能匹配不到，自然降级不高亮）
             onMouseEnter: (e) => { if (view && view.element) highlightSegment(view, a.match || a.label); },
             onMouseLeave: () => { if (view) clearHighlight(view); },
-            style: { ...actionBtnStyle, color: a.danger ? "var(--danger, #ef4444)" : a.unavailable ? "var(--text-muted)" : "var(--accent)", borderColor: a.danger ? "#fca5a5" : a.unavailable ? "var(--border)" : undefined, opacity: a.unavailable ? 0.75 : undefined },
+            style: { ...abStyle, color: a.danger ? "var(--danger, #ef4444)" : a.unavailable ? "var(--text-muted)" : "var(--accent)", borderColor: a.danger ? "#fca5a5" : a.unavailable ? "var(--border)" : undefined, opacity: a.unavailable ? 0.75 : undefined },
           }, typeIcon(a.type), a.unavailable ? " ❌" : null, a.danger ? " ⚠" : null, " " + a.label),
         ),
       ));
@@ -527,7 +544,8 @@ export default function register(ctx) {
 
   function SegmentRow({ segment, onPick, T: TT, view }) {
     // 有选项段 = 选项按钮（引用该段 + 预填）；无选项段 = 「引用单句：摘要」（引用该段本身）
-    const options = segment.options ?? [{ label: `${TT.quoteLine}：${summarizeSegment(segment.text)}`, value: "" }];
+    // 摘要预算随视口放宽（32..64 单位）：宽屏多显示原文，窄屏保守
+    const options = segment.options ?? [{ label: `${TT.quoteLine}：${summarizeSegment(segment.text, Math.round(32 * budgetFactor()))}`, value: "" }];
     // hover 按钮 → 原文高亮圈出对应子句（仅无选项段有意义；选项段 hover 同样高亮段文本）
     const onEnter = (e) => {
       e.currentTarget.style.borderColor = "color-mix(in srgb, var(--accent) 45%, var(--border))";
@@ -768,7 +786,7 @@ export default function register(ctx) {
         try { ctx.appendText(deco(quote)); } catch (e) {}
         if (view) view.close();
       };
-      const segments = capsOf("question") ? parseParagraph(text) : [];
+      const segments = capsOf("question") ? parseParagraph(text, { labelMax: Math.round(12 * budgetFactor()) }) : [];
       // 全空（无任何可渲染内容 + 无外部 provider）→ 关闭
       const view = {
         fullText, onPick, onNewSession, segments,
@@ -914,12 +932,13 @@ export default function register(ctx) {
           });
         }
       }
-            // ── url（新窗口打开）——同步识别
+            // ── url（新窗口打开）——同步识别；label 截断预算随视口放宽（40..80 字符）
       if (capsOf("url")) {
+        const maxUrl = Math.round(40 * budgetFactor());
         for (const url of extractUrls(text).slice(0, 2)) {
           view.extraActions.push({
-            id: "url:" + url, type: "url", label: url.length > 40 ? url.slice(0, 40) + "…" : url,
-            title: "新窗口打开链接",
+            id: "url:" + url, type: "url", label: url.length > maxUrl ? url.slice(0, maxUrl) + "…" : url,
+            title: "新窗口打开: " + url, // 完整 URL 随 hover 可见（label 截断时不丢信息）
             onClick: () => { try { window.open(url, "_blank", "noopener"); } catch (e) {} },
           });
         }
@@ -995,7 +1014,11 @@ export default function register(ctx) {
     // 选区所在 DOM 已被卸载（virtualized 滚动回收等）→ rect 塔化，直接收摊
     if (!rect || (!rect.width && !rect.height)) { closeSelectionCard(); return; }
     const vw = window.innerWidth;
-    const left = Math.max(8, Math.min(rect.left + rect.width / 2 - 130, vw - 268));
+    // 卡宽按实测（预算放宽后可远超旧估宽 260）；首挂载未入 DOM 时 firstChild 为空 → 兑底 260
+    const card = layer.firstChild;
+    const cardW = (card && card.offsetWidth) || 260;
+    // 中心对齐选区中心；右溢出按实测卡宽钳进视口
+    const left = Math.max(8, Math.min(rect.left + rect.width / 2 - cardW / 2, vw - 8 - cardW));
     let top = rect.bottom + 8;
     if (top > window.innerHeight - 130) top = Math.max(8, rect.top - 118); // 底部放不下 → 选区上方
     layer.style.top = `${top}px`;
@@ -1184,6 +1207,8 @@ export default function register(ctx) {
         // detached（virtualized 滚动移出 DOM）→ getBoundingClientRect 为 0 矩形，钉鼠标位置兑底
         const detached = !rect.width && !rect.height;
         const top = detached ? e.clientY + 8 : rect.bottom + 4;
+        // 动作按钮 maxWidth 随视口放宽（220..440），与段落卡片一致
+        const abStyle = { ...actionBtnStyle, maxWidth: Math.round(220 * budgetFactor()) };
         const left = Math.max(8, Math.min(detached ? e.clientX : rect.left, window.innerWidth - 280));
         const nodes = [];
 
@@ -1192,7 +1217,7 @@ export default function register(ctx) {
           key: "copy", type: "button",
           onClick: (e2) => { e2.stopPropagation(); try { navigator.clipboard.writeText(text); } catch (err) {} },
           title: T.copy,
-          style: { ...actionBtnStyle, color: copied ? "var(--ok, #22c55e)" : "var(--accent)", background: "color-mix(in srgb, " + (copied ? "var(--ok, #22c55e)" : "var(--accent)") + " 10%, transparent)" },
+          style: { ...abStyle, color: copied ? "var(--ok, #22c55e)" : "var(--accent)", background: "color-mix(in srgb, " + (copied ? "var(--ok, #22c55e)" : "var(--accent)") + " 10%, transparent)" },
         }, copied ? T.copied : T.copy));
         // provider 动作
         for (const a of externalActions) {
@@ -1200,7 +1225,7 @@ export default function register(ctx) {
             key: a.id, type: "button",
             onClick: (e2) => { e2.stopPropagation(); a.onClick(text, el); closeLayer(); },
             title: a.title || "",
-            style: { ...actionBtnStyle, color: a.danger ? "var(--danger, #ef4444)" : "var(--accent)", borderColor: a.danger ? "#fca5a5" : "var(--border)" },
+            style: { ...abStyle, color: a.danger ? "var(--danger, #ef4444)" : "var(--accent)", borderColor: a.danger ? "#fca5a5" : "var(--border)" },
           }, typeIcon(a.type || "command"), a.label));
         }
 
@@ -1213,6 +1238,11 @@ export default function register(ctx) {
         const dom = elToDom(h("span", { style: { position: "fixed", top, left, zIndex: 300 } }, card));
         layer.innerHTML = "";
         if (dom) layer.appendChild(dom);
+        // 挂载后按实测卡宽二次就位：按钮 maxWidth 放宽（220..440）后卡片可远超定位估宽 280，
+        // 靠右的行内 code 不按实测钳制会右溢出视口（与段落卡片 placeFixedCard 同思路）
+        const cardEl = layer.firstChild;
+        const cw = cardEl && cardEl.offsetWidth || 0;
+        if (cw && dom) dom.style.left = Math.max(8, Math.min(left, window.innerWidth - 8 - cw)) + "px";
       }
 
       // 外部点击关闭：capture 阶段检测点击是否在弹层外

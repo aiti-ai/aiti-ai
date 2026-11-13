@@ -24,4 +24,4 @@ await resolveEsbuild().build({
   logLevel: "warning",
   banner: { js: "// aiti-msg-smart client bundle — built by tools/build-client.mjs (esbuild). Do not edit." },
 });
-console.log("[aiti-msg-smart] client bundle → client/aiti-msg-smart-client.mjs");
+console.log("[aiti-msg-smart] client bundle → dist/aiti-msg-smart-client.mjs");
