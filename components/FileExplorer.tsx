@@ -136,11 +136,12 @@ async function allowOutsideLink(linkPath: string, target: string): Promise<void>
   if (!res.ok) throw await responseError(res, "Failed to allow the linked folder");
 }
 
-async function fetchGitStatus(cwd: string): Promise<GitStatusResponse> {
+async function fetchGitStatus(cwd: string, signal: AbortSignal): Promise<GitStatusResponse> {
   const res = await fetch(apiUrl("/api/git/status"), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ cwd }),
+    signal,
   });
   if (!res.ok) throw new Error(`Failed to load Git status (HTTP ${res.status})`);
   return res.json() as Promise<GitStatusResponse>;
@@ -1382,7 +1383,9 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
 
   useEffect(() => {
     let cancelled = false;
-    fetchGitStatus(cwd)
+    // Aborting a replaced request also stops its scan on the server (#1584).
+    const controller = new AbortController();
+    fetchGitStatus(cwd, controller.signal)
       .then((status) => {
         if (!cancelled) {
           setGitFiles(status.isGitRepository ? status.files : []);
@@ -1397,7 +1400,10 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
           setGitLineStats({ additions: 0, deletions: 0 });
         }
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
   }, [cwd, refreshKey, treeRefreshKey]);
 
   useEffect(() => {

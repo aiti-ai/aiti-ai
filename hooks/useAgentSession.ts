@@ -62,6 +62,8 @@ import { createShownNotices, extensionErrorMessage } from "@/lib/startup-issues"
 import { bareMcpOpensSettings } from "@/lib/mcp-command";
 import { copyText } from "@/lib/clipboard";
 import type { SettingsSection } from "@/lib/settings-navigation";
+import { withTranscriptNotices, type TranscriptNotice } from "@/lib/transcript-notices";
+import { applyToolClockEvent, endedToolClocks, NO_TOOL_CLOCKS, withoutToolClock, type ToolClocks } from "@/lib/tool-clock";
 import {
   enqueueExtensionUiRequest,
   removeExtensionUiRequest,
@@ -334,6 +336,8 @@ export interface UseAgentSessionOptions {
   newSessionPreparers?: NewSessionPreparer[];
   /** A run ended; `aborted` when it was stopped rather than finished (pi's `agent_settled.aborted`). */
   onAgentEnd?: (end: AgentEndInfo) => void;
+  /** An extension's `ctx.shutdown()` ended this session's runtime, as pi quits. Its file may remain. */
+  onSessionEnded?: (sessionId: string) => void;
   /** A top-level tool call finished; the files it touched may have changed. */
   onToolEnd?: (toolName: string) => void;
   onAttentionNeeded?: (request: BlockingExtensionUiRequest) => void;
@@ -654,7 +658,7 @@ export function prefetchModels(cwd: string): void {
 
 export function useAgentSession(opts: UseAgentSessionOptions) {
   const {
-    session, newSessionCwd, newSessionDraftKey, onAgentEnd, onToolEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onSideSession,
+    session, newSessionCwd, newSessionDraftKey, onAgentEnd, onSessionEnded, onToolEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onSideSession,
     modelsRefreshKey, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsPanelOpen,
     newSessionBackend,
     onOpenSettings, onDebugSnapshotReaderChange,
@@ -687,6 +691,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [activeLeafId, setActiveLeafId] = useState<string | null>(null);
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [activeToolResults, setActiveToolResults] = useState<Map<string, ToolResultMessage>>(new Map());
+  // Running tool calls' clocks, on `performance.now()` (lib/tool-clock.ts).
+  const [toolClocks, setToolClocks] = useState<ToolClocks>(NO_TOOL_CLOCKS);
   const [entryIds, setEntryIds] = useState<string[]>([]);
   const [historyCursor, setHistoryCursor] = useState<string | null>(null);
   const [hasEarlierMessages, setHasEarlierMessages] = useState(false);
@@ -950,6 +956,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const isCompactingRef = useRef(false);
   const extensionUiCountRef = useRef(0);
   const sessionIdRef = useRef<string | null>(session?.id ?? null);
+  const endedSessionRef = useRef<string | null>(null);
   const sessionPropIdRef = useRef<string | null>(session?.id ?? null);
   // False while the session carries no tool selection of its own, so its loadout
   // follows settings.json defaultTools and the picker must say so rather than
@@ -1072,6 +1079,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // before each (re)connect, the debug reader to show it.
   const wantsEventStream = useCallback((sid: string) => (
     sessionHookMountedRef.current
+    && endedSessionRef.current !== sid
     && sessionIdRef.current === sid
     && (
       agentRunningRef.current
@@ -2245,6 +2253,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     setSettling(false);
     setRetryInfo(null);
     setActiveToolResults(new Map());
+    setToolClocks(NO_TOOL_CLOCKS);
     dispatchStream({ type: "end" });
     return wasRunning;
   }, [dispatchStream]);
@@ -2601,6 +2610,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   });
 
   const handleAgentEvent = useCallback((event: AgentEvent) => {
+    if (endedSessionRef.current) return;
     // Subagent lifecycle signal: broadcast to the extension client (Fleet panel refresh + sidebar tree refresh).
     // Sources: subagent tool execution (delegation start) + upstream subagent-* custom messages (background start/finish notices).
     try {
@@ -2616,6 +2626,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
     } catch { /* broadcast failure must not affect the main flow */ }
     switch (event.type) {
+      case "session_ended": {
+        const sid = sessionIdRef.current;
+        if (!sid || event.sessionId !== sid) return;
+        // The owner leaves the session (a fresh composer, or the tab closes) and this view
+        // unmounts; until then nothing reconnects, which would start the runtime again.
+        endedSessionRef.current = sid;
+        cancelEventStreamGrace();
+        eventConnectionRef.current?.close();
+        deleteSessionViewSnapshot(sid);
+        onSessionEnded?.(sid);
+        return;
+      }
       case "connected": {
         dispatchStream({ type: "end" });
         // The server resolved the alias/placeholder id to the rebound handle (canonicalSessionId ≠ requested id):
@@ -2628,6 +2650,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           setExtensionDialogs((queue) => retainExtensionUiRequests(queue, pending));
           setExtensionCustomUis((queue) => retainExtensionUiRequests(queue, pending));
         }
+        // The replay that follows brings each running call's start with its elapsed time.
+        setToolClocks(endedToolClocks);
         // isRunning = the server's authoritative busy flag (same criteria as the sidebar running set): covers busy
         // states such as manual compaction where isStreaming=false — trusting isStreaming alone would keep showing
         // idle after reconnects / fresh page opens.
@@ -2970,7 +2994,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
               );
             }
           }
-          setMessages((prev) => [...prev, normalizeToolCalls(completed)]);
+          // pi's showCacheMissNotices (#1265): the wrapper sends them beside the message.
+          const notices = Array.isArray(event.transcriptNotices) ? event.transcriptNotices as TranscriptNotice[] : undefined;
+          setMessages((prev) => [...prev, withTranscriptNotices(normalizeToolCalls(completed), notices)]);
+          if (completed.role === "toolResult") {
+            const callId = (completed as ToolResultMessage).toolCallId;
+            setToolClocks((prev) => withoutToolClock(prev, callId));
+          }
           if (completed.role === "assistant") {
             const sid = sessionIdRef.current;
             if (sid) void refreshContextUsage(sid);
@@ -2987,6 +3017,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         if (isNestedToolExecutionEvent(event)) break;
         const id = event.toolCallId as string;
         const name = event.toolName as string;
+        const startedAt = performance.now();
+        setToolClocks((prev) => applyToolClockEvent(prev, event, startedAt));
         setAgentPhase((prev) => {
           const tools = prev?.kind === "running_tools" ? [...prev.tools] : [];
           if (!tools.some((t) => t.id === id)) tools.push({ id, name });
@@ -3037,6 +3069,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         if (isNestedToolExecutionEvent(event)) break;
         const id = event.toolCallId as string;
         onToolEnd?.(event.toolName as string);
+        const endedAt = performance.now();
+        setToolClocks((prev) => applyToolClockEvent(prev, event, endedAt));
         setActiveToolResults((prev) => {
           if (!prev.has(id)) return prev;
           const next = new Map(prev);
@@ -3211,7 +3245,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         setExtensionDialogs((queue) => removeExtensionUiRequest(queue, event.id as string));
         break;
     }
-  }, [addNotice, adoptRunStartedAt, applyLiveUsage, applyQueuedSnapshot, canonicalizeSessionId, cancelEventStreamGrace, dispatchStream, enqueueDelta, handleExtensionUiRequest, loadSession, markPromptLanded, notifyPromptStage, onAgentEnd, onToolEnd, opts.chatInputRef, refreshContextUsage, scheduleEventStreamClose, scrollToBottom, settleUiStage, syncLiveModel]);
+  }, [addNotice, adoptRunStartedAt, applyLiveUsage, applyQueuedSnapshot, canonicalizeSessionId, cancelEventStreamGrace, dispatchStream, enqueueDelta, handleExtensionUiRequest, loadSession, markPromptLanded, notifyPromptStage, onAgentEnd, onSessionEnded, onToolEnd, opts.chatInputRef, refreshContextUsage, scheduleEventStreamClose, scrollToBottom, settleUiStage, syncLiveModel]);
   handleAgentEventRef.current = handleAgentEvent;
 
   const respondToInteraction = useCallback(async (requestId: string, answer: {
@@ -3713,8 +3747,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       return;
     }
     try {
-      // Prompts parked behind a compaction come back for the composer, as Recall's do.
-      restoreRecalledPrompts(await sendAgentCommand<RecalledPrompts | null>(sid, { type: "abort" }));
+      // Stop takes the queued messages back for the composer, as Esc does in pi's TUI,
+      // with the prompts parked behind a compaction (and their images), as Recall does.
+      const recalled = await sendAgentCommand<RecalledPrompts | null>(sid, { type: "abort" });
+      // The server's queue_update only reaches us while SSE is connected; clear locally too.
+      if (recalled) setQueuedMessages({ steering: [], followUp: [] });
+      restoreRecalledPrompts(recalled);
     } catch (e) {
       console.error("Failed to abort:", e);
     }
@@ -4390,7 +4428,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
         case "session": {
           if (!sid) return complete({ handled: true, error: "No active session" });
-          if (!onSessionStatsPanelOpen) return complete({ handled: true, message: formatSessionSummary(sessionStats) });
+          if (!onSessionStatsPanelOpen) return complete({ handled: true, message: formatSessionSummary(sessionStats, translate) });
           await refreshSessionStats();
           onSessionStatsPanelOpen?.();
           return complete({ handled: true, action: "openSessionStats" });
@@ -4455,7 +4493,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } catch (e) {
       return complete({ handled: true, error: e instanceof Error ? e.message : String(e) });
     }
-  }, [activeLeafId, addNotice, ensureNewSession, handleCompact, isCompacting, loadModels, loadSession, loadSlashCommands, loadTools, promoteNewSession, onOpenSettings, onSessionForked, onSessionStatsPanelOpen, opts.chatInputRef, refreshSessionStats, sessionStats, slashCommandsForMcp, startSideChat]);
+  }, [activeLeafId, addNotice, ensureNewSession, handleCompact, isCompacting, loadModels, loadSession, loadSlashCommands, loadTools, promoteNewSession, onOpenSettings, onSessionForked, onSessionStatsPanelOpen, opts.chatInputRef, refreshSessionStats, sessionStats, slashCommandsForMcp, startSideChat, translate]);
 
   // Let AgentSession.prompt decide atomically whether to queue against the
   // current run or start a new turn if it settled while the request was in
@@ -5223,7 +5261,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // dialogs, so their completion and attention notifications reach the page as
   // if it had never let go. Nothing is resent.
   reattachEventStreamRef.current = (sid: string, reason: "visible" | "activity") => {
-    if (!eventStreamReleasedRef.current) return;
+    if (!eventStreamReleasedRef.current || endedSessionRef.current === sid) return;
     eventStreamReleasedRef.current = false;
     reattachDebugRef.current = { count: reattachDebugRef.current.count + 1, lastAt: Date.now(), lastReason: reason };
     setEventStreamReattachCount((count) => count + 1);
@@ -5703,7 +5741,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   return {
     // State
-    data, loading, error, activeLeafId, messages, activeToolResults, entryIds, historyCursor, hasEarlierMessages, earlierTurnCount, streamState,
+    data, loading, error, activeLeafId, messages, activeToolResults, toolClocks, entryIds, historyCursor, hasEarlierMessages, earlierTurnCount, streamState,
     agentRunning, modelNames, modelList, modelError, missingCwd, modelScopeWarnings, isModelScopeActive, allModelList, modelThinkingLevels, modelThinkingLevelMaps, newSessionModel, toolPreset, thinkingLevel,
     modelsRefreshing, modelsRefreshable, refreshModels,
     followPaused,    retryInfo, contextUsage, systemPrompt, forkingEntryId,

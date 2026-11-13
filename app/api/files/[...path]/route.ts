@@ -37,6 +37,7 @@ import { issueFileTicket, redeemFileTicket } from "@/lib/file-ticket";
 import { readTextPreviewChunk } from "@/lib/text-preview";
 import { registerFileWatch, startFileWatch, stopFileWatch } from "@/lib/file-watch-registry";
 import { isIgnored } from "@/lib/file-ignore";
+import { FILE_WATCH_HEARTBEAT_MS } from "@/lib/file-version";
 import { pageStreamLabel, registerPageStream } from "@/lib/page-stream-registry";
 
 // 忽略规则已改为纯文件驱动（.gitignore + .aitignore，见 lib/file-ignore.ts）——
@@ -824,6 +825,7 @@ async function handleFileRequest(
       let lastIno = stat?.ino ?? 0;
       let lastSize = stat?.size ?? 0;
       let lastExists = stat !== undefined;
+      let heartbeat: ReturnType<typeof setInterval> | undefined;
       const stream = new ReadableStream({
         start(controller) {
           const send = (eventName: string, data: Record<string, unknown>) => {
@@ -832,6 +834,7 @@ async function handleFileRequest(
               controller.enqueue(new TextEncoder().encode(payload));
             } catch {
               // client disconnected
+              clearInterval(heartbeat);
             }
           };
           try {
@@ -865,6 +868,7 @@ async function handleFileRequest(
               }
             });
             watcher.on("error", () => {
+              clearInterval(heartbeat);
               try { watcher?.close(); } catch { /* ignore */ }
               watcher = null;
               releaseWatch?.();
@@ -880,6 +884,7 @@ async function handleFileRequest(
             // A client gone without a cancel (a phone off the network) would keep
             // the watcher, and its place in the debug panel's count, forever.
             const onAbort = () => {
+              clearInterval(heartbeat);
               try { watcher?.close(); } catch { /* ignore */ }
               watcher = null;
               releaseWatch?.();
@@ -893,12 +898,14 @@ async function handleFileRequest(
             // The client snapshots only after this event, so emit it after the
             // watcher exists to avoid dropping changes between those steps.
             send("connected", { filePath });
+            heartbeat = setInterval(() => send("ping", {}), FILE_WATCH_HEARTBEAT_MS);
           } catch {
             send("error", { message: "Failed to watch file" });
             controller.close();
           }
         },
         cancel() {
+          clearInterval(heartbeat);
           try { watcher?.close(); } catch { /* ignore */ }
           releaseWatch?.();
         },

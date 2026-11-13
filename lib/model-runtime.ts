@@ -7,6 +7,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { rememberProviderModels } from "./deferred-provider-models.ts";
 import { serializeByKey } from "./key-serializer.ts";
+import { llamaCppExtension } from "./pi-sdk-internals.ts";
 
 /**
  * ModelRuntime that also includes providers registered by extensions (an
@@ -23,7 +24,11 @@ import { serializeByKey } from "./key-serializer.ts";
  */
 export async function createModelRuntimeWithExtensions(): Promise<ModelRuntime> {
   const agentDir = getAgentDir();
-  const services = await createAgentSessionServices({ cwd: agentDir, agentDir });
+  const services = await createAgentSessionServices({
+    cwd: agentDir,
+    agentDir,
+    resourceLoaderOptions: { extensionFactories: [llamaCppExtension] },
+  });
   await rememberProviderModels(services.modelRuntime);
   return services.modelRuntime;
 }

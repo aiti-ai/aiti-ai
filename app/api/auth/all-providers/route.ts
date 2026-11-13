@@ -1,4 +1,4 @@
-import { getModelRuntimeWithExtensions } from "@/lib/model-runtime-ext";
+import { getModelRuntimeWithExtensions } from "@/lib/model-runtime";
 import { buildApiKeyProviderList } from "@/lib/provider-listing";
 import { collectProviderListingInputs } from "@/lib/provider-listing-runtime";
 

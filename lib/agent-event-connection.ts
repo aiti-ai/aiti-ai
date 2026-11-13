@@ -73,6 +73,7 @@ export class AgentEventConnection {
   private retryGeneration = 0;
   /** Consecutive reconnect count (drives exponential backoff; reset on successful connect / when retrying stops). */
   private retryCount = 0;
+  private endedSessionId: string | null = null;
   // Bookkeeping for snapshot() only: nothing here decides what the connection does.
   private opens = 0;
   private retries = 0;
@@ -116,7 +117,7 @@ export class AgentEventConnection {
   }
 
   maintain(sessionId: string): void {
-    if (!this.options.shouldMaintain(sessionId)) return;
+    if (this.endedSessionId === sessionId || !this.options.shouldMaintain(sessionId)) return;
     const retryGeneration = this.retryGeneration;
     void this.ensureConnected(sessionId).catch((error) => {
       if (retryGeneration !== this.retryGeneration) return;
@@ -130,6 +131,7 @@ export class AgentEventConnection {
   }
 
   async ensureConnected(sessionId: string): Promise<void> {
+    if (this.endedSessionId === sessionId) throw new AgentEventConnectionError("closed");
     while (true) {
       let connection = this.current;
       if (!connection || connection.sessionId !== sessionId) {
@@ -220,6 +222,12 @@ export class AgentEventConnection {
         return;
       }
 
+      if (event.type === "session_ended" && event.sessionId === sessionId) {
+        this.endedSessionId = sessionId;
+        this.close();
+        this.options.onEvent(event);
+        return;
+      }
       // Heartbeat pings only refresh liveness and are not delivered to the business layer (callers need not handle them).
       if (event.type === "ping" || event.type === "heartbeat") {
         if (event.type === "heartbeat") connection.lastHeartbeatAt = connection.lastSeenAt;

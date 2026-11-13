@@ -1,4 +1,4 @@
-import { getModelRuntimeWithExtensions } from "@/lib/model-runtime-ext";
+import { getModelRuntimeWithExtensions } from "@/lib/model-runtime";
 import { invalidateModelsCache } from "@/lib/models-cache";
 import { removeStoredCredentialIfType } from "@/lib/provider-credential-store";
 
