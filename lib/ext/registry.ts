@@ -677,6 +677,7 @@ export class ExtRegistryImpl {
     //    miss attribution correct.
     const timingEnabled = process.env.PI_WEB_EXT_TIMING === "1";
     const timings: Array<{ id: string; ms: number; retranspiled: number }> = [];
+    const skippedBundled: string[] = []; // bundled best-effort tier: failures are expected in source-repo form, collected for one summary line
     for (const [id, winner] of this.winners) {
       if (disabled.has(id)) continue; // user-disabled → not loaded (absent from status; UI uses isEnabled)
       const { dir, source } = winner;
@@ -731,13 +732,25 @@ export class ExtRegistryImpl {
         this.extensions.set(ext.id, { id: ext.id, name: ext.name, version: pkgVersion ?? ext.version, dir, configDir, stateDir, cacheDir, source, ext });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        console.error(`[ext] ${id} failed to load:`, msg);
-        this.errors.set(id, msg);
+        if (source === "bundled") {
+          // Bundled baseline is best-effort ("use it if usable"): when the package ships
+          // in source-repo form the mirror has no dist/ artifacts or reconciled deps, so
+          // load failures here are expected — skip silently (no console.error, no errors
+          // entry; same-id higher-priority roots have usually won arbitration anyway).
+          // Failures in user/extra/dev roots keep the loud path.
+          skippedBundled.push(id);
+        } else {
+          console.error(`[ext] ${id} failed to load:`, msg);
+          this.errors.set(id, msg);
+        }
       } finally {
         if (timingEnabled) {
           timings.push({ id, ms: performance.now() - timingT0, retranspiled: countRetranspiled(cacheBefore!, snapshotJitiCache()) });
         }
       }
+    }
+    if (skippedBundled.length > 0) {
+      console.info(`[ext] bundled baseline: ${skippedBundled.length} unavailable extension(s) skipped silently (best-effort tier — source-repo form has no dist/deps): ${skippedBundled.join(", ")}`);
     }
     // [lazy loading v2] lazy-flag static diagnostics (non-blocking):
     // clientImmediately:false with no ui[slot][] item declarations at all →
