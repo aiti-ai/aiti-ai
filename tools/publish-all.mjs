@@ -208,6 +208,29 @@ if (ADOPT) {
 let published = 0, skippedUpToDate = 0, skippedPrivate = 0, skippedProtocol = 0, failed = 0;
 const report = [];
 
+// ---- pre-publish materialization: Monaco AMD assets (synced from pi-web-ext/tools/publish-all.mjs) ----
+// deploy.mjs syncMonaco only copies assets into local deploy dirs; npm packages must be
+// self-contained. Materialize BEFORE the contentHash/audit steps so (a) a monaco upgrade
+// triggers the auto-bump instead of shipping changed content under a stale version, and
+// (b) the official audit gate actually scans the shipped assets. The extension's own
+// tools/materialize-monaco.mjs is fingerprint-idempotent, so the prepack hook inside
+// `npm publish` below becomes a no-op skip.
+for (const { dir, pkgDir } of pkgs) {
+  if (EXCLUDE.has(dir) || (ONLY && !ONLY.includes(dir))) continue;
+  let text = "";
+  try { text = readFileSync(join(pkgDir, "tools", "deploy.mjs"), "utf8"); } catch { continue; }
+  if (!text.includes("monaco-editor/min/vs")) continue;
+  const script = join(pkgDir, "tools", "materialize-monaco.mjs");
+  if (!existsSync(script)) {
+    console.warn(`[publish] ${dir}: deploy.mjs uses monaco assets but tools/materialize-monaco.mjs is missing — npm package would 404 on loader.js`);
+    continue;
+  }
+  const r = spawnSync(process.execPath, [script, pkgDir], { encoding: "utf8" });
+  const tail = ((r.stdout || "") + (r.stderr || "")).trim().split("\n").filter(Boolean).pop() || "";
+  if (r.status !== 0) console.warn(`[publish] ${dir}: monaco materialization failed (${tail})`);
+  else console.log(`[publish] ${dir}: ${tail}`);
+}
+
 for (const { dir, pkgDir, pjPath, p } of pkgs) {
   if (EXCLUDE.has(dir)) continue;
   if (ONLY && !ONLY.includes(dir)) continue;

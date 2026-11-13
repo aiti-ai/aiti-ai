@@ -36,9 +36,6 @@ if (!["staging", "official"].includes(TARGET)) {
   console.error(`--target/--AITI_NPM_TARGET 必须为 staging|official，得到: ${TARGET}`);
   process.exit(2);
 }
-const REGISTRY = TARGET === "official"
-  ? "https://registry.npmjs.org/"
-  : (PRIV?.stagingRegistry || process.env.AITI_STAGING_REGISTRY || "https://registry.npmjs.org/"); // staging registry is internal — loaded from the machine-local config, never committed
 
 // ---- 发布范围（与 publish-all.mjs 同口径）----
 const EXCLUDE = new Set(["demo", "demo-lazy", "sm-demo-source", "templates", "shared"]);
@@ -60,6 +57,12 @@ function loadPrivConfig() {
 }
 const PRIV = loadPrivConfig();
 if (!PRIV) console.warn("[release-audit] 未找到 ~/.aiti/release-redact.json（且未设 AITI_RELEASE_REDACT）——内部值脱敏/扫描规则为空");
+// REGISTRY declared after PRIV: the staging branch references PRIV (defining it before PRIV
+// made a direct `--target staging` run throw a TDZ ReferenceError; official never hit that
+// branch, so it stayed hidden)
+const REGISTRY = TARGET === "official"
+  ? "https://registry.npmjs.org/"
+  : (PRIV?.stagingRegistry || process.env.AITI_STAGING_REGISTRY || "https://registry.npmjs.org/"); // staging registry is internal — loaded from the machine-local config, never committed
 
 // ---- 脱敏规则（与 sync-extensions-to-aiti-ai.mjs 同口径 + 官方源补充）----
 const REDACT = (PRIV?.redact ?? []).map((r) => [new RegExp(r.find, r.flags || "g"), r.replace]);
