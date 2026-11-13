@@ -108,7 +108,9 @@ export async function GET(req: Request) {
       const notModified = new Response(null, { status: 304, headers: { ETag: etag, "Cache-Control": "no-store" } });
       return perf ? perf.attach(notModified) : notModified;
     }
-    // Large lists are gzipped (upstream jsonResponse); the ETag is computed over the uncompressed body to match the client's If-None-Match.
+    // jsonResponse sends plain JSON (no Next-layer gzip — see lib/json-response.ts for the
+    // Next 16.4.6 Content-Encoding regression it avoids); the ETag is computed over the body
+    // to match the client's If-None-Match.
     return perf?.attach(jsonResponse(req, payload, {
       headers: { ETag: etag, "Cache-Control": "no-store" },
     })) ?? jsonResponse(req, payload, {
