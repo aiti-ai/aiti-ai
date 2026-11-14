@@ -1,92 +1,77 @@
-# Draft Keeper（aiti-draft-keeper）
+# @aiti-ai/aiti-draft-keeper
 
-## 来源 · Origin
+> Draft persistence and crash recovery for the composer — the sole owner of the composer draft state machine (v2 intent contract), shared slots across tabs, 7-day stale pruning.
 
-本包是 **aiti** 生态的组成部分——以 [pi](https://pi.dev) 为引擎的个人 AI 开发工作台与本地调试注入生态：**aiti-agent**（自托管 Web 工作台，基于开源项目 [pi-web](https://github.com/aiti-ai/pi-web) 构建，浏览器为主操作面）+ 各开发工具内的调试注入（aiti-devtools）+ 丰富的扩展体系。
+English · [简体中文](./README.zh-CN.md)
+
+## About aiti
 
 This package is part of the **aiti** ecosystem — a personal AI development workbench powered by [pi](https://pi.dev): **aiti-agent** (a self-hosted web workbench built on the open-source [pi-web](https://github.com/aiti-ai/pi-web)) plus debug injection into mainstream dev tools (aiti-devtools) and a rich extension system.
 
-**English**: Draft persistence and crash recovery for the composer — the sole owner of the composer draft state machine (v2 intent contract), shared slots across tabs, 7-day stale pruning.
+- Workbench (aiti-agent, built on pi-web): <https://github.com/aiti-ai/pi-web>
+- Ecosystem monorepo: <https://github.com/aiti-ai/aiti-ai>
+- Site: <https://aiti.pw>
 
-- 工作台 / workbench: <https://github.com/aiti-ai/pi-web>
-- 生态仓库 / monorepo: <https://github.com/aiti-ai/aiti-ai>
-- 官网 / site: <https://aiti.pw>
+## What it does
 
+Draft persistence + recovery takeover for the composer. All of pi-web core's draft logic has moved into this extension — core has zero draft-store dependencies and reaches the storage API through the `lib/composer/draft-api.ts` registry; key/value changes broadcast via the composer enhancement contract.
 
-草稿持久化 + 恢复接管扩展——pi-web 去 fork 化 P2 的产物（`docs/pi-web-defork-roadmap.md` §3.B）。
-core 的草稿逻辑（原 `lib/draft-store.ts` + ChatInput/ChatWindow 接线）已全部迁出，
-**core 零 draft-store 依赖**；core 经 `lib/composer/draft-api.ts` 注册表访问本扩展
-提供的存储 API，经 composer 增强契约广播 key/值变化。
+## Architecture (v2: the sole state-machine owner)
 
-## 架构（v2：状态机唯一所有者）
+- `client/core.mjs` = pure draft state-machine logic (storage/timers/onRestore injected, covered by `core.test.mjs`); `client/aiti-draft-keeper-client.mjs` = thin shell (window/localStorage adapters + hydration gating + DraftApi registration).
+- Core's (pi-web's) only write entry is **intents** (`applyDraftIntent`, composer-enhancement-contract v2):
+  - `sessionCreated {provisionalKey, sessionId}`: provisional drafts are voided on promote; new input during the promote window (before the key prop switches) is redirected into the sid slot;
+  - `rejected {key, text, images}`: a failed send merges back into the draft (written back directly when it's the current box).
+- `slotKeyOf` takes the cwd segment after the **last colon** — a draftId may itself contain colons (`initial:<cwd>` form).
+- `pruneStale()`: one-time cleanup of slots unwritten for >7 days at startup (including legacy per-tab leftovers and old formats without timestamps).
 
-- `client/core.mjs` = **草稿状态机纯逻辑**（storage/timers/onRestore 注入可测，
-  `core.test.mjs` 17 用例钉死语义）；`client/aiti-draft-keeper-client.mjs` =
-  薄壳（window/localStorage 适配 + hydration 门控 + DraftApi 注册）。
-- **core（pi-web）唯一写入口是意图**（`applyDraftIntent`，见 pi-web
-  `docs/composer-enhancement-contract.md` v2 节）：
-  - `sessionCreated {provisionalKey, sessionId}`：promote 时 provisional 草稿
-    作废；promote 窗口（key prop 切换前）的新输入重定向落 sid 槽位；
-  - `rejected {key, text, images}`：发送失败合并回草稿，当前框则写回。
-- `slotKeyOf` 按**最后一个冒号**取 cwd 段——draftId 可能自身含冒号
-  （?cwd= 引导的 `initial:<cwd>` 形式），不得按首个冒号切分。
-- `pruneStale()`：启动一次性清理 >7 天未写入槽位（含旧 per-tab 残留、无 ts 旧格式）。
-- 已修「恢复即删」：scan 恢复后同一轮 onChange 直接返回（恢复把 known 指向
-  恢复值后，空快照继续走清空分支会在确认延时后删掉刚恢复的草稿）。
+## Model (shared slots + no-contribution-no-writeback)
 
-## 模型（共享槽位 + 无贡献不回写）
+- **One shared slot per session** `crashrestore-<key>` (no tabId) — multiple tabs on the same session naturally share one draft; new views use `crashrestore-new:<cwd>`.
+- **known** = the value this tab last displayed/wrote.
+- **onChange** (only real input writes):
+  - `snap === known` → no write (no contribution, no writeback — the core of anti-oscillation);
+  - `snap === ""` → clear the slot (with a 300ms confirm delay against stale empty snapshots);
+  - otherwise → write the new value (last-write-wins).
+- **scan** (read-only, never writes → no oscillation source):
+  - empty box + stored draft → silently restore into the box (restore does not clear the stash);
+  - non-empty box + stored ⊇ known (another tab extended the draft) → sync into the box;
+  - diverged → leave alone (the writer writes its new value).
+- **Restore waits for host hydration** (`pi-web:hydrated` signal + stage-replay second line of defense) — otherwise a restore before hydration is wiped by the re-render from server HTML.
 
-- **每会话一个共享槽位** `crashrestore-<key>`（无 tabId）——多标签同会话天然共享
-  同一份草稿；新建视图 = `crashrestore-new:<cwd>`（cwd 族自然 key，draftId 抖动无感）。
-- **known** = 本标签页最后显示/写入的值。
-- **onChange（真实输入才写）**：
-  - `snap === known` → **不写**（无贡献不回写★——防震荡的核心）；
-  - `snap === ""` → 清槽位（**清空/发走再清**★；延迟 300ms 确认，防陈旧实例
-    空快照误清；打开时空框不清）；
-  - 其他 → 写新值（有贡献才写；last-write-wins）。
-- **scan（只读，永不写 → 无震荡源）**：
-  - 框空 + 有存储 → 静默恢复进框（**恢复不清暂存**；known = 恢复值）；
-  - 框有内容 + 存储 ⊇ known（别的标签页扩展了草稿）→ 同步进框；
-  - 分叉 → 不动（写方写新值）。
-- **恢复等宿主水合完成**（`pi-web:hydrated` 信号 + stage 重放二道防线）——
-  水合前落框会被 hydration 失配重渲染按服务端 HTML（空框）抹掉。
+## Multi-tab semantics
 
-## 多标签语义
+Shared draft + last-write-wins + passive sync:
+- Two tabs typing in the same session → each refreshes/restores independently (shared slots);
+- One tab extends the draft → the other passively syncs it into its box;
+- Simultaneous typing → last-write-wins (inherent to shared-draft semantics);
+- "Current page wins while typing": never popup/restore over a non-empty box.
 
-共享草稿 + last-write-wins + 被动同步：
-- 两个标签同会话各自打字 → 各自刷新各自恢复（共享槽位，无 own/foreign 之分）；
-- 一个标签扩展了草稿 → 另一标签被动同步进框；
-- 同时打字 → last-write-wins（共享草稿语义的固有属性）；
-- 「正在输入本页最大」：框有内容时绝不弹框/恢复，包含关系自动分流
-  （框 ⊇ 草稿丢弃；草稿 ⊇ 框静默覆盖；互不包含等下次框空恢复）。
+## Contract dependencies (core side)
 
-## 契约依赖（core 侧，worktree defork/composer-contract 分支）
+- `ctx.registerComposerEnhancement` (value observation / key switch / pre-send hooks)
+- `ctx.restoreComposerDraft` / `ctx.writeComposerValue` (controlled writes)
+- `ctx.registerDraftApi` (core accesses storage via `getDraftApi()`: applyIntent/getDraft/clearAllDrafts/flushAll are the v2 surface; saveDraft/clearDraft/rekeyDraft/restoreSubmission are deprecated, kept only for older cores)
+- `window.__piWebHydrated` + the `pi-web:hydrated` event (hydration signal)
 
-- `ctx.registerComposerEnhancement`（值观测/key 切换/发送前钩子）
-- `ctx.restoreComposerDraft` / `ctx.writeComposerValue`（受控写值，tracker 同步）
-- `ctx.registerDraftApi`（core 经 `getDraftApi()` 访问存储：**applyIntent**/
-  getDraft/clearAllDrafts/flushAll 为 v2 面；saveDraft/clearDraft/rekeyDraft/
-  restoreSubmission 为 deprecated，仅供未升级旧 core 回退）
-- `window.__piWebHydrated` + `pi-web:hydrated` 事件（水合信号）
-- ChatInput 增强器集合变化补发（晚注册补偿）
+## Known edges
 
-## 已知边界
+- Turning the keeper off in extman → draft features stop (core has no fallback; the keeper is the sole owner; runtime toggles apply immediately).
+- Two tabs typing at the exact same time = last-write-wins (inherent to shared-draft semantics).
+- Legacy per-tab slots (`crashrestore-<key>-<tabId>`) migrate automatically to shared slots on first read.
 
-- extman 关掉 keeper（或重开后关闭）→ 草稿功能停（core 无兜底，keeper 是
-  唯一所有者；运行时开关立即生效）。
-- 双标签**同时**打字 = last-write-wins（共享草稿语义固有）。
-- 旧 per-tab 槽位（crashrestore-<key>-<tabId>）首次读取时自动迁移到共享槽位；
-  从未访问的会话的旧槽位残留（无害）。
+## Install
 
-## 部署
+Bundled with **aiti-agent** (`@aiti-ai/pi-web`) — enable it from the in-app extension manager (ExtMan / App Center).
 
-```bash
-node tools/deploy.mjs    # 免构建；拷贝到 ~/.pi/web{,-dev}/extensions/
-```
-生效：POST /api/extensions/reload；刷新页面即新 client。
+Manual install: place this package at `~/.pi/web/extensions/aiti-draft-keeper/` and reload pi-web.
 
-## 文档 · Documentation
+## Documentation
 
-- 中文完整文档（aiti-docs）: <https://aiti.pw/extensions/aiti-draft-keeper.html>
-- English docs: <https://aiti.pw/en/extensions/aiti-draft-keeper.html>
-- 扩展注册表 / registry: <https://aiti.pw/extensions.html> · machine-readable <https://aiti.pw/extensions.json>
+- Documentation (English): <https://aiti.pw/en/extensions/aiti-draft-keeper.html>
+- 文档（中文）: <https://aiti.pw/extensions/aiti-draft-keeper.html>
+- Extension registry: <https://aiti.pw/extensions.html> · machine-readable <https://aiti.pw/extensions.json>
+
+## License
+
+MIT

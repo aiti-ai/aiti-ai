@@ -1,46 +1,57 @@
-# aiti-backup · pi-web 数据备份扩展
+# @aiti-ai/aiti-backup
 
-## 来源 · Origin
+> Snapshot backup for large pi-web state data — hard-link incremental snapshots, out-of-process execution, crash-safe temp files, keepCount rotation. Complements aiti-configs, which versions small configs in git.
 
-本包是 **aiti** 生态的组成部分——以 [pi](https://pi.dev) 为引擎的个人 AI 开发工作台与本地调试注入生态：**aiti-agent**（自托管 Web 工作台，基于开源项目 [pi-web](https://github.com/aiti-ai/pi-web) 构建，浏览器为主操作面）+ 各开发工具内的调试注入（aiti-devtools）+ 丰富的扩展体系。
+English · [简体中文](./README.zh-CN.md)
+
+## About aiti
 
 This package is part of the **aiti** ecosystem — a personal AI development workbench powered by [pi](https://pi.dev): **aiti-agent** (a self-hosted web workbench built on the open-source [pi-web](https://github.com/aiti-ai/pi-web)) plus debug injection into mainstream dev tools (aiti-devtools) and a rich extension system.
 
-**English**: Snapshot backup for large pi-web state data (session archives, git-trace ledger, agent sessions): hard-link incremental snapshots, out-of-process execution, crash-safe temp files, keepCount rotation. Complements aiti-configs, which versions small configs in git.
+- Workbench (aiti-agent, built on pi-web): <https://github.com/aiti-ai/pi-web>
+- Ecosystem monorepo: <https://github.com/aiti-ai/aiti-ai>
+- Site: <https://aiti.pw>
 
-- 工作台 / workbench: <https://github.com/aiti-ai/pi-web>
-- 生态仓库 / monorepo: <https://github.com/aiti-ai/aiti-ai>
-- 官网 / site: <https://aiti.pw>
+## What it does
 
+Snapshot backup for big state-tier data (session archives `.pwarc`, git-trace ops, `~/.pi/agent/sessions`) — complementary to aiti-configs: configs handles "small-config git versioning"; this extension handles "big-data snapshots".
 
-state 层大数据（会话归档 `.pwarc` / git-trace ops / `~/.pi/agent/sessions`）的**快照备份**——与 aiti-configs 互补：configs 管「小配置 git 版本化」，本扩展管「大数据快照」（方案：`docs/pi-web-ext-data-backup-extension-plan.md`，§7 已全拍板）。
+## How it works
 
-## 机制（M1+M2 已实施）
+- **Snapshot semantics**: each backup = `<dest>/<sourceId>/snapshots/<UTC timestamp>/` full point-in-time copy + `manifest.json` (completion marker)
+- **Hard-link incremental**: files with the same path as the previous snapshot and matching size+mtime are `fs.link` zero-copy; when the target disk doesn't support hard links (exFAT etc.) the whole round degrades to copying automatically (`mode:"full"`)
+- **Source strictly read-only**: backup never writes/deletes the source; symlinks are not followed (recorded as skipped); runtime noise names excluded by default
+- **Execution isolation**: scan/copy runs entirely in a standalone child process (`bin/backup-runner.cjs`, zero blocking of the host); progress flows via stdout JSONL → event-bus topics `aiti-backup:progress|done|error` (no polling)
+- **Interrupt safety**: a kill at any moment can only leave `.tmp-*` half-finished artifacts (auto-cleaned on the next run); a per-source run lock prevents concurrent runs
+- **Retention rotation**: `keepCount` (default 7) deletes the oldest, only among timestamp-named directories inside `snapshots/`
+- **Restore**: for now simply copy back from a snapshot directory (snapshots mirror the source's relative layout)
 
-- **快照语义**：每次备份 = `<dest>/<sourceId>/snapshots/<UTC时间戳>/` 完整时间点副本 + `manifest.json`（完成标记）；
-- **硬链接增量**：与上一快照同 path 且 size+mtime 一致的文件 `fs.link` 零拷贝；目标盘不支持（exFAT 等）自动整轮降级复制（`mode:"full"`）；
-- **源严格只读**：备份从不写/删源；symlink 不跟随（记 skipped）；运行态噪音名默认排除；
-- **执行隔离**：扫描/复制全在独立子进程 `bin/backup-runner.cjs`（宿主零阻塞），进度走 stdout JSONL → event-bus `aiti-backup:progress|done|error`（无轮询）；
-- **中断安全**：任意时刻 kill 只可能留 `.tmp-*` 半成品（下次运行自动清理）；同源运行锁防并发；
-- **保留轮转**：`keepCount`（默认 7）删最旧，仅限 snapshots/ 内时间戳命名目录；
-- **恢复**（M4 待实施）：M1/M2 阶段可直接从快照目录拷回（快照内为源的原样相对路径）。
-
-## 使用（当前为 API 形态，UI 面板=M5）
+## Usage (API)
 
 ```bash
-base=/dev/api/extensions/aiti-backup            # prod 实例去掉 /dev
-curl -s localhost:3001$base/status                                   # 源清单（state 自动发现 + pi-sessions）
+base=/api/extensions/aiti-backup
+curl -s localhost:3001$base/status                                   # source list (state auto-discovery + pi-sessions)
 curl -s -X POST localhost:3001$base/config -H content-type:application/json \
-  -d '{"dest":"/mnt/your-backup-disk"}'                               # 设目的地（与源互斥校验）
+  -d '{"dest":"/mnt/your-backup-disk"}'                              # set destination (mutual-exclusion check against sources)
 curl -s -X POST localhost:3001$base/backup -H content-type:application/json -d '{"all":true}'
-curl -s localhost:3001$base/runs                                     # 运行历史
+curl -s localhost:3001$base/runs                                     # run history
 ```
 
-- 源开关：`POST config {"sourceOverrides":{"pi-sessions":{"enabled":false}}}`；自定义源：`custom:[{id,path}]`。
-- 目的地由用户自选（外接盘/NAS），**备份内容未加密**；备份会话内容含隐私，请放在自己控制的盘上。
+- Source toggles: `POST config {"sourceOverrides":{"pi-sessions":{"enabled":false}}}`; custom sources: `custom:[{id,path}]`.
+- The destination is your choice (external drive/NAS); **backup contents are not encrypted** — session content contains private data, keep it on a disk you control.
 
-## 文档 · Documentation
+## Install
 
-- 中文完整文档（aiti-docs）: <https://aiti.pw/extensions/aiti-backup.html>
-- English docs: <https://aiti.pw/en/extensions/aiti-backup.html>
-- 扩展注册表 / registry: <https://aiti.pw/extensions.html> · machine-readable <https://aiti.pw/extensions.json>
+Bundled with **aiti-agent** (`@aiti-ai/pi-web`) — enable it from the in-app extension manager (ExtMan / App Center).
+
+Manual install: place this package at `~/.pi/web/extensions/aiti-backup/` and reload pi-web.
+
+## Documentation
+
+- Documentation (English): <https://aiti.pw/en/extensions/aiti-backup.html>
+- 文档（中文）: <https://aiti.pw/extensions/aiti-backup.html>
+- Extension registry: <https://aiti.pw/extensions.html> · machine-readable <https://aiti.pw/extensions.json>
+
+## License
+
+MIT

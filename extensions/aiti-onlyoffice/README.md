@@ -1,41 +1,35 @@
 # @aiti-ai/aiti-onlyoffice
 
-> .docx/.xlsx/.pptx 完整保真预览+编辑（OnlyOffice DocumentServer Docker 后端）。AGPL 社区版，feature 默认关
+> Full-fidelity preview + editing for .docx/.xlsx/.pptx (OnlyOffice DocumentServer Docker backend). AGPL community edition, feature off by default
 
-## 来源 · Origin
+English · [简体中文](./README.zh-CN.md)
 
-本包是 **aiti** 生态的组成部分——以 [pi](https://pi.dev) 为引擎的个人 AI 开发工作台与本地调试注入生态：**aiti-agent**（自托管 Web 工作台，基于开源项目 [pi-web](https://github.com/aiti-ai/pi-web) 构建，浏览器为主操作面）+ 各开发工具内的调试注入（aiti-devtools）+ 丰富的扩展体系。
+## About aiti
 
 This package is part of the **aiti** ecosystem — a personal AI development workbench powered by [pi](https://pi.dev): **aiti-agent** (a self-hosted web workbench built on the open-source [pi-web](https://github.com/aiti-ai/pi-web)) plus debug injection into mainstream dev tools (aiti-devtools) and a rich extension system.
 
-- 工作台 / workbench: <https://github.com/aiti-ai/pi-web>
-- 生态仓库 / monorepo: <https://github.com/aiti-ai/aiti-ai>
-- 官网 / site: <https://aiti.pw>
+- Workbench (aiti-agent, built on pi-web): <https://github.com/aiti-ai/pi-web>
+- Ecosystem monorepo: <https://github.com/aiti-ai/aiti-ai>
+- Site: <https://aiti.pw>
 
-## 功能定位（中文）
+Category: Developer tools · Tags: `word` · `excel` · `powerpoint` · `onlyoffice` · `editor` · `docker`
 
-.docx/.xlsx/.pptx 完整保真预览+编辑（OnlyOffice DocumentServer Docker 后端）。AGPL 社区版，feature 默认关
+## Install
 
-开发工具 · tags: `word` · `excel` · `powerpoint` · `onlyoffice` · `editor` · `docker`
+Bundled with **aiti-agent** (`@aiti-ai/pi-web`) — enable it from the in-app extension manager (ExtMan / App Center).
 
-## Positioning (English)
+Manual install: place this package at `~/.pi/web/extensions/aiti-onlyoffice/` and reload pi-web.
 
-Full-fidelity preview + editing for .docx/.xlsx/.pptx (OnlyOffice DocumentServer Docker backend). AGPL community edition, feature off by default
+1. Start DocumentServer: `scripts/onlyoffice-up.sh` (Docker, ~2 GB RAM steady-state).
+2. Extension manager → aiti-onlyoffice → Features → check **Enable OnlyOffice**, refresh the page.
 
-## 安装 / 部署
+Requires `aiti-editor` (the multi-editor arbitration host) + Docker.
 
-```bash
-# 1) 部署到 ~/.pi/web/extensions/aiti-onlyoffice/ 后 reload
-# 2) 启动 DocumentServer：scripts/onlyoffice-up.sh（Docker，常态 ~2G 内存）
-# 3) 扩展管理器 → aiti-onlyoffice → 功能 → 勾选「启用 OnlyOffice」并刷新页面
-# 依赖：aiti-editor（多编辑器仲裁宿主）+ Docker
-```
+## Documentation
 
-## 文档 · Documentation
-
-- 中文完整文档（aiti-docs）: <https://aiti.pw/extensions/aiti-onlyoffice.html>
-- English docs: <https://aiti.pw/en/extensions/aiti-onlyoffice.html>
-- 扩展注册表 / registry: <https://aiti.pw/extensions.html> · machine-readable <https://aiti.pw/extensions.json>
+- Documentation (English): <https://aiti.pw/en/extensions/aiti-onlyoffice.html>
+- 文档（中文）: <https://aiti.pw/extensions/aiti-onlyoffice.html>
+- Extension registry: <https://aiti.pw/extensions.html> · machine-readable <https://aiti.pw/extensions.json>
 
 ## License
 

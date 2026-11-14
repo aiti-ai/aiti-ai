@@ -4,15 +4,14 @@
 
 A small [pi package](https://pi.dev/packages) that pairs with the [pi-web](https://github.com/aiti-ai/pi-web) attach backend (`aiti-attach-agent`).
 
-## 来源 · Origin
+English · [简体中文](./README.zh-CN.md)
 
-本包是 **aiti** 生态的组成部分——以 [pi](https://pi.dev) 为引擎的个人 AI 开发工作台与本地调试注入生态：**aiti-agent**（自托管 Web 工作台，基于开源项目 [pi-web](https://github.com/aiti-ai/pi-web) 构建，浏览器为主操作面）+ 各开发工具内的调试注入（aiti-devtools）+ 丰富的扩展体系。
+## About aiti
 
-This package is part of the **aiti** ecosystem — a personal AI development workbench powered by [pi](https://pi.dev): **aiti-agent** (a self-hosted web workbench built on the open-source [pi-web](https://github.com/aiti-ai/pi-web)) plus debug injection into mainstream dev tools (aiti-devtools) and a rich extension system.
+This package comes from [aiti](https://aiti.pw/) (GitHub org [aiti-ai](https://github.com/aiti-ai)) — a personal AI development workbench ecosystem powered by [pi](https://pi.dev): the **aiti-agent** web workbench (built on open-source [pi-web](https://github.com/aiti-ai/pi-web)), debug injection into dev tools (aiti-devtools), and a library of extensions.
 
-- 工作台 / workbench: <https://github.com/aiti-ai/pi-web>
-- 生态仓库 / monorepo: <https://github.com/aiti-ai/aiti-ai>
-- 官网 / site: <https://aiti.pw>
+- Workbench (aiti-agent, built on pi-web): <https://github.com/aiti-ai/pi-web>
+- Ecosystem monorepo: <https://github.com/aiti-ai/aiti-ai>
 
 ## What it does
 
@@ -68,10 +67,10 @@ pi TUI ── /web ──▶ Unix-socket JSONL bridge ◀── attach ── pi
 
 The extension registers a socket server inside the pi process, forwards agent events, translates browser commands into pi APIs, and keeps a registry (`~/.pi/agent/bridge-registry.json`) that pi-web consults when opening a session. The second entry point (`dist/aiti-devtools-pi.js`) is the aiti-devtools connector bundle: when the [aiti-devtools](https://github.com/aiti-ai/aiti-ai) MCP bridge is in play, its tools route through this same socket to the page pi-web is showing.
 
-## 文档 · Documentation
+## Documentation
 
-- 中文完整文档（aiti-docs）: <https://aiti.pw/extensions/aiti-attach-agent.html>
-- English docs: <https://aiti.pw/en/extensions/aiti-attach-agent.html>
+- Documentation (English): <https://aiti.pw/en/extensions/aiti-attach-agent.html>
+- 文档（中文）: <https://aiti.pw/extensions/aiti-attach-agent.html>
 
 ## License
 

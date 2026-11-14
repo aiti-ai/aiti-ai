@@ -1,78 +1,60 @@
-# Queue Keeper（aiti-queue-keeper）
+# @aiti-ai/aiti-queue-keeper
 
-## 来源 · Origin
+> Full queue panel for the composer (queuePanel-slot takeover): banners, row operations (move / drag / steer-send / to-followUp / recall / delete) and a recycle bin — fully client-side.
 
-本包是 **aiti** 生态的组成部分——以 [pi](https://pi.dev) 为引擎的个人 AI 开发工作台与本地调试注入生态：**aiti-agent**（自托管 Web 工作台，基于开源项目 [pi-web](https://github.com/aiti-ai/pi-web) 构建，浏览器为主操作面）+ 各开发工具内的调试注入（aiti-devtools）+ 丰富的扩展体系。
+English · [简体中文](./README.zh-CN.md)
+
+## About aiti
 
 This package is part of the **aiti** ecosystem — a personal AI development workbench powered by [pi](https://pi.dev): **aiti-agent** (a self-hosted web workbench built on the open-source [pi-web](https://github.com/aiti-ai/pi-web)) plus debug injection into mainstream dev tools (aiti-devtools) and a rich extension system.
 
-**English**: Full queue panel for the composer (queuePanel-slot takeover): banners, row operations (move / drag / steer-send / to-followUp / recall / delete) and a recycle bin — fully client-side.
+- Workbench (aiti-agent, built on pi-web): <https://github.com/aiti-ai/pi-web>
+- Ecosystem monorepo: <https://github.com/aiti-ai/aiti-ai>
+- Site: <https://aiti.pw>
 
-- 工作台 / workbench: <https://github.com/aiti-ai/pi-web>
-- 生态仓库 / monorepo: <https://github.com/aiti-ai/aiti-ai>
-- 官网 / site: <https://aiti.pw>
+## What it does
 
+Renders the full queue panel through the `queuePanel` slot (**while taken over**, core hides its fallback banner):
 
-pi-web 去 fork 化 P3 的产物（`docs/pi-web-queue-cluster-ext-plan.md`）：把 ChatInput 内
-~900–1000 行队列增强 UI 外迁为独立扩展；core 回到「上游同形机制 + 薄接入」。
+- Queue banner (collapse/expand, counts, recall-all)
+- Row operations (↑↓ move, drag sort, steer-send, convert to followUp, recall, delete)
+- Recycle bin (restore / restore-all / purge / purge-all)
+- Undo bar (8s window after delete)
+- Import/export (pending-recovery dialog parsing + JSON download)
+- Notice bar (import/delete/recycle-bin feedback)
 
-## 职责
+## Architecture (zero data migration)
 
-经 `queuePanel` 插槽渲染完整队列面板（**接管时** core 隐藏兜底 banner）：
+- **Core keeps the mechanisms**: rpc-manager queue mirror / sidecar persistence / 12 RPCs / trash all stay in core; ChatInput keeps only the single-slot hookup + fallback banner.
+- **The extension keeps the strategy**: all UI state (collapse/notice/recycle bin/undo/drag) lives in `client/src/QueuePanel.tsx`; every operation goes through the **actions primitives** (`QueuePanelProps.actions`) calling core RPCs — the extension has zero storage of its own. Disabling the extension simply falls back to the core banner; no state data is ever lost.
+- **Contract**: `lib/composer/queue-api.ts` (core-side types + controller bus) + `/client/src/types.ts` (extension-side structural mirror); export download / import parsing pass through core pure functions via `actions.downloadExport/parseImport` (single implementation).
 
-- 队列横幅（折叠/展开、计数、Recall all）
-- 行操作（↑↓ 移动、拖拽排序、steer-send、转 followUp、取回、删除）
-- 回收站（restore / restore-all / purge / purge-all）
-- 撤销条（删除后 8s 窗口）
-- 导入导出（pending recovery 弹窗解析 + JSON 下载）
-- 通知条（导入/删除/回收站反馈）
+## Control flow
 
-## 架构（数据零迁移）
+- **core → ext**: ChatInput assembles `QueuePanelProps` (live projection + trash + actions) passed through the slot.
+- **ext → core**: `ctx.registerQueuePanelController({expand, notice})` — core recovery flows call `getQueuePanelController()?.expand()` to force-expand the panel; without a takeover the core fallback banner is a no-op.
+- **Takeover detection**: ChatInput `useExtSlotItems("queuePanel").length > 0` (feature off / uninstalled / still loading → falls back to the core banner).
 
-- **core 保机制**：rpc-manager 队列镜像/sidecar 持久化/12 个 RPC/trash 全部留核；
-  ChatInput 只留：ExtSlot 单行接入 + edit-intent 检查 + bottomMode 三态 + 兜底 banner。
-- **扩展保策略**：全部 UI 状态（折叠/通知/回收站/撤销/拖拽）在
-  `client/src/QueuePanel.tsx`；操作统一经 **actions 原语**（`QueuePanelProps.actions`）
-  调 core RPC，扩展零自有存储——关停扩展只是回到兜底 banner，任何状态数据无损。
-- **契约**：`lib/composer/queue-api.ts`（core 侧类型 + controller bus）+ `/client/src/types.ts`
-  （扩展侧结构镜像）；下载导出/导入解析经 `actions.downloadExport/parseImport` 透传
-  core 纯函数（单实现，扩展零逻辑）。
+## Feature
 
-## 控制流
-
-- **core → ext**：ChatInput 组装 `QueuePanelProps`（live 投影 + trash + actions）经插槽传入。
-- **ext → core**：`ctx.registerQueuePanelController({expand, notice})`——core 恢复流
-  （ChatWindow/useAgentSession 恢复/导入解析后）调用 `getQueuePanelController()?.expand()`
-  强制展开面板；无接管时 core 兜底 banner（无折叠态）no-op。
-- **接管判定**：ChatInput `useExtSlotItems("queuePanel").length > 0`（feature 关闭/卸载/
-  异步未加载 → 回落兜底 banner）。
-
-## feature
-
-- `queuePanel.enabled`（extman 可逐项启停）：关闭 → 不注册插槽项 → 回落 core 兜底。
+- `queuePanel.enabled` (per-item toggle in extman): off → the slot item is not registered → falls back to the core banner.
 
 ## i18n
 
-35 个 `chat.queue*` key 三语（zh-CN/en/zh-TW）在 `index.ts` `ui.i18n`（随 UI 外迁，
-core 已删同名 key，恢复上游 key 集）。扩展经 ctx.t() 读取。
+35 `chat.queue*` keys in three languages (zh-CN/en/zh-TW) declared in the extension's `ui.i18n` (read via `ctx.t()`).
 
-## 构建 / 部署
+## Install
 
-```bash
-npm run build:client   # vite lib mode → client/aiti-queue-keeper.mjs
-node tools/deploy.mjs  # 构建 + 拷贝到 ~/.pi/web{,-dev}/extensions/ + git 提交
-```
+Bundled with **aiti-agent** (`@aiti-ai/pi-web`) — enable it from the in-app extension manager (ExtMan / App Center).
 
-生效：`POST /api/extensions/reload`；client 刷新页面即新（内容哈希）。
+Manual install: place this package at `~/.pi/web/extensions/aiti-queue-keeper/` and reload pi-web.
 
-## 契约依赖（core 侧）
+## Documentation
 
-- `<ExtSlot name="queuePanel" extra={QueuePanelProps}/>`（P3 新增插槽）
-- `ctx.registerQueuePanelController`
-- `lib/composer/queue-api.ts`（QueueEntryView / QueueLiveView / QueuePanelActions /
-  QueuePanelController / QueuePanelProps）
-## 文档 · Documentation
+- Documentation (English): <https://aiti.pw/en/extensions/aiti-queue-keeper.html>
+- 文档（中文）: <https://aiti.pw/extensions/aiti-queue-keeper.html>
+- Extension registry: <https://aiti.pw/extensions.html> · machine-readable <https://aiti.pw/extensions.json>
 
-- 中文完整文档（aiti-docs）: <https://aiti.pw/extensions/aiti-queue-keeper.html>
-- English docs: <https://aiti.pw/en/extensions/aiti-queue-keeper.html>
-- 扩展注册表 / registry: <https://aiti.pw/extensions.html> · machine-readable <https://aiti.pw/extensions.json>
+## License
+
+MIT

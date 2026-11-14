@@ -3,7 +3,7 @@
 A small [pi package](https://pi.dev/packages) that keeps your model list tidy
 and rotates API keys to prevent 429 rate limits.
 
-> 🇨🇳 中文版：[README.zh-CN.md](https://github.com/aiti-ai/aiti-ai/blob/main/pi-plugins/pi-models-combo/README.zh-CN.md)
+English · [简体中文](./README.zh-CN.md)
 
 ## About aiti
 

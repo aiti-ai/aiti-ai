@@ -1,33 +1,56 @@
-# aiti-pair — 设备互连（临时聊天 / 互传文件）
+# @aiti-ai/aiti-pair
 
-连同一个桥的设备（手机浏览器 / 其他电脑 / agent 会话 / 注入页面）互发消息、互传文件。方案与架构见仓库根 `docs/aiti-bridge-pair-plan.md`。
+> Device interconnect over the bridge — paired devices (phone browsers / other computers / agent sessions / injected pages) exchange messages and files.
 
-## 形态
+English · [简体中文](./README.zh-CN.md)
 
-- 本扩展 = pi-web 载体薄壳：工具条按钮（「更多」溢出菜单内「设备互连」）→ 浮窗面板（`data-ext-float` 契约，aiti-float 接管拖拽/小屏全屏）内懒挂 pair widget
-- widget 与协议**不在本扩展**——来自 aiti-devtools 公共资产 `pair-client.js`（桥 core 构建产物，协议唯一来源）；本扩展运行时动态加载该资产（软依赖：aiti-devtools 未部署时面板显示引导，不崩）
-- 可达域 = 本实例内嵌桥的设备集合（与独立桥 8777 不互通）
+## About aiti
 
-## 同能力的其他入口
+This package is part of the **aiti** ecosystem — a personal AI development workbench powered by [pi](https://pi.dev): **aiti-agent** (a self-hosted web workbench built on the open-source [pi-web](https://github.com/aiti-ai/pi-web)) plus debug injection into mainstream dev tools (aiti-devtools) and a rich extension system.
 
-| 入口 | 位置 |
+- Workbench (aiti-agent, built on pi-web): <https://github.com/aiti-ai/pi-web>
+- Ecosystem monorepo: <https://github.com/aiti-ai/aiti-ai>
+- Site: <https://aiti.pw>
+
+## What it does
+
+Messages and file transfer between devices connected to the same bridge (mobile browsers, other computers, agent sessions, injected pages).
+
+## How it works
+
+- This extension is a thin pi-web shell: a toolbar button ("Device interconnect" in the "More" overflow menu) opens a floating panel (`data-ext-float` contract; aiti-float handles dragging / small-screen fullscreen) that lazy-loads the pair widget.
+- The widget and protocol are **not part of this extension** — they come from the aiti-devtools shared asset `pair-client.js` (built by the bridge core, the single source of protocol truth); the extension loads that asset at runtime (soft dependency: with aiti-devtools absent the panel shows guidance instead of crashing).
+- Reachability scope = the device set of this instance's embedded bridge (not interconnected with a standalone bridge on 8777).
+
+## Same capability, other entry points
+
+| Entry point | Location |
 |---|---|
-| 手机/外部浏览器独立页 | 桥 serve 的 `/pair.html`（独立桥 = `https://<host>/aiti/pair.html`；pi-web = `/api/extensions/aiti-devtools/pair.html`） |
-| cockpit 操作台 | 工具条 ✉ 按钮 → 弹层 widget |
-| agent（MCP） | `bridge_status`（devices 统一设备视图）+ `aiti_pair_send` / `aiti_pair_file` / `aiti_pair_fetch` |
+| Standalone page for phones / external browsers | `/pair.html` served by the bridge (standalone bridge: `https://<host>/aiti/pair.html`; pi-web: `/api/extensions/aiti-devtools/pair.html`) |
+| Cockpit console | toolbar ✉ button → popup widget |
+| Agents (MCP) | `bridge_status` (unified device view) + `aiti_pair_send` / `aiti_pair_file` / `aiti_pair_fetch` |
 
-## 跨桥联邦（M3，feature 门控默认关）
+## Cross-bridge federation (feature-gated, off by default)
 
-可达域默认 = 单个桥实例。开启 aiti-devtools 扩展的 `pairFed.enabled` 后，本实例面板/agent 工具可见并发消息/文件给**权威桥**（默认 `http://127.0.0.1:8777/aiti`，`pairFed.url` 可配）的设备（`fed:` 前缀命名空间）；权威桥用户向「pi-web 桥」设备发送 = 广播进本桥全部 pair 设备（v1 非对称语义）。fed 文件下载经权威桥同机直读（跨机部署不可用）。
+Reachability defaults to a single bridge instance. With the aiti-devtools feature `pairFed.enabled` turned on, this instance's panel/agent tools can also see and message/file the devices of the **authoritative bridge** (default `http://127.0.0.1:8777/aiti`, configurable via `pairFed.url`; devices appear under the `fed:` namespace). Sending from the authoritative bridge to "pi-web bridge" devices broadcasts to all pair devices on this bridge (v1 asymmetric semantics). Federated file download reads through the authoritative bridge's host (unavailable across machines).
 
-## 安全模型
+## Security model
 
-- pair 消息/文件下载需 peer token（注册时下发，浏览器 localStorage 记忆）
-- 上线/发现面（register/events/devices）双层门槛：桥内私网 gate（`X-Real-IP` 判内网；`AITI_PAIR_PUBLIC=1` 全开 / `AITI_PAIR_TOKEN` 档 B 注册 token）+ nginx 对外来源套 Authelia
-- 临时性：消息内存态不落盘、文件 TTL 1h 自清、设备掉线 1h 回收
+- Pair messages / file downloads require a peer token (issued at registration, remembered in browser localStorage)
+- The discovery surface (register/events/devices) is double-gated: bridge-private-network gate (`X-Real-IP` check; `AITI_PAIR_PUBLIC=1` opens fully / `AITI_PAIR_TOKEN` tier-B registration token) plus your reverse proxy's auth in front of public exposure
+- Ephemeral by design: messages live in memory only, files self-clean after a 1h TTL, devices are recycled 1h after going offline
 
-## 部署
+## Install
 
-```bash
-node tools/deploy.mjs   # → ~/.pi/web{,-dev}/extensions/ + 双实例热重载
-```
+Bundled with **aiti-agent** (`@aiti-ai/pi-web`) — enable it from the in-app extension manager (ExtMan / App Center).
+
+Manual install: place this package at `~/.pi/web/extensions/aiti-pair/` and reload pi-web.
+
+## Documentation
+
+- aiti-devtools (the bridge this pairs with): <https://aiti.pw/en/devtools/>
+- Extension registry: <https://aiti.pw/extensions.html> · machine-readable <https://aiti.pw/extensions.json>
+
+## License
+
+MIT
