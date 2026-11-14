@@ -189,17 +189,21 @@ async function provisionPiPlugins(options = {}) {
   const skipped = [];
   for (const p of auto) {
     const spec = `${p.pkg}@${p.version}`;
+    // Settings entries must carry the npm: prefix: the SDK's parseSource has no
+    // bare-spec branch, so a bare "@scope/name@ver" would be filed as a local
+    // path (path-separator-mangled on Windows) and never resolve.
+    const settingsSource = `npm:${spec}`;
     const existing = nameToSource.get(p.pkg);
     if (existing) {
       const existingIsNpm = Boolean(npmSourceName(existing));
-      if (existingIsNpm && owned[p.pkg] && existing !== spec) {
+      if (existingIsNpm && owned[p.pkg] && existing !== settingsSource) {
         // P3: our own npm entry, pins moved (main package upgrade) → follow.
         try {
           hooks.removeSource(existing);
         } catch (error) {
           log(`[pi-web] pi plugins: failed to remove stale entry ${existing}: ${error.message}`);
         }
-        declared.push({ name: p.pkg, spec });
+        declared.push({ name: p.pkg, spec, settingsSource });
       } else {
         // P1: already provided (user's entry, any version/local copy) — never touch.
         if (!existingIsNpm && owned[p.pkg]) delete owned[p.pkg]; // user switched to a local copy
@@ -209,13 +213,29 @@ async function provisionPiPlugins(options = {}) {
       continue;
     }
     if (owned[p.pkg]) {
+      // Legacy garbage from ≤ 0.15.15-aiti.6: a bare-spec settings entry that
+      // pi's parseSource can never resolve (so the name lookup above missed
+      // it). Paired with our ledger entry it is unambiguously ours → remove
+      // and re-declare in the good npm: form.
+      const pkgForms = [p.pkg, spec];
+      const legacyForms = path.sep === "/" ? pkgForms : [...pkgForms, ...pkgForms.map((f) => f.replace(/\//g, path.sep))];
+      const legacyEntry = configured.find((s) => typeof s === "string" && legacyForms.includes(s));
+      if (legacyEntry) {
+        try {
+          hooks.removeSource(legacyEntry);
+        } catch (error) {
+          log(`[pi-web] pi plugins: failed to remove legacy entry ${legacyEntry}: ${error.message}`);
+        }
+        declared.push({ name: p.pkg, spec, settingsSource });
+        continue;
+      }
       // P2: we added it before and it is gone — the user removed it; do not re-add.
       skipped.push(`${p.pkg} (removed by user; not re-adding)`);
       log(`[pi-web] pi plugins: ${p.pkg} was removed from settings — not re-adding (delete ${ledgerPath} to restore auto-provision)`);
       continue;
     }
     // P4: fresh.
-    declared.push({ name: p.pkg, spec });
+    declared.push({ name: p.pkg, spec, settingsSource });
   }
 
   // Persist declarations first: they survive install failures and pi's own
@@ -223,8 +243,26 @@ async function provisionPiPlugins(options = {}) {
   const failures = [];
   for (const d of declared) {
     try {
-      hooks.addSource(d.spec);
-      owned[d.name] = d.spec;
+      // Legacy cleanup: versions ≤ 0.15.15-aiti.6 persisted the bare spec (a
+      // local-path entry, path-separator-mangled on Windows) that pi can never
+      // resolve — remove our own stale garbage before writing the good entry.
+      const configured = hooks.getConfigured() || [];
+      const legacyForms = new Set([d.spec]);
+      if (path.sep !== "/") legacyForms.add(d.spec.replace(/\//g, path.sep));
+      for (const legacy of legacyForms) {
+        if (legacy === d.settingsSource) continue;
+        // while, not if: settings may hold the same form more than once
+        // (duplicate entries) — every instance must go, not just the first.
+        while (configured.includes(legacy)) {
+          try {
+            hooks.removeSource(legacy);
+          } catch {
+            break; // removal failed; avoid spinning forever on a stuck entry
+          }
+        }
+      }
+      hooks.addSource(d.settingsSource);
+      owned[d.name] = d.settingsSource;
     } catch (error) {
       log(`[pi-web] pi plugins: failed to persist declaration ${d.spec}: ${error.message}`);
       d.failed = true;
