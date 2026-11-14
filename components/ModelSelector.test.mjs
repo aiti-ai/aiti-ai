@@ -20,6 +20,7 @@ const {
   rememberRecentModel,
   pickRecentOptions,
   excludeRecentOptions,
+  recentRowHint,
 } = await jiti.import("./ModelSelector.tsx");
 const { I18nProvider } = await jiti.import("@/hooks/useI18n");
 
@@ -258,10 +259,37 @@ test("option rows show the provider suffix consistently on desktop and small scr
   // hint={option.provider} may remain (recents used to pin the provider, dropping hints).
   const bareProviderHints = modelSelectorSource.match(/hint=\{option\.provider\}/g) ?? [];
   assert.equal(bareProviderHints.length, 0, `all option rows must prefer the catalog hint with provider fallback (found ${bareProviderHints.length} bare provider hint(s))`);
+  // Provider-grouped rows keep the bare hint+fallback form (their group header names the
+  // provider); recents rows have no header, so they compose hint · provider (recentRowHint).
   const fallbackHints = modelSelectorSource.match(/hint=\{option\.hint \?\? option\.provider\}/g) ?? [];
-  assert.ok(
-    fallbackHints.length >= 2,
-    `recent + provider grouping must both render hint with provider fallback (found ${fallbackHints.length})`,
+  assert.equal(
+    fallbackHints.length, 1,
+    `provider-grouped rows must render hint with provider fallback (found ${fallbackHints.length})`,
+  );
+  const recentHintRows = modelSelectorSource.match(/hint=\{recentRowHint\(option\)\}/g) ?? [];
+  assert.equal(
+    recentHintRows.length, 1,
+    `recents rows must render the hint · provider composite (found ${recentHintRows.length})`,
+  );
+});
+
+// ── Recents suffix must keep the provider identifiable next to a price hint (2026-11-19 user report:
+//    "$0.6/$2.2 per M" alone tells nothing about which provider the model came from) ──
+test("recentRowHint composes price hint · provider; provider-only when no hint", () => {
+  assert.equal(
+    recentRowHint({ provider: "zai", providerName: "Z.ai", modelId: "glm-5", name: "GLM-5", hint: "$0.6/$2.2 per M" }),
+    "$0.6/$2.2 per M · Z.ai",
+    "price hint suffixed with the provider display name",
+  );
+  assert.equal(
+    recentRowHint({ provider: "zai", modelId: "glm-5", name: "GLM-5", hint: "0.5x" }),
+    "0.5x · zai",
+    "no providerName → provider id suffix",
+  );
+  assert.equal(
+    recentRowHint({ provider: "zai", providerName: "Z.ai", modelId: "glm-5", name: "GLM-5" }),
+    "Z.ai",
+    "no hint → provider display name (same fallback as grouped rows)",
   );
 });
 
