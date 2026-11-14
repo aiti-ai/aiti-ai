@@ -176,10 +176,10 @@ export function statusDotColor(e: any) {
 
 /** 状态点悬浮提示（与 statusDotColor 对应）。 */
 export function statusDotTitle(e: any) {
-  if (e.error) return "状态：异常";
-  if (e.enabled === false) return "状态：已停用";
-  if (!e.loaded) return "状态：未加载";
-  return "状态：运行中";
+  if (e.error) return t("ext.statusError");
+  if (e.enabled === false) return t("ext.statusDisabled");
+  if (!e.loaded) return t("ext.statusNotLoaded");
+  return t("ext.statusRunning");
 }
 
 /** 搜索词是否像一个安装来源（git: / npm: / https git / git@ / 本地路径 / @scope/pkg）。 */
@@ -333,8 +333,12 @@ export function locateSlotHost(slot: string): Element | null {
 
 /** 打开 ⋯ 溢出菜单并点扩展注册条目；命中调 onHit、失败调 onMiss（异步 120ms 后执行）。 */
 function openTopbarOverflow(regs: any[], label: string, where: string, onHit: () => void, onMiss: () => void) {
+  // Host topbar ⋯ button label follows host locale (zh "更多" / en "More") — match both.
   const more = [...document.querySelectorAll("button")].find(
-    (b) => b.getAttribute("aria-label") === "更多" || b.getAttribute("title") === "更多",
+    (b) => {
+      const s = b.getAttribute("aria-label") || b.getAttribute("title") || "";
+      return s === "更多" || s === "More";
+    },
   );
   if (!more) { onMiss(); return; }
   const wasOpen = !!document.querySelector("[data-topbar-dropdown]");
@@ -795,10 +799,10 @@ export function invokeHelper(opts: Record<string, unknown>): boolean {
       .then(() => {
         const inv2 = typeof window !== "undefined" ? (window as any).__aitiHelperInvoke : null;
         if (typeof inv2 === "function") inv2(opts);
-        else { try { (window as any).alert?.("aiti-helper 未安装或未就绪，无法唤起 AI。"); } catch {} }
+        else { try { (window as any).alert?.(t("ext.helperMissing")); } catch {} }
       });
     return true;
   }
-  try { (window as any).alert?.("aiti-helper 未安装或未就绪，无法唤起 AI。"); } catch {}
+  try { (window as any).alert?.(t("ext.helperMissing")); } catch {}
   return false;
 }
