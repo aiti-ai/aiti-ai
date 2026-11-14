@@ -320,7 +320,10 @@ for (const { dir, pkgDir, pjPath, p } of pkgs) {
   if (!FORCE && !BUMP && versionOnRegistry) {
     version = bump(p.version, "patch");
     p.version = version;
-    writeFileSync(pjPath, JSON.stringify(p, null, 2) + "\n");
+    // dry-run must not write back: an unbumped-but-never-published higher version would
+    // make the next run take the "local higher version not on registry → publish as-is"
+    // branch and ship an empty bump (2026-11-14 incident)
+    if (!DRY) writeFileSync(pjPath, JSON.stringify(p, null, 2) + "\n");
     report.push(publishedHash === null
       ? `^  ${dir}: contentHash 不可用（旧包），视为变更，版本自动 bump → ${version}`
       : `^  ${dir}: 内容变更，版本自动 bump → ${version}`);
