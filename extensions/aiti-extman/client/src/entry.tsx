@@ -37,13 +37,12 @@ export default function register(ctx: Record<string, any>) {
   }]);
   ctx.registerItems?.("dialogs", [{ id: "aiti-extman-panel", render: (props: any) => <ExtManPanel {...(props || {})} /> }]);
 
-  // 打开/跳转服务（双轨，照 aiti-helper.invoke / aiti-model-check.open 先例）：
-  //   1) DI 方案 P2：ctx.registerExtService("aiti-extman.open", fn)
-  //   2) 全局约定：window.__aitiExtmanOpen —— 与 extman-core tryDirectOpen 的
-  //      __<camel>Open 兼底同名（反向收益：面板内「打开」extman 自身条目从此直达）。
-  // 消费方：ai-helper 弹窗 🔧 按钮（跳转弹窗所属扩展）、其他扩展/控制台。
-  // 方案：docs/aiti-ext-dialog-extman-button-plan.md。
-  try { (window as any).__aitiExtmanOpen = (extId?: string) => openExtmanTo(extId); } catch {}
+  // Open/jump service (single channel via ctx.services, following the aiti-helper.invoke /
+  // aiti-model-check.open precedent): ctx.registerExtService("aiti-extman.open", fn).
+  // Consumers: the ai-helper dialog 🔧 button (jump to the dialog's owning extension), other
+  // extensions / console. extman-core's tryDirectOpen also reaches it via getExtService —
+  // extman's own "open" entries in the panel now open directly too.
+  // Plan: docs/aiti-ext-dialog-extman-button-plan.md.
   ctx.registerExtService?.("aiti-extman.open", (extId?: string) => openExtmanTo(extId));
   // aiti-float dock：默认浮窗打开（可停靠能力保留：⇱ 菜单仍可手动入右栏 tab）；
   // 注册 raw itemId（宿主拼 extId:itemId = EXTMAN_KEY）。
