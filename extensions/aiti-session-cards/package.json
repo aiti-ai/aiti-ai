@@ -1,8 +1,8 @@
 {
   "name": "@aiti-ai/aiti-session-cards",
   "version": "0.1.10",
-  "description": "Session request card extension \u2014 full UI for interaction-primitive cards (zcode plan approval / AskUser / omp OAuth / generic fallback) and tool authorization cards",
-  "soul": "agent \u6c42\u4f60\u4f5c\u7b54\u7684\u5361\u7247\uff0c\u957f\u4ec0\u4e48\u6837\u7531\u6269\u5c55\u8bf4\u4e86\u7b97\u3002",
+  "description": "Session request card extension — full UI for interaction-primitive cards (zcode plan approval / AskUser / omp OAuth / generic fallback) and tool authorization cards",
+  "soul": "agent 求你作答的卡片，长什么样由扩展说了算。",
   "scripts": {
     "build:client": "node tools/build-client.mjs",
     "watch": "vite build --watch --config vite.config.ts",
