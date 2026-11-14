@@ -46,7 +46,7 @@ function protocolChipSpec(proto: any): { icon: string; label: string; color: str
   }
 }
 
-/** 当前界面语言（与宿主 pi-locale 约定一致；zh 开头 → zh，否则 en）。 */
+/** Current UI locale (same convention as host pi-locale: zh* → zh, otherwise en). */
 function currentLocale(): "zh" | "en" {
   try {
     const v = localStorage.getItem("pi-locale") || (typeof navigator !== "undefined" ? navigator.language : "") || "en";
@@ -1883,11 +1883,11 @@ export function openExtmanPanel(): void {
   syncLoader();
 }
 
-/** 打开面板并跳转到指定扩展条目（外部门户：ai-helper 弹窗 🔧 按钮、其他扩展经
- *  aiti-extman.open 服务 / window.__aitiExtmanOpen 全局约定调用）。
- *  extId 空 = 仅打开面板（保持当前选中）。先落 selected/view 再开面板，
- *  避免打开后闪默认选中再跳（与 jump/jumpTo 同款 setState 补丁）。
- *  方案：docs/aiti-ext-dialog-extman-button-plan.md。 */
+/** Open the panel and jump to the given extension entry (external portal: the ai-helper dialog
+ *  🔧 button and other extensions call it via the "aiti-extman.open" ExtService).
+ *  Empty extId = just open the panel (keep current selection). selected/view are set before the
+ *  panel opens so it doesn't flash the default selection first (same setState patching as
+ *  jump/jumpTo). Plan: docs/aiti-ext-dialog-extman-button-plan.md. */
 export function openExtmanTo(extId?: string): void {
   if (extId) setState({ view: "exts", selected: { kind: "local", id: extId }, selCap: null, selConflict: null, error: null, message: null, mobileView: state.isMobile ? "detail" : state.mobileView });
   openExtmanPanel();
