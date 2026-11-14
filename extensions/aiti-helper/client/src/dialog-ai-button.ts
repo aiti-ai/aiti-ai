@@ -7,11 +7,16 @@
  * 改扫 [data-ext-id] 包装器，可靠命中所有扩展弹窗，且能直接拿到 owning 扩展 id →
  * 唤起 ai-helper 时按「本扩展 skills + 通用 skills + 其他扩展」分组展示。
  * 兼容兜底：未盖 data-ext-id 的非扩展弹窗（如 pi-web 内置 dialog）走 role=dialog/class~dialog 扫描。
+ *
+ * 同时注入两个角落按钮（§4.4 契约家族；extman 快捷按钮方案：docs/aiti-ext-dialog-extman-button-plan.md）：
+ *   🤖 AI Helper（原有） | 🔧 extman（AI 按钮左边：打开扩展管理面板并选中本弹窗所属扩展）。
+ *   分工语义：helper 管角落按钮基础设施（本扫描器），extman 只提供服务
+ *   （aiti-extman.open 服务 / __aitiExtmanOpen 全局，extman 侧注册）。
  */
 
 // 扩展展示名（id → 友好名，与 extman 共用同一张表）
 import { extDisplayName } from "../../../_shared/ext-display-names";
-import { apiUrl } from "./host-shim";
+import { apiUrl, extSvc } from "./host-shim";
 
 // AI 星星图标（单源 icons/sparkles.svg，_shared/icons 库经 deploy copyIcons 拷入）——
 // assets CSS-mask 渲染（currentColor 继承按钮颜色），与 helper 弹窗内 SparkIcon 同一文件；
@@ -24,6 +29,40 @@ const AiBotIconHtml = (size = 16) => {
 
 const AI_BTN_ATTR = "data-aiti-ai-btn";
 const HOST_ATTR = "data-aiti-ai-host";   // 标在 close 按钮上：已挂载过 AI 按钮（防重复注入）
+const EXT_BTN_ATTR = "data-aiti-extman-btn"; // 标 extman 🔧 按钮（防重复/便于测试定位）
+
+// extman 🔧 图标（wrench.svg，与 extman sidebarFooter 入口同一线图库资产；extman deploy copyIcons 拷入）
+const ExtManIconHtml = (size = 16) => {
+  const url = apiUrl("/api/extensions/aiti-extman/assets/icons/wrench.svg");
+  return '<span aria-hidden="true" style="display:inline-block;width:' + size + 'px;height:' + size + 'px;background:currentColor;' +
+    '-webkit-mask:url(' + url + ') center/contain no-repeat;mask:url(' + url + ') center/contain no-repeat"></span>';
+};
+
+// extman 是否可用（已安装且启用：宿主 manifest 清单 → __piWebExtUI.metas 有条目；
+// 未装/被禁用的扩展从 manifest 移除，metas 同步剪除）。缺席则不挂 🔧，优雅降级。
+function extmanAvailable(): boolean {
+  try {
+    const metas = ((window as any).__piWebExtUI && (window as any).__piWebExtUI.metas) || {};
+    return !!metas["aiti-extman"];
+  } catch { return false; }
+}
+
+// 打开 extman 并跳转到指定扩展条目（extId 空 = 仅打开面板）。
+// 通道：extSvc("aiti-extman.open") → window.__aitiExtmanOpen → 兑底点 sidebarFooter
+// 内按钮（静态条目由宿主渲染同样包 [data-ext-id] wrapper，staticClickForwarder
+// 负责懒物化转发；旧版 extman 未注册服务时只开面板不选中，体验降级不报错）。
+function openExtman(extId: string): void {
+  const direct = (extSvc<((id?: string) => void) | undefined>("aiti-extman.open"))
+    || (typeof window !== "undefined" ? (window as any).__aitiExtmanOpen : undefined);
+  if (typeof direct === "function") {
+    try { direct(extId || undefined); return; } catch {}
+  }
+  try {
+    const btn = document.querySelector<HTMLElement>('[data-ext-id="aiti-extman"][data-ext-slot="sidebarFooter"] button');
+    if (btn) { btn.click(); return; }
+  } catch {}
+  try { console.warn("[aiti-helper] extman 打开通道不可用（extman 未装或版本过旧）"); } catch {}
+}
 
 // 判断按钮是否为「移除/删除」类操作（而非弹窗关闭按钮）。
 // 列表/行里的 ✕（如模型向导模型列表的「移除模型」、多 key 的「删除此 key」）是删除操作，
@@ -157,6 +196,26 @@ function injectAt(closeBtn: HTMLElement, ext: { id: string; name: string }): boo
     closeBtn.parentNode!.insertBefore(aiBtn, closeBtn);
   } catch {
     try { closeBtn.parentNode!.appendChild(aiBtn); } catch {}
+  }
+
+  // extman 🔧 按钮：AI 按钮左边（布局 … 🔧 🤖 ✕，AI 保持紧邻关闭按钮）。
+  // extman 自身面板不挂（自我跳转无意义）；未装/被禁用不挂（extmanAvailable）。
+  if (ext && ext.id !== "aiti-extman" && extmanAvailable()) {
+    const extBtn = document.createElement("button");
+    extBtn.setAttribute(EXT_BTN_ATTR, "1");
+    extBtn.innerHTML = ExtManIconHtml(16);
+    const extLabel = extDisplayName(ext.id, ext.name || ext.id);
+    extBtn.title = ext.id ? "扩展管理：查看/配置 " + extLabel : "扩展管理";
+    extBtn.style.cssText = aiBtn.style.cssText;
+    extBtn.onmouseenter = () => { extBtn.style.opacity = "1"; };
+    extBtn.onmouseleave = () => { extBtn.style.opacity = ".85"; };
+    extBtn.onclick = (e) => {
+      e.preventDefault(); e.stopPropagation();
+      openExtman(ext.id);
+    };
+    try {
+      closeBtn.parentNode!.insertBefore(extBtn, aiBtn);
+    } catch {}
   }
   return true;
 }
