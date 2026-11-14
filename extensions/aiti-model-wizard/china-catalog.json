@@ -235,7 +235,8 @@
         "ernie-4.0-8k",
         "ernie-speed-8k",
         "ernie-lite-8k",
-        "ernie-tiny-8k"
+        "ernie-tiny-8k",
+        "ernie-5.5-flash-preview"
       ]
     },
     "minimax": {
