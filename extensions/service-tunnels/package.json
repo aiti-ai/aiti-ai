@@ -1,16 +1,16 @@
 {
   "name": "@aiti-ai/service-tunnels",
-  "version": "0.3.10",
+  "version": "0.3.11",
   "type": "module",
   "aiti": {
     "kind": "ext",
     "tier": "full",
     "systemDeps": {
       "linux-apt": [],
-      "note": "隧道二进制（cloudflared/ngrok/frpc）由运行时 justget 多源下载，不走 apt"
+      "note": "\u96a7\u9053\u4e8c\u8fdb\u5236\uff08cloudflared/ngrok/frpc\uff09\u7531\u8fd0\u884c\u65f6 justget \u591a\u6e90\u4e0b\u8f7d\uff0c\u4e0d\u8d70 apt"
     }
   },
-  "description": "One-click public reachability for local services — port discovery (service identification/custom names) / five exposure modes (tunnel·vhost·hybrid·router portmap·IPv6 direct) / auth gateway (portal·TOTP·face and voiceprint) / DDNS auto resolution ",
+  "description": "One-click public reachability for local services \u2014 port discovery (service identification/custom names) / five exposure modes (tunnel\u00b7vhost\u00b7hybrid\u00b7router portmap\u00b7IPv6 direct) / auth gateway (portal\u00b7TOTP\u00b7face and voiceprint) / DDNS auto resolution ",
   "homepage": "https://aiti.pw/extensions/service-tunnels.html",
   "license": "MIT",
   "scripts": {
@@ -22,7 +22,7 @@
     "esbuild": "^0.28.2",
     "qrcode": "^1.5.4"
   },
-  "soul": "本地服务不该被防火墙关起来——在哪都应该可以安全访问。",
+  "soul": "\u672c\u5730\u670d\u52a1\u4e0d\u8be5\u88ab\u9632\u706b\u5899\u5173\u8d77\u6765\u2014\u2014\u5728\u54ea\u90fd\u5e94\u8be5\u53ef\u4ee5\u5b89\u5168\u8bbf\u95ee\u3002",
   "aitiConfigs": {
     "configFiles": [
       "expose-inject.json"
@@ -39,6 +39,6 @@
     "url": "https://github.com/aiti-ai/aiti-ai/issues"
   },
   "dependencies": {
-    "service-tunnels": "^0.3.80"
+    "service-tunnels": "^0.3.82"
   }
 }
