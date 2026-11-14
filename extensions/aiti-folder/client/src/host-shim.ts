@@ -25,6 +25,13 @@ export function extSvc<T = unknown>(key: string): T | undefined {
   return (_ctx as any)?.getExtService?.(key) as T | undefined;
 }
 
+/** 懒加载 v2：显式物化其他扩展的 client（aiti-git-review 等按需加载扩展，
+ *  服务注册发生在其 client 加载后——跨扩展调用前先物化。旧宿主无此通道 → undefined。 */
+export function extEnsureMaterialized(id: string): Promise<boolean> | undefined {
+  const r = (_ctx as any)?.ensureMaterialized?.(id);
+  return r instanceof Promise ? r : undefined;
+}
+
 /** DI 方案 P2：注册跨扩展客户端服务（ctx.registerExtService 的 shim 封装；返回 disposer，旧宿主返回 null） */
 export function regSvc(key: string, impl: unknown): (() => void) | null {
   const c = _ctx as any;
@@ -108,9 +115,14 @@ export function closeFileTabs(ids: string[]): void {
 /** openFile(path, fileName?)：宿主打开文件标签页（sidebar 文件 dock 区块回调缺省用）。
  *  fileName 兜底 lastSeg(path)：宿主 handleOpenFile 的 fileName 为 tab.label 原料，缺省会
  *  致 FileIcons.getFileIcon(undefined) 崩溃（2026-09-15 dev 实捩：文件夹树点文件白屏）。 */
-export function openFile(path: string, fileName?: string): void {
-  const fn = _ctx?.openFile as ((p: string, f?: string) => void) | undefined;
-  if (typeof fn === "function") fn(path, fileName ?? lastSeg(path));
+export function openFile(path: string, fileName?: string, options?: { modeHint?: "diff"; select?: boolean }): void {
+  const fn = _ctx?.openFile as ((p: string, f?: string, o?: unknown) => void) | undefined;
+  if (typeof fn === "function") fn(path, fileName ?? lastSeg(path), options);
+}
+/** openFileDiff(path, fileName?)：以 git diff 视图打开文件（宿主 modeHint:"diff"，
+ *  monaco diff 编辑器显示工作区 vs 暂存/HEAD——「查看 Git Diff」直达，不建审核任务）。 */
+export function openFileDiff(path: string, fileName?: string): void {
+  openFile(path, fileName, { modeHint: "diff" });
 }
 /** openFolder(path, folderName?)：宿主打开文件夹标签页（sidebar 文件 dock 区块回调缺省用）。 */
 export function openFolder(path: string, folderName?: string): void {
