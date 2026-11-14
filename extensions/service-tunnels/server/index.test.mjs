@@ -13,7 +13,8 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 test("入口元数据：id/name/version/client 齐备", () => {
   assert.equal(ext.id, "service-tunnels");
   assert.equal(typeof ext.name, "string");
-  // 版本唯一来源 = package.json（entry 不再手写 version 字段，宿主加载时自动注入）
+  // Single source of truth for the version = package.json (entry no longer hand-writes a
+  // version field; the host injects it on load)
   const pkgVersion = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
   assert.ok(pkgVersion);
   assert.equal(typeof ext.client, "string");
