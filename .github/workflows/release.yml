@@ -3,11 +3,12 @@
 #
 # Trigger: node scripts/release-tag.mjs   （守卫：package.json 必须 X.Y.Z-aiti.N，tag 固定 v<version>）
 #          → git tag v0.16.0-aiti.1 && git push origin v0.16.0-aiti.1
-# Artifacts: aiti-web-v<ver>-{linux,darwin}-{x64,arm64}.tar.gz + aiti-web-v<ver>-win-x64.zip
-#        + checksums.txt (sha256-verified by install.sh / install.ps1 at download time)
-#        + checksums.txt (sha256-verified by install.sh / install.ps1 at download time)
+# Artifacts: aiti-web-v<ver>-universal.tar.gz + aiti-web-v<ver>-universal.zip（单包双格式，
+#        内容逐字节相同；zip 给 windows/Expand-Archive，tgz 给 linux/darwin）
+#        + per-asset .sha256（release job 合并为 checksums.txt）
 # Layout: prepare (linux, platform-agnostic build: .next + 49 extension dists → npm tgz)
-#       → archive (4-platform matrix: npm tgz + each platform's production closure → per-platform archives)
+#       → archive (single ubuntu runner: npm tgz + production closure → universal archive;
+#         platform differences flattened by postProcessUniversal in scripts/build-release-archive.mjs)
 #       → release (collect uploads + gh release create --generate-notes)
 #
 # Note: the npm channel (publish-all) is independent of this pipeline — GitHub Releases is handled here.
@@ -52,7 +53,7 @@ jobs:
           done
           exit $missing
   prepare:
-    # 平台无关构建层：.next + 扩展 dist 只构建一次（产物是纯 JS，平台 matrix 直接复用）。
+    # 平台无关构建层：.next + 扩展 dist 只构建一次（产物是纯 JS，archive job 直接复用）。
     # 依赖策略（2026-11-13 vendor 层退役）：扩展共享依赖（@aiti-ai/ext-shared、aiti-bridge、
     # aiti-devtools-core、justget、service-tunnels）全部从 npm registry 解析——即 "NPM Publish"
     # 工作流发布的版本；装机 reconcile 拉到的与构建用的同源。唯一例外 @aiti-ti/ddns（npmjs 无）
@@ -84,7 +85,10 @@ jobs:
           cache: npm
 
       - name: Install deps (main package — all public on npmjs)
-        run: npm install --no-audit --no-fund --loglevel=error
+        # --include=dev：与 build-release-archive.mjs 同源防御 —— next 需要 typescript
+        # 把 tsconfig paths 变成 webpack alias；runner 环境一旦带 NODE_ENV=production
+        # 就会静默 omit dev。npm pack 的 files 白名单不收 devDeps，无泄漏。
+        run: npm install --include=dev --no-audit --no-fund --loglevel=error
 
       - name: Build .next
         run: npm run build
@@ -153,15 +157,9 @@ jobs:
 
   archive:
     needs: prepare
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: linux, arch: x64, runner: ubuntu-latest }
-          - { os: darwin, arch: x64, runner: macos-15-intel } # Intel（macos-13 淘汰中，runner 队列枯竭）
-          - { os: darwin, arch: arm64, runner: macos-15 } # Apple Silicon（macos-latest/macos-14 arm64 池 2026-11-14 连续 runner 不接单自动 cancel，macos-15 arm64 池子健康）
-          - { os: win32, arch: x64, runner: windows-latest }
-    runs-on: ${{ matrix.runner }}
+    # universal 单包：平台差异由 postProcessUniversal 抹平（swc 删除 / sharp→wasm32 /
+    # esbuild 全平台补齐），单一 ubuntu runner 出全平台资产（macos/windows runner 退役）。
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -179,7 +177,7 @@ jobs:
           name: package-lock
           path: lock
 
-      - name: Build release archive
+      - name: Build universal release archive
         shell: bash
         env:
           NODE_OPTIONS: --max-old-space-size=8192
@@ -187,8 +185,7 @@ jobs:
           TGZ=$(ls dist-tgz/*.tgz | head -1)
           node scripts/build-release-archive.mjs \
             --from-tgz "$TGZ" \
-            --lock lock/package-lock.json \
-            --os ${{ matrix.os }} --arch ${{ matrix.arch }}
+            --lock lock/package-lock.json
 
       - name: Native binary glibc compatibility gate (max GLIBC_2.31)
         shell: bash
@@ -216,16 +213,9 @@ jobs:
           done
           exit $BAD
 
-      - name: Checksum
-        shell: bash
-        run: |
-          ASSET=$(ls aiti-web-v* | head -1)
-          sha256sum "$ASSET" > "$ASSET.sha256"
-          cat "$ASSET.sha256"
-
       - uses: actions/upload-artifact@v4
         with:
-          name: archive-${{ matrix.os }}-${{ matrix.arch }}
+          name: archive-universal
           path: |
             aiti-web-v*
             *.sha256
@@ -273,7 +263,7 @@ jobs:
           sparse-checkout: scripts
 
       # Same artifacts the release job uploaded — strictly identical assets,
-      # zero re-download from GitHub (~720 MB).
+      # zero re-download from GitHub (~230 MB: tgz + zip + checksums).
       - uses: actions/download-artifact@v4
         with:
           pattern: archive-*
