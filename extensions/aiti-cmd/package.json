@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/aiti-cmd",
   "type": "module",
-  "description": "命令管理器 —— 真 TTY 终端（node-pty，实时帧走事件总线主题）+ 常用命令收藏夹（CRUD 与 {参数} 占位符）+ 消息识别命令；执行全程 append-only 审计落盘",
+  "description": "Command manager — real PTY terminal + favorite commands + message-click recognition execution + live agent command observation + a unified cross-extension execution outlet",
   "devDependencies": {
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",

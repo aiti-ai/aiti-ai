@@ -2,7 +2,7 @@
   "name": "@aiti-ai/aiti-recovery",
   "version": "0.1.9",
   "type": "module",
-  "description": "恢复 UI 扩展（队列恢复对话框 + 重启恢复向导）——pi-web 去 fork 化 B3 外迁",
+  "description": "Recovery UI extension — queue recovery dialog (resolving queued messages left by interrupted sessions one by one) + restart recovery wizard (two-step handling of interrupted sessions), red-line semantics preserved: never auto-deliver, resuming onl",
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",

@@ -2,7 +2,7 @@
   "name": "@aiti-ai/aiti-provider-usage",
   "version": "0.1.9",
   "type": "module",
-  "description": "Provider 余额/配额查询扩展（15+ 家适配器 + 会话信息面板剩余额度区块）——pi-web 去 fork 化 B1 外迁",
+  "description": ".AI/OpenCode Go/Kimi/Codex/Copilot etc.), session info panel \"remaining quota\" section with the current session pinned on top, 5min TTL overview + manual refresh, event-driven ze",
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",

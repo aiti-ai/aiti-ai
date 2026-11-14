@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/aiti-qoder-agent",
   "version": "0.4.10",
-  "description": "Qoder CLI backend — stream-json driving + account credits via quota API (agentKey: qoder)",
+  "description": "Exclusive Qoder CLI session backend (qodercli/qoderclicn): credits/quota (getUsage), WASM-signed model catalog (listModels), task-list mirror, run-queue management, and plan/permission-mode support.",
   "soul": "别人走 ACP 大路，它偏要走签名的独木桥——因为风景在对面。",
   "scripts": {
     "build:client": "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});for(const f of fs.readdirSync('client/src'))if(f.endsWith('.mjs'))fs.copyFileSync('client/src/'+f,'dist/'+f)\""

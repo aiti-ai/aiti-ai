@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/aiti-devtools-pi",
   "version": "0.1.1",
-  "description": "aiti-devtools pi 扩展（agent 端无状态连接器）——注册桥 aiti_* 工具 + 会话/推送，桥独立常驻（packages/aiti-bridge）",
+  "description": "pi (pi.dev CLI) side extension: stateless agent-side connector reusing the aiti-devtools-agent wiring framework to bring pi CLI sessions into aiti-devtools.",
   "type": "module",
   "main": "src/index.ts",
   "license": "MIT",
