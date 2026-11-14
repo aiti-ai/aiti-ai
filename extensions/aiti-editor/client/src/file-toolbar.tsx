@@ -56,6 +56,8 @@ export const MiCloseAll = mkMenuIcon(() => <><circle cx="12" cy="12" r="10"/><pa
 export const MiSave = mkMenuIcon(() => <><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></>);
 export const MiSaveAs = mkMenuIcon(() => <><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><line x1="12" y1="16" x2="12" y2="10"/></>);
 export const MiRefresh = mkMenuIcon(() => <><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></>);
+// 钉住已钉态（lucide pin-off：图钉 + 斜删除线——与 aiti-folder MiPinOff 同形，保持图钉基底不用 ✓）
+export const MiPinOff = mkMenuIcon(() => <><line x1="12" y1="17" x2="12" y2="22"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16h14v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/><line x1="2" y1="2" x2="22" y2="22"/></>);
 
 const S: Record<string, any> = {
   bar: { display: "flex", alignItems: "center", gap: 8, padding: "5px 12px",
@@ -137,9 +139,13 @@ export function FileToolbar(props: {
   closeActions?: { left?: () => void; self?: () => void; right?: () => void; all?: () => void };
   /** 打开终端（当前文件所在目录；Unix=bash / Windows=PowerShell）；顶栏快捷按钮 + ⋯ 菜单项，compact 收进菜单 */
   onTerminal?: () => void;
+  /** 钉住动作（2026-11-24 菜单单行化：从 menuTop 文字项移入 ⋯ 窗口图标排）；
+   *  null/缺省 = 不渲染钉住钮（dock face 态无宿主 tab 钉住语义）。 */
+  pin?: { isPinned: () => boolean; toggle: () => void } | null;
 }) {
   const { filePath, dot, nav, notice, leading, modes, openWith, about, onSave, onSaveAs, onMention, mentionTitle, onMentionNewSession, onFileInfo, rightExtra, trailing, menuTop, infoAfterNav } = props;
   const closeActions = props.closeActions;
+  const pin = props.pin;
   const [menuOpen, setMenuOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   // 小屏系统返回 = 关闭「关于」弹窗
@@ -201,8 +207,8 @@ export function FileToolbar(props: {
 
   // ── 关闭图标排（2026-09-15 拍板：关闭左侧 / 关闭自己 / 关闭右侧 / 全部关闭 = 一排
   //   无歧义图标；大屏工具条常驻 + compact 收进 ⋯ 菜单，hover tooltip 兜底）──
-  const closeBtn = (fn: (() => void) | undefined, title: string, icon: any, size = 22) => fn ? (
-    <button type="button" title={title} aria-label={title}
+  const closeBtn = (fn: (() => void) | undefined, title: string, icon: any, size = 22, key?: string) => fn ? (
+    <button key={key} type="button" title={title} aria-label={title}
       onClick={() => { setMenuOpen(false); fn(); }}
       onMouseEnter={(e: any) => { e.currentTarget.style.background = "var(--bg-hover,#f3f4f6)"; }}
       onMouseLeave={(e: any) => { e.currentTarget.style.background = "transparent"; }}
@@ -211,6 +217,13 @@ export function FileToolbar(props: {
         background: "transparent", color: "var(--text-muted,#777)", cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
     >{icon}</button>
   ) : null;
+  // 图标排行（label 居左 + 图标钮居右；items 空数组不渲染）——菜单单行化共用形态
+  const iconRow = (label: string, items: any[], key: string) => items.filter(Boolean).length === 0 ? null : (
+    <div key={key} data-ext-editor-action-row="1" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, padding: "5px 10px" }}>
+      <span style={{ fontSize: 12, color: "var(--text-dim,#888)", flexShrink: 0, userSelect: "none" }}>{label}</span>
+      <div style={{ display: "flex", gap: 6, marginLeft: "auto", flexShrink: 0 }}>{items}</div>
+    </div>
+  );
   const closeIconRow = closeActions ? (
     <div data-ext-close-icon-row="1" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, padding: "5px 10px" }}>
       <span style={{ fontSize: 12, color: "var(--text-dim,#888)", flexShrink: 0, userSelect: "none" }}>关闭</span>
@@ -240,44 +253,48 @@ export function FileToolbar(props: {
       display: "flex", flexDirection: "column", gap: 2, padding: 6, minWidth: 170,
       background: "var(--bg,#fff)", border: "1px solid var(--border,#d0d0d0)", borderRadius: 10,
       boxShadow: "0 4px 12px rgba(0,0,0,0.15)", fontSize: 12 }}>
-      {/* ── 菜单分组重排（2026-09-16 用户拍板）：钉住 → 关闭排 → 导航（上/下一个文件）
-       *    → 保存组（保存/另存/下载）→ @ 组（当前会话/新会话）→ 查看 → 整理 → 打开。
-       *    关闭排与导航由 compact 专属改为常驻（菜单=全量命令中心；工具条按钮仍按 compact 收敛）。── */}
+      {/* ── 菜单单行化重排（2026-11-24，方案 docs/aiti-menu-single-row-plan.md §4.1/§5.4）：
+       *    menuTop 注入（扩展动作/导出）→ 关闭排 → 浏览排（‹›遍历）→ 窗口排（钉住/新窗口/终端）
+       *    → 保存组（保存/另存/下载）→ @ 组 → 查看组（重载/复制路径/复制内容）→ 整理组 → 元信息沉底。
+       *    浏览/窗口排为「label+图标排」形态（同关闭排规格）；全部项条件渲染保持现状语义。── */}
       {(menuTop || []).map((a, i) => menuItem(a, "menuTop-" + i))}
       {(menuTop || []).length > 0 && divider}
       {closeIconRow}
       {closeIconRow && divider}
-      {hasSibs && nav && (
-        <>
-          {menuItem({ label: "上一个文件", title: "同目录深度遍历（原 ‹ 按钮）", icon: <MiChevronL />, onClick: () => nav.onStep(-1) })}
-          {menuItem({ label: "下一个文件", title: "同目录深度遍历（原 › 按钮）", icon: <MiChevronR />, onClick: () => nav.onStep(1) })}
-          {divider}
-        </>
-      )}
-      {/* 保存组：保存 / 另存为 / 下载 / 重新加载 */}
+      {/* 浏览排：上/下一文件（hasSibs && nav 才渲染，与旧菜单内导航段条件一致；点击关菜单同 menuItem） */}
+      {hasSibs && nav && iconRow("浏览", [
+        closeBtn(() => nav.onStep(-1), "上一个文件（同目录深度遍历）", <MiChevronL size={16} />, 28, "nav-l"),
+        closeBtn(() => nav.onStep(1), "下一个文件（同目录深度遍历）", <MiChevronR size={16} />, 28, "nav-r"),
+      ], "row-browse")}
+      {/* 窗口排：钉住（pin prop）/ 新窗口 / 终端——至少一项才渲染 */}
+      {(pin || props.onNewWindow || props.onTerminal) && iconRow("窗口", [
+        pin ? closeBtn(pin.toggle, pin.isPinned() ? "取消钉住" : "钉住", pin.isPinned() ? <MiPinOff size={16} /> : <MiPin size={16} />, 28, "pin") : null,
+        props.onNewWindow ? closeBtn(props.onNewWindow, "在新窗口打开（独立查看窗口）", <MiExternal size={16} />, 28, "nw") : null,
+        props.onTerminal ? closeBtn(props.onTerminal, "打开终端（当前文件所在目录；Unix=bash / Windows=PowerShell）", <TerminalIcon size={16} />, 28, "term") : null,
+      ], "row-window")}
+      {(closeIconRow || (hasSibs && nav) || pin || props.onNewWindow || props.onTerminal) && divider}
+      {/* 保存组：保存 / 另存为 / 下载（重新加载移至查看组） */}
       {onSave && menuItem({ label: "保存", title: "保存当前编辑内容（Ctrl+S）", icon: <MiSave />, onClick: onSave })}
       {onSaveAs && menuItem({ label: "另存为…", title: "把当前内容保存为新文件", icon: <MiSaveAs />, onClick: onSaveAs })}
       {props.onDownload && menuItem({ label: "下载文件", icon: <MiDownload />, onClick: props.onDownload })}
-      {props.onReload && menuItem({ label: "重新加载", title: "从磁盘重读最新内容（有未保存编辑时会先询问：合并/加载磁盘/保留）", icon: <MiRefresh />, onClick: props.onReload })}
       {(onSave || onSaveAs || props.onDownload) && divider}
       {/* @ 组：当前会话 / 新会话 */}
-      {onMention && menuItem({ label: "@ 提及", title: mentionTitle || "提及文件——将当前文件写入聊天输入框", icon: <MiAt />, onClick: onMention })}
+      {onMention && menuItem({ label: "@ 到聊天", title: mentionTitle || "将当前文件写入聊天输入框", icon: <MiAt />, onClick: onMention })}
       {onMentionNewSession && menuItem({ label: "@ 到新会话", title: "新建会话并在输入框插入当前文件的 @ 引用", icon: <MiAt />, onClick: onMentionNewSession })}
       {(onMention || onMentionNewSession) && divider}
-      {/* 查看组 */}
-      {about && menuItem({ label: "关于编辑器…", title: about.name + "——能力与限制", icon: <MiInfo />, onClick: () => setAboutOpen(true) })}
-      {onFileInfo && menuItem({ label: "文件信息", title: "查看文件大小 / 修改时间等信息", icon: <MiInfo />, onClick: onFileInfo })}
+      {/* 查看组：重新加载 / 复制路径 / 复制内容 */}
+      {props.onReload && menuItem({ label: "重新加载", title: "从磁盘重读最新内容（有未保存编辑时会先询问：合并/加载磁盘/保留）", icon: <MiRefresh />, onClick: props.onReload })}
       {props.onCopyPath && menuItem({ label: "复制路径", icon: <MiCopy />, onClick: props.onCopyPath })}
       {props.onCopyContent && menuItem({ label: "复制内容", title: "复制文件全部内容到剪贴板（超过 1MB 拒绝）", icon: <MiClipboard />, onClick: props.onCopyContent })}
-      {(about || onFileInfo || props.onCopyPath || props.onCopyContent) && divider}
+      {(props.onReload || props.onCopyPath || props.onCopyContent) && divider}
       {/* 整理组 */}
       {props.onRename && menuItem({ label: "重命名...", icon: <MiPencil />, onClick: props.onRename })}
       {props.onMove && menuItem({ label: "移动到...", title: "把当前文件移到其他目录", icon: <MiMove />, onClick: props.onMove })}
       {props.onOpenDir && menuItem({ label: "在目录打开", icon: <MiFolder />, onClick: props.onOpenDir })}
       {(props.onRename || props.onMove || props.onOpenDir) && divider}
-      {/* 打开组 */}
-      {props.onNewWindow && menuItem({ label: "在新窗口打开", title: "独立查看窗口（只有文件的浏览器窗口）", icon: <MiExternal />, onClick: props.onNewWindow })}
-      {props.onTerminal && menuItem({ label: "打开终端", title: "在当前文件所在目录打开终端（Unix=bash / Windows=PowerShell）", icon: <TerminalIcon />, onClick: props.onTerminal })}
+      {/* 元信息沉底：文件信息 / 关于编辑器 */}
+      {onFileInfo && menuItem({ label: "文件信息", title: "查看文件大小 / 修改时间等信息", icon: <MiInfo />, onClick: onFileInfo })}
+      {about && menuItem({ label: "关于编辑器…", title: about.name + "——能力与限制", icon: <MiInfo />, onClick: () => setAboutOpen(true) })}
     </div>
   );
 
