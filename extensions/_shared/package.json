@@ -2,7 +2,7 @@
   "name": "@aiti-ai/ext-shared",
   "version": "0.1.12",
   "type": "module",
-  "description": ". Declared in each ex",
+  "description": "Server-side shared layer for aiti-agent extensions: agent-spawn-env (spawn env governance / resolveCliLaunch), seed-tool (history-replay seeds), cursor-cli-store (Cursor CLI session reader), exec-async, git-ops-client and more. Declared in each extension's package.json and installed into the shared node_modules root by extman reconcile (resolved via jiti walk-up).",
   "exports": {
     "./agent-accounts": "./agent-accounts.ts",
     "./agent-interaction": "./agent-interaction.ts",

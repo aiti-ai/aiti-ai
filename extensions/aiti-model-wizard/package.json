@@ -2,7 +2,7 @@
   "name": "@aiti-ai/aiti-model-wizard",
   "version": "0.1.13",
   "type": "module",
-  "description": ".dev + domestic AI catalog, Chinese/English, paste an API URL to reverse-search) → enter token → test (both 2xx/429 count as pass) → pick/type a model → write models.json; on miss, baseUr",
+  "description": "Guided AI provider/model onboarding — catalog search (models.dev + domestic AI catalog, Chinese/English, paste an API URL to reverse-search) → enter token → test (both 2xx/429 count as pass) → pick/type a model → write models.json; on miss, baseUrl reverse matching (auto-extracts URLs from any doc/code snippet) or auto detection (fills missing v1/v2, pulls the model list with a key +…",
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",

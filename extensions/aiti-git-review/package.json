@@ -2,7 +2,7 @@
   "name": "@aiti-ai/aiti-git-review",
   "version": "0.2.8",
   "type": "module",
-  "description": "Dedicated to reviewing uncommitted changes — Monaco diff workspace (side-by-side/merged/new-only/outline) + line-level annotations (must/suggest/question) + anchor flag-line re-mapping (stays valid while editing mid-review) + summary final-review ",
+  "description": "Dedicated to reviewing uncommitted changes — Monaco diff workspace (side-by-side/merged/new-only/outline) + line-level annotations (must/suggest/question) + anchor flag-line re-mapping (stays valid while editing mid-review) + summary final-review checklist + AI pre-review (aiti_review_ tools injected only into review sessions, zero tools day-to-day)",
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",
