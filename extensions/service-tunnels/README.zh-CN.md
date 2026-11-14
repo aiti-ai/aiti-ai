@@ -1,4 +1,4 @@
-# @aiti-ai/service-tunnels
+# @aiti-ai/aiti-service-tunnels
 
 > 本机服务一键公网可达 —— 端口发现（服务识别/自定义名）/ 五种暴露模式（隧道·vhost·混合·路由器映射·IPv6 直连）/ 认证网关（portal·TOTP·人脸声纹）/ DDNS 自动解析 / 网络体检 doctor
 

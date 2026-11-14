@@ -11,7 +11,7 @@
 //
 // --file 可重复；overrides 只对 --file 列出的包生效（npmjs 有版面的包照常走 registry）。
 // --omit：从并集剔除（npm 不装）——依赖名与可安装形态对不上的包（如 service-tunnels：
-// 依赖写无 scope 名而仓内源 name 是 @aiti-ai/service-tunnels），由调用方以 symlink 兜住。
+// 依赖写无 scope 名而仓内源 name 是 @aiti-ai/aiti-service-tunnels），由调用方以 symlink 兜住。
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
