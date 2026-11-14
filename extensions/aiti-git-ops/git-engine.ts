@@ -13,7 +13,7 @@
  * - 审计 jsonl（state 层 5MB 滚动）+ 事件 onChanged 回调（index.ts 接 event-bus topic）。
  */
 import { createHash } from "node:crypto";
-import { mkdir, rename, rm, cp, appendFile, stat } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, cp, appendFile, stat } from "node:fs/promises";
 import { dirname, join, isAbsolute, relative, resolve as pathResolve } from "node:path";
 import { execFileAsync, queueRepo } from "@aiti-ai/ext-shared/exec-async";
 
@@ -700,6 +700,44 @@ export async function gitDiscard(cwd: string, paths: string[]): Promise<{ ok: tr
     await audit({ repo, cmd: "discard", paths: rels, quarantined });
     changed(repo, "stage", `discard ${rels.length} 文件`);
     return { ok: true as const, quarantined };
+  });
+}
+
+/**
+ * 将路径追加进仓库 .gitignore（变更列表「加入 .gitignore」动作，主要面向 untracked 新文件）。
+ * 规则：条目 = 相对仓库根的正斜杠路径（.gitignore 在根，相对语义精确命中）；
+ * 已存在等值行（trim 后比对）则跳过；原文件末尾无换行时先补换行再追加。
+ */
+export async function gitIgnoreAdd(cwd: string, paths: string[]): Promise<{ ok: true; added: string[]; skipped: string[] }> {
+  const repo = await repoRoot(cwd);
+  const rels = relPaths(repo, paths);
+  return queueRepo(repo, async () => {
+    const giPath = join(repo, ".gitignore");
+    let existing = "";
+    try {
+      existing = await readFile(giPath, "utf8");
+    } catch { /* 无 .gitignore：新建 */ }
+    const lines = new Set(existing.split(/\r?\n/).map((l) => l.trim()).filter(Boolean));
+    const added: string[] = [];
+    const skipped: string[] = [];
+    let content = existing;
+    if (content && !content.endsWith("\n")) content += "\n";
+    for (const rel of rels) {
+      const entry = rel.replace(/\\/g, "/");
+      if (lines.has(entry)) {
+        skipped.push(entry);
+        continue;
+      }
+      lines.add(entry);
+      content += entry + "\n";
+      added.push(entry);
+    }
+    if (added.length > 0) {
+      await appendFile(giPath, added.map((e) => e + "\n").join(""), "utf8");
+      await audit({ repo, cmd: "ignore-add", paths: added });
+      changed(repo, "stage", `ignore +${added.length}`);
+    }
+    return { ok: true as const, added, skipped };
   });
 }
 

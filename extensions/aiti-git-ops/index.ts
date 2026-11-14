@@ -54,6 +54,7 @@ export default {
           stage: (cwd: string, paths: string[]) => engine.gitStage(cwd, paths),
           unstage: (cwd: string, paths: string[]) => engine.gitUnstage(cwd, paths),
           discard: (cwd: string, paths: string[]) => engine.gitDiscard(cwd, paths),
+          ignoreAdd: (cwd: string, paths: string[]) => engine.gitIgnoreAdd(cwd, paths),
           commit: (cwd: string, message?: string, amend?: boolean) => engine.gitCommit(cwd, message, amend),
           planExecute: (cwd: string, groups: engine.PlanGroup[]) => engine.gitPlanExecute(cwd, groups),
           planRollback: (cwd: string, baseHEAD: string) => engine.gitPlanRollback(cwd, baseHEAD),
@@ -104,6 +105,7 @@ export default {
           case "stage": return json(await engine.gitStage(cwd, body?.paths));
           case "unstage": return json(await engine.gitUnstage(cwd, body?.paths));
           case "discard": return json(await engine.gitDiscard(cwd, body?.paths));
+          case "ignore-add": return json(await engine.gitIgnoreAdd(cwd, body?.paths));
           case "commit": return json(await engine.gitCommit(cwd, body?.message, !!body?.amend));
           case "plan":
             if (p[2] === "execute") return json(await engine.gitPlanExecute(cwd, body?.groups));
