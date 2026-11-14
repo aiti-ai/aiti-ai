@@ -1,4 +1,4 @@
-# publish-docker.yml — Docker Hub publishing (aitiai/pi-web).
+# publish-docker.yml — Docker Hub + Aliyun ACR publishing (aitiai/pi-web).
 #
 # Trigger: workflow_dispatch (manual only — the auto-run on tag push is suspended,
 # like the other publish pipelines). Optional version tag input.
@@ -6,7 +6,9 @@
 # (docker/README.md → hub.docker.com/r/aitiai/pi-web overview).
 #
 # Artifacts: aitiai/pi-web:{core,full} + aitiai/pi-web:v<ver>-{core,full} + latest
+#             mirrored 1:1 to Aliyun ACR (registry.cn-hangzhou.aliyuncs.com/aiti-ai/pi-web)
 # Required secrets: DOCKERHUB_USERNAME (=aitiai), DOCKERHUB_TOKEN (hub.docker.com access token)
+#                   ALIYUN_ACR_USERNAME / ALIYUN_ACR_PASSWORD (Aliyun container registry account)
 #
 # Builds reuse docker/build.sh (the repo assembles its own staging context); the full image's FROM base is
 # resolved via the CORE_IMAGE alias (parameterized in build.sh; see docker/Dockerfile.full ARG CORE_IMAGE).
@@ -143,11 +145,27 @@ jobs:
           docker push "${IMAGE}:full"
           docker push "${IMAGE}:latest"
 
+      # Mirror the exact same images to Aliyun ACR (CN acceleration). Re-tags the
+      # local images built above — no rebuild, no re-pull. Secrets must exist or
+      # this step fails (docker.io push already succeeded at this point).
+      - name: Mirror to Aliyun ACR
+        env:
+          ACR_IMAGE: registry.cn-hangzhou.aliyuncs.com/aiti-ai/pi-web
+        run: |
+          printf '%s' "${{ secrets.ALIYUN_ACR_PASSWORD }}" | docker login registry.cn-hangzhou.aliyuncs.com \
+            --username "${{ secrets.ALIYUN_ACR_USERNAME }}" --password-stdin
+          for ref in "${{ steps.ver.outputs.version }}-core" "${{ steps.ver.outputs.version }}-full" core full latest; do
+            docker tag "${IMAGE}:${ref}" "${ACR_IMAGE}:${ref}"
+            docker push "${ACR_IMAGE}:${ref}"
+          done
+          docker logout registry.cn-hangzhou.aliyuncs.com
+
       - name: Summary
         run: |
           echo "### Docker Hub 发布完成" >> "$GITHUB_STEP_SUMMARY"
           echo "- \`${IMAGE}:${{ steps.ver.outputs.version }}-core\` / \`-full\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- \`core\` / \`full\` / \`latest\`（rolling）" >> "$GITHUB_STEP_SUMMARY"
+          echo "- 阿里云镜像：\`registry.cn-hangzhou.aliyuncs.com/aiti-ai/pi-web\`（同 tag 已同步）" >> "$GITHUB_STEP_SUMMARY"
 
   # Hub overview sync (docker/README.md → hub.docker.com/r/aitiai/pi-web).
   # Independent of the image build (idempotent, no registry side effects), so it runs
