@@ -2,7 +2,7 @@
 
 > aiti-agent 扩展的服务端共享层：agent-spawn-env（spawn env 治理 / resolveCliLaunch）、seed-tool（历史回放种子）、cursor-cli-store（Cursor CLI 会话读取器）、exec-async、git-ops-client 等共享模块。扩展 package.json 声明依赖后由 extman reconcile 统一装进共享根 node_modules，jiti walk-up 解析。
 
-简体中文 · English see [README.md](./README.md)
+[English](./README.md) · 简体中文
 
 ## 关于 aiti
 

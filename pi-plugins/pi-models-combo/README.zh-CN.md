@@ -2,7 +2,7 @@
 
 一个让模型列表保持整洁、并轮转 API key 防 429 的 [pi 包](https://pi.dev/packages)。
 
-> 🇬🇧 English version: [README.md](https://github.com/aiti-ai/aiti-ai/blob/main/pi-plugins/pi-models-combo/README.md)
+[English](./README.md) · 简体中文
 
 ## 关于 aiti
 
