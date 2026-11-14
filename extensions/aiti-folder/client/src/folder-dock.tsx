@@ -440,7 +440,7 @@ export function FolderDockBlock(props: FolderFaceProps) {
     { id: "refresh", title: t("sidebar.refreshExplorer"), icon: st.refreshDone === true ? <CheckIcon/> : <MiRefresh/>, done: st.refreshDone === true, visibility: "always", onClick: () => { requestDockCommand(itemKey, "refresh"); } },
     { id: "plus", title: t("files.newFile") + " / " + t("files.uploadFile"), icon: <PlusIcon/>, visibility: "expanded", onClick: (ev?: unknown) => { requestDockCommand(itemKey, "plus", { anchor: anchorRectOf(ev) }); } },
     { id: "changes", title: t("sidebar.changedFiles", { count: gitCount }), icon: <ChangesIcon/>, badge: gitCount > 0 ? gitCount : undefined, active: st.changesOpen === true, visibility: "expanded", onClick: () => { requestDockCommand(itemKey, "changes"); } },
-    { id: "at", title: t("files.insertPath"), icon: <span style={{ fontSize: 12, fontWeight: 700, lineHeight: 1 }}>@</span>, visibility: "expanded", onClick: () => { requestDockCommand(itemKey, "at"); } },
+    { id: "at", title: t("files.insertPathTitle"), icon: <span style={{ fontSize: 12, fontWeight: 700, lineHeight: 1 }}>@</span>, visibility: "expanded", onClick: () => { requestDockCommand(itemKey, "at"); } },
   ];
   return (
     <DockBody
@@ -461,9 +461,10 @@ export function FolderDockBlock(props: FolderFaceProps) {
         />
       )}
       extraMenuItems={[
-        { label: "钉住", icon: dockIconEl("pin", 13), active: pinned, alwaysRun: true, run: () => toggleFolderPin(path) },
         { label: "显示忽略项", icon: <MiEye />, active: showIgnored, alwaysRun: true, run: () => toggleShowIgnored(path) },
       ]}
+      moveRowPin={{ isPinned: () => pinned, toggle: () => toggleFolderPin(path) }}
+      hideCloseItem={true}
       onNewWindow={() => openFolderWindow(norm, props.cwd)}
       onClose={() => removeFolderInstance(path)}
     >

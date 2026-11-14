@@ -6,11 +6,11 @@
  * 开放点：window.__aitiFolder.registerAction（其他扩展注册目录级工具条按钮）。
  */
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { apiUrl, t, getFileTabs, closeFileTabs, extSvc } from "./host-shim";
+import { apiUrl, t, getFileTabs, closeFileTabs, extSvc, extEnsureMaterialized, openFileDiff } from "./host-shim";
 import { useDockCommands, useDockHeaderState, useDockHeaderMenuItems, writeBlockCollapsed, usePresent, closePanel } from "../../../_shared/ext-float-dock";
 import type { DockMenuItem } from "../../../_shared/ext-float-dock";
 import { lastSeg, normSlash, dirOf, relTo, relFromBase, joinPath, buildGitByPath, buildChangedDirs, fetchEntries, peekEntries, fetchList, peekList, recentProjects, displayCwd, buildSearchTree, type SearchTreeNode } from "./lib";
-import { GitBadge, FolderIcon, FileIcon, CaretIcon, CheckIcon, MiRefresh, MiExternal, MiPencil, MiMove, MiAt, MiInfo, MiDownload, MiUpload, MiTrash, MiFilePlus, MiFolderPlus, MiCopy, MiCopyTo, MiArrowUp, MiSearch, MiPin, MiX, MiCloseLeft, MiCloseRight, MiCloseAll, PlusIcon, TerminalIcon, ChangesIcon } from "./icons";
+import { GitBadge, FolderIcon, FileIcon, CaretIcon, CheckIcon, MiRefresh, MiExternal, MiPencil, MiMove, MiAt, MiInfo, MiDownload, MiUpload, MiTrash, MiFilePlus, MiFolderPlus, MiFolderUp, MiCopy, MiCopyTo, MiArrowUp, MiSearch, MiPin, MiPinOff, MiEyeOff, MiPlus, MiMinus, MiGitCompare, MiUndo, MiX, MiCloseLeft, MiCloseRight, MiCloseAll, PlusIcon, TerminalIcon, ChangesIcon } from "./icons";
 import { EXT_LANG, LANG_COLOR } from "./lib";
 import { FolderSwitcher } from "./folder-switcher";
 import { isFolderPinned, toggleFolderPin, folderItemKey } from "./folder-dock";
@@ -24,6 +24,15 @@ import { ct } from "./comp-i18n";
 // DI 方案 P2：git-review 打开/聚焦（services 通道优先，旧全局兜底）
 const grOpen = () => extSvc<(o?: any) => void>("aiti-git-review.open") || (window as any).__aitiGitReviewOpen;
 const grWork = () => extSvc<() => void>("aiti-git-review.work") || (window as any).__aitiGitReviewWork;
+/** 打开 Git Review（统一入口）：aiti-git-review 是懒加载扩展（immediately:false）——
+ *  服务在其 client 加载后才注册；先经宿主 ensureMaterialized 物化（幂等），否则
+ *  grOpen() 为 undefined 且 try/catch 静默 = 「点了没反应」（2026-11-24 用户实测修复）。 */
+async function openGitReview(scope?: { kind: string; path: string }): Promise<void> {
+  try { await extEnsureMaterialized("aiti-git-review"); } catch { /* 旧宿主无通道——继续旧全局兜底 */ }
+  const open = grOpen();
+  if (open) open(scope ? { scope } : undefined);
+  try { grWork() && grWork(); } catch { /* noop */ }
+}
 
 // ── 存活缓存：切走再切回不丢状态（宿主切 tab 会卸载 viewer，这里快照 + TTL 恢复）──
 // 展开状态按根目录存快照；存活期内切回秒开（目录列表另有 ENTRIES_TTL 缓存），过期自动失效。
@@ -101,8 +110,25 @@ function FolderCloseIconRow(props: { left?: () => void; self?: () => void; right
     </div>
   );
 }
-function menuHead(label: string, key: string) {
-  return <div key={key} style={{ fontSize:10, color:"var(--text-dim,#999)", fontWeight:600, padding:"3px 6px 1px", letterSpacing:0.4, userSelect:"none", whiteSpace:"nowrap" }}>{label}</div>;
+// ── 图标排行（2026-11-24 菜单单行化，方案 docs/aiti-menu-single-row-plan.md）：
+//    label 居左 + 28×28 线稿图标排居右，markup 对齐 FolderCloseIconRow / aiti-editor closeIconRow。
+//    仅收录公众周知动作；hover 背景+字色双变（对齐 dock icons 行），tooltip+aria-label 兜底。
+//    actions 构建侧负责条件过滤，行恒非空；onClick 是否关菜单由各动作保真契约决定（见方案 §5）。──
+type MenuRowAction = { key: string; title: string; icon: any; onClick: () => void };
+function menuActionRow(rowKey: string, label: string, actions: MenuRowAction[]) {
+  const btn = (a: MenuRowAction) => (
+    <button key={a.key} type="button" title={a.title} aria-label={a.title}
+      onClick={(e) => { e.stopPropagation(); a.onClick(); }}
+      onMouseEnter={(e:any)=>{ e.currentTarget.style.background="var(--bg-hover,#f3f4f6)"; e.currentTarget.style.color="var(--text,#222)"; }}
+      onMouseLeave={(e:any)=>{ e.currentTarget.style.background="transparent"; e.currentTarget.style.color="var(--text-muted,#777)"; }}
+      style={{ display:"inline-flex", alignItems:"center", justifyContent:"center", width:22, height:22, padding:0, border:"none", borderRadius:5, background:"transparent", color:"var(--text-muted,#777)", cursor:"pointer", flexShrink:0 }}>{a.icon}</button>
+  );
+  return (
+    <div key={rowKey} data-ext-folder-action-row="1" style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, padding:"3px 10px" }}>
+      <span style={{ fontSize:12, color:"var(--text-dim,#888)", flexShrink:0, userSelect:"none" }}>{label}</span>
+      <div style={{ display:"flex", gap:4, flexShrink:0 }}>{actions.map(btn)}</div>
+    </div>
+  );
 }
 
 // 剪贴板写文本：clipboard API 优先，execCommand 兜底（非安全上下文）
@@ -462,10 +488,10 @@ function DirOpsMenu(props: { dir: string; hovered: boolean; onChanged: (dir: str
     if(open){ setOpen(false); return; }
     const r = e.currentTarget.getBoundingClientRect();
     // 菜单固定视口定位：left 夹在视口内；底部空间不足时向上翻转，避免被屏幕裁掉。
-    // 估算菜单高度：~17 项 + 6 分区头 + 6 分隔线 + 容器 padding + gap + msg 行（见时）+ 输入框态更高。
-    // 写得稍大一些（590）确保翻转判断不会被低估值误导；翻转后顶部也不够就贴顶。
-    const mh = 590;
-    const menuWidth = 190;
+    // 估算菜单高度：4 图标排 + 6 文字行 + Git + 5 分隔线 + padding + msg 行 + 输入框态更高。
+    // 写得稍大一些（400）确保翻转判断不会被低估值误导；翻转后顶部也不够就贴顶。
+    const mh = 400;
+    const menuWidth = 230;
     const left = Math.max(8, Math.min(r.right - menuWidth, window.innerWidth - menuWidth - 8));
     const overflowDown = r.bottom + 4 + mh > window.innerHeight;
     const overflowUp = r.top - mh - 4 < 0;
@@ -488,7 +514,7 @@ function DirOpsMenu(props: { dir: string; hovered: boolean; onChanged: (dir: str
       <button type="button" onClick={toggle} title={tt("files.rename")+" / "+tt("files.insertPath")+" / "+tt("files.download")+" / "+tt("files.trash")+" / "+tt("files.newFile")}
         style={{ width:24, height:22, padding:0, display:"flex", alignItems:"center", justifyContent:"center", border:"1px solid var(--border)", borderRadius:4, background: open?"var(--bg-selected)":"var(--bg-panel)", color: open?"var(--accent)":"var(--text-dim)", cursor:"pointer", fontSize:14, fontWeight:700, lineHeight:1, transition:"color 0.12s, background 0.12s" }}>⋮</button>
       {open ? (
-        <div style={{ position:"fixed", left:pos!.left, top:pos!.top, zIndex:400, minWidth:170, padding:6, background:"var(--bg,#fff)", border:"1px solid var(--border,#d0d0d0)", borderRadius:10, boxShadow:"0 4px 12px rgba(0,0,0,0.15)", fontSize:12, display:"flex", flexDirection:"column", gap:2 }}>
+        <div style={{ position:"fixed", left:pos!.left, top:pos!.top, zIndex:400, minWidth:220, padding:6, background:"var(--bg,#fff)", border:"1px solid var(--border,#d0d0d0)", borderRadius:10, boxShadow:"0 4px 12px rgba(0,0,0,0.15)", fontSize:12, display:"flex", flexDirection:"column", gap:2 }}>
           {kind ? (
             <div style={{display:"flex",flexDirection:"column",gap:6,padding:"2px 2px 4px"}}>
               <div style={{fontSize:11,color:"var(--text-dim,#888)",fontWeight:600}}>{kind==="file"?tt("files.newFile"):tt("files.newFolder")}</div>
@@ -510,41 +536,48 @@ function DirOpsMenu(props: { dir: string; hovered: boolean; onChanged: (dir: str
               </div>
             </div>
           ) : [
-            // ── 打开/查看 ──
-            menuHead(tt("files.menuOpen"), "h-open"),
-            menuItem(<MiRefresh/>, tt("files.refresh"), ()=>{ setOpen(false); onRefresh && onRefresh(); }, "rf"),
-            menuItem(<NewWindowIcon/>, tt("files.openNewWindow"), ()=>{ setOpen(false); openNewWindow("folder", dir); }, "nw"),
-            menuItem(<TerminalIcon/>, tt("files.openTerminal"), ()=>{ setOpen(false); void openTerminal(dir).then(err=>{ if (err) setMsg({ err }); }); }, "ot"),
-            menuItem(<MiInfo/>, tt("files.entryInfo"), ()=>setInfoOpen(true), "info"), // 菜单保持开：容器 visible=hovered||open，关菜单会连带隐藏弹层
-            // ── 路径引用（复制路径邻接 @）──
-            menuSep("s-ref"), menuHead(tt("files.menuRef"), "h-ref"),
+            // ── 浏览/窗口排（2026-11-24 菜单单行化，方案 docs/aiti-menu-single-row-plan.md §3.1/§5.1）──
+            menuActionRow("row-browse", tt("files.menuBrowse"), [
+              { key:"rf", title: tt("files.refresh"), icon:<MiRefresh/>, onClick: ()=>{ setOpen(false); onRefresh && onRefresh(); } },
+              // 不关菜单：EntryInfoModal 挂本组件内，受 visible=hovered||open 控制（保真契约 §5.1#4）
+              { key:"info", title: tt("files.entryInfo"), icon:<MiInfo/>, onClick: ()=>setInfoOpen(true) },
+            ]),
+            menuActionRow("row-window", tt("files.menuWindow"), [
+              { key:"nw", title: tt("files.openNewWindow"), icon:<NewWindowIcon/>, onClick: ()=>{ setOpen(false); openNewWindow("folder", dir); } },
+              { key:"ot", title: tt("files.openTerminal"), icon:<TerminalIcon/>, onClick: ()=>{ setOpen(false); void openTerminal(dir).then(err=>{ if (err) setMsg({ err }); }); } },
+            ]),
+            // ── 路径引用（特色区置顶）──
+            menuSep("s-ref"),
             onAtMention ? menuItem(<MiAt/>, tt("files.insertPath"), doAt, "at") : null,
             menuItem(<MiCopy/>, tt("files.copyPath"), doCopyPath, "cp"),
             menuItem(<MiAt/>, tt("files.atNewSession"), doAtNew, "atn"),
-            // ── 整理（复制到邻接 移动到）──
-            menuSep("s-org"), menuHead(tt("files.menuOrganize"), "h-org"),
-            menuItem(<MiPencil/>, tt("files.rename"), doRename, "rn"),
-            menuItem(<MiMove/>, tt("files.move"), ()=>{ setTransfer("move"); }, "mv"),
-            menuItem(<MiCopyTo/>, tt("files.copyTo"), ()=>{ setTransfer("copy"); }, "cpto"),
-            onTrash ? menuItem(<MiTrash/>, tt("files.trash"), doTrash, "tr") : null,
-            // ── 新建 / 上传 ──
-            menuSep("s-new"), menuHead(tt("files.menuCreate"), "h-new"),
-            menuItem(<MiFilePlus/>, tt("files.newFile"), ()=>{ setKind("file"); setName(""); }, "nf"),
-            menuItem(<MiFolderPlus/>, tt("files.newFolder"), ()=>{ setKind("folder"); setName(""); }, "nd"),
-            menuItem(<MiUpload/>, tt("files.uploadFile"), ()=>{ setOpen(false); if(fileRef.current) fileRef.current.click(); }, "uf"),
-            menuItem(<MiUpload/>, tt("files.uploadFolder"), ()=>{ setOpen(false); if(dirRef.current) dirRef.current.click(); }, "ud"),
-            // ── 导出 ──
-            menuSep("s-exp"), menuHead(tt("files.menuExport"), "h-exp"),
-            menuItem(<MiDownload/>, tt("files.download"), doDownload, "dl"),
-            // ── Git ──
+            // ── Git（特色第二段）──
             root ? menuSep("s-git") : null,
-            root ? menuHead(tt("files.menuGit"), "h-git") : null,
             root ? (
-              <button type="button" key="gr" onClick={(e)=>{e.stopPropagation();try{(grOpen())&&(grOpen())({scope:{kind:"directory",path:root}});grWork()&&grWork();}catch(_){/* noop */}setOpen(false)}} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"5px 10px",border:"none",background:"transparent",color:"var(--accent)",cursor:"pointer",textAlign:"left",fontSize:12,borderRadius:6,whiteSpace:"nowrap"}}>
+              <button type="button" key="gr" onClick={(e)=>{e.stopPropagation();setOpen(false);void openGitReview({ kind: "directory", path: root });}} style={{display:"flex",alignItems:"center",gap:6,width:"100%",padding:"5px 10px",border:"none",background:"transparent",color:"var(--accent)",cursor:"pointer",textAlign:"left",fontSize:12,borderRadius:6,whiteSpace:"nowrap"}}>
                 <GrEyeIcon size={13} />
                 Git Review
               </button>
             ) : null,
+            // ── 新建 / 上传（图标排，惯例位）──
+            menuSep("s-new"),
+            menuActionRow("row-new", tt("files.menuCreate"), [
+              { key:"nf", title: tt("files.newFile"), icon:<MiFilePlus/>, onClick: ()=>{ setKind("file"); setName(""); } },
+              { key:"nd", title: tt("files.newFolder"), icon:<MiFolderPlus/>, onClick: ()=>{ setKind("folder"); setName(""); } },
+              { key:"uf", title: tt("files.uploadFile"), icon:<MiUpload/>, onClick: ()=>{ setOpen(false); if(fileRef.current) fileRef.current.click(); } },
+              { key:"ud", title: tt("files.uploadFolder"), icon:<MiFolderUp/>, onClick: ()=>{ setOpen(false); if(dirRef.current) dirRef.current.click(); } },
+            ]),
+            // ── 整理（图标排 + 文字行；回收站条件 onTrash）──
+            menuSep("s-org"),
+            menuActionRow("row-org", tt("files.menuOrganize"), [
+              { key:"rn", title: tt("files.rename"), icon:<MiPencil/>, onClick: doRename },
+              ...(onTrash ? [{ key:"tr", title: tt("files.trash"), icon:<MiTrash/>, onClick: doTrash }] : []),
+            ]),
+            menuItem(<MiMove/>, tt("files.move"), ()=>{ setTransfer("move"); }, "mv"),
+            menuItem(<MiCopyTo/>, tt("files.copyTo"), ()=>{ setTransfer("copy"); }, "cpto"),
+            // ── 导出 ──
+            menuSep("s-exp"),
+            menuItem(<MiDownload/>, tt("files.download"), doDownload, "dl"),
           ])}
           {msg ? <div style={{fontSize:10,color:msg.err?"var(--danger, #f87171)":"var(--ok, #4ade80)",padding:"2px 4px"}}>{msg.err?msg.err:(msg.ok||"")}</div> : null}
         </div>
@@ -559,8 +592,8 @@ function DirOpsMenu(props: { dir: string; hovered: boolean; onChanged: (dir: str
 
 // ── 文件行操作区（与文件夹 DirOpsMenu 同款：大屏悬停显示操作按钮；小屏无悬停→点击后部等效悬停，
 // 再点「+」展开菜单。点击文件名仍开文件；点击操作区不冒泡到行）。
-function FileOpsMenu(props: { filePath: string; cwd: string; root: string; onOpenFile?: (p: string) => void; onOpenFolder?: (p: string, name?: string) => void; onAtMention?: (rel: string, b: boolean) => void; onTrash?: (o: { path: string; name: string; isDir: boolean }) => void; hovered: boolean; t: TFn; onRefresh?: (p?: string) => void }) {
-  const { filePath, cwd, root, onOpenFile, onAtMention, onTrash, hovered, t: tt, onRefresh } = props;
+function FileOpsMenu(props: { filePath: string; cwd: string; root: string; onOpenFile?: (p: string) => void; onOpenFolder?: (p: string, name?: string) => void; onAtMention?: (rel: string, b: boolean) => void; onTrash?: (o: { path: string; name: string; isDir: boolean }) => void; hovered: boolean; t: TFn; onRefresh?: (p?: string) => void; gitIgnore?: (() => void) | null; /** true = 只渲染 ⋮ 入口（快捷钮 @/🗑/⬇ 不渲染）——变更行与 git 按钮互斥防挤压叠压 */ quickOnly?: boolean; /** 变更行 git 上下文：提供即在 ⋮ 菜单渲染 Git 组（暂存/diff/丢弃/gitignore） */ staged?: boolean; gitOp?: (kind: "stage" | "unstage" | "discard", rel: string) => void; /** 「丢弃」确认经页内弹窗（宿主 FolderBrowser requestDiscard） */ onRequestDiscard?: (o: { title: string; message: string; run: () => void }) => void }) {
+  const { filePath, cwd, root, onOpenFile, onAtMention, onTrash, hovered, t: tt, onRefresh, gitIgnore, quickOnly, staged, gitOp, onRequestDiscard } = props;
   const [open, setOpen] = useState(false); const [pos, setPos] = useState<{left:number;top:number}|null>(null);
   const [renameMode, setRenameMode] = useState(false);
   const [renameName, setRenameName] = useState("");
@@ -569,8 +602,8 @@ function FileOpsMenu(props: { filePath: string; cwd: string; root: string; onOpe
   const toggle = (e:any)=>{ e.stopPropagation(); if(open){ setOpen(false); return; }
     const r=e.currentTarget.getBoundingClientRect();
     // 菜单固定视口定位：left 夹在视口内；底部空间不足时向上翻转，避免被屏幕裁掉。
-    // 估算菜单高度：~12 项 + 5 分区头 + 5 分隔线 + padding + gap + msg 行 ≈ 440，用 460 留 buffer。
-    const mh=460; const menuWidth=168; const left=Math.max(8,Math.min(r.right-menuWidth,window.innerWidth-menuWidth-8)); const overflowDown=r.bottom+4+mh>window.innerHeight; const overflowUp=r.top-mh-4<0; let top: number;
+    // 估算菜单高度：3 图标排 + 6 文字行 + Git + 4 分隔线 + padding + gap + msg 行 ≈ 330，用 360 留 buffer。
+    const mh=360; const menuWidth=230; const left=Math.max(8,Math.min(r.right-menuWidth,window.innerWidth-menuWidth-8)); const overflowDown=r.bottom+4+mh>window.innerHeight; const overflowUp=r.top-mh-4<0; let top: number;
     if(overflowDown&&!overflowUp) top=Math.max(8,r.top-mh-4);
     else if(overflowDown&&overflowUp) top=8;
     else top=r.bottom+4;
@@ -602,12 +635,12 @@ function FileOpsMenu(props: { filePath: string; cwd: string; root: string; onOpe
   const visible = hovered || open || !!transfer;
   return (
     <div data-fileops={1} onClick={e=>e.stopPropagation()} style={{ position:"absolute", right:4, top:1, display:"flex", alignItems:"center", gap:3, zIndex:40, visibility:visible?"visible":"hidden" }}>
-      {onAtMention ? <button onClick={e=>{e.stopPropagation(); handleAt();}} title={tt("files.insertPath")} style={{ width:22, height:22, padding:0, display:"flex", alignItems:"center", justifyContent:"center", border:"1px solid var(--border)", borderRadius:4, background:"var(--bg-panel)", color:"var(--accent)", cursor:"pointer", fontSize:12, fontWeight:700, lineHeight:1, flexShrink:0 }}>@</button> : null}
-      {onTrash ? <button onClick={e=>{e.stopPropagation(); handleTrash();}} title={tt("files.trash")} style={{ width:22, height:22, padding:0, display:"flex", alignItems:"center", justifyContent:"center", border:"1px solid var(--border)", borderRadius:4, background:"var(--bg-panel)", color:"var(--danger, #ef4444)", cursor:"pointer", lineHeight:1, flexShrink:0 }}><MiTrash/></button> : null}
-      <button onClick={()=>doDownload()} title={tt("files.download")} style={{ width:22, height:22, padding:0, display:"flex", alignItems:"center", justifyContent:"center", border:"1px solid var(--border)", borderRadius:4, background:"var(--bg-panel)", color:"var(--accent)", cursor:"pointer", fontSize:12, fontWeight:700, lineHeight:1, flexShrink:0 }}><MiDownload/></button>
+      {!quickOnly && onAtMention ? <button onClick={e=>{e.stopPropagation(); handleAt();}} title={tt("files.insertPathTitle")} style={{ width:22, height:22, padding:0, display:"flex", alignItems:"center", justifyContent:"center", border:"1px solid var(--border)", borderRadius:4, background:"var(--bg-panel)", color:"var(--accent)", cursor:"pointer", fontSize:12, fontWeight:700, lineHeight:1, flexShrink:0 }}>@</button> : null}
+      {!quickOnly && onTrash ? <button onClick={e=>{e.stopPropagation(); handleTrash();}} title={tt("files.trash")} style={{ width:22, height:22, padding:0, display:"flex", alignItems:"center", justifyContent:"center", border:"1px solid var(--border)", borderRadius:4, background:"var(--bg-panel)", color:"var(--danger, #ef4444)", cursor:"pointer", lineHeight:1, flexShrink:0 }}><MiTrash/></button> : null}
+      {!quickOnly ? <button onClick={()=>doDownload()} title={tt("files.download")} style={{ width:22, height:22, padding:0, display:"flex", alignItems:"center", justifyContent:"center", border:"1px solid var(--border)", borderRadius:4, background:"var(--bg-panel)", color:"var(--accent)", cursor:"pointer", fontSize:12, fontWeight:700, lineHeight:1, flexShrink:0 }}><MiDownload/></button> : null}
       <button onClick={toggle} title={tt("files.rename")+" / "+tt("files.download")+" / "+tt("files.insertPath")+" / "+tt("files.trash")} style={{ width:24, height:22, padding:0, display:"flex", alignItems:"center", justifyContent:"center", border:"1px solid var(--border)", borderRadius:4, background:open?"var(--bg-selected)":"var(--bg-panel)", color:open?"var(--accent)":"var(--text-dim)", cursor:"pointer", fontSize:14, fontWeight:700, lineHeight:1, flexShrink:0, transition:"color 0.12s, background 0.12s" }}>⋮</button>
       {open ? (
-        <div style={{ position:"fixed", left:pos!.left, top:pos!.top, zIndex:400, minWidth:150, padding:6, background:"var(--bg,#fff)", border:"1px solid var(--border,#d0d0d0)", borderRadius:10, boxShadow:"0 4px 12px rgba(0,0,0,0.15)", fontSize:12, display:"flex", flexDirection:"column", gap:2 }}>
+        <div style={{ position:"fixed", left:pos!.left, top:pos!.top, zIndex:400, minWidth:220, padding:6, background:"var(--bg,#fff)", border:"1px solid var(--border,#d0d0d0)", borderRadius:10, boxShadow:"0 4px 12px rgba(0,0,0,0.15)", fontSize:12, display:"flex", flexDirection:"column", gap:2 }}>
           {renameMode ? (
             <div key="ri" style={{display:"flex",flexDirection:"column",gap:6,padding:"2px 2px 4px"}}>
               <div style={{fontSize:11,color:"var(--text-dim,#888)",fontWeight:600}}>{tt("files.rename")}</div>
@@ -619,35 +652,48 @@ function FileOpsMenu(props: { filePath: string; cwd: string; root: string; onOpe
               </div>
             </div>
           ) : [
-            // ── 打开/查看 ──
-            menuHead(tt("files.menuOpen"), "h-open"),
-            menuItem(<NewWindowIcon/>, tt("files.openNewWindow"), ()=>{ setOpen(false); openNewWindow("file", filePath); }, "nw"),
-            menuItem(<TerminalIcon/>, tt("files.openTerminal"), ()=>{ setOpen(false); void openTerminal(dirOf(filePath), lastSeg(filePath)).then(err=>{ if (err) alert(err); }); }, "ot"),
-            menuItem(<MiInfo/>, tt("files.entryInfo"), ()=>setInfoOpen(true), "info"), // 菜单保持开：容器 visibility=hovered||open，关菜单会连带隐藏弹层
-            // ── 路径引用（复制路径邻接 @）──
-            menuSep("s-ref"), menuHead(tt("files.menuRef"), "h-ref"),
+            // ── 浏览/窗口排（2026-11-24 菜单单行化，方案 docs/aiti-menu-single-row-plan.md §3.2/§5.2）──
+            menuActionRow("row-browse", tt("files.menuBrowse"), [
+              // 不关菜单：EntryInfoModal 挂本组件内，受 visibility=hovered||open 控制（保真契约 §5.2#3）
+              { key:"info", title: tt("files.entryInfo"), icon:<MiInfo/>, onClick: ()=>setInfoOpen(true) },
+            ]),
+            menuActionRow("row-window", tt("files.menuWindow"), [
+              { key:"nw", title: tt("files.openNewWindow"), icon:<NewWindowIcon/>, onClick: ()=>{ setOpen(false); openNewWindow("file", filePath); } },
+              { key:"ot", title: tt("files.openTerminal"), icon:<TerminalIcon/>, onClick: ()=>{ setOpen(false); void openTerminal(dirOf(filePath), lastSeg(filePath)).then(err=>{ if (err) alert(err); }); } },
+            ]),
+            // ── 路径引用（特色区置顶）──
+            menuSep("s-ref"),
             onAtMention ? menuItem(<MiAt/>, tt("files.insertPath"), handleAt, "at") : null,
             menuItem(<MiCopy/>, tt("files.copyPath"), doCopyPath, "cp"),
             menuItem(<MiAt/>, tt("files.atNewSession"), doAtNew, "atn"),
-            // ── 整理（复制到邻接 移动到）──
-            menuSep("s-org"), menuHead(tt("files.menuOrganize"), "h-org"),
-            menuItem(<MiPencil/>, tt("files.rename"), doRename, "rn"),
-            menuItem(<MiMove/>, tt("files.move"), ()=>{ setTransfer("move"); }, "mv"),
-            menuItem(<MiCopyTo/>, tt("files.copyTo"), ()=>{ setTransfer("copy"); }, "cpto"),
-            onTrash ? menuItem(<MiTrash/>, tt("files.trash"), handleTrash, "tr") : null,
-            // ── 导出 ──
-            menuSep("s-exp"), menuHead(tt("files.menuExport"), "h-exp"),
-            menuItem(<MiDownload/>, tt("files.download"), doDownload, "dl"),
-            // ── Git ──
+            // ── Git（特色第二段）──
             root ? menuSep("s-git") : null,
-            root ? menuHead(tt("files.menuGit"), "h-git") : null,
             root ? (
-              <button type="button" key="gr" onClick={(e)=>{ e.stopPropagation(); try{ if(grOpen()){ grOpen({ scope:{ kind:"directory", path: root } }); } grWork() && grWork(); }catch(_){/* noop */} setOpen(false); }}
+              <button type="button" key="gr" onClick={(e)=>{ e.stopPropagation(); setOpen(false); void openGitReview({ kind: "directory", path: root }); }}
                 style={{ display:"flex", alignItems:"center", gap:6, width:"100%", padding:"5px 10px", border:"none", background:"transparent", color:"var(--accent)", cursor:"pointer", textAlign:"left", fontSize:12, borderRadius:6, whiteSpace:"nowrap" }}>
                 <GrEyeIcon size={13} />
                 Git Review
               </button>
             ) : null,
+            // Git 组（变更行：引擎在位时）：暂存/取消暂存（随状态切换）、diff、丢弃（带确认）、加入 .gitignore（untracked）
+            // 原行内快捷钮已收编进此组（2026-11-24 用户拍板：行内与菜单统一）
+            gitOp ? [
+              menuItem(staged ? <MiMinus/> : <MiPlus/>, staged ? tt("files.unstage") : tt("files.stage"), () => gitOp(staged ? "unstage" : "stage", relFromBase(filePath, root) || filePath), "gst"),
+              menuItem(<MiGitCompare/>, "查看 Git Diff", () => { try { openFileDiff(filePath, filePath.split("/").pop() || filePath); } catch (_) { /* noop */ } }, "gdf"),
+              menuItem(<MiUndo/>, ct("git.discardTitle"), () => { const un = !!gitIgnore; const msg = un ? ct("git.discardUntrackedConfirm") : ct("git.discardConfirm", { path: relFromBase(filePath, root) || filePath }); const run = () => { if (un) { onTrash({ path: filePath, name: filePath.split("/").pop() || filePath, isDir: false }); } else { gitOp("discard", relFromBase(filePath, root) || filePath); } }; if (onRequestDiscard) { onRequestDiscard({ title: ct("git.discardTitle"), message: msg, run }); } else if (window.confirm(msg)) { run(); } }, "gds"),
+              gitIgnore ? menuItem(<MiEyeOff/>, tt("files.gitIgnoreAdd"), gitIgnore, "gi") : null,
+            ] : null,
+            // ── 整理（图标排 + 文字行；回收站条件 onTrash，handleTrash 行为不变）──
+            menuSep("s-org"),
+            menuActionRow("row-org", tt("files.menuOrganize"), [
+              { key:"rn", title: tt("files.rename"), icon:<MiPencil/>, onClick: doRename },
+              ...(onTrash ? [{ key:"tr", title: tt("files.trash"), icon:<MiTrash/>, onClick: handleTrash }] : []),
+            ]),
+            menuItem(<MiMove/>, tt("files.move"), ()=>{ setTransfer("move"); }, "mv"),
+            menuItem(<MiCopyTo/>, tt("files.copyTo"), ()=>{ setTransfer("copy"); }, "cpto"),
+            // ── 导出 ──
+            menuSep("s-exp"),
+            menuItem(<MiDownload/>, tt("files.download"), doDownload, "dl"),
           ]}
           {msg ? <div style={{fontSize:10,color:msg.err?"var(--danger, #f87171)":"var(--ok, #4ade80)",padding:"2px 4px"}}>{msg.err?msg.err:(msg.ok||"")}</div> : null}
         </div>
@@ -658,11 +704,44 @@ function FileOpsMenu(props: { filePath: string; cwd: string; root: string; onOpe
   );
 }
 
+/** untracked 文件「丢弃」= 移入系统回收站（复用 folder 已有 /trash 端点——不重新发明删除，2026-11-24 用户拍板） */
+async function discardUntrackedToTrash(absPath: string): Promise<void> {
+  const r = await fetch(apiUrl("/api/extensions/aiti-folder/trash"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ paths: [absPath] }) });
+  const d = await r.json().catch(() => ({ ok: false, error: "HTTP " + r.status }));
+  if (!r.ok || !d.ok) throw new Error(d.error || "HTTP " + r.status);
+}
+
+// ── 桶头（已暂存/工作区折叠项）：label (count) + hover 显示批量按钮；
+// 点击进 busy 态（spinner 常显直到完成——批量操作慢时给用户明确反馈），完成后恢复 hover 显隐。──
+function BucketHead(p: { label: string; count: number; batches?: Array<{ id: string; title: string; label: string; color?: string; confirm?: string; run: () => Promise<void> | void }>; requestDiscard?: (o: { title: string; message: string; run: () => void }) => void }) {
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [hovered, setHovered] = useState(false);
+  const busy = busyId !== null;
+  const show = busy || hovered;
+  return (
+    <div onMouseEnter={(e) => setHovered(true)} onMouseLeave={(e) => setHovered(false)}
+      style={{ display:"flex", alignItems:"center", gap:6, padding:"4px 10px 1px", fontSize:10, fontWeight:600, letterSpacing:"0.05em", textTransform:"uppercase" as const, color:"var(--text-dim)" }}>
+      <span style={{ fontWeight:600 }}>{p.label} ({p.count})</span>
+      <span style={{ flex:1 }} />
+      {(p.batches || []).map((b) => (
+        <button key={b.id} data-batch-btn type="button" title={b.title} aria-label={b.title} disabled={busy}
+          onClick={(e) => { e.stopPropagation(); if (busy) return; if (b.confirm && p.requestDiscard) { p.requestDiscard({ title: b.title, message: b.confirm, run: () => { setBusyId(b.id); const t0 = Date.now(); Promise.resolve(b.run()).catch(() => {}).then(async () => { const el = Date.now() - t0; if (el < 450) await new Promise(r2 => setTimeout(r2, 450 - el)); setBusyId(null); }); } }); return; } setBusyId(b.id); const t0 = Date.now(); Promise.resolve(b.run()).catch(() => {}).then(async () => { const el = Date.now() - t0; if (el < 450) await new Promise(r2 => setTimeout(r2, 450 - el)); setBusyId(null); }); }}
+          style={{ opacity: (show || busyId === b.id) ? 1 : 0, transition:"opacity 0.12s", border:"none", background:"none", color: busyId === b.id ? "var(--accent)" : (b.color || "var(--text-dim)"), cursor: busy ? "default" : "pointer", fontSize:10, padding:"1px 4px", borderRadius:4, fontFamily:"var(--font-mono)", display:"inline-flex", alignItems:"center", gap:4 }}
+        >
+          {busyId === b.id ? (
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" style={{ animation:"spin 0.8s linear infinite" }}><path d="M21 12a9 9 0 1 1-5.7-8.4" /></svg>
+          ) : b.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // ── 变更区段文件行：与树内文件行同款 hover 操作区（FileOpsMenu：@/🗑/⬇️/⋮ 菜单）──
 // 相对路径显示走 relFromBase（分隔符/大小写兼容 Windows——git status 的 filePath 是
 // 服务端 path.resolve 产物反斜杠形式，直接 startsWith(root+"/") 必失败→显示完整绝对路径）。
-function ChangedFileRow(o: { st: any; root: string; cwd: string; onOpenFile: (p: string) => void; onOpenFolder?: (p: string, name?: string) => void; onAtMention?: (rel: string, b: boolean) => void; onTrash?: (x: { path: string; name: string; isDir: boolean }) => void; t: TFn; onRefresh: () => void; staged?: boolean; gitOp?: (kind: "stage" | "unstage" | "discard", rel: string) => void }) {
-  const { st, root, cwd, onOpenFile, onAtMention, onTrash, t: tt, onRefresh, staged, gitOp } = o;
+function ChangedFileRow(o: { st: any; root: string; cwd: string; onOpenFile: (p: string) => void; onOpenFolder?: (p: string, name?: string) => void; onAtMention?: (rel: string, b: boolean) => void; onTrash?: (x: { path: string; name: string; isDir: boolean }) => void; t: TFn; onRefresh: () => void; staged?: boolean; untracked?: boolean; onGitIgnore?: (rel: string) => void; gitOp?: (kind: "stage" | "unstage" | "discard", rel: string) => void; onRequestDiscard?: (o: { title: string; message: string; run: () => void }) => void }) {
+  const { st, root, cwd, onOpenFile, onAtMention, onTrash, t: tt, onRefresh, staged, untracked, onGitIgnore, gitOp, onRequestDiscard } = o;
   const [hovered, setHovered] = useState(false);
   const rel = relFromBase(st.filePath, root) || st.filePath;
   const gitBtn = (title: string, label: string, fn: () => void, key: string, color = "var(--text-dim)") => (
@@ -676,14 +755,15 @@ function ChangedFileRow(o: { st: any; root: string; cwd: string; onOpenFile: (p:
       style={{ position:"relative", display:"flex", alignItems:"center", gap:6, paddingLeft:10, paddingRight:8, height:24, cursor:"pointer", borderRadius:4, userSelect:"none", background:hovered?"var(--bg-hover)":"transparent" }}>
       <GitBadge status={st} t={tt} />
       <span style={{fontSize:12,color:"var(--text)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{rel}</span>
+      {/* hover = git 快捷钮（＋/diff/✕，2026-11-24 用户拍板恢复）+ ⋮（文件动作全量菜单，快捷钮 @/🗑/⬇ 隐藏防叠压） */}
       {gitOp ? (
         <span data-fileops style={{ display:"flex", alignItems:"center", gap:2, opacity:hovered?1:0, transition:"opacity 0.12s", flexShrink:0 }}>
           {gitBtn(staged ? ct("git.unstageTitle") : ct("git.stageTitle"), staged ? "−" : "＋", () => gitOp(staged ? "unstage" : "stage", rel), "st")}
-          {gitBtn(ct("git.diffTitle"), "diff", () => { try { const open = grOpen(); if (open) open({ scope: { kind: "file", path: st.filePath } }); grWork() && grWork(); } catch (_) { /* noop */ } }, "df")}
-          {gitBtn(ct("git.discardTitle"), "✕", () => { if (window.confirm(ct("git.discardConfirm", { path: rel }))) gitOp("discard", rel); }, "ds", "#d6a84b")}
+          {gitBtn(ct("git.diffTitle"), "diff", () => { void openGitReview({ kind: "file", path: st.filePath }); }, "df")}
+          {gitBtn(ct("git.discardTitle"), "✕", () => { const un = untracked && onTrash; const msg = un ? tt("files.discardUntrackedConfirm") : ct("git.discardConfirm", { path: rel }); if (onRequestDiscard) { onRequestDiscard({ title: tt("files.discardTitle"), message: msg, run: () => { if (un) { onTrash({ path: st.filePath, name: st.filePath.split("/").pop() || st.filePath, isDir: false }); } else { gitOp("discard", rel); } } }); } else if (window.confirm(msg)) { if (un) { onTrash({ path: st.filePath, name: st.filePath.split("/").pop() || st.filePath, isDir: false }); } else { gitOp("discard", rel); } } }, "ds", "#d6a84b")}
         </span>
       ) : null}
-      <FileOpsMenu filePath={st.filePath} cwd={cwd} root={root} onOpenFile={onOpenFile} onOpenFolder={o.onOpenFolder} onAtMention={onAtMention} onTrash={onTrash} hovered={hovered} t={tt} onRefresh={onRefresh} />
+      <FileOpsMenu filePath={st.filePath} cwd={cwd} root={root} onOpenFile={onOpenFile} onOpenFolder={o.onOpenFolder} onAtMention={onAtMention} onTrash={onTrash} hovered={hovered} t={tt} onRefresh={onRefresh} staged={staged} gitOp={gitOp} gitIgnore={(untracked && onGitIgnore) ? () => onGitIgnore(rel) : null} quickOnly={!!gitOp} onRequestDiscard={onRequestDiscard} />
     </div>
   );
 }
@@ -754,7 +834,7 @@ function TreeNode(o: any) {
         ) : null}
         {(node.isDir) ? <DirOpsMenu dir={node.fullPath} hovered={hovered} onChanged={handleChanged} onRefresh={handleRefreshTree} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} onAtMention={onAtMention} onTrash={onTrash} t={tt} root={root} cwd={cwd} /> : null}
         {(node.isDir && hovered && onAtMention) ? (
-          <button onClick={e=>{e.stopPropagation(); onAtMention(relTo(node.fullPath,cwd),false);}} title={tt("files.insertPath")}
+          <button onClick={e=>{e.stopPropagation(); onAtMention(relTo(node.fullPath,cwd),false);}} title={tt("files.insertPathTitle")}
             style={{position:"absolute",right:80,top:"50%",transform:"translateY(-50%)",display:"flex",alignItems:"center",justifyContent:"center",height:20,width:22,padding:0,background:"var(--bg-panel)",border:"1px solid var(--border)",borderRadius:4,color:"var(--accent)",cursor:"pointer",fontSize:11,fontWeight:700}}>@</button>
         ) : null}
         {(node.isDir && hovered) ? (
@@ -814,6 +894,9 @@ export function FolderBrowser(props: any) {
   const [createBusy, setCreateBusy] = useState(false);
   const [pendingTrash, setPendingTrash] = useState<any>(null); // { path, name, isDir } | null
   const [trashBusy, setTrashBusy] = useState(false);
+  // 页内「放弃更改」确认弹窗（替代 window.confirm——2026-11-24 用户拍板）：{ title, message, run }
+  const [pendingDiscard, setPendingDiscard] = useState<{ title: string; message: string; run: () => void } | null>(null);
+  const requestDiscard = useCallback((o: { title: string; message: string; run: () => void }) => setPendingDiscard(o), []);
   const [highlightPath, setHighlightPath] = useState<string | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const dirUploadInputRef = useRef<HTMLInputElement | null>(null);
@@ -1073,9 +1156,9 @@ export function FolderBrowser(props: any) {
     if(moreOpen){ setMoreOpen(false); return; }
     const r = e.currentTarget.getBoundingClientRect();
     // 菜单固定视口定位（同 DirOpsMenu）：left 夹在视口内；底部空间不足时向上翻转。
-    // 估算菜单高度：~17 项 + 7 分区头 + 7 分隔线 + 关闭图标排 + padding + gap ≈ 620，用 640 留 buffer；上下都不够时贴顶。
-    const mh = 640;
-    const menuWidth = 210;
+    // 估算菜单高度：3 图标排（含关闭排）+ 7 文字行 + Git + 7 分隔线 + padding + gap ≈ 350，用 420 留 buffer；上下都不够时贴顶。
+    const mh = 420;
+    const menuWidth = 230;
     const left = Math.max(8, Math.min(r.right - menuWidth, window.innerWidth - menuWidth - 8));
     const overflowDown = r.bottom + 4 + mh > window.innerHeight;
     const overflowUp = r.top - mh - 4 < 0;
@@ -1165,6 +1248,15 @@ export function FolderBrowser(props: any) {
   const changedDirs = useMemo(()=>buildChangedDirs(gitFiles, root), [gitFiles, root]);
   const toggle = useCallback((fp: string,o: boolean)=>{ setExpanded(p=>{ const n=new Set(p); if(o) n.add(fp); else n.delete(fp); return n; }); }, []);
   const doRefresh = useCallback(()=>{ setRefreshKey(k=>k+1); setRefreshDone(true); setTimeout(()=>setRefreshDone(false), 1800); }, []);
+  // 变更文件行「加入 .gitignore」（untracked 新文件）：引擎 ignore-add → 通知位反馈 → 刷新变更
+  // （必须定义在 doRefresh 之后：useCallback deps 数组立即求值，const 前置引用会 TDZ 崩溃）
+  const handleGitIgnore = useCallback(async (rel: string) => {
+    try {
+      await folderGit.ignoreAdd(rel);
+      setUploadMsg({ ok: t("files.gitIgnoreDone") + " ✓" });
+    } catch (e:any) { setUploadMsg({ err: e && e.message ? e.message : String(e) }); }
+    doRefresh();
+  }, [folderGit, doRefresh]);
   const handleUploadInput = useCallback(async (ev: any)=>{
     const files = Array.from(ev.target.files||[]); ev.target.value="";
     if(files.length===0||uploadBusy) return;
@@ -1239,34 +1331,37 @@ export function FolderBrowser(props: any) {
   const buildDockMenuItems = (): DockMenuItem[] => {
     const items: DockMenuItem[] = [];
     const push = (id: string, label: string, run: () => void, icon?: any) => items.push({ kind: "item", id, label, icon, run });
-    // 菜单分组重排（2026-09-16，与工具栏 ⋮ 同序）：导航 → 导出 → 路径引用 → 打开/查看 → 整理 → Git
-    items.push({ kind: "head", label: t("files.menuNav") });
-    push("op", t("files.openParentDir"), () => doOpenParent(), <MiArrowUp/>);
+    // ── 菜单顺序对齐 folder 三菜单定稿（2026-11-24 菜单单行化，方案 docs/aiti-menu-single-row-plan.md §3.3）：
+    //    浏览 → 窗口 → 路径引用 → Git → 整理 → 导出；组名标题去除（sep 分段）；
+    //    同段多动作合并为 iconsRow（框架 v5 图标排形态，DockMenuItem iconsRow kind），
+    //    单动作保持 icon+文字 item 行——形态与工具栏 ⋮ MoreMenu 定稿一致。
+    //    钉住/关闭不在此注册：dock 区块形态由 DockBody 区块操作区统一提供（清单 pin/关面板）。──
+    items.push({ kind: "iconsRow", label: t("files.menuBrowse"), items: [
+      { key: "op", icon: <MiArrowUp/>, label: t("files.openParentDir"), run: () => doOpenParent() },
+      { key: "rf", icon: <MiRefresh/>, label: t("files.refresh"), run: () => doRefresh() },
+      { key: "info", icon: <MiInfo/>, label: t("files.entryInfo"), run: () => setMoreInfoOpen(true) },
+    ] });
+    items.push({ kind: "iconsRow", label: t("files.menuWindow"), items: [
+      { key: "nw", icon: <NewWindowIcon/>, label: t("files.openNewWindow"), run: () => openNewWindow("folder", root) },
+      { key: "ot", icon: <TerminalIcon/>, label: t("files.openTerminal"), run: () => { void openTerminal(root).then((err) => { if (err) setUploadMsg({ err }); }); } },
+      { key: "close", icon: <MiX/>, label: t("i18n.close"), run: () => { if (dockItemKey) { closePanel(dockItemKey); } else { closeCurrentTab(); } } },
+    ] });
+    // 「移动」行占位（含钉住钮，经 DockBody moveRowPin）：前移到窗口排之下（2026-11-24 用户拍板）
+    items.push({ kind: "moveRow" });
     items.push({ kind: "sep" });
-    items.push({ kind: "head", label: t("files.menuExport") });
-    push("dl", t("files.download"), () => { void doDownloadRoot(); }, <MiDownload/>);
-    items.push({ kind: "sep" });
-    items.push({ kind: "head", label: t("files.menuRef") });
+    // @ 提及（插入路径到聊天）与 @ 到新会话并列（2026-11-24 用户补齐；仅 onAtMention 环境渲染；
+    // 头行常驻 @ 按钮仍保留——常驻直达 + 菜单全量命令中心并存，与 MoreMenu/编辑器同哲学）
+    if (onAtMention) push("at", t("files.insertPath"), () => { try { onAtMention(relTo(root, cwd || root), false); } catch (_) { /* noop */ } }, <MiAt/>);
     push("cp", t("files.copyPath"), () => { void doCopyRoot(); }, <MiCopy/>);
     push("atn", t("files.atNewSession"), () => { void doRootAtNew(); }, <MiAt/>);
     items.push({ kind: "sep" });
-    items.push({ kind: "head", label: t("files.menuOpen") });
-    push("rf", t("files.refresh"), () => doRefresh(), <MiRefresh/>);
-    push("nw", t("files.openNewWindow"), () => openNewWindow("folder", root), <NewWindowIcon/>);
-    push("ot", t("files.openTerminal"), () => { void openTerminal(root).then((err) => { if (err) setUploadMsg({ err }); }); }, <TerminalIcon/>);
-    push("info", t("files.entryInfo"), () => setMoreInfoOpen(true), <MiInfo/>);
+    push("gr", "Git Review", () => { void openGitReview({ kind: "directory", path: root }); }, <GrEyeIcon size={13}/>);
     items.push({ kind: "sep" });
-    items.push({ kind: "head", label: t("files.menuOrganize") });
     push("rn", t("files.rename"), () => { setMoreRename(true); setMoreRenameName(lastSeg(root) || ""); }, <MiPencil/>);
     push("mv", t("files.move"), () => { setMoreTransfer("move"); }, <MiMove/>);
     push("cpto", t("files.copyTo"), () => { setMoreTransfer("copy"); }, <MiCopyTo/>);
     items.push({ kind: "sep" });
-    items.push({ kind: "head", label: t("files.menuGit") });
-    push("gr", "Git Review", () => { try { grOpen() && grOpen({ scope: { kind: "directory", path: root } }); grWork() && grWork(); } catch (_) { /* noop */ } }, <GrEyeIcon size={13}/>);
-    // ⚠ 标签页菜单区（menuTabs：钉住/关闭/关闭左/右/全部）不在此注册——dock 头 ⋮ 只在
-    // 左栏区块形态渲染（FolderDockBlock 传 dockItemKey），区块形态的钉住/关闭由 DockBody
-    // 区块操作区统一提供（extraMenuItems「钉住」=清单 pin ✓ / 「关闭」=关面板移清单）；
-    // 标签页菜单区仅属于右侧 dock tab / 浮窗形态（工具栏 ⋮ 更多菜单，非 dock 头）。
+    push("dl", t("files.download"), () => { void doDownloadRoot(); }, <MiDownload/>);
     return items;
   };
   useDockCommands(dockItemKey, dockItemKey ? {
@@ -1329,12 +1424,12 @@ export function FolderBrowser(props: any) {
             ? <svg width={13} height={13} viewBox="0 0 24 24" fill="none" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" style={{ stroke: "var(--ok, #4ade80)" }}><polyline points="20 6 9 17 4 12"/></svg>
             : <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg> })}
         {/* @ 将路径插入聊天：高频动作恒留外面（对齐文件行操作区），不收进 ⋯ 菜单 */}
-        {onAtMention ? TBtn({ key:"at", onClick:()=>onAtMention(relTo(root,cwd),false), title:t("files.insertPath"), color:"var(--accent)", children:<span style={{fontSize:12,fontWeight:700,lineHeight:1}}>@</span> }) : null}
+        {onAtMention ? TBtn({ key:"at", onClick:()=>onAtMention(relTo(root,cwd),false), title:t("files.insertPathTitle"), color:"var(--accent)", children:<span style={{fontSize:12,fontWeight:700,lineHeight:1}}>@</span> }) : null}
         {/* ⋯ 更多菜单：目录级共享菜单（刷新/复制路径/新窗口/重命名/@到新session/信息/上级目录/下载/Git Review）——与文件顶栏 ⋯ 菜单对齐 */}
         <div ref={moreRef} style={{ position:"relative", flexShrink:0 }}>
           {TBtn({ key:"more", onClick:toggleMore, title:t("files.rename")+" / "+t("files.copyPath")+" / "+t("files.entryInfo")+" / "+t("files.download"), color:moreOpen?"var(--accent)":"var(--text-dim)", bg:moreOpen?"var(--bg-selected)":"transparent", children:<span style={{fontSize:14,fontWeight:700,lineHeight:1}}>⋮</span> })}
           {moreOpen ? (
-            <div style={{ position:"fixed", left:morePos!.left, top:morePos!.top, zIndex:400, minWidth:180, padding:6, background:"var(--bg,#fff)", border:"1px solid var(--border,#d0d0d0)", borderRadius:10, boxShadow:"0 4px 12px rgba(0,0,0,0.15)", fontSize:12, display:"flex", flexDirection:"column", gap:2 }}>
+            <div style={{ position:"fixed", left:morePos!.left, top:morePos!.top, zIndex:400, minWidth:220, padding:6, background:"var(--bg,#fff)", border:"1px solid var(--border,#d0d0d0)", borderRadius:10, boxShadow:"0 4px 12px rgba(0,0,0,0.15)", fontSize:12, display:"flex", flexDirection:"column", gap:2 }}>
               {moreRename ? (
                 <div style={{display:"flex",flexDirection:"column",gap:6,padding:"2px 2px 4px"}}>
                   <div style={{fontSize:11,color:"var(--text-dim,#888)",fontWeight:600}}>{t("files.rename")}</div>
@@ -1346,38 +1441,40 @@ export function FolderBrowser(props: any) {
                   </div>
                 </div>
               ) : [
-                // ── 菜单分组重排（2026-09-16 用户拍板，对齐 aiti-editor ⋯ 菜单）：
-                //    钉住 → 关闭图标排 → 导航（上一个目录）→ 导出（下载）→ 路径引用（复制路径/@到新会话）
-                //    → 打开/查看 → 整理 → Git。关闭族由 5 条文字项收编为 4 连图标排（同编辑器）。──
-                menuHead(t("files.menuTabs"), "h-tabs"),
-                menuItem(isTabPinned() ? <CheckIcon/> : <MiPin/>, isTabPinned() ? t("files.unpin") : t("files.pin"), toggleTabPin, "pin"),
+                // ── 菜单单行化重排（2026-11-24，方案 docs/aiti-menu-single-row-plan.md §3.3/§5.3）：
+                //    关闭排 → 浏览排（上级/刷新/信息）→ 窗口排（钉住/新窗口/终端）→ 路径引用 → Git → 整理 → 下载。
+                //    钉住移入窗口排（状态切换：未钉 📌 / 已钉 ✓ accent；点击不关菜单，反馈走 uploadMsg）。──
                 <FolderCloseIconRow key="close-row" closeTab={()=>{ setMoreOpen(false); closeCurrentTab(); }} batch={(scope)=>{ setMoreOpen(false); batchCloseTabs(scope); }} t={t} />,
-                menuSep("s-nav"), menuHead(t("files.menuNav"), "h-nav"),
-                menuItem(<MiArrowUp/>, t("files.openParentDir"), doOpenParent, "op"),
-                // ── 导出（≈保存组）──
-                menuSep("s-exp"), menuHead(t("files.menuExport"), "h-exp"),
-                menuItem(<MiDownload/>, t("files.download"), ()=>void doDownloadRoot(), "dl"),
-                // ── 路径引用（@ 组）──
-                menuSep("s-ref"), menuHead(t("files.menuRef"), "h-ref"),
+                menuSep("s-browse"),
+                menuActionRow("row-browse", t("files.menuBrowse"), [
+                  { key:"op", title: t("files.openParentDir"), icon:<MiArrowUp/>, onClick: doOpenParent },
+                  { key:"rf", title: t("files.refresh"), icon:<MiRefresh/>, onClick: ()=>{ setMoreOpen(false); doRefresh(); } },
+                  // 先关菜单再开弹窗：EntryInfoModal 挂 FolderBrowser 根级，不受菜单开关影响（保真契约 §5.3#10）
+                  { key:"info", title: t("files.entryInfo"), icon:<MiInfo/>, onClick: ()=>{ setMoreOpen(false); setMoreInfoOpen(true); } },
+                ]),
+                menuActionRow("row-window", t("files.menuWindow"), [
+                  { key:"pin", title: isTabPinned() ? t("files.unpin") : t("files.pin"), icon: isTabPinned() ? <MiPinOff/> : <MiPin/>, onClick: toggleTabPin },
+                  { key:"nw", title: t("files.openNewWindow"), icon:<NewWindowIcon/>, onClick: ()=>{ setMoreOpen(false); openNewWindow("folder", root); } },
+                  { key:"ot", title: t("files.openTerminal"), icon:<TerminalIcon/>, onClick: ()=>{ setMoreOpen(false); void openTerminal(root).then(err=>{ if (err) setUploadMsg({ err }); }); } },
+                ]),
+                // ── 路径引用 ──
+                menuSep("s-ref"),
                 menuItem(<MiCopy/>, t("files.copyPath"), doCopyRoot, "cp"),
                 menuItem(<MiAt/>, t("files.atNewSession"), doRootAtNew, "atn"),
-                // ── 打开/查看 ──
-                menuSep("s-open"), menuHead(t("files.menuOpen"), "h-open"),
-                menuItem(<MiRefresh/>, t("files.refresh"), ()=>{ setMoreOpen(false); doRefresh(); }, "rf"),
-                menuItem(<NewWindowIcon/>, t("files.openNewWindow"), ()=>{ setMoreOpen(false); openNewWindow("folder", root); }, "nw"),
-                menuItem(<TerminalIcon/>, t("files.openTerminal"), ()=>{ setMoreOpen(false); void openTerminal(root).then(err=>{ if (err) setUploadMsg({ err }); }); }, "ot"),
-                menuItem(<MiInfo/>, t("files.entryInfo"), ()=>{ setMoreOpen(false); setMoreInfoOpen(true); }, "info"),
-                // ── 整理（重命名/移动到/复制到）──
-                menuSep("s-org"), menuHead(t("files.menuOrganize"), "h-org"),
-                menuItem(<MiPencil/>, t("files.rename"), ()=>{ setMoreRename(true); setMoreRenameName(lastSeg(root)||""); }, "rn"),
-                menuItem(<MiMove/>, t("files.move"), ()=>{ setMoreOpen(false); setMoreTransfer("move"); }, "mv"),
-                menuItem(<MiCopyTo/>, t("files.copyTo"), ()=>{ setMoreOpen(false); setMoreTransfer("copy"); }, "cpto"),
                 // ── Git ──
-                menuSep("s-git"), menuHead(t("files.menuGit"), "h-git"),
-                <button type="button" key="gr" onClick={(e)=>{ e.stopPropagation(); try{ grOpen() && grOpen({ scope:{ kind:"directory", path: root } }); grWork() && grWork(); }catch(_){/* noop */} setMoreOpen(false); }} style={{ display:"flex", alignItems:"center", gap:6, width:"100%", padding:"5px 10px", border:"none", background:"transparent", color:"var(--accent)", cursor:"pointer", textAlign:"left", fontSize:12, borderRadius:6, whiteSpace:"nowrap" }}>
+                menuSep("s-git"),
+                <button type="button" key="gr" onClick={(e)=>{ e.stopPropagation(); setMoreOpen(false); void openGitReview({ kind: "directory", path: root }); }} style={{ display:"flex", alignItems:"center", gap:6, width:"100%", padding:"5px 10px", border:"none", background:"transparent", color:"var(--accent)", cursor:"pointer", textAlign:"left", fontSize:12, borderRadius:6, whiteSpace:"nowrap" }}>
                   <GrEyeIcon size={13} />
                   Git Review
                 </button>,
+                // ── 整理（重命名/移动到/复制到，全文字行）──
+                menuSep("s-org"),
+                menuItem(<MiPencil/>, t("files.rename"), ()=>{ setMoreRename(true); setMoreRenameName(lastSeg(root)||""); }, "rn"),
+                menuItem(<MiMove/>, t("files.move"), ()=>{ setMoreOpen(false); setMoreTransfer("move"); }, "mv"),
+                menuItem(<MiCopyTo/>, t("files.copyTo"), ()=>{ setMoreOpen(false); setMoreTransfer("copy"); }, "cpto"),
+                // ── 导出 ──
+                menuSep("s-exp"),
+                menuItem(<MiDownload/>, t("files.download"), ()=>void doDownloadRoot(), "dl"),
               ]}
             </div>
           ) : null}
@@ -1524,19 +1621,31 @@ export function FolderBrowser(props: any) {
               const isStaged = (rel: string) => { const xy = xyMap.get(rel) ?? xyMap.get(rel + "/"); return !!xy && xy[0] !== " " && xy[0] !== "?"; };
               const stagedRows = folderGit.avail === true ? relRows.filter((r) => isStaged(r.rel)) : [];
               const unstagedRows = relRows.filter((r) => !stagedRows.includes(r));
-              const subHead = (label: string, count: number, key: string) => (
-                <div key={key} style={{ padding:"4px 10px 1px", fontSize:10, fontWeight:600, letterSpacing:"0.05em", textTransform:"uppercase" as const, color:"var(--text-dim)" }}>{label} ({count})</div>
-              );
+
               const rowEl = (r: { st: any; rel: string }) => (
-                <ChangedFileRow key={r.st.filePath} st={r.st} root={root} cwd={cwd||root} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} onAtMention={onAtMention} onTrash={setPendingTrash} t={t} onRefresh={doRefresh}
+                <ChangedFileRow key={r.st.filePath} st={r.st} root={root} cwd={cwd||root} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} onAtMention={onAtMention} onTrash={setPendingTrash} t={t} onRefresh={doRefresh} untracked={r.st.status === "untracked"} onGitIgnore={handleGitIgnore} onRequestDiscard={requestDiscard}
                   staged={folderGit.avail === true ? isStaged(r.rel) : undefined}
                   gitOp={folderGit.avail === true ? (kind, rel) => { void folderGit.op(kind, rel); } : undefined} />
               );
               return (
                 <>
-                  {folderGit.avail === true && stagedRows.length > 0 ? subHead(ct("git.stagedBucket"), stagedRows.length, "staged-head") : null}
+                  {folderGit.avail === true && stagedRows.length > 0 ? (
+                    <BucketHead label={ct("git.stagedBucket")} count={stagedRows.length} requestDiscard={requestDiscard} batches={[
+                      // 取消暂存 = 无损（文件回到工作区），不提示
+                      { id: "unstage-all", title: ct("git.unstageTitle") + " ×" + stagedRows.length, label: "−", run: async () => { const st = await folderGit.opPaths("unstage", stagedRows.map((r) => r.rel)); if (st !== 200) setUploadMsg({ err: "HTTP " + st }); else setUploadMsg({ ok: ct("git.unstageTitle") + " ✓ ×" + stagedRows.length }); } },
+                      // 放弃全部 = 破坏性，页内确认弹窗（已跟踪恢复到上次提交）
+                      { id: "discard-all", title: ct("git.discardTitle") + " ×" + stagedRows.length, label: "✕", color: "#d6a84b", confirm: ct("git.discardConfirm", { path: stagedRows.length + " 个文件" }), run: async () => { const st = await folderGit.opPaths("discard", stagedRows.map((r) => r.rel)); if (st !== 200) setUploadMsg({ err: "HTTP " + st }); } },
+                    ]} />
+                  ) : null}
                   {(folderGit.avail === true ? stagedRows : []).map(rowEl)}
-                  {folderGit.avail === true ? subHead(ct("git.unstagedBucket"), unstagedRows.length, "unstaged-head") : null}
+                  {folderGit.avail === true ? (
+                    <BucketHead label={ct("git.unstagedBucket")} count={unstagedRows.length} requestDiscard={requestDiscard} batches={[
+                      // 暂存 = 无损，不提示
+                      { id: "stage-all", title: ct("git.stageTitle") + " ×" + unstagedRows.length, label: "＋", run: async () => { const st = await folderGit.opPaths("stage", unstagedRows.map((r) => r.rel)); if (st !== 200) setUploadMsg({ err: "HTTP " + st }); else setUploadMsg({ ok: ct("git.stageTitle") + " ✓ ×" + unstagedRows.length }); } },
+                      // 放弃全部 = 破坏性，页内确认弹窗（已跟踪恢复到上次提交；未跟踪移入回收站可还原）
+                      { id: "discard-all", title: ct("git.discardTitle") + " ×" + unstagedRows.length, label: "✕", color: "#d6a84b", confirm: "将丢弃 " + unstagedRows.length + " 个文件的更改？（未跟踪文件移入回收站，已跟踪文件恢复到上次提交）", run: async () => { const st = await folderGit.opPaths("discard", unstagedRows.map((r) => r.rel)); if (st !== 200) setUploadMsg({ err: "HTTP " + st }); } },
+                    ]} />
+                  ) : null}
                   {unstagedRows.map(rowEl)}
                 </>
               );
@@ -1549,6 +1658,19 @@ export function FolderBrowser(props: any) {
         : roots.length===0 ? <div style={{padding:"12px",fontSize:12,color:"var(--text-dim)"}}>{t("files.noFiles")}</div>
         : roots.map((node:any)=> <TreeNode key={node.fullPath} node={node} depth={0} cwd={cwd||root} expanded={expanded} refreshKey={refreshKey} onToggle={toggle} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} onAtMention={onAtMention} onTrash={setPendingTrash} onChanged={doRefresh} gitByPath={gitByPath} changedDirs={changedDirs} highlightPath={highlightPath} t={t} root={root} showIgnored={showIgnored} />)) : null}
       </div>
+      {/* 「放弃更改」页内确认弹窗（替代 window.confirm——2026-11-24 用户拍板） */}
+      {pendingDiscard ? (
+        <div onClick={(e) => { if (e.target === e.currentTarget) setPendingDiscard(null); }} style={{ position:"fixed", inset:0, zIndex:500, background:"rgba(0,0,0,0.35)", display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <div style={{ width:400, padding:"16px 18px", borderRadius:12, background:"var(--bg,#fff)", border:"1px solid var(--border,#ddd)", boxShadow:"0 12px 40px rgba(0,0,0,0.25)", fontSize:13, display:"flex", flexDirection:"column", gap:10 }}>
+            <div style={{ fontWeight:600, fontSize:14 }}>{pendingDiscard.title}</div>
+            <div style={{ color:"var(--text-dim,#888)", fontSize:12, lineHeight:1.5 }}>{pendingDiscard.message}</div>
+            <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:2 }}>
+              <button type="button" onClick={()=>setPendingDiscard(null)} style={{ height:28, padding:"0 12px", borderRadius:5, background:"transparent", border:"1px solid var(--border,#d0d0d0)", color:"var(--text,#222)", cursor:"pointer", fontSize:12 }}>{t("files.cancel")}</button>
+              <button type="button" onClick={()=>{ const run = pendingDiscard.run; setPendingDiscard(null); run(); }} style={{ height:28, padding:"0 12px", borderRadius:5, background:"var(--danger, #ef4444)", border:"none", color:"#fff", cursor:"pointer", fontSize:12, fontWeight:600 }}>{ct("git.discardTitle")}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {/* 删除确认弹窗（移入系统回收站，可恢复） */}
       {pendingTrash ? (
         <div onClick={(e)=>{ if(e.target===e.currentTarget && !trashBusy) setPendingTrash(null); }} style={{ position:"fixed", inset:0, zIndex:400, background:"rgba(0,0,0,0.35)", display:"flex", alignItems:"center", justifyContent:"center" }}>
