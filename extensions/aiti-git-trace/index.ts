@@ -211,7 +211,6 @@ function startupCompactSelfCheck(): void {
 export default {
   id: "aiti-git-trace",
   name: "AI 变更追踪",
-  version: "0.2.0",
   // 能力声明（依赖与能力模型 P1）：本扩展提供「变更追踪」能力（多实现占位——未来
   // 其他追踪实现可同声明 cap.git-trace，消费方 dependsOn 指向能力名由平台解析）。
   // 消费方经 services.trace 出口（ctx.services.get("aiti-git-trace.trace")）使用。

@@ -107,7 +107,6 @@ function commandSuggest(store: ReturnType<typeof createStore> | null, q: string,
 export default {
   id: "aiti-cmd",
   name: "aiti 命令管理器（真 TTY 终端 + 常用命令）",
-  version: "0.1.0",
   icon: "icon.svg",
   client: "dist/aiti-cmd-client.mjs",
 

@@ -15,7 +15,6 @@
 export default {
   id: "aiti-debug-inject",
   name: "AITI 远程调试注入（可配置目标 pi-web）",
-  version: "0.3.0",
   icon: "icon.svg",
   client: "dist/aiti-debug-inject-client.mjs",
 

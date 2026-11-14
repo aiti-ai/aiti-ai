@@ -192,7 +192,7 @@ export const ACP_AGENTS: Array<{
   { name: "pi", bin: "pi-acp", args: [], agentKey: "pi" },
   // Qoder CLI（国际版）：`qoder --acp`（native aiti-qoder-agent 双区域并存；CN 版可经
   // 自定义后端面板自行加 qoder-cn 条目）。
-  { name: "qoder", bin: "qoder", args: ["--acp"], agentKey: "qoder" },
+  { name: "qoder", bin: "qoder", args: ["--acp"], agentKey: "qoder", installHint: "Qoder standalone CLI (qodercli)" },
 ];
 
 /** npm 的 npx-cli.js：nvm/unix 布局 <node目录>/../lib/node_modules/npm/bin/npx-cli.js；
@@ -1189,6 +1189,133 @@ let registered: string[] = [];
 let currentAgents: Array<{ name: string; bin: string; args: string[]; agentKey?: string; isBuiltin: boolean; registered?: boolean }> = [];
 let builtinNames = new Set<string>();
 
+// ── Backend scan (shared by startup + rescanBackends) ─────────────────────
+// Probe + register pass over builtin + user ACP agents — unconditional
+// registration: a missing CLI still registers the entry (available:false +
+// installHint, the dropdown greys it out); re-running the scan flips the
+// snapshot (POST /api/session-backends/rescan, host-invoked after boot).
+type AcpScanSlot = {
+  register(provider: {
+    type: string;
+    label: string;
+    agentKey?: string;
+    priority?: number;
+    maxCapabilities: SessionCapabilitiesLike;
+    available?: boolean;
+    installHint?: string;
+    listModels?: () => Promise<Array<{ id: string; provider: string; label?: string }>>;
+    refreshModels?: () => Promise<Array<{ id: string; provider: string; label?: string }>>;
+    createSession(options: { sessionId?: string; cwd?: string; model?: { provider: string; id: string } }): Promise<AcpHandle>;
+  }): string;
+};
+
+function scanAcpBackends(
+  slot: AcpScanSlot,
+  provide: (<T>(key: string, impl: T) => () => void) | undefined,
+  configDir: string,
+): { registered: string[]; unavailable: string[] } {
+  const nowRegistered: string[] = [];
+  const unavailable: string[] = [];
+  const userAgents = loadUserAgents(configDir);
+  const allAgents = [
+    ...ACP_AGENTS.map((a) => ({ ...a, isBuiltin: true })),
+    ...userAgents.map((a) => ({ ...a, isBuiltin: false })),
+  ];
+  for (const agent of allAgents) {
+    const resolved = agent.resolve
+      ? agent.resolve()
+      : (() => { const p = which(agent.bin); return p ? { bin: p, args: agent.args } : null; })();
+    const key = slot.register({
+      type: agent.name,
+      label: `ACP: ${agent.name}`,
+      agentKey: agent.agentKey,
+      // claude-code 保持 Backend 下拉第一位（方案 aiti-pi-family-multi-fork-rpc-plan §3.2）
+      ...(agent.name === "claude-code" ? { order: 10 } : {}),
+      maxCapabilities: ACP_CAPABILITIES,
+      // Availability snapshot: false = CLI missing → dropdown entry greyed out;
+      // refreshed on rescan. installHint comes from the agent catalog.
+      ...(resolved ? {} : { available: false as const, ...(agent.installHint ? { installHint: agent.installHint } : {}) }),
+      // 模型目录（D15）：缓存条目（启动后台真实获取 + 会话回填）；空 = 跟随 agent 默认；
+      // 上次使用的模型置顶（新建页默认项）
+      listModels: () => catalogListModels(agent.name, agent.agentKey ?? agent.name),
+      refreshModels: () => catalogRefreshModels(agent.name, agent.agentKey ?? agent.name),
+      async createSession(options) {
+        // 接管既有会话：以原 cwd 优先（session/load）；新会话用宿主 cwd。
+        // cwd 先算后构造：handle 信息面（/api/sessions info.cwd）在 start 完成前的
+        // 观察窗口也能拿到真实 cwd（2026-11-09 接管/URL 恢复拆除根因之一）。
+        const restored = options.sessionId ? await restoreCwdFn?.(agent.agentKey ?? agent.name, options.sessionId) : undefined;
+        const cwd = restored ?? options.cwd ?? process.cwd();
+        const handle = new AcpHandle(agent.name, resolved.bin, resolved.args, agent.agentKey ?? agent.name, cwd);
+        await handle.start(cwd);
+        if (options.sessionId) await handle.loadSession(options.sessionId, cwd);
+        else await handle.newSession(cwd);
+        await applyAcpSeedModel(handle, options.model, { sessionId: options.sessionId });
+        return handle as unknown as AcpHandle;
+      },
+    });
+    if (resolved) {
+      nowRegistered.push(key);
+    } else {
+      unavailable.push(key); // 未安装 → 条目常驻但灰显（装机后 rescan 自动点亮）
+    }
+  }
+  registered = nowRegistered;
+  currentAgents = allAgents.map((a) => ({
+    ...a,
+    registered: nowRegistered.includes(`aiti-acp-agent/${a.name}`),
+  }));
+  builtinNames = new Set(ACP_AGENTS.map((a) => a.name));
+  // P2 协议委托：launch 服务（多成员家族——launch.target 选成员，缺省 claude-code 优先）
+  const launchAgents = allAgents
+    .map((agent) => {
+      const resolved = agent.resolve
+        ? agent.resolve()
+        : (() => { const p = which(agent.bin); return p ? { bin: p, args: agent.args } : null; })();
+      return resolved ? { agent, resolved } : null;
+    })
+    .filter((x): x is NonNullable<typeof x> => !!x);
+  const pickDefault = launchAgents.find((x) => x.agent.name === "claude-code") ?? launchAgents[0];
+  if (pickDefault) {
+    provide?.("aiti-acp-agent.launch", {
+      agentKey: pickDefault.agent.agentKey ?? pickDefault.agent.name,
+      capabilities: ACP_CAPABILITIES,
+      members: allAgents.map((a) => ({ name: a.name, agentKey: a.agentKey ?? a.name, label: `ACP: ${a.name}` })),
+      createSessionFromLaunch: async (
+        launch: LaunchOverride,
+        options: { sessionId?: string; cwd?: string; model?: { provider: string; id: string } },
+      ) => {
+        const hit = (launch.target && launchAgents.find((x) => x.agent.name === launch.target)) || pickDefault;
+        if (!hit) throw new Error("[aiti-acp-agent] launch 委托：无可委托成员（agent 未安装）");
+        const restored = options.sessionId ? await restoreCwdFn?.(hit.agent.agentKey ?? hit.agent.name, options.sessionId) : undefined;
+        const cwd = restored ?? options.cwd ?? process.cwd();
+        const handle = new AcpHandle(hit.agent.name, hit.resolved.bin, hit.resolved.args, hit.agent.agentKey ?? hit.agent.name, cwd);
+        handle.launchOverride = launch;
+        await handle.start(cwd);
+        if (options.sessionId) await handle.loadSession(options.sessionId, cwd);
+        else await handle.newSession(cwd);
+        await applyAcpSeedModel(handle, options.model, { sessionId: options.sessionId });
+        return handle;
+      },
+    });
+    // A25-2：agent 账号契约描述符（家族级：各 CLI 凭据目录槽位；仅列已验证路径）
+    provide?.("aiti-acp-agent.agent", {
+      agent: "acp",
+      label: "ACP 家族",
+      modes: ["tui"],
+      dependencyHint: "各 ACP CLI 随用随装（装机才接原则）",
+      accountSlots: (c: { home: string }) => [
+        { key: "qwen-oauth", label: "Qwen Code OAuth", path: join(c.home, ".qwen", "oauth_creds.json") },
+        { key: "gemini-oauth", label: "Gemini CLI OAuth", path: join(c.home, ".gemini", "oauth_creds.json") },
+        { key: "copilot-hosts", label: "GitHub Copilot hosts", path: join(c.home, ".config", "github-copilot", "hosts.json") },
+      ],
+    });
+    console.log(`[aiti-acp-agent] registered: ${nowRegistered.join(", ") || "(none)"} + launch service`);
+  } else {
+    console.log(`[aiti-acp-agent] registered: ${nowRegistered.join(", ") || "(none)"}`);
+  }
+  return { registered: nowRegistered, unavailable };
+}
+
 /** 会话 recycle（D8，共享层 session-recycle.ts）：存量 AcpHandle 升级到当前扩展代码。 */
 const recycleApi = createSessionRecycleApi({
   isOwn: (h) => typeof (h as { agentName?: unknown }).agentName === "string",
@@ -1392,7 +1519,6 @@ function initModelCatalog(ctx: { configDir: string; cacheDir?: string }): void {
 export default {
   id: "aiti-acp-agent",
   name: "ACP Agents (通用 ACP 驱动)",
-  version: "0.3.0",
   icon: "🔌",
   client: "dist/acp-manager.mjs",
   ui: {
@@ -1471,11 +1597,6 @@ export default {
       // 队列崩溃恢复 sidecar 根（<stateDir>/queues/<sessionId>.json；docs/aiti-remote-queue-and-sidecar-plan.md §3）
       queueStateDir = (ctx as { stateDir?: string }).stateDir ?? join(ctx.configDir, "state");
       try { mkdirSync(join(queueStateDir, "queues"), { recursive: true }); } catch { /* exists */ }
-      const userAgents = loadUserAgents(ctx.configDir);
-      const allAgents = [
-        ...ACP_AGENTS.map((a) => ({ ...a, isBuiltin: true })),
-        ...userAgents.map((a) => ({ ...a, isBuiltin: false })),
-      ];
       // 恢复 cwd 辅助（sessionId 接管路径）：session-manager 是外部 agent 存储唯一读取实现；
       // ACP 会话的 cwd 必须以原会话归属为准（cbc session/load 按项目目录查找）。
       // ⚠ 服务必须按调用时动态解析：扩展 startup 顺序不保证 session-manager 已注册
@@ -1494,94 +1615,26 @@ export default {
         } catch { return undefined; }
       };
 
-      for (const agent of allAgents) {
-        const resolved = agent.resolve
-          ? agent.resolve()
-          : (() => { const p = which(agent.bin); return p ? { bin: p, args: agent.args } : null; })();
-        if (!resolved) continue;
-        const key = ctx.sessionProviders.register({
-          type: agent.name,
-          label: `ACP: ${agent.name}`,
-          agentKey: agent.agentKey,
-          // claude-code 保持 Backend 下拉第一位（方案 aiti-pi-family-multi-fork-rpc-plan §3.2）
-          ...(agent.name === "claude-code" ? { order: 10 } : {}),
-          maxCapabilities: ACP_CAPABILITIES,
-          // 模型目录（D15）：缓存条目（启动后台真实获取 + 会话回填）；空 = 跟随 agent 默认；
-          // 上次使用的模型置顶（新建页默认项）
-          listModels: () => catalogListModels(agent.name, agent.agentKey ?? agent.name),
-          refreshModels: () => catalogRefreshModels(agent.name, agent.agentKey ?? agent.name),
-          async createSession(options) {
-            // 接管既有会话：以原 cwd 优先（session/load）；新会话用宿主 cwd。
-            // cwd 先算后构造：handle 信息面（/api/sessions info.cwd）在 start 完成前的
-            // 观察窗口也能拿到真实 cwd（2026-11-09 接管/URL 恢复拆除根因之一）。
-            const restored = options.sessionId ? await restoreCwdFn?.(agent.agentKey ?? agent.name, options.sessionId) : undefined;
-            const cwd = restored ?? options.cwd ?? process.cwd();
-            const handle = new AcpHandle(agent.name, resolved.bin, resolved.args, agent.agentKey ?? agent.name, cwd);
-            await handle.start(cwd);
-            if (options.sessionId) await handle.loadSession(options.sessionId, cwd);
-            else await handle.newSession(cwd);
-            await applyAcpSeedModel(handle, options.model, { sessionId: options.sessionId });
-            return handle as unknown as AcpHandle;
-          },
-        });
-        registered.push(key);
+      // builtin+user agents 探测+注册+launch 服务（可重入；装机后无需重启，经 rescanBackends 重扫）
+      const acpScan = scanAcpBackends(ctx.sessionProviders, ctx.services?.provide, ctx.configDir);
+      if (acpScan.unavailable.length) {
+        console.log(`[aiti-acp-agent] startup scan: ${acpScan.unavailable.length} agent(s) not installed (greyed out in the dropdown)`);
       }
-      currentAgents = allAgents.map((a) => ({
-        ...a,
-        registered: registered.includes(`aiti-acp-agent/${a.name}`),
-      }));
-      builtinNames = new Set(ACP_AGENTS.map((a) => a.name));
       // 模型目录（D15）：cache 层缓存 + 启动后台真实获取（不阻塞 startup）
       initModelCatalog(ctx);
-      // P2 协议委托：launch 服务（多成员家族——launch.target 选成员，缺省 claude-code 优先）
-      const launchAgents = allAgents
-        .map((agent) => {
-          const resolved = agent.resolve
-            ? agent.resolve()
-            : (() => { const p = which(agent.bin); return p ? { bin: p, args: agent.args } : null; })();
-          return resolved ? { agent, resolved } : null;
-        })
-        .filter((x): x is NonNullable<typeof x> => !!x);
-      const pickDefault = launchAgents.find((x) => x.agent.name === "claude-code") ?? launchAgents[0];
-      if (pickDefault) {
-        ctx.services?.provide?.("aiti-acp-agent.launch", {
-          agentKey: pickDefault.agent.agentKey ?? pickDefault.agent.name,
-          capabilities: ACP_CAPABILITIES,
-          members: allAgents.map((a) => ({ name: a.name, agentKey: a.agentKey ?? a.name, label: `ACP: ${a.name}` })),
-          createSessionFromLaunch: async (
-            launch: LaunchOverride,
-            options: { sessionId?: string; cwd?: string; model?: { provider: string; id: string } },
-          ) => {
-            const hit = (launch.target && launchAgents.find((x) => x.agent.name === launch.target)) || pickDefault;
-            if (!hit) throw new Error("[aiti-acp-agent] launch 委托：无可委托成员（agent 未安装）");
-            const restored = options.sessionId ? await restoreCwdFn?.(hit.agent.agentKey ?? hit.agent.name, options.sessionId) : undefined;
-            const cwd = restored ?? options.cwd ?? process.cwd();
-            const handle = new AcpHandle(hit.agent.name, hit.resolved.bin, hit.resolved.args, hit.agent.agentKey ?? hit.agent.name, cwd);
-            handle.launchOverride = launch;
-            await handle.start(cwd);
-            if (options.sessionId) await handle.loadSession(options.sessionId, cwd);
-            else await handle.newSession(cwd);
-            await applyAcpSeedModel(handle, options.model, { sessionId: options.sessionId });
-            return handle;
-          },
-        });
-        // A25-2：agent 账号契约描述符（家族级：各 CLI 凭据目录槽位；仅列已验证路径，
-        // 未验证的 CLI 待实测后补——管理面对 missing 槽位如实显示）
-        ctx.services?.provide?.("aiti-acp-agent.agent", {
-          agent: "acp",
-          label: "ACP 家族",
-          modes: ["tui"],
-          dependencyHint: "各 ACP CLI 随用随装（装机才接原则）",
-          accountSlots: (c: { home: string }) => [
-            { key: "qwen-oauth", label: "Qwen Code OAuth", path: join(c.home, ".qwen", "oauth_creds.json") },
-            { key: "gemini-oauth", label: "Gemini CLI OAuth", path: join(c.home, ".gemini", "oauth_creds.json") },
-            { key: "copilot-hosts", label: "GitHub Copilot hosts", path: join(c.home, ".config", "github-copilot", "hosts.json") },
-          ],
-        });
-        console.log(`[aiti-acp-agent] registered: ${registered.join(", ") || "(none)"} + launch service`);
-      } else {
-        console.log(`[aiti-acp-agent] registered: ${registered.join(", ") || "(none)"}`);
-      }
+    },
+
+    /** Backend rescan (POST /api/session-backends/rescan): re-run the probe pass —
+     *  ACP CLIs installed after host boot light up without a restart; missing ones
+     *  stay greyed out with the install hint. */
+    rescanBackends(ctx: {
+      configDir: string;
+      sessionProviders: AcpScanSlot;
+      services?: { provide<T>(key: string, impl: T): () => void };
+    }) {
+      const r = scanAcpBackends(ctx.sessionProviders, ctx.services?.provide, ctx.configDir);
+      console.log(`[aiti-acp-agent] rescan: ${r.registered.length} available / ${r.unavailable.length} not installed`);
+      return r;
     },
 
     async api(req: Request, ctx: {

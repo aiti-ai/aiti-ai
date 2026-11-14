@@ -8,7 +8,6 @@
 export default {
   id: "aiti-word-docx-preview",
   name: "aiti-word-docx-preview",
-  version: "0.1.0",
   description: "Word 文档预览（docx-preview 高保真只读）：.docx 分页渲染，页眉页脚/表格/图片还原",
   client: "dist/aiti-word-docx-preview-client.mjs",
   clientImmediately: true,

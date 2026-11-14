@@ -328,7 +328,6 @@ async function runTool(name: string, args: any): Promise<any> {
 export default {
   id: "aiti-configs",
   name: "配置版本化 + 崩溃自检（安全网）",
-  version: "0.1.0",
   icon: "icon.svg",
   client: "dist/aiti-configs-client.mjs",
 

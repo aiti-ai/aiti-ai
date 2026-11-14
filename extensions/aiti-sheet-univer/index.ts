@@ -28,7 +28,6 @@ const saveBlobRoute = createBlobSaveRoute({
 export default {
   id: "aiti-sheet-univer",
   name: "aiti-sheet-univer",
-  version: "0.1.0",
   description: "Excel 表格编辑器（exceljs 数据面 + Univer 视图面）：.xlsx/.xlsm 预览+编辑，.xls/.ods 只读预览",
   client: "dist/aiti-sheet-univer-client.mjs",
   clientImmediately: true,

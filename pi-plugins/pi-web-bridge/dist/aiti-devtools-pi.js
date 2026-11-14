@@ -1,18 +1,349 @@
 /* aiti-devtools-pi · pi 扩展（内嵌桥 + 工具直连）· 构建产物，勿手改 */
 
 // src/index.ts
-import { join as join3, resolve, dirname as dirname3 } from "node:path";
-import { readFileSync as readFileSync3, existsSync as existsSync3, writeFileSync as writeFileSync3, openSync, appendFileSync as appendFileSync2, mkdirSync as mkdirSync3 } from "node:fs";
+import { join as join4, resolve, dirname as dirname4 } from "node:path";
+import { readFileSync as readFileSync3, existsSync as existsSync4, writeFileSync as writeFileSync3, openSync as openSync2, appendFileSync as appendFileSync3, mkdirSync as mkdirSync4 } from "node:fs";
 import { spawn as spawn2 } from "node:child_process";
 import { homedir as homedir2 } from "node:os";
 import { fileURLToPath } from "node:url";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 // ../aiti-devtools-core/src/bridge.ts
-import { randomBytes, randomInt } from "node:crypto";
+import { randomBytes as randomBytes2, randomInt } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdirSync, appendFileSync, readdirSync, readFileSync, existsSync, statSync, rmSync, writeFileSync, renameSync } from "node:fs";
+import { mkdirSync as mkdirSync2, appendFileSync as appendFileSync2, readdirSync as readdirSync2, readFileSync, existsSync as existsSync2, statSync as statSync2, rmSync as rmSync2, writeFileSync, renameSync, openSync, readSync, closeSync } from "node:fs";
+import { join as join2, dirname as dirname2 } from "node:path";
+
+// ../aiti-devtools-core/src/pair.ts
+import { randomBytes } from "node:crypto";
 import { join, dirname } from "node:path";
+import { mkdirSync, appendFileSync, existsSync, statSync, rmSync, unlinkSync, readdirSync, createReadStream } from "node:fs";
+import { Readable } from "node:stream";
+var PAIR_PEER_TTL = parseInt(process.env.AITI_PAIR_PEER_TTL || "3600000", 10);
+var PAIR_FILE_TTL = parseInt(process.env.AITI_PAIR_FILE_TTL || "3600000", 10);
+var PAIR_FILE_MAX = parseInt(process.env.AITI_PAIR_FILE_MAX || String(200 * 1024 * 1024), 10);
+var CHUNK_MAX = 2 * 1024 * 1024;
+var INBOX_MAX = 200;
+function createPairModule(deps) {
+  const { TAG, dataDir, cors, json, sseResponse } = deps;
+  const peers = /* @__PURE__ */ new Map();
+  const files = /* @__PURE__ */ new Map();
+  const filesDir = dataDir ? join(dataDir, "aiti-bridge", "pair-files") : "";
+  if (filesDir) {
+    try {
+      mkdirSync(filesDir, { recursive: true });
+    } catch {
+    }
+  }
+  const genId = (p) => p + randomBytes(6).toString("hex");
+  const safeName = (s) => String(s || "file").replace(/[/\\:*?"<>|\x00-\x1f]/g, "_").slice(0, 120) || "file";
+  const pairPublic = process.env.AITI_PAIR_PUBLIC === "1";
+  const pairToken = process.env.AITI_PAIR_TOKEN || "";
+  const PRIVATE_IP = /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1|fc|fd)/;
+  function gateAdmission(req, regToken) {
+    if (pairPublic) return null;
+    if ((req.headers.get("remote-user") || "").trim()) return null;
+    const ip = (req.headers.get("x-real-ip") || "").trim();
+    if (!ip || PRIVATE_IP.test(ip)) return null;
+    if (pairToken && regToken && regToken === pairToken) return null;
+    return json({ ok: false, error: "pair 上线限内网（外网开放：过 Authelia / AITI_PAIR_PUBLIC=1 / AITI_PAIR_TOKEN+regToken）" }, 403);
+  }
+  function broadcastToPeers(env) {
+    for (const [, p] of peers) {
+      if (!p.writer) continue;
+      if (!p.writer.write(env)) {
+        p.writer = null;
+        if (!p.offlineAt) p.offlineAt = Date.now();
+      }
+    }
+  }
+  function register(msg) {
+    const now = Date.now();
+    const name = safeName(String(msg && msg.name || "")).slice(0, 40) || "设备";
+    const pid = msg && msg.peerId && String(msg.peerId) || genId("p_");
+    const dev = msg && msg.device && typeof msg.device === "object" ? msg.device : null;
+    const devLabel = dev ? [dev.browser || "?", dev.os || "", dev.screen || ""].filter(Boolean).join(" · ") : null;
+    let p = peers.get(pid);
+    if (!p) {
+      if (devLabel) console.log(TAG + "   设备：" + devLabel + (dev && dev.lang ? " · " + dev.lang : ""));
+      p = { peerId: pid, token: "t_" + randomBytes(18).toString("hex"), name, ua: String(msg && msg.ua || "").slice(0, 200), device: dev, deviceLabel: devLabel, lastSeen: now, writer: null, offlineAt: null, inbox: [] };
+      peers.set(pid, p);
+      console.log(TAG + " pair 设备注册：" + name + " (" + pid + ")");
+      broadcastToPeers({ type: "peer-join", peer: { id: pid, kind: "pair", name } });
+      deps.getDevices().length;
+    } else {
+      p.name = name;
+      p.lastSeen = now;
+      p.offlineAt = null;
+      if (msg && msg.ua) p.ua = String(msg.ua).slice(0, 200);
+      if (dev) {
+        p.device = dev;
+        p.deviceLabel = devLabel;
+      }
+    }
+    return { peerId: p.peerId, token: p.token, name: p.name };
+  }
+  function checkPeer(peerId, token) {
+    const p = peers.get(String(peerId || ""));
+    return p && p.token && token && p.token === String(token) ? p : null;
+  }
+  function listPeers() {
+    const now = Date.now();
+    return [...peers.values()].map((p) => ({
+      kind: "pair",
+      id: p.peerId,
+      name: p.name,
+      ua: p.ua || null,
+      deviceLabel: p.deviceLabel || null,
+      online: !!p.writer,
+      offlineAt: p.offlineAt || null,
+      lastSeen: p.lastSeen,
+      pending: p.inbox.filter((m) => m.status === "pending").length,
+      _now: now
+    })).map(({ _now, ...row }) => row);
+  }
+  function deliverToPeer(peerId, env) {
+    const p = peers.get(String(peerId || ""));
+    if (!p) return false;
+    const rec = { ...env, status: "pending" };
+    p.inbox.push(rec);
+    if (p.inbox.length > INBOX_MAX) p.inbox.splice(0, p.inbox.length - INBOX_MAX);
+    if (p.writer && p.writer.write(env)) {
+      rec.status = "delivered";
+    }
+    return true;
+  }
+  function resolvePeerFuzzy(to) {
+    const q = String(to || "").trim();
+    if (!q) return { none: true };
+    const list = [...peers.values()];
+    if (peers.has(q)) return { hit: peers.get(q) };
+    const byName = list.filter((p) => p.name === q);
+    if (byName.length === 1) return { hit: byName[0] };
+    const fuzzy = list.filter((p) => (p.name || "").includes(q) || p.peerId.includes(q));
+    if (fuzzy.length === 1) return { hit: fuzzy[0] };
+    if (fuzzy.length > 1) return { multiple: fuzzy.map((p) => ({ kind: "pair", id: p.peerId, name: p.name })) };
+    return { none: true };
+  }
+  function fileInit(from, to, name, size, mime) {
+    if (!filesDir) return { error: "桥未配置 dataDir（文件中转不可用）" };
+    if (!size || size <= 0) return { error: "bad size" };
+    if (size > PAIR_FILE_MAX) return { error: "文件超过上限 " + Math.round(PAIR_FILE_MAX / 1024 / 1024) + "MB" };
+    const fileId = genId("f_");
+    const path = join(filesDir, fileId);
+    const rec = { fileId, name: safeName(name), size, mime: String(mime || "application/octet-stream").slice(0, 100), from, to: String(to || ""), path, bytes: 0, status: "uploading", at: Date.now() };
+    try {
+      rmSync(path, { force: true });
+    } catch {
+    }
+    files.set(fileId, rec);
+    return { fileId, name: rec.name, size, chunkMax: CHUNK_MAX };
+  }
+  function fileChunk(fileId, buf) {
+    const f = files.get(String(fileId || ""));
+    if (!f) return { error: "unknown fileId" };
+    if (f.status !== "uploading") return { error: "upload already completed" };
+    if (!buf || !buf.length) return { error: "empty chunk" };
+    if (buf.length > CHUNK_MAX) return { error: "chunk too large (≤" + CHUNK_MAX + "B)" };
+    if (f.bytes + buf.length > f.size) return { error: "exceeds declared size" };
+    try {
+      appendFileSync(f.path, buf);
+      f.bytes += buf.length;
+      return { ok: true, bytes: f.bytes };
+    } catch (e) {
+      return { error: String(e && e.message || e) };
+    }
+  }
+  function fileComplete(fileId) {
+    const f = files.get(String(fileId || ""));
+    if (!f) return { error: "unknown fileId" };
+    if (f.status !== "uploading") return { ok: true, file: publicFile(f) };
+    if (f.bytes !== f.size) return { error: "size mismatch（已收 " + f.bytes + "/" + f.size + "B，补传缺失块后再 complete）" };
+    f.status = "ready";
+    return { ok: true, file: publicFile(f) };
+  }
+  const publicFile = (f) => ({ fileId: f.fileId, name: f.name, size: f.size, mime: f.mime, from: f.from, to: f.to, at: f.at });
+  function fileDownload(p, fileId) {
+    if (!p) return json({ ok: false, error: "bad peer/token" }, 401);
+    const f = files.get(String(fileId || ""));
+    if (!f) return json({ ok: false, error: "unknown fileId" }, 404);
+    if (f.status !== "ready") return json({ ok: false, error: "file not ready" }, 409);
+    if (f.to && f.to !== "all" && f.to !== p.peerId && f.to !== p.name) return json({ ok: false, error: "not the receiver" }, 403);
+    if (!existsSync(f.path)) return json({ ok: false, error: "file expired" }, 410);
+    let stream;
+    try {
+      stream = Readable.toWeb(createReadStream(f.path));
+    } catch (e) {
+      return json({ ok: false, error: String(e && e.message || e) }, 500);
+    }
+    return new Response(stream, {
+      headers: {
+        ...cors,
+        "content-type": f.mime || "application/octet-stream",
+        "content-length": String(f.size),
+        "cache-control": "no-store",
+        "content-disposition": 'attachment; filename="pair-' + f.fileId.slice(2, 10) + `"; filename*=UTF-8''` + encodeURIComponent(f.name)
+      }
+    });
+  }
+  function getFileInfo(fileId) {
+    const f = files.get(String(fileId || ""));
+    return f ? { ...publicFile(f), path: f.path, status: f.status } : null;
+  }
+  async function fetchToFile(fileId, savePath) {
+    const f = files.get(String(fileId || ""));
+    if (!f) return { error: "unknown fileId" };
+    if (f.status !== "ready") return { error: "file not ready" };
+    if (!existsSync(f.path)) return { error: "file expired" };
+    if (!savePath) {
+      const dir = join(dataDir, "aiti-bridge", "pair-inbox");
+      try {
+        mkdirSync(dir, { recursive: true });
+      } catch (e) {
+        return { error: String(e && e.message || e) };
+      }
+      const dest = join(dir, safeName(f.name));
+      try {
+        if (existsSync(dest)) unlinkSync(dest);
+        await (await import("node:fs/promises")).copyFile(f.path, dest);
+      } catch (e) {
+        return { error: String(e && e.message || e) };
+      }
+      return { ok: true, path: dest, name: f.name, size: f.size };
+    }
+    try {
+      const { copyFile, mkdir } = await import("node:fs/promises");
+      await mkdir(dirname(savePath), { recursive: true });
+      await copyFile(f.path, savePath);
+    } catch (e) {
+      return { error: String(e && e.message || e) };
+    }
+    return { ok: true, path: savePath, name: f.name, size: f.size };
+  }
+  function sweep(now) {
+    for (const [pid, p] of [...peers]) {
+      if (p.writer) {
+        p.offlineAt = null;
+        continue;
+      }
+      if (now - p.lastSeen <= 12e4) continue;
+      if (!p.offlineAt) p.offlineAt = p.lastSeen;
+      if (now - p.offlineAt > PAIR_PEER_TTL) {
+        console.log(TAG + " pair 设备清理（掉线超时）：" + p.name + " (" + pid + ")");
+        peers.delete(pid);
+        broadcastToPeers({ type: "peer-leave", peer: { id: pid, name: p.name } });
+      }
+    }
+    if (filesDir) {
+      for (const [fid, f] of [...files]) {
+        if (now - f.at > PAIR_FILE_TTL) {
+          try {
+            rmSync(f.path, { force: true });
+          } catch {
+          }
+          files.delete(fid);
+        }
+      }
+      try {
+        if (existsSync(filesDir)) {
+          for (const name of readdirSync(filesDir)) {
+            try {
+              const p = join(filesDir, name);
+              if (statSync(p).isFile() && now - statSync(p).mtimeMs > PAIR_FILE_TTL) {
+                rmSync(p, { force: true });
+                files.delete(name);
+              }
+            } catch {
+            }
+          }
+        }
+      } catch {
+      }
+    }
+  }
+  async function handle(req, path, searchParams) {
+    const seg = path.slice(2);
+    const method = req.method;
+    if (seg[0] === "register" && method === "POST") {
+      const msg = await req.json().catch(() => null);
+      const denied = gateAdmission(req, msg && msg.regToken || null);
+      if (denied) return denied;
+      const r = register(msg);
+      return json({ ok: true, ...r });
+    }
+    if (seg[0] === "devices" && method === "GET") {
+      return json({ ok: true, devices: deps.getDevices() });
+    }
+    if (seg[0] === "events" && method === "GET") {
+      const denied = gateAdmission(req, searchParams.get("reg"));
+      if (denied) return denied;
+      const p = checkPeer(searchParams.get("peer"), searchParams.get("token"));
+      if (!p) return json({ ok: false, error: "bad peer/token" }, 401);
+      const { response, writer, cleanup } = sseResponse(() => {
+        if (p.writer === writer) {
+          p.writer = null;
+          if (!p.offlineAt) p.offlineAt = Date.now();
+        }
+        cleanup();
+      });
+      p.writer = writer;
+      p.lastSeen = Date.now();
+      p.offlineAt = null;
+      writer.write({ type: "ready", peerId: p.peerId, name: p.name });
+      return response;
+    }
+    if (seg[0] === "message" && method === "POST") {
+      const msg = await req.json().catch(() => null);
+      const p = checkPeer(msg && msg.peer, msg && msg.token);
+      if (!p) return json({ ok: false, error: "bad peer/token" }, 401);
+      const text = String(msg && msg.text || "").slice(0, 64e3);
+      if (!text.trim()) return json({ ok: false, error: "bad request（需要 text）" }, 400);
+      const r = deps.routeSend({ id: p.peerId, name: p.name }, String(msg && msg.to || "all"), { text });
+      return json(r, r.ok ? 200 : r.candidates ? 300 : 400);
+    }
+    if (seg[0] === "file") {
+      if (seg[1] === "init" && method === "POST") {
+        const msg = await req.json().catch(() => null);
+        const p = checkPeer(msg && msg.peer, msg && msg.token);
+        if (!p) return json({ ok: false, error: "bad peer/token" }, 401);
+        const r = fileInit({ id: p.peerId, name: p.name }, String(msg && msg.to || ""), String(msg && msg.name || ""), Number(msg && msg.size || 0), String(msg && msg.mime || ""));
+        return r.error ? json({ ok: false, error: r.error }, 400) : json({ ok: true, ...r });
+      }
+      if (seg[1] === "chunk" && method === "POST") {
+        const fileId = String(seg[2] || "");
+        const buf = Buffer.from(await req.arrayBuffer());
+        const r = fileChunk(fileId, buf);
+        return r.ok ? json(r) : json(r, 400);
+      }
+      if (seg[1] === "complete" && method === "POST") {
+        const fileId = String(seg[2] || "");
+        const r = fileComplete(fileId);
+        if (!r.ok) return json(r, 400);
+        const f = getFileInfo(fileId);
+        deps.routeSend(f.from, f.to || "all", { file: { fileId: f.fileId, name: f.name, size: f.size, mime: f.mime, from: f.from, fromName: f.from.name } });
+        return json(r);
+      }
+      if (seg.length === 2 && method === "GET") {
+        return fileDownload(checkPeer(searchParams.get("peer"), searchParams.get("token")), String(seg[1] || ""));
+      }
+    }
+    if (seg[0] === "inbox" && method === "GET") {
+      const p = checkPeer(searchParams.get("peer"), searchParams.get("token"));
+      if (!p) return json({ ok: false, error: "bad peer/token" }, 401);
+      p.lastSeen = Date.now();
+      const pending = p.inbox.filter((m) => m.status === "pending");
+      for (const m of pending) m.status = "delivered";
+      return json({ ok: true, peerId: p.peerId, name: p.name, pending: pending.map(({ status, ...m }) => m) });
+    }
+    return null;
+  }
+  return { handle, listPeers, deliverToPeer, resolvePeerFuzzy, register, checkPeer, fileInit, fileChunk, fileComplete, fileDownload, getFileInfo, fetchToFile, sweep, close: () => {
+    peers.clear();
+    files.clear();
+  } };
+}
+
+// ../aiti-devtools-core/src/bridge.ts
 var ID_TTL = parseInt(process.env.AITI_BRIDGE_TTL || "600000", 10);
 var AGENT_TTL = parseInt(process.env.AITI_AGENT_TTL || "3600000", 10);
 var BROADCAST_TTL = parseInt(process.env.AITI_BROADCAST_TTL || "600000", 10);
@@ -20,6 +351,176 @@ var AGENT_GRACE_TTL = parseInt(process.env.AITI_AGENT_GRACE_TTL || "120000", 10)
 var AGENT_HISTORY_TTL = parseInt(process.env.AITI_AGENT_HISTORY_TTL || String(7 * 24 * 3600 * 1e3), 10);
 var SWEEP_MS = parseInt(process.env.AITI_SWEEP_MS || "60000", 10);
 var LEGACY_TOKEN = "dev";
+var BRIDGE_TOOLS = [
+  {
+    name: "page_exec",
+    description: "在已连接页面执行类 CDP 命令（DOM/CSS/Input/Page/Runtime/Storage/Performance/Browser 域）。pageId 缺省=最新 AI 主窗口（self:true）；显式 pageId 优先。危险命令/浏览器受限操作会自动弹用户确认；Page.captureScreenshot 截屏会先弹准备卡展示截取意图（args.reason，请务必用一句话说明想截什么），用户调整好页面才开始截屏，截完再弹预览确认（大图自动落盘返回文件路径）；确认卡倒计时可用 args.timeout（ms）调整（默认 280000，服务端安全网自动同步 +30s 余量）。调试会话中从被调试页面（inject）发出的消息统一带 [发自: <pageId> · <url>] 来源标注——把 pageId 值传给 pageId 参数即操作该页面。\n\niframe 支持：Page.getFrameTree 查看 frame 树（iframe src/name/title，同域含 url/readyState）；Runtime.evaluate 传 contextId（iframe 索引从 1 起，同域可 eval）进 iframe 上下文执行。",
+    inputSchema: { type: "object", properties: {
+      cmd: { type: "string" },
+      args: { type: "object" },
+      pageId: { type: "string", description: "目标页面完整 ID——来自 AI 消息的 [发自: xxx]（如 3001/host）；也可 /bridge/sessions 查询" }
+    }, required: ["cmd"] }
+  },
+  { name: "page_snapshot", description: "拉取已连接页面基础现场（URL/选区/模拟条件）。pageId 缺省=最新 AI 主窗口（self:true）；显式 pageId 优先。", inputSchema: { type: "object", properties: { pageId: { type: "string" } } } },
+  { name: "self_ui", description: "扫描目标页面（缺省 AI 主窗口 xxx/ai）当前打开的弹窗/dialog/表单字段/按钮清单——ai-helper 回填定位用。返回 {dialogs:[{title, fields:[{label,selector,type}], buttons}]}，无弹窗时 dialogs 为空数组。", inputSchema: { type: "object", properties: { pageId: { type: "string", description: "缺省用 AI 主窗口（xxx/ai）；也可指定其他页面" } } } },
+  { name: "form_fill", description: "在目标页面（缺省 AI 主窗口 xxx/ai）的弹窗/表单里回填字段值——AI 结果直接操作扩展弹窗表单（React 兼容：原生 value setter + dispatch input/change）。配合 self_ui 使用：先 self_ui 拿字段 label/selector，再 form_fill 填值。参数：dialog（弹窗标识：标题子串或序号 0 起，缺省取面积最大的可见弹窗）、fields[{selector|label, value}]、button（可选，回填后点击的按钮文本如『保存』）。返回 {foundDialog, title, filled, missed, clicked}。", inputSchema: { type: "object", properties: {
+    pageId: { type: "string", description: "缺省用 AI 主窗口（xxx/ai）；也可指定其他页面" },
+    dialog: { type: "string", description: "弹窗标识：标题子串或序号（0 起）；缺省取面积最大的可见弹窗" },
+    fields: { type: "array", items: { type: "object", properties: { selector: { type: "string", description: "CSS 选择器（优先）" }, label: { type: "string", description: "弹窗内文本匹配（label[for]/包裹/文本包含）" }, value: { type: "string", description: "要填的值" } }, required: ["value"] }, description: "要填的字段列表" },
+    button: { type: "string", description: "回填后点击的按钮文本（如『保存』『确定』）" }
+  } } },
+  { name: "bridge_status", description: "查询桥上全部设备（devices 统一视图：kind=page 注入页面（含 pageId/url/title + device 浏览器·OS·屏幕）/kind=agent agent 会话（含 cwd）/kind=pair web 设备如手机）+ 已连接页面明细（sessions）与挂起请求。用户提到页面标题或 URL 时按 title/url 匹配 pageId；提到手机/设备时在 devices 里选（id 或名字传给 aiti_pair_send/aiti_pair_file 即可互发消息互传文件）。", inputSchema: { type: "object", properties: {} } },
+  {
+    name: "page_logs",
+    description: "从目标页面拉取本地缓冲的 console 日志（log/debug/info/warn/error 全量，CDP Runtime.evaluate 读取 window.__dbg.__consoleRing）。pageId 缺省=最新 AI 主窗口（self:true）；显式 pageId 优先。页面报错排查首选：先查 warn/error 再逐步放开。返回 {logs:[{ts,level,text,count}], bufferSize}。",
+    inputSchema: { type: "object", properties: {
+      pageId: { type: "string", description: "目标页面完整 ID（[发自: xxx] 或 /bridge/sessions）" },
+      level: { type: "string", description: "过滤级别：debug/log/info/warn/error（默认全部）" },
+      since: { type: "string", description: "ISO 时间：只返回此时间之后的日志" },
+      limit: { type: "number", description: "条数上限（≤200，默认 50，取最新）" },
+      token: { type: "string" }
+    } }
+  },
+  {
+    name: "page_network",
+    description: "从目标页面拉取本地缓冲的 ajax/fetch 请求完成态（CDP Runtime.evaluate 读取 window.__dbg.__netRing）。pageId 缺省=最新 AI 主窗口（self:true）；显式 pageId 优先。失败排查：status 传 400 或 errorOnly:true。注意：不含静态资源加载（那是 CDP Network 的能力）。返回 {requests:[{kind,method,url,status,statusText,durationMs,size,error,ts}], bufferSize}。",
+    inputSchema: { type: "object", properties: {
+      pageId: { type: "string" },
+      url: { type: "string", description: "URL 子串过滤" },
+      status: { type: "number", description: "status >= 此值才返回（如 400 只看失败）" },
+      errorOnly: { type: "boolean", description: "只看失败（error 非空 或 status>=400）" },
+      limit: { type: "number", description: "条数上限（≤100，默认 30，取最新）" },
+      token: { type: "string" }
+    } }
+  },
+  // ---- 用户交互型工具：AI 与人在页面上协作（AI 提问 → 人在 AI 窗口/页面作答或拒绝 → 结果回 AI） ----
+  // 统一机制：prompt 显示给人看；timeout 为可选——不传=永久等待（面板常驻直到用户操作，不读秒不超时）；
+  //   传了才显示读秒倒计时（可暂停）且服务器强制到点返回“用户无响应/不在线”；
+  //   交互消息到达时页面走浏览器 Notification（+标题闪烁/提示音）通知用户；人可拒绝（rejectable）。
+  // 响应信封：{ status:'answered'|'rejected'|'timeout'|'error', value?, reason?, error?, tookMs, timeoutMs }
+  {
+    name: "user_pick_element",
+    description: "请当前页面的人类用户点选一个页面元素（自动进入 Inspector 点选模式、收起 AI 窗口、弹点选面板；用户可确认选中或拒绝）。返回元素载荷 {tag,rect,xpath,text,attributes,framework,selector}。",
+    inputSchema: { type: "object", properties: {
+      prompt: { type: "string", description: "给用户看的说明（为什么需要点选这个元素）" },
+      timeout: { type: "number", description: "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户操作，无读秒；传了才显示读秒倒计时（可暂停），到点自动返回 timeout" },
+      rejectable: { type: "boolean", description: "是否允许用户拒绝（默认 true）" },
+      async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送；缺省=同步等待" },
+      pageId: { type: "string", description: "目标页面完整 ID（instanceId/frameId）" }
+    }, required: ["prompt"] }
+  },
+  {
+    name: "user_confirm",
+    description: "在 AI 窗口内向人类用户提一个是/否问题（如“确认执行此操作？”“是否继续？”），用户点 ✅/❌ 作答，并可附「补充说明」自由文本（value.comment）；另有固定选项「都不适合」→ 自定义回答（approved:null, custom）。返回 {status, approved, comment?, custom?, reason?}。",
+    inputSchema: { type: "object", properties: {
+      prompt: { type: "string", description: "问题内容" },
+      timeout: { type: "number", description: "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户操作，无读秒；传了才显示读秒倒计时（可暂停），到点自动返回 timeout" },
+      rejectable: { type: "boolean", description: "是否允许用户以“暂时无法处理”拒绝（默认 true）" },
+      async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送（不阻塞本调用）；缺省=同步等待" },
+      pageId: { type: "string" }
+    }, required: ["prompt"] }
+  },
+  {
+    name: "user_choose",
+    description: "在 AI 窗口内给人类用户一组选项让其选择（如修复方案 A/B/C）。单选（默认）→ value:{index,label}；multiple:true 多选 → value:{indexes,labels}。用户可附「补充说明」自由文本（value.comment）；另有固定选项「这些都不适合」→ 自定义答案（index:-1, custom:true）。返回 {status, value, reason?}。",
+    inputSchema: { type: "object", properties: {
+      prompt: { type: "string" },
+      choices: { type: "array", items: { type: "string" }, description: "选项列表（2-8 个）" },
+      multiple: { type: "boolean", description: "是否允许多选（默认 false；true 时返回 indexes/labels）" },
+      timeout: { type: "number", description: "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户操作，无读秒；传了才显示读秒倒计时（可暂停），到点自动返回 timeout" },
+      rejectable: { type: "boolean", description: "是否允许用户拒绝（默认 true）" },
+      async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送；缺省=同步等待" },
+      pageId: { type: "string" }
+    }, required: ["prompt", "choices"] }
+  },
+  {
+    name: "user_input",
+    description: "在 AI 窗口内请人类用户输入一段文本（如期望文案、配置值、场景描述），回车/点击即发送。返回 {status, value:{text}, reason?}。",
+    inputSchema: { type: "object", properties: {
+      prompt: { type: "string" },
+      defaultValue: { type: "string", description: "预填默认值（可选）" },
+      timeout: { type: "number", description: "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户操作，无读秒；传了才显示读秒倒计时（可暂停），到点自动返回 timeout" },
+      rejectable: { type: "boolean", description: "是否允许用户拒绝（默认 true）" },
+      async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送；缺省=同步等待" },
+      pageId: { type: "string" }
+    }, required: ["prompt"] }
+  },
+  {
+    name: "user_presence",
+    description: "探测人类用户是否在场/在线（AI 需要用户配合长任务前先确认），用户点「我在/稍后」，可附「补充说明」（value.comment）。返回 {status, present, comment?}；超时即视为不在线。",
+    inputSchema: { type: "object", properties: {
+      prompt: { type: "string", description: "询问文案（默认“你在吗？需要你配合继续开发”）" },
+      timeout: { type: "number", description: "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户作答；传了才显示读秒倒计时（可暂停），到点返回 status:'timeout'（视为不在线）——需要快速探测在场/限时等待时才显式传" },
+      async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送；缺省=同步等待" },
+      pageId: { type: "string" }
+    }, required: [] }
+  },
+  {
+    name: "user_notify",
+    description: "非阻塞通知：通过浏览器 Notification 告诉用户一条消息（如“修复完成，请刷新验证”），不等待回答。返回 {notified:true}。",
+    inputSchema: { type: "object", properties: {
+      title: { type: "string", description: "通知标题" },
+      body: { type: "string", description: "通知内容" },
+      timeout: { type: "number", description: "可选：通知卡自动关闭时限 ms（5000-600000）。不传=常驻直到用户关闭" },
+      async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送；缺省=同步等待" },
+      pageId: { type: "string" }
+    }, required: ["body"] }
+  },
+  // ---- 方案 G · P2：agent 接入 + 消息主通道 ----
+  {
+    name: "aiti_hello",
+    description: "agent 自我介绍/注册：覆盖 agentId（默认 clientInfo.name）与 sessionId（默认 Mcp-Session-Id 或桥随机）、绑定默认目标页 pageId、订阅页面事件（page_error）。注意：page_log/page_network 不再实时推送，改用 page_logs/page_network 工具按需拉取。建议会话开始时调用一次——注册后消息可定向到本会话（agentKey=agentId/sessionId）。",
+    inputSchema: { type: "object", properties: {
+      agentId: { type: "string", description: "自定义 agent 标识（如 pi / cc / qoder；缺省用 clientInfo.name）" },
+      sessionId: { type: "string", description: "本实例会话标识（多实例/多会话时区分；缺省用 Mcp-Session-Id，无则桥生成随机）" },
+      name: { type: "string", description: "显示名（可选，如 'pi · 工作区A'）" },
+      cwd: { type: "string", description: "工作目录（可选，显示 CWD . name (id)，方便识别 agent 身份）" },
+      pageId: { type: "string", description: "绑定默认调试目标页（pageId/url/title 均可，留空不绑）" },
+      subEvents: { type: "array", items: { type: "string" }, description: "订阅实时事件：page_error（默认不投递，显式订阅才推；page_log/page_network 不再实时推送，改用 page_logs/page_network 工具按需拉取）" }
+    } }
+  },
+  {
+    name: "file_stat",
+    description: "查询文件存在性/类型/大小/修改时间（绝对路径；组件源码/调用位置定位、AI 窗『后端打开/前端打开』前置校验用）。不存在或非法路径返回 {exists:false}。",
+    inputSchema: { type: "object", properties: {
+      path: { type: "string", description: "绝对路径（如 /home/user/src/App.vue）" }
+    }, required: ["path"] }
+  },
+  {
+    name: "aiti_inbox",
+    description: "消息主通道：拉取发给本 agent 会话的消息（人主动发话 user_message / 异步 user_* 作答 user_answer / 订阅的页面事件）。开始新一轮或需要最新信息时先调用；处理完把消息 id 放 ack 参数确认（标记 consumed，历史保留）。返回 agentKey（agentId/sessionId），未注册时提示调 aiti_hello 注册。",
+    inputSchema: { type: "object", properties: {
+      agentId: { type: "string", description: "agent 标识（缺省用 aiti_hello 注册值或 clientInfo.name）" },
+      sessionId: { type: "string", description: "本实例会话标识（缺省用 Mcp-Session-Id 或 aiti_hello 注册值）" },
+      ack: { description: "已处理消息 id 列表，或 { ids: [...], summary: '执行总结' }——summary（必带）会作为 agent 处理记录显示在操作台消息流", oneOf: [{ type: "array", items: { type: "string" } }, { type: "object", properties: { ids: { type: "array", items: { type: "string" } }, summary: { type: "string" } } }] }
+    } }
+  },
+  // ---- pair 设备互连（临时聊天/互传文件；设备发现走 bridge_status 的 devices 统一视图） ----
+  {
+    name: "aiti_pair_send",
+    description: "给桥上另一台设备发文本消息（pair web 设备如手机 / 其他 agent 会话 / 注入页面）。to 传设备 id 或名字（模糊匹配，唯一命中即发，多个/无命中返回候选清单——照候选重调即可）；to 省略或传 'all' 群发全部 pair 设备与 agent。对方是 agent 时消息进其 aiti_inbox（带 [发自 pair: <名>] 标注）。文件传输用 aiti_pair_file。",
+    inputSchema: { type: "object", properties: {
+      to: { type: "string", description: "目标设备 id 或名字（bridge_status 的 devices 里选；缺省=群发）" },
+      text: { type: "string", description: "消息文本" }
+    }, required: ["text"] }
+  },
+  {
+    name: "aiti_pair_file",
+    description: "把桥所在机器上的本地文件推给另一台设备（pair web 设备在浏览器里直接下载；agent 收到 file-meta 后用 aiti_pair_fetch 取回）。to 传设备 id 或名字。单文件上限 200MB，中转暂存 1 小时。",
+    inputSchema: { type: "object", properties: {
+      to: { type: "string", description: "目标设备 id 或名字" },
+      path: { type: "string", description: "本地文件绝对路径" }
+    }, required: ["to", "path"] }
+  },
+  {
+    name: "aiti_pair_fetch",
+    description: "把收到的 pair 文件取回到桥所在机器磁盘（fileId 来自 aiti_inbox 消息 payload.file.fileId）。缺省落 dataDir/aiti-bridge/pair-inbox/<原文件名>，返回可读路径；传 savePath 自定义落点。",
+    inputSchema: { type: "object", properties: {
+      fileId: { type: "string", description: "文件 id（aiti_inbox 消息 payload.file.fileId）" },
+      savePath: { type: "string", description: "落盘绝对路径（缺省 pair-inbox 目录 + 原文件名）" }
+    }, required: ["fileId"] }
+  }
+];
 function createBridge(dataDir = "", opts = {}) {
   const BRIDGE_NAME = opts.name || "aiti-mcp";
   const DISPLAY_NAME = opts.name || "aiti-devtools";
@@ -130,18 +631,18 @@ function createBridge(dataDir = "", opts = {}) {
     const a = agents.get(key);
     if (a && !agentOnline(a) && !a.offlineAt) a.offlineAt = Date.now();
   };
-  const agentKey = (aid, sid) => safeId(aid) + "/" + safeId(sid || "s_" + randomBytes(3).toString("hex"));
-  const randomSessionId = () => "s_" + randomBytes(3).toString("hex");
+  const agentKey = (aid, sid) => safeId(aid) + "/" + safeId(sid || "s_" + randomBytes2(3).toString("hex"));
+  const randomSessionId = () => "s_" + randomBytes2(3).toString("hex");
   const OUTBOX_MAX = 200;
   const safeId = (s) => String(s || "unknown").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 48);
-  const msgSessionDir = (agentId2) => join(dataDir, "aiti-bridge", "sessions", safeId(agentId2));
+  const msgSessionDir = (agentId2) => join2(dataDir, "aiti-bridge", "sessions", safeId(agentId2));
   const msgSessionFile = (agentId2) => {
     const dir = msgSessionDir(agentId2);
-    const files = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".jsonl")).sort() : [];
+    const files = existsSync2(dir) ? readdirSync2(dir).filter((f) => f.endsWith(".jsonl")).sort() : [];
     if (files.length) {
-      const latest = join(dir, files[files.length - 1]);
+      const latest = join2(dir, files[files.length - 1]);
       try {
-        if (statSync(latest).size > 2 * 1024 * 1024) return newMsgSessionFile(agentId2);
+        if (statSync2(latest).size > 2 * 1024 * 1024) return newMsgSessionFile(agentId2);
       } catch {
       }
       return latest;
@@ -150,14 +651,14 @@ function createBridge(dataDir = "", opts = {}) {
   };
   const newMsgSessionFile = (agentId2) => {
     const dir = msgSessionDir(agentId2);
-    mkdirSync(dir, { recursive: true });
-    return join(dir, (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-") + "_" + randomBytes(8).toString("hex") + ".jsonl");
+    mkdirSync2(dir, { recursive: true });
+    return join2(dir, (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-") + "_" + randomBytes2(8).toString("hex") + ".jsonl");
   };
   const appendMsgEvent = (agentId2, evt) => {
     try {
       const file = msgSessionFile(agentId2);
-      if (!existsSync(file)) appendFileSync(file, JSON.stringify({ type: "session", version: 1, id: randomBytes(8).toString("hex"), timestamp: (/* @__PURE__ */ new Date()).toISOString(), kind: "aiti-bridge" }) + "\n");
-      appendFileSync(file, JSON.stringify(evt) + "\n");
+      if (!existsSync2(file)) appendFileSync2(file, JSON.stringify({ type: "session", version: 1, id: randomBytes2(8).toString("hex"), timestamp: (/* @__PURE__ */ new Date()).toISOString(), kind: "aiti-bridge" }) + "\n");
+      appendFileSync2(file, JSON.stringify(evt) + "\n");
     } catch (e) {
     }
   };
@@ -165,9 +666,9 @@ function createBridge(dataDir = "", opts = {}) {
     const rows = [];
     try {
       const dir = msgSessionDir(agentId2);
-      if (!existsSync(dir)) return rows;
-      for (const f of readdirSync(dir).filter((x) => x.endsWith(".jsonl")).sort()) {
-        for (const line of readFileSync(join(dir, f), "utf8").split("\n")) {
+      if (!existsSync2(dir)) return rows;
+      for (const f of readdirSync2(dir).filter((x) => x.endsWith(".jsonl")).sort()) {
+        for (const line of readFileSync(join2(dir, f), "utf8").split("\n")) {
           if (!line.trim()) continue;
           const evt = JSON.parse(line);
           if (evt.type === "message") rows.push({ id: evt.id, ...evt.message || {}, at: evt.timestamp });
@@ -246,7 +747,7 @@ function createBridge(dataDir = "", opts = {}) {
         if (um) srcUrl = um[1].trim();
       }
     }
-    const m = { id: randomBytes(4).toString("hex"), ...msg, pageId: srcPageId, url: srcUrl, source: msg.source || msg.payload && msg.payload.source || null, sourceLabel: msg.sourceLabel || msg.payload && msg.payload.sourceLabel || null, agentId: key, at: (/* @__PURE__ */ new Date()).toISOString(), status: "pending" };
+    const m = { id: randomBytes2(4).toString("hex"), ...msg, pageId: srcPageId, url: srcUrl, source: msg.source || msg.payload && msg.payload.source || null, sourceLabel: msg.sourceLabel || msg.payload && msg.payload.sourceLabel || null, agentId: key, at: (/* @__PURE__ */ new Date()).toISOString(), status: "pending" };
     a.outbox.push(m);
     if (a.outbox.length > OUTBOX_MAX) a.outbox.splice(0, a.outbox.length - OUTBOX_MAX);
     appendMsgEvent(key, { type: "message", id: m.id, parentId: null, timestamp: m.at, message: m });
@@ -282,28 +783,28 @@ function createBridge(dataDir = "", opts = {}) {
   };
   const pruneSessionDirs = (now) => {
     if (!dataDir) return;
-    const rootDir = join(dataDir, "aiti-bridge", "sessions");
+    const rootDir = join2(dataDir, "aiti-bridge", "sessions");
     let dirs = [];
     try {
-      dirs = existsSync(rootDir) ? readdirSync(rootDir) : [];
+      dirs = existsSync2(rootDir) ? readdirSync2(rootDir) : [];
     } catch {
       return;
     }
     for (const d of dirs) {
       try {
-        const p = join(rootDir, d);
-        const st = statSync(p);
+        const p = join2(rootDir, d);
+        const st = statSync2(p);
         if (!st.isDirectory()) continue;
-        const files = readdirSync(p).filter((f) => f.endsWith(".jsonl"));
+        const files = readdirSync2(p).filter((f) => f.endsWith(".jsonl"));
         let mtime = st.mtimeMs;
         for (const f of files) {
           try {
-            mtime = Math.max(mtime, statSync(join(p, f)).mtimeMs);
+            mtime = Math.max(mtime, statSync2(join2(p, f)).mtimeMs);
           } catch {
           }
         }
         if (now - mtime > AGENT_HISTORY_TTL) {
-          rmSync(p, { recursive: true, force: true });
+          rmSync2(p, { recursive: true, force: true });
           console.log(TAG + " 清理历史 session（> " + Math.round(AGENT_HISTORY_TTL / 864e5) + " 天无活动）：" + d);
         }
       } catch {
@@ -333,6 +834,10 @@ function createBridge(dataDir = "", opts = {}) {
       }
     }
     for (const [k, v] of lastEventPush) if (now - v.ts > 36e5) lastEventPush.delete(k);
+    try {
+      pair.sweep(now);
+    } catch {
+    }
     for (const [iid, p] of [...pages]) {
       if (p.writer?.viaBus && now - (p.writer.lastSeen || 0) > BUS_CONN_TTL) {
         pages.delete(iid);
@@ -352,6 +857,10 @@ function createBridge(dataDir = "", opts = {}) {
   if (typeof sweepTimer.unref === "function") sweepTimer.unref();
   const close = () => {
     clearInterval(sweepTimer);
+    try {
+      pair.close();
+    } catch {
+    }
   };
   const pendingSampling = /* @__PURE__ */ new Map();
   const SAMPLING_TIMEOUT_MS = 45e3;
@@ -402,7 +911,7 @@ function createBridge(dataDir = "", opts = {}) {
         if (srcTitle) parts.push(clipMid(srcTitle, 40));
         tText = tText + "\n[发自: " + parts.join(" · ") + "（" + srcLabel + "：pageId 参数用它）]";
       }
-      payload = { ...payload || {}, source: a && a.source || null, sourceLabel: srcLabel, pageId: srcPageId, url: srcUrl, title: srcTitle };
+      payload = { ...payload || {}, source: payload.source || a && a.source || null, sourceLabel: payload.sourceLabel || srcLabel, pageId: srcPageId, url: srcUrl, title: srcTitle };
       const canSample = !!(a && a.stream && a.capabilities && a.capabilities.sampling && (kind === "user_message" || kind === "chat"));
       if (canSample) {
         const rid = "smp_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
@@ -437,7 +946,7 @@ function createBridge(dataDir = "", opts = {}) {
           const m0 = q && q.msg;
           if (m0 && m0.status === "pending") {
             m0.status = "delivered";
-            appendMsgEvent(t, { type: "status_change", id: randomBytes(4).toString("hex"), msgId: m0.id, status: "delivered", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
+            appendMsgEvent(t, { type: "status_change", id: randomBytes2(4).toString("hex"), msgId: m0.id, status: "delivered", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
             for (const w of aiConns) w.write({ type: "msg_status", agentKey: t, msgId: m0.id, status: "delivered" });
           }
           delivered.push({ agentKey: t, agentId: a.agentId, sessionId: a.sessionId, status: "inprocess" });
@@ -446,7 +955,7 @@ function createBridge(dataDir = "", opts = {}) {
           const m = q && q.msg;
           if (m && m.status === "pending") {
             m.status = "delivered";
-            appendMsgEvent(t, { type: "status_change", id: randomBytes(4).toString("hex"), msgId: m.id, status: "delivered", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
+            appendMsgEvent(t, { type: "status_change", id: randomBytes2(4).toString("hex"), msgId: m.id, status: "delivered", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
             for (const w of aiConns) w.write({ type: "msg_status", agentKey: t, msgId: m.id, status: "delivered" });
           }
           delivered.push({ agentKey: t, agentId: a.agentId, sessionId: a.sessionId, status: "stream+delivered" });
@@ -513,9 +1022,9 @@ ${String(pl.stack).slice(0, 400)}` : "");
   });
   const cors = { "access-control-allow-origin": "*", "access-control-allow-methods": "GET,POST,OPTIONS", "access-control-allow-headers": "Content-Type" };
   const pickedReports = /* @__PURE__ */ new Map();
-  const pickedFile = dataDir ? join(dataDir, "picked.json") : "";
+  const pickedFile = dataDir ? join2(dataDir, "picked.json") : "";
   try {
-    if (pickedFile && existsSync(pickedFile)) {
+    if (pickedFile && existsSync2(pickedFile)) {
       const saved = JSON.parse(readFileSync(pickedFile, "utf8"));
       if (saved && typeof saved === "object") {
         for (const [k, v] of Object.entries(saved)) if (Array.isArray(v)) pickedReports.set(k, v);
@@ -526,7 +1035,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
   const persistPicked = () => {
     if (!pickedFile) return;
     try {
-      mkdirSync(dirname(pickedFile), { recursive: true });
+      mkdirSync2(dirname2(pickedFile), { recursive: true });
       const tmp = pickedFile + ".tmp";
       writeFileSync(tmp, JSON.stringify(Object.fromEntries(pickedReports)));
       renameSync(tmp, pickedFile);
@@ -539,7 +1048,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
     return letters[randomInt(26)] + letters[randomInt(26)] + String(randomInt(100, 1e3));
   }
   function genSecret() {
-    return randomBytes(12).toString("hex");
+    return randomBytes2(12).toString("hex");
   }
   function portFromHostUrl(hostUrl) {
     if (!hostUrl || typeof hostUrl !== "string") return null;
@@ -722,151 +1231,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
     }
     return out;
   }
-  const TOOLS = [
-    {
-      name: "page_exec",
-      description: "在已连接页面执行类 CDP 命令（DOM/CSS/Input/Page/Runtime/Storage/Performance/Browser 域）。pageId 缺省=最新 AI 主窗口（self:true）；显式 pageId 优先。危险命令/浏览器受限操作会自动弹用户确认；Page.captureScreenshot 截屏会先弹准备卡展示截取意图（args.reason，请务必用一句话说明想截什么），用户调整好页面才开始截屏，截完再弹预览确认（大图自动落盘返回文件路径）；确认卡倒计时可用 args.timeout（ms）调整（默认 280000，服务端安全网自动同步 +30s 余量）。调试会话中从被调试页面（inject）发出的消息统一带 [发自: <pageId> · <url>] 来源标注——把 pageId 值传给 pageId 参数即操作该页面。\n\niframe 支持：Page.getFrameTree 查看 frame 树（iframe src/name/title，同域含 url/readyState）；Runtime.evaluate 传 contextId（iframe 索引从 1 起，同域可 eval）进 iframe 上下文执行。",
-      inputSchema: { type: "object", properties: {
-        cmd: { type: "string" },
-        args: { type: "object" },
-        pageId: { type: "string", description: "目标页面完整 ID——来自 AI 消息的 [发自: xxx]（如 3001/host）；也可 /bridge/sessions 查询" }
-      }, required: ["cmd"] }
-    },
-    { name: "page_snapshot", description: "拉取已连接页面基础现场（URL/选区/模拟条件）。pageId 缺省=最新 AI 主窗口（self:true）；显式 pageId 优先。", inputSchema: { type: "object", properties: { pageId: { type: "string" } } } },
-    { name: "self_ui", description: "扫描目标页面（缺省 AI 主窗口 xxx/ai）当前打开的弹窗/dialog/表单字段/按钮清单——ai-helper 回填定位用。返回 {dialogs:[{title, fields:[{label,selector,type}], buttons}]}，无弹窗时 dialogs 为空数组。", inputSchema: { type: "object", properties: { pageId: { type: "string", description: "缺省用 AI 主窗口（xxx/ai）；也可指定其他页面" } } } },
-    { name: "form_fill", description: "在目标页面（缺省 AI 主窗口 xxx/ai）的弹窗/表单里回填字段值——AI 结果直接操作扩展弹窗表单（React 兼容：原生 value setter + dispatch input/change）。配合 self_ui 使用：先 self_ui 拿字段 label/selector，再 form_fill 填值。参数：dialog（弹窗标识：标题子串或序号 0 起，缺省取面积最大的可见弹窗）、fields[{selector|label, value}]、button（可选，回填后点击的按钮文本如『保存』）。返回 {foundDialog, title, filled, missed, clicked}。", inputSchema: { type: "object", properties: {
-      pageId: { type: "string", description: "缺省用 AI 主窗口（xxx/ai）；也可指定其他页面" },
-      dialog: { type: "string", description: "弹窗标识：标题子串或序号（0 起）；缺省取面积最大的可见弹窗" },
-      fields: { type: "array", items: { type: "object", properties: { selector: { type: "string", description: "CSS 选择器（优先）" }, label: { type: "string", description: "弹窗内文本匹配（label[for]/包裹/文本包含）" }, value: { type: "string", description: "要填的值" } }, required: ["value"] }, description: "要填的字段列表" },
-      button: { type: "string", description: "回填后点击的按钮文本（如『保存』『确定』）" }
-    } } },
-    { name: "bridge_status", description: "查询已连接页面（sessions：含 pageId/url/title/frameworks + device/deviceLabel——浏览器·OS·屏幕·dpr·在线·语言·时区等设备信息，便于区分多台机器/标签页）与挂起请求。用户提到页面标题或 URL 时，按 title/url 匹配 pageId（如 refresh『某标题页面』或『某个 url 页面』）。", inputSchema: { type: "object", properties: {} } },
-    {
-      name: "page_logs",
-      description: "从目标页面拉取本地缓冲的 console 日志（log/debug/info/warn/error 全量，CDP Runtime.evaluate 读取 window.__dbg.__consoleRing）。pageId 缺省=最新 AI 主窗口（self:true）；显式 pageId 优先。页面报错排查首选：先查 warn/error 再逐步放开。返回 {logs:[{ts,level,text,count}], bufferSize}。",
-      inputSchema: { type: "object", properties: {
-        pageId: { type: "string", description: "目标页面完整 ID（[发自: xxx] 或 /bridge/sessions）" },
-        level: { type: "string", description: "过滤级别：debug/log/info/warn/error（默认全部）" },
-        since: { type: "string", description: "ISO 时间：只返回此时间之后的日志" },
-        limit: { type: "number", description: "条数上限（≤200，默认 50，取最新）" },
-        token: { type: "string" }
-      } }
-    },
-    {
-      name: "page_network",
-      description: "从目标页面拉取本地缓冲的 ajax/fetch 请求完成态（CDP Runtime.evaluate 读取 window.__dbg.__netRing）。pageId 缺省=最新 AI 主窗口（self:true）；显式 pageId 优先。失败排查：status 传 400 或 errorOnly:true。注意：不含静态资源加载（那是 CDP Network 的能力）。返回 {requests:[{kind,method,url,status,statusText,durationMs,size,error,ts}], bufferSize}。",
-      inputSchema: { type: "object", properties: {
-        pageId: { type: "string" },
-        url: { type: "string", description: "URL 子串过滤" },
-        status: { type: "number", description: "status >= 此值才返回（如 400 只看失败）" },
-        errorOnly: { type: "boolean", description: "只看失败（error 非空 或 status>=400）" },
-        limit: { type: "number", description: "条数上限（≤100，默认 30，取最新）" },
-        token: { type: "string" }
-      } }
-    },
-    // ---- 用户交互型工具：AI 与人在页面上协作（AI 提问 → 人在 AI 窗口/页面作答或拒绝 → 结果回 AI） ----
-    // 统一机制：prompt 显示给人看；timeout 为可选——不传=永久等待（面板常驻直到用户操作，不读秒不超时）；
-    //   传了才显示读秒倒计时（可暂停）且服务器强制到点返回“用户无响应/不在线”；
-    //   交互消息到达时页面走浏览器 Notification（+标题闪烁/提示音）通知用户；人可拒绝（rejectable）。
-    // 响应信封：{ status:'answered'|'rejected'|'timeout'|'error', value?, reason?, error?, tookMs, timeoutMs }
-    {
-      name: "user_pick_element",
-      description: "请当前页面的人类用户点选一个页面元素（自动进入 Inspector 点选模式、收起 AI 窗口、弹点选面板；用户可确认选中或拒绝）。返回元素载荷 {tag,rect,xpath,text,attributes,framework,selector}。",
-      inputSchema: { type: "object", properties: {
-        prompt: { type: "string", description: "给用户看的说明（为什么需要点选这个元素）" },
-        timeout: { type: "number", description: "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户操作，无读秒；传了才显示读秒倒计时（可暂停），到点自动返回 timeout" },
-        rejectable: { type: "boolean", description: "是否允许用户拒绝（默认 true）" },
-        async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送；缺省=同步等待" },
-        pageId: { type: "string", description: "目标页面完整 ID（instanceId/frameId）" }
-      }, required: ["prompt"] }
-    },
-    {
-      name: "user_confirm",
-      description: "在 AI 窗口内向人类用户提一个是/否问题（如“确认执行此操作？”“是否继续？”），用户点 ✅/❌ 作答，并可附「补充说明」自由文本（value.comment）；另有固定选项「都不适合」→ 自定义回答（approved:null, custom）。返回 {status, approved, comment?, custom?, reason?}。",
-      inputSchema: { type: "object", properties: {
-        prompt: { type: "string", description: "问题内容" },
-        timeout: { type: "number", description: "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户操作，无读秒；传了才显示读秒倒计时（可暂停），到点自动返回 timeout" },
-        rejectable: { type: "boolean", description: "是否允许用户以“暂时无法处理”拒绝（默认 true）" },
-        async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送（不阻塞本调用）；缺省=同步等待" },
-        pageId: { type: "string" }
-      }, required: ["prompt"] }
-    },
-    {
-      name: "user_choose",
-      description: "在 AI 窗口内给人类用户一组选项让其选择（如修复方案 A/B/C）。单选（默认）→ value:{index,label}；multiple:true 多选 → value:{indexes,labels}。用户可附「补充说明」自由文本（value.comment）；另有固定选项「这些都不适合」→ 自定义答案（index:-1, custom:true）。返回 {status, value, reason?}。",
-      inputSchema: { type: "object", properties: {
-        prompt: { type: "string" },
-        choices: { type: "array", items: { type: "string" }, description: "选项列表（2-8 个）" },
-        multiple: { type: "boolean", description: "是否允许多选（默认 false；true 时返回 indexes/labels）" },
-        timeout: { type: "number", description: "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户操作，无读秒；传了才显示读秒倒计时（可暂停），到点自动返回 timeout" },
-        rejectable: { type: "boolean", description: "是否允许用户拒绝（默认 true）" },
-        async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送；缺省=同步等待" },
-        pageId: { type: "string" }
-      }, required: ["prompt", "choices"] }
-    },
-    {
-      name: "user_input",
-      description: "在 AI 窗口内请人类用户输入一段文本（如期望文案、配置值、场景描述），回车/点击即发送。返回 {status, value:{text}, reason?}。",
-      inputSchema: { type: "object", properties: {
-        prompt: { type: "string" },
-        defaultValue: { type: "string", description: "预填默认值（可选）" },
-        timeout: { type: "number", description: "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户操作，无读秒；传了才显示读秒倒计时（可暂停），到点自动返回 timeout" },
-        rejectable: { type: "boolean", description: "是否允许用户拒绝（默认 true）" },
-        async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送；缺省=同步等待" },
-        pageId: { type: "string" }
-      }, required: ["prompt"] }
-    },
-    {
-      name: "user_presence",
-      description: "探测人类用户是否在场/在线（AI 需要用户配合长任务前先确认），用户点「我在/稍后」，可附「补充说明」（value.comment）。返回 {status, present, comment?}；超时即视为不在线。",
-      inputSchema: { type: "object", properties: {
-        prompt: { type: "string", description: "询问文案（默认“你在吗？需要你配合继续开发”）" },
-        timeout: { type: "number", description: "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户作答；传了才显示读秒倒计时（可暂停），到点返回 status:'timeout'（视为不在线）——需要快速探测在场/限时等待时才显式传" },
-        async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送；缺省=同步等待" },
-        pageId: { type: "string" }
-      }, required: [] }
-    },
-    {
-      name: "user_notify",
-      description: "非阻塞通知：通过浏览器 Notification 告诉用户一条消息（如“修复完成，请刷新验证”），不等待回答。返回 {notified:true}。",
-      inputSchema: { type: "object", properties: {
-        title: { type: "string", description: "通知标题" },
-        body: { type: "string", description: "通知内容" },
-        timeout: { type: "number", description: "可选：通知卡自动关闭时限 ms（5000-600000）。不传=常驻直到用户关闭" },
-        async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送；缺省=同步等待" },
-        pageId: { type: "string" }
-      }, required: ["body"] }
-    },
-    // ---- 方案 G · P2：agent 接入 + 消息主通道 ----
-    {
-      name: "aiti_hello",
-      description: "agent 自我介绍/注册：覆盖 agentId（默认 clientInfo.name）与 sessionId（默认 Mcp-Session-Id 或桥随机）、绑定默认目标页 pageId、订阅页面事件（page_error）。注意：page_log/page_network 不再实时推送，改用 page_logs/page_network 工具按需拉取。建议会话开始时调用一次——注册后消息可定向到本会话（agentKey=agentId/sessionId）。",
-      inputSchema: { type: "object", properties: {
-        agentId: { type: "string", description: "自定义 agent 标识（如 pi / cc / qoder；缺省用 clientInfo.name）" },
-        sessionId: { type: "string", description: "本实例会话标识（多实例/多会话时区分；缺省用 Mcp-Session-Id，无则桥生成随机）" },
-        name: { type: "string", description: "显示名（可选，如 'pi · 工作区A'）" },
-        cwd: { type: "string", description: "工作目录（可选，显示 CWD . name (id)，方便识别 agent 身份）" },
-        pageId: { type: "string", description: "绑定默认调试目标页（pageId/url/title 均可，留空不绑）" },
-        subEvents: { type: "array", items: { type: "string" }, description: "订阅实时事件：page_error（默认不投递，显式订阅才推；page_log/page_network 不再实时推送，改用 page_logs/page_network 工具按需拉取）" }
-      } }
-    },
-    {
-      name: "file_stat",
-      description: "查询文件存在性/类型/大小/修改时间（绝对路径；组件源码/调用位置定位、AI 窗『后端打开/前端打开』前置校验用）。不存在或非法路径返回 {exists:false}。",
-      inputSchema: { type: "object", properties: {
-        path: { type: "string", description: "绝对路径（如 /home/user/src/App.vue）" }
-      }, required: ["path"] }
-    },
-    {
-      name: "aiti_inbox",
-      description: "消息主通道：拉取发给本 agent 会话的消息（人主动发话 user_message / 异步 user_* 作答 user_answer / 订阅的页面事件）。开始新一轮或需要最新信息时先调用；处理完把消息 id 放 ack 参数确认（标记 consumed，历史保留）。返回 agentKey（agentId/sessionId），未注册时提示调 aiti_hello 注册。",
-      inputSchema: { type: "object", properties: {
-        agentId: { type: "string", description: "agent 标识（缺省用 aiti_hello 注册值或 clientInfo.name）" },
-        sessionId: { type: "string", description: "本实例会话标识（缺省用 Mcp-Session-Id 或 aiti_hello 注册值）" },
-        ack: { description: "已处理消息 id 列表，或 { ids: [...], summary: '执行总结' }——summary（必带）会作为 agent 处理记录显示在操作台消息流", oneOf: [{ type: "array", items: { type: "string" } }, { type: "object", properties: { ids: { type: "array", items: { type: "string" } }, summary: { type: "string" } } }] }
-      } }
-    }
-  ];
+  const TOOLS = BRIDGE_TOOLS;
   const settlePending = (requestId, ok, result) => {
     const r = pendingRequests.get(requestId);
     if (!r) return false;
@@ -1337,6 +1702,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
             "page_logs / page_network：排查页面报错/请求失败首选——page_logs 查 console（可 level/since/limit 过滤，先看 warn/error）；page_network 查 ajax/fetch 完成态（status≥400 或 errorOnly:true 只看失败）。两者均读页面本地缓冲（CDP Runtime.evaluate 按需拉取，不再实时上报）。",
             "user_confirm / user_choose / user_input / user_pick_element / user_presence：AI 与人类用户在页面上协作——prompt 给用户看，默认同步等待且永久等待（不传 timeout：面板常驻直到用户作答，无读秒；仅在确需限时催促时传 timeout ms，面板显示读秒倒计时可暂停，到点返回 status:'timeout'），响应信封 {status:'answered'|'rejected'|'timeout'|'error', value?, reason?, tookMs, timeoutMs}。传 async:true 可立即返回（结果经 AI 消息窗送达）。",
             "user_notify：非阻塞浏览器通知，不等待回答。",
+            "设备互连：bridge_status 返回 devices（kind=page/agent/pair 统一设备视图）——aiti_pair_send 给任意设备发文本、aiti_pair_file 推本地文件、aiti_pair_fetch 取回收到的文件（fileId 在 aiti_inbox 消息 payload.file）；手机等浏览器设备打开桥的 pair.html 即上线。",
             "常见用法：页面报错→page_logs(level:warn/error) 或 page_network(errorOnly:true)；操作页面→page_exec(cmd:'Runtime.evaluate', args:{expression:'...'})；定位元素→page_snapshot 后再 page_exec 或请用户 user_pick_element。"
           ].join("\n")
         };
@@ -1380,7 +1746,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
         const recAgentKey = session && session.agentKey || (session && session.agentId ? session.agentId + (session.id ? "/" + session.id : "") : null) || null;
         const recToolCall = (text, ok, detail) => {
           if (!recAgentKey) return;
-          const m = { id: randomBytes(4).toString("hex"), kind: "agent_tool", from: "agent", agentKey: recAgentKey, agentId: recAgentKey.split("/")[0], sessionId: recAgentKey.split("/").slice(1).join("/") || null, source: (agents.get(recAgentKey) || {}).source || "unknown", text: String(text).slice(0, 2e3), detail: detail === void 0 ? null : typeof detail === "string" ? detail : JSON.stringify(detail).slice(0, 4e3), at: (/* @__PURE__ */ new Date()).toISOString(), status: ok ? "ok" : "error" };
+          const m = { id: randomBytes2(4).toString("hex"), kind: "agent_tool", from: "agent", agentKey: recAgentKey, agentId: recAgentKey.split("/")[0], sessionId: recAgentKey.split("/").slice(1).join("/") || null, source: (agents.get(recAgentKey) || {}).source || "unknown", text: String(text).slice(0, 2e3), detail: detail === void 0 ? null : typeof detail === "string" ? detail : JSON.stringify(detail).slice(0, 4e3), at: (/* @__PURE__ */ new Date()).toISOString(), status: ok ? "ok" : "error" };
           appendMsgEvent(recAgentKey, { type: "message", id: m.id, parentId: null, timestamp: m.at, message: m });
           for (const w of aiConns) w.write({ type: "agent_answer", agentKey: recAgentKey, agentId: recAgentKey.split("/")[0], ok, text: m.text, at: m.at, detail: m.detail });
         };
@@ -1388,16 +1754,79 @@ ${String(pl.stack).slice(0, 400)}` : "");
           const curAgentKey = session && session.agentKey || (session && session.agentId ? session.agentId + (session.id ? "/" + session.id : "") : null) || null;
           const boundPageId = curAgentKey && agents.get(curAgentKey) && agents.get(curAgentKey).boundPageId || null;
           const sess = listSessions(boundPageId);
-          const resp = { sessions: sess, activePageId: boundPageId || null };
-          recToolCall("🛠 bridge_status → " + sess.length + " 个已连接页面" + (boundPageId ? " · 当前绑定: " + boundPageId : ""), true, resp);
+          const devices = listDevices();
+          const resp = { sessions: sess, activePageId: boundPageId || null, devices };
+          recToolCall("🛠 bridge_status → " + sess.length + " 个已连接页面 · " + devices.length + " 台设备" + (boundPageId ? " · 当前绑定: " + boundPageId : ""), true, resp);
           return { content: [{ type: "text", text: JSON.stringify(resp) }], isError: false };
+        }
+        if (params.name === "aiti_pair_send") {
+          const text = String(a.text || "").slice(0, 64e3);
+          if (!text.trim()) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "bad request（需要 text）" }) }], isError: true };
+          const me = { id: recAgentKey || "agent", name: (recAgentKey && agents.get(recAgentKey) || {}).name || recAgentKey || "agent", kind: "agent" };
+          const r = routePairSend(me, a.to ? String(a.to) : "all", { text });
+          recToolCall("🛠 aiti_pair_send(" + (a.to || "all") + ") → " + (r.ok ? "已投递 " + (r.delivered || []).length + " 端" : r.error || "失败"), !!r.ok, r);
+          return { content: [{ type: "text", text: JSON.stringify(r.ok ? { ok: true, delivered: r.delivered } : r) }], isError: !r.ok };
+        }
+        if (params.name === "aiti_pair_file") {
+          const fp = String(a.path || "").trim();
+          const to = String(a.to || "").trim();
+          if (!fp || !to) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "bad request（需要 to/path）" }) }], isError: true };
+          let st = null;
+          try {
+            st = statSync2(fp);
+          } catch {
+          }
+          if (!st || !st.isFile()) {
+            recToolCall("🛠 aiti_pair_file → 文件不存在: " + fp, false);
+            return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "文件不存在: " + fp }) }], isError: true };
+          }
+          const me = { id: recAgentKey || "agent", name: (recAgentKey && agents.get(recAgentKey) || {}).name || recAgentKey || "agent", kind: "agent" };
+          const pf0 = pair.resolvePeerFuzzy(to);
+          const toId = pf0.hit && pf0.hit.peerId || to;
+          const init = pair.fileInit(me, toId, fp.split(/[\\/]/).pop() || "file", st.size, "application/octet-stream");
+          if (init.error) {
+            recToolCall("🛠 aiti_pair_file → " + init.error, false);
+            return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: init.error }) }], isError: true };
+          }
+          const CHUNK = 1024 * 1024;
+          const buf = Buffer.allocUnsafe(CHUNK);
+          const fd = openSync(fp, "r");
+          try {
+            let off = 0;
+            while (off < st.size) {
+              const n = readSync(fd, buf, 0, Math.min(CHUNK, st.size - off), off);
+              const r2 = pair.fileChunk(init.fileId, buf.subarray(0, n));
+              if (r2.error) throw new Error(r2.error);
+              off += n;
+            }
+          } finally {
+            closeSync(fd);
+          }
+          const done = pair.fileComplete(init.fileId);
+          if (done.error) {
+            recToolCall("🛠 aiti_pair_file → " + done.error, false);
+            return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: done.error }) }], isError: true };
+          }
+          const meta = done.file;
+          const r = routePairSend(me, to, { file: { ...meta, fromName: me.name } });
+          recToolCall("🛠 aiti_pair_file(" + to + ") → " + meta.name + "（" + Math.round(st.size / 1024) + "KB）" + (r.ok ? " 已投递" : " 投递失败: " + (r.error || "")), !!r.ok, r);
+          return { content: [{ type: "text", text: JSON.stringify(r.ok ? { ok: true, fileId: meta.fileId, name: meta.name, size: meta.size, delivered: r.delivered } : r) }], isError: !r.ok };
+        }
+        if (params.name === "aiti_pair_fetch") {
+          const fileId = String(a.fileId || "").trim();
+          if (!fileId) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "bad request（需要 fileId）" }) }], isError: true };
+          const info = pair.getFileInfo(fileId);
+          return pair.fetchToFile(fileId, a.savePath ? String(a.savePath) : null).then((r) => {
+            recToolCall("🛠 aiti_pair_fetch(" + fileId + (info ? " · " + info.name : "") + ") → " + (r.ok ? r.path : r.error), !!r.ok, r);
+            return { content: [{ type: "text", text: JSON.stringify(r.ok ? { ...r, name: info ? info.name : null } : r) }], isError: !r.ok };
+          });
         }
         if (params.name === "file_stat") {
           const fp = String(a.path || "").trim();
           const out = { path: fp || null, exists: false, isFile: false, isDirectory: false, size: null, mtime: null };
           if (fp) {
             try {
-              const st = statSync(fp);
+              const st = statSync2(fp);
               out.exists = true;
               out.isFile = st.isFile();
               out.isDirectory = st.isDirectory();
@@ -1576,12 +2005,12 @@ ${String(pl.stack).slice(0, 400)}` : "");
                 m.ackedAt = Date.now();
                 m.summary = summary || null;
                 ackedAny = true;
-                appendMsgEvent(key, { type: "status_change", id: randomBytes(4).toString("hex"), msgId: id, status: "consumed", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
+                appendMsgEvent(key, { type: "status_change", id: randomBytes2(4).toString("hex"), msgId: id, status: "consumed", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
               }
             }
             if (ackedAny) {
               const text = summary || `✅ 已处理 ${ackIds.length} 条消息（未附总结——建议 ack 时带 summary）`;
-              const rid = randomBytes(4).toString("hex");
+              const rid = randomBytes2(4).toString("hex");
               const rec = { id: rid, kind: "agent_summary", from: "agent", agentKey: key, agentId: agentId2, sessionId: agent.sessionId, text, ackedIds: ackIds, at: (/* @__PURE__ */ new Date()).toISOString(), status: "ok" };
               agent.outbox.push(rec);
               appendMsgEvent(key, { type: "message", id: rid, parentId: null, timestamp: rec.at, message: rec });
@@ -1593,7 +2022,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
             if (m.status === "consumed") continue;
             if (m.status === "pending") {
               m.status = "delivered";
-              appendMsgEvent(key, { type: "status_change", id: randomBytes(4).toString("hex"), msgId: m.id, status: "delivered", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
+              appendMsgEvent(key, { type: "status_change", id: randomBytes2(4).toString("hex"), msgId: m.id, status: "delivered", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
             }
             out.push({ id: m.id, kind: m.kind, from: m.from, agentKey: key, agentId: agentId2, sessionId: agent.sessionId, pageId: m.pageId || m.payload && m.payload.pageId || null, url: m.url || m.payload && m.payload.url || null, text: m.text ?? null, payload: m.payload || null, at: m.at, status: m.status });
           }
@@ -1627,7 +2056,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       const uid = typeof process.getuid === "function" ? process.getuid() : null;
       const home = process.env.HOME || "";
       try {
-        const xs = readdirSync("/tmp/.X11-unix").filter((f) => /^X\d+$/.test(f)).sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
+        const xs = readdirSync2("/tmp/.X11-unix").filter((f) => /^X\d+$/.test(f)).sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
         if (xs.length && !out.DISPLAY) out.DISPLAY = ":" + xs[0].slice(1);
       } catch {
       }
@@ -1636,7 +2065,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       authCands.push(`${home}/.Xauthority`);
       for (const a of authCands) {
         try {
-          if (a && existsSync(a)) {
+          if (a && existsSync2(a)) {
             out.XAUTHORITY = a;
             break;
           }
@@ -1645,12 +2074,12 @@ ${String(pl.stack).slice(0, 400)}` : "");
       }
       if (uid != null) {
         try {
-          const ws = readdirSync(`/run/user/${uid}`).filter((f) => /^wayland-\d+$/.test(f)).sort();
+          const ws = readdirSync2(`/run/user/${uid}`).filter((f) => /^wayland-\d+$/.test(f)).sort();
           if (ws.length) out.WAYLAND_DISPLAY = ws[0];
         } catch {
         }
         try {
-          if (existsSync(`/run/user/${uid}/bus`)) {
+          if (existsSync2(`/run/user/${uid}/bus`)) {
             out.XDG_RUNTIME_DIR = `/run/user/${uid}`;
             out.DBUS_SESSION_BUS_ADDRESS = `unix:path=/run/user/${uid}/bus`;
           }
@@ -1753,11 +2182,111 @@ ${String(pl.stack).slice(0, 400)}` : "");
     };
     return { response: new Response(stream, { headers: { "content-type": "text/event-stream", "cache-control": "no-cache", "x-accel-buffering": "no", ...cors } }), writer, cleanup };
   }
+  const pair = createPairModule({
+    TAG,
+    dataDir,
+    cors,
+    json,
+    sseResponse: (onClose, opts2) => sseResponse(onClose, opts2),
+    getDevices: () => listDevices(),
+    routeSend: (fromDev, to, payload) => routePairSend(fromDev, to, payload)
+  });
+  function listDevices() {
+    const out = [];
+    for (const [instanceId, page] of pages) {
+      out.push({ kind: "page", id: instanceId, name: page.title || page.url || instanceId, url: page.url || null, title: page.title || null, device: page.device || null, deviceLabel: page.deviceLabel || null, online: true, lastSeen: Date.now() });
+    }
+    for (const [key, a] of agents) {
+      if (!a.registered && !agentOnline(a) && !a.outbox.length) continue;
+      out.push({ kind: "agent", id: key, name: a.name || a.agentId, cwd: a.cwd || null, source: a.source || "unknown", transportKind: a.transportKind, online: agentOnline(a), offlineAt: a.offlineAt || null, lastSeen: a.lastSeen });
+    }
+    for (const p of pair.listPeers()) out.push(p);
+    return out.sort((x, y) => (y.lastSeen || 0) - (x.lastSeen || 0));
+  }
+  function routePairSend(fromDev, to, payload) {
+    const q = String(to || "all").trim() || "all";
+    const from = { id: fromDev.id, kind: fromDev.kind || "pair", name: fromDev.name };
+    const env = (type, extra) => ({ id: randomBytes2(4).toString("hex"), type, from, to: q, ts: Date.now(), ...extra });
+    const delivered = [];
+    const pushPair = (pid) => {
+      if (pair.deliverToPeer(pid, env(payload.file ? "file" : "text", payload.file ? { file: payload.file } : { text: payload.text }))) delivered.push({ kind: "pair", id: pid });
+    };
+    const pushAgent = (target) => {
+      const label = "[发自 pair: " + fromDev.name + "]";
+      let text;
+      const pl = { source: "pair", sourceLabel: "Pair · " + fromDev.name, fromDevice: from };
+      if (payload.file) {
+        const f = payload.file;
+        text = "📎 收到文件：" + f.name + "（" + Math.max(1, Math.round((f.size || 0) / 1024)) + "KB）— 调 aiti_pair_fetch {fileId:'" + f.fileId + "'} 取回\n" + label;
+        pl.file = { fileId: f.fileId, name: f.name, size: f.size, mime: f.mime };
+      } else {
+        text = String(payload.text || "") + "\n" + label;
+      }
+      const r = pushToAgents(target, text, payload.file ? "pair_file" : "user_message", pl);
+      for (const d of r && r.delivered || []) delivered.push({ kind: "agent", id: d.agentKey, status: d.status });
+    };
+    const pushPage = (instanceId) => {
+      const msg = env(payload.file ? "file" : "text", payload.file ? { file: payload.file } : { text: payload.text });
+      let n = 0;
+      for (const [w, rec] of aiSelfReg) {
+        if (instanceId && String(rec.instanceId) !== instanceId) continue;
+        if (w.write({ type: "pair_msg", ...msg })) n++;
+      }
+      if (n) delivered.push({ kind: "page", id: instanceId });
+      return n;
+    };
+    if (q === "all") {
+      const peers = pair.listPeers();
+      for (const p of peers) {
+        if (p.id === fromDev.id) continue;
+        pushPair(p.id);
+      }
+      const label = "[发自 pair: " + fromDev.name + "]";
+      const pl = { source: "pair", sourceLabel: "Pair · " + fromDev.name, fromDevice: from };
+      const text = payload.file ? "📎 收到文件：" + payload.file.name + " — 调 aiti_pair_fetch {fileId:'" + payload.file.fileId + "'} 取回\n" + label : String(payload.text || "") + "\n" + label;
+      const ra = pushToAgents("all", text, payload.file ? "pair_file" : "user_message", pl);
+      for (const d of ra && ra.delivered || []) delivered.push({ kind: "agent", id: d.agentKey, status: d.status });
+      return { ok: delivered.length > 0, delivered };
+    }
+    const pf = pair.resolvePeerFuzzy(q);
+    if (pf.hit) {
+      if (pf.hit.peerId !== fromDev.id) pushPair(pf.hit.peerId);
+      return { ok: true, delivered };
+    }
+    if (agents.has(q) || agentIdx.has(q)) {
+      pushAgent(q);
+      return { ok: delivered.length > 0, delivered };
+    }
+    if (pages.has(q)) {
+      const n = pushPage(q);
+      return n ? { ok: true, delivered } : { ok: false, error: "页面连接已断开" };
+    }
+    if (pf.multiple) return { ok: false, candidates: pf.multiple, error: "pair 设备名匹配多个" };
+    const agentRows = listAgentSessions().filter((a) => (a.name || "").includes(q) || a.agentKey.includes(q));
+    if (agentRows.length === 1) {
+      pushAgent(agentRows[0].agentKey);
+      return { ok: delivered.length > 0, delivered };
+    }
+    if (agentRows.length > 1) return { ok: false, candidates: agentRows.map((a) => ({ kind: "agent", id: a.agentKey, name: a.name })), error: "agent 名匹配多个" };
+    const resolved = resolvePageId(q);
+    if (resolved.pageId) {
+      const inst = String(resolved.pageId).split("/")[0];
+      const n = pushPage(inst);
+      if (n) return { ok: true, delivered };
+    }
+    if (resolved.multiple) return { ok: false, candidates: resolved.multiple.map((pid) => ({ kind: "page", id: pid })), error: "页面匹配多个" };
+    return { ok: false, error: "无匹配设备（to 支持设备 id/名字；bridge_status 或 /bridge/pair/devices 查看在线设备）" };
+  }
   async function handle(req, path, searchParams) {
     if (path[0] === "aiti") path = path.slice(1);
     const endpoint = path[0];
     const sub = path.slice(1)[0] || "";
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
+    if (endpoint === "bridge" && sub === "pair") {
+      const r = await pair.handle(req, path, searchParams);
+      if (r) return r;
+      return new Response("not found: " + endpoint + "/" + sub, { status: 404 });
+    }
     if (endpoint === "bridge" && sub === "claim" && req.method === "POST") {
       const msg = await req.json().catch(() => null);
       const r = claimInstanceId(msg && msg.instanceId, msg && msg.secret, msg && msg.pageKey, msg && msg.hostUrl);
@@ -1903,11 +2432,11 @@ ${String(pl.stack).slice(0, 400)}` : "");
         if (om.status !== "consumed" && (om.kind === "user_message" || om.kind === "user_answer" || om.kind === "chat")) {
           om.status = "consumed";
           om.ackedAt = Date.now();
-          appendMsgEvent(resolvedKey, { type: "status_change", id: randomBytes(4).toString("hex"), msgId: om.id, status: "consumed", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
+          appendMsgEvent(resolvedKey, { type: "status_change", id: randomBytes2(4).toString("hex"), msgId: om.id, status: "consumed", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
           for (const w of aiConns) w.write({ type: "msg_status", agentKey: resolvedKey, msgId: om.id, status: "consumed" });
         }
       }
-      const m = { id: randomBytes(4).toString("hex"), kind: msg.kind || "agent_answer", from: "agent", agentId: parts[0], pageId: null, text: String(msg.text).slice(0, 4e3), payload: msg.payload || null, at: (/* @__PURE__ */ new Date()).toISOString(), status: "consumed" };
+      const m = { id: randomBytes2(4).toString("hex"), kind: msg.kind || "agent_answer", from: "agent", agentId: parts[0], pageId: null, text: String(msg.text).slice(0, 4e3), payload: msg.payload || null, at: (/* @__PURE__ */ new Date()).toISOString(), status: "consumed" };
       appendMsgEvent(resolvedKey, { type: "message", id: m.id, parentId: null, timestamp: m.at, message: m });
       for (const w of aiConns) w.write({ type: "agent_answer", agentKey: resolvedKey, agentId: parts[0], text: m.text, at: m.at });
       console.log(TAG + " agent 回答 → " + resolvedKey + " · " + String(m.text).slice(0, 80) + "（已消费待处理消息 " + a.outbox.filter((x) => x.status === "consumed").length + " 条）");
@@ -2088,9 +2617,9 @@ ${String(pl.stack).slice(0, 400)}` : "");
         const r0 = msg.result;
         if (r0 && typeof r0 === "object" && typeof r0.dataUrl === "string" && r0.dataUrl.length > 12e4) {
           const ext = r0.format === "png" ? "png" : "jpg";
-          const dir = join(dataDir, "aiti-bridge", "shots");
-          mkdirSync(dir, { recursive: true });
-          const file = join(dir, (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-") + "-" + String(msg.requestId).replace(/[^\w-]/g, "").slice(0, 12) + "." + ext);
+          const dir = join2(dataDir, "aiti-bridge", "shots");
+          mkdirSync2(dir, { recursive: true });
+          const file = join2(dir, (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-") + "-" + String(msg.requestId).replace(/[^\w-]/g, "").slice(0, 12) + "." + ext);
           writeFileSync(file, Buffer.from(r0.dataUrl.slice(r0.dataUrl.indexOf(",") + 1), "base64"));
           msg.result = { file, width: r0.width, height: r0.height, format: r0.format, bytes: r0.bytes || 0, note: "截屏已存文件（dataUrl 过大不内联）；前端文件标签页可直接打开查看" };
           console.log(TAG + " 截屏落盘：" + file + "（" + Math.round((r0.bytes || 0) / 1024) + "KB）");
@@ -2263,7 +2792,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       const isInit = msg.method === "initialize";
       if (isInit) {
         if (!session) {
-          const newId = randomBytes(16).toString("hex");
+          const newId = randomBytes2(16).toString("hex");
           session = { id: newId, writer: null, agentId: null, clientInfo: null, capabilities: null, lastSeen: Date.now(), open: false, source: "mcp" };
           mcpSessions.set(newId, session);
         }
@@ -2352,12 +2881,12 @@ ${String(pl.stack).slice(0, 400)}` : "");
         if (om.status !== "consumed" && (om.kind === "user_message" || om.kind === "user_answer" || om.kind === "chat")) {
           om.status = "consumed";
           om.ackedAt = Date.now();
-          appendMsgEvent(k, { type: "status_change", id: randomBytes(4).toString("hex"), msgId: om.id, status: "consumed", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
+          appendMsgEvent(k, { type: "status_change", id: randomBytes2(4).toString("hex"), msgId: om.id, status: "consumed", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
           for (const w of aiConns) w.write({ type: "msg_status", agentKey: k, msgId: om.id, status: "consumed" });
         }
       }
     }
-    const m = { id: randomBytes(4).toString("hex"), kind: "agent_summary", from: "agent", agentKey: k, agentId: k, sessionId: k.split("/").slice(1).join("/") || null, text: t.slice(0, 4e3), payload: null, at, status: "consumed" };
+    const m = { id: randomBytes2(4).toString("hex"), kind: "agent_summary", from: "agent", agentKey: k, agentId: k, sessionId: k.split("/").slice(1).join("/") || null, text: t.slice(0, 4e3), payload: null, at, status: "consumed" };
     appendMsgEvent(k, { type: "message", id: m.id, parentId: null, timestamp: at, message: m });
     for (const w of aiConns) w.write({ type: "agent_answer", agentKey: k, agentId: k, ok: true, text: m.text, at });
     return { ok: true, message: m };
@@ -2380,21 +2909,21 @@ ${String(pl.stack).slice(0, 400)}` : "");
     }
     return { ok: true, delivered: n };
   };
-  return { handle, sessions: () => listSessions(), tools: () => TOOLS, callTool, registerAgent: registerAgent2, bindAgentPage, setAgentSink, answer, clearAgent, pushAiEvent, close };
+  return { handle, sessions: () => listSessions(), devices: () => listDevices(), routePairSend, pair: () => pair, tools: () => TOOLS, callTool, registerAgent: registerAgent2, bindAgentPage, setAgentSink, answer, clearAgent, pushAiEvent, close };
 }
 
 // ../aiti-devtools-core/src/mcp-config.ts
 import { homedir } from "node:os";
-import { join as join2, dirname as dirname2 } from "node:path";
-import { existsSync as existsSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2, renameSync as renameSync2, mkdirSync as mkdirSync2, rmSync as rmSync2 } from "node:fs";
+import { join as join3, dirname as dirname3 } from "node:path";
+import { existsSync as existsSync3, readFileSync as readFileSync2, writeFileSync as writeFileSync2, renameSync as renameSync2, mkdirSync as mkdirSync3, rmSync as rmSync3 } from "node:fs";
 var homeDir = () => homedir();
 var MCP_TARGETS = {
   // pi 实际读取 getAgentDir()/mcp.json（getAgentDir = $PI_CODING_AGENT_DIR，默认 ~/.pi/agent）；
   // ~/.config/mcp/mcp.json 是历史误记——默认 pi 不读它（探针实证 2026-09-10，见执行记录 P17）
-  pi: [{ path: () => join2(process.env.PI_CODING_AGENT_DIR || join2(homeDir(), ".pi", "agent"), "mcp.json"), key: "mcpServers" }],
-  zcode: [{ path: () => join2(homeDir(), ".zcode", "cli", "config.json"), key: "mcpServers", keyPath: ["mcp", "servers"] }],
+  pi: [{ path: () => join3(process.env.PI_CODING_AGENT_DIR || join3(homeDir(), ".pi", "agent"), "mcp.json"), key: "mcpServers" }],
+  zcode: [{ path: () => join3(homeDir(), ".zcode", "cli", "config.json"), key: "mcpServers", keyPath: ["mcp", "servers"] }],
   opencode: [{
-    path: () => join2(homeDir(), ".config", "opencode", "opencode.json"),
+    path: () => join3(homeDir(), ".config", "opencode", "opencode.json"),
     key: "mcpServers",
     keyPath: ["mcp"],
     shimEntry: (shimPath) => ({ type: "local", command: ["node", shimPath], enabled: true }),
@@ -2404,19 +2933,19 @@ var MCP_TARGETS = {
     // D23：http 类型对 opencode 非法
   }],
   claude: [
-    { path: () => join2(homeDir(), ".claude.json"), key: "mcpServers" },
-    { path: (p) => join2(p, ".mcp.json"), key: "mcpServers", project: true }
+    { path: () => join3(homeDir(), ".claude.json"), key: "mcpServers" },
+    { path: (p) => join3(p, ".mcp.json"), key: "mcpServers", project: true }
   ],
   // CodeBuddy Code（腾讯 cbc）：用户级 ~/.codebuddy/.mcp.json（官方 mcp.md：.mcp.json 推荐 /
   // mcp.json 已废弃；条目形状 mcpServers+stdio 与 claude 同构，2026-09-11 cbc mcp add 实测钉死）。
   // 项目级 .mcp.json 与 claude 同文件（claude 目标已覆盖），不重复注册。
-  codebuddy: [{ path: () => join2(homeDir(), ".codebuddy", ".mcp.json"), key: "mcpServers" }],
-  cursor: [{ path: () => join2(homeDir(), ".cursor", "mcp.json"), key: "mcpServers" }],
-  windsurf: [{ path: () => join2(homeDir(), ".codeium", "windsurf", "mcp_config.json"), key: "mcpServers" }],
-  vscode: [{ path: (p) => join2(p, ".vscode", "mcp.json"), key: "servers", project: true }],
+  codebuddy: [{ path: () => join3(homeDir(), ".codebuddy", ".mcp.json"), key: "mcpServers" }],
+  cursor: [{ path: () => join3(homeDir(), ".cursor", "mcp.json"), key: "mcpServers" }],
+  windsurf: [{ path: () => join3(homeDir(), ".codeium", "windsurf", "mcp_config.json"), key: "mcpServers" }],
+  vscode: [{ path: (p) => join3(p, ".vscode", "mcp.json"), key: "servers", project: true }],
   zed: [
-    { path: () => join2(homeDir(), ".config", "zed", "settings.json"), key: "mcp" },
-    { path: (p) => join2(p, ".zed", "settings.json"), key: "mcp", project: true }
+    { path: () => join3(homeDir(), ".config", "zed", "settings.json"), key: "mcp" },
+    { path: (p) => join3(p, ".zed", "settings.json"), key: "mcp", project: true }
   ]
 };
 function detectStructureKey(cfg) {
@@ -2490,9 +3019,9 @@ function resolveContainer(cfg, keyPath) {
 function writeAtomic(path, cfg) {
   const tmp = path + ".tmp";
   const bak = path + ".bak";
-  mkdirSync2(dirname2(path), { recursive: true });
+  mkdirSync3(dirname3(path), { recursive: true });
   writeFileSync2(tmp, JSON.stringify(cfg, null, 2) + "\n");
-  if (existsSync2(path)) {
+  if (existsSync3(path)) {
     try {
       renameSync2(path, bak);
     } catch {
@@ -2501,14 +3030,14 @@ function writeAtomic(path, cfg) {
   try {
     renameSync2(tmp, path);
   } catch (e) {
-    if (existsSync2(bak) && !existsSync2(path)) {
+    if (existsSync3(bak) && !existsSync3(path)) {
       try {
         renameSync2(bak, path);
       } catch {
       }
     }
     try {
-      rmSync2(tmp, { force: true });
+      rmSync3(tmp, { force: true });
     } catch {
     }
     throw e;
@@ -2526,8 +3055,8 @@ function listPlannedWrites(opts) {
       if (!files) continue;
       for (const f of files) {
         const p = f.path(projectDir);
-        if (auto && !existsSync2(p)) continue;
-        out.push({ target: t, path: p, key: f.key, exists: existsSync2(p), keyPath: f.keyPath, shimEntry: f.shimEntry, envKey: f.envKey, httpEntry: f.httpEntry });
+        if (auto && !existsSync3(p)) continue;
+        out.push({ target: t, path: p, key: f.key, exists: existsSync3(p), keyPath: f.keyPath, shimEntry: f.shimEntry, envKey: f.envKey, httpEntry: f.httpEntry });
       }
     }
   }
@@ -2537,13 +3066,13 @@ function listPlannedWrites(opts) {
     for (const [t, files] of Object.entries(MCP_TARGETS)) {
       for (const f of files) {
         if (f.path(projectDir) === abs) {
-          matched = { target: t, path: abs, key: f.key, exists: existsSync2(abs), keyPath: f.keyPath, shimEntry: f.shimEntry, envKey: f.envKey, httpEntry: f.httpEntry };
+          matched = { target: t, path: abs, key: f.key, exists: existsSync3(abs), keyPath: f.keyPath, shimEntry: f.shimEntry, envKey: f.envKey, httpEntry: f.httpEntry };
           break;
         }
       }
       if (matched) break;
     }
-    out.push(matched ?? { target: abs, path: abs, key: "mcpServers", exists: existsSync2(abs) });
+    out.push(matched ?? { target: abs, path: abs, key: "mcpServers", exists: existsSync3(abs) });
   }
   return out;
 }
@@ -2573,7 +3102,7 @@ function registerAitiShim(opts) {
   for (const w of listPlannedWrites(opts)) {
     const outcome = (() => {
       let cfg;
-      if (!existsSync2(w.path)) {
+      if (!existsSync3(w.path)) {
         cfg = {};
       } else {
         const r = readJson(w.path);
@@ -2626,15 +3155,15 @@ function registerAitiShim(opts) {
 }
 function resolveShimPathAuto(cwdCandidates) {
   const installedCandidates = [
-    process.env.AITI_WEB_ROOT && join2(process.env.AITI_WEB_ROOT, "node_modules"),
-    join2(homeDir(), ".pi", "web", "node_modules"),
-    join2(homeDir(), ".pi", "web-dev", "node_modules")
-  ].filter((p) => !!p).map((nm) => join2(nm, "@aiti-ai", "aiti-bridge", "bin", "aiti-mcp-shim.cjs"));
+    process.env.AITI_WEB_ROOT && join3(process.env.AITI_WEB_ROOT, "node_modules"),
+    join3(homeDir(), ".pi", "web", "node_modules"),
+    join3(homeDir(), ".pi", "web-dev", "node_modules")
+  ].filter((p) => !!p).map((nm) => join3(nm, "@aiti-ai", "aiti-bridge", "bin", "aiti-mcp-shim.cjs"));
   const candidates = [
     process.env.AITI_SHIM_PATH,
     ...installedCandidates,
     ...cwdCandidates || [],
-    join2(homeDir(), "workspace", "pi-work", "packages", "aiti-bridge", "bin", "aiti-mcp-shim.cjs")
+    join3(homeDir(), "workspace", "aiti-ai", "packages", "aiti-bridge", "bin", "aiti-mcp-shim.cjs")
   ].filter((p) => !!p);
   for (const p of candidates) {
     try {
@@ -2927,9 +3456,9 @@ function normalizeBridgeBase(url) {
 // src/index.ts
 function logFile(msg) {
   try {
-    const logDir = join3(getAgentDir(), "logs");
-    mkdirSync3(logDir, { recursive: true });
-    appendFileSync2(join3(logDir, "aiti-devtools-pi.log"), `[aiti-devtools-pi] ${(/* @__PURE__ */ new Date()).toISOString().slice(11, 19)} ${msg}
+    const logDir = join4(getAgentDir(), "logs");
+    mkdirSync4(logDir, { recursive: true });
+    appendFileSync3(join4(logDir, "aiti-devtools-pi.log"), `[aiti-devtools-pi] ${(/* @__PURE__ */ new Date()).toISOString().slice(11, 19)} ${msg}
 `);
   } catch {
   }
@@ -2955,8 +3484,8 @@ function resolveBridgeUrl() {
     return normalizeBridgeBase("http://" + host + ":" + port + "/aiti");
   }
   try {
-    const settingsPath = join3(getAgentDir(), "settings.json");
-    if (existsSync3(settingsPath)) {
+    const settingsPath = join4(getAgentDir(), "settings.json");
+    if (existsSync4(settingsPath)) {
       const cfg = JSON.parse(readFileSync3(settingsPath, "utf8"));
       const u = cfg?.settings?.aitiDevtools?.bridgeUrl;
       if (typeof u === "string" && u) return normalizeBridgeBase(u.replace(/\/+$/, ""));
@@ -2966,22 +3495,22 @@ function resolveBridgeUrl() {
   return DEFAULT_BRIDGE_URL;
 }
 function bridgeScriptPath() {
-  if (process.env.AITI_BRIDGE_SCRIPT && existsSync3(process.env.AITI_BRIDGE_SCRIPT)) return process.env.AITI_BRIDGE_SCRIPT;
-  const here = dirname3(fileURLToPath(import.meta.url));
+  if (process.env.AITI_BRIDGE_SCRIPT && existsSync4(process.env.AITI_BRIDGE_SCRIPT)) return process.env.AITI_BRIDGE_SCRIPT;
+  const here = dirname4(fileURLToPath(import.meta.url));
   const candidates = [
     resolve(here, "../../aiti-bridge/bin/aiti-bridge.mjs"),
     // 源码/产物目录 → packages/aiti-bridge/bin
-    resolve(homedir2(), "workspace/pi-work/packages/aiti-bridge/bin/aiti-bridge.mjs")
+    resolve(homedir2(), "workspace/aiti-ai/packages/aiti-bridge/bin/aiti-bridge.mjs")
     // 开发环境绝对兜底
   ];
-  for (const p of candidates) if (existsSync3(p)) return p;
+  for (const p of candidates) if (existsSync4(p)) return p;
   return null;
 }
 function ensureBridgeSetting(url) {
   try {
-    const p = join3(getAgentDir(), "settings.json");
+    const p = join4(getAgentDir(), "settings.json");
     let cfg = null;
-    if (existsSync3(p)) {
+    if (existsSync4(p)) {
       try {
         cfg = JSON.parse(readFileSync3(p, "utf8"));
       } catch {
@@ -3000,9 +3529,9 @@ function ensureBridgeSetting(url) {
 }
 function ensureMcpConfig(url) {
   try {
-    const p = join3(homedir2(), ".config", "mcp", "mcp.json");
+    const p = join4(homedir2(), ".config", "mcp", "mcp.json");
     let cfg = null;
-    if (existsSync3(p)) {
+    if (existsSync4(p)) {
       try {
         cfg = JSON.parse(readFileSync3(p, "utf8"));
       } catch {
@@ -3025,7 +3554,7 @@ function ensureMcpConfig(url) {
 }
 function spawnBridge(script, host, port) {
   try {
-    const log = openSync(join3(getAgentDir(), "aiti-bridge.log"), "a");
+    const log = openSync2(join4(getAgentDir(), "aiti-bridge.log"), "a");
     const child = spawn2(process.execPath, [script, "--host", host, "--port", String(port)], {
       detached: true,
       stdio: ["ignore", log, log],
@@ -3066,15 +3595,15 @@ async function bootstrapBridge(base) {
       return true;
     }
   }
-  logFile("[aiti-devtools-pi] 桥拉起超时（" + base + "）——查看日志 " + join3(getAgentDir(), "aiti-bridge.log"));
+  logFile("[aiti-devtools-pi] 桥拉起超时（" + base + "）——查看日志 " + join4(getAgentDir(), "aiti-bridge.log"));
   return false;
 }
 var agentId = () => process.env.AITI_AGENT_ID || "pi";
 function agentDisplayName() {
   if (process.env.AITI_AGENT_NAME) return process.env.AITI_AGENT_NAME;
   try {
-    const settingsPath = join3(getAgentDir(), "settings.json");
-    if (existsSync3(settingsPath)) {
+    const settingsPath = join4(getAgentDir(), "settings.json");
+    if (existsSync4(settingsPath)) {
       const cfg = JSON.parse(readFileSync3(settingsPath, "utf8"));
       const n = cfg?.settings?.aitiDevtools?.agentName;
       if (typeof n === "string" && n) return n;
@@ -3083,7 +3612,7 @@ function agentDisplayName() {
   }
   return "pi";
 }
-var bridge = createBridge(join3(getAgentDir(), "aiti-bridge"));
+var bridge = createBridge(join4(getAgentDir(), "aiti-bridge"));
 var _bridgeClient = null;
 function getBridgeClient(base) {
   if (!_bridgeClient || _bridgeClient.base !== base) _bridgeClient = new AgentBridgeClient(base);
@@ -3302,7 +3831,7 @@ async function index_default(pi) {
     const base = resolveBridgeUrl();
     let piMcpCfg = null;
     try {
-      piMcpCfg = join3(getAgentDir(), "mcp.json");
+      piMcpCfg = join4(getAgentDir(), "mcp.json");
     } catch {
     }
     autoRegisterAitiShim({ targets: ["pi"], configPaths: piMcpCfg ? [piMcpCfg] : void 0, log: logFile });

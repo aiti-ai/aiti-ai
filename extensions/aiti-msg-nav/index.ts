@@ -17,7 +17,6 @@
 export default {
   id: "aiti-msg-nav",
   name: "消息滚动导航",
-  version: "0.1.0",
   icon: "icon.svg",
   client: "dist/aiti-msg-nav-client.mjs",
 

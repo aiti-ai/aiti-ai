@@ -352,7 +352,6 @@ async function handleApi(req: Request, ctx: ExtApiCtx): Promise<Response | null>
 export default {
   id: "aiti-testagent",
   name: "TestAgent 连桥（Java 进程扫描 / Attach）",
-  version: "0.3.0",
   icon: "icon.svg",
   client: "dist/aiti-testagent-client.mjs",
 

@@ -17,7 +17,6 @@ import * as engine from "./git-engine.ts";
 export default {
   id: "aiti-git-ops",
   name: "Git Ops（共享 Git 操作引擎）",
-  version: "0.1.0",
   icon: "icons/git-branch.svg",
   // 零 client bundle（同 aiti-echo-agent 等 10 个纯服务端扩展先例）
   provides: ["aiti-git-ops.api"],

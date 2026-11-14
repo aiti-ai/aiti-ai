@@ -16,7 +16,6 @@ let initialized = false;
 export default {
   id: "aiti-ai-usage",
   name: "AI Usage",
-  version: "0.1.0",
   icon: "icon.svg",
   client: "dist/aiti-ai-usage.mjs",
 

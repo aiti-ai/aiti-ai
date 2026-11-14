@@ -28,7 +28,6 @@ let recycleApi: ReturnType<typeof createSessionRecycleApi> | null = null;
 export default {
   id: "aiti-pi-agent",
   name: "Pi Spawn (子进程后端)",
-  version: "0.2.0",
   icon: "🚀",
 
   features: [spawnEnvFeature("Pi"), spawnCommandFeature("Pi"), spawnArgsPrefixFeature("Pi")],

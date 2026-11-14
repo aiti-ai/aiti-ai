@@ -85,7 +85,6 @@ function pageOrigin(req: Request): string {
 export default {
   id: "aiti-onlyoffice",
   name: "aiti-onlyoffice",
-  version: "0.1.0",
   description: "OnlyOffice DocumentServer 深度保真编辑档：.docx/.xlsx/.pptx 预览+编辑（Docker 后端，feature 默认关）",
   client: "dist/aiti-onlyoffice-client.mjs",
   clientImmediately: true,

@@ -696,7 +696,6 @@ async function runTool(name: string, args: any): Promise<any> {
 export default {
   id: "aiti-model-wizard",
   name: "模型添加向导（目录搜索 / 反向匹配 / 自动探测）",
-  version: "0.1.1",
   icon: "icon.svg",
   client: "dist/aiti-model-wizard-client.mjs",
 

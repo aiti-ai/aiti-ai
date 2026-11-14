@@ -29,7 +29,6 @@ import { homedir } from "node:os";
 export default {
   id: "aiti-cpu-meter",
   name: "主线程流畅度检测器（读秒 + 0-100 分 + 可注入任意站点）",
-  version: "0.3.1",
   icon: "icon.svg",
   client: "dist/aiti-cpu-meter-client.mjs",
 

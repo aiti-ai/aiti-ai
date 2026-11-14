@@ -1,163 +1,155 @@
 /**
- * aiti-qoder-agent — 流式三线组装单测（对齐 zcode 显示：text / thinking 各自成块）。
+ * aiti-qoder-agent — ACP 流式组装单测（text / thinking 双气泡线 + 工具卡直出）。
  *
- * 钉死 CC stream-json → pi message_update 映射：
- *   1. message_start 带空骨架 message（宿主 reducer 按 contentIndex 建块的前提）；
- *   2. content_block_start/delta/stop → thinking_start/delta/end + text_*，contentIndex 本地连续
- *      （tool_use 块不占位——工具卡由 assistant 帧方案 X 出，气泡里不留空洞）；
- *   3. assistant 终帧 → 按**帧内原序**分组落消息（连续同类归一条），liveHistory 同形；
- *   4. tool_result 的 string 形态 content（qoderclicn 1.1.56 实测）→ toolResult 条目；
- *   5. 容错：孤儿 delta 就地开块；工具空输出占位文案。
+ * 钉死 ACP session/update → pi message_update 映射（2026-11-13 ACP 重写）：
+ *   1. 首个 chunk 前有 message_start 空骨架（宿主 reducer 按 contentIndex 建块的前提）；
+ *   2. agent_thought_chunk / agent_message_chunk → thinking/text 两条独立气泡线
+ *      （thinking_start/delta/end + text_*，contentIndex 各自连续）；
+ *   3. tool_call → 原生 assistant toolCall 卡（_meta.qoder.toolName 优先于 title），
+ *      tool_call_update(completed/failed) → toolResult（rawOutput / content[].text 回退）；
+ *   4. 回合收口（session/prompt 响应）→ 气泡 flush 落 message_end + agent_settled；
+ *   5. 容错：孤儿 chunk 就地开块；工具空输出占位文案；失败工具带 isError。
  *
  * Run: node --experimental-strip-types --test pi-web-ext/aiti-qoder-agent/qoder-stream.test.mjs
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { PassThrough } from "node:stream";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+// 状态写盘隔离（session/new 换绑会 rename 模型状态文件）：不隔离就刷真实 ~/.pi/agent/ext-agents。
+const sandbox = mkdtempSync(join(tmpdir(), "qoder-stream-"));
+process.env.EXT_MODEL_STATE_DIR = join(sandbox, "ext-agents");
+process.env.PI_MODELS_CONFIG_PATH = join(sandbox, "models.json");
 
 const { QoderHandle } = await import("./index.ts");
+const { makeReadyHandle, flush } = await import("./qoder-acp-stub.mjs");
 
-function makeHandle(id = "qodercn:new-test") {
-  const stdout = new PassThrough();
-  const child = {
-    stdout,
-    stderr: { on() {} },
-    once() {},
-    stdin: { write: () => true, writable: true, on() {} },
-    kill() {},
-    exitCode: null,
-  };
-  const h = new QoderHandle(id, child, null, "/tmp", "cn");
-  const events = [];
-  h.subscribe((e) => events.push(e));
-  const write = (frame) => stdout.write(JSON.stringify(frame) + "\n");
-  return { h, events, write };
-}
+test.after(() => { rmSync(sandbox, { recursive: true, force: true }); });
 
-const flush = () => new Promise((r) => setTimeout(r, 2));
 const ame = (events) => events.filter((e) => e.type === "message_update").map((e) => e.assistantMessageEvent);
 
-test("message_start 带空骨架（无 message 则宿主整条丢弃 delta）", async () => {
-  const { events, write } = makeHandle();
-  write({ type: "stream_event", event: { type: "message_start", message: { role: "assistant" } } });
+test("首个 chunk 前有 message_start 空骨架", async () => {
+  const { h, events, stub } = await makeReadyHandle(QoderHandle);
+  stub.notify({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "你好" } });
   await flush();
   const start = events.find((e) => e.type === "message_start");
   assert.equal(start?.role, "assistant");
   assert.deepEqual(start?.message?.content, []);
   assert.equal(start?.message?.role, "assistant");
+  await h.dispose();
 });
 
-test("thinking + text 两线：contentIndex 本地连续，tool_use 不占位", async () => {
-  const { events, write } = makeHandle();
-  write({ type: "stream_event", event: { type: "message_start" } });
-  write({ type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "thinking" } } });
-  write({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "先想" } } });
-  write({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "一想" } } });
-  write({ type: "stream_event", event: { type: "content_block_stop", index: 0 } });
-  write({ type: "stream_event", event: { type: "content_block_start", index: 1, content_block: { type: "tool_use", name: "Bash", id: "t1" } } });
-  write({ type: "stream_event", event: { type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: '{"command' } } });
-  write({ type: "stream_event", event: { type: "content_block_stop", index: 1 } });
-  write({ type: "stream_event", event: { type: "content_block_start", index: 2, content_block: { type: "text" } } });
-  write({ type: "stream_event", event: { type: "content_block_delta", index: 2, delta: { type: "text_delta", text: "正文" } } });
-  write({ type: "stream_event", event: { type: "content_block_stop", index: 2 } });
+test("thinking + text 双线：各自 contentIndex，互不占位", async () => {
+  const { h, events, stub } = await makeReadyHandle(QoderHandle);
+  stub.notify({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "先想" } });
+  stub.notify({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "一想" } });
+  stub.notify({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "正文" } });
+  stub.notify({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "续写" } });
   await flush();
-
-  assert.deepEqual(ame(events), [
-    { type: "thinking_start", contentIndex: 0 },
-    { type: "thinking_delta", contentIndex: 0, delta: "先想" },
-    { type: "thinking_delta", contentIndex: 0, delta: "一想" },
-    { type: "thinking_end", contentIndex: 0, content: "先想一想" },
-    { type: "text_start", contentIndex: 1 },
-    { type: "text_delta", contentIndex: 1, delta: "正文" },
-    { type: "text_end", contentIndex: 1, content: "正文" },
-  ]);
+  const seq = ame(events).map((e) => e.type);
+  assert.deepEqual(seq, ["thinking_start", "thinking_delta", "thinking_delta", "text_start", "text_delta", "text_delta"]);
+  const thinkingIdx = ame(events).find((e) => e.type === "thinking_delta")?.contentIndex;
+  const textIdx = ame(events).find((e) => e.type === "text_delta")?.contentIndex;
+  assert.notEqual(thinkingIdx, textIdx, "thinking 与 text 线 contentIndex 必须不同");
+  await h.dispose();
 });
 
-test("assistant 终帧：按帧内原序分组落 liveHistory 与 message_end", async () => {
-  const { h, events, write } = makeHandle();
-  write({ type: "stream_event", event: { type: "message_start" } });
-  write({ type: "assistant", message: { model: "qfmodel", content: [
-    { type: "thinking", thinking: "推理过程" },
-    { type: "tool_use", id: "t1", name: "Read", input: { path: "a.ts" } },
-    { type: "text", text: "结论" },
-  ] } });
+test("孤儿 chunk（无 thinking_start 先行）就地开块不丢正文", async () => {
+  const { h, events, stub } = await makeReadyHandle(QoderHandle);
+  stub.notify({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "直接正文" } });
   await flush();
-
-  const ends = events.filter((e) => e.type === "message_end" && e.message?.role === "assistant");
-  // 帧内原序 = 显示序：thinking 在工具卡之前，不得被 toolCall 抢先（刷新回放与直播一致）
-  assert.deepEqual(ends.map((e) => e.message.content.map((b) => b.type)), [["thinking"], ["toolCall"], ["text"]]);
-  assert.equal(ends[1].message.model, "qfmodel");
-  assert.equal(ends[1].message.provider, "aiti-qoder-agent");
-  assert.deepEqual(
-    h.liveHistory.map((m) => m.content?.map((b) => b.type)),
-    [["thinking"], ["toolCall"], ["text"]],
-  );
+  const deltas = ame(events).filter((e) => e.type === "text_delta");
+  assert.equal(deltas.length, 1);
+  assert.equal(deltas[0].delta, "直接正文");
+  await h.dispose();
 });
 
-test("相邻同类块归一条：thinking+text 之间无工具时仍是一条两块的助手消息", async () => {
-  const { events, write } = makeHandle();
-  write({ type: "assistant", message: { content: [
-    { type: "thinking", thinking: "想" },
-    { type: "text", text: "答" },
-  ] } });
+test("tool_call → assistant toolCall 卡（_meta.qoder.toolName 优先）；completed 更新 → toolResult", async () => {
+  const { h, events, stub } = await makeReadyHandle(QoderHandle);
+  stub.notify({
+    sessionUpdate: "tool_call",
+    toolCallId: "call_1",
+    status: "pending",
+    title: "Edit file",
+    kind: "edit",
+    rawInput: { command: "sleep 2" },
+    _meta: { qoder: { toolName: "Bash" } },
+  });
   await flush();
-  const ends = events.filter((e) => e.type === "message_end" && e.message?.role === "assistant");
-  assert.equal(ends.length, 1);
-  assert.deepEqual(ends[0].message.content.map((b) => b.type), ["thinking", "text"]);
+  const card = events.filter((e) => e.type === "message_end").map((e) => e.message)
+    .find((m) => m?.content?.[0]?.type === "toolCall");
+  assert.equal(card?.content?.[0]?.toolName, "Bash", "真实工具名来自 _meta.qoder.toolName");
+  assert.equal(card?.content?.[0]?.toolCallId, "call_1");
+  assert.deepEqual(card?.content?.[0]?.input, { command: "sleep 2" });
+
+  stub.notify({
+    sessionUpdate: "tool_call_update",
+    toolCallId: "call_1",
+    status: "completed",
+    content: [{ type: "content", content: { type: "text", text: "done" } }],
+    rawOutput: "done-raw",
+  });
+  await flush();
+  const result = events.filter((e) => e.type === "message_end").map((e) => e.message)
+    .find((m) => m?.role === "toolResult");
+  assert.equal(result?.toolName, "Bash");
+  assert.equal(result?.content?.[0]?.text, "done", "content[].text 优先于 rawOutput");
+  await h.dispose();
 });
 
-test("孤儿 delta：缺 content_block_start 也就地开块（正文不得静默丢弃）", async () => {
-  const { events, write } = makeHandle();
-  write({ type: "stream_event", event: { type: "message_start" } });
-  write({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "丢块头" } } });
-  write({ type: "stream_event", event: { type: "content_block_start", index: 1, content_block: { type: "text" } } });
-  write({ type: "stream_event", event: { type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "正常" } } });
+test("回放单帧 completed tool_call：卡 + 结果两条都落 liveHistory（不留匿名结果）", async () => {
+  const sid = "sid-replay-1";
+  const { h, stub } = await makeReadyHandle(QoderHandle, { sessionId: sid, stubOpts: { sessionId: sid } });
+  // session/load 已完成（makeReadyHandle 走 load 路径），再注入一条 completed tool_call 模拟回放尾巴
+  stub.notify({
+    sessionUpdate: "tool_call",
+    toolCallId: "call_r",
+    status: "completed",
+    title: "echo",
+    rawInput: {},
+    content: [{ type: "content", content: { type: "text", text: "out" } }],
+  });
   await flush();
-
-  assert.deepEqual(ame(events), [
-    { type: "thinking_start", contentIndex: 0 },
-    { type: "thinking_delta", contentIndex: 0, delta: "丢块头" },
-    { type: "text_start", contentIndex: 1 },
-    { type: "text_delta", contentIndex: 1, delta: "正常" },
-  ]);
+  const history = h.getMessages();
+  const card = history.find((m) => m?.content?.[0]?.type === "toolCall" && m.content[0].toolCallId === "call_r");
+  const result = history.find((m) => m?.role === "toolResult" && m.toolCallId === "call_r");
+  assert.ok(card, "回放单帧也要出调用卡");
+  assert.ok(result, "结果行配对");
+  await h.dispose();
 });
 
-test("空工具输出：占位文案兜底（前端折叠卡不至于一行空白）", async () => {
-  const { events, write } = makeHandle();
-  write({ type: "assistant", message: { content: [{ type: "tool_use", id: "e1", name: "Bash", input: { command: "true" } }] } });
-  write({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "e1", content: "" }] } });
-  write({ type: "assistant", message: { content: [{ type: "tool_use", id: "e2", name: "Bash", input: { command: "false" } }] } });
-  write({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "e2", content: [], is_error: true }] } });
+test("回合收口：气泡 flush 落 message_end + agent_settled（stopReason 正常无 error）", async () => {
+  const { h, events, stub } = await makeReadyHandle(QoderHandle, { stubOpts: { autoAnswerPrompt: false } });
+  // 需要真实 prompt（挂起桩）：sessionReady 已就绪，直接发
+  const p = h.prompt("hi");
   await flush();
-
-  const results = events.filter((e) => e.type === "message_end" && e.message?.role === "toolResult");
-  assert.equal(results[0].message.content[0].text, "(工具执行完成，无文本输出)");
-  assert.equal(results[1].message.content[0].text, "(工具执行失败)");
-  assert.equal(results[1].message.isError, true);
+  stub.notify({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "思考段" } });
+  stub.notify({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "正文段" } });
+  stub.answerPrompt({ stopReason: "end_turn", usage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 } });
+  await p;
+  await flush();
+  const ends = events.filter((e) => e.type === "message_end").map((e) => e.message);
+  const think = ends.find((m) => m?.content?.[0]?.type === "thinking");
+  const text = ends.find((m) => m?.content?.[0]?.type === "text" && m.role === "assistant");
+  assert.equal(think?.content?.[0]?.thinking, "思考段", "thinking 气泡随收口落盘");
+  assert.equal(text?.content?.[0]?.text, "正文段", "text 气泡随收口落盘");
+  const settled = events.find((e) => e.type === "agent_settled");
+  assert.ok(settled);
+  assert.equal(settled.stopReason, undefined, "end_turn 不带 stopReason/error");
+  assert.equal(h.getUsageTotals().inputTokens, 3, "usage 累加");
+  await h.dispose();
 });
 
-test("工具名账本：流式块头登记，assistant 终帧丢失时 tool_result 仍报工具名", async () => {
-  const { events, write } = makeHandle();
-  write({ type: "stream_event", event: { type: "message_start" } });
-  write({ type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "s1", name: "WebFetch" } } });
-  // CLI 崩溃/丢帧：没有 assistant 终帧，直接来了工具结果
-  write({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "s1", content: "页面正文" }] } });
+test("failed 工具更新 → toolResult 带 isError + 空输出占位文案", async () => {
+  const { h, events, stub } = await makeReadyHandle(QoderHandle);
+  stub.notify({ sessionUpdate: "tool_call", toolCallId: "call_x", status: "pending", title: "Bash", rawInput: {} });
+  stub.notify({ sessionUpdate: "tool_call_update", toolCallId: "call_x", status: "failed" });
   await flush();
-
-  const result = events.filter((e) => e.type === "message_end" && e.message?.role === "toolResult").pop();
-  assert.equal(result?.message?.toolName, "WebFetch");
-  assert.equal(result?.message?.content[0].text, "页面正文");
-});
-
-test("tool_result：string 形态 content（qoderclicn 1.1.56 实测）→ 折叠进 toolResult 条目", async () => {
-  const { h, events, write } = makeHandle();
-  write({ type: "assistant", message: { content: [{ type: "tool_use", id: "t9", name: "Grep", input: { pattern: "x" } }] } });
-  write({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t9", content: "命中 3 处" }] } });
-  await flush();
-
-  const result = events.filter((e) => e.type === "message_end" && e.message?.role === "toolResult").pop();
-  assert.equal(result?.message?.toolCallId, "t9");
-  assert.equal(result?.message?.toolName, "Grep");
-  assert.equal(result?.message?.content[0].text, "命中 3 处");
-  assert.equal(h.liveHistory.at(-1)?.role, "toolResult");
+  const result = events.filter((e) => e.type === "message_end").map((e) => e.message)
+    .find((m) => m?.role === "toolResult");
+  assert.equal(result?.isError, true);
+  assert.ok(result?.content?.[0]?.text, "空输出有占位文案");
+  await h.dispose();
 });

@@ -428,7 +428,6 @@ function ratePercent(rate: number): string {
 export default {
   id: "aiti-ai-speek",
   name: "跟读模式（AI 输出朗读）",
-  version: "0.1.0",
   icon: "icon.svg",
   client: "dist/aiti-ai-speek-client.mjs",
 

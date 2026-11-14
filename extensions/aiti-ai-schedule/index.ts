@@ -64,7 +64,6 @@ const SCHEDULE_TASK_DESC = `定时任务管理：创建/查询/修改/启停/删
 export default {
   id: "aiti-ai-schedule",
   name: "AI 自调度（计划管理）",
-  version: "0.4.0",
   icon: "icon.svg",
   client: "dist/aiti-ai-schedule.mjs",
 

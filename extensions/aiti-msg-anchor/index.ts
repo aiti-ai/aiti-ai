@@ -28,7 +28,6 @@
 export default {
   id: "aiti-msg-anchor",
   name: "消息锚点横幅",
-  version: "0.1.0",
   icon: "icon.svg",
   client: "dist/aiti-msg-anchor-client.mjs",
 

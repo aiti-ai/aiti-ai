@@ -1,13 +1,15 @@
 /**
- * aiti-qoder-agent — 加固行为单测（P1 四处行为错误的回归钉子）。
+ * aiti-qoder-agent — 加固行为单测。
  *
- *   1. lineReader 溢出闸门必须真的可达（原实现在切行循环里 return，检查成了死代码
- *      → 单行超阈值时无限累积 Buffer）；
- *   2. recycle 的占位 id（`qoder:new-<uuid>`，从没收到过 init 帧）不得当成真实 sid
- *      去 --resume——共享层约定 sessionId 空串 = 只 dispose 不重建；
- *   3. init 帧换绑判据（endsWith）：占位 → 真实 sid 一次，重复 init 不二次换绑；
- *   4. abort() 在 handle 自认空闲时也必须给前端一帧收口（停止按钮不得永挂）；
- *   5. 队列 sidecar 文件名去冒号（NTFS 冒号是 ADS 流分隔符，win32 上多会话互相踩踏）。
+ * ACP 驱动（2026-11-13 重写）钉死的行为：
+ *   1. lineReader 溢出闸门可达（工具函数层，不受驱动切换影响）；
+ *   2. recycle 占位 id 判据（不变）；
+ *   3. abort() 空闲态补 aborted 收口帧（停止按钮不得永挂）；
+ *   4. abort() cancel 未收口 → 硬杀（SIGTERM→SIGKILL），前端绝不挂在「停止中」；
+ *   5. session/new 换绑：占位 id → 真实 sid（session_backend_ready + 模型状态迁移）；
+ *   6. 权限请求按 JSON-RPC id 精确应答，respondInteraction 对不上的 id 一律不应答；
+ *   7. available_commands_update → getCommands 出口；
+ *   8. sidecar 文件名去冒号（NTFS ADS 分隔符）。
  *
  * Run: node --experimental-strip-types --test pi-web-ext/aiti-qoder-agent/qoder-hardening.test.mjs
  */
@@ -18,33 +20,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 
-// 状态写盘隔离：init 帧换绑会 rename 模型状态文件并持久化 selected（不隔离就写进真实
+// 状态写盘隔离：session/new 换绑会 rename 模型状态文件并持久化 selected（不隔离就写进真实
 // ~/.pi/agent/ext-agents）。必须在 import 扩展前设好（读点在函数调用时，越早越稳）。
 const sandbox = mkdtempSync(join(tmpdir(), "qoder-hardening-"));
 process.env.EXT_MODEL_STATE_DIR = join(sandbox, "ext-agents");
 process.env.PI_MODELS_CONFIG_PATH = join(sandbox, "models.json");
 
 const { QoderHandle, lineReader, parseRecycleId, sidecarBase } = await import("./index.ts");
+const { makeReadyHandle, createAcpChild, flush } = await import("./qoder-acp-stub.mjs");
 
 test.after(() => { rmSync(sandbox, { recursive: true, force: true }); });
-
-const flush = () => new Promise((r) => setTimeout(r, 2));
-
-function makeHandle(id = "qodercn:new-hardening") {
-  const stdout = new PassThrough();
-  const child = {
-    stdout,
-    stderr: { on() {} },
-    once() {},
-    stdin: { write: () => true, writable: true, on() {} },
-    kill() {},
-    exitCode: null,
-  };
-  const h = new QoderHandle(id, child, null, "/tmp", "cn");
-  const events = [];
-  h.subscribe((e) => events.push(e));
-  return { h, events, write: (frame) => stdout.write(JSON.stringify(frame) + "\n") };
-}
 
 test("lineReader：单行超阈值 → onOverflow 触发且停止累积（闸门可达，非死代码）", async () => {
   const s = new PassThrough();
@@ -84,55 +69,147 @@ test("parseRecycleId：占位 id → 空 sessionId（只释放不重建）；真
 });
 
 test("abort()：空闲态也发 aborted 收口帧（前端停止按钮不得永挂）", async () => {
-  const { h, events } = makeHandle();
+  const { h, events } = await makeReadyHandle(QoderHandle);
+  // 先跑完一轮（桩 autoAnswerPrompt 默认开）→ running=false 空闲态
+  await h.prompt("hi");
+  await flush();
+  const before = events.length;
   await h.abort();
-  assert.deepEqual(events.map((e) => e.type), ["agent_end", "agent_settled"]);
-  assert.equal(events[1].stopReason, "aborted");
+  const newEvents = events.slice(before);
+  assert.deepEqual(newEvents.map((e) => e.type), ["agent_end", "agent_settled"]);
+  assert.equal(newEvents[1].stopReason, "aborted");
+  await h.dispose();
 });
 
-test("init 帧换绑：占位 id → 真实 sid（前缀随 variant），重复 init 不二次换绑", async () => {
-  const { h, events, write } = makeHandle("qodercn:new-abc123");
-  write({ type: "system", subtype: "init", session_id: "real-sid", model: "m1" });
-  await flush();
-  assert.equal(h.id, "qodercn:real-sid");
-  assert.equal(events.find((e) => e.type === "session_backend_ready")?.oldId, "qodercn:new-abc123");
-  write({ type: "system", subtype: "init", session_id: "real-sid", model: "m1" });
-  await flush();
-  assert.equal(events.filter((e) => e.type === "session_backend_ready").length, 1);
+test("abort()：cancel 后不收口 → 硬杀（SIGTERM→SIGKILL），前端绝不挂在「停止中」", async () => {
+  const prevSettle = QoderHandle.CANCEL_SETTLE_TIMEOUT_MS;
+  const prevGrace = QoderHandle.HARD_KILL_GRACE_MS;
+  QoderHandle.CANCEL_SETTLE_TIMEOUT_MS = 40;
+  QoderHandle.HARD_KILL_GRACE_MS = 30;
+  try {
+    const { h, stub } = await makeReadyHandle(QoderHandle, { stubOpts: { autoAnswerPrompt: false, cancelSilent: true } });
+    h.prompt("busy task").catch(() => {});
+    await flush();
+    assert.equal(stub.pendingPrompts.length, 1, "prompt 应挂起（桩不应答）");
+    const kills = [];
+    (h).child.kill = (sig) => { kills.push(sig); };
+    await h.abort(); // cancel 已写，但桩不回 cancelled → 超时 → 硬杀
+    await new Promise((r) => setTimeout(r, 120)); // settle timeout + grace elapsed
+    assert.ok(kills.includes("SIGTERM"), "应先 SIGTERM");
+    assert.ok(kills.includes("SIGKILL"), "宽限后应 SIGKILL");
+    assert.equal(kills.indexOf("SIGTERM"), 0, "SIGTERM 必须先于 SIGKILL");
+    const cancelFrame = stub.sent.find((f) => f.method === "session/cancel");
+    assert.ok(cancelFrame, "abort 应发出 session/cancel");
+  } finally {
+    QoderHandle.CANCEL_SETTLE_TIMEOUT_MS = prevSettle;
+    QoderHandle.HARD_KILL_GRACE_MS = prevGrace;
+  }
 });
 
-test("init 帧能力面快照：tools/slash_commands/permissionMode → getAllTools/getCommands/getPermissionMode", async () => {
-  const { h, write } = makeHandle();
-  assert.deepEqual(await h.getAllTools(), [], "init 前空态不抛");
-  assert.deepEqual(await h.getCommands(), []);
-  write({
-    type: "system",
-    subtype: "init",
-    session_id: "cap-sid",
-    model: "m1",
-    tools: ["Bash", "Read", "Edit"],
-    slash_commands: ["compact", "review"],
-    permissionMode: "bypassPermissions",
+test("abort()：cancel 正常收口（cancelled 响应）→ agent_settled(aborted)，不硬杀", async () => {
+  const { h, events, stub } = await makeReadyHandle(QoderHandle, { stubOpts: { autoAnswerPrompt: false } });
+  h.prompt("busy").catch(() => {});
+  await flush();
+  await h.abort(); // 桩在 session/cancel 时回 stopReason:cancelled
+  await flush();
+  const settled = events.find((e) => e.type === "agent_settled");
+  assert.ok(settled, "收口帧必须到达");
+  assert.equal(settled.stopReason, "aborted");
+  assert.equal(h.isRunning(), false);
+  await h.dispose();
+});
+
+test("session/new 换绑：占位 id → 真实 sid（session_backend_ready + agent_start）", async () => {
+  const { h, events } = await makeReadyHandle(QoderHandle, { id: "qodercn:new-bind" });
+  assert.equal(h.id, "qodercn:sid-stub-1");
+  const ready = events.find((e) => e.type === "session_backend_ready");
+  assert.equal(ready?.oldId, "qodercn:new-bind");
+  assert.equal(ready?.id, "qodercn:sid-stub-1");
+  assert.ok(events.some((e) => e.type === "agent_start"), "bootstrap 完成后发 agent_start");
+  await h.dispose();
+});
+
+test("available_commands_update → getCommands 出口；未知档 fail-loud", async () => {
+  const { h, stub } = await makeReadyHandle(QoderHandle);
+  stub.notify({
+    sessionUpdate: "available_commands_update",
+    availableCommands: [{ name: "goal", description: "Set a goal" }, { name: "compact" }],
   });
   await flush();
-  assert.deepEqual((await h.getAllTools()).map((t) => t.name), ["Bash", "Read", "Edit"]);
-  assert.deepEqual(await h.getCommands(), [
+  const cmds = await h.getCommands();
+  assert.deepEqual(cmds, [
+    { name: "goal", description: "Set a goal", source: "skill" },
     { name: "compact", source: "skill" },
-    { name: "review", source: "skill" },
   ]);
-  assert.equal(h.getPermissionMode(), "bypassPermissions");
-  // 重复 init（CLI 会再发一次）覆盖为最近一轮，且不得因模型未变而误报 model_select
-  write({ type: "system", subtype: "init", session_id: "cap-sid", model: "m1", tools: ["Bash"] });
+  await assert.rejects(() => h.setPermissionMode("nonsense"), /非法权限模式/);
+  assert.equal(await h.setPermissionMode("plan"), false, "plan 档在 ACP 面不可用（fail 返 false）");
+  await h.dispose();
+});
+
+test("权限请求：interaction_request 开卡 + respondInteraction 按 JSON-RPC id 应答", async () => {
+  const { h, events, stub } = await makeReadyHandle(QoderHandle);
+  const rawId = stub.request("session/request_permission", {
+    options: [
+      { optionId: "opt-allow", name: "Allow", kind: "allow_once" },
+      { optionId: "opt-deny", name: "Deny", kind: "deny_once" },
+    ],
+    toolCall: { toolCallId: "tc1", title: "Run rm -rf", rawInput: { command: "rm -rf /" }, _meta: { qoder: { toolName: "Bash" } } },
+  });
   await flush();
-  assert.deepEqual((await h.getAllTools()).map((t) => t.name), ["Bash"]);
+  const ask = events.find((e) => e.type === "interaction_request");
+  assert.ok(ask, "权限请求应上卡");
+  assert.equal(ask.kind, "tool_auth");
+  // respondInteraction(allow) → 桩应收到对该 rawId 的 JSON-RPC response（allow_selected + allow optionId）
+  const ok = await h.respondInteraction(ask.requestId, { action: "accept" });
+  assert.equal(ok, true);
+  await flush();
+  const resp = stub.sent.find((f) => f.id === rawId && f.result);
+  assert.ok(resp, "CLI 的 request 必须收到 response");
+  assert.equal(resp.result.outcome.outcome, "allow_selected");
+  assert.equal(resp.result.outcome.optionId, "opt-allow");
+  // 对不上的 requestId 不应答
+  assert.equal(await h.respondInteraction("perm-404", { action: "decline" }), false);
+  await h.dispose();
+});
+
+test("权限请求 deny：选 deny 选项回 CLI；前端卡片收到拒绝记录", async () => {
+  const { h, events, stub } = await makeReadyHandle(QoderHandle);
+  const rawId = stub.request("session/request_permission", {
+    options: [
+      { optionId: "opt-allow", name: "Allow", kind: "allow_once" },
+      { optionId: "opt-deny", name: "Deny", kind: "deny_once" },
+    ],
+    toolCall: { toolCallId: "tc2", title: "Write file", rawInput: { path: "/etc/passwd" } },
+  });
+  await flush();
+  const ask = events.find((e) => e.type === "interaction_request");
+  await h.respondInteraction(ask.requestId, { action: "decline" });
+  await flush();
+  const resp = stub.sent.find((f) => f.id === rawId && f.result);
+  assert.equal(resp.result.outcome.optionId, "opt-deny");
+  const card = events.filter((e) => e.type === "message_end" && e.message?.customType === "🔐 会话请求");
+  assert.ok(card.length >= 1, "决策要留痕（消息流 custom 卡）");
+  await h.dispose();
 });
 
 test("sidecar 文件名：win32 去冒号（NTFS ADS 分隔符），非 win 保持原样", () => {
-  const got = sidecarBase("qoder:new-abc");
+  const plain = "qodercn:0f3d2c1b";
   if (process.platform === "win32") {
-    assert.equal(got, "qoder_new-abc.json");
-    assert.ok(!got.includes(":"), "win32 上不得含冒号");
+    assert.equal(sidecarBase(plain), "qodercn_0f3d2c1b.json");
   } else {
-    assert.equal(got, "qoder:new-abc.json");
+    assert.equal(sidecarBase(plain), "qodercn:0f3d2c1b.json");
   }
+  assert.equal(sidecarBase("qodercn:new-abc"), (process.platform === "win32" ? "qodercn_new-abc" : "qodercn:new-abc") + ".json");
+});
+
+test("AcpRpc：孤儿响应/坏 JSON 不崩；stdin 关闭后 request reject", async () => {
+  const stub = createAcpChild();
+  const h = new QoderHandle("qodercn:new-rpc", stub.child, null, "/tmp", "cn", "/tmp/cli");
+  stub.writeFrame({ jsonrpc: "2.0", result: { stray: true }, id: 999 }); // 无人认领的响应
+  stub.writeFrame("not-json\n");
+  stub.child.kill(); // no-op
+  h["acp"]?.close();
+  const err = await h["acp"].request("session/prompt", {}).catch((e) => e);
+  assert.ok(/closed/.test(err.message), "关闭后 request 应 reject");
+  await h.dispose();
 });

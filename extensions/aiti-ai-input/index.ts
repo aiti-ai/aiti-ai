@@ -861,7 +861,6 @@ async function contextHistory(ctx: { core: { listSessions(): Promise<unknown[]>;
 export default {
   id: "aiti-ai-input",
   name: "AI input",
-  version: "0.4.2",
   icon: "icon.svg",
   client: "dist/aiti-ai-input-client.mjs",
 

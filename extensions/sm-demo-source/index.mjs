@@ -63,7 +63,6 @@ function json(body, status = 200) {
 export default {
   id: "sm-demo-source",
   name: "SM Demo Agent Source",
-  version: "0.1.0",
 
   ui: {
     // §4.8：声明 slot 能力 —— session-manager 据此自动发现本扩展

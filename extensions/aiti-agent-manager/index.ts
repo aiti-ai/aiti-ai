@@ -403,7 +403,6 @@ async function accountsAction(agent: string, action: string, body: Record<string
 export default {
   id: "aiti-agent-manager",
   name: "Agent 管理界面",
-  version: "0.2.0",
   icon: "🤖",
   // 统一管理面板（零构建原生 h() client；client/ 下文件随 deploy 拷入 dist/）
   client: "dist/agent-manager-client.mjs",

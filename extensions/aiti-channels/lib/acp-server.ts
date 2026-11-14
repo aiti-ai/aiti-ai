@@ -295,9 +295,20 @@ export async function startAcpServer(instanceId: string): Promise<{ ok: boolean;
   }
 
   const server = net.createServer((conn) => new AcpConnection(instanceId, conn));
+  // Reload race: shutdown's server.close() releases the pipe/file name asynchronously,
+  // so an immediate listen() hits EADDRINUSE while the old handle is still draining —
+  // and ensureAll only logs, leaving the endpoint dead until the next reload.
+  // Retry the same in-memory server a few times; the name frees within ~1-2s.
   await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(sockPath, () => resolve());
+    const attempts = 5;
+    const tryListen = (n: number) => {
+      server.once("error", (e: NodeJS.ErrnoException) => {
+        if (e.code === "EADDRINUSE" && n < attempts) setTimeout(() => tryListen(n + 1), 500);
+        else reject(e);
+      });
+      server.listen(sockPath, () => resolve());
+    };
+    tryListen(1);
   });
   servers().servers.set(instanceId, server);
   console.log(`[aiti-channels][acp] server 监听 ${sockPath}（实例 ${instanceId}${pipe ? "，命名管" : ""}）`);

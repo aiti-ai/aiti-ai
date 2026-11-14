@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-backup",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "pi-web 数据备份扩展（state 层快照：硬链接增量 + 保留轮转 + 源严格只读；与 aiti-configs 互补）",
   "type": "module",
   "scripts": {
@@ -8,7 +8,7 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "f373d5aec6a0234c",
+  "contentHash": "0c8db7a005131475",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

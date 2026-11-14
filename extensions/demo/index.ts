@@ -71,7 +71,6 @@ function json(body, status = 200) {
 export default {
   id: "demo",
   name: "扩展自检 (Demo)",
-  version: "0.2.1",
   icon: "icon.svg",
   client: "dist/demo-jsx.mjs",
 

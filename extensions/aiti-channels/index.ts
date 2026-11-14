@@ -49,7 +49,6 @@ function iframeUrl(cfg: any): string {
 export default {
   id: "aiti-channels",
   name: "IM 渠道（cc-connect 大前端）",
-  version: "0.1.0",
   icon: "icon.svg",
   client: "dist/aiti-channels-client.mjs",
 

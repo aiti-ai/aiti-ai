@@ -602,7 +602,6 @@ function writeTagsToPath(root: string, rel: string, add: string[], remove: strin
 const ext = {
   id: "aiti-doc-center",
   name: "文档中心",
-  version: "0.3.0",
   icon: "icon.svg",
   client: "dist/aiti-doc-center-client.mjs",
   ui: {

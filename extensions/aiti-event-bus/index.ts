@@ -66,7 +66,6 @@ let connSweeper: ReturnType<typeof setInterval> | null = null;
 export default {
   id: "aiti-event-bus",
   name: "页面事件总线",
-  version: "0.2.1",
   icon: "icon.svg",
   client: "dist/aiti-event-bus-client.mjs",
   description: "页面事件总线归口：链式接管 __piPageEvents；v0.2 主题订阅（按 type 白名单过滤转发）",

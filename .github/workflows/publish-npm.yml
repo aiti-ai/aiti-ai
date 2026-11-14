@@ -148,6 +148,10 @@ jobs:
             --file "service-tunnels=$PWD/vendor/npm/service-tunnels-0.3.76.tgz" \
             --file "@aiti-ti/ddns=$PWD/vendor/npm/aiti-ti-ddns-0.2.0.tgz"
           npm install --prefix "$BUILD" --legacy-peer-deps --no-audit --no-fund --loglevel=error
+          # 仓根 postcss.config.mjs（tailwind v4）被扩展 vite 向上搜索命中 —— build root 必须含
+          # @tailwindcss/postcss（aiti-sheet-univer 等未声明它，collect 只收扩展自身 deps）
+          npm install --prefix "$BUILD" --no-save --legacy-peer-deps --no-audit --no-fund --loglevel=error \
+            "@tailwindcss/postcss@$(node -p "require('./package.json').devDependencies['@tailwindcss/postcss']")"
           for ext in extensions/*/; do
             [ -d "$ext" ] || continue
             ln -sfn "$BUILD/node_modules" "${ext}node_modules"
@@ -203,6 +207,7 @@ jobs:
           if [[ "${{ inputs.registry || 'staging' }}" == "npmjs" ]]; then ARGS="--target official"; fi
           if [[ "${{ inputs.dry_run }}" != "false" ]]; then ARGS="$ARGS --dry-run"; fi
           if [[ -n "${{ inputs.only }}" ]]; then ARGS="$ARGS --only ${{ inputs.only }}"; fi
+          set -o pipefail # node 的退出码不能被 tee 吐掉（崩溃/失败必须让 step 变红）
           node tools/publish-all.mjs $ARGS 2>&1 | tee publish-report.txt
           grep -qE "失败 [1-9]" publish-report.txt && echo "::error::有包发布失败，详见上方报告" && exit 1
           true

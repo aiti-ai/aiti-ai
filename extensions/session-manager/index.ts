@@ -185,7 +185,6 @@ function sessionReadTool(currentSid: string) {
 const ext = {
   id: "session-manager",
   name: "Session Manager",
-  version: "0.2.0",
   icon: "icon.svg",
   client: "dist/session-manager.mjs",
 

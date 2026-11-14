@@ -73,7 +73,6 @@ function promptSuggest(store: PromptStore | null, q: string, limit: number): unk
 export default {
   id: "aiti-prompts",
   name: "aiti prompt 片段收藏库",
-  version: "0.1.0",
   icon: "icon.svg",
   client: "dist/aiti-prompts-client.mjs",
 
