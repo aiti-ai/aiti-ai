@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/service-tunnels",
-  "version": "0.3.83",
+  "version": "0.3.84",
   "type": "module",
   "aiti": {
     "kind": "ext",
@@ -29,7 +29,7 @@
     ]
   },
   "aitiExtProtocol": "1.0",
-  "contentHash": "f320e361394bd56f",
+  "contentHash": "cb7dffaa5c226827",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",
