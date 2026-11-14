@@ -1526,7 +1526,18 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   const activeProjectKeyRef = useRef<string | null>(null);
   const initialLinkedSessionId = linkedSessionId(initialNavigation);
   // True once the initial ?session= URL param has been resolved (or confirmed absent)
-  const [initialSessionRestored, setInitialSessionRestored] = useState<boolean>(() => !initialSessionId);
+  const [initialSessionRestored, setInitialSessionRestoredState] = useState<boolean>(() => !initialSessionId);
+  // Mirror ref written in the same task as the setter: the takeover-mode sidebar
+  // (session-manager SidebarContentDock) invokes onCwdChange synchronously right after
+  // onInitialRestoreDone() — before React re-renders — with its onCwdChangeRef still
+  // holding the previous commit's handleCwdChange closure. Guards must therefore read
+  // this ref (logical state), not the closure value (render state), or the failed
+  // ?session= restore leaves the shell stuck on the quickstart placeholder forever.
+  const initialSessionRestoredRef = useRef(initialSessionRestored);
+  const setInitialSessionRestored = useCallback((v: boolean | ((prev: boolean) => boolean)) => {
+    initialSessionRestoredRef.current = typeof v === "function" ? v(initialSessionRestoredRef.current) : v;
+    setInitialSessionRestoredState(v);
+  }, []);
   const sideTabOwner = activeSessionFamily?.root.id ?? null;
   useEffect(() => {
     if (!catalogLoaded || !initialSessionRestored) return;
@@ -1763,7 +1774,9 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     // 先渲染新会话 composer（「正在打开会话 → 新会话 → 会话」闪现的元凶之一：
     // session-manager 默认项目自动选 / cwd 镜像在恢复期间都可能送达 cwd）。恢复
     // 完成后由 handleSelectSession 权威决定 cwd，此间 cwd 一律忽略。
-    if (initialSessionId && !initialSessionRestored) return;
+    // Read via refs: the takeover sidebar's post-await notification can arrive with a
+    // stale closure (see initialSessionRestoredRef above).
+    if (initialSessionIdRef.current && !initialSessionRestoredRef.current) return;
     const currentFreshCwd = newSessionCwd ?? activeCwd;
     setActiveCwd(cwd);
     // Skip if cwd is null (initial mount).
@@ -1847,13 +1860,13 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
       // the default welcome page when none is remembered.
       restoreWorkspaceContext(newProject, cwd);
     }
-    if (initialSessionRestored || !initialSessionId) {
+    if (initialSessionRestoredRef.current || !initialSessionIdRef.current) {
       const urlSession = new URLSearchParams(window.location.search).get("session");
       if (!urlSession || urlSession !== selectedSession?.id) {
         replaceLocationIfChanged(router, inAppPathname("/"), { scroll: false });
       }
     }
-  }, [activeCwd, activeFileTabId, changeFileWorkspace, initialSessionId, initialSessionRestored, invalidateWorkspaceRestore, newSessionCwd, router, selectedSession, restoreWorkspaceContext]);
+  }, [activeCwd, activeFileTabId, changeFileWorkspace, invalidateWorkspaceRestore, newSessionCwd, router, selectedSession, restoreWorkspaceContext]);
 
   const handleSelectSession = useCallback((session: SessionInfo, isRestore = false, entryId?: string, blockIndex?: number, options?: SelectSessionOptions) => {
     setSearchTarget(entryId ? { sessionId: session.id, entryId, blockIndex } : null);
@@ -2152,11 +2165,14 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
         urlRestoredSessionRef.current = { id: data.info.id, cwd: data.info.cwd };
       }
       return true;
-    } catch (error) {
-      console.error("[pi-web] failed to open session:", error instanceof Error ? error.message : error);
+    } catch {
+      // Next.js dev surfaces console.error as an error overlay, but a failed open is a
+      // normal, recoverable condition (e.g. ?session= pointing at an archived/deleted
+      // session after a reload) — a toast is enough, no error-level noise.
+      piWebToastService.show(translate("sidebar.sessionNotFound"));
       return false;
     }
-  }, [handleSelectSession, router]);
+  }, [handleSelectSession, router, translate]);
 
   // pi-web.session.open(id) delegation backfill (same pattern as hostUiRef: refresh
   // each render to avoid a stale closure). Extensions (e.g. welcome-page widgets)
