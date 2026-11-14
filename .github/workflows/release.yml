@@ -159,7 +159,7 @@ jobs:
         include:
           - { os: linux, arch: x64, runner: ubuntu-latest }
           - { os: darwin, arch: x64, runner: macos-15-intel } # Intel（macos-13 淘汰中，runner 队列枯竭）
-          - { os: darwin, arch: arm64, runner: macos-14 } # Apple Silicon（macos-latest 2026-11-14 三连 15min cancel — runner 侧卡死，退回 macos-14）
+          - { os: darwin, arch: arm64, runner: macos-15 } # Apple Silicon（macos-latest/macos-14 arm64 池 2026-11-14 连续 runner 不接单自动 cancel，macos-15 arm64 池子健康）
           - { os: win32, arch: x64, runner: windows-latest }
     runs-on: ${{ matrix.runner }}
     steps:
