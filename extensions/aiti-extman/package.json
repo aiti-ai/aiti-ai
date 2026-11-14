@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-extman",
-  "version": "0.1.9",
+  "version": "0.1.11",
   "description": "Extension manager — search / enable-disable / install / online registry",
   "homepage": "https://aiti.pw/extensions/aiti-extman.html",
   "dependencies": {
@@ -16,7 +16,7 @@
   "soul": "管扩展的，也该是个扩展。",
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "4a291939accc7c70",
+  "contentHash": "3f5e406e876d2389",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",
