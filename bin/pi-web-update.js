@@ -16,7 +16,7 @@ const FETCH_TIMEOUT_MS = 10_000;
 // postinstall (patch-package) silently don't run. Older npm ignores the flag.
 const MANUAL_COMMAND = "npm install -g @aiti-ai/pi-web@latest --allow-scripts";
 const DEFAULT_RELEASE_REPO = "aiti-ai/aiti-ai";
-const DOWNLOAD_TIMEOUT_MS = 10 * 60_000; // archives are ~170-200 MB
+const DOWNLOAD_TIMEOUT_MS = 10 * 60_000; // universal archives are ~106-124 MB
 
 // Port of lib/app-update.ts (bin cannot import TypeScript).
 // Fork version scheme (Debian/Ubuntu style): "0.15.7" (legacy) / "0.16.0-aiti.1" (fork build
@@ -126,15 +126,6 @@ function isArchiveInstall(pkgDir, exists = fs.existsSync) {
   return exists(path.join(pkgDir, "RELEASE.txt"));
 }
 
-function readReleasePlatform(pkgDir) {
-  try {
-    const line = fs.readFileSync(path.join(pkgDir, "RELEASE.txt"), "utf8").split(/\r?\n/).find((l) => l.startsWith("platform="));
-    return line ? line.slice("platform=".length).trim() : null;
-  } catch {
-    return null;
-  }
-}
-
 // ---- archive channel: release sources (GitHub primary, Gitee fallback) ----
 
 function releaseSources(env = process.env) {
@@ -183,15 +174,16 @@ async function fetchLatestArchiveRelease({ fetchJson: fetchJsonDep = fetchJson, 
   throw lastError ?? new Error("no release source configured");
 }
 
-// Asset naming must match scripts/build-release-archive.mjs: process.platform's
-// win32 is published as "win" (linux/darwin keep their names).
+// Asset naming must match scripts/build-release-archive.mjs: one universal
+// archive covers every OS/arch (native binaries either dropped or shipped for
+// all platforms). win32 keeps its short name ("win").
 function releasePlatform(platform = process.platform) {
   return platform === "win32" ? "win" : platform;
 }
 
 function archiveAssetName(tag, { platform = process.platform, arch = process.arch } = {}) {
   const ext = platform === "win32" ? "zip" : "tar.gz";
-  return `aiti-web-${tag}-${releasePlatform(platform)}-${arch}.${ext}`;
+  return `aiti-web-${tag}-universal.${ext}`;
 }
 
 function findAsset(assets, name) {
@@ -360,12 +352,6 @@ async function runArchiveUpdate({
   if (running.length > 0) {
     error(`pi-web is running:\n${running.map(formatRecord).join("\n")}\nRun \`pi-web stop\` first, then update.`);
     return 1;
-  }
-
-  const builtPlatform = readReleasePlatform(pkgDir);
-  const wantedPlatform = `${releasePlatform(platform)}-${arch}`;
-  if (builtPlatform && builtPlatform !== wantedPlatform) {
-    log(`Note: this install was built for ${builtPlatform}; downloading ${wantedPlatform} for the current machine.`);
   }
 
   const assetName = archiveAssetName(release.tag, { platform, arch });
