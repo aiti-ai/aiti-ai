@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-folder",
-  "version": "0.1.8",
+  "version": "0.1.10",
   "description": "fileViewer folder take-over + pathPicker directory picker — browse / delete to trash + git toolbar and grouped commit plans (soft-depends on aiti-git-ops)",
   "type": "module",
   "scripts": {
