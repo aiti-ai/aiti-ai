@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/pi-git-trace",
   "version": "0.1.8",
-  "description": "编外 AI 变更追踪：.aiti-trace 独立追踪仓，op 编号 before/after 双 commit，文件⇄消息⇄操作全链路（pi 扩展，M0 追踪核心）",
+  "description": "Out-of-band AI change tracking — repo-root .aiti-trace standalone trace repo (autoInit even without git) + op-numbered before/after dual commits + full file⇄message⇄op lineage + rollback + shadow repo slimming compact",
   "keywords": [
     "pi",
     "pi-package",

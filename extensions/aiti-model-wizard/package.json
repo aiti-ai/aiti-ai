@@ -2,7 +2,7 @@
   "name": "@aiti-ai/aiti-model-wizard",
   "version": "0.1.11",
   "type": "module",
-  "description": "模型添加开机向导扩展——JSX + vite 构建 client bundle",
+  "description": ".dev + domestic AI catalog, Chinese/English, paste an API URL to reverse-search) → enter token → test (both 2xx/429 count as pass) → pick/type a model → write models.json; on miss, baseUr",
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",

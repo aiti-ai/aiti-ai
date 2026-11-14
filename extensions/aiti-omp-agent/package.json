@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/aiti-omp-agent",
   "version": "0.1.8",
-  "description": "Oh My Pi (omp.sh) — pi 最大 fork 的 RPC spawn 后端（拆分自 aiti-pi-agent，专一 omp）",
+  "description": "Oh My Pi (omp.sh) — RPC spawn backend for pi's largest fork (split from aiti-pi-agent to specialize in omp): `omp --mode rpc` child process + ready handshake / get_state capability surface / host tools / login / branch",
   "soul": "omp 的独立世界：ready 握手 / get_state 能力面 / host tools / login / branch。",
   "aitiExtProtocol": "1.0",
   "dependencies": {

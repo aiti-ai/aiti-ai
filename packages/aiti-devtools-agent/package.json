@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/aiti-devtools-agent",
   "version": "0.1.2",
-  "description": "aiti-devtools 多 agent 宿主接线框架：桥 HTTP/SSE 协议客户端 + AgentHost 契约 + 工具映射模板（pi / DSH / 其他 agent 复用）",
+  "description": "Multi-agent host wiring framework: AgentBridgeClient (bridge HTTP/SSE client) + AgentHost contract + tool/interaction mapping templates — reused by the pi extension, the DSH host adapter and more.",
   "type": "module",
   "main": "dist/index.js",
   "exports": {

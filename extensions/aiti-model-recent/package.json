@@ -2,7 +2,7 @@
   "name": "@aiti-ai/aiti-model-recent",
   "version": "0.1.9",
   "type": "module",
-  "description": "模型选择器「最近使用」数据提供方扩展——pi-web 去 fork 化 P4 外迁",
+  "description": "The model selector's \"recently used\" data provider — a pure service extension (zero UI); the panel's recent section fetches data synchronously and pick events feed the LRU; the localStorage key matches the original implementation, zero migration",
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",

@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/aiti-event-bus",
   "version": "0.1.8",
-  "description": "页面事件总线归口（链式接管 __piPageEvents + 全帧 SSE + publish/subscribe 服务出口）",
+  "description": "The page event bus for pi-web: takes over `__piPageEvents`, topic subscriptions with server-side filtering, publish-local for high-frequency frames, load-priority guarantee, and STALE_CONN silent rebuild.",
   "soul": "一条总线，全部帧。",
   "scripts": {
     "test": "node --test bus-core.test.mjs client-url.test.mjs stale-rebuild.test.mjs bus-id.test.mjs",

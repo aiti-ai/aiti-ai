@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/aiti-word-docx-preview",
   "version": "0.1.8",
-  "description": "Word 文档预览（docx-preview 高保真只读）",
+  "description": "High-fidelity read-only .docx preview (docx-preview: pagination / headers & footers / tables / images / lists restoration)",
   "main": "index.ts",
   "scripts": {
     "build": "vite build --config vite.config.ts",

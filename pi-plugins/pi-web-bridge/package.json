@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/pi-web-bridge",
   "version": "0.1.0",
-  "description": "Bridge a pi TUI session to the browser with /web — live view + bidirectional IO against pi-web (aiti-agent). A pi package.",
+  "description": "Bridge a [pi](https://pi.dev) TUI session to the browser with `/web` — the pi-web side opens the same session live, with bidirectional IO (prompt / steer / follow-up / abort / model switching), queued-message echo, and image attachment passthrough.",
   "keywords": [
     "pi",
     "pi-package",

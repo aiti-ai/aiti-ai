@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/aiti-extman",
   "version": "0.1.9",
-  "description": "aiti 扩展管理器（pi-web 扩展）",
+  "description": "Extension manager — search / enable-disable / install / online registry",
   "homepage": "https://aiti.pw/extensions/aiti-extman.html",
   "dependencies": {
     "yauzl": "^2.10.0"

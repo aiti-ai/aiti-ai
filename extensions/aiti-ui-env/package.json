@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/aiti-ui-env",
   "version": "0.1.8",
-  "description": "pi-web 扩展：UI 环境管理（桌面/无头虚拟屏）——4 态模式裁决新启动 MCP/应用的显示环境 + Xvfb/openbox/AT-SPI/VNC-on-web",
+  "description": "Environment allocator for UI debugging on headless background servers — a 4-state mode arbiter decides whether newly launched MCP/apps land on a real desktop or an Xvfb headless virtual display (Xvfb+openbox+AT-SPI virtual display + VNC-on-web + R",
   "type": "module",
   "aiti": {
     "kind": "ext",

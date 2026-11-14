@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/pi-models-combo",
   "version": "0.4.12",
-  "description": "Keep your model list tidy: for providers with an explicit models list in models.json, only those models stay visible. A pi package.",
+  "description": "Keep your model list tidy and rotate API keys to prevent 429 rate limits \u2014 model filtering, sticky multi-key rotation, multi-provider aggregation (combo models), quality monitoring",
   "keywords": [
     "pi",
     "pi-package",

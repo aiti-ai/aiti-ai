@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/aiti-cpu-meter",
   "version": "0.2.8",
-  "description": "主线程流畅度检测器（读秒 + 0-100 流畅度分 + 颜色分层 + 最小化 + 可注入任意站点：内部版/外部版双产物 + service-tunnels 注入）",
+  "description": ". Ships as two artifacts: a pi-web extension (internal) and a standalone single-file injector you can register into any websit",
   "soul": "主线程一卡，读秒就停；流畅度一分，忙闲立见——挂在工作页角落，收工点开看平均。",
   "scripts": {
     "build": "node tools/build.mjs",

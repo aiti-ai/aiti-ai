@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/aiti-onlyoffice",
   "version": "0.1.8",
-  "description": "OnlyOffice DocumentServer 深度保真编辑档（Docker 后端）",
+  "description": "Full-fidelity preview + editing for .docx/.xlsx/.pptx (OnlyOffice DocumentServer Docker backend). AGPL community edition, feature off by default",
   "main": "index.ts",
   "scripts": {
     "build": "vite build --config vite.config.ts",

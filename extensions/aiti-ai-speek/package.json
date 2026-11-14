@@ -2,7 +2,7 @@
   "name": "@aiti-ai/aiti-ai-speek",
   "version": "0.1.8",
   "type": "module",
-  "description": "pi-web「跟读模式」扩展：AI 输出语音朗读（可切音色/暂停/跳过/停止；默认浏览器 Web Speech，可选 edge-tts）",
+  "description": "Voice reading of AI output — switchable voice/pause/skip/stop; browser Web Speech by default, optional edge-tts",
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",

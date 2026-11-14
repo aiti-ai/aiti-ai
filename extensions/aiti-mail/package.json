@@ -2,7 +2,7 @@
   "name": "@aiti-ai/aiti-mail",
   "version": "0.1.8",
   "type": "module",
-  "description": "aiti-mail · pi-web 通用邮件发送出口（零依赖 SMTP 客户端 + node:sqlite 发送记录）",
+  "description": "The general \"mail sending outlet\" inside pi-web — zero-dependency SMTP client + send log (node:sqlite) + management dialog (config/test/log)",
   "scripts": {
     "test": "node --test tools/smtp.test.mjs",
     "deploy": "node tools/deploy.mjs",

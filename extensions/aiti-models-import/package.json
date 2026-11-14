@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/aiti-models-import",
   "version": "0.1.10",
-  "description": "其他 agent models 配置导入（首启弹窗 + 变更检测 + 经 aiti-model-wizard saveBatch 落盘）",
+  "description": "; persistence always goes through aiti-model-wizard saveBatch (undoable in one step), neve",
   "type": "module",
   "scripts": {
     "build:client": "vite build --config vite.config.ts",

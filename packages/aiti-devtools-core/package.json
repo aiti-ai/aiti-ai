@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/aiti-devtools-core",
   "version": "0.3.13",
-  "description": "aiti-devtools MCP server 核心（桥）：页面连接/SSE/工具执行/MCP JSON-RPC，供 pi-web 扩展与 pi 扩展 aiti-devtools-pi 共用",
+  "description": "Bridge core of aiti-devtools: the page ⇄ agent message/session bridge (claim/SSE/result protocol), Streamable HTTP MCP endpoint, browser protocol (host-protocol/aiwin) and carrier-agnostic shared capabilities (mcp-config registration / endpoints n",
   "type": "module",
   "main": "dist/index.js",
   "exports": {

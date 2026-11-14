@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/aiti-zcode-agent",
   "version": "0.1.10",
-  "description": "ZCode (智谱桌面端内嵌 CLI runtime) session backend driver (--json + --resume)",
+  "description": "Driven by Zhipu ZCode (CLI runtime embedded in the desktop AppImage) — dual-channel resident app-server (default, streaming/tool cards/steer/attachments) + oneshot fallback, plugged into All Sessions, consuming the GLM coding plan compliantly",
   "soul": "GLM 套餐在哪儿跑，面板就在哪儿看。",
   "scripts": {
     "build:client": "node tools/build-client.mjs"

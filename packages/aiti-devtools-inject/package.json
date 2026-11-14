@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/aiti-devtools-inject",
   "version": "0.1.0",
-  "description": "aiti-devtools 浏览器端注入源（launcher/client/bridge-client/standalone）——构建产物 aiti-launcher.js/bridge-client.js/cdp-core.js 供 core/assets 与独立桥使用",
+  "description": "Launcher + client injection artifacts and SDK: local injection internals, three forms, host/iframe routing (the __dbg protocol, createDbgLauncher, dynamic iframe injection).",
   "type": "module",
   "main": "src/standalone.js",
   "license": "MIT",

@@ -27,7 +27,7 @@
       }
     ]
   },
-  "description": "语音输入扩展（实时流式 ASR + 2-pass 离线精修 + 服务端 VAD 切句）—— JSX + vite 构建 client bundle",
+  "description": "Input enhancement for the AI chat composer: two-tier autocomplete (instant local → AI fallback), speech-input detection with spelling repair, streaming ASR with 2-pass refinement, switchable recognition engines (self-hosted / xfyun / Baidu / Silic",
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",

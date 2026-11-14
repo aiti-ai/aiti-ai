@@ -2,7 +2,7 @@
   "name": "@aiti-ai/aiti-helper",
   "version": "0.5.9",
   "type": "module",
-  "description": "AI 帮助点聚合 + AI 输入弹窗—— JSX + vite 构建 client bundle",
+  "description": "The one-sentence AI capability entry for all extensions — declarative AI help points (pi skills standard) + input/result preview/review-and-fill-back + streaming progress bus delivery + multi-turn follow-ups + history and background tasks + user-d",
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",

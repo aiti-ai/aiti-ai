@@ -2,7 +2,7 @@
   "name": "@aiti-ai/aiti-git-review",
   "version": "0.2.8",
   "type": "module",
-  "description": "Git 代码审核扩展（Monaco diff 工作区 + 标注流水线）—— JSX + vite 构建 client bundle",
+  "description": "Dedicated to reviewing uncommitted changes — Monaco diff workspace (side-by-side/merged/new-only/outline) + line-level annotations (must/suggest/question) + anchor flag-line re-mapping (stays valid while editing mid-review) + summary final-review ",
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",

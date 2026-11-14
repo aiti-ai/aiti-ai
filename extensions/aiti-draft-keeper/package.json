@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/aiti-draft-keeper",
   "version": "0.1.8",
-  "description": "草稿持久化 + 恢复接管",
+  "description": "Draft persistence and crash recovery for the composer — the sole owner of the composer draft state machine (v2 intent contract), shared slots across tabs, 7-day stale pruning.",
   "soul": "崩溃可以带走页面，带不走你打到一半的话。",
   "scripts": {
     "build:client": "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});for(const f of fs.readdirSync('client/src'))if(f.endsWith('.mjs'))fs.copyFileSync('client/src/'+f,'dist/'+f)\""

@@ -10,7 +10,7 @@
       "note": "隧道二进制（cloudflared/ngrok/frpc）由运行时 justget 多源下载，不走 apt"
     }
   },
-  "description": "pi-web 扩展：服务端口发现 / 虚拟主机代理 / 隧道 / 认证 / 自暴露（从 pi-web core 剥离的完整载体）",
+  "description": "One-click public reachability for local services — port discovery (service identification/custom names) / five exposure modes (tunnel·vhost·hybrid·router portmap·IPv6 direct) / auth gateway (portal·TOTP·face and voiceprint) / DDNS auto resolution ",
   "homepage": "https://aiti.pw/extensions/service-tunnels.html",
   "license": "MIT",
   "scripts": {
