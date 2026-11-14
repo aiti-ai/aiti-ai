@@ -15,8 +15,10 @@
 import { useState, useEffect } from "react";
 import { apiUrl } from "./host-shim";
 import { EditorApp } from "./editor-app";
+import { MiAt } from "./file-toolbar";
+import { buildAtText, openNewSessionWithExtSvc } from "../../../_shared/new-session-cwd";
 import {
-  DockBody, present, useGate, useGateSidebar,
+  DockBody, present, useGate, useGateSidebar, useDockHeaderMenuItems,
   sidebarZoneOf, seedBlockCollapsedDefault, seedDockDefault, declareDockZones,
   declareDockWindowOpener, clearDockPref,
 } from "../../../_shared/ext-float-dock";
@@ -220,6 +222,24 @@ export function FileDockBlock(props: FileFaceProps) {
   const path = normPath(props.path);
   const key = fileItemKey(path);
   const dockedZone = useGateSidebar(key);
+  // ⋮ 头菜单引用组（2026-11-24 用户补齐：与 folder 区块头菜单对齐）——@ 提及（宿主回调，条件渲染）
+  // + @ 到新会话（extSvc 缺席时 openNewSessionWithExtSvc 自动降级同源实现）。
+  const extSvc = (k: string) => (fileDockCtx as any)?.getExtService?.(k);
+  useDockHeaderMenuItems(key, [
+    ...(props.onAtMention ? [{
+      kind: "item" as const, id: "at", label: "@ 到聊天", icon: <MiAt />,
+      run: () => { try { props.onAtMention!(path, false); } catch { /* noop */ } },
+    }] : []),
+    {
+      kind: "item" as const, id: "atn", label: "@ 到新会话", icon: <MiAt />,
+      run: () => { void openNewSessionWithExtSvc({ text: buildAtText(path), targetDir: path.slice(0, path.lastIndexOf("/")) || path, targetPath: path, currentCwd: props.cwd, apiUrl, extSvc }); },
+    },
+    { kind: "sep" as const },
+    {
+      kind: "item" as const, id: "cp", label: "复制路径",
+      run: () => { try { navigator.clipboard?.writeText(path); } catch { /* noop */ } },
+    },
+  ]);
   if (!dockedZone) return null;
   return (
     <DockBody

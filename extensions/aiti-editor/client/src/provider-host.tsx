@@ -39,11 +39,13 @@ export function ThirdPartyProviderHost(props: {
   actions: HostActions;
   extMenuTop: MenuAction[];
   menuTopExtra: MenuAction[];
+  /** 钉住动作（⋯ 窗口图标排；null = face 态不渲染） */
+  pin?: { isPinned: () => boolean; toggle: () => void } | null;
   nav: { siblings: string[] | null; index: number; insertPos?: number; onStep: (d: number) => void };
   showToast: (kind: string, text: string) => void;
   watchEnabled?: boolean;
 }) {
-  const { provider, filePath, cwd, chain, actions, extMenuTop, menuTopExtra, nav, showToast, watchEnabled } = props;
+  const { provider, filePath, cwd, chain, actions, extMenuTop, menuTopExtra, pin, nav, showToast, watchEnabled } = props;
   const we: any = () => (window as any).__aitiEditor;
 
   const [capability, setCapability] = useState<EditorCapability>(() =>
@@ -253,6 +255,7 @@ export function ThirdPartyProviderHost(props: {
         onMove={actions.doMove}
         onNewWindow={actions.openInNewWindow}
         onTerminal={actions.openTerminal}
+        pin={pin ?? null}
         menuTop={[...extMenuTop, ...menuTopExtra]}
       />
       <div style={{ flex: "1 1 auto", minHeight: 0, minWidth: 0, position: "relative", overflow: "hidden" }}>

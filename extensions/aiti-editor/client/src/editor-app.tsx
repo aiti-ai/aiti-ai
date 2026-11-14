@@ -1857,9 +1857,9 @@ useEffect(() => {
   // 关闭族（关闭/左侧/右侧/全部）已收编为「关闭」图标排（2026-09-15）：FileToolbar
   // closeActions 传入——大屏工具条右端常驻 4 图标，compact 收进 ⋯ 菜单同款一行图标排。
   // dock face 态：钉住隐藏（pinnedPaths 是宿主 tab 体系概念，face 无容量逐出/批量关闭）。
-  const menuTopExtra: MenuAction[] = faceMode ? [] : [
-    { label: isPinnedNow() ? "取消钉住" : "钉住", icon: <MiPin />, onClick: togglePinNow },
-  ];
+  // 钉住已移入 ⋯ 菜单「窗口」图标排（2026-11-24，方案 docs/aiti-menu-single-row-plan.md §4.3）：
+  // 经 pin prop 下发（face 态 null=不渲染）；menuTopExtra 保留空数组维持 provider-host 注入位兼容。
+  const menuTopExtra: MenuAction[] = [];
   // dock face 态：关闭族只留「关闭」自我，且重路由 face 关闭链（confirmClose → 移除实例；
   // 原实现关 "file:<path>" 宿主 tab——face 态该 tab 不存在，会 no-op 漏关）。
   const closeActions = faceMode ? {
@@ -1919,6 +1919,7 @@ useEffect(() => {
         onNewWindow={openInNewWindow}
         onTerminal={openTerminal}
         onReload={doReload}
+        pin={faceMode ? null : { isPinned: isPinnedNow, toggle: togglePinNow }}
         menuTop={[...extMenuTop, ...menuTopExtra]}
         infoAfterNav={info}
       />
@@ -1942,6 +1943,7 @@ useEffect(() => {
           }}
           extMenuTop={extMenuTop}
           menuTopExtra={menuTopExtra}
+          pin={faceMode ? null : { isPinned: isPinnedNow, toggle: togglePinNow }}
           nav={navProps}
           showToast={showToast}
           watchEnabled={props.watchEnabled !== false}
@@ -2113,6 +2115,7 @@ useEffect(() => {
         onDownload={doDownload} onCopyPath={copyPath} onCopyContent={copyContent} onRename={doRename} onOpenDir={openDir}
         onMove={doMove}
         onTerminal={openTerminal}
+        pin={faceMode ? null : { isPinned: isPinnedNow, toggle: togglePinNow }}
       />
       {status.phase === "loading" && (
         <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, color: "var(--text-muted,#888)", fontSize: 14 }}>
