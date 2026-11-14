@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-git-ops",
-  "version": "0.1.8",
+  "version": "0.1.10",
   "description": "Whitelisted git write engine — checkout precheck / stash / plan breakpoints / audit / changed topic, consumed by folder and session-manager",
   "soul": "一处写仓，处处安全。",
   "aitiExtProtocol": "1.0",
