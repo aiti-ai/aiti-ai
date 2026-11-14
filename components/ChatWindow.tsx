@@ -468,6 +468,24 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     chatInputRef?.current?.replaceMessage(message);
   }, [chatInputRef]);
 
+  // "问 AI" on an error/warning notice: prefill the composer with a prompt that
+  // quotes the notice verbatim — these UI-only notices never reach the model
+  // (extension_ui_request notify goes to the page, not the conversation), so the
+  // quoted text is the AI's only window into what the user is asking about.
+  // Prefill only, never auto-send; a non-empty composer gets the prompt appended
+  // so an in-progress draft survives.
+  const askAiAboutNotice = useCallback((message: string) => {
+    const prefill = t("chat.noticeAskAiPrompt", { message });
+    const input = chatInputRef?.current;
+    if (!input) return;
+    if (input.hasInput()) {
+      input.appendText(prefill);
+    } else {
+      input.setText(prefill);
+    }
+    input.focus();
+  }, [chatInputRef, t]);
+
   // Spacer heights measured/derived below (bottom composer + prompt anchor).
   // Reflected up-front so they can be passed into useAgentSession for
   // step-follow geometry.
@@ -1749,7 +1767,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
           pointerEvents: "none",
         }}
       >
-        <NoticeShelf notices={notices} floating onPauseChange={setNoticePaused} />
+        <NoticeShelf notices={notices} floating onPauseChange={setNoticePaused} onAskAi={askAiAboutNotice} />
       </div>
 
       {/* Session request card takeover seam (agent-capability UI moved out of core):
@@ -2513,7 +2531,8 @@ const NOTICE_TEXT_PADDING_Y_PX = (NOTICE_MIN_HEIGHT_PX - 2 - NOTICE_LINE_BOX_PX)
 const NOTICE_MAX_HEIGHT_PX = 500;
 const NOTICE_TEXT_MAX_HEIGHT_PX = NOTICE_MAX_HEIGHT_PX - 2;
 
-function NoticeShelf({ notices, floating = false, align = "left", onPauseChange }: { notices: NoticeItem[]; floating?: boolean; align?: "left" | "right"; onPauseChange?: (id: string | null) => void }) {
+function NoticeShelf({ notices, floating = false, align = "left", onPauseChange, onAskAi }: { notices: NoticeItem[]; floating?: boolean; align?: "left" | "right"; onPauseChange?: (id: string | null) => void; onAskAi?: (message: string) => void }) {
+  const { t } = useI18n();
   if (notices.length === 0) return null;
   return (
     <div
@@ -2631,6 +2650,31 @@ function NoticeShelf({ notices, floating = false, align = "left", onPauseChange 
                 </a>
               ) : piece.text)}</Fragment>)}
             </span>
+            {(notice.type === "error" || notice.type === "warning") && onAskAi && (
+              <button
+                type="button"
+                onClick={() => onAskAi(notice.message)}
+                title={t("chat.noticeAskAiTitle")}
+                style={{
+                  flexShrink: 0,
+                  alignSelf: "flex-start",
+                  // Optically centre on the first text line: the compact button is
+                  // ~22px tall against the 21px line box, so it starts a hair above it.
+                  marginTop: NOTICE_TEXT_PADDING_Y_PX - 1,
+                  padding: "2px 10px",
+                  fontSize: 12,
+                  lineHeight: 1.5,
+                  borderRadius: 999,
+                  border: "1px solid color-mix(in srgb, var(--border) 80%, transparent)",
+                  background: "color-mix(in srgb, var(--bg) 90%, var(--accent) 10%)",
+                  color: "var(--accent)",
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {t("chat.noticeAskAi")}
+              </button>
+            )}
           </div>
         );
       })}
