@@ -10,7 +10,7 @@
       "note": "隧道二进制（cloudflared/ngrok/frpc）由运行时 justget 多源下载，不走 apt"
     }
   },
-  "description": "One-click public reachability for local services — port discovery (service identification/custom names) / five exposure modes (tunnel·vhost·hybrid·router portmap·IPv6 direct) / auth gateway (portal·TOTP·face and voiceprint) / DDNS auto resolution ",
+  "description": "One-click public reachability for local services — port discovery (service identification/custom names) / five exposure modes (tunnel·vhost·hybrid·router portmap·IPv6 direct) / auth gateway (portal·TOTP·face and voiceprint) / DDNS auto resolution / network health doctor",
   "homepage": "https://aiti.pw/extensions/service-tunnels.html",
   "license": "MIT",
   "scripts": {

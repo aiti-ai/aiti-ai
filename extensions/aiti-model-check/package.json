@@ -2,7 +2,7 @@
   "name": "@aiti-ai/aiti-model-check",
   "version": "0.1.8",
   "type": "module",
-  "description": "; parses the rate-limit recovery time (Retry-After etc.), records history to identify availability windows; long-term rate-limit expi",
+  "description": "Model health probing — sends a tiny probe message to each model to check availability / 429 rate limiting / errors; parses the rate-limit recovery time (Retry-After etc.), records history to identify availability windows; long-term rate-limit expiry reminders (pure local time checks, zero probing)",
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",

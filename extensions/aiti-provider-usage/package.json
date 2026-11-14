@@ -2,7 +2,7 @@
   "name": "@aiti-ai/aiti-provider-usage",
   "version": "0.1.9",
   "type": "module",
-  "description": ".AI/OpenCode Go/Kimi/Codex/Copilot etc.), session info panel \"remaining quota\" section with the current session pinned on top, 5min TTL overview + manual refresh, event-driven ze",
+  "description": "Provider balance/quota lookup — 16 adapter ids (DeepSeek/OpenRouter/Z.AI/OpenCode Go/Kimi/Codex/Copilot etc.), session info panel \"remaining quota\" section with the current session pinned on top, 5min TTL overview + manual refresh, event-driven zero polling",
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",

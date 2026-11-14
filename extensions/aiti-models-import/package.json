@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/aiti-models-import",
   "version": "0.1.10",
-  "description": "; persistence always goes through aiti-model-wizard saveBatch (undoable in one step), neve",
+  "description": "Imports models config from other agents — scans codex/ZCode/OpenCode provider·model configs into drafts, with a first-launch dialog guiding a one-time import; persistence always goes through aiti-model-wizard saveBatch (undoable in one step), never writes models.json directly",
   "type": "module",
   "scripts": {
     "build:client": "vite build --config vite.config.ts",

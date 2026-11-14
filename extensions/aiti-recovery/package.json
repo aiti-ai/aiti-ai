@@ -2,7 +2,7 @@
   "name": "@aiti-ai/aiti-recovery",
   "version": "0.1.9",
   "type": "module",
-  "description": "Recovery UI extension — queue recovery dialog (resolving queued messages left by interrupted sessions one by one) + restart recovery wizard (two-step handling of interrupted sessions), red-line semantics preserved: never auto-deliver, resuming onl",
+  "description": "Recovery UI extension — queue recovery dialog (resolving queued messages left by interrupted sessions one by one) + restart recovery wizard (two-step handling of interrupted sessions), red-line semantics preserved: never auto-deliver, resuming only sends \"continue\"",
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",
