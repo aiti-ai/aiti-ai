@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/aiti-bridge",
   "version": "0.2.5",
-  "description": ".0.0.1:8777`), plus a zero-dependency stdio⇄HTTP MCP forwarder wired up with a single environmen",
+  "description": "Standalone bridge service for aiti-devtools + the aiti stdio MCP shim: page connections / SSE / tool execution / MCP JSON-RPC on one port (default 127.0.0.1:8777), plus a zero-dependency stdio⇄HTTP MCP forwarder wired up with a single environment variable (AITI_BRIDGE_URL).",
   "type": "module",
   "bin": {
     "aiti-bridge": "bin/aiti-bridge.mjs",

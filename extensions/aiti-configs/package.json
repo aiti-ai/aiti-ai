@@ -2,7 +2,7 @@
   "name": "@aiti-ai/aiti-configs",
   "version": "0.1.8",
   "type": "module",
-  "description": "; if the system crashes, a command-line watchdog recovers without relying on the broken system",
+  "description": "A safety net for configuration — when AI/humans or extension changes break the config, there is a commit to revert, a diff to inspect, one-click restore; if the system crashes, a command-line watchdog recovers without relying on the broken system itself",
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",

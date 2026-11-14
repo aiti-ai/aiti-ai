@@ -2,7 +2,7 @@
   "name": "@aiti-ai/aiti-testagent",
   "version": "0.1.8",
   "type": "module",
-  "description": "; arbitrary in-JVM modification / Mock & SQL interception simulation / hot updates / diagnostic sampling; 57",
+  "description": "AI debugging MCP + IDE for Java backends — scan Java processes / attach one-click bridge connect / tunnel-bridge multi-endpoint management; arbitrary in-JVM modification / Mock & SQL interception simulation / hot updates / diagnostic sampling; 57 tools in 10 groups exposed on demand, fully reversible",
   "scripts": {
     "build:client": "node tools/build-client.mjs",
     "watch": "node tools/build-client.mjs --watch"
