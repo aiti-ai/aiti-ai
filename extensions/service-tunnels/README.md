@@ -1,4 +1,4 @@
-# @aiti-ai/service-tunnels
+# @aiti-ai/aiti-service-tunnels
 
 > One-click public reachability for local services — port discovery (service identification/custom names) / five exposure modes (tunnel·vhost·hybrid·router portmap·IPv6 direct) / auth gateway (portal·TOTP·face and voiceprint) / DDNS auto resolution / network health doctor
 
