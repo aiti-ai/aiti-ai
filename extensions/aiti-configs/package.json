@@ -2,7 +2,7 @@
   "name": "@aiti-ai/aiti-configs",
   "version": "0.1.8",
   "type": "module",
-  "description": "配置版本化 + 崩溃自检扩展（安全盾 UI）—— JSX + vite 构建 client bundle",
+  "description": "; if the system crashes, a command-line watchdog recovers without relying on the broken system",
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",

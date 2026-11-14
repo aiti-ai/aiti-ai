@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/aiti-attach-agent",
   "version": "0.1.7",
-  "description": "Socket-attached agent backend — connect pi-web to a running agent process (pi TUI bridge)",
+  "description": "; supports full automation via environment variables (PI_WEB_BRIDGE_AUTO=1 auto-bridges any CLI session); followUp queue echo + image attachment passthrough + idle time",
   "soul": "不抢方向盘——agent 已经在跑，附着上去看就好。",
   "aitiExtProtocol": "1.0",
   "dependencies": {

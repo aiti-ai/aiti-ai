@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/aiti-folder",
   "version": "0.1.8",
-  "description": "pi-web 文件夹浏览器扩展（fileViewer folder 接管 + pathPicker 目录选择器）—— JSX + vite 构建 client bundle",
+  "description": "fileViewer folder take-over + pathPicker directory picker — browse / delete to trash + git toolbar and grouped commit plans (soft-depends on aiti-git-ops)",
   "type": "module",
   "scripts": {
     "build:client": "vite build --config vite.config.ts",

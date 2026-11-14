@@ -2,7 +2,7 @@
   "name": "@aiti-ai/aiti-git-trace",
   "version": "0.2.12",
   "type": "module",
-  "description": "编外 AI 变更追踪扩展（.git/aiti 追踪仓 + 关注路径 + 回撤/部分回滚）—— JSX + vite 构建 client bundle",
+  "description": "Out-of-band AI change tracking — repo-root .aiti-trace standalone trace repo (autoInit even without git) + op-numbered before/after dual commits + full file⇄message⇄op lineage + rollback + shadow repo slimming compact",
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",

@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/aiti-bridge",
   "version": "0.2.5",
-  "description": "aiti-devtools 独立桥服务（常驻，不依赖 pi 生命周期）——页面连接/SSE/工具执行/MCP JSON-RPC + 静态资产 + stdio shim（env AITI_BRIDGE_URL 统一接入）；默认 127.0.0.1:8777",
+  "description": ".0.0.1:8777`), plus a zero-dependency stdio⇄HTTP MCP forwarder wired up with a single environmen",
   "type": "module",
   "bin": {
     "aiti-bridge": "bin/aiti-bridge.mjs",

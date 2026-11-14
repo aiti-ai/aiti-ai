@@ -3,7 +3,7 @@
   "version": "0.1.8",
   "type": "module",
   "homepage": "https://aiti.pw/extensions/session-manager.html",
-  "description": "AI token 用量统计扩展（provider/model/key/session 四维报表，日/月双粒度）",
+  "description": "AI token usage statistics — multi-dimensional reports by workspace/provider/model/key/time-slot, pivot over any dimension combination + sankey diagram + CSV export, event-driven with zero polling, standalone SQLite storage",
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "build:server": "esbuild server/ingest-worker.ts --bundle --platform=node --format=esm --outfile=dist/ingest-worker.mjs --log-level=warning",
