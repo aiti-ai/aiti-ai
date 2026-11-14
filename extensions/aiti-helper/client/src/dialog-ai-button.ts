@@ -8,10 +8,12 @@
  * 唤起 ai-helper 时按「本扩展 skills + 通用 skills + 其他扩展」分组展示。
  * 兼容兜底：未盖 data-ext-id 的非扩展弹窗（如 pi-web 内置 dialog）走 role=dialog/class~dialog 扫描。
  *
- * 同时注入两个角落按钮（§4.4 契约家族；extman 快捷按钮方案：docs/aiti-ext-dialog-extman-button-plan.md）：
- *   🤖 AI Helper（原有） | 🔧 extman（AI 按钮左边：打开扩展管理面板并选中本弹窗所属扩展）。
- *   分工语义：helper 管角落按钮基础设施（本扫描器），extman 只提供服务
- *   （aiti-extman.open 服务 / __aitiExtmanOpen 全局，extman 侧注册）。
+ * Two corner buttons are injected together (§4.4 contract family; extman quick button plan:
+ * docs/aiti-ext-dialog-extman-button-plan.md):
+ *   🤖 AI Helper (original) | 🔧 extman (left of the AI button: opens the extension manager
+ *   focused on the dialog's owning extension).
+ * Division of labor: helper owns the corner-button infrastructure (this scanner); extman only
+ * provides the service ("aiti-extman.open" ExtService, registered on the extman side).
  */
 
 // 扩展展示名（id → 友好名，与 extman 共用同一张表）
@@ -29,17 +31,18 @@ const AiBotIconHtml = (size = 16) => {
 
 const AI_BTN_ATTR = "data-aiti-ai-btn";
 const HOST_ATTR = "data-aiti-ai-host";   // 标在 close 按钮上：已挂载过 AI 按钮（防重复注入）
-const EXT_BTN_ATTR = "data-aiti-extman-btn"; // 标 extman 🔧 按钮（防重复/便于测试定位）
+const EXT_BTN_ATTR = "data-aiti-extman-btn"; // marks the extman 🔧 button (dedup / test locator)
 
-// extman 🔧 图标（wrench.svg，与 extman sidebarFooter 入口同一线图库资产；extman deploy copyIcons 拷入）
+// extman 🔧 icon (wrench.svg — same icon-library asset as extman's sidebarFooter entry; copied in by extman deploy copyIcons)
 const ExtManIconHtml = (size = 16) => {
   const url = apiUrl("/api/extensions/aiti-extman/assets/icons/wrench.svg");
   return '<span aria-hidden="true" style="display:inline-block;width:' + size + 'px;height:' + size + 'px;background:currentColor;' +
     '-webkit-mask:url(' + url + ') center/contain no-repeat;mask:url(' + url + ') center/contain no-repeat"></span>';
 };
 
-// extman 是否可用（已安装且启用：宿主 manifest 清单 → __piWebExtUI.metas 有条目；
-// 未装/被禁用的扩展从 manifest 移除，metas 同步剪除）。缺席则不挂 🔧，优雅降级。
+// Whether extman is available (installed & enabled: entry present in the host manifest →
+// __piWebExtUI.metas; uninstalled/disabled extensions are pruned from the manifest and metas
+// accordingly). When absent, skip the 🔧 button — graceful degradation.
 function extmanAvailable(): boolean {
   try {
     const metas = ((window as any).__piWebExtUI && (window as any).__piWebExtUI.metas) || {};
@@ -47,13 +50,13 @@ function extmanAvailable(): boolean {
   } catch { return false; }
 }
 
-// 打开 extman 并跳转到指定扩展条目（extId 空 = 仅打开面板）。
-// 通道：extSvc("aiti-extman.open") → window.__aitiExtmanOpen → 兑底点 sidebarFooter
-// 内按钮（静态条目由宿主渲染同样包 [data-ext-id] wrapper，staticClickForwarder
-// 负责懒物化转发；旧版 extman 未注册服务时只开面板不选中，体验降级不报错）。
+// Open extman and jump to the given extension entry (empty extId = just open the panel).
+// Channel: extSvc("aiti-extman.open") → fallback click on the sidebarFooter button (static
+// entries rendered by the host are also wrapped in [data-ext-id], staticClickForwarder handles
+// lazy materialization; on an old extman without the service this just opens the panel without
+// selection — degraded UX, never an error).
 function openExtman(extId: string): void {
-  const direct = (extSvc<((id?: string) => void) | undefined>("aiti-extman.open"))
-    || (typeof window !== "undefined" ? (window as any).__aitiExtmanOpen : undefined);
+  const direct = extSvc<(id?: string) => void>("aiti-extman.open");
   if (typeof direct === "function") {
     try { direct(extId || undefined); return; } catch {}
   }
@@ -198,7 +201,7 @@ function injectAt(closeBtn: HTMLElement, ext: { id: string; name: string }): boo
     try { closeBtn.parentNode!.appendChild(aiBtn); } catch {}
   }
 
-  // extman 🔧 按钮：AI 按钮左边（布局 … 🔧 🤖 ✕，AI 保持紧邻关闭按钮）。
+  // extman 🔧 button: left of the AI button (order … 🔧 🤖 ✕; AI stays next to close).
   // extman 自身面板不挂（自我跳转无意义）；未装/被禁用不挂（extmanAvailable）。
   if (ext && ext.id !== "aiti-extman" && extmanAvailable()) {
     const extBtn = document.createElement("button");
