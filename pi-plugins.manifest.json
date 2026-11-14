@@ -1,8 +1,8 @@
 {
   "plugins": [
-    { "pkg": "@aiti-ai/pi-models-combo", "version": "0.4.12" },
-    { "pkg": "@aiti-ai/pi-git-trace", "version": "0.1.7" },
-    { "pkg": "@aiti-ai/pi-web-bridge", "version": "0.1.0" },
+    { "pkg": "@aiti-ai/pi-models-combo", "version": "0.4.14" },
+    { "pkg": "@aiti-ai/pi-git-trace", "version": "0.1.8" },
+    { "pkg": "@aiti-ai/pi-web-bridge", "version": "0.1.1" },
     {
       "pkg": "@aiti-ai/pi-plan-sandbox",
       "version": "0.1.7",
