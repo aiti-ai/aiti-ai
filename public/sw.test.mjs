@@ -9,6 +9,9 @@ globalThis.self = {
   },
   addEventListener: (type, listener) => listeners.set(type, listener),
   clients: null,
+  // All URL paths in sw.js derive from registration.scope (#base-path support);
+  // root deployment scope like a real registration at https://pi.test/.
+  registration: { scope: "https://pi.test/" },
 };
 
 await import("./sw.js");
@@ -34,6 +37,7 @@ function dispatchPush(payload, clients, getNotifications = async () => []) {
     openWindow: async () => assert.fail("push must not open windows"),
   };
   self.registration = {
+    ...self.registration,
     showNotification: async (title, options) => { shown.push({ title, options }); },
     getNotifications,
   };
@@ -133,6 +137,7 @@ test("notification click focuses an existing client at the session URL", async (
   const focusedClient = {
     url: "https://pi.test/?session=session-1",
     focus: async () => { calls.push("focus"); },
+    postMessage: (message) => { calls.push(["postMessage", message]); },
     navigate: async () => assert.fail("exact client should not navigate"),
   };
   self.clients = {
@@ -144,21 +149,21 @@ test("notification click focuses an existing client at the session URL", async (
   await event.pending;
 
   assert.equal(event.wasClosed(), true);
-  assert.deepEqual(calls, ["focus"]);
+  // In-SPA session switch: the page receives the intent via postMessage and
+  // syncs the URL itself (zero reload).
+  assert.deepEqual(calls, [
+    "focus",
+    ["postMessage", { type: "pi-web:open-session", url: "https://pi.test/?session=session-1", sessionId: "session-1" }],
+  ]);
 });
 
-test("notification click navigates an existing client to the session", async () => {
+test("notification click hands another session's window the in-SPA switch (never a reload)", async () => {
   const calls = [];
-  const navigatedClient = {
-    focus: async () => { calls.push("focus"); },
-  };
   const existingClient = {
     url: "https://pi.test/?session=other-session",
-    navigate: async (url) => {
-      calls.push(["navigate", url]);
-      return navigatedClient;
-    },
-    focus: async () => assert.fail("the navigated client should be focused"),
+    focus: async () => { calls.push("focus"); },
+    postMessage: (message) => { calls.push(["postMessage", message]); },
+    navigate: async () => assert.fail("client.navigate is a hard refresh — the session switch must be in-SPA"),
   };
   self.clients = {
     matchAll: async () => [existingClient],
@@ -169,8 +174,8 @@ test("notification click navigates an existing client to the session", async () 
   await event.pending;
 
   assert.deepEqual(calls, [
-    ["navigate", "https://pi.test/?session=session-1"],
     "focus",
+    ["postMessage", { type: "pi-web:open-session", url: "https://pi.test/?session=session-1", sessionId: "session-1" }],
   ]);
 });
 
