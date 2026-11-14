@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-session-cards",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "Session request card extension — full UI for interaction-primitive cards (zcode plan approval / AskUser / omp OAuth / generic fallback) and tool authorization cards",
   "soul": "agent 求你作答的卡片，长什么样由扩展说了算。",
   "scripts": {
@@ -13,7 +13,7 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "f05bb2abfe922903",
+  "contentHash": "c53aaab3c9060f2f",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",
