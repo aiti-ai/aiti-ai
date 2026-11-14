@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/pi-models-combo",
   "version": "0.4.12",
-  "description": "Keep your model list tidy and rotate API keys to prevent 429 rate limits \u2014 model filtering, sticky multi-key rotation, multi-provider aggregation (combo models), quality monitoring",
+  "description": "Keep your model list tidy and rotate API keys to prevent 429 rate limits — model filtering, sticky multi-key rotation, multi-provider aggregation (combo models), quality monitoring",
   "keywords": [
     "pi",
     "pi-package",
