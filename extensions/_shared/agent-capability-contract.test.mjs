@@ -15,7 +15,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -75,6 +75,10 @@ function listAgentExts() {
 	return readdirSync(ROOT)
 		.filter((name) => name.startsWith("aiti-") && name.endsWith("-agent"))
 		.filter((name) => statSync(join(ROOT, name)).isDirectory())
+		// Real extension checkouts only: a stale dir holding just an ignored dist/
+		// (removed extension, build artifact left behind) must not enter the matrix —
+		// the aiti-opencode-agent removal left exactly such a shell (2026-11-14)
+		.filter((name) => existsSync(join(ROOT, name, "package.json")))
 		.sort();
 }
 
