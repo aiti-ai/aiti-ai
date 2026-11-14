@@ -230,6 +230,19 @@ export function excludeRecentOptions(
   return options.filter((option) => !recentKeys.has(`${option.provider}/${option.modelId}`));
 }
 
+/**
+ * Dim suffix text for a recents-section row. The recents section has no provider group header,
+ * so when a catalog/price hint is present ("$0.6/$2.2 per M", ext-agent billing "0.5x") the
+ * provider display name must ride along after it — a price-only suffix hides which provider the
+ * model came from and same-named models become indistinguishable. No hint → provider, the same
+ * fallback the grouped rows use (whose group header already names the provider, so their hint
+ * stays bare).
+ */
+export function recentRowHint(option: ModelSelectorOption): string {
+  const provider = option.providerName?.trim() || option.provider;
+  return option.hint ? `${option.hint} · ${provider}` : provider;
+}
+
 /** Groups in first-appearance order; never re-sorts, so a models.json provider keeps its file's order (#783). */
 export function groupModelOptions(options: ModelSelectorOption[]): ModelSelectorGroup[] {
   const groups: ModelSelectorGroup[] = [];
@@ -655,9 +668,9 @@ export function ModelSelector({
                       key={`recent:${option.provider}:${option.modelId}`}
                       active={option.modelId === value?.modelId && option.provider === value?.provider}
                       label={option.name}
-                      // Same hint as the grouped rows (ext catalogs / cost rates); provider fallback
-                      // keeps cross-provider same-named recents identifiable.
-                      hint={option.hint ?? option.provider}
+                      // Catalog/price hint composed with the provider (no group header here);
+                      // provider-only fallback keeps cross-provider same-named recents identifiable.
+                      hint={recentRowHint(option)}
                       status={option.status}
                       disabled={refreshing}
                       gutter={Boolean(onSetDefault)}
