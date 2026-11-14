@@ -661,7 +661,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
               {canEdit && !canCancelEdit && (
                 <button
                   onClick={() => onEditContent!(editTarget, entryId!)}
-                  title={t("i18n.editFromHereTitle")}
+                  title={t("i18n.editAgainTitle")}
                   style={{
                     display: "flex", alignItems: "center", gap: 4,
                     padding: "3px 8px", height: 22,
@@ -680,7 +680,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
                     <polyline points="15 10 20 15 15 20" />
                     <path d="M4 4v7a4 4 0 0 0 4 4h12" />
                   </svg>
-<span className="message-action-label">{t("i18n.editFromHere")}</span>
+<span className="message-action-label">{t("i18n.editAgain")}</span>
                 </button>
               )}
               {canCancelEdit && (

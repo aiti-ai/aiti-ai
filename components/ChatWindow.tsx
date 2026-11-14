@@ -1886,14 +1886,51 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                     compactError={options.recoverTruncation ? compactError : undefined}
                   />
                 );
-                if (!isVisible || currentRefIdx === undefined) return view;
+                // Edit-from-here veil (plan A, purely visual preview): while a mark is
+                // pending, everything after the marked message gets dimmed — sending
+                // rewinds the session and moves those messages out of the current
+                // branch. pointer-events stay untouched (re-marking / navigation /
+                // copy keep working); the veil disappears by itself once the mark is
+                // sent or cancelled (derived from editFromHerePending, no cleanup).
+                const veiled = editFromHereMarkIdx >= 0 && idx > editFromHereMarkIdx;
+                let renderedView: ReactNode = view;
+                if (veiled && renderedView != null) {
+                  renderedView = (
+                    <div style={{ position: "relative", opacity: 0.55, transition: "opacity 0.15s" }}>
+                      {renderedView}
+                      <div aria-hidden style={{ position: "absolute", inset: 0, background: "rgba(127,127,127,0.10)", pointerEvents: "none" }} />
+                    </div>
+                  );
+                }
+                if (editFromHereMarkIdx >= 0 && idx === editFromHereMarkIdx + 1 && renderedView != null) {
+                  renderedView = (
+                    <>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 12px", margin: "6px 0", borderRadius: 6, background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.22)", fontSize: 11, color: "var(--text-dim)" }}>
+                        <span style={{ flex: 1 }}>{t("chat.editHereVeilHint")}</span>
+                        <button
+                          type="button"
+                          onClick={handleCancelEditFromHere}
+                          title={t("i18n.editFromHereCancelTitle")}
+                          style={{ display: "flex", alignItems: "center", padding: "3px 8px", height: 22, background: "none", border: "none", borderRadius: 5, color: "var(--accent)", cursor: "pointer", fontSize: 11, fontWeight: 400, whiteSpace: "nowrap" }}
+                        >
+                          {t("i18n.editFromHereCancel")}
+                        </button>
+                      </div>
+                      {renderedView}
+                    </>
+                  );
+                }
+                if (!isVisible || currentRefIdx === undefined) return renderedView;
                 return (
                   <div key={`${keyPrefix}-${messageKey}`} data-entry-id={entryIds[idx]} data-chat-msg-role={msg.role} ref={options.attachRef === false ? undefined : attachVisibleRef(idx, currentRefIdx)} style={{ contentVisibility: "auto", containIntrinsicSize: "auto 160px" } as React.CSSProperties}>
-                    {view}
+                    {renderedView}
                   </div>
                 );
               };
 
+              // Edit-from-here veil scope: position of the marked message within the
+              // rendered history; everything after it is preview-dimmed (see renderMessage).
+              const editFromHereMarkIdx = editFromHerePending ? entryIds.indexOf(editFromHerePending.entryId) : -1;
               const rendered: ReactNode[] = [];
               for (let idx = 0; idx < messages.length;) {
                 const msg = messages[idx];

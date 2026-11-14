@@ -46,7 +46,7 @@ test("on a narrow phone a message's actions drop their labels and keep their tit
   const html = renderMessage({ role: "user", content: "Hi", timestamp: 1 }, { entryId: "entry", onFork: () => {}, onEditContent: () => {} });
   assert.equal(html.match(/class="message-action-label"/g)?.length, 3);
   // 合并适配：fork 的 editFromHereTitle 文案（上游文案是 branches within this session）。
-  for (const title of ["Copy message", "Edit from here — marks in place, takes effect on send (cancel anytime)", "New session — creates an independent copy from here"]) {
+  for (const title of ["Copy message", "Put this message's text into the composer to tweak and resend (does not branch the session)", "New session — creates an independent copy from here"]) {
   }
   const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
   assert.match(css, /@media \(max-width: 380px\) \{\s*\.message-action-label \{\s*display: none;\s*\}\s*\}/);

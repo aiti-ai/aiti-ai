@@ -37,8 +37,12 @@ test("both user and assistant messages remain visible (and thus nav targets)", (
   assert.match(source, /const isVisible = isMessageGroupAnchor\(msg\) \|\| msg\.role === "assistant";/);
   assert.match(
     source,
-    /if \(!isVisible \|\| currentRefIdx === undefined\) return view;/,
+    /if \(!isVisible \|\| currentRefIdx === undefined\) return renderedView;/,
   );
+  // renderMessage's only early visible-path exits: the veil wrapping (edit-from-here
+  // preview) may rename the returned binding but must keep returning through both
+  // branches (bare view + wrapper div) — grep both returns share the same variable.
+  assert.match(source, /return \(\n\s+<div key=\{`\$\{keyPrefix\}-\$\{messageKey\}`\}/);
 });
 
 test("chatOverlay slot stays wired for the nav toolbar extension", () => {

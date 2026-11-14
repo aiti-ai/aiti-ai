@@ -118,3 +118,16 @@ test("never falls back to the superseded upstream navigate+editContent path", ()
   // from appearing in the message render line.
   assert.doesNotMatch(source, /onEditContent=\{handleEditContent\}/);
 });
+
+test("pending mark previews the affected tail with a purely visual veil (plan A)", () => {
+  // While a mark is pending, messages after the marked one get a dimming veil
+  // (opacity + overlay) and a hint bar with a cancel button. The veil must not
+  // intercept pointer events (re-marking / navigation / copy keep working) and
+  // is derived from editFromHerePending — no cleanup path needed.
+  assert.match(source, /const editFromHereMarkIdx = editFromHerePending \? entryIds\.indexOf\(editFromHerePending\.entryId\) : -1;/);
+  assert.match(source, /const veiled = editFromHereMarkIdx >= 0 && idx > editFromHereMarkIdx;/);
+  assert.match(source, /pointerEvents: "none" \}\} \/>/);
+  assert.match(source, /t\("chat\.editHereVeilHint"\)/);
+  assert.match(source, /onClick=\{handleCancelEditFromHere\}/);
+  assert.match(source, /t\("i18n\.editFromHereCancel"\)/);
+});
