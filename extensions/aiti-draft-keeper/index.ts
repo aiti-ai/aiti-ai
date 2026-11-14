@@ -17,6 +17,5 @@
 export default {
   id: "aiti-draft-keeper",
   name: "Draft Keeper",
-  version: "0.1.0",
   client: "dist/aiti-draft-keeper-client.mjs",
 };

@@ -1,8 +1,13 @@
 /**
  * aiti-qoder-agent — 会话后端扩展：Qoder CLI 专属驱动 + 账号 credits。
  *
- * qodercli/qoderclicn 是 claude-code 协议族成员（stream-json 双向、system/init、
- * assistant/result 帧、total_credits 字段），驱动层与 aiti-claude-code-agent 同构；
+ * 驱动协议（2026-11-13 ACP 重写）：spawn `qodercli/qoderclicn --acp`（Agent Client
+ * Protocol, JSON-RPC over stdio，见 qoder-acp.ts）。此前的 stream-json 双向协议
+ * （system/init、assistant/result 帧、control_request/interrupt）随 qoderclicn
+ * 1.1.81+ 移除 SDK worker 会话而断链（CLI 原话 "SDK worker sessions are no longer
+ * supported"；headless 控制面只余 --acp，2026-11-13 全链路探针取证：session/cancel
+ * 秒回、set_model/set_mode/plan 帧齐备）。宿主事件契约不变（message_start/update/end、
+ * toolCall/toolResult 卡、agent_settled、permission_mode_changed、task_update）。
  * 本扩展**独占** qoder 两个成员（CC 族清单里不再注册），额外提供：
  *
  *   1. getUsage         — 账号 credits/配额（OpenAPI /api/v2/quota/usage）
@@ -40,12 +45,13 @@ import { createTaskListMirror, type TaskEntry } from "@aiti-ai/ext-shared/task-l
 // 会话「需用户应答的请求」统一语义共享层（权威源 _shared/agent-interaction.ts）：
 // kind 裁决 + pending 账本（sidecar 落盘/重建重发）+ 答案→CC 线协议换算。
 import {
-  createInteractionLedger, deriveAskKind, toControlResponse,
+  createInteractionLedger, deriveAskKind,
   type InteractionAnswer, type InteractionRecord,
 } from "@aiti-ai/ext-shared/agent-interaction";
 // 冷恢复工具行回放共享口径（权威源 _shared/seed-tool.ts；D18 四家归一，含空结果占位文案）
 import { createSeedToolReplay, EMPTY_TOOL_ERROR, EMPTY_TOOL_OUTPUT } from "@aiti-ai/ext-shared/seed-tool";
 import { qoderLoginBin, resolveQoderCli, qoderLoginDriver, type QoderVariant } from "./login-driver.ts";
+import { AcpRpc } from "./qoder-acp.ts";
 import { QODER_VARIANTS, qoderVariant, type QoderVariantInfo } from "./variants.ts";
 // steer 能力探针门控（纯函数层）：运行中注入只在「该 CLI 二进制探针 pass」时开放，见 steer-gate.ts
 import {
@@ -387,15 +393,11 @@ export function qoderContextWindow(modelId?: string): number | undefined {
  * 基能力表（**不是**最终值：`steer` 由探针门控逐 CLI 覆盖，见 qoderCapabilitiesFor）。
  */
 const QODER_CAPABILITIES: SessionCapabilitiesLike = {
-  // 基线关。qodercli 的 headless stream-json **有**注入面：入站 user 帧带 `priority`
-  // （MessageQueue 三档 now(0)/next(1)/later(2)），AgentLoop 在 inter_turn 附件采集时取
-  // **rank ≤ next** 的条目当轮吸收（`attachment.type==="queued_command"` + midTurn 包装，
-  // 消费回 `command_lifecycle state:"started"`，1.1.44 取证）。注意 `now` 会额外触发 headless
-  // 抢占（本轮被打断另起一轮），不是 steer。但同族 codebuddy 有吞输入前科、且注入被丢没有
-  // 显式错误——所以只在「该版本二进制的实跑探针 pass」时点亮（steer-gate.ts + tools/steer-probe.mjs）。
+  // ACP 驱动（2026-11-13 重写）：stream-json 的注入面（user 帧 priority 三档 + 认领回执）
+  // 随 1.1.81+ SDK worker 移除一并失效，ACP 注入面未探针 → steer 恒关（构造器里 withSteerGate(x, false)）。
+  // 运行中输入一律入本地 followUp 队列（收口后自动续轮）。若未来要开：按 steer-gate.ts 的
+  // 探针纪律对 --acp 模式实跑取证后再点亮。
   steer: false,
-  // backend-queue 共享层本地队列（D2 债清）：运行中输入不具备注入条件时**不写 stdin**
-  // → 入队、queue_update 上面板、result 收口后自动续轮（空闲 dispatch，等价于验证过「第二轮正常受理」）。
   followUp: true,
   queueManage: true, // 共享层全 CRUD（followUp 组；steer 组只读——注入后归 CLI 自己的队列管）
   getMessages: true,
@@ -539,45 +541,47 @@ function buildUserContent(
 }
 
 // ============================================================================
-// QoderHandle —— 驱动 qodercli/qoderclicn（协议同 claude-code 族）
+// QoderHandle —— 驱动 qodercli/qoderclicn（ACP: Agent Client Protocol over stdio）
 // ============================================================================
 
 /** 导出仅供单测直接驱动（宿主 loader 只消费 default 导出）。 */
 export class QoderHandle {
   source: string;
-  /** 探针门控后的能力表（构造时按 cliPath 定；steer 只在实跑 pass 的版本上为 true）。 */
+  /** 能力表（ACP 驱动：steer 未探针恒关，运行中输入一律本地队列）。 */
   readonly capabilities: SessionCapabilitiesLike;
-  /** 本会话 CLI 二进制路径（steer 门控键；版本化文件名，升级即失配 → 需重跑探针）。 */
+  /** 本会话 CLI 二进制路径（日志/排障用）。 */
   readonly cliPath: string;
   id: string;
   readonly cwd: string;
   readonly variant: "intl" | "cn";
 
   private child: ChildProcess;
+  /** ACP JSON-RPC 传输层（session/prompt、session/cancel、set_mode/set_model 全走它）。 */
+  private acp: AcpRpc | null = null;
   /** WASM 客户端（异步预热；就绪前 getUsage/getAvailableModels 静默降级）。 */
   private client: QoderClient | null;
-  private detachReader: (() => void) | null = null;
   private listeners = new Set<Listener>();
   private aliveFlag = true;
   private running = false;
   private model: { id: string; provider: string } | undefined;
-  /** 最近一轮 usage（result 帧机会式提取；部分版本恒缺） */
+  /** 最近一轮 usage（session/prompt 响应机会式提取；部分版本恒缺） */
   private lastUsage: {
     model?: string; inputTokens?: number; outputTokens?: number;
     cacheReadTokens?: number; cacheWriteTokens?: number;
   } | undefined;
+  /** 上下文用量（agent 的 session/update:usage_update 帧：{used,size}，机会式）。 */
+  private lastContextUsage: { tokens: number; contextWindow: number } | undefined;
   /** 会话累计用量（有 usage 帧才累加；getUsageTotals 数据源） */
   private usageTotals = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, turns: 0 };
-  /** control_request 序号 + 待决 set_model 响应关联 */
-  private seq = 0;
-  private controlWaiters = new Map<string, (ok: boolean) => void>();
-  /** abort 的 control_request 关联（request_id → resolver；2026-09-06 实测 qodercli 支持同构中断） */
-  private interruptWaiters: Array<(ok: boolean) => void> = [];
-  /** 直播期工具调用账本：toolCallId → 工具/入参（user 帧 tool_result 回填 toolName，方案 X） */
+  /** session/cancel 后等待 prompt 收口的时长；超时转硬杀（测试可覆盖） */
+  static CANCEL_SETTLE_TIMEOUT_MS = 5_000;
+  /** 硬杀宽限（SIGTERM → 该时长后 SIGKILL）；测试可覆盖 */
+  static HARD_KILL_GRACE_MS = 1_000;
+  /** 直播期工具调用账本：toolCallId → 工具/入参（tool_call_update completed 回填结果，方案 X） */
   private toolCallOpen = new Map<string, { name: string; input: unknown }>();
   /**
-   * 未决应答账本（共享层 agent-interaction）：can_use_tool 进、respondInteraction 出。
-   * 键集即「仍在等待应答的请求」——result 帧收口 / markDead 时逐个 interaction_expired
+   * 未决应答账本（共享层 agent-interaction）：session/request_permission 进、respondInteraction 出。
+   * 键集即「仍在等待应答的请求」——turn 收口 / markDead 时逐个 interaction_expired
    * 解锁前端；sidecar 落盘 + subscribe 重发解决「刷新/重建后卡片没了、CLI 还在等」。
    * ⚠ field 初始化器早于 ctor body（此刻 id 还是占位值）→ sidecar 路径惰性取 this.id。
    */
@@ -586,28 +590,43 @@ export class QoderHandle {
     sidecarFile: () => (interactionDir && realSidOf(this.id) ? join(interactionDir, sidecarBase(this.id)) : undefined),
     record: (n) => this.recordInteractionCustom(n),
   });
+  /** 未决权限请求（interaction requestId → JSON-RPC id + 选项 + response resolver）。 */
+  private permissionWaiters = new Map<string, {
+    rawId: number; allowOpt?: string; denyOpt?: string;
+    resolve: (result: unknown) => void;
+  }>();
+  /** 流式气泡双线（agent_thought_chunk / agent_message_chunk 各一条），收口时落 message_end。 */
+  private thinkingAcc: { contentIndex: number; text: string } | null = null;
+  private textAcc: { contentIndex: number; text: string } | null = null;
+  private contentSeq = 0;
+  private messageStarted = false;
+  /** initialize→session/new|load 完成前不受理 prompt：等待者挂 Promise（事件驱动，非轮询）。 */
+  private sessionReady = false;
+  private readyWaiters: Array<() => void> = [];
+  /** bootstrap 完成前挂起；markDead 时放行（后半段 aliveFlag 检查会 fail-loud）。 */
+  private waitSessionReady(): Promise<void> {
+    if (this.sessionReady) return Promise.resolve();
+    if (!this.aliveFlag) return Promise.reject(new Error("[aiti-qoder-agent] not running"));
+    return new Promise((resolve) => this.readyWaiters.push(resolve));
+  }
+  /** session/load 历史回放窗口：update 静默采集进 liveHistory，不发直播帧。 */
+  private loading = false;
+  /** session/load 历史回放的 assistant 文本累积（回放完成时落一条 liveHistory）。 */
+  private replayAssistant = "";
+  /** session/new|load 响应的 ACP 目录快照（权限档 + 模型清单）。 */
+  private acpModes: { availableModes: Array<{ id: string; name?: string; description?: string }>; currentModeId?: string } | null = null;
+  private acpModels: Array<{ modelId: string; name?: string; description?: string }> = [];
   /**
-   * 流式块账本（三线显示：text / thinking）：上游 content_block 序号 → 本气泡 contentIndex。
-   * tool_use 块不进表（工具卡走 assistant 帧方案 X），故本地序号自增连续、无空洞。
+   * 会话级快照（原 init 帧）：commands = slash 目录（available_commands_update 喂），
+   * permissionMode = CC 档名（ACP modeId 经映射）。
    */
-  private blockMap = new Map<number, number>();
-  private blockAcc = new Map<number, { kind: "text" | "thinking"; text: string }>();
-  private blockSeq = 0;
-  /**
-   * init 帧快照（CC 族 system/init 免费携带）：tools = 本轮可用工具名，
-   * commands = slash_commands（前端斜杠面板），permissionMode = CLI 自报当前档。
-   * init 可能重复发（同 codebuddy 实测）→ 直接覆盖为最近一轮。
-   */
-  private tools: Array<{ name: string; description: string }> = [];
   private commands: Array<{ name: string; description?: string; source: string }> = [];
   private permissionMode: string | undefined;
-  /** plan 态（planStateManager；与权限档并存，只与 dontAsk 互斥）——由 plan_mode_changed 帧驱动。 */
-  private planActive = false;
 
   private resetStream(): void {
-    this.blockMap.clear();
-    this.blockAcc.clear();
-    this.blockSeq = 0;
+    this.thinkingAcc = null;
+    this.textAcc = null;
+    this.messageStarted = false;
   }
 
   /**
@@ -622,16 +641,6 @@ export class QoderHandle {
     return this.queueSupport;
   }
 
-  /** 本会话是否开放运行中注入（探针门控结果，构造时定）。 */
-  private readonly steerOn: boolean;
-  /**
-   * 已写 stdin、尚未被 CLI 认领的注入（uuid → 文本）。认领信号是事件而非轮询：
-   * CLI 消费时回显 `user`（isReplay，uuid=我们写的）或发 `command_lifecycle{command_uuid}`，
-   * 两条都没等到就在本轮 result 处收口。只用于「插队组条目从面板搬进消息流」，不做投递等待。
-   */
-  private steerPending = new Map<string, string>();
-  /** 探针证据版本 vs CLI 自报版本的校验只做一次（每会话一条日志够了）。 */
-  private steerVersionChecked = false;
 
   /**
    * 任务列表镜像（TodoWrite working plan，共享层 task-list）：协议没有 todo 事件，
@@ -658,25 +667,29 @@ export class QoderHandle {
     this.variant = variant;
     this.source = `aiti-qoder-agent/${qoderVariant(variant).type}`;
     this.cliPath = cliPath;
-    this.steerOn = steerProbePassed(steerProbeBook, cliPath);
-    this.capabilities = withSteerGate(QODER_CAPABILITIES, this.steerOn);
+    // ACP 驱动：steer（运行中注入）通道未探针（stream-json 时代的 user 帧/命令生命周期
+    // 认领已随 1.1.81+ SDK worker 移除失效）——恒关，运行中输入一律本地队列（共享层）。
+    const steerOn = false;
+    void steerProbePassed; // 探针工具保留（tools/steer-probe.mjs），未重验前不点亮
+    this.capabilities = withSteerGate(QODER_CAPABILITIES, steerOn);
     this.queueSupport = createBackendQueueSupport({
       isRunning: () => this.running || !this.aliveFlag,
       alive: () => this.aliveFlag,
       dispatch: (text, images) => this.prompt(text, images?.length ? { images: images as never } : {}),
       onEvent: (ev) => this.emit(ev),
       log: (m) => console.warn(`[aiti-qoder-agent] ${m}`),
-      // 探针未 pass 的 CLI 不挂 steer 钩子：运行中输入一律本地排队（共享层不过滤，
-      // 挂了钩子就会注入——能力位与行为必须同一把门）。
-      ...(this.steerOn ? { steer: (text, images) => this.steerInject(text, images) } : {}),
+      // steer 钩子不挂：运行中输入一律本地排队（能力位与行为必须同一把门）。
       persistence: createQueueFilePersistence(
         () => (queueStateDir ? join(queueStateDir, "queues", sidecarBase(this.id)) : undefined),
         (m) => console.warn(m),
       ),
     });
-    this.detachReader = lineReader(child.stdout, (line) => this.onLine(line), {
-      onOverflow: (size) => this.markDead(`stdout line overflow (${size} bytes)`),
-    });
+    // ACP JSON-RPC 传输层：session/update → 事件映射（onAcpNotification）；
+    // agent 反向请求（session/request_permission 等）→ onAcpRequest。
+    this.acp = new AcpRpc(child, {
+      onRequest: (method, params, rawId) => this.onAcpRequest(method, params, rawId),
+      onNotification: (method, params) => this.onAcpNotification(method, params),
+    }, (m) => console.log(`[aiti-qoder-agent] ${m}`));
     // 三个流必须挂 error 监听（加固 A2）：ECONNRESET/EPIPE 无监听器会崩宿主进程。
     child.stdout?.on("error", (err) => this.markDead(`stdout error: ${err.message}`));
     child.stderr?.on("error", (err) => console.log(`[aiti-qoder-agent] stderr error: ${err.message}`));
@@ -698,17 +711,18 @@ export class QoderHandle {
   private markDead(reason: string): void {
     if (!this.aliveFlag) return;
     this.aliveFlag = false;
-    this.detachReader?.();
-    this.detachReader = null;
-    for (const w of this.interruptWaiters.splice(0)) w(false);
-    // 未决 control 往返一并落定（waiter 自带 clearTimeout）
-    for (const w of this.controlWaiters.values()) w(false);
-    this.controlWaiters.clear();
+    this.acp?.close();
+    for (const w of this.readyWaiters.splice(0)) w(); // 挂起的 prompt 放行 → 后半段 aliveFlag 检查抛错
+    
+    // 未决权限请求随进程一起作废（resolve cancelled，避免 CLI 侧悬挂等响应）
+    for (const [, w] of [...this.permissionWaiters.entries()]) {
+      try { w.resolve({ outcome: { outcome: "cancelled" } }); } catch { /* 桩响应失败无害 */ }
+    }
+    this.permissionWaiters.clear();
     // 未决应答随进程一起作废：必须通知前端解锁（否则批准对话框挂在死会话上）
     this.interactions.failPending("dead");
     // 流式/工具账本清零：进程已死，未闭合的块与未配对的 tool_use 不再有未来（Map 留着是泄漏）
     this.toolCallOpen.clear();
-    this.steerPending.clear(); // 进程已死：注入帧不可能再被认领，账本留着是泄漏
     this.resetStream();
     this.q.dispose(); // 队列清空 + 停未决续轮（进程死了队列没有未来）
     this.emit({ type: "session_backend_dead", reason });
@@ -757,293 +771,270 @@ export class QoderHandle {
     });
   }
 
-  private onLine(line: string): void {
-    let msg: Record<string, unknown>;
-    try { msg = JSON.parse(line) as Record<string, unknown>; } catch { return; }
-    const type = String(msg.type ?? "");
+  // ==========================================================================
+  // ACP inbound: notifications (session/update, mode changes) and agent requests
+  // (session/request_permission). Maps the ACP surface onto the host event
+  // contract (message_start/update/end, toolCall/toolResult cards, task_update,
+  // permission_mode_changed) — host sees no difference from the old stream-json era.
+  // ==========================================================================
 
-    if (type === "system" && msg.subtype === "init") {
-      const sid = String(msg.session_id ?? "");
-      const { agentKey, stateKey } = qoderVariant(this.variant);
-      if (sid && !this.id.includes(sid)) {
-        const oldId = this.id;
-        this.id = `${agentKey}:${sid}`;
-        this.emit({ type: "session_backend_ready", oldId, id: this.id });
-        // 状态文件跟随换绑（模型选择持久化到真实 sid 名下）
-        renameExtModelState(stateKey, oldId, this.id).then(() => this.persistModelState());
-        // 队列 sidecar 随 id 换绑（占位 id 随机，不迁移则 init 前排队的条目崩溃后不可恢复）
-        migrateSidecar(oldId, this.id);
-      }
-      const m = typeof msg.model === "string" ? msg.model : undefined;
-      if (m) this.trackModel(m, "restore");
-      // init 帧顺带把本轮能力面快照捡回来（工具/斜杠命令/权限档）——之前声明了
-      // listTools/getCommands 却恒返 []（宿主面板空白）。
-      if (Array.isArray(msg.tools)) {
-        this.tools = (msg.tools as unknown[]).map((name) => ({ name: String(name), description: "" }));
-      }
-      if (Array.isArray(msg.slash_commands)) {
-        this.commands = (msg.slash_commands as unknown[]).map((name) => ({ name: String(name), source: "skill" }));
-      }
-      if (typeof msg.permissionMode === "string" && msg.permissionMode) {
-        this.permissionMode = msg.permissionMode;
-      }
-      // 门控开着但 CLI 自报版本与探针记录不符 = 证据属于别的二进制（符号链接被升级
-      // 重指向）→ 只告警不收回：能力表已随会话创建发布给宿主，中途改会让前端按钮与
-      // 后端行为不一致。重跑探针即可纠正（新会话生效）。
-      if (this.steerOn && !this.steerVersionChecked) {
-        this.steerVersionChecked = true;
-        const stale = steerEvidenceStale(steerProbeBook, this.cliPath, String(msg.qodercli_version ?? ""));
-        if (stale) console.warn(`[aiti-qoder-agent] ${stale}`);
-      }
-      this.emit({ type: "agent_start", sessionId: this.id, model: this.model });
+  private onAcpNotification(method: string, params: unknown): void {
+    if (method === "session/update") {
+      const update = (params as Record<string, unknown> | undefined)?.update;
+      if (update && typeof update === "object") this.onSessionUpdate(update as Record<string, unknown>);
       return;
     }
-
-    if (type === "control_request" && String((msg.request as Record<string, unknown>)?.subtype ?? "") === "can_use_tool") {
-      // 需应答请求（CC 族 control_request）：记账 + 广播卡片（kind 决定前端渲哪张卡）+
-      // 消息流留痕。无人应答时由 result/markDead 终结；刷新/重连后由 subscribe 重发。
-      const reqId = String(msg.request_id ?? "");
-      const request = msg.request as Record<string, unknown>;
-      const toolName = typeof request.tool_name === "string" ? request.tool_name : undefined;
-      const input = request.input;
-      if (!reqId) return;
-      const kind = deriveAskKind(toolName, input);
-      const questions = (input as Record<string, unknown> | undefined)?.questions;
-      const plan = typeof (input as Record<string, unknown> | undefined)?.plan === "string"
-        ? ((input as Record<string, unknown>).plan as string)
-        : undefined;
-      this.interactions.open({ requestId: reqId, kind, toolName, input, ...(questions ? { questions } : {}), ...(plan ? { plan } : {}) });
+    if (method === "session/current_mode_update") {
+      const modeId = String((params as Record<string, unknown> | undefined)?.currentModeId ?? "");
+      if (modeId) this.applyPermissionMode(this.modeIdToCc(modeId));
       return;
     }
+    // Unknown notifications (session/set_model_confirm etc.) are ignored.
+  }
 
-    if (type === "system" && msg.subtype === "plan_mode_changed") {
-      // plan 是独立于权限档的状态机（planStateManager），CLI 进出各发一帧；
-      // 前端徽标只认 permission_mode_changed，故折算成 mode="plan"/回到原档。
-      const active = (msg.plan_mode as Record<string, unknown> | undefined)?.active === true;
-      this.planActive = active;
-      this.emit({ type: "permission_mode_changed", mode: active ? "plan" : this.permissionMode ?? "default" });
-      return;
-    }
-
-    if (type === "control_response") {
-      const resp = (msg.response ?? {}) as Record<string, unknown>;
-      const ok = resp.subtype === "success";
-      if (ok && typeof resp.mode === "string") {
-        // set_permission_mode 成功 → CLI 回读权限档，前端徽标跟随（plan 态另算一层）
-        this.permissionMode = resp.mode;
-        this.emit({ type: "permission_mode_changed", mode: this.planActive ? "plan" : resp.mode });
+  private onSessionUpdate(u: Record<string, unknown>): void {
+    const kind = String(u.sessionUpdate ?? "");
+    if (kind === "agent_message_chunk" || kind === "agent_thought_chunk") {
+      const content = (u.content ?? u.contentBlock ?? {}) as Record<string, unknown>;
+      const text = typeof content.text === "string" ? content.text : "";
+      if (!text) return;
+      if (this.loading) {
+        // session/load replay: silently accumulate into liveHistory, no live frames.
+        if (kind === "agent_message_chunk") this.replayAssistant += text;
+        return;
       }
-      for (const w of this.interruptWaiters.splice(0)) w(ok);
-      for (const [rid, waiter] of this.controlWaiters) {
-        if (rid === String(resp.request_id)) { waiter(ok); this.controlWaiters.delete(rid); }
+      if (kind === "agent_message_chunk") {
+        this.running = true; // late chunk must not resurrect a settled turn, but running flag follows reality
+        this.appendChunk("text", text);
+      } else {
+        this.appendChunk("thinking", text);
       }
       return;
     }
-
-    if (type === "stream_event") {
-      const ev = (msg.event ?? {}) as Record<string, unknown>;
-      const upIdx = typeof ev.index === "number" ? ev.index : -1;
-      if (ev.type === "message_start") {
-        this.running = true;
-        this.resetStream();
-        // 宿主 reducer 按 contentIndex 建块要求先有消息骨架（zcode ensureOpen 同形）；
-        // 缺 message 时所有 *_start/*_delta 整条丢弃（气泡空白）
-        this.emit({
-          type: "message_start",
-          role: "assistant",
-          message: {
-            role: "assistant",
-            content: [],
-            model: this.model?.id ?? "",
-            provider: "aiti-qoder-agent",
-          },
-        });
-      } else if (ev.type === "content_block_start") {
-        const block = (ev.content_block ?? {}) as Record<string, unknown>;
-        if (block.type === "tool_use") {
-          // 工具名账本提前登记（zcode toolNameByCallId 同款）：块头带 id/name，assistant 终帧
-          // 丢失/滞后时 tool_result 仍能报出工具名（卡片不再匿名）。入参等终帧补齐。
-          const tid = String(block.id ?? "");
-          if (tid && typeof block.name === "string" && !this.toolCallOpen.has(tid)) {
-            this.toolCallOpen.set(tid, { name: block.name, input: {} });
-          }
-          return; // tool_use 块不流式（卡片由 assistant 帧方案 X 出）
-        }
-        const kind = block.type === "thinking" ? "thinking" : block.type === "text" ? "text" : null;
-        if (!kind || upIdx < 0) return;
-        const idx = this.blockSeq++;
-        this.blockMap.set(upIdx, idx);
-        this.blockAcc.set(idx, { kind, text: "" });
-        this.emit({ type: "message_update", assistantMessageEvent: { type: kind === "thinking" ? "thinking_start" : "text_start", contentIndex: idx } });
-      } else if (ev.type === "content_block_delta") {
-        const delta = (ev.delta ?? {}) as Record<string, unknown>;
-        const knownIdx = this.blockMap.get(upIdx);
-        const known = knownIdx === undefined ? undefined : this.blockAcc.get(knownIdx);
-        let idx: number;
-        let acc: { kind: "text" | "thinking"; text: string };
-        if (known === undefined || knownIdx === undefined) {
-          // 孤儿 delta（content_block_start 丢帧，或 CLI 干脆不发块头）：按 delta 类型就地
-          // 开块（zcode ensureOpen 同款容错）——整段正文静默丢弃是最难查的失败模式。
-          const kind = delta.type === "thinking_delta" ? "thinking" : delta.type === "text_delta" ? "text" : null;
-          if (!kind || upIdx < 0) return;
-          idx = this.blockSeq++;
-          this.blockMap.set(upIdx, idx);
-          acc = { kind, text: "" };
-          this.blockAcc.set(idx, acc);
-          this.emit({
-            type: "message_update",
-            assistantMessageEvent: { type: kind === "thinking" ? "thinking_start" : "text_start", contentIndex: idx },
-          });
-        } else {
-          idx = knownIdx;
-          acc = known;
-        }
-        const isText = delta.type === "text_delta" && acc.kind === "text";
-        const isThinking = delta.type === "thinking_delta" && acc.kind === "thinking";
-        const text = typeof delta.text === "string" ? delta.text : typeof delta.thinking === "string" ? delta.thinking : "";
-        if ((!isText && !isThinking) || !text) return;
-        acc.text += text;
-        this.emit({
-          type: "message_update",
-          // 顶层 delta 只喂适配层的 partialText 快照（断线重连补气泡），不影响内容归位
-          ...(isText ? { delta: text } : {}),
-          assistantMessageEvent: {
-            type: isText ? "text_delta" : "thinking_delta",
-            contentIndex: idx,
-            delta: text,
-          },
-        });
-      } else if (ev.type === "content_block_stop") {
-        const idx = this.blockMap.get(upIdx);
-        const acc = idx === undefined ? undefined : this.blockAcc.get(idx);
-        if (idx === undefined || acc === undefined) return;
-        this.blockMap.delete(upIdx);
-        this.emit({
-          type: "message_update",
-          assistantMessageEvent: {
-            type: acc.kind === "thinking" ? "thinking_end" : "text_end",
-            contentIndex: idx,
-            content: acc.text,
-          },
-        });
+    if (kind === "user_message_chunk") {
+      // session/load replay carries the user turns; live runs never send these.
+      if (!this.loading) return;
+      const content = (u.content ?? u.contentBlock ?? {}) as Record<string, unknown>;
+      const text = typeof content.text === "string" ? content.text : "";
+      this.flushStreamMessages(); // assistant replay segment before this user turn ends here
+      if (text.trim()) this.liveHistory.push({ role: "user", content: text });
+      return;
+    }
+    if (kind === "tool_call" || kind === "tool_call_update") {
+      this.onToolCallUpdate(u, kind === "tool_call");
+      return;
+    }
+    if (kind === "plan") {
+      // ACP native plan entries → task-list mirror (TodoWrite-derived in the old protocol).
+      const entries = Array.isArray(u.entries) ? u.entries as Array<Record<string, unknown>> : [];
+      const todos = entries.flatMap((e) => {
+        const content = typeof e.content === "string" ? e.content.trim() : "";
+        if (!content) return [];
+        const status = e.status === "completed" ? "completed" : e.status === "in_progress" ? "in_progress" : "pending";
+        const priority = e.priority === "high" ? "high" : e.priority === "low" ? "low" : "medium";
+        return [{ content, status, priority } as Record<string, unknown>];
+      });
+      this.tasks.apply(todos as never);
+      return;
+    }
+    if (kind === "available_commands_update") {
+      const cmds = Array.isArray(u.availableCommands) ? u.availableCommands as Array<Record<string, unknown>> : [];
+      this.commands = cmds.flatMap((c) => {
+        const name = typeof c?.name === "string" ? c.name : "";
+        if (!name) return [];
+        return [{
+          name,
+          ...(typeof c.description === "string" && c.description ? { description: c.description } : {}),
+          source: "skill",
+        }];
+      });
+      return;
+    }
+    if (kind === "usage_update") {
+      const used = Number(u.used);
+      const size = Number(u.size);
+      if (Number.isFinite(used) && Number.isFinite(size) && size > 0) {
+        this.lastContextUsage = { tokens: used, contextWindow: size };
       }
       return;
     }
+    // Unknown update kinds (agent_info_update, current_mode inside update, ...) are ignored.
+  }
 
-    if (type === "assistant") {
-      const message = (msg.message ?? {}) as Record<string, unknown>;
-      const content = Array.isArray(message.content) ? message.content : [];
-      // 后台模型感知：assistant 帧自带实际服务的 model（CLI 降级/后台切换会变）
-      if (typeof message.model === "string" && message.model) this.trackModel(message.model, "set");
-      // 方案 X（对齐 aiti-claude-code-agent/zcode）：工具调用直播走原生 assistant toolCall 消息，
-      // 宿主 ToolCallBlock 按 toolCallId 折叠后续 toolResult——直播/refetch 同形，工具名/入参/输出齐全。
-      const toolUseBlocks = (content as Array<Record<string, unknown>>)
-        .filter((b) => b && b.type === "tool_use" && typeof b.name === "string");
-      // ⚠ 分组按**帧内原序**（连续同类归一条）：thinking 段该在工具卡之前，历史上把
-      //   toolCall 一律抢先入 liveHistory，刷新回放时思考/正文会跳到工具卡后面（与直播不一致）。
-      const groups = (content as Array<Record<string, unknown>>).reduce<
-        Array<{ kind: "tool"; blocks: unknown[] } | { kind: "text"; blocks: unknown[] }>
-      >((acc, b) => {
-        if (!b) return acc;
-        const isTool = b.type === "tool_use" && typeof b.name === "string";
-        const textBlock = b.type === "text" && typeof b.text === "string" && b.text
-          ? { type: "text", text: b.text }
-          : b.type === "thinking" && typeof b.thinking === "string" && b.thinking
-            ? { type: "thinking", thinking: b.thinking }
-            : null;
-        const block = isTool
-          ? { type: "toolCall", toolCallId: String((b as Record<string, unknown>).id ?? ""), toolName: String(b.name), input: (b.input ?? {}) as Record<string, unknown> }
-          : textBlock;
-        if (!block) return acc;
-        const kind = isTool ? "tool" : "text";
-        const last = acc[acc.length - 1];
-        if (last && last.kind === kind) last.blocks.push(block);
-        else acc.push({ kind, blocks: [block] });
-        return acc;
-      }, []);
-      for (const b of toolUseBlocks) {
-        this.toolCallOpen.set(String(b.id ?? ""), { name: String(b.name), input: b.input ?? {} });
-        // 任务列表主通道：TodoWrite 族工具入参（协议无 todo 事件，只能从工具事件派生）
-        this.tasks.fromToolEvent(String(b.name), b.input);
+  /** tool_call (new call) / tool_call_update (progress/result) → host tool cards (方案 X). */
+  private onToolCallUpdate(u: Record<string, unknown>, isCall: boolean): void {
+    const id = String(u.toolCallId ?? "");
+    const meta = (u._meta ?? {}) as Record<string, unknown>;
+    const qmeta = (meta.qoder ?? {}) as Record<string, unknown>;
+    // The real CLI tool name lives in _meta.qoder.toolName; `title` is a human-friendly label.
+    const name = typeof qmeta.toolName === "string" && qmeta.toolName ? qmeta.toolName
+      : typeof u.title === "string" && u.title ? u.title : "tool";
+    if (isCall) {
+      const input = (u.rawInput ?? {}) as Record<string, unknown>;
+      const alreadyCarded = id ? this.toolCallOpen.has(id) : false;
+      if (id && !alreadyCarded) this.toolCallOpen.set(id, { name, input });
+      // 任务列表主通道：TodoWrite 族工具入参（协议兜底；ACP 原生 plan 帧是第一通道）
+      this.tasks.fromToolEvent(name, input);
+      const status = String(u.status ?? "pending");
+      // 出卡：pending/in_progress 直播即时出；completed（含 session/load 回放的单帧态）
+      // 也必须出卡——只有 toolResult 没有调用卡时，刷新回放会变成匿名结果行。
+      const cardMsg = {
+        role: "assistant",
+        content: [{ type: "toolCall", toolCallId: id, toolName: name, input }],
+        model: this.model?.id ?? "",
+        provider: "aiti-qoder-agent",
+        timestamp: Date.now(),
+      };
+      if (!alreadyCarded) {
+        this.liveHistoryPush(cardMsg);
+        if (!this.loading) this.emit({ type: "message_end", message: cardMsg });
       }
-      for (const g of groups) {
+      if (status === "completed" || status === "failed") {
+        this.toolCallOpen.delete(id);
+        this.emitToolResult(id, name, input, u);
+      }
+      return;
+    }
+    // tool_call_update
+    const status = String(u.status ?? "");
+    if (status !== "completed" && status !== "failed") return; // in_progress etc.
+    const open = this.toolCallOpen.get(id);
+    this.toolCallOpen.delete(id);
+    this.emitToolResult(id, open?.name ?? name, open?.input ?? {}, u);
+  }
+
+  private emitToolResult(id: string, name: string, input: unknown, u: Record<string, unknown>): void {
+    // content[] blocks (text/diff) or rawOutput — same fallback chain as the old tool_result path.
+    const blocks = Array.isArray(u.content) ? u.content as Array<Record<string, unknown>> : [];
+    const texts: string[] = [];
+    for (const b of blocks) {
+      const inner = (b.content ?? b) as Record<string, unknown>;
+      if (typeof inner.text === "string") texts.push(inner.text);
+      else if (typeof b.rawText === "string") texts.push(b.rawText);
+      else if (b.type === "diff") texts.push(`[diff] ${typeof b.path === "string" ? b.path : ""}`);
+    }
+    if (!texts.length && typeof u.rawOutput === "string") texts.push(u.rawOutput);
+    const outText = texts.join("\n").trim();
+    const isError = u.status === "failed";
+    // 任务列表第二通道（input 优先、output 兜底）：部分 CLI 把新列表回显在结果里
+    this.tasks.fromToolEvent(name, input, outText);
+    const resultMsg = {
+      role: "toolResult",
+      ...(id ? { toolCallId: id } : {}),
+      ...(name ? { toolName: name } : {}),
+      content: [{ type: "text", text: (outText || (isError ? EMPTY_TOOL_ERROR : EMPTY_TOOL_OUTPUT)).slice(0, 4000) }],
+      ...(isError ? { isError: true } : {}),
+      timestamp: Date.now(),
+    };
+    this.liveHistory.push(resultMsg);
+    if (!this.loading) this.emit({ type: "message_end", message: resultMsg });
+  }
+
+  // ---- streaming bubbles (thinking / text lines), closed at turn end ----
+
+  private ensureMessageStart(): void {
+    if (this.messageStarted) return;
+    this.messageStarted = true;
+    this.emit({
+      type: "message_start",
+      role: "assistant",
+      message: { role: "assistant", content: [], model: this.model?.id ?? "", provider: "aiti-qoder-agent" },
+    });
+  }
+
+  private appendChunk(kind: "text" | "thinking", text: string): void {
+    this.ensureMessageStart();
+    let acc = kind === "text" ? this.textAcc : this.thinkingAcc;
+    if (!acc) {
+      acc = { contentIndex: this.contentSeq++, text: "" };
+      if (kind === "text") this.textAcc = acc; else this.thinkingAcc = acc;
+      this.emit({ type: "message_update", assistantMessageEvent: { type: kind === "thinking" ? "thinking_start" : "text_start", contentIndex: acc.contentIndex } });
+    }
+    acc.text += text;
+    this.emit({
+      type: "message_update",
+      // top-level delta feeds the adapter's partialText snapshot (reconnect backfill)
+      ...(kind === "text" ? { delta: text } : {}),
+      assistantMessageEvent: { type: kind === "thinking" ? "thinking_delta" : "text_delta", contentIndex: acc.contentIndex, delta: text },
+    });
+  }
+
+  /** session/load replay tail: accumulated assistant text lands as one liveHistory entry. */
+  private flushReplayAssistant(): void {
+    if (this.replayAssistant.trim()) {
+      this.liveHistory.push({
+        role: "assistant",
+        content: [{ type: "text", text: this.replayAssistant }],
+        model: this.model?.id ?? "",
+        provider: "aiti-qoder-agent",
+      });
+    }
+    this.replayAssistant = "";
+  }
+
+  /** Turn-end flush: bubble thinking/text lines as message_end entries (live history order). */
+  private flushStreamMessages(): void {
+    const flushOne = (acc: { contentIndex: number; text: string } | null, kind: "thinking" | "text") => {
+      if (!acc) return;
+      this.emit({
+        type: "message_update",
+        assistantMessageEvent: { type: kind === "thinking" ? "thinking_end" : "text_end", contentIndex: acc.contentIndex, content: acc.text },
+      });
+      if (acc.text.trim()) {
+        const block = kind === "thinking" ? { type: "thinking", thinking: acc.text } : { type: "text", text: acc.text };
         const groupMsg = {
           role: "assistant",
-          content: g.blocks,
-          model: typeof message.model === "string" ? message.model : this.model?.id ?? "",
+          content: [block],
+          model: this.model?.id ?? "",
           provider: "aiti-qoder-agent",
           timestamp: Date.now(),
         };
         this.liveHistoryPush(groupMsg);
         this.emit({ type: "message_end", message: groupMsg });
       }
-      this.resetStream();
-      return;
-    }
+    };
+    flushOne(this.thinkingAcc, "thinking");
+    flushOne(this.textAcc, "text");
+    this.resetStream();
+  }
 
-    if (type === "user") {
-      const echoUuid = typeof msg.uuid === "string" ? msg.uuid : "";
-      if (echoUuid && this.steerPending.has(echoUuid)) {
-        this.acceptSteer(echoUuid); // 注入被消费：CLI 回显（isReplay）= 认领回执
-        return;
-      }
-      // 方案 X：工具结果 → 原生 toolResult 条目（liveHistory 折叠配对 + message_end 直播即时出输出）
-      const message = (msg.message ?? {}) as Record<string, unknown>;
-      const content = Array.isArray(message.content) ? (message.content as Array<Record<string, unknown>>) : [];
-      for (const b of content) {
-        if (b.type === "tool_result") {
-          const id = String(b.tool_use_id ?? "");
-          const open = this.toolCallOpen.get(id);
-          this.toolCallOpen.delete(id);
-          const rc = Array.isArray(b.content) ? (b.content as Array<Record<string, unknown>>) : [];
-          const outText = (typeof b.content === "string" ? b.content : rc.map((x) => (typeof x.text === "string" ? x.text : "")).join("")).trim();
-          // 任务列表第二通道（zcode 同款 input 优先、output 兜底）：部分 CLI 把新列表回显在结果里
-          this.tasks.fromToolEvent(open?.name ?? "", open?.input, outText);
-          const isError = b.is_error === true;
-          const resultMsg = {
-            role: "toolResult",
-            ...(id ? { toolCallId: id } : {}),
-            ...(open?.name ? { toolName: open.name } : {}),
-            content: [{ type: "text", text: (outText || (isError ? EMPTY_TOOL_ERROR : EMPTY_TOOL_OUTPUT)).slice(0, 4000) }],
-            ...(isError ? { isError: true } : {}),
-            timestamp: Date.now(),
-          };
-          this.liveHistory.push(resultMsg);
-          this.emit({ type: "message_end", message: resultMsg });
-        }
-      }
-      return;
-    }
+  // ---- agent→client requests ----
 
-    if (type === "command_lifecycle") {
-      // msg_lifecycle_v1：{command_uuid, state}——注入帧的第二条认领通道（部分版本回显
-      // user、部分只发生命周期）。state 不做区分：cancelled 既出现在「被丢弃的排队项」
-      // 也出现在「已读取但本轮被打断」的收尾（1.1.44 按 reason 批量收尾），据其重发会
-      // 重复投递模型已看过的消息 → 一律按「已认领」收口。
-      const cu = typeof msg.command_uuid === "string" ? msg.command_uuid : "";
-      if (cu && this.steerPending.has(cu)) this.acceptSteer(cu);
-      return;
+  private onAcpRequest(method: string, params: unknown, rawId: number): Promise<unknown> | unknown {
+    if (method === "session/request_permission") {
+      return this.handlePermissionRequest(params as Record<string, unknown>, rawId);
     }
+    // fs/* should never arrive (initialize declares no fs capabilities) — fail loudly so
+    // silent client-side execution expectations never appear.
+    throw new Error(`[aiti-qoder-agent] unsupported agent request: ${method}`);
+  }
 
-    if (type === "result") {
-      this.running = false;
-      this.settleSteerAtTurnEnd(); // 注入没等到认领帧也要随本轮收口（面板不挂陈旧条目）
-      this.extractUsage(msg);
-      const isError = msg.is_error === true;
-      // 本轮结束 = 未决应答一起作废（卡片永挂会让前端误判仍在等待）
-      this.interactions.failPending("turn_end");
-      // result 帧 自带本轮 credits（total_credits / modelUsage.*.credits）
-      const credits = typeof msg.total_credits === "number" ? msg.total_credits : undefined;
-      this.emit({
-        type: "agent_settled",
-        ...(isError ? { error: String(msg.result ?? "error") } : {}),
-        ...(credits !== undefined ? { usage: { provider: "qoder", costUsd: 0, credits } } : {}),
-        result: typeof msg.result === "string" ? msg.result : undefined,
-      });
-      // settle（result 帧）后自动续轮（共享层幂等；running 已置 false 才会放行）
-      this.q.scheduleDrain();
-      return;
-    }
+  /**
+   * session/request_permission → interaction ledger (kind-derived cards, same UX as the
+   * old can_use_tool path). The JSON-RPC response stays pending until respondInteraction
+   * (or turn end / death) settles it.
+   */
+  private handlePermissionRequest(params: Record<string, unknown>, rawId: number): Promise<unknown> {
+    const options = Array.isArray(params.options) ? params.options as Array<Record<string, unknown>> : [];
+    // Pick allow/deny options by ACP kind (allow_once/allow_always vs deny_once/reject_once).
+    const kindOf = (o: Record<string, unknown> | undefined) => String(o?.kind ?? o?.optionKind ?? "");
+    const allowOpt = options.find((o) => kindOf(o).startsWith("allow"))?.optionId as string | undefined;
+    const denyOpt = options.find((o) => kindOf(o).startsWith("deny") || kindOf(o).startsWith("reject"))?.optionId as string | undefined;
+    const toolCall = (params.toolCall ?? {}) as Record<string, unknown>;
+    const tcMeta = ((toolCall._meta ?? {}) as Record<string, unknown>).qoder as Record<string, unknown> | undefined;
+    const toolName = (typeof tcMeta?.toolName === "string" && tcMeta.toolName)
+      || (typeof toolCall.title === "string" ? toolCall.title : undefined);
+    const input = toolCall.rawInput ?? {};
+    const requestId = `perm-${rawId}`;
+    const kind = deriveAskKind(toolName, input);
+    const questions = (input as Record<string, unknown> | undefined)?.questions;
+    const plan = typeof (input as Record<string, unknown> | undefined)?.plan === "string"
+      ? ((input as Record<string, unknown>).plan as string)
+      : undefined;
+    this.interactions.open({ requestId, kind, toolName, input, ...(questions ? { questions } : {}), ...(plan ? { plan } : {}) });
+    return new Promise<unknown>((resolve) => {
+      this.permissionWaiters.set(requestId, { rawId, allowOpt, denyOpt, resolve });
+    });
   }
 
   private liveHistory: unknown[] = [];
@@ -1082,18 +1073,12 @@ export class QoderHandle {
     const external = opts.sessionId ? await parseExternalSession(`${agentKey}:${opts.sessionId}`) : null;
     const metaCwd = typeof external?.meta?.cwd === "string" ? external.meta.cwd.trim() : "";
     const cwd = opts.cwd || metaCwd || process.cwd();
+    // ACP 驱动（qoderclicn 1.1.81+ 移除 stream-json SDK worker 的入站控制通道）：
+    // 长驻 `--acp` 进程，控制面走 JSON-RPC（session/prompt、session/cancel、set_mode/set_model）。
+    // 起步最大权限在 bootstrap 里用 session/set_mode("yolo") 设置（对应原 --permission-mode
+    // bypass_permissions）；模型种子在 bootstrap 里 session/set_model。
     const args = [
-      "-p",
-      "--output-format", "stream-json",
-      "--input-format", "stream-json",
-      "--include-partial-messages",
-      // 起步最大权限：headless 长驻会话逐条审批太吵（普通工具 CLI 自己 policy 放行，
-      // 只有 requiresUserInteraction 类工具会发 can_use_tool——那条走 interaction_request 应答）。
-      // 运行时仍可 set_permission_mode 切换。
-      "--permission-mode", "bypass_permissions",
-      // 注意：qodercli 不支持 --verbose（claude CLI 专属，传了会 exit 1）
-      ...(seedModel ? ["--model", seedModel] : []),
-      ...(opts.sessionId ? ["--resume", opts.sessionId] : []),
+      "--acp",
       ...(opts.extraArgs ?? []),
     ];
     // P1' 启动包装（docs/aiti-custom-agent-plan.md）：extman spawn.command/spawn.argsPrefix，缺省 = 行为不变
@@ -1120,22 +1105,128 @@ export class QoderHandle {
     // spawn.command/launchOverride 只是外层 wrapper，换 wrapper 不该让探针结论失效。
     const handle = new QoderHandle(provisionalId, child, opts.client, cwd, opts.variant, cli);
     if (seedModel) handle.model = { id: seedModel, provider: "qoder" };
-    if (external?.messages?.length) handle.seedHistory(external.messages);
+    // 接管既有会话：历史由 session/load 的 CLI 回放填充（比宿主索引 seedHistory 更权威——
+    // 宿主侧历史是 CLI 会话的投影，双喂会重复）。metaCwd 已保证 load 在原项目目录里进行。
     // 启动即写状态文件（pi 目录快照 + selected），引导外部 agent
     handle.persistModelState();
+    // ACP 握手 + 会话引导（异步不阻塞 start 返回；失败 → markDead → 前端复位）
+    void handle.startSession({ sessionId: opts.sessionId, seedModel });
     return handle;
   }
 
-  /** 背压修正（加固 A4）：write() 返回 false 仅表示帧入缓冲（>16KB 必返 false），不是失败。 */
-  private writeLine(obj: Record<string, unknown>): boolean {
-    const stdin = this.child.stdin;
-    if (!stdin?.writable) return false;
+  /**
+   * ACP bootstrap: initialize → initialized → session/new | session/load → set_mode(yolo)
+   * → set_model(seed). Failures land in markDead so the frontend settles (session_backend_dead)
+   * instead of hanging on a half-open session. agent_start fires after the real sid is bound.
+   */
+  private async startSession(opts: { sessionId?: string; seedModel?: string }): Promise<void> {
+    if (!this.acp) return;
     try {
-      stdin.write(JSON.stringify(obj) + "\n");
-      return true;
-    } catch {
-      return false;
+      await this.acp.request(
+        "initialize",
+        { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false } },
+        60_000,
+      );
+      this.acp.notify("initialized", {});
+      const { agentKey } = qoderVariant(this.variant);
+      if (opts.sessionId) {
+        // 接管：session/load（cwd 已按原会话归属解析——CLI 只在原项目目录里找历史）
+        this.loading = true;
+        const res = await this.acp.request(
+          "session/load", { sessionId: opts.sessionId, cwd: this.cwd || undefined, mcpServers: [] }, 150_000,
+        ) as Record<string, unknown> | null;
+        this.applyAcpSessionMeta(res);
+        this.loading = false;
+        this.flushStreamMessages();
+        this.flushReplayAssistant();
+      } else {
+        const res = await this.acp.request(
+          "session/new", { cwd: this.cwd || undefined, mcpServers: [] }, 60_000,
+        ) as Record<string, unknown> | null;
+        const sid = String((res as { sessionId?: unknown } | null)?.sessionId ?? "");
+        if (sid && !this.id.includes(sid)) {
+          const oldId = this.id;
+          this.id = `${agentKey}:${sid}`;
+          this.emit({ type: "session_backend_ready", oldId, id: this.id });
+          // 状态文件跟随换绑（模型选择持久化到真实 sid 名下）
+          const { stateKey } = qoderVariant(this.variant);
+          renameExtModelState(stateKey, oldId, this.id).then(() => this.persistModelState());
+          // 队列 sidecar 随 id 换绑（占位 id 随机，不迁移则 new 前排队的条目崩溃后不可恢复）
+          migrateSidecar(oldId, this.id);
+        }
+        this.applyAcpSessionMeta(res);
+      }
+      const sid = realSidOf(this.id) ?? undefined;
+      // 起步最大权限（headless 长驻会话逐条审批太吵）；运行时仍可 set_mode 切换。
+      try {
+        await this.acp.request("session/set_mode", { sessionId: sid, modeId: "yolo" }, 15_000);
+        this.applyPermissionMode("bypassPermissions");
+      } catch (e) {
+        console.warn(`[aiti-qoder-agent] set_mode(yolo) failed — staying on CLI default: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      if (opts.seedModel) {
+        try {
+          await this.acp.request("session/set_model", { sessionId: sid, modelId: opts.seedModel }, 15_000);
+          this.trackModel(opts.seedModel, "restore");
+        } catch (e) {
+          console.warn(`[aiti-qoder-agent] set_model(${opts.seedModel}) failed: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+      this.sessionReady = true;
+      for (const w of this.readyWaiters.splice(0)) w();
+      this.emit({ type: "agent_start", sessionId: this.id, model: this.model });
+      // bootstrap 期间经共享层入队的 prompt（创建即发/早到消息）在此放行（幂等，空队列无害）
+      this.q.scheduleDrain();
+    } catch (e) {
+      this.markDead(`acp bootstrap failed: ${e instanceof Error ? e.message : String(e)}`);
     }
+  }
+
+  /** session/new|load 响应的目录快照（权限档清单 + 模型清单）。 */
+  private applyAcpSessionMeta(res: Record<string, unknown> | null): void {
+    if (!res || typeof res !== "object") return;
+    const modes = res.modes as { availableModes?: unknown; currentModeId?: unknown } | undefined;
+    if (modes && Array.isArray(modes.availableModes)) {
+      this.acpModes = {
+        availableModes: (modes.availableModes as Array<Record<string, unknown>>).flatMap((m) => {
+          const id = typeof m?.id === "string" ? m.id : "";
+          return id ? [{ id, ...(typeof m.name === "string" ? { name: m.name } : {}), ...(typeof m.description === "string" ? { description: m.description } : {}) }] : [];
+        }),
+        ...(typeof modes.currentModeId === "string" ? { currentModeId: modes.currentModeId } : {}),
+      };
+    }
+    const models = res.models as { availableModels?: unknown } | undefined;
+    if (models && Array.isArray(models.availableModels)) {
+      this.acpModels = (models.availableModels as Array<Record<string, unknown>>).flatMap((m) => {
+        const modelId = typeof m?.modelId === "string" ? m.modelId : "";
+        return modelId ? [{ modelId, ...(typeof m.name === "string" ? { name: m.name } : {}), ...(typeof m.description === "string" ? { description: m.description } : {}) }] : [];
+      });
+    }
+  }
+
+  /** CC 档名 → ACP modeId（session/set_mode）。plan 在 ACP 面 unavailable（返回 undefined）。 */
+  private ccToModeId(mode: string): string | undefined {
+    const map: Record<string, string> = {
+      default: "default", acceptEdits: "acceptEdits", auto: "auto",
+      dontAsk: "dontAsk", bypassPermissions: "yolo", dont_ask: "dontAsk",
+    };
+    return map[mode];
+  }
+
+  /** ACP modeId → CC 档名（CLI 回显 / current_mode_update）。未知原样透传。 */
+  private modeIdToCc(modeId: string): string {
+    const map: Record<string, string> = {
+      default: "default", acceptEdits: "acceptEdits", auto: "auto",
+      dontAsk: "dontAsk", yolo: "bypassPermissions", bypass_permissions: "bypassPermissions",
+    };
+    return map[modeId] ?? modeId;
+  }
+
+  /** CLI 回显/设置成功后的统一入口：更新快照 + 广播（幂等，宿主按值去重）。 */
+  private applyPermissionMode(ccMode: string): void {
+    if (!ccMode) return;
+    this.permissionMode = ccMode;
+    this.emit({ type: "permission_mode_changed", mode: ccMode });
   }
 
   async prompt(
@@ -1143,80 +1234,74 @@ export class QoderHandle {
     options?: {
       images?: Array<{ type: "image"; data: string; mimeType: string }>;
       files?: Array<{ data: string; mimeType: string; filename?: string }>;
-      /**
-       * 运行中排队语义（core 透传）：followUp 恒入本地队列；steer/缺省按探针门控——
-       * pass 的 CLI 注入 stdin（当前轮工具间隙消费），否则同样收敛到队列（消息不丢）。
-       */
+      /** 运行中排队语义（core 透传）：ACP 驱动下 steer 通道未开放，一律收敛到本地队列。 */
       streamingBehavior?: "steer" | "followUp";
     },
   ): Promise<void> {
     if (!this.aliveFlag) throw new Error("[aiti-qoder-agent] not running");
     if (this.running) {
-      // 运行中：不在此处直发（注入或入队都由共享层按能力门分流；写 stdin 的注入路径
-      // 一旦被 CLI 吞掉也不会有显式错误，所以只在实跑探针通过的版本开放）。
+      // 运行中：收敛到本地队列（queue_update 上面板，收口后自动续轮）。
       await this.q.routePrompt(text, {
         ...(options?.images?.length ? { images: options.images as never } : {}),
         streamingBehavior: options?.streamingBehavior,
       });
       return;
     }
-    const ok = this.writeLine({
-      type: "user",
-      message: { role: "user", content: buildUserContent(text, options?.images) },
-    });
-    if (!ok) throw new Error("[aiti-qoder-agent] stdin closed");
-    // 写成功后才置 running（加固 A4）：写失败抛错时 running 保持 false，会话不被卡死
+    // bootstrap 未完成：挂起等 ready（事件驱动）。⚠ 不能走 routePrompt——共享层见
+    // isRunning()=false 会当空闲 dispatch 回本方法，无限递归。
+    await this.waitSessionReady();
+    if (!this.aliveFlag) throw new Error("[aiti-qoder-agent] not running");
+    const sid = realSidOf(this.id);
+    if (!sid || !this.acp) throw new Error("[aiti-qoder-agent] session not ready");
+    // ACP content blocks: text + optional images（promptCapabilities.image=true）。
+    const prompt: Array<Record<string, unknown>> = [{ type: "text", text }];
+    for (const img of options?.images ?? []) {
+      prompt.push({ type: "image", data: img.data, mimeType: img.mimeType });
+    }
+    // 写成功后才置 running（加固 A4）：request 抛错时 running 保持 false，会话不被卡死
     this.running = true;
     this.liveHistory.push({ role: "user", content: text });
+    let result: Record<string, unknown> | null = null;
+    try {
+      result = await this.acp.request("session/prompt", { sessionId: sid, prompt }) as Record<string, unknown> | null;
+    } catch (e) {
+      // transport-level failure (dead pipe / timeout): let markDead settle the UI via
+      // session_backend_dead; reset running here so the queue stays drainable.
+      this.running = false;
+      this.flushStreamMessages();
+      console.warn(`[aiti-qoder-agent] session/prompt failed: ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
+    this.finishTurn(result);
   }
 
   /**
-   * 运行中注入（steer 钩子；只在探针 pass 时挂载）。
-   *
-   * 帧形 = CLI 入站 user schema（1.1.44 取证）：MessageQueue 三档 `now(0) < next(1) < later(2)`，
-   * AgentLoop 的 inter_turn 附件采集取 **rank ≤ next** 的条目当轮吸收（`queued_command` 附件 +
-   * midTurn 包装，消费时回 `command_lifecycle state:"started"`）→ **steer 用 `next`**。
-   * `now` 额外命中 headless 的队列监听「有 now 就打断本轮」——实测注入后 535ms 本轮以
-   * `result/error_during_execution` 收口、注入另起一轮：那是**抢占**（等价 stop+重发），不是 steer。
-   * **uuid 必须由我们生成**——它是后面认领回执（`user` isReplay 回显 / `command_lifecycle.command_uuid`）
-   * 的关联键。
-   *
-   * 不做投递等待：CLI 丢弃注入时没有任何显式错误，等回执只会变成超时猜测（既不能证明
-   * 丢了、又不能安全重发——重发才是重复消息的根源）。写失败（stdin 已关）是唯一确定
-   * 的失败 → 抛给共享层降级入队。投递事实由探针与运行时日志负责。
+   * Turn settlement (session/prompt response): stopReason end_turn/cancelled/...
+   * flushes streaming bubbles, expires pending interactions, emits agent_settled
+   * (cancelled → stopReason "aborted", the host abort semantics) and drains the queue.
    */
-  private async steerInject(text: string, images?: Array<{ data: string; mimeType: string }>): Promise<void> {
-    const uuid = randomUUID();
-    const wrote = this.writeLine({
-      type: "user",
-      uuid,
-      priority: "next",
-      message: { role: "user", content: buildUserContent(text, images) },
+  private finishTurn(result: Record<string, unknown> | null): void {
+    this.running = false;
+    this.flushStreamMessages();
+    const stopReason = String(result?.stopReason ?? "end_turn");
+    this.extractUsage(result);
+    // 本轮结束 = 未决权限请求一并作废（卡片永挂会让前端误判仍在等待；CLI 侧响应 cancelled）
+    for (const [, w] of [...this.permissionWaiters.entries()]) {
+      try { w.resolve({ outcome: { outcome: "cancelled" } }); } catch { /* 无害 */ }
+    }
+    this.permissionWaiters.clear();
+    this.interactions.failPending("turn_end");
+    const aborted = stopReason === "cancelled";
+    const errorText = aborted ? undefined
+      : stopReason === "end_turn" ? undefined
+        : `stopReason=${stopReason}`;
+    this.emit({
+      type: "agent_settled",
+      ...(errorText ? { error: errorText } : {}),
+      ...(aborted ? { stopReason: "aborted" } : {}),
     });
-    if (!wrote) throw new Error("[aiti-qoder-agent] stdin closed");
-    this.steerPending.set(uuid, text);
-    // 面板「插队」组先挂上（只读——注入后归 CLI 自己的队列，撤回要走 stop 中断本轮）
-    this.q.registerSteer(uuid, text);
-    console.log(`[aiti-qoder-agent] steer injected uuid=${uuid} len=${text.length}`);
-  }
-
-  /** CLI 认领了一条注入：从「插队」组摘掉，落进消息流（回显帧不带 tool_result）。 */
-  private acceptSteer(uuid: string): void {
-    const text = this.steerPending.get(uuid);
-    if (text === undefined) return;
-    this.steerPending.delete(uuid);
-    this.q.drainSteer([uuid]);
-    const message = { role: "user", content: [{ type: "text", text }], timestamp: Date.now() };
-    this.liveHistory.push(message);
-    this.emit({ type: "message_end", message });
-  }
-
-  /**
-   * 轮末收口：本轮结束仍没等到认领帧的注入，按「已随本轮过去」处理（摘面板条目 + 落消息流）。
-   * 不重发——歧义时重发才是重复消息的来源；真要重发由用户在面板里重新发一条。
-   */
-  private settleSteerAtTurnEnd(): void {
-    for (const uuid of [...this.steerPending.keys()]) this.acceptSteer(uuid);
+    // settle（prompt 响应）后自动续轮（共享层幂等；running 已置 false 才会放行）
+    this.q.scheduleDrain();
   }
 
   /**
@@ -1239,26 +1324,20 @@ export class QoderHandle {
    * 帧若带 claude 形态 usage 则记账；实测部分版本不落 token（usage 恒缺/恒 0）
    * ——拿不到不编数据，getContextUsage 相应保持空轨。
    */
-  private extractUsage(msg: Record<string, unknown>): void {
-    const u = (msg.usage ?? null) as Record<string, unknown> | null;
+  private extractUsage(result: Record<string, unknown> | null): void {
+    const u = (result?.usage ?? null) as Record<string, unknown> | null;
     if (!u || typeof u !== "object") return;
     const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
-    const inputTokens = n(u.input_tokens);
-    const outputTokens = n(u.output_tokens);
-    const cacheReadTokens = n(u.cache_read_input_tokens);
-    const cacheWriteTokens = n(u.cache_creation_input_tokens);
+    const inputTokens = n(u.inputTokens);
+    const outputTokens = n(u.outputTokens);
     if (inputTokens === undefined && outputTokens === undefined) return;
     this.lastUsage = {
       model: this.model?.id,
       ...(inputTokens !== undefined ? { inputTokens } : {}),
       ...(outputTokens !== undefined ? { outputTokens } : {}),
-      ...(cacheReadTokens !== undefined ? { cacheReadTokens } : {}),
-      ...(cacheWriteTokens !== undefined ? { cacheWriteTokens } : {}),
     };
     this.usageTotals.inputTokens += inputTokens ?? 0;
     this.usageTotals.outputTokens += outputTokens ?? 0;
-    this.usageTotals.cacheReadTokens += cacheReadTokens ?? 0;
-    this.usageTotals.cacheWriteTokens += cacheWriteTokens ?? 0;
     this.usageTotals.turns += 1;
   }
 
@@ -1267,6 +1346,11 @@ export class QoderHandle {
    * 可判才报（qmodel_* 等自研命名未公开窗口 → undefined，空轨态）。
    */
   getContextUsage(): { percent: number; contextWindow: number; tokens: number } | undefined {
+    // 第一优先：agent 的 usage_update 帧（{used,size} 直接可判）。
+    const frame = this.lastContextUsage;
+    if (frame) {
+      return { percent: Math.min(100, (frame.tokens / frame.contextWindow) * 100), contextWindow: frame.contextWindow, tokens: frame.tokens };
+    }
     const u = this.lastUsage;
     if (!u) return undefined;
     const tokens = (u.inputTokens ?? 0) + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0);
@@ -1285,32 +1369,25 @@ export class QoderHandle {
    * 运行时切换模型：set_model control_request → control_response
    * （qodercli 1.1.17 为 CC 族 fork，二进制取证含该分支；超时回 false，fail-loud）。
    */
+  /** 运行时切换模型：session/set_model（ACP 原生；1.1.83 探针响应 {}）。 */
   async setModel(model: { id: string; provider: string }): Promise<boolean> {
     if (!this.aliveFlag) throw new Error("[aiti-qoder-agent] not running");
-    const requestId = `sm-${++this.seq}`;
-    const ok = await new Promise<boolean>((resolve) => {
-      const timer = setTimeout(() => {
-        if (this.controlWaiters.has(requestId)) {
-          this.controlWaiters.delete(requestId);
-          console.warn(`[aiti-qoder-agent] set_model(${model.id}) timed out — send a message first`);
-          resolve(false);
-        }
-      }, 15_000);
-      this.controlWaiters.set(requestId, (v) => { clearTimeout(timer); resolve(v); });
-      const wrote = this.writeLine({
-        type: "control_request",
-        request_id: requestId,
-        request: { subtype: "set_model", model: model.id },
-      });
-      if (!wrote) { clearTimeout(timer); this.controlWaiters.delete(requestId); resolve(false); }
-    });
-    if (ok) {
-      const prev = this.model;
-      this.model = { id: model.id, provider: "qoder" };
-      this.emit({ type: "model_select", model: this.model, ...(prev ? { previousModel: prev } : {}), source: "set" });
-      this.persistModelState();
+    const sid = realSidOf(this.id);
+    if (!sid || !this.acp) {
+      console.warn(`[aiti-qoder-agent] set_model(${model.id}) skipped — session not ready`);
+      return false;
     }
-    return ok;
+    try {
+      await this.acp.request("session/set_model", { sessionId: sid, modelId: model.id }, 15_000);
+    } catch (e) {
+      console.warn(`[aiti-qoder-agent] set_model(${model.id}) failed: ${e instanceof Error ? e.message : String(e)}`);
+      return false;
+    }
+    const prev = this.model;
+    this.model = { id: model.id, provider: "qoder" };
+    this.emit({ type: "model_select", model: this.model, ...(prev ? { previousModel: prev } : {}), source: "set" });
+    this.persistModelState();
+    return true;
   }
 
   async getAvailableModels(): Promise<ExtModelEntry[]> {
@@ -1382,74 +1459,59 @@ export class QoderHandle {
   }
 
   async abort(): Promise<void> {
-    // 2026-09-06 协议实测：qodercli 支持 CC 同构 control_request/interrupt——
-    // control_response success + result 帧（is_error）收敛；此前只置 running=false
-    // 属假成功（前端显停、CLI 仍在跑）。与 aiti-claude-code-agent 同款两段式。
-    // 15s 超时（加固：对齐 set_model/set_permission_mode；CLI 忙时不让宿主 abort 永挂）。
+    // ACP abort: session/cancel (acks sub-second, 2026-11-13 probe) → the in-flight
+    // session/prompt responds with stopReason:"cancelled" → finishTurn settles the UI
+    // with agent_settled("aborted"). Fallback: if the turn does not settle within
+    // CANCEL_SETTLE_TIMEOUT_MS, hard-kill the child (exit → markDead → session_backend_dead
+    // resets the UI; the host rebuilds with session/load on the next prompt).
     if (!this.running) {
-      // 失步兜底（zcode 同款）：前端运行态与 handle 失步（如 result 帧丢失）时静默 return
+      // 失步兜底（zcode 同款）：前端运行态与 handle 失步（如响应帧丢失）时静默 return
       // 会让停止按钮永久悬挂。补一帧 aborted 收口复位前端；幂等，真空闲时多一帧无害。
       this.emit({ type: "agent_end" });
       this.emit({ type: "agent_settled", stopReason: "aborted" });
       return;
     }
-    const requestId = `int-${++this.seq}`;
-    const interrupted = await new Promise<boolean>((resolve) => {
-      let settled = false;
-      const timer = setTimeout(() => {
-        if (!settled) { settled = true; resolve(false); }
-      }, 15_000);
-      timer.unref?.();
-      this.interruptWaiters.push((ok) => {
-        if (!settled) { settled = true; clearTimeout(timer); resolve(ok); }
-      });
-      const wrote = this.writeLine({
-        type: "control_request",
-        request_id: requestId,
-        request: { subtype: "interrupt" },
-      });
-      if (!wrote && !settled) { settled = true; clearTimeout(timer); resolve(false); }
-    });
-    if (!interrupted) console.warn("[aiti-qoder-agent] interrupt not acknowledged");
+    const sid = realSidOf(this.id);
+    const wrote = sid && this.acp ? this.acp.notify("session/cancel", { sessionId: sid }) : false;
+    if (!wrote) console.warn("[aiti-qoder-agent] session/cancel not written — falling back to hard stop");
+    // Two-stage fallback: if the turn is still unsettled after the grace period, kill the child.
+    const timer = setTimeout(() => {
+      if (!this.running) return; // settled normally via the cancelled response
+      console.warn("[aiti-qoder-agent] cancel not settled in time — hard-stopping CLI (SIGTERM→SIGKILL)");
+      try { this.child.kill("SIGTERM"); } catch { /* already gone */ }
+      const t = setTimeout(() => { try { this.child.kill("SIGKILL"); } catch { /* already gone */ } }, QoderHandle.HARD_KILL_GRACE_MS);
+      t.unref?.();
+    }, QoderHandle.CANCEL_SETTLE_TIMEOUT_MS);
+    timer.unref?.();
   }
 
-  /**
-   * 运行时切换权限模式（control_request/set_permission_mode，长驻进程运行时生效）。
-   * 2026-09-19 二进制定位：`plan` 走 planStateManager 开关（与权限档并存，进/出各发一帧
-   * plan_mode_changed），其余档直通 setPermissionMode；只有 `dontAsk` 与 plan 互斥
-   * （CLI 抛 "Plan mode is unavailable while the Don't ask permission mode is active"）
-   * → 那种情况下本方法拿到 error 响应返 false，前端先切别的档再进 plan。
-   */
   async setPermissionMode(mode: string): Promise<boolean> {
     if (!this.aliveFlag) throw new Error("[aiti-qoder-agent] not running");
     const supported = ["default", "acceptEdits", "dontAsk", "bypassPermissions", "auto", "plan"];
     if (!supported.includes(mode)) {
-      throw new Error(`[aiti-qoder-agent] 非法权限模式 "${mode}"（qodercli 可选：${supported.join("/")}）`);
+      throw new Error(`[aiti-qoder-agent] 非法权限模式 "${mode}"（可选：${supported.join("/")}）`);
     }
-    const requestId = `pm-${++this.seq}`;
-    const ok = await new Promise<boolean>((resolve) => {
-      const timer = setTimeout(() => {
-        if (this.controlWaiters.has(requestId)) {
-          this.controlWaiters.delete(requestId);
-          resolve(false);
-        }
-      }, 15_000);
-      this.controlWaiters.set(requestId, (v) => { clearTimeout(timer); resolve(v); });
-      const wrote = this.writeLine({
-        type: "control_request",
-        request_id: requestId,
-        request: { subtype: "set_permission_mode", mode },
-      });
-      if (!wrote) { clearTimeout(timer); this.controlWaiters.delete(requestId); resolve(false); }
-    });
-    // plan 不是权限档（独立状态机），生效由 plan_mode_changed 帧回执，别把它记进 permissionMode
-    if (ok && mode !== "plan") this.permissionMode = mode;
-    return ok;
+    // plan 档在 ACP 面不可用（availableModes 无 plan 条目，1.1.83 探针）——fail-loud，
+    // 前端提示失败（stream-json 时代的 planStateManager 通道随 SDK worker 一起移除）。
+    const modeId = this.ccToModeId(mode);
+    if (!modeId) {
+      console.warn(`[aiti-qoder-agent] permission mode "${mode}" is unavailable over ACP`);
+      return false;
+    }
+    const sid = realSidOf(this.id);
+    if (!sid || !this.acp) return false;
+    try {
+      await this.acp.request("session/set_mode", { sessionId: sid, modeId }, 15_000);
+    } catch (e) {
+      console.warn(`[aiti-qoder-agent] set_mode(${modeId}) failed: ${e instanceof Error ? e.message : String(e)}`);
+      return false;
+    }
+    // 生效回显由 session/current_mode_update 帧驱动（applyPermissionMode）；这里不重复广播。
+    return true;
   }
 
-  /** 当前模式（plan 态优先；init 帧回读 / 本进程切换记录；宿主无查询通道，供本扩展与排障用）。 */
   getPermissionMode(): string | undefined {
-    return this.planActive ? "plan" : this.permissionMode;
+    return this.permissionMode;
   }
 
   /**
@@ -1461,10 +1523,26 @@ export class QoderHandle {
     if (!this.aliveFlag) throw new Error("[aiti-qoder-agent] stdin closed");
     const ask = this.interactions.settle(requestId, answer);
     if (!ask) return false;
-    return this.writeLine({
-      type: "control_response",
-      response: { subtype: "success", request_id: requestId, response: toControlResponse(ask, answer) },
-    });
+    const waiter = this.permissionWaiters.get(requestId);
+    if (!waiter) return false;
+    this.permissionWaiters.delete(requestId);
+    // ACP outcome mapping: accept → allow option (deny 档无 allow 项时 cancelled fail-safe)；
+    // decline → deny option（无则 cancelled）。optionId 显式指定优先。
+    let outcome: Record<string, unknown>;
+    const optionId = answer.optionId ?? (answer.action === "accept" ? waiter.allowOpt : waiter.denyOpt);
+    if (answer.action === "accept" && waiter.allowOpt && !answer.optionId) {
+      outcome = { outcome: "allow_selected", optionId: waiter.allowOpt };
+    } else if (optionId) {
+      outcome = { outcome: "allow_selected", optionId };
+    } else {
+      outcome = { outcome: "cancelled" };
+    }
+    try {
+      waiter.resolve({ outcome });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   subscribe(listener: Listener): () => void {
@@ -1485,6 +1563,7 @@ export class QoderHandle {
 
   async dispose(): Promise<void> {
     if (!this.aliveFlag) return;
+    this.acp?.close();
     this.child.kill("SIGTERM");
     await new Promise<void>((resolve) => {
       const t = setTimeout(() => {
@@ -1514,17 +1593,12 @@ export class QoderHandle {
    */
   async steer(text: string): Promise<void> {
     if (!this.aliveFlag) throw new Error("[aiti-qoder-agent] not running");
-    if (!this.steerOn) {
-      throw new Error(
-        `Capability "steer" is not enabled for CLI "${this.cliPath || "?"}"：` +
-        "注入面未经实跑探针验证（跑 node tools/steer-probe.mjs --record，pass 后重开会话）",
-      );
-    }
-    if (!this.running) {
-      await this.prompt(text);
-      return;
-    }
-    await this.steerInject(text);
+    // ACP 驱动下 steer 通道未探针（stream-json 的注入面随 1.1.81+ SDK worker 移除）——
+    // 保持 fail-loud：宿主已按能力位把 steer 降级成 followUp，走到这里只能是有人直连 RPC。
+    throw new Error(
+      `Capability "steer" is not enabled for CLI "${this.cliPath || "?"}"：` +
+      "ACP 驱动的运行中注入面未经验证（运行中输入一律走 followUp 本地队列）",
+    );
   }
 
   /** @capability followUp —— 运行中入本地队列（result 后自动续轮，可撤回）；空闲等同普通 prompt。 */
@@ -1577,9 +1651,9 @@ export class QoderHandle {
   }
 
 
-  /** @capability listTools —— init 帧 tools 快照（宿主面板/工具卡描述用）。 */
+  /** @capability listTools —— ACP 面无工具清单帧（tool_call 卡自带工具名）→ 空态。 */
   async getAllTools(): Promise<Array<{ name: string; description: string }>> {
-    return this.tools.map((t) => ({ ...t }));
+    return [];
   }
 
   /** @capability getCommands —— init 帧 slash_commands 快照（前端斜杠面板）。 */
@@ -1797,7 +1871,6 @@ function scanQoderBackends(
 export default {
   id: "aiti-qoder-agent",
   name: "Qoder CLI (国际/CN 独立 CLI·非 IDE)",
-  version: "0.3.0",
   icon: "🟠",
   // 受控登录统一弹窗（零构建原生 h() client；client/ 下两文件随 deploy 拷贝）
   // 静态插入点声明（与 client registerItems 的 id 一一对应）

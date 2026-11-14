@@ -467,7 +467,6 @@ async function recycleApi(req: Request, ctx: { path: string[]; method: string })
 export default {
   id: "aiti-codebuddy-agent",
   name: "CodeBuddy Code (腾讯)",
-  version: "0.1.0",
   icon: "🔵",
 
   features: [

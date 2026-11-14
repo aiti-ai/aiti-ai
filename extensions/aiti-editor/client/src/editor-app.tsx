@@ -470,6 +470,10 @@ export function EditorApp(props: Record<string, any>) {
       return;
     }
     const u = new URLSearchParams({ encoding: openEncoding });
+    // stat 与 /raw 并行：缓存基线（baseMtimeMs）必须是【磁盘真实 mtime】而非 Date.now()——
+    // 否则服务端缓存的基线永远「比磁盘新」，磁盘新鲜度门卫（下方 stale 判定）永远失效。
+    const diskStatP = api("/stat?filePath=" + encodeURIComponent(filePath), { method: "GET" })
+      .then((r) => r.json()).catch(() => null);
     api("/raw?filePath=" + encodeURIComponent(filePath) + "&" + u.toString())
       .then((r) => r.json())
       .then((d) => {
@@ -478,13 +482,31 @@ export function EditorApp(props: Record<string, any>) {
         // 先检查服务端缓存（多开恢复）：必须早于 setMeta/setStatus——否则 Monaco create
         // 触发 onDidChangeModelContent 写回原版覆盖服务端编辑
         let _recoveredSrv: any = null;
-        (window as any).__aitiEditor._cacheFetchFromServer(filePath, true).then((srv: any) => {
+        (window as any).__aitiEditor._cacheFetchFromServer(filePath, true).then(async (srv: any) => {
           _recoveredSrv = srv;
           if (srv && srv.contentHash && srv.contentHash !== (window as any).__aitiEditor._hashContent(next.content)) {
-            next.content = srv.content;
-            next.encoding = srv.encoding || next.encoding;
+            // 磁盘新鲜度门卫（重开显示最新版）：用【基线内容 hash】而非 mtime——
+            // 缓存的 original = 上次会话看到的磁盘版；它与当前磁盘内容不一致 = 文件已被
+            // 外部更新（agent/shell），旧「未保存编辑」不再值得恢复 → 放弃恢复（磁盘版为准）
+            // 并清掉过期服务端缓存，避免下次打开再误判 dirty。（mtime 维度不可靠：精度/回拨/旧版污染）
+            try {
+              const stale = srv && srv.original != null
+                && (window as any).__aitiEditor._hashContent(String(srv.original))
+                  !== (window as any).__aitiEditor._hashContent(d.content || "");
+              if (stale) {
+                _recoveredSrv = null;
+                api("/cache-delete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ filePath }) }).catch(() => {});
+                next.content = d.content || "";
+                next.encoding = d.encoding || "utf-8";
+                next.hasBOM = d.hasBOM === true;
+                next.size = d.size || next.content.length;
+              } else {
+                next.content = srv.content;
+                next.encoding = srv.encoding || next.encoding;
+              }
+            } catch { next.content = srv.content; next.encoding = srv.encoding || next.encoding; }
           }
-        }).finally(() => {
+        }).finally(async () => {
           const isRecovered = _recoveredSrv && _recoveredSrv.contentHash && _recoveredSrv.contentHash !== (window as any).__aitiEditor._hashContent(d.content || "");
           const baseline = isRecovered ? (_recoveredSrv.original || _recoveredSrv.content) : next.content;
           initialContentRef.current = baseline;
@@ -492,10 +514,13 @@ export function EditorApp(props: Record<string, any>) {
           setStatus({ phase: "ready", error: null });
           (window as any).__aitiEditor._setDirty(filePath, isRecovered);
           setDirty(isRecovered);
-          // 建缓存：恢复时 original=服务端基线（磁盘原版）→ dirty 判定正确
+          // 建缓存：恢复时 original=服务端基线（磁盘原版）→ dirty 判定正确；
+          // baseMtimeMs = 磁盘真实 mtime（新鲜度门卫的基线信号，绝不能用 Date.now()）
+          const _ds: any = await diskStatP.catch(() => null);
+          const _diskMtime = _ds && _ds.ok && typeof _ds.mtimeMs === "number" ? _ds.mtimeMs : Date.now();
           (window as any).__aitiEditor._cacheSet(filePath, {
             content: next.content, original: baseline,
-            baseMtimeMs: Date.now(), language: next.language, size: next.size,
+            baseMtimeMs: _diskMtime, language: next.language, size: next.size,
             encoding: next.encoding, hasBOM: next.hasBOM,
           });
           if (isRecovered) {

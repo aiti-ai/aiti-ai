@@ -483,7 +483,6 @@ function getRunDetailInline(runId, knownArtifactDir) {
 export default {
   id: "aiti-subagents",
   name: "子代理（ai 委托 · 多 agent 协作）",
-  version: "0.4.0",
   icon: "icon.svg",
   client: "dist/aiti-subagents-client.mjs",
 

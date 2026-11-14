@@ -302,7 +302,6 @@ async function fetchRegistry(): Promise<Response> {
 export default {
   id: "aiti-extman",
   name: "aiti 扩展管理器",
-  version: "0.1.0",
   icon: "icon.svg",
   client: "dist/aiti-extman-client.mjs",
 

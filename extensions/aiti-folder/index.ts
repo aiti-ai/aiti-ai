@@ -142,7 +142,6 @@ async function trashToRecycle(absPath: string): Promise<{ ok: boolean; error?: s
 export default {
   id: "aiti-folder",
   name: "aiti-folder",
-  version: "0.1.0",
   description: "文件夹浏览器（fileViewer folder 接管）+ 目录选择器能力（pathPicker FolderSwitcher）。复用核心端点，UI 全在扩展。",
   client: "dist/aiti-folder-client.mjs",
   clientImmediately: true,

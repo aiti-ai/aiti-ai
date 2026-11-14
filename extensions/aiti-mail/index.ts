@@ -104,7 +104,6 @@ async function sendAndRecord(cfg: MailConfig, toList: string[], subject: string,
 export default {
   id: "aiti-mail",
   name: "邮件发送",
-  version: "0.1.0",
   icon: "icon.svg",
   client: "dist/aiti-mail-client.mjs",
 

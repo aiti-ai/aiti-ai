@@ -89,7 +89,6 @@ function draftView(d: any, conflicts: Map<string, { conflict: string; overrideFi
 export default {
   id: "aiti-models-import",
   name: "模型配置导入（从其他 agent）",
-  version: "0.1.0",
   icon: "icon.svg",
   client: "dist/aiti-models-import.mjs",
 

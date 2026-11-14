@@ -17,7 +17,6 @@ const json = (data: unknown, status = 200) =>
 export default {
   id: "aiti-recovery",
   name: "Recovery",
-  version: "0.1.0",
   client: "dist/aiti-recovery.mjs",
   icon: "icons/history.svg",
   features: [

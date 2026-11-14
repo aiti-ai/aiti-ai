@@ -14,7 +14,7 @@
   },
   "aitiExtProtocol": "1.0",
   "dependencies": {
-    "@aiti-ai/ext-shared": "^0.1.7"
+    "@aiti-ai/ext-shared": "^0.1.12"
   },
   "license": "MIT",
   "contentHash": "df1b963f71517751",

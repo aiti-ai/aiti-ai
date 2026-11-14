@@ -1549,7 +1549,6 @@ function quotaView(force: boolean): Response {
 export default {
   id: "aiti-zcode-agent",
   name: "ZCode CLI",
-  version: "0.1.0",
   icon: "🟢",
   // 受控登录统一弹窗（零构建原生 h() client；client/ 下两文件随 deploy 拷贝）
   // 静态插入点声明（与 client registerItems 的 id 一一对应）

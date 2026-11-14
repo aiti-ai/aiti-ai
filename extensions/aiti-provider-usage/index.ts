@@ -23,7 +23,6 @@ const json = (data: unknown, status = 200) =>
 export default {
   id: "aiti-provider-usage",
   name: "Provider Usage",
-  version: "0.1.0",
   client: "dist/aiti-provider-usage.mjs",
   icon: "icons/chart-column.svg",
   // 服务出口（2026-09-17）：aiti-model-wizard 等消费方经 ctx.services 取余额总览，

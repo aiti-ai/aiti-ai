@@ -371,7 +371,6 @@ function resolveApiBase(req: Request): { localOrigin: string; basePath: string; 
 export default {
   id: "aiti-helper",
   name: "AI Helper（扩展的一句话 AI 能力）",
-  version: "0.5.0",
   icon: "icons/sparkles.svg",   // 单源星星（_shared/icons 库；deploy copyIcons 拷入，不再有根 icon.svg）
   client: "dist/aiti-helper-client.mjs",
 

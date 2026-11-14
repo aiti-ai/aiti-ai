@@ -122,7 +122,6 @@ async function handleApi(req: Request, ctx: ExtApiCtx): Promise<Response | null>
 export default {
   id: "aiti-testagent-native",
   name: "testagent-native（Windows API/COM 追踪面板）",
-  version: "0.1.0",
   icon: "icon.svg",
   client: "dist/aiti-testagent-native-client.mjs",
 
