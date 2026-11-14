@@ -1,0 +1,24 @@
+# one-off: copy the working NPM_TOKEN repo secret to the new single-package
+# repos (aiti-ddns / service-tunnels). Runs on a throwaway branch only.
+name: copy-npm-token
+
+on:
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  copy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Copy NPM_TOKEN to target repos via gh (PAT from GH_PAT secret)
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          NPM_TOKEN_VALUE: ${{ secrets.NPM_TOKEN }}
+        run: |
+          gh auth status | sed 's/gho_.*/gho_<redacted>/'
+          gh secret set NPM_TOKEN -R aiti-ai/aiti-ddns --body "$NPM_TOKEN_VALUE"
+          gh secret set NPM_TOKEN -R aiti-ai/service-tunnels --body "$NPM_TOKEN_VALUE"
+          echo "--- verify (names only) ---"
+          gh secret list -R aiti-ai/aiti-ddns
+          gh secret list -R aiti-ai/service-tunnels
