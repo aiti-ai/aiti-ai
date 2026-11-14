@@ -14,7 +14,7 @@ test("renders temporary notices once at the top right of the chat column", () =>
   assert.equal(floatingChatShelves.length, 1);
   assert.match(
     source,
-    /position: "absolute",\s*top: 12,\s*left: 0,\s*right: isMobile(?: \|\| isCompact)? \? 0 : CHAT_MINIMAP_WIDTH,[\s\S]*?justifyContent: "flex-end",[\s\S]*?<NoticeShelf notices=\{notices\} floating onPauseChange=\{setNoticePaused\} \/>/,
+    /position: "absolute",\s*top: 12,\s*left: 0,\s*right: isMobile(?: \|\| isCompact)? \? 0 : CHAT_MINIMAP_WIDTH,[\s\S]*?justifyContent: "flex-end",[\s\S]*?<NoticeShelf notices=\{notices\} floating onPauseChange=\{setNoticePaused\} onAskAi=\{askAiAboutNotice\} \/>/,
   );
 });
 
@@ -68,4 +68,23 @@ test("lets keyboard users pause and scroll long notices", () => {
   assert.match(source, /onMouseLeave=\{\(event\) => \{\s*if \(!event\.currentTarget\.contains\(document\.activeElement\)\) onPauseChange\?\.\(null\)/);
   // The text's padding is interpolated, so the pattern skips the style's braces
   assert.match(source, /<span\s+tabIndex=\{0\}\s+style=\{\{[\s\S]*?overflowY: "auto"/);
+});
+
+test("offers an Ask AI button on error and warning notices only", () => {
+  assert.match(source, /onAskAi\?: \(message: string\) => void/);
+  assert.match(source, /\{\(notice\.type === "error" \|\| notice\.type === "warning"\) && onAskAi && \(/);
+  assert.match(source, /onClick=\{\(\) => onAskAi\(notice\.message\)\}/);
+});
+
+test("Ask AI prefills the composer without sending, quoting the notice verbatim", async () => {
+  // UI-only notices (extension_ui_request notify) never reach the model, so the
+  // prompt must quote the notice text; the click only fills the composer.
+  assert.match(source, /const prefill = t\("chat\.noticeAskAiPrompt", \{ message \}\)/);
+  assert.match(source, /if \(input\.hasInput\(\)\) \{\s*input\.appendText\(prefill\);\s*\} else \{\s*input\.setText\(prefill\);\s*\}/);
+  assert.match(source, /input\.focus\(\)/);
+  // The prompt template interpolates the notice text in every locale.
+  for (const lang of ["en", "zh-CN", "zh-TW"]) {
+    const locale = await readFile(new URL(`../lib/i18n/messages/${lang}.ts`, import.meta.url), "utf8");
+    assert.match(locale, /"chat\.noticeAskAiPrompt":[\s\S]*?\{message\}/);
+  }
 });
