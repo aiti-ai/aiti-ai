@@ -43,6 +43,9 @@ export type ExtModelEntry = {
   provider: string;
   label?: string;
   source?: "ext" | "pi";
+  /** Right-aligned dim text in the model picker row (e.g. qoder billing coefficient "0.5x").
+   *  Locale-neutral string rendered as-is; absent → host falls back to the provider id. */
+  hint?: string;
 };
 
 export type ExtModelState = {
@@ -272,16 +275,34 @@ export function piModelsFromModelsConfig(config: unknown): ExtModelEntry[] {
       const bits: string[] = [];
       if (typeof m.api === "string" && m.api) bits.push(String(m.api));
       if (typeof m.contextWindow === "number" && m.contextWindow > 0) bits.push(`${Math.round(m.contextWindow / 1024)}k`);
+      const hint = piCostHint(m);
       out.push({
         id: m.id,
         provider: "pi",
         label: bits.length > 0 ? `${String(m.name ?? m.id)} · ${bits.join(" · ")}` : String(m.name ?? m.id),
         source: "pi",
+        ...(hint ? { hint } : {}),
       });
       void provKey; // pi 目录按模型平铺；来源 provider key 不进 UI（避免与 provider 分组语义冲突）
     }
   }
   return out;
+}
+
+/**
+ * models.json 模型的 cost（pi ModelCost，美元/百万 token）→ 选择器行 hint（"$0.6/$2.2 per M"）。
+ * 格式与宿主 lib/model-visibility.ts 的 formatModelCostHint 一致（跨层复制，改格式两处同步）；
+ * cache 费率/分档不进（槽位窄）；缺失/全零 → 无 hint（不编数据）。
+ */
+function piCostHint(m: { cost?: { input?: unknown; output?: unknown } | null }): string | undefined {
+  const c = m.cost;
+  if (!c || typeof c !== "object") return undefined;
+  const inRate = typeof c.input === "number" && Number.isFinite(c.input) ? c.input : null;
+  const outRate = typeof c.output === "number" && Number.isFinite(c.output) ? c.output : null;
+  if (inRate === null && outRate === null) return undefined;
+  if ((inRate ?? 0) === 0 && (outRate ?? 0) === 0) return undefined;
+  const trim = (n: number) => n.toFixed(3).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
+  return `$${trim(inRate ?? 0)}/$${trim(outRate ?? 0)} per M`;
 }
 
 /**

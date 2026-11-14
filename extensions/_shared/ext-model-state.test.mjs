@@ -162,18 +162,24 @@ test("piModelsFromModelsConfig: models.json 扁平化 + label 尾注 + 容错", 
       "zai-coding-cn": {
         apiKey: "k",
         models: [
-          { id: "glm-4.7", name: "GLM-4.7", api: "openai-completions", contextWindow: 204800 },
+          { id: "glm-4.7", name: "GLM-4.7", api: "openai-completions", contextWindow: 204800, cost: { input: 0.6, output: 2.2, cacheRead: 0.11, cacheWrite: 0 } },
           { id: "glm-5.3", name: "GLM-5.3", api: "anthropic-messages" },
+          { id: "glm-free", name: "GLM-Free", api: "openai-completions", cost: { input: 0, output: 0 } },
+          { id: "glm-bad", name: "GLM-Bad", api: "openai-completions", cost: { input: "x", output: null } },
         ],
       },
       broken: { models: "not-an-array" },
       empty: {},
     },
   });
-  assert.deepEqual(out.map((m) => m.id), ["glm-4.7", "glm-5.3"]);
+  assert.deepEqual(out.map((m) => m.id), ["glm-4.7", "glm-5.3", "glm-free", "glm-bad"]);
   assert.ok(out.every((m) => m.provider === "pi" && m.source === "pi"));
   assert.match(String(out[0].label), /GLM-4\.7 · openai-completions · 200k/);
+  assert.equal(out[0].hint, "$0.6/$2.2 per M", "cost 费率进 hint（与宿主 formatModelCostHint 同格式）");
   assert.equal(out[1].label, "GLM-5.3 · anthropic-messages");
+  assert.equal(out[1].hint, undefined, "无 cost → 无 hint");
+  assert.equal(out[2].hint, undefined, "全零 cost（免费）→ 无 hint");
+  assert.equal(out[3].hint, undefined, "非法 cost → 无 hint（不编数据）");
   assert.deepEqual(piModelsFromModelsConfig(null), []);
   assert.deepEqual(piModelsFromModelsConfig({}), []);
   assert.deepEqual(piModelsFromModelsConfig({ providers: null }), []);
