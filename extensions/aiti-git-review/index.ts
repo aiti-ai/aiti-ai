@@ -718,7 +718,6 @@ function restoreBindings() {
 export default {
   id: "aiti-git-review",
   name: "Git 代码审核",
-  version: "0.2.0",
   icon: "icon.svg",
   client: "dist/aiti-git-review-client.mjs",
 

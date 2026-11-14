@@ -15,7 +15,6 @@
 export default {
   id: "aiti-ctx-meter",
   name: "上下文比例条（context %）",
-  version: "0.1.4",
   icon: "icons/meter-vertical.svg",
   client: "dist/aiti-ctx-meter-client.mjs",
   ui: {

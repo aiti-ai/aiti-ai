@@ -340,7 +340,15 @@ for (const { dir, pkgDir, pjPath, p } of pkgs) {
       if (existsSync(_dist0) && readdirSync(_dist0).length > 0) {
         console.log(`[publish] ${dir}: dist 已存在，跳过 ${buildScript0}`);
       } else {
-        execSync(`npm run ${buildScript0}`, { cwd: pkgDir, stdio: "inherit" });
+        // 构建失败只跳过本包（failed++）而非整个脚本崩溃——一个扩展的 client 构建坏
+        // 不应拖死其余全部包的发布（2026-11-14 aiti-sheet-univer 缺 @tailwindcss/postcss 实测）
+        try {
+          execSync(`npm run ${buildScript0}`, { cwd: pkgDir, stdio: "inherit" });
+        } catch (e) {
+          failed++;
+          report.push(`✗  ${dir}: ${buildScript0} 构建失败——跳过该包`);
+          continue;
+        }
       }
     }
   }

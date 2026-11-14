@@ -5,7 +5,7 @@
   "soul": "不抢方向盘——agent 已经在跑，附着上去看就好。",
   "aitiExtProtocol": "1.0",
   "dependencies": {
-    "@aiti-ai/ext-shared": "^0.1.4"
+    "@aiti-ai/ext-shared": "^0.1.12"
   },
   "license": "MIT",
   "contentHash": "0bbda346bca0bfcc",

@@ -19,7 +19,6 @@
 export default {
   id: "aiti-queue-keeper",
   name: "Queue Keeper",
-  version: "0.1.1",
   client: "dist/aiti-queue-keeper.mjs",
   icon: "icon.svg",
   features: [

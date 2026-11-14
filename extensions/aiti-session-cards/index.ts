@@ -10,7 +10,6 @@
 export default {
   id: "aiti-session-cards",
   name: "会话请求卡（审批/问答/授权）",
-  version: "0.1.0",
   icon: "icons/message-square.svg",
   client: "dist/aiti-session-cards.mjs",
   features: [

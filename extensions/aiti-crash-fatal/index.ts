@@ -50,7 +50,6 @@ const crashFlag = (cacheDir: string) => path.join(cacheDir, "crash-startup.flag"
 export default {
   id: "aiti-crash-fatal",
   name: "Fatal 崩溃测试（破坏核心文件 → global-error 急救页）",
-  version: "0.0.3",
   client: "dist/crash-fatal-client.mjs",
   server: {
     // 崩溃入口（部分崩）：标志文件存在就 throw → registry errors → ⚠「启动失败」。

@@ -186,7 +186,6 @@ async function startRun(sourceId: string) {
 export default {
   id: "aiti-backup",
   name: "数据备份（快照）",
-  version: "0.1.0",
   icon: "icon.svg",
 
   server: {

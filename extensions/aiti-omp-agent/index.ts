@@ -25,11 +25,14 @@ interface SessionCapabilitiesLike extends Record<string, boolean> {}
 /** 会话 recycle（D8）：存量 OmpSpawnHandle 升级到当前扩展代码。
  *  ⚠ omp 无 --session-id，重建即新会话（记档 id 保留；仅 dispose 语义）。 */
 let recycleApi: ReturnType<typeof createSessionRecycleApi> | null = null;
+/** Provider object captured at startup — rescanBackends flips the availability
+ *  snapshot in place (same identity keeps the wireB4Rebind/withHostTools closures)
+ *  and re-registers it. */
+let ompProviderRef: Record<string, unknown> | null = null;
 
 export default {
   id: "aiti-omp-agent",
   name: "Oh My Pi (omp 子进程后端)",
-  version: "0.1.0",
   icon: "🦉",
 
   features: [spawnEnvFeature("Omp"), spawnCommandFeature("Omp"), spawnArgsPrefixFeature("Omp"), hostToolsAllowFeature("Omp")],
@@ -47,6 +50,8 @@ export default {
           order?: number;
           agentKey?: string;
           maxCapabilities: SessionCapabilitiesLike;
+          available?: boolean;
+          installHint?: string;
           createSession(options: {
             sessionId?: string;
             cwd?: string;
@@ -58,6 +63,9 @@ export default {
     }) {
       captureSpawnEnvFeatures((ctx as any)?.features ?? null); // D1：spawn.env feature 捕获
       const spec = OMP_SPEC;
+      // Availability probe (dropdown grey-out): snapshot flips on rescanBackends.
+      const ompCli = resolveForkCli(spec);
+      const ompReady = Boolean(ompCli);
       // P2 host tools：omp 会话 ready 后把桥的 aiti_* 工具注册为宿主工具（失败静默降级）。
       const withHostTools = (h: OmpSpawnHandle): OmpSpawnHandle => {
         if (h.spec.commands.hasHostTools) {
@@ -99,14 +107,20 @@ export default {
         })();
         return hPromise;
       };
-      ctx.sessionProviders.register({
+      // provider 对象存模块级 ref：rescanBackends 原地翻转 available 快照后重新 register
+      //（同对象身份 → wireB4Rebind/withHostTools 闭包保持）
+      const ompProvider = {
         type: `${spec.id}-spawn`,
         label: spec.label,
         order: spec.order,
         agentKey: spec.agentKey,
         maxCapabilities: capabilitiesFor(spec),
+        // Availability snapshot: false = CLI missing → dropdown entry greyed out
+        ...(ompReady ? {} : { available: false as const, installHint: "bun install -g @oh-my-pi/pi-coding-agent (bun ≥ 1.3.14, or OMP_CLI env)" }),
         createSession: (options) => wireB4Rebind(OmpSpawnHandle.start(options, spec).then(withHostTools), options),
-      });
+      };
+      ompProviderRef = ompProvider;
+      ctx.sessionProviders.register(ompProvider);
       // P2 协议委托：launch 服务（omp 单 fork）。
       ctx.services?.provide?.("aiti-omp-agent.launch", {
         agentKey: "omp",
@@ -117,7 +131,28 @@ export default {
         },
       });
       const cli = resolveForkCli(spec);
-      console.log(`[omp-spawn] registered: ${spec.id}-spawn (${spec.id}: ${cli ? cli.origin : "未找到（createSession 时报安装指引）"})`);
+      console.log(`[omp-spawn] registered: ${spec.id}-spawn (${spec.id}: ${cli ? cli.origin : "未找到——条目灰显 + 安装提示，rescan 可重查"})`);
+    },
+
+    /** Backend rescan (POST /api/session-backends/rescan): re-run the availability
+     *  probe — a CLI installed after host boot lights up without a restart; missing
+     *  stays greyed out with the install hint. Flips the snapshot on the startup
+     *  provider object (same closures) and re-registers it. */
+    rescanBackends(ctx: { sessionProviders: { register(provider: unknown): string } }) {
+      if (!ompProviderRef) return;
+      const cli = resolveForkCli(OMP_SPEC);
+      const ready = Boolean(cli);
+      const p = ompProviderRef as { available?: boolean; installHint?: string };
+      if (ready) {
+        delete p.available;
+        delete p.installHint;
+      } else {
+        p.available = false;
+        p.installHint = "bun install -g @oh-my-pi/pi-coding-agent (bun ≥ 1.3.14, or OMP_CLI env)";
+      }
+      const key = (ctx.sessionProviders as { register(provider: unknown): string }).register(ompProviderRef);
+      console.log(`[omp-spawn] rescan: ${ready ? "available" : "not installed"} (${key})`);
+      return ready ? { registered: [key] } : { unavailable: [key] };
     },
 
     /** 会话 recycle（/session/recycle）：存量 handle 升级到当前扩展代码（D8）。 */

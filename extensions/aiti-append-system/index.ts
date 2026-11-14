@@ -64,7 +64,6 @@ function writeTarget(p: string, content: string, mode: "write" | "append"): stri
 export default {
   id: "aiti-append-system",
   name: "追加系统提示词（APPEND_SYSTEM.md 管理）",
-  version: "0.1.0",
   icon: "icon.svg",
   client: "dist/aiti-append-system-client.mjs",
 

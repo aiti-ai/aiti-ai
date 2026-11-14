@@ -361,7 +361,6 @@ function probeMemberSync(m: CustomAgentSpec): ProbeStatus {
 export default {
 	id: "aiti-custom-agent",
 	name: "自定义 Agent",
-	version: "0.1.0",
 	icon: "🧩",
 	// 管理面板（零构建原生 h() client；client/src 随 deploy 拷 dist）
 	client: "dist/custom-agent-client.mjs",

@@ -58,7 +58,6 @@
 export default {
   id: "aiti-float",
   name: "弹窗浮动增强",
-  version: "0.5.0",
   icon: "icon.svg",
   client: "dist/aiti-float-client.mjs",
 

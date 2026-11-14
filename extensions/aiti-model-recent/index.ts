@@ -10,7 +10,6 @@
 export default {
   id: "aiti-model-recent",
   name: "Model Recent",
-  version: "0.1.0",
   client: "dist/aiti-model-recent.mjs",
   icon: "icons/clock.svg",
   clientImmediately: true, // service 须在首开模型面板前注册（boot 物化）

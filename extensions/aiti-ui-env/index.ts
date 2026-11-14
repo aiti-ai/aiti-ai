@@ -823,7 +823,6 @@ let rotateTimer: ReturnType<typeof setInterval> | null = null;
 export default {
   id: "aiti-ui-env",
   name: "UI 环境（桌面/无头虚拟屏）",
-  version: "0.1.0",
   icon: "icon.svg",
   client: "dist/aiti-ui-env-client.mjs",
 

@@ -16,7 +16,6 @@ const saveBlobRoute = createBlobSaveRoute({
 export default {
   id: "aiti-word-superdoc",
   name: "aiti-word-superdoc",
-  version: "0.1.0",
   description: "Word 文档编辑器（SuperDoc：ProseMirror docx 双向）：.docx 预览+编辑。AGPL 隔离于本扩展，不装即无",
   client: "dist/aiti-word-superdoc-client.mjs",
   clientImmediately: true,

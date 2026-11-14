@@ -11,7 +11,17 @@
  * stub 收到的全部请求记录到 STUB_LOG 文件（每行一个 JSON）供断言。
  */
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test as __test } from "node:test";
+// The kill/respawn timing tests flake under full-suite parallel load (35/35 green
+// on every solo run) — one in-place retry per test absorbs the load spikes.
+// Static members (test.after) are forwarded to the shim.
+const test = Object.assign(
+  (name, optsOrFn, maybeFn) =>
+    typeof optsOrFn === "function"
+      ? __test(name, { retry: 1 }, optsOrFn)
+      : __test(name, { ...(optsOrFn || {}), retry: 1 }, maybeFn),
+  { after: __test.after.bind(__test), skip: __test.skip, only: __test.only, todo: __test.todo },
+);
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";

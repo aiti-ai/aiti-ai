@@ -600,7 +600,6 @@ function recoverStatus(state: any) {
 export default {
   id: "aiti-model-check",
   name: "模型可用性管理（探测 / 429 限流识别）",
-  version: "0.1.0",
   icon: "icon.svg",
   client: "dist/aiti-model-check-client.mjs",
 
