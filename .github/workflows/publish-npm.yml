@@ -148,10 +148,12 @@ jobs:
             --file "service-tunnels=$PWD/vendor/npm/service-tunnels-0.3.76.tgz" \
             --file "@aiti-ti/ddns=$PWD/vendor/npm/aiti-ti-ddns-0.2.0.tgz"
           npm install --prefix "$BUILD" --legacy-peer-deps --no-audit --no-fund --loglevel=error
-          # 仓根 postcss.config.mjs（tailwind v4）被扩展 vite 向上搜索命中 —— build root 必须含
-          # @tailwindcss/postcss（aiti-sheet-univer 等未声明它，collect 只收扩展自身 deps）
-          npm install --prefix "$BUILD" --no-save --legacy-peer-deps --no-audit --no-fund --loglevel=error \
-            "@tailwindcss/postcss@$(node -p "require('./package.json').devDependencies['@tailwindcss/postcss']")"
+          # 仓根 postcss.config.mjs（tailwind v4）被扩展 vite 向上搜索命中；PostCSS 从 config
+          # 所在目录（仓根）解析 @tailwindcss/postcss —— 扩展侧的 node_modules symlink 够不到，
+          # 必须把仓根 node_modules 也备好（aiti-sheet-univer / aiti-word-superdoc 实测 2026-11-14）
+          TW="@tailwindcss/postcss@$(node -p "require('./package.json').devDependencies['@tailwindcss/postcss']")"
+          npm install --no-save --legacy-peer-deps --no-audit --no-fund --loglevel=error "$TW"
+          npm install --prefix "$BUILD" --no-save --legacy-peer-deps --no-audit --no-fund --loglevel=error "$TW"
           for ext in extensions/*/; do
             [ -d "$ext" ] || continue
             ln -sfn "$BUILD/node_modules" "${ext}node_modules"
