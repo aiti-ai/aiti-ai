@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-model-wizard",
-  "version": "0.1.11",
+  "version": "0.1.13",
   "type": "module",
   "description": ".dev + domestic AI catalog, Chinese/English, paste an API URL to reverse-search) → enter token → test (both 2xx/429 count as pass) → pick/type a model → write models.json; on miss, baseUr",
   "scripts": {
@@ -22,7 +22,7 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "e962084de569bd2f",
+  "contentHash": "0e368d1c444daaaf",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",
