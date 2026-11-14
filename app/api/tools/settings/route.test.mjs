@@ -9,9 +9,20 @@ const agentDir = await mkdtemp(path.join(os.tmpdir(), "pi-web-tool-settings-rout
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 process.env.PI_CODING_AGENT_DIR = agentDir;
 process.env.PI_WEB_FILE_SANDBOX = "1"; // 合并：上游安全测试假设文件沙箱强制执行（本地默认关，测试内显式开）
+// 合并适配：宿主（pi-web AI 会话）会向子进程注入 API_ALLOW_ORIGINS=* / PI_WEB_BASE_DOMAIN 等 env，
+// 会放宽 isApiRequestAllowed 的 origin/host 门，污染本文件的安全断言——测试必须从零配置基线出发。
+const savedHostEnv = {};
+for (const key of ["API_ALLOW_ORIGINS", "PI_WEB_BASE_DOMAIN", "PI_WEB_ALLOWED_HOSTS", "PI_WEB_HOSTNAME"]) {
+  savedHostEnv[key] = process.env[key];
+  delete process.env[key];
+}
 test.after(async () => {
   if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
   else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+  for (const [key, value] of Object.entries(savedHostEnv)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
   await rm(agentDir, { recursive: true, force: true });
 });
 
