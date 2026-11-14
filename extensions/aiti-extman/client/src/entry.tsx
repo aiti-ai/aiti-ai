@@ -10,7 +10,7 @@
  */
 import { __setCtx, t } from "./host-shim";
 import { state, setState, setHostCaps, EXTMAN_KEY } from "./extman-core";
-import { ExtManPanel, ExtManDockFace, SidebarFooterButton, openExtmanPanel } from "./extman-ui";
+import { ExtManPanel, ExtManDockFace, SidebarFooterButton, openExtmanPanel, openExtmanTo } from "./extman-ui";
 
 function setHostIsMobile(v: boolean) { if (state.isMobile !== v) setState({ isMobile: v }); }
 
@@ -36,6 +36,15 @@ export default function register(ctx: Record<string, any>) {
     meta: { label: t("ext.shortLabel"), title: t("ext.title"), icon: "icons/wrench.svg", onClick: () => openExtmanPanel() },
   }]);
   ctx.registerItems?.("dialogs", [{ id: "aiti-extman-panel", render: (props: any) => <ExtManPanel {...(props || {})} /> }]);
+
+  // 打开/跳转服务（双轨，照 aiti-helper.invoke / aiti-model-check.open 先例）：
+  //   1) DI 方案 P2：ctx.registerExtService("aiti-extman.open", fn)
+  //   2) 全局约定：window.__aitiExtmanOpen —— 与 extman-core tryDirectOpen 的
+  //      __<camel>Open 兼底同名（反向收益：面板内「打开」extman 自身条目从此直达）。
+  // 消费方：ai-helper 弹窗 🔧 按钮（跳转弹窗所属扩展）、其他扩展/控制台。
+  // 方案：docs/aiti-ext-dialog-extman-button-plan.md。
+  try { (window as any).__aitiExtmanOpen = (extId?: string) => openExtmanTo(extId); } catch {}
+  ctx.registerExtService?.("aiti-extman.open", (extId?: string) => openExtmanTo(extId));
   // aiti-float dock：默认浮窗打开（可停靠能力保留：⇱ 菜单仍可手动入右栏 tab）；
   // 注册 raw itemId（宿主拼 extId:itemId = EXTMAN_KEY）。
   // 一次性迁移：旧版 seedDockDefault 曾把 "right-panel" 写成用户偏好——清掉让新默认（浮窗）生效；
@@ -48,5 +57,5 @@ export default function register(ctx: Record<string, any>) {
       localStorage.setItem(MIG, "1");
     }
   } catch { /* ignore */ }
-  ctx.registerItems?.("rightFileDock", [{ id: "panel", render: (props: any) => <ExtManDockFace {...(props || {})} />, meta: { title: "扩展" } }]);
+  ctx.registerItems?.("rightFileDock", [{ id: "panel", render: (props: any) => <ExtManDockFace {...(props || {})} />, meta: { title: t("ext.shortLabel") } }]);
 }

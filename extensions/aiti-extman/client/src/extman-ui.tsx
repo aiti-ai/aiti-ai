@@ -46,15 +46,28 @@ function protocolChipSpec(proto: any): { icon: string; label: string; color: str
   }
 }
 
+/** 当前界面语言（与宿主 pi-locale 约定一致；zh 开头 → zh，否则 en）。 */
+function currentLocale(): "zh" | "en" {
+  try {
+    const v = localStorage.getItem("pi-locale") || (typeof navigator !== "undefined" ? navigator.language : "") || "en";
+    return String(v).toLowerCase().startsWith("zh") ? "zh" : "en";
+  } catch { return "en"; }
+}
+
 /** 🤖 协议升级：唤起 aiti-helper 预选 ext-protocol-upgrade skill，带扩展 id 与迁移手册路由。 */
 function askAiProtocolUpgrade(id: string, proto: any) {
   const refs = (proto?.upgradeRefs || []).join(" → ");
-  const from = proto?.declared ?? "(未声明/legacy)";
-  const msg = `【扩展协议升级】把 pi-web 扩展 ${id} 从协议 ${from} 升级到当前 ${proto?.current}。\n` +
+  const from = proto?.declared ?? (currentLocale() === "zh" ? "（未声明/legacy）" : "(undeclared/legacy)");
+  const zhMsg = `【扩展协议升级】把 pi-web 扩展 ${id} 从协议 ${from} 升级到当前 ${proto?.current}。\n` +
     `请走 ext-protocol-upgrade skill：先读 docs/pi-web-ext-protocol.md；本扩展按顺序读迁移手册 ${refs || "（无跳数）"}，` +
     `改 pi-web-ext/${id}/ 源码并更新 package.json 的 aitiExtProtocol，构建/测试/deploy 后回报。` +
     (proto?.detail ? `\n现状：${proto.detail}` : "");
-  invokeHelper({ helperId: "ext-protocol-upgrade", extId: SELF_ID, extName: "aiti-extman", message: msg, contextLabel: "扩展协议升级：" + id });
+  const enMsg = `[Extension protocol upgrade] Upgrade pi-web extension ${id} from protocol ${from} to current ${proto?.current}.\n` +
+    `Use the ext-protocol-upgrade skill: read docs/pi-web-ext-protocol.md first; read the migration handbooks in order ${refs || "(none skipped)"}, ` +
+    `edit pi-web-ext/${id}/ source and bump aitiExtProtocol in package.json, then build/test/deploy and report back.` +
+    (proto?.detail ? `\nCurrent state: ${proto.detail}` : "");
+  const msg = currentLocale() === "zh" ? zhMsg : enMsg;
+  invokeHelper({ helperId: "ext-protocol-upgrade", extId: SELF_ID, extName: "aiti-extman", message: msg, contextLabel: t("ext.protocolUpgradeCtx", { id }) });
 }
 
 /**
@@ -1008,7 +1021,7 @@ function ExtManContent(): any {
                               fontSize: 12, fontWeight: isSel ? 600 : 500, color: "var(--text)",
                               display: "flex", alignItems: "center", gap: 5, minWidth: 0,
                             }}>
-                              <span title="状态：未安装" style={{ flexShrink: 0, width: 7, height: 7, borderRadius: "50%", background: "var(--border)" }} />
+                              <span title={t("ext.statusNotInstalled")} style={{ flexShrink: 0, width: 7, height: 7, borderRadius: "50%", background: "var(--border)" }} />
                               {extIconSpan(ext, 12)}
                               <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, flex: 1 }}>{extDisplayName(ext.id, ext.name) + (ext.version ? " · v" + ext.version : "")}</span>
                             </div>
@@ -1376,7 +1389,7 @@ function LocalDetail({ id, entry }: { id: string; entry: any }) {
                     return <span key={d} role="button" tabIndex={0}
                       onClick={() => setState({ selected: { kind: "local", id: d }, error: null, message: null, view: "exts", mobileView: state.isMobile ? "detail" : state.mobileView })}
                       onKeyDown={(e) => { if (e.key === "Enter") setState({ selected: { kind: "local", id: d }, error: null, message: null, view: "exts", mobileView: state.isMobile ? "detail" : state.mobileView }); }}
-                      title={off ? d + "（已禁用）" : d + (kinds.length ? " [" + kinds.join(" ") + "]" : "")}
+                      title={off ? t("ext.dependentDisabledTitle", { id: d }) : d + (kinds.length ? " [" + kinds.join(" ") + "]" : "")}
                       style={{
                         ...chipStyle(off ? "var(--text-dim)" : "var(--text-muted)", "var(--bg-hover)"),
                         fontFamily: "var(--font-mono)", fontSize: 11, cursor: "pointer", textDecoration: off ? "line-through" : "none",
@@ -1531,8 +1544,8 @@ function FeaturePanel({ id, features }: { id: string; features: any[] }) {
                   <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0, flex: 1 }}>
                     <div style={{ display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap" }}>
                       <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)" }}>{f.label}</span>
-                      {isString && <span style={chipStyle("#2563eb", "rgba(37,99,235,0.12)")}>{f.type === "textlist" ? "环境变量" : "文本"}</span>}
-                      {!isString && f.default === false && <span style={chipStyle("rgba(217,119,6,0.9)", "rgba(217,119,6,0.12)")}>默认关</span>}
+                      {isString && <span style={chipStyle("#2563eb", "rgba(37,99,235,0.12)")}>{f.type === "textlist" ? t("ext.featureTypeTextlist") : t("ext.featureTypeText")}</span>}
+                      {!isString && f.default === false && <span style={chipStyle("rgba(217,119,6,0.9)", "rgba(217,119,6,0.12)")}>{t("ext.featureDefaultOff")}</span>}
                       {!isString && f.enabled === false && <span style={chipStyle("var(--danger, #ef4444)", "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)")}>{t("ext.disabled")}</span>}
                     </div>
                     {f.description && <div style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.45 }}>{f.description}</div>}
@@ -1817,7 +1830,7 @@ export function ExtManDockFace(props: any) {
   useEffect(() => { if (docked) { void refreshStatus(); void refreshTrusted(); syncLoader(); } }, [docked]);
   if (!docked) return null;
   return (
-    <DockBody itemKey={EXTMAN_KEY} zone="right-panel" title="扩展管理" chrome="tab"
+    <DockBody itemKey={EXTMAN_KEY} zone="right-panel" title={t("ext.title")} chrome="tab"
       zones={["right-panel"]}>
       <ExtManContent />
     </DockBody>
@@ -1868,6 +1881,16 @@ export function openExtmanPanel(): void {
   void refreshStatus();
   void refreshTrusted();
   syncLoader();
+}
+
+/** 打开面板并跳转到指定扩展条目（外部门户：ai-helper 弹窗 🔧 按钮、其他扩展经
+ *  aiti-extman.open 服务 / window.__aitiExtmanOpen 全局约定调用）。
+ *  extId 空 = 仅打开面板（保持当前选中）。先落 selected/view 再开面板，
+ *  避免打开后闪默认选中再跳（与 jump/jumpTo 同款 setState 补丁）。
+ *  方案：docs/aiti-ext-dialog-extman-button-plan.md。 */
+export function openExtmanTo(extId?: string): void {
+  if (extId) setState({ view: "exts", selected: { kind: "local", id: extId }, selCap: null, selConflict: null, error: null, message: null, mobileView: state.isMobile ? "detail" : state.mobileView });
+  openExtmanPanel();
 }
 
 export function SidebarFooterButton() {

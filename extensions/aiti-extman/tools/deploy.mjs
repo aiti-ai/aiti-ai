@@ -46,6 +46,10 @@ for (const extDir of targets) {
   // client TS 残留检查器（层 2）：installer.ts 以 ./check-client.mjs 相对导入，需同目录
   copyFileSync(resolve(root, '../_shared/check-client.mjs'), resolve(extDir, 'check-client.mjs'));
   copyFileSync(resolve(root, 'dist/aiti-extman-client.mjs'), resolve(extDir, 'dist/aiti-extman-client.mjs'));
+  // manifest client 声明路径是 client/aiti-extman-client.mjs（index.ts client 字段）——宿主 assets 路由
+  // 按「assets/<声明路径>」加载，实际读的是 client/ 而非 dist/。此前 deploy 只更新 dist/，
+  // client/ 停在旧版（2026-09-10 起 extman client 改动全部静默未生效），本次修复同拷两处。
+  copyFileSync(resolve(root, 'dist/aiti-extman-client.mjs'), resolve(extDir, 'client/aiti-extman-client.mjs'));
   // yauzl 是运行时依赖（zip 解包）——只拷运行时闭包（yauzl→fd-slicer/buffer-crc32→pend），
   // 不带 node_modules 全量（vite 等构建依赖不进部署目录）。
   copyFileSync(resolve(root, 'package.json'), resolve(extDir, 'package.json'));
