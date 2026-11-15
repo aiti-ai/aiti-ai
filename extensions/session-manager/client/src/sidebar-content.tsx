@@ -65,7 +65,7 @@ const DOCK_STACK_SERVICE = "aiti-float.dockstack";
 /** 应用中心（aiti-app-center）：DockStack 全折叠空白的填充物（docs/aiti-app-center-plan.md）。
  *  软依赖——服务缺席（扩展禁用/旧部署）时空白照旧，其余零影响。 */
 const APP_CENTER_SERVICE = "aiti-app-center.api";
-/** 快速上手（aiti-quickstart）：全折叠空白的引导卡（filler 组合上半，应用中心在下）。
+/** 快速上手（aiti-quickstart）：全折叠空白的引导卡（v3.1 作 header 插槽进应用中心滚动体，随内容滚动）。
  *  软依赖同 app-center——缺席/禁用/用户 ✕ 关闭（renderQuickstart 返回 null）→ 回退现状。 */
 const QUICKSTART_SERVICE = "aiti-quickstart.api";
 
@@ -649,20 +649,18 @@ export function SidebarContentDock(props: Record<string, any>) {
 
       {/* DockStack：统一区块栈（aiti-float 服务；缺席降级 = 常驻区块直排 + slot 原样渲染）。
           slotExtra：文件夹 faces（aiti-folder 动态注册）所需宿主回调/会话 cwd 透传。
-          filler 组合（v3 快速上手）：引导卡在上（flexShrink 0）、应用中心在下（flex:1 内滚）——
-          spacer 为 flex column，二者同屏共存；各自缺席/关闭态自然回退（双缺席 = 现状空白）。 */}
+          filler 组合（v3.1）：快速上手作 header 插槽进应用中心滚动体——随内容滚动，搜索行 sticky 顶吸；
+          仅快速上手（应用中心缺席）时直出引导卡；双缺席 = undefined 现状空白。 */}
       {stackApi ? (
         <stackApi.DockStack
           blocks={blocks}
           dockSlot="sidebarExplorerDock"
           staticShell={StaticDockShell}
           filler={(appCenterApi || quickstartApi)
-            ? () => (
-                <>
-                  {quickstartApi ? quickstartApi.renderQuickstart() : null}
-                  {appCenterApi ? appCenterApi.renderAppCenter() : null}
-                </>
-              )
+            ? () => {
+                if (!appCenterApi) return quickstartApi ? quickstartApi.renderQuickstart() : null;
+                return appCenterApi.renderAppCenter({ header: quickstartApi ? quickstartApi.renderQuickstart() : null });
+              }
             : undefined}
           slotExtra={{
             cwd: cwdState,

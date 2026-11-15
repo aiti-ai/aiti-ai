@@ -30,7 +30,18 @@ export interface IndexFacade extends SessionIndex {
 }
 
 export function createIndexFacade(dbPath: string, opts: { workerPath?: string } = {}): IndexFacade {
-  const local = openSessionIndex(dbPath);
+  // Lazy main-thread connection (2026-11-15 "startup: database is locked" incident):
+  // when dev/prod share one dataDir (PI_WEB_DATA_DIR), the peer instance's full sync
+  // write storm can hold the writer lock past busy_timeout (5s) — a synchronous
+  // open+ensure (CREATE TABLE write txn) at facade-construction time then fails the
+  // whole startup hook (services exports / auto-archive timer / first sync never
+  // attach; panel shows "load failed"). First-use open instead: API paths re-invoke
+  // runtime() per request (natural retry), background sync failures stay log-only.
+  let localHandle: SessionIndex | null = null;
+  const local = (): SessionIndex => {
+    if (!localHandle) localHandle = openSessionIndex(dbPath);
+    return localHandle;
+  };
   let worker: Worker | null = null;
   let workerDisabled = false;
   let spawnFails = 0;
@@ -105,7 +116,7 @@ export function createIndexFacade(dbPath: string, opts: { workerPath?: string } 
   }
 
   const facade: IndexFacade = {
-    ensure: () => local.ensure(),
+    ensure: () => local().ensure(),
 
     async sync(sessions) {
       try {
@@ -114,7 +125,7 @@ export function createIndexFacade(dbPath: string, opts: { workerPath?: string } 
       } catch (e) {
         log("sync worker 往返失败，回落本地：", e instanceof Error ? e.message : e);
       }
-      return local.sync(sessions);
+      return local().sync(sessions);
     },
 
     async syncExt(agent: string, refs: ExtSessionRef[], parse: (ref: ExtSessionRef) => ParsedSessionFile | null) {
@@ -126,7 +137,7 @@ export function createIndexFacade(dbPath: string, opts: { workerPath?: string } 
           log(`syncExt(${agent}) worker 往返失败，回落本地：`, e instanceof Error ? e.message : e);
         }
       }
-      return local.syncExt(agent, refs, parse);
+      return local().syncExt(agent, refs, parse);
     },
 
     requestVacuum(): boolean {
@@ -136,32 +147,33 @@ export function createIndexFacade(dbPath: string, opts: { workerPath?: string } 
       return true;
     },
 
-    upsertExtParsed: (agent, sid, refPath, parsed) => local.upsertExtParsed(agent, sid, refPath, parsed),
-    refreshExtTimestamps: (agent, fresh) => local.refreshExtTimestamps(agent, fresh),
-    extRows: (agents) => local.extRows(agents),
-    markArchived: (packageRef, sessionIds) => local.markArchived(packageRef, sessionIds),
-    setExtArchived: (id, archived) => local.setExtArchived(id, archived),
-    search: (q, limit, filters?: SearchFilters) => local.search(q, limit, filters),
+    upsertExtParsed: (agent, sid, refPath, parsed) => local().upsertExtParsed(agent, sid, refPath, parsed),
+    refreshExtTimestamps: (agent, fresh) => local().refreshExtTimestamps(agent, fresh),
+    extRows: (agents) => local().extRows(agents),
+    markArchived: (packageRef, sessionIds) => local().markArchived(packageRef, sessionIds),
+    setExtArchived: (id, archived) => local().setExtArchived(id, archived),
+    search: (q, limit, filters?: SearchFilters) => local().search(q, limit, filters),
     // session-search tools (docs/pi-session-search-tools-plan.md): read-only, main thread is fine (fts queries are ms-level)
-    searchSessions: (q, opts) => local.searchSessions(q, opts),
-    resolveSessionRefs: (refs) => local.resolveSessionRefs(refs),
-    sessionMessages: (ref, opts) => local.sessionMessages(ref, opts),
-    stats: (runningSessionIds, days?) => local.stats(runningSessionIds, days) as SessionStats,
-    lastMeta: (sessionId) => local.lastMeta(sessionId),
-    lastMetaBatch: (sessionIds) => local.lastMetaBatch(sessionIds),
-    lastMessageText: (sessionId) => local.lastMessageText(sessionId),
-    lastMessageTextBatch: (sessionIds) => local.lastMessageTextBatch(sessionIds),
-    getSession: (id) => local.getSession(id) as IndexedSessionRow | undefined,
-    getSessionBatch: (sessionIds) => local.getSessionBatch(sessionIds),
-    archivedRows: () => local.archivedRows(),
-    restoreToLive: (id, path) => local.restoreToLive(id, path),
-    removeSession: (id) => local.removeSession(id),
-    removeAgentRows: (agent) => local.removeAgentRows(agent),
+    searchSessions: (q, opts) => local().searchSessions(q, opts),
+    resolveSessionRefs: (refs) => local().resolveSessionRefs(refs),
+    sessionMessages: (ref, opts) => local().sessionMessages(ref, opts),
+    stats: (runningSessionIds, days?) => local().stats(runningSessionIds, days) as SessionStats,
+    lastMeta: (sessionId) => local().lastMeta(sessionId),
+    lastMetaBatch: (sessionIds) => local().lastMetaBatch(sessionIds),
+    lastMessageText: (sessionId) => local().lastMessageText(sessionId),
+    lastMessageTextBatch: (sessionIds) => local().lastMessageTextBatch(sessionIds),
+    getSession: (id) => local().getSession(id) as IndexedSessionRow | undefined,
+    getSessionBatch: (sessionIds) => local().getSessionBatch(sessionIds),
+    archivedRows: () => local().archivedRows(),
+    restoreToLive: (id, path) => local().restoreToLive(id, path),
+    removeSession: (id) => local().removeSession(id),
+    removeAgentRows: (agent) => local().removeAgentRows(agent),
 
     close() {
       try { void worker?.terminate(); } catch { /* already gone */ }
       worker = null;
-      local.close();
+      try { localHandle?.close(); } catch { /* already closed */ }
+      localHandle = null; // reopen on next use (self-heal; normal flow evicts the runtime first)
     },
   };
 

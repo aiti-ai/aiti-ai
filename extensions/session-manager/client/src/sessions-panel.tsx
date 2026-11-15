@@ -839,7 +839,12 @@ export function SessionsPanel(props: any) {
   // 外部源条 + 会话列表」合并成一个滚动容器（整窗一个滚动位置），并在向下滚动时
   // 把标签云/agent 云各自收拢到 2 行，紧凑展示会话；滚回顶部自动展开。大屏不启用。
   const [scrunch, setScrunch] = useState<"full" | "brief" | "expanded">("full");
-  const [compact, setCompact] = useState(false);
+  // Lazy-init from matchMedia so the compact (mobile) header layout renders on first paint.
+  const [compact, setCompact] = useState(() =>
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia("(max-width: 640px)").matches
+      : false
+  );
   const scrunchRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 640px)");
@@ -1626,6 +1631,107 @@ export function SessionsPanel(props: any) {
       </div>
     );
 
+  // --- Header elements, shared by the desktop single-row and mobile two-row layouts. ---
+  // Mobile (compact, ≤640px — same breakpoint as aiti-float fullscreen): the search box
+  // gets its own full-width row; in the single-row layout the title + button group
+  // squeezed it down to an unusable sliver (user feedback).
+  const searchInput = (
+    <input
+      ref={searchRef}
+      value={query}
+      placeholder={t("sm.searchPlaceholder")}
+      onChange={(e) => setQuery(e.target.value)}
+      style={(compact ? { ...inputStyle, flex: "0 0 auto", width: "100%" } : inputStyle) as React.CSSProperties}
+    />
+  );
+  const cwdBtn = (
+    <span ref={cwdMenuRef} style={{ position: "relative", display: "inline-flex", flexShrink: 0 }}>
+      <button
+        onClick={() => setCwdPickerOpen((v) => !v)}
+        title={cwdFilter ? `${cwdFilter} · ${t("sm.dir.change")}` : t("sm.dir.pick")}
+        style={{
+          ...ghostBtn, fontSize: 11, minWidth: 0, maxWidth: 150,
+          display: "inline-flex", alignItems: "center", gap: 4,
+          background: cwdFilter ? "var(--accent)" : undefined,
+          borderColor: cwdFilter ? "var(--accent)" : undefined,
+          color: cwdFilter ? "var(--bg)" : undefined,
+          padding: compact ? "3px 8px" : undefined,
+        } as React.CSSProperties}
+      >
+        {/* path truncates itself, the ✕ never clips (flexShrink:0) — stays clickable on long paths */}
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{`${cwdFilter ? displayCwd(cwdFilter) : t("sm.dir.all")}`}</span>
+        {cwdFilter && (
+          <span
+            onClick={(e) => { e.stopPropagation(); setCwdFilter(""); setPage(0); }}
+            title={t("sm.clearAll")}
+            style={{ flexShrink: 0, opacity: 0.7 }}
+          >✖</span>
+        )}
+      </button>
+      {cwdPickerOpen && (
+        <WorkspaceDropdown
+          selected={cwdFilter || undefined}
+          align="right"
+          showUseDefault={false}
+          allOption={{ label: t("sm.dir.all") }}
+          onSelect={(p) => { setCwdPickerOpen(false); setCwdFilter(p || ""); setPage(0); }}
+          onClose={() => setCwdPickerOpen(false)}
+        />
+      )}
+    </span>
+  );
+  const filterBtn = (
+    <button
+      onClick={() => setFilterOpen((v) => !v)}
+      title={t("sm.filter")}
+      style={{
+        ...ghostBtn, fontSize: 11, position: "relative",
+        display: "inline-flex", alignItems: "center", gap: 3,
+        padding: compact ? "3px 7px" : undefined,
+        background: activeFilterCount ? "var(--accent)" : undefined,
+        borderColor: activeFilterCount ? "var(--accent)" : undefined,
+        color: activeFilterCount ? "var(--bg)" : undefined,
+      } as React.CSSProperties}
+    >
+      {/* funnel icon always visible — an empty label-less pill read as a broken toggle on mobile */}
+      <SIc name="filter" size={12} />
+      {activeFilterCount > 0 && <span>{activeFilterCount}</span>}
+    </button>
+  );
+  const statsBtn = (
+    <button
+      onClick={() => { setStatsOpen((v) => !v); setFilterOpen(false); }}
+      title={t("sm.stats")}
+      style={{ ...ghostBtn, fontSize: 11, padding: compact ? "3px 7px" : undefined, background: statsOpen ? "color-mix(in srgb, var(--ok, #10b981) 18%, transparent)" : undefined } as React.CSSProperties}
+    ><SIc name="chartColumn" size={11} /></button>
+  );
+  const archBtns = (
+    <>
+      {archStatus && archStatus.candidates.length > 0 && (
+        <button
+          onClick={() => void runArchiveNow()}
+          disabled={archBusy}
+          title={archStatus.candidates.map((c: any) => c.sessionId.slice(0, 8)).join(", ")}
+          style={{ ...ghostBtn, color: ensureReadability("var(--warn, #f59e0b)"), borderColor: "#f59e0b55", whiteSpace: "nowrap", fontSize: 10, padding: compact ? "3px 7px" : undefined } as React.CSSProperties}
+        >{archBusy ? "…" : `${archStatus.candidates.length}`}</button>
+      )}
+      {archStatus && archStatus.cacheBytes > 0 && (
+        <button
+          onClick={async () => {
+            const res = await fetch(apiUrl("/api/extensions/session-manager/archive/cache?clear=1"));
+            if (res.ok) refreshArchStatus();
+          }}
+          title={t("sm.clearCache")}
+          style={{ ...ghostBtn, fontSize: 10, whiteSpace: "nowrap", padding: compact ? "3px 7px" : undefined } as React.CSSProperties}
+        >{`${(archStatus.cacheBytes / 1048576).toFixed(1)}M`}</button>
+      )}
+    </>
+  );
+  const closeBtn = (
+    <button onClick={() => panelOpen.onClose()} aria-label={t("sm.close")} title={t("sm.close")}
+      style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, lineHeight: 1, padding: "2px 6px", flexShrink: 0 } as React.CSSProperties}>✕</button>
+  );
+
   return (
     <div
       style={{
@@ -1656,88 +1762,33 @@ export function SessionsPanel(props: any) {
           boxShadow: "0 18px 60px rgba(0,0,0,0.4)",
         }}
       >
-        {/* header: title + search + filters/stats + archive strip */}
-        <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "10px 12px", borderBottom: "1px solid var(--border)" }}>
-          <strong style={{ fontSize: 13, color: "var(--text)", whiteSpace: "nowrap" }}>{t("sm.allSessions")}</strong>
-          <input
-            ref={searchRef}
-            value={query}
-            placeholder={t("sm.searchPlaceholder")}
-            onChange={(e) => setQuery(e.target.value)}
-            style={inputStyle as React.CSSProperties}
-          />
-          {/* 目录过滤入口（弹出 aiti-folder WorkspaceDropdown：已知 workspace 优先）：与 ⚙ 并列；默认不选=全部 */}
-          <span ref={cwdMenuRef} style={{ position: "relative", display: "inline-flex", flexShrink: 0 }}>
-            <button
-              onClick={() => setCwdPickerOpen((v) => !v)}
-              title={cwdFilter ? `${cwdFilter} · ${t("sm.dir.change")}` : t("sm.dir.pick")}
-              style={{
-                ...ghostBtn, fontSize: 11, minWidth: 0, maxWidth: 150,
-                display: "inline-flex", alignItems: "center", gap: 4,
-                background: cwdFilter ? "var(--accent)" : undefined,
-                borderColor: cwdFilter ? "var(--accent)" : undefined,
-                color: cwdFilter ? "var(--bg)" : undefined,
-              } as React.CSSProperties}
-            >
-              {/* 路径名自身截断，✕ 永不裁剪（flexShrink:0）——长路径下也始终可见可点 */}
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{`${cwdFilter ? displayCwd(cwdFilter) : t("sm.dir.all")}`}</span>
-              {cwdFilter && (
-                <span
-                  onClick={(e) => { e.stopPropagation(); setCwdFilter(""); setPage(0); }}
-                  title={t("sm.clearAll")}
-                  style={{ flexShrink: 0, opacity: 0.7 }}
-                >✖</span>
-              )}
-            </button>
-            {cwdPickerOpen && (
-              <WorkspaceDropdown
-                selected={cwdFilter || undefined}
-                align="right"
-                showUseDefault={false}
-                allOption={{ label: t("sm.dir.all") }}
-                onSelect={(p) => { setCwdPickerOpen(false); setCwdFilter(p || ""); setPage(0); }}
-                onClose={() => setCwdPickerOpen(false)}
-              />
-            )}
-          </span>
-          {/* §14.2 filter menu trigger (active-count badge) */}
-          <button
-            onClick={() => setFilterOpen((v) => !v)}
-            title={t("sm.filter")}
-            style={{
-              ...ghostBtn, fontSize: 11, position: "relative",
-              background: activeFilterCount ? "var(--accent)" : undefined,
-              borderColor: activeFilterCount ? "var(--accent)" : undefined,
-              color: activeFilterCount ? "var(--bg)" : undefined,
-            } as React.CSSProperties}
-          >{`${activeFilterCount ? " " + activeFilterCount : ""}`}</button>
-          {/* §14.3 stats drawer trigger */}
-          <button
-            onClick={() => { setStatsOpen((v) => !v); setFilterOpen(false); }}
-            title={t("sm.stats")}
-            style={{ ...ghostBtn, fontSize: 11, background: statsOpen ? "color-mix(in srgb, var(--ok, #10b981) 18%, transparent)" : undefined } as React.CSSProperties}
-          ><SIc name="chartColumn" size={11} /></button>
-          {archStatus && archStatus.candidates.length > 0 && (
-            <button
-              onClick={() => void runArchiveNow()}
-              disabled={archBusy}
-              title={archStatus.candidates.map((c: any) => c.sessionId.slice(0, 8)).join(", ")}
-              style={{ ...ghostBtn, color: ensureReadability("var(--warn, #f59e0b)"), borderColor: "#f59e0b55", whiteSpace: "nowrap", fontSize: 10 } as React.CSSProperties}
-            >{archBusy ? "…" : `${archStatus.candidates.length}`}</button>
-          )}
-          {archStatus && archStatus.cacheBytes > 0 && (
-            <button
-              onClick={async () => {
-                const res = await fetch(apiUrl("/api/extensions/session-manager/archive/cache?clear=1"));
-                if (res.ok) refreshArchStatus();
-              }}
-              title={t("sm.clearCache")}
-              style={{ ...ghostBtn, fontSize: 10, whiteSpace: "nowrap" } as React.CSSProperties}
-            >{`${(archStatus.cacheBytes / 1048576).toFixed(1)}M`}</button>
-          )}
-          <button onClick={() => panelOpen.onClose()} aria-label={t("sm.close")} title={t("sm.close")}
-            style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, lineHeight: 1, padding: "2px 6px", flexShrink: 0 } as React.CSSProperties}>✕</button>
-        </div>
+        {/* header: title + search + filters/stats + archive strip.
+            Desktop: one row (title / search / buttons). Mobile (compact): two rows —
+            row 1 = title + buttons, row 2 = full-width search box. */}
+        {compact ? (
+          <div style={{ padding: "8px 10px", borderBottom: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", rowGap: 4, minWidth: 0 }}>
+              <strong style={{ fontSize: 13, color: "var(--text)", whiteSpace: "nowrap" }}>{t("sm.allSessions")}</strong>
+              <span style={{ flex: 1 }} />
+              {cwdBtn}
+              {filterBtn}
+              {statsBtn}
+              {archBtns}
+              {closeBtn}
+            </div>
+            {searchInput}
+          </div>
+        ) : (
+          <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "10px 12px", borderBottom: "1px solid var(--border)" }}>
+            <strong style={{ fontSize: 13, color: "var(--text)", whiteSpace: "nowrap" }}>{t("sm.allSessions")}</strong>
+            {searchInput}
+            {cwdBtn}
+            {filterBtn}
+            {statsBtn}
+            {archBtns}
+            {closeBtn}
+          </div>
+        )}
         {/* §14.2 filter menu (model / date / sort / role) */}
         {filterOpen && (
           <div style={{ display: "flex", gap: 14, alignItems: "flex-start", flexWrap: "wrap", padding: "8px 12px", borderBottom: "1px solid var(--border)", background: "rgba(99,102,241,0.05)" }}>
