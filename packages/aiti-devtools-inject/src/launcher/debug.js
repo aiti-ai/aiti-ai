@@ -3,6 +3,7 @@ import { el } from './dom.js';
 import { getPhysViewport, _fixedVisual, positionPhysical, visToCss, capVisW, detectScreenMode } from './viewport.js';
 import { DBG_SHOW_KEY } from './constants.js';
 import { lsGetString, lsSetString } from './storage.js';
+import { t } from './i18n.js';
 
 export function initDebug(ctx) {
   ctx.loadShowDebug = function () { return lsGetString(DBG_SHOW_KEY, '') === 'on';   }
@@ -23,21 +24,21 @@ export function initDebug(ctx) {
       var uadM = (navigator.userAgentData && typeof navigator.userAgentData.mobile === 'boolean') ? navigator.userAgentData.mobile : '∅';
       var L = [];
       L.push('URL ' + (location.href || '∅'));
-      L.push('📱 ' + (m.small ? '小屏' : '大屏') + (m.tiny ? '(tiny)' : m.small ? '(smal)' : '') + ' · 判定基准 ' + m.deviceCssW + 'px');
+      L.push('📱 ' + (m.small ? t('Small') : t('Large')) + (m.tiny ? '(tiny)' : m.small ? '(smal)' : '') + t(' · baseline ') + m.deviceCssW + 'px');
       L.push('screen ' + m.screenW + '×' + m.screenH + ' dpr ' + m.dpr + ' · outerW ' + (window.outerWidth || '∅'));
       L.push('inner ' + Math.round(innerWidth) + '×' + Math.round(innerHeight) + ' · vv.scale ' + vvs + ' · UA-CH.mobile ' + uadM);
-      L.push('视觉视口 ' + m.vpW + '×' + m.vpH + ' · ' + (m.mobileUA ? 'mobile' : 'desktop'));
+      L.push(t('Visual viewport ') + m.vpW + '×' + m.vpH + ' · ' + (m.mobileUA ? 'mobile' : 'desktop'));
       L.push('vp ' + Math.round(vp.w) + '×' + Math.round(vp.h) + ' s ' + vp.scale.toFixed(3) + (Math.abs(vp.scale - vp.scaleY) > 0.001 ? ' sy ' + vp.scaleY.toFixed(3) : '') + ' · FIXED ' + (_fixedVisual ? 'visual' : 'layout'));
       L.push('platform ' + (navigator.platform || '∅') + '\nUA ' + (navigator.userAgent || '∅').replace(/\s+/g, ' ').slice(0, 140));
       try {
         var fr = ctx.fab.getBoundingClientRect();
-        L.push('fab 屏上 ' + Math.round(fr.left * fx) + '×' + Math.round(fr.top * fy) + ' (' + Math.round(fr.width * fx) + '×' + Math.round(fr.height * fy) + ')' + (ctx.fabInScreen() ? ' ✓屏内' : ' ✗屏外') + ' tr ' + (ctx.fab.style.transform || 'none'));
+        L.push(t('fab on-screen ') + Math.round(fr.left * fx) + '×' + Math.round(fr.top * fy) + ' (' + Math.round(fr.width * fx) + '×' + Math.round(fr.height * fy) + ')' + (ctx.fabInScreen() ? t(' ✓in-viewport') : t(' ✗offscreen')) + ' tr ' + (ctx.fab.style.transform || 'none'));
       } catch (e) {}
       try {
         if (ctx.aiWin) {
           var ar = ctx.aiWin.getBoundingClientRect();
           var iw = (ctx.aiIframe && ctx.aiIframe.contentWindow) ? ctx.aiIframe.contentWindow.innerWidth : 0;
-          L.push('AI win display ' + getComputedStyle(ctx.aiWin).display + ' CSS ' + ctx.aiWin.style.width + '×' + ctx.aiWin.style.height + ' 屏上 ' + Math.round(ar.left * fx) + '×' + Math.round(ar.top * fy) + ' (' + Math.round(ar.width * fx) + '×' + Math.round(ar.height * fy) + ') iframe ' + iw);
+          L.push('AI win display ' + getComputedStyle(ctx.aiWin).display + ' CSS ' + ctx.aiWin.style.width + '×' + ctx.aiWin.style.height + t(' on-screen ') + Math.round(ar.left * fx) + '×' + Math.round(ar.top * fy) + ' (' + Math.round(ar.width * fx) + '×' + Math.round(ar.height * fy) + ') iframe ' + iw);
         }
       } catch (e) {}
       return L.join('\n');
@@ -57,7 +58,7 @@ export function initDebug(ctx) {
         ctx.debugPanel = el('div', { class: 'dbg-overlay' });
         var card = el('div', { class: 'dbg-overlay-card' });
         var head = el('div', { class: 'dbg-dialog-head' });
-        head.appendChild(el('span', {}, ['🔍 调试信息（复制给 AI 协助诊断）']));
+        head.appendChild(el('span', {}, [t('🔍 Debug info (copy for AI diagnosis)')]));
         var x = el('button', { class: 'dbg-ghost', style: 'border:1px solid #d1d5db;background:#fff;border-radius:6px;padding:2px 8px;cursor:pointer;font:inherit;' }, ['✕']);
         x.addEventListener('click', function () { ctx.debugPanel.classList.remove('dbg-open'); });
         head.appendChild(x);
@@ -65,12 +66,12 @@ export function initDebug(ctx) {
         var body = el('div', { class: 'dbg-dialog-body' });
         var info = el('div', { class: 'dbg-debug-info' });
         var help = el('div', { class: 'dbg-debug-help' });
-        help.innerHTML = '<b>字段说明</b>' +
-          '<code>判定基准</code> = screen.width（老 WebView 报物理像素时 ÷dpr 修正；UA-CH mobile=false 的平板不除）；≥768 大屏、&lt;480 tiny<br>' +
-          '<code>scale / sy</code> = 布局→视觉 CSS 缩放（屏宽/innerWidth、屏高/innerHeight）；非等比时不同，counter-zoom 用 scale<br>' +
-          '<code>FIXED layout/visual</code> = fixed 元素坐标系：layout 需 counter-zoom，visual（iOS）直接视觉坐标<br>' +
-          '<code>屏上</code> = 元素实际视觉位置（rect×scale）；✓屏内 = 可见<br>' +
-          '<code>AI iframe</code> = ai.html 看到的宽度，应≈视觉宽（移动布局）；过大（900+）= 桌面布局被缩成蚂蚁';
+        help.innerHTML = t('<b>Field notes</b>') +
+          t('<code>baseline</code> = screen.width (÷dpr correction for old WebViews reporting physical pixels; tablets with UA-CH mobile=false are not divided); ≥768 large, &lt;480 tiny<br>') +
+          t('<code>scale / sy</code> = layout→visual CSS scale (screen.width/innerWidth, screen.height/innerHeight); differ when non-uniform; counter-zoom uses scale<br>') +
+          t('<code>FIXED layout/visual</code> = fixed-element coordinate systems: layout needs counter-zoom, visual (iOS) uses visual coords directly<br>') +
+          t('<code>on-screen</code> = the element\'s real visual position (rect×scale); ✓in-viewport = visible<br>') +
+          t('<code>AI iframe</code> = width as seen by ai.html; should ≈ visual width (mobile layout); too large (900+) = desktop layout shrunk into ants');
         body.appendChild(info); body.appendChild(help);
         card.appendChild(body);
         var foot = el('div', { class: 'dbg-dialog-foot' });
@@ -78,9 +79,9 @@ export function initDebug(ctx) {
         var cb = el('input', { type: 'checkbox' });
         cb.checked = !ctx.loadShowDebug(); // label="下次不再自动显示"：勾选=关闭（语义取反 loadShowDebug，默认不勾=会自动显示）
         cb.addEventListener('change', function () { ctx.saveShowDebug(!cb.checked); });
-        lbl.appendChild(cb); lbl.appendChild(document.createTextNode('下次不再自动显示'));
-        var copyBtn = el('button', { class: 'dbg-primary' }, ['📋 复制']);
-        copyBtn.addEventListener('click', function () { ctx._dbgCopy(info.textContent); copyBtn.textContent = '✅ 已复制'; setTimeout(function () { copyBtn.textContent = '📋 复制'; }, 1200); });
+        lbl.appendChild(cb); lbl.appendChild(document.createTextNode(t('Do not auto-show next time')));
+        var copyBtn = el('button', { class: 'dbg-primary' }, [t('📋 Copy')]);
+        copyBtn.addEventListener('click', function () { ctx._dbgCopy(info.textContent); copyBtn.textContent = t('✅ Copied'); setTimeout(function () { copyBtn.textContent = t('📋 Copy'); }, 1200); });
         foot.appendChild(lbl); foot.appendChild(copyBtn);
         card.appendChild(foot);
         ctx.debugPanel.appendChild(card);
@@ -101,9 +102,9 @@ export function initDebug(ctx) {
       var cb = el('input', { type: 'checkbox' });
       cb.checked = ctx.loadShowDebug();
       cb.addEventListener('change', function () { ctx.saveShowDebug(cb.checked); });
-      lbl.appendChild(cb); lbl.appendChild(document.createTextNode(' 刷新时自动显示调试信息'));
+      lbl.appendChild(cb); lbl.appendChild(document.createTextNode(t(' auto-show debug info on refresh')));
       pop.appendChild(lbl);
-      var viewBtn = el('button', {}, ['📋 查看调试信息']);
+      var viewBtn = el('button', {}, [t('📋 View debug info')]);
       viewBtn.addEventListener('click', function () { pop.remove(); ctx.showDebugPanel(); });
       pop.appendChild(viewBtn);
       ctx.root.appendChild(pop);

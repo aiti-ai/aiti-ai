@@ -62,7 +62,7 @@ test("顶层非对象配置（数组/字符串/null）：干净报错不崩溃�
   assert.equal(readFileSync(pStr, "utf8"), '"just a string"');
 });
 
-test("只读目录：写失败干净报错，原文件完好（rename 语义下文件只读不拦原子替换，目录只读才拦）", () => {
+test("只读目录：写失败干净报错，原文件完好（rename 语义下文件只读不拦原子替换，目录只读才拦）", { skip: process.platform === "win32" ? "POSIX mode-bit semantics: Windows chmod does not make directories unwritable, the exercise is unrepresentable there" : false }, () => {
   const p = join(SANDBOX, "readonly/cfg.json");
   mk(p, JSON.stringify({ mcpServers: { keep: { command: "x" } } }, null, 2));
   const dir = join(p, "..");
