@@ -378,7 +378,7 @@ export default {
 
   ui: {
     // 懒加载 v2 M3批①：静态条目带 icon（与 client ICONS.cup 同源，物化前后零闪变）。
-    toolbar: [{ id: "java", label: "Java", title: "Java 进程 · TestAgent 连桥", icon: "icons/coffee.svg" }],
+    toolbar: [{ id: "java", label: "Java", title: "i18n:at.title", icon: "icons/coffee.svg" }],
     // aiti-float dock v3：停靠槽静态声明（懒扩展物化触发 + 静态入口；id 与 client 注册一致）
     rightFileDock: [{ id: "panel", label: "Java" }],
     dialogs: [{ id: "panel", label: "Java 进程连桥面板" }],
