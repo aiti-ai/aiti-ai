@@ -18,10 +18,9 @@
 
 import { randomBytes } from "node:crypto";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Registry, restoreDeepInPlace, redactDeep } from "./mask.ts";
+import { Registry, restoreDeepInPlace, redactDeep, auditPayload, type SecretState } from "@aiti-ai/secret-mask-core";
 import { redactMessages } from "./messages.ts";
-import { appendAuditLog, handleSecretCommand, loadPersist, type AuditResult, type SecretState } from "./commands.ts";
-import { auditPayload } from "./mask.ts";
+import { appendAuditLog, loadPersist, AUDIT_LOG_PATH, PERSIST_PATH } from "./commands.ts";
 
 const SECTION_KEY = "secret_masking";
 
@@ -37,7 +36,6 @@ const SECTION_TEXT = [
 interface ExtensionState extends SecretState {
   sessionLoaded: boolean;
   sessionId: string;
-  lastAudit?: string;
 }
 
 export default async function (pi: ExtensionAPI): Promise<void> {
@@ -48,6 +46,8 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     cwd: process.cwd(),
     persisted: false,
     audit: false,
+    persistPath: PERSIST_PATH,
+    auditPath: AUDIT_LOG_PATH,
     sessionLoaded: false,
     sessionId: "",
   };
@@ -57,7 +57,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     state.cwd = ctx.cwd || process.cwd();
     try { state.sessionId = ctx.sessionManager?.getSessionId?.() ?? ""; } catch { state.sessionId = ""; }
     if (!state.sessionLoaded) {
-      loadPersist(state);
+      loadPersist(state, PERSIST_PATH);
       state.sessionLoaded = true;
     }
   });
@@ -104,7 +104,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       leakedLabels: a.leakedLabels,
     };
     state.lastAudit = `${a.leaks} leak(s), ${a.placeholders} placeholder(s)`;
-    appendAuditLog(result);
+    appendAuditLog(result, AUDIT_LOG_PATH);
     if (a.leaks > 0) {
       try { ctx.ui.notify(`secret-mask LEAK: ${a.leaks} registered value(s) found in the outgoing payload (${a.leakedLabels.join(", ")}) — check /secret audit show`, "error"); } catch {}
     }

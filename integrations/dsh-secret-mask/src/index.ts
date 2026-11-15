@@ -73,7 +73,7 @@ export function apply(ctx: Ctx, config: Config): void {
   registerSection(ctx, cfg);
   registerPostExecute(ctx, cfg);
   registerShadowTools(ctx, cfg);
-  registerAudit(ctx, cfg, cfg.auditPath);
+  registerAudit(ctx, cfg);
   registerSecretCommand(ctx, cfg);
 
   // Session lifecycle: value registries are per-agent memory; drop the key so

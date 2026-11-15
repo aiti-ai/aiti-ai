@@ -5,8 +5,12 @@ import z from "@deepseek-ai/schemastery";
 
 // src/state.ts
 import { randomBytes } from "node:crypto";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
-// src/core/detect.ts
+// node_modules/@aiti-ai/secret-mask-core/dist/index.js
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 function entropy(v) {
   if (!v) return 0;
   const counts = /* @__PURE__ */ new Map();
@@ -509,8 +513,6 @@ function scan(text, opts = {}) {
   }
   return hits;
 }
-
-// src/core/mask.ts
 var MIN_REDACT_LENGTH = 6;
 function stringLeaves(node, out = []) {
   if (typeof node === "string") out.push(node);
@@ -750,12 +752,8 @@ function auditPayload(payload, registry) {
   walk(payload);
   return { strings, placeholders, leaks, leakedLabels: [...leaksByLabel.keys()] };
 }
-
-// src/core/commands.ts
-import { homedir } from "node:os";
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-var PERSIST_PATH = join(homedir(), ".dsh", "secret-mask.json");
+var PERSIST_FILE_NAME = "secret-mask.json";
+var AUDIT_FILE_NAME = "secret-mask-audit.log";
 function maskablePreview(entry) {
   const v = entry.value;
   if (v.length <= 8) return "*".repeat(v.length);
@@ -773,10 +771,9 @@ ${lines.join("\n")}`;
 }
 function statusText(state) {
   const n = state.registry.size;
-  return `secret-mask: ${state.enabled ? "ON" : "OFF"}; ${n} value(s) registered; persistence ${state.persisted ? "saved for this workspace" : "off (session-only)"}; send-audit ${state.audit ? "ON" : "OFF"}${state.lastAudit ? `; last: ${state.lastAudit}` : ""}.`;
+  return `secret-mask: ${state.enabled ? "ON" : "OFF"}; ${n} value(s) registered; persistence ${state.persisted ? "saved for this project" : "off (session-only)"}; send-audit ${state.audit ? "ON" : "OFF"}${state.lastAudit ? `; last: ${state.lastAudit}` : ""}.`;
 }
-var AUDIT_LOG_PATH = join(homedir(), ".dsh", "secret-mask-audit.log");
-function appendAuditLog(result, path = AUDIT_LOG_PATH) {
+function appendAuditLog(result, path) {
   try {
     mkdirSync(dirname(path), { recursive: true });
     appendFileSync(path, JSON.stringify(result) + "\n", { mode: 384 });
@@ -785,7 +782,7 @@ function appendAuditLog(result, path = AUDIT_LOG_PATH) {
     return e instanceof Error ? e.message : String(e);
   }
 }
-function readAuditTail(maxLines = 5, path = AUDIT_LOG_PATH) {
+function readAuditTail(maxLines = 5, path) {
   try {
     const lines = readFileSync(path, "utf8").trimEnd().split("\n");
     return lines.slice(-maxLines);
@@ -798,10 +795,10 @@ function parseAdd(args) {
   if (m) return { value: args.slice(0, m.index).trim(), alias: m[1] };
   return { value: args.trim() };
 }
-function handleSecretCommand(state, rawArgs) {
-  return handleSync(state, rawArgs.trim());
+function handleSecretCommand(state, rawArgs, io) {
+  return handleSync(state, rawArgs.trim(), io);
 }
-async function handleSync(state, args) {
+async function handleSync(state, args, io) {
   const [cmd, ...rest] = args.length ? args.split(/\s+/) : [""];
   const tail = args.slice(cmd.length).trim();
   switch (cmd) {
@@ -811,23 +808,28 @@ async function handleSync(state, args) {
         ok: true,
         text: [
           "secret-mask commands:",
-          "  /secret add <value> [as <alias>]   register a value (kept out of the session log)",
+          "  /secret add <value> [as <alias>]   register a value (masked input when omitted)",
           "  /secret list                       show registered values (masked preview)",
           "  /secret remove <alias|label>       unregister one value",
           "  /secret clear                      unregister all",
           "  /secret on | off                   enable/disable redaction for this session",
           "  /secret status                     current state",
-          "  /secret save | unload              persist values for this workspace / drop them",
+          "  /secret save | unload              persist values for this project / drop them",
           "  /secret audit [on|off|show]        per-send wire-payload proof log"
         ].join("\n")
       };
     }
     case "add": {
-      const value = tail;
-      if (!value) return { ok: false, text: "Usage: /secret add <value> [as <alias>]  (the value never reaches the model and is not written to the session log)" };
+      let value = tail;
+      let alias;
+      if (!value && io.input) {
+        value = await io.input("Paste secret value (input is kept out of the chat)") ?? "";
+        if (!value.trim()) return { ok: false, text: "secret-mask: cancelled." };
+      }
       const parsed = parseAdd(value);
       if (!parsed || !parsed.value) return { ok: false, text: "Usage: /secret add <value> [as <alias>]" };
-      const res = state.registry.registerManual(parsed.value, parsed.alias);
+      alias = parsed.alias;
+      const res = state.registry.registerManual(parsed.value, alias);
       if (!res) return { ok: false, text: `secret-mask: value rejected (must be at least ${MIN_REDACT_LENGTH} characters).` };
       const note = res.replaced ? " (replaced previous entry for this value)" : "";
       return { ok: true, text: `secret-mask: registered ${res.entry.placeholder}${note}` };
@@ -853,7 +855,7 @@ async function handleSync(state, args) {
       const arg = tail.trim();
       if (arg === "on" || arg === "") {
         state.audit = true;
-        return { ok: true, text: `secret-mask: send-audit ON — every model request is scanned for registered raw values; evidence appended to ${AUDIT_LOG_PATH}` };
+        return { ok: true, text: `secret-mask: send-audit ON — every provider request is scanned for registered raw values; evidence appended to ${state.auditPath}` };
       }
       if (arg === "off") {
         state.audit = false;
@@ -869,13 +871,13 @@ ${lines.join("\n")}` : "secret-mask: no audit evidence yet (turn /secret audit o
     case "status":
       return { ok: true, text: statusText(state) };
     case "save": {
-      const err = savePersist(state);
+      const err = savePersist(state, state.persistPath);
       if (err) return { ok: false, text: `secret-mask: save failed: ${err}` };
       state.persisted = true;
       return { ok: true, text: `secret-mask: ${state.registry.size} value(s) persisted for ${state.cwd} (0600, values stay on this machine).` };
     }
     case "unload": {
-      const err = clearPersist(state.cwd);
+      const err = clearPersist(state.cwd, state.persistPath);
       state.persisted = false;
       if (err) return { ok: false, text: `secret-mask: unload failed: ${err}` };
       return { ok: true, text: `secret-mask: persisted values for ${state.cwd} removed (session entries kept).` };
@@ -884,7 +886,7 @@ ${lines.join("\n")}` : "secret-mask: no audit evidence yet (turn /secret audit o
       return { ok: false, text: `secret-mask: unknown subcommand "${cmd}". Try /secret help.` };
   }
 }
-function savePersist(state, path = PERSIST_PATH) {
+function savePersist(state, path) {
   try {
     let file = { version: 1, projects: {} };
     try {
@@ -908,7 +910,7 @@ function savePersist(state, path = PERSIST_PATH) {
     return e instanceof Error ? e.message : String(e);
   }
 }
-function clearPersist(cwd, path = PERSIST_PATH) {
+function clearPersist(cwd, path) {
   try {
     let file = { version: 1, projects: {} };
     try {
@@ -923,7 +925,7 @@ function clearPersist(cwd, path = PERSIST_PATH) {
     return e instanceof Error ? e.message : String(e);
   }
 }
-function loadPersist(state, path = PERSIST_PATH) {
+function loadPersist(state, path) {
   let n = 0;
   let file;
   try {
@@ -944,6 +946,8 @@ function loadPersist(state, path = PERSIST_PATH) {
 
 // src/state.ts
 var sessions = /* @__PURE__ */ new Map();
+var PERSIST_PATH = join(homedir(), ".dsh", PERSIST_FILE_NAME);
+var AUDIT_LOG_PATH = join(homedir(), ".dsh", AUDIT_FILE_NAME);
 function stateFor(agentId, cfg) {
   const key = agentId && agentId.length ? agentId : "__global__";
   let st = sessions.get(key);
@@ -954,10 +958,12 @@ function stateFor(agentId, cfg) {
       salt: randomBytes(4).toString("hex"),
       cwd: cfg.workspaceDir || process.cwd(),
       persisted: false,
-      audit: cfg.audit
+      audit: cfg.audit,
+      persistPath: PERSIST_PATH,
+      auditPath: cfg.auditPath || AUDIT_LOG_PATH
     };
     sessions.set(key, st);
-    loadPersist(st);
+    loadPersist(st, st.persistPath);
   }
   return st;
 }
@@ -1107,7 +1113,7 @@ function registerShadowTools(ctx, cfg) {
 }
 
 // src/hooks/audit.ts
-function registerAudit(ctx, cfg, auditPath) {
+function registerAudit(ctx, cfg) {
   ctx.on("llm/stream", (options, next) => {
     const st = stateFor(options?.sessionId, cfg);
     if (st.enabled && st.audit && st.registry.size > 0) {
@@ -1124,7 +1130,7 @@ function registerAudit(ctx, cfg, auditPath) {
           leaks: a.leaks,
           leakedLabels: a.leakedLabels
         },
-        auditPath
+        cfg.auditPath || st.auditPath
       );
       if (err) ctx.logger.warn("dsh-secret-mask: audit log write failed: " + err);
       if (a.leaks > 0) {
@@ -1176,7 +1182,7 @@ function apply(ctx, config) {
   registerSection(ctx, cfg);
   registerPostExecute(ctx, cfg);
   registerShadowTools(ctx, cfg);
-  registerAudit(ctx, cfg, cfg.auditPath);
+  registerAudit(ctx, cfg);
   registerSecretCommand(ctx, cfg);
   ctx.on("agent/disposed", (payload) => {
     dropSession(payload?.agent?.id);
