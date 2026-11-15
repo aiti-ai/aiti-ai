@@ -7,6 +7,43 @@
 import { t, apiUrl } from "./host-shim";
 import { EXT_DISPLAY_NAMES } from "../../../_shared/ext-display-names";
 import { openFloat, closePanel } from "../../../_shared/ext-float-dock";
+
+/* ── 跨扩展条目文案解析（"i18n:<key>" 前缀 → 声明扩展 manifest ui.i18n 表）──
+ * 插槽条目 label/title 携带 i18n key 后，extman 的 direct-open 按 DOM 文案/title 匹配，
+ * 须先把 key 解析成当前 locale 文案才能命中。manifest 拉一次缓存（register 时预热；
+ * 未就绪时回退裸 key，与旧行为等价）。级联与宿主 translateExtItemText 一致。 */
+let extI18nTables: Record<string, Record<string, Record<string, string>>> | null = null;
+let extI18nPrimed = false;
+function primeExtI18n(): void {
+  if (extI18nPrimed || typeof window === "undefined") return;
+  extI18nPrimed = true;
+  fetch(apiUrl("/api/extensions/manifest"))
+    .then((r) => r.json())
+    .then((d) => {
+      const map: Record<string, Record<string, Record<string, string>>> = {};
+      for (const e of d?.extensions ?? []) if (e?.id && e?.ui?.i18n) map[e.id] = e.ui.i18n;
+      extI18nTables = map;
+    })
+    .catch(() => { /* 下次重试 */ extI18nPrimed = false; });
+}
+function tableFor(ui18n: Record<string, Record<string, string>> | undefined, locale: string): Record<string, string> {
+  if (!ui18n) return {};
+  return ui18n[locale] ?? ui18n[locale.split("-")[0]] ?? ui18n.en ?? Object.values(ui18n)[0] ?? {};
+}
+/** 解析 "i18n:" 前缀文案；无前缀/缺表/缺键原样（裸 key）。 */
+export function resolveExtItemText(extId: string | undefined, text: string | undefined): string {
+  if (!text) return "";
+  if (!extId || !text.startsWith("i18n:")) return text;
+  primeExtI18n();
+  const key = text.slice("i18n:".length);
+  let locale = "en";
+  try { const v = localStorage.getItem("pi-locale"); if (v === "zh-CN" || v === "en") locale = v; } catch { /* ignore */ }
+  return tableFor(extI18nTables?.[extId], locale)[key] ?? key;
+}
+/** 条目展示名（label 优先 title 兑底，i18n key 已解析）——direct-open 匹配与提示文案共用。 */
+function resolveItemLabel(extId: string | undefined, item: any): string {
+  return resolveExtItemText(extId, item && item.label) || resolveExtItemText(extId, item && item.title) || (item && item.id) || "";
+}
 // extman-ui.tsx 从本模块取展示名（保持旧 import 面不变）
 export { extDisplayName } from "../../../_shared/ext-display-names";
 
@@ -349,8 +386,11 @@ function openTopbarOverflow(regs: any[], label: string, where: string, onHit: ()
     const keys = [label];
     for (const r of regs) {
       if (r && r.meta) {
-        if (r.meta.title) keys.push(String(r.meta.title));
-        if (r.meta.label) keys.push(String(r.meta.label));
+        // label/title 可能是 "i18n:<key>" 原始 key——菜单 DOM 里是宿主解析后的文案，须解析后再匹配
+        const rl = resolveExtItemText(r.extId, r.meta.label);
+        const rt = resolveExtItemText(r.extId, r.meta.title);
+        if (rt) keys.push(String(rt));
+        if (rl) keys.push(String(rl));
       }
       if (r && r.id) keys.push(String(r.id).split(":").pop()!);
     }
@@ -452,7 +492,7 @@ export function openSlotItem(extId: string, slot: string, item: any, currentSess
 }
 
 function openSlotItemNow(extId: string, slot: string, item: any, currentSession: any) {
-  const label = (item && (item.label || item.title || item.id)) || "";
+  const label = resolveItemLabel(extId, item);
   const where = (item && item.where) || slot;
 
   // 会话级插槽（chatInputTop / sessionRowActions 等）：无开关，是当前会话内的常驻 UI。
