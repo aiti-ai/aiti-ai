@@ -19,8 +19,8 @@ export default function register(ctx: Record<string, unknown>) {
   ctx.registerItems?.("toolbar", [{
     id: "aiti-configs-open",
     meta: {
-      label: "配置",
-      title: "aiti-configs：配置版本化 + 自检",
+      label: "i18n:cfg.open.label",
+      title: "i18n:cfg.open.title",
       icon: "icons/shield.svg",
       onClick: () => { try { window.__aitiConfigsOpen && window.__aitiConfigsOpen(); } catch { /* noop */ } },
     },

@@ -354,8 +354,19 @@ export default {
   ui: {
     clientImmediately: false, // [懒加载 v2] M1 已同步生产，懒化重启用
     toolbar: [
-      { id: "aiti-configs-open", label: "配置", title: "aiti-configs：配置版本化（status/commit/恢复）+ 自检报告 + 历史版本安全盾", icon: "icons/shield.svg" },
+      { id: "aiti-configs-open", label: "i18n:cfg.open.label", title: "i18n:cfg.open.title", icon: "icons/shield.svg" },
     ],
+    i18n: {
+      "zh-CN": {
+      "cfg.open.label": "配置",
+      "cfg.open.title": "aiti-configs：配置版本化（status/commit/恢复）+ 自检报告 + 历史版本安全盾",
+      },
+      en: {
+      "cfg.open.label": "Config",
+      "cfg.open.title": "aiti-configs: config versioning (status/commit/restore) + self-check + history shield",
+      },
+    },
+
     dialogs: [{ id: "aiti-configs-dialog", label: "aiti-configs" }],
   },
 
