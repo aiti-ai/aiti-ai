@@ -4,6 +4,7 @@ import { getPhysViewport, _fixedVisual, positionPhysical, capVisW, placePhysPane
 import { makePointerDrag, makeCardDrag } from './drag.js';
 import { AI_WIN_DEFAULTS, AI_WIN_KEY } from './constants.js';
 import { lsGetJSON, lsSetJSON } from './storage.js';
+import { t } from './i18n.js';
 
 export function initAiwin(ctx) {
   ctx.loadAiState = function () { return lsGetJSON(AI_WIN_KEY, {});   }
@@ -144,7 +145,7 @@ export function initAiwin(ctx) {
       ? (ctx.aiState.smallHeightPct > 0 ? ctx.aiState.smallHeightPct : 100) >= 100
       : !!ctx.aiState.__max;
     ctx.aiMaxBtn.textContent = maxed ? '❐' : '⛶';
-    ctx.aiMaxBtn.title = maxed ? '还原窗口（退出最大化）' : '最大化窗口（铺满页面；再点还原）';
+    ctx.aiMaxBtn.title = maxed ? t('Restore window (exit maximize)') : t('Maximize (fill the page; click again to restore)');
   };
   // 拖动/缩放 = 手动调整 → 自动退出最大化态（图标还原；否则松手后点 ❐ 会跳回很久前的旧位置，反直觉）
   ctx.aiDropMax = function () {
@@ -230,7 +231,7 @@ export function initAiwin(ctx) {
         else if (ctx.aiIframe) ctx.aiIframe.src = backUrl;
       } catch (e) {}
       ctx.aiReady = false;
-      try { if (ctx.addMsg) ctx.addMsg('sys', '⚠ AI 窗会话 URL 加载失败（10s 无响应）——已回退' + ((ctx.loadCustomAiUrl && ctx.loadCustomAiUrl()) ? '用户设置地址' : '默认地址') + '（AI 窗导航后将重新追踪）'); } catch (e) {}
+      try { if (ctx.addMsg) ctx.addMsg('sys', t('⚠ AI window session URL failed to load (10s no response) — fell back') + ((ctx.loadCustomAiUrl && ctx.loadCustomAiUrl()) ? t('User-set URL') : t('Default URL')) + t('(re-tracked after AI window navigation)')); } catch (e) {}
     }, 10000);
   };
   ctx.aiUrlWithBridge = function (base, token) {
@@ -289,7 +290,7 @@ export function initAiwin(ctx) {
       var _tracked = !url && !!(ctx.trackedAiUrl && ctx.trackedAiUrl()); // 本次打开是否用了追踪 URL（10s 探测回退）
       var pop = window.open(effUrl, 'aiti-ai-popup', ctx.aiPopupFeatures());
       if (!pop) {
-        ctx.addMsg('sys', '⚠ 浏览器拦截了独立窗口——已退回页面内窗口（点 ⧉ 可再次尝试；直接点击时不会被拦截）');
+        ctx.addMsg('sys', t('⚠ Browser blocked the standalone window — fell back to in-page (click ⧉ to retry; user-gesture opens are never blocked)'));
         ctx.setAiMode('iframe'); // 记录 mode=iframe + 重建内嵌窗口（默认隐藏）
         ctx.aiOpen = true;
         try { ctx.showAi(true); } catch (e) {} // 显示回退的内嵌窗口（避免 fab 亮着但看不到 AI 窗）
@@ -313,7 +314,7 @@ export function initAiwin(ctx) {
                 // 用户手动关闭新窗口 → 回到内嵌模式（记录 + 重建内嵌窗口；未主动关则显示，经 💬 主动关则保持隐藏）
                 var _wasOpen = ctx.aiOpen;
                 ctx.setAiMode('iframe'); // 记录 mode=iframe + 重建内嵌窗口（默认隐藏）
-                ctx.addMsg('sys', '🪟 AI 独立窗口已关闭——已回到页面内窗口' + (_wasOpen ? '' : '（点 💬 可重新打开）'));
+                ctx.addMsg('sys', t('🪟 AI standalone window closed — back to the in-page window') + (_wasOpen ? '' : t('(click 💬 to reopen)')));
                 if (_wasOpen) {
                   ctx.aiOpen = true;
                   try { ctx.showAi(true); } catch (e) {}
@@ -343,11 +344,11 @@ export function initAiwin(ctx) {
       menu.style.zIndex = '2147483647'; // 高于 AI 窗（2147483642）
       var layout = (ctx.aiState && ctx.aiState.popupLayout) || 'float';
       [
-        ['float', '⧉ 浮动窗口', '独立小窗，可自由移动、调整大小'],
-        ['left', '⇤ 左侧并排', '贴靠浏览器左缘，与页面左右分屏'],
-        ['right', '⇥ 右侧并排', '贴靠浏览器右缘，与页面左右分屏'],
-        ['bottom', '⇊ 底部横排', '贴靠浏览器底部，上下分屏'],
-        ['top', '⇈ 顶部横排', '贴靠浏览器顶部，上下分屏'],
+        ['float', t('⧉ Floating window'), t('Standalone window, freely movable & resizable')],
+        ['left', t('⇤ Split left'), t('Dock to browser left edge (side-by-side split)')],
+        ['right', t('⇥ Split right'), t('Dock to browser right edge (side-by-side split)')],
+        ['bottom', t('⇊ Dock bottom'), t('Dock to browser bottom (top/bottom split)')],
+        ['top', t('⇈ Dock top'), t('Dock to browser top (top/bottom split)')],
       ].forEach(function (d) {
         var item = el('div', { class: 'dbg-ai-pop-menu-item' + (layout === d[0] ? ' dbg-on' : '') }, []);
         item.appendChild(el('span', {}, [d[1]]));
@@ -370,7 +371,7 @@ export function initAiwin(ctx) {
           try { ctx.showAi(true); } catch (e) {}
           if (ctx.aiBtn) ctx.aiBtn.classList.add('dbg-on');
           ctx.saveDbgState();
-          ctx.addMsg('sys', '🪟 AI 已在独立窗口打开（' + d[1] + '）——关闭该窗口即回到页面内');
+          ctx.addMsg('sys', t('🪟 AI opened in standalone window (') + d[1] + t(') — close it to return to the in-page window'));
         });
         menu.appendChild(item);
       });
@@ -496,7 +497,7 @@ export function initAiwin(ctx) {
       bar.appendChild(maxBtn);
       ctx.aiSyncMaxBtn();
       // 新窗口按钮 ⧉：大屏下拉选择布局（Chrome Inspector 式：独立弹窗 / 左/右/底/顶 dock）；小屏无分屏意义，直接打开新窗口
-      var popBtn = el('button', { class: 'dbg-ai-pop', title: 'AI 新窗口布局：浮动 / 左·右并排 / 底·顶横排（关闭新窗口即回到内嵌模式）' }, ['⧉']);
+      var popBtn = el('button', { class: 'dbg-ai-pop', title: t('AI new-window layout: floating / split left·right / dock bottom·top (close it to return to embedded mode)') }, ['⧉']);
       popBtn.addEventListener('click', function (e) {
         e.stopPropagation();
         if (detectScreenMode().small) {
@@ -505,16 +506,16 @@ export function initAiwin(ctx) {
           ctx.setAiMode('popup'); // 销毁内嵌窗口 + 打开新窗口（会话经记录 URL 延续）
           ctx.aiBtn.classList.add('dbg-on');
           ctx.saveDbgState();
-          ctx.addMsg('sys', '🪟 AI 已在独立窗口打开——关闭该窗口即回到页面内窗口');
+          ctx.addMsg('sys', t('🪟 AI opened in a standalone window — close it to return to the in-page window'));
           return;
         }
         ctx.aiPopupMenu(popBtn);
       });
       bar.appendChild(popBtn);
-      var setBtn = el('button', { class: 'dbg-ai-settings', title: '设置' }, ['⚙']);
+      var setBtn = el('button', { class: 'dbg-ai-settings', title: t('Settings') }, ['⚙']);
       setBtn.addEventListener('click', function (e) { e.stopPropagation(); ctx.aiWinSettings(setBtn); });
       bar.appendChild(setBtn);
-      var closeBtn = el('button', { class: 'dbg-ai-close', title: '关闭' }, ['✕']);
+      var closeBtn = el('button', { class: 'dbg-ai-close', title: t('Close') }, ['✕']);
       closeBtn.addEventListener('click', function () {
         ctx.showAi(false);
         ctx.aiOpen = false;
@@ -787,7 +788,7 @@ export function initAiwin(ctx) {
       var pop = el('div', { class: 'dbg-ai-settings-pop' });
       pop.style.zIndex = '2147483647'; // 高于 AI 窗（2147483642）——设置弹窗不被自身遮挡（用户实测）
       var small = detectScreenMode().small;
-      var sec = el('div', { style: 'font-size:11px;font-weight:600;color:#4f46e5;margin-bottom:6px' }, [small ? '📱 小屏（按 % 高度）' : '🖥 大屏（具体尺寸/位置）']);
+      var sec = el('div', { style: 'font-size:11px;font-weight:600;color:#4f46e5;margin-bottom:6px' }, [small ? t('📱 Small (% height)') : t('🖥 Large (specific size/position)')]);
       pop.appendChild(sec);
       if (small) {
         // 高度 %：slider + 数值
@@ -800,11 +801,11 @@ export function initAiwin(ctx) {
           pctLabel.textContent = ctx.aiState.smallHeightPct + '%';
           ctx.saveAiState(); ctx.applyAiState();
         });
-        hRow.appendChild(el('span', {}, ['高度'])); hRow.appendChild(slider); hRow.appendChild(pctLabel);
+        hRow.appendChild(el('span', {}, [t('Height')])); hRow.appendChild(slider); hRow.appendChild(pctLabel);
         pop.appendChild(hRow);
         // 贴底/贴顶
         var dRow = el('div', { style: 'display:flex;gap:8px;margin-top:8px' });
-        [['bottom', '⬇ 贴底'], ['top', '⬆ 贴顶']].forEach(function (d) {
+        [['bottom', t('⬇ Dock bottom')], ['top', t('⬆ Dock top')]].forEach(function (d) {
           var b = el('button', { style: 'flex:1;border:1px solid #d1d5db;border-radius:6px;padding:4px 8px;cursor:pointer;font:inherit;font-size:12px;color:#374151;background:' + (ctx.aiState.smallDock === d[0] ? '#4f46e5;color:#fff' : '#fff') }, [d[1]]);
           b.addEventListener('click', function () {
             ctx.aiState.smallDock = d[0];
@@ -821,11 +822,11 @@ export function initAiwin(ctx) {
         var hInp = el('input', { type: 'number', value: String(ctx.aiState.height || 560), min: '200', step: '20', style: 'width:64px;border:1px solid #d1d5db;border-radius:5px;padding:2px 5px;font:inherit;color:#111827' });
         wInp.addEventListener('change', function () { ctx.aiState.width = Math.max(280, parseInt(wInp.value, 10) || 400); ctx.clampAiWindow(); ctx.saveAiState(); ctx.applyAiState(); });
         hInp.addEventListener('change', function () { ctx.aiState.height = Math.max(200, parseInt(hInp.value, 10) || 560); ctx.clampAiWindow(); ctx.saveAiState(); ctx.applyAiState(); });
-        whRow.appendChild(el('span', {}, ['宽'])); whRow.appendChild(wInp); whRow.appendChild(el('span', {}, ['高'])); whRow.appendChild(hInp);
+        whRow.appendChild(el('span', {}, [t('W')])); whRow.appendChild(wInp); whRow.appendChild(el('span', {}, [t('H')])); whRow.appendChild(hInp);
         pop.appendChild(whRow);
         // 位置：左/右/自由
         var posRow = el('div', { style: 'display:flex;gap:8px;margin-top:8px' });
-        [['left', '⬅ 贴左'], ['right', '➡ 贴右'], ['free', '✥ 自由']].forEach(function (d) {
+        [['left', t('⬅ Dock left')], ['right', t('➡ Dock right')], ['free', t('✥ Free')]].forEach(function (d) {
           var cur = ctx.aiState.dock || (d[0] === 'right' ? 'right' : '');
           var b = el('button', { style: 'flex:1;border:1px solid #d1d5db;border-radius:6px;padding:4px 8px;cursor:pointer;font:inherit;font-size:12px;color:#374151;background:' + (cur === d[0] ? '#4f46e5;color:#fff' : '#fff') }, [d[1]]);
           b.addEventListener('click', function () {
@@ -841,7 +842,7 @@ export function initAiwin(ctx) {
       // AI 地址显示：当前生效地址 + 来源（⭐ 用户设置 aiti-agent > 会话记忆（AI 窗上报）> 默认推断）
       // AI 地址（两行独立管理）：🔁 当前会话追踪（AI 窗上报，优先）/ ⭐ 用户设置或默认推断——各自可复制/单独清除
       var urlSec = el('div', { style: 'margin-top:10px;border-top:1px solid rgba(255,255,255,.15);padding-top:8px' });
-      urlSec.appendChild(el('div', { style: 'font-size:11px;font-weight:600;color:#4f46e5;margin-bottom:4px' }, ['🔗 AI 地址']));
+      urlSec.appendChild(el('div', { style: 'font-size:11px;font-weight:600;color:#4f46e5;margin-bottom:4px' }, [t('🔗 AI URL')]));
       var urlMono = 'font-family:ui-monospace,SFMono-Regular,monospace;font-size:11px;line-height:1.5;word-break:break-all;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:6px 8px;color:#334155;user-select:all';
       var _reopenSettings = function () { try { pop.remove(); ctx.aiWinSettings(anchorBtn); } catch (e) {} }; // 清除后重建面板（显示最新值）
       var _navAi = function (u) { // AI 窗导航到回退地址
@@ -854,32 +855,32 @@ export function initAiwin(ctx) {
       var tracked2 = (ctx.trackedAiUrl ? ctx.trackedAiUrl() : '') || '';
       var trkRow = el('div', { style: 'margin-bottom:8px' });
       var trkHead = el('div', { style: 'display:flex;align-items:center;gap:6px;margin-bottom:3px;font-size:11px;color:#6b7280' });
-      trkHead.appendChild(el('span', {}, ['🔁 当前会话（AI 窗上报，优先）']));
-      var trkClear = el('button', { style: 'margin-left:auto;border:1px solid #d1d5db;border-radius:5px;padding:1px 8px;cursor:pointer;font:inherit;font-size:11px;background:#fff;color:#374151' }, ['✕ 清除']);
+      trkHead.appendChild(el('span', {}, [t('🔁 Current session (reported by AI window, priority)')]));
+      var trkClear = el('button', { style: 'margin-left:auto;border:1px solid #d1d5db;border-radius:5px;padding:1px 8px;cursor:pointer;font:inherit;font-size:11px;background:#fff;color:#374151' }, [t('✕ Clear')]);
       trkClear.addEventListener('click', function () {
         try { ctx.clearAiUrl(); } catch (e) {}
         _navAi(ctx.aiFallbackUrl());
-        try { ctx.addMsg('sys', '✕ 已清除会话追踪 URL——AI 窗已回退' + ((ctx.loadCustomAiUrl && ctx.loadCustomAiUrl()) ? '用户设置地址（导航后重新追踪）' : '默认地址（导航后重新追踪）')); } catch (e) {}
+        try { ctx.addMsg('sys', t('✕ Session-tracked URL cleared — AI window fell back') + ((ctx.loadCustomAiUrl && ctx.loadCustomAiUrl()) ? t('User-set URL (re-tracked after navigation)') : t('Default URL (re-tracked after navigation)'))); } catch (e) {}
         _reopenSettings();
       });
       trkHead.appendChild(trkClear);
       trkRow.appendChild(trkHead);
-      trkRow.appendChild(el('div', { style: urlMono, title: tracked2 || '（无——AI 窗加载/导航后自动记录）' }, [tracked2 || '（无——AI 窗加载/导航后自动记录）']));
+      trkRow.appendChild(el('div', { style: urlMono, title: tracked2 || t('(none — auto-tracked after AI window loads/navigates)') }, [tracked2 || t('(none — auto-tracked after AI window loads/navigates)')]));
       urlSec.appendChild(trkRow);
       // 行2：⭐ 用户设置（aiti-agent）或默认推断——显示当前 base；可复制；用户设置可清除回默认
       var customUrl = (ctx.loadCustomAiUrl ? ctx.loadCustomAiUrl() : '') || '';
       var setRow = el('div', {});
       var setHead = el('div', { style: 'display:flex;align-items:center;gap:6px;margin-bottom:3px;font-size:11px;color:#6b7280' });
-      setHead.appendChild(el('span', {}, [customUrl ? '⭐ 用户设置（aiti-agent）' : '默认推断']));
-      var cpBtn = el('button', { style: 'border:1px solid #d1d5db;border-radius:5px;padding:1px 8px;cursor:pointer;font:inherit;font-size:11px;background:#fff;color:#374151' }, ['📋 复制']);
+      setHead.appendChild(el('span', {}, [customUrl ? t('⭐ User-set (aiti-agent)') : t('Auto-inferred')]));
+      var cpBtn = el('button', { style: 'border:1px solid #d1d5db;border-radius:5px;padding:1px 8px;cursor:pointer;font:inherit;font-size:11px;background:#fff;color:#374151' }, [t('📋 Copy')]);
       cpBtn.addEventListener('click', function () {
         try {
-          navigator.clipboard.writeText(customUrl || ctx.cfg.aiUrl || '').then(function () { cpBtn.textContent = '✓ 已复制'; setTimeout(function () { cpBtn.textContent = '📋 复制'; }, 1200); }, function () { cpBtn.textContent = '复制失败'; });
+          navigator.clipboard.writeText(customUrl || ctx.cfg.aiUrl || '').then(function () { cpBtn.textContent = t('✓ Copied'); setTimeout(function () { cpBtn.textContent = t('📋 Copy'); }, 1200); }, function () { cpBtn.textContent = t('Copy failed'); });
         } catch (e) {}
       });
       setHead.appendChild(cpBtn);
       if (customUrl) {
-        var cstClear = el('button', { style: 'border:1px solid #d1d5db;border-radius:5px;padding:1px 8px;cursor:pointer;font:inherit;font-size:11px;background:#fff;color:#374151' }, ['✕ 清除']);
+        var cstClear = el('button', { style: 'border:1px solid #d1d5db;border-radius:5px;padding:1px 8px;cursor:pointer;font:inherit;font-size:11px;background:#fff;color:#374151' }, [t('✕ Clear')]);
         cstClear.addEventListener('click', function () {
           try { ctx.clearCustomAiUrl(); } catch (e) {}
           // 追踪 URL 若属于 custom base → 同步失效（清掉）；属于默认 base 则保留会话
@@ -887,22 +888,22 @@ export function initAiwin(ctx) {
           if (!trkLeft) { try { ctx.clearAiUrl(); } catch (e) {} }
           var backUrl = ctx.aiUrlFor();
           _navAi(backUrl);
-          try { ctx.addMsg('sys', '✕ 已清除用户设置地址——AI 窗回退默认地址' + (trkLeft ? '（当前会话仍保留）' : '（导航后重新追踪）')); } catch (e) {}
+          try { ctx.addMsg('sys', t('✕ User-set URL cleared — AI window fell back to default') + (trkLeft ? t('(current session kept)') : t('(re-tracked after navigation)'))); } catch (e) {}
           _reopenSettings();
         });
         setHead.appendChild(cstClear);
       }
       setRow.appendChild(setHead);
-      setRow.appendChild(el('div', { style: urlMono, title: customUrl || ctx.cfg.aiUrl || '（未配置）' }, [customUrl || ctx.cfg.aiUrl || '（未配置）']));
+      setRow.appendChild(el('div', { style: urlMono, title: customUrl || ctx.cfg.aiUrl || t('(not configured)') }, [customUrl || ctx.cfg.aiUrl || t('(not configured)')]));
       urlSec.appendChild(setRow);
       pop.appendChild(urlSec);
       // ⭐ 设置 aiti-agent 地址（第一推荐）——默认只显示按钮，点开才出输入框；与 cockpit 同链路（临时切换 + 10s 探测，成功才生效）
       var setSec = el('div', { style: 'margin-top:10px;border-top:1px solid rgba(255,255,255,.15);padding-top:8px' });
-      var setLbl = el('div', { style: 'font-size:11px;font-weight:600;color:#4f46e5;margin-bottom:4px' }, ['⭐ 设置 aiti-agent（第一推荐）']);
+      var setLbl = el('div', { style: 'font-size:11px;font-weight:600;color:#4f46e5;margin-bottom:4px' }, [t('⭐ Set up aiti-agent (recommended)')]);
       setSec.appendChild(setLbl);
       var aitiLink = el('a', { href: 'https://aiti.pw', target: '_blank', rel: 'noopener', style: 'color:#4f46e5;text-decoration:underline' }, ['aiti.pw ↗']);
-      setSec.appendChild(el('div', { style: 'font-size:11px;color:#6b7280;line-height:1.5;margin-bottom:6px' }, ['带 Web 界面的 AI 助手（', aitiLink, '）——装好后设地址，AI 窗直接由它接管；应用后 10s 协议探测，成功才生效，失败自动回退。']));
-      var setBtn = el('button', { style: 'width:100%;border:1px solid #4f46e5;border-radius:6px;padding:4px 8px;cursor:pointer;font:inherit;font-size:12px;background:#eef2ff;color:#4338ca' }, ['⚙ 设置地址']);
+      setSec.appendChild(el('div', { style: 'font-size:11px;color:#6b7280;line-height:1.5;margin-bottom:6px' }, [t('AI assistant with web UI ('), aitiLink, t(') — install it, set the URL, and the AI window is taken over; 10s protocol probe after apply, success required, auto-fallback on failure.')]));
+      var setBtn = el('button', { style: 'width:100%;border:1px solid #4f46e5;border-radius:6px;padding:4px 8px;cursor:pointer;font:inherit;font-size:12px;background:#eef2ff;color:#4338ca' }, [t('⚙ Set URL')]);
       setBtn.addEventListener('click', function () {
         try { pop.remove(); } catch (e) {} // 关设置弹窗，打开同款模态弹窗（与 cockpit 一致）
         if (ctx.aiAgentDlg) ctx.aiAgentDlg();
@@ -911,9 +912,9 @@ export function initAiwin(ctx) {
       pop.appendChild(setSec);
       // 重置：位置/尺寸 + URL（新会话）——原工具条 ⟲ 移入设置
       var resetSec = el('div', { style: 'margin-top:10px;border-top:1px solid rgba(255,255,255,.15);padding-top:8px' });
-      var resetLbl = el('div', { style: 'font-size:11px;font-weight:600;color:#4f46e5;margin-bottom:4px' }, ['⟲ 重置']);
+      var resetLbl = el('div', { style: 'font-size:11px;font-weight:600;color:#4f46e5;margin-bottom:4px' }, [t('⟲ Reset')]);
       resetSec.appendChild(resetLbl);
-      var resetBtn = el('button', { style: 'width:100%;border:1px solid #fca5a5;border-radius:6px;padding:5px 8px;cursor:pointer;font:inherit;font-size:12px;background:#fef2f2;color:#b91c1c' }, ['重置位置/尺寸 + URL（新会话）']);
+      var resetBtn = el('button', { style: 'width:100%;border:1px solid #fca5a5;border-radius:6px;padding:5px 8px;cursor:pointer;font:inherit;font-size:12px;background:#fef2f2;color:#b91c1c' }, [t('Reset position/size + URL (new session)')]);
       resetBtn.addEventListener('click', function () {
         ctx.resetAiDefault(); // 位置/尺寸回默认（含保存）
         ctx.clearAiUrl();     // 清 URL 记录（会话回初始）
@@ -923,30 +924,30 @@ export function initAiwin(ctx) {
           var sep = ctx.cfg.aiUrl.indexOf('?') >= 0 ? '&' : '?';
           ctx.aiIframe.src = ctx.withAiWinMark(ctx.cfg.aiUrl + sep + '_dbg=' + Date.now() + ctx.aiPageParams());
         }
-        ctx.addMsg('sys', '⟲ 已重置：AI 窗位置/尺寸回默认，URL 回初始（新会话）');
+        ctx.addMsg('sys', t('⟲ Reset: AI window position/size to default, URL to initial (new session)'));
         try { pop.remove(); } catch (e) {} // 重置后窗口移动，设置弹窗一并关闭
       });
       resetSec.appendChild(resetBtn);
       pop.appendChild(resetSec);
       // 调试设置（原 ⚙ 内容——保留：刷新时自动显示调试信息 + 查看调试信息）
       var dbgSec = el('div', { style: 'margin-top:10px;border-top:1px solid rgba(255,255,255,.15);padding-top:8px' });
-      var dbgLbl = el('div', { style: 'font-size:11px;font-weight:600;color:#4f46e5;margin-bottom:4px' }, ['🔧 调试']);
+      var dbgLbl = el('div', { style: 'font-size:11px;font-weight:600;color:#4f46e5;margin-bottom:4px' }, [t('🔧 Debug')]);
       dbgSec.appendChild(dbgLbl);
       var lbl = el('label', { style: 'display:flex;align-items:center;gap:4px;font-size:12px' }, []);
       var cb = el('input', { type: 'checkbox' });
       try { cb.checked = ctx.loadShowDebug(); } catch (e) {}
       cb.addEventListener('change', function () { try { ctx.saveShowDebug(cb.checked); } catch (e) {} });
-      lbl.appendChild(cb); lbl.appendChild(document.createTextNode(' 刷新时自动显示调试信息'));
+      lbl.appendChild(cb); lbl.appendChild(document.createTextNode(t(' auto-show debug info on refresh')));
       dbgSec.appendChild(lbl);
-      var viewBtn = el('button', { style: 'margin-top:6px;border:1px solid #94a3b8;border-radius:6px;padding:3px 10px;cursor:pointer;font:inherit;font-size:12px;background:#fff;color:#374151' }, ['📋 查看调试信息']);
+      var viewBtn = el('button', { style: 'margin-top:6px;border:1px solid #94a3b8;border-radius:6px;padding:3px 10px;cursor:pointer;font:inherit;font-size:12px;background:#fff;color:#374151' }, [t('📋 View debug info')]);
       viewBtn.addEventListener('click', function () { pop.remove(); try { ctx.showDebugPanel(); } catch (e) {} });
       dbgSec.appendChild(viewBtn);
       pop.appendChild(dbgSec);
       // Inspector 设置（原工具条 ⏱：调速/网络/错误/场景/放行/视口等）——点击弹出独立面板
       var inspSec = el('div', { style: 'margin-top:10px;border-top:1px solid rgba(255,255,255,.15);padding-top:8px' });
-      var inspLbl = el('div', { style: 'font-size:11px;font-weight:600;color:#4f46e5;margin-bottom:6px' }, ['🛠 Inspector 设置']);
+      var inspLbl = el('div', { style: 'font-size:11px;font-weight:600;color:#4f46e5;margin-bottom:6px' }, [t('🛠 Inspector settings')]);
       inspSec.appendChild(inspLbl);
-      var inspBtn = el('button', { style: 'width:100%;border:1px solid #a5b4fc;border-radius:6px;padding:5px 8px;cursor:pointer;font:inherit;font-size:12px;background:#eef2ff;color:#4338ca' }, ['⏱ 调速 / 🌐 网络 / ⚠ 错误（弹出面板）']);
+      var inspBtn = el('button', { style: 'width:100%;border:1px solid #a5b4fc;border-radius:6px;padding:5px 8px;cursor:pointer;font:inherit;font-size:12px;background:#eef2ff;color:#4338ca' }, [t('⏱ Timing / 🌐 Network / ⚠ Errors (popup panel)')]);
       inspBtn.addEventListener('click', function () {
         try { pop.remove(); } catch (e) {} // 关设置弹窗（面板 z-index 低于设置弹窗，不关会被盖住）
         try { ctx.toggleSpeedPanel(); } catch (e) {}
@@ -994,33 +995,33 @@ export function initAiwin(ctx) {
       // 防重复叠加：已有同款设置弹窗则忽略（宿主层非单例，快速连点会开多个遮罩）
       if (ctx.root) {
         var _dup = ctx.root.querySelector('.dbg-dialog-card');
-        if (_dup && _dup.innerText.indexOf('设置 aiti-agent') >= 0) return;
+        if (_dup && _dup.innerText.indexOf(t('Set up aiti-agent')) >= 0) return;
       }
       var dlg = el('div', { class: 'dbg-dialog' });
       var card = el('div', { class: 'dbg-dialog-card', style: 'width:min(520px, 90vw)' });
       var head = el('div', { class: 'dbg-dialog-head' });
-      head.appendChild(el('span', {}, ['⭐ 设置 aiti-agent 地址']));
+      head.appendChild(el('span', {}, [t('⭐ Set aiti-agent URL')]));
       var close = el('button', { style: 'border:0;background:none;cursor:pointer;font-size:14px;color:#6b7280' }, ['✕']);
       head.appendChild(close);
       var body = el('div', { class: 'dbg-dialog-body' });
       var aitiLink = el('a', { href: 'https://aiti.pw', target: '_blank', rel: 'noopener', style: 'color:#4f46e5;text-decoration:underline' }, ['aiti.pw ↗']);
-      body.appendChild(el('div', { style: 'font-size:12.5px;color:#374151;line-height:1.6' }, ['带 Web 界面的 AI 助手（', aitiLink, '）——下载安装后，把它的访问地址填到下面，AI 窗将直接由它接管（本窗口不再使用）。']));
-      body.appendChild(el('div', { style: 'font-size:11.5px;color:#6b7280;line-height:1.6' }, ['应用后自动与宿主协商重开 AI 窗，10 秒内协议探测；连接成功才生效（此后重开自动使用），失败自动回退本窗口（可修改重试）。']));
-      var inp = el('input', { type: 'url', spellcheck: 'false', placeholder: 'https://你的-aiti-agent-地址', value: (ctx.loadCustomAiUrl ? ctx.loadCustomAiUrl() : '') || '', style: 'width:100%;box-sizing:border-box;border:1px solid #d1d5db;border-radius:8px;padding:8px 10px;font:inherit;font-size:13px;outline:none' });
+      body.appendChild(el('div', { style: 'font-size:12.5px;color:#374151;line-height:1.6' }, [t('AI assistant with web UI ('), aitiLink, t(') — after installing, enter its URL below and the AI window will be taken over by it (this window no longer used).')]));
+      body.appendChild(el('div', { style: 'font-size:11.5px;color:#6b7280;line-height:1.6' }, [t('After apply, auto-negotiates with the host to reopen the AI window with a 10s protocol probe; takes effect only on success (auto-used afterwards), auto-falls back to this window on failure (edit and retry).')]));
+      var inp = el('input', { type: 'url', spellcheck: 'false', placeholder: t('https://your-aiti-agent-url'), value: (ctx.loadCustomAiUrl ? ctx.loadCustomAiUrl() : '') || '', style: 'width:100%;box-sizing:border-box;border:1px solid #d1d5db;border-radius:8px;padding:8px 10px;font:inherit;font-size:13px;outline:none' });
       body.appendChild(inp);
       // 当前导航 URL：可直接填入输入框修改（如微调地址/路径）或仅复制
       var _cur = (ctx.trackedAiUrl ? ctx.trackedAiUrl() : '') || '';
       if (_cur) {
         var curRow = el('div', { style: 'margin-top:6px;font-size:11px;color:#6b7280;line-height:1.5' });
-        curRow.appendChild(el('span', {}, ['🔁 当前 AI 窗导航：']));
-        var curBtn = el('button', { style: 'margin-left:4px;border:1px solid #d1d5db;border-radius:5px;padding:1px 8px;cursor:pointer;font:inherit;font-size:11px;background:#fff;color:#374151' }, ['✍ 填入修改']);
+        curRow.appendChild(el('span', {}, [t('🔁 Current AI window navigation: ')]));
+        var curBtn = el('button', { style: 'margin-left:4px;border:1px solid #d1d5db;border-radius:5px;padding:1px 8px;cursor:pointer;font:inherit;font-size:11px;background:#fff;color:#374151' }, [t('✍ Fill & edit')]);
         curBtn.addEventListener('click', function () {
           try {
             inp.value = String(_cur); // 原样填入（完整路径与参数，一字不改）
             inp.focus();
             try { var u0 = String(_cur); inp.setSelectionRange(u0.length, u0.length); } catch (e) {}
-            curBtn.textContent = '✓ 已填入';
-            setTimeout(function () { curBtn.textContent = '✍ 填入修改'; }, 1200);
+            curBtn.textContent = t('✓ Filled in');
+            setTimeout(function () { curBtn.textContent = t('✍ Fill & edit'); }, 1200);
           } catch (e) {}
         });
         curRow.appendChild(curBtn);
@@ -1029,9 +1030,9 @@ export function initAiwin(ctx) {
         body.appendChild(curRow);
       }
       var foot = el('div', { class: 'dbg-dialog-foot' });
-      var openAiti = el('button', { class: 'dbg-ghost' }, ['🔗 打开 aiti.pw']);
-      var cancelBtn = el('button', { class: 'dbg-ghost' }, ['取消']);
-      var applyBtn = el('button', { class: 'dbg-primary' }, ['应用并切换']);
+      var openAiti = el('button', { class: 'dbg-ghost' }, [t('🔗 Open aiti.pw')]);
+      var cancelBtn = el('button', { class: 'dbg-ghost' }, [t('Cancel')]);
+      var applyBtn = el('button', { class: 'dbg-primary' }, [t('Apply & switch')]);
       var closeDlg = function () { try { dlg.remove(); } catch (e) {} };
       close.addEventListener('click', closeDlg);
       dlg.addEventListener('click', function (e) { if (e.target === dlg) closeDlg(); });
@@ -1039,16 +1040,16 @@ export function initAiwin(ctx) {
       openAiti.addEventListener('click', function () { try { window.open('https://aiti.pw', '_blank'); } catch (e) {} });
       applyBtn.addEventListener('click', function () {
         var u = (inp.value || '').trim();
-        if (!u) { applyBtn.textContent = '请输入地址'; setTimeout(function () { applyBtn.textContent = '应用并切换'; }, 1500); return; }
+        if (!u) { applyBtn.textContent = t('Enter URL'); setTimeout(function () { applyBtn.textContent = t('Apply & switch'); }, 1500); return; }
         if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
         try {
           var p = new URL(u);
           if (!p.hostname) throw 0;
           if (/\s/.test(p.hostname) || p.hostname.indexOf('%') >= 0) throw 1; // 空格会被编码成 %20 的假 host（'not a url' 不 throw）——判非法
           u = p.href.replace(/\/+$/, '');
-        } catch (e) { applyBtn.textContent = '地址格式不对'; setTimeout(function () { applyBtn.textContent = '应用并切换'; }, 1500); return; }
+        } catch (e) { applyBtn.textContent = t('Invalid URL format'); setTimeout(function () { applyBtn.textContent = t('Apply & switch'); }, 1500); return; }
         ctx.applyCustomAiUrl(u); // 临时切换 + 10s 探测，成功才落盘（与 cockpit 同链路）
-        try { ctx.addMsg('sys', '⚙ 已应用 aiti-agent 地址：' + String(u).slice(0, 60) + '（10s 协议探测，成功才生效）'); } catch (e) {}
+        try { ctx.addMsg('sys', t('⚙ aiti-agent URL applied: ') + String(u).slice(0, 60) + t('(10s protocol probe; takes effect only on success)')); } catch (e) {}
         closeDlg(); // AI 窗即将切换
       });
       foot.appendChild(openAiti); foot.appendChild(cancelBtn); foot.appendChild(applyBtn);
@@ -1091,12 +1092,12 @@ export function initAiwin(ctx) {
         // 新窗口模式：清 URL 记录后用带 bridge/token 的新 URL 重开窗口
         ctx.clearAiUrl();
         ctx.openAiPopup(ctx.aiUrlWithBridge(base, token));
-        ctx.addMsg('sys', '🔗 AI 窗已绑定桥：' + base + ' token=' + token);
+        ctx.addMsg('sys', t('🔗 AI window bound to bridge: ') + base + ' token=' + token);
         return;
       }
       if (!ctx.aiIframe) return;
       var sep = ctx.cfg.aiUrl.indexOf('?') >= 0 ? '&' : '?';
       ctx.aiIframe.src = ctx.withAiWinMark(ctx.cfg.aiUrl + sep + 'bridge=' + encodeURIComponent(base) + '&token=' + encodeURIComponent(token) + '&_dbg=' + Date.now() + ctx.aiPageParams());
-      ctx.addMsg('sys', '🔗 AI 窗已绑定桥：' + base + ' token=' + token);
+      ctx.addMsg('sys', t('🔗 AI window bound to bridge: ') + base + ' token=' + token);
       }
 }

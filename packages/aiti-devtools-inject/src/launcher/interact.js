@@ -8,24 +8,25 @@ import { el, escapeHtml } from './dom.js';
 import { dbgMsg } from './protocol.js';
 import { isTouchDevice, detectScreenMode, getPhysViewport, capVisW, placePhysPanel, _fixedVisual } from './viewport.js';
 import { makePointerDrag } from './drag.js';
+import { t } from './i18n.js';
 
 // 可读回答描述（异步交互 user_answer 事件文案）。
 // AI 窗 cockpit.html 有同语义实现（吃整 result 含 status）；这里适配 launcher 侧入参（直接传 value 层），
 // 并覆盖多选（indexes/labels）——finishAsk 异步分支调用，仅 answered 态进入，无需 status 分支。
 function describeAnswer(kind, v) {
   v = v || {};
-  if (kind === 'confirm') return v.approved === false ? '❌ 否' : '✅ 是';
+  if (kind === 'confirm') return v.approved === false ? t('❌ No') : t('✅ Yes');
   if (kind === 'choose') {
-    if (Array.isArray(v.indexes)) return (v.labels && v.labels.length) ? v.labels.join('、') : (v.indexes.length + ' 项');
-    return (v.custom || v.index === -1) ? '✍️ 都不适合' : String(v.label != null ? v.label : v.index);
+    if (Array.isArray(v.indexes)) return (v.labels && v.labels.length) ? v.labels.join('、') : (v.indexes.length + t(' items'));
+    return (v.custom || v.index === -1) ? t('✍️ None of these') : String(v.label != null ? v.label : v.index);
   }
   if (kind === 'input') return String(v.text || '');
-  if (kind === 'presence') return v.present === false ? '⏳ 稍后' : '🙋 我在';
+  if (kind === 'presence') return v.present === false ? t('⏳ Later') : t('🙋 I\'m here');
   if (kind === 'pick_element') {
     if (v.tag || v.text) return '🎯 <' + (v.tag || '?') + '>' + (v.text ? ' ' + String(v.text).trim().slice(0, 40) : '');
-    return '🎯 已选元素';
+    return t('🎯 Element selected');
   }
-  return '✅ 已作答';
+  return t('✅ Answered');
 }
 
 export function initInteract(ctx) {
@@ -62,9 +63,28 @@ export function initInteract(ctx) {
   ctx.showPickHint = function () {
     try {
       if (!detectScreenMode().small) return;
-      ctx.showPickToast('🖱 点击页面元素选择<br><span style="color:#a5b4fc;font-size:11px">点选后工具条 ✓ 确认发送</span>');
+      ctx.showPickToast(t('🖱 Click a page element to select<br><span style="color:#a5b4fc;font-size:11px">Confirm on the toolbar with ✓ after picking</span>'));
     } catch (e) {}
   };
+
+  // 消息区（prompt/通知正文）+ 右上角「📋 复制」按钮：一键复制全文（长 URL/命令免手动拖选）——
+  // 文本本身也可自由选中（CSS .dbg-copyable user-select:text）；复制走 ctx.copyToClipboard（dialog.js，Clipboard API → execCommand 兜底）
+  function makeCopyableBlock(text, cls) {
+    var wrap = el('div', { class: cls + ' dbg-copyable' });
+    wrap.appendChild(el('span', {}, [text]));
+    var btn = el('button', { class: 'dbg-msg-copy', title: t('Copy all') }, [t('📋 Copy')]);
+    btn.addEventListener('click', function (e) {
+      e.stopPropagation(); // 不触发面板内其他点击委托（问答面板 dialog 级 click 委托）
+      var done = function (ok) {
+        btn.textContent = ok ? t('✓ Copied') : t('✕ Copy failed');
+        btn.classList.toggle('dbg-msg-copy-ok', !!ok);
+        setTimeout(function () { btn.textContent = t('📋 Copy'); btn.classList.remove('dbg-msg-copy-ok'); }, 1200);
+      };
+      if (ctx.copyToClipboard) ctx.copyToClipboard(text, done); else done(false);
+    });
+    wrap.appendChild(btn);
+    return wrap;
+  }
 
   // ---- 浏览器通知（Notification API + 标题闪烁 + 提示音） ----
   ctx.NOTIFY = { timer: null, origTitle: document.title, audio: null };
@@ -200,21 +220,21 @@ export function initInteract(ctx) {
     if (pp.silent) return; // 服务端已结算（超时/取消/agent 停止）——只关面板，不回桥
     if (pp.it && pp.it.async) {
       // 异步：候选已在确认选中时进 AI 待选——只关窗/清 HUD（桥已异步返回；发送/拒绝消息由对应分支 postBridgeEvent）
-      ctx.addMsg('sys', result.status === 'answered' ? '🎯 已选中（候选已放入 AI 待选，点击 [元素N] 发送给 AI）' : (result.status === 'rejected' ? '✕ 用户取消/拒绝：' + (result.reason || '') : '⏱ 点选超时（用户无响应）'));
+      ctx.addMsg('sys', result.status === 'answered' ? t('🎯 Selected (candidate in AI pending area, click [element N] to send)') : (result.status === 'rejected' ? t('✕ User cancelled/declined: ') + (result.reason || '') : t('⏱ Pick timeout (no user response)')));
       return;
     }
     ctx.sendInteractionResult(pp.requestId, result);
-    ctx.addMsg('sys', result.status === 'answered' ? '🎯 用户已选元素（回传 AI）' : (result.status === 'rejected' ? '✕ 用户拒绝选择：' + (result.reason || '') : '⏱ 点选超时（用户无响应）'));
+    ctx.addMsg('sys', result.status === 'answered' ? t('🎯 User picked an element (sent to AI)') : (result.status === 'rejected' ? t('✕ User declined selection: ') + (result.reason || '') : t('⏱ Pick timeout (no user response)')));
   };
   // 服务端结算（agent 停止/取消）→ 静默关闭点选面板（不回桥——桥已 settle，回传会报“无 pending”）
   ctx.closePickPanel = function (requestId) {
     var pp = ctx.pickPanel;
-    if (pp && pp.requestId === requestId) { pp.silent = true; ctx.finishPickPanel({ status: 'cancelled', error: 'AI 已停止' }); }
+    if (pp && pp.requestId === requestId) { pp.silent = true; ctx.finishPickPanel({ status: 'cancelled', error: t('AI stopped') }); }
   };
   ctx.showPickElementPanel = function (requestId, it) {
     // 去重：同 requestId 重复投递（桥双 writer/双转发兜底）→ 跳过，否则第二条会立刻拒绝第一条（'新的交互打断'）
     if (ctx.pickPanel && ctx.pickPanel.requestId === requestId) return;
-    if (ctx.pickPanel) ctx.finishPickPanel({ status: 'rejected', reason: '新的交互打断' });
+    if (ctx.pickPanel) ctx.finishPickPanel({ status: 'rejected', reason: t('Interrupted by new interaction') });
     // 清理可能残留的弹窗（MCP 调用中断/超时可能留下未清理的确认窗——用户看到多个堆叠）
     try {
       var _olds = ctx.root.querySelectorAll('.dbg-pick-dialog');
@@ -229,22 +249,22 @@ export function initInteract(ctx) {
     //   确认后才进入点选（工具条 hover/锁定），后续点选/结果全走原有工具条（一套 inspect 系统）
     var dialog = el('div', { class: 'dbg-pick-dialog' });
     var head = el('div', { class: 'dbg-pick-head' });
-    head.appendChild(el('span', { class: 'dbg-pick-title' }, ['🎯 AI 请你选择页面元素']));
+    head.appendChild(el('span', { class: 'dbg-pick-title' }, [t('🎯 AI asks you to pick a page element')]));
     var noTimeout = !(timeoutMs > 0); // 永久等待：无倒计时/暂停（⏸ 藏掉——没东西可暂停），头部静态 ♾ 标记面板常驻直到用户操作
-    var timerSpan = el('span', { style: 'font-weight:400;color:#93c5fd;font-size:11px' }, [noTimeout ? '♾ 等待操作' : ('⏱ ' + Math.ceil(timeoutMs / 1000) + 's')]);
-    var pauseBtn = el('button', { title: '暂停倒计时' }, ['⏸']);
+    var timerSpan = el('span', { style: 'font-weight:400;color:#93c5fd;font-size:11px' }, [noTimeout ? t('♾ Waiting') : ('⏱ ' + Math.ceil(timeoutMs / 1000) + 's')]);
+    var pauseBtn = el('button', { title: t('Pause countdown') }, ['⏸']);
     if (noTimeout) pauseBtn.style.display = 'none';
-    var minBtn = el('button', { title: '暂时隐藏（再点恢复）' }, ['👁 隐藏']);
+    var minBtn = el('button', { title: t('Temporarily hide (click to restore)') }, [t('👁 Hide')]);
     head.appendChild(timerSpan);
     head.appendChild(pauseBtn);
     head.appendChild(minBtn);
     dialog.appendChild(head);
     var body = el('div', { class: 'dbg-pick-body' });
     if (it.prompt) body.appendChild(el('div', { style: 'white-space:pre-wrap' }, [it.prompt]));
-    body.appendChild(el('div', { style: 'color:#94a3b8;line-height:1.5;margin-top:4px' }, ['AI 需要你帮忙在页面上点选一个元素。点「现在开始选择」进入点选——移到元素上高亮、点击锁定，然后在工具条上确认发送。']));
+    body.appendChild(el('div', { style: 'color:#94a3b8;line-height:1.5;margin-top:4px' }, [t('AI needs you to pick a page element. Click "Start selecting" to begin — hover to highlight, click to lock, then confirm on the toolbar.')]));
     var c = el('div', { style: 'margin-top:8px;display:flex;gap:6px;justify-content:center' });
-    var startBtn = el('button', { class: 'dbg-pick-ok' }, ['🖱 现在开始选择']);
-    var laterBtn = el('button', { class: 'dbg-pick-cancel' }, ['⏳ 暂不选择']);
+    var startBtn = el('button', { class: 'dbg-pick-ok' }, [t('🖱 Start selecting')]);
+    var laterBtn = el('button', { class: 'dbg-pick-cancel' }, [t('⏳ Not now')]);
     c.appendChild(laterBtn); c.appendChild(startBtn); // 手机惯例：主操作（现在开始选择）在右侧
     body.appendChild(c);
     dialog.appendChild(body);
@@ -276,7 +296,7 @@ export function initInteract(ctx) {
     minBtn.addEventListener('click', function () {
       var hidden = body.style.display === 'none';
       body.style.display = hidden ? '' : 'none';
-      minBtn.textContent = hidden ? '👁 隐藏' : '👁 显示';
+      minBtn.textContent = hidden ? t('👁 Hide') : t('👁 Show');
       if (dialog.parentNode) placePhysPanel(dialog, { visW: Math.min(420, Math.round(getPhysViewport().w) - 24), dock: 'bottom', gap: 12, offsetY: 64, minH: 40, maxWidth: '420px', overflowY: 'auto' });
       // offsetY 必须保留：丢了会贴到屏幕最底，正好压住底部贴合的 inspect 工具条
     });
@@ -288,7 +308,7 @@ export function initInteract(ctx) {
       ctx.activateNestedIframes(isTouchDevice() ? 'touch' : 'mouse');
       ctx.broadcast({ type: 'dbg_enter_inspector', payload: { mode: 'mouse' } });
       ctx.broadcast({ type: 'dbg_ai_pick', payload: { active: true } });
-      ctx.addMsg('sys', '🎯 点选模式（' + String(it.prompt || '').slice(0, 40) + '）——移到元素高亮、点击锁定，工具条上确认。');
+      ctx.addMsg('sys', t('🎯 Pick mode (') + String(it.prompt || '').slice(0, 40) + t(') — hover to highlight, click to lock, confirm on the toolbar.'));
       try { if (ctx.showPickHint) ctx.showPickHint(); } catch (e) {} // 小屏底部 toast：点击元素选择
     }
     startBtn.addEventListener('click', function () {
@@ -296,7 +316,7 @@ export function initInteract(ctx) {
       startInspect();
       ctx.pickPanel.dialog = null; // 确认窗已移除——finishPickPanel 不再动它
     });
-    laterBtn.addEventListener('click', function () { ctx.finishPickPanel({ status: 'rejected', reason: '用户暂不选择' }); });
+    laterBtn.addEventListener('click', function () { ctx.finishPickPanel({ status: 'rejected', reason: t('User chose not to select now') }); });
     // 倒计时（支持暂停/继续：⏸ 后服务器计时同步暂停）
     var deadline = Date.now() + timeoutMs;
     var paused = false;
@@ -305,13 +325,13 @@ export function initInteract(ctx) {
       if (paused) return;
       var left = Math.max(0, deadline - Date.now());
       if (timerSpan) timerSpan.textContent = '⏱ ' + Math.ceil(left / 1000) + 's';
-      if (left <= 0) ctx.finishPickPanel({ status: 'timeout', error: '用户无响应（不在线）' });
+      if (left <= 0) ctx.finishPickPanel({ status: 'timeout', error: t('No user response (away)') });
     }
     if (!noTimeout) pauseBtn.addEventListener('click', function () {
       paused = !paused;
       if (paused) {
         remainingMs = Math.max(0, deadline - Date.now());
-        if (timerSpan) timerSpan.textContent = '⏸ 已暂停（剩 ' + Math.ceil(remainingMs / 1000) + 's）';
+        if (timerSpan) timerSpan.textContent = t('⏸ Paused (') + Math.ceil(remainingMs / 1000) + 's）';
         pauseBtn.textContent = '▶';
       } else {
         deadline = Date.now() + remainingMs;
@@ -350,28 +370,29 @@ export function initInteract(ctx) {
     }
     var dialog = el('div', { class: 'dbg-pick-dialog' }); // 浮层面板（右下角，不覆盖全屏）
     var head = el('div', { class: 'dbg-pick-head' });
-    var kindTitle = { confirm: '🤖 AI 需要你确认', choose: '🤖 AI 请你选择', input: '✍️ AI 请你输入', presence: '🙋 AI 问你是否在场' };
-    head.appendChild(el('span', { class: 'dbg-pick-title' }, [kindTitle[kind] || '🤖 AI 需要你回答']));
+    var kindTitle = { confirm: t('🤖 AI needs your confirmation'), choose: t('🤖 AI asks you to choose'), input: t('✍️ AI asks for your input'), presence: t('🙋 AI asks if you\'re present') };
+    head.appendChild(el('span', { class: 'dbg-pick-title' }, [kindTitle[kind] || t('🤖 AI needs your answer')]));
     var noTimeout = !(timeoutMs > 0); // 永久等待：无倒计时/暂停（⏸ 藏掉），头部静态 ♾ 标记面板常驻直到用户操作
-    var timerSpan = el('span', { style: 'font-weight:400;color:#93c5fd;font-size:11px' }, [noTimeout ? '♾ 等待操作' : ('⏱ ' + Math.ceil(timeoutMs / 1000) + 's')]);
-    var pauseBtn = el('button', { title: '暂停倒计时' }, ['⏸']);
+    var timerSpan = el('span', { style: 'font-weight:400;color:#93c5fd;font-size:11px' }, [noTimeout ? t('♾ Waiting') : ('⏱ ' + Math.ceil(timeoutMs / 1000) + 's')]);
+    var pauseBtn = el('button', { title: t('Pause countdown') }, ['⏸']);
     if (noTimeout) pauseBtn.style.display = 'none';
-    var minBtn = el('button', { title: '暂时隐藏（再点恢复）' }, ['👁 隐藏']);
+    var minBtn = el('button', { title: t('Temporarily hide (click to restore)') }, [t('👁 Hide')]);
     head.appendChild(timerSpan);
     head.appendChild(pauseBtn);
     head.appendChild(minBtn);
     // 取消（拒绝本次请求）：全面板头部右上角 ✕（标准关闭位）；多选底部另有「✕ 取消 + ✅ 发送所选」（用户认可，保留）
-    var cancelHead = el('button', { title: '取消（拒绝本次请求）', style: 'font-size:15px;font-weight:700;padding:2px 10px' }, ['✕']);
-    cancelHead.addEventListener('click', function () { finishAsk({ status: 'rejected', reason: '用户取消' }); });
+    var cancelHead = el('button', { title: t('Cancel (decline this request)'), style: 'font-size:15px;font-weight:700;padding:2px 10px' }, ['✕']);
+    cancelHead.addEventListener('click', function () { finishAsk({ status: 'rejected', reason: t('User cancelled') }); });
     head.appendChild(cancelHead);
     dialog.appendChild(head);
     var body = el('div', { class: 'dbg-pick-body' });
     // 问题区：大字号高对比 + 左侧强调条（.dbg-ask-prompt）——AI 的问题是面板最重要信息（布局分区）
-    body.appendChild(el('div', { class: 'dbg-ask-prompt' }, [it.prompt || '']));
+    // 右上角「📋 复制」：消息全文一键复制（用户要求——长 URL/授权链接等场景）
+    body.appendChild(makeCopyableBlock(it.prompt || '', 'dbg-ask-prompt'));
     minBtn.addEventListener('click', function () {
       var hidden = body.style.display === 'none';
       body.style.display = hidden ? '' : 'none';
-      minBtn.textContent = hidden ? '👁 隐藏' : '👁 显示';
+      minBtn.textContent = hidden ? t('👁 Hide') : t('👁 Show');
       // 重算面板高度：隐藏时收起成头部细栏（原固定高 → body 藏了但高度不变 = 空盒子，很搞笑），显示时恢复内容高
       try { reflowPanel(); } catch (e) {}
     });
@@ -380,7 +401,7 @@ export function initInteract(ctx) {
     var singleShot = !(kind === 'choose' && multiple); // 单选：点选项立即作答；多选/自定义：两步（选完点发送）
     // 选项区标签（非 input 时显示）——文案随交互模式引导（编号徽标 + 键盘 1-9 快捷键）
     if (kind !== 'input') {
-      ctl.appendChild(el('div', { class: 'dbg-ask-label' }, [singleShot ? '点选项或按数字键 1-9 立即作答：' : '勾选（可多选）后点「发送」：']));
+      ctl.appendChild(el('div', { class: 'dbg-ask-label' }, [singleShot ? t('Click an option or press 1-9 to answer:') : t('Check items (multi-select) then press Send:')]));
     }
     var optWrap = el('div', { style: 'display:flex;flex-direction:column;gap:8px;margin-top:8px' }); // 垂直全宽列表：长文案不挤压、扫读快
     var sel = { v: null, idxs: {}, custom: false };
@@ -391,9 +412,9 @@ export function initInteract(ctx) {
       var cv = comment ? { comment: comment } : {};
       // 固定选项「都不适合」→ 自定义回答（补充说明字段始终可用，与是否选此项无关）
       if (sel.custom) {
-        if (kind === 'choose') finishAsk({ status: 'answered', value: { index: -1, label: comment || '都不适合', custom: true } });
-        else if (kind === 'confirm') finishAsk({ status: 'answered', value: { approved: null, custom: comment || '都不适合' } });
-        else finishAsk({ status: 'answered', value: { present: null, custom: comment || '都不适合' } });
+        if (kind === 'choose') finishAsk({ status: 'answered', value: { index: -1, label: comment || t('None of these'), custom: true } });
+        else if (kind === 'confirm') finishAsk({ status: 'answered', value: { approved: null, custom: comment || t('None of these') } });
+        else finishAsk({ status: 'answered', value: { present: null, custom: comment || t('None of these') } });
         return;
       }
       if (kind === 'choose') {
@@ -415,42 +436,42 @@ export function initInteract(ctx) {
       } else if (kind === 'presence') {
         if (sel.v === null && !comment) return;
         if (sel.v === null) finishAsk({ status: 'answered', value: { present: null, custom: comment } });
-        else if (sel.v === 'later') finishAsk({ status: 'rejected', reason: '用户暂时不在', ...cv });
+        else if (sel.v === 'later') finishAsk({ status: 'rejected', reason: t('User temporarily away'), ...cv });
         else finishAsk({ status: 'answered', value: Object.assign({ present: true }, cv) });
       }
     }
     // 选项按钮顺序契约（2026-09 用户指定）：编号选项 1/2/3… → 确认（主操作）→ 取消/否定 → 「都不适合」（自上而下）
     function askNum(n) { return el('span', { class: 'dbg-ask-num' }, [String(n)]); }
     if (kind === 'confirm') {
-      optWrap.appendChild(el('button', { class: 'dbg-primary dbg-ask-opt', 'data-v': 'yes' }, [askNum(1), '是 / 确认']));
-      optWrap.appendChild(el('button', { class: 'dbg-ghost dbg-ask-opt dbg-ask-no', 'data-v': 'no' }, [askNum(2), '否 / 取消']));
-      optWrap.appendChild(el('button', { class: 'dbg-ghost dbg-ask-opt dbg-ask-opt-custom', 'data-custom': '1' }, [askNum(3), '都不适合（输入回答）']));
+      optWrap.appendChild(el('button', { class: 'dbg-primary dbg-ask-opt', 'data-v': 'yes' }, [askNum(1), t('Yes / Confirm')]));
+      optWrap.appendChild(el('button', { class: 'dbg-ghost dbg-ask-opt dbg-ask-no', 'data-v': 'no' }, [askNum(2), t('No / Cancel')]));
+      optWrap.appendChild(el('button', { class: 'dbg-ghost dbg-ask-opt dbg-ask-opt-custom', 'data-custom': '1' }, [askNum(3), t('None of these (type an answer)')]));
     } else if (kind === 'choose') {
-      var choices = (it.choices && it.choices.length) ? it.choices : ['选项 A', '选项 B'];
+      var choices = (it.choices && it.choices.length) ? it.choices : [t('Option A'), t('Option B')];
       choices.forEach(function (c, i) { optWrap.appendChild(el('button', { class: 'dbg-ghost dbg-ask-opt', 'data-i': String(i) }, [askNum(i + 1), String(c)])); });
-      optWrap.appendChild(el('button', { class: 'dbg-ghost dbg-ask-opt dbg-ask-opt-custom', 'data-custom': '1' }, [askNum(choices.length + 1), '这些都不适合（输入回答）']));
+      optWrap.appendChild(el('button', { class: 'dbg-ghost dbg-ask-opt dbg-ask-opt-custom', 'data-custom': '1' }, [askNum(choices.length + 1), t('None of these work (type an answer)')]));
     } else if (kind === 'presence') {
-      optWrap.appendChild(el('button', { class: 'dbg-primary dbg-ask-opt', 'data-v': 'yes' }, [askNum(1), '我在，继续']));
-      optWrap.appendChild(el('button', { class: 'dbg-ghost dbg-ask-opt dbg-ask-no', 'data-v': 'later' }, [askNum(2), '稍后 / 不在']));
+      optWrap.appendChild(el('button', { class: 'dbg-primary dbg-ask-opt', 'data-v': 'yes' }, [askNum(1), t('I\'m here, continue')]));
+      optWrap.appendChild(el('button', { class: 'dbg-ghost dbg-ask-opt dbg-ask-no', 'data-v': 'later' }, [askNum(2), t('Later / Away')]));
     }
     if (kind !== 'input') ctl.appendChild(optWrap);
     // 独立补充说明（confirm/choose/presence）：选了任何选项后都能再补充；仅填补充 = 自定义回答
     var commentInp = null, sendBtn = null;
     if (kind === 'confirm' || kind === 'choose' || kind === 'presence') {
-      ctl.appendChild(el('div', { class: 'dbg-ask-label' }, ['📝 补充说明（可选）']));
+      ctl.appendChild(el('div', { class: 'dbg-ask-label' }, [t('📝 Extra note (optional)')]));
       var commentRow = el('div', { style: 'display:flex;gap:6px' });
-      commentInp = el('input', { type: 'text', placeholder: singleShot ? '📝 补充说明（可选，填好后点选项一并发送）' : '📝 补充说明（可选）', style: 'background:rgba(255,255,255,.06);border:1px solid rgba(148,163,184,.35);color:#f1f5f9;border-radius:8px;padding:9px 11px;font:inherit;flex:1' });
+      commentInp = el('input', { type: 'text', placeholder: singleShot ? t('📝 Extra note (optional; added when you click an option)') : t('📝 Extra note (optional)'), style: 'background:rgba(255,255,255,.06);border:1px solid rgba(148,163,184,.35);color:#f1f5f9;border-radius:8px;padding:9px 11px;font:inherit;flex:1' });
       // 发送按钮：亮绿高亮（CSS .dbg-ask-send）——加宽加粗（用户实测「确认按钮明显、发送完全不明显」）；
       // 单选即答默认隐藏（点选项已直接发送），仅在「都不适合」（需打字）时出现；
       // 多选：发送按钮并入底部主操作行（footSend）——此处不创建，避免两个「发送所选 ✓」
-      sendBtn = multiple ? null : el('button', { class: 'dbg-primary dbg-ask-send', style: (singleShot ? 'display:none;' : '') + 'flex:1;font-weight:700;font-size:13px;padding:9px 12px' }, ['✓ 发送']);
+      sendBtn = multiple ? null : el('button', { class: 'dbg-primary dbg-ask-send', style: (singleShot ? 'display:none;' : '') + 'flex:1;font-weight:700;font-size:13px;padding:9px 12px' }, [t('✓ Send')]);
       commentRow.appendChild(commentInp);
       if (sendBtn) commentRow.appendChild(sendBtn);
       ctl.appendChild(commentRow);
     }
     if (kind === 'input') {
-      var inp = el('input', { type: 'text', value: it.defaultValue || '', placeholder: '输入你的回答…', style: 'background:rgba(255,255,255,.06);border:1px solid rgba(148,163,184,.35);color:#f1f5f9;border-radius:8px;padding:9px 11px;font:inherit;flex:1' });
-      var send = el('button', { class: 'dbg-primary dbg-ask-send' }, ['发送']);
+      var inp = el('input', { type: 'text', value: it.defaultValue || '', placeholder: t('Type your answer…'), style: 'background:rgba(255,255,255,.06);border:1px solid rgba(148,163,184,.35);color:#f1f5f9;border-radius:8px;padding:9px 11px;font:inherit;flex:1' });
+      var send = el('button', { class: 'dbg-primary dbg-ask-send' }, [t('Send')]);
       var r3 = el('div', { style: 'display:flex;gap:6px' });
       r3.appendChild(inp); r3.appendChild(send);
       ctl.appendChild(r3);
@@ -465,7 +486,7 @@ export function initInteract(ctx) {
         if (sendBtn) sendBtn.disabled = !(hasSel || hasCmt);
         if (footSend) {
           footSend.disabled = !(hasSel || hasCmt);
-          if (multiple) footSend.textContent = '✅ 发送所选（' + Object.keys(sel.idxs).length + '）';
+          if (multiple) footSend.textContent = t('✅ Send selected (') + Object.keys(sel.idxs).length + '）';
         }
       }
       Array.prototype.forEach.call(optBtns, function (o) {
@@ -516,9 +537,9 @@ export function initInteract(ctx) {
     if (it.rejectable !== false && kind !== 'presence') {
       var det2 = el('details', {}, []);
       // 拒绝区：文字/点击区域放大（用户实测 11px 太小不好点）
-      det2.appendChild(el('summary', { style: 'cursor:pointer;font-size:13px;color:#cbd5e1;margin-top:10px;padding:4px 0;user-select:none' }, ['✕ 现在无法处理（告诉 AI 原因）']));
+      det2.appendChild(el('summary', { style: 'cursor:pointer;font-size:13px;color:#cbd5e1;margin-top:10px;padding:4px 0;user-select:none' }, [t('✕ Can\'t handle now (tell AI why)')]));
       var rr2 = el('div', { style: 'display:flex;flex-wrap:wrap;gap:8px;margin-top:6px' });
-      ['我暂时无法满足你的要求', '暂时找不到/选不了', '等会再处理'].forEach(function (r) {
+      [t('I can\'t fulfill this right now'), t('Can\'t find/select it right now'), t('Handle it later')].forEach(function (r) {
         rr2.appendChild(el('button', { class: 'dbg-ask-reject', 'data-reason': r }, [r]));
       });
       det2.appendChild(rr2);
@@ -533,9 +554,9 @@ export function initInteract(ctx) {
     // 底部主操作行：仅多选（用户认可：取消靠左 + 发送靠右）；单选/确认/输入的取消已移到头部 ✕
     if (kind === 'choose' && multiple) {
       var footRow = el('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:10px' });
-      footRow.appendChild(el('button', { class: 'dbg-pick-cancel dbg-ask-cancel' }, ['✕ 取消']));
+      footRow.appendChild(el('button', { class: 'dbg-pick-cancel dbg-ask-cancel' }, [t('✕ Cancel')]));
       // 底部主发送按钮：更大更醒目（✅ + 已选数量动态更新 + 未选禁用）——用户实测原来两个「发送所选 ✓」重复且看不清
-      var footSend = el('button', { class: 'dbg-primary dbg-ask-send', style: 'flex:1;font-weight:800;font-size:16px;padding:12px 18px;border-radius:10px;letter-spacing:.5px;display:flex;align-items:center;justify-content:center;gap:6px' }, ['✅ 发送所选（0）']);
+      var footSend = el('button', { class: 'dbg-primary dbg-ask-send', style: 'flex:1;font-weight:800;font-size:16px;padding:12px 18px;border-radius:10px;letter-spacing:.5px;display:flex;align-items:center;justify-content:center;gap:6px' }, [t('✅ Send selected (0)')]);
       footSend.disabled = true; // 初始无勾选：禁用（refreshAskSend 在 else 块内先跑、此时 footSend 未赋值，创建后显式初始化）
       footSend.addEventListener('click', finishAskCustom);
       footRow.appendChild(footSend);
@@ -586,15 +607,15 @@ export function initInteract(ctx) {
         if (res.status === 'answered') {
           var txt = describeAnswer(kind, res.value);
           ctx.postBridgeEvent('user_answer', { kind: kind, answer: txt, status: 'answered' });
-          ctx.addMsg('sys', '💬 用户已回答：' + txt + '（异步——已放入 AI 待选，点击 [回答N] 发送给 AI）');
+          ctx.addMsg('sys', t('💬 User answered: ') + txt + t('(async — placed in AI pending area, click [answer N] to send)'));
         } else {
-          ctx.postBridgeEvent('user_answer', { kind: kind, answer: res.status === 'rejected' ? '❌ 拒绝：' + (res.reason || '') : '⏱ 超时', status: res.status === 'rejected' ? 'rejected' : 'timeout', reason: res.reason || '' });
-          ctx.addMsg('sys', res.status === 'rejected' ? '✕ 用户拒绝：' + (res.reason || '') + '（异步——已通知 MCP）' : '⏱ 等待超时（用户无响应）');
+          ctx.postBridgeEvent('user_answer', { kind: kind, answer: res.status === 'rejected' ? t('❌ Denied: ') + (res.reason || '') : t('⏱ Timeout'), status: res.status === 'rejected' ? 'rejected' : 'timeout', reason: res.reason || '' });
+          ctx.addMsg('sys', res.status === 'rejected' ? t('✕ User denied: ') + (res.reason || '') + t('(async — MCP notified)') : t('⏱ Wait timeout (no user response)'));
         }
         return;
       }
       ctx.sendInteractionResult(requestId, res);
-      ctx.addMsg('sys', res.status === 'answered' ? '💬 用户已回答（回传 AI）' : (res.status === 'rejected' ? '✕ 用户拒绝：' + (res.reason || '') : '⏱ 等待超时（用户无响应）'));
+      ctx.addMsg('sys', res.status === 'answered' ? t('💬 User answered (sent to AI)') : (res.status === 'rejected' ? t('✕ User denied: ') + (res.reason || '') : t('⏱ Wait timeout (no user response)')));
     }
     ctx.hostAskPanels = ctx.hostAskPanels || {};
     var silent = false;
@@ -608,18 +629,18 @@ export function initInteract(ctx) {
       if (paused) return;
       var left = Math.max(0, deadline - Date.now());
       timerSpan.textContent = '⏱ ' + Math.ceil(left / 1000) + 's';
-      if (left <= 0) finishAsk({ status: 'timeout', error: '用户无响应（不在线）' });
+      if (left <= 0) finishAsk({ status: 'timeout', error: t('No user response (away)') });
     }
     if (!noTimeout) pauseBtn.addEventListener('click', function () {
       paused = !paused;
       if (paused) {
         remainingMs = Math.max(0, deadline - Date.now());
-        timerSpan.textContent = '⏸ 已暂停（剩 ' + Math.ceil(remainingMs / 1000) + 's）';
-        pauseBtn.textContent = '▶ 继续';
+        timerSpan.textContent = t('⏸ Paused (') + Math.ceil(remainingMs / 1000) + 's）';
+        pauseBtn.textContent = t('▶ Resume');
       } else {
         deadline = Date.now() + remainingMs;
         timerSpan.textContent = '⏱ ' + Math.ceil(remainingMs / 1000) + 's';
-        pauseBtn.textContent = '⏸ 暂停';
+        pauseBtn.textContent = t('⏸ Pause');
       }
       ctx.sendInteractionControl(requestId, paused ? 'pause' : 'resume');
     });
@@ -641,7 +662,7 @@ export function initInteract(ctx) {
       if (t.classList.contains('dbg-ask-yes')) {
         finishAsk(kind === 'confirm' ? { status: 'answered', value: { approved: true } } : { status: 'answered', value: { present: true } });
       } else if (t.classList.contains('dbg-ask-no')) {
-        finishAsk(kind === 'confirm' ? { status: 'answered', value: { approved: false } } : { status: 'rejected', reason: '用户暂时不在' });
+        finishAsk(kind === 'confirm' ? { status: 'answered', value: { approved: false } } : { status: 'rejected', reason: t('User temporarily away') });
       } else if (t.classList.contains('dbg-ask-choice')) {
         var i = parseInt(t.getAttribute('data-i'), 10);
         var ch = it.choices || [];
@@ -649,13 +670,13 @@ export function initInteract(ctx) {
       } else if (t.classList.contains('dbg-ask-reject')) {
         finishAsk({ status: 'rejected', reason: t.getAttribute('data-reason') });
       } else if (t.classList.contains('dbg-ask-cancel')) {
-        finishAsk({ status: 'rejected', reason: '用户取消' });
+        finishAsk({ status: 'rejected', reason: t('User cancelled') });
       }
     });
     // 服务端结算（agent 停止/取消）→ 静默关闭问答面板（不回桥——桥已 settle，回传会报“无 pending”）
     ctx.closeHostAskPanel = function (requestId) {
       var p = ctx.hostAskPanels[requestId];
-      if (p) { silent = true; p.finishAsk({ status: 'cancelled', error: 'AI 已停止' }); }
+      if (p) { silent = true; p.finishAsk({ status: 'cancelled', error: t('AI stopped') }); }
     };
   };
 
@@ -665,18 +686,18 @@ export function initInteract(ctx) {
     var timeoutMs = parseInt(it.timeoutMs, 10) > 0 ? parseInt(it.timeoutMs, 10) : 0; // timeout 可选：>0 才倒计时读秒/到点自动收卡；0=常驻直到用户 ✕
     var dialog = el('div', { class: 'dbg-pick-dialog' });
     var head = el('div', { class: 'dbg-pick-head' });
-    head.appendChild(el('span', { class: 'dbg-pick-title' }, ['🔔 ' + (it.title || 'AI 通知')]));
+    head.appendChild(el('span', { class: 'dbg-pick-title' }, ['🔔 ' + (it.title || t('AI notification'))]));
     var noTimeout = !(timeoutMs > 0); // 无 timeout：通知卡常驻（♾ 不读秒、不自动收卡）
-    var timerSpan = el('span', { style: 'font-weight:400;color:#93c5fd;font-size:11px' }, [noTimeout ? '♾ 常驻' : ('⏱ ' + Math.ceil(timeoutMs / 1000) + 's')]);
-    var pauseBtn = el('button', { title: '暂停倒计时' }, ['⏸']);
+    var timerSpan = el('span', { style: 'font-weight:400;color:#93c5fd;font-size:11px' }, [noTimeout ? t('♾ Persistent') : ('⏱ ' + Math.ceil(timeoutMs / 1000) + 's')]);
+    var pauseBtn = el('button', { title: t('Pause countdown') }, ['⏸']);
     if (noTimeout) pauseBtn.style.display = 'none';
     head.appendChild(timerSpan);
     head.appendChild(pauseBtn);
-    var closeBtn = el('button', { title: '关闭', style: 'font-size:15px;font-weight:700;padding:2px 10px' }, ['✕']);
+    var closeBtn = el('button', { title: t('Close'), style: 'font-size:15px;font-weight:700;padding:2px 10px' }, ['✕']);
     head.appendChild(closeBtn);
     dialog.appendChild(head);
     var body = el('div', { class: 'dbg-pick-body' });
-    body.appendChild(el('div', { style: 'white-space:pre-wrap;font-size:14px;line-height:1.7;color:#e5e7eb;word-break:break-word;overflow-wrap:anywhere' }, [it.body || '']));
+    body.appendChild(makeCopyableBlock(it.body || '', 'dbg-notify-body')); // 通知正文同款「📋 复制」（常驻卡可回看，复制需求同问答面板）
     dialog.appendChild(body);
     try {
       makePointerDrag({
@@ -704,12 +725,12 @@ export function initInteract(ctx) {
       paused = !paused;
       if (paused) {
         remainingMs = Math.max(0, deadline - Date.now());
-        timerSpan.textContent = '⏸ 已暂停（剩 ' + Math.ceil(remainingMs / 1000) + 's）';
-        pauseBtn.textContent = '▶ 继续';
+        timerSpan.textContent = t('⏸ Paused (') + Math.ceil(remainingMs / 1000) + 's）';
+        pauseBtn.textContent = t('▶ Resume');
       } else {
         deadline = Date.now() + remainingMs;
         timerSpan.textContent = '⏱ ' + Math.ceil(remainingMs / 1000) + 's';
-        pauseBtn.textContent = '⏸ 暂停';
+        pauseBtn.textContent = t('⏸ Pause');
       }
     });
     closeBtn.addEventListener('click', closeCard);
@@ -727,12 +748,12 @@ export function initInteract(ctx) {
       // 双通道去重：独立桥下桥直发页面 + AI 窗转发两条路都可能到 launcher → 只弹一次（问答面板在 showHostAskPanel 内按 requestId 去重，通知路径无面板故在此去重）
       if (ctx.lastNotifyId === payload.requestId) return;
       ctx.lastNotifyId = payload.requestId;
-      ctx.notifyUser(it.title || '🤖 AI 有一条消息', it.body || '');
+      ctx.notifyUser(it.title || t('🤖 AI has a message'), it.body || '');
       ctx.showNotifyPanel(payload.requestId, it); // 页面内通知卡：可拖动、可回看（timeout 可选：不传=常驻直到 ✕；系统通知会自动消失）
       return;
     }
     // 浏览器通知（Notification + 标题闪烁 + 提示音）：通知用户有消息要处理
-    ctx.notifyUser('🤖 AI 需要你', itKind === 'pick_element' ? (it.prompt || '请点击页面上的一个元素') : (it.prompt || '请在页面回答'));
+    ctx.notifyUser(t('🤖 AI needs you'), itKind === 'pick_element' ? (it.prompt || t('Please click an element on the page')) : (it.prompt || t('Please answer on the page')));
     if (itKind === 'pick_element') {
       ctx.showPickElementPanel(payload.requestId, it); // 收起 AI 窗 + 进入点选 + 弹面板（✓/✕/超时回桥）
     } else {
