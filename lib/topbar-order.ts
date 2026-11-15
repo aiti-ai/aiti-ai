@@ -34,7 +34,8 @@ export type BuiltinTopbarId =
   | "export"
   | "title"
   | "branch"
-  | "system";
+  | "system"
+  | "debug";
 
 /** Any button id: built-in, or an extension item id (e.g. "aiti-devtools:aiti-inspect"). */
 export type TopbarItemId = BuiltinTopbarId | (string & {});
@@ -57,6 +58,7 @@ export const DEFAULT_TOPBAR_ORDER: TopbarOrderItem[] = [
   "title",
   "branch",
   "system",
+  "debug",
   // sessionTopbar-slot extension items go here
 ];
 

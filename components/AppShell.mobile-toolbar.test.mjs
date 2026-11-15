@@ -176,7 +176,7 @@ test("[fork] keep-open plumbing stays retired (maps to upstream #4; there is no 
   assert.match(source, /onClick=\{\(\) => toggleTopPanel\("agents"\)\}/);
   assert.match(source, /onClick=\{\(\) => toggleTopPanel\("theme"\)\}/);
   assert.match(source, /onClick=\{\(\) => toggleTopPanel\("language"\)\}/);
-  assert.match(source, /onClick=\{\(\) => toggleTopPanel\("debug"\)\}/);
+  assert.match(source, /act\(\(\) => toggleTopPanel\("debug"\)\)\(menu\)/);
 });
 
 test("[fork] theme/language dual entries coexist: kept in the top bar (fork decision) + settings panel takes effect (upstream #772)", () => {
