@@ -140,12 +140,15 @@ interface Props {
  *  local UI clock that refreshes every second, starting at this turn's agent_start
  *  (useAgentSession.runStartedAtRef); display logic only, no state polling/requests. */
 function ElapsedBadge({ startedAt }: { startedAt: number }) {
-  const [, setTick] = useState(0);
+  // Pure render: the ticking time lives in state, updated by the interval (react-hooks/purity —
+  // Date.now() during render is impure; same visible behavior).
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    const timer = setInterval(() => setTick((n) => n + 1), 1000);
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
-  const secs = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+  const secs = Math.max(0, Math.round((now - startedAt) / 1000));
   const label = secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m${String(secs % 60).padStart(2, "0")}s`;
   return <span style={{ fontVariantNumeric: "tabular-nums" }}>({label})</span>;
 }
@@ -838,7 +841,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       // (in session order) — the extension uses it to scope the rollback range precisely
       // (including the edited turn), not just ops after the entryId.
       // Find M's position in entryIds, then collect the role==="user" entryIds after it.
-      let cutUserEntryIds: string[] = [];
+      const cutUserEntryIds: string[] = [];
       const mi = entryIds.indexOf(entryId);
       if (mi >= 0) {
         for (let i = mi; i < messages.length; i++) {

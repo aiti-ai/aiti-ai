@@ -1100,6 +1100,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       ),
       readinessTimeoutMs: EVENT_STREAM_READY_TIMEOUT_MS,
       reconnectDelayMs: EVENT_STREAM_RECONNECT_DELAY_MS,
+      // Callbacks below fire on SSE events only (never during render) — Date.now() is safe;
+      // the compiler's purity pass flags closures built inside useMemo conservatively.
+      // eslint-disable-next-line react-hooks/purity
       onActivity: () => { lastSseActivityRef.current = Date.now(); },
       onTrouble: () => {
         // Connection error: the dropped-events window is open and reconciliation should happen ASAP, but the
@@ -1107,6 +1110,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         // baseline interval apart, with the 15s tick as the backstop; zeroing the activity stamp returns later
         // ticks to the short-interval baseline. reconcile returns on its own when the agent is not running.
         lastSseActivityRef.current = 0;
+        // eslint-disable-next-line react-hooks/purity
         const now = Date.now();
         if (now - lastReconcileAtRef.current >= AGENT_STATE_RECONCILE_MS) {
           lastReconcileAtRef.current = now;
