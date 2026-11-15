@@ -724,8 +724,19 @@ export default {
 
   ui: {
     toolbar: [
-      { id: "aiti-model-wizard-open", label: "模型", title: "aiti-model-wizard：添加 AI 提供商/模型（目录搜索 / 反向匹配 / 自动探测）" },
+      { id: "aiti-model-wizard-open", label: "i18n:mw.open.label", title: "i18n:mw.open.title" },
     ],
+    i18n: {
+      "zh-CN": {
+      "mw.open.label": "模型",
+      "mw.open.title": "aiti-model-wizard：添加 AI 提供商/模型（目录搜索 / 反向匹配 / 自动探测）",
+      },
+      en: {
+      "mw.open.label": "Models",
+      "mw.open.title": "aiti-model-wizard: add AI providers/models (catalog search / reverse match / probe)",
+      },
+    },
+
     dialogs: [{ id: "aiti-model-wizard-dialog", label: "aiti-model-wizard" }],
     banners: [{ id: "aiti-model-wizard-banner", label: "aiti-model-wizard：无模型引导" }],
     sessionStats: [{ id: "aiti-model-wizard-multikey-status", label: "聚合 / 多key运行状态", title: "会话信息下拉内「聚合 / 多 key 代理运行时状态」（薄壳直连 /proxy-status，重 chunk 覆盖升级为完整版）" }],
