@@ -124,6 +124,11 @@ export interface ExtClientContext {
    *  "extId:itemId"; meta may carry title/priority etc. Data source for the
    *  floating-dialog extension's self-arranging DockStack container. */
   useSlotItems?: (slot: ExtSlotName) => ExtUiItemRegistered[];
+  /** Non-hook synchronous read of slot items (read-only projection of getExtUiItems: merged
+   *  static items with materialize-forwarder onClick, feature gating, manifest ordering).
+   *  Cross-extension consumers outside a React render body (e.g. app-center command hints
+   *  service enumerating apps for the input suggest) — no lazy-load boot side effect. */
+  getSlotItems?: (slot: ExtSlotName) => ExtUiItemRegistered[];
   /** Reads the set of all extensions' ui.provides declarations (static manifest, unchanged at runtime; not a hook). */
   getExtProvides?: () => Set<string>;
   /** Current UI locale (for Intl formatting such as formatRelativeTime; follows the host locale setting). */
@@ -520,6 +525,8 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
     // Hook: must be called in a component render body (internally the real
     // useExtSlotItems hook, including the lazy-load boot side effect).
     useSlotItems: (slot: ExtSlotName) => useExtSlotItems(slot),
+    // Non-hook sibling of useSlotItems (same getExtUiItems source; no boot side effect — see type doc above)
+    getSlotItems: (slot: ExtSlotName) => getExtUiItems(slot),
     getExtProvides: () => {
       const provides = new Set<string>();
       for (const meta of Object.values(getExtMetas())) {
