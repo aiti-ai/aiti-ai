@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/pi-secret-mask",
   "version": "0.1.1",
-  "description": "Paste-safe by default — session-level secret redaction for pi: values pasted into prompts become [REDACTED:*] placeholders before the model sees them and are restored inside tool arguments before execution. Zero dependencies.",
+  "description": "Paste-safe by default — session-level secret redaction for pi: values pasted into prompts become [REDACTED:*] placeholders before the model sees them and are restored inside tool arguments before execution. Zero dependencies. Part of the aiti ecosystem (@aiti-ai/pi-web); also works standalone.",
   "keywords": [
     "pi",
     "pi-package",

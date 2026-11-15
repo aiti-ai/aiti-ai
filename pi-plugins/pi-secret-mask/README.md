@@ -15,6 +15,18 @@ write tool:   ANTHROPIC_KEY=sk-ant-api03-<80 chars>   ← restored at execution 
 session file: the original text (the context hook is non-destructive)
 ```
 
+
+## About aiti
+
+This package is part of the **aiti** ecosystem — a personal AI development workbench powered by [pi](https://pi.dev).
+
+- **aiti Web workbench** (self-hosted, browser-first, this plugin ships pre-installed): npm package **`@aiti-ai/pi-web`** — <https://github.com/aiti-ai/pi-web> · site <https://aiti.pw>
+- Ecosystem monorepo (docs site, extensions, integrations): <https://github.com/aiti-ai/aiti-ai>
+
+**Works standalone**: any pi (coding agent) user can `pi install npm:@aiti-ai/pi-secret-mask` and get every capability on its own — no dependency on any other aiti component.
+
+**Also works with aiti Web**: sessions started from the web workbench get this plugin automatically (bundled first-party plugin, auto-provisioned on startup).
+
 ## Install
 
 ```bash
