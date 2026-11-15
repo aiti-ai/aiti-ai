@@ -940,14 +940,17 @@ export default function register(ctx) {
         // 从 inject（被调试页面）发出的消息统一带来源标注（pageId + url）——agent 经 aiti_* 工具（pageId 参数）操作该页面需要
         finalText = stripOrphanTags(withSource(finalText));
         logSent(finalText);
-        // 发送即消费：仅错误候选记录 dismissed（防宿主延迟重发"复活"已发送的错误）；
-        // 元素/回答不 dismissed——用户后续主动重选同元素不应被拦；同步摘输入框占位符。
+        // 发送即消费：全部被引用候选一律 removeCandidate（记录 dismissed 指纹+时刻——此前仅错误候选记录，
+        // 元素/回答裸 setPicked([]) 不留痕；宿主 1.5s 定时重发/桥双投递/hp 重载竞态的迟到 dbg_ai_element
+        // 会走 host-protocol 复活分支，把已发送的候选[元素N]芯片+占位符重新插回（实测排队后复现）。
+        // 用户后续主动重选同元素不受拦：新点选 ts 晚于 dismissed 时刻 → 复活放行（host-protocol ts 比较），
+        // 与清空按钮（同样逐个 removeCandidate）语义一致。
         // 注意：removeCandidate 循环会同步更新 pickedElements（onPicked）并重编号剩余候选——
-        // 摘除必须用发送前的 tag 值快照（与清空按钮同款 bug 修复）。
+        // 摘除必须用发送前的 tag 值快照（与清空按钮同款 bug 修复）；循环结束 picked 已空且已落盘，
+        // 无需再 setPicked([])。
         const sentTags = pickedElements.map((el) => el.tag);
-        pickedElements.forEach((el) => { try { if (hp && el && el.kind === 'error') hp.removeCandidate(el); } catch (e) {} });
+        pickedElements.forEach((el) => { try { if (hp) hp.removeCandidate(el); } catch (e) {} });
         stripTagsFromInput(sentTags);
-        setPicked([]); // 替换过的候选清除（含 localStorage）
         return elements.length ? { text: finalText, elements } : { text: finalText };
       }
       // 有候选但本条未引用（如纯 steer/followup）：也带来源标注；未匹配到候选的孤儿占位符同样兑底（防裸发），

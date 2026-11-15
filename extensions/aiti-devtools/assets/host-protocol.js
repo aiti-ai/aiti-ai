@@ -51,17 +51,38 @@
     }
 
     // ---------------- 候选状态（元素/错误/异步作答 → [元素N]/[回答N]/[错误N]） ----------------
+    // 清除记录持久化（同实例分 key）：AI 窗刷新/热重载重建 hp 后内存 Map 清零，而宿主侧
+    // picksPendingElements 不受 AI 窗刷新影响——其 1.5s 定时重发的迟到 dbg_ai_element 会在刷新后
+    // 把已清除/已发送的候选复活回输入框。持久化后刷新不丢清除记录；上限 50 条防膨胀（按时刻裁最老）。
+    function dismissedKey() {
+      try { var iid = getAiInstanceId(); return (iid ? PICKED_KEY_BASE + '@' + iid : PICKED_KEY_BASE) + '@dismissed'; } catch (e) { return PICKED_KEY_BASE + '@dismissed'; }
+    }
+    function saveDismissed() {
+      try {
+        var entries = Array.from(dismissedElFps.entries()).sort(function (a, b) { return a[1] - b[1]; }).slice(-50);
+        var obj = {};
+        entries.forEach(function (e2) { obj[e2[0]] = e2[1]; });
+        global.localStorage.setItem(dismissedKey(), JSON.stringify(obj));
+      } catch (e) {}
+    }
+    function loadDismissed() {
+      try {
+        var obj = JSON.parse(global.localStorage.getItem(dismissedKey())) || {};
+        Object.keys(obj).forEach(function (k) { dismissedElFps.set(String(k), Number(obj[k]) || 0); });
+      } catch (e) {}
+    }
     // 恢复：localStorage 持久化（key=同域同键），AI 窗刷新/重开后 create 即恢复候选（此前 load() 是
     // 死代码从未调用——刷新即丢全部候选，宿主重发仅覆盖错误/元素重发在途的）。恢复走 setPicked：
-    // 触发 onPicked（适配端 syncPicked → 上报 host）+ 重新编号。dismissed 指纹在内存，不拦恢复。
+    // 触发 onPicked（适配端 syncPicked → 上报 host）+ 重新编号。已清除候选靠 dismissed 指纹（已持久化）拦截恢复。
     var picked = [];
     try {
       var __restored = load();
       if (__restored.length) setPicked(__restored);
     } catch (e) {}
     var listeners = new Set();
-    var dismissedElFps = new Map();  // 已清除元素指纹 → 清除时刻（旧消息延迟重发不复活；新点选 ts 晚则复活）
+    var dismissedElFps = new Map();  // 已清除元素指纹 → 清除时刻（旧消息延迟重发不复活；新点选 ts 晚则复活；持久化见 dismissedKey）
     var dismissedErrKeys = new Set(); // 已清除错误 key（message 前 80 字符）
+    loadDismissed();
     var debugTarget = { pageId: null, instanceId: null, frameId: null, bridge: null, targetUrl: null, title: null };
     var lastBootKey = '';
 
@@ -211,7 +232,7 @@
             var revive = true;
             if (dismissedElFps.has(elfp)) {
               var dmAt = dismissedElFps.get(elfp) || 0;
-              if (m.ts && m.ts > dmAt) dismissedElFps.delete(elfp);
+              if (m.ts && m.ts > dmAt) { dismissedElFps.delete(elfp); saveDismissed(); }
               else revive = false;
             }
             if (revive) {
@@ -551,10 +572,10 @@
       if (touched) v = v.replace(/ {2,}/g, ' ');
       return v;
     }
-    /** 移除候选（用户清除）——同步记录已清除指纹 + 时刻（旧消息延迟重发不复活；新点选 ts 晚则复活） */
+    /** 移除候选（用户清除/发送消费）——同步记录已清除指纹 + 时刻并持久化（旧消息延迟重发不复活；新点选 ts 晚则复活） */
     function removeCandidate(el) {
       if (isErrCandidate(el)) dismissedErrKeys.add(String(el.message || '').slice(0, 80)); // 按消息 key 记录（错误候选无 __fp）
-      else if (el.__elfp || el.__fp) dismissedElFps.set(el.__elfp || el.__fp, Date.now());
+      else if (el.__elfp || el.__fp) { dismissedElFps.set(el.__elfp || el.__fp, Date.now()); saveDismissed(); }
       setPicked(picked.filter(function (x) { return x !== el; }));
     }
 
