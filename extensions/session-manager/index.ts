@@ -418,8 +418,8 @@ const ext = {
      *  会话删除由本扩展接管（先归档、再在归档记录上删除），
      *  core 侧栏据此隐藏内置删除按钮。 */
     provides: ["session-delete"],
-    toolbar: [{ id: "sessions", label: "Sessions", title: "All sessions", icon: "icons/message-square.svg" }],
-    sidebar: [{ id: "sessions", label: "Sessions", title: "All sessions", badge: true }],
+    toolbar: [{ id: "sessions", label: "Sessions", title: "i18n:sm.allSessions", icon: "icons/message-square.svg" }],
+    sidebar: [{ id: "sessions", label: "Sessions", title: "i18n:sm.allSessions", badge: true }],
     sidebarProjects: [{ id: "clone", label: "项目 / Projects", title: "左侧会话列表接管（SidebarClone）" }],
     // 左栏整块接管（sidebar 统一 dock 方案 §3.2）：AppShell 层 Header + DockStack + 底部行
     sidebarContent: [{ id: "master", label: "侧栏接管", title: "左侧栏整块接管（SidebarContentDock）" }],
@@ -652,6 +652,9 @@ const ext = {
         "sm.roleSearch": "Role (search)",
         "sm.clearAll": "Clear all",
         "sm.selectedCount": "{count} selected",
+        "sm.totalCount": "Total {count}",
+        "sm.selectAll": "Select all",
+        "sm.invertSelect": "Invert",
         "sm.archive": "Archive",
         "sm.archiveDialogTitle": "Archive session",
         "sm.archiveResolved": "Archive as resolved",
@@ -1097,6 +1100,9 @@ const ext = {
         "sm.roleSearch": "角色（搜索）",
         "sm.clearAll": "清除全部",
         "sm.selectedCount": "已选 {count} 个",
+        "sm.totalCount": "共 {count} 个",
+        "sm.selectAll": "全选",
+        "sm.invertSelect": "反选",
         "sm.archive": "归档",
         "sm.archiveDialogTitle": "归档会话",
         "sm.archiveResolved": "已解决归档",
