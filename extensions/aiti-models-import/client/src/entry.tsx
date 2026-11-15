@@ -27,7 +27,7 @@ export default function register(ctx: Record<string, unknown>) {
     );
   }
 
-  ctx.registerItems?.("toolbar", [{ id: "aiti-models-import-open", render: ImportButton, meta: { label: "导入模型配置", icon: "icons/import.svg" } }]);
+  ctx.registerItems?.("toolbar", [{ id: "aiti-models-import-open", render: ImportButton, meta: { label: "i18n:mi.open.label", icon: "icons/import.svg" } }]);
   ctx.registerItems?.("dialogs", [{ id: "aiti-models-import-dialog", render: ImportDialogSlot, meta: { label: "模型配置导入" } }]);
 
   // 跨扩展打开服务（quickstart 引导卡「从 Agent 导入…」消费；ext-services 拍板正路）。
