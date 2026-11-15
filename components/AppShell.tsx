@@ -5122,7 +5122,16 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
               fits; the offscreen strip is used for measurement */}
           <div
             ref={itemsRowRef}
-            style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "stretch", height: "100%", overflowX: "hidden", position: "relative" }}
+            style={{
+              // Narrow phones: shrink to content width. The right cluster (stats/⋯/
+              // debug/file) leaves this row only a few dozen px, the overflow measure
+              // folds every item into ⋯ (cutoff -1), and a flex:1 empty shell would
+              // split the leftover space with the Agents tier below — a big blank
+              // middle band with icons stranded at both ends. Shrinking collapses the
+              // shell to 0 when empty and lets the Agents tier own the spring.
+              flex: isNarrowMobile ? "0 1 auto" : "1 1 0%",
+              minWidth: 0, display: "flex", alignItems: "stretch", height: "100%", overflowX: "hidden", position: "relative",
+            }}
           >
             {rowEntryNodes}
             <div
@@ -5188,6 +5197,11 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
               flex: 1,
               minWidth: 0,
               height: "100%",
+              // Left edge rule: separates the tier from the sidebar toggle (empty
+              // items row) or from the last visible top-bar item. Overlaps that
+              // neighbor's own 1px border at the same x when present — renders as a
+              // single line either way.
+              borderLeft: "1px solid var(--border)",
             }}
           >
           {renderAgentsButton(true)}
@@ -5206,7 +5220,9 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
                     display: "flex", alignItems: "center", justifyContent: "center",
                     width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
                     background: mobileToolbarMoreOpen ? "var(--bg-selected)" : "none",
-                    border: "none", borderRight: "1px solid var(--border)",
+                    // The session-stats button to our left carries no right border —
+                    // without this rule the stats/⋯ pair shows a gap in the rule line.
+                    border: "none", borderLeft: "1px solid var(--border)", borderRight: "1px solid var(--border)",
                     color: mobileToolbarMoreOpen ? "var(--text)" : "var(--text-muted)",
                     cursor: "pointer", flexShrink: 0, transition: "color 0.12s, background 0.12s",
                   }}
