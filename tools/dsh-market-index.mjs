@@ -92,6 +92,12 @@ function sortVersionsDesc(versions) {
   return [...versions].sort((a, b) => (semLt(a, b) ? 1 : semLt(b, a) ? -1 : 0));
 }
 
+// npm staged-publishing artifact: a brand-new package's first CI publish is held
+// as a `0.0.0-stage` placeholder ("Temporary package placeholder for staged
+// publishing"); it is not an installable release and stays in the registry
+// forever, so the index must not offer it.
+const STAGE_PLACEHOLDER = /^0\.0\.0-stage$/;
+
 function manifestEngines(pkgName) {
   // local source of truth: the synced mirror tree (integrations/<repo>/<pkg>/package.json)
   const found = scanIntegrationManifests(pkgName);
@@ -139,7 +145,7 @@ for (const p of PLUGINS) {
     console.warn(`[skip] ${p.name}: ${e.message}`);
     continue;
   }
-  const versions = sortVersionsDesc(Object.keys(pk.versions)).filter((v) => !pk.versions[v].deprecated);
+  const versions = sortVersionsDesc(Object.keys(pk.versions)).filter((v) => !pk.versions[v].deprecated && !STAGE_PLACEHOLDER.test(v));
   if (versions.length === 0) {
     console.warn(`[skip] ${p.name}: no non-deprecated versions`);
     continue;
