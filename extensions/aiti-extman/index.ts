@@ -29,7 +29,7 @@
  *
  * 用法：部署到 ~/.pi/web/extensions/aiti-extman/（tools/deploy.mjs）后 reload。
  */
-import { installExtension, removeExtension, installFromZipBuffer, extractZipToTemp, writePublisher, parseInstallSource } from "./installer.js";
+import { installExtension, removeExtension, installFromZipBuffer, extractZipToTemp, writePublisher, parseInstallSource, runNpm } from "./installer.js";
 import { reconcile, depsState, extDepStates, collectDeps, extensionsRootPath } from "./shared-deps.js";
 import {
   resolvePublisherForSource,
@@ -45,6 +45,16 @@ import { rmSync, readFileSync, existsSync } from "fs";
 import { join, resolve } from "path";
 import { EXT_PROTOCOL_VERSION, EXT_PROTOCOL_MIN_MAJOR, extProtocolInfo } from "./ext-protocol.mjs";
 import { screenAndMigrateOnInstall } from "./protocol-screen.mjs";
+import { extPinyin } from "./pinyin-index.mjs"; // 独立文件名即版本：.mjs 经宿主走原生 ESM（缓存不可清），改内容不换名不会重新加载
+
+// _shared 显示名表（client 眼中的中文名来自此表；e.name 可能是英文如 Service Tunnels，
+// 拼音索引必须覆盖显示中文名才能搜 fuwusuidao 命中）。结构 Record<string, {en, zh}>，取 .zh。
+// jiti interop：部署目录 _shared TS 转译加载。
+let displayZh: Record<string, { zh?: string }> = {};
+try {
+  const req = typeof require === "function" ? (require as NodeRequire) : undefined;
+  displayZh = req?.("./_shared/ext-display-names.ts")?.EXT_DISPLAY_NAMES ?? {};
+} catch {}
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
@@ -253,9 +263,24 @@ function withSharedDeps(payload: any): any {
   return payload;
 }
 
-/** 全量状态（含发行者 + 协议 + 插槽条目详情 + markdown 描述 + 共享依赖视图）。 */
+/** 拼音索引富化：name 含中文的扩展附 pinyin 字段（"全拼连写 首字母"，见 pinyin-helper.mjs）。 */
+function withPinyin(payload: any): any {
+  const extensions = payload?.extensions;
+  if (!extensions || typeof extensions !== "object") return payload;
+  for (const id of Object.keys(extensions)) {
+    const e = extensions[id];
+    if (!e || typeof e !== "object") continue;
+    const fromName = typeof e.name === "string" ? extPinyin(e.name) : "";
+    const zh = displayZh[id]?.zh;
+    const fromDisplay = typeof zh === "string" && zh ? extPinyin(zh) : "";
+    e.pinyin = fromName === fromDisplay ? fromName : [fromName, fromDisplay].filter(Boolean).join(" ");
+  }
+  return payload;
+}
+
+/** 全量状态（含发行者 + 协议 + 插槽条目详情 + markdown 描述 + 共享依赖视图 + 拼音索引）。 */
 function enrichedStatus(): any {
-  return withProtocol(withSharedDeps(withDescription(withDisabledDeps(withPublishers(withSlotDetails(statusPayload()))))));
+  return withProtocol(withSharedDeps(withDescription(withDisabledDeps(withPublishers(withSlotDetails(withPinyin(statusPayload())))))));
 }
 
 /** 检查发行者是否需 trust（VSCode 式）：未信任 → 返回 needsTrust 响应，不安装。 */
@@ -280,6 +305,93 @@ function normalizePublisher(p: unknown): Publisher | null {
     source: typeof o.source === "string" && o.source.trim() ? o.source.trim() : "unknown",
     fingerprint: o.fingerprint.trim(),
   };
+}
+
+// ── npm 包更新检查（同 pi package-manager 策略：安装目录 package.json version ×
+//    `npm view <name> version --json`（走机器 npm 配置与 registry，与「更新」安装按钮同一解析源，
+//    查到的版本就是能装到的版本）→ semver gt。时机=客户端打开面板/手动刷新各查一次（非轮询）；
+//    并发 4；查询失败静默视为无更新；服务端短缓存 5min，force=1 绕过。
+//    git 来源：installer 未持久化安装来源元数据，暂无法可靠检测，跳过。 ──
+const NPM_PKG_NAME_RE = /^(@[A-Za-z0-9-._]+\/)?[A-Za-z0-9-._]+$/;
+const UPDATES_TTL_MS = 5 * 60_000;
+const UPDATES_CONCURRENCY = 4; // 同 pi UPDATE_CHECK_CONCURRENCY
+const UPDATES_TIMEOUT_MS = 12_000;
+let updatesCache: { at: number; data: any } | null = null;
+
+/** 轻量 semver gt（numeric x.y.z[-pre]；prerelease 逐段比较，@aiti-ai 包均为简单三段，够用）。 */
+export function semverGt(a: string, b: string): boolean {
+  const parse = (v: string) => {
+    const m = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+.*)?$/.exec(v.trim());
+    return m ? { nums: [Number(m[1]), Number(m[2]), Number(m[3])], pre: m[4] ?? null } : null;
+  };
+  const pa = parse(a);
+  const pb = parse(b);
+  if (!pa || !pb) return false;
+  for (let i = 0; i < 3; i++) if (pa.nums[i] !== pb.nums[i]) return pa.nums[i] > pb.nums[i];
+  if (pa.pre && pb.pre) {
+    const xa = pa.pre.split(".");
+    const xb = pb.pre.split(".");
+    for (let i = 0; i < Math.max(xa.length, xb.length); i++) {
+      const x = xa[i];
+      const y = xb[i];
+      if (x === undefined) return false;
+      if (y === undefined) return true;
+      if (/^\d+$/.test(x) && /^\d+$/.test(y)) { const d = Number(x) - Number(y); if (d) return d > 0; }
+      else if (x !== y) return x > y;
+    }
+    return false;
+  }
+  if (pa.pre) return false; // 1.0.0-alpha < 1.0.0
+  if (pb.pre) return true;  // 1.0.0 > 1.0.0-alpha
+  return false;
+}
+
+/** npm dist-tags.latest（runNpm 走机器 npm 配置；失败/超时返回 null = 无更新，同 pi catch→false）。 */
+async function npmLatestVersion(pkg: string): Promise<string | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const res = await Promise.race([
+      runNpm(["view", pkg, "version", "--json"]),
+      new Promise<null>((resolveP) => { timer = setTimeout(() => resolveP(null), UPDATES_TIMEOUT_MS); }),
+    ]);
+    if (!res) return null;
+    const parsed = JSON.parse(res.stdout.trim());
+    return typeof parsed === "string" && parsed ? parsed : null;
+  } catch {
+    return null;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/** 全量已安装扩展的 npm 更新检查（并发 4；读部署目录 package.json name+version）。 */
+async function computeUpdates(): Promise<any> {
+  const st = statusPayload();
+  const extensions = st?.extensions ?? {};
+  const entries: Array<{ id: string; pkg: string; installed: string | null }> = [];
+  for (const id of Object.keys(extensions)) {
+    const e = extensions[id];
+    if (!e || typeof e.dir !== "string" || !e.dir) continue;
+    try {
+      const pj = JSON.parse(readFileSync(join(e.dir, "package.json"), "utf8")) as { name?: unknown; version?: unknown };
+      const name = typeof pj.name === "string" ? pj.name : "";
+      if (!name || !NPM_PKG_NAME_RE.test(name)) continue;
+      entries.push({ id, pkg: name, installed: typeof pj.version === "string" ? pj.version : null });
+    } catch {}
+  }
+  const updates: Record<string, { pkg: string; installed: string; latest: string; hasUpdate: boolean }> = {};
+  let idx = 0;
+  const worker = async () => {
+    while (idx < entries.length) {
+      const cur = entries[idx++];
+      const latest = await npmLatestVersion(cur.pkg);
+      // 查询失败或本地未记录版本 → 不出条目（静默，UI 显示回到注册表对比回退）
+      if (!latest || !cur.installed) continue;
+      updates[cur.id] = { pkg: cur.pkg, installed: cur.installed, latest, hasUpdate: semverGt(latest, cur.installed) };
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(UPDATES_CONCURRENCY, entries.length) || 1 }, worker));
+  return { ok: true, checkedAt: new Date().toISOString(), updates };
 }
 
 // ── 在线注册表代理（aiti-docs 编译产物；浏览器直连跨域，这里代取 + 短缓存） ──
@@ -425,6 +537,8 @@ export default {
         "ext.registryEmpty": "Registry is empty",
         "ext.registryFailed": "Failed to load registry",
         "ext.installed": "installed",
+        "ext.updatesChecking": "Checking for updates…",
+        "ext.npmUpToDate": "up to date (npm v{version})",
         "ext.updateTo": "update to v{version}",
         "ext.noSource": "no online source",
         "ext.detail": "Details",
@@ -605,6 +719,8 @@ export default {
         "ext.registryEmpty": "注册表为空",
         "ext.registryFailed": "注册表获取失败",
         "ext.installed": "已安装",
+        "ext.updatesChecking": "检查更新中…",
+        "ext.npmUpToDate": "已是最新（npm v{version}）",
         "ext.updateTo": "可更新到 v{version}",
         "ext.noSource": "暂无在线安装源",
         "ext.detail": "详情",
@@ -710,6 +826,21 @@ export default {
         }
       }
 
+      // GET updates — npm 包更新检查（pi package-manager 同策略；?force=1 绕过 5min 缓存）。
+      if (route === "updates" && ctx.method === "GET") {
+        const force = new URL(req.url ?? "/", "http://localhost").searchParams.get("force") === "1";
+        if (!force && updatesCache && Date.now() - updatesCache.at < UPDATES_TTL_MS) {
+          return json({ ...updatesCache.data, cached: true });
+        }
+        try {
+          const data = await computeUpdates();
+          updatesCache = { at: Date.now(), data };
+          return json(data);
+        } catch (e) {
+          return json({ error: e instanceof Error ? e.message : String(e) }, 500);
+        }
+      }
+
       // POST install-zip — multipart 文件上传安装（file=<zip>，可选 id / docsUrl / trust / publisherHint）。
       if (route === "install-zip" && ctx.method === "POST") {
         const form = await req.formData().catch(() => null);
@@ -754,6 +885,7 @@ export default {
           // 协议检查 + 安装时筛查占位（方案 §7；当前 skipped，不影响行为）
           const protocolCheck = protocolOfDir(result.dir);
           const screening = await screenAndMigrateOnInstall({ id: result.id, dir: result.dir, kind: "zip", fromProtocol: protocolCheck.declared, toProtocol: protocolCheck.current });
+          updatesCache = null; // 新装/覆盖后版本可能已变，下次更新检查强制重查
           return json({ ok: true, id: result.id, deps, protocolCheck, screening, ...enrichedStatus() });
         } catch (e) {
           return json({ error: e instanceof Error ? e.message : String(e) }, 500);
@@ -841,11 +973,13 @@ export default {
             // 协议检查 + 安装时筛查占位（方案 §7；当前 skipped，不影响行为）
             const protocolCheck = protocolOfDir(result.dir);
             const screening = await screenAndMigrateOnInstall({ id: result.id, dir: result.dir, kind: plan.kind, fromProtocol: protocolCheck.declared, toProtocol: protocolCheck.current });
+            updatesCache = null; // 安装/更新后版本已变，下次更新检查强制重查
             return json({ ok: true, id: result.id, deps, protocolCheck, screening, ...enrichedStatus() });
           }
           if (body.action === "remove") {
             if (!body.id?.trim()) return json({ error: "id required" }, 400);
             removeExtension(body.id);
+            updatesCache = null;
             // pin 清理（P2）：卸载后 source/capability pin 失效——core 提供方法时顺手清（旧 core 无此方法则跳过，解析时软校验兜底）
             try { reg.clearExtPins?.(body.id); } catch {}
             // 依赖并集已变小 → reconcile 让 npm 裁剪共享根里不再被任何扩展引用的包（非致命）
