@@ -6,7 +6,7 @@
  * string and structural shape only; peer packages stay external in the bundle.
  */
 
-import type { Registry } from "./core/mask.ts";
+import type { SecretState as CoreSecretState } from "@aiti-ai/secret-mask-core";
 
 // ---- cordis context surface (structural) ----
 
@@ -184,15 +184,8 @@ export interface PromptSection {
 
 // ---- plugin-side state ----
 
-export interface SessionState {
-  registry: Registry;
-  enabled: boolean;
-  salt: string;
-  cwd: string;
-  persisted: boolean;
-  audit: boolean;
-  lastAudit?: string;
-}
+/** Session state = the shared core state + nothing DSH-specific. */
+export type SessionState = CoreSecretState;
 
 export interface PluginConfig {
   enabled: boolean;

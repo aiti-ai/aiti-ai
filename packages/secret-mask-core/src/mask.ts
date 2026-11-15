@@ -1,9 +1,7 @@
 /**
- * Placeholder registry and redaction engine for dsh-secret-mask.
+ * Placeholder registry and redaction engine for pi-secret-mask.
  *
- * Ported verbatim from @aiti-ai/pi-secret-mask src/mask.ts (same placeholder
- * format, same entropy/checksum rules) so both hosts redact identically. The
- * registry maps secret values to stable placeholders:
+ * The registry maps secret values to stable placeholders:
  *   - manual entry with alias:  `[REDACTED:github-token]`
  *   - auto-detected entry:      `[REDACTED:GITHUB_TOKEN#a1b2c3d4]`
  *                              (hash = fnv1a(sessionSalt + value), stable within
@@ -11,8 +9,8 @@
  *                               placeholder; meaningless across sessions)
  *
  * redact() replaces known value forms with placeholders; restore() puts real
- * values back (used inside shadow tool wrappers before execution). All
- * operations are exact-match and idempotent.
+ * values back (used in tool arguments before execution). All operations are
+ * exact-match and idempotent.
  */
 
 import { fnv1a, scan } from "./detect.ts";
@@ -266,12 +264,7 @@ export function deepMapStrings(value: unknown, fn: (s: string) => string): unkno
   return value;
 }
 
-/**
- * Restore placeholders inside a **cloned** tool-call input structure. DSH
- * freezes the arguments object before the pipeline, so the shadow tool
- * wrapper restores into a deep clone and executes the wrapped tool with the
- * clone (never mutates the frozen original).
- */
+/** Restore placeholders inside a tool-call input structure (in place). */
 export function restoreDeep<T>(obj: T, registry: Registry): { value: T; count: number } {
   let count = 0;
   const mapped = deepMapStrings(obj, (s) => {
@@ -282,7 +275,41 @@ export function restoreDeep<T>(obj: T, registry: Registry): { value: T; count: n
   return { value: mapped as T, count };
 }
 
-/** Redact known values inside a nested structure (tool result canonical values). */
+/** Restore placeholders inside a nested structure **in place** (tool-call inputs must be patched in place: pi reads the fields off the event object). */
+export function restoreDeepInPlace(value: unknown, registry: Registry): number {
+  let count = 0;
+  const walk = (node: unknown): void => {
+    if (typeof node === "string") return;
+    if (Array.isArray(node)) {
+      for (let i = 0; i < node.length; i++) {
+        const v = node[i];
+        if (typeof v === "string") {
+          const r = registry.restore(v);
+          if (r.count > 0) {
+            node[i] = r.text;
+            count += r.count;
+          }
+        } else walk(v);
+      }
+      return;
+    }
+    if (node && typeof node === "object") {
+      for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+        if (typeof v === "string") {
+          const r = registry.restore(v);
+          if (r.count > 0) {
+            (node as Record<string, unknown>)[k] = r.text;
+            count += r.count;
+          }
+        } else walk(v);
+      }
+    }
+  };
+  walk(value);
+  return count;
+}
+
+/** Redact known values inside a nested structure (tool results, details). */
 export function redactDeep<T>(obj: T, registry: Registry): { value: T; count: number } {
   let count = 0;
   const mapped = deepMapStrings(obj, (s) => {
@@ -301,10 +328,10 @@ export interface PayloadAudit {
 }
 
 /**
- * Audit the FINAL wire payload (the `llm/stream` GenerateOptions): count
- * placeholder occurrences and — the actual proof — occurrences of any
+ * Audit the FINAL wire payload (the `before_provider_request` event payload):
+ * count placeholder occurrences and — the actual proof — occurrences of any
  * registered raw value across every string leaf. Independent of the redaction
- * passes: whatever earlier hooks did, this sees what the provider receives.
+ * pass: whatever earlier hooks did to the payload, this sees what goes on the wire.
  */
 export function auditPayload(payload: unknown, registry: Registry): PayloadAudit {
   const leaksByLabel = new Map<string, number>();

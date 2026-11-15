@@ -7,7 +7,7 @@
  */
 
 import type { CommandDefinition, PluginConfig, PluginContext } from "../dsh-types.ts";
-import { handleSecretCommand } from "../core/commands.ts";
+import { handleSecretCommand } from "@aiti-ai/secret-mask-core";
 import { stateFor } from "../state.ts";
 
 export function registerSecretCommand(ctx: PluginContext, cfg: PluginConfig): void {
