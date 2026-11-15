@@ -245,8 +245,8 @@ export default {
 
   ui: {
     toolbar: [
-      { id: "aiti-git-trace-watch", label: "关注路径", title: "aiti-git-trace：关注路径管理（workspace 持久 + 本会话识别；只追 git 仓）", icon: "icons/git-branch.svg" },
-      { id: "aiti-git-trace-timeline", label: "时间线", title: "aiti-git-trace：本会话 ops 时间线（回滚/看 diff）", icon: "icons/git-commit-horizontal.svg" },
+      { id: "aiti-git-trace-watch", label: "i18n:gt.watch.short", title: "i18n:gt.watch.app.title", icon: "icons/git-branch.svg" },
+      { id: "aiti-git-trace-timeline", label: "i18n:gt.timeline.short", title: "i18n:gt.timeline.app.title", icon: "icons/git-commit-horizontal.svg" },
     ],
     dialogs: [
       { id: "aiti-git-trace-watch-dialog", label: "aiti-git-trace · 关注路径" },
@@ -256,15 +256,18 @@ export default {
     banners: [{ id: "aiti-git-trace-banner", label: "aiti-git-trace" }],
     // aiti-float dock 静态声明（id 与 client 注册一致）：时间线（左栏/右栏双位）+ 关注路径
     sidebarExplorerDock: [
-      { id: "timeline", label: "时间线" },
-      { id: "watch", label: "关注路径" },
+      { id: "timeline", label: "i18n:gt.timeline.short" },
+      { id: "watch", label: "i18n:gt.watch.short" },
     ],
     rightFileDock: [
-      { id: "timeline", label: "时间线" },
-      { id: "watch", label: "关注路径" },
+      { id: "timeline", label: "i18n:gt.timeline.short" },
+      { id: "watch", label: "i18n:gt.watch.short" },
     ],
     i18n: {
       en: {
+        "gt.timeline.short": "Timeline",
+        "gt.watch.app.title": "aiti-git-trace: watch-path management (workspace-persistent + per-session; git repos only)",
+        "gt.timeline.app.title": "aiti-git-trace: session ops timeline (rollback / diff)",
         "gt.watch.short": "Watch",
         "gt.watch.traceEnabled": "File change tracking (this workspace)",
         "gt.watch.traceOff": "Tracking fully disabled for this workspace (stops before the next op).",
@@ -386,6 +389,9 @@ export default {
         "gt.footer.truncated": "Some changed files are not listed (ledger path cap).",
       },
       "zh-CN": {
+        "gt.timeline.short": "时间线",
+        "gt.watch.app.title": "aiti-git-trace：关注路径管理（workspace 持久 + 本会话识别；只追 git 仓）",
+        "gt.timeline.app.title": "aiti-git-trace：本会话 ops 时间线（回滚/看 diff）",
         "gt.watch.short": "关注路径",
         "gt.watch.traceEnabled": "文件变更追踪（本工作区）",
         "gt.watch.traceOff": "已彻底关闭本工作区的文件变更追踪（当前会话下一个操作前即停止）。",
