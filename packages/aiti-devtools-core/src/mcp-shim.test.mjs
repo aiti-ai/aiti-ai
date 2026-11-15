@@ -26,7 +26,7 @@ const read = (p) => JSON.parse(readFileSync(p, "utf8"));
 
 function setup() {
   mk(PI_CFG, { mcpServers: { "aiti-testagent": { command: "node", args: ["/x/y.cjs"] } } });
-  mk(ZCODE_CFG, { mcp: { servers: { "aiti-devtools-dev": { type: "http", url: "http://127.0.0.1:30142/dev/api/extensions/aiti-devtools/mcp/mcp" } } }, provider: { x: 1 } });
+  mk(ZCODE_CFG, { mcp: { servers: { "aiti-devtools-dev": { type: "http", url: "http://127.0.0.1:3001/dev/api/extensions/aiti-devtools/mcp/mcp" } } }, provider: { x: 1 } });
 }
 
 test("auto 模式：只写已存在的配置（pi 平面 / zcode 嵌套），缺失目标不新建", () => {

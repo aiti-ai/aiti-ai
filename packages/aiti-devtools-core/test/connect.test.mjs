@@ -104,4 +104,8 @@ const get = async (path, opts) => {
 
 console.log(`\nconnect: ${pass} passed, ${fail} failed`);
 server.close();
-process.exit(fail ? 1 : 0);
+// Node24/win32: fetch/AbortSignal handles race the exit-period teardown and trip
+// the libuv async.c:76 assertion after all assertions have passed — set the exit
+// code and defer a beat so pending handles settle before the loop drains.
+process.exitCode = fail ? 1 : 0;
+setTimeout(() => process.exit(process.exitCode || 0), 300).unref?.();

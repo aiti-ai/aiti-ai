@@ -1,6 +1,7 @@
 // inspector 子系统（ctx 模式：initX(ctx) 注册本子系统函数，Phase A 调用）
 import { el } from './dom.js';
 import { getPhysViewport, detectScreenMode, isTouchCompact, isTouchDevice, isSmallScreen } from './viewport.js';
+import { t } from './i18n.js';
 
 export function initInspector(ctx) {
   ctx.applyToolbarCompact = function () {
@@ -43,10 +44,10 @@ export function initInspector(ctx) {
       ctx.enterSelfClient(mode);
       ctx.activateNestedIframes(mode); // 宿主页内同源 iframe 也可选中
       ctx.broadcast({ type: 'dbg_enter_inspector', payload: { mode: mode } });
-      ctx.addMsg('sys', '🎯 Inspector（' + (mode === 'touch' ? '触屏' : '桌面') + '）：宿主页与目标页均可点选——' +
+      ctx.addMsg('sys', '🎯 Inspector（' + (mode === 'touch' ? t('Touch') : t('Desktop')) + t('): pick on both host and target pages — ') +
         (mode === 'touch'
-          ? '点击=移动选区，✓确认。'
-          : '划过高亮，点击选中，Esc 退出。'));
+          ? t('Click = move selection, ✓ to confirm.')
+          : t('Hover to highlight, click to select, Esc to exit.')));
       try { if (ctx.showPickHint) ctx.showPickHint(); } catch (e) {} // 小屏底部 toast：点击元素选择
       }
 
