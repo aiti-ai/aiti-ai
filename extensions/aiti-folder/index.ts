@@ -156,6 +156,13 @@ export default {
     pathPicker: [
       { id: "aiti-folder-picker", label: "目录选择", title: "aiti-folder：目录选择器能力（FolderSwitcher，不切 cwd）" },
     ],
+    // 命令目录槽（dialogs 同型无渲染点；ai-app-center 动作卡 + 输入命令提示消费，方案
+    // docs/aiti-ai-input-app-command-hints-plan.md §9）。静态声明 = extman 插槽详情可见 +
+    // 懒加载兼容（本扩展是立即加载，client 动态注册的同 id 条目会覆盖静态条目）；
+    // label 惯例中文（静态条目不走客户端 t）。
+    commands: [
+      { id: "open-terminal", label: "打开终端", title: "aiti-folder：当前项目打开右栏工作区终端 tab" },
+    ],
     // 扩展自持 i18n 表（ctx.t 只读本表；缺 key 回退显 key）。复用核心 files.*/sidebar.* key，
     // 翻译与 core lib/i18n/messages 对齐——新增 t()/tt() 调用记得同步补 key。
     i18n: {

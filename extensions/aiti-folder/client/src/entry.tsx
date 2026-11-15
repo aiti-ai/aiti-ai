@@ -13,7 +13,7 @@
  * 部署：node tools/deploy.mjs         （自动先构建再拷贝）
  */
 import { useState, useEffect } from "react";
-import { __setCtx } from "./host-shim";
+import { __setCtx, extSvc, t } from "./host-shim";
 import { registerAction } from "./folder-actions";
 import { FolderSwitcher } from "./folder-switcher";
 import { syncFolderDockFaces, INSTANCES_EVENT, openFolderDocked } from "./folder-dock";
@@ -49,9 +49,42 @@ try { (window as any).__aitiFolder = { registerAction, openFolderDocked }; } cat
 // 就绪广播（开页方案 §1 F5）：aiti-git-review「审此目录」动作晚注册用（同 aiti-editor:ready 注）
 try { window.dispatchEvent(new CustomEvent("aiti-folder:ready")); } catch { /* noop */ }
 
+/** 打开终端（薄入口轻量版）：宿主统一入口 pi-web.ui.onOpenTerminal（右栏工作区终端 tab，同 cwd
+ *  复用已开 tab 防双开）——与 folder-browser.openTerminal 主路径同源；宿主服务缺席才拉重 chunk 走
+ *  完整兜底链（__aitiCmd 遗留 / 服务端系统终端窗）。 */
+function openTerminalAt(cwd: string): void {
+  try {
+    const hostUi = extSvc<{ get?: (name: string) => unknown }>("pi-web.ui");
+    const open = hostUi?.get?.("onOpenTerminal") as ((cwd: string, forceNew?: boolean) => void) | undefined;
+    if (typeof open === "function") { open(cwd); return; }
+  } catch { /* 服务缺席——走后续回退 */ }
+  import("./folder-browser").then((m) => m.openTerminal(cwd)).catch(() => {});
+}
+
+/** 当前项目 cwd（权威 = 会话工作区；ai-folder 文件面板 root 也跟随它）。无会话返回空。 */
+function currentSessionCwd(): string {
+  try {
+    const sess = extSvc<{ get?: () => { session?: { cwd?: string } | null } }>("pi-web.session");
+    return sess?.get?.()?.session?.cwd || "";
+  } catch { return ""; }
+}
+
 export default function register(ctx: Record<string, unknown>) {
   // 重要：必须在任何 JSX 组件渲染前调用（host-shim 模块级持 ctx）
   __setCtx(ctx);
+
+  // 命令目录槽（宿主无渲染点；aiti-app-center 动作卡 + 输入命令提示消费，方案
+  // docs/aiti-ai-input-app-command-hints-plan.md §9）：「打开终端」= 当前项目（会话 cwd）
+  // 打开右栏工作区终端 tab——与左栏文件区块头行按钮同源能力，无需占用任何 UI 槽。
+  ctx.registerItems?.("commands", [{
+    id: "open-terminal",
+    // 声明式条目约定：label/icon/meta 都在 meta 内（buildApps 读 meta.label/meta.icon；宿主工具条同构）
+    meta: {
+      label: t("files.openTerminal") || "打开终端",
+      icon: { svg: '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>' },
+      onClick: () => { const cwd = currentSessionCwd(); if (cwd) openTerminalAt(cwd); },
+    },
+  }]);
 
   ctx.registerItems?.("fileViewer", [{
     id: "aiti-folder",

@@ -13,7 +13,7 @@ import { lastSeg, normSlash, dirOf, relTo, relFromBase, joinPath, buildGitByPath
 import { GitBadge, FolderIcon, FileIcon, CaretIcon, CheckIcon, MiRefresh, MiExternal, MiPencil, MiMove, MiAt, MiInfo, MiDownload, MiUpload, MiTrash, MiFilePlus, MiFolderPlus, MiFolderUp, MiCopy, MiCopyTo, MiArrowUp, MiSearch, MiPin, MiPinOff, MiEyeOff, MiPlus, MiMinus, MiGitCompare, MiUndo, MiX, MiCloseLeft, MiCloseRight, MiCloseAll, PlusIcon, TerminalIcon, ChangesIcon } from "./icons";
 import { EXT_LANG, LANG_COLOR } from "./lib";
 import { FolderSwitcher } from "./folder-switcher";
-import { isFolderPinned, toggleFolderPin, folderItemKey } from "./folder-dock";
+import { isFolderPinned, toggleFolderPin, folderItemKey, removeFolderInstance } from "./folder-dock";
 import { DirectoryBrowser } from "./directory-browser";
 import { openViewerWindow } from "../../../_shared/open-viewer-window";
 import { clampToViewport, fixedOrigin } from "../../../_shared/popup-anchor";
@@ -339,7 +339,7 @@ function openNewWindow(kind: "file" | "folder", p: string, winCwd?: string) {
 // 主窗口优先宿主 pi-web.ui.onOpenTerminal（右侧工作区终端 tab，同 cwd 复用已开 tab；AppShell 单一入口）；
 // 服务缺席再查 __aitiCmd（遗留兜底）；都没有回退服务端 open-terminal（桌面环境弹系统终端窗）。
 // CWD=文件夹自身；选中文件=父目录（服务端判定）。返回错误文案，null=成功。
-async function openTerminal(p: string, name?: string): Promise<string | null> {
+export async function openTerminal(p: string, name?: string): Promise<string | null> {
   // 独立查看窗判定在前（有 opener = 非主窗口）：请主窗口（opener）的 aiti-cmd 代开，等回执。
   const openerWin: any = (window as any).opener;
   if (openerWin && !openerWin.closed) {
@@ -1344,7 +1344,10 @@ export function FolderBrowser(props: any) {
     items.push({ kind: "iconsRow", label: t("files.menuWindow"), items: [
       { key: "nw", icon: <NewWindowIcon/>, label: t("files.openNewWindow"), run: () => openNewWindow("folder", root) },
       { key: "ot", icon: <TerminalIcon/>, label: t("files.openTerminal"), run: () => { void openTerminal(root).then((err) => { if (err) setUploadMsg({ err }); }); } },
-      { key: "close", icon: <MiX/>, label: t("i18n.close"), run: () => { if (dockItemKey) { closePanel(dockItemKey); } else { closeCurrentTab(); } } },
+      // 关闭归位「窗口」排（2026-11-15 用户拍板：区块段末尾不好找）。语义 = removeFolderInstance
+      //（关面板并移出清单，刷新不回弹）——与折叠未挂载态的区块段「关闭」同语义，唯一化。
+      // 实例路径从 dockItemKey 反解（浏览子目录后 root 已偏离实例路径，不能拿 root 去匹配清单）。
+      { key: "close", icon: <MiX/>, label: t("i18n.close"), run: () => { if (dockItemKey && dockItemKey.startsWith("aiti-folder:folder:")) { removeFolderInstance(dockItemKey.slice("aiti-folder:folder:".length)); } else if (dockItemKey) { closePanel(dockItemKey); } else { closeCurrentTab(); } } },
     ] });
     // 「移动」行占位（含钉住钮，经 DockBody moveRowPin）：前移到窗口排之下（2026-11-24 用户拍板）
     items.push({ kind: "moveRow" });
