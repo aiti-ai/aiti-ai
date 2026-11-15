@@ -11,6 +11,7 @@
  */
 import type { ExtApiCtx } from "./types.ts";
 import { handleClone, handleHistory, handleForget, handleRecord } from "./clone.ts";
+import { readExamplesConfig, writeExamplesConfig } from "./examples-config.ts";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -21,6 +22,19 @@ function json(data: unknown, status = 200): Response {
 
 export async function api(req: Request, ctx: ExtApiCtx): Promise<Response | null> {
   const [action, sub] = ctx.path;
+  // 「试试这样问」动态设置（widget settings 面板读写；方案 docs/aiti-quickstart-examples-dynamic-prompts-plan.md §3.4）
+  if (action === "examples" && sub === "config") {
+    try {
+      if (req.method === "GET") return json({ ok: true, config: readExamplesConfig(ctx.configDir) });
+      if (req.method === "PUT") {
+        let body: unknown = null;
+        try { body = await req.json(); } catch { body = null; }
+        return json({ ok: true, config: writeExamplesConfig(ctx.configDir, body) });
+      }
+    } catch (e) {
+      return json({ ok: false, error: (e as Error)?.message ?? String(e) }, 500);
+    }
+  }
   if (action !== "workspace") return null;
   let body: Record<string, unknown> | null = null;
   if (req.method === "POST" || req.method === "PUT") {
