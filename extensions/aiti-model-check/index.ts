@@ -612,11 +612,24 @@ export default {
   ui: {
     clientImmediately: true, // 限流到期提醒（recover）需页面常驻监听 mc:recover→浏览器通知（113KB bundle；懒加载 v2 的 M1 懒化对本功能让步）
     toolbar: [
-      { id: "aiti-model-check-open", label: "模型", title: "aiti-model-check：模型可用性探测 / 429 限流识别 / 可用时间", icon: "icons/radio.svg", feature: "behavior.showToolbar" },
+      { id: "aiti-model-check-open", label: "i18n:mc.open.label", title: "i18n:mc.open.title", icon: "icons/radio.svg", feature: "behavior.showToolbar" },
     ],
     // aiti-float dock v3：停靠槽静态声明（懒扩展物化触发 + 静态入口；id 与 client 注册一致）
-    sidebarExplorerDock: [{ id: "panel", label: "模型检查" }],
-    rightFileDock: [{ id: "panel", label: "模型检查" }],
+    sidebarExplorerDock: [{ id: "panel", label: "i18n:mc.panel.label" }],
+    rightFileDock: [{ id: "panel", label: "i18n:mc.panel.label" }],
+    i18n: {
+      "zh-CN": {
+      "mc.open.label": "模型",
+      "mc.open.title": "aiti-model-check：模型可用性探测 / 429 限流识别 / 可用时间",
+      "mc.panel.label": "模型检查",
+      },
+      en: {
+      "mc.open.label": "Models",
+      "mc.open.title": "aiti-model-check: model availability probe / 429 detection / availability windows",
+      "mc.panel.label": "Model check",
+      },
+    },
+
     pages: [{ id: "aiti-model-check-dialog", label: "aiti-model-check" }], // 实际注册在 pages 插槽（client entry.tsx），声明与之一致
   },
 
