@@ -34,7 +34,8 @@ export default {
     banners: [{ id: "self-expose-alert", label: "自暴露无认证告警" }],
     // 「手机访问」底行静态声明（懒扩展零 bundle 入口；id 与 client registerItems 一致，
     // 首击 staticClickForwarder 物化后转发 meta.onClick —— extman 同款两段式）
-    sidebarFooter: [{ id: "service-tunnels-mobile", label: "i18n:mobile.footerLabel", title: "i18n:mobile.footerTitle", icon: "icons/qr-code.svg" }],
+    // hideOnMobile：手机视口不渲染（人已在手机上，扫码入口无意义；client 侧 MobileFooterButton 同规则）
+    sidebarFooter: [{ id: "service-tunnels-mobile", label: "i18n:mobile.footerLabel", title: "i18n:mobile.footerTitle", icon: "icons/qr-code.svg", hideOnMobile: true }],
     i18n: I18N,
   },
 
