@@ -53,8 +53,9 @@ test("top-bar buttons have exactly one render site each (Debug / file toggle / c
   assert.equal(callsOf("renderMainFileToggle"), 1, "renderMainFileToggle must have exactly one call site (the top-right corner owner); a second call means the upstream inline toggle rode back in on a merge");
   assert.match(source, /\{renderMainFileToggle\(isMobile\)\}/);
   assert.doesNotMatch(stripped, /renderMainFileToggle\(true\)/);
-  // Chat toolbar actions: only inside the narrow-mobile More overlay (mobile: true).
-  assert.equal(callsOf("renderChatToolbarActions"), 1, "renderChatToolbarActions must have exactly one call site (the More overlay); the upstream medium inline row must stay deleted");
+  // Chat toolbar actions: retired outright (2026-11-15) — the vertical-••• more menu
+  // is the single overflow mechanism; even the More-overlay call site is gone.
+  assert.equal(callsOf("renderChatToolbarActions"), 0, "renderChatToolbarActions must have zero call sites (retired; single overflow = the vertical ⋯ more menu)");
 });
 
 test("top-bar status buttons are not duplicated: no leftover renderSessionStatsButton definition or call", () => {
@@ -104,10 +105,18 @@ test("top-bar render helpers have exactly one call site each (merge-stacking gua
   const cases = [
     { fn: "renderDebugButton", want: "renderDebugButton(isMobile)", owner: "顶栏右簇（f19b7398 re-home）" },
     { fn: "renderMainFileToggle", want: "renderMainFileToggle(isMobile)", owner: "右上角固定开关（51273ef1）" },
-    { fn: "renderChatToolbarActions", want: "renderChatToolbarActions(true)", owner: "窄屏 More 浮层面板内" },
+    { fn: "renderChatToolbarActions", want: 0, owner: "已退役（2026-11-15）——单一溢出机制 = 竖三点 ⋯ 菜单，浮层/行内调用都不许回来" },
   ];
   for (const { fn, want, owner } of cases) {
     const sites = callSites(fn);
+    if (want === 0) {
+      assert.equal(
+        sites.length, 0,
+        `${fn} 应彻底退役、0 调用点（规则 = ${owner}）。` +
+        `Found ${sites.length} occurrence(s): ${JSON.stringify(sites)}. If a merge reintroduced this, keep the single-overflow rule — never both.`,
+      );
+      continue;
+    }
     assert.equal(
       sites.length, 1,
       `${fn} 调用点应恰 1 处（单一 owner = ${owner}，形态 ${want}）。` +
