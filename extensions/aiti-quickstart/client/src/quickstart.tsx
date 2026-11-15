@@ -20,7 +20,7 @@
  * extra 只读数据（slot-extra 红线）：widget 收 { cwd, isMobile, area }；动作全走服务。
  */
 import { useState, useEffect, t, extSvc, apiUrl, onExtServiceChange } from "./host-shim";
-import { readSidebarDismissed, writeSidebarDismissed, resolveQuickstartCwd, topRecentRoot, deriveOnboardingState, splitKbdHint, RUNTIME_ROWS, type OnboardingState } from "./quickstart-logic";
+import { readSidebarDismissed, writeSidebarDismissed, resolveQuickstartCwd, topRecentRoot, deriveOnboardingState, splitKbdHint, RUNTIME_ROWS, assembleExampleChips, normalizeExamplesConfig, shuffle, type ExamplesMode, type ExampleChip, type ExamplePromptItem, type OnboardingState } from "./quickstart-logic";
 
 /* ── 公共样式（CSS vars 带兜底，照 app-center 卡片写法；紧凑化 2026-11-12；
  *   2026-11-15 宿主顶区改 flex 自适应——吃掉 composer 上方全部空白，卡片自然高度
@@ -303,7 +303,25 @@ const SHORTCUT_KEYS = [
   "qs.sc.newSession", "qs.sc.enter", "qs.sc.shiftEnter", "qs.sc.escStop",
   "qs.sc.at", "qs.sc.slash", "qs.sc.upRecall", "qs.sc.upHistory",
 ] as const;
-const EXAMPLE_KEYS = ["qs.ex.1", "qs.ex.2", "qs.ex.3", "qs.ex.4"] as const;
+const EXAMPLE_KEYS = ["qs.ex.1", "qs.ex.2", "qs.ex.3", "qs.ex.4", "qs.ex.5", "qs.ex.6", "qs.ex.7", "qs.ex.8"] as const;
+
+/** 「试试这样问」设置变更事件（widget settings 面板保存后广播，卡片监听刷新；事件驱动无轮询）。 */
+const EXAMPLES_CHANGED_EVENT = "aiti-quickstart:examples-changed";
+
+/** 收藏库 suggest 端点（aiti-prompts server 端 startup 即常驻，API 不受懒物化影响）。 */
+function fetchPromptsSuggest(limit: number): Promise<ExamplePromptItem[]> {
+  return fetch(apiUrl(`/api/extensions/aiti-prompts/prompts/suggest?limit=${limit}`), { headers: { accept: "application/json" } })
+    .then((r) => (r.ok ? (r.json() as Promise<{ results?: ExamplePromptItem[] }>) : null))
+    .then((d) => (Array.isArray(d?.results) ? d!.results : []))
+    .catch(() => []);
+}
+
+function fetchExamplesConfig(): Promise<{ mode: ExamplesMode; maxChips: number }> {
+  return fetch(apiUrl("/api/extensions/aiti-quickstart/examples/config"), { headers: { accept: "application/json" } })
+    .then((r) => (r.ok ? (r.json() as Promise<{ config?: unknown }>) : null))
+    .then((d) => normalizeExamplesConfig(d?.config))
+    .catch(() => normalizeExamplesConfig(null));
+}
 
 /** 「上次工作区」chips 数据：双源合并——/api/sessions 派生（projectRoot distinct）+
  *  扩展 workspace history（获取过的目录在无会话时也有记录）。单靠 sessions 源时，
@@ -673,29 +691,136 @@ export function RuntimeWidget(props: { isMobile?: boolean; area?: string }) {
   );
 }
 
-/** 示例提示词卡（bottom，w8 h1）：chip 点击写入 composer 并聚焦。
+/** 示例提示词卡（bottom，w8 h1）：动态装配（方案 docs/aiti-quickstart-examples-dynamic-prompts-plan.md §3.3）——
+ *  mode=auto：aiti-prompts 收藏优先（suggest 端点已过滤 suggest:false、按使用频次/最近排序）+
+ *  内置池（8 条多语）随机补足；mode=prompts / builtin 单源。点击填入 composer 并对收藏
+ *  POST touch 记使用；设置经 widget settings 契约（entry.tsx）在宿主 ⚙ 面板编辑。
  *  pi-web.composer 是字段访问式 { get(name), names() } 服务（ChatInput composerUiRef 契约）。 */
 export function ExamplesWidget() {
-  const fill = (text: string) => {
+  const [chips, setChips] = useState<ExampleChip[] | null>(null);
+  const [reloadTick, setReloadTick] = useState(0);
+  const [poolShuffled] = useState(() => shuffle(EXAMPLE_KEYS.map((k) => t(k)))); // 挂载时洗牌一次，重渲染不闪
+  useEffect(() => {
+    const onChange = () => setReloadTick((v) => v + 1);
+    try { window.addEventListener(EXAMPLES_CHANGED_EVENT, onChange); } catch { /* ignore */ }
+    return () => { try { window.removeEventListener(EXAMPLES_CHANGED_EVENT, onChange); } catch { /* ignore */ } };
+  }, []);
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      const config = await fetchExamplesConfig();
+      const prompts = config.mode === "builtin" ? [] : await fetchPromptsSuggest(config.maxChips);
+      if (!alive) return;
+      setChips(assembleExampleChips({ mode: config.mode, maxChips: config.maxChips, prompts, pool: poolShuffled }));
+    })();
+    return () => { alive = false; };
+  }, [reloadTick, poolShuffled]);
+  const fill = (chip: ExampleChip) => {
     try {
       const composer = extSvc<{ get: (name: string) => unknown }>("pi-web.composer");
       const setInputValue = composer?.get?.("setInputValue") as ((v: string) => void) | undefined;
       const focusComposer = composer?.get?.("focusComposer") as (() => void) | undefined;
-      setInputValue?.(text);
+      setInputValue?.(chip.text);
       focusComposer?.();
     } catch { /* ignore */ }
+    // 收藏条目记使用（fire-and-forget；aiti-prompts 排序依据 useCount/lastUsedAt）。
+    // 路由实形 /prompts/touch/{id}（aiti-prompts api.ts p[1]==="touch"；注释写 /prompts/{id}/touch 系笔误）。
+    if (chip.promptId) {
+      void fetch(apiUrl(`/api/extensions/aiti-prompts/prompts/touch/${encodeURIComponent(chip.promptId)}`), { method: "POST" }).catch(() => { /* ignore */ });
+    }
   };
   return (
     <div style={{ ...cardStyle, height: "auto", minHeight: "100%" }}>
       <div style={titleStyle}>{t("qs.examplesTitle")}</div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-        {EXAMPLE_KEYS.map((key) => (
-          <button key={key} type="button" style={chipBase} onClick={() => fill(t(key))}
+        {(chips ?? []).map((chip, i) => (
+          <button key={`${chip.promptId ?? "builtin"}:${i}`} type="button" title={chip.text} style={chipBase} onClick={() => fill(chip)}
             onMouseEnter={(e: any) => { e.currentTarget.style.borderColor = "var(--accent, #2563eb)"; e.currentTarget.style.color = "var(--accent, #2563eb)"; }}
             onMouseLeave={(e: any) => { e.currentTarget.style.borderColor = "var(--border, #3a3a3a)"; e.currentTarget.style.color = "var(--text-muted, #999)"; }}>
-            {t(key)}
+            {chip.promptId ? <BookmarkIcon /> : null}
+            {chip.label}
           </button>
         ))}
+      </div>
+    </div>
+  );
+}
+
+/** lucide bookmark（收藏条目标识：来自 aiti-prompts 收藏库的 chip 带小书签）。 */
+function BookmarkIcon() {
+  return (
+    <svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0, opacity: 0.75 }}>
+      <path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z" />
+    </svg>
+  );
+}
+
+/** 「试试这样问」设置面板（widget settings 契约内容体；宿主 ⚙ 面板 ✎ 按钮打开）。
+ *  读写 aiti-quickstart 服务端 config（examples.json 原子写），保存后广播
+ *  EXAMPLES_CHANGED_EVENT 让卡片即时刷新。 */
+export function ExamplesSettings({ close }: { close: () => void }) {
+  const [mode, setMode] = useState<ExamplesMode>("auto");
+  const [maxChips, setMaxChips] = useState(4);
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void fetchExamplesConfig().then((c) => {
+      if (!alive) return;
+      setMode(c.mode);
+      setMaxChips(c.maxChips);
+      setLoaded(true);
+    });
+    return () => { alive = false; };
+  }, []);
+  const save = async () => {
+    setSaving(true);
+    try {
+      await fetch(apiUrl("/api/extensions/aiti-quickstart/examples/config"), {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mode, maxChips }),
+      });
+      try { window.dispatchEvent(new CustomEvent(EXAMPLES_CHANGED_EVENT)); } catch { /* ignore */ }
+      close();
+    } finally {
+      setSaving(false);
+    }
+  };
+  const rowStyle: Record<string, unknown> = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "7px 0" };
+  const labelStyle: Record<string, unknown> = { fontSize: 12, color: "var(--text, #ddd)", flexShrink: 0 };
+  const modeOptions: Array<{ v: ExamplesMode; label: string }> = [
+    { v: "auto", label: t("qs.exs.mode.auto") },
+    { v: "prompts", label: t("qs.exs.mode.prompts") },
+    { v: "builtin", label: t("qs.exs.mode.builtin") },
+  ];
+  const stepBtn: Record<string, unknown> = {
+    display: "inline-flex", alignItems: "center", justifyContent: "center",
+    width: 24, height: 24, border: "1px solid var(--border, #3a3a3a)", borderRadius: 6,
+    background: "none", color: "var(--text, #ddd)", cursor: "pointer", fontSize: 13, padding: 0, fontFamily: "inherit",
+  };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 2, fontFamily: "inherit" }}>
+      <div style={rowStyle}>
+        <span style={labelStyle}>{t("qs.exs.mode")}</span>
+        <select value={mode} disabled={!loaded} onChange={(e: any) => setMode(e.target.value as ExamplesMode)}
+          style={{ flex: 1, minWidth: 0, maxWidth: 260, background: "var(--bg-hover, #232323)", color: "var(--text, #ddd)", border: "1px solid var(--border, #3a3a3a)", borderRadius: 6, padding: "4px 8px", fontSize: 12, fontFamily: "inherit" }}>
+          {modeOptions.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
+        </select>
+      </div>
+      <div style={rowStyle}>
+        <span style={labelStyle}>{t("qs.exs.maxChips")}</span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+          <button type="button" style={stepBtn} disabled={!loaded || maxChips <= 2} onClick={() => setMaxChips((v) => Math.max(2, v - 1))} aria-label="-">−</button>
+          <span style={{ fontSize: 12, color: "var(--text, #ddd)", minWidth: 16, textAlign: "center" }}>{maxChips}</span>
+          <button type="button" style={stepBtn} disabled={!loaded || maxChips >= 8} onClick={() => setMaxChips((v) => Math.min(8, v + 1))} aria-label="+">＋</button>
+        </span>
+      </div>
+      <div style={{ display: "flex", justifyContent: "flex-end", padding: "8px 0 2px" }}>
+        <button type="button" disabled={!loaded || saving} onClick={() => { void save(); }}
+          style={{ border: "1px solid var(--accent, #2563eb)", borderRadius: 6, background: "none", color: "var(--accent, #2563eb)", fontSize: 12, padding: "5px 14px", cursor: "pointer", fontFamily: "inherit", opacity: !loaded || saving ? 0.5 : 1 }}>
+          {t("qs.exs.save")}
+        </button>
       </div>
     </div>
   );
