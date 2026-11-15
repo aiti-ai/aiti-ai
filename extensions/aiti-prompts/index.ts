@@ -88,18 +88,23 @@ export default {
 
   ui: {
     clientImmediately: false, // [懒加载 v2] M1 已同步生产，懒化重启用
-    toolbar: [{ id: "aiti-prompts-open", label: "Prompt", title: "aiti-prompts：收藏库 / 会话提取 / 一键插队排队", icon: "icons/bookmark.svg" }],
+    toolbar: [{ id: "aiti-prompts-open", label: "i18n:pp.app.label", title: "i18n:pp.app.title", icon: "icons/bookmark.svg" }],
     // aiti-float dock v3：停靠槽静态声明（懒扩展物化触发 + 静态入口；id 与 client 注册一致）
-    sidebarExplorerDock: [{ id: "panel", label: "收藏库" }],
-    rightFileDock: [{ id: "panel", label: "收藏库" }],
+    sidebarExplorerDock: [{ id: "panel", label: "i18n:pp.library.label" }],
+    rightFileDock: [{ id: "panel", label: "i18n:pp.library.label" }],
     dialogs: [
       { id: "aiti-prompts-panel", label: "aiti-prompts 收藏库" },
       { id: "aiti-prompts-save", label: "aiti-prompts 保存 prompt" },
       { id: "aiti-prompts-export", label: "aiti-prompts 导出 Prompts" },
     ],
-    toolbar: [{ id: "aiti-prompts-export", label: "导出 Prompts", title: "aiti-prompts：导出本会话 Prompts（md/json）", icon: "icons/import.svg" }],
+    toolbar: [{ id: "aiti-prompts-export", label: "i18n:pp.export.label", title: "i18n:pp.export.title", icon: "icons/import.svg" }],
     i18n: {
       en: {
+        "pp.app.label": "Prompt",
+        "pp.app.title": "aiti-prompts: library / session extraction / one-click queue-jump",
+        "pp.export.label": "Export prompts",
+        "pp.export.title": "aiti-prompts: export this session's prompts (md/json)",
+        "pp.library.label": "Library",
         "pp.title": "aiti-prompts",
         "exportPrompts.title": "Export prompts",
         "exportPrompts.dateFrom": "From",
@@ -117,6 +122,11 @@ export default {
         "exportPrompts.close": "Close",
       },
       "zh-CN": {
+        "pp.app.label": "Prompt",
+        "pp.app.title": "aiti-prompts：收藏库 / 会话提取 / 一键插队排队",
+        "pp.export.label": "导出 Prompts",
+        "pp.export.title": "aiti-prompts：导出本会话 Prompts（md/json）",
+        "pp.library.label": "收藏库",
         "pp.title": "提示词收藏",
         "exportPrompts.title": "导出 Prompts",
         "exportPrompts.dateFrom": "开始",
