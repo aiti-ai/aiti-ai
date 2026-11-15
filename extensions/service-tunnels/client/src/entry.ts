@@ -131,10 +131,24 @@ export default function register(ctx: {
 
   // 底行按钮：样式与宿主内建 模型/技能/设置 同规格（flex:1 + 图标 + 2 字短词），
   // 开态高亮跟随展示状态机；icon 内联 svg（禁 emoji）。
+  // Mobile viewports render nothing: already on the phone, the "scan to open" entry is
+  // pointless (same 640px breakpoint as the host useIsMobile; the manifest static item
+  // is gated by meta.hideOnMobile for the pre-materialization phase).
   function MobileFooterButton() {
     const st = usePresent(MOBILE_KEY);
     const isOpen = st !== "closed";
     const { t } = useI18nShim();
+    const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && !!window.matchMedia?.("(max-width: 640px)")?.matches);
+    useEffect(() => {
+      const mq = window.matchMedia?.("(max-width: 640px)");
+      if (!mq) return;
+      const apply = () => setIsMobile(mq.matches);
+      apply();
+      if (mq.addEventListener) mq.addEventListener("change", apply);
+      else mq.addListener?.(apply);
+      return () => { if (mq.removeEventListener) mq.removeEventListener("change", apply); else mq.removeListener?.(apply); };
+    }, []);
+    if (isMobile) return null;
     return h("button", {
       type: "button",
       onClick: () => (isOpen ? closeMobile() : openMobile()),
