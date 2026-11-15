@@ -27,6 +27,7 @@ export const SM_ICONS: Record<string, SvgNode[]> = {
   eye: [_p("M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"), { tag: "circle", attrs: { cx: 12, cy: 12, r: 3 } }],
   arrowDown: [_p("M12 5v14"), _p("m19 12-7 7-7-7")],
   chartColumn: [_p("M3 3v16a2 2 0 0 0 2 2h16"), _p("M18 17V9"), _p("M13 17V5"), _p("M8 17v-3")],
+  filter: [_p("M22 3H2l8 9.46V19l4 2v-8.54L22 3Z")],
 };
 /** 线图标渲染：<SIc name="archive" size={13} /> —— stroke 走 currentColor，颜色由外层 color 控制 */
 export const SIc = ({ name, size = 13 }: { name: keyof typeof SM_ICONS | string; size?: number }) => (
