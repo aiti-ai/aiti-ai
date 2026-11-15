@@ -128,7 +128,18 @@ export default {
   ui: {
     clientImmediately: false, // [懒加载 v2] M1 已同步生产，懒化重启用
     // 懒加载 v2 M3批②：静态条目与 client 注册 id/icon 对齐
-    toolbar: [{ id: "aiti-cmd-open", label: "命令", title: "aiti-cmd：运行总览 / 常用命令 / 执行记录", icon: "icons/terminal.svg" }],
+    toolbar: [{ id: "aiti-cmd-open", label: "i18n:cmd.open.label", title: "i18n:cmd.open.title", icon: "icons/terminal.svg" }],
+    i18n: {
+      "zh-CN": {
+      "cmd.open.label": "命令",
+      "cmd.open.title": "aiti-cmd：运行总览 / 常用命令 / 执行记录",
+      },
+      en: {
+      "cmd.open.label": "Commands",
+      "cmd.open.title": "aiti-cmd: run overview / commands / execution log",
+      },
+    },
+
     dialogs: [{ id: "aiti-cmd-panel", label: "aiti-cmd 命令面板" }, { id: "aiti-cmd-detail", label: "aiti-cmd 命令详情" }],
     // terminalDock 槽位声明（懒加载适配修复 2026-09-09）：declaredSlots 收集自 ui 的键——
     // 缺此声明时 pendingForSlot("terminalDock") 恒空，TerminalPanelBridge 查槽不触发本扩展
