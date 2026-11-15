@@ -27,6 +27,7 @@ import { initInspector } from './inspector.js';
 import { initDialog } from './dialog.js';
 import { initPicks } from './picks.js';
 import { initDebug } from './debug.js';
+import { t } from './i18n.js';
 
 // AI 窗特征检测（防嵌套）：popup 同名窗口 / _dbg URL 参数（aiwin 拼 AI 窗地址的专有参数）/
 // 共享库特征对象 __AITI_AI_WIN__（aiti-client 顶层按「AI 窗身份」判定后置——带 _dbg/popup 名才置，
@@ -107,7 +108,7 @@ export function createDbgLauncher(url, opts) {
 
     // ---------------- 两个浮动按钮（最开始只注入它们） ----------------
   ctx.fab = el('div', { class: 'dbg-fab' });
-  ctx.aiBtn = el('button', { 'data-label': 'AI 消息' }, ['💬']);
+  ctx.aiBtn = el('button', { 'data-label': t('AI message') }, ['💬']);
   ctx.inspBtn = el('button', { 'data-label': 'Inspector' }, [elSvg(LUCIDE.crosshair, 15)]);
     ctx.fab.appendChild(ctx.aiBtn);
     ctx.fab.appendChild(ctx.inspBtn);
@@ -333,9 +334,9 @@ export function createDbgLauncher(url, opts) {
     // 放行方案（多态）：默认=当前方案（只锁 click/hover）；全放行（含 click）/ 全冻结 / 自定义 p1-p3（调速面板管理）
     // 放行方案：内置（默认/全放行/全冻结，不可删）+ 用户自定义（方案名+内容可增删改，localStorage 持久化）
   ctx.RELEASE_PROFILES = {
-      default: { name: 'default', label: '⚡ 默认放行',   release: ['key', 'wheel', 'scroll', 'touch', 'focus'], builtin: true },
-      all:     { name: 'all',     label: '⚡⚡ 全部放行', release: ['click', 'hover', 'key', 'wheel', 'scroll', 'touch', 'focus'], builtin: true },
-      frozen:  { name: 'frozen',  label: '⛔ 全部冻结', release: [], builtin: true },
+      default: { name: 'default', label: t('⚡ Default allow'),   release: ['key', 'wheel', 'scroll', 'touch', 'focus'], builtin: true },
+      all:     { name: 'all',     label: t('⚡⚡ Allow all'), release: ['click', 'hover', 'key', 'wheel', 'scroll', 'touch', 'focus'], builtin: true },
+      frozen:  { name: 'frozen',  label: t('⛔ Freeze all'), release: [], builtin: true },
     };
     // 默认放行类别用户可编辑（持久化；默认 = 除 click/hover 外全放行）
 
@@ -516,7 +517,7 @@ export function createDbgLauncher(url, opts) {
     // 勾选区：哪些信息带给 AI（R7 可选）
   ctx.checks = el('div', { class: 'dbg-checks' });
   ctx.checkDefs = [
-      ['text', '文本'], ['computed', '样式'], ['attrs', '属性'], ['xpath', '定位'], ['framework', '框架/文件位置'],
+      ['text', t('Text')], ['computed', t('Styles')], ['attrs', t('Attributes')], ['xpath', t('Locate')], ['framework', t('Framework / file location')],
     ];
   ctx.checkBoxes = {};
     ctx.checkDefs.forEach(function (c) {
@@ -531,8 +532,8 @@ export function createDbgLauncher(url, opts) {
     ctx.dBody.appendChild(ctx.checks);
 
   ctx.dFoot = el('div', { class: 'dbg-dialog-foot' });
-  ctx.dCancel = el('button', { class: 'dbg-ghost' }, ['取消']);
-  ctx.dSend = el('button', { class: 'dbg-primary' }, ['发送给 AI']);
+  ctx.dCancel = el('button', { class: 'dbg-ghost' }, [t('Cancel')]);
+  ctx.dSend = el('button', { class: 'dbg-primary' }, [t('Send to AI')]);
     ctx.dFoot.appendChild(ctx.dCancel);
     ctx.dFoot.appendChild(ctx.dSend);
     ctx.cardDlg.appendChild(ctx.dHead);
@@ -559,7 +560,7 @@ export function createDbgLauncher(url, opts) {
       // 兜底 catch（picksAddElement 异常才走）：本设备是「host 发元素给 AI」，归属恒为 AI（_selfAttrib:false）——
       // 即使此刻 selfAiRequested 被干扰，也强制发到 AI 窗，不落 host self。
       catch (e) { ctx.postToAi({ type: 'dbg_ai_element', _selfAttrib: false, payload: ctx.lastPayload }); }
-      ctx.addMsg('sys', '已发送选中元素（' + ctx.lastPayload.tag + '）给 AI——输入框已放入 [元素N]，点发送即达。');
+      ctx.addMsg('sys', t('Sent selected element (') + ctx.lastPayload.tag + t(') to AI — [element N] placed in the composer, press send.'));
     });
 
     // ---------------- 全局消息入口（宿主 ⇄ 目标UI / AI） ----------------
@@ -603,7 +604,7 @@ export function createDbgLauncher(url, opts) {
         ctx.aiOpen = true;
         ctx.aiBtn.classList.add('dbg-on');
         ctx.saveDbgState();
-        ctx.addMsg('sys', '🔄 正在恢复 AI 独立窗口（等待窗口回应…）');
+        ctx.addMsg('sys', t('🔄 Restoring AI standalone window (waiting for response…)'));
         setTimeout(function () {
           try {
             if (ctx.aiPopup && !ctx.aiPopup.closed) { ctx.showAi(true); return; } // 心跳已认领，弹窗未重载
@@ -616,9 +617,9 @@ export function createDbgLauncher(url, opts) {
           ctx.showAi(true);
           ctx.aiOpen = true;
           ctx.aiBtn.classList.add('dbg-on');
-          ctx.addMsg('sys', '🔄 已恢复调试会话（刷新前 AI 窗口开着，现已自动重开）。');
+          ctx.addMsg('sys', t('🔄 Debug session restored (AI window was open before refresh, auto-reopened).'));
         } catch (e) {
-          ctx.addMsg('sys', '⚠ AI 窗口自动恢复失败：' + ((e && e.message) || e) + '（可在 AI 窗口就地反馈给 AI 修复）');
+          ctx.addMsg('sys', t('⚠ AI window auto-restore failed: ') + ((e && e.message) || e) + t('(can report to the AI in its window for fixes)'));
         }
       }
     }

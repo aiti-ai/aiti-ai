@@ -3,6 +3,7 @@ import { VERSION } from './config.js';
 import { MINI_DBG_CLIENT } from 'virtual:dbg-client';
 import { el } from './dom.js';
 import { getPhysViewport, _fixedVisual, positionPhysical, isTouchDevice } from './viewport.js';
+import { t } from './i18n.js';
 
 export function initTarget(ctx) {
 
@@ -24,7 +25,7 @@ export function initTarget(ctx) {
       var toolbarRow1 = el('div', { class: 'dbg-toolbar-row' });
       var selLabel = el('span', { class: 'dbg-sel-label' }, ['——']);
       // 工具条标题文字点击 → 打开预览弹窗（查看详情/指示/发送）——预览为可选：默认工具条 ✓ 直接发送，少点一次
-      selLabel.title = '🔍 点击查看详情/预览（发送直接点 ✓）';
+      selLabel.title = t('🔍 Click for details/preview (✓ to send)');
       selLabel.style.cursor = 'pointer';
       selLabel.style.textDecoration = 'underline dotted';
       selLabel.style.textUnderlineOffset = '3px';
@@ -63,10 +64,10 @@ export function initTarget(ctx) {
       //   + ←↑↓→ 四个几何方向键正面化（原 ▾ 菜单掏空取消）；◀前一个/▶后一个/⏮最前/⏭最后 撤下——
       //   仅快捷键 PageUp/PageDown/Home/End（触屏在帮助窗 ④ 有可点入口），HOST_NAV_KEYS/doNav 不动
       var NAV_DEFS = [
-        ['up', '↖', '父级（DOM 树上一层，↖=向父层）· 快捷键 Backspace / Delete'],
-        ['downOrNext', '↘', '子级/深度遍历（↘=展开树；有子级→进入首子级；无子级→同级 next，一路点遍历整棵 DOM 树）· 快捷键 Enter'],
-        ['leftN', '←', '页面左边相邻元素 · 快捷键 ←'], ['topN', '↑', '页面上边相邻元素 · 快捷键 ↑'],
-        ['bottomN', '↓', '页面下边相邻元素 · 快捷键 ↓'], ['rightN', '→', '页面右边相邻元素 · 快捷键 →'],
+        ['up', '↖', t('Parent (up one DOM level, ↖=to parent) · keys Backspace / Delete')],
+        ['downOrNext', '↘', t('Child/depth traversal (↘=expand tree; first child if any, else sibling next — keep pressing to walk the whole DOM tree) · key Enter')],
+        ['leftN', '←', t('Element adjacent left · key ←')], ['topN', '↑', t('Element adjacent above · key ↑')],
+        ['bottomN', '↓', t('Element adjacent below · key ↓')], ['rightN', '→', t('Element adjacent right · key →')],
       ];
       // ---- 通用弹出定位：锚点 rect（布局）→ 视觉（跟随缩放 scale/scaleY + counter-zoom）；
       //      默认朝下放行（anchor 下方），下方放不下翻上方；屏内 clamp；rAF 后按实际视觉尺寸校正 ----
@@ -105,7 +106,7 @@ export function initTarget(ctx) {
         toolbarRow2.appendChild(b);
       });
       // # 快速选择：CSS selector 或 xpath path
-      var selBtn = el('button', { 'data-tip': '快速选择：输入 CSS selector（.card）或 xpath（//div[@class=card]）定位元素' }, ['#']);
+      var selBtn = el('button', { 'data-tip': t('Quick pick: type a CSS selector (.card) or xpath (//div[@class=card]) to locate an element') }, ['#']);
       selBtn.addEventListener('click', function () {
         if (selInputRow.style.display === 'flex') { selInputRow.style.display = 'none'; ctx.floatToolbarReAnchor(); return; }
         selInputRow.style.display = 'flex';
@@ -116,7 +117,7 @@ export function initTarget(ctx) {
       });
       toolbarRow2.appendChild(selBtn);
       var selInputRow = el('div', { class: 'dbg-toolbar-row dbg-sel-input-row' });
-      var selInput = el('input', { placeholder: 'CSS selector 或 XPath，Enter 定位', 'aria-label': 'selector' });
+      var selInput = el('input', { placeholder: t('CSS selector or XPath, Enter to locate'), 'aria-label': 'selector' });
       var selHint = el('div', { class: 'dbg-sel-hint' }, ['CSS：.card / .card button / #main > li:nth-child(2)　XPath：//div[@class="card"]']);
       selInput.addEventListener('keydown', function (e) {
         if (e.key === 'Enter') {
@@ -129,7 +130,7 @@ export function initTarget(ctx) {
       selInputRow.appendChild(selInput);
       selInputRow.appendChild(selHint);
       toolbar.appendChild(selInputRow);
-      var confirmBtn = el('button', { 'data-tip': '确认选中并弹出预览', class: 'dbg-nav-ok' }, ['✓']);
+      var confirmBtn = el('button', { 'data-tip': t('Confirm selection & show preview'), class: 'dbg-nav-ok' }, ['✓']);
       confirmBtn.addEventListener('click', function () {
         // user_pick_element 交互（pickPanel 存在）：工具条 ✓ 确认 → 候选 + 发送（同步 MCP / 异步 AI 窗）+ 结束交互
         if (ctx.pickPanel) {
@@ -145,7 +146,7 @@ export function initTarget(ctx) {
               // 异步：只发 AI 窗口输入框（元素候选 [元素N] 进 pi-web）——不走 MCP、不重复：
               //   不再 postBridgeEvent user_answer（那会让扩展把回答文本也当候选再插一个——用户实测重复）
               try { ctx.picksAddElement(ctx.enrichElPayload ? ctx.enrichElPayload(_pl) : _pl); } catch (e) {}
-              ctx.finishPickPanel({ status: 'async', payload: _pl, note: '候选已放入 AI 待选' });
+              ctx.finishPickPanel({ status: 'async', payload: _pl, note: t('Candidate placed in AI pending area') });
             } else {
               // 同步：只回 MCP（sendInteractionResult）——不再往输入框放候选（用户实测：同步回传的同时又放了一个，重复）。
               // 先 sourcemap 补全真实源码路径再回传（user_pick_element 响应带真实文件而非 chunk URL）
@@ -226,24 +227,24 @@ export function initTarget(ctx) {
         // 全部劫持发给自己，AI 窗收不到（用户实测：错误消息没进 AI 窗）。复位后回归 AI 窗优先。
         ctx.selfAiRequested = false;
       }
-      var resumeBtn = el('button', { 'data-tip': '恢复快选：退出临时状态，hover 高亮重新生效（鼠标划过快速预览/切换选区）', class: 'dbg-nav-resume' }, ['🖱']);
+      var resumeBtn = el('button', { 'data-tip': t('Restore quick-pick: exit temp state, hover highlight back on (hover to preview/move the selection)'), class: 'dbg-nav-resume' }, ['🖱']);
       resumeBtn.addEventListener('click', function () {
         if (ctx.selfClient && typeof ctx.selfClient.resumeHover === 'function') ctx.selfClient.resumeHover();
         ctx.postToFrame(ctx.selFrameId(), { type: 'dbg_resume_hover' });
-        ctx.addMsg('sys', '🖱 已恢复快选：hover 高亮重新生效（划过快速预览，点击即选新位置）。');
+        ctx.addMsg('sys', t('🖱 Quick-pick restored: hover highlight back on (hover to preview, click to move the selection).'));
       });
       toolbarRow2.appendChild(resumeBtn);
       // 模拟 hover（真实事件派发）：pin 在当前选中元素，页面 JS hover 逻辑（mouseenter 展开/动画）生效并持久保持；
       //   再点/退出清除（mouseleave 仍被冻结拦截 → 持久）。只影响 JS 逻辑，CSS :hover 需真实指针。
-      var hoverSimBtn = el('button', { 'data-tip': '模拟 hover（真实派发 mouseover/mouseenter，页面 JS hover 逻辑生效并持久保持；再点或退出清除）', class: 'dbg-nav-hover' }, ['👆']);
+      var hoverSimBtn = el('button', { 'data-tip': t('Simulate hover (dispatches real mouseover/mouseenter, page JS hover logic runs and persists; click again or exit to clear)'), class: 'dbg-nav-hover' }, ['👆']);
       hoverSimBtn.addEventListener('click', function () {
         ctx.hudHoverOn = !ctx.hudHoverOn;
         try { ctx.applyHoverSim(); } catch (e) {}
         hoverSimBtn.classList.toggle('dbg-on', !!ctx.hudHoverOn); // 立即更新外观
-        ctx.addMsg('sys', '👆 模拟 hover：' + (ctx.hudHoverOn ? '已 pin（mouseover/mouseenter 已派发，持久保持；再点或退出清除）' : '已清除（mouseleave 已派发）') + '。');
+        ctx.addMsg('sys', t('👆 Simulate hover: ') + (ctx.hudHoverOn ? t('Pinned (mouseover/mouseenter dispatched, persistent; click again or exit to clear)') : t('Cleared (mouseleave dispatched)')) + '。');
       });
       toolbarRow2.appendChild(hoverSimBtn);
-      var profileBtn = el('button', { 'data-tip': '放行方案（下拉选择）：🔒默认放行 / 🔓全部放行 / ⛔全部冻结 / 自定义方案；下拉末尾「⚙️ 自定义…」打开设置面板管理多个方案。快捷键：空格/Tab=默认放行⇄全部放行一键切换（锁定态生效，页面弹出菜单不收起）', class: 'dbg-nav-profile' }, [ctx.RELEASE_PROFILES.default.label]);
+      var profileBtn = el('button', { 'data-tip': t('Allow plan (dropdown): 🔒 default allow / 🔓 allow all / ⛔ freeze all / custom plans; "⚙️ Custom…" at the end opens the panel to manage plans. Shortcuts: Space/Tab = one-key toggle default allow ⇄ allow all (while locked, page popup menus stay open)'), class: 'dbg-nav-profile' }, [ctx.RELEASE_PROFILES.default.label]);
       var profileMenu = null;
       function closeProfileMenu() {
         if (profileMenu && profileMenu.parentNode) profileMenu.parentNode.removeChild(profileMenu);
@@ -257,22 +258,22 @@ export function initTarget(ctx) {
         ctx.getProfileOrder().forEach(function (name) {
           var pf = ctx.getProfiles()[name];
           var item = el('div', { class: 'dbg-profile-item' + (name === ctx.currentProfile ? ' dbg-on' : '') }, []);
-          item.appendChild(el('span', { class: 'dbg-profile-label' }, [pf.label + ((name === 'default' || name === 'all') ? ' · 空格/Tab' : '')]));
-          item.appendChild(el('span', { class: 'dbg-profile-desc' }, [pf.release.length ? '放行 ' + pf.release.join('/') : '全部冻结']));
+          item.appendChild(el('span', { class: 'dbg-profile-label' }, [pf.label + ((name === 'default' || name === 'all') ? t(' · Space/Tab') : '')]));
+          item.appendChild(el('span', { class: 'dbg-profile-desc' }, [pf.release.length ? t('Allow ') + pf.release.join('/') : t('Freeze all')]));
           item.addEventListener('click', function (ev) {
             ev.stopPropagation();
             var applied = ctx.applyProfile(name);
             profileBtn.textContent = applied.label;
             closeProfileMenu();
-            ctx.addMsg('sys', '已应用放行方案：' + applied.label + '（' + (applied.release.length ? '放行 ' + applied.release.join('/') : '全部冻结') + '）');
+            ctx.addMsg('sys', t('Allow plan applied: ') + applied.label + '（' + (applied.release.length ? t('Allow ') + applied.release.join('/') : t('Freeze all')) + '）');
           });
           profileMenu.appendChild(item);
         });
         // 常驻动作项：「⚙️ 自定义…」打开 ⏱ 设置面板管理多个自定义方案（增删改+localStorage 持久化已在）
         profileMenu.appendChild(el('div', { class: 'dbg-profile-divider' }));
         var pfCustom = el('div', { class: 'dbg-profile-item dbg-profile-action' }, []);
-        pfCustom.appendChild(el('span', { class: 'dbg-profile-label' }, ['⚙️ 自定义…']));
-        pfCustom.appendChild(el('span', { class: 'dbg-profile-desc' }, ['添加/编辑/删除自定义方案']));
+        pfCustom.appendChild(el('span', { class: 'dbg-profile-label' }, [t('⚙️ Custom…')]));
+        pfCustom.appendChild(el('span', { class: 'dbg-profile-desc' }, [t('Add/edit/delete custom plans')]));
         pfCustom.addEventListener('click', function (ev) {
           ev.stopPropagation();
           closeProfileMenu();
@@ -287,10 +288,10 @@ export function initTarget(ctx) {
       });
       toolbarRow2.appendChild(profileBtn);
       // 帮助按钮：使用帮助小窗（help 子系统构建/开关；打开时工具条保持显示，对照选区读帮助）
-      var helpBtn = el('button', { 'data-tip': '使用帮助：按钮说明 / 快捷键总表 / 进阶技巧（含放行工作流、触屏导航入口）', class: 'dbg-nav-help' }, ['❓']);
+      var helpBtn = el('button', { 'data-tip': t('Help: buttons / shortcut table / advanced tips (allow workflow, touch navigation)'), class: 'dbg-nav-help' }, ['❓']);
       helpBtn.addEventListener('click', function () { ctx.toggleHelpDialog(); });
       toolbarRow2.appendChild(helpBtn);
-      var exitInspBtn = el('button', { 'data-tip': '取消选区并退出 Inspector', class: 'dbg-nav-close' }, ['✕']);
+      var exitInspBtn = el('button', { 'data-tip': t('Clear selection & exit Inspector'), class: 'dbg-nav-close' }, ['✕']);
       exitInspBtn.addEventListener('click', function () {
         if (ctx.selfClientActive) { try { ctx.exitSelfClient(); } catch (e) {} ctx.selfClientActive = false; }
         try { ctx.exitInspector(); } catch (e) {} // 真正退出（异常不阻断后续清理）
@@ -301,7 +302,7 @@ export function initTarget(ctx) {
         ctx.sweepTargetOutlinesGlobal(); // 独立兜底（不依赖 exitInspector 完整执行）
         setTimeout(ctx.sweepTargetOutlinesGlobal, 500);
         setTimeout(ctx.sweepTargetOutlinesGlobal, 1500);
-        ctx.addMsg('sys', '✕ 已退出 Inspector（宿主与全部 iframe 点选已关闭）。');
+        ctx.addMsg('sys', t('✕ Exited Inspector (picking closed on host and all iframes).'));
       });
       // 分隔线：确认按钮（✓）特殊——与左边功能按钮隔开，放在最右边
       toolbarRow2.appendChild(el('span', { class: 'dbg-toolbar-sep' }));

@@ -3,6 +3,7 @@ import { el } from './dom.js';
 import { isTouchDevice , isSmallScreen , getPhysViewport, capVisW, positionPhysical } from './viewport.js';
 import { OPT_KEY, DEFAULT_RELEASE_KEY } from './constants.js';
 import { lsGetJSON, lsSetJSON } from './storage.js';
+import { t, getLangPref, setLang } from './i18n.js';
 
 export function initOptions(ctx) {
   ctx.loadOptState = function () { return lsGetJSON(OPT_KEY, {});   }
@@ -47,7 +48,7 @@ export function initOptions(ctx) {
   ctx.buildSpeedPanel = function () {
       ctx.speedPanel = el('div', { class: 'dbg-speed' });
       var head = el('div', { class: 'dbg-speed-head' });
-      head.appendChild(el('span', {}, ['⏱ 调速 / 🌐 网络 / ⚠ 错误']));
+      head.appendChild(el('span', {}, [t('⏱ Timing / 🌐 Network / ⚠ Errors')]));
       var hClose = el('button', {}, ['✕']);
       hClose.addEventListener('click', function () { ctx.speedPanel.classList.remove('dbg-open'); });
       head.appendChild(hClose);
@@ -57,9 +58,9 @@ export function initOptions(ctx) {
 
       // 网络模拟（fetch/XHR 延迟与离线）
       var rowNet = el('div', { class: 'dbg-speed-row' });
-      rowNet.appendChild(el('label', {}, ['网络模拟']));
+      rowNet.appendChild(el('label', {}, [t('Network throttle')]));
       var netBtns = el('div', { class: 'dbg-seg', 'data-opt': 'net' });
-      [[0, '正常'], [500, '500ms'], [1000, '1s'], [2000, '2s']].forEach(function (o) {
+      [[0, t('Normal')], [500, '500ms'], [1000, '1s'], [2000, '2s']].forEach(function (o) {
         var b = el('button', { 'data-v': String(o[0]) }, [o[1]]);
         if (ctx.optState.netDelay === o[0] && !ctx.optState.netOffline) b.classList.add('dbg-on');
         b.addEventListener('click', function () {
@@ -69,7 +70,7 @@ export function initOptions(ctx) {
         });
         netBtns.appendChild(b);
       });
-      var offBtn = el('button', { 'data-v': 'off', title: 'fetch 立即失败 / XHR 触发 error（模拟断网）' }, ['📴 离线']);
+      var offBtn = el('button', { 'data-v': 'off', title: t('fetch fails immediately / XHR fires error (simulate offline)') }, [t('📴 Offline')]);
       if (ctx.optState.netOffline) offBtn.classList.add('dbg-on');
       offBtn.addEventListener('click', function () {
         ctx.optState.netOffline = !ctx.optState.netOffline; if (ctx.optState.netOffline) ctx.optState.netDelay = 0;
@@ -84,16 +85,16 @@ export function initOptions(ctx) {
       // 危险命令无人值守：确认卡弹出后无响应 N 秒自动允许执行（reload/删元素/改 localStorage 等）——
       // 适合无人值守/自动化联调；手势类（复制/粘贴等）浏览器要求真实点击，不支持自动接受
       var rowDanger = el('div', { class: 'dbg-speed-row' });
-      rowDanger.appendChild(el('label', {}, ['危险命令', '（无人值守）']));
+      rowDanger.appendChild(el('label', {}, [t('Dangerous command'), t('(unattended)')]));
       var dangerBtns = el('div', { class: 'dbg-seg', 'data-opt': 'dangerAutoOkMs' });
-      [[0, '手动确认'], [10000, '10s'], [30000, '30s'], [60000, '60s']].forEach(function (o) {
-        var b = el('button', { 'data-v': String(o[0]), title: o[0] ? '危险命令确认卡弹出后 ' + (o[0] / 1000) + ' 秒内无人点选 → 自动允许执行（等同点「允许执行」）' : '每次危险命令都等人工点选（默认，最安全）' }, [o[1]]);
+      [[0, t('Manual confirm')], [10000, '10s'], [30000, '30s'], [60000, '60s']].forEach(function (o) {
+        var b = el('button', { 'data-v': String(o[0]), title: o[0] ? t('After a dangerous-command confirm card pops up ') + (o[0] / 1000) + t(' s without a pick → auto-allow (same as clicking Allow)') : t('Wait for manual confirm on every dangerous command (default, safest)') }, [o[1]]);
         if ((ctx.optState.dangerAutoOkMs || 0) === o[0]) b.classList.add('dbg-on');
         b.addEventListener('click', function () {
           ctx.optState.dangerAutoOkMs = o[0];
           dangerBtns.querySelectorAll('button').forEach(function (x) { x.classList.toggle('dbg-on', x === b); });
           ctx.saveOptState();
-          ctx.addMsg('sys', '危险命令：' + (o[0] ? '无响应 ' + (o[0] / 1000) + 's 后自动允许执行（无人值守）' : '每次手动确认'));
+          ctx.addMsg('sys', t('Dangerous command: ') + (o[0] ? t('no response ') + (o[0] / 1000) + t('s then auto-allow (unattended)') : t('Confirm manually every time')));
         });
         dangerBtns.appendChild(b);
       });
@@ -102,13 +103,13 @@ export function initOptions(ctx) {
 
       // 强制报错（验证错误上报链路 / 给 AI 造错误场景）
       var rowErr = el('div', { class: 'dbg-speed-row' });
-      rowErr.appendChild(el('label', {}, ['强制报错']));
+      rowErr.appendChild(el('label', {}, [t('Force error')]));
       var errBtns = el('div', { class: 'dbg-seg' });
-      [['sync', '⚠ 同步异常'], ['promise', '⚠ Promise'], ['console', '⚠ console.error'], ['resource', '⚠ 资源404']].forEach(function (o) {
-        var b = el('button', { title: '在目标页触发 ' + o[1] + '，错误 hook 捕获后上报' }, [o[1]]);
+      [['sync', t('⚠ Sync error')], ['promise', '⚠ Promise'], ['console', '⚠ console.error'], ['resource', t('⚠ Resource 404')]].forEach(function (o) {
+        var b = el('button', { title: t('Trigger on target page ') + o[1] + t(', reported after the error hook captures') }, [o[1]]);
         b.addEventListener('click', function () {
           ctx.postToFrame(ctx.selFrameId(), { type: 'dbg_force_error', payload: { kind: o[0] } });
-          ctx.addMsg('sys', '⚡ 已触发强制错误：' + o[1] + '（等待页面错误 hook 上报）');
+          ctx.addMsg('sys', t('⚡ Forced error triggered: ') + o[1] + t('(waiting for the page error hook report)'));
         });
         errBtns.appendChild(b);
       });
@@ -117,16 +118,16 @@ export function initOptions(ctx) {
 
       // 场景预设：把「不好重现」的条件打包成一键场景
       var rowScene = el('div', { class: 'dbg-speed-row dbg-scene-row' });
-      rowScene.appendChild(el('label', {}, ['场景预设']));
+      rowScene.appendChild(el('label', {}, [t('Scenario presets')]));
       var sceneBtns = el('div', { class: 'dbg-seg' });
       [
-        ['mobile', '📱 窄屏375', { viewportW: 375 }],
-        ['dark', '🌙 深色', { darkMode: true }],
-        ['expired', '⏳ 过期+7天', { timeOffsetMs: 7 * 24 * 3600 * 1000 }],
-        ['slow', '🐢 弱网', { netDelay: 500, animSpeed: 0.5 }],
-        ['reset', '🔄 重置全部', null],
+        ['mobile', t('📱 Narrow 375'), { viewportW: 375 }],
+        ['dark', t('🌙 Dark'), { darkMode: true }],
+        ['expired', t('⏳ Expired +7d'), { timeOffsetMs: 7 * 24 * 3600 * 1000 }],
+        ['slow', t('🐢 Slow network'), { netDelay: 500, animSpeed: 0.5 }],
+        ['reset', t('🔄 Reset all'), null],
       ].forEach(function (o) {
-        var b = el('button', { title: o[0] === 'reset' ? '恢复所有模拟为默认' : '一键应用场景：' + o[1] }, [o[1]]);
+        var b = el('button', { title: o[0] === 'reset' ? t('Restore all emulation to defaults') : t('One-click scenarios: ') + o[1] }, [o[1]]);
         b.addEventListener('click', function () {
           if (o[0] === 'reset') {
             // 重置全部模拟条件（保留无人值守设置：安全偏好不随模拟重置清除）
@@ -138,23 +139,41 @@ export function initOptions(ctx) {
             }, { dangerAutoOkMs: keepDangerOk });
             ctx.saveOptState(); ctx.applyOptsToTarget();
             ctx.syncSpeedPanelUI();
-            ctx.addMsg('sys', '🔄 已重置全部模拟条件。');
+            ctx.addMsg('sys', t('🔄 All emulation flags reset.'));
             return;
           }
           Object.assign(ctx.optState, o[2]);
           ctx.saveOptState(); ctx.applyOptsToTarget();
           ctx.syncSpeedPanelUI();
-          ctx.addMsg('sys', '🎬 场景已应用：' + o[1] + '（可继续配合网络/错误区微调）');
+          ctx.addMsg('sys', t('🎬 Scenario applied: ') + o[1] + t('(can combine with network/error tweaks)'));
         });
         sceneBtns.appendChild(b);
       });
       rowScene.appendChild(sceneBtns);
       body.appendChild(rowScene);
 
+      // 语言切换（i18n，docs/launcher-i18n-plan.md）：跟随浏览器/中文/English，localStorage __dbg_lang；切换后新开面板生效
+      var rowLang = el('div', { class: 'dbg-speed-row' });
+      rowLang.appendChild(el('label', {}, [t('🌐 Language')]));
+      var langSel = el('select', { class: 'dbg-lang-sel', style: 'flex:1;padding:4px 6px;border-radius:6px;border:1px solid rgba(148,163,184,.35);background:rgba(15,23,42,.6);color:#e5e7eb;font:inherit;font-size:12px' });
+      [['', '🌐 ' + t('Auto (follow browser)')], ['zh', '中文' /* i18n-keep: language endonym */], ['en', 'English']].forEach(function (it) {
+        var op = el('option', { value: it[0] }, [it[1]]);
+        var pref = getLangPref();
+        if (pref === it[0] || (it[0] === '' && (pref === null || pref === undefined))) op.setAttribute('selected', '');
+        langSel.appendChild(op);
+      });
+      langSel.addEventListener('change', function () {
+        var v = langSel.value;
+        setLang(v === '' ? null : v);
+        ctx.addMsg('sys', t('🌐 Language switched (applies to newly opened panels)'));
+      });
+      rowLang.appendChild(langSel);
+      body.appendChild(rowLang);
+
       // 现场快照：把出错现场（错误+场景条件+页面状态）打包发给 AI
       var rowSnap = el('div', { class: 'dbg-speed-row' });
-      rowSnap.appendChild(el('label', {}, ['现场快照']));
-      var snapBtn = el('button', { class: 'dbg-snap-btn', title: '把当前出错现场（错误列表+模拟条件+页面状态）打包发给 AI' }, ['📸 捕获现场发 AI']);
+      rowSnap.appendChild(el('label', {}, [t('Capture snapshot')]));
+      var snapBtn = el('button', { class: 'dbg-snap-btn', title: t('Package the current error state (errors + emulation flags + page state) and send to AI') }, [t('📸 Capture state & send to AI')]);
       snapBtn.addEventListener('click', ctx.captureSceneSend);
       rowSnap.appendChild(snapBtn);
       body.appendChild(rowSnap);
@@ -163,14 +182,14 @@ export function initOptions(ctx) {
       // 注：原"事件放行"逐类开关行已移除——方案管理（默认放行/自定义方案均可编辑类别）已完全覆盖，避免重复 UI
       var PROFILE_CATS = ['click', 'hover', 'key', 'wheel', 'scroll', 'touch', 'focus'];
       var rowProfile = el('div', { class: 'dbg-speed-row dbg-release-row' });
-      rowProfile.appendChild(el('label', {}, ['放行方案']));
+      rowProfile.appendChild(el('label', {}, [t('Allow plan')]));
       var pfWrap = el('div', { class: 'dbg-rel-wrap' });
       var pfBtns = el('div', { class: 'dbg-seg' });
       ctx.getProfileOrder().forEach(function (name) {
         var b = el('button', { 'data-pf': name }, [ctx.getProfiles()[name].label]);
         b.addEventListener('click', function () {
           var pf = ctx.applyProfile(name);
-          ctx.addMsg('sys', '已应用放行方案：' + pf.label + '（' + (pf.release.length ? '放行 ' + pf.release.join('/') : '全部冻结') + '）');
+          ctx.addMsg('sys', t('Allow plan applied: ') + pf.label + '（' + (pf.release.length ? t('Allow ') + pf.release.join('/') : t('Freeze all')) + '）');
         });
         pfBtns.appendChild(b);
       });
@@ -182,7 +201,7 @@ export function initOptions(ctx) {
       var pfCount = el('span', {}, ['0']);
       pfEditHeader.appendChild(pfArrow);
       pfEditHeader.appendChild(pfCount);
-      pfEditHeader.appendChild(el('span', {}, ['方案编辑（含默认放行，点击展开）']));
+      pfEditHeader.appendChild(el('span', {}, [t('Plan editor (incl. default allow, click to expand)')]));
       var pfEditBody = el('div', { style: 'display:none' }); // 默认收起
       pfEditHeader.addEventListener('click', function () {
         var open = pfEditBody.style.display === 'none';
@@ -210,17 +229,17 @@ export function initOptions(ctx) {
           l2.appendChild(document.createTextNode(cat));
           dChecks.appendChild(l2);
         });
-        var dSave = el('button', { style: 'border:1px solid #d1d5db;background:#fff;border-radius:6px;padding:1px 8px;cursor:pointer;font:inherit;font-size:10px' }, ['保存']);
+        var dSave = el('button', { style: 'border:1px solid #d1d5db;background:#fff;border-radius:6px;padding:1px 8px;cursor:pointer;font:inherit;font-size:10px' }, [t('Save')]);
         dSave.addEventListener('click', function () {
           dpf.release = PROFILE_CATS.filter(function (c) { return dboxes[c].checked; });
           try { localStorage.setItem(DEFAULT_RELEASE_KEY, JSON.stringify(dpf.release)); } catch (e) {}
           if (ctx.currentProfile === 'default') ctx.applyProfile('default');
-          ctx.addMsg('sys', '默认放行已保存：放行 ' + (dpf.release.join('/') || '（无，=全冻结）'));
+          ctx.addMsg('sys', t('Default plan saved: allow ') + (dpf.release.join('/') || t('(none = freeze all)')));
           rebuildProfileUI();
         });
         dRow.appendChild(dChecks);
         dRow.appendChild(dSave);
-        dRow.appendChild(el('span', { style: 'font-size:10px;color:#9ca3af' }, ['固定方案（不可删除）']));
+        dRow.appendChild(el('span', { style: 'font-size:10px;color:#9ca3af' }, [t('Built-in plan (cannot delete)')]));
         pfEditBody.appendChild(dRow);
         // 用户自定义方案（可改名/改类别/删除）
         ctx.userProfiles.forEach(function (u) {
@@ -237,20 +256,20 @@ export function initOptions(ctx) {
             label.appendChild(document.createTextNode(cat));
             catChecks.appendChild(label);
           });
-          var saveBtn = el('button', { style: 'border:1px solid #d1d5db;background:#fff;border-radius:6px;padding:1px 8px;cursor:pointer;font:inherit;font-size:10px' }, ['保存']);
+          var saveBtn = el('button', { style: 'border:1px solid #d1d5db;background:#fff;border-radius:6px;padding:1px 8px;cursor:pointer;font:inherit;font-size:10px' }, [t('Save')]);
           saveBtn.addEventListener('click', function () {
             u.label = nameInput.value.trim() || u.label;
             u.release = PROFILE_CATS.filter(function (c) { return pboxes[c].checked; });
             ctx.saveUserProfiles();
-            ctx.addMsg('sys', '方案「' + u.label + '」已保存：放行 ' + (u.release.join('/') || '（无，=全冻结）'));
+            ctx.addMsg('sys', t('Plan "') + u.label + t('" saved: allow ') + (u.release.join('/') || t('(none = freeze all)')));
             rebuildProfileUI();
           });
-          var delBtn = el('button', { style: 'border:1px solid #fecaca;background:#fee2e2;border-radius:6px;padding:1px 8px;cursor:pointer;font:inherit;font-size:10px;color:#b91c1c' }, ['删除']);
+          var delBtn = el('button', { style: 'border:1px solid #fecaca;background:#fee2e2;border-radius:6px;padding:1px 8px;cursor:pointer;font:inherit;font-size:10px;color:#b91c1c' }, [t('Delete')]);
           delBtn.addEventListener('click', function () {
             ctx.removeUserProfile(u.name);
             renderUserProfiles();
             rebuildProfileUI();
-            ctx.addMsg('sys', '已删除方案「' + u.label + '」');
+            ctx.addMsg('sys', t('Deleted plan "') + u.label + '」');
           });
           row.appendChild(nameInput);
           row.appendChild(catChecks);
@@ -259,23 +278,23 @@ export function initOptions(ctx) {
           pfEditBody.appendChild(row);
         });
       }
-      var addBtn = el('button', { style: 'border:1px solid #a5b4fc;background:#e0e7ff;border-radius:6px;padding:3px 10px;cursor:pointer;font:inherit;font-size:11px;color:#4338ca;margin-top:4px' }, ['➕ 添加方案']);
+      var addBtn = el('button', { style: 'border:1px solid #a5b4fc;background:#e0e7ff;border-radius:6px;padding:3px 10px;cursor:pointer;font:inherit;font-size:11px;color:#4338ca;margin-top:4px' }, [t('➕ Add plan')]);
       addBtn.addEventListener('click', function () {
         // 默认名"放行方案N"（从1递增，已有同名则+1）
-        var baseName = '放行方案';
+        var baseName = t('Allow plan');
         var n = 1;
         var profiles = ctx.getProfiles();
         while (profiles[baseName + n] || ctx.userProfiles.some(function(u){ return u.label === baseName + n; })) n++;
-        var label = prompt('新方案名称：', baseName + n);
+        var label = prompt(t('New plan name: '), baseName + n);
         if (!label) return;
         var name = ctx.addUserProfile(label);
         renderUserProfiles();
         rebuildProfileUI();
-        ctx.addMsg('sys', '已添加方案「' + label + '」（默认全放行，可编辑类别）。');
+        ctx.addMsg('sys', t('Added plan "') + label + t('" (allow-all default, categories editable).'));
       });
       pfWrap.appendChild(pfEditWrap);
       pfWrap.appendChild(addBtn);
-      var pfTip = el('div', { style: 'font-size:10px;color:#6b7280' }, ['方案 = 放行哪些事件类别（其余冻结）。默认只锁 click/hover；全放行含 click。自定义方案保存后在工具条下拉可选。锁定态按 空格 在默认放行/全部放行之间一键切换（页面弹出菜单不收起）。']);
+      var pfTip = el('div', { style: 'font-size:10px;color:#6b7280' }, [t('A plan = which event categories are allowed (rest frozen). Default locks only click/hover; allow-all includes click. Saved custom plans appear in the toolbar dropdown. While locked, press Space to toggle default-allow/allow-all (page popup menus stay open).')]);
       pfWrap.appendChild(pfTip);
       rowProfile.appendChild(pfWrap);
       body.appendChild(rowProfile);
@@ -286,7 +305,7 @@ export function initOptions(ctx) {
           var b = el('button', { 'data-pf': name }, [ctx.getProfiles()[name].label]);
           b.addEventListener('click', function () {
             var pf = ctx.applyProfile(name);
-            ctx.addMsg('sys', '已应用放行方案：' + pf.label);
+            ctx.addMsg('sys', t('Allow plan applied: ') + pf.label);
           });
           pfBtns.appendChild(b);
         });
@@ -296,36 +315,36 @@ export function initOptions(ctx) {
 
       // 视口模拟（大屏↔小屏切换）：改 target iframe 宽度，iframe 内媒体查询实时生效
       var rowViewport = el('div', { class: 'dbg-speed-row dbg-release-row' });
-      rowViewport.appendChild(el('label', {}, ['视口模拟']));
+      rowViewport.appendChild(el('label', {}, [t('Viewport emulation')]));
       var vpWrap = el('div', { class: 'dbg-rel-wrap' });
       var vpBtns = el('div', { class: 'dbg-seg' });
-      var vpDefs = [[375, '📱 375'], [414, '414'], [768, '平板768'], [1024, '1024'], [1280, '🖥 1280'], [1440, '1440'], [0, '自适应']];
-      var vpCur = el('span', { style: 'font-size:10px;color:#6b7280' }, ['当前 iframe 视口：—']); // 更新为实际值
+      var vpDefs = [[375, '📱 375'], [414, '414'], [768, t('Tablet 768')], [1024, '1024'], [1280, '🖥 1280'], [1440, '1440'], [0, t('Auto-fit')]];
+      var vpCur = el('span', { style: 'font-size:10px;color:#6b7280' }, [t('Current iframe viewport: —')]); // 更新为实际值
       vpDefs.forEach(function (o) {
         var b = el('button', { 'data-v': String(o[0]) }, [o[1]]);
         b.addEventListener('click', function () {
           ctx.optState.viewportW = o[0];
           ctx.saveOptState(); ctx.applyOptsToTarget();
-          ctx.addMsg('sys', '视口模拟：' + (o[0] ? o[0] + 'px' : '自适应（恢复原宽）') + '（大屏↔小屏切换，媒体查询实时生效）');
+          ctx.addMsg('sys', t('Viewport emulation: ') + (o[0] ? o[0] + 'px' : t('Auto-fit (restore width)')) + t('(large↔small switch, media queries live)'));
         });
         vpBtns.appendChild(b);
       });
-      var vpCustom = el('input', { type: 'number', placeholder: '自定义px', style: 'width:74px;border:1px solid #d1d5db;border-radius:6px;padding:2px 6px;font:inherit;font-size:11px' });
-      var vpGo = el('button', {}, ['应用']);
+      var vpCustom = el('input', { type: 'number', placeholder: t('Custom px'), style: 'width:74px;border:1px solid #d1d5db;border-radius:6px;padding:2px 6px;font:inherit;font-size:11px' });
+      var vpGo = el('button', {}, [t('Apply')]);
       vpGo.addEventListener('click', function () {
         var v = parseInt(vpCustom.value, 10);
-        if (v > 0) { ctx.optState.viewportW = v; ctx.saveOptState(); ctx.applyOptsToTarget(); ctx.addMsg('sys', '视口模拟：' + v + 'px'); }
+        if (v > 0) { ctx.optState.viewportW = v; ctx.saveOptState(); ctx.applyOptsToTarget(); ctx.addMsg('sys', t('Viewport emulation: ') + v + 'px'); }
       });
-      var vpTouch = el('label', { class: 'dbg-chk', style: 'margin-top:4px', title: '模拟触屏设备特征（pointer:coarse / hover:none）' }, []);
+      var vpTouch = el('label', { class: 'dbg-chk', style: 'margin-top:4px', title: t('Emulate touch device traits (pointer:coarse / hover:none)') }, []);
       var vpTouchBox = el('input', { type: 'checkbox' });
       vpTouchBox.checked = !!ctx.optState.simulateTouch;
       vpTouchBox.addEventListener('change', function () {
         ctx.optState.simulateTouch = vpTouchBox.checked;
         ctx.saveOptState(); ctx.applyOptsToTarget();
-        ctx.addMsg('sys', '触屏模拟：' + (vpTouchBox.checked ? '开（页面按触屏设备渲染）' : '关'));
+        ctx.addMsg('sys', t('Touch emulation: ') + (vpTouchBox.checked ? t('On (page renders as touch device)') : t('Off')));
       });
       vpTouch.appendChild(vpTouchBox);
-      vpTouch.appendChild(document.createTextNode('模拟触屏'));
+      vpTouch.appendChild(document.createTextNode(t('Emulate touch')));
       vpWrap.appendChild(vpBtns);
       var vpRow2 = el('div', { style: 'display:flex;gap:4px;margin-top:4px;align-items:center' });
       vpRow2.appendChild(vpCustom);
@@ -338,7 +357,7 @@ export function initOptions(ctx) {
       // 当前视口显示（target iframe innerWidth）
       function refreshViewportLabel() {
         var tw = (ctx.listFrames()[0] || {}).win;
-        if (tw && vpCur) vpCur.textContent = '当前 iframe 视口：' + (tw.innerWidth || '—') + 'px';
+        if (tw && vpCur) vpCur.textContent = t('Current iframe viewport: ') + (tw.innerWidth || '—') + 'px';
       }
       setInterval(refreshViewportLabel, 1000);
 
@@ -346,26 +365,26 @@ export function initOptions(ctx) {
       // 注："📣 告知 AI" 已移除——inject 发出的消息统一带 [发自: pageId · url] 来源标注，无需手动告知
       // MCP 桥：launcher 不负责连桥——所有连接由 AI 窗口负责（AI 窗连桥 + 页面 ↔ AI 窗 postMessage 唯一通道）
       var rowMcp = el('div', { class: 'dbg-speed-row' });
-      rowMcp.appendChild(el('label', {}, ['MCP 桥']));
+      rowMcp.appendChild(el('label', {}, [t('MCP bridge')]));
       var mcpWrap = el('div', { class: 'dbg-rel-wrap', style: 'font-size:11px;color:#6b7280' });
-      mcpWrap.appendChild(document.createTextNode('🔗 连接由 AI 窗口负责：页面 ↔ AI 窗经 postMessage 交互（唯一通道），桥连接（role=ai）在 AI 窗侧。'));
+      mcpWrap.appendChild(document.createTextNode(t('🔗 Connection handled by the AI window: page ↔ AI window via postMessage (the only channel); the bridge connection (role=ai) lives on the AI window side.')));
       rowMcp.appendChild(mcpWrap);
       body.appendChild(rowMcp);
 
       // 选区工具（#指定 / 👆穿透 / 🖥宿主页；从工具条移入面板，保持工具条精简）
       var rowSelTools = el('div', { class: 'dbg-speed-row' });
-      rowSelTools.appendChild(el('label', {}, ['选区工具']));
+      rowSelTools.appendChild(el('label', {}, [t('Selection tools')]));
       var selTools = el('div', { class: 'dbg-seg' });
-      var t1 = el('button', { title: '按 CSS 选择器指定选区' }, ['# 指定']); 
-      var t2 = el('button', { title: '真实点击穿透：放行一次点击让页面打开菜单/弹层（冻结期间菜单不会消失）' }, ['👆 穿透']);
-      var t3 = el('button', { title: '在宿主页自身点选元素（不进入目标 iframe）' }, ['🖥 宿主页']);
+      var t1 = el('button', { title: t('Specify selection by CSS selector') }, [t('# Specify')]); 
+      var t2 = el('button', { title: t('Real click pass-through: allow one click so the page opens menus/popups (menus won\'t vanish while frozen)') }, [t('👆 Pass-through')]);
+      var t3 = el('button', { title: t('Pick elements on the host page itself (skip target iframes)') }, [t('🖥 Host page')]);
       t1.addEventListener('click', function () {
-        var s = prompt('输入 CSS 选择器指定选区，例如 .card:nth-child(2)');
+        var s = prompt(t('Type a CSS selector to set the selection, e.g. .card:nth-child(2)'));
         if (s) ctx.postToFrame(ctx.selFrameId(), { type: 'dbg_select', payload: { selector: s } });
       });
       t2.addEventListener('click', function () {
         ctx.postToFrame(ctx.selFrameId(), { type: 'dbg_passthrough_click' });
-        ctx.addMsg('sys', '👆 真实点击：放行一次点击（页面菜单/弹层可正常打开，随后恢复冻结）。');
+        ctx.addMsg('sys', t('👆 Real click: allow one click (page menus/popups open normally, then freeze resumes).'));
       });
       t3.addEventListener('click', function () {
         if (ctx.selfClientActive) { ctx.exitSelfClient(); ctx.selfClientActive = false; return; }
@@ -381,9 +400,9 @@ export function initOptions(ctx) {
 
       // 动画速度（playbackRate）
       var row1 = el('div', { class: 'dbg-speed-row' });
-      row1.appendChild(el('label', {}, ['动画速度']));
+      row1.appendChild(el('label', {}, [t('Animation speed')]));
       var animBtns = el('div', { class: 'dbg-seg', 'data-opt': 'animSpeed' });
-      [[0, '⏸ 暂停'], [0.1, '0.1x'], [0.25, '0.25x'], [0.5, '0.5x'], [1, '1x']].forEach(function (o) {
+      [[0, t('⏸ Pause')], [0.1, '0.1x'], [0.25, '0.25x'], [0.5, '0.5x'], [1, '1x']].forEach(function (o) {
         var b = el('button', { 'data-v': String(o[0]) }, [o[1]]);
         if (ctx.optState.animSpeed === o[0]) b.classList.add('dbg-on');
         b.addEventListener('click', function () {
@@ -399,7 +418,7 @@ export function initOptions(ctx) {
       // 注：原"事件拦截"行（blockScroll/blockWheel 拦截滚动/滚轮）已移除——放行方案可冻结 scroll/wheel（等效），避免概念重叠
       // 定时器慢放（实验性）
       var row3 = el('div', { class: 'dbg-speed-row' });
-      row3.appendChild(el('label', {}, ['定时器慢放', '（实验性）']));
+      row3.appendChild(el('label', {}, [t('Timer slowdown'), t('(experimental)')]));
       var timerBtns = el('div', { class: 'dbg-seg', 'data-opt': 'slowTimers' });
       [[1, '1x'], [2, '2x'], [5, '5x']].forEach(function (o) {
         var b = el('button', { 'data-v': String(o[0]) }, [o[1]]);
