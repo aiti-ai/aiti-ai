@@ -231,3 +231,23 @@ jobs:
           name: publish-report
           path: publish-report.txt
           retention-days: 30
+
+  # After a real official publish, fire aiti-docs' sync-ext-versions workflow
+  # (repository_dispatch) so the docs-site extension catalog converges to the
+  # versions that just shipped. Needs AITI_DOCS_TOKEN: a fine-grained PAT with
+  # contents:write on aiti-ai/aiti-docs. staging/aliyun/dry-run must not touch docs.
+  trigger-docs-sync:
+    needs: publish
+    if: ${{ inputs.registry == 'npmjs' && inputs.dry_run == 'false' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger aiti-docs extension-version sync
+        env:
+          GH_TOKEN: ${{ secrets.AITI_DOCS_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::AITI_DOCS_TOKEN not set — skipping aiti-docs sync trigger (set it to a PAT with contents:write on aiti-ai/aiti-docs)"
+            exit 0
+          fi
+          gh api repos/aiti-ai/aiti-docs/dispatches -f event_type=pi-web-published
+          echo "aiti-docs sync-ext-versions dispatched"
