@@ -81,6 +81,7 @@ export const jsxs = (...args: unknown[]) => {
 // ---------- React hooks 委托（按需增删） ----------
 export const useState = <T>(init: T | (() => T)) => c<(...a: unknown[]) => [T, (v: T | ((prev: T) => T)) => void]>("useState")(init);
 export const useEffect = (fn: () => unknown, deps?: unknown[]) => c("useEffect")(fn, deps);
+export const useLayoutEffect = (fn: () => unknown, deps?: unknown[]) => c("useLayoutEffect")(fn, deps);
 export const useRef = <T>(v: T) => c<(...a: unknown[]) => { current: T }>("useRef")(v);
 export const useCallback = <T extends (...args: never[]) => unknown>(fn: T, deps?: unknown[]) => c<(...a: unknown[]) => T>("useCallback")(fn, deps);
 export const useMemo = <T>(fn: () => T, deps?: unknown[]) => c<(...a: unknown[]) => T>("useMemo")(fn, deps);
