@@ -1,7 +1,7 @@
 # fp-corpus results
 
 - corpus: changesets/changesets, psf/requests, spf13/cobra, GoogleCloudPlatform/microservices-demo, docker/awesome-compose, tldr-pages/tldr, twbs/bootstrap, highlightjs/cdn-release, auth0/node-jsonwebtoken, panva/jose, motdotla/dotenv
-- files: 60190/82928 scanned (<2MB text, binary skipped) in 7.4s
+- files: 60190/82928 scanned (<2MB text, binary skipped) in 7.7s
 - secret-rule hits: 66
 
 Judgement: complete private keys / signed JWTs / sample DB credentials published as test vectors are real-shaped hits (should be redacted), not false positives.
