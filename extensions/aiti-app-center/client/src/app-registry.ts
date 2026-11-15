@@ -154,9 +154,26 @@ export function viewMode(totalApps: number): "flat" | "two-segment" {
   return totalApps <= FLAT_MODE_THRESHOLD ? "flat" : "two-segment";
 }
 
-/** 首次态（v3）：两段式且无钉住记录 → 「更多」默认展开（分类浏览即首屏）。 */
-export function moreExpandedDefault(pinnedCount: number): boolean {
-  return pinnedCount === 0;
+/** 「更多」默认收起的行数阈值（v3.2）：钉住区所需行数 ≥ 阈值才默认收起，不足则展开全部。
+ *  宽度自适应——列数由容器内容宽按 auto-fill 网格推导（pinnedGridColumns），替代固定钉住数阈值。 */
+export const MORE_COLLAPSE_PINNED_ROWS = 2;
+
+/** 钉住卡片网格单列最小宽（px；app-center gridStyle 同源，勿单边改）。 */
+export const PINNED_CARD_MIN = 64;
+/** 钉住卡片网格列距（px；app-center gridStyle 同源，勿单边改）。 */
+export const PINNED_COL_GAP = 6;
+
+/** 钉住网格列数：与 gridStyle 的 auto-fill minmax(PINNED_CARD_MIN,1fr) + PINNED_COL_GAP 列距同源推导
+ *  （CSS auto-fill 列数公式 floor((W+gap)/(min+gap))）；宽度未测得（≤0）按 1 列保守估计。 */
+export function pinnedGridColumns(contentWidth: number): number {
+  if (!(contentWidth > 0)) return 1;
+  return Math.max(1, Math.floor((contentWidth + PINNED_COL_GAP) / (PINNED_CARD_MIN + PINNED_COL_GAP)));
+}
+
+/** 钉住区已占满的整行数（给定容器内容宽与钉住数；严格口径：末行未占满不计——floor，
+ *  即钉住数 ≥ 2×列数才满两行）。 */
+export function pinnedRowsNeeded(pinnedCount: number, contentWidth: number): number {
+  return Math.floor(pinnedCount / pinnedGridColumns(contentWidth));
 }
 
 /** 搜索匹配：query 按空白分词，逐词命中 label/extName/extId/keywords 任一即算命中（大小写不敏感子串）。 */
