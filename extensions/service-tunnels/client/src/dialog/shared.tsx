@@ -19,20 +19,24 @@ export function MiniQr({ url, size = 96 }: { url: string; size?: number }) {
     qrDataUrl(url, { size: size * 2 }).then((d) => { if (alive) setQr(d); }).catch(() => { if (alive) setQr(null); });
     return () => { alive = false; };
   }, [open, qr, url, size]);
-  if (!open) {
-    return (
-      <button onClick={() => setOpen(true)} title="QR"
-        style={{ flexShrink: 0, width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", borderRadius: 5, color: "var(--text-dim)", cursor: "pointer" }}>
-        <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+  return (
+    <>
+      <button onClick={() => setOpen((v) => !v)} title="QR" aria-expanded={open}
+        style={{ flexShrink: 0, width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center", background: open ? "var(--bg-hover)" : "none", border: "none", borderRadius: 5, color: open ? "var(--accent)" : "var(--text-dim)", cursor: "pointer" }}>
+        <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <rect x={3} y={3} width={6} height={6} rx={1} /><path d="M6 6h.01" /><rect x={15} y={3} width={6} height={6} rx={1} /><path d="M18 6h.01" /><rect x={3} y={15} width={6} height={6} rx={1} /><path d="M6 18h.01" />
           <path d="M14 14h.01M17 14h.01M20 14h.01M14 17h.01M17 17h.01M20 17h.01M14 20h.01M17 20h.01M20 20h.01" />
         </svg>
       </button>
-    );
-  }
-  return qr
-    ? <img src={qr} width={size} height={size} alt="QR" style={{ flexShrink: 0, borderRadius: 6, border: "1px solid var(--border)" }} />
-    : <span style={{ flexShrink: 0, fontSize: 11, color: "var(--text-dim)" }}>…</span>;
+      {open && (
+        <div style={{ flexBasis: "100%", minWidth: 0, display: "flex", paddingLeft: 2, paddingBottom: 2 }}>
+          {qr
+            ? <img src={qr} width={size} height={size} alt="QR" style={{ borderRadius: 8, border: "1px solid var(--border)", background: "#fff", padding: 4, boxSizing: "content-box" }} />
+            : <span style={{ flexShrink: 0, fontSize: 11, color: "var(--text-dim)" }}>…</span>}
+        </div>
+      )}
+    </>
+  );
 }
 import type { ExposeInfo } from "./types";
 import { ddnsBadge, modeOf, fmtAddr } from "../lib-shared";
@@ -281,7 +285,7 @@ export function ExposeDetailModal({ ex, t, onClose, onOpen, onCopy, copiedKey, o
                     </button>
                   </div>
                   {/* 登录中间页不出码（QR 直达主入口）；其余链接点 QR 按钮出码（§3.6） */}
-                  {u !== ex.loginUrl && <div style={{ display: "flex" }}><MiniQr url={u} /></div>}
+                  {u !== ex.loginUrl && <MiniQr url={u} />}
                 </div>
               ))}
             </div>
@@ -448,7 +452,7 @@ export function ConfirmDialog({ title, body, confirmLabel, cancelLabel, onConfir
 
 export function UrlRow({ url, label, copied, onCopy, onOpen, isMobile }: { url: string; label: string; copied: boolean; onCopy: () => void; onOpen: () => void; isMobile: boolean }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 6px", borderRadius: 6, background: "var(--bg)" }}>
+    <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, padding: "4px 6px", borderRadius: 6, background: "var(--bg)" }}>
       <span style={{ fontSize: 10, color: "var(--text-dim)", minWidth: isMobile ? 66 : 92, flexShrink: 0 }}>{label}</span>
       <button onClick={onOpen} title={url}
         style={{ flex: 1, minWidth: 0, textAlign: "left", background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: 12, fontFamily: "var(--font-mono)", color: "var(--accent)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
