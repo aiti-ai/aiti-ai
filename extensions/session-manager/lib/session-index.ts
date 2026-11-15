@@ -190,6 +190,19 @@ function readHead(path: string, n: number): string {
 }
 
 export function openSessionIndex(dbPath: string): SessionIndex {
+  try {
+    return openSessionIndexInner(dbPath);
+  } catch (e) {
+    // Diagnostic wrap: with dev/prod sharing one dataDir the raw failure is a bare
+    // "database is locked" — always include which library file failed to open.
+    throw new Error(
+      `open index failed (${dbPath}): ${e instanceof Error ? e.message : e}`,
+      { cause: e },
+    );
+  }
+}
+
+function openSessionIndexInner(dbPath: string): SessionIndex {
   const db = new DatabaseSync(dbPath);
   // dev/prod 双实例共享同一 dataDir（PI_WEB_DATA_DIR）时两进程并发写本库：
   // 无 busy_timeout 时并发写立即 SQLITE_BUSY → sync 事务回滚 → 行间歇性丢失（实测
