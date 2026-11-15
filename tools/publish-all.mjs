@@ -15,7 +15,7 @@
 
 import { readFileSync, writeFileSync, existsSync, readdirSync, mkdtempSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
-import { join, basename, dirname, resolve, sep } from "node:path";
+import { join, basename, dirname, resolve, sep, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -32,6 +32,9 @@ const EXCLUDE = new Set(["demo", "demo-lazy", "sm-demo-source", "templates", "sh
 // packages/ = aiti-devtools 全家桶（vite/webpack/nuxt/astro 载体插件 + core/inject/bridge/agent/pi）
 // ——用户应用「npm i -D @aiti-ai/aiti-devtools-vite」的接入面，不发布则文档安装方式全是空谈
 const PLUGIN_ROOTS = ["pi-plugins", "packages"];
+// integrations/ = 外部 agent 载体适配（DSH/DeepSeek Harness、opencode、openclaw、browser-ext）——
+// 两层嵌套（integrations/<repo>/<pkg>），2026-11-15 起 dsh 系插件走同一发布链（docs/pi-secret-mask-dsh-port-plan.md §6）
+const INTEGRATION_ROOTS = ["integrations"];
 
 const args = process.argv.slice(2);
 const has = (f) => args.includes(f);
@@ -156,6 +159,19 @@ for (const rel of PLUGIN_ROOTS) {
     if (d.isDirectory() && existsSync(join(abs, d.name, "package.json"))) addPkg(join(abs, d.name));
   }
 }
+// integrations：容器目录两层扫描（integrations/<repo>/[<pkg>/]package.json）
+for (const rel of INTEGRATION_ROOTS) {
+  const abs = join(REPO, rel);
+  if (!existsSync(abs)) continue;
+  for (const repo of readdirSync(abs, { withFileTypes: true })) {
+    if (!repo.isDirectory()) continue;
+    const repoDir = join(abs, repo.name);
+    if (existsSync(join(repoDir, "package.json"))) { addPkg(repoDir); continue; }
+    for (const d of readdirSync(repoDir, { withFileTypes: true })) {
+      if (d.isDirectory() && existsSync(join(repoDir, d.name, "package.json"))) addPkg(join(repoDir, d.name));
+    }
+  }
+}
 
 // registry 信息：curl 拉完整 packument（npm view 的 install-v1 缩略 Accept 在阿里云 lazy
 // proxy 上不触发上游拉取恒 404——完整 JSON 才 200）。aliyun target 带 Basic 认证。
@@ -248,7 +264,9 @@ for (const { dir, pkgDir, pjPath, p } of pkgs) {
       ? `extensions/${basename(pkgDir)}`
       : pkgDir.startsWith(join(REPO, "packages") + sep)
         ? `packages/${basename(pkgDir)}`
-        : `pi-plugins/${basename(pkgDir)}`;
+        : pkgDir.startsWith(join(REPO, "integrations") + sep)
+          ? `integrations/${relative(join(REPO, "integrations"), pkgDir).split(sep).join("/")}`
+          : `pi-plugins/${basename(pkgDir)}`;
     let metaChanged = false;
     if (!p.repository) { p.repository = { type: "git", url: REPO_URL, directory: repoDir }; metaChanged = true; }
     if (!p.homepage) { p.homepage = "https://github.com/aiti-ai/aiti-ai#readme"; metaChanged = true; }
