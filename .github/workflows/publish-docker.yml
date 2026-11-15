@@ -60,7 +60,7 @@ jobs:
   # deps (core/full dependency closure) from the npm registry — both must already
   # be published, otherwise fail fast with an actionable message.
   deps-on-registry:
-    if: ${{ inputs.readme_only != true }}
+    if: ${{ inputs.readme_only != true && inputs.mirror_only != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -91,7 +91,7 @@ jobs:
 
   build-push:
     needs: deps-on-registry
-    if: ${{ inputs.readme_only != true }}
+    if: ${{ inputs.readme_only != true && inputs.mirror_only != true }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
