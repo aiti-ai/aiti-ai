@@ -21,17 +21,17 @@ export function MiniQr({ url, size = 96 }: { url: string; size?: number }) {
   }, [open, qr, url, size]);
   return (
     <>
-      <button onClick={() => setOpen((v) => !v)} title="QR" aria-expanded={open}
-        style={{ flexShrink: 0, width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center", background: open ? "var(--bg-hover)" : "none", border: "none", borderRadius: 5, color: open ? "var(--accent)" : "var(--text-dim)", cursor: "pointer" }}>
-        <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <button onClick={() => setOpen((v) => !v)} title="扫码访问" aria-expanded={open}
+        style={{ flexShrink: 0, width: 28, height: 26, display: "flex", alignItems: "center", justifyContent: "center", background: open ? "var(--bg-hover)" : "none", border: "none", borderRadius: 5, color: open ? "var(--accent)" : "var(--text-muted)", cursor: "pointer" }}>
+        <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <rect x={3} y={3} width={6} height={6} rx={1} /><path d="M6 6h.01" /><rect x={15} y={3} width={6} height={6} rx={1} /><path d="M18 6h.01" /><rect x={3} y={15} width={6} height={6} rx={1} /><path d="M6 18h.01" />
           <path d="M14 14h.01M17 14h.01M20 14h.01M14 17h.01M17 17h.01M20 17h.01M14 20h.01M17 20h.01M20 20h.01" />
         </svg>
       </button>
       {open && (
-        <div style={{ flexBasis: "100%", minWidth: 0, display: "flex", paddingLeft: 2, paddingBottom: 2 }}>
+        <div style={{ flexBasis: "100%", minWidth: 0, display: "flex", justifyContent: "center", padding: "6px 0 2px" }}>
           {qr
-            ? <img src={qr} width={size} height={size} alt="QR" style={{ borderRadius: 8, border: "1px solid var(--border)", background: "#fff", padding: 4, boxSizing: "content-box" }} />
+            ? <img src={qr} width={size} height={size} alt="QR" style={{ borderRadius: 10, border: "1px solid var(--border)", background: "#fff", padding: 6, boxSizing: "content-box", boxShadow: "0 2px 8px rgba(0,0,0,0.08)" }} />
             : <span style={{ flexShrink: 0, fontSize: 11, color: "var(--text-dim)" }}>…</span>}
         </div>
       )}
@@ -273,19 +273,16 @@ export function ExposeDetailModal({ ex, t, onClose, onOpen, onCopy, copiedKey, o
           {field(t("services.exposeResult"), links.length === 0 ? "—" : (
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
               {links.map((u) => (
-                <div key={u} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <button onClick={() => onOpen(u)} title={u}
-                      style={{ flex: 1, minWidth: 0, textAlign: "left", padding: "4px 8px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "var(--accent)", cursor: "pointer", fontFamily: "var(--font-mono)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {u}
-                    </button>
-                    <button onClick={() => onCopy(`expose-detail-${u}`, u)}
-                      style={{ flexShrink: 0, width: 28, height: 26, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: copiedKey === `expose-detail-${u}` ? "#16a34a" : "var(--text-dim)", cursor: "pointer", fontSize: 11 }}>
-                      {copiedKey === `expose-detail-${u}` ? "✓" : "⧉"}
-                    </button>
-                  </div>
-                  {/* 登录中间页不出码（QR 直达主入口）；其余链接点 QR 按钮出码（§3.6） */}
-                  {u !== ex.loginUrl && <MiniQr url={u} />}
+                <div key={u} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, minWidth: 0, padding: "2px 0" }}>
+                  <button onClick={() => onOpen(u)} title={u}
+                    style={{ flex: 1, minWidth: 0, textAlign: "left", padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 5, color: "var(--accent)", cursor: "pointer", fontFamily: "var(--font-mono)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {u}
+                  </button>
+                  <button onClick={() => onCopy(`expose-detail-${u}`, u)} title={copiedKey === `expose-detail-${u}` ? "已复制" : "复制"}
+                    style={{ flexShrink: 0, width: 28, height: 26, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", borderRadius: 5, color: copiedKey === `expose-detail-${u}` ? "#16a34a" : "var(--text-muted)", cursor: "pointer", fontSize: 12 }}>
+                    {copiedKey === `expose-detail-${u}` ? "✓" : "⧉"}
+                  </button>
+                  <MiniQr url={u} size={110} />
                 </div>
               ))}
             </div>
