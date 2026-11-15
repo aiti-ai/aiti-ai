@@ -10,9 +10,11 @@ test("confines extension overlays to the content region above the composer", () 
   assert.doesNotMatch(source, /function ExtensionRequestSheet/);
   assert.match(
     source,
-    // 合并适配：内容区容器的 className 已随空新会话优化改为模板串（`flex-1` 条件化，isEmptyNew 时不伸展），
+    // 合并适配：内容区容器的 className 已随空新会话优化改为模板串（`flex-1` 条件化，isEmptyNew 时不伸展）。
+    // 2026-11-15 composer 容器同理改模板串（欢迎页追加 shrink-0：多行输入框在矮视口不再被 flex
+    // 压缩溢出盖住下方 widget 区，方案 docs/aiti-quickstart-examples-dynamic-prompts-plan.md §3.1）。
     // 守门语义不变：overlays 必须落在内容区容器内、composer（bottomComposer）之前。
-    /relative flex min-h-0 min-w-0 overflow-hidden[\s\S]*?<ExtensionDialog[\s\S]*?<ExtensionCustomPanel[\s\S]*?className="relative flex min-h-0 flex-col"[\s\S]*?{chatInputElement}/,
+    /relative flex min-h-0 min-w-0 overflow-hidden[\s\S]*?<ExtensionDialog[\s\S]*?<ExtensionCustomPanel[\s\S]*?relative flex min-h-0 flex-col\$\{isEmptyNew[\s\S]*?{chatInputElement}/,
   );
   // 合并纪律（C 类）：不再接受旧 fork 形态 `relative shrink-0` —— 那次放宽曾把
   // 丢上游 #1429 收缩链的错误融合结果合法化（宽口钉让测试接住错误代码）。

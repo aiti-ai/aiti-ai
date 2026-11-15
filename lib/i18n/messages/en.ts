@@ -31,6 +31,7 @@ export const enLocale: LocalePlugin = {
     "nsw.recentEmpty": "No recent sessions",
     "nsw.customize": "Customize widgets",
     "nsw.edit": "Edit",
+    "nsw.editWidget": "Edit content",
     "nsw.add": "Add widgets",
     "nsw.top": "Top",
     "nsw.bottom": "Bottom",

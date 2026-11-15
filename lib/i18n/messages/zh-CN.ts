@@ -31,6 +31,7 @@ export const zhCNLocale: LocalePlugin = {
     "nsw.recentEmpty": "暂无最近会话",
     "nsw.customize": "自定义小组件",
     "nsw.edit": "编辑",
+    "nsw.editWidget": "编辑内容",
     "nsw.add": "添加小组件",
     "nsw.top": "顶部",
     "nsw.bottom": "底部",
