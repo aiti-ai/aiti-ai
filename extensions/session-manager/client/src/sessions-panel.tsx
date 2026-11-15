@@ -778,6 +778,16 @@ export function SessionsPanel(props: any) {
   const [page, setPage] = useState(0);
   const [debounced, setDebounced] = useState("");
   const [searchHits, setSearchHits] = useState<any[] | null>(null); // null = not searching
+  // 搜索重跑 nonce：searchHits 是独立 FTS 快照，只随 query/filter 刷新——归档/删除/恢复/
+  // 移动等列表写操作后旧 hit（archived=false）残留，已归档行不消失（2026-11-15 修复）。
+  // refreshListChannels 完成时广播 sm:sessions-changed，借它 bump 让下方搜索 effect 重跑；
+  // 归档管线服务端同步 markArchived，重跑即命中 archived=1 → 默认视图（非已归档）自然滤掉。
+  const [searchNonce, setSearchNonce] = useState(0);
+  useEffect(() => {
+    const bump = () => setSearchNonce((v) => v + 1);
+    window.addEventListener("sm:sessions-changed", bump);
+    return () => window.removeEventListener("sm:sessions-changed", bump);
+  }, []);
   const [rowBusy, setRowBusy] = useState(new Set<string>());
   const [archStatus, setArchStatus] = useState<any>(null);
   const [archBusy, setArchBusy] = useState(false);
@@ -922,7 +932,7 @@ export function SessionsPanel(props: any) {
       .then((d) => { if (alive) setSearchHits(d.hits ?? []); })
       .catch(() => { if (alive) setSearchHits([]); });
     return () => { alive = false; };
-  }, [debounced, modelFilter, roleFilter]);
+  }, [debounced, modelFilter, roleFilter, searchNonce]);
 
   // Archive status strip (candidates / cache)
   const refreshArchStatus = () => {
@@ -1147,6 +1157,15 @@ export function SessionsPanel(props: any) {
       ))}
     </div>
   );
+  // §14.4 select-all / invert: scope = current filtered result (including rows
+  // not yet paginated in / "load more"-hidden). Same set the prune logic keeps
+  // selection aligned with; batch ops below skip running/archived on their own.
+  const selectAllFiltered = () => setSelection(new Set(filtered.map((x) => x.id)));
+  const invertFiltered = () => setSelection((prev) => {
+    const n = new Set<string>();
+    for (const x of filtered) if (!prev.has(x.id)) n.add(x.id);
+    return n;
+  });
   const batchArchive = async () => {
     // running sessions are never archived (server also enforces this)
     const ids = [...selection].filter((id) => !s.running.has(id) && !(byIdL.get(id)?.archived));
@@ -1285,10 +1304,12 @@ export function SessionsPanel(props: any) {
         }}
         style={{
           flexShrink: 0, cursor: "pointer", userSelect: "none", width: 16, textAlign: "center",
-          fontSize: 13, opacity: selection.has(sess.id) ? 1 : 0.25,
+          // keep checkboxes half-visible during batch mode so select-all/invert
+          // results stay readable; hover-reveal (0.25) otherwise
+          fontSize: 13, opacity: selection.has(sess.id) ? 1 : selection.size > 0 ? 0.6 : 0.25,
         }}
         onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; }}
-        onMouseLeave={(e) => { if (!selection.has(sess.id)) e.currentTarget.style.opacity = "0.25"; }}
+        onMouseLeave={(e) => { if (!selection.has(sess.id)) e.currentTarget.style.opacity = selection.size > 0 ? "0.6" : "0.25"; }}
       >{selection.has(sess.id) ? "☑" : "☐"}</span>
       <div style={{ width: 14, flexShrink: 0, color: "var(--accent)", fontSize: 11, textAlign: "center" }}>
         {pending ? "⏳" : s.running.has(sess.id) ? "⟳" : sess.archived ? "📦" : ""}
@@ -1840,15 +1861,25 @@ export function SessionsPanel(props: any) {
           </div>
         )}
 
-        {/* §14.4 batch bar */}
-        {selection.size > 0 && (
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "6px 12px", borderBottom: "1px solid var(--border)", background: "color-mix(in srgb, var(--warn, #f59e0b) 8%, transparent)" }}>
-            <span style={{ fontSize: 11, color: ensureReadability("var(--warn, #f59e0b)") }}>{t("sm.selectedCount", { count: selection.size })}</span>
-            <button disabled={batchBusy} onClick={() => void batchArchive()} style={ghostBtn}>{`${t("sm.archive")}`}</button>
-            <button disabled={batchBusy} onClick={() => setBatchMoveOpen(true)} style={ghostBtn}>{`${t("sm.moveBatch") ?? "移动到…"}`}</button>
-            <button disabled={batchBusy} onClick={() => void batchFavorite()} style={ghostBtn}>{`${t("sm.favorite")}`}</button>
-            <button disabled={batchBusy} onClick={() => void batchDelete()} style={{ ...ghostBtn, color: ensureReadability("var(--danger, #f87171)") } as React.CSSProperties}>{`${t("sm.archiveDelete")}`}</button>
-            <button onClick={() => setSelection(new Set())} style={{ ...ghostBtn, marginLeft: "auto" } as React.CSSProperties}>清除</button>
+        {/* §14.4 batch bar — always on while the filtered list is non-empty:
+            empty selection → slim strip with select-all/invert only (otherwise you'd
+            have to hand-check one row before batch ops become reachable);
+            non-empty → full action bar. Scope of both = current filtered result. */}
+        {filtered.length > 0 && (
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: selection.size > 0 ? "6px 12px" : "2px 12px", borderBottom: "1px solid var(--border)", background: selection.size > 0 ? "color-mix(in srgb, var(--warn, #f59e0b) 8%, transparent)" : "transparent" }}>
+            <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{t("sm.totalCount", { count: filtered.length }) ?? `${filtered.length}`}</span>
+            <button onClick={selectAllFiltered} style={{ ...ghostBtn, fontSize: 10, padding: "1px 8px" } as React.CSSProperties}>{t("sm.selectAll") ?? "全选"}</button>
+            <button onClick={invertFiltered} style={{ ...ghostBtn, fontSize: 10, padding: "1px 8px" } as React.CSSProperties}>{t("sm.invertSelect") ?? "反选"}</button>
+            {selection.size > 0 && (
+              <>
+                <span style={{ fontSize: 11, color: ensureReadability("var(--warn, #f59e0b)") }}>{t("sm.selectedCount", { count: selection.size })}</span>
+                <button disabled={batchBusy} onClick={() => void batchArchive()} style={ghostBtn}>{`${t("sm.archive")}`}</button>
+                <button disabled={batchBusy} onClick={() => setBatchMoveOpen(true)} style={ghostBtn}>{`${t("sm.moveBatch") ?? "移动到…"}`}</button>
+                <button disabled={batchBusy} onClick={() => void batchFavorite()} style={ghostBtn}>{`${t("sm.favorite")}`}</button>
+                <button disabled={batchBusy} onClick={() => void batchDelete()} style={{ ...ghostBtn, color: ensureReadability("var(--danger, #f87171)") } as React.CSSProperties}>{`${t("sm.archiveDelete")}`}</button>
+                <button onClick={() => setSelection(new Set())} style={{ ...ghostBtn, marginLeft: "auto" } as React.CSSProperties}>清除</button>
+              </>
+            )}
           </div>
         )}
 
