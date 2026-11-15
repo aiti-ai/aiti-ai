@@ -74,15 +74,17 @@ export default {
   ui: {
     clientImmediately: false, // [懒加载 v2] M1 已同步生产，懒化重启用
     // id 与 client 注册对齐（aiti-channels-open——原 channels 为历史错位，M1 审计发现）
-    toolbar: [{ id: "aiti-channels-open", label: "IM 渠道", title: "aiti-channels：cc-connect 托管 + IM 渠道 + 管理台嵌入", icon: "icons/message-circle.svg" }],
+    toolbar: [{ id: "aiti-channels-open", label: "i18n:channels.open", title: "i18n:channels.app.title", icon: "icons/message-circle.svg" }],
     dialogs: [{ id: "aiti-channels-panel", label: "IM 渠道与 cc-connect 管理" }],
     i18n: {
       en: {
+        "channels.app.title": "aiti-channels: cc-connect hosting + IM channels + admin embed",
         "channels.title": "IM Channels & cc-connect",
         "channels.open": "IM Channels",
         "channels.close": "Close",
       },
       "zh-CN": {
+        "channels.app.title": "aiti-channels：cc-connect 托管 + IM 渠道 + 管理台嵌入",
         "channels.title": "IM 渠道与 cc-connect",
         "channels.open": "IM 渠道",
         "channels.close": "关闭",
