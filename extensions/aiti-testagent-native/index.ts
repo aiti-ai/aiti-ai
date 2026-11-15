@@ -134,7 +134,7 @@ export default {
   },
 
   ui: {
-    toolbar: [{ id: "testagent-native", label: "Win", title: "testagent-native · Windows API/COM 追踪", icon: "icons/monitor.svg" }],
+    toolbar: [{ id: "testagent-native", label: "Win", title: "i18n:wt.title", icon: "icons/monitor.svg" }],
     rightFileDock: [{ id: "panel", label: "Win" }],
     dialogs: [{ id: "panel", label: "testagent-native 追踪面板" }],
     clientImmediately: false,
