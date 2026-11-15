@@ -161,10 +161,29 @@ jobs:
         run: |
           printf '%s' "${{ secrets.ALIYUN_ACR_PASSWORD }}" | docker login registry.cn-hangzhou.aliyuncs.com \
             --username "${{ secrets.ALIYUN_ACR_USERNAME }}" --password-stdin
+          mirror_ref() {
+            local ref="$1" src="$2" adigest hdigest attempt
+            # Resumable: skip when ACR already holds the byte-identical manifest
+            adigest=$(docker buildx imagetools inspect "${ACR_IMAGE}:${ref}" --raw 2>/dev/null | sha256sum | cut -d' ' -f1 || true)
+            hdigest=$(docker buildx imagetools inspect "${src}:${ref}" --raw 2>/dev/null | sha256sum | cut -d' ' -f1 || true)
+            if [ -n "$adigest" ] && [ "$adigest" = "$hdigest" ]; then
+              echo "skip ${ref}: ACR digest already matches Hub"
+              return 0
+            fi
+            # Cross-border blob streaming dies on transient stream errors — retry
+            for attempt in 1 2 3; do
+              echo "mirror ${ref}: attempt ${attempt}"
+              if docker buildx imagetools create -t "${ACR_IMAGE}:${ref}" "${src}:${ref}"; then return 0; fi
+              [ "$attempt" = 3 ] && return 1
+              sleep $((attempt * 30))
+            done
+          }
+          failed=""
           for ref in "${{ steps.ver.outputs.version }}-core" "${{ steps.ver.outputs.version }}-full" core full latest; do
-            docker buildx imagetools create -t "${ACR_IMAGE}:${ref}" "${IMAGE}:${ref}"
+            mirror_ref "$ref" "${IMAGE}" || failed="$failed $ref"
           done
           docker logout registry.cn-hangzhou.aliyuncs.com
+          if [ -n "$failed" ]; then echo "::error::ACR mirror failed tags:$failed"; exit 1; fi
 
       - name: Summary
         run: |
@@ -179,7 +198,7 @@ jobs:
   mirror-acr:
     if: ${{ inputs.mirror_only == true }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 120
     steps:
       - name: Resolve version
         id: ver
@@ -193,10 +212,27 @@ jobs:
         run: |
           printf '%s' "${{ secrets.ALIYUN_ACR_PASSWORD }}" | docker login registry.cn-hangzhou.aliyuncs.com \
             --username "${{ secrets.ALIYUN_ACR_USERNAME }}" --password-stdin
+          mirror_ref() {
+            local ref="$1" src="aitiai/pi-web" adigest hdigest attempt
+            adigest=$(docker buildx imagetools inspect "${ACR_IMAGE}:${ref}" --raw 2>/dev/null | sha256sum | cut -d' ' -f1 || true)
+            hdigest=$(docker buildx imagetools inspect "${src}:${ref}" --raw 2>/dev/null | sha256sum | cut -d' ' -f1 || true)
+            if [ -n "$adigest" ] && [ "$adigest" = "$hdigest" ]; then
+              echo "skip ${ref}: ACR digest already matches Hub"
+              return 0
+            fi
+            for attempt in 1 2 3; do
+              echo "mirror ${ref}: attempt ${attempt}"
+              if docker buildx imagetools create -t "${ACR_IMAGE}:${ref}" "${src}:${ref}"; then return 0; fi
+              [ "$attempt" = 3 ] && return 1
+              sleep $((attempt * 30))
+            done
+          }
+          failed=""
           for ref in "${{ steps.ver.outputs.version }}-core" "${{ steps.ver.outputs.version }}-full" core full latest; do
-            docker buildx imagetools create -t "${ACR_IMAGE}:${ref}" "aitiai/pi-web:${ref}"
+            mirror_ref "$ref" || failed="$failed $ref"
           done
           docker logout registry.cn-hangzhou.aliyuncs.com
+          if [ -n "$failed" ]; then echo "::error::ACR mirror failed tags:$failed"; exit 1; fi
 
   # Hub overview sync (docker/README.md → hub.docker.com/r/aitiai/pi-web).
   # Independent of the image build (idempotent, no registry side effects), so it runs
