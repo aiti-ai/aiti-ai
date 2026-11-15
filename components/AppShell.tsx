@@ -304,7 +304,9 @@ function renderExtItemIcon(icon: NonNullable<ExtUiItemRegistered["meta"]>["icon"
  *  (2026-08 contract; see the docs extension-points reference). */
 function ExtToolbarIconButton({ item }: { item: ExtUiItemRegistered }) {
   const icon = item.meta?.icon;
-  const title = item.meta?.title ?? item.meta?.label ?? item.id;
+  // label/title support "i18n:<key>" (translateExtItemText; manifest ui.i18n cascade) —
+  // extensions may ship either raw text or i18n keys on both static and registered items.
+  const title = translateExtItemText(item.extId, item.meta?.title) || translateExtItemText(item.extId, item.meta?.label) || item.id;
   // [lazy-load v2] While a static item's click-triggered materialization is in
   // flight: semi-transparent + click-guarded; static declarations without an icon
   // render the label's first character as a placeholder (icons are required by the
@@ -330,7 +332,7 @@ function ExtToolbarIconButton({ item }: { item: ExtUiItemRegistered }) {
     >
       {icon != null
         ? renderExtItemIcon(icon, item.extId)
-        : <span style={{ fontSize: 13, fontWeight: 600, lineHeight: 1 }}>{(item.meta?.label ?? item.id).slice(0, 1)}</span>}
+        : <span style={{ fontSize: 13, fontWeight: 600, lineHeight: 1 }}>{(translateExtItemText(item.extId, item.meta?.label) || item.id).slice(0, 1)}</span>}
     </button>
   );
 }
@@ -1287,7 +1289,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     })),
     ...rightDockItems
       .filter((it) => dockPanelStates.get(it.id) === "docked:right-panel")
-      .map((it) => ({ id: `dock:${it.id}`, label: it.meta?.title || it.meta?.label || it.extId || it.id, filePath: "", kind: "dock" as const })),
+      .map((it) => ({ id: `dock:${it.id}`, label: translateExtItemText(it.extId, it.meta?.title) || translateExtItemText(it.extId, it.meta?.label) || it.extId || it.id, filePath: "", kind: "dock" as const })),
     // [上游 #1129/#1469] 子代理工作 tab + side chat tab：panel 承载与 handleOpenSubagentTab 挂载同源
     ...agentTabs.map((tab) => {
       const session = tab.side ? sessionCatalog.find((item) => item.id === tab.sessionId) : undefined;
@@ -3991,7 +3993,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
       // noMenuLabel: the extension already provides full content in the ⋯ menu (e.g.
       // a search input + button); the host adds no text label
       const label = extItem2 && !extItem2.meta?.noMenuLabel
-        ? (extItem2.meta?.label ?? extItem2.meta?.title ?? id)
+        ? (translateExtItemText(extItem2.extId, extItem2.meta?.label) || translateExtItemText(extItem2.extId, extItem2.meta?.title) || id)
         : null;
       // Whole row clickable: the extension's inner button carries the action; clicks
       // on text/blank areas delegate to it (same as built-in items' full-row button).
@@ -4033,7 +4035,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
                mounted — undefined would blow up the React element tree; icons are
                required by the SOP, the placeholder is a fallback only) */
             <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 16, height: 16, flexShrink: 0, fontSize: 12, fontWeight: 600, color: "var(--text-muted)" }} aria-hidden>
-              {(extItem2?.meta?.label ?? extItem2?.meta?.title ?? "?").slice(0, 1)}
+              {(translateExtItemText(extItem2?.extId, extItem2?.meta?.label) || translateExtItemText(extItem2?.extId, extItem2?.meta?.title) || "?").slice(0, 1)}
             </span>
           )}
           {label && (
@@ -4108,7 +4110,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     const toolbarItem = toolbarExtItems.find((it) => it.id === id);
     const sessionItem = sessionTopbarExtItems.find((it) => it.id === id);
     const it = toolbarItem ?? sessionItem;
-    return it?.meta?.label ?? it?.meta?.title ?? id;
+    return translateExtItemText(it?.extId, it?.meta?.label) || translateExtItemText(it?.extId, it?.meta?.title) || id;
   };
   const topbarItemLabel = (id: TopbarItemId): string => {
     switch (id) {
