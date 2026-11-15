@@ -49,6 +49,9 @@ export interface ExtUiItemRegistered {
     title?: string;
     badge?: boolean;
     noMenuLabel?: boolean;
+    /** Static item hide marker (manifest ui[slot][]): the host skips rendering the
+     *  static entry (bottom-row absorbed items, quickstart flash fix). */
+    hidden?: boolean;
     /** Declarative icon (toolbar): rendered by the host (the ⋯ menu icon slot and the
      *  standard toolbar button when render is absent); once provided, the extension's
      *  render menu branch is no longer used. */
