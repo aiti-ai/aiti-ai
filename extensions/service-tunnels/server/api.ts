@@ -46,6 +46,11 @@ function pickPortmapParams(v: unknown): Record<string, unknown> | undefined {
 
 // tools 探测缓存（进程级；TTL 5min——工具安装状态变化极低频）
 let toolStatusCache: { at: number; allowDownload: boolean; toolStatus: unknown } | null = null;
+/** 测试注入口：清 tools 探测缓存（模块级 + globalThis 预热双份；capabilities.resetCapabilitiesCache 同范式）。 */
+export function resetToolStatusCache(): void {
+  toolStatusCache = null;
+  delete (globalThis as Record<string, unknown>).__stToolCache;
+}
 function cachedToolStatus(st: { tools: { allowDownload(): boolean; list(): unknown } }) {
   const now = Date.now();
   if (toolStatusCache && now - toolStatusCache.at < 300_000) return toolStatusCache;
@@ -83,6 +88,7 @@ import { getInjectRegistry } from "./inject-registry.ts";
 import { handleExtrasApi } from "./api/extras.ts";
 import { handleDdnsApi } from "./api/ddns.ts";
 import { handleDoctorApi, doctorMockEnabled } from "./api/doctor.ts";
+import { handleSelfRecoApi } from "./api/self-reco.ts";
 import { cachedCapabilities, detectCapabilities } from "./capabilities.ts";
 
 /** enrolled 列表：优先库 0.3.41+ 的 enrolled()，旧实例回退 bindings() 过滤
@@ -190,7 +196,10 @@ export async function handleApi(req: Request, ctx: ExtApiContextLike): Promise<R
   const p = ctx.path || [];
   const search = ctx.searchParams;
 
-  // ---- M3 分域路由：新功能域优先（extras / ddns / doctor）----
+  // ---- M3 分域路由：新功能域优先（self-reco / extras / ddns / doctor）----
+  // self-reco 依赖 tools 探测缓存（同源 cachedToolStatus，5min TTL）——经 helpers 传入避免环导
+  const selfReco = await handleSelfRecoApi(req, ctx, { toolStatus: () => cachedToolStatus(getServiceTunnels()).toolStatus });
+  if (selfReco) return selfReco;
   for (const domain of [handleExtrasApi, handleDdnsApi, handleDoctorApi]) {
     const viaDomain = await domain(req, ctx);
     if (viaDomain) return viaDomain;

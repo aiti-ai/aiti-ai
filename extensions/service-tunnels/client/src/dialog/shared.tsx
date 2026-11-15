@@ -6,7 +6,34 @@ import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { useIsMobile, apiUrl, extSvc } from "../host-shim";
 import { dismissOnBack } from "../../../../_shared/overlay-back-client";
+import { qrDataUrl } from "../qr";
 import type { ParamSpec } from "../types-shim";
+
+/** 迷你二维码（方案 §3.6：点开才生成，96px；列表内避免无谓 QR 运算）。 */
+export function MiniQr({ url, size = 96 }: { url: string; size?: number }) {
+  const [qr, setQr] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open || qr) return;
+    let alive = true;
+    qrDataUrl(url, { size: size * 2 }).then((d) => { if (alive) setQr(d); }).catch(() => { if (alive) setQr(null); });
+    return () => { alive = false; };
+  }, [open, qr, url, size]);
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)} title="QR"
+        style={{ flexShrink: 0, width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", borderRadius: 5, color: "var(--text-dim)", cursor: "pointer" }}>
+        <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <rect x={3} y={3} width={6} height={6} rx={1} /><path d="M6 6h.01" /><rect x={15} y={3} width={6} height={6} rx={1} /><path d="M18 6h.01" /><rect x={3} y={15} width={6} height={6} rx={1} /><path d="M6 18h.01" />
+          <path d="M14 14h.01M17 14h.01M20 14h.01M14 17h.01M17 17h.01M20 17h.01M14 20h.01M17 20h.01M20 20h.01" />
+        </svg>
+      </button>
+    );
+  }
+  return qr
+    ? <img src={qr} width={size} height={size} alt="QR" style={{ flexShrink: 0, borderRadius: 6, border: "1px solid var(--border)" }} />
+    : <span style={{ flexShrink: 0, fontSize: 11, color: "var(--text-dim)" }}>…</span>;
+}
 import type { ExposeInfo } from "./types";
 import { ddnsBadge, modeOf, fmtAddr } from "../lib-shared";
 
@@ -242,15 +269,19 @@ export function ExposeDetailModal({ ex, t, onClose, onOpen, onCopy, copiedKey, o
           {field(t("services.exposeResult"), links.length === 0 ? "—" : (
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
               {links.map((u) => (
-                <div key={u} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <button onClick={() => onOpen(u)} title={u}
-                    style={{ flex: 1, minWidth: 0, textAlign: "left", padding: "4px 8px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "var(--accent)", cursor: "pointer", fontFamily: "var(--font-mono)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {u}
-                  </button>
-                  <button onClick={() => onCopy(`expose-detail-${u}`, u)}
-                    style={{ flexShrink: 0, width: 28, height: 26, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: copiedKey === `expose-detail-${u}` ? "#16a34a" : "var(--text-dim)", cursor: "pointer", fontSize: 11 }}>
-                    {copiedKey === `expose-detail-${u}` ? "✓" : "⧉"}
-                  </button>
+                <div key={u} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <button onClick={() => onOpen(u)} title={u}
+                      style={{ flex: 1, minWidth: 0, textAlign: "left", padding: "4px 8px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "var(--accent)", cursor: "pointer", fontFamily: "var(--font-mono)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {u}
+                    </button>
+                    <button onClick={() => onCopy(`expose-detail-${u}`, u)}
+                      style={{ flexShrink: 0, width: 28, height: 26, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: copiedKey === `expose-detail-${u}` ? "#16a34a" : "var(--text-dim)", cursor: "pointer", fontSize: 11 }}>
+                      {copiedKey === `expose-detail-${u}` ? "✓" : "⧉"}
+                    </button>
+                  </div>
+                  {/* 登录中间页不出码（QR 直达主入口）；其余链接点 QR 按钮出码（§3.6） */}
+                  {u !== ex.loginUrl && <div style={{ display: "flex" }}><MiniQr url={u} /></div>}
                 </div>
               ))}
             </div>
@@ -426,6 +457,7 @@ export function UrlRow({ url, label, copied, onCopy, onOpen, isMobile }: { url: 
       <button onClick={onCopy} title={copied ? "✓" : "⧉"} style={{ flexShrink: 0, width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", borderRadius: 5, color: copied ? "#16a34a" : "var(--text-dim)", cursor: "pointer", fontSize: 12 }}>
         {copied ? "✓" : "⧉"}
       </button>
+      <MiniQr url={url} />
     </div>
   );
 }
