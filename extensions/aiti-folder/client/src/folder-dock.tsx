@@ -461,10 +461,18 @@ export function FolderDockBlock(props: FolderFaceProps) {
         />
       )}
       extraMenuItems={[
+        // 「新窗口打开」仅未挂载态显示（2026-11-15 用户去重）：挂载态「窗口」排已有「新窗口」，
+        // 区块段再放一份即重复；未挂载态（无全量菜单）才由本项兜底——不依赖内容也能开独立查看窗。
+        ...(typeof st.root !== "string" || !st.root.length
+          ? [{ label: t("files.openNewWindow"), icon: dockIconEl("new-window", 13), run: () => openFolderWindow(norm, props.cwd) }]
+          : []),
         { label: "显示忽略项", icon: <MiEye />, active: showIgnored, alwaysRun: true, run: () => toggleShowIgnored(path) },
       ]}
       moveRowPin={{ isPinned: () => pinned, toggle: () => toggleFolderPin(path) }}
-      hideCloseItem={true}
+      // 关闭入口分工（2026-11-15 终版，用户拍板）：挂载态 → 「窗口」排 ✕（removeFolderInstance
+      // 同语义，hideCloseItem 抑制区块段重复）；折叠未挂载态（无全量菜单）→ 区块段「关闭」
+      //（st.root 未注册 = 未挂载过）。两态都有关闭，位置都在用户预期的「窗口/关窗」区域。
+      hideCloseItem={typeof st.root === "string" && st.root.length > 0}
       onNewWindow={() => openFolderWindow(norm, props.cwd)}
       onClose={() => removeFolderInstance(path)}
     >
