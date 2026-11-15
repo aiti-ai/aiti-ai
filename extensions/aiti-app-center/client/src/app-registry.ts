@@ -2,7 +2,8 @@
  * aiti-app-center · app-registry —— 应用枚举与分类解析（纯逻辑层，零 JSX）。
  *
  * 数据源（全部现有注册表，新插件自动进列表）：
- *   - toolbar/sidebarFooter 插槽条目（meta.onClick 可调，含懒扩展静态条目的物化转发）→ action/manage 卡
+ *   - toolbar / commands（命令目录槽，dialogs 同型无渲染点）插槽条目（meta.onClick 可调，含懒扩展
+ *     静态条目的物化转发）→ action/manage 卡
  *   - rightFileDock 插槽条目 + dialogs 白名单 → panel 卡（present 状态机打开）
  *   - manifest features（boolean 型）→ toggle 卡（extman ops API 切换 + 广播回灌）
  *
@@ -66,7 +67,7 @@ export const APP_STORE_EVENT = "pi:app-center:store";
 export const APP_OVERRIDES: Record<string, { category?: string; keywords?: string[] }> = {
   // session 会话与项目
   "session-manager": { category: "session", keywords: ["sessions", "会话"] },
-  "aiti-folder": { category: "session", keywords: ["folder", "文件夹", "文件"] },
+  "aiti-folder": { category: "session", keywords: ["folder", "文件夹", "文件", "终端", "terminal"] },
   "aiti-draft-keeper": { category: "session", keywords: ["draft", "草稿"] },
   "aiti-recovery": { category: "session", keywords: ["recovery", "恢复"] },
   "aiti-session-cards": { category: "session", keywords: ["request", "请求卡"] },
@@ -234,16 +235,50 @@ export function hideApp(appId: string): void {
   if (!cur.includes(appId)) writeHidden([...cur, appId]);
 }
 
+/* ── 声明式条目文案 i18n（`i18n:` 前缀，与宿主 translateExtItemText 同级联）──
+ *    宿主渲染静态（零 bundle）条目时会自行翻译 label/title，但 useSlotItems 返回的是
+ *    原始 meta——静态条目未物化期间（如 extman 的 "i18n:ext.shortLabel"）app center
+ *    必须自行解析，否则卡片露出原始 key。 ── */
+
+/** UI locale（localStorage pi-locale，与宿主 useI18n 同源；缺省 en）。 */
+export function currentUiLocale(): string {
+  try {
+    const v = localStorage.getItem("pi-locale");
+    if (v === "zh-CN" || v === "en") return v;
+  } catch { /* ignore */ }
+  return "en";
+}
+
+/** 表级联：当前 locale → 同语短码（zh）→ en → 任一可用表。 */
+export function i18nTableFor(ui18n: Record<string, Record<string, string>> | undefined | null, locale: string): Record<string, string> {
+  if (!ui18n) return {};
+  return ui18n[locale] ?? ui18n[locale.split("-")[0]] ?? ui18n.en ?? Object.values(ui18n)[0] ?? {};
+}
+
+/**
+ * `i18n:` 前缀文案解析：按声明扩展的 manifest ui.i18n 表出成品文案；无前缀原样
+ * 透传；缺表/缺键回退裸 key。返回值恒非空（text 非空时）。
+ */
+export function translateExtItemText(extId: string | undefined, text: string | undefined, ui18n: Record<string, Record<string, string>> | undefined | null, locale: string): string {
+  if (!text) return "";
+  if (!extId || !text.startsWith("i18n:")) return text;
+  const key = text.slice("i18n:".length);
+  return i18nTableFor(ui18n, locale)[key] ?? key;
+}
+
 /* ── 卡片组装（依赖注入形态，便于单测）── */
 
 /** 组装输入：消费方（app-center.tsx hooks）从插槽/manifest 取数后传入；runs 是闭包。 */
 export function buildApps(input: {
-  exts: Array<{ id: string; name?: string; version?: string; description?: string; icon?: string | null; category?: string; features?: Array<{ id: string; type?: string; label?: string; description?: string; category?: string; enabled: boolean }> | null }>;
-  slotItems: Array<{ slot: "toolbar" | "sidebarFooter" | "rightFileDock" | "dialogs"; id: string; extId?: string; meta?: { label?: string; title?: string; icon?: unknown; onClick?: (e?: unknown) => void }; category?: string }>;
+  exts: Array<{ id: string; name?: string; version?: string; description?: string; icon?: string | null; category?: string; ui?: { i18n?: Record<string, Record<string, string>> } | null; features?: Array<{ id: string; type?: string; label?: string; description?: string; category?: string; enabled: boolean }> | null }>;
+  slotItems: Array<{ slot: "toolbar" | "commands" | "sidebarFooter" | "rightFileDock" | "dialogs"; id: string; extId?: string; meta?: { label?: string; title?: string; icon?: unknown; onClick?: (e?: unknown) => void }; category?: string }>;
   featureState: Record<string, boolean>;
   /** 面板打开原语（present 状态机语义糖；UI 层注入，rightFileDock 卡专用）。 */
   openPanel: (key: string) => void;
+  /** UI locale（缺省现读 pi-locale）；locale 切换后由组件层重算触发刷新。 */
+  locale?: string;
 }): AppDescriptor[] {
+  const locale = input.locale ?? currentUiLocale();
   const out: AppDescriptor[] = [];
   const seen = new Set<string>();
   const extById = new Map(input.exts.map((e) => [e.id, e]));
@@ -272,7 +307,12 @@ export function buildApps(input: {
     const id = `${kind}:${fullId}`;
     if (seen.has(id)) continue;
     seen.add(id);
-    const label = String(it.meta?.label ?? it.meta?.title ?? (colon > 0 ? it.id.slice(colon + 1) : it.id));
+    // label/title 支持 "i18n:<key>" 前缀（宿主 translateExtItemText 同款：label 优先，
+    // 空则 title，再空回退 id 尾段）；无前缀文案原样透传。
+    const ui18n = ext?.ui?.i18n;
+    const label = translateExtItemText(extId, it.meta?.label, ui18n, locale)
+      || translateExtItemText(extId, it.meta?.title, ui18n, locale)
+      || String(colon > 0 ? it.id.slice(colon + 1) : it.id);
     out.push({
       id,
       kind,
@@ -297,11 +337,12 @@ export function buildApps(input: {
       const id = `toggle:${ext.id}:${f.id}`;
       if (seen.has(id)) continue;
       seen.add(id);
+      const rawLabel = f.label != null ? String(f.label) : String(f.id);
       out.push({
         id,
         kind: "toggle",
         category: resolveCategory(f.category, ext.category, ext.id),
-        label: String(f.label ?? f.id),
+        label: translateExtItemText(ext.id, rawLabel, ext.ui?.i18n, locale) || rawLabel,
         featureDescription: f.description,
         extId: ext.id,
         extName: ext.name,

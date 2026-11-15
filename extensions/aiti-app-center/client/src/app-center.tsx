@@ -18,10 +18,10 @@ import {
   buildApps, matchApp, viewMode, moreExpandedDefault, categoryLabel, categorySortKey,
   splitByKind, extensionToggleGroups, hardDependents, disableExtension, isToggleId,
   readPinned, readHidden, togglePinned, toggleHidden, hideApp, movePinned, pruneToggleIds,
-  setBooleanFeature, APP_STORE_EVENT,
+  setBooleanFeature, APP_STORE_EVENT, currentUiLocale,
   type AppDescriptor, type ToggleGroup,
 } from "./app-registry";
-import { present, presentState, dockPref } from "../../../_shared/ext-float-dock-core";
+import { openPanel } from "./commands";
 
 /** 触屏（无 hover）：卡片右上角 ☆/? 常显（方案 §5.2）。 */
 const IS_TOUCH = typeof matchMedia === "function" && matchMedia("(hover: none)").matches;
@@ -32,19 +32,7 @@ const DISABLE_PROTECT: Record<string, string> = {
   "aiti-extman": "info.disableManager",
 };
 
-/** 面板打开原语：已停靠 → 原位激活（ACTIVATE 置前）；有偏好 → 落偏好位；否则右栏 tab（dock 面板的宿命位）。 */
-function openPanel(key: string): void {
-  try {
-    const cur = presentState(key);
-    if (cur.startsWith("docked:")) {
-      const zone = cur.slice("docked:".length);
-      if (zone) { present(key, `dock:${zone}`); return; }
-    }
-    const pref = dockPref(key);
-    if (pref && pref !== "float") { present(key, `dock:${pref}`); return; }
-    present(key, "dock:right-panel");
-  } catch { /* ignore */ }
-}
+/** 面板打开原语 openPanel 上提至 ./commands（应用命令提示服务同源消费；本组件改 import）。 */
 
 /** manifest 一次拉取（304 缓存同宿主）；refresh = 禁用后重拉（nonce 变更触发 effect，非轮询）。 */
 function useManifestExts(): { exts: Array<Record<string, any>>; refresh: () => void } {
@@ -419,8 +407,18 @@ export function AppCenter(props: { ctx: Record<string, any> }) {
   const { ctx } = props;
   // 插槽枚举（三槽均非交互槽——宿主 AppShell 启动即读，懒扩展以静态条目+转发器出现，零额外拉取）
   const toolbarItems = (ctx.useSlotItems as (s: string) => any[])?.("toolbar") ?? [];
+  const commandItems = (ctx.useSlotItems as (s: string) => any[])?.("commands") ?? []; // 命令目录槽（无渲染点纯命令，方案 §9）
   const footerItems = (ctx.useSlotItems as (s: string) => any[])?.("sidebarFooter") ?? [];
   const rightDockItems = (ctx.useSlotItems as (s: string) => any[])?.("rightFileDock") ?? [];
+  // UI locale：静态条目的 "i18n:" 标签解析在 buildApps 内按 locale 出成品文案；宿主
+  // useSlotItems 在 locale 切换时数组身份不变（store version 不 bump），须自行订阅
+  // locale 变更事件重算（宿主 ExtSlots.LOCALE_CHANGED_EVENT，跨边界字符串约定）。
+  const [locale, setLocale] = useState(currentUiLocale);
+  useEffect(() => {
+    const on = () => setLocale(currentUiLocale());
+    window.addEventListener("pi-web:locale-changed", on);
+    return () => window.removeEventListener("pi-web:locale-changed", on);
+  }, []);
   const { exts, refresh: refreshManifest } = useManifestExts();
   const { overlay: featureOverlay, dropExt: dropFeatureOverlay } = useFeatureOverlay();
   // 一次性本地迁移（P0-2）：prune 必须先于两个数组的读取——useState 初始化器按声明序在首帧执行。
@@ -453,12 +451,14 @@ export function AppCenter(props: { ctx: Record<string, any> }) {
     exts: exts as any,
     slotItems: [
       ...toolbarItems.map((it: any) => ({ ...it, slot: "toolbar" as const })),
+      ...commandItems.map((it: any) => ({ ...it, slot: "commands" as const })),
       ...footerItems.map((it: any) => ({ ...it, slot: "sidebarFooter" as const })),
       ...rightDockItems.map((it: any) => ({ ...it, slot: "rightFileDock" as const })),
     ],
     featureState,
     openPanel,
-  }), [toolbarItems, footerItems, rightDockItems, exts, featureState]);
+    locale,
+  }), [toolbarItems, commandItems, footerItems, rightDockItems, exts, featureState, locale]);
 
   // 禁用成功 = 乐观移除该扩展全部四类卡（不依赖宿主 store 更新时序；reload 后插槽卡自然消失）
   const apps = useMemo(() => (removedExts.length === 0 ? builtApps : builtApps.filter((a) => !removedExts.includes(a.extId))), [builtApps, removedExts]);
