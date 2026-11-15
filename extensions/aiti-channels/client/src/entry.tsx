@@ -21,8 +21,8 @@ export default function register(ctx: Record<string, unknown>) {
   ctx.registerItems?.("toolbar", [{
     id: "aiti-channels-open",
     meta: {
-      label: "IM 渠道",
-      title: "IM 渠道：cc-connect 托管 + 渠道管理台",
+      label: "i18n:channels.open",
+      title: "i18n:channels.app.title",
       icon: "icons/message-circle.svg",
       onClick: () => openFromToolbar(),
     },
