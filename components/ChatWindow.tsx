@@ -2323,7 +2323,13 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
 
       
 
-      <div ref={bottomComposerRef} className="relative flex min-h-0 flex-col">
+      {/* shrink-0 on the welcome page only: the composer must never be flex-squeezed.
+          With a multi-line textarea (auto-grow up to 200px) in a short viewport the old
+          shrinkable container got compressed while the textarea kept its height and
+          overflowed over the widget zone below it (measured 139px overlap at 390x420,
+          2026-11-15). Session view keeps the old behavior (compact/stacked + bottomMode
+          folding already handle short viewports there). */}
+      <div ref={bottomComposerRef} className={`relative flex min-h-0 flex-col${isEmptyNew ? " shrink-0" : ""}`}>
         {!isEmptyNew && (
           <div
             style={{

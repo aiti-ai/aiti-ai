@@ -537,6 +537,9 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
           render: it.render,
           meta: it.meta,
           ...(it.feature ? { feature: it.feature } : {}),
+          // widget settings contract (newSessionWidgets etc.): { label?, render({ close }) }
+          // surfaced as a ✎ button in the host customize panel; pass through untouched
+          ...((it as { settings?: unknown }).settings ? { settings: (it as { settings?: unknown }).settings } : {}),
         })),
         ext.id,
       );

@@ -1911,6 +1911,7 @@ export const zhTWLocale: LocalePlugin = {
     "nsw.recentEmpty": "暫無最近會話",
     "nsw.customize": "自訂小工具",
     "nsw.edit": "編輯",
+    "nsw.editWidget": "編輯內容",
     "nsw.add": "新增小工具",
     "nsw.top": "頂部",
     "nsw.bottom": "底部",
