@@ -119,7 +119,8 @@ async function main() {
 
   git(["tag", "-a", plan.tag, "-m", `aiti-ai release ${plan.version}`]);
   console.log(`[release-tag] ✓ 已创建 ${plan.tag}`);
-  console.log(`[release-tag] 下一步：git push origin ${plan.tag}  （触发 release.yml：构建四平台产物 + GitHub Release）`);
+  console.log(`[release-tag] 下一步：git push origin ${plan.tag}`);
+  console.log(`[release-tag] 之后：gh workflow run release.yml --ref ${plan.tag}  （workflow_dispatch-only，push tag 不会自动触发；主包发布用 gh workflow run publish.yml --ref ${plan.tag}）`);
 }
 
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
