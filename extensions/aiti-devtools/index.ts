@@ -141,7 +141,16 @@ export default {
   ],
 
   ui: {
-    toolbar: [{ id: "aiti-open", label: "AITI", title: "aiti devtools：注入端口管理 + AI 调试界面", icon: "icons/wrench.svg" }],
+    toolbar: [{ id: "aiti-open", label: "AITI", title: "i18n:dt.open.title", icon: "icons/wrench.svg" }],
+    i18n: {
+      "zh-CN": {
+      "dt.open.title": "aiti devtools：注入端口管理 + AI 调试界面",
+      },
+      en: {
+      "dt.open.title": "aiti devtools: injection endpoints + AI debugging UI",
+      },
+    },
+
     dialogs: [{ id: "aiti-dialog", label: "AITI devtools" }],
   },
 
