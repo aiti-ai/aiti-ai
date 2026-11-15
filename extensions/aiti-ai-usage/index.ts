@@ -87,11 +87,13 @@ export default {
     // [懒加载 v2] 纯报表面板：开页不拉 client bundle（82KB）——toolbar 静态按钮点击经
     // meta.onClick 物化打开；sessionStats 是交互插槽（打开会话信息时自动物化）。
     clientImmediately: false,
-    toolbar: [{ id: "usage", label: "用量", title: "AI 用量报表", icon: "icons/chart-column.svg" }],
+    toolbar: [{ id: "usage", label: "i18n:au.app.label", title: "i18n:au.app.title", icon: "icons/chart-column.svg" }],
     sessionStats: [{ id: "report-entry", label: "用量报表按钮", title: "会话统计下拉内「用量报表」入口" }],
     dialogs: [{ id: "report", label: "AI 用量报表" }],
     i18n: {
       en: {
+        "au.app.label": "Usage",
+        "au.app.title": "AI usage report",
         "au.title": "AI Usage Report",
         "au.entry": "Usage Report",
         "au.tabOverview": "Overview",
@@ -221,6 +223,8 @@ export default {
         "au.quote.fileref": "@file mention",
       },
       "zh-CN": {
+        "au.app.label": "用量",
+        "au.app.title": "AI 用量报表",
         "au.title": "AI 用量报表",
         "au.entry": "用量报表",
         "au.tabOverview": "总览",
