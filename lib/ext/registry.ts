@@ -74,6 +74,8 @@ const UI_SLOT_KEYS = [
   "pages",
   "chatInputTop",
   "commands",          // command catalog — no render point (dialogs-type); consumed by aiti-app-center / input command hints
+  "fileViewer",        // file view/edit takeover items (historical omission in this list — slots/status never listed them)
+  "pathPicker",        // directory-picker capability items (same historical omission)
   "sidebarExplorerDock", // float-dock extension v0.5.0: sidebar dock zone
   "rightFileDock",       // float-dock extension v0.5.0: right dock zone (tabbed)
   "sidebarTasks",        // float-dock extension v0.5.1: sidebar tasks zone
