@@ -304,6 +304,7 @@ export function registerStaticItems(
         title: decl.meta?.title ?? decl.title,
         badge: decl.meta?.badge ?? decl.badge,
         noMenuLabel: decl.meta?.noMenuLabel,
+        hidden: decl.meta?.hidden ?? (decl as { hidden?: boolean }).hidden, // 静态条目隐藏标记（底行收编不渲染，快速上手闪现修复）
         icon: decl.meta?.icon ?? decl.icon,
         onClick: (e?: unknown) => {
           void Promise.resolve(staticClickHandler?.(extId, compositeId, slot, e)).catch(() => {});

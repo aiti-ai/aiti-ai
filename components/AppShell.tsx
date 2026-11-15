@@ -3275,7 +3275,8 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   // meta.onClick (staticClickForwarder → materialize → forward to the registered
   // item's behavior). Same rules as toolbar declarative items; after materialization
   // the registered item overrides the same id and the static entry retires naturally.
-  const sidebarFooterStaticItems = useExtSlotItems("sidebarFooter").filter((it) => it.static && !hasExtRender(it));
+  const sidebarFooterStaticItems = useExtSlotItems("sidebarFooter").filter((it) => it.static && !hasExtRender(it)
+    && (it.meta as { hidden?: boolean } | undefined)?.hidden !== true); // hidden：仅收编/转发，不渲染按钮（快速上手闪现修复）
   // Extension-level metadata (manifest name/icon) — used to label the extension in panels
   const extMetas = useExtMetas();
 
