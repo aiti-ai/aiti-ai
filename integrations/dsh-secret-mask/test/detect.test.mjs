@@ -1,0 +1,162 @@
+// Detection rules: positive matches + near misses (shape-adjacent non-secrets).
+// Fake values only — never real credentials in fixtures. Fixed-length token
+// shapes get exact-length high-entropy fakes (real tokens are fixed-length and
+// the regexes enforce it; low-entropy doc samples like AKIA...EXAMPLE are
+// intentionally rejected by the filler guard).
+import assert from "node:assert/strict";
+import { randomInt } from "node:crypto";
+import { test } from "node:test";
+import { scan, entropy, fnv1a } from "../src/core/detect.ts";
+
+const B36 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+const A2Z7 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+const ALPHA = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const rand = (n, chars) => Array.from({ length: n }, () => chars[randomInt(chars.length)]).join("");
+
+const ids = (hits) => hits.map((h) => h.id);
+
+test("prefix tokens: positive matches", () => {
+  const text = [
+    `aws AKIA${rand(16, A2Z7)} key`,
+    `github ghp_${rand(36, B36)}`,
+    `gitlab glpat-${rand(24, B36 + "_-")}`,
+    `slack xoxb-123456789012-${rand(24, B36)}`,
+    `stripe sk_live_${rand(24, B36)}`,
+    `sendgrid SG.${rand(22, B36)}.${rand(43, B36)}`,
+    `twilio SK${rand(32, "0123456789abcdef")}`,
+    `google AIza${rand(35, B36 + "_-")}`,
+    `goog oauth GOCSPX-${rand(28, B36 + "_-")}`,
+    `anthropic sk-ant-api03-${rand(40, B36 + "_-")}`,
+    `hf hf_${rand(34, ALPHA)}`,
+    `npm npm_${rand(36, B36)}`,
+    `pypi pypi-AgEIcHlwaS5vcmc${rand(60, B36 + "_-")}`,
+    `azure AccountKey = ${rand(86, B36 + "+")}==`,
+  ].join("\n");
+  const hits = scan(text);
+  for (const id of [
+    "aws-access-key", "github-token", "gitlab-pat", "slack-token", "stripe-live-key", "sendgrid-key", "twilio-key",
+    "google-api-key", "google-oauth-secret", "anthropic-key", "huggingface-token", "npm-token", "pypi-token",
+    "azure-storage-key",
+  ]) {
+    assert.ok(ids(hits).includes(id), `missing ${id} (got ${JSON.stringify(ids(hits))})`);
+  }
+});
+
+test("doc-sample low-entropy AWS key is rejected by the filler guard", () => {
+  assert.equal(ids(scan("aws AKIAIOSFODNN7EXAMPLE")).includes("aws-access-key"), false);
+});
+
+test("openai key shapes", () => {
+  const legacy = scan(`key: sk-${rand(20, B36)}T3BlbkFJ${rand(20, B36)}`);
+  assert.equal(ids(legacy).includes("openai-key"), true);
+  const proj = scan(`key: sk-proj-${rand(48, B36 + "_-")}`);
+  assert.equal(ids(proj).includes("openai-key"), true);
+  const plain48 = scan(`key: sk-${rand(48, B36)}`);
+  assert.equal(ids(plain48).includes("openai-key"), true);
+});
+
+test("jwt: only with alg header", () => {
+  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify({ sub: "1" })).toString("base64url");
+  const jwt = `${header}.${payload}.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJVadQssw5c`;
+  assert.equal(ids(scan(`auth ${jwt}`)).includes("jwt"), true);
+  const noAlgHeader = Buffer.from(JSON.stringify({ typ: "JWT" })).toString("base64url");
+  assert.equal(ids(scan(`auth ${noAlgHeader}.${payload}.sig`)).includes("jwt"), false);
+});
+
+test("private key complete and truncated", () => {
+  const body = Array.from({ length: 8 }, (_, i) => `AAAA${i}abcdefghijklmnopqrstuvwx`).join("\n");
+  const pem = `-----BEGIN RSA PRIVATE KEY-----\n${body}\n-----END RSA PRIVATE KEY-----`;
+  assert.equal(ids(scan(pem)).includes("private-key"), true);
+  const B64BODY = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const truncated = `-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n${rand(48, B64BODY)}\n${rand(48, B64BODY)}\n${rand(48, B64BODY)}`;
+  assert.equal(ids(scan(truncated)).includes("private-key-truncated"), true);
+});
+
+test("db url with real password", () => {
+  const hit = scan("connect postgres://admin:7fJk2mN9pQrStUv@db.example.com:5432/app");
+  assert.equal(ids(hit).includes("db-connection-url"), true);
+  const placeholder = scan("postgres://user:{{DB_PASS}}@db.example.com/db");
+  assert.equal(ids(placeholder).includes("db-connection-url"), false);
+  const nopass = scan("postgres://admin@db.example.com:5432/app");
+  assert.equal(ids(nopass).includes("db-connection-url"), false);
+});
+
+test("auth header value", () => {
+  const hit = scan("Authorization: Bearer 8fKj2LmNpQrStUvWxYz0123456789");
+  assert.equal(ids(hit).includes("auth-header"), true);
+});
+
+test("generic assignment: high entropy caught, near misses pass", () => {
+  const caughtQuoted = scan('api_key = "7fJk2mN9pQrStUvWx3y4z5A6b7C8d9E0"');
+  assert.equal(ids(caughtQuoted).includes("generic-secret-quoted"), true, "quoted assignment");
+  const caught = scan('api_key = 7fJk2mN9pQrStUvWx3y4z5A6b7C8d9E0');
+  assert.equal(ids(caught).includes("generic-secret"), true, "bare assignment");
+  const caughtConst = scan('const SECRET = "9pQrStUvWx3y4z5A6b7C8d9E0f1G2h3I";');
+  assert.ok(ids(caughtConst).includes("generic-secret-quoted") || ids(caughtConst).includes("generic-secret"), "quoted/const form");
+  // near misses: template slot, env reference, low entropy, code identifier
+  assert.equal(ids(scan('password = "${DB_PASSWORD}"')).includes("generic-secret"), false);
+  assert.equal(ids(scan("token = process.env.API_TOKEN")).includes("generic-secret"), false);
+  assert.equal(ids(scan('password = "aaaaaaaaaaaaaa"')).includes("generic-secret"), false);
+  assert.equal(ids(scan("apiKey = getToken()")).includes("generic-secret"), false);
+  assert.equal(ids(scan('password = "hunter2"')).includes("generic-secret"), false, "short low-entropy");
+  assert.equal(ids(scan("token: changeme")).includes("generic-secret"), false);
+});
+
+test("keyword boundary: OAuth/auth-inside-word not triggered", () => {
+  assert.equal(ids(scan('const authorName = "someWriterName";')).includes("generic-secret-quoted"), false);
+});
+
+test("base64-wrapped prefix token caught whole", () => {
+  const token = "ghp_" + rand(36, B36);
+  const wrapped = Buffer.from(token).toString("base64");
+  const hits = scan(`payload ${wrapped}`);
+  assert.equal(ids(hits).some((id) => id.startsWith("github-token")), true, JSON.stringify(hits.map((h) => h.id)));
+});
+
+test("placeholders already present are protected", () => {
+  const text = 'the key [REDACTED:api-key] stays hidden; api_key = "9pQrStUvWx3y4z5A6b7C8d9E0" also hidden';
+  const hits = scan(text);
+  for (const h of hits) {
+    assert.ok(!text.slice(h.start, h.end).includes("[REDACTED:"), "no hit inside placeholder");
+  }
+  assert.ok(hits.some((h) => h.id.startsWith("generic-secret")), "generic still detected after placeholder");
+});
+
+test("hits are positional, non-overlapping", () => {
+  const a = "ghp_" + rand(36, B36);
+  const b = "AKIA" + rand(16, A2Z7);
+  const hits = scan(`${a} then ${b}`);
+  assert.equal(hits.length, 2);
+  assert.ok(hits[0].start < hits[1].start);
+  assert.ok(hits[0].end <= hits[1].start);
+});
+
+test("CJK keywords: 密码/密钥/授权码/令牌 with fullwidth colon and latin-CJK adjacency", () => {
+  const V = "7fJk2mN9pQrStUvWx3y4z5A6b7C8d9E0";
+  const V2 = "aB3xK9mQ2wR5tY8uI0oP1aS2dF3gH4jK";
+  assert.equal(ids(scan(`数据库密码 = "${V}"`)).includes("generic-secret-quoted"), true);
+  assert.equal(ids(scan(`密码 = ${V}`)).includes("generic-secret"), true);
+  assert.equal(ids(scan(`授权码：${V2}`)).includes("generic-secret"), true, "fullwidth colon");
+  assert.equal(ids(scan(`API密钥: "${V}"`)).includes("generic-secret-quoted"), true, "latin-CJK adjacency");
+  assert.equal(ids(scan(`db密码 = "${V}"`)).includes("generic-secret-quoted"), true, "latin-CJK adjacency 2");
+  assert.equal(ids(scan(`令牌 = "${V}"`)).includes("generic-secret-quoted"), true);
+  assert.equal(ids(scan(`秘钥：${V2}`)).includes("generic-secret"), true);
+  assert.equal(ids(scan(`Authorization：Bearer ${V2}`)).includes("auth-header"), true, "fullwidth colon in auth header");
+  // near misses
+  assert.equal(ids(scan(`密码规则如下：不得包含用户名`)).length, 0, "keyword followed by CJK prose");
+  assert.equal(ids(scan(`密码策略：长度至少8位`)).length, 0, "policy text");
+  assert.equal(ids(scan(`访问令牌：{{token}}`)).length, 0, "template slot");
+  assert.equal(ids(scan(`密码 = abc123`)).length, 0, "short low-entropy value");
+});
+
+test("entropy helper sanity", () => {
+  assert.ok(entropy("aaaaaaaaaaaa") < 0.1);
+  assert.ok(entropy("7fJk2mN9pQrStUvWx3y4") > 3.5);
+});
+
+test("fnv1a stable and hex8", () => {
+  assert.equal(fnv1a("hello"), fnv1a("hello"));
+  assert.notEqual(fnv1a("hello"), fnv1a("hellp"));
+  assert.match(fnv1a("x"), /^[0-9a-f]{8}$/);
+});
