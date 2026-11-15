@@ -8,7 +8,8 @@
  * 小屏收敛：顶栏宽度不足（ResizeObserver 实测 < COMPACT_AT）时进入 compact 态——
  * ‹› 遍历/计数/⬇/↗/类型·大小 标签全部收进 ⋯ 菜单（‹› 变「上一个/下一个文件」菜单项），
  * 只留 状态点 + 路径 + @ + 插槽（保存/模式切换）+ ⋯；@ 是最高优先级动作恒留外面。
- * 更小屏（< MODE_DROPDOWN_AT）：modes 模式切换（编辑/分栏/预览）从内联 tabs 变下拉，进一步省空间。
+ * modes 模式切换（编辑/分栏/预览）默认内联 tabs；空间不够时才变下拉——判据用弹性占位的实测宽度
+ * （= 顶栏剩余空间，天然涵盖 git 徽标/保存按钮/信息位等真实占用），带滞回防抖。
  */
 import { useState, useEffect, useRef } from "react";
 import { extSvc } from "./host-shim";
@@ -18,8 +19,12 @@ export type MenuAction = { label: string; title?: string; /** 可选图标（Rea
 
 /** 顶栏宽度低于该值（px）判定为小屏 compact 态：次要按钮收进 ⋯ 菜单 */
 const COMPACT_AT = 620;
-/** 顶栏宽度低于该值（px）：modes 模式切换从内联 tabs 变下拉（很小屏进一步省空间） */
-const MODE_DROPDOWN_AT = 500;
+/** modes 模式切换内联↔下拉的空间判据（px，读弹性占位宽度）：
+ *  下拉→内联：占位 ≥ MODE_INLINE_NEED（≈ 内联 tabs 比下拉钮多占的 ~90px + 余量，切换后仍留正空隙）；
+ *  内联→下拉：占位被压到 minWidth(8) 附近（≤ MODE_INLINE_SQUEEZED）= 内容真挤不下。
+ *  两阈值间隔大于切换带来的宽度差 → 滞回，来回拖拽不会抖动。 */
+const MODE_INLINE_NEED = 114;
+const MODE_INLINE_SQUEEZED = 10;
 
 /** 终端图标（> _ 线稿）；与 aiti-folder 菜单图标体系对齐 */
 function TerminalIcon() {
@@ -81,7 +86,7 @@ export function FileToolbar(props: {
   notice?: { kind: string; text: string } | null;
   /** 左侧插槽：静态自定义元素（模式切换请用 modes——小屏自动变下拉） */
   leading?: any;
-  /** 模式切换（markdown 编辑/分栏/预览等）：普通宽度渲染内联 tabs，很小屏（< MODE_DROPDOWN_AT）自动变下拉（当前项 ✓）。
+  /** 模式切换（markdown 编辑/分栏/预览等）：空间足够时渲染内联 tabs，不够时自动变下拉（当前项 ✓）。
    *  item.disabled = 禁用态（如无 edit 能力时「编辑」项），disabledTitle 替代 title 说明禁用原因。 */
   modes?: { items: { label: string; value: string; title?: string; disabled?: boolean; disabledTitle?: string }[]; value: string; onChange: (v: string) => void };
   /** 「打开方式」（M0 多编辑器仲裁，§1.4 位置 A）：命中队列全列；行点击 = 仅本次切换，
@@ -162,24 +167,35 @@ export function FileToolbar(props: {
     document.addEventListener("mousedown", h);
     return () => document.removeEventListener("mousedown", h);
   }, [owOpen]);
-  // 小屏收敛：顶栏实测宽度 < COMPACT_AT → 次要按钮收进 ⋯ 菜单；< MODE_DROPDOWN_AT → modes 变下拉
-  // （同一次 RO 实测派生两档，事件驱动非轮询）
+  // 小屏收敛：顶栏实测宽度 < COMPACT_AT → 次要按钮收进 ⋯ 菜单；
+  // modes 内联↔下拉看弹性占位实测宽度（= 剩余空间的直接读数，事件驱动非轮询非估算）
   const [compact, setCompact] = useState(false);
   const [tiny, setTiny] = useState(false);
+  const spacerRef = useRef<any>(null);
+  const measure = () => {
+    const el = barRef.current;
+    if (!el) return;
+    setCompact(el.clientWidth < COMPACT_AT);
+    const sp = spacerRef.current ? spacerRef.current.clientWidth : 0;
+    // 滞回：下拉态占位≥NEED 才升内联；内联态占位≤SQUEEZED 才降回下拉（两阈值间隔大于切换宽度差，不抖）
+    setTiny((cur) => (cur ? sp < MODE_INLINE_NEED : sp <= MODE_INLINE_SQUEEZED));
+  };
   useEffect(() => {
     const el = barRef.current;
     if (!el) return;
-    const update = () => { setCompact(el.clientWidth < COMPACT_AT); setTiny(el.clientWidth < MODE_DROPDOWN_AT); };
-    update();
+    measure();
     let ro: any = null;
     if (typeof ResizeObserver !== "undefined") {
-      ro = new ResizeObserver(update);
+      ro = new ResizeObserver(measure);
       ro.observe(el);
     } else {
-      window.addEventListener("resize", update);
+      window.addEventListener("resize", measure);
     }
-    return () => { if (ro) ro.disconnect(); else window.removeEventListener("resize", update); };
+    return () => { if (ro) ro.disconnect(); else window.removeEventListener("resize", measure); };
   }, []);
+  // 内容变化（dirty 保存钮出现/消失、notice、git 徽标…）不改顶栏总宽，RO 不触发——渲染后补测一次兜底
+  // （measure 幂等，值不变时 setState bail-out，无循环风险；host-shim 未导出 useLayoutEffect，用 useEffect）
+  useEffect(measure);
 
   // modes 下拉（很小屏态）：点外部关闭
   const [modeOpen, setModeOpen] = useState(false);
@@ -327,11 +343,11 @@ export function FileToolbar(props: {
       )}
       {/* 信息位：类型 · 大小 · 时长 · 实时态（紧随文件名/‹›遍历之后） */}
       {infoAfterNav}
-      {/* 弹性占位：把右侧按钮簇推到最右 */}
-      <span style={{ flex: "1 1 auto", minWidth: 8 }} />
+      {/* 弹性占位：把右侧按钮簇推到最右；宽度即顶栏剩余空间，供 modes 内联↔下拉判据实测 */}
+      <span ref={spacerRef} style={{ flex: "1 1 auto", minWidth: 8 }} />
       {/* 通知（可收缩：行宽不够时自身省略号收敛，绝不把右侧按钮簇/⋮ 顶出可视区） */}
       {notice && <span style={{ color: notice.kind === "err" ? "var(--danger, #f87171)" : notice.kind === "ok" ? "var(--ok, #4ade80)" : "var(--warn, #f59e0b)", marginRight: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: compact ? 90 : 160, flexShrink: 1, minWidth: 0 }}>{notice.text}</span>}
-      {/* 模式切换（编辑/分栏/预览等）：普通宽度内联 tabs；很小屏（< MODE_DROPDOWN_AT）变下拉进一步省空间 */}
+      {/* 模式切换（编辑/分栏/预览等）：空间足够（弹性占位实测）内联 tabs；挤不下才变下拉进一步省空间 */}
       {modes && !tiny && (
         <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
           {modes.items.map((m) => (

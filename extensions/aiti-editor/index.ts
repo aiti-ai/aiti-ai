@@ -789,8 +789,19 @@ export default {
     // 此静态声明供宿主懒加载清单发现——刷新后存在 docked 文件实例时，消费这些插槽才知道
     // 要物化本扩展回归 face；图片浮层条目同理（dialogs 是宿主常挂插槽）。
     dialogs: [{ id: "file", label: "文件" }, { id: "image-preview", label: "图片预览" }],
-    sidebarExplorerDock: [{ id: "file", label: "文件" }],
-    rightFileDock: [{ id: "file", label: "文件" }, { id: "image-preview", label: "图片预览" }],
+    sidebarExplorerDock: [{ id: "file", label: "i18n:ed.file.label" }],
+    rightFileDock: [{ id: "file", label: "i18n:ed.file.label" }, { id: "image-preview", label: "i18n:ed.image.label" }],
+    i18n: {
+      "zh-CN": {
+      "ed.file.label": "文件",
+      "ed.image.label": "图片预览",
+      },
+      en: {
+      "ed.file.label": "Files",
+      "ed.image.label": "Image preview",
+      },
+    },
+
   },
   features: [
     { id: "editor.text", label: "文本文件编辑", description: "接管文本类文件为 Monaco 在线编辑器（未命中时回退核心只读查看器）", default: true },
