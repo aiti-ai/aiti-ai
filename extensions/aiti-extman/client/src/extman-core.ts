@@ -5,6 +5,7 @@
  * 宿主能力（t/apiUrl）经 host-shim 委托；reloadExtensions/extLoaderState 由 entry.tsx 注入。
  */
 import { t, apiUrl } from "./host-shim";
+import { typoMatch } from "./typo-search.mjs";
 import { EXT_DISPLAY_NAMES } from "../../../_shared/ext-display-names";
 import { openFloat, closePanel } from "../../../_shared/ext-float-dock";
 
@@ -62,6 +63,9 @@ export const state = {
   registryData: null as any,  // aiti.pw /extensions.json
   registryError: null as string | null,
   registryLoaded: false,
+  // npm 更新检查（pi package-manager 同策略）：{ <extId>: { pkg, installed, latest, hasUpdate } }
+  updates: null as Record<string, { pkg: string; installed: string; latest: string; hasUpdate: boolean }> | null,
+  updatesChecking: false,
   isMobile: false,
   // VSCode 式 trust：待确认的发行者（{kind:"source"|"zip", source, docsUrl?, id?, publisher, file?, zipName?}）
   pendingTrust: null as any,
@@ -608,6 +612,58 @@ export async function loadRegistry() {
   }
 }
 
+let updatesInFlight: Promise<void> | null = null;
+/**
+ * npm 包更新检查（pi package-manager 同策略：打开面板/手动刷新时各查一次，非轮询；
+ * 服务端 5min 缓存，force=1 绕过）。失败静默——更新提示是增强信息，不阻塞主流程。
+ */
+export async function loadUpdates(force = false) {
+  if (updatesInFlight) return updatesInFlight;
+  const p = (async () => {
+    setState({ updatesChecking: true });
+    try {
+      const r = await fetch(apiUrl("/api/extensions/aiti-extman/updates" + (force ? "?force=1" : "")), { cache: "no-store" });
+      const d = await r.json();
+      if (!r.ok || d.error) throw new Error(d.error || "HTTP " + r.status);
+      setState({ updates: d.updates || {}, updatesChecking: false });
+    } catch {
+      setState({ updatesChecking: false }); // 静默失败
+    } finally {
+      updatesInFlight = null;
+    }
+  })();
+  updatesInFlight = p;
+  return p;
+}
+
+/** 轻量 semver gt（与服务端 semverGt 同逻辑：numeric x.y.z[-pre]，prerelease 逐段）。 */
+export function semverGt(a: string, b: string): boolean {
+  const parse = (v: string) => {
+    const m = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+.*)?$/.exec(String(v).trim());
+    return m ? { nums: [Number(m[1]), Number(m[2]), Number(m[3])], pre: m[4] ?? null } : null;
+  };
+  const pa = parse(a);
+  const pb = parse(b);
+  if (!pa || !pb) return false;
+  for (let i = 0; i < 3; i++) if (pa.nums[i] !== pb.nums[i]) return pa.nums[i] > pb.nums[i];
+  if (pa.pre && pb.pre) {
+    const xa = pa.pre.split(".");
+    const xb = pb.pre.split(".");
+    for (let i = 0; i < Math.max(xa.length, xb.length); i++) {
+      const x = xa[i];
+      const y = xb[i];
+      if (x === undefined) return false;
+      if (y === undefined) return true;
+      if (/^\d+$/.test(x) && /^\d+$/.test(y)) { const d = Number(x) - Number(y); if (d) return d > 0; }
+      else if (x !== y) return x > y;
+    }
+    return false;
+  }
+  if (pa.pre) return false;
+  if (pb.pre) return true;
+  return false;
+}
+
 /**
  * 操作入口（UI 层统一走这里）：disable/remove 前做依赖影响检查——
  * 存在已启用依赖者（clientDependsOn 指向它）时改弹自绘确认（pendingDependents），
@@ -686,6 +742,8 @@ export async function execOp(action: string, extra: Record<string, unknown>) {
     };
     setState({ message: installProtocolHint(t(msgs[action] || "ext.msgReloaded"), action === "install" ? (d as any)?.protocolCheck : null), busyKey: null, applying: null });
     if (action === "trust" || action === "untrust" || action === "install") void refreshTrusted();
+    // 安装/卸载改变了本地版本 → 强制重查 npm 更新（服务端缓存已随 install/remove 作废，这里 force 拉新）
+    if (action === "install" || action === "remove") void loadUpdates(true);
   } catch (e) {
     setState({ error: String((e as any) && (e as any).message || e), busyKey: null, applying: null });
     console.error('[aiti-extman] ❌ ' + String((e as any) && (e as any).message || e))
@@ -739,6 +797,7 @@ export async function runInstallZip(file: File, trust?: boolean) {
     await syncClient();
     setState({ message: installProtocolHint(t("ext.msgInstalled"), (d as any)?.protocolCheck), busyKey: null, applying: null });
     void refreshTrusted();
+    void loadUpdates(true); // zip 覆盖安装后版本可能已变
   } catch (e) {
     setState({ error: String((e as any) && (e as any).message || e), busyKey: null, applying: null });
     console.error('[aiti-extman] ❌ ' + String((e as any) && (e as any).message || e))
@@ -766,21 +825,26 @@ export function subscribeAll(fn: () => void): () => void {
   return () => { unsubState(); window.removeEventListener("pi-web:locale-changed", onLocale); };
 }
 
-/** 本地条目是否命中搜索（id / name / 描述字段；双语名都参与匹配）。 */
+/** 本地条目是否命中搜索（id / name / 描述字段；双语名都参与匹配；错字容忍与拼音搜索见各 helper）。 */
 export function localMatches(id: string, e: any, q: string) {
   if (!q) return true;
   const s = q.toLowerCase();
   const names = EXT_DISPLAY_NAMES[id] ? EXT_DISPLAY_NAMES[id].en + " " + EXT_DISPLAY_NAMES[id].zh : "";
-  return (id + " " + (e.name || "") + " " + names + " " + ((e.packageInfo && e.packageInfo.name) || "")).toLowerCase().includes(s);
+  const hay = (id + " " + (e.name || "") + " " + names + " " + ((e.packageInfo && e.packageInfo.name) || "") + " " + (e.pinyin || "")).toLowerCase();
+  const qNorm = s.replace(/\s+/g, ""); // fuwu suidao → fuwusuidao（拼音连写匹配；额外宽松形态）
+  return hay.includes(s) || (!!qNorm && hay.includes(qNorm)) || typoMatch(q, hay) || (!!qNorm && typoMatch(qNorm, hay));
 }
 
-/** 在线条目是否命中搜索（双语名都参与匹配）。 */
+/** 在线条目是否命中搜索（双语名都参与匹配；错字容忍同上；拼音复用本地同 id 条目的富化字段）。 */
 export function onlineMatches(ext: any, q: string) {
   if (!q) return false; // 空搜索只显示本地
   const s = q.toLowerCase();
   const names = EXT_DISPLAY_NAMES[ext.id] ? EXT_DISPLAY_NAMES[ext.id].en + " " + EXT_DISPLAY_NAMES[ext.id].zh : "";
-  return [ext.id, ext.name, names, ext.description, ext.category, (ext.tags || []).join(" ")]
-    .filter(Boolean).join(" ").toLowerCase().includes(s);
+  const pinyin = (state.status && state.status.extensions && state.status.extensions[ext.id] && state.status.extensions[ext.id].pinyin) || "";
+  const hay = [ext.id, ext.name, names, ext.description, ext.category, (ext.tags || []).join(" "), pinyin]
+    .filter(Boolean).join(" ").toLowerCase();
+  const qNorm = s.replace(/\s+/g, "");
+  return hay.includes(s) || (!!qNorm && hay.includes(qNorm)) || typoMatch(q, hay) || (!!qNorm && typoMatch(qNorm, hay));
 }
 
 // ---------- 在线注册表辅助 ----------
