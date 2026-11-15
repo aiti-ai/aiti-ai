@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-service-tunnels",
-  "version": "0.3.84",
+  "version": "0.3.86",
   "type": "module",
   "aiti": {
     "kind": "ext",
