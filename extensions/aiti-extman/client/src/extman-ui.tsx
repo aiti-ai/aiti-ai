@@ -13,7 +13,7 @@ import {
   refreshTrusted, refreshStatus, sortedLocalIds, loadRegistry, loadUpdates, runOp, runInstallZip,
   localMatches, onlineMatches, registryDocUrl, registryInstallSource, onlinePublisher, syncLoader, semverGt,
   extDisplayName, subscribeAll, dependentsOf, execOp, depEdges, hardDependents, clientDependents,
-  invokeHelper,
+  invokeHelper, extUi18nExact,
   EXTMAN_KEY,
 } from "./extman-core";
 import { t, apiUrl } from "./host-shim";
@@ -1059,7 +1059,7 @@ function ExtManContent(): any {
                           onMouseLeave={(ev) => { if (!isSel) ev.currentTarget.style.background = "none"; }}>
                           <div style={{ minWidth: 0, flex: 1 }}>
                             {/* 第一行：名字（中英文展示名优先，按界面语言切换；缺省回退包名） */}
-                            <div title={ext.description || ext.id} style={{
+                            <div title={extUi18nExact(ext.id)["ext.description"] || ext.description || ext.id} style={{
                               fontSize: 12, fontWeight: isSel ? 600 : 500, color: "var(--text)",
                               display: "flex", alignItems: "center", gap: 5, minWidth: 0,
                             }}>
@@ -1071,8 +1071,8 @@ function ExtManContent(): any {
                             <div style={{ fontSize: 11, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 2 }}>
                               {[
                                 extDisplayName(ext.id, ext.name) !== ext.id ? <span key="pkg" style={{ fontFamily: "var(--font-mono)" }}>{ext.id}</span> : null,
-                                ext.description
-                                  ? (extDisplayName(ext.id, ext.name) !== ext.id ? " · " + ext.description : ext.description)
+                                (extUi18nExact(ext.id)["ext.description"] || ext.description || "")
+                                  ? (extDisplayName(ext.id, ext.name) !== ext.id ? " · " + (extUi18nExact(ext.id)["ext.description"] || ext.description) : (extUi18nExact(ext.id)["ext.description"] || ext.description))
                                   : null,
                               ]}
                             </div>
@@ -1269,7 +1269,7 @@ function LocalDetail({ id, entry }: { id: string; entry: any }) {
         <InfoRow label={t("ext.status")}>
           <span style={{ color: statusDotColor(entry) }}>{entry.error ? "error" : !enabled ? t("ext.disabled") : entry.loaded ? "loaded" : "—"}</span>
         </InfoRow>
-        <InfoRow label={t("ext.name")}><span>{extDisplayName(id, entry.name)}</span></InfoRow>
+        <InfoRow label={t("ext.fieldName")}><span>{extDisplayName(id, entry.name)}</span></InfoRow>
         <InfoRow label={t("ext.version")}>
           <span style={{ fontFamily: "var(--font-mono)" }}>
             {entry.version || "—"}{pkg.version && pkg.version !== entry.version ? " (package " + pkg.version + ")" : ""}
@@ -1608,12 +1608,12 @@ function FeaturePanel({ id, features }: { id: string; features: any[] }) {
                         label={(f.enabled === false ? t("ext.enable") : t("ext.disable")) + " " + f.id} />}
                   <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0, flex: 1 }}>
                     <div style={{ display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap" }}>
-                      <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)" }}>{f.label}</span>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)" }}>{extUi18nExact(id)["feat." + f.id] || f.label}</span>
                       {isString && <span style={chipStyle("#2563eb", "rgba(37,99,235,0.12)")}>{f.type === "textlist" ? t("ext.featureTypeTextlist") : t("ext.featureTypeText")}</span>}
                       {!isString && f.default === false && <span style={chipStyle("rgba(217,119,6,0.9)", "rgba(217,119,6,0.12)")}>{t("ext.featureDefaultOff")}</span>}
                       {!isString && f.enabled === false && <span style={chipStyle("var(--danger, #ef4444)", "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)")}>{t("ext.disabled")}</span>}
                     </div>
-                    {f.description && <div style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.45 }}>{f.description}</div>}
+                    {extUi18nExact(id)["feat." + f.id + ".desc"] || f.description ? <div style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.45 }}>{extUi18nExact(id)["feat." + f.id + ".desc"] || f.description}</div> : null}
                     {isString
                       ? (f.type === "textlist"
                         ? <TextlistFeatureInput key={f.id + "-input"} f={f} id={id} busy={busy}
@@ -1672,7 +1672,7 @@ function OnlineDetail({ ext }: { ext: any }) {
       {ext.descriptionMd && <MdDesc text={ext.descriptionMd} vars={extDescVars(ext.id)} />}
 
       <div style={gridStyle}>
-        {ext.name && <InfoRow label={t("ext.name")}><span>{extDisplayName(ext.id, ext.name)}</span></InfoRow>}
+        {ext.name && <InfoRow label={t("ext.fieldName")}><span>{extDisplayName(ext.id, ext.name)}</span></InfoRow>}
         {ext.version && <InfoRow label={t("ext.version")}><span style={{ fontFamily: "var(--font-mono)" }}>v{ext.version}</span></InfoRow>}
         {ext.type && <InfoRow label={t("ext.type")}>{ext.type}</InfoRow>}
         {ext.category && <InfoRow label={t("ext.category")}>{ext.category}</InfoRow>}

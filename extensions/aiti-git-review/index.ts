@@ -737,6 +737,8 @@ export default {
     rightFileDock: [{ id: "workspace", label: "i18n:gr.workspace.label" }],
     i18n: {
       en: {
+        "ext.displayName": "Git Review",
+        "ext.description": "Lists review-task changesets (files + status) for AI familiarization. Param: taskId (defaults to the session-bound task).",
         "gr.app.label": "Review",
         "gr.app.title": "aiti-git-review: review changes (uncommitted / baseline / two-ref diff)",
         "gr.workspace.label": "Review",
@@ -783,7 +785,7 @@ export default {
         "gr.tabs.summary": "Summary",
       },
       "zh-CN": {
-        "gr.app.label": "审核",
+        "ext.displayName": "Git 代码审核",        "gr.app.label": "审核",
         "gr.app.title": "aiti-git-review：审核变更（未提交 / 指定基线 / 两版本对比）",
         "gr.workspace.label": "审查",
         "gr.title": "Git 代码审核",

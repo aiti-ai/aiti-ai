@@ -85,6 +85,7 @@ export default {
         "cat.other": "其他",
       },
       en: {
+        "ext.displayName": "App Center",
         "app.search": "Search apps…",
         "app.searchToggles": "Search toggles…",
         "app.pinned": "Pinned",

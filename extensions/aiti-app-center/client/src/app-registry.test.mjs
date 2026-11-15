@@ -370,6 +370,20 @@ test("translateExtItemText：i18n: 前缀级联（当前 locale → 短码 → e
   assert.deepEqual(i18nTableFor(undefined, "zh-CN"), {});
 });
 
+test("matchApp：拼音索引 + 连写宽松 + 错字容忍（extman 同款，2026-11-15 对齐）", () => {
+  const app = { label: "服务隧道", extId: "service-tunnels", extName: "Service Tunnels", keywords: [], pinyin: "fuwusuidao fst" };
+  assert.ok(matchApp(app, "fuwusuidao"), "全拼连写命中 pinyin hay");
+  assert.ok(matchApp(app, "fuwu suidao"), "拼音分词连写宽松（qNorm 去空格）");
+  assert.ok(matchApp(app, "fst"), "首字母命中");
+  assert.ok(matchApp(app, "fuwusuida"), "拼音尾字符缺失在错字容忍内（8字允1错）");
+  assert.ok(matchApp(app, "服务"), "中文词命中 label");
+  assert.ok(!matchApp(app, "helloworld"), "完全无关词不命中（错字容忍不误报）");
+  // 无 pinyin 字段的卡片：连写/错字照常作用在其余 hay 上（降级安全）
+  const noPinyin = { label: "服务隧道", extId: "service-tunnels", extName: "Service Tunnels", keywords: [] };
+  assert.ok(matchApp(noPinyin, "servcie"), "错字容忍：英文 label 错字命中（无 pinyin 也可用）");
+  assert.ok(matchApp(noPinyin, "tunnels service"), "双语名分词 AND 命中");
+});
+
 test("currentUiLocale：pi-locale 读取 + 非法值/缺省回退 en", () => {
   store.set("pi-locale", "zh-CN");
   assert.equal(currentUiLocale(), "zh-CN");

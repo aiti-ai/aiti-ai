@@ -16,9 +16,10 @@
 // 无 toolbar / 无弹窗——「就是简单注入检测器」。幂等：feature 变更重挂（先 dispose 旧实例）。
 
 import { createMeter, ICON_AI } from "./core.mjs";
-import { extDisplayName } from "../../../_shared/ext-display-names";
+import { extDisplayName, primeExtRegistry } from "../../../_shared/ext-display-names";
 
 export default function register(ctx) {
+  primeExtRegistry((p) => ctx.apiUrl ? ctx.apiUrl(p) : p); // 自述名 registry（无中心表）
   if (typeof document === "undefined") return;
 
   const INJECT_FLAG = "data-aiti-cpu-meter-inject";

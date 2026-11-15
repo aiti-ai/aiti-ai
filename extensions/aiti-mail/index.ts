@@ -121,16 +121,22 @@ export default {
     rightFileDock: [{ id: "panel", label: "i18n:mail.open.label" }],
     i18n: {
       "zh-CN": {
+        "it.panel.title": "邮件：SMTP 配置 / 发送测试 / 发送记录",
+        "it.aiti-mail-panel.label": "邮件（SMTP 配置 / 发送记录）",
       "mail.open.label": "邮件",
       "mail.open.title": "邮件：SMTP 配置 / 发送测试 / 发送记录",
       },
       en: {
+        "it.panel.title": "Mail: SMTP config / send test / send history",
+        "it.aiti-mail-panel.label": "Mail (SMTP config / send history)",
+        "ext.displayName": "Mail Sender",
+        "feat.aiti-mail-panel": "Mail (SMTP config / send history)",
       "mail.open.label": "Mail",
       "mail.open.title": "Mail: SMTP config / test sending / send log",
       },
     },
 
-    dialogs: [{ id: "aiti-mail-panel", label: "邮件（SMTP 配置 / 发送记录）" }],
+    dialogs: [{ id: "aiti-mail-panel", label: "i18n:it.aiti-mail-panel.label" }],
   },
 
   server: {

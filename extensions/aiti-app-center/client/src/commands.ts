@@ -126,6 +126,23 @@ function currentFeatureState(exts: ManifestExt[]): Record<string, boolean> {
   return m;
 }
 
+/** 拼音索引（extman server /status 富化；模块级缓存一次，失败静默降级——联想损失拼音匹配，无功能性影响）。 */
+let pinyinMapCache: Record<string, string> | null = null;
+async function loadPinyinMap(): Promise<Record<string, string>> {
+  if (pinyinMapCache) return pinyinMapCache;
+  try {
+    const d = await fetch(apiUrl("/api/extensions/aiti-extman/status")).then((r) => r.json());
+    const next: Record<string, string> = {};
+    const exts = d?.extensions ?? {};
+    for (const id of Object.keys(exts)) {
+      const p = exts[id]?.pinyin;
+      if (typeof p === "string" && p) next[id] = p;
+    }
+    pinyinMapCache = next;
+  } catch { /* extman 缺席 → 空表 */ pinyinMapCache = {}; }
+  return pinyinMapCache;
+}
+
 /* ── 纯投影（依赖注入形态，可单测） ── */
 
 export function buildCommandHints(input: {
@@ -139,6 +156,8 @@ export function buildCommandHints(input: {
   openPanelFn: (key: string) => void;
   apiUrlFn: (p: string) => string;
   categoryText: (id: string) => string;
+  /** 拼音索引 map（extman server /status 富化；缺席 = 无拼音匹配）。 */
+  pinyinMap?: Record<string, string>;
 }): CommandHint[] {
   const limit = input.limit ?? 5;
   const q = String(input.q ?? "").trim();
@@ -150,6 +169,7 @@ export function buildCommandHints(input: {
     featureState: input.featureState,
     openPanel: input.openPanelFn,
     locale: currentUiLocale(), // query 时现读：静态条目 "i18n:" 标签按当前 locale 出成品文案
+    pinyinMap: input.pinyinMap,
   });
   const hiddenSet = new Set(input.hidden);
   const qEmpty = !q;
@@ -221,6 +241,7 @@ export async function queryCommands(q: string, limit = 5): Promise<CommandHint[]
     openPanelFn: openPanel,
     apiUrlFn: apiUrl,
     categoryText: (id) => categoryLabel(id, t),
+    pinyinMap: await loadPinyinMap(),
   });
 }
 

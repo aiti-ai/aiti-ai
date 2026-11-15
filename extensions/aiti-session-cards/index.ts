@@ -21,4 +21,13 @@ export default {
       enabled: true,
     },
   ],
+  ui: {
+    // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
+    i18n: {
+      en: {
+        "ext.displayName": "Session Request Cards (approval/Q&A/authorization)",
+        "feat.sessionCards.enabled": "Full request card UI",
+      },
+    },
+  },
 };

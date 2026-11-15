@@ -39,6 +39,24 @@ export default {
     },
   ],
 
+
+  ui: {
+    // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
+    i18n: {
+      "zh-CN": {
+        "ext.displayName": "远程调试注入",
+      },
+      en: {
+        "feat.service.url.desc": "Target pi-web base URL (with sub-path, e.g. https://host:port/dev)",
+        "feat.inject.enabled.desc": "When on, injects the AITI debug launcher into the target pi-web's pages (visible only after that instance's pages refresh)",
+        "ext.displayName": "Remote Debug Inject",
+        "ext.description": "Target pi-web base URL (with sub-path, e.g. https://host:port/dev). After configuring, enable injection below.",
+        "feat.service.url": "Service URL",
+        "feat.inject.enabled": "Enable injection",
+      },
+    },
+  },
+
   server: {
     startup() {
       console.log("[aiti-debug-inject] 就绪（纯 client 注入；feature 控制：service.url + inject.enabled）");

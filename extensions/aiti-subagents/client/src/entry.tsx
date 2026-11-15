@@ -1159,7 +1159,7 @@ function AgentsFeatureBanner({ cwd }: { cwd?: string; currentSession?: unknown; 
 export default function register(ctx: Record<string, unknown>) {
   // aiti-float dock v0.5.1：sidebarTasks「任务」区（float 方案 §4.4.2）——子代理任务列表。
   // 数据 = fleet/status + fleet/events SSE（事件驱动零轮询）；点击经 pi-web:open-session 打开会话。
-  ctx.registerItems?.("sidebarTasks", [{ id: "tasks", render: SidebarTasksSection, meta: { title: "任务" } }]);
+  ctx.registerItems?.("sidebarTasks", [{ id: "tasks", render: SidebarTasksSection, meta: { title: "i18n:it.tasks.title" } }]);
   __setCtx(ctx);
   const reg = ctx.registerItems as ((slot: string, items: unknown[]) => void) | undefined;
   // ---- 工具栏按钮 ----

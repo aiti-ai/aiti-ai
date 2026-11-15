@@ -159,6 +159,8 @@ export default {
         "qs.hub.err.parse": "无法识别的仓库地址（支持 https…git / git@host:path / git:<url> / 本地路径）",
       },
       en: {
+        "ext.displayName": "Quickstart",
+        "feat.acquire": "Acquire workspace…",
         "qs.guideTitle": "Quickstart",
         "qs.sidebarLabel": "Quickstart",
         "qs.sidebarTitle": "Quickstart: back to the welcome guide",

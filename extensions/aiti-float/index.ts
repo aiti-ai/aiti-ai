@@ -66,6 +66,18 @@ export default {
   provides: ["aiti-float.dockstack"],
 
   // AI 自管理清单：AI 能帮扩展弹窗接入本契约（属性表/最大化 API/检查清单）
+  ui: {
+    // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
+    i18n: {
+      "zh-CN": {
+        "ext.displayName": "弹窗浮动增强器",
+      },
+      en: {
+        "ext.displayName": "Dialog Float Enhancer",
+      },
+    },
+  },
+
   ai: {
     manage: true,
     intro: "AI 能帮我把扩展弹窗接入浮动契约（拖拽/缩放/小屏全屏/手动最大化）",

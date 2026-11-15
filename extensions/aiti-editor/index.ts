@@ -788,15 +788,33 @@ export default {
     // 文件 dock faces（file-dock.tsx 按实例动态注册）+ 图片预览浮层（image-float.tsx 固定条目）：
     // 此静态声明供宿主懒加载清单发现——刷新后存在 docked 文件实例时，消费这些插槽才知道
     // 要物化本扩展回归 face；图片浮层条目同理（dialogs 是宿主常挂插槽）。
-    dialogs: [{ id: "file", label: "文件" }, { id: "image-preview", label: "图片预览" }],
+    dialogs: [{ id: "file", label: "i18n:it.file.label" }, { id: "image-preview", label: "i18n:it.image-preview.label" }],
     sidebarExplorerDock: [{ id: "file", label: "i18n:ed.file.label" }],
     rightFileDock: [{ id: "file", label: "i18n:ed.file.label" }, { id: "image-preview", label: "i18n:ed.image.label" }],
     i18n: {
       "zh-CN": {
-      "ed.file.label": "文件",
+        "it.file.label": "文件",
+        "it.image-preview.label": "图片预览",
+        "it.image-preview.title": "图片预览",
+        "ext.displayName": "文件编辑器",      "ed.file.label": "文件",
       "ed.image.label": "图片预览",
       },
       en: {
+        "feat.editor.text.desc": "Takes over text files with the Monaco in-browser editor (falls back to the core read-only viewer when not matched)",
+        "feat.soffice.path.desc": "Legacy format conversion (.doc→.docx/.pdf, .xls→.xlsx, .ppt→.pptx); auto-detected when empty",
+        "feat.editor.binary.desc": "Renders images/video/audio/PDF and other binary files with registered providers (falls back to the core viewer when off)",
+        "feat.editor.mdPreviewSmart.desc": "Clicking a paragraph/heading/code line in the preview pops an action card (copy/quote/new session/file/edit…)",
+        "it.file.label": "Files",
+        "it.image-preview.label": "Image preview",
+        "it.image-preview.title": "Image preview",
+        "ext.displayName": "File Editor",        "ext.description": "File editor: Monaco in-browser editing (takes over text files; non-text falls back to the core viewer). Design: docs/pi-web-file-editor-design.md",
+        "feat.aiti-editor": "Editor",
+        "feat.file": "Files",
+        "feat.image-preview": "Image preview",
+        "feat.editor.text": "Text file editing",
+        "feat.soffice.path": "soffice path (LibreOffice)",
+        "feat.editor.binary": "Binary file viewer",
+        "feat.editor.mdPreviewSmart": "Markdown preview smart click",
       "ed.file.label": "Files",
       "ed.image.label": "Image preview",
       },

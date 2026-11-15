@@ -878,7 +878,7 @@ export default function register(ctx) {
   // ==================== 注册 ====================
   // 按钮 → toolbar（AppShell 全局壳）；dialog → pages（传 activeCwd，且不随 session 切换卸载——满足「点击其他 session 弹窗不关闭」）
   ctx.registerItems("toolbar", [
-    { id: "aiti-helper-open", render: AiHelperButton, meta: { label: "AI 助手" } },
+    { id: "aiti-helper-open", render: AiHelperButton, meta: { label: "i18n:it.open.label" } },
   ]);
   ctx.registerItems("pages", [
     { id: "aiti-helper-dialog", render: AiHelperDialog },
