@@ -5,7 +5,7 @@
  */
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useI18n, useIsMobile, apiUrl, BASE_PATH } from "../host-shim";
-import { UrlRow, SchemaForm, ConfirmDialog, providerDisplayLabel } from "../dialog/shared";
+import { UrlRow, SchemaForm, ConfirmDialog, providerDisplayLabel, MiniQr } from "../dialog/shared";
 import { identityView, modeOf, ddnsBadge, portmapProbeView } from "../lib-shared";
 import type { ExposeInfo, SelfState, ServicesResponse } from "../dialog/types";
 
@@ -1311,10 +1311,13 @@ export function AuthExposeSection({ port, t, openInNewTab, exposes, onStopExpose
         <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 6, background: "var(--bg)", border: "1px solid var(--border)" }}>
           <div style={{ fontSize: 10, color: "var(--text-dim)" }}>{t("services.exposeResult")}</div>
           {[result.url, result.localUrl, result.baseUrl, result.domainUrl, ...(result.altUrls ?? [])].filter(Boolean).map((u) => (
-            <button key={u} onClick={() => openInNewTab(u!)}
-              style={{ display: "block", maxWidth: "100%", marginTop: 2, background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--accent)", textAlign: "left", overflowWrap: "anywhere", wordBreak: "break-all" }}>
-              {u}
-            </button>
+            <div key={u} style={{ marginTop: 2 }}>
+              <button onClick={() => openInNewTab(u!)}
+                style={{ display: "block", maxWidth: "100%", background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--accent)", textAlign: "left", overflowWrap: "anywhere", wordBreak: "break-all" }}>
+                {u}
+              </button>
+              <div style={{ marginTop: 2 }}><MiniQr url={u!} /></div>
+            </div>
           ))}
           {result.loginUrl && (
             <button onClick={() => openInNewTab(result.loginUrl!)}

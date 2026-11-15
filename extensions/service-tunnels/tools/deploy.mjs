@@ -61,7 +61,7 @@ for (const extDir of targets) {
 const extRepo = resolve(homedir(), ".pi", "web", "extensions");
 
 // 图标文件拷贝（icon: "icons/<name>.svg" → 宿主加载时内嵌；库在 _shared/icons/）
-for (const t of targets) copyIcons(resolve(t, "icons"), ["globe"], { log: (m2) => console.log(m2) });
+for (const t of targets) copyIcons(resolve(t, "icons"), ["globe", "qr-code"], { log: (m2) => console.log(m2) });
 
 deployCommit({ repo: extRepo, name: "service-tunnels", paths: ["service-tunnels"], log: (m) => console.log("[deploy] " + m) });
 console.log("[deploy] 完成。reload: POST /api/extensions/reload");
