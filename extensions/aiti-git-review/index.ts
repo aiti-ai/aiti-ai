@@ -731,12 +731,15 @@ export default {
   ui: {
     clientImmediately: false, // [懒加载 v2] M1 已同步生产，懒化重启用
     toolbar: [
-      { id: "aiti-git-review-open", label: "审核", title: "aiti-git-review：审核变更（未提交 / 指定基线 / 两版本对比）", icon: "icons/eye.svg" },
+      { id: "aiti-git-review-open", label: "i18n:gr.app.label", title: "i18n:gr.app.title", icon: "icons/eye.svg" },
     ],
     dialogs: [{ id: "aiti-git-review-dialog", label: "aiti-git-review" }],
-    rightFileDock: [{ id: "workspace", label: "审查" }],
+    rightFileDock: [{ id: "workspace", label: "i18n:gr.workspace.label" }],
     i18n: {
       en: {
+        "gr.app.label": "Review",
+        "gr.app.title": "aiti-git-review: review changes (uncommitted / baseline / two-ref diff)",
+        "gr.workspace.label": "Review",
         "gr.title": "Git Code Review",
         "gr.picker.new": "New review",
         "gr.picker.selectFiles": "Select files",
@@ -780,6 +783,9 @@ export default {
         "gr.tabs.summary": "Summary",
       },
       "zh-CN": {
+        "gr.app.label": "审核",
+        "gr.app.title": "aiti-git-review：审核变更（未提交 / 指定基线 / 两版本对比）",
+        "gr.workspace.label": "审查",
         "gr.title": "Git 代码审核",
         "gr.picker.new": "新建审查",
         "gr.picker.selectFiles": "选文件",
