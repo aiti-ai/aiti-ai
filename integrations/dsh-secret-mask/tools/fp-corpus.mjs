@@ -128,7 +128,7 @@ class Pool {
 
 async function main() {
   const here = path.dirname(new URL(import.meta.url).pathname);
-  const src = here0() ? path.join(here0(), "..", "src", "detect.ts") : path.resolve("src/detect.ts");
+  const src = here0() ? path.join(here0(), "..", "src", "core", "detect.ts") : path.resolve("src/core/detect.ts");
   const only = process.argv.slice(2); // optional repo name substrings
   const repos = only.length ? CORPUS.filter((c) => only.some((o) => c.repo.includes(o))) : CORPUS;
 
@@ -179,7 +179,7 @@ function here0() {
 }
 
 if (isMainThread) {
-  const pool = new Pool(Math.max(2, Math.min(8, availableParallelism())), path.join(here0(), "..", "src", "detect.ts"));
+  const pool = new Pool(Math.max(2, Math.min(8, availableParallelism())), path.join(here0(), "..", "src", "core", "detect.ts"));
   // expose the pool to main() without a mutable module binding race
   globalThis.__pool = pool;
   main().catch((e) => { console.error(e); process.exit(1); });
