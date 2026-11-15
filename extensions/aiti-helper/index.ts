@@ -388,8 +388,19 @@ export default {
     // 懒加载 v2 M3批②：icon 补齐；移除错放在 toolbar 的「aiti-helper-dialog」陈旧声明
     //（它实为 client 的 pages 条目——留在 toolbar 里会变成幻影静态按钮）
     toolbar: [
-      { id: "aiti-helper-open", label: "AI", title: "aiti-helper：一句话唤起 AI（帮助点/自由发挥；独立置顶弹窗，可拖拽，有历史）", icon: "icons/sparkles.svg" },
+      { id: "aiti-helper-open", label: "i18n:helper.open.label", title: "i18n:helper.open.title", icon: "icons/sparkles.svg" },
     ],
+    i18n: {
+      "zh-CN": {
+      "helper.open.label": "AI 助手",
+      "helper.open.title": "aiti-helper：一句话唤起 AI（帮助点/自由发挥；独立置顶弹窗，可拖拽，有历史）",
+      },
+      en: {
+      "helper.open.label": "AI assistant",
+      "helper.open.title": "aiti-helper: one-phrase AI summon (floating window, draggable, with history)",
+      },
+    },
+
   },
 
   server: {
