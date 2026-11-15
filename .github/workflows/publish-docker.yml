@@ -42,6 +42,11 @@ on:
         required: false
         default: false
         type: boolean
+      mirror_only:
+        description: "Only byte-faithfully mirror existing Hub tags to Aliyun ACR (skip gate + builds)"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -145,9 +150,11 @@ jobs:
           docker push "${IMAGE}:full"
           docker push "${IMAGE}:latest"
 
-      # Mirror the exact same images to Aliyun ACR (CN acceleration). Re-tags the
-      # local images built above — no rebuild, no re-pull. Secrets must exist or
-      # this step fails (docker.io push already succeeded at this point).
+      # Mirror the exact same images to Aliyun ACR (CN acceleration), byte-faithfully:
+      # buildx imagetools create copies the registry manifests verbatim (multi-arch list +
+      # provenance attestations included), so ACR digests match Docker Hub digests 1:1.
+      # Plain `docker tag`+`docker push` would re-serialize manifests in the classic image
+      # store and silently drift digests.
       - name: Mirror to Aliyun ACR
         env:
           ACR_IMAGE: registry.cn-hangzhou.aliyuncs.com/aiti-ai/pi-web
@@ -155,8 +162,7 @@ jobs:
           printf '%s' "${{ secrets.ALIYUN_ACR_PASSWORD }}" | docker login registry.cn-hangzhou.aliyuncs.com \
             --username "${{ secrets.ALIYUN_ACR_USERNAME }}" --password-stdin
           for ref in "${{ steps.ver.outputs.version }}-core" "${{ steps.ver.outputs.version }}-full" core full latest; do
-            docker tag "${IMAGE}:${ref}" "${ACR_IMAGE}:${ref}"
-            docker push "${ACR_IMAGE}:${ref}"
+            docker buildx imagetools create -t "${ACR_IMAGE}:${ref}" "${IMAGE}:${ref}"
           done
           docker logout registry.cn-hangzhou.aliyuncs.com
 
@@ -166,6 +172,31 @@ jobs:
           echo "- \`${IMAGE}:${{ steps.ver.outputs.version }}-core\` / \`-full\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- \`core\` / \`full\` / \`latest\`（rolling）" >> "$GITHUB_STEP_SUMMARY"
           echo "- 阿里云镜像：\`registry.cn-hangzhou.aliyuncs.com/aiti-ai/pi-web\`（同 tag 已同步）" >> "$GITHUB_STEP_SUMMARY"
+
+  # Byte-faithful mirror of already-published Hub tags to ACR (no gate, no builds).
+  # Run with mirror_only=true + version_tag to backfill/repair ACR for any released
+  # version — e.g. versions published before the ACR mirror existed.
+  mirror-acr:
+    if: ${{ inputs.mirror_only == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Resolve version
+        id: ver
+        run: |
+          V="${{ inputs.version_tag }}"
+          [ -n "$V" ] || V="${GITHUB_REF_NAME}"
+          echo "version=${V}" >> "$GITHUB_OUTPUT"
+      - name: Mirror existing Hub tags to Aliyun ACR (byte-faithful)
+        env:
+          ACR_IMAGE: registry.cn-hangzhou.aliyuncs.com/aiti-ai/pi-web
+        run: |
+          printf '%s' "${{ secrets.ALIYUN_ACR_PASSWORD }}" | docker login registry.cn-hangzhou.aliyuncs.com \
+            --username "${{ secrets.ALIYUN_ACR_USERNAME }}" --password-stdin
+          for ref in "${{ steps.ver.outputs.version }}-core" "${{ steps.ver.outputs.version }}-full" core full latest; do
+            docker buildx imagetools create -t "${ACR_IMAGE}:${ref}" "aitiai/pi-web:${ref}"
+          done
+          docker logout registry.cn-hangzhou.aliyuncs.com
 
   # Hub overview sync (docker/README.md → hub.docker.com/r/aitiai/pi-web).
   # Independent of the image build (idempotent, no registry side effects), so it runs
