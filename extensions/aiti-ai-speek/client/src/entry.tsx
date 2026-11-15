@@ -100,7 +100,7 @@ export default function register(ctx) {
   }
 
   ctx.registerItems?.("toolbar", [
-    { id: "follow", render: ShellToggle, meta: { label: "跟读模式", title: "跟读模式：AI 回复自动朗读", icon: "icons/volume-2.svg" } },
+    { id: "follow", render: ShellToggle, meta: { label: "i18n:speek.followMode.label", title: "i18n:speek.followMode.title", icon: "icons/volume-2.svg" } },
   ]);
 
   try { console.log("[aiti-ai-speek] 薄壳已挂载（🔊 开关；跟读引擎首次开启时按需加载）"); } catch {}

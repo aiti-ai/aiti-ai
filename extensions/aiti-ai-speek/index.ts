@@ -461,7 +461,7 @@ export default {
 
   ui: {
     // 🔊 跟读开关（全局顶栏）
-    toolbar: [{ id: "follow", label: "跟读模式", title: "跟读模式：AI 回复自动朗读（可暂停/跳过/切音色）", icon: "icons/volume-2.svg" }],
+    toolbar: [{ id: "follow", label: "i18n:speek.followMode.label", title: "i18n:speek.followMode.title", icon: "icons/volume-2.svg" }],
     // 播放条（会话顶栏，常驻不消失）
     sessionTopbar: [{ id: "bar", label: "跟读播放条" }],
     // assistant 消息 hover 操作区：朗读这条/停止朗读
@@ -470,6 +470,8 @@ export default {
     dialogs: [{ id: "settings", label: "跟读设置" }],
     i18n: {
       "zh-CN": {
+        "speek.followMode.label": "跟读模式",
+        "speek.followMode.title": "跟读模式：AI 回复自动朗读（可暂停/跳过/切音色）",
         "speek.followOn": "跟读模式已开启，AI 回复将自动朗读",
         "speek.followOff": "开启跟读模式：AI 回复自动朗读",
         "speek.followHidden": "跟读进行中（播放条已隐藏）",
@@ -486,6 +488,8 @@ export default {
         "speek.backgroundContinue": "允许后台继续朗读（浏览器切到后台标签页时不停读）",
       },
       "en": {
+        "speek.followMode.label": "Follow-along",
+        "speek.followMode.title": "Follow-along: read AI replies aloud (pause / skip / voice)",
         "speek.followOn": "Follow-along on: AI replies will be read aloud",
         "speek.followOff": "Turn on follow-along reading",
         "speek.followHidden": "Follow-along active (bar hidden)",
