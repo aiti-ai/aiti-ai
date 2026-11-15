@@ -116,9 +116,20 @@ export default {
 
   ui: {
     clientImmediately: false, // [懒加载 v2] 静态条目点击拉起
-    toolbar: [{ id: "aiti-mail-open", label: "邮件", title: "邮件：SMTP 配置 / 发送测试 / 发送记录", icon: "icons/mail.svg" }],
+    toolbar: [{ id: "aiti-mail-open", label: "i18n:mail.open.label", title: "i18n:mail.open.title", icon: "icons/mail.svg" }],
     // aiti-float dock v3：停靠槽静态声明（懒扩展物化触发 + 静态入口；id 与 client 注册一致）
-    rightFileDock: [{ id: "panel", label: "邮件" }],
+    rightFileDock: [{ id: "panel", label: "i18n:mail.open.label" }],
+    i18n: {
+      "zh-CN": {
+      "mail.open.label": "邮件",
+      "mail.open.title": "邮件：SMTP 配置 / 发送测试 / 发送记录",
+      },
+      en: {
+      "mail.open.label": "Mail",
+      "mail.open.title": "Mail: SMTP config / test sending / send log",
+      },
+    },
+
     dialogs: [{ id: "aiti-mail-panel", label: "邮件（SMTP 配置 / 发送记录）" }],
   },
 
