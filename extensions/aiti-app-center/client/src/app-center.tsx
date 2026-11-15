@@ -5,20 +5,22 @@
  * DockStack 的 spacer（全部区块折叠时才存在——任一展开自动让位，零显隐状态）。
  * React 原语 = 宿主单实例（host-shim 委托 ctx；跨 bundle 组件工厂与 DockStack 服务同模式）。
  *
- * 布局（v2 视图分置，不占行）：
- *   搜索行 = 搜索框（flex:1）+ ✏️ 编辑 / ＋ 扩展管理 / ⇄ 视图切换（28px 方形图标按钮）
+ * 布局（v2 视图分置，不占行；v3.1 单滚动体）：
+ *   header 插槽 = 快速上手卡（session-manager 传入，随内容滚动）
+ *   搜索行（sticky 顶吸）= 搜索框（flex:1）+ ✏️ 编辑 / ＋ 扩展管理 / ⇄ 视图切换（28px 方形图标按钮）
  *   · 应用视图（默认）：可执行入口（action/panel/manage）
  *       flat（可见应用 ≤ FLAT_MODE_THRESHOLD）按分类平铺；否则「常用（钉住序）+ 更多（分类 chips + 网格）」
  *     开关视图：toggle 按来源扩展分组的行式开关（不钉不隐藏）
  *   卡片操作：非编辑态 hover（触屏常显）= ☆ 快捷钉拔 + ? 信息页；编辑态追加 ✕ 隐藏、钉住区 ▲▼
  *   信息页：来源扩展（名/id/版本/描述）+ 功能说明 + 钉住/隐藏 + 该扩展开关直切 + 一键禁用（状态机）+ 打开扩展管理
  */
-import { useState, useEffect, useMemo, useRef, apiUrl, t } from "./host-shim";
+import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef, apiUrl, t } from "./host-shim";
 import {
-  buildApps, matchApp, viewMode, moreExpandedDefault, categoryLabel, categorySortKey,
+  buildApps, matchApp, viewMode, categoryLabel, categorySortKey,
   splitByKind, extensionToggleGroups, hardDependents, disableExtension, isToggleId,
   readPinned, readHidden, togglePinned, toggleHidden, hideApp, movePinned, pruneToggleIds,
   setBooleanFeature, APP_STORE_EVENT, currentUiLocale,
+  MORE_COLLAPSE_PINNED_ROWS, PINNED_CARD_MIN, PINNED_COL_GAP, pinnedRowsNeeded,
   type AppDescriptor, type ToggleGroup,
 } from "./app-registry";
 import { openPanel } from "./commands";
@@ -218,7 +220,8 @@ function AppCard(props: {
 }
 
 const sectionHead = { fontSize: 10, fontWeight: 600, color: "var(--text-dim, #888)", letterSpacing: "0.05em", textTransform: "uppercase" as const, padding: "2px 2px 0", userSelect: "none" as const };
-const gridStyle = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(64px, 1fr))", gap: "10px 6px", width: "100%" } as const;
+/* 卡片网格：列数推导（pinnedGridColumns/pinnedRowsNeeded）与本表 minmax/列距同源（PINNED_CARD_MIN/PINNED_COL_GAP），勿单边改 */
+const gridStyle = { display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${PINNED_CARD_MIN}px, 1fr))`, gap: `10px ${PINNED_COL_GAP}px`, width: "100%" } as const;
 const chipBtn = {
   display: "inline-flex", alignItems: "center", gap: 4, alignSelf: "flex-start",
   background: "none", border: "1px solid var(--border, #3a3a3a)", borderRadius: 7,
@@ -402,9 +405,11 @@ function InfoSheet(props: {
   );
 }
 
-/** 应用中心主组件（ctx = 宿主扩展 ctx；useSlotItems 为宿主真 hook，须在渲染体内调用）。 */
-export function AppCenter(props: { ctx: Record<string, any> }) {
-  const { ctx } = props;
+/** 应用中心主组件（ctx = 宿主扩展 ctx；useSlotItems 为宿主真 hook，须在渲染体内调用）。
+ *  header（v3.1）：可选顶部插槽（session-manager filler 传入快速上手卡）——随内容滚动，
+ *  搜索行 sticky 顶吸：快速上手滚出视口后搜索行钉在滚动体顶部。 */
+export function AppCenter(props: { ctx: Record<string, any>; header?: any }) {
+  const { ctx, header } = props;
   // 插槽枚举（三槽均非交互槽——宿主 AppShell 启动即读，懒扩展以静态条目+转发器出现，零额外拉取）
   const toolbarItems = (ctx.useSlotItems as (s: string) => any[])?.("toolbar") ?? [];
   const commandItems = (ctx.useSlotItems as (s: string) => any[])?.("commands") ?? []; // 命令目录槽（无渲染点纯命令，方案 §9）
@@ -433,13 +438,32 @@ export function AppCenter(props: { ctx: Record<string, any> }) {
   const [query, setQuery] = useState("");
   const [edit, setEdit] = useState(false);
   const [view, setView] = useState<"apps" | "toggles">("apps");
-  const [moreOpen, setMoreOpen] = useState<boolean>(() => moreExpandedDefault(readPinned().length));
+  const [moreOpen, setMoreOpen] = useState(true); // 首帧先展开；收起由下方 layout effect 按实测宽度在 paint 前决定
   const [selectedCat, setSelectedCat] = useState<string>("__all");
   const [infoId, setInfoId] = useState<string | null>(null);
   const [disable, setDisable] = useState<{ confirm: boolean; busy: boolean; error: string | null }>({ confirm: false, busy: false, error: null });
   const [removedExts, setRemovedExts] = useState<string[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  // 滚动体内容宽（v3.2）：ResizeObserver 事件驱动测量（非轮询），供「更多」行数自适应。
+  // clientWidth 含 padding——扣除实测左右 padding 得内容盒宽（= 卡片网格实际可用宽度）。
+  const [contentWidth, setContentWidth] = useState(0);
+  const bodyRoRef = useRef<ResizeObserver | null>(null);
+  const attachBody = useCallback((el: HTMLDivElement | null) => {
+    scrollRef.current = el;
+    bodyRoRef.current?.disconnect();
+    bodyRoRef.current = null;
+    if (el && typeof ResizeObserver !== "undefined") {
+      const measure = () => {
+        const cs = getComputedStyle(el);
+        setContentWidth(el.clientWidth - parseFloat(cs.paddingLeft || "0") - parseFloat(cs.paddingRight || "0"));
+      };
+      const ro = new ResizeObserver(measure);
+      ro.observe(el); // observe 即触发首次回调（异步）；下方同步先测一次供首帧 layout effect 用
+      bodyRoRef.current = ro;
+      measure();
+    }
+  }, []);
 
   const featureState = useMemo(() => {
     const m: Record<string, boolean> = {};
@@ -474,17 +498,18 @@ export function AppCenter(props: { ctx: Record<string, any> }) {
   const infoToggles = useMemo(() => (infoApp ? toggles.filter((a) => a.extId === infoApp.extId) : []), [infoApp, toggles]);
   const infoDependents = useMemo(() => (infoApp ? hardDependents(exts as any, infoApp.extId) : []), [infoApp, exts]);
 
-  // 形态判断用「实际可见钉住数」（P0-2 双保险）：钉住数组可能含已隐藏/已消失的 id。
-  // 只在此处「展开」修正（数据迟到后才发现无可见钉住）——收起只发生在下次打开，
-  // 用户当场 hover 钉住不打断「更多」浏览（§2）。
-  const pinnedSeenRef = useRef(pinnedApps.length > 0);
-  useEffect(() => {
-    if (apps.length === 0) return;
-    const has = pinnedApps.length > 0;
-    if (has === pinnedSeenRef.current) return;
-    pinnedSeenRef.current = has;
-    if (!has) setMoreOpen(true);
-  }, [pinnedApps.length, apps.length]);
+  // 「更多」默认形态（v3.2 宽度自适应）：钉住区已占满的整行数（按容器内容宽推导列数，末行未占满不计）不足
+  // MORE_COLLAPSE_PINNED_ROWS → 自动展开全部；占满 ≥ 阈值整行才默认收起。
+  // 收起只发生在挂载首帧（layout effect，paint 前生效无跳动）与下次打开（重挂载重算）；
+  // 打开态变窄不打断浏览，仅在变宽腾出空间（行数降到阈值下）时即时展开。
+  const autoMoreRef = useRef<boolean | null>(null);
+  useLayoutEffect(() => {
+    if (apps.length === 0 && !header) return; // 数据未到不判定（钉住可能指向未建出的应用）
+    const auto = pinnedRowsNeeded(pinnedApps.length, contentWidth) < MORE_COLLAPSE_PINNED_ROWS;
+    const prev = autoMoreRef.current;
+    autoMoreRef.current = auto;
+    if (prev === null || (auto && prev === false)) setMoreOpen(auto);
+  }, [contentWidth, pinnedApps.length, apps.length, header]);
 
   const searching = query.trim().length > 0;
   const entryResults = useMemo(() => (searching ? visibleEntries.filter((a) => matchApp(a, query)) : []), [searching, visibleEntries, query]);
@@ -502,7 +527,7 @@ export function AppCenter(props: { ctx: Record<string, any> }) {
   }, [visibleEntries, pinnedApps, searching]);
 
   const mode = viewMode(visibleEntries.length);
-  if (apps.length === 0) return null; // 无可收录入口 → spacer 保持空白（行为同未装）
+  if (apps.length === 0 && !header) return null; // 无可收录入口且无 header → spacer 保持空白（行为同未装）
 
   const onToggleFeature = (app: AppDescriptor) => {
     const featureId = app.id.slice(`toggle:${app.extId}:`.length);
@@ -559,42 +584,45 @@ export function AppCenter(props: { ctx: Record<string, any> }) {
 
   return (
     <div data-aiti-app-center="1" style={{ flex: 1, minHeight: 0, position: "relative", display: "flex", flexDirection: "column" }}>
-      {/* 搜索行：搜索框吸收挤压 + 三枚方形图标按钮（不额外占行） */}
-      <div style={{ display: "flex", alignItems: "center", gap: 5, flexShrink: 0, padding: "10px 12px 0" }}>
-        <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 6, background: "var(--bg-hover, #232323)", border: "1px solid var(--border, #3a3a3a)", borderRadius: 8, padding: "5px 9px" }}>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true" style={{ color: "var(--text-dim, #888)", flexShrink: 0 }}>
-            <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
-          </svg>
-          <input
-            type="text"
-            value={query}
-            onChange={(e: any) => setQuery(e.target.value)}
-            placeholder={t(view === "apps" ? "app.search" : "app.searchToggles")}
-            aria-label={t(view === "apps" ? "app.search" : "app.searchToggles")}
-            style={{ flex: 1, minWidth: 0, background: "none", border: "none", outline: "none", color: "var(--text, #ddd)", fontSize: 12, fontFamily: "inherit" }}
-          />
-        </div>
-        {view === "apps" ? (
-          <HeaderButton title={edit ? t("app.done") : t("app.edit")} active={edit} onClick={() => setEdit((v) => !v)}>
-            <EditIcon />
+      {/* 单滚动体（v3.1）：快速上手（header 插槽，session-manager filler 传入）随内容滚出视口，
+          搜索行 sticky 顶吸——负 margin 全幅 + bg-panel 不透明背景盖住滚过内容；
+          InfoSheet top:48 与吸顶搜索行下沿对齐。 */}
+      <div ref={attachBody} data-app-center-body="1" style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", padding: "0 12px 12px", display: "flex", flexDirection: "column", gap: 12 }}>
+        {header ? <div style={{ margin: "0 -12px" }}>{header}</div> : null}
+        {/* 搜索行：搜索框吸收挤压 + 三枚方形图标按钮（不额外占行） */}
+        <div data-app-center-search="1" style={{ position: "sticky", top: 0, zIndex: 3, flexShrink: 0, display: "flex", alignItems: "center", gap: 5, margin: "0 -12px", padding: "10px 12px 8px", background: "var(--bg-panel, #1b1b1b)" }}>
+          <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 6, background: "var(--bg-hover, #232323)", border: "1px solid var(--border, #3a3a3a)", borderRadius: 8, padding: "5px 9px" }}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true" style={{ color: "var(--text-dim, #888)", flexShrink: 0 }}>
+              <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
+            </svg>
+            <input
+              type="text"
+              value={query}
+              onChange={(e: any) => setQuery(e.target.value)}
+              placeholder={t(view === "apps" ? "app.search" : "app.searchToggles")}
+              aria-label={t(view === "apps" ? "app.search" : "app.searchToggles")}
+              style={{ flex: 1, minWidth: 0, background: "none", border: "none", outline: "none", color: "var(--text, #ddd)", fontSize: 12, fontFamily: "inherit" }}
+            />
+          </div>
+          {view === "apps" ? (
+            <HeaderButton title={edit ? t("app.done") : t("app.edit")} active={edit} onClick={() => setEdit((v) => !v)}>
+              <EditIcon />
+            </HeaderButton>
+          ) : null}
+          {extmanApp ? (
+            <HeaderButton title={t("view.extman")} onClick={openExtman}><PlusIcon /></HeaderButton>
+          ) : null}
+          <HeaderButton title={t(view === "apps" ? "view.toToggles" : "view.toApps")} onClick={switchView}>
+            {view === "apps" ? <SlidersIcon /> : <GridIcon />}
           </HeaderButton>
-        ) : null}
-        {extmanApp ? (
-          <HeaderButton title={t("view.extman")} onClick={openExtman}><PlusIcon /></HeaderButton>
-        ) : null}
-        <HeaderButton title={t(view === "apps" ? "view.toToggles" : "view.toApps")} onClick={switchView}>
-          {view === "apps" ? <SlidersIcon /> : <GridIcon />}
-        </HeaderButton>
-      </div>
-
-      {notice ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 6, margin: "8px 12px 0", padding: "5px 8px", border: "1px solid var(--border, #3a3a3a)", borderRadius: 8, fontSize: 11, color: "var(--text-muted, #999)" }}>
-          <span style={{ flex: 1, minWidth: 0 }}>{notice}</span>
-          <button type="button" style={miniBtn()} title={t("info.close")} aria-label={t("info.close")} onClick={() => setNotice(null)}>✕</button>
         </div>
-      ) : null}
 
-      <div ref={scrollRef} data-app-center-body="1" style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", padding: "10px 12px 12px", display: "flex", flexDirection: "column", gap: 12 }}>
+        {notice ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 8px", border: "1px solid var(--border, #3a3a3a)", borderRadius: 8, fontSize: 11, color: "var(--text-muted, #999)" }}>
+            <span style={{ flex: 1, minWidth: 0 }}>{notice}</span>
+            <button type="button" style={miniBtn()} title={t("info.close")} aria-label={t("info.close")} onClick={() => setNotice(null)}>✕</button>
+          </div>
+        ) : null}
         {view === "toggles" ? (
           toggleGroups.length === 0 ? (
             <div style={{ fontSize: 12, color: "var(--text-dim, #888)", textAlign: "center", padding: "12px 0" }}>{t("app.noResults")}</div>
@@ -619,7 +647,7 @@ export function AppCenter(props: { ctx: Record<string, any> }) {
             ) : (
               <div style={{ fontSize: 11, color: "var(--text-dim, #888)", padding: "2px 2px" }}>{t("app.pinHint")}</div>
             )}
-            {/* 更多（首次态默认展开；钉过默认收起；编辑态强制展开——hover 快捷钉不打断展开） */}
+            {/* 更多（钉住区占满 ≥ 2 行才默认收起——列数随宽度自适应；不足两行展开全部；编辑态强制展开——hover 快捷钉不打断展开） */}
             {moreOpen || edit ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 <div role="tablist" aria-label={t("app.more")} style={{ display: "flex", flexWrap: "wrap", gap: "5px 6px", flexShrink: 0 }}>
@@ -701,9 +729,10 @@ export function AppCenter(props: { ctx: Record<string, any> }) {
   );
 }
 
-/** 服务 API（aiti-app-center.api）：跨 bundle 组件工厂，session-manager 编排器作 DockStack filler 消费。 */
+/** 服务 API（aiti-app-center.api）：跨 bundle 组件工厂，session-manager 编排器作 DockStack filler 消费。
+ *  opts.header（v3.1）：可选顶部插槽元素（如快速上手卡）——进滚动体随内容滚走，搜索行 sticky 顶吸。 */
 export function createAppCenterApi(ctx: Record<string, any>) {
   return {
-    renderAppCenter: () => <AppCenter ctx={ctx} />,
+    renderAppCenter: (opts?: { header?: any }) => <AppCenter ctx={ctx} header={opts?.header} />,
   };
 }
