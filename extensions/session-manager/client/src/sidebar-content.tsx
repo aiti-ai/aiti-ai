@@ -20,12 +20,12 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { t, apiUrl, getExtService, onExtServiceChange, ensureMaterialized, renderSlot } from "./host-shim";
-import { useStore, refreshSessions, refreshWorkspaces, refreshProjectSessions, getProjectSessionsTarget, type WorkspaceEntry } from "./store";
+import { useStore, refreshSessions, refreshWorkspaces, refreshProjectSessions, getProjectSessionsTarget, panelOpen, type WorkspaceEntry } from "./store";
 import { SidebarList } from "./sidebar-dock";
 import { getRecentProjects, getProjectActivity, normalizeWorkspaceKey, type SessionInfo } from "./sidebar/pure";
 import { useWorktree } from "./sidebar/use-worktree";
 import { useBranchChip } from "./sidebar/branch-chip";
-import { DockBody, readBlockCollapsed, writeBlockCollapsed, seedBlockCollapsedDefault, present, sidebarZoneOf, SIDEBAR_COLLAPSE_PREFIX } from "../../../_shared/ext-float-dock";
+import { DockBody, readBlockCollapsed, writeBlockCollapsed, seedBlockCollapsedDefault, present, sidebarZoneOf, SIDEBAR_COLLAPSE_PREFIX, dockIconEl } from "../../../_shared/ext-float-dock";
 import { dedupeFetch } from "../../../_shared/dedupe-fetch";
 // 跨扩展复用（构建期内联，DirectoryBrowser 先例）：aiti-folder 的文件夹多实例生命周期。
 // 区块 faces（左栏栈/浮窗/右栏）由 aiti-folder entry 动态注册（folder-dock v2）；
@@ -460,7 +460,13 @@ export function SidebarContentDock(props: Record<string, any>) {
       fill: true,
       render: () => (
         <DockBody itemKey="projects" blockKey="projects" title={t("sm.dockProjects")} chrome="section" kind="reserved"
-          headerActions={hasOtherActivity ? [{ id: "projects-activity", title: t("sidebar.newActivity"), icon: activityDotEl, visibility: "always", onClick: () => openProjectsAndPicker() }] : undefined}>
+          headerActions={hasOtherActivity ? [{ id: "projects-activity", title: t("sidebar.newActivity"), icon: activityDotEl, visibility: "always", onClick: () => openProjectsAndPicker() }] : undefined}
+          extraMenuItems={[
+            // 折叠态 ⋮ 也有常用出口（2026-11-15）：「全部会话」面板 + 手动刷新。项目区块是
+            // 常驻核心（无独立恢复入口），不提供「关闭」——折叠即收起，右端箭头同义。
+            { label: t("sm.openAll"), icon: dockIconEl("float", 13), run: () => panelOpen.onOpen() },
+            { label: t("sidebar.refresh"), run: () => { void doRefresh(); } },
+          ]}>
           <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "hidden" }}>
             <SidebarList
               cwd={cwdState ?? undefined}

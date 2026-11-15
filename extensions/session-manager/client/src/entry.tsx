@@ -484,7 +484,7 @@ export default function register(ctx: Record<string, unknown>) {
     // ⋯ 菜单 metaIcon 形态、定制预览/离屏测量全归宿主统一渲染（与 configs/git-review 等同契约）。
     // 旧自绘 ToolbarEntry/KanbanEntry 与宿主标准按钮逐像素同款，属声明式契约前的遗留，已删；
     // 自绘时代的渲染型 onClick 也一并消除（panelOpen/kanbanOpen 转发进 meta.onClick）。
-    { id: "sessions", meta: { label: t("sm.allSessions"), icon: "icons/message-square.svg", onClick: () => panelOpen.onOpen() } },
+    { id: "sessions", meta: { label: "i18n:sm.allSessions", icon: "icons/message-square.svg", onClick: () => panelOpen.onOpen() } },
     // feature 门控（index.ts features 声明，default:false）：宿主 getExtUiItems 按此过滤——
     // 关闭时条目不渲染（含 ⋯ 菜单/自定义顶栏），extman「功能管理」打开后即时恢复，无需扩展自写判断。
     // 全插槽唯一保留 render 的条目：真交互组件（输入框），⋯ 菜单内由宿主挂载（menu=true 窄版）。
