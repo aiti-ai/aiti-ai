@@ -40,7 +40,7 @@ const homepage = 'https://aiti.pw/extensions/aiti-extman.html';
 
 for (const extDir of targets) {
   mkdirSync(resolve(extDir, 'dist'), { recursive: true });
-  for (const f of ['index.ts', 'icon.svg', 'installer.ts', 'publisher.ts', 'shared-deps.ts', 'protocol-screen.mjs']) copyFileSync(resolve(root, f), resolve(extDir, f));
+  for (const f of ['index.ts', 'icon.svg', 'installer.ts', 'publisher.ts', 'shared-deps.ts', 'protocol-screen.mjs', 'pinyin-index.mjs']) copyFileSync(resolve(root, f), resolve(extDir, f));
   // 协议版本 canonical（_shared/ext-protocol.mjs）→ 部署目录同名拷贝（index.ts 以 ./ext-protocol.mjs 相对导入）
   copyFileSync(resolve(root, '../_shared/ext-protocol.mjs'), resolve(extDir, 'ext-protocol.mjs'));
   // client TS 残留检查器（层 2）：installer.ts 以 ./check-client.mjs 相对导入，需同目录

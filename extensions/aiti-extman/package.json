@@ -4,6 +4,7 @@
   "description": "Extension manager — search / enable-disable / install / online registry",
   "homepage": "https://aiti.pw/extensions/aiti-extman.html",
   "dependencies": {
+    "pinyin-pro": "^3.29.5",
     "yauzl": "^2.10.0"
   },
   "scripts": {
