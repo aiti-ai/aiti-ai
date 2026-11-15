@@ -27,11 +27,14 @@ export default {
 
   ui: {
     clientImmediately: false, // [懒加载 v2] M1 已同步生产，懒化重启用
-    toolbar: [{ id: "ports", label: "服务端口", title: "服务端口与隧道（发现 / 暴露 / 认证 / 自暴露）", icon: "icons/globe.svg" }],
+    toolbar: [{ id: "ports", label: "i18n:st.ports.label", title: "i18n:st.ports.title", icon: "icons/globe.svg" }],
     // aiti-float dock v3：停靠槽静态声明（懒扩展物化触发 + 静态入口；id 与 client 注册一致）
-    rightFileDock: [{ id: "ports", label: "服务端口" }],
+    rightFileDock: [{ id: "ports", label: "i18n:st.ports.label" }],
     dialogs: [{ id: "ports", label: "Service ports" }],
     banners: [{ id: "self-expose-alert", label: "自暴露无认证告警" }],
+    // 「手机访问」底行静态声明（懒扩展零 bundle 入口；id 与 client registerItems 一致，
+    // 首击 staticClickForwarder 物化后转发 meta.onClick —— extman 同款两段式）
+    sidebarFooter: [{ id: "service-tunnels-mobile", label: "i18n:mobile.footerLabel", title: "i18n:mobile.footerTitle", icon: "icons/qr-code.svg" }],
     i18n: I18N,
   },
 
