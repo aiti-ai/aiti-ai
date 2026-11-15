@@ -1526,7 +1526,16 @@ export default {
     // 各入口默认不渲染——client 按 feature 门控（behavior.showAcpManager）。
     // 入口只负责打开统一弹窗（dialogs 插槽），设置全部集中在弹窗内。
     // feature 门控静态化：关 → 宿主不渲染静态按钮（懒加载 v2 ExtUiItem.feature）
-    toolbar: [{ id: "aiti-acp-manage-open", label: "ACP", title: "Manage ACP backend agents", icon: "icons/plug.svg", feature: "behavior.showAcpManager" }],
+    toolbar: [{ id: "aiti-acp-manage-open", label: "ACP", title: "i18n:acp.manage.title", icon: "icons/plug.svg", feature: "behavior.showAcpManager" }],
+    i18n: {
+      "zh-CN": {
+      "acp.manage.title": "ACP 后端 Agent 管理",
+      },
+      en: {
+      "acp.manage.title": "Manage ACP backend agents",
+      },
+    },
+
     // aiti-float dock v3：停靠槽静态声明（懒扩展物化触发 + 静态入口；id 与 client 注册一致）
     sidebarExplorerDock: [{ id: "manage", label: "ACP" }],
     rightFileDock: [{ id: "manage", label: "ACP" }],
