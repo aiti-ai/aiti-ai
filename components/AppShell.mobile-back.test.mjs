@@ -24,7 +24,7 @@ test("wires every host overlay to the back stack on small screens only", () => {
     /useOverlayBack\(isMobile && settingsSection !== null, \(\) => setSettingsSection\(null\)\);/,
     /useOverlayBack\(isMobile && projectTrustDialogOpen, \(\) => setProjectTrustDialogOpen\(false\)\);/,
     /useOverlayBack\(isMobile && exportDialogOpen, \(\) => setExportDialogOpen\(false\)\);/,
-    /useOverlayBack\(isMobile && mobileToolbarMoreOpen, \(\) => setMobileToolbarMoreOpen\(false\)\);/,
+    // (mobileToolbarMoreOpen overlay-back line retired 2026-11-15 with the horizontal-••• layer)
     /useOverlayBack\(isMobile && \(moreOpen \|\| customizeOpen\), \(\) => \{/,
     /useOverlayBack\(isMobile && activeTopPanel !== null, \(\) => setActiveTopPanel\(null\)\);/,
     /useOverlayBack\(isMobile && bridgedNameDialog !== null, \(\) => setBridgedNameDialog\(null\)\);/,
