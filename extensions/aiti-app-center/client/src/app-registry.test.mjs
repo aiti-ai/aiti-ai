@@ -29,7 +29,7 @@ const {
   categoryLabel,
   categorySortKey,
   viewMode,
-  moreExpandedDefault,
+  MORE_COLLAPSE_PINNED_ROWS, PINNED_CARD_MIN, PINNED_COL_GAP, pinnedGridColumns, pinnedRowsNeeded,
   matchApp,
   currentUiLocale,
   i18nTableFor,
@@ -74,11 +74,24 @@ test("categoryLabel / categorySortKey：内部 i18n、自定义原文、内部�
   assert.ok(categorySortKey("other") < categorySortKey("我的工具"));
 });
 
-test("viewMode / moreExpandedDefault：形态自适应（v3）", () => {
+test("viewMode / pinned rows：形态自适应（v3.2 宽度自适应收起）", () => {
   assert.equal(viewMode(FLAT_MODE_THRESHOLD), "flat");
   assert.equal(viewMode(FLAT_MODE_THRESHOLD + 1), "two-segment");
-  assert.equal(moreExpandedDefault(0), true); // 首次态：更多展开
-  assert.equal(moreExpandedDefault(3), false); // 已钉住：收起
+  // 列数 = auto-fill minmax(64,1fr)+6 列距推导：floor((W+6)/70)；未测得宽度保守 1 列
+  assert.equal(PINNED_CARD_MIN, 64);
+  assert.equal(PINNED_COL_GAP, 6);
+  assert.equal(pinnedGridColumns(0), 1);
+  assert.equal(pinnedGridColumns(70), 1);
+  assert.equal(pinnedGridColumns(140), 2);
+  assert.equal(pinnedGridColumns(306), 4);
+  // 行数 = floor(count/cols)（整行占满口径，末行未占满不计）；不足 MORE_COLLAPSE_PINNED_ROWS（2）整行 → 展开，≥ 2 整行 → 收起
+  assert.equal(pinnedRowsNeeded(0, 306), 0);
+  assert.equal(pinnedRowsNeeded(4, 306), 1); // 1 整行 → 展开（rows < 2）
+  assert.equal(pinnedRowsNeeded(5, 306), 1); // 第 2 行仅 1 个（未占满）→ 仍算 1 整行 → 展开
+  assert.equal(pinnedRowsNeeded(7, 306), 1); // 第 2 行 3/4 → 展开
+  assert.equal(pinnedRowsNeeded(8, 306), 2); // 两行全满 → 收起
+  assert.equal(pinnedRowsNeeded(9, 306), 2); // 2 整行 + 末行 1 个（不计）→ 收起
+  assert.ok(pinnedRowsNeeded(8, 306) >= MORE_COLLAPSE_PINNED_ROWS);
 });
 
 test("matchApp：多词 AND、大小写不敏感、覆盖 keywords", () => {
