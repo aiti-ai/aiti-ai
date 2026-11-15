@@ -73,6 +73,7 @@ const UI_SLOT_KEYS = [
   "banners",
   "pages",
   "chatInputTop",
+  "commands",          // command catalog — no render point (dialogs-type); consumed by aiti-app-center / input command hints
   "sidebarExplorerDock", // float-dock extension v0.5.0: sidebar dock zone
   "rightFileDock",       // float-dock extension v0.5.0: right dock zone (tabbed)
   "sidebarTasks",        // float-dock extension v0.5.1: sidebar tasks zone
