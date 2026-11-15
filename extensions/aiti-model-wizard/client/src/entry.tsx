@@ -221,7 +221,7 @@ export default function register(ctx: Record<string, unknown>) {
     regSvc("aiti-model-wizard.openTab", (t?: string, p?: string | null) => lazyOpen(t, p));
   } catch { /* 旧宿主无 registerExtService 时忽略（消费方有 window 全局兜底） */ }
 
-  ctx.registerItems?.("toolbar", [{ id: "aiti-model-wizard-open", render: WizardButtonShell, meta: { label: "模型向导", icon: "icons/sparkles.svg" } }]);
+  ctx.registerItems?.("toolbar", [{ id: "aiti-model-wizard-open", render: WizardButtonShell, meta: { label: "i18n:mw.open.label", icon: "icons/sparkles.svg" } }]);
   // 模型选择器下拉底部动作区：「管理模型」入口（薄壳启动即注册——不依赖重 chunk，
   // 没点过 🧙 的会话也能从任何模型下拉直达向导）。
   ctx.registerItems?.("modelSelectorFooter", [{ id: "aiti-model-wizard-manage", render: ManageModelsRow, meta: { label: "管理模型" } }]);
