@@ -19,6 +19,9 @@
 let _ctx: Record<string, unknown> | null = null;
 export function __setCtx(ctx: Record<string, unknown>): void { _ctx = ctx; }
 
+/** 读取已注入 ctx（服务层在 register 之外取宿主出口用；register 前为 null）。 */
+export function getCtx(): Record<string, unknown> | null { return _ctx; }
+
 /** DI 方案 P2：跨扩展客户端服务读取（ctx.getExtService 的 shim 封装；提供方懒加载/缺席 → undefined，消费方必须降级） */
 export function extSvc<T = unknown>(key: string): T | undefined {
   return (_ctx as any)?.getExtService?.(key) as T | undefined;

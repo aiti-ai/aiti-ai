@@ -31,6 +31,9 @@ const {
   viewMode,
   moreExpandedDefault,
   matchApp,
+  currentUiLocale,
+  i18nTableFor,
+  translateExtItemText,
   readPinned,
   writePinned,
   togglePinned,
@@ -323,6 +326,75 @@ test("静态面板条目不进卡（声明标记打不中 dock key = 死卡）",
   });
   assert.ok(!apps.some((a) => a.label === "文件" && a.kind === "panel"), "静态死卡不出现");
   assert.ok(apps.some((a) => a.label === "图片预览"), "动态面板卡保留");
+});
+
+test("translateExtItemText：i18n: 前缀级联（当前 locale → 短码 → en → 首表）/缺键回退裸 key/无前缀透传", () => {
+  const ui18n = {
+    "zh-CN": { "ext.shortLabel": "扩展", "only.zh": "仅中文" },
+    en: { "ext.shortLabel": "Exts", "only.en": "EN only" },
+  };
+  assert.equal(translateExtItemText("aiti-extman", "i18n:ext.shortLabel", ui18n, "zh-CN"), "扩展");
+  assert.equal(translateExtItemText("aiti-extman", "i18n:ext.shortLabel", ui18n, "en"), "Exts");
+  // zh-TW：zh-TW/zh 表均缺 → en 表命中（级联在表级）
+  assert.equal(translateExtItemText("aiti-extman", "i18n:ext.shortLabel", ui18n, "zh-TW"), "Exts");
+  // 命中表里缺键 → 裸 key（en 表命中但无 only.zh）
+  assert.equal(translateExtItemText("aiti-extman", "i18n:only.zh", ui18n, "en"), "only.zh");
+  // en 无表时末位兜底 = 首表（zh-CN）
+  const zhOnly = { "zh-CN": { "k": "只有中文" } };
+  assert.equal(translateExtItemText("x", "i18n:k", zhOnly, "en"), "只有中文");
+  // 短码表直接命中
+  const withZh = { ...ui18n, zh: { "zh.only": "短码命中" } };
+  assert.equal(translateExtItemText("x", "i18n:zh.only", withZh, "zh-TW"), "短码命中");
+  assert.deepEqual(i18nTableFor(withZh, "zh"), withZh.zh);
+  // 缺键 → 裸 key；缺表 → 裸 key
+  assert.equal(translateExtItemText("aiti-extman", "i18n:nope", ui18n, "zh-CN"), "nope");
+  assert.equal(translateExtItemText("aiti-extman", "i18n:ext.shortLabel", undefined, "zh-CN"), "ext.shortLabel");
+  // 无前缀 / 无 extId / 空文案
+  assert.equal(translateExtItemText("x", "普通文案", ui18n, "zh-CN"), "普通文案");
+  assert.equal(translateExtItemText(undefined, "i18n:ext.shortLabel", ui18n, "zh-CN"), "i18n:ext.shortLabel");
+  assert.equal(translateExtItemText("x", "", ui18n, "zh-CN"), "");
+  assert.equal(translateExtItemText("x", undefined, ui18n, "zh-CN"), "");
+  assert.deepEqual(i18nTableFor(undefined, "zh-CN"), {});
+});
+
+test("currentUiLocale：pi-locale 读取 + 非法值/缺省回退 en", () => {
+  store.set("pi-locale", "zh-CN");
+  assert.equal(currentUiLocale(), "zh-CN");
+  store.set("pi-locale", "fr");
+  assert.equal(currentUiLocale(), "en");
+  store.delete("pi-locale");
+  assert.equal(currentUiLocale(), "en");
+});
+
+test("buildApps：静态条目 i18n: 标签解析（label 优先 title 兜底）+ toggle feature label + locale 参数", () => {
+  const exts = [
+    {
+      id: "extman", name: "ExtMan", category: "system",
+      ui: { i18n: { "zh-CN": { "ext.shortLabel": "扩展", "ext.title": "扩展管理" }, en: { "ext.shortLabel": "Exts" } } },
+    },
+    { id: "plain", features: [{ id: "f.on", label: "i18n:feat.on", enabled: true }] },
+  ];
+  exts[1].ui = { i18n: { "zh-CN": { "feat.on": "开关甲" }, en: { "feat.on": "Toggle A" } } };
+  const slotItems = [
+    { slot: "sidebarFooter", id: "extman:open", extId: "extman", meta: { label: "i18n:ext.shortLabel", onClick: () => {} } },
+    { slot: "toolbar", id: "extman:notitle", extId: "extman", meta: { title: "i18n:ext.title", onClick: () => {} } }, // 无 label → title 兑底
+    { slot: "toolbar", id: "extman:raw", extId: "extman", meta: { label: "原文案", onClick: () => {} } }, // 无前缀透传
+  ];
+  const zh = buildApps({ exts, slotItems, featureState: { "plain:f.on": true }, openPanel: () => {}, locale: "zh-CN" });
+  const byId = new Map(zh.map((a) => [a.id, a]));
+  assert.equal(byId.get("manage:extman:open").label, "扩展");
+  assert.equal(byId.get("action:extman:notitle").label, "扩展管理"); // label 缺 → title 译后兑底
+  assert.equal(byId.get("action:extman:raw").label, "原文案");
+  assert.equal(byId.get("toggle:plain:f.on").label, "开关甲");
+  const en = buildApps({ exts, slotItems, featureState: {}, openPanel: () => {}, locale: "en" });
+  const enById = new Map(en.map((a) => [a.id, a]));
+  assert.equal(enById.get("manage:extman:open").label, "Exts");
+  assert.equal(enById.get("action:extman:notitle").label, "ext.title"); // en 缺键 → 裸 key（与宿主同）
+  // 缺 locale 参数 → 现读 pi-locale（测试桩 localStorage）
+  store.set("pi-locale", "zh-CN");
+  const auto = buildApps({ exts, slotItems: [slotItems[0]], featureState: {}, openPanel: () => {} });
+  assert.equal(auto[0].label, "扩展");
+  store.delete("pi-locale");
 });
 
 test("disableExtension：ops 请求形态 + HTTP 200 里的 body.error 也算失败", async () => {
