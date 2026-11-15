@@ -133,6 +133,9 @@ const SLOT_CONTEXT: Record<string, { context: "global" | "context"; where: strin
   pages: { context: "global", where: "主区域页面面板（常驻）" },
   sessionRowActions: { context: "context", where: "左侧会话列表·会话行操作按钮" },
   chatInputTop: { context: "context", where: "聊天输入框上方" },
+  commands: { context: "global", where: "命令目录（无 UI 渲染点；应用中心动作卡 + 输入命令提示消费）" },
+  fileViewer: { context: "context", where: "文件查看/编辑接管（按文件匹配）" },
+  pathPicker: { context: "global", where: "目录选择器能力（顶栏打开文件夹等消费）" },
 };
 
 /** 给扩展条目补充插槽条目详情（label/title/context/位置）——从 entry ui 定义读取。 */
