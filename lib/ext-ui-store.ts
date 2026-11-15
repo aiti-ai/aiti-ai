@@ -52,6 +52,9 @@ export interface ExtUiItemRegistered {
     /** Static item hide marker (manifest ui[slot][]): the host skips rendering the
      *  static entry (bottom-row absorbed items, quickstart flash fix). */
     hidden?: boolean;
+    /** Static item hidden on mobile viewports (≤640px): the host skips rendering it
+     *  there (e.g. service-tunnels' phone-QR entry is pointless on the phone itself). */
+    hideOnMobile?: boolean;
     /** Declarative icon (toolbar): rendered by the host (the ⋯ menu icon slot and the
      *  standard toolbar button when render is absent); once provided, the extension's
      *  render menu branch is no longer used. */
@@ -308,6 +311,7 @@ export function registerStaticItems(
         badge: decl.meta?.badge ?? decl.badge,
         noMenuLabel: decl.meta?.noMenuLabel,
         hidden: decl.meta?.hidden ?? (decl as { hidden?: boolean }).hidden, // 静态条目隐藏标记（底行收编不渲染，快速上手闪现修复）
+        hideOnMobile: decl.meta?.hideOnMobile ?? (decl as { hideOnMobile?: boolean }).hideOnMobile, // 移动端视口隐藏（同 hidden 白名单透传）
         icon: decl.meta?.icon ?? decl.icon,
         onClick: (e?: unknown) => {
           void Promise.resolve(staticClickHandler?.(extId, compositeId, slot, e)).catch(() => {});
