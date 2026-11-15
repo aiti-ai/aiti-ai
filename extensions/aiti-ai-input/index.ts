@@ -873,21 +873,60 @@ export default {
 
   ui: {
     // 图标声明式（"@mic" token → deploy 时嵌入 lucide 线图，宿主自动绘制标准 36×36 按钮；feature 由 client registerItems 同 id 门控，宿主统一过滤）
-    toolbar: [{ id: "aiti-asr-open", label: "语音识别引擎管理", icon: "icons/mic.svg" }],
+    toolbar: [{ id: "aiti-asr-open", label: "i18n:asr.open.label", icon: "icons/mic.svg" }],
     dialogs: [{ id: "aiti-asr-panel", label: "语音识别引擎管理" }],
     // aiti-float dock：左栏区块 + 右栏 tab 静态声明（id 与 client 注册一致；懒扩展物化触发 + 静态入口）
     // 左栏不静态声明：面板默认**浮窗**（静态声明会让宿主直接物化左栏区块 → 默认出现在左栏）；
     // 用户可点浮窗 ⇱ 手动停靠到左栏/右栏
     sidebarExplorerDock: [],
-    rightFileDock: [{ id: "asr", label: "语音识别" }, { id: "asr-usage", label: "语音流量统计" }],
+    rightFileDock: [{ id: "asr", label: "i18n:asr.panel.label" }, { id: "asr-usage", label: "i18n:asr.usage.label" }],
     chatInputTop: [
       { id: "aiti-ai-input-voice-tag", label: "语音/高速输入感知条（识别语音或高速输入·正在修复提示）" },
       { id: "aiti-ai-input-autocomplete", label: "AI 行内自动补全（灰字续句）" },
-      { id: "aiti-ai-input-suggest", label: "收藏联想（prompt + 命令，静态优先）" },
+      { id: "aiti-ai-input-suggest", label: "收藏联想（prompt + 命令 + 应用，静态优先）" },
     ],
     sessionStats: [
       { id: "aiti-ai-input-aux-usage", label: "其他辅助 AI 用量统计行（会话统计下拉内）" },
     ],
+    // 建议/候选标签文案（suggest.* 键；client logic.ts barLabel/sugAppRow 经 ctx.t 查表）
+    i18n: {
+      "zh-CN": {
+        "asr.open.title": "语音识别引擎管理（状态 / 启停 / 热词）",
+        "asr.open.label": "语音识别引擎管理",
+        "asr.panel.label": "语音识别",
+        "asr.usage.label": "语音流量统计",
+        "suggest.tagAi": "续写",
+        "suggest.tagVoice": "语音",
+        "suggest.tagPrompt": "收藏",
+        "suggest.tagCmd": "命令",
+        "suggest.tagEmpty": "AI",
+        "suggest.tagLocal": "收藏",
+        "suggest.tagHistory": "历史",
+        "suggest.tagApp": "应用",
+        "suggest.tagNewline": "换行",
+        "suggest.appToggleOn": "开",
+        "suggest.appToggleOff": "关",
+        "suggest.appRunTitle": "点击直接执行（应用命令，不填入输入框）",
+      },
+      en: {
+        "asr.open.title": "ASR engine manager (status / toggle / hotwords)",
+        "asr.open.label": "ASR engine manager",
+        "asr.panel.label": "Speech recognition",
+        "asr.usage.label": "ASR traffic stats",
+        "suggest.tagAi": "Continue",
+        "suggest.tagVoice": "Voice",
+        "suggest.tagPrompt": "Saved",
+        "suggest.tagCmd": "Command",
+        "suggest.tagEmpty": "AI",
+        "suggest.tagLocal": "Saved",
+        "suggest.tagHistory": "History",
+        "suggest.tagApp": "App",
+        "suggest.tagNewline": "New line",
+        "suggest.appToggleOn": "on",
+        "suggest.appToggleOff": "off",
+        "suggest.appRunTitle": "Click to run (app command; nothing is inserted into the input)",
+      },
+    },
   },
 
   // 功能管理（aiti-extman 详情面板逐项启停；core 持久化 features.json）
@@ -909,6 +948,8 @@ export default {
     { id: "autocomplete.ctx.large", label: "上下文：大（~5.5k/次）", group: "auto-complete/context", default: false },
     // 组：收藏联想（建议区内嵌候选，词云端显示收藏/命令；关则仅剩 AI 续写与语音修复）
     { id: "suggest.enabled", label: "收藏/命令联想（建议区显示）", group: "suggest", default: true },
+    // 应用命令提示（应用中心清单 → suggest kind="app" 候选：点击/↑↓+Enter 直接执行；方案 docs/aiti-ai-input-app-command-hints-plan.md）
+    { id: "ai-input.commandHints", label: "应用命令提示（输入时联想应用中心的应用/面板/开关，点击直接执行）", group: "suggest", default: true, description: "与收藏/命令联想独立的开关：输入词命中应用清单（工具条动作/面板/管理入口/功能开关）时在联想弹窗尾部追加「应用」候选，点击或 ↑↓ 选中后回车直接执行，不向输入框插入文本。Tab/→ 自动接受会跳过应用候选（防误执行）。" },
     // 短输入严格模式阈值：查询不超过该字符数时走严格过滤（防 1-2 字符英文/中文 substring 命中大量长尾候选）
     { id: "suggest.looseLen", type: "string", label: "短输入严格过滤阈值（字符数，超过才宽松匹配）", group: "suggest", value: "10", placeholder: "10", description: "查询长度 ≤ 该值时走严格过滤：英文≥3字符/中文≥2字，且查询需达标题或内容长度的 1/4 才弹出（防短词命中长正文噪音）；> 该值按 substring 宽松匹配。0=关闭严格过滤。" },
     // suggest ⚡ 一键执行（aiti-cmd-exec-integration-plan.md §3.4；默认关——联想出的命令不自动跑，

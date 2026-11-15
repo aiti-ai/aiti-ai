@@ -28,7 +28,7 @@
  */
 
 // ---------- 模块级状态（跨组件共享；listener 模式） ----------
-import { extSvc } from "./host-shim";
+import { extSvc, getCtx, t } from "./host-shim";
 import { uiAlert, uiConfirm } from "../../../_shared/ui-dialogs";
 
 let voicePending = false;
@@ -175,7 +175,7 @@ const AC = {
   anchor: null, // 灰字显示时的输入框视口快照（scroll 时比对锚点是否真移动）
   // features（extman 管理）：host 统一维护共享 store（manifest 一次拉取，ctx.getFeatures 读）；
   // extman 变更 → host patch store → ctx.onFeatureChange 通知 → 重读——零请求/零轮询。
-  feats: { autoComplete: true, localOnly: false, minChars: 3, suggest: false, suggestRun: false, ctx: "medium", voiceEnabled: false, voiceFix: false, voiceIndicator: false, asrStreaming: true, asrVad: true, asrSplit: true, asrPass2: true, asrModelStream: "iic/SenseVoiceSmall" },
+  feats: { autoComplete: true, localOnly: false, minChars: 3, suggest: false, suggestRun: false, commandHints: true, ctx: "medium", voiceEnabled: false, voiceFix: false, voiceIndicator: false, asrStreaming: true, asrVad: true, asrSplit: true, asrPass2: true, asrModelStream: "iic/SenseVoiceSmall" },
   getFeatures: null, onFeatureChange: null,
 };
 // 当前会话模型（跟聊天界面的 model 走，不写死）：ChatInput props → AC.extra.model
@@ -191,6 +191,7 @@ function curModel() {
 let ACbar = null;      // 建议条容器（chatInputTop 内，组件渲染，模块填充）
 let isCoarse = false;  // pointer:coarse（触控/无精确指针）→ 小屏模式
 let sugActive = false; // 收藏联想（SUG）保有结果显示时，AC 让位、不覆盖建议条
+let nlLastWant = false; // 小屏换行胶囊上次渲染时的可见判定（nlRefresh 去重，防 selectionchange 高频重建）
 // 双 keydown handler 都在 document capture（acHandleKey 先注册、sugOnKey 后注册），
 // stopPropagation 拦不住同节点后注册者——同一 keydown 只允许一个 handler 落地（Tab/Esc/箭头）
 let keyConsumedAt = 0;
@@ -198,27 +199,59 @@ function acUpdateCoarse() {
   try {
     isCoarse = !!window.matchMedia && window.matchMedia("(pointer:coarse)").matches;
   } catch (e) { isCoarse = false; }
-  if (ACbar) ACbar.style.display = isCoarse ? "flex" : "none";
-  if (!isCoarse) acHideBar();
+  // display 交给 barRender 按候选动态管（桌面大内容续写也走建议条预览行）；模式切换双向清残留
+  acHideBar();
 }
-// 建议条内容：由调用方（AC/SUG）先 acRenderBar 再填充；整体重建避免残留
+
+// 小屏常驻换行胶囊（2026-11-15 二轮）：宿主把软键盘 Enter 定义为发送（微信式），手机键盘没有
+// 便捷的 Shift+Enter —— 显示条件 = 输入框聚焦 && 光标不在开头（行首插入换行无意义）。
+// 满足时建议条常驻（无候选时条里只有换行项）；失焦/光标回行首收起。刷新由 entry 挂的
+// selectionchange/focusin/focusout 驱动（键盘、点按、软键盘选择手柄拖动、程序化 setSelectionRange
+// 均触发 document selectionchange）；nlLastWant 去重防高频 selectionchange 抖动重建。
+function nlShouldShow() {
+  const ta = document.querySelector("textarea[data-chat-input]");
+  if (!ta || document.activeElement !== ta) return false;
+  try { return (ta.selectionStart || 0) > 0; } catch (e) { return false; }
+}
+function nlRefresh() {
+  if (!ACbar || !isCoarse) return;
+  const want = nlShouldShow();
+  if (want === nlLastWant) return; // 胶囊可见性没变：条内容由候选链路（barSet/barClear→barRender）自管
+  nlLastWant = want;
+  if (want || BARP.items.length) barRender();
+  else acHideBar();
+}
+// 建议条内容：由调用方（AC/SUG）先 acRenderBar 再填充；整体重建避免残留。
+// 定位模式（2026-11 大内容续写预览）：桌面 relative（配 barRender 填充后的负 margin 浮层化，
+// 不依赖宿主 position/overflow，永不裁剪）；小屏 static 文档流（软键盘推挤由页面天然处理）
 function acRenderBar() {
   if (!ACbar) return null;
   ACbar.innerHTML = "";
+  if (isCoarse) {
+    ACbar.style.position = "static";
+    ACbar.style.zIndex = "";
+    ACbar.style.marginTop = ""; ACbar.style.marginBottom = ""; ACbar.style.paddingBottom = "";
+  } else {
+    ACbar.style.position = "relative";
+    ACbar.style.zIndex = "30";
+  }
   return ACbar;
 }
-function acHideBar() { if (ACbar) ACbar.innerHTML = ""; }
+function acHideBar() { if (!ACbar) return; ACbar.innerHTML = ""; ACbar.style.display = "none"; nlLastWant = false; }
 
 // ---------- 建议聚合区（词云换行；多来源归一为统一候选抽象） ----------
 // 一条候选 = { type, short, full }：type=ai/voice/prompt/cmd/suggest-empty · short=简短名（占位符/标签用） · full=完整内容。
 // 渲染、点按全部按统一规则处理，不因来源分叉。
 const BARP = { items: [], markMap: {}, marks: [] }; // marks: [{mark,name,text,type,id}] 已插入待选区（供 chips 展示与发送展开）
-const BARP_LABEL = { ai: "续写", voice: "语音", prompt: "收藏", cmd: "命令", "suggest-empty": "AI", local: "收藏", history: "历史" };
+// 建议/候选标签（i18n：suggest.* 词条，t() 渲染时现查 locale 表——切语言后下次渲染即新）
+const BARP_LABEL_KEYS = { ai: "suggest.tagAi", voice: "suggest.tagVoice", prompt: "suggest.tagPrompt", cmd: "suggest.tagCmd", "suggest-empty": "suggest.tagEmpty", local: "suggest.tagLocal", history: "suggest.tagHistory", app: "suggest.tagApp", newline: "suggest.tagNewline" };
+function barLabel(type) { const k = BARP_LABEL_KEYS[type] || ""; const v = k ? t(k) : ""; return v && v !== k ? v : (type === "suggest-empty" ? "AI" : String(type)); }
 // 收藏/命令 的点按分派由 register 内注入（其依赖 SUG 闭包状态，不能在模块级直调）；
 // 注入实现：短→填入 · 长→[short] 占位。
 let pickPromptUser = null;   // prompt/cmd 点按分派（register 注入）
 let pickEmptyUser = null;    // suggest-empty（“让 AI 生成”）分派（register 注入）
 let runCmdUser = null;       // cmd 候选 ⚡ 一键执行分派（register 注入；依赖 SUG 闭包与 AC.apiUrl）
+let runAppUser = null;       // app 候选执行分派（initSuggest 注入；含条件清空输入框，依赖 SUG 闭包）
 function barSet(kind, list) {
   BARP.items = [...BARP.items.filter((x) => x.tag !== kind), ...list.map((i) => ({ tag: kind, type: i.type, short: i.short, full: i.full, rich: i.rich, item: i.item }))];
   barRender();
@@ -251,20 +284,39 @@ function barDisplay(it) {
 }
 function barIsLong(it) { return !!it.full && it.full.length > 60 && it.type !== "ai" && it.type !== "voice"; }
 function barMulti(it) { return it.type === "voice" || (it.full || "").length > 30; }
+// 小屏「⏎ 换行」胶囊点按：光标处插入换行。acInsertAtCaret → acSetTaValue 走 React 受控
+// 写入（直写 ta.value 会被宿主 tracker 吞 onChange）并派发 input 事件 → SUG/AC 的 350ms
+// 防抖重排自然接管。换行打断触发词（光标落新行行首，sugWordAt 匹配不到词），旧候选已过期
+// → 立即清灰字与 suggest 候选并复位互斥标志（不等防抖兜底，避免 350ms 内残留过期胶囊）。
+function barInsertNewline() {
+  const ta = document.querySelector("textarea[data-chat-input]");
+  if (!ta) return;
+  acClearGhost(); // 旧灰字/AC 候选基于换行前文本，已过期（内部清 ai/local/history）
+  barClear("suggest");
+  sugActive = false; // suggest 候选已清：放行 AC（防抖回调里 sugClose 会再兜底一次）
+  acInsertAtCaret(ta, "\n");
+}
 // 统一点按：按 type 分派（不因来源写多份）
 function barPick(it) {
   if (it.type === "ai" || it.type === "local" || it.type === "history") { AC.ghost = { text: it.full || "", source: it.type === "ai" ? "ai" : "local" }; acAcceptGhost(); }
   else if (it.type === "voice") { voiceFixApply(it.item); }
   else if (it.type === "suggest-empty" && pickEmptyUser) pickEmptyUser();
+  else if (it.type === "app" && runAppUser) runAppUser(it.item); // 小屏胶囊：点击 = 直接执行（不填入；条件清空见 sugRunApp）
   else if (pickPromptUser) pickPromptUser(it); // prompt/cmd：由 register 注入的实现分派（短→填入 · 长→占位）
 }
 function barRender() {
   if (!ACbar) return;
-  if (!BARP.items.length) { acHideBar(); return; }
+  const nlWant = isCoarse && nlShouldShow(); // 小屏换行胶囊常驻判定（聚焦 && 光标不在行首）
+  if (!BARP.items.length && !nlWant) { acHideBar(); return; }
   const bar = acRenderBar();
   for (const it of BARP.items) {
+    // 桌面 AC 候选（ai/local/history）：大内容预览行（多行可读，见 ghostPreviewRow）；小屏保持胶囊行
+    if (!isCoarse && (it.type === "ai" || it.type === "local" || it.type === "history")) {
+      bar.appendChild(ghostPreviewRow(it));
+      continue;
+    }
     const tail = it.type === "ai" ? "↘" : it.type === "voice" ? "替换" : barIsLong(it) ? "⊕ 占位" : "";
-    const row = acBarRow(BARP_LABEL[it.type] || "?", barDisplay(it), () => barPick(it), { tail, long: barIsLong(it), multiLine: barMulti(it), rich: it.rich });
+    const row = acBarRow(barLabel(it.type), barDisplay(it), () => barPick(it), { tail, long: barIsLong(it), multiLine: barMulti(it), rich: it.rich });
     // suggest ⚡ 一键执行（§3.4；cmd 候选 + feature 开）：独立小胶囊（button 不嵌套），
     // 点按分派 runCmdUser（sugRunCmd 两段式确认），与「填入」胶囊并列
     if (it.type === "cmd" && AC.feats.suggestRun && runCmdUser && it.item) {
@@ -286,6 +338,61 @@ function barRender() {
     }
     bar.appendChild(row);
   }
+  // 小屏换行胶囊（2026-11-15 二轮改常驻）：显示条件 = 输入框聚焦 && 光标不在开头（nlShouldShow）。
+  // 无候选时条里只有它（建议条常驻）；失焦/光标回行首由 nlRefresh 收起。桌面不渲染：Shift+Enter
+  // 直接可用，且桌面浮层负 margin 测量不应多算一行。放最后：换行是「结构操作」，优先级低于所有内容候选。
+  if (isCoarse && nlWant) {
+    bar.appendChild(acBarRow("⏎", barLabel("newline"), () => barInsertNewline(), {}));
+  }
+  nlLastWant = nlWant;
+  ACbar.style.display = "flex"; // 有候选才显示（含桌面预览行；无候选由 acHideBar 收起）
+  // 桌面浮层化第二步（填充后才能测高）：负 margin-top 抵自身整体高度（含 padding-bottom
+  // 8px 呼吸间隙）→ 视觉悬浮在输入框上方、占位归零（ghost 出现/消失不推挤布局不跳动）；
+  // relative+z30 高于消息区文本可读可点。小屏保持文档流占位不动。
+  if (!isCoarse) {
+    ACbar.style.paddingBottom = "8px";
+    ACbar.style.marginBottom = "0";
+    ACbar.style.marginTop = -ACbar.offsetHeight + "px";
+  }
+}
+
+// 桌面大内容续写预览行（建议条形态 · 多行可读）：灰字 overlay 单行装不下的长收藏/长续写
+// 改走文档流建议条（同小屏形态的桌面版），clamp 3 行防撑爆视口；点按/Tab 接受语义与 ghost 一致。
+// 样式全走 pi-web 主题变量（mobile 方案 §二红线：禁止硬编码默认色）
+function ghostPreviewRow(it: any) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.style.cssText = [
+    "display:flex;gap:8px;align-items:flex-start;width:100%;box-sizing:border-box;text-align:left;",
+    "padding:8px 10px;border:1px solid var(--border,#e0e0e0);border-radius:10px;",
+    "background:var(--bg,#ffffff);color:var(--text,#1a1a1a);font-size:12.5px;line-height:1.55;",
+    "cursor:pointer;transition:background .12s;",
+  ].join("");
+  const tag = document.createElement("span");
+  tag.textContent = barLabel(it.type) || "";
+  tag.style.cssText = "flex-shrink:0;font-size:11px;font-weight:600;color:var(--accent,#2563eb);padding-top:2px;";
+  const main = document.createElement("span");
+  main.textContent = it.full || it.short || "";
+  main.style.cssText = [
+    "flex:1 1 auto;min-width:0;white-space:pre-wrap;word-break:break-word;",
+    "color:var(--text-dim,#9ca3af);opacity:.85;",
+    "display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;",
+  ].join("");
+  const tail = document.createElement("span");
+  tail.textContent = "Tab 接受 · Esc 忽略";
+  tail.style.cssText = "flex-shrink:0;font-size:11px;color:var(--text-dim,#9ca3af);white-space:nowrap;padding-top:2px;opacity:.85;";
+  b.appendChild(tag); b.appendChild(main); b.appendChild(tail);
+  // hover 提示可点（直操 DOM 无 class，事件加减背景；恢复用同一变量保持主题一致）
+  b.addEventListener("mouseenter", () => { b.style.background = "var(--bg-panel,#f5f5f5)"; });
+  b.addEventListener("mouseleave", () => { b.style.background = "var(--bg,#ffffff)"; });
+  // 点按=接受；preventDefault+stopPropagation 双拦同 acBarRow（防合成 click 穿透宿主元素）
+  let done = false;
+  const go = () => { if (!done) { done = true; barPick(it); } };
+  const swallow = (e: any) => { e.preventDefault(); e.stopPropagation(); };
+  b.addEventListener("pointerdown", (e) => { swallow(e); go(); });
+  b.addEventListener("touchend", swallow, { passive: false } as any);
+  b.addEventListener("click", swallow);
+  return b;
 }
 
 // ---------- 语音歧义修复（主动：检测语音输入 → AI 判定 → 仅当有歧义才显示替换建议） ----------
@@ -543,6 +650,8 @@ function syncAcFeatures() {
     suggest: map["suggest.enabled"] === true,
     // suggest ⚡ 一键执行（§3.4 默认关：显式开启才在命令候选旁加执行按钮）
     suggestRun: map["ai-input.suggestRun"] === true,
+    // 应用命令提示（app-center 应用清单；默认开——与 suggest 相互独立的开关）
+    commandHints: map["ai-input.commandHints"] !== false,
     ctx: map["autocomplete.ctx.large"] === true ? "large" : map["autocomplete.ctx.small"] === true ? "small" : "medium",
     // 顶级总闸：语音输入法（🎤 贴在输入框上的按钮）——**默认关**（未完全测好，显式开启才挂按钮）
     voiceEnabled: map["voice.enabled"] === true,
@@ -775,6 +884,18 @@ async function acLocalFetch(v, inflightKey, cacheKey) {
 }
 
 // 灰字渲染：镜像测量光标像素坐标 → fixed overlay + 灰字 span（L0 本地命中附 ↦来源 角标）
+// 2026-11 大内容分流：单行装不下（或含换行）→ 不再用 fixed overlay 单行 ellipsis 截断
+// （长收藏/长续写只露一小截没法读），改走建议条预览行（桌面负 margin 浮层 / 小屏胶囊），
+// 交互不变（Tab/→/Esc 基于 AC.ghost 状态，与形态无关）
+let ghostMeasureCtx: any = null;
+function ghostFitsOneLine(text: string, ta: HTMLTextAreaElement, maxW: number): boolean {
+  try {
+    if (!ghostMeasureCtx) ghostMeasureCtx = document.createElement("canvas").getContext("2d");
+    const css = getComputedStyle(ta);
+    ghostMeasureCtx.font = css.font || `${css.fontStyle} ${css.fontWeight} ${css.fontSize} ${css.fontFamily}`;
+    return ghostMeasureCtx.measureText(text).width <= maxW;
+  } catch { return true; } // 测量失败保守走原 overlay（不回归）
+}
 function acShowGhost(text, source, lsource, lname) {
   const ta = acActiveTa();
   if (!ta || ta !== document.activeElement) return;
@@ -792,6 +913,15 @@ function acShowGhost(text, source, lsource, lname) {
   }
   const pos = acCaretOffset(ta);
   if (!pos) return;
+  // 桌面大内容分流：光标到右缘单行装不下（或 AI 续写含换行）→ 建议条预览行（浮在输入框上方）
+  const maxW = Math.max(80, ta.getBoundingClientRect().right - pos.x - 12);
+  if (text.includes("\n") || !ghostFitsOneLine(text, ta, maxW)) {
+    const t = source === "local" ? (lsource === "history" ? "history" : "local") : "ai";
+    barSet(t, [{ type: t, short: "", full: text, item: { lsource, lname } }]);
+    AC.ghost = { text, source };
+    AC.anchor = taAnchor(ta);
+    return;
+  }
   let ov = AC.overlay;
   if (!ov) {
     ov = document.createElement("div");
@@ -810,7 +940,7 @@ function acShowGhost(text, source, lsource, lname) {
   ov.style.fontSize = css.fontSize;
   ov.style.lineHeight = css.lineHeight;
   ov.style.letterSpacing = css.letterSpacing;
-  ov.style.maxWidth = Math.max(80, ta.getBoundingClientRect().right - pos.x - 12) + "px";
+  ov.style.maxWidth = maxW + "px";
   const span = document.createElement("span");
   span.style.cssText = "white-space:pre;overflow:hidden;text-overflow:ellipsis;opacity:.55;color:var(--text-dim, #9ca3af);pointer-events:none;";
   span.textContent = text;
@@ -992,6 +1122,10 @@ export function isVoicePending(): boolean { return voicePending; }
 export function setAcBar(el: HTMLElement | null): void { ACbar = el; }
 
 /** SUG 收藏联想子系统初始化：注入 apiUrl，装配点按分派，返回键盘/输入处理器。 */
+// 应用命令服务懒加载标记（sugQueryApps 用；服务 up 事件清零——resetAppSvcAttempt 由 entry 订阅调）
+let appSvcAttempted = false;
+export function resetAppSvcAttempt() { appSvcAttempted = false; }
+
 export function initSuggest(apiUrl: (p: string) => string) {
   const SUG_DEBOUNCE = 350; // 开页方案 §6：150→350ms（与 L0 同思路，输入停顿才发建议请求）
   const SUG = {
@@ -1071,6 +1205,7 @@ export function initSuggest(apiUrl: (p: string) => string) {
       return;
     }
     const list = SUG.items.map((x) => {
+      if (x.kind === "app") return { type: "app", short: x.name, full: "", item: x.item }; // 小屏胶囊：点击 = 执行（barPick 分派）
       const t = x.kind === "cmd" ? (x.cmd || "") : (x.text || "");
       return { type: x.kind === "cmd" ? "cmd" : "prompt", short: x.name, full: t, item: x };
     });
@@ -1089,6 +1224,7 @@ export function initSuggest(apiUrl: (p: string) => string) {
     ((it.full || "").length > 60 ? sugInsertMark : sugApply)(obj);
   };
   runCmdUser = (it) => sugRunCmd(it);
+  runAppUser = (h) => sugRunApp({ item: h });
   pickEmptyUser = () => sugAiFallback();
   function sugInsertMark(it) {
     const ta = SUG.ta || document.querySelector("textarea[data-chat-input]");
@@ -1109,6 +1245,69 @@ export function initSuggest(apiUrl: (p: string) => string) {
     barClear("suggest");
     sugClose();
   }
+  // 应用图标三形态（宿主 renderExtItemIcon 同规则）：{svg} 内联 / "icons/*.svg" CSS-mask（URL 同宿主
+  // /api/extensions/<extId>/assets/） / emoji 文本；异常返回 null（行内无图标不阻断候选）
+  function sugAppIcon(h) {
+    const icon = h && h.icon;
+    if (icon == null) return null;
+    try {
+      if (typeof icon === "object" && icon.svg) {
+        const span = document.createElement("span");
+        span.style.cssText = "flex-shrink:0;display:inline-flex;color:var(--text,#1a1a1a);";
+        span.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + String(icon.svg) + "</svg>";
+        return span;
+      }
+      if (typeof icon === "string" && icon.endsWith(".svg")) {
+        const url = apiUrl(`/api/extensions/${h.extId || ""}/assets/${icon}`);
+        const span = document.createElement("span");
+        span.setAttribute("aria-hidden", "true");
+        span.style.cssText = "flex-shrink:0;display:inline-block;width:16px;height:16px;background:currentColor;-webkit-mask-image:url(\"" + url + "\");mask-image:url(\"" + url + "\");-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-position:center;mask-position:center;-webkit-mask-size:contain;mask-size:contain;";
+        return span;
+      }
+      const span = document.createElement("span");
+      span.textContent = String(icon);
+      span.style.cssText = "flex-shrink:0;font-size:15px;line-height:1;";
+      return span;
+    } catch (e) { return null; }
+  }
+  // 应用命令候选行（桌面弹窗）：徽标「应用」+ 图标 + label + 次级（来源扩展 · 分类）+ toggle 尾态；
+  // 点击 = 直接执行（真实动作不填入）
+  function sugAppRow(it, i) {
+    const h = (it && it.item) || {};
+    const row = document.createElement("div");
+    row.style.cssText = "padding:7px 12px;borderRadius:8px;cursor:pointer;min-width:0;font-size:13px;line-height:1.5;touch-action:manipulation;transition:background .12s;display:flex;gap:8px;align-items:center;";
+    if (i === SUG.idx) row.style.background = "color-mix(in srgb, var(--accent, #2563eb) 18%, transparent)";
+    row.addEventListener("mouseenter", () => { if (i !== SUG.idx) row.style.background = "color-mix(in srgb, var(--accent, #2563eb) 10%, transparent)"; });
+    row.addEventListener("mouseleave", () => { if (i !== SUG.idx) row.style.background = ""; });
+    const badge = document.createElement("span");
+    badge.textContent = barLabel("app");
+    badge.style.cssText = "flex-shrink:0;font-size:11px;color:var(--text-dim,#9ca3af);border:1px solid var(--border,#e0e0e0);border-radius:999px;padding:1px 7px;white-space:nowrap;";
+    row.appendChild(badge);
+    const icon = sugAppIcon(h);
+    if (icon) row.appendChild(icon);
+    const main = document.createElement("span");
+    main.textContent = h.label || it.name || "";
+    main.title = t("suggest.appRunTitle");
+    main.style.cssText = "font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;";
+    row.appendChild(main);
+    const sub = [h.extName, h.category].filter(Boolean).join(" · ");
+    if (sub) {
+      const subEl = document.createElement("span");
+      subEl.textContent = sub;
+      subEl.style.cssText = "flex-shrink:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--text-dim,#9ca3af);margin-left:auto;";
+      row.appendChild(subEl);
+    }
+    if (h.kind === "toggle") {
+      const st = document.createElement("span");
+      st.textContent = h.on ? t("suggest.appToggleOn") : t("suggest.appToggleOff");
+      st.style.cssText = "flex-shrink:0;font-size:11px;color:var(--text-dim,#9ca3af);";
+      row.appendChild(st);
+    }
+    // touch/鼠标统一 pointerdown + 阻合成 click（同 suggest 行；app 行点击即执行，无上屏路径）
+    row.onpointerdown = (e) => { e.preventDefault(); e.stopPropagation(); sugRunApp(it); };
+    row.addEventListener("touchend", (e) => { e.preventDefault(); e.stopPropagation(); }, { passive: false });
+    return row;
+  }
   function sugBuildPopup() {
     const ta = SUG.ta; if (!ta) return;
     if (!SUG.items.length) {
@@ -1128,10 +1327,15 @@ export function initSuggest(apiUrl: (p: string) => string) {
     ].join(";");
     document.body.appendChild(pop);
       SUG.items.forEach((it, i) => {
+        // 应用命令候选：独立行渲染（徽标+图标+执行），不走填入路径
+        if (it.kind === "app") { pop.appendChild(sugAppRow(it, i)); return; }
         // 候选已在上层（sugTrigger）过滤「业已完成输入」；此处直接渲染
         const input = SUG.ta ? SUG.ta.value : "";
+        // 上下结构（2026-11-14 二轮修复）：原 name+prev 同行 flex 在长内容下 name(flex-shrink)
+        // 被压到只剩一个字符（用户实测「方案先行」只显示「方」）——长收藏场景左右布局天然不成立，
+        // 改为 name 独占一行（完整显示，超长才省略）+ prev 块级 clamp 3 行
         const row = document.createElement("div");
-        row.style.cssText = "padding:7px 12px;borderRadius:8px;cursor:pointer;display:flex;gap:8px;align-items:baseline;min-width:0;font-size:13px;touch-action:manipulation;transition:background .12s";
+        row.style.cssText = "padding:7px 12px;borderRadius:8px;cursor:pointer;min-width:0;font-size:13px;line-height:1.5;touch-action:manipulation;transition:background .12s";
         if (i === SUG.idx) {
           row.style.background = "color-mix(in srgb, var(--accent, #2563eb) 18%, transparent)";
           row.style.color = "var(--text, #1a1a1a)";
@@ -1148,14 +1352,16 @@ export function initSuggest(apiUrl: (p: string) => string) {
         // 名称优先完整显示（去掉图标、去掉 45% 截断）；预览才收缩省略
         const name = document.createElement("span");
         name.textContent = it.name;
-        name.style.cssText = "font-weight:600;flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+        name.style.cssText = "font-weight:600;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
         row.appendChild(name);
         // 预览文案与名称相同（收藏时常见：name=首行）→ 省略，避免小屏重复占两列；且与输入一致时已在上层过滤
         const prevText = it.kind === "cmd" ? (it.cmd || "") : (it.text || "");
         if (prevText && prevText !== it.name && prevText !== input) {
           const prev = document.createElement("span");
           prev.textContent = prevText;
-          prev.style.cssText = "opacity:.65;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1 1 auto";
+          // 块级 + clamp 3 行+尾部省略（-webkit-box；Chrome/Safari/Firefox 68+ 均支持）；
+          // 不控制则长收藏全文 wrap 占满弹窗（maxHeight 240 全被一条候选吃掉）
+          prev.style.cssText = "display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;opacity:.65;margin-top:2px;";
           row.appendChild(prev);
         }
         // suggest ⚡ 一键执行（§3.4，feature ai-input.suggestRun 默认关）：命令文本已在联想结果
@@ -1197,21 +1403,48 @@ export function initSuggest(apiUrl: (p: string) => string) {
     // idx=-1：不预选任何候选（选择权永远留给用户）——只有 ↑↓ 显式选择后才置 moved；
     // Enter 只认 moved，未选择时回车=正常发送消息（弹窗开着也发送，如单条候选场景不想补全）
     SUG.idx = -1; SUG.moved = false;
-    const data = await sugFetch(q);
-    if (!data || !data.ok || data.q !== SUG.q || SUG.ta !== ta) return;
+    const wantHttp = AC.feats.suggest;
+    const wantApps = AC.feats.commandHints;
+    // 并行聚合：收藏/命令（HTTP /suggest，suggest 开）+ 应用命令（前端进程内，commandHints 开）。
+    // 全部到位后一次渲染（app 查询走 manifest TTL 缓存 + entry 预热，近似瞬时）。
+    const [data, appHints] = await Promise.all([
+      wantHttp ? sugFetch(q) : Promise.resolve(null),
+      wantApps ? sugQueryApps(q) : Promise.resolve([]),
+    ]);
+    if (data && (data.q !== SUG.q || SUG.ta !== ta)) return; // 已有更新触发的联想在途 → 本轮作废
+    if (!wantHttp && SUG.ta !== ta) return; // 应用链路同样遵守锚漂移作废
     // 业已完成的输入不提示：候选全文已出现在当前词/整框输入里（如刚接受完、输入=候选全文）→
-    // 过滤后再显示（大小屏同一判定；Enter 确认后不再弹同样提示，Enter 继续走发送/跟进）
+    // 过滤后再显示（大小屏同一判定；Enter 确认后不再弹同样提示，Enter 继续走发送/跟进）。
+    // app 候选无填入语义，不经过该过滤（应用命令候选文本恒不等于输入）。
     const input = ta.value || "";
     const word = sugAnchorWord();
-    SUG.items = (data.results || [])
+    const httpItems = ((data && data.results) || [])
       .filter((r) => sugCandShown(r, input, word))
       .map((r) => ({ ...r, display: r.providerLabel || "" }));
+    const appItems = (appHints || []).map((h) => ({ kind: "app", name: h.label || h.id, text: "", item: h, display: barLabel("app") }));
+    SUG.items = [...httpItems, ...appItems]; // prompt/cmd 在前（填入语义）、app 在后（执行语义）
     // 无可见候选：不弹空态（AI 兜底尚未接入——sugAiFallback 仅预留 hook，
     // 点了无实际功能，空态气泡只会误导；等 ai-helper invoke 接入后再恢复显示）
     if (!SUG.items.length) { sugClose(); return; }
     sugActive = true;   // 联想有结果显示：AC 让位互斥
     acClearGhost();     // 清 AC 旧灰字/建议，防双弹覆盖
     sugRender();
+  }
+  // 应用命令查询（aiti-app-center.commands 客户端服务）：缺席 → 一次性 ensureMaterialized 拉起
+  // （attempted 标志防禁用态重试风暴；服务 up 事件清标志——entry 订阅；down 无需处理，每次现判空）
+  async function sugQueryApps(q) {
+    try {
+      const svc = extSvc("aiti-app-center.commands");
+      if (!svc || typeof svc.query !== "function") {
+        if (!appSvcAttempted) {
+          appSvcAttempted = true;
+          try { getCtx()?.ensureMaterialized?.("aiti-app-center"); } catch (e) { /* ignore */ }
+        }
+        return [];
+      }
+      const r = await svc.query(q, 5);
+      return Array.isArray(r) ? r : [];
+    } catch (e) { return []; }
   }
   function sugClose() {
     sugActive = false;
@@ -1231,6 +1464,7 @@ export function initSuggest(apiUrl: (p: string) => string) {
     requestAnimationFrame(() => { try { el.setSelectionRange(caret, caret); } catch (e) {} });
   }
   function sugApply(it) {
+    if (it.kind === "app") { sugRunApp(it); return; } // 应用命令候选：直接执行，不填入（键盘 ↑↓+Enter 显式选中路径）
     const ta = SUG.ta; if (!ta) return;
     const insert = it.kind === "cmd" ? (it.cmd || it.name) : (it.text || it.name);
     const rest = ta.value.slice(SUG.anchorCaret);
@@ -1242,6 +1476,29 @@ export function initSuggest(apiUrl: (p: string) => string) {
     sugSetTa(next, caret, ta);
     // 命令命中：记录（后续可直接执行，不走 AI——本骨架先仅填入，/run 由 aiti-cmd 面板接管）
     try { console.log("[AI input] suggest 命中", was, "→", it.kind, it.name); } catch (e) {}
+  }
+  // 应用命令执行：直接调 run()（不填入），先关弹窗。条件清空输入框（§交互语义）：触发词覆盖
+  // 输入框全部内容（trim 后相等）→ 执行成功后清空（触发词使命已完成，残留即噪音，忘删还会拼出
+  // 残句发出）；触发词只是正在编辑句子的一部分 → 保留（绝不破坏正文）。run() 抛错则不动文本。
+  function sugRunApp(it) {
+    const h = it && it.item;
+    const ta = SUG.ta;                                    // sugClose 会置 null，先捕获
+    const aStart = SUG.anchorStart, aCaret = SUG.anchorCaret;
+    sugClose();
+    if (!h || typeof h.run !== "function") return;
+    try { console.log("[AI input] 应用命令执行 →", h.kind, h.label); } catch (e) {}
+    try { h.run(); } catch (e) { try { console.warn("[AI input] 应用命令执行失败：", h.label, e); } catch (e2) {} return; }
+    if (ta && aStart != null && aCaret != null) {
+      const v = String(ta.value || "");
+      if (v.trim() === v.slice(aStart, aCaret).trim()) { acSetTaValue(ta, ""); acPlaceCaret(ta, 0); }
+    }
+  }
+  // 从 from（含）起循环找第一条非 app 候选——键盘自动接受（Tab/→）跳过 app：
+  // 真实副作用（切开关/开面板）必须显式两步（点击或 ↑↓ 选中后 Enter），防打字途中误触执行
+  function sugNextNonApp(from) {
+    const n = SUG.items.length;
+    for (let k = 0; k < n; k++) { const i = (from + k) % n; if (SUG.items[i].kind !== "app") return SUG.items[i]; }
+    return null;
   }
   // suggest ⚡ 执行（§3.4）：命令文本已在联想结果里（前端持有）→ 直接前端 POST aiti-cmd /run
   // （source=suggest），不绕本扩展服务端；危险命令 403 needConfirm + 一次性 token 两段式照旧。
@@ -1274,6 +1531,7 @@ export function initSuggest(apiUrl: (p: string) => string) {
     if (typeof openSession === "function") openSession(r.sessionId, it.name || cmd);
   }
   function sugAiFallback() {
+    if (!AC.feats.suggest) return; // AI 兜底仅 suggest 开（commandHints-only 模式不出网）
     const q = SUG.q;
     sugClose();
     // AI 动态建议（无静态命中）：弹窗 AI 按钮同源能力——先占位告知，ai-helper invoke 后续接入
@@ -1304,7 +1562,9 @@ export function initSuggest(apiUrl: (p: string) => string) {
       else SUG.idx = e.key === "ArrowDown" ? (SUG.idx + 1) % n : (SUG.idx - 1 + n) % n;
       sugRender(); return;
     }
-    if (e.key === "Tab") { keyConsumedAt = e.timeStamp; e.preventDefault(); e.stopPropagation(); if (SUG.items.length) sugApply(SUG.items[SUG.idx < 0 ? 0 : SUG.idx]); else sugAiFallback(); return; }
+    // Tab：自动接受当前选中（或第一条）。app 候选跳过（从当前位置起找下一条非 app；全部为 app →
+    // no-op 弹窗保留）——真实副作用必须显式两步；全跳过且 suggest 开时落 AI 兜底（commandHints-only 不出网）
+    if (e.key === "Tab") { keyConsumedAt = e.timeStamp; e.preventDefault(); e.stopPropagation(); const pick = sugNextNonApp(SUG.idx < 0 ? 0 : SUG.idx); if (pick) sugApply(pick); else if (AC.feats.suggest) sugAiFallback(); return; }
     if (e.key === "Enter") {
       // Enter 默认=发送消息：仅当用户已用 ↑↓ 显式选择过某条（moved）才把选中候选上屏。
       // 系统绝不预选候选（idx=-1 无高亮）——单条候选也不高亮，此时按 ↑↓ 才选中它、再回车才上屏；
@@ -1313,8 +1573,8 @@ export function initSuggest(apiUrl: (p: string) => string) {
       else { sugClose(); }
       return;
     }
-    if (e.key === " ") { if (SUG.moved && SUG.items.length) { keyConsumedAt = e.timeStamp; e.preventDefault(); sugApply(SUG.items[SUG.idx]); } else { sugClose(); } return; }
-    if (e.key === "ArrowRight") { if (SUG.items.length && ta.selectionStart === ta.value.length) { keyConsumedAt = e.timeStamp; e.preventDefault(); sugApply(SUG.items[SUG.idx < 0 ? 0 : SUG.idx]); } return; }
+    if (e.key === " ") { if (SUG.moved && SUG.items.length) { const sel = SUG.items[SUG.idx]; if (sel && sel.kind !== "app") { keyConsumedAt = e.timeStamp; e.preventDefault(); sugApply(sel); } else { keyConsumedAt = e.timeStamp; e.preventDefault(); /* app 选中：no-op 但仍拦截空格上屏（键盘全归 suggest 语义，弹窗保留） */ } } else { sugClose(); } return; }
+    if (e.key === "ArrowRight") { if (SUG.items.length && ta.selectionStart === ta.value.length) { keyConsumedAt = e.timeStamp; e.preventDefault(); const pick = sugNextNonApp(SUG.idx < 0 ? 0 : SUG.idx); if (pick) sugApply(pick); } return; }
   }
   // 输入捕捉 → 联想调度（input 事件在 AC 之前不冲突：suggest 弹窗开着时 AC 的灰字键由 sugOnKey 优先拦截）
   async function sugOnInput(e) {
@@ -1322,7 +1582,7 @@ export function initSuggest(apiUrl: (p: string) => string) {
     if (!isChatInput(ta)) return;
     if (AC.extra && AC.extra.menuOpen) { sugClose(); return; }  // slash/@/历史 picker 打开时不打扰（@文件输入不弹 SUG）
     await acFeatures(false); // 先确保 features 就绪（避免首次输入的竞态：suggest 开关未拉到就拦截）
-    if (!AC.feats.suggest) { sugClose(); return; } // 收藏联想默认关闭（extman 开启才弹）
+    if (!AC.feats.suggest && !AC.feats.commandHints) { sugClose(); return; } // 收藏联想与应用命令提示双关才不弹（各自独立开关）
     // 拼音组合中的 input（isComposing=true）：不排程但清防抖；compositionend 补排程（真实输入法上屏后无 input:N）
     if (e.isComposing) { if (SUG.timer) clearTimeout(SUG.timer); return; }
     if (SUG.timer) clearTimeout(SUG.timer);
@@ -1364,4 +1624,5 @@ export {
   voiceFixReset,
   syncAcFeatures,
   acEnforceMinChars,
+  nlRefresh,
 };
