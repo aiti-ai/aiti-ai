@@ -296,3 +296,78 @@ export function splitKbdHint(hint: string): { kbd: string; desc: string } {
 export function isQuickstartWidgetId(compositeId: string): boolean {
   return typeof compositeId === "string" && compositeId.startsWith(`${EXT_ID}:`);
 }
+
+/* ── 「试试这样问」动态装配（方案 docs/aiti-quickstart-examples-dynamic-prompts-plan.md §3.3） ── */
+
+export type ExamplesMode = "auto" | "prompts" | "builtin";
+
+export interface ExamplesConfig {
+  mode: ExamplesMode;
+  maxChips: number;
+}
+
+export const EXAMPLES_CONFIG_DEFAULT: ExamplesConfig = { mode: "auto", maxChips: 4 };
+const EXAMPLES_MODES: ExamplesMode[] = ["auto", "prompts", "builtin"];
+
+/** 收藏条目质量下限：text 去空白后少于 8 字符视为太短（无引导价值），不参与展示。 */
+export const EXAMPLES_MIN_TEXT = 8;
+
+export function normalizeExamplesConfig(raw: unknown): ExamplesConfig {
+  const r = (raw ?? {}) as Partial<ExamplesConfig>;
+  const n = typeof r.maxChips === "number"
+    ? r.maxChips
+    : parseInt(String(r.maxChips ?? ""), 10);
+  const max = Number.isFinite(n) ? Math.max(2, Math.min(8, Math.round(n))) : EXAMPLES_CONFIG_DEFAULT.maxChips;
+  return {
+    mode: EXAMPLES_MODES.includes(r.mode as ExamplesMode) ? (r.mode as ExamplesMode) : EXAMPLES_CONFIG_DEFAULT.mode,
+    maxChips: max,
+  };
+}
+
+export interface ExamplePromptItem {
+  id: string;
+  name?: string;
+  text: string;
+}
+
+export interface ExampleChip {
+  /** 填入 composer 的文本（收藏 = prompt 全文；内置 = i18n 文案）。 */
+  text: string;
+  /** chip 显示文本（收藏 = prompt 名；内置 = 文案本身）。 */
+  label: string;
+  /** aiti-prompts 收藏 id（内置池条目为 null；有值时点击后 POST touch 记使用）。 */
+  promptId: string | null;
+}
+
+/** Fisher-Yates 洗牌（可注入 rand 便于单测）。 */
+export function shuffle<T>(list: T[], rand: () => number = Math.random): T[] {
+  const out = [...list];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+/** 展示装配：mode 三态 + 收藏质量过滤 + 内置池随机补足。 */
+export function assembleExampleChips(params: {
+  mode: ExamplesMode;
+  maxChips: number;
+  prompts: ExamplePromptItem[];
+  /** 内置池（已 t() 化的文案数组，顺序 = qs.ex.1..8；展示时随机抽取）。 */
+  pool: string[];
+  rand?: () => number;
+}): ExampleChip[] {
+  const max = Math.max(1, Math.min(8, Math.round(params.maxChips) || EXAMPLES_CONFIG_DEFAULT.maxChips));
+  const poolShuffled = shuffle(params.pool, params.rand);
+  const builtinChip = (text: string): ExampleChip => ({ text, label: text, promptId: null });
+  if (params.mode === "builtin") return poolShuffled.slice(0, max).map(builtinChip);
+  const usable = (params.prompts ?? [])
+    .filter((p) => typeof p?.text === "string" && p.text.trim().length >= EXAMPLES_MIN_TEXT)
+    .slice(0, max)
+    .map((p) => ({ text: p.text, label: (p.name || "").trim() || p.text, promptId: p.id || null }));
+  if (params.mode === "prompts") return usable;
+  // auto：收藏优先，不足 maxChips 由内置池补足（随机）
+  const fill = poolShuffled.slice(0, Math.max(0, max - usable.length)).map(builtinChip);
+  return [...usable, ...fill];
+}
