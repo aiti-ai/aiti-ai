@@ -469,7 +469,14 @@ export var LUCIDE = {
        * 问题区（.dbg-ask-prompt）：大字号高对比 + 左侧强调条——AI 的问题是面板最重要信息
        * 选项区：垂直全宽列表（长文案不挤压换行）+ 数字徽标（1/2/3…，与键盘快捷键 1-9 对应）
        * 语义配色：主操作（是/确认/我在）绿色渐变；否定/取消红字浅红 hover；「都不适合」虚线灰 */
-      .dbg-ask-prompt { white-space: pre-wrap; font-size: 15px; font-weight: 600; color: #f8fafc; line-height: 1.7; word-break: break-word; background: rgba(96,165,250,.08); border-left: 3px solid #60a5fa; border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; }
+      .dbg-ask-prompt { white-space: pre-wrap; font-size: 15px; font-weight: 600; color: #f8fafc; line-height: 1.7; word-break: break-word; background: rgba(96,165,250,.08); border-left: 3px solid #60a5fa; border-radius: 6px; padding: 10px 74px 10px 12px; margin-bottom: 10px; }
+      /* 可复制消息区（ask prompt / notify 正文）：文本可自由选中 + 右上角「📋 复制」一键复制全文 */
+      .dbg-copyable { position: relative; user-select: text; -webkit-user-select: text; }
+      .dbg-notify-body { white-space: pre-wrap; font-size: 14px; line-height: 1.7; color: #e5e7eb; word-break: break-word; overflow-wrap: anywhere; padding-right: 74px; }
+      /* (0-2-0) 压过 .dbg-pick-body button (0-1-1) 的 padding/border/radius/font-size */
+      .dbg-copyable .dbg-msg-copy { position: absolute; top: 6px; right: 6px; border: 1px solid rgba(148,163,184,.35); background: rgba(15,23,42,.6); color: #cbd5e1; border-radius: 6px; padding: 3px 8px; font: inherit; font-size: 11px; line-height: 1.4; cursor: pointer; user-select: none; -webkit-user-select: none; }
+      .dbg-copyable .dbg-msg-copy:hover { background: rgba(59,130,246,.28); border-color: rgba(147,197,253,.6); color: #eff6ff; }
+      .dbg-copyable .dbg-msg-copy.dbg-msg-copy-ok { background: rgba(34,197,94,.22); border-color: rgba(74,222,128,.6); color: #bbf7d0; }
       .dbg-pick-body .dbg-ask-opt { display: flex; align-items: center; gap: 9px; width: 100%; min-width: 0; justify-content: flex-start; text-align: left; padding: 10px 12px; border-radius: 9px; background: rgba(255,255,255,.07); border: 1px solid rgba(148,163,184,.28); color: #eef2f7; transition: background .12s, border-color .12s; }
       .dbg-pick-body .dbg-ask-opt:hover { background: rgba(255,255,255,.13); border-color: rgba(165,180,252,.6); }
       .dbg-ask-num { flex: 0 0 auto; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 6px; background: rgba(99,102,241,.22); border: 1px solid rgba(129,140,248,.5); color: #c7d2fe; font-size: 12px; font-weight: 700; line-height: 1; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; }
