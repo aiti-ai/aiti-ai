@@ -41,7 +41,7 @@ export default function register(ctx: Record<string, any>) {
   ctx.registerItems?.("toolbar", [{
     id: "aiti-doc-center-open",
     meta: {
-      label: "文档",
+      label: "i18n:dc.app.label",
       title: "文档中心：workspace 文档收集与全文检索",
       icon: { svg: '<path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/>' },
       onClick: () => requestOpen(),

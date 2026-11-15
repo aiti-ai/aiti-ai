@@ -607,11 +607,13 @@ const ext = {
   ui: {
     clientImmediately: false, // [懒加载 v2] M1 已同步生产，懒化重启用
     // 懒加载 v2 M3批①：静态条目与 client 注册 id/icon 对齐（物化前后零闪变）
-    toolbar: [{ id: "aiti-doc-center-open", label: "文档", title: "文档中心：workspace 文档收集与全文检索", icon: { svg: '<path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/>' } }],
-    rightFileDock: [{ id: "docs", label: "文档" }],
+    toolbar: [{ id: "aiti-doc-center-open", label: "i18n:dc.app.label", title: "i18n:dc.app.title", icon: { svg: '<path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/>' } }],
+    rightFileDock: [{ id: "docs", label: "i18n:dc.app.label" }],
     pages: [{ id: "aiti-doc-center-page", label: "文档中心", title: "aiti-doc-center：文档中心" }],
     i18n: {
       zh: {
+        "dc.app.label": "文档",
+        "dc.app.title": "文档中心：workspace 文档收集与全文检索",
         "dc.tabsDir": "目录",
         "dc.tabsTime": "时间",
         "dc.tabsSession": "会话",
@@ -702,6 +704,8 @@ const ext = {
         "dc.ftActionTitle": "标签（文档中心：查看/增删，非 md 文件打 tag 后进索引）",
       },
       en: {
+        "dc.app.label": "Docs",
+        "dc.app.title": "Doc center: workspace doc collection & full-text search",
         "dc.tabsDir": "Folder",
         "dc.tabsTime": "Time",
         "dc.tabsSession": "Sessions",
