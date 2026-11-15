@@ -925,7 +925,7 @@ export { SettingsDialog };
 // HeavyFollowToggle 接管薄壳按钮（点击后的状态机/订阅/恢复全走真实实现）。
 export function initHeavySlots(ctx) {
   ctx.registerItems?.("toolbar", [
-    { id: "follow", render: HeavyFollowToggle, meta: { label: "跟读模式", title: "跟读模式：AI 回复自动朗读", icon: "icons/volume-2.svg" } },
+    { id: "follow", render: HeavyFollowToggle, meta: { label: "i18n:speek.followMode.label", title: "i18n:speek.followMode.title", icon: "icons/volume-2.svg" } },
   ]);
   ctx.registerItems?.("assistantMessageActions", [
     { id: "read", render: AssistantMessageAction, meta: { label: "开始朗读" } },
