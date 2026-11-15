@@ -232,6 +232,7 @@
     cfg.onResult = opts.onResult || null;
     cfg.onEvent = opts.onEvent || null;
     cfg.onInteraction = opts.onInteraction || null;
+    cfg.onPairMsg = opts.onPairMsg || null; // pair 设备互连消息（text/file）
     cfg.onReady = opts.onReady || null;
     if (!cfg.base) return false;
     ensureStarveRelay(); // 防抱死让路监听（幂等，首次 connect 时挂上）
@@ -309,6 +310,9 @@
     } else if (m.type === 'interaction') {
       // 用户交互消息（AI 提问 → AI 窗口/页面作答）；宿主转发场景转发给 parent 由宿主面板处理
       if (cfg.onInteraction) cfg.onInteraction(m);
+    } else if (m.type === 'pair_msg') {
+      // pair 设备互连消息（text/file：设备→页面投递；pair 协议在 core bridge.ts routePairSend）
+      if (cfg.onPairMsg) cfg.onPairMsg(m);
     } else if (m.type === 'event') {
       if (cfg.onEvent) cfg.onEvent(m.event || m);
     }

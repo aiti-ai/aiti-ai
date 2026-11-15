@@ -1,21 +1,22 @@
+import { t } from './i18n.js';
 // 纯数据表（自 dbg-launcher.js 闭包提取）
 export var DANGER_COMMANDS = {
-      'DOM.removeNode': '删除页面元素（不可恢复）',
-      'Page.reload': '重载目标页面',
-      'Page.navigate': '导航到其他地址',
-      'Storage.localStorageClear': '清空 localStorage（持久数据）',
-      'Storage.localStorageSet': '写入 localStorage（持久数据）',
+      'DOM.removeNode': t('Delete page element (irreversible)'),
+      'Page.reload': t('Reload target page'),
+      'Page.navigate': t('Navigate to another URL'),
+      'Storage.localStorageClear': t('Clear localStorage (persistent data)'),
+      'Storage.localStorageSet': t('Write localStorage (persistent data)'),
     }
 
 export var GESTURE_COMMANDS = {
-      'Browser.copy': '复制到剪贴板',
-      'Browser.paste': '读取剪贴板内容（浏览器可能弹授权）',
-      'Browser.pickFile': '选择本地文件（弹文件选择器；小文件直接返回内容/小图片转 dataUrl）',
-      'Browser.share': '系统分享面板（标题/文本/链接）',
-      'Browser.download': '下载文件',
-      'Browser.openWindow': '打开新窗口',
-      'Browser.fullscreen': '进入全屏',
-      'Browser.play': '播放音视频（自动播放策略）',
+      'Browser.copy': t('Copy to clipboard'),
+      'Browser.paste': t('Read clipboard (browser may ask permission)'),
+      'Browser.pickFile': t('Pick a local file (opens file picker; small files return content / small images as dataUrl)'),
+      'Browser.share': t('System share sheet (title/text/link)'),
+      'Browser.download': t('Download file'),
+      'Browser.openWindow': t('Open new window'),
+      'Browser.fullscreen': t('Enter fullscreen'),
+      'Browser.play': t('Play media (autoplay policy)'),
       // Page.captureScreenshot 不在 gesture/danger 列表：页面渲染截取无需用户手势、无危险副作用——
       //   直接进 launcher 截屏卡流程（意图说明 → 可先调整页面 → 预览确认才发送）
     }

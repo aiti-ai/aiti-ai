@@ -6,6 +6,7 @@
 import { el } from './dom.js';
 import { getPhysViewport, placePhysPanel } from './viewport.js';
 import { makePointerDrag } from './drag.js';
+import { t } from './i18n.js';
 
 export function initHelp(ctx) {
 
@@ -22,8 +23,8 @@ export function initHelp(ctx) {
       if (ctx.helpDialogOpen()) { ctx.closeHelpDialog(); return; }
       var d = el('div', { class: 'dbg-help-dialog' });
       var head = el('div', { class: 'dbg-help-head' });
-      head.appendChild(el('span', {}, ['❓ 选区工具条 · 使用帮助']));
-      var hClose = el('button', { title: '关闭（Esc）' }, ['✕']);
+      head.appendChild(el('span', {}, [t('❓ Selection toolbar · Help')]));
+      var hClose = el('button', { title: t('Close (Esc)') }, ['✕']);
       hClose.addEventListener('click', function (ev) { ev.stopPropagation(); ctx.closeHelpDialog(); });
       head.appendChild(hClose);
       d.appendChild(head);
@@ -31,46 +32,46 @@ export function initHelp(ctx) {
       var body = el('div', { class: 'dbg-help-body' });
       // 静态文案用 innerHTML（全部只读内容，无用户输入拼接）
       body.innerHTML = [
-        '<h4>这是什么</h4>',
-        '<div>划过页面元素高亮预览，点击锁定后出现这个工具条——用方向键微调选区，<b>✓ 确认发送给 AI</b>。<br>',
-        '💡 点顶部标签行文字（<code>&lt;div&gt; 320×48 …</code>）可打开详情预览弹窗。</div>',
-        '<h4>① 按钮一览</h4>',
+        t('<h4>What is this</h4>'),
+        t('<div>Hover page elements to preview, click to lock and this toolbar appears — fine-tune with arrow keys, <b>✓ to send to AI</b>.<br>'),
+        t('💡 Click the tag row text (<code>&lt;div&gt; 320×48 …</code>) to open the details/preview dialog.</div>'),
+        t('<h4>1. Buttons</h4>'),
         '<table>',
-        '<tr><td><b>↖ 父级 / ↘ 子级</b></td><td>沿 DOM 树上/下一层（斜向=走树）；子级没有时自动同级下一个</td></tr>',
-        '<tr><td><b>← ↑ ↓ →</b></td><td>页面<b>几何位置</b>相邻元素（与键盘方向键同位）</td></tr>',
-        '<tr><td><b>#</b></td><td>快速选择：输入 CSS selector 或 XPath 定位</td></tr>',
-        '<tr><td><b>🖱 恢复快选</b></td><td>回到「划过即选」（锁定后 hover 快选暂停防误切）</td></tr>',
-        '<tr><td><b>👆 模拟hover</b></td><td>给选中元素派发真实 mouseenter，JS 悬停展开持久保持；再点清除</td></tr>',
-        '<tr><td><b>🔒 放行方案</b></td><td>锁定后页面事件默认冻结；下拉切换方案，末尾「⚙️ 自定义…」打开设置面板管理多个自定义方案</td></tr>',
-        '<tr><td><b>✕ / ✓</b></td><td>取消退出 / 确认发送</td></tr>',
+        t('<tr><td><b>↖ Parent / ↘ Child</b></td><td>Up/down the DOM tree (diagonal = tree walk); auto next sibling when no child</td></tr>'),
+        t('<tr><td><b>← ↑ ↓ →</b></td><td>Elements adjacent by <b>geometry</b> (same positions as arrow keys)</td></tr>'),
+        t('<tr><td><b>#</b></td><td>Quick pick: type a CSS selector or XPath to locate</td></tr>'),
+        t('<tr><td><b>🖱 Restore quick-pick</b></td><td>Back to hover-to-pick (paused while locked to prevent mis-switch)</td></tr>'),
+        t('<tr><td><b>👆 Simulate hover</b></td><td>Dispatches real mouseenter on the selection, JS hover expansions persist; click again to clear</td></tr>'),
+        t('<tr><td><b>🔒 Allow plan</b></td><td>Page events frozen by default while locked; switch plans in the dropdown, "⚙️ Custom…" at the end opens the panel to manage custom plans</td></tr>'),
+        t('<tr><td><b>✕ / ✓</b></td><td>Cancel exit / confirm send</td></tr>'),
         '</table>',
-        '<h4>② 快捷键总表</h4>',
+        t('<h4>2. Keyboard shortcuts</h4>'),
         '<table>',
-        '<tr><td><kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd></td><td>页面几何相邻元素</td></tr>',
-        '<tr><td><kbd>Enter</kbd></td><td>子级（无子级→同级 next，一路按遍历整棵 DOM 树）</td></tr>',
-        '<tr><td><kbd>Backspace</kbd> / <kbd>Delete</kbd></td><td>父级</td></tr>',
-        '<tr><td><kbd>PageUp</kbd> / <kbd>PageDown</kbd></td><td>DOM 平级前一个 / 后一个（按钮已收起，仅快捷键）</td></tr>',
-        '<tr><td><kbd>Home</kbd> / <kbd>End</kbd></td><td>子级首个 / 末个（同上）</td></tr>',
-        '<tr><td><kbd>空格</kbd> / <kbd>Tab</kbd></td><td>放行方案一键切换：默认放行 ⇄ 全部放行（两键同效，防系统监控占据空格）</td></tr>',
-        '<tr><td><kbd>Esc</kbd></td><td>关帮助窗 → 取消/退出</td></tr>',
+        t('<tr><td><kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd></td><td>Geometrically adjacent elements</td></tr>'),
+        t('<tr><td><kbd>Enter</kbd></td><td>Child (none → sibling next; keep pressing to walk the DOM tree)</td></tr>'),
+        t('<tr><td><kbd>Backspace</kbd> / <kbd>Delete</kbd></td><td>Parent</td></tr>'),
+        t('<tr><td><kbd>PageUp</kbd> / <kbd>PageDown</kbd></td><td>Prev / next DOM sibling (buttons hidden, shortcuts only)</td></tr>'),
+        t('<tr><td><kbd>Home</kbd> / <kbd>End</kbd></td><td>First / last child (as above)</td></tr>'),
+        t('<tr><td><kbd>Space</kbd> / <kbd>Tab</kbd></td><td>One-key allow-plan toggle: default allow ⇄ allow all (both keys work, in case the system grabs Space)</td></tr>'),
+        t('<tr><td><kbd>Esc</kbd></td><td>Close help → cancel/exit</td></tr>'),
         '</table>',
-        '<div class="dbg-help-note">快捷键在工具条显示时生效；光标在输入框时不劫持。</div>',
-        '<h4>③ 进阶：点不动页面按钮？「放行 → 触发 → 切回 → 选中」</h4>',
+        t('<div class="dbg-help-note">Shortcuts work while the toolbar is shown; typing in inputs is never intercepted.</div>'),
+        t('<h4>3. Advanced: can\'t click page buttons? Allow → trigger → switch back → select</h4>'),
         '<ol>',
-        '<li>按 <kbd>空格</kbd> 或 <kbd>Tab</kbd> → 切到 🔓 <b>全部放行</b></li>',
-        '<li>点击目标按钮 → 真实事件触发，菜单展开</li>',
-        '<li>再按 <kbd>空格</kbd>/<kbd>Tab</kbd> → 切回 🔒 <b>默认放行</b>（展开的菜单不会收起）</li>',
-        '<li>划过/方向键选中菜单项，<b>✓</b> 发送</li>',
+        t('<li>Press <kbd>Space</kbd> or <kbd>Tab</kbd> → switch to 🔓 <b>allow all</b></li>'),
+        t('<li>Click the target button → real event fires, menu opens</li>'),
+        t('<li>Press <kbd>Space</kbd>/<kbd>Tab</kbd> again → back to 🔒 <b>default allow</b> (opened menus stay open)</li>'),
+        t('<li>Hover/arrow-key onto menu items, <b>✓</b> to send</li>'),
         '</ol>',
-        '<div>其他：<b>👆 模拟 hover</b> 对付 JS 悬停展开（CSS :hover 除外）；<b># 快速选择</b>支持 <code>.card button</code> 与 <code>//div[@class="card"]</code>。</div>',
-        '<h4>④ 键盘没有时（触屏）：以下方向点按钮直达</h4>',
+        t('<div>More: <b>👆 Simulate hover</b> handles JS hover expansions (not CSS :hover); <b># quick pick</b> accepts <code>.card button</code> and <code>//div[@class="card"]</code>.</div>'),
+        t('<h4>4. No keyboard (touch): tap direction buttons</h4>'),
         '<div class="dbg-help-nav-row">',
-        '<button data-dir="prev">◀ 前一个</button>',
-        '<button data-dir="next">▶ 后一个</button>',
-        '<button data-dir="first">⏮ 最前</button>',
-        '<button data-dir="last">⏭ 最后</button>',
+        t('<button data-dir="prev">◀ Prev</button>'),
+        t('<button data-dir="next">▶ Next</button>'),
+        t('<button data-dir="first">⏮ First</button>'),
+        t('<button data-dir="last">⏭ Last</button>'),
         '</div>',
-        '<div class="dbg-help-note">对应快捷键 PageUp/PageDown/Home/End。</div>',
+        t('<div class="dbg-help-note">Mapped to PageUp/PageDown/Home/End.</div>'),
       ].join('');
       // 触屏导航兜底：◀▶⏮⏭ 可点入口（按钮已从工具条撤下，触屏无 PageUp/PageDown/Home/End）
       body.querySelectorAll('.dbg-help-nav-row button').forEach(function (b) {
