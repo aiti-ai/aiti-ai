@@ -18,7 +18,9 @@
 #     false — publish for real.
 #   only: optional comma-separated dir name filter (e.g. "aiti-cmd,session-manager").
 #
-# Publish scope: extensions/ (63+ extensions) + pi-plugins/ + packages/ (the aiti-devtools family).
+# Publish scope: extensions/ (63+ extensions) + pi-plugins/ + packages/ (the aiti-devtools family)
+# + integrations/ (external-agent carriers: integrations/<repo>/<pkg>, e.g. DSH plugins —
+#   @aiti-ai/aiti-devtools-dsh, @aiti-ai/dsh-secret-mask; no CI build needed, the mirror carries lib/).
 # Decision matrix (tools/publish-all.mjs): unchanged content skips; changed content auto-bumps the patch version; official-registry versions
 # without a contentHash count as changed and converge; every official publish is gated by release-audit, FAIL blocks it.
 #
@@ -182,6 +184,15 @@ jobs:
             # 部分包无 deps 字段（esbuild 隐式靠仓根），prepublishOnly/build 需要
             [ -x "${d}node_modules/.bin/esbuild" ] || (cd "$d" && npm install --no-save esbuild --legacy-peer-deps --no-audit --no-fund --loglevel=error)
             mv "$pj.orig" "$pj"   # 还原（node_modules 保留）
+          done
+          # integrations/<repo>/<pkg>：镜像自带 lib/ 构建产物，CI 不构建；防御性去 lock（与 packages/ 同理，
+          # 发布不需要 lock，且镜像侧历史 lock 可能含私源 resolved）
+          for repo in integrations/*/; do
+            [ -d "$repo" ] || continue
+            for d in "$repo"*/; do
+              [ -f "${d}package.json" ] || continue
+              rm -f "${d}package-lock.json"
+            done
           done
           # dist 直塞：vendor tgz（48 构建的同版本产物）解出 dist 覆盖进包目录——
           # publish-all 对非空 dist 跳过构建（绕开各包 build 脚本的 esbuild 解析差异）
