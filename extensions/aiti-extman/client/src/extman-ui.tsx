@@ -10,8 +10,8 @@ import {
   SELF_ID, AITI_REGISTRY_PAGE, SOURCE_LABELS, SOURCE_COLORS, btnStyle, chipStyle,
   shortenPath, statusDotColor, statusDotTitle, looksLikeSource, publisherTrusted,
   publisherSourceLabel, findButtonByLabel, openSlotItem, dropToBack,
-  refreshTrusted, refreshStatus, sortedLocalIds, loadRegistry, runOp, runInstallZip,
-  localMatches, onlineMatches, registryDocUrl, registryInstallSource, onlinePublisher, syncLoader,
+  refreshTrusted, refreshStatus, sortedLocalIds, loadRegistry, loadUpdates, runOp, runInstallZip,
+  localMatches, onlineMatches, registryDocUrl, registryInstallSource, onlinePublisher, syncLoader, semverGt,
   extDisplayName, subscribeAll, dependentsOf, execOp, depEdges, hardDependents, clientDependents,
   invokeHelper,
   EXTMAN_KEY,
@@ -26,6 +26,14 @@ import { uiConfirm } from "../../../_shared/ui-dialogs";
 // ---------- 扩展协议徽标 / AI 升级（docs/pi-web-ext-protocol.md） ----------
 
 /** 协议状态 → chip 规格（ok 无 minorAhead 时返回 null；状态由服务端 withProtocol 富化到 status.extensions[id].protocol）。 */
+// 底部 roots 摘要 chip 着色（label → [文字色, 背景色]；未列出的走灰色兜底）。
+const ROOT_CHIP_COLORS: Record<string, [string, string]> = {
+  user: ["#3b82f6", "rgba(59,130,246,0.12)"],
+  extra: ["#d97706", "rgba(217,119,6,0.12)"],
+  dev: ["#059669", "rgba(5,150,105,0.12)"],
+  bundled: ["#8b5cf6", "rgba(139,92,246,0.12)"],
+};
+
 function protocolChipSpec(proto: any): { icon: string; label: string; color: string; bg: string } | null {
   const state = proto?.state;
   if (!state) return null;
@@ -209,14 +217,16 @@ function PublisherCell({ publisher }: { publisher: any }) {
   const trusted = publisherTrusted(publisher);
   const busy = state.busyKey === "trust:" + name || state.busyKey === "untrust:" + name;
   const keyName = (publisher.name && publisher.name.trim()) || publisher.fingerprint || "";
-  const linkStyle = { color: "var(--accent)", textDecoration: "none", fontSize: 12, fontWeight: 600, overflowWrap: "anywhere" };
+  const linkStyle = { color: "var(--accent)", textDecoration: "none", fontSize: 12, fontWeight: 600 };
+  const actionBtnStyle = { ...btnStyle, padding: "3px 10px", fontSize: 11 } as React.CSSProperties;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 5, minWidth: 0 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", minWidth: 0 }}>
         {url ? (
-          <a href={url} target="_blank" rel="noopener noreferrer" title={url} style={linkStyle}>
-            {name}{" "}
-            <svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} style={{ verticalAlign: "middle" }}>
+          <a href={url} target="_blank" rel="noopener noreferrer" title={url}
+            style={{ ...linkStyle, display: "inline-flex", alignItems: "center", gap: 4, whiteSpace: "nowrap", minWidth: 0, maxWidth: "100%" }}>
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{name}</span>
+            <svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} style={{ flexShrink: 0 }}>
               <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
               <polyline points="15 3 21 3 21 9" />
               <line x1={10} y1={14} x2={21} y2={3} />
@@ -229,25 +239,26 @@ function PublisherCell({ publisher }: { publisher: any }) {
         {trusted
           ? <span style={chipStyle("color-mix(in srgb, var(--ok, #10b981) 90%, transparent)", "color-mix(in srgb, var(--ok, #10b981) 12%, transparent)")}>✓ {t("ext.trusted")}</span>
           : <span style={chipStyle("rgba(217,119,6,0.9)", "rgba(217,119,6,0.12)")}>⚠ {t("ext.notTrusted")}</span>}
+        {/* 信任/撤销按钮内联同行（flexWrap 宽度不够自然换行，不再独立成行） */}
+        {trusted ? (
+          <button type="button" disabled={busy}
+            onClick={() => void runOp("untrust", { name: keyName })}
+            style={actionBtnStyle}>
+            {busy ? "…" : t("ext.untrustPublisher")}
+          </button>
+        ) : keyName ? (
+          <button type="button" disabled={busy}
+            onClick={() => void runOp("trust", { name: (publisher.name && publisher.name.trim()) || "", fingerprint: keyName, url, source: publisher.source })}
+            style={actionBtnStyle}>
+            {busy ? "…" : t("ext.trustPublisher")}
+          </button>
+        ) : null}
       </div>
       {!publisher.name && publisher.fingerprint && (
         <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-dim)" }}>
           {t("ext.fingerprint")}: {publisher.fingerprint}
         </div>
       )}
-      {trusted ? (
-        <button type="button" disabled={busy}
-          onClick={() => void runOp("untrust", { name: keyName })}
-          style={{ ...btnStyle, alignSelf: "flex-start", padding: "3px 10px", fontSize: 11 } as React.CSSProperties}>
-          {busy ? "…" : t("ext.untrustPublisher")}
-        </button>
-      ) : keyName ? (
-        <button type="button" disabled={busy}
-          onClick={() => void runOp("trust", { name: (publisher.name && publisher.name.trim()) || "", fingerprint: keyName, url, source: publisher.source })}
-          style={{ ...btnStyle, alignSelf: "flex-start", padding: "3px 10px", fontSize: 11 } as React.CSSProperties}>
-          {busy ? "…" : t("ext.trustPublisher")}
-        </button>
-      ) : null}
     </div>
   );
 }
@@ -745,12 +756,37 @@ function ExtManContent(): any {
   for (const ext of regExts) registryById[ext.id] = ext;
 
   const busyAny = state.busyKey !== null;
+
+  // 底部 roots 摘要：单行 chip 徽章（label 着色 + 路径），完整清单在 title tooltip。
+  const rootChips: { label: string; value: string }[] = status ? [
+    { label: "user", value: shortenPath(status.extensionsRoot) },
+    ...((status.extraExtensionsRoots && status.extraExtensionsRoots.length)
+      ? status.extraExtensionsRoots.map((p: string) => ({ label: "extra", value: shortenPath(p) }))
+      : []),
+    ...(status.devExtensionsRoot ? [{ label: "dev", value: shortenPath(status.devExtensionsRoot) }] : []),
+    { label: "bundled", value: shortenPath(status.bundledExtensionsRoot) },
+    { label: "data", value: shortenPath(status.dataRoot) },
+  ] : [];
   const installBusy = state.busyKey && state.busyKey.indexOf("install:") === 0;
 
   // 选中有效性：在线条目可能因安装成功变成本地——保持原样即可（local 优先校正）。
   const sel = state.selected;
   const selLocal = sel && sel.kind === "local" && status && status.extensions[sel.id];
   const selOnline = sel && sel.kind === "online" && registryById[sel.id];
+
+  // 左列表滚动容器 ref + 选中行滚入可视区：跳转打开（其他弹窗 🔧 → aiti-extman.open → openExtmanTo）
+  // 时选中项可能在长列表视口外。selected/status 就绪后把选中行 scrollIntoView(nearest)——
+  // 已在视口内则零位移，普通点击选中不受影响；status 异步到位后 effect 重跑完成首次滚动。
+  const listRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const s = state.selected;
+    if (!s || s.kind !== "local") return;
+    const raf = requestAnimationFrame(() => {
+      const el = listRef.current?.querySelector('[data-ext-row="l:' + s.id + '"]');
+      if (el) el.scrollIntoView({ block: "nearest" });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [state.selected, status]);
 
   // 详情顶部 ‹ › 导航：本地扩展详情时显示；顺序 = 左列表当前顺序（localIds，有搜索时为过滤结果）
   const navIds = localIds;
@@ -791,7 +827,7 @@ function ExtManContent(): any {
               <button type="button" disabled={busyAny} onClick={() => void runOp("reload", {})} style={{ ...btnStyle, flex: 1 } as React.CSSProperties}>
                 {state.busyKey === "reload:" ? "…" : t("ext.reload")}
               </button>
-              <button type="button" disabled={busyAny} onClick={() => void refreshStatus()} style={{ ...btnStyle, flex: 1 } as React.CSSProperties}>{t("ext.refresh")}</button>
+              <button type="button" disabled={busyAny} onClick={() => { void refreshStatus(); void loadUpdates(true); }} style={{ ...btnStyle, flex: 1 } as React.CSSProperties}>{t("ext.refresh")}</button>
             </div>
           </div>
         ) : (
@@ -815,7 +851,7 @@ function ExtManContent(): any {
               <button type="button" disabled={busyAny} onClick={() => void runOp("reload", {})} style={btnStyle as React.CSSProperties}>
                 {state.busyKey === "reload:" ? "…" : t("ext.reload")}
               </button>
-              <button type="button" disabled={busyAny} onClick={() => void refreshStatus()} style={btnStyle as React.CSSProperties}>{t("ext.refresh")}</button>
+              <button type="button" disabled={busyAny} onClick={() => { void refreshStatus(); void loadUpdates(true); }} style={btnStyle as React.CSSProperties}>{t("ext.refresh")}</button>
               <button type="button" onClick={() => setState({ open: false })} title={t("ext.close")} aria-label={t("ext.close")} style={btnStyle as React.CSSProperties}><IconClose /></button>
             </div>
           </div>
@@ -906,7 +942,7 @@ function ExtManContent(): any {
                   )}
                 </div>
               </div>,
-              <div key="results" style={{ flex: 1, overflowY: "auto", padding: "8px 6px" }}>
+              <div key="results" ref={listRef} style={{ flex: 1, overflowY: "auto", padding: "8px 6px" }}>
                 {state.view === "caps" ? <CapList q={q} />
                 : state.view === "conflicts" ? <ConflictList q={q} />
                 : !status ? (
@@ -939,7 +975,13 @@ function ExtManContent(): any {
                     const e = status.extensions[id];
                     const isSel = rowSelected("local", id);
                     const reg = registryById[id];
-                    const updatable = reg && reg.version && e.version && reg.version !== e.version;
+                    // npm 更新检查（pi 同策略）优先；仅当 npm 数据缺失（未完成/非 npm 包）才回退注册表对比，
+                    // 且要求注册表版本 semver 大于已装版本——陈旧注册表的旧版本（如 0.3.9 vs 0.3.86）不提示
+                    const upd = state.updates && state.updates[id];
+                    const npmUpd = upd && upd.hasUpdate;
+                    const regUpd = !upd && reg && reg.version && e.version && semverGt(reg.version, e.version);
+                    const updatable = npmUpd || regUpd;
+                    const upVer = npmUpd ? upd.latest : (reg && reg.version) || "";
                     const protoChip = protocolChipSpec(e.protocol);
                     const showDivider = !hasQuery && e.enabled === false && (i === 0 || status.extensions[localIds[i - 1]].enabled !== false);
                     const hovered = state.hoverLocal === id;
@@ -947,7 +989,7 @@ function ExtManContent(): any {
                     return (
                       <div key={"l:" + id}>
                         {showDivider && <div style={{ padding: "8px 8px 3px", fontSize: 10, fontWeight: 700, color: "var(--danger, #ef4444)", textTransform: "uppercase", borderTop: "1px solid var(--border)", marginTop: 6 }}>{t("ext.disabled")}</div>}
-                        <div onClick={() => setState({ selected: { kind: "local", id }, error: null, message: null, mobileView: isMobile ? "detail" : state.mobileView })}
+                        <div data-ext-row={"l:" + id} onClick={() => setState({ selected: { kind: "local", id }, error: null, message: null, mobileView: isMobile ? "detail" : state.mobileView })}
                           style={{
                             display: "flex", alignItems: "center", gap: 8, padding: "9px 10px",
                             borderRadius: 5, cursor: "pointer",
@@ -984,7 +1026,7 @@ function ExtManContent(): any {
                               label={(e.enabled === false ? t("ext.enable") : t("ext.disable")) + " " + id} />
                           ) : [
                             hasQuery && <span key="inst" style={chipStyle("rgba(99,102,241,0.9)", "rgba(99,102,241,0.12)")}>{t("ext.installed")}</span>,
-                            updatable && <span key="up" style={chipStyle("#d97706", "rgba(217,119,6,0.12)")}>↑{reg.version}</span>,
+                            updatable && <span key="up" title={npmUpd ? (upd.pkg + " " + upd.installed + " → " + upd.latest) : ""} style={chipStyle("#d97706", "rgba(217,119,6,0.12)")}>↑{upVer}</span>,
                             !hasQuery && <SourceTag key="src" source={e.source} />,
                           ]}
                         </div>
@@ -1092,22 +1134,20 @@ function ExtManContent(): any {
             padding: "8px 18px", borderTop: "1px solid var(--border)", flexShrink: 0,
           }}>
             <div style={{ minWidth: 0, flex: 1, fontSize: 10, color: "var(--text-dim)", fontFamily: "var(--font-mono)", lineHeight: 1.5, overflow: "hidden" }}
-              title={[
-                "user: " + shortenPath(status.extensionsRoot),
-                ...(status.extraExtensionsRoots && status.extraExtensionsRoots.length ? ["extra: " + status.extraExtensionsRoots.map(shortenPath).join(", ")] : []),
-                ...(status.devExtensionsRoot ? ["dev: " + shortenPath(status.devExtensionsRoot)] : []),
-                "bundled: " + shortenPath(status.bundledExtensionsRoot),
-                "data: " + shortenPath(status.dataRoot),
-              ].join("\n")}>
-              {isMobile
-                ? <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>user: {shortenPath(status.extensionsRoot)}</div>
-                : [
-                  <div key="user">user: {shortenPath(status.extensionsRoot)}</div>,
-                  status.extraExtensionsRoots && status.extraExtensionsRoots.length > 0 && <div key="extra">extra: {status.extraExtensionsRoots.map(shortenPath).join(", ")}</div>,
-                  status.devExtensionsRoot && <div key="dev">dev: {shortenPath(status.devExtensionsRoot)}</div>,
-                  <div key="bundled">bundled: {shortenPath(status.bundledExtensionsRoot)}</div>,
-                  <div key="data">data: {shortenPath(status.dataRoot)}</div>,
-                ]}
+              title={rootChips.map((c) => c.label + ": " + c.value).join("\n")}>
+              <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {rootChips.map((c, i) => (
+                  <span key={c.label + ":" + i}>
+                    {i > 0 && <span style={{ opacity: 0.45, margin: "0 7px" }}>·</span>}
+                    <span style={{
+                      display: "inline-block", fontSize: 9, lineHeight: 1.7, padding: "0 6px", borderRadius: 8, fontWeight: 600,
+                      color: ROOT_CHIP_COLORS[c.label]?.[0] || "var(--text-muted)",
+                      background: ROOT_CHIP_COLORS[c.label]?.[1] || "rgba(127,127,127,0.14)",
+                    }}>{c.label}</span>
+                    {" " + c.value}
+                  </span>
+                ))}
+              </div>
             </div>
             <a href={AITI_REGISTRY_PAGE} target="_blank" rel="noopener noreferrer"
               style={{ fontSize: 11, color: "var(--accent)", textDecoration: "none", whiteSpace: "nowrap", flexShrink: 0 }}>
@@ -1274,7 +1314,32 @@ function LocalDetail({ id, entry }: { id: string; entry: any }) {
         <InfoRow label={t("ext.publisher")}><PublisherCell publisher={entry.publisher} /></InfoRow>
         <InfoRow label={t("ext.dir")}><span style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>{entry.dir ? shortenPath(entry.dir) : "—"}</span></InfoRow>
         <InfoRow label={t("ext.configDir")}><span style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>{entry.configDir ? shortenPath(entry.configDir) : "—"}</span></InfoRow>
-        {pkg.name && <InfoRow label="npm"><span style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>{pkg.name}</span></InfoRow>}
+        {pkg.name && (
+          <InfoRow label="npm">
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap", minWidth: 0 }}>
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>{pkg.name}</span>
+              {(() => {
+                const upd = state.updates && state.updates[id];
+                // 更新检查已出结果且就是本包 → npm 版本状态（pi 同策略：npm registry 为准）
+                if (!upd || upd.pkg !== pkg.name) return null;
+                if (upd.hasUpdate) {
+                  const installing = state.busyKey === "install:" + upd.pkg;
+                  return [
+                    <span key="chip" title={upd.installed + " → " + upd.latest} style={chipStyle("#d97706", "rgba(217,119,6,0.12)")}>↑ {upd.latest}</span>,
+                    <button key="btn" type="button" disabled={installing || !enabled}
+                      title={t("ext.updateTo", { version: upd.latest })}
+                      onClick={() => void runOp("install", { source: "npm:" + upd.pkg, id })}
+                      style={{ ...btnStyle, background: "var(--accent)", color: "white", borderColor: "var(--accent)" } as React.CSSProperties}>
+                      {installing ? "…" : t("ext.update")}
+                    </button>,
+                  ];
+                }
+                return <span style={chipStyle("color-mix(in srgb, var(--ok, #10b981) 90%, transparent)", "color-mix(in srgb, var(--ok, #10b981) 12%, transparent)")} title={t("ext.npmUpToDate", { version: upd.latest })}>✓ {upd.latest}</span>;
+              })()}
+              {state.updatesChecking && !state.updates && <span style={{ fontSize: 11, color: "var(--text-dim)" }}>{t("ext.updatesChecking")}</span>}
+            </span>
+          </InfoRow>
+        )}
         {entry.i18nLocales && entry.i18nLocales.length > 0 && (
           <InfoRow label="i18n"><span style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>{entry.i18nLocales.join(", ")}</span></InfoRow>
         )}
@@ -1735,7 +1800,8 @@ function AddPane() {
           {regList.map((ext: any) => {
             const installed = state.status && state.status.extensions[ext.id];
             const installedVersion = installed && installed.version;
-            const updatable = installed && ext.version && installedVersion && ext.version !== installedVersion;
+            // 注册表面板同口径：注册表版本 semver 大于已装才提示（旧版本误报如 0.3.9 → 0.3.86）
+            const updatable = installed && ext.version && installedVersion && semverGt(ext.version, installedVersion);
             const src = registryInstallSource(ext);
             return (
               <div key={ext.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg-panel)" }}>
@@ -1827,7 +1893,7 @@ export function ExtManDockFace(props: any) {
   useEffect(() => subscribeAll(() => force((v) => v + 1)), []);
   setCurrentSession(props ? props.currentSession : null);
   // 挂载即拉数据（SidebarFooterButton 入口外的路径——如偏好直达停靠——也有数据）
-  useEffect(() => { if (docked) { void refreshStatus(); void refreshTrusted(); syncLoader(); } }, [docked]);
+  useEffect(() => { if (docked) { void refreshStatus(); void refreshTrusted(); void loadUpdates(); syncLoader(); } }, [docked]);
   if (!docked) return null;
   return (
     <DockBody itemKey={EXTMAN_KEY} zone="right-panel" title={t("ext.title")} chrome="tab"
@@ -1880,6 +1946,7 @@ export function openExtmanPanel(): void {
   setState({ open: true, maximized: false, error: null, message: null, zBack: false });
   void refreshStatus();
   void refreshTrusted();
+  void loadUpdates(); // npm 更新检查（打开面板查一次，非轮询）
   syncLoader();
 }
 
