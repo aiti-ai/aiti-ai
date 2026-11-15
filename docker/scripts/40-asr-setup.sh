@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# 40-asr-setup.sh — ASR venv + default-engine model pre-download (aiti-docker-image-plan §2.2.2)
-# The bulk of the size (~2GB): baked into the image at build time so users never stall on their first turn; modelscope reachable directly from CN.
+# 40-asr-setup.sh — ASR venv only (aiti-docker-image-plan §2.2.2)
+# Models are NOT baked into the image (2026-11-15: dropped to save ~1GB image size) — funasr downloads
+# them automatically on first use (same AutoModel hub="ms" calls as voice-asr-stream.py); the cache
+# dir /opt/aiti-asr/models (MODELSCOPE_CACHE, set in Dockerfile.full) is created here and kept writable
+# by aiti so runtime downloads persist across container restarts via the data volume.
 set -euo pipefail
 VENV=/opt/aiti-asr/.venv
 # ⚠ First-run calibration (2026-09-09): ubuntu 26.04 system python = 3.14, and the numpy1.26/torch ecosystem has no cp314
@@ -23,27 +26,12 @@ uv pip install --python "$VENV/bin/python" \
   fastapi "uvicorn[standard]" python-multipart websockets \
   funasr modelscope pypinyin
 
-# Model pre-download: same sources as voice-asr-stream.py's built-in default engines (TODO backfill completed 2026-09-09) —
-#   streaming paraformer-zh-streaming / 2-pass seaco paraformer / quick SenseVoiceSmall / VAD fsmn-vad,
-#   all funasr AutoModel hub="ms" (modelscope direct from CN). Same call, same params = same alias resolution, zero re-download at runtime.
-# Cache location MODELSCOPE_CACHE=/opt/aiti-asr/models: baked into the image layer and not shadowed by the optional /home/aiti/.cache volume;
-# the same ENV name in Dockerfile.full makes runtime read the same directory (switching models via asr-config.json also lands incremental downloads here).
+# Cache location MODELSCOPE_CACHE=/opt/aiti-asr/models: created here (empty) and not shadowed by the optional
+# /home/aiti/.cache volume; the same ENV name in Dockerfile.full makes runtime download into the same directory
+# (first-use auto-download + switching models via asr-config.json also lands incremental downloads here).
 export MODELSCOPE_CACHE=/opt/aiti-asr/models
 mkdir -p "$MODELSCOPE_CACHE"
-"$VENV/bin/python" - <<'EOF'
-from funasr import AutoModel
-
-for model_id in (
-    "paraformer-zh-streaming",                                    # STREAM_MODEL_ID default (WS realtime transcript)
-    "iic/speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",  # OFFLINE_MODEL_ID default (2-pass refinement)
-    "iic/SenseVoiceSmall",                                        # SENSE_MODEL_ID (quick recognition)
-    "fsmn-vad",                                                   # VAD (dynamic streaming VAD)
-):
-    print(f"[40-asr] pre-download {model_id} ...", flush=True)
-    AutoModel(model=model_id, device="cpu", disable_update=True, hub="ms")
-print("[40-asr] funasr default models cached")
-EOF
-echo "[40-asr] venv + models -> $VENV / $MODELSCOPE_CACHE"
+echo "[40-asr] venv -> $VENV | model cache dir (runtime auto-download) -> $MODELSCOPE_CACHE"
 # readable by aiti (runtime loading) and writable (runtime incremental model downloads land here)
 chown -R aiti:aiti "$MODELSCOPE_CACHE" 2>/dev/null || true
 chmod -R a+rX /opt/aiti-asr 2>/dev/null || true
