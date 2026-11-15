@@ -90,8 +90,7 @@ if [ "$TARGET" = "full" ]; then
   for b in cloudflared ngrok frpc edge-tts; do
     docker exec "$NAME" sh -c "command -v $b >/dev/null" && ok "$b present" || bad "$b missing"
   done
-  M=$(docker exec "$NAME" sh -c 'ls /opt/aiti-asr/models/models 2>/dev/null | wc -l')
-  [ "$M" -ge 4 ] && ok "funasr pre-downloaded models: $M" || bad "funasr pre-downloaded models only $M"
+  docker exec "$NAME" sh -c 'test -w /opt/aiti-asr/models' && ok "ASR model cache dir writable (models auto-download on first use)" || bad "ASR model cache dir not writable"
 fi
 
 say "── wrap-up ──"
