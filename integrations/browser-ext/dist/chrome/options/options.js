@@ -1,8 +1,8 @@
 /*
- * aiti-devtools 浏览器扩展 · options（v2）
+ * aiti-devtools browser extension · options (v2)
  *
- * 站点规则（默认关 + 白名单/排除）+ AI 目标（pi-web 探测预填 / 兼容 agent / cockpit 兜底）+ 高级（桥地址 / shim）。
- * v1 legacy 配置由 migrate() 读取映射（enabled→defaultEnabled、excludes→denySites、自定义 aiUrl→cockpitUrl）。
+ * Site rules (default off + allowlist/deny) + AI target (pi-web probe prefill / compatible agent / cockpit fallback) + advanced (bridge URL / shim).
+ * v1 legacy config is mapped by migrate() (enabled→defaultEnabled, excludes→denySites, custom aiUrl→cockpitUrl).
  */
 (function () {
   'use strict';
@@ -85,7 +85,7 @@
   function save() {
     const cfg = collect();
     api.storage.sync.set(cfg, () => {
-      // 通知各 tab content script 重求值（storage.onChanged 亦会触发，双保险）
+      // notify every tab's content script to re-evaluate (storage.onChanged also fires — belt and braces)
       try {
         api.tabs.query({}, (tabs) => {
           (tabs || []).forEach((t) => {
@@ -99,7 +99,7 @@
     });
   }
 
-  // 探测本机 pi-web：HEAD /aiti/aiti-launcher.js（host_permissions <all_urls> 放行跨源）
+  // probe local pi-web: HEAD /aiti/aiti-launcher.js (host_permissions <all_urls> allows the cross-origin call)
   function probe() {
     setProbe('探测中…');
     const ports = ['30141', '30142'];
