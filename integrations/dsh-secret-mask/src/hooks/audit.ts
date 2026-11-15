@@ -11,11 +11,10 @@
  */
 
 import type { GenerateOptions, PluginConfig, PluginContext } from "../dsh-types.ts";
-import { auditPayload } from "../core/mask.ts";
-import { appendAuditLog } from "../core/commands.ts";
+import { auditPayload, appendAuditLog } from "@aiti-ai/secret-mask-core";
 import { stateFor } from "../state.ts";
 
-export function registerAudit(ctx: PluginContext, cfg: PluginConfig, auditPath?: string): void {
+export function registerAudit(ctx: PluginContext, cfg: PluginConfig): void {
   ctx.on("llm/stream", (options: GenerateOptions, next: () => AsyncIterable<unknown>): AsyncIterable<unknown> => {
     const st = stateFor(options?.sessionId, cfg);
     if (st.enabled && st.audit && st.registry.size > 0) {
@@ -32,7 +31,7 @@ export function registerAudit(ctx: PluginContext, cfg: PluginConfig, auditPath?:
           leaks: a.leaks,
           leakedLabels: a.leakedLabels,
         },
-        auditPath,
+        cfg.auditPath || st.auditPath,
       );
       if (err) ctx.logger.warn("dsh-secret-mask: audit log write failed: " + err);
       if (a.leaks > 0) {

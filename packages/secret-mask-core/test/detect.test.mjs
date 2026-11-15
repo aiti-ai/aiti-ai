@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { randomInt } from "node:crypto";
 import { test } from "node:test";
-import { scan, entropy, fnv1a } from "../src/core/detect.ts";
+import { scan, entropy, fnv1a } from "../src/detect.ts";
 
 const B36 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 const A2Z7 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";

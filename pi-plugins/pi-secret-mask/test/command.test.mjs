@@ -11,7 +11,16 @@ import { Registry } from "../src/mask.ts";
 const SECRET = "7fJk2mN9pQrStUvWx3y4z5A6b7C8d9E0";
 
 function mkState() {
-  return { registry: new Registry(), enabled: true, salt: "salt", cwd: "/proj/a", persisted: false };
+  return {
+    registry: new Registry(),
+    enabled: true,
+    salt: "salt",
+    cwd: "/proj/a",
+    persisted: false,
+    audit: false,
+    persistPath: "/tmp/pi-secret-mask-test/secret-mask.json",
+    auditPath: "/tmp/pi-secret-mask-test/audit.log",
+  };
 }
 
 test("help and unknown subcommand", async () => {
@@ -142,7 +151,7 @@ test("send-audit: payload proof scan + command toggle + evidence log", async () 
   const dir = mkdtempSync(join(tmpdir(), "secret-mask-audit-"));
   try {
     const log = join(dir, "audit.log");
-    assert.equal(appendAuditLog({ time: "t", sessionId: "s", strings: 3, placeholders: 3, leaks: 1, leakedLabels: ["audit-key"] }, log), undefined);
+    assert.equal(appendAuditLog({ time: "t", sessionId: "s", purpose: "conversation", strings: 3, placeholders: 3, leaks: 1, leakedLabels: ["audit-key"] }, log), undefined);
     assert.equal(readAuditTail(5, log).length, 1);
     assert.ok(readAuditTail(5, log)[0].includes("audit-key"), "labels recorded, raw values never");
     assert.ok(!readAuditTail(5, log)[0].includes(SECRET), "raw value never in the evidence log");

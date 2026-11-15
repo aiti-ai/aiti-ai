@@ -23,7 +23,7 @@
  */
 
 import type { AgentLike, PluginConfig, PluginContext, SessionStartPayload, ToolDefinition, ToolExecution } from "../dsh-types.ts";
-import { restoreDeep } from "../core/mask.ts";
+import { restoreDeep } from "@aiti-ai/secret-mask-core";
 import { stateFor } from "../state.ts";
 
 export const SHADOW_WHITELIST = ["bash", "write", "edit", "str_replace_editor"] as const;
