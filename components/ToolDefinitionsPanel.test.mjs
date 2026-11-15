@@ -7,7 +7,11 @@ const systemSource = await readFile(new URL("./SystemPromptPanel.tsx", import.me
 const appShellSource = await readFile(new URL("./AppShell.tsx", import.meta.url), "utf8");
 
 test("keeps System and Tools in separate adjacent toolbar actions", () => {
-  assert.match(appShellSource, /handleSystemInfoToggle\("system", mobile\)[\s\S]*?handleSystemInfoToggle\("tools", mobile\)/);
+  // 2026-11-15 (d3d11cc7): the mobile horizontal More-controls tier retired — its
+  // `handleSystemInfoToggle(…, mobile)` call sites went with it. The top bar now pins
+  // the fork's own buttons: system is a plain panel toggle, tools routes through the
+  // lazy system-info loader.
+  assert.match(appShellSource, /toggleTopPanel\("system"\)[\s\S]*?handleSystemInfoToggle\("tools"\)/);
   assert.match(appShellSource, /activeTopPanel === "system"[\s\S]*?<SystemPromptPanel/);
   assert.match(appShellSource, /activeTopPanel === "tools"[\s\S]*?<ToolDefinitionsPanel/);
   assert.doesNotMatch(systemSource, /ToolEntry|tools/);
