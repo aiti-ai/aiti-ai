@@ -75,8 +75,19 @@ export default {
 
   ui: {
     toolbar: [
-      { id: "aiti-append-system-open", label: "提示词", title: "aiti-append-system：追加系统提示词（全局 / 项目）", icon: "icons/pen-line.svg" },
+      { id: "aiti-append-system-open", label: "i18n:ap.open.label", title: "i18n:ap.open.title", icon: "icons/pen-line.svg" },
     ],
+    i18n: {
+      "zh-CN": {
+      "ap.open.label": "提示词",
+      "ap.open.title": "aiti-append-system：追加系统提示词（全局 / 项目）",
+      },
+      en: {
+      "ap.open.label": "Prompts",
+      "ap.open.title": "aiti-append-system: append system prompts (global / project)",
+      },
+    },
+
     pages: [{ id: "aiti-append-system-panel", label: "追加系统提示词" }], // 实际注册在 pages 插槽（client），声明与之一致
   },
 
