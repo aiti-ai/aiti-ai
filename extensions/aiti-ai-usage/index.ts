@@ -89,9 +89,13 @@ export default {
     clientImmediately: false,
     toolbar: [{ id: "usage", label: "i18n:au.app.label", title: "i18n:au.app.title", icon: "icons/chart-column.svg" }],
     sessionStats: [{ id: "report-entry", label: "用量报表按钮", title: "会话统计下拉内「用量报表」入口" }],
-    dialogs: [{ id: "report", label: "AI 用量报表" }],
+    dialogs: [{ id: "report", label: "i18n:it.report.label" }],
     i18n: {
       en: {
+        "it.report.title": "Usage report",
+        "it.report.label": "AI usage report",
+        "ext.displayName": "AI Usage",        "feat.report-entry": "Usage report button",
+        "feat.report": "AI usage report",
         "au.app.label": "Usage",
         "au.app.title": "AI usage report",
         "au.title": "AI Usage Report",
@@ -223,7 +227,9 @@ export default {
         "au.quote.fileref": "@file mention",
       },
       "zh-CN": {
-        "au.app.label": "用量",
+        "it.report.title": "用量",
+        "it.report.label": "AI 用量报表",
+        "ext.displayName": "AI 用量统计",        "au.app.label": "用量",
         "au.app.title": "AI 用量报表",
         "au.title": "AI 用量报表",
         "au.entry": "用量报表",

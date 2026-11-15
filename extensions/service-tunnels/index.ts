@@ -26,7 +26,15 @@ export default {
   client: "dist/service-tunnels.mjs",
 
   ui: {
-    clientImmediately: false, // [懒加载 v2] M1 已同步生产，懒化重启用
+    // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
+    i18n: {
+      "zh-CN": {
+        "ext.displayName": "服务隧道",
+      },
+      en: {
+        "ext.displayName": "Service Tunnels",        "feat.self-expose-alert": "Unauthenticated exposure alert",
+      },
+    },    clientImmediately: false, // [懒加载 v2] M1 已同步生产，懒化重启用
     toolbar: [{ id: "ports", label: "i18n:st.ports.label", title: "i18n:st.ports.title", icon: "icons/globe.svg" }],
     // aiti-float dock v3：停靠槽静态声明（懒扩展物化触发 + 静态入口；id 与 client 注册一致）
     rightFileDock: [{ id: "ports", label: "i18n:st.ports.label" }],

@@ -1016,15 +1016,15 @@ export default function register(ctx) {
   }
 
   ctx.registerItems("toolbar", [
-    { id: "aiti-inspect", render: InspectButton, meta: { label: "点选元素" } },
-    { id: "aiti-open", render: AitiToolbarButton, meta: { label: "AITI 调试器" } },
+    { id: "aiti-inspect", render: InspectButton, meta: { label: "i18n:it.inspect-pick.label" } },
+    { id: "aiti-open", render: AitiToolbarButton, meta: { label: "i18n:it.inspect.label" } },
   ]);
   ctx.registerItems("dialogs", [
     { id: "aiti-dialog", render: AitiDialog },
     { id: "aiti-detail", render: DetailDialog },
   ]);
   // dock v3（P1 批）：右栏「调试」tab——raw itemId "main"（宿主拼 extId:itemId = DIALOG_KEY）
-  ctx.registerItems("rightFileDock", [{ id: "main", render: AitiDockFace, meta: { title: "调试" } }]);
+  ctx.registerItems("rightFileDock", [{ id: "main", render: AitiDockFace, meta: { title: "i18n:it.main.title" } }]);
   ctx.registerItems("chatInputTop", [{ id: "aiti-picked", render: ChatInputTop }]);
 
   // ---------- 按需注入 launcher（首次点击 🎯 才装，初始化零注入） ----------

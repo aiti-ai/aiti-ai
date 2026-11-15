@@ -71,6 +71,8 @@ export default {
         "providerUsage.available": "可用",
       },
       en: {
+        "feat.providerUsage.enabled": "Remaining quota panel",
+        "feat.panel": "Remaining quota",
         "providerUsage.remainingQuota": "Remaining quota",
         "providerUsage.currentSession": "current session",
         "providerUsage.loading": "Loading…",

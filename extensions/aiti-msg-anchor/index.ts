@@ -35,11 +35,27 @@ export default {
     clientDependsOn: ["aiti-msg-nav"], // 共享同一 chatOverlay 插槽与 DOM 契约（并行预取提示）
     i18n: {
       "zh-CN": {
-        "anchor.currentInput": "当前输入",
+        "ext.displayName": "消息锚点横幅",        "anchor.currentInput": "当前输入",
         "anchor.firstInput": "第一条输入",
         "anchor.latestInput": "最近输入",
         "anchor.sessionTitle": "会话标题",
         "anchor.hint": "点击跳转到该输入",
+      },
+      en: {
+        "feat.show.banner.desc": "Persistent banner at the top of the message area showing the user input owning the current viewport",
+        "feat.display.mode.desc": "current = user input owning the current viewport (scroll-follow); first = session's first input; latest = most recent input; title = session title",
+        "feat.display.title.desc": "Banner line 1 shows the current session title (name; falls back to the first input when absent)",
+        "feat.display.input.desc": "Banner line 2 shows the user input owning the current viewport (input decided by display.mode)",
+        "feat.display.opacity.desc": "Banner opacity (0-100 number: 0 = fully transparent, 100 = opaque)",
+        "feat.text.maxLen.desc": "Max characters for user input/title in the banner (truncated beyond this)",
+        "ext.displayName": "Message Anchor Banner",
+        "ext.description": "current = user input owning the current viewport (follows scroll); first = session's first input; latest = most recent input; title = session title",
+        "feat.show.banner": "Show the message anchor banner",
+        "feat.display.mode": "Display mode",
+        "feat.display.title": "Show session title row",
+        "feat.display.input": "Show current input row",
+        "feat.display.opacity": "Banner opacity",
+        "feat.text.maxLen": "Text truncation length",
       },
       "en": {
         "anchor.currentInput": "Current input",

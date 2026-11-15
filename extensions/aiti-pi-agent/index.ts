@@ -32,6 +32,19 @@ export default {
 
   features: [spawnEnvFeature("Pi"), spawnCommandFeature("Pi"), spawnArgsPrefixFeature("Pi")],
 
+
+  ui: {
+    // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
+    i18n: {
+      "zh-CN": {
+        "ext.displayName": "pi 会话后端",
+      },
+      en: {
+        "ext.displayName": "pi Session Backend",
+      },
+    },
+  },
+
   server: {
     startup(ctx: {
       /** 跨扩展服务 slot（P2 协议委托；缺省=旧宿主降级）。 */
