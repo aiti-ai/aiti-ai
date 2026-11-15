@@ -94,8 +94,19 @@ export default {
 
   ui: {
     toolbar: [
-      { id: "aiti-models-import-open", label: "导入模型配置", title: "aiti-models-import：从 codex / zcode / opencode 等导入 provider 配置（经模型向导落盘）", icon: "icons/import.svg" },
+      { id: "aiti-models-import-open", label: "i18n:mi.open.label", title: "i18n:mi.open.title", icon: "icons/import.svg" },
     ],
+    i18n: {
+      "zh-CN": {
+      "mi.open.label": "导入模型配置",
+      "mi.open.title": "aiti-models-import：从 codex / zcode / opencode 等导入 provider 配置（经模型向导落盘）",
+      },
+      en: {
+      "mi.open.label": "Import model configs",
+      "mi.open.title": "aiti-models-import: import provider configs from codex / zcode / opencode etc. (lands via model wizard)",
+      },
+    },
+
     dialogs: [{ id: "aiti-models-import-dialog", label: "aiti-models-import" }],
   },
 
