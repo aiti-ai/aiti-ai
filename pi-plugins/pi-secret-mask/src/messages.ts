@@ -1,20 +1,16 @@
 /**
- * AgentMessage redaction for the `context` hook.
+ * AgentMessage redaction for the `context` hook — pi's message-shape adapter.
  *
- * Handles pi's message shapes without importing host types (structural
- * typing): user (string or text/image blocks), assistant text blocks
- * (thinking/toolCall untouched), toolResult text blocks, bashExecution
- * command+output, custom message content, compaction/branch summaries.
- *
- * Auto-detection (registering newly seen secret-shaped values) runs only on
- * text the user authored: user message content and bash commands. Tool output
- * and model text only get redaction of already-registered values.
- *
- * The hook receives a deep copy, so in-place edits never touch the session
- * transcript — redaction applies to what is sent to the model only.
+ * Maps pi's message shapes onto the shared engine's span contract
+ * (@aiti-ai/secret-mask-core): user (string or text/image blocks), assistant
+ * text blocks (thinking/toolCall untouched), toolResult text blocks,
+ * bashExecution command+output, custom message content, compaction/branch
+ * summaries. The hook receives a deep copy, so in-place span mutation never
+ * touches the session transcript — redaction applies to what is sent to the
+ * model only.
  */
 
-import type { Registry, ScanMaxOptions } from "./mask.ts";
+import { redactTextSpans, type Registry, type ScanMaxOptions } from "@aiti-ai/secret-mask-core";
 
 export interface TextSpan {
   get(): string;
@@ -80,8 +76,8 @@ export interface MessageRedactResult {
 
 /**
  * Register new auto-detected secrets from user-authored text, then redact all
- * registered value forms across every collected span. Mutates the (deep
- * copied) messages in place.
+ * registered value forms across every collected span (the shared span loop).
+ * Mutates the (deep copied) messages in place.
  */
 export function redactMessages(
   messages: unknown[],
@@ -89,22 +85,14 @@ export function redactMessages(
   salt: string,
   opts: ScanMaxOptions = {},
 ): MessageRedactResult {
-  let newEntries = 0;
   let changed = false;
+  let newEntries = 0;
   for (const message of messages) {
     const spans = collectSpans(message);
     if (spans.length === 0) continue;
-    const detect = userAuthored(message);
-    for (const span of spans) {
-      const text = span.get();
-      if (!text) continue;
-      if (detect) newEntries += registry.autoRegister(text, salt, opts).length;
-      const res = registry.redact(text);
-      if (res.count > 0) {
-        span.set(res.text);
-        changed = true;
-      }
-    }
+    const res = redactTextSpans(spans, registry, salt, { ...opts, autoDetect: userAuthored(message) });
+    if (res.changed) changed = true;
+    newEntries += res.newEntries;
   }
   return { changed, newEntries };
 }
