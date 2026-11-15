@@ -81,14 +81,16 @@ export default {
 
   ui: {
     clientImmediately: false, // [懒加载 v2] M1 已同步生产，懒化重启用
-    toolbar: [{ id: "aiti-ai-schedule-open", label: "调度", title: "调度：定时任务与计划管理", icon: "icons/clock.svg" }],
+    toolbar: [{ id: "aiti-ai-schedule-open", label: "i18n:sh.app.label", title: "i18n:sh.app.title", icon: "icons/clock.svg" }],
     // aiti-float dock v3 + v4 对齐分组：停靠槽静态声明（懒扩展物化触发 + 静态入口；id 与 client 注册一致）
-    rightFileDock: [{ id: "panel", label: "调度" }],
+    rightFileDock: [{ id: "panel", label: "i18n:sh.app.label" }],
     sidebarExplorerDock: [{ id: "panel", label: "任务" }],
     pages: [{ id: "aiti-ai-schedule-page", label: "调度", title: "aiti-ai-schedule：定时任务与计划管理" }],
     // 调度语法说明（? 帮助浮层）词条——按当前 UI 语言取词
     i18n: {
       "zh-CN": {
+        "sh.app.label": "调度",
+        "sh.app.title": "调度：定时任务与计划管理",
         "sh.title": "调度语法说明",
         "sh.titleAttr": "调度语法说明",
         "sh.cronHead": "cron 表达式 5 段：分 时 日 月 周（也可 6 段，开头加秒）",
@@ -110,6 +112,8 @@ export default {
         "sh.textareaTitle": "支持多行：每行一个调度（如工作日 0 9 * * 1-5，周末 0 10 * * 0,6），任一到达即执行；失焦即时校验",
       },
       en: {
+        "sh.app.label": "Schedule",
+        "sh.app.title": "Schedule: timed tasks & plan management",
         "sh.title": "Schedule syntax",
         "sh.titleAttr": "Schedule syntax help",
         "sh.cronHead": "cron expression: 5 fields (min hour day month weekday); optionally 6 fields with leading seconds",

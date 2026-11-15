@@ -50,7 +50,7 @@ export default function register(ctx: Record<string, any>) {
   ctx.registerItems?.("toolbar", [{
     id: "aiti-ai-schedule-open",
     meta: {
-      label: "调度",
+      label: "i18n:sh.app.label",
       title: "调度：定时任务与计划管理",
       icon: "icons/clock.svg",
       onClick: () => requestOpen(),
