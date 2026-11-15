@@ -10,7 +10,7 @@ import { runInNewContext } from "node:vm";
 
 const {
   markdownPreviewHtml, hasMermaidFence, hasFenceOf, isFenceLang, activeFenceRenderers,
-  fenceShellCss, fenceShellScript,
+  fenceShellCss, fenceShellScript, frontmatterToFence,
 } = await import("./markdown.ts");
 const { mermaidFenceCss } = await import("./md-mermaid.ts");
 const { makeEl } = await import("./mini-dom.mjs");
@@ -58,6 +58,44 @@ test("预览：实际生成脚本的标题 ID 与 TOC 一致，点击能滚到�
     assert.equal(headings[index].scrolls, 1);
     assert.equal(messages[index].anchor, id);
   });
+});
+
+// ── frontmatter → 代码围栏（预览/导出渲染前处理；行数不变，行号映射不失准）──
+
+const FM = "---\ntitle: t\next:\n  id: x\n---\n\n# 正文\n";
+
+test("frontmatterToFence：--- 围栏转 ```yaml（只改首尾两行，行数严格不变）", () => {
+  const out = frontmatterToFence(FM);
+  assert.equal(out, "```yaml\ntitle: t\next:\n  id: x\n```\n\n# 正文\n");
+  assert.equal(out.split("\n").length, FM.split("\n").length);
+  // 无尾换行的收尾 --- 一样处理
+  assert.equal(frontmatterToFence("---\na: 1\n---"), "```yaml\na: 1\n```");
+});
+
+test("frontmatterToFence：非 frontmatter 原样返回", () => {
+  assert.equal(frontmatterToFence("# t\n\n正文\n"), "# t\n\n正文\n");
+  assert.equal(frontmatterToFence(""), "");
+  assert.equal(frontmatterToFence("---"), "---"); // 无换行：只是 hr
+  assert.equal(frontmatterToFence("---\nabc\n"), "---\nabc\n"); // 有开头无收尾：非 frontmatter
+  assert.equal(frontmatterToFence("---\n---\n\nbody\n"), "```yaml\n```\n\nbody\n"); // 空 frontmatter
+});
+
+test("frontmatterToFence：CRLF 保留；体内含反引号围栏时用更长围栏", () => {
+  const crlf = frontmatterToFence("---\r\ntitle: t\r\n---\r\nbody\r\n");
+  assert.equal(crlf, "```yaml\r\ntitle: t\r\n```\r\nbody\r\n");
+  const nested = frontmatterToFence("---\ndesc: |\n  ```mermaid\n  graph TD\n---\nbody\n");
+  assert.match(nested, /^````yaml\n/);
+  assert.match(nested, /\n````\nbody\n$/);
+  const before = "---\ndesc: |\n  ```mermaid\n  graph TD\n---\nbody\n";
+  assert.equal(nested.split("\n").length, before.split("\n").length); // 行数不变
+});
+
+test("预览：frontmatter 进 srcdoc 前已转 yaml 围栏（正文/TOC 链路不受影响）", () => {
+  const html = markdownPreviewHtml(FM + "\n## 章节\n", false);
+  assert.match(html, /%60%60%60yaml/); // encodeURIComponent("```yaml")
+  assert.doesNotMatch(html, /%0A---%0A/); // 不会再有裸 --- 首尾围栏进 parse 流
+  const links = [...html.matchAll(/<a href="#([^"]+)">/g)].map((m) => m[1]);
+  assert.deepEqual(links, ["正文", "章节"]); // TOC 仍只收正文标题（frontmatter 行不进 TOC）
 });
 
 test("isFenceLang / hasFenceOf：围栏门禁判定", () => {

@@ -73,6 +73,33 @@ export function activeFenceRenderers(content: string, renderers?: MdFenceDescrip
 }
 
 /**
+ * Convert a leading YAML frontmatter block (`---` … `---`) into an equivalent fenced
+ * code block (```yaml … ```). Only the two delimiter lines are rewritten — the line
+ * count is preserved exactly, so preview source-line mapping / git change highlighting
+ * / smart-click line numbers stay aligned with the editor buffer (which is never touched;
+ * preview & HTML/PDF export rendering only).
+ */
+export function frontmatterToFence(content: string): string {
+  if (!/^---[ \t]*(?:\r?\n)/.test(content)) return content;
+  const lines = content.split("\n"); // \r stays attached to each line (harmless)
+  let close = -1;
+  for (let i = 1; i < lines.length; i++) {
+    if (/^---[ \t]*\r?$/.test(lines[i])) { close = i; break; }
+  }
+  if (close < 0) return content; // no closing delimiter → not frontmatter (plain hr)
+  // Fence must outlast any backtick run inside the body (CommonMark closing-fence rule)
+  let maxTicks = 0;
+  for (let j = 1; j < close; j++) {
+    const t = lines[j].match(/^ {0,3}(`+)/);
+    if (t && t[1].length > maxTicks) maxTicks = t[1].length;
+  }
+  const ticks = "`".repeat(Math.max(3, maxTicks + 1));
+  lines[0] = ticks + "yaml" + (lines[0].endsWith("\r") ? "\r" : "");
+  lines[close] = ticks + (lines[close].endsWith("\r") ? "\r" : "");
+  return lines.join("\n");
+}
+
+/**
  * 围栏渲染块通用壳 CSS（§3.2：壳=边框/头部条/lang 标签/源码·预览切换/错误态，归内置；
  * 全渲染器统一视觉，渲染器只往 view 与 actions 插槽里放自己的东西）。
  * 仅在有渲染器命中围栏时注入——无图/无数学文档零字节。
@@ -207,6 +234,7 @@ export function markdownPreviewHtml(
   smart = true,
   renderers?: MdFenceDescriptor[],
 ): string {
+  content = frontmatterToFence(content); // frontmatter → yaml fence（行数不变，行号映射不失准）
   const base = getBase();
   const bg = dark ? "#0d1117" : "#fff";
   const fg = dark ? "#c9d1d9" : "#24292f";
@@ -452,6 +480,7 @@ async function _vendorText(p: string): Promise<string> {
 }
 
 export async function markdownRenderHtml(content: string, dark: boolean, title: string): Promise<string> {
+  content = frontmatterToFence(content); // 同预览：frontmatter → yaml fence
   const bg = dark ? "#0d1117" : "#fff";
   const fg = dark ? "#c9d1d9" : "#24292f";
   const lines = content.split("\n");
