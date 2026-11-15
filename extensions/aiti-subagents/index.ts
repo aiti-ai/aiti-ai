@@ -498,10 +498,25 @@ export default {
     // aiti-float dock v0.5.1：左栏「任务」区（宿主折叠容器；无子代理活动时区仍渲染，内容自显空态）
     sidebarTasks: [{ id: "tasks", label: "子代理任务" }],
     // 懒加载 v2 M3批②：icon 与 client 注册 meta.icon 同源；侧栏「任务」区块物化前不显示（计划已接受）
-    toolbar: [{ id: "aiti-subagents", label: "子代理", title: "子代理舰队监控面板", icon: "icons/users.svg" }],
+    toolbar: [{ id: "aiti-subagents", label: "i18n:sub.open.label", title: "i18n:sub.open.title", icon: "icons/users.svg" }],
     // aiti-float dock v3：停靠槽静态声明（懒扩展物化触发 + 静态入口；id 与 client 注册一致）
-    sidebarExplorerDock: [{ id: "fleet", label: "子代理舰队" }],
-    rightFileDock: [{ id: "fleet", label: "舰队" }],
+    sidebarExplorerDock: [{ id: "fleet", label: "i18n:sub.fleetFull.label" }],
+    rightFileDock: [{ id: "fleet", label: "i18n:sub.fleet.label" }],
+    i18n: {
+      "zh-CN": {
+      "sub.open.label": "子代理",
+      "sub.open.title": "子代理舰队监控面板",
+      "sub.fleet.label": "舰队",
+      "sub.fleetFull.label": "子代理舰队",
+      },
+      en: {
+      "sub.open.label": "Subagents",
+      "sub.open.title": "Subagent fleet monitor",
+      "sub.fleet.label": "Fleet",
+      "sub.fleetFull.label": "Subagent fleet",
+      },
+    },
+
     dialogs: [{ id: "aiti-subagents-fleet", label: "子代理舰队" },
               { id: "aiti-subagents-inspector", label: "子代理检查器" },
               { id: "aiti-subagents-concurrency", label: "并发配置" }],
