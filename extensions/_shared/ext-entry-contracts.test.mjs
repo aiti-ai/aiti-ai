@@ -28,6 +28,9 @@ const VALID_SLOTS = new Set([
   "toolbar", "sidebar", "sidebarFooter", "sessionTopbar", "sessionRowActions",
   "sessionRowLeading", "sessionRowMeta", "sidebarProjects", "sidebarContent",
   "dialogs", "banners", "pages", "chatInputTop", "chatOverlay",
+  // commands 目录槽：host registry.ts UI_SLOT_KEYS 已收录（ec06564a），消费方 = aiti-app-center /
+  // input 命令提示；aiti-folder 首用（2026-11-15）
+  "commands",
   "userMessageActions", "assistantMessageActions", "assistantMessageFooter",
   "fileViewer", "pathPicker", "newSessionBackendOptions", "sessionStats",
   "composerTools", "queuePanel", "recoveryDialog", "workspacePickerActions",
