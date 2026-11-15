@@ -71,7 +71,7 @@ export default function register(ctx: Record<string, any>) {
   ctx.registerItems?.("toolbar", [{
     id: "aiti-helper-open",
     meta: {
-      label: "AI 助手",
+      label: "i18n:helper.open.label",
       title: "aiti-helper：一句话唤起 AI（帮助点/自由发挥；独立置顶弹窗，可拖拽，有历史）",
       icon: "icons/sparkles.svg",
       onClick: () => window.__aitiHelperInvoke!({ placeholder: "描述你想让 AI 做什么…" }),

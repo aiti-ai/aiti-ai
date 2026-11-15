@@ -18,7 +18,7 @@
 
 // 扩展展示名（id → 友好名，与 extman 共用同一张表）
 import { extDisplayName } from "../../../_shared/ext-display-names";
-import { apiUrl, extSvc } from "./host-shim";
+import { apiUrl, extSvc, hostCtx } from "./host-shim";
 
 // AI 星星图标（单源 icons/sparkles.svg，_shared/icons 库经 deploy copyIcons 拷入）——
 // assets CSS-mask 渲染（currentColor 继承按钮颜色），与 helper 弹窗内 SparkIcon 同一文件；
@@ -51,20 +51,37 @@ function extmanAvailable(): boolean {
 }
 
 // Open extman and jump to the given extension entry (empty extId = just open the panel).
-// Channel: extSvc("aiti-extman.open") → fallback click on the sidebarFooter button (static
-// entries rendered by the host are also wrapped in [data-ext-id], staticClickForwarder handles
-// lazy materialization; on an old extman without the service this just opens the panel without
-// selection — degraded UX, never an error).
-function openExtman(extId: string): void {
-  const direct = extSvc<(id?: string) => void>("aiti-extman.open");
-  if (typeof direct === "function") {
-    try { direct(extId || undefined); return; } catch {}
+async function openExtman(extId: string): Promise<void> {
+  if (tryOpenExtmanDirect(extId)) return;
+  // [Lazy loading v2] extman ships clientImmediately:false — until its first
+  // materialization neither direct channel above is registered, and the ExtSlot DOM
+  // wrapper below does not exist either (the sidebar footer entry is then rendered by
+  // the host as a static zero-bundle button). Ask the host ctx to materialize extman
+  // (register runs synchronously before the promise settles), then retry the direct
+  // channels. Returns true when just registered, false when already materialized or
+  // missing from the manifest — retrying covers both, no need to branch on it.
+  const ctx = hostCtx() as { ensureMaterialized?: (id: string) => Promise<boolean> } | null;
+  if (ctx && typeof ctx.ensureMaterialized === "function") {
+    try { await ctx.ensureMaterialized("aiti-extman"); } catch {}
+    if (tryOpenExtmanDirect(extId)) return;
   }
+  // DOM fallback (old host without ctx.ensureMaterialized): click the sidebarFooter
+  // entry — requires extman already materialized ([data-ext-id] wrapper exists only
+  // then); on an old extman without the service this just opens the panel without
+  // selection — degraded UX, never an error.
   try {
     const btn = document.querySelector<HTMLElement>('[data-ext-id="aiti-extman"][data-ext-slot="sidebarFooter"] button');
     if (btn) { btn.click(); return; }
   } catch {}
   try { console.warn("[aiti-helper] extman 打开通道不可用（extman 未装或版本过旧）"); } catch {}
+}
+
+// Direct channel: "aiti-extman.open" ExtService, registered by extman's entry at
+// materialization time. No cross-extension window global (DI plan §6).
+function tryOpenExtmanDirect(extId: string): boolean {
+  const fn = extSvc<(id?: string) => void>("aiti-extman.open");
+  if (typeof fn !== "function") return false;
+  try { fn(extId || undefined); return true; } catch { return false; }
 }
 
 // 判断按钮是否为「移除/删除」类操作（而非弹窗关闭按钮）。
