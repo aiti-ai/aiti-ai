@@ -15,8 +15,10 @@ const mobileHookSource = await readFile(new URL("../hooks/useIsMobile.ts", impor
 // Skip does not mean lost coverage: upstream intent → fork-equivalent pin
 // mapping (the [fork] block at the end of this file runs unconditionally):
 //   #1/#2 two-tier action presentation → [fork] inline + width-measured overflow collapse
-//   #3 covered mis-touch protection    → [fork] renderMainFileToggle covered five-piece set
-//   #4 layer stays open after use      → [fork] keepMobileToolbarOpen / setMobileToolbarMoreOpen(true)
+//   #3 covered mis-touch protection    → [fork] covered remnants must stay gone (retired)
+//   #4 layer stays open after use      → [fork] keepMobileToolbarOpen/setMobileToolbarMoreOpen
+//                                        must stay gone (retired; single overflow = the
+//                                        vertical-••• more menu on every width)
 //   #5 theme/language entries          → [fork] dual entry coexistence (top bar + upstream #772 settings panel)
 //   #6 stats degradation               → AppShell.stat-fallback.test.mjs (4 pins)
 //   #7 trust warnings/file toggle      → AppShell.topbar-dedup.test.mjs + AppShell.mobile-topbar-toggle.test.mjs
@@ -55,9 +57,11 @@ test("uses a compact narrow-mobile toolbar with a floating action layer", { skip
 });
 
 test("only renders the Agents switcher when the active session family has subagents", () => {
-  assert.match(source, /const hasSubagentSessions = Boolean\(activeSessionFamily\?\.subagents\.length\)/);
-  // 合并适配：fork 在门控上追加 agentsBadge（有 subagent 才算 badge，无则不渲染按钮）。
-  assert.match(source, /\{hasSubagentSessions && agentsBadge && \(\s*<button[\s\S]*?toggleTopPanel\("agents", mobile\)/);
+  // 窄屏 tier 的 Agents 按钮走 renderAgentsButton：session-family 门控落在 disabled/opacity
+  // 上（activeSessionFamily），badge 仅在有 running subagent 时渲染（2026-11-15 起
+  // renderChatToolbarActions 退役，upstream 行内 "agents" 按钮随之消失，该门控收拢于此）。
+  assert.match(source, /cursor: activeSessionFamily \? "pointer" : "not-allowed", opacity: activeSessionFamily \? 1 : 0\.45/);
+  assert.match(source, /\{agentsBadge && agentsBadge\.count > 0 && renderAgentsBadge\(agentsBadge, mobile\)\}/);
   assert.match(source, /activeTopPanel === "agents" && activeSessionFamily && selectedSession/);
 });
 
@@ -72,7 +76,9 @@ test("keeps the Agents panel open while switching sessions and positions it at t
 
 test("only renders branch toolbar controls for sessions with branches", () => {
   assert.match(source, /const sessionHasBranches = hasSessionBranches\(branchTree\)/);
-  assert.match(source, /\{sessionHasBranches && \(mobile \? \(/);
+  // 2026-11-15：上游 overlay 里的 mobile 行内分支按钮随 renderChatToolbarActions 退役；
+  // 移动端分支入口 = fork 顶栏 branch 项（renderTopbarItem）+ 此处 isMobile BranchNavigator。
+  assert.doesNotMatch(source, /\{sessionHasBranches && \(mobile \? \(/);
   assert.match(source, /\{isMobile && sessionHasBranches && \(/);
   assert.match(source, /panel === "branches" \? null : panel/);
 });
@@ -85,11 +91,12 @@ test("keeps covered statistics and file controls out of interaction and focus", 
   assert.match(source, /aria-hidden=\{covered \? true : undefined\}/);
 });
 
-test("closes the mobile action layer on outside click, Escape, layout changes, and session changes", () => {
-  assert.match(source, /event\.composedPath\(\)\.includes\(toolbar\)/);
-  assert.match(source, /document\.addEventListener\("pointerdown", handlePointerDown, true\)/);
-  assert.match(source, /event\.key !== "Escape"[\s\S]*?setMobileToolbarMoreOpen\(false\)/);
-  assert.match(source, /\}, \[isMobile, isNarrowMobile, selectedSession\?\.id, newSessionDraftId\]\);/);
+test("the mobile action layer machinery stays retired (single overflow = the vertical ••• more menu)", () => {
+  // 2026-11-15 retirement: the horizontal-••• "More controls" button, its floating
+  // overlay, the keep-open plumbing and the pointer/Escape layer-closer are all gone.
+  // Any of these coming back (auto-merge) means a second overflow menu again — keep them out.
+  assert.doesNotMatch(source, /data-mobile-toolbar-more|mobile-toolbar-actions|handleMobileToolbarMoreToggle|mobileToolbarMoreOpen|mobileToolbarRef/);
+  assert.doesNotMatch(source, /renderChatToolbarActions/);
 });
 
 test("keeps the mobile action layer open after using an expanded action", { skip: upstreamStructSkip }, () => {
@@ -151,23 +158,25 @@ test("[fork] top-bar actions in two tiers: inline renderTopbarItem(item,true) + 
   assert.match(source, /const renderTopbarItem = \(id: string, inRow: boolean, forMeasure = false, forPreview = false\)/);
 });
 
-test("[fork] file toggle mis-touch protection while the narrow-screen ⋯ layer is open: the covered five-piece set (maps to upstream #3)", () => {
-  assert.match(source, /const covered = mobile && isNarrowMobile && mobileToolbarMoreOpen;/);
-  assert.match(source, /disabled=\{covered\}/);
-  assert.match(source, /tabIndex=\{covered \? -1 : undefined\}/);
-  assert.match(source, /aria-hidden=\{covered \? true : undefined\}/);
-  assert.match(source, /visibility: covered \? "hidden" : "visible"/);
-  assert.match(source, /pointerEvents: covered \? "none" : "auto"/);
+test("[fork] no covered remnants in the file toggle (maps to upstream #3; the ⋯ layer it guarded against is retired)", () => {
+  // The covered five-piece set existed to keep the file toggle untouchable while the
+  // retired horizontal-••• layer was open. With the layer gone, any `covered` remnant
+  // in renderMainFileToggle is dead code riding back in on a merge — keep it out.
+  assert.doesNotMatch(source, /const covered = mobile && isNarrowMobile/);
+  assert.doesNotMatch(source, /visibility: covered \? "hidden" : "visible"/);
+  assert.doesNotMatch(source, /pointerEvents: covered \? "none" : "auto"/);
 });
 
-test("[fork] the ⋯ layer stays open after using an expanded action: keepMobileToolbarOpen reopens + action handlers reopen instead of closing (maps to upstream #4)", () => {
-  assert.match(source, /if \(isMobile && isNarrowMobile && keepMobileToolbarOpen\) setMobileToolbarMoreOpen\(true\);/);
-  assert.match(source, /toggleTopPanel\("branches", true\)/);
-  assert.match(source, /handleSystemInfoToggle\("system", mobile\)/);
-  assert.match(source, /handleSystemInfoToggle\("tools", mobile\)/);
-  // history / autoName actions: reopen the ⋯ layer after running (rather than closing) — same semantics as upstream "the layer does not close because an action was used"
-  assert.match(source, /handleViewFullHistory\(\);[\s\S]{0,120}if \(mobile && isNarrowMobile\) setMobileToolbarMoreOpen\(true\);/);
-  assert.match(source, /void handleAutoName\(\);[\s\S]{0,120}if \(mobile && isNarrowMobile\) setMobileToolbarMoreOpen\(true\);/);
+test("[fork] keep-open plumbing stays retired (maps to upstream #4; there is no second layer to keep open)", () => {
+  // toggleTopPanel/handleSystemInfoToggle are back to single-argument panel toggles;
+  // keepMobileToolbarOpen / setMobileToolbarMoreOpen / the history-autoName reopen
+  // dance all belonged to the retired horizontal-••• layer. Coming back = merge damage.
+  assert.doesNotMatch(source, /keepMobileToolbarOpen/);
+  assert.doesNotMatch(source, /setMobileToolbarMoreOpen/);
+  assert.match(source, /onClick=\{\(\) => toggleTopPanel\("agents"\)\}/);
+  assert.match(source, /onClick=\{\(\) => toggleTopPanel\("theme"\)\}/);
+  assert.match(source, /onClick=\{\(\) => toggleTopPanel\("language"\)\}/);
+  assert.match(source, /onClick=\{\(\) => toggleTopPanel\("debug"\)\}/);
 });
 
 test("[fork] theme/language dual entries coexist: kept in the top bar (fork decision) + settings panel takes effect (upstream #772)", () => {
