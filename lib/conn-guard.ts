@@ -48,7 +48,7 @@ interface PendingEntry {
 type StarveListener = (starved: boolean) => void;
 
 const starveListeners = new Set<StarveListener>();
-let pending = new Map<number, PendingEntry>();
+const pending = new Map<number, PendingEntry>();
 let nextId = 1;
 let starved = false;
 let lastStarveAt = 0;
