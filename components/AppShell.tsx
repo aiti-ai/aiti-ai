@@ -3282,6 +3282,9 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     // (extension items enter the top bar via toolbarExtItems)
     const ids: TopbarItemId[] = ["theme", "language"];
     if (showChat) ids.push("history", "export", "title", "branch", "system", "tools");
+    // debug joins the unified topbar-order system (was a hardcoded right-cluster
+    // button re-homed from upstream v0.13.0, f19b7398 — unmanaged by design no more)
+    ids.push("debug");
     return ids;
   }, [showChat]);
   const topbarToolbarExtIds = useMemo(
@@ -3314,7 +3317,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
       // first overflowing ones become extension icon buttons (still reachable via ⋯)
       ...topbarSessionExtIds,
       ...topbarToolbarExtIds,
-      "history", "export", "title", "branch", "system", "tools",
+      "history", "export", "title", "branch", "system", "tools", "debug",
     ],
     [topbarToolbarExtIds, topbarSessionExtIds],
   );
@@ -3805,6 +3808,36 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
         </button>
       );
     }
+    if (id === "debug") {
+      const active = activeTopPanel === "debug";
+      return (
+        <button
+          ref={!menu && !forMeasure ? debugButtonRef : undefined}
+          type="button"
+          onClick={act(() => toggleTopPanel("debug"))(menu)}
+          title={translate("debug.title")}
+          aria-label={translate("debug.title")}
+          aria-pressed={active}
+          style={menu ? { ...topbarMenuRowStyle, ...(active ? { background: "var(--bg-selected)", color: "var(--text)" } : {}) } : {
+            ...topbarRowBtnStyle(),
+            width: TOP_BAR_ICON_BUTTON_SIZE,
+            background: active ? "var(--bg-selected)" : "none",
+            color: active ? "var(--text)" : "var(--text-muted)",
+          }}
+          onMouseEnter={menu ? menuEnter : rowEnter}
+          onMouseLeave={menu ? menuLeave : rowLeave}
+        >
+          <span style={menu ? topbarMenuIconSlotStyle : { display: "contents" }}>
+            <svg width={iconDim} height={iconDim} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M8 2l1.9 1.9M16 2l-1.9 1.9M9 7.1v-1a3 3 0 0 1 6 0v1" />
+              <path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6zM12 20v-9" />
+              <path d="M6.5 9C4.6 8.8 3 7.1 3 5M6 13H2M3 21c0-2.1 1.7-3.9 3.8-4M21 5c0 2.1-1.6 3.8-3.5 4M22 13h-4M17.2 17c2.1.1 3.8 1.9 3.8 4" />
+            </svg>
+          </span>
+          {menu && <span>{translate("debug.title")}</span>}
+        </button>
+      );
+    }
     if (id === "tools") {
       const active = activeTopPanel === "tools";
       return (
@@ -4087,6 +4120,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
       case "branch": return translate("i18n.branches");
       case "system": return translate("system.label");
       case "tools": return translate("tools.label");
+      case "debug": return translate("debug.title");
       default: return extLabel(id);
     }
   };
@@ -4434,47 +4468,6 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
       {agentsBadge && agentsBadge.count > 0 && renderAgentsBadge(agentsBadge, mobile)}
     </button>
   );
-
-  // Upstream v0.13.0's Debug button, re-homed into the fork's top-bar right cluster:
-  // the panel type/reader/close wiring survived the merge, but the entry button rode
-  // upstream's toolbar (dropped in the resolution) — without it the panel is unreachable.
-  const renderDebugButton = (mobile: boolean) => {
-    const open = activeTopPanel === "debug";
-    return (
-      <button
-        ref={debugButtonRef}
-        type="button"
-        onClick={() => toggleTopPanel("debug")}
-        title={translate("debug.title")}
-        aria-label={translate("debug.title")}
-        aria-pressed={open}
-        style={{
-          display: "flex", alignItems: "center", justifyContent: "center",
-          width: TOP_BAR_ICON_BUTTON_SIZE, height: "100%", padding: 0,
-          background: open ? "var(--bg-selected)" : "none",
-          border: "none",
-          borderTop: open ? "2px solid var(--accent)" : "2px solid transparent",
-          borderLeft: mobile ? "none" : "1px solid var(--border)",
-          borderRight: mobile ? "1px solid var(--border)" : "none",
-          color: open ? "var(--text)" : "var(--text-muted)",
-          cursor: "pointer", flexShrink: 0, transition: "color 0.1s, background 0.1s",
-        }}
-        onMouseEnter={(event) => {
-          event.currentTarget.style.color = "var(--text)";
-        }}
-        onMouseLeave={(event) => {
-          event.currentTarget.style.color = open ? "var(--text)" : "var(--text-muted)";
-        }}
-        data-mobile-toolbar-action={mobile ? "debug" : undefined}
-      >
-        <svg width={mobile ? 16 : 13} height={mobile ? 16 : 13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: open ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }} aria-hidden="true">
-          <path d="M8 2l1.9 1.9M16 2l-1.9 1.9M9 7.1v-1a3 3 0 0 1 6 0v1" />
-          <path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6zM12 20v-9" />
-          <path d="M6.5 9C4.6 8.8 3 7.1 3 5M6 13H2M3 21c0-2.1 1.7-3.9 3.8-4M21 5c0 2.1-1.6 3.8-3.5 4M22 13h-4M17.2 17c2.1.1 3.8 1.9 3.8 4" />
-        </svg>
-      </button>
-    );
-  };
 
   const renderMainFileToggle = (mobile: boolean) => {
     return (
@@ -5009,9 +5002,9 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
               </svg>
             </button>
           </div>
-          {/* Upstream v0.13.0 Debug panel entry (re-homed; see renderDebugButton) */}
-          {renderDebugButton(isMobile)}
-          {/* File-panel toggle pinned at the far right of the top bar (top-right
+          {/* The Debug panel entry moved into the unified topbar-order system
+              (builtin id "debug", renderTopbarItem case) — sortable / hideable /
+              overflowable via the ⋯ menu like every other top-bar item. */}          {/* File-panel toggle pinned at the far right of the top bar (top-right
               corner); the upstream mobile toolbar originally called
               renderMainFileToggle(true), which was lost in the custom-order refactor */}
           {renderMainFileToggle(isMobile)}
