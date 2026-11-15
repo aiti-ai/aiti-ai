@@ -1311,12 +1311,12 @@ export function AuthExposeSection({ port, t, openInNewTab, exposes, onStopExpose
         <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 6, background: "var(--bg)", border: "1px solid var(--border)" }}>
           <div style={{ fontSize: 10, color: "var(--text-dim)" }}>{t("services.exposeResult")}</div>
           {[result.url, result.localUrl, result.baseUrl, result.domainUrl, ...(result.altUrls ?? [])].filter(Boolean).map((u) => (
-            <div key={u} style={{ marginTop: 2 }}>
-              <button onClick={() => openInNewTab(u!)}
-                style={{ display: "block", maxWidth: "100%", background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--accent)", textAlign: "left", overflowWrap: "anywhere", wordBreak: "break-all" }}>
+            <div key={u} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 2, minWidth: 0 }}>
+              <button onClick={() => openInNewTab(u!)} title={u}
+                style={{ flex: 1, minWidth: 0, textAlign: "left", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 5, padding: "4px 8px", cursor: "pointer", fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--accent)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {u}
               </button>
-              <div style={{ marginTop: 2 }}><MiniQr url={u!} /></div>
+              <MiniQr url={u!} size={110} />
             </div>
           ))}
           {result.loginUrl && (

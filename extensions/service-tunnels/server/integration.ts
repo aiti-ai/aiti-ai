@@ -667,6 +667,10 @@ export function getSelfAccessUrls(): Array<{ label: string; labelKey?: string; l
   for (const e of st.exposes()) {
     const isSelf = e.site === "pi-web" || e.name?.startsWith("expose-self-");
     if (!isSelf || e.port !== port) continue;
+    // 只列运行中通道：库 exposes() 是进程内生命周期记录，隧道模式 stop 后记录
+    // 残留（st.stop 隧道路径不删 map 项），死隧道 URL 不可达却带 authEntry——
+    // 「手机访问」就绪态/停止回首次页全被它卡住（真机轮 F3）。
+    if (!e.running) continue;
     // 无认证（auth-none / tcp）入口 → noAuth=true，行内标红（与 Ports 页活动列表一致）
     const noAuth = !e.provider;
     // baseUrl 已由库拼接部署前缀(0.3.13+,见 expose.proxyExpose withDeploy);
