@@ -488,7 +488,7 @@ export default function register(ctx: Record<string, unknown>) {
     // feature 门控（index.ts features 声明，default:false）：宿主 getExtUiItems 按此过滤——
     // 关闭时条目不渲染（含 ⋯ 菜单/自定义顶栏），extman「功能管理」打开后即时恢复，无需扩展自写判断。
     // 全插槽唯一保留 render 的条目：真交互组件（输入框），⋯ 菜单内由宿主挂载（menu=true 窄版）。
-    { id: "search", render: ToolbarSearch, meta: { label: "搜索会话", icon: "icons/search.svg", noMenuLabel: true }, feature: "toolbar.search" },
+    { id: "search", render: ToolbarSearch, meta: { label: "i18n:it.search.label", icon: "icons/search.svg", noMenuLabel: true }, feature: "toolbar.search" },
     { id: "kanban", meta: { label: t("sm.kanban"), icon: "icons/square-kanban.svg", onClick: () => kanbanOpen.onOpen() } },
   ]);
   // aiti-float dock v3（P3 批）：三个面板接右栏停靠 face（主面板无 default；两个查看器默认右栏）
@@ -496,8 +496,8 @@ export default function register(ctx: Record<string, unknown>) {
   seedDockDefault("session-manager:archived-viewer", "right-panel");
   ctx.registerItems?.("rightFileDock", [
     { id: "panel", render: PanelDockFaceLazy, meta: { title: "All Sessions" } },
-    { id: "archived-viewer", render: ArchivedViewerDockFaceLazy, meta: { title: "归档查看器" } },
-    { id: "ext-viewer", render: ExtViewerDockFaceLazy, meta: { title: "外部会话" } },
+    { id: "archived-viewer", render: ArchivedViewerDockFaceLazy, meta: { title: "i18n:it.archived-viewer.title" } },
+    { id: "ext-viewer", render: ExtViewerDockFaceLazy, meta: { title: "i18n:it.ext-viewer.title" } },
   ]);
   ctx.registerItems?.("dialogs", [
     { id: "panel", render: PanelFloatFace },
@@ -520,7 +520,7 @@ export default function register(ctx: Record<string, unknown>) {
     // 轻量非模态提示宿主（toast.tsx）：桥占用无法自动命名等降级原因说明
     { id: "toast", render: ToastHost },
   ]);
-  ctx.registerItems?.("sessionTopbar", [{ id: "tags", render: TopbarTags, meta: { label: "标签" } }]);
+  ctx.registerItems?.("sessionTopbar", [{ id: "tags", render: TopbarTags, meta: { label: "i18n:it.tags.label" } }]);
   // 「项目 / Projects」左栏接管（宿主 SessionSidebar 项目区替换渲染；无 cwd 时显示全部，
   // 数据 = 本扩展 /sessions API）。宿主渲染折叠头，扩展只出列表本体。
   ctx.registerItems?.("sidebarProjects", [{ id: "dock", render: SidebarDock }]);

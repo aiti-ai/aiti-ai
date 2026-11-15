@@ -20,6 +20,9 @@
  * 两个数组不再含 `toggle:*`；v1 残留由 pruneToggleIds() 一次性清洗。
  */
 
+import { extNameFor, extDescriptionFor, featureLabelFor, featureDescriptionFor } from "../../../_shared/ext-display-names.ts";
+import { typoMatch } from "../../../_shared/typo-search.mjs";
+
 export type AppKind = "action" | "panel" | "toggle" | "manage";
 
 export interface AppDescriptor {
@@ -34,6 +37,8 @@ export interface AppDescriptor {
   /** 声明式图标（ExtUiItemIcon 三形态：{svg} / emoji 字符串 / "icons/*.svg" 相对路径）。 */
   icon?: string | { svg: string };
   keywords: string[];
+  /** 拼音索引（源自 extman server /status 富化："全拼连写 首字母"；搜索 hay 用）。 */
+  pinyin?: string;
   run: () => void;
   /** toggle 卡当前态（boolean feature）。 */
   on?: boolean;
@@ -176,12 +181,19 @@ export function pinnedRowsNeeded(pinnedCount: number, contentWidth: number): num
   return Math.floor(pinnedCount / pinnedGridColumns(contentWidth));
 }
 
-/** 搜索匹配：query 按空白分词，逐词命中 label/extName/extId/keywords 任一即算命中（大小写不敏感子串）。 */
-export function matchApp(app: { label: string; extId: string; extName?: string; keywords?: string[] }, query: string): boolean {
+/** 搜索匹配（extman 同款宽松度，2026-11-15 对齐）：query 按空白分词逐词子串命中（AND）
+ *  + 连写宽松（qNorm 去空格，fuwu suidao→fuwusuidao）+ 错字容忍（typo-search OSA 自适应阈值）。
+ *  hay：label + extId + 双语展示名（中心表 en+zh，en 态也能中文词搜）+ extName + keywords + pinyin
+ *  （拼音源自 extman server /status 富化，全拼连写+首字母）。 */
+export function matchApp(app: { label: string; extId: string; extName?: string; keywords?: string[]; pinyin?: string }, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
-  const hay = [app.label, app.extId, app.extName ?? "", ...(app.keywords ?? [])].join("\n").toLowerCase();
-  return q.split(/\s+/).every((tok) => hay.includes(tok));
+  const hay = [app.label, app.extId, app.extName ?? "", ...(app.keywords ?? []), app.pinyin ?? ""].join("\n").toLowerCase();
+  const qNorm = q.replace(/\s+/g, "");
+  return q.split(/\s+/).every((tok) => hay.includes(tok))
+    || (!!qNorm && hay.includes(qNorm))
+    || typoMatch(q, hay)
+    || (!!qNorm && typoMatch(qNorm, hay));
 }
 
 /* ── 钉住/隐藏存储（localStorage 单一事实源 + 变更事件/跨 tab 订阅；折叠键同范式）── */
@@ -294,6 +306,8 @@ export function buildApps(input: {
   openPanel: (key: string) => void;
   /** UI locale（缺省现读 pi-locale）；locale 切换后由组件层重算触发刷新。 */
   locale?: string;
+  /** 拼音索引 map（extId → "全拼连写 首字母"；extman server /status 富化，缺席 = 无拼音搜索）。 */
+  pinyinMap?: Record<string, string>;
 }): AppDescriptor[] {
   const locale = input.locale ?? currentUiLocale();
   const out: AppDescriptor[] = [];
@@ -336,9 +350,10 @@ export function buildApps(input: {
       category: resolveCategory((it as { category?: string }).category ?? (it.meta as { category?: string } | undefined)?.category, ext?.category, extId),
       label,
       extId,
-      extName: ext?.name,
+      extName: extNameFor(ext, locale),
       extVersion: ext?.version,
-      extDescription: ext?.description,
+      extDescription: extDescriptionFor(ext, locale) || undefined,
+      pinyin: input.pinyinMap?.[extId],
       extIcon: ext?.icon ?? undefined,
       icon: it.meta?.icon as AppDescriptor["icon"],
       keywords: [...(APP_OVERRIDES[extId]?.keywords ?? [])],
@@ -359,12 +374,13 @@ export function buildApps(input: {
         id,
         kind: "toggle",
         category: resolveCategory(f.category, ext.category, ext.id),
-        label: translateExtItemText(ext.id, rawLabel, ext.ui?.i18n, locale) || rawLabel,
-        featureDescription: f.description,
+        label: featureLabelFor(ext, f, locale) || rawLabel,
+        featureDescription: featureDescriptionFor(ext, f, locale) || undefined,
         extId: ext.id,
-        extName: ext.name,
+        extName: extNameFor(ext, locale),
         extVersion: ext.version,
-        extDescription: ext.description,
+        extDescription: extDescriptionFor(ext, locale) || undefined,
+        pinyin: input.pinyinMap?.[ext.id],
         extIcon: ext.icon ?? undefined,
         keywords: [...(APP_OVERRIDES[ext.id]?.keywords ?? []), f.id],
         on: input.featureState[`${ext.id}:${f.id}`] ?? f.enabled !== false,

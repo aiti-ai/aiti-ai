@@ -131,16 +131,27 @@ export default {
     toolbar: [{ id: "aiti-cmd-open", label: "i18n:cmd.open.label", title: "i18n:cmd.open.title", icon: "icons/terminal.svg" }],
     i18n: {
       "zh-CN": {
-      "cmd.open.label": "命令",
+        "it.aiti-cmd-panel.label": "aiti-cmd 命令面板",
+        "it.aiti-cmd-detail.label": "aiti-cmd 命令详情",
+        "ext.displayName": "命令面板",      "cmd.open.label": "命令",
       "cmd.open.title": "aiti-cmd：运行总览 / 常用命令 / 执行记录",
       },
       en: {
+        "feat.tool.aiti_cmd_run.desc": "When off, new agent sessions no longer get this tool (already-injected sessions refuse immediately)",
+        "it.aiti-cmd-panel.label": "aiti-cmd command panel",
+        "it.aiti-cmd-detail.label": "aiti-cmd command detail",
+        "ext.displayName": "Command Palette",
+        "ext.description": "Runs a shell command in the aiti-cmd backend PTY runner, creating a persistent interactive session (output streams into the ⚡ commands panel, fully audited).",
+        "feat.tool.aiti_cmd_run": "Agent tool: aiti_cmd_run (run commands in-session via the backend runner; dangerous ones confirmed twice)",
+        "feat.aiti-cmd-panel": "aiti-cmd command panel",
+        "feat.aiti-cmd-detail": "aiti-cmd command detail",
+        "feat.workspace-terminal": "Workspace terminal",
       "cmd.open.label": "Commands",
       "cmd.open.title": "aiti-cmd: run overview / commands / execution log",
       },
     },
 
-    dialogs: [{ id: "aiti-cmd-panel", label: "aiti-cmd 命令面板" }, { id: "aiti-cmd-detail", label: "aiti-cmd 命令详情" }],
+    dialogs: [{ id: "aiti-cmd-panel", label: "i18n:it.aiti-cmd-panel.label" }, { id: "aiti-cmd-detail", label: "i18n:it.aiti-cmd-detail.label" }],
     // terminalDock 槽位声明（懒加载适配修复 2026-09-09）：declaredSlots 收集自 ui 的键——
     // 缺此声明时 pendingForSlot("terminalDock") 恒空，TerminalPanelBridge 查槽不触发本扩展
     // 物化 → fallback 再查 __aitiCmd 也无（client 未加载）→ 误报「未检测到 aiti-cmd 扩展」。

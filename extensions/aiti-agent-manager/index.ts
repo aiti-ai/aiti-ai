@@ -421,16 +421,20 @@ export default {
     }],
     i18n: {
       "zh-CN": {
+        "it.aiti-agent-manager-panel-dialog.label": "Agent 管理",
       "am.open.label": "Agent 管理",
       "am.open.title": "Agent 管理（统一登录态）",
       },
       en: {
+        "it.aiti-agent-manager-panel-dialog.label": "Agent management",
+        "ext.displayName": "Agent Manager",
+        "feat.aiti-agent-manager-panel-dialog": "Agent management",
       "am.open.label": "Agent manager",
       "am.open.title": "Agent manager (unified logins)",
       },
     },
 
-    dialogs: [{ id: "aiti-agent-manager-panel-dialog", label: "Agent 管理" }],
+    dialogs: [{ id: "aiti-agent-manager-panel-dialog", label: "i18n:it.aiti-agent-manager-panel-dialog.label" }],
   },
 
   server: {

@@ -34,7 +34,8 @@ const EXTS = [
       { id: "feat-str", type: "string", label: "文本项", value: "x" },
     ],
   },
-  { id: "ext-b", name: "扩展B", version: "2.0.0", description: "d-b", icon: null, category: "code", features: null },
+  // ext.name 自声明词条（2026-11-15 i18n 约定）：en 态覆盖 CJK 原文 —— 第三方扩展注册通道
+  { id: "ext-b", name: "扩展B", version: "2.0.0", description: "d-b", icon: null, category: "code", features: null, ui: { i18n: { en: { "ext.displayName": "Extension B", "ext.description": "Desc B" } } } },
 ];
 const SLOT_ITEMS = [
   // toolbar/sidebarFooter 卡需 meta.onClick（buildApps 死卡规则：无 onClick 的动作条目不进卡）；
@@ -114,7 +115,7 @@ test("buildCommandHints：投影字段（成品分类文案 / toggle on 态与 r
   const hints = buildCommandHints(BASE);
   const panel = hints.find((h) => h.kind === "panel");
   assert.equal(panel.category, "cat:code", "分类走注入的成品文案函数");
-  assert.equal(panel.extName, "扩展B");
+  assert.equal(panel.extName, "Extension B", "ext.name 词条覆盖（en 态自声明通道）");
   const on = hints.find((h) => h.id === "toggle:ext-a:feat-on");
   const off = hints.find((h) => h.id === "toggle:ext-a:feat-off");
   assert.equal(on.on, true);

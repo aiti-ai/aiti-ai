@@ -51,6 +51,30 @@ function useManifestExts(): { exts: Array<Record<string, any>>; refresh: () => v
   return { exts, refresh: () => setNonce((n) => n + 1) };
 }
 
+/** 拼音索引（extman server /status 富化："全拼连写 首字母"）——搜索 hay 用；拉取失败静默降级（无拼音搜索）。
+ *  跨扩展依赖：extman 的 ops API 同款先例（toggle 开关也走它）；extman 缺席时仅损拼音能力。 */
+function usePinyinMap(): Record<string, string> {
+  const [map, setMap] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let alive = true;
+    fetch(apiUrl("/api/extensions/aiti-extman/status"))
+      .then((r) => r.json())
+      .then((d) => {
+        if (!alive) return;
+        const next: Record<string, string> = {};
+        const exts = d?.extensions ?? {};
+        for (const id of Object.keys(exts)) {
+          const p = exts[id]?.pinyin;
+          if (typeof p === "string" && p) next[id] = p;
+        }
+        setMap(next);
+      })
+      .catch(() => { /* extman 缺席/失败 → 无拼音，静默 */ });
+    return () => { alive = false; };
+  }, []);
+  return map;
+}
+
 /** feature 态本地覆盖层：extman 广播（含本扩展自己 set-feature 后补发的同款事件）→ 原地 patch，不重拉 manifest。 */
 function useFeatureOverlay(): { overlay: Record<string, boolean>; dropExt: (extId: string) => void } {
   const [overlay, setOverlay] = useState<Record<string, boolean>>({});
@@ -444,6 +468,7 @@ export function AppCenter(props: { ctx: Record<string, any>; header?: any }) {
   const [disable, setDisable] = useState<{ confirm: boolean; busy: boolean; error: string | null }>({ confirm: false, busy: false, error: null });
   const [removedExts, setRemovedExts] = useState<string[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
+  const pinyinMap = usePinyinMap();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // 滚动体内容宽（v3.2）：ResizeObserver 事件驱动测量（非轮询），供「更多」行数自适应。
   // clientWidth 含 padding——扣除实测左右 padding 得内容盒宽（= 卡片网格实际可用宽度）。
@@ -482,7 +507,8 @@ export function AppCenter(props: { ctx: Record<string, any>; header?: any }) {
     featureState,
     openPanel,
     locale,
-  }), [toolbarItems, commandItems, footerItems, rightDockItems, exts, featureState, locale]);
+    pinyinMap,
+  }), [toolbarItems, commandItems, footerItems, rightDockItems, exts, featureState, locale, pinyinMap]);
 
   // 禁用成功 = 乐观移除该扩展全部四类卡（不依赖宿主 store 更新时序；reload 后插槽卡自然消失）
   const apps = useMemo(() => (removedExts.length === 0 ? builtApps : builtApps.filter((a) => !removedExts.includes(a.extId))), [builtApps, removedExts]);

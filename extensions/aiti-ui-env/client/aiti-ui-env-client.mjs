@@ -563,5 +563,5 @@ export default function register(ctx) {
   }
 
   ctx.registerItems("dialogs", [{ id: "ui-env-dialog", render: Dialog }]);
-  ctx.registerItems("toolbar", [{ id: "ui-env-toolbar", render: ToolbarButton, meta: { label: "显示环境" } }]);
+  ctx.registerItems("toolbar", [{ id: "ui-env-toolbar", render: ToolbarButton, meta: { label: "i18n:it.ui-env-toolbar.label" } }]);
 }

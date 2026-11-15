@@ -1152,8 +1152,8 @@ export function syncToolbar() {
   ctx.registerItems("toolbar", [{
     id: "aiti-model-check-open",
     meta: {
-      label: "模型检查",
-      title: "aiti-model-check：模型可用性探测 / 429 限流识别 / 可用时间",
+      label: "i18n:it.model-check.label",
+      title: "i18n:it.model-check.title",
       icon: "icons/radio.svg",
       // 点击转发（静态入口）与 extman「打开」（meta.open 优先）双通道同路。
       onClick: () => { try { window.__aitiModelCheckOpen && window.__aitiModelCheckOpen(); } catch {} },

@@ -254,15 +254,15 @@ function register(ctx) {
   ctx.registerItems("toolbar", [{
     id: "aiti-mail-open",
     meta: {
-      label: "邮件",
-      title: "邮件：SMTP 配置 / 发送测试 / 发送记录",
+      label: "i18n:it.panel.label",
+      title: "i18n:it.panel.title",
       icon: "icons/mail.svg",
       onClick: function () { requestOpen(); },
     },
   }]);
   ctx.registerItems("dialogs", [{ id: "aiti-mail-panel", render: MailPanel }]);
   // aiti-float dock v3（P3 批）：右栏「邮件」tab（id 拼后 = MAIL_KEY）
-  ctx.registerItems("rightFileDock", [{ id: "panel", render: MailDockFace, meta: { title: "邮件" } }]);
+  ctx.registerItems("rightFileDock", [{ id: "panel", render: MailDockFace, meta: { title: "i18n:it.panel.title" } }]);
   try { console.log("[aiti-mail] 管理弹窗已挂载（toolbar ✉ 入口 → dialogs 弹窗）"); } catch (e) { /* noop */ }
 }
 
