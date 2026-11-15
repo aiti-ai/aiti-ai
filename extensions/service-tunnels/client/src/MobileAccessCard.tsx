@@ -191,12 +191,17 @@ export function MobileAccessCard({ onClose, onOpenPorts, onOpenSelf }: Props) {
   }, [candidate, doExpose]);
 
   const stop = useCallback(async () => {
-    setBusy(true);
+    setBusy(true); setError("");
     try {
-      await post("self-stop", {});
+      const d = await post("self-stop", {});
+      if (d.error) { setError(String(d.error)); return; }
       try { localStorage.removeItem(REMEMBER_KEY); } catch { /* ignore */ }
       load();
-    } finally { if (aliveRef.current) setBusy(false); }
+    } catch (e) {
+      if (aliveRef.current) setError(String(e));
+    } finally {
+      if (aliveRef.current) setBusy(false);
+    }
   }, [post, load]);
 
   const copyUrl = useCallback(async () => {
