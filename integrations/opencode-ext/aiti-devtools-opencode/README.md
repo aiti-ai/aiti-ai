@@ -1,6 +1,6 @@
 # @aiti-ai/aiti-devtools-opencode
 
-> OpenCode host 插件（16 工具进程内注册 + messages.transform 占位符改写）+ 官方 web UI 即 AI 窗（nginx 反代剥 CSP + sub_filter 注入，不 fork）
+> OpenCode host 插件（动态注册桥全部 aiti_* 工具 + messages.transform 占位符改写 + session.error 中止/出错回桥 + 冷启动全清单自愈占位）+ 官方 web UI 即 AI 窗（nginx 反代剥 CSP + sub_filter 注入，不 fork）
 
 ## 来源 · Origin
 
@@ -14,13 +14,32 @@ This package is part of the **aiti** ecosystem — a personal AI development wor
 
 ## 功能定位（中文）
 
-OpenCode host 插件（16 工具进程内注册 + messages.transform 占位符改写）+ 官方 web UI 即 AI 窗（nginx 反代剥 CSP + sub_filter 注入，不 fork）
+OpenCode host 插件（动态注册桥全部 aiti_* 工具（tools/list 驱动，当前 19 个） + messages.transform 占位符改写）+ 官方 web UI 即 AI 窗（nginx 反代剥 CSP + sub_filter 注入，不 fork）
 
 宿主适配 · tags: `opencode` · `adapter` · `plugin` · `messages-transform` · `webui` · `placeholder`
 
 ## Positioning (English)
 
-OpenCode host plugin (16 tools registered in-process + messages.transform placeholder rewriting) + the official web UI serves as the AI window (nginx reverse proxy strips CSP + sub_filter injection, no fork)
+OpenCode host plugin (dynamic in-process registration of all bridge aiti_* tools, driven by tools/list, currently 19 + messages.transform placeholder rewriting) + the official web UI serves as the AI window (nginx reverse proxy strips CSP + sub_filter injection, no fork)
+
+## v0.3.2 变更（2026-11-13）
+
+- **session.error 回桥**：只有 session.idle 不足以收尾——会话报错/用户中止时 AI 窗侧会悬挂；现在 `session.error`（`MessageAbortedError` → ⏹ 中止提示，其余 → ⚠️ 错误文本）也回桥落消息流
+- **冷启动全清单自愈占位**：opencode 先于桥启动时，此前只注册 2 个占位工具且重启前不自愈；现按核心静态清单 `BRIDGE_TOOLS`（core 0.3.13 新导出）注册全量 19 工具占位（真实 schema），execute 调用时重拉 tools/list 自动派发——桥恢复即自愈，无需重启 opencode。注：opencode 插件工具表进程级静态，桥重启后**新增**的工具仍需重启才进模型工具列表
+- 依赖：`@aiti-ai/aiti-devtools-core` ^0.3.13（注意：私仓 0.3.12 是 2026-11-11 一次游离发布，内容系旧基底不含 pair 模块；0.3.13 为仓库谱系超集，^range 解析自动落到 0.3.13）
+
+## 测试 / Testing
+
+```bash
+# 桥/插件全链路自动化 E2E（6 用例：工具清单 / 注册 / 推送注入回桥 / 占位符改写 / 交互卡闭环）
+# 环境依赖：独立桥 127.0.0.1:8777 + opencode serve 127.0.0.1:19870（缺任一自动 skip，同 shim-e2e 约定）
+# 默认用 opencode 免费模型（opencode/glm-5.3-flash-free，零成本）；AITI_OC_E2E_MODEL 覆盖
+node --test opencode-ext/aiti-devtools-opencode/test/e2e-bridge.test.mjs
+# 或进标准测试面（PKG_ROOTS 已含 opencode-ext）：
+node scripts/test-web-ext.mjs --with-pkg --only e2e-bridge
+```
+
+基线（2026-11-13，48 机）：7/7 pass（T1 工具清单 19 个 / T2 注册 / T3 推送→注入→回显→answer 落桥 / T4 占位符展开→aiti_consumed 清候选 / T5 user_confirm→SSE 卡→模拟点击→模型收到 approved+comment / T6 中途 abort→session.error→⏹ 回桥落消息流）。手动 E2E（真 Chrome 页面腿）见上 2026-11-07 复检记录。
 
 ## 安装 / 部署
 

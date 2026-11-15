@@ -14,7 +14,7 @@
 import type { Hooks, Plugin } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin";
 import { AgentBridgeClient, wrapToolResult, type BridgeTool } from "@aiti-ai/aiti-devtools-agent";
-import { registerAitiShim, resolveShimPathAuto, rewriteMessage } from "@aiti-ai/aiti-devtools-core";
+import { BRIDGE_TOOLS, registerAitiShim, resolveShimPathAuto, rewriteMessage, type RewriteCandidate } from "@aiti-ai/aiti-devtools-core";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -142,21 +142,31 @@ export const AitiDevtoolsPlugin: Plugin = async (input) => {
   const hooks: Hooks = { event: undefined, tool: {} };
 
   if (!bridgeTools.length) {
-    // 桥未启动：注册两个占位探测工具（模型可见、调用时给出清晰指引），不拖垮 opencode
-    log("bridge not reachable at " + BRIDGE_BASE + " — placeholder tools registered");
-    const errText = "桥不可达：" + BRIDGE_BASE + "。请先启动独立桥：node ~/workspace/aiti-ai/packages/aiti-bridge/bin/aiti-bridge.mjs（默认 127.0.0.1:8777），然后重启 opencode。";
-    hooks.tool = {
-      [PREFIX + "bridge_status"]: tool({
-        description: "查询 aiti-devtools 已连接页面（sessions/pageId/url/title）。当前桥未启动。" + DESCRIPTION_SUFFIX,
-        args: {},
-        async execute() { return errText; },
-      }),
-      [PREFIX + "page_exec"]: tool({
-        description: "在已连接页面执行类 CDP 命令。当前桥未启动。" + DESCRIPTION_SUFFIX,
-        args: { cmd: z.string().describe("CDP 命令，如 Runtime.evaluate"), args: z.record(z.string(), z.any()).optional() },
-        async execute() { return errText; },
-      }),
+    // 桥未启动（冷启动降级）：按核心静态清单 BRIDGE_TOOLS 注册全量占位工具（真实 schema，模型可见可调），
+    // execute 自愈派发——调用时重拉 tools/list，桥恢复后即透传真实调用，无需重启 opencode。
+    // （opencode 插件工具表进程级静态、无运行时新增 API，故桥重启后【新增】的工具仍需重启才进模型工具列表；
+    //   已知工具的冷启动可用性则由本占位层兜住。）
+    log("bridge not reachable at " + BRIDGE_BASE + " — cold-start: " + BRIDGE_TOOLS.length + " self-healing placeholder tools registered");
+    const errText = "桥不可达：" + BRIDGE_BASE + "。本工具处于冷启动降级模式（占位清单）；桥启动/恢复后再次调用即自动派发真实工具，无需重启 opencode。启动独立桥：node ~/workspace/pi-work/packages/aiti-bridge/bin/aiti-bridge.mjs（默认 127.0.0.1:8777）。";
+    interface HealCtx { sessionID: string; directory: string; abort?: AbortSignal; callID?: string }
+    const healExecute = (toolName: string) => async (args: Record<string, unknown>, ctx: HealCtx) => {
+      const fresh = await fetchBridgeTools(BRIDGE_BASE);
+      if (!fresh.length) return errText;
+      const sess = await registerAndStream(ctx.sessionID, ctx.directory);
+      if (!sess) return "桥注册失败：" + BRIDGE_BASE + "（桥可能刚恢复，重试即可）";
+      log("bridge back up — healed dispatch: " + toolName + " (" + fresh.length + " tools live)");
+      const r = await bridge.callTool(toolName, args || {}, { agentId: AGENT_ID, sessionId: ctx.sessionID, cwd: ctx.directory, cancelId: ctx.callID }, ctx.abort);
+      const wrapped = wrapToolResult(r);
+      return wrapped.content[0]?.text ?? JSON.stringify(wrapped);
     };
+    hooks.tool = Object.fromEntries(BRIDGE_TOOLS.map((t) => [
+      PREFIX + t.name,
+      tool({
+        description: "【冷启动降级·桥不可达】" + (t.description || t.name) + DESCRIPTION_SUFFIX,
+        args: schemaToShape((t.inputSchema || { type: "object", properties: {} }) as Record<string, unknown>),
+        execute: healExecute(t.name),
+      }),
+    ]));
     return hooks;
   }
 
@@ -180,7 +190,8 @@ export const AitiDevtoolsPlugin: Plugin = async (input) => {
   }
   log("registered " + bridgeTools.length + " aiti_* tools from " + BRIDGE_BASE);
 
-  // ---- 事件接线：session.idle → 回答回桥（消息流落盘供 AI 窗展示）----
+  // ---- 事件接线：session.idle → 回答回桥（消息流落盘供 AI 窗展示）；
+  //      session.error → 错误/中止也回桥（否则 AI 窗侧悬挂等答案） ----
   hooks.event = async ({ event }) => {
     if (event.type === "session.idle") {
       const sessionID = (event.properties as { sessionID?: string } | undefined)?.sessionID;
@@ -193,6 +204,16 @@ export const AitiDevtoolsPlugin: Plugin = async (input) => {
         const text = (last?.parts ?? []).filter((p) => p.type === "text").map((p: any) => p.text).join("\n").trim();
         if (text) await bridge.answer(sess.agentKey, text);
       } catch { /* 回答失败不影响会话 */ }
+    } else if (event.type === "session.error") {
+      const props = event.properties as { sessionID?: string; error?: { name?: string; data?: { message?: string } } } | undefined;
+      const sess = props?.sessionID ? sessions.get(props.sessionID) : null;
+      if (!sess) return;
+      const errName = String(props.error?.name || "");
+      const errMsg = String(props.error?.data?.message || props.error?.name || "未知错误");
+      const text = /abort/i.test(errName)
+        ? "⏹ 会话已被中止（用户取消），本轮终止。"
+        : "⚠️ 会话出错：" + errMsg;
+      try { await bridge.answer(sess.agentKey, text); } catch { /* 回答失败不影响会话 */ }
     }
   };
 
