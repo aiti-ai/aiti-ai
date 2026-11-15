@@ -74,7 +74,7 @@ test("a rejected submission preserves a different run reported by the server", (
   assert.match(reconcileSource, /if \(!agentRunningRef\.current\) return;[\s\S]*?finishPromptWithoutStream/);
 });
 
-test("opening System or Tools lazily starts a dormant session without sending a prompt", () => {
+test("opening Tools lazily starts a dormant session without sending a prompt (system is a plain panel toggle since d3d11cc7)", () => {
   const loadSystemInfoSource = source.slice(
     source.indexOf("  const loadSystemInfo = useCallback"),
     source.indexOf("  const loadSlashCommands = useCallback"),
@@ -92,8 +92,10 @@ test("opening System or Tools lazily starts a dormant session without sending a 
   assert.match(loadSystemInfoSource, /setSystemPrompt\(state\.systemPrompt \?\? ""\)/);
   assert.match(loaderEffectSource, /onSystemInfoLoaderChange\?\.\(loadSystemInfo\)/);
   assert.match(loaderEffectSource, /onSystemInfoLoaderChange\?\.\(null\)/);
-  assert.match(appShellSource, /onClick=\{\(\) => handleSystemInfoToggle\("system", mobile\)\}/);
-  assert.match(appShellSource, /onClick=\{\(\) => handleSystemInfoToggle\("tools", mobile\)\}/);
+  // 2026-11-15 (d3d11cc7): mobile tier gone — the system button is a plain toggle,
+  // tools keeps the loader-handler path (same topbar act()(menu) form for both).
+  assert.match(appShellSource, /onClick=\{act\(\(\) => toggleTopPanel\("system"\)\)\(menu\)\}/);
+  assert.match(appShellSource, /onClick=\{act\(\(\) => handleSystemInfoToggle\("tools"\)\)\(menu\)\}/);
   assert.match(appShellSource, /systemInfoLoaderRef\.current/);
   assert.doesNotMatch(appShellSource, /systemPrompt !== null \|\| systemInfoLoading/);
   assert.match(appShellSource, /const loadId = \+\+systemInfoLoadIdRef\.current/);
@@ -253,7 +255,9 @@ test("forking stays available during a run while in-session branch switches wait
   assert.match(source, /const branchSwitchLocked = agentRunning \|\| bashRunning \|\| isCompacting;/);
   assert.match(source, /onBranchDataChange\(data\?\.tree \?\? \[\], activeLeafId, handleLeafChange, branchSwitchLocked\)/);
   assert.match(appShellSource, /setBranchSwitchLocked\(locked\)/);
-  assert.equal((appShellSource.match(/locked=\{branchSwitchLocked\}/g) ?? []).length, 2);
+  // 2026-11-15 (d3d11cc7): the mobile overlay's BranchNavigator (the second
+  // locked={branchSwitchLocked} site) retired with the horizontal tier — one pin left.
+  assert.equal((appShellSource.match(/locked=\{branchSwitchLocked\}/g) ?? []).length, 1);
 });
 
 test("first user messages expose both branch actions and edit before their own entry", () => {
@@ -871,7 +875,9 @@ test("sizes the message tail from the rendered bottom composer", () => {
   // （relative flex min-h-0 flex-col，与 fieldset/内层列同链）；曾保留的旧形态
   // relative shrink-0 是合并丢链的错误融合结果，不再接受（同
   // ChatWindow.extension-request 钉的 C 类纪律）。
-  assert.match(chatWindowSource, /<div ref=\{bottomComposerRef\} className="relative flex min-h-0 flex-col">/);
+  // 2026-11-15 (2223dd9d): the new-session page adds a conditional shrink-0 to the
+  // same chain prefix (template literal) — chain intact, pin updated to the new form.
+  assert.match(chatWindowSource, /<div ref=\{bottomComposerRef\} className=\{`relative flex min-h-0 flex-col/);
   assert.doesNotMatch(chatWindowSource, /bottomComposerRef\} className="relative shrink-0"/);
   assert.match(chatWindowSource, /height: bottomComposerHeight/);
 });
