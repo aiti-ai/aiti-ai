@@ -5332,7 +5332,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
                     const extraTokenRows = [
                        ...(sessionStats.cost > 0 ? [[translate("session.cost"), `$${sessionStats.cost.toFixed(4)}`]] : []),
                        ...(ctx?.contextWindow ? [[translate("session.context"), (
-                         <span style={{ display: "inline-flex", alignItems: "center", gap: 6, justifyContent: "flex-end" }}>
+                         <span key="session-context" style={{ display: "inline-flex", alignItems: "center", gap: 6, justifyContent: "flex-end" }}>
                            <span style={{
                              color: ctxUrg.color,
                              fontVariantNumeric: "tabular-nums",

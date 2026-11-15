@@ -25,6 +25,9 @@ import { useI18n } from "@/hooks/useI18n";
  *  legal hook call); materialize (effect) only reads the snapshot — no hook
  *  calls inside callbacks. */
 let extI18nSnapshot: ReturnType<typeof useI18n> | null = null;
+/** Render-phase module mutation is forbidden (react-hooks/globals); ExtSlots commits the latest
+ *  host i18n snapshot via useLayoutEffect so non-tree consumers (ext panel error labels) can read it. */
+function setExtI18nSnapshot(s: ReturnType<typeof useI18n> | null) { extI18nSnapshot = s; }
 import type { ComposerEnhancement, ComposerSnapshot, RecoveryItemsProvider } from "@/lib/composer/types";
 import type { QueuePanelController } from "@/lib/composer/queue-api";
 import { registerRecoveryItemsProvider } from "@/lib/composer/recovery";
@@ -602,8 +605,13 @@ export function ExtSlotsProvider({ children, serverSlotDeclarations }: { childre
   const [, force] = useState(0);
   // Seeded in the render body (idempotent, no side-effect rollback needed): must run before children (TakeoverSlot)
   seedServerDeclarations(serverSlotDeclarations);
-  // SidebarClone's (via the @/ host-module chain) useI18n is delegated here through the host shim — the snapshot refreshes every render
-  extI18nSnapshot = useI18n();
+  // SidebarClone's (via the @/ host-module chain) useI18n is delegated here through the host shim — the snapshot
+  // refreshes every commit (useLayoutEffect = pre-paint, so consumers never render stale locale; react-hooks/globals
+  // forbids render-phase module mutation, hence the explicit setter).
+  const i18n = useI18n();
+  useLayoutEffect(() => {
+    setExtI18nSnapshot(i18n);
+  });
   useEffect(() => {
     void loadExtensions();
     const unsub = subscribeExtUi(() => force((v) => v + 1));
