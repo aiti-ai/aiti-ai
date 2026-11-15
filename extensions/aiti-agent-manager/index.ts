@@ -415,10 +415,21 @@ export default {
     clientDependsOn: ["aiti-cmd"],
     toolbar: [{
       id: "aiti-agent-manager-panel",
-      label: "Agent 管理",
-      title: "Agent 管理（统一登录态）",
+      label: "i18n:am.open.label",
+      title: "i18n:am.open.title",
       icon: "icons/bot.svg",
     }],
+    i18n: {
+      "zh-CN": {
+      "am.open.label": "Agent 管理",
+      "am.open.title": "Agent 管理（统一登录态）",
+      },
+      en: {
+      "am.open.label": "Agent manager",
+      "am.open.title": "Agent manager (unified logins)",
+      },
+    },
+
     dialogs: [{ id: "aiti-agent-manager-panel-dialog", label: "Agent 管理" }],
   },
 
