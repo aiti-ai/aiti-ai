@@ -15,6 +15,18 @@ write 工具：ANTHROPIC_KEY=sk-ant-api03-<80位>   ← 执行时已还原为真
 session 文件：原文保留（context 钩子是非破坏性的）
 ```
 
+
+## 关于 aiti
+
+本包是 **aiti** 生态的一部分——一个以 [pi](https://pi.dev) 为引擎的个人 AI 开发工作台生态。
+
+- **aiti Web 工作台**（自托管、浏览器主操作面，本插件默认预装）：npm 包 **`@aiti-ai/pi-web`** —— <https://github.com/aiti-ai/pi-web> · 官网 <https://aiti.pw>
+- 生态 monorepo（文档站、扩展、集成）： <https://github.com/aiti-ai/aiti-ai>
+
+**可独立使用**：任何 pi（coding agent）用户均可直接 `pi install npm:@aiti-ai/pi-secret-mask`，单独获得全部能力，与 aiti 其它组件无任何依赖。
+
+**也可配合 aiti Web 使用**：从 Web 工作台发起的会话自动带上本插件（第一方插件，启动时自动预配）。
+
 ## 安装
 
 ```bash
