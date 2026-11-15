@@ -270,12 +270,16 @@ export class Engine {
 
   saveWatermarks() {
     for (const e of this.entries.values()) {
+      // Skip running entries: their watermark was already persisted (pre-advanced) at fire
+      // time and will be rewritten on completion. Persisting the in-memory value here would
+      // race with the completion path when stop()/reload happens mid-run (2026-11-15 fire storm root cause).
+      if (e.running) continue;
       this.store.setWatermark(e.key, { nextRunAt: e.nextRunAt, lastRunAt: e.lastRunAt });
     }
-    // 把运行字段回写 plan 快照
+    // 把运行字段回写 plan 快照（执行中条目的运行字段未定型，同样跳过；完成时回写）
     let dirty = false;
     for (const e of this.entries.values()) {
-      if (e.kind !== "ai" || !e.plan) continue;
+      if (e.kind !== "ai" || !e.plan || e.running) continue;
       if (e.plan.nextRunAt !== e.nextRunAt || e.plan.lastRunAt !== e.lastRunAt || e.plan.runCount !== e.runCount) {
         e.plan.nextRunAt = e.nextRunAt; e.plan.lastRunAt = e.lastRunAt; e.plan.runCount = e.runCount;
         dirty = true;
@@ -332,9 +336,18 @@ export class Engine {
             this.store.saveState();
           }
           this.advance(e, now);
+          this.store.setWatermark(e.key, { nextRunAt: e.nextRunAt, lastRunAt: e.lastRunAt });
           continue;
         }
       }
+      // Fire-and-claim（2026-11-15 09:30 fire-storm fix）：advance the slot to its next
+      // occurrence and persist BEFORE executing. Previously the watermark stayed on the
+      // (already passed) fire time for the whole run — any engine rebuild (extension
+      // reload) within the catch-up grace window then re-fired the plan, one session per reload.
+      this.advance(e, e.nextRunAt);
+      // All slots exhausted (pure once plan finished / cron has no future slot) → self-disable
+      if (e.nextRunAt === Number.MAX_SAFE_INTEGER) e.enabled = false;
+      this.store.setWatermark(e.key, { nextRunAt: e.nextRunAt, lastRunAt: e.lastRunAt });
       void this.execute(e);
     }
   }
@@ -474,15 +487,13 @@ export class Engine {
     if (manual) {
       // 手动触发不打乱原定水位：只更新 lastRunAt
       e.lastRunAt = Date.now();
-    } else if (status === "ok") {
-      e.lastRunAt = Date.now();
-      this.advance(e, e.lastRunAt);
-      // 全部时点耗尽（纯 once 计划跑完 / cron 无未来时点）→ 自停；interval 永不耗尽
-      if (e.nextRunAt === Number.MAX_SAFE_INTEGER) e.enabled = false;
     } else {
-      // 失败：跳过该时点，按正常节奏走（避免每秒重试风暴）；重试逻辑见下
+      // Auto trigger: the slot was already advanced + persisted before execution
+      // (fire-and-claim in tick). Completion only records lastRunAt — no second advance.
+      // Note interval schedules now keep a fixed cadence (fire time + everySec) instead of
+      // drifting by completion time. Failures keep the advanced slot too (no retry storm);
+      // the 60s retry below is the only immediate follow-up.
       e.lastRunAt = Date.now();
-      this.advance(e, e.lastRunAt);
     }
     e.running = false;
     this.executing--;
@@ -615,12 +626,22 @@ export class Engine {
     const result = await new Promise<string>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pendingInvokes.delete(sessionId);
+        this.abortSession(apiOrigin, basePath, sessionId);
         reject(new Error("一次性会话执行超时（" + Math.round(timeoutMs / 1000) + "s）· sessionId=" + sessionId));
       }, timeoutMs);
       this.pendingInvokes.set(sessionId, { resolve, reject, timer });
     }).catch((e) => ({ __err: String(e.message || e) })) as any;
     if (result && result.__err) return { error: result.__err, sessionId };
     return { text: String(result), sessionId, model: data?.model?.modelId || p.model || null };
+  }
+
+  /** Timeout kills the one-shot session too (fire-and-forget): engine giving up waiting
+   *  does not stop the session by itself — a zombie session keeps burning tokens (2026-11-15). */
+  private abortSession(apiOrigin: string, basePath: string, sessionId: string) {
+    fetch(apiOrigin + basePath + "/api/session-backends/" + encodeURIComponent(sessionId), {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "abort" }),
+    }).catch(() => { /* abort failure must not affect scheduling */ });
   }
 
   /** onAgentSettled 接线：resolve 等待中的一次性会话。 */
