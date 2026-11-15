@@ -4,14 +4,23 @@ import { test } from "node:test";
 import { mkdtempSync, rmSync, readFileSync, existsSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { handleSecretCommand, savePersist, loadPersist, clearPersist, PERSIST_PATH } from "../src/core/commands.ts";
+import { handleSecretCommand, savePersist, loadPersist, clearPersist } from "../src/commands.ts";
 // SecretState type is only used structurally here (plain .mjs test file).
-import { Registry } from "../src/core/mask.ts";
+import { Registry } from "../src/mask.ts";
 
 const SECRET = "7fJk2mN9pQrStUvWx3y4z5A6b7C8d9E0";
 
 function mkState() {
-  return { registry: new Registry(), enabled: true, salt: "salt", cwd: "/proj/a", persisted: false };
+  return {
+    registry: new Registry(),
+    enabled: true,
+    salt: "salt",
+    cwd: "/proj/a",
+    persisted: false,
+    audit: false,
+    persistPath: "/tmp/secret-mask-core-test/secret-mask.json",
+    auditPath: "/tmp/secret-mask-core-test/audit.log",
+  };
 }
 
 test("help and unknown subcommand", async () => {
@@ -56,13 +65,11 @@ test("value with spaces + trailing as-alias parse", async () => {
 
 test("masked interactive add", async () => {
   const s = mkState();
-  // DSH port: interactive masked input is not part of the v1 command surface —
-  // `/secret add` takes the value inline (recordInput:false keeps it out of the
-  // session log), so a bare `add` is a usage error rather than a prompt.
-  const add = await handleSecretCommand(s, "add");
-  assert.equal(add.ok, false);
-  assert.match(add.text, /Usage/);
-  assert.equal(s.registry.size, 0);
+  const add = await handleSecretCommand(s, "add", { input: async () => SECRET });
+  assert.ok(add.ok);
+  assert.equal(s.registry.size, 1);
+  const cancel = await handleSecretCommand(s, "add", { input: async () => "" });
+  assert.equal(cancel.ok, false);
 });
 
 test("on/off/status", async () => {
@@ -112,8 +119,8 @@ test("save/load/unload persistence round-trip (temp path)", () => {
 });
 
 test("send-audit: payload proof scan + command toggle + evidence log", async () => {
-  const { auditPayload } = await import("../src/core/mask.ts");
-  const { appendAuditLog, readAuditTail } = await import("../src/core/commands.ts");
+  const { auditPayload } = await import("../src/mask.ts");
+  const { appendAuditLog, readAuditTail } = await import("../src/commands.ts");
   const s = mkState();
   s.registry.registerManual(SECRET, "audit-key");
   s.registry.registerManual("9pQrStUvWx3y4z5A6b7C8d9E0f1", "audit-key-2");

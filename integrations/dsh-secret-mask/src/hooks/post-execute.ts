@@ -15,7 +15,7 @@
  */
 
 import type { ContentBlock, PluginConfig, PluginContext, PostToolDecision, ToolExecution, ToolExecutionResult } from "../dsh-types.ts";
-import { redactDeep } from "../core/mask.ts";
+import { redactDeep } from "@aiti-ai/secret-mask-core";
 import { stateFor } from "../state.ts";
 import { isTextBlock, rewriteTextBlock } from "../spans.ts";
 

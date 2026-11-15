@@ -9,13 +9,18 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { Registry } from "./core/mask.ts";
-import { loadPersist, type SecretState } from "./core/commands.ts";
-import type { AgentLike, PluginConfig, SessionState } from "./dsh-types.ts";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { Registry, loadPersist, PERSIST_FILE_NAME, AUDIT_FILE_NAME, type SecretState } from "@aiti-ai/secret-mask-core";
+import type { PluginConfig } from "./dsh-types.ts";
 
-const sessions = new Map<string, SessionState>();
+const sessions = new Map<string, SecretState>();
 
-export function stateFor(agentId: string | undefined, cfg: PluginConfig): SessionState {
+/** DSH storage locations (host side of the shared core contract). */
+export const PERSIST_PATH = join(homedir(), ".dsh", PERSIST_FILE_NAME);
+export const AUDIT_LOG_PATH = join(homedir(), ".dsh", AUDIT_FILE_NAME);
+
+export function stateFor(agentId: string | undefined, cfg: PluginConfig): SecretState {
   const key = agentId && agentId.length ? agentId : "__global__";
   let st = sessions.get(key);
   if (!st) {
@@ -26,10 +31,12 @@ export function stateFor(agentId: string | undefined, cfg: PluginConfig): Sessio
       cwd: cfg.workspaceDir || process.cwd(),
       persisted: false,
       audit: cfg.audit,
+      persistPath: PERSIST_PATH,
+      auditPath: cfg.auditPath || AUDIT_LOG_PATH,
     };
     sessions.set(key, st);
     // Opt-in persistence: restore this workspace's saved bucket on first use.
-    loadPersist(st);
+    loadPersist(st, st.persistPath);
   }
   return st;
 }
@@ -39,9 +46,6 @@ export function dropSession(agentId: string | undefined): void {
 }
 
 /** Redaction / detection master switches for one session (config × /secret toggles). */
-export function active(st: SessionState): boolean {
+export function active(st: SecretState): boolean {
   return st.enabled;
 }
-
-export type { SecretState };
-export type { AgentLike };
