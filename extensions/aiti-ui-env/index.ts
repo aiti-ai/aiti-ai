@@ -870,18 +870,20 @@ export default {
   ui: {
     clientImmediately: false, // [懒加载 v2] M1 已同步生产，懒化重启用
     // id 与 client 注册对齐（ui-env-toolbar——原 ui-env 为历史错位，M1 审计发现）
-    toolbar: [{ id: "ui-env-toolbar", label: "显示环境", title: "UI 环境管理：桌面/无头虚拟屏 + VNC-on-web", icon: "icons/monitor.svg" }],
+    toolbar: [{ id: "ui-env-toolbar", label: "i18n:uiEnv.open", title: "i18n:uiEnv.toolbarTitle", icon: "icons/monitor.svg" }],
     // aiti-float dock v3：停靠槽静态声明（懒扩展物化触发 + 静态入口；id 与 client 注册一致）
-    rightFileDock: [{ id: "panel", label: "显示环境" }],
+    rightFileDock: [{ id: "panel", label: "i18n:uiEnv.open" }],
     dialogs: [{ id: "ui-env-dialog", label: "显示环境管理" }],
     i18n: {
       en: {
+        "uiEnv.toolbarTitle": "UI env manager: desktop/headless virtual displays + VNC-on-web",
         "uiEnv.title": "Display environment",
         "uiEnv.open": "Display env",
         "uiEnv.modeTitle": "Mode (applies to newly started MCP / apps)",
         "uiEnv.close": "Close",
       },
       "zh-CN": {
+        "uiEnv.toolbarTitle": "UI 环境管理：桌面/无头虚拟屏 + VNC-on-web",
         "uiEnv.title": "UI 环境（桌面/无头虚拟屏）",
         "uiEnv.open": "显示环境",
         "uiEnv.modeTitle": "显示模式（作用于新启动的 MCP / 应用）",
