@@ -1,11 +1,12 @@
 /*
- * aiti-devtools 浏览器扩展 · popup（v2）
+ * aiti-devtools browser extension · popup (v2)
  *
- * 本页状态卡（默认关 / 白名单命中 / 已排除 / 受限页）+ 三按钮：
- *   ⚡ 本页启用（本次）—— 纯运行时注入（postMessage 覆盖，导航后失效；用户显式行为优先于规则）
- *   ★ 总是启用此站点 —— 当前 origin 写入白名单
- *   ⚙ 设置
- * AI 目标显示（pi-web / 兼容 agent / cockpit）+ 打开 AI 窗。
+ * This-page state card (default off / allowlisted / denied / restricted page) + three buttons:
+ *   ⚡ Enable on this page (once) — pure runtime injection (postMessage override, dies on navigation;
+ *      explicit user action wins over rules)
+ *   ★ Always enable this site — writes the current origin into the allowlist
+ *   ⚙ Options
+ * Shows the AI target (pi-web / compatible agent / cockpit) and opens the AI window.
  */
 (function () {
   'use strict';
@@ -69,7 +70,7 @@
     });
   }
 
-  // ⚡ 本次：通知在场 content script 立即注入（纯运行时消息，导航后失效）
+  // ⚡ once: tell the already-present content script to inject now (pure runtime message, gone on navigation)
   $('once').addEventListener('click', () => {
     if (!TAB || TAB.id == null) return;
     setHint('注入中…');
@@ -83,7 +84,7 @@
     } catch (e) { setHint('此页面不支持脚本注入', 'err'); }
   });
 
-  // ★ 总是：当前 origin 写入白名单
+  // ★ always: write the current origin into the allowlist
   $('always').addEventListener('click', () => {
     if (!TAB || !TAB.url) return;
     let origin;
