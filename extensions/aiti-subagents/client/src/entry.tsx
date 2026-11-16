@@ -12,7 +12,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { __setCtx, apiUrl, createElement } from "./host-shim";
+import { __setCtx, apiUrl, createElement, t } from "./host-shim";
 import { SidebarTasksSection } from "./sidebar-tasks";
 
 type RunStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | string;
@@ -71,7 +71,7 @@ function setCfgOpen(v: boolean) { cfgOpen = v; for (const l of cfgListeners) l()
 
 // ---- 工具 ----
 function fmtDuration(ms?: number): string {
-  if (!ms) return "进行中";
+  if (!ms) return t("进行中");
   if (ms < 1000) return `${ms}ms`;
   if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
   return `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`;
@@ -201,14 +201,14 @@ async function openSessionByFile(file: string, label?: string): Promise<boolean>
     const d = await fetch(apiUrl("/api/sessions?refresh=1")).then((r) => r.json());
     const rows = d?.sessions || [];
     const row = rows.find((s: { path?: string; id?: string }) => s.path === file) || rows.find((s: { path?: string }) => s.path && file && file.endsWith(s.path)) || rows.find((s: { id?: string }) => s.id === file);
-    if (!row) { setMsgGlobal(`未在索引中找到${label || "会话"}（稍后重试）`); return false; }
+    if (!row) { setMsgGlobal(`${t("未在索引中找到")}${label || t("会话")}${t("（稍后重试）")}`); return false; }
     // AppShell 事件通道：SPA 内切换会话（面板保持），不依赖 session-manager open-live
     window.dispatchEvent(new CustomEvent("pi-web:open-session", { detail: { id: row.id } }));
     window.dispatchEvent(new Event("sm:sessions-changed")); // 左侧树同步刷新
-    setMsgGlobal(`已打开${label || "会话"}窗口`);
+    setMsgGlobal(`${t("已打开")}${label || t("会话")}${t("窗口")}`);
     return true;
   } catch (e) {
-    setMsgGlobal("打开失败: " + (e instanceof Error ? e.message : String(e)));
+    setMsgGlobal(t("打开失败: ") + (e instanceof Error ? e.message : String(e)));
     return false;
   }
 }
@@ -248,7 +248,7 @@ function ConfigSelect({ value, options, onChange }: { value: string; options: { 
         onClick={() => setOpen(!open)}
         style={{ width: "100%", height: 34, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, padding: "0 9px", border: "1px solid var(--border)", borderRadius: 5, background: "var(--bg)", color: "var(--text)", fontSize: 12, cursor: "pointer", textAlign: "left" }}
       >
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: current ? "var(--text)" : "var(--text-dim)" }}>{current ? current.label : "选择…"}</span>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: current ? "var(--text)" : "var(--text-dim)" }}>{current ? current.label : t("选择…")}</span>
         <span style={{ flexShrink: 0, fontSize: 9, color: "var(--text-dim)", transform: open ? "rotate(180deg)" : "none", transition: "transform .15s" }}>{"▾"}</span>
       </button>
       {open && pos && (
@@ -309,9 +309,9 @@ function AgentsManagerBody({ embedded }: { embedded?: boolean }) {
 
   // 编辑默认 "keep"（保持原样）——用户不主动改执行器就绝不重建 runner 块，
   // 块内未在表单呈现的字段（promptDelivery/capabilities/未来扩展）零丢失。
-  const runnerCurrentLabel = (runner?: AgentDef["runner"]) => !runner || runner.type === "pi" ? "内置 pi"
-    : runner.type === "external-job" ? `pi-web 会话（${runner.backend || runner.options?.backend || "pi"}）`
-    : `外部 CLI ${runner.adapter}${runner.command ? `（${runner.command}）` : ""}`;
+  const runnerCurrentLabel = (runner?: AgentDef["runner"]) => !runner || runner.type === "pi" ? t("内置 pi")
+    : runner.type === "external-job" ? `${t("pi-web 会话（")}${runner.backend || runner.options?.backend || "pi"}）`
+    : `${t("sa.extCli")} ${runner.adapter}${runner.command ? `（${runner.command}）` : ""}`;
   const runnerState = (agent: AgentDef) => ({
     runnerKind: "keep",
     runnerAdapter: agent.runner?.adapter || agent.runner?.backend || "claude-code",
@@ -356,8 +356,8 @@ function AgentsManagerBody({ embedded }: { embedded?: boolean }) {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
     });
     const d = await r.json();
-    if (d?.ok) { setMsg("已保存（覆盖内置需同名）"); setEditing(null); load(); }
-    else setMsg("❌ " + (d?.error || "保存失败"));
+    if (d?.ok) { setMsg(t("已保存（覆盖内置需同名）")); setEditing(null); load(); }
+    else setMsg("❌ " + (d?.error || t("保存失败")));
   };
 
   const takeOver = async (name: string) => {
@@ -365,14 +365,14 @@ function AgentsManagerBody({ embedded }: { embedded?: boolean }) {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }),
     });
     const d = await r.json();
-    setMsg(d?.ok ? `${name} 已由 pi-web 后端 ${d.backend} 接管（删除自定义可恢复 fork 直启）` : "❌ " + (d?.error || "接管失败"));
+    setMsg(d?.ok ? `${name} 已由 pi-web 后端 ${d.backend} 接管（删除自定义可恢复 fork 直启）` : "❌ " + (d?.error || t("接管失败")));
     load();
   };
 
   const del = async (name: string) => {
     const r = await fetch(apiUrl(`/api/extensions/aiti-subagents/agents/${encodeURIComponent(name)}`), { method: "DELETE" });
     const d = await r.json();
-    setMsg(d?.ok ? (d?.restored ? "已删除自定义，恢复默认" : "已删除") : "❌ " + (d?.error || "删除失败"));
+    setMsg(d?.ok ? (d?.restored ? t("已删除自定义，恢复默认") : t("已删除")) : "❌ " + (d?.error || t("删除失败")));
     load();
   };
 
@@ -387,25 +387,25 @@ function AgentsManagerBody({ embedded }: { embedded?: boolean }) {
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderBottom: "1px solid var(--border)", userSelect: "none" }}>
-          <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>{editing === "new" ? "新建 Agent" : `编辑 Agent · ${editing.name}`}</span>
-          <button title="关闭编辑" onClick={() => { setEditing(null); setMsg(""); }} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, padding: 2 }}>✕</button>
+          <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>{editing === "new" ? t("新建 Agent") : `编辑 Agent · ${editing.name}`}</span>
+          <button title={t("关闭编辑")} onClick={() => { setEditing(null); setMsg(""); }} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, padding: 2 }}>✕</button>
         </div>
         <div style={{ flex: 1, overflowY: "auto", padding: "4px 14px 10px" }}>
-          <label style={labelStyle}>{"名称（字母/数字/下划线/连字符）"}</label>
+          <label style={labelStyle}>{t("名称（字母/数字/下划线/连字符）")}</label>
           <input style={inputStyle} value={form.name} disabled={editing !== "new"} onChange={set("name")} placeholder="my-agent" />
-          <label style={labelStyle}>{"描述"}</label>
-          <input style={inputStyle} value={form.description} onChange={set("description")} placeholder="这个 agent 做什么" />
-          <label style={labelStyle}>{"模型（可选，如 claude-haiku-4-5；留空继承父会话）"}</label>
-          <input style={inputStyle} value={form.model} onChange={set("model")} placeholder="留空 = 继承父模型" />
-          <label style={labelStyle}>{`执行器（外部 CLI 或 pi-web 会话——决定 fork 用什么启动这个子代理）${form.runnerCurrent ? `　当前：${form.runnerCurrent}` : ""}`}</label>
+          <label style={labelStyle}>{t("描述")}</label>
+          <input style={inputStyle} value={form.description} onChange={set("description")} placeholder={t("这个 agent 做什么")} />
+          <label style={labelStyle}>{t("模型（可选，如 claude-haiku-4-5；留空继承父会话）")}</label>
+          <input style={inputStyle} value={form.model} onChange={set("model")} placeholder={t("留空 = 继承父模型")} />
+          <label style={labelStyle}>{`${t("执行器（外部 CLI 或 pi-web 会话——决定 fork 用什么启动这个子代理）")}${form.runnerCurrent ? `　当前：${form.runnerCurrent}` : ""}`}</label>
           <div style={{ display: "flex", gap: 6 }}>
             <ConfigSelect
               value={form.runnerKind}
               options={[
-                { value: "keep", label: form.runnerCurrent ? `保持原样（${form.runnerCurrent}）` : "保持原样", disabled: !form.runnerCurrent },
-                { value: "pi", label: "内置 pi" },
-                { value: "external-cli", label: "外部 CLI（Claude Code / Codex / Cursor）" },
-                { value: "pi-web", label: "pi-web 会话（RPC/ACP，可从前端 attach）" },
+                { value: "keep", label: form.runnerCurrent ? `${t("保持原样（")}${form.runnerCurrent}）` : t("保持原样"), disabled: !form.runnerCurrent },
+                { value: "pi", label: t("内置 pi") },
+                { value: "external-cli", label: t("外部 CLI（Claude Code / Codex / Cursor）") },
+                { value: "pi-web", label: t("pi-web 会话（RPC/ACP，可从前端 attach）") },
               ]}
               onChange={(v) => setForm({ ...form, runnerKind: v })}
             />
@@ -419,24 +419,24 @@ function AgentsManagerBody({ embedded }: { embedded?: boolean }) {
             {form.runnerKind === "pi-web" && (
               <ConfigSelect
                 value={form.runnerAdapter}
-                options={(backends.length ? backends : [{ key: "pi", label: "pi（内置 RPC 会话）" }]).map((b) => ({ value: b.key, label: b.label || b.key }))}
+                options={(backends.length ? backends : [{ key: "pi", label: t("pi（内置 RPC 会话）") }]).map((b) => ({ value: b.key, label: b.label || b.key }))}
                 onChange={(v) => setForm({ ...form, runnerAdapter: v })}
               />
             )}
           </div>
-          {form.runnerKind === "external-cli" && <input style={{ ...inputStyle, marginTop: 6 }} value={form.runnerCommand} onChange={set("runnerCommand")} placeholder="命令（留空按 adapter 默认：claude / codex / cursor-agent）" />}
-          {form.runnerKind === "pi-web" && <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 6 }}>{"子代理将启动为真正的 pi-web 会话：出现在会话列表、可实时打开观察、可 steer。"}</div>}
-          <label style={labelStyle}>{"tools 白名单（逗号分隔，留空 = 全部系统工具）"}</label>
+          {form.runnerKind === "external-cli" && <input style={{ ...inputStyle, marginTop: 6 }} value={form.runnerCommand} onChange={set("runnerCommand")} placeholder={t("命令（留空按 adapter 默认：claude / codex / cursor-agent）")} />}
+          {form.runnerKind === "pi-web" && <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 6 }}>{t("子代理将启动为真正的 pi-web 会话：出现在会话列表、可实时打开观察、可 steer。")}</div>}
+          <label style={labelStyle}>{t("tools 白名单（逗号分隔，留空 = 全部系统工具）")}</label>
           <input style={inputStyle} value={form.tools} onChange={set("tools")} placeholder="read, grep, find, ls, bash, edit, write" />
-          <label style={labelStyle}>{"excludeTools 黑名单（逗号分隔，排除交互类等）"}</label>
+          <label style={labelStyle}>{t("excludeTools 黑名单（逗号分隔，排除交互类等）")}</label>
           <input style={inputStyle} value={form.excludeTools} onChange={set("excludeTools")} placeholder="user_confirm, user_input" />
-          <label style={labelStyle}>{"系统提示词（给子代理 LLM 的角色定义）"}</label>
-          <textarea style={{ ...inputStyle, minHeight: 160, fontFamily: "var(--font-mono, monospace)", lineHeight: 1.5, resize: "vertical" }} value={form.systemPrompt} onChange={set("systemPrompt")} placeholder="你是 ..." />
+          <label style={labelStyle}>{t("系统提示词（给子代理 LLM 的角色定义）")}</label>
+          <textarea style={{ ...inputStyle, minHeight: 160, fontFamily: "var(--font-mono, monospace)", lineHeight: 1.5, resize: "vertical" }} value={form.systemPrompt} onChange={set("systemPrompt")} placeholder={t("你是 ...")} />
         </div>
         <div style={{ display: "flex", gap: 8, padding: "8px 14px", borderTop: "1px solid var(--border)", alignItems: "center" }}>
           <span style={{ flex: 1, fontSize: 11, color: "var(--text-dim)" }}>{msg}</span>
-          <button className="config-button config-button-secondary config-button-small" onClick={() => { setEditing(null); setMsg(""); }}>{"取消"}</button>
-          <button className="config-button config-button-primary config-button-small" onClick={save}>{"保存"}</button>
+          <button className="config-button config-button-secondary config-button-small" onClick={() => { setEditing(null); setMsg(""); }}>{t("取消")}</button>
+          <button className="config-button config-button-primary config-button-small" onClick={save}>{t("保存")}</button>
         </div>
       </div>
     </div>
@@ -446,19 +446,19 @@ function AgentsManagerBody({ embedded }: { embedded?: boolean }) {
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
       {editOverlay}
       <div style={{ padding: "8px 12px", display: "flex", gap: 6, alignItems: "center" }}>
-        <span style={{ fontSize: 11, color: "var(--text-dim)", flex: 1 }}>{`${agents.length} 个 agent（用户自定义覆盖内置，编辑保存即生效）`}</span>
+        <span style={{ fontSize: 11, color: "var(--text-dim)", flex: 1 }}>{t("sa.agentCount", { n: agents.length })}</span>
         {embedded && (
-          <button onClick={() => setFleetOpen(true)} title="打开子代理舰队（运行总览 / 检查器 / 委派）" style={{ background: "rgba(0,212,255,0.12)", border: "1px solid rgba(0,212,255,0.3)", color: "#00d4ff", borderRadius: 6, padding: "3px 12px", fontSize: 12, cursor: "pointer", fontWeight: 600 }}>{"子代理舰队"}</button>
+          <button onClick={() => setFleetOpen(true)} title={t("打开子代理舰队（运行总览 / 检查器 / 委派）")} style={{ background: "rgba(0,212,255,0.12)", border: "1px solid rgba(0,212,255,0.3)", color: "#00d4ff", borderRadius: 6, padding: "3px 12px", fontSize: 12, cursor: "pointer", fontWeight: 600 }}>{t("子代理舰队")}</button>
         )}
-        <button onClick={load} title="重新加载列表" style={{ background: "none", border: "1px solid var(--border)", color: "var(--text-muted)", borderRadius: 6, padding: "3px 10px", fontSize: 12, cursor: "pointer" }}>{"↻ 刷新"}</button>
-        <button onClick={() => startEdit(null)} style={{ background: "rgba(0,212,255,0.12)", border: "1px solid rgba(0,212,255,0.3)", color: "#00d4ff", borderRadius: 6, padding: "3px 12px", fontSize: 12, cursor: "pointer" }}>{"＋ 新建"}</button>
+        <button onClick={load} title={t("重新加载列表")} style={{ background: "none", border: "1px solid var(--border)", color: "var(--text-muted)", borderRadius: 6, padding: "3px 10px", fontSize: 12, cursor: "pointer" }}>{t("↻ 刷新")}</button>
+        <button onClick={() => startEdit(null)} style={{ background: "rgba(0,212,255,0.12)", border: "1px solid rgba(0,212,255,0.3)", color: "#00d4ff", borderRadius: 6, padding: "3px 12px", fontSize: 12, cursor: "pointer" }}>{t("＋ 新建")}</button>
       </div>
       <div style={{ flex: 1, overflowY: "auto", padding: "0 8px 8px", minHeight: 0 }}>
         {agents.map((a) => (
           <div key={a.name} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 6, border: "1px solid var(--border)", marginBottom: 4 }}>
             <span style={{ fontWeight: 600, fontSize: 12, width: 90, flexShrink: 0 }}>{a.name}</span>
             <span
-              title={a.runner ? runnerCurrentLabel(a.runner) : "内置 pi 执行器"}
+              title={a.runner ? runnerCurrentLabel(a.runner) : t("内置 pi 执行器")}
               style={{ fontSize: 9, padding: "0 5px", borderRadius: 6, flexShrink: 0, background: !a.runner ? "rgba(0,212,255,0.1)" : a.runner.type === "external-job" ? "color-mix(in srgb, var(--ok, #10b981) 15%, transparent)" : "rgba(168,85,247,0.15)", color: !a.runner ? "#00d4ff" : a.runner.type === "external-job" ? "var(--ok, #10b981)" : "#a855f7" }}
             >
               {!a.runner
@@ -467,28 +467,28 @@ function AgentsManagerBody({ embedded }: { embedded?: boolean }) {
                   ? `pw:${a.runner.backend || "pi"}`
                   : ({ "claude-code": "CC", "claude-code-writer": "CC✎", "codex-exec": "codex", "codex-exec-writer": "codex✎", "cursor-agent": "cursor", "cursor-agent-writer": "cursor✎" } as Record<string, string>)[a.runner.adapter || ""] || a.runner.adapter}
             </span>
-            <span style={{ flex: 1, fontSize: 11, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.description || "(无描述)"}</span>
-            {a.isUserDefined && <span style={{ fontSize: 9, padding: "0 5px", borderRadius: 6, background: "color-mix(in srgb, var(--ok, #10b981) 15%, transparent)", color: "var(--ok, #10b981)", flexShrink: 0 }}>{"自定义"}</span>}
+            <span style={{ flex: 1, fontSize: 11, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.description || t("(无描述)")}</span>
+            {a.isUserDefined && <span style={{ fontSize: 9, padding: "0 5px", borderRadius: 6, background: "color-mix(in srgb, var(--ok, #10b981) 15%, transparent)", color: "var(--ok, #10b981)", flexShrink: 0 }}>{t("自定义")}</span>}
             {!a.isUserDefined && a.runner?.type === "external-cli" && (() => {
               const backend = ({ "claude-code": "claude", "claude-code-writer": "claude", "codex-exec": "codex", "codex-exec-writer": "codex", "cursor-agent": "cursor", "cursor-agent-writer": "cursor" } as Record<string, string>)[a.runner?.adapter || ""];
               const ready = backend && backends.some((b) => b.key === backend);
               return (
                 <button
                   disabled={!ready}
-                  title={ready ? `执行替换为 pi-web 后端 ${backend}（同名覆盖，删除自定义即恢复 fork 直启）` : `pi-web 后端 ${backend || "?"} 未就绪`}
+                  title={ready ? `执行替换为 pi-web 后端 ${backend}${t("（同名覆盖，删除自定义即恢复 fork 直启）")}` : `pi-web 后端 ${backend || "?"} 未就绪`}
                   onClick={() => takeOver(a.name)}
                   style={{ background: ready ? "color-mix(in srgb, var(--ok, #10b981) 12%, transparent)" : "none", border: `1px solid ${ready ? "color-mix(in srgb, var(--ok, #10b981) 40%, transparent)" : "var(--border)"}`, color: ready ? "var(--ok, #10b981)" : "var(--text-dim)", borderRadius: 4, padding: "1px 8px", fontSize: 11, cursor: ready ? "pointer" : "not-allowed", flexShrink: 0, opacity: ready ? 1 : 0.55 }}
                 >
-                  {"接管"}
+                  {t("接管")}
                 </button>
               );
             })()}
-            <button onClick={() => startEdit(a)} style={{ background: "none", border: "1px solid var(--border)", color: "var(--text-muted)", borderRadius: 4, padding: "1px 8px", fontSize: 11, cursor: "pointer", flexShrink: 0 }}>{"编辑"}</button>
-            {a.isUserDefined && <button onClick={() => del(a.name)} title="删除自定义（恢复默认）" style={{ background: "none", border: "1px solid var(--danger, #ef4444)", color: "var(--danger, #ef4444)", borderRadius: 4, padding: "1px 8px", fontSize: 11, cursor: "pointer", flexShrink: 0 }}>{"删除"}</button>}
+            <button onClick={() => startEdit(a)} style={{ background: "none", border: "1px solid var(--border)", color: "var(--text-muted)", borderRadius: 4, padding: "1px 8px", fontSize: 11, cursor: "pointer", flexShrink: 0 }}>{t("编辑")}</button>
+            {a.isUserDefined && <button onClick={() => del(a.name)} title={t("删除自定义（恢复默认）")} style={{ background: "none", border: "1px solid var(--danger, #ef4444)", color: "var(--danger, #ef4444)", borderRadius: 4, padding: "1px 8px", fontSize: 11, cursor: "pointer", flexShrink: 0 }}>{t("删除")}</button>}
           </div>
         ))}
       </div>
-      <div style={{ padding: "4px 12px", fontSize: 11, color: "var(--text-dim)", borderTop: "1px solid var(--border)" }}>{msg || "内置 agent 编辑保存后以同名覆盖（删除恢复默认）"}</div>
+      <div style={{ padding: "4px 12px", fontSize: 11, color: "var(--text-dim)", borderTop: "1px solid var(--border)" }}>{msg || t("内置 agent 编辑保存后以同名覆盖（删除恢复默认）")}</div>
     </div>
   );
 }
@@ -527,8 +527,8 @@ function AgentsDialog() {
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderBottom: "1px solid var(--border)", cursor: "grab", userSelect: "none" }}>
           <span style={{ color: "var(--text-muted)", display: "flex" }}>{FLEET_ICON(14)}</span>
-          <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>{"Agent 管理"}</span>
-          <button title="关闭" onClick={() => setAgentsOpen(false)} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, padding: 2 }}>✕</button>
+          <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>{t("Agent 管理")}</span>
+          <button title={t("关闭")} onClick={() => setAgentsOpen(false)} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, padding: 2 }}>✕</button>
         </div>
         <AgentsManagerBody />
       </div>
@@ -563,7 +563,7 @@ function ConcurrencyDialog() {
         }
         setVals(v);
       })
-      .catch(() => setMsg("加载失败"));
+      .catch(() => setMsg(t("加载失败")));
   };
   useEffect(() => { if (open) { setMsg(""); load(); } }, [open]); // 打开拉一次；保存后重拉（变更自己处理，零轮询）
 
@@ -577,8 +577,8 @@ function ConcurrencyDialog() {
   };
   const defText = (m: { key: string; type?: string }) => {
     const d = (data?.defaults as Record<string, unknown> | undefined)?.[m.key];
-    if (d === null || d === undefined) return "默认 不限";
-    return `默认 ${m.type === "capacitySlotMs" ? `${Math.round(Number(d) / 60000)}min` : d}`;
+    if (d === null || d === undefined) return t("默认 不限");
+    return `${t("sa.default")} ${m.type === "capacitySlotMs" ? `${Math.round(Number(d) / 60000)}min` : d}`;
   };
   const save = async (config: Record<string, unknown>) => {
     setBusy(true); setMsg("");
@@ -588,7 +588,7 @@ function ConcurrencyDialog() {
       });
       const d = await r.json();
       if (!r.ok || d.ok === false) setMsg("❌ " + (d.error || `HTTP ${r.status}`));
-      else { setMsg("已保存，对新启动的子代理立即生效"); load(); }
+      else { setMsg(t("已保存，对新启动的子代理立即生效")); load(); }
     } catch (e) { setMsg("❌ " + e); }
     setBusy(false);
   };
@@ -606,16 +606,16 @@ function ConcurrencyDialog() {
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderBottom: "1px solid var(--border)", cursor: "grab", userSelect: "none" }}>
-          <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>{"子代理并发配置"}</span>
-          <button title="关闭" onClick={() => setCfgOpen(false)} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, padding: 2 }}>✕</button>
+          <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>{t("子代理并发配置")}</span>
+          <button title={t("关闭")} onClick={() => setCfgOpen(false)} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, padding: 2 }}>✕</button>
         </div>
         <div style={{ flex: 1, overflowY: "auto", padding: "8px 14px", minHeight: 0 }}>
           {data?.readable === false ? (
-            <div style={{ fontSize: 12, color: "var(--danger, #ef4444)", lineHeight: 1.6 }}>{`配置文件损坏，拒绝读写：${data.path}（${data.error}）——先手工修复后再试`}</div>
+            <div style={{ fontSize: 12, color: "var(--danger, #ef4444)", lineHeight: 1.6 }}>{`${t("配置文件损坏，拒绝读写：")}${data.path}（${data.error}${t("）——先手工修复后再试")}`}</div>
           ) : (
             <>
               <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.5, marginBottom: 8 }}>
-                {"四层闸门：单 run 并发 → 单 run 累计 → 会话累计 → 跨 run 活跃顶层 async 数（唯一能拦跨 run 并发的闸门，2026-10-10 12 路并行事故漏配的维度）。留空=不改；↺=回退缺省。保存后对新启动的子代理立即生效，无需重启。"}
+                {t("四层闸门：单 run 并发 → 单 run 累计 → 会话累计 → 跨 run 活跃顶层 async 数（唯一能拦跨 run 并发的闸门，2026-10-10 12 路并行事故漏配的维度）。留空=不改；↺=回退缺省。保存后对新启动的子代理立即生效，无需重启。")}
               </div>
               {((data?.meta as { key: string; type?: string; label: string; desc: string }[] | undefined) ?? []).map((m) => (
                 <div key={m.key} style={{ border: "1px solid var(--border)", borderRadius: 6, padding: "6px 9px", marginBottom: 6 }}>
@@ -635,7 +635,7 @@ function ConcurrencyDialog() {
                     <span style={{ fontSize: 11, color: "var(--text-muted)", minWidth: 70 }}>{defText(m)}</span>
                     <button
                       disabled={busy}
-                      title="恢复缺省（删除该键）"
+                      title={t("恢复缺省（删除该键）")}
                       onClick={() => void save({ [m.key]: null })}
                       style={{ background: "none", border: "1px solid var(--border)", color: "var(--text-muted)", borderRadius: 4, padding: "1px 8px", fontSize: 11, cursor: "pointer", flexShrink: 0 }}
                     >{"↺"}</button>
@@ -657,17 +657,17 @@ function ConcurrencyDialog() {
                 const s = String(vals[m.key] ?? "").trim();
                 if (s === "") continue;
                 if (m.type === "capacitySlotMs") {
-                  if (s !== "false" && !Number.isFinite(Number(s))) { setMsg(`「${m.label}」请输入分钟数或 false`); return; }
+                  if (s !== "false" && !Number.isFinite(Number(s))) { setMsg(`「${m.label}${t("」请输入分钟数或 false")}`); return; }
                   config[m.key] = s === "false" ? false : Number(s) * 60000;
                 } else {
-                  if (!Number.isFinite(Number(s))) { setMsg(`「${m.label}」请输入数字`); return; }
+                  if (!Number.isFinite(Number(s))) { setMsg(`「${m.label}${t("」请输入数字")}`); return; }
                   config[m.key] = Number(s);
                 }
               }
-              if (!Object.keys(config).length) { setMsg("请先填入要修改的值（留空=不改）"); return; }
+              if (!Object.keys(config).length) { setMsg(t("请先填入要修改的值（留空=不改）")); return; }
               void save(config);
             }}
-          >{busy ? "保存中…" : "保存"}</button>
+          >{busy ? t("保存中…") : t("保存")}</button>
         </div>
       </div>
     </div>
@@ -728,7 +728,7 @@ function FleetBody(props?: { dockItemKey?: string }) {
       <div style={{ flex: 1, overflowY: "auto", padding: 6, minHeight: 0 }}>
         {all.length === 0 ? (
           <div style={{ textAlign: "center", color: "var(--text-muted)", padding: 40, fontSize: 12, whiteSpace: "pre-line" }}>
-            {"暂无子代理运行。\n在 AI 会话中调用 subagent 工具，或让模型使用 scout/worker/reviewer。"}
+            {t("暂无子代理运行。\n在 AI 会话中调用 subagent 工具，或让模型使用 scout/worker/reviewer。")}
           </div>
         ) : (
           groupList.map((group) => {
@@ -741,13 +741,13 @@ function FleetBody(props?: { dockItemKey?: string }) {
                   <span style={{ color: "var(--text-muted)", fontSize: 10 }}>{"▾"}</span>
                   <span style={{ flex: 1, fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={group.key}>
                     {isOrphan
-                      ? `早期运行（父会话未知 · ${new Date(Math.max(...group.runs.map((r) => r.createdAt || 0))).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} 前后）`
-                      : group.title || "父会话"}
+                      ? `${t("sa.earlyRuns", { time: new Date(Math.max(...group.runs.map((r) => r.createdAt || 0))).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) })}`
+                      : group.title || t("父会话")}
                   </span>
-                  {runningCount > 0 && <span style={{ fontSize: 10, padding: "0 6px", borderRadius: 8, background: "rgba(0,212,255,0.15)", color: "#00d4ff" }}>{`${runningCount} 运行中`}</span>}
-                  <span style={{ fontSize: 10, color: "var(--text-dim)", flexShrink: 0 }}>{`${group.runs.length} 子代理`}</span>
+                  {runningCount > 0 && <span style={{ fontSize: 10, padding: "0 6px", borderRadius: 8, background: "rgba(0,212,255,0.15)", color: "#00d4ff" }}>{t("sa.runningCount", { n: runningCount })}</span>}
+                  <span style={{ fontSize: 10, color: "var(--text-dim)", flexShrink: 0 }}>{t("sa.subCount", { n: group.runs.length })}</span>
                   {!isOrphan && group.key && (
-                    <button title="打开父会话" onClick={() => openSession(group.key)} style={{ background: "none", border: "1px solid var(--border)", color: "var(--text-muted)", borderRadius: 4, padding: "1px 8px", fontSize: 10, cursor: "pointer", flexShrink: 0 }}>{"打开"}</button>
+                    <button title={t("打开父会话")} onClick={() => openSession(group.key)} style={{ background: "none", border: "1px solid var(--border)", color: "var(--text-muted)", borderRadius: 4, padding: "1px 8px", fontSize: 10, cursor: "pointer", flexShrink: 0 }}>{t("打开")}</button>
                   )}
                 </div>
                 {/* 子代理行 */}
@@ -773,28 +773,28 @@ function FleetBody(props?: { dockItemKey?: string }) {
                           <span style={{ fontSize: 11, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{metaBits}</span>
                         </div>
                         <div title={run.task || ""} style={{ fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {(run.task || "").slice(0, 90) || "（无任务文本）"}
+                          {(run.task || "").slice(0, 90) || t("（无任务文本）")}
                         </div>
                       </div>
                       <span style={{ fontSize: 11, color: run.status === "running" ? "#00d4ff" : "var(--text-muted)", flexShrink: 0 }}>{liveElapsed || fmtDuration(run.durationMs)}</span>
                       {run.sessionFile && (
-                        <button title="打开子代理会话（transcript 回看全过程）" onClick={() => openSession(run.sessionFile as string)} style={{ background: "none", border: "1px solid rgba(0,212,255,0.4)", color: "#00d4ff", borderRadius: 4, padding: "1px 6px", fontSize: 11, cursor: "pointer", flexShrink: 0 }}>{"会话"}</button>
+                        <button title={t("打开子代理会话（transcript 回看全过程）")} onClick={() => openSession(run.sessionFile as string)} style={{ background: "none", border: "1px solid rgba(0,212,255,0.4)", color: "#00d4ff", borderRadius: 4, padding: "1px 6px", fontSize: 11, cursor: "pointer", flexShrink: 0 }}>{t("会话")}</button>
                       )}
                       {run.status === "running" && (
                         <button
-                          title="中止（/web 桥 abort 优先，回退 control inbox）"
+                          title={t("中止（/web 桥 abort 优先，回退 control inbox）")}
                           onClick={() => {
                             fetch(apiUrl("/api/extensions/aiti-subagents/fleet/bridge"), {
                               method: "POST", headers: { "content-type": "application/json" },
                               body: JSON.stringify({ id: run.id, action: "abort" }),
-                            }).then((r) => r.json()).then((r) => { if (!r.ok) alert("中止失败: " + (r.error || "未知")); }).catch(() => {});
+                            }).then((r) => r.json()).then((r) => { if (!r.ok) alert(t("中止失败: ") + (r.error || t("未知"))); }).catch(() => {});
                           }}
                           style={{ background: "none", border: "1px solid var(--border)", color: "var(--danger, #ef4444)", borderRadius: 4, padding: "1px 6px", fontSize: 11, cursor: "pointer", flexShrink: 0 }}
                         >
                           {"■"}
                         </button>
                       )}
-                      <button title="详情" onClick={() => openInspector(run.id)} style={{ background: "none", border: "1px solid var(--border)", color: "var(--text-muted)", borderRadius: 4, padding: "1px 8px", fontSize: 11, cursor: "pointer", flexShrink: 0 }}>{"详情"}</button>
+                      <button title={t("详情")} onClick={() => openInspector(run.id)} style={{ background: "none", border: "1px solid var(--border)", color: "var(--text-muted)", borderRadius: 4, padding: "1px 8px", fontSize: 11, cursor: "pointer", flexShrink: 0 }}>{t("详情")}</button>
                     </div>
                   );
                 })}
@@ -805,16 +805,16 @@ function FleetBody(props?: { dockItemKey?: string }) {
       </div>
       {/* 底部 */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", borderTop: "1px solid var(--border)", fontSize: 11, color: "var(--text-muted)" }}>
-        <span style={{ flex: 1 }}>{`共 ${state.runCount} 次运行`}</span>
-        <button title="刷新" aria-label="刷新" onClick={() => setReloadKey((k) => k + 1)} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 13, padding: 2 }}>⟳</button>
-        <button onClick={() => setAgentsOpen(true)} title="管理/自定义 agent 定义" style={{ background: "none", border: "1px solid var(--border)", color: "var(--text-muted)", borderRadius: 4, padding: "1px 8px", fontSize: 11, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+        <span style={{ flex: 1 }}>{t("sa.totalRuns", { n: state.runCount })}</span>
+        <button title={t("刷新")} aria-label={t("刷新")} onClick={() => setReloadKey((k) => k + 1)} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 13, padding: 2 }}>⟳</button>
+        <button onClick={() => setAgentsOpen(true)} title={t("管理/自定义 agent 定义")} style={{ background: "none", border: "1px solid var(--border)", color: "var(--text-muted)", borderRadius: 4, padding: "1px 8px", fontSize: 11, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
           {FLEET_ICON(11)}
-          {"Agent 管理"}
+          {t("Agent 管理")}
         </button>
-        <button onClick={() => setCfgOpen(true)} title="并发配置（单 run 并发 / 累计预算 / 跨 run 活跃顶层 async 数）" style={{ background: "none", border: "1px solid var(--border)", color: "var(--text-muted)", borderRadius: 4, padding: "1px 8px", fontSize: 11, cursor: "pointer" }}>{"并发"}</button>
+        <button onClick={() => setCfgOpen(true)} title={t("并发配置（单 run 并发 / 累计预算 / 跨 run 活跃顶层 async 数）")} style={{ background: "none", border: "1px solid var(--border)", color: "var(--text-muted)", borderRadius: 4, padding: "1px 8px", fontSize: 11, cursor: "pointer" }}>{t("并发")}</button>
         <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
           <span style={{ width: 6, height: 6, borderRadius: 3, background: "var(--ok, #10b981)", display: "inline-block" }} />
-          {"SSE 实时"}
+          {t("SSE 实时")}
         </span>
       </div>
     </>
@@ -850,9 +850,9 @@ function FleetDialog() {
         {/* 标题栏（首个子元素 = aiti-float 拖拽把手） */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderBottom: "1px solid var(--border)", cursor: "grab", userSelect: "none" }}>
           <span style={{ color: "var(--text-muted)", display: "flex" }}>{FLEET_ICON(15)}</span>
-          <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>{"子代理舰队"}</span>
-          <span style={{ fontSize: 10, color: "var(--text-muted)", border: "1px solid var(--border)", borderRadius: 8, padding: "1px 8px" }}>{"fork 引擎"}</span>
-          <button title="关闭" aria-label="关闭" onClick={() => setFleetOpen(false)} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, padding: 2 }}>✕</button>
+          <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>{t("子代理舰队")}</span>
+          <span style={{ fontSize: 10, color: "var(--text-muted)", border: "1px solid var(--border)", borderRadius: 8, padding: "1px 8px" }}>{t("fork 引擎")}</span>
+          <button title={t("关闭")} aria-label={t("关闭")} onClick={() => setFleetOpen(false)} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, padding: 2 }}>✕</button>
         </div>
         <FleetBody />
       </div>
@@ -869,11 +869,11 @@ function FleetDockLeft() {
   if (!docked) return null;
   const runningCount = typeof hs.runningCount === "number" ? hs.runningCount : 0;
   const actions: DockHeaderAction[] = [
-    { id: "refresh", title: "刷新", icon: <RefreshIcon/>, visibility: "always", onClick: () => { requestDockCommand(FLEET_KEY, "refresh"); } },
-    { id: "agents", title: "Agent 管理", icon: <AgentsIcon/>, visibility: "always", onClick: () => { requestDockCommand(FLEET_KEY, "agents"); } },
+    { id: "refresh", title: t("刷新"), icon: <RefreshIcon/>, visibility: "always", onClick: () => { requestDockCommand(FLEET_KEY, "refresh"); } },
+    { id: "agents", title: t("Agent 管理"), icon: <AgentsIcon/>, visibility: "always", onClick: () => { requestDockCommand(FLEET_KEY, "agents"); } },
   ];
   return (
-    <DockBody itemKey={FLEET_KEY} title="子代理舰队" chrome="section"
+    <DockBody itemKey={FLEET_KEY} title={t("子代理舰队")} chrome="section"
       count={runningCount > 0 ? runningCount : undefined}
       zones={[sidebarZoneOf(FLEET_KEY), "right-panel"]} defaultZone={sidebarZoneOf(FLEET_KEY)}
       headerActions={actions}>
@@ -887,7 +887,7 @@ function FleetDockRight() {
   const docked = useGate(FLEET_KEY, { dock: "right-panel" });
   if (!docked) return null;
   return (
-    <DockBody itemKey={FLEET_KEY} zone="right-panel" title="子代理舰队" chrome="tab"
+    <DockBody itemKey={FLEET_KEY} zone="right-panel" title={t("子代理舰队")} chrome="tab"
       zones={[sidebarZoneOf(FLEET_KEY), "right-panel"]} defaultZone={sidebarZoneOf(FLEET_KEY)}>
       <FleetBody />
     </DockBody>
@@ -909,19 +909,19 @@ function SteerRow({ runId, active }: { runId: string; active: boolean }) {
     })
       .then((r) => r.json())
       .then((r) => {
-        setMsg(r.ok ? "已投递" : "✕ " + (r.error || "失败"));
+        setMsg(r.ok ? t("已投递") : "✕ " + (r.error || t("失败")));
         if (r.ok) setText("");
       })
-      .catch(() => setMsg("网络错误"))
+      .catch(() => setMsg(t("网络错误")))
       .finally(() => setSending(false));
   };
   return (
     <div style={{ display: "flex", gap: 6, padding: "8px 10px", borderTop: "1px solid var(--border)", alignItems: "center" }}>
-      <span style={{ fontSize: 11, color: "var(--text-muted)", flexShrink: 0 }}>{"发消息:"}</span>
+      <span style={{ fontSize: 11, color: "var(--text-muted)", flexShrink: 0 }}>{t("发消息:")}</span>
       <input
         value={text}
         disabled={!active || sending}
-        placeholder={active ? "向运行中的子代理发消息…" : "run 已结束，不能发消息"}
+        placeholder={active ? t("向运行中的子代理发消息…") : t("run 已结束，不能发消息")}
         onChange={(e) => setText(e.currentTarget.value)}
         onKeyDown={(e) => { if (e.key === "Enter") send(); }}
         style={{ flex: 1, fontSize: 12, padding: "4px 8px", background: "var(--bg-panel)", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text)" }}
@@ -931,7 +931,7 @@ function SteerRow({ runId, active }: { runId: string; active: boolean }) {
         disabled={!active || sending || !text.trim()}
         style={{ background: "none", border: "1px solid var(--border)", color: active && text.trim() ? "#00d4ff" : "var(--text-muted)", borderRadius: 4, padding: "3px 10px", fontSize: 11, cursor: active && text.trim() ? "pointer" : "default", flexShrink: 0 }}
       >
-        {sending ? "…" : "发送"}
+        {sending ? "…" : t("发送")}
       </button>
       {msg && <span style={{ fontSize: 11, color: msg.startsWith("✓") ? "var(--ok, #10b981)" : "var(--danger, #ef4444)", flexShrink: 0 }}>{msg}</span>}
     </div>
@@ -968,12 +968,12 @@ function InspectorDialog() {
 
   if (!open) return null;
 
-  const tabs = [{ id: "summary", label: "摘要" }, { id: "output", label: "输出" }, { id: "report", label: "运行报告" }, { id: "tools", label: "工具调用" }, { id: "raw", label: "原始数据" }];
+  const tabs = [{ id: "summary", label: t("摘要") }, { id: "output", label: t("输出") }, { id: "report", label: t("运行报告") }, { id: "tools", label: t("工具调用") }, { id: "raw", label: t("原始数据") }];
   const isForkDetail = Boolean(run && run.engine === "fork");
 
   let body: unknown = null;
   if (!run) {
-    body = <div style={{ textAlign: "center", color: "var(--text-muted)", padding: 40, fontSize: 12 }}>{"加载中..."}</div>;
+    body = <div style={{ textAlign: "center", color: "var(--text-muted)", padding: 40, fontSize: 12 }}>{t("加载中...")}</div>;
   } else {
     const color = statusMeta(run.status as RunStatus);
     const mono: Record<string, string | number> = { fontFamily: "var(--font-mono, ui-monospace, monospace)", fontSize: 11, lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-all", margin: 0 };
@@ -984,22 +984,22 @@ function InspectorDialog() {
         <div style={{ padding: 12, fontSize: 12, lineHeight: 1.7 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 5 }}><b>{"agent:"}</b>{agentIconEl(run.agent as string)}{run.agent}</div>
           <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-            <b>{"状态:"}</b>
+            <b>{t("状态:")}</b>
             <span style={{ color, display: "flex" }}>{statusIcon(run.status as RunStatus)}</span>
             {run.status}
-            {isForkDetail && run.pidAlive != null ? `（runner pid ${run.pid}${run.pidAlive ? " 存活" : " 已退出"}）` : ""}
+            {isForkDetail && run.pidAlive != null ? `（runner pid ${run.pid}${run.pidAlive ? t(" 存活") : t(" 已退出")}）` : ""}
           </div>
           {run.cwd ? <div><b>{"Workspace: "}</b><span title={String(run.cwd)} style={{ fontFamily: "var(--font-mono, ui-monospace, monospace)", fontSize: 11 }}>{String(run.cwd)}</span></div> : null}
-          <div><b>{"耗时: "}</b>{fmtDuration(run.durationMs as number)}</div>
-          <div><b>{"任务: "}</b>{String(run.task ?? "")}</div>
+          <div><b>{t("耗时: ")}</b>{fmtDuration(run.durationMs as number)}</div>
+          <div><b>{t("任务: ")}</b>{String(run.task ?? "")}</div>
           {isForkDetail && (
             <div>
-              <b>{"用量: "}</b>
-              {`tokens ${typeof totalTokens === "object" && totalTokens ? `${totalTokens.input ?? 0}↑ ${totalTokens.output ?? 0}↓（总 ${totalTokens.total ?? 0}）` : String(totalTokens ?? "-")} · turns ${run.turnCount ?? "-"} · tool 调用 ${run.toolCount ?? "-"} · $${Number(cost).toFixed(4)}`}
+              <b>{t("用量: ")}</b>
+              {`${t("sa.tokensHead")} ${typeof totalTokens === "object" && totalTokens ? `${totalTokens.input ?? 0}↑ ${totalTokens.output ?? 0}↓${t("sa.tokensTotal", { total: totalTokens.total ?? 0 })}` : String(totalTokens ?? "-")} · ${t("sa.turns", { n: run.turnCount ?? "-" })} · ${t("sa.toolCalls", { n: run.toolCount ?? "-" })} · $${Number(cost).toFixed(4)}`}
             </div>
           )}
           {!isForkDetail && (run as { tokenUsage?: { input?: number; output?: number; cost?: number } }).tokenUsage ? (
-            <div><b>{"用量: "}</b>{`↑${(run.tokenUsage as { input?: number }).input || 0} ↓${(run.tokenUsage as { output?: number }).output || 0} $${Number((run.tokenUsage as { cost?: number }).cost || 0).toFixed(4)}`}</div>
+            <div><b>{t("用量: ")}</b>{`↑${(run.tokenUsage as { input?: number }).input || 0} ↓${(run.tokenUsage as { output?: number }).output || 0} $${Number((run.tokenUsage as { cost?: number }).cost || 0).toFixed(4)}`}</div>
           ) : null}
           {isForkDetail && Array.isArray(run.steps) && (run.steps as unknown[]).length > 0 && (
             <div style={{ marginTop: 6 }}>
@@ -1011,19 +1011,19 @@ function InspectorDialog() {
           )}
           {isForkDetail && (run as { steering?: { requested?: number; delivered?: number; pending?: number } }).steering && (
             <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
-              {`发消息: 发起 ${(run.steering as { requested?: number }).requested ?? 0} · 已送达 ${(run.steering as { delivered?: number }).delivered ?? 0} · 待发 ${(run.steering as { pending?: number }).pending ?? 0}`}
+              {`${t("sa.steerLine", { requested: (run.steering as { requested?: number }).requested ?? 0, delivered: (run.steering as { delivered?: number }).delivered ?? 0, pending: (run.steering as { pending?: number }).pending ?? 0 })}`}
             </div>
           )}
           {isForkDetail && (
             <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
               {(run.sessionFile || run.childSessionFile) && (
-                <button onClick={() => openSessionByFile((run.childSessionFile || run.sessionFile) as string, "子代理会话")} style={{ background: "none", border: "1px solid #00d4ff", color: "#00d4ff", borderRadius: 4, padding: "2px 10px", fontSize: 11, cursor: "pointer" }}>
-                  {"打开子代理消息窗口"}
+                <button onClick={() => openSessionByFile((run.childSessionFile || run.sessionFile) as string, t("子代理会话"))} style={{ background: "none", border: "1px solid #00d4ff", color: "#00d4ff", borderRadius: 4, padding: "2px 10px", fontSize: 11, cursor: "pointer" }}>
+                  {t("打开子代理消息窗口")}
                 </button>
               )}
               {(run.parentSessionFile || (run as { asyncDetail?: { parentSessionFile?: string } }).asyncDetail?.parentSessionFile) && (
-                <button onClick={() => openSessionByFile((run.parentSessionFile || (run as { asyncDetail?: { parentSessionFile?: string } }).asyncDetail!.parentSessionFile) as string, "父会话")} style={{ background: "none", border: "1px solid var(--border)", color: "var(--text-muted)", borderRadius: 4, padding: "2px 10px", fontSize: 11, cursor: "pointer" }}>
-                  {"↩ 打开父会话"}
+                <button onClick={() => openSessionByFile((run.parentSessionFile || (run as { asyncDetail?: { parentSessionFile?: string } }).asyncDetail!.parentSessionFile) as string, t("父会话"))} style={{ background: "none", border: "1px solid var(--border)", color: "var(--text-muted)", borderRadius: 4, padding: "2px 10px", fontSize: 11, cursor: "pointer" }}>
+                  {t("↩ 打开父会话")}
                 </button>
               )}
             </div>
@@ -1032,31 +1032,31 @@ function InspectorDialog() {
             const bridge = (run as { bridge?: { attached?: boolean; error?: string; state?: { isStreaming?: boolean; model?: { provider?: string; id?: string }; pendingMessageCount?: number }; recentMessages?: { role: string; text: string }[] } }).bridge!;
             return bridge.attached ? (
               <div style={{ marginTop: 4, padding: "6px 8px", background: "color-mix(in srgb, var(--ok, #10b981) 8%, transparent)", borderRadius: 6, fontSize: 11 }}>
-                <div style={{ color: "var(--ok, #10b981)" }}>{`🟢 /web RPC 已连接 · ${bridge.state?.isStreaming ? "流式执行中" : "空闲"} · ${bridge.state?.model?.provider ?? ""}/${bridge.state?.model?.id ?? ""} · 待投递 ${bridge.state?.pendingMessageCount ?? 0}`}</div>
+                <div style={{ color: "var(--ok, #10b981)" }}>{`🟢 /web RPC 已连接 · ${bridge.state?.isStreaming ? t("流式执行中") : t("空闲")} · ${bridge.state?.model?.provider ?? ""}/${bridge.state?.model?.id ?? ""} · 待投递 ${bridge.state?.pendingMessageCount ?? 0}`}</div>
                 {(bridge.recentMessages || []).slice(-3).map((m, i) => (
                   <div key={i} style={{ color: "var(--text-muted)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{`[${m.role}] ${m.text.slice(0, 120)}`}</div>
                 ))}
               </div>
             ) : (
               <div style={{ marginTop: 4, padding: "6px 8px", background: "rgba(0,0,0,0.15)", borderRadius: 6, fontSize: 11 }}>
-                {`bridge 未连接（${bridge.error || "socket 不可达"}）——控制回退 control inbox 文件投递`}
+                {`${t("bridge 未连接（")}${bridge.error || t("socket 不可达")}${t("）——控制回退 control inbox 文件投递")}`}
               </div>
             );
           })()}
-          {run.error ? <div style={{ color: "var(--danger, #ef4444)" }}><b>{"错误: "}</b>{String(run.error)}</div> : null}
+          {run.error ? <div style={{ color: "var(--danger, #ef4444)" }}><b>{t("错误: ")}</b>{String(run.error)}</div> : null}
         </div>
       );
     } else if (tab === "report") {
       body = (
         <div style={{ flex: 1, minHeight: 0, overflow: "auto", margin: 8 }}>
-          <pre style={{ ...mono, padding: 12, background: "rgba(0,0,0,0.25)", borderRadius: 6, margin: 0 }}>{String(run.logMarkdown || "（fork 引擎无运行报告——run 未落盘或仍在进行）")}</pre>
+          <pre style={{ ...mono, padding: 12, background: "rgba(0,0,0,0.25)", borderRadius: 6, margin: 0 }}>{String(run.logMarkdown || t("（fork 引擎无运行报告——run 未落盘或仍在进行）"))}</pre>
         </div>
       );
     } else if (tab === "output") {
       // 弹性高度（flex:1 填满面板）——面板拉大/最大化时输出区跟着变大
       body = (
         <div style={{ flex: 1, minHeight: 0, overflow: "auto", margin: 8 }}>
-          <pre style={{ ...mono, padding: 12, background: "rgba(0,0,0,0.25)", borderRadius: 6, margin: 0 }}>{String(run.output || "(无输出)")}</pre>
+          <pre style={{ ...mono, padding: 12, background: "rgba(0,0,0,0.25)", borderRadius: 6, margin: 0 }}>{String(run.output || t("(无输出)"))}</pre>
         </div>
       );
     } else if (tab === "tools") {
@@ -1064,7 +1064,7 @@ function InspectorDialog() {
       body = (
         <div style={{ padding: 8, flex: 1, minHeight: 0, overflow: "auto" }}>
           {calls.length === 0 ? (
-            <div style={{ color: "var(--text-muted)", fontSize: 12, padding: 8 }}>{"(无工具调用)"}</div>
+            <div style={{ color: "var(--text-muted)", fontSize: 12, padding: 8 }}>{t("(无工具调用)")}</div>
           ) : (
             calls.map((tc, i) => (
               <div key={i} style={{ padding: "4px 8px", borderBottom: "1px solid var(--border)", fontSize: 11, display: "flex", gap: 8 }}>
@@ -1096,8 +1096,8 @@ function InspectorDialog() {
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderBottom: "1px solid var(--border)", cursor: "grab", userSelect: "none" }}>
           <span style={{ color: "var(--text-muted)", display: "flex" }}>{iconSvg(AGENT_PATHS.scout, 14)}</span>
-          <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>{`检查器${run ? ` · ${run.agent}` : ""}`}</span>
-          <button title="关闭" aria-label="关闭" onClick={() => setInspectorOpen(false)} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, padding: 2 }}>✕</button>
+          <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>{t("sa.inspectorTitle", { agent: run ? ` · ${run.agent}` : "" })}</span>
+          <button title={t("关闭")} aria-label={t("关闭")} onClick={() => setInspectorOpen(false)} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, padding: 2 }}>✕</button>
         </div>
         {/* tab 栏 */}
         <div style={{ display: "flex", gap: 0, borderBottom: "1px solid var(--border)", background: "rgba(0,0,0,0.15)" }}>
@@ -1136,21 +1136,21 @@ function AgentsFeatureBanner({ cwd }: { cwd?: string; currentSession?: unknown; 
             <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />
           </svg>
         </span>
-        <strong style={{ fontSize: 13 }}>子代理引擎 · pi-subagents</strong>
-        <span style={{ fontSize: 12, color: "var(--text-muted)" }}>唯一引擎（内置子代理已禁用）；运行与 agent 管理都在舰队面板</span>
+        <strong style={{ fontSize: 13 }}>{t("sa.engineTitle")}</strong>
+        <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{t("sa.engineOnly")}</span>
       </div>
       <button
         type="button"
         onClick={() => setFleetOpen(true)}
         style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg-hover)", color: "var(--accent)", cursor: "pointer", fontSize: 12, fontWeight: 600 }}
-        title="打开子代理舰队（运行总览 / 检查器 / Agent 管理）"
+        title={t("打开子代理舰队（运行总览 / 检查器 / Agent 管理）")}
       >
         <span style={{ display: "inline-flex" }}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />
           </svg>
         </span>
-        打开子代理舰队
+        {t("打开子代理舰队（运行总览 / 检查器 / Agent 管理）")}
       </button>
     </div>
   );
@@ -1167,8 +1167,8 @@ export default function register(ctx: Record<string, unknown>) {
   reg?.("toolbar", [{
     id: "aiti-subagents",
     meta: {
-      label: "子代理舰队",
-      title: "子代理舰队",
+      label: t("子代理舰队"),
+      title: t("子代理舰队"),
       icon: "icons/users.svg",
       onClick: () => {
         // v3.1 修正：原 `!fleetOpen` 引用未定义标识符（点击 ReferenceError，工具条按钮失效）；
@@ -1180,18 +1180,18 @@ export default function register(ctx: Record<string, unknown>) {
     },
   }]);
   reg?.("dialogs", [
-    { id: "aiti-subagents-fleet", render: FleetDialog, meta: { label: "子代理舰队" } },
-    { id: "aiti-subagents-inspector", render: InspectorDialog, meta: { label: "子代理检查器" } },
-    { id: "aiti-subagents-agents", render: AgentsDialog, meta: { label: "Agent 管理" } },
-    { id: "aiti-subagents-concurrency", render: ConcurrencyDialog, meta: { label: "并发配置" } },
+    { id: "aiti-subagents-fleet", render: FleetDialog, meta: { label: t("子代理舰队") } },
+    { id: "aiti-subagents-inspector", render: InspectorDialog, meta: { label: t("子代理检查器") } },
+    { id: "aiti-subagents-agents", render: AgentsDialog, meta: { label: t("Agent 管理") } },
+    { id: "aiti-subagents-concurrency", render: ConcurrencyDialog, meta: { label: t("并发配置") } },
   ]);
   // aiti-float dock v3（P2 批）：Fleet 默认左栏（运行监控窄条驻留），右栏可选；行点击 Inspector 浮窗联动照旧
   // zone 规范值 sidebar:<key>（v4；旧 sidebar-explorer 兼容读，存量偏好不迁移也照常渲染）
   seedDockDefault(FLEET_KEY, sidebarZoneOf(FLEET_KEY));
   // zones 进注册表：TabBar ⇱ 菜单（后台 tab）也能看到 left⇄right 全集（v3.1）
   declareDockZones(FLEET_KEY, [sidebarZoneOf(FLEET_KEY), "right-panel"], sidebarZoneOf(FLEET_KEY));
-  reg?.("sidebarExplorerDock", [{ id: "fleet", render: FleetDockLeft, meta: { title: "子代理舰队", priority: 1, maxHeightPct: 30 } }]); // 任务区块（默认序 1 + 次级限高 30%：项目→任务→文件→停靠）
-  reg?.("rightFileDock", [{ id: "fleet", render: FleetDockRight, meta: { title: "舰队" } }]);
+  reg?.("sidebarExplorerDock", [{ id: "fleet", render: FleetDockLeft, meta: { title: t("子代理舰队"), priority: 1, maxHeightPct: 30 } }]); // 任务区块（默认序 1 + 次级限高 30%：项目→任务→文件→停靠）
+  reg?.("rightFileDock", [{ id: "fleet", render: FleetDockRight, meta: { title: t("舰队") } }]);
   // 设置 Agents 页顶部 feature 区块接管（pi-subagents 引擎横幅 + 打开舰队；未注册时宿主原版开关区兑底）
   reg?.("settingsAgentsFeature", [{ id: "engine-banner", render: AgentsFeatureBanner }]);
   reg?.("settingsAgents", [{ id: "agents-manager", render: AgentsSettingsPanel }]);
