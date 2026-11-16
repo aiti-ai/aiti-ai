@@ -1966,6 +1966,7 @@ export const enLocale: LocalePlugin = {
     "i18n.editFromStartTitle": "Edit from here — rebuild this session from the first message, takes effect on send (cancel anytime)",
     "i18n.newSession": "New session",
     "i18n.newSessionTitle": "New session — creates an independent copy from here",
+    "i18n.newSessionBashRunning": "A command is running — forking from here is paused until it finishes",
     "i18n.estimatedTokens": "Estimated token count while streaming",
     "i18n.noOutput": "(no output)",
     "i18n.noSummary": "(no summary)",
