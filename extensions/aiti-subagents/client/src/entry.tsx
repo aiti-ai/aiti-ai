@@ -530,6 +530,7 @@ function AgentsDialog() {
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderBottom: "1px solid var(--border)", cursor: "grab", userSelect: "none" }}>
           <span style={{ color: "var(--text-muted)", display: "flex" }}>{FLEET_ICON(14)}</span>
           <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>{t("Agent 管理")}</span>
+          <button title={t("并发配置（单 run 并发 / 累计预算 / 跨 run 活跃顶层 async 数）")} onClick={() => setCfgOpen(true)} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 14, padding: 2 }}>⚙</button>
           <button title={t("关闭")} onClick={() => setAgentsOpen(false)} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, padding: 2 }}>✕</button>
         </div>
         <AgentsManagerBody />
