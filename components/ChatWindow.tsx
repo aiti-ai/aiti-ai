@@ -1886,7 +1886,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                     onOpenSubagent={onOpenSubagent}
                     entryId={entryIds[idx]}
                     searchBlock={entryIds[idx] === pendingSearchScroll?.entryId ? searchBlock : undefined}
-                    onFork={bashRunning || isNew || !sessionCap("fork") ? undefined : forkFromMessage}
+                    onFork={isNew || !sessionCap("fork") ? undefined : forkFromMessage}
+                    forkBashRunning={bashRunning}
                     forking={forkingEntryId === entryIds[idx]}
                     onNavigate={isNew ? undefined : handleNavigate}
                     prevAssistantEntryId={isNew ? undefined : prevAssistantEntryId}

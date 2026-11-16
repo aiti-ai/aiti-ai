@@ -1966,6 +1966,7 @@ export const zhCNLocale: LocalePlugin = {
     "i18n.editFromStartTitle": "从此处编辑：清空历史重建本会话，发送时生效（可随时取消）",
     "i18n.newSession": "新会话",
     "i18n.newSessionTitle": "新会话，从此处创建独立副本",
+    "i18n.newSessionBashRunning": "命令运行中，暂不能从此处开新会话",
     "i18n.estimatedTokens": "流式输出期间的估算 Token 数",
     "i18n.noOutput": "（无输出）",
     "i18n.noSummary": "（无摘要）",
