@@ -1387,11 +1387,12 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   useEffect(() => {
     if (!terminalsRestored) return;
     try {
-      window.sessionStorage.setItem(TERMINAL_TABS_KEY, JSON.stringify({
+      const payload = JSON.stringify({
         tabs: terminalTabs.map(({ id, cwd }) => ({ id, cwd })),
         activeId: activeFileTabId,
         open: rightPanelOpen,
-      }));
+      });
+      window.sessionStorage.setItem(TERMINAL_TABS_KEY, payload);
     } catch { /* storage is optional */ }
   }, [terminalTabs, activeFileTabId, rightPanelOpen, terminalsRestored]);
 
@@ -1496,6 +1497,13 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   const sideTabOwner = activeSessionFamily?.root.id ?? null;
   useEffect(() => {
     if (!catalogLoaded || !initialSessionRestored) return;
+    // [terminal-restore race] 同一 mount 批次内 effect 共享同一渲染快照：终端恢复 effect
+    // （TERMINAL_TABS_KEY）先排队 setState，本 effect 后跑时读到的 activeFileTabId 仍是初始
+    // null —— 若此时执行覆盖分支，会用 null/false 覆盖掉已排队的终端 tab 激活与右栏打开，
+    // 导致恢复的终端 tab 永远不 active（materialize 不触发 → 空壳），且持久化 effect 随后
+    // 把污染状态写回 storage，每次刷新复发。等 terminalsRestored（下一轮快照已含终端恢复值）
+    // 再跑，让位但不丢语义；依赖数组同步补 terminalsRestored。
+    if (!terminalsRestored) return;
     const previous = sideTabOwnerRef.current;
     if (!sideTabsReadyRef.current || previous !== sideTabOwner) {
       if (sideTabsReadyRef.current && previous && !sideTabsSavedOnWorkspaceSwitchRef.current) rememberSideTabs(previous);
@@ -1517,7 +1525,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     }
     if (sideTabOwner) rememberSideTabs(sideTabOwner);
     sideTabsSavedOnWorkspaceSwitchRef.current = false;
-  }, [activeFileTabId, catalogLoaded, fileTabs, initialSessionRestored, rememberSideTabs, rightPanelOpen, selectedSession?.id, sessionCatalog, sideTabOwner, terminalTabs]);
+  }, [activeFileTabId, catalogLoaded, fileTabs, initialSessionRestored, rememberSideTabs, rightPanelOpen, selectedSession?.id, sessionCatalog, sideTabOwner, terminalTabs, terminalsRestored]);
   // sessionStorage is empty during SSR. Applying the tab's remembered session
   // in the useState initializer made the first client tree differ from the
   // server HTML (sidebar "select project" vs ""). Restore after mount instead.
