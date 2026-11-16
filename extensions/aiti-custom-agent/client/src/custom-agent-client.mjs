@@ -288,6 +288,8 @@ export function detectPrefix(m) {
 
 export function registerCustomAgentClient(ctx, config) {
 	const h = (...a) => ctx.h(...a);
+	// i18n：宿主 ctx.t（index.ts ui.i18n 词条，zh/en 双表）；旧宿主缺席时回退裸 key（样板 agent-manager 同款）
+	const t = (k, p2) => { const fn = ctx.t; return typeof fn === "function" ? fn(k, p2) : k; };
 	const useState = (v) => ctx.useState(v);
 	const useEffect = (fn, deps) => ctx.useEffect(fn, deps);
 	const api = (p, init) => fetch(ctx.apiUrl("/api/extensions/" + config.extId + p), { cache: "no-store", ...init });
@@ -323,7 +325,7 @@ export function registerCustomAgentClient(ctx, config) {
 		const bridgeIsUrl = m.bridge && /^https?:\/\//i.test(m.bridge);
 		const pfxDetected = detectPrefix(m);
 		return {
-			label: copy ? `${m.label}（副本）` : m.label,
+			label: copy ? `${m.label}${t("（副本）")}` : m.label,
 			id: copy ? `${m.id}-copy` : m.id,
 			idTouched: true,
 			driver: m.driver || "generic",
@@ -420,15 +422,15 @@ export function registerCustomAgentClient(ctx, config) {
 						display: "flex", flexDirection: "column", overflow: "hidden", fontSize: 13 },
 				},
 				h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexShrink: 0 } },
-					h("b", null, "自定义 Agent"),
-					h("span", { style: { opacity: 0.6, fontSize: 11 } }, "新建会话后端注册中心 · 保存即热生效"),
+					h("b", null, t("自定义 Agent")),
+					h("span", { style: { opacity: 0.6, fontSize: 11 } }, t("新建会话后端注册中心 · 保存即热生效")),
 					h("span", { style: { flex: 1 } }),
 					view.mode === "list" && h("button", {
 						disabled: busy != null,
 						onClick: () => { setForm(emptyForm()); setView({ mode: "edit" }); },
-					}, "＋ 新增"),
-					view.mode === "edit" && h("button", { onClick: () => setView({ mode: "list" }) }, "返回列表"),
-					h("button", { onClick: () => setOpen(false), title: "关闭" }, "✕"),
+					}, t("＋ 新增")),
+					view.mode === "edit" && h("button", { onClick: () => setView({ mode: "list" }) }, t("返回列表")),
+					h("button", { onClick: () => setOpen(false), title: t("关闭") }, "✕"),
 				),
 				// 内容区：唯一滚动容器（aiti-float 约定 flex:1 + minHeight:0 + overflowY auto）
 				h("div", { style: { flex: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 } },
@@ -446,12 +448,12 @@ export function registerCustomAgentClient(ctx, config) {
 			const warnings = data?.warnings ?? [];
 			return h("div", null,
 				!agents.length && h("div", { style: { opacity: 0.7, padding: "10px 0" } },
-					data ? "还没有自定义后端——点「＋ 新增」注册一条（如 docker 化的 CLI）。" : "加载中…"),
+					data ? t("还没有自定义后端——点「＋ 新增」注册一条（如 docker 化的 CLI）。") : t("加载中…")),
 				...agents.map((m, i) => hRow(m, agents[i - 1], agents[i + 1])),
 				!!warnings.length && h("div", { style: { marginTop: 8, color: "#d97706", fontSize: 11, whiteSpace: "pre-wrap" } },
-					"配置警告：\n" + warnings.join("\n")),
+					t("配置警告：\n") + warnings.join("\n")),
 				h("div", { style: { opacity: 0.55, marginTop: 10, fontSize: 11, lineHeight: "16px" } },
-					"generic 驱动 = one-shot 任务型：任务文本写进 stdin，stdout 流式进会话；模型/权限等完整协议能力等 P2 协议委托。"),
+					t("generic 驱动 = one-shot 任务型：任务文本写进 stdin，stdout 流式进会话；模型/权限等完整协议能力等 P2 协议委托。")),
 			);
 		}
 
@@ -460,53 +462,53 @@ export function registerCustomAgentClient(ctx, config) {
 			return h("div", { key: m.id, style: { borderTop: "1px solid rgba(128,128,128,.18)", padding: "8px 0" } },
 				h("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } },
 					h("b", null, m.label),
-					m.enabled === false && h("span", { style: { color: "#64748b", fontSize: 11 } }, "已停用"),
+					m.enabled === false && h("span", { style: { color: "#64748b", fontSize: 11 } }, t("已停用")),
 					!m.enabled && null,
 					m.enabled !== false && (m.registered
-						? h("span", { style: { color: "#16a34a", fontSize: 11 } }, "● 已注册")
-						: h("span", { style: { color: "#d97706", fontSize: 11 } }, "○ 未注册（探活失败或停用）")),
+						? h("span", { style: { color: "#16a34a", fontSize: 11 } }, t("● 已注册"))
+						: h("span", { style: { color: "#d97706", fontSize: 11 } }, t("○ 未注册（探活失败或停用）"))),
 					probe && (probe.ok
-						? h("span", { title: probe.detail, style: { color: "#16a34a", fontSize: 11 } }, "探活")
-						: h("span", { title: probe.detail, style: { color: "#dc2626", fontSize: 11 } }, "探活")),
+						? h("span", { title: probe.detail, style: { color: "#16a34a", fontSize: 11 } }, t("探活"))
+						: h("span", { title: probe.detail, style: { color: "#dc2626", fontSize: 11 } }, t("探活"))),
 					h("span", { style: { flex: 1 } }),
-					h("button", { disabled: busy != null, onClick: () => { setForm(formOf(m)); setView({ mode: "edit" }); } }, "编辑"),
-					h("button", { disabled: busy != null, onClick: () => { setForm(formOf(m, true)); setView({ mode: "edit" }); } }, "复制"),
+					h("button", { disabled: busy != null, onClick: () => { setForm(formOf(m)); setView({ mode: "edit" }); } }, t("编辑")),
+					h("button", { disabled: busy != null, onClick: () => { setForm(formOf(m, true)); setView({ mode: "edit" }); } }, t("复制")),
 					h("button", {
 						disabled: busy != null || !m.registered,
-						title: "运行探活命令",
-						onClick: () => post(`probe:${m.id}`, "/probe", { id: m.id }, (d) => `探活：${d.detail ?? (d.ok ? "可执行" : "失败")}`),
-					}, "探活"),
+						title: t("运行探活命令"),
+						onClick: () => post(`probe:${m.id}`, "/probe", { id: m.id }, (d) => `${t("探活：")}${d.detail ?? (d.ok ? t("可执行") : t("失败"))}`),
+					}, t("探活")),
 					h("button", {
 						disabled: busy != null,
-						onClick: () => post(`toggle:${m.id}`, `/agents/${m.id}`, { ...m, enabled: m.enabled === false }, "已更新"),
-					}, m.enabled === false ? "启用" : "停用"),
+						onClick: () => post(`toggle:${m.id}`, `/agents/${m.id}`, { ...m, enabled: m.enabled === false }, t("已更新")),
+					}, m.enabled === false ? t("启用") : t("停用")),
 					h("button", {
 						disabled: busy != null || !prev,
-						title: "上移（与上一位交换位次）",
+						title: t("上移（与上一位交换位次）"),
 						onClick: () => swapOrder(m, prev),
 					}, "↑"),
 					h("button", {
 						disabled: busy != null || !next,
-						title: "下移（与下一位交换位次）",
+						title: t("下移（与下一位交换位次）"),
 						onClick: () => swapOrder(m, next),
 					}, "↓"),
 					h("button", {
 						disabled: busy != null,
 						onClick: async () => {
-							if (!window.confirm(`删除自定义后端「${m.label}」(${m.id})？`)) return;
-							await call(`del:${m.id}`, `/agents/${m.id}`, { method: "DELETE" }, "已删除");
+							if (!window.confirm(`${t("删除自定义后端「")}${m.label}」(${m.id})？`)) return;
+							await call(`del:${m.id}`, `/agents/${m.id}`, { method: "DELETE" }, t("已删除"));
 						},
-					}, "删除"),
+					}, t("删除")),
 				),
 				h("div", { style: { opacity: 0.65, fontSize: 11, margin: "2px 0 2px" } },
-					`${m.id} · 驱动 ${m.driver}${m.serviceKey ? (m.serviceOk ? " · 服务 ✓" : " · 服务 ✗（基础扩展未部署/过旧）") : ""} · ${m.command || "(默认 CLI)"}${(m.argsPrefix || []).length ? " ▸ " + m.argsPrefix.join(" ") : ""}`),
+					`${m.id}${t(" · 驱动 ")}${m.driver}${m.serviceKey ? (m.serviceOk ? t(" · 服务 ✓") : t(" · 服务 ✗（基础扩展未部署/过旧）")) : ""} · ${m.command || t("(默认 CLI)")}${(m.argsPrefix || []).length ? " ▸ " + m.argsPrefix.join(" ") : ""}`),
 			);
 		}
 
 		async function swapOrder(a, b) {
 			if (!a || !b) return;
-			await post(`swap:${a.id}`, `/agents/${a.id}`, { ...a, order: b.order }, "已调整位次");
-			await post(`swap:${b.id}`, `/agents/${b.id}`, { ...b, order: a.order }, "已调整位次");
+			await post(`swap:${a.id}`, `/agents/${a.id}`, { ...a, order: b.order }, t("已调整位次"));
+			await post(`swap:${b.id}`, `/agents/${b.id}`, { ...b, order: a.order }, t("已调整位次"));
 		}
 
 		// ---------------- 前缀命令（开关 / 类型字段 / 生成同步） ----------------
@@ -527,27 +529,27 @@ export function registerCustomAgentClient(ctx, config) {
 		/** 被包装真实 CLI 的输入提示：协议型驱动必须显式填（command 顶替后驱动不带自家 CLI 名） */
 		function cliPlaceholder() {
 			const def = DRIVER_DEFAULT_CLI[form.driver];
-			if (form.driver !== "generic") return `必填：${def ?? "该驱动默认 CLI"}（command 已由包装命令顶替）`;
-			return form.prefixKind === "docker" ? "留空 = 用镜像入口点；否则填真实 CLI（如 claude）" : "如 claude（可带参数）";
+			if (form.driver !== "generic") return `${t("必填：")}${def ?? t("该驱动默认 CLI")}${t("（command 已由包装命令顶替）")}`;
+			return form.prefixKind === "docker" ? t("留空 = 用镜像入口点；否则填真实 CLI（如 claude）") : t("如 claude（可带参数）");
 		}
 
 		/** 各包装类型的结构字段（生成 argsPrefix 的输入；docker 额外给常用前缀/选项下拉） */
 		function hPrefixFields(p) {
 			if (form.prefixKind === "docker") {
 				return [
-					hField("运行方式", h("select", { value: p.mode ?? "run-i", onChange: (e) => setPfx({ mode: e?.target?.value ?? "run-i" }) },
-						...DOCKER_MODES.map((o) => h("option", { key: o.value, value: o.value }, o.label)))),
-					hField("镜像/容器", h("input", {
-						value: p.image ?? "", size: 30, placeholder: "aiti/aiti:core（exec 模式填容器名）",
+					hField(t("运行方式"), h("select", { value: p.mode ?? "run-i", onChange: (e) => setPfx({ mode: e?.target?.value ?? "run-i" }) },
+						...DOCKER_MODES.map((o) => h("option", { key: o.value, value: o.value }, t(o.label))))),
+					hField(t("镜像/容器"), h("input", {
+						value: p.image ?? "", size: 30, placeholder: t("aiti/aiti:core（exec 模式填容器名）"),
 						onInput: (e) => setPfx({ image: e?.target?.value ?? "" }),
 					})),
-					hField("容器内命令", h("input", {
+					hField(t("容器内命令"), h("input", {
 						value: p.cli ?? "", size: 34, placeholder: cliPlaceholder(),
 						onInput: (e) => setPfx({ cli: e?.target?.value ?? "" }),
 					})),
-					hField("附加参数", h("span", null,
+					hField(t("附加参数"), h("span", null,
 						h("textarea", {
-							value: p.opts ?? "", rows: 4, cols: 50, placeholder: "每行一个参数：-v / ${cwd}:${cwd} / -w / ${cwd}",
+							value: p.opts ?? "", rows: 4, cols: 50, placeholder: t("每行一个参数：-v / ${cwd}:${cwd} / -w / ${cwd}"),
 							onInput: (e) => setPfx({ opts: e?.target?.value ?? "" }),
 						}), " ",
 						h("select", {
@@ -560,43 +562,43 @@ export function registerCustomAgentClient(ctx, config) {
 								if (extra) setPfx({ opts: [...linesOf(p.opts), ...extra.args].join("\n") });
 							},
 						},
-							h("option", { key: "__pick__", value: "" }, "＋ 常用选项…"),
-							...DOCKER_EXTRAS.map((o) => h("option", { key: o.value, value: o.value }, o.label))),
+							h("option", { key: "__pick__", value: "" }, t("＋ 常用选项…")),
+							...DOCKER_EXTRAS.map((o) => h("option", { key: o.value, value: o.value }, t(o.label)))),
 						h("div", { style: { opacity: 0.6, fontSize: 11, marginTop: 2 } },
-							"容器内回连宿主桥：桥模式选 host.docker.internal 时补 --add-host=host.docker.internal:host-gateway，或直接用共享宿主网络的运行方式。"),
+							t("容器内回连宿主桥：桥模式选 host.docker.internal 时补 --add-host=host.docker.internal:host-gateway，或直接用共享宿主网络的运行方式。")),
 					)),
 				];
 			}
 			if (form.prefixKind === "ssh") {
 				return [
-					hField("目标", h("input", {
+					hField(t("目标"), h("input", {
 						value: p.target ?? "", size: 30, placeholder: "user@host",
 						onInput: (e) => setPfx({ target: e?.target?.value ?? "" }),
 					})),
-					hField("端口", h("input", {
+					hField(t("端口"), h("input", {
 						value: p.port ?? "", size: 6, placeholder: "22",
 						onInput: (e) => setPfx({ port: e?.target?.value ?? "" }),
 					})),
-					hField("远端命令", h("input", {
+					hField(t("远端命令"), h("input", {
 						value: p.cli ?? "", size: 34, placeholder: cliPlaceholder(),
 						onInput: (e) => setPfx({ cli: e?.target?.value ?? "" }),
 					})),
-					hField("附加选项", h("span", null,
+					hField(t("附加选项"), h("span", null,
 						h("textarea", {
-							value: p.opts ?? "", rows: 3, cols: 50, placeholder: "每行一个参数，如 -t / -o / StrictHostKeyChecking=accept-new",
+							value: p.opts ?? "", rows: 3, cols: 50, placeholder: t("每行一个参数，如 -t / -o / StrictHostKeyChecking=accept-new"),
 							onInput: (e) => setPfx({ opts: e?.target?.value ?? "" }),
 						}),
-						h("div", { style: { opacity: 0.6, fontSize: 11, marginTop: 2 } }, "远端须免密登录（密钥 agent 已配好）；-p 端口在上方位次之间自动插入。"),
+						h("div", { style: { opacity: 0.6, fontSize: 11, marginTop: 2 } }, t("远端须免密登录（密钥 agent 已配好）；-p 端口在上方位次之间自动插入。")),
 					)),
 				];
 			}
 			if (form.prefixKind === "env") {
 				return [
-					hField("临时变量", h("textarea", {
-						value: p.vars ?? "", rows: 3, cols: 50, placeholder: "每行一个 KEY=VALUE，如：\nHTTPS_PROXY=$HTTPS_PROXY\nFOO=bar",
+					hField(t("临时变量"), h("textarea", {
+						value: p.vars ?? "", rows: 3, cols: 50, placeholder: t("每行一个 KEY=VALUE，如：\nHTTPS_PROXY=$HTTPS_PROXY\nFOO=bar"),
 						onInput: (e) => setPfx({ vars: e?.target?.value ?? "" }),
 					})),
-					hField("被包装命令", h("input", {
+					hField(t("被包装命令"), h("input", {
 						value: p.cli ?? "", size: 34, placeholder: cliPlaceholder(),
 						onInput: (e) => setPfx({ cli: e?.target?.value ?? "" }),
 					})),
@@ -604,71 +606,71 @@ export function registerCustomAgentClient(ctx, config) {
 			}
 			if (form.prefixKind === "custom") {
 				return [
-					hField("附加参数", h("span", null,
+					hField(t("附加参数"), h("span", null,
 						h("textarea", {
 							value: p.opts ?? "", rows: 3, cols: 50,
-							placeholder: "每行一个参数，如 nix-shell 的 --run / sudo 的 -E",
+							placeholder: t("每行一个参数，如 nix-shell 的 --run / sudo 的 -E"),
 							onInput: (e) => setPfx({ opts: e?.target?.value ?? "" }),
 						}),
 						h("div", { style: { opacity: 0.6, fontSize: 11, marginTop: 2 } },
-							"包装命令填在下方「命令」框（任意可执行文件：sudo / nix-shell / podman / timeout / firejail …）；这儿放它的参数。"),
+							t("包装命令填在下方「命令」框（任意可执行文件：sudo / nix-shell / podman / timeout / firejail …）；这儿放它的参数。")),
 					)),
-					hField("被包装命令", h("input", {
+					hField(t("被包装命令"), h("input", {
 						value: p.cli ?? "", size: 34, placeholder: cliPlaceholder(),
 						onInput: (e) => setPfx({ cli: e?.target?.value ?? "" }),
 					})),
 				];
 			}
 			return [
-				hField("代理工具", h("select", { value: p.tool ?? "runsocks", onChange: (e) => setPfx({ tool: e?.target?.value ?? "runsocks" }) },
-					...SOCKS_TOOLS.map((o) => h("option", { key: o.value, value: o.value }, o.label)))),
-				hField("附加参数", h("textarea", {
-					value: p.opts ?? "", rows: 3, cols: 50, placeholder: "每行一个参数，如 proxychains 的 -f / 配置文件路径",
+				hField(t("代理工具"), h("select", { value: p.tool ?? "runsocks", onChange: (e) => setPfx({ tool: e?.target?.value ?? "runsocks" }) },
+					...SOCKS_TOOLS.map((o) => h("option", { key: o.value, value: o.value }, t(o.label))))),
+				hField(t("附加参数"), h("textarea", {
+					value: p.opts ?? "", rows: 3, cols: 50, placeholder: t("每行一个参数，如 proxychains 的 -f / 配置文件路径"),
 					onInput: (e) => setPfx({ opts: e?.target?.value ?? "" }),
 				})),
-				hField("被包装命令", h("input", {
+				hField(t("被包装命令"), h("input", {
 					value: p.cli ?? "", size: 34, placeholder: cliPlaceholder(),
 					onInput: (e) => setPfx({ cli: e?.target?.value ?? "" }),
 				})),
-				h("div", { style: { opacity: 0.6, fontSize: 11 } }, "socks 服务端地址在各工具自己的配置里（dante.conf / proxychains.conf），不在本表单。"),
+				h("div", { style: { opacity: 0.6, fontSize: 11 } }, t("socks 服务端地址在各工具自己的配置里（dante.conf / proxychains.conf），不在本表单。")),
 			];
 		}
 
 		// ---------------- 表单页 ----------------
 		function hForm() {
 			return h("div", { style: { display: "grid", gap: 8 } },
-				hField("显示名", h("input", {
-					value: form.label, size: 44, placeholder: "如 Claude Code (Docker)",
+				hField(t("显示名"), h("input", {
+					value: form.label, size: 44, placeholder: t("如 Claude Code (Docker)"),
 					onInput: (e) => setForm((f) => ({ ...f, label: e?.target?.value ?? "", id: f.idTouched ? f.id : slugify(e?.target?.value ?? "") })),
 				})),
-				hField("标识 id", h("span", null,
+				hField(t("标识 id"), h("span", null,
 					h("input", {
-						value: form.id, size: 30, placeholder: "自动生成，可改",
+						value: form.id, size: 30, placeholder: t("自动生成，可改"),
 						onInput: (e) => setForm((f) => ({ ...f, id: e?.target?.value ?? "", idTouched: true })),
 					}),
-					h("span", { style: { opacity: 0.6, fontSize: 11, marginLeft: 6 } }, "provider type（字母/数字/-_）")),
+					h("span", { style: { opacity: 0.6, fontSize: 11, marginLeft: 6 } }, t("provider type（字母/数字/-_）"))),
 				),
-				hField("驱动类型", h("select", { value: form.driver, onChange: (e) => setForm((f) => ({ ...f, driver: e?.target?.value ?? "generic" })) },
-					...DRIVER_OPTIONS.map((o) => h("option", { key: o.value, value: o.value, disabled: !!o.disabled }, o.label)))),
-				hField("前缀命令", h("span", null,
+				hField(t("驱动类型"), h("select", { value: form.driver, onChange: (e) => setForm((f) => ({ ...f, driver: e?.target?.value ?? "generic" })) },
+					...DRIVER_OPTIONS.map((o) => h("option", { key: o.value, value: o.value, disabled: !!o.disabled }, t(o.label))))),
+				hField(t("前缀命令"), h("span", null,
 					h("select", { value: form.prefixEnabled ? form.prefixKind : "", onChange: (e) => pickPrefixKind(e?.target?.value ?? "") },
 						...PREFIX_CHOICES.map((o) => h("option", { key: o.value || "__none__", value: o.value }, o.label))),
 					h("span", { style: { opacity: 0.6, fontSize: 11, marginLeft: 6 } },
-						"用 docker / ssh / env / proxychains 等包装真实 CLI——选中即顶替「命令」，真实 CLI 进参数前缀末尾"),
+						t("用 docker / ssh / env / proxychains 等包装真实 CLI——选中即顶替「命令」，真实 CLI 进参数前缀末尾")),
 				)),
 				form.prefixEnabled && h("div", { style: { border: "1px dashed rgba(128,128,128,.4)", borderRadius: 8, padding: "8px 10px", display: "grid", gap: 6 } },
 					...hPrefixFields(form.pfx?.[form.prefixKind] ?? {}),
 					h("div", { style: { opacity: 0.7, fontSize: 11, lineHeight: "16px", wordBreak: "break-all" } },
-						`实际执行：${[form.command, ...linesOf(form.argsPrefixText)].join(" ")}`),
+						`${t("实际执行：")}${[form.command, ...linesOf(form.argsPrefixText)].join(" ")}`),
 				),
-				hField(form.prefixEnabled ? "包装命令" : "命令", h("span", null,
+				hField(form.prefixEnabled ? t("包装命令") : t("命令"), h("span", null,
 					h("input", {
 						value: form.command, size: 36,
 						// 自定义包装的工具名写在这里（绕过下面的只读）——它是 command 本身
 						disabled: form.prefixEnabled === true && form.prefixKind !== "custom",
 						placeholder: form.prefixEnabled
-							? (form.prefixKind === "custom" ? "任意可执行文件：sudo / nix-shell / podman / timeout …" : "由包装类型决定（换 podman 等请选「自定义」）")
-							: (form.driver === "generic" ? "如 docker（容器内 CLI 写进参数前缀末尾）" : "留空 = 用该驱动默认 CLI"),
+							? (form.prefixKind === "custom" ? t("任意可执行文件：sudo / nix-shell / podman / timeout …") : t("由包装类型决定（换 podman 等请选「自定义」）"))
+							: (form.driver === "generic" ? t("如 docker（容器内 CLI 写进参数前缀末尾）") : t("留空 = 用该驱动默认 CLI")),
 						onInput: (e) => {
 							const v = e?.target?.value ?? "";
 							if (form.prefixEnabled && form.prefixKind === "custom") setPfx({ tool: v });
@@ -678,35 +680,35 @@ export function registerCustomAgentClient(ctx, config) {
 					h("button", {
 						disabled: busy != null || !(form.probe || form.command).trim(),
 						onClick: () => post("probe-form", "/probe", { command: form.command, probe: form.probe },
-							(d) => `探测：${d.detail ?? (d.ok ? "可执行" : "失败")}`),
-					}, busy === "probe-form" ? "探测中…" : "探测"),
+							(d) => `${t("探测：")}${d.detail ?? (d.ok ? t("可执行") : t("失败"))}`),
+					}, busy === "probe-form" ? t("探测中…") : t("探测")),
 				)),
-				hField("探活命令", h("input", {
-					value: form.probe, size: 36, placeholder: "缺省 = 命令（可带空格分隔参数，如 docker version）",
+				hField(t("探活命令"), h("input", {
+					value: form.probe, size: 36, placeholder: t("缺省 = 命令（可带空格分隔参数，如 docker version）"),
 					onInput: (e) => setForm((f) => ({ ...f, probe: e?.target?.value ?? "" })),
 				})),
-				hField("参数前缀", h("span", null,
+				hField(t("参数前缀"), h("span", null,
 					h("textarea", {
 						value: form.argsPrefixText, rows: 6, cols: 56,
-						placeholder: "每行一个参数，如：\nrun\n--rm\n-i\n-v\n${cwd}:${cwd}\n-w\n${cwd}\nmy-image:latest\nclaude",
+						placeholder: t("每行一个参数，如：\nrun\n--rm\n-i\n-v\n${cwd}:${cwd}\n-w\n${cwd}\nmy-image:latest\nclaude"),
 						onInput: (e) => setForm((f) => ({ ...f, argsPrefixText: e?.target?.value ?? "" })),
 					}),
 					h("div", { style: { opacity: 0.6, fontSize: 11, marginTop: 2 } },
 						form.prefixEnabled
-							? "由上方包装字段生成；改任一包装字段即按模板重写，这里可继续手改（每行一个参数，支持 $VAR / ${cwd}）。"
-							: "拼在驱动内置参数之前；支持 $VAR / ${cwd}（会话工作目录）。docker 配方建议 -v ${cwd}:${cwd} -w ${cwd} 同路径挂载。")),
+							? t("由上方包装字段生成；改任一包装字段即按模板重写，这里可继续手改（每行一个参数，支持 $VAR / ${cwd}）。")
+							: t("拼在驱动内置参数之前；支持 $VAR / ${cwd}（会话工作目录）。docker 配方建议 -v ${cwd}:${cwd} -w ${cwd} 同路径挂载。"))),
 				),
-				hField("环境变量", h("div", { style: { display: "grid", gap: 4 } },
+				hField(t("环境变量"), h("div", { style: { display: "grid", gap: 4 } },
 					...form.envRows.map(([k, v], i) => h("div", { key: i, style: { display: "flex", gap: 4, alignItems: "center" } },
 						h("input", { value: k, size: 16, placeholder: "KEY", onInput: (e) => setEnvRow(i, 0, e?.target?.value ?? "") }),
 						h("span", null, "="),
-						h("input", { value: v, size: 30, placeholder: "VALUE（支持 $VAR / ${cwd}）", onInput: (e) => setEnvRow(i, 1, e?.target?.value ?? "") }),
+						h("input", { value: v, size: 30, placeholder: t("VALUE（支持 $VAR / ${cwd}）"), onInput: (e) => setEnvRow(i, 1, e?.target?.value ?? "") }),
 						h("button", { onClick: () => setForm((f) => ({ ...f, envRows: f.envRows.filter((_, j) => j !== i) })) }, "✕"),
 					)),
-					h("button", { onClick: () => setForm((f) => ({ ...f, envRows: [...f.envRows, ["", ""]] })) }, "＋ 添加变量"),
-					h("div", { style: { opacity: 0.6, fontSize: 11 } }, "成员级 env，优先级最高；密钥建议写 $VAR 引用父进程环境变量而非明文。"),
+					h("button", { onClick: () => setForm((f) => ({ ...f, envRows: [...f.envRows, ["", ""]] })) }, t("＋ 添加变量")),
+					h("div", { style: { opacity: 0.6, fontSize: 11 } }, t("成员级 env，优先级最高；密钥建议写 $VAR 引用父进程环境变量而非明文。")),
 				)),
-				hField("桥模式", h("span", null,
+				hField(t("桥模式"), h("span", null,
 					h("select", { value: form.bridge, onChange: (e) => setForm((f) => ({ ...f, bridge: e?.target?.value ?? "" })) },
 						...BRIDGE_OPTIONS.map((o) => h("option", { key: o.value, value: o.value }, o.label))),
 					form.bridge === "__url__" && h("input", {
@@ -716,18 +718,18 @@ export function registerCustomAgentClient(ctx, config) {
 					}),
 				)),
 				(data?.driverMembers ?? {})[form.driver]?.length
-					? hField("委托目标", h("span", null,
+					? hField(t("委托目标"), h("span", null,
 						h("select", { value: form.target, onChange: (e) => setForm((f) => ({ ...f, target: e?.target?.value ?? "" })) },
-							h("option", { key: "__default__", value: "" }, "缺省成员"),
+							h("option", { key: "__default__", value: "" }, t("缺省成员")),
 							...data.driverMembers[form.driver].map((mm) => h("option", { key: mm.name, value: mm.name }, `${mm.label}（agentKey: ${mm.agentKey}）`))),
-						h("div", { style: { opacity: 0.6, fontSize: 11, marginTop: 2 } }, "多成员驱动（如 ACP）指定委托到哪个成员；缺省由基础扩展决定。"),
+						h("div", { style: { opacity: 0.6, fontSize: 11, marginTop: 2 } }, t("多成员驱动（如 ACP）指定委托到哪个成员；缺省由基础扩展决定。")),
 					))
 					: null,
-				hField("排序", h("input", {
+				hField(t("排序"), h("input", {
 					value: form.order, size: 8, placeholder: "1000",
 					onInput: (e) => setForm((f) => ({ ...f, order: e?.target?.value ?? "" })),
 				})),
-				hField("启用", h("input", {
+				hField(t("启用"), h("input", {
 					type: "checkbox", checked: form.enabled === true,
 					onChange: (e) => setForm((f) => ({ ...f, enabled: e?.target?.checked ?? true })),
 				})),
@@ -735,13 +737,13 @@ export function registerCustomAgentClient(ctx, config) {
 					h("button", {
 						disabled: busy != null || !form.label.trim() || (form.driver === "generic" && !form.command.trim()),
 						onClick: async () => {
-							const d = await post("save", "/agents", agentOfForm(form), () => "已保存并热生效");
+							const d = await post("save", "/agents", agentOfForm(form), () => t("已保存并热生效"));
 							if (d && !d.error) { setView({ mode: "list" }); }
-							if (d && d.problems && d.problems.length) setNotice({ kind: "err", text: "已保存，但以下成员未注册：\n" + d.problems.join("\n") });
-							else if (d && d.warnings && d.warnings.length) setNotice({ kind: "err", text: "已保存，但有条目被跳过：\n" + d.warnings.join("\n") });
+							if (d && d.problems && d.problems.length) setNotice({ kind: "err", text: t("已保存，但以下成员未注册：\n") + d.problems.join("\n") });
+							else if (d && d.warnings && d.warnings.length) setNotice({ kind: "err", text: t("已保存，但有条目被跳过：\n") + d.warnings.join("\n") });
 						},
-					}, busy === "save" ? "保存中…" : "保存"),
-					h("button", { onClick: () => setView({ mode: "list" }) }, "取消"),
+					}, busy === "save" ? t("保存中…") : t("保存")),
+					h("button", { onClick: () => setView({ mode: "list" }) }, t("取消")),
 				),
 			);
 		}
