@@ -53,6 +53,8 @@ import { useDockCommands, useDockHeaderState, useDockHeaderStateOf, requestDockC
 import type { DockHeaderAction } from "../../../_shared/ext-float-dock";
 
 const FLEET_KEY = "aiti-subagents:fleet";
+// 分组折叠状态（模块级：浮窗/停靠两面共享；键 = parentSessionFile，默认全展开）
+const fleetCollapsedGroups = new Set<string>();
 function setFleetOpen(v: boolean) { if (v) openFloat(FLEET_KEY); else closePanel(FLEET_KEY); }
 
 let inspectorOpen = false;
@@ -687,6 +689,13 @@ function FleetBody(props?: { dockItemKey?: string }) {
     return () => window.removeEventListener("aiti-subagents:activity", onActivity);
   }, []);
   const state = useFleetState(true, reloadKey);
+  // 分组折叠（两面共享集合；tick 仅用于触发 re-render）
+  const [, setCollapsedTick] = useState(0);
+  const toggleGroup = (key: string) => {
+    if (fleetCollapsedGroups.has(key)) fleetCollapsedGroups.delete(key);
+    else fleetCollapsedGroups.add(key);
+    setCollapsedTick((n) => n + 1);
+  };
 
   const running = state.running || [];
   const recent = (state.recent || []).slice(0, 12);
@@ -736,9 +745,13 @@ function FleetBody(props?: { dockItemKey?: string }) {
             const isOrphan = group.key === " __orphan__";
             return (
               <div key={group.key} style={{ marginBottom: 8 }}>
-                {/* 父会话组头 */}
-                <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 8px", background: "rgba(128,128,128,0.08)", borderRadius: 6, marginBottom: 2 }}>
-                  <span style={{ color: "var(--text-muted)", fontSize: 10 }}>{"▾"}</span>
+                {/* 父会话组头（整行可点折叠/展开） */}
+                <div
+                  onClick={() => toggleGroup(group.key)}
+                  title={fleetCollapsedGroups.has(group.key) ? t("展开分组") : t("折叠分组")}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 8px", background: "rgba(128,128,128,0.08)", borderRadius: 6, marginBottom: 2, cursor: "pointer", userSelect: "none" }}
+                >
+                  <span style={{ color: "var(--text-muted)", fontSize: 10, width: 10, flexShrink: 0, display: "inline-block", transition: "transform .12s", transform: fleetCollapsedGroups.has(group.key) ? "rotate(-90deg)" : "none" }}>{"▾"}</span>
                   <span style={{ flex: 1, fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={group.key}>
                     {isOrphan
                       ? `${t("sa.earlyRuns", { time: new Date(Math.max(...group.runs.map((r) => r.createdAt || 0))).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) })}`
@@ -747,11 +760,11 @@ function FleetBody(props?: { dockItemKey?: string }) {
                   {runningCount > 0 && <span style={{ fontSize: 10, padding: "0 6px", borderRadius: 8, background: "rgba(0,212,255,0.15)", color: "#00d4ff" }}>{t("sa.runningCount", { n: runningCount })}</span>}
                   <span style={{ fontSize: 10, color: "var(--text-dim)", flexShrink: 0 }}>{t("sa.subCount", { n: group.runs.length })}</span>
                   {!isOrphan && group.key && (
-                    <button title={t("打开父会话")} onClick={() => openSession(group.key)} style={{ background: "none", border: "1px solid var(--border)", color: "var(--text-muted)", borderRadius: 4, padding: "1px 8px", fontSize: 10, cursor: "pointer", flexShrink: 0 }}>{t("打开")}</button>
+                    <button title={t("打开父会话")} onClick={(e) => { e.stopPropagation(); openSession(group.key); }} style={{ background: "none", border: "1px solid var(--border)", color: "var(--text-muted)", borderRadius: 4, padding: "1px 8px", fontSize: 10, cursor: "pointer", flexShrink: 0 }}>{t("打开")}</button>
                   )}
                 </div>
-                {/* 子代理行 */}
-                {group.runs.map((run) => {
+                {/* 子代理行（折叠时不渲染） */}
+                {!fleetCollapsedGroups.has(group.key) && group.runs.map((run) => {
                   const color = statusMeta(run.status);
                   const rowBg = run.status === "running" ? "rgba(0,212,255,0.07)" : "transparent";
                   const wsBase = run.cwd ? String(run.cwd).split("/").filter(Boolean).pop() || "" : "";
