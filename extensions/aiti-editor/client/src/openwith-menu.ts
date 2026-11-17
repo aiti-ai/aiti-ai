@@ -8,6 +8,7 @@
  * 非文件树区域 / 内建单 provider 文件（txt/md 等）不拦截（浏览器默认菜单不动，零回归）。
  */
 import { extOf, hasCapability, capabilityBadge } from "./arbiter";
+import { t } from "./host-shim.ts";
 
 interface MenuHandle { el: HTMLDivElement; close: () => void }
 
@@ -88,7 +89,7 @@ function buildMenu(x: number, y: number, fp: string, chain: any[], we: any): Men
   el.style.top = Math.min(y, window.innerHeight - mh - 8) + "px";
 
   const header = document.createElement("div");
-  header.textContent = "打开方式";
+  header.textContent = t("打开方式");
   header.style.cssText = "padding:3px 8px 5px;font-weight:600;font-size:11px;color:var(--text-dim,#888);";
   el.appendChild(header);
 
@@ -104,13 +105,13 @@ function buildMenu(x: number, y: number, fp: string, chain: any[], we: any): Men
     const label = document.createElement("span");
     label.style.cssText = "flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
       + (p.id === activeId ? "font-weight:600;color:var(--accent,#4f8ef7);" : "");
-    label.textContent = (p.displayName || p.id) + ((p as any).sourceExt ? " · " + (p as any).sourceExt : "");
+    label.textContent = t(p.displayName || p.id) + ((p as any).sourceExt ? " · " + (p as any).sourceExt : "");
     item.appendChild(label);
 
     const badge = document.createElement("span");
     badge.style.cssText = "flex-shrink:0;font-size:11px;";
     badge.textContent = capabilityBadge(p);
-    badge.title = hasCapability(p, "edit") ? (hasCapability(p, "preview") ? "预览 + 编辑" : "编辑") : "预览";
+    badge.title = hasCapability(p, "edit") ? (hasCapability(p, "preview") ? t("预览 + 编辑") : t("编辑")) : t("预览");
     item.appendChild(badge);
 
     if (p.id === activeId) {
@@ -124,7 +125,7 @@ function buildMenu(x: number, y: number, fp: string, chain: any[], we: any): Men
     star.type = "button";
     const isDefault = prefs[ext] === p.id;
     star.textContent = isDefault ? "★" : "☆";
-    star.title = isDefault ? "当前默认（点击无变化）" : "设为 " + (p.displayName || p.id) + " 为默认（持久化）";
+    star.title = isDefault ? t("当前默认（点击无变化）") : t("设为 {name} 为默认（持久化）", { name: t(p.displayName || p.id) });
     star.style.cssText = "flex-shrink:0;border:none;background:transparent;cursor:pointer;font-size:13px;padding:0 2px;line-height:1;"
       + (isDefault ? "color:var(--warn, #f59e0b);" : "color:var(--text-muted,#aaa);");
     star.addEventListener("click", (ev) => {

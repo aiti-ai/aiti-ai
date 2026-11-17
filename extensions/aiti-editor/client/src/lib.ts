@@ -1,6 +1,7 @@
 /**
  * aiti-editor · 纯工具/常量（自手写版原样搬运，无 ctx/base 依赖）。
  */
+import { t } from "./host-shim.ts";
 
 // ── 语言表（对齐核心 lib/file-types）──
 export const LANG_EXT: Record<string, string> = {
@@ -281,14 +282,14 @@ export function describeMonacoError(err: unknown): string {
   const e = err as any;
   const src = e && typeof e === "object" && e.target && (e.target.src || e.target.href);
   if (typeof Event !== "undefined" && e instanceof Event) {
-    return "脚本加载失败" + (src ? "：" + String(src).slice(-140) : "（网络中断 / 404 / 被拦截）");
+    return t("脚本加载失败：{src}", { src: src ? String(src).slice(-140) : t("（网络中断 / 404 / 被拦截）") });
   }
   const msg = e && typeof e.message === "string" ? e.message : (typeof err === "string" ? err : "");
   if (/\[object Event\]/.test(msg)) {
     // loader 把 Event 字符串化塞进 Error.message，URL 已丢失 → 通用文案 + 自助指引
-    return "脚本加载失败（网络中断 / 404 / 被拦截），已自动清除加载缓存，可重试；若仍失败请刷新页面";
+    return t("脚本加载失败（网络中断 / 404 / 被拦截），已自动清除加载缓存，可重试；若仍失败请刷新页面");
   }
   if (msg) return msg;
-  if (src) return "脚本加载失败：" + String(src).slice(-140);
-  return String(err ?? "未知错误");
+  if (src) return t("脚本加载失败：{src}", { src: String(src).slice(-140) });
+  return String(err ?? t("未知错误"));
 }
