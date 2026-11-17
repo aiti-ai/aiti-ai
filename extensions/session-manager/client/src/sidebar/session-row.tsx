@@ -181,7 +181,13 @@ function SessionItem({
     // 行移除进行中置灰（与 All Sessions 面板同源 pendingRemovals：后台刷新慢，让用户知道在动）
     markPendingRemoval(session.id, "live");
     try {
-      await fetch(apiUrl(`/api/sessions/${encodeURIComponent(session.id)}`), { method: "DELETE" });
+      const res = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(session.id)}`), { method: "DELETE" });
+      if (!res.ok) {
+        // rollback immediately on failure (optimistically hidden rows reappear; dock list filtering is driven by pendingRemovals)
+        clearPendingRemoval(session.id);
+        setDeleting(false);
+        return;
+      }
       onDeleted?.(session.id);
     } catch {
       clearPendingRemoval(session.id);
