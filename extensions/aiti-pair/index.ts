@@ -19,6 +19,16 @@ export default {
     skills: "skills",
   },
 
+
+  ui: {
+    // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
+    i18n: {
+      en: {
+        "ext.displayName": "Device Pairing (temp chat / file transfer)",
+      },
+    },
+  },
+
   server: {
     startup() {
       console.log("[aiti-pair] 就绪（薄载体：widget/协议由 aiti-devtools pair-client.js 公共资产提供）");

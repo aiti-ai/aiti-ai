@@ -5,8 +5,7 @@
  * 宿主能力（t/apiUrl）经 host-shim 委托；reloadExtensions/extLoaderState 由 entry.tsx 注入。
  */
 import { t, apiUrl } from "./host-shim";
-import { typoMatch } from "./typo-search.mjs";
-import { EXT_DISPLAY_NAMES } from "../../../_shared/ext-display-names";
+import { typoMatch } from "../../../_shared/typo-search.mjs";
 import { openFloat, closePanel } from "../../../_shared/ext-float-dock";
 
 /* ── 跨扩展条目文案解析（"i18n:<key>" 前缀 → 声明扩展 manifest ui.i18n 表）──
@@ -40,6 +39,15 @@ export function resolveExtItemText(extId: string | undefined, text: string | und
   let locale = "en";
   try { const v = localStorage.getItem("pi-locale"); if (v === "zh-CN" || v === "en") locale = v; } catch { /* ignore */ }
   return tableFor(extI18nTables?.[extId], locale)[key] ?? key;
+}
+/** Current-locale-only table for one extension (NO cascade — manifest text is the
+ *  zh-CN source; only the current locale's own table overrides it). Self-declared
+ *  "ext.description" / "feat.<id>" overrides per the 2026-11-15 i18n convention. */
+export function extUi18nExact(extId: string | undefined): Record<string, string> {
+  primeExtI18n();
+  let locale = "en";
+  try { const v = localStorage.getItem("pi-locale"); if (v === "zh-CN" || v === "en") locale = v; } catch { /* ignore */ }
+  return extI18nTables?.[extId ?? ""]?.[locale] ?? {};
 }
 /** 条目展示名（label 优先 title 兑底，i18n key 已解析）——direct-open 匹配与提示文案共用。 */
 function resolveItemLabel(extId: string | undefined, item: any): string {
@@ -829,8 +837,8 @@ export function subscribeAll(fn: () => void): () => void {
 export function localMatches(id: string, e: any, q: string) {
   if (!q) return true;
   const s = q.toLowerCase();
-  const names = EXT_DISPLAY_NAMES[id] ? EXT_DISPLAY_NAMES[id].en + " " + EXT_DISPLAY_NAMES[id].zh : "";
-  const hay = (id + " " + (e.name || "") + " " + names + " " + ((e.packageInfo && e.packageInfo.name) || "") + " " + (e.pinyin || "")).toLowerCase();
+  const display = extUi18nExact(id)["ext.displayName"] || e.name || ""; // 自述词条（当前 locale）+ manifest 原文（zh 源）都进 hay
+  const hay = (id + " " + (e.name || "") + " " + display + " " + ((e.packageInfo && e.packageInfo.name) || "") + " " + (e.pinyin || "")).toLowerCase();
   const qNorm = s.replace(/\s+/g, ""); // fuwu suidao → fuwusuidao（拼音连写匹配；额外宽松形态）
   return hay.includes(s) || (!!qNorm && hay.includes(qNorm)) || typoMatch(q, hay) || (!!qNorm && typoMatch(qNorm, hay));
 }
@@ -839,9 +847,9 @@ export function localMatches(id: string, e: any, q: string) {
 export function onlineMatches(ext: any, q: string) {
   if (!q) return false; // 空搜索只显示本地
   const s = q.toLowerCase();
-  const names = EXT_DISPLAY_NAMES[ext.id] ? EXT_DISPLAY_NAMES[ext.id].en + " " + EXT_DISPLAY_NAMES[ext.id].zh : "";
+  const display = extUi18nExact(ext.id)["ext.displayName"] || ext.name || "";
   const pinyin = (state.status && state.status.extensions && state.status.extensions[ext.id] && state.status.extensions[ext.id].pinyin) || "";
-  const hay = [ext.id, ext.name, names, ext.description, ext.category, (ext.tags || []).join(" "), pinyin]
+  const hay = [ext.id, ext.name, display, ext.description, ext.category, (ext.tags || []).join(" "), pinyin]
     .filter(Boolean).join(" ").toLowerCase();
   const qNorm = s.replace(/\s+/g, "");
   return hay.includes(s) || (!!qNorm && hay.includes(qNorm)) || typoMatch(q, hay) || (!!qNorm && typoMatch(qNorm, hay));

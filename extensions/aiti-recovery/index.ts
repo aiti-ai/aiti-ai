@@ -30,9 +30,10 @@ export default {
   ],
   ui: {
     recoveryDialog: [{ id: "dialog", label: "恢复对话框" }],
-    dialogs: [{ id: "wizard", label: "重启恢复向导" }],
+    dialogs: [{ id: "wizard", label: "i18n:it.wizard.label" }],
     i18n: {
   "zh-CN": {
+    "it.wizard.label": "重启恢复向导",
     "chat.close": "关闭",
     "chat.continue": "继续",
     "chat.queueExport": "导出",
@@ -139,6 +140,10 @@ export default {
     "chat.restartRecoveryWasRunning": "中斷時正在運行：{prompt}",
   },
   "en": {
+    "it.wizard.label": "Restart recovery wizard",
+    "feat.recovery.enabled": "Recovery dialog & wizard",
+    "feat.dialog": "Recovery dialog",
+    "feat.wizard": "Restart recovery wizard",
     "chat.close": "Close",
     "chat.continue": "Continue",
     "chat.queueExport": "Export",

@@ -47,15 +47,6 @@ import { EXT_PROTOCOL_VERSION, EXT_PROTOCOL_MIN_MAJOR, extProtocolInfo } from ".
 import { screenAndMigrateOnInstall } from "./protocol-screen.mjs";
 import { extPinyin } from "./pinyin-index.mjs"; // 独立文件名即版本：.mjs 经宿主走原生 ESM（缓存不可清），改内容不换名不会重新加载
 
-// _shared 显示名表（client 眼中的中文名来自此表；e.name 可能是英文如 Service Tunnels，
-// 拼音索引必须覆盖显示中文名才能搜 fuwusuidao 命中）。结构 Record<string, {en, zh}>，取 .zh。
-// jiti interop：部署目录 _shared TS 转译加载。
-let displayZh: Record<string, { zh?: string }> = {};
-try {
-  const req = typeof require === "function" ? (require as NodeRequire) : undefined;
-  displayZh = req?.("./_shared/ext-display-names.ts")?.EXT_DISPLAY_NAMES ?? {};
-} catch {}
-
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
   headers: { "content-type": "application/json", "cache-control": "no-store" },
@@ -271,8 +262,9 @@ function withPinyin(payload: any): any {
     const e = extensions[id];
     if (!e || typeof e !== "object") continue;
     const fromName = typeof e.name === "string" ? extPinyin(e.name) : "";
-    const zh = displayZh[id]?.zh;
-    const fromDisplay = typeof zh === "string" && zh ? extPinyin(zh) : "";
+    // zh 拼音源 = ui.i18n zh-CN 自述词条 ext.displayName（无中心表；manifest 原文兜底于 fromName）
+    const zh = e.ui?.i18n?.["zh-CN"]?.["ext.displayName"];
+    const fromDisplay = typeof zh === "string" && zh && zh !== e.name ? extPinyin(zh) : "";
     e.pinyin = fromName === fromDisplay ? fromName : [fromName, fromDisplay].filter(Boolean).join(" ");
   }
   return payload;
@@ -438,6 +430,7 @@ export default {
     dialogs: [{ id: "aiti-extman-panel", label: "aiti-extman extensions panel" }],
     i18n: {
       en: {
+        "ext.displayName": "Extension Manager",
         "ext.title": "Extensions",
         "ext.shortLabel": "Extensions",
         "ext.sidebarTitle": "Extensions · enable/disable, install, online registry",
@@ -473,7 +466,7 @@ export default {
         "ext.select": "Select an extension",
         "ext.summary": "{total} extensions · {on} on · {off} off",
         "ext.status": "Status",
-        "ext.name": "Name",
+        "ext.fieldName": "Name",
         "ext.version": "Version",
         "ext.protocol": "Protocol",
         "ext.protocolCurrent": "current",
@@ -620,7 +613,7 @@ export default {
         "ext.protocolUpgradeCtx": "Extension protocol upgrade: {id}",
       },
       "zh-CN": {
-        "ext.title": "扩展管理",
+        "ext.displayName": "扩展管理器",        "ext.title": "扩展管理",
         "ext.shortLabel": "扩展",
         "ext.sidebarTitle": "扩展管理（启停 / 安装 / 在线注册表）",
         "ext.reload": "全部重载",
@@ -655,7 +648,7 @@ export default {
         "ext.select": "选择左侧扩展查看详情",
         "ext.summary": "{total} 个扩展 · {on} 启用 · {off} 禁用",
         "ext.status": "状态",
-        "ext.name": "名称",
+        "ext.fieldName": "名称",
         "ext.version": "版本",
         "ext.protocol": "协议",
         "ext.protocolCurrent": "当前",

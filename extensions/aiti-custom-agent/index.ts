@@ -365,6 +365,21 @@ export default {
 	// 管理面板（零构建原生 h() client；client/src 随 deploy 拷 dist）
 	client: "dist/custom-agent-client.mjs",
 
+	ui: {
+		// English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
+		i18n: {
+			"zh-CN": {
+				"it.panel.label": "自定义 Agent",
+				"it.panel.title": "自定义 Agent：注册自定义后端（命令/参数前缀/env/桥模式）",
+			},
+			en: {
+				"ext.displayName": "Custom Agents",
+				"it.panel.label": "Custom Agents",
+				"it.panel.title": "Custom Agents: register custom backends (command/args prefix/env/bridge mode)",
+			},
+		},
+	},
+
 	server: {
 		async startup(ctx: ExtServerContextLike) {
 			ctxRef = ctx;

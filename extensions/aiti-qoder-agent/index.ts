@@ -1879,6 +1879,19 @@ export default {
 
   features: [spawnEnvFeature("Qoder"), spawnCommandFeature("Qoder"), spawnArgsPrefixFeature("Qoder")],
 
+
+  ui: {
+    // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
+    i18n: {
+      "zh-CN": {
+        "ext.displayName": "Qoder 会话后端",
+      },
+      en: {
+        "ext.displayName": "Qoder Session Backend",
+      },
+    },
+  },
+
   server: {
     startup(ctx: {
       /** 扩展数据目录（宿主 serverContext 恒提供；类型上按需声明）。 */

@@ -167,7 +167,7 @@ export default {
     // 翻译与 core lib/i18n/messages 对齐——新增 t()/tt() 调用记得同步补 key。
     i18n: {
       "zh-CN": {
-        "files.cancel": "取消",
+        "ext.displayName": "文件夹浏览器",        "files.cancel": "取消",
         "files.refresh": "刷新",
         "files.changedCount": "{count} 个文件",
         "files.loading": "正在加载文件...",
@@ -277,6 +277,12 @@ export default {
         "sidebar.fulltextHintTitle": "仅搜索文档中心已收录的 workspace md；收录为定期/手动扫描，最新文件可能未入库",
         "sidebar.useDefaultDirectory": "使用默认目录",
         "i18n.networkError": "网络错误",
+      },
+      en: {
+        "ext.displayName": "Folder Browser",        "ext.description": "Folder browser (fileViewer folder takeover) + directory picker capability (pathPicker FolderSwitcher). Reuses core endpoints; UI lives entirely in the extension.",
+        "feat.aiti-folder": "Folders",
+        "feat.aiti-folder-picker": "Directory picker",
+        "feat.open-terminal": "Open terminal",
       },
       "en": {
         "files.cancel": "Cancel",
