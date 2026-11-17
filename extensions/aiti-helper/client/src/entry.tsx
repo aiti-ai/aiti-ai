@@ -16,7 +16,7 @@
  *
  * 构建：node tools/build-client.mjs   （或 npm run build:client）
  */
-import { __setCtx, regSvc, apiUrl } from "./host-shim";
+import { __setCtx, regSvc, apiUrl, t } from "./host-shim";
 import { primeExtRegistry } from "../../../_shared/ext-display-names";
 import { installDialogAiButton } from "./dialog-ai-button";
 // 纯类型导入：编译期完全擦除，不会把重 UI 拉进薄 chunk；invoke 选项类型与重 UI 单源
@@ -58,8 +58,8 @@ function invokeStable(opts: InvokeOpts = {}): boolean {
 function suggestStable(q: string): void {
   invokeStable({
     system: "用户在聊天输入框打字但没命中收藏命令/prompt。请根据用户输入生成一条有用的简短建议（命令或 prompt 文本），只输出建议内容本身，不加解释。",
-    placeholder: "AI 生成中…（基于「" + q + "」）",
-    contextLabel: "suggest 兜底：「" + q + "」",
+    placeholder: t("dlg.suggest.ph", { q }),
+    contextLabel: t("dlg.suggest.ctx", { q }),
   });
 }
 
@@ -67,7 +67,7 @@ function suggestStable(q: string): void {
 export default function register(ctx: Record<string, any>) {
   // 重要：必须在任何渲染前调用（host-shim 模块级持 ctx；重 chunk mountHeavyUI 经 hostCtx() 读）
   __setCtx(ctx);
-  // 自述名 registry（无中心表）：manifest ui.i18n 缓存一次，extDisplayName 查词条用
+  // Self-description registry (no central table): manifest ui.i18n cached once, looked up by extDisplayName
   primeExtRegistry((p) => apiUrl(p));
 
   // toolbar 🤖（AppShell 全局壳；index.ts 有同 id 静态声明作首帧兜底，注册后接管）
@@ -77,7 +77,7 @@ export default function register(ctx: Record<string, any>) {
       label: "i18n:helper.open.label",
       title: "i18n:it.open.title.2",
       icon: "icons/sparkles.svg",
-      onClick: () => window.__aitiHelperInvoke!({ placeholder: "描述你想让 AI 做什么…" }),
+      onClick: () => window.__aitiHelperInvoke!(),   // default placeholder resolved in-dialog via t("dlg.ph.default") per UI locale
     },
   }]);
   // pages 弹窗条目不在此注册——重 UI mountHeavyUI() 装配时按需注册
