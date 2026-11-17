@@ -79,7 +79,7 @@ const SCHED_KEY = "aiti-ai-schedule:panel";
  *  记忆键），零「点击加载」字样；仍然不预加载内容代码，展开时才由容器 ensureMaterialized
  *  → 注册条目同 key 覆盖 → 真 face 无缝接管。 */
 function StaticDockShell(p: {
-  itemKey: string; blockKey?: string; title?: string; chrome?: "section" | "tab"; kind?: "dockable" | "reserved";
+  itemKey: string; blockKey?: string; title?: string; icon?: unknown; chrome?: "section" | "tab"; kind?: "dockable" | "reserved";
   zones?: any[]; defaultZone?: string; children?: any;
 }) {
   return (
@@ -87,6 +87,7 @@ function StaticDockShell(p: {
       itemKey={p.itemKey}
       blockKey={p.blockKey ?? p.itemKey}
       title={p.title}
+      icon={p.icon}
       chrome={p.chrome ?? "section"}
       kind={p.kind ?? "dockable"}
       zones={p.zones}
@@ -459,7 +460,7 @@ export function SidebarContentDock(props: Record<string, any>) {
       align: "top" as const, // 对齐分组（v4）：核心区块上对齐
       fill: true,
       render: () => (
-        <DockBody itemKey="projects" blockKey="projects" title={t("sm.dockProjects")} chrome="section" kind="reserved"
+        <DockBody itemKey="projects" blockKey="projects" title={t("sm.dockProjects")} icon="aiti-ai-logo" headerHint={t("sm.dockProjectsHint")} chrome="section" kind="reserved"
           headerActions={hasOtherActivity ? [{ id: "projects-activity", title: t("sidebar.newActivity"), icon: activityDotEl, visibility: "always", onClick: () => openProjectsAndPicker() }] : undefined}
           extraMenuItems={[
             // 折叠态 ⋮ 也有常用出口（2026-11-15）：「全部会话」面板 + 手动刷新。项目区块是
