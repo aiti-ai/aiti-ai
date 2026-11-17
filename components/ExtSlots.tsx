@@ -1443,6 +1443,7 @@ export function ExtSlot<S extends ExtSlotName>({
   currentSession = null,
   extra,
   only,
+  placement,
 }: {
   name: S;
   currentSession?: { id: string; cwd: string; name?: string; firstMessage?: string } | null;
@@ -1453,11 +1454,17 @@ export function ExtSlot<S extends ExtSlotName>({
    *  id = the registered composite id "extId:itemId". No filtering by
    *  default — zero impact on other slots). */
   only?: string;
+  /** Dual-mount slots (assistantMessageActions renders at the top meta row
+   *  AND the message's bottom-left): items declare meta.placement "top" or
+   *  "bottom"; absent meta → "bottom" (the majority). One ExtSlot instance
+   *  per placement; unfiltered instances render every item (old behavior). */
+  placement?: "top" | "bottom";
 }) {
   const items = useExtSlotItems(name)
     // render is optional (declarative toolbar items are rendered by the host); other slots only consume items with render
     .filter(hasExtRender)
-    .filter((it) => !only || it.id === only);
+    .filter((it) => !only || it.id === only)
+    .filter((it) => !placement || (it.meta?.placement ?? "bottom") === placement);
   // Framework-level extension identity stamping: only for "dialog-class"
   // slots (dialogs/pages, both position:fixed overlays), each item is wrapped
   // in a display:contents div stamped with
@@ -1502,7 +1509,7 @@ export function ExtSlot<S extends ExtSlotName>({
 
 /** Convenience: memoized slot for use inside tight render loops (rows). */
 export const MemoExtSlot = memo(ExtSlot, (prev, next) =>
-  prev.name === next.name && prev.currentSession?.id === next.currentSession?.id
+  prev.name === next.name && prev.currentSession?.id === next.currentSession?.id && prev.placement === next.placement
 );
 
 // ── TakeoverSlot —— the generic "yield the whole block when taken over"
