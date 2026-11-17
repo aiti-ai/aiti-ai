@@ -11,6 +11,7 @@
  */
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { editorBase, ensureEditorTicket, t } from "./host-shim.ts";
+import { getPopover } from "./md-smart";
 import { buildPreviewShim, PREVIEW_MSG } from "../../preview/preview-shim";
 import {
   buildHtmlPreviewSrcdoc, previewUrl, resolvePreviewRel, absBase,
@@ -93,6 +94,8 @@ export function HtmlPreviewPane(props: HtmlPreviewPaneProps) {
   // 刷新动作顺手走一遍 ensureEditorTicket（客户端缓存命中即零请求，过期才真的换票）
   const [tkOver, setTkOver] = useState<string | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  /** When the selection card opened (dismiss window: the same-gesture closing click is ignored) */
+  const selOpenAtRef = useRef(0);
 
   const freshTicket = useCallback(() => {
     // 不带 force：客户端缓存按 TTL-5min 过期，有效期内命中缓存 = 零请求，过期才真的换票
@@ -157,6 +160,40 @@ export function HtmlPreviewPane(props: HtmlPreviewPaneProps) {
           level: typeof d.level === "string" ? d.level : "error",
           text: typeof d.text === "string" ? d.text : "",
         }, ...rs].slice(0, REPORTS_CAP));
+      }
+      if (d.type === PREVIEW_MSG.select) {
+        // Cross-origin selection → msg-smart card (rect mode): container-viewport coords plus the
+        // iframe's live parent-page position are translated by the engine; the card renders in the
+        // top document, overlaying the iframe (opaque origin forbids entering the container doc;
+        // in-container scroll is invisible to us so the card does not follow — click-away/10s
+        // auto-dismiss covers it). No line ranges here → quote prefix is a bare @file.
+        const api = getPopover();
+        if (!api) return;
+        selOpenAtRef.current = Date.now();
+        const text = typeof d.text === "string" ? d.text : "";
+        const top = Number(d.top), left = Number(d.left), bottom = Number(d.bottom);
+        const width = Number(d.width), height = Number(d.height);
+        if (!text || ![top, left, bottom, width, height].every((n) => Number.isFinite(n))) return;
+        const p = props.filePath;
+        api.open({
+          isSelection: true,
+          text,
+          element: null,
+          rect: { top, left, bottom, width, height },
+          frame: fr,
+          cwd: p.slice(0, p.lastIndexOf("/")),
+          decorateQuote: (q: string) => "@" + p + "\n" + q,
+          caps: { question: false, fileExternalRoots: false },
+        });
+      }
+      if (d.type === PREVIEW_MSG.dismiss) {
+        // Clicks inside the cross-origin container never reach the parent (events do not cross
+        // document boundaries) → the shim reports them and we close the card here; the same-gesture
+        // click right after opening arrives instantly and is swallowed by the time window
+        // (same pattern as the top-level outsideHandler).
+        if (Date.now() - selOpenAtRef.current < 250) return;
+        try { getPopover()?.close(); } catch { /* ignore */ }
+        return;
       }
     };
     window.addEventListener("message", onMsg);

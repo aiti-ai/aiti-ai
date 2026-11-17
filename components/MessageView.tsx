@@ -911,6 +911,42 @@ function AssistantMessageView({
     }, () => {});
   };
 
+  // One copy button element reused by both action rows (top meta row + bottom
+  // left) — the same dual-mount rationale as meta.placement "both": long
+  // messages keep an action within reach at either scroll end. Both instances
+  // share the copied state, so they flip to "Copied" together.
+  const copyButton = (
+    <button
+      onClick={copyContent}
+      title={t("i18n.copyMessage")}
+      style={{
+        display: "flex", alignItems: "center", gap: 4,
+        padding: "1px 6px", height: 18,
+        background: "none", border: "none",
+        borderRadius: 5,
+        color: copied ? "var(--accent)" : "var(--text-dim)",
+        cursor: "pointer",
+        fontSize: 11, fontWeight: 400,
+        whiteSpace: "nowrap",
+        transition: "color 0.12s",
+      }}
+      onMouseEnter={(e) => { if (!copied) e.currentTarget.style.color = "var(--accent)"; }}
+      onMouseLeave={(e) => { if (!copied) e.currentTarget.style.color = "var(--text-dim)"; }}
+    >
+      {copied ? (
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
+      ) : (
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+        </svg>
+      )}
+      <span className="message-action-label">{copied ? t("i18n.copied") : t("i18n.copy")}</span>
+    </button>
+  );
+
   useEffect(() => {
     if (!isStreaming) {
       // Finalise any un-finished thinking block durations on stream end
@@ -1025,6 +1061,11 @@ function AssistantMessageView({
             </>
           );
         })()}
+        {time && !isStreaming && (
+          <span style={{ fontSize: 10, color: "var(--text-dim)", marginLeft: (textContent && !isStreaming) ? 0 : "auto" }}>{time}</span>
+        )}
+        {/* Top action end: copy + extensions that prefer the top
+            (meta.placement = "top"/"both"); hover-gated like the bottom row. */}
         {textContent && !isStreaming && (
           <div
             style={{
@@ -1034,44 +1075,14 @@ function AssistantMessageView({
               transition: "opacity 0.12s",
             }}
           >
-            <button
-              onClick={copyContent}
-              title={t("i18n.copyMessage")}
-              style={{
-                display: "flex", alignItems: "center", gap: 4,
-                padding: "1px 6px", height: 18,
-                background: "none", border: "none",
-                borderRadius: 5,
-                color: copied ? "var(--accent)" : "var(--text-dim)",
-                cursor: "pointer",
-                fontSize: 11, fontWeight: 400,
-                whiteSpace: "nowrap",
-                transition: "color 0.12s",
-              }}
-              onMouseEnter={(e) => { if (!copied) e.currentTarget.style.color = "var(--accent)"; }}
-              onMouseLeave={(e) => { if (!copied) e.currentTarget.style.color = "var(--text-dim)"; }}
-            >
-              {copied ? (
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-              ) : (
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                </svg>
-              )}
-              {copied ? t("i18n.copied") : t("i18n.copy")}
-            </button>
+            {copyButton}
             <ExtSlot
               name="assistantMessageActions"
+              placement="top"
               currentSession={null}
               extra={{ entryId, sessionId, text: textContent }}
             />
           </div>
-        )}
-        {time && !isStreaming && (
-          <span style={{ fontSize: 10, color: "var(--text-dim)", marginLeft: (textContent && !isStreaming) ? 0 : "auto" }}>{time}</span>
         )}
       </div>
 
@@ -1080,6 +1091,30 @@ function AssistantMessageView({
           <BlockView key={`${entryId ?? "stream"}-${originalIndex}`} block={block} searchTarget={block === searchBlock} toolResults={toolResults} toolsNotRun={aborted || providerError !== null} isStreaming={isStreaming} streamingDuration={streamingDurations.get(originalIndex) ?? (block.type === "thinking" ? thinkingDurationFromFile : undefined)} toolCallDurations={toolCallDurations} toolClocks={toolClocks} cwd={cwd} onOpenFile={onOpenFile} onOpenSubagent={onOpenSubagent} sessionId={sessionId} entryId={entryId} blockIndex={originalIndex} />
         ))}
       </div>
+
+      {/* Hover actions live at the message's bottom-left: the built-in copy
+          button + extension buttons (assistantMessageActions slot, e.g.
+          aiti-msg-share). Extensions declare meta.placement "top" to mount at
+          the meta row instead; absent meta → here (the majority). Same hover
+          gating as the top instance. */}
+      {textContent && !isStreaming && (
+        <div
+          style={{
+            display: "flex", alignItems: "center", gap: 6, marginTop: 2,
+            opacity: hovered ? 1 : 0,
+            pointerEvents: hovered ? "auto" : "none",
+            transition: "opacity 0.12s",
+          }}
+        >
+          {copyButton}
+          <ExtSlot
+            name="assistantMessageActions"
+            placement="bottom"
+            currentSession={null}
+            extra={{ entryId, sessionId, text: textContent }}
+          />
+        </div>
+      )}
 
       {providerError && (
         <div

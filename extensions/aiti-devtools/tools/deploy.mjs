@@ -62,6 +62,7 @@ for (const t of TARGETS) {
   }
   copyFileSync(resolve(coreSrc, 'bridge.ts'), resolve(extDir, 'bridge-core.ts'));
   copyIfPresent(resolve(coreSrc, 'pair.ts'), resolve(extDir, 'pair.ts'), 'pair.ts'); // pair 设备互连模块（bridge-core.ts 相对导入）
+  copyIfPresent(resolve(coreSrc, 'ua-parse.js'), resolve(extDir, 'ua-parse.js'), 'ua-parse.js'); // UA/client-hint 解析（bridge-core.ts 相对导入；host-protocol.js 资产自带同算法副本）
   copyFileSync(resolve(extSrc, 'server', 'pair-fed.ts'), resolve(extDir, 'pair-fed.ts')); // 跨桥联邦代理（index.ts 相对导入）
   // jiti 转译缓存对内容变化不失效（实测坑：deploy 后 reload/restart 仍跑旧转译产物）——服务端源码有变时清之
   const jitiCache = resolve(process.env.PI_WEB_DEV_WEBROOT || resolve(homedir(), '.pi', 'web-dev'), '.cache', 'jiti');

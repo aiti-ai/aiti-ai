@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiUrl, appendText, openFile, extSvc, t } from "./host-shim";
 import { buildAtText, openNewSessionWithExtSvc } from "../../../_shared/new-session-cwd";
 import { usePresent, useGate, DockBody, openFloat, closePanel } from "../../../_shared/ext-float-dock";
+import { zoomFactorOf } from "../../../_shared/popup-anchor";
 
 const API = (p: string) => apiUrl("/api/extensions/aiti-doc-center" + p);
 
@@ -391,7 +392,8 @@ function DocCenterDialog({ onClose, initialUnder, embedded }: { onClose: () => v
         <button onClick={(e) => {
           const r = e.currentTarget.getBoundingClientRect();
           const w = Math.min(320, window.innerWidth * 0.8);
-          setWsRect({ left: Math.max(8, Math.min(r.right - w, window.innerWidth - w - 8)), top: r.bottom + 4 });
+          const zf = zoomFactorOf(e.currentTarget); // panel UI scale: divide viewport-space back
+          setWsRect({ left: Math.max(8, Math.min(r.right - w, window.innerWidth - w - 8)) / zf, top: (r.bottom + 4) / zf });
           setWsOpen((v) => !v);
         }}
           title={under ? t("dc.wsTipUnder", { dir: under }) : t("dc.wsTipAll")}
@@ -505,7 +507,8 @@ function DocCenterDialog({ onClose, initialUnder, embedded }: { onClose: () => v
             <button onClick={(e) => {
               const r = e.currentTarget.getBoundingClientRect();
               const w = Math.min(340, window.innerWidth * 0.86);
-              setTagSelRect({ left: Math.max(8, Math.min(r.left, window.innerWidth - w - 8)), top: r.bottom + 4 });
+              const zf = zoomFactorOf(e.currentTarget); // panel UI scale: divide viewport-space back
+              setTagSelRect({ left: Math.max(8, Math.min(r.left, window.innerWidth - w - 8)) / zf, top: (r.bottom + 4) / zf });
               setTagSelOpen((v) => !v);
             }}
               title={view === "dir" ? t("dc.dirFilterTip") : t("dc.tagFilterTip")}
@@ -536,10 +539,10 @@ function DocCenterDialog({ onClose, initialUnder, embedded }: { onClose: () => v
           <div style={{ width: 224, flexShrink: 0, borderRight: "1px solid var(--border)", overflowY: "auto", padding: "8px 6px" }}>
             {(tagSel.length > 0 || dirFilter) && (
               <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 4, padding: "2px 4px 6px", borderBottom: "1px solid var(--border)", marginBottom: 6 }}>
-                {sortTags(tagSel.map((k) => ({ key: k, display: (flatTags.find((f) => f.key === k) || { display: k }).display, source: "ui" }))).map((t: any) => (
-                  <span key={t.key} style={{ fontSize: 10.5, padding: "1px 6px", borderRadius: 5, background: "#6366f122", color: "#6366f1", display: "inline-flex", alignItems: "center", gap: 3, minWidth: 0 }}>
-                    #{t.display}
-                    <span onClick={() => setTagSel((s) => s.filter((x) => x !== t.key))} title={t("dc.remove")} style={{ cursor: "pointer", fontWeight: 700 }}>×</span>
+                {sortTags(tagSel.map((k) => ({ key: k, display: (flatTags.find((f) => f.key === k) || { display: k }).display, source: "ui" }))).map((tg: any) => (
+                  <span key={tg.key} style={{ fontSize: 10.5, padding: "1px 6px", borderRadius: 5, background: "#6366f122", color: "#6366f1", display: "inline-flex", alignItems: "center", gap: 3, minWidth: 0 }}>
+                    #{tg.display}
+                    <span onClick={() => setTagSel((s) => s.filter((x) => x !== tg.key))} title={t("dc.remove")} style={{ cursor: "pointer", fontWeight: 700 }}>×</span>
                   </span>
                 ))}
                 {dirFilter && (

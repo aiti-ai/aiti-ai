@@ -29,6 +29,18 @@ export function regSvc(key: string, impl: unknown): (() => void) | null {
   const c = _ctx as any;
   return typeof c?.registerExtService === "function" ? c.registerExtService(key, impl) : null;
 }
+
+/** getTopicItems(topic): synchronous cross-extension topic providers (registered at client boot). */
+export function getTopicItems<T = unknown>(topic: string): T[] {
+  const fn = (_ctx as any)?.getTopicItems as ((topic: string) => T[]) | undefined;
+  try { return fn ? fn(topic) : []; } catch { return []; }
+}
+
+/** ensureMaterialized(id): materialize a lazy extension client on demand. */
+export function ensureMaterialized(id: string): Promise<boolean> {
+  const fn = (_ctx as any)?.ensureMaterialized as ((id: string) => Promise<boolean>) | undefined;
+  return typeof fn === "function" ? fn(id) : Promise.resolve(false);
+}
 function c<T = (...args: never[]) => unknown>(name: string): T {
   return (_ctx?.[name] as T) ?? (() => undefined as never);
 }

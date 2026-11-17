@@ -52,8 +52,8 @@ test("previewClickInfo：块级点击 → info 字段齐备（float/doc/win/caps
   assert.equal(info.paragraphId, "mdprev:" + FILE + ":3:-");
   // 引用带源码定位（msg-smart 的 formatQuote 结果接在后面）
   assert.equal(info.decorateQuote("> 一段正文\n"), srcRef(FILE, 12, 14) + "\n> 一段正文\n");
-  // 预览语境裁剪：question/providers/跨仓分辨关闭
-  assert.deepEqual(info.caps, { question: false, providers: false, fileExternalRoots: false });
+  // Preview-context caps: question/cross-repo off; providers open (share button via msg-popover-action)
+  assert.deepEqual(info.caps, { question: false, fileExternalRoots: false });
 });
 
 test("previewClickInfo：代码行点击 → rowIndex + __aitiClickedOffset（行高亮/行矩形）", () => {
@@ -92,4 +92,21 @@ test("previewClickInfo：setInline 建层 / close 移除层（弹层生命周期
   assert.equal(appended, null);
   info.close();
   assert.equal(removed, true);
+});
+
+test("selection-container: 容器注册封装（服务缺席 → 静默降级不抛异常；meta 回调带引用装饰与 caps）", async () => {
+  const { registerSelectionContainer, unregisterSelectionContainer, previewSelectionMeta } = await import("./md-smart.ts");
+  const doc = fakeDoc({ blk: "3" });
+  // Service absent (no _ctx in tests) → both wrappers must not throw
+  registerSelectionContainer(doc, {}, previewSelectionMeta(FILE));
+  unregisterSelectionContainer(doc);
+  // meta callback: annotated block → quote carries line ranges; unannotated (TOC etc.) → bare @file
+  const meta = previewSelectionMeta(FILE);
+  const blkEl = { closest: (sel) => (sel === "[data-src-start]" ? { getAttribute: (a) => (a === "data-src-start" ? "20" : "24") } : null) };
+  const m1 = meta(null, blkEl);
+  assert.equal(m1.cwd, "/home/pi/workspace/workspace-tools/docs");
+  assert.deepEqual(m1.caps, { question: false, fileExternalRoots: false }); // providers open (share button)
+  assert.equal(m1.decorateQuote("> 选中文本\n"), srcRef(FILE, 20, 24) + "\n> 选中文本\n");
+  const m2 = meta(null, null);
+  assert.equal(m2.decorateQuote("x\n"), "@" + FILE + "\nx\n");
 });
