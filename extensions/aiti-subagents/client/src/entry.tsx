@@ -48,12 +48,13 @@ type BackendDef = { key: string; label?: string };
 // ---- 模块级面板开关（多处入口共享）----
 // dock v3（P2 批）：Fleet 面板显隐收口展示状态机（openFloat/closePanel）；渲染门控 useGate
 import { useGate, usePresent, DockBody, openFloat, closePanel, seedDockDefault, declareDockZones, presentState, useGateSidebar, sidebarZoneOf } from "../../../_shared/ext-float-dock";
+import { dockIconDecl } from "../../../_shared/dock-icons";
 // dock 头工具条 v3（方案 pi-web-dock-header-toolbar-plan）：face 声明按钮、内容实现命令+状态
 import { useDockCommands, useDockHeaderState, useDockHeaderStateOf, requestDockCommand } from "../../../_shared/ext-float-dock";
 import type { DockHeaderAction } from "../../../_shared/ext-float-dock";
 
 const FLEET_KEY = "aiti-subagents:fleet";
-// 分组折叠状态（模块级：浮窗/停靠两面共享；键 = parentSessionFile，默认全展开）
+// Group collapse state (module-level: shared by the float/dock faces; key = parentSessionFile, all expanded by default)
 const fleetCollapsedGroups = new Set<string>();
 function setFleetOpen(v: boolean) { if (v) openFloat(FLEET_KEY); else closePanel(FLEET_KEY); }
 
@@ -690,7 +691,7 @@ function FleetBody(props?: { dockItemKey?: string }) {
     return () => window.removeEventListener("aiti-subagents:activity", onActivity);
   }, []);
   const state = useFleetState(true, reloadKey);
-  // 分组折叠（两面共享集合；tick 仅用于触发 re-render）
+  // group collapse (set shared by both faces; tick only triggers re-renders)
   const [, setCollapsedTick] = useState(0);
   const toggleGroup = (key: string) => {
     if (fleetCollapsedGroups.has(key)) fleetCollapsedGroups.delete(key);
@@ -746,7 +747,7 @@ function FleetBody(props?: { dockItemKey?: string }) {
             const isOrphan = group.key === " __orphan__";
             return (
               <div key={group.key} style={{ marginBottom: 8 }}>
-                {/* 父会话组头（整行可点折叠/展开） */}
+                {/* parent-session group header (whole row clickable to collapse/expand) */}
                 <div
                   onClick={() => toggleGroup(group.key)}
                   title={fleetCollapsedGroups.has(group.key) ? t("展开分组") : t("折叠分组")}
@@ -764,7 +765,7 @@ function FleetBody(props?: { dockItemKey?: string }) {
                     <button title={t("打开父会话")} onClick={(e) => { e.stopPropagation(); openSession(group.key); }} style={{ background: "none", border: "1px solid var(--border)", color: "var(--text-muted)", borderRadius: 4, padding: "1px 8px", fontSize: 10, cursor: "pointer", flexShrink: 0 }}>{t("打开")}</button>
                   )}
                 </div>
-                {/* 子代理行（折叠时不渲染） */}
+                {/* subagent rows (not rendered while collapsed) */}
                 {!fleetCollapsedGroups.has(group.key) && group.runs.map((run) => {
                   const color = statusMeta(run.status);
                   const rowBg = run.status === "running" ? "rgba(0,212,255,0.07)" : "transparent";
@@ -887,7 +888,7 @@ function FleetDockLeft() {
     { id: "agents", title: t("Agent 管理"), icon: <AgentsIcon/>, visibility: "always", onClick: () => { requestDockCommand(FLEET_KEY, "agents"); } },
   ];
   return (
-    <DockBody itemKey={FLEET_KEY} title={t("子代理舰队")} chrome="section"
+    <DockBody itemKey={FLEET_KEY} title={t("子代理舰队")} icon="bot" chrome="section"
       count={runningCount > 0 ? runningCount : undefined}
       zones={[sidebarZoneOf(FLEET_KEY), "right-panel"]} defaultZone={sidebarZoneOf(FLEET_KEY)}
       headerActions={actions}>
@@ -1204,8 +1205,8 @@ export default function register(ctx: Record<string, unknown>) {
   seedDockDefault(FLEET_KEY, sidebarZoneOf(FLEET_KEY));
   // zones 进注册表：TabBar ⇱ 菜单（后台 tab）也能看到 left⇄right 全集（v3.1）
   declareDockZones(FLEET_KEY, [sidebarZoneOf(FLEET_KEY), "right-panel"], sidebarZoneOf(FLEET_KEY));
-  reg?.("sidebarExplorerDock", [{ id: "fleet", render: FleetDockLeft, meta: { title: t("子代理舰队"), priority: 1, maxHeightPct: 30 } }]); // 任务区块（默认序 1 + 次级限高 30%：项目→任务→文件→停靠）
-  reg?.("rightFileDock", [{ id: "fleet", render: FleetDockRight, meta: { title: t("舰队") } }]);
+  reg?.("sidebarExplorerDock", [{ id: "fleet", render: FleetDockLeft, meta: { title: t("子代理舰队"), priority: 1, maxHeightPct: 30 } }]); // task block (default order 1 + 30% secondary height cap: projects→tasks→files→docks)
+  reg?.("rightFileDock", [{ id: "fleet", render: FleetDockRight, meta: { title: t("舰队"), icon: dockIconDecl("bot") } }]);
   // 设置 Agents 页顶部 feature 区块接管（pi-subagents 引擎横幅 + 打开舰队；未注册时宿主原版开关区兑底）
   reg?.("settingsAgentsFeature", [{ id: "engine-banner", render: AgentsFeatureBanner }]);
   reg?.("settingsAgents", [{ id: "agents-manager", render: AgentsSettingsPanel }]);
