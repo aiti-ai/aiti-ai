@@ -76,6 +76,11 @@ export interface EngineOptions {
   includeExtra?: string[];
   /** 注入 entry id 获取（index.ts 由 ctx.sessionManager.getLeafEntry() 提供） */
   getEntryId?: () => string | null;
+  /** [B2] Lazy parse of the user-message entryId (index.ts scans the session-file tail for the last
+   *  user entry id). message_end fires before the entry is persisted (the host emits
+   *  _emitExtensionEvent before appendMessage), so the event payload has no entryId → the engine
+   *  calls back here when first needed for accounting (by then persistence has long completed). */
+  findUserEntryId?: () => string | null;
   /** §13.4 loose 模式：无 git 目录预算内自动建仓（默认开；config.json trace.autoInit） */
   autoInit?: boolean;
   /** loose 建仓文件数预算（默认 2000） */
@@ -350,17 +355,40 @@ export class TraceEngine {
   /** turn 当前用户消息 entry id（消息徽标按用户消息匹配，§4/§8.2） */
   turnUserEntryId: string | null = null;
   turnPrompt: string | null = null;
+  /** [B2] Current user-message text (carried directly by the message_end event) and entryId parse
+   *  progress. Events precede persistence: entryId cannot be taken from the event → parsed lazily
+   *  at first accounting; on failure no retry within this message, userEntryId stays null (UI
+   *  grouping falls back to msgSeq, only the 💬 jump degrades). */
+  private pendingUserText: string | null = null;
+  private userEntryTried = false;
 
-  /** turn_start：用户消息锚点（§4）。仅当捕获到「新」用户消息时推进 msgSeq——
-   *  同一用户消息的后续 agent turn（turn 2+）保持 msgSeq/prompt 不变，归入同一 prompt 分组。 */
-  onTurnStart(prompt?: { userEntryId: string; text: string } | null): void {
+  /** turn_start: flush convergence-window reset ([P0-3d]/[P1-1]). Attribution duty moved to
+   *  onUserMessage ([B2]). */
+  onTurnStart(): void {
     this.turnActiveRoots = new Set(); // [P0-3d] flush 收敛窗口按 turn 重置
     this.gitlinkScanTurn.clear(); // [P1-1] 兜底扫描降频窗口
-    if (prompt) {
-      this.msgSeq += 1;
-      this.turnUserEntryId = prompt.userEntryId || null;
-      this.turnPrompt = prompt.text || null;
-    }
+  }
+
+  /** [B2] User-message boundary (driven by the message_end role=user event). It necessarily arrives
+   *  before every tool_call that message triggers, so msgSeq/prompt attribution is race-free — this
+   *  replaces the old turn_start session-file scan scheme, which raced with user-entry persistence
+   *  (a new message not yet persisted hit lastPromptId and was treated as a "later turn of the same
+   *  message", attributing to the previous round = off-by-one; failed 2 of 3 rounds in testing). */
+  onUserMessage(text: string): void {
+    this.msgSeq += 1;
+    this.pendingUserText = text || null;
+    this.turnPrompt = this.pendingUserText;
+    this.turnUserEntryId = null;
+    this.userEntryTried = false;
+  }
+
+  /** [B2] Lazily parse the current message's entryId (at most once per message). Skipped when there
+   *  is no message boundary, preventing resume scenarios from mismatching entries left over from a
+   *  previous session. */
+  private ensureUserEntryId(): void {
+    if (this.userEntryTried || !this.pendingUserText) return;
+    this.userEntryTried = true;
+    this.turnUserEntryId = this.opts.findUserEntryId?.() ?? null;
   }
 
   /** 工作区配置读取（记录 mtime 供实时开关检测；读失败 = 缺省开） */
@@ -468,6 +496,7 @@ export class TraceEngine {
         } catch { /* 识别失败按未识别处理 */ }
       }
     }
+    this.ensureUserEntryId(); // [B2] lazy parse at first accounting (the user entry persisted long ago by now)
     const pending: PendingOp = {
       op,
       toolCallId,
@@ -731,6 +760,7 @@ export class TraceEngine {
 	/** 合成 pending（复用 before/after 边界提交管线；不占引擎 op 编号——台账 plan 行与
 	 *  rollback 行同策略：kind 标识 + 时间序，op=lastOp 仅作 commit message 占位） */
 	private syntheticPending(summary: string): PendingOp {
+		this.ensureUserEntryId(); // [B2] same as the main path: lazy parse before plan-row attribution
 		return {
 			op: this.lastOp || 0,
 			toolCallId: `plan-record-${++this.planSeq}`,
