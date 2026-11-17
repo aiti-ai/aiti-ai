@@ -213,7 +213,7 @@ export function MarksBar() {
 }
 
 // 收藏联想宿主：sug 处理器由 initSuggest(ctx.apiUrl) 创建、entry 装配时传入
-export function SuggestHost({ sug }: { sug: { onInput: (e: Event) => void; onKeyDown: (e: KeyboardEvent) => void; sugClose: () => void; SUG: { timer: any; ta: HTMLTextAreaElement | null; items: any[]; anchor: { ta: HTMLTextAreaElement; left: number; top: number; scrollTop: number } | null } } }) {
+export function SuggestHost({ sug }: { sug: { onInput: (e: Event) => void; onKeyDown: (e: KeyboardEvent) => void; sugClose: () => void; onHostValueWritten?: () => Promise<void>; SUG: { timer: any; ta: HTMLTextAreaElement | null; items: any[]; anchor: { ta: HTMLTextAreaElement; left: number; top: number; scrollTop: number } | null } } }) {
   useEffect(() => {
     const onInput = (e: Event) => sug.onInput(e);
     const onKeyDown = (e: KeyboardEvent) => sug.onKeyDown(e);

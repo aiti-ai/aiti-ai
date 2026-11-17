@@ -209,7 +209,7 @@ export function TopbarTags(props: any) {
       {(isNewSession ? pending : tagIds).length > 2 && (
         <span style={{ fontSize: 10, color: "var(--text-dim)" }}>{`+${(isNewSession ? pending : tagIds).length - 2}`}</span>
       )}
-      {isNewSession && <span style={{ fontSize: 10, color: "var(--warn, #f59e0b)" }}>新建会话</span>}
+      {isNewSession && <span style={{ fontSize: 10, color: "var(--warn, #f59e0b)" }}>{t("sm.noSession")}</span>}
       {editing ? (
         <span ref={editRef} style={{ position: "relative", display: "inline-flex" }}>
           <input
@@ -336,7 +336,7 @@ export function RowActions(props: any) {
           feature 门控（behavior.session-timeline，默认关）——菜单面入口见 sessions-panel 行「⋯」菜单 */}
       {showTimelineBtn && (
       <button
-        title="打开该会话的时间线（aiti-git-trace）"
+        title={t("sm.timelineTip")}
         onClick={(e) => {
           e.stopPropagation();
           try {

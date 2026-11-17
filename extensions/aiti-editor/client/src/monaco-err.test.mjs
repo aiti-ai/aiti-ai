@@ -9,6 +9,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+// Stub the host i18n channel before importing lib.ts: in node --test there is no
+// register(ctx), so host-shim t() falls back to the bare key (interpolation params
+// are dropped). Identity + {name} interpolation mirrors the host cascade result for
+// zh-CN, keeping the URL-in-message assertions meaningful.
+const mod = await import("./host-shim.ts");
+// host-shim exports t as a function reading module-level _ctx; emulate ctx via __setCtx
+mod.__setCtx({ t: (k, p) => k.replace(/\{([\w.-]+)\}/g, (_, n) => (p && p[n] !== undefined ? String(p[n]) : "{" + n + "}")) });
 const { describeMonacoError } = await import("./lib.ts");
 
 test("loader 包装的 Error（message 含 [object Event]）→ 可读文案 + 自助指引", () => {

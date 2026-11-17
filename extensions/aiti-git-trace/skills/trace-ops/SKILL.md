@@ -1,8 +1,11 @@
 ---
 name: trace-ops
 title: 查询会话的 AI 文件追踪操作
+title.en: "Query a session's AI file-trace operations"
 placeholder: 想查哪个会话的操作？给我会话 ID（不填就查当前会话）
+placeholder.en: "Which session's operations? Give me the session id (empty = current session)"
 summary: 读取 aiti-git-trace 台账，列出某会话被追踪的全部 AI 文件操作（op 编号/工具/变更文件），可用于「这个文件是谁改的」「这轮对话动了哪些文件」类问题。
+summary.en: "Read the aiti-git-trace ledger and list all traced AI file operations of a session (op no./tool/files changed) — answers questions like who changed this file / which files this round touched."
 outputs:
   format: json-obj
   schema:

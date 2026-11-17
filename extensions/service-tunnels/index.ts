@@ -26,20 +26,13 @@ export default {
   client: "dist/service-tunnels.mjs",
 
   ui: {
-    // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
-    i18n: {
-      "zh-CN": {
-        "ext.displayName": "服务隧道",
-      },
-      en: {
-        "ext.displayName": "Service Tunnels",        "feat.self-expose-alert": "Unauthenticated exposure alert",
-      },
-    },    clientImmediately: false, // [懒加载 v2] M1 已同步生产，懒化重启用
+    // i18n entries live in server/i18n.ts's I18N constant (incl. ext.displayName / feat.* / it.* static entry keys)
+    clientImmediately: false, // [懒加载 v2] M1 已同步生产，懒化重启用
     toolbar: [{ id: "ports", label: "i18n:st.ports.label", title: "i18n:st.ports.title", icon: "icons/globe.svg" }],
     // aiti-float dock v3：停靠槽静态声明（懒扩展物化触发 + 静态入口；id 与 client 注册一致）
     rightFileDock: [{ id: "ports", label: "i18n:st.ports.label" }],
-    dialogs: [{ id: "ports", label: "Service ports" }],
-    banners: [{ id: "self-expose-alert", label: "自暴露无认证告警" }],
+    dialogs: [{ id: "ports", label: "i18n:it.ports-dialog.label" }],
+    banners: [{ id: "self-expose-alert", label: "i18n:feat.self-expose-alert" }],
     // 「手机访问」底行静态声明（懒扩展零 bundle 入口；id 与 client registerItems 一致，
     // 首击 staticClickForwarder 物化后转发 meta.onClick —— extman 同款两段式）
     // hideOnMobile：手机视口不渲染（人已在手机上，扫码入口无意义；client 侧 MobileFooterButton 同规则）

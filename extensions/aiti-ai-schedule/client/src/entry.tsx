@@ -7,6 +7,7 @@
 import { __setCtx, t } from "./host-shim";
 import { SchedulePageSlot, ScheduleDockRight, ScheduleDockSidebar, SCHED_KEY } from "./schedule-app";
 import { seedDockDefault, sidebarZoneOf, declareDockZones, presentState, present } from "../../../_shared/ext-float-dock";
+import { dockIconDecl } from "../../../_shared/dock-icons";
 
 const OPEN_EVENT = "aiti-ai-schedule:open";
 function requestOpen(prefill?: Record<string, unknown>) {
@@ -64,7 +65,7 @@ export default function register(ctx: Record<string, any>) {
   // zones 全集注册（v3.1）：TabBar 页签/浮窗 ⇱ 位置菜单的数据源——face 未挂载
   // （右栏 tab 后台态）时菜单只能靠这里；浮窗壳另带 DOM 属性兑底。
   declareDockZones(SCHED_KEY, [sidebarZoneOf(SCHED_KEY), "right-panel"], sidebarZoneOf(SCHED_KEY));
-  ctx.registerItems?.("rightFileDock", [{ id: "panel", render: ScheduleDockRight, meta: { title: "i18n:sh.app.label" } }]);
+  ctx.registerItems?.("rightFileDock", [{ id: "panel", render: ScheduleDockRight, meta: { title: "i18n:sh.app.label", icon: dockIconDecl("clock") } }]);
   // 展开高度策略在 face 层（schedule-app 嵌入态 maxHeight 55vh + body 内部滚动）——
   // cell 级 maxHeightPct 百分比在互斥折叠后的 auto 高 wrapper 里解析不了，不传。
   ctx.registerItems?.("sidebarExplorerDock", [{ id: "panel", render: ScheduleDockSidebar, meta: { title: "i18n:sb.tasks", priority: 1, align: "top" } }]);

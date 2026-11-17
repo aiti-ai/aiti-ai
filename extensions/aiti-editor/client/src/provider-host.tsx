@@ -11,7 +11,7 @@
  *   - 工具条复用 FileToolbar：▦ 打开方式（位置 A）+ 预览/编辑段控件（能力联动经仲裁器）。
  */
 import { useState, useEffect, useRef, useCallback } from "react";
-import { editorBase, ensureEditorTicket, extSvc } from "./host-shim";
+import { editorBase, ensureEditorTicket, extSvc, t } from "./host-shim.ts";
 import { isDarkTheme } from "./lib";
 import { hasCapability, capabilityBadge, type EditorCapability, type ProviderLike } from "./arbiter";
 import { FileToolbar, type MenuAction } from "./file-toolbar";
@@ -80,9 +80,9 @@ export function ThirdPartyProviderHost(props: {
     if (next) {
       w.setActiveProvider(filePath, next.id); // 换 provider → EditorApp 重渲染换宿主（key 变）
       w.setActiveCapability(filePath, cap);
-      showToast("ok", "已切换到 " + (next.displayName || next.id) + (cap === "edit" ? " 编辑" : " 预览"));
+      showToast("ok", t("已切换到 {name}{mode}", { name: t(next.displayName || next.id), mode: cap === "edit" ? t(" 编辑") : t(" 预览") }));
     } else {
-      showToast("warn", "未安装可" + (cap === "edit" ? "编辑" : "预览") + " ." + ext.replace(/^\./, "") + " 的扩展");
+      showToast("warn", t("未安装可{mode} .{ext} 的扩展", { mode: cap === "edit" ? t("编辑") : t("预览"), ext: ext.replace(/^\./, "") }));
     }
   }, [filePath, chain, ext, showToast]);
 
@@ -102,7 +102,7 @@ export function ThirdPartyProviderHost(props: {
         const [st, buf] = await Promise.all([
           fetch(editorBase() + "/t/" + ticket + "/stat?t=" + Date.now(), { cache: "no-store" }).then((r) => r.json()).catch(() => null),
           fetch(editorBase() + "/t/" + ticket + "/file?t=" + Date.now(), { cache: "no-store" }).then((r) => {
-            if (!r.ok) throw new Error("readFile 失败 (" + r.status + ")");
+            if (!r.ok) throw new Error(t("readFile 失败 ({status})", { status: r.status }));
             return r.arrayBuffer();
           }),
         ]);
@@ -121,7 +121,7 @@ export function ThirdPartyProviderHost(props: {
             const err: any = new Error("conflict"); err.conflict = true; err.diskMtimeMs = d.diskMtimeMs;
             throw err;
           }
-          if (!r.ok) throw new Error(d.error || "保存失败 (" + r.status + ")");
+          if (!r.ok) throw new Error(d.error || t("保存失败 ({status})", { status: r.status }));
           mtimeRef.current = d.mtimeMs || Date.now();
           return { ok: true as const, mtimeMs: mtimeRef.current, size: d.size };
         }
@@ -129,7 +129,7 @@ export function ThirdPartyProviderHost(props: {
         const cpId = (provider as any).contentProvider || provider.id;
         const cp = w?._getContentProvider ? w._getContentProvider(cpId) : null;
         if (!cp || typeof cp.write !== "function") {
-          throw new Error("编辑器「" + (provider.displayName || provider.id) + "」未注册内容管线（ContentProvider.write），无法保存");
+          throw new Error(t("编辑器「{name}」未注册内容管线（ContentProvider.write），无法保存", { name: t(provider.displayName || provider.id) }));
         }
         const res = await cp.write(filePath, data, opts?.force ? 0 : (mtimeRef.current || 0));
         if (res && typeof res.mtimeMs === "number") mtimeRef.current = res.mtimeMs;
@@ -193,7 +193,7 @@ export function ThirdPartyProviderHost(props: {
         inst.el.style && (inst.el.style.height = "100%");
         container.appendChild(inst.el);
       } else if (!inst || !inst.el) {
-        setHostErr("编辑器未返回视图（render 需返回 { el, dispose }）");
+        setHostErr(t("编辑器未返回视图（render 需返回 { el, dispose }）"));
       }
     } catch (e: any) {
       setHostErr(String((e && e.message) || e));
@@ -223,28 +223,28 @@ export function ThirdPartyProviderHost(props: {
         filePath={filePath}
         about={{ name: provider.displayName || provider.id, id: provider.id, source: (provider as any).sourceExt, ...((provider as any).about || {}) }}
         onSave={capability === "edit" ? () => {
-          if (!saveHandlerRef.current) { showToast("warn", "编辑器实例未就绪，请稍后再试"); return; }
+          if (!saveHandlerRef.current) { showToast("warn", t("编辑器实例未就绪，请稍后再试")); return; }
           void saveHandlerRef.current("save");
         } : undefined}
         onSaveAs={capability === "edit" ? () => {
-          if (!saveHandlerRef.current) { showToast("warn", "编辑器实例未就绪，请稍后再试"); return; }
+          if (!saveHandlerRef.current) { showToast("warn", t("编辑器实例未就绪，请稍后再试")); return; }
           void saveHandlerRef.current("saveAs");
         } : undefined}
-        dot={{ title: dirty ? "有未保存修改" : "已同步", color: dirty ? "var(--warn, #f59e0b)" : "var(--border,#e0e0e0)" }}
+        dot={{ title: dirty ? t("有未保存修改") : t("已同步"), color: dirty ? "var(--warn, #f59e0b)" : "var(--border,#e0e0e0)" }}
         nav={nav}
         modes={{
           items: [
-            { label: "预览", value: "preview", title: "预览模式（" + (provider.displayName || provider.id) + "）" },
+            { label: t("预览"), value: "preview", title: t("预览模式（{name}）", { name: t(provider.displayName || provider.id) }) },
             chainHasEdit
-              ? { label: "编辑", value: "edit", title: "编辑模式（当前编辑器具备编辑能力）" }
-              : { label: "编辑", value: "edit", disabled: true, disabledTitle: "未安装可编辑 ." + ext.replace(/^\./, "") + " 的扩展" },
+              ? { label: t("编辑"), value: "edit", title: t("编辑模式（当前编辑器具备编辑能力）") }
+              : { label: t("编辑"), value: "edit", disabled: true, disabledTitle: t("未安装可编辑 .{ext} 的扩展", { ext: ext.replace(/^\./, "") }) },
           ],
           value: capability,
           onChange: (v: string) => routeCapability(v as EditorCapability),
         }}
         openWith={{ items: openWithItems, onPick: (id) => (window as any).__aitiEditor.setActiveProvider(filePath, id), onSetDefault: (id) => (window as any).__aitiEditor.setActiveProvider(filePath, id, { makeDefault: true }) }}
         onMention={actions.doMention}
-        mentionTitle={"提及文件——将当前文件写入聊天输入框"}
+        mentionTitle={t("提及文件——将当前文件写入聊天输入框")}
         onMentionNewSession={actions.doMentionNewSession}
         onFileInfo={actions.doFileInfo}
         downloadBtn={!!actions.doDownload}
@@ -262,14 +262,14 @@ export function ThirdPartyProviderHost(props: {
         <div ref={containerRef} style={{ position: "absolute", inset: 0, overflow: "hidden" }} />
         {hostErr && (
           <div style={{ position: "absolute", inset: 0, zIndex: 300, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, background: "var(--bg,#fff)", color: "var(--danger, #f87171)", fontSize: 13, padding: 16, textAlign: "center" }}>
-            <div>{"编辑器渲染失败"}<br />{hostErr}</div>
+            <div>{t("编辑器渲染失败")}<br />{hostErr}</div>
             {chain.length > 1 && (
               <button type="button" onClick={() => {
                 const w = (window as any).__aitiEditor;
                 const next = chain.find((p) => p.id !== provider.id);
-                if (next) { w.setActiveProvider(filePath, next.id); showToast("ok", "已切换到 " + (next.displayName || next.id)); }
+                if (next) { w.setActiveProvider(filePath, next.id); showToast("ok", t("已切换到 {name}", { name: t(next.displayName || next.id) })); }
               }} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px", border: "1px solid var(--border,#d0d0d0)", borderRadius: 7, cursor: "pointer", background: "var(--bg-selected,#eef2ff)", color: "var(--text,#1a1a1a)", fontSize: 11, fontWeight: 500, fontFamily: "inherit" }}>
-                尝试其他编辑器
+                {t("尝试其他编辑器")}
               </button>
             )}
           </div>

@@ -507,15 +507,11 @@
        * Options area: vertical full-width list (long copy wraps without squeezing) + number badges (1/2/3…, matching keyboard shortcuts 1-9)
        * Semantic colors: primary action (yes/confirm/I'm here) green gradient; negative/cancel red text with light-red hover; "none of these fit" dashed gray */
       .dbg-ask-prompt { white-space: pre-wrap; font-size: 15px; font-weight: 600; color: #f8fafc; line-height: 1.7; word-break: break-word; background: rgba(96,165,250,.08); border-left: 3px solid #60a5fa; border-radius: 6px; padding: 10px 74px 10px 12px; margin-bottom: 10px; }
-      /* Copyable message areas: ask prompt keeps a floating "📋 Copy" button top-right (text also
-       * selectable); notify body is plain selectable text (one-click copy moved to the card header,
-       * so the body no longer reserves room for a floating button) */
+      /* Copyable message areas (user-select: text); one-click copy lives in the panel header
+       * (lucide copy button, same as the notify card) -- no floating body button anymore.
+       * .dbg-copyable .dbg-msg-copy CSS removed with it (keys stay in locales: aiwin/debug still use them). */
       .dbg-copyable { position: relative; user-select: text; -webkit-user-select: text; }
       .dbg-notify-body { white-space: pre-wrap; font-size: 14px; line-height: 1.7; color: #e5e7eb; word-break: break-word; overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; }
-      /* (0-2-0) overrides the padding/border/radius/font-size of .dbg-pick-body button (0-1-1) */
-      .dbg-copyable .dbg-msg-copy { position: absolute; top: 6px; right: 6px; border: 1px solid rgba(148,163,184,.35); background: rgba(15,23,42,.6); color: #cbd5e1; border-radius: 6px; padding: 3px 8px; font: inherit; font-size: 11px; line-height: 1.4; cursor: pointer; user-select: none; -webkit-user-select: none; }
-      .dbg-copyable .dbg-msg-copy:hover { background: rgba(59,130,246,.28); border-color: rgba(147,197,253,.6); color: #eff6ff; }
-      .dbg-copyable .dbg-msg-copy.dbg-msg-copy-ok { background: rgba(34,197,94,.22); border-color: rgba(74,222,128,.6); color: #bbf7d0; }
       .dbg-pick-body .dbg-ask-opt { display: flex; align-items: center; gap: 9px; width: 100%; min-width: 0; justify-content: flex-start; text-align: left; padding: 10px 12px; border-radius: 9px; background: rgba(255,255,255,.07); border: 1px solid rgba(148,163,184,.28); color: #eef2f7; transition: background .12s, border-color .12s; }
       .dbg-pick-body .dbg-ask-opt:hover { background: rgba(255,255,255,.13); border-color: rgba(165,180,252,.6); }
       .dbg-ask-num { flex: 0 0 auto; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 6px; background: rgba(99,102,241,.22); border: 1px solid rgba(129,140,248,.5); color: #c7d2fe; font-size: 12px; font-weight: 700; line-height: 1; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; }
@@ -4146,7 +4142,6 @@
     "✕ Can't handle now (tell AI why)": "✕ 现在无法处理（告诉 AI 原因）",
     "✕ Cancel": "✕ 取消",
     "✕ Clear": "✕ 清除",
-    "✕ Copy failed": "✕ 复制失败",
     "✕ Deny": "✕ 拒绝",
     "✕ Exited Inspector (picking closed on host and all iframes).": "✕ 已退出 Inspector（宿主与全部 iframe 点选已关闭）。",
     "✕ Session-tracked URL cleared — AI window fell back": "✕ 已清除会话追踪 URL——AI 窗已回退",
@@ -6429,28 +6424,9 @@
       } catch (e) {
       }
     };
-    function makeCopyableBlock(text, cls) {
-      var wrap = el("div", { class: cls + " dbg-copyable" });
-      wrap.appendChild(el("span", {}, [text]));
-      var btn = el("button", { class: "dbg-msg-copy", title: t("Copy all") }, [t("📋 Copy")]);
-      btn.addEventListener("click", function(e) {
-        e.stopPropagation();
-        var done = function(ok) {
-          btn.textContent = ok ? t("✓ Copied") : t("✕ Copy failed");
-          btn.classList.toggle("dbg-msg-copy-ok", !!ok);
-          setTimeout(function() {
-            btn.textContent = t("📋 Copy");
-            btn.classList.remove("dbg-msg-copy-ok");
-          }, 1200);
-        };
-        if (ctx.copyToClipboard) ctx.copyToClipboard(text, done);
-        else done(false);
-      });
-      wrap.appendChild(btn);
-      return wrap;
-    }
     ctx.NOTIFY = { timer: null, origTitle: document.title, audio: null };
-    ctx.notifyUser = function(title, body) {
+    ctx.notifyUser = function(title, body, opts) {
+      opts = opts || {};
       var shown = false;
       if ("Notification" in window) {
         if (Notification.permission === "granted") {
@@ -6475,15 +6451,15 @@
           }
         }
       }
-      if (!shown) {
+      if (!shown && !opts.noToastFallback) {
         try {
           ctx.showPickToast("🔔 " + title + (body ? "<br>" + body : ""), 6e3);
         } catch (e) {
         }
-        if (document.hidden) {
-          ctx.flashTitle("🔔 " + title);
-          ctx.beepAttention();
-        }
+      }
+      if (!shown && document.hidden) {
+        ctx.flashTitle("🔔 " + title);
+        ctx.beepAttention();
       }
     };
     ctx.flashTitle = function(prefix) {
@@ -6797,6 +6773,23 @@
       head.appendChild(timerSpan);
       head.appendChild(pauseBtn);
       head.appendChild(minBtn);
+      var copyBtn = el("button", { title: t("Copy all"), style: "padding:3px 7px" }, [elSvg(LUCIDE.copy, 13)]);
+      copyBtn.addEventListener("click", function(e) {
+        e.stopPropagation();
+        var done2 = function(ok) {
+          copyBtn.innerHTML = "";
+          copyBtn.appendChild(ok ? elSvg(LUCIDE.check, 13) : document.createTextNode("✕"));
+          copyBtn.style.color = ok ? "#4ade80" : "#f87171";
+          setTimeout(function() {
+            copyBtn.innerHTML = "";
+            copyBtn.appendChild(elSvg(LUCIDE.copy, 13));
+            copyBtn.style.color = "";
+          }, 1200);
+        };
+        if (ctx.copyToClipboard) ctx.copyToClipboard(it.prompt || "", done2);
+        else done2(false);
+      });
+      head.appendChild(copyBtn);
       var cancelHead = el("button", { title: t("Cancel (decline this request)"), style: "font-size:15px;font-weight:700;padding:2px 10px" }, ["✕"]);
       cancelHead.addEventListener("click", function() {
         finishAsk({ status: "rejected", reason: t("User cancelled") });
@@ -6804,7 +6797,9 @@
       head.appendChild(cancelHead);
       dialog.appendChild(head);
       var body = el("div", { class: "dbg-pick-body" });
-      body.appendChild(makeCopyableBlock(it.prompt || "", "dbg-ask-prompt"));
+      var promptBlock = el("div", { class: "dbg-ask-prompt dbg-copyable" });
+      promptBlock.appendChild(el("span", {}, [it.prompt || ""]));
+      body.appendChild(promptBlock);
       minBtn.addEventListener("click", function() {
         var hidden = body.style.display === "none";
         body.style.display = hidden ? "" : "none";
@@ -7255,7 +7250,7 @@
       if (itKind === "notify") {
         if (ctx.lastNotifyId === payload.requestId) return;
         ctx.lastNotifyId = payload.requestId;
-        ctx.notifyUser(it.title || t("🤖 AI has a message"), it.body || "");
+        ctx.notifyUser(it.title || t("🤖 AI has a message"), it.body || "", { noToastFallback: true });
         ctx.showNotifyPanel(payload.requestId, it);
         return;
       }

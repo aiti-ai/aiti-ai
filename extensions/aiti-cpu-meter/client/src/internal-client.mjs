@@ -19,7 +19,7 @@ import { createMeter, ICON_AI } from "./core.mjs";
 import { extDisplayName, primeExtRegistry } from "../../../_shared/ext-display-names";
 
 export default function register(ctx) {
-  primeExtRegistry((p) => ctx.apiUrl ? ctx.apiUrl(p) : p); // 自述名 registry（无中心表）
+  primeExtRegistry((p) => ctx.apiUrl ? ctx.apiUrl(p) : p); // self-description registry (no central table)
   if (typeof document === "undefined") return;
 
   const INJECT_FLAG = "data-aiti-cpu-meter-inject";

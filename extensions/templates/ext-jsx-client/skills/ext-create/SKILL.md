@@ -1,8 +1,11 @@
 ---
 name: ext-create
 title: 用本模板创建新扩展
+title.en: "Create a new extension from this template"
 placeholder: 描述你想创建的扩展（如：创建一个在会话顶栏显示服务器状态的扩展）…
+placeholder.en: "Describe the extension to create (e.g. one that shows server status in the session toolbar)…"
 summary: 完整创建流程——复制模板、改 index.ts/vite.config、写 client 组件、构建、部署、生效
+summary.en: "The full creation flow — copy the template, edit index.ts/vite.config, write client components, build, deploy, verify"
 ---
 
 # ext-create · 用 ext-jsx-client 模板创建新扩展

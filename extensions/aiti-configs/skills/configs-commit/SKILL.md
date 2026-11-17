@@ -1,8 +1,11 @@
 ---
 name: configs-commit
 title: AI 帮我提交配置
+title.en: "AI: commit configs"
 placeholder: 要提交哪些变更？（缺省全部）…
+placeholder.en: "Which changes to commit? (all by default)…"
 summary: 先看变更（含拦截明细），确认无敏感/超大文件后提交配置仓
+summary.en: "Review changes (with interception details), confirm no sensitive/oversized files, then commit the config repo"
 outputs:
   format: text
 action:

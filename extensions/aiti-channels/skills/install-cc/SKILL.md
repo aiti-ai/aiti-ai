@@ -1,8 +1,11 @@
 ---
 name: install-cc
 title: AI 帮我安装 / 更新 cc-connect
+title.en: "AI: install/update cc-connect"
 placeholder: 安装/更新 cc-connect（如：看看有没有新版，有就更新）
+placeholder.en: "Install/update cc-connect (e.g. check for a new version and update if any)"
 summary: 检测当前/最新版本，安装或更新 cc-connect 二进制（justget 多源竞速 + gitee 镜像）
+summary.en: "Detect current/latest version, install or update the cc-connect binary (justget multi-mirror racing + gitee mirror)"
 outputs:
   format: json-obj
   schema:

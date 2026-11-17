@@ -5,7 +5,7 @@
  * 数据刷新（ETag/304）、tag 动作（乐观锁 409 重试）、归档动作、pending tags 持久化。
  */
 
-import { useState, useEffect, apiUrl, getExtService } from "./host-shim";
+import { useState, useEffect, apiUrl, getExtService, t } from "./host-shim";
 import { present as presentDock, presentState, openFloat, closePanel } from "../../../_shared/ext-float-dock-lite";
 import { dedupeFetch } from "../../../_shared/dedupe-fetch";
 import { decodeSessionsPayload, decodeArchivedPayload, decodeRowV2 } from "../../server/payload.ts";
@@ -137,45 +137,168 @@ function reconcileLocalNames(scope: "full" | "scoped" = "full"): void {
   for (const id of [...localNameOverrides.keys()]) if (!seen.has(id)) localNameOverrides.delete(id);
 }
 
-/* ── 行移除操作进行中跟踪（置灰标注，2026-09）──────────────
- * 移除类操作（归档/彻底删除/从列表移除，含恢复——恢复也是把行移出归档视图）
- * 后端动作 + 列表刷新（refreshSessions）较慢：操作执行即标记该行 pending（带桶：
- * live=从当前 live 视图移除 / archived=从归档视图移除），渲染层把对应条目置灰 +
- * 禁点，让用户知道正在处理、防重复点击；刷新落地（条目已移出所在桶）自动清除，
- * 失败由调用方 clear 恢复样式。模块级跨组件共享（面板行/归档弹层/批量对话框/归档
- * 查看器），订阅模式同 sharedFilter（Set 变更不触发 store.emit，须单独通知）。 */
-const pendingRemovals = new Map<string, "live" | "archived">();
+/* ── Optimistic hiding for row-removal operations (2026-11-29 upgrade; supersedes the
+ * 2026-09 gray-out variant) ──────────────
+ * Removal-type operations (archive / hard delete / remove from list / real archive, incl.
+ * restore — restoring also moves rows out of the archive view) have a slow backend action +
+ * list refresh (refreshSessions) (large-file brotli compression takes seconds to tens of
+ * seconds + archive forces a full index rescan): the moment the operation fires, the row is
+ * marked pending (with bucket: live = row currently in the live view / archived = row currently
+ * in the archive view) and the render layer simply does not render it — the row disappears
+ * instantly on click (optimistic removal) while the backend grinds away; on failure the caller
+ * clear() rolls back (row restored) + a toast reports the error.
+ *
+ * Anti-flicker: the marker is pruned by prunePendingRemovals only when, after a list refresh
+ * has landed, the row has left its store bucket — an in-flight stale response still sees the
+ * row in the store, so the marker stays and the row stays hidden (same idea as
+ * localNameOverrides' "in-flight responses never overwrite optimistic values"); the store
+ * arrays are never mutated (rollback is free).
+ *
+ * TTL fuse 30s (PENDING_TTL_MS): a hung request (network drop / stuck proxy) must not make the
+ * row vanish forever — on expiry the marker auto-clears, the row reappears + a toast notes the
+ * backend is still processing; when the backend later finishes, the refresh landing converges
+ * naturally. One-shot setTimeout, not polling (red-line compliant).
+ *
+ * Shared module-level across components (panel rows / archive overlay / batch dialog / archive
+ * viewer / dock rows); subscription works like sharedFilter (Map mutations don't trigger
+ * store.emit, so a separate notification is required). */
+const PENDING_TTL_MS = 30_000;
+const pendingRemovals = new Map<string, { bucket: "live" | "archived"; at: number }>();
 const pendingRemovalSubs = new Set<() => void>();
+const pendingTtlTimers = new Map<string, ReturnType<typeof setTimeout>>();
 function notifyPendingRemovals() { for (const l of pendingRemovalSubs) l(); }
+function disarmPendingTtl(id: string) {
+  const t = pendingTtlTimers.get(id);
+  if (t) { clearTimeout(t); pendingTtlTimers.delete(id); }
+}
+  /** TTL expiry notice: no static import (the test-isolation mirror lacks toast/react); goes
+ *  straight through the host pi-web.toast service (globally registered by the single renderer;
+ *  silent on old hosts without the service — the notice is just sugar). */
+function toastSlowNotice(): void {
+  try {
+    const host = getExtService("pi-web.toast") as { show?: (text: string, o?: { ms?: number }) => unknown } | undefined;
+    host?.show?.(t("sm.optSlow") ?? "操作仍在后台处理，行已恢复显示；完成后列表会自动刷新", { ms: 5000 });
+  } catch { /* non-DOM */ }
+}
+function armPendingTtl(id: string) {
+  disarmPendingTtl(id);
+  pendingTtlTimers.set(id, setTimeout(() => {
+    pendingTtlTimers.delete(id);
+    const hadP = pendingRemovals.delete(id);
+    const hadM = optimisticMoved.delete(id);
+    if (hadP || hadM) {
+      notifyPendingRemovals();
+      toastSlowNotice();
+    }
+  }, PENDING_TTL_MS));
+}
 export function markPendingRemoval(id: string, bucket: "live" | "archived") {
-  pendingRemovals.set(id, bucket);
+  const key = String(id);
+  pendingRemovals.set(key, { bucket, at: Date.now() });
+  armPendingTtl(key);
   notifyPendingRemovals();
 }
 export function clearPendingRemoval(id: string) {
-  if (pendingRemovals.delete(id)) notifyPendingRemovals();
+  if (pendingRemovals.delete(id)) {
+    if (!optimisticMoved.has(String(id))) disarmPendingTtl(String(id));
+    notifyPendingRemovals();
+  }
 }
-export function pendingRemovalOf(id: string): "live" | "archived" | undefined {
-  return pendingRemovals.get(id);
+function pendingRemovalBucketOf(id: string): "live" | "archived" | undefined {
+  return pendingRemovals.get(String(id))?.bucket;
 }
 export function isPendingRemoval(id: string, bucket?: "live" | "archived"): boolean {
-  if (!bucket) return pendingRemovals.has(id);
-  return pendingRemovals.get(id) === bucket;
+  const b = pendingRemovalBucketOf(id);
+  if (!bucket) return b !== undefined;
+  return b === bucket;
 }
 export function subscribePendingRemovals(l: () => void) {
   pendingRemovalSubs.add(l);
   return () => { pendingRemovalSubs.delete(l); };
 }
-/** 列表刷新落地后调用：条目已移出标记所在桶 → 该 pending 已完成（清除，防残留）。
- *  bucket==live 只看 live 桶：归档/从列表移除把行移进 archived 桶，但 live 视图已无
- *  此行 → 完成（归档行新出现不受 live 标记影响）；bucket==archived 看 archived 桶。 */
+
+/* ── Optimistic bucket-move rows (2026-11-29): archive/restore = a row moving between views,
+ * a snapshot row steps in immediately ──
+ * Archive-type ops: the live row hides (pendingRemovals live) + the archive group shows the
+ * snapshot row instantly ({...row, archived:true}); restore-type (restore/reopen): the archived
+ * row hides + the live list shows the snapshot row instantly. The render layer merges optimistic
+ * rows into the list deduped by id (server rows win).
+ * Landing alignment: once a refresh lands and the row has appeared in the server's target bucket,
+ * prunePendingRemovals also clears the optimistic row (the real row takes over rendering, avoiding
+ * duplicates); on failure clearOptimisticMove rolls back. TTL shares the same 30s fuse with
+ * pendingRemovals. */
+const optimisticMoved = new Map<string, { row: Record<string, unknown>; to: "live" | "archived"; at: number }>();
+export function markOptimisticMove(id: string, row: Record<string, unknown>, to: "live" | "archived") {
+  const key = String(id);
+  optimisticMoved.set(key, { row, to, at: Date.now() });
+  armPendingTtl(key);
+  notifyPendingRemovals();
+}
+export function clearOptimisticMove(id: string) {
+  if (optimisticMoved.delete(String(id))) {
+    if (!pendingRemovals.has(String(id))) disarmPendingTtl(String(id));
+    notifyPendingRemovals();
+  }
+}
+/** For render-layer merging: optimistic bucket-move snapshot rows of a target view (archived flag already flipped). */
+export function optimisticMovedRows(to: "live" | "archived"): Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = [];
+  for (const [id, m] of optimisticMoved) if (m.to === to) out.push({ ...m.row, id, archived: to === "archived" });
+  return out;
+}
+/** Render-layer predicate: whether a row in a server bucket should be optimistically hidden
+ *  (by the row's own bucket; optimistic snapshot rows are exempt — they arrive via
+ *  optimisticMovedRows and never sit in a server bucket). */
+export function hidePendingRow(row: { id?: unknown; archived?: boolean }): boolean {
+  const id = String(row?.id ?? "");
+  if (!id) return false;
+  if (optimisticMoved.has(id)) return true;
+  const b = pendingRemovalBucketOf(id);
+  return b !== undefined && b === (row?.archived ? "archived" : "live");
+}
+
+/** Unified entry for optimistic removal: hides the row immediately (optionally with an optimistic
+ *  bucket-move snapshot) and returns a rollback function. On success the caller proceeds with
+ *  refreshListChannels as usual (the landing prune clears markers automatically); on failure call
+ *  rollback() to restore all rows + the caller shows the error (toast/alert/overlay err).
+ *  entry.bucket = the row's current view (live = live list row / archived = archive view row);
+ *  entry.row+entry.to = optimistic bucket move (archive to="archived" / restore to="live"). */
+export interface OptimisticEntry {
+  id: string;
+  bucket: "live" | "archived";
+  row?: Record<string, unknown>;
+  to?: "live" | "archived";
+}
+export function beginOptimisticRemoval(entries: OptimisticEntry[]): () => void {
+  for (const e of entries) {
+    markPendingRemoval(e.id, e.bucket);
+    if (e.to && e.row) markOptimisticMove(e.id, e.row, e.to);
+  }
+  return () => {
+    for (const e of entries) { clearPendingRemoval(e.id); clearOptimisticMove(e.id); }
+  };
+}
+
+/** Called after a list refresh lands: an entry that has left its marker's bucket → that pending is
+ *  done (cleared, no residue). bucket==live only checks the live bucket: archive / remove-from-list
+ *  moves the row into the archived bucket while the live view no longer has it → done (a newly
+ *  appearing archived row is unaffected by live markers); bucket==archived checks the archived
+ *  bucket. Optimistic bucket-move rows align in the same pass: already in the server's target
+ *  bucket → the real row takes over rendering, snapshot cleared (an in-flight stale response
+ *  landing without the row in the target bucket → not cleared; the row stays optimistic until
+ *  landing is confirmed). */
 function prunePendingRemovals() {
-  if (!pendingRemovals.size) return;
+  if (!pendingRemovals.size && !optimisticMoved.size) return;
   const liveIds = new Set((store.sessions ?? []).map((r) => String(r.id)));
   const archIds = new Set((store.archived ?? []).map((r) => String(r.id)));
   let changed = false;
-  for (const [id, bucket] of [...pendingRemovals]) {
-    const gone = bucket === "live" ? !liveIds.has(id) : !archIds.has(id);
-    if (gone) { pendingRemovals.delete(id); changed = true; }
+  for (const [id, v] of [...pendingRemovals]) {
+    const gone = v.bucket === "live" ? !liveIds.has(id) : !archIds.has(id);
+    if (gone) { pendingRemovals.delete(id); if (!optimisticMoved.has(id)) disarmPendingTtl(id); changed = true; }
+  }
+  for (const [id, m] of [...optimisticMoved]) {
+    const present = m.to === "live" ? liveIds.has(id) : archIds.has(id);
+    if (present) { optimisticMoved.delete(id); if (!pendingRemovals.has(id)) disarmPendingTtl(id); changed = true; }
   }
   if (changed) notifyPendingRemovals();
 }
@@ -1282,20 +1405,22 @@ export async function detectSessionCwd(id: string): Promise<SessionCwdResult | n
 }
 
 /** 归档一批会话（workspace 删除时「全部归档」选项；server 拒绝运行中 id）。
- *  skipped = 被守卫跳过（打开/运行中/未索引）的会话数——提示区分「部分跳过」而非笼统失败。 */
-export async function archiveBatchSession(ids: string[]): Promise<{ ok: boolean; archived: number; skipped: number }> {
+ *  skipped = sessions skipped by guards (open / running / not indexed), skippedIds = the details
+ *  (for per-row rollback of optimistic removal — 2026-11-29: skipped rows were not archived and
+ *  must be shown again). */
+export async function archiveBatchSession(ids: string[]): Promise<{ ok: boolean; archived: number; skipped: number; skippedIds: string[] }> {
   try {
     const res = await fetch(apiUrl("/api/extensions/session-manager/archive/run"), {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ ids }),
     });
     const d = await res.json().catch(() => ({}));
-    if (!res.ok) return { ok: false, archived: 0, skipped: 0 };
+    if (!res.ok) return { ok: false, archived: 0, skipped: 0, skippedIds: [] };
     refreshListChannels({ force: true });
-    const skipped = Array.isArray((d as { skippedIds?: string[] }).skippedIds) ? (d as { skippedIds: string[] }).skippedIds.length : 0;
-    return { ok: true, archived: (d as { archived?: number }).archived ?? 0, skipped };
+    const skippedIds = Array.isArray((d as { skippedIds?: string[] }).skippedIds) ? (d as { skippedIds: string[] }).skippedIds : [];
+    return { ok: true, archived: (d as { archived?: number }).archived ?? 0, skipped: skippedIds.length, skippedIds };
   } catch {
-    return { ok: false, archived: 0, skipped: 0 };
+    return { ok: false, archived: 0, skipped: 0, skippedIds: [] };
   }
 }
 

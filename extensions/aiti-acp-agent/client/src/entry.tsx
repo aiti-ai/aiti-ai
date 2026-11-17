@@ -15,6 +15,7 @@
 import { __setCtx } from "./host-shim";
 import { ACP_KEY, setDialogOpen, acpDefaultZone } from "./common";
 import { usePresent, isSidebarDockState, seedDockDefault, declareDockZones } from "../../../_shared/ext-float-dock-lite";
+import { dockIconDecl } from "../../../_shared/dock-icons";
 import { lazyExtView, createLazyModule } from "../../../_shared/ext-lazy";
 
 // 重模块单例：面板三面（float/right/left）与命令式入口共享一次 import
@@ -68,7 +69,7 @@ export default function register(ctx: Record<string, unknown>) {
   // zone 规范值 sidebar:<key>（v4；旧 sidebar-explorer 兼容读）
   seedDockDefault(ACP_KEY, acpDefaultZone());
   declareDockZones(ACP_KEY, [acpDefaultZone(), "right-panel"], acpDefaultZone());
-  ctx.registerItems?.("rightFileDock", [{ id: "manage", render: AcpDockRightSlot, meta: { title: "ACP" } }]);
+  ctx.registerItems?.("rightFileDock", [{ id: "manage", render: AcpDockRightSlot, meta: { title: "ACP", icon: dockIconDecl("plug") } }]);
   ctx.registerItems?.("sidebarExplorerDock", [{ id: "manage", render: AcpDockLeftSlot, meta: { title: "ACP", priority: 3 } }]);
 
   console.log("[aiti-acp-agent] client 已注册（薄壳 + 懒弹窗 chunk）");

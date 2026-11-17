@@ -107,6 +107,31 @@ function FeatRow(props: FeatRowProps) {
 export function AsrPanelSlot() { return renderAsrPanel("float"); }
 export function AsrDockRight() { return renderAsrPanel("right"); }
 
+/** Mobile composited-layer paint-loss self-heal (confirmed 2026-11-16: "blank panel on small screens"):
+ *  on some Chromium mobile kernels (verified on the Huawei browser), the right-panel dock face
+ *  occasionally hits a composited-layer dropped frame where DOM/layout/hit-test are all normal but
+ *  the paint texture was never committed (a forced relayout via viewport toggle recovers). After
+ *  mount, use a double-rAF to nudge a translateZ(0) layer promotion and remove it again, forcing
+ *  the compositor to re-rasterize and commit that subtree; only in the embedded face (the float
+ *  face is already its own composited layer and has no such issue). No polling, one-shot, negligible cost. */
+function useForceLayerRepaint(enabled: boolean): (el: HTMLElement | null) => void {
+  const elRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        const el = elRef.current;
+        if (!el) return;
+        el.style.transform = "translateZ(0)";
+        requestAnimationFrame(() => { if (el.style.transform === "translateZ(0)") el.style.transform = ""; });
+      });
+    });
+    return () => { cancelAnimationFrame(raf1); cancelAnimationFrame(raf2); };
+  }, [enabled]);
+  return (el) => { elRef.current = el; };
+}
+
 // ── 引擎视图类型（GET /asr/config 响应；key 值不回传，只有 configured/tail）──
 interface AsrProvField { key: string; label: string; secret?: boolean; placeholder?: string }
 interface AsrProvView {
@@ -507,6 +532,8 @@ function renderAsrPanel(face?: string) {
   const st0 = usePresent(ASR_KEY);
   // 头行按钮状态（内容上报）；hook 必须在早退之前调用（hook 顺序稳定）
   const hs = useDockHeaderStateOf(ASR_KEY);
+  // mobile composited-layer dropped-frame self-heal (embedded face only; see the hook comment)
+  const repaintRef = useForceLayerRepaint(face !== "float");
   // 三面（v4 + 本批 P1）：float=浮窗 / right=右栏 tab / left=左栏区块（sidebar 族任意落位）
   const open = face === "float" ? st0 === "floating"
     : face === "right" ? st0 === "docked:right-panel"
@@ -804,7 +831,7 @@ function renderAsrPanel(face?: string) {
     );
   }
   const asrInner = (
-    <div style={{ position: "relative", display: "flex", flexDirection: "column", minHeight: 0, height: "100%", background: "var(--bg,#fff)", color: "var(--text,#1a1a1a)", fontSize: 13 }}>
+    <div ref={repaintRef} style={{ position: "relative", display: "flex", flexDirection: "column", minHeight: 0, height: "100%", background: "var(--bg,#fff)", color: "var(--text,#1a1a1a)", fontSize: 13 }}>
       {asrContent}
     </div>
   );
@@ -821,7 +848,7 @@ function renderAsrPanel(face?: string) {
     { id: "refresh", title: "刷新", icon: <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></svg>, disabled: hs.loading === true, visibility: "always", onClick: () => { requestDockCommand(ASR_KEY, "refresh"); } },
   ];
   return (
-    <DockBody itemKey={ASR_KEY} title="语音识别引擎" chrome="section" kind="dockable"
+    <DockBody itemKey={ASR_KEY} title="语音识别引擎" icon="mic" chrome="section" kind="dockable"
       zones={asrZones} defaultZone={sidebarZoneOf(ASR_KEY)}
       headerActions={actions}>
       {asrInner}

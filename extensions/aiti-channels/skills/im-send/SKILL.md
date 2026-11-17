@@ -1,8 +1,11 @@
 ---
 name: im-send
 title: AI 帮我发 IM 消息（钉钉/飞书/微信…）
+title.en: "AI: send an IM message (DingTalk/Feishu/WeChat…)"
 placeholder: 想给谁发什么（如：给 autoai 发钉钉消息说“部署已完成”）
+placeholder.en: "Send what to whom (e.g. tell autoai on DingTalk that deployment is done)"
 summary: 经 cc-connect 向 IM 渠道发文本消息，并自动记录消息日志
+summary.en: "Send a text message over an IM channel via cc-connect, auto-logged to the message log"
 outputs:
   format: json-obj
   schema:
