@@ -399,7 +399,7 @@ function runShim(opts, env = {}) {
 }
 
 /** 除装载 ready 外的全部上报（「什么都不发」类断言用）。 */
-const nonReady = (h) => h.msgs.filter((m) => m.type !== PREVIEW_MSG.ready);
+const nonReady = (h) => h.msgs.filter((m) => m.type !== PREVIEW_MSG.ready && m.type !== PREVIEW_MSG.dismiss); // dismiss: every click reports (selection-card dismissal relay)
 
 test("shim：装载完成上报 ready（带文档标题，供父页面包屑）", () => {
   const h = runShim({ base: PREVIEW_BASE, docRel: "" });
@@ -500,7 +500,7 @@ test("shim：页内锚点与 mailto 完全放行（ preventDefault 会把 TOC �
   const h = runShim({ base: PREVIEW_BASE, docRel: "" });
   assert.equal(h.click(h.anchor("#sec-1", PREVIEW_BASE + "index.html#sec-1")), false);
   assert.equal(h.click(h.anchor("mailto:a@b.c", "mailto:a@b.c")), false);
-  assert.equal(nonReady(h).length, 0, "锚点/mailto 不产生任何上报（ready 除外）");
+  assert.equal(nonReady(h).length, 0, "锚点/mailto 不产生 open/report 上报（ready/dismiss 除外——dismiss 是每次点击的关弹层中继）");
 });
 
 test("shim：非链接点击与无 href 元素不报错", () => {
