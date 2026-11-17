@@ -288,7 +288,7 @@ export function detectPrefix(m) {
 
 export function registerCustomAgentClient(ctx, config) {
 	const h = (...a) => ctx.h(...a);
-	// i18n：宿主 ctx.t（index.ts ui.i18n 词条，zh/en 双表）；旧宿主缺席时回退裸 key（样板 agent-manager 同款）
+	// i18n: host ctx.t (index.ts ui.i18n entries, zh/en tables); falls back to the bare key on old hosts (same pattern as agent-manager)
 	const t = (k, p2) => { const fn = ctx.t; return typeof fn === "function" ? fn(k, p2) : k; };
 	const useState = (v) => ctx.useState(v);
 	const useEffect = (fn, deps) => ctx.useEffect(fn, deps);
