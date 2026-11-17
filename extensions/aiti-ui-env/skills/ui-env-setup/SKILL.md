@@ -1,7 +1,9 @@
 ---
 name: ui-env-setup
 title: AI 帮我选显示模式
+title.en: "AI: choose a display mode"
 placeholder: 描述你的场景（如：我在跑带界面的浏览器自动化，想从浏览器看）…
+placeholder.en: "Describe your scenario (e.g. I run browser automation with UI and want to view it from my browser)…"
 outputs:
   format: json-obj
   schema:
