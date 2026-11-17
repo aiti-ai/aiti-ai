@@ -8,7 +8,7 @@
  *   SuggestHost      收藏联想宿主（键盘/输入监听；处理器由 initSuggest 注入）
  */
 import { useState, useEffect, useRef } from "react";
-import { apiUrl, extSvc } from "./host-shim";
+import { apiUrl, extSvc, t } from "./host-shim";
 import {
   AC, BARP, isChatInput, anchorMoved,
   acFeatures, acReschedule, acHandleKey, acClearGhost, acClearTimer, acAbort,
@@ -468,8 +468,8 @@ export function VoiceAffixButton() {
       type="button"
       id="aiti-voice-affix"
       data-composer-affix="1"
-      aria-label="按住说话"
-      title="按住说话"
+      aria-label={t("asr.holdToTalk")}
+      title={t("asr.holdToTalk")}
       style={{
         width: 32,
         height: 32,
