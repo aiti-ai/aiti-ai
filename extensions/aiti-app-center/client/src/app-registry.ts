@@ -37,7 +37,7 @@ export interface AppDescriptor {
   /** 声明式图标（ExtUiItemIcon 三形态：{svg} / emoji 字符串 / "icons/*.svg" 相对路径）。 */
   icon?: string | { svg: string };
   keywords: string[];
-  /** 拼音索引（源自 extman server /status 富化："全拼连写 首字母"；搜索 hay 用）。 */
+  /** Pinyin index (from the extman server /status enrichment: "full-pinyin concatenated + initials"; used as search hay). */
   pinyin?: string;
   run: () => void;
   /** toggle 卡当前态（boolean feature）。 */
@@ -181,10 +181,10 @@ export function pinnedRowsNeeded(pinnedCount: number, contentWidth: number): num
   return Math.floor(pinnedCount / pinnedGridColumns(contentWidth));
 }
 
-/** 搜索匹配（extman 同款宽松度，2026-11-15 对齐）：query 按空白分词逐词子串命中（AND）
- *  + 连写宽松（qNorm 去空格，fuwu suidao→fuwusuidao）+ 错字容忍（typo-search OSA 自适应阈值）。
- *  hay：label + extId + 双语展示名（中心表 en+zh，en 态也能中文词搜）+ extName + keywords + pinyin
- *  （拼音源自 extman server /status 富化，全拼连写+首字母）。 */
+/** Search matching (same looseness as extman, aligned 2026-11-15): query tokenized by whitespace, per-token substring hit (AND)
+ *  + concatenated looseness (qNorm strips spaces, fuwu suidao→fuwusuidao) + typo tolerance (typo-search OSA adaptive threshold).
+ *  hay: label + extId + bilingual display names (central table en+zh, so Chinese words work in en mode too) + extName + keywords + pinyin
+ *  (pinyin from the extman server /status enrichment, full-pinyin concatenated + initials). */
 export function matchApp(app: { label: string; extId: string; extName?: string; keywords?: string[]; pinyin?: string }, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
@@ -306,7 +306,7 @@ export function buildApps(input: {
   openPanel: (key: string) => void;
   /** UI locale（缺省现读 pi-locale）；locale 切换后由组件层重算触发刷新。 */
   locale?: string;
-  /** 拼音索引 map（extId → "全拼连写 首字母"；extman server /status 富化，缺席 = 无拼音搜索）。 */
+  /** Pinyin index map (extId → "full-pinyin concatenated + initials"; extman server /status enrichment, absent = no pinyin search). */
   pinyinMap?: Record<string, string>;
 }): AppDescriptor[] {
   const locale = input.locale ?? currentUiLocale();
