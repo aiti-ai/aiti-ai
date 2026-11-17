@@ -14,6 +14,7 @@ import { contextUrgency, CTX_BREATHE_CSS } from "@/lib/context-urgency";
 import type { ChatScrollPosition } from "@/lib/chat-scroll-position";
 import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
+import { renderExtItemIcon as renderExtItemIconShared } from "./ExtItemIcon";
 import { TabBody, type TabBodyCtx } from "./TabBody";
 import { DetachedTabWindow } from "./DetachedTabWindow";
 import { movePanelTab, orderPanelTabs } from "@/lib/panel-tab-order";
@@ -286,40 +287,7 @@ function notificationProjectLabel(session: SessionInfo | null): string {
  *  (24×24 viewBox, lucide line style) / emoji / an in-extension .svg file (CSS-mask).
  *  Shared by the "⋯" menu icon slot and declarative toolbar buttons (ExtToolbarIconButton). */
 function renderExtItemIcon(icon: NonNullable<ExtUiItemRegistered["meta"]>["icon"], extId?: string): React.ReactNode {
-  if (icon == null) return null;
-  if (typeof icon === "object" && "svg" in icon) {
-    return (
-      <svg
-        width={16}
-        height={16}
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={2}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden="true"
-        dangerouslySetInnerHTML={{ __html: icon.svg }}
-      />
-    );
-  }
-  if (typeof icon === "string" && icon.endsWith(".svg")) {
-    const url = apiUrl(`/api/extensions/${extId ?? ""}/assets/${icon}`);
-    return (
-      <span
-        aria-hidden
-        style={{
-          display: "inline-block", width: 16, height: 16, flexShrink: 0, verticalAlign: "middle",
-          background: "currentColor",
-          WebkitMaskImage: `url("${url}")`, maskImage: `url("${url}")`,
-          WebkitMaskRepeat: "no-repeat", maskRepeat: "no-repeat",
-          WebkitMaskPosition: "center", maskPosition: "center",
-          WebkitMaskSize: "contain", maskSize: "contain",
-        }}
-      />
-    );
-  }
-  return <span style={{ fontSize: 15, lineHeight: 1 }}>{String(icon)}</span>;
+  return renderExtItemIconShared(icon, extId);
 }
 
 /** Declarative toolbar button (extension registerItems supplies meta.icon +
@@ -1314,7 +1282,10 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     })),
     ...rightDockItems
       .filter((it) => dockPanelStates.get(it.id) === "docked:right-panel")
-      .map((it) => ({ id: `dock:${it.id}`, label: translateExtItemText(it.extId, it.meta?.title) || translateExtItemText(it.extId, it.meta?.label) || it.extId || it.id, filePath: "", kind: "dock" as const })),
+      .map((it) => ({ id: `dock:${it.id}`, label: translateExtItemText(it.extId, it.meta?.title) || translateExtItemText(it.extId, it.meta?.label) || it.extId || it.id, filePath: "", kind: "dock" as const,
+        // Semantic tab icon from the registering entry's meta.icon ({svg} / ".svg" path /
+        // emoji; TabBar renders it via renderExtItemIcon, generic grid glyph when absent).
+        icon: it.meta?.icon, extId: it.extId })),
     // [上游 #1129/#1469] 子代理工作 tab + side chat tab：panel 承载与 handleOpenSubagentTab 挂载同源
     ...agentTabs.map((tab) => {
       const session = tab.side ? sessionCatalog.find((item) => item.id === tab.sessionId) : undefined;
