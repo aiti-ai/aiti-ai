@@ -225,6 +225,11 @@ jobs:
     needs: archive
     runs-on: ubuntu-latest
     steps:
+      # shallow checkout — only to read releases/<tag>.md (notes body); no git history needed
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
       - uses: actions/download-artifact@v4
         with:
           pattern: archive-*
@@ -238,15 +243,64 @@ jobs:
           rm -f *.sha256
           cat checksums.txt
 
+      # Body = human-written releases/<tag>.md + fixed install/verify section +
+      # compare line. Falls back to GitHub auto-generated notes when the file
+      # is missing (tagged before the notes-file convention, or hotfix with
+      # --skip-notes) so the release never blocks on a missing draft.
+      - name: Assemble release notes
+        id: notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PREV=$(gh release list --repo "${{ github.repository }}" --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null || true)
+          if node scripts/assemble-release-notes.mjs \
+              --tag "${{ github.ref_name }}" \
+              --prev "$PREV" \
+              --out /tmp/notes-final.md; then
+            echo "mode=notes-file" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::releases/${{ github.ref_name }}.md missing — falling back to auto-generated notes (draft one with scripts/draft-release-notes.mjs before tagging)"
+            echo "mode=generate" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create release and upload assets
         env:
           GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}   # 本 job 无 checkout（无 .git），gh 需显式指仓
+          GH_REPO: ${{ github.repository }}   # checkout has no origin auth context; gh needs the explicit repo
         run: |
-          gh release create "${{ github.ref_name }}" \
-            --title "aiti-web ${{ github.ref_name }}" \
-            --generate-notes \
-            release-assets/*
+          ARGS=()
+          if [ "${{ steps.notes.outputs.mode }}" = "notes-file" ]; then
+            ARGS+=(--notes-file /tmp/notes-final.md)
+          else
+            ARGS+=(--generate-notes)
+          fi
+          # idempotent re-runs: edit the existing release instead of failing
+          if gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
+            gh release edit "${{ github.ref_name }}" "${ARGS[@]}"
+          else
+            gh release create "${{ github.ref_name }}" \
+              --title "aiti-web ${{ github.ref_name }}" \
+              "${ARGS[@]}" \
+              release-assets/*
+          fi
+
+  # Phase 2 consumer: aiti-docs sync-changelogs workflow pulls release bodies
+  # into the aiti.pw/changelogs page. Harmless 204 while that workflow is
+  # absent; guarded by continue-on-error so docs sync never blocks a release.
+  changelog-sync:
+    needs: release
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Notify aiti-docs (changelog-sync)
+        env:
+          AITI_DOCS_TOKEN: ${{ secrets.AITI_DOCS_TOKEN }}
+        run: |
+          curl -sS -o /dev/null -w "%{http_code}\n" -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $AITI_DOCS_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository_owner }}/aiti-docs/dispatches" \
+            -d '{"event_type":"changelog-sync","client_payload":{"tag":"${{ github.ref_name }}"}}'
 
   # Mirror the release into the Gitee repo — the fallback download channel the
   # installers and `pi-web update` use when GitHub is unreachable (CN networks).
