@@ -313,7 +313,7 @@ function AgentsManagerBody({ embedded }: { embedded?: boolean }) {
   // 编辑默认 "keep"（保持原样）——用户不主动改执行器就绝不重建 runner 块，
   // 块内未在表单呈现的字段（promptDelivery/capabilities/未来扩展）零丢失。
   const runnerCurrentLabel = (runner?: AgentDef["runner"]) => !runner || runner.type === "pi" ? t("内置 pi")
-    : runner.type === "external-job" ? `${t("pi-web 会话（")}${runner.backend || runner.options?.backend || "pi"}）`
+    : runner.type === "external-job" ? `${t("pi-web 会话（")}${runner.backend || runner.options?.backend || "pi"}${t("）")}`
     : `${t("sa.extCli")} ${runner.adapter}${runner.command ? `（${runner.command}）` : ""}`;
   const runnerState = (agent: AgentDef) => ({
     runnerKind: "keep",
@@ -368,7 +368,7 @@ function AgentsManagerBody({ embedded }: { embedded?: boolean }) {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }),
     });
     const d = await r.json();
-    setMsg(d?.ok ? `${name} 已由 pi-web 后端 ${d.backend} 接管（删除自定义可恢复 fork 直启）` : "❌ " + (d?.error || t("接管失败")));
+    setMsg(d?.ok ? `${name}${t(" 已由 pi-web 后端 ")}${d.backend}${t(" 接管（删除自定义可恢复 fork 直启）")}` : "❌ " + (d?.error || t("接管失败")));
     load();
   };
 
@@ -390,7 +390,7 @@ function AgentsManagerBody({ embedded }: { embedded?: boolean }) {
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderBottom: "1px solid var(--border)", userSelect: "none" }}>
-          <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>{editing === "new" ? t("新建 Agent") : `编辑 Agent · ${editing.name}`}</span>
+          <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>{editing === "new" ? t("新建 Agent") : `${t("编辑 Agent · ")}${editing.name}`}</span>
           <button title={t("关闭编辑")} onClick={() => { setEditing(null); setMsg(""); }} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, padding: 2 }}>✕</button>
         </div>
         <div style={{ flex: 1, overflowY: "auto", padding: "4px 14px 10px" }}>
@@ -400,7 +400,7 @@ function AgentsManagerBody({ embedded }: { embedded?: boolean }) {
           <input style={inputStyle} value={form.description} onChange={set("description")} placeholder={t("这个 agent 做什么")} />
           <label style={labelStyle}>{t("模型（可选，如 claude-haiku-4-5；留空继承父会话）")}</label>
           <input style={inputStyle} value={form.model} onChange={set("model")} placeholder={t("留空 = 继承父模型")} />
-          <label style={labelStyle}>{`${t("执行器（外部 CLI 或 pi-web 会话——决定 fork 用什么启动这个子代理）")}${form.runnerCurrent ? `　当前：${form.runnerCurrent}` : ""}`}</label>
+          <label style={labelStyle}>{`${t("执行器（外部 CLI 或 pi-web 会话——决定 fork 用什么启动这个子代理）")}${form.runnerCurrent ? `${t("　当前：")}${form.runnerCurrent}` : ""}`}</label>
           <div style={{ display: "flex", gap: 6 }}>
             <ConfigSelect
               value={form.runnerKind}
@@ -478,7 +478,7 @@ function AgentsManagerBody({ embedded }: { embedded?: boolean }) {
               return (
                 <button
                   disabled={!ready}
-                  title={ready ? `执行替换为 pi-web 后端 ${backend}${t("（同名覆盖，删除自定义即恢复 fork 直启）")}` : `pi-web 后端 ${backend || "?"} 未就绪`}
+                  title={ready ? `${t("执行替换为 pi-web 后端 ")}${backend}${t("（同名覆盖，删除自定义即恢复 fork 直启）")}` : `${t("pi-web 后端 ")}${backend || "?"}${t(" 未就绪")}`}
                   onClick={() => takeOver(a.name)}
                   style={{ background: ready ? "color-mix(in srgb, var(--ok, #10b981) 12%, transparent)" : "none", border: `1px solid ${ready ? "color-mix(in srgb, var(--ok, #10b981) 40%, transparent)" : "var(--border)"}`, color: ready ? "var(--ok, #10b981)" : "var(--text-dim)", borderRadius: 4, padding: "1px 8px", fontSize: 11, cursor: ready ? "pointer" : "not-allowed", flexShrink: 0, opacity: ready ? 1 : 0.55 }}
                 >
@@ -615,7 +615,7 @@ function ConcurrencyDialog() {
         </div>
         <div style={{ flex: 1, overflowY: "auto", padding: "8px 14px", minHeight: 0 }}>
           {data?.readable === false ? (
-            <div style={{ fontSize: 12, color: "var(--danger, #ef4444)", lineHeight: 1.6 }}>{`${t("配置文件损坏，拒绝读写：")}${data.path}（${data.error}${t("）——先手工修复后再试")}`}</div>
+            <div style={{ fontSize: 12, color: "var(--danger, #ef4444)", lineHeight: 1.6 }}>{`${t("配置文件损坏，拒绝读写：")}${data.path}${t("（")}${data.error}${t("）——先手工修复后再试")}`}</div>
           ) : (
             <>
               <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.5, marginBottom: 8 }}>
@@ -661,10 +661,10 @@ function ConcurrencyDialog() {
                 const s = String(vals[m.key] ?? "").trim();
                 if (s === "") continue;
                 if (m.type === "capacitySlotMs") {
-                  if (s !== "false" && !Number.isFinite(Number(s))) { setMsg(`「${m.label}${t("」请输入分钟数或 false")}`); return; }
+                  if (s !== "false" && !Number.isFinite(Number(s))) { setMsg(`${t("「")}${m.label}${t("」请输入分钟数或 false")}`); return; }
                   config[m.key] = s === "false" ? false : Number(s) * 60000;
                 } else {
-                  if (!Number.isFinite(Number(s))) { setMsg(`「${m.label}${t("」请输入数字")}`); return; }
+                  if (!Number.isFinite(Number(s))) { setMsg(`${t("「")}${m.label}${t("」请输入数字")}`); return; }
                   config[m.key] = Number(s);
                 }
               }
@@ -1002,7 +1002,7 @@ function InspectorDialog() {
             <b>{t("状态:")}</b>
             <span style={{ color, display: "flex" }}>{statusIcon(run.status as RunStatus)}</span>
             {run.status}
-            {isForkDetail && run.pidAlive != null ? `（runner pid ${run.pid}${run.pidAlive ? t(" 存活") : t(" 已退出")}）` : ""}
+            {isForkDetail && run.pidAlive != null ? `${t("（runner pid ")}${run.pid}${run.pidAlive ? t(" 存活") : t(" 已退出")}${t("）")}` : ""}
           </div>
           {run.cwd ? <div><b>{"Workspace: "}</b><span title={String(run.cwd)} style={{ fontFamily: "var(--font-mono, ui-monospace, monospace)", fontSize: 11 }}>{String(run.cwd)}</span></div> : null}
           <div><b>{t("耗时: ")}</b>{fmtDuration(run.durationMs as number)}</div>
@@ -1047,7 +1047,7 @@ function InspectorDialog() {
             const bridge = (run as { bridge?: { attached?: boolean; error?: string; state?: { isStreaming?: boolean; model?: { provider?: string; id?: string }; pendingMessageCount?: number }; recentMessages?: { role: string; text: string }[] } }).bridge!;
             return bridge.attached ? (
               <div style={{ marginTop: 4, padding: "6px 8px", background: "color-mix(in srgb, var(--ok, #10b981) 8%, transparent)", borderRadius: 6, fontSize: 11 }}>
-                <div style={{ color: "var(--ok, #10b981)" }}>{`🟢 /web RPC 已连接 · ${bridge.state?.isStreaming ? t("流式执行中") : t("空闲")} · ${bridge.state?.model?.provider ?? ""}/${bridge.state?.model?.id ?? ""} · 待投递 ${bridge.state?.pendingMessageCount ?? 0}`}</div>
+                <div style={{ color: "var(--ok, #10b981)" }}>{`${t("🟢 /web RPC 已连接 · ")}${bridge.state?.isStreaming ? t("流式执行中") : t("空闲")} · ${bridge.state?.model?.provider ?? ""}/${bridge.state?.model?.id ?? ""} · ${t("待投递 ")}${bridge.state?.pendingMessageCount ?? 0}`}</div>
                 {(bridge.recentMessages || []).slice(-3).map((m, i) => (
                   <div key={i} style={{ color: "var(--text-muted)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{`[${m.role}] ${m.text.slice(0, 120)}`}</div>
                 ))}
