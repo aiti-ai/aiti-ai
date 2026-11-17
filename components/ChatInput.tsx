@@ -262,6 +262,12 @@ interface Props {
   onRestoreComposerTrash?: (id: string) => Promise<{ text: string; images: ChatDraftImage[] } | null>;
   slashCommands?: SlashCommandInfo[];
   slashCommandsLoading?: boolean;
+  /**
+   * An extension's dialog or panel is open over the chat. Its layer sits under the composer's
+   * menus, so the history, `/` and `@` menus hide meanwhile and come back once it closes: typing
+   * `/` in a fresh composer is what shows a dialog session_start asks (#1678).
+   */
+  extensionUiOpen?: boolean;
   onLoadSlashCommands?: () => Promise<SlashCommandInfo[]> | SlashCommandInfo[];
   onBuiltinCommand?: (message: string) => Promise<BuiltinSlashCommandResult>;
   soundEnabled?: boolean;
@@ -1495,6 +1501,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   onExportQueue, onImportQueue, onStageImport, onMoveQueue, onRecallOne, onRequeueAt, onRemoveQueueItem,
   queueTrash, onRestoreQueueItem, onPurgeQueueTrash, onTrashComposerInput, onRestoreComposerTrash,
   slashCommands, slashCommandsLoading, onLoadSlashCommands,
+  extensionUiOpen = false,
   onBuiltinCommand,
   soundEnabled, onSoundToggle, onAudioUnlock,
   onPromptWithStreamingBehavior,
@@ -3156,9 +3163,9 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }, [inputHistory.length]);
 
   useEffect(() => {
-    if (!historyMenuOpen) return;
+    if (!historyMenuOpen || extensionUiOpen) return;
     historyItemRefs.current[historyActiveIndex]?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, [historyActiveIndex, historyMenuOpen]);
+  }, [historyActiveIndex, historyMenuOpen, extensionUiOpen]);
 
   const applyHistoryInput = useCallback((text: string) => {
     // History picked from the menu → exit direct-paging mode (the two mechanisms are mutually exclusive)
@@ -3406,7 +3413,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
         return;
       }
 
-      if (historyMenuOpen && !isComposing) {
+      if (historyMenuOpen && !extensionUiOpen && !isComposing) {
         if (e.key === "ArrowDown") {
           e.preventDefault();
           setHistoryActiveIndex((i) => Math.min(Math.max(0, inputHistory.length - 1), i + 1));
@@ -3429,7 +3436,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
         }
       }
 
-      if (slashMenuOpen && slashQuery !== null) {
+      if (slashMenuOpen && slashQuery !== null && !extensionUiOpen) {
         if (e.key === "ArrowDown") {
           e.preventDefault();
           setSlashActiveIndex(getNextSlashIndex("down"));
@@ -3475,7 +3482,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
       // @ file menu — skip while composing so IME candidate navigation
       // (arrows/Enter/Tab) is never intercepted.
-      if (atMenuOpen && atQuery !== null && !isComposing) {
+      if (atMenuOpen && atQuery !== null && !extensionUiOpen && !isComposing) {
         if (e.key === "ArrowDown") {
           e.preventDefault();
           setAtActiveIndex((i) => cycleListIndex(i, atMatches.length, 1));
@@ -3609,7 +3616,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
         }
       }
     },
-    [isMobile, enterSendMode, isStreaming, onSteer, onFollowUp, onAbort, slashMenuOpen, slashQuery, displayedSlashCommands, slashActiveIndex, applySlashCommand, sendQueued, handleSend, getNextSlashIndex, atMenuOpen, atQuery, atMatches, atActiveIndex, applyAtCompletion, historyMenuOpen, inputHistory, historyActiveIndex, applyHistoryInput, applyHistoryNav, navigateRecalled, handleRecallOne, queuedMessages, value]
+    [isMobile, enterSendMode, isStreaming, onSteer, onFollowUp, onAbort, extensionUiOpen, slashMenuOpen, slashQuery, displayedSlashCommands, slashActiveIndex, applySlashCommand, sendQueued, handleSend, getNextSlashIndex, atMenuOpen, atQuery, atMatches, atActiveIndex, applyAtCompletion, historyMenuOpen, inputHistory, historyActiveIndex, applyHistoryInput, applyHistoryNav, navigateRecalled, handleRecallOne, queuedMessages, value]
   );
 
   // onInput only measures height (upstream semantics) — never reuse resizeTextarea
@@ -3742,12 +3749,13 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }, [displayedSlashCommands.length]);
 
   useEffect(() => {
-    if (!slashMenuOpen) return;
+    if (!slashMenuOpen || extensionUiOpen) return;
     slashItemRefs.current[slashActiveIndex]?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, [slashActiveIndex, slashMenuOpen]);
+  }, [slashActiveIndex, slashMenuOpen, extensionUiOpen]);
 
+  // extensionUiOpen too: the menu mounts again once an extension's dialog closes.
   useLayoutEffect(() => {
-    if (!slashMenuOpen || slashQuery === null) {
+    if (!slashMenuOpen || slashQuery === null || extensionUiOpen) {
       setSlashMenuMaxHeight(null);
       return;
     }
@@ -3756,10 +3764,10 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     return subscribeUpwardMenuMaxHeight(menu, (nextHeight) => {
       setSlashMenuMaxHeight((current) => current === nextHeight ? current : nextHeight);
     });
-  }, [slashMenuOpen, slashQuery]);
+  }, [slashMenuOpen, slashQuery, extensionUiOpen]);
 
   useLayoutEffect(() => {
-    if (!atMenuOpen || atQuery === null) {
+    if (!atMenuOpen || atQuery === null || extensionUiOpen) {
       setAtMenuMaxHeight(null);
       return;
     }
@@ -3768,7 +3776,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     return subscribeUpwardMenuMaxHeight(menu, (nextHeight) => {
       setAtMenuMaxHeight((current) => current === nextHeight ? current : nextHeight);
     });
-  }, [atMenuOpen, atQuery]);
+  }, [atMenuOpen, atQuery, extensionUiOpen]);
 
   // Build model options: prefer modelList (has provider info), fallback to modelNames
   const modelOptions: ModelSelectorOption[] = (() => {
@@ -4305,7 +4313,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
         {/* Main input */}
         <div style={{ position: "relative", minWidth: 0 }}>
-          {historyMenuOpen && inputHistory.length > 0 && (
+          {historyMenuOpen && !extensionUiOpen && inputHistory.length > 0 && (
             <div
               ref={historyMenuRef}
               data-input-overlay="1"
@@ -4393,7 +4401,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               </div>
             </div>
           )}
-          {slashMenuOpen && slashQuery !== null && (
+          {slashMenuOpen && slashQuery !== null && !extensionUiOpen && (
             <div
               ref={slashMenuRef}
               data-input-overlay="1"
@@ -4545,7 +4553,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               </div>
             </div>
           )}
-          {atMenuOpen && atQuery !== null && (() => {
+          {atMenuOpen && atQuery !== null && !extensionUiOpen && (() => {
             const indexLoading = fileIndexLoading && (!fileIndex || fileIndex.cwd !== cwd);
              const matchCountLabel = atMatches.length === 1 ? t("chat.match") : t("chat.matches", { count: atMatches.length });
             // With a truncated index, local results are provisional — the
