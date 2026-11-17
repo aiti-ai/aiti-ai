@@ -848,7 +848,7 @@ function TopBar() {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: C.border, background: "rgba(255,255,255,0.92)", backdropFilter: "blur(8px)", flexShrink: 0, flexWrap: "wrap" }}>
       <span title={running ? t("运行中") : t("未运行")} style={{ width: 10, height: 10, borderRadius: "50%", background: statusColor, flexShrink: 0 }} />
-      <span style={{ fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 5 }}><Ic size={13} paths={ICON.msg} />{t("IM 渠道 &amp; cc-connect")}</span>
+      <span style={{ fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 5 }}><Ic size={13} paths={ICON.msg} />{t("IM 渠道 & cc-connect")}</span>
       <span style={{ fontSize: 11, color: C.muted }}>{s.version || ""}</span>
       <span style={{ fontSize: 11, color: C.muted }}>{running ? `pid ${s.pid || ""}` : t("未运行")}</span>
       <span style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
