@@ -9,6 +9,7 @@ import {
   store, useStore, panelOpen, kanbanOpen,
   refreshRunning, refreshSessions, refreshWorkspaces, emit, setPendingSearch, displayCwd,
   applyRunningFrame, subscribeRunningFrames, isRunningSseHealthy,
+  hidePendingRow, subscribePendingRemovals,
 } from "./store";
 import { sessionTitle, agentBadge, fmtRelative } from "./helpers";
 
@@ -162,6 +163,9 @@ export function SidebarEntry() {
  */
 function SidebarSessionsMenu(props: { anchor: DOMRect; onClose: () => void }) {
   const s = useStore();
+  // Optimistic removal (2026-11-29): pending rows stay out of the open dropdown (just-archived/deleted sessions are no longer clickable)
+  const [, setOptTick] = useState(0);
+  useEffect(() => subscribePendingRemovals(() => setOptTick((v) => v + 1)), []);
   const boxRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
 
@@ -200,7 +204,7 @@ function SidebarSessionsMenu(props: { anchor: DOMRect; onClose: () => void }) {
 
   // 下拉列表：运行中优先 + 最近完成补齐，最多 8 条。运行中按最近活跃倒序；
   // 已结束按结束时间（modified）倒序。外部 agent 会话/归档不参与（pi-web:open-session 只认 pi）。
-  const sessionsAll = s.sessions as any[];
+  const sessionsAll = (s.sessions as any[]).filter((x: any) => !hidePendingRow(x));
   const byRecent = (a: any, b: any) => String(b.modified ?? "").localeCompare(String(a.modified ?? ""));
   const running = sessionsAll.filter((x) => s.running.has(x.id)).sort(byRecent);
   const completed = sessionsAll

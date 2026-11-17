@@ -1,7 +1,9 @@
 ---
 name: agent-adapter
 title: AI 帮我接入新 agent 的会话
+title.en: "AI: integrate a new agent's sessions"
 placeholder: 描述要接入的 agent（如：帮我把 Windsurf 的会话接进 all sessions）…
+placeholder.en: "Describe the agent (e.g. bring Windsurf sessions into all sessions)…"
 ---
 
 # agent-adapter · 接入新的外部 agent 会话源
