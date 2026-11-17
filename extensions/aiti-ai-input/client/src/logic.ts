@@ -1576,15 +1576,10 @@ export function initSuggest(apiUrl: (p: string) => string) {
     if (e.key === " ") { if (SUG.moved && SUG.items.length) { const sel = SUG.items[SUG.idx]; if (sel && sel.kind !== "app") { keyConsumedAt = e.timeStamp; e.preventDefault(); sugApply(sel); } else { keyConsumedAt = e.timeStamp; e.preventDefault(); /* app 选中：no-op 但仍拦截空格上屏（键盘全归 suggest 语义，弹窗保留） */ } } else { sugClose(); } return; }
     if (e.key === "ArrowRight") { if (SUG.items.length && ta.selectionStart === ta.value.length) { keyConsumedAt = e.timeStamp; e.preventDefault(); const pick = sugNextNonApp(SUG.idx < 0 ? 0 : SUG.idx); if (pick) sugApply(pick); } return; }
   }
-  // 输入捕捉 → 联想调度（input 事件在 AC 之前不冲突：suggest 弹窗开着时 AC 的灰字键由 sugOnKey 优先拦截）
-  async function sugOnInput(e) {
-    const ta = e.target;
-    if (!isChatInput(ta)) return;
-    if (AC.extra && AC.extra.menuOpen) { sugClose(); return; }  // slash/@/历史 picker 打开时不打扰（@文件输入不弹 SUG）
-    await acFeatures(false); // 先确保 features 就绪（避免首次输入的竞态：suggest 开关未拉到就拦截）
-    if (!AC.feats.suggest && !AC.feats.commandHints) { sugClose(); return; } // 收藏联想与应用命令提示双关才不弹（各自独立开关）
-    // 拼音组合中的 input（isComposing=true）：不排程但清防抖；compositionend 补排程（真实输入法上屏后无 input:N）
-    if (e.isComposing) { if (SUG.timer) clearTimeout(SUG.timer); return; }
+  // Debounced reschedule (shared by sugOnInput and the host value-written event): re-evaluate the
+  // trigger word from the current value/caret — no word / too short → sugClose (clears suggest/app
+  // candidates); word found → sugTrigger re-fetches candidates
+  function sugSchedule(ta) {
     if (SUG.timer) clearTimeout(SUG.timer);
     SUG.timer = setTimeout(() => {
       const caret = ta.selectionStart ?? ta.value.length;
@@ -1602,7 +1597,37 @@ export function initSuggest(apiUrl: (p: string) => string) {
       sugTrigger(w.word, ta, w.start, caret);
     }, SUG_DEBOUNCE);
   }
-  return { onInput: sugOnInput, onKeyDown: sugOnKey, sugClose, SUG };
+  // input capture → suggest scheduling (input events don't conflict with AC: while the suggest popup is open, sugOnKey intercepts AC ghost keys first)
+  async function sugOnInput(e) {
+    const ta = e.target;
+    if (!isChatInput(ta)) return;
+    if (AC.extra && AC.extra.menuOpen) { sugClose(); return; }  // leave slash/@/history pickers alone while open (no SUG during @file input)
+    await acFeatures(false); // make sure features are ready first (avoids a first-input race: intercepting before the suggest flag arrives)
+    if (!AC.feats.suggest && !AC.feats.commandHints) { sugClose(); return; } // popup suppressed only when BOTH favorite-suggest and command-hints are off (independent switches)
+    // input during IME composition (isComposing=true): don't schedule, but clear the debounce;
+    // compositionend re-schedules (real IME commits emit no input:N)
+    if (e.isComposing) { if (SUG.timer) clearTimeout(SUG.timer); return; }
+    sugSchedule(ta);
+  }
+  // Host-programmatic value writes (send-clear / draft restore / composer contract injection)
+  // deliberately dispatch no input event (to avoid a React tracker loop) and only broadcast the
+  // window "pi-web:composer-value-written" event — entry subscribes and forwards here: after a
+  // write, the old trigger word / ghost continuation (based on pre-write text) is stale, so clear
+  // first (suggest/app candidates + ghost), then debounce-reschedule on the new value (equivalent
+  // to the clear+reschedule semantics of real input). After send-clear the value is empty → the
+  // reschedule naturally sugCloses; if a contract injection hits a trigger word → repopup on the
+  // new text. nlRefresh recomputes the small-screen wrap pills in sync (writes move the caret).
+  async function onHostValueWritten() {
+    const ta = document.querySelector("textarea[data-chat-input]");
+    if (!ta) { sugClose(); return; }
+    if (AC.extra && AC.extra.menuOpen) { sugClose(); nlRefresh(); return; } // picker open, same as sugOnInput: clear only, no scheduling
+    sugClose();       // stale candidates (includes aborter canceling in-flight requests + barClear("suggest"))
+    nlRefresh();      // wrap-pill recompute (if the pills aren't wanted either after clearing candidates → acHideBar collapses the whole bar)
+    await acFeatures(false);
+    if (AC.feats.suggest || AC.feats.commandHints) sugSchedule(ta);
+    if (AC.feats.autoComplete) acReschedule(); // ghost continuation: clear old + reschedule (internally acClearTimer/acClearGhost)
+  }
+  return { onInput: sugOnInput, onKeyDown: sugOnKey, sugClose, onHostValueWritten, SUG };
 }
 
 export {
