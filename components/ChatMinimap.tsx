@@ -357,7 +357,6 @@ export function ChatMinimap({
       let refIndex = 0;
       let currentTurn: TurnInfo | null = null;
 
-      const streamingMessage = getStreamingMessage();
       const allMessages: (AgentMessage | Partial<AgentMessage>)[] = streamingMessage
         ? [...messagesRef.current, streamingMessage]
         : messagesRef.current;
