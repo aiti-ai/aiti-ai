@@ -260,6 +260,7 @@ function render(props = {}) {
     sessions: catalog,
     copied: false,
     onCopy() {},
+    onClose() {},
     t,
     ...props,
   }))));
@@ -280,6 +281,7 @@ test("a quiet page reads OK: no issue list, the meter's scale in its label, ever
   assert.doesNotMatch(html, /<dl|<dt|debug-panel-footer/);
   assert.match(html, /<span class="debug-panel-heading" title="Read-only: [^"]+">Debug<\/span>/);
   assert.match(html, /<button type="button" class="debug-panel-copy"[^>]*>Copy JSON<\/button>/);
+  assert.match(html, /<button type="button" class="debug-panel-close"[^>]*title="Close"[^>]*>/);
   // No live region: a screen reader would read every change out.
   assert.doesNotMatch(html, /role="status"|aria-live/);
 });

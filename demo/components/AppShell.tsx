@@ -2133,6 +2133,7 @@ export function AppShell() {
                   loading={systemInfoLoading}
                   prompt={systemPrompt}
                   translate={translate}
+                  onClose={() => setActiveTopPanel(null)}
                 />
               )}
               {activeTopPanel === "tools" && (
