@@ -16,7 +16,7 @@ import { FolderSwitcher } from "./folder-switcher";
 import { isFolderPinned, toggleFolderPin, folderItemKey, removeFolderInstance } from "./folder-dock";
 import { DirectoryBrowser } from "./directory-browser";
 import { openViewerWindow } from "../../../_shared/open-viewer-window";
-import { clampToViewport, fixedOrigin } from "../../../_shared/popup-anchor";
+import { clampToViewport, fixedOrigin, zoomFactorOf } from "../../../_shared/popup-anchor";
 import { buildAtText, openNewSessionWithExtSvc } from "../../../_shared/new-session-cwd";
 import { useFolderGit, GitBar } from "./git-toolbar";
 import { ct } from "./comp-i18n";
@@ -505,7 +505,10 @@ function DirOpsMenu(props: { dir: string; hovered: boolean; onChanged: (dir: str
     } else {
       top = r.bottom + 4;
     }
-    setPos({ left, top });
+    // Panel UI scale (zoomed panel containers): viewport-space estimates must be
+    // divided back before being written as insets (see popup-anchor.zoomFactorOf).
+    const zoomFactor = zoomFactorOf(e.currentTarget);
+    setPos({ left: left / zoomFactor, top: top / zoomFactor });
     setOpen(true);
   };
   const visible = hovered || open || !!transfer;
@@ -607,7 +610,8 @@ function FileOpsMenu(props: { filePath: string; cwd: string; root: string; onOpe
     if(overflowDown&&!overflowUp) top=Math.max(8,r.top-mh-4);
     else if(overflowDown&&overflowUp) top=8;
     else top=r.bottom+4;
-    setPos({left,top}); setOpen(true); };
+    const zf=zoomFactorOf(e.currentTarget); // panel UI scale: divide viewport-space back (popup-anchor.zoomFactorOf)
+    setPos({left:left/zf,top:top/zf}); setOpen(true); };
   const handleAt = ()=>{ if(!onAtMention) return; onAtMention(relTo(filePath,cwd),false); setOpen(false); };
   // 复制路径（绝对路径）：菜单保持开，反馈写菜单底部 msg 行
   const doCopyPath = ()=>{ copyTextToClipboard(filePath).then(()=>setMsg({ok: tt("files.copyDone")}), (e:any)=>setMsg({err:(e&&e.message)?e.message:tt("files.copyFailed")})); };
@@ -923,7 +927,8 @@ export function FolderBrowser(props: any) {
     if (m.height > below && above > below) top = a.top - gap - m.height; // 上翻
     const c = clampToViewport(a.left, top, m.width, m.height, pad);
     const o = fixedOrigin(menu);
-    const next = { left: c.left - o.x, top: c.top - o.y };
+    const z = zoomFactorOf(menu);
+    const next = { left: (c.left - o.x) / z, top: (c.top - o.y) / z };
     setPlusPos((cur) => (cur && cur.left === next.left && cur.top === next.top) ? cur : next);
   }, [plusOpen, newKind, plusAnchor]);
   // fixed 菜单不随内容滚（工具栏横向滚/树滚 → 滞留旧位 = 错位），任意容器滚动即关。
@@ -1170,7 +1175,10 @@ export function FolderBrowser(props: any) {
     } else {
       top = r.bottom + 4;
     }
-    setMorePos({ left, top });
+    // Panel UI scale (zoomed panel containers): viewport-space estimates must be
+    // divided back before being written as insets (see popup-anchor.zoomFactorOf).
+    const moreZoom = zoomFactorOf(moreRef.current || document.body);
+    setMorePos({ left: left / moreZoom, top: top / moreZoom });
     setMoreOpen(true);
   }, [moreOpen]);
   // 复制路径（对齐文件顶栏「复制路径」；结果走头部通知位，失败显错误）
