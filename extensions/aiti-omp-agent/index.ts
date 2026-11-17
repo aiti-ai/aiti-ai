@@ -37,6 +37,16 @@ export default {
 
   features: [spawnEnvFeature("Omp"), spawnCommandFeature("Omp"), spawnArgsPrefixFeature("Omp"), hostToolsAllowFeature("Omp")],
 
+
+  ui: {
+    // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
+    i18n: {
+      en: {
+        "ext.displayName": "Oh My Pi (omp subprocess backend)",
+      },
+    },
+  },
+
   server: {
     startup(ctx: {
       /** 跨扩展服务 slot（P2 协议委托；缺省=旧宿主降级）。 */

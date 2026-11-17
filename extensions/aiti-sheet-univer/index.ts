@@ -35,6 +35,21 @@ export default {
   features: [
     { id: "sheet.edit", label: "Excel 编辑保存", description: "开启后 .xlsx/.xlsm 提供 edit 能力（保存走 save-blob）；关闭仅预览", default: true },
   ],
+
+  ui: {
+    // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
+    i18n: {
+      "zh-CN": {
+        "ext.displayName": "Excel 编辑器",
+      },
+      en: {
+        "feat.sheet.edit.desc": "When on, .xlsx/.xlsm get edit capability (saves via save-blob); off = preview only",
+        "ext.displayName": "Excel Editor",        "ext.description": "Excel spreadsheet editor (exceljs data layer + Univer view layer): .xlsx/.xlsm preview + edit, .xls/.ods read-only preview",
+        "feat.sheet.edit": "Excel edit & save",
+      },
+    },
+  },
+
   server: {
     startup(ctx: any) {
       if (ctx.configDir) setSofficeDataDir(ctx.configDir); // soffice 定位读同一份 features.json

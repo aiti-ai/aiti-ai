@@ -224,12 +224,12 @@ export default function register(ctx: Record<string, unknown>) {
   ctx.registerItems?.("toolbar", [{ id: "aiti-model-wizard-open", render: WizardButtonShell, meta: { label: "i18n:mw.open.label", icon: "icons/sparkles.svg" } }]);
   // 模型选择器下拉底部动作区：「管理模型」入口（薄壳启动即注册——不依赖重 chunk，
   // 没点过 🧙 的会话也能从任何模型下拉直达向导）。
-  ctx.registerItems?.("modelSelectorFooter", [{ id: "aiti-model-wizard-manage", render: ManageModelsRow, meta: { label: "管理模型" } }]);
+  ctx.registerItems?.("modelSelectorFooter", [{ id: "aiti-model-wizard-manage", render: ManageModelsRow, meta: { label: "i18n:it.manage.label" } }]);
   // 会话信息插槽条目：薄壳直连版（重 chunk initHeavySlots 注册同 id 完整版幂等覆盖升级）——
   // 没点过 🧙 的会话打开「会话信息」也能看到聚合 / 多key 运行状态。
-  ctx.registerItems?.("sessionStats", [{ id: "aiti-model-wizard-multikey-status", render: SessionStatsShell, meta: { label: "聚合 / 多key运行状态" } }]);
+  ctx.registerItems?.("sessionStats", [{ id: "aiti-model-wizard-multikey-status", render: SessionStatsShell, meta: { label: "i18n:it.multikey-status.label" } }]);
   // 设置面板「模型」页签接管：原地渲染向导（宿主跳板——未注册时原生 ModelsConfig 自动兜底零回归）。
   // 与工具条 🧙 / modelSelectorFooter 同一打开通路之外的独立入口；重 chunk 首次渲染按需加载。
-  ctx.registerItems?.("settingsModels", [{ id: "aiti-model-wizard-settings", render: SettingsModelsFace, meta: { label: "模型向导" } }]);
+  ctx.registerItems?.("settingsModels", [{ id: "aiti-model-wizard-settings", render: SettingsModelsFace, meta: { label: "i18n:it.settings.label" } }]);
   try { console.log("[aiti-model-wizard] 薄壳已挂载（🧙 按钮 + 徽标 + 会话信息聚合/多key状态；向导重 chunk 首次交互按需加载）"); } catch {}
 }

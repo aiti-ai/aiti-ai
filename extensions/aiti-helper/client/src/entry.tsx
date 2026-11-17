@@ -16,7 +16,8 @@
  *
  * 构建：node tools/build-client.mjs   （或 npm run build:client）
  */
-import { __setCtx, regSvc } from "./host-shim";
+import { __setCtx, regSvc, apiUrl } from "./host-shim";
+import { primeExtRegistry } from "../../../_shared/ext-display-names";
 import { installDialogAiButton } from "./dialog-ai-button";
 // 纯类型导入：编译期完全擦除，不会把重 UI 拉进薄 chunk；invoke 选项类型与重 UI 单源
 import type { HelperInvokeOpts } from "./helper-app";
@@ -66,13 +67,15 @@ function suggestStable(q: string): void {
 export default function register(ctx: Record<string, any>) {
   // 重要：必须在任何渲染前调用（host-shim 模块级持 ctx；重 chunk mountHeavyUI 经 hostCtx() 读）
   __setCtx(ctx);
+  // 自述名 registry（无中心表）：manifest ui.i18n 缓存一次，extDisplayName 查词条用
+  primeExtRegistry((p) => apiUrl(p));
 
   // toolbar 🤖（AppShell 全局壳；index.ts 有同 id 静态声明作首帧兜底，注册后接管）
   ctx.registerItems?.("toolbar", [{
     id: "aiti-helper-open",
     meta: {
       label: "i18n:helper.open.label",
-      title: "aiti-helper：一句话唤起 AI（帮助点/自由发挥；独立置顶弹窗，可拖拽，有历史）",
+      title: "i18n:it.open.title.2",
       icon: "icons/sparkles.svg",
       onClick: () => window.__aitiHelperInvoke!({ placeholder: "描述你想让 AI 做什么…" }),
     },

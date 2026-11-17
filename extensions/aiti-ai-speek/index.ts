@@ -463,14 +463,16 @@ export default {
     // 🔊 跟读开关（全局顶栏）
     toolbar: [{ id: "follow", label: "i18n:speek.followMode.label", title: "i18n:speek.followMode.title", icon: "icons/volume-2.svg" }],
     // 播放条（会话顶栏，常驻不消失）
-    sessionTopbar: [{ id: "bar", label: "跟读播放条" }],
+    sessionTopbar: [{ id: "bar", label: "i18n:it.bar.label" }],
     // assistant 消息 hover 操作区：朗读这条/停止朗读
     assistantMessageActions: [{ id: "read", label: "朗读这条回复" }],
     // 设置面板（dialogs 插槽）
-    dialogs: [{ id: "settings", label: "跟读设置" }],
+    dialogs: [{ id: "settings", label: "i18n:it.settings.label" }],
     i18n: {
       "zh-CN": {
-        "speek.followMode.label": "跟读模式",
+        "it.settings.label": "跟读设置",
+        "it.bar.label": "跟读播放条",
+        "ext.displayName": "AI 语音朗读",        "speek.followMode.label": "跟读模式",
         "speek.followMode.title": "跟读模式：AI 回复自动朗读（可暂停/跳过/切音色）",
         "speek.followOn": "跟读模式已开启，AI 回复将自动朗读",
         "speek.followOff": "开启跟读模式：AI 回复自动朗读",
@@ -486,6 +488,19 @@ export default {
         "speek.readThis": "开始朗读",
         "speek.stopReading": "停止朗读",
         "speek.backgroundContinue": "允许后台继续朗读（浏览器切到后台标签页时不停读）",
+      },
+      en: {
+        "it.settings.label": "Read-aloud settings",
+        "it.bar.label": "Read-aloud bar",
+        "ext.displayName": "AI Voice Reading",
+        "feat.bar": "Read-aloud playback bar",
+        "feat.read": "Read this reply aloud",
+        "feat.settings": "Read-aloud settings",
+        "feat.steer.enabled": "Read-aloud prompt injection (when on, prompts the AI to optimize output, e.g. conclusion first / conversational)",
+        "feat.tts.edge": "edge-tts backend quality tier (auto-enabled when installed; better than browser Web Speech)",
+        "feat.tts.edge.bin": "edge-tts executable path (empty = auto-detect ~/.local/bin, PATH, pipx)",
+        "feat.process.enabled": "Read the process aloud (also reads AI narration like \"Let me check…\"; skips thinking and tool runs)",
+        "feat.minChars": "Ignore threshold (replies shorter than N chars are not read)",
       },
       "en": {
         "speek.followMode.label": "Follow-along",

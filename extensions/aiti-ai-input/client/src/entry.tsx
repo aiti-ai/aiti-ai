@@ -151,13 +151,13 @@ export default function register(ctx: Record<string, unknown>) {
   // 语音识别引擎：默认**浮窗**（不 seed 停靠位）；左栏/右栏 face 仅供用户手动 ⇱ 停靠
   initAsrDockPref();
   declareDockZones("aiti-ai-input:asr", ["right-panel"]);
-  ctx.registerItems?.("rightFileDock", [{ id: "asr", render: AsrDockRightLazy, meta: { title: "语音识别引擎" } }]);
+  ctx.registerItems?.("rightFileDock", [{ id: "asr", render: AsrDockRightLazy, meta: { title: "i18n:it.asr.title" } }]);
   // 语音流量统计报表（形态对齐 aiti-ai-usage：KPI + 趋势 + 明细 + 估算费用）
   // 默认**浮窗**（不 seed 停靠位 → 不会默认出现在左栏）；左栏/右栏 face 仅供用户手动 ⇱ 停靠
   initUsageDockPref();
   declareDockZones("aiti-ai-input:asr-usage", ["right-panel"]);
   ctx.registerItems?.("dialogs", [{ id: "aiti-asr-usage-report", render: UsageReportSlotLazy, meta: { open: () => usageOpenSet(true) } }]);
-  ctx.registerItems?.("rightFileDock", [{ id: "asr-usage", render: UsageDockRightLazy, meta: { title: "语音流量" } }]);
+  ctx.registerItems?.("rightFileDock", [{ id: "asr-usage", render: UsageDockRightLazy, meta: { title: "i18n:it.asr-usage.title" } }]);
   ctx.registerItems?.("sessionStats", [
     { id: "aiti-ai-input-aux-usage", render: AuxAiUsageRows },
   ]);

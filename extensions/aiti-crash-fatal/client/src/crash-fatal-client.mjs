@@ -81,7 +81,7 @@ export default function register(ctx) {
                 await fetch(apiUrl("/api/extensions/aiti-crash-fatal/restore-build"), { method: "POST" });
               } finally {
                 close();
-                showPopup({ title: "已还原 AppShell.tsx", body: "等 HMR 自动恢复（或刷新页面）→ Build Error 消失。若页面已全屏 overlay，从 /dev/rescue.html 发指令让 AI 跑 restore-build。", buttons: [{ label: "关闭" }] });
+                showPopup({ title: "已还原 AppShell.tsx", body: "等 HMR 自动恢复（或刷新页面）→ Build Error 消失。若页面已全屏 overlay，从 /dev/rescue.html 发指令让 AI 跑 restore-build。", buttons: [{ label: "i18n:it.close.label" }] });
               }
             },
           });
@@ -91,7 +91,7 @@ export default function register(ctx) {
             label: "立即恢复扩展", primary: true,
             onClick: async (close) => {
               try { await restoreExt(); } finally { close(); }
-              showPopup({ title: "已恢复", body: "startup 崩溃标志已清除并 reload。左下角 ⚠ 应已消失（若还在，刷新页面）。", buttons: [{ label: "关闭" }] });
+              showPopup({ title: "已恢复", body: "startup 崩溃标志已清除并 reload。左下角 ⚠ 应已消失（若还在，刷新页面）。", buttons: [{ label: "i18n:it.close.label" }] });
             },
           });
         }
@@ -104,14 +104,14 @@ export default function register(ctx) {
               const doRestore = async () => {
                 if (timer) { clearTimeout(timer); timer = null; }
                 try { await restoreExt(); } finally {
-                  showPopup({ title: "扩展已恢复", body: "startup 崩溃标志已清除并 reload，左下角 ⚠ 应已消失。", buttons: [{ label: "关闭" }] });
+                  showPopup({ title: "扩展已恢复", body: "startup 崩溃标志已清除并 reload，左下角 ⚠ 应已消失。", buttons: [{ label: "i18n:it.close.label" }] });
                 }
               };
               try {
                 const r = await fetch(apiUrl("/api/extensions/aiti-crash-fatal/crash-ext"), { method: "POST" });
                 const d = await r.json();
                 if (!d.ok) {
-                  showPopup({ title: "失败", body: String(d.error || r.status), buttons: [{ label: "关闭" }] });
+                  showPopup({ title: "失败", body: String(d.error || r.status), buttons: [{ label: "i18n:it.close.label" }] });
                   return;
                 }
                 // 宿主 reload → startup throw → manifest failed → ⚠ 指示器出现
@@ -124,11 +124,11 @@ export default function register(ctx) {
                   body: "startup 入口已崩，页面 / API / 本扩展按钮全部存活（部分崩）。\n\n· 左下角出现黄色 ⚠ 按钮，点开见「aiti-crash-fatal · 启动失败」完整消息（含恢复提示）\n· 点 ⚠ 弹层里的 🚑 也可叫急救 AI\n· 60s 后自动恢复；或点下方按钮立即恢复",
                   buttons: [
                     { label: "立即恢复", primary: true, onClick: (c) => { void doRestore().then(() => c()); } },
-                    { label: "关闭" },
+                    { label: "i18n:it.close.label" },
                   ],
                 });
               } catch (e) {
-                showPopup({ title: "网络错误", body: String(e), buttons: [{ label: "关闭" }] });
+                showPopup({ title: "网络错误", body: String(e), buttons: [{ label: "i18n:it.close.label" }] });
               }
             },
           },
@@ -144,10 +144,10 @@ export default function register(ctx) {
                   body: d.ok
                     ? "已向 components/AppShell.tsx 顶部注入不存在导出的 import（备份在 " + (d.bak || "") + "）。\n\n等 HMR / 刷新页面 → 全屏 Build Error overlay（global-error 接不住编译错）→ rescue-hook 🚑 横幅 → 自动引导进 /rescue.html 静态急救页（不进编译图，模块图坏时依然可达）。\n\n还原：本弹窗重开点「立即恢复编译」，或访问 /api/extensions/aiti-crash-fatal/restore-build，或在急救页发指令让 AI 跑。"
                     : ("失败：" + (d.error || r.status)),
-                  buttons: [{ label: "关闭" }],
+                  buttons: [{ label: "i18n:it.close.label" }],
                 });
               } catch (e) {
-                showPopup({ title: "网络错误", body: String(e), buttons: [{ label: "关闭" }] });
+                showPopup({ title: "网络错误", body: String(e), buttons: [{ label: "i18n:it.close.label" }] });
               }
             },
           },
@@ -163,21 +163,21 @@ export default function register(ctx) {
                   body: d.ok
                     ? "已破坏 app/page.tsx（备份在 " + (d.bak || "") + "）。\n\n现在刷新页面（Cmd/Ctrl+R）→ 页面崩到 🚑 急救页（chat UI 进不去）。\n\n在急救页发指令测试急救 AI，或直接访问 /api/extensions/aiti-crash-fatal/restore（GET）还原。"
                     : ("失败：" + (d.error || r.status)),
-                  buttons: [{ label: "关闭" }],
+                  buttons: [{ label: "i18n:it.close.label" }],
                 });
               } catch (e) {
-                showPopup({ title: "网络错误", body: String(e), buttons: [{ label: "关闭" }] });
+                showPopup({ title: "网络错误", body: String(e), buttons: [{ label: "i18n:it.close.label" }] });
               }
             },
           },
         );
         showPopup({
-          title: "Fatal 崩溃测试",
+          title: "i18n:it.fatal.title",
           body: "选择崩溃模式（均有备份 / 可恢复）：\n\n🧨 崩扩展 startup（部分崩）— 本扩展 startup 入口崩：页面 / API / client 全活着，左下角出现 ⚠「启动失败」指示器，可看加载失败消息。60s 自动恢复。\n\n💥 崩页面 — 破坏 app/page.tsx：刷新后整页崩到 🚑 global-error 急救页（chat UI 进不去）。\n\n🧱 崩编译 — 注入不存在导出：Build Error overlay 全屏接管（编译错 global-error 接不住）→ rescue-hook 🚑 横幅自动引导进 /rescue.html 静态急救页。\n" + (extCrashed ? "\n⚠ 当前正处于 startup 崩溃态，可点「立即恢复扩展」。" : "") + (buildCorrupted ? "\n🧱 当前正处于编译错误态，可点「立即恢复编译」。" : ""),
           buttons,
         });
       },
-      title: "Fatal 崩溃测试：崩页面（global-error 急救页）/ 崩扩展 startup（⚠ 启动失败指示器）",
+      title: "i18n:it.fatal.title.2",
       style: {
         fontSize: 11, padding: "2px 8px", borderRadius: 5, cursor: "pointer",
         background: "#dc2626", color: "#fff", border: "none", fontWeight: 600,

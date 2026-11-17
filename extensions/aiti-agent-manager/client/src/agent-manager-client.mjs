@@ -64,8 +64,8 @@ export function registerAgentManagerClient(ctx, config) {
   ctx.registerItems("toolbar", [{
     id: `${config.extId}-panel`,
     meta: {
-      label: "Agent 管理",
-      title: "Agent 管理（统一登录态）",
+      label: "i18n:it.panel.label",
+      title: "i18n:it.panel.title",
       icon: "icons/bot.svg",
       onClick: () => requestOpen(),
     },
