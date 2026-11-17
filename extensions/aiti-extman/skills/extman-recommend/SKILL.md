@@ -1,8 +1,11 @@
 ---
 name: extman-recommend
 title: AI 帮我选扩展
+title.en: "AI: recommend extensions"
 placeholder: 描述你想实现的能力（如：想在聊天里做语音输入 / 想管多个会话）…
+placeholder.en: "Describe the capability (e.g. voice input in chat / manage multiple sessions)…"
 summary: 按能力描述在已装 + 在线注册表里推荐扩展，找不到就建议新建
+summary.en: "Recommend extensions from installed + the online registry by capability description; suggest creating one if nothing fits"
 ---
 
 # extman-recommend · 推荐扩展
