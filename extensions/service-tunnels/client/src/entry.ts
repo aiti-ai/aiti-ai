@@ -16,7 +16,7 @@ import "./lib-i18n";
 import { ST_KEY, ServicesDialog } from "./ServicesDialog";
 import { SelfExposeAlert } from "./SelfExposeAlert";
 import { MobileAccessCard } from "./MobileAccessCard";
-import { MOBILE_KEY } from "./mobile-logic";
+import { MOBILE_KEY, type MobileLaunch } from "./mobile-logic";
 // dock v3（P3 批）：面板显隐收口展示状态机 + 右栏停靠 face
 import { usePresent, DockBody, openFloat, closePanel, seedDockDefault } from "../../../_shared/ext-float-dock";
 
@@ -126,8 +126,23 @@ export default function register(ctx: {
   }
 
   // ── 「手机访问」（方案 v2：入口 = 左侧栏底行「扩展」右侧，sidebarFooter slot）──
+  // Parametrized launch (sources-and-service plan §3.2): module-level launch
+  // snapshot passed through by MobileDialogSlot; the card watches the launch
+  // reference so re-launching while open applies the new args.
+  let mobileLaunch: MobileLaunch | null = null;
   function openMobile() { openFloat(MOBILE_KEY); }
-  function closeMobile() { closePanel(MOBILE_KEY); }
+  function closeMobile() { mobileLaunch = null; closePanel(MOBILE_KEY); }
+
+  /** Client service "service-tunnels.mobile": other extensions open the card
+   *  bare or with args ({url} renders that link's QR directly / {query}
+   *  appends onto the ready pi-web channel / {title} custom caption).
+   *  Empty/invalid args = plain open (self/memory). Consumers must null-check
+   *  getExtService (lazy-extension constraint, same as aiti-extman.open). */
+  function openMobileWith(opts?: MobileLaunch) {
+    mobileLaunch = opts && (opts.url || opts.query || opts.title) ? { url: opts.url, query: opts.query, title: opts.title } : null;
+    openFloat(MOBILE_KEY);
+  }
+  try { (ctx as { registerExtService?: (k: string, impl: unknown) => unknown }).registerExtService?.("service-tunnels.mobile", openMobileWith); } catch (e) { console.warn("[service-tunnels] registerExtService(service-tunnels.mobile) failed", e); }
 
   // 底行按钮：样式与宿主内建 模型/技能/设置 同规格（flex:1 + 图标 + 2 字短词），
   // 开态高亮跟随展示状态机；icon 内联 svg（禁 emoji）。
@@ -181,6 +196,7 @@ export default function register(ctx: {
     const st = usePresent(MOBILE_KEY);
     if (st !== "floating") return null;
     return h(MobileAccessCard, {
+      launch: mobileLaunch,
       onClose: closeMobile,
       onOpenPorts: () => { closeMobile(); openDialog("ports"); },
       onOpenSelf: () => { closeMobile(); openDialog("self"); },

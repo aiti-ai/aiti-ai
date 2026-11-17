@@ -318,6 +318,29 @@ export async function handleApi(req: Request, ctx: ExtApiContextLike): Promise<R
       if (search.get("self-only") === "1") {
         return json({ self: getSelfExposeState() });
       }
+      if (search.get("exposes-only") === "1") {
+        // Lightweight list for the mobile card's ports source tab
+        // (sources-and-service plan §3.3; avoids the full status payload).
+        // Field names match the full exposes map; noAuth check mirrors the
+        // PortsTab active list (empty provider = unauthenticated). loginUrl is
+        // returned for display only — the client never QR-encodes it.
+        const exposes = st.exposes().map((e) => {
+          let running = e.running;
+          if ((e.name ?? "").startsWith("proxy:") && e.label !== undefined) {
+            running = Boolean(st.proxy.bindings().some((b) => b.port === e.port && (b.label ?? "") === (e.label ?? "")));
+          }
+          return {
+            name: e.name, label: e.label ?? null, port: e.port, mode: e.mode ?? null,
+            provider: e.provider ?? null, running,
+            url: e.url ?? null, localUrl: e.localUrl ?? null, baseUrl: e.baseUrl ?? null,
+            domainUrl: e.domainUrl ?? null, loginUrl: e.loginUrl ?? null,
+            altUrls: (e.mode === "proxy" || e.mode === "both") && running
+              ? getLocalhostVhostUrls(e.port, e.label)
+              : [],
+          };
+        });
+        return json({ exposes });
+      }
       ensureSites();
       const providers = st.auth.providers();
       const lang = search.get("lang") ?? req.headers.get("accept-language")?.split(",")[0] ?? undefined;
