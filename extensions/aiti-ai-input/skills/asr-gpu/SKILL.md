@@ -1,7 +1,9 @@
 ---
 name: asr-gpu
 title: ASR 服务 GPU 加速适配（识别 GPU / 查版本 / 升级 / 回退）
+title.en: "ASR GPU acceleration (detect GPU / versions / upgrade / rollback)"
 placeholder: 想给 ASR 服务启用 GPU 加速，帮我识别显卡、查支持、适配并测试，不行就回退 CPU…
+placeholder.en: "Enable GPU acceleration for ASR: detect the GPU, check support, adapt and test, fall back to CPU if unsupported…"
 outputs:
   format: text
 ---

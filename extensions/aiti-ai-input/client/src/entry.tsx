@@ -26,6 +26,7 @@ import {
 } from "./logic";
 import { VoiceTagBar, MarksBar, AutocompleteHost, SuggestHost, AuxAiUsageRows, VoiceAffixButton } from "./components";
 import { openFloat, closePanel, usePresent, declareDockZones } from "../../../_shared/ext-float-dock-lite";
+import { dockIconDecl } from "../../../_shared/dock-icons";
 import { lazyExtView, createLazyModule } from "../../../_shared/ext-lazy";
 
 
@@ -109,6 +110,12 @@ export default function register(ctx: Record<string, unknown>) {
   document.addEventListener("selectionchange", nlRefresh, true);
   document.addEventListener("focusin", nlRefresh, true);
   document.addEventListener("focusout", nlRefresh, true);
+  // Host-programmatic value writes (send-clear / draft restore / contract injection) deliberately skip
+  // the input event (to avoid a React tracker loop) and only broadcast window
+  // "pi-web:composer-value-written" — subscribe here to close the loop: without this, after a send-clear
+  // the suggest/app candidates and ghost continuation linger (the real-input chain gets no notice);
+  // internally clears stale state + debounce-reschedules on the new value + recomputes wrap pills
+  window.addEventListener("pi-web:composer-value-written", () => { void sug.onHostValueWritten?.(); });
 
   const sugProps = { sug };
   ctx.registerItems?.("chatInputTop", [
@@ -151,7 +158,7 @@ export default function register(ctx: Record<string, unknown>) {
   // 语音识别引擎：默认**浮窗**（不 seed 停靠位）；左栏/右栏 face 仅供用户手动 ⇱ 停靠
   initAsrDockPref();
   declareDockZones("aiti-ai-input:asr", ["right-panel"]);
-  ctx.registerItems?.("rightFileDock", [{ id: "asr", render: AsrDockRightLazy, meta: { title: "i18n:it.asr.title" } }]);
+  ctx.registerItems?.("rightFileDock", [{ id: "asr", render: AsrDockRightLazy, meta: { title: "i18n:it.asr.title", icon: dockIconDecl("mic") } }]);
   // 语音流量统计报表（形态对齐 aiti-ai-usage：KPI + 趋势 + 明细 + 估算费用）
   // 默认**浮窗**（不 seed 停靠位 → 不会默认出现在左栏）；左栏/右栏 face 仅供用户手动 ⇱ 停靠
   initUsageDockPref();
