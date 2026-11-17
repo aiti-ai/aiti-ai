@@ -378,8 +378,9 @@ test("subagent completion stays silent and never becomes unread", () => {
     /completedWithNotifications = finishedInBackground\.filter\([\s\S]*?!previousSuppressedCompletionSessionIdsRef\.current\.has\(id\)[\s\S]*?!knownSubagentIds\.has\(id\)/,
   );
   assert.match(source, /completedWithNotifications\.forEach\(\(id\) => next\.set\(id, markedAt\)\)/);
-  // 合并注：上游 #1688 给 onBackgroundTaskDone 增补 (completedWithNotifications, since)
-  // 两个实参（chime 认领下界）——调用点仍在，fork 的「仅未选中会话提示音」语义在 AppShell 侧。
+  // Upstream #1688 adds (completedWithNotifications, since) args to onBackgroundTaskDone
+  // (a chime claim's lower bound) — the call site stays; the fork's tone-only-for-unselected
+  // semantics live in AppShell.
   assert.match(source, /if \(completedWithNotifications\.length > 0\) \{[\s\S]*?const since =[\s\S]*?onBackgroundTaskDone\?\.\(completedWithNotifications, since\);/);
   assert.match(
     source,
@@ -411,7 +412,7 @@ test("search results of archived families are tagged, not hidden", () => {
     searchSource,
     // 合并适配：7c0778a8 的 titleMatch 高亮把 name span 变成三元（before/mark/after 或原名），
     // archived 标签仍紧跟其后——正则放宽为「name span 收尾 + archived 条件」。
-    // v0.17 再变：命中行标题 span 收尾为 `: title}`，archived 标签仍紧跟其后。
+    // v0.17 changes the title span's tail to `: title}`; the archived tag still follows it.
     /: title\}\s*<\/span>\s*\{archivedSessionIds\?\.has\(session\.id\) && \(\s*<span className="[^"]*text-\[10px\][^"]*">\{t\("sidebar\.archived"\)\}<\/span>/,
   );
   // The whole family counts: a subagent hit of an archived session is tagged too.

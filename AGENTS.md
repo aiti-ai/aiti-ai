@@ -36,7 +36,7 @@ Fork releases use the Debian/Ubuntu-style build suffix, never bare versions:
 - Ordering is dpkg semantics, not semver: the upstream core dominates and the suffix only breaks ties (`0.16.0-aiti.2 > 0.16.0-aiti.1 > 0.16.0`; `0.16.1 > 0.16.0-aiti.3`). All consumers (update checks, tags, npm) implement this ordering — do not "fix" it to strict semver.
 - tag = `v<version>`; the npm package version and the `latest` dist-tag carry the same string.
 - The **sole release entry point** is `node scripts/release-tag.mjs` (guard: version must be `X.Y.Z-aiti.N`, tag must not exist anywhere, working tree must be clean; `--dry-run` / `--suggest` / `--force` to exempt a dirty tree). Never `git tag` by hand.
-- npm publishing: the official registry (registry.npmjs.org) goes through GitHub Actions (`publish.yml`, OIDC trusted publishing); the private registry (registry.example.com) is published locally — always with `--tag latest`, since npm otherwise refuses to let a prerelease-looking version take over `latest`.
+- npm publishing: the official registry (registry.npmjs.org) goes through GitHub Actions (`publish.yml` / `publish-npm.yml`, OIDC trusted publishing); the private registry is published locally — always with `--tag latest`.
 - Full design and rationale: `docs/aiti-ai-fork-build-suffix-versioning-plan.md` lives in the private source workspace.
 
 ---
