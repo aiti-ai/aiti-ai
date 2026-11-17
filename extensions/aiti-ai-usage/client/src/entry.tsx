@@ -18,9 +18,9 @@ export default function register(ctx: Record<string, unknown>) {
   seedDockDefault(REPORT_KEY, "right-panel");
   // meta.onClick：懒加载下 toolbar 静态条目点击后由宿主转发——panel.open() 驱动 float 状态机
   // （模块级），物化前后调用都生效。
-  ctx.registerItems?.("toolbar", [{ id: "usage", render: ToolbarEntry, meta: { label: "用量", icon: "icons/chart-column.svg", onClick: () => panel.open() } }]);
+  ctx.registerItems?.("toolbar", [{ id: "usage", render: ToolbarEntry, meta: { label: "i18n:au.app.label", icon: "icons/chart-column.svg", onClick: () => panel.open() } }]);
   ctx.registerItems?.("sessionStats", [{ id: "report-entry", render: SessionStatsEntry }]);
   ctx.registerItems?.("dialogs", [{ id: "report", render: UsageReport }]);
   // 右栏停靠 face：注册 raw itemId（宿主拼 extId:itemId = REPORT_KEY）
-  ctx.registerItems?.("rightFileDock", [{ id: "report", render: ReportDockFace, meta: { title: "用量" } }]);
+  ctx.registerItems?.("rightFileDock", [{ id: "report", render: ReportDockFace, meta: { title: "i18n:it.report.title" } }]);
 }

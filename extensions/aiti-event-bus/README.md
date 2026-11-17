@@ -1,92 +1,95 @@
-# aiti-event-bus · 页面事件总线
+# @aiti-ai/aiti-event-bus
 
-## 来源 · Origin
+> The page event bus for pi-web: takes over `__piPageEvents`, topic subscriptions with server-side filtering, publish-local for high-frequency frames, load-priority guarantee, and STALE_CONN silent rebuild.
 
-本包是 **aiti** 生态的组成部分——以 [pi](https://pi.dev) 为引擎的个人 AI 开发工作台与本地调试注入生态：**aiti-agent**（自托管 Web 工作台，基于开源项目 [pi-web](https://github.com/aiti-ai/pi-web) 构建，浏览器为主操作面）+ 各开发工具内的调试注入（aiti-devtools）+ 丰富的扩展体系。
+English · [简体中文](./README.zh-CN.md)
+
+## About aiti
 
 This package is part of the **aiti** ecosystem — a personal AI development workbench powered by [pi](https://pi.dev): **aiti-agent** (a self-hosted web workbench built on the open-source [pi-web](https://github.com/aiti-ai/pi-web)) plus debug injection into mainstream dev tools (aiti-devtools) and a rich extension system.
 
-**English**: The page event bus for pi-web: takes over __piPageEvents, v0.2 topic subscriptions with server-side filtering, publish-local for high-frequency frames, load-priority guarantee and STALE_CONN silent rebuild.
+- Workbench (aiti-agent, built on pi-web): <https://github.com/aiti-ai/pi-web>
+- Ecosystem monorepo: <https://github.com/aiti-ai/aiti-ai>
+- Site: <https://aiti.pw>
 
-- 工作台 / workbench: <https://github.com/aiti-ai/pi-web>
-- 生态仓库 / monorepo: <https://github.com/aiti-ai/aiti-ai>
-- 官网 / site: <https://aiti.pw>
+## What it does
 
+The single event bus for page events in pi-web. The bus implementation is owned by this extension; the core `lib/agent-page-events.ts` stays untouched as the fallback host + core's own channel (SessionSidebar running).
 
-> ❝ 一条总线，全部帧。 ❞
+## Mechanism: accessor-property takeover
 
-页面事件总线归口扩展（依赖注入方案 **P0.5**，`docs/pi-web-ext-dependency-injection-plan.md` §4-E，2026-09-06 拍板）：总线实现归本扩展持有，core `lib/agent-page-events.ts` 不删不改、退为兜底宿主 + core 自用通道（SessionSidebar running）。
+All page-event publishes (core `running`, plan-first `pf:remind`, model-check `mc:avail`, editor `ed-watch`, …) go through the global `globalThis.__piPageEvents.publish` mouth. At startup this extension converts the `__piPageEvents` property into an **accessor** (`installPageEventSlot`, bus-core.ts):
 
-## 机制：访问器属性接管
+- **Reads** always return a stable slot object (`publish` = a wrapper feeding both the previous owner and this bus) — core receives every frame with zero changes
+- **Writes** (module re-evaluation / reassignment by others) are absorbed by the setter as "previous owner update" — immune to turbopack dev's unconditional global reassignment, independent of evaluation order
+- **Restore guard**: uninstall only when the accessor is still the one installed by this extension (no hot-reload stacking); on reload all SSE connections are closed so clients' EventSource reconnects to the new bus instance
+- `bus-core.ts` is a pure kernel (`createEventBus` broadcaster + `installPageEventSlot`), directly tested with `node --test`
 
-页面事件的**全部发布**（core `running`、plan-first `pf:remind`、model-check `mc:avail`、editor `ed-watch`…）都走 `globalThis.__piPageEvents.publish` 全局口。本扩展 startup 时把 `__piPageEvents` 属性**接管为访问器**（`installPageEventSlot`，bus-core.ts）：
+## Surfaces
 
-- **读**恒得稳定槽对象（`publish` = wrapper 双喂：当前前任 + 本总线）——core 零改动拿到全部帧
-- **写**（模块再求值 / 他人重装的重赋值）被 setter 吸收为「前任更新」——turbopack dev 下 instrumentation 与路由各自惰性求值 `agent-page-events` 并无条件重赋全局，换函数式接管会被冲掉（dev 实测复现），访问器方案免役且与求值顺序无关
-- **restore 守卫**：仅当访问器仍是自己装的才卸下还原前任槽（防热重载堆叠）；reload 时主动断开全部 SSE 连接，客户端 EventSource 自动重连到新总线实例
-
-- `bus-core.ts`：纯内核（`createEventBus` 广播器 + `installPageEventSlot` 访问器接管），`node --test` 直测（15 例：bus-core 10 例，`client-url` 5 例，含 clobber 免疫与 `//dev` 主机误拼关键回归）
-
-## 面
-
-| 面 | 契约 |
+| Surface | Contract |
 |---|---|
-| SSE | `GET /api/extensions/aiti-event-bus/events` —— 帧契约 `{type,...}` 与 core route 一致；建连即推 named `hello`（`{conn}`，客户端据此声明订阅）；named `heartbeat` 30s 不进帧分发 |
-| 订阅声明 | `POST /api/extensions/aiti-event-bus/subscribe` `{conn, types:[...]|null}` —— 声明该连接的 type 白名单（整体覆盖；空数组=合法空白名单；null=恢复全帧）。转发按白名单过滤（`frameMatches`）：**不匹配的帧不出 SSE**——高频流扩展（aiti-cmd 终端 `cmd-<id>`）靠它避免无关帧到达订阅方；未声明的连接全帧（v0.1 兼容）。精确项全等匹配，尾部 `*` 项作前缀通配（如 `sched:*`，供 type 动态拼接的生产方）。EventSource 断线重连后新连接订阅集为空 → 客户端在 hello 后重发全集 |
-| 连接保活 | `POST /heartbeat {conn}` —— client broker 每 45s 一次；服务端扫描（60s）：发过心跳且 3min 未刷新的连接判半开（页面已死 TCP 未断）→ cleanup。v0.1 旧客户端不发心跳、永不超时（兼容） |
-| 服务端服务出口 | `ctx.services.provide("aiti-event-bus.publish", { publish(type, data) })` —— 经全局槽双喂（core route 也收到；低频状态帧用）。`ctx.services.provide("aiti-event-bus.publish-local", { publish })` —— **直连总线不喂 core**（v0.2）：高频大帧（终端流）专用，避免污染 core route 订阅方（session-manager/SessionSidebar）；local 帧不会出现在 `/api/agent/running/events` 上 |
-| 客户端服务出口 | `ctx.registerExtService("aiti-event-bus.subscribe", subscribePageFrames)`（全帧，v0.1 兼容）+ `ctx.registerExtService("aiti-event-bus.subscribe-topics", subscribeTopics)`（主题订阅，v0.2） |
-| client broker | 页面级单例 SSE + 引用计数（末位退订才关闭）；分发/退订契约与 core `window.__piPageEventsClient` 一致 |
+| SSE | `GET /api/extensions/aiti-event-bus/events` — frame contract `{type,...}` identical to the core route; a named `hello` (`{conn}`) is pushed on connect (clients declare subscriptions based on it); named `heartbeat` every 30s, never dispatched as frames |
+| Subscription declaration | `POST /api/extensions/aiti-event-bus/subscribe` `{conn, types:[...]|null}` — type whitelist for this connection (whole replacement; empty array = legal empty whitelist; null = all frames). Forwarding filters by the whitelist (`frameMatches`): **non-matching frames never leave the SSE** — high-frequency extensions (aiti-cmd terminal `cmd-<id>`) rely on this to keep unrelated frames away from subscribers; undeclared connections receive all frames (v0.1 compatible). Exact items match exactly; trailing `*` items act as prefix wildcards (e.g. `sched:*`). After EventSource reconnection the new connection's subscription set is empty → clients re-send the full set after hello |
+| Connection keep-alive | `POST /heartbeat {conn}` — client broker every 45s; server scan (60s): connections that sent heartbeats but weren't refreshed for 3min are judged half-open (page dead, TCP not closed) → cleanup. Old v0.1 clients don't send heartbeats and never time out (compatible) |
+| Server service outlets | `ctx.services.provide("aiti-event-bus.publish", { publish(type, data) })` — feeds through the global slot (the core route also receives; for low-frequency state frames). `ctx.services.provide("aiti-event-bus.publish-local", { publish })` — straight to the bus, **not fed to core** (v0.2): dedicated to high-volume frames (terminal streams), keeping core-route subscribers clean; local frames never appear on `/api/agent/running/events` |
+| Client service outlets | `ctx.registerExtService("aiti-event-bus.subscribe", subscribePageFrames)` (all frames, v0.1 compatible) + `ctx.registerExtService("aiti-event-bus.subscribe-topics", subscribeTopics)` (topic subscription, v0.2) |
+| Client broker | Page-level singleton SSE + reference counting (closed when the last subscription leaves); dispatch/unsubscribe contract matches core `window.__piPageEventsClient` |
 
-## 消费方接入（2026-09-09 拍板：topics 唯一，禁止任何兜底）
+## Consumer integration (topics only)
 
 ```js
-// 唯一订阅方式：type 白名单（SSE 转发层过滤 + 本地分发过滤）
+// The only subscription mode: type whitelist (server-side SSE filtering + local dispatch filtering)
 const topics = ctx.getExtService?.("aiti-event-bus.subscribe-topics");
-if (!topics) return;               // 总线未启用 → 不订阅、功能降级，不兜底
+if (!topics) return;               // bus not enabled → don't subscribe, degrade the feature; no fallback
 const h = topics(handler, ["cmd-s_ab12", "sched:*"], (status) => { /* up/down/reconnecting */ });
-// h.ready：白名单在服务端生效（此后再拉初始快照即可无缝衔接）
-// ...h.off() 退订
+// h.ready: the whitelist is active server-side (pull initial snapshots after this for a seamless join)
+// ...h.off() to unsubscribe
 ```
 
-> **禁止兜底（必须）**：不得再写全帧订阅（`subscribePageFrames`）/ core
-> `__piPageEventsClient` / 自建 EventSource 作为兜底路径——兜底 = 保留复杂度 =
-> 保留错误之源，历史兜底已全部删除。`subscribePageFrames` 服务出口仅为兼容面
-> 保留，新代码一律 topics。
+> **No fallback paths**: do not write all-frame subscriptions (`subscribePageFrames`), core `__piPageEventsClient`, or hand-rolled EventSource as a fallback — the `subscribePageFrames` outlet exists only for compatibility; new code always uses topics.
 
-### 高频流约定（aiti-cmd 范式）
+### High-frequency stream conventions (aiti-cmd paradigm)
 
-- **发布方自管理是否发送**：每个实例一个专属 type（如终端 `cmd-<sessionId>`、agent 命令 `cmd-<toolCallId>`），列表快照用固定 type（`cmd-sessions` / `cmd-pilist`）；发布帧统一 `{ type, evt, seq?, ...}`。
-- **发布走 publish-local**：终端大流量帧直连总线、不双喂 core route——新接入的高频生产方一律用 `aiti-event-bus.publish-local`；低频状态帧（pf:remind/mc:avail/ed-watch/gr:task/sched:*）继续走 `aiti-event-bus.publish`（双喂，core route 消费方可见）。
-- **订阅保活（停推协议）**：高频生产方自带保活——前端订阅存在期间每 15s 向**自己的后端**（非 event-bus）POST 活跃 type 表（aiti-cmd：`/alive`）；后端对「曾报活但超时未刷新」的 type **停推**（aiti-cmd：45s），未报活的 type 乐观推（新订阅首心跳前不丢帧）。页面关闭/面板关闭 → 心跳停止 → 源头即断，不依赖 SSE 层丢帧；重开面板 → 心跳恢复 → 自动续推（中断输出靠 REST 快照 + seq 补齐）。**event-bus 不做推送拦截**（无订阅者时拦帧太复杂且易误拦）——活性与停推由各生产方自理；连接级半开回收（/heartbeat 3min 超时清理）归 event-bus；低频帧（分钟级）无需保活。
-- **大消息不走总线**：初始回放/全量快照（可达 MB 级）由订阅方先订阅、再 REST 拉快照；发布方每帧带单调 `seq`，客户端以快照 seq 为基线去重后续实时帧——无缝无重复，断线重连后重拉快照补丢失段。
-- 实时增量帧（小帧）才进总线。
+- **Publishers manage their own sending**: one dedicated type per instance (terminal `cmd-<sessionId>`, agent command `cmd-<toolCallId>`); list snapshots use fixed types (`cmd-sessions` / `cmd-pilist`); frames are `{ type, evt, seq?, ...}`.
+- **Publish via publish-local**: high-volume terminal frames go straight to the bus without feeding the core route; low-frequency state frames (`pf:remind`/`mc:avail`/`ed-watch`/`gr:task`/`sched:*`) keep using `aiti-event-bus.publish` (dual-fed).
+- **Subscription keep-alive (stop-push protocol)**: while a frontend subscription exists, the producer's client POSTs its active type list to **its own backend** every 15s (aiti-cmd: `/alive`); the backend stops pushing types that were reported alive but timed out (aiti-cmd: 45s) and optimistically pushes types never reported (no frame loss before a new subscriber's first heartbeat). Page/panel closed → heartbeat stops → source disconnects; reopened → heartbeats resume → pushing continues automatically (interruption gaps are filled via REST snapshots + `seq`).
+- **Big messages don't use the bus**: initial replay / full snapshots (potentially MB-sized) are fetched by subscribers via REST after subscribing; producers carry a monotonic `seq` per frame so clients dedupe real-time frames against the snapshot baseline.
+- Only real-time incremental frames (small) go through the bus.
 
-### 消费方拓扑（2026-09-09 整改后）
+### Consumer topology
 
-| 消费方 | 通道 | 白名单 |
+| Consumer | Channel | Whitelist |
 |---|---|---|
-| aiti-cmd（TerminalView/PiCommandView/总览列表） | 本总线 topics | `cmd-<id>` / `cmd-sessions` / `cmd-pilist` |
-| aiti-ai-schedule | 本总线 topics | `sched:*`（通配） |
-| aiti-editor（两处 watch） | 本总线 topics | `ed-watch` |
-| aiti-git-review | 本总线 topics | `gr:task` |
-| aiti-plan-first | 本总线 topics | `pf:remind` |
-| aiti-model-wizard | 本总线 topics | `mc:avail` |
-| session-manager / SessionSidebar | core route（`__piPageEventsClient`） | —（cmd 帧已退出 core route，无污染） |
+| aiti-cmd (TerminalView/PiCommandView/overview list) | bus topics | `cmd-<id>` / `cmd-sessions` / `cmd-pilist` |
+| aiti-ai-schedule | bus topics | `sched:*` (wildcard) |
+| aiti-editor (two watchers) | bus topics | `ed-watch` |
+| aiti-git-review | bus topics | `gr:task` |
+| aiti-plan-first | bus topics | `pf:remind` |
+| aiti-model-wizard | bus topics | `mc:avail` |
+| session-manager / SessionSidebar | core route (`__piPageEventsClient`) | — |
 
-各消费方均保留三级降级链：topics 服务缺席 → 全帧订阅（v0.1）→ core 旧 route / 自建 SSE。
-
-生产方接入（新代码优先走服务出口，全局口兜底）：
+Producer integration (service outlets first, global mouth as transitional):
 
 ```ts
 ctx.services?.get("aiti-event-bus.publish")?.publish("my:evt", { ... });
-// 过渡期等价：(globalThis as any).__piPageEvents?.publish("my:evt", { ... })
+// transitional equivalent: (globalThis as any).__piPageEvents?.publish("my:evt", { ... })
 ```
 
-稳态拓扑：2 条 SSE——core route（SessionSidebar 自用 running）+ 本扩展 `/events`（其余页面消费，含 aiti-cmd 终端流的主题订阅）；消费方全部迁 ctx 后 core route 仅剩 SessionSidebar 自用。
+Steady state: two SSE connections — the core route (SessionSidebar's own running) + this extension's `/events` (all other page consumers, including topic subscriptions for aiti-cmd terminal streams).
 
-## 文档 · Documentation
+## Install
 
-- 中文完整文档（aiti-docs）: <https://aiti.pw/extensions/aiti-event-bus.html>
-- English docs: <https://aiti.pw/en/extensions/aiti-event-bus.html>
-- 扩展注册表 / registry: <https://aiti.pw/extensions.html> · machine-readable <https://aiti.pw/extensions.json>
+Bundled with **aiti-agent** (`@aiti-ai/pi-web`) — enable it from the in-app extension manager (ExtMan / App Center).
+
+Manual install: place this package at `~/.pi/web/extensions/aiti-event-bus/` and reload pi-web.
+
+## Documentation
+
+- Documentation (English): <https://aiti.pw/en/guide/ext-services.html>
+- 文档（中文）: <https://aiti.pw/guide/ext-services.html>
+- Extension registry: <https://aiti.pw/extensions.html> · machine-readable <https://aiti.pw/extensions.json>
+
+## License
+
+MIT

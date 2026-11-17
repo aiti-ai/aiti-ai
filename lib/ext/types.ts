@@ -406,6 +406,11 @@ export type ExtSlotName =
   | "banners"
   | "pages"
   | "chatInputTop"   // Above the chat input (the in-page devtools extension: inspect candidate area, etc.)
+  | "commands"       // Command catalog (catalog-type slot like "dialogs": no render point anywhere — items live in the
+                     //   registry only, consumed by aiti-app-center (action cards) and the input command hints. Extensions
+                     //   declare pure commands (label + meta.onClick) without occupying any UI slot, e.g. aiti-folder's
+                     //   "open terminal". Lazy extensions should also declare ui.commands[] statically (static items get
+                     //   the same materialize-forwarder onClick as other slots).
   | "chatOverlay"    // Overlay above the message area (message scroll navigator etc.; the message-navigation extension
                      //   renders an absolute floating toolbar to the right of the message column)
   | "userMessageActions" // Hover action area under user messages (the prompt-library extension: 📌 save as prompt, etc.)
@@ -948,6 +953,10 @@ export interface ExtUiDefinition {
   fileViewer?: ExtUiItem[];   // File view/edit takeover items (springboard-rendered by the core FileViewer; items need a match predicate to take effect)
   pathPicker?: ExtUiItem[];   // Directory-picker capability items (springboard-rendered by the core top bar's "open folder"; items carry render({path,onSelect}))
   chatInputTop?: ExtUiItem[];
+  /** Command catalog — catalog-type slot like "dialogs" (no render point anywhere): items live in the
+   *  registry only, consumed by aiti-app-center (action cards) and the input command hints. Pure
+   *  command declarations (label + meta.onClick) that occupy no UI slot. */
+  commands?: ExtUiItem[];
   /** Floating-dock extension v0.5.0: dock block below the sidebar file area (host DockSection collapsed container; float plan §4.2). */
   sidebarExplorerDock?: ExtUiItem[];
   /** Floating-dock extension v0.5.0: right-column dock block — each item derives a TabBar tab (float plan §4.3). */

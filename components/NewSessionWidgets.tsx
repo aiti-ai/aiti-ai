@@ -19,7 +19,7 @@
  *   panel actions only write localStorage prefs + dispatch events (no
  *   polling).
  */
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { apiUrl } from "@/lib/base-path";
 import { ExtSlot, useExtMetas, useExtSlotItems } from "./ExtSlots";
@@ -402,15 +402,38 @@ export function NewSessionWidgetZone({
     return null;
   }
 
+  // Bottom zone participates in flex shrinking (no shrink-0): when a multi-line
+  // composer needs the space, the zone contracts and scrolls internally instead of
+  // pushing content off-screen. Plenty of space → natural height, visuals unchanged.
   return (
     <div
-      className={`relative w-full ${area === "top" ? "min-h-0 flex-1" : "min-h-0 shrink-0"}`}
-      style={{ overflowY: "auto", padding: area === "top" ? "4px 0 8px" : "8px 0 0" }}
+      className={`relative w-full min-h-0 ${area === "top" ? "flex-1" : ""}`}
+      style={{ overflowY: "auto", scrollbarWidth: "thin", padding: area === "top" ? "4px 0 8px" : "8px 0 0" }}
     >
       {editButton}
       {grid}
     </div>
   );
+}
+
+// ── Widget settings contract ──
+
+/** Per-widget settings surface (registered by extensions on newSessionWidgets items):
+ *  `{ settings: { label?, render({ close }) } }` — the customize panel renders a ✎
+ *  button on rows whose item carries one, and hosts `render` inside a standard
+ *  second-level dialog shell. Static manifest entries carry no functions, so the
+ *  button only appears once the client materializes and takes over the item. */
+interface WidgetSettings {
+  label?: string;
+  render: (helpers: { close: () => void }) => ReactNode;
+}
+
+function widgetSettingsOf(it: unknown): WidgetSettings | null {
+  const s = (it as { settings?: unknown } | null)?.settings;
+  if (s && typeof s === "object" && typeof (s as WidgetSettings).render === "function") {
+    return s as WidgetSettings;
+  }
+  return null;
 }
 
 // ── Customize panel ──
@@ -443,15 +466,29 @@ const ICON_DOWN = "M6 9l6 6 6-6";
 const ICON_EYE = "M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12Z M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z";
 const ICON_EYE_OFF = "M17.94 17.94A10.07 10.07 0 0 1 12 19c-7 0-11-7-11-7a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 5c7 0 11 7 11 7a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24M1 1l22 22";
 const ICON_SWAP = "M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4";
+const ICON_EDIT_PENCIL = "M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z";
 
 export function NewSessionWidgetsCustomize({ onClose }: { onClose: () => void }) {
   const isMobile = useIsMobile();
   const { t } = useI18n();
   const metas = useExtMetas();
+  const rawExtItems = useExtSlotItems("newSessionWidgets");
   const items = useNewSessionWidgetItems();
   const pref = useNewSessionWidgetPref();
   const layout = useMemo(() => resolveWidgetLayout(items, pref), [items, pref]);
   const byId = useMemo(() => new Map(items.map((it) => [it.id, it])), [items]);
+  // settings contract: raw slot items (same source useNewSessionWidgetItems reads) keyed by id
+  const settingsById = useMemo(() => {
+    const m = new Map<string, WidgetSettings>();
+    for (const it of rawExtItems) {
+      const s = widgetSettingsOf(it);
+      if (s) m.set(it.id, s);
+    }
+    return m;
+  }, [rawExtItems]);
+  const [settingsOpenId, setSettingsOpenId] = useState<string | null>(null);
+  const settingsEntry = settingsOpenId ? byId.get(settingsOpenId) : null;
+  const settingsWidget = settingsOpenId ? settingsById.get(settingsOpenId) : null;
 
   // Every operation first materializes the effective order into a complete
   // preference, then mutates it — so entries not yet in the preference can
@@ -538,6 +575,17 @@ export function NewSessionWidgetsCustomize({ onClose }: { onClose: () => void })
         {canMoveAcross && (
           <button type="button" onClick={() => moveTo(id, other)} title={other === "top" ? t("nsw.moveToTop") : t("nsw.moveToBottom")} aria-label={other === "top" ? t("nsw.moveToTop") : t("nsw.moveToBottom")} style={PANEL_BTN_STYLE}>
             <PanelIcon path={ICON_SWAP} />
+          </button>
+        )}
+        {settingsById.has(id) && (
+          <button
+            type="button"
+            onClick={() => setSettingsOpenId(id)}
+            title={settingsById.get(id)?.label || t("nsw.editWidget")}
+            aria-label={settingsById.get(id)?.label || t("nsw.editWidget")}
+            style={PANEL_BTN_STYLE}
+          >
+            <PanelIcon path={ICON_EDIT_PENCIL} />
           </button>
         )}
         <button type="button" onClick={() => toggleHidden(id)} title={t("nsw.hide")} aria-label={t("nsw.hide")} style={PANEL_BTN_STYLE}>
@@ -640,6 +688,48 @@ export function NewSessionWidgetsCustomize({ onClose }: { onClose: () => void })
           </button>
         </div>
       </div>
+      {/* Second-level widget settings shell (widget settings contract): content comes
+          from the item's settings.render({ close }); the shell only supplies chrome. */}
+      {settingsEntry && settingsWidget && createPortal(
+        <>
+          <div style={{ position: "fixed", inset: 0, zIndex: 132 }} onClick={() => setSettingsOpenId(null)} />
+          <div
+            role="dialog"
+            aria-label={settingsWidget.label || `${settingsEntry.title} · ${t("nsw.editWidget")}`}
+            style={{
+              position: "fixed",
+              top: "50%",
+              left: "50%",
+              transform: "translate(-50%, -50%)",
+              zIndex: 133,
+              width: 380,
+              maxWidth: "calc(100vw - 24px)",
+              maxHeight: "min(520px, 80dvh)",
+              overflowY: "auto",
+              background: "var(--bg)",
+              border: "1px solid var(--border)",
+              borderRadius: 10,
+              boxShadow: "0 8px 24px rgba(0,0,0,0.2)",
+              padding: "10px 0 0",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 14px 8px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {settingsWidget.label || `${settingsEntry.title} · ${t("nsw.editWidget")}`}
+              </span>
+              <button type="button" onClick={() => setSettingsOpenId(null)} aria-label={t("nsw.close")} style={{ ...PANEL_BTN_STYLE, border: "none", width: 22, height: 22 }}>
+                <PanelIcon path="M18 6L6 18M6 6l12 12" />
+              </button>
+            </div>
+            <div style={{ padding: "10px 14px", overflowY: "auto", minHeight: 0 }}>
+              {settingsWidget.render({ close: () => setSettingsOpenId(null) })}
+            </div>
+          </div>
+        </>,
+        document.body,
+      )}
     </>,
     document.body,
   );

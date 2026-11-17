@@ -27,10 +27,22 @@ import {
   useDockHeaderStateOf, requestDockCommand,
 } from "../../../_shared/ext-float-dock";
 import { openViewerWindow } from "../../../_shared/open-viewer-window";
+import { dockIconDecl } from "../../../_shared/dock-icons";
 import type { DockZone, DockHeaderAction } from "../../../_shared/ext-float-dock";
 
-/* ── 多实例清单（v2 条目带钉标；旧格式 string[] 兼容读）── */
-const INSTANCES_KEY = "pi:sidebar-dock:folders";
+/* ── multi-instance manifest (v2 entries carry pin flag; legacy string[] read-compat) ──
+ * Key is scoped per deployment sub-path (basePath): localStorage is origin-shared,
+ * while same-origin sub-path instances (/ vs /win, /dev) are different hosts/path
+ * spaces — folder manifest and pins must not leak across. Root deployments (no
+ * first segment in pathname) keep the bare key = seamless with legacy data. */
+function detectInstanceBase(): string {
+  try {
+    const m = window.location.pathname.match(/^\/([A-Za-z0-9._-]+)(?:\/|$)/);
+    return m ? "/" + m[1] : "";
+  } catch { return ""; } // no DOM (test stub / SSR) → root scope
+}
+const INSTANCE_BASE = detectInstanceBase();
+const INSTANCES_KEY = "pi:sidebar-dock:folders" + (INSTANCE_BASE ? `@${INSTANCE_BASE}` : "");
 export const INSTANCES_EVENT = "pi:sidebar-dock:folders-changed";
 /** 未钉实例保留上限缺省值（FIFO：超限挤掉最旧未钉并关其面板；钉住豁免）。
  *  实际值读 session-manager feature `behavior.folder-quota`（extman 可改，默认 3）。
@@ -440,13 +452,15 @@ export function FolderDockBlock(props: FolderFaceProps) {
     { id: "refresh", title: t("sidebar.refreshExplorer"), icon: st.refreshDone === true ? <CheckIcon/> : <MiRefresh/>, done: st.refreshDone === true, visibility: "always", onClick: () => { requestDockCommand(itemKey, "refresh"); } },
     { id: "plus", title: t("files.newFile") + " / " + t("files.uploadFile"), icon: <PlusIcon/>, visibility: "expanded", onClick: (ev?: unknown) => { requestDockCommand(itemKey, "plus", { anchor: anchorRectOf(ev) }); } },
     { id: "changes", title: t("sidebar.changedFiles", { count: gitCount }), icon: <ChangesIcon/>, badge: gitCount > 0 ? gitCount : undefined, active: st.changesOpen === true, visibility: "expanded", onClick: () => { requestDockCommand(itemKey, "changes"); } },
-    { id: "at", title: t("files.insertPath"), icon: <span style={{ fontSize: 12, fontWeight: 700, lineHeight: 1 }}>@</span>, visibility: "expanded", onClick: () => { requestDockCommand(itemKey, "at"); } },
+    { id: "at", title: t("files.insertPathTitle"), icon: <span style={{ fontSize: 12, fontWeight: 700, lineHeight: 1 }}>@</span>, visibility: "expanded", onClick: () => { requestDockCommand(itemKey, "at"); } },
   ];
   return (
     <DockBody
       itemKey={itemKey}
       blockKey={itemKey}
       title={title}
+      // No icon prop: the title switcher (renderTitle) already carries its own folder
+      // icon — a block icon here would render two identical folder glyphs side by side.
       chrome="section"
       kind="dockable"
       zones={[sidebarZoneOf(itemKey), "right-panel"]}
@@ -461,9 +475,18 @@ export function FolderDockBlock(props: FolderFaceProps) {
         />
       )}
       extraMenuItems={[
-        { label: "钉住", icon: dockIconEl("pin", 13), active: pinned, alwaysRun: true, run: () => toggleFolderPin(path) },
+        // 「新窗口打开」仅未挂载态显示（2026-11-15 用户去重）：挂载态「窗口」排已有「新窗口」，
+        // 区块段再放一份即重复；未挂载态（无全量菜单）才由本项兜底——不依赖内容也能开独立查看窗。
+        ...(typeof st.root !== "string" || !st.root.length
+          ? [{ label: t("files.openNewWindow"), icon: dockIconEl("new-window", 13), run: () => openFolderWindow(norm, props.cwd) }]
+          : []),
         { label: "显示忽略项", icon: <MiEye />, active: showIgnored, alwaysRun: true, run: () => toggleShowIgnored(path) },
       ]}
+      moveRowPin={{ isPinned: () => pinned, toggle: () => toggleFolderPin(path) }}
+      // 关闭入口分工（2026-11-15 终版，用户拍板）：挂载态 → 「窗口」排 ✕（removeFolderInstance
+      // 同语义，hideCloseItem 抑制区块段重复）；折叠未挂载态（无全量菜单）→ 区块段「关闭」
+      //（st.root 未注册 = 未挂载过）。两态都有关闭，位置都在用户预期的「窗口/关窗」区域。
+      hideCloseItem={typeof st.root === "string" && st.root.length > 0}
       onNewWindow={() => openFolderWindow(norm, props.cwd)}
       onClose={() => removeFolderInstance(path)}
     >
@@ -603,7 +626,9 @@ function buildFaceItems(p: string): { stack: FolderFaceItem; float: FolderFaceIt
       const f = faceOf(rp);
       return <FolderDockRightFace path={f.path} cwd={f.cwd} onOpenFile={f.onOpenFile} onOpenFolder={f.onOpenFolder} onAtMention={f.onAtMention} gitRefreshKey={f.gitRefreshKey} />;
     },
-    meta: { title },
+    // Semantic tab icon (host TabBar renders meta.icon; the sidebar collapsed header
+    // keeps the title switcher's own folder icon — no extra block icon there).
+    meta: { title, icon: dockIconDecl("folder") },
   };
   const entry = { stack, float, right };
   faceItemsCache.set(p, entry);

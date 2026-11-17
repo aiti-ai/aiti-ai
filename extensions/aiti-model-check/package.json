@@ -2,7 +2,7 @@
   "name": "@aiti-ai/aiti-model-check",
   "version": "0.1.8",
   "type": "module",
-  "description": "模型可用性管理 UI—— JSX + vite 构建 client bundle",
+  "description": "; parses the rate-limit recovery time (Retry-After etc.), records history to identify availability windows; long-term rate-limit expi",
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",

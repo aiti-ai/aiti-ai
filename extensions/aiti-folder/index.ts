@@ -142,7 +142,6 @@ async function trashToRecycle(absPath: string): Promise<{ ok: boolean; error?: s
 export default {
   id: "aiti-folder",
   name: "aiti-folder",
-  version: "0.1.0",
   description: "文件夹浏览器（fileViewer folder 接管）+ 目录选择器能力（pathPicker FolderSwitcher）。复用核心端点，UI 全在扩展。",
   client: "dist/aiti-folder-client.mjs",
   clientImmediately: true,
@@ -152,16 +151,27 @@ export default {
   icon: "icon.svg",
   ui: {
     fileViewer: [
-      { id: "aiti-folder", label: "文件夹", title: "aiti-folder：文件夹浏览器（树 + git 状态 + 切换）" },
+      { id: "aiti-folder", label: "i18n:it.folder.label", title: "i18n:it.folder.title" },
     ],
     pathPicker: [
-      { id: "aiti-folder-picker", label: "目录选择", title: "aiti-folder：目录选择器能力（FolderSwitcher，不切 cwd）" },
+      { id: "aiti-folder-picker", label: "i18n:it.folder-picker.label", title: "i18n:it.folder-picker.title" },
+    ],
+    // 命令目录槽（dialogs 同型无渲染点；ai-app-center 动作卡 + 输入命令提示消费，方案
+    // docs/aiti-ai-input-app-command-hints-plan.md §9）。静态声明 = extman 插槽详情可见 +
+    // 懒加载兼容（本扩展是立即加载，client 动态注册的同 id 条目会覆盖静态条目）；
+    // label 惯例中文（静态条目不走客户端 t）。
+    commands: [
+      { id: "open-terminal", label: "打开终端", title: "aiti-folder：当前项目打开右栏工作区终端 tab" },
     ],
     // 扩展自持 i18n 表（ctx.t 只读本表；缺 key 回退显 key）。复用核心 files.*/sidebar.* key，
     // 翻译与 core lib/i18n/messages 对齐——新增 t()/tt() 调用记得同步补 key。
     i18n: {
       "zh-CN": {
-        "files.cancel": "取消",
+        "it.folder.label": "文件夹",
+        "it.folder.title": "aiti-folder：文件夹浏览器（树 + git 状态 + 切换）",
+        "it.folder-picker.label": "目录选择",
+        "it.folder-picker.title": "aiti-folder：目录选择器能力（FolderSwitcher，不切 cwd）",
+        "ext.displayName": "文件夹浏览器",        "files.cancel": "取消",
         "files.refresh": "刷新",
         "files.changedCount": "{count} 个文件",
         "files.loading": "正在加载文件...",
@@ -171,8 +181,16 @@ export default {
         "files.parentDir": "上级目录",
         "files.selectFolder": "选择此文件夹",
         "files.containsChangedFiles": "包含已更改文件",
-        "files.insertPath": "将路径插入聊天",
-        "files.atNewSession": "到新session",
+        "files.insertPath": "@ 到聊天",
+        "files.insertPathTitle": "将路径写入聊天输入框",
+        "files.gitIgnoreAdd": "加入 .gitignore",
+        "files.gitIgnoreDone": "已加入 .gitignore",
+        "files.stage": "暂存",
+        "files.unstage": "取消暂存",
+        "files.stageAll": "暂存全部",
+        "files.unstageAll": "取消暂存全部",
+        "files.trashFailed": "移入回收站失败",
+        "files.atNewSession": "@ 到新会话",
         "files.entryInfo": "文件信息",
         "files.infoName": "名称",
         "files.infoType": "类型",
@@ -200,6 +218,8 @@ export default {
         "files.copyDoneAction": "已复制",
         "files.menuTabs": "标签页",
         "files.menuNav": "导航",
+        "files.menuBrowse": "浏览",
+        "files.menuWindow": "窗口",
         "files.menuOpen": "打开",
         "files.menuRef": "路径引用",
         "files.menuOrganize": "整理",
@@ -263,6 +283,15 @@ export default {
         "i18n.networkError": "网络错误",
       },
       "en": {
+        "ext.displayName": "Folder Browser",        "ext.description": "Folder browser (fileViewer folder takeover) + directory picker capability (pathPicker FolderSwitcher). Reuses core endpoints; UI lives entirely in the extension.",
+        "feat.aiti-folder": "Folders",
+        "it.folder.label": "Folders",
+        "it.folder.title": "aiti-folder: folder browser (tree + git status + switching)",
+        "it.folder-picker.label": "Directory picker",
+        "it.folder-picker.title": "aiti-folder: directory picker capability (FolderSwitcher, no cwd switching)",
+        "feat.aiti-folder-picker": "Directory picker",
+        "feat.open-terminal": "Open terminal",
+      
         "files.cancel": "Cancel",
         "files.refresh": "Refresh",
         "files.changedCount": "{count} files",
@@ -273,8 +302,16 @@ export default {
         "files.parentDir": "Parent directory",
         "files.selectFolder": "Select this folder",
         "files.containsChangedFiles": "Contains changed files",
-        "files.insertPath": "Insert path into chat",
-        "files.atNewSession": "to new session",
+        "files.insertPath": "@ To chat",
+        "files.insertPathTitle": "Write the path into the chat input",
+        "files.gitIgnoreAdd": "Add to .gitignore",
+        "files.gitIgnoreDone": "Added to .gitignore",
+        "files.stage": "Stage",
+        "files.unstage": "Unstage",
+        "files.stageAll": "Stage all",
+        "files.unstageAll": "Unstage all",
+        "files.trashFailed": "Move to trash failed",
+        "files.atNewSession": "@ To new session",
         "files.entryInfo": "File info",
         "files.infoName": "Name",
         "files.infoType": "Type",
@@ -302,6 +339,8 @@ export default {
         "files.copyDoneAction": "Copied",
         "files.menuTabs": "Tabs",
         "files.menuNav": "Navigate",
+        "files.menuBrowse": "Browse",
+        "files.menuWindow": "Window",
         "files.menuOpen": "Open",
         "files.menuRef": "Path reference",
         "files.menuOrganize": "Organize",

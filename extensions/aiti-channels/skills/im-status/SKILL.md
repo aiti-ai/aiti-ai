@@ -1,8 +1,11 @@
 ---
 name: im-status
 title: 查看 IM 渠道状态 / 会话 / 消息日志
+title.en: "IM channel status / sessions / message log"
 placeholder: 想查什么（如：现在有哪些活跃会话？发的消息都成功了吗？）
+placeholder.en: "What to check (e.g. which sessions are active? did my messages go through?)"
 summary: 汇总 cc-connect 进程状态、项目/平台、活跃会话、发消息记录
+summary.en: "Summarize cc-connect process status, projects/platforms, active sessions, sent-message log"
 outputs:
   format: text
 ---

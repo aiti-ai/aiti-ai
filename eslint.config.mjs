@@ -6,7 +6,11 @@ const eslintConfig = [
   // extensions/ hosts the ported pi-web extension packages (mirror of the
 // private source repo). They are independent projects with their own build/lint lifecycle —
 // same policy as demo/. See AGENTS.md "extensions/".
-  { ignores: ["demo/**", "extensions/**"] },
+  // pi-plugins/ + packages/ are independently published npm packages (@aiti-ai/*, gated by
+  // publish-npm's release-audit); integrations/ are separate ext mirrors (dsh/opencode);
+  // bin/ + tools/ are plain node launchers/tooling (CommonJS by design). All carry their own
+  // toolchains — excluded from the Next app's lint scope, same policy as extensions//demo.
+  { ignores: ["demo/**", "extensions/**", "pi-plugins/**", "packages/**", "integrations/**", "bin/**", "tools/**", "vendor/**"] },
   ...coreWebVitals,
   ...typescript,
   {
@@ -14,6 +18,7 @@ const eslintConfig = [
       "**/.next/**",
       "**/.next-*/**", // any PI_WEB_DIST_DIR variant (.next-dev/.next-aiti/...)
       "**/node_modules/**",
+      ".docker-build-context/**", // local docker staging mirror (build.sh assembly; never in git/CI)
     ],
   },
   {
@@ -28,6 +33,13 @@ const eslintConfig = [
       // hand-written and silence the noise, same as the other compiler rules.
       "react-hooks/preserve-manual-memoization": "off",
     },
+  },
+  {
+    // ExtSlots hosts the extension-runtime react shim: deliberately loose hook signatures
+    // mirroring React's own internal types (generic plumbing across the host↔extension
+    // boundary). Precise generics here only produce `as unknown as X` noise, not safety.
+    files: ["components/ExtSlots.tsx"],
+    rules: { "@typescript-eslint/no-explicit-any": "off", "@typescript-eslint/no-empty-object-type": "off" },
   },
 ];
 

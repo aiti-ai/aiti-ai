@@ -24,7 +24,7 @@ import { copyIcons } from '../../_shared/ext-icons-deploy.mjs';
 import { notifyReconcile } from '../../_shared/reconcile-deps.mjs';
 
 // 容忍拷贝：发布仓（aiti-ai）的 packages/aiti-devtools-core 镜像不含 pair 三件
-// （pair.ts / pair-client.js / pair.html）——npm/docker 形态缺源时降级跳过（pair 手机页不可用），
+// (pair.ts / pair-client.js) — skipped when missing in npm/docker form (pair.html retired: phone entry = workbench deep link ?pair=1),
 // 不让整个 aiti-devtools 扩展部署失败；本仓（workspace-tools）core/src 有源，行为不变。
 const copyIfPresent = (src, dst, note) => {
   if (existsSync(src)) { copyFileSync(src, dst); return; }
@@ -83,7 +83,6 @@ for (const t of TARGETS) {
   copyFileSync(resolve(injectDist, 'cdp-core.js'), resolve(extDir, 'assets', 'cdp-core.js'));
   copyFileSync(resolve(coreSrc, 'host-protocol.js'), resolve(extDir, 'assets', 'host-protocol.js'));
   copyIfPresent(resolve(coreSrc, 'pair-client.js'), resolve(extDir, 'assets', 'pair-client.js'), 'assets/pair-client.js'); // pair 公共库（widget）
-  copyIfPresent(resolve(coreSrc, 'pair.html'), resolve(extDir, 'assets', 'pair.html'), 'assets/pair.html'); // pair 手机独立页
   console.log('[deploy] ' + t.name + ' → ' + extDir + '（源码/bridge-core/client/assets）');
 }
 console.log('[deploy] 完成。pi-web 热重载：POST /api/extensions/reload（dev basePath /dev 前缀）；或重启 pi-web');

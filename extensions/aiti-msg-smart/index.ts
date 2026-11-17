@@ -35,7 +35,8 @@ export default {
       // 注意：client ctx.t 只查本表（ExtSlots makeClientContext 的 tableFor），
       // 查不到返回 key 原文——新增 T.* 词条必须同步补齐三表，否则按钮显示裸 key。
       "zh-CN": {
-        "chat.quoteReply": "引用回复",
+        "it.quote.label": "引用",
+        "ext.displayName": "消息智能",        "chat.quoteReply": "引用回复",
         "chat.quoteFull": "引用全文",
         "chat.quoteLine": "引用单句",
         "chat.copy": "复制",
@@ -45,7 +46,22 @@ export default {
         "files.openFolder": "打开文件夹",
       },
       "en": {
+        "feat.recognizer.question.desc": "Recognizes closed/choice questions → option buttons + quote-reply",
+        "feat.recognizer.selection.desc": "Text selection in the message area → popover: copy / quote-reply",
+        "feat.recognizer.file.desc": "Extracts file/dir paths in a paragraph → open/locate buttons (existence-checked)",
+        "feat.recognizer.fileExternalRoots.desc": "When the main cwd doesn't match, resolves cross-repo files together with aiti-git-trace's session rules/watched paths",
+        "feat.recognizer.url.desc": "Recognizes http/https links in a paragraph → open-in-new-window button",
+        "feat.recognizer.summary.desc": "Copy-full-text action on any paragraph",
+        "ext.displayName": "Message Intelligence",
+        "feat.recognizer.question": "Question recognition (quote-reply)",
+        "feat.recognizer.selection": "Selection recognition (quoted fragment)",
+        "feat.recognizer.file": "File/dir recognition",
+        "feat.recognizer.fileExternalRoots": "Cross-repo file resolution",
+        "feat.recognizer.url": "Link recognition",
+        "feat.recognizer.summary": "Copy full text",
+      
         "chat.quoteReply": "Quote reply",
+        "it.quote.label": "Quote",
         "chat.quoteFull": "Quote full",
         "chat.quoteLine": "Quote line",
         "chat.copy": "Copy",

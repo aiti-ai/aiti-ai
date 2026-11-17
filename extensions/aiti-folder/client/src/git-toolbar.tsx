@@ -12,6 +12,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiUrl, extSvc, openFile } from "./host-shim";
 import { ct } from "./comp-i18n";
 import { createGitOpsApi } from "../../../_shared/git-ops-client/api.mjs";
+// ⚠ api 实例只在 hook 内创建（勿提模块级：folder-browser → git-toolbar 循环依赖下
+// 模块级 const 会踩 TDZ「Cannot access before initialization」，2026-11-24 实测）。
 import { BranchPanel, BranchChipBadge } from "../../../_shared/git-ops-client/branch-panel";
 import { CommitPlanDialog } from "./git-plan";
 
@@ -32,6 +34,8 @@ export interface FolderGit {
   refresh: () => void;
   /** 行级单文件操作（git-ops M4 补：双列态行钮）；返回 HTTP status */
   op: (kind: "stage" | "unstage" | "discard", path: string) => Promise<number>;
+  /** 批量（桶头「暂存全部 / 取消暂存全部」）：一次引擎调用，完成后自动重探 + statusBump */
+  opPaths: (kind: "stage" | "unstage" | "discard", paths: string[]) => Promise<number>;
 }
 
 export function useFolderGit(root: string): FolderGit {
@@ -95,7 +99,16 @@ export function useFolderGit(root: string): FolderGit {
     return r.status;
   }, [api, root, probe]);
 
-  return { avail, refs, statusBump, refresh, op };
+  const ignoreAdd = useCallback((rel: string) => api.ignoreAdd(root, [rel]), [api, root]);
+  const opPaths = useCallback(async (kind: "stage" | "unstage" | "discard", paths: string[]): Promise<number> => {
+    const r = kind === "stage" ? await api.stage(root, paths)
+      : kind === "unstage" ? await api.unstage(root, paths)
+        : await api.discard(root, paths);
+    void probe(root);
+    setStatusBump((v) => v + 1);
+    return r.status;
+  }, [api, root, probe]);
+  return { avail, refs, statusBump, refresh, op, opPaths, ignoreAdd };
 }
 
 /* ── GitBar：变更区段上方单行工具条 ── */

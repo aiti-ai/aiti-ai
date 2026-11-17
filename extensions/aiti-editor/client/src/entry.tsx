@@ -9,7 +9,7 @@
  * 构建：node tools/build-client.mjs   （或 npm run build:client）
  * 部署：node tools/deploy.mjs         （自动先构建再拷贝）
  */
-import { __setCtx } from "./host-shim";
+import { __setCtx } from "./host-shim.ts";
 import { setCtx } from "./env";
 import { installSessionService } from "./session-svc";
 import { setupRegistry, canTakeover } from "./registry";
@@ -51,12 +51,12 @@ export default function register(ctx: Record<string, any>) {
   ctx.registerItems?.("dialogs", [{
     id: "image-preview",
     render: () => <ImageFloatFace />,
-    meta: { label: "图片预览", title: "aiti-editor: image preview overlay" },
+    meta: { label: "i18n:it.image-preview.label", title: "aiti-editor: image preview overlay" },
   }]);
   ctx.registerItems?.("rightFileDock", [{
     id: "image-preview",
     render: () => <ImageDockRightFace />,
-    meta: { title: "图片预览" },
+    meta: { title: "i18n:it.image-preview.title" },
   }]);
 
   // 文件 dock faces（右栏 dock tab / 左栏区块 / 浮窗；方案 docs/file-dock-face-plan.md）：

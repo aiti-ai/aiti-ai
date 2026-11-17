@@ -467,7 +467,6 @@ async function recycleApi(req: Request, ctx: { path: string[]; method: string })
 export default {
   id: "aiti-codebuddy-agent",
   name: "CodeBuddy Code (腾讯)",
-  version: "0.1.0",
   icon: "🔵",
 
   features: [
@@ -555,6 +554,35 @@ export default {
       placeholder: "http://127.0.0.1:8777",
     },
   ],
+
+
+  ui: {
+    // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
+    i18n: {
+      en: {
+        "feat.codebuddy.cliPath.desc": "Path to the cbc executable (absolute path after npm i -g @tencent-ai/codebuddy-code or brew install codebuddy-code). Empty = auto-detect cbc/codebuddy on PATH → npx fallback (first use downloads)",
+        "feat.codebuddy.packageSpec.desc": "Package pulled by the npx fallback (default @tencent-ai/codebuddy-code latest cache; pin a version supported by the local Node)",
+        "feat.codebuddy.model.desc": "Default model id for new sessions (--model): default-model/fast-model/balanced-model family aliases or a full model id",
+        "feat.codebuddy.permissionMode.desc": "--permission-mode: default/acceptEdits/bypassPermissions (maps to the agent tool's permission semantics)",
+        "feat.codebuddy.connectionMode.desc": "stream (default, long-lived connection: single process, multi-turn, cwd switching saves cold start) | oneshot (single-shot process per turn, legacy fallback)",
+        "feat.codebuddy.apiKey.desc": "CODEBUDDY_API_KEY: personal API key from the Tencent CodeBuddy platform (used by the npx fallback)",
+        "feat.codebuddy.authToken.desc": "CODEBUDDY_AUTH_TOKEN: existing OAuth token (preferred by the CLI side; for logged-in desktop users)",
+        "feat.codebuddy.baseUrl.desc": "CODEBUDDY_BASE_URL: point to an OpenAI-compatible endpoint (bypassing the Tencent gateway, e.g. a self-hosted proxy)",
+        "feat.codebuddy.bridgeUrl.desc": "AITI_BRIDGE_URL: enables aiti_* tools inside cbc sessions connecting to the AITI bridge (MCP tool injection)",
+        "ext.displayName": "CodeBuddy Code (Tencent)",
+        "ext.description": "Path to the cbc executable (absolute path after npm i -g @tencent-ai/codebuddy-code or brew install codebuddy-code). Empty = auto-detect cbc/codebuddy on PATH → npx fallback (first use downloads).",
+        "feat.codebuddy.cliPath": "CLI path",
+        "feat.codebuddy.packageSpec": "npx package spec",
+        "feat.codebuddy.model": "Default model",
+        "feat.codebuddy.permissionMode": "Permission mode",
+        "feat.codebuddy.connectionMode": "Connection mode",
+        "feat.codebuddy.apiKey": "API key (credential)",
+        "feat.codebuddy.authToken": "Auth token (credential)",
+        "feat.codebuddy.baseUrl": "Base URL (third-party model gateway)",
+        "feat.codebuddy.bridgeUrl": "AITI bridge URL (MCP tool injection)",
+      },
+    },
+  },
 
   server: {
     startup(ctx: {

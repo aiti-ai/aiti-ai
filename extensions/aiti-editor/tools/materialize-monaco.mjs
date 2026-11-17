@@ -79,7 +79,9 @@ function vsFromNpmPack(spec) {
   if (pack.status !== 0) throw new Error(`npm pack ${MONACO_DEP}@${spec} failed: ${(pack.stderr || pack.stdout || "").slice(-300)}`);
   const tgz = readdirSync(tmp).find((f) => f.endsWith(".tgz"));
   if (!tgz) throw new Error("npm pack produced no tarball");
-  const x = spawnSync("tar", ["xzf", join(tmp, tgz), "-C", tmp], { encoding: "utf8" });
+  // Relative archive name + cwd=tmp: GNU tar parses the drive colon in `-f C:\...`
+  // as a remote host ("Cannot connect to C:", lessons §3, 2026-11-11)
+  const x = spawnSync("tar", ["xzf", tgz, "-C", "."], { encoding: "utf8", cwd: tmp });
   if (x.status !== 0) throw new Error(`tar extract failed: ${(x.stderr || "").slice(-200)}`);
   const vs = join(tmp, "package", "min", "vs");
   if (!existsSync(join(vs, "loader.js"))) throw new Error("monaco tarball has no min/vs/loader.js");

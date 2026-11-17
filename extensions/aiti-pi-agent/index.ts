@@ -28,10 +28,22 @@ let recycleApi: ReturnType<typeof createSessionRecycleApi> | null = null;
 export default {
   id: "aiti-pi-agent",
   name: "Pi Spawn (子进程后端)",
-  version: "0.2.0",
   icon: "🚀",
 
   features: [spawnEnvFeature("Pi"), spawnCommandFeature("Pi"), spawnArgsPrefixFeature("Pi")],
+
+
+  ui: {
+    // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
+    i18n: {
+      "zh-CN": {
+        "ext.displayName": "pi 会话后端",
+      },
+      en: {
+        "ext.displayName": "pi Session Backend",
+      },
+    },
+  },
 
   server: {
     startup(ctx: {

@@ -19,6 +19,7 @@ import {
   DockDemoDialog, DockDemoRightTab, DockDemoSidebarSection, DockDemoToolbarButton,
 } from "./dock-demo"; // aiti-float dock v0.5.0 试点（双 face + 状态机防双开）
 import { seedDockDefault } from "../../../_shared/ext-float-dock";
+import { dockIconDecl } from "../../../_shared/dock-icons";
 import { WidgetDemoCard } from "./new-session-widget";
 
 export default function register(ctx: Record<string, unknown>) {
@@ -37,22 +38,22 @@ export default function register(ctx: Record<string, unknown>) {
   }
 
   ctx.registerItems?.("toolbar", [
-    { id: "jsx-example", render: JsxToolbarButton, meta: { label: "JSX 示例" } },
-    { id: "dock-demo", render: DockDemoToolbarButton, meta: { label: "停靠示例" } },
+    { id: "jsx-example", render: JsxToolbarButton, meta: { label: "i18n:it.jsx-demo.label" } },
+    { id: "dock-demo", render: DockDemoToolbarButton, meta: { label: "i18n:it.dock-demo.label" } },
   ]);
   ctx.registerItems?.("dialogs", [
-    { id: "jsx-example", render: DialogsSlot, meta: { label: "JSX 示例面板" } },
-    { id: "dock-demo", render: DockDemoDialog, meta: { label: "停靠示例（浮窗态）" } },
+    { id: "jsx-example", render: DialogsSlot, meta: { label: "i18n:it.jsx-demo-panel.label" } },
+    { id: "dock-demo", render: DockDemoDialog, meta: { label: "i18n:it.dock-demo-float.label" } },
   ]);
   // 停靠 faces（dock 方案 §6：同一内容组件注册两处，gate 门控结构性防双开）
   // ⚠ dock item 注册 raw itemId（宿主自动拼 extId:itemId = itemKey）——状态机 key "demo:dock"
   // 的 itemId 段是 "dock"，故此处必须 id: "dock"（原 "dock-demo" 拼后不匹配 → dock tab 从未出现）
-  ctx.registerItems?.("rightFileDock", [{ id: "dock", render: DockDemoRightTab, meta: { title: "🧩 停靠示例" } }]);
-  ctx.registerItems?.("sidebarExplorerDock", [{ id: "dock", render: DockDemoSidebarSection, meta: { title: "🧩 停靠示例", priority: 4 } }]);
+  ctx.registerItems?.("rightFileDock", [{ id: "dock", render: DockDemoRightTab, meta: { title: "i18n:it.dock-demo.title", icon: dockIconDecl("box") } }]);
+  ctx.registerItems?.("sidebarExplorerDock", [{ id: "dock", render: DockDemoSidebarSection, meta: { title: "i18n:it.dock.title", priority: 4 } }]);
   // 新会话欢迎页小组件（newSessionWidgets）：meta 标注允许区域 + 栅格尺寸（手机 4 列/
   // 桌面 8 列，w4=手机满行/桌面半行）；extra 只喂数据 {cwd,isMobile,area}，用户可在
   // 「自定义小组件」面板排序/跨区移动/隐藏。方案 docs/pi-web-new-session-widgets-plan.md
   ctx.registerItems?.("newSessionWidgets", [
-    { id: "widget", render: WidgetDemoCard, meta: { title: "示例小组件", areas: ["top", "bottom"], defaultArea: "bottom", w: 4, h: 1 } },
+    { id: "widget", render: WidgetDemoCard, meta: { title: "i18n:it.widget.title", areas: ["top", "bottom"], defaultArea: "bottom", w: 4, h: 1 } },
   ]);
 }

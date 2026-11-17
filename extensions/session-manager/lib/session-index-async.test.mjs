@@ -5,7 +5,7 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -23,6 +23,21 @@ function parsed(id) {
     files: [],
   };
 }
+
+test("facade 构造零 IO：本地连接惰性首开（2026-11-15 'startup: database is locked' 修复回归）", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sm-facade-lazy-"));
+  let facade;
+  try {
+    const dbPath = join(dir, "lazy.sqlite");
+    facade = createIndexFacade(dbPath, { workerPath: join(dir, "no-such-worker.mjs") });
+    assert.equal(existsSync(dbPath), false, "构造不应打开/创建库文件（startup 零 db IO）");
+    assert.equal(facade.getSession("nope"), undefined, "首次使用才打开（读方法照常工作）");
+    assert.equal(existsSync(dbPath), true, "首用后库文件已建");
+  } finally {
+    facade?.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test("facade：workerPath 缺失 → sync/syncExt 自动回落本地实现（行为同旧版）", async () => {
   const dir = mkdtempSync(join(tmpdir(), "sm-facade-"));

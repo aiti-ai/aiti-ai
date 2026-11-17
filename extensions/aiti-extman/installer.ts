@@ -82,6 +82,25 @@ function resolveExtensionEntry(dir: string): string | null {
   return null;
 }
 
+/**
+ * 读扩展入口源码里 default export 声明的 id（host 强制目录名 = entry id，声明值是权威推导源）。
+ * npm 包名不能用来推：@aiti-ai/aiti-service-tunnels 剥 scope 后是 aiti-service-tunnels，
+ * 而扩展真 id 是 service-tunnels——装错目录名会被宿主拒（entry id does not match）。
+ * 解析失败返回 null，调用方回退原推导（行首锚定取第一个匹配，同 withDisabledDeps 手法）。
+ */
+function declaredExtensionId(dir: string): string | null {
+  const entry = resolveExtensionEntry(dir);
+  if (!entry) return null;
+  try {
+    const src = readFileSync(entry, "utf8");
+    const m = src.match(/^\s*id\s*:\s*["'`]([^"'`\s]+)["'`]/m);
+    const id = m?.[1]?.trim();
+    return id && ID_RE.test(id) ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 /** 在一层子目录里找扩展入口（npm 包常见嵌套布局：package/<id>/index.ts）。 */
 function findNestedEntry(dir: string): string | null {
   const entries = readdirSync(dir)
@@ -290,8 +309,6 @@ export async function extractZipToTemp(buf: Buffer): Promise<string> {
 export async function installExtension(source: string, explicitId?: string, docsUrl?: string): Promise<InstallResult> {
   const plan = parseInstallSource(source);
   if (!plan) throw new Error(`无法识别的扩展来源：${source}`);
-  const id = explicitId?.trim() || plan.id;
-  if (!ID_RE.test(id)) throw new Error(`非法扩展 id："${id}"（仅限字母数字 . _ -）`);
 
   const root = extensionsRoot();
   mkdirSync(root, { recursive: true });
@@ -325,6 +342,10 @@ export async function installExtension(source: string, explicitId?: string, docs
     if (!entryDir) throw new Error("未找到扩展入口（index.ts 或单文件 .ts/.mjs/.js）");
     checkEntryClient(entryDir); // 层 2：client TS 残留检查，FAIL 在删旧版之前中止
 
+    // id：显式指定 > 入口声明（权威，见 declaredExtensionId）> 来源推导（npm 剥 scope / git 尾段）。
+    const id = explicitId?.trim() || declaredExtensionId(entryDir) || plan.id;
+    if (!ID_RE.test(id)) throw new Error(`非法扩展 id："${id}"（仅限字母数字 . _ -）`);
+
     const target = join(root, id);
     const replaced = existsSync(target);
     if (replaced) rmSync(target, { recursive: true, force: true });
@@ -351,8 +372,8 @@ export async function installFromZipBuffer(buf: Buffer, explicitId?: string, doc
     if (!entryDir) throw new Error("zip 内未找到扩展入口（index.ts 或单文件 .ts/.mjs/.js，且不含 node_modules）");
     checkEntryClient(entryDir); // 层 2：client TS 残留检查，FAIL 在删旧版之前中止
 
-    // 入口在嵌套子目录时，id 缺省用该目录名。
-    const defaultId = entryDir === extract ? "uploaded-ext" : basename(entryDir);
+    // id：显式指定 > 入口声明（权威）> 嵌套目录名（嵌套布局）> uploaded-ext（根布局）。
+    const defaultId = declaredExtensionId(entryDir) || (entryDir === extract ? "uploaded-ext" : basename(entryDir));
     const id = explicitId?.trim() || defaultId;
     if (!ID_RE.test(id)) throw new Error(`非法扩展 id："${id}"（仅限字母数字 . _ -）`);
 

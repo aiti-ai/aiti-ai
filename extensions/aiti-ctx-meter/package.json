@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/aiti-ctx-meter",
   "version": "0.1.13",
-  "description": "输入区上下文比例条指示器（context % + 会话面板入口）",
+  "description": "Input-area context ratio-bar indicator — desktop compactLead vertical bar + small-screen modelInfoLead leading slot, four-tier urgency color scale + critical breathing, click opens the host session stats panel",
   "soul": "上下文还剩多少，看一眼电池就知道。",
   "scripts": {
     "build:client": "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});fs.copyFileSync('client/src/aiti-ctx-meter-client.mjs','dist/aiti-ctx-meter-client.mjs')\""

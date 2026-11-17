@@ -7,11 +7,11 @@ globalThis.self = {
     href: "https://pi.test/sw.js?v=test",
     origin: "https://pi.test",
   },
-  // [fork] the worker derives every URL from self.registration.scope (basePath
-  // awareness); the harness serves it at the root, like the default deployment.
-  registration: { scope: "https://pi.test/" },
   addEventListener: (type, listener) => listeners.set(type, listener),
   clients: null,
+  // All URL paths in sw.js derive from registration.scope (#base-path support);
+  // root deployment scope like a real registration at https://pi.test/.
+  registration: { scope: "https://pi.test/" },
 };
 
 await import("./sw.js");
@@ -37,7 +37,7 @@ function dispatchPush(payload, clients, getNotifications = async () => []) {
     openWindow: async () => assert.fail("push must not open windows"),
   };
   self.registration = {
-    scope: "https://pi.test/",
+    ...self.registration,
     showNotification: async (title, options) => { shown.push({ title, options }); },
     getNotifications,
   };
@@ -134,13 +134,10 @@ test("push ignores malformed payloads", async () => {
 
 test("notification click focuses an existing client at the session URL", async () => {
   const calls = [];
-  const posted = [];
   const focusedClient = {
     url: "https://pi.test/?session=session-1",
     focus: async () => { calls.push("focus"); },
-    // [fork] the switch intent is posted in-SPA even when the window is already
-    // at the target address (it re-syncs the session and URL without a reload).
-    postMessage: (message) => { posted.push(message); },
+    postMessage: (message) => { calls.push(["postMessage", message]); },
     navigate: async () => assert.fail("exact client should not navigate"),
   };
   self.clients = {
@@ -152,23 +149,21 @@ test("notification click focuses an existing client at the session URL", async (
   await event.pending;
 
   assert.equal(event.wasClosed(), true);
-  assert.deepEqual(calls, ["focus"]);
-  assert.equal(posted[0].type, "pi-web:open-session");
-  assert.equal(posted[0].sessionId, "session-1");
+  // In-SPA session switch: the page receives the intent via postMessage and
+  // syncs the URL itself (zero reload).
+  assert.deepEqual(calls, [
+    "focus",
+    ["postMessage", { type: "pi-web:open-session", url: "https://pi.test/?session=session-1", sessionId: "session-1" }],
+  ]);
 });
 
-test("notification click hands a different session to an existing client in-page ([fork] no hard navigation)", async () => {
-  // [fork] client.navigate hard-refreshes a window that may be viewing another
-  // session/instance and loses all its state. The fork focuses the window and
-  // posts the switch intent instead; the page swaps sessions in-SPA
-  // (pi-web:open-session channel) and syncs the URL itself.
+test("notification click hands another session's window the in-SPA switch (never a reload)", async () => {
   const calls = [];
-  const posted = [];
   const existingClient = {
     url: "https://pi.test/?session=other-session",
     focus: async () => { calls.push("focus"); },
-    postMessage: (message) => { posted.push(message); },
-    navigate: async () => assert.fail("a same-origin window is never hard-navigated"),
+    postMessage: (message) => { calls.push(["postMessage", message]); },
+    navigate: async () => assert.fail("client.navigate is a hard refresh — the session switch must be in-SPA"),
   };
   self.clients = {
     matchAll: async () => [existingClient],
@@ -178,11 +173,10 @@ test("notification click hands a different session to an existing client in-page
   const event = dispatchNotificationClick({ url: "/?session=session-1" });
   await event.pending;
 
-  assert.deepEqual(calls, ["focus"]);
-  assert.equal(posted.length, 1);
-  assert.equal(posted[0].type, "pi-web:open-session");
-  assert.equal(posted[0].url, "https://pi.test/?session=session-1");
-  assert.equal(posted[0].sessionId, "session-1");
+  assert.deepEqual(calls, [
+    "focus",
+    ["postMessage", { type: "pi-web:open-session", url: "https://pi.test/?session=session-1", sessionId: "session-1" }],
+  ]);
 });
 
 test("notification click opens a window and rejects cross-origin targets", async () => {

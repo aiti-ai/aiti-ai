@@ -1,8 +1,11 @@
 ---
 name: instance-manage
 title: AI 帮我启动 / 停止 / 重启 cc-connect 实例
+title.en: "AI: start/stop/restart a cc-connect instance"
 placeholder: 启停/重启哪个实例（如：启动 atest 实例）
+placeholder.en: "Which instance to start/stop/restart (e.g. start the atest instance)"
 summary: 启动/停止/重启 cc-connect 实例（default 或自建），多实例独立管理
+summary.en: "Start/stop/restart cc-connect instances (default or custom), managed independently"
 outputs:
   format: json-obj
   schema:

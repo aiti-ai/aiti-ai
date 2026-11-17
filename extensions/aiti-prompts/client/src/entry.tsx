@@ -11,6 +11,7 @@
  */
 import { __setCtx } from "./host-shim";
 import { seedDockDefault, declareDockZones, sidebarZoneOf } from "../../../_shared/ext-float-dock";
+import { dockIconDecl } from "../../../_shared/dock-icons";
 import { PANEL_KEY } from "./prompts-app";
 import { openFromToolbar, PromptsPanelSlot, PromptsDockLeft, PromptsDockRight, PromptsSaveSlot, PromptsMessageAction, __bindSendChat, __openExternal, setAppCtx } from "./prompts-app";
 import { exportPromptsOnClick, ExportPromptsDialog } from "./export-dialog";
@@ -27,8 +28,8 @@ export default function register(ctx: Record<string, any>) {
   ctx.registerItems("toolbar", [{
     id: "aiti-prompts-open",
     meta: {
-      label: "Prompt 收藏库",
-      title: "aiti-prompts：收藏库 / 会话提取 / 一键插队排队",
+      label: "i18n:it.open.label",
+      title: "i18n:it.open.title",
       icon: "icons/bookmark.svg",
       onClick: () => openFromToolbar(),
     },
@@ -41,20 +42,20 @@ export default function register(ctx: Record<string, any>) {
   ctx.registerItems("dialogs", [
     { id: "aiti-prompts-panel", render: PromptsPanelSlot },
     { id: "aiti-prompts-save", render: PromptsSaveSlot },
-    { id: "aiti-prompts-export", render: ExportPromptsDialog, meta: { label: "导出 Prompts" } },
+    { id: "aiti-prompts-export", render: ExportPromptsDialog, meta: { label: "i18n:it.export.label" } },
   ]);
   // defork B2：「导出 Prompts」入口（原 core 更多菜单 export 项外迁）。
   // toolbar 声明式（无 render）：宿主画标准图标按钮，onClick 开 dialogs 弹窗。
   ctx.registerItems("toolbar", [{
     id: "aiti-prompts-export",
-    meta: { label: "导出 Prompts", title: t2("exportPrompts.title"), icon: "icons/import.svg", onClick: exportPromptsOnClick },
+    meta: { label: "i18n:it.export.label.2", title: t2("exportPrompts.title"), icon: "icons/import.svg", onClick: exportPromptsOnClick },
   }]);
   // aiti-float dock v3（P2 批）：收藏库默认左栏（单列收藏流「随手查随手插」）；不接右栏
   // zone 规范值 sidebar:<key>（v4；旧 sidebar-explorer 兼容读）
   seedDockDefault(PANEL_KEY, sidebarZoneOf(PANEL_KEY));
   declareDockZones(PANEL_KEY, [sidebarZoneOf(PANEL_KEY), "right-panel"], sidebarZoneOf(PANEL_KEY));
-  ctx.registerItems("rightFileDock", [{ id: "panel", render: PromptsDockRight, meta: { title: "收藏库" } }]);
-  ctx.registerItems("sidebarExplorerDock", [{ id: "panel", render: PromptsDockLeft, meta: { title: "收藏库", priority: 3 } }]);
+  ctx.registerItems("rightFileDock", [{ id: "panel", render: PromptsDockRight, meta: { title: "i18n:it.panel.title", icon: dockIconDecl("library") } }]);
+  ctx.registerItems("sidebarExplorerDock", [{ id: "panel", render: PromptsDockLeft, meta: { title: "i18n:it.panel.title.2", priority: 3 } }]);
   ctx.registerItems("userMessageActions", [{
     id: "aiti-prompts-save-message",
     render: (props: any) => <PromptsMessageAction text={props && typeof props.text === "string" ? props.text : ""} />,

@@ -124,6 +124,27 @@ function parseSkillFrontmatter(text: string): { meta: Record<string, any>; body:
 // 从扩展注册表（globalThis.__piWebExt）聚合所有扩展的 ai.skills 帮助点。
 // 扩展声明：export default { ..., ai: { manage, intro, skills: "skills"（目录，缺省 "skills"） } }
 // skills/index.json 列 skill 名；每个 skill = skills/<name>/SKILL.md（frontmatter=元数据 + 正文）。
+
+/** Bilingual/multilingual fields normalization: SKILL.md frontmatter carries per-locale
+ * overrides as dot-suffixed keys — `title.en: "..."` / `summary.ja: "..."` — base (zh)
+ * fields stay unsuffixed. Legacy flat camelCase (`titleEn`) is accepted as `.en` alias.
+ * Returns { locale: { field: value } } or undefined. Adding a language = adding lines in
+ * SKILL.md; no code change anywhere (client cascades loc → loc short-code → base field). */
+function collectFieldI18n(meta: Record<string, any>): Record<string, Record<string, string>> | undefined {
+  const i18n: Record<string, Record<string, string>> = {};
+  const put = (loc: string, field: string, v: unknown) => {
+    if (v === undefined || v === null || v === "") return;
+    (i18n[loc] ??= {})[field] = String(v);
+  };
+  for (const [k, v] of Object.entries(meta)) {
+    const dot = k.match(/^(title|summary|placeholder)\.([a-zA-Z]{2}(?:-[A-Za-z]{2,4})?)$/);
+    if (dot) { put(dot[2], dot[1], v); continue; }
+    const legacy = k.match(/^(title|summary|placeholder)En$/);
+    if (legacy) put("en", legacy[1], v);
+  }
+  return Object.keys(i18n).length ? i18n : undefined;
+}
+
 function collectHelpers(): number {
   let n = 0;
   try {
@@ -158,6 +179,9 @@ function collectHelpers(): number {
           title: String(meta.title || meta.name || id),
           summary: meta.summary ? String(meta.summary) : undefined,
           placeholder: meta.placeholder ? String(meta.placeholder) : undefined,
+          // Multilingual overrides (title.en / summary.ja / legacy titleEn …) normalized to
+          // i18n[locale][field]; client picks per UI locale with fallback to base fields.
+          i18n: collectFieldI18n(meta),
           outputs: meta.outputs || undefined,
           action: meta.action || undefined,
           skillPath: skillFile,
@@ -219,6 +243,17 @@ function collectUserSkills(): void {
       title: String(meta.title || s.title || name),
       summary: meta.summary ? String(meta.summary) : (s.summary || undefined),
       placeholder: meta.placeholder ? String(meta.placeholder) : undefined,
+      // Merge En overrides stored in the user-skills index (s.titleEn) with SKILL.md i18n keys.
+      i18n: (() => {
+        const fromIdx: Record<string, Record<string, string>> = {};
+        if (s.titleEn) (fromIdx.en ??= {}).title = String(s.titleEn);
+        if (s.summaryEn) (fromIdx.en ??= {}).summary = String(s.summaryEn);
+        const fromMd = collectFieldI18n(meta);
+        if (!fromMd) return Object.keys(fromIdx).length ? fromIdx : undefined;
+        const merged: Record<string, Record<string, string>> = { ...fromMd };
+        for (const [loc, f] of Object.entries(fromIdx)) merged[loc] = { ...f, ...(merged[loc] || {}) };
+        return merged;
+      })(),
       outputs: meta.outputs || undefined,
       action: meta.action || undefined,
       skillPath: skillFile,
@@ -371,7 +406,6 @@ function resolveApiBase(req: Request): { localOrigin: string; basePath: string; 
 export default {
   id: "aiti-helper",
   name: "AI Helper（扩展的一句话 AI 能力）",
-  version: "0.5.0",
   icon: "icons/sparkles.svg",   // 单源星星（_shared/icons 库；deploy copyIcons 拷入，不再有根 icon.svg）
   client: "dist/aiti-helper-client.mjs",
 
@@ -389,8 +423,262 @@ export default {
     // 懒加载 v2 M3批②：icon 补齐；移除错放在 toolbar 的「aiti-helper-dialog」陈旧声明
     //（它实为 client 的 pages 条目——留在 toolbar 里会变成幻影静态按钮）
     toolbar: [
-      { id: "aiti-helper-open", label: "AI", title: "aiti-helper：一句话唤起 AI（帮助点/自由发挥；独立置顶弹窗，可拖拽，有历史）", icon: "icons/sparkles.svg" },
+      { id: "aiti-helper-open", label: "i18n:helper.open.label", title: "i18n:helper.open.title", icon: "icons/sparkles.svg" },
     ],
+    i18n: {
+      "zh-CN": {
+        "it.open.label": "AI 助手",
+        "it.open.label.2": "AI 助手",
+        "it.open.title": "aiti-helper：一句话唤起 AI（帮助点/自由发挥；独立置顶弹窗，可拖拽，有历史）",
+        "it.open.title.2": "aiti-helper：一句话唤起 AI（帮助点/自由发挥；独立置顶弹窗，可拖拽，有历史）",
+        "ext.displayName": "AI 助手入口",      "helper.open.label": "AI 助手",
+      "helper.open.title": "aiti-helper：一句话唤起 AI（帮助点/自由发挥；独立置顶弹窗，可拖拽，有历史）",
+
+        // ---- dialog UI shell (helper-app.tsx / entry.tsx / dialog-ai-button.ts; dlg.* prefix) ----
+        "dlg.tab.ai": "助手",
+        "dlg.tab.ai.title": "AI 助手",
+        "dlg.tab.hist": "历史",
+        "dlg.tab.hist.title": "执行历史",
+        "dlg.expandAll": "展开全部",
+        "dlg.collapseAll": "收起全部",
+        "dlg.newSkill": "新增 Skill",
+        "dlg.newSkill.title": "新增 Skill（存 data 目录）",
+        "dlg.close.title": "关闭（历史已保存，可随时从 🕘 历史找回）",
+        "dlg.back": "← 返回",
+        "dlg.aiTools": "AI 工具",
+        "dlg.tools.pending": "共 {total} 个 · 当前待启用 {pending} 个",
+        "dlg.tools.allOn": "共 {total} 个 · 已全部启用",
+        "dlg.tools.defaultOff": "默认关：点「执行」经本 skill 建的任务会话会自动带上这些工具（会话级，用完即还原，不全局开启）。",
+        "dlg.tools.badge.title": "共 {total} 个 AI 工具，当前待启用 {pending} 个（默认关；经 🤖 执行该扩展的 skill 时自动带上）",
+        "dlg.skillLoading": "加载说明…",
+        "dlg.readFailed": "读取失败",
+        "dlg.newSkill.intro": "自定义 skill 存到 data 目录（不覆盖任何扩展的部署产物）；归属扩展不打标签则默认归 ai-helper。",
+        "dlg.f.name": "名称（必填，字母/数字/_/-）",
+        "dlg.f.name.ph": "如 session-archive-30d",
+        "dlg.f.owner": "归属扩展（不指定归 ai-helper）",
+        "dlg.f.owner.none": "（不指定 · 归 ai-helper）",
+        "dlg.f.title": "显示标题（可空，默认用名称）",
+        "dlg.f.title.ph": "如 AI 帮我归档 30 天会话",
+        "dlg.f.titleEn": "英文标题（可空；英文界面显示）",
+        "dlg.f.titleEn.ph": "e.g. AI: archive 30-day sessions",
+        "dlg.f.summary": "一句话说明（可空）",
+        "dlg.f.summary.ph": "这个 skill 能做什么",
+        "dlg.f.summaryEn": "英文说明（可空；英文界面显示）",
+        "dlg.f.summaryEn.ph": "What this skill can do, in English",
+        "dlg.f.body": "正文手册（可空；可让 AI 帮你写）",
+        "dlg.f.body.ph": "SKILL.md 正文（任务说明、API、输出格式…）。留空则先建骨架，再用「AI 帮我新增/修改 skill」补全。",
+        "dlg.save": "保存",
+        "dlg.saving": "保存中…",
+        "dlg.aiWrite": "让 AI 写",
+        "dlg.bgActive.n": "{n} 个后台任务执行中",
+        "dlg.bgActive.rejoin": "接回此会话的实时进度",
+        "dlg.bgActive.item": "· {sid}「{msg}」",
+        "dlg.loadingHelpers": "加载帮助点…",
+        "dlg.noSkills": "暂无 skills（可新增自定义）",
+        "dlg.search.ph": "搜索 skills…（标题 / 说明 / id）",
+        "dlg.noMatch": "无匹配 skill",
+        "dlg.selected": "已选：{title}",
+        "dlg.viewSkill": "看看它能做什么",
+        "dlg.viewSkill.title": "查看这个帮助点（skill）能做什么",
+        "dlg.ph.default": "描述你想让 AI 做什么…",
+        "dlg.bg": "后台执行",
+        "dlg.bg.title": "隐藏弹窗，AI 继续在后台执行（可从历史或该会话恢复）",
+        "dlg.run": "执行",
+        "dlg.running": "执行中…",
+        "dlg.st.connecting": "正在连接 AI 会话…",
+        "dlg.st.thinking": "AI 思考中…",
+        "dlg.st.tool": "调用工具…",
+        "dlg.st.done": "完成",
+        "dlg.st.reconnecting": "重新连接…",
+        "dlg.st.degraded": "无实时推送（任务仍在执行）",
+        "dlg.degraded.body": "⚠ {why}：无实时推送。任务仍在后台执行，结果就绪后可直接打开会话查看。",
+        "dlg.openSession": "打开会话",
+        "dlg.resultPreview": "结果预览（审核后落地；关闭后可在历史找回）",
+        "dlg.actionFill": "回填弹窗",
+        "dlg.actionApi": "入库",
+        "dlg.adopt": "填入聊天框",
+        "dlg.copy": "复制",
+        "dlg.retry": "重来",
+        "dlg.followup": "↪ 追问",
+        "dlg.followup.ph": "不满意？输入追加要求继续，如「改成中文输出」「加个确认」「再详细点」…",
+        "dlg.turnSame": "💬 已在同一 AI 会话延续（上下文完整）",
+        "dlg.turnN": "💬 已迭代 {n} 轮 · 追问带手工上下文",
+        "dlg.hist.header": "历史记录（server 持久化，关闭不丢）",
+        "dlg.hist.count": " · {n} 条",
+        "dlg.hist.empty": "暂无历史记录。用 ✨ AI 生成一次就有了。",
+        "dlg.hist.restore": "点击恢复此结果",
+        "dlg.hist.freeform": "自由发挥",
+        "dlg.hist.turnN": " · 第{n}轮",
+        "dlg.hist.landed": "已落地",
+        "dlg.hist.unlanded": "未落地",
+        "dlg.hist.noMsg": "（早期记录无输入）",
+        "dlg.loading": "加载中…",
+        "dlg.grp.thisExt": "本扩展 · {name}",
+        "dlg.grp.general": "通用 Skills",
+        "dlg.grp.collapse": "收起 {name} 的 skills",
+        "dlg.grp.expand": "展开 {name} 的 skills",
+        "dlg.err.result": "取结果失败",
+        "dlg.err.bus": "事件总线服务不可用",
+        "dlg.err.hostEvents": "宿主不支持实时事件",
+        "dlg.err.busConn": "总线连接失败",
+        "dlg.notif.bg.title": "AI Helper 后台执行中",
+        "dlg.notif.bg.body": "任务在 session {sid} 后台运行。从 🕘 历史或该会话可恢复查看。",
+        "dlg.note.bgResume": "已接回后台任务 · 第{turn}轮执行中",
+        "dlg.note.lastResult": "已恢复该会话上次结果（第{turn}轮）",
+        "dlg.note.noResult": "该会话本轮未产生结果",
+        "dlg.err.dialogGone": "原弹窗已关闭，无法回填（请从弹窗 AI 按钮唤起）",
+        "dlg.err.noAction": "该条无落地动作（自由发挥结果）",
+        "dlg.err.badJson": "结果不是有效 JSON：{err}",
+        "dlg.land.filled": "已回填 {n} 个表单字段",
+        "dlg.land.filled.note": "已回填 {n} 个表单字段（{note}）",
+        "dlg.land.noFields": "没有可回填的字段（AI 输出需为 {字段:值} JSON）",
+        "dlg.err.apiFail": "入库失败：{err}",
+        "dlg.land.stored": "已入库：「{name}」",
+        "dlg.land.stored.plain": "已入库",
+        "dlg.err.apiExc": "入库异常：{err}",
+        "dlg.err.nameRequired": "请填写 skill 名",
+        "dlg.err.nameChars": "skill 名只能用字母/数字/下划线/连字符",
+        "dlg.err.saveFailed": "保存失败",
+        "dlg.err.saveFailed.err": "保存失败: {err}",
+        "dlg.land.skillSaved": "已保存到 data 目录（归属 {owner}）",
+        "dlg.ctx.dialogAi": "弹窗 AI",
+        "dlg.aiBtn.title": "AI Helper：让 AI 帮我用 {name} 处理这个弹窗",
+        "dlg.aiBtn.title.plain": "AI Helper：让 AI 帮我处理这个弹窗",
+        "dlg.aiBtn.ph": "告诉 AI 你想让{name}做什么…",
+        "dlg.aiBtn.ph.it": "它",
+        "dlg.extBtn.title": "扩展管理：查看/配置 {name}",
+        "dlg.extBtn.title.plain": "扩展管理",
+        "dlg.suggest.ph": "AI 生成中…（基于「{q}」）",
+        "dlg.suggest.ctx": "suggest 兜底：「{q}」",
+      },
+      en: {
+        "it.open.label": "AI Helper",
+        "it.open.label.2": "AI Helper",
+        "it.open.title": "aiti-helper: invoke AI in one sentence (helper dots / freeform; standalone draggable top window, with history)",
+        "it.open.title.2": "aiti-helper: invoke AI in one sentence (helper dots / freeform; standalone draggable top window, with history)",
+        "ext.displayName": "AI Helper",
+      "helper.open.label": "AI assistant",
+      "helper.open.title": "aiti-helper: one-phrase AI summon (floating window, draggable, with history)",
+
+        // ---- dialog UI shell (helper-app.tsx / entry.tsx / dialog-ai-button.ts; dlg.* prefix) ----
+        "dlg.tab.ai": "AI",
+        "dlg.tab.ai.title": "AI assistant",
+        "dlg.tab.hist": "History",
+        "dlg.tab.hist.title": "Run history",
+        "dlg.expandAll": "Expand all",
+        "dlg.collapseAll": "Collapse all",
+        "dlg.newSkill": "New Skill",
+        "dlg.newSkill.title": "New Skill (stored in data dir)",
+        "dlg.close.title": "Close (history is saved; find it anytime under 🕘 History)",
+        "dlg.back": "← Back",
+        "dlg.aiTools": "AI tools",
+        "dlg.tools.pending": "{total} total · {pending} pending enablement",
+        "dlg.tools.allOn": "{total} total · all enabled",
+        "dlg.tools.defaultOff": "Off by default: task sessions created via Run with this skill automatically carry these tools (session-scoped, restored afterwards, never globally enabled).",
+        "dlg.tools.badge.title": "{total} AI tools total, {pending} pending enablement (off by default; auto-attached when running this extension's skills via 🤖)",
+        "dlg.skillLoading": "Loading description…",
+        "dlg.readFailed": "Failed to read",
+        "dlg.newSkill.intro": "Custom skills are stored in the data dir (never overwrites deployed extension assets); without an owner tag they belong to ai-helper.",
+        "dlg.f.name": "Name (required: letters/digits/_/-)",
+        "dlg.f.name.ph": "e.g. session-archive-30d",
+        "dlg.f.owner": "Owner extension (defaults to ai-helper)",
+        "dlg.f.owner.none": "(unspecified · belongs to ai-helper)",
+        "dlg.f.title": "Display title (optional; defaults to name)",
+        "dlg.f.title.ph": "e.g. AI: archive 30-day sessions",
+        "dlg.f.titleEn": "English title (optional; shown in the English UI)",
+        "dlg.f.titleEn.ph": "e.g. AI: archive 30-day sessions",
+        "dlg.f.summary": "One-line description (optional)",
+        "dlg.f.summary.ph": "What this skill can do",
+        "dlg.f.summaryEn": "English description (optional; shown in the English UI)",
+        "dlg.f.summaryEn.ph": "What this skill can do, in English",
+        "dlg.f.body": "Body manual (optional; let AI write it)",
+        "dlg.f.body.ph": "SKILL.md body (task description, APIs, output format…). Leave empty to scaffold first, then complete it via \"AI: add/modify skill\".",
+        "dlg.save": "Save",
+        "dlg.saving": "Saving…",
+        "dlg.aiWrite": "Let AI write",
+        "dlg.bgActive.n": "{n} background task(s) running",
+        "dlg.bgActive.rejoin": "Rejoin this session's live progress",
+        "dlg.bgActive.item": "· {sid} \"{msg}\"",
+        "dlg.loadingHelpers": "Loading skills…",
+        "dlg.noSkills": "No skills yet (you can add custom ones)",
+        "dlg.search.ph": "Search skills… (title / description / id)",
+        "dlg.noMatch": "No matching skill",
+        "dlg.selected": "Selected: {title}",
+        "dlg.viewSkill": "What can it do",
+        "dlg.viewSkill.title": "See what this helper (skill) can do",
+        "dlg.ph.default": "Describe what you want the AI to do…",
+        "dlg.bg": "Background",
+        "dlg.bg.title": "Hide the dialog; AI keeps running in the background (recover from history or the session)",
+        "dlg.run": "Run",
+        "dlg.running": "Running…",
+        "dlg.st.connecting": "Connecting to AI session…",
+        "dlg.st.thinking": "AI thinking…",
+        "dlg.st.tool": "Calling tools…",
+        "dlg.st.done": "Done",
+        "dlg.st.reconnecting": "Reconnecting…",
+        "dlg.st.degraded": "No live updates (task still running)",
+        "dlg.degraded.body": "⚠ {why}: no live updates. The task keeps running in the background; open the session to view the result once ready.",
+        "dlg.openSession": "Open session",
+        "dlg.resultPreview": "Result preview (lands after review; recoverable from history)",
+        "dlg.actionFill": "Fill dialog",
+        "dlg.actionApi": "Store",
+        "dlg.adopt": "Insert into chat",
+        "dlg.copy": "Copy",
+        "dlg.retry": "Retry",
+        "dlg.followup": "↪ Follow up",
+        "dlg.followup.ph": "Not satisfied? Add a follow-up, e.g. \"output in English\", \"add a confirmation\", \"more detail\"…",
+        "dlg.turnSame": "💬 Continuing in the same AI session (full context)",
+        "dlg.turnN": "💬 Iterated {n} round(s) · follow-ups carry manual context",
+        "dlg.hist.header": "History (server-persisted, survives close)",
+        "dlg.hist.count": " · {n} entries",
+        "dlg.hist.empty": "No history yet. Run ✨ AI once and it appears here.",
+        "dlg.hist.restore": "Click to restore this result",
+        "dlg.hist.freeform": "Freeform",
+        "dlg.hist.turnN": " · round {n}",
+        "dlg.hist.landed": "Landed",
+        "dlg.hist.unlanded": "Not landed",
+        "dlg.hist.noMsg": "(no input in early records)",
+        "dlg.loading": "Loading…",
+        "dlg.grp.thisExt": "This extension · {name}",
+        "dlg.grp.general": "General Skills",
+        "dlg.grp.collapse": "Collapse {name} skills",
+        "dlg.grp.expand": "Expand {name} skills",
+        "dlg.err.result": "Failed to fetch result",
+        "dlg.err.bus": "Event bus service unavailable",
+        "dlg.err.hostEvents": "Host does not support live events",
+        "dlg.err.busConn": "Bus connection failed",
+        "dlg.notif.bg.title": "AI Helper running in background",
+        "dlg.notif.bg.body": "Task is running in background session {sid}. Recover it from 🕘 History or that session.",
+        "dlg.note.bgResume": "Background task rejoined · round {turn} running",
+        "dlg.note.lastResult": "Restored the session's last result (round {turn})",
+        "dlg.note.noResult": "This round produced no result",
+        "dlg.err.dialogGone": "Original dialog closed; cannot fill (invoke from the dialog's AI button)",
+        "dlg.err.noAction": "No land action for this entry (freeform result)",
+        "dlg.err.badJson": "Result is not valid JSON: {err}",
+        "dlg.land.filled": "Filled {n} form field(s)",
+        "dlg.land.filled.note": "Filled {n} form field(s) ({note})",
+        "dlg.land.noFields": "No fillable fields (AI output must be {field: value} JSON)",
+        "dlg.err.apiFail": "Store failed: {err}",
+        "dlg.land.stored": "Stored: \"{name}\"",
+        "dlg.land.stored.plain": "Stored",
+        "dlg.err.apiExc": "Store error: {err}",
+        "dlg.err.nameRequired": "Skill name is required",
+        "dlg.err.nameChars": "Skill name may only use letters/digits/underscore/hyphen",
+        "dlg.err.saveFailed": "Save failed",
+        "dlg.err.saveFailed.err": "Save failed: {err}",
+        "dlg.land.skillSaved": "Saved to data dir (owner {owner})",
+        "dlg.ctx.dialogAi": "Dialog AI",
+        "dlg.aiBtn.title": "AI Helper: let AI handle this dialog with {name}",
+        "dlg.aiBtn.title.plain": "AI Helper: let AI handle this dialog",
+        "dlg.aiBtn.ph": "Tell the AI what you want {name} to do…",
+        "dlg.aiBtn.ph.it": "it",
+        "dlg.extBtn.title": "Extension manager: view/configure {name}",
+        "dlg.extBtn.title.plain": "Extension manager",
+        "dlg.suggest.ph": "AI generating… (based on \"{q}\")",
+        "dlg.suggest.ctx": "suggest fallback: \"{q}\"",
+      },
+    },
+
   },
 
   server: {
@@ -738,16 +1026,18 @@ export default {
         if (userSkills.has(name)) return json({ ok: false, error: "同名 skill 已存在: " + name }, 409);
         const owner = body.owner && String(body.owner).trim() ? String(body.owner).trim() : "aiti-helper";
         const title = body.title && String(body.title).trim() ? String(body.title).trim() : name;
+        const titleEn = body.titleEn && String(body.titleEn).trim() ? String(body.titleEn).trim() : undefined;
         const summary = body.summary ? String(body.summary) : undefined;
+        const summaryEn = body.summaryEn ? String(body.summaryEn) : undefined;
         const skillBody = body.body ? String(body.body) : "";
         const at = Date.now();
         const dir = join(userSkillsDir(), name);
         mkdirSync(dir, { recursive: true });
-        const meta = { name, title, summary: summary || undefined };
+        const meta = { name, title, "title.en": titleEn, summary: summary || undefined, "summary.en": summaryEn };
         const yaml = Object.entries(meta).filter(([, v]) => v !== undefined).map(([k, v]) => `${k}: ${JSON.stringify(v)}`).join("\n");
         const content = "---\n" + yaml + "\n---\n\n" + (skillBody || (title + "\n\n（用户自定义 skill，正文待完善——可让 AI 帮你写，见「AI 帮我新增/修改 skill」帮助点）"));
         writeFileSync(join(dir, "SKILL.md"), content);
-        userSkills.set(name, { id: name, name, owner, title, summary, at, updatedAt: at });
+        userSkills.set(name, { id: name, name, owner, title, titleEn, summary, summaryEn, at, updatedAt: at });
         saveUserSkillsIndex();
         collectHelpers();
         audit({ action: "user_skill_create", name, owner });
@@ -761,12 +1051,25 @@ export default {
         const body = await req.json().catch(() => null) || {};
         if (body.owner && String(body.owner).trim()) s.owner = String(body.owner).trim();
         if (body.title && String(body.title).trim()) s.title = String(body.title).trim();
+        if (body.titleEn !== undefined) s.titleEn = body.titleEn ? String(body.titleEn).trim() : undefined;
         if (body.summary !== undefined) s.summary = body.summary ? String(body.summary) : undefined;
+        if (body.summaryEn !== undefined) s.summaryEn = body.summaryEn ? String(body.summaryEn) : undefined;
         s.updatedAt = Date.now();
         const dir = join(userSkillsDir(), name);
         let fm: { meta: Record<string, any>; body: string } = { meta: { name, title: s.title, summary: s.summary }, body: "" };
         try { if (existsSync(join(dir, "SKILL.md"))) fm = parseSkillFrontmatter(readFileSync(join(dir, "SKILL.md"), "utf8")); } catch {}
-        const yaml = Object.entries({ name, title: s.title, summary: s.summary || undefined }).filter(([, v]) => v !== undefined).map(([k, v]) => `${k}: ${JSON.stringify(v)}`).join("\n");
+        // Carry over existing dot-locale keys (title.ja etc.) from the old frontmatter; En keys rewritten from s.*
+        const carried: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(fm.meta || {})) {
+          if (/^(title|summary|placeholder)\.[a-zA-Z]{2}(?:-[A-Za-z]{2,4})?$/.test(k) && !String(k).endsWith(".en")) carried[k] = v;
+        }
+        const yaml = Object.entries({
+          name, title: s.title,
+          "title.en": s.titleEn,
+          summary: s.summary || undefined,
+          "summary.en": s.summaryEn,
+          ...carried,
+        }).filter(([, v]) => v !== undefined).map(([k, v]) => `${k}: ${JSON.stringify(v)}`).join("\n");
         writeFileSync(join(dir, "SKILL.md"), "---\n" + yaml + "\n---\n\n" + (body.body !== undefined ? String(body.body) : fm.body));
         saveUserSkillsIndex();
         collectHelpers();

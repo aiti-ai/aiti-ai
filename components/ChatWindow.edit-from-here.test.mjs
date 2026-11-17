@@ -98,10 +98,13 @@ test("new-session button is not gated by sessionBusy/first message (visible whil
   // clobbers it again, the test goes red.
   // 2026-09-18: added fork capability gating (local sessions have no caps,
   // unchanged; external backends without fork support hide the button).
-  // 合并适配：onFork 融合形态 = 本地能力门 ∪ 上游 bashRunning 门槛；
+  // 2026-11-16: the upstream bashRunning gate is demoted from "hide the
+  // button" to "hold the click": the button stays visible while a command
+  // runs (forkBashRunning → dimmed + tooltip), clicks are held until settle.
   // 2026-11-12 merge: handler is forkFromMessage (upstream #1539 composer prefill).
-  assert.match(source, /onFork=\{bashRunning \|\| isNew \|\| !sessionCap\("fork"\) \? undefined : forkFromMessage\}/);
-  assert.doesNotMatch(source, /onFork=\{sessionBusy/);
+  assert.match(source, /onFork=\{isNew \|\| !sessionCap\("fork"\) \? undefined : forkFromMessage\}/);
+  assert.match(source, /forkBashRunning=\{bashRunning\}/);
+  assert.doesNotMatch(source, /onFork=\{(bashRunning|sessionBusy)/);
   assert.doesNotMatch(source, /idx === 0 && msg\.role === "user" \? undefined : handleFork/);
 });
 
@@ -117,4 +120,17 @@ test("never falls back to the superseded upstream navigate+editContent path", ()
   // the former's presence means the fork mechanism was clobbered. Forbid it
   // from appearing in the message render line.
   assert.doesNotMatch(source, /onEditContent=\{handleEditContent\}/);
+});
+
+test("pending mark previews the affected tail with a purely visual veil (plan A)", () => {
+  // While a mark is pending, messages after the marked one get a dimming veil
+  // (opacity + overlay) and a hint bar with a cancel button. The veil must not
+  // intercept pointer events (re-marking / navigation / copy keep working) and
+  // is derived from editFromHerePending — no cleanup path needed.
+  assert.match(source, /const editFromHereMarkIdx = editFromHerePending \? entryIds\.indexOf\(editFromHerePending\.entryId\) : -1;/);
+  assert.match(source, /const veiled = editFromHereMarkIdx >= 0 && idx > editFromHereMarkIdx;/);
+  assert.match(source, /pointerEvents: "none" \}\} \/>/);
+  assert.match(source, /t\("chat\.editHereVeilHint"\)/);
+  assert.match(source, /onClick=\{handleCancelEditFromHere\}/);
+  assert.match(source, /t\("i18n\.editFromHereCancel"\)/);
 });

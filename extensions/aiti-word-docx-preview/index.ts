@@ -8,12 +8,24 @@
 export default {
   id: "aiti-word-docx-preview",
   name: "aiti-word-docx-preview",
-  version: "0.1.0",
   description: "Word 文档预览（docx-preview 高保真只读）：.docx 分页渲染，页眉页脚/表格/图片还原",
   client: "dist/aiti-word-docx-preview-client.mjs",
   clientImmediately: true,
   icon: "icon.svg",
   features: [],
+
+  ui: {
+    // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
+    i18n: {
+      "zh-CN": {
+        "ext.displayName": "Word 预览",
+      },
+      en: {
+        "ext.displayName": "Word Preview",        "ext.description": "Word document preview (docx-preview, high-fidelity read-only): .docx paginated rendering with headers/footers/tables/images restored",
+      },
+    },
+  },
+
   server: {
     startup(ctx: any) {
       console.log("[aiti-word-docx-preview] 就绪");

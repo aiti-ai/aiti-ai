@@ -29,7 +29,6 @@ import { homedir } from "node:os";
 export default {
   id: "aiti-cpu-meter",
   name: "主线程流畅度检测器（读秒 + 0-100 分 + 可注入任意站点）",
-  version: "0.3.1",
   icon: "icon.svg",
   client: "dist/aiti-cpu-meter-client.mjs",
 
@@ -109,6 +108,34 @@ export default {
       placeholder: "https://host:port",
     },
   ],
+
+
+  ui: {
+    // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
+    i18n: {
+      "zh-CN": {
+        "ext.displayName": "CPU 流畅度仪表",
+      },
+      en: {
+        "feat.enabled.desc": "Shows the CPU smoothness meter on this instance's page (rAF timer + 0-100 smoothness score + color tiers + minimize)",
+        "feat.pos.desc": "Default position: left-bottom (default) / left-top / right-bottom / right-top. Change anytime from the panel menu",
+        "feat.score.desc": "Shows the 0-100 smoothness score (Apdex-anchored + color tiers) + session stats (avg/runtime/min)",
+        "feat.minimize.desc": "Panel can minimize to a small icon (color dot + live score) dragged out of the way; click to restore",
+        "feat.askAi.desc": "Shows an AI icon in the panel title bar (✨ sparkles, same style as aiti-helper); click to send the recent jam window to AI for analysis",
+        "feat.inject.enabled.desc": "Injects the CPU meter of the \"Service URL\" target instance into the current page (cross-instance viewing requires the target to have this enabled too)",
+        "feat.service.url.desc": "Target pi-web base URL (with sub-path, e.g. https://host:port/dev)",
+        "ext.displayName": "CPU Meter",
+        "ext.description": "Shows a CPU smoothness meter on this instance's page (rAF timer + 0-100 smoothness score + color tiers + minimize). The timer freezes and the score plummets when the main thread jams.",
+        "feat.enabled": "Enable the meter",
+        "feat.pos": "Position",
+        "feat.score": "Smoothness score",
+        "feat.minimize": "Allow minimizing",
+        "feat.askAi": "\"Ask AI\" panel button",
+        "feat.inject.enabled": "Cross-instance injection",
+        "feat.service.url": "Service URL",
+      },
+    },
+  },
 
   server: {
     async startup(ctx) {

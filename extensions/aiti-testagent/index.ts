@@ -352,7 +352,6 @@ async function handleApi(req: Request, ctx: ExtApiCtx): Promise<Response | null>
 export default {
   id: "aiti-testagent",
   name: "TestAgent 连桥（Java 进程扫描 / Attach）",
-  version: "0.3.0",
   icon: "icon.svg",
   client: "dist/aiti-testagent-client.mjs",
 
@@ -379,13 +378,16 @@ export default {
 
   ui: {
     // 懒加载 v2 M3批①：静态条目带 icon（与 client ICONS.cup 同源，物化前后零闪变）。
-    toolbar: [{ id: "java", label: "Java", title: "Java 进程 · TestAgent 连桥", icon: "icons/coffee.svg" }],
+    toolbar: [{ id: "java", label: "Java", title: "i18n:at.title", icon: "icons/coffee.svg" }],
     // aiti-float dock v3：停靠槽静态声明（懒扩展物化触发 + 静态入口；id 与 client 注册一致）
     rightFileDock: [{ id: "panel", label: "Java" }],
-    dialogs: [{ id: "panel", label: "Java 进程连桥面板" }],
+    dialogs: [{ id: "panel", label: "i18n:it.panel.label" }],
     clientImmediately: false, // [懒加载 v2] M1 已同步生产，懒化重启用
     i18n: {
       en: {
+        "it.panel.label": "Java process bridge panel",
+        "ext.displayName": "TestAgent · Java Debugging",
+        "feat.panel": "Java process bridge panel",
         "at.title": "Java Processes · TestAgent Bridge",
         "at.entry": "Java",
         "at.refresh": "Refresh",
@@ -409,7 +411,8 @@ export default {
         "at.degraded": " (localhost fallback: browser must be on the pi-web host)",
       },
       "zh-CN": {
-        "at.title": "Java 进程 · TestAgent 连桥",
+        "it.panel.label": "Java 进程连桥面板",
+        "ext.displayName": "TestAgent · Java 后端调试",        "at.title": "Java 进程 · TestAgent 连桥",
         "at.entry": "Java",
         "at.refresh": "刷新",
         "at.close": "关闭",

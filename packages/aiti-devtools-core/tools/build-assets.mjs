@@ -26,6 +26,8 @@ const files = [
   [resolve(pi, 'src/cockpit.html'), 'cockpit.html'],
   [resolve(coreRoot, 'src/aiwin.js'), 'aiwin.js'],
   [resolve(coreRoot, 'src/host-protocol.js'), 'host-protocol.js'],
+  [resolve(coreRoot, 'src/pair-client.js'), 'pair-client.js'],
+  [resolve(coreRoot, 'src/pair.html'), 'pair.html'],
 ];
 
 mkdirSync(out, { recursive: true });

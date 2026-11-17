@@ -2072,8 +2072,8 @@ function TextFileViewer({
             background: "transparent", border: "none", cursor: "pointer",
             color: "var(--text-dim)", fontSize: 11, padding: "1px 4px",
           }}
-          onMouseEnter={(e: any) => { e.currentTarget.style.color = "var(--text)"; }}
-          onMouseLeave={(e: any) => { e.currentTarget.style.color = "var(--text-dim)"; }}
+          onMouseEnter={(e: MouseEvent<HTMLButtonElement>) => { e.currentTarget.style.color = "var(--text)"; }}
+          onMouseLeave={(e: MouseEvent<HTMLButtonElement>) => { e.currentTarget.style.color = "var(--text-dim)"; }}
         >⎇</button>
 
         <div className="file-viewer-controls">

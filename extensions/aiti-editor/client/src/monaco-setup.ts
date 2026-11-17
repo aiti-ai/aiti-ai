@@ -1,7 +1,7 @@
 /**
  * aiti-editor · Monaco AMD 加载器 + 语言贡献/装饰/诊断（自手写版原样搬运）。
  */
-import { apiUrl, ensureEditorTicket } from "./host-shim";
+import { apiUrl, ensureEditorTicket, t } from "./host-shim.ts";
 import { CSV_RAINBOW, detectDelimiter, parseCsvLine } from "./lib";
 import { loadJsYaml } from "./registry";
 
@@ -536,7 +536,7 @@ export function setupModelDiagnostics(monaco: any, editor: any): (() => void) | 
         if (/^(true|false)\s*$/.test(trimmed)) continue;
         markers.push({
           severity: monaco.MarkerSeverity.Hint,
-          message: '无法解析的行（TOML 语法）',
+          message: t('无法解析的行（TOML 语法）'),
           startLineNumber: i + 1, startColumn: 1, endLineNumber: i + 1, endColumn: lines[i].length + 1,
         });
       }

@@ -13,7 +13,10 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 test("入口元数据：id/name/version/client 齐备", () => {
   assert.equal(ext.id, "service-tunnels");
   assert.equal(typeof ext.name, "string");
-  assert.ok(ext.version);
+  // Single source of truth for the version = package.json (entry no longer hand-writes a
+  // version field; the host injects it on load)
+  const pkgVersion = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
+  assert.ok(pkgVersion);
   assert.equal(typeof ext.client, "string");
   // client bundle 构建产物存在（部署/加载前提）
   const clientPath = join(root, ext.client);

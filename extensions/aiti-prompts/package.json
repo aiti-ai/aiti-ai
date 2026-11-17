@@ -2,7 +2,7 @@
   "name": "@aiti-ai/aiti-prompts",
   "version": "0.1.8",
   "type": "module",
-  "description": "aiti prompt 片段收藏库（收藏/会话提取/一键插队排队）—— JSX + vite 构建 client bundle",
+  "description": "Prompt snippet collection — favorites/groups/session extraction/save-as-you-type",
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",

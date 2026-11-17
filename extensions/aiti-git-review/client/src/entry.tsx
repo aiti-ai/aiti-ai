@@ -24,8 +24,8 @@ export default function register(ctx: Record<string, any>) {
   ctx.registerItems?.("toolbar", [{
     id: "aiti-git-review-open",
     meta: {
-      label: "审核",
-      title: "aiti-git-review：审核变更（未提交 / 指定基线 / 两版本对比）",
+      label: "i18n:gr.app.label",
+      title: "i18n:gr.app.title",
       icon: "icons/eye.svg",
       onClick: () => openFromToolbar(),
     },
@@ -33,7 +33,7 @@ export default function register(ctx: Record<string, any>) {
   ctx.registerItems?.("pages", [{ id: "aiti-git-review-page", render: ReviewWork }]);
   // aiti-float dock v0.5.0（§1.1 审查 tab）：右栏停靠 face——与 pages face 经状态机互斥 gate
   // ⚠ 注册 raw itemId，宿主自动拼 extId:itemId = itemKey——必须与状态机 key "aiti-git-review:workspace" 一致
-  ctx.registerItems?.("rightFileDock", [{ id: "workspace", render: DockReviewWork, meta: { title: "审查" } }]);
+  ctx.registerItems?.("rightFileDock", [{ id: "workspace", render: DockReviewWork, meta: { title: "i18n:gr.workspace.label" } }]);
 
   // ── 全局打开兜底（ReviewWork 挂载前的早期调用只记状态） ──
   (window as any).__aitiGitReviewOpen = (opts: any) => { G.open = opts || {}; };

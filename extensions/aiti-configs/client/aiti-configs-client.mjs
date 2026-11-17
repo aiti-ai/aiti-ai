@@ -308,7 +308,7 @@ export default function register(ctx) {
   }
 
   // 渲染注册
-  ctx.registerItems("toolbar", [{ id: "aiti-configs-open", render: ConfigsButton, meta: { label: "配置" } }]);
+  ctx.registerItems("toolbar", [{ id: "aiti-configs-open", render: ConfigsButton, meta: { label: "i18n:it.open.label" } }]);
   ctx.registerItems("pages", [{ id: "aiti-configs-dialog", render: ConfigsDialog }]);
   try { console.log("[aiti-configs] client 安全盾已挂载（toolbar 触发 → pages 渲染，状态/历史/自检/配置）"); } catch (e) {}
 }

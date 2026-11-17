@@ -5,7 +5,7 @@
     "esbuild": "^0.24.2"
   },
   "soul": "AI 说得再好，抄起来也挺费劲。",
-  "description": "消息智能 —— 点击消息段落/标题/行内 code 弹层动作条（引用回复、复制、文件打开定位、子句与行高亮），其他扩展可注册 provider 追加动作",
+  "description": "Message click recognition — paragraph/heading/code-line clicks → quote/copy/option popups + clause/line highlighting",
   "version": "0.1.8",
   "aitiExtProtocol": "1.0",
   "license": "MIT",

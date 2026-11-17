@@ -1,3 +1,4 @@
+import { t } from './i18n.js';
 // picks 子系统（ctx 模式，简化版）：页面错误 + 元素候选 → AI 窗口输入框候选区
 //   页面错误（client 错误 hook 上报 dbg_page_error）→ 去重 + 取前 3 个 → postToAi(dbga_ai_error)
 //   → pi-web aiti 扩展的候选区（与 inspect 选择的元素同机制，泛化 [xxxN] 占位符）：
@@ -76,7 +77,7 @@ export function initPicks(ctx) {
         ctx.picksPendingErrors.slice().forEach(function (m) { ctx.postToAi(m); });
       }, 2000);
     }
-    ctx.addMsg('sys', '⚠ 页面错误 [' + (kind || 'error') + '] ' + String(message || '').slice(0, 80) + ' → 已放入 AI 输入框候选区（[错误' + ctx.picksErrCount + ']）');
+    ctx.addMsg('sys', t('⚠ Page error [') + (kind || 'error') + '] ' + String(message || '').slice(0, 80) + t(' → placed in AI composer pending area ([error') + ctx.picksErrCount + ']）');
   };
 
   // ---- 元素候选（HUD 确认选中 / Inspect 确认 / dbg_ai_picked 转发）：缓存 + 定时重发 + ack ----

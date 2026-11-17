@@ -732,6 +732,10 @@ class CodexHandle {
 // ============================================================================
 
 let lastKey: string | null = null;
+/** Provider object captured at startup — rescanBackends flips the availability
+ *  snapshot in place (same identity keeps the createSession/listModels closures)
+ *  and re-registers it (same registry key overwrites in the host map). */
+let codexProviderRef: Record<string, unknown> | null = null;
 let counter = 0;
 
 // ============================================================================
@@ -823,7 +827,6 @@ function quotaRoute(req: Request, ctx: { path: string[]; method: string; searchP
 export default {
   id: "aiti-codex-agent",
   name: "Codex CLI",
-  version: "0.1.0",
   icon: "🌀",
   // 受控登录统一弹窗（零构建原生 h() client；client/ 下两文件随 deploy 拷贝）
   // 静态插入点声明（与 client registerItems 的 id 一一对应）
@@ -880,12 +883,19 @@ export default {
       });
       loginApi = mountControlledLoginApi(login);
       loginCtl = login;
-      lastKey = ctx.sessionProviders.register({
+      // Availability probe (dropdown grey-out): bare name requires a PATH hit —
+      // spawn has no npx fallback. Snapshot flips on rescanBackends.
+      const codexBin = resolveCodexBin();
+      const codexReady = codexBin.includes("/") || Boolean(whichBin(codexBin));
+      // provider 对象存模块级 ref：rescanBackends 原地翻转 available 快照后重新 register
+      //（同对象身份 → createSession/listModels 闭包保持，宿主 Map 同 key 覆盖）
+      const codexProvider = {
         type: "codex",
         label: "OpenAI Codex CLI",
         agentKey: "codex",
         maxCapabilities: CODEX_CAPABILITIES,
-        // 静态目录（新建页选后端时给选择器供数据；无会话即可取）
+        // Availability snapshot: false = CLI missing → dropdown entry greyed out
+        ...(codexReady ? {} : { available: false as const, installHint: "codex CLI (npm i -g @openai/codex)" }),
         // 静态目录（新建页选后端时给选择器供数据；无会话即可取）——上次使用的模型置顶
         listModels: async () => withLastUsedFirst(await codexCatalog(), (await readAgentLastUsedModel("codex"))?.id),
         createSession: async (options) => {
@@ -931,7 +941,9 @@ export default {
           handle.persistModelState();
           return handle;
         },
-      });
+      };
+      codexProviderRef = codexProvider;
+      lastKey = ctx.sessionProviders.register(codexProvider);
       // agent 描述符：agent 管理面（aiti-agent-manager）动态发现用——manager 不写死各家
       ctx.services?.provide?.("aiti-codex-agent.agent", {
         agent: "codex",
@@ -968,7 +980,29 @@ export default {
           return handle;
         },
       });
-      console.log(`[aiti-codex-agent] registered: ${lastKey} + launch service`);
+      console.log(`[aiti-codex-agent] registered: ${lastKey} + launch service${codexReady ? "" : " (CLI missing — entry greyed out)"}`);
+    },
+
+    /** Backend rescan (POST /api/session-backends/rescan): re-run the availability
+     *  probe — a CLI installed after host boot lights up without a restart; missing
+     *  stays greyed out with the install hint. Flips the snapshot on the startup
+     *  provider object (same closures) and re-registers it. */
+    rescanBackends(ctx: { sessionProviders: { register(provider: unknown): string } }) {
+      if (!codexProviderRef) return;
+      const bin = resolveCodexBin();
+      const ready = bin.includes("/") || Boolean(whichBin(bin));
+      const p = codexProviderRef as { available?: boolean; installHint?: string };
+      if (ready) {
+        delete p.available;
+        delete p.installHint;
+      } else {
+        p.available = false;
+        p.installHint = "codex CLI (npm i -g @openai/codex)";
+      }
+      const key = (ctx.sessionProviders as { register(provider: unknown): string }).register(codexProviderRef);
+      const keyStr = typeof lastKey === "string" ? lastKey : key;
+      console.log(`[aiti-codex-agent] rescan: ${ready ? "available" : "not installed"} (${keyStr})`);
+      return ready ? { registered: [keyStr] } : { unavailable: [keyStr] };
     },
 
     /** 受控登录 API：POST /login/start · GET /login/status · POST /login/cancel · POST /login/submit。 */

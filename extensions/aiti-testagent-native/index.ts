@@ -122,7 +122,6 @@ async function handleApi(req: Request, ctx: ExtApiCtx): Promise<Response | null>
 export default {
   id: "aiti-testagent-native",
   name: "testagent-native（Windows API/COM 追踪面板）",
-  version: "0.1.0",
   icon: "icon.svg",
   client: "dist/aiti-testagent-native-client.mjs",
 
@@ -135,12 +134,15 @@ export default {
   },
 
   ui: {
-    toolbar: [{ id: "testagent-native", label: "Win", title: "testagent-native · Windows API/COM 追踪", icon: "icons/monitor.svg" }],
+    toolbar: [{ id: "testagent-native", label: "Win", title: "i18n:wt.title", icon: "icons/monitor.svg" }],
     rightFileDock: [{ id: "panel", label: "Win" }],
-    dialogs: [{ id: "panel", label: "testagent-native 追踪面板" }],
+    dialogs: [{ id: "panel", label: "i18n:it.panel.label" }],
     clientImmediately: false,
     i18n: {
       en: {
+        "it.panel.label": "testagent-native trace panel",
+        "ext.displayName": "testagent-native (Windows API/COM trace panel)",
+        "feat.panel": "testagent-native trace panel",
         "wt.title": "testagent-native · Windows Native Trace",
         "wt.broker": "Broker",
         "wt.sessions": "Sessions",
@@ -156,6 +158,7 @@ export default {
         "wt.offline": "broker offline (start testagent-native-broker, default 127.0.0.1:8766)",
       },
       "zh-CN": {
+        "it.panel.label": "testagent-native 追踪面板",
         "wt.title": "testagent-native · Windows 原生追踪",
         "wt.broker": "Broker",
         "wt.sessions": "会话",
