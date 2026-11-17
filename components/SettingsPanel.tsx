@@ -38,6 +38,13 @@ import { PluginsConfig } from "./PluginsConfig";
 import { McpConfig } from "./McpConfig";
 import { ConfigButton, ConfigDetailNavigationContext, ConfigSwitch, type ConfigDetailNavigation } from "./SettingsUi";
 import { FontSettings } from "./FontSettings";
+import {
+  PANEL_UI_SCALE_DEFAULT,
+  PANEL_UI_SCALE_MAX,
+  PANEL_UI_SCALE_MIN,
+  PANEL_UI_SCALE_STEP,
+  usePanelScale,
+} from "@/hooks/usePanelScale";
 import { useExtSlotItems, ExtItemBoundary } from "./ExtSlots";
 import { hasExtRender } from "@/lib/ext-ui-store";
 
@@ -85,6 +92,7 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
   const { locale, setLocale, supportedLocales, t } = useI18n();
   const { preference, setThemePreference } = useTheme();
   const { width: chatContentWidth, setWidth: setChatContentWidth, fontSize, setFontSize } = useChatAppearance();
+  const { panelUiScale, setPanelUiScale } = usePanelScale();
   const enterSendMode = useEnterSendMode();
   const [shellSettings, setShellSettings] = useState<ToolSettingsResponse | null>(null);
   const [shellSaving, setShellSaving] = useState(false);
@@ -234,6 +242,34 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
         <p id="settings-typography-description" className="settings-general-description">{t("settings.fontDescription")}</p>
         <div className="settings-chat-options">
           <FontSettings />
+          <div className="settings-chat-option settings-chat-range-option">
+            <div className="settings-chat-range-header">
+              <label htmlFor="settings-panel-ui-scale">{t("settings.panelUiScale")}</label>
+              <output htmlFor="settings-panel-ui-scale">{panelUiScale}%</output>
+              <ConfigButton
+                variant="ghost"
+                size="small"
+                className="settings-chat-reset"
+                title={t("settings.resetPanelUiScale")}
+                aria-label={t("settings.resetPanelUiScale")}
+                disabled={panelUiScale === PANEL_UI_SCALE_DEFAULT}
+                onClick={() => setPanelUiScale(PANEL_UI_SCALE_DEFAULT)}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8M3 3v5h5" />
+                </svg>
+              </ConfigButton>
+            </div>
+            <input
+              id="settings-panel-ui-scale"
+              type="range"
+              min={PANEL_UI_SCALE_MIN}
+              max={PANEL_UI_SCALE_MAX}
+              step={PANEL_UI_SCALE_STEP}
+              value={panelUiScale}
+              onChange={(event) => setPanelUiScale(Number(event.target.value))}
+            />
+          </div>
           <div className="settings-chat-option settings-chat-range-option">
             <div className="settings-chat-range-header">
               <label htmlFor="settings-chat-content-font-size">{t("settings.chatContentFontSize")}</label>
