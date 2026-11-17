@@ -14,7 +14,7 @@
  * 部署：node tools/deploy.mjs         （拷主 bundle + 全部 hash 分块）
  */
 import { useState, useEffect } from "react";
-import { __setCtx, getCtx, regSvc } from "./host-shim";
+import { __setCtx, getCtx, regSvc, t } from "./host-shim";
 import { fetchNewModelsOnce, api } from "./wizard-lib";
 
 let heavyPromise: Promise<any> | null = null;
@@ -110,7 +110,7 @@ function WizardButtonShell() {
   };
   return (
     <button
-      title={newTotal ? "aiti-model-wizard：发现 " + newTotal + " 个新模型，点击查看" : "aiti-model-wizard：添加 AI 提供商/模型"}
+      title={newTotal ? t("mw.shell.newFound", { n: newTotal }) : t("mw.shell.title")}
       onClick={open}
       onMouseEnter={(e: any) => { e.currentTarget.style.color = "var(--text)"; }}
       onMouseLeave={(e: any) => { e.currentTarget.style.color = "var(--text-muted)"; }}
@@ -160,7 +160,7 @@ function ManageModelsRow({ onClose }: { onClose?: () => void }) {
   return (
     <button
       type="button"
-      title="aiti-model-wizard：打开模型向导（添加 AI 提供商/模型、聚合与多 key 管理）"
+      title={t("mw.shell.manageTitle")}
       onClick={open}
       onMouseEnter={(e: any) => { e.currentTarget.style.background = "var(--bg-hover)"; e.currentTarget.style.color = "var(--text)"; }}
       onMouseLeave={(e: any) => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = "var(--text-muted)"; }}
