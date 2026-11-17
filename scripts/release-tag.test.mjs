@@ -1,6 +1,6 @@
 // release-tag.test.mjs — 发版守卫脚本：纯函数单测 + 临时 fixture 仓子进程端到端
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,7 +8,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const SCRIPT = fileURLToPath(new URL("./release-tag.mjs", import.meta.url));
-const { FORK_VERSION_PATTERN, parseReleaseVersion, nextForkNumber, planRelease } = await import(SCRIPT);
+const { FORK_VERSION_PATTERN, parseReleaseVersion, nextForkNumber, planRelease, checkNotesFile } = await import(SCRIPT);
 
 test("parseReleaseVersion: accepts X.Y.Z-aiti.N, rejects bare and malformed", () => {
   assert.deepEqual(parseReleaseVersion("0.16.0-aiti.1"), {
@@ -42,9 +42,18 @@ test("planRelease: guards — bare version / existing tag / dirty tree", () => {
   assert.deepEqual(ok, { ok: true, tag: "v0.16.0-aiti.2", version: "0.16.0-aiti.2" });
 });
 
+test("checkNotesFile: missing / too short / TODO warn / clean pass", () => {
+  assert.match(checkNotesFile(null).reason, /is missing/);
+  assert.match(checkNotesFile("## Highlights\n\n- one line\n").reason, /essentially empty/);
+  assert.equal(checkNotesFile("## Highlights\n\n- a\n- b\n- c\n").ok, true);
+  const todo = checkNotesFile("## Highlights\n\n<!-- c -->\n- TODO: ...\n- another entry here\n- and one more\n");
+  assert.equal(todo.ok, true, "TODO is a soft warning, not a rejection");
+  assert.match(todo.warn, /TODO/);
+});
+
 // ---- 子进程端到端：真实 git fixture 仓 ----
 
-function makeFixtureRepo(t, version) {
+function makeFixtureRepo(t, version, notes = "## Highlights\n\n- Shipped the thing.\n- Fixed the other thing.\n") {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "release-tag-fix-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8" });
@@ -52,6 +61,10 @@ function makeFixtureRepo(t, version) {
   git("config", "user.email", "test@local");
   git("config", "user.name", "test");
   fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "fix", version }));
+  if (notes != null) {
+    fs.mkdirSync(path.join(dir, "releases"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "releases", `v${version}.md`), notes);
+  }
   git("add", ".");
   git("commit", "-qm", "init");
   return dir;
@@ -94,4 +107,31 @@ test("end-to-end: suggest suggests the next fork build number", (t) => {
   git("tag", "v0.16.0-aiti.2");
   const out = execFileSync(process.execPath, [SCRIPT, "--suggest"], { cwd: dir, encoding: "utf8" });
   assert.match(out, /v0\.16\.0-aiti\.3/);
+});
+
+test("end-to-end: missing notes file refused unless --skip-notes", (t) => {
+  const dir = makeFixtureRepo(t, "0.16.0-aiti.1", null);
+  let failed = false;
+  try {
+    execFileSync(process.execPath, [SCRIPT, "--dry-run"], { cwd: dir, encoding: "utf8" });
+  } catch (e) {
+    failed = true;
+    assert.match(String(e.stderr), /is missing/);
+    assert.match(String(e.stderr), /draft-release-notes\.mjs/);
+  }
+  assert.equal(failed, true, "missing notes must exit non-zero");
+  const r = spawnSync(process.execPath, [SCRIPT, "--dry-run", "--skip-notes"], { cwd: dir, encoding: "utf8" });
+  assert.equal(r.status, 0, "--skip-notes must pass");
+  const out = r.stdout + r.stderr; // guard warnings go to stderr
+  assert.match(out, /tag=v0\.16\.0-aiti\.1/);
+  assert.match(out, /waived via --skip-notes/);
+});
+
+test("end-to-end: TODO placeholder in notes passes with a soft warning", (t) => {
+  const dir = makeFixtureRepo(t, "0.16.0-aiti.1", "## Highlights\n\n- TODO: ...\n- another entry here\n- and one more\n");
+  const r = spawnSync(process.execPath, [SCRIPT, "--dry-run"], { cwd: dir, encoding: "utf8" });
+  assert.equal(r.status, 0, "TODO is a soft warning, must pass");
+  const out = r.stdout + r.stderr; // soft warning goes to stderr
+  assert.match(out, /tag=v0\.16\.0-aiti\.1/);
+  assert.match(out, /TODO/);
 });
