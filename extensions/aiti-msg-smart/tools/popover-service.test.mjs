@@ -10,9 +10,10 @@ import test from "node:test";
 
 const clientSrc = await readFile(new URL("../client/src/index.js", import.meta.url), "utf8");
 
-test("popover 服务：注册 aiti-msg-smart.popover（open/close，走同一个 ph）", () => {
+test("popover 服务：注册 aiti-msg-smart.popover（open/close，走同一个 ph；划选 info 分流划选引擎）", () => {
   assert.match(clientSrc, /ctx\.registerExtService\?\.\("aiti-msg-smart\.popover"/);
-  assert.match(clientSrc, /open: \(info\) => \{ if \(info\) ph\(info\); \}/);
+  assert.match(clientSrc, /open: \(info\) => \{\s*\n\s*if \(!info\) return;/);
+  assert.match(clientSrc, /if \(info\.isSelection && \(info\.range \|\| info\.rect\)\) \{ openSelectionCard\(info\.text, info\.range \|\| null, info\.element, info\); return; \}\s*\n\s*ph\(info\);/);
   // close 必须清 state.opening + 浮层监听（清不干净 → 下次点击 toggle 误判）
   assert.match(clientSrc, /close: \(\) => \{[\s\S]*?state\.opening = null;[\s\S]*?clearFloat\(\);/);
 });
@@ -23,8 +24,9 @@ test("渲染上下文：rcx 缺省顶层文档/窗口（聊天路径不受影响
   assert.match(clientSrc, /function setRcx\(info\) \{[\s\S]*?\(info && info\.doc\) \|\| \(typeof document/);
   // ph 入口按 info 重设（每次开弹层都重新解析，framed 与聊天互不串味）
   assert.match(clientSrc, /const ph = \(info\) => \{\s*\n\s*setRcx\(info\);/);
-  // 顶层委托（划选/inline code）显式复位，防 rcx 残留指向 iframe
-  assert.match(clientSrc, /function openSelectionCard\(text, range, msgEl\) \{\s*\n\s*setRcx\(null\);/);
+  // Top-level delegates (selection/inline code) reset rcx explicitly in case it still points at a
+  // framed popover's iframe; the ext path re-points it at the container doc/win instead.
+  assert.match(clientSrc, /function openSelectionCard\(text, range, msgEl, ext\) \{\s*\n\s*setRcx\(ext \? \{ doc: ext\.doc, win: ext\.win \} : null\);/);
   assert.match(clientSrc, /setRcx\(null\); \/\/ 行内 code 弹层恒在顶层文档/);
 });
 

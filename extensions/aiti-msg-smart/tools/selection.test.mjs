@@ -58,14 +58,25 @@ test("selection path: 划选走段落点击全流程（统一识别与弹层管�
 });
 
 test("selection card: 同时只开一个 + pointerup 监听 + 弹层互斥", () => {
-  // 打开前关三类既有弹层（段落/pre/行内 code/旧选中）
-  assert.match(clientSrc, /function openSelectionCard\(text, range, msgEl\) \{[\s\S]*?closeSelectionCard\(\);/);
+  // Close the three existing popover kinds before opening; ext param lets external containers
+  // (iframes) reuse the same engine for selection
+  assert.match(clientSrc, /function openSelectionCard\(text, range, msgEl, ext\) \{[\s\S]*?closeSelectionCard\(\);/);
   // 段落/行内 code 路径反向互斥
   assert.match(clientSrc, /\/\/ 与划选弹层互斥：开段落弹层前先关选中弹层[\s\S]*?closeSelectionCard\(\);/);
   assert.match(clientSrc, /\/\/ 与划选弹层互斥：开 code 弹层前先关选中弹层\s*\n\s*closeSelectionCard\(\);/);
   // 消息区 pointerup capture + 消息块范围校验
   assert.match(clientSrc, /document\.addEventListener\("pointerup", \(e\) => \{/);
-  assert.match(clientSrc, /closest\("\[data-chat-msg-role\]"\)/);
+  // The guard must read the top window explicitly (rcx may still point at a framed popover's
+  // iframe — reading that selection would pass the guard, then the top window's empty selection
+  // crashes getRangeAt(0) with IndexSizeError, killing the listener → selection never pops again)
+  assert.match(clientSrc, /if \(!selectionNonCollapsed\(window\)\) return;/);
+  assert.match(clientSrc, /if \(!sel \|\| sel\.rangeCount === 0\) return;/);
+  // Same-gesture closing click race: the card opens on mouseup and the browser fires one more
+  // click (target = the cross-block common ancestor like ul/ol — not in the leaf-block whitelist)
+  // → outsideHandler must ignore clicks right after opening, or the card closes instantly
+  assert.match(clientSrc, /const openedAt = Date\.now\(\);[\s\S]*?if \(Date\.now\(\) - openedAt < 200\) return;/);
+  // container = chat msg block OR FileViewer markdown preview
+  assert.match(clientSrc, /closest\("\[data-chat-msg-role\], \.markdown-file-preview"\)/);
 });
 
 test("selection card: 点弹层自身不重开（pointerup 排除卡片内 target，按钮 click 可达）", () => {
@@ -80,4 +91,31 @@ test("selection card: 点弹层自身不重开（pointerup 排除卡片内 targe
 
 test("feature: recognizer.selection 默认开启（extman 可关）", () => {
   assert.match(serverSrc, /id: "recognizer\.selection", label: "划选识别（引用片段）".*default: true/);
+});
+
+test("selection via popover service: 外部容器（aiti-editor 预览 iframe）划选走同一引擎", () => {
+  // popover service open routing: isSelection + range/rect → openSelectionCard (engine owns the
+  // layer; card pinned under the selection)
+  assert.match(clientSrc, /if \(info\.isSelection && \(info\.range \|\| info\.rect\)\) \{ openSelectionCard\(info\.text, info\.range \|\| null, info\.element, info\); return; \}/);
+  // ext param: doc/win point at the container document (card renders inside the iframe); default = top document, unchanged
+  assert.match(clientSrc, /function openSelectionCard\(text, range, msgEl, ext\) \{/);
+  assert.match(clientSrc, /setRcx\(ext \? \{ doc: ext\.doc, win: ext\.win \} : null\)/);
+  // scroll/resize follow attaches to the container window (positionSelectionCard previously had
+  // no listener — any scroll un-anchored the card)
+  assert.match(clientSrc, /selectionState\.win = rcx\.win \|\| window;/);
+  assert.match(clientSrc, /selectionState\.win\.addEventListener\("scroll", follow, true\)/);
+  // close removes listeners via the container window (rcx may already be re-pointed by a later framed popover)
+  assert.match(clientSrc, /function selWin\(\) \{ return selectionState\.win \|\| window; \}/);
+});
+
+test("selection-container: 容器注册服务（msg-smart 直挂在选区文档挂 pointerup，标准做法）", () => {
+  assert.match(clientSrc, /aiti-msg-smart\.selection-container/);
+  // handler mirrors the top-level pointerup: card-target exclusion + non-collapsed check + live meta + openSelectionCard
+  assert.match(clientSrc, /const selContainers = new Map\(\);/);
+  assert.match(clientSrc, /info\.doc\.addEventListener\("pointerup", handler, true\);/);
+  assert.match(clientSrc, /openSelectionCard\(text, range, rootEl, \{ doc: info\.doc, win: info\.win, \.\.\.meta \}\);/);
+  // unregister: detach the listener; also close the card when it belongs to this container
+  assert.match(clientSrc, /if \(selectionState\.win === rec\.win\) closeSelectionCard\(\);/);
+  // refuse registration when the feature is off
+  assert.match(clientSrc, /if \(!featureEnabled\("recognizer\.selection"\)\) return;/);
 });
