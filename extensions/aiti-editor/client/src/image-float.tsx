@@ -19,6 +19,7 @@
  * （DockBody chrome="tab"，页签 ⇱/✕ 由宿主 TabBar 承担）。
  */
 import { useEffect, useState } from "react";
+import { t } from "./host-shim.ts";
 import {
   DockBody, present, presentState, useGate, clearDockPref, declareDockZones,
 } from "../../../_shared/ext-float-dock";
@@ -94,7 +95,7 @@ function CurrentViewer({ img }: { img: CurrentImage }) {
 }
 
 function titleOf(img: CurrentImage): string {
-  return (img.alt || "").trim() || "图片预览";
+  return (img.alt || "").trim() || t("图片预览");
 }
 
 /** 浮窗面（dialogs 插槽 item；gate = floating）。 */
@@ -139,7 +140,7 @@ export function ImageFloatFace() {
             {titleOf(img)}
           </h3>
           <button
-            type="button" aria-label="关闭" title="关闭" onClick={closeImagePreview}
+            type="button" aria-label={t("关闭")} title={t("关闭")} onClick={closeImagePreview}
             style={{ background: "none", border: "none", color: "var(--text-muted, #888)", cursor: "pointer", fontSize: 14, padding: "2px 8px", fontFamily: "inherit" }}
           >✕</button>
         </div>
