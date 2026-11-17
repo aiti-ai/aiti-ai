@@ -14,7 +14,8 @@ import { useI18n, apiUrl } from "./host-shim";
 import { usePresent } from "../../../_shared/ext-float-dock";
 import { qrDataUrl, downloadQrPng } from "./qr";
 import { FaceCaptureModal } from "./face-capture";
-import { MOBILE_KEY, REMEMBER_KEY, tierParams, confirmNeeded, pickCandidate, resolveReadyUrl, upgradeToPageProto, faceSelectable, schemeKey, type Reco, type RecoCandidate } from "./mobile-logic";
+import { MOBILE_KEY, REMEMBER_KEY, tierParams, confirmNeeded, pickCandidate, pickTunnelTool, resolveReadyUrl, upgradeToPageProto, faceSelectable, schemeKey, appendQuery, launchUrlSafe, exposeToUrls, loadSourceMemory, saveSourceMemory, pageReachability, type Source, type MobileLaunch, type Reco, type RecoCandidate } from "./mobile-logic";
+import { NoAuthBadge } from "./dialog/shared";
 
 // ---------------------------------------------------------------------------
 // 组件
@@ -27,30 +28,142 @@ interface Props {
   onClose: () => void;
   onOpenPorts: () => void;
   onOpenSelf: () => void;
+  /** Parametrized launch (client service "service-tunnels.mobile"; sources-and-service plan §3.2). */
+  launch?: MobileLaunch | null;
 }
 
 function pageHttps(): boolean {
   return typeof location !== "undefined" && location.protocol === "https:";
 }
 
-export function MobileAccessCard({ onClose, onOpenPorts, onOpenSelf }: Props) {
+/** Lightweight expose row (element of GET status?exposes-only=1). */
+interface PortRow {
+  name: string;
+  label: string | null;
+  provider: string | null;
+  running: boolean;
+  url: string | null;
+  localUrl: string | null;
+  baseUrl: string | null;
+  domainUrl: string | null;
+  loginUrl: string | null;
+  altUrls: string[];
+}
+
+/** Shared ready QR block (self / ports / link all reuse; generated on render,
+ *  copy + download PNG). */
+function ReadyQr({ url, hint, t, size = 220 }: { url: string; hint?: string; t: (k: string) => string; size?: number }) {
+  const [qr, setQr] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    setQr(null);
+    qrDataUrl(url, { size: 336 }).then((d) => { if (alive) setQr(d); }).catch(() => { if (alive) setQr(null); });
+    return () => { alive = false; };
+  }, [url]);
+  const copy = useCallback(async () => {
+    try { await navigator.clipboard.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* ignore */ }
+  }, [url]);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 4 }}>
+      {qr && <img src={qr} width={size} height={size} alt="QR" style={{ borderRadius: 8, marginTop: 10 }} />}
+      {hint && <div style={{ marginTop: 8, fontSize: 11, color: "var(--text-muted)", wordBreak: "break-all", textAlign: "center" }}>{hint}</div>}
+      <div style={{ marginTop: 6, fontSize: 11, fontFamily: "var(--font-mono)", wordBreak: "break-all", color: "var(--text-dim, var(--text-muted))", textAlign: "center" }}>{url}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, flexWrap: "wrap", justifyContent: "center" }}>
+        <button type="button" onClick={copy} style={{ height: 30, padding: "0 12px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg-hover)", color: "var(--text)", fontSize: 12, cursor: "pointer" }}>{copied ? t("mobile.copied") : t("mobile.copy")}</button>
+        <button type="button" disabled={!qr} onClick={() => qr && downloadQrPng(qr, "pi-web-mobile.png")} style={{ height: 30, padding: "0 12px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg-hover)", color: "var(--text)", fontSize: 12, cursor: qr ? "pointer" : "default", opacity: qr ? 1 : 0.6 }}>{t("mobile.downloadPng")}</button>
+      </div>
+    </div>
+  );
+}
+
+export function MobileAccessCard({ onClose, onOpenPorts, onOpenSelf, launch }: Props) {
   const { t } = useI18n();
   const [reco, setReco] = useState<Reco | null>(null);
   const [view, setView] = useState<View>("loading");
   const [candidate, setCandidate] = useState<RecoCandidate | null>(null);
   const [readyUrl, setReadyUrl] = useState<string | null>(null);
-  const [qr, setQr] = useState<string | null>(null);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [tier, setTier] = useState<Tier>("password");
+  const [tunnelTool, setTunnelTool] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [copied, setCopied] = useState(false);
   const [totpQr, setTotpQr] = useState<string | null>(null);
   const [faceOpen, setFaceOpen] = useState(false);
   const [toast, setToast] = useState("");
   const recoRef = useRef<Reco | null>(null);
   const aliveRef = useRef(true);
+
+  // —— QR source switch (sources-and-service plan §3.1, v3: entry/page/ports) ——
+  // link only appears when launched with {url}; a bare open applies memory
+  // (Q2: remember the last tab + ports pick); default = entry — the original
+  // card view (expose wizard: username/password + scheme + QR), kept intact
+  // and always visible as its own tab.
+  const safeLaunchUrl = launchUrlSafe(launch?.url);
+  const [source, setSource] = useState<Source>(() => {
+    if (safeLaunchUrl) return "link";
+    if (launch?.query) return "page";
+    return loadSourceMemory(typeof localStorage !== "undefined" ? localStorage : null)?.source ?? "entry";
+  });
+  const [portList, setPortList] = useState<Array<{ name: string; label: string | null; noAuth: boolean; urls: string[] }>>([]);
+  const [portSel, setPortSel] = useState<string | null>(null);
+  const [portsLoading, setPortsLoading] = useState(false);
+  const [portNote, setPortNote] = useState("");
+  const sourceRef = useRef(source);
+  useEffect(() => { sourceRef.current = source; }, [source]);
+
+  // Current-page URL (location.href as-is, parametrized query appended).
+  const pageUrl = typeof location !== "undefined" ? appendQuery(location.href, launch?.query) : null;
+  const pageReach = pageReachability(pageUrl);
+
+  // Parametrized launch args changed (re-launching via svc({...}) while the
+  // card is open also applies; §3.2). Args win: memory is not written.
+  // {url} → link; {query} → page source.
+  useEffect(() => {
+    if (!launch) return;
+    if (launchUrlSafe(launch.url)) { setSource("link"); return; }
+    if (launch.query) setSource("page");
+  }, [launch]);
+
+  // ports source list (lightweight endpoint; event-driven refresh, no polling)
+  const loadPorts = useCallback(() => {
+    setPortsLoading(true);
+    fetch(apiUrl("/api/extensions/service-tunnels/status?exposes-only=1"))
+      .then((r) => r.json() as Promise<{ exposes?: PortRow[] }>)
+      .then((d) => {
+        if (!aliveRef.current) return;
+        const rows = (d.exposes ?? []).filter((e) => e.running)
+          .map((e) => ({ name: e.name, label: e.label, noAuth: !e.provider, urls: exposeToUrls(e) }))
+          .filter((r) => r.urls.length > 0);
+        setPortList(rows);
+        setPortsLoading(false);
+        // Restore selection: current pick stays valid first; else memory; on
+        // memory miss fall back to the first URL and say so.
+        const all = rows.flatMap((r) => r.urls);
+        setPortSel((prev) => {
+          if (prev && all.includes(prev)) return prev;
+          const mem = loadSourceMemory(typeof localStorage !== "undefined" ? localStorage : null);
+          const want = mem?.source === "ports" ? (mem.portUrl ?? null) : null;
+          if (want && all.includes(want)) return want;
+          if (want) setPortNote(t("mobile.sourceRememberedGone"));
+          return all[0] ?? null;
+        });
+      })
+      .catch(() => { if (aliveRef.current) setPortsLoading(false); });
+  }, [t]);
+
+  const switchSource = useCallback((s: Source) => {
+    setSource(s);
+    if (s === "link") return; // a parametrized launch is governed by its args, not memory
+    saveSourceMemory(typeof localStorage !== "undefined" ? localStorage : null, s === "ports" ? { source: "ports", portUrl: portSel ?? undefined } : { source: s });
+    if (s === "ports") loadPorts();
+  }, [portSel, loadPorts]);
+
+  const pickPortUrl = useCallback((url: string) => {
+    setPortSel(url);
+    saveSourceMemory(typeof localStorage !== "undefined" ? localStorage : null, { source: "ports", portUrl: url });
+  }, []);
 
   const post = useCallback((action: string, body: Record<string, unknown>): Promise<Record<string, unknown>> =>
     fetch(apiUrl("/api/extensions/service-tunnels/status"), {
@@ -71,11 +184,12 @@ export function MobileAccessCard({ onClose, onOpenPorts, onOpenSelf }: Props) {
       if (deepToast) setToast(deepToast);
       return;
     }
-    let remembered: { id?: string } | null = null;
+    let remembered: { id?: string; tier?: string; tunnel?: string } | null = null;
     try { remembered = JSON.parse(localStorage.getItem(REMEMBER_KEY) ?? "null"); } catch { /* ignore */ }
     const { candidate: pick, rememberedGone } = pickCandidate(d, remembered);
     if (!pick) { setView("unsafe"); if (deepToast) setToast(deepToast); return; }
     setCandidate(pick);
+    setTunnelTool(pickTunnelTool(pick, remembered?.tunnel ?? null));
     if (rememberedGone) setToast(t("mobile.rememberedGone"));
     else if (deepToast) setToast(deepToast);
     setTier((pick.https) ? "face" : "password"); // Q1：https 候选默认刷脸档
@@ -89,12 +203,12 @@ export function MobileAccessCard({ onClose, onOpenPorts, onOpenSelf }: Props) {
       .catch(() => { if (aliveRef.current) { setError(t("mobile.error")); setView("unsafe"); } });
   }, [applyReco, t]);
 
-  // 事件驱动刷新（mount + focus + visibility + online；无轮询）
+  // event-driven refresh (mount + focus + visibility + online; no polling). While the ports source is active, also refreshes the light list in sync.
   useEffect(() => {
     aliveRef.current = true;
     load();
-    const onFocus = () => load();
-    const onVis = () => { if (document.visibilityState === "visible") load(); };
+    const onFocus = () => { load(); if (sourceRef.current === "ports") loadPorts(); };
+    const onVis = () => { if (document.visibilityState === "visible") onFocus(); };
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVis);
     window.addEventListener("online", onFocus);
@@ -104,18 +218,15 @@ export function MobileAccessCard({ onClose, onOpenPorts, onOpenSelf }: Props) {
       document.removeEventListener("visibilitychange", onVis);
       window.removeEventListener("online", onFocus);
     };
-  }, [load]);
+  }, [load, loadPorts]);
 
-  // 就绪态出码（readyUrl 变化即重出；隧道 URL 变化自动跟新）
-  useEffect(() => {
-    if (view !== "ready" || !readyUrl) { setQr(null); return; }
-    let alive = true;
-    qrDataUrl(upgradeToPageProto(readyUrl, pageHttps()), { size: 336 }).then((d) => { if (alive) setQr(d); }).catch(() => { if (alive) setQr(null); });
-    return () => { alive = false; };
-  }, [view, readyUrl]);
+  // self-source QR URL: ready channel + https upgrade. Note: launch.query is
+  // scoped to the PAGE source only (v2 semantics) — the entry wizard's QR must
+  // stay parameter-free.
+  const selfQrUrl = view === "ready" && readyUrl ? upgradeToPageProto(readyUrl, pageHttps()) : null;
 
   const remember = (id: string) => {
-    try { localStorage.setItem(REMEMBER_KEY, JSON.stringify({ id, tier })); } catch { /* ignore */ }
+    try { localStorage.setItem(REMEMBER_KEY, JSON.stringify({ id, tier, tunnel: tunnelTool ?? undefined })); } catch { /* ignore */ }
   };
 
   // —— 暴露执行（两步分调：user-add 先行；失败不静默 R9）——
@@ -134,7 +245,7 @@ export function MobileAccessCard({ onClose, onOpenPorts, onOpenSelf }: Props) {
           mode: c.mode ?? "proxy",
           provider: c.auth === "none" ? "none" : (c.auth ?? "portal"),
           policy: params.policy,
-          ...(c.id === "tunnel" ? { tunnel: c.tunnel ?? "cloudflared" } : {}),
+          ...(c.id === "tunnel" ? { tunnel: pickTunnelTool(c, tunnelTool) } : {}),
           ...(params.providerParams ? { providerParams: params.providerParams } : {}),
         };
         const d = await post("self-expose", body);
@@ -147,7 +258,7 @@ export function MobileAccessCard({ onClose, onOpenPorts, onOpenSelf }: Props) {
     } finally {
       if (aliveRef.current) setBusy(false);
     }
-  }, [tier, post, load]);
+  }, [tier, tunnelTool, post, load]);
 
   // —— 首次提交：user-add →（刷脸采集 / TOTP 登记）→ 暴露 ——
   const submitFirst = useCallback(async () => {
@@ -204,11 +315,6 @@ export function MobileAccessCard({ onClose, onOpenPorts, onOpenSelf }: Props) {
     }
   }, [post, load]);
 
-  const copyUrl = useCallback(async () => {
-    if (!readyUrl) return;
-    try { await navigator.clipboard.writeText(readyUrl); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* ignore */ }
-  }, [readyUrl]);
-
   // ---- 渲染 ----
   const row = { display: "flex", alignItems: "center", gap: 8, marginTop: 10 } as const;
   const input = { flex: 1, height: 30, padding: "0 8px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", fontSize: 12 } as const;
@@ -223,6 +329,24 @@ export function MobileAccessCard({ onClose, onOpenPorts, onOpenSelf }: Props) {
 
   const riskyNote = candidate ? confirmNeeded(candidate) : false; // 确认弹层单独渲染
   void riskyNote;
+
+  // Tunnel tool picker row (only when the tunnel candidate has >1 usable tool —
+  // trycloudflare.com is occasionally unreachable, so cloudflared/ngrok/frpc are switchable)
+  const tunnelToolRow = candidate?.id === "tunnel" && (candidate.tunnelOptions?.length ?? 0) > 1 ? (() => {
+    const active = tunnelTool ?? candidate.tunnel ?? candidate.tunnelOptions?.[0];
+    return (
+      <div style={{ ...row, flexWrap: "wrap" }}>
+        <span style={{ color: "var(--text-muted)", fontSize: 11 }}>{t("mobile.tunnelTool")}:</span>
+        {candidate.tunnelOptions!.map((tool) => (
+          <button key={tool} type="button" disabled={busy} onClick={() => setTunnelTool(tool)}
+            title={tool === "cloudflared" ? t("mobile.tunnelCloudflaredHint") : undefined}
+            style={{ ...btn, fontSize: 11, padding: "0 8px", height: 26, background: active === tool ? "var(--accent)" : "var(--bg-hover)", color: active === tool ? "#fff" : "var(--text)", borderColor: active === tool ? "var(--accent)" : "var(--border)" }}>
+            {tool}
+          </button>
+        ))}
+      </div>
+    );
+  })() : null;
 
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -248,6 +372,32 @@ export function MobileAccessCard({ onClose, onOpenPorts, onOpenSelf }: Props) {
         </div>
 
         <div style={{ padding: "12px 14px 14px", fontSize: 12, color: "var(--text)" }}>
+          {/* QR source switch (§3.1 v3): service entry / current page / exposed */}
+          <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+            {(["entry", "page", "ports"] as Source[]).map((s) => (
+              <button key={s} type="button" onClick={() => switchSource(s)}
+                style={{ flex: 1, height: 28, borderRadius: 6, border: `1px solid ${source === s ? "var(--accent)" : "var(--border)"}`, background: source === s ? "var(--accent)" : "var(--bg-hover)", color: source === s ? "#fff" : "var(--text)", fontSize: 12, cursor: "pointer" }}>
+                {s === "entry" ? t("mobile.tabEntry") : s === "page" ? t("mobile.tabPage") : t("mobile.tabPorts")}
+              </button>
+            ))}
+          </div>
+
+          {/* —— page source: QR of the current browser URL (§3.1 v2) —— */}
+          {source === "page" && (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 4 }}>
+              {pageUrl && <ReadyQr url={pageUrl} hint={t("mobile.qrHint")} t={t} />}
+              {pageReach === "loopback" && <div style={{ ...row, color: "var(--danger, #f87171)", fontSize: 11, justifyContent: "center", textAlign: "center" }}>{t("mobile.pageLoopbackHint")}</div>}
+              {pageReach === "lan" && <div style={{ ...row, color: "var(--text-muted)", fontSize: 11, justifyContent: "center", textAlign: "center" }}>{t("mobile.pageLanHint")}</div>}
+              {pageReach !== "public" && (
+                <div style={{ ...row, justifyContent: "center" }}>
+                  <button type="button" style={{ ...btn, background: "var(--accent)", borderColor: "var(--accent)", color: "#fff" }} onClick={() => switchSource("entry")}>{t("mobile.setupAccess")}</button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* —— entry source: the original expose wizard, unchanged (§3.1 v3) —— */}
+          {source === "entry" && (<>
           {toast && <div style={{ ...row, color: "var(--text-muted)", fontSize: 11 }}>{toast}</div>}
           {error && <div style={{ ...row, color: "var(--danger, #f87171)", fontSize: 11 }}>{error}</div>}
 
@@ -301,13 +451,14 @@ export function MobileAccessCard({ onClose, onOpenPorts, onOpenSelf }: Props) {
                     <span style={{ color: "var(--text-muted)", fontSize: 11 }}>{t("mobile.scheme")}:</span>
                     {(reco?.candidates ?? []).filter((c) => c.available && !confirmNeeded(c)).map((c) => (
                       <button key={c.id} type="button" disabled={busy}
-                        onClick={() => { setCandidate(c); setTier(faceSelectable(c, pageHttps()) ? "face" : "password"); }}
+                        onClick={() => { setCandidate(c); setTunnelTool(pickTunnelTool(c, tunnelTool)); setTier(faceSelectable(c, pageHttps()) ? "face" : "password"); }}
                         style={{ ...btn, fontSize: 11, padding: "0 8px", height: 26, background: candidate.id === c.id ? "var(--accent)" : "var(--bg-hover)", color: candidate.id === c.id ? "#fff" : "var(--text)", borderColor: candidate.id === c.id ? "var(--accent)" : "var(--border)" }}>
                         {t(schemeKey(c.id))}
                       </button>
                     ))}
                     {(candidate.badges ?? []).map(badge)}
                   </div>
+                  {tunnelToolRow}
                 </>
               )}
               <div style={{ ...row, justifyContent: "flex-end" }}>
@@ -326,13 +477,14 @@ export function MobileAccessCard({ onClose, onOpenPorts, onOpenSelf }: Props) {
                 <span style={{ color: "var(--text-muted)", fontSize: 11 }}>{t("mobile.scheme")}:</span>
                 {(reco?.candidates ?? []).filter((c) => c.available && !confirmNeeded(c)).map((c) => (
                   <button key={c.id} type="button" disabled={busy}
-                    onClick={() => { setCandidate(c); setTier(faceSelectable(c, pageHttps()) ? "face" : "password"); }}
+                    onClick={() => { setCandidate(c); setTunnelTool(pickTunnelTool(c, tunnelTool)); setTier(faceSelectable(c, pageHttps()) ? "face" : "password"); }}
                     style={{ ...btn, fontSize: 11, padding: "0 8px", height: 26, background: candidate.id === c.id ? "var(--accent)" : "var(--bg-hover)", color: candidate.id === c.id ? "#fff" : "var(--text)", borderColor: candidate.id === c.id ? "var(--accent)" : "var(--border)" }}>
                     {t(schemeKey(c.id))}
                   </button>
                 ))}
                 {(candidate.badges ?? []).map(badge)}
               </div>
+              {tunnelToolRow}
               <div style={{ ...row, justifyContent: "flex-end" }}>
                 <button type="button" style={btn} disabled={busy} onClick={() => { setView("list"); load(true); }}>{t("mobile.switchScheme")}</button>
                 <button type="button" style={btn} onClick={onOpenSelf} title={t("mobile.fullSettingsTitle")}>{t("mobile.fullSettings")}</button>
@@ -373,16 +525,12 @@ export function MobileAccessCard({ onClose, onOpenPorts, onOpenSelf }: Props) {
             </div>
           )}
 
-          {/* S3 就绪：大二维码 */}
-          {view === "ready" && readyUrl && (
+          {/* S3 ready: big QR (parametrized launch.query appended in selfQrUrl) */}
+          {view === "ready" && selfQrUrl && (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 4 }}>
               <div style={{ fontWeight: 600 }}>{t("mobile.ready")}</div>
-              {qr && <img src={qr} width={220} height={220} alt="QR" style={{ borderRadius: 8, marginTop: 10 }} />}
-              <div style={{ marginTop: 8, fontSize: 11, color: "var(--text-muted)", wordBreak: "break-all", textAlign: "center" }}>{t("mobile.qrHint")}</div>
-              <div style={{ marginTop: 6, fontSize: 11, fontFamily: "var(--font-mono)", wordBreak: "break-all", color: "var(--text-dim, var(--text-muted))" }}>{upgradeToPageProto(readyUrl, pageHttps())}</div>
+              <ReadyQr url={selfQrUrl} hint={t("mobile.qrHint")} t={t} />
               <div style={{ ...row, flexWrap: "wrap", justifyContent: "center" }}>
-                <button type="button" style={btn} onClick={copyUrl}>{copied ? t("mobile.copied") : t("mobile.copy")}</button>
-                <button type="button" style={btn} disabled={!qr} onClick={() => qr && downloadQrPng(qr, "pi-web-mobile.png")}>{t("mobile.downloadPng")}</button>
                 <button type="button" style={btn} onClick={() => { setView("list"); load(true); }}>{t("mobile.switchScheme")}</button>
               </div>
               <div style={{ ...row, flexWrap: "wrap", justifyContent: "center", borderTop: "1px solid var(--border)", paddingTop: 8, width: "100%" }}>
@@ -422,7 +570,7 @@ export function MobileAccessCard({ onClose, onOpenPorts, onOpenSelf }: Props) {
                     </div>
                     {c.available && (
                       <button type="button" style={btn} disabled={busy}
-                        onClick={() => { setCandidate(c); if (confirmNeeded(c)) setView("confirm"); else if (!reco?.hasUsers) setView("first"); else void doExpose(c); }}>
+                        onClick={() => { setCandidate(c); setTunnelTool(pickTunnelTool(c, tunnelTool)); if (confirmNeeded(c)) setView("confirm"); else if (!reco?.hasUsers) setView("first"); else void doExpose(c); }}>
                         {t("mobile.exposeOnly")}
                       </button>
                     )}
@@ -432,6 +580,52 @@ export function MobileAccessCard({ onClose, onOpenPorts, onOpenSelf }: Props) {
               <div style={{ ...row, justifyContent: "flex-end" }}>
                 <button type="button" style={btn} onClick={onOpenSelf} title={t("mobile.fullSettingsTitle")}>{t("mobile.fullSettings")}</button>
               </div>
+            </div>
+          )}
+          </>)}
+
+          {/* —— ports source (§3.1: every exposed URL from the ports dialog is
+              QR-able; Q2 remembers the last pick) —— */}
+          {source === "ports" && (
+            <div>
+              {portNote && <div style={{ ...row, color: "var(--text-muted)", fontSize: 11 }}>{portNote}</div>}
+              {portsLoading ? (
+                <div style={{ ...row, justifyContent: "center", padding: "24px 0", color: "var(--text-muted)" }}>…</div>
+              ) : portList.length === 0 ? (
+                <div>
+                  <div style={{ color: "var(--text-muted)", padding: "10px 0" }}>{t("mobile.portsEmpty")}</div>
+                  <div style={{ ...row, justifyContent: "flex-end" }}>
+                    <button type="button" style={{ ...btn, background: "var(--accent)", borderColor: "var(--accent)", color: "#fff" }} onClick={onOpenPorts}>{t("mobile.openPorts")}</button>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <div style={{ ...row, marginTop: 4, color: "var(--text-muted)", fontSize: 11 }}>{t("mobile.portsPick")}</div>
+                  {portList.map((r) => (
+                    <div key={r.name} style={{ borderTop: "1px solid var(--border)", paddingTop: 8, marginTop: 8 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                        <strong style={{ fontSize: 12 }}>{r.label || r.name}</strong>
+                        {r.noAuth && <NoAuthBadge t={t} />}
+                      </div>
+                      {r.urls.map((u) => (
+                        <button key={u} type="button" onClick={() => pickPortUrl(u)}
+                          style={{ ...btn, ...row, width: "100%", justifyContent: "flex-start", textAlign: "left", fontFamily: "var(--font-mono)", fontSize: 11, background: portSel === u ? "var(--bg-selected)" : "var(--bg-hover)", borderColor: portSel === u ? "var(--accent)" : "var(--border)", color: portSel === u ? "var(--accent)" : "var(--text)" }}>
+                          {upgradeToPageProto(u, pageHttps()) ?? u}
+                        </button>
+                      ))}
+                    </div>
+                  ))}
+                  {portSel && <ReadyQr url={upgradeToPageProto(portSel, pageHttps()) ?? portSel} hint={t("mobile.qrHint")} t={t} />}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* —— custom link source (§3.2: parametrized {url} launch renders its QR) —— */}
+          {source === "link" && safeLaunchUrl && (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 4 }}>
+              <div style={{ fontWeight: 600, textAlign: "center" }}>{launch?.title || t("mobile.linkTitle")}</div>
+              <ReadyQr url={safeLaunchUrl} hint={t("mobile.qrHint")} t={t} />
             </div>
           )}
         </div>
