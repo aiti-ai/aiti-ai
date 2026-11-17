@@ -5121,8 +5121,25 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   </button>
                 )}
                 {mobileMatrix.stop && (
-                  <MobileIconButton label={t("chat.stop")} onClick={() => { onAbort(); refocusInput(); }} color="#ef4444">
-                    <svg width="13" height="13" viewBox="0 0 10 10" fill="none"><rect x="1.5" y="1.5" width="7" height="7" rx="1.5" fill="currentColor" /></svg>
+                  <MobileIconButton
+                    label={aborting ? t("chat.stopping") : t("chat.stop")}
+                    title={aborting ? t("chat.stopping") : t("chat.stop")}
+                    onClick={() => { onAbort(); refocusInput(); }}
+                    color="#ef4444"
+                  >
+                    {aborting ? (
+                      /* Same spinner + label swap as the desktop Stop (abort is
+                         async — without this the tap looks dead while the
+                         backend winds the run down). Deliberately NOT disabled:
+                         on mobile a dropped settle event must not lock out a
+                         retry tap. */
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" style={{ animation: "spin 1s linear infinite" }}>
+                        <path d="M12 3a9 9 0 0 1 9 9" />
+                        <path d="M12 21a9 9 0 0 1-9-9" opacity="0.45" />
+                      </svg>
+                    ) : (
+                      <svg width="13" height="13" viewBox="0 0 10 10" fill="none"><rect x="1.5" y="1.5" width="7" height="7" rx="1.5" fill="currentColor" /></svg>
+                    )}
                   </MobileIconButton>
                 )}
                 {mobileMatrix.steer && (
