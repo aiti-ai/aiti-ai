@@ -323,6 +323,7 @@ export function renderLegacySheetView(host: any, ctx: { filePath: string }): { e
               apiUrl: (p: string) => apiUrl(p),
               filePath,
               targetLabel: ".xlsx",
+              t: (window as any).__aitiSheetUniverT,
               onClose: () => { try { pane.remove(); } catch { /* 忽略 */ } btn.disabled = false; btn.textContent = "转为 .xlsx 并打开"; },
               onRetry: () => { try { pane.remove(); } catch { /* 忽略 */ } btn.disabled = false; btn.click(); },
             }));
