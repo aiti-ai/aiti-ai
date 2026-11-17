@@ -154,6 +154,7 @@
         "qwen-turbo",
         "qwen3-max",
         "qwen3-coder",
+        "qwen4-max-preview",
         "qwen-vl-max",
         "qwen2.5-coder-32b-instruct"
       ]
@@ -236,7 +237,8 @@
         "ernie-speed-8k",
         "ernie-lite-8k",
         "ernie-tiny-8k",
-        "ernie-5.5-flash-preview"
+        "ernie-5.5-flash-preview",
+        "ernie-5.1"
       ]
     },
     "minimax": {
@@ -736,6 +738,8 @@
       ],
       "authType": "oauth",
       "oauthProviderId": "qoder",
+      "baseUrl": "",
+      "apiType": "",
       "doc": "https://docs.qoder.com",
       "signupUrl": "https://qoder.com/en",
       "register": "🔐 订阅登录型（无需 token）。订阅后两种方式接入：① 本页点「登录」走浏览器设备码；② 本机安装 qodercli 并登录 → 向导自动导入凭据。注意：Free 账号无 credits，付费订阅额度才可推理。模型清单以登录后网关实时返回为准（id 为厂商混淆别名，随版本变动；下方目录仅未登录时的兜底预览）。",
@@ -757,6 +761,8 @@
       ],
       "authType": "oauth",
       "oauthProviderId": "qoder-cn",
+      "baseUrl": "",
+      "apiType": "",
       "doc": "https://docs.qoder.com",
       "signupUrl": "https://qoder.com.cn",
       "tokenUrl": "https://qoder.com.cn/account/integrations",
