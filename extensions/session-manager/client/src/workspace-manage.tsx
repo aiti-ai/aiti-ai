@@ -14,7 +14,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { t, apiUrl } from "./host-shim";
-import { store, useStore, displayCwd, moveBatchSession, archiveBatchSession, markPendingRemoval, clearPendingRemoval, ensureTags, togglePinProject, movePinnedProject, unpinProject } from "./store";
+import { store, useStore, displayCwd, moveBatchSession, archiveBatchSession, beginOptimisticRemoval, ensureTags, togglePinProject, movePinnedProject, unpinProject } from "./store";
 import { orderProjects, pinnedProjectKeys } from "./sidebar/pure";
 import { ghostBtn, miniBtn, ensureReadability, SIc } from "./helpers";
 import { MoveCwdPicker } from "./move-cwd-picker";
@@ -151,12 +151,25 @@ export function ManageDialog(props: WorkspaceManageProps & { onCloseDialog: () =
   const doArchive = async () => {
     if (!deleting || busy) return;
     const ids = deleting.sessions.map((x) => x.id);
-    // 先置灰涉及的会话行（后台刷新慢，让用户知道在动），失败恢复样式
-    for (const id of ids) markPendingRemoval(id, "live");
+    // Optimistic removal (2026-11-29): involved rows vanish from the panel/dock on click; on failure restore per-row + toast
+    const rowOf = (id: string) => (store.sessions as any[]).find((r) => String(r.id) === String(id)) as Record<string, unknown> | undefined;
+    const rollbacks = new Map<string, () => void>();
+    for (const id of ids) {
+      const row = rowOf(id);
+      rollbacks.set(id, beginOptimisticRemoval(row ? [{ id, bucket: "live", row, to: "archived" }] : [{ id, bucket: "live" }]));
+    }
     setBusy(true); setArchiving(true);
     const res = await archiveBatchSession(ids);
-    if (!res.ok) for (const id of ids) clearPendingRemoval(id);
-    else await unpinProject(deleting.key); // 项目已无在册会话 → 顺带清钉
+    if (!res.ok) {
+      // all skipped / failed: restore everything + a notice (with all skipped, archiveSessions returns ok:false)
+      for (const rb of rollbacks.values()) rb();
+      rollbacks.clear();
+    } else {
+      // partially skipped: restore only the skipped rows (not archived); archived rows stay hidden until the refresh lands and prune clears them
+      for (const sid of res.skippedIds) { rollbacks.get(sid)?.(); rollbacks.delete(sid); }
+      rollbacks.clear();
+      await unpinProject(deleting.key); // the project has no registered sessions → unpin too (original semantics: ok ⇒ unpin)
+    }
     setBusy(false); setArchiving(false);
     window.alert?.(
       res.ok

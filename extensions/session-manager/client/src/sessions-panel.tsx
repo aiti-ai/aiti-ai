@@ -7,13 +7,13 @@ import type { ReactNode } from "react";
 import { t, apiUrl, openFile } from "./host-shim";
 import {
   store, useStore, panelOpen, managerOpen, refreshSessions, refreshListChannels, ensureTags, collapsePanelIfCovering,
-  archiveSession, restoreSession, deleteArchivedSession, act, notifySessionsChanged, hideExtSession,
+  archiveSessions, restoreSession, deleteArchivedSession, act, notifySessionsChanged, hideExtSession,
   sharedFilter, clearSharedFilter, useSharedFilter, toggleSharedFilter, setPendingSearch, consumePendingSearch,
   displayCwd, EMPTY_TAGS, moveSession, deleteLiveSession, detectSessionCwd,
   refreshSources, sourceAction, importSession, openLiveSession, useAgentFilter, toggleAgentFilter,
   fetchRelatedDocs, subscribeRunningFrames,
-  markPendingRemoval, clearPendingRemoval, isPendingRemoval, subscribePendingRemovals,
-  applySessionNameLocal, collectSubtreeIds,
+  isPendingRemoval, subscribePendingRemovals,
+  beginOptimisticRemoval, hidePendingRow, optimisticMovedRows, applySessionNameLocal, collectSubtreeIds,
   SM_PANEL_KEY, ARCHIVED_VIEWER_KEY, EXT_VIEWER_KEY, openExtViewer, openViewer, closeViewer, closeExtViewer,
   viewerSessionId, subscribeViewerSession, extViewerId, subscribeExtViewer,
 } from "./store";
@@ -182,6 +182,19 @@ function ArchiveDialog(props: { ids: string[]; onClose: () => void }) {
     if (busy) return;
     setBusy(true);
     setErr(null);
+    // Optimistic removal (2026-11-29): per-row begin (rollbacks stored by id); on failure only the
+    // unsuccessful/failed rows roll back — successful rows stay hidden until the refresh lands and
+    // prune clears them; deleted/archived rows vanish from the list the moment they are clicked.
+    const rowOf = (id: string) => store.sessions?.find((r) => String(r.id) === String(id)) as Record<string, unknown> | undefined;
+    const rollbacks = new Map<string, () => void>();
+    const beginOne = (id: string, move: boolean) => {
+      const row = rowOf(id);
+      rollbacks.set(id, beginOptimisticRemoval(move && row
+        ? [{ id, bucket: "live", row, to: "archived" }]
+        : [{ id, bucket: "live" }]));
+    };
+    const rollbackFrom = (id: string) => { rollbacks.get(id)?.(); rollbacks.delete(id); };
+    const rollbackAll = () => { for (const rb of rollbacks.values()) rb(); rollbacks.clear(); };
     try {
       if (mode === "delete") {
         // 直接删除（未归档）：与归档是两个独立功能——不经过归档直接删会话文件
@@ -194,45 +207,62 @@ function ArchiveDialog(props: { ids: string[]; onClose: () => void }) {
           confirmLabel: t("sm.archiveDelete") ?? "彻底删除",
           danger: true,
           onConfirm: async () => {
-            // 确认后才开始：先置灰全部目标行（后台刷新慢，让用户知道在动），失败恢复
-            for (const id of props.ids) markPendingRemoval(id, "live");
             try {
               for (const id of props.ids) {
+                beginOne(id, false); // the row vanishes from the list on click (host DELETE runs per session)
                 const e = await deleteLiveSession(id);
                 if (e) {
-                  clearPendingRemoval(id);
+                  rollbackFrom(id); // failed rows reappear; successful rows stay hidden until landing converges
                   throw new Error(`${t("sm.deleteFailed") ?? "删除失败"}：${e}`);
                 }
               }
               props.onClose();
             } catch (err) {
-              // 后续未执行到的行同样恢复（避免残留置灰）；已成功删除的行等刷新落地 prune 清
-              for (const id of props.ids) clearPendingRemoval(id);
               throw err;
             }
           },
         });
         return;
       }
-      // 归档（含已解决/未解决 tag 前置）：执行即置灰全部目标行，失败逐行恢复
-      for (const id of props.ids) markPendingRemoval(id, "live");
-      const fail = () => { for (const id of props.ids) clearPendingRemoval(id); };
+      // Archive (with resolved/unresolved tag prep): tag rows one by one first (light operation;
+      // kept per-row to avoid a 409 storm), then the pi rows go out in one batched archiveSessions
+      // request (the old N sequential per-row requests were an amplifier of slow large-file
+      // archiving); ext-source rows take the view-layer removal path (the server is per-row anyway).
+      // Rows leave the list on fire.
+      const piIds: string[] = [];
       for (const id of props.ids) {
+        const row = store.sessions?.find((r) => String(r.id) === id) as { agent?: string } | undefined;
+        if (row?.agent && row.agent !== "pi") continue; // ext rows are handled per-row below
+        piIds.push(id);
+      }
+      for (const id of piIds) {
         if (mode === "resolved" || mode === "unresolved") {
           // 归档前先打 tag（多语名称；不存在则自动创建，默认颜色：已完成=绿 / 未完成=灰）
           const tagPath = mode === "resolved" ? t("sm.archiveTagResolved") : t("sm.archiveTagUnresolved");
           const ok = await act("assign", { sessionId: id, path: tagPath });
-          if (!ok) { fail(); setErr(`${id.slice(0, 8)} tag 失败`); return; }
+          if (!ok) { rollbackAll(); setErr(`${id.slice(0, 8)} tag 失败`); return; }
         }
-        // ext 源行（zcode/cursor 等只读镜像）不进归档管线：默默改走视图层移除（源数据不动）
-        const row = store.sessions?.find((r) => String(r.id) === id) as { agent?: string } | undefined;
-        if (row?.agent && row.agent !== "pi") {
-          const ok = await hideExtSession(id, true);
-          if (!ok) { fail(); setErr(`${id.slice(0, 8)} 移除失败`); return; }
-          continue;
+      }
+      // all target rows optimistically cleared (pi rows carry an archive-group snapshot; ext rows likewise)
+      for (const id of props.ids) beginOne(id, true);
+      const extIds = props.ids.filter((id) => !piIds.includes(id));
+      for (const id of extIds) {
+        const ok = await hideExtSession(id, true);
+        if (!ok) { rollbackAll(); setErr(`${id.slice(0, 8)} 移除失败`); return; }
+      }
+      if (piIds.length) {
+        const r = await archiveSessions(piIds);
+        if (!r.ok) {
+          // all skipped (all running / open / not indexed) or the request failed → restore everything + a clear error
+          rollbackAll();
+          setErr(r.skippedIds.length
+            ? `${t("sm.archiveFailed") ?? "归档失败"}：会话正在打开/运行中（${r.skippedIds.length} 个）`
+            : `${t("sm.archiveFailed") ?? "归档失败"}`);
+          return;
         }
-        const ok = await archiveSession(id);
-        if (!ok) { fail(); setErr(`${id.slice(0, 8)} 归档失败`); return; }
+        // partially skipped: skipped rows were not archived — restore only them; archived rows stay hidden until landing
+        for (const id of r.skippedIds) rollbackFrom(id);
+        if (r.skippedIds.length) showToast(t("sm.archiveSkipped", { count: r.skippedIds.length }) ?? `${r.skippedIds.length} 个会话正在打开/运行中，已跳过`);
       }
       props.onClose();
     } finally {
@@ -325,8 +355,23 @@ function renderExtViewer(props: any, face?: string) {
     return () => { alive = false; };
   }, [id]);
 
-  if (!id) return null;
-  if (face === "float" ? st !== "floating" : st !== "docked:right-panel") return null;
+  // face gate first (both faces stay mounted on the dialogs slot — closed state must render nothing)
+  const present = face === "float" ? st === "floating" : st === "docked:right-panel";
+  if (!present) return null;
+  if (!id) {
+    // App-center panel-card entries (aiti-app-center openPanel) toggle the present state
+    // without an ext target — render a hint instead of a blank pane (2026-11-16 fix).
+    // NOTE: self-contained styles — viewerBoxStyle is declared further below (TDZ).
+    const emptyStyle: React.CSSProperties = face === "float"
+      ? { width: "min(720px, 94vw)", height: "min(80vh, 720px)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, background: "var(--bg-panel)", border: "1px solid var(--border)", borderRadius: 14, boxShadow: "0 18px 60px rgba(0,0,0,0.4)" }
+      : { flex: 1, width: "100%", minHeight: 0, alignItems: "center", justifyContent: "center", gap: 12, display: "flex", flexDirection: "column", padding: 24, background: "var(--bg-panel)" };
+    return (
+      <div style={emptyStyle as React.CSSProperties}>
+        <div style={{ fontSize: 12, color: "var(--text-muted)", textAlign: "center", lineHeight: 1.6, maxWidth: 360 }}>{t("sm.viewer.pickHint")}</div>
+        <button onClick={() => panelOpen.onOpen()} style={{ ...ghostBtn, color: ensureReadability("var(--accent)"), borderColor: "var(--accent)66" } as React.CSSProperties}>{t("sm.openAll")}</button>
+      </div>
+    );
+  }
   const close = closeExtViewer;
   const openPi = (newId: string) => {
     closeExtViewer();
@@ -533,11 +578,12 @@ function viewerAction(
       danger: true,
       onConfirm: () => {
         setBusy?.("delete");
-        // 确认后置灰归档行（后台刷新慢），失败恢复样式
-        markPendingRemoval(sessionId, "archived");
+        // Optimistic removal (2026-11-29): rows leave the archive view on confirm; the backend runs
+        // in the background; on failure rollback + toast
+        const rollback = beginOptimisticRemoval([{ id: sessionId, bucket: "archived" }]);
         return deleteArchivedSession(sessionId)
           .then((ok) => {
-            if (!ok) { clearPendingRemoval(sessionId); window.alert?.(`${t("sm.deleteFailed") ?? "删除失败"}：${sessionId.slice(0, 8)}`); return; }
+            if (!ok) { rollback(); showToast(`${t("sm.deleteFailed") ?? "删除失败"}：${sessionId.slice(0, 8)}`); return; }
             closeViewer();
           })
           .finally(() => setBusy?.(null));
@@ -545,12 +591,13 @@ function viewerAction(
     });
     return Promise.resolve();
   }
-  // 恢复/重开：把行移出归档视图 —— 先置灰，失败恢复样式
-  markPendingRemoval(sessionId, "archived");
+  // restore/reopen: moves rows out of the archive view — optimistic bucket move: the archived row
+  // hides instantly + the live list shows the snapshot row instantly; rollback on failure
+  const rollback = beginOptimisticRemoval([{ id: sessionId, bucket: "archived", row: data?.session ?? {}, to: "live" }]);
   return restoreSession(sessionId).then((ok) => {
     if (!ok) {
-      clearPendingRemoval(sessionId);
-      window.alert?.(`${t(kind === "reopen" ? "sm.reopenFailed" : "sm.restoreFailed") ?? "操作失败"}：${sessionId.slice(0, 8)}`);
+      rollback();
+      showToast(`${t(kind === "reopen" ? "sm.reopenFailed" : "sm.restoreFailed") ?? "操作失败"}：${sessionId.slice(0, 8)}`);
       return;
     }
     closeViewer();
@@ -648,8 +695,23 @@ function renderArchivedViewer(props: any, face?: string) {
     return () => { alive = false; };
   }, [sessionId]);
 
-  if (!sessionId) return null;
-  if (face === "float" ? st !== "floating" : st !== "docked:right-panel") return null;
+  // face gate first (both faces stay mounted on the dialogs slot — closed state must render nothing)
+  const present = face === "float" ? st === "floating" : st === "docked:right-panel";
+  if (!present) return null;
+  if (!sessionId) {
+    // App-center panel-card entries (openPanel) toggle the present state without a
+    // viewer target — render a hint instead of a blank pane (2026-11-16 fix).
+    // NOTE: self-contained styles — archBoxStyle is declared further below (TDZ).
+    const emptyStyle: React.CSSProperties = face === "float"
+      ? { width: "min(720px, 94vw)", height: "min(80vh, 720px)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, background: "var(--bg-panel)", border: "1px solid var(--border)", borderRadius: 14, boxShadow: "0 18px 60px rgba(0,0,0,0.4)" }
+      : { flex: 1, width: "100%", minHeight: 0, alignItems: "center", justifyContent: "center", gap: 12, display: "flex", flexDirection: "column", padding: 24, background: "var(--bg-panel)" };
+    return (
+      <div style={emptyStyle as React.CSSProperties}>
+        <div style={{ fontSize: 12, color: "var(--text-muted)", textAlign: "center", lineHeight: 1.6, maxWidth: 360 }}>{t("sm.viewer.pickHint")}</div>
+        <button onClick={() => panelOpen.onOpen()} style={{ ...ghostBtn, color: ensureReadability("var(--accent)"), borderColor: "var(--accent)66" } as React.CSSProperties}>{t("sm.openAll")}</button>
+      </div>
+    );
+  }
   const close = () => closeViewer();
   const archBoxStyle: React.CSSProperties = face === "float"
     ? {
@@ -1044,7 +1106,18 @@ export function SessionsPanel(props: any) {
         name: h.title, cwd: h.cwd, modified: h.modified,
         firstMessage: h.text, lastMessage: h.text, lastRole: h.role, archived: h.archived, messageCount: 0,
       }))
-    : [...(s.sessions ?? []), ...(s.archived ?? [])]; // 服务端拆分返回（live/archived 两桶）；面板合并视图，下方 favIds 例外过滤照旧
+    : (() => {
+        // Optimistic-removal filtering (2026-11-29): pending rows are not rendered (the row clears
+        // on click); optimistic bucket-move snapshot rows merge deduped by id (server rows win) —
+        // archived/restored rows appear in the target view instantly.
+        const live = (s.sessions ?? []).filter((r) => !hidePendingRow(r));
+        const arch = (s.archived ?? []).filter((r) => !hidePendingRow(r));
+        const merged = [...live, ...arch];
+        const ids = new Set(merged.map((r) => String(r.id)));
+        const moved = [...optimisticMovedRows("live"), ...optimisticMovedRows("archived")]
+          .filter((m) => !ids.has(String(m.id)));
+        return [...merged, ...moved];
+      })(); // server returns split (live/archived buckets); the panel merges the views, favIds exception filtering below unchanged
   const byIdL = new Map(base.map((x) => [x.id, x]));
 
   // §14.2.2/14.2.3: local filters (list mode) + sort.
@@ -1208,14 +1281,17 @@ export function SessionsPanel(props: any) {
       danger: true,
       onConfirm: async () => {
         setBatchBusy(true);
-        // 确认后：先置灰全部目标行（后台刷新慢，让用户知道在动），失败逐行恢复
-        for (const id of ids) markPendingRemoval(id, "live");
+        // Optimistic removal (2026-11-29): per-row begin, the row vanishes on click; failed rows
+        // recover instantly while successful rows stay hidden until the refresh lands and prune clears them
+        const rollbacks = new Map<string, () => void>();
         try {
           let failed = 0;
           for (const id of ids) {
+            rollbacks.set(id, beginOptimisticRemoval([{ id, bucket: "live" }]));
             const e = await deleteLiveSession(id);
-            if (e) { failed++; clearPendingRemoval(id); }
+            if (e) { failed++; rollbacks.get(id)?.(); rollbacks.delete(id); }
           }
+          rollbacks.clear();
           setSelection(new Set());
           void refreshSessions();
           notifySessionsChanged();
@@ -1493,13 +1569,18 @@ export function SessionsPanel(props: any) {
           const extHideRun = async (ids: string[]) => {
             if (isBusy(sess.id)) return;
             markBusy(sess.id);
-            // 先置灰涉及行（后台刷新慢，让用户知道在动），失败恢复样式
-            for (const id of ids) markPendingRemoval(id, "live");
+            // Optimistic removal: involved rows vanish on click + the archive group appears instantly; restore + toast on failure
+            const rowOf = (id: string) => (store.sessions ?? []).find((r) => String(r.id) === String(id)) as Record<string, unknown> | undefined;
+            const rollbacks = new Map<string, () => void>();
+            for (const id of ids) {
+              const row = rowOf(id);
+              rollbacks.set(id, beginOptimisticRemoval(row ? [{ id, bucket: "live", row, to: "archived" }] : [{ id, bucket: "live" }]));
+            }
             for (const id of ids) {
               const ok = await hideExtSession(id, true);
               if (!ok) {
-                for (const x of ids) clearPendingRemoval(x);
-                window.alert?.(`${String(id).slice(0, 8)} 移除失败`);
+                rollbacks.get(id)?.(); rollbacks.delete(id);
+                showToast(`${String(id).slice(0, 8)} 移除失败`);
                 break;
               }
             }
@@ -1531,9 +1612,10 @@ export function SessionsPanel(props: any) {
             onClick: () => {
               if (isBusy(sess.id)) return;
               markBusy(sess.id);
-              markPendingRemoval(sess.id, "archived");
+              // Optimistic bucket move: archived row hides instantly + live list appears instantly; rollback + toast on failure
+              const rollback = beginOptimisticRemoval([{ id: sess.id, bucket: "archived", row: sess as unknown as Record<string, unknown>, to: "live" }]);
               void restoreSession(sess.id).then((ok) => {
-                if (!ok) { clearPendingRemoval(sess.id); window.alert?.(`${t("sm.reopenFailed") ?? "重开失败"}：${sess.id.slice(0, 8)}`); return; }
+                if (!ok) { rollback(); showToast(`${t("sm.reopenFailed") ?? "重开失败"}：${sess.id.slice(0, 8)}`); return; }
                 // ext 视图层归档行：恢复后直接走后端扩展接管（⚡ 同链路）
                 if (isExtArchived) {
                   return openLiveSession(sess.id, sess.cwd).then((r) => {
@@ -1551,14 +1633,16 @@ export function SessionsPanel(props: any) {
             onClick: () => {
               if (isBusy(sess.id)) return;
               markBusy(sess.id);
-              markPendingRemoval(sess.id, "archived");
+              // Optimistic removal: archived row hides instantly, rollback + toast on failure (failures
+              // must be visible — a silent rollback once looked like "no success and no error")
+              const rollback = beginOptimisticRemoval([{ id: sess.id, bucket: "archived" }]);
               void restoreSession(sess.id)
                 .then((ok) => {
                   if (!ok) {
                     // 失败必须可见（对齐 reopen/delete 路径）：曾因服务端读写成路径分裂导致
                     // restore 404 而这里静默回滚样式，用户只看到「没成功也没报错」
-                    clearPendingRemoval(sess.id);
-                    window.alert?.(`${t("sm.restoreFailed") ?? "恢复失败"}：${sess.id.slice(0, 8)}`);
+                    rollback();
+                    showToast(`${t("sm.restoreFailed") ?? "恢复失败"}：${sess.id.slice(0, 8)}`);
                   }
                 })
                 .finally(() => markDone(sess.id));
@@ -1577,10 +1661,10 @@ export function SessionsPanel(props: any) {
                 danger: true,
                 onConfirm: () => {
                   markBusy(sess.id);
-                  // 确认后才置灰（后台刷新慢），失败恢复样式
-                  markPendingRemoval(sess.id, "archived");
+                  // Optimistic removal: rows leave the archive view on confirm; rollback + toast on failure
+                  const rollback = beginOptimisticRemoval([{ id: sess.id, bucket: "archived" }]);
                   return deleteArchivedSession(sess.id)
-                    .then((ok) => { if (!ok) clearPendingRemoval(sess.id); })
+                    .then((ok) => { if (!ok) { rollback(); showToast(`${t("sm.deleteFailed") ?? "删除失败"}：${sess.id.slice(0, 8)}`); } })
                     .finally(() => markDone(sess.id));
                 },
               });
