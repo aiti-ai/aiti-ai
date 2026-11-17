@@ -119,7 +119,7 @@ test("entry 挂 openImagePreview + dialogs 浮层注册 + index 静态声明（i
   assert.match(entrySrc, /registerItems\?\.\("dialogs"/);
   assert.match(entrySrc, /id: "image-preview"/);
   assert.match(entrySrc, /openImagePreview \}\)/); // __aitiEditor Object.assign
-  assert.match(indexSrc, /\{ id: "image-preview", label: "图片预览" \}/);
+  assert.match(indexSrc, /\{ id: "image-preview", label: "i18n:it\.image-preview\.label" \}/);
   // 旧 imageViewer 插槽接管已整体退役（宿主 image tab 机制删除）
   assert.doesNotMatch(entrySrc, /"imageViewer"/);
   assert.doesNotMatch(indexSrc, /imageViewer/);

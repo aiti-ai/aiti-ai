@@ -9,7 +9,7 @@
  * 构建：node tools/build-client.mjs   （或 npm run build:client）
  * 部署：node tools/deploy.mjs         （自动先构建再拷贝）
  */
-import { __setCtx } from "./host-shim";
+import { __setCtx } from "./host-shim.ts";
 import { setCtx } from "./env";
 import { installSessionService } from "./session-svc";
 import { setupRegistry, canTakeover } from "./registry";
