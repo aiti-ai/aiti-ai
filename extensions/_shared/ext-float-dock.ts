@@ -12,13 +12,64 @@
  */
 import { useEffect, useState, createElement as h } from "react";
 import { clampToViewport, fixedOrigin } from "./popup-anchor";
-import { DOCK_ICON_NODES, DOCK_ICON_SVG_ROOT_PROPS, type DockIconName } from "./dock-icons";
+import { DOCK_ICON_NODES, DOCK_ICON_SVG_ROOT_PROPS, dockIconReactAttrs, type DockIconName } from "./dock-icons";
 
 /** 图标元素（React/h 版；dock-icons 单一数据源）：stroke=2 线稿、currentColor。
  *  与 DOM 版 createDockIconSvg（core appendDockIconRow 内）同图形同尺寸。 */
 export function dockIconEl(name: DockIconName, size = 16): unknown {
   return h("svg", { width: size, height: size, ...DOCK_ICON_SVG_ROOT_PROPS, "aria-hidden": "true" },
-    ...DOCK_ICON_NODES[name].map((n, i) => h(n.tag, { key: i, ...n.attrs })));
+    // kebab-case SVG attrs (stroke-width from thin()) must be camelized for React JSX
+    ...DOCK_ICON_NODES[name].map((n, i) => h(n.tag, { key: i, ...dockIconReactAttrs(n.attrs) })));
+}
+
+/** CSS-mask span: icon asset URL tinted with currentColor (same rendering as the
+ *  host's renderExtItemIcon). */
+function maskedIconSpan(url: string, size: number): unknown {
+  return h("span", { "aria-hidden": "true", style: {
+    display: "inline-block", width: size, height: size, flexShrink: 0,
+    background: "currentColor",
+    WebkitMaskImage: `url("${url}")`, maskImage: `url("${url}")`,
+    WebkitMaskRepeat: "no-repeat", maskRepeat: "no-repeat",
+    WebkitMaskPosition: "center", maskPosition: "center",
+    WebkitMaskSize: "contain", maskSize: "contain",
+  } });
+}
+
+/** Block-header icon declaration → React element (the DockBody icon prop contract).
+ *  Five forms, aligned with the host's renderExtItemIcon (ExtUiItem.icon) contract so
+ *  third-party extensions (npm-installed, not importing this module's name table) can
+ *  fully self-host their icons, on both the static shell and the real face:
+ *    1. React element (h()-built) → rendered as-is (fully self-held; the third-party main path);
+ *    2. { svg: "<path …/>" } → inline SVG markup (24×24, stroke=currentColor; same shape
+ *       as the host's {svg} form);
+ *    3. { url: "https://…/icon.svg" } → CSS-mask span tinted with currentColor (expects a
+ *       complete URL: the host-derived static-entry meta.iconUrl, or a value the extension
+ *       resolved itself via its own ctx.apiUrl);
+ *    4. a DOCK_ICON_NODES name-table hit → dockIconEl (built-in extensions' shortcut;
+ *       also available to third parties via the @aiti-ai/ext-shared npm package);
+ *    5. any other string → emoji/text glyph (host-identical fallback).
+ *  A bare relative path "icons/x.svg" (the host manifest form) is NOT resolved here — it
+ *  needs extId + the basePath-aware apiUrl and this module is ctx-free. On the static-shell
+ *  path the host derives meta.iconUrl and the shell passes form ③; on the real-face path
+ *  the owning extension resolves it itself (it has ctx.apiUrl). With an old host that lacks
+ *  the derivation, the static shell simply renders no icon (graceful, no emoji-text fallback). */
+export function dockIconFromDecl(icon: unknown, size = 13): unknown {
+  if (icon == null) return null;
+  if (typeof icon === "object") {
+    const o = icon as Record<string, unknown>;
+    if (typeof o.svg === "string") {
+      return h("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor",
+        strokeWidth: 2, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, "aria-hidden": "true",
+        dangerouslySetInnerHTML: { __html: o.svg } });
+    }
+    if (typeof o.url === "string") return maskedIconSpan(o.url, size);
+    return null;
+  }
+  if (typeof icon !== "string" || !icon) return null;
+  if (/^https?:\/\//.test(icon)) return maskedIconSpan(icon, size);
+  if ((DOCK_ICON_NODES as Record<string, unknown>)[icon]) return dockIconEl(icon as DockIconName, size);
+  if (icon.endsWith(".svg")) return null; // relative asset path: see doc above (host derives meta.iconUrl)
+  return h("span", { style: { fontSize: size, lineHeight: 1 } }, icon); // emoji/text glyph
 }
 
 /* ── 左栏区块 zone 泛化（sidebar 统一 dock 方案 §3.8）──
@@ -54,7 +105,7 @@ import {
   floatApi, closePanel, positionMenuModel, seedDockDefault, declareDockZones, DOCK_ZONE_LABELS,
 } from "./ext-float-dock-core";
 import { usePresent, useGate } from "./ext-float-dock-lite";
-import type { DockHeaderAction, DockHeaderCommands, DockHeaderState, DockHeaderStore, DockMenuItem, DockIconRowItem } from "./ext-float-dock-core";
+import type { DockHeaderAction, DockHeaderCommands, DockHeaderState, DockHeaderStore, DockMenuItem, DockIconRowItem, MenuIconRowItem } from "./ext-float-dock-core";
 
 
 /* ── 左栏区块栈：折叠/排序/迁移的 React 绑定见文件尾（useBlockCollapsed/useDockOrder）；
@@ -175,7 +226,7 @@ type DockMenuRow =
   | { type: "head"; label: string }
   | { type: "sep" }
   | { type: "item"; label: string; icon?: unknown; badge?: number | string; hint?: string; active?: boolean; alwaysRun?: boolean; disabled?: boolean; run: () => void }
-  | { type: "icons"; label?: string; icon?: unknown; items: DockIconRowItem[] };
+  | { type: "icons"; label?: string; icon?: unknown; items: Array<DockIconRowItem | MenuIconRowItem> };
 
 /** 停靠面板头行（chrome="section"，左栏区块统一头行 v3）：展开箭头 + 标题位 +
  *  **声明式业务按钮**（自适应宽度；放不下自动进 ⋮「工具」组）+ **常驻 detach**（位置菜单）+
@@ -187,6 +238,16 @@ export function DockBody(props: {
   itemKey: string;
   zone?: DockZone;
   title?: string;
+  /** Collapsed-header icon left of the title (chrome="section" only). Five forms
+   *  (see dockIconFromDecl): React element / {svg} markup / {url} asset URL /
+   *  dock-icons name string / emoji-text — third-party extensions carry their own
+   *  icons without depending on the built-in name table. */
+  icon?: unknown;
+  /** Collapsed-header hover tooltip override. chrome="section" headers default to the
+   *  functional hint (drag-handle text for dockable; none for reserved). Provide
+   *  headerHint for a semantic description instead — typically on reserved blocks whose
+   *  header would otherwise be mute. */
+  headerHint?: string;
   /** "section"：统一 ⋮ 头行（左栏区块）；"tab"：无头行（控件在宿主 TabBar 页签上） */
   chrome?: "section" | "tab";
   /** 可停靠位置全集（detach 位置菜单；缺省 [zone]——单 zone 面板无需传） */
@@ -211,6 +272,11 @@ export function DockBody(props: {
   onNewWindow?: () => void;
   /** 扩展附加菜单项（钉住等多实例专属动作；插在区块操作段） */
   extraMenuItems?: Array<{ label: string; icon?: unknown; hint?: string; active?: boolean; alwaysRun?: boolean; run: () => void }>;
+  /** 移动行钉住钮（2026-11-24 菜单单行化：钉住并入「移动」图标排首位）——提供即渲染
+   *  （pin/pin-off 图标随钉住态切换）；不传则移动行只有上移/下移。 */
+  moveRowPin?: { isPinned: () => boolean; toggle: () => void } | null;
+  /** 隐藏区块段「关闭」item（关闭已并入内容 ⋯ 菜单「窗口」图标排时置 true，防重复入口）。 */
+  hideCloseItem?: boolean;
   /** 标题位自定义（如文件夹的目录切换器）；提供时替换标题文本（title 仍用于 aria/兜底） */
   renderTitle?: () => unknown;
   /** 声明式头行按钮（face 本地声明；与服务/本地 store 注册的 buttons 合并，prop 优先按 id 去重） */
@@ -267,9 +333,20 @@ export function DockBody(props: {
       if (t && menu.anchor?.contains(t)) return;
       setMenu(null);
     };
+    // 锚点打开时位置快照（scroll 关闭的位移阈值判据）
+    let anchorTop: number | null = null;
+    let anchorLeft: number | null = null;
+    try { const a = menu.anchor?.getBoundingClientRect?.(); if (a) { anchorTop = a.top; anchorLeft = a.left; } } catch { /* ignore */ }
     const onScroll = (e: any) => {
-      // 菜单内部滚动豁免（长菜单必须可滚）；菜单外任意容器滚动即关（fixed 弹层滞留旧位=错位）
+      // 菜单内部滚动豁免（长菜单必须可滚）；菜单外滚动在锚点真被滚走时才关（fixed 弹层滞留旧位=错位）。
+      // 位移阈值容错（2026-11-15 小屏反馈「菜单经常自己关掉」）：手机地址栏收缩/橡皮筋/惯性
+      // 假 scroll 时锚点没挪（fixed 侧栏 overlay 不随 body 滚）→ 不关；错位超阈值才关。
       if (menuEl && e.target instanceof Node && menuEl.contains(e.target)) return;
+      try {
+        const a = menu.anchor?.getBoundingClientRect?.();
+        if (a && anchorTop !== null && anchorLeft !== null
+          && Math.abs(a.top - anchorTop) < 4 && Math.abs(a.left - anchorLeft) < 4) return;
+      } catch { /* ignore */ }
       setMenu(null);
     };
     document.addEventListener("mousedown", onDown);
@@ -327,26 +404,47 @@ export function DockBody(props: {
   // ── ⋮ 主菜单（三段：工具溢出 / 内容注册菜单项 / 区块操作）──
   const buildMainMenu = (): DockMenuRow[] => {
     const out: DockMenuRow[] = [];
+    // 「移动」图标行构建（含可选钉住钮首位）：menuItems 有 moveRow 占位时在占位处插入
+    //（前移），否则回落区块段默认位。内容未挂载（折叠未展开过）时 menuItems 缺席，
+    // 区块段默认移动排同样走此构建——钉住钮不再只随挂载态出现（2026-11-15）。
+    // Sorting is dockable-only: reserved blocks (fixed resident blocks like projects) get
+    // no drag handle and no "move" row in the ⋮ menu.
+    const sortable = kind !== "reserved";
+    const buildMoveRow = (): DockMenuRow => ({
+      type: "icons", label: "移动", icon: dockIconEl("move-diagonal-2", 13), items: [
+        ...(props.moveRowPin ? [{
+          key: "pin",
+          icon: (props.moveRowPin.isPinned() ? "pin-off" : "pin") as any,
+          label: props.moveRowPin.isPinned() ? "取消钉住" : "钉住",
+          run: () => props.moveRowPin!.toggle(),
+        }] : []),
+        { key: "move-up", icon: "chevron-up", label: "上移", run: () => requestBlockMove(blockKey, -1) },
+        { key: "move-down", icon: "chevron-down", label: "下移", run: () => requestBlockMove(blockKey, 1) },
+      ],
+    });
     if (overflowActions.length > 0) {
       out.push({ type: "head", label: "工具" });
       for (const a of overflowActions) out.push({ type: "item", label: a.title, icon: a.icon, badge: a.badge, active: a.active, alwaysRun: true, disabled: a.disabled, run: a.onClick });
     }
     if (storeData.menuItems && storeData.menuItems.length > 0) {
       if (out.length > 0) out.push({ type: "sep" });
+      let moveRowInserted = false;
       for (const m of storeData.menuItems) {
+        if (m.kind === "moveRow" && sortable && !moveRowInserted) { moveRowInserted = true; out.push(buildMoveRow()); continue; }
         if (m.kind === "head") out.push({ type: "head", label: m.label });
         else if (m.kind === "sep") out.push({ type: "sep" });
+        else if (m.kind === "iconsRow") out.push({ type: "icons", label: m.label, items: m.items });
         else out.push({ type: "item", label: m.label, icon: m.icon, hint: m.hint, active: m.active, alwaysRun: m.alwaysRun, disabled: m.disabled, run: m.run });
       }
+      if (chrome === "section" && sortable && !moveRowInserted) out.push(buildMoveRow());
     }
     const ops: DockMenuRow[] = [];
-    if (chrome === "section") {
+    if (chrome === "section" && sortable && !(storeData.menuItems || []).some((m) => m.kind === "moveRow")) {
       // 单行「移动」（2026-09-15 用户拍板回归 §3.5 图标排形态）：行首对角双箭头图标（move-diagonal-2，
       // 左上+右下）+ 行名呈 icon+text，与区块段其余行呼应；右侧 chevron-up/down 即时上移/下移。
-      ops.push({ type: "icons", label: "移动", icon: dockIconEl("move-diagonal-2", 13), items: [
-        { key: "move-up", icon: "chevron-up", label: "上移", run: () => requestBlockMove(blockKey, -1) },
-        { key: "move-down", icon: "chevron-down", label: "下移", run: () => requestBlockMove(blockKey, 1) },
-      ] });
+      // menuItems 含 moveRow 占位时移动行已前移插入（不在此重复）。与挂载态 buildMoveRow
+      // 同源：钉住钮（moveRowPin 提供时）在未挂载折叠态同样可见可用。
+      ops.push(buildMoveRow());
     }
     if (kind === "reserved" && typeof props.onRemove === "function") {
       ops.push({ type: "item", label: "移除本实例", icon: dockIconEl("trash", 13), run: () => props.onRemove!() });
@@ -354,7 +452,7 @@ export function DockBody(props: {
     if (Array.isArray(props.extraMenuItems)) {
       for (const m of props.extraMenuItems) ops.push({ type: "item", label: m.label, icon: m.icon, hint: m.hint, active: m.active, alwaysRun: m.alwaysRun, run: m.run });
     }
-    if (kind === "dockable" && chrome === "section") {
+    if (kind === "dockable" && chrome === "section" && props.hideCloseItem !== true) {
       ops.push({ type: "item", label: "关闭", icon: dockIconEl("x", 13), run: () => (props.onClose ? props.onClose() : closePanel(itemKey)) });
     }
     if (ops.length > 0) {
@@ -406,7 +504,7 @@ export function DockBody(props: {
             onMouseEnter: (e: any) => { if (!x.active) { e.currentTarget.style.background = "var(--bg-hover, #262626)"; e.currentTarget.style.color = "var(--text, #ddd)"; } },
             onMouseLeave: (e: any) => { if (!x.active) { e.currentTarget.style.background = "none"; e.currentTarget.style.color = "var(--text-muted, #888)"; } },
           },
-            dockIconEl(x.icon, 16),
+            typeof x.icon === "string" ? dockIconEl(x.icon as any, 16) : x.icon,
             x.isDefault ? h("span", { key: "dot", "data-ext-dock-icon-default": "1", style: { position: "absolute" as const, top: 3, right: 3, width: 4, height: 4, borderRadius: "50%", background: "var(--accent, #2563eb)", pointerEvents: "none" as const } }) : null,
           );
         })),
@@ -442,7 +540,10 @@ export function DockBody(props: {
       // 首帧离屏（布局期测量后落位，绘制前同步无闪烁）
       ...(menuPos ? { left: menuPos.left, top: menuPos.top } : { left: -99999, top: -99999 }),
     },
-    onMouseLeave: () => setMenu(null),
+    // hover 关闭仅限真 hover 设备（2026-11-15 小屏反馈「菜单经常自己关掉」）：手机上手指
+    // 滑动浏览菜单项时浏览器合成 mouse 事件（touchmove 目标变化 → 合成 mouseleave），
+    // 无条件关闭等于「一滑就关」；触屏（hover:none）忽略 mouseleave，改由外点/滚动关闭。
+    onMouseLeave: () => { try { if (!window.matchMedia("(hover: hover) and (pointer: fine)").matches) return; } catch { /* 判定缺席按桌面处理 */ } setMenu(null); },
   }, menuRows.map(renderMenuRow)) : null;
   const toggleCollapsed = () => setCollapsed(!collapsed);
   // 排序 v2：头行 = HTML5 拖拽把手。dragged key 双通道传递：dataTransfer（跨 bundle，
@@ -477,9 +578,11 @@ export function DockBody(props: {
     requestBlockDrop(dragged, blockKey, (e.clientY - r.top) < r.height / 2);
   };
   const headerProps: any = { ref: setHeaderEl, style: { display: "flex", alignItems: "center", gap: 4, padding: "4px 8px", borderBottom: "1px solid var(--border, #333)", flexShrink: 0, minWidth: 0 }, onClick: (e: any) => { if (e.target && typeof e.target.closest === "function" && e.target.closest("button")) return; toggleCollapsed(); } };
-  if (chrome === "section") {
+  if (chrome === "section" && kind !== "reserved") {
+    // Drag handle only for dockable blocks (reserved = fixed-order resident blocks, e.g.
+    // projects: no "drag to reorder" tooltip, not a drag handle; click-to-collapse unaffected).
     headerProps.draggable = true;
-    headerProps.title = "拖动排序";
+    headerProps.title = props.headerHint ?? "拖动排序";
     headerProps.onDragStart = onDragStart;
     headerProps.onDragOver = (e: any) => { if (isDockDrag(e) && dragKey !== blockKey) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; dropMark(e, true); } };
     headerProps.onDragLeave = (e: any) => { try { if (e.relatedTarget && e.currentTarget.contains(e.relatedTarget)) return; } catch { /* ignore */ } dropMark(e, false); };
@@ -488,10 +591,17 @@ export function DockBody(props: {
       dragKey = null;
       document.querySelectorAll(".pi-dock-drop-before, .pi-dock-drop-after").forEach((el) => el.classList.remove("pi-dock-drop-before", "pi-dock-drop-after"));
     };
+  } else if (chrome === "section" && props.headerHint) {
+    // Reserved header: mute by default; a semantic headerHint gives it a hover description.
+    headerProps.title = props.headerHint;
   }
-  const titleNode = props.renderTitle
-    ? h("span", { style: { minWidth: 0, flex: "0 1 auto", display: "inline-flex", alignItems: "center" } }, props.renderTitle())
-    : h("span", { style: { fontSize: 11, fontWeight: 600, color: "var(--text-muted, #999)", letterSpacing: "0.04em", textTransform: "uppercase" as const, flex: "0 1 auto", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, minWidth: 0 } }, title ?? "");
+  // Collapsed-header icon (five-form declaration contract; see dockIconFromDecl)
+  const iconNode = dockIconFromDecl(props.icon, 13);
+  const titleNode = h("span", { style: { minWidth: 0, flex: "0 1 auto", display: "inline-flex", alignItems: "center", gap: 5 } },
+    iconNode,
+    props.renderTitle
+      ? props.renderTitle()
+      : h("span", { style: { fontSize: 11, fontWeight: 600, color: "var(--text-muted, #999)", flex: "0 1 auto", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, minWidth: 0 } }, title ?? ""));
   // 折叠保挂（v3）：内容注册过命令（曾挂载）→ 折叠保留 children（隐藏），按钮状态与命令即时可用
   const keepAlive = collapsed && storeData.hasCommands;
   return h("div", {
@@ -606,6 +716,9 @@ export function useGateSidebar(itemKey: string): string | null {
 export function sidebarBlockItem(opts: {
   key: string;                 // 完整 itemKey "extId:itemId"（= 注册复合 id 约定）
   title: string;
+  /** Collapsed-header icon: five-form declaration (element / {svg} / {url} /
+   *  dock-icons name / emoji-text; see dockIconFromDecl). */
+  icon?: unknown;
   priority?: number;           // 默认序（项目0→任务1→文件2→停靠3+）
   zones?: DockZone[];          // 位置全集（sidebar 族自动并入；右栏显式声明）
   defaultZone?: DockZone;
@@ -621,6 +734,7 @@ export function sidebarBlockItem(opts: {
     if (!dockedZone) return null;
     return h(DockBody, {
       itemKey: opts.key, title: opts.title, chrome: "section" as const,
+      icon: opts.icon,
       zones, defaultZone: opts.defaultZone, kind: "dockable" as const,
     }, opts.renderContent());
   };
@@ -641,6 +755,9 @@ export function sidebarBlockItem(opts: {
 export function createDockFaces(opts: {
   key: string;                       // 完整 itemKey "extId:itemId"（= 注册 id 约定，防 dock tab 链断裂）
   title: string;
+  /** Collapsed-header icon: five-form declaration (element / {svg} / {url} /
+   *  dock-icons name / emoji-text; see dockIconFromDecl). */
+  icon?: unknown;
   zones: DockZone[];
   defaultZone?: DockZone;
   renderContent: () => any;          // 两面共用内容（ReactNode 工厂）
@@ -703,11 +820,11 @@ export function createDockFaces(opts: {
     if (zone === "sidebar-explorer") {
       const dockedZone = useGateSidebar(key);
       if (!dockedZone) return null;
-      return h(DockBody, { itemKey: key, zone, title, chrome, zones, defaultZone }, renderContent());
+      return h(DockBody, { itemKey: key, zone, title, icon: opts.icon, chrome, zones, defaultZone }, renderContent());
     }
     const docked = useGate(key, { dock: zone });
     if (!docked) return null;
-    return h(DockBody, { itemKey: key, zone, title, chrome, zones, defaultZone }, renderContent());
+    return h(DockBody, { itemKey: key, zone, title, icon: opts.icon, chrome, zones, defaultZone }, renderContent());
   };
 
   const hasSidebarZone = zones.some((z) => z === "sidebar-explorer" || z.startsWith("sidebar:"));

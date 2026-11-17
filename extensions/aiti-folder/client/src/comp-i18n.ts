@@ -62,7 +62,9 @@ const COMPONENT_DICT: Record<string, Record<string, string>> = {
     "git.stageTitle": "Stage",
     "git.unstageTitle": "Unstage",
     "git.discardTitle": "Discard changes",
-    "git.discardConfirm": "Discard ALL uncommitted changes of {path}? (untracked files go to quarantine, recoverable by hand)",
+    // 已跟踪文件（引擎 discard = checkout 恢复到上次提交；untracked 由客户端分流到回收站，走下方专属文案）
+    "git.discardConfirm": "Discard ALL uncommitted changes of {path}? (tracked files restore to the last commit)",
+    "git.discardUntrackedConfirm": "Move the untracked file to the trash? (restorable from the trash)",
     "git.diffTitle": "View diff (git-review)",
     "git.changesToggle": "Toggle changed-files section",
     "git.planRetry": "Retry remaining groups",
@@ -117,7 +119,9 @@ const COMPONENT_DICT: Record<string, Record<string, string>> = {
     "git.stageTitle": "暂存",
     "git.unstageTitle": "取消暂存",
     "git.discardTitle": "丢弃变更",
-    "git.discardConfirm": "丢弃 {path} 的全部未提交改动？（未跟踪文件移入隔离区，可手工找回）",
+    // 已跟踪文件（引擎 discard = checkout 恢复到上次提交；untracked 由客户端分流到回收站，走下方专属文案）
+    "git.discardConfirm": "丢弃 {path} 的全部未提交改动？（已跟踪文件将恢复到上次提交）",
+    "git.discardUntrackedConfirm": "将未跟踪文件移入回收站？（可在回收站还原）",
     "git.diffTitle": "查看 diff（git-review）",
     "git.changesToggle": "开/合变更文件区",
     "git.planRetry": "重试剩余组",

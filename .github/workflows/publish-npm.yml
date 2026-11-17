@@ -18,7 +18,9 @@
 #     false — publish for real.
 #   only: optional comma-separated dir name filter (e.g. "aiti-cmd,session-manager").
 #
-# Publish scope: extensions/ (63+ extensions) + pi-plugins/ + packages/ (the aiti-devtools family).
+# Publish scope: extensions/ (63+ extensions) + pi-plugins/ + packages/ (the aiti-devtools family)
+# + integrations/ (external-agent carriers: integrations/<repo>/<pkg>, e.g. DSH plugins —
+#   @aiti-ai/aiti-devtools-dsh, @aiti-ai/dsh-secret-mask; no CI build needed, the mirror carries lib/).
 # Decision matrix (tools/publish-all.mjs): unchanged content skips; changed content auto-bumps the patch version; official-registry versions
 # without a contentHash count as changed and converge; every official publish is gated by release-audit, FAIL blocks it.
 #
@@ -148,6 +150,12 @@ jobs:
             --file "service-tunnels=$PWD/vendor/npm/service-tunnels-0.3.76.tgz" \
             --file "@aiti-ti/ddns=$PWD/vendor/npm/aiti-ti-ddns-0.2.0.tgz"
           npm install --prefix "$BUILD" --legacy-peer-deps --no-audit --no-fund --loglevel=error
+          # 仓根 postcss.config.mjs（tailwind v4）被扩展 vite 向上搜索命中；PostCSS 从 config
+          # 所在目录（仓根）解析 @tailwindcss/postcss —— 扩展侧的 node_modules symlink 够不到，
+          # 必须把仓根 node_modules 也备好（aiti-sheet-univer / aiti-word-superdoc 实测 2026-11-14）
+          TW="@tailwindcss/postcss@$(node -p "require('./package.json').devDependencies['@tailwindcss/postcss']")"
+          npm install --no-save --legacy-peer-deps --no-audit --no-fund --loglevel=error "$TW"
+          npm install --prefix "$BUILD" --no-save --legacy-peer-deps --no-audit --no-fund --loglevel=error "$TW"
           for ext in extensions/*/; do
             [ -d "$ext" ] || continue
             ln -sfn "$BUILD/node_modules" "${ext}node_modules"
@@ -177,6 +185,15 @@ jobs:
             [ -x "${d}node_modules/.bin/esbuild" ] || (cd "$d" && npm install --no-save esbuild --legacy-peer-deps --no-audit --no-fund --loglevel=error)
             mv "$pj.orig" "$pj"   # 还原（node_modules 保留）
           done
+          # integrations/<repo>/<pkg>：镜像自带 lib/ 构建产物，CI 不构建；防御性去 lock（与 packages/ 同理，
+          # 发布不需要 lock，且镜像侧历史 lock 可能含私源 resolved）
+          for repo in integrations/*/; do
+            [ -d "$repo" ] || continue
+            for d in "$repo"*/; do
+              [ -f "${d}package.json" ] || continue
+              rm -f "${d}package-lock.json"
+            done
+          done
           # dist 直塞：vendor tgz（48 构建的同版本产物）解出 dist 覆盖进包目录——
           # publish-all 对非空 dist 跳过构建（绕开各包 build 脚本的 esbuild 解析差异）
           for d in packages/*/; do
@@ -203,6 +220,7 @@ jobs:
           if [[ "${{ inputs.registry || 'staging' }}" == "npmjs" ]]; then ARGS="--target official"; fi
           if [[ "${{ inputs.dry_run }}" != "false" ]]; then ARGS="$ARGS --dry-run"; fi
           if [[ -n "${{ inputs.only }}" ]]; then ARGS="$ARGS --only ${{ inputs.only }}"; fi
+          set -o pipefail # node 的退出码不能被 tee 吐掉（崩溃/失败必须让 step 变红）
           node tools/publish-all.mjs $ARGS 2>&1 | tee publish-report.txt
           grep -qE "失败 [1-9]" publish-report.txt && echo "::error::有包发布失败，详见上方报告" && exit 1
           true
@@ -213,3 +231,23 @@ jobs:
           name: publish-report
           path: publish-report.txt
           retention-days: 30
+
+  # After a real official publish, fire aiti-docs' sync-ext-versions workflow
+  # (repository_dispatch) so the docs-site extension catalog converges to the
+  # versions that just shipped. Needs AITI_DOCS_TOKEN: a fine-grained PAT with
+  # contents:write on aiti-ai/aiti-docs. staging/aliyun/dry-run must not touch docs.
+  trigger-docs-sync:
+    needs: publish
+    if: ${{ inputs.registry == 'npmjs' && inputs.dry_run == 'false' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger aiti-docs extension-version sync
+        env:
+          GH_TOKEN: ${{ secrets.AITI_DOCS_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::AITI_DOCS_TOKEN not set — skipping aiti-docs sync trigger (set it to a PAT with contents:write on aiti-ai/aiti-docs)"
+            exit 0
+          fi
+          gh api repos/aiti-ai/aiti-docs/dispatches -f event_type=pi-web-published
+          echo "aiti-docs sync-ext-versions dispatched"

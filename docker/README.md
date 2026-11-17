@@ -164,5 +164,5 @@ node docker/scripts/gen-deps.mjs                         # S3 dependency matrix 
 | `/api/models` 403 | Normal — it only allows existing session cwds; the health check uses `/api/home` |
 | x11vnc connects but no picture / very slow | NOFILE deadlock (O20) — confirm `AITI_GUI_NOFILE` was not raised and use the image's own 50-gui-start |
 | CDP 9222 unreachable | Confirm `--user-data-dir` is among the flags (Chrome 136+ ignores CDP on the default profile) + first-run EULA skipped |
-| ASR first response slow | Models load lazily (full pre-downloads its models, zero re-download; switching models downloads incrementally) |
+| ASR first response slow | Models are not baked into the image — the first voice turn downloads them automatically (modelscope, cached in `/opt/aiti-asr/models`; switching models downloads incrementally) |
 | OOM | full + voice needs ≥8GB memory (2–6GB OOMs in practice, test report T-H5) |

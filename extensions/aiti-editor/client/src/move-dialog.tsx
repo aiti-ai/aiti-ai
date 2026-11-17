@@ -7,7 +7,7 @@
  *  - 确认 POST /move { filePath, targetDir } → 移动当前文件到浏览目录
  */
 import { useState, useEffect, useCallback, useRef } from "react";
-import { apiUrl, extSvc } from "./host-shim";
+import { apiUrl, extSvc, t } from "./host-shim.ts";
 import { dedupeFetch } from "../../../_shared/dedupe-fetch";
 import { dismissOnBack } from "../../../_shared/overlay-back-client";
 
@@ -112,9 +112,9 @@ export function MoveToDialog(props: {
       <div style={{ width: "min(540px,92vw)", maxHeight: "82vh", display: "flex", flexDirection: "column", background: "var(--bg-panel)", border: "1px solid var(--border)", borderRadius: 10, boxShadow: "0 12px 40px rgba(0,0,0,0.3)", overflow: "hidden" }}>
         {/* 标题 */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: "1px solid var(--border)", background: "var(--bg)", flexShrink: 0 }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>移动到</span>
+          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{t("移动到")}</span>
           <span style={{ flex: 1, minWidth: 0, fontFamily: "var(--font-mono,ui-monospace,monospace)", fontSize: 12, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={filePath}>{srcName}</span>
-          <button onClick={() => { if (!busy) onClose(); }} title="关闭" style={{ height: 26, padding: "0 10px", border: "1px solid var(--border)", borderRadius: 5, background: "var(--bg-panel)", color: "var(--text)", cursor: "pointer", fontSize: 12, flexShrink: 0 }}>✕</button>
+          <button onClick={() => { if (!busy) onClose(); }} title={t("关闭")} style={{ height: 26, padding: "0 10px", border: "1px solid var(--border)", borderRadius: 5, background: "var(--bg-panel)", color: "var(--text)", cursor: "pointer", fontSize: 12, flexShrink: 0 }}>✕</button>
         </div>
         {/* 一级：workspace */}
         <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderBottom: "1px solid var(--border)", background: "var(--bg)", flexShrink: 0 }}>
@@ -139,13 +139,13 @@ export function MoveToDialog(props: {
         </div>
         {/* 二级：目录浏览 */}
         <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderBottom: "1px solid var(--border)", flexShrink: 0, fontSize: 12, color: "var(--text-muted)", fontFamily: "var(--font-mono)", overflowX: "auto", whiteSpace: "nowrap" }}>
-          {(data && data.parentPath != null) ? <button onClick={() => loadBrowse(data.parentPath)} title="上级目录" style={{ height: 22, padding: "0 6px", border: "1px solid var(--border)", borderRadius: 4, background: "var(--bg-panel)", color: "var(--text-muted)", cursor: "pointer", fontSize: 12, flexShrink: 0 }}>↑</button> : null}
+          {(data && data.parentPath != null) ? <button onClick={() => loadBrowse(data.parentPath)} title={t("上级目录")} style={{ height: 22, padding: "0 6px", border: "1px solid var(--border)", borderRadius: 4, background: "var(--bg-panel)", color: "var(--text-muted)", cursor: "pointer", fontSize: 12, flexShrink: 0 }}>↑</button> : null}
           <span title={browsePath} style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{browsePath || "/"}</span>
         </div>
         <div style={{ flex: 1, overflowY: "auto", padding: "4px 0" }}>
-          {loading ? <div style={{ padding: "12px", fontSize: 12, color: "var(--text-dim)" }}>正在加载…</div> : null}
+          {loading ? <div style={{ padding: "12px", fontSize: 12, color: "var(--text-dim)" }}>{t("正在加载…")}</div> : null}
           {error ? <div style={{ padding: "12px", fontSize: 12, color: "var(--danger, #f87171)" }}>{error}</div> : null}
-          {(!loading && !error && dirs.length === 0) ? <div style={{ padding: "12px", fontSize: 12, color: "var(--text-dim)" }}>无子目录</div> : null}
+          {(!loading && !error && dirs.length === 0) ? <div style={{ padding: "12px", fontSize: 12, color: "var(--text-dim)" }}>{t("无子目录")}</div> : null}
           {(!loading && !error) ? dirs.map((d: any) => (
             <button key={d.path} onClick={() => loadBrowse(d.path)} title={d.path} style={rowStyle}>
               <FolderIcon open={false} />
@@ -158,9 +158,9 @@ export function MoveToDialog(props: {
         <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "8px 12px", borderTop: "1px solid var(--border)", background: "var(--bg)", flexShrink: 0 }}>
           {msg ? <div style={{ fontSize: 11, color: msg.err ? "var(--danger, #f87171)" : "var(--ok, #4ade80)" }}>{msg.err || msg.ok}</div> : null}
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ flex: 1, minWidth: 0, fontFamily: "var(--font-mono,ui-monospace,monospace)", fontSize: 11, color: "var(--text-dim,#888)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={browsePath}>→ 目标目录: {browsePath || "/"}</span>
-            <button onClick={() => { if (!busy) onClose(); }} style={{ height: 28, padding: "0 12px", border: "1px solid var(--border)", borderRadius: 5, background: "var(--bg-panel)", color: "var(--text)", cursor: "pointer", fontSize: 12 }}>取消</button>
-            <button onClick={() => void doMove()} disabled={busy || !browsePath} style={{ height: 28, padding: "0 12px", border: "none", borderRadius: 5, background: "var(--accent,#4f8ef7)", color: "#fff", cursor: busy ? "default" : "pointer", fontSize: 12, fontWeight: 600, opacity: (busy || !browsePath) ? 0.6 : 1 }}>{busy ? "…" : "移动到此目录"}</button>
+            <span style={{ flex: 1, minWidth: 0, fontFamily: "var(--font-mono,ui-monospace,monospace)", fontSize: 11, color: "var(--text-dim,#888)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={browsePath}>{t("→ 目标目录: {p}", { p: browsePath || "/" })}</span>
+            <button onClick={() => { if (!busy) onClose(); }} style={{ height: 28, padding: "0 12px", border: "1px solid var(--border)", borderRadius: 5, background: "var(--bg-panel)", color: "var(--text)", cursor: "pointer", fontSize: 12 }}>{t("取消")}</button>
+            <button onClick={() => void doMove()} disabled={busy || !browsePath} style={{ height: 28, padding: "0 12px", border: "none", borderRadius: 5, background: "var(--accent,#4f8ef7)", color: "#fff", cursor: busy ? "default" : "pointer", fontSize: 12, fontWeight: 600, opacity: (busy || !browsePath) ? 0.6 : 1 }}>{busy ? "…" : t("移动到此目录")}</button>
           </div>
         </div>
       </div>

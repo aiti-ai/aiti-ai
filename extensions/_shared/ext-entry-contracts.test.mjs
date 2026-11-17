@@ -28,6 +28,9 @@ const VALID_SLOTS = new Set([
   "toolbar", "sidebar", "sidebarFooter", "sessionTopbar", "sessionRowActions",
   "sessionRowLeading", "sessionRowMeta", "sidebarProjects", "sidebarContent",
   "dialogs", "banners", "pages", "chatInputTop", "chatOverlay",
+  // commands 目录槽：host registry.ts UI_SLOT_KEYS 已收录（ec06564a），消费方 = aiti-app-center /
+  // input 命令提示；aiti-folder 首用（2026-11-15）
+  "commands",
   "userMessageActions", "assistantMessageActions", "assistantMessageFooter",
   "fileViewer", "pathPicker", "newSessionBackendOptions", "sessionStats",
   "composerTools", "queuePanel", "recoveryDialog", "workspacePickerActions",
@@ -114,10 +117,16 @@ test("index.ts 静态 ui 声明的插槽键全部合法", () => {
   for (const name of listExts()) {
     const indexSrc = existsSync(join(extRoot, name, "index.ts")) ? readFileSync(join(extRoot, name, "index.ts"), "utf8") : null;
     if (!indexSrc) continue;
-    // ui 块里的非插槽元数据键（宿主 registerDeclaredSlots 会多声明但无消费方；ai-helper 聚合读）：
-    // i18n/provides/clientDependsOn/clientImmediately 是宿主过滤的白名单，helpers 是 aiti-helper 的聚合元数据
+    // Scan only the top-level ui: { ... } block — a whole-file 4-space sweep also hits
+    // same-named keys inside agent tool declarations (session_search's promptGuidelines:
+    // [...] was flagged as an unknown slot, 2026-11-11)
+    const uiBlock = indexSrc.match(/^  ui: \{([\s\S]*?)\n  \},/m)?.[1] ?? "";
+    // Non-slot metadata keys inside the ui block (the host's registerDeclaredSlots
+    // declares them with no consumer; ai-helper aggregation reads them):
+    // i18n/provides/clientDependsOn/clientImmediately are host-filtered whitelist,
+    // helpers is aiti-helper aggregation metadata
     const UI_META_KEYS = new Set(["i18n", "provides", "clientDependsOn", "clientImmediately", "helpers"]);
-    for (const m of indexSrc.matchAll(/^\s{4}([a-zA-Z]+):\s*\[$/gm)) {
+    for (const m of uiBlock.matchAll(/^ {4}([a-zA-Z]+): \[$/gm)) {
       if (!VALID_SLOTS.has(m[1]) && !UI_META_KEYS.has(m[1])) bad.push(`${name}: ui.${m[1]}`);
     }
   }

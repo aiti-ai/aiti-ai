@@ -11,6 +11,7 @@
  */
 import { __setCtx } from "./host-shim";
 import { declareDockZones, sidebarZoneOf } from "../../../_shared/ext-float-dock";
+import { dockIconDecl } from "../../../_shared/dock-icons";
 import { App, ModelDialog, ModelCheckDockFace, ModelCheckDockRight, setMcCtx, syncToolbar, initRecoverWatcher, MC_KEY } from "./model-check-app";
 
 export default function register(ctx: Record<string, any>) {
@@ -21,9 +22,9 @@ export default function register(ctx: Record<string, any>) {
   ctx.registerItems?.("pages", [{ id: "aiti-model-check-dialog", render: ModelDialog, meta: { open: () => { try { window.__aitiModelCheckOpen && window.__aitiModelCheckOpen(); } catch {} } } }]);
   // zones 全集注册（v3.1）：TabBar ⇱ 菜单在 face 未挂载时的数据源；zone 用规范值 sidebar:<key>
   declareDockZones(MC_KEY, [sidebarZoneOf(MC_KEY), "right-panel"], sidebarZoneOf(MC_KEY));
-  ctx.registerItems?.("rightFileDock", [{ id: "panel", render: ModelCheckDockRight, meta: { title: "模型可用性" } }]);
+  ctx.registerItems?.("rightFileDock", [{ id: "panel", render: ModelCheckDockRight, meta: { title: "i18n:it.panel.title", icon: dockIconDecl("shield-check") } }]);
   // aiti-float dock v3（P3 批）：左栏可选（保守无 default）
-  ctx.registerItems?.("sidebarExplorerDock", [{ id: "panel", render: ModelCheckDockFace, meta: { title: "模型检查", priority: 3 } }]);
+  ctx.registerItems?.("sidebarExplorerDock", [{ id: "panel", render: ModelCheckDockFace, meta: { title: "i18n:it.model-check.title", priority: 3 } }]);
   syncToolbar();
   if (typeof ctx.onFeatureChange === "function") ctx.onFeatureChange(syncToolbar);
   // 限流到期提醒（recover）：页面级监听 mc:recover → 浏览器通知（面板不在前台/未打开也能收）

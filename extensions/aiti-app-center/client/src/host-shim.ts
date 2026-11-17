@@ -19,6 +19,9 @@
 let _ctx: Record<string, unknown> | null = null;
 export function __setCtx(ctx: Record<string, unknown>): void { _ctx = ctx; }
 
+/** 读取已注入 ctx（服务层在 register 之外取宿主出口用；register 前为 null）。 */
+export function getCtx(): Record<string, unknown> | null { return _ctx; }
+
 /** DI 方案 P2：跨扩展客户端服务读取（ctx.getExtService 的 shim 封装；提供方懒加载/缺席 → undefined，消费方必须降级） */
 export function extSvc<T = unknown>(key: string): T | undefined {
   return (_ctx as any)?.getExtService?.(key) as T | undefined;
@@ -78,6 +81,7 @@ export const jsxs = (...args: unknown[]) => {
 // ---------- React hooks 委托（按需增删） ----------
 export const useState = <T>(init: T | (() => T)) => c<(...a: unknown[]) => [T, (v: T | ((prev: T) => T)) => void]>("useState")(init);
 export const useEffect = (fn: () => unknown, deps?: unknown[]) => c("useEffect")(fn, deps);
+export const useLayoutEffect = (fn: () => unknown, deps?: unknown[]) => c("useLayoutEffect")(fn, deps);
 export const useRef = <T>(v: T) => c<(...a: unknown[]) => { current: T }>("useRef")(v);
 export const useCallback = <T extends (...args: never[]) => unknown>(fn: T, deps?: unknown[]) => c<(...a: unknown[]) => T>("useCallback")(fn, deps);
 export const useMemo = <T>(fn: () => T, deps?: unknown[]) => c<(...a: unknown[]) => T>("useMemo")(fn, deps);

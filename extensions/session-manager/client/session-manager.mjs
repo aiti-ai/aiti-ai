@@ -2213,16 +2213,16 @@ export default function register(ctx) {
 
   ctx.registerItems("sidebar", [{ id: "sessions", render: SidebarEntry }]);
   ctx.registerItems("toolbar", [
-    { id: "sessions", render: ToolbarEntry, meta: { label: "全部会话" } },
-    { id: "search", render: ToolbarSearch, meta: { label: "搜索会话", noMenuLabel: true } },
-    { id: "kanban", render: KanbanEntry, meta: { label: "看板" } },
+    { id: "sessions", render: ToolbarEntry, meta: { label: "i18n:it.sessions.label" } },
+    { id: "search", render: ToolbarSearch, meta: { label: "i18n:it.search.label", noMenuLabel: true } },
+    { id: "kanban", render: KanbanEntry, meta: { label: "i18n:it.board.label" } },
   ]);
   ctx.registerItems("dialogs", [
     { id: "panel", render: SessionsPanel },
     { id: "archived-viewer", render: ArchivedViewer },
     { id: "tags-manager", render: TagManager },
   ]);
-  ctx.registerItems("sessionTopbar", [{ id: "tags", render: TopbarTags, meta: { label: "标签" } }]);
+  ctx.registerItems("sessionTopbar", [{ id: "tags", render: TopbarTags, meta: { label: "i18n:it.tags.label" } }]);
   ctx.registerItems("sessionRowActions", [{ id: "actions", render: RowActions }]);
 }
 

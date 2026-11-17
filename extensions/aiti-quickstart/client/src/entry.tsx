@@ -11,7 +11,7 @@
  *     `aiti-quickstart.open`（跨扩展开 Hub）。
  */
 import { __setCtx, regSvc, t } from "./host-shim";
-import { QuickstartFiller, WorkspacePickerAcquireEntry, FreshGuidePage, openQuickstart, renderWidget } from "./quickstart";
+import { QuickstartFiller, WorkspacePickerAcquireEntry, FreshGuidePage, openQuickstart, renderWidget, ExamplesSettings } from "./quickstart";
 import { WorkspaceHubRoot } from "./workspace-hub";
 import { SERVICE_KEY, FOOTER_ITEM_ID, WIDGET_METAS, WIDGET_TITLE_KEYS } from "./quickstart-logic";
 
@@ -19,7 +19,9 @@ export default function register(ctx: Record<string, unknown>): () => void {
   // 必须在任何 JSX 组件渲染前调用（host-shim 模块级持 ctx）
   __setCtx(ctx);
 
-  // 欢迎页 widget：meta 与 manifest 静态条目同源（WIDGET_METAS），注册后同 id 接管
+  // 欢迎页 widget：meta 与 manifest 静态条目同源（WIDGET_METAS），注册后同 id 接管。
+  // settings 契约（宿主 ⚙ 面板 ✎ 按钮，方案 docs/aiti-quickstart-examples-dynamic-prompts-plan.md
+  // §3.2）：examples 自带设置面板（来源模式 + 条数），其余 widget 无 settings 不出现按钮。
   ctx.registerItems?.("newSessionWidgets", WIDGET_METAS.map((m) => ({
     id: m.id,
     render: (props: Record<string, unknown>) => renderWidget(m.id, props ?? {}),
@@ -31,6 +33,9 @@ export default function register(ctx: Record<string, unknown>): () => void {
       h: m.h,
       priority: m.priority,
     },
+    ...(m.id === "examples"
+      ? { settings: { render: ({ close }: { close: () => void }) => <ExamplesSettings close={close} /> } }
+      : {}),
   })));
 
   // sidebarFooter「快速上手」：**只作 app center 收编源**（2026-11-07 用户拍板：左下工具条

@@ -5,7 +5,7 @@
  * M2：Markdown 双模式（编辑/预览 tab + Ctrl+B/I） + 注册表开放（window.__aitiEditor）
  */
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { apiUrl, editorBase, ensureEditorTicket, ticketedEditorPath, extSvc } from "./host-shim";
+import { apiUrl, editorBase, ensureEditorTicket, ticketedEditorPath, extSvc, regSvc, t } from "./host-shim.ts";
 import { getCtx, editorRefHolder } from "./env";
 import { ENCODINGS, encDisplay, formatSize, mdSlug, sourceLinesForText, isDarkTheme, describeMonacoError } from "./lib";
 import { detectLanguage, mdFenceDescriptors } from "./registry";
@@ -46,6 +46,105 @@ function fmtMediaDuration(s: number): string {
   const sec = total % 60;
   const two = (n: number) => String(n).padStart(2, "0");
   return h > 0 ? `${h}:${two(m)}:${two(sec)}` : `${m}:${two(sec)}`;
+}
+
+// ── 🔊 speek file-read follow (reverse service from aiti-ai-speek to this extension;
+// docs/aiti-ai-speek-file-read-plan.md §3.4) ──
+// Registry: filePath → { editorRef, previewRef, viewModeRef } (each open tab registers its own;
+// whatever file is being read is the one that follows).
+// Follow has two paths: Monaco (edit/split) reveal + line highlight; md preview (preview/split)
+// matches the block element by text inside the iframe document + scrollIntoView.
+// The service is lazily installed as a singleton (on first component mount; __setCtx runs at entry
+// register before render, so the module top level can't have it).
+type SpeekEditorEntry = { editorRef: { current: any }; previewRef: { current: any }; viewModeRef: { current: string } };
+const speekEditorRefs = new Map<string, SpeekEditorEntry>();
+let speekFollowDecor: string[] = []; // current Monaco follow-highlight decoration ids (one global speech stream, one set)
+let speekPreviewHl: { doc: Document; el: Element; prev: string } | null = null; // preview follow highlight (records the original background for restore)
+let speekFollowSvcInstalled = false;
+/** Normalization: whitespace-stripped comparison (preview DOM textContent vs spoken segment match) */
+function speekNorm(s: unknown): string {
+  return String(s || "").replace(/\s+/g, "");
+}
+/** Text-match scroll + highlight inside the preview iframe; skipped when match is empty (code-block/table summary segments) */
+function speekFollowPreview(entry: SpeekEditorEntry, match: string): boolean {
+  const iframe = entry.previewRef && entry.previewRef.current;
+  const doc: Document | null = iframe && iframe.contentDocument;
+  if (!doc || !doc.body || !match) return false;
+  const want = speekNorm(match);
+  if (!want) return false;
+  const blocks = doc.querySelectorAll("h1,h2,h3,h4,h5,h6,p,li,pre,blockquote,td");
+  let hit: Element | null = null;
+  for (const el of blocks) {
+    const txt = speekNorm(el.textContent);
+    if (!txt) continue;
+    if (txt.includes(want) || want.includes(txt)) { hit = el; break; }
+  }
+  if (!hit) return false;
+  try { (hit as HTMLElement).scrollIntoView({ block: "center", behavior: "smooth" }); } catch { /* noop */ }
+  try {
+    if (speekPreviewHl && speekPreviewHl.doc === doc && speekPreviewHl.el !== hit) {
+      (speekPreviewHl.el as HTMLElement).style.background = speekPreviewHl.prev; // restore the previous line
+    }
+    const he = hit as HTMLElement;
+    speekPreviewHl = { doc, el: he, prev: he.style.background || "" };
+    he.style.background = "color-mix(in srgb, var(--accent,#3b82f6) 20%, transparent)";
+  } catch { /* noop */ }
+  return true;
+}
+function ensureSpeekFollowSvc() {
+  if (speekFollowSvcInstalled) return;
+  speekFollowSvcInstalled = true;
+  regSvc("aiti-editor.speekFollow", {
+    /** Called per spoken sentence: Monaco reveal / preview scroll + highlight; path not in the
+     *  registry (already closed) → false silently. match = the segment's raw text (non-empty for
+     *  body/headings/list items; empty for code-block/table summaries — the preview path skips those) */
+    followLine(path: string, line: number, match?: string): boolean {
+      const entry = speekEditorRefs.get(path);
+      if (!entry) return false;
+      const mode = entry.viewModeRef ? entry.viewModeRef.current : "edit";
+      let ok = false;
+      // preview/split: follow in the preview iframe (DOM can only be found with a match)
+      if ((mode === "preview" || mode === "split") && match) {
+        ok = speekFollowPreview(entry, match) || ok;
+      }
+      // edit/split: Monaco reveal + line highlight (skipped when the editor is invisible in preview mode)
+      if (mode === "edit" || mode === "split") {
+        const ed = entry.editorRef && entry.editorRef.current;
+        if (ed && typeof line === "number" && line >= 1 && ((ed.getModel()?.getLineCount?.() ?? 0) >= line)) {
+          try { ed.revealLinesInCenter(line, line); } catch { /* noop */ }
+          try {
+            speekFollowDecor = ed.deltaDecorations(speekFollowDecor, [{
+              range: { startLineNumber: line, endLineNumber: line, startColumn: 1, endColumn: 1 },
+              options: { isWholeLine: true, inlineStyle: "background-color: color-mix(in srgb, var(--accent,#3b82f6) 22%, transparent)" },
+            }]);
+          } catch { /* deltaDecorations unavailable → scroll only, no highlight */ }
+          ok = true;
+        }
+      }
+      return ok;
+    },
+    /** Clear highlights on speek stop / read-finished return-switch (Monaco decoration + preview background restore) */
+    clearFollow() {
+      for (const entry of speekEditorRefs.values()) {
+        const ed = entry.editorRef && entry.editorRef.current;
+        if (ed && speekFollowDecor.length) { try { ed.deltaDecorations(speekFollowDecor, []); } catch { /* noop */ } }
+        if (speekPreviewHl) {
+          try { (speekPreviewHl.el as HTMLElement).style.background = speekPreviewHl.prev; } catch { /* noop */ }
+        }
+      }
+      speekFollowDecor = [];
+      speekPreviewHl = null;
+    },
+  });
+}
+function registerSpeekEditor(path: string, refs: SpeekEditorEntry) {
+  ensureSpeekFollowSvc();
+  speekEditorRefs.set(path, refs);
+}
+function unregisterSpeekEditor(path: string) {
+  speekEditorRefs.delete(path);
+  // registry empty (all files closed) → clear leftover highlight references (decorations vanish with editor dispose)
+  if (!speekEditorRefs.size) { speekFollowDecor = []; speekPreviewHl = null; }
 }
 
 export function EditorApp(props: Record<string, any>) {
@@ -113,6 +212,34 @@ export function EditorApp(props: Record<string, any>) {
     toastTimerRef.current = setTimeout(() => { toastTimerRef.current = null; setToast(null); }, 2400);
   }, []);
   useEffect(() => () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); }, []);
+
+  // 🔊 speek follow registration: this instance's three refs enter the registry (keyed by filePath) —
+  // when aiti-ai-speek reads this file, follow by view (Monaco/preview)
+  useEffect(() => {
+    registerSpeekEditor(filePath, { editorRef, previewRef, viewModeRef });
+    return () => unregisterSpeekEditor(filePath);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filePath]);
+
+  // 🔊 "read" button callback: the text view always renders; service absent → toast + extman locate
+  // guidance (docs/aiti-ai-speek-file-read-plan.md §3.4)
+  const doSpeakFile = useCallback(() => {
+    const svc = extSvc("aiti-ai-speek.readText") as { speak?: (p: unknown) => Promise<{ ok?: boolean; chunks?: number; error?: string }> } | undefined;
+    if (!svc?.speak) {
+      showToast("warn", t("aiti-ai-speek 未安装或未启用——已打开扩展管理，请启用后重试"));
+      try { (extSvc("aiti-extman.open") as ((id?: string) => void) | undefined)?.("aiti-ai-speek"); } catch { /* extman absent too: toast only */ }
+      return;
+    }
+    const text = editorRef.current ? editorRef.current.getValue() : ((meta?.content as string) || "");
+    if (!text || !text.trim()) { showToast("warn", t("文件内容为空，无可朗读内容")); return; }
+    const name = filePath.split(/[\\/]/).pop() || filePath;
+    Promise.resolve(svc.speak({ path: filePath, name, text }))
+      .then((r) => {
+        if (r && r.ok) showToast("ok", t("开始朗读：{name}（{chunks} 块 · 播放条可控）", { name, chunks: r.chunks }));
+        else showToast("err", t("朗读失败：{msg}", { msg: (r && r.error) || t("未知原因") }));
+      })
+      .catch((e) => showToast("err", t("朗读失败：{msg}", { msg: String(e) })));
+  }, [filePath, meta]);
   // 编辑内容变化 → 防抖重算 git 变更行标注/大纲（大文件跳过实时重算，仅关键节点重算）
   // （声明在组件前部：Monaco mount effect 的 deps 引用它，必须早于该 effect 声明）
   const [chgTick, setChgTick] = useState(0);
@@ -225,7 +352,7 @@ export function EditorApp(props: Record<string, any>) {
     const statP = api("/stat?filePath=" + encodeURIComponent(filePath)).then((r) => r.json()).catch(() => null);
     const rawP = api("/raw?filePath=" + encodeURIComponent(filePath) + encU).then((r) => r.json());
     Promise.all([statP, rawP]).then(([m, d]) => {
-      if (d.error) { setNotice({ kind: "warn", text: "刷新失败：" + d.error }); return; }
+      if (d.error) { setNotice({ kind: "warn", text: t("刷新失败：{msg}", { msg: d.error }) }); return; }
       const content = d.content || "";
       const mtimeMs = (m && m.ok && typeof m.mtimeMs === "number") ? m.mtimeMs : (sig ? sig.mtimeMs : Date.now());
       const size = (m && m.ok && typeof m.size === "number") ? m.size : (sig ? sig.size : content.length);
@@ -260,7 +387,7 @@ export function EditorApp(props: Record<string, any>) {
   const diskFrameRef = useRef<(frame: any) => void>(() => {});
   useEffect(() => {
     diskFrameRef.current = (frame: any) => {
-      if (frame.gone) { setNotice({ kind: "warn", text: "磁盘上的文件已不存在（可能被移动或删除）" }); return; }
+      if (frame.gone) { setNotice({ kind: "warn", text: t("磁盘上的文件已不存在（可能被移动或删除）") }); return; }
       const sig = sigOfFrame(frame);
       if (!sig) return;
       if (sameDiskSig(sig, diskSigRef.current)) return; // 自己保存的回声 / 已知状态，忽略
@@ -288,7 +415,7 @@ export function EditorApp(props: Record<string, any>) {
     if (fileType !== "archive") return;
     api("/archive?filePath=" + encodeURIComponent(filePath))
       .then((r) => r.json())
-      .then((d) => { if (d.ok) setArchiveFiles(d.files); else setArchiveErr(d.error || "解析失败"); })
+      .then((d) => { if (d.ok) setArchiveFiles(d.files); else setArchiveErr(d.error || t("解析失败")); })
       .catch((e) => setArchiveErr(String(e)));
   }, [filePath, fileType, archiveTick]); // archiveTick：ed-watch 帧到 → 重拉列表（磁盘上包被换了）
 
@@ -470,6 +597,10 @@ export function EditorApp(props: Record<string, any>) {
       return;
     }
     const u = new URLSearchParams({ encoding: openEncoding });
+    // stat 与 /raw 并行：缓存基线（baseMtimeMs）必须是【磁盘真实 mtime】而非 Date.now()——
+    // 否则服务端缓存的基线永远「比磁盘新」，磁盘新鲜度门卫（下方 stale 判定）永远失效。
+    const diskStatP = api("/stat?filePath=" + encodeURIComponent(filePath), { method: "GET" })
+      .then((r) => r.json()).catch(() => null);
     api("/raw?filePath=" + encodeURIComponent(filePath) + "&" + u.toString())
       .then((r) => r.json())
       .then((d) => {
@@ -478,13 +609,31 @@ export function EditorApp(props: Record<string, any>) {
         // 先检查服务端缓存（多开恢复）：必须早于 setMeta/setStatus——否则 Monaco create
         // 触发 onDidChangeModelContent 写回原版覆盖服务端编辑
         let _recoveredSrv: any = null;
-        (window as any).__aitiEditor._cacheFetchFromServer(filePath, true).then((srv: any) => {
+        (window as any).__aitiEditor._cacheFetchFromServer(filePath, true).then(async (srv: any) => {
           _recoveredSrv = srv;
           if (srv && srv.contentHash && srv.contentHash !== (window as any).__aitiEditor._hashContent(next.content)) {
-            next.content = srv.content;
-            next.encoding = srv.encoding || next.encoding;
+            // 磁盘新鲜度门卫（重开显示最新版）：用【基线内容 hash】而非 mtime——
+            // 缓存的 original = 上次会话看到的磁盘版；它与当前磁盘内容不一致 = 文件已被
+            // 外部更新（agent/shell），旧「未保存编辑」不再值得恢复 → 放弃恢复（磁盘版为准）
+            // 并清掉过期服务端缓存，避免下次打开再误判 dirty。（mtime 维度不可靠：精度/回拨/旧版污染）
+            try {
+              const stale = srv && srv.original != null
+                && (window as any).__aitiEditor._hashContent(String(srv.original))
+                  !== (window as any).__aitiEditor._hashContent(d.content || "");
+              if (stale) {
+                _recoveredSrv = null;
+                api("/cache-delete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ filePath }) }).catch(() => {});
+                next.content = d.content || "";
+                next.encoding = d.encoding || "utf-8";
+                next.hasBOM = d.hasBOM === true;
+                next.size = d.size || next.content.length;
+              } else {
+                next.content = srv.content;
+                next.encoding = srv.encoding || next.encoding;
+              }
+            } catch { next.content = srv.content; next.encoding = srv.encoding || next.encoding; }
           }
-        }).finally(() => {
+        }).finally(async () => {
           const isRecovered = _recoveredSrv && _recoveredSrv.contentHash && _recoveredSrv.contentHash !== (window as any).__aitiEditor._hashContent(d.content || "");
           const baseline = isRecovered ? (_recoveredSrv.original || _recoveredSrv.content) : next.content;
           initialContentRef.current = baseline;
@@ -492,14 +641,17 @@ export function EditorApp(props: Record<string, any>) {
           setStatus({ phase: "ready", error: null });
           (window as any).__aitiEditor._setDirty(filePath, isRecovered);
           setDirty(isRecovered);
-          // 建缓存：恢复时 original=服务端基线（磁盘原版）→ dirty 判定正确
+          // 建缓存：恢复时 original=服务端基线（磁盘原版）→ dirty 判定正确；
+          // baseMtimeMs = 磁盘真实 mtime（新鲜度门卫的基线信号，绝不能用 Date.now()）
+          const _ds: any = await diskStatP.catch(() => null);
+          const _diskMtime = _ds && _ds.ok && typeof _ds.mtimeMs === "number" ? _ds.mtimeMs : Date.now();
           (window as any).__aitiEditor._cacheSet(filePath, {
             content: next.content, original: baseline,
-            baseMtimeMs: Date.now(), language: next.language, size: next.size,
+            baseMtimeMs: _diskMtime, language: next.language, size: next.size,
             encoding: next.encoding, hasBOM: next.hasBOM,
           });
           if (isRecovered) {
-            setNotice({ kind: "warn", text: "已恢复未保存编辑" });
+            setNotice({ kind: "warn", text: t("已恢复未保存编辑") });
           }
         });
         api("/stat?filePath=" + encodeURIComponent(filePath), { method: "GET" })
@@ -930,8 +1082,8 @@ export function EditorApp(props: Record<string, any>) {
     let cancelled = false;
     api("/git-base?filePath=" + encodeURIComponent(filePath))
       .then((r) => r.json())
-      .then((d) => { if (!cancelled) setGitBase(d && d.ok ? d : { error: (d && d.error) || "无法获取 HEAD 基线" }); })
-      .catch(() => { if (!cancelled) setGitBase({ error: "网络错误" }); });
+      .then((d) => { if (!cancelled) setGitBase(d && d.ok ? d : { error: (d && d.error) || t("无法获取 HEAD 基线") }); })
+      .catch(() => { if (!cancelled) setGitBase({ error: t("网络错误") }); });
     return () => { cancelled = true; };
   }, [gitHasDelta, gitBase, filePath]);
   // hunk 计算：dmp 行级 diff（HEAD 基线 vs 当前编辑内容）——标注/大纲/徽标计数单一数据源
@@ -1021,7 +1173,7 @@ export function EditorApp(props: Record<string, any>) {
   }, [gitView, gitViewActive, sideEffective]);
   // 窄屏进左右视图：提示已退化为合并
   useEffect(() => {
-    if (gitViewActive && gitView === "side" && !wideEnough) showToast("warn", "窗口太窄，并排不可读，已用合并视图展示（拉宽窗口恢复并排）");
+    if (gitViewActive && gitView === "side" && !wideEnough) showToast("warn", t("窗口太窄，并排不可读，已用合并视图展示（拉宽窗口恢复并排）"));
   }, [gitViewActive, gitView, wideEnough]);
   // 重入 diff 视图或 dirty 变化（保存/合并）时刷新合并侧，保证与当前编辑内容一致
   useEffect(() => {
@@ -1058,7 +1210,7 @@ export function EditorApp(props: Record<string, any>) {
         .then(async (r) => {
           const d = await r.json().catch(() => ({}));
           if (r.status === 409 && d.conflict) {
-            if (await uiConfirm({ message: "文件已被外部修改，用当前内容覆盖磁盘版本？", danger: true })) return doSave(true);
+            if (await uiConfirm({ message: t("文件已被外部修改，用当前内容覆盖磁盘版本？"), danger: true })) return doSave(true);
             setNotice({ kind: "warn", text: "\u5DF2\u53D6\u6D88\u8986\u76D6\uFF0C\u6587\u4EF6\u4FDD\u6301\u672A\u4FDD\u5B58" });
             return;
           }
@@ -1092,8 +1244,8 @@ export function EditorApp(props: Record<string, any>) {
     if (!editor) return;
     const dir = filePath.slice(0, filePath.lastIndexOf("/")) || "/";
     const name0 = filePath.split("/").pop() || "untitled.txt";
-    const suggested = name0.replace(/(\.[^.]*)$/, "") + "-副本" + (name0.match(/\.[^.]*$/)?.[0] || "");
-    const input = await uiPrompt({ message: "另存为（输入完整路径或当前目录下的文件名）：", value: dir + "/" + suggested });
+    const suggested = name0.replace(/(\.[^.]*)$/, "") + t("-副本") + (name0.match(/\.[^.]*$/)?.[0] || "");
+    const input = await uiPrompt({ message: t("另存为（输入完整路径或当前目录下的文件名）："), value: dir + "/" + suggested });
     if (!input) return;
     const newPath = input.trim();
     if (!newPath || newPath === filePath) return;
@@ -1104,7 +1256,7 @@ export function EditorApp(props: Record<string, any>) {
       .then((r) => r.json())
       .then(async (st) => {
         if (st && st.ok) {
-          if (!(await uiConfirm({ message: "目标文件已存在：\n" + newPath + "\n覆盖？", danger: true }))) { setSaving(false); return; }
+          if (!(await uiConfirm({ message: t("目标文件已存在：\n{p}\n覆盖？", { p: newPath }), danger: true }))) { setSaving(false); return; }
         }
         const enc = meta ? { encoding: meta.encoding, hasBOM: meta.hasBOM === true } : { encoding: "utf-8", hasBOM: false };
         return api("/save", {
@@ -1112,8 +1264,8 @@ export function EditorApp(props: Record<string, any>) {
           body: JSON.stringify({ filePath: newPath, content: editor.getValue(), encoding: enc.encoding, hasBOM: enc.hasBOM }),
         }).then(async (r) => {
           const d = await r.json().catch(() => ({} as any));
-          if (!r.ok) { setNotice({ kind: "err", text: d.error || "另存失败 (" + r.status + ")" }); return; }
-          setNotice({ kind: "ok", text: "已另存为 " + (newPath.split("/").pop() || newPath) });
+          if (!r.ok) { setNotice({ kind: "err", text: d.error || t("另存失败 ({status})", { status: r.status }) }); return; }
+          setNotice({ kind: "ok", text: t("已另存为 {name}", { name: newPath.split("/").pop() || newPath }) });
           try { getCtx()?.openFile?.(newPath); } catch { /* 打开失败静默 */ }
         });
       })
@@ -1411,7 +1563,7 @@ useEffect(() => {
   const sendToNewSession = async (text: string) => {
     if (forwardComposer("newSession", text)) return;
     if ((window as any).__aitiViewerStandalone) {
-      showToast("err", "主面板已关闭，无法写入输入框");
+      showToast("err", t("主面板已关闭，无法写入输入框"));
       return;
     }
     const dir = filePath.slice(0, filePath.lastIndexOf("/"));
@@ -1424,7 +1576,7 @@ useEffect(() => {
     if (forwardComposer("steer", msg)) {
       // 独立窗口：转发主面板对当前会话 steer
     } else if ((window as any).__aitiViewerStandalone) {
-      showToast("err", "主面板已关闭，无法发送");
+      showToast("err", t("主面板已关闭，无法发送"));
     } else {
       getCtx()?.sendChatMessage?.(msg, "steer");
     }
@@ -1438,12 +1590,12 @@ useEffect(() => {
     if (forwardComposer("append", msg)) {
       // 独立窗口：已转发主面板插入当前输入框
     } else if ((window as any).__aitiViewerStandalone) {
-      showToast("err", "主面板已关闭，无法写入输入框");
+      showToast("err", t("主面板已关闭，无法写入输入框"));
     } else if (typeof getCtx()?.appendText === "function") {
       getCtx()!.appendText(msg + " ");
-      showToast("ok", "已插入输入框，未发送");
+      showToast("ok", t("已插入输入框，未发送"));
     } else {
-      navigator.clipboard.writeText(msg).then(() => showToast("ok", "已复制到剪贴板")).catch(() => showToast("err", "写入剪贴板失败"));
+      navigator.clipboard.writeText(msg).then(() => showToast("ok", t("已复制到剪贴板"))).catch(() => showToast("err", t(t("写入剪贴板失败"))));
     }
     setAiPop(null);
   };
@@ -1505,10 +1657,10 @@ useEffect(() => {
   const copyPath = () => {
     const text = filePath;
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(() => setNotice({ kind: "ok", text: "已复制路径" })).catch(() => setNotice({ kind: "err", text: "复制失败" }));
+      navigator.clipboard.writeText(text).then(() => setNotice({ kind: "ok", text: t("已复制路径") })).catch(() => setNotice({ kind: "err", text: t("复制失败") }));
     } else {
       const ta = document.createElement("textarea"); ta.value = text; document.body.appendChild(ta); ta.select();
-      document.execCommand("copy"); ta.remove(); setNotice({ kind: "ok", text: "已复制路径" });
+      document.execCommand("copy"); ta.remove(); setNotice({ kind: "ok", text: t("已复制路径") });
     }
   };
   // 复制内容（⋯ 菜单项，仅文本视图）：把当前文件全部文本写入剪贴板。
@@ -1516,13 +1668,13 @@ useEffect(() => {
   const COPY_CONTENT_LIMIT = 1024 * 1024;
   const copyContent = () => {
     const content = editorRef.current ? editorRef.current.getValue() : (meta ? meta.content : "");
-    if (content == null) { setNotice({ kind: "err", text: "内容未加载" }); return; }
-    if (content.length > COPY_CONTENT_LIMIT) { setNotice({ kind: "err", text: "内容太大，无法复制（超过 1MB）" }); return; }
+    if (content == null) { setNotice({ kind: "err", text: t("内容未加载") }); return; }
+    if (content.length > COPY_CONTENT_LIMIT) { setNotice({ kind: "err", text: t("内容太大，无法复制（超过 1MB）") }); return; }
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(content).then(() => setNotice({ kind: "ok", text: "已复制内容" })).catch(() => setNotice({ kind: "err", text: "复制失败" }));
+      navigator.clipboard.writeText(content).then(() => setNotice({ kind: "ok", text: t("已复制内容") })).catch(() => setNotice({ kind: "err", text: t("复制失败") }));
     } else {
       const ta = document.createElement("textarea"); ta.value = content; document.body.appendChild(ta); ta.select();
-      document.execCommand("copy"); ta.remove(); setNotice({ kind: "ok", text: "已复制内容" });
+      document.execCommand("copy"); ta.remove(); setNotice({ kind: "ok", text: t("已复制内容") });
     }
   };
   // 打开终端：独立查看窗（无 aiti-cmd 面板）→ postMessage 请主窗口（opener）代开，等回执；
@@ -1537,7 +1689,7 @@ useEffect(() => {
         const m: any = ev.data;
         if (!m || m.source !== "aiti-cmd" || m.type !== "open-shell-result" || m.reqId !== reqId) return;
         window.removeEventListener("message", onMsg);
-        if (!m.ok) setNotice({ kind: "err", text: m.error || "创建终端失败" });
+        if (!m.ok) setNotice({ kind: "err", text: m.error || t("创建终端失败") });
       };
       window.addEventListener("message", onMsg);
       try {
@@ -1549,33 +1701,33 @@ useEffect(() => {
       }
       setTimeout(() => {
         window.removeEventListener("message", onMsg);
-        setNotice({ kind: "err", text: "主窗口未响应（aiti-cmd 未启用？）" });
+        setNotice({ kind: "err", text: t("主窗口未响应（aiti-cmd 未启用？）") });
       }, 4000);
       return;
     }
     const bridge = (window as any).__aitiCmd;
     if (bridge && typeof bridge.openShell === "function") {
       bridge.openShell(parentDir, filePath.split("/").pop() || "bash")
-        .then((r: any) => { if (!r || !r.ok) setNotice({ kind: "err", text: (r && r.error) || "创建终端失败" }); });
+        .then((r: any) => { if (!r || !r.ok) setNotice({ kind: "err", text: (r && r.error) || t("创建终端失败") }); });
       return;
     }
     fetch(apiUrl("/api/extensions/aiti-folder/open-terminal"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: filePath }) })
       .then(async (r) => {
         const d = await r.json().catch(() => ({} as any));
-        if (!r.ok || !d.ok) setNotice({ kind: "err", text: d.error || "打开终端失败 (" + r.status + ")" });
+        if (!r.ok || !d.ok) setNotice({ kind: "err", text: d.error || t("打开终端失败 ({status})", { status: r.status }) });
       })
       .catch((e) => setNotice({ kind: "err", text: String(e) }));
   };
   const doRename = async () => {
     const oldName = filePath.split("/").pop() || "";
-    const newName = await uiPrompt({ message: "输入新文件名", value: oldName });
+    const newName = await uiPrompt({ message: t("输入新文件名"), value: oldName });
     if (!newName || newName === oldName) return;
     setSaving(true);
     api("/rename", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ filePath, newName }) })
       .then(async (r) => {
         const d = await r.json().catch(() => ({}));
-        if (!r.ok) { setNotice({ kind: "err", text: d.error || "重命名失败" }); return; }
-        setNotice({ kind: "ok", text: "已重命名为 " + newName });
+        if (!r.ok) { setNotice({ kind: "err", text: d.error || t("重命名失败") }); return; }
+        setNotice({ kind: "ok", text: t("已重命名为 {name}", { name: newName }) });
         getCtx()?.openFile?.(d.newPath || (filePath.slice(0, filePath.lastIndexOf("/") + 1) + newName), newName);
       })
       .finally(() => setSaving(false));
@@ -1586,7 +1738,7 @@ useEffect(() => {
   const onMoveDone = (newPath: string) => {
     setMoveOpen(false);
     const name = newPath.split("/").pop() || "";
-    setNotice({ kind: "ok", text: "已移动到 " + (filePath.split("/").pop() || "") + " → " + newPath.slice(0, newPath.lastIndexOf("/")) });
+    setNotice({ kind: "ok", text: t("已移动到 {name} → {dir}", { name: filePath.split("/").pop() || "", dir: newPath.slice(0, newPath.lastIndexOf("/")) }) });
     // 打开新路径（新内容由 openFile 重新加载；与重命名行为一致）
     getCtx()?.openFile?.(newPath, name);
   };
@@ -1697,7 +1849,7 @@ useEffect(() => {
       .then((m) => { setFileInfo(m && m.ok ? { size: m.size, mtimeMs: m.mtimeMs } : { size: meta ? meta.size : 0, mtimeMs: 0 }); })
       .catch(() => setFileInfo({ size: meta ? meta.size : 0, mtimeMs: 0 }));
   };
-  const binaryTypeLabel = (({ image: "图片", video: "视频", audio: "音频", pdf: "PDF", archive: "压缩包" } as Record<string, string>)[fileType] || "文件");
+  const binaryTypeLabel = (({ image: t("图片"), video: t("视频"), audio: t("音频"), pdf: "PDF", archive: t("压缩包") } as Record<string, string>)[fileType] || "文件");
   const fmtTime = (ms: any) => { try { return ms ? new Date(ms).toLocaleString() : "—"; } catch { return "—"; } };
   const infoRow = (k: string, v: any, mono?: boolean) => (
     <div key={k} style={{ display: "flex", gap: 10, alignItems: "baseline" }}>
@@ -1709,8 +1861,8 @@ useEffect(() => {
   const parentDir = filePath.slice(0, filePath.lastIndexOf("/")) || "/";
   const infoRowDir = () => (
     <div key="dir" style={{ display: "flex", gap: 10, alignItems: "baseline" }}>
-      <span style={{ flexShrink: 0, width: 62, color: "var(--text-dim,#888)" }}>目录</span>
-      <button type="button" title="点击打开该目录" onClick={() => { setFileInfo(null); openDir(); }}
+      <span style={{ flexShrink: 0, width: 62, color: "var(--text-dim,#888)" }}>{t("目录")}</span>
+      <button type="button" title={t("点击打开该目录")} onClick={() => { setFileInfo(null); openDir(); }}
         style={{ flex: 1, minWidth: 0, wordBreak: "break-all", textAlign: "left", padding: 0, border: "none", background: "transparent", cursor: "pointer",
           color: "var(--accent,#4f8ef7)", fontFamily: "var(--font-mono,ui-monospace,monospace)", textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: 3 }}>{parentDir}</button>
     </div>
@@ -1719,18 +1871,18 @@ useEffect(() => {
     <div onClick={(e) => { if (e.target === e.currentTarget) setFileInfo(null); }}
       style={{ position: "fixed", inset: 0, zIndex: 800, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.35)" }}>
       <div style={{ width: 400, maxWidth: "92vw", padding: "16px 18px", borderRadius: 12, background: "var(--bg,#fff)", border: "1px solid var(--border,#ddd)", boxShadow: "0 12px 40px rgba(0,0,0,0.25)", fontSize: 13 }}>
-        <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 10 }}>文件信息</div>
+        <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 10 }}>{t("文件信息")}</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 7, fontSize: 12 }}>
-          {infoRow("文件名", filePath.split("/").pop() || "—", true)}
+          {infoRow(t("文件名"), filePath.split("/").pop() || "—", true)}
           {infoRowDir()}
-          {infoRow("类型", isBinaryView ? binaryTypeLabel : language)}
-          {infoRow("大小", formatSize(fileInfo.size || 0))}
-          {infoRow("修改时间", fmtTime(fileInfo.mtimeMs))}
-          {!isBinaryView && infoRow("编码", meta ? encDisplay(meta.encoding, meta.hasBOM) : "UTF-8", true)}
-          {!isBinaryView && meta && meta.content && infoRow("行数", String(meta.content.split("\n").length))}
+          {infoRow(t("类型"), isBinaryView ? binaryTypeLabel : language)}
+          {infoRow(t("大小"), formatSize(fileInfo.size || 0))}
+          {infoRow(t("修改时间"), fmtTime(fileInfo.mtimeMs))}
+          {!isBinaryView && infoRow(t("编码"), meta ? encDisplay(meta.encoding, meta.hasBOM) : "UTF-8", true)}
+          {!isBinaryView && meta && meta.content && infoRow(t("行数"), String(meta.content.split("\n").length))}
         </div>
         <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
-          <button type="button" onClick={() => setFileInfo(null)} style={T.btn}>关闭</button>
+          <button type="button" onClick={() => setFileInfo(null)} style={T.btn}>{t("关闭")}</button>
         </div>
       </div>
     </div>
@@ -1741,7 +1893,7 @@ useEffect(() => {
 
   // git 变更视图切换器（文本视图有变更时显示；选项与 aiti-git-review 一致）+ 变更徽标（点击在 最新/左右 间切换）
   const gitLeading = gitSwitchShow ? (() => {
-    const stLabel = (gitInfo && gitInfo.label) || "有变更";
+    const stLabel = (gitInfo && gitInfo.label) || t("有变更");
     // 计数优先用 dmpHunks（实时，含未保存编辑）；基线未加载时退回 numstat（仅干净文件）
     const counts = dmpHunks.length
       ? "+" + dmpHunks.reduce((s: number, h: any) => s + h.adds, 0) + " −" + dmpHunks.reduce((s: number, h: any) => s + h.dels, 0)
@@ -1750,22 +1902,22 @@ useEffect(() => {
       <div style={{ display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
         <button type="button"
           title={gitIsNewFile
-            ? "新文件（相对 HEAD 无基线，整篇均为新增" + (dirty ? "，含未保存编辑" : "") + "）；点击在 最新/左右 视图间切换"
-            : "工作区 vs HEAD 有未提交变更（" + stLabel + (dirty ? "，含未保存编辑" : "") + "）；点击在 最新/左右 视图间切换"}
+            ? t("新文件（相对 HEAD 无基线，整篇均为新增{dirty}）；点击在 最新/左右 视图间切换", { dirty: dirty ? t("，含未保存编辑") : "" })
+            : t("工作区 vs HEAD 有未提交变更（{label}{dirty}）；点击在 最新/左右 视图间切换", { label: stLabel, dirty: dirty ? t("，含未保存编辑") : "" })}
           onClick={() => setGitView(gitView === "latest" ? "side" : "latest")}
           style={{ fontSize: 10, fontFamily: "var(--font-mono, ui-monospace, monospace)", color: gitIsNewFile ? "#16a34a" : "#7c3aed",
             border: "1px solid " + (gitIsNewFile ? "rgba(22,163,74,.35)" : "rgba(124,58,237,.35)"), borderRadius: 4, padding: "1px 6px",
             background: gitViewActive ? (gitIsNewFile ? "rgba(22,163,74,.12)" : "rgba(124,58,237,.12)") : "transparent", cursor: "pointer", whiteSpace: "nowrap" }}>
-          {gitIsNewFile ? "新文件" : "⇋ HEAD" + (counts ? " " + counts : "")}
+          {gitIsNewFile ? t("新文件") : "⇋ HEAD" + (counts ? " " + counts : "")}
         </button>
         <select value={gitView} onChange={(e) => setGitView(e.target.value)}
-          title="git 变更视图（工作区 vs HEAD；默认「最新」显示最终版）"
+          title={t("git 变更视图（工作区 vs HEAD；默认「最新」显示最终版）")}
           style={{ fontSize: 11, padding: "2px 4px", height: 24, border: "1px solid var(--border,#d0d0d0)",
             borderRadius: 6, background: "var(--bg,#fff)", color: "var(--text,#1a1a1a)", fontFamily: "inherit", cursor: "pointer" }}>
-          <option value="latest">最新</option>
-          <option value="side">左右</option>
-          <option value="inline">合并</option>
-          <option value="outline">大纲</option>
+          <option value="latest">{t("最新")}</option>
+          <option value="side">{t("左右")}</option>
+          <option value="inline">{t("合并")}</option>
+          <option value="outline">{t("大纲")}</option>
         </select>
       </div>
     );
@@ -1777,7 +1929,7 @@ useEffect(() => {
   const togglePinNow = () => {
     const on = !!(window as any).__aitiEditor?.togglePin?.(filePath);
     setUiTick((n) => n + 1);
-    showToast("ok", on ? "已钉住（不受批量关闭/容量逐出影响）" : "已取消钉住");
+    showToast("ok", on ? t("已钉住（不受批量关闭/容量逐出影响）") : t("已取消钉住"));
   };
   // 批量关闭时未保存文件的逐个确认（保存/丢弃/取消）
   const [batchAsk, setBatchAsk] = useState<any>(null); // { path, resolve(choice) }
@@ -1832,9 +1984,9 @@ useEffect(() => {
   // 关闭族（关闭/左侧/右侧/全部）已收编为「关闭」图标排（2026-09-15）：FileToolbar
   // closeActions 传入——大屏工具条右端常驻 4 图标，compact 收进 ⋯ 菜单同款一行图标排。
   // dock face 态：钉住隐藏（pinnedPaths 是宿主 tab 体系概念，face 无容量逐出/批量关闭）。
-  const menuTopExtra: MenuAction[] = faceMode ? [] : [
-    { label: isPinnedNow() ? "取消钉住" : "钉住", icon: <MiPin />, onClick: togglePinNow },
-  ];
+  // 钉住已移入 ⋯ 菜单「窗口」图标排（2026-11-24，方案 docs/aiti-menu-single-row-plan.md §4.3）：
+  // 经 pin prop 下发（face 态 null=不渲染）；menuTopExtra 保留空数组维持 provider-host 注入位兼容。
+  const menuTopExtra: MenuAction[] = [];
   // dock face 态：关闭族只留「关闭」自我，且重路由 face 关闭链（confirmClose → 移除实例；
   // 原实现关 "file:<path>" 宿主 tab——face 态该 tab 不存在，会 no-op 漏关）。
   const closeActions = faceMode ? {
@@ -1849,12 +2001,12 @@ useEffect(() => {
   const batchAskModal = batchAsk ? (
     <div style={{ position: "fixed", inset: 0, zIndex: 900, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.35)" }}>
       <div style={{ width: 360, padding: "16px 18px", borderRadius: 12, background: "var(--bg,#fff)", border: "1px solid var(--border,#ddd)", boxShadow: "0 12px 40px rgba(0,0,0,0.25)", fontSize: 13 }}>
-        <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>关闭未保存的文件</div>
+        <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>{t("关闭未保存的文件")}</div>
         <div style={{ fontFamily: "var(--font-mono,ui-monospace,monospace)", color: "var(--text-dim,#888)", fontSize: 12, marginBottom: 14, wordBreak: "break-all" }}>{batchAsk.path}</div>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <button type="button" onClick={() => { const r = batchAsk.resolve; setBatchAsk(null); r && r("save"); }} style={T.btn}>保存并关闭</button>
-          <button type="button" onClick={() => { const r = batchAsk.resolve; setBatchAsk(null); r && r("discard"); }} style={T.btn}>不保存关闭</button>
-          <button type="button" onClick={() => { const r = batchAsk.resolve; setBatchAsk(null); r && r("cancel"); }} style={{ ...T.btn, border: "none", background: "transparent" }}>取消</button>
+          <button type="button" onClick={() => { const r = batchAsk.resolve; setBatchAsk(null); r && r("save"); }} style={T.btn}>{t("保存并关闭")}</button>
+          <button type="button" onClick={() => { const r = batchAsk.resolve; setBatchAsk(null); r && r("discard"); }} style={T.btn}>{t("不保存关闭")}</button>
+          <button type="button" onClick={() => { const r = batchAsk.resolve; setBatchAsk(null); r && r("cancel"); }} style={{ ...T.btn, border: "none", background: "transparent" }}>{t("取消")}</button>
         </div>
       </div>
     </div>
@@ -1869,10 +2021,10 @@ useEffect(() => {
         <span>·</span><span style={{ flexShrink: 0 }}>{formatSize(meta ? meta.size : 0)}</span>
         {isMediaFile && mediaDuration != null && isFinite(mediaDuration) ? (<><span>·</span><span style={{ flexShrink: 0 }}>{fmtMediaDuration(mediaDuration)}</span></>) : null}
         {live ? (
-          <span title="文件变化实时同步中——agent 追写内容会自动刷新预览"
+          <span title={t("文件变化实时同步中——agent 追写内容会自动刷新预览")}
             style={{ display: "inline-flex", alignItems: "center", gap: 3, flexShrink: 0, color: "var(--ok, #4ade80)" }}>
             <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--ok, #4ade80)", animation: "aitiLivePulse 1.6s ease-in-out infinite" }} />
-            <span>实时</span>
+            <span>{t("实时")}</span>
           </span>
         ) : null}
       </span>
@@ -1880,7 +2032,7 @@ useEffect(() => {
     return (
       <FileToolbar
         filePath={filePath}
-        dot={{ title: "二进制文件（只读预览）", color: "var(--border,#e0e0e0)" }}
+        dot={{ title: t("二进制文件（只读预览）"), color: "var(--border,#e0e0e0)" }}
         nav={navProps}
         closeActions={closeActions}
         about={aboutProp}
@@ -1894,6 +2046,7 @@ useEffect(() => {
         onNewWindow={openInNewWindow}
         onTerminal={openTerminal}
         onReload={doReload}
+        pin={faceMode ? null : { isPinned: isPinnedNow, toggle: togglePinNow }}
         menuTop={[...extMenuTop, ...menuTopExtra]}
         infoAfterNav={info}
       />
@@ -1917,6 +2070,7 @@ useEffect(() => {
           }}
           extMenuTop={extMenuTop}
           menuTopExtra={menuTopExtra}
+          pin={faceMode ? null : { isPinned: isPinnedNow, toggle: togglePinNow }}
           nav={navProps}
           showToast={showToast}
           watchEnabled={props.watchEnabled !== false}
@@ -1937,24 +2091,24 @@ useEffect(() => {
   if (isBinaryView) {
     const fileUrl = pathTicket ? editorBase() + "/t/" + pathTicket + "/file" : "";
     const mediaSrc = fileUrl && mediaBust > 0 ? fileUrl + "&v=" + mediaBust : fileUrl;
-    const typeLabel = ({ image: "图片", video: "视频", audio: "音频", pdf: "PDF", archive: "压缩包" } as Record<string, string>)[fileType] || "文件";
+    const typeLabel = ({ image: t("图片"), video: t("视频"), audio: t("音频"), pdf: "PDF", archive: t("压缩包") } as Record<string, string>)[fileType] || "文件";
     let body: any;
     if (fileType === "archive") {
       body = archiveErr
         ? <div style={{ color: "var(--danger, #f87171)", fontSize: 13, padding: 20 }}>{archiveErr}</div>
         : !archiveFiles
-          ? <div style={{ color: "var(--text-dim,#888)", fontSize: 13, textAlign: "center", padding: 40 }}>正在加载压缩包内容…</div>
+          ? <div style={{ color: "var(--text-dim,#888)", fontSize: 13, textAlign: "center", padding: 40 }}>{t("正在加载压缩包内容…")}</div>
           : archiveFiles.length === 0
-            ? <div style={{ color: "var(--text-dim,#888)", fontSize: 13, textAlign: "center", padding: 40 }}>压缩包为空</div>
+            ? <div style={{ color: "var(--text-dim,#888)", fontSize: 13, textAlign: "center", padding: 40 }}>{t("压缩包为空")}</div>
             : (
               <div style={{ width: "100%", fontFamily: "var(--font-mono, ui-monospace, monospace)", fontSize: 12 }}>
                 <div style={{ display: "flex", padding: "6px 12px", borderBottom: "1px solid var(--border,#e0e0e0)", color: "var(--text-dim,#888)", fontWeight: 600, fontSize: 11 }}>
-                  <span style={{ flex: "1 1 auto", minWidth: 0 }}>文件名</span>
-                  <span style={{ flex: "0 0 80px", textAlign: "right" }}>大小</span>
-                  <span style={{ flex: "0 0 140px", textAlign: "right", paddingRight: 8 }}>时间</span>
+                  <span style={{ flex: "1 1 auto", minWidth: 0 }}>{t("文件名")}</span>
+                  <span style={{ flex: "0 0 80px", textAlign: "right" }}>{t("大小")}</span>
+                  <span style={{ flex: "0 0 140px", textAlign: "right", paddingRight: 8 }}>{t("时间")}</span>
                 </div>
                 {archiveFiles.map((f: any, i: number) => (
-                  <div key={i} title={"点击打开 " + f.name}
+                  <div key={i} title={t("点击打开 {name}", { name: f.name })}
                     style={{ display: "flex", padding: "4px 12px", borderBottom: "1px solid var(--border,#f0f0f0)", cursor: "pointer",
                       background: i % 2 === 0 ? "transparent" : "rgba(0,0,0,0.02)" }}
                     onClick={() => {
@@ -1966,7 +2120,7 @@ useEffect(() => {
                           if (d.ok && d.extractPath) {
                             getCtx()?.openFile?.(d.extractPath, innerName);
                           } else {
-                            setArchiveErr(d.error || "提取失败");
+                            setArchiveErr(d.error || t("提取失败"));
                           }
                         })
                         .catch((e) => setArchiveErr(String(e)));
@@ -1979,7 +2133,7 @@ useEffect(() => {
                   </div>
                 ))}
                 <div style={{ padding: "6px 12px", color: "var(--text-dim,#888)", fontSize: 11, borderTop: "1px solid var(--border,#e0e0e0)" }}>
-                  {"共 " + archiveFiles.length + " 个文件" + (archiveFiles.filter((f: any) => f.name.endsWith("/")).length > 0 ? "，" + archiveFiles.filter((f: any) => f.name.endsWith("/")).length + " 个目录" : "")}
+                  {t("共 {files} 个文件{dirs}", { files: archiveFiles.length, dirs: archiveFiles.filter((f: any) => f.name.endsWith("/")).length > 0 ? t("，{n} 个目录", { n: archiveFiles.filter((f: any) => f.name.endsWith("/")).length }) : "" })}
                 </div>
               </div>
             );
@@ -2003,11 +2157,11 @@ useEffect(() => {
           <div style={{ flex: 1, minHeight: 0, minWidth: 0, position: "relative" }}>
             {mediaSrc
               ? <ImageViewer src={mediaSrc} filePath={filePath} fileSize={meta ? meta.size : undefined} mtimeMs={meta ? meta.mtimeMs : undefined} onSrcError={recoverMedia} />
-              : <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim,#888)", fontSize: 13 }}>正在加载…</div>}
+              : <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim,#888)", fontSize: 13 }}>{t("正在加载…")}</div>}
             {hasNav && (
               <>
-                <button type="button" onClick={() => stepImage(-1)} title="上一个图片" style={{ ...arrowBtn, position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", display: "inline-flex", alignItems: "center" }}><MiChevronL size={20} /></button>
-                <button type="button" onClick={() => stepImage(1)} title="下一个图片" style={{ ...arrowBtn, position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", display: "inline-flex", alignItems: "center" }}><MiChevronR size={20} /></button>
+                <button type="button" onClick={() => stepImage(-1)} title={t("上一个图片")} style={{ ...arrowBtn, position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", display: "inline-flex", alignItems: "center" }}><MiChevronL size={20} /></button>
+                <button type="button" onClick={() => stepImage(1)} title={t("下一个图片")} style={{ ...arrowBtn, position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", display: "inline-flex", alignItems: "center" }}><MiChevronR size={20} /></button>
                 {navLabel && <span style={{ position: "absolute", right: 16, bottom: 14, color: "rgba(255,255,255,0.75)", fontSize: 11, fontFamily: "var(--font-mono,ui-monospace,monospace)", background: "rgba(0,0,0,0.35)", padding: "2px 8px", borderRadius: 10 }}>{navLabel}</span>}
               </>
             )}
@@ -2018,13 +2172,13 @@ useEffect(() => {
       );
     }
     body =
-      !fileUrl ? <div style={{ color: "var(--text-dim,#888)", fontSize: 13, textAlign: "center", padding: 40 }}>正在加载…</div>
+      !fileUrl ? <div style={{ color: "var(--text-dim,#888)", fontSize: 13, textAlign: "center", padding: 40 }}>{t("正在加载…")}</div>
       // 注意：不要调 setMediaActive —— 该状态从未声明也无人消费（纯写不读），
       // 调用会抛 ReferenceError 使整个视频/音频预览崩溃（2026-09-06 实测）。
       : fileType === "video" ? <video key={mediaSrc} src={mediaSrc} controls playsInline preload="metadata" onPlay={() => { mediaErrRef.current = 0; }} onLoadedMetadata={(e: any) => { mediaErrRef.current = 0; setMediaDuration(e.currentTarget.duration); }} onError={recoverMedia} style={{ maxWidth: "100%", maxHeight: "100%" }} />
       : fileType === "audio" ? <audio key={mediaSrc} src={mediaSrc} controls preload="metadata" onPlay={() => { mediaErrRef.current = 0; }} onLoadedMetadata={(e: any) => { mediaErrRef.current = 0; setMediaDuration(e.currentTarget.duration); }} onError={recoverMedia} style={{ width: "90%", maxWidth: 480 }} />
       : fileType === "pdf" ? <iframe key={mediaSrc} src={mediaSrc} style={{ width: "100%", height: "100%", border: "none" }} />
-      : <div style={{ color: "var(--text-dim,#888)", fontSize: 14, textAlign: "center", padding: 40 }}>暂不支持预览此类型文件</div>;
+      : <div style={{ color: "var(--text-dim,#888)", fontSize: 14, textAlign: "center", padding: 40 }}>{t("暂不支持预览此类型文件")}</div>;
     return (
       <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", background: "var(--bg,#fff)", position: "relative" }}>
         {renderBinaryBar(typeLabel)}
@@ -2048,6 +2202,7 @@ useEffect(() => {
         onSave={!isReadOnly ? () => doSave(false) : undefined}
         onSaveAs={!isReadOnly ? () => doSaveAsText() : undefined}
         onReload={doReload}
+        onSpeak={doSpeakFile}
         dot={{ title: dirty ? "\u6709\u672A\u4FDD\u5B58\u4FEE\u6539" : "\u5DF2\u540C\u6B65", color: dirty ? "var(--warn, #f59e0b)" : "var(--border,#e0e0e0)" }}
         nav={navProps}
         closeActions={closeActions}
@@ -2079,8 +2234,8 @@ useEffect(() => {
         menuTop={[
           ...extMenuTop,
           ...(isMarkdown ? [
-            { label: "导出 HTML", icon: <MiFileText />, onClick: () => doExportHtml() },
-            { label: "导出 PDF", icon: <MiFileText />, onClick: () => doExportPdf() },
+            { label: t("导出 HTML"), icon: <MiFileText />, onClick: () => doExportHtml() },
+            { label: t("导出 PDF"), icon: <MiFileText />, onClick: () => doExportPdf() },
           ] : []),
           ...menuTopExtra,
         ]}
@@ -2088,11 +2243,12 @@ useEffect(() => {
         onDownload={doDownload} onCopyPath={copyPath} onCopyContent={copyContent} onRename={doRename} onOpenDir={openDir}
         onMove={doMove}
         onTerminal={openTerminal}
+        pin={faceMode ? null : { isPinned: isPinnedNow, toggle: togglePinNow }}
       />
       {status.phase === "loading" && (
         <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, color: "var(--text-muted,#888)", fontSize: 14 }}>
           <div style={{ width: 30, height: 30, border: "3px solid var(--border,#e0e0e0)", borderTopColor: "#4f8ef7", borderRightColor: "#4f8ef7", borderRadius: "50%", animation: "aiti-spin 0.6s linear infinite" }} />
-          正在加载文件内容…
+          {t("正在加载文件内容…")}
         </div>
       )}
       {status.phase === "error" && (
@@ -2100,7 +2256,7 @@ useEffect(() => {
           <div>
             {"aiti-editor \u63A5\u7BA1\u5931\u8D25"}<br />{String(status.error)}
             <div style={{ marginTop: 10 }}>
-              <button type="button" onClick={loadContent} style={T.btn}>重试</button>
+              <button type="button" onClick={loadContent} style={T.btn}>{t("重试")}</button>
             </div>
           </div>
         </div>
@@ -2121,13 +2277,13 @@ useEffect(() => {
             <div style={{ position: "absolute", inset: 0, zIndex: 600,
                 display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12,
                 background: "rgba(0,0,0,0.35)", color: "var(--danger, #f87171)", fontSize: 13, padding: 16, textAlign: "center" }}>
-              <div>Monaco 编辑器加载失败<br />{monacoErr}</div>
-              <div style={{ color: "var(--text-dim,#888)", fontSize: 12 }}>重试会自动清除加载缓存；若反复失败请刷新页面（或检查网络）</div>
+              <div>{t("Monaco 编辑器加载失败")}<br />{monacoErr}</div>
+              <div style={{ color: "var(--text-dim,#888)", fontSize: 12 }}>{t("重试会自动清除加载缓存；若反复失败请刷新页面（或检查网络）")}</div>
               <button
                 type="button"
                 onClick={() => { setMonacoErr(null); setMonacoRetry((n) => n + 1); }}
                 style={T.btn}
-              >重试加载</button>
+              >{t("重试加载")}</button>
             </div>
           )}
           {/* preview/split 共用一个 wrap（split 占右半，preview 全屏）；git diff 视图激活时一并隐藏。
@@ -2164,7 +2320,7 @@ useEffect(() => {
               <div ref={diffContainerRef} style={{ position: "absolute", inset: 0 }} />
               {!gitBase && (
                 <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted,#888)", fontSize: 12 }}>
-                  正在获取 HEAD 基线…
+                  {t("正在获取 HEAD 基线…")}
                 </div>
               )}
               {gitBase && (gitBase as any).error && (
@@ -2178,11 +2334,11 @@ useEffect(() => {
                   background: "var(--bg,#fff)", border: "1px solid var(--border,#ddd)", borderRadius: 8,
                   boxShadow: "0 4px 16px rgba(0,0,0,.12)", zIndex: 20, padding: 6 }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-dim,#888)", padding: "4px 6px" }}>
-                    {"大纲 · " + gitHunks.length + " 个变更区"}
+                    {t("大纲 · {n} 个变更区", { n: gitHunks.length })}
                   </div>
                   {gitHunks.length === 0 && (
                     <div style={{ color: "var(--text-muted,#999)", fontSize: 12, padding: 8 }}>
-                      无变更行（工作区与 HEAD 一致，或基线尚未加载）
+                      {t("无变更行（工作区与 HEAD 一致，或基线尚未加载）")}
                     </div>
                   )}
                   {gitHunks.map((hk: any, i: number) => (
@@ -2205,23 +2361,23 @@ useEffect(() => {
           {!isBinaryView && isMarkdown && !gitViewActive && (viewMode === "split" || viewMode === "preview") && (gitIsNewFile || mdChgRanges.length > 0) && (
             gitIsNewFile ? (
               <span
-                title="新文件：相对 HEAD 无基线，整篇均为新增"
+                title={t("新文件：相对 HEAD 无基线，整篇均为新增")}
                 style={{ position: "absolute", right: 16, bottom: 14, zIndex: 30,
                   display: "inline-flex", alignItems: "center", gap: 5,
                   fontSize: 11, fontFamily: "var(--font-mono, ui-monospace, monospace)", color: "#16a34a",
                   border: "1px solid rgba(22,163,74,.4)", borderRadius: 999, padding: "4px 12px",
                   background: "var(--bg,#fff)", boxShadow: "0 3px 10px rgba(0,0,0,.15)" }}>
-                {"新文件"}
+                {t("新文件")}
               </span>
             ) : (
               <button type="button" onClick={gotoMdChg}
-                title="定位到下一个 git 变更块（循环）"
+                title={t("定位到下一个 git 变更块（循环）")}
                 style={{ position: "absolute", right: 16, bottom: 14, zIndex: 30,
                   display: "inline-flex", alignItems: "center", gap: 5,
                   fontSize: 11, fontFamily: "var(--font-mono, ui-monospace, monospace)", color: "#7c3aed",
                   border: "1px solid rgba(124,58,237,.4)", borderRadius: 999, padding: "4px 12px",
                   background: "var(--bg,#fff)", cursor: "pointer", boxShadow: "0 3px 10px rgba(0,0,0,.15)" }}>
-                {"⇋ " + mdChgRanges.length + " 处改动 · 定位"}
+                {t("⇋ {n} 处改动 · 定位", { n: mdChgRanges.length })}
               </button>
             )
           )}
@@ -2246,20 +2402,20 @@ useEffect(() => {
                       type="button"
                       onClick={() => { doSave(false, () => { const b0 = (askState.blockers || [])[0]; if (b0 && b0.onSave) b0.onSave(); (window as any).__aitiEditor._setDirty(askState.path, false); closeAsk(true); }); }}
                       style={T.btn}
-                    >保存并关闭</button>
+                    >{t("保存并关闭")}</button>
                   )}
                   {(askState.blockers || []).some((b: any) => b.actions.includes("discard")) && (
                     <button
                       type="button"
                       onClick={() => { const b0 = (askState.blockers || [])[0]; if (b0 && b0.onDiscard) b0.onDiscard(); (window as any).__aitiEditor._setDirty(askState.path, false); closeAsk(true); }}
                       style={T.btn}
-                    >不保存关闭</button>
+                    >{t("不保存关闭")}</button>
                   )}
                   <button
                     type="button"
                     onClick={() => closeAsk(false)}
                     style={{ ...T.btn, border: "none", background: "transparent" }}
-                  >取消</button>
+                  >{t("取消")}</button>
                 </div>
               </div>
             </div>
@@ -2272,7 +2428,7 @@ useEffect(() => {
               <div style={{ width: 360, padding: "16px 18px", borderRadius: 12,
                 background: "var(--bg,#fff)", border: "1px solid var(--border,#ddd)",
                 boxShadow: "0 12px 40px rgba(0,0,0,0.25)", fontSize: 13 }}>
-                <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>磁盘上的文件已被修改</div>
+                <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>{t("磁盘上的文件已被修改")}</div>
                 <div style={{ color: "var(--text-dim,#888)", fontSize: 12, marginBottom: 14, wordBreak: "break-all" }}>{filePath}</div>
                 <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                   <button
@@ -2306,7 +2462,7 @@ useEffect(() => {
                       } catch (e: any) { setNotice({ kind: "err", text: "\u5408\u5E76\u5931\u8D25\uFF1A" + (e && e.message || e) }); }
                     }}
                     style={T.btn}
-                  >合并</button>
+                  >{t("合并")}</button>
                   <button
                     type="button"
                     onClick={() => {
@@ -2329,12 +2485,12 @@ useEffect(() => {
                         .catch((e) => setNotice({ kind: "err", text: String(e) }));
                     }}
                     style={T.btn}
-                  >加载磁盘</button>
+                  >{t("加载磁盘")}</button>
                   <button
                     type="button"
                     onClick={() => { setExtChange(null); setNotice({ kind: "warn", text: "\u4FDD\u7559\u5F53\u524D\u7F16\u8F91\uFF08\u4FDD\u5B58\u65F6\u5C06\u68C0\u6D4B\u51B2\u7A81\uFF09" }); }}
                     style={T.btn}
-                  >保留当前</button>
+                  >{t("保留当前")}</button>
                 </div>
               </div>
             </div>
@@ -2344,12 +2500,12 @@ useEffect(() => {
               display: "flex", gap: 4, padding: "4px 8px",
               background: "var(--bg,#fff)", border: "1px solid var(--border,#d0d0d0)",
               borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,0.15)", fontSize: 11 }}>
-              <button title="插入 @文件#行 引用到当前会话输入框（不发送）" onClick={() => { doMention(); setAiPop(null); }} style={{ ...T.btn, padding: "2px 8px", gap: 4 }}>@</button>
-              <button title="插入 @引用到新会话输入框（不发送）" onClick={() => { doMentionNewSession(); setAiPop(null); }} style={{ ...T.btn, padding: "2px 8px", gap: 4 }}>@到新会话</button>
-              <button title="选区写入当前会话输入框，自主决定是否发送" onClick={() => aiInsert("重构这段代码：\n")} style={{ ...T.btn, padding: "2px 8px", gap: 4 }}>重构</button>
-              <button title="立即以 steer 发送到当前会话" onClick={() => aiAction("解释这段代码：\n")} style={{ ...T.btn, padding: "2px 8px", gap: 4 }}>解释</button>
+              <button title={t("插入 @文件#行 引用到当前会话输入框（不发送）")} onClick={() => { doMention(); setAiPop(null); }} style={{ ...T.btn, padding: "2px 8px", gap: 4 }}>@</button>
+              <button title={t("插入 @引用到新会话输入框（不发送）")} onClick={() => { doMentionNewSession(); setAiPop(null); }} style={{ ...T.btn, padding: "2px 8px", gap: 4 }}>@到新会话</button>
+              <button title={t("选区写入当前会话输入框，自主决定是否发送")} onClick={() => aiInsert("重构这段代码：\n")} style={{ ...T.btn, padding: "2px 8px", gap: 4 }}>重构</button>
+              <button title={t("立即以 steer 发送到当前会话")} onClick={() => aiAction("解释这段代码：\n")} style={{ ...T.btn, padding: "2px 8px", gap: 4 }}>解释</button>
               {isMarkdown && detectTable(editorRef.current) && (
-                <button title="按列宽对齐光标所在 Markdown 表格（Alt+Shift+F 同款）" onClick={() => { formatTable(editorRef.current); setAiPop(null); }} style={{ ...T.btn, padding: "2px 8px", gap: 4 }}>表格优化</button>
+                <button title={t("按列宽对齐光标所在 Markdown 表格（Alt+Shift+F 同款）")} onClick={() => { formatTable(editorRef.current); setAiPop(null); }} style={{ ...T.btn, padding: "2px 8px", gap: 4 }}>表格优化</button>
               )}
             </div>
           )}
@@ -2361,11 +2517,11 @@ useEffect(() => {
           borderTop: "1px solid var(--border,#e0e0e0)", fontSize: 11,
           color: "var(--text-dim,#888)", background: "var(--bg,#fff)", flexShrink: 0 }}>
           <span style={{ flexShrink: 0, fontFamily: "var(--font-mono, ui-monospace, monospace)" }}>
-            {meta && meta.content ? meta.content.split("\n").length + " 行" : ""}
+            {meta && meta.content ? t("{n} 行", { n: meta.content.split("\n").length }) : ""}
           </span>
           <span style={{ flexShrink: 0, fontFamily: "var(--font-mono, ui-monospace, monospace)" }}
-            title={meta ? meta.size + " 字节" : ""}>{formatSize(meta ? meta.size : 0)}</span>
-          {isReadOnly && <span style={{ color: "var(--warn, #f59e0b)", flexShrink: 0 }}>超 1MB 只读</span>}
+            title={meta ? t("{n} 字节", { n: meta.size }) : ""}>{formatSize(meta ? meta.size : 0)}</span>
+          {isReadOnly && <span style={{ color: "var(--warn, #f59e0b)", flexShrink: 0 }}>{t("超 1MB 只读")}</span>}
           <span style={{ flex: "1 1 auto" }} />
           <span style={{ flexShrink: 0 }}>{language}</span>
           {/* 编码徽标（点击弹编码菜单；向上弹出） */}
@@ -2382,7 +2538,7 @@ useEffect(() => {
                 display: "flex", flexDirection: "column", gap: 1, padding: 6, minWidth: 210,
                 background: "var(--bg,#fff)", border: "1px solid var(--border,#d0d0d0)", borderRadius: 10,
                 boxShadow: "0 4px 12px rgba(0,0,0,0.15)", fontSize: 12 }}>
-                <div style={{ padding: "4px 10px", fontWeight: 600, fontSize: 11, color: "var(--text-dim,#888)" }}>以编码重新打开（不保存当前改动）</div>
+                <div style={{ padding: "4px 10px", fontWeight: 600, fontSize: 11, color: "var(--text-dim,#888)" }}>{t("以编码重新打开（不保存当前改动）")}</div>
                 {ENCODINGS.map((e) => {
                   const cur = !e.id.startsWith("utf-8-bom") && ((meta && meta.encoding === e.id) || (e.id === "utf-8" && (!meta || meta.encoding !== "gbk") && !(meta && meta.hasBOM))) && e.id !== "auto";
                   const bomCur = e.id === "utf-8-bom" && meta && meta.hasBOM;
@@ -2396,7 +2552,7 @@ useEffect(() => {
                   );
                 })}
                 <div style={{ height: 1, background: "var(--border,#eee)", margin: "3px 2px" }} />
-                <div style={{ padding: "4px 10px", fontWeight: 600, fontSize: 11, color: "var(--text-dim,#888)" }}>以编码保存（另存为新编码）</div>
+                <div style={{ padding: "4px 10px", fontWeight: 600, fontSize: 11, color: "var(--text-dim,#888)" }}>{t("以编码保存（另存为新编码）")}</div>
                 {ENCODINGS.filter((e) => e.id !== "auto").map((e) => (
                   <button
                     type="button" key={"s-" + e.id}

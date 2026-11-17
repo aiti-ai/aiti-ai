@@ -13,11 +13,11 @@
 
 import { ensureStyles } from "./agent-manager-styles.mjs";
 
-/** 自动保险档别名 → 展示名（服务端在各覆盖性操作前自动生成）。 */
+/** Auto insurance-tier alias → display entry key (resolved via t(); used inside the register scope). */
 const AUTO_LABEL = {
-  "_auto-before-switch": "自动·切换前",
-  "_auto-before-login": "自动·登录前",
-  "_auto-before-logout": "自动·登出前",
+  "_auto-before-switch": "am.autoSwitch",
+  "_auto-before-login": "am.autoLogin",
+  "_auto-before-logout": "am.autoLogout",
 };
 
 /** 过期时间戳（ms）→ 本地短日期（YYYY-MM-DD）。 */
@@ -30,27 +30,27 @@ function fmtNum(n) {
   try { return Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 }); } catch { return String(n); }
 }
 
-/** 额度 chip 文案（display 优先；否则 剩余/总量 归一）。 */
-function quotaText(q) {
+/** Quota chip label (display first; otherwise remaining/total normalized). t is injected by the caller (register scope). */
+function quotaText(t, q) {
   if (typeof q.display === "string" && q.display.trim()) return q.display.trim();
   const unit = q.unit ?? "";
-  if (q.remaining !== undefined && q.total !== undefined) return `额度 ${fmtNum(q.remaining)} / ${fmtNum(q.total)} ${unit}`.trim();
-  if (q.remaining !== undefined) return `额度 剩余 ${fmtNum(q.remaining)} ${unit}`.trim();
-  if (q.usedPercent !== undefined) return `额度 剩余 ${fmtNum(100 - q.usedPercent)}%`;
-  return "额度";
+  if (q.remaining !== undefined && q.total !== undefined) return t("am.quota.remainingOf", { remaining: fmtNum(q.remaining), total: fmtNum(q.total), unit }).trim();
+  if (q.remaining !== undefined) return t("am.quota.remaining", { remaining: fmtNum(q.remaining), unit }).trim();
+  if (q.usedPercent !== undefined) return t("am.quota.usedPercent", { pct: fmtNum(100 - q.usedPercent) });
+  return t("am.quota");
 }
 
-/** 额度 tooltip（分包明细 + 更新时间）。 */
-function quotaTitle(q) {
+/** Quota tooltip (per-package breakdown + updated at). t is injected by the caller. */
+function quotaTitle(t, q) {
   const pkgs = (q.packages ?? []).map((p, i) => {
-    const name = p.name ?? `包${i + 1}`;
-    if (p.remaining !== undefined && p.total !== undefined) return `${name}：${fmtNum(p.remaining)} / ${fmtNum(p.total)} ${p.unit ?? q.unit ?? ""}`.trim();
-    if (p.usedPercent !== undefined) return `${name}：已用 ${fmtNum(p.usedPercent)}%`;
-    if (p.remaining !== undefined) return `${name}：剩余 ${fmtNum(p.remaining)} ${p.unit ?? q.unit ?? ""}`.trim();
-    return p.note ? `${name}：${p.note}` : name;
+    const name = p.name ?? t("am.quota.pkgN", { n: i + 1 });
+    if (p.remaining !== undefined && p.total !== undefined) return t("am.quota.pkgRemainingOf", { name, remaining: fmtNum(p.remaining), total: fmtNum(p.total), unit: p.unit ?? q.unit ?? "" }).trim();
+    if (p.usedPercent !== undefined) return t("am.quota.pkgUsed", { name, pct: fmtNum(p.usedPercent) });
+    if (p.remaining !== undefined) return t("am.quota.pkgRemaining", { name, remaining: fmtNum(p.remaining), unit: p.unit ?? q.unit ?? "" }).trim();
+    return p.note ? t("am.quota.pkgNote", { name, note: p.note }) : name;
   }).join("\n");
   const extra = q.note ? `\n${q.note}` : "";
-  return `额度（点击刷新）${pkgs ? "\n" + pkgs : ""}${extra}\n更新于 ${new Date(q.fetchedAt).toLocaleTimeString()}`;
+  return t("am.quota.title", { pkgs, extra, time: new Date(q.fetchedAt).toLocaleTimeString() });
 }
 
 export function registerAgentManagerClient(ctx, config) {
@@ -60,12 +60,14 @@ export function registerAgentManagerClient(ctx, config) {
   const useEffect = (fn, deps) => ctx.useEffect(fn, deps);
   const api = (p, init) => fetch(ctx.apiUrl("/api/extensions/" + config.extId + p), { cache: "no-store", ...init });
   const jsonInit = (body) => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  // i18n: host ctx.t (index.ts ui.i18n entries, zh/en tables); falls back to the bare key on old hosts without it
+  const t = (k, p2) => { const fn = ctx.t; return typeof fn === "function" ? fn(k, p2) : k; };
 
   ctx.registerItems("toolbar", [{
     id: `${config.extId}-panel`,
     meta: {
-      label: "Agent 管理",
-      title: "Agent 管理（统一登录态）",
+      label: "i18n:it.panel.label",
+      title: "i18n:it.panel.title",
       icon: "icons/bot.svg",
       onClick: () => requestOpen(),
     },
@@ -95,52 +97,52 @@ export function registerAgentManagerClient(ctx, config) {
   function AccountPanel({ agent, accounts, busy, actAccounts, setNotice, confirmDel, setConfirmDel }) {
     return h("div", { className: "am-accounts" },
       h("div", { className: "am-accounts-title" },
-        "账号档",
-        h("span", { className: "am-acc-chip" }, `${accounts.length} 个`),
+        t("am.accounts.title"),
+        h("span", { className: "am-acc-chip" }, t("am.accounts.count", { n: accounts.length })),
       ),
       h("div", { className: "am-hint" },
-        "这里只列已保存的账号档（供切换 / 删除）；新增保存用上方「当前登录」旁的「保存为账号档…」；登录 / 切换前旧状态自动存 _auto-before-* 保险档。"),
+        t("am.accounts.hint")),
       accounts.length === 0
-        ? h("div", { className: "am-empty" }, "暂无账号档——先保存当前登录，或直接登录新账号")
+        ? h("div", { className: "am-empty" }, t("am.accounts.empty"))
         : h("div", { className: "am-acc-list" }, ...accounts.map((acc) => h(AccountRow, { key: acc.alias, acc, agent, busy, actAccounts, setNotice, confirmDel, setConfirmDel }))),
     );
   }
 
   /** 账号档行：别名/账号信息（user+uin+有效期）/凭据数/保存日 + 切换/删除（删除二次确认）。 */
   function AccountRow({ acc, agent, busy, actAccounts, setNotice, confirmDel, setConfirmDel }) {
-    const label = AUTO_LABEL[acc.alias] ?? acc.alias;
+    const label = acc.alias.startsWith("_auto-") && AUTO_LABEL[acc.alias] ? t(AUTO_LABEL[acc.alias]) : acc.alias;
     const delPending = confirmDel && confirmDel.agent === agent && confirmDel.alias === acc.alias;
     const name = acc.user ?? acc.note;
-    const who = name ? `账号 ${name}${acc.uin ? `（uin ${acc.uin}）` : ""}` : null;
-    const expiry = typeof acc.expiresAt === "number" ? `有效期至 ${fmtDate(acc.expiresAt)}` : null;
-    const meta = [who, expiry, `${acc.slotCount} 项凭据`, `保存于 ${fmtDate(acc.savedAt)}`].filter(Boolean).join(" · ");
+    const who = name ? t("am.acc.who", { name, uin: acc.uin ? t("am.acc.uin", { uin: acc.uin }) : "" }) : null;
+    const expiry = typeof acc.expiresAt === "number" ? t("am.acc.expiry", { date: fmtDate(acc.expiresAt) }) : null;
+    const meta = [who, expiry, t("am.acc.slots", { n: acc.slotCount }), t("am.acc.savedAt", { date: fmtDate(acc.savedAt) })].filter(Boolean).join(" · ");
     return h("div", { className: "am-acc-item" + (acc.current ? " is-current" : "") },
       h("span", { className: "am-acc-label" + (acc.auto ? " is-auto" : "") }, label),
-      acc.current && h("span", { className: "am-acc-chip is-current" }, "当前"),
+      acc.current && h("span", { className: "am-acc-chip is-current" }, t("am.acc.current")),
       h("span", { className: "am-acc-meta", title: meta }, meta),
       h("div", { className: "am-acc-actions" },
         !acc.current && h("button", {
           className: "am-btn is-sm",
           disabled: busy === `${agent}:accounts-switch`,
-          title: "恢复该账号档到本机登录位置（当前状态若未存档会先自动存 _auto-before-switch）",
+          title: t("am.acc.switchTip"),
           onClick: async () => {
-            const d = await actAccounts(agent, "switch", { alias: acc.alias }, `已切换到「${label}」：新会话生效（旧会话保持原账号）`);
-            if (d?.autoSaved) setNotice({ ok: true, text: `已切换到「${label}」；切换前状态已自动存为「${AUTO_LABEL["_auto-before-switch"]}」` });
+            const d = await actAccounts(agent, "switch", { alias: acc.alias }, t("am.acc.switched", { label }));
+            if (d?.autoSaved) setNotice({ ok: true, text: t("am.acc.switchedAuto", { label }) });
           },
-        }, busy === `${agent}:accounts-switch` ? "切换中…" : "切换"),
+        }, busy === `${agent}:accounts-switch` ? t("am.switching") : t("am.switch")),
         h("button", {
           className: "am-btn is-sm" + (delPending ? " is-danger" : ""),
           disabled: busy === `${agent}:accounts-remove`,
           onClick: () => {
             if (delPending) {
               setConfirmDel(null);
-              void actAccounts(agent, "remove", { alias: acc.alias }, `已删除账号档「${label}」`);
+              void actAccounts(agent, "remove", { alias: acc.alias }, t("am.deleted", { label }));
             } else {
               setConfirmDel({ agent, alias: acc.alias });
               setTimeout(() => setConfirmDel((cur) => (cur && cur.agent === agent && cur.alias === acc.alias ? null : cur)), 2500);
             }
           },
-        }, delPending ? "确认删除？" : "删除"),
+        }, delPending ? t("am.confirmDelete") : t("am.delete")),
       ),
     );
   }
@@ -151,16 +153,16 @@ export function registerAgentManagerClient(ctx, config) {
     const [authToken, setAuthToken] = useState("");
     const [baseUrl, setBaseUrl] = useState("");
     return h("div", { className: "am-subpanel" },
-      h("input", { className: "am-input", placeholder: "CODEBUDDY_API_KEY（平台个人 key）", value: apiKey, onInput: (e) => setApiKey(e?.target?.value ?? "") }),
-      h("input", { className: "am-input", placeholder: "CODEBUDDY_AUTH_TOKEN（可选，优先级更高）", value: authToken, onInput: (e) => setAuthToken(e?.target?.value ?? "") }),
-      h("input", { className: "am-input", placeholder: "CODEBUDDY_BASE_URL（可选，第三方网关）", value: baseUrl, onInput: (e) => setBaseUrl(e?.target?.value ?? "") }),
+      h("input", { className: "am-input", placeholder: t("am.keyPh.apiKey"), value: apiKey, onInput: (e) => setApiKey(e?.target?.value ?? "") }),
+      h("input", { className: "am-input", placeholder: t("am.keyPh.authToken"), value: authToken, onInput: (e) => setAuthToken(e?.target?.value ?? "") }),
+      h("input", { className: "am-input", placeholder: t("am.keyPh.baseUrl"), value: baseUrl, onInput: (e) => setBaseUrl(e?.target?.value ?? "") }),
       h("div", { className: "am-actions is-end" },
-        h("button", { className: "am-btn", onClick: onDone }, "收起"),
+        h("button", { className: "am-btn", onClick: onDone }, t("am.collapse")),
         h("button", {
           className: "am-btn is-primary",
           disabled: !apiKey.trim() && !authToken.trim() && !baseUrl.trim(),
           onClick: async () => { await callFn(`${agent}:set-key`, `/ctl/${agent}/set-key`, jsonInit({ apiKey, authToken, baseUrl })); onDone(); },
-        }, "保存（空串=清除该字段）"),
+        }, t("am.keySave")),
       ),
     );
   }
@@ -238,7 +240,7 @@ export function registerAgentManagerClient(ctx, config) {
     async function actAccounts(agent, action, body, okText) {
       const d = await call(`${agent}:accounts-${action}`, `/accounts/${agent}/${action}`, jsonInit(body ?? {}));
       if (d && !d.error) { setNotice({ ok: true, text: okText }); refresh(); }
-      else if (d?.error) setNotice({ ok: false, text: `${action} 失败：${d.error}` });
+      else if (d?.error) setNotice({ ok: false, text: t("am.actionFailed", { action, error: d.error }) });
       return d;
     }
 
@@ -250,7 +252,7 @@ export function registerAgentManagerClient(ctx, config) {
         return;
       }
       setConfirmLogout(null);
-      void actAccounts(agent, "logout", {}, "已登出：本机凭据已清（保险档保留在账号档列表）");
+      void actAccounts(agent, "logout", {}, t("am.loggedOut"));
     }
 
     if (!open) return null;
@@ -260,27 +262,27 @@ export function registerAgentManagerClient(ctx, config) {
       "div",
       { className: "am-panel", "data-ext-float": "1", "data-ext-float-w": "560", "data-ext-float-h": "460" },
       h("div", { className: "am-head" },
-        h("b", { className: "am-title" }, "Agent 管理"),
-        h("span", { className: "am-head-sub" }, "统一登录态 · 账号档"),
+        h("b", { className: "am-title" }, t("am.title")),
+        h("span", { className: "am-head-sub" }, t("am.subtitle")),
         h("span", { className: "am-spacer" }),
-        h("button", { className: "am-btn is-ghost is-sm", onClick: () => setOpen(false), title: "关闭" }, "✕"),
+        h("button", { className: "am-btn is-ghost is-sm", onClick: () => setOpen(false), title: t("am.close") }, "✕"),
       ),
       h("div", { className: "am-body" },
         reqError && h("div", { className: "am-error" }, reqError),
         notice && h("div", { className: "am-notice" }, notice.text),
-        !agents.length && h("div", { className: "am-empty" }, "加载中…"),
+        !agents.length && h("div", { className: "am-empty" }, t("am.loading")),
         ...agents.map((a) => hAgentRow(a)),
         hPiHost(data?.piHost),
         h("div", { className: "am-foot" },
-          "登录操作代理到各扩展既有 /login/* 端点；账号档存于 configDir/agent-accounts.json（备份加密）。CodeBuddy 浏览器 OAuth 的终端渲染在 aiti-cmd 面板（sid 共享，可一键打开）。"),
+          t("am.foot")),
       ),
       // 保存账号档弹窗（命名后提交；紧跟「当前登录」的保存入口）
       saveForm && h("div", { className: "am-modal-mask", onClick: () => setSaveForm(null) },
         h("div", { className: "am-modal", onClick: (e) => e.stopPropagation() },
-          h("div", { className: "am-accounts-title" }, "保存为账号档"),
-          h("div", { className: "am-hint" }, `把「${saveForm.agent}」当前登录保存为账号档，起个别名便于日后切换与识别。`),
+          h("div", { className: "am-accounts-title" }, t("am.saveAs")),
+          h("div", { className: "am-hint" }, t("am.saveAsHint", { agent: saveForm.agent })),
           h("input", {
-            className: "am-input", autoFocus: true, placeholder: "别名（如 主账号 / 团队号 / 客户A）",
+            className: "am-input", autoFocus: true, placeholder: t("am.aliasPh"),
             value: saveForm.alias,
             onInput: (e) => setSaveForm((f) => (f ? { ...f, alias: e?.target?.value ?? "" } : f)),
             onKeyDown: (e) => {
@@ -289,12 +291,12 @@ export function registerAgentManagerClient(ctx, config) {
             },
           }),
           h("div", { className: "am-actions is-end" },
-            h("button", { className: "am-btn", onClick: () => setSaveForm(null) }, "取消"),
+            h("button", { className: "am-btn", onClick: () => setSaveForm(null) }, t("am.cancel")),
             h("button", {
               className: "am-btn is-primary",
               disabled: !saveForm.alias.trim() || busy === `${saveForm.agent}:accounts-save`,
               onClick: () => void saveNow(),
-            }, busy === `${saveForm.agent}:accounts-save` ? "保存中…" : "保存"),
+            }, busy === `${saveForm.agent}:accounts-save` ? t("am.saving") : t("am.save")),
           ),
         ),
       ),
@@ -306,23 +308,23 @@ export function registerAgentManagerClient(ctx, config) {
       return h(
         "div",
         { className: "am-row" },
-        h("div", { className: "am-meta", style: { marginBottom: 4 } }, "pi 宿主订阅（模型向导 OAuth，只读展示）"),
+        h("div", { className: "am-meta", style: { marginBottom: 4 } }, t("am.piHost")),
         ...piHost.map((p) => h("div", { key: p.provider, className: "am-acc-item" },
           h("b", { className: "am-acc-label" }, p.provider),
           p.user && h("span", { className: "am-acc-meta" }, p.user),
           h("span", { className: "am-spacer" }),
           p.expired === true
-            ? h("span", { className: "am-acc-chip", style: { color: "#d97706", borderColor: "rgba(217,119,6,.4)" } }, "token 已过期，重新登录可续期")
-            : h("span", { className: "am-acc-chip is-current" }, "已授权"),
+            ? h("span", { className: "am-acc-chip", style: { color: "#d97706", borderColor: "rgba(217,119,6,.4)" } }, t("am.tokenExpired"))
+            : h("span", { className: "am-acc-chip is-current" }, t("am.authorized")),
         )),
       );
     }
 
     function badge(authState, flowState) {
-      if (flowState === "logging-in") return h("span", { className: "am-badge is-logging" }, "登录中");
-      if (authState === "ready") return h("span", { className: "am-badge is-ready" }, "已登录");
-      if (authState === "missing") return h("span", { className: "am-badge is-missing" }, "未登录");
-      return h("span", { className: "am-badge is-unknown" }, "未知");
+      if (flowState === "logging-in") return h("span", { className: "am-badge is-logging" }, t("am.badgeLogging"));
+      if (authState === "ready") return h("span", { className: "am-badge is-ready" }, t("am.badgeReady"));
+      if (authState === "missing") return h("span", { className: "am-badge is-missing" }, t("am.badgeMissing"));
+      return h("span", { className: "am-badge is-unknown" }, t("am.badgeUnknown"));
     }
 
     // 保存账号档弹窗的提交
@@ -330,7 +332,7 @@ export function registerAgentManagerClient(ctx, config) {
       const f = saveForm;
       const alias = (f?.alias ?? "").trim();
       if (!f || !alias) return;
-      const d = await actAccounts(f.agent, "save", { alias }, `已保存账号档「${alias}」`);
+      const d = await actAccounts(f.agent, "save", { alias }, t("am.saved", { alias }));
       if (d && !d.error) setSaveForm(null);
     }
 
@@ -347,54 +349,51 @@ export function registerAgentManagerClient(ctx, config) {
         h("div", { className: "am-row-head" },
           h("span", { className: "am-name" }, a.label),
           badge(a.authState, a.flowState),
-          a.authSource === "fs" && h("span", { className: "am-flag" }, "（探测）"),
+          a.authSource === "fs" && h("span", { className: "am-flag" }, t("am.flagProbe")),
           h("span", { className: "am-spacer" }),
-          !a.installed && h("span", { className: "am-flag" }, "扩展未部署"),
+          !a.installed && h("span", { className: "am-flag" }, t("am.flagNotDeployed")),
         ),
         h("div", { className: "am-meta" },
-          "登录形态：" + (a.modes ?? []).map((m) => ({ url: "授权链接", paste: "粘贴 code", apikey: "API Key", tui: "浏览器 OAuth" }[m] ?? m)).join(" / ")
-          + (a.dependencyHint ? ` · 依赖：${a.dependencyHint}` : "")),
+          t("am.modes", { modes: (a.modes ?? []).map((m) => ({ url: t("am.mode.url"), paste: t("am.mode.paste"), apikey: t("am.mode.apikey"), tui: t("am.mode.tui") }[m] ?? m)).join(" / ") })
+          + (a.dependencyHint ? t("am.dependency", { hint: a.dependencyHint }) : "")),
         // 当前登录：展示账号/过期 + 保存入口紧贴（新增档从这里存，账号档卡片只列已存的）
         (ext?.account?.user || hasContent) && h("div", { className: "am-acct-line " + (ext?.account?.expired ? "is-warn" : "is-ok") },
           ext?.account?.user
-            ? `CLI 登录账号：${ext.account.user}${ext.account.uin ? `（uin ${ext.account.uin}）` : ""}`
-              + (ext.account.expired
-                ? " · 已过期，请在 CLI 内重新登录"
-                : ext.account.expiresAt ? ` · 有效期至 ${fmtDate(ext.account.expiresAt)}` : "")
-            : "当前登录：已检测到本机凭据",
+            ? t("am.cliAccount", { user: ext.account.user, uin: ext.account.uin ? t("am.acc.uin", { uin: ext.account.uin }) : "", tail: ext.account.expired ? t("am.expiredCli") : ext.account.expiresAt ? t("am.validUntil", { date: fmtDate(ext.account.expiresAt) }) : "" })
+            : t("am.detectedCreds"),
           hasContent && h("button", {
             className: "am-btn is-sm", style: { marginLeft: 8 },
-            title: "把当前本机登录保存为账号档（起别名）",
+            title: t("am.saveAsTip"),
             onClick: () => setSaveForm({ agent: key, alias: "" }),
-          }, "保存为账号档…"),
+          }, t("am.saveAsBtn")),
           // 官方账号额度（descriptor.accountQuota；点击强制刷新）
           a.quota?.available === true && h("button", {
             className: "am-btn is-ghost is-sm", style: { marginLeft: 8 },
-            title: quotaTitle(a.quota),
+            title: quotaTitle(t, a.quota),
             onClick: async () => {
               const r = await fetch(ctx.apiUrl(`/api/extensions/${config.extId}/quota/${key}?force=1`), { cache: "no-store" });
               const d = await r.json().catch(() => null);
               if (d && d.error) setNotice({ ok: false, text: d.error });
               refresh();
             },
-          }, quotaText(a.quota)),
+          }, quotaText(t, a.quota)),
           a.quota?.available === false && a.quota.reason === "fetch-failed" && h("span", {
             className: "am-flag", style: { marginLeft: 8 },
-            title: `额度查询失败：${a.quota.error ?? ""}`,
-          }, "额度查询失败"),
+            title: t("am.quotaFailTip", { error: a.quota.error ?? "" }),
+          }, t("am.quotaFail")),
         ),
         // ── 操作条 1：登录 / 授权 ──
         h("div", { className: "am-actions" },
           !isCb && (a.modes ?? []).includes("url") && h("button",
             { className: "am-btn", disabled: busy === `${key}:start`, onClick: () => ctl(key, "start") },
-            busy === `${key}:start` ? "发起中…" : "登录"),
+            busy === `${key}:start` ? t("am.starting") : t("am.login")),
           !isCb && (a.modes ?? []).includes("paste") && h("button",
             { className: "am-btn", disabled: busy === `${key}:start`, onClick: () => ctl(key, "start") },
-            busy === `${key}:start` ? "发起中…" : "登录"),
-          !isCb && h("button", { className: "am-btn", disabled: busy === `${key}:cancel`, onClick: () => ctl(key, "cancel") }, "取消"),
+            busy === `${key}:start` ? t("am.starting") : t("am.login")),
+          !isCb && h("button", { className: "am-btn", disabled: busy === `${key}:cancel`, onClick: () => ctl(key, "cancel") }, t("am.cancel")),
           !isCb && (a.modes ?? []).includes("paste") && h("span", { className: "am-inline" },
             h("input", {
-              className: "am-input", placeholder: "粘贴授权完成页 code（或回调链接）",
+              className: "am-input", placeholder: t("am.codePh"),
               value: pasteCode[key] ?? "",
               onInput: (e) => setPasteCode({ ...pasteCode, [key]: e?.target?.value ?? "" }),
             }),
@@ -402,68 +401,66 @@ export function registerAgentManagerClient(ctx, config) {
               className: "am-btn is-primary",
               disabled: !(pasteCode[key] ?? "").trim() || busy === `${key}:submit`,
               onClick: () => ctl(key, "submit", { code: pasteCode[key] }),
-            }, "提交"),
+            }, t("am.submit")),
           ),
           isCb && h("button", { className: "am-btn" + (keyForm === key ? " is-primary" : ""), onClick: () => setKeyForm(keyForm === key ? null : key) }, "API Key…"),
           isCb && h("button", {
             className: "am-btn",
             disabled: busy === `${key}:tui-start`,
-            title: "发起新的浏览器 OAuth 登录（会覆盖 CLI 当前登录；覆盖前自动存 _auto-before-login 保险档）",
+            title: t("am.oauthStartTip"),
             onClick: async () => {
               const d = await ctl(key, "tui-start");
               if (d && !d.error) {
-                setNotice({ ok: true, text: d.backupDir ? "OAuth 已发起：旧登录已备份并暂离（随时可从「账号档」切回）；完成后把新账号存档起别名" : "OAuth 已发起：完成登录后到「账号档」把新账号存档并起别名" });
+                setNotice({ ok: true, text: d.backupDir ? t("am.oauthStartedBackup") : t("am.oauthStarted") });
                 // 直接打开 aiti-cmd 终端面板（浏览器 OAuth 的交互面在该面板里）
-                if (d.sid) { const okOpen = await openCmdTerminal(d.sid, "cbc-login"); if (!okOpen) setNotice({ ok: false, text: "OAuth 已发起，但未能打开 aiti-cmd 终端面板（未部署/未加载）" }); }
+                if (d.sid) { const okOpen = await openCmdTerminal(d.sid, "cbc-login"); if (!okOpen) setNotice({ ok: false, text: t("am.oauthNoCmd") }); }
               }
             },
-          }, busy === `${key}:tui-start` ? "发起中…" : "浏览器 OAuth"),
+          }, busy === `${key}:tui-start` ? t("am.starting") : t("am.oauthBtn")),
           isCb && h("button", {
             className: "am-btn",
             disabled: busy === `${key}:tui-cancel` || !tuiActive,
-            title: tuiActive ? "终止进行中的 OAuth 登录会话" : "当前无进行中的 OAuth 登录",
+            title: tuiActive ? t("am.oauthCancelTip") : t("am.noOauth"),
             onClick: async () => {
               const d = await ctl(key, "tui-cancel");
-              if (d && !d.error) { setNotice({ ok: true, text: "已取消 OAuth 登录会话" }); refresh(); }
+              if (d && !d.error) { setNotice({ ok: true, text: t("am.oauthCancelled") }); refresh(); }
             },
-          }, "取消 OAuth"),
+          }, t("am.cancelOauth")),
         ),
         // ── 操作条 2：账号档 / 登出（右对齐） ──
         a.installed && h("div", { className: "am-actions is-end" },
           h("button", {
             className: "am-btn" + (accOpen === key ? " is-primary" : ""),
             onClick: () => setAccOpen(accOpen === key ? null : key),
-            title: "多账号备份 / 切换",
-          }, accOpen === key ? "收起账号档" : `账号档${accounts.length ? `（${accounts.length}）` : "…"}`),
+            title: t("am.accountsTip"),
+          }, accOpen === key ? t("am.accountsCollapse") : t("am.accountsBtn", { tail: accounts.length ? t("am.accountsBtnTail", { n: accounts.length }) : "…" })),
           h("button", {
             className: "am-btn" + (confirmLogout === key ? " is-danger" : ""),
             disabled: busy === `${key}:accounts-logout` || !hasContent,
-            title: hasContent
-              ? "清空本机当前登录凭据（自动先存 _auto-before-logout 保险档）"
-              : "当前无登录态可登出",
+            title: hasContent ? t("am.logoutTip") : t("am.nothingToLogout"),
             onClick: () => handleLogout(key),
-          }, confirmLogout === key ? "确认登出？" : "登出"),
+          }, confirmLogout === key ? t("am.confirmLogout") : t("am.logout")),
         ),
         // 流程错误（失败/超时）透传展示——等价退役的扩展内登录弹窗 error 行
         ext?.error && h("div", { className: "am-error" }, String(ext.error)),
         // URL 展示（A url-only 模式：ext.url 由聚合透传）
         ext?.url && h("div", { className: "am-url-line" },
           h("a", { className: "am-url", href: ext.url, target: "_blank", rel: "noreferrer" }, ext.url.slice(0, 90) + (ext.url.length > 90 ? "…" : "")),
-          h("button", { className: "am-btn is-ghost is-sm", onClick: () => { try { navigator.clipboard?.writeText(ext.url); } catch { /* 无剪贴板权限 */ } } }, "复制"),
+          h("button", { className: "am-btn is-ghost is-sm", onClick: () => { try { navigator.clipboard?.writeText(ext.url); } catch { /* no clipboard permission */ } } }, t("am.copy")),
         ),
         // codebuddy TUI OAuth 状态行
         isCb && a.tui?.tuiSid && h("div", { className: "am-tui-line" },
-          `OAuth ${a.tui.tuiState ?? "waiting"} · 终端会话 ${a.tui.tuiSid}`,
+          t("am.tuiLine", { state: a.tui.tuiState ?? "waiting", sid: a.tui.tuiSid }),
           h("button", {
             className: "am-btn is-sm",
             style: { marginLeft: 6 },
-            title: "在 aiti-cmd 终端面板中打开该会话（共享 sid）",
+            title: t("am.openCmdTip"),
             onClick: async () => {
               const okOpen = await openCmdTerminal(a.tui.tuiSid, "cbc-login");
-              if (!okOpen) setNotice({ ok: false, text: "未能打开 aiti-cmd 终端面板（未部署/未加载）" });
+              if (!okOpen) setNotice({ ok: false, text: t("am.noCmdPanel") });
             },
-          }, "打开终端"),
-          a.tui.tuiUrl && h("a", { href: a.tui.tuiUrl, target: "_blank", rel: "noreferrer" }, "打开授权页"),
+          }, t("am.openTerminal")),
+          a.tui.tuiUrl && h("a", { href: a.tui.tuiUrl, target: "_blank", rel: "noreferrer" }, t("am.openAuthPage")),
         ),
         // codebuddy apikey 表单
         isCb && keyForm === key && h(KeyForm, { agent: key, onDone: () => setKeyForm(null), call }),

@@ -1,7 +1,9 @@
 ---
 name: skill-manage
 title: AI 帮我新增/修改 skill
+title.en: "AI: add/modify a skill"
 placeholder: 描述你想加/改什么 skill（如：给 session-manager 加一个归档 30 天会话的 skill）…
+placeholder.en: "What skill to add/change (e.g. give session-manager a 30-day archive skill)…"
 outputs:
   format: json-obj
   schema:

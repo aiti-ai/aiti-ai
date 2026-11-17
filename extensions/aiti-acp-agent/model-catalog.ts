@@ -9,6 +9,10 @@
  *      优先级最高）。
  * 缓存：ctx.cacheDir/model-catalog.json，TTL 24h；session 源覆盖 cli/acp；cli 条目
  * 随版本变化失效。探测单飞（per-agent in-flight 锁）+ 全局并发上限 2。
+ * Negative cache (2026-11-16): a failed probe records fails[agent]=timestamp (TTL 1h); automatic
+ * refresh is suppressed during that window (manual refreshForce exempt) — unauthenticated backends
+ * fail deterministically, and without a negative cache every startup / lazy trigger would burn a
+ * full round of CLI spawns.
  *
  * 方案：docs/aiti-acp-model-catalog-startup-plan.md。
  */
@@ -29,9 +33,12 @@ export interface CatalogEntry {
 interface CatalogFile {
   v: 1;
   agents: Record<string, CatalogEntry>;
+  /** Negative cache: agent → last probe-failure timestamp (epoch ms); optional (older files without the field read fine). */
+  fails?: Record<string, number>;
 }
 
 export const CATALOG_TTL_MS = 24 * 3600 * 1000;
+export const CATALOG_FAIL_TTL_MS = 3600 * 1000;
 
 // ============================================================================
 // 磁盘缓存（fail-soft：坏 JSON / 不可写一律当缺失）
@@ -69,7 +76,7 @@ export class ModelCatalogStore {
     return true;
   }
 
-  /** 写入（合并规则：session 恒覆盖；cli/acp 不覆盖 session 既有条目）。 */
+  /** Write (merge rules: session always overwrites; cli/acp never overwrite existing session entries; a success clears the negative cache). */
   put(agent: string, entry: CatalogEntry): void {
     this.load();
     const prev = this.data.agents[agent];
@@ -77,6 +84,29 @@ export class ModelCatalogStore {
       return; // 会话实测最准，探测结果不回退它
     }
     this.data.agents[agent] = entry;
+    this.clearFail(agent);
+    this.persist();
+  }
+
+  /** Negative cache: record a probe failure (automatic refresh suppressed within the FAIL TTL; refreshForce exempt). */
+  markFail(agent: string, opts: { now?: number } = {}): void {
+    this.load();
+    (this.data.fails ??= {})[agent] = opts.now ?? Date.now();
+    this.persist();
+  }
+
+  /** Within the failure TTL = automatic probing suppressed (independent of fresh; manual force refresh ignores this). */
+  probeSuppressed(agent: string, opts: { now?: number } = {}): boolean {
+    this.load();
+    const at = this.data.fails?.[agent];
+    return typeof at === "number" && (opts.now ?? Date.now()) - at < CATALOG_FAIL_TTL_MS;
+  }
+
+  private clearFail(agent: string): void {
+    if (this.data.fails && agent in this.data.fails) delete this.data.fails[agent];
+  }
+
+  private persist(): void {
     try {
       mkdirSync(dirname(this.file), { recursive: true });
       const tmp = this.file + ".tmp";
@@ -122,7 +152,9 @@ export interface AgentProbeDesc {
 }
 
 export interface CatalogRefresher {
-  /** 启动全量刷新（后台）：跳过新鲜条目；失败静默。返回是否全部完成。 */
+  /** Full refresh (refresh each within the concurrency cap): fresh / negative-cached entries are
+   *  skipped; failures are silent. No automatic caller (startup no longer does a full pass since
+   *  2026-11-16; the catalog is fully lazy); kept for manual full-refresh scenarios. */
   refreshAll(): Promise<void>;
   /** 单 agent 刷新（TTL 内跳过）。 */
   refresh(agent: string): Promise<CatalogEntry | null>;
@@ -158,7 +190,9 @@ export function createCatalogRefresher(store: ModelCatalogStore, agents: () => A
     if (existing) return existing;
     const desc = agents().find((a) => a.name === name);
     if (!desc) return Promise.resolve(null);
-    if (!opts.force && store.isFresh(name, { cliVersion: undefined })) return Promise.resolve(store.get(name));
+    if (!opts.force && (store.isFresh(name, { cliVersion: undefined }) || store.probeSuppressed(name))) {
+      return Promise.resolve(store.get(name));
+    }
     const p = (async () => {
       try {
         // 版本判据仅在能取到时参与（isFresh 内部已处理 cli 源比较）
@@ -167,6 +201,8 @@ export function createCatalogRefresher(store: ModelCatalogStore, agents: () => A
           store.put(name, entry);
           return store.get(name);
         }
+        // probe failure → negative cache (no automatic retry within the FAIL TTL; refreshForce can still probe)
+        store.markFail(name);
         return store.get(name);
       } finally {
         flight.delete(name);

@@ -3,7 +3,7 @@
  * with jiti (TypeScript transpilation, same mechanism the pi TUI uses).
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "fs";
-import { join, resolve } from "path";
+import { dirname, join, resolve } from "path";
 import { pathToFileURL } from "url";
 import { createJiti } from "jiti";
 import { jitiCacheDir } from "./data-dir.ts";
@@ -14,15 +14,34 @@ import type { PiWebExtension } from "./types.ts";
 // provided by the host's node_modules — depend on the host rather than external
 // links. Same version and same instance as the app's own dependency (package.json
 // dependencies pin 0.85.x).
-// When Turbopack compiles the instrumentation hook, import.meta.dirname is
-// undefined (a known Next 16 pitfall), while next dev/start always run with the
-// project root as cwd — derive the node_modules location from cwd.
-const hostSdkDir = resolve(
-  import.meta.dirname ? join(import.meta.dirname, "..", "..") : process.cwd(),
-  "node_modules",
-  "@earendil-works",
-  "pi-coding-agent",
-);
+// Turbopack statically drops import.meta.dirname in some Next 16 server
+// chunks (compiles to undefined in published builds), so the SDK location
+// cannot be derived from the loader file's URL alone. Walk up from cwd
+// instead: repo/dev layouts run with cwd = project root (node_modules one
+// level up), while npm installs spawn next with cwd =
+// <installRoot>/node_modules/@aiti-ai/pi-web (bin/pi-web.js sets cwd: pkgDir),
+// so the SDK sits three levels up. A fixed depth guesses wrong for exactly
+// one of the two layouts; the walk-up covers both plus any future one.
+function findHostSdkDir(): string {
+  const starts: string[] = [];
+  if (import.meta.dirname) starts.push(join(import.meta.dirname, "..", ".."));
+  starts.push(process.cwd());
+  for (const start of starts) {
+    let dir = resolve(start);
+    for (let depth = 0; depth < 8; depth++) {
+      const candidate = join(dir, "node_modules", "@earendil-works", "pi-coding-agent");
+      if (existsSync(join(candidate, "package.json"))) return candidate;
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  }
+  // Nothing found — keep the legacy flat-layout guess so downstream
+  // existsSync() checks degrade the same way as before.
+  return resolve(process.cwd(), "node_modules", "@earendil-works", "pi-coding-agent");
+}
+
+const hostSdkDir = findHostSdkDir();
 
 const HOST_SDK_ID = "@earendil-works/pi-coding-agent";
 

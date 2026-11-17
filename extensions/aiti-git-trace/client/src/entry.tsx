@@ -11,6 +11,7 @@
  */
 import { __setCtx } from "./host-shim";
 import { seedDockDefault, declareDockZones, sidebarZoneOf } from "../../../_shared/ext-float-dock";
+import { dockIconDecl } from "../../../_shared/dock-icons";
 // 薄壳版：面板组件名保持不变（内部是懒加载包装），新增 requestForkDialog（用到才拉重 chunk）
 import { WatchToolbarButton, TimelineToolbarButton, TimelineComposerButton, WatchPanelSlot, WatchDockLeft, WatchDockRight, TimelineSlot, TimelineDockRight, TimelineDockLeft, ForkDialogSlot, BannerSlot, MessageBadge, installSessionService, requestForkDialog } from "./trace-app";
 import { TraceFilesRow } from "./trace-files-row";
@@ -27,12 +28,12 @@ export default function register(ctx: Record<string, any>) {
   declareDockZones("aiti-git-trace:timeline", ["right-panel", sidebarZoneOf("aiti-git-trace:timeline")], "right-panel");
   declareDockZones("aiti-git-trace:watch", [sidebarZoneOf("aiti-git-trace:watch"), "right-panel"], sidebarZoneOf("aiti-git-trace:watch"));
   ctx.registerItems?.("rightFileDock", [
-    { id: "timeline", render: TimelineDockRight, meta: { title: "时间线" } },
-    { id: "watch", render: WatchDockRight, meta: { title: "关注路径" } },
+    { id: "timeline", render: TimelineDockRight, meta: { title: "i18n:gt.timeline.short", icon: dockIconDecl("history") } },
+    { id: "watch", render: WatchDockRight, meta: { title: "i18n:gt.watch.short", icon: dockIconDecl("git-branch") } },
   ]);
   ctx.registerItems?.("sidebarExplorerDock", [
-    { id: "timeline", render: TimelineDockLeft, meta: { title: "时间线", priority: 3 } },
-    { id: "watch", render: WatchDockLeft, meta: { title: "关注路径", priority: 3 } },
+    { id: "timeline", render: TimelineDockLeft, meta: { title: "i18n:gt.timeline.short", priority: 3 } },
+    { id: "watch", render: WatchDockLeft, meta: { title: "i18n:gt.watch.short", priority: 3 } },
   ]);
 
   // 工具条独立入口：静态注册 + feature 门控（默认关）——宿主按 feature 统一显隐（关 → 顶栏行/⋯菜单/自定义面板都不进，
@@ -40,11 +41,11 @@ export default function register(ctx: Record<string, any>) {
   //   ⎇ 关注路径 → trace.watchUI（入口在时间线面板顶部）
   //   ⎇ 时间线   → trace.timelineUI（主入口在输入框下方控制行 composerTools 插槽）
   ctx.registerItems?.("toolbar", [
-    { id: "aiti-git-trace-watch", render: WatchToolbarButton, meta: { label: "关注路径", icon: "icons/git-branch.svg" }, feature: "trace.watchUI" },
-    { id: "aiti-git-trace-timeline", render: TimelineToolbarButton, meta: { label: "时间线", icon: "icons/git-commit-horizontal.svg" }, feature: "trace.timelineUI" },
+    { id: "aiti-git-trace-watch", render: WatchToolbarButton, meta: { label: "i18n:gt.watch.short", icon: "icons/git-branch.svg" }, feature: "trace.watchUI" },
+    { id: "aiti-git-trace-timeline", render: TimelineToolbarButton, meta: { label: "i18n:gt.timeline.short", icon: "icons/git-commit-horizontal.svg" }, feature: "trace.timelineUI" },
   ]);
   ctx.registerItems?.("composerTools", [
-    { id: "aiti-git-trace-timeline-entry", render: TimelineComposerButton, meta: { label: "时间线" } },
+    { id: "aiti-git-trace-timeline-entry", render: TimelineComposerButton, meta: { label: "i18n:gt.timeline.short" } },
   ]);
   ctx.registerItems?.("dialogs", [
     { id: "aiti-git-trace-watch-dialog", render: WatchPanelSlot },

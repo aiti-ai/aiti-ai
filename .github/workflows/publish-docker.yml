@@ -1,4 +1,4 @@
-# publish-docker.yml — Docker Hub publishing (aitiai/pi-web).
+# publish-docker.yml — Docker Hub + Aliyun ACR publishing (aitiai/pi-web).
 #
 # Trigger: workflow_dispatch (manual only — the auto-run on tag push is suspended,
 # like the other publish pipelines). Optional version tag input.
@@ -6,7 +6,9 @@
 # (docker/README.md → hub.docker.com/r/aitiai/pi-web overview).
 #
 # Artifacts: aitiai/pi-web:{core,full} + aitiai/pi-web:v<ver>-{core,full} + latest
+#             mirrored 1:1 to Aliyun ACR (registry.cn-hangzhou.aliyuncs.com/aiti-ai/pi-web)
 # Required secrets: DOCKERHUB_USERNAME (=aitiai), DOCKERHUB_TOKEN (hub.docker.com access token)
+#                   ALIYUN_ACR_USERNAME / ALIYUN_ACR_PASSWORD (Aliyun container registry account)
 #
 # Builds reuse docker/build.sh (the repo assembles its own staging context); the full image's FROM base is
 # resolved via the CORE_IMAGE alias (parameterized in build.sh; see docker/Dockerfile.full ARG CORE_IMAGE).
@@ -40,6 +42,11 @@ on:
         required: false
         default: false
         type: boolean
+      mirror_only:
+        description: "Only byte-faithfully mirror existing Hub tags to Aliyun ACR (skip gate + builds)"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -53,7 +60,7 @@ jobs:
   # deps (core/full dependency closure) from the npm registry — both must already
   # be published, otherwise fail fast with an actionable message.
   deps-on-registry:
-    if: ${{ inputs.readme_only != true }}
+    if: ${{ inputs.readme_only != true && inputs.mirror_only != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -84,7 +91,7 @@ jobs:
 
   build-push:
     needs: deps-on-registry
-    if: ${{ inputs.readme_only != true }}
+    if: ${{ inputs.readme_only != true && inputs.mirror_only != true }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -143,11 +150,89 @@ jobs:
           docker push "${IMAGE}:full"
           docker push "${IMAGE}:latest"
 
+      # Mirror the exact same images to Aliyun ACR (CN acceleration), byte-faithfully:
+      # buildx imagetools create copies the registry manifests verbatim (multi-arch list +
+      # provenance attestations included), so ACR digests match Docker Hub digests 1:1.
+      # Plain `docker tag`+`docker push` would re-serialize manifests in the classic image
+      # store and silently drift digests.
+      - name: Mirror to Aliyun ACR
+        env:
+          ACR_IMAGE: registry.cn-hangzhou.aliyuncs.com/aiti-ai/pi-web
+        run: |
+          printf '%s' "${{ secrets.ALIYUN_ACR_PASSWORD }}" | docker login registry.cn-hangzhou.aliyuncs.com \
+            --username "${{ secrets.ALIYUN_ACR_USERNAME }}" --password-stdin
+          mirror_ref() {
+            local ref="$1" src="$2" adigest hdigest attempt
+            # Resumable: skip when ACR already holds the byte-identical manifest
+            adigest=$(docker buildx imagetools inspect "${ACR_IMAGE}:${ref}" --raw 2>/dev/null | sha256sum | cut -d' ' -f1 || true)
+            hdigest=$(docker buildx imagetools inspect "${src}:${ref}" --raw 2>/dev/null | sha256sum | cut -d' ' -f1 || true)
+            if [ -n "$adigest" ] && [ "$adigest" = "$hdigest" ]; then
+              echo "skip ${ref}: ACR digest already matches Hub"
+              return 0
+            fi
+            # Cross-border blob streaming dies on transient stream errors — retry
+            for attempt in 1 2 3; do
+              echo "mirror ${ref}: attempt ${attempt}"
+              if docker buildx imagetools create -t "${ACR_IMAGE}:${ref}" "${src}:${ref}"; then return 0; fi
+              [ "$attempt" = 3 ] && return 1
+              sleep $((attempt * 30))
+            done
+          }
+          failed=""
+          for ref in "${{ steps.ver.outputs.version }}-core" "${{ steps.ver.outputs.version }}-full" core full latest; do
+            mirror_ref "$ref" "${IMAGE}" || failed="$failed $ref"
+          done
+          docker logout registry.cn-hangzhou.aliyuncs.com
+          if [ -n "$failed" ]; then echo "::error::ACR mirror failed tags:$failed"; exit 1; fi
+
       - name: Summary
         run: |
           echo "### Docker Hub 发布完成" >> "$GITHUB_STEP_SUMMARY"
           echo "- \`${IMAGE}:${{ steps.ver.outputs.version }}-core\` / \`-full\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- \`core\` / \`full\` / \`latest\`（rolling）" >> "$GITHUB_STEP_SUMMARY"
+          echo "- 阿里云镜像：\`registry.cn-hangzhou.aliyuncs.com/aiti-ai/pi-web\`（同 tag 已同步）" >> "$GITHUB_STEP_SUMMARY"
+
+  # Byte-faithful mirror of already-published Hub tags to ACR (no gate, no builds).
+  # Run with mirror_only=true + version_tag to backfill/repair ACR for any released
+  # version — e.g. versions published before the ACR mirror existed.
+  mirror-acr:
+    if: ${{ inputs.mirror_only == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Resolve version
+        id: ver
+        run: |
+          V="${{ inputs.version_tag }}"
+          [ -n "$V" ] || V="${GITHUB_REF_NAME}"
+          echo "version=${V}" >> "$GITHUB_OUTPUT"
+      - name: Mirror existing Hub tags to Aliyun ACR (byte-faithful)
+        env:
+          ACR_IMAGE: registry.cn-hangzhou.aliyuncs.com/aiti-ai/pi-web
+        run: |
+          printf '%s' "${{ secrets.ALIYUN_ACR_PASSWORD }}" | docker login registry.cn-hangzhou.aliyuncs.com \
+            --username "${{ secrets.ALIYUN_ACR_USERNAME }}" --password-stdin
+          mirror_ref() {
+            local ref="$1" src="aitiai/pi-web" adigest hdigest attempt
+            adigest=$(docker buildx imagetools inspect "${ACR_IMAGE}:${ref}" --raw 2>/dev/null | sha256sum | cut -d' ' -f1 || true)
+            hdigest=$(docker buildx imagetools inspect "${src}:${ref}" --raw 2>/dev/null | sha256sum | cut -d' ' -f1 || true)
+            if [ -n "$adigest" ] && [ "$adigest" = "$hdigest" ]; then
+              echo "skip ${ref}: ACR digest already matches Hub"
+              return 0
+            fi
+            for attempt in 1 2 3; do
+              echo "mirror ${ref}: attempt ${attempt}"
+              if docker buildx imagetools create -t "${ACR_IMAGE}:${ref}" "${src}:${ref}"; then return 0; fi
+              [ "$attempt" = 3 ] && return 1
+              sleep $((attempt * 30))
+            done
+          }
+          failed=""
+          for ref in "${{ steps.ver.outputs.version }}-core" "${{ steps.ver.outputs.version }}-full" core full latest; do
+            mirror_ref "$ref" || failed="$failed $ref"
+          done
+          docker logout registry.cn-hangzhou.aliyuncs.com
+          if [ -n "$failed" ]; then echo "::error::ACR mirror failed tags:$failed"; exit 1; fi
 
   # Hub overview sync (docker/README.md → hub.docker.com/r/aitiai/pi-web).
   # Independent of the image build (idempotent, no registry side effects), so it runs

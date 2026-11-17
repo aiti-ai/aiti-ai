@@ -174,3 +174,80 @@ test("ensureMaterialized: no bundle → false; already materialized → false (i
   // No bundle (import fails) → materialize returns false, no throw
   assert.equal(await ensureMaterialized("ext-ensure-no-bundle", () => null), false);
 });
+
+
+
+// ── [slow-flash fix] materialize-failure registry + declaredAllFailed ──
+// Failure signals are registered by materialize()/prefetch() so TakeoverSlot can
+// release the fallback deterministically instead of waiting out the ceiling timer.
+
+test("declaredAllFailed: no declarers / pending declarers → false", async () => {
+  const { registerDeclaredSlots, declaredAllFailed } = await import("../components/ext-client-loader.ts");
+  const SLOT = "test-slot-fail-none-unique";
+  assert.equal(declaredAllFailed(SLOT), false, "no declarers at all → not a failure verdict");
+  registerDeclaredSlots("ext-fail-none-a", [SLOT]);
+  assert.equal(declaredAllFailed(SLOT), false, "declarer still pending (never materialized) → not a failure verdict");
+});
+
+test("declaredAllFailed: contract-violation bundle (no register export) registers the failure", async () => {
+  const { setBootGraph, registerDeclaredSlots, materialize, declaredAllFailed } =
+    await import("../components/ext-client-loader.ts");
+  const SLOT = "test-slot-fail-contract-unique";
+  const EXT = "ext-fail-contract-unique";
+  registerDeclaredSlots(EXT, [SLOT]);
+  // data: URL passes through withBaseUrl untouched (empty basePath) and loads fine,
+  // but exports no default/register → contract violation → deterministic failure.
+  setBootGraph({ rev: "c1", entries: [{ id: EXT, url: "data:text/javascript;base64,ZXhwb3J0IGNvbnN0IHg9MQ==", rev: "c1" }] });
+  const ok = await materialize(EXT, () => null);
+  assert.equal(ok, false);
+  assert.equal(declaredAllFailed(SLOT), true, "sole declarer failed deterministically (no register export)");
+});
+
+test("declaredAllFailed: bundle import failure registers the failure (bust retry exhausted)", async () => {
+  const { setBootGraph, registerDeclaredSlots, materialize, declaredAllFailed } =
+    await import("../components/ext-client-loader.ts");
+  const SLOT = "test-slot-fail-fetch-unique";
+  const EXT = "ext-fail-fetch-unique";
+  registerDeclaredSlots(EXT, [SLOT]);
+  // Payload is a syntax error: the first import fails, the negative-cache-busting
+  // retry (data payload is not query-aware) fails too → outer catch → registered.
+  setBootGraph({ rev: "f1", entries: [{ id: EXT, url: "data:text/javascript;base64,c3ludGF4KA==", rev: "f1" }] });
+  const ok = await materialize(EXT, () => null);
+  assert.equal(ok, false);
+  assert.equal(declaredAllFailed(SLOT), true, "import failure (both attempts) is a deterministic failure");
+});
+
+test("declaredAllFailed: mixed success/pending → false (only a total failure releases)", async () => {
+  const { setBootGraph, registerDeclaredSlots, materialize, declaredAllFailed } =
+    await import("../components/ext-client-loader.ts");
+  const SLOT = "test-slot-fail-mixed-unique";
+  const BAD = "ext-fail-mixed-bad-unique";
+  const GOOD = "ext-fail-mixed-good-unique";
+  registerDeclaredSlots(BAD, [SLOT]);
+  registerDeclaredSlots(GOOD, [SLOT]);
+  setBootGraph({ rev: "m1", entries: [
+    { id: BAD, url: "data:text/javascript;base64,ZXhwb3J0IGNvbnN0IHg9MQ==", rev: "m1" },
+    { id: GOOD, url: "data:text/javascript;base64,ZXhwb3J0IGRlZmF1bHQgZnVuY3Rpb24gcmVnaXN0ZXIoKXtnbG9iYWxUaGlzLl9fc2xvd0ZsYXNoR29vZD0oZ2xvYmFsVGhpcy5fX3Nsb3dGbGFzaEdvb2R8fDApKzF9", rev: "m1" },
+  ] });
+  await materialize(BAD, () => null); // BAD fails deterministically
+  assert.equal(await materialize(GOOD, () => null), true, "GOOD registers");
+  assert.equal(declaredAllFailed(SLOT), false, "GOOD succeeded → held (not all failed)");
+});
+
+test("declaredAllFailed: invalidate (reload) forgets the failure and a fixed bundle succeeds", async () => {
+  const { setBootGraph, registerDeclaredSlots, materialize, declaredAllFailed, invalidate } =
+    await import("../components/ext-client-loader.ts");
+  const SLOT = "test-slot-fail-retry-unique";
+  const EXT = "ext-fail-retry-unique";
+  registerDeclaredSlots(EXT, [SLOT]);
+  setBootGraph({ rev: "r1", entries: [{ id: EXT, url: "data:text/javascript;base64,ZXhwb3J0IGNvbnN0IHg9MQ==", rev: "r1" }] });
+  await materialize(EXT, () => null); // contract violation → failure registered
+  assert.equal(declaredAllFailed(SLOT), true);
+  // New graph rev ships a fixed bundle → invalidate (reload) grants a retry.
+  setBootGraph({ rev: "r2", entries: [{ id: EXT, url: "data:text/javascript;base64,ZXhwb3J0IGRlZmF1bHQgZnVuY3Rpb24gcmVnaXN0ZXIoKXt9", rev: "r2" }] });
+  invalidate(EXT);
+  assert.equal(declaredAllFailed(SLOT), false, "invalidate forgets the failure → retry granted");
+  const ok = await materialize(EXT, () => null);
+  assert.equal(ok, true, "retry with the fixed bundle registers");
+  assert.equal(declaredAllFailed(SLOT), false, "success keeps the slot held (no false release)");
+});

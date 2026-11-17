@@ -446,11 +446,23 @@ const recycleApi = createSessionRecycleApi({
 export default {
   id: "aiti-attach-agent",
   name: "Session Attach (socket 附着后端)",
-  version: "0.1.0",
   icon: "🔌",
 
   // G1：aiti_bridge_req 转发的桥工具白名单（缺省只读子集；* = 全量）
   features: [hostToolsAllowFeature()],
+
+
+  ui: {
+    // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
+    i18n: {
+      "zh-CN": {
+        "ext.displayName": "附着会话后端",
+      },
+      en: {
+        "ext.displayName": "Attach Session Backend",
+      },
+    },
+  },
 
   server: {
     startup(ctx: {

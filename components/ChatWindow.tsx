@@ -141,12 +141,15 @@ interface Props {
  *  local UI clock that refreshes every second, starting at this turn's agent_start
  *  (useAgentSession.runStartedAtRef); display logic only, no state polling/requests. */
 function ElapsedBadge({ startedAt }: { startedAt: number }) {
-  const [, setTick] = useState(0);
+  // Pure render: the ticking time lives in state, updated by the interval (react-hooks/purity —
+  // Date.now() during render is impure; same visible behavior).
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    const timer = setInterval(() => setTick((n) => n + 1), 1000);
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
-  const secs = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+  const secs = Math.max(0, Math.round((now - startedAt) / 1000));
   const label = secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m${String(secs % 60).padStart(2, "0")}s`;
   return <span style={{ fontVariantNumeric: "tabular-nums" }}>({label})</span>;
 }
@@ -468,6 +471,24 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   const handleEditContent = useCallback((message: UserMessage) => {
     chatInputRef?.current?.replaceMessage(message);
   }, [chatInputRef]);
+
+  // "问 AI" on an error/warning notice: prefill the composer with a prompt that
+  // quotes the notice verbatim — these UI-only notices never reach the model
+  // (extension_ui_request notify goes to the page, not the conversation), so the
+  // quoted text is the AI's only window into what the user is asking about.
+  // Prefill only, never auto-send; a non-empty composer gets the prompt appended
+  // so an in-progress draft survives.
+  const askAiAboutNotice = useCallback((message: string) => {
+    const prefill = t("chat.noticeAskAiPrompt", { message });
+    const input = chatInputRef?.current;
+    if (!input) return;
+    if (input.hasInput()) {
+      input.appendText(prefill);
+    } else {
+      input.setText(prefill);
+    }
+    input.focus();
+  }, [chatInputRef, t]);
 
   // Spacer heights measured/derived below (bottom composer + prompt anchor).
   // Reflected up-front so they can be passed into useAgentSession for
@@ -821,7 +842,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       // (in session order) — the extension uses it to scope the rollback range precisely
       // (including the edited turn), not just ops after the entryId.
       // Find M's position in entryIds, then collect the role==="user" entryIds after it.
-      let cutUserEntryIds: string[] = [];
+      const cutUserEntryIds: string[] = [];
       const mi = entryIds.indexOf(entryId);
       if (mi >= 0) {
         for (let i = mi; i < messages.length; i++) {
@@ -1750,7 +1771,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
           pointerEvents: "none",
         }}
       >
-        <NoticeShelf notices={notices} floating onPauseChange={setNoticePaused} />
+        <NoticeShelf notices={notices} floating onPauseChange={setNoticePaused} onAskAi={askAiAboutNotice} />
       </div>
 
       {/* Session request card takeover seam (agent-capability UI moved out of core):
@@ -1867,7 +1888,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                     onOpenSubagent={onOpenSubagent}
                     entryId={entryIds[idx]}
                     searchBlock={entryIds[idx] === pendingSearchScroll?.entryId ? searchBlock : undefined}
-                    onFork={bashRunning || isNew || !sessionCap("fork") ? undefined : forkFromMessage}
+                    onFork={isNew || !sessionCap("fork") ? undefined : forkFromMessage}
+                    forkBashRunning={bashRunning}
                     forking={forkingEntryId === entryIds[idx]}
                     onNavigate={isNew ? undefined : handleNavigate}
                     prevAssistantEntryId={isNew ? undefined : prevAssistantEntryId}
@@ -1888,14 +1910,51 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                     compactError={options.recoverTruncation ? compactError : undefined}
                   />
                 );
-                if (!isVisible || currentRefIdx === undefined) return view;
+                // Edit-from-here veil (plan A, purely visual preview): while a mark is
+                // pending, everything after the marked message gets dimmed — sending
+                // rewinds the session and moves those messages out of the current
+                // branch. pointer-events stay untouched (re-marking / navigation /
+                // copy keep working); the veil disappears by itself once the mark is
+                // sent or cancelled (derived from editFromHerePending, no cleanup).
+                const veiled = editFromHereMarkIdx >= 0 && idx > editFromHereMarkIdx;
+                let renderedView: ReactNode = view;
+                if (veiled && renderedView != null) {
+                  renderedView = (
+                    <div style={{ position: "relative", opacity: 0.55, transition: "opacity 0.15s" }}>
+                      {renderedView}
+                      <div aria-hidden style={{ position: "absolute", inset: 0, background: "rgba(127,127,127,0.10)", pointerEvents: "none" }} />
+                    </div>
+                  );
+                }
+                if (editFromHereMarkIdx >= 0 && idx === editFromHereMarkIdx + 1 && renderedView != null) {
+                  renderedView = (
+                    <>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 12px", margin: "6px 0", borderRadius: 6, background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.22)", fontSize: 11, color: "var(--text-dim)" }}>
+                        <span style={{ flex: 1 }}>{t("chat.editHereVeilHint")}</span>
+                        <button
+                          type="button"
+                          onClick={handleCancelEditFromHere}
+                          title={t("i18n.editFromHereCancelTitle")}
+                          style={{ display: "flex", alignItems: "center", padding: "3px 8px", height: 22, background: "none", border: "none", borderRadius: 5, color: "var(--accent)", cursor: "pointer", fontSize: 11, fontWeight: 400, whiteSpace: "nowrap" }}
+                        >
+                          {t("i18n.editFromHereCancel")}
+                        </button>
+                      </div>
+                      {renderedView}
+                    </>
+                  );
+                }
+                if (!isVisible || currentRefIdx === undefined) return renderedView;
                 return (
                   <div key={`${keyPrefix}-${messageKey}`} data-entry-id={entryIds[idx]} data-chat-msg-role={msg.role} ref={options.attachRef === false ? undefined : attachVisibleRef(idx, currentRefIdx)} style={{ contentVisibility: "auto", containIntrinsicSize: "auto 160px" } as React.CSSProperties}>
-                    {view}
+                    {renderedView}
                   </div>
                 );
               };
 
+              // Edit-from-here veil scope: position of the marked message within the
+              // rendered history; everything after it is preview-dimmed (see renderMessage).
+              const editFromHereMarkIdx = editFromHerePending ? entryIds.indexOf(editFromHerePending.entryId) : -1;
               const rendered: ReactNode[] = [];
               for (let idx = 0; idx < messages.length;) {
                 const msg = messages[idx];
@@ -2270,7 +2329,13 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
 
       
 
-      <div ref={bottomComposerRef} className="relative flex min-h-0 flex-col">
+      {/* shrink-0 on the welcome page only: the composer must never be flex-squeezed.
+          With a multi-line textarea (auto-grow up to 200px) in a short viewport the old
+          shrinkable container got compressed while the textarea kept its height and
+          overflowed over the widget zone below it (measured 139px overlap at 390x420,
+          2026-11-15). Session view keeps the old behavior (compact/stacked + bottomMode
+          folding already handle short viewports there). */}
+      <div ref={bottomComposerRef} className={`relative flex min-h-0 flex-col${isEmptyNew ? " shrink-0" : ""}`}>
         {!isEmptyNew && (
           <div
             style={{
@@ -2478,7 +2543,8 @@ const NOTICE_TEXT_PADDING_Y_PX = (NOTICE_MIN_HEIGHT_PX - 2 - NOTICE_LINE_BOX_PX)
 const NOTICE_MAX_HEIGHT_PX = 500;
 const NOTICE_TEXT_MAX_HEIGHT_PX = NOTICE_MAX_HEIGHT_PX - 2;
 
-function NoticeShelf({ notices, floating = false, align = "left", onPauseChange }: { notices: NoticeItem[]; floating?: boolean; align?: "left" | "right"; onPauseChange?: (id: string | null) => void }) {
+function NoticeShelf({ notices, floating = false, align = "left", onPauseChange, onAskAi }: { notices: NoticeItem[]; floating?: boolean; align?: "left" | "right"; onPauseChange?: (id: string | null) => void; onAskAi?: (message: string) => void }) {
+  const { t } = useI18n();
   if (notices.length === 0) return null;
   return (
     <div
@@ -2596,6 +2662,31 @@ function NoticeShelf({ notices, floating = false, align = "left", onPauseChange 
                 </a>
               ) : piece.text)}</Fragment>)}
             </span>
+            {(notice.type === "error" || notice.type === "warning") && onAskAi && (
+              <button
+                type="button"
+                onClick={() => onAskAi(notice.message)}
+                title={t("chat.noticeAskAiTitle")}
+                style={{
+                  flexShrink: 0,
+                  alignSelf: "flex-start",
+                  // Optically centre on the first text line: the compact button is
+                  // ~22px tall against the 21px line box, so it starts a hair above it.
+                  marginTop: NOTICE_TEXT_PADDING_Y_PX - 1,
+                  padding: "2px 10px",
+                  fontSize: 12,
+                  lineHeight: 1.5,
+                  borderRadius: 999,
+                  border: "1px solid color-mix(in srgb, var(--border) 80%, transparent)",
+                  background: "color-mix(in srgb, var(--bg) 90%, var(--accent) 10%)",
+                  color: "var(--accent)",
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {t("chat.noticeAskAi")}
+              </button>
+            )}
           </div>
         );
       })}

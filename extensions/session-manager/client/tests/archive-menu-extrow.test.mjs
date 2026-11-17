@@ -73,6 +73,7 @@ export const deleteLiveSession = async () => null;
 export const hideExtSession = async () => true;
 export const markPendingRemoval = () => {};
 export const clearPendingRemoval = () => {};
+export function beginOptimisticRemoval() { return () => {}; }
 `;
 const CONFIRM_STUB = `export function showConfirm() {}\n`;
 const HELPERS_STUB = `export function ensureReadability(c) { return c; }\nexport const SIc = () => null;\n`;

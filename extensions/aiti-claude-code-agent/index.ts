@@ -1039,6 +1039,121 @@ function which(bin: string): string | null {
 
 let registered: string[] = [];
 
+// ── Backend scan (shared by startup + rescanBackends) ─────────────────────
+// Probe + register pass over the CC family members — unconditional
+// registration: a missing CLI still registers the entry (available:false +
+// installHint, the dropdown greys it out); re-running the scan flips the
+// snapshot (POST /api/session-backends/rescan, host-invoked after boot).
+type CcScanSlot = {
+  register(provider: {
+    type: string;
+    label: string;
+    agentKey?: string;
+    priority?: number;
+    maxCapabilities: SessionCapabilitiesLike;
+    available?: boolean;
+    installHint?: string;
+    listModels?: () => Promise<Array<{ id: string; provider: string; label?: string }>>;
+    listProfiles?: () => Promise<Array<{ name: string; path: string }>>;
+    createSession(options: {
+      sessionId?: string;
+      cwd?: string;
+      extraArgs?: string[];
+      env?: Record<string, string>;
+      bin?: string;
+      permissionMode?: string;
+    }): Promise<ClaudeCodeHandle>;
+  }): string;
+};
+
+function scanCcBackends(
+  slot: CcScanSlot,
+  provide?: <T>(key: string, impl: T) => () => void,
+): { registered: string[]; unavailable: string[] } {
+  const nowRegistered: string[] = [];
+  const unavailable: string[] = [];
+  for (const member of FAMILY) {
+    const bin = which(member.bin);
+    const key = slot.register({
+      type: member.name,
+      label: member.label,
+      agentKey: member.agentKey,
+      priority: 10,
+      maxCapabilities: capsFor(member),
+      // Availability snapshot: false = CLI missing → dropdown entry greyed out;
+      // refreshed on rescan.
+      ...(bin ? {} : { available: false as const, installHint: "claude CLI (npm i -g @anthropic-ai/claude-code)" }),
+      // 静态目录（新建页选后端时给选择器供数据；无会话即可取）——上次使用的模型置顶，
+      // 前端默认选中它（list[0]），新建会话即默认该 agent 上次使用的模型
+      listModels: async () => withLastUsedFirst(await claudeCodeCatalog(), (await readAgentLastUsedModel("claude"))?.id),
+      // cc-switch 档案清单（~/.claude/<name>.json；内容含凭证不出服务端）
+      ...(member.profilesDir
+        ? {
+            listProfiles: async () => {
+              const RESERVED = new Set([
+                "settings.json", "auth.json", ".credentials.json", "backup.json",
+                "stats-cache.json", "config.json", "statsig.json", "usage.json",
+                "todos.json", "ide-lock.json",
+              ]);
+              const dir = `${process.env.HOME ?? process.env.USERPROFILE}/${member.profilesDir}`;
+              try {
+                const files = await (await import("node:fs/promises")).readdir(dir);
+                return files
+                  .filter((f) => f.endsWith(".json") && !f.startsWith(".") && !RESERVED.has(f))
+                  .map((f) => ({ name: f.replace(/\.json$/, ""), path: `${dir}/${f}` }));
+              } catch {
+                return [];
+              }
+            },
+          }
+        : {}),
+      // 冷恢复 cwd（2026-09-16）：真实历史 jsonl 按会话原 directory 存放，resume 的
+      // cwd 也应回到原目录。但原目录可能已删（项目清理）——spawn cwd 必须存在（否则
+      // ENOENT 打不开会话，比空白更糟），此时 spawn 落显式/兜底 cwd，历史回放仍按
+      // 原目录找 jsonl（historyCwd 与 spawn cwd 解耦）。
+      createSession: async (options) => {
+        let cwd = options.cwd;
+        let historyCwd: string | undefined;
+        if (!cwd && options.sessionId) {
+          const restored = await restoredCwdFor(options.sessionId);
+          if (restored) {
+            if (existsSync(restored)) cwd = restored;
+            else historyCwd = restored;
+          }
+        }
+        return ClaudeCodeHandle.start({
+          ...options,
+          ...(cwd ? { cwd } : {}),
+          ...(historyCwd ? { historyCwd } : {}),
+          bin: member.bin,
+          caps: capsFor(member),
+        });
+      },
+    });
+    if (bin) {
+      nowRegistered.push(key);
+    } else {
+      unavailable.push(key); // 未安装 → 条目常驻但灰显（装机后 rescan 自动点亮）
+    }
+  }
+  registered = nowRegistered;
+  // P2 协议委托：向 aiti-custom-agent 暴露 launch 服务（成员的启动包装 → 本扩展完整协议会话）。
+  // 契约最小化：agentKey + capabilities + listModels + createSessionFromLaunch(launch, options)。
+  const primary = FAMILY.find((m) => which(m.bin)) ?? FAMILY[0];
+  provide?.("aiti-claude-code-agent.launch", {
+    agentKey: primary.agentKey,
+    capabilities: capsFor(primary),
+    listModels: async () => withLastUsedFirst(await claudeCodeCatalog(), (await readAgentLastUsedModel("claude"))?.id),
+    createSessionFromLaunch: (launch: LaunchOverride, options: Record<string, unknown>) =>
+      ClaudeCodeHandle.start({
+        ...(options as Parameters<typeof ClaudeCodeHandle.start>[0]),
+        launchOverride: launch,
+        caps: capsFor(primary),
+      }),
+  });
+  return { registered: nowRegistered, unavailable };
+}
+
 /** configDir 兑底（宿主 serverContext 恒带 configDir；按 demo 约定自拼，仅防御性）。 */
 function extDataDir(): string {
   const env = process.env.PI_WEB_DATA_DIR;
@@ -1252,7 +1367,6 @@ async function claudeAuthReady(): Promise<boolean> {
 export default {
   id: "aiti-claude-code-agent",
   name: "Claude Code (resume)",
-  version: "0.1.0",
   icon: "🟣",
   // 受控登录统一弹窗（零构建原生 h() client；client/ 下两文件随 deploy 拷贝）
   // 静态插入点声明（与 client registerItems 的 id 一一对应）
@@ -1314,64 +1428,10 @@ export default {
       });
       loginApi = mountControlledLoginApi(login);
       loginCtl = login;
-      for (const member of FAMILY) {
-        if (!which(member.bin)) continue; // 未安装 → 不注册（装机才接）
-        const key = ctx.sessionProviders.register({
-          type: member.name,
-          label: member.label,
-          agentKey: member.agentKey,
-          priority: 10,
-          maxCapabilities: capsFor(member),
-          // 静态目录（新建页选后端时给选择器供数据；无会话即可取）——上次使用的模型置顶，
-          // 前端默认选中它（list[0]），新建会话即默认该 agent 上次使用的模型
-          listModels: async () => withLastUsedFirst(await claudeCodeCatalog(), (await readAgentLastUsedModel("claude"))?.id),
-          // cc-switch 档案清单（~/.claude/<name>.json；内容含凭证不出服务端）
-          ...(member.profilesDir
-            ? {
-                listProfiles: async () => {
-                  const RESERVED = new Set([
-                    "settings.json", "auth.json", ".credentials.json", "backup.json",
-                    "stats-cache.json", "config.json", "statsig.json", "usage.json",
-                    "todos.json", "ide-lock.json",
-                  ]);
-                  const dir = `${process.env.HOME ?? process.env.USERPROFILE}/${member.profilesDir}`;
-                  try {
-                    const files = await (await import("node:fs/promises")).readdir(dir);
-                    return files
-                      .filter((f) => f.endsWith(".json") && !f.startsWith(".") && !RESERVED.has(f))
-                      .map((f) => ({ name: f.replace(/\.json$/, ""), path: `${dir}/${f}` }));
-                  } catch {
-                    return [];
-                  }
-                },
-              }
-            : {}),
-          // 冷恢复 cwd（2026-09-16）：真实历史 jsonl 按会话原 directory 存放，resume 的
-          // cwd 也应回到原目录。但原目录可能已删（项目清理）——spawn cwd 必须存在（否则
-          // ENOENT 打不开会话，比空白更糟），此时 spawn 落显式/兜底 cwd，历史回放仍按
-          // 原目录找 jsonl（historyCwd 与 spawn cwd 解耦）。
-          createSession: async (options) => {
-            let cwd = options.cwd;
-            let historyCwd: string | undefined;
-            if (!cwd && options.sessionId) {
-              const restored = await restoredCwdFor(options.sessionId);
-              if (restored) {
-                if (existsSync(restored)) cwd = restored;
-                else historyCwd = restored;
-              }
-            }
-            return ClaudeCodeHandle.start({
-              ...options,
-              ...(cwd ? { cwd } : {}),
-              ...(historyCwd ? { historyCwd } : {}),
-              bin: member.bin,
-              caps: capsFor(member),
-            });
-          },
-        });
-        registered.push(key);
-      }
-      console.log(`[aiti-claude-code-agent] registered family members: ${registered.join(", ") || "(none on PATH)"}`);
+      // 家族成员探测+注册+launch 服务（可重入；装机后无需重启，经 rescanBackends 重扫）
+      const ccScan = scanCcBackends(ctx.sessionProviders, ctx.services?.provide);
+      console.log(`[aiti-claude-code-agent] registered family members: ${ccScan.registered.join(", ") || "(none on PATH)"}` +
+        (ccScan.unavailable.length ? ` (not installed, greyed out: ${ccScan.unavailable.join(", ")})` : ""));
       // agent 描述符：agent 管理面（aiti-agent-manager）动态发现用——manager 不写死各家
       ctx.services?.provide?.("aiti-claude-code-agent.agent", {
         agent: "claude",
@@ -1391,21 +1451,19 @@ export default {
           { key: "claude-oauth", label: "OAuth 凭据", path: join(c.home, ".claude", ".credentials.json") },
         ],
       });
-      // P2 协议委托：向 aiti-custom-agent 暴露 launch 服务（成员的启动包装 → 本扩展完整协议会话）。
-      // 契约最小化：agentKey + capabilities + listModels + createSessionFromLaunch(launch, options)。
-      const primary = FAMILY.find((m) => which(m.bin)) ?? FAMILY[0];
-      ctx.services?.provide?.("aiti-claude-code-agent.launch", {
-        agentKey: primary.agentKey,
-        capabilities: capsFor(primary),
-        listModels: async () => withLastUsedFirst(await claudeCodeCatalog(), (await readAgentLastUsedModel("claude"))?.id),
-        createSessionFromLaunch: (launch: LaunchOverride, options: Record<string, unknown>) =>
-          ClaudeCodeHandle.start({
-            ...(options as Parameters<typeof ClaudeCodeHandle.start>[0]),
-            launchOverride: launch,
-            caps: capsFor(primary),
-          }),
-      });
-      console.log("[aiti-claude-code-agent] launch service provided: aiti-claude-code-agent.launch");
+      // P2 协议委托 launch 服务已并入 scanCcBackends（rescan 重扫时同样刷新）
+    },
+
+    /** Backend rescan (POST /api/session-backends/rescan): re-run the probe pass —
+     *  CLIs installed after host boot light up without a restart; missing ones stay
+     *  greyed out with the install hint. */
+    rescanBackends(ctx: {
+      sessionProviders: CcScanSlot;
+      services?: { provide<T>(key: string, impl: T): () => void };
+    }) {
+      const r = scanCcBackends(ctx.sessionProviders, ctx.services?.provide);
+      console.log(`[aiti-claude-code-agent] rescan: ${r.registered.length} available / ${r.unavailable.length} not installed`);
+      return r;
     },
 
     /** 受控登录 API：POST /login/start · GET /login/status · POST /login/cancel · POST /login/submit（paste 模式）+ 会话 recycle。 */

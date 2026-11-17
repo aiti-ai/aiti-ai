@@ -17,13 +17,13 @@ export default function register(ctx: Record<string, unknown>) {
 
   ctx.registerItems?.("dialogs", [{ id: "ui-env-dialog", render: UiEnvDialog }]);
   // aiti-float dock v3（P3 批）：右栏可选（保守无 default，open 默认仍浮窗）
-  ctx.registerItems?.("rightFileDock", [{ id: "panel", render: UiEnvDockFace, meta: { title: "显示环境" } }]);
+  ctx.registerItems?.("rightFileDock", [{ id: "panel", render: UiEnvDockFace, meta: { title: "i18n:uiEnv.open" } }]);
   // 懒加载 v2 两段式：声明式条目（无 render）
   ctx.registerItems?.("toolbar", [{
     id: "ui-env-toolbar",
     meta: {
-      label: "显示环境",
-      title: "UI 环境管理：桌面/无头虚拟屏 + VNC-on-web",
+      label: "i18n:uiEnv.open",
+      title: "i18n:uiEnv.toolbarTitle",
       icon: "icons/monitor.svg",
       onClick: () => togglePanelFromToolbar(),
     },

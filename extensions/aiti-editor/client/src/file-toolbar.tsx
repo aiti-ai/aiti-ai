@@ -8,18 +8,23 @@
  * 小屏收敛：顶栏宽度不足（ResizeObserver 实测 < COMPACT_AT）时进入 compact 态——
  * ‹› 遍历/计数/⬇/↗/类型·大小 标签全部收进 ⋯ 菜单（‹› 变「上一个/下一个文件」菜单项），
  * 只留 状态点 + 路径 + @ + 插槽（保存/模式切换）+ ⋯；@ 是最高优先级动作恒留外面。
- * 更小屏（< MODE_DROPDOWN_AT）：modes 模式切换（编辑/分栏/预览）从内联 tabs 变下拉，进一步省空间。
+ * modes 模式切换（编辑/分栏/预览）默认内联 tabs；空间不够时才变下拉——判据用弹性占位的实测宽度
+ * （= 顶栏剩余空间，天然涵盖 git 徽标/保存按钮/信息位等真实占用），带滞回防抖。
  */
 import { useState, useEffect, useRef } from "react";
-import { extSvc } from "./host-shim";
+import { extSvc, t } from "./host-shim.ts";
 import { dismissOnBack } from "../../../_shared/overlay-back-client";
 
 export type MenuAction = { label: string; title?: string; /** 可选图标（ReactNode，如 aiti-git-review 的统一 GrEyeIcon）；渲染在文案左侧 */ icon?: any; onClick: () => void };
 
 /** 顶栏宽度低于该值（px）判定为小屏 compact 态：次要按钮收进 ⋯ 菜单 */
 const COMPACT_AT = 620;
-/** 顶栏宽度低于该值（px）：modes 模式切换从内联 tabs 变下拉（很小屏进一步省空间） */
-const MODE_DROPDOWN_AT = 500;
+/** modes 模式切换内联↔下拉的空间判据（px，读弹性占位宽度）：
+ *  下拉→内联：占位 ≥ MODE_INLINE_NEED（≈ 内联 tabs 比下拉钮多占的 ~90px + 余量，切换后仍留正空隙）；
+ *  内联→下拉：占位被压到 minWidth(8) 附近（≤ MODE_INLINE_SQUEEZED）= 内容真挤不下。
+ *  两阈值间隔大于切换带来的宽度差 → 滞回，来回拖拽不会抖动。 */
+const MODE_INLINE_NEED = 114;
+const MODE_INLINE_SQUEEZED = 10;
 
 /** 终端图标（> _ 线稿）；与 aiti-folder 菜单图标体系对齐 */
 function TerminalIcon() {
@@ -47,6 +52,8 @@ export const MiMove = mkMenuIcon(() => <><polyline points="5 9 2 12 5 15"/><poly
 export const MiFolder = mkMenuIcon(() => <><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></>);
 export const MiChevronL = mkMenuIcon(() => <><polyline points="15 18 9 12 15 6"/></>);
 export const MiChevronR = mkMenuIcon(() => <><polyline points="9 18 15 12 9 6"/></>);
+// 🔊 Read the current file aloud (aiti-speek read entry; same shape as lucide volume-2)
+export const MiVolume = mkMenuIcon(() => <><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a9 9 0 0 1 0 14"/></>);
 export const MiFileText = mkMenuIcon(() => <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></>);
 export const MiPin = mkMenuIcon(() => <><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></>);
 export const MiX = mkMenuIcon(() => <><path d="M18 6 6 18"/><path d="m6 6 12 12"/></>);
@@ -56,6 +63,8 @@ export const MiCloseAll = mkMenuIcon(() => <><circle cx="12" cy="12" r="10"/><pa
 export const MiSave = mkMenuIcon(() => <><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></>);
 export const MiSaveAs = mkMenuIcon(() => <><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><line x1="12" y1="16" x2="12" y2="10"/></>);
 export const MiRefresh = mkMenuIcon(() => <><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></>);
+// 钉住已钉态（lucide pin-off：图钉 + 斜删除线——与 aiti-folder MiPinOff 同形，保持图钉基底不用 ✓）
+export const MiPinOff = mkMenuIcon(() => <><line x1="12" y1="17" x2="12" y2="22"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16h14v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/><line x1="2" y1="2" x2="22" y2="22"/></>);
 
 const S: Record<string, any> = {
   bar: { display: "flex", alignItems: "center", gap: 8, padding: "5px 12px",
@@ -79,7 +88,7 @@ export function FileToolbar(props: {
   notice?: { kind: string; text: string } | null;
   /** 左侧插槽：静态自定义元素（模式切换请用 modes——小屏自动变下拉） */
   leading?: any;
-  /** 模式切换（markdown 编辑/分栏/预览等）：普通宽度渲染内联 tabs，很小屏（< MODE_DROPDOWN_AT）自动变下拉（当前项 ✓）。
+  /** 模式切换（markdown 编辑/分栏/预览等）：空间足够时渲染内联 tabs，不够时自动变下拉（当前项 ✓）。
    *  item.disabled = 禁用态（如无 edit 能力时「编辑」项），disabledTitle 替代 title 说明禁用原因。 */
   modes?: { items: { label: string; value: string; title?: string; disabled?: boolean; disabledTitle?: string }[]; value: string; onChange: (v: string) => void };
   /** 「打开方式」（M0 多编辑器仲裁，§1.4 位置 A）：命中队列全列；行点击 = 仅本次切换，
@@ -137,9 +146,18 @@ export function FileToolbar(props: {
   closeActions?: { left?: () => void; self?: () => void; right?: () => void; all?: () => void };
   /** 打开终端（当前文件所在目录；Unix=bash / Windows=PowerShell）；顶栏快捷按钮 + ⋯ 菜单项，compact 收进菜单 */
   onTerminal?: () => void;
+  /** 🔊 Read the current file aloud (aiti-speek; always-on semantics guaranteed by the caller: when
+   *  speek is not installed, the callback guides the install).
+   *  The ⋯ menu "browse" row's render condition loosened to hasSibs || onSpeak (single file without
+   *  a list still gets a read button). */
+  onSpeak?: () => void;
+  /** 钉住动作（2026-11-24 菜单单行化：从 menuTop 文字项移入 ⋯ 窗口图标排）；
+   *  null/缺省 = 不渲染钉住钮（dock face 态无宿主 tab 钉住语义）。 */
+  pin?: { isPinned: () => boolean; toggle: () => void } | null;
 }) {
   const { filePath, dot, nav, notice, leading, modes, openWith, about, onSave, onSaveAs, onMention, mentionTitle, onMentionNewSession, onFileInfo, rightExtra, trailing, menuTop, infoAfterNav } = props;
   const closeActions = props.closeActions;
+  const pin = props.pin;
   const [menuOpen, setMenuOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   // 小屏系统返回 = 关闭「关于」弹窗
@@ -156,24 +174,35 @@ export function FileToolbar(props: {
     document.addEventListener("mousedown", h);
     return () => document.removeEventListener("mousedown", h);
   }, [owOpen]);
-  // 小屏收敛：顶栏实测宽度 < COMPACT_AT → 次要按钮收进 ⋯ 菜单；< MODE_DROPDOWN_AT → modes 变下拉
-  // （同一次 RO 实测派生两档，事件驱动非轮询）
+  // 小屏收敛：顶栏实测宽度 < COMPACT_AT → 次要按钮收进 ⋯ 菜单；
+  // modes 内联↔下拉看弹性占位实测宽度（= 剩余空间的直接读数，事件驱动非轮询非估算）
   const [compact, setCompact] = useState(false);
   const [tiny, setTiny] = useState(false);
+  const spacerRef = useRef<any>(null);
+  const measure = () => {
+    const el = barRef.current;
+    if (!el) return;
+    setCompact(el.clientWidth < COMPACT_AT);
+    const sp = spacerRef.current ? spacerRef.current.clientWidth : 0;
+    // 滞回：下拉态占位≥NEED 才升内联；内联态占位≤SQUEEZED 才降回下拉（两阈值间隔大于切换宽度差，不抖）
+    setTiny((cur) => (cur ? sp < MODE_INLINE_NEED : sp <= MODE_INLINE_SQUEEZED));
+  };
   useEffect(() => {
     const el = barRef.current;
     if (!el) return;
-    const update = () => { setCompact(el.clientWidth < COMPACT_AT); setTiny(el.clientWidth < MODE_DROPDOWN_AT); };
-    update();
+    measure();
     let ro: any = null;
     if (typeof ResizeObserver !== "undefined") {
-      ro = new ResizeObserver(update);
+      ro = new ResizeObserver(measure);
       ro.observe(el);
     } else {
-      window.addEventListener("resize", update);
+      window.addEventListener("resize", measure);
     }
-    return () => { if (ro) ro.disconnect(); else window.removeEventListener("resize", update); };
+    return () => { if (ro) ro.disconnect(); else window.removeEventListener("resize", measure); };
   }, []);
+  // 内容变化（dirty 保存钮出现/消失、notice、git 徽标…）不改顶栏总宽，RO 不触发——渲染后补测一次兜底
+  // （measure 幂等，值不变时 setState bail-out，无循环风险；host-shim 未导出 useLayoutEffect，用 useEffect）
+  useEffect(measure);
 
   // modes 下拉（很小屏态）：点外部关闭
   const [modeOpen, setModeOpen] = useState(false);
@@ -201,8 +230,8 @@ export function FileToolbar(props: {
 
   // ── 关闭图标排（2026-09-15 拍板：关闭左侧 / 关闭自己 / 关闭右侧 / 全部关闭 = 一排
   //   无歧义图标；大屏工具条常驻 + compact 收进 ⋯ 菜单，hover tooltip 兜底）──
-  const closeBtn = (fn: (() => void) | undefined, title: string, icon: any, size = 22) => fn ? (
-    <button type="button" title={title} aria-label={title}
+  const closeBtn = (fn: (() => void) | undefined, title: string, icon: any, size = 22, key?: string) => fn ? (
+    <button key={key} type="button" title={title} aria-label={title}
       onClick={() => { setMenuOpen(false); fn(); }}
       onMouseEnter={(e: any) => { e.currentTarget.style.background = "var(--bg-hover,#f3f4f6)"; }}
       onMouseLeave={(e: any) => { e.currentTarget.style.background = "transparent"; }}
@@ -211,14 +240,21 @@ export function FileToolbar(props: {
         background: "transparent", color: "var(--text-muted,#777)", cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}
     >{icon}</button>
   ) : null;
+  // 图标排行（label 居左 + 图标钮居右；items 空数组不渲染）——菜单单行化共用形态
+  const iconRow = (label: string, items: any[], key: string) => items.filter(Boolean).length === 0 ? null : (
+    <div key={key} data-ext-editor-action-row="1" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, padding: "5px 10px" }}>
+      <span style={{ fontSize: 12, color: "var(--text-dim,#888)", flexShrink: 0, userSelect: "none" }}>{label}</span>
+      <div style={{ display: "flex", gap: 6, marginLeft: "auto", flexShrink: 0 }}>{items}</div>
+    </div>
+  );
   const closeIconRow = closeActions ? (
     <div data-ext-close-icon-row="1" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, padding: "5px 10px" }}>
-      <span style={{ fontSize: 12, color: "var(--text-dim,#888)", flexShrink: 0, userSelect: "none" }}>关闭</span>
+      <span style={{ fontSize: 12, color: "var(--text-dim,#888)", flexShrink: 0, userSelect: "none" }}>{t("关闭")}</span>
       <div style={{ display: "flex", gap: 6, marginLeft: "auto", flexShrink: 0 }}>
-        {closeBtn(closeActions.left, "关闭左侧", <MiCloseLeft size={16} />, 28)}
-        {closeBtn(closeActions.self, "关闭", <MiX size={16} />, 28)}
-        {closeBtn(closeActions.right, "关闭右侧", <MiCloseRight size={16} />, 28)}
-        {closeBtn(closeActions.all, "关闭全部", <MiCloseAll size={16} />, 28)}
+        {closeBtn(closeActions.left, t("关闭左侧"), <MiCloseLeft size={16} />, 28)}
+        {closeBtn(closeActions.self, t("关闭"), <MiX size={16} />, 28)}
+        {closeBtn(closeActions.right, t("关闭右侧"), <MiCloseRight size={16} />, 28)}
+        {closeBtn(closeActions.all, t("关闭全部"), <MiCloseAll size={16} />, 28)}
       </div>
     </div>
   ) : null;
@@ -240,51 +276,57 @@ export function FileToolbar(props: {
       display: "flex", flexDirection: "column", gap: 2, padding: 6, minWidth: 170,
       background: "var(--bg,#fff)", border: "1px solid var(--border,#d0d0d0)", borderRadius: 10,
       boxShadow: "0 4px 12px rgba(0,0,0,0.15)", fontSize: 12 }}>
-      {/* ── 菜单分组重排（2026-09-16 用户拍板）：钉住 → 关闭排 → 导航（上/下一个文件）
-       *    → 保存组（保存/另存/下载）→ @ 组（当前会话/新会话）→ 查看 → 整理 → 打开。
-       *    关闭排与导航由 compact 专属改为常驻（菜单=全量命令中心；工具条按钮仍按 compact 收敛）。── */}
+      {/* ── 菜单单行化重排（2026-11-24，方案 docs/aiti-menu-single-row-plan.md §4.1/§5.4）：
+       *    menuTop 注入（扩展动作/导出）→ 关闭排 → 浏览排（‹›遍历）→ 窗口排（钉住/新窗口/终端）
+       *    → 保存组（保存/另存/下载）→ @ 组 → 查看组（重载/复制路径/复制内容）→ 整理组 → 元信息沉底。
+       *    浏览/窗口排为「label+图标排」形态（同关闭排规格）；全部项条件渲染保持现状语义。── */}
       {(menuTop || []).map((a, i) => menuItem(a, "menuTop-" + i))}
       {(menuTop || []).length > 0 && divider}
       {closeIconRow}
       {closeIconRow && divider}
-      {hasSibs && nav && (
-        <>
-          {menuItem({ label: "上一个文件", title: "同目录深度遍历（原 ‹ 按钮）", icon: <MiChevronL />, onClick: () => nav.onStep(-1) })}
-          {menuItem({ label: "下一个文件", title: "同目录深度遍历（原 › 按钮）", icon: <MiChevronR />, onClick: () => nav.onStep(1) })}
-          {divider}
-        </>
-      )}
-      {/* 保存组：保存 / 另存为 / 下载 / 重新加载 */}
-      {onSave && menuItem({ label: "保存", title: "保存当前编辑内容（Ctrl+S）", icon: <MiSave />, onClick: onSave })}
-      {onSaveAs && menuItem({ label: "另存为…", title: "把当前内容保存为新文件", icon: <MiSaveAs />, onClick: onSaveAs })}
-      {props.onDownload && menuItem({ label: "下载文件", icon: <MiDownload />, onClick: props.onDownload })}
-      {props.onReload && menuItem({ label: "重新加载", title: "从磁盘重读最新内容（有未保存编辑时会先询问：合并/加载磁盘/保留）", icon: <MiRefresh />, onClick: props.onReload })}
+      {/* 浏览排：🔊 朗读当前文件（onSpeak 恒传时渲染）+ 上/下一文件（hasSibs && nav 才渲染）；
+          点击关菜单同 menuItem——朗读继续（文件桶独立），不停读 */}
+      {(hasSibs || props.onSpeak) && iconRow(t("浏览"), [
+        props.onSpeak ? closeBtn(props.onSpeak, t("朗读当前文件（aiti-speek 跟读模式）"), <MiVolume size={16} />, 28, "speak") : null,
+        nav ? closeBtn(() => nav.onStep(-1), t("上一个文件（同目录深度遍历）"), <MiChevronL size={16} />, 28, "nav-l") : null,
+        nav ? closeBtn(() => nav.onStep(1), t("下一个文件（同目录深度遍历）"), <MiChevronR size={16} />, 28, "nav-r") : null,
+      ], "row-browse")}
+      {/* 窗口排：钉住（pin prop）/ 新窗口 / 终端——至少一项才渲染 */}
+      {(pin || props.onNewWindow || props.onTerminal) && iconRow(t("窗口"), [
+        pin ? closeBtn(pin.toggle, pin.isPinned() ? t("取消钉住") : t("钉住"), pin.isPinned() ? <MiPinOff size={16} /> : <MiPin size={16} />, 28, "pin") : null,
+        props.onNewWindow ? closeBtn(props.onNewWindow, t("在新窗口打开（独立查看窗口）"), <MiExternal size={16} />, 28, "nw") : null,
+        props.onTerminal ? closeBtn(props.onTerminal, t("打开终端（当前文件所在目录；Unix=bash / Windows=PowerShell）"), <TerminalIcon size={16} />, 28, "term") : null,
+      ], "row-window")}
+      {(closeIconRow || (hasSibs || props.onSpeak) || pin || props.onNewWindow || props.onTerminal) && divider}
+      {/* 保存组：保存 / 另存为 / 下载（重新加载移至查看组） */}
+      {onSave && menuItem({ label: t("保存"), title: t("保存当前编辑内容（Ctrl+S）"), icon: <MiSave />, onClick: onSave })}
+      {onSaveAs && menuItem({ label: t("另存为…"), title: t("把当前内容保存为新文件"), icon: <MiSaveAs />, onClick: onSaveAs })}
+      {props.onDownload && menuItem({ label: t("下载文件"), icon: <MiDownload />, onClick: props.onDownload })}
       {(onSave || onSaveAs || props.onDownload) && divider}
       {/* @ 组：当前会话 / 新会话 */}
-      {onMention && menuItem({ label: "@ 提及", title: mentionTitle || "提及文件——将当前文件写入聊天输入框", icon: <MiAt />, onClick: onMention })}
-      {onMentionNewSession && menuItem({ label: "@ 到新会话", title: "新建会话并在输入框插入当前文件的 @ 引用", icon: <MiAt />, onClick: onMentionNewSession })}
+      {onMention && menuItem({ label: "@ " + t("到聊天"), title: mentionTitle || t("将当前文件写入聊天输入框"), icon: <MiAt />, onClick: onMention })}
+      {onMentionNewSession && menuItem({ label: "@ " + t("到新会话"), title: t("新建会话并在输入框插入当前文件的 @ 引用"), icon: <MiAt />, onClick: onMentionNewSession })}
       {(onMention || onMentionNewSession) && divider}
-      {/* 查看组 */}
-      {about && menuItem({ label: "关于编辑器…", title: about.name + "——能力与限制", icon: <MiInfo />, onClick: () => setAboutOpen(true) })}
-      {onFileInfo && menuItem({ label: "文件信息", title: "查看文件大小 / 修改时间等信息", icon: <MiInfo />, onClick: onFileInfo })}
-      {props.onCopyPath && menuItem({ label: "复制路径", icon: <MiCopy />, onClick: props.onCopyPath })}
-      {props.onCopyContent && menuItem({ label: "复制内容", title: "复制文件全部内容到剪贴板（超过 1MB 拒绝）", icon: <MiClipboard />, onClick: props.onCopyContent })}
-      {(about || onFileInfo || props.onCopyPath || props.onCopyContent) && divider}
+      {/* 查看组：重新加载 / 复制路径 / 复制内容 */}
+      {props.onReload && menuItem({ label: t("重新加载"), title: t("从磁盘重读最新内容（有未保存编辑时会先询问：合并/加载磁盘/保留）"), icon: <MiRefresh />, onClick: props.onReload })}
+      {props.onCopyPath && menuItem({ label: t("复制路径"), icon: <MiCopy />, onClick: props.onCopyPath })}
+      {props.onCopyContent && menuItem({ label: t("复制内容"), title: t("复制文件全部内容到剪贴板（超过 1MB 拒绝）"), icon: <MiClipboard />, onClick: props.onCopyContent })}
+      {(props.onReload || props.onCopyPath || props.onCopyContent) && divider}
       {/* 整理组 */}
-      {props.onRename && menuItem({ label: "重命名...", icon: <MiPencil />, onClick: props.onRename })}
-      {props.onMove && menuItem({ label: "移动到...", title: "把当前文件移到其他目录", icon: <MiMove />, onClick: props.onMove })}
-      {props.onOpenDir && menuItem({ label: "在目录打开", icon: <MiFolder />, onClick: props.onOpenDir })}
+      {props.onRename && menuItem({ label: t("重命名..."), icon: <MiPencil />, onClick: props.onRename })}
+      {props.onMove && menuItem({ label: t("移动到..."), title: t("把当前文件移到其他目录"), icon: <MiMove />, onClick: props.onMove })}
+      {props.onOpenDir && menuItem({ label: t("在目录打开"), icon: <MiFolder />, onClick: props.onOpenDir })}
       {(props.onRename || props.onMove || props.onOpenDir) && divider}
-      {/* 打开组 */}
-      {props.onNewWindow && menuItem({ label: "在新窗口打开", title: "独立查看窗口（只有文件的浏览器窗口）", icon: <MiExternal />, onClick: props.onNewWindow })}
-      {props.onTerminal && menuItem({ label: "打开终端", title: "在当前文件所在目录打开终端（Unix=bash / Windows=PowerShell）", icon: <TerminalIcon />, onClick: props.onTerminal })}
+      {/* 元信息沉底：文件信息 / 关于编辑器 */}
+      {onFileInfo && menuItem({ label: t("文件信息"), title: t("查看文件大小 / 修改时间等信息"), icon: <MiInfo />, onClick: onFileInfo })}
+      {about && menuItem({ label: t("关于编辑器…"), title: t("{name}——能力与限制", { name: about.name }), icon: <MiInfo />, onClick: () => setAboutOpen(true) })}
     </div>
   );
 
   return (
     <div ref={barRef} style={S.bar}>
       {/* 状态点 */}
-      <span title={(dot && dot.title) || "只读预览"}
+      <span title={(dot && dot.title) || t("只读预览")}
         style={{ width: 7, height: 7, borderRadius: "50%", flexShrink: 0,
           background: (dot && dot.color) || "var(--border,#e0e0e0)" }} />
       {/* 文件名（完整路径进 title 悬浮）——信息紧随其后，长路径不再挤爆工具条 */}
@@ -292,29 +334,29 @@ export function FileToolbar(props: {
       {/* ‹› 同目录深度遍历（compact 收进菜单） */}
       {nav && !compact && (
         <div style={{ display: "flex", gap: 2, flexShrink: 0 }}>
-          <button type="button" title="上一个文件（深度遍历）" disabled={navDisabled}
+          <button type="button" title={t("上一个文件（深度遍历）")} disabled={navDisabled}
             onClick={() => nav.onStep(-1)}
             style={{ ...(navDisabled ? S.btnD : S.btn), padding: "3px 9px", display: "inline-flex", alignItems: "center" }}><MiChevronL size={14} /></button>
-          <button type="button" title="下一个文件（深度遍历）" disabled={navDisabled}
+          <button type="button" title={t("下一个文件（深度遍历）")} disabled={navDisabled}
             onClick={() => nav.onStep(1)}
             style={{ ...(navDisabled ? S.btnD : S.btn), padding: "3px 9px", display: "inline-flex", alignItems: "center" }}><MiChevronR size={14} /></button>
         </div>
       )}
       {hasSibs && !compact && (
         <span title={sibIndex >= 0
-          ? ("深度遍历共 " + nav!.siblings!.length + " 个文件（仅文件，不含文件夹）")
-          : ("当前文件不在遍历清单内，按路径序定位相邻文件（共 " + nav!.siblings!.length + " 个）")}
+          ? t("深度遍历共 {n} 个文件（仅文件，不含文件夹）", { n: nav!.siblings!.length })
+          : t("当前文件不在遍历清单内，按路径序定位相邻文件（共 {n} 个）", { n: nav!.siblings!.length })}
           style={{ flexShrink: 0, color: sibIndex >= 0 ? "var(--text-dim,#888)" : "var(--text-muted,#aaa)", fontSize: 10, fontFamily: "var(--font-mono, ui-monospace, monospace)" }}>
           {posLabel}
         </span>
       )}
       {/* 信息位：类型 · 大小 · 时长 · 实时态（紧随文件名/‹›遍历之后） */}
       {infoAfterNav}
-      {/* 弹性占位：把右侧按钮簇推到最右 */}
-      <span style={{ flex: "1 1 auto", minWidth: 8 }} />
+      {/* 弹性占位：把右侧按钮簇推到最右；宽度即顶栏剩余空间，供 modes 内联↔下拉判据实测 */}
+      <span ref={spacerRef} style={{ flex: "1 1 auto", minWidth: 8 }} />
       {/* 通知（可收缩：行宽不够时自身省略号收敛，绝不把右侧按钮簇/⋮ 顶出可视区） */}
       {notice && <span style={{ color: notice.kind === "err" ? "var(--danger, #f87171)" : notice.kind === "ok" ? "var(--ok, #4ade80)" : "var(--warn, #f59e0b)", marginRight: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: compact ? 90 : 160, flexShrink: 1, minWidth: 0 }}>{notice.text}</span>}
-      {/* 模式切换（编辑/分栏/预览等）：普通宽度内联 tabs；很小屏（< MODE_DROPDOWN_AT）变下拉进一步省空间 */}
+      {/* 模式切换（编辑/分栏/预览等）：空间足够（弹性占位实测）内联 tabs；挤不下才变下拉进一步省空间 */}
       {modes && !tiny && (
         <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
           {modes.items.map((m) => (
@@ -330,7 +372,7 @@ export function FileToolbar(props: {
       )}
       {modes && tiny && curMode && (
         <div data-modes-dd="1" style={{ position: "relative", flexShrink: 0 }}>
-          <button type="button" title="视图模式" onClick={() => setModeOpen(!modeOpen)}
+          <button type="button" title={t("视图模式")} onClick={() => setModeOpen(!modeOpen)}
             style={{ ...S.btn, padding: "3px 8px", gap: 3 }}>{curMode.label}<span style={{ fontSize: 9, lineHeight: 1, opacity: 0.7 }}>{modeOpen ? "▲" : "▼"}</span></button>
           {modeOpen && (
             <div style={{ position: "absolute", top: "100%", left: 0, zIndex: 100,
@@ -358,7 +400,7 @@ export function FileToolbar(props: {
       {/* 打开方式（▦，M0 多编辑器仲裁；多 provider 命中时才出现）：行点击=仅本次，★=设为默认 */}
       {openWith && openWith.items.length > 1 && (
         <div data-openwith-dd="1" style={{ position: "relative", flexShrink: 0 }}>
-          <button type="button" title="打开方式（本文件类型有多个编辑器）" onClick={() => setOwOpen(!owOpen)}
+          <button type="button" title={t("打开方式（本文件类型有多个编辑器）")} onClick={() => setOwOpen(!owOpen)}
             style={{ ...S.btn, padding: "3px 8px", fontSize: 13 }}>▦</button>
           {owOpen && (
             <div style={{ position: "absolute", top: "100%", right: 0, zIndex: 120,
@@ -366,11 +408,11 @@ export function FileToolbar(props: {
               background: "var(--bg,#fff)", border: "1px solid var(--border,#d0d0d0)", borderRadius: 10,
               boxShadow: "0 4px 12px rgba(0,0,0,0.15)", fontSize: 12 }}>
               <div style={{ padding: "3px 8px 5px", fontWeight: 600, fontSize: 11, color: "var(--text-dim,#888)" }}>
-                {"打开方式（★ = 设为默认）"}
+                {t("打开方式（★ = 设为默认）")}
               </div>
               {openWith.items.map((it) => (
                 <div key={it.id}
-                  title={it.active ? "当前生效" : "点击用此编辑器打开（仅本次）"}
+                  title={it.active ? t("当前生效") : t("点击用此编辑器打开（仅本次）")}
                   onClick={() => { if (!it.active) { setOwOpen(false); openWith.onPick(it.id); } }}
                   style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 8px", borderRadius: 6,
                     cursor: it.active ? "default" : "pointer",
@@ -379,13 +421,13 @@ export function FileToolbar(props: {
                   onMouseLeave={(e: any) => { if (!it.active) e.currentTarget.style.background = "transparent"; }}>
                   <span style={{ flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                     fontWeight: it.active ? 600 : 400, color: it.active ? "var(--accent,#4f8ef7)" : "var(--text,#1a1a1a)" }}>
-                    {it.displayName}
+                    {t(it.displayName)}
                     {it.source ? <span style={{ color: "var(--text-dim,#888)", fontWeight: 400 }}> · {it.source}</span> : null}
                   </span>
-                  <span title={it.badge.includes("✏️") ? (it.badge.includes("👁") ? "预览 + 编辑" : "编辑") : "预览"}
+                  <span title={it.badge.includes("✏️") ? (it.badge.includes("👁") ? t("预览 + 编辑") : t("编辑")) : t("预览")}
                     style={{ flexShrink: 0, fontSize: 11 }}>{it.badge}</span>
                   {it.active ? <span style={{ flexShrink: 0, color: "var(--accent,#4f8ef7)", fontSize: 11 }}>✓</span> : null}
-                  <button type="button" title={it.isDefault ? "当前默认（点击无变化）" : "设为 " + it.displayName + " 为默认（持久化）"}
+                  <button type="button" title={it.isDefault ? t("当前默认（点击无变化）") : t("设为 {name} 为默认（持久化）", { name: t(it.displayName) })}
                     onClick={(e) => { e.stopPropagation(); if (!it.isDefault) { openWith.onSetDefault(it.id); setOwOpen(false); } }}
                     style={{ flexShrink: 0, border: "none", background: "transparent", cursor: "pointer", fontSize: 13,
                       color: it.isDefault ? "var(--warn, #f59e0b)" : "var(--text-muted,#aaa)", padding: "0 2px", lineHeight: 1 }}>
@@ -399,40 +441,40 @@ export function FileToolbar(props: {
       )}
       {/* @ 提及（最高优先级：任何宽度恒留外面） */}
       {onMention && (
-        <button type="button" title={mentionTitle || "提及文件——将当前文件写入聊天输入框"}
+        <button type="button" title={mentionTitle || t("提及文件——将当前文件写入聊天输入框")}
           onClick={onMention}
           style={{ ...S.btn, padding: "2px 8px", fontSize: 13, flexShrink: 0, fontFamily: "inherit" }}>{"\u0040"}</button>
       )}
       {/* 快捷下载（可选；compact 收进菜单——菜单内本就有「下载文件」） */}
       {props.downloadBtn && props.onDownload && !compact && (
-        <button type="button" title="下载文件" onClick={props.onDownload}
+        <button type="button" title={t("下载文件")} onClick={props.onDownload}
           style={{ ...S.btn, padding: "3px 8px", fontSize: 13, flexShrink: 0 }}>⬇</button>
       )}
       {/* 右侧插槽（保存/扩展动作） */}
       {rightExtra}
       {/* 独立窗口快捷打开（B 图形 SVG，与 dock 图标规范统一；compact 收进菜单） */}
       {props.onNewWindow && !compact && (
-        <button type="button" title="在新窗口打开（独立查看窗口）" onClick={props.onNewWindow}
+        <button type="button" title={t("在新窗口打开（独立查看窗口）")} onClick={props.onNewWindow}
           style={{ ...S.btn, padding: "3px 8px", display: "inline-flex", alignItems: "center", flexShrink: 0 }}><MiExternal size={14} /></button>
       )}
       {/* 终端快捷打开（🖥；compact 收进菜单——菜单内本就有「打开终端」） */}
       {props.onTerminal && !compact && (
-        <button type="button" title="打开终端（当前文件所在目录）" onClick={props.onTerminal}
+        <button type="button" title={t("打开终端（当前文件所在目录）")} onClick={props.onTerminal}
           style={{ ...S.btn, padding: "3px 8px", fontSize: 13, flexShrink: 0 }}>🖥</button>
       )}
       {/* 关闭图标排（左侧/自己/右侧/全部；大屏常驻，compact 收进 ⋯ 菜单） */}
       {closeActions && !compact && (
         <div data-ext-close-toolbar-row="1" style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
-          {closeBtn(closeActions.left, "关闭左侧", <MiCloseLeft size={14} />)}
-          {closeBtn(closeActions.self, "关闭", <MiX size={14} />)}
-          {closeBtn(closeActions.right, "关闭右侧", <MiCloseRight size={14} />)}
-          {closeBtn(closeActions.all, "关闭全部", <MiCloseAll size={14} />)}
+          {closeBtn(closeActions.left, t("关闭左侧"), <MiCloseLeft size={14} />)}
+          {closeBtn(closeActions.self, t("关闭"), <MiX size={14} />)}
+          {closeBtn(closeActions.right, t("关闭右侧"), <MiCloseRight size={14} />)}
+          {closeBtn(closeActions.all, t("关闭全部"), <MiCloseAll size={14} />)}
         </div>
       )}
       {/* 更多菜单（⋮，2026-09-16 重排）：钉住 → 关闭排 → 上/下一文件 → 保存组 → @组 → 查看/整理/打开 */}
       <div style={{ position: "relative", flexShrink: 0 }}>
         <button type="button" onClick={() => setMenuOpen(!menuOpen)}
-          style={{ ...S.btn, padding: "4px 8px", fontWeight: 700 }} title="更多">⋮</button>
+          style={{ ...S.btn, padding: "4px 8px", fontWeight: 700 }} title={t("更多")}>⋮</button>
         {menuOpen && menu}
       </div>
       {/* 最右信息标签（compact 收进「文件信息」） */}
@@ -447,17 +489,17 @@ export function FileToolbar(props: {
             background: "var(--bg,#fff)", border: "1px solid var(--border,#ddd)", boxShadow: "0 12px 40px rgba(0,0,0,0.25)", fontSize: 13 }}>
             <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4 }}>
               <span style={{ fontWeight: 600, fontSize: 15 }}>{about.name}</span>
-              {about.source ? <span style={{ fontSize: 11, color: "var(--text-dim,#888)" }}>来自扩展 {about.source}</span> : null}
+              {about.source ? <span style={{ fontSize: 11, color: "var(--text-dim,#888)" }}>{t("来自扩展 {src}", { src: about.source })}</span> : null}
             </div>
             <div style={{ fontFamily: "var(--font-mono,ui-monospace,monospace)", fontSize: 11, color: "var(--text-dim,#888)", marginBottom: 10, wordBreak: "break-all" }}>{about.id}</div>
-            {about.summary && <div style={{ marginBottom: 12, lineHeight: 1.5 }}>{about.summary}</div>}
+            {about.summary && <div style={{ marginBottom: 12, lineHeight: 1.5 }}>{t(about.summary)}</div>}
             {(about.capabilities || []).length > 0 && (
               <>
-                <div style={{ fontWeight: 600, fontSize: 12, margin: "10px 0 4px", color: "var(--text-dim,#888)" }}>能力</div>
+                <div style={{ fontWeight: 600, fontSize: 12, margin: "10px 0 4px", color: "var(--text-dim,#888)" }}>{t("能力")}</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                   {about.capabilities!.map((c, i) => (
                     <div key={i} style={{ display: "flex", gap: 6, lineHeight: 1.45 }}>
-                      <span style={{ color: "#16a34a", flexShrink: 0 }}>✓</span><span>{c}</span>
+                      <span style={{ color: "#16a34a", flexShrink: 0 }}>✓</span><span>{t(c)}</span>
                     </div>
                   ))}
                 </div>
@@ -465,11 +507,11 @@ export function FileToolbar(props: {
             )}
             {(about.limits || []).length > 0 && (
               <>
-                <div style={{ fontWeight: 600, fontSize: 12, margin: "12px 0 4px", color: "var(--text-dim,#888)" }}>限制</div>
+                <div style={{ fontWeight: 600, fontSize: 12, margin: "12px 0 4px", color: "var(--text-dim,#888)" }}>{t("限制")}</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                   {about.limits!.map((c, i) => (
                     <div key={i} style={{ display: "flex", gap: 6, lineHeight: 1.45 }}>
-                      <span style={{ color: "#d97706", flexShrink: 0 }}>⚠</span><span>{c}</span>
+                      <span style={{ color: "#d97706", flexShrink: 0 }}>⚠</span><span>{t(c)}</span>
                     </div>
                   ))}
                 </div>
@@ -477,14 +519,14 @@ export function FileToolbar(props: {
             )}
             {(about.vendor || about.license) && (
               <div style={{ marginTop: 12, paddingTop: 8, borderTop: "1px solid var(--border,#eee)", fontSize: 11, color: "var(--text-dim,#888)" }}>
-                {about.vendor ? <div>实现：{about.vendor}</div> : null}
-                {about.license ? <div>许可：{about.license}</div> : null}
+                {about.vendor ? <div>{t("实现：")}{about.vendor}</div> : null}
+                {about.license ? <div>{t("许可：")}{about.license}</div> : null}
               </div>
             )}
             <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
               <button type="button" onClick={() => setAboutOpen(false)} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 12px",
                 border: "1px solid var(--border,#d0d0d0)", borderRadius: 7, cursor: "pointer", background: "var(--bg-selected,#eef2ff)",
-                color: "var(--text,#1a1a1a)", fontSize: 12, fontWeight: 500, fontFamily: "inherit" }}>关闭</button>
+                color: "var(--text,#1a1a1a)", fontSize: 12, fontWeight: 500, fontFamily: "inherit" }}>{t("关闭")}</button>
             </div>
           </div>
         </div>

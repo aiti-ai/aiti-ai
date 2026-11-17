@@ -2,7 +2,8 @@
  * aiti-app-center · app-registry —— 应用枚举与分类解析（纯逻辑层，零 JSX）。
  *
  * 数据源（全部现有注册表，新插件自动进列表）：
- *   - toolbar/sidebarFooter 插槽条目（meta.onClick 可调，含懒扩展静态条目的物化转发）→ action/manage 卡
+ *   - toolbar / commands（命令目录槽，dialogs 同型无渲染点）插槽条目（meta.onClick 可调，含懒扩展
+ *     静态条目的物化转发）→ action/manage 卡
  *   - rightFileDock 插槽条目 + dialogs 白名单 → panel 卡（present 状态机打开）
  *   - manifest features（boolean 型）→ toggle 卡（extman ops API 切换 + 广播回灌）
  *
@@ -19,6 +20,9 @@
  * 两个数组不再含 `toggle:*`；v1 残留由 pruneToggleIds() 一次性清洗。
  */
 
+import { extNameFor, extDescriptionFor, featureLabelFor, featureDescriptionFor } from "../../../_shared/ext-display-names.ts";
+import { typoMatch } from "../../../_shared/typo-search.mjs";
+
 export type AppKind = "action" | "panel" | "toggle" | "manage";
 
 export interface AppDescriptor {
@@ -33,6 +37,8 @@ export interface AppDescriptor {
   /** 声明式图标（ExtUiItemIcon 三形态：{svg} / emoji 字符串 / "icons/*.svg" 相对路径）。 */
   icon?: string | { svg: string };
   keywords: string[];
+  /** Pinyin index (from the extman server /status enrichment: "full-pinyin concatenated + initials"; used as search hay). */
+  pinyin?: string;
   run: () => void;
   /** toggle 卡当前态（boolean feature）。 */
   on?: boolean;
@@ -66,7 +72,7 @@ export const APP_STORE_EVENT = "pi:app-center:store";
 export const APP_OVERRIDES: Record<string, { category?: string; keywords?: string[] }> = {
   // session 会话与项目
   "session-manager": { category: "session", keywords: ["sessions", "会话"] },
-  "aiti-folder": { category: "session", keywords: ["folder", "文件夹", "文件"] },
+  "aiti-folder": { category: "session", keywords: ["folder", "文件夹", "文件", "终端", "terminal"] },
   "aiti-draft-keeper": { category: "session", keywords: ["draft", "草稿"] },
   "aiti-recovery": { category: "session", keywords: ["recovery", "恢复"] },
   "aiti-session-cards": { category: "session", keywords: ["request", "请求卡"] },
@@ -153,17 +159,41 @@ export function viewMode(totalApps: number): "flat" | "two-segment" {
   return totalApps <= FLAT_MODE_THRESHOLD ? "flat" : "two-segment";
 }
 
-/** 首次态（v3）：两段式且无钉住记录 → 「更多」默认展开（分类浏览即首屏）。 */
-export function moreExpandedDefault(pinnedCount: number): boolean {
-  return pinnedCount === 0;
+/** 「更多」默认收起的行数阈值（v3.2）：钉住区所需行数 ≥ 阈值才默认收起，不足则展开全部。
+ *  宽度自适应——列数由容器内容宽按 auto-fill 网格推导（pinnedGridColumns），替代固定钉住数阈值。 */
+export const MORE_COLLAPSE_PINNED_ROWS = 2;
+
+/** 钉住卡片网格单列最小宽（px；app-center gridStyle 同源，勿单边改）。 */
+export const PINNED_CARD_MIN = 64;
+/** 钉住卡片网格列距（px；app-center gridStyle 同源，勿单边改）。 */
+export const PINNED_COL_GAP = 6;
+
+/** 钉住网格列数：与 gridStyle 的 auto-fill minmax(PINNED_CARD_MIN,1fr) + PINNED_COL_GAP 列距同源推导
+ *  （CSS auto-fill 列数公式 floor((W+gap)/(min+gap))）；宽度未测得（≤0）按 1 列保守估计。 */
+export function pinnedGridColumns(contentWidth: number): number {
+  if (!(contentWidth > 0)) return 1;
+  return Math.max(1, Math.floor((contentWidth + PINNED_COL_GAP) / (PINNED_CARD_MIN + PINNED_COL_GAP)));
 }
 
-/** 搜索匹配：query 按空白分词，逐词命中 label/extName/extId/keywords 任一即算命中（大小写不敏感子串）。 */
-export function matchApp(app: { label: string; extId: string; extName?: string; keywords?: string[] }, query: string): boolean {
+/** 钉住区已占满的整行数（给定容器内容宽与钉住数；严格口径：末行未占满不计——floor，
+ *  即钉住数 ≥ 2×列数才满两行）。 */
+export function pinnedRowsNeeded(pinnedCount: number, contentWidth: number): number {
+  return Math.floor(pinnedCount / pinnedGridColumns(contentWidth));
+}
+
+/** Search matching (same looseness as extman, aligned 2026-11-15): query tokenized by whitespace, per-token substring hit (AND)
+ *  + concatenated looseness (qNorm strips spaces, fuwu suidao→fuwusuidao) + typo tolerance (typo-search OSA adaptive threshold).
+ *  hay: label + extId + bilingual display names (central table en+zh, so Chinese words work in en mode too) + extName + keywords + pinyin
+ *  (pinyin from the extman server /status enrichment, full-pinyin concatenated + initials). */
+export function matchApp(app: { label: string; extId: string; extName?: string; keywords?: string[]; pinyin?: string }, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
-  const hay = [app.label, app.extId, app.extName ?? "", ...(app.keywords ?? [])].join("\n").toLowerCase();
-  return q.split(/\s+/).every((tok) => hay.includes(tok));
+  const hay = [app.label, app.extId, app.extName ?? "", ...(app.keywords ?? []), app.pinyin ?? ""].join("\n").toLowerCase();
+  const qNorm = q.replace(/\s+/g, "");
+  return q.split(/\s+/).every((tok) => hay.includes(tok))
+    || (!!qNorm && hay.includes(qNorm))
+    || typoMatch(q, hay)
+    || (!!qNorm && typoMatch(qNorm, hay));
 }
 
 /* ── 钉住/隐藏存储（localStorage 单一事实源 + 变更事件/跨 tab 订阅；折叠键同范式）── */
@@ -234,16 +264,52 @@ export function hideApp(appId: string): void {
   if (!cur.includes(appId)) writeHidden([...cur, appId]);
 }
 
+/* ── 声明式条目文案 i18n（`i18n:` 前缀，与宿主 translateExtItemText 同级联）──
+ *    宿主渲染静态（零 bundle）条目时会自行翻译 label/title，但 useSlotItems 返回的是
+ *    原始 meta——静态条目未物化期间（如 extman 的 "i18n:ext.shortLabel"）app center
+ *    必须自行解析，否则卡片露出原始 key。 ── */
+
+/** UI locale（localStorage pi-locale，与宿主 useI18n 同源；缺省 en）。 */
+export function currentUiLocale(): string {
+  try {
+    const v = localStorage.getItem("pi-locale");
+    if (v === "zh-CN" || v === "en") return v;
+  } catch { /* ignore */ }
+  return "en";
+}
+
+/** 表级联：当前 locale → 同语短码（zh）→ en → 任一可用表。 */
+export function i18nTableFor(ui18n: Record<string, Record<string, string>> | undefined | null, locale: string): Record<string, string> {
+  if (!ui18n) return {};
+  return ui18n[locale] ?? ui18n[locale.split("-")[0]] ?? ui18n.en ?? Object.values(ui18n)[0] ?? {};
+}
+
+/**
+ * `i18n:` 前缀文案解析：按声明扩展的 manifest ui.i18n 表出成品文案；无前缀原样
+ * 透传；缺表/缺键回退裸 key。返回值恒非空（text 非空时）。
+ */
+export function translateExtItemText(extId: string | undefined, text: string | undefined, ui18n: Record<string, Record<string, string>> | undefined | null, locale: string): string {
+  if (!text) return "";
+  if (!extId || !text.startsWith("i18n:")) return text;
+  const key = text.slice("i18n:".length);
+  return i18nTableFor(ui18n, locale)[key] ?? key;
+}
+
 /* ── 卡片组装（依赖注入形态，便于单测）── */
 
 /** 组装输入：消费方（app-center.tsx hooks）从插槽/manifest 取数后传入；runs 是闭包。 */
 export function buildApps(input: {
-  exts: Array<{ id: string; name?: string; version?: string; description?: string; icon?: string | null; category?: string; features?: Array<{ id: string; type?: string; label?: string; description?: string; category?: string; enabled: boolean }> | null }>;
-  slotItems: Array<{ slot: "toolbar" | "sidebarFooter" | "rightFileDock" | "dialogs"; id: string; extId?: string; meta?: { label?: string; title?: string; icon?: unknown; onClick?: (e?: unknown) => void }; category?: string }>;
+  exts: Array<{ id: string; name?: string; version?: string; description?: string; icon?: string | null; category?: string; ui?: { i18n?: Record<string, Record<string, string>> } | null; features?: Array<{ id: string; type?: string; label?: string; description?: string; category?: string; enabled: boolean }> | null }>;
+  slotItems: Array<{ slot: "toolbar" | "commands" | "sidebarFooter" | "rightFileDock" | "dialogs"; id: string; extId?: string; meta?: { label?: string; title?: string; icon?: unknown; onClick?: (e?: unknown) => void }; category?: string }>;
   featureState: Record<string, boolean>;
   /** 面板打开原语（present 状态机语义糖；UI 层注入，rightFileDock 卡专用）。 */
   openPanel: (key: string) => void;
+  /** UI locale（缺省现读 pi-locale）；locale 切换后由组件层重算触发刷新。 */
+  locale?: string;
+  /** Pinyin index map (extId → "full-pinyin concatenated + initials"; extman server /status enrichment, absent = no pinyin search). */
+  pinyinMap?: Record<string, string>;
 }): AppDescriptor[] {
+  const locale = input.locale ?? currentUiLocale();
   const out: AppDescriptor[] = [];
   const seen = new Set<string>();
   const extById = new Map(input.exts.map((e) => [e.id, e]));
@@ -272,16 +338,22 @@ export function buildApps(input: {
     const id = `${kind}:${fullId}`;
     if (seen.has(id)) continue;
     seen.add(id);
-    const label = String(it.meta?.label ?? it.meta?.title ?? (colon > 0 ? it.id.slice(colon + 1) : it.id));
+    // label/title 支持 "i18n:<key>" 前缀（宿主 translateExtItemText 同款：label 优先，
+    // 空则 title，再空回退 id 尾段）；无前缀文案原样透传。
+    const ui18n = ext?.ui?.i18n;
+    const label = translateExtItemText(extId, it.meta?.label, ui18n, locale)
+      || translateExtItemText(extId, it.meta?.title, ui18n, locale)
+      || String(colon > 0 ? it.id.slice(colon + 1) : it.id);
     out.push({
       id,
       kind,
       category: resolveCategory((it as { category?: string }).category ?? (it.meta as { category?: string } | undefined)?.category, ext?.category, extId),
       label,
       extId,
-      extName: ext?.name,
+      extName: extNameFor(ext, locale),
       extVersion: ext?.version,
-      extDescription: ext?.description,
+      extDescription: extDescriptionFor(ext, locale) || undefined,
+      pinyin: input.pinyinMap?.[extId],
       extIcon: ext?.icon ?? undefined,
       icon: it.meta?.icon as AppDescriptor["icon"],
       keywords: [...(APP_OVERRIDES[extId]?.keywords ?? [])],
@@ -297,16 +369,18 @@ export function buildApps(input: {
       const id = `toggle:${ext.id}:${f.id}`;
       if (seen.has(id)) continue;
       seen.add(id);
+      const rawLabel = f.label != null ? String(f.label) : String(f.id);
       out.push({
         id,
         kind: "toggle",
         category: resolveCategory(f.category, ext.category, ext.id),
-        label: String(f.label ?? f.id),
-        featureDescription: f.description,
+        label: featureLabelFor(ext, f, locale) || rawLabel,
+        featureDescription: featureDescriptionFor(ext, f, locale) || undefined,
         extId: ext.id,
-        extName: ext.name,
+        extName: extNameFor(ext, locale),
         extVersion: ext.version,
-        extDescription: ext.description,
+        extDescription: extDescriptionFor(ext, locale) || undefined,
+        pinyin: input.pinyinMap?.[ext.id],
         extIcon: ext.icon ?? undefined,
         keywords: [...(APP_OVERRIDES[ext.id]?.keywords ?? []), f.id],
         on: input.featureState[`${ext.id}:${f.id}`] ?? f.enabled !== false,

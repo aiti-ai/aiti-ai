@@ -40,12 +40,17 @@ const homepage = 'https://aiti.pw/extensions/aiti-extman.html';
 
 for (const extDir of targets) {
   mkdirSync(resolve(extDir, 'dist'), { recursive: true });
-  for (const f of ['index.ts', 'icon.svg', 'installer.ts', 'publisher.ts', 'shared-deps.ts', 'protocol-screen.mjs']) copyFileSync(resolve(root, f), resolve(extDir, f));
+  for (const f of ['index.ts', 'icon.svg', 'installer.ts', 'publisher.ts', 'shared-deps.ts', 'protocol-screen.mjs', 'pinyin-index.mjs']) copyFileSync(resolve(root, f), resolve(extDir, f));
   // 协议版本 canonical（_shared/ext-protocol.mjs）→ 部署目录同名拷贝（index.ts 以 ./ext-protocol.mjs 相对导入）
   copyFileSync(resolve(root, '../_shared/ext-protocol.mjs'), resolve(extDir, 'ext-protocol.mjs'));
   // client TS 残留检查器（层 2）：installer.ts 以 ./check-client.mjs 相对导入，需同目录
   copyFileSync(resolve(root, '../_shared/check-client.mjs'), resolve(extDir, 'check-client.mjs'));
   copyFileSync(resolve(root, 'dist/aiti-extman-client.mjs'), resolve(extDir, 'dist/aiti-extman-client.mjs'));
+  // The manifest declares client/aiti-extman-client.mjs as the load path (index.ts client
+  // field) — the host assets route loads "assets/<declared path>", which reads client/ not
+  // dist/. deploy used to update dist/ only, leaving client/ stale (since 2026-09-10 every
+  // extman client change silently no-opped); this fix copies to both locations.
+  copyFileSync(resolve(root, 'dist/aiti-extman-client.mjs'), resolve(extDir, 'client/aiti-extman-client.mjs'));
   // yauzl 是运行时依赖（zip 解包）——只拷运行时闭包（yauzl→fd-slicer/buffer-crc32→pend），
   // 不带 node_modules 全量（vite 等构建依赖不进部署目录）。
   copyFileSync(resolve(root, 'package.json'), resolve(extDir, 'package.json'));

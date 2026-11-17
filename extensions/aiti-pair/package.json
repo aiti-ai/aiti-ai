@@ -2,7 +2,7 @@
   "name": "@aiti-ai/aiti-pair",
   "version": "0.1.2",
   "type": "module",
-  "description": "pair 设备互连面板 —— 连同一桥的设备（手机/其他浏览器/agent 会话）互发消息、互传文件；widget 与协议来自 aiti-devtools 公共资产（pair-client.js）",
+  "description": "Device interconnect over the bridge — paired devices (phone browsers / other computers / agent sessions / injected pages) exchange messages and files.",
   "scripts": {
     "build:client": "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});for(const f of fs.readdirSync('client/src'))if(f.endsWith('.mjs'))fs.copyFileSync('client/src/'+f,'dist/'+f)\"",
     "deploy": "node tools/deploy.mjs"

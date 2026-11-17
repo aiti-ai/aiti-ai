@@ -1111,7 +1111,7 @@ export default function register(ctx) {
       onMouseLeave: (e) => { e.currentTarget.style.color = "var(--text-dim)"; },
     }, h("span", { key: "icon", style: { display: "inline-flex" } }, typeIcon("quote")), " 引用");
   }
-  try { ctx.registerItems("userMessageActions", [{ id: "aiti-msg-smart-quote", render: UserQuoteFull, meta: { label: "引用" } }]); } catch (e) {}
+  try { ctx.registerItems("userMessageActions", [{ id: "aiti-msg-smart-quote", render: UserQuoteFull, meta: { label: "i18n:it.quote.label" } }]); } catch (e) {}
 
   // ── 内联 code 点击弹层（可扩展主题 inline-code-action）：
   //    行内 <code>（不在 <pre>/代码块内）点击 → 复制代码 + 弹小动作层。

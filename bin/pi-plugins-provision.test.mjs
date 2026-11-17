@@ -38,11 +38,23 @@ function tmpDir() {
 // install behaviors for the P1–P4 matrix.
 function makeHooks({ configured = [], installImpl, batchImpl } = {}) {
   const calls = { added: [], removed: [], batch: [], installed: [], progress: null };
+  // Array form is mutated by add/removeSource so getConfigured() reflects the
+  // settings changes like the real SDK facade does.
+  const conf = typeof configured === "function" ? configured : [...configured];
   const hooks = {
     agentDir: tmpDir(),
-    getConfigured: () => (typeof configured === "function" ? configured() : configured),
-    addSource: (source) => calls.added.push(source),
-    removeSource: (source) => calls.removed.push(source),
+    getConfigured: () => (typeof conf === "function" ? conf() : conf),
+    addSource: (source) => {
+      calls.added.push(source);
+      if (Array.isArray(conf)) conf.push(source);
+    },
+    removeSource: (source) => {
+      calls.removed.push(source);
+      if (Array.isArray(conf)) {
+        const i = conf.indexOf(source);
+        if (i !== -1) conf.splice(i, 1);
+      }
+    },
     installBatch: async (specs) => {
       calls.batch.push(specs);
       if (batchImpl) return batchImpl(specs);
@@ -114,7 +126,7 @@ test("excludes auto:false plugins (plan-sandbox)", async () => {
   const { hooks, calls } = makeHooks();
   const { res, ledger } = await run({ hooks });
   assert.equal(res.changed, true);
-  for (const spec of AUTO_SPECS) assert.ok(calls.added.includes(spec), `missing ${spec}`);
+  for (const spec of AUTO_SPECS) assert.ok(calls.added.includes(`npm:${spec}`), `missing npm:${spec}`);
   assert.ok(!calls.added.some((s) => s.includes("pi-plan-sandbox")), "plan-sandbox must not be provisioned");
   assert.equal(calls.batch.length, 1);
   assert.deepEqual(calls.batch[0], AUTO_SPECS);
@@ -136,8 +148,8 @@ test("fingerprint match is a no-op", async () => {
 test("P1: an existing npm entry of the same name (any version) is left alone", async () => {
   const { hooks, calls } = makeHooks({ configured: ["npm:@aiti-ai/pi-models-combo@9.9.9"] });
   const { res, ledger, lines } = await run({ hooks });
-  assert.ok(!calls.added.includes("@aiti-ai/pi-models-combo@0.4.12"), "user's entry must not be touched");
-  assert.ok(calls.added.includes("@aiti-ai/pi-git-trace@0.1.7"));
+  assert.ok(!calls.added.includes("npm:@aiti-ai/pi-models-combo@0.4.12"), "user's entry must not be touched");
+  assert.ok(calls.added.includes("npm:@aiti-ai/pi-git-trace@0.1.7"));
   assert.ok(res.skipped.some((s) => s.includes("pi-models-combo") && s.includes("already provided")));
   assert.ok(lines.some((l) => l.includes("already provided by settings") && l.includes("pi-models-combo")));
   assert.ok(!ledger.owned["@aiti-ai/pi-models-combo"]);
@@ -149,7 +161,7 @@ test("P1: an existing local-path entry of the same package name is left alone", 
   fs.writeFileSync(path.join(local, "package.json"), JSON.stringify({ name: "@aiti-ai/pi-models-combo" }));
   const { hooks, calls } = makeHooks({ configured: [local] });
   const { res, lines } = await run({ hooks });
-  assert.ok(!calls.added.includes("@aiti-ai/pi-models-combo@0.4.12"));
+  assert.ok(!calls.added.includes("npm:@aiti-ai/pi-models-combo@0.4.12"));
   assert.ok(res.skipped.some((s) => s.includes("already provided") && s.includes(local)));
   assert.ok(lines.some((l) => l.includes("already provided by settings") && l.includes(local)));
 });
@@ -161,7 +173,7 @@ test("P2: an owned entry removed by the user is not re-added", async () => {
   assert.ok(!calls.added.some((s) => s.includes("pi-models-combo")));
   assert.ok(res.skipped.some((s) => s.includes("removed by user") && s.includes("pi-models-combo")));
   // Others still provision.
-  assert.ok(calls.added.includes("@aiti-ai/pi-git-trace@0.1.7"));
+  assert.ok(calls.added.includes("npm:@aiti-ai/pi-git-trace@0.1.7"));
 });
 
 test("P3: owned npm entry follows a new pin (remove old + add new + reinstall)", async () => {
@@ -176,10 +188,25 @@ test("P3: owned npm entry follows a new pin (remove old + add new + reinstall)",
   };
   const { res, ledger } = await run({ hooks, ledger: { owned }, manifest });
   assert.deepEqual(calls.removed, ["npm:@aiti-ai/pi-models-combo@0.4.11"]);
-  assert.ok(calls.added.includes("@aiti-ai/pi-models-combo@0.4.12"));
+  assert.ok(calls.added.includes("npm:@aiti-ai/pi-models-combo@0.4.12"));
   assert.ok(calls.batch[0].includes("@aiti-ai/pi-models-combo@0.4.12"));
-  assert.equal(ledger.owned["@aiti-ai/pi-models-combo"], "@aiti-ai/pi-models-combo@0.4.12");
+  assert.equal(ledger.owned["@aiti-ai/pi-models-combo"], "npm:@aiti-ai/pi-models-combo@0.4.12");
   assert.equal(res.failed.length, 0);
+});
+
+test("P2-legacy: owned bare-spec entry still in settings is removed and re-declared", async () => {
+  // The .6-era upgrade path: mangled bare entry sits in settings and the ledger
+  // still owns it — must not be mistaken for "removed by user".
+  const bare = "@aiti-ai/pi-models-combo@0.4.12";
+  const mangled = path.sep === "/" ? bare : bare.replace("/", path.sep);
+  const { hooks, calls } = makeHooks({ configured: [mangled] });
+  const owned = { "@aiti-ai/pi-models-combo": bare };
+  const { res, ledger, lines } = await run({ hooks, ledger: { owned } });
+  assert.ok(calls.removed.includes(mangled), "legacy entry must be removed");
+  assert.ok(calls.added.includes("npm:@aiti-ai/pi-models-combo@0.4.12"));
+  assert.equal(ledger.owned["@aiti-ai/pi-models-combo"], "npm:@aiti-ai/pi-models-combo@0.4.12");
+  assert.equal(res.failed.length, 0);
+  assert.ok(!lines.some((l) => l.includes("removed by user")), "must not be skipped as user-removed");
 });
 
 test("P3: owned entry replaced by a user's local copy → ownership dropped, no touch", async () => {
@@ -189,8 +216,27 @@ test("P3: owned entry replaced by a user's local copy → ownership dropped, no 
   const owned = { "@aiti-ai/pi-models-combo": "@aiti-ai/pi-models-combo@0.4.11" };
   const { ledger } = await run({ hooks, ledger: { owned } });
   assert.deepEqual(calls.removed, []);
-  assert.ok(!calls.added.includes("@aiti-ai/pi-models-combo@0.4.12"));
+  assert.ok(!calls.added.includes("npm:@aiti-ai/pi-models-combo@0.4.12"));
   assert.ok(!ledger.owned["@aiti-ai/pi-models-combo"], "stale ownership must be dropped");
+});
+
+test("legacy bare-spec settings entries (pre-npm:-prefix era) are cleaned up", async () => {
+  // Versions ≤ 0.15.15-aiti.6 persisted the bare spec; on Windows the SDK's
+  // path normalization also mangled it with backslashes. Both forms must be
+  // removed when re-provisioning, and the good npm: entry must be written.
+  const bare = "@aiti-ai/pi-models-combo@0.4.12";
+  const mangled = path.sep === "/" ? bare : bare.replace("/", path.sep); // "@aiti-ai\\pi-models-combo@0.4.12" on Windows
+  const { hooks, calls } = makeHooks({ configured: [bare, mangled] });
+  const { res, ledger } = await run({ hooks });
+  assert.deepEqual([...calls.removed].sort(), [bare, mangled].sort());
+  // The real contract: no legacy form may survive in settings, duplicates
+  // included — on POSIX bare === mangled, so the fixture above holds two
+  // identical entries and the cleanup must strip both.
+  const remaining = hooks.getConfigured().filter((s) => s === bare || s === mangled);
+  assert.deepEqual(remaining, []);
+  assert.ok(calls.added.includes("npm:@aiti-ai/pi-models-combo@0.4.12"));
+  assert.equal(ledger.owned["@aiti-ai/pi-models-combo"], "npm:@aiti-ai/pi-models-combo@0.4.12");
+  assert.equal(res.failed.length, 0);
 });
 
 test("batch failure falls back to per-plugin installs; failures recorded but declarations kept", async () => {

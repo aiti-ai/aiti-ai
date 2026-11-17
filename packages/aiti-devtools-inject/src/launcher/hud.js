@@ -2,6 +2,7 @@
 import { el, escapeHtml } from './dom.js';
 import { getPhysViewport, detectCoordSemantics, _fixedVisual, positionPhysical, detectScreenMode } from './viewport.js';
 import { makePointerDrag } from './drag.js';
+import { t } from './i18n.js';
 
 export function initHud(ctx) {
   ctx.attachHudDrag = function () {
@@ -50,7 +51,7 @@ export function initHud(ctx) {
       // 每行 display:block + nowrap + ellipsis（不折行，超宽省略）——信息全且不乱
       var rowHtml = function (s) { return '<span style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%">' + s + '</span>'; };
       var rows = [];
-      var head = '<b>🎯 点击选择</b> <b>&lt;' + (p.tag || '?') + '&gt;</b>';
+      var head = t('<b>🎯 Click to select</b> <b>&lt;') + (p.tag || '?') + '&gt;</b>';
       if (p.rect) head += ' <i>' + p.rect.w + '×' + p.rect.h + '</i>';
       rows.push(rowHtml(head));
       if (p.text) rows.push(rowHtml('“' + escapeHtml(p.text.trim().slice(0, 60)) + '”'));
@@ -62,13 +63,13 @@ export function initHud(ctx) {
       if (p.component || p.file) {
         // 完整路径 + 行号：折行 + word-break（不 ellipsis 截断——有空间就显示全）
         var _fl = (p.component ? p.component + ' · ' : '');
-        if (p.file) _fl += '<a class="dbg-open-file" data-file="' + escapeHtml(p.file).replace(/"/g, '&quot;') + '" data-line="' + (p.line || '') + '" title="点击在后台打开">' + escapeHtml(p.file) + (p.line ? ':' + p.line : '') + '</a>';
+        if (p.file) _fl += '<a class="dbg-open-file" data-file="' + escapeHtml(p.file).replace(/"/g, '&quot;') + '" data-line="' + (p.line || '') + '" title="' + t('Click to open in backend') + '">' + escapeHtml(p.file) + (p.line ? ':' + p.line : '') + '</a>';
         if (p.usedAt && (p.usedAt.file || p.usedAt.component)) {
           if (p.usedAt.file) {
-            _fl += ' ← 调用于 <a class="dbg-open-file" data-file="' + escapeHtml(p.usedAt.file).replace(/"/g, '&quot;') + '" data-line="' + (p.usedAt.line || '') + '" title="点击在后台打开">' + escapeHtml(p.usedAt.file) + ':' + (p.usedAt.line || '') + '</a>';
+            _fl += t(' ← called at <a class="dbg-open-file" data-file="') + escapeHtml(p.usedAt.file).replace(/"/g, '&quot;') + '" data-line="' + (p.usedAt.line || '') + '" title="' + t('Click to open in backend') + '">' + escapeHtml(p.usedAt.file) + ':' + (p.usedAt.line || '') + '</a>';
           } else if (p.usedAt.component) {
             // 构建未注入源码路径（__file 缺失）：只显示调用组件名
-            _fl += ' ← 调用于 ' + escapeHtml(p.usedAt.component);
+            _fl += t(' ← called at ') + escapeHtml(p.usedAt.component);
           }
         }
         rows.push('<span style="display:block;white-space:pre-wrap;word-break:break-all;max-width:100%">📄 ' + _fl + '</span>');
@@ -77,7 +78,7 @@ export function initHud(ctx) {
       ctx.hud.innerHTML = rows.join('');
       // 右上角抓手：HUD 本体 pointer-events:none 不拦页面，拖动仅通过抓手（innerHTML 每次重写后重新附加）
       if (!ctx.hud.querySelector('.dbg-hud-grip')) {
-        ctx.hud.appendChild(el('span', { class: 'dbg-hud-grip', title: '拖动固定 HUD（不跟随选区）' }, ['⠿']));
+        ctx.hud.appendChild(el('span', { class: 'dbg-hud-grip', title: t('Drag to pin HUD (stop following the selection)') }, ['⠿']));
       }
       // 定位：优先选区下方（箭头指向选区上方）；工具条在选区下方时 HUD 翻上方；底部空间不足也翻上方
       // 用户拖动后位置固定（hudUserPos 非空不自动定位——保持用户拖到的位置）

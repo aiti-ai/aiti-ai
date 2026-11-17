@@ -180,6 +180,40 @@ export function entryOf(id: string): PiWebBootEntry | undefined {
   return bootGraph.entries.find((e) => e.id === id);
 }
 
+/**
+ * Materialize-failure registry (id → reason): a deterministic "this bundle will
+ * never register" signal for takeover waiting windows (bundle fetch failed /
+ * no register export / register threw). Cleared on a successful retry and on
+ * invalidate (reload grants a retry). Consumers: TakeoverSlot releases the
+ * fallback as soon as every declarer of its slot has failed, instead of
+ * waiting out the anti-deadlock timeout.
+ */
+const materializeFailures = new Map<string, string>();
+
+/** Materialize settled listeners (id + ok): fired once per materialize() call
+ *  — success or failure both settle — so waiting UI can re-check declaredAllFailed(). */
+const materializeSettledListeners = new Set<(id: string, ok: boolean) => void>();
+export function onMaterializeSettled(fn: (id: string, ok: boolean) => void): () => void {
+  materializeSettledListeners.add(fn);
+  return () => { materializeSettledListeners.delete(fn); };
+}
+function notifyMaterializeSettled(id: string, ok: boolean): void {
+  for (const fn of [...materializeSettledListeners]) {
+    try { fn(id, ok); } catch { /* listener failures must not break the loop */ }
+  }
+}
+
+/** Whether every extension declaring the slot failed to materialize (and at
+ *  least one declarer exists). False while any declarer is still pending or
+ *  succeeded — only a total failure is a deterministic "no takeover" signal. */
+export function declaredAllFailed(slot: string): boolean {
+  const ids = [...declaredSlots.entries()]
+    .filter(([, slots]) => slots.includes(slot))
+    .map(([id]) => id);
+  if (ids.length === 0) return false;
+  return ids.every((id) => materializeFailures.has(id));
+}
+
 /** Phase one: fetch the bundle and grab the register entry (never called, no side effects). */
 export async function prefetch(id: string): Promise<void> {
   const entry = entryOf(id);
@@ -231,6 +265,8 @@ export async function prefetch(id: string): Promise<void> {
   } catch (e) {
     console.error(`[ext] failed to fetch client bundle for ${id}:`, e);
     modules.delete(id);
+    materializeFailures.set(id, `bundle fetch failed: ${String((e as Error)?.message ?? e).slice(0, 160)}`);
+    notifyMaterializeSettled(id, false);
   }
 }
 
@@ -253,7 +289,7 @@ export async function materialize(id: string, makeCtx: (id: string) => unknown):
       await prefetch(id);
       mod = modules.get(id);
     }
-    if (!mod) return false;
+    if (!mod) return false; // fetch failure already registered + notified inside prefetch
     if (mod.materialized) return false;
     if (!mod.registerFn) {
       // Bundle contract violation (no default/register export) — warn once and do
@@ -262,6 +298,8 @@ export async function materialize(id: string, makeCtx: (id: string) => unknown):
         warnedNullRegister.add(id);
         console.warn(`[ext] ${id}: client bundle exports no register function (expected export default register(ctx))`);
       }
+      materializeFailures.set(id, "bundle exports no register function");
+      notifyMaterializeSettled(id, false);
       return false;
     }
     try {
@@ -269,10 +307,16 @@ export async function materialize(id: string, makeCtx: (id: string) => unknown):
       // DI plan P2: capture the disposer register returned (unwinds the client-service registration on invalidate)
       mod.disposeFn = typeof ret === "function" ? (ret as () => void) : null;
       mod.materialized = true;
+      materializeFailures.delete(id); // a retry got through — clear the stale failure
       return true;
     } catch (e) {
       console.error(`[ext] failed to materialize ${id}:`, e);
+      materializeFailures.set(id, `register threw: ${String((e as Error)?.message ?? e).slice(0, 160)}`);
       return false;
+    } finally {
+      // Settle notification only for verdicts materialize() itself made; prefetch
+      // fetch failures notify on their own (this path returned early above).
+      if (mod) notifyMaterializeSettled(id, !!modules.get(id)?.materialized);
     }
   })();
   materializing.set(id, run);
@@ -414,6 +458,9 @@ export function invalidate(id: string, removeItems?: (extId: string) => void): v
   try { mod?.disposeFn?.(); } catch (e) { console.warn(`[ext] ${id}: client dispose failed:`, e); }
   removeItems?.(id);
   modules.delete(id);
+  // Reload grants a retry: forget the previous failure (TakeoverSlot must not
+  // release the fallback off a stale verdict once the bundle is invalidated).
+  materializeFailures.delete(id);
 }
 
 /**

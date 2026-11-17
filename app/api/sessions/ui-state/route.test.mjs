@@ -9,6 +9,13 @@ const agentDir = await mkdtemp(path.join(os.tmpdir(), "pi-web-session-ui-state-r
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 process.env.PI_CODING_AGENT_DIR = agentDir;
 process.env.PI_WEB_FILE_SANDBOX = "1"; // 合并：上游安全测试假设文件沙箱强制执行（本地默认关，测试内显式开）
+// The pi-web host injects API_ALLOW_ORIGINS=* (and PI_WEB_BASE_DOMAIN etc.) into
+// child sessions; that widens isApiRequestAllowed and breaks the security
+// assertions below. Tests must run from the zero-config baseline. (Each test
+// file runs in its own node --test child process, so deleting is enough.)
+for (const key of ["API_ALLOW_ORIGINS", "PI_WEB_BASE_DOMAIN", "PI_WEB_ALLOWED_HOSTS", "PI_WEB_HOSTNAME"]) {
+  delete process.env[key];
+}
 test.after(async () => {
   if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
   else process.env.PI_CODING_AGENT_DIR = previousAgentDir;

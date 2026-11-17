@@ -10,9 +10,12 @@ test("confines extension overlays to the content region above the composer", () 
   assert.doesNotMatch(source, /function ExtensionRequestSheet/);
   assert.match(
     source,
-    // [fork-merge] 121649d7 (welcome top widget zone) made flex-1 conditional on
-    // isEmptyNew — the confinement chain is unchanged; pin the current shape.
-    /className=\{`relative flex min-h-0 min-w-0 overflow-hidden\$\{isEmptyNew \? "" : " flex-1"\}`\}[\s\S]*?<ExtensionDialog[\s\S]*?<ExtensionCustomPanel[\s\S]*?className="relative flex min-h-0 flex-col"[\s\S]*?{chatInputElement}/,
+    // [fork-merge] Upstream's welcome-widget change made the content container's
+    // flex-1 conditional on isEmptyNew; the newer composer change also made its
+    // class a conditional template (shrink-0 on the empty new-session screen).
+    // Pin both current shapes: overlays must stay inside the content region,
+    // before the composer (bottomComposer). The confinement chain is unchanged.
+    /className=\{`relative flex min-h-0 min-w-0 overflow-hidden\$\{isEmptyNew \? "" : " flex-1"\}`\}[\s\S]*?<ExtensionDialog[\s\S]*?<ExtensionCustomPanel[\s\S]*?className=\{`relative flex min-h-0 flex-col\$\{isEmptyNew \? " shrink-0" : ""\}`\}[\s\S]*?{chatInputElement}/,
   );
   // 合并纪律（C 类）：不再接受旧 fork 形态 `relative shrink-0` —— 那次放宽曾把
   // 丢上游 #1429 收缩链的错误融合结果合法化（宽口钉让测试接住错误代码）。

@@ -111,7 +111,12 @@ export function createDockStackApi(ctx: Record<string, any>) {
   function StaticDockFace(props: { item: Record<string, any>; shell?: any }) {
     const item = props.item;
     const blockKey = String(item.id);
-    const title = String(item.meta?.title ?? item.meta?.label ?? item.extId ?? item.id);
+    // "i18n:<key>" static titles resolve against the declaring extension's manifest
+    // table (host ctx.translateItemText); plain titles pass through unchanged.
+    const rawTitle = String(item.meta?.title ?? item.meta?.label ?? item.extId ?? item.id);
+    const title = typeof (ctx as any).translateItemText === "function"
+      ? (ctx as any).translateItemText(item.extId, rawTitle) || rawTitle
+      : rawTitle;
     const collapsed = useBlockCollapsedCtx(blockKey)[0];
     const [phase, setPhase] = useState<string>("idle");
     const load = () => {
@@ -129,6 +134,12 @@ export function createDockStackApi(ctx: Record<string, any>) {
         itemKey: blockKey,
         blockKey,
         title,
+        // Block header icon (five-form contract, dockIconFromDecl on the shell side):
+        // meta.iconUrl = host-resolved absolute URL for the ".svg"-relative asset form;
+        // meta.icon / item.icon pass through verbatim ({svg} / name / emoji). Third-party
+        // extensions carry their own icons ({svg} / {url} / emoji) without the built-in
+        // name table; the shell shows the same icon as the real face after materialization.
+        icon: item.meta?.iconUrl ? { url: item.meta.iconUrl } : (item.meta?.icon ?? item.icon),
         chrome: "section",
         kind: "dockable",
         zones,
@@ -142,7 +153,7 @@ export function createDockStackApi(ctx: Record<string, any>) {
       h("div",
         {
           onClick: () => writeBlockCollapsed(blockKey, !collapsed),
-          style: { display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", cursor: "pointer", userSelect: "none", fontSize: 12, color: "var(--text-muted)", letterSpacing: "0.04em", textTransform: "uppercase" },
+          style: { display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", cursor: "pointer", userSelect: "none", fontSize: 12, color: "var(--text-muted)" },
         },
         h("span", { style: { transform: collapsed ? "rotate(-90deg)" : "none", transition: "transform 0.12s", fontSize: 10 } }, "▼"),
         h("span", { style: { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, title),
@@ -273,7 +284,9 @@ export function createDockStackApi(ctx: Record<string, any>) {
       ...blocks.map((b) => ({ ...b, align: (b.align ?? "top") as BlockAlign })),
       ...dockedItems.map((it: any): DockItemDef => ({
         key: String(it.id),
-        title: (it.meta?.title as string) ?? String(it.id),
+        title: ((typeof (ctx as any).translateItemText === "function" && /^i18n:/.test(String(it.meta?.title ?? "")))
+          ? (ctx as any).translateItemText(it.extId, String(it.meta?.title))
+          : (it.meta?.title as string)) ?? String(it.id),
         priority: typeof it.meta?.priority === "number" ? it.meta.priority : DOCK_DEFAULT_PRIORITY,
         // 对齐分组（v4）：dockable 默认下对齐（重要性次级）；meta.align="top" 显式声明核心区块
         align: (it.meta?.align === "top" ? "top" : "bottom") as BlockAlign,

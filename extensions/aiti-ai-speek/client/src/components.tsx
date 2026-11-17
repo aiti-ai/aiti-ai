@@ -170,6 +170,12 @@ export function HeavyFollowToggle(props) {
   const resumedRef = useRef(false);
   const prevListIdRef = useRef(null);
   useEffect(() => {
+    // During file read (fileBucket): activeSessionId is managed by readFileText (file: bucket).
+    // This effect's setCurrentSession(listId) would kick the bucket off (no 📖 / no follow / playback unanchored).
+    // ⚠ the early return only blocks "re-runs with an unchanged listId" (triggered by the followOn flip, a
+    //   readFileText critical window) — a listId change (the user switching AI sessions) must pass through:
+    //   stop file read and switch to the new session normally (otherwise a lingering fileBucket swallows settled/updating via the fileMode early return → AI-message follow positioning breaks / double-fires; regression verified 2026-11-17).
+    if (st.fileBucket && prevListIdRef.current === listId) return;
     if (listId && st.followOn) {
       setCurrentSession(listId);
       subscribeSession(sseId, listId);
@@ -187,7 +193,7 @@ export function HeavyFollowToggle(props) {
     } else {
       unsubscribeSession();
     }
-  }, [listId, sseId, st.followOn]);
+  }, [listId, sseId, st.followOn, st.fileBucket]);
   // 三态：关 / 开（普通开启）/ 读中·播放条藏（条被隐藏时的恢复态，点按打开条）。
   // 中间态只由「跟读开着 + 条没显示」决定（不依赖 playing：停止后条藏也显示——否则一点就误关跟读）。
   const readingHidden = on && !st.barVisible;
@@ -199,14 +205,20 @@ export function HeavyFollowToggle(props) {
     : (readingHidden
       ? t("speek.followHidden") + "（点按恢复播放条）"
       : t("speek.followOn") + "（点按关闭跟读）");
+  // Three-state icon (player convention, user-decided 2026-11-18): off / on but not reading = outlined horn;
+  // reading = solid square (stop semantics). Solid only for the square — a solid horn mixed into the ⋯ menu's outlined icons reads like a color blob.
+  const playing = on && st.playing;
   return (
     <button
       className={"aisp-btn-tb" + stateCls}
       title={title}
       aria-pressed={on}
       onClick={() => toggleFollow()}
+      // ⋯ menu state: aligns with the host icon slot (36px + right divider); suppresses the .on accent background
+      // (menu-row hover backgrounds are the host's business; only color semantics stay here)
+      style={props?.menu ? { background: "transparent", borderRight: "1px solid var(--border)", borderRadius: 0 } : undefined}
     >
-      <Icon d={ICON.volume} size={16} filled={on} />
+      <Icon d={playing ? ICON.stop : ICON.volume} size={16} filled={playing} />
       {totalMsgs > 0 && <span className="aisp-msgcount">{totalMsgs > 999 ? "999+" : totalMsgs}</span>}
       {readingHidden && <span className="aisp-dot" />}
     </button>
@@ -300,6 +312,10 @@ export function PlaybackBar(props) {
   const agentId = props?.currentSession?.id || null;
   const sessionId = rootId || agentId;
   const steerId = agentId || rootId;
+  // File bucket (aiti-editor 🔊 read): the display key switches to the file-bucket list (progress / navigation / jump picker); the playback core is untouched
+  const fb = st.fileBucket || null;
+  const listId = fb ? fb.id : sessionId;
+  const listLen = (listId && st.msgList?.[listId]) ? st.msgList[listId].length : 0;
   // 抢占单例：首个实例 primary=true，其余 false（useRef 初始化只在首次渲染执行，稳定）
   const primaryRef = useRef(null);
   if (primaryRef.current === null) {
@@ -331,22 +347,24 @@ export function PlaybackBar(props) {
   //   - curItem = msgList[sessionId][curIndex]（即当前播放消息的 {id,key}）
   //   - curSeg  = curSegs[curSeg]（已合并跨消息的 seg 流，含 _id=text 所属消息 id）
   //   - raw     = textCache[sessionId][curItem.id]（按需取，未命中传空串 → highlight 走文本匹配兜底）
-  const curItem = (sessionId && st.msgList && st.msgList[sessionId]) ? (st.msgList[sessionId][st.curIndex] || null) : null;
+  const curItem = (listId && st.msgList && st.msgList[listId]) ? (st.msgList[listId][st.curIndex] || null) : null;
   const curSeg = (st.curSegs && st.curSegs.length) ? (st.curSegs[st.curSeg] || null) : null;
   useEffect(() => {
     if (!primary) return;
     if (!st.followOn || !st.playing || !curSeg) { clearHighlight(); return; }
+    // file read: highlighting goes through the editor line follow (speaker followLine), not message-stream DOM positioning
+    if (st.fileBucket) { clearHighlight(); return; }
     // match=原文（无前缀/无口播）优先；无 match（概要段）回退 text，找不到则不打扰
     // sourceId=消息 entryId → 按 data-entry-id 精确定位消息，比文本匹配可靠
     const sourceId = curItem?.id || curSeg._id || null;
-    const raw = (sessionId && curItem?.id && st.textCache?.[sessionId]?.[curItem.id]) || '';
+    const raw = (listId && curItem?.id && st.textCache?.[listId]?.[curItem.id]) || '';
     try {
       window.__speekScrollMode = st.settings.followScroll || "smart";
-      window.__speekListForHighlight = (sessionId && st.msgList?.[sessionId]) ? st.msgList[sessionId] : null;
+      window.__speekListForHighlight = (listId && st.msgList?.[listId]) ? st.msgList[listId] : null;
     } catch { /* noop */ }
     const ok = highlightSegment(curSeg.match ?? curSeg.text, sourceId, raw);
     if (!ok) clearHighlight();
-  }, [st.followOn, st.playing, curItem?.id, st.curSeg]);
+  }, [st.followOn, st.playing, curItem?.id, st.curSeg, st.fileBucket]);
   // 停止/关闭跟读时确保清除
   useEffect(() => {
     if (!primary) return;
@@ -393,8 +411,8 @@ export function PlaybackBar(props) {
 
   // [fix 20260903] 同上：旧 st.queue/st.itemId/st.segIdx → 新 msgList+curIndex/curSegs+curSeg
   const item = curItem; // 复用上面算的 curItem，避免重复计算
-  // 消息总数（仅跟读开启时展示：列表由跟随 followOn 的 SSE 订阅维护，关闭时无刷新）
-  const totalMsgs = (sessionId && st.msgList?.[sessionId]) ? st.msgList[sessionId].length : 0;
+  // message count (shown only while follow-read is on: the list is maintained by the SSE subscription following followOn; no refresh when off); fileMode = file block count
+  const totalMsgs = listLen;
   // 进度显示（2026-09 优化）：x/y = 会话消息列表中当前第几条；a/b = 当前消息内第几句
   //   curIndex 已由 speaker.js 逐句同步为真实消息索引（不再停留在批次起点）
   let segPos = 0, segTotal = 0;
@@ -410,11 +428,15 @@ export function PlaybackBar(props) {
   // x = 1-based（当前第几条，最后一条 x=y 一致）；y/b = 实际数量（不加 1；b 为当前消息句数）
   const msgPos = st.curIndex >= 0 ? st.curIndex + 1 : 0;
   const msgTotal = totalMsgs;
+  // filename truncation (progress area shows "📖 name · block x/y · sentence a/b")
+  const fbName = fb ? (fb.name.length > 18 ? fb.name.slice(0, 17) + "…" : fb.name) : "";
   const queueInfo = st.starting
-    ? "启动中…"
+    ? (fb ? `📖 ${fbName} · 启动中…` : "启动中…")
     : item
-      ? `${msgPos}/${msgTotal} · ${segPos}/${segTotal}`
-      : (totalMsgs ? `0/${totalMsgs}` : "等待");
+      ? (fb
+        ? `📖 ${fbName} · ${msgPos}/${msgTotal} · ${segPos}/${segTotal}`
+        : `${msgPos}/${msgTotal} · ${segPos}/${segTotal}`)
+      : (totalMsgs ? (fb ? `📖 ${fbName} · 0/${totalMsgs}` : `0/${totalMsgs}`) : "等待");
   const extra = st.backlog > 0 ? ` +${st.backlog}` : "";
 
   const ctl = (title, fn, d, cls, disabled) => (
@@ -486,14 +508,14 @@ export function PlaybackBar(props) {
   const body = (
     <div ref={barRef} className="aisp-bar" style={barStyle}>
       <span className="aisp-grip" title="拖动移动 · 双击复位" aria-hidden onPointerDown={onGripDown} onDoubleClick={onGripDbl}>⠿</span>
-      {/* ⏮ 上一条：只要该会话有消息列表（哪怕读完/停止）都可导航，不受 playing 限制 */}
-      {ctl(t("speek.prev"), prev, ICON.prev, "", !(st.msgList[sessionId] && st.msgList[sessionId].length))}
+      {/* ⏮ previous: navigable as long as the current bucket has a list (file bucket = blocks; AI session = messages), not limited to playing */}
+      {ctl(t("speek.prev"), prev, ICON.prev, "", !listLen)}
       {st.paused
         ? ctl(t("speek.play"), resume, ICON.play)
         : st.playing
           ? ctl(t("speek.pause"), pause, ICON.pause)
           : ctl(t("speek.replay"), () => { if (sessionId) resumeFromCurrentPos(sessionId); }, ICON.play, "", false)}
-      {ctl(t("speek.next"), skip, ICON.next, "", !(st.msgList[sessionId] && st.msgList[sessionId].length))}
+      {ctl(t("speek.next"), skip, ICON.next, "", !listLen)}
       {ctl(t("speek.stop"), () => setFollow(false), ICON.stop, "stop", false)}
       {st.starting
         ? (
@@ -532,7 +554,8 @@ export function PlaybackBar(props) {
             {extra}
           </span>
         )}
-      {drifted && (
+      {/* drift button: AI-session playback only (file buckets have no message-stream DOM, so "read this page" is meaningless) */}
+      {drifted && !st.fileBucket && (
         <span className="aisp-drift">
           <button
             title="从当前页第一条可见消息开始读"
@@ -551,7 +574,7 @@ export function PlaybackBar(props) {
   return (
     <>
       {createPortal(body, document.body)}
-      <MessagePicker sessionId={sessionId} />
+      <MessagePicker sessionId={listId} />
       <FailToast />
     </>
   );
@@ -925,15 +948,15 @@ export { SettingsDialog };
 // HeavyFollowToggle 接管薄壳按钮（点击后的状态机/订阅/恢复全走真实实现）。
 export function initHeavySlots(ctx) {
   ctx.registerItems?.("toolbar", [
-    { id: "follow", render: HeavyFollowToggle, meta: { label: "跟读模式", title: "跟读模式：AI 回复自动朗读", icon: "icons/volume-2.svg" } },
+    { id: "follow", render: HeavyFollowToggle, meta: { label: "i18n:speek.followMode.label", title: "i18n:speek.followMode.title", icon: "icons/volume-2.svg" } },
   ]);
   ctx.registerItems?.("assistantMessageActions", [
-    { id: "read", render: AssistantMessageAction, meta: { label: "开始朗读" } },
+    { id: "read", render: AssistantMessageAction, meta: { label: "i18n:it.read.label" } },
   ]);
   ctx.registerItems?.("sessionTopbar", [
-    { id: "bar", render: PlaybackBar, meta: { label: "跟读播放条" } },
+    { id: "bar", render: PlaybackBar, meta: { label: "i18n:it.bar.label" } },
   ]);
   ctx.registerItems?.("dialogs", [
-    { id: "settings", render: SettingsDialog, meta: { label: "跟读设置" } },
+    { id: "settings", render: SettingsDialog, meta: { label: "i18n:it.settings.label" } },
   ]);
 }

@@ -7,13 +7,13 @@ import type { ReactNode } from "react";
 import { t, apiUrl, openFile } from "./host-shim";
 import {
   store, useStore, panelOpen, managerOpen, refreshSessions, refreshListChannels, ensureTags, collapsePanelIfCovering,
-  archiveSession, restoreSession, deleteArchivedSession, act, notifySessionsChanged, hideExtSession,
+  archiveSessions, restoreSession, deleteArchivedSession, act, notifySessionsChanged, hideExtSession,
   sharedFilter, clearSharedFilter, useSharedFilter, toggleSharedFilter, setPendingSearch, consumePendingSearch,
   displayCwd, EMPTY_TAGS, moveSession, deleteLiveSession, detectSessionCwd,
   refreshSources, sourceAction, importSession, openLiveSession, useAgentFilter, toggleAgentFilter,
   fetchRelatedDocs, subscribeRunningFrames,
-  markPendingRemoval, clearPendingRemoval, isPendingRemoval, subscribePendingRemovals,
-  applySessionNameLocal, collectSubtreeIds,
+  isPendingRemoval, subscribePendingRemovals,
+  beginOptimisticRemoval, hidePendingRow, optimisticMovedRows, applySessionNameLocal, collectSubtreeIds,
   SM_PANEL_KEY, ARCHIVED_VIEWER_KEY, EXT_VIEWER_KEY, openExtViewer, openViewer, closeViewer, closeExtViewer,
   viewerSessionId, subscribeViewerSession, extViewerId, subscribeExtViewer,
 } from "./store";
@@ -182,6 +182,19 @@ function ArchiveDialog(props: { ids: string[]; onClose: () => void }) {
     if (busy) return;
     setBusy(true);
     setErr(null);
+    // Optimistic removal (2026-11-29): per-row begin (rollbacks stored by id); on failure only the
+    // unsuccessful/failed rows roll back — successful rows stay hidden until the refresh lands and
+    // prune clears them; deleted/archived rows vanish from the list the moment they are clicked.
+    const rowOf = (id: string) => store.sessions?.find((r) => String(r.id) === String(id)) as Record<string, unknown> | undefined;
+    const rollbacks = new Map<string, () => void>();
+    const beginOne = (id: string, move: boolean) => {
+      const row = rowOf(id);
+      rollbacks.set(id, beginOptimisticRemoval(move && row
+        ? [{ id, bucket: "live", row, to: "archived" }]
+        : [{ id, bucket: "live" }]));
+    };
+    const rollbackFrom = (id: string) => { rollbacks.get(id)?.(); rollbacks.delete(id); };
+    const rollbackAll = () => { for (const rb of rollbacks.values()) rb(); rollbacks.clear(); };
     try {
       if (mode === "delete") {
         // 直接删除（未归档）：与归档是两个独立功能——不经过归档直接删会话文件
@@ -194,45 +207,62 @@ function ArchiveDialog(props: { ids: string[]; onClose: () => void }) {
           confirmLabel: t("sm.archiveDelete") ?? "彻底删除",
           danger: true,
           onConfirm: async () => {
-            // 确认后才开始：先置灰全部目标行（后台刷新慢，让用户知道在动），失败恢复
-            for (const id of props.ids) markPendingRemoval(id, "live");
             try {
               for (const id of props.ids) {
+                beginOne(id, false); // the row vanishes from the list on click (host DELETE runs per session)
                 const e = await deleteLiveSession(id);
                 if (e) {
-                  clearPendingRemoval(id);
+                  rollbackFrom(id); // failed rows reappear; successful rows stay hidden until landing converges
                   throw new Error(`${t("sm.deleteFailed") ?? "删除失败"}：${e}`);
                 }
               }
               props.onClose();
             } catch (err) {
-              // 后续未执行到的行同样恢复（避免残留置灰）；已成功删除的行等刷新落地 prune 清
-              for (const id of props.ids) clearPendingRemoval(id);
               throw err;
             }
           },
         });
         return;
       }
-      // 归档（含已解决/未解决 tag 前置）：执行即置灰全部目标行，失败逐行恢复
-      for (const id of props.ids) markPendingRemoval(id, "live");
-      const fail = () => { for (const id of props.ids) clearPendingRemoval(id); };
+      // Archive (with resolved/unresolved tag prep): tag rows one by one first (light operation;
+      // kept per-row to avoid a 409 storm), then the pi rows go out in one batched archiveSessions
+      // request (the old N sequential per-row requests were an amplifier of slow large-file
+      // archiving); ext-source rows take the view-layer removal path (the server is per-row anyway).
+      // Rows leave the list on fire.
+      const piIds: string[] = [];
       for (const id of props.ids) {
+        const row = store.sessions?.find((r) => String(r.id) === id) as { agent?: string } | undefined;
+        if (row?.agent && row.agent !== "pi") continue; // ext rows are handled per-row below
+        piIds.push(id);
+      }
+      for (const id of piIds) {
         if (mode === "resolved" || mode === "unresolved") {
           // 归档前先打 tag（多语名称；不存在则自动创建，默认颜色：已完成=绿 / 未完成=灰）
           const tagPath = mode === "resolved" ? t("sm.archiveTagResolved") : t("sm.archiveTagUnresolved");
           const ok = await act("assign", { sessionId: id, path: tagPath });
-          if (!ok) { fail(); setErr(`${id.slice(0, 8)} tag 失败`); return; }
+          if (!ok) { rollbackAll(); setErr(`${id.slice(0, 8)} tag 失败`); return; }
         }
-        // ext 源行（zcode/cursor 等只读镜像）不进归档管线：默默改走视图层移除（源数据不动）
-        const row = store.sessions?.find((r) => String(r.id) === id) as { agent?: string } | undefined;
-        if (row?.agent && row.agent !== "pi") {
-          const ok = await hideExtSession(id, true);
-          if (!ok) { fail(); setErr(`${id.slice(0, 8)} 移除失败`); return; }
-          continue;
+      }
+      // all target rows optimistically cleared (pi rows carry an archive-group snapshot; ext rows likewise)
+      for (const id of props.ids) beginOne(id, true);
+      const extIds = props.ids.filter((id) => !piIds.includes(id));
+      for (const id of extIds) {
+        const ok = await hideExtSession(id, true);
+        if (!ok) { rollbackAll(); setErr(`${id.slice(0, 8)} 移除失败`); return; }
+      }
+      if (piIds.length) {
+        const r = await archiveSessions(piIds);
+        if (!r.ok) {
+          // all skipped (all running / open / not indexed) or the request failed → restore everything + a clear error
+          rollbackAll();
+          setErr(r.skippedIds.length
+            ? `${t("sm.archiveFailed") ?? "归档失败"}：会话正在打开/运行中（${r.skippedIds.length} 个）`
+            : `${t("sm.archiveFailed") ?? "归档失败"}`);
+          return;
         }
-        const ok = await archiveSession(id);
-        if (!ok) { fail(); setErr(`${id.slice(0, 8)} 归档失败`); return; }
+        // partially skipped: skipped rows were not archived — restore only them; archived rows stay hidden until landing
+        for (const id of r.skippedIds) rollbackFrom(id);
+        if (r.skippedIds.length) showToast(t("sm.archiveSkipped", { count: r.skippedIds.length }) ?? `${r.skippedIds.length} 个会话正在打开/运行中，已跳过`);
       }
       props.onClose();
     } finally {
@@ -325,8 +355,23 @@ function renderExtViewer(props: any, face?: string) {
     return () => { alive = false; };
   }, [id]);
 
-  if (!id) return null;
-  if (face === "float" ? st !== "floating" : st !== "docked:right-panel") return null;
+  // face gate first (both faces stay mounted on the dialogs slot — closed state must render nothing)
+  const present = face === "float" ? st === "floating" : st === "docked:right-panel";
+  if (!present) return null;
+  if (!id) {
+    // App-center panel-card entries (aiti-app-center openPanel) toggle the present state
+    // without an ext target — render a hint instead of a blank pane (2026-11-16 fix).
+    // NOTE: self-contained styles — viewerBoxStyle is declared further below (TDZ).
+    const emptyStyle: React.CSSProperties = face === "float"
+      ? { width: "min(720px, 94vw)", height: "min(80vh, 720px)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, background: "var(--bg-panel)", border: "1px solid var(--border)", borderRadius: 14, boxShadow: "0 18px 60px rgba(0,0,0,0.4)" }
+      : { flex: 1, width: "100%", minHeight: 0, alignItems: "center", justifyContent: "center", gap: 12, display: "flex", flexDirection: "column", padding: 24, background: "var(--bg-panel)" };
+    return (
+      <div style={emptyStyle as React.CSSProperties}>
+        <div style={{ fontSize: 12, color: "var(--text-muted)", textAlign: "center", lineHeight: 1.6, maxWidth: 360 }}>{t("sm.viewer.pickHint")}</div>
+        <button onClick={() => panelOpen.onOpen()} style={{ ...ghostBtn, color: ensureReadability("var(--accent)"), borderColor: "var(--accent)66" } as React.CSSProperties}>{t("sm.openAll")}</button>
+      </div>
+    );
+  }
   const close = closeExtViewer;
   const openPi = (newId: string) => {
     closeExtViewer();
@@ -533,11 +578,12 @@ function viewerAction(
       danger: true,
       onConfirm: () => {
         setBusy?.("delete");
-        // 确认后置灰归档行（后台刷新慢），失败恢复样式
-        markPendingRemoval(sessionId, "archived");
+        // Optimistic removal (2026-11-29): rows leave the archive view on confirm; the backend runs
+        // in the background; on failure rollback + toast
+        const rollback = beginOptimisticRemoval([{ id: sessionId, bucket: "archived" }]);
         return deleteArchivedSession(sessionId)
           .then((ok) => {
-            if (!ok) { clearPendingRemoval(sessionId); window.alert?.(`${t("sm.deleteFailed") ?? "删除失败"}：${sessionId.slice(0, 8)}`); return; }
+            if (!ok) { rollback(); showToast(`${t("sm.deleteFailed") ?? "删除失败"}：${sessionId.slice(0, 8)}`); return; }
             closeViewer();
           })
           .finally(() => setBusy?.(null));
@@ -545,12 +591,13 @@ function viewerAction(
     });
     return Promise.resolve();
   }
-  // 恢复/重开：把行移出归档视图 —— 先置灰，失败恢复样式
-  markPendingRemoval(sessionId, "archived");
+  // restore/reopen: moves rows out of the archive view — optimistic bucket move: the archived row
+  // hides instantly + the live list shows the snapshot row instantly; rollback on failure
+  const rollback = beginOptimisticRemoval([{ id: sessionId, bucket: "archived", row: data?.session ?? {}, to: "live" }]);
   return restoreSession(sessionId).then((ok) => {
     if (!ok) {
-      clearPendingRemoval(sessionId);
-      window.alert?.(`${t(kind === "reopen" ? "sm.reopenFailed" : "sm.restoreFailed") ?? "操作失败"}：${sessionId.slice(0, 8)}`);
+      rollback();
+      showToast(`${t(kind === "reopen" ? "sm.reopenFailed" : "sm.restoreFailed") ?? "操作失败"}：${sessionId.slice(0, 8)}`);
       return;
     }
     closeViewer();
@@ -648,8 +695,23 @@ function renderArchivedViewer(props: any, face?: string) {
     return () => { alive = false; };
   }, [sessionId]);
 
-  if (!sessionId) return null;
-  if (face === "float" ? st !== "floating" : st !== "docked:right-panel") return null;
+  // face gate first (both faces stay mounted on the dialogs slot — closed state must render nothing)
+  const present = face === "float" ? st === "floating" : st === "docked:right-panel";
+  if (!present) return null;
+  if (!sessionId) {
+    // App-center panel-card entries (openPanel) toggle the present state without a
+    // viewer target — render a hint instead of a blank pane (2026-11-16 fix).
+    // NOTE: self-contained styles — archBoxStyle is declared further below (TDZ).
+    const emptyStyle: React.CSSProperties = face === "float"
+      ? { width: "min(720px, 94vw)", height: "min(80vh, 720px)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, background: "var(--bg-panel)", border: "1px solid var(--border)", borderRadius: 14, boxShadow: "0 18px 60px rgba(0,0,0,0.4)" }
+      : { flex: 1, width: "100%", minHeight: 0, alignItems: "center", justifyContent: "center", gap: 12, display: "flex", flexDirection: "column", padding: 24, background: "var(--bg-panel)" };
+    return (
+      <div style={emptyStyle as React.CSSProperties}>
+        <div style={{ fontSize: 12, color: "var(--text-muted)", textAlign: "center", lineHeight: 1.6, maxWidth: 360 }}>{t("sm.viewer.pickHint")}</div>
+        <button onClick={() => panelOpen.onOpen()} style={{ ...ghostBtn, color: ensureReadability("var(--accent)"), borderColor: "var(--accent)66" } as React.CSSProperties}>{t("sm.openAll")}</button>
+      </div>
+    );
+  }
   const close = () => closeViewer();
   const archBoxStyle: React.CSSProperties = face === "float"
     ? {
@@ -778,6 +840,16 @@ export function SessionsPanel(props: any) {
   const [page, setPage] = useState(0);
   const [debounced, setDebounced] = useState("");
   const [searchHits, setSearchHits] = useState<any[] | null>(null); // null = not searching
+  // 搜索重跑 nonce：searchHits 是独立 FTS 快照，只随 query/filter 刷新——归档/删除/恢复/
+  // 移动等列表写操作后旧 hit（archived=false）残留，已归档行不消失（2026-11-15 修复）。
+  // refreshListChannels 完成时广播 sm:sessions-changed，借它 bump 让下方搜索 effect 重跑；
+  // 归档管线服务端同步 markArchived，重跑即命中 archived=1 → 默认视图（非已归档）自然滤掉。
+  const [searchNonce, setSearchNonce] = useState(0);
+  useEffect(() => {
+    const bump = () => setSearchNonce((v) => v + 1);
+    window.addEventListener("sm:sessions-changed", bump);
+    return () => window.removeEventListener("sm:sessions-changed", bump);
+  }, []);
   const [rowBusy, setRowBusy] = useState(new Set<string>());
   const [archStatus, setArchStatus] = useState<any>(null);
   const [archBusy, setArchBusy] = useState(false);
@@ -829,7 +901,12 @@ export function SessionsPanel(props: any) {
   // 外部源条 + 会话列表」合并成一个滚动容器（整窗一个滚动位置），并在向下滚动时
   // 把标签云/agent 云各自收拢到 2 行，紧凑展示会话；滚回顶部自动展开。大屏不启用。
   const [scrunch, setScrunch] = useState<"full" | "brief" | "expanded">("full");
-  const [compact, setCompact] = useState(false);
+  // Lazy-init from matchMedia so the compact (mobile) header layout renders on first paint.
+  const [compact, setCompact] = useState(() =>
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia("(max-width: 640px)").matches
+      : false
+  );
   const scrunchRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 640px)");
@@ -922,7 +999,7 @@ export function SessionsPanel(props: any) {
       .then((d) => { if (alive) setSearchHits(d.hits ?? []); })
       .catch(() => { if (alive) setSearchHits([]); });
     return () => { alive = false; };
-  }, [debounced, modelFilter, roleFilter]);
+  }, [debounced, modelFilter, roleFilter, searchNonce]);
 
   // Archive status strip (candidates / cache)
   const refreshArchStatus = () => {
@@ -1029,7 +1106,18 @@ export function SessionsPanel(props: any) {
         name: h.title, cwd: h.cwd, modified: h.modified,
         firstMessage: h.text, lastMessage: h.text, lastRole: h.role, archived: h.archived, messageCount: 0,
       }))
-    : [...(s.sessions ?? []), ...(s.archived ?? [])]; // 服务端拆分返回（live/archived 两桶）；面板合并视图，下方 favIds 例外过滤照旧
+    : (() => {
+        // Optimistic-removal filtering (2026-11-29): pending rows are not rendered (the row clears
+        // on click); optimistic bucket-move snapshot rows merge deduped by id (server rows win) —
+        // archived/restored rows appear in the target view instantly.
+        const live = (s.sessions ?? []).filter((r) => !hidePendingRow(r));
+        const arch = (s.archived ?? []).filter((r) => !hidePendingRow(r));
+        const merged = [...live, ...arch];
+        const ids = new Set(merged.map((r) => String(r.id)));
+        const moved = [...optimisticMovedRows("live"), ...optimisticMovedRows("archived")]
+          .filter((m) => !ids.has(String(m.id)));
+        return [...merged, ...moved];
+      })(); // server returns split (live/archived buckets); the panel merges the views, favIds exception filtering below unchanged
   const byIdL = new Map(base.map((x) => [x.id, x]));
 
   // §14.2.2/14.2.3: local filters (list mode) + sort.
@@ -1147,6 +1235,15 @@ export function SessionsPanel(props: any) {
       ))}
     </div>
   );
+  // §14.4 select-all / invert: scope = current filtered result (including rows
+  // not yet paginated in / "load more"-hidden). Same set the prune logic keeps
+  // selection aligned with; batch ops below skip running/archived on their own.
+  const selectAllFiltered = () => setSelection(new Set(filtered.map((x) => x.id)));
+  const invertFiltered = () => setSelection((prev) => {
+    const n = new Set<string>();
+    for (const x of filtered) if (!prev.has(x.id)) n.add(x.id);
+    return n;
+  });
   const batchArchive = async () => {
     // running sessions are never archived (server also enforces this)
     const ids = [...selection].filter((id) => !s.running.has(id) && !(byIdL.get(id)?.archived));
@@ -1184,14 +1281,17 @@ export function SessionsPanel(props: any) {
       danger: true,
       onConfirm: async () => {
         setBatchBusy(true);
-        // 确认后：先置灰全部目标行（后台刷新慢，让用户知道在动），失败逐行恢复
-        for (const id of ids) markPendingRemoval(id, "live");
+        // Optimistic removal (2026-11-29): per-row begin, the row vanishes on click; failed rows
+        // recover instantly while successful rows stay hidden until the refresh lands and prune clears them
+        const rollbacks = new Map<string, () => void>();
         try {
           let failed = 0;
           for (const id of ids) {
+            rollbacks.set(id, beginOptimisticRemoval([{ id, bucket: "live" }]));
             const e = await deleteLiveSession(id);
-            if (e) { failed++; clearPendingRemoval(id); }
+            if (e) { failed++; rollbacks.get(id)?.(); rollbacks.delete(id); }
           }
+          rollbacks.clear();
           setSelection(new Set());
           void refreshSessions();
           notifySessionsChanged();
@@ -1285,10 +1385,12 @@ export function SessionsPanel(props: any) {
         }}
         style={{
           flexShrink: 0, cursor: "pointer", userSelect: "none", width: 16, textAlign: "center",
-          fontSize: 13, opacity: selection.has(sess.id) ? 1 : 0.25,
+          // keep checkboxes half-visible during batch mode so select-all/invert
+          // results stay readable; hover-reveal (0.25) otherwise
+          fontSize: 13, opacity: selection.has(sess.id) ? 1 : selection.size > 0 ? 0.6 : 0.25,
         }}
         onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; }}
-        onMouseLeave={(e) => { if (!selection.has(sess.id)) e.currentTarget.style.opacity = "0.25"; }}
+        onMouseLeave={(e) => { if (!selection.has(sess.id)) e.currentTarget.style.opacity = selection.size > 0 ? "0.6" : "0.25"; }}
       >{selection.has(sess.id) ? "☑" : "☐"}</span>
       <div style={{ width: 14, flexShrink: 0, color: "var(--accent)", fontSize: 11, textAlign: "center" }}>
         {pending ? "⏳" : s.running.has(sess.id) ? "⟳" : sess.archived ? "📦" : ""}
@@ -1467,13 +1569,18 @@ export function SessionsPanel(props: any) {
           const extHideRun = async (ids: string[]) => {
             if (isBusy(sess.id)) return;
             markBusy(sess.id);
-            // 先置灰涉及行（后台刷新慢，让用户知道在动），失败恢复样式
-            for (const id of ids) markPendingRemoval(id, "live");
+            // Optimistic removal: involved rows vanish on click + the archive group appears instantly; restore + toast on failure
+            const rowOf = (id: string) => (store.sessions ?? []).find((r) => String(r.id) === String(id)) as Record<string, unknown> | undefined;
+            const rollbacks = new Map<string, () => void>();
+            for (const id of ids) {
+              const row = rowOf(id);
+              rollbacks.set(id, beginOptimisticRemoval(row ? [{ id, bucket: "live", row, to: "archived" }] : [{ id, bucket: "live" }]));
+            }
             for (const id of ids) {
               const ok = await hideExtSession(id, true);
               if (!ok) {
-                for (const x of ids) clearPendingRemoval(x);
-                window.alert?.(`${String(id).slice(0, 8)} 移除失败`);
+                rollbacks.get(id)?.(); rollbacks.delete(id);
+                showToast(`${String(id).slice(0, 8)} 移除失败`);
                 break;
               }
             }
@@ -1505,9 +1612,10 @@ export function SessionsPanel(props: any) {
             onClick: () => {
               if (isBusy(sess.id)) return;
               markBusy(sess.id);
-              markPendingRemoval(sess.id, "archived");
+              // Optimistic bucket move: archived row hides instantly + live list appears instantly; rollback + toast on failure
+              const rollback = beginOptimisticRemoval([{ id: sess.id, bucket: "archived", row: sess as unknown as Record<string, unknown>, to: "live" }]);
               void restoreSession(sess.id).then((ok) => {
-                if (!ok) { clearPendingRemoval(sess.id); window.alert?.(`${t("sm.reopenFailed") ?? "重开失败"}：${sess.id.slice(0, 8)}`); return; }
+                if (!ok) { rollback(); showToast(`${t("sm.reopenFailed") ?? "重开失败"}：${sess.id.slice(0, 8)}`); return; }
                 // ext 视图层归档行：恢复后直接走后端扩展接管（⚡ 同链路）
                 if (isExtArchived) {
                   return openLiveSession(sess.id, sess.cwd).then((r) => {
@@ -1525,14 +1633,16 @@ export function SessionsPanel(props: any) {
             onClick: () => {
               if (isBusy(sess.id)) return;
               markBusy(sess.id);
-              markPendingRemoval(sess.id, "archived");
+              // Optimistic removal: archived row hides instantly, rollback + toast on failure (failures
+              // must be visible — a silent rollback once looked like "no success and no error")
+              const rollback = beginOptimisticRemoval([{ id: sess.id, bucket: "archived" }]);
               void restoreSession(sess.id)
                 .then((ok) => {
                   if (!ok) {
                     // 失败必须可见（对齐 reopen/delete 路径）：曾因服务端读写成路径分裂导致
                     // restore 404 而这里静默回滚样式，用户只看到「没成功也没报错」
-                    clearPendingRemoval(sess.id);
-                    window.alert?.(`${t("sm.restoreFailed") ?? "恢复失败"}：${sess.id.slice(0, 8)}`);
+                    rollback();
+                    showToast(`${t("sm.restoreFailed") ?? "恢复失败"}：${sess.id.slice(0, 8)}`);
                   }
                 })
                 .finally(() => markDone(sess.id));
@@ -1551,10 +1661,10 @@ export function SessionsPanel(props: any) {
                 danger: true,
                 onConfirm: () => {
                   markBusy(sess.id);
-                  // 确认后才置灰（后台刷新慢），失败恢复样式
-                  markPendingRemoval(sess.id, "archived");
+                  // Optimistic removal: rows leave the archive view on confirm; rollback + toast on failure
+                  const rollback = beginOptimisticRemoval([{ id: sess.id, bucket: "archived" }]);
                   return deleteArchivedSession(sess.id)
-                    .then((ok) => { if (!ok) clearPendingRemoval(sess.id); })
+                    .then((ok) => { if (!ok) { rollback(); showToast(`${t("sm.deleteFailed") ?? "删除失败"}：${sess.id.slice(0, 8)}`); } })
                     .finally(() => markDone(sess.id));
                 },
               });
@@ -1605,6 +1715,107 @@ export function SessionsPanel(props: any) {
       </div>
     );
 
+  // --- Header elements, shared by the desktop single-row and mobile two-row layouts. ---
+  // Mobile (compact, ≤640px — same breakpoint as aiti-float fullscreen): the search box
+  // gets its own full-width row; in the single-row layout the title + button group
+  // squeezed it down to an unusable sliver (user feedback).
+  const searchInput = (
+    <input
+      ref={searchRef}
+      value={query}
+      placeholder={t("sm.searchPlaceholder")}
+      onChange={(e) => setQuery(e.target.value)}
+      style={(compact ? { ...inputStyle, flex: "0 0 auto", width: "100%" } : inputStyle) as React.CSSProperties}
+    />
+  );
+  const cwdBtn = (
+    <span ref={cwdMenuRef} style={{ position: "relative", display: "inline-flex", flexShrink: 0 }}>
+      <button
+        onClick={() => setCwdPickerOpen((v) => !v)}
+        title={cwdFilter ? `${cwdFilter} · ${t("sm.dir.change")}` : t("sm.dir.pick")}
+        style={{
+          ...ghostBtn, fontSize: 11, minWidth: 0, maxWidth: 150,
+          display: "inline-flex", alignItems: "center", gap: 4,
+          background: cwdFilter ? "var(--accent)" : undefined,
+          borderColor: cwdFilter ? "var(--accent)" : undefined,
+          color: cwdFilter ? "var(--bg)" : undefined,
+          padding: compact ? "3px 8px" : undefined,
+        } as React.CSSProperties}
+      >
+        {/* path truncates itself, the ✕ never clips (flexShrink:0) — stays clickable on long paths */}
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{`${cwdFilter ? displayCwd(cwdFilter) : t("sm.dir.all")}`}</span>
+        {cwdFilter && (
+          <span
+            onClick={(e) => { e.stopPropagation(); setCwdFilter(""); setPage(0); }}
+            title={t("sm.clearAll")}
+            style={{ flexShrink: 0, opacity: 0.7 }}
+          >✖</span>
+        )}
+      </button>
+      {cwdPickerOpen && (
+        <WorkspaceDropdown
+          selected={cwdFilter || undefined}
+          align="right"
+          showUseDefault={false}
+          allOption={{ label: t("sm.dir.all") }}
+          onSelect={(p) => { setCwdPickerOpen(false); setCwdFilter(p || ""); setPage(0); }}
+          onClose={() => setCwdPickerOpen(false)}
+        />
+      )}
+    </span>
+  );
+  const filterBtn = (
+    <button
+      onClick={() => setFilterOpen((v) => !v)}
+      title={t("sm.filter")}
+      style={{
+        ...ghostBtn, fontSize: 11, position: "relative",
+        display: "inline-flex", alignItems: "center", gap: 3,
+        padding: compact ? "3px 7px" : undefined,
+        background: activeFilterCount ? "var(--accent)" : undefined,
+        borderColor: activeFilterCount ? "var(--accent)" : undefined,
+        color: activeFilterCount ? "var(--bg)" : undefined,
+      } as React.CSSProperties}
+    >
+      {/* funnel icon always visible — an empty label-less pill read as a broken toggle on mobile */}
+      <SIc name="filter" size={12} />
+      {activeFilterCount > 0 && <span>{activeFilterCount}</span>}
+    </button>
+  );
+  const statsBtn = (
+    <button
+      onClick={() => { setStatsOpen((v) => !v); setFilterOpen(false); }}
+      title={t("sm.stats")}
+      style={{ ...ghostBtn, fontSize: 11, padding: compact ? "3px 7px" : undefined, background: statsOpen ? "color-mix(in srgb, var(--ok, #10b981) 18%, transparent)" : undefined } as React.CSSProperties}
+    ><SIc name="chartColumn" size={11} /></button>
+  );
+  const archBtns = (
+    <>
+      {archStatus && archStatus.candidates.length > 0 && (
+        <button
+          onClick={() => void runArchiveNow()}
+          disabled={archBusy}
+          title={archStatus.candidates.map((c: any) => c.sessionId.slice(0, 8)).join(", ")}
+          style={{ ...ghostBtn, color: ensureReadability("var(--warn, #f59e0b)"), borderColor: "#f59e0b55", whiteSpace: "nowrap", fontSize: 10, padding: compact ? "3px 7px" : undefined } as React.CSSProperties}
+        >{archBusy ? "…" : `${archStatus.candidates.length}`}</button>
+      )}
+      {archStatus && archStatus.cacheBytes > 0 && (
+        <button
+          onClick={async () => {
+            const res = await fetch(apiUrl("/api/extensions/session-manager/archive/cache?clear=1"));
+            if (res.ok) refreshArchStatus();
+          }}
+          title={t("sm.clearCache")}
+          style={{ ...ghostBtn, fontSize: 10, whiteSpace: "nowrap", padding: compact ? "3px 7px" : undefined } as React.CSSProperties}
+        >{`${(archStatus.cacheBytes / 1048576).toFixed(1)}M`}</button>
+      )}
+    </>
+  );
+  const closeBtn = (
+    <button onClick={() => panelOpen.onClose()} aria-label={t("sm.close")} title={t("sm.close")}
+      style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, lineHeight: 1, padding: "2px 6px", flexShrink: 0 } as React.CSSProperties}>✕</button>
+  );
+
   return (
     <div
       style={{
@@ -1635,88 +1846,33 @@ export function SessionsPanel(props: any) {
           boxShadow: "0 18px 60px rgba(0,0,0,0.4)",
         }}
       >
-        {/* header: title + search + filters/stats + archive strip */}
-        <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "10px 12px", borderBottom: "1px solid var(--border)" }}>
-          <strong style={{ fontSize: 13, color: "var(--text)", whiteSpace: "nowrap" }}>{t("sm.allSessions")}</strong>
-          <input
-            ref={searchRef}
-            value={query}
-            placeholder={t("sm.searchPlaceholder")}
-            onChange={(e) => setQuery(e.target.value)}
-            style={inputStyle as React.CSSProperties}
-          />
-          {/* 目录过滤入口（弹出 aiti-folder WorkspaceDropdown：已知 workspace 优先）：与 ⚙ 并列；默认不选=全部 */}
-          <span ref={cwdMenuRef} style={{ position: "relative", display: "inline-flex", flexShrink: 0 }}>
-            <button
-              onClick={() => setCwdPickerOpen((v) => !v)}
-              title={cwdFilter ? `${cwdFilter} · ${t("sm.dir.change")}` : t("sm.dir.pick")}
-              style={{
-                ...ghostBtn, fontSize: 11, minWidth: 0, maxWidth: 150,
-                display: "inline-flex", alignItems: "center", gap: 4,
-                background: cwdFilter ? "var(--accent)" : undefined,
-                borderColor: cwdFilter ? "var(--accent)" : undefined,
-                color: cwdFilter ? "var(--bg)" : undefined,
-              } as React.CSSProperties}
-            >
-              {/* 路径名自身截断，✕ 永不裁剪（flexShrink:0）——长路径下也始终可见可点 */}
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{`${cwdFilter ? displayCwd(cwdFilter) : t("sm.dir.all")}`}</span>
-              {cwdFilter && (
-                <span
-                  onClick={(e) => { e.stopPropagation(); setCwdFilter(""); setPage(0); }}
-                  title={t("sm.clearAll")}
-                  style={{ flexShrink: 0, opacity: 0.7 }}
-                >✖</span>
-              )}
-            </button>
-            {cwdPickerOpen && (
-              <WorkspaceDropdown
-                selected={cwdFilter || undefined}
-                align="right"
-                showUseDefault={false}
-                allOption={{ label: t("sm.dir.all") }}
-                onSelect={(p) => { setCwdPickerOpen(false); setCwdFilter(p || ""); setPage(0); }}
-                onClose={() => setCwdPickerOpen(false)}
-              />
-            )}
-          </span>
-          {/* §14.2 filter menu trigger (active-count badge) */}
-          <button
-            onClick={() => setFilterOpen((v) => !v)}
-            title={t("sm.filter")}
-            style={{
-              ...ghostBtn, fontSize: 11, position: "relative",
-              background: activeFilterCount ? "var(--accent)" : undefined,
-              borderColor: activeFilterCount ? "var(--accent)" : undefined,
-              color: activeFilterCount ? "var(--bg)" : undefined,
-            } as React.CSSProperties}
-          >{`${activeFilterCount ? " " + activeFilterCount : ""}`}</button>
-          {/* §14.3 stats drawer trigger */}
-          <button
-            onClick={() => { setStatsOpen((v) => !v); setFilterOpen(false); }}
-            title={t("sm.stats")}
-            style={{ ...ghostBtn, fontSize: 11, background: statsOpen ? "color-mix(in srgb, var(--ok, #10b981) 18%, transparent)" : undefined } as React.CSSProperties}
-          ><SIc name="chartColumn" size={11} /></button>
-          {archStatus && archStatus.candidates.length > 0 && (
-            <button
-              onClick={() => void runArchiveNow()}
-              disabled={archBusy}
-              title={archStatus.candidates.map((c: any) => c.sessionId.slice(0, 8)).join(", ")}
-              style={{ ...ghostBtn, color: ensureReadability("var(--warn, #f59e0b)"), borderColor: "#f59e0b55", whiteSpace: "nowrap", fontSize: 10 } as React.CSSProperties}
-            >{archBusy ? "…" : `${archStatus.candidates.length}`}</button>
-          )}
-          {archStatus && archStatus.cacheBytes > 0 && (
-            <button
-              onClick={async () => {
-                const res = await fetch(apiUrl("/api/extensions/session-manager/archive/cache?clear=1"));
-                if (res.ok) refreshArchStatus();
-              }}
-              title={t("sm.clearCache")}
-              style={{ ...ghostBtn, fontSize: 10, whiteSpace: "nowrap" } as React.CSSProperties}
-            >{`${(archStatus.cacheBytes / 1048576).toFixed(1)}M`}</button>
-          )}
-          <button onClick={() => panelOpen.onClose()} aria-label={t("sm.close")} title={t("sm.close")}
-            style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, lineHeight: 1, padding: "2px 6px", flexShrink: 0 } as React.CSSProperties}>✕</button>
-        </div>
+        {/* header: title + search + filters/stats + archive strip.
+            Desktop: one row (title / search / buttons). Mobile (compact): two rows —
+            row 1 = title + buttons, row 2 = full-width search box. */}
+        {compact ? (
+          <div style={{ padding: "8px 10px", borderBottom: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", rowGap: 4, minWidth: 0 }}>
+              <strong style={{ fontSize: 13, color: "var(--text)", whiteSpace: "nowrap" }}>{t("sm.allSessions")}</strong>
+              <span style={{ flex: 1 }} />
+              {cwdBtn}
+              {filterBtn}
+              {statsBtn}
+              {archBtns}
+              {closeBtn}
+            </div>
+            {searchInput}
+          </div>
+        ) : (
+          <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "10px 12px", borderBottom: "1px solid var(--border)" }}>
+            <strong style={{ fontSize: 13, color: "var(--text)", whiteSpace: "nowrap" }}>{t("sm.allSessions")}</strong>
+            {searchInput}
+            {cwdBtn}
+            {filterBtn}
+            {statsBtn}
+            {archBtns}
+            {closeBtn}
+          </div>
+        )}
         {/* §14.2 filter menu (model / date / sort / role) */}
         {filterOpen && (
           <div style={{ display: "flex", gap: 14, alignItems: "flex-start", flexWrap: "wrap", padding: "8px 12px", borderBottom: "1px solid var(--border)", background: "rgba(99,102,241,0.05)" }}>
@@ -1840,15 +1996,25 @@ export function SessionsPanel(props: any) {
           </div>
         )}
 
-        {/* §14.4 batch bar */}
-        {selection.size > 0 && (
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "6px 12px", borderBottom: "1px solid var(--border)", background: "color-mix(in srgb, var(--warn, #f59e0b) 8%, transparent)" }}>
-            <span style={{ fontSize: 11, color: ensureReadability("var(--warn, #f59e0b)") }}>{t("sm.selectedCount", { count: selection.size })}</span>
-            <button disabled={batchBusy} onClick={() => void batchArchive()} style={ghostBtn}>{`${t("sm.archive")}`}</button>
-            <button disabled={batchBusy} onClick={() => setBatchMoveOpen(true)} style={ghostBtn}>{`${t("sm.moveBatch") ?? "移动到…"}`}</button>
-            <button disabled={batchBusy} onClick={() => void batchFavorite()} style={ghostBtn}>{`${t("sm.favorite")}`}</button>
-            <button disabled={batchBusy} onClick={() => void batchDelete()} style={{ ...ghostBtn, color: ensureReadability("var(--danger, #f87171)") } as React.CSSProperties}>{`${t("sm.archiveDelete")}`}</button>
-            <button onClick={() => setSelection(new Set())} style={{ ...ghostBtn, marginLeft: "auto" } as React.CSSProperties}>清除</button>
+        {/* §14.4 batch bar — always on while the filtered list is non-empty:
+            empty selection → slim strip with select-all/invert only (otherwise you'd
+            have to hand-check one row before batch ops become reachable);
+            non-empty → full action bar. Scope of both = current filtered result. */}
+        {filtered.length > 0 && (
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: selection.size > 0 ? "6px 12px" : "2px 12px", borderBottom: "1px solid var(--border)", background: selection.size > 0 ? "color-mix(in srgb, var(--warn, #f59e0b) 8%, transparent)" : "transparent" }}>
+            <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{t("sm.totalCount", { count: filtered.length }) ?? `${filtered.length}`}</span>
+            <button onClick={selectAllFiltered} style={{ ...ghostBtn, fontSize: 10, padding: "1px 8px" } as React.CSSProperties}>{t("sm.selectAll") ?? "全选"}</button>
+            <button onClick={invertFiltered} style={{ ...ghostBtn, fontSize: 10, padding: "1px 8px" } as React.CSSProperties}>{t("sm.invertSelect") ?? "反选"}</button>
+            {selection.size > 0 && (
+              <>
+                <span style={{ fontSize: 11, color: ensureReadability("var(--warn, #f59e0b)") }}>{t("sm.selectedCount", { count: selection.size })}</span>
+                <button disabled={batchBusy} onClick={() => void batchArchive()} style={ghostBtn}>{`${t("sm.archive")}`}</button>
+                <button disabled={batchBusy} onClick={() => setBatchMoveOpen(true)} style={ghostBtn}>{`${t("sm.moveBatch") ?? "移动到…"}`}</button>
+                <button disabled={batchBusy} onClick={() => void batchFavorite()} style={ghostBtn}>{`${t("sm.favorite")}`}</button>
+                <button disabled={batchBusy} onClick={() => void batchDelete()} style={{ ...ghostBtn, color: ensureReadability("var(--danger, #f87171)") } as React.CSSProperties}>{`${t("sm.archiveDelete")}`}</button>
+                <button onClick={() => setSelection(new Set())} style={{ ...ghostBtn, marginLeft: "auto" } as React.CSSProperties}>清除</button>
+              </>
+            )}
           </div>
         )}
 

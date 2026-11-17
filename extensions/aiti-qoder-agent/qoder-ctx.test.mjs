@@ -8,24 +8,19 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { PassThrough } from "node:stream";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+// 状态写盘隔离（session/new 换绑会 rename 模型状态文件）。
+const sandbox = mkdtempSync(join(tmpdir(), "qoder-ctx-"));
+process.env.EXT_MODEL_STATE_DIR = join(sandbox, "ext-agents");
+process.env.PI_MODELS_CONFIG_PATH = join(sandbox, "models.json");
 
 const { QoderHandle, qoderContextWindow } = await import("./index.ts");
+const { makeReadyHandle, flush } = await import("./qoder-acp-stub.mjs");
 
-function makeHandle() {
-  const stdout = new PassThrough();
-  const child = {
-    stdout,
-    stderr: { on() {} },
-    stdin: { write: () => true, writable: true, on() {} },
-    once() {},
-    kill() {},
-    exitCode: null,
-  };
-  const h = new QoderHandle("qoder:sess-test", child, null, "/tmp", "cn");
-  const write = (frame) => stdout.write(JSON.stringify(frame) + "\n");
-  return { h, write };
-}
+test.after(() => { rmSync(sandbox, { recursive: true, force: true }); });
 
 test("qoderContextWindow: claude/gpt 转发名可判，qmodel_* 不猜", () => {
   assert.equal(qoderContextWindow("claude-sonnet-4-5"), 200_000);
@@ -34,24 +29,24 @@ test("qoderContextWindow: claude/gpt 转发名可判，qmodel_* 不猜", () => {
   assert.equal(qoderContextWindow(undefined), undefined);
 });
 
-test("contextUsage 机会式：result.usage → getContextUsage + getUsageTotals 累计", async () => {
-  const { h, write } = makeHandle();
-  write({ type: "system", subtype: "init", session_id: "sess-test", model: "claude-sonnet-4-5" });
-  write({ type: "result", is_error: false,
-    usage: { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 500, cache_creation_input_tokens: 10 } });
+test("contextUsage：usage_update 帧（{used,size}）→ getContextUsage 直接可判", async () => {
+  const { h, stub } = await makeReadyHandle(QoderHandle);
+  stub.notify({ sessionUpdate: "usage_update", used: 610, size: 200_000 });
+  await flush();
   const cu = h.getContextUsage();
-  assert.ok(cu, "usage 齐全 + 模型可判 → 有数据");
+  assert.ok(cu, "usage_update 帧直接给窗口 → 有数据");
   assert.equal(cu.tokens, 610);
   assert.equal(cu.contextWindow, 200_000);
-  const totals = h.getUsageTotals();
-  assert.equal(totals.inputTokens, 100);
-  assert.equal(totals.turns, 1);
 });
 
-test("contextUsage 机会式：无 usage 帧（部分版本恒缺）→ undefined，不编数据", async () => {
-  const { h, write } = makeHandle();
-  write({ type: "system", subtype: "init", session_id: "sess-test", model: "qmodel_38max" });
-  write({ type: "result", is_error: false, total_credits: 3 });
-  assert.equal(h.getContextUsage(), undefined, "无 usage → 空轨");
-  assert.equal(h.getUsageTotals().turns, 0);
+test("contextUsage 兜底：session/prompt 响应 usage → totals 累计；无帧 → undefined 不编数据", async () => {
+  const { h, stub } = await makeReadyHandle(QoderHandle);
+  // prompt 响应带 usage（桩默认 autoAnswer）：inputTokens=10 累加
+  await h.prompt("hi");
+  await flush();
+  const totals = h.getUsageTotals();
+  assert.equal(totals.inputTokens, 10);
+  assert.equal(totals.turns, 1);
+  assert.equal(h.getContextUsage(), undefined, "无 usage_update 帧且模型窗口不可判 → 空轨");
+  await h.dispose();
 });

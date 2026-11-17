@@ -1,7 +1,9 @@
 ---
 name: session-find
 title: AI 帮我找会话
+title.en: "AI: find a session"
 placeholder: 描述你要找的会话（如：昨天写的一个 Python 脚本的会话）…
+placeholder.en: "Describe the session (e.g. yesterday's session working on a Python script)…"
 ---
 
 # session-find · 找会话

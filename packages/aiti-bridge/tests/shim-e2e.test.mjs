@@ -68,18 +68,58 @@ async function toolsOf(sh) {
   return { init, list, names: list.result.tools.map((t) => t.name) };
 }
 
+// pi-web basePath layout is machine-specific (48: dev=/dev prod=""; 155: /wdev /win;
+// mac: /mdev /mac). The shim itself discovers any known variant from a bare origin,
+// so only the EXPECTED endpoint strings need the layout. Auto-detect it from the
+// instance's own redirect (Next basePath bounces / → /<base>/); env overrides;
+// defaults keep the 48 layout when probing is impossible.
+function detectBase(origin, fallback) {
+  try {
+    const r = fetchSyncGet(origin + "/");
+    const loc = r.headers.get("location") || "";
+    const m = loc.match(/^https?:\/\/[^/]+(\/[^/]+)/);
+    if (r.status >= 300 && r.status < 400 && m && m[1] !== "") return m[1];
+    if (r.ok && !m) return ""; // served at root: no basePath
+  } catch { /* instance down → caller decides */ }
+  return fallback;
+}
+import { execFileSync as _execFileSync } from "node:child_process";
+function fetchSyncGet(url) {
+  // curl: sync probe without pulling a fetch-to-sync bridge; -k for self-signed chains
+  const out = _execFileSync("curl", ["-s", "-k", "-o", "/dev/null", "-w", "%{http_code}\\n%{redirect_url}", "--max-time", "5", url], { encoding: "utf8" });
+  const [code, redirect] = out.trim().split("\n");
+  return { status: Number(code) || 0, headers: { get: (n) => (n.toLowerCase() === "location" ? redirect : null) }, ok: code.startsWith("2") };
+}
+const DEV_BASE = process.env.AITI_E2E_DEV_BASE ?? detectBase("http://127.0.0.1:3001", "/dev");
+const PROD_BASE = process.env.AITI_E2E_PROD_BASE ?? detectBase("http://127.0.0.1:3002", "");
+
+// Warm the dev/prod MCP routes before the matrix runs: Next dev compiles route
+// handlers lazily on first hit, and under full-suite parallel load that first
+// compile alone exceeds the shim's probe budget — the first matrix cases then
+// degrade to self-check mode while later ones ride the warmed route. A tolerant
+// GET forces the compile up front; result is irrelevant.
+for (const warmUrl of [
+  `http://127.0.0.1:3001${DEV_BASE}/api/extensions/aiti-devtools/mcp/mcp`,
+  `http://127.0.0.1:3002${PROD_BASE}/api/extensions/aiti-devtools/mcp/mcp`,
+]) {
+  try { await fetch(warmUrl, { method: "GET", signal: AbortSignal.timeout(60000) }); } catch { /* instance down → cases degrade/skip as designed */ }
+}
+
 for (const t of [
   { label: "独立桥裸 origin（8777）", url: "http://127.0.0.1:8777", expect: "http://127.0.0.1:8777/aiti/mcp" },
   { label: "独立桥带 /aiti", url: "http://127.0.0.1:8777/aiti", expect: "http://127.0.0.1:8777/aiti/mcp" },
   { label: "独立桥完整端点（多写 /mcp）", url: "http://127.0.0.1:8777/aiti/mcp", expect: "http://127.0.0.1:8777/aiti/mcp" },
-  { label: "pi-web dev basePath（3001/dev）", url: "http://127.0.0.1:3001/dev", expect: "http://127.0.0.1:3001/dev/api/extensions/aiti-devtools/mcp/mcp" },
-  { label: "pi-web dev 完整端点", url: "http://127.0.0.1:3001/dev/api/extensions/aiti-devtools/mcp/mcp", expect: "http://127.0.0.1:3001/dev/api/extensions/aiti-devtools/mcp/mcp" },
-  { label: "pi-web dev 少写一个 /mcp", url: "http://127.0.0.1:3001/dev/api/extensions/aiti-devtools/mcp", expect: "http://127.0.0.1:3001/dev/api/extensions/aiti-devtools/mcp/mcp" },
-  { label: "pi-web dev 裸 origin（basePath 变体探测）", url: "http://127.0.0.1:3001", expect: "http://127.0.0.1:3001/dev/api/extensions/aiti-devtools/mcp/mcp" },
-  { label: "pi-web prod 裸 origin（3002）", url: "http://127.0.0.1:3002", expect: "http://127.0.0.1:3002/api/extensions/aiti-devtools/mcp/mcp" },
+  { label: `pi-web dev basePath（3001${DEV_BASE}）`, url: `http://127.0.0.1:3001${DEV_BASE}`, expect: `http://127.0.0.1:3001${DEV_BASE}/api/extensions/aiti-devtools/mcp/mcp` },
+  { label: "pi-web dev 完整端点", url: `http://127.0.0.1:3001${DEV_BASE}/api/extensions/aiti-devtools/mcp/mcp`, expect: `http://127.0.0.1:3001${DEV_BASE}/api/extensions/aiti-devtools/mcp/mcp` },
+  { label: "pi-web dev 少写一个 /mcp", url: `http://127.0.0.1:3001${DEV_BASE}/api/extensions/aiti-devtools/mcp`, expect: `http://127.0.0.1:3001${DEV_BASE}/api/extensions/aiti-devtools/mcp/mcp` },
+  { label: "pi-web dev 裸 origin（basePath 变体探测）", url: "http://127.0.0.1:3001", expect: `http://127.0.0.1:3001${DEV_BASE}/api/extensions/aiti-devtools/mcp/mcp` },
+  { label: "pi-web prod 裸 origin（3002）", url: "http://127.0.0.1:3002", expect: `http://127.0.0.1:3002${PROD_BASE}/api/extensions/aiti-devtools/mcp/mcp` },
 ]) {
   test("e2e 协商+全链路：" + t.label, async () => {
-    const sh = startShim({ AITI_BRIDGE_URL: t.url });
+    const sh = // Generous probe budget: the matrix cases hit the REAL dev instance, whose lazy
+    // route compilation under full-suite parallel load can exceed the 5s default and
+    // push the shim into degraded self-check mode (init answers as aiti-shim).
+    startShim({ AITI_BRIDGE_URL: t.url, AITI_PROBE_TIMEOUT_MS: "20000" });
     try {
       const { init, names } = await toolsOf(sh);
       assert.equal(init.result.serverInfo.name, "aiti-devtools"); // 桥的 initialize 原样透传

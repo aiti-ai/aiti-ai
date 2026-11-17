@@ -50,6 +50,17 @@ export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports", embe
   const [logsLoading, setLogsLoading] = useState(false);
   const [detailFor, setDetailFor] = useState<ExposeInfo | null>(null);
   const [tab, setTab] = useState<TabId>(initialTab);
+
+  // 外部页签切换请求（「手机访问·更多选项」等 deep-link）：openFloat 幂等（已开不再
+  // 触发挂载）→ initialTab 不生效；已挂载实例经事件换页签（尊重能力门控同款回退）。
+  useEffect(() => {
+    const onSwitch = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail as TabId;
+      if (id === "ports" || id === "self" || id === "users") setTab(id);
+    };
+    window.addEventListener("piwe-st-switch-tab", onSwitch);
+    return () => window.removeEventListener("piwe-st-switch-tab", onSwitch);
+  }, []);
   const [self, setSelf] = useState<SelfState | null>(null);
   const [infoModal, setInfoModal] = useState<"access" | "auth" | null>(null);
   // M1 capabilities（/status capabilities 段；tab/表单声明式门控）

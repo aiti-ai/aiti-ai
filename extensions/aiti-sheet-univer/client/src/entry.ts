@@ -13,6 +13,9 @@ import { renderSheetView, renderLegacySheetView, persistBytes } from "./sheet-vi
 function register(ctx: Record<string, any>): void {
   // apiUrl（多实例 /dev 前缀安全）→ sheet-view 的 save-blob fetch 用
   (window as any).__aitiSheetUniverApiUrl = (p: string) => (typeof ctx.apiUrl === "function" ? ctx.apiUrl(p) : p);
+  // i18n translate (ctx.t → manifest ui.i18n table) injected as soffice-panel opts.t
+  (window as any).__aitiSheetUniverT = (k: string, p?: Record<string, unknown>) =>
+    (typeof ctx.t === "function" ? ctx.t(k, p) : k);
 
   whenAitiEditorReady(() => {
     const we = (window as any).__aitiEditor;

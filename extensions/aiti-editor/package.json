@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/aiti-editor",
   "version": "1.0.11",
-  "description": "文件编辑器 —— 接管 fileViewer 插槽的可扩展编辑器（Monaco 编辑文本类文件，非文本交回核心查看器）+ 保存冲突 409 与白名单/大小校验",
+  "description": "Extensible editor — Monaco editing take over + save (mtime conflict 409 + whitelist/size checks) + archive extraction + unified image viewer (message images and file images unified, zoom · pinch · info panel)",
   "main": "index.ts",
   "scripts": {
     "build:client": "vite build --config vite.config.ts",

@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/aiti-subagents",
   "version": "0.4.8",
-  "description": "子代理扩展（pi-subagents 的 pi-web 适配版）",
+  "description": "Subagent fleet — Fleet observation / run control / agent management / concurrency config — fork engine, tools belong to upstream pi-subagents",
   "soul": "主 agent 负责思考，脏活累活分给专职的它。",
   "scripts": {
     "build:client": "node tools/build-client.mjs",

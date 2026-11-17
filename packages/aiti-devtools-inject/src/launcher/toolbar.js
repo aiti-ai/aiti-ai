@@ -2,6 +2,7 @@
 import { getPhysViewport, detectCoordSemantics, positionPhysical } from './viewport.js';
 import { makePointerDrag } from './drag.js';
 import { HOST_NAV_KEYS } from './constants.js';
+import { t } from './i18n.js';
 
 export function initToolbar(ctx) {
   ctx.floatToolbar = function (x, y, w, h) {
@@ -149,7 +150,7 @@ export function initToolbar(ctx) {
         return;
       }
       if (k === 'Escape') {
-        if (ctx.pickPanel) { ctx.finishPickPanel({ status: 'rejected', reason: '用户按 Esc 取消' }); return; }
+        if (ctx.pickPanel) { ctx.finishPickPanel({ status: 'rejected', reason: t('User cancelled with Esc') }); return; }
         if (ctx.dialog.classList.contains('dbg-open')) ctx.closeDialog();
         // inspect / AI 点选（🎯 或 aiti_user_pick_element 进入时只设 aiInspectActive 不设 inspectorOn）——Esc 一律退出
         else if (ctx.inspectorOn || ctx.aiInspectActive) ctx.exitInspector();
@@ -168,7 +169,7 @@ export function initToolbar(ctx) {
           var _next = ctx.currentProfile === 'default' ? 'all' : 'default';
           var _pfv = ctx.applyProfile(_next);
           if (_pBtn) _pBtn.textContent = _pfv.label;
-          ctx.addMsg('sys', '⚡ 已切换：' + _pfv.label + '（' + (_pfv.release.length ? '放行 ' + _pfv.release.join('/') : '全部冻结') + '）——空格/Tab 可切回' + (_next === 'default' ? '全部放行' : '默认放行') + '，页面弹出菜单保持打开');
+          ctx.addMsg('sys', t('⚡ Switched: ') + _pfv.label + '（' + (_pfv.release.length ? t('Allow ') + _pfv.release.join('/') : t('Freeze all')) + t(') — Space/Tab to switch back') + (_next === 'default' ? t('Allow all') : t('Default allow')) + t(', page popup menus stay open'));
         }
         return;
       }
