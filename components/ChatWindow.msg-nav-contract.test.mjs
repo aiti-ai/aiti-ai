@@ -34,7 +34,8 @@ test("both user and assistant messages remain visible (and thus nav targets)", (
   // render branch on equal footing with assistant messages.
   // (After the experimental merge, upstream's isMessageGroupAnchor criterion = user +
   // compaction anchors was adopted, which covers more cases.)
-  assert.match(source, /const isVisible = isMessageGroupAnchor\(msg\) \|\| msg\.role === "assistant";/);
+  // upstream 0.17 turn-ref form of the fork's visibility rule (anchor || assistant)
+  assert.match(source, /const isVisible = hasTurnRef\(msg, turnAnchors\[idx\]\);/);
   assert.match(
     source,
     /if \(!isVisible \|\| currentRefIdx === undefined\) return renderedView;/,
