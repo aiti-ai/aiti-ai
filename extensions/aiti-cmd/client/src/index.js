@@ -51,15 +51,10 @@ const topbarBtnStyle = {
   color: "var(--text-muted)", cursor: "pointer", flexShrink: 0, fontSize: 16, lineHeight: 1,
   transition: "color 0.12s",
 };
-const SOURCE_LABEL = { manual: "手动", message: "消息识别", shell: "终端", favorite: "收藏", "asr-selfheal": "ASR 自愈", schedule: "定时", suggest: "联想", "ai-helper": "AI", codebuddy: "CodeBuddy", service: "服务", unknown: "未知" };
+
 
 // 沙箱模式（默认 none 无沙箱）：label 用于编辑弹窗 select；icon 用于列表/会话行标记；hint 用于弹窗提示
-const SANDBOX = {
-  none:      { label: "无沙箱（完全信任）· 默认", icon: "", short: "无沙箱", hint: "不隔离文件系统/网络，仅限可信命令", warn: true },
-  "bwrap-ro":      { label: "系统只读（工作目录可写）", icon: " 🛡", short: "只读", hint: "文件系统只读，改动不落盘；工作目录真实可写", warn: false },
-  "bwrap-offline": { label: "只读 + 断网", icon: " 🛡", short: "只读+断网", hint: "文件系统只读且无网络——最高隔离，适合不信任命令", warn: false },
-  "bwrap-tmp":     { label: "临时可写盘（退出即丢）", icon: " ♻", short: "临时盘", hint: "一次性环境：系统只读，/tmp、$HOME 可写但退出即丢", warn: false },
-};
+
 const SANDBOX_ORDER = ["none", "bwrap-ro", "bwrap-offline", "bwrap-tmp"];
 
 // 终端配色（slate 色板 × 深背景）：默认主题的纯白前景 + 黑底在亮色 UI 里割裂，
@@ -86,142 +81,31 @@ const TERM_FONT = "ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, 'D
 // ---------- 终端增强：窗口大小 / 全屏 / 虚拟键盘 / 快捷键 ----------
 // 窗口大小预设：fit=自适应容器（默认，桌面端即常规终端观感）；其余为固定 列×行（同常规终端窗口，小屏用滚动看全貌）
 const TERM_SIZES = [
-  { id: "fit", label: "自适应", cols: null, rows: null },
+  // label resolves lazily via labelKey (t() at render points) — the module top level has no t (t lives
+  // in the register(ctx) scope), calling it directly would throw a ReferenceError and kill the whole client module
+  { id: "fit", labelKey: "cmd.k344", label: "自适应", cols: null, rows: null },
   { id: "80x24", label: "80×24", cols: 80, rows: 24 },
   { id: "100x30", label: "100×30", cols: 100, rows: 30 },
   { id: "120x40", label: "120×40", cols: 120, rows: 40 },
   { id: "160x50", label: "160×50", cols: 160, rows: 50 },
 ];
 // 常用快捷键参考（帮助弹层）
-const TERM_SHORTCUTS = [
-  ["Ctrl+C", "中断当前命令（SIGINT）"],
-  ["Ctrl+D", "退出 shell / EOF"],
-  ["Ctrl+Z", "挂起当前任务（后台）"],
-  ["Ctrl+L", "清屏"],
-  ["Ctrl+A / Ctrl+E", "光标到行首 / 行尾"],
-  ["Ctrl+U / Ctrl+K", "删除到行首 / 删除到行尾"],
-  ["Ctrl+W", "删除前一个单词"],
-  ["Ctrl+R", "反向搜索命令历史"],
-  ["Ctrl+← / Ctrl+→", "按词移动光标（readline）"],
-  ["Ctrl+↑ / Ctrl+↓", "上/下翻（终端）"],
-  ["Tab", "命令 / 路径补全"],
-  ["↑ / ↓", "上一条 / 下一条命令历史"],
-  ["← / →", "光标左 / 右移"],
-  ["Home / End", "行首 / 行尾"],
-  ["PgUp / PgDn", "上翻 / 下翻一页"],
-  ["Esc", "取消 / 进入 vi 模式"],
-  ["右键 / Ctrl+Shift+C / Ctrl+Insert", "复制选中的终端文本（Ctrl+C 是中断，不能用来复制）"],
-  ["Ctrl+Shift+V / Shift+Insert", "粘贴剪贴板到终端"],
-  ["Ctrl+Shift+F", "切换终端全屏"],
-  ["Ctrl+Shift+K", "切换虚拟键盘"],
-  ["Ctrl+Shift+S", "循环终端窗口大小"],
-  ["F1–F12", "终端功能键（虚拟键盘「常用/全键」底部一行，mc / htop 等 TUI 用）"],
-];
+
 // 工具条按钮说明（帮助弹层用：触屏没有 hover，title 看不见，按钮含义在这里集中解释）；
 // 滚动按钮标签随 UI 语言：zh → 「↓底」，其他 → 图标「⇊」
-const TOOLBAR_LEGEND = (zh) => [
-  [zh ? "↓底" : "⇊", "滚动到底部：跳到最新输出（上翻阅读时不会打扰）"],
-  ["⌨", "虚拟键盘：方向 / Tab / Esc / Ctrl / 常用符号（Ctrl+Shift+K）"],
-  ["?", "本帮助面板"],
-  ["＋", "新建：再开一个 shell（目录 = 当前终端 📁 实时路径）"],
-  ["新会话", "新建 pi-web 会话：打开新 agent 会话并 @ 当前终端实时路径"],
-  ["⇲", "拉回窗口：终端视图移回 aiti-cmd 弹窗（页签显示占位；仅页签模式有）"],
-  ["⛶", "全屏 / 退出全屏（Ctrl+Shift+F）"],
-];
+
 // Shift 锁的上档映射：数字/标点键 → 上档符号（字母键走大写分支；符号键已是上档形态时直接吞锁）
-const SHIFTED = { "1": "!", "2": "@", "3": "#", "4": "$", "5": "%", "6": "^", "7": "&", "8": "*", "9": "(", "0": ")", "-": "_", "=": "+", "`": "~", "[": "{", "]": "}", "\\": "|", ";": ":", "'": "\"", ",": "<", ".": ">", "/": "?" };
+
 // 功能键 F1-F12 行：发 xterm 标准转义序列（F1-F4 走 SS3 \x1bOP..，F5-F12 走 CSI \x1b[15~..；
 // 与 xterm.js 物理键盘默认输出一致，mc / htop / less 等 TUI 用 F 键操作）
-const KEYPAD_FN_ROW = [
-  { k: "F1", seq: "\x1bOP", c: "功能键 F1" },
-  { k: "F2", seq: "\x1bOQ", c: "功能键 F2" },
-  { k: "F3", seq: "\x1bOR", c: "功能键 F3" },
-  { k: "F4", seq: "\x1bOS", c: "功能键 F4" },
-  { k: "F5", seq: "\x1b[15~", c: "功能键 F5" },
-  { k: "F6", seq: "\x1b[17~", c: "功能键 F6" },
-  { k: "F7", seq: "\x1b[18~", c: "功能键 F7" },
-  { k: "F8", seq: "\x1b[19~", c: "功能键 F8" },
-  { k: "F9", seq: "\x1b[20~", c: "功能键 F9" },
-  { k: "F10", seq: "\x1b[21~", c: "功能键 F10" },
-  { k: "F11", seq: "\x1b[23~", c: "功能键 F11" },
-  { k: "F12", seq: "\x1b[24~", c: "功能键 F12" },
-];
+
 // 虚拟键盘键位（参考小屏终端：Termux 默认 extra-keys = ESC / - / HOME / ↑↓←→ / END / PGDN / PGUP / TAB / CTRL / ALT，
 // 并补 JuiceSSH / ConnectBot 常见的常用符号与 Ctrl 组合；外加 SHIFT（大写/上档）与 WIN（Meta）锁）
-const KEYPAD_ROWS = [
-  [
-    { k: "ESC", seq: "\x1b", c: "取消" },
-    { k: "TAB", seq: "\t", c: "补全" },
-    { k: "SHIFT", mod: "shift" },
-    { k: "CTRL", mod: "ctrl" },
-    { k: "ALT", mod: "alt" },
-    { k: "WIN", mod: "win" },
-    { k: "|", txt: "|" },
-    { k: "~", txt: "~" },
-    { k: "-", txt: "-" },
-    { k: "_", txt: "_" },
-    { k: "HOME", seq: "\x1b[H", c: "行首" },
-    { k: "END", seq: "\x1b[F", c: "行尾" },
-    { k: "PGUP", seq: "\x1b[5~", c: "上翻" },
-    { k: "PGDN", seq: "\x1b[6~", c: "下翻" },
-  ],
-  [
-    { k: "↑", seq: "\x1b[A", c: "上一条历史/上移" },
-    { k: "↓", seq: "\x1b[B", c: "下一条历史/下移" },
-    { k: "←", seq: "\x1b[D", c: "左移" },
-    { k: "→", seq: "\x1b[C", c: "右移" },
-    { k: "⌫", seq: "\x7f", c: "退格" },
-    { k: "↵", seq: "\r", c: "回车" },
-    { k: "C-c", seq: "\x03", c: "中断" },
-    { k: "C-d", seq: "\x04", c: "退出/EOF" },
-    { k: "C-z", seq: "\x1a", c: "挂起" },
-    { k: "C-l", seq: "\x0c", c: "清屏" },
-    { k: "C-a", seq: "\x01", c: "光标到行首" },
-    { k: "C-e", seq: "\x05", c: "光标到行尾" },
-    { k: "C-r", seq: "\x12", c: "反向搜索历史" },
-    { k: "C-u", seq: "\x15", c: "删到行首" },
-    { k: "C-w", seq: "\x17", c: "删词" },
-  ],
-  KEYPAD_FN_ROW,
-];
+
 // 全键盘（ABC 全键档）：完整字母 / 数字 / 符号 / 空格，CTRL/SHIFT/ALT/WIN 锁 + 键 = 组合键
 const KBD_DQUOTE = String.fromCharCode(34); // "
 const KBD_BSLASH = String.fromCharCode(92); // \
-const KEYPAD_FULL_ROWS = [
-  [
-    { k: "1", txt: "1" }, { k: "2", txt: "2" }, { k: "3", txt: "3" }, { k: "4", txt: "4" }, { k: "5", txt: "5" },
-    { k: "6", txt: "6" }, { k: "7", txt: "7" }, { k: "8", txt: "8" }, { k: "9", txt: "9" }, { k: "0", txt: "0" },
-    { k: "-", txt: "-" }, { k: "=", txt: "=" },
-  ],
-  [
-    { k: "Q", txt: "q" }, { k: "W", txt: "w" }, { k: "E", txt: "e" }, { k: "R", txt: "r" }, { k: "T", txt: "t" },
-    { k: "Y", txt: "y" }, { k: "U", txt: "u" }, { k: "I", txt: "i" }, { k: "O", txt: "o" }, { k: "P", txt: "p" },
-  ],
-  [
-    { k: "A", txt: "a" }, { k: "S", txt: "s" }, { k: "D", txt: "d" }, { k: "F", txt: "f" }, { k: "G", txt: "g" },
-    { k: "H", txt: "h" }, { k: "J", txt: "j" }, { k: "K", txt: "k" }, { k: "L", txt: "l" },
-  ],
-  [
-    { k: "Z", txt: "z" }, { k: "X", txt: "x" }, { k: "C", txt: "c" }, { k: "V", txt: "v" }, { k: "B", txt: "b" },
-    { k: "N", txt: "n" }, { k: "M", txt: "m" }, { k: "⌫", seq: "\x7f", c: "退格" },
-  ],
-  [
-    { k: "&", txt: "&" }, { k: ";", txt: ";" }, { k: ":", txt: ":" }, { k: "'", txt: "'" }, { k: KBD_DQUOTE, txt: KBD_DQUOTE },
-    { k: KBD_BSLASH, txt: KBD_BSLASH }, { k: "/", txt: "/" }, { k: "?", txt: "?" }, { k: "!", txt: "!" }, { k: "$", txt: "$" },
-    { k: "#", txt: "#" }, { k: "@", txt: "@" }, { k: "%", txt: "%" }, { k: "^", txt: "^" }, { k: "*", txt: "*" },
-  ],
-  [
-    { k: "(", txt: "(" }, { k: ")", txt: ")" }, { k: "[", txt: "[" }, { k: "]", txt: "]" }, { k: "{", txt: "{" },
-    { k: "}", txt: "}" }, { k: "<", txt: "<" }, { k: ">", txt: ">" }, { k: "=", txt: "=" }, { k: "+", txt: "+" },
-    { k: ".", txt: "." }, { k: ",", txt: "," }, { k: "|", txt: "|" }, { k: "~", txt: "~" },
-  ],
-  [
-    { k: "ESC", seq: "\x1b", c: "取消" }, { k: "TAB", seq: "\t", c: "补全" },
-    { k: "SHIFT", mod: "shift" }, { k: "CTRL", mod: "ctrl" }, { k: "ALT", mod: "alt" }, { k: "WIN", mod: "win" },
-    { k: "␣", txt: " ", c: "空格" }, { k: "↵", seq: "\r", c: "回车" },
-  ],
-  KEYPAD_FN_ROW,
-];
+
 // 终端偏好持久化（localStorage：窗口大小 / 键盘开关）
 const LS_TERM_SIZE = "aiti-cmd:term-size";
 const LS_TERM_KBD = "aiti-cmd:term-kbd";
@@ -303,6 +187,136 @@ function installTermClipboard(term, el, onPaste) {
 }
 
 export default function register(ctx) {
+  // i18n: host ctx.t (index.ts ui.i18n entries, zh/en tables); falls back to the bare key on old hosts without it
+  const t = (k, p2) => { const fn = ctx.t; return typeof fn === "function" ? fn(k, p2) : k; };
+  const SHIFTED =  { "1": "!", "2": "@", "3": "#", "4": "$", "5": "%", "6": "^", "7": "&", "8": "*", "9": "(", "0": ")", "-": "_", "=": "+", "`": "~", "[": "{", "]": "}", "\\": "|", ";": ":", "'": "\"", ",": "<", ".": ">", "/": "?" };
+  // KEYPAD_FN_ROW must be declared before KEYPAD_FULL_ROWS/KEYPAD_ROWS (both reference it at the end;
+  // declaring it later would throw a TDZ ReferenceError and kill the whole register)
+  const KEYPAD_FN_ROW =  [
+  { k: "F1", seq: "\x1bOP", c: t("cmd.k133") },
+  { k: "F2", seq: "\x1bOQ", c: t("cmd.k137") },
+  { k: "F3", seq: "\x1bOR", c: t("cmd.k138") },
+  { k: "F4", seq: "\x1bOS", c: t("cmd.k139") },
+  { k: "F5", seq: "\x1b[15~", c: t("cmd.k140") },
+  { k: "F6", seq: "\x1b[17~", c: t("cmd.k141") },
+  { k: "F7", seq: "\x1b[18~", c: t("cmd.k142") },
+  { k: "F8", seq: "\x1b[19~", c: t("cmd.k143") },
+  { k: "F9", seq: "\x1b[20~", c: t("cmd.k144") },
+  { k: "F10", seq: "\x1b[21~", c: t("cmd.k134") },
+  { k: "F11", seq: "\x1b[23~", c: t("cmd.k135") },
+  { k: "F12", seq: "\x1b[24~", c: t("cmd.k136") },
+];
+  const KEYPAD_FULL_ROWS =  [
+  [
+    { k: "1", txt: "1" }, { k: "2", txt: "2" }, { k: "3", txt: "3" }, { k: "4", txt: "4" }, { k: "5", txt: "5" },
+    { k: "6", txt: "6" }, { k: "7", txt: "7" }, { k: "8", txt: "8" }, { k: "9", txt: "9" }, { k: "0", txt: "0" },
+    { k: "-", txt: "-" }, { k: "=", txt: "=" },
+  ],
+  [
+    { k: "Q", txt: "q" }, { k: "W", txt: "w" }, { k: "E", txt: "e" }, { k: "R", txt: "r" }, { k: "T", txt: "t" },
+    { k: "Y", txt: "y" }, { k: "U", txt: "u" }, { k: "I", txt: "i" }, { k: "O", txt: "o" }, { k: "P", txt: "p" },
+  ],
+  [
+    { k: "A", txt: "a" }, { k: "S", txt: "s" }, { k: "D", txt: "d" }, { k: "F", txt: "f" }, { k: "G", txt: "g" },
+    { k: "H", txt: "h" }, { k: "J", txt: "j" }, { k: "K", txt: "k" }, { k: "L", txt: "l" },
+  ],
+  [
+    { k: "Z", txt: "z" }, { k: "X", txt: "x" }, { k: "C", txt: "c" }, { k: "V", txt: "v" }, { k: "B", txt: "b" },
+    { k: "N", txt: "n" }, { k: "M", txt: "m" }, { k: "⌫", seq: "\x7f", c: t("cmd.k376") },
+  ],
+  [
+    { k: "&", txt: "&" }, { k: ";", txt: ";" }, { k: ":", txt: ":" }, { k: "'", txt: "'" }, { k: KBD_DQUOTE, txt: KBD_DQUOTE },
+    { k: KBD_BSLASH, txt: KBD_BSLASH }, { k: "/", txt: "/" }, { k: "?", txt: "?" }, { k: "!", txt: "!" }, { k: "$", txt: "$" },
+    { k: "#", txt: "#" }, { k: "@", txt: "@" }, { k: "%", txt: "%" }, { k: "^", txt: "^" }, { k: "*", txt: "*" },
+  ],
+  [
+    { k: "(", txt: "(" }, { k: ")", txt: ")" }, { k: "[", txt: "[" }, { k: "]", txt: "]" }, { k: "{", txt: "{" },
+    { k: "}", txt: "}" }, { k: "<", txt: "<" }, { k: ">", txt: ">" }, { k: "=", txt: "=" }, { k: "+", txt: "+" },
+    { k: ".", txt: "." }, { k: ",", txt: "," }, { k: "|", txt: "|" }, { k: "~", txt: "~" },
+  ],
+  [
+    { k: "ESC", seq: "\x1b", c: t("cmd.k155") }, { k: "TAB", seq: "\t", c: t("cmd.k352") },
+    { k: "SHIFT", mod: "shift" }, { k: "CTRL", mod: "ctrl" }, { k: "ALT", mod: "alt" }, { k: "WIN", mod: "win" },
+    { k: "␣", txt: " ", c: t("cmd.k313") }, { k: "↵", seq: "\r", c: t("cmd.k177") },
+  ],
+  KEYPAD_FN_ROW,
+];
+  const KEYPAD_ROWS =  [
+  [
+    { k: "ESC", seq: "\x1b", c: t("cmd.k155") },
+    { k: "TAB", seq: "\t", c: t("cmd.k352") },
+    { k: "SHIFT", mod: "shift" },
+    { k: "CTRL", mod: "ctrl" },
+    { k: "ALT", mod: "alt" },
+    { k: "WIN", mod: "win" },
+    { k: "|", txt: "|" },
+    { k: "~", txt: "~" },
+    { k: "-", txt: "-" },
+    { k: "_", txt: "_" },
+    { k: "HOME", seq: "\x1b[H", c: t("cmd.k350") },
+    { k: "END", seq: "\x1b[F", c: t("cmd.k349") },
+    { k: "PGUP", seq: "\x1b[5~", c: t("cmd.k71") },
+    { k: "PGDN", seq: "\x1b[6~", c: t("cmd.k74") },
+  ],
+  [
+    { k: "↑", seq: "\x1b[A", c: t("cmd.k69") },
+    { k: "↓", seq: "\x1b[B", c: t("cmd.k73") },
+    { k: "←", seq: "\x1b[D", c: t("cmd.k197") },
+    { k: "→", seq: "\x1b[C", c: t("cmd.k163") },
+    { k: "⌫", seq: "\x7f", c: t("cmd.k376") },
+    { k: "↵", seq: "\r", c: t("cmd.k177") },
+    { k: "C-c", seq: "\x03", c: t("cmd.k77") },
+    { k: "C-d", seq: "\x04", c: t("cmd.k374") },
+    { k: "C-z", seq: "\x1a", c: t("cmd.k234") },
+    { k: "C-l", seq: "\x0c", c: t("cmd.k301") },
+    { k: "C-a", seq: "\x01", c: t("cmd.k98") },
+    { k: "C-e", seq: "\x05", c: t("cmd.k97") },
+    { k: "C-r", seq: "\x12", c: t("cmd.k153") },
+    { k: "C-u", seq: "\x15", c: t("cmd.k123") },
+    { k: "C-w", seq: "\x17", c: t("cmd.k124") },
+  ],
+  KEYPAD_FN_ROW,
+];
+  const TOOLBAR_LEGEND =  (zh) => [
+  [zh ? t("cmd.k54") : "⇊", t("cmd.k303")],
+  ["⌨", t("cmd.k347")],
+  ["?", t("cmd.k280")],
+  ["＋", t("cmd.k268")],
+  [t("cmd.k259"), t("cmd.k264")],
+  ["⇲", t("cmd.k233")],
+  ["⛶", t("cmd.k104")],
+];
+  const TERM_SHORTCUTS =  [
+  ["Ctrl+C", t("cmd.k78")],
+  ["Ctrl+D", t("cmd.k373")],
+  ["Ctrl+Z", t("cmd.k235")],
+  ["Ctrl+L", t("cmd.k301")],
+  ["Ctrl+A / Ctrl+E", t("cmd.k99")],
+  ["Ctrl+U / Ctrl+K", t("cmd.k128")],
+  ["Ctrl+W", t("cmd.k129")],
+  ["Ctrl+R", t("cmd.k154")],
+  ["Ctrl+← / Ctrl+→", t("cmd.k236")],
+  ["Ctrl+↑ / Ctrl+↓", t("cmd.k67")],
+  ["Tab", t("cmd.k168")],
+  ["↑ / ↓", t("cmd.k68")],
+  ["← / →", t("cmd.k100")],
+  ["Home / End", t("cmd.k351")],
+  ["PgUp / PgDn", t("cmd.k72")],
+  ["Esc", t("cmd.k156")],
+  [t("cmd.k164"), t("cmd.k184")],
+  ["Ctrl+Shift+V / Shift+Insert", t("cmd.k317")],
+  ["Ctrl+Shift+F", t("cmd.k118")],
+  ["Ctrl+Shift+K", t("cmd.k119")],
+  ["Ctrl+Shift+S", t("cmd.k218")],
+  ["F1–F12", t("cmd.k327")],
+];
+  const SANDBOX =  {
+  none:      { label: t("cmd.k270"), icon: "", short: t("cmd.k269"), hint: t("cmd.k76"), warn: true },
+  "bwrap-ro":      { label: t("cmd.k318"), icon: " 🛡", short: t("cmd.k160"), hint: t("cmd.k256"), warn: false },
+  "bwrap-offline": { label: t("cmd.k161"), icon: " 🛡", short: t("cmd.k162"), hint: t("cmd.k255"), warn: false },
+  "bwrap-tmp":     { label: t("cmd.k79"), icon: " ♻", short: t("cmd.k80"), hint: t("cmd.k66"), warn: false },
+};
+  const SOURCE_LABEL =  { manual: t("cmd.k222"), message: t("cmd.k300"), shell: t("cmd.k325"), favorite: t("cmd.k245"), "asr-selfheal": t("cmd.k31"), schedule: t("cmd.k190"), suggest: t("cmd.k338"), "ai-helper": "AI", codebuddy: "CodeBuddy", service: t("cmd.k276"), unknown: t("cmd.k278") };
   const { h, useState, useEffect, useRef, apiUrl } = ctx;
 
   // UI 语言（zh → 中文标签「↓底」，其他语言 → 图标「⇊」；跟随宿主切语言重渲染）
@@ -395,13 +409,13 @@ export default function register(ctx) {
       h("div", { style: { width: 440, maxWidth: "100%", borderRadius: 12, background: "var(--bg-panel)", border: "1px solid var(--border)", color: "var(--text)", fontFamily: "inherit", boxShadow: "0 20px 60px rgba(0,0,0,0.35)", padding: 14 }, onClick: (e) => e.stopPropagation() },
         h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 } },
           h("span", { style: { fontSize: 15, display: "inline-flex" } }, h("svg", { width: 13, height: 13, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true }, [h("path", { key: "p1", d: "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" }), h("path", { key: "p2", d: "M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" })])),
-          h("b", { style: { fontSize: 14 } }, "打开链接？"),
+          h("b", { style: { fontSize: 14 } }, t("cmd.k224")),
         ),
         h("code", { style: { display: "block", fontSize: 13, color: "var(--accent)", wordBreak: "break-all", whiteSpace: "pre-wrap", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, padding: "6px 8px", marginBottom: 4, fontFamily: "var(--font-mono)" } }, link.uri),
-        h("div", { style: { fontSize: 13, color: "var(--text-muted)", marginBottom: 10 } }, "在新窗口/新标签页中打开（外部网站）"),
+        h("div", { style: { fontSize: 13, color: "var(--text-muted)", marginBottom: 10 } }, t("cmd.k179")),
         h("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
-          h("button", { onClick: onClose, style: { ...btnStyle, padding: "5px 16px" } }, "取消"),
-          h("button", { onClick: open, style: { ...btnStyle, background: "var(--accent)", color: "#fff", borderTop: "none", borderRight: "none", borderBottom: "none", borderLeft: "none", padding: "5px 18px", fontWeight: 600 } }, "打开"),
+          h("button", { onClick: onClose, style: { ...btnStyle, padding: "5px 16px" } }, t("cmd.k155")),
+          h("button", { onClick: open, style: { ...btnStyle, background: "var(--accent)", color: "#fff", borderTop: "none", borderRight: "none", borderBottom: "none", borderLeft: "none", padding: "5px 18px", fontWeight: 600 } }, t("cmd.k223")),
         ),
       ),
     );
@@ -412,18 +426,18 @@ export default function register(ctx) {
     // 打开交互 shell（§3.3 前端「打开终端」下沉后端）：POST /shell 由服务端建会话（命令文本不落前端），
     // 前端拿 sid 渲染。→ 弹出面板直达终端视图；返回 Promise<{ok, sessionId?, error?}>
     const createShell = (cwd, name) => {
-      return fetch(api("/shell"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cwd: cwd || undefined, name: name || "终端" }) })
-        .then((x) => x.json()).catch(() => ({ ok: false, error: "网络错误" }))
+      return fetch(api("/shell"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cwd: cwd || undefined, name: name || t("cmd.k325") }) })
+        .then((x) => x.json()).catch(() => ({ ok: false, error: t("cmd.k336") }))
         .then((r) => {
-          if (!r || !r.ok || !r.sessionId) return { ok: false, error: (r && r.error) || "创建终端失败" };
-          setState({ panelOpen: true, view: { kind: "pty", id: r.sessionId, title: r.name || name || "终端" }, detail: null });
+          if (!r || !r.ok || !r.sessionId) return { ok: false, error: (r && r.error) || t("cmd.k122") };
+          setState({ panelOpen: true, view: { kind: "pty", id: r.sessionId, title: r.name || name || t("cmd.k325") }, detail: null });
           return { ok: true, sessionId: r.sessionId };
         });
     };
     // 渲染既有会话（sid 已由后端创建——ai-input suggest ⚡ / codebuddy 等消费方交 sid 过来）
     const openSession = (sessionId, title) => {
       if (!sessionId) return;
-      setState({ panelOpen: true, view: { kind: "pty", id: String(sessionId), title: title || ("会话 " + String(sessionId)) }, detail: null });
+      setState({ panelOpen: true, view: { kind: "pty", id: String(sessionId), title: title || (t("cmd.k82") + String(sessionId)) }, detail: null });
     };
     window.__aitiCmd = {
       openCommand: (cmd, cwd) => { setState({ detail: { cmd: String(cmd || ""), cwd: cwd || null }, detailBusy: false }); },
@@ -450,7 +464,7 @@ export default function register(ctx) {
     window.addEventListener("aiti-cmd:open-shell", (ev) => {
       const cwd = ev.detail && typeof ev.detail.cwd === "string" ? ev.detail.cwd : undefined;
       if (cwd === undefined) return;
-      try { createShell(cwd, ev.detail.name || "终端")?.catch?.(() => {}); } catch (e) { /* noop */ }
+      try { createShell(cwd, ev.detail.name || t("cmd.k325"))?.catch?.(() => {}); } catch (e) { /* noop */ }
     });
   }
 
@@ -466,7 +480,7 @@ export default function register(ctx) {
         if (!j || !Array.isArray(j.commands) || !j.commands.length) return [];
         return j.commands.map((c) => {
           // cd xxx && … → workdir 作为运行 cwd，action 作为命令本体（识别更准确）
-          const wd = c.workdir ? `工作目录：${c.workdir}\n` : "";
+          const wd = c.workdir ? `${t("cmd.k195")}${c.workdir}\n` : "";
           return {
             type: "command",
             id: c.cmd,
@@ -475,8 +489,8 @@ export default function register(ctx) {
             danger: !!(c.danger && c.danger.length),
             unavailable: c.exists === false,
             title: wd + (c.exists === false
-              ? "部分命令未安装。点击查看安装建议"
-              : (c.danger && c.danger.length ? `危险命令：${c.danger.join("/")}。点击查看/收藏（不会直接执行）` : "点击查看/收藏此命令（不会直接执行）")),
+              ? t("cmd.k379")
+              : (c.danger && c.danger.length ? `${t("cmd.k147")}${c.danger.join("/")}${t("cmd.k62")}` : t("cmd.k304"))),
             onClick: () => { setState({ detail: { cmd: c.action || c.cmd, cwd: c.workdir || cwd || null }, detailBusy: false }); },
           };
         });
@@ -493,15 +507,15 @@ export default function register(ctx) {
           .then((r) => (r.ok ? r.json() : null)).catch(() => null);
         if (!j || !Array.isArray(j.commands) || !j.commands.length) return [];
         const c = j.commands[0];
-        const wd = c.workdir ? `工作目录：${c.workdir}\n` : "";
+        const wd = c.workdir ? `${t("cmd.k195")}${c.workdir}\n` : "";
         return [{
           type: "command",
           id: "inline:" + c.cmd,
           label: c.cmd.length > 40 ? c.cmd.slice(0, 40) + "…" : c.cmd,
           danger: !!(c.danger && c.danger.length),
           title: wd + (c.exists === false
-            ? "部分命令未安装。点击查看安装建议"
-            : (c.danger && c.danger.length ? `危险命令：${c.danger.join("/")}。点击查看/收藏（不会直接执行）` : "点击查看/收藏此命令（不会直接执行）")),
+            ? t("cmd.k379")
+            : (c.danger && c.danger.length ? `${t("cmd.k147")}${c.danger.join("/")}${t("cmd.k62")}` : t("cmd.k304"))),
           onClick: (codeText, codeEl) => { setState({ detail: { cmd: c.action || c.cmd, cwd: c.workdir || null }, detailBusy: false }); },
         }];
       },
@@ -647,8 +661,8 @@ export default function register(ctx) {
       let everDown = false;
       // 结束横幅：醒目底色块行（被终止红底 / 非零退出黄底 / 正常结束绿底）——幂等，重放 reset 后可重写
       const writeExitBanner = (m) => {
-        const tail = `退出码 ${m.code ?? "?"}${m.signal ? " · " + m.signal : ""} · 耗时 ${((m.durationMs || 0) / 1000).toFixed(1)}s${m.truncated ? " · 输出已截断" : ""}`;
-        if (m.signal) term.write(`\r\n\x1b[41;97m ⏹ 会话已停止（被 ${m.signal} 终止） · ${tail} \x1b[0m\r\n`);
+        const tail = `${t("cmd.k375")}${m.code ?? "?"}${m.signal ? " · " + m.signal : ""}${t("cmd.k8")}${((m.durationMs || 0) / 1000).toFixed(1)}s${m.truncated ? " · 输出已截断" : ""}`;
+        if (m.signal) term.write(`\r\n\x1b[41;97m ⏹ 会话已停止（被 ${m.signal}${t("cmd.k26")}${tail} \x1b[0m\r\n`);
         else if ((m.code ?? 0) !== 0) term.write(`\r\n\x1b[43;30m ⚠ 会话已结束 · ${tail} \x1b[0m\r\n`);
         else term.write(`\r\n\x1b[42;30m ✓ 会话已结束 · ${tail} \x1b[0m\r\n`);
       };
@@ -846,7 +860,7 @@ export default function register(ctx) {
       return h("button", {
         key: i,
         onPointerDown: (e) => { e.preventDefault(); press(); }, // pointerdown+preventDefault：不抢终端焦点，点键不发移动端输入法
-        title: k.mod ? (k.mod === "ctrl" ? "Ctrl 锁：点一次锁定，再按字母键发 Ctrl+字母、按方向键发 Ctrl+方向（按词移动）" : k.mod === "alt" ? "Alt 锁：点一次锁定，再按字母/符号键发 Alt+键（ESC 前缀）、按方向键发 Alt+方向" : k.mod === "shift" ? "SHIFT 锁：点一次锁定，再按字母=大写（如 grep -E）、数字=上档符号、方向键=Shift+方向（选择）" : k.mod === "win" ? "WIN/Meta 锁：点一次锁定，再按键=ESC 前缀（终端 Meta 键，同 ALT 语义；部分程序区分绑定）" : "") : (k.c || ""),
+        title: k.mod ? (k.mod === "ctrl" ? t("cmd.k34") : k.mod === "alt" ? t("cmd.k32") : k.mod === "shift" ? t("cmd.k37") : k.mod === "win" ? t("cmd.k38") : "") : (k.c || ""),
         style: { minWidth: 34, height: 30, borderRadius: 6, border: "1px solid " + (active ? "var(--accent)" : "var(--border)"), background: active ? "var(--accent)" : "var(--bg-hover)", color: active ? "#fff" : "var(--text)", fontSize: 12, fontWeight: 600, cursor: "pointer", padding: "0 6px", fontFamily: "inherit", flexShrink: 0 },
       }, k.k);
     };
@@ -854,13 +868,13 @@ export default function register(ctx) {
     const kbdRows = kbdMode === "full" ? KEYPAD_FULL_ROWS : KEYPAD_ROWS;
     const keypad = h("div", { style: { flexShrink: 0, display: "flex", flexDirection: "column", gap: 4, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, padding: 6, maxHeight: "48%", overflowY: "auto" } },
       h("div", { style: { display: "flex", alignItems: "center", gap: 4, flexShrink: 0 } },
-        h("button", { onClick: () => setKbdMode("common"), title: "常用键：方向 / 编辑 / Ctrl 组合 / 常用符号", style: { ...miniBtn, fontSize: 12, padding: "1px 8px", background: kbdMode === "common" ? "var(--accent)" : "transparent", color: kbdMode === "common" ? "#fff" : "var(--text-muted)", border: "1px solid " + (kbdMode === "common" ? "var(--accent)" : "var(--border)") } }, "常用"),
-        h("button", { onClick: () => setKbdMode("full"), title: "全键盘：字母 / 数字 / 符号 / 空格 —— Ctrl 锁 + 字母键 = Ctrl+字母", style: { ...miniBtn, fontSize: 12, padding: "1px 8px", background: kbdMode === "full" ? "var(--accent)" : "transparent", color: kbdMode === "full" ? "#fff" : "var(--text-muted)", border: "1px solid " + (kbdMode === "full" ? "var(--accent)" : "var(--border)") } }, "ABC 全键"),
-        h("span", { style: { ...smallStyle, marginLeft: "auto", fontSize: 12, whiteSpace: "nowrap" } }, kbdMode === "full" ? "CTRL/SHIFT/ALT/WIN 锁 + 键 = 组合键" : "参考 Termux extra-keys"),
+        h("button", { onClick: () => setKbdMode("common"), title: t("cmd.k212"), style: { ...miniBtn, fontSize: 12, padding: "1px 8px", background: kbdMode === "common" ? "var(--accent)" : "transparent", color: kbdMode === "common" ? "#fff" : "var(--text-muted)", border: "1px solid " + (kbdMode === "common" ? "var(--accent)" : "var(--border)") } }, t("cmd.k206")),
+        h("button", { onClick: () => setKbdMode("full"), title: t("cmd.k108"), style: { ...miniBtn, fontSize: 12, padding: "1px 8px", background: kbdMode === "full" ? "var(--accent)" : "transparent", color: kbdMode === "full" ? "#fff" : "var(--text-muted)", border: "1px solid " + (kbdMode === "full" ? "var(--accent)" : "var(--border)") } }, t("cmd.k28")),
+        h("span", { style: { ...smallStyle, marginLeft: "auto", fontSize: 12, whiteSpace: "nowrap" } }, kbdMode === "full" ? t("cmd.k33") : t("cmd.k152")),
         // 关闭按钮：常显（即使开键盘就忘的人也一眼能看到），快捷键 Esc + 顶栏 ⌨ 同步切换；
         // aria-label 用「收起」而非「关闭」：ai-helper 弹窗 🤖 扫描器按 aria-label*=「关闭」找弹窗关闭按钮，
         // 这里若叫「关闭…」会被当成弹窗关闭按钮误挂 🤖（它只是键盘面板的开关）
-        h("button", { onClick: toggleKbd, title: "关闭虚拟键盘 (Esc)", "aria-label": "收起虚拟键盘", style: { ...miniBtn, fontSize: 13, padding: "0 8px", height: 22, color: "var(--text-muted)", display: "inline-flex", alignItems: "center", gap: 3 } }, "×", h("span", { style: { fontSize: 12 } }, "关闭")),
+        h("button", { onClick: toggleKbd, title: t("cmd.k111"), "aria-label": t("cmd.k253"), style: { ...miniBtn, fontSize: 13, padding: "0 8px", height: 22, color: "var(--text-muted)", display: "inline-flex", alignItems: "center", gap: 3 } }, "×", h("span", { style: { fontSize: 12 } }, t("cmd.k109"))),
       ),
       kbdRows.map((row, ri) => h("div", { key: ri, style: { display: "flex", flexWrap: "wrap", gap: 3 } },
         row.map((k, i) => renderKey(k, i)),
@@ -869,7 +883,7 @@ export default function register(ctx) {
     // 常用快捷键帮助（参考小屏终端：Termux / JuiceSSH / ConnectBot 常见键位）+ 工具条按钮说明
     // （触屏没有 hover，title 看不见 —— 按钮含义集中在这里查，不给顶栏按钮加会变字的标签）
     const help = h("div", { style: { flexShrink: 0, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, padding: "8px 10px", maxHeight: "45%", overflowY: "auto", fontSize: 13 } },
-      h("div", { style: { fontWeight: 700, marginBottom: 6 } }, "常用快捷键"),
+      h("div", { style: { fontWeight: 700, marginBottom: 6 } }, t("cmd.k210")),
       h("table", { style: { borderCollapse: "collapse", width: "100%" } },
         h("tbody", {},
           TERM_SHORTCUTS.map((pair) =>
@@ -879,8 +893,8 @@ export default function register(ctx) {
             )),
         ),
       ),
-      h("div", { style: { marginTop: 6, color: "var(--text-muted)", fontSize: 12, lineHeight: 1.5 } }, "虚拟键盘有「⌨ 常用 / ABC 全键」两档：常用 = 方向/编辑/Ctrl 组合；全键 = 完整字母数字符号键盘（含空格，可输入命令全文）。CTRL/SHIFT/ALT/WIN 四把锁，点一次锁定、再按任意键自动解锁（与物理键盘同感）：CTRL 锁 + 字母 = Ctrl+字母（如 a→Ctrl+A 行首）、+ 方向键 = 按词移动（readline）；SHIFT 锁 + 字母 = 大写（grep -E 必需）、+ 数字 = 上档符号、+ 方向键 = Shift+方向（选择）；ALT/WIN 锁 + 字母/符号 = ESC 前缀（Meta 键），+ 方向键 = Alt+方向（xterm \x1b[1;3x 序列，程序可区分是否带 Alt）。注意：终端转义协议不区分左右 Shift/Alt（只有 GUI 程序能区分），所以只有一把 SHIFT/ALT 锁。终端聚焦时 Ctrl+Shift+F 全屏、Ctrl+Shift+K 键盘、Ctrl+Shift+S 循环窗口大小。"),
-      h("div", { style: { fontWeight: 700, margin: "8px 0 4px", borderTop: "1px solid var(--border)", paddingTop: 8 } }, "工具条按钮"),
+      h("div", { style: { marginTop: 6, color: "var(--text-muted)", fontSize: 12, lineHeight: 1.5 } }, t("cmd.k346")),
+      h("div", { style: { fontWeight: 700, margin: "8px 0 4px", borderTop: "1px solid var(--border)", paddingTop: 8 } }, t("cmd.k196")),
       h("table", { style: { borderCollapse: "collapse", width: "100%" } },
         h("tbody", {},
           TOOLBAR_LEGEND(isZh).map((pair) =>
@@ -899,36 +913,36 @@ export default function register(ctx) {
         // 顶部状态：exit 用醒目底色 badge（被终止红 / 非零黄 / 正常绿），其余纯色文字
         status === "exit" ? h("span", { style: { display: "inline-flex", alignItems: "center", flexShrink: 0, padding: "1px 8px", borderRadius: 6, fontWeight: 700, fontSize: 11, lineHeight: "16px", color: exitInfo?.signal ? "#fff" : exitInfo && (exitInfo.code ?? 0) !== 0 ? "var(--warn, #facc15)" : "var(--ok, #4ade80)", background: exitInfo?.signal ? "var(--danger, #ef4444)" : exitInfo && (exitInfo.code ?? 0) !== 0 ? "color-mix(in srgb, var(--warn, #facc15) 22%, transparent)" : "color-mix(in srgb, var(--ok, #4ade80) 18%, transparent)" } },
           isSmall
-            ? (exitInfo?.signal ? "已停止" : exitInfo && (exitInfo.code ?? 0) !== 0 ? "已结束" : "已结束")
-            : (exitInfo?.signal ? "会话已停止（被 " + exitInfo.signal + " 终止）" : exitInfo && (exitInfo.code ?? 0) !== 0 ? "会话已结束（退出码 " + exitInfo.code + "）" : "会话已结束"))
+            ? (exitInfo?.signal ? t("cmd.k198") : exitInfo && (exitInfo.code ?? 0) !== 0 ? t("cmd.k203") : t("cmd.k203"))
+            : (exitInfo?.signal ? t("cmd.k83") + exitInfo.signal + t("cmd.k25") : exitInfo && (exitInfo.code ?? 0) !== 0 ? t("cmd.k85") + exitInfo.code + "）" : t("cmd.k84")))
         : h("span", { style: { color: status === "running" ? (killPending ? "var(--warn, #f59e0b)" : "var(--ok, #4ade80)") : "var(--text)" } },
           isSmall
             ? (killPending ? "⏳" : status === "running" ? "●" : status === "queued" ? "⏳" : status === "replaying" ? "⟳" : status === "reconnecting" ? "⚠" : "…")
-            : (killPending && status === "running" ? "终止中（已发 SIGTERM，最多 3s 后强制 KILL）" : status === "running" ? "● 运行中" : status === "queued" ? "排队中（等待并发空位）" : status === "replaying" ? "⟳ 回放中" : status === "reconnecting" ? "连接中断，重连中…" : "… 连接中")),
+            : (killPending && status === "running" ? t("cmd.k321") : status === "running" ? t("cmd.k60") : status === "queued" ? t("cmd.k239") : status === "replaying" ? t("cmd.k61") : status === "reconnecting" ? t("cmd.k370") : t("cmd.k51"))),
         meta && !isSmall && h("span", { title: meta.cwd, style: { fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, flexShrink: 1 } }, "📁 " + (meta.cwd || "")),
         meta && !isSmall && h("code", { style: { ...smallStyle, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flexShrink: 2 } }, "$ " + String(meta.cmd).slice(0, 60)),
         // 窗口大小（自适应 / 固定标准尺寸）：小屏也显示（用户要求可见；窄屏下 label 较短占用有限），Ctrl+Shift+S 仍可循环
-        h("select", { value: sizeId, onChange: (e) => { const v = e.target.value; setSizeId(v); lsSet(LS_TERM_SIZE, v); }, style: selStyle, title: "终端窗口大小（列×行）：自适应容器，或固定标准尺寸——小屏也能看到完整终端，超出可滚动" },
-          TERM_SIZES.map((s) => h("option", { key: s.id, value: s.id }, s.label)),
+        h("select", { value: sizeId, onChange: (e) => { const v = e.target.value; setSizeId(v); lsSet(LS_TERM_SIZE, v); }, style: selStyle, title: t("cmd.k330") },
+          TERM_SIZES.map((s) => h("option", { key: s.id, value: s.id }, s.labelKey ? t(s.labelKey) : s.label)),
         ),
-        h("button", { onClick: scrollBottom, title: "滚动到底部", "aria-label": "滚动到底部", style: miniBtn }, isZh ? "↓底" : "⇊"),
-        h("button", { onClick: toggleKbd, title: "虚拟键盘：方向键 / Tab / Esc / Ctrl / 常用符号 (Ctrl+Shift+K)", "aria-label": "虚拟键盘", style: { ...miniBtn, background: kbdOpen ? "var(--accent)" : undefined, color: kbdOpen ? "#fff" : undefined } }, "⌨"),
-        h("button", { onClick: () => setHelpOpen((x) => !x), title: "常用快捷键帮助", "aria-label": "常用快捷键帮助", style: { ...miniBtn, background: helpOpen ? "var(--accent)" : undefined, color: helpOpen ? "#fff" : undefined } }, "?"),
+        h("button", { onClick: scrollBottom, title: t("cmd.k302"), "aria-label": t("cmd.k302"), style: miniBtn }, isZh ? t("cmd.k54") : "⇊"),
+        h("button", { onClick: toggleKbd, title: t("cmd.k348"), "aria-label": t("cmd.k345"), style: { ...miniBtn, background: kbdOpen ? "var(--accent)" : undefined, color: kbdOpen ? "#fff" : undefined } }, "⌨"),
+        h("button", { onClick: () => setHelpOpen((x) => !x), title: t("cmd.k211"), "aria-label": t("cmd.k211"), style: { ...miniBtn, background: helpOpen ? "var(--accent)" : undefined, color: helpOpen ? "#fff" : undefined } }, "?"),
         // 页签模式操作区（顺序：＋ 新建 · ⇲ 拉回窗口 · ⛶ 最大化）；弹窗模式不传不渲染；
         // 弹窗模式传 sendToTab（⇱ 转到页签：终端移到文件区工作区终端页签）
-        sendToTab && h("button", { onClick: sendToTab, title: "转到页签：终端移到右侧文件区的工作区终端页签（弹窗内变占位）", "aria-label": "转到工作区页签", style: miniBtn }, isSmall ? "⇱" : "⇱ 转到页签"),
-        onNewShell && h("button", { onClick: onNewShell, title: "新建：再开一个 shell（目录 = 当前终端 📁 实时路径）", "aria-label": "新建 shell", style: miniBtn }, isSmall ? "＋" : "＋ 新建"),
-        onNewPiSession && h("button", { onClick: onNewPiSession, title: "新建 pi-web 会话：打开新 agent 会话并 @ 当前终端实时路径", "aria-label": "新建 pi-web 会话", style: miniBtn }, isSmall ? "💬" : "新会话"),
-        pullBack && h("button", { onClick: pullBack, title: "拉回窗口：终端视图移回 aiti-cmd 弹窗（页签显示占位）", "aria-label": "拉回窗口", style: miniBtn }, isSmall ? "⇲" : "⇲ 拉回窗口"),
+        sendToTab && h("button", { onClick: sendToTab, title: t("cmd.k364"), "aria-label": t("cmd.k360"), style: miniBtn }, isSmall ? "⇱" : t("cmd.k56")),
+        onNewShell && h("button", { onClick: onNewShell, title: t("cmd.k268"), "aria-label": t("cmd.k265"), style: miniBtn }, isSmall ? "＋" : t("cmd.k404")),
+        onNewPiSession && h("button", { onClick: onNewPiSession, title: t("cmd.k264"), "aria-label": t("cmd.k261"), style: miniBtn }, isSmall ? "💬" : t("cmd.k259")),
+        pullBack && h("button", { onClick: pullBack, title: t("cmd.k232"), "aria-label": t("cmd.k231"), style: miniBtn }, isSmall ? "⇲" : t("cmd.k57")),
         // 最大化/还原 放最末：与 aiti-float 自动注入的 ⛶/❐ 同位（关闭按钮之前），习惯后置
-        h("button", { onClick: () => setFullscreen((x) => !x), title: "全屏 / 退出全屏 (Ctrl+Shift+F)", "aria-label": "全屏", style: { ...miniBtn, background: fullscreen ? "var(--accent)" : undefined, color: fullscreen ? "#fff" : undefined } }, fullscreen ? "⤡" : "⛶"),
-        exitInfo && h("span", { style: { fontWeight: 700, color: exitInfo.signal ? "var(--danger, #ef4444)" : (exitInfo.code ?? 0) !== 0 ? "#b45309" : "var(--text-muted)" } }, `退出码 ${exitInfo.code ?? "?"}${exitInfo.signal ? " · " + exitInfo.signal : ""} · ${((exitInfo.durationMs || 0) / 1000).toFixed(1)}s`),
+        h("button", { onClick: () => setFullscreen((x) => !x), title: t("cmd.k103"), "aria-label": t("cmd.k101"), style: { ...miniBtn, background: fullscreen ? "var(--accent)" : undefined, color: fullscreen ? "#fff" : undefined } }, fullscreen ? "⤡" : "⛶"),
+        exitInfo && h("span", { style: { fontWeight: 700, color: exitInfo.signal ? "var(--danger, #ef4444)" : (exitInfo.code ?? 0) !== 0 ? "#b45309" : "var(--text-muted)" } }, `${t("cmd.k375")}${exitInfo.code ?? "?"}${exitInfo.signal ? " · " + exitInfo.signal : ""} · ${((exitInfo.durationMs || 0) / 1000).toFixed(1)}s`),
       ),
       h("div", { ref, style: { flex: 1, minHeight: 0, background: "#0f172a", borderRadius: 8, padding: 6, overflow: isFit ? "hidden" : "auto", touchAction: "none" } }),
       // 小屏底部状态栏：顶部简化后 cwd/命令全不可见——底部放一份；统计计数（🤖 agent / 🖥 终端）也下沉到这里
       isSmall && meta && h("div", { style: { flexShrink: 0, display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--text-muted)", padding: "4px 6px 0", overflow: "hidden", minHeight: 0, whiteSpace: "nowrap" } },
-        counts && h("span", { title: "当前：🤖 agent 在跑 / 🖥 终端在跑", style: { flexShrink: 0 } }, "🤖" + counts.piRunning + "/" + counts.piTotal + " 🖥" + counts.ptyRunning),
-        meta.cwd && h("span", { title: "工作目录", style: { overflow: "hidden", textOverflow: "ellipsis", minWidth: 0, flexShrink: 1 } }, "📁 " + meta.cwd),
+        counts && h("span", { title: t("cmd.k217"), style: { flexShrink: 0 } }, "🤖" + counts.piRunning + "/" + counts.piTotal + " 🖥" + counts.ptyRunning),
+        meta.cwd && h("span", { title: t("cmd.k194"), style: { overflow: "hidden", textOverflow: "ellipsis", minWidth: 0, flexShrink: 1 } }, "📁 " + meta.cwd),
         h("code", { title: String(meta.cmd), style: { overflow: "hidden", textOverflow: "ellipsis", minWidth: 0, flexShrink: 2, color: "var(--text)" } }, "$ " + String(meta.cmd).slice(0, 60)),
       ),
       kbdOpen && keypad,
@@ -985,7 +999,7 @@ export default function register(ctx) {
       const ensureHeader = () => { if (!headerWritten) { headerWritten = true; try { term.write(`\x1b[94m$ ${currentCmd || "（订阅前已开始）"}\x1b[0m\r\n`); } catch {} } };
       // 结束横幅：醒目底色块行（被终止/出错红底 / 正常绿底），替代旧灰色小字；快照重放后也补写
       const writeExitBanner = (m) => {
-        const tail = `耗时 ${((m.durationMs || 0) / 1000).toFixed(1)}s${m.truncated ? " · 输出已截断" : ""}`;
+        const tail = `${t("cmd.k337")}${((m.durationMs || 0) / 1000).toFixed(1)}s${m.truncated ? " · 输出已截断" : ""}`;
         if (m.isError) term.write(`\r\n\x1b[41;97m ⏹ 命令已停止（出错/被终止） · ${tail} \x1b[0m\r\n`);
         else term.write(`\r\n\x1b[42;30m ✓ 命令已完成 · ${tail} \x1b[0m\r\n`);
       };
@@ -1101,28 +1115,28 @@ export default function register(ctx) {
         // 顶部状态：exit 用醒目底色 badge（被终止/出错红 / 正常绿 / 已清理灰），其余纯色文字
         status === "exit" ? h("span", { style: { display: "inline-flex", alignItems: "center", flexShrink: 0, padding: "1px 8px", borderRadius: 6, fontWeight: 700, fontSize: 11, lineHeight: "16px", color: exitInfo?.swept ? "var(--text)" : exitInfo?.isError ? "#fff" : "var(--ok, #4ade80)", background: exitInfo?.swept ? "var(--bg-hover)" : exitInfo?.isError ? "var(--danger, #ef4444)" : "color-mix(in srgb, var(--ok, #4ade80) 18%, transparent)" } },
           isSmall
-            ? (exitInfo?.swept ? "已结束" : exitInfo?.isError ? "已停止" : "完成")
-            : (exitInfo?.swept ? "已结束（服务器已清理记录）" : exitInfo?.isError ? "命令已停止（出错/被终止）" : "命令已完成"))
+            ? (exitInfo?.swept ? t("cmd.k203") : exitInfo?.isError ? t("cmd.k198") : t("cmd.k189"))
+            : (exitInfo?.swept ? t("cmd.k204") : exitInfo?.isError ? t("cmd.k173") : t("cmd.k174")))
         : h("span", { style: { color: status === "running" ? "var(--ok, #4ade80)" : "var(--text)" } },
           isSmall
             ? (status === "running" ? "●" : status === "reconnecting" ? "⚠" : "…")
-            : (status === "running" ? "● 运行中" : status === "reconnecting" ? "重连中…" : "… 连接中")),
+            : (status === "running" ? t("cmd.k60") : status === "reconnecting" ? t("cmd.k382") : t("cmd.k51"))),
         // 顶栏 meta 信息小屏隐藏（移到下方状态栏）
-        !isSmall && meta && h("code", { style: smallStyle }, "🤖 " + String(meta.sessionId || "").slice(0, 8) + " $ " + String(meta.cmd || "（订阅前已开始）").slice(0, 70)),
-        h("button", { onClick: saveCmd, disabled: !hasSel && !String(meta?.cmd || "").trim(), title: hasSel ? "收藏选中的文本（可只收藏命令片段）" : "收藏完整命令到常用命令", "aria-label": "收藏命令", style: { ...btnStyle, padding: isSmall ? "2px 6px" : "2px 10px", opacity: hasSel || String(meta?.cmd || "").trim() ? 1 : 0.5, cursor: hasSel || String(meta?.cmd || "").trim() ? "pointer" : "not-allowed" } }, isSmall ? "＋" : "＋ 收藏"),
-        exitInfo && !isSmall && !exitInfo.swept && h("span", { style: { fontWeight: 700, color: exitInfo.isError ? "var(--danger, #ef4444)" : "var(--text-muted)" } }, (exitInfo.isError ? "出错/被终止" : "完成") + " · " + ((exitInfo.durationMs || 0) / 1000).toFixed(1) + "s"),
-        status !== "exit" && h("button", { onClick: killPi, disabled: killBusy, title: killBusy ? "终止信号已发送，等待进程退出…" : "只终止这条 bash 命令（agent 收到错误后继续思考；同会话并发 bash 会一起终止）", "aria-label": "终止命令", style: { ...btnStyle, color: "var(--danger, #ef4444)", padding: isSmall ? "2px 6px" : "2px 10px", opacity: killBusy ? 0.6 : 1, cursor: killBusy ? "wait" : "pointer" } }, killBusy ? (isSmall ? "⏳" : "终止中…") : (isSmall ? "⏹" : "终止命令")),
-        h("button", { onClick: scrollBottom, title: "滚动到底部", "aria-label": "滚动到底部", style: { ...btnStyle, padding: "2px 8px" } }, isZh ? "↓底" : "⇊"),
+        !isSmall && meta && h("code", { style: smallStyle }, "🤖 " + String(meta.sessionId || "").slice(0, 8) + " $ " + String(meta.cmd || t("cmd.k399")).slice(0, 70)),
+        h("button", { onClick: saveCmd, disabled: !hasSel && !String(meta?.cmd || "").trim(), title: hasSel ? t("cmd.k252") : t("cmd.k250"), "aria-label": t("cmd.k249"), style: { ...btnStyle, padding: isSmall ? "2px 6px" : "2px 10px", opacity: hasSel || String(meta?.cmd || "").trim() ? 1 : 0.5, cursor: hasSel || String(meta?.cmd || "").trim() ? "pointer" : "not-allowed" } }, isSmall ? "＋" : t("cmd.k401")),
+        exitInfo && !isSmall && !exitInfo.swept && h("span", { style: { fontWeight: 700, color: exitInfo.isError ? "var(--danger, #ef4444)" : "var(--text-muted)" } }, (exitInfo.isError ? t("cmd.k115") : t("cmd.k189")) + " · " + ((exitInfo.durationMs || 0) / 1000).toFixed(1) + "s"),
+        status !== "exit" && h("button", { onClick: killPi, disabled: killBusy, title: killBusy ? t("cmd.k322") : t("cmd.k158"), "aria-label": t("cmd.k323"), style: { ...btnStyle, color: "var(--danger, #ef4444)", padding: isSmall ? "2px 6px" : "2px 10px", opacity: killBusy ? 0.6 : 1, cursor: killBusy ? "wait" : "pointer" } }, killBusy ? (isSmall ? "⏳" : t("cmd.k320")) : (isSmall ? "⏹" : t("cmd.k323"))),
+        h("button", { onClick: scrollBottom, title: t("cmd.k302"), "aria-label": t("cmd.k302"), style: { ...btnStyle, padding: "2px 8px" } }, isZh ? t("cmd.k54") : "⇊"),
         // 最大化放最末：与 TerminalView 一致习惯
-        h("button", { onClick: () => setFs((x) => !x), title: "全屏 / 退出全屏", "aria-label": "全屏", style: { ...btnStyle, padding: "2px 8px", color: fs ? "var(--accent)" : undefined } }, fs ? "⤡" : "⛶"),
+        h("button", { onClick: () => setFs((x) => !x), title: t("cmd.k102"), "aria-label": t("cmd.k101"), style: { ...btnStyle, padding: "2px 8px", color: fs ? "var(--accent)" : undefined } }, fs ? "⤡" : "⛶"),
       ),
       h("div", { ref, style: { flex: 1, minHeight: 0, background: "#0f172a", borderRadius: 8, padding: 6, overflow: "hidden" } }),
       // 小屏底部状态栏：meta 必含（订阅运行中命令）；统计计数下沉到这里
       isSmall && meta && h("div", { style: { flexShrink: 0, display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--text-muted)", padding: "4px 6px 0", overflow: "hidden", minHeight: 0, whiteSpace: "nowrap" } },
-        counts && h("span", { title: "当前：🤖 agent 在跑 / 🖥 终端在跑", style: { flexShrink: 0 } }, "🤖" + counts.piRunning + "/" + counts.piTotal + " 🖥" + counts.ptyRunning),
-        h("span", { title: "agent 会话", style: { overflow: "hidden", textOverflow: "ellipsis", minWidth: 0, flexShrink: 1 } }, "🤖 " + String(meta.sessionId || "").slice(0, 8)),
-        h("code", { title: String(meta.cmd), style: { overflow: "hidden", textOverflow: "ellipsis", minWidth: 0, flexShrink: 2, color: "var(--text)" } }, "$ " + String(meta.cmd || "（订阅前已开始）").slice(0, 60)),
-        exitInfo && h("span", { style: { color: exitInfo.isError ? "var(--danger, #ef4444)" : "var(--text-muted)", flexShrink: 0 } }, exitInfo.swept ? "已清理" : (exitInfo.isError ? "⚠ " : "✓ ") + ((exitInfo.durationMs || 0) / 1000).toFixed(1) + "s"),
+        counts && h("span", { title: t("cmd.k217"), style: { flexShrink: 0 } }, "🤖" + counts.piRunning + "/" + counts.piTotal + " 🖥" + counts.ptyRunning),
+        h("span", { title: t("cmd.k39"), style: { overflow: "hidden", textOverflow: "ellipsis", minWidth: 0, flexShrink: 1 } }, "🤖 " + String(meta.sessionId || "").slice(0, 8)),
+        h("code", { title: String(meta.cmd), style: { overflow: "hidden", textOverflow: "ellipsis", minWidth: 0, flexShrink: 2, color: "var(--text)" } }, "$ " + String(meta.cmd || t("cmd.k399")).slice(0, 60)),
+        exitInfo && h("span", { style: { color: exitInfo.isError ? "var(--danger, #ef4444)" : "var(--text-muted)", flexShrink: 0 } }, exitInfo.swept ? t("cmd.k202") : (exitInfo.isError ? "⚠ " : "✓ ") + ((exitInfo.durationMs || 0) / 1000).toFixed(1) + "s"),
       ),
       h(TermLinkConfirm, { link: linkConfirm, onClose: () => setLinkConfirm(null) }),
     );
@@ -1188,15 +1202,15 @@ export default function register(ctx) {
     };
     const verifyChain = async () => {
       const d = await fetch(api("/history/verify")).then((r) => r.json()).catch(() => null);
-      if (!d) { setVerifyResult("校验失败"); return; }
-      setVerifyResult(d.ok ? "链完整 · " + d.checkedHashes + " 条哈希" + (d.legacy ? "（legacy " + d.legacy + "）" : "") : "篡改于 " + (d.brokenAt || "?") + " · " + d.checkedHashes + " 条");
+      if (!d) { setVerifyResult(t("cmd.k284")); return; }
+      setVerifyResult(d.ok ? t("cmd.k383") + d.checkedHashes + t("cmd.k21") + (d.legacy ? "（legacy " + d.legacy + "）" : "") : t("cmd.k316") + (d.brokenAt || "?") + " · " + d.checkedHashes + t("cmd.k19"));
     };
     const expand = async (id) => {
       if (expanded === id) { setExpanded(null); return; }
       setExpanded(id);
       if (outputs[id] === undefined) {
         const d = await fetch(api("/history/" + id)).then((r) => r.json()).catch(() => null);
-        setOutputs((o) => ({ ...o, [id]: (d && d.output) || "（无输出）" }));
+        setOutputs((o) => ({ ...o, [id]: (d && d.output) || t("cmd.k393") }));
       }
     };
     useEffect(() => { if (open) { refresh(); const iv = setInterval(refresh, 5000); return () => clearInterval(iv); } }, [open, refreshTick]);
@@ -1236,11 +1250,11 @@ export default function register(ctx) {
 
     // 运行命令（危险命令一次性 token 确认流程：服务端强制）
     const runWithConfirm = async (payload) => {
-      let r = await fetch(api("/run"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) }).then((x) => x.json()).catch(() => ({ ok: false, error: "网络错误" }));
+      let r = await fetch(api("/run"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) }).then((x) => x.json()).catch(() => ({ ok: false, error: t("cmd.k336") }));
       if (r.needConfirm) {
-        const ok = await uiConfirm({ message: `确认执行危险命令${r.danger && r.danger.length ? "（" + r.danger.join("/") + "）" : ""}？`, detail: `$ ${payload.command}`, danger: true });
+        const ok = await uiConfirm({ message: `${t("cmd.k311")}${r.danger && r.danger.length ? "（" + r.danger.join("/") + "）" : ""}？`, detail: `$ ${payload.command}`, danger: true });
         if (!ok) return null;
-        r = await fetch(api("/run"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...payload, confirmToken: r.confirmToken }) }).then((x) => x.json()).catch(() => ({ ok: false, error: "网络错误" }));
+        r = await fetch(api("/run"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...payload, confirmToken: r.confirmToken }) }).then((x) => x.json()).catch(() => ({ ok: false, error: t("cmd.k336") }));
       }
       return r;
     };
@@ -1250,15 +1264,15 @@ export default function register(ctx) {
       let filled = {};
       if (params.length) {
         const vals = {};
-        for (const p of params) { const v = await uiPrompt({ message: `参数 ${p}：` }); if (v == null) return; vals[p] = v; }
+        for (const p of params) { const v = await uiPrompt({ message: `${t("cmd.k151")}${p}：` }); if (v == null) return; vals[p] = v; }
         filled = vals;
       }
       let cmd = item.cmd;
       for (const [k, v] of Object.entries(filled)) cmd = cmd.replaceAll("{" + k + "}", v);
       const r = await runWithConfirm({ command: cmd, cwd: item.cwd, name: item.name, source: "favorite", commandId: item.id, confirm: !!item.confirm, sandbox: item.sandbox || "none" });
       if (!r) return;
-      if (!r.ok) { setErr(r.error || "运行失败"); return; }
-      if (r.queued) setErr("已加入队列，等待执行（位置 " + r.position + "/" + r.maxConcurrent + " 并发）");
+      if (!r.ok) { setErr(r.error || t("cmd.k366")); return; }
+      if (r.queued) setErr(t("cmd.k200") + r.position + "/" + r.maxConcurrent + t("cmd.k16"));
       openView("pty", r.sessionId, item.name || item.cmd);
       setTab("overview");
       setRefreshTick((t) => t + 1);
@@ -1280,20 +1294,20 @@ export default function register(ctx) {
       }
       const cwd = s.cwd || "";
       if (!cwd) {
-        setErr("转到页签失败：此终端会话没有工作目录，无法定位到项目页签");
+        setErr(t("cmd.k363"));
         return;
       }
       // 建页签走宿主 pi-web.ui 服务（交互时刻同步读，AppShell 必已挂载）；onOpenTerminal
       // 即 handleOpenTerminal(cwd, forceNew)，forceNew=true 与原 openShellTab 语义一致。
       const openTab = ctx?.getExtService?.("pi-web.ui")?.get?.("onOpenTerminal");
       if (typeof openTab !== "function") {
-        setErr("转到页签失败：宿主建页签能力缺席（pi-web.ui.onOpenTerminal）");
+        setErr(t("cmd.k362"));
         return;
       }
       pendingTakeovers.push({ cwd, sessionId: s.id, title: s.name || s.cmd || "bash", ts: Date.now() });
       try { openTab(cwd, true); } catch (e) {
         pendingTakeovers.pop();
-        setErr("转到页签失败：" + ((e instanceof Error && e.message) || String(e)));
+        setErr(t("cmd.k361") + ((e instanceof Error && e.message) || String(e)));
         return;
       }
       closeView();
@@ -1335,11 +1349,11 @@ export default function register(ctx) {
       setNewTermBusy(true);
       const useCwd = cwd || ctx?.getExtService?.("pi-web.ui")?.get?.("selectedCwd") || undefined;
       Promise.resolve(
-        fetch(api("/shell"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "终端", cwd, ttlMs: 24 * 3600 * 1000 }) })
-          .then((x) => x.json()).catch(() => ({ ok: false, error: "网络错误" }))
+        fetch(api("/shell"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: t("cmd.k325"), cwd, ttlMs: 24 * 3600 * 1000 }) })
+          .then((x) => x.json()).catch(() => ({ ok: false, error: t("cmd.k336") }))
       ).then((r) => {
-        if (!r || !r.ok) setErr((r && r.error) || "创建终端失败");
-        else { openView("pty", r.sessionId, r.name || "终端"); setTab("overview"); setRefreshTick((t) => t + 1); }
+        if (!r || !r.ok) setErr((r && r.error) || t("cmd.k122"));
+        else { openView("pty", r.sessionId, r.name || t("cmd.k325")); setTab("overview"); setRefreshTick((t) => t + 1); }
       }).finally(() => setNewTermBusy(false));
     };
     // 「＋ 新建 / ＋ 新终端」@ 上 shell 实时路径：先查当前终端会话实时 pwd（cd 后取 cd 后的），再建新终端
@@ -1354,7 +1368,7 @@ export default function register(ctx) {
       if (!s) return;
       const live = await liveCwdOf(s.id, s.cwd);
       if (!openNewPiSession(live)) {
-        setErr(live ? "新建 pi-web 会话失败：宿主新会话通道不可用" : "新建 pi-web 会话失败：当前终端会话没有工作目录");
+        setErr(live ? t("cmd.k262") : t("cmd.k263"));
         return;
       }
       closeView(); // 收敛弹窗回总览；宿主已切新会话页
@@ -1367,10 +1381,10 @@ export default function register(ctx) {
     const commandsOf = (gid) => filtered.filter((c) => c.groupId === gid);
     const ungrouped = filtered.filter((c) => !c.groupId);
     const groupPathOf = (id) => {
-      if (!id) return "未分组";
+      if (!id) return t("cmd.k277");
       const parts = []; let cur = groups.find((g) => g.id === id); let guard = 0;
       while (cur && guard++ < 20) { parts.unshift(cur.name); cur = cur.parentId ? groups.find((g) => g.id === cur.parentId) : undefined; }
-      return parts.join(" / ") || "未分组";
+      return parts.join(" / ") || t("cmd.k277");
     };
     const saveGroupEditing = async () => {
       if (!editingGroup || !editingGroup.name.trim()) return;
@@ -1403,10 +1417,10 @@ export default function register(ctx) {
     // ⏰ 定时执行：委托 ⏰调度 页预填新建（aiti-ai-schedule 未加载则直接创建待确认计划）
     const scheduleCommand = async (c) => {
       // 危险命令（带执行确认标记）排班前二次确认——定时到点会无人值守自动执行
-      if (c.confirm && !(await uiConfirm({ message: `命令「${c.name || c.cmd}」标记为危险命令。\n创建定时计划后到点将不经确认直接执行，确认继续？`, danger: true }))) return;
+      if (c.confirm && !(await uiConfirm({ message: `${t("cmd.k170")}${c.name || c.cmd}${t("cmd.k64")}`, danger: true }))) return;
       const prefill = {
-        name: (c.name || c.cmd || "定时命令").slice(0, 60),
-        prompt: "执行以下命令并汇报结果" + (c.cwd ? "（工作目录：" + c.cwd + "）" : "") + "：\n$ " + c.cmd + "\n完成后简要汇报输出要点与退出码。" + (c.params && c.params.length ? "\n注意：命令含 {参数} 占位符，请按当前上下文合理填充后再执行。" : ""),
+        name: (c.name || c.cmd || t("cmd.k191")).slice(0, 60),
+        prompt: t("cmd.k226") + (c.cwd ? t("cmd.k389") + c.cwd + "）" : "") + "：\n$ " + c.cmd + "\n完成后简要汇报输出要点与退出码。" + (c.params && c.params.length ? "\n注意：命令含 {参数} 占位符，请按当前上下文合理填充后再执行。" : ""),
         cwd: c.cwd || undefined,
         mode: "session",
       };
@@ -1417,9 +1431,9 @@ export default function register(ctx) {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ ...prefill, schedule: "0 9 * * *", enabled: false, autoApprove: false }),
       }).then((r) => r.json()).then((d) => {
-        if (d && d.ok) void uiAlert({ message: `已创建待确认计划「${prefill.name}」（默认每天9点，到 ⏰调度 页修改并批准）`, kind: "success" });
-        else void uiAlert({ message: "创建失败：" + ((d && d.error) || "未知错误"), kind: "error" });
-      }).catch((e) => void uiAlert({ message: "创建失败：" + String(e), kind: "error" }));
+        if (d && d.ok) void uiAlert({ message: `${t("cmd.k199")}${prefill.name}${t("cmd.k65")}`, kind: "success" });
+        else void uiAlert({ message: t("cmd.k121") + ((d && d.error) || t("cmd.k279")), kind: "error" });
+      }).catch((e) => void uiAlert({ message: t("cmd.k121") + String(e), kind: "error" }));
     };
 const renderCommandRow = (c, depth) =>
       h("div", { key: c.id, style: { display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", borderRadius: 8, background: "var(--bg-hover)", border: "1px solid var(--border)", marginLeft: depth * 18 } },
@@ -1428,11 +1442,11 @@ const renderCommandRow = (c, depth) =>
           h("code", { style: { fontSize: 13, color: "var(--text-muted)", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, "$ " + c.cmd + (c.cwd ? "  ·  " + c.cwd : "")),
         ),
         h("span", { style: { fontSize: 13, color: "var(--text-muted)" } }, "×" + (c.runCount || 0)),
-        h("button", { onClick: () => runCommand(c), style: { ...btnStyle, background: "var(--accent)", color: "#fff", borderTop: "none", borderRight: "none", borderBottom: "none", borderLeft: "none" }, title: "▶ 执行此命令" + (c.params && c.params.length ? "（含参数，执行时逐一填写）" : "") + (c.confirm ? "（危险命令，执行前弹窗确认）" : "") }, Ic(13, ICONS.play), "执行"),
-        h("button", { onClick: () => copyAsNew(c), style: btnStyle, title: "复制命令内容到剪贴板并打开「新建命令」预填（可改后另存）" }, "⧉"),
-        h("button", { onClick: () => scheduleCommand(c), style: btnStyle, title: "定时执行：创建调度计划（预填本条命令）" }, "⏰"),
-        h("button", { onClick: () => setEditing({ id: c.id, name: c.name, cmd: c.cmd, cwd: c.cwd || "", tags: (c.tags || []).join(","), confirm: !!c.confirm, groupId: c.groupId || null, sandbox: c.sandbox || "none", suggest: c.suggest !== false }), style: btnStyle, title: "编辑命令（名称/命令/cwd/标签/分组/沙箱/执行确认/智能提示）" }, Ic(13, ICONS.pencil)),
-        h("button", { onClick: () => { fetch(api("/commands/" + c.id), { method: "DELETE" }).then(() => setRefreshTick((t) => t + 1)); }, style: miniBtnDanger, title: "删除此命令" }, Ic(13, ICONS.trash)),
+        h("button", { onClick: () => runCommand(c), style: { ...btnStyle, background: "var(--accent)", color: "#fff", borderTop: "none", borderRight: "none", borderBottom: "none", borderLeft: "none" }, title: t("cmd.k59") + (c.params && c.params.length ? t("cmd.k388") : "") + (c.confirm ? t("cmd.k386") : "") }, Ic(13, ICONS.play), t("cmd.k225")),
+        h("button", { onClick: () => copyAsNew(c), style: btnStyle, title: t("cmd.k183") }, "⧉"),
+        h("button", { onClick: () => scheduleCommand(c), style: btnStyle, title: t("cmd.k192") }, "⏰"),
+        h("button", { onClick: () => setEditing({ id: c.id, name: c.name, cmd: c.cmd, cwd: c.cwd || "", tags: (c.tags || []).join(","), confirm: !!c.confirm, groupId: c.groupId || null, sandbox: c.sandbox || "none", suggest: c.suggest !== false }), style: btnStyle, title: t("cmd.k333") }, Ic(13, ICONS.pencil)),
+        h("button", { onClick: () => { fetch(api("/commands/" + c.id), { method: "DELETE" }).then(() => setRefreshTick((t) => t + 1)); }, style: miniBtnDanger, title: t("cmd.k130") }, Ic(13, ICONS.trash)),
       );
     const renderGroupTree = (parentId, depth) => {
       const subs = childrenOf(parentId);
@@ -1451,12 +1465,12 @@ const renderCommandRow = (c, depth) =>
           h("div", { key: "g" + g.id, style: { display: "flex", alignItems: "center", gap: 6, padding: "5px 8px", borderRadius: 6, cursor: "pointer", marginLeft: depth * 18, background: "transparent" }, onClick: () => setCollapsed({ ...collapsed, [g.id]: !isCollapsed }) },
             h("span", { style: { fontSize: 13, color: "var(--text-muted)" } }, (subCount || cmdCount) ? (isCollapsed ? "▸" : "▾") : "·"),
             h("span", { style: { fontSize: 14, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 5 } }, Ic(13, ICONS.folder), g.name),
-            h("span", { style: { fontSize: 13, color: "var(--text-muted)" } }, cmdCount + (subCount ? "+" + subCount + "子" : "")),
+            h("span", { style: { fontSize: 13, color: "var(--text-muted)" } }, cmdCount + (subCount ? "+" + subCount + t("cmd.k187") : "")),
             h("span", { style: { marginLeft: "auto", display: "flex", gap: 2 }, onClick: (e) => e.stopPropagation() },
-              h("button", { onClick: () => newCmdInGroup(g.id), style: miniBtn, title: "在此分组下新建命令" }, "＋命令"),
-              h("button", { onClick: () => { setEditing(null); setEditingGroup({ name: "", parentId: g.id }); }, style: miniBtn, title: "在此分组下新建子分组" }, "＋子组"),
-              h("button", { onClick: () => setEditingGroup({ id: g.id, name: g.name, parentId: g.parentId }), style: miniBtn, title: "重命名/移动" }, Ic(12, ICONS.pencil)),
-              h("button", { onClick: async () => { if (await uiConfirm({ message: `删除分组「${g.name}」及其子分组？组内命令将移入未分组`, danger: true })) { fetch(api("/commands/groups/" + g.id), { method: "DELETE" }).then(() => setRefreshTick((t) => t + 1)); } }, style: miniBtnDanger, title: "删除分组" }, Ic(12, ICONS.trash)),
+              h("button", { onClick: () => newCmdInGroup(g.id), style: miniBtn, title: t("cmd.k180") }, t("cmd.k411")),
+              h("button", { onClick: () => { setEditing(null); setEditingGroup({ name: "", parentId: g.id }); }, style: miniBtn, title: t("cmd.k181") }, t("cmd.k412")),
+              h("button", { onClick: () => setEditingGroup({ id: g.id, name: g.name, parentId: g.parentId }), style: miniBtn, title: t("cmd.k381") }, Ic(12, ICONS.pencil)),
+              h("button", { onClick: async () => { if (await uiConfirm({ message: `${t("cmd.k126")}${g.name}${t("cmd.k63")}`, danger: true })) { fetch(api("/commands/groups/" + g.id), { method: "DELETE" }).then(() => setRefreshTick((t) => t + 1)); } }, style: miniBtnDanger, title: "删除分组" }, Ic(12, ICONS.trash)),
             ),
           ),
         );
@@ -1492,53 +1506,53 @@ const renderCommandRow = (c, depth) =>
         h("div", { style: { display: "flex", alignItems: "center", gap: 6, padding: "2px 8px", borderBottom: "1px solid var(--border)", flexShrink: 0, minHeight: 26, lineHeight: 1 } },
           h("span", { style: { width: 18, height: 18, borderRadius: 5, background: "var(--bg-hover)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, flexShrink: 0 } }, Ic(12, ICONS.terminal)),
           h("span", { style: { fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", flexShrink: 0 } }, "aiti-cmd"),
-          h("span", { style: { fontSize: 12, color: "var(--text-muted)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, "运行总览 · 常用命令 · 执行审计"),
+          h("span", { style: { fontSize: 12, color: "var(--text-muted)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, t("cmd.k368")),
           // aria-label="关闭"：ai-helper 弹窗 🤖 注入的定位标记（全局 UI 契约，同 model-wizard/configs 等扩展）
-          h("button", { onClick: () => setState({ panelOpen: false }), title: "关闭面板", "aria-label": "关闭", style: { ...btnStyle, padding: "1px 6px", fontSize: 12, background: "transparent", borderTop: "none", borderRight: "none", borderBottom: "none", borderLeft: "none", color: "var(--text-muted)", flexShrink: 0, display: "inline-flex", lineHeight: 1 } }, Ic(12, ICONS.x)),
+          h("button", { onClick: () => setState({ panelOpen: false }), title: t("cmd.k113"), "aria-label": t("cmd.k109"), style: { ...btnStyle, padding: "1px 6px", fontSize: 12, background: "transparent", borderTop: "none", borderRight: "none", borderBottom: "none", borderLeft: "none", color: "var(--text-muted)", flexShrink: 0, display: "inline-flex", lineHeight: 1 } }, Ic(12, ICONS.x)),
         ),
         // 内容区（顶部 tab 页签带：active 下划线 + 主色，系统 TabBar 风格；单行紧凑高度）
         h("div", { style: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", padding: "6px 10px 10px", overflow: "hidden", gap: 6 } },
           h("div", { style: { display: "flex", gap: 2, flexShrink: 0, borderBottom: "1px solid var(--border)", lineHeight: 1 } },
-            h("button", { onClick: () => { closeView(); setTab("overview"); refresh(); }, title: "总览：agent 运行中命令 / 终端会话一览", style: tabBtn(tab === "overview") }, Ic(12, ICONS.list), "总览"),
-            h("button", { onClick: () => setTab("commands"), title: "命令：常用命令列表（执行/复制/编辑/删除）", style: tabBtn(tab === "commands") }, "命令"),
-            h("button", { onClick: () => setTab("history"), title: "历史：执行审计（append-only 留存）", style: tabBtn(tab === "history") }, "历史"),
+            h("button", { onClick: () => { closeView(); setTab("overview"); refresh(); }, title: t("cmd.k220"), style: tabBtn(tab === "overview") }, Ic(12, ICONS.list), t("cmd.k219")),
+            h("button", { onClick: () => setTab("commands"), title: t("cmd.k176"), style: tabBtn(tab === "commands") }, t("cmd.k167")),
+            h("button", { onClick: () => setTab("history"), title: t("cmd.k149"), style: tabBtn(tab === "history") }, t("cmd.k148")),
           ),
         err && h("p", { style: { ...smallStyle, color: "var(--danger, #ef4444)", marginBottom: 6 } }, String(err)),
         tab === "commands" && h("div", { style: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 6 } },
           h("div", { style: rowStyle },
-            h("input", { style: { ...inputStyle, maxWidth: 240 }, value: q, placeholder: "搜索命令…", onChange: (e) => setQ(e.target.value) }),
-            h("button", { onClick: () => { setEditingGroup(null); setEditing({ name: "", cmd: "", cwd: "", tags: "", confirm: false, groupId: null, sandbox: "none", suggest: true }); }, style: btnStyle, title: "＋ 新建命令（保存后出现在命令列表对应分组）" }, "＋ 新建命令"),
-            h("button", { onClick: () => { setEditing(null); setEditingGroup({ name: "", parentId: null }); }, style: btnStyle, title: "＋ 新建分组（树形分组整理命令）" }, "＋ 新分组"),
-            h("button", { onClick: () => { loadDict(); setDictOpen(!dictOpen); }, style: btnStyle, title: "词库：常用命令名（AI 消息识别用，全文扫描）" }, "词库"),
+            h("input", { style: { ...inputStyle, maxWidth: 240 }, value: q, placeholder: t("cmd.k243"), onChange: (e) => setQ(e.target.value) }),
+            h("button", { onClick: () => { setEditingGroup(null); setEditing({ name: "", cmd: "", cwd: "", tags: "", confirm: false, groupId: null, sandbox: "none", suggest: true }); }, style: btnStyle, title: t("cmd.k407") }, t("cmd.k406")),
+            h("button", { onClick: () => { setEditing(null); setEditingGroup({ name: "", parentId: null }); }, style: btnStyle, title: t("cmd.k405") }, t("cmd.k403")),
+            h("button", { onClick: () => { loadDict(); setDictOpen(!dictOpen); }, style: btnStyle, title: t("cmd.k356") }, t("cmd.k355")),
           ),
           allTags.length > 0 && h("div", { style: { display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 2 } },
-            h("button", { onClick: () => setActiveTag(null), title: "全部：取消标签过滤", style: { ...btnStyle, padding: "1px 8px", fontSize: 13, background: !activeTag ? "var(--accent)" : "transparent", color: !activeTag ? "#fff" : "var(--text)", border: "1px solid " + (!activeTag ? "var(--accent)" : "var(--border)") } }, "全部"),
+            h("button", { onClick: () => setActiveTag(null), title: t("cmd.k107"), style: { ...btnStyle, padding: "1px 8px", fontSize: 13, background: !activeTag ? "var(--accent)" : "transparent", color: !activeTag ? "#fff" : "var(--text)", border: "1px solid " + (!activeTag ? "var(--accent)" : "var(--border)") } }, t("cmd.k105")),
             allTags.map((tag) =>
-              h("button", { key: tag, onClick: () => setActiveTag(activeTag === tag ? null : tag), title: "#" + tag + "：按标签过滤（再点取消）", style: { ...btnStyle, padding: "1px 8px", fontSize: 13, background: activeTag === tag ? "var(--accent)" : "transparent", color: activeTag === tag ? "#fff" : "var(--text)", border: "1px solid " + (activeTag === tag ? "var(--accent)" : "var(--border)") } }, "#" + tag)),
+              h("button", { key: tag, onClick: () => setActiveTag(activeTag === tag ? null : tag), title: "#" + tag + t("cmd.k414"), style: { ...btnStyle, padding: "1px 8px", fontSize: 13, background: activeTag === tag ? "var(--accent)" : "transparent", color: activeTag === tag ? "#fff" : "var(--text)", border: "1px solid " + (activeTag === tag ? "var(--accent)" : "var(--border)") } }, "#" + tag)),
           ),
           dictOpen && h("div", { style: { border: "1px solid var(--border)", borderRadius: 8, padding: 8, marginBottom: 4, background: "var(--bg)" } },
             h("div", { style: { ...rowStyle, marginBottom: 4 } },
-              h("b", { style: { fontSize: 14 } }, "常用命令词库（消息识别用）"),
-              h("span", { style: { ...smallStyle, flex: 1 } }, "内置 " + (dictData ? dictData.groups.reduce((a, g) => a + g.names.length, 0) : "?") + " 命令名 / 识别时全文扫描"),
-              h("button", { onClick: () => setDictOpen(false), title: "关闭词库", style: { ...btnStyle, padding: "2px 8px", display: "inline-flex" } }, Ic(12, ICONS.x)),
+              h("b", { style: { fontSize: 14 } }, t("cmd.k209")),
+              h("span", { style: { ...smallStyle, flex: 1 } }, t("cmd.k114") + (dictData ? dictData.groups.reduce((a, g) => a + g.names.length, 0) : "?") + t("cmd.k14")),
+              h("button", { onClick: () => setDictOpen(false), title: t("cmd.k112"), style: { ...btnStyle, padding: "2px 8px", display: "inline-flex" } }, Ic(12, ICONS.x)),
             ),
             dictData && h("div", { style: { display: "flex", flexWrap: "wrap", gap: "2px 8px", marginBottom: 6, fontSize: 13, color: "var(--text-muted)" } },
               dictData.groups.map((g) => h("span", { key: g.group, style: { padding: "1px 8px", background: "var(--bg-hover)", borderRadius: 6 } }, g.group + ": " + g.names.slice(0, 12).join(" ") + (g.names.length > 12 ? " …" : ""))),
             ),
-            h("textarea", { style: { ...inputStyle, minHeight: 56, fontFamily: "var(--font-mono)" }, value: dictText, placeholder: "自定义命令词（每行一个，如：mytool / just get / pnpm-dlx）", onChange: (e) => setDictText(e.target.value) }),
+            h("textarea", { style: { ...inputStyle, minHeight: 56, fontFamily: "var(--font-mono)" }, value: dictText, placeholder: t("cmd.k343"), onChange: (e) => setDictText(e.target.value) }),
             h("div", { style: { ...rowStyle, marginTop: 4 } },
-              h("button", { onClick: async () => { await fetch(api("/commands/dict"), { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ extra: dictText.split(/\n|,|，/).map((s) => s.trim()).filter(Boolean) }) }); setDictText(""); setRefreshTick((t) => t + 1); loadDict(); }, style: { ...btnStyle, background: "var(--accent)", color: "#fff", borderTop: "none", borderRight: "none", borderBottom: "none", borderLeft: "none" }, title: "保存自定义命令词到词库（消息识别立即生效）" }, "保存词库"),
-              h("span", { style: smallStyle }, "新增词后，消息识别会立即用新词扫描"),
+              h("button", { onClick: async () => { await fetch(api("/commands/dict"), { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ extra: dictText.split(/\n|,|，/).map((s) => s.trim()).filter(Boolean) }) }); setDictText(""); setRefreshTick((t) => t + 1); loadDict(); }, style: { ...btnStyle, background: "var(--accent)", color: "#fff", borderTop: "none", borderRight: "none", borderBottom: "none", borderLeft: "none" }, title: t("cmd.k93") }, t("cmd.k94")),
+              h("span", { style: smallStyle }, t("cmd.k260")),
             ),
           ),
           h("div", { style: { flex: 1, overflow: "auto", display: "flex", flexDirection: "column", gap: 2 } },
-            filtered.length === 0 && groups.length === 0 ? h("p", { style: smallStyle }, "（无命令——从 AI 消息识别收藏，或点「＋ 新建命令」）")
+            filtered.length === 0 && groups.length === 0 ? h("p", { style: smallStyle }, t("cmd.k391"))
             : [
                 // 顶层分组树
                 renderGroupTree(null, 0),
                 // 未分组命令（无分组归属，且不在任何分组内的命令）
                 ungrouped.length > 0 && h("div", { key: "_ungrouped", style: { marginTop: 4 } },
-                  h("div", { style: { fontSize: 13, color: "var(--text-muted)", padding: "2px 8px" } }, "未分组"),
+                  h("div", { style: { fontSize: 13, color: "var(--text-muted)", padding: "2px 8px" } }, t("cmd.k277")),
                   ungrouped.map((c) => renderCommandRow(c, 0)),
                 ),
               ],
@@ -1546,23 +1560,23 @@ const renderCommandRow = (c, depth) =>
         ),
         tab === "history" && h("div", { style: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 6 } },
           h("div", { style: rowStyle },
-            h("b", { style: { fontSize: 14 } }, "执行审计（append-only 留存）"),
-            h("span", { style: { ...smallStyle, flex: 1 } }, "命令/参数/输出/退出码/时间/来源——安全审计"),
-            h("button", { onClick: verifyChain, title: "校验审计链完整性（哈希链）", style: { ...btnStyle, padding: "2px 10px", display: "inline-flex", alignItems: "center", gap: 4 } }, verifyResult ? "✓ " + verifyResult : [Ic(12, ICONS.lock), "校验链"]),
-            h("button", { onClick: () => setRefreshTick((t) => t + 1), style: btnStyle, title: "刷新历史记录" }, "↻ 刷新"),
+            h("b", { style: { fontSize: 14 } }, t("cmd.k229")),
+            h("span", { style: { ...smallStyle, flex: 1 } }, t("cmd.k169")),
+            h("button", { onClick: verifyChain, title: t("cmd.k285"), style: { ...btnStyle, padding: "2px 10px", display: "inline-flex", alignItems: "center", gap: 4 } }, verifyResult ? "✓ " + verifyResult : [Ic(12, ICONS.lock), t("cmd.k286")]),
+            h("button", { onClick: () => setRefreshTick((t) => t + 1), style: btnStyle, title: t("cmd.k132") }, t("cmd.k55")),
           ),
           // 来源分布 chips（M4a：groupBy=source 可视化；点击过滤，再点取消）
           srcGroups.length > 0 && h("div", { style: { display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" } },
-            h("span", { style: { ...smallStyle, marginRight: 2 } }, "来源分布"),
+            h("span", { style: { ...smallStyle, marginRight: 2 } }, t("cmd.k281")),
             srcGroups.map((g) => h("button", {
               key: g.source,
               onClick: () => setSrcFilter(srcFilter === g.source ? null : g.source),
-              title: SOURCE_LABEL[g.source] || g.source + "：共 " + g.count + " 条，失败 " + g.failCount + "（" + Math.round(g.failRate * 100) + "%），最近 " + new Date(g.lastTs).toLocaleString("zh-CN", { hour12: false }),
+              title: SOURCE_LABEL[g.source] || g.source + t("cmd.k413") + g.count + t("cmd.k23") + g.failCount + "（" + Math.round(g.failRate * 100) + t("cmd.k27") + new Date(g.lastTs).toLocaleString("zh-CN", { hour12: false }),
               style: { ...btnStyle, padding: "1px 8px", fontSize: 13, background: srcFilter === g.source ? "var(--accent)" : "transparent", color: srcFilter === g.source ? "#fff" : "var(--text)", border: "1px solid " + (srcFilter === g.source ? "var(--accent)" : "var(--border)") },
             }, (SOURCE_LABEL[g.source] || g.source) + " " + g.count + (g.failCount ? " ⚠" + g.failCount : ""))),
           ),
           h("div", { style: { flex: 1, overflow: "auto", display: "flex", flexDirection: "column", gap: 4 } },
-            records.length === 0 ? h("p", { style: smallStyle }, "（暂无执行记录）")
+            records.length === 0 ? h("p", { style: smallStyle }, t("cmd.k394"))
             : (srcFilter ? records.filter((r) => r.source === srcFilter) : records).map((rec) =>
               h("div", { key: rec.id, style: { display: "flex", flexDirection: "column", gap: 4, padding: "6px 8px", borderRadius: 8, background: "var(--bg-hover)", border: "1px solid var(--border)", cursor: "pointer" }, onClick: () => expand(rec.id) },
                 h("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
@@ -1573,7 +1587,7 @@ const renderCommandRow = (c, depth) =>
                   h("span", { style: { fontSize: 13, color: "var(--text-muted)" } }, SOURCE_LABEL[rec.source] || rec.source),
                   rec.danger && rec.danger.length ? h("span", { style: { color: "var(--warn, #f59e0b)", display: "inline-flex" } }, Ic(12, ICONS.alert)) : null,
                 ),
-                expanded === rec.id && h("pre", { style: { ...smallStyle, background: "#0f172a", color: "#a5f3fc", padding: 8, borderRadius: 6, maxHeight: 220, overflow: "auto", whiteSpace: "pre-wrap", margin: 0, fontFamily: "var(--font-mono)" } }, outputs[rec.id] !== undefined ? outputs[rec.id] : "加载中…"),
+                expanded === rec.id && h("pre", { style: { ...smallStyle, background: "#0f172a", color: "#a5f3fc", padding: 8, borderRadius: 6, maxHeight: 220, overflow: "auto", whiteSpace: "pre-wrap", margin: 0, fontFamily: "var(--font-mono)" } }, outputs[rec.id] !== undefined ? outputs[rec.id] : t("cmd.k145")),
               )),
           ),
         ),
@@ -1593,7 +1607,7 @@ const renderCommandRow = (c, depth) =>
             // 详情态当前 pty 会话（为「＋ 新终端」@上当前终端路径：新会话 cwd = 当前终端会话 cwd）
             const curPty = view && view.kind === "pty" ? sessions.find((x) => x.id === view.id) || null : null;
             const live = [];
-            for (const c of piCmds) if (c.status === "running") live.push({ kind: "pi", id: c.id, title: c.cmd || "（订阅前已开始）", icon: "🤖", state: "running" });
+            for (const c of piCmds) if (c.status === "running") live.push({ kind: "pi", id: c.id, title: c.cmd || t("cmd.k399"), icon: "🤖", state: "running" });
             for (const s of sessions) if (s.status === "running" || s.status === "queued") live.push({ kind: "pty", id: s.id, title: s.name || s.cmd, icon: "🖥", state: s.status });
             const isCur = (t) => !!view && t.kind === view.kind && t.id === view.id;
             // 当前视图已退出（不在活列表）→ 末尾补位，不动活跃 tab 的位置
@@ -1605,12 +1619,15 @@ const renderCommandRow = (c, depth) =>
             // 菜单可视态：hidden 清零（会话退完）时 tabMenuOpen 残留 true 会让下次首次点「⋯」反转失效，派生量统一兜住
             const menuOpen = tabMenuOpen && hidden.length > 0;
             const stateDot = (t) => t.state === "running" ? "●" : t.state === "queued" ? "⏳" : "■";
-            const stateText = { running: "运行中", queued: "排队中", dead: "已退出" };
+            const stateText = { running: t("cmd.k365"), queued: t("cmd.k237"), dead: t("cmd.k205") };
             // tab 胶囊：active 主色边框高亮；label 截断，完整标题看 hover tooltip / 下拉
-            const liveTabBtn = (t, active) => h("button", {
-              key: t.kind + ":" + t.id,
-              onClick: () => { if (!active) openView(t.kind, t.id, t.title); },
-              title: stateDot(t) + " " + stateText[t.state] + " — " + t.title + (active ? "（当前）" : "（点击切换）"),
+            // the parameter must not be named t — it would shadow the register-scope i18n t(); t("cmd.kN") in the
+            // body would then call the tab object (TypeError: t is not a function → the panel gets wrongly
+            // error-boundary-unmounted)
+            const liveTabBtn = (tv, active) => h("button", {
+              key: tv.kind + ":" + tv.id,
+              onClick: () => { if (!active) openView(tv.kind, tv.id, tv.title); },
+              title: stateDot(tv) + " " + stateText[tv.state] + " — " + tv.title + (active ? t("cmd.k390") : t("cmd.k398")),
               style: {
                 ...btnStyle, display: "inline-flex", alignItems: "center", minWidth: 0, maxWidth: 160,
                 flexShrink: 1, // 空间不足时收缩（label 已 ellipsis），防止长标题 tab 把「⋯」按钮挤出容器被裁
@@ -1620,16 +1637,16 @@ const renderCommandRow = (c, depth) =>
                 color: active ? "var(--text)" : "var(--text-muted)", fontWeight: active ? 600 : 400,
               },
             },
-              h("span", { style: { color: t.state === "running" ? "var(--ok, #4ade80)" : t.state === "queued" ? "var(--warn, #f59e0b)" : "var(--text-muted)", flexShrink: 0, marginRight: 3 } }, stateDot(t)),
-              h("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, (t.icon + " " + t.title).trim()),
+              h("span", { style: { color: tv.state === "running" ? "var(--ok, #4ade80)" : tv.state === "queued" ? "var(--warn, #f59e0b)" : "var(--text-muted)", flexShrink: 0, marginRight: 3 } }, stateDot(tv)),
+              h("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, (tv.icon + " " + tv.title).trim()),
             );
             return h("div", { style: { ...rowStyle, marginBottom: 2, gap: 6, minHeight: 22, lineHeight: 1 } },
-              h("button", { onClick: closeView, title: "← 返回总览", style: { ...btnStyle, padding: isSmall ? "0 6px" : "0 8px", fontSize: 12, height: 20, lineHeight: "18px" } }, isSmall ? "←" : "← 返回总览"),
+              h("button", { onClick: closeView, title: t("cmd.k53"), style: { ...btnStyle, padding: isSmall ? "0 6px" : "0 8px", fontSize: 12, height: 20, lineHeight: "18px" } }, isSmall ? "←" : t("cmd.k53")),
               // tab 条（固定顺序：数据序前 maxVisible 个 + 「⋯」下拉；切换只改高亮不挪位）
               h("div", { style: { display: "flex", alignItems: "center", gap: 4, flex: 1, minWidth: 0, overflow: "hidden" } },
                 shown.map((t) => liveTabBtn(t, isCur(t))),
                 hidden.length > 0 && h("div", { style: { position: "relative", flexShrink: 0 } },
-                  h("button", { onClick: (e) => { e.stopPropagation(); setTabMenuOpen(!menuOpen); }, title: hiddenCur ? "当前：" + stateDot(hiddenCur) + " " + stateText[hiddenCur.state] + " — " + hiddenCur.title + "（更多终端/命令，还有 " + hidden.length + " 个未显示）" : "更多终端/命令（还有 " + hidden.length + " 个未显示），点开列表切换", "aria-label": "更多终端", style: { ...btnStyle, display: "inline-flex", alignItems: "center", gap: 4, padding: isSmall ? "0 5px" : "0 7px", fontSize: 12, height: 20, lineHeight: "18px", background: menuOpen ? "var(--bg-hover)" : "transparent", border: "1px solid " + (hiddenCur ? "var(--accent)" : "var(--border)") } },
+                  h("button", { onClick: (e) => { e.stopPropagation(); setTabMenuOpen(!menuOpen); }, title: hiddenCur ? t("cmd.k216") + stateDot(hiddenCur) + " " + stateText[hiddenCur.state] + " — " + hiddenCur.title + t("cmd.k395") + hidden.length + t("cmd.k12") : t("cmd.k275") + hidden.length + t("cmd.k13"), "aria-label": t("cmd.k274"), style: { ...btnStyle, display: "inline-flex", alignItems: "center", gap: 4, padding: isSmall ? "0 5px" : "0 7px", fontSize: 12, height: 20, lineHeight: "18px", background: menuOpen ? "var(--bg-hover)" : "transparent", border: "1px solid " + (hiddenCur ? "var(--accent)" : "var(--border)") } },
                     "⋯",
                     hiddenCur && h("span", { style: { maxWidth: 92, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: hiddenCur.state === "dead" ? "var(--text-muted)" : "var(--text)", fontWeight: 600 } }, stateDot(hiddenCur) + " " + hiddenCur.title),
                   ),
@@ -1649,19 +1666,19 @@ const renderCommandRow = (c, depth) =>
                 ),
               ),
               !isSmall && h("span", { style: { ...smallStyle, fontSize: 12, lineHeight: 1, flexShrink: 0, whiteSpace: "nowrap" } }, "🤖 " + piRunning + "/" + piCmds.length + " · 🖥 " + ptyRunning),
-              h("button", { onClick: curPty ? () => newShellAt(curPty) : () => newShell(), disabled: newTermBusy, title: newTermBusy ? "正在创建终端会话…" : (curPty ? "＋ 新终端：再开一个 shell（目录 = 当前终端 📁 实时路径）" : "＋ 新终端：开一个交互式 shell（无沙箱）"), style: { ...btnStyle, padding: isSmall ? "0 6px" : "0 8px", fontSize: 12, height: 20, lineHeight: "18px", background: "var(--accent)", color: "#fff", borderTop: "none", borderRight: "none", borderBottom: "none", borderLeft: "none", flexShrink: 0, opacity: newTermBusy ? 0.6 : 1, cursor: newTermBusy ? "wait" : "pointer" } }, newTermBusy ? (isSmall ? "⏳" : "开启中…") : (isSmall ? "＋" : "＋ 新终端")),
+              h("button", { onClick: curPty ? () => newShellAt(curPty) : () => newShell(), disabled: newTermBusy, title: newTermBusy ? t("cmd.k294") : (curPty ? t("cmd.k409") : t("cmd.k410")), style: { ...btnStyle, padding: isSmall ? "0 6px" : "0 8px", fontSize: 12, height: 20, lineHeight: "18px", background: "var(--accent)", color: "#fff", borderTop: "none", borderRight: "none", borderBottom: "none", borderLeft: "none", flexShrink: 0, opacity: newTermBusy ? 0.6 : 1, cursor: newTermBusy ? "wait" : "pointer" } }, newTermBusy ? (isSmall ? "⏳" : t("cmd.k213")) : (isSmall ? "＋" : t("cmd.k408"))),
               // 会话已结束则隐藏中止（点了也只能 409）；PTY 结束态经 sessions 列表感知
               view.kind === "pty" && sessions.find((x) => x.id === view.id)?.status === "running" && (() => {
                 const kb = killBusy.has(view.id);
-                return h("button", { onClick: () => killSession(view.id), disabled: kb, title: kb ? "终止信号已发送，等待进程退出…" : "终止命令（杀进程）", style: { ...btnStyle, color: "var(--danger, #ef4444)", padding: isSmall ? "0 6px" : "0 8px", fontSize: 12, height: 20, lineHeight: "18px", opacity: kb ? 0.6 : 1, cursor: kb ? "wait" : "pointer" } }, isSmall ? (kb ? "⏳" : "⏹") : (kb ? "终止中…" : "终止"));
+                return h("button", { onClick: () => killSession(view.id), disabled: kb, title: kb ? t("cmd.k322") : t("cmd.k324"), style: { ...btnStyle, color: "var(--danger, #ef4444)", padding: isSmall ? "0 6px" : "0 8px", fontSize: 12, height: 20, lineHeight: "18px", opacity: kb ? 0.6 : 1, cursor: kb ? "wait" : "pointer" } }, isSmall ? (kb ? "⏳" : "⏹") : (kb ? t("cmd.k320") : t("cmd.k319")));
               })(),
             );
           };
           const header = view ? renderDetailHeader() : h("div", { style: { ...rowStyle, marginBottom: 2, gap: 6, minHeight: 22, lineHeight: 1 } },
-                h("b", { style: { fontSize: 13, whiteSpace: "nowrap", flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 4 } }, Ic(13, ICONS.list), "运行总览"),
+                h("b", { style: { fontSize: 13, whiteSpace: "nowrap", flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 4 } }, Ic(13, ICONS.list), t("cmd.k367")),
                 h("span", { style: { ...smallStyle, fontSize: 12, lineHeight: 1, flex: 1, minWidth: 140 } },
-                  "agent " + piRunning + " 条在跑" + (piCmds.length > piRunning ? "（共 " + piCmds.length + "）" : "") + " · 🖥 终端 " + ptyRunning + " 个在跑" + (ptyQueued ? "（" + ptyQueued + " 排队）" : "") + " · 点行看详情"),
-                h("button", { onClick: () => newShell(), disabled: newTermBusy, title: newTermBusy ? "正在创建终端会话…" : "＋ 新终端：开一个交互式 shell（无沙箱）", style: { ...btnStyle, fontSize: 12, height: 20, lineHeight: "18px", padding: "0 10px", background: "var(--accent)", color: "#fff", borderTop: "none", borderRight: "none", borderBottom: "none", borderLeft: "none", marginLeft: "auto", flexShrink: 0, opacity: newTermBusy ? 0.6 : 1, cursor: newTermBusy ? "wait" : "pointer" } }, newTermBusy ? "开启中…" : "＋ 新终端"),
+                  "agent " + piRunning + t("cmd.k22") + (piCmds.length > piRunning ? t("cmd.k385") + piCmds.length + "）" : "") + t("cmd.k10") + ptyRunning + t("cmd.k11") + (ptyQueued ? "（" + ptyQueued + t("cmd.k17") : "") + t("cmd.k7")),
+                h("button", { onClick: () => newShell(), disabled: newTermBusy, title: newTermBusy ? t("cmd.k294") : t("cmd.k410"), style: { ...btnStyle, fontSize: 12, height: 20, lineHeight: "18px", padding: "0 10px", background: "var(--accent)", color: "#fff", borderTop: "none", borderRight: "none", borderBottom: "none", borderLeft: "none", marginLeft: "auto", flexShrink: 0, opacity: newTermBusy ? 0.6 : 1, cursor: newTermBusy ? "wait" : "pointer" } }, newTermBusy ? t("cmd.k213") : t("cmd.k408")),
               );
           // dock 单实例：该终端会话被工作区页签持有（未 detach）时，弹窗渲染占位卡——
           // 视图此刻归页签；「拉回窗口」切归属（detached 标记）后这里恢复 TerminalView。
@@ -1671,10 +1688,10 @@ const renderCommandRow = (c, depth) =>
                 : hostTabId ? h("div", { style: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, padding: 24, color: "var(--text-dim)", fontSize: 12 } },
                     h("div", { style: { display: "flex", alignItems: "center", gap: 6, color: "var(--text-muted)" } },
                       h("span", { style: { display: "inline-flex", flexShrink: 0 } }, Ic(14, ICONS.monitor)),
-                      h("span", null, "此终端已在工作区页签打开（右侧文件区）"),
+                      h("span", null, t("cmd.k297")),
                     ),
-                    h("button", { onClick: () => { tabDetached[hostTabId] = true; notifyTabAttached(); }, style: { ...btnStyle, padding: "6px 14px", color: "var(--accent)", fontWeight: 600, fontSize: 12 } }, "拉回窗口"),
-                    h("span", { style: { fontSize: 11, color: "var(--text-muted)" } }, "终端同时只能在一处显示；页签内已变为占位"),
+                    h("button", { onClick: () => { tabDetached[hostTabId] = true; notifyTabAttached(); }, style: { ...btnStyle, padding: "6px 14px", color: "var(--accent)", fontWeight: 600, fontSize: 12 } }, t("cmd.k231")),
+                    h("span", { style: { fontSize: 11, color: "var(--text-muted)" } }, t("cmd.k329")),
                   )
                 : (() => {
                     const s = sessions.find((x) => x.id === view.id);
@@ -1689,33 +1706,33 @@ const renderCommandRow = (c, depth) =>
             : h("div", { style: { flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column", gap: 8 } },
                 // 🤖 agent 命令（2s 自动刷新；点行进详情，⏹ 只终止命令不 abort turn）
                 h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
-                  h("div", { style: { fontSize: 14, fontWeight: 700, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 5 } }, Ic(13, ICONS.bot), "agent 命令"),
-                  piCmds.length === 0 ? h("p", { style: { ...smallStyle, margin: 0 } }, "（没有在跑的 bash 命令；agent 会话执行命令时自动出现）")
+                  h("div", { style: { fontSize: 14, fontWeight: 700, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 5 } }, Ic(13, ICONS.bot), t("cmd.k40")),
+                  piCmds.length === 0 ? h("p", { style: { ...smallStyle, margin: 0 } }, t("cmd.k397"))
                   : piCmds.map((c) =>
                     h("div", { key: c.id, style: { display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 8, background: "var(--bg-hover)", border: "1px solid var(--border)", cursor: "pointer" }, onClick: () => openView("pi", c.id, c.cmd) },
                       h("span", { style: { fontSize: 13, color: c.status === "running" ? "var(--ok, #4ade80)" : c.isError ? "var(--danger, #f87171)" : "var(--text-muted)" } }, c.status === "running" ? "●" : c.isError ? "⚠" : "■"),
                       h("div", { style: { flex: 1, minWidth: 0 } },
-                        h("code", { style: { fontSize: 13, display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, "$ " + (c.cmd || "（订阅前已开始）")),
+                        h("code", { style: { fontSize: 13, display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, "$ " + (c.cmd || t("cmd.k399"))),
                         h("span", { style: { fontSize: 13, color: "var(--text-muted)" } },
-                          "🤖 " + String(c.sessionId || "").slice(0, 8) + (c.cwd ? " · " + c.cwd : "") + " · " + (c.status === "running" ? "运行中" : c.isError ? "出错/被终止" : "完成") + " · " + ((c.status === "running" ? Date.now() - c.startedTs : c.durationMs || 0) / 1000).toFixed(0) + "s" + (c.bytes ? " · " + (c.bytes / 1024).toFixed(1) + "KB" : "") + (c.truncated ? " · 截断" : "")),
+                          "🤖 " + String(c.sessionId || "").slice(0, 8) + (c.cwd ? " · " + c.cwd : "") + " · " + (c.status === "running" ? t("cmd.k365") : c.isError ? t("cmd.k115") : t("cmd.k189")) + " · " + ((c.status === "running" ? Date.now() - c.startedTs : c.durationMs || 0) / 1000).toFixed(0) + "s" + (c.bytes ? " · " + (c.bytes / 1024).toFixed(1) + "KB" : "") + (c.truncated ? t("cmd.k5") : "")),
                       ),
-                      c.status === "running" && h("button", { onClick: (e) => { e.stopPropagation(); killPiCommand(c.id); }, disabled: piKillBusy.has(c.id), title: piKillBusy.has(c.id) ? "终止信号已发送，等待进程退出…" : "只终止这条命令（不 abort 整个 turn）", style: { ...btnStyle, color: "var(--danger, #ef4444)", padding: "2px 8px", opacity: piKillBusy.has(c.id) ? 0.6 : 1, cursor: piKillBusy.has(c.id) ? "wait" : "pointer" } }, piKillBusy.has(c.id) ? "⏳" : "⏹"),
+                      c.status === "running" && h("button", { onClick: (e) => { e.stopPropagation(); killPiCommand(c.id); }, disabled: piKillBusy.has(c.id), title: piKillBusy.has(c.id) ? t("cmd.k322") : t("cmd.k159"), style: { ...btnStyle, color: "var(--danger, #ef4444)", padding: "2px 8px", opacity: piKillBusy.has(c.id) ? 0.6 : 1, cursor: piKillBusy.has(c.id) ? "wait" : "pointer" } }, piKillBusy.has(c.id) ? "⏳" : "⏹"),
                     )),
                 ),
                 // 🖥 终端会话（点行进终端；⏹ 杀进程）
                 h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
-                  h("div", { style: { fontSize: 14, fontWeight: 700, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 5 } }, Ic(13, ICONS.monitor), "终端会话"),
-                  sessions.length === 0 ? h("p", { style: { ...smallStyle, margin: 0 } }, "（无活跃会话——点「＋ 新终端」开一个 shell，或执行一条命令）")
+                  h("div", { style: { fontSize: 14, fontWeight: 700, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 5 } }, Ic(13, ICONS.monitor), t("cmd.k326")),
+                  sessions.length === 0 ? h("p", { style: { ...smallStyle, margin: 0 } }, t("cmd.k392"))
                   : sessions.map((s) =>
                     h("div", { key: s.id, style: { display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 8, background: "var(--bg-hover)", border: "1px solid var(--border)", cursor: "pointer" }, onClick: () => openView("pty", s.id, s.name || s.cmd) },
                       h("span", { style: { fontSize: 13, color: s.status === "running" ? "var(--ok, #4ade80)" : s.status === "queued" ? "var(--warn, #f59e0b)" : "var(--text-muted)" } }, s.status === "running" ? "●" : s.status === "queued" ? "⏳" : "■"),
                       h("div", { style: { flex: 1, minWidth: 0 } },
                         h("code", { style: { fontSize: 13, display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, "$ " + s.cmd + (SANDBOX[s.sandbox || "none"] ? SANDBOX[s.sandbox || "none"].icon : "")),
                         h("span", { style: { fontSize: 13, color: "var(--text-muted)" } },
-                          (sessionHostTabSync(s.id) ? "工作区页签 · " : "") +
-                          (s.status === "queued" ? "排队中 (" + s.queuePosition + "/" + s.queueLength + ")" : (s.status === "running" ? "运行中" : "退出 " + (s.exitCode ?? "?")) + " · " + ((s.status === "running" ? Date.now() - s.startTs : s.durationMs || 0) / 1000).toFixed(0) + "s" + (s.sandbox ? " · " + (SANDBOX[s.sandbox] ? SANDBOX[s.sandbox].short : s.sandbox) : " · 无沙箱"))),
+                          (sessionHostTabSync(s.id) ? t("cmd.k193") : "") +
+                          (s.status === "queued" ? t("cmd.k238") + s.queuePosition + "/" + s.queueLength + ")" : (s.status === "running" ? t("cmd.k365") : t("cmd.k372") + (s.exitCode ?? "?")) + " · " + ((s.status === "running" ? Date.now() - s.startTs : s.durationMs || 0) / 1000).toFixed(0) + "s" + (s.sandbox ? " · " + (SANDBOX[s.sandbox] ? SANDBOX[s.sandbox].short : s.sandbox) : t("cmd.k6")))),
                       ),
-                      (s.status === "running" || s.status === "queued") && h("button", { onClick: (e) => { e.stopPropagation(); killSession(s.id); }, disabled: killBusy.has(s.id), title: killBusy.has(s.id) ? "终止信号已发送，等待进程退出…" : s.status === "queued" ? "取消排队" : "终止命令（杀进程）", style: { ...btnStyle, color: "var(--danger, #ef4444)", padding: "2px 8px", opacity: killBusy.has(s.id) ? 0.6 : 1, cursor: killBusy.has(s.id) ? "wait" : "pointer" } }, killBusy.has(s.id) ? "⏳" : s.status === "queued" ? "取消" : "⏹"),
+                      (s.status === "running" || s.status === "queued") && h("button", { onClick: (e) => { e.stopPropagation(); killSession(s.id); }, disabled: killBusy.has(s.id), title: killBusy.has(s.id) ? t("cmd.k322") : s.status === "queued" ? t("cmd.k157") : t("cmd.k324"), style: { ...btnStyle, color: "var(--danger, #ef4444)", padding: "2px 8px", opacity: killBusy.has(s.id) ? 0.6 : 1, cursor: killBusy.has(s.id) ? "wait" : "pointer" } }, killBusy.has(s.id) ? "⏳" : s.status === "queued" ? t("cmd.k155") : "⏹"),
                     )),
                 ),
                 // ⚡ 常用命令：tag 云卡片（点击执行；颜色随标签，尺寸随使用次数微放大）——放最后
@@ -1726,9 +1743,9 @@ const renderCommandRow = (c, depth) =>
                   const shown = sorted.slice(0, 30);
                   return h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
                     h("div", { style: { display: "flex", alignItems: "center", gap: 6 } },
-                      h("span", { style: { fontSize: 14, fontWeight: 700, color: "var(--text-muted)" } }, "常用命令"),
-                      h("span", { style: { fontSize: 13, color: "var(--text-muted)" } }, sorted.length + " 条 · 点击执行"),
-                      h("button", { onClick: () => setTab("commands"), title: "到命令页管理（新建/编辑/分组/标签）", style: { ...miniBtn, marginLeft: "auto" } }, "管理 →"),
+                      h("span", { style: { fontSize: 14, fontWeight: 700, color: "var(--text-muted)" } }, t("cmd.k208")),
+                      h("span", { style: { fontSize: 13, color: "var(--text-muted)" } }, sorted.length + t("cmd.k20")),
+                      h("button", { onClick: () => setTab("commands"), title: t("cmd.k131"), style: { ...miniBtn, marginLeft: "auto" } }, t("cmd.k314")),
                     ),
                     h("div", { style: { display: "flex", flexWrap: "wrap", gap: 5 } },
                       shown.map((c) => {
@@ -1738,7 +1755,7 @@ const renderCommandRow = (c, depth) =>
                         return h("button", {
                           key: c.id,
                           onClick: () => runCommand(c),
-                          title: "$ " + c.cmd + (c.cwd ? "  ·  " + c.cwd : "") + (c.confirm ? "（危险命令，执行前确认）" : "") + (c.runCount ? " · 已执行 " + c.runCount + " 次" : ""),
+                          title: "$ " + c.cmd + (c.cwd ? "  ·  " + c.cwd : "") + (c.confirm ? t("cmd.k387") : "") + (c.runCount ? t("cmd.k4") + c.runCount + t("cmd.k24") : ""),
                           style: {
                             border: "1px solid " + base + "66", background: base + "1f", color: `color-mix(in srgb, ${base} 68%, var(--text))`,
                             borderRadius: 999, padding: weight ? "3px 11px" : "2px 9px", fontSize: 13 + weight, fontWeight: 500,
@@ -1747,7 +1764,7 @@ const renderCommandRow = (c, depth) =>
                           },
                         }, (c.name || c.cmd) + (c.confirm ? " ⚠" : ""));
                       }),
-                      sorted.length > shown.length && h("span", { style: { ...smallStyle, alignSelf: "center" } }, "… 还有 " + (sorted.length - shown.length) + " 条"),
+                      sorted.length > shown.length && h("span", { style: { ...smallStyle, alignSelf: "center" } }, t("cmd.k50") + (sorted.length - shown.length) + t("cmd.k19")),
                     ),
                   );
                 })(),
@@ -1785,52 +1802,52 @@ const renderCommandRow = (c, depth) =>
               h("div", { style: { display: "flex", alignItems: "center", gap: 10, padding: "14px 18px", borderBottom: "1px solid var(--border)" } },
                 h("span", { style: { width: 28, height: 28, borderRadius: 8, background: "var(--bg-hover)", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--font-mono)", fontSize: 15, fontWeight: 700, color: "var(--accent)", flexShrink: 0 } }, "$"),
                 h("div", { style: { flex: 1, minWidth: 0 } },
-                  h("div", { style: { fontSize: 15, fontWeight: 700 } }, editing.id ? "编辑命令" : "新建命令"),
-                  h("div", { style: { fontSize: 13, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, editing.groupId ? "📁 " + groupPathOf(editing.groupId) : "未分组"),
+                  h("div", { style: { fontSize: 15, fontWeight: 700 } }, editing.id ? t("cmd.k332") : t("cmd.k267")),
+                  h("div", { style: { fontSize: 13, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, editing.groupId ? "📁 " + groupPathOf(editing.groupId) : t("cmd.k277")),
                 ),
-                h("button", { onClick: () => setEditing(null), title: "关闭 (Esc)", "aria-label": "关闭", style: { background: "transparent", borderTop: "none", borderRight: "none", borderBottom: "none", borderLeft: "none", color: "var(--text-muted)", fontSize: 16, cursor: "pointer", padding: "4px 8px", borderRadius: 4 } }, "✕"),
+                h("button", { onClick: () => setEditing(null), title: t("cmd.k110"), "aria-label": t("cmd.k109"), style: { background: "transparent", borderTop: "none", borderRight: "none", borderBottom: "none", borderLeft: "none", color: "var(--text-muted)", fontSize: 16, cursor: "pointer", padding: "4px 8px", borderRadius: 4 } }, "✕"),
               ),
               // 表单区：两列 Grid（名称/分组/工作目录 前置；命令全宽居中）
               h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px 14px", padding: "16px 18px" } },
-                field("名称", h("input", { style: ctl(), value: editing.name, placeholder: "缺省 = 命令文本", onChange: (e) => set({ name: e.target.value }) })),
-                field("分组", h("select", { style: ctl(), value: editing.groupId || "", onChange: (e) => set({ groupId: e.target.value || null }) },
-                  h("option", { value: "" }, "（未分组）"),
+                field(t("cmd.k166"), h("input", { style: ctl(), value: editing.name, placeholder: t("cmd.k334"), onChange: (e) => set({ name: e.target.value }) })),
+                field(t("cmd.k116"), h("select", { style: ctl(), value: editing.groupId || "", onChange: (e) => set({ groupId: e.target.value || null }) },
+                  h("option", { value: "" }, t("cmd.k396")),
                   groups.map((g) => h("option", { key: g.id, value: g.id }, groupPathOf(g.id))),
                 )),
-                field("工作目录", h("input", { style: ctl({ fontFamily: "var(--font-mono)" }), value: editing.cwd || "", placeholder: "缺省 = 当前会话目录", onChange: (e) => set({ cwd: e.target.value }) })),
-                field("标签", h("input", { style: ctl(), value: editing.tags || "", placeholder: "逗号分隔，如 build, fe", onChange: (e) => set({ tags: e.target.value }) })),
-                field("命令", h("textarea", { id: "aiti-cmd-edit-cmd", autoFocus: !editing.id, style: ctl({ minHeight: 72, fontFamily: "var(--font-mono)", resize: "vertical" }), value: editing.cmd, placeholder: "pnpm build --filter {pkg}", onChange: (e) => set({ cmd: e.target.value }) }), "支持 {参数} 占位符，执行时填入", true),
-                field("沙箱", h("select", { style: ctl((editing.sandbox || "none") === "none" ? { borderColor: "var(--warn, #f59e0b)", background: "color-mix(in srgb, var(--warn, #f59e0b) 12%, transparent)", color: "var(--warn, #f59e0b)" } : null), value: editing.sandbox || "none", onChange: (e) => set({ sandbox: e.target.value }) },
+                field(t("cmd.k194"), h("input", { style: ctl({ fontFamily: "var(--font-mono)" }), value: editing.cwd || "", placeholder: t("cmd.k335"), onChange: (e) => set({ cwd: e.target.value }) })),
+                field(t("cmd.k283"), h("input", { style: ctl(), value: editing.tags || "", placeholder: t("cmd.k377"), onChange: (e) => set({ tags: e.target.value }) })),
+                field(t("cmd.k167"), h("textarea", { id: "aiti-cmd-edit-cmd", autoFocus: !editing.id, style: ctl({ minHeight: 72, fontFamily: "var(--font-mono)", resize: "vertical" }), value: editing.cmd, placeholder: "pnpm build --filter {pkg}", onChange: (e) => set({ cmd: e.target.value }) }), t("cmd.k244"), true),
+                field(t("cmd.k299"), h("select", { style: ctl((editing.sandbox || "none") === "none" ? { borderColor: "var(--warn, #f59e0b)", background: "color-mix(in srgb, var(--warn, #f59e0b) 12%, transparent)", color: "var(--warn, #f59e0b)" } : null), value: editing.sandbox || "none", onChange: (e) => set({ sandbox: e.target.value }) },
                   SANDBOX_ORDER.map((v) => h("option", { key: v, value: v }, SANDBOX[v].label)),
                 ), (() => { const m = SANDBOX[editing.sandbox || "none"] || SANDBOX.none; return h("span", { style: { fontSize: 13, lineHeight: 1.4, color: m.warn ? "var(--warn, #f59e0b)" : "var(--ok, #10b981)" } }, m.hint); })()),
-                field("执行确认", h("button", {
+                field(t("cmd.k230"), h("button", {
                   type: "button",
                   onClick: () => set({ confirm: !editing.confirm }),
-                  title: "执行前是否弹窗确认（危险命令建议开启）",
+                  title: t("cmd.k228"),
                   style: { ...ctl(), display: "flex", alignItems: "center", gap: 8, textAlign: "left", cursor: "pointer", padding: "6px 10px" },
                 },
                   h("span", { style: { position: "relative", width: 32, height: 18, borderRadius: 999, background: editing.confirm ? "var(--warn, #f59e0b)" : "var(--border)", flexShrink: 0, transition: "background .15s" } },
                     h("span", { style: { position: "absolute", top: 2, left: editing.confirm ? 16 : 2, width: 14, height: 14, borderRadius: "50%", background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,0.25)", transition: "left .15s" } }),
                   ),
-                  h("span", { style: { fontSize: 13, color: "var(--text)" } }, editing.confirm ? "执行前弹窗确认" : "直接执行"),
+                  h("span", { style: { fontSize: 13, color: "var(--text)" } }, editing.confirm ? t("cmd.k227") : t("cmd.k308")),
                 ), null),
-                field("智能提示", h("button", {
+                field(t("cmd.k272"), h("button", {
                   type: "button",
                   onClick: () => set({ suggest: !editing.suggest }),
-                  title: "作为 aiti-ai-input 智能提示（输入联想/补全）的来源；关掉后输入时不再提示此命令",
+                  title: t("cmd.k87"),
                   style: { ...ctl(), display: "flex", alignItems: "center", gap: 8, textAlign: "left", cursor: "pointer", padding: "6px 10px" },
                 },
                   h("span", { style: { position: "relative", width: 32, height: 18, borderRadius: 999, background: editing.suggest ? "var(--accent)" : "var(--border)", flexShrink: 0, transition: "background .15s" } },
                     h("span", { style: { position: "absolute", top: 2, left: editing.suggest ? 16 : 2, width: 14, height: 14, borderRadius: "50%", background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,0.25)", transition: "left .15s" } }),
                   ),
-                  h("span", { style: { fontSize: 13, color: "var(--text)" } }, editing.suggest ? "参与智能提示" : "不参与智能提示"),
-                ), "作为 aiti-ai-input 输入联想/补全的来源（默认开）", true),
+                  h("span", { style: { fontSize: 13, color: "var(--text)" } }, editing.suggest ? t("cmd.k150") : t("cmd.k75")),
+                ), t("cmd.k88"), true),
               ),
               // 页脚
               h("div", { style: { display: "flex", alignItems: "center", gap: 8, padding: "12px 18px", borderTop: "1px solid var(--border)" } },
-                h("span", { style: { ...smallStyle, flex: 1 } }, editing.id ? "改动即时生效" : "保存后出现在命令列表对应分组"),
-                h("button", { onClick: () => setEditing(null), style: { ...btnStyle, padding: "6px 14px" } }, "取消"),
-                h("button", { onClick: saveEditing, disabled: !editing.cmd.trim(), style: { ...btnStyle, background: editing.cmd.trim() ? "var(--accent)" : "var(--bg-hover)", color: "#fff", borderTop: "none", borderRight: "none", borderBottom: "none", borderLeft: "none", padding: "6px 18px", fontWeight: 600, cursor: editing.cmd.trim() ? "pointer" : "not-allowed", opacity: editing.cmd.trim() ? 1 : 0.6 } }, editing.id ? "保存修改" : "创建"),
+                h("span", { style: { ...smallStyle, flex: 1 } }, editing.id ? t("cmd.k254") : t("cmd.k91")),
+                h("button", { onClick: () => setEditing(null), style: { ...btnStyle, padding: "6px 14px" } }, t("cmd.k155")),
+                h("button", { onClick: saveEditing, disabled: !editing.cmd.trim(), style: { ...btnStyle, background: editing.cmd.trim() ? "var(--accent)" : "var(--bg-hover)", color: "#fff", borderTop: "none", borderRight: "none", borderBottom: "none", borderLeft: "none", padding: "6px 18px", fontWeight: 600, cursor: editing.cmd.trim() ? "pointer" : "not-allowed", opacity: editing.cmd.trim() ? 1 : 0.6 } }, editing.id ? t("cmd.k90") : t("cmd.k120")),
               ),
             ),
           );
@@ -1858,22 +1875,22 @@ const renderCommandRow = (c, depth) =>
               h("div", { style: { display: "flex", alignItems: "center", gap: 10, padding: "14px 18px", borderBottom: "1px solid var(--border)" } },
                 h("span", { style: { width: 28, height: 28, borderRadius: 8, background: "var(--bg-hover)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, flexShrink: 0 } }, "📁"),
                 h("div", { style: { flex: 1 } },
-                  h("div", { style: { fontSize: 15, fontWeight: 700 } }, editingGroup.id ? "编辑分组" : "新建分组"),
-                  h("div", { style: { fontSize: 13, color: "var(--text-muted)" } }, editingGroup.parentId ? "位于：" + groupPathOf(editingGroup.parentId) : "顶层分组"),
+                  h("div", { style: { fontSize: 15, fontWeight: 700 } }, editingGroup.id ? t("cmd.k331") : t("cmd.k266")),
+                  h("div", { style: { fontSize: 13, color: "var(--text-muted)" } }, editingGroup.parentId ? t("cmd.k86") + groupPathOf(editingGroup.parentId) : t("cmd.k384")),
                 ),
-                h("button", { onClick: () => setEditingGroup(null), title: "关闭 (Esc)", "aria-label": "关闭", style: { background: "transparent", borderTop: "none", borderRight: "none", borderBottom: "none", borderLeft: "none", color: "var(--text-muted)", fontSize: 16, cursor: "pointer", padding: "4px 8px", borderRadius: 4 } }, "✕"),
+                h("button", { onClick: () => setEditingGroup(null), title: t("cmd.k110"), "aria-label": t("cmd.k109"), style: { background: "transparent", borderTop: "none", borderRight: "none", borderBottom: "none", borderLeft: "none", color: "var(--text-muted)", fontSize: 16, cursor: "pointer", padding: "4px 8px", borderRadius: 4 } }, "✕"),
               ),
               h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px 14px", padding: "16px 18px" } },
-                field("分组名", h("input", { autoFocus: true, style: ctl(), value: editingGroup.name, placeholder: "如：构建 / 部署", onChange: (e) => setG({ name: e.target.value }) })),
-                field("上级分组", h("select", { style: ctl(), value: editingGroup.parentId || "", onChange: (e) => setG({ parentId: e.target.value || null }) },
-                  h("option", { value: "" }, "（顶层）"),
+                field(t("cmd.k117"), h("input", { autoFocus: true, style: ctl(), value: editingGroup.name, placeholder: t("cmd.k186"), onChange: (e) => setG({ name: e.target.value }) })),
+                field(t("cmd.k70"), h("select", { style: ctl(), value: editingGroup.parentId || "", onChange: (e) => setG({ parentId: e.target.value || null }) },
+                  h("option", { value: "" }, t("cmd.k400")),
                   groups.filter((g) => g.id !== editingGroup.id).map((g) => h("option", { key: g.id, value: g.id }, groupPathOf(g.id))),
                 )),
               ),
               h("div", { style: { display: "flex", alignItems: "center", gap: 8, padding: "12px 18px", borderTop: "1px solid var(--border)" } },
-                h("span", { style: { ...smallStyle, flex: 1 } }, "删除分组时组内命令自动移入未分组"),
-                h("button", { onClick: () => setEditingGroup(null), style: { ...btnStyle, padding: "6px 14px" } }, "取消"),
-                h("button", { onClick: saveGroupEditing, disabled: !editingGroup.name.trim(), style: { ...btnStyle, background: editingGroup.name.trim() ? "var(--accent)" : "var(--bg-hover)", color: "#fff", borderTop: "none", borderRight: "none", borderBottom: "none", borderLeft: "none", padding: "6px 18px", fontWeight: 600, cursor: editingGroup.name.trim() ? "pointer" : "not-allowed", opacity: editingGroup.name.trim() ? 1 : 0.6 } }, editingGroup.id ? "保存修改" : "创建"),
+                h("span", { style: { ...smallStyle, flex: 1 } }, t("cmd.k127")),
+                h("button", { onClick: () => setEditingGroup(null), style: { ...btnStyle, padding: "6px 14px" } }, t("cmd.k155")),
+                h("button", { onClick: saveGroupEditing, disabled: !editingGroup.name.trim(), style: { ...btnStyle, background: editingGroup.name.trim() ? "var(--accent)" : "var(--bg-hover)", color: "#fff", borderTop: "none", borderRight: "none", borderBottom: "none", borderLeft: "none", padding: "6px 18px", fontWeight: 600, cursor: editingGroup.name.trim() ? "pointer" : "not-allowed", opacity: editingGroup.name.trim() ? 1 : 0.6 } }, editingGroup.id ? t("cmd.k90") : t("cmd.k120")),
               ),
             ),
           );
@@ -1906,27 +1923,27 @@ const renderCommandRow = (c, depth) =>
     if (!detail) return null;
     // 分组路径（与命令面板一致）：如 "构建 / 前端"
     const groupPathOf = (id) => {
-      if (!id) return "未分组";
+      if (!id) return t("cmd.k277");
       const parts = []; let cur = groups.find((g) => g.id === id); let guard = 0;
       while (cur && guard++ < 20) { parts.unshift(cur.name); cur = cur.parentId ? groups.find((g) => g.id === cur.parentId) : undefined; }
-      return parts.join(" / ") || "未分组";
+      return parts.join(" / ") || t("cmd.k277");
     };
     const doSave = async () => {
       setSaved(false); setErr(null);
-      if (!current || !String(current).trim()) { setErr("命令内容为空，无法收藏"); return; }
+      if (!current || !String(current).trim()) { setErr(t("cmd.k171")); return; }
       const r = await fetch(api("/commands"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: name || current, cmd: current, cwd: cwd || undefined, groupId: groupId || null, confirm, sandbox: "none", source: "ai-message" }) }).then((x) => x.json());
-      if (r.ok) setSaved(true); else setErr(r.error || "保存失败");
+      if (r.ok) setSaved(true); else setErr(r.error || t("cmd.k92"));
     };
     const doRun = async () => {
       const cmd = current;
-      let r = await fetch(api("/run"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ command: cmd, cwd: cwd || undefined, source: "message", sandbox: "none" }) }).then((x) => x.json()).catch(() => ({ ok: false, error: "网络错误" }));
+      let r = await fetch(api("/run"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ command: cmd, cwd: cwd || undefined, source: "message", sandbox: "none" }) }).then((x) => x.json()).catch(() => ({ ok: false, error: t("cmd.k336") }));
       if (r.needConfirm) {
         const danger = (r.danger || []).join("/");
-        const ok = await uiConfirm({ message: `确认执行危险命令${danger ? "（" + danger + "）" : ""}？`, detail: `$ ${cmd}`, danger: true });
+        const ok = await uiConfirm({ message: `${t("cmd.k311")}${danger ? "（" + danger + "）" : ""}？`, detail: `$ ${cmd}`, danger: true });
         if (!ok) return;
-        r = await fetch(api("/run"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ command: cmd, cwd: cwd || undefined, source: "message", sandbox: "none", confirmToken: r.confirmToken }) }).then((x) => x.json()).catch(() => ({ ok: false, error: "网络错误" }));
+        r = await fetch(api("/run"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ command: cmd, cwd: cwd || undefined, source: "message", sandbox: "none", confirmToken: r.confirmToken }) }).then((x) => x.json()).catch(() => ({ ok: false, error: t("cmd.k336") }));
       }
-      if (!r.ok) { setErr(r.error || "运行失败"); return; }
+      if (!r.ok) { setErr(r.error || t("cmd.k366")); return; }
       setState({ panelOpen: true, view: { kind: "pty", id: r.sessionId, title: cmd }, detail: null });
     };
     return h("div", {
@@ -1942,57 +1959,57 @@ const renderCommandRow = (c, depth) =>
         h("div", { style: { display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderBottom: "1px solid var(--border)", flexShrink: 0 } },
           h("span", { style: { width: 28, height: 28, borderRadius: 8, background: "var(--bg-hover)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, flexShrink: 0 } }, "＋"),
           h("div", { style: { flex: 1, minWidth: 0 } },
-            h("div", { style: { fontSize: 15, fontWeight: 700 } }, "命令管理"),
-            h("div", { style: { fontSize: 13, color: "var(--text-muted)" } }, "查看 / 收藏 / 编辑，不会直接执行"),
+            h("div", { style: { fontSize: 15, fontWeight: 700 } }, t("cmd.k175")),
+            h("div", { style: { fontSize: 13, color: "var(--text-muted)" } }, t("cmd.k282")),
           ),
-          h("button", { onClick: () => setState({ detail: null }), title: "关闭", "aria-label": "关闭", style: { ...btnStyle, padding: "2px 10px", background: "transparent", borderTop: "none", borderRight: "none", borderBottom: "none", borderLeft: "none", color: "var(--text-muted)" } }, "✕"),
+          h("button", { onClick: () => setState({ detail: null }), title: t("cmd.k109"), "aria-label": t("cmd.k109"), style: { ...btnStyle, padding: "2px 10px", background: "transparent", borderTop: "none", borderRight: "none", borderBottom: "none", borderLeft: "none", color: "var(--text-muted)" } }, "✕"),
         ),
         // 内容区
         h("div", { style: { flex: 1, minHeight: 0, overflow: "auto", padding: 14 } },
-        h("p", { style: { ...smallStyle, marginBottom: 8, color: "var(--text-muted)" } }, "此面板用于 查看 / 收藏 / 编辑 命令，不会直接执行。"),
+        h("p", { style: { ...smallStyle, marginBottom: 8, color: "var(--text-muted)" } }, t("cmd.k298")),
         current !== detail.cmd && h("div", { style: { ...rowStyle, marginBottom: 4 } },
-          h("button", { onClick: () => setCurrent(detail.cmd), title: "返回原命令", style: { ...btnStyle, padding: "1px 8px", fontSize: 13 } }, "← 返回: " + detail.cmd.slice(0, 30)),
-          h("span", { style: smallStyle }, "正在查看相关命令"),
+          h("button", { onClick: () => setCurrent(detail.cmd), title: t("cmd.k369"), style: { ...btnStyle, padding: "1px 8px", fontSize: 13 } }, t("cmd.k52") + detail.cmd.slice(0, 30)),
+          h("span", { style: smallStyle }, t("cmd.k296")),
         ),
         h("pre", { style: { background: "#0f172a", color: "#a5f3fc", padding: 10, borderRadius: 8, fontSize: 13, fontFamily: "var(--font-mono)", whiteSpace: "pre-wrap", wordBreak: "break-all", margin: "0 0 8px" } }, current),
         info && h("div", { style: { ...smallStyle, marginBottom: 8 } },
           info.exists === false
-            ? h("span", { style: { color: "var(--danger, #ef4444)" } }, "command not found：" + info.cmd + " 未安装（PATH/项目 bin 中找不到）")
-            : h("span", {}, "命令可识别" + (info.exists === true ? " · 已安装（PATH/项目 bin）" : "")),
-          (info.params && info.params.length) ? h("span", {}, " · 参数: {" + info.params.join("}, {") + "}") : null,
-          (info.danger && info.danger.length) ? h("span", {}, " · ⚠ 危险: " + info.danger.join("/")) : null,
+            ? h("span", { style: { color: "var(--danger, #ef4444)" } }, "command not found：" + info.cmd + t("cmd.k18"))
+            : h("span", {}, t("cmd.k172") + (info.exists === true ? t("cmd.k3") : "")),
+          (info.params && info.params.length) ? h("span", {}, t("cmd.k2") + info.params.join("}, {") + "}") : null,
+          (info.danger && info.danger.length) ? h("span", {}, t("cmd.k1") + info.danger.join("/")) : null,
         ),
         info && info.exists === false && info.installSuggestion && h("div", { style: { ...smallStyle, marginBottom: 8, background: "color-mix(in srgb, var(--danger, #ef4444) 8%, transparent)", border: "1px solid color-mix(in srgb, var(--danger, #ef4444) 35%, transparent)", borderRadius: 6, padding: "6px 8px", color: "var(--danger, #ef4444)" } },
-          h("span", { style: { fontWeight: 600 } }, "安装建议："), h("code", { style: { fontSize: 13 } }, info.installSuggestion),
-          h("button", { onClick: () => { try { navigator.clipboard.writeText(info.installSuggestion); } catch {} }, style: { ...btnStyle, padding: "1px 8px", fontSize: 13, marginLeft: 6 } }, "复制"),
+          h("span", { style: { fontWeight: 600 } }, t("cmd.k188")), h("code", { style: { fontSize: 13 } }, info.installSuggestion),
+          h("button", { onClick: () => { try { navigator.clipboard.writeText(info.installSuggestion); } catch {} }, style: { ...btnStyle, padding: "1px 8px", fontSize: 13, marginLeft: 6 } }, t("cmd.k182")),
         ),
         desc && desc.found && h("div", { style: { ...smallStyle, marginBottom: 8, background: "var(--bg-hover)", borderRadius: 6, padding: "6px 8px" } },
           h("span", { style: { fontWeight: 600 } }, "📂 " + desc.name + " · " + desc.group + ""),
           desc.desc ? h("span", { style: { marginLeft: 6 } }, desc.desc) : null,
           desc.related && desc.related.length ? h("div", { style: { display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 } },
-            h("span", { style: { fontSize: 13, color: "var(--text-muted)", marginRight: 2 } }, "常用:"),
-            desc.related.map((p) => h("button", { key: p, type: "button", onClick: () => setCurrent(p), title: "点击查看/管理此命令", style: { fontSize: 13, background: "var(--bg)", padding: "2px 8px", borderRadius: 6, border: "1px solid var(--border)", color: "var(--accent)", cursor: "pointer" } }, p)))
+            h("span", { style: { fontSize: 13, color: "var(--text-muted)", marginRight: 2 } }, t("cmd.k207")),
+            desc.related.map((p) => h("button", { key: p, type: "button", onClick: () => setCurrent(p), title: t("cmd.k305"), style: { fontSize: 13, background: "var(--bg)", padding: "2px 8px", borderRadius: 6, border: "1px solid var(--border)", color: "var(--accent)", cursor: "pointer" } }, p)))
           : null,
           desc.peers && desc.peers.length ? h("div", { style: { display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 } },
-            h("span", { style: { fontSize: 13, color: "var(--text-muted)", marginRight: 2 } }, "同类:"),
-            desc.peers.map((p) => h("button", { key: p, type: "button", onClick: () => setCurrent(p), title: "点击查看/管理此命令", style: { fontSize: 13, background: "var(--bg)", padding: "2px 8px", borderRadius: 6, border: "1px solid var(--border)", color: "var(--accent)", cursor: "pointer" } }, p)))
+            h("span", { style: { fontSize: 13, color: "var(--text-muted)", marginRight: 2 } }, t("cmd.k165")),
+            desc.peers.map((p) => h("button", { key: p, type: "button", onClick: () => setCurrent(p), title: t("cmd.k305"), style: { fontSize: 13, background: "var(--bg)", padding: "2px 8px", borderRadius: 6, border: "1px solid var(--border)", color: "var(--accent)", cursor: "pointer" } }, p)))
           : null,
         ),
         h("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 } },
-          h("input", { style: inputStyle, value: name, placeholder: "收藏名称（默认=命令文本）", onChange: (e) => setName(e.target.value) }),
-          h("select", { style: inputStyle, value: groupId || "", title: "收藏到哪个分组", onChange: (e) => setGroupId(e.target.value || null) },
-            h("option", { value: "" }, "（未分组）"),
+          h("input", { style: inputStyle, value: name, placeholder: t("cmd.k247"), onChange: (e) => setName(e.target.value) }),
+          h("select", { style: inputStyle, value: groupId || "", title: t("cmd.k246"), onChange: (e) => setGroupId(e.target.value || null) },
+            h("option", { value: "" }, t("cmd.k396")),
             groups.map((g) => h("option", { key: g.id, value: g.id }, groupPathOf(g.id))),
           ),
-          h("input", { style: inputStyle, value: cwd, placeholder: "cwd（缺省=当前会话目录）", onChange: (e) => setCwd(e.target.value) }),
-          h("label", { style: { fontSize: 13, display: "inline-flex", alignItems: "center", gap: 4 } }, h("input", { type: "checkbox", checked: confirm, onChange: (e) => setConfirm(e.target.checked) }), "危险命令执行前确认"),
+          h("input", { style: inputStyle, value: cwd, placeholder: t("cmd.k42"), onChange: (e) => setCwd(e.target.value) }),
+          h("label", { style: { fontSize: 13, display: "inline-flex", alignItems: "center", gap: 4 } }, h("input", { type: "checkbox", checked: confirm, onChange: (e) => setConfirm(e.target.checked) }), t("cmd.k146")),
         ),
         err && h("p", { style: { ...smallStyle, color: "var(--danger, #ef4444)", marginBottom: 6 } }, String(err)),
         h("div", { style: { display: "flex", gap: 8 } },
-          h("button", { onClick: doSave, style: { ...btnStyle, background: "var(--accent)", color: "#fff", borderTop: "none", borderRight: "none", borderBottom: "none", borderLeft: "none", flex: 1 } }, saved ? "已收藏" : "＋ 收藏到常用命令"),
-          h("button", { onClick: doRun, style: { ...btnStyle, flex: 1, color: "var(--accent)" } }, busy ? "…" : "▶ 单独执行"),
+          h("button", { onClick: doSave, style: { ...btnStyle, background: "var(--accent)", color: "#fff", borderTop: "none", borderRight: "none", borderBottom: "none", borderLeft: "none", flex: 1 } }, saved ? t("cmd.k201") : t("cmd.k402")),
+          h("button", { onClick: doRun, style: { ...btnStyle, flex: 1, color: "var(--accent)" } }, busy ? "…" : t("cmd.k58")),
         ),
-        h("p", { style: { ...smallStyle, marginTop: 8 } }, "收藏后可在 ⚡ 命令面板随时一键调用（不依赖 AI）；执行记录全部写入审计日志。"),
+        h("p", { style: { ...smallStyle, marginTop: 8 } }, t("cmd.k248")),
         ),
       ),
     );
@@ -2055,8 +2072,8 @@ const renderCommandRow = (c, depth) =>
 
   // 页签专用建 shell（§3.3 同 createShell 走后端 /shell；不开弹窗、不切 view——归属由调用方决定）
   async function createShellSession(cwd) {
-    const r = await fetch(api("/shell"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cwd: cwd || undefined, name: "bash" }) }).then((x) => x.json()).catch(() => ({ ok: false, error: "网络错误" }));
-    if (!r || !r.ok || !r.sessionId) throw new Error((r && r.error) || "创建终端失败");
+    const r = await fetch(api("/shell"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cwd: cwd || undefined, name: "bash" }) }).then((x) => x.json()).catch(() => ({ ok: false, error: t("cmd.k336") }));
+    if (!r || !r.ok || !r.sessionId) throw new Error((r && r.error) || t("cmd.k122"));
     return { sessionId: r.sessionId, title: r.name || "bash" };
   }
 
@@ -2145,22 +2162,22 @@ const renderCommandRow = (c, depth) =>
           h("span", { style: { display: "inline-flex", flexShrink: 0 } }, Ic(14, ICONS.monitor)),
           h("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, cwd),
         ),
-        attaching ? h("span", null, "正在启动 shell…")
+        attaching ? h("span", null, t("cmd.k295"))
         : h("button", { onClick: attach, style: { ...btnStyle, padding: "6px 14px", background: "var(--bg-hover)", borderColor: "var(--border)", color: "var(--accent)", fontWeight: 600, fontSize: 12 } },
-            "接管到页签",
+            t("cmd.k240"),
           ),
         error && h("span", { role: "alert", style: { color: "var(--danger, #ef4444)" } }, error),
-        h("span", { style: { fontSize: 11, color: "var(--text-muted)" } }, "shell 由 aiti-cmd 承载 · 24h 会话"),
+        h("span", { style: { fontSize: 11, color: "var(--text-muted)" } }, t("cmd.k49")),
       );
     } else if (detachedEntry) {
       // 已拉回窗口：页签显示占位（单实例——视图此刻归弹窗）
       body = h("div", { style: { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, padding: 24, color: "var(--text-dim)", fontSize: 12 } },
         h("div", { style: { display: "flex", alignItems: "center", gap: 6, color: "var(--text-muted)" } },
           h("span", { style: { display: "inline-flex", flexShrink: 0 } }, Ic(14, ICONS.monitor)),
-          h("span", null, attached.entry.title + " 已在 aiti-cmd 窗口打开"),
+          h("span", null, attached.entry.title + t("cmd.k15")),
         ),
-        h("button", { onClick: takeBackToTab, style: { ...btnStyle, padding: "6px 14px", color: "var(--accent)", fontWeight: 600, fontSize: 12 } }, "接管到页签"),
-        h("span", { style: { fontSize: 11, color: "var(--text-muted)" } }, "终端同时只能在一处显示；接管后窗口内该终端变为占位"),
+        h("button", { onClick: takeBackToTab, style: { ...btnStyle, padding: "6px 14px", color: "var(--accent)", fontWeight: 600, fontSize: 12 } }, t("cmd.k240")),
+        h("span", { style: { fontSize: 11, color: "var(--text-muted)" } }, t("cmd.k328")),
       );
     } else {
       // 无独立头行（双标题栏收敛）：标题/目录已在页签栏与工具条（📁 cwd），操作收进 TerminalView
@@ -2187,7 +2204,7 @@ const renderCommandRow = (c, depth) =>
       style: topbarBtnStyle,
       onMouseEnter: (e) => { e.currentTarget.style.color = "var(--text)"; },
       onMouseLeave: (e) => { e.currentTarget.style.color = "var(--text-muted)"; },
-      title: "aiti-cmd：运行总览 / 常用命令 / 执行记录",
+      title: t("cmd.k41"),
     },
       // lucide terminal：命令终端——与系统内建线条图标同风格
       h("svg", { width: 16, height: 16, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": "true" },
@@ -2199,8 +2216,8 @@ const renderCommandRow = (c, depth) =>
   ctx.registerItems("toolbar", [{
     id: "aiti-cmd-open",
     meta: {
-      label: "常用命令",
-      title: "aiti-cmd：运行总览 / 常用命令 / 执行记录",
+      label: t("cmd.k208"),
+      title: t("cmd.k41"),
       icon: { svg: '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>' },
       // 重开面板回总览列表（旧详情视图可能已过期——会话死了会无限重连）
       onClick: () => setState({ panelOpen: true, view: null }),
