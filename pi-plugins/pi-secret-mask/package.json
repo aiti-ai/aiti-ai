@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/pi-secret-mask",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Paste-safe by default — session-level secret redaction for pi: values pasted into prompts become [REDACTED:*] placeholders before the model sees them and are restored inside tool arguments before execution. Detection engine shared with the DSH edition via @aiti-ai/secret-mask-core. Part of the aiti ecosystem (@aiti-ai/pi-web); also works standalone.",
   "keywords": [
     "pi",
@@ -44,5 +44,8 @@
     "access": "public"
   },
   "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
-  "contentHash": "56969a379a7bfa68"
+  "contentHash": "56969a379a7bfa68",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  }
 }
