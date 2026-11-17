@@ -95,7 +95,7 @@ export function DockDemoRightTab() {
   const docked = useGate(DOCK_ITEM_KEY, { dock: "right-panel" });
   if (!docked) return null;
   return (
-    <DockBody itemKey={DOCK_ITEM_KEY} zone="right-panel" title="🧩 停靠示例" chrome="tab"
+    <DockBody itemKey={DOCK_ITEM_KEY} zone="right-panel" title="停靠示例" chrome="tab"
       zones={["right-panel", sidebarZoneOf(DOCK_ITEM_KEY)]} defaultZone="right-panel">
       <DockDemoContent />
     </DockBody>
@@ -112,7 +112,7 @@ export function DockDemoSidebarSection() {
     { id: "incr", title: "计数 +1（dock 头命令示范）", badge: count > 0 ? count : undefined, visibility: "always", onClick: () => { requestDockCommand(DOCK_ITEM_KEY, "incr"); } },
   ];
   return (
-    <DockBody itemKey={DOCK_ITEM_KEY} title="🧩 停靠示例" chrome="section" kind="dockable"
+    <DockBody itemKey={DOCK_ITEM_KEY} title="停靠示例" icon="box" chrome="section" kind="dockable"
       count={count > 0 ? count : undefined}
       zones={["right-panel", sidebarZoneOf(DOCK_ITEM_KEY)]} defaultZone="right-panel"
       headerActions={actions}>
