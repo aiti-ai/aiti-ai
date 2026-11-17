@@ -1,8 +1,11 @@
 ---
 name: ext-modify
 title: AI 帮我改扩展
+title.en: "AI: modify an extension"
 placeholder: 描述要改什么（如：给 aiti-cmd 加一个导出命令的 skill / 给 demo 换个图标）…
+placeholder.en: "What to change (e.g. add an export-command skill to aiti-cmd / swap demo's icon)…"
 summary: 定位扩展源码→改 entry/client/server/i18n/skills→重建 JSX client（若有）→部署→reload
+summary.en: "Locate the extension source → edit entry/client/server/i18n/skills → rebuild the JSX client (if any) → deploy → reload"
 ---
 
 # ext-modify · 修改已有扩展

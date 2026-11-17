@@ -1,8 +1,11 @@
 ---
 name: jank-debug
 title: 调试页面卡顿（cpu-meter 现场分析）
+title.en: "Debug page jank (cpu-meter live analysis)"
 placeholder: 什么时候卡？做什么操作时卡？持续多久？有无报错…
+placeholder.en: "When does it jank? During which actions? How long? Any errors…"
 summary: 读取 aiti-cpu-meter 检测器现场（流畅度分/长任务/LoAF 脚本归因/卡顿快照），对照本仓历史卡顿案例定位主线程元凶，给出可执行修复建议
+summary.en: "Read aiti-cpu-meter's live detector data (smoothness score/long tasks/LoAF script attribution/jank snapshots), match against known jank cases in this repo to find the main-thread culprit, and give actionable fixes"
 outputs:
   format: text
 ---
