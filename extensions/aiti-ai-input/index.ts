@@ -881,16 +881,20 @@ export default {
     sidebarExplorerDock: [],
     rightFileDock: [{ id: "asr", label: "i18n:asr.panel.label" }, { id: "asr-usage", label: "i18n:asr.usage.label" }],
     chatInputTop: [
-      { id: "aiti-ai-input-voice-tag", label: "语音/高速输入感知条（识别语音或高速输入·正在修复提示）" },
-      { id: "aiti-ai-input-autocomplete", label: "AI 行内自动补全（灰字续句）" },
-      { id: "aiti-ai-input-suggest", label: "收藏联想（prompt + 命令 + 应用，静态优先）" },
+      { id: "aiti-ai-input-voice-tag", label: "i18n:feat.aiti-ai-input-voice-tag" },
+      { id: "aiti-ai-input-autocomplete", label: "i18n:feat.aiti-ai-input-autocomplete" },
+      { id: "aiti-ai-input-suggest", label: "i18n:feat.aiti-ai-input-suggest" },
     ],
     sessionStats: [
-      { id: "aiti-ai-input-aux-usage", label: "其他辅助 AI 用量统计行（会话统计下拉内）" },
+      { id: "aiti-ai-input-aux-usage", label: "i18n:feat.aiti-ai-input-aux-usage" },
     ],
     // 建议/候选标签文案（suggest.* 键；client logic.ts barLabel/sugAppRow 经 ctx.t 查表）
     i18n: {
       "zh-CN": {
+        "feat.aiti-ai-input-voice-tag": "语音/高速输入感知条（识别语音或高速输入·正在修复提示）",
+        "feat.aiti-ai-input-autocomplete": "AI 行内自动补全（灰字续句）",
+        "feat.aiti-ai-input-suggest": "收藏联想（prompt + 命令 + 应用，静态优先）",
+        "feat.aiti-ai-input-aux-usage": "其他辅助 AI 用量统计行（会话统计下拉内）",
         "it.asr.title": "语音识别引擎",
         "it.asr-usage.title": "语音流量",
         "it.aiti-asr-panel.label": "语音识别引擎管理",
