@@ -1,7 +1,9 @@
 ---
 name: usage-report
 title: AI 帮我解读 AI 用量统计
+title.en: "AI: interpret AI usage stats"
 placeholder: 想了解什么？如：这个月哪个模型花钱最多 / 最近 7 天 token 趋势…
+placeholder.en: "What to know? e.g. which model cost the most this month / last-7-day token trend…"
 ---
 
 # usage-report · 解读 AI 用量数据
