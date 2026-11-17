@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { getFileIcon, FolderIcon } from "./FileIcons.tsx";
-import { useHorizontalStrip } from "@/hooks/useHorizontalStrip";
 import { renderExtItemIcon } from "./ExtItemIcon";
 import type { ExtUiItemIcon } from "@/lib/ext/types";
 import { useI18n } from "@/hooks/useI18n";
@@ -219,9 +218,6 @@ interface CtxMenu {
 export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab, onOpenViewerWindow, onDockFileTab, revealToken, onReorderTab }: Props) {
   const { t } = useI18n();
   const [hoveredClose, setHoveredClose] = useState<string | null>(null);
-  // The strip has no scrollbar (globals.css): a vertical wheel scrolls it
-  // sideways, and an opened or selected tab is brought into view.
-  const listRef = useHorizontalStrip<HTMLDivElement>('[role="tab"][aria-selected="true"]', `${tabs.length}\n${activeTabId}`);
   const draggedId = useRef<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ id: string; after: boolean } | null>(null);
   const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null);
