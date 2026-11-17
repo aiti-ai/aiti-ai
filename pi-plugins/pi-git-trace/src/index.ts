@@ -3,7 +3,8 @@
  *
  * 事件接线（pi SDK docs/extensions.md）：
  *   session_start        → 重建 engine（新会话/fork 后状态重置；台账续接 op 编号）
- *   turn_start           → msgSeq 归属计数
+ *   message_end          → user-message boundary ([B2] attribution: the event carries the text directly, race-free)
+ *   turn_start           → flush convergence-window reset (attribution duty moved to message_end)
  *   tool_call            → mutating 判定 + before commit（可 block 语义未用，只观测）
  *   tool_execution_end   → after commit + 台账行
  *   turn_end             → 无条件兜底 flush（§3.5）
@@ -73,10 +74,12 @@ export default function piGitTrace(pi: MinimalPi): void {
     if (!bound) {
       await (await import("./recognition.ts")).ensureWired();
     }
-    // 总开关（§9）：pi-web 扩展 startup 写出的 config.json；缺文件/缺字段 = 开（独立 pi CLI 场景）
+    // Kill-switch (§9): config.json written by the pi-web extension at startup
+    // (configDir = <dataDir>/aiti-git-trace/config/); missing file/field = on (standalone pi CLI).
+    // 2026-11-17: fixed the read path (the config segment was missing, so the switch was never seen).
     let cfg: any = {};
     try {
-      cfg = JSON.parse(fs.readFileSync(path.join(traceDataDir(process.env), "config.json"), "utf8"));
+      cfg = JSON.parse(fs.readFileSync(path.join(traceDataDir(process.env), "config", "config.json"), "utf8"));
       if (cfg.enabled === false) return null; // kill-switch：本会话不追踪
       bound = true;
     } catch { /* 缺文件/解析失败 = 默认开（独立 pi CLI 场景） */ }
@@ -88,6 +91,26 @@ export default function piGitTrace(pi: MinimalPi): void {
       getPlanRel: () => currentPlanRel, // [P1-2 尾巴] additive 方案绑定
       dataDir: resolveDataDir(),  // 根目录（引擎内 ledgerFileFor 再拼 aiti-git-trace/state/ops，§3.6）
       getEntryId: () => ctxRef?.sessionManager?.getLeafEntry?.()?.id ?? null,
+      // [B2] lazy parse of the user-message entryId: message_end fires before the entry is persisted,
+      // so the event carries no id; the engine calls back here at first accounting — scanning the
+      // session-file tail for the last user entry with text (by then the message is necessarily
+      // persisted; on failure returns null, UI grouping falls back to msgSeq).
+      findUserEntryId: (): string | null => {
+        try {
+          const sf = ctxRef?.sessionManager?.getSessionFile?.();
+          if (!sf || !fs.existsSync(sf)) return null;
+          const lines = fs.readFileSync(sf, "utf8").trimEnd().split("\n").slice(-200);
+          for (let i = lines.length - 1; i >= 0; i--) {
+            let en: any;
+            try { en = JSON.parse(lines[i]); } catch { continue; }
+            const m = en?.message;
+            if (m?.role !== "user") continue;
+            if (!userMessageText(m)) continue; // same filter as onUserMessage
+            return en.id ? String(en.id) : null;
+          }
+          return null;
+        } catch { return null; }
+      },
       autoInit: cfg.autoInit !== false,
       autoInitMaxFiles: Number(cfg.autoInitMaxFiles) || 2000,
       seedCommonIgnores: cfg.seedCommonIgnores === true,
@@ -112,7 +135,9 @@ export default function piGitTrace(pi: MinimalPi): void {
   let currentPlanRel: string | null = null;
   function refreshPlanRel(): void {
     try {
-      const pf = path.join(resolveDataDir(), "aiti-plan-first", "plans.json");
+      // Actual file lives at the configDir tier (<dataDir>/aiti-plan-first/config/plans.json);
+      // 2026-11-17: fixed (the config segment was missing → currentPlanRel was always null)
+      const pf = path.join(resolveDataDir(), "aiti-plan-first", "config", "plans.json");
       if (!fs.existsSync(pf)) { currentPlanRel = null; return; }
       const plans = JSON.parse(fs.readFileSync(pf, "utf8"));
       const sid = ctxRef?.sessionManager?.getSessionId?.();
@@ -140,7 +165,6 @@ export default function piGitTrace(pi: MinimalPi): void {
   pi.on("session_start", async (_event, ctx) => {
     ctxRef = ctx ?? ctxRef;
     engine = null; // fork/new/resume 后重建；op 编号由台账续接
-    lastPromptId = null; // 新会话重新捕获用户消息
     currentModel = resolveCurrentModel() ?? currentModel; // [P1-2] 初始模型（最近 model_change 条目）
     refreshPlanRel(); // [P1-2 尾巴] 方案绑定刷新
     await ensureEngine();
@@ -175,37 +199,39 @@ export default function piGitTrace(pi: MinimalPi): void {
     },
   };
 
-  // 最近一次已捕获的用户消息 entry id（turn 2+ 用来识别「同一用户消息」；session_start 重置）
-  let lastPromptId: string | null = null;
+  // extract user-message text from the event object (content blocks / plain string, two shapes;
+  // same filter as the old scan)
+  function userMessageText(m: any): string {
+    const blocks = Array.isArray(m?.content) ? m.content : [];
+    const texts = blocks.map((b: any) => (typeof b === "string" ? b : b?.type === "text" ? String(b.text || "") : "")).filter(Boolean);
+    return (texts.join(" ") || (typeof m?.content === "string" ? m.content : "")).trim();
+  }
+
+  // [B2] user-message boundary: the message_end(role=user) event necessarily arrives before every
+  // tool_call that message triggers (the host loop emits message events before running the
+  // provider), so msgSeq/prompt attribution is race-free.
+  // The old turn_start session-file scan is retired: it raced with user-entry persistence (a new
+  // message not yet persisted hit lastPromptId and was misjudged as a "later turn of the same
+  // message", attributing to the previous round = off-by-one).
+  pi.on("message_end", async (event, ctx) => {
+    const m = (event as any)?.message;
+    if (m?.role !== "user") return;
+    // the first-message boundary must not be lost: the session_start engine creation may come later
+    // than the first message_end (SDK / first-session path), so ensureEngine here too (idempotent);
+    // only give up on this round's attribution if the engine cannot be built.
+    ctxRef = ctx ?? ctxRef;
+    const e = await ensureEngine();
+    if (!e) return;
+    const text = userMessageText(m);
+    if (!text) return; // user entry without text (anomalous/injected shapes): not a new round
+    e.onUserMessage(text.slice(0, 200));
+  });
 
   pi.on("turn_start", async (_event, ctx) => {
     refreshPlanRel(); // [P1-2 尾巴] 轮间绑定变更感知
     const e = await ensureEngine();
     await e?.scanNestedRuntime(); // 运行期嵌套仓预扫（审核发现③：原无参调用为死代码，已修）
-    // 捕获用户消息：扫会话文件尾（leaf 时序不可靠——turn 2+ 时 leaf 是上一条 assistant 消息）。
-    // user 是独立 role（toolResult 不会误报）；命中 lastPromptId 即同一条消息的后续 turn → 不推进 msgSeq。
-    let prompt: { userEntryId: string; text: string } | null = null;
-    try {
-      const sf = ctx?.sessionManager?.getSessionFile?.();
-      if (sf && fs.existsSync(sf)) {
-        const lines = fs.readFileSync(sf, "utf8").trimEnd().split("\n").slice(-200);
-        for (let i = lines.length - 1; i >= 0; i--) {
-          let en: any;
-          try { en = JSON.parse(lines[i]); } catch { continue; }
-          const m = en?.message;
-          if (m?.role !== "user") continue;
-          if (en.id && en.id === lastPromptId) break; // 同一用户消息已消费
-          const blocks = Array.isArray(m.content) ? m.content : [];
-          const texts = blocks.map((b: any) => (typeof b === "string" ? b : b?.type === "text" ? String(b.text || "") : "")).filter(Boolean);
-          const text = (texts.join(" ") || (typeof m.content === "string" ? m.content : "")).slice(0, 200);
-          if (!text.trim()) continue; // 无文本的 user 条目（异常/注入形态）：跳过，继续向前找
-          lastPromptId = en.id ? String(en.id) : lastPromptId;
-          prompt = { userEntryId: String(en.id || ""), text };
-          break;
-        }
-      }
-    } catch { /* 读取失败不阻塞（prompt 缺失仅影响分组头显示） */ }
-    e?.onTurnStart(prompt);
+    e?.onTurnStart(); // [B2] flush-window reset only; attribution already driven by message_end
   });
 
   pi.on("tool_call", async (event, ctx) => {

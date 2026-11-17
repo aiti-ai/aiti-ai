@@ -25,8 +25,10 @@ var PAIR_FILE_MAX = parseInt(process.env.AITI_PAIR_FILE_MAX || String(200 * 1024
 var CHUNK_MAX = 2 * 1024 * 1024;
 var INBOX_MAX = 200;
 function createPairModule(deps) {
-  const { TAG, dataDir, cors, json, sseResponse } = deps;
+  const { TAG, dataDir, cors, json, sseResponse, validateInstance } = deps;
   const peers = /* @__PURE__ */ new Map();
+  const names = /* @__PURE__ */ new Map();
+  const pageInbox = /* @__PURE__ */ new Map();
   const files = /* @__PURE__ */ new Map();
   const filesDir = dataDir ? join(dataDir, "aiti-bridge", "pair-files") : "";
   if (filesDir) {
@@ -37,6 +39,7 @@ function createPairModule(deps) {
   }
   const genId = (p) => p + randomBytes(6).toString("hex");
   const safeName = (s) => String(s || "file").replace(/[/\\:*?"<>|\x00-\x1f]/g, "_").slice(0, 120) || "file";
+  const iidOf = (s) => String(s || "").split("/")[0];
   const pairPublic = process.env.AITI_PAIR_PUBLIC === "1";
   const pairToken = process.env.AITI_PAIR_TOKEN || "";
   const PRIVATE_IP = /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1|fc|fd)/;
@@ -57,7 +60,15 @@ function createPairModule(deps) {
       }
     }
   }
-  function register(msg) {
+  const PRIVATE_IP_RE = /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1|fc|fd)/;
+  function clientIp(req) {
+    const real = (req.headers.get("x-real-ip") || "").trim();
+    if (real) return real;
+    const xff = (req.headers.get("x-forwarded-for") || "").trim();
+    if (xff) return xff.split(",")[0].trim() || null;
+    return null;
+  }
+  function register(msg, meta) {
     const now = Date.now();
     const name = safeName(String(msg && msg.name || "")).slice(0, 40) || "设备";
     const pid = msg && msg.peerId && String(msg.peerId) || genId("p_");
@@ -66,9 +77,9 @@ function createPairModule(deps) {
     let p = peers.get(pid);
     if (!p) {
       if (devLabel) console.log(TAG + "   设备：" + devLabel + (dev && dev.lang ? " · " + dev.lang : ""));
-      p = { peerId: pid, token: "t_" + randomBytes(18).toString("hex"), name, ua: String(msg && msg.ua || "").slice(0, 200), device: dev, deviceLabel: devLabel, lastSeen: now, writer: null, offlineAt: null, inbox: [] };
+      p = { peerId: pid, token: "t_" + randomBytes(18).toString("hex"), name, ua: String(msg && msg.ua || "").slice(0, 200), device: dev, deviceLabel: devLabel, lastSeen: now, writer: null, offlineAt: null, inbox: [], ip: meta && meta.ip || null, regAt: now };
       peers.set(pid, p);
-      console.log(TAG + " pair 设备注册：" + name + " (" + pid + ")");
+      console.log(TAG + " pair 设备注册：" + name + " (" + pid + ")" + (p.ip ? " @ " + p.ip : ""));
       broadcastToPeers({ type: "peer-join", peer: { id: pid, kind: "pair", name } });
       deps.getDevices().length;
     } else {
@@ -80,27 +91,71 @@ function createPairModule(deps) {
         p.device = dev;
         p.deviceLabel = devLabel;
       }
+      if (meta && meta.ip) p.ip = meta.ip;
     }
     return { peerId: p.peerId, token: p.token, name: p.name };
+  }
+  function pageIdentity(msg) {
+    const iid = String(msg && msg.instanceId || "");
+    if (!iid || !validateInstance(iid)) return null;
+    const pageId = String(msg && msg.pageId || "") || iid + "/host";
+    const named = names.get(iidOf(pageId));
+    const self = deps.getDevices().filter((d) => d.id === pageId || d.id === iid)[0];
+    const name = String(msg && msg.name || named && named.name || self && self.name || pageId).slice(0, 80);
+    return { id: pageId, name, kind: "page" };
   }
   function checkPeer(peerId, token) {
     const p = peers.get(String(peerId || ""));
     return p && p.token && token && p.token === String(token) ? p : null;
   }
+  function notePageInbox(iid, env) {
+    const key = iidOf(iid);
+    if (!key) return;
+    let box = pageInbox.get(key);
+    if (!box) {
+      box = { seq: 0, items: [] };
+      pageInbox.set(key, box);
+    }
+    box.seq += 1;
+    box.items.push({ seq: box.seq, env });
+    if (box.items.length > 100) box.items.splice(0, box.items.length - 100);
+  }
+  function pullPageInbox(iid, since) {
+    const box = pageInbox.get(iidOf(iid));
+    if (!box) return { ok: true, seq: since || 0, items: [] };
+    const items = box.items.filter((it) => it.seq > (since || 0)).map((it) => ({ seq: it.seq, env: it.env }));
+    return { ok: true, seq: box.seq, items };
+  }
   function listPeers() {
     const now = Date.now();
-    return [...peers.values()].map((p) => ({
-      kind: "pair",
-      id: p.peerId,
-      name: p.name,
-      ua: p.ua || null,
-      deviceLabel: p.deviceLabel || null,
-      online: !!p.writer,
-      offlineAt: p.offlineAt || null,
-      lastSeen: p.lastSeen,
-      pending: p.inbox.filter((m) => m.status === "pending").length,
-      _now: now
-    })).map(({ _now, ...row }) => row);
+    return [...peers.values()].map((p) => {
+      const stale = !p.writer && now - p.lastSeen >= 12e4;
+      return {
+        kind: "pair",
+        id: p.peerId,
+        name: p.name,
+        ua: p.ua || null,
+        deviceLabel: p.deviceLabel || null,
+        online: !stale && !p.offlineAt,
+        offlineAt: stale || p.offlineAt ? p.offlineAt || p.lastSeen : null,
+        lastSeen: p.lastSeen,
+        ip: p.ip || null,
+        pending: p.inbox.filter((m) => m.status === "pending").length
+      };
+    });
+  }
+  function nameFor(instanceId) {
+    const n = names.get(iidOf(instanceId));
+    return n ? n.name : null;
+  }
+  function setName(instanceId, name) {
+    const iid = iidOf(instanceId);
+    if (!iid || !validateInstance(iid)) return { ok: false, error: "bad instanceId" };
+    const clean = String(name || "").trim().slice(0, 40);
+    if (!clean) return { ok: false, error: "bad name" };
+    names.set(iid, { name: clean, at: Date.now() });
+    console.log(TAG + " pair 页面改名：" + iid + " → " + clean);
+    return { ok: true, name: clean };
   }
   function deliverToPeer(peerId, env) {
     const p = peers.get(String(peerId || ""));
@@ -163,12 +218,24 @@ function createPairModule(deps) {
     return { ok: true, file: publicFile(f) };
   }
   const publicFile = (f) => ({ fileId: f.fileId, name: f.name, size: f.size, mime: f.mime, from: f.from, to: f.to, at: f.at });
-  function fileDownload(p, fileId) {
-    if (!p) return json({ ok: false, error: "bad peer/token" }, 401);
+  function fileDownload(auth, fileId, peerAuth) {
+    const peer = peerAuth ? checkPeer(String(peerAuth.peerId || ""), String(peerAuth.token || "")) : null;
+    if (!peer && (!auth || !validateInstance(iidOf(auth.instanceId)))) return json({ ok: false, error: "bad instanceId" }, 401);
     const f = files.get(String(fileId || ""));
     if (!f) return json({ ok: false, error: "unknown fileId" }, 404);
     if (f.status !== "ready") return json({ ok: false, error: "file not ready" }, 409);
-    if (f.to && f.to !== "all" && f.to !== p.peerId && f.to !== p.name) return json({ ok: false, error: "not the receiver" }, 403);
+    if (peer) {
+      const okTo = !f.to || f.to === "all" || f.to === peer.peerId || f.to === peer.name;
+      const okFrom = f.from && f.from.id === peer.peerId;
+      if (!okTo && !okFrom) return json({ ok: false, error: "not the receiver" }, 403);
+    } else {
+      const selfIid = iidOf(auth.instanceId);
+      if (f.to && f.to !== "all") {
+        const selfRow = deps.getDevices().filter((d) => iidOf(d.id) === selfIid)[0];
+        const nameHit = !!(selfRow && selfRow.name && (selfRow.name === f.to || String(selfRow.name).includes(f.to)));
+        if (iidOf(f.to) !== selfIid && iidOf(f.from && f.from.id) !== selfIid && !nameHit) return json({ ok: false, error: "not the receiver" }, 403);
+      }
+    }
     if (!existsSync(f.path)) return json({ ok: false, error: "file expired" }, 410);
     let stream;
     try {
@@ -221,6 +288,9 @@ function createPairModule(deps) {
     return { ok: true, path: savePath, name: f.name, size: f.size };
   }
   function sweep(now) {
+    for (const [iid, n] of [...names]) {
+      if (now - n.at > PAIR_PEER_TTL) names.delete(iid);
+    }
     for (const [pid, p] of [...peers]) {
       if (p.writer) {
         p.offlineAt = null;
@@ -268,7 +338,7 @@ function createPairModule(deps) {
       const msg = await req.json().catch(() => null);
       const denied = gateAdmission(req, msg && msg.regToken || null);
       if (denied) return denied;
-      const r = register(msg);
+      const r = register(msg, { ip: clientIp(req) });
       return json({ ok: true, ...r });
     }
     if (seg[0] === "devices" && method === "GET") {
@@ -292,21 +362,36 @@ function createPairModule(deps) {
       writer.write({ type: "ready", peerId: p.peerId, name: p.name });
       return response;
     }
+    function requestIdentity(msg) {
+      const pg = pageIdentity(msg);
+      if (pg) return pg;
+      const pp = checkPeer(String(msg && msg.peer || ""), String(msg && msg.token || ""));
+      return pp ? { id: pp.peerId, name: pp.name, kind: "pair" } : null;
+    }
+    if (seg[0] === "name" && method === "POST") {
+      const msg = await req.json().catch(() => null);
+      const from = pageIdentity(msg);
+      if (!from) return json({ ok: false, error: "bad instanceId（页面未在桥上）" }, 401);
+      const r = setName(from.id, String(msg && msg.name || ""));
+      return json(r, r.ok ? 200 : 400);
+    }
     if (seg[0] === "message" && method === "POST") {
       const msg = await req.json().catch(() => null);
-      const p = checkPeer(msg && msg.peer, msg && msg.token);
-      if (!p) return json({ ok: false, error: "bad peer/token" }, 401);
+      const from = requestIdentity(msg);
+      if (!from) return json({ ok: false, error: "bad instanceId（页面未在桥上；外部设备请带 register 的 peer/token）" }, 401);
       const text = String(msg && msg.text || "").slice(0, 64e3);
       if (!text.trim()) return json({ ok: false, error: "bad request（需要 text）" }, 400);
-      const r = deps.routeSend({ id: p.peerId, name: p.name }, String(msg && msg.to || "all"), { text });
+      const r = deps.routeSend(from, String(msg && msg.to || "all"), { text, pageId: from.id, notify: !!(msg && msg.notify) });
       return json(r, r.ok ? 200 : r.candidates ? 300 : 400);
     }
     if (seg[0] === "file") {
       if (seg[1] === "init" && method === "POST") {
         const msg = await req.json().catch(() => null);
-        const p = checkPeer(msg && msg.peer, msg && msg.token);
-        if (!p) return json({ ok: false, error: "bad peer/token" }, 401);
-        const r = fileInit({ id: p.peerId, name: p.name }, String(msg && msg.to || ""), String(msg && msg.name || ""), Number(msg && msg.size || 0), String(msg && msg.mime || ""));
+        const from = requestIdentity({ ...msg, name: void 0 });
+        if (!from) return json({ ok: false, error: "bad instanceId（页面未在桥上；外部设备请带 register 的 peer/token）" }, 401);
+        const denied = gateAdmission(req, null);
+        if (denied) return denied;
+        const r = fileInit(from, String(msg && msg.to || ""), String(msg && msg.name || ""), Number(msg && msg.size || 0), String(msg && msg.mime || ""));
         return r.error ? json({ ok: false, error: r.error }, 400) : json({ ok: true, ...r });
       }
       if (seg[1] === "chunk" && method === "POST") {
@@ -324,8 +409,13 @@ function createPairModule(deps) {
         return json(r);
       }
       if (seg.length === 2 && method === "GET") {
-        return fileDownload(checkPeer(searchParams.get("peer"), searchParams.get("token")), String(seg[1] || ""));
+        return fileDownload({ instanceId: searchParams.get("instanceId") || "" }, String(seg[1] || ""), { peerId: searchParams.get("peer") || "", token: searchParams.get("token") || "" });
       }
+    }
+    if (seg[0] === "inbox" && method === "GET" && searchParams.get("instanceId")) {
+      const iid = searchParams.get("instanceId") || "";
+      if (!validateInstance(iid)) return json({ ok: false, error: "bad instanceId" }, 401);
+      return json(pullPageInbox(iid, Number(searchParams.get("since") || 0)));
     }
     if (seg[0] === "inbox" && method === "GET") {
       const p = checkPeer(searchParams.get("peer"), searchParams.get("token"));
@@ -337,8 +427,10 @@ function createPairModule(deps) {
     }
     return null;
   }
-  return { handle, listPeers, deliverToPeer, resolvePeerFuzzy, register, checkPeer, fileInit, fileChunk, fileComplete, fileDownload, getFileInfo, fetchToFile, sweep, close: () => {
+  return { handle, listPeers, nameFor, setName, notePageInbox, pullPageInbox, deliverToPeer, resolvePeerFuzzy, register, checkPeer, fileInit, fileChunk, fileComplete, fileDownload, getFileInfo, fetchToFile, sweep, close: () => {
     peers.clear();
+    names.clear();
+    pageInbox.clear();
     files.clear();
   } };
 }
@@ -463,7 +555,7 @@ var BRIDGE_TOOLS = [
       body: { type: "string", description: "通知内容" },
       timeout: { type: "number", description: "可选：通知卡自动关闭时限 ms（5000-600000）。不传=常驻直到用户关闭" },
       async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送；缺省=同步等待" },
-      pageId: { type: "string" }
+      pageId: { type: "string", description: "目标页面：完整 pageId（iid/frameId）/url/title（resolvePageId 同款）或裸 instanceId（pair 设备 id 同源）。缺省=广播全部 AI 窗 + 会话默认页" }
     }, required: ["body"] }
   },
   // ---- 方案 G · P2：agent 接入 + 消息主通道 ----
@@ -498,9 +590,9 @@ var BRIDGE_TOOLS = [
   // ---- pair 设备互连（临时聊天/互传文件；设备发现走 bridge_status 的 devices 统一视图） ----
   {
     name: "aiti_pair_send",
-    description: "给桥上另一台设备发文本消息（pair web 设备如手机 / 其他 agent 会话 / 注入页面）。to 传设备 id 或名字（模糊匹配，唯一命中即发，多个/无命中返回候选清单——照候选重调即可）；to 省略或传 'all' 群发全部 pair 设备与 agent。对方是 agent 时消息进其 aiti_inbox（带 [发自 pair: <名>] 标注）。文件传输用 aiti_pair_file。",
+    description: "给桥上另一台设备发文本消息（页面 / 其他 agent 会话 / pair web 设备如手机）。to 传设备 id 或名字（模糊匹配，唯一命中即发，多个/无命中返回候选清单）；to 省略或传 'all' = 全部页面（不跨类）；'agents' = 全部 agent；'pairs' = 全部 pair 设备。文件传输用 aiti_pair_file。",
     inputSchema: { type: "object", properties: {
-      to: { type: "string", description: "目标设备 id 或名字（bridge_status 的 devices 里选；缺省=群发）" },
+      to: { type: "string", description: "目标设备 id 或名字（bridge_status 的 devices 里选；缺省/'all'=全部页面；'agents'=全部代理；'pairs'=全部 pair 设备）" },
       text: { type: "string", description: "消息文本" }
     }, required: ["text"] }
   },
@@ -1124,6 +1216,41 @@ ${String(pl.stack).slice(0, 400)}` : "");
     if (hit.size > 1) return { multiple: [...hit.keys()] };
     return { notFound: true };
   }
+  function resolveAiTarget(pageIdStr) {
+    const full = String(pageIdStr || "");
+    if (!full) return null;
+    const pid = parsePageId(full);
+    if (pid.frameId === "ai") {
+      for (const [w, rec] of aiSelfReg) {
+        if (String(rec.instanceId) === String(pid.instanceId)) return { w, via: "self", frameId: "ai", connInstanceId: String(rec.instanceId) };
+      }
+      for (const [w, rec] of aiPageReg) {
+        if (rec.pageId && String(rec.instanceId) === String(pid.instanceId)) return { w, via: "self", frameId: "ai", connInstanceId: String(rec.instanceId) };
+      }
+    }
+    let hit = null;
+    let bestSeen = 0;
+    for (const [w, rec] of aiPageReg) {
+      if (!rec.pageId) continue;
+      const baseId = String(rec.pageId).replace(/\/host$/, "");
+      if (rec.pageId === full || baseId && full.indexOf(baseId + "/") === 0) {
+        if (!hit || (rec.lastSeen || 0) > bestSeen) {
+          hit = { w, rec, baseId };
+          bestSeen = rec.lastSeen || 0;
+        }
+      }
+    }
+    if (!hit) {
+      if (pid.frameId === "host") {
+        for (const [w, rec] of aiSelfReg) {
+          if (String(rec.instanceId) === String(pid.instanceId)) return { w, via: "ai", frameId: "host", connInstanceId: String(rec.instanceId) };
+        }
+      }
+      return null;
+    }
+    const frame = full.length > String(hit.baseId).length ? full.slice(String(hit.baseId).length + 1) : "host";
+    return { w: hit.w, via: "ai", frameId: frame || "host", connInstanceId: String(hit.rec.instanceId) };
+  }
   const withDevice = (row, dev, label) => {
     if (dev && typeof dev === "object") {
       row.device = dev;
@@ -1228,6 +1355,18 @@ ${String(pl.stack).slice(0, 400)}` : "");
       withDevice(selfRow, rec.device, rec.deviceLabel);
       addMine(selfRow);
       out.push(selfRow);
+    }
+    for (const [w, rec] of aiPageReg) {
+      if (rec.pageId) continue;
+      const self2 = aiSelfReg.get(w);
+      const iid = self2 && String(self2.instanceId);
+      const fbPageId = iid ? iid + "/host" : null;
+      if (!fbPageId || seen.has(fbPageId)) continue;
+      seen.add(fbPageId);
+      const fbRow = { instanceId: iid, frameId: "host", pageId: fbPageId, url: rec.url || self2 && self2.url || null, title: rec.title || self2 && self2.title || null, frameworks: null, active: true, viaAI: true, lastSeen: rec.lastSeen };
+      withDevice(fbRow, self2 && self2.device, self2 && self2.deviceLabel);
+      addMine(fbRow);
+      out.push(fbRow);
     }
     return out;
   }
@@ -1610,10 +1749,20 @@ ${String(pl.stack).slice(0, 400)}` : "");
     const { instanceId, frameId } = parsePageId(pageId || LEGACY_TOKEN);
     const page = pages.get(instanceId);
     let aiTarget = null;
+    let aiTargetVia = "self";
+    let aiTargetFrameId = "ai";
     if (frameId === "ai") {
       for (const [w, rec] of aiSelfReg) if (rec.instanceId === instanceId) {
         aiTarget = w;
         break;
+      }
+    }
+    if (!aiTarget) {
+      const t = resolveAiTarget(pageId || "");
+      if (t) {
+        aiTarget = t.w;
+        aiTargetVia = t.via;
+        aiTargetFrameId = t.frameId;
       }
     }
     const ms = clampTimeout(timeoutMs);
@@ -1646,9 +1795,13 @@ ${String(pl.stack).slice(0, 400)}` : "");
         cancelPending(requestId, "无执行端（页面/AI 通道均未连接），先连接桥");
       };
       if (aiTarget) {
-        if (!aiTarget.write({ type: "interaction", requestId, interaction: payload, frameId: "ai", via: "self" })) {
+        const env = { type: "interaction", requestId, interaction: payload, frameId: aiTargetFrameId };
+        if (aiTargetVia === "ai") env.pageId = pageId;
+        env.via = aiTargetVia;
+        if (!aiTarget.write(env)) {
           aiConns.delete(aiTarget);
           aiSelfReg.delete(aiTarget);
+          aiPageReg.delete(aiTarget);
           if (aiConns.size > 0) {
             for (const w of aiConns) w.write({ type: "interaction", requestId, interaction: payload, pageId, via: "ai" });
           } else return noExecutor();
@@ -1702,7 +1855,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
             "page_logs / page_network：排查页面报错/请求失败首选——page_logs 查 console（可 level/since/limit 过滤，先看 warn/error）；page_network 查 ajax/fetch 完成态（status≥400 或 errorOnly:true 只看失败）。两者均读页面本地缓冲（CDP Runtime.evaluate 按需拉取，不再实时上报）。",
             "user_confirm / user_choose / user_input / user_pick_element / user_presence：AI 与人类用户在页面上协作——prompt 给用户看，默认同步等待且永久等待（不传 timeout：面板常驻直到用户作答，无读秒；仅在确需限时催促时传 timeout ms，面板显示读秒倒计时可暂停，到点返回 status:'timeout'），响应信封 {status:'answered'|'rejected'|'timeout'|'error', value?, reason?, tookMs, timeoutMs}。传 async:true 可立即返回（结果经 AI 消息窗送达）。",
             "user_notify：非阻塞浏览器通知，不等待回答。",
-            "设备互连：bridge_status 返回 devices（kind=page/agent/pair 统一设备视图）——aiti_pair_send 给任意设备发文本、aiti_pair_file 推本地文件、aiti_pair_fetch 取回收到的文件（fileId 在 aiti_inbox 消息 payload.file）；手机等浏览器设备打开桥的 pair.html 即上线。",
+            "设备互连：bridge_status 返回 devices（kind=page/agent/pair 统一设备视图）——aiti_pair_send 给任意设备发文本、aiti_pair_file 推本地文件、aiti_pair_fetch 取回收到的文件（fileId 在 aiti_inbox 消息 payload.file）；任何浏览器打开 pi-web 页面即可在设备互连面板上线。",
             "常见用法：页面报错→page_logs(level:warn/error) 或 page_network(errorOnly:true)；操作页面→page_exec(cmd:'Runtime.evaluate', args:{expression:'...'})；定位元素→page_snapshot 后再 page_exec 或请用户 user_pick_element。"
           ].join("\n")
         };
@@ -1763,8 +1916,18 @@ ${String(pl.stack).slice(0, 400)}` : "");
           const text = String(a.text || "").slice(0, 64e3);
           if (!text.trim()) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "bad request（需要 text）" }) }], isError: true };
           const me = { id: recAgentKey || "agent", name: (recAgentKey && agents.get(recAgentKey) || {}).name || recAgentKey || "agent", kind: "agent" };
-          const r = routePairSend(me, a.to ? String(a.to) : "all", { text });
-          recToolCall("🛠 aiti_pair_send(" + (a.to || "all") + ") → " + (r.ok ? "已投递 " + (r.delivered || []).length + " 端" : r.error || "失败"), !!r.ok, r);
+          if (!a.to || !String(a.to).trim()) {
+            const cands = [
+              ...listDevices().filter((d) => d.kind === "page").map((d) => ({ kind: "page", id: d.id, name: d.name })),
+              ...listAgentSessions().filter((x) => x.agentKey !== recAgentKey).map((x) => ({ kind: "agent", id: x.agentKey, name: x.name })),
+              ...pair.listPeers().map((pd) => ({ kind: "pair", id: pd.id, name: pd.name || pd.id }))
+            ];
+            const resp = { ok: false, error: 'to 未指定——不再默认群发（广播须显式传 to:"all"）；请按 bridge_status devices 选目标 id/名字重调', candidates: cands };
+            recToolCall('🛠 aiti_pair_send → 拒绝缺省群发（广播须显式 to:"all"）', false, resp);
+            return { content: [{ type: "text", text: JSON.stringify(resp) }], isError: true };
+          }
+          const r = routePairSend(me, String(a.to), { text });
+          recToolCall("🛠 aiti_pair_send(" + a.to + ") → " + (r.ok ? "已投递 " + (r.delivered || []).length + " 端" : r.error || "失败"), !!r.ok, r);
           return { content: [{ type: "text", text: JSON.stringify(r.ok ? { ok: true, delivered: r.delivered } : r) }], isError: !r.ok };
         }
         if (params.name === "aiti_pair_file") {
@@ -1781,8 +1944,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
             return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "文件不存在: " + fp }) }], isError: true };
           }
           const me = { id: recAgentKey || "agent", name: (recAgentKey && agents.get(recAgentKey) || {}).name || recAgentKey || "agent", kind: "agent" };
-          const pf0 = pair.resolvePeerFuzzy(to);
-          const toId = pf0.hit && pf0.hit.peerId || to;
+          const toId = to;
           const init = pair.fileInit(me, toId, fp.split(/[\\/]/).pop() || "file", st.size, "application/octet-stream");
           if (init.error) {
             recToolCall("🛠 aiti_pair_file → " + init.error, false);
@@ -1963,6 +2125,53 @@ ${String(pl.stack).slice(0, 400)}` : "");
         if (params.name === "user_notify") {
           const notif = { kind: "notify", title: String(a.title || "🤖 AI 有一条消息"), body: String(a.body || a.prompt || ""), timeoutMs: clampTimeout(a.timeout) };
           const rid = "notify_" + Date.now();
+          if (a.pageId) {
+            const raw = String(a.pageId);
+            let iid = "";
+            let frameId = null;
+            let fullPageId = "";
+            if (raw.indexOf("/") >= 0) {
+              const resolved = resolvePageId(raw);
+              if (resolved.multiple) {
+                recToolCall("🔔 user_notify → ⚠ 页面匹配多个", false);
+                return { content: [{ type: "text", text: "页面匹配多个：" + resolved.multiple.join(", ") + "——请用具体 pageId 指定" }], isError: true };
+              }
+              if (resolved.notFound || !resolved.pageId) {
+                recToolCall("🔔 user_notify(" + raw + ") → ⚠ 未找到匹配页面", false);
+                return { content: [{ type: "text", text: "未找到匹配页面（pageId/url/title 均未命中）——用 bridge_status 查看可用 pageId" }], isError: true };
+              }
+              const pid = parsePageId(resolved.pageId);
+              iid = pid.instanceId;
+              frameId = pid.frameId;
+              fullPageId = resolved.pageId;
+            } else {
+              iid = raw;
+            }
+            let delivered = false;
+            const tgt = fullPageId ? resolveAiTarget(fullPageId) : resolveAiTarget(iid + "/ai");
+            if (tgt) {
+              try {
+                delivered = !!tgt.w.write({ type: "interaction", requestId: rid, interaction: notif, frameId: tgt.frameId, via: tgt.via });
+              } catch {
+                delivered = false;
+              }
+              if (!delivered) {
+                aiConns.delete(tgt.w);
+                aiSelfReg.delete(tgt.w);
+                aiPageReg.delete(tgt.w);
+              }
+            }
+            if (!delivered) {
+              const pg2 = pages.get(iid);
+              if (pg2) delivered = !!pg2.writer.write({ type: "interaction", requestId: rid, interaction: notif, frameId, render: "notify-only" });
+            }
+            if (!delivered) {
+              recToolCall("🔔 user_notify(" + iid + ") → ⚠ 目标未连接", false);
+              return { content: [{ type: "text", text: "目标页面未连接（instanceId 未命中或已掉线）——用 bridge_status 查看可用 pageId" }], isError: true };
+            }
+            recToolCall("🔔 user_notify(" + iid + ") → " + String(notif.body).slice(0, 60), true);
+            return { content: [{ type: "text", text: JSON.stringify({ status: "sent", notified: true, title: notif.title, pageId: fullPageId || iid }) }], isError: false };
+          }
           for (const w of aiConns) w.write({ type: "interaction", requestId: rid, interaction: notif, pageId });
           const pg = pages.get(parsePageId(pageId || LEGACY_TOKEN).instanceId);
           if (pg) pg.writer.write({ type: "interaction", requestId: rid, interaction: notif, frameId: parsePageId(pageId || LEGACY_TOKEN).frameId, render: "notify-only" });
@@ -2189,92 +2398,269 @@ ${String(pl.stack).slice(0, 400)}` : "");
     json,
     sseResponse: (onClose, opts2) => sseResponse(onClose, opts2),
     getDevices: () => listDevices(),
-    routeSend: (fromDev, to, payload) => routePairSend(fromDev, to, payload)
+    routeSend: (fromDev, to, payload) => routePairSend(fromDev, to, payload),
+    // Page identity check: idRegistry (claim registrations) U aiSelfReg (role=ai self-attested connections
+    // carry ai- prefixed ids and never enter idRegistry — see the connect handler); public forgery is gated by gateAdmission
+    validateInstance: (instanceId) => validInstance(instanceId) || [...aiSelfReg.values()].some((r) => String(r.instanceId) === String(instanceId))
   });
   function listDevices() {
     const out = [];
+    const seenPages = /* @__PURE__ */ new Set();
+    for (const w of aiConns) {
+      const self = aiSelfReg.get(w);
+      const pageReg = aiPageReg.get(w);
+      const iid = self && String(self.instanceId);
+      if (!iid || seenPages.has(iid)) continue;
+      seenPages.add(iid);
+      const dev = self.device || null;
+      const pageId = pageReg && pageReg.pageId ? String(pageReg.pageId) : iid + "/host";
+      const nm = pair.nameFor(iid) || (dev && (dev.os || dev.browser) ? [dev.os, dev.browser].filter(Boolean).join(" · ") : self.title || pageReg?.url || pageId);
+      out.push({ kind: "page", id: pageId, name: nm, url: pageReg?.url || null, title: pageReg?.title || null, device: dev, deviceLabel: dev ? [dev.browser, dev.os, dev.screen].filter(Boolean).join(" · ") : null, online: true, lastSeen: self.lastSeen || Date.now() });
+    }
     for (const [instanceId, page] of pages) {
-      out.push({ kind: "page", id: instanceId, name: page.title || page.url || instanceId, url: page.url || null, title: page.title || null, device: page.device || null, deviceLabel: page.deviceLabel || null, online: true, lastSeen: Date.now() });
+      out.push({ kind: "page", id: instanceId, name: pair.nameFor(instanceId) || page.title || page.url || instanceId, url: page.url || null, title: page.title || null, device: page.device || null, deviceLabel: page.deviceLabel || null, online: true, lastSeen: Date.now() });
     }
     for (const [key, a] of agents) {
       if (!a.registered && !agentOnline(a) && !a.outbox.length) continue;
-      out.push({ kind: "agent", id: key, name: a.name || a.agentId, cwd: a.cwd || null, source: a.source || "unknown", transportKind: a.transportKind, online: agentOnline(a), offlineAt: a.offlineAt || null, lastSeen: a.lastSeen });
+      out.push({ kind: "agent", id: key, name: a.name || a.agentId, cwd: a.cwd || null, sessionId: a.sessionId || (key.includes("/") ? key.split("/").slice(1).join("/") : null), source: a.source || "unknown", transportKind: a.transportKind, online: agentOnline(a), offlineAt: a.offlineAt || null, lastSeen: a.lastSeen });
     }
     for (const p of pair.listPeers()) out.push(p);
     return out.sort((x, y) => (y.lastSeen || 0) - (x.lastSeen || 0));
   }
+  function aiDeviceFrom(req, msg) {
+    let dev = null;
+    try {
+      const dq = msg && msg.device || null;
+      if (dq) dev = typeof dq === "string" ? JSON.parse(dq) : dq;
+    } catch (e) {
+    }
+    if (!dev) {
+      const ua = req.headers.get("user-agent") || "";
+      if (ua) {
+        let browser = "?", bver = "";
+        try {
+          const sp = ua.match(/(EdgA|Edg|OPR|CriOS|FxiOS)\/([\d.]+)/);
+          if (sp) {
+            const b = sp[1];
+            browser = b === "EdgA" || b === "Edg" ? "Edge" : b === "OPR" ? "Opera" : b === "CriOS" ? "Chrome" : "Firefox";
+            bver = sp[2];
+          } else if (/FxiOS|Firefox\//.test(ua)) {
+            const m = ua.match(/(?:Firefox|FxiOS)\/([\d.]+)/);
+            browser = "Firefox";
+            bver = m ? m[1] : "";
+          } else if (/Chrome\//.test(ua)) {
+            const m = ua.match(/Chrome\/([\d.]+)/);
+            browser = "Chrome";
+            bver = m ? m[1] : "";
+          } else {
+            const vm = ua.match(/Version\/([\d.]+).*Safari/);
+            if (vm) {
+              browser = "Safari";
+              bver = vm[1];
+            } else if (/MSIE|Trident/.test(ua)) {
+              browser = "IE";
+              const mi = ua.match(/rv:([\d.]+)/);
+              bver = mi ? mi[1] : "";
+            }
+          }
+        } catch {
+        }
+        let os = "?", osv = "";
+        try {
+          if (/Windows NT/.test(ua)) {
+            os = "Windows";
+            osv = /Windows NT 10\.0/.test(ua) ? "10/11" : /Windows NT 6\.[123]/.test(ua) ? "7/8" : "10/11";
+          } else if (/iPhone|iPad|iPod/.test(ua)) {
+            os = "iOS";
+            const im = ua.match(/OS (\d+[_\d]*)/);
+            osv = im ? im[1].replace(/_/g, ".") : "";
+          } else if (/Android/.test(ua)) {
+            os = "Android";
+            const am = ua.match(/Android ([\d.]+)/);
+            osv = am ? am[1] : "";
+          } else if (/Mac OS X/.test(ua)) {
+            os = "macOS";
+            const mm = ua.match(/Mac OS X ([\d_.]+)/);
+            osv = mm ? mm[1].replace(/_/g, ".") : "";
+          } else if (/CrOS/.test(ua)) {
+            os = "ChromeOS";
+          } else if (/Linux/.test(ua)) {
+            os = "Linux";
+          }
+        } catch {
+        }
+        const mobile = /Android|iPhone|iPad|iPod|Mobile|Windows Phone/i.test(ua);
+        const isTablet = /iPad|Tablet|Silk/i.test(ua) || /Android/i.test(ua) && !/Mobile/i.test(ua);
+        dev = { browser, version: bver, os, osVer: osv, deviceType: mobile || isTablet ? isTablet ? "tablet" : "mobile" : "desktop" };
+      }
+    }
+    return dev;
+  }
+  function deliverToInstance(iidOrPageId, envelope) {
+    const bare = iidOrPageId.indexOf("/") >= 0 ? iidOrPageId.split("/")[0] : iidOrPageId;
+    const full = iidOrPageId;
+    for (const w of aiConns) {
+      const reg = aiSelfReg.get(w) || aiPageReg.get(w);
+      if (reg && (String(reg.instanceId) === bare || reg.pageId && String(reg.pageId) === full)) {
+        let ok = false;
+        try {
+          ok = !!w.write(envelope);
+        } catch {
+          ok = false;
+        }
+        if (!ok) {
+          aiConns.delete(w);
+          aiSelfReg.delete(w);
+          aiPageReg.delete(w);
+        }
+        return ok;
+      }
+    }
+    const pg = pages.get(bare);
+    if (pg && pg.writer) {
+      try {
+        return !!pg.writer.write(envelope);
+      } catch {
+        return false;
+      }
+    }
+    return false;
+  }
   function routePairSend(fromDev, to, payload) {
     const q = String(to || "all").trim() || "all";
-    const from = { id: fromDev.id, kind: fromDev.kind || "pair", name: fromDev.name };
+    const from = { id: fromDev.id, kind: fromDev.kind || "page", name: fromDev.name };
     const env = (type, extra) => ({ id: randomBytes2(4).toString("hex"), type, from, to: q, ts: Date.now(), ...extra });
+    const devRows = listDevices().filter((d) => d.kind === "page");
     const delivered = [];
-    const pushPair = (pid) => {
-      if (pair.deliverToPeer(pid, env(payload.file ? "file" : "text", payload.file ? { file: payload.file } : { text: payload.text }))) delivered.push({ kind: "pair", id: pid });
-    };
     const pushAgent = (target) => {
-      const label = "[发自 pair: " + fromDev.name + "]";
-      let text;
-      const pl = { source: "pair", sourceLabel: "Pair · " + fromDev.name, fromDevice: from };
-      if (payload.file) {
-        const f = payload.file;
-        text = "📎 收到文件：" + f.name + "（" + Math.max(1, Math.round((f.size || 0) / 1024)) + "KB）— 调 aiti_pair_fetch {fileId:'" + f.fileId + "'} 取回\n" + label;
-        pl.file = { fileId: f.fileId, name: f.name, size: f.size, mime: f.mime };
-      } else {
-        text = String(payload.text || "") + "\n" + label;
-      }
+      const fromIsAgent = from.kind === "agent";
+      const fromId = String(fromDev.id || fromDev.name || "?");
+      const fromName = String(fromDev.name || fromId);
+      const fromShown = fromName !== fromId ? fromName + "（" + fromId + "）" : fromId;
+      const label = fromIsAgent ? "[发自 session: " + fromShown + "]" : "[发自 pair: " + fromName + "]";
+      const pl = { source: "pair", sourceLabel: (fromIsAgent ? "Session · " : "Pair · ") + fromName, fromDevice: from };
+      const text = payload.file ? "📎 收到文件：" + payload.file.name + "（" + Math.max(1, Math.round((payload.file.size || 0) / 1024)) + "KB）— 调 aiti_pair_fetch {fileId:'" + payload.file.fileId + "'} 取回\n" + label : String(payload.text || "") + "\n" + label;
+      if (payload.file) pl.file = { fileId: payload.file.fileId, name: payload.file.name, size: payload.file.size, mime: payload.file.mime };
       const r = pushToAgents(target, text, payload.file ? "pair_file" : "user_message", pl);
       for (const d of r && r.delivered || []) delivered.push({ kind: "agent", id: d.agentKey, status: d.status });
     };
-    const pushPage = (instanceId) => {
-      const msg = env(payload.file ? "file" : "text", payload.file ? { file: payload.file } : { text: payload.text });
-      let n = 0;
-      for (const [w, rec] of aiSelfReg) {
-        if (instanceId && String(rec.instanceId) !== instanceId) continue;
-        if (w.write({ type: "pair_msg", ...msg })) n++;
+    const pushPageRow = (row) => {
+      const iid = String(row.id).split("/")[0];
+      const rid = "pair_" + randomBytes2(4).toString("hex");
+      let ok = false;
+      let frame = null;
+      if (payload.file) {
+        const msg = env("file", { file: payload.file });
+        frame = { ...msg, type: "pair_msg" };
+        ok = deliverToInstance(iid, frame);
+      } else if (payload.notify) {
+        const body = String(payload.text || "");
+        const card = { kind: "notify", title: from.name, body, timeoutMs: 3e4, fromPair: from };
+        for (const w of aiConns) {
+          const reg = aiSelfReg.get(w) || aiPageReg.get(w);
+          if (reg && String(reg.instanceId) === iid) {
+            try {
+              ok = !!w.write({ type: "interaction", requestId: rid, interaction: card, frameId: "ai", via: "self" });
+            } catch {
+              ok = false;
+            }
+            break;
+          }
+        }
+        if (!ok) {
+          const pg = pages.get(iid);
+          if (pg && pg.writer) {
+            try {
+              ok = !!pg.writer.write({ type: "interaction", requestId: rid, interaction: card, frameId: null, render: "notify-only" });
+            } catch {
+              ok = false;
+            }
+          }
+        }
+        if (ok) frame = { id: rid, type: "text", from, to: row.id, ts: Date.now(), text: body };
+      } else {
+        const msg = env("text", { text: payload.text });
+        frame = { ...msg, type: "pair_msg" };
+        ok = deliverToInstance(iid, frame);
       }
-      if (n) delivered.push({ kind: "page", id: instanceId });
-      return n;
+      if (ok) {
+        delivered.push({ kind: "page", id: row.id });
+        if (frame) pair.notePageInbox(iid, frame);
+      }
+      return ok;
     };
-    if (q === "all") {
-      const peers = pair.listPeers();
-      for (const p of peers) {
-        if (p.id === fromDev.id) continue;
-        pushPair(p.id);
+    const pushPageRaw = (raw) => {
+      const row = devRows.find((d) => d.id === raw);
+      return row ? pushPageRow(row) : false;
+    };
+    if (q === "all" || q === "pages") {
+      const selfIid = fromDev.id.indexOf("/") >= 0 ? fromDev.id.split("/")[0] : fromDev.id;
+      for (const row of devRows) {
+        if (String(row.id).split("/")[0] === selfIid) continue;
+        pushPageRow(row);
       }
-      const label = "[发自 pair: " + fromDev.name + "]";
-      const pl = { source: "pair", sourceLabel: "Pair · " + fromDev.name, fromDevice: from };
-      const text = payload.file ? "📎 收到文件：" + payload.file.name + " — 调 aiti_pair_fetch {fileId:'" + payload.file.fileId + "'} 取回\n" + label : String(payload.text || "") + "\n" + label;
-      const ra = pushToAgents("all", text, payload.file ? "pair_file" : "user_message", pl);
-      for (const d of ra && ra.delivered || []) delivered.push({ kind: "agent", id: d.agentKey, status: d.status });
       return { ok: delivered.length > 0, delivered };
     }
-    const pf = pair.resolvePeerFuzzy(q);
-    if (pf.hit) {
-      if (pf.hit.peerId !== fromDev.id) pushPair(pf.hit.peerId);
-      return { ok: true, delivered };
+    if (q === "agents") {
+      pushAgent("all");
+      return { ok: delivered.length > 0, delivered };
+    }
+    if (q === "pairs") {
+      const penv = env(payload.file ? "file" : "text", payload.file ? { file: payload.file } : { text: payload.text });
+      for (const pd of pair.listPeers()) {
+        try {
+          if (pair.deliverToPeer(pd.id, penv)) delivered.push({ kind: "pair", id: pd.id });
+        } catch {
+        }
+      }
+      return { ok: delivered.length > 0, delivered };
+    }
+    if (q === "all-kinds") {
+      const selfIid = fromDev.id.indexOf("/") >= 0 ? fromDev.id.split("/")[0] : fromDev.id;
+      for (const row of devRows) {
+        if (String(row.id).split("/")[0] === selfIid) continue;
+        pushPageRow(row);
+      }
+      pushAgent("all");
+      const penv = env(payload.file ? "file" : "text", payload.file ? { file: payload.file } : { text: payload.text });
+      for (const pd of pair.listPeers()) {
+        try {
+          if (pair.deliverToPeer(pd.id, penv)) delivered.push({ kind: "pair", id: pd.id });
+        } catch {
+        }
+      }
+      return { ok: delivered.length > 0, delivered };
+    }
+    if (devRows.some((d) => d.id === q)) {
+      pushPageRaw(q);
+      return { ok: delivered.length > 0, delivered };
     }
     if (agents.has(q) || agentIdx.has(q)) {
       pushAgent(q);
       return { ok: delivered.length > 0, delivered };
     }
-    if (pages.has(q)) {
-      const n = pushPage(q);
-      return n ? { ok: true, delivered } : { ok: false, error: "页面连接已断开" };
+    const devMatches = devRows.filter((d) => (d.name || "").includes(q) || d.id.includes(q));
+    if (devMatches.length === 1) {
+      pushPageRaw(devMatches[0].id);
+      return { ok: delivered.length > 0, delivered };
     }
-    if (pf.multiple) return { ok: false, candidates: pf.multiple, error: "pair 设备名匹配多个" };
+    if (devMatches.length > 1) return { ok: false, candidates: devMatches.map((d) => ({ kind: "page", id: d.id, name: d.name })), error: "页面名匹配多个" };
     const agentRows = listAgentSessions().filter((a) => (a.name || "").includes(q) || a.agentKey.includes(q));
     if (agentRows.length === 1) {
       pushAgent(agentRows[0].agentKey);
       return { ok: delivered.length > 0, delivered };
     }
     if (agentRows.length > 1) return { ok: false, candidates: agentRows.map((a) => ({ kind: "agent", id: a.agentKey, name: a.name })), error: "agent 名匹配多个" };
-    const resolved = resolvePageId(q);
-    if (resolved.pageId) {
-      const inst = String(resolved.pageId).split("/")[0];
-      const n = pushPage(inst);
-      if (n) return { ok: true, delivered };
+    const pr = pair.resolvePeerFuzzy(q);
+    if (pr && pr.hit) {
+      const penv = env(payload.file ? "file" : "text", payload.file ? { file: payload.file } : { text: payload.text });
+      try {
+        if (pair.deliverToPeer(pr.hit.peerId, penv)) delivered.push({ kind: "pair", id: pr.hit.peerId });
+      } catch {
+      }
+      return { ok: delivered.length > 0, delivered };
     }
-    if (resolved.multiple) return { ok: false, candidates: resolved.multiple.map((pid) => ({ kind: "page", id: pid })), error: "页面匹配多个" };
+    if (pr && pr.multiple) return { ok: false, candidates: pr.multiple, error: "pair 设备名匹配多个" };
     return { ok: false, error: "无匹配设备（to 支持设备 id/名字；bridge_status 或 /bridge/pair/devices 查看在线设备）" };
   }
   async function handle(req, path, searchParams) {
@@ -2476,8 +2862,9 @@ ${String(pl.stack).slice(0, 400)}` : "");
       };
       if (role === "ai") {
         aiConns.add(writer);
+        const aiDev = aiDeviceFrom(req, { device: searchParams.get("device") || null });
         aiPageReg.set(writer, { instanceId, pageId: null, title: null, url: null, frames: null, lastSeen: Date.now() });
-        aiSelfReg.set(writer, { instanceId, url: searchParams.get("url") || null, title: searchParams.get("title") || null, lastSeen: Date.now() });
+        aiSelfReg.set(writer, { instanceId, url: searchParams.get("url") || null, title: searchParams.get("title") || null, frames: /* @__PURE__ */ new Set(["host"]), frameInfo: /* @__PURE__ */ new Map(), device: aiDev, deviceLabel: aiDev ? [aiDev.browser, aiDev.os].filter(Boolean).join(" · ") : null, lastSeen: Date.now() });
         bindAgentFromAiSelf(aiSelfReg.get(writer));
         console.log(TAG + " AI 控制台已连接：instanceId=" + instanceId);
       } else {
@@ -2540,9 +2927,17 @@ ${String(pl.stack).slice(0, 400)}` : "");
         }
       };
       if (role === "ai") {
+        for (const [w, reg] of [...aiSelfReg]) {
+          if (w !== writer && String(reg.instanceId) === String(instanceId)) {
+            aiConns.delete(w);
+            aiPageReg.delete(w);
+            aiSelfReg.delete(w);
+          }
+        }
         aiConns.add(writer);
+        const aiDev = aiDeviceFrom(req, msg);
         aiPageReg.set(writer, { instanceId, pageId: null, title: msg && msg.title || null, url: msg && msg.url || null, frames: null, lastSeen: Date.now() });
-        aiSelfReg.set(writer, { instanceId, url: msg && msg.url || null, title: msg && msg.title || null, lastSeen: Date.now() });
+        aiSelfReg.set(writer, { instanceId, url: msg && msg.url || null, title: msg && msg.title || null, device: aiDev, deviceLabel: aiDev ? [aiDev.browser, aiDev.os].filter(Boolean).join(" · ") : null, lastSeen: Date.now() });
         bindAgentFromAiSelf(aiSelfReg.get(writer));
         console.log(TAG + " AI 控制台已连接（总线）：instanceId=" + instanceId);
       } else {
@@ -2849,6 +3244,9 @@ ${String(pl.stack).slice(0, 400)}` : "");
     }
     const a = agents.get(k);
     a.lastSeen = Date.now();
+    if (opts2.name && a.name === k) a.name = String(opts2.name);
+    if (opts2.name) a.name = String(opts2.name);
+    if (opts2.cwd) a.cwd = String(opts2.cwd);
     if (opts2.pageId) a.boundPageId = String(opts2.pageId);
     if (Array.isArray(opts2.subEvents)) a.subEvents = new Set(opts2.subEvents.map(String));
     if (!a.boundPageId) bindAgentFromAiSelfReverse(k, a);
@@ -3755,9 +4153,14 @@ function injectAgentEvent(pi, m) {
   if (m.type === "page_event") {
     text = m.text || "";
   } else if (m.type === "agent_push") {
-    if (m.kind === "user_answer") text = "💬 你的交互请求有人作答（来自 aiti-devtools）：" + (m.text || "");
-    else text = "💬 人发来消息（来自 aiti-devtools）：" + (m.text || "");
     const p = m.payload || {};
+    const fd = p.fromDevice || null;
+    if (m.kind === "user_answer") text = "💬 你的交互请求有人作答（来自 aiti-devtools）：" + (m.text || "");
+    else if (fd && fd.kind === "agent") {
+      const id = String(fd.id || fd.name || "?");
+      const nm = String(fd.name || id);
+      text = "💬 session " + (nm !== id ? nm + "（" + id + "）" : id) + " 发来消息（来自 aiti-devtools）：" + (m.text || "");
+    } else text = "💬 用户发来消息（来自 aiti-devtools）：" + (m.text || "");
     if (p.pageId || p.sourceLabel) lastUserSrc = { pageId: p.pageId || null, url: p.url || null, sourceLabel: p.sourceLabel || null };
   }
   if (!text) return;
