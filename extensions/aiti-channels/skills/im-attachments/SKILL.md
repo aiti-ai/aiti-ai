@@ -1,8 +1,11 @@
 ---
 name: im-attachments
 title: 查看 / 提取通过 IM 渠道收到的附件文件
+title.en: "View/extract attachments received via IM channels"
 placeholder: 刚发了什么文件给我？帮我读一下（如：两个文件，帮我分析）
+placeholder.en: "What file was just sent to me? Read it (e.g. two files, analyze them)"
 summary: 定位 cc-connect 收到（用户经钉钉/飞书等聊天发给机器人）的附件文件，并读取/提取
+summary.en: "Locate attachments cc-connect received (sent by users via DingTalk/Feishu etc.) and read/extract them"
 outputs:
   format: text
 ---

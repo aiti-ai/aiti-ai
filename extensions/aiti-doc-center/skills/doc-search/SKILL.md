@@ -1,8 +1,11 @@
 ---
 name: doc-search
 title: 搜索文档中心
+title.en: "Search the doc center"
 placeholder: 想找什么文档？给关键词（如：方案、git-trace、全文检索）
+placeholder.en: "What to find? Keywords (e.g. plan, git-trace, full-text search)"
 summary: 在 workspace 文档中心做全文检索（FTS5 + 权重融合排序），返回带 snippet 高亮的文档清单（路径/标题/更新时间/tags）。支持 tag 过滤（如 方案、docs、design）。
+summary.en: "Full-text search over the workspace doc center (FTS5 + weighted ranking); returns a doc list with highlighted snippets (path/title/updated time/tags). Supports tag filters (e.g. plans, docs, design)."
 outputs:
   format: json-obj
   schema:

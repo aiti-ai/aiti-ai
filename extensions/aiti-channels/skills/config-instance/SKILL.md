@@ -1,8 +1,11 @@
 ---
 name: config-instance
 title: AI 帮我配置 cc-connect 实例 / 项目 / 平台
+title.en: "AI: configure a cc-connect instance/project/platform"
 placeholder: 配置一个钉钉项目（如：新建实例 atest，加钉钉项目，agent 用 claudecode）
+placeholder.en: "Configure a DingTalk project (e.g. create instance atest, add a DingTalk project, agent = claudecode)"
 summary: 从表单生成 config.toml——配置实例的 management/bridge 端口、项目（agent/工作目录/平台凭据）
+summary.en: "Generate config.toml from the form — configure an instance's management/bridge ports and projects (agent/workdir/platform credentials)"
 outputs:
   format: json-obj
   schema:
