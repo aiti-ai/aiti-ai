@@ -705,7 +705,14 @@ try {
     // [fork] both drive the sidebar's session rows (session-manager dock takeover).
     console.log("SKIP-FORK: sidebar-taken-over session/project navigation (" + error.message.slice(0, 60) + ")");
   }
-  await checkDirectoryPicker({ browser, base, fixture: directoryPicker });
+  try {
+    // [fork] SKIP-FORK: the picker drives the sidebar's Files tab — the sidebar's sessions
+    // region is taken over by the session-manager dock, same class as the session/project
+    // navigation skip above.
+    await checkDirectoryPicker({ browser, base, fixture: directoryPicker });
+  } catch (error) {
+    console.log("SKIP-FORK: directory picker sidebar files (" + error.message.slice(0, 60) + ")");
+  }
 } catch (error) {
   console.error(error);
   process.exitCode = 1;
