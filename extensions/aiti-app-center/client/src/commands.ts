@@ -126,7 +126,8 @@ function currentFeatureState(exts: ManifestExt[]): Record<string, boolean> {
   return m;
 }
 
-/** 拼音索引（extman server /status 富化；模块级缓存一次，失败静默降级——联想损失拼音匹配，无功能性影响）。 */
+/** Pinyin index (extman server /status enrichment; module-level cached once, silent degradation on
+ *  failure — suggest loses pinyin matching, no functional impact). */
 let pinyinMapCache: Record<string, string> | null = null;
 async function loadPinyinMap(): Promise<Record<string, string>> {
   if (pinyinMapCache) return pinyinMapCache;
@@ -139,7 +140,7 @@ async function loadPinyinMap(): Promise<Record<string, string>> {
       if (typeof p === "string" && p) next[id] = p;
     }
     pinyinMapCache = next;
-  } catch { /* extman 缺席 → 空表 */ pinyinMapCache = {}; }
+  } catch { /* extman absent → empty table */ pinyinMapCache = {}; }
   return pinyinMapCache;
 }
 
@@ -156,7 +157,7 @@ export function buildCommandHints(input: {
   openPanelFn: (key: string) => void;
   apiUrlFn: (p: string) => string;
   categoryText: (id: string) => string;
-  /** 拼音索引 map（extman server /status 富化；缺席 = 无拼音匹配）。 */
+  /** Pinyin index map (extman server /status enrichment; absent = no pinyin matching). */
   pinyinMap?: Record<string, string>;
 }): CommandHint[] {
   const limit = input.limit ?? 5;

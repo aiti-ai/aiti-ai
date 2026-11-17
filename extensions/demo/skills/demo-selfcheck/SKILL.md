@@ -1,8 +1,11 @@
 ---
 name: demo-selfcheck
 title: AI 帮我跑 demo 扩展自检
+title.en: "AI: run the demo extension self-check"
 placeholder: 运行 demo 扩展自检，逐项报告（如：帮我检查 demo 扩展是否正常）…
+placeholder.en: "Run the demo self-check and report item by item (e.g. check whether the demo extension is healthy)…"
 summary: 逐项调用 demo 的 server api 检查各扩展点是否正常
+summary.en: "Call the demo's server APIs item by item to verify every extension point"
 ---
 
 # demo-selfcheck · 运行 demo 扩展自检

@@ -1,7 +1,9 @@
 ---
 name: asr-server
 title: ASR 语音识别服务器（8767）运维
+title.en: "ASR speech server (8767) ops"
 placeholder: ASR 服务器有问题或要配置/重启，帮我检查修复（自动识别 Linux/macOS/Windows）…
+placeholder.en: "ASR server has issues or needs config/restart — check and fix for me (auto-detects Linux/macOS/Windows)…"
 outputs:
   format: text
 ---

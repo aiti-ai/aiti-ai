@@ -8,6 +8,7 @@
  * 导出离线自包含：render 函数进不了单文件，故 markdownExportHtml 仍自带一份 mermaid 内联脚本。
  */
 import { getBase } from "./env.ts";
+import { t } from "./host-shim.ts";
 import { mdSlug } from "./lib.ts";
 
 /**
@@ -473,10 +474,10 @@ const _vendorTextCache: Record<string, string> = {};
 async function _vendorText(p: string): Promise<string> {
   if (_vendorTextCache[p]) return _vendorTextCache[p];
   const r = await fetch(getBase() + p, { cache: "no-store" });
-  if (!r.ok) throw new Error("vendor 加载失败: " + p);
-  const t = await r.text();
-  _vendorTextCache[p] = t;
-  return t;
+  if (!r.ok) throw new Error(t("vendor 加载失败: {p}", { p }));
+  const text = await r.text(); // not "t": that would shadow the imported translate fn (TDZ on the throw line)
+  _vendorTextCache[p] = text;
+  return text;
 }
 
 export async function markdownRenderHtml(content: string, dark: boolean, title: string): Promise<string> {

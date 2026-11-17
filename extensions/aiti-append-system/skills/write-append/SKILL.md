@@ -1,8 +1,11 @@
 ---
 name: write-append
 title: AI 帮我写追加系统提示词
+title.en: "AI: write an appended system prompt rule"
 placeholder: 想让 AI 永远记住什么？（如：始终用中文回复 / 提交信息用英文…）
+placeholder.en: "What should the AI always remember? (e.g. always reply in Chinese / commit messages in English…)"
 summary: 起草一条追加进系统提示词的规则（pi APPEND_SYSTEM.md），可直接写入全局（~/.pi/agent/）或项目（<cwd>/.pi/）
+summary.en: "Draft a rule to append to the system prompt (pi APPEND_SYSTEM.md); can write to global (~/.pi/agent/) or project (<cwd>/.pi/)"
 outputs:
   format: json-obj
   schema:

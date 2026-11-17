@@ -10,11 +10,13 @@
  * + SVG 下载 + 查看器缩放（0.5–3）+ 亮暗主题跟随，渲染参数一致（strict / suppressErrorRendering）。
  */
 import { getBase } from "./env.ts";
+import { t } from "./host-shim.ts";
 import type { MdRenderCtx, MdRendererRegistration } from "./markdown.ts";
 
 const VENDOR_PATH = "/assets/vendor/mermaid.min.js";
 /** 出图失败与 vendor 载失败共用文案（同上游 i18n.invalidMermaid；壳把 message 写进错误态） */
-const INVALID = "无效的 Mermaid 图表";
+// Lazy at call time: module top-level t() would run before register(ctx) sets the table
+const INVALID = () => t("无效的 Mermaid 图表");
 const VIEW_SELECTOR = '.md-fence-view[data-md-fence="mermaid"]';
 
 /**
@@ -92,12 +94,12 @@ function openZoom(doc: Document, view: Element): void {
     + '<div class="md-zoom-toolbar"><span class="md-zoom-title">mermaid</span>'
     + '<div class="md-zoom-actions">'
     + '<div class="md-zoom-stepper">'
-    + '<button type="button" data-z="out" title="缩小" aria-label="缩小"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg></button>'
+    + '<button type="button" data-z="out" title="' + t("缩小") + '" aria-label="' + t("缩小") + '"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg></button>'
     + '<span class="md-zoom-value">100%</span>'
-    + '<button type="button" data-z="in" title="放大" aria-label="放大"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>'
+    + '<button type="button" data-z="in" title="' + t("放大") + '" aria-label="' + t("放大") + '"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>'
     + '</div>'
-    + '<button type="button" class="md-zoom-icon" data-z="fit" title="适应宽度" aria-label="适应宽度"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg></button>'
-    + '<button type="button" class="md-zoom-icon" data-z="close" title="关闭" aria-label="关闭"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>'
+    + '<button type="button" class="md-zoom-icon" data-z="fit" title="' + t("适应宽度") + '" aria-label="' + t("适应宽度") + '"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg></button>'
+    + '<button type="button" class="md-zoom-icon" data-z="close" title="' + t("关闭") + '" aria-label="' + t("关闭") + '"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>'
     + '</div></div>'
     + '<div class="md-zoom-viewport"><div class="md-zoom-canvas">' + xml + '</div></div>'
     + '</div>';
@@ -160,23 +162,23 @@ async function render(view: HTMLElement, code: string, ctx: MdRenderCtx): Promis
   const svgBtn = doc.createElement("button");
   svgBtn.type = "button";
   svgBtn.className = "md-fbtn md-mermaid-svg";
-  svgBtn.title = "下载文件 (SVG)";
-  svgBtn.setAttribute("aria-label", "下载文件 (SVG)");
+  svgBtn.title = t("下载文件 (SVG)");
+  svgBtn.setAttribute("aria-label", t("下载文件 (SVG)"));
   svgBtn.textContent = "SVG";
   (svgBtn as HTMLButtonElement).hidden = true;
   if (slot) slot.insertBefore(svgBtn, slot.querySelector(".md-fence-toggle"));
-  view.title = "打开 Mermaid 查看器";
-  view.setAttribute("aria-label", "正在渲染 Mermaid 图表");
-  if (!w) throw new Error(INVALID);
+  view.title = t("打开 Mermaid 查看器");
+  view.setAttribute("aria-label", t("正在渲染 Mermaid 图表"));
+  if (!w) throw new Error(INVALID());
   const mermaid = await loadMermaid(w);
   try {
     mermaid.initialize({ startOnLoad: false, securityLevel: "strict", suppressErrorRendering: true, theme: ctx.dark ? "dark" : "default" });
-  } catch (e) { throw new Error(INVALID); }
+  } catch (e) { throw new Error(INVALID()); }
   const ok = await mermaid.parse(code, { suppressErrors: true });
-  if (!ok) throw new Error(INVALID);
+  if (!ok) throw new Error(INVALID());
   const r = await mermaid.render("md-mermaid-" + Date.now() + "-" + Math.random().toString(36).slice(2), code);
   view.innerHTML = r.svg;
-  view.setAttribute("aria-label", "打开 Mermaid 查看器");
+  view.setAttribute("aria-label", t("打开 Mermaid 查看器"));
   (svgBtn as HTMLButtonElement).hidden = false;
   wireClicks(doc);
 }

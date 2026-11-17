@@ -35,6 +35,7 @@ export default {
       // 注意：client ctx.t 只查本表（ExtSlots makeClientContext 的 tableFor），
       // 查不到返回 key 原文——新增 T.* 词条必须同步补齐三表，否则按钮显示裸 key。
       "zh-CN": {
+        "it.quote.label": "引用",
         "ext.displayName": "消息智能",        "chat.quoteReply": "引用回复",
         "chat.quoteFull": "引用全文",
         "chat.quoteLine": "引用单句",
@@ -44,7 +45,7 @@ export default {
         "export.revealDir": "定位目录",
         "files.openFolder": "打开文件夹",
       },
-      en: {
+      "en": {
         "feat.recognizer.question.desc": "Recognizes closed/choice questions → option buttons + quote-reply",
         "feat.recognizer.selection.desc": "Text selection in the message area → popover: copy / quote-reply",
         "feat.recognizer.file.desc": "Extracts file/dir paths in a paragraph → open/locate buttons (existence-checked)",
@@ -58,9 +59,9 @@ export default {
         "feat.recognizer.fileExternalRoots": "Cross-repo file resolution",
         "feat.recognizer.url": "Link recognition",
         "feat.recognizer.summary": "Copy full text",
-      },
-      "en": {
+      
         "chat.quoteReply": "Quote reply",
+        "it.quote.label": "Quote",
         "chat.quoteFull": "Quote full",
         "chat.quoteLine": "Quote line",
         "chat.copy": "Copy",

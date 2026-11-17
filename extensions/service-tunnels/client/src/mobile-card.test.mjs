@@ -92,6 +92,88 @@ test("schemeKey：候选 id → i18n 键（schemeVhost / schemePortmap）", () =
 test("MOBILE_KEY 与入口 key 契约", () => {
   assert.equal(logic.MOBILE_KEY, "service-tunnels:mobile");
   assert.equal(logic.REMEMBER_KEY, "pi:st:mobile-scheme:v1");
+  assert.equal(logic.SOURCE_KEY, "pi:st:mobile-source:v1");
+});
+
+// ---- source switch + parametrized popup (sources-and-service plan §6, cases 1-3) ----
+
+test("appendQuery：合并/同名覆盖/无 query 原样/带 ? 前缀/坏 URL", () => {
+  const base = "https://pi.example.com:8443/dev/";
+  assert.equal(logic.appendQuery(base, "pair=1"), "https://pi.example.com:8443/dev/?pair=1");
+  assert.equal(logic.appendQuery(base, "?pair=1&x=2"), "https://pi.example.com:8443/dev/?pair=1&x=2");
+  // same-name override (caller semantics win), the rest kept
+  assert.equal(logic.appendQuery("https://x.example.com/?session=abc", "session=zzz"), "https://x.example.com/?session=zzz");
+  assert.equal(logic.appendQuery("https://x.example.com/?a=1", "b=2"), "https://x.example.com/?a=1&b=2");
+  // no/empty query passed through as-is; bad URL passed through as-is
+  assert.equal(logic.appendQuery(base, ""), base);
+  assert.equal(logic.appendQuery(base, undefined), base);
+  assert.equal(logic.appendQuery("not a url", "a=1"), "not a url");
+  assert.equal(logic.appendQuery(null, "a=1"), null);
+});
+
+test("launchUrlSafe：协议白名单 http/https，其余拒绝", () => {
+  assert.equal(logic.launchUrlSafe("https://pi.example.com/?pair=1"), "https://pi.example.com/?pair=1");
+  assert.equal(logic.launchUrlSafe("http://10.203.10.52:3001/dev"), "http://10.203.10.52:3001/dev");
+  assert.equal(logic.launchUrlSafe("javascript:alert(1)"), null);
+  assert.equal(logic.launchUrlSafe("file:///etc/passwd"), null);
+  assert.equal(logic.launchUrlSafe("not a url"), null);
+  assert.equal(logic.launchUrlSafe(undefined), null);
+});
+
+test("exposeToUrls：PortsTab 同序（url→localUrl→baseUrl→domainUrl→altUrls）去重保序、空值过滤", () => {
+  const urls = logic.exposeToUrls({
+    url: "https://a.example.com", localUrl: "http://127.0.0.1:5173",
+    baseUrl: "https://a.example.com", // duplicates url → deduped
+    domainUrl: null, altUrls: ["http://5173.st.localhost", "https://a.example.com"],
+  });
+  assert.deepEqual(urls, ["https://a.example.com", "http://127.0.0.1:5173", "http://5173.st.localhost"]);
+  assert.deepEqual(logic.exposeToUrls({ url: null, altUrls: null }), []);
+});
+
+test("来源记忆：读写回环；非法 source/坏 JSON → null；ports 带 portUrl", () => {
+  const mem = new Map();
+  const storage = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v) };
+  assert.equal(logic.loadSourceMemory(storage), null);
+  logic.saveSourceMemory(storage, { source: "ports", portUrl: "https://a.example.com" });
+  assert.deepEqual(logic.loadSourceMemory(storage), { source: "ports", portUrl: "https://a.example.com" });
+  logic.saveSourceMemory(storage, { source: "page" });
+  assert.deepEqual(logic.loadSourceMemory(storage), { source: "page", portUrl: null });
+  // legacy v1 value "self" migrated to "entry" (same semantics: expose the wizard tab); link is never memorized
+  logic.saveSourceMemory(storage, { source: "self" });
+  assert.deepEqual(logic.loadSourceMemory(storage), { source: "entry", portUrl: null });
+  logic.saveSourceMemory(storage, { source: "link" });
+  assert.equal(logic.loadSourceMemory(storage), null);
+  // bad JSON
+  mem.set(logic.SOURCE_KEY, "{{bad");
+  assert.equal(logic.loadSourceMemory(storage), null);
+  // no storage
+  assert.equal(logic.loadSourceMemory(null), null);
+  logic.saveSourceMemory(null, { source: "page" }); // must not throw
+});
+
+test("pickTunnelTool：记忆工具可用即用；失效回落候选默认/首个；非隧道候选 null", () => {
+  const c = { id: "tunnel", tunnel: "cloudflared", tunnelOptions: ["cloudflared", "ngrok", "frpc"] };
+  assert.equal(logic.pickTunnelTool(c, "ngrok"), "ngrok");
+  assert.equal(logic.pickTunnelTool(c, null), "cloudflared");
+  assert.equal(logic.pickTunnelTool(c, "gone"), "cloudflared"); // stale memory
+  const noDefault = { id: "tunnel", tunnel: null, tunnelOptions: ["frpc", "ngrok"] };
+  assert.equal(logic.pickTunnelTool(noDefault, null), "frpc");
+  assert.equal(logic.pickTunnelTool({ id: "vhost" }, "ngrok"), null);
+  assert.equal(logic.pickTunnelTool(null, "ngrok"), null);
+});
+
+test("pageReachability：回环/局域网/公网三档（v2 当前页源可达性提示）", () => {
+  assert.equal(logic.pageReachability("http://127.0.0.1:3001/dev/"), "loopback");
+  assert.equal(logic.pageReachability("http://localhost:3001/dev/"), "loopback");
+  assert.equal(logic.pageReachability("http://foo.localhost:3001/"), "loopback");
+  assert.equal(logic.pageReachability("http://10.203.10.52:3001/dev/"), "lan");
+  assert.equal(logic.pageReachability("http://10.0.0.3/"), "lan");
+  assert.equal(logic.pageReachability("http://172.16.3.1/"), "lan");
+  assert.equal(logic.pageReachability("http://172.32.3.1/"), "public"); // 172.32 is outside the private ranges
+  assert.equal(logic.pageReachability("https://pi.example.com:8443/dev/?session=x"), "public");
+  assert.equal(logic.pageReachability("https://3001-pi-web.pi.example.com:8443/dev/"), "public");
+  assert.equal(logic.pageReachability("not a url"), "public"); // fallback never false-positives
+  assert.equal(logic.pageReachability(null), "public");
 });
 
 test("清理", () => { rmSync(tmp, { recursive: true, force: true }); });

@@ -1,8 +1,11 @@
 ---
 name: ext-publish
 title: AI 帮我发布扩展
+title.en: "AI: publish an extension"
 placeholder: 描述要发布的扩展（如：把 my-ext 发布到 npmjs 并进在线注册表）…
+placeholder.en: "Which extension to publish (e.g. publish my-ext to npmjs and into the online registry)…"
 summary: 发 npm 包到 npmjs（可被 extman 的 npm: 来源安装）→ 写 docs/extensions/<id>.md → 发 PR 进在线注册表
+summary.en: "Publish the npm package to npmjs (installable via extman's npm: source) → write docs/extensions/<id>.md → PR into the online registry"
 ---
 
 # ext-publish · 发布扩展（面向其他用户）

@@ -1,3 +1,15 @@
+
+// Current UI language (pi-web persists localStorage pi-locale — authoritative; fall back to <html lang>
+// only when empty; then fall back to Chinese).
+// Module-level: the zh/en ternary shared by debug-panel copy (2026-11-15 i18n alignment).
+function uiIsEn() {
+  try {
+    const stored = localStorage.getItem("pi-locale");
+    if (stored && stored.trim()) return String(stored).toLowerCase().startsWith("en");
+    const l = (document.documentElement && document.documentElement.lang) || "";
+    return l.toLowerCase().startsWith("en");
+  } catch { return false; }
+}
 /**
  * aiti-devtools client bundle — prebuilt ESM（与 demo 同模式：host 传 h/useState/useEffect/apiUrl）
  *
@@ -307,7 +319,7 @@ export default function register(ctx) {
     loadCdpCore(); // M1：预载 self-exec 执行核心（不阻塞连桥；无宿主也能自管理）
     return loadBridgeClient().then((ok) => {
       bridgeConnecting = false;
-      if (!ok) return { ok: false, error: "bridge-client 加载失败" };
+      if (!ok) return { ok: false, error: (uiIsEn() ? "bridge-client load failed" : "bridge-client 加载失败") };
       // 连接参数公共库出（AI 窗身份 + exec 转发宿主；onStatus/onExec 等回调适配端自己拼）
       const common = (hp && hp.bridgeConnectParams) ? hp.bridgeConnectParams() : { role: "ai", token: "dev", useForward: true };
       window.BridgeClient.connect({
@@ -356,7 +368,7 @@ export default function register(ctx) {
               insertPlaceholder(cand);
             }
           }
-          setBridgeLog("用户" + (pv.status === "rejected" ? "拒绝：" + (pv.reason || "") : (pv.status === "answered" ? "回答：" + (pv.answer || "") : "超时")));
+          setBridgeLog((uiIsEn() ? "User" : "用户") + (pv.status === "rejected" ? (uiIsEn() ? "rejected: " : "拒绝：") + (pv.reason || "") : (pv.status === "answered" ? (uiIsEn() ? "answered: " : "回答：") + (pv.answer || "") : "超时")));
         },
       });
       refreshSessions();
@@ -365,7 +377,7 @@ export default function register(ctx) {
   }
 
   // ---------- 状态：桥 + sessions + 执行结果 ----------
-  let bridgeStatus = "桥未连";
+  let bridgeStatus = (uiIsEn() ? "Bridge not connected" : "桥未连");
   let bridgeColor = "var(--danger, #f87171)";
   const bridgeListeners = new Set();
   let sessionsRows = [];
@@ -389,7 +401,7 @@ export default function register(ctx) {
         if (rec) list.push(rec);
       }
       setSessions(list);
-      if (debugTarget.pageId) setBridgeStatus("桥已连 · 目标 " + debugTarget.pageId, "var(--ok, #4ade80)");
+      if (debugTarget.pageId) setBridgeStatus((uiIsEn() ? "Bridge connected · target " : "桥已连 · 目标 ") + debugTarget.pageId, "var(--ok, #4ade80)");
     }).catch(() => {});
   }
 
@@ -435,8 +447,8 @@ export default function register(ctx) {
     const exec = async () => {
       if (!cmd.trim() || busy) return;
       const pid = targetId || target.pageId;
-      if (!pid) { setExecOut("未选目标（boot 自动带 / 从页面列表选）"); return; }
-      setBusy(true); setExecOut("执行中…");
+      if (!pid) { setExecOut((uiIsEn() ? "No target selected (boot provides one / pick from the page list)" : "未选目标（boot 自动带 / 从页面列表选）")); return; }
+      setBusy(true); setExecOut((uiIsEn() ? "Running…" : "执行中…"));
       try {
         const parts = cmd.trim().split(/\s+/);
         const m = parts[0].match(/^(\w+)\.(\w+)$/);
@@ -462,33 +474,33 @@ export default function register(ctx) {
       // ① 桥状态
       h("div", { style: { ...rowStyle, marginBottom: 6 } },
         h("span", { style: { fontSize: 12, color: bridgeColor, flex: 1, wordBreak: "break-all" } }, status),
-        h("button", { onClick: () => connectBridge(), style: { ...btnStyle, display: "inline-flex", alignItems: "center", gap: 5 } }, Ic(13, ICONS.plug), "连桥"),
-        h("button", { onClick: refreshSessions, style: { ...btnStyle, display: "inline-flex" }, title: "刷新会话列表" }, Ic(13, ICONS.refresh)),
+        h("button", { onClick: () => connectBridge(), style: { ...btnStyle, display: "inline-flex", alignItems: "center", gap: 5 } }, Ic(13, ICONS.plug), (uiIsEn() ? "Connect" : "连桥")),
+        h("button", { onClick: refreshSessions, style: { ...btnStyle, display: "inline-flex" }, title: (uiIsEn() ? "Refresh session list" : "刷新会话列表") }, Ic(13, ICONS.refresh)),
       ),
       // ② 调试目标（boot）
       h("div", { style: { background: "rgba(79,70,229,0.08)", borderRadius: 8, padding: "6px 8px", marginBottom: 8 } },
-        h("div", { style: { fontSize: 11, fontWeight: 600, color: "#4f46e5", display: "flex", alignItems: "center", gap: 5 } }, Ic(12, ICONS.crosshair), "当前调试目标"),
+        h("div", { style: { fontSize: 11, fontWeight: 600, color: "#4f46e5", display: "flex", alignItems: "center", gap: 5 } }, Ic(12, ICONS.crosshair), (uiIsEn() ? "Current debug target" : "当前调试目标")),
         h("p", { style: { ...smallStyle, marginTop: 2 } }, "pageId: " + (target.pageId || "—") + (target.targetUrl ? "\n" + target.targetUrl : "")),
       ),
       // ③ 页面列表（发现）
       h("div", { style: rowStyle },
         h("select", { style: inputStyle, value: targetId || target.pageId || "", onChange: (e) => setTargetId(e.target.value) },
-          h("option", { key: "__boot__", value: "" }, "（目标：boot / 选择）"),
+          h("option", { key: "__boot__", value: "" }, (uiIsEn() ? "(target: boot / select)" : "（目标：boot / 选择）")),
           (rows || []).map((r) =>
             h("option", { key: r.pageId, value: r.pageId }, r.pageId + (r.url ? " · " + String(r.url).slice(0, 34) : "") + (r.frameworks ? " [" + r.frameworks + "]" : ""))),
         ),
       ),
       // ④ 命令执行
       h("div", { style: rowStyle },
-        h("input", { style: inputStyle, value: cmd, placeholder: "CDP 命令：DOM.getOuterHTML .card / Input.click .btn / 或直接表达式", onChange: (e) => setCmd(e.target.value), onKeyDown: (e) => { if (e.key === "Enter") exec(); } }),
-        h("button", { onClick: exec, style: { ...btnStyle, background: "#4f46e5", color: "#fff", border: "none" } }, busy ? "…" : "执行"),
+        h("input", { style: inputStyle, value: cmd, placeholder: (uiIsEn() ? "CDP command: DOM.getOuterHTML .card / Input.click .btn / or a bare expression" : "CDP 命令：DOM.getOuterHTML .card / Input.click .btn / 或直接表达式"), onChange: (e) => setCmd(e.target.value), onKeyDown: (e) => { if (e.key === "Enter") exec(); } }),
+        h("button", { onClick: exec, style: { ...btnStyle, background: "#4f46e5", color: "#fff", border: "none" } }, busy ? "…" : (uiIsEn() ? "Run" : "执行")),
       ),
       execOut && h("pre", { style: { ...smallStyle, background: "#0f172a", color: "#a5f3fc", padding: 6, borderRadius: 6, marginBottom: 8, whiteSpace: "pre-wrap" } }, execOut),
       log.length > 0 && h("div", { style: { marginBottom: 8 } }, log.map((l, i) => h("div", { key: i, style: smallStyle }, l))),
       // ⑤ MCP / 注入端口（已迁移，见上方说明）：MCP 工具进程内注入、注入端口归 service-tunnels
       h("div", { style: { borderTop: "1px solid var(--border)", paddingTop: 8, marginTop: 8 } },
         h("p", { style: { ...smallStyle, color: "#64748b" } },
-          "MCP 工具已由服务端进程内注入（方案 M，无需注册）；注入端口管理在 service-tunnels 扩展（ServicesDialog · 注入源）。"),
+          (uiIsEn() ? "MCP tools are injected in-process by the server (Plan M, no registration); injection endpoint management lives in the service-tunnels extension (ServicesDialog · injection sources)." : "MCP 工具已由服务端进程内注入（方案 M，无需注册）；注入端口管理在 service-tunnels 扩展（ServicesDialog · 注入源）。")),
       ),
     );
   }
@@ -517,7 +529,7 @@ export default function register(ctx) {
       },
         h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px 10px", flexShrink: 0 } },
           h("b", { style: { fontSize: 14, display: "inline-flex", alignItems: "center", gap: 6 } }, Ic(14, ICONS.bug), "AITI · mcp-bridge"),
-          h("button", { onClick: close, style: { ...btnStyle, padding: "2px 8px", display: "inline-flex" }, "aria-label": "关闭" }, Ic(12, ICONS.x)),
+          h("button", { onClick: close, style: { ...btnStyle, padding: "2px 8px", display: "inline-flex" }, "aria-label": (uiIsEn() ? "Close" : "关闭") }, Ic(12, ICONS.x)),
         ),
         h("div", { style: { padding: "0 16px 16px", flex: "1 1 auto", minHeight: 0, overflow: "auto" } }, h(DialogBody, null)),
       ),
@@ -692,7 +704,7 @@ export default function register(ctx) {
       style: { ...topbarBtnStyle, background: active ? "#4f46e5" : "none", color: active ? "#fff" : "var(--text-muted)", borderRadius: active ? 6 : 0, borderRight: active ? "none" : "1px solid var(--border)" },
       onMouseEnter: (e) => { if (!active) e.currentTarget.style.color = "var(--text)"; },
       onMouseLeave: (e) => { if (!active) e.currentTarget.style.color = "var(--text-muted)"; },
-      title: "点选页面元素（通知宿主 inspect；选中元素进候选 [元素N]）",
+      title: (uiIsEn() ? "Pick a page element (notifies the host to inspect; picked elements enter candidates [元素N])" : "点选页面元素（通知宿主 inspect；选中元素进候选 [元素N]）"),
     },
       // lucide：非 active crosshair（点选准星）· active square（停止）——与系统内建线条图标同风格
       active
@@ -735,7 +747,7 @@ export default function register(ctx) {
     const el = picked[d];
     if (!el) return null;
     if (!el.include) el.include = {};
-    const FIELD_LABELS = [["tag", "标签"], ["text", "文本"], ["xpath", "xpath"], ["selector", "selector"], ["rect", "尺寸"], ["docRect", "文档位置"], ["attributes", "属性"], ["computed", "样式"], ["framework", "框架"], ["component", "组件"], ["file", "组件源码"], ["usedAt", "调用位置"], ["frame", "页面"]];
+    const FIELD_LABELS = [["tag", (uiIsEn() ? "Tag" : "标签")], ["text", (uiIsEn() ? "Text" : "文本")], ["xpath", "xpath"], ["selector", "selector"], ["rect", (uiIsEn() ? "Rect" : "尺寸")], ["docRect", "文档位置"], ["attributes", "属性"], ["computed", "样式"], ["framework", "框架"], ["component", "组件"], ["file", (uiIsEn() ? "component source" : "组件源码")], ["usedAt", "调用位置"], ["frame", "页面"]];
     // 初始化 include 显式 true（默认全选）——否则 !undefined=true 首次点击看似无效
     FIELD_LABELS.forEach(([fld]) => { if (el.include[fld] === undefined) el.include[fld] = true; });
     const toggle = (fld) => { el.include[fld] = !el.include[fld]; setPicked([...pickedElements]); };
@@ -748,12 +760,12 @@ export default function register(ctx) {
         onClick: (e) => e.stopPropagation(),
       },
         h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 } },
-          h("b", { style: { fontSize: 13 } }, (el.tag || "候选") + " 详情"),
-          h("button", { onClick: () => setDetail(-1), style: { ...btnStyle, padding: "2px 8px", display: "inline-flex" }, "aria-label": "关闭" }, Ic(12, ICONS.x)),
+          h("b", { style: { fontSize: 13 } }, (el.tag || (uiIsEn() ? "Candidate" : "候选")) + (uiIsEn() ? " details" : " 详情")),
+          h("button", { onClick: () => setDetail(-1), style: { ...btnStyle, padding: "2px 8px", display: "inline-flex" }, "aria-label": (uiIsEn() ? "Close" : "关闭") }, Ic(12, ICONS.x)),
         ),
         h("div", { style: { marginBottom: 10 } },
           detailRowsText(el).map(([k, v], i) => {
-            const isFile = hp && hp.isFileRow ? hp.isFileRow(k) : (k === "组件源码" || k === "调用处");
+            const isFile = hp && hp.isFileRow ? hp.isFileRow(k) : (k === (uiIsEn() ? "component source" : "组件源码") || k === (uiIsEn() ? "call site" : "调用处"));
             // 文件行提取（core rowFileInfo 公共：组件源码/调用处 → file/line，兼容富载荷与 hover 轻载荷）
             const fi = (hp && hp.rowFileInfo) ? (hp.rowFileInfo(el, k) || {}) : {};
             const file = fi.file || null;
@@ -769,7 +781,7 @@ export default function register(ctx) {
                 style: { display: "flex", gap: 6, fontSize: 11, padding: "2px 0", borderBottom: "1px solid var(--border)", alignItems: "center", borderRadius: 4 },
                 onMouseEnter: () => setHoverRow(i),
                 onMouseLeave: () => setHoverRow(null),
-                title: fileOk ? "文件存在：📂 后台编辑器打开 / 🖥 前端 pi-web 文件标签页查看" : (isFile && file ? "文件不存在（或非文件路径）——不提供打开" : undefined),
+                title: fileOk ? (uiIsEn() ? "File exists: 📂 open in the backend editor / 🖥 view in a pi-web frontend file tab" : "文件存在：📂 后台编辑器打开 / 🖥 前端 pi-web 文件标签页查看") : (isFile && file ? (uiIsEn() ? "File missing (or not a file path) — no open action" : "文件不存在（或非文件路径）——不提供打开") : undefined),
               },
               h("span", { style: { color: "var(--text-muted)", minWidth: 64, fontWeight: 600 } }, k),
               h("code", {
@@ -789,26 +801,26 @@ export default function register(ctx) {
                   });
                 },
                 style: { ...btnStyle, padding: "1px 6px", fontSize: 10, flexShrink: 0, marginLeft: 2, color: copiedRow === i ? "#059669" : "var(--text)" },
-                title: copiedRow === i ? "已复制" : "复制此内容",
-              }, copiedRow === i ? [Ic(12, ICONS.check), "已复制"] : Ic(13, ICONS.copy)),
+                title: copiedRow === i ? (uiIsEn() ? "Copied" : "已复制") : (uiIsEn() ? "Copy this content" : "复制此内容"),
+              }, copiedRow === i ? [Ic(12, ICONS.check), (uiIsEn() ? "Copied" : "已复制")] : Ic(13, ICONS.copy)),
               (rowHover && file && fileOk) && h("span", { style: { display: "flex", gap: 4, flexShrink: 0 } },
-                h("button", { onClick: (e) => { e.stopPropagation(); openFileBackend(file, line); }, style: { ...btnStyle, padding: "1px 8px", display: "inline-flex", alignItems: "center", gap: 4 } }, Ic(11, ICONS.folder), "后台"),
-                h("button", { onClick: (e) => { e.stopPropagation(); openFileFrontend(file); }, style: { ...btnStyle, padding: "1px 8px", display: "inline-flex", alignItems: "center", gap: 4 } }, Ic(11, ICONS.monitor), "前端"),
+                h("button", { onClick: (e) => { e.stopPropagation(); openFileBackend(file, line); }, style: { ...btnStyle, padding: "1px 8px", display: "inline-flex", alignItems: "center", gap: 4 } }, Ic(11, ICONS.folder), uiIsEn() ? "Backend" : "后台"),
+                h("button", { onClick: (e) => { e.stopPropagation(); openFileFrontend(file); }, style: { ...btnStyle, padding: "1px 8px", display: "inline-flex", alignItems: "center", gap: 4 } }, Ic(11, ICONS.monitor), uiIsEn() ? "Frontend" : "前端"),
               ),
               (file && checking) && h("span", { style: { color: "var(--text-muted)", fontSize: 10, flexShrink: 0 } }, "…"),
-              (file && fileMissing) && h("span", { style: { color: "var(--text-muted)", fontSize: 10, flexShrink: 0 } }, "（文件不存在）"));
+              (file && fileMissing) && h("span", { style: { color: "var(--text-muted)", fontSize: 10, flexShrink: 0 } }, (uiIsEn() ? "(file missing)" : "（文件不存在）")));
           }),
         ),
         el.kind === "error"
-          ? h("p", { style: { ...smallStyle, margin: "8px 0" } }, "发送时 [错误N] 替换为完整错误详情（类型/消息/堆栈/时间）。")
+          ? h("p", { style: { ...smallStyle, margin: "8px 0" } }, (uiIsEn() ? "On send, [错误N] is replaced with the full error details (type/message/stack/time)." : "发送时 [错误N] 替换为完整错误详情（类型/消息/堆栈/时间）。"))
           : h("div", { style: { borderTop: "1px solid var(--border)", padding: "8px 0", marginBottom: 8 } },
-              h("p", { style: { ...smallStyle, marginBottom: 6 } }, "发送给 AI 的字段（勾选）："),
+              h("p", { style: { ...smallStyle, marginBottom: 6 } }, (uiIsEn() ? "Fields sent to the AI (checked):" : "发送给 AI 的字段（勾选）：")),
               h("div", { style: { display: "flex", flexWrap: "wrap", gap: "4px 12px" } },
                 FIELD_LABELS.map(([fld, label]) =>
                   h("label", { key: fld, style: { display: "inline-flex", alignItems: "center", gap: 3, fontSize: 11, color: "var(--text)", cursor: "pointer" } },
                     h("input", { type: "checkbox", checked: el.include[fld] !== false, onChange: () => toggle(fld) }), label))),
             ),
-        h("p", { style: { ...smallStyle } }, "后台打开经 MCP 桥 open_file（IDE 由 AITI_OPEN_CMD 环境变量指定，无则用系统默认编辑程序）；🖥 前端打开在 pi-web 文件标签页在线查看。文件经存在性校验，存在才显示打开按钮；查询通道：AI 窗直连扩展 file-stat（bridge 通道）/ 桥 file_stat 工具（ai 通道）。"),
+        h("p", { style: { ...smallStyle } }, (uiIsEn() ? "Backend opens via the MCP bridge open_file (IDE from the AITI_OPEN_CMD env var, else the system default editor); 🖥 frontend opens as a file tab in pi-web for online viewing. Files are existence-checked — the open button shows only when present. Query channels: AI-window direct to the extension file-stat (bridge channel) / the bridge file_stat tool (ai channel)." : "后台打开经 MCP 桥 open_file（IDE 由 AITI_OPEN_CMD 环境变量指定，无则用系统默认编辑程序）；🖥 前端打开在 pi-web 文件标签页在线查看。文件经存在性校验，存在才显示打开按钮；查询通道：AI 窗直连扩展 file-stat（bridge 通道）/ 桥 file_stat 工具（ai 通道）。")),
       ),
     );
   }
@@ -827,20 +839,20 @@ export default function register(ctx) {
           h("span", {
             className: "aiti-picked-tag",
             onClick: (e) => { e.stopPropagation(); ensurePlaceholder(el); },
-            title: "点击：仅输入框补占位符（不弹详情）",
+            title: (uiIsEn() ? "Click: insert the placeholder into the input only (no detail dialog)" : "点击：仅输入框补占位符（不弹详情）"),
             style: { padding: "0 6px 0 1px", borderRight: "1px dashed " + (el.kind === "error" ? "#fecaca" : "#c7d2fe"), fontWeight: 600, cursor: "pointer", flexShrink: 0 },
           }, el.tag),
           // 描述区：补占位符（若被删）+ 查看详情/筛选/打开文件（原行为）
           h("span", {
             onClick: (e) => { e.stopPropagation(); ensurePlaceholder(el); setDetail(i); },
-            title: "点击：输入框补占位符（若被删）+ 查看详情/筛选/打开文件",
+            title: (uiIsEn() ? "Click: insert the placeholder (if deleted) + view details / filter / open files" : "点击：输入框补占位符（若被删）+ 查看详情/筛选/打开文件"),
             style: { padding: "0 4px", cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 220, flexShrink: 1 },
           }, briefText(el)),
           h("button", {
             // 逐条清除：记录指纹（宿主延迟重发不"复活"）+ 输入框同步摘掉该条占位符（编号重排对齐）
             onClick: (e) => { e.stopPropagation(); removeOneCandidate(el); },
             style: { background: "none", border: "none", cursor: "pointer", color: "inherit", opacity: 0.75, padding: "0 2px", fontSize: 11, lineHeight: 1, flexShrink: 0 },
-            title: "清除该候选（同步删输入框里的 " + el.tag + "）",
+            title: (uiIsEn() ? "Clear this candidate (also removes " : "清除该候选（同步删输入框里的 ") + el.tag + "）",
           }, "✕"))),
       // 📖 教程链接（devtools 功能曝光位）：候选区出现即可见——点选元素/页面调试 5 分钟教程直达 aiti.pw
       h("a", {
@@ -848,9 +860,9 @@ export default function register(ctx) {
         target: "_blank",
         rel: "noopener noreferrer",
         onClick: (e) => { e.stopPropagation(); },
-        title: "点选元素 / 页面调试 5 分钟教程（aiti.pw）",
+        title: (uiIsEn() ? "Element picking / page debugging — 5-minute tutorial (aiti.pw)" : "点选元素 / 页面调试 5 分钟教程（aiti.pw）"),
         style: { color: "var(--accent, #4f46e5)", textDecoration: "none", fontSize: 11, flexShrink: 0, whiteSpace: "nowrap" },
-      }, "📖 教程"),
+      }, (uiIsEn() ? "📖 Tutorial" : "📖 教程")),
       h("button", {
         onClick: () => {
           // 清除候选：host-protocol 记录指纹（宿主延迟重发不"复活"）+ 输入框同步摘掉占位符。
@@ -863,22 +875,14 @@ export default function register(ctx) {
           setPicked([]);
         },
         style: { ...btnStyle, padding: "1px 8px", marginLeft: "auto", color: "var(--danger, #ef4444)" },
-      }, "清空"),
+      }, (uiIsEn() ? "Clear" : "清空")),
     );
   }
 
   // 发送钩子：[元素N]/[回答N]/[错误N] → 真实候选内容 + 收集元素（agent 经桥操作时知道元素）；错误候选只替换文本不进 elements。
   // 来源标注 [发自: pageId · url]：调试会话中从被调试页面（inject）发出的【每条】消息统一携带——追加在消息末尾（独立一行），
   // 避免占头部干扰用户正文/首句阅读；agent 定位 pageId 不受位置影响（按标签 [发自: 解析）。
-  // 当前界面语言（pi-web 存 localStorage pi-locale——权威；为空才 fallback <html lang>；再 fallback 中文）
-  const uiIsEn = () => {
-    try {
-      const stored = localStorage.getItem("pi-locale");
-      if (stored && stored.trim()) return String(stored).toLowerCase().startsWith("en");
-      const l = (document.documentElement && document.documentElement.lang) || "";
-      return l.toLowerCase().startsWith("en");
-    } catch { return false; }
-  };
+  // uiIsEn has been hoisted to module level (see the file header)
   // 来源标注说明（随界面语言中/英）；标签 [发自: 固定——协议标识，工具描述/跨语言一致，AI 识别稳定
   // 注：pi-web 场景工具经 server.agent 扩展点以 aiti_* 内部命令注入（方案 M），非 MCP——提示指向 aiti-* 工具
   const SRC_NOTE = () => (uiIsEn() ? "aiti-* tools: use it as the pageId param" : "aiti-*：pageId 参数用它");
@@ -909,7 +913,7 @@ export default function register(ctx) {
       // 无候选：纯文本消息（发送/steer/followup）同样带来源标注——之前仅候选引用时才加，同页消息有的带 pageId 有的不带
       // 孤儿占位符兑底：候选已被清除/失效或跨窗口编号过期时，文本里残留的 [元素N]/[回答N]/[错误N]/[选择N]
       // 匹配不到任何候选——裸发给 AI 无意义（实测 [错误1] 原样发出四连），替换为失效提示。
-      const stripOrphanTags = (t) => String(t || "").replace(/\[(?:元素|回答|错误|选择)\d+\]/g, "[⚠ 候选已失效，占位符已移除（重新选元素/刷新页面重采）]");
+      const stripOrphanTags = (t) => String(t || "").replace(/\[(?:元素|回答|错误|选择)\d+\]/g, (uiIsEn() ? "[⚠ candidate stale, placeholder removed (re-pick the element / re-open the page)]" : "[⚠ 候选已失效，占位符已移除（重新选元素/刷新页面重采）]"));
       if (!pickedElements.length) {
         const t0 = stripOrphanTags(text);
         if (pid) { const t = withSource(t0); logSent(t); return { text: t }; }
@@ -998,7 +1002,7 @@ export default function register(ctx) {
       style: topbarBtnStyle,
       onMouseEnter: (e) => { e.currentTarget.style.color = "var(--text)"; },
       onMouseLeave: (e) => { e.currentTarget.style.color = "var(--text-muted)"; },
-      title: "AITI mcp-bridge：连桥 / 调试目标 / 执行 / 注入",
+      title: (uiIsEn() ? "AITI mcp-bridge: bridge / debug target / execute / injection" : "AITI mcp-bridge：连桥 / 调试目标 / 执行 / 注入"),
     },
       // lucide bug：调试器——与系统内建线条图标同风格
       h("svg", { width: 16, height: 16, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": "true" },

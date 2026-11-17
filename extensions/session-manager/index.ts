@@ -14,11 +14,13 @@ import { bindActivityPublisher, publishSessionActivity, resetActivityBusState } 
 import { ensureProviders, resolveExtId } from "./server/ext-sources.ts";
 import { requestIndexVacuum } from "./lib/session-index-async.ts";
 import { dirname, join } from "node:path";
+import { enrichForSession, probePlanSvc, writeAgentToolsKillswitch } from "./server/session-enrich.ts";
 
 let archiveTimer: ReturnType<typeof setInterval> | null = null;
 let smConfigDir = ""; // services.tags 出口用（startup 时填充）
 let smCoreRef: ExtCoreLike | null = null; // agentTools 懒同步用（startup 存 / shutdown 清）
 let lastToolSyncAt = 0; // agentTools 懒同步节流（5s 内不重复 sync）
+let smServicesGet: ((key: string) => unknown) | null = null; // enrich consumes aiti-plan-first.plans (the execute closure has no ctx; startup pins the lookup fn)
 
 // ── session-search tools（docs/pi-session-search-tools-plan.md §4）────────────
 // 给 pi 会话注入的只读检索工具：scope 三档（current/pi/all）+ 单/多 session id。
@@ -64,6 +66,12 @@ function resolveScope(raw: unknown, currentSid: string): { ok: true; agents?: st
   if (r.ids.length === 1) return { ok: true, ids: r.ids };
   return { ok: false, error: r.unresolved.length ? `no unique session matched "${s}"（ambiguous prefix or unknown id/path）` : `no session matched "${s}"` };
 }
+
+// ── enrich (docs/pi-session-search-enrich-tags-plan.md §3, 1:1 with the TUI-side pi-session-search) ──
+// Implementation lives in server/session-enrich.ts (injectable deps, directly testable); this module keeps
+// only a thin shell of state: planSvc probe (startup-pinned services.get first, byId fallback) + the enrich call.
+const planSvc = () => probePlanSvc(smServicesGet);
+const enrich = (sids: string[]) => enrichForSession(sids, smConfigDir, readTagData, planSvc());
 
 function sessionSearchTool(currentSid: string) {
   return {
@@ -112,8 +120,11 @@ function sessionSearchTool(currentSid: string) {
       if (!hits.length) {
         return { content: [{ type: "text", text: `no session matched query "${params.q}"（scope=${Array.isArray(params.scope) ? "[ids]" : String(params.scope ?? "all")}${agents ? `, agent=${agents.join("/")}` : ""}）. Try a different keyword, scope "all", or a >= 3-char Chinese phrase.` }] } as never;
       }
-      const lines = hits.map((h, i) =>
-        `${i + 1}. ${h.sessionId} [${h.agent ?? "?"}]${h.title ? ` «${h.title}»` : ""} ${h.modified}${h.archived ? " (archived)" : ""}\n   cwd: ${h.cwd}\n   ${h.role}@${h.ts ?? "?"}: ${h.text.replace(/\s+/g, " ").slice(0, 200)}\n   entry: ${h.entryId}`);
+      const extraMap = enrich(hits.map((h) => h.sessionId));
+      const lines = hits.map((h, i) => {
+        const extra = extraMap.get(h.sessionId);
+        return `${i + 1}. ${h.sessionId} [${h.agent ?? "?"}]${h.title ? ` «${h.title}»` : ""} ${h.modified}${h.archived ? " (archived)" : ""}\n   cwd: ${h.cwd}${extra ? `\n   ${extra.replace(/\n/g, "\n   ")}` : ""}\n   ${h.role}@${h.ts ?? "?"}: ${h.text.replace(/\s+/g, " ").slice(0, 200)}\n   entry: ${h.entryId}`;
+      });
       const text = `session_search: ${hits.length} hit(s)${scoped.ids ? ` in ${scoped.ids.length} scoped session(s)` : ""}（index synced ${new Date(lastToolSyncAt).toISOString() || "snapshot"}）\n${lines.join("\n")}\n(use session_read with the session id above; pass entry to anchor a single message)`;
       return { content: [{ type: "text", text }] } as never;
     },
@@ -159,7 +170,8 @@ function sessionReadTool(currentSid: string) {
       if (!res) return { content: [{ type: "text", text: `session_read failed: no unique session matched "${params.session}"（use session_search to find exact ids）` }], isError: true } as never;
       const { row, messages, total } = res;
       if (!messages.length) return { content: [{ type: "text", text: `session ${row.id} has no matching messages（role=${params.role ?? "user"}, total=${total}）` }] } as never;
-      const head = `session ${row.id} [${row.agent ?? "pi"}]${row.name ? ` «${row.name}»` : ""} cwd=${row.cwd} modified=${row.modified}`;
+      const extra = enrich([String(row.id)]).get(String(row.id));
+      const head = `session ${row.id} [${row.agent ?? "pi"}]${row.name ? ` «${row.name}»` : ""} cwd=${row.cwd} modified=${row.modified}${extra ? `\n${extra}` : ""}`;
       const body = messages.map((m, i) => {
         const label = params.entry ? "" : `[${(params.offset ?? 0) + i + 1}/${total}] `;
         const meta = m.toolName ? ` (tool:${m.toolName})` : "";
@@ -332,6 +344,10 @@ const ext = {
       smConfigDir = ctx.configDir || "";
       smCoreRef = ctx.core as ExtCoreLike | null;
       lastToolSyncAt = 0;
+      smServicesGet = typeof ctx.services?.get === "function" ? (key: string) => ctx.services.get(key) : null;
+      // kill-switch persistence (pi-session-search B-side yield probe, docs/pi-session-search-enrich-tags-plan.md §4.2):
+      // feature switches go extman → reload → this startup rerun rewrites; new B-side sessions read the new value.
+      writeAgentToolsKillswitch(smConfigDir);
       // 活动数据帧发布通道（总线缺席静默；帧构造/节流/行缓存见 server/activity-bus.ts）
       bindActivityPublisher((type, data) => {
         try {
@@ -422,12 +438,12 @@ const ext = {
     sidebar: [{ id: "sessions", label: "Sessions", title: "i18n:sm.allSessions", badge: true }],
     sidebarProjects: [{ id: "clone", label: "项目 / Projects", title: "左侧会话列表接管（SidebarClone）" }],
     // 左栏整块接管（sidebar 统一 dock 方案 §3.2）：AppShell 层 Header + DockStack + 底部行
-    sidebarContent: [{ id: "master", label: "侧栏接管", title: "左侧栏整块接管（SidebarContentDock）" }],
+    sidebarContent: [{ id: "master", label: "i18n:feat.master", title: "i18n:feat.master.desc" }],
     sessionTopbar: [{ id: "tags", label: "tags" }],
-    sessionRowMeta: [{ id: "session-tags", label: "会话标签" }],
-    sessionRowActions: [{ id: "star", label: "star", title: "Favorite" }],
-    workspacePickerActions: [{ id: "manage", label: "Manage workspaces" }],
-    newSessionContextTrailing: [{ id: "upload", label: "Upload workspace" }],
+    sessionRowMeta: [{ id: "session-tags", label: "i18n:feat.session-tags" }],
+    sessionRowActions: [{ id: "star", label: "star", title: "i18n:it.star.title" }],
+    workspacePickerActions: [{ id: "manage", label: "i18n:it.manage-workspaces.label" }],
+    newSessionContextTrailing: [{ id: "upload", label: "i18n:it.upload-workspace.label" }],
     // 新建会话条 Workspace×Backend 盒子后面的尾随按钮（方案 session-manager-workspace-upload-plan.md §12）：
     // 上传工作区捷径——上传/解压后经宿主 "pi-web.newSession" 服务 setCwd 把新会话切到解压目录；
     // 旧宿主无此插槽/服务 → 静默降级（按钮不渲染 / 上传后仅 toast）。
@@ -441,6 +457,8 @@ const ext = {
     pages: [],
     i18n: {
       en: {
+        "it.sessions.label": "All Sessions",
+        "it.board.label": "Board",
         "feat.toolbar.search.desc": "Session search box in the top bar (incl. ⋯ menu); searches all sessions",
         "feat.behavior.favorite-icons.desc": "Shows favorite (★) icons in session lists/boards/top bar",
         "feat.behavior.session-timeline.desc": "Shows the \"⎇ Timeline\" action in sidebar session-row hover actions",
@@ -457,7 +475,11 @@ const ext = {
         "feat.agentTools.enabled": "Session search tools (session_search / session_read)",
         "feat.clone": "Projects",
         "feat.master": "Sidebar takeover",
+        "feat.master.desc": "Full left-sidebar takeover (SidebarContentDock)",
         "feat.session-tags": "Session tags",
+        "it.star.title": "Favorite",
+        "it.manage-workspaces.label": "Manage workspaces",
+        "it.upload-workspace.label": "Upload workspace",
         "feat.picker": "Branch / Worktree",
         "sidebar.loading": "Loading...",
         "sidebar.noSessions": "No sessions found",
@@ -530,6 +552,7 @@ const ext = {
         "i18n.checking": "Checking…",
         "sm.allSessions": "All sessions",
         "sm.dockProjects": "Projects",
+        "sm.dockProjectsHint": "Projects and sessions",
         "sm.dockAddFolder": "Add folder to sidebar",
         "sm.searchPlaceholder": "Search sessions…",
         "sm.search": "Search",
@@ -543,6 +566,7 @@ const ext = {
         "sm.noRunning": "No running sessions",
         "sm.recent": "Recently completed",
         "sm.openAll": "Open all sessions",
+        "sm.viewer.pickHint": "Opened from App Center without a session target — pick a session in All Sessions to view it here.",
         "sm.noSessions": "No sessions yet",
         "sm.noResults": "No matching sessions",
         "sm.loading": "…",
@@ -688,6 +712,9 @@ const ext = {
         "sm.extRemove": "Remove from list",
         "sm.extTrueArchive": "True archive (remove from source, restorable)",
         "sm.pendingRemoval": "Removing…",
+        "sm.optSlow": "Still processing in the background — rows restored; the list will refresh when done",
+        "sm.archiveFailed": "Archive failed",
+        "sm.archiveSkipped": "{count} session(s) open/running — skipped",
         "sm.extRemoveTitle": "Move to the archived group; hidden from the list. Recoverable anytime — data inside ZCode/Cursor etc. is not touched.",
         "sm.extChildrenTogetherBtn": "Remove the {count} children too",
         "sm.extChildrenKeepBtn": "Remove the main session only",
@@ -721,6 +748,7 @@ const ext = {
         "sm.relatedDocs": "Related docs",
         "sm.relatedDocsShort": "Docs",
         "sm.timeline": "Timeline",
+        "sm.timelineTip": "Open this session's timeline (aiti-git-trace)",
         "sm.relatedDocsEmpty": "No docs were touched by this session",
         "sm.relatedDocsHint": "Docs the session touched · collected by aiti-git-trace, related via aiti-doc-center",
         "sm.docCenterAbsent": "Doc center not enabled (aiti-doc-center)",
@@ -798,6 +826,7 @@ const ext = {
         "sidebar.hide": "隱藏側邊欄",
         "sidebar.toggleSessionSearch": "搜尋對話",
         "sm.dockProjects": "專案",
+        "sm.dockProjectsHint": "專案與會話列表",
         "sm.runFailed": "任務失敗",
         "sm.runAborted": "已停止",
         "sm.runInterrupted": "已中斷（未正常結束）",
@@ -875,6 +904,9 @@ const ext = {
         "sm.projectPinUp": "在釘住項中上移",
         "sm.projectPinDown": "在釘住項中下移",
         "sm.pendingRemoval": "處理中…",
+        "sm.optSlow": "操作仍在背景處理，行已恢復顯示；完成後列表會自動重新整理",
+        "sm.archiveFailed": "歸檔失敗",
+        "sm.archiveSkipped": "{count} 個會話正在開啟/執行中，已跳過",
         "sm.extRemoveTitle": "收進已封存分組，列表不再顯示；隨時可恢復接管，ZCode 等應用內資料不受影響。",
         "sm.extChildrenTogetherBtn": "同時移除 {count} 個子會話",
         "sm.extChildrenKeepBtn": "只移除主會話",
@@ -907,6 +939,14 @@ const ext = {
         "sm.viewer.extSession": "外部會話",
       },
       "zh-CN": {
+        "feat.master": "侧栏接管",
+        "feat.master.desc": "左侧栏整块接管（SidebarContentDock）",
+        "feat.session-tags": "会话标签",
+        "it.star.title": "收藏",
+        "it.manage-workspaces.label": "管理工作区",
+        "it.upload-workspace.label": "上传工作区",
+        "it.sessions.label": "全部会话",
+        "it.board.label": "看板",
         "it.archived-viewer.title": "归档查看器",
         "it.ext-viewer.title": "外部会话",
         "it.search.label": "搜索会话",
@@ -982,6 +1022,7 @@ const ext = {
         "i18n.checking": "检查中…",
         "sm.allSessions": "全部会话",
         "sm.dockProjects": "项目",
+        "sm.dockProjectsHint": "项目和会话列表",
         "sm.dockAddFolder": "添加文件夹到侧栏",
         "sm.searchPlaceholder": "搜索会话…",
         "sm.search": "搜索",
@@ -995,6 +1036,7 @@ const ext = {
         "sm.noRunning": "暂无运行中的会话",
         "sm.recent": "最近完成",
         "sm.openAll": "打开全部会话",
+        "sm.viewer.pickHint": "从应用中心打开，未指定目标会话——在「全部会话」里选择一个会话后在此查看。",
         "sm.noSessions": "暂无会话",
         "sm.noResults": "没有匹配的会话",
         "sm.loading": "…",
@@ -1140,6 +1182,9 @@ const ext = {
         "sm.extRemove": "从列表移除",
         "sm.extTrueArchive": "真归档（从源移除，可放回）",
         "sm.pendingRemoval": "处理中…",
+        "sm.optSlow": "操作仍在后台处理，行已恢复显示；完成后列表会自动刷新",
+        "sm.archiveFailed": "归档失败",
+        "sm.archiveSkipped": "{count} 个会话正在打开/运行中，已跳过",
         "sm.extRemoveTitle": "收进已归档分组，列表不再显示；随时可恢复接管，ZCode 等应用内数据不受影响。",
         "sm.extChildrenTogetherBtn": "同时移除 {count} 个子会话",
         "sm.extChildrenKeepBtn": "只移除主会话",
@@ -1173,6 +1218,7 @@ const ext = {
         "sm.relatedDocs": "相关文档",
         "sm.relatedDocsShort": "文档",
         "sm.timeline": "时间线",
+        "sm.timelineTip": "打开该会话的时间线（aiti-git-trace）",
         "sm.relatedDocsEmpty": "该会话没有触达过文档",
         "sm.relatedDocsHint": "会话触达过的文档 · aiti-git-trace 采集 → aiti-doc-center 关联",
         "sm.docCenterAbsent": "文档中心未启用（aiti-doc-center）",

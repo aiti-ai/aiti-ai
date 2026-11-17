@@ -728,10 +728,25 @@ export default {
     ],
     i18n: {
       "zh-CN": {
+        "feat.aiti-model-wizard-banner": "aiti-model-wizard：无模型引导",
+        "feat.aiti-model-wizard-multikey-status": "聚合 / 多key运行状态",
+        "feat.aiti-model-wizard-multikey-status.desc": "会话信息下拉内「聚合 / 多 key 代理运行时状态」（薄壳直连 /proxy-status，重 chunk 覆盖升级为完整版）",
+        "feat.aiti-model-wizard-manage": "管理模型",
+        "feat.aiti-model-wizard-manage.desc": "模型选择器下拉底部「管理模型」入口——打开模型向导",
+        "it.manage.label": "管理模型",
+        "it.multikey-status.label": "聚合 / 多key运行状态",
+        "it.settings.label": "模型向导",
+        "it.shell.title": "模型管理",
+        "it.multikey-status.label.2": "聚合 / 多key运行状态",
         "ext.displayName": "模型添加向导",      "mw.open.label": "模型",
       "mw.open.title": "aiti-model-wizard：添加 AI 提供商/模型（目录搜索 / 反向匹配 / 自动探测）",
       },
       en: {
+        "it.manage.label": "Manage models",
+        "it.multikey-status.label": "Aggregation / multi-key status",
+        "it.settings.label": "Model wizard",
+        "it.shell.title": "Model management",
+        "it.multikey-status.label.2": "Aggregation / multi-key status",
         "feat.tool.aiti_model_wizard_status.desc": "Model setup wizard: currently configured providers (token masked) + models.json path",
         "feat.tool.aiti_model_wizard_search.desc": "Searches AI providers in the catalog (Chinese/English keywords + reverse match from a baseUrl)",
         "feat.tool.aiti_model_wizard_provider.desc": "Views a provider's detail (api URL templates / auth method / model list notes)",
@@ -746,7 +761,9 @@ export default {
         "ext.description": "Injects aiti_model_wizard_* tools into sessions (off by default; enable temporarily via the AI helper 🤖 or the extension manager)",
         "feat.aiti-model-wizard-banner": "aiti-model-wizard: no-model onboarding",
         "feat.aiti-model-wizard-multikey-status": "Aggregation / multi-key status",
+        "feat.aiti-model-wizard-multikey-status.desc": "Inside the session-info dropdown — aggregation / multi-key proxy runtime status (thin shell via /proxy-status; heavy-chunk upgrade pending)",
         "feat.aiti-model-wizard-manage": "Manage models",
+        "feat.aiti-model-wizard-manage.desc": "Manage-models entry at the bottom of the model-selector dropdown — opens the model wizard",
         "feat.tool.aiti_model_wizard_status": "model_wizard_status · current state",
         "feat.tool.aiti_model_wizard_search": "model_wizard_search · search catalog",
         "feat.tool.aiti_model_wizard_provider": "model_wizard_provider · provider detail",
@@ -771,10 +788,10 @@ export default {
     },
 
     dialogs: [{ id: "aiti-model-wizard-dialog", label: "aiti-model-wizard" }],
-    banners: [{ id: "aiti-model-wizard-banner", label: "aiti-model-wizard：无模型引导" }],
-    sessionStats: [{ id: "aiti-model-wizard-multikey-status", label: "聚合 / 多key运行状态", title: "会话信息下拉内「聚合 / 多 key 代理运行时状态」（薄壳直连 /proxy-status，重 chunk 覆盖升级为完整版）" }],
+    banners: [{ id: "aiti-model-wizard-banner", label: "i18n:feat.aiti-model-wizard-banner" }],
+    sessionStats: [{ id: "aiti-model-wizard-multikey-status", label: "i18n:feat.aiti-model-wizard-multikey-status", title: "i18n:feat.aiti-model-wizard-multikey-status.desc" }],
     // 模型选择器下拉底部动作区：「管理模型」入口（薄壳启动即注册，宿主 ModelSelector 全实例渲染）
-    modelSelectorFooter: [{ id: "aiti-model-wizard-manage", label: "管理模型", title: "模型选择器下拉底部「管理模型」入口——打开模型向导" }],
+    modelSelectorFooter: [{ id: "aiti-model-wizard-manage", label: "i18n:feat.aiti-model-wizard-manage", title: "i18n:feat.aiti-model-wizard-manage.desc" }],
   },
 
   // 功能管理（aiti-extman 详情面板逐项启停；core 持久化 features.json）

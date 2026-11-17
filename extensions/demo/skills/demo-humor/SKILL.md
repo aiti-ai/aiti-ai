@@ -1,8 +1,11 @@
 ---
 name: demo-humor
 title: AI 帮我玩 demo 幽默彩蛋
+title.en: "AI: play the demo humor easter egg"
 placeholder: 看一条随机幽默 / 切换彩蛋开关（如：给我来一条 demo 幽默）…
+placeholder.en: "Show a random humor line / toggle the easter egg (e.g. give me a demo humor line)…"
 summary: 读取/切换 demo 扩展自带的幽默语料彩蛋
+summary.en: "Read/switch the demo extension's built-in humor lines"
 ---
 
 # demo-humor · demo 幽默彩蛋

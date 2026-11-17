@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const {
-  ModelCatalogStore, createCatalogRefresher, parseOpenCodeModels, CATALOG_TTL_MS,
+  ModelCatalogStore, createCatalogRefresher, parseOpenCodeModels, CATALOG_TTL_MS, CATALOG_FAIL_TTL_MS,
 } = await import("./model-catalog.ts");
 
 function tmpStore() {
@@ -147,6 +147,63 @@ test("store：坏 JSON fail-soft 为空", async () => {
     const store2 = new ModelCatalogStore(dir);
     assert.equal(store2.get("x"), null);
     assert.ok(!store2.isFresh("x"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("store：负面缓存 markFail/probeSuppressed + TTL + put 成功清负面 + 落盘重载", () => {
+  const { store, dir } = tmpStore();
+  const t0 = Date.now();
+  try {
+    assert.ok(!store.probeSuppressed("gemini"), "无失败记录 = 不抑制");
+    store.markFail("gemini", { now: t0 });
+    assert.ok(store.probeSuppressed("gemini", { now: t0 + 1000 }));
+    assert.ok(!store.probeSuppressed("gemini", { now: t0 + CATALOG_FAIL_TTL_MS + 1 }), "FAIL TTL 外解除抑制");
+    // disk reload (simulated): negative records readable
+    const store2 = new ModelCatalogStore(dir);
+    assert.ok(store2.probeSuppressed("gemini", { now: t0 + 1000 }));
+    // a success entry write clears the negative record
+    store2.put("gemini", { models: [{ id: "g" }], source: "acp", fetchedAt: t0 + 2000 });
+    assert.ok(!store2.probeSuppressed("gemini"), "探测成功清负面缓存");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("refresher：探测失败进负面缓存 —— 自动 refresh 被抑制、refreshForce 不受限、成功后恢复自动", async () => {
+  const { store, dir } = tmpStore();
+  let probeCalls = 0;
+  try {
+    const makeRefresher = () => createCatalogRefresher(store, () => [{
+      name: "gemini",
+      probeAcp: async () => {
+        probeCalls++;
+        if (probeCalls <= 2) return null; // first two attempts fail (unauthenticated)
+        return { models: [{ id: "g-x" }], source: "acp", fetchedAt: Date.now() }; // succeeds afterwards
+      },
+    }]);
+    const refresher = makeRefresher();
+    await refresher.refresh("gemini");
+    assert.equal(probeCalls, 1);
+    assert.equal(store.get("gemini"), null, "失败不产生目录条目");
+    assert.ok(store.probeSuppressed("gemini"), "失败即负面缓存");
+    // within the negative-cache window, automatic refresh no longer calls probe
+    await Promise.all(Array.from({ length: 3 }, () => refresher.refresh("gemini")));
+    assert.equal(probeCalls, 1, "FAIL TTL 内自动重试被抑制");
+    // refreshAll skips negative-cached entries too
+    await refresher.refreshAll();
+    assert.equal(probeCalls, 1, "refreshAll 跳过负面缓存期条目");
+    // manual force refresh is exempt (second attempt → fails again, refreshes the negative timestamp)
+    const entry = await refresher.refreshForce("gemini");
+    assert.equal(probeCalls, 2);
+    assert.equal(entry, null);
+    assert.ok(store.probeSuppressed("gemini"));
+    // third attempt (force) succeeds → cache stored + negative cleared → automatic refresh regains its trigger
+    const ok = await refresher.refreshForce("gemini");
+    assert.equal(probeCalls, 3);
+    assert.equal(ok?.models[0].id, "g-x");
+    assert.ok(!store.probeSuppressed("gemini"), "成功清负面");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

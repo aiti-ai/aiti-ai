@@ -1,7 +1,9 @@
 ---
 name: acp-agent-diagnose
 title: AI 帮我排查 ACP agent 没注册上
+title.en: "AI: diagnose an ACP agent not registering"
 placeholder: 描述现象（如：装了 gemini 但新会话 Backend 里没有它）…
+placeholder.en: "Describe the symptom (e.g. gemini is installed but missing from the new-session Backend list)…"
 ---
 
 # acp-agent-diagnose · 排查 ACP 后端未注册
