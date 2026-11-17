@@ -5,8 +5,8 @@ import test from "node:test";
 const source = await readFile(new URL("./useAgentSession.ts", import.meta.url), "utf8");
 
 test("new-session startup sends only explicit browser overrides", () => {
-  // 合并注：v0.17 把新会话的 model/thinking 采纳逻辑抽成 applyNewSessionStartState
-  // （ensureNewSession 调用它），切片改为覆盖该 helper 全体。
+  // Upstream 0.17 extracts the new-session model/thinking adoption into
+  // applyNewSessionStartState (called by ensureNewSession); the slice covers the helper.
   const ensureSource = source.slice(
     source.indexOf("const applyNewSessionStartState"),
     source.indexOf("const loadSlashCommands"),
@@ -19,7 +19,7 @@ test("new-session startup sends only explicit browser overrides", () => {
 });
 
 test("new-session startup adopts server state only while explicit overrides are unchanged", () => {
-  // 合并注：v0.17 把 model/thinking 采纳逻辑抽成 applyNewSessionStartState，切片覆盖该 helper。
+  // Upstream 0.17 extracts the adoption logic into applyNewSessionStartState; slice covers it.
   const ensureSource = source.slice(
     source.indexOf("const applyNewSessionStartState"),
     source.indexOf("const loadSlashCommands"),
