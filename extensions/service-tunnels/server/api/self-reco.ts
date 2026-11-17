@@ -91,6 +91,7 @@ interface RecoCandidate {
   mode?: string;
   auth?: string;
   tunnel?: string | null;
+  tunnelOptions?: string[];
   url?: string | null;
   https?: boolean;
   badges?: string[];
@@ -146,7 +147,10 @@ export async function handleSelfRecoApi(
     });
   }
 
-  // ② tunnel —— 隧道工具在本机可用（次选，标注代价）
+  // ② tunnel —— a tunnel tool exists on this machine (2nd choice, costs
+  //  labeled). tunnelOptions lists every usable tool (trycloudflare.com is
+  //  occasionally unreachable → user can switch to ngrok/frpc); the tunnel
+  //  field remains the default recommendation (cloudflared first).
   const tools = tunnelTools(helpers?.toolStatus?.());
   if (tools.available) {
     const existing = liveChannels.find((u) => u.tunnel);
@@ -156,6 +160,7 @@ export async function handleSelfRecoApi(
       mode: "tunnel",
       auth: "portal",
       tunnel: tools.names.includes("cloudflared") ? "cloudflared" : tools.names[0],
+      tunnelOptions: tools.names,
       url: existing?.url ?? null,
       https: existing?.url?.startsWith("https://") === true,
       badges: ["password-only", "any-network", "third-party", "url-changes", "rate-limit"],
