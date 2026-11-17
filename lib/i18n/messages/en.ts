@@ -62,6 +62,8 @@ export const enLocale: LocalePlugin = {
     "settings.monoFontPlaceholder": "Default: Noto Sans Mono",
     "settings.resetUiFont": "Reset interface font",
     "settings.resetMonoFont": "Reset monospace font",
+    "settings.panelUiScale": "Panel UI scale",
+    "settings.resetPanelUiScale": "Reset panel UI scale",
     "settings.fontDescription": "Names of fonts installed on this device, comma-separated; leave blank for the default. The monospace font is used for code and the terminal. Saved in this browser only.",
     "settings.uiFontWeight": "Interface font weight",
     "settings.monoFontWeight": "Monospace font weight",

@@ -62,6 +62,8 @@ export const zhCNLocale: LocalePlugin = {
     "settings.monoFontPlaceholder": "默认 Noto Sans Mono",
     "settings.resetUiFont": "重置界面字体",
     "settings.resetMonoFont": "重置等宽字体",
+    "settings.panelUiScale": "面板界面缩放",
+    "settings.resetPanelUiScale": "重置面板界面缩放",
     "settings.fontDescription": "填写本机已安装的字体名，多个用逗号分隔，留空使用默认。等宽字体用于代码和终端。仅保存在当前浏览器。",
     "settings.uiFontWeight": "界面字体字重",
     "settings.monoFontWeight": "等宽字体字重",
