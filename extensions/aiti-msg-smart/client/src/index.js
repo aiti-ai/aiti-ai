@@ -6,7 +6,12 @@
  *   - question 区：每段 → 选项按钮（是/否/A/B/好，X，accent 高亮）或引用回复兜底（摘要）；
  *     多段/首段带选项时追加整段兜底引用
  *   - file 区：提取段落内路径（相对路径拼 cwd）→ /api/files 存在性校验 → 打开/定位两按钮
+ *   - top row: external msg-popover-top-action providers rendered after the new-session button
+ *     contract: registerTopicItem("msg-popover-top-action", { id, label, title?, onClick(text, cwd) })
  *   - provider 区：外部 msg-popover-action 主题 provider（aiti-cmd 命令识别等）
+ *   - file section: external msg-file-action topic providers (e.g. aiti-msg-share)
+ *     contract: registerTopicItem("msg-file-action", { id, label, match(abs, isDir), onClick(abs, isDir) }) —
+ *     the file card renders one button per matching item; providers own their gating.
  *   - 复制全文：长段落附加动作
  * 异步（file 校验 / provider 识别）到达后重渲染同一卡片。
  * 「同一时刻只开一个」模块级 state（切段先关旧段、同段再点=关闭 toggle）。
@@ -49,6 +54,7 @@ function typeIcon(type) {
   const p = type === "quote" ? ["M7.9 20A9 9 0 1 0 4 16.1L2 22Z"]
     : type === "file" ? ["M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z", "M14 2v4a2 2 0 0 0 2 2h4", "M10 9H8", "M16 13H8", "M16 17H8"]
     : type === "command" ? ["M4 17l6-6-6-6", "M12 19h8"]
+    : type === "share" ? ["M18 8a3 3 0 1 0-3-3", "M6 15a3 3 0 1 0 3 3", "M18 16a3 3 0 1 0 3-3", "M8.6 13.5l6.8-4", "M8.6 10.5l6.8 4"]
     : type === "url" ? ["M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71", "M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"] : null;
   if (!p) return null;
   const el = h("svg", { width: 12, height: 12, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true }, p.map((d, i) => h("path", { key: i, d })));
@@ -82,6 +88,7 @@ export default function register(ctx) {
     return typeof v === "string" && v !== k ? v : "";
   };
   const T = {
+    quote: tr("it.quote.label") || "引用",
     quoteReply: tr("chat.quoteReply") || "引用回复",
     quoteFull: tr("chat.quoteFull") || "引用全文",
     quoteLine: tr("chat.quoteLine") || "引用单句",
@@ -90,6 +97,19 @@ export default function register(ctx) {
     openFolder: tr("files.openFolder") || "打开文件夹", // 右侧 FolderViewer（display-only，不影响 cwd）
     copy: tr("chat.copy") || "复制",
     copied: tr("chat.copied") || "已复制",
+    share: tr("chat.share") || "分享",
+    newSession: tr("chat.newSession") || "新会话",
+    newSessionTip: tr("chat.newSessionTip") || "把该内容引用到新建会话的输入框（15 秒内有效）",
+    openUrl: tr("chat.openUrl") || "新窗口打开",
+    quoteMsgTip: tr("chat.quoteMsgTip") || "把这条消息引用到输入框",
+    copyThought: tr("chat.copyThought") || "复制该行思考",
+    copyCode: tr("chat.copyCode") || "复制该行代码",
+    copySelection: tr("chat.copySelection") || "复制选中片段",
+    copyPara: tr("chat.copyPara") || "复制整段文本",
+    quoteThought: tr("chat.quoteThought") || "把该行思考引用到输入框",
+    quoteCode: tr("chat.quoteCode") || "把该行引用到输入框",
+    quoteSelection: tr("chat.quoteSelection") || "把选中片段引用到当前会话输入框",
+    quotePara: tr("chat.quotePara") || "把整段引用到输入框",
   };
 
   /**
@@ -389,17 +409,29 @@ export default function register(ctx) {
     //    （通道收口 _shared/openNewSession，见 docs/pi-web-at-new-session-cwd-plan.md §4.5）
     nodes.push(h("span", { key: "top-actions", style: { display: "flex", flexWrap: "wrap", gap: 4 } },
       h("button", {
-        key: "copy-full", type: "button", title: view.isThought ? "复制该行思考" : view.isCode ? "复制该行代码" : view.isSelection ? "复制选中片段" : "复制整段文本", style: abStyle,
+        key: "copy-full", type: "button", title: view.isThought ? T.copyThought : view.isCode ? T.copyCode : view.isSelection ? T.copySelection : T.copyPara, style: abStyle,
         onClick: (e) => { e.stopPropagation(); try { navigator.clipboard.writeText(view.fullText); } catch (err) {} view.close(); },
-      }, "复制"),
+      }, T.copy),
       h("button", {
-        key: "quote-full", type: "button", title: view.isThought ? "把该行思考引用到输入框" : view.isCode ? "把该行引用到输入框" : view.isSelection ? "把选中片段引用到当前会话输入框" : "把整段引用到输入框", style: abStyle,
+        key: "quote-full", type: "button", title: view.isThought ? T.quoteThought : view.isCode ? T.quoteCode : view.isSelection ? T.quoteSelection : T.quotePara, style: abStyle,
         onClick: (e) => { e.stopPropagation(); view.onPick(formatQuote(view.fullText)); },
-      }, "引用"),
+      }, T.quote),
       view.onNewSession && h("button", {
-        key: "quote-new-session", type: "button", title: "把该内容引用到新建会话的输入框（15 秒内有效）", style: abStyle,
+        key: "quote-new-session", type: "button", title: T.newSessionTip, style: abStyle,
         onClick: (e) => { e.stopPropagation(); view.onNewSession(formatQuote(view.fullText)); },
-      }, "新会话"),
+      }, T.newSession),
+      // ── Top-row extension point: actions rendered right after new-session in the
+      // first row (e.g. share). Contract: registerTopicItem("msg-popover-top-action",
+      // { id, label, title?, onClick(text, cwd) }). Providers own their gating.
+      ...(() => {
+        try {
+          const items = typeof ctx.getTopicItems === "function" ? ctx.getTopicItems("msg-popover-top-action") : [];
+          return items.map((a) => h("button", {
+            key: "top-" + a.id, type: "button", title: a.title || a.label, style: abStyle,
+            onClick: (e) => { e.stopPropagation(); a.onClick(view.fullText, info.cwd); view.close(); },
+          }, a.label));
+        } catch { return []; }
+      })(),
     ));
 
     // ── question 区（紧跟复制/引用）：每段一行（选项或引用单句摘要）
@@ -410,11 +442,22 @@ export default function register(ctx) {
       nodes.push(h(SegmentRow, { key: "seg" + i, segment: seg, onPick: view.onPick, T, view }));
     }
 
-    // ── file 区（校验通过才显示；打开 + 定位两按钮）
+    // ── file section (shown after path validation): open / reveal + external actions
     if (view.paths.length) {
+      // External file actions via topic extension point (msg-file-action).
+      // Providers register at client boot; read synchronously at interaction time.
+      const fileActions = typeof ctx.getTopicItems === "function"
+        ? ctx.getTopicItems("msg-file-action") : [];
       nodes.push(h("span", { key: "files", style: { display: "flex", flexWrap: "wrap", gap: 4 } },
         ...view.paths.map(({ path: abs, isDir }) =>
           h("span", { key: abs, style: { display: "inline-flex", flexWrap: "wrap", gap: 4 } },
+            ...fileActions.filter((a) => {
+              try { return !a.match || a.match(abs, isDir); } catch { return false; }
+            }).map((a) => h("button", {
+              key: "topic-" + (a.id || a.label), type: "button",
+              onClick: (e) => { e.stopPropagation(); a.onClick(abs, isDir); view.close(); },
+              title: a.title || a.label, style: abStyle,
+            }, a.type ? typeIcon(a.type) : null, `${a.label}: ${abs.split("/").pop()}`)),
             !isDir && h("button", {
               key: "open", type: "button",
               onClick: (e) => { e.stopPropagation(); ctx.openFile(abs, abs.split("/").pop() ?? abs); view.close(); },
@@ -830,8 +873,15 @@ export default function register(ctx) {
       };
       view.onCardEnter = clearDismiss; // hover 卡片期间暂停计时
       view.onCardLeave = () => { if (!view.closed) armDismiss(); }; // 离开后重新计时
+      // Same-gesture closing click: the selection path opens the card on mouseup, and the
+      // browser fires one more click right after (target = drag start/end common ancestor,
+      // e.g. ul/ol for a cross-item selection — NOT in the leaf-block whitelist below),
+      // which would close the card the instant it opens. Paragraph path is unaffected by
+      // this window (its click target is always in the whitelist); it just doubles the guard.
+      const openedAt = Date.now();
       // 点弹层与锚点段落以外的区域 → 关闭（段落间切换/toggle 由上方 ph 主逻辑统一处理，这里不抢）
       outsideHandler = (e2) => {
+        if (Date.now() - openedAt < 200) return; // same-gesture click right after mouseup-open
         let t2 = e2.target;
         if (t2 && t2.nodeType === 3) t2 = t2.parentElement;
         if (t2 && t2.closest && t2.closest("[data-msg-smart-card]")) return;
@@ -938,7 +988,7 @@ export default function register(ctx) {
         for (const url of extractUrls(text).slice(0, 2)) {
           view.extraActions.push({
             id: "url:" + url, type: "url", label: url.length > maxUrl ? url.slice(0, maxUrl) + "…" : url,
-            title: "新窗口打开: " + url, // 完整 URL 随 hover 可见（label 截断时不丢信息）
+            title: T.openUrl + ": " + url, // full URL stays visible on hover (label may truncate)
             onClick: () => { try { window.open(url, "_blank", "noopener"); } catch (e) {} },
           });
         }
@@ -983,12 +1033,64 @@ export default function register(ctx) {
     try {
       ctx.registerExtService?.("aiti-msg-smart.popover", {
         version: 1,
-        open: (info) => { if (info) ph(info); },
+        open: (info) => {
+          if (!info) return;
+          // Selection info: route to the selection card engine (fixed layer pinned under
+          // the selection, scroll-follow) instead of the paragraph click path.
+          //   - range: same-origin container (e.g. aiti-editor markdown preview) — card
+          //     renders in that document (callers pass their own doc/win);
+          //   - rect (+frame): cross-origin container (opaque-origin HTML preview) — no Range
+          //     access, card renders in the top document, coordinates translated per frame.
+          if (info.isSelection && (info.range || info.rect)) { openSelectionCard(info.text, info.range || null, info.element, info); return; }
+          ph(info);
+        },
         // 迷你 React 元素树 → DOM（供外部容器的 setInline 使用；按 rcx.doc 创建节点）
         toDom: (node) => elToDom(node),
         close: () => {
           if (state.opening) { try { state.opening.close(); } catch (e) {} state.opening = null; }
           clearFloat();
+        },
+      });
+    } catch (e) {}
+
+    // ── 划选容器注册（aiti-editor 预览 iframe 等同源容器）：标准做法（CSS-Tricks Selection API /
+    //    Medium 式弹层同款）——事件探测/选区读取/弹层渲染全部发生在选区所在文档，
+    //    无 postMessage 转发、无跨文档异步取选区。register({ doc, win, meta })：在容器 doc 上
+    //    挂 pointerup（capture），划选发生时 meta(range, rootEl) 现场取元数据
+    //    （cwd/decorateQuote/caps/...）；unregister({ doc })：摘监听（容器销毁前调用）。
+    const selContainers = new Map();
+    try {
+      ctx.registerExtService?.("aiti-msg-smart.selection-container", {
+        version: 1,
+        register: (info) => {
+          if (!info || !info.doc || !info.win || selContainers.has(info.doc)) return;
+          if (!featureEnabled("recognizer.selection")) return;
+          const handler = (e) => {
+            if (e.pointerType === "mouse" && e.button !== 0) return;
+            let pt = e.target;
+            if (pt && pt.nodeType === 3) pt = pt.parentElement;
+            if (pt && pt.closest && pt.closest("[data-msg-smart-card]")) return; // 点弹层自身 ≠ 新划选
+            const sel = info.win.getSelection();
+            if (!sel || sel.isCollapsed || sel.rangeCount === 0 || !sel.toString().trim()) return;
+            const range = sel.getRangeAt(0);
+            const node = range.commonAncestorContainer;
+            const rootEl = node.nodeType === 3 ? node.parentElement : node;
+            let meta = {};
+            try { meta = typeof info.meta === "function" ? (info.meta(range, rootEl) || {}) : {}; } catch (err) { meta = {}; }
+            const text = sel.toString().replace(/\u00a0/g, " ").trim();
+            if (!text) return;
+            openSelectionCard(text, range, rootEl, { doc: info.doc, win: info.win, ...meta });
+          };
+          info.doc.addEventListener("pointerup", handler, true);
+          selContainers.set(info.doc, { win: info.win, handler });
+        },
+        unregister: (info) => {
+          const rec = info && selContainers.get(info.doc);
+          if (!rec) return;
+          try { info.doc.removeEventListener("pointerup", rec.handler, true); } catch (e) {}
+          selContainers.delete(info.doc);
+          // 容器销毁（srcdoc 重建）：若当前划选弹层属于它（layer 挂在该文档里），一并收掉
+          if (selectionState.win === rec.win) closeSelectionCard();
         },
       });
     } catch (e) {}
@@ -999,28 +1101,49 @@ export default function register(ctx) {
   //    与段落点击路径互斥（守卫见上）；纯点击不受影响。
   //    「新会话引用」投递：收口 _shared/openNewSession（pendingComposer + pi-web:new-session
   //    一步到位；core ChatInput 消费 15s 时效防陈文、光标落在末尾）——本扩展不再手写通道。
-  const selectionState = { layer: null, range: null, pid: null, scrollHandler: null };
+  // win: the window the card lives in (top-level chat = window; external containers such as the
+  // aiti-editor preview iframe = that iframe's win) — scroll/resize followers and viewport
+  // clamping all use it (a range's rects are relative to its own document's viewport).
+  // rect/frame: cross-origin container mode (opaque origin iframe, Range unreachable) — rect is
+  // container-viewport coords, frame is the parent-side iframe element; coordinates are translated
+  // to the parent viewport and the card renders in the parent document.
+  const selectionState = { layer: null, range: null, pid: null, scrollHandler: null, win: null, rect: null, frame: null };
+  function selWin() { return selectionState.win || window; }
   function closeSelectionCard() {
-    if (selectionState.scrollHandler) { window.removeEventListener("scroll", selectionState.scrollHandler, true); window.removeEventListener("resize", selectionState.scrollHandler); selectionState.scrollHandler = null; }
+    if (selectionState.scrollHandler) { const w = selWin(); w.removeEventListener("scroll", selectionState.scrollHandler, true); w.removeEventListener("resize", selectionState.scrollHandler); selectionState.scrollHandler = null; }
     if (selectionState.layer) { selectionState.layer.remove(); selectionState.layer = null; }
     selectionState.range = null;
     selectionState.pid = null;
+    selectionState.win = null;
+    selectionState.rect = null;
+    selectionState.frame = null;
   }
   function positionSelectionCard() {
     const { layer, range } = selectionState;
-    if (!layer || !range) return;
+    if (!layer) return;
     let rect;
-    try { rect = range.getBoundingClientRect(); } catch (e) { closeSelectionCard(); return; }
-    // 选区所在 DOM 已被卸载（virtualized 滚动回收等）→ rect 塔化，直接收摊
-    if (!rect || (!rect.width && !rect.height)) { closeSelectionCard(); return; }
-    const vw = window.innerWidth;
+    if (range) {
+      try { rect = range.getBoundingClientRect(); } catch (e) { closeSelectionCard(); return; }
+      // Selection DOM unmounted (virtualized scroll recycle etc.) → collapsed rect, tear down
+      if (!rect || (!rect.width && !rect.height)) { closeSelectionCard(); return; }
+    } else if (selectionState.rect) {
+      // Cross-origin mode: container coords + the container's live parent-page position → parent
+      // viewport coords (recomputed on parent scroll via the follow listener)
+      const r = selectionState.rect;
+      const fr = selectionState.frame;
+      if (fr && !fr.isConnected) { closeSelectionCard(); return; }
+      const off = fr ? fr.getBoundingClientRect() : { top: 0, left: 0 };
+      rect = { top: off.top + r.top, bottom: off.top + r.bottom, left: off.left + r.left, width: r.width, height: r.height };
+    } else return;
+    const w = selWin();
+    const vw = w.innerWidth;
     // 卡宽按实测（预算放宽后可远超旧估宽 260）；首挂载未入 DOM 时 firstChild 为空 → 兑底 260
     const card = layer.firstChild;
     const cardW = (card && card.offsetWidth) || 260;
     // 中心对齐选区中心；右溢出按实测卡宽钳进视口
     const left = Math.max(8, Math.min(rect.left + rect.width / 2 - cardW / 2, vw - 8 - cardW));
     let top = rect.bottom + 8;
-    if (top > window.innerHeight - 130) top = Math.max(8, rect.top - 118); // 底部放不下 → 选区上方
+    if (top > w.innerHeight - 130) top = Math.max(8, rect.top - 118); // 底部放不下 → 选区上方
     layer.style.top = `${top}px`;
     layer.style.left = `${left}px`;
   }
@@ -1031,12 +1154,23 @@ export default function register(ctx) {
   //  - setInline：自管 fixed layer 钉选区下方（renderCard 判非行级元素走 in-flow
   //    setInline 正好落在这里；滚动跟随由 scrollHandler → positionSelectionCard）；
   //  - close：closeSelectionCard（layer 生命周期随弹层，ph 的 view.close 统一触发）。
-  function openSelectionCard(text, range, msgEl) {
-    setRcx(null); // 划选弹层恒在顶层文档（rcx 可能指向上一次 framed 弹层的 iframe）
+  // ext：外部容器划选（aiti-editor 预览 iframe 等）——doc/win 指向容器文档（弹层渲染进该文档，
+  // range rect 与视口钳制同源自洽）；decorateQuote/caps/cwd/messageRole/sessionId 白名单并入 info。
+  // 缺省 = 顶层聊天路径（行为零变化）。
+  function openSelectionCard(text, range, msgEl, ext) {
+    setRcx(ext ? { doc: ext.doc, win: ext.win } : null); // 顶层路径恒回落顶层（rcx 可能残指上一次 framed 弹层）
     // 弹层同时只开一个：先关现有三类弹层（段落/pre/行内 code/旧选中）
     if (state.opening) { try { state.opening.close(); } catch (e) {} state.opening = null; clearFloat(); }
     if (inlineCodeState.opening) { try { inlineCodeState.opening.close?.(); } catch (e) {} inlineCodeState.opening = null; }
     closeSelectionCard();
+    selectionState.win = rcx.win || window;
+    if (ext && ext.rect) { selectionState.rect = ext.rect; selectionState.frame = ext.frame || null; }
+    // scroll/resize follow (positionSelectionCard previously had no listener attached — any
+    // scroll un-anchored the card; fixed here)
+    const follow = () => positionSelectionCard();
+    selectionState.scrollHandler = follow;
+    selectionState.win.addEventListener("scroll", follow, true);
+    selectionState.win.addEventListener("resize", follow);
 
     const layer = (rcx.doc || document).createElement("div");
     layer.style.position = "fixed";
@@ -1045,18 +1179,22 @@ export default function register(ctx) {
     layer.style.pointerEvents = "none";
     (rcx.doc || document).body.appendChild(layer);
     selectionState.layer = layer;
-    selectionState.range = range.cloneRange();
+    selectionState.range = range ? range.cloneRange() : null; // rect mode (cross-origin) has no Range
     selectionState.pid = "selection:" + (++lineClickSeq);
 
     const info = {
       text,
-      cwd: (typeof window !== "undefined" && window.__piWebCwd) || undefined,
+      cwd: (ext && ext.cwd) || (typeof window !== "undefined" && window.__piWebCwd) || undefined,
       element: msgEl,
       rowIndex: null,
       paragraphId: selectionState.pid,
       isSelection: true,
-      messageRole: msgEl && msgEl.dataset ? (msgEl.dataset.chatMsgRole || undefined) : undefined,
-      sessionId: undefined,
+      // 外部容器可自带 messageRole（顶层路径从消息容器 dataset 读）；decorateQuote/caps 同理并入
+      messageRole: ext && ext.messageRole ? ext.messageRole
+        : msgEl && msgEl.dataset ? (msgEl.dataset.chatMsgRole || undefined) : undefined,
+      sessionId: ext && ext.sessionId ? ext.sessionId : undefined,
+      ...(ext && ext.decorateQuote ? { decorateQuote: ext.decorateQuote } : null),
+      ...(ext && ext.caps ? { caps: ext.caps } : null),
       setInline: (node) => {
         if (!selectionState.layer) return; // 弹层已被收掉（异步识别晚到/选区失效）——不复活
         layer.innerHTML = "";
@@ -1072,7 +1210,11 @@ export default function register(ctx) {
   if (featureEnabled("recognizer.selection")) {
     document.addEventListener("pointerup", (e) => {
       if (e.pointerType === "mouse" && e.button !== 0) return;
-      if (!selectionNonCollapsed()) return;
+      // Explicit top window: rcx may still point at a framed popover's iframe —
+      // reading that window's selection would pass the guard (iframe selection still
+      // non-collapsed) and then crash on the top window's empty selection below
+      // (getRangeAt(0) with rangeCount=0 → IndexSizeError, listener dead → no card).
+      if (!selectionNonCollapsed(window)) return;
       // 点在弹层自身（复制/引用/新会话按钮等）≠ 新划选：卡片 onMouseDown preventDefault
       // 保住了选区（selectionNonCollapsed 仍 true），不排除会重走 openSelectionCard →
       // 旧 layer 被 remove 重建 → click 目标 detach，按钮点了无效（划选弹层按钮失效根因）
@@ -1080,11 +1222,16 @@ export default function register(ctx) {
       if (pt && pt.nodeType === 3) pt = pt.parentElement;
       if (pt && pt.closest && pt.closest("[data-msg-smart-card]")) return;
       const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) return; // guard before getRangeAt (belt & braces)
       const range = sel.getRangeAt(0);
-      // 选区须落在消息内容块（core ChatWindow 消息容器的 data-chat-msg-role 标记）内
+      // Selection must land inside a selection-aware container: a chat message
+      // block (core ChatWindow data-chat-msg-role marker) or the FileViewer
+      // markdown preview (.markdown-file-preview, rendered in the top document,
+      // not an iframe) — file previews were previously excluded, so selecting
+      // text there never opened the card.
       const node = range.commonAncestorContainer;
       const rootEl = node.nodeType === 3 ? node.parentElement : node;
-      const msgEl = rootEl && rootEl.closest && rootEl.closest("[data-chat-msg-role]");
+      const msgEl = rootEl && rootEl.closest && rootEl.closest("[data-chat-msg-role], .markdown-file-preview");
       if (!msgEl) return;
       const text = sel.toString().replace(/\u00a0/g, " ").trim();
       if (!text) return;
@@ -1097,7 +1244,7 @@ export default function register(ctx) {
     const text = props.text ?? "";
     if (!text.trim()) return null;
     return h("button", {
-      title: "把这条消息引用到输入框",
+      title: T.quoteMsgTip,
       onClick: () => { try { ctx.appendText(formatQuote(text)); } catch (e) {} },
       style: {
         display: "flex", alignItems: "center", gap: 4,
@@ -1109,7 +1256,7 @@ export default function register(ctx) {
       },
       onMouseEnter: (e) => { e.currentTarget.style.color = "var(--accent)"; },
       onMouseLeave: (e) => { e.currentTarget.style.color = "var(--text-dim)"; },
-    }, h("span", { key: "icon", style: { display: "inline-flex" } }, typeIcon("quote")), " 引用");
+    }, h("span", { key: "icon", style: { display: "inline-flex" } }, typeIcon("quote")), " " + T.quote);
   }
   try { ctx.registerItems("userMessageActions", [{ id: "aiti-msg-smart-quote", render: UserQuoteFull, meta: { label: "i18n:it.quote.label" } }]); } catch (e) {}
 
