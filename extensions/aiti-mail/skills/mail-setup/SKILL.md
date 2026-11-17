@@ -1,7 +1,9 @@
 ---
 name: mail-setup
 title: 邮件 · 配置 SMTP / 帮我发邮件 / 查发送记录
+title.en: "Mail · configure SMTP / send mail / view send log"
 placeholder: 例：帮我配 QQ 邮箱 SMTP 并发测试邮件到 me@example.com…
+placeholder.en: "e.g. configure QQ mail SMTP and send a test mail to me@example.com…"
 outputs:
   format: json-obj
   schema:
