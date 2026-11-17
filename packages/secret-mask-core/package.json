@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/secret-mask-core",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Host-agnostic secret redaction engine: deterministic credential detection rules (regex + checksums + entropy + false-positive guards), the [REDACTED:*] placeholder registry with stable per-session hashing, deep redact/restore traversal, final-payload leak auditing, and the /secret command logic. Shared by @aiti-ai/pi-secret-mask (pi) and @aiti-ai/dsh-secret-mask (DeepSeek Harness); any TS/JS agent can adapt it by mapping its message shapes to text spans.",
   "keywords": [
     "secrets",
