@@ -176,6 +176,7 @@ test("降级层：⇱ 菜单 DOM 构建与交互（float 缺席）", async (t) =
     constructor(type, opts) { this.type = type; if (opts && opts.detail !== undefined) this.detail = opts.detail; }
   };
   globalThis.localStorage = dom.window.localStorage;
+  globalThis.localStorage.setItem("pi-locale", "zh-CN"); // header/menu word table picks by locale; this block asserts zh labels
   // 注意：不删全局桩——菜单打开会注册 dismiss setTimeout(0)，若测试同步结束后桩被删，
   // 定时器回调将 ReferenceError 并把整个测试文件标记失败（node --test 文件级失败）。
   t.after(() => rmSync(dir, { recursive: true, force: true }));
