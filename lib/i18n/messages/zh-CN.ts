@@ -53,6 +53,8 @@ export const zhCNLocale: LocalePlugin = {
     "settings.appearance": "外观",
     "settings.chatContentWidth": "聊天内容宽度",
     "settings.chatContentFontSize": "聊天和终端字体大小",
+    "settings.panelUiScale": "面板界面缩放",
+    "settings.resetPanelUiScale": "重置面板界面缩放",
     "settings.typography": "字体与排版",
     "settings.uiFontFamily": "界面字体",
     "settings.monoFontFamily": "等宽字体",

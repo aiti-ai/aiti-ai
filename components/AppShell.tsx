@@ -119,6 +119,7 @@ import { TerminalPanel } from "./TerminalPanel";
 import { newTerminalTab, restoreTerminalTabs, TERMINAL_TABS_KEY, type TerminalTab } from "./terminal-tab-state";
 import { appendSideTab, restoreSideTabs, sideTabsKey } from "./side-tab-state";
 import { useTheme } from "@/hooks/useTheme";
+import { usePanelScale } from "@/hooks/usePanelScale";
 import { useFontPreferences } from "@/hooks/useFontPreferences";
 import { THEME_OPTIONS } from "@/lib/theme";
 import { ThemeIcon } from "./ThemeIcon";
@@ -412,6 +413,8 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   const { locale, setLocale, t: translate, supportedLocales } = useI18n();
   // Restore fonts even when Settings and the chat composer have not been opened.
   useFontPreferences();
+  // Restore the panel UI scale (--pi-panel-zoom) the same way.
+  usePanelScale();
   const isMobile = useIsMobile();
   const isCompact = useIsCompact();
   // Icon buttons are uniformly 36px wide (matching extension buttons); icon size is
@@ -4722,6 +4725,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
           display: "flex",
           flexDirection: "column",
           flexShrink: 0,
+          zoom: "var(--pi-panel-zoom, 1)",
           paddingTop: "env(safe-area-inset-top)",
           paddingBottom: "env(safe-area-inset-bottom)",
           zIndex: 200,
@@ -5992,7 +5996,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
             .filter((t) => t.kind !== "terminal" && t.kind !== "agent" && t.kind !== "side")
             .filter((t) => t.id === activeFileTabId || panelKeepAlive.includes(t.id))
             .map((tab) => (
-              <div key={`${fileWorkspaceGeneration}:${tab.id}`} hidden={tab.id !== activeFileTabId} style={{ width: "100%", height: "100%" }}>
+              <div key={`${fileWorkspaceGeneration}:${tab.id}`} hidden={tab.id !== activeFileTabId} style={{ width: "100%", height: "100%", zoom: "var(--pi-panel-zoom, 1)" }}>
                 <TabBody tab={tab} host="panel" ctx={tabBodyCtx} />
               </div>
             ))}
