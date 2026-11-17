@@ -44,8 +44,5 @@
     "access": "public"
   },
   "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
-  "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-ai/issues"
-  },
   "contentHash": "56969a379a7bfa68"
 }
