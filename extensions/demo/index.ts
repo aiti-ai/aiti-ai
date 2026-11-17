@@ -233,7 +233,7 @@ const DEMO_MANIFEST = {
     chatInputTop: [{ id: "check", label: "🧪" }],
     // aiti-float dock v0.5.0 试点（dock 方案 §6）：右栏 tab 停靠 + 侧栏停靠区
     rightFileDock: [{ id: "dock-demo", label: "i18n:it.dock-demo.label" }],
-    sidebarExplorerDock: [{ id: "dock-demo", label: "🧩 停靠示例" }],
+    sidebarExplorerDock: [{ id: "dock-demo", label: "停靠示例", icon: "box" }],
     userMessageActions: [{ id: "demo-pin", label: "demo 标记", title: "demo：给消息打 demo 标记（本地演示，与收藏库无关）" }],
     // 新会话欢迎页小组件（渲染型；运行时注册在 client/src/entry.tsx，meta 携带尺寸/区域）
     newSessionWidgets: [{ id: "widget", label: "示例小组件" }],
@@ -243,6 +243,14 @@ const DEMO_MANIFEST = {
     // provides: ["session-delete"],
     i18n: {
       en: {
+        "it.open.label.2": "demo self-check",
+        "it.open.label.3": "demo self-check",
+        "it.star.label": "demo flag",
+        "it.banner.label": "demo banner test",
+        "it.open.label.4": "demo self-check",
+        "it.star.label.2": "demo flag",
+        "it.dock.title": "🧩 Dock demo",
+        "it.widget.title": "Sample widget",
         "it.open.label": "demo self-check",
         "it.dock-demo.label": "🧩 Dock demo",
         "it.page.label": "demo self-check page",
@@ -289,6 +297,14 @@ const DEMO_MANIFEST = {
         "jsx.state": "How it works",
       },
       "zh-CN": {
+        "it.open.label.2": "demo 自检",
+        "it.open.label.3": "demo 自检",
+        "it.star.label": "demo 标记",
+        "it.banner.label": "demo 横幅测试",
+        "it.open.label.4": "demo 自检",
+        "it.star.label.2": "demo 标记",
+        "it.dock.title": "🧩 停靠示例",
+        "it.widget.title": "示例小组件",
         "it.open.label": "demo 自检",
         "it.dock-demo.label": "🧩 停靠示例",
         "it.page.label": "demo 自检页面",
