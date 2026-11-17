@@ -51,8 +51,10 @@ function useManifestExts(): { exts: Array<Record<string, any>>; refresh: () => v
   return { exts, refresh: () => setNonce((n) => n + 1) };
 }
 
-/** 拼音索引（extman server /status 富化："全拼连写 首字母"）——搜索 hay 用；拉取失败静默降级（无拼音搜索）。
- *  跨扩展依赖：extman 的 ops API 同款先例（toggle 开关也走它）；extman 缺席时仅损拼音能力。 */
+/** Pinyin index (extman server /status enrichment: "full-pinyin concatenated + initials") — used as
+ *  search hay; silent degradation on fetch failure (no pinyin search).
+ *  Cross-extension dependency: same precedent as extman's ops API (the toggle switch uses it too);
+ *  without extman only pinyin capability is lost. */
 function usePinyinMap(): Record<string, string> {
   const [map, setMap] = useState<Record<string, string>>({});
   useEffect(() => {
@@ -69,7 +71,7 @@ function usePinyinMap(): Record<string, string> {
         }
         setMap(next);
       })
-      .catch(() => { /* extman 缺席/失败 → 无拼音，静默 */ });
+      .catch(() => { /* extman absent/failed → no pinyin, silent */ });
     return () => { alive = false; };
   }, []);
   return map;
