@@ -5184,6 +5184,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
                   loading={systemInfoLoading}
                   tools={systemTools}
                   translate={translate}
+                  onClose={() => setActiveTopPanel(null)}
                 />
               )}
               {activeTopPanel === "session" && (

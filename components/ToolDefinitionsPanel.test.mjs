@@ -19,6 +19,15 @@ test("keeps System and Tools in separate adjacent toolbar actions", () => {
   assert.doesNotMatch(panelSource, /tool-definitions-heading/);
 });
 
+test("header bar carries a title and a top-right close button (session-info parity)", () => {
+  assert.match(panelSource, /className="tool-definitions-header"/);
+  assert.match(panelSource, /className="tool-definitions-title"/);
+  assert.match(panelSource, /\{translate\("tools\.title"\)\}/);
+  assert.match(panelSource, /onClick=\{onClose\}/);
+  assert.match(panelSource, /translate\("i18n\.close"\)/);
+  assert.match(appShellSource, /<ToolDefinitionsPanel[\s\S]*?onClose=\{\(\) => setActiveTopPanel\(null\)\}/);
+});
+
 test("renders declared tool definitions in a selectable master-detail layout", () => {
   assert.match(panelSource, /tools\?\.filter\(\(tool\) => tool\.active && !tool\.declarationHidden\)/);
   assert.match(panelSource, /setSelectedToolName\(tool\.name\)/);
