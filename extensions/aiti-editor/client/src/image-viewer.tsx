@@ -7,6 +7,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import exifr from "exifr";
 import { formatSize, guessImageExt } from "./lib";
+import { t } from "./host-shim.ts";
 
 const MIN_SCALE = 0.02;
 const MAX_SCALE = 40;
@@ -26,22 +27,22 @@ function exifRows(e: Record<string, any>): [string, string][] {
   if (!e) return [];
   const rows: [string, string][] = [];
   const cam = [e.Make, e.Model].filter(Boolean).join(" ").trim();
-  if (cam) rows.push(["相机", cam]);
-  if (e.LensModel) rows.push(["镜头", String(e.LensModel)]);
+  if (cam) rows.push([t("相机"), cam]);
+  if (e.LensModel) rows.push([t("镜头"), String(e.LensModel)]);
   let dt = e.DateTimeOriginal || e.DateTimeDigitized || e.DateTime || e.CreateDate;
   if (dt) {
     try {
       const d = dt instanceof Date ? dt : new Date(dt);
       dt = isNaN(d.getTime()) ? String(dt) : d.toLocaleString("zh-CN", { hour12: false });
     } catch { dt = String(dt); }
-    rows.push(["拍摄时间", String(dt)]);
+    rows.push([t("拍摄时间"), String(dt)]);
   }
   const params: string[] = [];
   if (e.ISO) params.push("ISO " + e.ISO);
   if (e.FNumber) params.push("f/" + Number(e.FNumber).toFixed(1));
   if (e.ExposureTime) params.push(fmtShutter(e.ExposureTime));
   if (e.FocalLength) params.push(Number(e.FocalLength).toFixed(1).replace(/\.0$/, "") + "mm");
-  if (params.length) rows.push(["参数", params.join(" · ")]);
+  if (params.length) rows.push([t("参数"), params.join(" · ")]);
   if (typeof e.Latitude === "number" && typeof e.Longitude === "number"
       && isFinite(e.Latitude) && isFinite(e.Longitude)
       && (e.Latitude !== 0 || e.Longitude !== 0)) {
@@ -313,25 +314,25 @@ export function ImageViewer(props: {
   // 复制图片：当前帧绘制到 canvas → PNG blob → ClipboardItem（SVG/跨域污染/不支持时降级提示）
   const copyImage = () => {
     const img = imgRef.current;
-    const doFb = (t: string) => {
-      setCopyFb(t);
+    const doFb = (msg: string) => {
+      setCopyFb(msg);
       if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
       copyTimerRef.current = setTimeout(() => { copyTimerRef.current = null; setCopyFb(null); }, 1600);
     };
-    if (!img || !img.naturalWidth) { doFb("未加载"); return; }
+    if (!img || !img.naturalWidth) { doFb(t("未加载")); return; }
     try {
       const canvas = document.createElement("canvas");
       canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
       const c2d = canvas.getContext("2d");
-      if (!c2d) { doFb("复制失败"); return; }
+      if (!c2d) { doFb(t("复制失败")); return; }
       c2d.drawImage(img, 0, 0);
       canvas.toBlob((blob) => {
-        if (!blob || !(navigator.clipboard as any) || typeof (window as any).ClipboardItem === "undefined") { doFb("浏览器不支持"); return; }
+        if (!blob || !(navigator.clipboard as any) || typeof (window as any).ClipboardItem === "undefined") { doFb(t("浏览器不支持")); return; }
         navigator.clipboard.write([new (window as any).ClipboardItem({ "image/png": blob })])
-          .then(() => doFb("已复制"))
-          .catch(() => doFb("复制失败"));
+          .then(() => doFb(t("已复制")))
+          .catch(() => doFb(t("复制失败")));
       }, "image/png");
-    } catch { doFb("该格式无法复制"); }
+    } catch { doFb(t("该格式无法复制")); }
   };
   const onDoubleClick = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -391,7 +392,7 @@ export function ImageViewer(props: {
       )}
       {loadErr && (
         <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center",
-            color: "var(--danger, #f87171)", fontSize: 13 }}>图片加载失败</div>
+            color: "var(--danger, #f87171)", fontSize: 13 }}>{t("图片加载失败")}</div>
       )}
 
       {/* 底部工具条（小屏：maxWidth + 换行 + 安全区，缩放按钮不再被裁出屏幕） */}
@@ -403,24 +404,24 @@ export function ImageViewer(props: {
           cursor: "default", pointerEvents: "auto" }}
         onPointerDown={(e) => e.stopPropagation()} onPointerMove={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}
       >
-        {tbtn("−", "缩小（-）", () => zoomStep(1 / 1.25))}
-        <span title={"当前缩放 " + pct + "%\n点击回到 100%"}
+        {tbtn("−", t("缩小（-）"), () => zoomStep(1 / 1.25))}
+        <span title={t("当前缩放 {pct}%（点击回到 100%）", { pct })}
           onClick={() => zoomAt(1)}
           style={{ minWidth: 52, textAlign: "center", fontSize: 12, fontFamily: "var(--font-mono, ui-monospace, monospace)",
             color: uiFg, cursor: "pointer", padding: "3px 4px", borderRadius: 6,
             background: mode === "free" ? "transparent" : (isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.05)") }}>
-          {pct + "%" + (mode === "fit" ? " 适" : "")}
+          {pct + "%" + (mode === "fit" ? t(" 适") : "")}
         </span>
-        {tbtn("+", "放大（+）", () => zoomStep(1.25))}
+        {tbtn("+", t("放大（+）"), () => zoomStep(1.25))}
         <div style={{ width: 1, height: 16, background: uiBorder, margin: "0 4px" }} />
-        {tbtn("⛶", "适应窗口（0）", () => { setMode("fit"); setPos({ x: 0, y: 0 }); })}
-        {tbtn("1:1", "实际大小（1）", () => zoomAt(1))}
-        {tbtn("⟳", "旋转 90°（R）", () => setRot((r) => (r + 90) % 360))}
+        {tbtn("⛶", t("适应窗口（0）"), () => { setMode("fit"); setPos({ x: 0, y: 0 }); })}
+        {tbtn("1:1", t("实际大小（1）"), () => zoomAt(1))}
+        {tbtn("⟳", t("旋转 90°（R）"), () => setRot((r) => (r + 90) % 360))}
         <div style={{ width: 1, height: 16, background: uiBorder, margin: "0 4px" }} />
-        {tbtn(copyFb || "⧉", copyFb ? copyFb : "复制图片到剪贴板（PNG）", copyImage,
+        {tbtn(copyFb || "⧉", copyFb ? copyFb : t("复制图片到剪贴板（PNG）"), copyImage,
           copyFb ? { color: "var(--ok, #4ade80)", minWidth: 28, justifyContent: "center" } : undefined)}
         {downloadName ? (
-          <a href={src} download={downloadName} title="下载原图（保存到本地）" aria-label="下载原图"
+          <a href={src} download={downloadName} title={t("下载原图（保存到本地）")} aria-label={t("下载原图")}
             style={{ border: "none", background: "transparent", color: uiFg, cursor: "pointer", fontSize: 13,
               padding: "3px 7px", borderRadius: 6, lineHeight: 1, fontFamily: "inherit",
               display: "inline-flex", alignItems: "center", textDecoration: "none" }}
@@ -429,8 +430,8 @@ export function ImageViewer(props: {
           >⬇</a>
         ) : null}
         <div style={{ width: 1, height: 16, background: uiBorder, margin: "0 4px" }} />
-        {tbtn("ⓘ", "图片信息", () => setShowInfo((v) => !v), showInfo ? { background: isDark ? "rgba(255,255,255,0.14)" : "rgba(0,0,0,0.09)" } : undefined)}
-        {!isDataUrl ? tbtn("↗", "新窗口打开原图", () => window.open(src, "_blank")) : null}
+        {tbtn("ⓘ", t("图片信息"), () => setShowInfo((v) => !v), showInfo ? { background: isDark ? "rgba(255,255,255,0.14)" : "rgba(0,0,0,0.09)" } : undefined)}
+        {!isDataUrl ? tbtn("↗", t("新窗口打开原图"), () => window.open(src, "_blank")) : null}
       </div>
 
       {/* 信息面板 */}
@@ -461,8 +462,8 @@ export function ImageViewer(props: {
             return (
               <div style={{ marginTop: 6, paddingTop: 6, borderTop: `1px solid ${uiBorder}` }}>
                 <div style={{ fontWeight: 600, marginBottom: 2, fontSize: 11.5, opacity: 0.75 }}>EXIF</div>
-                {exifState === "loading" && <div style={{ opacity: 0.6, fontSize: 11.5 }}>解析中…</div>}
-                {exifState === "done" && rows.length === 0 && <div style={{ opacity: 0.6, fontSize: 11.5 }}>无 EXIF 信息</div>}
+                {exifState === "loading" && <div style={{ opacity: 0.6, fontSize: 11.5 }}>{t("解析中…")}</div>}
+                {exifState === "done" && rows.length === 0 && <div style={{ opacity: 0.6, fontSize: 11.5 }}>{t("无 EXIF 信息")}</div>}
                 {rows.map(([k, v]) => (
                   k === "GPS" ? (
                     <div key={k} style={{ display: "flex", gap: 10 }}>
@@ -482,7 +483,7 @@ export function ImageViewer(props: {
             );
           })()}
           <div style={{ marginTop: 6, paddingTop: 6, borderTop: `1px solid ${uiBorder}`, opacity: 0.55, fontSize: 11 }}>
-            {"拖拽平移 · 滚轮缩放 · 双击 适应/100%"}
+            {t("拖拽平移 · 滚轮缩放 · 双击 适应/100%")}
           </div>
         </div>
       )}

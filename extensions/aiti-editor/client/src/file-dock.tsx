@@ -13,7 +13,7 @@
  * 无钉住（配额/钉住服务于 folder 左栏栈管理，文件不做）。
  */
 import { useState, useEffect } from "react";
-import { apiUrl } from "./host-shim";
+import { apiUrl, t } from "./host-shim.ts";
 import { EditorApp } from "./editor-app";
 import { MiAt } from "./file-toolbar";
 import { buildAtText, openNewSessionWithExtSvc } from "../../../_shared/new-session-cwd";
@@ -23,6 +23,7 @@ import {
   declareDockWindowOpener, clearDockPref,
 } from "../../../_shared/ext-float-dock";
 import { openViewerWindow } from "../../../_shared/open-viewer-window";
+import { dockIconDecl } from "../../../_shared/dock-icons";
 import type { DockZone } from "../../../_shared/ext-float-dock";
 
 /* ── 多实例清单（正在以 face 形态存续的文件；路径不带尾斜杠）── */
@@ -246,6 +247,7 @@ export function FileDockBlock(props: FileFaceProps) {
       itemKey={key}
       blockKey={key}
       title={fileNameOf(path)}
+      icon="file"
       chrome="section"
       kind="dockable"
       zones={[sidebarZoneOf(key), "right-panel"]}
@@ -286,7 +288,7 @@ export function FileFloatFace(props: FileFaceProps) {
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px 6px", flexShrink: 0 }}>
           <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={path}>{fileNameOf(path)}</h3>
           <button
-            type="button" aria-label="关闭" title="关闭" onClick={() => closeFileFace(path)}
+            type="button" aria-label={t("关闭")} title={t("关闭")} onClick={() => closeFileFace(path)}
             style={{ background: "none", border: "none", color: "var(--text-muted, #888)", cursor: "pointer", fontSize: 14, padding: "2px 8px", fontFamily: "inherit" }}
           >✕</button>
         </div>
@@ -351,12 +353,13 @@ export function syncFileDockFaces(ctx: Record<string, unknown>): void {
     floatItems.push({
       id: rawId,
       render: (rp: any) => <FileFloatFace {...(faceOf(rp) as any)} />,
-      meta: { label: "文件", title },
+      meta: { label: "i18n:ed.file.label", title },
     });
     rightItems.push({
       id: rawId,
       render: (rp: any) => <FileDockRightFace {...(faceOf(rp) as any)} />,
-      meta: { title },
+      // Semantic tab icon (host TabBar renders meta.icon)
+      meta: { title, icon: dockIconDecl("file") },
     });
   }
   if (prevFacePaths) {
