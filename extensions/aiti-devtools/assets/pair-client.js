@@ -406,6 +406,8 @@
     '.apair-dev .dot{width:6px;height:6px;border-radius:50%;background:#10b981;flex-shrink:0}',
     '.apair-dev .dot.off{background:#cbd5e1}',
     '.apair-dev .kd{font-size:9px;color:var(--ap-dim);flex-shrink:0;letter-spacing:.04em}',
+    // The self row reuses the kind slot (its "page" kind is meaningless to the operator)
+    '.apair-dev .kd.self{color:var(--ap-accent);background:var(--ap-accent-soft);border-radius:6px;padding:1px 5px;font-weight:600}',
     // ---- Device detail: inline ℹ button + grouped key-value overlay ----
     '.apair-devinfo{background:transparent;border:1px solid transparent;border-radius:6px;color:var(--ap-dim);cursor:pointer;font:inherit;font-size:13px;line-height:1;padding:5px 6px;min-width:26px;flex-shrink:0;text-align:center;transition:color .12s,background .12s;display:flex;align-items:center;justify-content:center}',
     '.apair-devinfo:hover{color:var(--ap-accent);background:var(--ap-accent-soft)}',
@@ -681,12 +683,18 @@
       var mySession = currentSessionId();
       var myIid = p.getInstanceId();
       var selfPageId = p.getSelfPageId();
-      /** "This device": this page (same pageId or canonical bridge instanceId — the row id may be a host
-       *  pageId whose base differs) or this workbench session's agent (id/name carries the URL session). */
-      function isSelfRow(d) {
-        return (d.kind === 'page' && (d.id === selfPageId || (d.instanceId && d.instanceId === myIid))) ||
-          !!(mySession && d.kind === 'agent' && (String(d.id).indexOf(mySession) !== -1 || String(d.name).indexOf(mySession) !== -1));
+      /** This page: same pageId, or the canonical bridge instanceId (the row id may be a host pageId whose
+       *  base differs from the instanceId). */
+      function isSelfPage(d) {
+        return d.kind === 'page' && (d.id === selfPageId || (d.instanceId && d.instanceId === myIid));
       }
+      /** This workbench session's agent (id/name carries the URL session) — only used as a FALLBACK:
+       *  when the page row itself is listed, marking the agent too produced two rows labelled 自己. */
+      function isSelfAgent(d) {
+        return !!(mySession && d.kind === 'agent' && (String(d.id).indexOf(mySession) !== -1 || String(d.name).indexOf(mySession) !== -1));
+      }
+      var hasSelfPageRow = all.some(isSelfPage);
+      function isSelfRow(d) { return isSelfPage(d) || (!hasSelfPageRow && isSelfAgent(d)); }
       // 默认只显在线；"显示离线"开启才列出。选中的目标即使离线/被过滤也保持可见（发送目标上下文不丢）
       var list = showOffline ? all : all.filter(function (d) { return d.online !== false || d.id === target; });
       // This device is pinned to the top of the device block: with the old pure name sort it landed at the
@@ -726,7 +734,6 @@
           var info = isSelf ? '' : (d.deviceLabel || d.cwd || '');
           var dup = !isSelf && nameCount[d.name] > 1;
           var nm = d.name + (dup ? ' <span style="color:var(--ap-dim);font-weight:400">·' + esc(idTail(d)) + '</span>' : '');
-          if (isSelf) nm += ' <span style="background:var(--ap-accent-soft);color:var(--ap-accent);border-radius:6px;padding:1px 5px;font-size:9px;font-weight:600">' + SELF_LABEL + '</span>';
           rows.push('<div class="apair-dev' + (d.id === target ? ' sel' : '') + (!on ? ' off' : '') + '" data-id="' + esc(d.id) + '" title="' + esc(d.name) + (info ? ' · ' + info : '') + (on ? '' : '（离线）') + '">'
             + '<span class="ic">' + pageIcon(d) + '</span>'
             + '<span class="nmc"><span class="nm">' + nm + '</span>'
@@ -734,7 +741,8 @@
             + '</span>'
             + '<button class="apair-devinfo" data-info="' + esc(d.id) + '" title="设备详情"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></button>'
             + '<span class="dot' + (!on ? ' off' : '') + '"></span>'
-            + (isSelf ? '' : '<span class="kd">' + esc(kindLabel(d.kind)) + '</span>') + '</div>');
+            // 自己 occupies the kind slot: "page" tells the operator nothing about their own device
+            + '<span class="kd' + (isSelf ? ' self' : '') + '">' + esc(isSelf ? SELF_LABEL : kindLabel(d.kind)) + '</span></div>');
         });
       }
       var html = rows.join('');
