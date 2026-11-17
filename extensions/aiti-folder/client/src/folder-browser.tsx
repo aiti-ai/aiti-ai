@@ -52,7 +52,7 @@ function loadExpandedSnapshot(rootPath?: string): Set<string> | null {
 }
 
 // ── tab 窗口管理（钉住/关闭族，对齐 aiti-editor ⋯ 菜单 5 条；作用域=folder tab，文件 tab 归 aiti-editor 管）──
-// 钉住定义统一 = 区块清单 pin（localStorage pi:sidebar-dock:folders 条目 pin 标记）——
+// Pin definition is unified = manifest pin flag (localStorage pi:sidebar-dock:folders[@basePath] entry pin) —
 // 左栏区块 / 右栏 dock tab / 浮窗三面同状态同展示（一个定义一个展示，用户拍板）；
 // 旧式独立 fileViewer folder tab（不进清单）不再有独立内存钉住。
 const folderTabId = (p: string) => "folder:" + p;
