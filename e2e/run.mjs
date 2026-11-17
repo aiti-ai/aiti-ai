@@ -33,7 +33,14 @@ mkdirSync(artifacts, { recursive: true });
 const agentDir = mkdtempSync(join(tmpdir(), "pi-web-e2e-"));
 const project = join(agentDir, "project");
 const sessionDir = join(agentDir, "sessions", "e2e");
+// Isolate every web-extension tier: a developer machine's deployed extensions
+// and extension state must never leak into the fixture (they take over settings
+// panels and the sidebar, and upstream assertions then fail for unrelated reasons).
+const webExtensionsDir = join(agentDir, "web-extensions-empty");
+const webDataDir = join(agentDir, "web-data");
 mkdirSync(project);
+mkdirSync(webExtensionsDir);
+mkdirSync(webDataDir);
 const previewFile = join(project, "preview.html");
 writeFileSync(previewFile, filePanelFixture);
 const largeStorageFile = join(project, "large-storage.html");
@@ -166,9 +173,17 @@ try {
   server = spawn(process.execPath, [join(root, "node_modules/next/dist/bin/next"), mode, "-H", "127.0.0.1", "-p", String(port)], {
     cwd: root,
     // [fork] bundled extensions live at <repoRoot>/extensions in this repo (ported aiti
-    // packages). The fixture environment must stay clean: point the bundled tier at an
-    // empty dir so the e2e server loads only the fixture extension below.
-    env: { ...process.env, PI_CODING_AGENT_DIR: agentDir, PI_WEB_PASSWORD: "", NEXT_TELEMETRY_DISABLED: "1", PI_WEB_BUNDLED_EXTENSIONS_DIR: join(agentDir, "bundled-empty") },
+    // packages). Point all three web-extension tiers at fixture dirs so the e2e server
+    // loads only the pi fixture extension below, even on a machine with local deploys.
+    env: {
+      ...process.env,
+      PI_CODING_AGENT_DIR: agentDir,
+      PI_WEB_PASSWORD: "",
+      NEXT_TELEMETRY_DISABLED: "1",
+      PI_WEB_BUNDLED_EXTENSIONS_DIR: join(agentDir, "bundled-empty"),
+      PI_WEB_EXTENSIONS_DIR: webExtensionsDir,
+      PI_WEB_DATA_DIR: webDataDir,
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
   server.once("error", (error) => { serverError = error; });
@@ -277,7 +292,9 @@ try {
       document.addEventListener("DOMContentLoaded", () => document.head.append(style));
       if (document.head) document.head.append(style);
     });
-    page.setDefaultTimeout(30_000);
+    // A cold Turbopack compile plus extension manifest loading can exceed 30s
+    // on a busy developer machine; the first session-state wait is the victim.
+    page.setDefaultTimeout(60_000);
     const errors = [];
     const olderResponses = [];
     page.on("pageerror", (error) => errors.push(error.message));

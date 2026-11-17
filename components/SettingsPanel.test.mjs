@@ -176,7 +176,7 @@ test("groups fonts, chat font size and width in one section, chat behavior in an
   for (const key of ["chatContentWidth", "chatContentFontSize", "fontDescription", "panelUiScale", "resetPanelUiScale"]) {
     assert.match(typographySection, new RegExp(`t\\("settings\\.${key}"\\)`));
   }
-  // The panel UI scale row (fork): same range pattern as the chat rows, own slider id.
+  // The panel UI scale row: same range pattern as the chat rows, own slider id.
   assert.match(typographySection, /id="settings-panel-ui-scale"/);
   assert.match(typographySection, /type="range"[\s\S]*?value=\{panelUiScale\}/);
   assert.match(chatSection, /className="settings-chat-options"/);

@@ -69,7 +69,7 @@ pi install npm:@aiti-ai/pi-secret-mask@latest     # 开发期也可用本地路�
 
 确定性正则 + 校验和规则，无网络请求、无模型调用：AWS、GitHub、GitLab、Slack（token + webhook）、Stripe live、SendGrid、Twilio、Google API/OAuth、Anthropic、OpenAI、Hugging Face、npm、PyPI、Azure storage、JWT（须解出 alg 头）、PEM 私钥（完整 + 截断）、带真实密码的 DB URL、`Authorization` 头、泛型 `key = "value"` / `key = value` 赋值（香农熵阈值 + 代码标识符/模板/URL 排除）。base64 包装的前缀型 token 解码后整段命中。短于 6 字符的值忽略（噪音防护）。
 
-**中文关键词**（v0.1.x）：泛型赋值词表包含 `密码 / 密钥 / 秘钥 / 口令 / 令牌 / 授权码 / 授权密钥 / 访问令牌 / 访问密钥 / 凭证 / 凭据 / 私钥`；赋值分隔符支持全角冒号（`密码：xxx`、`授权码：xxx`、`Authorization：Bearer xxx`）；中英邻接（`API密钥`、`db密码`）与纯中文前缀（`数据库密码`）都算词边界。已知取舍：**裸赋值的纯中文短语**值需约 8 个不同汉字才达熵下限（3.0 bits/字符）；引号包裹形态可靠，或用 `/secret add`。
+**中文关键词**（v0.1.x）：泛型赋值词表包含 `密码 / 密钥 / 秘钥 / 口令 / 令牌 / 授权码 / 授权密钥 / 访问令牌 / 访问密钥 / 凭证 / 凭据 / 私钥`；赋值分隔符支持全角冒号（`密码：xxx`、`授权码：xxx`、`Authorization：Bearer xxx`）；中英邻接（`API密钥`、`db密码`）与纯中文前缀（`数据库密码`）都算词边界。bare 值熵下限为 **2.5 bits/字符**（自 cc-redact 的 3.0 调降——该值按文件扫描场景调参，对话场景下只拦人类自设密码 2.5-3.0 区段，而中文说明句熵横跨旧阈值两侧；21 万本地文件实测调降后仅新增 keyword+冒号说明句/minified 形态误报，无真实凭据）。bare 值终止符含全角标点（`密码：xxx，请记好` 不吞尾注）。极低熵值（约 6 个不同字符以下）引号包裹或用 `/secret add`。
 
 误报三重防护：`plausibleSecret` 排除集（模板槽位、`${VAR}`、路径、URL、`process.env.*`、`example`/`changeme` 等填充值）、熵下限（引号形态 ≥2.0 / 裸值 ≥3.0 bits/字符）、代码标识符/成员链排除（`Uint8Array`、`jose.base64url.decode` 不是密码值）。规则形状对标公开的 gitleaks/GitHub secret-scanning 语料库（以 MIT 许可的 `claude-code-redact` 项目实现为参照）；`tools/fp-corpus.mjs` 复用其 11 个锁定公共仓库（4.2 万+ 文件）做误报复测。完整归属、许可文本与商标说明见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
 

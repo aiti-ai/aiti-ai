@@ -58,6 +58,32 @@ test("on a narrow phone a message's actions drop their labels and keep their tit
   assert.match(css, /@media \(max-width: 380px\) \{\s*\.message-action-label \{\s*display: none;\s*\}\s*\}/);
 });
 
+test("assistantMessageActions mounts at both placements and routes items by meta.placement", async () => {
+  const { registerExtUiItems } = await jiti.import("@/lib/ext-ui-store");
+  const dispose = registerExtUiItems("assistantMessageActions", [
+    { id: "top-item", render: () => React.createElement("span", null, "TOPBTN"), meta: { placement: "top" } },
+    { id: "bottom-item", render: () => React.createElement("span", null, "BOTTOMBTN") },
+    { id: "both-item", render: () => React.createElement("span", null, "BOTHBTN"), meta: { placement: "both" } },
+  ], "ext-placement-test");
+  try {
+    const html = renderMessage(
+      { role: "assistant", provider: "p", model: "m", content: [{ type: "text", text: "Body text" }] },
+      {},
+    );
+    assert.ok(html.includes("TOPBTN") && html.includes("BOTTOMBTN") && html.includes("BOTHBTN"), "all items render");
+    assert.ok(html.indexOf("TOPBTN") < html.indexOf("Body text"), "top item mounts in the meta row above the content");
+    assert.ok(html.indexOf("BOTTOMBTN") > html.indexOf("Body text"), "default item mounts in the bottom row below the content");
+    // "both" mounts the same item on both sides: once above, once below the content
+    assert.equal(html.split("TOPBTN").length - 1, 1);
+    assert.equal(html.split("BOTTOMBTN").length - 1, 1);
+    assert.equal(html.split("BOTHBTN").length - 1, 2);
+    assert.ok(html.indexOf("BOTHBTN") < html.indexOf("Body text"));
+    assert.ok(html.lastIndexOf("BOTHBTN") > html.indexOf("Body text"));
+  } finally {
+    dispose();
+  }
+});
+
 test("streaming headers preserve counts and speed without showing empty metrics", () => {
   const renderHeader = (props) => renderToStaticMarkup(React.createElement(
     I18nProvider, null, React.createElement(AssistantMessageHeader, { modelName: "Test Model", ...props }),

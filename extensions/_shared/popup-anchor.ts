@@ -9,9 +9,15 @@
  * （fixedOrigin）。
  */
 
-/** 祖先是否构成 fixed containing block（CSS 常用子集：transform/perspective/filter、
- *  will-change 声明同类属性、contain 布局系取值）。 */
+/** Whether an ancestor constitutes a fixed containing block (common CSS subset:
+ *  transform/perspective/filter, will-change declaring the same properties, contain
+ *  layout values, zoom≠1 — standardized CSS zoom makes fixed descendants position
+ *  relative to the zoomed ancestor with insets scaled by it; verified on Chrome 157:
+ *  an inset:0 overlay inside a zoom container renders at the container size, not the
+ *  viewport size). */
 function isFixedContainingBlock(cs: CSSStyleDeclaration): boolean {
+  const zoomValue = parseFloat(cs.zoom || "");
+  if (Number.isFinite(zoomValue) && zoomValue !== 1) return true;
   if (cs.transform !== "none" || cs.perspective !== "none" || cs.filter !== "none") return true;
   if (/transform|perspective|filter/.test(cs.willChange || "")) return true;
   const c = cs.contain;
@@ -32,6 +38,25 @@ export function fixedOrigin(el: Element): { x: number; y: number } {
     n = n.parentElement;
   }
   return { x: 0, y: 0 };
+}
+
+/** Product of `zoom` values on el's ancestor chain (excluding el itself; 1 when none).
+ *  Standardized CSS zoom makes the nearest zoomed ancestor the containing block of
+ *  fixed descendants and scales their insets — a popup rendered inside a zoomed panel
+ *  must divide viewport-space coordinates by this factor after subtracting the
+ *  containing-block origin (fixedOrigin, which now matches on zoomed ancestors too):
+ *  local = (expectedViewport − origin) / zoomFactor. */
+export function zoomFactorOf(el: Element): number {
+  let z = 1;
+  let n = el.parentElement;
+  while (n && n !== document.documentElement) {
+    try {
+      const zoomValue = parseFloat(getComputedStyle(n).zoom || "");
+      if (Number.isFinite(zoomValue) && zoomValue > 0 && zoomValue !== 1) z *= zoomValue;
+    } catch { /* ignore */ }
+    n = n.parentElement;
+  }
+  return z;
 }
 
 /** 视口内钳制（pad 内边距；宽/高超视口时贴 pad 对齐）。入参/返回均为视口坐标。 */

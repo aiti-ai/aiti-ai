@@ -12,7 +12,7 @@
  * worktree 分区数据与操作由消费方注入（宿主 /api/worktrees* 例外不进引擎，§2）。
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { clampToViewport, fixedOrigin } from "../popup-anchor";
+import { clampToViewport, fixedOrigin, zoomFactorOf } from "../popup-anchor";
 import { buildAtText, openNewSessionWithExtSvc } from "../new-session-cwd";
 import { createGitOpsApi } from "./api.mjs";
 import { makeT } from "./i18n.mjs";
@@ -182,7 +182,8 @@ export function BranchPanel(p: BranchPanelProps) {
       left = c.left; top = c.top;
     }
     const o = fixedOrigin(el);
-    setPos((cur) => (cur && cur.left === left - o.x && cur.top === top - o.y ? cur : { left: left - o.x, top: top - o.y }));
+    const z = zoomFactorOf(el);
+    setPos((cur) => (cur && cur.left === (left - o.x) / z && cur.top === (top - o.y) / z ? cur : { left: (left - o.x) / z, top: (top - o.y) / z }));
   });
 
   // 点外关闭（chip 本体除外——由 chip onClick 单一开关）+ Escape

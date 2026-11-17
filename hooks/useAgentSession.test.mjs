@@ -241,14 +241,15 @@ test("forking stays available during a run while in-session branch switches wait
     source.indexOf("  const handleModelChange = useCallback"),
   );
 
-  // Fork copies into a new file, so it stays available during a run: a running
-  // bash command holds clicks (forkBashRunning dims the button + tooltip) instead
-  // of hiding it. The in-session edit still waits because pi refuses
-  // navigate_tree mid-run. The handler is forkFromMessage (upstream #1539 prefills
-  // the composer with the forked message) behind the local capability gate.
+  // Fork copies into a new file, so nothing about a running turn blocks it:
+  // the bashRunning gate retired (2026-11-17 — the button stays visible while
+  // a bash command runs, forkBashRunning drives its busy display); the
+  // in-session edit still waits because pi refuses navigate_tree mid-run.
+  // Local capability gate (sessionCap("fork")); 2026-11-12 merge: handler is
+  // forkFromMessage (upstream #1539 prefills the composer with the forked
+  // message).
   assert.match(chatWindowSource, /onFork=\{isNew \|\| !sessionCap\("fork"\) \? undefined : forkFromMessage\}/);
   assert.match(chatWindowSource, /forkBashRunning=\{bashRunning\}/);
-  assert.doesNotMatch(chatWindowSource, /onFork=\{bashRunning \|\| isNew/);
   assert.match(chatWindowSource, /onEditContent=\{sessionBusy \? undefined : handleEditContent\}/);
   assert.match(chatWindowSource, /onAskInNewChat && quotedSelection\.sourceEntryId && !bashRunning &&/);
   assert.match(forkSource, /addNotice\(\{ type: "error", message:/);
@@ -271,12 +272,13 @@ test("first user messages expose both branch actions and edit before their own e
   // fork decision (a4aaff0): forking while running / on the first message are both
   // legal — onFork carries no sessionBusy gating (the upstream sessionBusy || isNew
   // variant is forbidden by the ChatWindow edit-from-here red test).
-  // The local capability gate hides the button for backends without fork support;
-  // a running bash command only holds clicks via forkBashRunning (button stays visible).
-  // The handler is forkFromMessage (upstream #1539 composer prefill).
+  // 2026-09-18: added the fork capability gate (local sessions without caps unchanged;
+  // external backends without fork support hide the button).
+  // 2026-11-17: the upstream bashRunning gate retired — the button stays visible
+  // while a bash command runs (forkBashRunning drives the busy display).
+  // Same call site; handler is forkFromMessage (upstream #1539 composer prefill).
   assert.match(chatWindowSource, /onFork=\{isNew \|\| !sessionCap\("fork"\) \? undefined : forkFromMessage\}/);
   assert.match(chatWindowSource, /forkBashRunning=\{bashRunning\}/);
-  assert.doesNotMatch(chatWindowSource, /onFork=\{bashRunning \|\| isNew/);
   assert.doesNotMatch(chatWindowSource, /idx === 0 && msg\.role === "user" \? undefined : handleFork/);
   // Edit-from-here for fork relies on prevAssistantEntryId to locate the branch point (upstream has no such mechanism, so the old doesNotMatch no longer applies).
   assert.match(navigateSource, /type: "navigate_tree",\s*targetId: entryId/);

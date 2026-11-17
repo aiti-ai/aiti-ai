@@ -11,7 +11,31 @@
  * 控制浮窗/嵌入两 face 的显隐。
  */
 import { useEffect, useState, createElement as h } from "react";
-import { clampToViewport, fixedOrigin } from "./popup-anchor";
+import { clampToViewport, fixedOrigin, zoomFactorOf } from "./popup-anchor";
+// ── header/menu words: local bilingual table below (menuWord); core float/zone words live in ext-float-dock-core (dockWord) ──
+const DOCK_MENU_WORDS: Record<string, { "zh-CN": string; en: string }> = {
+  expand: { "zh-CN": "展开", en: "Expand" },
+  collapse: { "zh-CN": "折叠", en: "Collapse" },
+  block: { "zh-CN": "区块", en: "Block" },
+  position: { "zh-CN": "切换停靠位置", en: "Change dock position" },
+  actions: { "zh-CN": "区块操作", en: "Block actions" },
+  move: { "zh-CN": "移动", en: "Move" },
+  pin: { "zh-CN": "钉住", en: "Pin" },
+  unpin: { "zh-CN": "取消钉住", en: "Unpin" },
+  moveUp: { "zh-CN": "上移", en: "Move up" },
+  moveDown: { "zh-CN": "下移", en: "Move down" },
+  tools: { "zh-CN": "工具", en: "Tools" },
+  removeInstance: { "zh-CN": "移除本实例", en: "Remove this instance" },
+  close: { "zh-CN": "关闭", en: "Close" },
+  zones: { "zh-CN": "停靠方位", en: "Dock zones" },
+  defaultSuffix: { "zh-CN": "（默认）", en: " (default)" },
+};
+function menuWord(key: keyof typeof DOCK_MENU_WORDS): string {
+  let loc = "en";
+  try { loc = window.localStorage.getItem("pi-locale") || "en"; } catch { /* storage unavailable */ }
+  const w = DOCK_MENU_WORDS[key];
+  return (w as any)[loc === "zh-CN" ? "zh-CN" : "en"] ?? w.en;
+}
 import { DOCK_ICON_NODES, DOCK_ICON_SVG_ROOT_PROPS, dockIconReactAttrs, type DockIconName } from "./dock-icons";
 
 /** 图标元素（React/h 版；dock-icons 单一数据源）：stroke=2 线稿、currentColor。
@@ -322,7 +346,12 @@ export function DockBody(props: {
     if (m.height > below && above > below) top = b.top - gap - m.height; // 上翻
     const c = clampToViewport(b.right - m.width, top, m.width, m.height, pad);
     const o = fixedOrigin(menuEl);
-    const next = { left: c.left - o.x, top: c.top - o.y };
+    // Panel UI scale (CSS zoom on the sidebar / right-panel containers): b/m/o are all
+    // viewport-space, but the menu's written inset is rendered scaled by the ancestor
+    // zoom chain — divide back so the rendered position lands on the expected viewport
+    // coordinates (zoom does not create a containing block; orthogonal to fixedOrigin).
+    const z = zoomFactorOf(menuEl);
+    const next = { left: (c.left - o.x) / z, top: (c.top - o.y) / z };
     setMenuPos((cur) => (cur && cur.left === next.left && cur.top === next.top) ? cur : next);
   }, [menu, menuEl]);
   useEffect(() => {
@@ -411,19 +440,19 @@ export function DockBody(props: {
     // no drag handle and no "move" row in the ⋮ menu.
     const sortable = kind !== "reserved";
     const buildMoveRow = (): DockMenuRow => ({
-      type: "icons", label: "移动", icon: dockIconEl("move-diagonal-2", 13), items: [
+      type: "icons", label: menuWord("move"), icon: dockIconEl("move-diagonal-2", 13), items: [
         ...(props.moveRowPin ? [{
           key: "pin",
           icon: (props.moveRowPin.isPinned() ? "pin-off" : "pin") as any,
-          label: props.moveRowPin.isPinned() ? "取消钉住" : "钉住",
+          label: props.moveRowPin.isPinned() ? menuWord("unpin") : menuWord("pin"),
           run: () => props.moveRowPin!.toggle(),
         }] : []),
-        { key: "move-up", icon: "chevron-up", label: "上移", run: () => requestBlockMove(blockKey, -1) },
-        { key: "move-down", icon: "chevron-down", label: "下移", run: () => requestBlockMove(blockKey, 1) },
+        { key: "move-up", icon: "chevron-up", label: menuWord("moveUp"), run: () => requestBlockMove(blockKey, -1) },
+        { key: "move-down", icon: "chevron-down", label: menuWord("moveDown"), run: () => requestBlockMove(blockKey, 1) },
       ],
     });
     if (overflowActions.length > 0) {
-      out.push({ type: "head", label: "工具" });
+      out.push({ type: "head", label: menuWord("tools") });
       for (const a of overflowActions) out.push({ type: "item", label: a.title, icon: a.icon, badge: a.badge, active: a.active, alwaysRun: true, disabled: a.disabled, run: a.onClick });
     }
     if (storeData.menuItems && storeData.menuItems.length > 0) {
@@ -447,24 +476,24 @@ export function DockBody(props: {
       ops.push(buildMoveRow());
     }
     if (kind === "reserved" && typeof props.onRemove === "function") {
-      ops.push({ type: "item", label: "移除本实例", icon: dockIconEl("trash", 13), run: () => props.onRemove!() });
+      ops.push({ type: "item", label: menuWord("removeInstance"), icon: dockIconEl("trash", 13), run: () => props.onRemove!() });
     }
     if (Array.isArray(props.extraMenuItems)) {
       for (const m of props.extraMenuItems) ops.push({ type: "item", label: m.label, icon: m.icon, hint: m.hint, active: m.active, alwaysRun: m.alwaysRun, run: m.run });
     }
     if (kind === "dockable" && chrome === "section" && props.hideCloseItem !== true) {
-      ops.push({ type: "item", label: "关闭", icon: dockIconEl("x", 13), run: () => (props.onClose ? props.onClose() : closePanel(itemKey)) });
+      ops.push({ type: "item", label: menuWord("close"), icon: dockIconEl("x", 13), run: () => (props.onClose ? props.onClose() : closePanel(itemKey)) });
     }
     if (ops.length > 0) {
       if (out.length > 0) out.push({ type: "sep" });
-      out.push({ type: "head", label: "区块" });
+      out.push({ type: "head", label: menuWord("block") });
       out.push(...ops);
     }
     return out;
   };
   const positionRows: DockMenuRow[] = menu?.kind === "position"
     // v5 图标排（方案 §3.4）：统一模型（浮窗 → 各停靠位）+ 一行无歧义方位图标
-    ? [{ type: "icons" as const, label: "停靠方位", items: positionMenuModel(itemKey, allZones, defaultZone, state, { onNewWindow: props.onNewWindow }) }]
+    ? [{ type: "icons" as const, label: menuWord("zones"), items: positionMenuModel(itemKey, allZones, defaultZone, state, { onNewWindow: props.onNewWindow }) }]
     : [];
   const menuRows: DockMenuRow[] = menu?.kind === "position" ? positionRows : (menu?.kind === "main" ? buildMainMenu() : []);
   const renderMenuRow = (it: DockMenuRow, i: number) => {
@@ -487,7 +516,7 @@ export function DockBody(props: {
         style: { display: "flex", gap: 6, marginLeft: "auto", flexShrink: 0 } },
         ...it.items.map((x, j) => {
           const isRadio = x.active === true || x.active === false;
-          const tip = x.isDefault ? `${x.label}（默认）` : x.label;
+          const tip = x.isDefault ? `${x.label}${menuWord("defaultSuffix")}` : x.label;
           return h("button", {
             key: `icon-${j}`, type: "button",
             role: isRadio ? "menuitemradio" : "menuitem",
@@ -601,7 +630,9 @@ export function DockBody(props: {
     iconNode,
     props.renderTitle
       ? props.renderTitle()
-      : h("span", { style: { fontSize: 11, fontWeight: 600, color: "var(--text-muted, #999)", flex: "0 1 auto", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, minWidth: 0 } }, title ?? ""));
+      // 13px/500 body-color matches custom renderTitle headers (e.g. folder title
+      // switcher) so every section header reads as the same tier; icon prop is 13 too.
+      : h("span", { style: { fontSize: 13, fontWeight: 500, color: "var(--text, #222)", flex: "0 1 auto", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, minWidth: 0 } }, title ?? ""));
   // 折叠保挂（v3）：内容注册过命令（曾挂载）→ 折叠保留 children（隐藏），按钮状态与命令即时可用
   const keepAlive = collapsed && storeData.hasCommands;
   return h("div", {
@@ -618,7 +649,7 @@ export function DockBody(props: {
   },
     chrome === "section" && h("div", headerProps,
       h("button", {
-        type: "button", title: collapsed ? "展开" : "折叠", "aria-label": (title ?? "区块") + (collapsed ? " 展开" : " 折叠"),
+        type: "button", title: collapsed ? menuWord("expand") : menuWord("collapse"), "aria-label": (title ?? menuWord("block")) + (collapsed ? " " + menuWord("expand") : " " + menuWord("collapse")),
         "aria-expanded": collapsed ? "false" : "true", style: { ...btnBase, display: "flex", alignItems: "center" },
         onClick: toggleCollapsed,
       },
@@ -632,7 +663,7 @@ export function DockBody(props: {
       ...shownActions.map(actionBtn),
       showDetach ? h("span", { style: { position: "relative", display: "inline-flex", flexShrink: 0 } },
         h("button", {
-          ref: setPosBtnEl, type: "button", title: "切换停靠位置", "aria-label": "切换停靠位置", "aria-haspopup": "menu",
+          ref: setPosBtnEl, type: "button", title: menuWord("position"), "aria-label": menuWord("position"), "aria-haspopup": "menu",
           "aria-expanded": menu?.kind === "position" ? "true" : "false",
           style: { ...btnBase, fontSize: 12 },
           onClick: () => { if (menu?.kind === "position") setMenu(null); else { setMenuPos(null); setMenu({ kind: "position", anchor: posBtnEl ?? menuBtnEl! }); } },
@@ -640,7 +671,7 @@ export function DockBody(props: {
         menu?.kind === "position" ? menuNode : null,
       ) : null,
       h("span", { style: { position: "relative", display: "inline-flex", flexShrink: 0 } },
-        h("button", { ref: setMenuBtnEl, type: "button", title: "区块操作", "aria-label": "区块操作", "aria-haspopup": "menu", "aria-expanded": menu?.kind === "main" ? "true" : "false",
+        h("button", { ref: setMenuBtnEl, type: "button", title: menuWord("actions"), "aria-label": menuWord("actions"), "aria-haspopup": "menu", "aria-expanded": menu?.kind === "main" ? "true" : "false",
           style: { ...btnBase, fontSize: 12, fontWeight: 700 },
           onClick: () => { if (menu?.kind === "main") { setMenu(null); } else { setMenuPos(null); setMenu({ kind: "main", anchor: menuBtnEl! }); } },
           onKeyDown: (e: any) => { if (e.key === "Escape" && menu?.kind === "main") setMenu(null); } }, "⋮"),
@@ -806,7 +837,7 @@ export function createDockFaces(opts: {
       },
         opts.chrome !== false && h("div", { style: { display: "flex", alignItems: "center", gap: 8, padding: "10px 14px 6px", flexShrink: 0 } },
           h("h3", { style: { margin: 0, fontSize: 14, fontWeight: 600, flex: 1 } }, title),
-          h("button", { type: "button", "aria-label": "关闭", title: "关闭", onClick: () => closePanel(key),
+          h("button", { type: "button", "aria-label": menuWord("close"), title: menuWord("close"), onClick: () => closePanel(key),
             style: { background: "none", border: "none", color: "var(--text-muted, #888)", cursor: "pointer", fontSize: 14, padding: "2px 8px", fontFamily: "inherit" } }, "✕"),
         ),
         h("div", { style: { flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column" } }, renderContent()),
