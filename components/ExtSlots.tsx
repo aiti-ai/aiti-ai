@@ -143,6 +143,15 @@ export interface ExtClientContext {
    * degrades to string (backwards compatible).
    */
   t(key: string, params?: Record<string, string | number>): string;
+  /**
+   * Resolve an "i18n:<key>" prefixed text against ANOTHER extension's manifest
+   * i18n table (same cascade as translateExtItemText). Needed by renderers of
+   * other extensions' static slot items (e.g. aiti-float's StaticDockFace block
+   * shell for lazy sidebarExplorerDock entries) — the declaring extension's
+   * own t() is unavailable before materialization. Missing key falls back to
+   * the raw text; old hosts without this method degrade to the plain string.
+   */
+  translateItemText?(extId: string | undefined, text: string | undefined): string;
   apiUrl(path: string): string;
   registerItems(slot: ExtSlotName, items: Array<{ id: string; render?: (props: ExtRenderProps) => ReactNode; meta?: Record<string, unknown>; feature?: string }>): void;
   /** Returns a disposer: calling it removes exactly this registration (DSH effect semantics; used for HMR invalidation). */
@@ -538,6 +547,8 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
       return provides;
     },
     getLocale: () => currentUiLocale(),
+    // Cross-extension static-item text translation (aiti-float StaticDockFace etc.) — see interface doc above.
+    translateItemText: (extId, text) => translateExtItemText(extId, text),
     registerItems: (slot, items) => {
       registerExtUiItems(
         slot,
