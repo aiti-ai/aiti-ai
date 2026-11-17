@@ -274,7 +274,7 @@ function pairWindowSize() {
       }));
   }
 
-  ctx.registerItems?.("toolbar", [{ id: "pair", render: PairToolbarButton, meta: { label: "设备互连" } }]);
-  ctx.registerItems?.("dialogs", [{ id: "pair", render: PairDialog, meta: { label: "设备互连面板" } }]);
-  ctx.registerItems?.("sidebarExplorerDock", [{ id: "pair", render: PairDockBlock, meta: { label: "设备互连", title: "设备互连", priority: 30 } }]);
+  ctx.registerItems?.("toolbar", [{ id: "pair", render: PairToolbarButton, meta: { label: "i18n:it.pair.label" } }]);
+  ctx.registerItems?.("dialogs", [{ id: "pair", render: PairDialog, meta: { label: "i18n:it.pair.label.2" } }]);
+  ctx.registerItems?.("sidebarExplorerDock", [{ id: "pair", render: PairDockBlock, meta: { label: "i18n:it.pair.label.3", title: "i18n:it.pair.title", priority: 30 } }]);
 }

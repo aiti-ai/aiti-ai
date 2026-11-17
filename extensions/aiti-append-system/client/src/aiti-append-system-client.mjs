@@ -269,7 +269,7 @@ export default function register(c) {
     id: "aiti-append-system-open",
     render: ToolbarButton,
     feature: "behavior.showToolbar",
-    meta: { label: "追加系统提示词" },
+    meta: { label: "i18n:it.open.label" },
   }]);
   // pages 面板：常驻注册（不带 feature）→ 扩展管理器随时可「打开」
   ctx.registerItems("pages", [{
@@ -280,6 +280,6 @@ export default function register(c) {
     },
   }]);
   // aiti-float dock v3（P3 批）：右栏「提示词」tab（face 参数防双实例同渲；id 拼后 = AAS_KEY）
-  ctx.registerItems("rightFileDock", [{ id: "panel", render: AASDockFace, meta: { title: "提示词" } }]);
+  ctx.registerItems("rightFileDock", [{ id: "panel", render: AASDockFace, meta: { title: "i18n:it.panel.title" } }]);
   try { console.log("[aiti-append-system] client 已挂载（pages 面板 + toolbar 📝 按钮 feature 门控）"); } catch (e) {}
 }

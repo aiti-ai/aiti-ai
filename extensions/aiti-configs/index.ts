@@ -358,10 +358,14 @@ export default {
     ],
     i18n: {
       "zh-CN": {
-      "cfg.open.label": "配置",
+        "ext.displayName": "配置版本化 + 崩溃自检",      "cfg.open.label": "配置",
       "cfg.open.title": "aiti-configs：配置版本化（status/commit/恢复）+ 自检报告 + 历史版本安全盾",
       },
       en: {
+        "feat.agentTools.enabled.desc": "Injects aiti_configs_* tools into sessions (off by default; enable temporarily via the AI helper 🤖 or the extension manager)",
+        "ext.displayName": "Config Versioning & Self-check",
+        "ext.description": "Injects aiti_configs_* tools into sessions (off by default; enable temporarily via the AI helper 🤖 or the extension manager)",
+        "feat.agentTools.enabled": "AI tool (config management)",
       "cfg.open.label": "Config",
       "cfg.open.title": "aiti-configs: config versioning (status/commit/restore) + self-check + history shield",
       },

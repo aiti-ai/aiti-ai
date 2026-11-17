@@ -504,12 +504,23 @@ export default {
     rightFileDock: [{ id: "fleet", label: "i18n:sub.fleet.label" }],
     i18n: {
       "zh-CN": {
-      "sub.open.label": "子代理",
+        "it.aiti-subagents-fleet.label": "子代理舰队",
+        "it.aiti-subagents-inspector.label": "子代理检查器",
+        "it.aiti-subagents-concurrency.label": "并发配置",
+        "ext.displayName": "子代理",      "sub.open.label": "子代理",
       "sub.open.title": "子代理舰队监控面板",
       "sub.fleet.label": "舰队",
       "sub.fleetFull.label": "子代理舰队",
       },
       en: {
+        "it.aiti-subagents-fleet.label": "Subagent fleet",
+        "it.aiti-subagents-inspector.label": "Subagent inspector",
+        "it.aiti-subagents-concurrency.label": "Concurrency config",
+        "ext.displayName": "Subagents",
+        "feat.tasks": "Subagent tasks",
+        "feat.aiti-subagents-fleet": "Subagent fleet",
+        "feat.aiti-subagents-inspector": "Subagent inspector",
+        "feat.aiti-subagents-concurrency": "Concurrency config",
       "sub.open.label": "Subagents",
       "sub.open.title": "Subagent fleet monitor",
       "sub.fleet.label": "Fleet",
@@ -517,9 +528,9 @@ export default {
       },
     },
 
-    dialogs: [{ id: "aiti-subagents-fleet", label: "子代理舰队" },
-              { id: "aiti-subagents-inspector", label: "子代理检查器" },
-              { id: "aiti-subagents-concurrency", label: "并发配置" }],
+    dialogs: [{ id: "aiti-subagents-fleet", label: "i18n:it.aiti-subagents-fleet.label" },
+              { id: "aiti-subagents-inspector", label: "i18n:it.aiti-subagents-inspector.label" },
+              { id: "aiti-subagents-concurrency", label: "i18n:it.aiti-subagents-concurrency.label" }],
   },
 
   server: {

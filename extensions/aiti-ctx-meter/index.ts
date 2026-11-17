@@ -20,6 +20,7 @@ export default {
   ui: {
     i18n: {
       en: {
+        "ext.displayName": "Context Meter (context %)",
         "meter.none": "No context data yet (idle or external backend)",
         "meter.compacting": "Compacting…",
         "meter.queued": "Compaction queued",

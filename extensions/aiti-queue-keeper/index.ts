@@ -38,7 +38,7 @@ export default {
     // 扩展自包含，不依赖 core 翻译表。
     i18n: {
       "zh-CN": {
-        "chat.queued": "已排队 · {count}",
+        "ext.displayName": "队列管家",        "chat.queued": "已排队 · {count}",
         "chat.recall": "编辑",
         "chat.recallTitle": "移除所有排队消息并将其放回输入框编辑",
         "chat.steer": "插队",
@@ -82,6 +82,8 @@ export default {
         "chat.close": "关闭",
       },
       en: {
+        "ext.displayName": "Queue Keeper",        "feat.queuePanel.enabled": "Queue panel enhancements",
+        "feat.panel": "Queue panel",
         "chat.queued": "Queued · {count}",
         "chat.recall": "Edit",
         "chat.recallTitle": "Remove all queued messages and put them back into the input box for editing",

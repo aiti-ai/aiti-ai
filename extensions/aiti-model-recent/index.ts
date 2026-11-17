@@ -22,4 +22,12 @@ export default {
       enabled: true,
     },
   ],
+  ui: {
+    // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
+    i18n: {
+      en: {
+        "feat.modelRecent.enabled": "Recently used models",
+      },
+    },
+  },
 };

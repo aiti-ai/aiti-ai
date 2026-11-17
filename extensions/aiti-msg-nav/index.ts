@@ -24,11 +24,18 @@ export default {
     clientDependsOn: [],
     i18n: {
       "zh-CN": {
-        "nav.earliest": "到最早消息",
+        "ext.displayName": "消息滚动导航",        "nav.earliest": "到最早消息",
         "nav.prevUser": "上一个用户输入",
         "nav.nextUser": "下一个用户输入",
         "nav.latestHint": "到最新消息（长按保持屏幕常亮）",
         "nav.keepAwakeOn": "屏幕保持常亮",
+      },
+      en: {
+        "feat.show.toolbar.desc": "Jump-to-earliest/jump-to-latest/prev/next buttons on the right of the message area",
+        "feat.behavior.keepAwake.desc": "Long-press the bottom-most button while the agent runs to keep the screen awake (Screen Wake Lock API)",
+        "ext.displayName": "Message Scroll Nav",
+        "feat.show.toolbar": "Show the message scroll nav bar",
+        "feat.behavior.keepAwake": "Keep screen awake while long-pressing \"jump to latest\"",
       },
       "en": {
         "nav.earliest": "Jump to earliest message",
