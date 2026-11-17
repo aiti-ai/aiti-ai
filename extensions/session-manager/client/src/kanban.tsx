@@ -7,6 +7,7 @@ import { t } from "./host-shim";
 import {
   store, useStore, kanbanOpen, refreshSessions, ensureTags,
   useSharedFilter, toggleSharedFilter, clearSharedFilter, displayCwd, EMPTY_TAGS,
+  hidePendingRow, subscribePendingRemovals,
 } from "./store";
 import { byIdMap, tagPath, sessionTagIds, matchesTags, sessionTitle, fmtRelative, descendantsLocal, selectStyle, ghostBtn, SIc } from "./helpers";
 import { StarButton, TagEditPopover } from "./tag-ui";
@@ -15,6 +16,9 @@ import { act } from "./store";
 
 export function KanbanPage(props: any) {
   const s = useStore();
+  // Optimistic removal (2026-11-29): pending-row changes use a separate subscription driving re-filtering (same as panel/dock)
+  const [, setOptTick] = useState(0);
+  useEffect(() => subscribePendingRemovals(() => setOptTick((v) => v + 1)), []);
   const [open, setOpen] = useState(kanbanOpen.value);
   const [project, setProject] = useState<string | null>(null); // null = all projects
   const [columns, setColumns] = useState<string[]>([]); // tag ids as columns
@@ -63,13 +67,14 @@ export function KanbanPage(props: any) {
 
   const data = s.tagData ?? EMPTY_TAGS;
   const byId = byIdMap(data);
-  const projects = [...new Set(s.sessions.map((x: any) => x.projectRoot ?? x.cwd).filter(Boolean))]
+  const projects = [...new Set(s.sessions.filter((x: any) => !hidePendingRow(x)).map((x: any) => x.projectRoot ?? x.cwd).filter(Boolean))]
     .sort((a: string, b: string) => a.localeCompare(b));
   const tagList = [...data.tags].sort((a: any, b: any) => a.name.localeCompare(b.name));
 
-  const sessionsInProject = project
+  const sessionsInProject0 = project
     ? s.sessions.filter((x: any) => (x.projectRoot ?? x.cwd) === project)
     : s.sessions;
+  const sessionsInProject = sessionsInProject0.filter((x: any) => !hidePendingRow(x));
   const narrowed = filterTags.length
     ? sessionsInProject.filter((x: any) => matchesTags(x.id, data, filterTags))
     : sessionsInProject;
