@@ -127,7 +127,9 @@
       if (i >= 0) return global.location.origin + path.slice(0, i) + '/api/extensions/aiti-devtools/mcp';
       return global.location.origin + (path.indexOf('/aiti/') === 0 ? '/aiti' : '');
     }
-    function emit(ev, data) { (listeners[ev] || []).forEach(function (cb) { try { cb(data); } catch (e) {} }); }
+    // Listener errors stay isolated (one bad consumer must not break the others), but they are no longer
+    // silent: a swallowed ReferenceError inside renderMsgs made received messages invisible with zero trace.
+    function emit(ev, data) { (listeners[ev] || []).forEach(function (cb) { try { cb(data); } catch (e) { try { console.warn('[aiti-pair] listener ' + ev + ' failed:', e); } catch (e2) {} } }); }
     function on(ev, cb) { (listeners[ev] = listeners[ev] || []).push(cb); return function () { listeners[ev] = (listeners[ev] || []).filter(function (x) { return x !== cb; }); }; }
 
     function loadName() {
@@ -166,7 +168,10 @@
         // ---- bridge-client) — no dedicated SSE ----
     var onPairMsg = function (e) { // B5: kept by reference; removed in stop() (prevents remount listener leak / phantom unread)
       var m = e.detail || {};
-      var env = { id: m.id, type: m.type === 'file' ? 'file' : 'text', from: m.from, to: m.to, ts: m.ts, text: m.text, file: m.file };
+      // Live bridge frames carry type "pair_msg" (files ride in .file); only a local echo has type "file".
+      // Deciding on m.type alone turned every RECEIVED file into an empty text bubble (no download card).
+      var isFile = !!(m.file) || m.type === 'file';
+      var env = { id: m.id, type: isFile ? 'file' : 'text', from: m.from, to: m.to, ts: m.ts, text: m.text, file: m.file };
       if (!env.from || (env.type === 'text' && !env.text && !env.file)) return;
       pushHistory(env, false);
       emit(env.type, env); emit('message', env);
@@ -208,10 +213,12 @@
       }).catch(function () { emit('status', { state: 'off' }); return devices; });
     }
     // ---- 发送 ----
-    function sendText(to, text) {
+    function sendText(to, text, opts) {
       var idt = identity();
       if (!idt) return Promise.reject(new Error('页面身份未就绪（bridge-client 未连接）'));
-      return http('/bridge/pair/message', { instanceId: idt.instanceId, secret: idt.secret || '', pageId: getPageId(), to: to || 'all', text: String(text || '') }).then(function (r) {
+      // notify=true → the bridge also pops an interaction card on the target page (🔔 send); it must
+      // ride the request body — dropping it made the bell button behave like a plain send.
+      return http('/bridge/pair/message', { instanceId: idt.instanceId, secret: idt.secret || '', pageId: getPageId(), to: to || 'all', text: String(text || ''), notify: !!(opts && opts.notify) }).then(function (r) {
         if (!r) throw new Error('发送失败（网络）');
         if (r.ok) {
           var pid = getPageId() || idt.instanceId;
@@ -283,7 +290,7 @@
     function pushHistory(env, mine) {
       // pair_msg envelope normalization (live frames and inbox catch-up share the same shape): type normalized to file/text for the render/export branches
       if (env.type === 'pair_msg') env.type = env.file ? 'file' : 'text';
-      env.mine = !!mine || !!(env.from && env.from.id && env.from.id === getInstanceId());
+      env.mine = !!mine || !!(env.from && env.from.id && String(env.from.id).split('/')[0] === getInstanceId());
       history.push(env);
       if (history.length > 500) history.splice(0, history.length - 500);
       emit('history', history);
@@ -578,16 +585,29 @@
       var d = new Date(typeof ts === 'number' ? ts : (Date.parse(ts) || Date.now()));
       return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
     }
+    /** Same-name disambiguation tail: page rows end with "/host" (id.slice(-4) was literally "host" for
+     *  every page, so two browser windows named "Linux · Edge" both rendered "Linux · Edge ·host") — prefer
+     *  the canonical instanceId tail, then the id base. */
+    function idTail(d) {
+      var base = (d && d.instanceId) ? String(d.instanceId) : String((d && d.id) || '').split('/')[0];
+      return base.slice(-4);
+    }
     function targetName(id, rows) {
       if (id === 'all') return langZh ? '全部页面' : 'All pages';
       if (id === 'agents') return langZh ? '全部代理' : 'All agents';
       if (id === 'pairs') return langZh ? '全部设备' : 'All devices';
       var all = rows || p.getDevices();
       var d = all.filter(function (x) { return x.id === id; })[0];
+      // Row ids for pi-web pages are pageIds whose base may differ from the bridge instanceId; after an id
+      // flip the old id no longer matches a row — fall back to the canonical instanceId so labels stay readable.
+      if (!d) {
+        var base = String(id || '').split('/')[0];
+        d = base ? all.filter(function (x) { return x.kind === 'page' && x.instanceId && x.instanceId === base; })[0] : null;
+      }
       if (!d) return String(id || '').slice(0, 12);
       // 同名歧义时占位符也带 id 尾标（与列表消歧一致）
       var same = all.filter(function (x) { return x.name === d.name; }).length;
-      return d.name + (same > 1 ? ' ·' + String(d.id).slice(-4) : '');
+      return d.name + (same > 1 ? ' ·' + idTail(d) : '');
     }
 
     // 离线显示偏好（默认只显在线；持久化 localStorage）
@@ -637,7 +657,10 @@
       // target" — an empty list (not loaded / fetch failed) never touches target, otherwise every
       // refresh would first jump to "all devices" and then restore (selection flicker).
       var __devs = p.getDevices();
-      if (target !== 'all' && __devs.length && !__devs.some(function (d) { return d.id === target; })) {
+      // Group pseudo-targets (all/agents/pairs) are not device rows — the dead-target self-heal below must
+      // never reset them, otherwise picking "All agents"/"All devices" silently bounces back to "all".
+      var GROUP_TARGETS = { all: 1, agents: 1, pairs: 1 };
+      if (target !== 'all' && !GROUP_TARGETS[target] && __devs.length && !__devs.some(function (d) { return d.id === target; })) {
         target = 'all';
         saveTargetSelection();
       }
@@ -656,10 +679,22 @@
         headFltBtn.title = showOffline ? T.hideOfflineTip : T.showOfflineTip;
       }
       var mySession = currentSessionId();
+      var myIid = p.getInstanceId();
+      var selfPageId = p.getSelfPageId();
+      /** "This device": this page (same pageId or canonical bridge instanceId — the row id may be a host
+       *  pageId whose base differs) or this workbench session's agent (id/name carries the URL session). */
+      function isSelfRow(d) {
+        return (d.kind === 'page' && (d.id === selfPageId || (d.instanceId && d.instanceId === myIid))) ||
+          !!(mySession && d.kind === 'agent' && (String(d.id).indexOf(mySession) !== -1 || String(d.name).indexOf(mySession) !== -1));
+      }
       // 默认只显在线；"显示离线"开启才列出。选中的目标即使离线/被过滤也保持可见（发送目标上下文不丢）
       var list = showOffline ? all : all.filter(function (d) { return d.online !== false || d.id === target; });
-      // Pure stable sort (name/ID): online status only affects the dot color, never the order — row positions never jump on refresh
+      // This device is pinned to the top of the device block: with the old pure name sort it landed at the
+      // bottom ("Windows · Edge" after "Linux · Chrome") and scrolled out of the narrow dock. Everything
+      // else keeps the stable name/ID order (online state only colors the dot, never reorders rows).
       list.sort(function (a, b) {
+        var sa = isSelfRow(a) ? 1 : 0, sb = isSelfRow(b) ? 1 : 0;
+        if (sa !== sb) return sb - sa;
         return String(a.name).localeCompare(String(b.name)) || String(a.id).localeCompare(String(b.id));
       });
       var rows = ['<div class="apair-sidehd"><span class="t">设备</span>'
@@ -678,18 +713,19 @@
         rows.push('<div style="font-size:11px;color:var(--ap-dim);padding:8px 4px;text-align:center;line-height:1.6">暂无在线设备</div>');
       } else {
         // 同名消歧：同默认名的设备（多标签/多来源/同 CLI 多会话）追加 id 尾标区分，
-        // 否则列表看起来全是重复项（name 相同时 cwd 副标题窄屏又看不见）
+        // 否则列表看起来全是重复项（name 相同时 cwd 副标题窄屏又看不见）。
+        // The self row is excluded from the count: it already carries the 自己 badge, and an id tail on your
+        // own row ("Windows · Edge ·8f3a") only looked like a duplicate device.
         var nameCount = {};
-        list.forEach(function (d) { nameCount[d.name] = (nameCount[d.name] || 0) + 1; });
+        list.forEach(function (d) { if (!isSelfRow(d)) nameCount[d.name] = (nameCount[d.name] || 0) + 1; });
         list.forEach(function (d) {
           var on = d.online !== false;
-          var info = d.deviceLabel || d.cwd || '';
-          var dup = nameCount[d.name] > 1;
-          var nm = d.name + (dup ? ' <span style="color:var(--ap-dim);font-weight:400">·' + esc(String(d.id).slice(-4)) + '</span>' : '');
-          // 「自己」：当前工作台会话的 agent（id/name 含 URL 里的 sessionId）
-          // self = this page (same pageId) or this session's agent (id/name contains URL session)
-          var isSelf = (d.kind === 'page' && d.id === p.getSelfPageId()) ||
-            !!(mySession && d.kind === 'agent' && (String(d.id).indexOf(mySession) !== -1 || String(d.name).indexOf(mySession) !== -1));
+          var isSelf = isSelfRow(d);
+          // Self row: device label + kind are noise for the operator ("Edge · Windows · 1536x864 · page" says
+          // nothing about yourself) — keep the editable device name and the 自己 badge only.
+          var info = isSelf ? '' : (d.deviceLabel || d.cwd || '');
+          var dup = !isSelf && nameCount[d.name] > 1;
+          var nm = d.name + (dup ? ' <span style="color:var(--ap-dim);font-weight:400">·' + esc(idTail(d)) + '</span>' : '');
           if (isSelf) nm += ' <span style="background:var(--ap-accent-soft);color:var(--ap-accent);border-radius:6px;padding:1px 5px;font-size:9px;font-weight:600">' + SELF_LABEL + '</span>';
           rows.push('<div class="apair-dev' + (d.id === target ? ' sel' : '') + (!on ? ' off' : '') + '" data-id="' + esc(d.id) + '" title="' + esc(d.name) + (info ? ' · ' + info : '') + (on ? '' : '（离线）') + '">'
             + '<span class="ic">' + pageIcon(d) + '</span>'
@@ -698,7 +734,7 @@
             + '</span>'
             + '<button class="apair-devinfo" data-info="' + esc(d.id) + '" title="设备详情"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></button>'
             + '<span class="dot' + (!on ? ' off' : '') + '"></span>'
-            + '<span class="kd">' + esc(kindLabel(d.kind)) + '</span></div>');
+            + (isSelf ? '' : '<span class="kd">' + esc(kindLabel(d.kind)) + '</span>') + '</div>');
         });
       }
       var html = rows.join('');
@@ -760,7 +796,11 @@
         } else {
           inner = '<div class="apair-bub">' + esc(m.text || '') + '</div>';
         }
-        var who = mine ? '' : '<div class="apair-who">' + esc((m.from && m.from.name) || '?') + ' → ' + esc(targetName(m.to, all)) + '</div>';
+        // targetName(m.to) is deliberate: `all` only exists inside renderDevices/targetName, and a bare
+        // reference here threw ReferenceError for every RECEIVED message (the sender's own echo took the
+        // `mine` short-circuit, so the bug only showed on the receiving side). emit() swallows listener
+        // errors, so the failure was silent: uplink worked, the peer's chat pane stayed empty.
+        var who = mine ? '' : '<div class="apair-who">' + esc((m.from && m.from.name) || '?') + ' → ' + esc(targetName(m.to)) + '</div>';
         return '<div class="apair-msg' + (mine ? ' mine' : '') + '">' + who + inner + '<div class="apair-meta">' + time + '</div></div>';
       }).join('');
       // B7: autoscroll only when user is near the bottom (<=40px) — reading history is not yanked down
