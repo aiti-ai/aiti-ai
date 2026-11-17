@@ -4,7 +4,7 @@
  * 插槽：toolbar（⏰ 线图按钮入口）+ pages（弹窗面板，data-ext-float 规范）。
  * 委托入口：window.__aitiAiScheduleOpen(prefill?) —— prompt 收藏/cmd 行内 ⏰ 调起预填新建。
  */
-import { __setCtx } from "./host-shim";
+import { __setCtx, t } from "./host-shim";
 import { SchedulePageSlot, ScheduleDockRight, ScheduleDockSidebar, SCHED_KEY } from "./schedule-app";
 import { seedDockDefault, sidebarZoneOf, declareDockZones, presentState, present } from "../../../_shared/ext-float-dock";
 
@@ -31,7 +31,7 @@ export default function register(ctx: Record<string, any>) {
 
   function ToolbarButton() {
     return (
-      <button type="button" title="调度：定时任务与计划管理" onClick={() => requestOpen()}
+      <button type="button" title={t("sh.app.title")} onClick={() => requestOpen()}
         onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
         onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}
         style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 36, height: 36, padding: 0, background: "none", borderTop: "none", borderRight: "1px solid var(--border)", color: "var(--text-muted)", cursor: "pointer", flexShrink: 0 }}>
@@ -51,12 +51,12 @@ export default function register(ctx: Record<string, any>) {
     id: "aiti-ai-schedule-open",
     meta: {
       label: "i18n:sh.app.label",
-      title: "调度：定时任务与计划管理",
+      title: "i18n:sh.app.title",
       icon: "icons/clock.svg",
       onClick: () => requestOpen(),
     },
   }]);
-  ctx.registerItems?.("pages", [{ id: "aiti-ai-schedule-page", render: SchedulePageSlot, meta: { label: "调度" } }]);
+  ctx.registerItems?.("pages", [{ id: "aiti-ai-schedule-page", render: SchedulePageSlot, meta: { label: "i18n:sh.app.label" } }]);
   // aiti-float dock v3（P3 批）+ v4 对齐分组：任务（定时任务，用户拍板 2026-09-16 区块名就叫「任务」）=核心区块，默认位=左栏区块（上对齐组，
   // priority 1 紧随项目）；右栏 tab 保留为可选位。老用户已存的 dockpref（旧默认 right-panel）
   // 不被覆盖（seed 只填缺席）——由 session-manager 编排器显式 dock 一次性迁入左栏。
@@ -64,9 +64,9 @@ export default function register(ctx: Record<string, any>) {
   // zones 全集注册（v3.1）：TabBar 页签/浮窗 ⇱ 位置菜单的数据源——face 未挂载
   // （右栏 tab 后台态）时菜单只能靠这里；浮窗壳另带 DOM 属性兑底。
   declareDockZones(SCHED_KEY, [sidebarZoneOf(SCHED_KEY), "right-panel"], sidebarZoneOf(SCHED_KEY));
-  ctx.registerItems?.("rightFileDock", [{ id: "panel", render: ScheduleDockRight, meta: { title: "调度" } }]);
+  ctx.registerItems?.("rightFileDock", [{ id: "panel", render: ScheduleDockRight, meta: { title: "i18n:sh.app.label" } }]);
   // 展开高度策略在 face 层（schedule-app 嵌入态 maxHeight 55vh + body 内部滚动）——
   // cell 级 maxHeightPct 百分比在互斥折叠后的 auto 高 wrapper 里解析不了，不传。
-  ctx.registerItems?.("sidebarExplorerDock", [{ id: "panel", render: ScheduleDockSidebar, meta: { title: "任务", priority: 1, align: "top" } }]);
+  ctx.registerItems?.("sidebarExplorerDock", [{ id: "panel", render: ScheduleDockSidebar, meta: { title: "i18n:sb.tasks", priority: 1, align: "top" } }]);
   try { console.log("[aiti-ai-schedule] 管理弹窗已挂载（toolbar ⏰ 入口 → pages 弹窗）"); } catch { /* noop */ }
 }

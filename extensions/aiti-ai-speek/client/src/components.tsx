@@ -928,12 +928,12 @@ export function initHeavySlots(ctx) {
     { id: "follow", render: HeavyFollowToggle, meta: { label: "i18n:speek.followMode.label", title: "i18n:speek.followMode.title", icon: "icons/volume-2.svg" } },
   ]);
   ctx.registerItems?.("assistantMessageActions", [
-    { id: "read", render: AssistantMessageAction, meta: { label: "开始朗读" } },
+    { id: "read", render: AssistantMessageAction, meta: { label: "i18n:it.read.label" } },
   ]);
   ctx.registerItems?.("sessionTopbar", [
-    { id: "bar", render: PlaybackBar, meta: { label: "跟读播放条" } },
+    { id: "bar", render: PlaybackBar, meta: { label: "i18n:it.bar.label" } },
   ]);
   ctx.registerItems?.("dialogs", [
-    { id: "settings", render: SettingsDialog, meta: { label: "跟读设置" } },
+    { id: "settings", render: SettingsDialog, meta: { label: "i18n:it.settings.label" } },
   ]);
 }

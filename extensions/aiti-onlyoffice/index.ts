@@ -95,6 +95,27 @@ export default {
     { id: "onlyoffice.publicUrl", type: "string", label: "浏览器侧 DS 地址", description: "浏览器加载 api.js 用的 DS 地址；留空跟随「DocumentServer 地址」。nginx /onlyoffice/ 反代场景填 https://…/onlyoffice", value: "", placeholder: "http://127.0.0.1:8802" },
     { id: "onlyoffice.containerBase", type: "string", label: "回调地址", description: "DS 容器回访（download/callback）的基址。默认=网页地址（浏览器访问的 协议+域名+端口，容器与网页同源可达）；仅当容器无法访问网页地址（如 DS 部署在别的机器）时设置覆盖，如 https://pi.example.com:8443", value: "", placeholder: "https://pi.example.com:8443" },
   ],
+
+  ui: {
+    // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
+    i18n: {
+      "zh-CN": {
+        "ext.displayName": "OnlyOffice 编辑",
+      },
+      en: {
+        "feat.onlyoffice.enabled.desc": "When on, probes DocumentServer and registers word/sheet editors when healthy",
+        "feat.onlyoffice.url.desc": "DS URL used by the local server/container (healthcheck and callbacks)",
+        "feat.onlyoffice.publicUrl.desc": "DS URL the browser loads api.js from; empty = follow onlyoffice.url",
+        "feat.onlyoffice.containerBase.desc": "Base URL for DS container callbacks (download/callback); auto-guessed when empty",
+        "ext.displayName": "OnlyOffice Editor",        "ext.description": "OnlyOffice DocumentServer deep-fidelity editing tier: .docx/.xlsx/.pptx preview + edit (Docker backend, feature off by default)",
+        "feat.onlyoffice.enabled": "Enable OnlyOffice",
+        "feat.onlyoffice.url": "DocumentServer URL",
+        "feat.onlyoffice.publicUrl": "Browser-side DS URL",
+        "feat.onlyoffice.containerBase": "Callback URL",
+      },
+    },
+  },
+
   server: {
     startup(ctx: any) {
       console.log("[aiti-onlyoffice] 就绪（enabled=" + featureBool(ctx, "onlyoffice.enabled", false) + "）");

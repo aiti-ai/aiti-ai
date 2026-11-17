@@ -75,16 +75,31 @@ export default {
     clientImmediately: false, // [懒加载 v2] M1 已同步生产，懒化重启用
     // id 与 client 注册对齐（aiti-channels-open——原 channels 为历史错位，M1 审计发现）
     toolbar: [{ id: "aiti-channels-open", label: "i18n:channels.open", title: "i18n:channels.app.title", icon: "icons/message-circle.svg" }],
-    dialogs: [{ id: "aiti-channels-panel", label: "IM 渠道与 cc-connect 管理" }],
+    dialogs: [{ id: "aiti-channels-panel", label: "i18n:it.aiti-channels-panel.label" }],
     i18n: {
       en: {
+        "feat.behavior.proxy-bridge.desc": "Manages the cc-connect process lifecycle (start/stop/restart/health checks; no systemd)",
+        "feat.behavior.embed-ui.desc": "Embeds cc-connect's native Web UI (standalone-subdomain iframe) in a 🖥️ admin Tab of the panel",
+        "feat.tool.aiti-im-list.desc": "Lists IM channels/projects/active sessions (cc-connect): process status, project list, active sessions; grab channel state, project list and active sessions before sending",
+        "feat.tool.aiti-im-send.desc": "Sends text/files to IM channels like DingTalk/Feishu/WeCom via the cc-connect socket API",
+        "feat.agentTools.enabled.desc": "Injects aiti-im-* tools into sessions (off by default; enable temporarily via the AI helper 🤖 or the extension manager)",
+        "it.aiti-channels-panel.label": "IM channels & cc-connect manager",
+        "ext.displayName": "IM Channels",
+        "ext.description": "Manages the cc-connect process lifecycle (start/stop/restart/health checks; no systemd)",
+        "feat.behavior.proxy-bridge": "cc-connect hosting",
+        "feat.behavior.embed-ui": "Embed admin UI",
+        "feat.tool.aiti-im-list": "aiti-im-list · channel/project/session list",
+        "feat.tool.aiti-im-send": "aiti-im-send · send channel message",
+        "feat.agentTools.enabled": "AI tool (IM channels)",
+        "feat.aiti-channels-panel": "IM channels & cc-connect manager",
         "channels.app.title": "aiti-channels: cc-connect hosting + IM channels + admin embed",
         "channels.title": "IM Channels & cc-connect",
         "channels.open": "IM Channels",
         "channels.close": "Close",
       },
       "zh-CN": {
-        "channels.app.title": "aiti-channels：cc-connect 托管 + IM 渠道 + 管理台嵌入",
+        "it.aiti-channels-panel.label": "IM 渠道与 cc-connect 管理",
+        "ext.displayName": "IM 渠道",        "channels.app.title": "aiti-channels：cc-connect 托管 + IM 渠道 + 管理台嵌入",
         "channels.title": "IM 渠道与 cc-connect",
         "channels.open": "IM 渠道",
         "channels.close": "关闭",
