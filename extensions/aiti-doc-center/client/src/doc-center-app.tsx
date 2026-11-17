@@ -539,10 +539,10 @@ function DocCenterDialog({ onClose, initialUnder, embedded }: { onClose: () => v
           <div style={{ width: 224, flexShrink: 0, borderRight: "1px solid var(--border)", overflowY: "auto", padding: "8px 6px" }}>
             {(tagSel.length > 0 || dirFilter) && (
               <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 4, padding: "2px 4px 6px", borderBottom: "1px solid var(--border)", marginBottom: 6 }}>
-                {sortTags(tagSel.map((k) => ({ key: k, display: (flatTags.find((f) => f.key === k) || { display: k }).display, source: "ui" }))).map((t: any) => (
-                  <span key={t.key} style={{ fontSize: 10.5, padding: "1px 6px", borderRadius: 5, background: "#6366f122", color: "#6366f1", display: "inline-flex", alignItems: "center", gap: 3, minWidth: 0 }}>
-                    #{t.display}
-                    <span onClick={() => setTagSel((s) => s.filter((x) => x !== t.key))} title={t("dc.remove")} style={{ cursor: "pointer", fontWeight: 700 }}>×</span>
+                {sortTags(tagSel.map((k) => ({ key: k, display: (flatTags.find((f) => f.key === k) || { display: k }).display, source: "ui" }))).map((tg: any) => (
+                  <span key={tg.key} style={{ fontSize: 10.5, padding: "1px 6px", borderRadius: 5, background: "#6366f122", color: "#6366f1", display: "inline-flex", alignItems: "center", gap: 3, minWidth: 0 }}>
+                    #{tg.display}
+                    <span onClick={() => setTagSel((s) => s.filter((x) => x !== tg.key))} title={t("dc.remove")} style={{ cursor: "pointer", fontWeight: 700 }}>×</span>
                   </span>
                 ))}
                 {dirFilter && (
