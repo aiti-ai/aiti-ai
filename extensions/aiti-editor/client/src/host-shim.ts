@@ -121,7 +121,7 @@ export async function ensureEditorTicket(filePath: string, root?: string, force 
   })
     .then((r) => r.json())
     .then((d: { ticket?: string; error?: string; expiresIn?: number }) => {
-      if (!d.ticket) throw new Error(d.error || "ticket 签发失败");
+      if (!d.ticket) throw new Error(d.error || t("ticket 签发失败"));
       const ttl = (typeof d.expiresIn === "number" && d.expiresIn > 0 ? d.expiresIn * 1000 : 3600_000)
         - EDITOR_TICKET_CLIENT_TTL_MARGIN_MS;
       _editorTicketCache.set(filePath, { ticket: d.ticket, exp: Date.now() + Math.max(ttl, 60_000) });
