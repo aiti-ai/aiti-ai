@@ -1,8 +1,11 @@
 ---
 name: ext-create
 title: 用本模板创建新扩展
+title.en: "Create a new extension from this template"
 placeholder: 描述你想创建的扩展（如：创建一个在会话顶栏显示服务器状态的扩展）…
+placeholder.en: "Describe the extension to create (e.g. one that shows server status in the session toolbar)…"
 summary: 完整创建流程——复制模板、改 index.ts/vite.config、写 client 组件、构建、部署、生效
+summary.en: "The full creation flow — copy the template, edit index.ts/vite.config, write client components, build, deploy, verify"
 ---
 
 # ext-create · 用 ext-jsx-client 模板创建新扩展
@@ -40,7 +43,7 @@ cd <pi-web 仓库>/pi-web-ext && cp -r templates/ext-jsx-client <your-ext>
 export default {
   id: "your-ext",                       // 与目录名一致
   name: "你的扩展名",
-  version: "0.1.0",
+  // 不写 version：版本唯一来源 = package.json（发布流程维护），宿主加载时自动注入
   icon: "icon.svg",
   client: "dist/<your-ext>-client.mjs",  // ← 必须 = vite.config.ts 里 build.lib.fileName 的产物（产物统一 dist/）
   ai: { manage: true, intro: "一句话：AI 能帮我做什么", skills: "skills" }, // 可选：加 AI 帮助点

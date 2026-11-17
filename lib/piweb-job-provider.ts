@@ -146,12 +146,18 @@ export function installPiWebJobProvider(): void {
 
   void (async () => {
     try {
-      // Load the fork package's source module directly via jiti (the Symbol.for registry is shared
-      // across module copies — same store as the fork extension)
+      // Load the fork package's module via jiti (the Symbol.for registry is shared
+      // across module copies — same store as the fork extension).
+      // The npm dist package ships compiled src/ (external-job-provider.js + .d.ts,
+      // see pi-subagents build-package.mjs #2980); a source-tree install (git
+      // worktree / linked repo) has the .ts original — probe both.
       const agentDir = process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), ".pi", "agent");
-      const modPath = path.join(agentDir, "npm", "node_modules", "@aiti-ai", "pi-subagents", "src", "api", "external-job-provider.ts");
-      if (!fs.existsSync(modPath)) {
-        console.warn(`[piweb-job-provider] fork external-job-provider not found; skipping registration: ${modPath}`);
+      const pkgRoot = path.join(agentDir, "npm", "node_modules", "@aiti-ai", "pi-subagents");
+      const modPath = ["src/api/external-job-provider.js", "src/api/external-job-provider.ts"]
+        .map((rel) => path.join(pkgRoot, rel))
+        .find((p) => fs.existsSync(p));
+      if (!modPath) {
+        console.warn(`[piweb-job-provider] fork external-job-provider not found; skipping registration: ${pkgRoot}/src/api/external-job-provider.{js,ts}`);
         return;
       }
       const { createJiti } = await import("jiti");

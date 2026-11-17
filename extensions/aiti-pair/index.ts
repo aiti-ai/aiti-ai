@@ -19,6 +19,29 @@ export default {
     skills: "skills",
   },
 
+  // lazy-load v2 static entry declaration: ids aligned with the client registerItems (zero flicker across materialization); right-panel dock = doc-center-style two-face shape
+  ui: {
+    rightFileDock: [{ id: "pair", label: "i18n:it.pair.label" }],
+    toolbar: [{ id: "pair", label: "i18n:it.pair.label" }],
+    // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
+    i18n: {
+      "zh-CN": {
+        "it.pair.label": "设备配对",
+        "it.pair.label.2": "设备配对面板",
+        "it.pair.label.3": "设备配对",
+        "it.pair.title": "设备配对",
+        "ext.displayName": "设备互连（临时聊天 / 互传文件）",
+      },
+      en: {
+        "it.pair.label": "Device pairing",
+        "it.pair.label.2": "Device pairing panel",
+        "it.pair.label.3": "Device pairing",
+        "it.pair.title": "Device pairing",
+        "ext.displayName": "Device Pairing (temp chat / file transfer)",
+      },
+    },
+  },
+
   server: {
     startup() {
       console.log("[aiti-pair] 就绪（薄载体：widget/协议由 aiti-devtools pair-client.js 公共资产提供）");

@@ -20,12 +20,12 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { t, apiUrl, getExtService, onExtServiceChange, ensureMaterialized, renderSlot } from "./host-shim";
-import { useStore, refreshSessions, refreshWorkspaces, refreshProjectSessions, getProjectSessionsTarget, type WorkspaceEntry } from "./store";
+import { useStore, refreshSessions, refreshWorkspaces, refreshProjectSessions, getProjectSessionsTarget, panelOpen, type WorkspaceEntry } from "./store";
 import { SidebarList } from "./sidebar-dock";
 import { getRecentProjects, getProjectActivity, normalizeWorkspaceKey, type SessionInfo } from "./sidebar/pure";
 import { useWorktree } from "./sidebar/use-worktree";
 import { useBranchChip } from "./sidebar/branch-chip";
-import { DockBody, readBlockCollapsed, writeBlockCollapsed, seedBlockCollapsedDefault, present, sidebarZoneOf, SIDEBAR_COLLAPSE_PREFIX } from "../../../_shared/ext-float-dock";
+import { DockBody, readBlockCollapsed, writeBlockCollapsed, seedBlockCollapsedDefault, present, sidebarZoneOf, SIDEBAR_COLLAPSE_PREFIX, dockIconEl } from "../../../_shared/ext-float-dock";
 import { dedupeFetch } from "../../../_shared/dedupe-fetch";
 // 跨扩展复用（构建期内联，DirectoryBrowser 先例）：aiti-folder 的文件夹多实例生命周期。
 // 区块 faces（左栏栈/浮窗/右栏）由 aiti-folder entry 动态注册（folder-dock v2）；
@@ -65,7 +65,7 @@ const DOCK_STACK_SERVICE = "aiti-float.dockstack";
 /** 应用中心（aiti-app-center）：DockStack 全折叠空白的填充物（docs/aiti-app-center-plan.md）。
  *  软依赖——服务缺席（扩展禁用/旧部署）时空白照旧，其余零影响。 */
 const APP_CENTER_SERVICE = "aiti-app-center.api";
-/** 快速上手（aiti-quickstart）：全折叠空白的引导卡（filler 组合上半，应用中心在下）。
+/** 快速上手（aiti-quickstart）：全折叠空白的引导卡（v3.1 作 header 插槽进应用中心滚动体，随内容滚动）。
  *  软依赖同 app-center——缺席/禁用/用户 ✕ 关闭（renderQuickstart 返回 null）→ 回退现状。 */
 const QUICKSTART_SERVICE = "aiti-quickstart.api";
 
@@ -79,7 +79,7 @@ const SCHED_KEY = "aiti-ai-schedule:panel";
  *  记忆键），零「点击加载」字样；仍然不预加载内容代码，展开时才由容器 ensureMaterialized
  *  → 注册条目同 key 覆盖 → 真 face 无缝接管。 */
 function StaticDockShell(p: {
-  itemKey: string; blockKey?: string; title?: string; chrome?: "section" | "tab"; kind?: "dockable" | "reserved";
+  itemKey: string; blockKey?: string; title?: string; icon?: unknown; chrome?: "section" | "tab"; kind?: "dockable" | "reserved";
   zones?: any[]; defaultZone?: string; children?: any;
 }) {
   return (
@@ -87,6 +87,7 @@ function StaticDockShell(p: {
       itemKey={p.itemKey}
       blockKey={p.blockKey ?? p.itemKey}
       title={p.title}
+      icon={p.icon}
       chrome={p.chrome ?? "section"}
       kind={p.kind ?? "dockable"}
       zones={p.zones}
@@ -459,8 +460,14 @@ export function SidebarContentDock(props: Record<string, any>) {
       align: "top" as const, // 对齐分组（v4）：核心区块上对齐
       fill: true,
       render: () => (
-        <DockBody itemKey="projects" blockKey="projects" title={t("sm.dockProjects")} chrome="section" kind="reserved"
-          headerActions={hasOtherActivity ? [{ id: "projects-activity", title: t("sidebar.newActivity"), icon: activityDotEl, visibility: "always", onClick: () => openProjectsAndPicker() }] : undefined}>
+        <DockBody itemKey="projects" blockKey="projects" title={t("sm.dockProjects")} icon="aiti-ai-logo" headerHint={t("sm.dockProjectsHint")} chrome="section" kind="reserved"
+          headerActions={hasOtherActivity ? [{ id: "projects-activity", title: t("sidebar.newActivity"), icon: activityDotEl, visibility: "always", onClick: () => openProjectsAndPicker() }] : undefined}
+          extraMenuItems={[
+            // 折叠态 ⋮ 也有常用出口（2026-11-15）：「全部会话」面板 + 手动刷新。项目区块是
+            // 常驻核心（无独立恢复入口），不提供「关闭」——折叠即收起，右端箭头同义。
+            { label: t("sm.openAll"), icon: dockIconEl("float", 13), run: () => panelOpen.onOpen() },
+            { label: t("sidebar.refresh"), run: () => { void doRefresh(); } },
+          ]}>
           <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "hidden" }}>
             <SidebarList
               cwd={cwdState ?? undefined}
@@ -643,20 +650,18 @@ export function SidebarContentDock(props: Record<string, any>) {
 
       {/* DockStack：统一区块栈（aiti-float 服务；缺席降级 = 常驻区块直排 + slot 原样渲染）。
           slotExtra：文件夹 faces（aiti-folder 动态注册）所需宿主回调/会话 cwd 透传。
-          filler 组合（v3 快速上手）：引导卡在上（flexShrink 0）、应用中心在下（flex:1 内滚）——
-          spacer 为 flex column，二者同屏共存；各自缺席/关闭态自然回退（双缺席 = 现状空白）。 */}
+          filler 组合（v3.1）：快速上手作 header 插槽进应用中心滚动体——随内容滚动，搜索行 sticky 顶吸；
+          仅快速上手（应用中心缺席）时直出引导卡；双缺席 = undefined 现状空白。 */}
       {stackApi ? (
         <stackApi.DockStack
           blocks={blocks}
           dockSlot="sidebarExplorerDock"
           staticShell={StaticDockShell}
           filler={(appCenterApi || quickstartApi)
-            ? () => (
-                <>
-                  {quickstartApi ? quickstartApi.renderQuickstart() : null}
-                  {appCenterApi ? appCenterApi.renderAppCenter() : null}
-                </>
-              )
+            ? () => {
+                if (!appCenterApi) return quickstartApi ? quickstartApi.renderQuickstart() : null;
+                return appCenterApi.renderAppCenter({ header: quickstartApi ? quickstartApi.renderQuickstart() : null });
+              }
             : undefined}
           slotExtra={{
             cwd: cwdState,

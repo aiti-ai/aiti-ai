@@ -45,16 +45,18 @@ test("top-bar buttons have exactly one render site each (Debug / file toggle / c
       .split("\n")
       .filter((line) => line.includes(`${name}(`) && !line.includes(`const ${name}`))
       .length;
-  // Debug: re-homed to the fork's top-bar right cluster (f19b7398) — one call, (isMobile).
-  assert.equal(callsOf("renderDebugButton"), 1, "renderDebugButton must have exactly one call site (the fork re-homed entry); a second call means an upstream toolbar entry rode back in on a merge");
-  assert.match(source, /\{renderDebugButton\(isMobile\)\}/);
-  assert.doesNotMatch(stripped, /renderDebugButton\(true\)/);
+  // Debug: retired outright (2026-11-15) — the entry moved into the unified
+  // topbar-order system (builtin id "debug", renderTopbarItem case). Any standalone
+  // renderDebugButton coming back means a second, unmanaged entry again.
+  assert.equal(callsOf("renderDebugButton"), 0, "renderDebugButton must have zero call sites (retired; the debug entry lives in renderTopbarItem as builtin id \"debug\")");
+  assert.doesNotMatch(stripped, /renderDebugButton\(/);
   // File toggle: pinned at the top-right corner (51273ef1) — one call, (isMobile).
   assert.equal(callsOf("renderMainFileToggle"), 1, "renderMainFileToggle must have exactly one call site (the top-right corner owner); a second call means the upstream inline toggle rode back in on a merge");
   assert.match(source, /\{renderMainFileToggle\(isMobile\)\}/);
   assert.doesNotMatch(stripped, /renderMainFileToggle\(true\)/);
-  // Chat toolbar actions: only inside the narrow-mobile More overlay (mobile: true).
-  assert.equal(callsOf("renderChatToolbarActions"), 1, "renderChatToolbarActions must have exactly one call site (the More overlay); the upstream medium inline row must stay deleted");
+  // Chat toolbar actions: retired outright (2026-11-15) — the vertical-••• more menu
+  // is the single overflow mechanism; even the More-overlay call site is gone.
+  assert.equal(callsOf("renderChatToolbarActions"), 0, "renderChatToolbarActions must have zero call sites (retired; single overflow = the vertical ⋯ more menu)");
 });
 
 test("top-bar status buttons are not duplicated: no leftover renderSessionStatsButton definition or call", () => {
@@ -73,7 +75,8 @@ test("the \"⋯\" more button sits after the session stats (existing layout orde
 // ════════════════════════════════════════════════════════════════════════════
 // 2026-11 topbar 双堆叠第二波（v0.13→v0.15 合并）后的单一调用点计数钉。
 // 上游 mobile-toolbar 的行内调用组（renderChatToolbarActions / renderDebugButton /
-// renderMainFileToggle）被合并带回，与 fork 的单一 owner 叠加——桌面出现两个
+// renderMainFileToggle）曾被合并带回，与 fork 的单一 owner 叠加（renderDebugButton 已于
+// 2026-11-15 整体退役：debug 入口 = topbar-order 内置项）——桌面出现两个
 // Debug、两个文件面板开关，375px 下行内开关还与 fork ⋯ 溢出按钮重叠。与本文件
 // 开头 session stats 双堆叠同款（auto-merge 无冲突地两边都加）。这里改用「剥注
 // 释后统计调用行数」的强钉：任何来源（合并带入、重构补回）把调用点加回都会红。
@@ -102,12 +105,20 @@ function callSites(fnName) {
 
 test("top-bar render helpers have exactly one call site each (merge-stacking guard)", () => {
   const cases = [
-    { fn: "renderDebugButton", want: "renderDebugButton(isMobile)", owner: "顶栏右簇（f19b7398 re-home）" },
+    { fn: "renderDebugButton", want: 0, owner: "已退役（2026-11-15）——debug 入口收编进 topbar-order 统一体系（builtin id debug）" },
     { fn: "renderMainFileToggle", want: "renderMainFileToggle(isMobile)", owner: "右上角固定开关（51273ef1）" },
-    { fn: "renderChatToolbarActions", want: "renderChatToolbarActions(true)", owner: "窄屏 More 浮层面板内" },
+    { fn: "renderChatToolbarActions", want: 0, owner: "已退役（2026-11-15）——单一溢出机制 = 竖三点 ⋯ 菜单，浮层/行内调用都不许回来" },
   ];
   for (const { fn, want, owner } of cases) {
     const sites = callSites(fn);
+    if (want === 0) {
+      assert.equal(
+        sites.length, 0,
+        `${fn} 应彻底退役、0 调用点（规则 = ${owner}）。` +
+        `Found ${sites.length} occurrence(s): ${JSON.stringify(sites)}. If a merge reintroduced this, keep the single-overflow rule — never both.`,
+      );
+      continue;
+    }
     assert.equal(
       sites.length, 1,
       `${fn} 调用点应恰 1 处（单一 owner = ${owner}，形态 ${want}）。` +

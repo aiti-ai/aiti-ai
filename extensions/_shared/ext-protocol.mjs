@@ -1,5 +1,5 @@
 /**
- * pi-web 扩展协议版本 —— canonical 定义（aiti-ai 侧）。
+ * pi-web 扩展协议版本 —— canonical 定义（pi-work 侧）。
  *
  * 用途：
  *   - 扩展在 package.json 声明 `"aitiExtProtocol": "1.0"`（字符串 MAJOR.MINOR）；

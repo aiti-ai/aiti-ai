@@ -8,6 +8,7 @@
  * 导出离线自包含：render 函数进不了单文件，故 markdownExportHtml 仍自带一份 mermaid 内联脚本。
  */
 import { getBase } from "./env.ts";
+import { t } from "./host-shim.ts";
 import { mdSlug } from "./lib.ts";
 
 /**
@@ -70,6 +71,33 @@ export function activeFenceRenderers(content: string, renderers?: MdFenceDescrip
     out.push(r);
   }
   return out;
+}
+
+/**
+ * Convert a leading YAML frontmatter block (`---` … `---`) into an equivalent fenced
+ * code block (```yaml … ```). Only the two delimiter lines are rewritten — the line
+ * count is preserved exactly, so preview source-line mapping / git change highlighting
+ * / smart-click line numbers stay aligned with the editor buffer (which is never touched;
+ * preview & HTML/PDF export rendering only).
+ */
+export function frontmatterToFence(content: string): string {
+  if (!/^---[ \t]*(?:\r?\n)/.test(content)) return content;
+  const lines = content.split("\n"); // \r stays attached to each line (harmless)
+  let close = -1;
+  for (let i = 1; i < lines.length; i++) {
+    if (/^---[ \t]*\r?$/.test(lines[i])) { close = i; break; }
+  }
+  if (close < 0) return content; // no closing delimiter → not frontmatter (plain hr)
+  // Fence must outlast any backtick run inside the body (CommonMark closing-fence rule)
+  let maxTicks = 0;
+  for (let j = 1; j < close; j++) {
+    const t = lines[j].match(/^ {0,3}(`+)/);
+    if (t && t[1].length > maxTicks) maxTicks = t[1].length;
+  }
+  const ticks = "`".repeat(Math.max(3, maxTicks + 1));
+  lines[0] = ticks + "yaml" + (lines[0].endsWith("\r") ? "\r" : "");
+  lines[close] = ticks + (lines[close].endsWith("\r") ? "\r" : "");
+  return lines.join("\n");
 }
 
 /**
@@ -207,6 +235,7 @@ export function markdownPreviewHtml(
   smart = true,
   renderers?: MdFenceDescriptor[],
 ): string {
+  content = frontmatterToFence(content); // frontmatter → yaml fence（行数不变，行号映射不失准）
   const base = getBase();
   const bg = dark ? "#0d1117" : "#fff";
   const fg = dark ? "#c9d1d9" : "#24292f";
@@ -445,13 +474,14 @@ const _vendorTextCache: Record<string, string> = {};
 async function _vendorText(p: string): Promise<string> {
   if (_vendorTextCache[p]) return _vendorTextCache[p];
   const r = await fetch(getBase() + p, { cache: "no-store" });
-  if (!r.ok) throw new Error("vendor 加载失败: " + p);
-  const t = await r.text();
-  _vendorTextCache[p] = t;
-  return t;
+  if (!r.ok) throw new Error(t("vendor 加载失败: {p}", { p }));
+  const text = await r.text(); // not "t": that would shadow the imported translate fn (TDZ on the throw line)
+  _vendorTextCache[p] = text;
+  return text;
 }
 
 export async function markdownRenderHtml(content: string, dark: boolean, title: string): Promise<string> {
+  content = frontmatterToFence(content); // 同预览：frontmatter → yaml fence
   const bg = dark ? "#0d1117" : "#fff";
   const fg = dark ? "#c9d1d9" : "#24292f";
   const lines = content.split("\n");

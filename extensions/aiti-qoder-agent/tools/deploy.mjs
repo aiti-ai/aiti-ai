@@ -17,7 +17,7 @@ const bases = [
 for (const base of bases) {
   const dest = join(base, "aiti-qoder-agent");
   mkdirSync(dest, { recursive: true });
-  for (const f of ["index.ts","package.json","qoder-core.mjs","login-driver.ts","variants.ts","steer-gate.ts"]) {
+  for (const f of ["index.ts","package.json","qoder-core.mjs","qoder-acp.ts","login-driver.ts","variants.ts","steer-gate.ts"]) {
     if (!existsSync(join(root, f))) throw new Error(`[deploy] aiti-qoder-agent 缺文件 ${f}（文件集须与部署树一致）`);
     cpSync(join(root, f), join(dest, f));
   }

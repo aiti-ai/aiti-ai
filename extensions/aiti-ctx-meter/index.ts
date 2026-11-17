@@ -15,12 +15,12 @@
 export default {
   id: "aiti-ctx-meter",
   name: "上下文比例条（context %）",
-  version: "0.1.4",
   icon: "icons/meter-vertical.svg",
   client: "dist/aiti-ctx-meter-client.mjs",
   ui: {
     i18n: {
       en: {
+        "ext.displayName": "Context Meter (context %)",
         "meter.none": "No context data yet (idle or external backend)",
         "meter.compacting": "Compacting…",
         "meter.queued": "Compaction queued",

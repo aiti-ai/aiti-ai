@@ -7,11 +7,15 @@
  */
 import { __setCtx, regSvc } from "./host-shim";
 import { createAppCenterApi } from "./app-center";
+import { registerCommandsService } from "./commands";
 
 export default function register(ctx: Record<string, unknown>): () => void {
   __setCtx(ctx);
   const dispose = regSvc("aiti-app-center.api", createAppCenterApi(ctx));
+  // 应用命令提示查询服务（aiti-ai-input suggest kind="app" 数据源）+ manifest 后台预热
+  const disposeCmd = registerCommandsService();
   return () => {
     try { dispose?.(); } catch { /* ignore */ }
+    try { disposeCmd?.(); } catch { /* ignore */ }
   };
 }

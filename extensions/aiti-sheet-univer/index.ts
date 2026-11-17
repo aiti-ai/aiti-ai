@@ -28,7 +28,6 @@ const saveBlobRoute = createBlobSaveRoute({
 export default {
   id: "aiti-sheet-univer",
   name: "aiti-sheet-univer",
-  version: "0.1.0",
   description: "Excel 表格编辑器（exceljs 数据面 + Univer 视图面）：.xlsx/.xlsm 预览+编辑，.xls/.ods 只读预览",
   client: "dist/aiti-sheet-univer-client.mjs",
   clientImmediately: true,
@@ -36,6 +35,21 @@ export default {
   features: [
     { id: "sheet.edit", label: "Excel 编辑保存", description: "开启后 .xlsx/.xlsm 提供 edit 能力（保存走 save-blob）；关闭仅预览", default: true },
   ],
+
+  ui: {
+    // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
+    i18n: {
+      "zh-CN": {
+        "ext.displayName": "Excel 编辑器",
+      },
+      en: {
+        "feat.sheet.edit.desc": "When on, .xlsx/.xlsm get edit capability (saves via save-blob); off = preview only",
+        "ext.displayName": "Excel Editor",        "ext.description": "Excel spreadsheet editor (exceljs data layer + Univer view layer): .xlsx/.xlsm preview + edit, .xls/.ods read-only preview",
+        "feat.sheet.edit": "Excel edit & save",
+      },
+    },
+  },
+
   server: {
     startup(ctx: any) {
       if (ctx.configDir) setSofficeDataDir(ctx.configDir); // soffice 定位读同一份 features.json

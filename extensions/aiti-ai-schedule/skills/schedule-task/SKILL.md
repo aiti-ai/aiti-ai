@@ -1,8 +1,11 @@
 ---
 name: schedule-task
 title: AI 帮我管理定时任务
+title.en: "AI: manage scheduled tasks"
 placeholder: 每天早上9点总结昨天的 git 提交，写到项目日报…
+placeholder.en: "Summarize yesterday's git commits into a daily report every morning at 9…"
 summary: 用 schedule_task 工具创建/查询/修改/删除定时计划；教 cron 写法与模式选择
+summary.en: "Create/query/modify/delete schedules with the schedule_task tool; teaches cron syntax and mode selection"
 ---
 
 # schedule-task · 定时任务管理

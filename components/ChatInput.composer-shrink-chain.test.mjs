@@ -52,9 +52,12 @@ test("shrink chain ③: the queue box can give way down to header + one row (min
 });
 
 test("shrink chain ④: ChatWindow's bottom composer container is a shrinkable flex column", async () => {
-  assert.match(windowSource, /className="relative flex min-h-0 flex-col"/);
-  // Demo mirror agrees (full-upstream form) — if the two disagree again, that's
-  // a merge resolution bug, not intent.
+  // 2026-11-15 (2223dd9d): the new-session page made the container conditionally
+  // shrink-0, so the chain prefix now lives in a template literal — the shrinkable
+  // flex-column chain (relative flex min-h-0 flex-col) itself is unchanged.
+  assert.match(windowSource, /className=\{`relative flex min-h-0 flex-col/);
+  // Demo mirror keeps the full-upstream plain form; the divergence above is the
+  // deliberate local new-session adaptation, not a merge loss.
   const demoWindow = await readFile(new URL("../demo/components/ChatWindow.tsx", import.meta.url), "utf8");
   assert.match(demoWindow, /className="relative flex min-h-0 flex-col"/);
 });

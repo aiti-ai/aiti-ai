@@ -128,10 +128,10 @@ function renderMailPanel(face) {
       .then(function (r) { return r.json(); })
       .then(function (d) {
         if (!liveRef.current) return;
-        setMsg(d.ok ? { kind: "ok", text: "已保存" } : { kind: "err", text: "保存失败：" + (d.error || "?") });
+        setMsg(d.ok ? { kind: "ok", text: t("已保存") } : { kind: "err", text: t("保存失败：") + (d.error || "?") });
         if (d.ok) loadConfig();
       })
-      .catch(function (e) { if (liveRef.current) setMsg({ kind: "err", text: "保存失败：" + e }); })
+      .catch(function (e) { if (liveRef.current) setMsg({ kind: "err", text: t("保存失败：") + e }); })
       .finally(function () { if (liveRef.current) setBusy(false); });
   };
   var sendTest = function () {
@@ -142,11 +142,11 @@ function renderMailPanel(face) {
         if (!liveRef.current) return;
         var rs = d.results || [];
         var bad = rs.filter(function (r) { return r.status !== "ok"; });
-        if (d.ok) setMsg({ kind: "ok", text: "测试邮件已发送 → " + rs.map(function (r) { return r.to; }).join(", ") + "（" + rs.map(function (r) { return r.durationMs; }).join("/") + "ms）" });
-        else setMsg({ kind: "err", text: "发送失败：" + (d.error || (bad[0] && bad[0].error) || "?") });
+        if (d.ok) setMsg({ kind: "ok", text: t("测试邮件已发送 → ") + rs.map(function (r) { return r.to; }).join(", ") + "（" + rs.map(function (r) { return r.durationMs; }).join("/") + "ms）" });
+        else setMsg({ kind: "err", text: t("发送失败：") + (d.error || (bad[0] && bad[0].error) || "?") });
         loadLog();
       })
-      .catch(function (e) { if (liveRef.current) setMsg({ kind: "err", text: "发送失败：" + e }); })
+      .catch(function (e) { if (liveRef.current) setMsg({ kind: "err", text: t("发送失败：") + e }); })
       .finally(function () { if (liveRef.current) setBusy(false); });
   };
 
@@ -176,40 +176,40 @@ function renderMailPanel(face) {
   if (tab === "config") {
     var hasCfg = !!cfg;
     bodyEl = h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
-      row("SMTP 服务器", h("input", { value: form.host, onChange: function (e) { setF("host", e.target.value); }, placeholder: "如 smtp.qq.com", style: inputStyle })),
+      row(t("SMTP 服务器"), h("input", { value: form.host, onChange: function (e) { setF("host", e.target.value); }, placeholder: t("如 smtp.qq.com"), style: inputStyle })),
       h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } },
-        row("端口", h("input", { value: form.port, onChange: function (e) { setF("port", e.target.value.replace(/\D/g, "")); }, placeholder: "465 / 587 / 25", style: inputStyle })),
-        row("加密", h("select", { value: form.secure, onChange: function (e) { setF("secure", e.target.value); }, style: inputStyle },
-          h("option", { value: "ssl" }, "SSL/TLS（465 隐式）"),
-          h("option", { value: "starttls" }, "STARTTLS（587 推荐，服务器支持则自动升级）"),
-          h("option", { value: "none" }, "不加密直连（25 等，永不升级）")))),
-      row("用户名", h("input", { value: form.user, onChange: function (e) { setF("user", e.target.value); }, placeholder: " usually 即发件邮箱", style: inputStyle })),
-      row("密码/授权码", h("input", { type: "password", value: form.pass, onChange: function (e) { setF("pass", e.target.value); },
-        placeholder: hasCfg && cfg && cfg.hasPass ? "已保存（留空=不修改）" : "SMTP 授权码（非登录密码）", style: inputStyle })),
-      row("发件人", h("input", { value: form.from, onChange: function (e) { setF("from", e.target.value); }, placeholder: "可选，缺省用用户名", style: inputStyle })),
+        row(t("端口"), h("input", { value: form.port, onChange: function (e) { setF("port", e.target.value.replace(/\D/g, "")); }, placeholder: "465 / 587 / 25", style: inputStyle })),
+        row(t("加密"), h("select", { value: form.secure, onChange: function (e) { setF("secure", e.target.value); }, style: inputStyle },
+          h("option", { value: "ssl" }, t("SSL/TLS（465 隐式）")),
+          h("option", { value: "starttls" }, t("STARTTLS（587 推荐，服务器支持则自动升级）")),
+          h("option", { value: "none" }, t("不加密直连（25 等，永不升级）"))))),
+      row(t("用户名"), h("input", { value: form.user, onChange: function (e) { setF("user", e.target.value); }, placeholder: t(" usually 即发件邮箱"), style: inputStyle })),
+      row(t("密码/授权码"), h("input", { type: "password", value: form.pass, onChange: function (e) { setF("pass", e.target.value); },
+        placeholder: hasCfg && cfg && cfg.hasPass ? t("已保存（留空=不修改）") : t("SMTP 授权码（非登录密码）"), style: inputStyle })),
+      row(t("发件人"), h("input", { value: form.from, onChange: function (e) { setF("from", e.target.value); }, placeholder: t("可选，缺省用用户名"), style: inputStyle })),
       h("div", { style: { display: "flex", justifyContent: "flex-end" } },
         h("button", { disabled: busy || !form.host.trim(), onClick: save,
-          style: Object.assign(btnStyle("#3b82f6", "#fff"), { opacity: busy || !form.host.trim() ? 0.5 : 1 }) }, busy ? "保存中…" : "保存配置")),
+          style: Object.assign(btnStyle("#3b82f6", "#fff"), { opacity: busy || !form.host.trim() ? 0.5 : 1 }) }, busy ? t("保存中…") : t("保存配置"))),
       h("div", { style: { borderTop: "1px solid var(--border)", paddingTop: 8, display: "flex", flexDirection: "column", gap: 8 } },
-        h("div", { style: { fontSize: 12, fontWeight: 600 } }, "发送测试"),
-        row("测试收件人", h("input", { value: form.testTo, onChange: function (e) { setF("testTo", e.target.value); },
+        h("div", { style: { fontSize: 12, fontWeight: 600 } }, t("发送测试")),
+        row(t("测试收件人"), h("input", { value: form.testTo, onChange: function (e) { setF("testTo", e.target.value); },
           placeholder: "you@example.com", style: inputStyle })),
         h("div", { style: { display: "flex", justifyContent: "flex-end" } },
           h("button", { disabled: busy || !form.testTo.trim() || !cfg, onClick: sendTest,
             style: Object.assign(btnStyle("var(--bg-hover)", "var(--text)"), { opacity: busy || !form.testTo.trim() || !cfg ? 0.5 : 1 }),
-            title: !cfg ? "先保存配置" : "" }, "发送测试")),
+            title: !cfg ? t("先保存配置") : "" }, t("发送测试"))),
         h("div", { style: { fontSize: 11, color: "var(--text-muted)" } },
-          "提示：QQ/163 邮箱需在邮箱设置里开启 SMTP 并使用「授权码」。密码只存本机 configDir/config.json（0600），API 不回显。")));
+          t("提示：QQ/163 邮箱需在邮箱设置里开启 SMTP 并使用「授权码」。密码只存本机 configDir/config.json（0600），API 不回显。"))));
   } else {
     bodyEl = h("div", null,
       h("div", { style: { display: "flex", justifyContent: "flex-end", marginBottom: 6 } },
-        h("button", { onClick: loadLog, style: btnStyle("var(--bg-hover)", "var(--text)") }, "刷新")),
+        h("button", { onClick: loadLog, style: btnStyle("var(--bg-hover)", "var(--text)") }, t("刷新"))),
       log === null
-        ? h("div", { style: { color: "var(--text-muted)", fontSize: 12 } }, "加载中…")
+        ? h("div", { style: { color: "var(--text-muted)", fontSize: 12 } }, t("加载中…"))
         : log.length === 0
-          ? h("div", { style: { color: "var(--text-muted)", fontSize: 12, padding: "20px 0", textAlign: "center" } }, "暂无发送记录")
+          ? h("div", { style: { color: "var(--text-muted)", fontSize: 12, padding: "20px 0", textAlign: "center" } }, t("暂无发送记录"))
           : h("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 11.5 } },
-              h("thead", null, h("tr", null, ["时间", "收件人", "主题", "状态", "耗时", "来源"].map(function (th) {
+              h("thead", null, h("tr", null, [t("时间"), t("收件人"), t("主题"), t("状态"), t("耗时"), t("来源")].map(function (th) {
                 return h("th", { key: th, style: { textAlign: "left", padding: "4px 8px", borderBottom: "1px solid var(--border)", color: "var(--text-muted)" } }, th);
               }))),
               h("tbody", null, log.map(function (r) {
@@ -221,17 +221,17 @@ function renderMailPanel(face) {
                   h("td", { style: tdStyle }, r.duration_ms != null ? r.duration_ms + "ms" : ""),
                   h("td", { style: tdStyle }, r.source || ""));
               }))),
-      h("div", { style: { fontSize: 11, color: "var(--text-muted)", marginTop: 8 } }, "记录保留 90 天（cache/mails.db）。"));
+      h("div", { style: { fontSize: 11, color: "var(--text-muted)", marginTop: 8 } }, t("记录保留 90 天（cache/mails.db）。")));
   }
 
   var panelEl = h(mailFragment, null,
     h("div", { style: head },
       floating ? h("span", { style: { fontWeight: 700, fontSize: 14, display: "flex", alignItems: "center", gap: 6 } },
-        Ic(15, ICONS.mail), "邮件") : null,
+        Ic(15, ICONS.mail), t("邮件")) : null,
       h("span", { style: { flex: 1 } }),
-      tabBtn("config", "配置"),
-      tabBtn("log", "发送记录"),
-      floating ? h("button", { onClick: function () { setOpen(false); }, "aria-label": "关闭", title: "关闭",
+      tabBtn("config", t("配置")),
+      tabBtn("log", t("发送记录")),
+      floating ? h("button", { onClick: function () { setOpen(false); }, "aria-label": t("关闭"), title: t("关闭"),
         style: { background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", padding: "2px 6px", flexShrink: 0 } },
         Ic(12, ICONS.x)) : null),
     h("div", { style: { flex: 1, minHeight: 0, overflowY: "auto", padding: 12 } },
@@ -250,19 +250,21 @@ function renderMailPanel(face) {
 }
 
 function register(ctx) {
+	// i18n: host ctx.t (index.ts ui.i18n entries, Chinese raw text as key); falls back to the bare key on old hosts
+	var t = function (k) { return typeof ctx.t === "function" ? ctx.t(k) : k; };
   __setCtx(ctx);
   ctx.registerItems("toolbar", [{
     id: "aiti-mail-open",
     meta: {
-      label: "邮件",
-      title: "邮件：SMTP 配置 / 发送测试 / 发送记录",
+      label: "i18n:it.panel.label",
+      title: "i18n:it.panel.title",
       icon: "icons/mail.svg",
       onClick: function () { requestOpen(); },
     },
   }]);
   ctx.registerItems("dialogs", [{ id: "aiti-mail-panel", render: MailPanel }]);
   // aiti-float dock v3（P3 批）：右栏「邮件」tab（id 拼后 = MAIL_KEY）
-  ctx.registerItems("rightFileDock", [{ id: "panel", render: MailDockFace, meta: { title: "邮件" } }]);
+  ctx.registerItems("rightFileDock", [{ id: "panel", render: MailDockFace, meta: { title: "i18n:it.panel.title" } }]);
   try { console.log("[aiti-mail] 管理弹窗已挂载（toolbar ✉ 入口 → dialogs 弹窗）"); } catch (e) { /* noop */ }
 }
 

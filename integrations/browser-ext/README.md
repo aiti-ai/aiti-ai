@@ -66,6 +66,10 @@ npm run package     # → dist/*.zip + dist/aiti-devtools-firefox.xpi (needs sys
 - Double-injection guard: `window.__dbgLauncherInstalled` (no double injection when the page already runs a launcher, e.g. pi-web)
 - Small screens: full Firefox for Android support (MV3); the launcher's small-screen physical adaptation is built in
 
+## Store publishing
+
+Chrome Web Store / Edge Add-ons / AMO 的合规清单与逐步发布手册：[STORE-REVIEW.md](STORE-REVIEW.md) · [PUBLISHING.md](PUBLISHING.md)。
+
 ## Layout
 
 ```

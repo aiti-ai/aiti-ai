@@ -50,8 +50,44 @@ const crashFlag = (cacheDir: string) => path.join(cacheDir, "crash-startup.flag"
 export default {
   id: "aiti-crash-fatal",
   name: "Fatal 崩溃测试（破坏核心文件 → global-error 急救页）",
-  version: "0.0.3",
   client: "dist/crash-fatal-client.mjs",
+
+  ui: {
+    // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
+    i18n: {
+      "zh-CN": {
+        "it.close.label": "关闭",
+        "it.close.label.2": "关闭",
+        "it.close.label.3": "关闭",
+        "it.close.label.4": "关闭",
+        "it.close.label.5": "关闭",
+        "it.close.label.6": "关闭",
+        "it.close.label.7": "关闭",
+        "it.close.label.8": "关闭",
+        "it.close.label.9": "关闭",
+        "it.close.label.10": "关闭",
+        "it.fatal.title": "Fatal 崩溃测试",
+        "it.fatal.title.2": "Fatal 崩溃测试：崩页面（global-error 急救页）/ 崩扩展 startup（⚠ 启动失败指示器）",
+        "ext.displayName": "崩溃演习（开发）",
+      },
+      en: {
+        "it.close.label": "Close",
+        "it.close.label.2": "Close",
+        "it.close.label.3": "Close",
+        "it.close.label.4": "Close",
+        "it.close.label.5": "Close",
+        "it.close.label.6": "Close",
+        "it.close.label.7": "Close",
+        "it.close.label.8": "Close",
+        "it.close.label.9": "Close",
+        "it.close.label.10": "Close",
+        "it.fatal.title": "Fatal crash drill",
+        "it.fatal.title.2": "Fatal crash drill: crash the page (global-error rescue page) / crash extension startup (⚠ startup-failure indicator)",
+        "ext.displayName": "Crash Drill (dev)",
+      },
+    },
+  },
+
   server: {
     // 崩溃入口（部分崩）：标志文件存在就 throw → registry errors → ⚠「启动失败」。
     // 注意 startup throw 时扩展已加载成功（loadAll 先行），API/client 不受影响。

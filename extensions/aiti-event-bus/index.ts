@@ -66,7 +66,6 @@ let connSweeper: ReturnType<typeof setInterval> | null = null;
 export default {
   id: "aiti-event-bus",
   name: "页面事件总线",
-  version: "0.2.1",
   icon: "icon.svg",
   client: "dist/aiti-event-bus-client.mjs",
   description: "页面事件总线归口：链式接管 __piPageEvents；v0.2 主题订阅（按 type 白名单过滤转发）",
@@ -74,6 +73,20 @@ export default {
   // startAll 按 priority 降序启动——总线 startup（__piPageEvents 访问器接管 + 路由注册）
   // 先于一切消费扩展执行；shutdown 对称逆序（总线最后停，消费方先退订）。
   startupPriority: 100,
+
+
+  ui: {
+    // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
+    i18n: {
+      "zh-CN": {
+        "ext.displayName": "页面事件总线",
+      },
+      en: {
+        "ext.displayName": "Page Event Bus",
+        "ext.description": "Single funnel for page events: chain-takes over __piPageEvents; v0.2 topic subscriptions (whitelist by type, forwarded)",
+      },
+    },
+  },
 
   server: {
     startup(ctx: any) {

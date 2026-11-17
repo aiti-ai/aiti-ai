@@ -3,7 +3,7 @@
  */
 import { Fragment, useEffect, useState } from "react";
 import { useI18n, useIsMobile, apiUrl, copyText } from "../host-shim";
-import { ConfirmDialog, UrlRow, SchemaForm, providerDisplayLabel } from "../dialog/shared";
+import { ConfirmDialog, UrlRow, SchemaForm, providerDisplayLabel, MiniQr } from "../dialog/shared";
 import { portmapProbeView } from "../lib-shared";
 import type { ExposeInfo, SelfState } from "../dialog/types";
 
@@ -452,7 +452,7 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
             <div style={{ fontSize: 11, fontWeight: 600, color: self?.unauthenticated ? "var(--danger, #f87171)" : "#16a34a", marginBottom: 5 }}>{t("services.selfExposeUrls")}</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
               {exposeUrls.map((u) => (
-                <div key={u.url} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
+                <div key={u.url} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, fontSize: 11 }}>
                   <span style={{ flexShrink: 0, color: "var(--text-dim)", width: 96 }}>{u.labelKey ? t(u.labelKey, u.labelParams) : u.label}</span>
                   {u.noAuth && <NoAuthBadge t={t} />}
                   <button onClick={() => openOrDetail(u)} title={u.url}
@@ -462,6 +462,7 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
                   <button onClick={() => copy(`self-expose-${u.url}`, u.url)} style={{ ...btn, padding: "3px 8px", flexShrink: 0 }}>
                     {copiedKey === `self-expose-${u.url}` ? "✓" : t("services.copy")}
                   </button>
+                  <MiniQr url={u.url} />
                   {vhostStopName(u) && (
                     <button onClick={() => onStopExpose(vhostStopName(u)!)} disabled={busy} title={t("services.selfStopVhostHint")}
                       style={{ ...btn, padding: "3px 8px", flexShrink: 0, color: "var(--danger, #f87171)" }}>
@@ -724,7 +725,7 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
               {authEntries.length > 0 && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 6 }}>
                   {authEntries.map((u) => (
-                    <div key={u.url} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
+                    <div key={u.url} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, fontSize: 11 }}>
                       <span style={{ color: "var(--text-dim)", flexShrink: 0 }}>{u.labelKey ? t(u.labelKey, u.labelParams) : u.label}</span>
                       <span style={{ flex: 1, fontFamily: "var(--font-mono)", overflowWrap: "anywhere", color: "var(--text)" }}>{u.url}</span>
                       <button onClick={() => openInNewTab(u.url)} style={{ ...btn, padding: "3px 10px", flexShrink: 0, color: "var(--accent)" }}>

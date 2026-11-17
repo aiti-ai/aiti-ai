@@ -1,29 +1,49 @@
 /**
  * aiti-pair client —— 设备互连面板（零构建，ctx.h hyperscript）
  *
- * 结构（照 demo-client.mjs 范式）：
- *   - toolbar 按钮（lucide message-circle 线条图标）→ 开面板
- *   - dialogs 浮窗（data-ext-float 契约：aiti-float 接管拖拽/持久化 + 小屏全屏；
- *     框架自动注入右上角 AI 按钮）内懒挂 pair widget：
- *     首开才动态加载 aiti-devtools 扩展的 pair-client.js（软依赖，缺席给引导），
- *     AitiPair.mount(host, { base: 内嵌桥 mcp 端点 })——可达域 = 本实例内嵌桥设备集合。
+ * Structure (same two-face shape as doc-center; aiti-float present state machine as the single source):
+ *   - toolbar button (lucide message-circle line icon) → present("open") dialog
+ *   - dialogs floating face (rendered in the floating state): data-ext-float contract + key/dock
+ *     declarations; the dock entry is injected by aiti-float into the "position" menu (never
+ *     hand-written); the right-panel face header ⇱ "back to float" → present("float")
+ *   - rightFileDock right-panel face (rendered in the docked:right-panel state): DockBody tab
+ *     contract markers (data-ext-item etc. — orchestrator dependencies) + mini header ⇱
+ *     "back to float" → present("float")
+ *   - both faces share one widget instance (switching face = remount; SSE reconnects on the same
+ *     peerId seamlessly); in the closed state both faces collapse + the instance stops (saves
+ *     SSE); the unread red dot lives in the toolbar badge.
+ *   - widget = dynamically loads the aiti-devtools extension's pair-client.js (soft dependency;
+ *     show onboarding guidance when absent), AitiPair.mount(host, { base: embedded bridge MCP endpoint }).
  *
  * 协议唯一来源：packages/aiti-devtools-core/src/pair-client.js（本文件零协议实现）。
  */
-let panelOpen = false;
-// aiti-float present store 全局面（零构建驱动停靠/浮回；浮窗增强未装时为 null）
+// aiti-float present state machine (zero-build direct API read; always "floating" = plain-dialog fallback when the float enhancement is not installed)
 const PAIR_KEY = "aiti-pair:pair";
-const PAIR_DOCK_STATE = "dock:sidebar:aiti-pair:pair";
+const PAIR_DOCK_ZONE = "dock:right-panel"; // present action value (→ state docked:right-panel)
 function floatApi() { const api = globalThis.__piweFloat; return api && typeof api.present === "function" ? api : null; }
-const listeners = new Set();
-function setPanelOpen(v) {
-  panelOpen = v;
-  if (v) setUnread(0); // 开面板即清未读
-  if (!v && face === "dialog") setFace(null); // 弹窗关闭 → 侧栏区块收回 widget
-  for (const l of listeners) l();
+function presentOf() {
+  const api = globalThis.__piweFloat;
+  try {
+    if (api && typeof api.presented === "function") return api.presented(PAIR_KEY) || "closed";
+    return "unknown"; // aiti-float not ready / not installed: never guess the face (prevents the panel flashing on refresh); render by the real state once ready
+  } catch (e) { return "unknown"; }
+}
+function presentPair(mode) {
+  const api = floatApi();
+  if (!api) return; // no aiti-float: always floating; state-machine calls are all no-ops
+  if (mode === "open") migrateDockPref(); // a pref left over from the old left-panel dock test routes open to the removed sidebar slot → migrate to the new right-panel slot
+  try { api.present(PAIR_KEY, mode); } catch (e) {}
+}
+// Legacy dockPref migration: sidebar:xxx (old left-panel dock) → right-panel; float / right-side slots are kept
+function migrateDockPref() {
+  try {
+    const K = "pi-web:ext-float:dockpref:v1:" + PAIR_KEY;
+    const cur = localStorage.getItem(K);
+    if (cur && cur !== "float" && cur !== "right-panel") localStorage.setItem(K, "right-panel");
+  } catch (e) {}
 }
 
-// 未读徽标 store（面板关闭时收到 pair 消息 → toolbar 按钮红点）
+// Unread badge store (a pair message arriving while the panel is closed (closed state) → toolbar button red dot)
 let unread = 0;
 const unreadListeners = new Set();
 function setUnread(n) {
@@ -32,22 +52,46 @@ function setUnread(n) {
 }
 function bumpUnread() { setUnread(unread + 1); }
 
+// C1: the closed-state unread data source = a module-level global aiti-pair-msg listener
+// (singleton, not tied to the mount lifecycle). After the pair-client B5 fix, stopping the
+// instance removes its own listener and there is no more "phantom instance" collecting messages —
+// the badge must own its channel.
+let pairMsgListenerInstalled = false;
+function installGlobalPairMsgListener() {
+  if (pairMsgListenerInstalled || typeof globalThis.addEventListener !== "function") return;
+  pairMsgListenerInstalled = true;
+  globalThis.addEventListener("aiti-pair-msg", (e) => {
+    const m = (e && e.detail) || {};
+    if (!m || !m.from) return;
+    if (presentOf() === "closed") bumpUnread();
+  });
+}
+
 // widget 挂载去重（React 重渲染/StrictMode ref 双触发不重复 mount；AitiPair 实例模块级保活）
 let mounted = null; // { el, instance }
 let mountPromise = null; // 在途挂载（异步加载竞态去重：ref 回调可能并发触发多次）
+// Whether mounted.el is still attached to the DOM — when the panel closes / the face switches,
+// React unmounts the old host while the module-level mounted still holds the old el; reopening
+// the panel must remount based on isConnected (otherwise the second toolbar click sets ready=true
+// with an empty container → blank panel).
+const mountedLive = () => !!(mounted && mounted.el && mounted.el.isConnected);
 
-// widget 当前宿主面：'dialog'（弹窗/兜底浮层）| 'dock'（侧栏区块）| null（未挂载）
-// ——弹窗与侧栏两面共用单实例，换面 = 重挂（SSE 同 peerId 重连无感）；面变化广播给
-// 侧栏区块（弹窗打开时侧栏让位显示引导，关弹窗自动收回侧栏，杜绝两面拉锯）
+// The widget's current host face: 'dialog' (float / fallback overlay) | 'dock' (right-panel block) |
+// null (unmounted / collapsed). The face marker only drives the polling fallback; face exclusivity
+// is guaranteed by the present state machine as the single source (floating/docked, never both).
 let face = null;
-const faceListeners = new Set();
 function setFace(v) {
+  if (face === v) return; // idempotent short-circuit: no notification on the same value
   face = v;
-  for (const l of faceListeners) l();
+  // Device-list polling fallback follows panel visibility (visible face mounted → on; collapsed → off)
+  if (mounted && mounted.instance && mounted.instance.setPolling) {
+    try { mounted.instance.setPolling(v != null); } catch (e) {}
+  }
 }
 
 export default function register(ctx) {
   const { h, useState, useEffect, apiUrl } = ctx;
+  installGlobalPairMsgListener(); // C1: closed-state unread badge channel (B8 ordering: before any mount)
 
   /* ── 深链：?pair=1 打开工作台即弹出本面板（QR/复制链接指向工作台 URL，与桌面「先开 pi-web → 点设备互连」同体验） ──
      一次性消费：开面板后从地址栏去掉参数（刷新不再自动弹；配对态在 localStorage，重开点工具条即可）。
@@ -56,12 +100,12 @@ export default function register(ctx) {
   try {
     const u = new URL(globalThis.location.href);
     if (u.searchParams.get("pair") === "1") {
-      setPanelOpen(true);
+      presentPair("open");
       u.searchParams.delete("pair");
       globalThis.history?.replaceState?.(null, "", u.pathname + (u.searchParams.toString() ? "?" + u.searchParams : "") + u.hash);
       setTimeout(() => {
         try {
-          if (!panelOpen || document.querySelector(".apair")) return;
+          if (document.querySelector(".apair")) return;
           const sz = pairWindowSize();
           const host = document.createElement("div");
           host.style.cssText = "position:fixed;inset:0;z-index:310;background:rgba(0,0,0,0.35);display:flex;align-items:center;justify-content:center";
@@ -70,20 +114,20 @@ export default function register(ctx) {
           const bar = document.createElement("div");
           bar.style.cssText = "display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;flex-shrink:0";
           bar.innerHTML = '<span style="flex:1">✉ 设备互连</span>'
-            + '<button title="停靠到侧栏" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:12px;padding:2px 6px">⇱</button>';
-          bar.querySelector('button').onclick = () => { const api = floatApi(); if (api) { api.present(PAIR_KEY, PAIR_DOCK_STATE); host.remove(); setPanelOpen(false); } };
+            + '<button title="停靠到右侧" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:12px;padding:2px 6px">⇱</button>';
+          bar.querySelector('button').onclick = () => { presentPair(PAIR_DOCK_ZONE); host.remove(); };
           const closeBtn = document.createElement("button");
           closeBtn.textContent = "✕";
           closeBtn.setAttribute("aria-label", "关闭");
           closeBtn.style.cssText = "background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:2px 6px";
-          closeBtn.onclick = () => { host.remove(); setPanelOpen(false); };
+          closeBtn.onclick = () => { presentPair("close"); host.remove(); };
           bar.appendChild(closeBtn);
           box.appendChild(bar);
           const inner = document.createElement("div");
           inner.style.cssText = "position:absolute;top:41px;bottom:0;left:0;right:0";
           box.appendChild(inner);
           host.appendChild(box);
-          host.addEventListener("click", (e) => { if (e.target === host) { host.remove(); setPanelOpen(false); } });
+          host.addEventListener("click", (e) => { if (e.target === host) { presentPair("close"); host.remove(); } });
           document.body.appendChild(host);
           ensureWidget(inner, "dialog").catch(() => {});
         } catch {}
@@ -99,7 +143,7 @@ export default function register(ctx) {
     if (globalThis.AitiPair) return Promise.resolve(globalThis.AitiPair);
     return new Promise((resolve, reject) => {
       const s = document.createElement("script");
-      s.src = LIB_URL() + "?v=" + Date.now(); // cache-bust：扩展资产更新后浏览器子资源缓存可能不失效
+      s.src = LIB_URL(); // asset endpoint negotiation cache (ETag/304): assets invalidate automatically on update; unchanged returns 304 instantly
       s.onload = () => (globalThis.AitiPair ? resolve(globalThis.AitiPair) : reject(new Error("pair-client.js 加载后未暴露 AitiPair")));
       s.onerror = () => reject(new Error("pair-client.js 加载失败（aiti-devtools 扩展未部署？）"));
       document.head.appendChild(s);
@@ -107,37 +151,81 @@ export default function register(ctx) {
   }
 
   function ensureWidget(host, faceTag) {
-    if (mounted && mounted.el && mounted.el.isConnected) { setFace(faceTag ?? face); return Promise.resolve(mounted); }
+    // Strict validation: reuse only if mounted, alive, and on the current host (face switch / panel reopen = new host → must remount)
+    if (mounted && mounted.el && mounted.el.isConnected && mounted.el === host) { setFace(faceTag); return Promise.resolve(mounted); }
     if (mountPromise) return mountPromise;
     // 重开面板 = React 重建 host DOM（旧 el 已摘除）→ 先停旧实例再重挂（AitiPair 实例同 peerId 幂等，SSE 重连无感）
-    if (mounted) { try { mounted.instance.stop(); } catch (e) {} mounted = null; setFace(null); }
+    if (mounted) { try { mounted.instance.stop(); } catch (e) {} mounted = null; }
     mountPromise = loadPairLib().then((AitiPair) => {
       const el = document.createElement("div");
       el.style.cssText = "position:absolute;inset:0;display:flex;min-height:0";
       host.innerHTML = ""; // 防御：同 host 重复挂载时清旧（幂等）
       host.appendChild(el);
-      const instance = AitiPair.mount(el, { base: BRIDGE_BASE() });
-      instance.on('message', () => { if (!face) bumpUnread(); }); // 面板外（未挂载面）收到消息 → 未读 +1
+      const instance = AitiPair.mount(el, {
+        base: BRIDGE_BASE(),
+        // B8: the 📱 phone entry generates the QR with params via the service-tunnels "mobile access"
+        // client service (soft dependency; when absent the widget degrades itself to link + copy).
+        // Service shape: registerExtService("service-tunnels.mobile", openMobileWith({url|query|title}))
+        // — {url} renders the QR for that link directly.
+        // ⚠ service-tunnels is a lazy extension (clientImmediately:false): resident slots like the
+        // toolbar do not materialize it, and the service only registers after its own entry is first
+        // clicked — so here we ensureMaterialized deterministically, then re-fetch (same pattern as
+        // agent-manager → aiti-cmd.open-session), avoiding "never clicked the entry → 📱 forever degraded".
+        openOnPhone: (url) => {
+          const lookup = () => (typeof ctx.getExtService === "function" ? ctx.getExtService("service-tunnels.mobile") : null);
+          const direct = lookup();
+          if (typeof direct === "function") { direct({ url, title: "设备互连 · 手机接入" }); return Promise.resolve(); }
+          if (typeof ctx.ensureMaterialized !== "function") return Promise.reject(new Error("openOnPhone 服务未就绪"));
+          return Promise.resolve(ctx.ensureMaterialized("service-tunnels")).then(() => {
+            const svc = lookup();
+            if (typeof svc !== "function") throw new Error("openOnPhone 服务未就绪（物化后仍缺席——service-tunnels 未部署/停用？）");
+            svc({ url, title: "设备互连 · 手机接入" });
+          });
+        },
+      });
       mounted = { el, instance };
-      setFace(faceTag ?? "dialog");
+      setFace(faceTag);
       mountPromise = null; // 成功即清：下次面板重开（DOM 已换）必须重新挂载，不能返回旧 promise
       return mounted;
     }).catch((e) => { mountPromise = null; throw e; }); // 失败也允许重试
+    setFace(null); // remount means the panel is absent: notify after mountPromise assignment so a re-entering ensureWidget sees the in-flight promise and returns
     return mountPromise;
   }
 
-  /* ── 浮窗面板（dialogs 插槽） ── */
+  // Subscription to present state changes (shared by both faces; stops the instance on closed to save SSE). ⚠ must be called inside the component (React hook rules)
+  function usePresentPair() {
+    const [, force] = useState(0);
+    useEffect(() => {
+      const l = () => force((n) => n + 1);
+      let off;
+      const onPresent = (d) => {
+        if (d && d.key !== PAIR_KEY) return;
+        if (presentOf() === "closed") {
+          setFace(null);
+          if (mounted) { try { mounted.instance.stop(); } catch (e) {} }
+        }
+        l();
+      };
+      const api = globalThis.__piweFloat;
+      if (api && typeof api.onPresentChange === "function") {
+        off = api.onPresentChange(onPresent);
+      } else {
+        // aiti-float becomes ready later than this component: install broadcasts piwe-float-installed; re-check the real state once ready
+        globalThis.addEventListener('piwe-float-installed', l, { once: true });
+      }
+      return () => { try { off && off(); } catch (e) {} globalThis.removeEventListener('piwe-float-installed', l); };
+    }, []);
+    return presentOf();
+  }
+
+  /* ── Floating panel (dialogs slot; rendered in the floating state) ── */
   function PairDialog() {
-    const [open, setOpen] = useState(panelOpen);
+    const state = usePresentPair();
     const [err, setErr] = useState("");
     const [ready, setReady] = useState(false);
+    const open = state === "floating";
     useEffect(() => {
-      const l = () => setOpen(panelOpen);
-      listeners.add(l);
-      return () => listeners.delete(l);
-    }, []);
-    useEffect(() => {
-      if (!open || ready || mounted) { if (open && mounted) setReady(true); return; }
+      if (!open || ready || mountedLive()) { if (open && mountedLive()) setReady(true); return; }
       let dead = false;
       ensureWidget(hostEl(), "dialog").then(() => { if (!dead) setReady(true); }).catch((e) => { if (!dead) setErr(String((e && e.message) || e)); });
       return () => { dead = true; };
@@ -150,11 +238,14 @@ export default function register(ctx) {
         position: "fixed", inset: 0, zIndex: 310, background: "rgba(0,0,0,0.35)",
         display: "flex", alignItems: "center", justifyContent: "center",
       },
-      onClick: () => setPanelOpen(false),
+      onClick: () => presentPair("close"),
     },
       h("div", {
         "data-ext-float": "1",      // aiti-float 接管：拖拽/缩放/持久化/置前
+        "data-ext-float-key": PAIR_KEY, // state-machine key (read by the ✕ interceptor / dock preference / position menu)
         "data-ext-float-full": "1", // 小屏（≤640px）铺满视口
+        "data-ext-float-dock": "right-panel",
+        "data-ext-float-dock-default": "right-panel",
         "data-ext-float-w": String(sz.w),
         "data-ext-float-h": String(sz.h),
         style: {
@@ -171,23 +262,19 @@ export default function register(ctx) {
           },
         },
           h("h3", { style: { margin: 0, fontSize: 13, fontWeight: 600, flex: 1 } }, "✉ 设备互连"),
-          h("button", {
-            title: "停靠到侧栏（面板常驻左栏，可随时拉回浮窗）",
-            onClick: () => { const api = floatApi(); if (api) { api.present(PAIR_KEY, PAIR_DOCK_STATE); setPanelOpen(false); } },
-            style: { background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 12, padding: "2px 6px" },
-          }, "⇱"),
+          // the dock entry is auto-injected by aiti-float into the "position" menu per the data-ext-float-dock declaration (never hand-written — avoids a double ⇱)
           h("span", { style: { fontSize: 10, color: "var(--text-dim)", fontWeight: 400 } }, "连同一桥即互发"),
           h("button", {
-            onClick: () => setPanelOpen(false), "aria-label": "关闭",
+            onClick: () => presentPair("close"), "aria-label": "关闭",
             style: { background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 14, padding: "2px 6px" },
           }, "✕"),
         ),
         h("div", {
           ref: (el) => {
             hostRef = el;
-            if (open && el && !mounted && !mountPromise) {
+            if (open && el && !mountedLive() && !mountPromise) {
               ensureWidget(el, "dialog").then(() => setReady(true)).catch((e) => setErr(String((e && e.message) || e)));
-            } else if (open && mounted) setReady(true);
+            } else if (open && mountedLive()) setReady(true);
           },
           style: { position: "absolute", top: 41, bottom: 0, left: 0, right: 0, display: ready ? "block" : "none" },
         }),
@@ -220,7 +307,10 @@ function pairWindowSize() {
     }, []);
     return h("button", {
       title: "设备互连：临时聊天 / 互传文件（连同一桥的设备）",
-      onClick: () => setPanelOpen(true),
+      onClick: () => {
+        setUnread(0);
+        presentPair("open"); // idempotent open in the docked state (aiti-float flashes to point at the panel); closed/floating → dialog
+      },
       onMouseEnter: (e) => { e.currentTarget.style.color = "var(--text)"; },
       onMouseLeave: (e) => { e.currentTarget.style.color = "var(--text-muted)"; },
       style: {
@@ -242,39 +332,31 @@ function pairWindowSize() {
       }));
   }
 
-  /* ── 侧栏 dock 区块（默认弹窗，可选停靠）：widget 双面共用单实例 ──
-     弹窗打开时侧栏让位（显示收回引导），关弹窗自动收回侧栏；host 统一 chrome（⋮ 折叠/排序）勿自写 */
-  function PairDockBlock() {
-    const [, force] = useState(0);
-    useEffect(() => {
-      const l = () => force((n) => n + 1);
-      faceListeners.add(l);
-      return () => faceListeners.delete(l);
-    }, []);
-    if (face === "dialog") {
-      return h("div", { style: { padding: "14px 12px", fontSize: 12, color: "var(--text-muted)", lineHeight: 1.7 } },
-        "设备互连已在弹窗中打开。",
-        h("div", { style: { marginTop: 10 } },
-          h("button", {
-            onClick: () => setPanelOpen(false),
-            style: { background: "var(--bg-hover, rgba(0,0,0,.06))", border: "1px solid var(--border)", borderRadius: 8, color: "var(--text)", cursor: "pointer", font: "inherit", padding: "5px 12px" },
-          }, "收回侧栏")));
-    }
-    return h("div", { style: { display: "flex", flexDirection: "column", height: "100%", minHeight: 0 } },
-      h("div", { style: { display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderBottom: "1px solid var(--border)", flexShrink: 0, fontSize: 12, fontWeight: 600 } },
-        h("span", { style: { flex: 1 } }, "✉ 设备互连"),
-        h("button", {
-          title: "拉回浮窗（弹窗形态）",
-          onClick: () => { const api = floatApi(); if (api) api.present(PAIR_KEY, "float"); setPanelOpen(true); },
-          style: { background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 12, padding: "2px 6px" },
-        }, "⇱")),
+  /* ── Right-panel dock face (rightFileDock slot; rendered in the docked:right-panel state) — same as doc-center ──
+     根节点带 DockBody（chrome:"tab"）契约标注；无自绘头行（页签控件在宿主 TabBar）。 */
+  function DockPair() {
+    const state = usePresentPair();
+    if (state !== "docked:right-panel") return null; // contract gate: render nothing outside the right-panel docked state
+    return h("div", {
+      "data-ext-float-dock-body": PAIR_KEY, // DockBody(tab) contract marker: depended on by the orchestrator / ⇱ menu / flash positioning
+      "data-ext-item": PAIR_KEY,
+      "data-ext-dock-block": PAIR_KEY,
+      "data-ext-float-dock": "right-panel",
+      "data-ext-float-dock-default": "right-panel",
+      style: { display: "flex", flexDirection: "column", height: "100%", minHeight: 0, overflow: "hidden", position: "relative" },
+    },
       h("div", {
-        ref: (el) => { if (el && face !== "dock") { hostRef = el; ensureWidget(el, "dock").catch(() => {}); } },
-        style: { position: "relative", flex: 1, minHeight: 300, overflow: "hidden", background: "var(--bg-panel)" },
+        ref: (el) => {
+          if (!el) return;
+          hostRef = el;
+          if (mountedLive() && mounted.el === el) return; // already mounted on this host: idempotent skip
+          ensureWidget(el, "dock").catch(() => {});
+        },
+        style: { position: "relative", flex: 1, minHeight: 0, overflow: "hidden", background: "var(--bg-panel)" },
       }));
   }
 
-  ctx.registerItems?.("toolbar", [{ id: "pair", render: PairToolbarButton, meta: { label: "设备互连" } }]);
-  ctx.registerItems?.("dialogs", [{ id: "pair", render: PairDialog, meta: { label: "设备互连面板" } }]);
-  ctx.registerItems?.("sidebarExplorerDock", [{ id: "pair", render: PairDockBlock, meta: { label: "设备互连", title: "设备互连", priority: 30 } }]);
+  ctx.registerItems?.("toolbar", [{ id: "pair", render: PairToolbarButton, meta: { label: "i18n:it.pair.label" } }]);
+  ctx.registerItems?.("dialogs", [{ id: "pair", render: PairDialog, meta: { label: "i18n:it.pair.label.2" } }]);
+  ctx.registerItems?.("rightFileDock", [{ id: "pair", render: DockPair, meta: { label: "i18n:it.pair.label", title: "i18n:it.pair.title" } }]);
 }

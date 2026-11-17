@@ -1,8 +1,11 @@
 ---
 name: extman-status
 title: AI 帮我体检扩展
+title.en: "AI: health-check extensions"
 placeholder: 描述要查什么（如：哪些扩展没加载 / 有没有可更新的 / aiti-devtools 现在啥状态）…
+placeholder.en: "What to check (e.g. which extensions failed to load / any updates available / what is aiti-devtools' current state)…"
 summary: 读全量状态 + 在线注册表，汇报启停/加载失败/版本更新/功能开关
+summary.en: "Read full status + the online registry; report start/stop state, load failures, version updates, feature switches"
 ---
 
 # extman-status · 扩展体检

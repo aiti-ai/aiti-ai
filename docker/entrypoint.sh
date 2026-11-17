@@ -42,7 +42,7 @@ else
 fi
 # ── 0.5 pi config (default settings generation + optional host ~/.pi inheritance, design §2.1.3) ──────────
 # settings.json is no longer pre-written at image build time (30-install-pi.sh only installs the CLI) — the first
-# startup generates the defaults here (the six packages). If the user mounted ~/.pi (compose option):
+# startup generates the defaults here (the five packages). If the user mounted ~/.pi (compose option):
 #   auth.json / models.json  adopted only when missing (seed semantics; runtime files never overwritten)
 #   settings.json            target absent → adopt wholesale; present → jq merge (user keys win + packages union)
 AGENT_DIR=/opt/aiti/agent
@@ -65,7 +65,6 @@ elif [ ! -f "$AGENT_DIR/settings.json" ]; then
   cat > "$AGENT_DIR/settings.json" <<'EOF'
 {
   "packages": [
-    "npm:pi-mcp-adapter",
     "npm:@aiti-ai/pi-subagents",
     "npm:@aiti-ai/pi-models-combo",
     "/opt/aiti/pi-plugins/pi-git-trace",
@@ -74,7 +73,7 @@ elif [ ! -f "$AGENT_DIR/settings.json" ]; then
   ]
 }
 EOF
-  echo "[entrypoint] settings.json defaults generated (six packages)"
+  echo "[entrypoint] settings.json defaults generated (five packages)"
 fi
 for f in auth.json models.json; do
   if [ -f "$AITI_HOME/.pi/agent/$f" ] && [ ! -f "$AGENT_DIR/$f" ]; then

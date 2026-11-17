@@ -14,7 +14,6 @@
 export default {
   id: "aiti-app-center",
   name: "应用中心",
-  version: "0.2.0",
   icon: "icons/layout-grid.svg",
   client: "dist/aiti-app-center-client.mjs",
 
@@ -86,6 +85,7 @@ export default {
         "cat.other": "其他",
       },
       en: {
+        "ext.displayName": "App Center",
         "app.search": "Search apps…",
         "app.searchToggles": "Search toggles…",
         "app.pinned": "Pinned",

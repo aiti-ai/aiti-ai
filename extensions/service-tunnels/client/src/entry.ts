@@ -10,10 +10,13 @@
  * 门禁由宿主完成）。文件打开经 aiti_open_file postMessage（宿主 AppShell 监听）。
  */
 import { __setCtx, openFileInHost } from "./host-shim";
+import { useI18n as useI18nShim } from "./host-shim";
 // 库 CATALOG 新域键合并进 I18N（构建期静态；模块副作用——必须先于消费组件求值）
 import "./lib-i18n";
 import { ST_KEY, ServicesDialog } from "./ServicesDialog";
 import { SelfExposeAlert } from "./SelfExposeAlert";
+import { MobileAccessCard } from "./MobileAccessCard";
+import { MOBILE_KEY, type MobileLaunch } from "./mobile-logic";
 // dock v3（P3 批）：面板显隐收口展示状态机 + 右栏停靠 face
 import { usePresent, DockBody, openFloat, closePanel, seedDockDefault } from "../../../_shared/ext-float-dock";
 
@@ -25,6 +28,8 @@ function setDialog(v: boolean, tab: "ports" | "self" | "users" = initialTab) {
 }
 function openDialog(tab: "ports" | "self" | "users" = "ports") {
   setDialog(true, tab);
+  // 已挂载实例（openFloat 幂等不重挂、initialTab 不生效）经事件换页签；未挂载时 initialTab 兜底
+  try { window.dispatchEvent(new CustomEvent("piwe-st-switch-tab", { detail: tab })); } catch { /* ignore */ }
 }
 // 播种默认落位：用户无偏好时 open 直达右栏 tab
 try {
@@ -120,18 +125,101 @@ export default function register(ctx: {
     });
   }
 
+  // ── 「手机访问」（方案 v2：入口 = 左侧栏底行「扩展」右侧，sidebarFooter slot）──
+  // Parametrized launch (sources-and-service plan §3.2): module-level launch
+  // snapshot passed through by MobileDialogSlot; the card watches the launch
+  // reference so re-launching while open applies the new args.
+  let mobileLaunch: MobileLaunch | null = null;
+  function openMobile() { openFloat(MOBILE_KEY); }
+  function closeMobile() { mobileLaunch = null; closePanel(MOBILE_KEY); }
+
+  /** Client service "service-tunnels.mobile": other extensions open the card
+   *  bare or with args ({url} renders that link's QR directly / {query}
+   *  appends onto the ready pi-web channel / {title} custom caption).
+   *  Empty/invalid args = plain open (self/memory). Consumers must null-check
+   *  getExtService (lazy-extension constraint, same as aiti-extman.open). */
+  function openMobileWith(opts?: MobileLaunch) {
+    mobileLaunch = opts && (opts.url || opts.query || opts.title) ? { url: opts.url, query: opts.query, title: opts.title } : null;
+    openFloat(MOBILE_KEY);
+  }
+  try { (ctx as { registerExtService?: (k: string, impl: unknown) => unknown }).registerExtService?.("service-tunnels.mobile", openMobileWith); } catch (e) { console.warn("[service-tunnels] registerExtService(service-tunnels.mobile) failed", e); }
+
+  // 底行按钮：样式与宿主内建 模型/技能/设置 同规格（flex:1 + 图标 + 2 字短词），
+  // 开态高亮跟随展示状态机；icon 内联 svg（禁 emoji）。
+  // Mobile viewports render nothing: already on the phone, the "scan to open" entry is
+  // pointless (same 640px breakpoint as the host useIsMobile; the manifest static item
+  // is gated by meta.hideOnMobile for the pre-materialization phase).
+  function MobileFooterButton() {
+    const st = usePresent(MOBILE_KEY);
+    const isOpen = st !== "closed";
+    const { t } = useI18nShim();
+    const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && !!window.matchMedia?.("(max-width: 640px)")?.matches);
+    useEffect(() => {
+      const mq = window.matchMedia?.("(max-width: 640px)");
+      if (!mq) return;
+      const apply = () => setIsMobile(mq.matches);
+      apply();
+      if (mq.addEventListener) mq.addEventListener("change", apply);
+      else mq.addListener?.(apply);
+      return () => { if (mq.removeEventListener) mq.removeEventListener("change", apply); else mq.removeListener?.(apply); };
+    }, []);
+    if (isMobile) return null;
+    return h("button", {
+      type: "button",
+      onClick: () => (isOpen ? closeMobile() : openMobile()),
+      title: t("mobile.footerTitle"),
+      "aria-label": t("mobile.footerTitle"),
+      style: {
+        flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+        height: 32, padding: 0, background: "none", border: "none",
+        borderRadius: 9, color: "var(--text-muted)", cursor: "pointer",
+        fontSize: 12, transition: "background 0.12s, color 0.12s",
+      },
+      onMouseEnter: (e) => { e.currentTarget.style.background = "var(--bg-hover)"; e.currentTarget.style.color = "var(--text)"; },
+      onMouseLeave: (e) => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = "var(--text-muted)"; },
+    },
+      h("svg", { width: 14, height: 14, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true },
+        h("rect", { key: "q1", x: 3, y: 3, width: 6, height: 6, rx: 1 }),
+        h("path", { key: "q2", d: "M6 6h.01" }),
+        h("rect", { key: "q3", x: 15, y: 3, width: 6, height: 6, rx: 1 }),
+        h("path", { key: "q4", d: "M18 6h.01" }),
+        h("rect", { key: "q5", x: 3, y: 15, width: 6, height: 6, rx: 1 }),
+        h("path", { key: "q6", d: "M6 18h.01" }),
+        h("path", { key: "q7", d: "M14 14h.01M17 14h.01M20 14h.01M14 17h.01M17 17h.01M20 17h.01M14 20h.01M17 20h.01M20 20h.01" }),
+      ),
+      h("span", null, t("mobile.footerLabel")),
+    );
+  }
+
+  // 简单卡 face（dialogs 插槽 = 浮窗渲染；data-ext-float 属性在卡片根节点）
+  function MobileDialogSlot() {
+    const st = usePresent(MOBILE_KEY);
+    if (st !== "floating") return null;
+    return h(MobileAccessCard, {
+      launch: mobileLaunch,
+      onClose: closeMobile,
+      onOpenPorts: () => { closeMobile(); openDialog("ports"); },
+      onOpenSelf: () => { closeMobile(); openDialog("self"); },
+    });
+  }
+
+  /** 宿主 i18n 委托（shim useI18n 依赖 ctx 已就绪；底行按钮渲染时 ctx 必已注入）。 */
+
   // 懒加载 v2 M3批②：声明式条目（无 render）。banner（自暴露告警）物化前不显示——低频安全提示，已记录可接受
   ctx.registerItems("toolbar", [{
     id: "ports",
     meta: {
-      label: "服务端口",
-      title: "服务端口与隧道（发现 / 暴露 / 认证 / 自暴露）",
+      label: "i18n:st.ports.label",
+      title: "i18n:st.ports.title",
       icon: { svg: '<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>' },
       onClick: () => openDialog("ports"),
     },
   }]);
   ctx.registerItems("dialogs", [{ id: "ports", render: DialogsSlot }]);
+  ctx.registerItems("dialogs", [{ id: "mobile-face", render: MobileDialogSlot }]);
+  // 「手机访问」底行按钮（sidebarFooter slot = 底行最右端，「扩展」之后；extman 同款范式）
+  ctx.registerItems?.("sidebarFooter", [{ id: "service-tunnels-mobile", render: MobileFooterButton, meta: { label: "i18n:mobile.footerLabel", title: "i18n:mobile.footerTitle", icon: "icons/qr-code.svg", onClick: () => openMobile() } }]);
   // aiti-float dock v3（P3 批）：右栏「服务端口」tab
-  ctx.registerItems("rightFileDock", [{ id: "ports", render: TunnelDockFace, meta: { title: "服务端口" } }]);
+  ctx.registerItems("rightFileDock", [{ id: "ports", render: TunnelDockFace, meta: { title: "i18n:st.ports.label" } }]);
   ctx.registerItems("banners", [{ id: "self-expose-alert", render: BannersSlot }]);
 }

@@ -227,6 +227,10 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
         return <video controls playsInline preload="metadata" src={mediaHref} aria-label={label} />;
       }
       // Image inside a link: the link's own navigation wins, no preview click layer added (upstream behavior).
+      // react-markdown v10 instantiates `components` renderers as real component types (per-element
+      // hook scope), so useContext here is legitimate at runtime — the hooks plugin just cannot
+      // see through the object-literal shorthand naming. Targeted suppression, documented.
+      // eslint-disable-next-line react-hooks/rules-of-hooks
       const insideLink = useContext(MarkdownLinkContext);
       const filePath = typeof src === "string" ? resolveLocalFileHref(src, cwd) : null;
       if (!filePath) {

@@ -18,6 +18,7 @@ import { createPairFed } from "./pair-fed.js"; // pair 跨桥联邦代理（M3.2
 
 const fs = require("node:fs");
 const path = require("node:path");
+const crypto = require("node:crypto");
 
 let bridge = null;
 let dataDirCache = ""; // 扩展 cacheDir（startup 存）：截屏大图落盘目录用（数据分层：可再生 → cache）
@@ -37,10 +38,13 @@ function getOrCreatePairFed(cacheDir: string) {
       deliverToAllLocalPeers: (env: unknown) => {
         const b = bridge;
         if (!b) return 0;
-        let n = 0;
-        // 全量投递（不过滤 online）：在线走 SSE、离线进 inbox（重连/刷新恢复）——入站广播语义
-        try { for (const p of b.pair().listPeers()) if (b.pair().deliverToPeer(p.id, env)) n++; } catch {}
-        return n;
+        // D1: inbound delivery switched to routePairSend broadcast (re-audit plan; old listPeers x deliverToPeer
+        // was doubly broken — page devices no longer live in peers). Broadcast reaches pages + agents + pair
+        // peers, all kinds; from carries the authoritative bridge's original sender name (relay identity kept).
+        const e = (env && typeof env === "object" ? env : {}) as any;
+        const from = { id: "fed-relay", name: (e.from && e.from.name) || "权威桥", kind: "pair" as const };
+        const payload = e.type === "file" && e.file ? { file: e.file } : { text: String(e.text || "") };
+        try { const r = b.routePairSend(from, "all-kinds", payload); return r && r.ok ? (r.delivered || []).length : 0; } catch { return 0; }
       },
     });
   }
@@ -92,17 +96,46 @@ const ASSETS = {
   "host-protocol.js": "application/javascript",
   "cdp-core.js": "application/javascript",
   "pair-client.js": "application/javascript",
-  "pair.html": "text/html; charset=utf-8",
 };
 
-function serveAsset(ctx, name) {
+// Negotiable cache: content-hash ETag + no-cache — unchanged assets answer 304 (near-instant),
+// updated assets invalidate automatically. Replaces the old no-store, which re-downloaded the
+// full ~100KB pair-client.js on every panel open (seconds-level wait on slow-network devices).
+function serveAsset(ctx, name, req) {
   const p = path.join(ctx.dir, "assets", name);
   try {
     const data = fs.readFileSync(p);
-    return new Response(data, { headers: { "content-type": ASSETS[name], "cache-control": "no-store" } });
+    const etag = '"' + crypto.createHash("sha1").update(data).digest("hex").slice(0, 16) + '"';
+    const inm = req && req.headers ? req.headers.get("if-none-match") : null;
+    if (inm && inm.split(",").map((s) => s.trim()).includes(etag)) {
+      return new Response(null, { status: 304, headers: { etag, "cache-control": "no-cache" } });
+    }
+    return new Response(data, { headers: { "content-type": ASSETS[name], etag, "cache-control": "no-cache" } });
   } catch {
     return new Response("asset not found: " + name, { status: 404 });
   }
+}
+
+// Session-name backfill: from the host /api/sessions firstMessage/cwd shape (a uuid means nothing in the pair device list).
+// Only queried while the bridge-side name is still the temp shape ("pi-web · <8 chars>") (throttled); cross-process fetch to the local API.
+let _lastNameFetch = 0;
+async function refreshAgentSessionName(key: string, sessionId: string) {
+  try {
+    if (!bridge) return;
+    const port = Number(process.env.PORT) || 3001;
+    if (Date.now() - _lastNameFetch < 1500) return; // throttled
+    _lastNameFetch = Date.now();
+    const r = await fetch(`http://127.0.0.1:${port}/api/sessions?fmt=2`, { signal: AbortSignal.timeout(4000) });
+    if (!r.ok) return;
+    const rows = (await r.json()) as any[];
+    const hit = Array.isArray(rows) ? rows.find((x) => x && (x.id === sessionId || String(x.id || "").startsWith(String(sessionId || "").slice(0, 8)))) : null;
+    if (!hit) return;
+    const base = String(hit.cwd || "").split("/").filter(Boolean).pop() || "";
+    const fm = String(hit.firstMessage || "").replace(/\s+/g, " ").slice(0, 40);
+    const name = fm ? `${base} · ${fm}` : base || "pi-web";
+    try { bridge.registerAgent(key, { agentId: key, id: sessionId, name, open: false, capabilities: {} }); } catch {}
+    console.log("[aiti-devtools] 会话名补齐：" + key + " → " + name.slice(0, 50));
+  } catch { /* best-effort */ }
 }
 
 export default {
@@ -141,7 +174,61 @@ export default {
   ],
 
   ui: {
-    toolbar: [{ id: "aiti-open", label: "AITI", title: "aiti devtools：注入端口管理 + AI 调试界面", icon: "icons/wrench.svg" }],
+    toolbar: [{ id: "aiti-open", label: "AITI", title: "i18n:dt.open.title", icon: "icons/wrench.svg" }],
+    i18n: {
+      "zh-CN": {
+        "it.main.title": "调试",
+        "it.inspect.label": "AITI 调试器",
+        "it.inspect-pick.label": "点选元素",
+        "ext.displayName": "页面 AI 调试工具",      "dt.open.title": "aiti devtools：注入端口管理 + AI 调试界面",
+      },
+      en: {
+        "it.main.title": "Debug",
+        "it.inspect.label": "AITI debugger",
+        "it.inspect-pick.label": "Pick element",
+        "feat.pairFed.enabled.desc": "When on, this instance's pair panel/agent tools show cross-bridge federation messaging (message/file relay via the authoritative bridge)",
+        "feat.pairFed.url.desc": "Default http://127.0.0.1:8777/aiti",
+        "feat.pairFed.filesDir.desc": "For same-machine direct reads of fed files; default ~/.pi/aiti-bridge/aiti-pair-inbox",
+        "feat.tool.aiti_page_exec.desc": "Runs CDP-like commands on a connected page (DOM/CSS/Input/Page/Runtime/Storage/Performance/Browser domains)",
+        "feat.tool.aiti_page_snapshot.desc": "Pulls the connected page's basic scene (URL/selection/emulation conditions)",
+        "feat.tool.aiti_self_ui.desc": "Scans the target page (default AI main window xxx/ai) for open dialogs/forms/buttons — ai-helper fill targeting",
+        "feat.tool.aiti_form_fill.desc": "Fills field values into the target page (React-compatible: native value setter + input/change dispatch), with an optional button click",
+        "feat.tool.aiti_bridge_status.desc": "Queries connected pages and pending requests (match pageId by title/URL)",
+        "feat.tool.aiti_page_logs.desc": "Queries the target page's collected console logs (log/debug/info/warn/error, first check warn/error)",
+        "feat.tool.aiti_page_network.desc": "Queries the target page's collected ajax/fetch completions (filter by status/errorOnly)",
+        "feat.tool.aiti_user_pick_element.desc": "Asks the human user to pick a page element (enters Inspector mode; returns the element payload)",
+        "feat.tool.aiti_user_confirm.desc": "Asks the human a yes/no question (with an optional comment; returns approved/custom)",
+        "feat.tool.aiti_user_choose.desc": "Gives the human a set of options to choose (single/multiple; with an optional comment)",
+        "feat.tool.aiti_user_input.desc": "Asks the human to type a text (returns on Enter/click)",
+        "feat.tool.aiti_user_presence.desc": "Probes whether the human user is present/online (confirm before long tasks)",
+        "feat.tool.aiti_user_notify.desc": "Non-blocking browser notification (does not wait for an answer)",
+        "feat.tool.aiti_aiti_hello.desc": "Agent self-intro/register/bind target page (recommended once per session start)",
+        "feat.tool.aiti_aiti_inbox.desc": "Pulls messages sent to this agent session (user messages / async answers / page events), with ack",
+        "feat.tool.aiti_file_stat.desc": "Queries file existence/type/size/mtime (absolute path)",
+        "ext.displayName": "Page DevTools",
+        "feat.pairFed.enabled": "pairFed · cross-bridge federation",
+        "feat.pairFed.url": "pairFed · authoritative bridge pair base",
+        "feat.pairFed.filesDir": "pairFed · authoritative bridge files dir",
+        "feat.tool.aiti_page_exec": "page_exec · page execution",
+        "feat.tool.aiti_page_snapshot": "page_snapshot · page snapshot",
+        "feat.tool.aiti_self_ui": "self_ui · dialog/form inventory",
+        "feat.tool.aiti_form_fill": "form_fill · dialog form fill",
+        "feat.tool.aiti_bridge_status": "bridge_status · bridge status",
+        "feat.tool.aiti_page_logs": "page_logs · page logs",
+        "feat.tool.aiti_page_network": "page_network · page network",
+        "feat.tool.aiti_user_pick_element": "user_pick_element · element picker",
+        "feat.tool.aiti_user_confirm": "user_confirm · yes/no question",
+        "feat.tool.aiti_user_choose": "user_choose · single choice",
+        "feat.tool.aiti_user_input": "user_input · text input",
+        "feat.tool.aiti_user_presence": "user_presence · presence probe",
+        "feat.tool.aiti_user_notify": "user_notify · notification",
+        "feat.tool.aiti_aiti_hello": "aiti_hello · register",
+        "feat.tool.aiti_aiti_inbox": "aiti_inbox · message channel",
+        "feat.tool.aiti_file_stat": "file_stat · file stat",
+      "dt.open.title": "aiti devtools: injection endpoints + AI debugging UI",
+      },
+    },
+
     dialogs: [{ id: "aiti-dialog", label: "AITI devtools" }],
   },
 
@@ -259,7 +346,7 @@ export default {
         }
       }
       // 静态资源（单段路径）
-      if (p.length === 1 && ASSETS[p[0]]) return serveAsset(ctx, p[0]);
+      if (p.length === 1 && ASSETS[p[0]]) return serveAsset(ctx, p[0], req);
       // 桥端点（mcp 前缀）
       if (p[0] === "mcp" && bridge) return bridge.handle(req, p.slice(1), ctx.searchParams);
       return new Response("not found: " + p.join("/"), { status: 404 });
@@ -347,14 +434,34 @@ export default {
           };
         });
       },
+
       onAgentSession(info) {
         if (!bridge) return;
         const key = "pi-web/" + info.sessionId;
-        bridge.registerAgent(key, { agentId: key, id: info.sessionId, open: false, capabilities: {} });
+        bridge.registerAgent(key, { agentId: key, id: info.sessionId, name: "pi-web · " + String(info.sessionId || "").slice(0, 8), open: false, capabilities: {} });
+        // async session-name backfill (host sessions' firstMessage/cwd shape — a uuid means nothing to users);
+        // the title is only generated after the first message → follow up again on the first message via setAgentSink
+        void refreshAgentSessionName(key, info.sessionId);
         // 进程内推送 sink：人发消息/异步 user_* 作答 → 直推会话（模型立即看到）
-        bridge.setAgentSink(key, (text, kind) => {
-          const label = kind === "user_answer" ? "你的交互请求有人作答（来自 aiti-devtools）" : "人发来消息（来自 aiti-devtools）";
+        bridge.setAgentSink(key, (text, kind, payload) => {
+          // sender wording by real source (payload.fromDevice.kind, 2026-11-17): messages from agent
+          // sessions are labeled session (with name/id), never "human/user"; only page/pair device/AI
+          // window (human-operated) sources show "user". user_answer = a human answering an
+          // interaction card on the page — keep the original wording.
+          let label;
+          if (kind === "user_answer") label = "你的交互请求有人作答（来自 aiti-devtools）";
+          else {
+            const fd = (payload && payload.fromDevice) || null;
+            if (fd && fd.kind === "agent") {
+              const id = String(fd.id || fd.name || "?");
+              const nm = String(fd.name || id);
+              label = "session " + (nm !== id ? nm + "（" + id + "）" : id) + " 发来消息（来自 aiti-devtools）";
+            } else {
+              label = "用户发来消息（来自 aiti-devtools）";
+            }
+          }
           void info.steer(String(label + "：" + text).slice(0, 800)).catch(() => {});
+          void refreshAgentSessionName(key, info.sessionId); // session-name follow-up (after the first message generates title/firstMessage)
         });
         console.log("[aiti-devtools] agent 会话接入（进程内）：" + key);
       },

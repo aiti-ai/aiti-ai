@@ -307,15 +307,15 @@ export default function register(ctx) {
   }
 
   // ── 注册全部 slot ──
-  ctx.registerItems("dialogs", [{ id: "demo-selfcheck", render: SelfCheckDialog, meta: { label: "demo 自检面板" } }]);
-  ctx.registerItems("toolbar", [{ id: "demo-toolbar", render: ToolbarButton, meta: { label: "demo 自检" } }]);
-  ctx.registerItems("sidebar", [{ id: "demo-sidebar", render: SidebarEntry, meta: { label: "demo 自检" } }]);
-  ctx.registerItems("sessionTopbar", [{ id: "demo-topbar", render: SessionTopbarChip, meta: { label: "demo 自检" } }]);
-  ctx.registerItems("sessionRowActions", [{ id: "demo-star", render: SessionRowStar, meta: { label: "demo 标记" } }]);
-  ctx.registerItems("banners", [{ id: "demo-banner", render: TestBanner, meta: { label: "demo 横幅测试" } }]);
-  ctx.registerItems("pages", [{ id: "demo-page", render: Page, meta: { label: "demo 自检页面" } }]);
-  ctx.registerItems("chatInputTop", [{ id: "demo-check", render: ChatInputTop, meta: { label: "demo 自检" } }]);
-  ctx.registerItems("userMessageActions", [{ id: "demo-pin", render: UserMsgActions, meta: { label: "demo 标记" } }]);
+  ctx.registerItems("dialogs", [{ id: "demo-selfcheck", render: SelfCheckDialog, meta: { label: "i18n:it.selfcheck.label" } }]);
+  ctx.registerItems("toolbar", [{ id: "demo-toolbar", render: ToolbarButton, meta: { label: "i18n:it.open.label" } }]);
+  ctx.registerItems("sidebar", [{ id: "demo-sidebar", render: SidebarEntry, meta: { label: "i18n:it.open.label.2" } }]);
+  ctx.registerItems("sessionTopbar", [{ id: "demo-topbar", render: SessionTopbarChip, meta: { label: "i18n:it.open.label.3" } }]);
+  ctx.registerItems("sessionRowActions", [{ id: "demo-star", render: SessionRowStar, meta: { label: "i18n:it.star.label" } }]);
+  ctx.registerItems("banners", [{ id: "demo-banner", render: TestBanner, meta: { label: "i18n:it.banner.label" } }]);
+  ctx.registerItems("pages", [{ id: "demo-page", render: Page, meta: { label: "i18n:it.page.label" } }]);
+  ctx.registerItems("chatInputTop", [{ id: "demo-check", render: ChatInputTop, meta: { label: "i18n:it.open.label.4" } }]);
+  ctx.registerItems("userMessageActions", [{ id: "demo-pin", render: UserMsgActions, meta: { label: "i18n:it.star.label.2" } }]);
 
   // ── 非 UI 扩展点 ──
   // chat hook（preSend）：/demo-send <text> → 替换为带前缀的真实内容（无可见 UI）。

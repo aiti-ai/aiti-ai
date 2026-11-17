@@ -5,7 +5,7 @@
  */
 import { getBase, editorRefHolder } from "./env";
 import { LANG_EXT, detectFileType, isViewableBinary, isTextFile, matches, formatToml, formatCsv, loadVendorGlobal } from "./lib";
-import { ensureEditorTicket, apiUrl } from "./host-shim";
+import { ensureEditorTicket, apiUrl, t } from "./host-shim.ts";
 import { fetchSofficeStatus, buildSofficeMissingPanel } from "../../../_shared/soffice-panel";
 import { extOf, sortChain, resolveFenceChain, defaultCapabilityOf, shouldTakeover, type EditorCapability } from "./arbiter";
 import { isFenceLang } from "./markdown";
@@ -570,8 +570,8 @@ const loadDmp = (): Promise<any> => {
       const prefix = lineText.slice(0, col - 1);
       if (/"[a-zA-Z_]*$/.test(prefix)) {
         return [
-          { label: "key", kind: "Property", insertText: "\"key\": \"\"", detail: "JSON 键" },
-          { label: "value", kind: "Value", insertText: "\"value\"", detail: "JSON 值" },
+          { label: "key", kind: "Property", insertText: "\"key\": \"\"", detail: t("JSON 键") },
+          { label: "value", kind: "Value", insertText: "\"value\"", detail: t("JSON 值") },
         ];
       }
       return [];
@@ -725,30 +725,30 @@ const loadDmp = (): Promise<any> => {
       bar.style.cssText = "display:flex;align-items:center;gap:8px;padding:5px 12px;font-size:11px;color:var(--text-dim,#888);border-bottom:1px solid var(--border,#e0e0e0);flex-shrink:0;";
       const tipSpan = document.createElement("span");
       tipSpan.style.flex = "1 1 auto";
-      tipSpan.textContent = "旧格式只读预览（soffice 转 PDF）";
+      tipSpan.textContent = t("旧格式只读预览（soffice 转 PDF）");
       bar.appendChild(tipSpan);
       const convBtn = document.createElement("button");
       convBtn.type = "button";
       const isDoc = /\.doc$/i.test(ctx.filePath);
       if (isDoc) {
-        convBtn.textContent = "转为 .docx 并打开";
-        convBtn.title = "后台转换为同名 -fromdoc.docx 副本（不覆盖原文件与已有文件）并自动打开";
+        convBtn.textContent = t("转为 .docx 并打开");
+        convBtn.title = t("后台转换为同名 -fromdoc.docx 副本（不覆盖原文件与已有文件）并自动打开");
         convBtn.style.cssText = "padding:2px 10px;font-size:11px;font-weight:600;border:1px solid var(--border,#d0d0d0);border-radius:6px;background:var(--bg,#fff);cursor:pointer;color:var(--text,#1a1a1a);font-family:inherit;";
         convBtn.onclick = async () => {
           convBtn.disabled = true;
-          convBtn.textContent = "转换中…";
+          convBtn.textContent = t("转换中…");
           try {
             const r = await fetch(getBase() + "/convert-saveas", {
               method: "POST", cache: "no-store", headers: { "content-type": "application/json" },
               body: JSON.stringify({ filePath: ctx.filePath }),
             }).then((x: any) => x.json());
-            if (!r.ok) throw new Error(r.error || "转换失败");
-            tipSpan.textContent = "已创建 " + String(r.newPath || "").split("/").pop() + "，正在打开…";
+            if (!r.ok) throw new Error(r.error || t("转换失败"));
+            tipSpan.textContent = t("已创建 {name}，正在打开…", { name: String(r.newPath || "").split("/").pop() });
             try { (window as any).__aitiEditor?.openFile(r.newPath); } catch { /* 打开失败静默 */ }
           } catch (e: any) {
             convBtn.disabled = false;
-            convBtn.textContent = "转为 .docx 并打开";
-            tipSpan.textContent = "转换失败：" + String((e && e.message) || e);
+            convBtn.textContent = t("转为 .docx 并打开");
+            tipSpan.textContent = t("转换失败：{msg}", { msg: String((e && e.message) || e) });
             showSofficePanel();
           }
         };
@@ -758,7 +758,7 @@ const loadDmp = (): Promise<any> => {
       wrap.style.cssText = "flex:1;min-height:0;position:relative;";
       const loading = document.createElement("div");
       loading.style.cssText = "position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--text-muted,#888);font-size:13px;background:var(--bg,#fff);";
-      loading.textContent = "正在转换（soffice）…首次约需数秒";
+      loading.textContent = t("正在转换（soffice）…首次约需数秒");
       const frame = document.createElement("iframe");
       frame.title = "doc-pdf-preview";
       frame.style.cssText = "width:100%;height:100%;border:none;opacity:0;";
@@ -774,12 +774,12 @@ const loadDmp = (): Promise<any> => {
           if (dead) return;
           if (!r.ok) {
             const d = await r.json().catch(() => ({} as any));
-            loading.textContent = d.error || "转换失败 (" + r.status + ")";
+            loading.textContent = d.error || t("转换失败 ({status})", { status: r.status });
             loading.style.color = "var(--danger, #f87171)";
             return;
           }
           const ct = r.headers.get("content-type") || "";
-          if (!ct.includes("pdf")) { loading.textContent = "转换结果异常（非 PDF）"; loading.style.color = "var(--danger, #f87171)"; return; }
+          if (!ct.includes("pdf")) { loading.textContent = t("转换结果异常（非 PDF）"); loading.style.color = "var(--danger, #f87171)"; return; }
           blobUrl = URL.createObjectURL(await r.blob());
           frame.src = blobUrl;
         } catch (e: any) {

@@ -7,11 +7,18 @@
  * 改扫 [data-ext-id] 包装器，可靠命中所有扩展弹窗，且能直接拿到 owning 扩展 id →
  * 唤起 ai-helper 时按「本扩展 skills + 通用 skills + 其他扩展」分组展示。
  * 兼容兜底：未盖 data-ext-id 的非扩展弹窗（如 pi-web 内置 dialog）走 role=dialog/class~dialog 扫描。
+ *
+ * Two corner buttons are injected together (§4.4 contract family; extman quick button plan:
+ * docs/aiti-ext-dialog-extman-button-plan.md):
+ *   🤖 AI Helper (original) | 🔧 extman (left of the AI button: opens the extension manager
+ *   focused on the dialog's owning extension).
+ * Division of labor: helper owns the corner-button infrastructure (this scanner); extman only
+ * provides the service ("aiti-extman.open" ExtService, registered on the extman side).
  */
 
 // 扩展展示名（id → 友好名，与 extman 共用同一张表）
 import { extDisplayName } from "../../../_shared/ext-display-names";
-import { apiUrl } from "./host-shim";
+import { apiUrl, extSvc, hostCtx, t } from "./host-shim";
 
 // AI 星星图标（单源 icons/sparkles.svg，_shared/icons 库经 deploy copyIcons 拷入）——
 // assets CSS-mask 渲染（currentColor 继承按钮颜色），与 helper 弹窗内 SparkIcon 同一文件；
@@ -24,6 +31,58 @@ const AiBotIconHtml = (size = 16) => {
 
 const AI_BTN_ATTR = "data-aiti-ai-btn";
 const HOST_ATTR = "data-aiti-ai-host";   // 标在 close 按钮上：已挂载过 AI 按钮（防重复注入）
+const EXT_BTN_ATTR = "data-aiti-extman-btn"; // marks the extman 🔧 button (dedup / test locator)
+
+// extman 🔧 icon (wrench.svg — same icon-library asset as extman's sidebarFooter entry; copied in by extman deploy copyIcons)
+const ExtManIconHtml = (size = 16) => {
+  const url = apiUrl("/api/extensions/aiti-extman/assets/icons/wrench.svg");
+  return '<span aria-hidden="true" style="display:inline-block;width:' + size + 'px;height:' + size + 'px;background:currentColor;' +
+    '-webkit-mask:url(' + url + ') center/contain no-repeat;mask:url(' + url + ') center/contain no-repeat"></span>';
+};
+
+// Whether extman is available (installed & enabled: entry present in the host manifest →
+// __piWebExtUI.metas; uninstalled/disabled extensions are pruned from the manifest and metas
+// accordingly). When absent, skip the 🔧 button — graceful degradation.
+function extmanAvailable(): boolean {
+  try {
+    const metas = ((window as any).__piWebExtUI && (window as any).__piWebExtUI.metas) || {};
+    return !!metas["aiti-extman"];
+  } catch { return false; }
+}
+
+// Open extman and jump to the given extension entry (empty extId = just open the panel).
+async function openExtman(extId: string): Promise<void> {
+  if (tryOpenExtmanDirect(extId)) return;
+  // [Lazy loading v2] extman ships clientImmediately:false — until its first
+  // materialization neither direct channel above is registered, and the ExtSlot DOM
+  // wrapper below does not exist either (the sidebar footer entry is then rendered by
+  // the host as a static zero-bundle button). Ask the host ctx to materialize extman
+  // (register runs synchronously before the promise settles), then retry the direct
+  // channels. Returns true when just registered, false when already materialized or
+  // missing from the manifest — retrying covers both, no need to branch on it.
+  const ctx = hostCtx() as { ensureMaterialized?: (id: string) => Promise<boolean> } | null;
+  if (ctx && typeof ctx.ensureMaterialized === "function") {
+    try { await ctx.ensureMaterialized("aiti-extman"); } catch {}
+    if (tryOpenExtmanDirect(extId)) return;
+  }
+  // DOM fallback (old host without ctx.ensureMaterialized): click the sidebarFooter
+  // entry — requires extman already materialized ([data-ext-id] wrapper exists only
+  // then); on an old extman without the service this just opens the panel without
+  // selection — degraded UX, never an error.
+  try {
+    const btn = document.querySelector<HTMLElement>('[data-ext-id="aiti-extman"][data-ext-slot="sidebarFooter"] button');
+    if (btn) { btn.click(); return; }
+  } catch {}
+  try { console.warn("[aiti-helper] extman 打开通道不可用（extman 未装或版本过旧）"); } catch {}
+}
+
+// Direct channel: "aiti-extman.open" ExtService, registered by extman's entry at
+// materialization time. No cross-extension window global (DI plan §6).
+function tryOpenExtmanDirect(extId: string): boolean {
+  const fn = extSvc<(id?: string) => void>("aiti-extman.open");
+  if (typeof fn !== "function") return false;
+  try { fn(extId || undefined); return true; } catch { return false; }
+}
 
 // 判断按钮是否为「移除/删除」类操作（而非弹窗关闭按钮）。
 // 列表/行里的 ✕（如模型向导模型列表的「移除模型」、多 key 的「删除此 key」）是删除操作，
@@ -129,7 +188,7 @@ function injectAt(closeBtn: HTMLElement, ext: { id: string; name: string }): boo
   const aiBtn = document.createElement("button");
   aiBtn.setAttribute(AI_BTN_ATTR, "1");
   aiBtn.innerHTML = AiBotIconHtml(16);
-  aiBtn.title = ext && ext.id ? "AI Helper：让 AI 帮我用 " + extDisplayName(ext.id, ext.name || ext.id) + " 处理这个弹窗" : "AI Helper：让 AI 帮我处理这个弹窗";
+  aiBtn.title = ext && ext.id ? t("dlg.aiBtn.title", { name: extDisplayName(ext.id, ext.name || ext.id) }) : t("dlg.aiBtn.title.plain");
   aiBtn.style.cssText = "cursor:pointer;border:none;background:none;color:inherit;padding:2px 6px;line-height:1;opacity:.85;display:inline-flex;align-items:center";
   aiBtn.onmouseenter = () => { aiBtn.style.opacity = "1"; };
   aiBtn.onmouseleave = () => { aiBtn.style.opacity = ".85"; };
@@ -146,8 +205,8 @@ function injectAt(closeBtn: HTMLElement, ext: { id: string; name: string }): boo
     sysParts.push("请根据弹窗上下文帮用户处理相关任务；如需操作该弹窗表单可调 self_ui/form_fill 工具。");
     (window as any).__aitiHelperInvoke({
       system: sysParts.join(""),
-      placeholder: "告诉 AI 你想让" + (extName || "它") + "做什么…",
-      contextLabel: (extName ? extName + " · " : "") + (ctxInfo.title || "弹窗 AI"),
+      placeholder: t("dlg.aiBtn.ph", { name: extName || t("dlg.aiBtn.ph.it") }),
+      contextLabel: (extName ? extName + " · " : "") + (ctxInfo.title || t("dlg.ctx.dialogAi")),
       dialogEl: panel,     // 供 action:fill 回填弹窗表单
       extId, extName,      // 分组高亮本扩展 skills
     });
@@ -157,6 +216,26 @@ function injectAt(closeBtn: HTMLElement, ext: { id: string; name: string }): boo
     closeBtn.parentNode!.insertBefore(aiBtn, closeBtn);
   } catch {
     try { closeBtn.parentNode!.appendChild(aiBtn); } catch {}
+  }
+
+  // extman 🔧 button: left of the AI button (order … 🔧 🤖 ✕; AI stays next to close).
+  // extman 自身面板不挂（自我跳转无意义）；未装/被禁用不挂（extmanAvailable）。
+  if (ext && ext.id !== "aiti-extman" && extmanAvailable()) {
+    const extBtn = document.createElement("button");
+    extBtn.setAttribute(EXT_BTN_ATTR, "1");
+    extBtn.innerHTML = ExtManIconHtml(16);
+    const extLabel = extDisplayName(ext.id, ext.name || ext.id);
+    extBtn.title = ext.id ? t("dlg.extBtn.title", { name: extLabel }) : t("dlg.extBtn.title.plain");
+    extBtn.style.cssText = aiBtn.style.cssText;
+    extBtn.onmouseenter = () => { extBtn.style.opacity = "1"; };
+    extBtn.onmouseleave = () => { extBtn.style.opacity = ".85"; };
+    extBtn.onclick = (e) => {
+      e.preventDefault(); e.stopPropagation();
+      openExtman(ext.id);
+    };
+    try {
+      closeBtn.parentNode!.insertBefore(extBtn, aiBtn);
+    } catch {}
   }
   return true;
 }

@@ -1,8 +1,11 @@
 ---
 name: model-check
 title: AI 帮我检查模型可用性
+title.en: "AI: check model availability"
 placeholder: 检查哪些模型？（缺省全部）…
+placeholder.en: "Which models to check? (all by default)…"
 summary: 探测各模型当前是否可用 / 429 限流 / 预计何时恢复，看历史识别可用窗口
+summary.en: "Probe whether models are currently available / 429 rate-limited / expected recovery time; view history to spot availability windows"
 outputs:
   format: text
 action:

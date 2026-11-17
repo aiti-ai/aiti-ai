@@ -27,8 +27,8 @@ export default function register(ctx: Record<string, unknown>) {
     );
   }
 
-  ctx.registerItems?.("toolbar", [{ id: "aiti-models-import-open", render: ImportButton, meta: { label: "导入模型配置", icon: "icons/import.svg" } }]);
-  ctx.registerItems?.("dialogs", [{ id: "aiti-models-import-dialog", render: ImportDialogSlot, meta: { label: "模型配置导入" } }]);
+  ctx.registerItems?.("toolbar", [{ id: "aiti-models-import-open", render: ImportButton, meta: { label: "i18n:mi.open.label", icon: "icons/import.svg" } }]);
+  ctx.registerItems?.("dialogs", [{ id: "aiti-models-import-dialog", render: ImportDialogSlot, meta: { label: "i18n:it.import.label" } }]);
 
   // 跨扩展打开服务（quickstart 引导卡「从 Agent 导入…」消费；ext-services 拍板正路）。
   // 消费方探测式软依赖：本扩展缺席/旧版无服务 → 对方不渲染入口。

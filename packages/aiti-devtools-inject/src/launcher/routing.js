@@ -2,6 +2,7 @@
 import { getPhysViewport, isTouchDevice, placePhysBox } from './viewport.js';
 import { dbgMsg } from './protocol.js';
 import { el } from './dom.js';
+import { t } from './i18n.js';
 
 export function initRouting(ctx) {
   ctx.captureSceneSend = function () {
@@ -23,7 +24,7 @@ export function initRouting(ctx) {
       };
       var condCount = Object.keys(conditions).filter(function (k) { return conditions[k] && conditions[k] !== 1; }).length;
       ctx.sendToAi({ kind: 'scene_report', report: scene });
-      ctx.addMsg('sys', '📸 现场已发送给 AI：' + ctx.errLog.length + ' 条错误 · ' + condCount + ' 个非默认模拟条件');
+      ctx.addMsg('sys', t('📸 Snapshot sent to AI: ') + ctx.errLog.length + t(' errors · ') + condCount + t(' non-default emulation flags'));
       }
 
   ctx.addMsg = function (role, text) {
@@ -37,16 +38,16 @@ export function initRouting(ctx) {
         ctx.copyFallbackCard = el('div', { class: 'dbg-dialog' });
         var card = el('div', { class: 'dbg-dialog-card', style: 'width:min(560px, 94%);max-height:90%' });
         var head = el('div', { class: 'dbg-dialog-head' });
-        head.appendChild(el('span', {}, ['📋 复制内容']));
+        head.appendChild(el('span', {}, [t('📋 Copy content')]));
         card.appendChild(head);
         var body = el('div', { class: 'dbg-dialog-body' });
-        body.appendChild(el('div', {}, ['剪贴板在 AI 窗不可用——已自动全选下方内容，Ctrl/Cmd+C 直接复制：']));
+        body.appendChild(el('div', {}, [t('Clipboard unavailable in the AI window — content below is auto-selected, press Ctrl/Cmd+C to copy: ')]));
         var ta = el('textarea', { readonly: 'readonly', spellcheck: 'false', style: 'width:100%;height:220px;box-sizing:border-box;white-space:pre-wrap;word-break:break-all;color:#0f172a' });
         body.appendChild(ta);
         card.appendChild(body);
         var foot = el('div', { class: 'dbg-dialog-foot' });
-        var retry = el('button', { class: 'dbg-primary' }, ['📋 再试复制']);
-        var close = el('button', { class: 'dbg-ghost' }, ['关闭']);
+        var retry = el('button', { class: 'dbg-primary' }, [t('📋 Retry copy')]);
+        var close = el('button', { class: 'dbg-ghost' }, [t('Close')]);
         foot.appendChild(retry);
         foot.appendChild(close);
         card.appendChild(foot);
@@ -57,7 +58,7 @@ export function initRouting(ctx) {
           try {
             navigator.clipboard.writeText(ta.value).then(function () {
               ctx.copyFallbackCard.classList.remove('dbg-open');
-              try { if (ctx.addMsg) ctx.addMsg('sys', '📋 已复制到剪贴板'); } catch (e) {}
+              try { if (ctx.addMsg) ctx.addMsg('sys', t('📋 Copied to clipboard')); } catch (e) {}
             }, function () {});
           } catch (e) {}
         };
@@ -188,7 +189,7 @@ export function initRouting(ctx) {
     ctx.aiReady = false;
     ctx.aiOpen = true;
     try { ctx.showAi(true); } catch (e) {}
-    try { if (ctx.addMsg) ctx.addMsg('sys', '⚙ AI 地址已切换：' + String(url).slice(0, 80) + '（10s 协议探测，成功才生效；失败自动回退）'); } catch (e) {}
+    try { if (ctx.addMsg) ctx.addMsg('sys', t('⚙ AI URL switched: ') + String(url).slice(0, 80) + t('(10s protocol probe; success required; auto-fallback on failure)')); } catch (e) {}
     // 探测：10s 内收到新 AI 窗 dbg_ai_ready（来源匹配）→ 成功并持久化；超时 → 恢复原状回退
     clearTimeout(ctx._aiSwapT);
     ctx._aiSwapUrl = url;
@@ -208,7 +209,7 @@ export function initRouting(ctx) {
         else if (ctx.aiIframe) ctx.aiIframe.src = backUrl;
       } catch (e) {}
       ctx.aiReady = false;
-      try { if (ctx.addMsg) ctx.addMsg('sys', '⚠ AI 地址连接失败（' + Math.round(swapTimeout / 1000) + 's 无响应）——已回退本窗口，请确认地址后重试'); } catch (e) {}
+      try { if (ctx.addMsg) ctx.addMsg('sys', t('⚠ AI URL connection failed (') + Math.round(swapTimeout / 1000) + t('s no response) — fell back to this window; check the URL and retry')); } catch (e) {}
     }, swapTimeout);
   };
 
@@ -269,7 +270,7 @@ export function initRouting(ctx) {
         tool: 'page_exec',
         pageId: pageId || null,
         bridge: out.bridge,
-        note: '传 pageId 参数即可操作该页面（MCP: page_exec / 扩展: aiti_page_exec）',
+        note: t('Pass the pageId parameter to operate this page (MCP: page_exec / extension: aiti_page_exec)'),
       };
       return out;
     } catch (e) { return p; }
@@ -368,7 +369,7 @@ export function initRouting(ctx) {
   ctx.openFileAt = function (file, line) {
     if (!file) return;
     ctx.postBridgeEvent('open_file', { file: file, line: line || null });
-    ctx.addMsg('sys', '📂 已请求后台打开：' + file + (line ? ':' + line : ''));
+    ctx.addMsg('sys', t('📂 Requested backend open: ') + file + (line ? ':' + line : ''));
   }
 
   ctx.execInPage = function (cmd, args, frameId) {
@@ -430,7 +431,7 @@ export function initRouting(ctx) {
           }).then(function (r) { return r.json(); }).catch(function (e) { console.error(e); });
         } else {
           console.log('[dbg-launcher] → AI（console 模式）', JSON.stringify(payload, null, 2));
-          ctx.addMsg('sys', 'AI 通道未配置（aiUrl/endpoint 为空），已回显到 console。');
+          ctx.addMsg('sys', t('AI channel not configured (aiUrl/endpoint empty), echoed to console.'));
         }
       }
       }
@@ -470,9 +471,9 @@ export function initRouting(ctx) {
         tip = el('div', { class: 'dbg-block-tip' });
         ctx.root.appendChild(tip);
       }
-      var labels = { click: '点击', hover: '悬停', key: '键盘', wheel: '滚轮', scroll: '滚动', touch: '触摸', focus: '聚焦' };
+      var labels = { click: t('Click'), hover: t('Hover'), key: t('Keyboard'), wheel: t('Wheel'), scroll: t('Scroll'), touch: t('Touch events'), focus: t('Focus') };
       var label = labels[category] || category || '';
-      tip.innerHTML = '🛡 已拦截 <b>' + label + '</b> 事件（' + (type || category || '') + '）：页面交互已冻结——放行请用工具条 🔒 放行方案（空格/Tab 一键切换）';
+      tip.innerHTML = t('🛡 Blocked <b>') + label + t('</b> events (') + (type || category || '') + t('): page interaction frozen — use toolbar 🔒 Allow plan to let events through (Space/Tab toggles)');
       // 闪避定位：拦截点在下半屏 → 上半展示；在上半屏 → 底部展示。小屏模式底部需抬高避让固定 HUD。
       // clientX/Y 与 innerHeight 同为 CSS px 坐标系，缩放页无需 counter-zoom 补偿
       try {
@@ -506,7 +507,7 @@ export function initRouting(ctx) {
           !(ctx.aiIframe && source === ctx.aiIframe.contentWindow) &&
           !ctx.listFrames().some(function (f) { return f.win === source; })) {
         try { source.close(); } catch (e) {}
-        try { if (ctx.addMsg) ctx.addMsg('sys', '🪟 已关闭残留的 AI 独立窗口（当前为页面内窗口；需要时可点 ⧉ 重新打开独立窗口）'); } catch (e) {}
+        try { if (ctx.addMsg) ctx.addMsg('sys', t('🪟 Closed stale AI standalone window (now in-page; click ⧉ to reopen the standalone window if needed)')); } catch (e) {}
       }
       // 新窗口模式 + 弹窗句柄丢失（宿主刷新后 ctx.aiPopup 为 null）：从弹窗发来的任意消息 adopt e.source 重建引用。
       // 排除宿主自身（self 走回调不经消息事件）与已知目标 iframe（fN）——弹窗不是宿主 iframe，不会误认领。
@@ -516,7 +517,7 @@ export function initRouting(ctx) {
           ctx.aiPopup = source;
           ctx._restoringPopup = false; // 恢复完成（心跳认领）——后续 ensureAi 正常 openAiPopup
           try { ctx._aiOnReady(false); } catch (e) {} // 就绪：补发 boot/队列/缓存候选（幂等）
-          try { if (ctx.addMsg) ctx.addMsg('sys', '🪟 已重新连接 AI 独立窗口（窗口未重载，会话保持）'); } catch (e) {}
+          try { if (ctx.addMsg) ctx.addMsg('sys', t('🪟 Reconnected to the AI standalone window (not reloaded, session kept)')); } catch (e) {}
         }
       }
       switch (m.type) {
@@ -540,8 +541,8 @@ export function initRouting(ctx) {
         case 'dbg_iframe_ready':
           // 阶段 3：宿主内 iframe 就绪提示（launcher 不再自建预览；ready 仅记录）
           if (source === 'self') break;
-          ctx.addMsg('sys', 'iframe 就绪：' + (m.payload && m.payload.url) +
-            (m.payload && m.payload.frameworks && m.payload.frameworks.length ? '（框架：' + m.payload.frameworks.join('/') + '）' : ''));
+          ctx.addMsg('sys', t('iframe ready: ') + (m.payload && m.payload.url) +
+            (m.payload && m.payload.frameworks && m.payload.frameworks.length ? t(' (framework: ') + m.payload.frameworks.join('/') + '）' : ''));
           break;
         case 'dbg_ai_confirm': {
           // AI 点选确认：回传当前选区给 AI 窗（累积待发送）+ 恢复 hover（可继续连续选择下一个）
@@ -618,7 +619,7 @@ export function initRouting(ctx) {
             labelEl.textContent = label;
             // 完整信息进 tooltip（hover 标签查看：文本/颜色/字体/路径）
             var tipParts = ['<' + p.tag + '>' + (p.text ? ' “' + p.text.trim().slice(0, 60) + '”' : '')];
-            if (p.usedAt && (p.usedAt.file || p.usedAt.component)) tipParts.push('📍 调用于 ' + (p.usedAt.file ? p.usedAt.file + (p.usedAt.line ? ':' + p.usedAt.line : '') : String(p.usedAt.component)));
+            if (p.usedAt && (p.usedAt.file || p.usedAt.component)) tipParts.push(t('📍 Called at ') + (p.usedAt.file ? p.usedAt.file + (p.usedAt.line ? ':' + p.usedAt.line : '') : String(p.usedAt.component)));
             if (p.color) tipParts.push('fg ' + p.color);
             if (p.bg && p.bg !== 'rgba(0, 0, 0, 0)') tipParts.push('bg ' + p.bg);
             if (p.fontSize) tipParts.push('font ' + p.fontSize);
@@ -679,7 +680,7 @@ export function initRouting(ctx) {
           break;
         case 'dbg_element_selected': {
           var payload = m.payload;
-          if (!payload) { ctx.addMsg('sys', '没有可选的元素（页面是空白？）'); break; }
+          if (!payload) { ctx.addMsg('sys', t('No selectable element (blank page?)')); break; }
           ctx.lastPayload = payload;
           ctx.dTag.textContent = payload.tag + (payload.rect ? ' ' + payload.rect.w + '×' + payload.rect.h : '') +
             (payload.text ? ' “' + payload.text.trim().slice(0, 30) + '”' : '');
@@ -743,7 +744,7 @@ export function initRouting(ctx) {
           // 阶段 3：宿主 + 全部 iframe 广播进入 Inspector（无自建预览）
           ctx.broadcast({ type: 'dbg_enter_inspector', payload: { mode: 'mouse' } });
           ctx.broadcast({ type: 'dbg_ai_pick', payload: { active: true } });
-          ctx.addMsg('sys', '🎯 AI 点选：宿主页与目标页均可 hover 选择（点击 → 工具条 → ✓ 确认回传 AI 窗）。Esc 退出。');
+          ctx.addMsg('sys', t('🎯 AI pick: hover-select on both host and target pages (click → toolbar → ✓ confirm back to the AI window). Esc to exit.'));
           try { if (ctx.showPickHint) ctx.showPickHint(); } catch (e) {} // 小屏底部 toast：点击元素选择
           break;
         }
@@ -798,7 +799,7 @@ export function initRouting(ctx) {
           try {
             if (navigator.clipboard && navigator.clipboard.writeText) {
               navigator.clipboard.writeText(_ctxt).then(
-                function () { try { ctx.addMsg('sys', '📋 已复制（host）'); } catch (e) {} },
+                function () { try { ctx.addMsg('sys', t('📋 Copied (host)')); } catch (e) {} },
                 function () { try { if (ctx.showCopyFallback) ctx.showCopyFallback(_ctxt); } catch (e) {} }
               );
             } else { try { if (ctx.showCopyFallback) ctx.showCopyFallback(_ctxt); } catch (e) {} }
@@ -818,7 +819,7 @@ export function initRouting(ctx) {
               ctx._aiSwapUrl = null; ctx._aiSwapSource = null; ctx._aiSwapPrev = null;
               clearTimeout(ctx._aiSwapT);
               try { ctx.saveCustomAiUrl(_okUrl); } catch (e) {} // 协商成功才持久化（此后重开 AI 窗用它）
-              try { if (ctx.addMsg) ctx.addMsg('sys', '✅ AI 地址连接成功：' + String(_okUrl).slice(0, 80) + '——由 aiti-agent 接管'); } catch (e) {}
+              try { if (ctx.addMsg) ctx.addMsg('sys', t('✅ AI URL connected: ') + String(_okUrl).slice(0, 80) + t(' — taken over by aiti-agent')); } catch (e) {}
             }
           }
           try { if (ctx._aiOnReady) ctx._aiOnReady(false); } catch (e) {}
@@ -838,13 +839,13 @@ export function initRouting(ctx) {
                 var _trk = !!(ctx.trackedAiUrl && ctx.trackedAiUrl());
                 try { ctx.aiIframe.src = _src; } catch (e) {}
                 try { ctx.aiTrackProbe(_trk); } catch (e) {} // 追踪 URL 重载 → 同样 10s 探测回退
-                try { if (ctx.addMsg) ctx.addMsg('sys', '🔁 AI 窗桥连接断开——已自动重载（' + (st === 'reconnecting' ? '重连中' : '待重连') + '）'); } catch (e) {}
+                try { if (ctx.addMsg) ctx.addMsg('sys', t('🔁 AI window bridge lost — auto-reloaded (') + (st === 'reconnecting' ? t('Reconnecting') : t('Reconnect pending')) + '）'); } catch (e) {}
                 setTimeout(function () { ctx._aiReloading = false; }, 3000); // 重载节流：3s 内不再触发
               }
               // 断开后恢复：AI 窗重连成功会再报 connected（见下），届时补发 boot/候选（_aiOnReady 幂等）
             } else if (st === 'connected') {
               try { if (ctx._aiOnReady) ctx._aiOnReady(false); } catch (e) {} // 重连成功 → 补发 boot/队列/缓存候选
-              try { if (ctx.addMsg) ctx.addMsg('sys', '🔗 AI 窗桥连接已恢复'); } catch (e) {}
+              try { if (ctx.addMsg) ctx.addMsg('sys', t('🔗 AI window bridge reconnected')); } catch (e) {}
             }
           } catch (e) {}
           break;
@@ -859,7 +860,7 @@ export function initRouting(ctx) {
           break;
         case 'dbg_ai_escape':
           // AI 点选时按 Esc → 退出点选模式（回到 AI 输入框）；交互点选中 = 拒绝本次点选
-          if (ctx.pickPanel) { ctx.finishPickPanel({ status: 'rejected', reason: '用户按 Esc 取消' }); break; }
+          if (ctx.pickPanel) { ctx.finishPickPanel({ status: 'rejected', reason: t('User cancelled with Esc') }); break; }
           ctx.exitAiInspect();
           break;
         case 'dbg_inspect_escape':
@@ -902,7 +903,7 @@ export function initRouting(ctx) {
           var pe = m.payload || {};
           ctx.errLog.unshift({ kind: pe.kind, message: pe.message, stack: pe.stack, at: new Date().toISOString() });
           if (ctx.errLog.length > 20) ctx.errLog.pop();
-          ctx.addMsg('sys', '⚠ 页面错误 [' + pe.kind + '] ' + pe.message + (pe.stack ? '\n' + pe.stack : ''));
+          ctx.addMsg('sys', t('⚠ Page error [') + pe.kind + '] ' + pe.message + (pe.stack ? '\n' + pe.stack : ''));
           // AI 候选区：自动采集（去重，最多 3 个）→ 转发 AI 窗（pi-web aiti 扩展 → 输入框 [错误N]；失败不影响错误链路）
           try { if (ctx.picksAddError) ctx.picksAddError(pe.kind, pe.message, pe.stack, ctx.sourceFrameId ? ctx.sourceFrameId(source) : null); } catch (e) {}
           break;

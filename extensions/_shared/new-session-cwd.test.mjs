@@ -28,8 +28,8 @@ test("pathCovers：相等 / 互为前缀 / 无关", () => {
 
 test("pathCovers：路径归一（尾斜杠 / win 反斜杠）", () => {
   assert.ok(pathCovers("/a/b/", "/a/b"));
-  assert.ok(pathCovers("C:\\workspace\\proj", "C:/workspace/proj/src"));
-  assert.ok(pathCovers("C:/workspace/proj/src", "C:\\workspace\\proj"));
+  assert.ok(pathCovers("D:\\workspace\\proj", "D:/workspace/proj/src"));
+  assert.ok(pathCovers("D:/workspace/proj/src", "D:\\workspace\\proj"));
 });
 
 test("DEFAULT_EXCLUDE_DIR_NAMES：v2 用户拍板清单", () => {
@@ -41,7 +41,7 @@ test("stripCommonDirs：单层常规目录剥离 / 多重 / 大小写 / 非常�
   assert.equal(stripCommonDirs("/home/w/proj/docs/design"), "/home/w/proj"); // 连续剥两层
   assert.equal(stripCommonDirs("/home/w/proj/Design"), "/home/w/proj");      // 大小写不敏感
   assert.equal(stripCommonDirs("/home/w/proj/src"), "/home/w/proj/src");     // 非常规名不动
-  assert.equal(stripCommonDirs("C:\\workspace\\proj\\tmp"), "C:/workspace/proj");
+  assert.equal(stripCommonDirs("D:\\workspace\\proj\\tmp"), "D:/workspace/proj");
   assert.equal(stripCommonDirs("/home/w/proj"), "/home/w/proj");
 });
 
@@ -115,7 +115,7 @@ test("resolveNewSessionCwd v2：关注路径配置在目标子层（目标目录
 test("resolveNewSessionCwd v2：已知 workspace 覆盖 → 最长匹配", () => {
   const r = resolveNewSessionCwd({
     targetDir: "/home/w/pi-web/lib", targetPath: "/home/w/pi-web/lib/x.ts",
-    currentCwd: "/home/w/aiti-ai",
+    currentCwd: "/home/w/pi-work",
     knownWorkspaces: ["/home/w", "/home/w/pi-web", "/home/w/other"],
   });
   assert.equal(r.cwd, "/home/w/pi-web");
@@ -135,8 +135,8 @@ test("resolveNewSessionCwd v2：常规目录剥离（无 workspace 命中）", (
 test("resolveNewSessionCwd v2：剥离后命中 workspace → 用 workspace", () => {
   const r = resolveNewSessionCwd({
     targetDir: "/home/w/pi-web/docs", targetPath: "/home/w/pi-web/docs/guide.md",
-    currentCwd: "/home/w/aiti-ai",
-    knownWorkspaces: ["/home/w/aiti-ai", "/home/w/pi-web"],
+    currentCwd: "/home/w/pi-work",
+    knownWorkspaces: ["/home/w/pi-work", "/home/w/pi-web"],
   });
   assert.equal(r.cwd, "/home/w/pi-web"); // 剥 docs 后 /home/w/pi-web 命中已知 workspace
 });
@@ -246,7 +246,7 @@ test("resolveNewSessionCwdClient：端点失败/缺席 → 本地判定兜底（
   // git-trace 端点 fetch 抛异常（未装/404）→ 兜底 = 本地 resolveNewSessionCwd（knownWorkspaces 已从 sessions 派生）
   const cwd = await resolveNewSessionCwdClient({
     targetDir: "/home/w/pi-web/docs", targetPath: "/home/w/pi-web/docs/guide.md",
-    currentCwd: "/home/w/aiti-ai",
+    currentCwd: "/home/w/pi-work",
     apiUrl: (p) => "http://host" + p,
     fetchFn: (async (url) => {
       if (String(url).includes("/api/sessions")) return { ok: true, json: async () => ({ sessions: [{ cwd: "/home/w/pi-web" }] }) };
@@ -304,7 +304,7 @@ test("buildAtText：与宿主 buildAtMentionText 同格式（空格加引号、�
   assert.equal(buildAtText("proj", true), "@proj/ ");
   assert.equal(buildAtText("my proj", true), '@"my proj/" ');
   assert.equal(buildAtText("proj/", true), "@proj/ "); // 尾斜杠归一
-  assert.equal(buildAtText("C:/workspace/a b.md"), '@"C:/workspace/a b.md" ');
+  assert.equal(buildAtText("D:/workspace/a b.md"), '@"D:/workspace/a b.md" ');
 });
 
 test("openNewSession：pendingComposer + CWD 判定 + 派发（dispatch 注入；node 无 window）", async () => {

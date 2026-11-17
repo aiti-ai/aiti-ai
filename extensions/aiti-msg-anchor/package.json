@@ -2,7 +2,7 @@
   "name": "@aiti-ai/aiti-msg-anchor",
   "version": "0.1.8",
   "type": "module",
-  "description": "消息锚点横幅扩展（消息区顶部常驻显示当前视口所属的用户输入；滚动跟随；可切换为第一条输入/最近输入/会话标题）—— JSX + vite 构建 client bundle",
+  "description": "A persistent banner at the top of the message area — shows \"the user input that generated the content currently at the top of your screen\", following turn segments as you scroll; switchable to first input / latest input / session title",
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "deploy": "node tools/deploy.mjs"

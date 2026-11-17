@@ -24,7 +24,6 @@
 // M2a 前置验证（@aiti-ai/ext-shared 包化）：服务端运行时经 npm 包名 + exports 子路径
 // import _shared 模块（.mjs 与 .ts 各一）——jiti walk-up 解析由 /api/extensions/demo/shared 自检。
 import { extProtocolInfo } from "@aiti-ai/ext-shared/ext-protocol";
-import { EXT_DISPLAY_NAMES } from "@aiti-ai/ext-shared/ext-display-names";
 
 // 幽默彩蛋：注入注册 + 语料管理（见 server/humor*.ts）
 import { maybeFetchHumor, pickRandomHumor, listHumor, fetchHumorBatch } from "./server/humor.ts";
@@ -68,10 +67,9 @@ function json(body, status = 200) {
   });
 }
 
-export default {
+const DEMO_MANIFEST = {
   id: "demo",
   name: "扩展自检 (Demo)",
-  version: "0.2.1",
   icon: "icon.svg",
   client: "dist/demo-jsx.mjs",
 
@@ -110,7 +108,12 @@ export default {
         const info = extProtocolInfo("1.0");
         return json({
           protocol: { ok: info !== undefined, sample: info },
-          displayNames: { ok: !!EXT_DISPLAY_NAMES, demo: EXT_DISPLAY_NAMES?.["demo"] ?? null, count: Object.keys(EXT_DISPLAY_NAMES || {}).length },
+          // 展示名自检：本扩展 index.ts 顶层 ui.i18n 的 ext.displayName 自述词条（无中心表，2026-11-15 起）。
+          // demo 的 ui 声明在本文件 export default 内 —— 与下方 manifest.ui 同源，这里直接引用同一常量。
+          displayName: {
+            zh: DEMO_MANIFEST.ui.i18n["zh-CN"]["ext.displayName"],
+            en: DEMO_MANIFEST.ui.i18n.en["ext.displayName"],
+          },
         });
       }
 
@@ -220,17 +223,17 @@ export default {
   },
 
   ui: {
-    toolbar: [{ id: "open", label: "demo 自检", title: "demo 扩展自检" }],
+    toolbar: [{ id: "open", label: "i18n:it.open.label", title: "i18n:it.open.label" }],
     sidebar: [{ id: "entry", label: "demo 自检", title: "demo 扩展自检", badge: false }],
     sessionTopbar: [{ id: "check", label: "🧪" }],
     sessionRowActions: [{ id: "demo-star", label: "demo 标记", title: "demo 会话标记（演示，非收藏）" }],
-    dialogs: [{ id: "selfcheck", label: "demo 自检面板" }],
+    dialogs: [{ id: "selfcheck", label: "i18n:it.selfcheck.label" }],
     banners: [{ id: "banner", label: "demo 横幅测试" }],
-    pages: [{ id: "page", label: "demo 自检页面" }],
+    pages: [{ id: "page", label: "i18n:it.page.label" }],
     chatInputTop: [{ id: "check", label: "🧪" }],
     // aiti-float dock v0.5.0 试点（dock 方案 §6）：右栏 tab 停靠 + 侧栏停靠区
-    rightFileDock: [{ id: "dock-demo", label: "🧩 停靠示例" }],
-    sidebarExplorerDock: [{ id: "dock-demo", label: "🧩 停靠示例" }],
+    rightFileDock: [{ id: "dock-demo", label: "i18n:it.dock-demo.label" }],
+    sidebarExplorerDock: [{ id: "dock-demo", label: "停靠示例", icon: "box" }],
     userMessageActions: [{ id: "demo-pin", label: "demo 标记", title: "demo：给消息打 demo 标记（本地演示，与收藏库无关）" }],
     // 新会话欢迎页小组件（渲染型；运行时注册在 client/src/entry.tsx，meta 携带尺寸/区域）
     newSessionWidgets: [{ id: "widget", label: "示例小组件" }],
@@ -240,6 +243,33 @@ export default {
     // provides: ["session-delete"],
     i18n: {
       en: {
+        "it.open.label.2": "demo self-check",
+        "it.open.label.3": "demo self-check",
+        "it.star.label": "demo flag",
+        "it.banner.label": "demo banner test",
+        "it.open.label.4": "demo self-check",
+        "it.star.label.2": "demo flag",
+        "it.dock.title": "🧩 Dock demo",
+        "it.widget.title": "Sample widget",
+        "it.open.label": "demo self-check",
+        "it.dock-demo.label": "🧩 Dock demo",
+        "it.page.label": "demo self-check page",
+        "it.selfcheck.label": "demo self-check panel",
+        "it.jsx-demo.label": "JSX demo",
+        "it.dock-demo.label": "🧩 Dock demo",
+        "it.dock-demo.title": "🧩 Dock demo",
+        "it.jsx-demo-panel.label": "JSX demo panel",
+        "it.dock-demo-float.label": "Dock demo (floating)",
+        "ext.displayName": "Demo Extension",
+        "feat.open": "demo self-check",
+        "feat.entry": "demo self-check",
+        "feat.demo-star": "demo flag",
+        "feat.selfcheck": "demo self-check panel",
+        "feat.banner": "demo banner test",
+        "feat.page": "demo self-check page",
+        "feat.dock-demo": "🧩 Dock demo",
+        "feat.demo-pin": "demo flag",
+        "feat.widget": "Sample widget",
         "demo.title": "demo Extension self-check",
         "demo.open": "demo Self-check",
         "demo.close": "Close",
@@ -267,7 +297,24 @@ export default {
         "jsx.state": "How it works",
       },
       "zh-CN": {
-        "demo.title": "demo 扩展自检",
+        "it.open.label.2": "demo 自检",
+        "it.open.label.3": "demo 自检",
+        "it.star.label": "demo 标记",
+        "it.banner.label": "demo 横幅测试",
+        "it.open.label.4": "demo 自检",
+        "it.star.label.2": "demo 标记",
+        "it.dock.title": "🧩 停靠示例",
+        "it.widget.title": "示例小组件",
+        "it.open.label": "demo 自检",
+        "it.dock-demo.label": "🧩 停靠示例",
+        "it.page.label": "demo 自检页面",
+        "it.selfcheck.label": "demo 自检面板",
+        "it.jsx-demo.label": "JSX 示例",
+        "it.dock-demo.label": "停靠示例",
+        "it.dock-demo.title": "🧩 停靠示例",
+        "it.jsx-demo-panel.label": "JSX 示例面板",
+        "it.dock-demo-float.label": "停靠示例（浮窗态）",
+        "ext.displayName": "示例扩展",        "demo.title": "demo 扩展自检",
         "demo.open": "demo 自检",
         "demo.close": "关闭",
         "demo.rerun": "重跑",
@@ -296,3 +343,4 @@ export default {
     },
   },
 };
+export default DEMO_MANIFEST;

@@ -77,7 +77,7 @@ export function agentsMdTemplate(extId) {
 
 /** 默认 tools/build.mjs（esbuild 单包零配置；扩展自带 tools/build.mjs 则不走到这里）。 */
 function buildMjsTemplate(extId, extRoot, clientOut, entryRel) {
-  const repoHint = "/home/pi/workspace/aiti-ai"; // 现场构建探测源码仓 node_modules 用（三机各不同，缺失时走 npm exec）
+  const repoHint = "/home/pi/workspace/pi-work"; // 现场构建探测源码仓 node_modules 用（三机各不同，缺失时走 npm exec）
   return `/**
  * ${extId} · 现场构建入口（dev-pack 默认模板，esbuild 单包零配置）
  * 用法：node tools/build.mjs
@@ -100,8 +100,8 @@ function findEsbuild() {
   const home = (process.env.HOME || process.env.USERPROFILE || "").split(pathSep).join("/");
   const candidates = [
     extRoot + "/node_modules/esbuild/bin/esbuild",
-    home + "/workspace/aiti-ai/node_modules/esbuild/bin/esbuild",
-    "C:/workspace/aiti-ai/node_modules/esbuild/bin/esbuild", // windows dev box（源码在 D 盘）
+    home + "/workspace/pi-work/node_modules/esbuild/bin/esbuild",
+    "D:/workspace/pi-work/node_modules/esbuild/bin/esbuild", // 155 win（源码在 D 盘）
   ];
   for (const c of candidates) {
     if (!existsSync(c)) continue;

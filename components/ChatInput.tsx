@@ -924,13 +924,53 @@ function BottomModeBar({ mode, onClick, height = 32, tapWidth = 32, count, label
   );
 }
 
-/** Handle (shared since the v4 13th review): two states — a capsule (with an embedded count ⎯ N ⎯ when a queue exists) or a thin bar; tap cycles the three bottom modes. */
-function NotchHandle({ capsule, count, onClick, title }: {
+/** Handle (shared since the v4 13th review): three states — a capsule (with an embedded count ⎯ N ⎯ when a queue exists), a thin bar, or an "expand" affordance (upward chevron + base bar — the desktop collapsed restore control; the bare bar read as decoration, not as "expand"). Tap cycles the three bottom modes. */
+function NotchHandle({ capsule, count, onClick, title, variant = "bar" }: {
   capsule: boolean;
   count: number;
   onClick: () => void;
   title: string;
+  /** "expand" renders the chevron + base-bar pull-up tab (desktop restore); default keeps the thin grabber bar. */
+  variant?: "bar" | "expand";
 }) {
+  if (variant === "expand") {
+    return (
+      <button
+        type="button"
+        aria-label={title}
+        onClick={onClick}
+        title={title}
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: 3,
+          padding: "6px 18px 7px",
+          background: "none",
+          border: "none",
+          borderRadius: 8,
+          color: "var(--text-muted)",
+          cursor: "pointer",
+          transition: "background 0.12s, color 0.12s, box-shadow 0.12s",
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = "var(--bg-hover)";
+          e.currentTarget.style.boxShadow = "0 0 0 1px var(--border)";
+          e.currentTarget.style.color = "var(--text)";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = "none";
+          e.currentTarget.style.boxShadow = "none";
+          e.currentTarget.style.color = "var(--text-muted)";
+        }}
+      >
+        <svg width="24" height="12" viewBox="0 0 24 12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }} aria-hidden="true">
+          <polyline points="4 9.5 12 2.5 20 9.5" />
+        </svg>
+        <span aria-hidden="true" style={{ width: 36, height: 4, borderRadius: 2, background: "currentColor", opacity: 0.45 }} />
+      </button>
+    );
+  }
   if (!capsule) {
     return (
       <div
@@ -4742,6 +4782,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   count={queueCount}
                   onClick={() => cycleBottomMode()}
                   title={t("chat.restoreBottom")}
+                  variant={queueCount > 0 ? "bar" : "expand"}
                 />
               </div>
             )
@@ -5120,8 +5161,25 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   </button>
                 )}
                 {mobileMatrix.stop && (
-                  <MobileIconButton label={t("chat.stop")} onClick={() => { onAbort(); refocusInput(); }} color="#ef4444">
-                    <svg width="13" height="13" viewBox="0 0 10 10" fill="none"><rect x="1.5" y="1.5" width="7" height="7" rx="1.5" fill="currentColor" /></svg>
+                  <MobileIconButton
+                    label={aborting ? t("chat.stopping") : t("chat.stop")}
+                    title={aborting ? t("chat.stopping") : t("chat.stop")}
+                    onClick={() => { onAbort(); refocusInput(); }}
+                    color="#ef4444"
+                  >
+                    {aborting ? (
+                      /* Same spinner + label swap as the desktop Stop (abort is
+                         async — without this the tap looks dead while the
+                         backend winds the run down). Deliberately NOT disabled:
+                         on mobile a dropped settle event must not lock out a
+                         retry tap. */
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" style={{ animation: "spin 1s linear infinite" }}>
+                        <path d="M12 3a9 9 0 0 1 9 9" />
+                        <path d="M12 21a9 9 0 0 1-9-9" opacity="0.45" />
+                      </svg>
+                    ) : (
+                      <svg width="13" height="13" viewBox="0 0 10 10" fill="none"><rect x="1.5" y="1.5" width="7" height="7" rx="1.5" fill="currentColor" /></svg>
+                    )}
                   </MobileIconButton>
                 )}
                 {mobileMatrix.steer && (

@@ -74,7 +74,7 @@ test("a rejected submission preserves a different run reported by the server", (
   assert.match(reconcileSource, /if \(!agentRunningRef\.current\) return;[\s\S]*?finishPromptWithoutStream/);
 });
 
-test("opening System or Tools lazily starts a dormant session without sending a prompt", () => {
+test("opening Tools lazily starts a dormant session without sending a prompt (system is a plain panel toggle since d3d11cc7)", () => {
   const loadSystemInfoSource = source.slice(
     source.indexOf("  const loadSystemInfo = useCallback"),
     source.indexOf("  const loadSlashCommands = useCallback"),
@@ -92,8 +92,10 @@ test("opening System or Tools lazily starts a dormant session without sending a 
   assert.match(loadSystemInfoSource, /setSystemPrompt\(state\.systemPrompt \?\? ""\)/);
   assert.match(loaderEffectSource, /onSystemInfoLoaderChange\?\.\(loadSystemInfo\)/);
   assert.match(loaderEffectSource, /onSystemInfoLoaderChange\?\.\(null\)/);
-  assert.match(appShellSource, /onClick=\{\(\) => handleSystemInfoToggle\("system", mobile\)\}/);
-  assert.match(appShellSource, /onClick=\{\(\) => handleSystemInfoToggle\("tools", mobile\)\}/);
+  // 2026-11-15 (d3d11cc7): mobile tier gone — the system button is a plain toggle,
+  // tools keeps the loader-handler path (same topbar act()(menu) form for both).
+  assert.match(appShellSource, /onClick=\{act\(\(\) => toggleTopPanel\("system"\)\)\(menu\)\}/);
+  assert.match(appShellSource, /onClick=\{act\(\(\) => handleSystemInfoToggle\("tools"\)\)\(menu\)\}/);
   assert.match(appShellSource, /systemInfoLoaderRef\.current/);
   assert.doesNotMatch(appShellSource, /systemPrompt !== null \|\| systemInfoLoading/);
   assert.match(appShellSource, /const loadId = \+\+systemInfoLoadIdRef\.current/);
@@ -239,12 +241,14 @@ test("forking stays available during a run while in-session branch switches wait
     source.indexOf("  const handleModelChange = useCallback"),
   );
 
-  // Fork copies into a new file, so only a shell command blocks it; the
-  // in-session edit still waits because pi refuses navigate_tree mid-run.
-  // 合并适配：本地能力门（sessionCap("fork")）与上游 bashRunning 门槛并存；
-  // 2026-11-12 merge: handler is forkFromMessage (upstream #1539 prefills the
-  // composer with the forked message) behind the same combined gate.
-  assert.match(chatWindowSource, /onFork=\{bashRunning \|\| isNew \|\| !sessionCap\("fork"\) \? undefined : forkFromMessage\}/);
+  // Fork copies into a new file, so it stays available during a run: a running
+  // bash command holds clicks (forkBashRunning dims the button + tooltip) instead
+  // of hiding it. The in-session edit still waits because pi refuses
+  // navigate_tree mid-run. The handler is forkFromMessage (upstream #1539 prefills
+  // the composer with the forked message) behind the local capability gate.
+  assert.match(chatWindowSource, /onFork=\{isNew \|\| !sessionCap\("fork"\) \? undefined : forkFromMessage\}/);
+  assert.match(chatWindowSource, /forkBashRunning=\{bashRunning\}/);
+  assert.doesNotMatch(chatWindowSource, /onFork=\{bashRunning \|\| isNew/);
   assert.match(chatWindowSource, /onEditContent=\{sessionBusy \? undefined : handleEditContent\}/);
   assert.match(chatWindowSource, /onAskInNewChat && quotedSelection\.sourceEntryId && !bashRunning &&/);
   assert.match(forkSource, /addNotice\(\{ type: "error", message:/);
@@ -253,7 +257,9 @@ test("forking stays available during a run while in-session branch switches wait
   assert.match(source, /const branchSwitchLocked = agentRunning \|\| bashRunning \|\| isCompacting;/);
   assert.match(source, /onBranchDataChange\(data\?\.tree \?\? \[\], activeLeafId, handleLeafChange, branchSwitchLocked\)/);
   assert.match(appShellSource, /setBranchSwitchLocked\(locked\)/);
-  assert.equal((appShellSource.match(/locked=\{branchSwitchLocked\}/g) ?? []).length, 2);
+  // 2026-11-15 (d3d11cc7): the mobile overlay's BranchNavigator (the second
+  // locked={branchSwitchLocked} site) retired with the horizontal tier — one pin left.
+  assert.equal((appShellSource.match(/locked=\{branchSwitchLocked\}/g) ?? []).length, 1);
 });
 
 test("first user messages expose both branch actions and edit before their own entry", () => {
@@ -265,11 +271,12 @@ test("first user messages expose both branch actions and edit before their own e
   // fork decision (a4aaff0): forking while running / on the first message are both
   // legal — onFork carries no sessionBusy gating (the upstream sessionBusy || isNew
   // variant is forbidden by the ChatWindow edit-from-here red test).
-  // 2026-09-18: added the fork capability gate (local sessions without caps unchanged;
-  // external backends without fork support hide the button).
-  // 合并适配：同一调用点，融合形态 = 本地能力门 ∪ 上游 bashRunning 门槛；
-  // 2026-11-12 merge: handler is forkFromMessage (upstream #1539 composer prefill)
-  assert.match(chatWindowSource, /onFork=\{bashRunning \|\| isNew \|\| !sessionCap\("fork"\) \? undefined : forkFromMessage\}/);
+  // The local capability gate hides the button for backends without fork support;
+  // a running bash command only holds clicks via forkBashRunning (button stays visible).
+  // The handler is forkFromMessage (upstream #1539 composer prefill).
+  assert.match(chatWindowSource, /onFork=\{isNew \|\| !sessionCap\("fork"\) \? undefined : forkFromMessage\}/);
+  assert.match(chatWindowSource, /forkBashRunning=\{bashRunning\}/);
+  assert.doesNotMatch(chatWindowSource, /onFork=\{bashRunning \|\| isNew/);
   assert.doesNotMatch(chatWindowSource, /idx === 0 && msg\.role === "user" \? undefined : handleFork/);
   // Edit-from-here for fork relies on prevAssistantEntryId to locate the branch point (upstream has no such mechanism, so the old doesNotMatch no longer applies).
   assert.match(navigateSource, /type: "navigate_tree",\s*targetId: entryId/);
@@ -871,7 +878,9 @@ test("sizes the message tail from the rendered bottom composer", () => {
   // （relative flex min-h-0 flex-col，与 fieldset/内层列同链）；曾保留的旧形态
   // relative shrink-0 是合并丢链的错误融合结果，不再接受（同
   // ChatWindow.extension-request 钉的 C 类纪律）。
-  assert.match(chatWindowSource, /<div ref=\{bottomComposerRef\} className="relative flex min-h-0 flex-col">/);
+  // 2026-11-15 (2223dd9d): the new-session page adds a conditional shrink-0 to the
+  // same chain prefix (template literal) — chain intact, pin updated to the new form.
+  assert.match(chatWindowSource, /<div ref=\{bottomComposerRef\} className=\{`relative flex min-h-0 flex-col/);
   assert.doesNotMatch(chatWindowSource, /bottomComposerRef\} className="relative shrink-0"/);
   assert.match(chatWindowSource, /height: bottomComposerHeight/);
 });

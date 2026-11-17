@@ -1,19 +1,19 @@
 /*
- * aiti-devtools 浏览器扩展 · background service worker（Chrome / Edge / Firefox）
+ * aiti-devtools browser extension · background service worker (Chrome / Edge / Firefox)
  *
- * 职责：安装/升级时初始化与迁移配置（v2 schema：默认关 + 白名单/排除 + aiTarget）。
- * v2 迁移映射（legacy v1 → v2，语义等价）：
+ * Role: initialize/migrate config on install & upgrade (v2 schema: default-off + allow/deny site rules + aiTarget).
+ * v1 → v2 migration map (semantics-preserving):
  *   enabled:true  → defaultEnabled:true
  *   excludes[]    → denySites[]
- *   bridgeUrl     → 原样
- *   aiUrl（默认 cockpit 值）      → aiTarget.kind=cockpit（URL 由 bridgeUrl 推导）
- *   aiUrl（自定义值）             → aiTarget.kind=cockpit + cockpitUrl=aiUrl
+ *   bridgeUrl     → kept as-is
+ *   aiUrl (default cockpit value) → aiTarget.kind=cockpit (URL derived from bridgeUrl)
+ *   aiUrl (custom value)          → aiTarget.kind=cockpit + cockpitUrl=aiUrl
  */
 const api = globalThis.browser || globalThis.chrome;
 
 const V2_DEFAULTS = {
   v: 2,
-  defaultEnabled: false,          // ★ v2：默认关（白名单 / popup 按需启用）
+  defaultEnabled: false,          // ★ v2: default off (allowlist / popup on-demand enable)
   allowSites: [],
   denySites: [],
   aiTarget: { kind: 'cockpit', baseUrl: '', cockpitUrl: '' },
@@ -47,5 +47,5 @@ api.runtime.onInstalled.addListener(() => {
     api.storage.sync.get(null, (cur) => {
       api.storage.sync.set(migrate(cur || {}));
     });
-  } catch (e) { /* 安装初始化失败不阻塞 */ }
+  } catch (e) { /* install-init failure must not block */ }
 });

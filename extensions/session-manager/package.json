@@ -3,7 +3,7 @@
   "version": "0.2.15",
   "type": "module",
   "homepage": "https://aiti.pw/extensions/session-manager.html",
-  "description": "会话管理扩展（全部会话面板/看板/标签）—— JSX + vite 构建 client bundle",
+  "description": "Cross-project session panel — tag tree + colors / favorites / search / archive / kanban / new-session branch·Worktree picker / history parsing for 23 agent families / DockStack orchestration",
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",
@@ -15,7 +15,7 @@
   },
   "soul": "会话不是用完即走的流水，是每天都在累积的资产。",
   "dependencies": {
-    "@aiti-ai/ext-shared": "^0.1.3",
+    "@aiti-ai/ext-shared": "^0.1.12",
     "@node-rs/jieba": "^2.0.2",
     "yauzl": "^2.10.0"
   },

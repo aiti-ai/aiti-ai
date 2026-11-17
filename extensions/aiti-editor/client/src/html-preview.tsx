@@ -10,7 +10,7 @@
  * 所以预览里的 `fetch`/`localStorage`/读父页 DOM 必然失败——那是设计目标，不是 bug（方案 §七-1）。
  */
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { editorBase, ensureEditorTicket } from "./host-shim";
+import { editorBase, ensureEditorTicket, t } from "./host-shim.ts";
 import { buildPreviewShim, PREVIEW_MSG } from "../../preview/preview-shim";
 import {
   buildHtmlPreviewSrcdoc, previewUrl, resolvePreviewRel, absBase,
@@ -147,7 +147,7 @@ export function HtmlPreviewPane(props: HtmlPreviewPaneProps) {
       if (d.type === PREVIEW_MSG.open) {
         const rel = typeof d.rel === "string" ? d.rel : "";
         const target = resolvePreviewRel(props.filePath, rel);
-        if (!target) { props.showToast("warn", "链接指向预览目录之外，未改道"); return; }
+        if (!target) { props.showToast("warn", t("链接指向预览目录之外，未改道")); return; }
         props.onOpenPath(target);
         return;
       }
@@ -171,38 +171,38 @@ export function HtmlPreviewPane(props: HtmlPreviewPaneProps) {
     <div style={{ position: "absolute", inset: 0, overflow: "hidden", background: "var(--bg,#fff)" }}>
       <div style={barS}>
         <span style={{ display: "inline-flex", gap: 4 }}>
-          <button type="button" style={segS(mode === "fast")} title="编辑器缓冲直接进 srcdoc：未保存即所见，相对资源走预览路由"
-            onClick={() => { setMode("fast"); persist({ mode: "fast" }); }}>快速</button>
-          <button type="button" style={segS(mode === "served")} title="iframe 指向服务端磁盘文档：原生相对解析与站内导航（未保存编辑不可见）"
-            onClick={() => { if (!abs) { props.showToast("warn", "票据未就绪，真预览暂不可用"); return; } setMode("served"); setDocRel(""); freshTicket(); persist({ mode: "served" }); }}>真预览</button>
+          <button type="button" style={segS(mode === "fast")} title={t("编辑器缓冲直接进 srcdoc：未保存即所见，相对资源走预览路由")}
+            onClick={() => { setMode("fast"); persist({ mode: "fast" }); }}>{t("快速")}</button>
+          <button type="button" style={segS(mode === "served")} title={t("iframe 指向服务端磁盘文档：原生相对解析与站内导航（未保存编辑不可见）")}
+            onClick={() => { if (!abs) { props.showToast("warn", t("票据未就绪，真预览暂不可用")); return; } setMode("served"); setDocRel(""); freshTicket(); persist({ mode: "served" }); }}>{t("真预览")}</button>
         </span>
         <button type="button" style={segS(scripts, "#0891b2")}
           title={scripts
-            ? "作者脚本执行中（仍无同源能力：fetch/localStorage/读父页 DOM 不可用）"
-            : "作者脚本已剥离（快速态剥 srcdoc／真预览态服务端剥响应）；预览自身的报错回传与链接改道不受影响"}
+            ? t("作者脚本执行中（仍无同源能力：fetch/localStorage/读父页 DOM 不可用）")
+            : t("作者脚本已剥离（快速态剥 srcdoc／真预览态服务端剥响应）；预览自身的报错回传与链接改道不受影响")}
           onClick={() => { const v = !scripts; setScripts(v); persist({ scripts: v }); }}>
-          {"脚本 " + (scripts ? "●开" : "○关")}
+          {t("脚本") + " " + (scripts ? t("●开") : t("○关"))}
         </button>
-        <select value={viewport} title="视口宽度预设（只改宽度，不伪造 UA／像素比——设备模拟是 devtools 的活）"
+        <select value={viewport} title={t("视口宽度预设（只改宽度，不伪造 UA／像素比——设备模拟是 devtools 的活）")}
           style={{ ...btnS, height: 24, padding: "2px 4px" }}
           onChange={(e) => { const v = e.target.value; setViewport(v); persist({ viewport: v }); }}>
-          {VIEWPORT_PRESETS.map((v) => <option key={v.id} value={v.id} title={v.title}>{v.label}</option>)}
+          {VIEWPORT_PRESETS.map((v) => <option key={v.id} value={v.id} title={t(v.title)}>{t(v.label)}</option>)}
         </select>
-        <button type="button" style={btnS} title={mode === "served" ? "重新拉取磁盘文档（换破缓存参数）" : "用当前缓冲重建预览"}
-          onClick={() => { if (mode === "served") freshTicket(); setBust((v) => v + 1); }}>↻ 刷新</button>
+        <button type="button" style={btnS} title={mode === "served" ? t("重新拉取磁盘文档（换破缓存参数）") : t("用当前缓冲重建预览")}
+          onClick={() => { if (mode === "served") freshTicket(); setBust((v) => v + 1); }}>↻ {t("刷新")}</button>
         {props.dirty && mode === "served" && (
           <button type="button" style={{ ...btnS, borderColor: "color-mix(in srgb, var(--warn, #f59e0b) 60%, transparent)", color: "#b45309" }}
-            title="真预览读的是磁盘文件，当前有未保存修改"
-            onClick={() => { props.onSave(); freshTicket(); setBust((v) => v + 1); }}>保存并刷新</button>
+            title={t("真预览读的是磁盘文件，当前有未保存修改")}
+            onClick={() => { props.onSave(); freshTicket(); setBust((v) => v + 1); }}>{t("保存并刷新")}</button>
         )}
         {docRel ? (
-          <span title={"当前预览文档：" + docRel}
+          <span title={t("当前预览文档：{p}", { p: docRel })}
             style={{ opacity: .7, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 170 }}>{docRel}</span>
-        ) : (mode === "fast" ? <span style={{ opacity: .55 }}>{"缓冲 · 未保存可见"}</span> : null)}
+        ) : (mode === "fast" ? <span style={{ opacity: .55 }}>{t("缓冲 · 未保存可见")}</span> : null)}
         <span style={{ flex: 1 }} />
         {reports.length > 0 && (
           <button type="button" style={segS(showReports, errs ? "#dc2626" : "#b45309")}
-            title={"预览内 console／报错回传（上限 " + REPORTS_CAP + " 条，最新在前）"}
+            title={t("预览内 console／报错回传（上限 {n} 条，最新在前）", { n: REPORTS_CAP })}
             onClick={() => setShowReports((v) => !v)}>
             {"⚠ " + reports.length + (errs ? " · " + errs + " err" : "")}
           </button>
@@ -211,13 +211,13 @@ export function HtmlPreviewPane(props: HtmlPreviewPaneProps) {
       <div style={{ ...st.wrap, top: BAR_H }}>
         {mode === "served" && !abs ? (
           <div style={{ padding: 40, textAlign: "center", color: "var(--text-dim,#888)", fontSize: 12 }}>
-            票据未就绪或已过期——重开文件或切回「快速」
+            {t("票据未就绪或已过期——重开文件或切回「快速」")}
           </div>
         ) : (
           <iframe
             ref={iframeRef}
             key={mode + ":" + bust}
-            title="HTML 预览"
+            title={t("HTML 预览")}
             // 快速态：sandbox 且**不给 allow-same-origin** = opaque origin（唯一硬边界；剥脚本只是便利层）
             // 真预览态：origin 隔离由响应头 CSP: sandbox 负责，这里不再叠属性
             sandbox={mode === "fast" ? "allow-scripts allow-forms allow-popups allow-modals allow-pointer-lock" : undefined}
@@ -230,7 +230,7 @@ export function HtmlPreviewPane(props: HtmlPreviewPaneProps) {
           <div style={{ position: "absolute", left: "50%", bottom: 14, transform: "translateX(-50%)", zIndex: 25,
             fontSize: 11, color: "var(--text-dim,#888)", background: "var(--bg,#fff)",
             border: "1px solid var(--border,#e0e0e0)", borderRadius: 999, padding: "3px 10px", whiteSpace: "nowrap" }}>
-            等待预览装载…（久候无响应多为脚本出错或资源路径越出预览目录）
+            {t("等待预览装载…（久候无响应多为脚本出错或资源路径越出预览目录）")}
           </div>
         )}
         {showReports && (
@@ -238,15 +238,15 @@ export function HtmlPreviewPane(props: HtmlPreviewPaneProps) {
             overflowY: "auto", zIndex: 30, background: "var(--bg,#fff)", border: "1px solid var(--border,#ddd)",
             borderRadius: 8, boxShadow: "0 8px 28px rgba(0,0,0,.18)", padding: 6 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "2px 4px 6px" }}>
-              <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-dim,#888)" }}>{"预览上报 · " + reports.length}</span>
+              <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-dim,#888)" }}>{t("预览上报 · {n}", { n: reports.length })}</span>
               <span style={{ flex: 1 }} />
               <button type="button" style={btnS} onClick={() => {
                 try {
                   navigator.clipboard?.writeText(reports.map((r) => "[" + r.level + "] " + r.text).join("\n"));
-                  props.showToast("ok", "已复制上报内容");
-                } catch { props.showToast("warn", "复制失败"); }
-              }}>复制</button>
-              <button type="button" style={btnS} onClick={() => { setReports([]); setShowReports(false); }}>清空</button>
+                  props.showToast("ok", t("已复制上报内容"));
+                } catch { props.showToast("warn", t("复制失败")); }
+              }}>{t("复制")}</button>
+              <button type="button" style={btnS} onClick={() => { setReports([]); setShowReports(false); }}>{t("清空")}</button>
             </div>
             {reports.map((r: Report, i: number) => (
               <div key={i} style={{ display: "flex", gap: 6, alignItems: "baseline", padding: "3px 4px",

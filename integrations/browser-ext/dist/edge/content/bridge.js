@@ -1,11 +1,13 @@
 /*
- * aiti-devtools 浏览器扩展 · isolated world 配置桥（Chrome / Edge / Firefox）
+ * aiti-devtools browser extension · isolated-world config bridge (Chrome / Edge / Firefox)
  *
- * v2 职责：读 storage.sync 配置（含 v1 迁移）→ **站点规则求值**（denySites > defaultEnabled‖allowSites）
- *          → 把**解析结果**（enabled/bridgeUrl/aiUrl）写 localStorage（MAIN world 同步读）+ postMessage 实时广播。
- * 按需启用：popup「在本页启用（本次）」→ runtime.onMessage('aiti-ext:once') → 仅 postMessage 一条
- *          enabled:true 的覆盖 cfg（**纯运行时消息不落盘**）——MAIN world main.js 的常驻监听立即注入；
- *          新 document 重新按规则裁决，天然「本次」语义（硬导航失效、SPA 软路由保留）。
+ * v2 role: read storage.sync config (incl. v1 migration) → **site-rule evaluation**
+ *          (denySites > defaultEnabled||allowSites) → write the **resolved** result
+ *          (enabled/bridgeUrl/aiUrl) to localStorage (synchronous read by MAIN world) + postMessage live update.
+ * On-demand: popup "Enable on this page (once)" → runtime.onMessage('aiti-ext:once') → posts a single
+ *          enabled:true override cfg (**pure runtime message, nothing persisted**) — the always-on listener
+ *          in MAIN-world main.js injects immediately; every new document re-evaluates the rules, which is
+ *          the natural "once" semantics (dies on hard navigation, survives SPA soft routing).
  */
 (function () {
   'use strict';
@@ -15,7 +17,7 @@
   const LS_KEY = 'aiti-ext:cfg';
   const V2_DEFAULTS = {
     v: 2,
-    defaultEnabled: false,        // ★ v2：默认关
+    defaultEnabled: false,        // ★ v2: default off
     allowSites: [],
     denySites: [],
     aiTarget: { kind: 'cockpit', baseUrl: '', cockpitUrl: '' },
@@ -25,7 +27,7 @@
   const api = globalThis.browser || globalThis.chrome;
   if (!api || !api.runtime || !api.runtime.id) return;
 
-  function migrate(stored) { /* 与 sw.js 同款（独立运行时无共享模块） */
+  function migrate(stored) { /* same as sw.js (no shared module across isolated runtimes) */
     stored = stored || {};
     const cfg = {
       v: 2,
@@ -52,18 +54,18 @@
     }
     return false;
   }
-  // 站点规则求值（denySites 优先于一切；default关时白名单命中才开）
+  // site-rule evaluation (denySites wins over everything; with default-off, allowlist hit enables)
   function autoEnabled(href, cfg) {
     if (matchesAny(href, cfg.denySites)) return false;
     return cfg.defaultEnabled || matchesAny(href, cfg.allowSites);
   }
-  // AI 窗地址解析：pi-web/agent → baseUrl；cockpit → 显式 cockpitUrl 或 bridgeUrl origin 推导
+  // AI window URL resolution: pi-web/agent → baseUrl; cockpit → explicit cockpitUrl or derived from bridgeUrl origin
   function resolveAiUrl(cfg) {
     const t = cfg.aiTarget || { kind: 'cockpit' };
     if ((t.kind === 'pi-web' || t.kind === 'agent') && t.baseUrl) return t.baseUrl;
     return t.cockpitUrl || cfg.bridgeUrl.replace(/\/+$/, '').replace(/\/aiti$/, '') + '/cockpit.html';
   }
-  // 规则求值 → MAIN world 所需的解析结果
+  // rule evaluation → the resolved result the MAIN world needs
   function resolve(href, cfg) {
     return { v: 2, enabled: autoEnabled(href, cfg), bridgeUrl: cfg.bridgeUrl, aiUrl: resolveAiUrl(cfg) };
   }
@@ -83,12 +85,12 @@
     publish(resolved);
   }
 
-  read().then(apply);                                                          // 首次求值
-  if (api.storage.onChanged) api.storage.onChanged.addListener((ch, area) => { // 配置变化实时重求值
+  read().then(apply);                                                          // first evaluation
+  if (api.storage.onChanged) api.storage.onChanged.addListener((ch, area) => { // re-evaluate live on config change
     if (area === 'sync') read().then(apply);
   });
 
-  // popup 按需启用（本次）：纯运行时覆盖，不落盘
+  // popup on-demand enable (once): pure runtime override, nothing persisted
   api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (!msg || msg.__aitiExt !== 1) return;
     if (msg.type === 'aiti-ext:once') {

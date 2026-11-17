@@ -4293,10 +4293,10 @@ export function initHeavySlots(ctx: any): void {
       localStorage.setItem("aiti-model-wizard:default-float-migrated", "1");
     }
   } catch { /* ignore */ }
-  ctx.registerItems?.("rightFileDock", [{ id: "shell-v2", render: WizardDockFace, meta: { title: "模型管理" } }]);
+  ctx.registerItems?.("rightFileDock", [{ id: "shell-v2", render: WizardDockFace, meta: { title: "i18n:it.shell.title" } }]);
   ctx.registerItems?.("pages", [{ id: "aiti-model-wizard-reminder", render: ReminderToast }]);
   ctx.registerItems?.("banners", [{ id: "aiti-model-wizard-banner", render: Banner }]);
-  ctx.registerItems?.("sessionStats", [{ id: "aiti-model-wizard-multikey-status", render: MultiKeyStatusRows, meta: { label: "聚合 / 多key运行状态" } }]); // 与薄壳 entry 壳条目同 id：registerExtUiItems 幂等覆盖升级（薄壳直连版 → 完整版），重复注册天然收敛
+  ctx.registerItems?.("sessionStats", [{ id: "aiti-model-wizard-multikey-status", render: MultiKeyStatusRows, meta: { label: "i18n:it.multikey-status.label.2" } }]); // same id as the thin-shell entry's slot entry: registerExtUiItems idempotently overwrites/upgrades (thin-shell direct version → full version); duplicate registrations converge naturally
 }
 
 export function openWizardFromShell(tab?: string, provider?: string | null): void {

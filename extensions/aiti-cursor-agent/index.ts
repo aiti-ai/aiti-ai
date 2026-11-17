@@ -653,6 +653,9 @@ function extDataDir(): string {
 
 /** 额度缓存（成功 60s / 失败 10s；?force=1 绕过）。 */
 let quotaCache: { at: number; ttl: number; value: Record<string, unknown> } | null = null;
+/** Provider object captured at startup — rescanBackends flips the availability
+ *  snapshot in place (same identity keeps the closures) and re-registers it. */
+let cursorProviderRef: Record<string, unknown> | null = null;
 const QUOTA_TTL_MS = 60_000;
 const QUOTA_ERROR_TTL_MS = 10_000;
 
@@ -690,7 +693,6 @@ function quotaRoute(req: Request, ctx: { path: string[]; method: string; searchP
 export default {
   id: "aiti-cursor-agent",
   name: "Cursor Agent",
-  version: "0.1.0",
   // 受控登录统一弹窗（零构建原生 h() client；client/ 下两文件随 deploy 拷贝）
   // 静态插入点声明（与 client registerItems 的 id 一一对应）
   // 登录 UI 已统一到 aiti-agent-manager（受控登录弹窗退役，2026-09-13）：不再声明
@@ -788,16 +790,24 @@ export default {
         handle.persistModelState();
         return handle;
       };
-      ctx.sessionProviders.register({
+      // Availability probe (dropdown grey-out): bare name requires a PATH hit —
+      // snapshot flips on rescanBackends.
+      const cursorBin = process.env.CURSOR_CLI_PATH || "cursor";
+      const cursorReady = cursorBin.includes("/") || Boolean(whichBin(cursorBin));
+      const cursorProvider = {
         type: "cursor-agent",
         label: "Cursor Agent CLI",
         agentKey: "cursor",
         priority: 10,
         maxCapabilities: CURSOR_CAPABILITIES,
+        // Availability snapshot: false = CLI missing → dropdown entry greyed out
+        ...(cursorReady ? {} : { available: false as const, installHint: "Cursor Agent CLI (https://cursor.com/install)" }),
         // 静态目录（新建页选后端时给选择器供数据；无会话即可取）——上次使用的模型置顶
         listModels: async () => withLastUsedFirst(await cursorCatalog(), (await readAgentLastUsedModel("cursor"))?.id),
         createSession: async (options) => createCursorSession(options),
-      });
+      };
+      cursorProviderRef = cursorProvider; // rescanBackends 原地翻转快照后重新 register
+      ctx.sessionProviders.register(cursorProvider);
       // agent 描述符：agent 管理面（aiti-agent-manager）动态发现用——manager 不写死各家
       ctx.services?.provide?.("aiti-cursor-agent.agent", {
         agent: "cursor",
@@ -823,7 +833,28 @@ export default {
         createSessionFromLaunch: (launch: LaunchOverride, options: { cwd?: string; sessionId?: string; model?: { provider: string; id: string } }) =>
           createCursorSession(options, launch),
       });
-      console.log("[aiti-cursor-agent] registered session provider: cursor-agent (agentKey: cursor) + launch service");
+      console.log(`[aiti-cursor-agent] registered session provider: cursor-agent (agentKey: cursor) + launch service${cursorReady ? "" : " (CLI missing — entry greyed out)"}`);
+    },
+
+    /** Backend rescan (POST /api/session-backends/rescan): re-run the availability
+     *  probe — a CLI installed after host boot lights up without a restart; missing
+     *  stays greyed out with the install hint. Flips the snapshot on the startup
+     *  provider object (same closures) and re-registers it. */
+    rescanBackends(ctx: { sessionProviders: { register(provider: unknown): string } }) {
+      if (!cursorProviderRef) return;
+      const bin = process.env.CURSOR_CLI_PATH || "cursor";
+      const ready = bin.includes("/") || Boolean(whichBin(bin));
+      const p = cursorProviderRef as { available?: boolean; installHint?: string };
+      if (ready) {
+        delete p.available;
+        delete p.installHint;
+      } else {
+        p.available = false;
+        p.installHint = "Cursor Agent CLI (https://cursor.com/install)";
+      }
+      const key = (ctx.sessionProviders as { register(provider: unknown): string }).register(cursorProviderRef);
+      console.log(`[aiti-cursor-agent] rescan: ${ready ? "available" : "not installed"} (${key})`);
+      return ready ? { registered: [key] } : { unavailable: [key] };
     },
 
     /** 受控登录 API：POST /login/start · GET /login/status · POST /login/cancel · POST /login/submit。 */

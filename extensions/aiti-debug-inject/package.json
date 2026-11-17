@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/aiti-debug-inject",
   "version": "0.3.8",
-  "description": "可配置远程调试注入",
+  "description": "Minimal remote-debug injection — injects another pi-web instance's debugger into this instance's pages; the service URL is a text feature in extman, off by default",
   "soul": "调试器该穿在哪件衣服里，由你说了算。",
   "scripts": {
     "build:client": "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});for(const f of fs.readdirSync('client/src'))if(f.endsWith('.mjs'))fs.copyFileSync('client/src/'+f,'dist/'+f)\""

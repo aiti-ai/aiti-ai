@@ -10,7 +10,6 @@
 export default {
   id: "aiti-session-cards",
   name: "会话请求卡（审批/问答/授权）",
-  version: "0.1.0",
   icon: "icons/message-square.svg",
   client: "dist/aiti-session-cards.mjs",
   features: [
@@ -22,4 +21,13 @@ export default {
       enabled: true,
     },
   ],
+  ui: {
+    // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
+    i18n: {
+      en: {
+        "ext.displayName": "Session Request Cards (approval/Q&A/authorization)",
+        "feat.sessionCards.enabled": "Full request card UI",
+      },
+    },
+  },
 };

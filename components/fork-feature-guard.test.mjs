@@ -287,6 +287,41 @@ const GUARDS = [
       /export function isPublicApiPath/,
     ],
   },
+  {
+    name: "Top bar: single overflow = the vertical ⋮ more menu (the upstream #373 horizontal More-controls tier was retired 2026-11-15 — its return means two overflow menus again; see docs/pi-web-topbar-single-overflow-and-debug-unify-plan.md)",
+    file: "./AppShell.tsx",
+    must: [
+      /const renderTopbarItem = \(id: string, inRow: boolean, forMeasure = false, forPreview = false\)/, // fork's custom-drawn top bar (measured ⋮ overflow) — the one overflow mechanism on every width
+      /const overflowMenuNodes = overflowItems\.map\(\(item\)/,
+      /data-mobile-toolbar="true"/,                                     // narrow tier keeps only the Agents button
+      /flex: "0 0 auto"/,                                               // the tier shrinks; itemsRow (flex:1) stays the only spring
+    ],
+    not: [
+      /renderChatToolbarActions/,                                       // retired overlay renderer (dup stacked Debug/file-toggle twice on merges)
+      /data-mobile-toolbar-more|mobile-toolbar-actions/,                // the horizontal ••• button + floating actions layer
+      /mobileToolbarMoreOpen|keepMobileToolbarOpen/,                    // its keep-open plumbing
+    ],
+  },
+  {
+    name: "Debug entry lives in the topbar-order system (the hardcoded right-cluster renderDebugButton was retired 2026-11-15 — sortable/hideable/overflowable like every builtin)",
+    file: "./AppShell.tsx",
+    must: [
+      /if \(id === "debug"\) \{/,                                       // renderTopbarItem case (inline 44px button + ⋮ menu row)
+      /ids\.push\("debug"\)/,                                           // topbarBuiltinIds carries it (not showChat-gated)
+      /"system", "tools", "debug"/,                                     // default order tail
+    ],
+    not: [
+      /renderDebugButton/,                                              // the hardcoded right-cluster entry must not ride back in on a merge
+    ],
+  },
+  {
+    name: "topbar-order contract: debug is a builtin id (type + default tail) — an upstream merge must not drop it from the contract file",
+    file: "../lib/topbar-order.ts",
+    must: [
+      /\| "debug";/,                                                    // BuiltinTopbarId union
+      /"debug",\s*\n\s*\/\/ sessionTopbar-slot extension items go here/, // DEFAULT_TOPBAR_ORDER tail
+    ],
+  },
 ];
 
 for (const g of GUARDS) {

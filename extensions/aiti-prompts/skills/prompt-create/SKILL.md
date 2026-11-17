@@ -1,7 +1,9 @@
 ---
 name: prompt-create
 title: AI 帮我写 prompt
+title.en: "AI: write a prompt"
 placeholder: 描述这个 prompt 的用途（如：帮我写一个代码审查 prompt）…
+placeholder.en: "What this prompt is for (e.g. a code-review prompt)…"
 outputs:
   format: json-obj
   schema:

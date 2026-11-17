@@ -10,7 +10,6 @@
 export default {
   id: "aiti-model-recent",
   name: "Model Recent",
-  version: "0.1.0",
   client: "dist/aiti-model-recent.mjs",
   icon: "icons/clock.svg",
   clientImmediately: true, // service 须在首开模型面板前注册（boot 物化）
@@ -23,4 +22,12 @@ export default {
       enabled: true,
     },
   ],
+  ui: {
+    // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
+    i18n: {
+      en: {
+        "feat.modelRecent.enabled": "Recently used models",
+      },
+    },
+  },
 };

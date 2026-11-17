@@ -22,9 +22,11 @@ import {
   AC, BARP,
   onBeforeInput, onCompositionStart, onCompositionEnd,
   setVoicePending, voiceFixReset, acClearGhost, syncAcFeatures, acEnforceMinChars, initSuggest,
+  resetAppSvcAttempt, nlRefresh,
 } from "./logic";
 import { VoiceTagBar, MarksBar, AutocompleteHost, SuggestHost, AuxAiUsageRows, VoiceAffixButton } from "./components";
 import { openFloat, closePanel, usePresent, declareDockZones } from "../../../_shared/ext-float-dock-lite";
+import { dockIconDecl } from "../../../_shared/dock-icons";
 import { lazyExtView, createLazyModule } from "../../../_shared/ext-lazy";
 
 
@@ -92,10 +94,28 @@ export default function register(ctx: Record<string, unknown>) {
   // 收藏联想子系统（SUG 闭包 + 点按分派注入 pickPromptUser/pickEmptyUser）
   const sug = initSuggest(AC.apiUrl);
 
+  // 应用命令服务（aiti-app-center.commands）up 事件 → 清懒加载 attempted 标志（重启用后恢复拉起；零轮询）
+  try {
+    (ctx as { onExtServiceChange?: (cb: (key: string, phase: string) => void) => void }).onExtServiceChange?.((key, phase) => {
+      if (key === "aiti-app-center.commands" && phase === "up") resetAppSvcAttempt();
+    });
+  } catch { /* ignore */ }
+
   // 事件监听（capture：在 React 受控 onChange 之前拿到原始 inputType）
   document.addEventListener("beforeinput", onBeforeInput, true);
   document.addEventListener("compositionstart", onCompositionStart, true);
   document.addEventListener("compositionend", onCompositionEnd, true);
+  // 小屏换行胶囊常驻刷新（logic nlRefresh：聚焦 && 光标不在行首才显示；键盘/点按/软键盘选择
+  // 手柄拖动/程序化 setSelectionRange 均触发 document selectionchange；focus 两端管失焦收起）
+  document.addEventListener("selectionchange", nlRefresh, true);
+  document.addEventListener("focusin", nlRefresh, true);
+  document.addEventListener("focusout", nlRefresh, true);
+  // Host-programmatic value writes (send-clear / draft restore / contract injection) deliberately skip
+  // the input event (to avoid a React tracker loop) and only broadcast window
+  // "pi-web:composer-value-written" — subscribe here to close the loop: without this, after a send-clear
+  // the suggest/app candidates and ghost continuation linger (the real-input chain gets no notice);
+  // internally clears stale state + debounce-reschedules on the new value + recomputes wrap pills
+  window.addEventListener("pi-web:composer-value-written", () => { void sug.onHostValueWritten?.(); });
 
   const sugProps = { sug };
   ctx.registerItems?.("chatInputTop", [
@@ -127,7 +147,7 @@ export default function register(ctx: Record<string, unknown>) {
     id: "aiti-asr-open",
     feature: "toolbar.enabled", // 顶级总闸：关→宿主统一不渲染顶部 🎙️ 图标（旧 asr.hotwords.panel 已提升换名）
     meta: {
-      icon: "icons/mic.svg", label: "语音识别服务器管理", title: "语音识别服务器管理（状态 / 启停 / 热词）",
+      icon: "icons/mic.svg", label: "i18n:asr.open.label", title: "i18n:asr.open.title",
       open: openAsrPanel,  // extman 直接打开通道（feature 关/图标隐藏也生效）
       onClick: openAsrPanel,
     },
@@ -138,13 +158,13 @@ export default function register(ctx: Record<string, unknown>) {
   // 语音识别引擎：默认**浮窗**（不 seed 停靠位）；左栏/右栏 face 仅供用户手动 ⇱ 停靠
   initAsrDockPref();
   declareDockZones("aiti-ai-input:asr", ["right-panel"]);
-  ctx.registerItems?.("rightFileDock", [{ id: "asr", render: AsrDockRightLazy, meta: { title: "语音识别引擎" } }]);
+  ctx.registerItems?.("rightFileDock", [{ id: "asr", render: AsrDockRightLazy, meta: { title: "i18n:it.asr.title", icon: dockIconDecl("mic") } }]);
   // 语音流量统计报表（形态对齐 aiti-ai-usage：KPI + 趋势 + 明细 + 估算费用）
   // 默认**浮窗**（不 seed 停靠位 → 不会默认出现在左栏）；左栏/右栏 face 仅供用户手动 ⇱ 停靠
   initUsageDockPref();
   declareDockZones("aiti-ai-input:asr-usage", ["right-panel"]);
   ctx.registerItems?.("dialogs", [{ id: "aiti-asr-usage-report", render: UsageReportSlotLazy, meta: { open: () => usageOpenSet(true) } }]);
-  ctx.registerItems?.("rightFileDock", [{ id: "asr-usage", render: UsageDockRightLazy, meta: { title: "语音流量" } }]);
+  ctx.registerItems?.("rightFileDock", [{ id: "asr-usage", render: UsageDockRightLazy, meta: { title: "i18n:it.asr-usage.title" } }]);
   ctx.registerItems?.("sessionStats", [
     { id: "aiti-ai-input-aux-usage", render: AuxAiUsageRows },
   ]);

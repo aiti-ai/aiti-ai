@@ -14,6 +14,7 @@ import { contextUrgency, CTX_BREATHE_CSS } from "@/lib/context-urgency";
 import type { ChatScrollPosition } from "@/lib/chat-scroll-position";
 import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
+import { renderExtItemIcon as renderExtItemIconShared } from "./ExtItemIcon";
 import { TabBody, type TabBodyCtx } from "./TabBody";
 import { DetachedTabWindow } from "./DetachedTabWindow";
 import { movePanelTab, orderPanelTabs } from "@/lib/panel-tab-order";
@@ -31,6 +32,31 @@ const SessionSidebarLazy = dynamic(
   () => import("./SessionSidebar").then((m) => ({ default: m.SessionSidebar })),
   { ssr: false, loading: () => null },
 );
+
+/** Waiting-window skeleton for the sidebarContent takeover (slow-flash fix):
+ *  block-shape placeholder mirroring the taker's layout (header + project rows
+ *  + folder block), shown instead of the native sidebar while the taker bundle
+ *  is still loading on a slow network. */
+function SidebarTakeoverSkeleton() {
+  return (
+    <div className="takeover-skeleton" aria-hidden="true">
+      <div className="takeover-skeleton-row takeover-skeleton-header" />
+      <div className="takeover-skeleton-block">
+        <div className="takeover-skeleton-row takeover-skeleton-head" />
+        <div className="takeover-skeleton-row takeover-skeleton-line" />
+        <div className="takeover-skeleton-row takeover-skeleton-line" />
+        <div className="takeover-skeleton-row takeover-skeleton-line" />
+        <div className="takeover-skeleton-row takeover-skeleton-line" />
+      </div>
+      <div className="takeover-skeleton-block">
+        <div className="takeover-skeleton-row takeover-skeleton-head" />
+        <div className="takeover-skeleton-row takeover-skeleton-line" />
+        <div className="takeover-skeleton-row takeover-skeleton-line" />
+        <div className="takeover-skeleton-row takeover-skeleton-line" />
+      </div>
+    </div>
+  );
+}
 import { hasExtRender } from "@/lib/ext-ui-store";
 import type { ExtRenderProps, ExtUiItemRegistered } from "@/lib/ext-ui-store";
 import { getExtUiItems, subscribeExtUi } from "@/lib/ext-ui-store";
@@ -182,7 +208,7 @@ import type { FileExplorerHandle } from "./FileExplorer";
 import type { FileViewerState } from "@/lib/file-viewer-state";
 import { PRESET_READ_ONLY, type ToolEntry } from "@/lib/tool-presets";
 import { createSideChat, deleteSideChat } from "@/lib/side-chat-client";
-import { getAgentsBadge, getFoldedMoreAgentsBadge, getSessionFamily, isHiddenRelation, sideChatTitle } from "@/lib/session-family";
+import { getAgentsBadge, getSessionFamily, isHiddenRelation, sideChatTitle } from "@/lib/session-family";
 import { getRecentProjects } from "@/lib/project-groups";
 import { skillExpansionToCommand } from "@/lib/slash-display";
 import { getLastSettingsSection, settingsSectionRequiresProject, type SettingsSection } from "@/lib/settings-navigation";
@@ -261,40 +287,7 @@ function notificationProjectLabel(session: SessionInfo | null): string {
  *  (24×24 viewBox, lucide line style) / emoji / an in-extension .svg file (CSS-mask).
  *  Shared by the "⋯" menu icon slot and declarative toolbar buttons (ExtToolbarIconButton). */
 function renderExtItemIcon(icon: NonNullable<ExtUiItemRegistered["meta"]>["icon"], extId?: string): React.ReactNode {
-  if (icon == null) return null;
-  if (typeof icon === "object" && "svg" in icon) {
-    return (
-      <svg
-        width={16}
-        height={16}
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={2}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden="true"
-        dangerouslySetInnerHTML={{ __html: icon.svg }}
-      />
-    );
-  }
-  if (typeof icon === "string" && icon.endsWith(".svg")) {
-    const url = apiUrl(`/api/extensions/${extId ?? ""}/assets/${icon}`);
-    return (
-      <span
-        aria-hidden
-        style={{
-          display: "inline-block", width: 16, height: 16, flexShrink: 0, verticalAlign: "middle",
-          background: "currentColor",
-          WebkitMaskImage: `url("${url}")`, maskImage: `url("${url}")`,
-          WebkitMaskRepeat: "no-repeat", maskRepeat: "no-repeat",
-          WebkitMaskPosition: "center", maskPosition: "center",
-          WebkitMaskSize: "contain", maskSize: "contain",
-        }}
-      />
-    );
-  }
-  return <span style={{ fontSize: 15, lineHeight: 1 }}>{String(icon)}</span>;
+  return renderExtItemIconShared(icon, extId);
 }
 
 /** Declarative toolbar button (extension registerItems supplies meta.icon +
@@ -304,7 +297,9 @@ function renderExtItemIcon(icon: NonNullable<ExtUiItemRegistered["meta"]>["icon"
  *  (2026-08 contract; see the docs extension-points reference). */
 function ExtToolbarIconButton({ item }: { item: ExtUiItemRegistered }) {
   const icon = item.meta?.icon;
-  const title = item.meta?.title ?? item.meta?.label ?? item.id;
+  // label/title support "i18n:<key>" (translateExtItemText; manifest ui.i18n cascade) —
+  // extensions may ship either raw text or i18n keys on both static and registered items.
+  const title = translateExtItemText(item.extId, item.meta?.title) || translateExtItemText(item.extId, item.meta?.label) || item.id;
   // [lazy-load v2] While a static item's click-triggered materialization is in
   // flight: semi-transparent + click-guarded; static declarations without an icon
   // render the label's first character as a placeholder (icons are required by the
@@ -330,7 +325,7 @@ function ExtToolbarIconButton({ item }: { item: ExtUiItemRegistered }) {
     >
       {icon != null
         ? renderExtItemIcon(icon, item.extId)
-        : <span style={{ fontSize: 13, fontWeight: 600, lineHeight: 1 }}>{(item.meta?.label ?? item.id).slice(0, 1)}</span>}
+        : <span style={{ fontSize: 13, fontWeight: 600, lineHeight: 1 }}>{(translateExtItemText(item.extId, item.meta?.label) || item.id).slice(0, 1)}</span>}
     </button>
   );
 }
@@ -497,7 +492,6 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     });
   }, []);
   const agentsBadge = activeSessionFamily ? getAgentsBadge(activeSessionFamily.subagents, runningSessionIds) : null;
-  const hasSubagentSessions = Boolean(activeSessionFamily?.subagents.length);
 const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: boolean) => (
     <span
       aria-hidden="true"
@@ -575,8 +569,6 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   const [explorerRefreshKey, setExplorerRefreshKey] = useState(0);
   const fileExplorerRef = useRef<FileExplorerHandle>(null);
   const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
-  const [mobileToolbarMoreOpen, setMobileToolbarMoreOpen] = useState(false);
-  const mobileToolbarRef = useRef<HTMLDivElement>(null);
   // The plain Settings button opens a phone's Settings on its list of sections; shortcuts open theirs.
   const [settingsOpenAtHome, setSettingsOpenAtHome] = useState(false);
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
@@ -608,13 +600,6 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   // as closed — same-batch it would clamp against the stale open-sidebar max and
   // shrink the target width, which would change the chat width.
   const widePendingWidthRef = useRef<number | null>(null);
-  // A narrow phone folds the Agents button into More: the folded button says that subagents run.
-  const foldedMoreAgentsBadge = isNarrowMobile ? getFoldedMoreAgentsBadge(agentsBadge, mobileToolbarMoreOpen) : null;
-  const moreControlsLabel = mobileToolbarMoreOpen
-    ? translate("chat.close")
-    : foldedMoreAgentsBadge
-      ? translate("chat.moreControlsAgentsRunning", { count: foldedMoreAgentsBadge.count })
-      : translate("chat.moreControls");
   const [mobileSidebarReady, setMobileSidebarReady] = useState(false);
   const sidebarWidthRef = useRef(SIDEBAR_DEFAULT_WIDTH);
   const rightPanelWidthRef = useRef(RIGHT_PANEL_FALLBACK_WIDTH);
@@ -903,12 +888,10 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
 
   const toggleTopPanel = useCallback((
     panel: "agents" | "branches" | "system" | "tools" | "session" | "language" | "theme" | "debug",
-    keepMobileToolbarOpen = false,
   ) => {
     if (isMobile) setSidebarOpen(false);
     setActiveTopPanel((cur) => cur === panel ? null : panel);
-    if (isMobile && isNarrowMobile && keepMobileToolbarOpen) setMobileToolbarMoreOpen(true);
-  }, [isMobile, isNarrowMobile]);
+  }, [isMobile]);
 
   // The Debug button on screen (one of its three places at a time); Escape gives focus back to it.
   const debugButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -923,10 +906,9 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
 
   const handleSystemInfoToggle = useCallback((
     panel: "system" | "tools",
-    keepMobileToolbarOpen = false,
   ) => {
     const opening = activeTopPanel !== panel;
-    toggleTopPanel(panel, keepMobileToolbarOpen);
+    toggleTopPanel(panel);
     if (!opening || systemInfoLoading) return;
 
     const load = systemInfoLoaderRef.current;
@@ -993,17 +975,10 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     });
   }, [isMobile]);
 
-  const handleMobileToolbarMoreToggle = useCallback(() => {
-    setSidebarOpen(false);
-    setActiveTopPanel(null);
-    setMobileToolbarMoreOpen((open) => !open);
-  }, []);
-
   const handleRightPanelToggle = useCallback(() => {
     if (isMobile) {
       setSidebarOpen(false);
       setActiveTopPanel(null);
-      setMobileToolbarMoreOpen(false);
     }
     setRightPanelOpen((open) => !open);
   }, [isMobile]);
@@ -1033,33 +1008,6 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     setRightPanelSizeMode("full");
   }, [exitRightPanelWide, rightPanelSizeMode, sidebarOpen]);
 
-
-  useEffect(() => {
-    if (!mobileToolbarMoreOpen) return;
-
-    const handlePointerDown = (event: PointerEvent) => {
-      const toolbar = mobileToolbarRef.current;
-      if (toolbar && event.composedPath().includes(toolbar)) return;
-      setMobileToolbarMoreOpen(false);
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      event.stopPropagation();
-      setMobileToolbarMoreOpen(false);
-    };
-
-    document.addEventListener("pointerdown", handlePointerDown, true);
-    document.addEventListener("keydown", handleKeyDown, true);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown, true);
-      document.removeEventListener("keydown", handleKeyDown, true);
-    };
-  }, [mobileToolbarMoreOpen]);
-
-  useEffect(() => {
-    setMobileToolbarMoreOpen(false);
-  }, [isMobile, isNarrowMobile, selectedSession?.id, newSessionDraftId]);
 
   useEffect(() => {
     if (!activeTopPanel || !topBarRef.current) return;
@@ -1336,7 +1284,10 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     })),
     ...rightDockItems
       .filter((it) => dockPanelStates.get(it.id) === "docked:right-panel")
-      .map((it) => ({ id: `dock:${it.id}`, label: it.meta?.title || it.meta?.label || it.extId || it.id, filePath: "", kind: "dock" as const })),
+      .map((it) => ({ id: `dock:${it.id}`, label: translateExtItemText(it.extId, it.meta?.title) || translateExtItemText(it.extId, it.meta?.label) || it.extId || it.id, filePath: "", kind: "dock" as const,
+        // Semantic tab icon from the registering entry's meta.icon ({svg} / ".svg" path /
+        // emoji; TabBar renders it via renderExtItemIcon, generic grid glyph when absent).
+        icon: it.meta?.icon, extId: it.extId })),
     // [上游 #1129/#1469] 子代理工作 tab + side chat tab：panel 承载与 handleOpenSubagentTab 挂载同源
     ...agentTabs.map((tab) => {
       const session = tab.side ? sessionCatalog.find((item) => item.id === tab.sessionId) : undefined;
@@ -1434,11 +1385,12 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   useEffect(() => {
     if (!terminalsRestored) return;
     try {
-      window.sessionStorage.setItem(TERMINAL_TABS_KEY, JSON.stringify({
+      const payload = JSON.stringify({
         tabs: terminalTabs.map(({ id, cwd }) => ({ id, cwd })),
         activeId: activeFileTabId,
         open: rightPanelOpen,
-      }));
+      });
+      window.sessionStorage.setItem(TERMINAL_TABS_KEY, payload);
     } catch { /* storage is optional */ }
   }, [terminalTabs, activeFileTabId, rightPanelOpen, terminalsRestored]);
 
@@ -1528,10 +1480,28 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   const activeProjectKeyRef = useRef<string | null>(null);
   const initialLinkedSessionId = linkedSessionId(initialNavigation);
   // True once the initial ?session= URL param has been resolved (or confirmed absent)
-  const [initialSessionRestored, setInitialSessionRestored] = useState<boolean>(() => !initialSessionId);
+  const [initialSessionRestored, setInitialSessionRestoredState] = useState<boolean>(() => !initialSessionId);
+  // Mirror ref written in the same task as the setter: the takeover-mode sidebar
+  // (session-manager SidebarContentDock) invokes onCwdChange synchronously right after
+  // onInitialRestoreDone() — before React re-renders — with its onCwdChangeRef still
+  // holding the previous commit's handleCwdChange closure. Guards must therefore read
+  // this ref (logical state), not the closure value (render state), or the failed
+  // ?session= restore leaves the shell stuck on the quickstart placeholder forever.
+  const initialSessionRestoredRef = useRef(initialSessionRestored);
+  const setInitialSessionRestored = useCallback((v: boolean | ((prev: boolean) => boolean)) => {
+    initialSessionRestoredRef.current = typeof v === "function" ? v(initialSessionRestoredRef.current) : v;
+    setInitialSessionRestoredState(v);
+  }, []);
   const sideTabOwner = activeSessionFamily?.root.id ?? null;
   useEffect(() => {
     if (!catalogLoaded || !initialSessionRestored) return;
+    // [terminal-restore race] 同一 mount 批次内 effect 共享同一渲染快照：终端恢复 effect
+    // （TERMINAL_TABS_KEY）先排队 setState，本 effect 后跑时读到的 activeFileTabId 仍是初始
+    // null —— 若此时执行覆盖分支，会用 null/false 覆盖掉已排队的终端 tab 激活与右栏打开，
+    // 导致恢复的终端 tab 永远不 active（materialize 不触发 → 空壳），且持久化 effect 随后
+    // 把污染状态写回 storage，每次刷新复发。等 terminalsRestored（下一轮快照已含终端恢复值）
+    // 再跑，让位但不丢语义；依赖数组同步补 terminalsRestored。
+    if (!terminalsRestored) return;
     const previous = sideTabOwnerRef.current;
     if (!sideTabsReadyRef.current || previous !== sideTabOwner) {
       if (sideTabsReadyRef.current && previous && !sideTabsSavedOnWorkspaceSwitchRef.current) rememberSideTabs(previous);
@@ -1553,7 +1523,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     }
     if (sideTabOwner) rememberSideTabs(sideTabOwner);
     sideTabsSavedOnWorkspaceSwitchRef.current = false;
-  }, [activeFileTabId, catalogLoaded, fileTabs, initialSessionRestored, rememberSideTabs, rightPanelOpen, selectedSession?.id, sessionCatalog, sideTabOwner, terminalTabs]);
+  }, [activeFileTabId, catalogLoaded, fileTabs, initialSessionRestored, rememberSideTabs, rightPanelOpen, selectedSession?.id, sessionCatalog, sideTabOwner, terminalTabs, terminalsRestored]);
   // sessionStorage is empty during SSR. Applying the tab's remembered session
   // in the useState initializer made the first client tree differ from the
   // server HTML (sidebar "select project" vs ""). Restore after mount instead.
@@ -1765,7 +1735,9 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     // 先渲染新会话 composer（「正在打开会话 → 新会话 → 会话」闪现的元凶之一：
     // session-manager 默认项目自动选 / cwd 镜像在恢复期间都可能送达 cwd）。恢复
     // 完成后由 handleSelectSession 权威决定 cwd，此间 cwd 一律忽略。
-    if (initialSessionId && !initialSessionRestored) return;
+    // Read via refs: the takeover sidebar's post-await notification can arrive with a
+    // stale closure (see initialSessionRestoredRef above).
+    if (initialSessionIdRef.current && !initialSessionRestoredRef.current) return;
     const currentFreshCwd = newSessionCwd ?? activeCwd;
     setActiveCwd(cwd);
     // Skip if cwd is null (initial mount).
@@ -1849,13 +1821,13 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
       // the default welcome page when none is remembered.
       restoreWorkspaceContext(newProject, cwd);
     }
-    if (initialSessionRestored || !initialSessionId) {
+    if (initialSessionRestoredRef.current || !initialSessionIdRef.current) {
       const urlSession = new URLSearchParams(window.location.search).get("session");
       if (!urlSession || urlSession !== selectedSession?.id) {
         replaceLocationIfChanged(router, inAppPathname("/"), { scroll: false });
       }
     }
-  }, [activeCwd, activeFileTabId, changeFileWorkspace, initialSessionId, initialSessionRestored, invalidateWorkspaceRestore, newSessionCwd, router, selectedSession, restoreWorkspaceContext]);
+  }, [activeCwd, activeFileTabId, changeFileWorkspace, invalidateWorkspaceRestore, newSessionCwd, router, selectedSession, restoreWorkspaceContext]);
 
   const handleSelectSession = useCallback((session: SessionInfo, isRestore = false, entryId?: string, blockIndex?: number, options?: SelectSessionOptions) => {
     setSearchTarget(entryId ? { sessionId: session.id, entryId, blockIndex } : null);
@@ -2154,11 +2126,14 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
         urlRestoredSessionRef.current = { id: data.info.id, cwd: data.info.cwd };
       }
       return true;
-    } catch (error) {
-      console.error("[pi-web] failed to open session:", error instanceof Error ? error.message : error);
+    } catch {
+      // Next.js dev surfaces console.error as an error overlay, but a failed open is a
+      // normal, recoverable condition (e.g. ?session= pointing at an archived/deleted
+      // session after a reload) — a toast is enough, no error-level noise.
+      piWebToastService.show(translate("sidebar.sessionNotFound"));
       return false;
     }
-  }, [handleSelectSession, router]);
+  }, [handleSelectSession, router, translate]);
 
   // pi-web.session.open(id) delegation backfill (same pattern as hostUiRef: refresh
   // each render to avoid a stale closure). Extensions (e.g. welcome-page widgets)
@@ -3313,7 +3288,9 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   // meta.onClick (staticClickForwarder → materialize → forward to the registered
   // item's behavior). Same rules as toolbar declarative items; after materialization
   // the registered item overrides the same id and the static entry retires naturally.
-  const sidebarFooterStaticItems = useExtSlotItems("sidebarFooter").filter((it) => it.static && !hasExtRender(it));
+  const sidebarFooterStaticItems = useExtSlotItems("sidebarFooter").filter((it) => it.static && !hasExtRender(it)
+    && (it.meta as { hidden?: boolean } | undefined)?.hidden !== true // hidden：仅收编/转发，不渲染按钮（快速上手闪现修复）
+    && !((it.meta as { hideOnMobile?: boolean } | undefined)?.hideOnMobile === true && isMobile)); // hideOnMobile：移动端视口不渲染（如手机访问扫码入口在手机上无意义）
   // Extension-level metadata (manifest name/icon) — used to label the extension in panels
   const extMetas = useExtMetas();
 
@@ -3322,6 +3299,9 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     // (extension items enter the top bar via toolbarExtItems)
     const ids: TopbarItemId[] = ["theme", "language"];
     if (showChat) ids.push("history", "export", "title", "branch", "system", "tools");
+    // debug joins the unified topbar-order system (was a hardcoded right-cluster
+    // button re-homed from upstream v0.13.0, f19b7398 — unmanaged by design no more)
+    ids.push("debug");
     return ids;
   }, [showChat]);
   const topbarToolbarExtIds = useMemo(
@@ -3354,7 +3334,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
       // first overflowing ones become extension icon buttons (still reachable via ⋯)
       ...topbarSessionExtIds,
       ...topbarToolbarExtIds,
-      "history", "export", "title", "branch", "system", "tools",
+      "history", "export", "title", "branch", "system", "tools", "debug",
     ],
     [topbarToolbarExtIds, topbarSessionExtIds],
   );
@@ -3845,6 +3825,36 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
         </button>
       );
     }
+    if (id === "debug") {
+      const active = activeTopPanel === "debug";
+      return (
+        <button
+          ref={!menu && !forMeasure ? debugButtonRef : undefined}
+          type="button"
+          onClick={act(() => toggleTopPanel("debug"))(menu)}
+          title={translate("debug.title")}
+          aria-label={translate("debug.title")}
+          aria-pressed={active}
+          style={menu ? { ...topbarMenuRowStyle, ...(active ? { background: "var(--bg-selected)", color: "var(--text)" } : {}) } : {
+            ...topbarRowBtnStyle(),
+            width: TOP_BAR_ICON_BUTTON_SIZE,
+            background: active ? "var(--bg-selected)" : "none",
+            color: active ? "var(--text)" : "var(--text-muted)",
+          }}
+          onMouseEnter={menu ? menuEnter : rowEnter}
+          onMouseLeave={menu ? menuLeave : rowLeave}
+        >
+          <span style={menu ? topbarMenuIconSlotStyle : { display: "contents" }}>
+            <svg width={iconDim} height={iconDim} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M8 2l1.9 1.9M16 2l-1.9 1.9M9 7.1v-1a3 3 0 0 1 6 0v1" />
+              <path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6zM12 20v-9" />
+              <path d="M6.5 9C4.6 8.8 3 7.1 3 5M6 13H2M3 21c0-2.1 1.7-3.9 3.8-4M21 5c0 2.1-1.6 3.8-3.5 4M22 13h-4M17.2 17c2.1.1 3.8 1.9 3.8 4" />
+            </svg>
+          </span>
+          {menu && <span>{translate("debug.title")}</span>}
+        </button>
+      );
+    }
     if (id === "tools") {
       const active = activeTopPanel === "tools";
       return (
@@ -3998,7 +4008,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
       // noMenuLabel: the extension already provides full content in the ⋯ menu (e.g.
       // a search input + button); the host adds no text label
       const label = extItem2 && !extItem2.meta?.noMenuLabel
-        ? (extItem2.meta?.label ?? extItem2.meta?.title ?? id)
+        ? (translateExtItemText(extItem2.extId, extItem2.meta?.label) || translateExtItemText(extItem2.extId, extItem2.meta?.title) || id)
         : null;
       // Whole row clickable: the extension's inner button carries the action; clicks
       // on text/blank areas delegate to it (same as built-in items' full-row button).
@@ -4040,7 +4050,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
                mounted — undefined would blow up the React element tree; icons are
                required by the SOP, the placeholder is a fallback only) */
             <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 16, height: 16, flexShrink: 0, fontSize: 12, fontWeight: 600, color: "var(--text-muted)" }} aria-hidden>
-              {(extItem2?.meta?.label ?? extItem2?.meta?.title ?? "?").slice(0, 1)}
+              {(translateExtItemText(extItem2?.extId, extItem2?.meta?.label) || translateExtItemText(extItem2?.extId, extItem2?.meta?.title) || "?").slice(0, 1)}
             </span>
           )}
           {label && (
@@ -4115,7 +4125,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     const toolbarItem = toolbarExtItems.find((it) => it.id === id);
     const sessionItem = sessionTopbarExtItems.find((it) => it.id === id);
     const it = toolbarItem ?? sessionItem;
-    return it?.meta?.label ?? it?.meta?.title ?? id;
+    return translateExtItemText(it?.extId, it?.meta?.label) || translateExtItemText(it?.extId, it?.meta?.title) || id;
   };
   const topbarItemLabel = (id: TopbarItemId): string => {
     switch (id) {
@@ -4127,6 +4137,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
       case "branch": return translate("i18n.branches");
       case "system": return translate("system.label");
       case "tools": return translate("tools.label");
+      case "debug": return translate("debug.title");
       default: return extLabel(id);
     }
   };
@@ -4363,6 +4374,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
           {sidebarFooterRow}
         </>
       }
+      placeholder={<SidebarTakeoverSkeleton />}
       extra={sidebarContentExtra}
     />
   );
@@ -4371,7 +4383,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     <button
       ref={themeBtnRef}
       type="button"
-      onClick={() => toggleTopPanel("theme", mobile)}
+      onClick={() => toggleTopPanel("theme")}
       title={translate(themeLabelKey)}
       aria-label={translate(themeLabelKey)}
       aria-haspopup="menu"
@@ -4399,7 +4411,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     <button
       ref={languageBtnRef}
       type="button"
-      onClick={() => toggleTopPanel("language", mobile)}
+      onClick={() => toggleTopPanel("language")}
       title={translate("common.language")}
       aria-label={translate("common.language")}
       aria-haspopup="menu"
@@ -4446,7 +4458,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     <button
       type="button"
       // On a narrow phone it sits outside the More menu, so it leaves that menu as it is.
-      onClick={() => toggleTopPanel("agents", mobile && !isNarrowMobile)}
+      onClick={() => toggleTopPanel("agents")}
       disabled={!activeSessionFamily}
       title={agentsButtonLabel}
       aria-label={agentsButtonLabel}
@@ -4475,371 +4487,13 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     </button>
   );
 
-  const renderChatToolbarActions = (mobile: boolean) => {
-    if (!mobile && !showChat) return null;
-    return (
-      <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
-        <button
-          type="button"
-          onClick={() => {
-            handleViewFullHistory();
-            if (mobile && isNarrowMobile) setMobileToolbarMoreOpen(true);
-          }}
-          disabled={!selectedSession}
-          title={selectedSession ? translate("history.full") : translate("history.unsaved")}
-          aria-label={translate("history.full")}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 6,
-            width: mobile ? TOP_BAR_ICON_BUTTON_SIZE : undefined,
-            height: "100%",
-            padding: mobile ? 0 : "0 12px",
-            background: "none",
-            border: "none",
-            borderTop: "2px solid transparent",
-            borderRight: "1px solid var(--border)",
-            color: selectedSession ? "var(--text-muted)" : "var(--text-dim)",
-            cursor: selectedSession ? "pointer" : "not-allowed",
-            opacity: selectedSession ? 1 : 0.45,
-            flexShrink: 0,
-            fontSize: 11,
-            whiteSpace: "nowrap",
-            transition: "color 0.1s, background 0.1s, opacity 0.1s",
-          }}
-          onMouseEnter={(event) => {
-            if (!selectedSession) return;
-            event.currentTarget.style.color = "var(--text)";
-            event.currentTarget.style.background = "var(--bg-hover)";
-          }}
-          onMouseLeave={(event) => {
-            event.currentTarget.style.color = selectedSession ? "var(--text-muted)" : "var(--text-dim)";
-            event.currentTarget.style.background = "none";
-          }}
-          data-mobile-toolbar-action={mobile ? "history" : undefined}
-        >
-          <svg
-            width={mobile ? 16 : 12}
-            height={mobile ? 16 : 12}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            style={{
-              color: selectedSession ? "var(--text-muted)" : "var(--text-dim)",
-              flexShrink: 0,
-            }}
-            aria-hidden="true"
-          >
-            <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
-            <path d="M3 3v5h5" />
-            <path d="M12 7v5l3 2" />
-          </svg>
-          {!mobile && <span>{translate("history.label")}</span>}
-        </button>
-        {(() => {
-          // After a context compaction the current messages may no longer contain a
-          // user message, so also consult the session file's total message count.
-          const hasMessages = Boolean(
-            selectedSession
-            && ((sessionStats?.userMessages ?? 0) > 0 || selectedSession.messageCount > 0),
-          );
-          const disabled = !selectedSession || selectedSession.transient || !hasMessages || autoNameStatus.kind === "naming";
-          const isSuccess = autoNameStatus.kind === "success";
-          const isError = autoNameStatus.kind === "error";
-          const label = autoNameStatus.kind === "naming"
-            ? translate("title.generating")
-            : isSuccess
-              ? translate("title.updated")
-              : isError
-                ? translate("title.failed")
-                : translate("title.generate");
-          const title = !selectedSession || selectedSession.transient
-            ? translate("title.unsaved")
-            : !hasMessages
-              ? translate("title.noMessages")
-              : isError
-                ? autoNameStatus.message
-                : translate("title.generateSession");
-
-          return (
-            <button
-              type="button"
-              onClick={() => {
-                void handleAutoName();
-                if (mobile && isNarrowMobile) setMobileToolbarMoreOpen(true);
-              }}
-              disabled={disabled}
-              title={title}
-              aria-label={label}
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-                width: mobile ? TOP_BAR_ICON_BUTTON_SIZE : undefined,
-                height: "100%", padding: mobile ? 0 : "0 12px",
-                background: "none", border: "none",
-                borderTop: "2px solid transparent",
-                borderRight: "1px solid var(--border)",
-                color: isError ? "#dc2626" : isSuccess ? "var(--accent)" : disabled ? "var(--text-dim)" : "var(--text-muted)",
-                cursor: disabled ? "not-allowed" : "pointer",
-                opacity: disabled && autoNameStatus.kind !== "naming" ? 0.45 : 1,
-                flexShrink: 0, fontSize: 11, whiteSpace: "nowrap",
-                transition: "color 0.1s, background 0.1s, opacity 0.1s",
-              }}
-              onMouseEnter={(event) => {
-                if (disabled) return;
-                event.currentTarget.style.color = isError ? "#dc2626" : "var(--text)";
-                event.currentTarget.style.background = "var(--bg-hover)";
-              }}
-              onMouseLeave={(event) => {
-                event.currentTarget.style.color = isError ? "#dc2626" : isSuccess ? "var(--accent)" : disabled ? "var(--text-dim)" : "var(--text-muted)";
-                event.currentTarget.style.background = "none";
-              }}
-              data-mobile-toolbar-action={mobile ? "name" : undefined}
-            >
-              {autoNameStatus.kind === "naming" ? (
-                <svg className="animate-spin" width={mobile ? 16 : 13} height={mobile ? 16 : 13} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" opacity="0.25" />
-                  <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                </svg>
-              ) : isSuccess ? (
-                <svg width={mobile ? 16 : 13} height={mobile ? 16 : 13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-              ) : (
-                <svg width={mobile ? 16 : 13} height={mobile ? 16 : 13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="m15 4 5 5L7 22l-5-5Z" />
-                  <path d="m14 5 5 5" />
-                  <path d="M6 4V2M5 3H3M19 19v3M17.5 20.5h3" />
-                </svg>
-              )}
-              {!mobile && <span>{label}</span>}
-            </button>
-          );
-        })()}
-        {hasSubagentSessions && agentsBadge && (
-          <button
-            type="button"
-            onClick={() => toggleTopPanel("agents", mobile)}
-            title={agentsButtonLabel}
-            aria-label={agentsButtonLabel}
-            aria-pressed={activeTopPanel === "agents"}
-            style={{
-              position: "relative",
-              display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-              width: mobile ? TOP_BAR_ICON_BUTTON_SIZE : undefined,
-              height: "100%", padding: mobile ? 0 : "0 12px",
-              background: activeTopPanel === "agents" ? "var(--bg-selected)" : "none",
-              border: "none",
-              borderTop: activeTopPanel === "agents" ? "2px solid var(--accent)" : "2px solid transparent",
-              borderRight: "1px solid var(--border)",
-              color: activeTopPanel === "agents" ? "var(--text)" : "var(--text-muted)",
-              cursor: "pointer", flexShrink: 0, fontSize: 11, whiteSpace: "nowrap",
-              transition: "color 0.1s, background 0.1s",
-            }}
-            data-mobile-toolbar-action={mobile ? "agents" : undefined}
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <rect x="5" y="7" width="14" height="11" rx="2" /><path d="M9 11h.01M15 11h.01M9 15h6M12 7V4M10 4h4" />
-            </svg>
-            {!mobile && <span>{translate("agentSwitcher.title")}</span>}
-            {/* While subagents run: their count, ringed by a spinner; otherwise all of them. */}
-            <span
-              aria-hidden="true"
-              style={{
-                position: "relative",
-                minWidth: 15, height: 15, padding: "0 4px", display: "grid", placeItems: "center",
-                borderRadius: 7,
-                background: agentsBadge.running ? "color-mix(in srgb, var(--accent) 22%, var(--bg-panel))" : "var(--bg-selected)",
-                color: "var(--accent)",
-                fontSize: 10, lineHeight: 1, fontVariantNumeric: "tabular-nums",
-                fontWeight: agentsBadge.running ? 600 : undefined,
-                ...(mobile ? { position: "absolute", top: 3, right: 3, minWidth: 13, height: 13, padding: "0 3px", fontSize: 9 } : {}),
-              }}
-            >
-              {agentsBadge.running && (
-                <svg
-                  className="animate-spin motion-reduce:animate-none"
-                  viewBox="0 0 24 24" fill="none" aria-hidden="true"
-                  style={{ position: "absolute", top: -3, left: -3, width: "calc(100% + 6px)", height: "calc(100% + 6px)", pointerEvents: "none" }}
-                >
-                  <circle cx="12" cy="12" r="11" stroke="currentColor" strokeWidth="2" opacity="0.2" />
-                  <path d="M23 12a11 11 0 0 0-11-11" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                </svg>
-              )}
-              {agentsBadge.count}
-            </span>
-          </button>
-        )}
-        {sessionHasBranches && (mobile ? (
-          <button
-            type="button"
-            onClick={() => toggleTopPanel("branches", true)}
-            title={translate("i18n.branches")}
-            aria-label={translate("i18n.branches")}
-            aria-pressed={activeTopPanel === "branches"}
-            style={{
-              display: "flex", alignItems: "center", justifyContent: "center",
-              width: TOP_BAR_ICON_BUTTON_SIZE, height: "100%", padding: 0,
-              background: activeTopPanel === "branches" ? "var(--bg-selected)" : "none",
-              border: "none",
-              borderTop: activeTopPanel === "branches" ? "2px solid var(--accent)" : "2px solid transparent",
-              borderRight: "1px solid var(--border)",
-              color: activeTopPanel === "branches" ? "var(--text)" : "var(--text-muted)",
-              cursor: "pointer", flexShrink: 0,
-            }}
-            data-mobile-toolbar-action="branches"
-          >
-            <svg width={mobile ? 16 : 12} height={mobile ? 16 : 12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: branchTree.length > 0 ? "var(--accent)" : "var(--text-dim)" }} aria-hidden="true">
-              <line x1="6" y1="3" x2="6" y2="15" />
-              <circle cx="18" cy="6" r="3" />
-              <circle cx="6" cy="18" r="3" />
-              <path d="M18 9a9 9 0 0 1-9 9" />
-            </svg>
-          </button>
-        ) : (
-          <BranchNavigator
-            tree={branchTree}
-            activeLeafId={branchActiveLeafId}
-            onLeafChange={handleBranchLeafChange}
-            locked={branchSwitchLocked}
-            inline
-            containerRef={topBarRef}
-            open={activeTopPanel === "branches"}
-            onToggle={() => toggleTopPanel("branches")}
-            hasSession
-          />
-        ))}
-        <button
-          ref={systemBtnRef}
-          type="button"
-          onClick={() => handleSystemInfoToggle("system", mobile)}
-          disabled={mobile && !showChat}
-          title={translate("system.prompt")}
-          aria-label={translate("system.prompt")}
-          aria-pressed={activeTopPanel === "system"}
-          style={{
-            display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-            width: mobile ? TOP_BAR_ICON_BUTTON_SIZE : undefined,
-            height: "100%", padding: mobile ? 0 : "0 12px",
-            background: activeTopPanel === "system" ? "var(--bg-selected)" : "none",
-            border: "none",
-            borderTop: activeTopPanel === "system" ? "2px solid var(--accent)" : "2px solid transparent",
-            borderRight: "1px solid var(--border)",
-            cursor: mobile && !showChat ? "not-allowed" : "pointer",
-            color: activeTopPanel === "system" ? "var(--text)" : "var(--text-muted)",
-            opacity: mobile && !showChat ? 0.45 : 1,
-            fontSize: 11, whiteSpace: "nowrap", transition: "color 0.1s, background 0.1s",
-          }}
-          onMouseEnter={(event) => {
-            if (mobile && !showChat) return;
-            event.currentTarget.style.color = "var(--text)";
-          }}
-          onMouseLeave={(event) => {
-            event.currentTarget.style.color = activeTopPanel === "system" ? "var(--text)" : "var(--text-muted)";
-          }}
-          data-mobile-toolbar-action={mobile ? "system" : undefined}
-        >
-          <svg width={mobile ? 16 : 12} height={mobile ? 16 : 12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: systemPrompt ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }} aria-hidden="true">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-            <polyline points="14 2 14 8 20 8" />
-            <line x1="8" y1="13" x2="16" y2="13" />
-            <line x1="8" y1="17" x2="13" y2="17" />
-          </svg>
-          {!mobile && <span>{translate("system.label")}</span>}
-        </button>
-        <button
-          type="button"
-          onClick={() => handleSystemInfoToggle("tools", mobile)}
-          disabled={mobile && !showChat}
-          title={translate("tools.title")}
-          aria-label={translate("tools.title")}
-          aria-pressed={activeTopPanel === "tools"}
-          style={{
-            display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-            width: mobile ? TOP_BAR_ICON_BUTTON_SIZE : undefined,
-            height: "100%", padding: mobile ? 0 : "0 12px",
-            background: activeTopPanel === "tools" ? "var(--bg-selected)" : "none",
-            border: "none",
-            borderTop: activeTopPanel === "tools" ? "2px solid var(--accent)" : "2px solid transparent",
-            borderRight: "1px solid var(--border)",
-            cursor: mobile && !showChat ? "not-allowed" : "pointer",
-            color: activeTopPanel === "tools" ? "var(--text)" : "var(--text-muted)",
-            opacity: mobile && !showChat ? 0.45 : 1,
-            fontSize: 11, whiteSpace: "nowrap", transition: "color 0.1s, background 0.1s",
-          }}
-          onMouseEnter={(event) => {
-            if (mobile && !showChat) return;
-            event.currentTarget.style.color = "var(--text)";
-          }}
-          onMouseLeave={(event) => {
-            event.currentTarget.style.color = activeTopPanel === "tools" ? "var(--text)" : "var(--text-muted)";
-          }}
-          data-mobile-toolbar-action={mobile ? "tools" : undefined}
-        >
-          <svg width={mobile ? 16 : 12} height={mobile ? 16 : 12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: systemTools?.some((tool) => tool.active) ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }} aria-hidden="true">
-            <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.9-7.9z" />
-          </svg>
-          {!mobile && <span>{translate("tools.label")}</span>}
-        </button>
-      </div>
-    );
-  };
-
-  // Upstream v0.13.0's Debug button, re-homed into the fork's top-bar right cluster:
-  // the panel type/reader/close wiring survived the merge, but the entry button rode
-  // upstream's toolbar (dropped in the resolution) — without it the panel is unreachable.
-  const renderDebugButton = (mobile: boolean) => {
-    const open = activeTopPanel === "debug";
-    return (
-      <button
-        ref={debugButtonRef}
-        type="button"
-        onClick={() => toggleTopPanel("debug", mobile)}
-        title={translate("debug.title")}
-        aria-label={translate("debug.title")}
-        aria-pressed={open}
-        style={{
-          display: "flex", alignItems: "center", justifyContent: "center",
-          width: TOP_BAR_ICON_BUTTON_SIZE, height: "100%", padding: 0,
-          background: open ? "var(--bg-selected)" : "none",
-          border: "none",
-          borderTop: open ? "2px solid var(--accent)" : "2px solid transparent",
-          borderLeft: mobile ? "none" : "1px solid var(--border)",
-          borderRight: mobile ? "1px solid var(--border)" : "none",
-          color: open ? "var(--text)" : "var(--text-muted)",
-          cursor: "pointer", flexShrink: 0, transition: "color 0.1s, background 0.1s",
-        }}
-        onMouseEnter={(event) => {
-          event.currentTarget.style.color = "var(--text)";
-        }}
-        onMouseLeave={(event) => {
-          event.currentTarget.style.color = open ? "var(--text)" : "var(--text-muted)";
-        }}
-        data-mobile-toolbar-action={mobile ? "debug" : undefined}
-      >
-        <svg width={mobile ? 16 : 13} height={mobile ? 16 : 13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: open ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }} aria-hidden="true">
-          <path d="M8 2l1.9 1.9M16 2l-1.9 1.9M9 7.1v-1a3 3 0 0 1 6 0v1" />
-          <path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6zM12 20v-9" />
-          <path d="M6.5 9C4.6 8.8 3 7.1 3 5M6 13H2M3 21c0-2.1 1.7-3.9 3.8-4M21 5c0 2.1-1.6 3.8-3.5 4M22 13h-4M17.2 17c2.1.1 3.8 1.9 3.8 4" />
-        </svg>
-      </button>
-    );
-  };
-
   const renderMainFileToggle = (mobile: boolean) => {
-    const covered = mobile && isNarrowMobile && mobileToolbarMoreOpen;
     return (
       <button
         type="button"
         onClick={handleRightPanelToggle}
-        disabled={covered}
-        tabIndex={covered ? -1 : undefined}
         aria-controls="file-panel"
         aria-expanded={rightPanelOpen}
-        aria-hidden={covered ? true : undefined}
         title={rightPanelOpen ? translate("files.hidePanel") : translate("files.showPanel")}
         aria-label={rightPanelOpen ? translate("files.hidePanel") : translate("files.showPanel")}
         data-mobile-toolbar-file={mobile ? "true" : undefined}
@@ -4853,14 +4507,12 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
           marginRight: "calc(-44px - min(env(safe-area-inset-right), 8px))",
           display: "flex", alignItems: "center", justifyContent: "center",
           width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
-          visibility: covered ? "hidden" : "visible",
-          pointerEvents: covered ? "none" : "auto",
           background: rightPanelOpen ? "var(--bg-selected)" : "none",
           border: "none", borderLeft: "1px solid var(--border)",
           color: rightPanelOpen ? "var(--text)" : "var(--text-muted)",
           cursor: "pointer", flexShrink: 0, transition: "color 0.12s, background 0.12s",
         }}
-        onMouseEnter={(event) => { if (!covered) event.currentTarget.style.color = "var(--text)"; }}
+        onMouseEnter={(event) => { event.currentTarget.style.color = "var(--text)"; }}
         onMouseLeave={(event) => { event.currentTarget.style.color = rightPanelOpen ? "var(--text)" : "var(--text-muted)"; }}
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -4882,7 +4534,6 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   useOverlayBack(isMobile && settingsSection !== null, () => setSettingsSection(null));
   useOverlayBack(isMobile && projectTrustDialogOpen, () => setProjectTrustDialogOpen(false));
   useOverlayBack(isMobile && exportDialogOpen, () => setExportDialogOpen(false));
-  useOverlayBack(isMobile && mobileToolbarMoreOpen, () => setMobileToolbarMoreOpen(false));
   useOverlayBack(isMobile && (moreOpen || customizeOpen), () => {
     setMoreOpen(false);
     setCustomizeOpen(false);
@@ -5178,79 +4829,28 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
               position: "relative",
               display: "flex",
               alignItems: "stretch",
-              flex: 1,
-              minWidth: 0,
+              // Shrink to the Agents button only (no flex spring): the upstream
+              // narrow/medium inline rows are retired — the fork's custom-drawn
+              // top bar (renderTopbarItem + measured ⋯ overflow) is the single
+              // overflow mechanism on every width, and the session-stats button's
+              // margin-left:auto owns all leftover space, so the Agents button
+              // joins the right cluster instead of floating mid-bar.
+              flex: "0 0 auto",
               height: "100%",
+              // Left edge rule: separates the tier from the sidebar toggle (empty
+              // items row) or from the last visible top-bar item. Overlaps that
+              // neighbor's own 1px border at the same x when present — renders as a
+              // single line either way.
+              borderLeft: "1px solid var(--border)",
             }}
           >
           {renderAgentsButton(true)}
-          {isNarrowMobile && (
-            <button
-              type="button"
-              onClick={handleMobileToolbarMoreToggle}
-                  title={moreControlsLabel}
-                  aria-label={moreControlsLabel}
-                  aria-controls="mobile-toolbar-actions"
-                  aria-expanded={mobileToolbarMoreOpen}
-                  data-mobile-toolbar-more="true"
-                  style={{
-                    position: "relative",
-                    zIndex: mobileToolbarMoreOpen ? 21 : undefined,
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
-                    background: mobileToolbarMoreOpen ? "var(--bg-selected)" : "none",
-                    border: "none", borderRight: "1px solid var(--border)",
-                    color: mobileToolbarMoreOpen ? "var(--text)" : "var(--text-muted)",
-                    cursor: "pointer", flexShrink: 0, transition: "color 0.12s, background 0.12s",
-                  }}
-                >
-                  {mobileToolbarMoreOpen ? (
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-                      <line x1="5" y1="5" x2="19" y2="19" /><line x1="19" y1="5" x2="5" y2="19" />
-                    </svg>
-                  ) : (
-                    <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                      <circle cx="5" cy="12" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="19" cy="12" r="1.5" />
-                    </svg>
-                  )}
-                </button>
-              )}
-              {isNarrowMobile && mobileToolbarMoreOpen && (
-                <div
-                  id="mobile-toolbar-actions"
-                  role="toolbar"
-                  aria-label={translate("chat.moreControls")}
-                  data-mobile-toolbar-actions="true"
-                  style={{
-                    position: "absolute",
-                    top: 0,
-                    right: 0,
-                    bottom: 0,
-                    // Right of the Agents and More buttons, which stay in place.
-                    left: `calc(2 * ${TOP_BAR_ICON_BUTTON_SIZE})`,
-                    zIndex: 20,
-                    display: "flex",
-                    alignItems: "stretch",
-                    // More buttons than a 320px phone fits (the Debug button made seven): scroll, never clip.
-                    overflowX: "auto",
-                    overflowY: "hidden",
-                    scrollbarWidth: "none",
-                    background: "color-mix(in srgb, var(--bg-panel) 94%, var(--bg))",
-                    boxShadow: "4px 0 18px rgba(0,0,0,0.12)",
-                    backdropFilter: "blur(10px)",
-                  }}
-                >
-                  {renderChatToolbarActions(true)}
-                </div>
-              )}
-              {/* Upstream's medium-band inline row (renderChatToolbarActions/
-                 renderDebugButton/renderMainFileToggle for !isNarrowMobile) is NOT
-                 rendered: this fork's custom-drawn top bar (renderTopbarItem with
-                 measured ⋯ overflow) already covers every band, the narrow tier
-                 above covers ≤480px, and the fork re-homed the file toggle (top
-                 right corner) and the Debug entry (right cluster, f19b7398) as
-                 single owners — rendering the upstream row again stacked them
-                 twice on desktop and medium widths. */}
+              {/* The upstream narrow-band tier (a second, horizontal-••• "More controls"
+                  button + its floating actions overlay) was retired per the fork's
+                  single-overflow contract: the vertical-••• more menu already collects
+                  every top-bar item on every width, and the overlay duplicated those
+                  same actions (history/export/branches/system/tools) as a second set.
+                  Don't reintroduce it on merge — topbar-dedup.test.mjs pins its absence. */}
           </div>
           )}
           {/* Session stats — right-aligned in top bar */}
@@ -5420,9 +5020,9 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
               </svg>
             </button>
           </div>
-          {/* Upstream v0.13.0 Debug panel entry (re-homed; see renderDebugButton) */}
-          {renderDebugButton(isMobile)}
-          {/* File-panel toggle pinned at the far right of the top bar (top-right
+          {/* The Debug panel entry moved into the unified topbar-order system
+              (builtin id "debug", renderTopbarItem case) — sortable / hideable /
+              overflowable via the ⋯ menu like every other top-bar item. */}          {/* File-panel toggle pinned at the far right of the top bar (top-right
               corner); the upstream mobile toolbar originally called
               renderMainFileToggle(true), which was lost in the custom-order refactor */}
           {renderMainFileToggle(isMobile)}
@@ -5593,6 +5193,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
                   loading={systemInfoLoading}
                   tools={systemTools}
                   translate={translate}
+                  onClose={() => setActiveTopPanel(null)}
                 />
               )}
               {activeTopPanel === "session" && (
@@ -5746,7 +5347,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
                     const extraTokenRows = [
                        ...(sessionStats.cost > 0 ? [[translate("session.cost"), `$${sessionStats.cost.toFixed(4)}`]] : []),
                        ...(ctx?.contextWindow ? [[translate("session.context"), (
-                         <span style={{ display: "inline-flex", alignItems: "center", gap: 6, justifyContent: "flex-end" }}>
+                         <span key="session-context" style={{ display: "inline-flex", alignItems: "center", gap: 6, justifyContent: "flex-end" }}>
                            <span style={{
                              color: ctxUrg.color,
                              fontVariantNumeric: "tabular-nums",

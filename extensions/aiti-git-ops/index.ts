@@ -17,10 +17,19 @@ import * as engine from "./git-engine.ts";
 export default {
   id: "aiti-git-ops",
   name: "Git Ops（共享 Git 操作引擎）",
-  version: "0.1.0",
   icon: "icons/git-branch.svg",
   // 零 client bundle（同 aiti-echo-agent 等 10 个纯服务端扩展先例）
   provides: ["aiti-git-ops.api"],
+
+
+  ui: {
+    // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
+    i18n: {
+      en: {
+        "ext.displayName": "Git Ops (shared git operations engine)",
+      },
+    },
+  },
 
   server: {
     startup: async (ctx: any) => {
@@ -55,6 +64,7 @@ export default {
           stage: (cwd: string, paths: string[]) => engine.gitStage(cwd, paths),
           unstage: (cwd: string, paths: string[]) => engine.gitUnstage(cwd, paths),
           discard: (cwd: string, paths: string[]) => engine.gitDiscard(cwd, paths),
+          ignoreAdd: (cwd: string, paths: string[]) => engine.gitIgnoreAdd(cwd, paths),
           commit: (cwd: string, message?: string, amend?: boolean) => engine.gitCommit(cwd, message, amend),
           planExecute: (cwd: string, groups: engine.PlanGroup[]) => engine.gitPlanExecute(cwd, groups),
           planRollback: (cwd: string, baseHEAD: string) => engine.gitPlanRollback(cwd, baseHEAD),
@@ -105,6 +115,7 @@ export default {
           case "stage": return json(await engine.gitStage(cwd, body?.paths));
           case "unstage": return json(await engine.gitUnstage(cwd, body?.paths));
           case "discard": return json(await engine.gitDiscard(cwd, body?.paths));
+          case "ignore-add": return json(await engine.gitIgnoreAdd(cwd, body?.paths));
           case "commit": return json(await engine.gitCommit(cwd, body?.message, !!body?.amend));
           case "plan":
             if (p[2] === "execute") return json(await engine.gitPlanExecute(cwd, body?.groups));

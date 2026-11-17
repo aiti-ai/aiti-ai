@@ -186,8 +186,17 @@ async function startRun(sourceId: string) {
 export default {
   id: "aiti-backup",
   name: "数据备份（快照）",
-  version: "0.1.0",
   icon: "icon.svg",
+
+
+  ui: {
+    // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
+    i18n: {
+      en: {
+        "ext.displayName": "Data Backup (snapshots)",
+      },
+    },
+  },
 
   server: {
     startup(ctx: any) {

@@ -292,3 +292,72 @@ test("isQuickstartWidgetId：组合 id 前缀判定", () => {
   assert.equal(logic.isQuickstartWidgetId("aiti-quickstart"), false);
   assert.equal(logic.isQuickstartWidgetId(""), false);
 });
+
+/* ── 「试试这样问」动态装配（examples-config + assembleExampleChips） ── */
+
+test("normalizeExamplesConfig：缺省/越界/非法值钳制", () => {
+  assert.deepEqual(logic.normalizeExamplesConfig(null), { mode: "auto", maxChips: 4 });
+  assert.deepEqual(logic.normalizeExamplesConfig(undefined), { mode: "auto", maxChips: 4 });
+  assert.deepEqual(logic.normalizeExamplesConfig({ mode: "prompts", maxChips: 6 }), { mode: "prompts", maxChips: 6 });
+  // 越界钳制：maxChips 2~8
+  assert.equal(logic.normalizeExamplesConfig({ maxChips: 1 }).maxChips, 2);
+  assert.equal(logic.normalizeExamplesConfig({ maxChips: 99 }).maxChips, 8);
+  assert.equal(logic.normalizeExamplesConfig({ maxChips: "5" }).maxChips, 5);
+  assert.equal(logic.normalizeExamplesConfig({ maxChips: NaN }).maxChips, 4);
+  // 非法 mode 回退 auto
+  assert.equal(logic.normalizeExamplesConfig({ mode: "bogus" }).mode, "auto");
+});
+
+const POOL = ["内置一", "内置二", "内置三", "内置四", "内置五", "内置六", "内置七", "内置八"];
+const PROMPTS = [
+  { id: "p1", name: "方案先行", text: "先给方案，我确认后再写代码，不要直接动手实现" },
+  { id: "p2", name: "跑测试", text: "跑一遍全量测试，修复所有失败的用例并说明根因" },
+  { id: "short", name: "太短", text: "继续" },
+];
+
+const RAND_STABLE = () => 0.42; // 稳定伪随机：洗牌结果可复现
+
+
+test("assembleExampleChips：auto 收藏优先 + 质量过滤 + 内置补足", () => {
+  const chips = logic.assembleExampleChips({ mode: "auto", maxChips: 4, prompts: PROMPTS, pool: POOL, rand: RAND_STABLE });
+  assert.equal(chips.length, 4);
+  // 太短的收藏（text < 8 字符）被过滤，两条有效收藏排前
+  assert.deepEqual(chips.slice(0, 2).map((c) => c.promptId), ["p1", "p2"]);
+  assert.equal(chips[0].label, "方案先行");
+  // 不足 4 条由内置池随机补足（promptId null）
+  assert.deepEqual(chips.slice(2).map((c) => c.promptId), [null, null]);
+  assert.ok(chips.slice(2).every((c) => POOL.includes(c.text)));
+});
+
+test("assembleExampleChips：prompts 单源（不足就少显示，不补内置）", () => {
+  const chips = logic.assembleExampleChips({ mode: "prompts", maxChips: 4, prompts: PROMPTS, pool: POOL, rand: RAND_STABLE });
+  assert.equal(chips.length, 2); // short 被质量过滤
+  assert.ok(chips.every((c) => c.promptId !== null));
+});
+
+test("assembleExampleChips：builtin 单源随机抽取 + 无收藏场景", () => {
+  const chips = logic.assembleExampleChips({ mode: "builtin", maxChips: 3, prompts: PROMPTS, pool: POOL, rand: RAND_STABLE });
+  assert.equal(chips.length, 3);
+  assert.ok(chips.every((c) => c.promptId === null && POOL.includes(c.text)));
+  // 收藏为空 → auto 全量回退内置
+  const empty = logic.assembleExampleChips({ mode: "auto", maxChips: 4, prompts: [], pool: POOL, rand: RAND_STABLE });
+  assert.equal(empty.length, 4);
+  assert.ok(empty.every((c) => c.promptId === null));
+});
+
+test("assembleExampleChips：收藏 chip 显示名（无名回退全文）+ touch id 透传", () => {
+  const chips = logic.assembleExampleChips({
+    mode: "prompts", maxChips: 4,
+    prompts: [{ id: "p9", text: "没有名字的收藏条目也要能正常显示与填入" }],
+    pool: POOL, rand: RAND_STABLE,
+  });
+  assert.equal(chips[0].label, chips[0].text); // 无 name 回退全文
+  assert.equal(chips[0].promptId, "p9");
+});
+
+test("shuffle：保持元素集合不变", () => {
+  const src = [1, 2, 3, 4, 5];
+  const out = logic.shuffle(src, RAND_STABLE);
+  assert.deepEqual([...out].sort(), src);
+  assert.deepEqual(src, [1, 2, 3, 4, 5]); // 不改入参
+});

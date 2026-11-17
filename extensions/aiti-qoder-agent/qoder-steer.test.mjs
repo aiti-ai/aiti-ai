@@ -96,76 +96,13 @@ test("账本解析 fail-closed：脏文件/坏 JSON 都不可能放开能力", (
   assert.equal(gate.steerProbePassed(book, "/a"), true);
 });
 
-test("门控关（默认）：能力位 steer=false，运行中 steer 不写 stdin 而是排队", async () => {
-  const { h, events, frames, write } = makeHandle();
-  assert.equal(h.capabilities.steer, false);
-  await h.prompt("第一条");
-  write({ type: "stream_event", event: { type: "message_start" } });
-  await h.prompt("想插队", { streamingBehavior: "steer" });
-  assert.equal(userFrames(frames()).length, 1, "门控关时不得有第二条 stdin 写入");
-  assert.deepEqual(lastQueue(events)?.followUp, ["想插队"], "收敛到本地队列（消息不丢）");
-  await assert.rejects(() => h.steer("直连 RPC 也不放行"), /steer-probe\.mjs --record/);
-});
-
-test("门控开：注入 priority=next 的入站 user 帧（轮内吸收档），认领回显后从插队组落进消息流", async () => {
-  applySteerProbeBook({ [CLI]: { verdict: "pass", cliVersion: "9.9.9" } });
-  const { h, events, frames, write } = makeHandle();
-  assert.equal(h.capabilities.steer, true);
-  await h.prompt("第一条");
-  write({ type: "stream_event", event: { type: "message_start" } });
-  await h.prompt("插队的话", { streamingBehavior: "steer" });
-  const inject = userFrames(frames()).at(-1);
-  assert.equal(inject.priority, "next", "next = 被本轮 inter_turn 附件采集吸收；now 会抢占、later 只能等轮末");
-  assert.equal(typeof inject.uuid, "string");
-  assert.ok(inject.uuid.length > 0);
-  assert.equal(inject.message.content[0].text, "插队的话");
-  assert.deepEqual(lastQueue(events)?.steering, ["插队的话"], "面板「插队」组先挂上（只读）");
-  assert.deepEqual(lastQueue(events)?.followUp, [], "没有落进排队组");
-  write({ type: "user", uuid: inject.uuid, isReplay: true, message: { role: "user", content: [{ type: "text", text: "插队的话" }] } });
-  assert.deepEqual(lastQueue(events)?.steering, [], "认领回显后摘条");
-  const bubble = [...events].reverse().find((e) => e.type === "message_end" && e.message?.role === "user");
-  assert.equal(bubble?.message?.content?.[0]?.text, "插队的话", "摘下来的条目落进消息流");
-});
-
-test("生命周期回执（含 cancelled）按已认领收口：摘条落消息流，轮末绝不重发", async () => {
-  applySteerProbeBook({ [CLI]: { verdict: "pass" } });
-  const { h, events, frames, write } = makeHandle();
-  await h.prompt("第一条");
-  write({ type: "stream_event", event: { type: "message_start" } });
-  await h.prompt("插队一条", { streamingBehavior: "steer" });
-  const inject = userFrames(frames()).at(-1);
-  assert.equal(inject.priority, "next");
-  write({ type: "command_lifecycle", command_uuid: inject.uuid, state: "cancelled" });
-  assert.deepEqual(lastQueue(events)?.steering, [], "回执即摘条");
-  const bubble = [...events].reverse().find((e) => e.type === "message_end" && e.message?.role === "user");
-  assert.equal(bubble?.message?.content?.[0]?.text, "插队一条");
-  write({ type: "result", result: "ok" });
-  await flush();
-  // cancelled 在这个 CLI 里既可能是「排队项被丢弃」也可能是「已读取后本轮被打断」——
-  // 据其重发会把模型已看过的消息再投一次，所以两种都不重发（钉死这条口径）
-  assert.equal(userFrames(frames()).length, 2, "注入帧 + 首轮帧，没有第三条");
-});
-
-test("轮末仍无认领：随本轮收口摘条，不重发（歧义时重发=重复消息）", async () => {
-  applySteerProbeBook({ [CLI]: { verdict: "pass" } });
-  const { h, events, frames, write } = makeHandle();
-  await h.prompt("第一条");
-  write({ type: "stream_event", event: { type: "message_start" } });
-  await h.prompt("石沉大海", { streamingBehavior: "steer" });
-  assert.equal(userFrames(frames()).length, 2, "注入确实写了 stdin");
-  write({ type: "result", result: "ok" });
-  await flush();
-  assert.equal(userFrames(frames()).length, 2, "轮末不得补发第二条");
-  assert.deepEqual(lastQueue(events)?.steering, [], "面板不留陈旧插队条目");
-});
-
-test("图片注入走同一份 content 构造（image 块 + text 块）", async () => {
-  applySteerProbeBook({ [CLI]: { verdict: "pass" } });
-  const { h, frames, write } = makeHandle();
-  await h.prompt("第一条");
-  write({ type: "stream_event", event: { type: "message_start" } });
-  await h.prompt("看图", { images: [{ type: "image", data: "AAEC", mimeType: "image/png" }], streamingBehavior: "steer" });
-  const content = userFrames(frames()).at(-1).message.content;
-  assert.deepEqual(content[0], { type: "image", source: { type: "base64", media_type: "image/png", data: "AAEC" } });
-  assert.equal(content[1].text, "看图");
+test("ACP 驱动：steer 能力位恒关，steer() fail-loud 抛错（运行中输入一律走 followUp 本地队列）", async () => {
+  const { QoderHandle } = await import("./index.ts");
+  const { makeReadyHandle } = await import("./qoder-acp-stub.mjs");
+  const { h } = await makeReadyHandle(QoderHandle, { handleOpts: { cliPath: CLI } });
+  assert.equal(h.capabilities.steer, false, "ACP 注入面未探针 → 恒关");
+  await assert.rejects(() => h.steer("运行中注入"), /Capability "steer" is not enabled/);
+  // followUp 仍然可用（本地队列）
+  await h.followUp("排队的输入");
+  await h.dispose();
 });

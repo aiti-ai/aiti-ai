@@ -41,17 +41,17 @@ export default function register(ctx: Record<string, any>) {
   ctx.registerItems?.("toolbar", [{
     id: "aiti-doc-center-open",
     meta: {
-      label: "文档",
-      title: "文档中心：workspace 文档收集与全文检索",
+      label: "i18n:dc.app.label",
+      title: "i18n:it.docs.title",
       icon: { svg: '<path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/>' },
       onClick: () => requestOpen(),
     },
   }]);
-  ctx.registerItems?.("pages", [{ id: "aiti-doc-center-page", render: DocCenterPageSlot, meta: { label: "文档中心" } }]);
+  ctx.registerItems?.("pages", [{ id: "aiti-doc-center-page", render: DocCenterPageSlot, meta: { label: "i18n:it.aiti-doc-center-page.label" } }]);
   // aiti-float dock v0.5.x（§1.1 文档 tab）：右栏停靠 face——与 pages 浮窗经状态机互斥 gate
   // ⚠ 注册 raw itemId，宿主自动拼 extId:itemId = itemKey——必须与状态机 key "aiti-doc-center:docs" 的
   // itemId 段一致（拼后链路：镜像/联动/TabBody only 全按复合 id 匹配）
-  ctx.registerItems?.("rightFileDock", [{ id: "docs", render: DockDocs, meta: { title: "文档" } }]);
+  ctx.registerItems?.("rightFileDock", [{ id: "docs", render: DockDocs, meta: { title: "i18n:it.docs.title" } }]);
   // M6-B 编辑器联动：aiti-editor ⋯ 菜单「🏷 标签」入口（查看/增删任意文件 tag；非 md 打 tag 即进索引）
   const unregTags = registerEditorFileTags();
   if (unregTags) { try { (ctx as any).registerCleanup?.(unregTags); } catch { /* 旧宿主无此口：模块随页面生命周期 */ } }

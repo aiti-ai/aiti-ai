@@ -1,8 +1,11 @@
 ---
 name: extman-toggle
 title: AI 帮我启停/卸载/重载
+title.en: "AI: enable/disable/uninstall/reload extensions"
 placeholder: 描述要做什么（如：禁用 aiti-model-check / 重载所有扩展 / 关掉 devtools 的 page_logs 工具）…
+placeholder.en: "What to do (e.g. disable aiti-model-check / reload all extensions / turn off devtools' page_logs tool)…"
 summary: 启停/卸载/重载扩展 + 逐项开关功能（features）
+summary.en: "Enable/disable/uninstall/reload extensions + toggle individual features"
 ---
 
 # extman-toggle · 启停/卸载/重载/功能开关
