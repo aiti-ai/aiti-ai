@@ -98,10 +98,13 @@ test("new-session button is not gated by sessionBusy/first message (visible whil
   // clobbers it again, the test goes red.
   // 2026-09-18: added fork capability gating (local sessions have no caps,
   // unchanged; external backends without fork support hide the button).
-  // 合并适配：onFork 融合形态 = 本地能力门 ∪ 上游 bashRunning 门槛；
+  // 2026-11-16: the upstream bashRunning gate is demoted from "hide the
+  // button" to "hold the click": the button stays visible while a command
+  // runs (forkBashRunning → dimmed + tooltip), clicks are held until settle.
   // 2026-11-12 merge: handler is forkFromMessage (upstream #1539 composer prefill).
-  assert.match(source, /onFork=\{bashRunning \|\| isNew \|\| !sessionCap\("fork"\) \? undefined : forkFromMessage\}/);
-  assert.doesNotMatch(source, /onFork=\{sessionBusy/);
+  assert.match(source, /onFork=\{isNew \|\| !sessionCap\("fork"\) \? undefined : forkFromMessage\}/);
+  assert.match(source, /forkBashRunning=\{bashRunning\}/);
+  assert.doesNotMatch(source, /onFork=\{(bashRunning|sessionBusy)/);
   assert.doesNotMatch(source, /idx === 0 && msg\.role === "user" \? undefined : handleFork/);
 });
 
