@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiUrl, appendText, openFile, extSvc, t } from "./host-shim";
 import { buildAtText, openNewSessionWithExtSvc } from "../../../_shared/new-session-cwd";
 import { usePresent, useGate, DockBody, openFloat, closePanel } from "../../../_shared/ext-float-dock";
+import { zoomFactorOf } from "../../../_shared/popup-anchor";
 
 const API = (p: string) => apiUrl("/api/extensions/aiti-doc-center" + p);
 
@@ -391,7 +392,8 @@ function DocCenterDialog({ onClose, initialUnder, embedded }: { onClose: () => v
         <button onClick={(e) => {
           const r = e.currentTarget.getBoundingClientRect();
           const w = Math.min(320, window.innerWidth * 0.8);
-          setWsRect({ left: Math.max(8, Math.min(r.right - w, window.innerWidth - w - 8)), top: r.bottom + 4 });
+          const zf = zoomFactorOf(e.currentTarget); // panel UI scale: divide viewport-space back
+          setWsRect({ left: Math.max(8, Math.min(r.right - w, window.innerWidth - w - 8)) / zf, top: (r.bottom + 4) / zf });
           setWsOpen((v) => !v);
         }}
           title={under ? t("dc.wsTipUnder", { dir: under }) : t("dc.wsTipAll")}
@@ -505,7 +507,8 @@ function DocCenterDialog({ onClose, initialUnder, embedded }: { onClose: () => v
             <button onClick={(e) => {
               const r = e.currentTarget.getBoundingClientRect();
               const w = Math.min(340, window.innerWidth * 0.86);
-              setTagSelRect({ left: Math.max(8, Math.min(r.left, window.innerWidth - w - 8)), top: r.bottom + 4 });
+              const zf = zoomFactorOf(e.currentTarget); // panel UI scale: divide viewport-space back
+              setTagSelRect({ left: Math.max(8, Math.min(r.left, window.innerWidth - w - 8)) / zf, top: (r.bottom + 4) / zf });
               setTagSelOpen((v) => !v);
             }}
               title={view === "dir" ? t("dc.dirFilterTip") : t("dc.tagFilterTip")}
