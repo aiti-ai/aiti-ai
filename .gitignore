@@ -67,8 +67,10 @@ e2e_*.mjs
 
 # ported extension packages (extensions/) build artifacts
 extensions/node_modules
-extensions/**/node_modules/
-integrations/**/node_modules/
+extensions/**/node_modules
+integrations/**/node_modules
+pi-plugins/**/node_modules
+packages/**/node_modules
 
 # npm pack artifacts & scratch dirs (regenerable / local-only)
 /*.tgz
