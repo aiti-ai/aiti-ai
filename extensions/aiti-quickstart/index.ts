@@ -63,6 +63,8 @@ export default {
     workspacePickerActions: [{ id: "acquire", label: "获取工作区…", title: "获取工作区：Git 克隆 / 上传 / 本地目录 / 新建", icon: "icons/rocket.svg" }],
     i18n: {
       "zh-CN": {
+        "ext.displayName": "快速上手",
+        "feat.acquire": "获取工作区…",
         "qs.guideTitle": "快速上手",
         "qs.sidebarLabel": "快速上手",
         "qs.sidebarTitle": "快速上手：回到欢迎页引导",
