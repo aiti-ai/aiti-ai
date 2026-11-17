@@ -31,6 +31,31 @@ const SessionSidebarLazy = dynamic(
   () => import("./SessionSidebar").then((m) => ({ default: m.SessionSidebar })),
   { ssr: false, loading: () => null },
 );
+
+/** Waiting-window skeleton for the sidebarContent takeover (slow-flash fix):
+ *  block-shape placeholder mirroring the taker's layout (header + project rows
+ *  + folder block), shown instead of the native sidebar while the taker bundle
+ *  is still loading on a slow network. */
+function SidebarTakeoverSkeleton() {
+  return (
+    <div className="takeover-skeleton" aria-hidden="true">
+      <div className="takeover-skeleton-row takeover-skeleton-header" />
+      <div className="takeover-skeleton-block">
+        <div className="takeover-skeleton-row takeover-skeleton-head" />
+        <div className="takeover-skeleton-row takeover-skeleton-line" />
+        <div className="takeover-skeleton-row takeover-skeleton-line" />
+        <div className="takeover-skeleton-row takeover-skeleton-line" />
+        <div className="takeover-skeleton-row takeover-skeleton-line" />
+      </div>
+      <div className="takeover-skeleton-block">
+        <div className="takeover-skeleton-row takeover-skeleton-head" />
+        <div className="takeover-skeleton-row takeover-skeleton-line" />
+        <div className="takeover-skeleton-row takeover-skeleton-line" />
+        <div className="takeover-skeleton-row takeover-skeleton-line" />
+      </div>
+    </div>
+  );
+}
 import { hasExtRender } from "@/lib/ext-ui-store";
 import type { ExtRenderProps, ExtUiItemRegistered } from "@/lib/ext-ui-store";
 import { getExtUiItems, subscribeExtUi } from "@/lib/ext-ui-store";
@@ -4369,6 +4394,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
           {sidebarFooterRow}
         </>
       }
+      placeholder={<SidebarTakeoverSkeleton />}
       extra={sidebarContentExtra}
     />
   );
