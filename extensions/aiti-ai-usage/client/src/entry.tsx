@@ -22,5 +22,5 @@ export default function register(ctx: Record<string, unknown>) {
   ctx.registerItems?.("sessionStats", [{ id: "report-entry", render: SessionStatsEntry }]);
   ctx.registerItems?.("dialogs", [{ id: "report", render: UsageReport }]);
   // 右栏停靠 face：注册 raw itemId（宿主拼 extId:itemId = REPORT_KEY）
-  ctx.registerItems?.("rightFileDock", [{ id: "report", render: ReportDockFace, meta: { title: "用量" } }]);
+  ctx.registerItems?.("rightFileDock", [{ id: "report", render: ReportDockFace, meta: { title: "i18n:it.report.title" } }]);
 }

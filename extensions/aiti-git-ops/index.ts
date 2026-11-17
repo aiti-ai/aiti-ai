@@ -21,6 +21,16 @@ export default {
   // 零 client bundle（同 aiti-echo-agent 等 10 个纯服务端扩展先例）
   provides: ["aiti-git-ops.api"],
 
+
+  ui: {
+    // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
+    i18n: {
+      en: {
+        "ext.displayName": "Git Ops (shared git operations engine)",
+      },
+    },
+  },
+
   server: {
     startup: async (ctx: any) => {
       servicesCtx = ctx?.services ?? null;

@@ -392,10 +392,15 @@ export default {
     ],
     i18n: {
       "zh-CN": {
-      "helper.open.label": "AI 助手",
+        "it.open.title": "aiti-helper：一句话唤起 AI（帮助点/自由发挥；独立置顶弹窗，可拖拽，有历史）",
+        "it.open.title.2": "aiti-helper：一句话唤起 AI（帮助点/自由发挥；独立置顶弹窗，可拖拽，有历史）",
+        "ext.displayName": "AI 助手入口",      "helper.open.label": "AI 助手",
       "helper.open.title": "aiti-helper：一句话唤起 AI（帮助点/自由发挥；独立置顶弹窗，可拖拽，有历史）",
       },
       en: {
+        "it.open.title": "aiti-helper: invoke AI in one sentence (helper dots / freeform; standalone draggable top window, with history)",
+        "it.open.title.2": "aiti-helper: invoke AI in one sentence (helper dots / freeform; standalone draggable top window, with history)",
+        "ext.displayName": "AI Helper",
       "helper.open.label": "AI assistant",
       "helper.open.title": "aiti-helper: one-phrase AI summon (floating window, draggable, with history)",
       },

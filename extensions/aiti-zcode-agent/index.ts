@@ -1624,6 +1624,33 @@ export default {
     spawnArgsPrefixFeature("ZCode CLI"),
   ],
 
+
+  ui: {
+    // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
+    i18n: {
+      "zh-CN": {
+        "ext.displayName": "ZCode 会话后端",
+      },
+      en: {
+        "feat.zcode.transport.desc": "app-server = long-lived ZCode Protocol (same as desktop: streaming typewriter/tool cards/native steer/hot model switch, saves ~5-6s cold start per turn); oneshot = single-shot process per turn (legacy fallback). Empty defaults to app-server",
+        "feat.zcode.runtimePath.desc": "ZCode runtime: zcode.cjs file, extracted dir, or executable; auto-probed when empty",
+        "feat.zcode.autoDownload.desc": "Auto-downloads from the official site when the runtime isn't found (~30MB, cached)",
+        "feat.zcode.mode.desc": "--mode for each spawn: build (asks on tool calls) / edit / plan",
+        "feat.zcode.model.desc": "Default model for new sessions (provider/model, e.g. bigmodel/GLM-5.3)",
+        "feat.zcode.apiKeyOverride.desc": "Manually provides the coding-plan API key (skips desktop keychain reuse)",
+        "feat.zcode.ultraGateway.desc": "app-server routes dynamically via the zcode.z.ai platform root (desktop-linked accounts)",
+        "ext.displayName": "ZCode Session Backend",        "ext.description": "app-server = long-lived ZCode Protocol (same as desktop: streaming typewriter/tool cards/native steer/hot model switch, saves ~5-6s cold start per turn); oneshot = single-shot process per turn (legacy fallback). Empty defaults to app-server.",
+        "feat.zcode.transport": "Transport channel",
+        "feat.zcode.runtimePath": "Runtime path",
+        "feat.zcode.autoDownload": "Auto-download AppImage",
+        "feat.zcode.mode": "Permission mode",
+        "feat.zcode.model": "Default model ref",
+        "feat.zcode.apiKeyOverride": "API key manual override",
+        "feat.zcode.ultraGateway": "Ultra gateway routing",
+      },
+    },
+  },
+
   server: {
     startup(ctx: {
       configDir: string;

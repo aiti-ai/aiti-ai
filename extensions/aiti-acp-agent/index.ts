@@ -1529,9 +1529,17 @@ export default {
     toolbar: [{ id: "aiti-acp-manage-open", label: "ACP", title: "i18n:acp.manage.title", icon: "icons/plug.svg", feature: "behavior.showAcpManager" }],
     i18n: {
       "zh-CN": {
-      "acp.manage.title": "ACP 后端 Agent 管理",
+        "ext.displayName": "ACP 会话后端",      "acp.manage.title": "ACP 后端 Agent 管理",
       },
       en: {
+        "feat.acp.permissionPolicy.desc": "allow (default, trusted agent: prefers bypass mode + auto-approves, no interruptions) | ask (approval card in the frontend for manual review; requests and decisions are logged into the session)",
+        "feat.acp.permissionTimeoutSec.desc": "Fallback for ask mode when no human responds: auto-allow on timeout (trust first), default 300; 0 = wait forever",
+        "feat.behavior.showAcpManager.desc": "Hidden by default. When enabled, shows the ACP management entry (dialog) in the top toolbar; the \"Manage ACP Agents…\" option in the new-session Backend dropdown works regardless",
+        "ext.displayName": "ACP Session Backend",
+        "ext.description": "allow (default, trusted agent: prefers bypass mode + auto-approves, no interruptions) | ask (approval card in the frontend for manual review; requests and decisions are written into the session)",
+        "feat.acp.permissionPolicy": "Tool permission policy",
+        "feat.acp.permissionTimeoutSec": "Manual-approval timeout (seconds)",
+        "feat.behavior.showAcpManager": "Show the \"ACP Agents\" toolbar button",
       "acp.manage.title": "Manage ACP backend agents",
       },
     },
