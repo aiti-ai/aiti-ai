@@ -113,7 +113,7 @@ test("consistency: entry.tsx 注册 meta 完整（areas both / defaultArea botto
   assert.ok(/areas:\s*\[\s*"top",\s*"bottom"\s*\]/.test(meta), "areas 应为 both");
   assert.ok(/defaultArea:\s*"bottom"/.test(meta), "defaultArea 应为 bottom");
   assert.ok(/w:\s*4/.test(meta) && /h:\s*1/.test(meta), "尺寸应为 4×1");
-  assert.ok(/title:\s*"示例小组件"/.test(meta), "应有 title（自定义面板显示名）");
+  assert.ok(/title:\s*"i18n:it\.widget\.title"/.test(meta), "应有 title（i18n 引用，自定义面板显示名）");
   assert.ok(/render:\s*WidgetDemoCard/.test(meta), "运行时注册必须带 render");
 });
 
