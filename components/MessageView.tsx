@@ -210,6 +210,8 @@ interface Props {
   /** `message` as the composer takes it back: pi's /fork puts the forked message in the editor. */
   onFork?: (entryId: string, message: UserMessage) => void;
   forking?: boolean;
+  /** A bash command is still running: the fork button stays visible but clicks are held until it settles. */
+  forkBashRunning?: boolean;
   onNavigate?: (entryId: string) => Promise<boolean>;
   prevAssistantEntryId?: string;
   /** Unified "edit from here" entry: frontend-only marking (prefill the input box + highlight + button flips to cancel); the actual rewind happens only when the message is sent */
@@ -330,9 +332,9 @@ function haveSameRelevantToolResults(
   return true;
 }
 
-export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, onOpenSubagent, entryId, searchBlock, onFork, forking, onNavigate, prevAssistantEntryId, onEditFromHere, editingFromStart, onCancelEditFromStart, onEditContent, onCancelEdit, isEditing, showTimestamp, prevTimestamp, sessionId, writtenFiles, turnAssistantEntryIds, suppressMessageFooter, onCompact, isCompacting, compactError }: Props) {
+export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, onOpenSubagent, entryId, searchBlock, onFork, forking, forkBashRunning, onNavigate, prevAssistantEntryId, onEditFromHere, editingFromStart, onCancelEditFromStart, onEditContent, onCancelEdit, isEditing, showTimestamp, prevTimestamp, sessionId, writtenFiles, turnAssistantEntryIds, suppressMessageFooter, onCompact, isCompacting, compactError }: Props) {
   if (message.role === "user") {
-    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onNavigate={onNavigate} prevAssistantEntryId={prevAssistantEntryId} onEditFromHere={onEditFromHere} editingFromStart={editingFromStart} onCancelEditFromStart={onCancelEditFromStart} onEditContent={onEditContent} onCancelEdit={onCancelEdit} isEditing={isEditing} />;
+    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} forkBashRunning={forkBashRunning} onNavigate={onNavigate} prevAssistantEntryId={prevAssistantEntryId} onEditFromHere={onEditFromHere} editingFromStart={editingFromStart} onCancelEditFromStart={onCancelEditFromStart} onEditContent={onEditContent} onCancelEdit={onCancelEdit} isEditing={isEditing} />;
   }
   if (message.role === "assistant") {
     return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} onOpenSubagent={onOpenSubagent} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} searchBlock={searchBlock} writtenFiles={writtenFiles} turnAssistantEntryIds={turnAssistantEntryIds} suppressMessageFooter={suppressMessageFooter} onCompact={onCompact} isCompacting={isCompacting} compactError={compactError} />;
@@ -363,6 +365,7 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     && prev.searchBlock === next.searchBlock
     && prev.onFork === next.onFork
     && prev.forking === next.forking
+    && prev.forkBashRunning === next.forkBashRunning
     && prev.onNavigate === next.onNavigate
     && prev.prevAssistantEntryId === next.prevAssistantEntryId
     && prev.onEditFromHere === next.onEditFromHere
@@ -382,13 +385,14 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     && prev.compactError === next.compactError;
 });
 
-function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditFromHere, editingFromStart, onCancelEditFromStart, onEditContent, onCancelEdit, isEditing }: {
+function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, forkBashRunning, onNavigate, prevAssistantEntryId, onEditFromHere, editingFromStart, onCancelEditFromStart, onEditContent, onCancelEdit, isEditing }: {
   message: UserMessage;
   cwd?: string;
   onOpenFile?: (filePath: string, page?: number) => void;
   entryId?: string;
   onFork?: (entryId: string, message: UserMessage) => void;
   forking?: boolean;
+  forkBashRunning?: boolean;
   onNavigate?: (entryId: string) => Promise<boolean>;
   prevAssistantEntryId?: string;
   onEditFromHere?: (entryId: string, message: UserMessage, branchPointId: string | null) => void;
@@ -708,15 +712,16 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
               )}
               {canFork && (
                 <button
-                  onClick={() => { onFork!(entryId!, editTarget); }}
+                  onClick={() => { if (!forkBashRunning) onFork!(entryId!, editTarget); }}
                   disabled={forking}
-                   title={forking ? t("i18n.creatingSession") : t("i18n.newSessionTitle")}
+                   title={forking ? t("i18n.creatingSession") : forkBashRunning ? t("i18n.newSessionBashRunning") : t("i18n.newSessionTitle")}
                   style={{
                     display: "flex", alignItems: "center", gap: 4,
                     padding: "3px 8px", height: 22,
                     background: "none", border: "none",
                     borderRadius: 5,
                     color: forking ? "var(--accent)" : "var(--text-dim)",
+                    opacity: forkBashRunning && !forking ? 0.55 : 1,
                     cursor: forking ? "not-allowed" : "pointer",
                     fontSize: 11, fontWeight: 400,
                     whiteSpace: "nowrap",
