@@ -201,10 +201,10 @@ export function HeavyFollowToggle(props) {
   // 当前会话消息总数徽标（仅跟读开启时显示：关闭跟读不订阅不拉列表，数字恒无意义）
   const totalMsgs = (on && listId && st.msgList?.[listId]) ? st.msgList[listId].length : 0;
   const title = !on
-    ? t("speek.followOff") + (totalMsgs ? `（会话 ${totalMsgs} 条消息）` : "")
+    ? t("speek.followOff") + (totalMsgs ? t("speek.followOffMsgs", { n: totalMsgs }) : "")
     : (readingHidden
-      ? t("speek.followHidden") + "（点按恢复播放条）"
-      : t("speek.followOn") + "（点按关闭跟读）");
+      ? t("speek.followHidden") + t("speek.followRestoreHint")
+      : t("speek.followOn") + t("speek.followDisableHint"));
   // Three-state icon (player convention, user-decided 2026-11-18): off / on but not reading = outlined horn;
   // reading = solid square (stop semantics). Solid only for the square — a solid horn mixed into the ⋯ menu's outlined icons reads like a color blob.
   const playing = on && st.playing;

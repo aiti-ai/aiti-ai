@@ -10,7 +10,7 @@
  *       成功后 dispatch "pi-web:models-changed" 让模型选择器即时刷新。
  */
 import { useEffect, useMemo, useState } from "react";
-import { apiUrl, extSvc } from "./host-shim";
+import { apiUrl, extSvc, t } from "./host-shim";
 
 const api = (p: string, init?: RequestInit) =>
   fetch(apiUrl("/api/extensions/aiti-models-import" + p), { cache: "no-store", ...init });
@@ -149,12 +149,12 @@ export function ImportDialogSlot() {
       >
         {/* 标题栏（首个子元素 = aiti-float 拖拽把手） */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, cursor: "move" }}>
-          <div style={{ fontSize: 15, fontWeight: 700, flex: 1 }}>从其他 Agent 导入模型配置</div>
-          <button onClick={() => void doScan()} disabled={loading} title="重新扫描本机 agent 配置"
+          <div style={{ fontSize: 15, fontWeight: 700, flex: 1 }}>{t("mi.shell.title")}</div>
+          <button onClick={() => void doScan()} disabled={loading} title={t("mi.shell.rescanTitle")}
             style={{ background: "none", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text-muted)", cursor: "pointer", fontSize: 11, padding: "3px 8px" }}>
-            {loading ? "扫描中…" : "↻ 重新扫描"}
+            {loading ? t("mi.shell.scanning") : "↻ " + t("mi.shell.rescan")}
           </button>
-          <button onClick={() => void doClose()} aria-label="关闭" title="关闭"
+          <button onClick={() => void doClose()} aria-label={t("mi.shell.close")} title={t("mi.shell.close")}
             style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, lineHeight: 1, padding: "2px 6px" }}>✕</button>
         </div>
         <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 10 }}>
