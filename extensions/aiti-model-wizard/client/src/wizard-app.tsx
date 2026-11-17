@@ -9,7 +9,7 @@
  * 架构：toolbar 🧙 按钮 → 独立置顶 dialog（pages slot）+ banners
  */
 import { useState, useEffect, useCallback, useRef } from "react";
-import { apiUrl, extSvc, regSvc, getCtx } from "./host-shim";
+import { apiUrl, extSvc, regSvc, getCtx, t } from "./host-shim";
 import { uiConfirm } from "../../../_shared/ui-dialogs";
 import { api, jsonBody, Ic, ICONS, LINK, genName, fetchNewModelsOnce, fetchNewModelsWithToast, invalidateNewModels } from "./wizard-lib";
 import { ProviderAvatar } from "./provider-icons";
@@ -4198,7 +4198,7 @@ export function WizardButton() {
   const open = () => { try { (window.__aitiModelWizardOpenTab || window.__aitiModelWizardOpen)!(newTotal ? "status" : undefined); } catch {} };
   return (
     <button
-      title={newTotal ? "aiti-model-wizard：发现 " + newTotal + " 个新模型，点击查看" : "aiti-model-wizard：添加 AI 提供商/模型"}
+      title={newTotal ? t("mw.shell.newFound", { n: newTotal }) : t("mw.shell.title")}
       onClick={open}
       onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
       onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}
