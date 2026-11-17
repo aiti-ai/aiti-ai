@@ -1014,53 +1014,8 @@ function AssistantMessageView({
             </>
           );
         })()}
-        {textContent && !isStreaming && (
-          <div
-            style={{
-              display: "flex", alignItems: "center", gap: 6, marginLeft: "auto",
-              opacity: hovered ? 1 : 0,
-              pointerEvents: hovered ? "auto" : "none",
-              transition: "opacity 0.12s",
-            }}
-          >
-            <button
-              onClick={copyContent}
-              title={t("i18n.copyMessage")}
-              style={{
-                display: "flex", alignItems: "center", gap: 4,
-                padding: "1px 6px", height: 18,
-                background: "none", border: "none",
-                borderRadius: 5,
-                color: copied ? "var(--accent)" : "var(--text-dim)",
-                cursor: "pointer",
-                fontSize: 11, fontWeight: 400,
-                whiteSpace: "nowrap",
-                transition: "color 0.12s",
-              }}
-              onMouseEnter={(e) => { if (!copied) e.currentTarget.style.color = "var(--accent)"; }}
-              onMouseLeave={(e) => { if (!copied) e.currentTarget.style.color = "var(--text-dim)"; }}
-            >
-              {copied ? (
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-              ) : (
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                </svg>
-              )}
-              {copied ? t("i18n.copied") : t("i18n.copy")}
-            </button>
-            <ExtSlot
-              name="assistantMessageActions"
-              currentSession={null}
-              extra={{ entryId, sessionId, text: textContent }}
-            />
-          </div>
-        )}
         {time && !isStreaming && (
-          <span style={{ fontSize: 10, color: "var(--text-dim)", marginLeft: (textContent && !isStreaming) ? 0 : "auto" }}>{time}</span>
+          <span style={{ fontSize: 10, color: "var(--text-dim)", marginLeft: "auto" }}>{time}</span>
         )}
       </div>
 
@@ -1069,6 +1024,58 @@ function AssistantMessageView({
           <BlockView key={`${entryId ?? "stream"}-${originalIndex}`} block={block} searchTarget={block === searchBlock} toolResults={toolResults} isStreaming={isStreaming} streamingDuration={streamingDurations.get(originalIndex) ?? (block.type === "thinking" ? thinkingDurationFromFile : undefined)} toolCallDurations={toolCallDurations} cwd={cwd} onOpenFile={onOpenFile} onOpenSubagent={onOpenSubagent} sessionId={sessionId} entryId={entryId} blockIndex={originalIndex} />
         ))}
       </div>
+
+      {/* Hover actions live at the message's bottom-left (copy + extension
+          buttons, e.g. aiti-msg-share). They used to sit at the right edge of
+          the top meta row, which read as floating at the top-right corner;
+          every mainstream AI chat surfaces them under the content on the left,
+          so they moved back there (same hover gating as before). The meta row
+          keeps model + usage + timestamp. */}
+      {textContent && !isStreaming && (
+        <div
+          style={{
+            display: "flex", alignItems: "center", gap: 6, marginTop: 2,
+            opacity: hovered ? 1 : 0,
+            pointerEvents: hovered ? "auto" : "none",
+            transition: "opacity 0.12s",
+          }}
+        >
+          <button
+            onClick={copyContent}
+            title={t("i18n.copyMessage")}
+            style={{
+              display: "flex", alignItems: "center", gap: 4,
+              padding: "1px 6px", height: 18,
+              background: "none", border: "none",
+              borderRadius: 5,
+              color: copied ? "var(--accent)" : "var(--text-dim)",
+              cursor: "pointer",
+              fontSize: 11, fontWeight: 400,
+              whiteSpace: "nowrap",
+              transition: "color 0.12s",
+            }}
+            onMouseEnter={(e) => { if (!copied) e.currentTarget.style.color = "var(--accent)"; }}
+            onMouseLeave={(e) => { if (!copied) e.currentTarget.style.color = "var(--text-dim)"; }}
+          >
+            {copied ? (
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            ) : (
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+              </svg>
+            )}
+            <span className="message-action-label">{copied ? t("i18n.copied") : t("i18n.copy")}</span>
+          </button>
+          <ExtSlot
+            name="assistantMessageActions"
+            currentSession={null}
+            extra={{ entryId, sessionId, text: textContent }}
+          />
+        </div>
+      )}
 
       {providerError && (
         <div
