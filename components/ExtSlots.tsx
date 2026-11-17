@@ -478,7 +478,11 @@ export function translateExtItemText(extId: string | undefined, text: string | u
   if (!ui18n) return key;
   const loc = currentUiLocale();
   const table = ui18n[loc] ?? ui18n[loc.split("-")[0]] ?? ui18n.en ?? Object.values(ui18n)[0];
-  return table?.[key] ?? key;
+  if (table?.[key]) return table[key];
+  // Missing key in the active table → fall back to any table that has it (partial
+  // translations degrade to the other language instead of a bare key).
+  for (const t of Object.values(ui18n)) { if (t?.[key]) return t[key]; }
+  return key;
 }
 
 function makeClientContext(ext: ManifestExt): ExtClientContext {
@@ -491,6 +495,16 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
     if (!ui18n) return EMPTY_I18N_TABLE;
     const loc = currentUiLocale();
     return ui18n[loc] ?? ui18n[loc.split("-")[0]] ?? ui18n.en ?? Object.values(ui18n)[0] ?? EMPTY_I18N_TABLE;
+  };
+  // t() with a cross-table fallback: a key missing from the active table resolves
+  // against the extension's other tables before degrading to the bare key.
+  const translate = (key: string, params?: Record<string, string | number>): string => {
+    const table = tableFor();
+    let msg = table[key];
+    if (msg === undefined && ui18n) {
+      for (const t of Object.values(ui18n)) { if (t && t[key] !== undefined) { msg = t[key]; break; } }
+    }
+    return interpolate(msg ?? key, params);
   };
   const ctx: ExtClientContext = {
     h: createElement,
@@ -509,7 +523,7 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
     // host-shim lazy context (__smI18nCtx) → directly returns the host
     // useI18n() current value (t/locale follow the host locale)
     useContext: ((c: any) => (c && (c as any).__smI18nCtx
-      ? { t: (key: string, params?: Record<string, string | number>) => interpolate(tableFor()[key] ?? key, params), locale: currentUiLocale() }
+      ? { t: (key: string, params?: Record<string, string | number>) => translate(key, params), locale: currentUiLocale() }
       : useContext(c))) as any,
     useSyncExternalStore: ((sub: any, get: any, getServer?: any) => useSyncExternalStore(sub as any, get, getServer)) as any,
     useReducer: ((fn: any, init: any, initArg?: any) => useReducer(fn, init, initArg as never)) as any,
@@ -519,7 +533,7 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
     forwardRef: ((fn: any) => forwardRef(fn as any)) as any,
     memo: ((fn: any) => memo(fn as any)) as any,
     createPortal: (children, container) => createPortal(children, container),
-    t: (key, params) => interpolate(tableFor()[key] ?? key, params),
+    t: translate,
     apiUrl,
     renderSlot: (name, props) => createElement(ExtSlot, {
       name,
