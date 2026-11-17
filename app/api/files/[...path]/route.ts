@@ -46,7 +46,7 @@ import { pageStreamLabel, registerPageStream } from "@/lib/page-stream-registry"
 const FILE_REQUEST_TYPES = ["list", "read", "download", "meta", "preview", "watch"] as const;
 type FileRequestType = typeof FILE_REQUEST_TYPES[number];
 const FILE_REQUEST_TYPE_SET = new Set<string>(FILE_REQUEST_TYPES);
-const MAX_UPLOAD_FILE_BYTES = 25 * 1024 * 1024;
+// One limit for a request's files together; a single file may use all of it.
 const MAX_UPLOAD_TOTAL_BYTES = 100 * 1024 * 1024;
 // Multipart boundaries and headers are not file bytes, but must be bounded too.
 const MAX_UPLOAD_REQUEST_BYTES = MAX_UPLOAD_TOTAL_BYTES + 1024 * 1024;
@@ -411,13 +411,15 @@ export async function POST(
           continue;
         }
 
-        // 上游修复（#1039）：冲突替换改走 lib 的 replaceUploadFile（临时文件+rename），
-        // 写失败时不再先删后写、丢失原文件
+        // Upstream fix (#1039): conflict replacement goes through the lib's replaceUploadFile
+        // (temp file + rename), so a failed write no longer deletes the original first.
+        // Upstream 0.17: writes are async — a 100MB synchronous write would stall every
+        // stream and request this process serves until the disk catches up.
         try {
           if (conflictSet.has(file.name)) {
-            replaceUploadFile(destination, bytes);
+            await replaceUploadFile(destination, bytes);
           } else {
-            fs.writeFileSync(destination, bytes, { flag: "wx" });
+            await fs.promises.writeFile(destination, bytes, { flag: "wx" });
           }
           uploaded.push(file.name);
         } catch (error) {
@@ -520,7 +522,7 @@ function streamFile(filePath: string, stat: fs.Stats, contentType: string, range
   }
 
   const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader);
-  if (!match) {
+  if (!match || (!match[1] && !match[2])) {
     return new Response(null, {
       status: 416,
       headers: {

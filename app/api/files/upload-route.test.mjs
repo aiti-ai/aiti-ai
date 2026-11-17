@@ -30,19 +30,21 @@ function fixture() {
   return { directory, destination };
 }
 
-async function upload(directory, strategy = "overwrite", names = ["important.txt"], ensure = false) {
-  // 合并契约（本地演化版）：POST /api/files/upload?conflict=…，directory 走 multipart 字段而非 URL 段
+async function upload(directory, strategy = "overwrite", names = ["important.txt"], contentsOrEnsure = "replacement", ensure = false) {
+  // Upstream wire form: directory encoded into the URL path segments (lib/file-upload-client
+  // uploadFiles/upload-check). Regression: catch-all segments carry no leading slash, so a naive
+  // join turns unix absolute paths relative ("home/…" → "path must be absolute" 400) while windows
+  // drive-letter paths survive by luck — the route must restore them via filePathFromApiSegments.
+  // The multipart directory field (fork evolution) is also appended; the route accepts both forms.
+  const contents = contentsOrEnsure === true ? "replacement" : contentsOrEnsure;
+  const withEnsure = ensure || contentsOrEnsure === true;
+  const encoded = encodeFilePathForApi(directory);
   const form = new FormData();
   form.append("directory", directory);
-  for (const name of names) form.append("files", new File(["replacement"], name));
-  return POST(new NextRequest(`http://localhost/api/files/upload?conflict=${strategy}${ensure ? "&ensure=1" : ""}`, {
+  for (const name of names) form.append("files", new File([contents], name));
+  return POST(new NextRequest(`http://localhost/api/files/${encoded}?type=upload&conflict=${strategy}${withEnsure ? "&ensure=1" : ""}`, {
     method: "POST", headers: { host: "localhost" }, body: form,
-  }), { params: Promise.resolve({ path: ["upload"] }) });
-}
-
-// 上游 wire 形态：directory 编码进 URL 路径段（lib/file-upload-client uploadFiles/upload-check）。
-// 回归：catch-all 段不含首斜杠，直接 join 会把 Unix 绝对路径变相对（"home/…" → "path must be absolute" 400），
-// Windows 盘符路径侥幸存活——必须经 filePathFromApiSegments 还原。
+  }), { params: Promise.resolve({ path: encoded.split("/").map(decodeURIComponent) }) });
 async function uploadViaUrlPath(directory, type = "upload", names = ["important.txt"]) {
   const form = new FormData();
   for (const name of names) form.append("files", new File(["replacement"], name));
@@ -52,6 +54,7 @@ async function uploadViaUrlPath(directory, type = "upload", names = ["important.
     `http://localhost/api/files/${encoded}?type=${type}&conflict=skip${type === "upload" ? "&ensure=1" : ""}`,
     { method: "POST", headers: { host: "localhost" }, body: form },
   ), { params: Promise.resolve({ path: segments }) });
+}
 }
 
 test("url-path directory form restores the leading slash for unix absolute paths (upload)", async () => {
@@ -95,12 +98,12 @@ test("windows drive-letter directory in url path stays absolute", async () => {
 for (const partial of [false, true]) {
   test(`failed overwrite preserves original and cleans staging (partial write: ${partial})`, async (t) => {
     const { directory, destination } = fixture();
-    const write = fs.writeFileSync;
+    const write = fs.promises.writeFile;
     let injected = false;
-    t.mock.method(fs, "writeFileSync", (target, ...args) => {
+    t.mock.method(fs.promises, "writeFile", async (target, ...args) => {
       if (String(target).startsWith(directory + path.sep)) {
         injected = true;
-        if (partial) write(target, "partial replacement", args[1]);
+        if (partial) await write(target, "partial replacement", args[1]);
         throw Object.assign(new Error("simulated ENOSPC"), { code: "ENOSPC" });
       }
       return write(target, ...args);
@@ -148,9 +151,9 @@ test("refuses a destination changed to a link while the replacement is staged", 
   const { directory, destination } = fixture();
   const outside = fs.mkdtempSync(path.join(base, "changed-outside-"));
   fs.writeFileSync(path.join(outside, "secret.txt"), "private contents");
-  const write = fs.writeFileSync;
-  t.mock.method(fs, "writeFileSync", (target, ...args) => {
-    const result = write(target, ...args);
+  const write = fs.promises.writeFile;
+  t.mock.method(fs.promises, "writeFile", async (target, ...args) => {
+    const result = await write(target, ...args);
     if (String(target).startsWith(directory + path.sep)) {
       fs.unlinkSync(destination);
       fs.symlinkSync(outside, destination, process.platform === "win32" ? "junction" : "dir");
@@ -162,6 +165,30 @@ test("refuses a destination changed to a link while the replacement is staged", 
   assert.equal((await response.json()).errors[0].error, "Cannot replace a directory or symbolic link");
   assert.equal(fs.lstatSync(destination).isSymbolicLink(), true);
   assert.equal(fs.readFileSync(path.join(outside, "secret.txt"), "utf8"), "private contents");
+  assert.deepEqual(fs.readdirSync(directory), ["important.txt"]);
+});
+
+test("one file may fill the 100MB limit, and one byte more is refused", async () => {
+  const { directory } = fixture();
+  const limit = 100 * 1024 * 1024;
+
+  const atLimit = await upload(directory, "error", ["full.bin"], Buffer.alloc(limit));
+  assert.equal(atLimit.status, 200);
+  assert.deepEqual(await atLimit.json(), { uploaded: ["full.bin"], skipped: [], errors: [] });
+  assert.equal(fs.statSync(path.join(directory, "full.bin")).size, limit);
+
+  const over = await upload(directory, "error", ["over.bin"], Buffer.alloc(limit + 1));
+  assert.equal(over.status, 413);
+  assert.deepEqual(await over.json(), { error: "Uploads must total 100MB or less" });
+  assert.deepEqual(fs.readdirSync(directory).sort(), ["full.bin", "important.txt"]);
+});
+
+test("files that pass the limit only together are refused before any is written", async () => {
+  const { directory } = fixture();
+  const half = Buffer.alloc(50 * 1024 * 1024 + 1);
+  const response = await upload(directory, "error", ["first.bin", "second.bin"], half);
+  assert.equal(response.status, 413);
+  assert.deepEqual(await response.json(), { error: "Uploads must total 100MB or less" });
   assert.deepEqual(fs.readdirSync(directory), ["important.txt"]);
 });
 

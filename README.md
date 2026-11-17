@@ -45,7 +45,7 @@ Beyond the workbench, the [aiti ecosystem](https://aiti.pw/) adds page-injection
 - **Project file tools**: browse and upload files, inspect Git diffs, and preview source, Markdown, images, audio, PDFs, and DOCX files with automatic refresh.
 - **Git worktrees**: switch checkouts from the sidebar while keeping sessions from the same repository grouped together.
 - **Web-based configuration**: manage provider login and API keys, models, model tests, plugin packages, and skills without leaving Pi Web.
-- **English, Simplified Chinese, and Traditional Chinese UI**: Pi Web follows the browser language initially and provides a language switcher in the top bar.
+- **English, Simplified Chinese, and Traditional Chinese UI**: Pi Web follows the browser language initially. Change it under Settings → General → Language.
 
 ## Quick Start
 
@@ -115,6 +115,12 @@ PI_WEB_PASSWORD='a-long-random-password' pi-web --hostname 0.0.0.0
 
 Password authentication does not encrypt the connection. Do not expose Pi Web over plain HTTP to the internet; use HTTPS through a trusted reverse proxy or a trusted VPN. If a reverse proxy sends an external hostname, add that exact name to `PI_WEB_ALLOWED_HOSTS`. This allow-list does not change the address Pi Web binds to.
 
+With many chats, terminals or file previews active at once, plain HTTP limits the browser to six connections and requests start to wait; see [Serving Pi Web over HTTP/2](./docs/http2.md).
+
+### Docker
+
+Each release publishes an image to `ghcr.io/aiti-ai/aiti-ai` (Docker Hub `aitiai/pi-web` and Aliyun ACR for the core/full variants). See [Running Pi Web in Docker](./docs/docker.md) for it, the Compose example and which volumes to keep.
+
 ### HTTP Proxy
 
 Server-side model and API requests honor the standard `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` environment variables.
@@ -144,6 +150,7 @@ npx @aiti-ai/pi-web@latest
 - **Shared configuration**: the Models panel uses pi's model, settings, and credential storage, so changes are visible to both interfaces. An open session applies a saved edit of its model when you select the model again.
 - **File access boundary**: the file browser is limited to working directories selected in Pi Web and project or session roots it already knows about; it is not a general filesystem browser.
 - **Git worktrees**: see [Worktrees in Pi Web](https://github.com/aiti-ai/aiti-ai/blob/main/docs/worktrees.md) for switcher visibility, worktree creation, and removal behavior.
+- **Integration hooks**: apps that embed Pi Web can replace the session row's context menu, and server-side pi extensions can keep a session from idle shutdown; see [Integration Hooks](./docs/integrations.md).
 
 ### Bundled pi plugins
 
