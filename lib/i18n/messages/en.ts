@@ -53,6 +53,8 @@ export const enLocale: LocalePlugin = {
     "settings.appearance": "Appearance",
     "settings.chatContentWidth": "Chat content width",
     "settings.chatContentFontSize": "Chat & terminal font size",
+    "settings.panelUiScale": "Panel UI scale",
+    "settings.resetPanelUiScale": "Reset panel UI scale",
     "settings.typography": "Fonts & layout",
     "settings.uiFontFamily": "Interface font",
     "settings.monoFontFamily": "Monospace font",

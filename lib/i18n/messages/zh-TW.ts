@@ -17,6 +17,8 @@ export const zhTWLocale: LocalePlugin = {
     "settings.appearance": "外觀",
     "settings.chatContentWidth": "聊天內容寬度",
     "settings.chatContentFontSize": "聊天和終端字體大小",
+    "settings.panelUiScale": "面板介面縮放",
+    "settings.resetPanelUiScale": "重設面板介面縮放",
     "settings.typography": "字體與排版",
     "settings.uiFontFamily": "介面字體",
     "settings.monoFontFamily": "等寬字體",
