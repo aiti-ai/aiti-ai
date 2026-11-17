@@ -465,11 +465,12 @@ export default {
     // 播放条（会话顶栏，常驻不消失）
     sessionTopbar: [{ id: "bar", label: "i18n:it.bar.label" }],
     // assistant 消息 hover 操作区：朗读这条/停止朗读
-    assistantMessageActions: [{ id: "read", label: "朗读这条回复" }],
+    assistantMessageActions: [{ id: "read", label: "i18n:it.read.label" }],
     // 设置面板（dialogs 插槽）
     dialogs: [{ id: "settings", label: "i18n:it.settings.label" }],
     i18n: {
       "zh-CN": {
+        "it.read.label": "朗读这条回复",
         "it.settings.label": "跟读设置",
         "it.bar.label": "跟读播放条",
         "ext.displayName": "AI 语音朗读",        "speek.followMode.label": "跟读模式",
@@ -487,12 +488,15 @@ export default {
         "speek.settings": "跟读设置",
         "speek.readThis": "开始朗读",
         "speek.stopReading": "停止朗读",
+        "speek.shellOff": "跟读模式：AI 回复自动朗读（点按开启）",
+        "speek.shellPending": "跟读模式：开启中（引擎模块加载后接管播放条）",
         "speek.backgroundContinue": "允许后台继续朗读（浏览器切到后台标签页时不停读）",
       },
-      en: {
+      "en": {
         "it.settings.label": "Read-aloud settings",
+        "it.read.label": "Read this reply aloud",
         "it.bar.label": "Read-aloud bar",
-        "ext.displayName": "AI Voice Reading",
+        "ext.displayName": "AI Read Aloud",
         "feat.bar": "Read-aloud playback bar",
         "feat.read": "Read this reply aloud",
         "feat.settings": "Read-aloud settings",
@@ -501,13 +505,12 @@ export default {
         "feat.tts.edge.bin": "edge-tts executable path (empty = auto-detect ~/.local/bin, PATH, pipx)",
         "feat.process.enabled": "Read the process aloud (also reads AI narration like \"Let me check…\"; skips thinking and tool runs)",
         "feat.minChars": "Ignore threshold (replies shorter than N chars are not read)",
-      },
-      "en": {
-        "speek.followMode.label": "Follow-along",
-        "speek.followMode.title": "Follow-along: read AI replies aloud (pause / skip / voice)",
-        "speek.followOn": "Follow-along on: AI replies will be read aloud",
-        "speek.followOff": "Turn on follow-along reading",
-        "speek.followHidden": "Follow-along active (bar hidden)",
+      
+        "speek.followMode.label": "Read aloud",
+        "speek.followMode.title": "Read aloud: AI replies are read out automatically (pause / skip / voice)",
+        "speek.followOn": "Read aloud on: AI replies will be spoken",
+        "speek.followOff": "Turn on read-aloud (AI replies read automatically)",
+        "speek.followHidden": "Read aloud active (bar hidden)",
         "speek.play": "Play",
         "speek.pause": "Pause",
         "speek.prev": "Previous message",
@@ -515,9 +518,11 @@ export default {
         "speek.replay": "Re-read current page",
         "speek.stop": "Stop & clear queue",
         "speek.queue": "{cur}/{total} queued",
-        "speek.settings": "Follow-along settings",
-        "speek.readThis": "Start reading",
+        "speek.settings": "Read-aloud settings",
+        "speek.readThis": "Read aloud",
         "speek.stopReading": "Stop reading",
+        "speek.shellOff": "Read aloud: AI replies are read out automatically (click to turn on)",
+        "speek.shellPending": "Read aloud: turning on (playback bar takes over once the engine module loads)",
         "speek.backgroundContinue": "Continue reading in background (don't stop when tab loses focus)",
       },
     },
