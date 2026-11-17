@@ -86,8 +86,10 @@ function esbuildBin() {
   return resolve(here, "..", "..", "..", "_shared", "..", "aiti-float", "node_modules", "esbuild", "bin", "esbuild");
 }
 
-/** 打包 folder-dock.tsx（react → stub）并安装 DOM 桩后 import；每测试独立模块实例。 */
-async function loadFolderDock(t) {
+/** Bundle folder-dock.tsx (react → stub) and import behind a DOM stub; fresh module per test.
+ *  opts.pathname: simulate sub-path deployment (e.g. "/win/") — INSTANCES_KEY is scoped by
+ *  the first pathname segment, so it must be set before the module import. */
+async function loadFolderDock(t, opts = {}) {
   const dir = mkdtempSync(join(tmpdir(), "afd-test-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const reactStub = join(dir, "react-stub.js");
@@ -107,6 +109,7 @@ async function loadFolderDock(t) {
     "--alias:react=" + reactStub, "--outfile=" + outfile, "--log-level=error"]);
 
   const dom = makeDomStub();
+  if (opts.pathname !== undefined) dom.window.location = { pathname: opts.pathname };
   globalThis.window = dom.window;
   globalThis.document = dom.document;
   globalThis.localStorage = dom.window.localStorage;
@@ -168,6 +171,33 @@ test("未钉 FIFO 配额：>3 未钉挤最旧，钉住豁免", async (t) => {
   mod.addFolderInstance("/f6"); // 未钉 = /f3,/f4,/f5 → 第 4 个挤出 /f3
   assert.deepEqual(readEntries().map((e) => e.p), ["/f2", "/f4", "/f5", "/f6"], "钉住豁免配额");
   assert.equal(mod.isFolderPinned("/f2"), true);
+});
+
+test("清单 key 按部署子路径分域：/win 实例落 pi:sidebar-dock:folders@/win，与根域互不可见", async (t) => {
+  const { mod } = await loadFolderDock(t, { pathname: "/win/" });
+  // seed the root-scope key first (simulates the other instance's existing manifest);
+  // the localStorage stub is installed by loadFolderDock, so seeding must come after it
+  writeEntries([{ p: "/root-only", pin: 1 }]);
+  // sub-path instance starts empty (no legacy-root inheritance); writes land on the suffixed key
+  assert.deepEqual(mod.readFolderInstances(), [], "sub-path instance must not see the root manifest");
+  assert.equal(mod.isFolderPinned("/root-only"), false);
+  mod.addFolderInstance("/win-project");
+  mod.toggleFolderPin("/win-project");
+  assert.deepEqual(
+    JSON.parse(globalThis.localStorage.getItem("pi:sidebar-dock:folders@/win") ?? "[]"),
+    [{ p: "/win-project", pin: 1 }],
+    "子路径写入落 @/win key",
+  );
+  assert.equal(
+    JSON.parse(globalThis.localStorage.getItem(KEY) ?? "[]").length, 1,
+    "根域 key 不被子路径实例污染",
+  );
+});
+
+test("无尾斜杠 pathname 同样归一（/win → @/win）", async (t) => {
+  const { mod } = await loadFolderDock(t, { pathname: "/win" });
+  mod.addFolderInstance("/p");
+  assert.ok(globalThis.localStorage.getItem("pi:sidebar-dock:folders@/win"), "无尾斜杠同域");
 });
 
 test("faces 重注册：同路径 render/meta 引用恒定（pin 翻转零重挂），差量增删不改既有引用", async (t) => {
