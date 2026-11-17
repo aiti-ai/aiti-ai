@@ -1455,16 +1455,22 @@ export function ExtSlot<S extends ExtSlotName>({
    *  default — zero impact on other slots). */
   only?: string;
   /** Dual-mount slots (assistantMessageActions renders at the top meta row
-   *  AND the message's bottom-left): items declare meta.placement "top" or
-   *  "bottom"; absent meta → "bottom" (the majority). One ExtSlot instance
-   *  per placement; unfiltered instances render every item (old behavior). */
+   *  AND the message's bottom-left): items declare meta.placement "top",
+   *  "bottom" or "both" (same button on both sides — handy for long
+   *  messages where one end is off-screen). Absent meta → "bottom" (the
+   *  majority). One ExtSlot instance per placement; unfiltered instances
+   *  render every item (old behavior). */
   placement?: "top" | "bottom";
 }) {
   const items = useExtSlotItems(name)
     // render is optional (declarative toolbar items are rendered by the host); other slots only consume items with render
     .filter(hasExtRender)
     .filter((it) => !only || it.id === only)
-    .filter((it) => !placement || (it.meta?.placement ?? "bottom") === placement);
+    .filter((it) => {
+      if (!placement) return true;
+      const p = it.meta?.placement ?? "bottom";
+      return placement === "top" ? p === "top" || p === "both" : p !== "top";
+    });
   // Framework-level extension identity stamping: only for "dialog-class"
   // slots (dialogs/pages, both position:fixed overlays), each item is wrapped
   // in a display:contents div stamped with
