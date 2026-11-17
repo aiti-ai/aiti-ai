@@ -1,7 +1,9 @@
 ---
 name: command-create
 title: AI 帮我写命令
+title.en: "AI: write a command"
 placeholder: 描述这条命令做什么（如：一键打包并推 GitHub）…
+placeholder.en: "What this command does (e.g. one-click build and push to GitHub)…"
 outputs:
   format: json-obj
   schema:
