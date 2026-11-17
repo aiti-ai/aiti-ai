@@ -7,7 +7,7 @@
  * 与 Fleet 面板一致；本文件自带一份精简实现避免与 entry 相互 import 成环）。
  */
 import { useEffect, useState } from "react";
-import { apiUrl } from "./host-shim";
+import { t, apiUrl } from "./host-shim";
 
 type FleetRun = {
   id?: string;
@@ -79,7 +79,7 @@ export function SidebarTasksSection() {
 
   if (running.length === 0 && recent.length === 0) {
     return (
-      <div style={{ padding: "8px 14px", fontSize: 11, color: "var(--text-dim)" }}>还没有任务</div>
+      <div style={{ padding: "8px 14px", fontSize: 11, color: "var(--text-dim)" }}>{t("sa.noTasks")}</div>
     );
   }
 
@@ -87,7 +87,7 @@ export function SidebarTasksSection() {
     <div style={{ display: "flex", flexDirection: "column", paddingBottom: 4 }}>
       {running.length > 0 && (
         <div style={{ padding: "4px 14px 2px", fontSize: 10, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-          运行中 {running.length}
+          {t("sa.runningN", { n: running.length })}
         </div>
       )}
       {running.map((r, i) => (
@@ -100,7 +100,7 @@ export function SidebarTasksSection() {
       ))}
       {recent.length > 0 && (
         <div style={{ padding: "6px 14px 2px", fontSize: 10, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-          最近完成
+          {t("sa.recentDone")}
         </div>
       )}
       {recent.map((r, i) => {
