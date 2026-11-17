@@ -1,8 +1,11 @@
 ---
 name: configs-restore
 title: AI 帮我回滚配置
+title.en: "AI: restore configs"
 placeholder: 回滚到哪次提交？（不填则回滚上一个版本）…
+placeholder.en: "Restore to which commit? (empty = the previous version)…"
 summary: 查看历史版本，确认目标 commit 后走恢复协议五步走（固化现场→tag→checkout→写回源→复测→写 HEAD，不丢数据）
+summary.en: "Review history, confirm the target commit, then run the 5-step restore protocol (snapshot → tag → checkout → write back → re-verify → move HEAD; no data loss)"
 outputs:
   format: text
 action:
