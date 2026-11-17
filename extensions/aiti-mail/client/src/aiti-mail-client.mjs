@@ -9,6 +9,8 @@
 let _ctx = null;
 function __setCtx(ctx) { _ctx = ctx; }
 function c(name) { return _ctx?.[name] ?? function () { return undefined; }; }
+// i18n: host ctx.t (index.ts ui.i18n entries, Chinese raw text as key); falls back to the bare key on old hosts
+function t(k) { var fn = _ctx && _ctx.t; return typeof fn === "function" ? fn(k) : k; }
 function h(type, props) {
   var args = Array.prototype.slice.call(arguments);
   return c("h").apply(null, args);

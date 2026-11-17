@@ -974,7 +974,8 @@ export function AiHelperDialog(props: Record<string, any>) {
               ? <span style={{ display: "inline-flex", flexShrink: 0 }}><SparkIcon size={11} /></span>
               : <span style={{ display: "inline-flex", width: 9, flexShrink: 0, transition: "transform .15s", transform: expanded ? "rotate(90deg)" : "none" }}><Ic size={9} paths={ICONS.chevron} /></span>)}
       <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.label}</span>
-      <span style={{ fontSize: 10, fontWeight: 600, flexShrink: 0, lineHeight: 1, padding: "2px 5px", borderRadius: 7,
+      <span title={t("dlg.count.title", { n: g.items.length })}
+        style={{ fontSize: 10, fontWeight: 600, flexShrink: 0, lineHeight: 1, padding: "2px 5px", borderRadius: 7,
         background: g.kind === "ext" || expanded ? "rgba(37,99,235,.18)" : "rgba(128,128,128,.22)" }}>{g.items.length}</span>
       {/* 工具徽标：该扩展 agent 工具——待启用数（pending>0）琥珀色醒目，全启用显示总数（灰）。无工具不显示 */}
       {(() => {
