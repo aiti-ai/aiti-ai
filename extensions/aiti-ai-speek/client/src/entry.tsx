@@ -17,6 +17,7 @@
  */
 import { __setCtx } from "./host-shim";
 import { installSessionService } from "./session-svc";
+import { regSvc, t } from "./host-shim";
 
 // 薄壳内联最小状态（点击后与重 chunk 的 speaker.store 经 loadHeavy 同步）
 const shell = { followOn: false, pendingOn: false, apiUrlSet: false, features: {} };
@@ -44,6 +45,14 @@ export default function register(ctx) {
   // 统一会话状态服务订阅（pi-web.session）：组件取 root id 仅限 active（禁 URL 未验证直读）。
   installSessionService(ctx);
 
+  // Cross-extension client service: the aiti-editor 🔊 "read" button entry (docs/aiti-ai-speek-file-read-plan.md §3.3).
+  // Thin-shell registration (usable at register, no lazy-load window); the handler loadHeavies internally, then goes through readFileText.
+  regSvc("aiti-ai-speek.readText", {
+    speak: (payload) => loadHeavy(ctx)
+      .then(({ sp }) => sp.readFileText(payload))
+      .catch((e) => ({ ok: false, error: String(e && e.message ? e.message : e) })),
+  });
+
   // features：薄壳期收集（重 chunk 加载时经 setSettings 透传）
   const syncFeatures = () => {
     const feats = typeof ctx.getFeatures === "function" ? ctx.getFeatures() : {};
@@ -57,14 +66,16 @@ export default function register(ctx) {
   // 薄壳开关：点击 = toggleFollow（followOn=true）→ 加载重 chunk → initHeavySlots
   // 重注册「follow」条目为 HeavyFollowToggle（同 id 覆盖）→ 它渲染时读 followOn=true
   // 并执行订阅/恢复/入播（原跟随 effect 语义不变）。
-  function ShellToggle() {
+  function ShellToggle(props) {
     const h = ctx.h;
     const on = shell.followOn || shell.pendingOn;
+    // ⋯ menu state: aligns with the host icon slot (36px + right divider); rounded corners removed to avoid a notch at the divider
+    const menu = props?.menu === true;
     return h("button", {
       className: "aisp-btn-tb" + (shell.followOn || shell.pendingOn ? " on" : ""),
       title: shell.followOn || shell.pendingOn
-        ? "跟读模式：开启中（引擎模块加载后接管播放条）"
-        : "跟读模式：AI 回复自动朗读（点按开启）",
+        ? t("speek.shellPending")
+        : t("speek.shellOff"),
       "aria-pressed": (shell.followOn || shell.pendingOn) ? "true" : "false",
       onClick: () => {
         if (shell.followOn || shell.pendingOn) return; // 已开：接管后的真实开关管理
@@ -88,9 +99,10 @@ export default function register(ctx) {
         color: on ? "var(--accent,#3b82f6)" : "var(--text-muted,#777)",
         cursor: "pointer", transition: "background .12s,color .12s",
         outline: "none",
+        ...(menu ? { borderRight: "1px solid var(--border,#ddd)", borderRadius: 0 } : {}),
       },
     },
-      h("svg", { width: 16, height: 16, viewBox: "0 0 24 24", fill: on ? "currentColor" : "none",
+      h("svg", { width: 16, height: 16, viewBox: "0 0 24 24", fill: "none",
         stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": "true" },
         h("path", { d: "M11 5 6 9H2v6h4l5 4V5z" }),
         h("path", { d: "M15.5 8.5a5 5 0 0 1 0 7" }),
