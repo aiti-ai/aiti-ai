@@ -1015,7 +1015,27 @@ function AssistantMessageView({
           );
         })()}
         {time && !isStreaming && (
-          <span style={{ fontSize: 10, color: "var(--text-dim)", marginLeft: "auto" }}>{time}</span>
+          <span style={{ fontSize: 10, color: "var(--text-dim)", marginLeft: (textContent && !isStreaming) ? 0 : "auto" }}>{time}</span>
+        )}
+        {/* Extension actions that prefer the top (meta.placement = "top") stay
+            here on the meta row's right edge; the built-in copy button lives at
+            the bottom row only. Same hover gating as the bottom row. */}
+        {textContent && !isStreaming && (
+          <div
+            style={{
+              display: "flex", alignItems: "center", gap: 6, marginLeft: "auto",
+              opacity: hovered ? 1 : 0,
+              pointerEvents: hovered ? "auto" : "none",
+              transition: "opacity 0.12s",
+            }}
+          >
+            <ExtSlot
+              name="assistantMessageActions"
+              placement="top"
+              currentSession={null}
+              extra={{ entryId, sessionId, text: textContent }}
+            />
+          </div>
         )}
       </div>
 
@@ -1025,12 +1045,11 @@ function AssistantMessageView({
         ))}
       </div>
 
-      {/* Hover actions live at the message's bottom-left (copy + extension
-          buttons, e.g. aiti-msg-share). They used to sit at the right edge of
-          the top meta row, which read as floating at the top-right corner;
-          every mainstream AI chat surfaces them under the content on the left,
-          so they moved back there (same hover gating as before). The meta row
-          keeps model + usage + timestamp. */}
+      {/* Hover actions live at the message's bottom-left: the built-in copy
+          button + extension buttons (assistantMessageActions slot, e.g.
+          aiti-msg-share). Extensions declare meta.placement "top" to mount at
+          the meta row instead; absent meta → here (the majority). Same hover
+          gating as the top instance. */}
       {textContent && !isStreaming && (
         <div
           style={{
@@ -1071,6 +1090,7 @@ function AssistantMessageView({
           </button>
           <ExtSlot
             name="assistantMessageActions"
+            placement="bottom"
             currentSession={null}
             extra={{ entryId, sessionId, text: textContent }}
           />
