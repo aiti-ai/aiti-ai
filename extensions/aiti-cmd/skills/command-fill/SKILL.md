@@ -1,7 +1,9 @@
 ---
 name: command-fill
 title: AI 帮我填命令表单
+title.en: "AI: fill a command form"
 placeholder: 描述你想填的命令字段…（需从命令详情弹窗的 AI 按钮唤起）
+placeholder.en: "Which command fields to fill… (invoke from the command detail dialog's AI button)"
 outputs:
   format: json-obj
   schema:

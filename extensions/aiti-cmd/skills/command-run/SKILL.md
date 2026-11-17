@@ -1,7 +1,9 @@
 ---
 name: command-run
 title: AI 帮我执行命令
+title.en: "AI: run a command"
 placeholder: 描述要执行什么（如：起一个 watch 模式的前端构建，我要在面板里看日志）…
+placeholder.en: "What to run (e.g. start a frontend build in watch mode; I want to watch logs in the panel)…"
 outputs:
   format: json-obj
   schema:

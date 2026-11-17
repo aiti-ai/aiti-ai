@@ -1,7 +1,9 @@
 ---
 name: command-fix
 title: AI 优化/修复命令
+title.en: "AI: optimize/fix a command"
 placeholder: 描述要改哪条命令、怎么改（如：把打包命令加上 git 推送）…
+placeholder.en: "Which command to change and how (e.g. add git push to the build command)…"
 outputs:
   format: json-obj
   schema:
