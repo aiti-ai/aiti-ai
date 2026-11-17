@@ -134,6 +134,12 @@ export function createDockStackApi(ctx: Record<string, any>) {
         itemKey: blockKey,
         blockKey,
         title,
+        // Block header icon (five-form contract, dockIconFromDecl on the shell side):
+        // meta.iconUrl = host-resolved absolute URL for the ".svg"-relative asset form;
+        // meta.icon / item.icon pass through verbatim ({svg} / name / emoji). Third-party
+        // extensions carry their own icons ({svg} / {url} / emoji) without the built-in
+        // name table; the shell shows the same icon as the real face after materialization.
+        icon: item.meta?.iconUrl ? { url: item.meta.iconUrl } : (item.meta?.icon ?? item.icon),
         chrome: "section",
         kind: "dockable",
         zones,
@@ -147,7 +153,7 @@ export function createDockStackApi(ctx: Record<string, any>) {
       h("div",
         {
           onClick: () => writeBlockCollapsed(blockKey, !collapsed),
-          style: { display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", cursor: "pointer", userSelect: "none", fontSize: 12, color: "var(--text-muted)", letterSpacing: "0.04em", textTransform: "uppercase" },
+          style: { display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", cursor: "pointer", userSelect: "none", fontSize: 12, color: "var(--text-muted)" },
         },
         h("span", { style: { transform: collapsed ? "rotate(-90deg)" : "none", transition: "transform 0.12s", fontSize: 10 } }, "▼"),
         h("span", { style: { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, title),
