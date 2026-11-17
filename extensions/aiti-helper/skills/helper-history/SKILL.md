@@ -1,7 +1,9 @@
 ---
 name: helper-history
 title: AI 帮我整理历史
+title.en: "AI: tidy up history"
 placeholder: 描述你想怎么整理历史（如：统计各帮助点的使用次数，或清理已落地的旧记录）…
+placeholder.en: "How to tidy history (e.g. count usage per helper, or clean landed old records)…"
 ---
 
 # helper-history · 整理历史

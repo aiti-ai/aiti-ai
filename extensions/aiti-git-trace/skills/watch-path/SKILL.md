@@ -1,8 +1,11 @@
 ---
 name: watch-path
 title: 管理关注路径（cwd 之外的追踪范围）
+title.en: "Manage watch paths (tracing beyond cwd)"
 placeholder: 例如：把 ~/workspace/pi-web 加入关注；或查看当前关注列表
+placeholder.en: "e.g. add ~/workspace/pi-web to watch; or list current watch paths"
 summary: 查看/添加/删除 aiti-git-trace 的 workspace 级关注路径。关注路径中已识别的 git 仓会被副 store 正式追踪（cwd 之外的多仓场景）。
+summary.en: "View/add/remove aiti-git-trace's workspace-level watch paths; git repos under a watch path get formally traced by a secondary store (multi-repo beyond cwd)."
 outputs:
   format: json-obj
   schema:

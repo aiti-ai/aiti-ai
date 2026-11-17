@@ -1,8 +1,11 @@
 ---
 name: model-params-fill
 title: AI 帮我补全模型参数（查权威数据 → 写 models-store → 回填参数）
+title.en: "AI: fill in missing model parameters (look up authoritative data → write models-store → backfill)"
 placeholder: 哪个模型缺参数？比如 provider 里的 glm-5、kimi-k3…（或贴模型 id 列表）…
+placeholder.en: "Which model lacks parameters? e.g. glm-5, kimi-k3 under a provider… (or paste model ids)…"
 summary: 模型在所有数据源（models.json / 内置目录 / models.dev / OpenRouter / LiteLLM）都查不到参数、被保存成裸条目时，上网查权威数据（官方文档 / /models 接口 / models.dev），写入 ~/.pi/agent/models-store.json（运行时权威模型库），并把参数回填到模型向导的参数面板（浮窗，或双栏右侧详情内嵌面板），用户点击保存生效。
+summary.en: "When a model was saved as a bare entry with no parameters from any source (models.json / builtin catalog / models.dev / OpenRouter / LiteLLM), look up authoritative data online (official docs / the /models endpoint / models.dev), write it into ~/.pi/agent/models-store.json (the runtime authoritative model store), and backfill the parameters into the model wizard's parameter panel (floating window, or the embedded detail panel on the right of the two-pane layout); takes effect when the user clicks Save."
 outputs:
   format: json-obj
   schema:

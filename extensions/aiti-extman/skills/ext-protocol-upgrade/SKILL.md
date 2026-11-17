@@ -1,8 +1,11 @@
 ---
 name: ext-protocol-upgrade
 title: AI 帮我升级扩展协议
+title.en: "AI: upgrade the extension protocol"
 placeholder: 哪个扩展要升级？（如 aiti-cmd；留空 = 全量协议体检出清单）
+placeholder.en: "Which extension to upgrade? (e.g. aiti-cmd; empty = full protocol audit list)"
 summary: 读协议规范与版本迁移手册 → 逐跳迁移源码 → 更新 package.json 声明 → 构建/测试/部署
+summary.en: "Read the protocol spec and migration guide → migrate the source hop by hop → update the package.json declaration → build/test/deploy"
 ---
 
 # ext-protocol-upgrade · 扩展协议升级

@@ -1,8 +1,11 @@
 ---
 name: extman-install
 title: AI 帮我装扩展
+title.en: "AI: install an extension"
 placeholder: 粘贴来源（git:https://… / npm:@scope/pkg / 本地路径 / zip）…
+placeholder.en: "Paste a source (git:https://… / npm:@scope/pkg / local path / zip)…"
 summary: 从 git/npm/本地/zip 安装，含发行者信任门控流程
+summary.en: "Install from git/npm/local/zip, with the publisher trust-gating flow"
 ---
 
 # extman-install · 安装扩展

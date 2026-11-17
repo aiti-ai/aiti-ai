@@ -1,8 +1,11 @@
 ---
 name: model-wizard
 title: AI 帮我添加 AI 提供商/模型
+title.en: "AI: add an AI provider/model"
 placeholder: 想加哪个提供商/模型？比如 DeepSeek、智谱 GLM、Kimi、硅基流动…（或贴一个 API 地址）…
+placeholder.en: "Which provider/model to add? e.g. DeepSeek, Zhipu GLM, Kimi, SiliconFlow… (or paste an API URL)…"
 summary: 搜提供商目录 → 填 token → 测试连通 → 选模型 → 写入 models.json；支持单 key 与多 key（apiKeys，每个带 name/rpm，轮转防 429）
+summary.en: "Search the provider catalog → fill token → test connectivity → pick models → write models.json; supports single key and multi-key (apiKeys, each with name/rpm, rotation against 429)"
 outputs:
   format: text
 action:

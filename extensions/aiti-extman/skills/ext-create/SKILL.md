@@ -1,8 +1,11 @@
 ---
 name: ext-create
 title: AI 帮我建扩展
+title.en: "AI: create an extension"
 placeholder: 描述你想建的扩展（如：在会话顶栏显示服务器状态的扩展）…
+placeholder.en: "Describe the extension (e.g. one that shows server status in the session toolbar)…"
 summary: 从 ext-jsx-client 模板创建新扩展——复制/改名/写组件/构建/部署/生效，含坑速查
+summary.en: "Create a new extension from the ext-jsx-client template — copy/rename/write components/build/deploy/verify, with a pitfalls quick reference"
 ---
 
 # ext-create · 创建新扩展
