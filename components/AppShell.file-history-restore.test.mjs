@@ -26,6 +26,23 @@ test("panel expansion triggers session restore: the rightPanelOpen effect exists
   assert.match(m[0], /setTimeout\(\(\) => restore\(\), 0\)/);
 });
 
+test("lazy-materialization window: probe miss → ensureExtMaterialized('aiti-editor') then restore (refresh → expand without any prior file open)", () => {
+  // The file-editor extension is lazily loaded (clientImmediately:false): right after a refresh
+  // window.__aitiEditor is not mounted, the probe silently no-ops, and the effect deps never change
+  // again — the tombstone restore was lost in exactly that window. The effect must materialize the
+  // extension deterministically when the probe misses, then invoke the restore (extension-side
+  // one-shot guard keeps it idempotent). Verified live 2026-11-17: refresh → expand → panel stayed
+  // empty ("No file open") although GET session-files returned entries.
+  const m = source.match(
+    /useEffect\(\(\) => \{\s*\n\s*if \(!rightPanelOpen\) return;\s*\n\s*const restore = window\.__aitiEditor\?\._restoreSession;[\s\S]*?\n\s*\}, \[rightPanelOpen\]\);/,
+  );
+  assert.ok(m, "the rightPanelOpen session-restore effect is missing");
+  assert.match(m[0], /ensureExtMaterialized\("aiti-editor"\)/);
+  // restore only through the mounted API after materialization; a materialization failure must not throw
+  assert.match(m[0], /typeof api\._restoreSession === "function"/);
+  assert.match(m[0], /\.catch\(/);
+});
+
 test("restore triggering is owned solely by the effect: must not scatter back into inline calls inside a single handler", () => {
   // First cut out the effect block; in the remaining source only the Window type declaration `_restoreSession?: () => void;`
   // may appear; any other occurrence (inline calls in handlers etc.) = regression to the shape that lost the logic last time.
