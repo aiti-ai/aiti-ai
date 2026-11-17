@@ -1,8 +1,11 @@
 ---
 name: install-soffice
 title: AI 帮我在服务器安装 LibreOffice
+title.en: "AI: install LibreOffice on the server"
 placeholder: 描述情况，如「.doc 打不开 / 转不了 PDF」…
+placeholder.en: "Describe the problem, e.g. cannot open .doc / cannot convert to PDF…"
 summary: pi-web 所在服务器缺少 LibreOffice (soffice) 导致 .doc/.xls/.ppt 老格式无法在线转换 / PDF 预览时，AI 自动检测平台并安装（Linux 多发行版 / Windows winget / macOS brew），装完自动验证
+summary.en: "When the pi-web server lacks LibreOffice (soffice) so legacy .doc/.xls/.ppt files cannot convert online or preview as PDF, the AI detects the platform and installs automatically (Linux multi-distro / Windows winget / macOS brew), then verifies"
 outputs:
   format: text
 ---
