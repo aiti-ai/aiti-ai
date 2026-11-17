@@ -91,6 +91,8 @@ function setFace(v) {
 
 export default function register(ctx) {
   const { h, useState, useEffect, apiUrl } = ctx;
+  // i18n: host ctx.t with bare-key fallback (index.ts ui.i18n entries)
+  const t = (k) => (typeof ctx.t === "function" ? ctx.t(k) : k);
   installGlobalPairMsgListener(); // C1: closed-state unread badge channel (B8 ordering: before any mount)
 
   /* ── 深链：?pair=1 打开工作台即弹出本面板（QR/复制链接指向工作台 URL，与桌面「先开 pi-web → 点设备互连」同体验） ──
@@ -306,7 +308,7 @@ function pairWindowSize() {
       return () => unreadListeners.delete(l);
     }, []);
     return h("button", {
-      title: "设备互连：临时聊天 / 互传文件（连同一桥的设备）",
+      title: t("it.pair.title"),
       onClick: () => {
         setUnread(0);
         presentPair("open"); // idempotent open in the docked state (aiti-float flashes to point at the panel); closed/floating → dialog
