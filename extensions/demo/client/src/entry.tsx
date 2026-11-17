@@ -19,6 +19,7 @@ import {
   DockDemoDialog, DockDemoRightTab, DockDemoSidebarSection, DockDemoToolbarButton,
 } from "./dock-demo"; // aiti-float dock v0.5.0 试点（双 face + 状态机防双开）
 import { seedDockDefault } from "../../../_shared/ext-float-dock";
+import { dockIconDecl } from "../../../_shared/dock-icons";
 import { WidgetDemoCard } from "./new-session-widget";
 
 export default function register(ctx: Record<string, unknown>) {
@@ -47,7 +48,7 @@ export default function register(ctx: Record<string, unknown>) {
   // 停靠 faces（dock 方案 §6：同一内容组件注册两处，gate 门控结构性防双开）
   // ⚠ dock item 注册 raw itemId（宿主自动拼 extId:itemId = itemKey）——状态机 key "demo:dock"
   // 的 itemId 段是 "dock"，故此处必须 id: "dock"（原 "dock-demo" 拼后不匹配 → dock tab 从未出现）
-  ctx.registerItems?.("rightFileDock", [{ id: "dock", render: DockDemoRightTab, meta: { title: "i18n:it.dock-demo.title" } }]);
+  ctx.registerItems?.("rightFileDock", [{ id: "dock", render: DockDemoRightTab, meta: { title: "i18n:it.dock-demo.title", icon: dockIconDecl("box") } }]);
   ctx.registerItems?.("sidebarExplorerDock", [{ id: "dock", render: DockDemoSidebarSection, meta: { title: "i18n:it.dock.title", priority: 4 } }]);
   // 新会话欢迎页小组件（newSessionWidgets）：meta 标注允许区域 + 栅格尺寸（手机 4 列/
   // 桌面 8 列，w4=手机满行/桌面半行）；extra 只喂数据 {cwd,isMobile,area}，用户可在
