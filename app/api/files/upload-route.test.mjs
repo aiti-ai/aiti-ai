@@ -45,6 +45,8 @@ async function upload(directory, strategy = "overwrite", names = ["important.txt
   return POST(new NextRequest(`http://localhost/api/files/${encoded}?type=upload&conflict=${strategy}${withEnsure ? "&ensure=1" : ""}`, {
     method: "POST", headers: { host: "localhost" }, body: form,
   }), { params: Promise.resolve({ path: encoded.split("/").map(decodeURIComponent) }) });
+}
+
 async function uploadViaUrlPath(directory, type = "upload", names = ["important.txt"]) {
   const form = new FormData();
   for (const name of names) form.append("files", new File(["replacement"], name));
@@ -54,7 +56,6 @@ async function uploadViaUrlPath(directory, type = "upload", names = ["important.
     `http://localhost/api/files/${encoded}?type=${type}&conflict=skip${type === "upload" ? "&ensure=1" : ""}`,
     { method: "POST", headers: { host: "localhost" }, body: form },
   ), { params: Promise.resolve({ path: segments }) });
-}
 }
 
 test("url-path directory form restores the leading slash for unix absolute paths (upload)", async () => {
@@ -168,9 +169,11 @@ test("refuses a destination changed to a link while the replacement is staged", 
   assert.deepEqual(fs.readdirSync(directory), ["important.txt"]);
 });
 
-test("one file may fill the 100MB limit, and one byte more is refused", async () => {
+test("one file may fill the per-file limit, and one byte more is refused (fork hardening)", async () => {
+  // The fork's local-API hardening caps a single upload at 25MB on top of the
+  // upstream 100MB total (commit 3961834d), so the per-file cap fires first.
   const { directory } = fixture();
-  const limit = 100 * 1024 * 1024;
+  const limit = 25 * 1024 * 1024;
 
   const atLimit = await upload(directory, "error", ["full.bin"], Buffer.alloc(limit));
   assert.equal(atLimit.status, 200);
@@ -179,14 +182,25 @@ test("one file may fill the 100MB limit, and one byte more is refused", async ()
 
   const over = await upload(directory, "error", ["over.bin"], Buffer.alloc(limit + 1));
   assert.equal(over.status, 413);
-  assert.deepEqual(await over.json(), { error: "Uploads must total 100MB or less" });
+  assert.deepEqual(await over.json(), { error: "Each upload must be 25MB or smaller" });
   assert.deepEqual(fs.readdirSync(directory).sort(), ["full.bin", "important.txt"]);
 });
 
-test("files that pass the limit only together are refused before any is written", async () => {
+test("files that pass the per-file limit only together exceed the total, refused before any write", async () => {
+  // Four 25MB files plus a 1KB filler each clear nothing per-file but sum past
+  // the upstream 100MB total, while the multipart body stays under the 101MB
+  // request-parse cap so the refusal comes from the total check, before any
+  // file is written.
   const { directory } = fixture();
-  const half = Buffer.alloc(50 * 1024 * 1024 + 1);
-  const response = await upload(directory, "error", ["first.bin", "second.bin"], half);
+  const chunk = Buffer.alloc(25 * 1024 * 1024);
+  const encoded = encodeFilePathForApi(directory);
+  const form = new FormData();
+  form.append("directory", directory);
+  for (const name of ["a.bin", "b.bin", "c.bin", "d.bin"]) form.append("files", new File([chunk], name));
+  form.append("files", new File([Buffer.alloc(1024)], "e.bin"));
+  const response = await POST(new NextRequest(`http://localhost/api/files/${encoded}?type=upload&conflict=error`, {
+    method: "POST", headers: { host: "localhost" }, body: form,
+  }), { params: Promise.resolve({ path: encoded.split("/").map(decodeURIComponent) }) });
   assert.equal(response.status, 413);
   assert.deepEqual(await response.json(), { error: "Uploads must total 100MB or less" });
   assert.deepEqual(fs.readdirSync(directory), ["important.txt"]);

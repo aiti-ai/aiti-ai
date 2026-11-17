@@ -2243,6 +2243,10 @@
   min-width: 0;
 }
 
+.config-detail-grid-value.mcp-config-code {
+  font-size: 11px;
+}
+
 .mcp-config-chip {
   max-width: 100%;
   padding: 0 5px;

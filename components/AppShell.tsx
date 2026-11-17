@@ -5208,12 +5208,9 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
                   subagents={activeSessionFamily.subagents}
                   selectedSessionId={selectedSession.id}
                   runningSessionIds={runningSessionIds}
-                  // A pick closes the switcher, so the strip (where it shows) takes over at once.
-                  onSelectSession={(session) => {
-                    setActiveTopPanel(null);
-                    handleSelectSession(session);
-                    requestAnimationFrame(() => focusIfLost(document, agentsButtonRef.current));
-                  }}
+                  // [fork] A pick switches sessions but keeps the Agents panel open — the fork's
+                  // switcher is for hopping between agents without losing the list.
+                  onSelectSession={handleSelectSession}
                   openSubagentTabIds={openSubagentTabIds}
                   onToggleSubagentTab={handleToggleSubagentTab}
                   onNewSideChat={() => handleNewSideChat(activeSessionFamily.root.id)}

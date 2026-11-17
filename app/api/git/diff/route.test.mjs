@@ -64,10 +64,12 @@ test("preserves trailing spaces in Git file and directory paths", { skip: proces
   assert.equal(result.supported, true);
   assert.ok(result.patch.includes("+space-suffixed file"));
 
-  const { GET: getStatus } = await jiti.import("../status/route.ts");
-  const url = new URL("http://localhost/api/git/status");
-  url.searchParams.set("cwd", root);
-  const statusResponse = await getStatus(new NextRequest(url));
+  // Fork contract: /api/git/status takes the cwd in the POST body (never in the
+  // URL, so local paths stay out of access logs).
+  const { POST: postStatus } = await jiti.import("../status/route.ts");
+  const statusResponse = await postStatus(new NextRequest("http://localhost/api/git/status", {
+    method: "POST", headers: { host: "localhost", "content-type": "application/json" }, body: JSON.stringify({ cwd: root }),
+  }));
   assert.equal(statusResponse.status, 200);
   const status = await statusResponse.json();
   assert.ok(status.files.some((file) => file.filePath === filePath));

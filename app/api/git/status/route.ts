@@ -7,7 +7,7 @@ import { getGitStatus } from "@/lib/git-changes";
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => null) as { cwd?: unknown } | null;
-    const cwd = typeof body?.cwd === "string" ? body.cwd.trim() : "";
+    const cwd = typeof body?.cwd === "string" ? body.cwd : "";
     if (!cwd || (!cwd.startsWith("/") && !isWindowsAbsolutePath(cwd))) {
       return NextResponse.json({ error: "cwd must be an absolute path" }, { status: 400 });
     }

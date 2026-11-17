@@ -52,8 +52,8 @@ async function handleDiff(cwd: string, filePath: string): Promise<NextResponse> 
 // new code must use POST (cwd/path go in the JSON body, so they never land in URLs/access logs).
 export async function GET(request: NextRequest) {
   try {
-    const cwd = request.nextUrl.searchParams.get("cwd")?.trim() ?? "";
-    const filePath = request.nextUrl.searchParams.get("path")?.trim() ?? "";
+    const cwd = request.nextUrl.searchParams.get("cwd") ?? "";
+    const filePath = request.nextUrl.searchParams.get("path") ?? "";
     return await handleDiff(cwd, filePath);
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
@@ -64,8 +64,8 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json().catch(() => ({}))) as { cwd?: unknown; path?: unknown };
-    const cwd = typeof body.cwd === "string" ? body.cwd.trim() : "";
-    const filePath = typeof body.path === "string" ? body.path.trim() : "";
+    const cwd = typeof body.cwd === "string" ? body.cwd : "";
+    const filePath = typeof body.path === "string" ? body.path : "";
     return await handleDiff(cwd, filePath);
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
