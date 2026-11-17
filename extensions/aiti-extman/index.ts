@@ -262,7 +262,7 @@ function withPinyin(payload: any): any {
     const e = extensions[id];
     if (!e || typeof e !== "object") continue;
     const fromName = typeof e.name === "string" ? extPinyin(e.name) : "";
-    // zh 拼音源 = ui.i18n zh-CN 自述词条 ext.displayName（无中心表；manifest 原文兜底于 fromName）
+    // zh pinyin source = the ui.i18n zh-CN self-description entry ext.displayName (no central table; raw manifest text is the fallback via fromName)
     const zh = e.ui?.i18n?.["zh-CN"]?.["ext.displayName"];
     const fromDisplay = typeof zh === "string" && zh && zh !== e.name ? extPinyin(zh) : "";
     e.pinyin = fromName === fromDisplay ? fromName : [fromName, fromDisplay].filter(Boolean).join(" ");
