@@ -611,7 +611,7 @@ const ext = {
     rightFileDock: [{ id: "docs", label: "i18n:dc.app.label" }],
     pages: [{ id: "aiti-doc-center-page", label: "i18n:it.aiti-doc-center-page.label", title: "i18n:it.aiti-doc-center-page.label" }],
     i18n: {
-      zh: {
+      "zh-CN": {
         "dc.app.label": "文档",
         "dc.app.title": "文档中心：workspace 文档收集与全文检索",
         "dc.tabsDir": "目录",
@@ -702,10 +702,6 @@ const ext = {
         "dc.ftAddPh": "新增标签（回车确认；/ 分层级）",
         "dc.ftAdd": "添加",
         "dc.ftActionTitle": "标签（文档中心：查看/增删，非 md 文件打 tag 后进索引）",
-      },
-      "zh-CN": {
-        "it.docs.title": "文档中心：workspace 文档收集与全文检索",
-        "it.aiti-doc-center-page.label": "文档中心",
         "it.docs.title": "文档",
         "it.aiti-doc-center-page.label": "文档中心",
         "ext.displayName": "文档中心",
@@ -720,7 +716,6 @@ const ext = {
         "feat.agentTools.enabled.desc": "Injects aiti_doc_* tools into sessions (off by default; enable temporarily via the AI helper 🤖 or the extension manager)",
         "it.aiti-doc-center-page.label": "Doc Center",
         "it.docs.title": "Docs",
-        "it.aiti-doc-center-page.label": "Doc Center",
         "ext.displayName": "Doc Center",
         "ext.description": "Searches the workspace doc center (FTS full-text + weighted fusion ranking). Params: query (required, ≥3 chars works best), tag (optional, e.g. plan, docs), limit (optional, default 8). Returns docs with snippet highlights (path/title/updated/tags).",
         "feat.aiti-doc-center-page": "Doc Center",
