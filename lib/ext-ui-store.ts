@@ -50,6 +50,11 @@ export interface ExtUiItemRegistered {
     title?: string;
     badge?: boolean;
     noMenuLabel?: boolean;
+    /** Dual-mount slot placement (assistantMessageActions renders both at the
+     *  top meta row and the message's bottom-left): "top" mounts the item in
+     *  the meta row, "bottom" under the content. Absent → "bottom" (the
+     *  majority). Unknown to other slots — they ignore it. */
+    placement?: "top" | "bottom";
     /** Static item hide marker (manifest ui[slot][]): the host skips rendering the
      *  static entry (bottom-row absorbed items, quickstart flash fix). */
     hidden?: boolean;
@@ -318,6 +323,7 @@ export function registerStaticItems(
         label: decl.meta?.label ?? decl.label,
         title: decl.meta?.title ?? decl.title,
         badge: decl.meta?.badge ?? decl.badge,
+        placement: decl.meta?.placement ?? (decl as { placement?: "top" | "bottom" }).placement,
         noMenuLabel: decl.meta?.noMenuLabel,
         hidden: decl.meta?.hidden ?? (decl as { hidden?: boolean }).hidden, // 静态条目隐藏标记（底行收编不渲染，快速上手闪现修复）
         hideOnMobile: decl.meta?.hideOnMobile ?? (decl as { hideOnMobile?: boolean }).hideOnMobile, // 移动端视口隐藏（同 hidden 白名单透传）

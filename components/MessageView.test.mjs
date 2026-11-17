@@ -52,6 +52,28 @@ test("on a narrow phone a message's actions drop their labels and keep their tit
   assert.match(css, /@media \(max-width: 380px\) \{\s*\.message-action-label \{\s*display: none;\s*\}\s*\}/);
 });
 
+test("assistantMessageActions mounts at both placements and routes items by meta.placement", async () => {
+  const { registerExtUiItems } = await jiti.import("@/lib/ext-ui-store");
+  const dispose = registerExtUiItems("assistantMessageActions", [
+    { id: "top-item", render: () => React.createElement("span", null, "TOPBTN"), meta: { placement: "top" } },
+    { id: "bottom-item", render: () => React.createElement("span", null, "BOTTOMBTN") },
+  ], "ext-placement-test");
+  try {
+    const html = renderMessage(
+      { role: "assistant", provider: "p", model: "m", content: [{ type: "text", text: "Body text" }] },
+      {},
+    );
+    assert.ok(html.includes("TOPBTN") && html.includes("BOTTOMBTN"), "both items render");
+    assert.ok(html.indexOf("TOPBTN") < html.indexOf("Body text"), "top item mounts in the meta row above the content");
+    assert.ok(html.indexOf("BOTTOMBTN") > html.indexOf("Body text"), "default item mounts in the bottom row below the content");
+    // Dual-mount must not double-render a placement-less item
+    assert.equal(html.split("TOPBTN").length - 1, 1);
+    assert.equal(html.split("BOTTOMBTN").length - 1, 1);
+  } finally {
+    dispose();
+  }
+});
+
 test("streaming headers preserve counts and speed without showing empty metrics", () => {
   const renderHeader = (props) => renderToStaticMarkup(React.createElement(
     I18nProvider, null, React.createElement(AssistantMessageHeader, { modelName: "Test Model", ...props }),
