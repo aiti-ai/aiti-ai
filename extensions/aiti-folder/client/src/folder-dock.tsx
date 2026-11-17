@@ -27,10 +27,22 @@ import {
   useDockHeaderStateOf, requestDockCommand,
 } from "../../../_shared/ext-float-dock";
 import { openViewerWindow } from "../../../_shared/open-viewer-window";
+import { dockIconDecl } from "../../../_shared/dock-icons";
 import type { DockZone, DockHeaderAction } from "../../../_shared/ext-float-dock";
 
-/* ── 多实例清单（v2 条目带钉标；旧格式 string[] 兼容读）── */
-const INSTANCES_KEY = "pi:sidebar-dock:folders";
+/* ── multi-instance manifest (v2 entries carry pin flag; legacy string[] read-compat) ──
+ * Key is scoped per deployment sub-path (basePath): localStorage is origin-shared,
+ * while same-origin sub-path instances (/ vs /win, /dev) are different hosts/path
+ * spaces — folder manifest and pins must not leak across. Root deployments (no
+ * first segment in pathname) keep the bare key = seamless with legacy data. */
+function detectInstanceBase(): string {
+  try {
+    const m = window.location.pathname.match(/^\/([A-Za-z0-9._-]+)(?:\/|$)/);
+    return m ? "/" + m[1] : "";
+  } catch { return ""; } // no DOM (test stub / SSR) → root scope
+}
+const INSTANCE_BASE = detectInstanceBase();
+const INSTANCES_KEY = "pi:sidebar-dock:folders" + (INSTANCE_BASE ? `@${INSTANCE_BASE}` : "");
 export const INSTANCES_EVENT = "pi:sidebar-dock:folders-changed";
 /** 未钉实例保留上限缺省值（FIFO：超限挤掉最旧未钉并关其面板；钉住豁免）。
  *  实际值读 session-manager feature `behavior.folder-quota`（extman 可改，默认 3）。
@@ -447,6 +459,8 @@ export function FolderDockBlock(props: FolderFaceProps) {
       itemKey={itemKey}
       blockKey={itemKey}
       title={title}
+      // No icon prop: the title switcher (renderTitle) already carries its own folder
+      // icon — a block icon here would render two identical folder glyphs side by side.
       chrome="section"
       kind="dockable"
       zones={[sidebarZoneOf(itemKey), "right-panel"]}
@@ -612,7 +626,9 @@ function buildFaceItems(p: string): { stack: FolderFaceItem; float: FolderFaceIt
       const f = faceOf(rp);
       return <FolderDockRightFace path={f.path} cwd={f.cwd} onOpenFile={f.onOpenFile} onOpenFolder={f.onOpenFolder} onAtMention={f.onAtMention} gitRefreshKey={f.gitRefreshKey} />;
     },
-    meta: { title },
+    // Semantic tab icon (host TabBar renders meta.icon; the sidebar collapsed header
+    // keeps the title switcher's own folder icon — no extra block icon there).
+    meta: { title, icon: dockIconDecl("folder") },
   };
   const entry = { stack, float, right };
   faceItemsCache.set(p, entry);
