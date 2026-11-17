@@ -837,7 +837,7 @@ export function subscribeAll(fn: () => void): () => void {
 export function localMatches(id: string, e: any, q: string) {
   if (!q) return true;
   const s = q.toLowerCase();
-  const display = extUi18nExact(id)["ext.displayName"] || e.name || ""; // 自述词条（当前 locale）+ manifest 原文（zh 源）都进 hay
+  const display = extUi18nExact(id)["ext.displayName"] || e.name || ""; // self-description entry (current locale) + raw manifest text (zh source) both go into hay
   const hay = (id + " " + (e.name || "") + " " + display + " " + ((e.packageInfo && e.packageInfo.name) || "") + " " + (e.pinyin || "")).toLowerCase();
   const qNorm = s.replace(/\s+/g, ""); // fuwu suidao → fuwusuidao（拼音连写匹配；额外宽松形态）
   return hay.includes(s) || (!!qNorm && hay.includes(qNorm)) || typoMatch(q, hay) || (!!qNorm && typoMatch(qNorm, hay));
