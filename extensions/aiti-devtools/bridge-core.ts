@@ -2039,9 +2039,15 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
     }
     // exact hit: row ids from the same view as bridge_status (listDevices) — every id shown in the panel is directly deliverable
     if (devRows.some((d) => d.id === q)) { pushPageRaw(q); return { ok: delivered.length > 0, delivered }; }
+    // Canonical bridge instanceId addressing (bare `ai-xxx`, or any frame form `ai-xxx/host|ai`): a page row's
+    // id is the host pageId (possibly a launcher identity), so the instanceId is NOT a substring of it. Without
+    // this, deduping the duplicate `pages` row silently broke "send to the instanceId shown in bridge_status".
+    const qBase = q.indexOf("/") >= 0 ? q.split("/")[0] : q;
+    const byIid = devRows.filter((d) => d.instanceId && String(d.instanceId) === qBase);
+    if (byIid.length === 1) { pushPageRow(byIid[0]); return { ok: delivered.length > 0, delivered }; }
     if (agents.has(q) || agentIdx.has(q)) { pushAgent(q); return { ok: delivered.length > 0, delivered }; }
     // fuzzy name: pages (same view as bridge_status) → agents → pair peers fallback
-    const devMatches = devRows.filter((d) => (d.name || "").includes(q) || d.id.includes(q));
+    const devMatches = devRows.filter((d) => (d.name || "").includes(q) || d.id.includes(q) || (d.instanceId && String(d.instanceId).includes(q)));
     if (devMatches.length === 1) { pushPageRaw(devMatches[0].id); return { ok: delivered.length > 0, delivered }; }
     if (devMatches.length > 1) return { ok: false, candidates: devMatches.map((d) => ({ kind: "page", id: d.id, name: d.name })), error: "页面名匹配多个" };
     const agentRows = listAgentSessions().filter((a) => (a.name || "").includes(q) || a.agentKey.includes(q));
