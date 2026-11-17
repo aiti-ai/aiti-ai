@@ -40,6 +40,123 @@
 (function (global) {
   'use strict';
 
+  /**
+   * UA / client-hint parsing — browser + OS + form factor.
+   *
+   * ⛔ Do NOT go back to a single leftmost-match regex like /(EdgA?|Chrome|Firefox|OPR|Safari|Edge)\/(\d+)/:
+   *    Chromium derivatives (Edge/Opera/Samsung/Yandex/Vivaldi/DuckDuckGo…) embed `Chrome/<v>` BEFORE their
+   *    own token and regex alternation is position-ordered, not priority-ordered — that exact bug reported
+   *    `Edge 157` as `Chrome 157` (UA "…Chrome/157.0.0.0 Safari/537.36 Edg/157.0.0.0").
+   *
+   * Order: navigator.userAgentData.brands (UA-CH, secure contexts; explicit Edge/Opera/Brave/… brands) →
+   * ordered distinctive-token table (most specific first) → plain Chrome/Firefox/Safari tail.
+   *
+   * ⚠ Keep in sync with packages/aiti-devtools-core/src/ua-parse.js (node/bridge copy). test/ua-parse.test.mjs
+   *   runs both implementations over the same corpus and fails on any drift.
+   */
+  var UA_BRAND_NAMES = [
+    [/Microsoft Edge/i, 'Edge'],
+    [/Opera|Opera GX/i, 'Opera'],
+    [/Brave/i, 'Brave'],
+    [/Vivaldi/i, 'Vivaldi'],
+    [/Samsung Internet/i, 'Samsung Internet'],
+    [/YaBrowser|Yandex/i, 'Yandex'],
+    [/DuckDuckGo/i, 'DuckDuckGo'],
+    [/Google Chrome/i, 'Chrome'],
+    [/Chromium/i, 'Chromium'],
+  ];
+  var UA_TOKENS = [
+    ['EdgiOS', 'Edge'], ['EdgA', 'Edge'], ['Edg', 'Edge'], ['Edge', 'Edge'],
+    ['OPiOS', 'Opera'], ['OPR', 'Opera'],
+    ['SamsungBrowser', 'Samsung Internet'], ['YaBrowser', 'Yandex'], ['Vivaldi', 'Vivaldi'],
+    ['DuckDuckGo', 'DuckDuckGo'], ['Whale', 'Whale'], ['Electron', 'Electron'],
+    ['FxiOS', 'Firefox'], ['Firefox', 'Firefox'], ['CriOS', 'Chrome'], ['Chrome', 'Chrome'],
+  ];
+  var UA_VERSION_TOKENS = {
+    Edge: ['Edg', 'EdgA', 'EdgiOS', 'Edge'], Opera: ['OPR', 'OPiOS'],
+    'Samsung Internet': ['SamsungBrowser'], Yandex: ['YaBrowser'], Vivaldi: ['Vivaldi'],
+    DuckDuckGo: ['DuckDuckGo'], Whale: ['Whale'], Electron: ['Electron'],
+    Firefox: ['Firefox', 'FxiOS'], Chrome: ['Chrome', 'CriOS'],
+  };
+  function uaTokenVersion(ua, tokens) {
+    for (var i = 0; i < (tokens || []).length; i++) {
+      var t = tokens[i];
+      var at = ua.indexOf(t + '/');
+      if (at < 0) continue;
+      var m = ua.slice(at + t.length + 1).match(/^[\d.]+/);
+      if (m) return m[0];
+    }
+    return '';
+  }
+  function uaParse(ua, nav) {
+    var s = String(ua || '');
+    var out = { browser: '?', version: '', os: '?', osVer: '', deviceType: 'desktop', mobile: false, source: '' };
+    // ---- browser: UA-CH first ----
+    try {
+      var brands = nav && nav.userAgentData && nav.userAgentData.brands && nav.userAgentData.brands.length ? nav.userAgentData.brands : null;
+      if (brands) {
+        for (var bi = 0; bi < UA_BRAND_NAMES.length; bi++) {
+          var re = UA_BRAND_NAMES[bi][0], name = UA_BRAND_NAMES[bi][1], hit = null;
+          for (var bj = 0; bj < brands.length; bj++) { if (brands[bj] && re.test(String(brands[bj].brand))) { hit = brands[bj]; break; } }
+          if (!hit) continue;
+          out.browser = name;
+          out.version = String(hit.version || '');
+          out.source = 'ua-ch';
+          break;
+        }
+        if (out.browser !== '?' && out.browser !== 'Chromium') {
+          var full = uaTokenVersion(s, UA_VERSION_TOKENS[out.browser]);
+          if (full) out.version = full;
+        }
+      }
+    } catch (e) {}
+    // ---- browser: UA-string fallback / refinement of a generic UA-CH 'Chromium' ----
+    if (out.browser === '?' || out.browser === 'Chromium') {
+      for (var ti = 0; ti < UA_TOKENS.length; ti++) {
+        var tok = UA_TOKENS[ti][0];
+        if (s.indexOf(tok + '/') < 0) continue;
+        out.browser = UA_TOKENS[ti][1];
+        out.version = uaTokenVersion(s, UA_VERSION_TOKENS[out.browser]);
+        if (!out.source) out.source = 'ua-string';
+        break;
+      }
+      if (out.browser === '?') {
+        var vm = s.match(/Version\/([\d.]+).*Safari/);
+        if (vm) { out.browser = 'Safari'; out.version = vm[1]; out.source = 'ua-string'; }
+        else if (/MSIE|Trident/.test(s)) { out.browser = 'IE'; var mi = s.match(/rv:([\d.]+)/); out.version = mi ? mi[1] : ''; out.source = 'ua-string'; }
+      }
+    }
+    // ---- OS ----
+    var ipadLike = false;
+    try {
+      var touch = nav && typeof nav.maxTouchPoints === 'number' ? nav.maxTouchPoints : 0;
+      // iPadOS 13+ masquerades as desktop Safari (Macintosh); touch points are the only reliable tell.
+      ipadLike = touch > 1 && /Mac OS X/.test(s) && !/Chrome|CriOS|Firefox|FxiOS|Edg|OPR/.test(s);
+      if (/Windows Phone/.test(s)) { out.os = 'Windows Phone'; }
+      else if (/Windows NT/.test(s)) {
+        out.os = 'Windows';
+        out.osVer = /Windows NT 10\.0/.test(s) ? '10/11' : /Windows NT 6\.[123]/.test(s) ? '7/8' : '10/11';
+      } else if (/iPhone|iPad|iPod/.test(s)) {
+        out.os = 'iOS'; var im = s.match(/OS (\d+[_\d]*)/); out.osVer = im ? im[1].replace(/_/g, '.') : '';
+      } else if (/Android/.test(s)) {
+        out.os = 'Android'; var am = s.match(/Android ([\d.]+)/); out.osVer = am ? am[1] : '';
+      } else if (/CrOS/.test(s)) {
+        out.os = 'ChromeOS';
+      } else if (ipadLike) {
+        out.os = 'iOS'; out.osVer = '';
+      } else if (/Mac OS X/.test(s)) {
+        out.os = 'macOS'; var mm = s.match(/Mac OS X ([\d_.]+)/); out.osVer = mm ? mm[1].replace(/_/g, '.') : '';
+      } else if (/Linux|X11/.test(s)) {
+        out.os = 'Linux';
+      }
+    } catch (e) {}
+    // ---- form factor ----
+    out.mobile = /Android|iPhone|iPod|Mobile|Windows Phone|IEMobile/i.test(s) || (out.os === 'iOS' && /iPhone|iPod/.test(s));
+    var tablet = /iPad|Tablet|Silk|PlayBook/i.test(s) || (/Android/i.test(s) && !/Mobile/i.test(s)) || ipadLike;
+    out.deviceType = tablet ? 'tablet' : out.mobile ? 'mobile' : 'desktop';
+    return out;
+  }
+
   function createHostProtocol(handlers) {
     var h = handlers || {};
     // 候选持久化 key：按 AI 窗实例分（B5）——内嵌 iframe 与 ⧉ 独立窗同开时不再互相覆盖 localStorage
@@ -749,21 +866,9 @@
       var n = (typeof navigator !== 'undefined') ? navigator : null;
       var s = (typeof screen !== 'undefined') ? screen : null;
       var ua = (n && n.userAgent) ? String(n.userAgent) : '';
-      var browser = '?', bver = '';
-      try {
-        var m = ua.match(/(EdgA?|Chrome|Firefox|OPR|Safari|Edge)\/([\d.]+)/);
-        if (m) { browser = (m[1] === 'Edg' || m[1] === 'Edge') ? 'Edge' : (m[1] === 'OPR' ? 'Opera' : m[1]); bver = m[2]; }
-        else if (/MSIE|Trident/.test(ua)) { browser = 'IE'; var mi = ua.match(/rv:([\d.]+)/); bver = mi ? mi[1] : ''; }
-      } catch (e) {}
-      var os = '?', osv = '';
-      try {
-        if (/Windows NT/.test(ua)) { os = 'Windows'; osv = /Windows NT 10\.0/.test(ua) ? '10/11' : (/Windows NT 6\.[123]/.test(ua) ? '7/8' : '10/11'); }
-        else if (/iPhone|iPad|iPod/.test(ua)) { os = 'iOS'; osv = (/iPhone OS (\d+[_\d]*)/.test(ua)) ? RegExp.$1.replace(/_/g, '.') : ''; }
-        else if (/Android/.test(ua)) { os = 'Android'; var am = ua.match(/Android ([\d.]+)/); osv = am ? am[1] : ''; }
-        else if (/Mac OS X/.test(ua)) { os = 'macOS'; var mm = ua.match(/Mac OS X ([\d_.]+)/); osv = mm ? mm[1].replace(/_/g, '.') : ''; }
-        else if (/CrOS/.test(ua)) { os = 'ChromeOS'; }
-        else if (/Linux/.test(ua)) { os = 'Linux'; }
-      } catch (e) {}
+      var uaInfo = uaParse(ua, n);
+      var browser = uaInfo.browser || '?', bver = uaInfo.version || '';
+      var os = uaInfo.os || '?', osv = uaInfo.osVer || '';
       var w = 0, h = 0, vw = 0, vh = 0, dpr = 1;
       try { w = (s && s.width) || 0; h = (s && s.height) || 0; } catch (e) {}
       try { vw = (global.innerWidth) || 0; vh = (global.innerHeight) || 0; dpr = (global.devicePixelRatio) || 1; } catch (e) {}
@@ -774,8 +879,8 @@
       var lang = (n && (n.language || (n.languages && n.languages[0]) || '')) || '';
       var tz = ''; try { tz = (typeof Intl !== 'undefined' && Intl.DateTimeFormat().resolvedOptions().timeZone) || ''; } catch (e) {}
       var wd = false; try { wd = !!n.webdriver; } catch (e) {}
-      var mobile = /Android|iPhone|iPad|iPod|Mobile|Windows Phone/i.test(ua) || touch > 1;
-      var deviceType = mobile ? (/iPad|Tablet|Silk/i.test(ua) ? 'tablet' : 'mobile') : 'desktop';
+      var mobile = uaInfo.mobile;
+      var deviceType = uaInfo.deviceType;
       var deviceId = '';
       try { deviceId = global.localStorage.getItem('__aiti_device_id') || ''; } catch (e) {}
       if (!deviceId) { deviceId = 'dev-' + Math.random().toString(36).slice(2, 10); try { global.localStorage.setItem('__aiti_device_id', deviceId); } catch (e) {} }
@@ -840,5 +945,5 @@
     };
   }
 
-  global.AitiHostProtocol = { create: createHostProtocol };
+  global.AitiHostProtocol = { create: createHostProtocol, uaParse: uaParse };
 })(window);
