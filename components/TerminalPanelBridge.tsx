@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { useExtSlotItems, ExtItemBoundary, useExtSlotSettled, ensureExtSlotMaterialized } from "./ExtSlots";
-import { hasExtRender } from "@/lib/ext-ui-store";
+import { hasExtRender, subscribeExtUi, extUiVersion } from "@/lib/ext-ui-store";
 import { TerminalPanel } from "./TerminalPanel";
 import type { TerminalTab } from "./terminal-tab-state";
 
@@ -55,9 +55,16 @@ export function TerminalPanelBridge({ tab, active, onClosed, onRestart, onCloseE
   // slot-declaring extension has materialized, this component renders an
   // empty shell placeholder (the !settled branch below) and does not jump
   // ahead building a native PTY — double-open protection unchanged.
+  // [manifest-race fix] 该 effect 原先只依赖 [active]：刷新恢复 tab 时它早于
+  // manifest/bootGraph 到达就跑——pendingForSlot 虽有 SSR seed，但 prefetch 在空
+  // bootGraph 下静默放弃（entryOf 无行 → return），materialize 无声失败且无人
+  // 重试（terminalDock 不在 INTERACTIVE_SLOTS，version-bump 的 auto 拉起不覆盖
+  // lazy 扩展）→ 恢复的终端 tab 永远空壳。补 ui-store version 依赖：manifest
+  // 处理完必 bump → 重跑；pendingForSlot 幂等（已 materialize 跳过），重复跑无害。
+  const extUiVer = useSyncExternalStore(subscribeExtUi, extUiVersion, () => 0);
   useEffect(() => {
     if (active) void ensureExtSlotMaterialized("terminalDock");
-  }, [active]);
+  }, [active, extUiVer]);
   // Tab-close finalization routing: takeover mode removes locally
   // immediately; native mode goes through TerminalPanel's closing effect for
   // full finalization (wait for creation/in-flight input → DELETE → callback;
