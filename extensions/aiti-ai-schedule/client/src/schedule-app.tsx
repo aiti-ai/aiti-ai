@@ -54,21 +54,21 @@ function fmtTime(ts?: number | null): string {
   const d = new Date(ts);
   const sameDay = d.toDateString() === new Date().toDateString();
   const hm = d.toTimeString().slice(0, 5);
-  return sameDay ? "今天 " + hm : `${d.getMonth() + 1}/${d.getDate()} ` + hm;
+  return sameDay ? t("dlg.today", { hm }) : `${d.getMonth() + 1}/${d.getDate()} ` + hm;
 }
 function relTime(ts?: number | null): string {
   if (!ts) return "";
   const diff = Date.now() - ts;
-  if (diff < 60e3) return Math.max(1, Math.round(diff / 1e3)) + "s 前";
-  if (diff < 3600e3) return Math.round(diff / 60e3) + "m 前";
-  if (diff < 86400e3) return Math.round(diff / 3600e3) + "h 前";
-  return Math.round(diff / 86400e3) + "d 前";
+  if (diff < 60e3) return t("time.ago", { v: Math.max(1, Math.round(diff / 1e3)) + "s" });
+  if (diff < 3600e3) return t("time.ago", { v: Math.round(diff / 60e3) + "m" });
+  if (diff < 86400e3) return t("time.ago", { v: Math.round(diff / 3600e3) + "h" });
+  return t("time.ago", { v: Math.round(diff / 86400e3) + "d" });
 }
-function statusBadge(t: any): [string, string] {
-  if (!t.triggerEnabled && t.enabled) return ["待触发(调度关)", "var(--warn, #f59e0b)"];
-  if (!t.enabled) return t.autoApprove === false ? ["待确认", "var(--warn, #f59e0b)"] : ["已停用", "#8a8a8a"];
-  if (t.running) return ["执行中…", "#3b82f6"];
-  return ["启用", "var(--ok, #10b981)"];
+function statusBadge(task: any): [string, string] {
+  if (!task.triggerEnabled && task.enabled) return [t("st.pendingOff"), "var(--warn, #f59e0b)"];
+  if (!task.enabled) return task.autoApprove === false ? [t("st.pendingApproval"), "var(--warn, #f59e0b)"] : [t("st.disabled"), "#8a8a8a"];
+  if (task.running) return [t("st.running"), "#3b82f6"];
+  return [t("st.enabled"), "var(--ok, #10b981)"];
 }
 function scheduleHuman(t: any): string { return Array.isArray(t.schedule) ? t.schedule.join(" · ") : String(t.schedule); }
 const btnStyle = (bg: string, color: string): React.CSSProperties => ({
@@ -105,7 +105,9 @@ const TIMEZONE_OPTIONS: { value: string; label: string }[] = (() => {
   });
 })();
 const LOCAL_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
-const TZ_GROUPS = [...new Set(TIMEZONE_OPTIONS.map((o) => (o.value.includes("/") ? o.value.slice(0, o.value.indexOf("/")) : "其他")))].sort();
+// i18n：分组名（无 "/" 的 IANA 名归入「其他」）随 UI 语言变化——惰性求值（模块顶层求值早于 ctx 注入，不能预计算）
+const tzGroupOf = (value: string): string => (value.includes("/") ? value.slice(0, value.indexOf("/")) : t("tz.other"));
+const tzGroups = (): string[] => [...new Set(TIMEZONE_OPTIONS.map((o) => tzGroupOf(o.value)))].sort();
 
 // ---------- 时区选择器：搜索 + 按区域分组的树形下拉 ----------
 function TimezonePicker({ value, onChange }: { value: string; onChange: (tz: string) => void }) {
@@ -154,7 +156,7 @@ function TimezonePicker({ value, onChange }: { value: string; onChange: (tz: str
   useEffect(() => {
     if (!open) return;
     const keep = [LOCAL_TZ.split("/")[0], value.split("/")[0]].filter(Boolean);
-    setCollapsed(new Set(TZ_GROUPS.filter((g) => !keep.includes(g))));
+    setCollapsed(new Set(tzGroups().filter((g) => !keep.includes(g))));
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const q = query.trim().toLowerCase();
@@ -163,7 +165,7 @@ function TimezonePicker({ value, onChange }: { value: string; onChange: (tz: str
     for (const o of TIMEZONE_OPTIONS) {
       if (q && !o.value.toLowerCase().includes(q)) continue;
       const slash = o.value.indexOf("/");
-      const group = slash === -1 ? "其他" : o.value.slice(0, slash);
+      const group = tzGroupOf(o.value);
       const leaf = slash === -1 ? o.value : o.value.slice(slash + 1);
       if (!map.has(group)) map.set(group, []);
       map.get(group)!.push({ value: o.value, leaf, suffix: o.label.slice(o.value.length) });
@@ -175,7 +177,7 @@ function TimezonePicker({ value, onChange }: { value: string; onChange: (tz: str
   const pick = (tz: string) => { onChange(tz); setOpen(false); setQuery(""); };
   const curLabel = value
     ? TIMEZONE_OPTIONS.find((o) => o.value === value)?.label || value
-    : `缺省（本机${LOCAL_TZ ? ` · ${LOCAL_TZ}` : ""}`;
+    : t("tz.defaultLocal", { tz: LOCAL_TZ ? ` · ${LOCAL_TZ}` : "" });
 
   return (
     <div ref={wrapRef} style={{ position: "relative" }}>
@@ -184,7 +186,7 @@ function TimezonePicker({ value, onChange }: { value: string; onChange: (tz: str
         onClick={() => setOpen(!open)}
         onKeyDown={(e) => { if (e.key === "Enter") setOpen(!open); }}
         style={{ ...inputStyle, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
-        <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{curLabel}{!value && "）"}</span>
+        <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{curLabel}</span>
         <span style={{ color: "var(--text-muted)", flexShrink: 0 }}>{open ? "▾" : "▸"}</span>
       </div>
       {open && rect && (
@@ -192,7 +194,7 @@ function TimezonePicker({ value, onChange }: { value: string; onChange: (tz: str
           top: rect.top, bottom: rect.bottom, left: rect.left, width: rect.width,
           background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6,
           boxShadow: "0 8px 24px rgba(0,0,0,.3)" }}>
-          <input autoFocus placeholder="搜索时区，如 shanghai / york / utc"
+          <input autoFocus placeholder={t("tz.search")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
@@ -209,13 +211,13 @@ function TimezonePicker({ value, onChange }: { value: string; onChange: (tz: str
             {/* 首项：缺省 */}
             <div className="tz-row" onClick={() => pick("")}
               style={{ padding: "4px 8px", fontSize: 12, cursor: "pointer", color: "var(--text-muted)", fontWeight: !value ? 600 : undefined }}>
-              缺省（本机{LOCAL_TZ ? ` · ${LOCAL_TZ}` : ""}）
+              {t("tz.defaultLocal", { tz: LOCAL_TZ ? ` · ${LOCAL_TZ}` : "" })}
             </div>
             {/* 编辑旧任务存了列表外的值——保底展示 */}
             {value && !TIMEZONE_OPTIONS.some((o) => o.value === value) && (
               <div className="tz-row" onClick={() => pick(value)}
                 style={{ padding: "4px 8px", fontSize: 12, cursor: "pointer", fontWeight: 600 }}>
-                {value}（当前）
+                {t("tz.current", { v: value })}
               </div>
             )}
             {groups.map(([group, items]) => {
@@ -242,7 +244,7 @@ function TimezonePicker({ value, onChange }: { value: string; onChange: (tz: str
             })}
             {groups.length === 0 && (
               <div style={{ padding: "8px", fontSize: 12, color: "var(--text-muted)" }}>
-                无匹配 —— 按 Enter 使用自定义值「{query.trim()}」
+                {t("tz.noMatch", { q: query.trim() })}
               </div>
             )}
           </div>
@@ -250,7 +252,7 @@ function TimezonePicker({ value, onChange }: { value: string; onChange: (tz: str
             <div className="tz-row" onClick={() => pick(query.trim())}
               style={{ padding: "5px 8px", fontSize: 11.5, cursor: "pointer", color: "var(--text-muted)",
                 borderTop: "1px solid var(--border)", borderRadius: "0 0 6px 6px" }}>
-              ↵ 使用自定义值「{query.trim()}」
+              {t("tz.useCustom", { q: query.trim() })}
             </div>
           )}
         </div>
@@ -261,7 +263,9 @@ function TimezonePicker({ value, onChange }: { value: string; onChange: (tz: str
 
 // ---------- 调度输入即时校验工具（本地逐行镜像 parseSchedules/parseCron 语义；服务端 /plans/validate 权威兜底） ----------
 const SCHED_DOW_ALIAS: Record<string, number> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
-const SCHED_SEGS: string[] = ["秒", "分", "时", "日", "月", "周"];
+// i18n：调度段名随 UI 语言变化——惰性取词（模块顶层求值早于 ctx 注入）
+const SEG_KEYS = ["sec", "min", "hour", "day", "mon", "dow"] as const;
+const segLabel = (i: number): string => t("seg." + (SEG_KEYS[i] ?? "sec"));
 function schedDowNum(v: string): number {
   const t = v.trim().toLowerCase();
   if (/^\d+$/.test(t)) return parseInt(t, 10);
@@ -274,17 +278,17 @@ function schedFieldOk(field: string, min: number, max: number): string | null {
     const slash = p.indexOf("/");
     if (slash >= 0) {
       step = parseInt(p.slice(slash + 1), 10);
-      if (!Number.isFinite(step) || step <= 0) return "步进 / 需为正整数";
+      if (!Number.isFinite(step) || step <= 0) return t("err.step");
       p = p.slice(0, slash);
     }
-    if (!p) return "空字段";
+    if (!p) return t("err.empty");
     if (p === "*") continue;
     let lo: number, hi: number;
     const dash = p.indexOf("-");
     if (dash >= 0) { lo = schedDowNum(p.slice(0, dash)); hi = schedDowNum(p.slice(dash + 1)); }
     else { lo = hi = schedDowNum(p); if (slash >= 0) hi = max; } // "5/" = 从 5 起步进
     if (!Number.isFinite(lo) || !Number.isFinite(hi) || lo < min || hi > max || lo > hi) {
-      return "取值需在 " + min + "-" + max + " 内";
+      return t("err.range", { min, max });
     }
   }
   return null;
@@ -297,12 +301,12 @@ function validateSchedRow(row: string): string | null {
   if (/^\d+\s*[smhd]?$/i.test(s)) return null;      // 间隔 30m/2h/90s
   if (schedIsIso(s)) return null;                     // ISO 一次性 2026-09-10 09:00:00
   const seg = s.split(/\s+/);
-  if (seg.length !== 5 && seg.length !== 6) return "需 5 段（分 时 日 月 周）或 6 段（秒开头），当前 " + seg.length + " 段";
+  if (seg.length !== 5 && seg.length !== 6) return t("err.segCount", { n: seg.length });
   const six = seg.length === 6;
   const ranges: [number, number][] = six ? [[0, 59], [0, 59], [0, 23], [1, 31], [1, 12], [0, 7]] : [[0, 59], [0, 23], [1, 31], [1, 12], [0, 7]];
   for (let i = 0; i < seg.length; i++) {
     const e = schedFieldOk(seg[i], ranges[i][0], ranges[i][1]);
-    if (e) return "第 " + (i + 1) + " 段（" + SCHED_SEGS[i + (six ? 0 : 1)] + "）：" + e;
+    if (e) return t("err.seg", { n: i + 1, seg: segLabel(i + (six ? 0 : 1)), msg: e });
   }
   return null;
 }
@@ -390,11 +394,11 @@ function SchedHelp() {
           <div style={{ fontWeight: 600, fontSize: 12.5 }}>{t("sh.title")}</div>
           <div style={{ color: "var(--text-muted)" }}>
             {t("sh.cronHead")}
-            <div style={SH_ROW}><span style={SH_K}>分</span><span style={SH_V}>{t("sh.f.min")}</span></div>
-            <div style={SH_ROW}><span style={SH_K}>时</span><span style={SH_V}>{t("sh.f.hour")}</span></div>
-            <div style={SH_ROW}><span style={SH_K}>日</span><span style={SH_V}>{t("sh.f.day")}</span></div>
-            <div style={SH_ROW}><span style={SH_K}>月</span><span style={SH_V}>{t("sh.f.month")}</span></div>
-            <div style={SH_ROW}><span style={SH_K}>周</span><span style={SH_V}>{t("sh.f.dow")}</span></div>
+            <div style={SH_ROW}><span style={SH_K}>{t("sh.k.min")}</span><span style={SH_V}>{t("sh.f.min")}</span></div>
+            <div style={SH_ROW}><span style={SH_K}>{t("sh.k.hour")}</span><span style={SH_V}>{t("sh.f.hour")}</span></div>
+            <div style={SH_ROW}><span style={SH_K}>{t("sh.k.day")}</span><span style={SH_V}>{t("sh.f.day")}</span></div>
+            <div style={SH_ROW}><span style={SH_K}>{t("sh.k.month")}</span><span style={SH_V}>{t("sh.f.month")}</span></div>
+            <div style={SH_ROW}><span style={SH_K}>{t("sh.k.dow")}</span><span style={SH_V}>{t("sh.f.dow")}</span></div>
             <div style={{ marginTop: 2 }}>{t("sh.symbols")}</div>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -414,16 +418,17 @@ function SchedHelp() {
 }
 
 // ---------- 模型下拉选择器（对齐 pi-web ModelSelector「新建 session 同款」：provider 分组 + 搜索过滤 + 缺省/默认模型 + 可用性提示点） ----------
+// i18n：可用性提示点文案随 UI 语言变化——键表惰性取词（模块顶层求值早于 ctx 注入）
 const AVAIL_DOT: Record<string, [string, string]> = {
-  ok: ["var(--ok, #10b981)", "可用"],
-  rl: ["var(--warn, #f59e0b)", "限流(429)"],
-  err: ["var(--danger, #ef4444)", "不可用"],
-  unprobed: ["#9ca3af", "未探测"],
+  ok: ["var(--ok, #10b981)", "md.ok"],
+  rl: ["var(--warn, #f59e0b)", "md.rl"],
+  err: ["var(--danger, #ef4444)", "md.err"],
+  unprobed: ["#9ca3af", "md.unprobed"],
 };
 function ModelDot({ avail }: { avail?: string }) {
   if (!avail || !AVAIL_DOT[avail]) return null;
-  const [color, tip] = AVAIL_DOT[avail];
-  return <span title={tip} style={{ width: 7, height: 7, borderRadius: 999, background: color, flexShrink: 0, display: "inline-block" }} />;
+  const [color, tipKey] = AVAIL_DOT[avail];
+  return <span title={t(tipKey)} style={{ width: 7, height: 7, borderRadius: 999, background: color, flexShrink: 0, display: "inline-block" }} />;
 }
 
 function ModelPicker({ value, onChange, cwd }: { value: string; onChange: (v: string) => void; cwd?: string }) {
@@ -464,7 +469,7 @@ function ModelPicker({ value, onChange, cwd }: { value: string; onChange: (v: st
         setDefaultModel(d.defaultModel ? `${d.defaultModel.provider}/${d.defaultModel.modelId}` : "");
         loadedCwdRef.current = key;
       } else {
-        setErr(String(d.error || "模型列表加载失败"));
+        setErr(String(d.error || t("mp.loadErr")));
       }
     }).catch((e) => { if (alive) setErr(String(e?.message || e)); });
     return () => { alive = false; };
@@ -520,7 +525,7 @@ function ModelPicker({ value, onChange, cwd }: { value: string; onChange: (v: st
   const pick = (v: string) => { onChange(v); setOpen(false); setQuery(""); };
   const cur = list?.find((m) => `${m.provider}/${m.id}` === value);
   const labelOf = (m: { id: string; name: string; provider: string }) => (m.name && m.name !== m.id ? m.name : m.id);
-  const defaults = defaultModel ? `缺省（默认 ${defaultModel}）` : "缺省（默认模型）";
+  const defaults = defaultModel ? t("mp.defaultWith", { m: defaultModel }) : t("mp.default");
 
   return (
     <div ref={wrapRef} style={{ position: "relative" }}>
@@ -534,7 +539,7 @@ function ModelPicker({ value, onChange, cwd }: { value: string; onChange: (v: st
           {value ? (cur ? labelOf(cur) : value) : defaults}
         </span>
         {value && (
-          <span title="清除（用默认模型）" onClick={(e) => { e.stopPropagation(); onChange(""); }}
+          <span title={t("mp.clearTip")} onClick={(e) => { e.stopPropagation(); onChange(""); }}
             style={{ color: "var(--text-muted)", flexShrink: 0, cursor: "pointer", fontSize: 11, lineHeight: 1 }}>✕</span>
         )}
         <span style={{ color: "var(--text-muted)", flexShrink: 0 }}>{open ? "▾" : "▸"}</span>
@@ -545,13 +550,13 @@ function ModelPicker({ value, onChange, cwd }: { value: string; onChange: (v: st
           background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6,
           boxShadow: "0 8px 24px rgba(0,0,0,.3)", display: "flex", flexDirection: "column" }}>
           {showSearch && (
-            <input autoFocus placeholder="搜索模型（名称 / id / provider）" value={query}
+            <input autoFocus placeholder={t("mp.search")} value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Escape") setOpen(false); }}
               style={{ ...inputStyle, border: "none", borderBottom: "1px solid var(--border)", borderRadius: "6px 6px 0 0", flexShrink: 0 }} />
           )}
           <div style={{ maxHeight: 264, overflowY: "auto" }}>
-            {list === null && !err && <div style={{ padding: 8, fontSize: 12, color: "var(--text-muted)" }}>加载中…</div>}
+            {list === null && !err && <div style={{ padding: 8, fontSize: 12, color: "var(--text-muted)" }}>{t("ui.loading")}</div>}
             {err && <div style={{ padding: 8, fontSize: 12, color: "var(--danger, #ef4444)" }}>{err}</div>}
             {list !== null && (
               <>
@@ -563,7 +568,7 @@ function ModelPicker({ value, onChange, cwd }: { value: string; onChange: (v: st
                 {value && !cur && (
                   <div className="mp-row" onClick={() => pick(value)} title={value}
                     style={{ padding: "5px 8px", fontSize: 12, cursor: "pointer", fontWeight: 600, borderTop: "1px solid var(--border)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {value}（当前，已不在列表）
+                    {t("mp.stale", { v: value })}
                   </div>
                 )}
                 {groups.map(([provider, items]) => (
@@ -590,7 +595,7 @@ function ModelPicker({ value, onChange, cwd }: { value: string; onChange: (v: st
                 ))}
                 {groups.length === 0 && (
                   <div style={{ padding: 8, fontSize: 12, color: "var(--text-muted)" }}>
-                    {q ? "无匹配模型" : "未发现可用模型（可在 models.json 启用）"}
+                    {q ? t("mp.noMatch") : t("mp.none")}
                   </div>
                 )}
               </>
@@ -674,10 +679,10 @@ function RefPicker({ anchor, placeholder, loadItems, onPick, onClose }: {
         }}
         style={{ ...inputStyle, border: "none", borderBottom: "1px solid var(--border)", borderRadius: "6px 6px 0 0", flexShrink: 0 }} />
       <div style={{ maxHeight: 264, overflowY: "auto" }}>
-        {items === null && <div style={{ padding: 8, fontSize: 12, color: "var(--text-muted)" }}>加载中…</div>}
+        {items === null && <div style={{ padding: 8, fontSize: 12, color: "var(--text-muted)" }}>{t("ui.loading")}</div>}
         {err && items !== null && items.length === 0 && <div style={{ padding: 8, fontSize: 12, color: "var(--danger, #ef4444)" }}>{err}</div>}
         {!err && items !== null && items.length === 0 && (
-          <div style={{ padding: 8, fontSize: 12, color: "var(--text-muted)" }}>无匹配</div>
+          <div style={{ padding: 8, fontSize: 12, color: "var(--text-muted)" }}>{t("ui.noMatch")}</div>
         )}
         {items !== null && items.map((it) => (
           <div key={it.key} className="ref-row" onClick={() => pick(it)}
@@ -736,7 +741,7 @@ function CcChannelPicker({ anchor, onPick, onClose }: {
   useEffect(() => {
     fetch(API("/cc/projects")).then((r) => r.json()).then((d) => {
       if (d.ok) setProjects(d.projects || []);
-      else setErr(String(d.error || "项目列表加载失败"));
+      else setErr(String(d.error || t("cc.projErr")));
     }).catch((e) => setErr(String(e?.message || e)));
   }, []);
   useEffect(() => {
@@ -744,7 +749,7 @@ function CcChannelPicker({ anchor, onPick, onClose }: {
     setSessions(null);
     fetch(API("/cc/sessions?project=" + encodeURIComponent(project))).then((r) => r.json()).then((d) => {
       if (d.ok) setSessions(d.sessions || []);
-      else setErr(String(d.error || "会话列表加载失败"));
+      else setErr(String(d.error || t("cc.sessErr")));
     }).catch((e) => setErr(String(e?.message || e)));
   }, [project]);
 
@@ -761,9 +766,9 @@ function CcChannelPicker({ anchor, onPick, onClose }: {
       background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6,
       boxShadow: "0 8px 24px rgba(0,0,0,.3)", display: "flex", flexDirection: "column", gap: 6, padding: 8 }}>
       <style>{`.ref-row:hover{background:var(--bg-hover)}`}</style>
-      <div style={{ fontSize: 11, color: "var(--text-muted)" }}>项目（cc-connect）</div>
+      <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{t("cc.projects")}</div>
       {err && <div style={{ fontSize: 11.5, color: "var(--danger, #ef4444)" }}>{err}</div>}
-      {projects === null && !err && <div style={{ fontSize: 12, color: "var(--text-muted)" }}>加载中…</div>}
+      {projects === null && !err && <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{t("ui.loading")}</div>}
       {projects !== null && (
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {projects.map((p: any) => (
@@ -771,17 +776,17 @@ function CcChannelPicker({ anchor, onPick, onClose }: {
               {p.name}{p.sessions_count ? ` (${p.sessions_count})` : ""}
             </button>
           ))}
-          {projects.length === 0 && <span style={{ fontSize: 11.5, color: "var(--text-muted)" }}>无项目——检查 cc-connect 是否在运行</span>}
+          {projects.length === 0 && <span style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{t("cc.none")}</span>}
         </div>
       )}
       <div style={{ fontSize: 11, color: "var(--text-muted)", borderTop: "1px solid var(--border)", paddingTop: 6 }}>
-        会话{project ? " · " + project : ""}（只列出 cc-connect 已知会话）
+        {t("cc.sessions", { p: project ? " · " + project : "" })}
       </div>
       <div style={{ maxHeight: 210, overflowY: "auto" }}>
-        {!project && <div style={{ padding: 4, fontSize: 12, color: "var(--text-muted)" }}>← 先选项目</div>}
-        {project && sessions === null && <div style={{ padding: 4, fontSize: 12, color: "var(--text-muted)" }}>加载中…</div>}
+        {!project && <div style={{ padding: 4, fontSize: 12, color: "var(--text-muted)" }}>{t("cc.pickFirst")}</div>}
+        {project && sessions === null && <div style={{ padding: 4, fontSize: 12, color: "var(--text-muted)" }}>{t("ui.loading")}</div>}
         {project && sessions !== null && sessions.length === 0 && (
-          <div style={{ padding: 4, fontSize: 12, color: "var(--text-muted)" }}>该项目暂无会话</div>
+          <div style={{ padding: 4, fontSize: 12, color: "var(--text-muted)" }}>{t("cc.empty")}</div>
         )}
         {project && sessions !== null && sessions.map((s: any) => (
           <div key={s.session_key} className="ref-row"
@@ -815,7 +820,7 @@ function EditForm({ initial, onDone }: { initial: any; onDone: (saved: boolean) 
     const lines = sched.split("\n").map((x) => x.trim()).filter(Boolean);
     for (let i = 0; i < lines.length; i++) {
       const e = validateSchedRow(lines[i]);
-      if (e) { setSchedErr("第 " + (i + 1) + " 行：" + e); return; }
+      if (e) { setSchedErr(t("err.line", { n: i + 1, msg: e })); return; }
     }
     if (lines.length === 0) { setSchedErr(""); return; }
     clearTimeout(schedTimer.current);
@@ -826,7 +831,7 @@ function EditForm({ initial, onDone }: { initial: any; onDone: (saved: boolean) 
           body: JSON.stringify({ schedule: lines.length === 1 ? lines[0] : lines }),
         });
         const d = await r.json();
-        setSchedErr(d.ok ? "" : String(d.error || "校验失败") + "（保存前请修正）");
+        setSchedErr(d.ok ? "" : String(d.error || t("ed.validateFail")) + t("ed.fixSuffix"));
       } catch { /* 网络异常静默——保存时服务端仍会兜底 */ }
     }, 300);
   }, [sched]);
@@ -927,7 +932,7 @@ function EditForm({ initial, onDone }: { initial: any; onDone: (saved: boolean) 
         body: JSON.stringify(body),
       });
       const d = await r.json();
-      if (!d.ok) void uiAlert({ message: "保存失败：" + (d.error || r.status), kind: "error" });
+      if (!d.ok) void uiAlert({ message: t("ed.saveFail", { e: d.error || r.status }), kind: "error" });
       onDone(!!d.ok);
     } finally { setBusy(false); }
   }
@@ -940,11 +945,11 @@ function EditForm({ initial, onDone }: { initial: any; onDone: (saved: boolean) 
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "10px 0" }}>
-      <div style={{ fontSize: 13, fontWeight: 600 }}>{initial?.id ? "编辑计划 · " + initial.name : "新建计划"}</div>
-      {row("名称", <input value={name} onChange={(e) => setName(e.target.value)} placeholder="如：每日9点项目日报" style={inputStyle} />)}
+      <div style={{ fontSize: 13, fontWeight: 600 }}>{initial?.id ? t("ed.edit", { name: initial.name }) : t("ed.new")}</div>
+      {row(t("ed.name"), <input value={name} onChange={(e) => setName(e.target.value)} placeholder={t("ed.namePh")} style={inputStyle} />)}
       {row((
         <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-          调度<SchedHelp />
+          {t("ed.sched")}<SchedHelp />
         </span>
       ), (
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -956,53 +961,53 @@ function EditForm({ initial, onDone }: { initial: any; onDone: (saved: boolean) 
         </div>
       ))}
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-        {[["每 5 分钟", "*/5 * * * *"], ["每小时", "0 * * * *"], ["每天 9 点", "0 9 * * *"], ["工作日 18 点", "0 18 * * 1-5"], ["30 分钟", "30m"], ["一次性 +1h", "+1h"]].map(([label, val]) => (
+        {[[t("ed.chip.5m"), "*/5 * * * *"], [t("ed.chip.hourly"), "0 * * * *"], [t("ed.chip.daily9"), "0 9 * * *"], [t("ed.chip.weekday18"), "0 18 * * 1-5"], [t("ed.chip.30m"), "30m"], [t("ed.chip.once1h"), "+1h"]].map(([label, val]) => (
           <button key={val} style={btnStyle("var(--bg-hover)", "var(--text-muted)")} onClick={() => { setSched(val); setSchedErr(""); }}>{label}</button>
         ))}
       </div>
-      {row("提示词", (
+      {row(t("ed.prompt"), (
         <div>
           <textarea ref={promptRef} value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={5}
-            placeholder="目标 + 验收标准（给到点执行的 AI 看的完整指令）"
+            placeholder={t("ed.promptPh")}
             style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
           <div ref={refBtnRef} style={{ display: "flex", gap: 6, marginTop: 4, alignItems: "center", flexWrap: "wrap" }}>
-            <button style={btnStyle("var(--bg-hover)", "var(--text-muted)")} onClick={() => setPicker(picker === "prompt" ? null : "prompt")}>收藏</button>
-            <button style={btnStyle("var(--bg-hover)", "var(--text-muted)")} onClick={() => setPicker(picker === "cmd" ? null : "cmd")}>命令</button>
-            <button style={btnStyle("var(--bg-hover)", "var(--text-muted)")} onClick={() => setPicker(picker === "doc" ? null : "doc")}>文档</button>
-            <span style={{ fontSize: 10.5, color: "var(--text-muted)" }}>插入到提示词光标处</span>
+            <button style={btnStyle("var(--bg-hover)", "var(--text-muted)")} onClick={() => setPicker(picker === "prompt" ? null : "prompt")}>{t("ed.fav")}</button>
+            <button style={btnStyle("var(--bg-hover)", "var(--text-muted)")} onClick={() => setPicker(picker === "cmd" ? null : "cmd")}>{t("ed.cmd")}</button>
+            <button style={btnStyle("var(--bg-hover)", "var(--text-muted)")} onClick={() => setPicker(picker === "doc" ? null : "doc")}>{t("ed.doc")}</button>
+            <span style={{ fontSize: 10.5, color: "var(--text-muted)" }}>{t("ed.insertTip")}</span>
           </div>
           {picker && (
             <RefPicker anchor={refBtnRef}
-              placeholder={picker === "prompt" ? "搜索收藏（名称/内容/标签）" : picker === "cmd" ? "搜索常用命令（{参数} 占位符原样插入）" : "搜索文档中心（服务端全文检索）"}
+              placeholder={picker === "prompt" ? t("ed.searchFav") : picker === "cmd" ? t("ed.searchCmd") : t("ed.searchDoc")}
               loadItems={picker === "prompt" ? loadPrompts : picker === "cmd" ? loadCmds : loadDocs}
               onPick={pickRef(picker)}
               onClose={() => setPicker(null)} />
           )}
         </div>
       ))}
-      {row("模式", (
+      {row(t("ed.mode"), (
         <select value={mode} onChange={(e) => setMode(e.target.value)} style={inputStyle}>
-          <option value="auto">auto（有活会话注入，否则新会话）</option>
-          <option value="invokeAI">invokeAI（轻量问答，无工具）</option>
-          <option value="session">session（总是新建全功能会话）</option>
+          <option value="auto">{t("ed.mode.auto")}</option>
+          <option value="invokeAI">{t("ed.mode.invokeAI")}</option>
+          <option value="session">{t("ed.mode.session")}</option>
         </select>
       ))}
-      {row("目录", <input value={cwd} onChange={(e) => setCwd(e.target.value)} placeholder="可选，默认创建时会话 cwd" style={inputStyle} />)}
-      {row("模型", <ModelPicker value={model} onChange={setModel} cwd={cwd.trim()} />)}
-      {row("限次", <input value={maxRuns} onChange={(e) => setMaxRuns(e.target.value.replace(/\D/g, ""))} placeholder="可选，累计跑 N 次自停" style={inputStyle} />)}
-      {row("每日上限", <input value={dailyCap} onChange={(e) => setDailyCap(e.target.value.replace(/\D/g, ""))} placeholder="可选，每天最多自动执行 N 次（预算）" style={inputStyle} />)}
-      {row("时区", <TimezonePicker value={timezone} onChange={setTimezone} />)}
-      {row("送达IM", (
+      {row(t("ed.cwd"), <input value={cwd} onChange={(e) => setCwd(e.target.value)} placeholder={t("ed.cwdPh")} style={inputStyle} />)}
+      {row(t("ed.model"), <ModelPicker value={model} onChange={setModel} cwd={cwd.trim()} />)}
+      {row(t("ed.maxRuns"), <input value={maxRuns} onChange={(e) => setMaxRuns(e.target.value.replace(/\D/g, ""))} placeholder={t("ed.maxRunsPh")} style={inputStyle} />)}
+      {row(t("ed.dailyCap"), <input value={dailyCap} onChange={(e) => setDailyCap(e.target.value.replace(/\D/g, ""))} placeholder={t("ed.dailyCapPh")} style={inputStyle} />)}
+      {row(t("ed.tz"), <TimezonePicker value={timezone} onChange={setTimezone} />)}
+      {row(t("ed.cc"), (
         <div style={{ position: "relative" }}>
           <div role="button" tabIndex={0} ref={ccBtnRef}
             onClick={() => setCcOpen(!ccOpen)}
             onKeyDown={(e) => { if (e.key === "Enter") setCcOpen(!ccOpen); }}
             style={{ ...inputStyle, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
             <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: ccSessionKey ? undefined : "var(--text-muted)" }}>
-              {ccSessionKey ? `${ccProject} · ${ccLabel || ccSessionKey.slice(0, 28) + "…"}` : "不发送（点选 cc-connect 通道）"}
+              {ccSessionKey ? `${ccProject} · ${ccLabel || ccSessionKey.slice(0, 28) + "…"}` : t("ed.ccNone")}
             </span>
             {ccSessionKey && (
-              <span role="button" title="清除"
+              <span role="button" title={t("ed.clear")}
                 onClick={(e) => { e.stopPropagation(); setCcProject(""); setCcSessionKey(""); setCcLabel(""); }}
                 style={{ color: "var(--text-muted)", cursor: "pointer", flexShrink: 0 }}>✕</span>
             )}
@@ -1014,11 +1019,11 @@ function EditForm({ initial, onDone }: { initial: any; onDone: (saved: boolean) 
           )}
         </div>
       ))}
-      {row("送达邮箱", <input value={mailTo} onChange={(e) => setMailTo(e.target.value)}
-        placeholder="可选，逗号分隔多个，如 a@x.com, b@y.com（经 aiti-mail 发送）" style={inputStyle} />)}
-      {(ccSessionKey || mailTo.trim()) && row("发送条件", (
+      {row(t("ed.mail"), <input value={mailTo} onChange={(e) => setMailTo(e.target.value)}
+        placeholder={t("ed.mailPh")} style={inputStyle} />)}
+      {(ccSessionKey || mailTo.trim()) && row(t("ed.sendOn"), (
         <div style={{ display: "flex", gap: 6 }}>
-          {[["all", "都发"], ["ok", "仅成功"], ["error", "仅失败"]].map(([v, label]) => (
+          {[["all", t("ed.sendOn.all")], ["ok", t("ed.sendOn.ok")], ["error", t("ed.sendOn.error")]].map(([v, label]) => (
             <button key={v} style={btnStyle(sendOn === v ? "rgba(59,130,246,.15)" : "var(--bg-hover)", sendOn === v ? "#60a5fa" : "var(--text-muted)")}
               onClick={() => setSendOn(v)}>{label}</button>
           ))}
@@ -1026,19 +1031,19 @@ function EditForm({ initial, onDone }: { initial: any; onDone: (saved: boolean) 
       ))}
       {(ccSessionKey || mailTo.trim()) && mode === "auto" && (
         <div style={{ fontSize: 11, color: "var(--text-muted)", paddingLeft: 60 }}>
-          注：auto 模式注入活会话时，送达的是「已注入通知」而非任务结果（真实结果随活会话异步产生）——需要真结果送达请选 invokeAI 或 session（总是新会话）模式
+          {t("ed.autoNote")}
         </div>
       )}
-      {row("通知", (
+      {row(t("ed.notify"), (
         <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12.5, cursor: "pointer", paddingTop: 4 }}>
-          <input type="checkbox" checked={notify} onChange={(e) => setNotify(e.target.checked)} /> 完成后浏览器通知
+          <input type="checkbox" checked={notify} onChange={(e) => setNotify(e.target.checked)} /> {t("ed.notifyLabel")}
         </label>
       ))}
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-        <button style={btnStyle("transparent", "var(--text-muted)")} onClick={() => onDone(false)}>取消</button>
+        <button style={btnStyle("transparent", "var(--text-muted)")} onClick={() => onDone(false)}>{t("ui.cancel")}</button>
         <button disabled={busy || !name.trim() || !sched.trim() || !prompt.trim() || !!schedErr}
           style={{ ...btnStyle("#3b82f6", "#fff"), opacity: busy || !name.trim() || !sched.trim() || !prompt.trim() || !!schedErr ? 0.5 : 1 }}
-          onClick={save}>{busy ? "保存中…" : "保存"}</button>
+          onClick={save}>{busy ? t("ui.saving") : t("ui.save")}</button>
       </div>
     </div>
   );
@@ -1052,14 +1057,14 @@ function RunsPanel({ onClose }: { onClose: () => void }) {
   return (
     <div style={{ position: "absolute", inset: 0, background: "var(--bg,#fff)", zIndex: 20, overflowY: "auto", padding: 12 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}><Ic size={13} paths={ICONS.history} />运行历史</div>
-        <button onClick={onClose} aria-label="关闭" title="关闭"
+        <div style={{ fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}><Ic size={13} paths={ICONS.history} />{t("run.title")}</div>
+        <button onClick={onClose} aria-label={t("ui.close")} title={t("ui.close")}
           style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, lineHeight: 1, padding: "2px 6px", flexShrink: 0 }}>✕</button>
       </div>
-      {runs === null ? <div style={{ color: "var(--text-muted)", fontSize: 12 }}>加载中…</div> : (
+      {runs === null ? <div style={{ color: "var(--text-muted)", fontSize: 12 }}>{t("ui.loading")}</div> : (
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11.5 }}>
           <thead>
-            <tr>{["时间", "任务", "状态", "耗时", "详情"].map((th) => (
+            <tr>{[t("run.th.time"), t("run.th.task"), t("run.th.status"), t("run.th.ms"), t("run.th.detail")].map((th) => (
               <th key={th} style={{ textAlign: "left", padding: "4px 8px", borderBottom: "1px solid var(--border)", color: "var(--text-muted)" }}>{th}</th>
             ))}</tr>
           </thead>
@@ -1073,7 +1078,7 @@ function RunsPanel({ onClose }: { onClose: () => void }) {
                   <td style={tdStyle} title={r.at}>{new Date(r.at).toLocaleString()}</td>
                   <td style={tdStyle}>{r.name}</td>
                   <td style={{ ...tdStyle, color: r.status === "ok" ? "var(--ok, #10b981)" : r.status === "error" ? "var(--danger, #ef4444)" : r.status === "missed" ? "var(--warn, #f59e0b)" : "inherit" }}>
-                    {r.status}{r.retry ? "·重试" : ""}
+                    {r.status}{r.retry ? t("run.retry") : ""}
                   </td>
                   <td style={tdStyle}>{r.ms != null ? r.ms + "ms" : ""}</td>
                   <td style={{ ...tdStyle, maxWidth: 380, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
@@ -1081,11 +1086,11 @@ function RunsPanel({ onClose }: { onClose: () => void }) {
                     {r.error ? "⚠ " + r.error : (r.text || "")}
                     {r.ccSent && (
                       <span style={{ color: ccOk ? "var(--ok, #10b981)" : "var(--danger, #ef4444)", marginLeft: 6 }}
-                        title={ccOk ? "IM 已送达" : "IM 送达失败：" + r.ccSent}>{ccOk ? "已送达" : "送达失败"}</span>
+                        title={ccOk ? t("run.ccOk") : t("run.ccFail", { e: r.ccSent })}>{ccOk ? t("run.delivered") : t("run.deliverFail")}</span>
                     )}
                     {r.mailSent && (
                       <span style={{ color: mailOk ? "var(--ok, #10b981)" : "var(--danger, #ef4444)", marginLeft: 6 }}
-                        title={mailOk ? "邮件已送达" : "邮件送达失败：" + r.mailSent}>{mailOk ? "已送达" : "送达失败"}</span>
+                        title={mailOk ? t("run.mailOk") : t("run.mailFail", { e: r.mailSent })}>{mailOk ? t("run.delivered") : t("run.deliverFail")}</span>
                     )}
                   </td>
                 </tr>
@@ -1137,8 +1142,8 @@ function ScheduleDialog({ onClose, initialEditing, embedded, dockItemKey }: { on
       try {
         if (m.type === "run" && m.notify && typeof Notification !== "undefined" && Notification.permission === "granted") {
           const ok = m.status === "ok";
-          new Notification((ok ? "✅ " : "❌ ") + "定时任务 · " + m.name, {
-            body: ok ? "执行完成" : String(m.error || "执行失败").slice(0, 120), tag: m.targetId,
+          new Notification((ok ? "✅ " : "❌ ") + t("dlg.notify.title", { name: m.name }), {
+            body: ok ? t("dlg.notify.ok") : String(m.error || t("dlg.notify.fail")).slice(0, 120), tag: m.targetId,
           });
         }
       } catch { /* 非 JSON 帧 */ }
@@ -1215,23 +1220,23 @@ function ScheduleDialog({ onClose, initialEditing, embedded, dockItemKey }: { on
       {!dockHoist && (
       <div style={head}>
         <span style={{ fontWeight: 700, fontSize: 14, display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-          <Ic size={15} paths={ICONS.clock} />定时任务与计划
+          <Ic size={15} paths={ICONS.clock} />{t("dlg.title")}
         </span>
         {config && (
           <span style={{ fontSize: 11.5, color: config.active ? "var(--ok, #10b981)" : "var(--warn, #f59e0b)", cursor: "pointer", marginLeft: 4 }}
-            onClick={() => act("/config")} title="点击切换运行时暂停（env 门控不变）">
-            {config.active ? "● 触发开" : "● 已暂停"}
+            onClick={() => act("/config")} title={t("dlg.triggerTip")}>
+            {config.active ? t("dlg.triggerOn") : t("dlg.triggerOff")}
           </span>
         )}
         <span style={{ flex: 1 }} />
-        <button style={headBtn("transparent", "var(--text-muted)")} onClick={() => setShowRuns(true)} title="运行历史">
-          <Ic size={13} paths={ICONS.history} /> 历史
+        <button style={headBtn("transparent", "var(--text-muted)")} onClick={() => setShowRuns(true)} title={t("run.title")}>
+          <Ic size={13} paths={ICONS.history} /> {t("dlg.history")}
         </button>
-        <button style={{ ...headBtn("#3b82f6", "#fff") }} onClick={() => setEditing(null)} title="新建计划">
-          <Ic size={12} paths={ICONS.plus} /> 新建计划
+        <button style={{ ...headBtn("#3b82f6", "#fff") }} onClick={() => setEditing(null)} title={t("ed.new")}>
+          <Ic size={12} paths={ICONS.plus} /> {t("ed.new")}
         </button>
         {!embedded && (
-          <button style={btnStyle("transparent", "var(--text-muted)")} onClick={onClose} aria-label="关闭" title="关闭 (ESC)">
+          <button style={btnStyle("transparent", "var(--text-muted)")} onClick={onClose} aria-label={t("ui.close")} title={t("dlg.closeTip")}>
             <Ic size={12} paths={ICONS.x} />
           </button>
         )}
@@ -1240,10 +1245,10 @@ function ScheduleDialog({ onClose, initialEditing, embedded, dockItemKey }: { on
 
       {/* 弹窗体 */}
       <div style={body}>
-        {tasks === null && <div style={{ padding: 24, color: "var(--text-muted)" }}>加载中…</div>}
+        {tasks === null && <div style={{ padding: 24, color: "var(--text-muted)" }}>{t("ui.loading")}</div>}
         {tasks !== null && tasks.length === 0 && (
           <div style={{ padding: "40px 0", textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
-            暂无任务——右上角新建，或在对话里让 AI「每天早上9点总结 git 提交」
+            {t("dlg.empty")}
           </div>
         )}
         {tasks !== null && (
@@ -1256,33 +1261,33 @@ function ScheduleDialog({ onClose, initialEditing, embedded, dockItemKey }: { on
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
                     <div style={{ display: "flex", gap: 8, alignItems: "center", minWidth: 0 }}>
                       <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 5, background: isAi ? "rgba(59,130,246,.15)" : "rgba(122,122,122,.15)", color: isAi ? "#60a5fa" : "var(--text-muted)" }}>
-                        {isAi ? (task.createdBy === "agent" ? "AI计划" : "AI计划") : "扩展任务"}
+                        {isAi ? t("dlg.badge.ai") : t("dlg.badge.ext")}
                       </span>
                       <strong style={{ fontSize: 13.5 }}>{task.name}</strong>
                       <span style={{ fontSize: 11, padding: "1px 6px", borderRadius: 5, background: badgeColor + "22", color: badgeColor }}>{badgeText}</span>
                     </div>
                     <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                       {isAi && task.autoApprove === false && task.enabled === false && (
-                        <button style={btnStyle("color-mix(in srgb, var(--ok, #10b981) 15%, transparent)", "var(--ok, #10b981)")} onClick={() => act("/plans/" + task.id + "/approve")} title="批准该 AI 创建的计划生效">批准</button>
+                        <button style={btnStyle("color-mix(in srgb, var(--ok, #10b981) 15%, transparent)", "var(--ok, #10b981)")} onClick={() => act("/plans/" + task.id + "/approve")} title={t("dlg.approveTip")}>{t("dlg.approve")}</button>
                       )}
                       <button style={btnStyle("var(--bg-hover)", "var(--text)")}
                         onClick={() => act(isAi ? "/plans/" + task.id + "/run" : "/schedules/" + encodeURIComponent(task.id) + "/run")}
-                        disabled={task.running}>{task.running ? "…" : "▶ 执行"}</button>
-                      {isAi && <button style={btnStyle("transparent", "var(--text-muted)")} onClick={() => act("/plans/" + task.id + "/" + (task.enabled ? "disable" : "enable"))}>{task.enabled ? "暂停" : "启用"}</button>}
-                      {isAi && <button style={btnStyle("transparent", "var(--text-muted)")} onClick={() => setEditing(task)}>编辑</button>}
-                      {isAi && <button style={btnStyle("transparent", "var(--danger, #ef4444)")} onClick={async () => { if (await uiConfirm({ message: "删除计划「" + task.name + "」？", danger: true })) act("/plans/" + task.id, "DELETE"); }}>删除</button>}
+                        disabled={task.running}>{task.running ? "…" : t("dlg.run")}</button>
+                      {isAi && <button style={btnStyle("transparent", "var(--text-muted)")} onClick={() => act("/plans/" + task.id + "/" + (task.enabled ? "disable" : "enable"))}>{task.enabled ? t("dlg.pause") : t("dlg.enable")}</button>}
+                      {isAi && <button style={btnStyle("transparent", "var(--text-muted)")} onClick={() => setEditing(task)}>{t("dlg.edit")}</button>}
+                      {isAi && <button style={btnStyle("transparent", "var(--danger, #ef4444)")} onClick={async () => { if (await uiConfirm({ message: t("dlg.delConfirm", { name: task.name }), danger: true })) act("/plans/" + task.id, "DELETE"); }}>{t("dlg.delete")}</button>}
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 14, marginTop: 6, fontSize: 11.5, color: "var(--text-muted)", flexWrap: "wrap" }}>
                     <span>⏱ {scheduleHuman(task)}</span>
-                    <span>下次 {!task.enabled ? "—" : fmtTime(task.nextRunAt)}</span>
-                    <span>上次 {task.lastRunAt ? fmtTime(task.lastRunAt) + " (" + relTime(task.lastRunAt) + ")" : "未跑"}</span>
-                    <span>已跑 {task.runCount || 0} 次{task.maxRuns ? "/" + task.maxRuns : ""}</span>
-                    {isAi && task.dailyCap && <span title="今日已自动执行/每日上限">日预算 {task.todayCount || 0}/{task.dailyCap}</span>}
-                    {isAi && task.timezone && <span title="cron 按此时区计算">🌍 {task.timezone}</span>}
-                    {isAi && <span>模式 {task.mode}</span>}
-                    {isAi && task.cc && <span title={"结果送达 IM：" + task.cc.project + " · " + task.cc.sessionKey}>💬</span>}
-                    {isAi && task.mailTo && <span title={"结果送达邮箱：" + task.mailTo}>✉</span>}
+                    <span>{t("dlg.next")} {!task.enabled ? "—" : fmtTime(task.nextRunAt)}</span>
+                    <span>{t("dlg.last")} {task.lastRunAt ? fmtTime(task.lastRunAt) + " (" + relTime(task.lastRunAt) + ")" : t("dlg.never")}</span>
+                    <span>{t("dlg.ranCount", { n: task.runCount || 0 })}{task.maxRuns ? "/" + task.maxRuns : ""}</span>
+                    {isAi && task.dailyCap && <span title={t("dlg.dailyTip")}>{t("dlg.daily", { n: task.todayCount || 0, cap: task.dailyCap })}</span>}
+                    {isAi && task.timezone && <span title={t("dlg.tzTip")}>🌍 {task.timezone}</span>}
+                    {isAi && <span>{t("dlg.mode", { m: task.mode })}</span>}
+                    {isAi && task.cc && <span title={t("dlg.ccTip", { p: task.cc.project + " · " + task.cc.sessionKey })}>💬</span>}
+                    {isAi && task.mailTo && <span title={t("dlg.mailTip", { m: task.mailTo })}>✉</span>}
                     {task.model && <span>{task.model}</span>}
                     {task.cwd && <span title={task.cwd}>📂 {task.cwd.split("/").slice(-1)[0] || task.cwd}</span>}
                   </div>
@@ -1352,13 +1357,13 @@ function renderScheduleSlot(face?: string) {
   if (face === "sidebar") {
     const triggerActive = hs.triggerActive === true;
     const actions: DockHeaderAction[] = [
-      { id: "plus", title: "新建计划", icon: <Ic size={12} paths={ICONS.plus} />, visibility: "always", onClick: () => { requestDockCommand(SCHED_KEY, "plus"); } },
-      { id: "refresh", title: "刷新", icon: hs.refreshDone === true ? <Ic size={12} paths={ICONS.check} /> : <Ic size={12} paths={ICONS.refresh} />, done: hs.refreshDone === true, visibility: "always", onClick: () => { requestDockCommand(SCHED_KEY, "refresh"); } },
-      { id: "history", title: "运行历史", icon: <Ic size={12} paths={ICONS.history} />, active: hs.showRuns === true, visibility: "always", onClick: () => { requestDockCommand(SCHED_KEY, "history"); } },
-      { id: "trigger", title: triggerActive ? "运行时触发已开启（点击暂停）" : "运行时触发已暂停（点击开启）", icon: <Ic size={12} paths={triggerActive ? ICONS.pause : ICONS.play} />, active: triggerActive, visibility: "always", onClick: () => { requestDockCommand(SCHED_KEY, "trigger"); } },
+      { id: "plus", title: t("ed.new"), icon: <Ic size={12} paths={ICONS.plus} />, visibility: "always", onClick: () => { requestDockCommand(SCHED_KEY, "plus"); } },
+      { id: "refresh", title: t("ui.refresh"), icon: hs.refreshDone === true ? <Ic size={12} paths={ICONS.check} /> : <Ic size={12} paths={ICONS.refresh} />, done: hs.refreshDone === true, visibility: "always", onClick: () => { requestDockCommand(SCHED_KEY, "refresh"); } },
+      { id: "history", title: t("run.title"), icon: <Ic size={12} paths={ICONS.history} />, active: hs.showRuns === true, visibility: "always", onClick: () => { requestDockCommand(SCHED_KEY, "history"); } },
+      { id: "trigger", title: triggerActive ? t("sb.triggerOnTip") : t("sb.triggerOffTip"), icon: <Ic size={12} paths={triggerActive ? ICONS.pause : ICONS.play} />, active: triggerActive, visibility: "always", onClick: () => { requestDockCommand(SCHED_KEY, "trigger"); } },
     ];
     return (
-      <DockBody itemKey={SCHED_KEY} title="任务" chrome="section" kind="dockable"
+      <DockBody itemKey={SCHED_KEY} title={t("sb.tasks")} chrome="section" kind="dockable"
         zones={[sidebarZoneOf(SCHED_KEY), "right-panel"]} defaultZone={sidebarZoneOf(SCHED_KEY)}
         headerActions={actions}>
         {dialog}
@@ -1366,7 +1371,7 @@ function renderScheduleSlot(face?: string) {
     );
   }
   return (
-    <DockBody itemKey={SCHED_KEY} zone="right-panel" title="任务" chrome="tab" zones={[sidebarZoneOf(SCHED_KEY), "right-panel"]} defaultZone={sidebarZoneOf(SCHED_KEY)}>
+    <DockBody itemKey={SCHED_KEY} zone="right-panel" title={t("sb.tasks")} chrome="tab" zones={[sidebarZoneOf(SCHED_KEY), "right-panel"]} defaultZone={sidebarZoneOf(SCHED_KEY)}>
       {dialog}
     </DockBody>
   );

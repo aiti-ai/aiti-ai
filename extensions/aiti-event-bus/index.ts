@@ -74,6 +74,20 @@ export default {
   // 先于一切消费扩展执行；shutdown 对称逆序（总线最后停，消费方先退订）。
   startupPriority: 100,
 
+
+  ui: {
+    // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
+    i18n: {
+      "zh-CN": {
+        "ext.displayName": "页面事件总线",
+      },
+      en: {
+        "ext.displayName": "Page Event Bus",
+        "ext.description": "Single funnel for page events: chain-takes over __piPageEvents; v0.2 topic subscriptions (whitelist by type, forwarded)",
+      },
+    },
+  },
+
   server: {
     startup(ctx: any) {
       // 旧实例残留流交接关闭（STREAMS_SLOT 注释：shutdown 漏调时防僵尸流）。

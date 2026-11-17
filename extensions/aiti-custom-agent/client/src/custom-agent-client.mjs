@@ -296,8 +296,8 @@ export function registerCustomAgentClient(ctx, config) {
 	ctx.registerItems("toolbar", [{
 		id: `${config.extId}-panel`,
 		meta: {
-			label: "自定义 Agent",
-			title: "自定义 Agent：注册自定义后端（命令/参数前缀/env/桥模式）",
+			label: "i18n:it.panel.label",
+			title: "i18n:it.panel.title",
 			icon: "icons/bot.svg",
 			onClick: () => {
 				if (!moduleSetOpen) return;

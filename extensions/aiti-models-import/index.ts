@@ -98,10 +98,13 @@ export default {
     ],
     i18n: {
       "zh-CN": {
+        "it.import.label": "模型配置导入",
       "mi.open.label": "导入模型配置",
       "mi.open.title": "aiti-models-import：从 codex / zcode / opencode 等导入 provider 配置（经模型向导落盘）",
       },
       en: {
+        "it.import.label": "Model config import",
+        "ext.displayName": "Model Config Import (from other agents)",
       "mi.open.label": "Import model configs",
       "mi.open.title": "aiti-models-import: import provider configs from codex / zcode / opencode etc. (lands via model wizard)",
       },

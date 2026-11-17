@@ -23,6 +23,21 @@ export default {
   features: [
     { id: "word.edit", label: "Word 编辑保存", description: "开启后 .docx 提供 edit 能力（保存走 save-blob）；关闭仅预览", default: true },
   ],
+
+  ui: {
+    // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
+    i18n: {
+      "zh-CN": {
+        "ext.displayName": "Word 编辑",
+      },
+      en: {
+        "feat.word.edit.desc": "When on, .docx gets edit capability (saves via save-blob); off = preview only",
+        "ext.displayName": "Word Editor",        "ext.description": "Word document editor (SuperDoc: ProseMirror docx round-trip): .docx preview + edit. AGPL isolated in this extension; not installed = not present",
+        "feat.word.edit": "Word edit & save",
+      },
+    },
+  },
+
   server: {
     startup(ctx: any) {
       console.log("[aiti-word-superdoc] 就绪");

@@ -89,7 +89,7 @@ export default function register(ctx: Record<string, unknown>) {
   ctx.registerItems?.("fileViewer", [{
     id: "aiti-folder",
     render: (props: Record<string, unknown>) => <FolderBrowserLazy {...props} />,
-    meta: { label: "文件夹", title: "aiti-folder: folder browser", match: (_fp: unknown, opts: any) => opts && opts.kind === "folder" },
+    meta: { label: "i18n:it.folder.label", title: "aiti-folder: folder browser", match: (_fp: unknown, opts: any) => opts && opts.kind === "folder" },
   }]);
   ctx.registerItems?.("pathPicker", [{
     id: "aiti-folder-picker",
@@ -99,7 +99,7 @@ export default function register(ctx: Record<string, unknown>) {
     render: (props: Record<string, unknown>) => (
       <FolderSwitcher {...(props as any)} onSelect={(p: string) => openFolderDocked(p, "right-panel")} />
     ),
-    meta: { label: "目录选择", title: "aiti-folder: directory switcher (no cwd change)" },
+    meta: { label: "i18n:it.folder-picker.label", title: "aiti-folder: directory switcher (no cwd change)" },
   }]);
 
   // 多实例 dock faces（v2）：左栏栈/浮窗/右栏三面按清单动态注册；instances 变化
