@@ -40,15 +40,17 @@ export function defaultViewModeOf(filePath: string, language = ""): "preview" | 
   return previewKindOf(filePath, language) ? "preview" : "edit";
 }
 
+import { t } from "./host-shim.ts";
+
 export interface ModeItem { label: string; value: string; title: string }
 
 /** 三模式条目（edit/split/preview）：两类共用同一套，差异在预览面内部而非切换器。 */
 export function previewModeItems(kind: PreviewKind | null): ModeItem[] {
   if (!kind) return [];
-  const renderLabel = kind === "html" ? "渲染页面预览" : "渲染预览";
+  const renderLabel = kind === "html" ? t("渲染页面预览") : t("渲染预览");
   return [
-    { label: "编辑", value: "edit", title: "编辑源码" },
-    { label: "分栏", value: "split", title: "左侧编辑·右侧预览" },
-    { label: "预览", value: "preview", title: renderLabel },
+    { label: t("编辑"), value: "edit", title: t("编辑源码") },
+    { label: t("分栏"), value: "split", title: t("左侧编辑·右侧预览") },
+    { label: t("预览"), value: "preview", title: renderLabel },
   ];
 }

@@ -129,11 +129,14 @@ function codeNote(lang, codeLines) {
   return `接下来是一段${langName}代码，约${lineDesc}${hint ? `，主要实现${hint}` : ""}；细节请看屏幕。`;
 }
 
-/** 列表 → 每项独立口播段（有序读编号「第一…」；无序读内容；match=该项原文供高亮） */
-function listSegments(items, ordered, startNum) {
+/** List → independent spoken segments per item (ordered items read with ordinals "first…"; unordered
+ *  read content; match = the item's raw text for highlighting)
+ *  itemLines = source line per item (with trackLines, each seg gets line attached, for file-read follow) */
+function listSegments(items, ordered, startNum, itemLines, track) {
   const segs = [];
   let n = startNum || 1;
-  for (const raw of items) {
+  for (let idx = 0; idx < items.length; idx++) {
+    const raw = items[idx];
     const content = leanText(raw).trim();
     if (!content) { n++; continue; }
     const spoken = verbalize(content);
@@ -144,7 +147,9 @@ function listSegments(items, ordered, startNum) {
     } else {
       text = spoken;
     }
-    segs.push({ kind: SEG.BODY, text, match: content });
+    const seg = { kind: SEG.BODY, text, match: content };
+    if (track && itemLines && itemLines[idx]) seg.line = itemLines[idx];
+    segs.push(seg);
     n++;
   }
   return segs;
@@ -153,9 +158,14 @@ function listSegments(items, ordered, startNum) {
 /**
  * 主入口：markdown → 朗读段序列（带类型，供「全文概要化」与「仅要点」两模式消费）
  * @param {string} md agent 回复的 markdown
- * @returns {Array<{kind: string, text: string}>}
+ * @param {{trackLines?: boolean}} [opts] with trackLines=true each seg gets line attached (1-based
+ *   start line within the input text; exact for headings/code blocks/tables/list items, approximate
+ *   for paragraph sentences which fall to the paragraph start line) —
+ *   used by file-read follow; omitted by default, zero impact (AI-message path unchanged).
+ * @returns {Array<{kind: string, text: string, line?: number}>}
  */
-export function toSpeechSegments(md) {
+export function toSpeechSegments(md, opts) {
+  const track = !!(opts && opts.trackLines);
   const lines = String(md || "").split(/\r?\n/);
   const segs = [];
   let i = 0;
@@ -165,12 +175,17 @@ export function toSpeechSegments(md) {
     // 代码围栏
     if (/^\s*```/.test(line)) {
       const lang = line.replace(/^\s*```\s*/, "").trim();
+      const fenceLine = i + 1;
       const codeLines = [];
       i++;
       while (i < lines.length && !/^\s*```/.test(lines[i])) { codeLines.push(lines[i]); i++; }
       i++; // 跳过收尾 ```
       const note = codeNote(lang, codeLines);
-      if (note) segs.push({ kind: SEG.NOTE, text: note });
+      if (note) {
+        const seg = { kind: SEG.NOTE, text: note };
+        if (track) seg.line = fenceLine;
+        segs.push(seg);
+      }
       continue;
     }
     // 标题
@@ -181,16 +196,21 @@ export function toSpeechSegments(md) {
       if (title) {
         const isSum = SUMMARY_KEYWORDS.some((k) => title.includes(k));
         // text=朗读（带序号前缀 + 口播）；match=DOM 原文（不加前缀、不口播）用于高亮定位
-        segs.push({ kind: isSum ? SEG.SUMMARY : SEG.HEADING, text: `第${headingCount}部分：${verbalize(title)}`, match: title });
+        const seg = { kind: isSum ? SEG.SUMMARY : SEG.HEADING, text: `第${headingCount}部分：${verbalize(title)}`, match: title };
+        if (track) seg.line = i + 1;
+        segs.push(seg);
       }
       i++;
       continue;
     }
     // 表格块
     if (line.trim().startsWith("|")) {
+      const tblLine = i + 1;
       const block = [];
       while (i < lines.length && lines[i].trim().startsWith("|")) { block.push(lines[i].trim()); i++; }
-      segs.push({ kind: SEG.NOTE, text: tableNote(block) });
+      const seg = { kind: SEG.NOTE, text: tableNote(block) };
+      if (track) seg.line = tblLine;
+      segs.push(seg);
       continue;
     }
     // 列表（有序 = 数字开头，读编号；无序 = - * + 开头）
@@ -199,15 +219,17 @@ export function toSpeechSegments(md) {
     if (LIST_RE.test(line)) {
       const ordered = /^\s*\d+[.、)]\s*\S/.test(line);
       const items = [];
+      const itemLines = [];
       let startNum = 1, first = true;
       while (i < lines.length && LIST_RE.test(lines[i])) {
         const m = ITEM_STRIP_RE.exec(lines[i]);
         if (first && ordered && m && m[2]) startNum = parseInt(m[2], 10) || 1;
         first = false;
         items.push(lines[i].replace(ITEM_STRIP_RE, ""));
+        itemLines.push(i + 1);
         i++;
       }
-      const segs2 = listSegments(items, ordered, startNum);
+      const segs2 = listSegments(items, ordered, startNum, itemLines, track);
       for (const s of segs2) { if (s.text) segs.push(s); }
       continue;
     }
@@ -215,7 +237,8 @@ export function toSpeechSegments(md) {
     if (/^\s*[-*_]{3,}\s*$/.test(line)) { i++; continue; }
     // 空行
     if (!line.trim()) { i++; continue; }
-    // 段落：收集到空行/特殊行前
+    // paragraph: collect until a blank/special line (paragraph sentences follow to the paragraph start line, approximate)
+    const paraStart = i + 1;
     const para = [];
     while (
       i < lines.length && lines[i].trim() && !/^\s*```/.test(lines[i])
@@ -228,11 +251,57 @@ export function toSpeechSegments(md) {
         // 纯符号句（如 ")、"""、"---" 残留）不可读：不产出 seg（edge-tts 会合成失败）
         if (!speakable(s)) continue;
         // match=lean 原文（DOM 渲染后与此一致）；text=口播化
-        segs.push({ kind: classifySentence(s), text: verbalize(s), match: s });
+        const seg = { kind: classifySentence(s), text: verbalize(s), match: s };
+        if (track) seg.line = paraStart;
+        segs.push(seg);
       }
     }
   }
   return segs;
+}
+
+// ── File-read chunking (aiti-editor 🔊 read entry; docs/aiti-ai-speek-file-read-plan.md §3.1) ──
+/** Oversize fallback for md h1 chunking: force-split when a block exceeds this many consecutive lines (prevents one giant chapter block getting too deep) */
+const CHUNK_MD_MAX_LINES = 400;
+/** Lines per block for non-md text */
+const CHUNK_TEXT_LINES = 60;
+
+/**
+ * File text → speech block sequence (with source line numbers; pure function).
+ *   md/markdown: chunk at `^# ` h1 boundaries; force-split blocks exceeding CHUNK_MD_MAX_LINES
+ *     (md without an h1 naturally takes the force-split path, CHUNK_MD_MAX_LINES per block);
+ *   other text (txt/log/code etc.): CHUNK_TEXT_LINES lines per block.
+ * Returns [{ id: "fc-N", text, startLine }] (startLine = the block's first line, 1-based); null for empty text.
+ */
+export function chunkFileForSpeech(text, name) {
+  const raw = String(text || "");
+  if (!raw.trim()) return null;
+  const lines = raw.split(/\r?\n/);
+  const ext = ((String(name || "").match(/\.([^.]+)$/) || [])[1] || "").toLowerCase();
+  const isMd = ext === "md" || ext === "markdown";
+  const spans = []; // { start(0-based), end(exclusive) }
+  if (isMd) {
+    let start = 0;
+    for (let li = 0; li < lines.length; li++) {
+      // new h1 (not the first line) → boundary; over-limit inside a block → force-split
+      if (li > start && (/^#\s+/.test(lines[li]) || li - start >= CHUNK_MD_MAX_LINES)) {
+        spans.push({ start, end: li });
+        start = li;
+      }
+    }
+    if (start < lines.length) spans.push({ start, end: lines.length });
+  } else {
+    for (let li = 0; li < lines.length; li += CHUNK_TEXT_LINES) {
+      spans.push({ start: li, end: Math.min(li + CHUNK_TEXT_LINES, lines.length) });
+    }
+  }
+  const out = [];
+  for (const sp of spans) {
+    const blockText = lines.slice(sp.start, sp.end).join("\n");
+    if (!blockText.trim()) continue; // skip blank-only blocks
+    out.push({ id: "fc-" + (out.length + 1), text: blockText, startLine: sp.start + 1 });
+  }
+  return out.length ? out : null;
 }
 
 /** 按朗读内容模式过滤：full=全文概要化（全读）；essentials=仅要点（A+B+标题导航） */

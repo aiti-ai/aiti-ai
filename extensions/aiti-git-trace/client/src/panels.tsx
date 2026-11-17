@@ -18,6 +18,7 @@ import {
   TIMELINE_KEY, WATCH_KEY,
   panelStyle, btnStyle, chipStyle, inputStyle, scrollLayerStyle, badgeStyle, fmtTime,
 } from "./common";
+import { toAbsPath } from "./trace-files-row.pure";
 
 function RefreshSvg() {
   return (
@@ -68,7 +69,7 @@ function renderWatch(props?: any, face?: string): any { bindSession(props);
     if (!open) return;
     let c = cwd.trim();
     if (!c) {
-      const host = SVC_SESSION?.cwd || CURRENT_SESSION?.cwd || "";
+      const host = getCwd();
       if (host) { setCwd(host); c = host; }
     }
     if (c) resolve(c);
@@ -253,7 +254,7 @@ function renderWatch(props?: any, face?: string): any { bindSession(props);
     { id: "refresh", title: t("gt.common.refresh") || "刷新", icon: <RefreshSvg/>, visibility: "always", onClick: () => { requestDockCommand(WATCH_KEY, "refresh"); } },
   ];
   return (
-    <DockBody itemKey={WATCH_KEY} title="关注路径" chrome="section" kind="dockable"
+    <DockBody itemKey={WATCH_KEY} title="关注路径" icon="git-branch" chrome="section" kind="dockable"
       zones={watchZones} defaultZone={sidebarZoneOf(WATCH_KEY)}
       headerActions={watchActions}>
       {watchInner}
@@ -484,10 +485,10 @@ function renderTimeline(props?: any, face?: string): any { bindSession(props);
     fetch(apiUrl("/api/sessions")).then((r) => r.json()).then((d) => {
       if (dead) return;
       const all = (d && d.sessions) || [];
-      const curId = SVC_SESSION?.id || CURRENT_SESSION?.id || sessionId;
+      const curId = getSessionId() || sessionId;
       const cur = all.find((x: any) => x.id === curId);
       const pk = cur?.projectKey;
-      const cwd = cur?.cwd || SVC_SESSION?.cwd || CURRENT_SESSION?.cwd || "";
+      const cwd = cur?.cwd || getCwd() || "";
       const list = all
         .filter((x: any) => (pk ? x.projectKey === pk : cwd ? (x.cwd || "").startsWith(cwd) : true))
         .sort((a: any, b: any) => (b.modified || 0) - (a.modified || 0));
@@ -1096,7 +1097,7 @@ function renderTimeline(props?: any, face?: string): any { bindSession(props);
       { id: "refresh", title: "刷新", icon: <RefreshSvg/>, visibility: "always", onClick: () => { requestDockCommand(TIMELINE_KEY, "refresh"); } },
     ];
     return (
-      <DockBody itemKey={TIMELINE_KEY} title="时间线" chrome="section" kind="dockable"
+      <DockBody itemKey={TIMELINE_KEY} title="时间线" icon="history" chrome="section" kind="dockable"
         count={typeof hsTl.ops === "number" && hsTl.ops > 0 ? hsTl.ops : undefined}
         zones={tlZones} defaultZone="right-panel" headerActions={tlActions}>{tlInner}</DockBody>
     );
@@ -1107,6 +1108,46 @@ function renderTimeline(props?: any, face?: string): any { bindSession(props);
 }
 
 // ---------- 回撤三选项对话框（§5.2，全局 Promise API） ----------
+
+/** fork three-option buttons (mirrors the host send/delete button vocabulary):
+ *  danger = revert (delete-level warning color, solid); accent = keep (host send-active primary color, solid);
+ *  ghost  = cancel (gray outline, not active) */
+function ForkChoice(props: { variant: "danger" | "accent" | "ghost"; disabled: boolean; title: string; hint?: string; compact?: boolean; onClick: () => void }): any {
+  const v = props.variant;
+  const compact = !!props.compact;
+  const base: any = {
+    flex: "1 1 auto", cursor: props.disabled ? "default" : "pointer",
+    textAlign: compact ? "center" : "left", borderRadius: compact ? 7 : 8,
+    padding: compact ? "6px 10px" : "10px 12px",
+    display: "flex", flexDirection: compact ? "row" : "column", alignItems: "center", justifyContent: "center",
+    whiteSpace: "nowrap", opacity: props.disabled ? 0.55 : 1, transition: "background 0.12s",
+  };
+  let hoverBg = "";
+  if (v === "danger") {
+    Object.assign(base, { border: "1px solid var(--danger)", background: "var(--danger)", color: "#fff" });
+    hoverBg = "color-mix(in srgb, var(--danger) 82%, black)";
+  } else if (v === "accent") {
+    Object.assign(base, { border: "1px solid var(--accent)", background: "var(--accent)", color: "var(--accent-contrast)" });
+    hoverBg = "var(--accent-hover)";
+  } else {
+    Object.assign(base, { border: "1px solid var(--border)", background: "transparent", color: "var(--text-dim)" });
+    hoverBg = "color-mix(in srgb, var(--text-dim) 10%, transparent)";
+  }
+  return (
+    <button
+      style={base}
+      disabled={props.disabled}
+      onClick={props.onClick}
+      onMouseEnter={(e: any) => { if (!props.disabled) e.currentTarget.style.background = hoverBg; }}
+      onMouseLeave={(e: any) => { e.currentTarget.style.background = base.background; }}
+    >
+      <span style={{ fontSize: compact ? 12 : 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{props.title}</span>
+      {!compact && props.hint ? (
+        <span style={{ fontSize: 11, opacity: v === "ghost" ? 0.8 : 0.85, marginTop: 3, display: "block", lineHeight: 1.45 }}>{props.hint}</span>
+      ) : null}
+    </button>
+  );
+}
 
 let forkResolve: ((v: any) => void) | null = null;
 
@@ -1148,16 +1189,26 @@ function groupOpsByTurn(ops: any[]): any[] {
   return [...m.values()].sort((a, b) => minOp(a) - minOp(b));
 }
 
-/** 该轮组触达文件数（场景 8：每轮组头「M 文件」小标；从 ops stores 窗口增量聚合，无需行数） */
-function turnFilesOf(g: any): number {
-  const s = new Set<string>();
+/** Files touched by this turn group (absolute paths deduped keeping first-seen order; same source as the
+ *  file rows under messages — stores[].paths + toAbsPath; only stores with a baseline, gaps have no diff to view) */
+function turnFileList(g: any): string[] {
+  const seen = new Set<string>(); const out: string[] = [];
   for (const o of g.ops || []) {
-    for (const st of o.stores || []) {
-      if (!st.before) continue;
-      for (const p of st.paths || []) s.add(st.root + "\u0000" + p);
+    for (const s of o.stores || []) {
+      if (!s.before) continue;
+      for (const p of s.paths || []) {
+        const abs = toAbsPath(s.root, String(p));
+        if (!abs || seen.has(abs)) continue;
+        seen.add(abs); out.push(abs);
+      }
     }
   }
-  return s.size;
+  return out;
+}
+
+/** Number of files touched by this turn group (scenario 8: the "M files" badge in each turn-group header) */
+function turnFilesOf(g: any): number {
+  return turnFileList(g).length;
 }
 
 /** 把失败现场组装成完整 prompt，注入 AI 输入框让当前会话 AI 接手收尾（方案 §3.4/§6）。
@@ -1194,17 +1245,10 @@ ${refs}
 }
 
 export function ForkDialogSlot(): any {
-  const [st, setSt] = useState<{ visible: boolean; ops: any[]; busy: string; fail: any; refs: any[]; sessionId: string; roots: string[]; totals: any }>({ visible: false, ops: [], busy: "", fail: null, refs: [], sessionId: "", roots: [], totals: null });
-  // 打开即默认最大化（aiti-float 全局 API；面板增强完成后调用）。hooks 必须在顶层无条件调用。
-  const forkPanelRef = useRef<any>(null);
-  useEffect(() => {
-    const el = forkPanelRef.current;
-    if (!el) return;
-    const t = window.setTimeout(() => {
-      try { (window as any).__piweFloat?.setMax?.(el, true); } catch { /* float 未就绪时跳过 */ }
-    }, 100);
-    return () => window.clearTimeout(t);
-  }, [st.visible]);
+  const [st, setSt] = useState<{ visible: boolean; ops: any[]; busy: string; fail: any; refs: any[]; sessionId: string; roots: string[]; totals: any; peeking: boolean }>({ visible: false, ops: [], busy: "", fail: null, refs: [], sessionId: "", roots: [], totals: null, peeking: false });
+  // Popup form: on large screens pops centered at 720×560 per data-ext-float-w/-h, never auto-maximized
+  // (fullscreen swallows the whole workspace context and makes users think they left the page); on small
+  // screens fullscreen is handled by the float contract data-ext-float-full="1" — no intervention needed here.
 
   // 懒加载对接：shell（forkGate）经 requestForkDialog 投递请求——挂载前/后都能消费；
   // 组件未挂载时请求驻留 pendingFork，挂载 effect 立即消费。
@@ -1230,7 +1274,7 @@ export function ForkDialogSlot(): any {
         if (ops.length === 0) { req.resolve({ action: "keep" }); return; }
         forkResolve = req.resolve;
         // R4：汇总行数据来自 fork-preview 响应附带的 files/totals 聚合（不另发 /files）
-        setSt({ visible: true, ops, busy: "", fail: null, refs: [], sessionId: sessionId || "", roots: [], totals: (r && r.totals) || null });
+        setSt({ visible: true, ops, busy: "", fail: null, refs: [], sessionId: sessionId || "", roots: [], totals: (r && r.totals) || null, peeking: false });
       })();
     };
     consume();
@@ -1242,6 +1286,13 @@ export function ForkDialogSlot(): any {
     (window as any).__aitiGitTraceForkDialog = (p: any) => requestForkDialog(p);
     return () => { try { delete (window as any).__aitiGitTraceForkDialog; } catch { /* noop */ } };
   }, []);
+
+  // Clicking a file chip: collapse the popup (the mask would cover the lower-z timeline overlay) and open on the
+  // right the timeline file page (overview + per-file filter + auto-expanded diff), same as the file chips under messages; the floating bar returns to the decision.
+  function peekFile(p: string) {
+    setSt({ ...st, peeking: true });
+    openPanel("timeline", { sessionId: st.sessionId || getSessionId(), view: "file", file: p });
+  }
 
   // 从预览 ops 收集「按仓分组、组内升序」的 refs；
   // gap store（before=null）也传（服务端 skip 并计入 skipped）——其变更无法自动撤销，撤销后明示。
@@ -1280,7 +1331,7 @@ export function ForkDialogSlot(): any {
   }
 
   function resolveFork(v: any) {
-    setSt({ visible: false, ops: [], busy: "", fail: null, refs: [], sessionId: "", roots: [], totals: null });
+    setSt({ visible: false, ops: [], busy: "", fail: null, refs: [], sessionId: "", roots: [], totals: null, peeking: false });
     try { forkResolve && forkResolve(v); } catch {}
     forkResolve = null;
   }
@@ -1296,10 +1347,46 @@ export function ForkDialogSlot(): any {
 
   const groups = groupOpsByTurn(st.ops);
   if (!st.visible) return null;
+  // peek state (mini decision bar): the decision body collapses (not unmounted, state kept) — the timeline
+  // overlay z(10050) is below the original mask z(10060); without collapsing, the view page would sit under the mask.
+  // The bar itself carries the three decision buttons (decide right after reading the diff, no "back" first), clicking the summary row expands the full popup; large screens center at 720, small screens hug the edge with adaptive wrapping.
+  if (st.peeking) {
+    const totals = st.totals;
+    const expand = () => setSt({ ...st, peeking: false });
+    return (
+      <div style={{ position: "fixed", left: 12, right: 12, bottom: 14, maxWidth: 720, margin: "0 auto", zIndex: 10060, background: "var(--bg-panel)", color: "var(--text)", border: "1px solid var(--border)", borderTop: "2px solid var(--accent)", borderRadius: 12, boxShadow: "0 10px 40px rgba(0,0,0,.5)", fontSize: 12, overflow: "hidden" }}>
+        {/* summary row: click to expand the full popup */}
+        <div onClick={expand} title={t("gt.fork.expandTip")} style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderBottom: "1px solid var(--border)", cursor: "pointer" }}>
+          <span aria-hidden style={{ flexShrink: 0, color: "var(--accent)", fontWeight: 700, fontSize: 13 }}>⏸</span>
+          <b style={{ fontSize: 13, flexShrink: 0 }}>{t("gt.fork.title")}</b>
+          {totals ? (
+            <span style={{ opacity: 0.65, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>
+              {fmtN(totals.ops)} {t("gt.ov.ops")} · {fmtN(totals.files)} {t("gt.ov.files")} · <span style={{ color: "#1a7f37", fontWeight: 600 }}>+{fmtN(totals.adds)}</span> <span style={{ color: "#cf222e", fontWeight: 600 }}>−{fmtN(totals.dels)}</span>
+            </span>
+          ) : null}
+          {st.busy ? <span style={{ opacity: 0.7, flexShrink: 0 }}>{st.busy}…</span> : null}
+          <span style={{ marginLeft: "auto", flexShrink: 0, opacity: 0.6 }}>{t("gt.fork.expand")} ▾</span>
+        </div>
+        {/* decision row: choose directly on the bar; in fail state no heavy actions (AI handover / ignore), only a back entry */}
+        {st.fail ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px" }}>
+            <span style={{ color: "#cf222e", fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t("gt.fork.failTitle")}</span>
+            <button style={{ ...btnStyle, fontWeight: 600 }} onClick={expand}>{t("gt.fork.backToDecision")}</button>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, padding: "9px 12px" }}>
+            {/* order follows Chinese web conventions (antd/Feishu alike): cancel left, primary action rightmost; the destructive action centered and separated from the primary */}
+            <ForkChoice variant="ghost" compact disabled={!!st.busy} title={"✕ " + t("gt.fork.cancel")} onClick={() => resolveFork({ action: "cancel" })} />
+            <ForkChoice variant="danger" compact disabled={!!st.busy} title={"↩ " + t("gt.fork.rollback")} onClick={() => doRollback()} />
+            <ForkChoice variant="accent" compact disabled={!!st.busy} title={"✓ " + t("gt.fork.keep")} onClick={() => resolveFork({ action: "keep" })} />
+          </div>
+        )}
+      </div>
+    );
+  }
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 10060, background: "rgba(0,0,0,.5)", display: "flex", alignItems: "center", justifyContent: "center" }}>
       <div
-        ref={forkPanelRef}
         style={{ ...panelStyle, position: "static", width: 720, maxWidth: "94vw", maxHeight: "86vh", padding: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}
         data-ext-float="1" data-ext-float-full="1" data-ext-float-w={720} data-ext-float-h={560}
       >
@@ -1324,7 +1411,11 @@ export function ForkDialogSlot(): any {
             </div>
           ) : (
             <div style={{ padding: "12px 14px 0" }}>
-              <div style={{ opacity: 0.8, marginBottom: 10 }}>{t("gt.fork.desc")}</div>
+              {/* hint bar: scenario description (light accent background + info icon, layered apart from body/lists) */}
+              <div style={{ display: "flex", gap: 8, alignItems: "flex-start", background: "color-mix(in srgb, var(--accent) 7%, transparent)", border: "1px solid color-mix(in srgb, var(--accent) 22%, transparent)", borderRadius: 8, padding: "8px 10px", marginBottom: 10, fontSize: 12, lineHeight: 1.55, color: "var(--text)", opacity: 0.9 }}>
+                <svg aria-hidden style={{ flexShrink: 0, marginTop: 2 }} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                <span>{t("gt.fork.desc")}</span>
+              </div>
               {/* 场景 8（R4）：顶部汇总条「N 次操作 · M 个文件 · +A −B」（服务端 fork-preview 附带聚合） */}
               {st.totals ? (
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", border: "1px solid var(--border)", borderRadius: 6, padding: "6px 10px", marginBottom: 10, fontSize: 12 }}>
@@ -1336,11 +1427,13 @@ export function ForkDialogSlot(): any {
                   <span style={{ color: "#cf222e", fontWeight: 600 }}>−{fmtN(st.totals.dels)}</span>
                 </div>
               ) : null}
-              {groups.map((g) => (
+              {groups.map((g) => {
+                const files = turnFileList(g);
+                return (
                 <div key={g.key} style={{ border: "1px solid var(--border)", borderRadius: 6, marginBottom: 10 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", borderBottom: "1px solid var(--border)", fontSize: 12, fontWeight: 600 }}>
                     <span title={g.prompt || ""} style={{ opacity: 0.9, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1, minWidth: 0 }}>🗣 {String(g.prompt || "").slice(0, 60) || "(无 prompt)"}</span>
-                    {turnFilesOf(g) > 0 ? <span style={{ fontSize: 11, opacity: 0.65, flexShrink: 0, whiteSpace: "nowrap" }}>{t("gt.fork.turnFiles", { n: String(turnFilesOf(g)) })}</span> : null}
+                    {files.length > 0 ? <span style={{ fontSize: 11, opacity: 0.65, flexShrink: 0, whiteSpace: "nowrap" }}>{t("gt.fork.turnFiles", { n: String(files.length) })}</span> : null}
                   </div>
                   {g.ops.map((op: any) => (
                     <div key={String(op.op) + String(op.t1)} style={{ padding: "6px 10px", borderBottom: "1px solid var(--border)" }}>
@@ -1349,14 +1442,29 @@ export function ForkDialogSlot(): any {
                       {forkHasGap(op) ? <span title={t("gt.fork.gapTip")} style={{ color: "#9a6700", border: "1px solid #f0c674", borderRadius: 4, padding: "0 5px", fontSize: 11, marginLeft: 4 }}>⏭ {t("gt.fork.gap")}</span> : null}
                     </div>
                   ))}
+                  {/* changed-file chips (same as the file rows under messages): click → the right-side timeline file page to view the diff */}
+                  {files.length > 0 ? (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center", padding: "6px 10px" }}>
+                      <span aria-hidden title={t("gt.footer.title", { n: g.ops.length })} style={{ fontSize: 11, color: "var(--text-dim)", cursor: "default" }}>⎇</span>
+                      {files.map((p: string) => (
+                        <button key={p}
+                          style={{ ...chipStyle, maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                          title={p + "\n" + t("gt.fork.viewFileTip")}
+                          onClick={() => peekFile(p)}>
+                          {p.split("/").pop() || p}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
           {st.busy ? <div style={{ padding: "0 14px 4px", opacity: 0.7 }}>{st.busy}…</div> : null}
         </div>
-        {/* 底部操作区：固定不随内容滚动，始终可见 */}
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", padding: "10px 14px", borderTop: "1px solid var(--border)", flexShrink: 0 }}>
+        {/* bottom action area: fixed, never scrolls with content, always visible; three options as cards (title + consequence), decision info readable in place */}
+        <div style={{ display: "flex", gap: 10, padding: "10px 14px", borderTop: "1px solid var(--border)", flexShrink: 0 }}>
           {st.fail ? (
             <>
               <button style={btnStyle} disabled={!!st.busy} onClick={() => resolveFail({ action: "ai" })}>🤖 {t("gt.fork.aiTakeover")}</button>
@@ -1364,9 +1472,10 @@ export function ForkDialogSlot(): any {
             </>
           ) : (
             <>
-              <button style={btnStyle} disabled={!!st.busy} onClick={() => doRollback()}>↩ {t("gt.fork.rollback")}</button>
-              <button style={btnStyle} disabled={!!st.busy} onClick={() => resolveFork({ action: "keep" })}>{t("gt.fork.keep")}</button>
-              <button style={btnStyle} disabled={!!st.busy} onClick={() => resolveFork({ action: "cancel" })}>{t("gt.fork.cancel")}</button>
+              {/* same order as the mini decision bar: cancel left, primary action rightmost; destructive action centered */}
+              <ForkChoice variant="ghost" disabled={!!st.busy} title={"✕ " + t("gt.fork.cancel")} hint={t("gt.fork.cancelHint")} onClick={() => resolveFork({ action: "cancel" })} />
+              <ForkChoice variant="danger" disabled={!!st.busy} title={"↩ " + t("gt.fork.rollback")} hint={t("gt.fork.rollbackHint")} onClick={() => doRollback()} />
+              <ForkChoice variant="accent" disabled={!!st.busy} title={"✓ " + t("gt.fork.keep")} hint={t("gt.fork.keepHint")} onClick={() => resolveFork({ action: "keep" })} />
             </>
           )}
         </div>

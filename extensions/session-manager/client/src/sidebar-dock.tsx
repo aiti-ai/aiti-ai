@@ -19,7 +19,7 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { apiUrl, t, getLocale } from "./host-shim";
-import { useStore, refreshSessions, refreshListChannels, refreshWorkspaces, refreshProjectSessions, isProjectSessionsLoaded, noteDraftSession, removePendingDraft, ensureTags, togglePinSession, togglePinProject, type WorkspaceEntry } from "./store";
+import { useStore, refreshSessions, refreshListChannels, refreshWorkspaces, refreshProjectSessions, isProjectSessionsLoaded, noteDraftSession, removePendingDraft, ensureTags, togglePinSession, togglePinProject, hidePendingRow, subscribePendingRemovals, type WorkspaceEntry } from "./store";
 import { matchesTags, tagPath } from "./helpers";
 import {
   SESSION_LIST_ITEM_HEIGHT,
@@ -104,6 +104,10 @@ declare global {
  *  形态渲染（折叠头行归 DockBody）；旧 sidebarProjects 回退路径仍经 SidebarDock（折叠头壳）。 */
 export function SidebarList(props: SidebarDockProps) {
   const store = useStore();
+  // Optimistic removal (2026-11-29): pending-row changes do not trigger store.emit, so a separate
+  // subscription drives re-filtering (same as panel/kanban); hidePendingRow filters at render — archive/delete/remove rows vanish from the dock on click
+  const [, setOptTick] = useState(0);
+  useEffect(() => subscribePendingRemovals(() => setOptTick((v) => v + 1)), []);
   const {
     cwd: selectedCwdProp,
     homeDir = "",
@@ -135,7 +139,7 @@ export function SidebarList(props: SidebarDockProps) {
     bindPickerOpener,
   } = props;
 
-  const sessions = (store.projectSessions ?? []) as SessionInfo[];
+  const sessions = ((store.projectSessions ?? []) as SessionInfo[]).filter((r) => !hidePendingRow(r));
   // [通道拆分] 全量通道仍供宿主 catalog（家族树）/草稿判定/兜底 projectFor；
   // 侧栏列表/项目 picker 改由 scoped + workspaces 两条快通道供数（见下方各 useMemo）。
   const allSessions = (store.sessions ?? []) as SessionInfo[];

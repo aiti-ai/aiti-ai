@@ -34,7 +34,7 @@ const EXTS = [
       { id: "feat-str", type: "string", label: "文本项", value: "x" },
     ],
   },
-  // ext.name 自声明词条（2026-11-15 i18n 约定）：en 态覆盖 CJK 原文 —— 第三方扩展注册通道
+  // ext.name self-declared entries (2026-11-15 i18n convention): en mode overrides the CJK raw text — the third-party extension registration channel
   { id: "ext-b", name: "扩展B", version: "2.0.0", description: "d-b", icon: null, category: "code", features: null, ui: { i18n: { en: { "ext.displayName": "Extension B", "ext.description": "Desc B" } } } },
 ];
 const SLOT_ITEMS = [

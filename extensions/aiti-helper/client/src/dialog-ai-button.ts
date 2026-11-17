@@ -18,7 +18,7 @@
 
 // 扩展展示名（id → 友好名，与 extman 共用同一张表）
 import { extDisplayName } from "../../../_shared/ext-display-names";
-import { apiUrl, extSvc, hostCtx } from "./host-shim";
+import { apiUrl, extSvc, hostCtx, t } from "./host-shim";
 
 // AI 星星图标（单源 icons/sparkles.svg，_shared/icons 库经 deploy copyIcons 拷入）——
 // assets CSS-mask 渲染（currentColor 继承按钮颜色），与 helper 弹窗内 SparkIcon 同一文件；
@@ -188,7 +188,7 @@ function injectAt(closeBtn: HTMLElement, ext: { id: string; name: string }): boo
   const aiBtn = document.createElement("button");
   aiBtn.setAttribute(AI_BTN_ATTR, "1");
   aiBtn.innerHTML = AiBotIconHtml(16);
-  aiBtn.title = ext && ext.id ? "AI Helper：让 AI 帮我用 " + extDisplayName(ext.id, ext.name || ext.id) + " 处理这个弹窗" : "AI Helper：让 AI 帮我处理这个弹窗";
+  aiBtn.title = ext && ext.id ? t("dlg.aiBtn.title", { name: extDisplayName(ext.id, ext.name || ext.id) }) : t("dlg.aiBtn.title.plain");
   aiBtn.style.cssText = "cursor:pointer;border:none;background:none;color:inherit;padding:2px 6px;line-height:1;opacity:.85;display:inline-flex;align-items:center";
   aiBtn.onmouseenter = () => { aiBtn.style.opacity = "1"; };
   aiBtn.onmouseleave = () => { aiBtn.style.opacity = ".85"; };
@@ -205,8 +205,8 @@ function injectAt(closeBtn: HTMLElement, ext: { id: string; name: string }): boo
     sysParts.push("请根据弹窗上下文帮用户处理相关任务；如需操作该弹窗表单可调 self_ui/form_fill 工具。");
     (window as any).__aitiHelperInvoke({
       system: sysParts.join(""),
-      placeholder: "告诉 AI 你想让" + (extName || "它") + "做什么…",
-      contextLabel: (extName ? extName + " · " : "") + (ctxInfo.title || "弹窗 AI"),
+      placeholder: t("dlg.aiBtn.ph", { name: extName || t("dlg.aiBtn.ph.it") }),
+      contextLabel: (extName ? extName + " · " : "") + (ctxInfo.title || t("dlg.ctx.dialogAi")),
       dialogEl: panel,     // 供 action:fill 回填弹窗表单
       extId, extName,      // 分组高亮本扩展 skills
     });
@@ -225,7 +225,7 @@ function injectAt(closeBtn: HTMLElement, ext: { id: string; name: string }): boo
     extBtn.setAttribute(EXT_BTN_ATTR, "1");
     extBtn.innerHTML = ExtManIconHtml(16);
     const extLabel = extDisplayName(ext.id, ext.name || ext.id);
-    extBtn.title = ext.id ? "扩展管理：查看/配置 " + extLabel : "扩展管理";
+    extBtn.title = ext.id ? t("dlg.extBtn.title", { name: extLabel }) : t("dlg.extBtn.title.plain");
     extBtn.style.cssText = aiBtn.style.cssText;
     extBtn.onmouseenter = () => { extBtn.style.opacity = "1"; };
     extBtn.onmouseleave = () => { extBtn.style.opacity = ".85"; };

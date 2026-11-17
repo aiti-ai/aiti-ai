@@ -109,6 +109,24 @@ test("GET /status?self-only=1 — 轻量 self 状态", async () => {
   assert.ok(!("services" in d));
 });
 
+test("GET /status?exposes-only=1 — 轻量暴露清单（手机访问端口服务 tab）", async () => {
+  setSt(mockSt());
+  const res = await handleApi(new Request("http://x/api/extensions/service-tunnels/status?exposes-only=1"), { ...ctx, path: ["status"], searchParams: new URLSearchParams("exposes-only=1") });
+  const d = await json(res);
+  assert.ok(Array.isArray(d.exposes));
+  assert.equal(d.exposes.length, 1);
+  const e = d.exposes[0];
+  // required fields complete: used for the QR judgment (provider empty = noAuth); loginUrl returned for display only
+  for (const k of ["name", "label", "port", "mode", "provider", "running", "url", "localUrl", "baseUrl", "domainUrl", "loginUrl", "altUrls"]) assert.ok(k in e, `missing ${k}`);
+  assert.equal(e.name, "expose-5173-basic");
+  assert.equal(e.provider, "basic");
+  assert.equal(e.running, true);
+  assert.equal(e.url, "https://x.trycloudflare.com");
+  // without the heavy full-status payload
+  assert.ok(!("providers" in d));
+  assert.ok(!("sites" in d));
+});
+
 test("GET /status?logs=<name> — 读 expose 日志（tail 50）", async () => {
   const dir = mkdtempSync(join(tmpdir(), "st-logs-"));
   const log = join(dir, "x.access.log");

@@ -1,7 +1,9 @@
 ---
 name: session-archive
 title: AI 帮我归档旧会话
+title.en: "AI: archive old sessions"
 placeholder: 描述归档条件（如：把 30 天没动的大会话归档）…
+placeholder.en: "Describe the archive criteria (e.g. archive large sessions idle for 30 days)…"
 outputs:
   format: json-obj
   schema:
