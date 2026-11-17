@@ -1399,7 +1399,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   const { isDragOver, handleDragEnter, handleDragOver, handleDragLeave, handleDrop } = useDragDrop(onDrop);
 
   // While a run goes, an extension message that opened it anchors its turn before the reply lands.
-  const openTail = agentRunning || isStreaming;
+  const openTail = agentRunning || streamState.isStreaming;
   const turnAnchors = useMemo(() => getTurnAnchors(messages, { openTail }), [messages, openTail]);
   const turnRefCount = messages.reduce((count, message, idx) => count + (hasTurnRef(message, turnAnchors[idx]) ? 1 : 0), 0);
   // Stable Map identity: `messages` doesn't change during streaming updates
@@ -1865,7 +1865,6 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                   msg.role === "user" && idx > 0 && messages[idx - 1].role === "assistant"
                     ? entryIds[idx - 1]
                     : undefined;
-                const isVisible = isMessageGroupAnchor(msg) || msg.role === "assistant";
                 const isVisible = hasTurnRef(msg, turnAnchors[idx]);
                 const currentRefIdx = visibleRefIndexByMessage.get(idx);
                 const keyPrefix = options.keyPrefix ?? "message";
