@@ -269,9 +269,9 @@ test("嵌套仓：发现→父 store 排除+注册副 store→副 store 正式�
   git(["-C", nested, "config", "user.email", "n@n"], nested);
   git(["-C", nested, "config", "user.name", "n"], nested);
 
-  const e = newEngine(fx, "s-nest");
+  const e = newEngine(fx, "s-nest", { findUserEntryId: () => "user-entry-u1" });
   await e.init();
-  await e.onTurnStart({ userEntryId: "user-entry-u1", text: "" });
+  e.onUserMessage("嵌套仓用例消息"); // [B2] message boundary + lazy entryId parse at first accounting
   // op1：主仓文件变更（嵌套仓尚无任何变更→不会被 status 发现）
   await runSimpleOp(e, "o1", "edit", { path: "base.txt" }, () => fx.write("base.txt", "n1\n"));
   // op2：写嵌套仓内文件（bash 副作用模拟）→ after 阶段发现嵌套仓
@@ -288,7 +288,7 @@ test("嵌套仓：发现→父 store 排除+注册副 store→副 store 正式�
   assert.ok(secLog[0].includes("phase=after"));
   const rows = readRows(ledgerFileFor(fx.dataDir, "s-nest"));
   const row2 = rows.find((r) => r.op === 2)!;
-  assert.equal(rows[0].userEntryId, "user-entry-u1"); // turn_start 锚点透传台账
+  assert.equal(rows[0].userEntryId, "user-entry-u1"); // [B2] lazy parse flows through to the ledger
   const nestEntry = row2.stores.find((s) => s.root === nested);
   assert.ok(nestEntry, "op2 台账应含嵌套仓条目");
   assert.equal(nestEntry.partial, true);
@@ -546,7 +546,7 @@ test("loose 基本流：无 git 小目录自动建 .aiti-trace + .gitignore 维�
   const fx = mkFixture(t);
   const plain = path.join(fx.root, "plain");
   fs.mkdirSync(plain);
-  const e = new TraceEngine({ cwd: plain, sessionId: "s-loose", dataDir: fx.dataDir, looseDenylist: false });
+  const e = new TraceEngine({ cwd: plain, sessionId: "s-loose", dataDir: fx.dataDir, looseDenylist: false, findUserEntryId: () => "u1" });
   await e.init();
   assert.equal(e.tracked, true);           // 不再「无 git 不追踪」
   assert.equal(e.kind, "loose");
@@ -555,7 +555,7 @@ test("loose 基本流：无 git 小目录自动建 .aiti-trace + .gitignore 维�
   assert.equal(fs.existsSync(path.join(plain, ".git")), false); // 仍然绝不造 .git
   const gi = fs.readFileSync(path.join(plain, ".gitignore"), "utf8");
   assert.ok(gi.includes(".aiti-trace/"), "gitignore 应含 .aiti-trace/");
-  await e.onTurnStart({ userEntryId: "u1", text: "hello loose" });
+  e.onUserMessage("hello loose");
   await runSimpleOp(e, "l1", "write", { path: "a.txt" }, () => fs.writeFileSync(path.join(plain, "a.txt"), "a\n"));
   const rows = readRows(ledgerFileFor(fx.dataDir, "s-loose"));
   assert.equal(rows.length, 1);
@@ -617,7 +617,7 @@ test("loose→git 演进：同一 .aiti-trace 在目录 git init 后无缝转 gi
   const e1 = new TraceEngine({ cwd: plain, sessionId: "s-ev1", dataDir: fx.dataDir, looseDenylist: false });
   await e1.init();
   assert.equal(e1.kind, "loose");
-  await e1.onTurnStart({ userEntryId: "u1", text: "loose turn" });
+  e1.onUserMessage("loose turn");
   await runSimpleOp(e1, "ev1", "write", { path: "a.txt" }, () => fs.writeFileSync(path.join(plain, "a.txt"), "a\n"));
   // 目录后来 git init
   git(["init", "-q", "-b", "main"], plain);
@@ -629,7 +629,7 @@ test("loose→git 演进：同一 .aiti-trace 在目录 git init 后无缝转 gi
   assert.equal(fs.existsSync(path.join(plain, ".aiti-trace", "HEAD")), true); // store 未换
   const projExcl = fs.readFileSync(path.join(plain, ".git", "info", "exclude"), "utf8");
   assert.ok(projExcl.includes(".aiti-trace/"));     // git 模式可见性块补齐
-  await e2.onTurnStart({ userEntryId: "u2", text: "git turn" });
+  e2.onUserMessage("git turn");
   await runSimpleOp(e2, "ev2", "write", { path: "b.txt" }, () => fs.writeFileSync(path.join(plain, "b.txt"), "b\n"));
   const rows = readRows(ledgerFileFor(fx.dataDir, "s-ev2"));
   assert.equal(rows.length, 1);                     // 新会话台账正常（同仓续追踪）
@@ -684,7 +684,7 @@ test("跨仓识别修复：cd 路径经过嵌套仓但零变更 → 台账不落
   const e = newEngine(fx, "s-cross");
   await e.init(); // [P0-3a] 子仓默认不自动注册（仅 exclude）
   assert.equal((e as any).stores.size, 1);
-  await e.onTurnStart({ userEntryId: "u1", text: "cd around" });
+  e.onUserMessage("cd around");
   // 主仓改文件；bash 同时 cd 进嵌套仓（无文件变更）+ 落一个写目标（保持 mutating 语义）
   await e.onToolCall("c1", "bash", { command: `cd ${nested} && ls && cd ${fx.repo} && echo done > done.txt` });
   fx.write("a.txt", "a2\n");
@@ -737,38 +737,79 @@ test("工作区追踪开关：enabled=false 彻底不追踪；会话中实时关
   assert.equal(e.noStoreReason, "workspace-disabled");
 });
 
-test("用户消息捕获：同一条消息的 turn 2+ 不推进 msgSeq（归入同一 prompt 分组）", async (t) => {
+test("用户消息边界（[B2] message_end 驱动）：同消息多 turn 归同一分组；新消息推进 msgSeq + entryId 惰性换新", async (t) => {
   const fx = mkFixture(t);
-  const e = newEngine(fx, "s-prompt");
+  const e = newEngine(fx, "s-prompt", {
+    // mock host: re-pair the entryId from the current message text (the real impl scans the session-file tail)
+    findUserEntryId: () => (e.turnPrompt === "帮我改 a.txt" ? "u-9" : e.turnPrompt === "再改 b.txt" ? "u-10" : null),
+  });
   await e.init();
-  e.onTurnStart({ userEntryId: "u-9", text: "帮我改 a.txt" });
+  // 1st user message (message_end event → onUserMessage)
+  e.onUserMessage("帮我改 a.txt");
   await runSimpleOp(e, "p1", "write", { path: "a.txt" }, () => fx.write("a.txt", "1\n"));
-  // 同一用户消息的第二个 agent turn（无新 prompt）
-  e.onTurnStart(null);
+  // second agent turn of the same user message (turn_start no longer carries/advances attribution)
+  e.onTurnStart();
   await runSimpleOp(e, "p2", "write", { path: "b.txt" }, () => fx.write("b.txt", "2\n"));
-  // 新的用户消息 → msgSeq 推进
-  e.onTurnStart({ userEntryId: "u-10", text: "再改 b.txt" });
+  // 2nd user message → msgSeq advances + entryId lazily re-parsed
+  e.onUserMessage("再改 b.txt");
   await runSimpleOp(e, "p3", "write", { path: "b.txt" }, () => fx.write("b.txt", "3\n"));
   const rows = readRows(ledgerFileFor(fx.dataDir, "s-prompt"));
   assert.equal(rows.length, 3);
   assert.equal(rows[0].msgSeq, 1);
+  assert.equal(rows[0].userEntryId, "u-9");
   assert.equal(rows[1].msgSeq, 1); // 同 prompt 分组
+  assert.equal(rows[1].userEntryId, "u-9"); // parsed lazily once; later ops of the same message reuse it
   assert.equal(rows[1].prompt, "帮我改 a.txt");
   assert.equal(rows[2].msgSeq, 2);
+  assert.equal(rows[2].userEntryId, "u-10");
   assert.equal(rows[2].prompt, "再改 b.txt");
+});
+
+test("off-by-one 回归：新消息事件到达即换新归因，entryId 解析失败也不得沿用上一轮", async (t) => {
+  const fx = mkFixture(t);
+  let failResolve = false; // simulate the "event arrived, entry not persisted" persistence-race window
+  const e = newEngine(fx, "s-race", { findUserEntryId: () => (failResolve ? null : "u-ok") });
+  await e.init();
+  e.onUserMessage("第一轮");
+  await runSimpleOp(e, "r1", "write", { path: "a.txt" }, () => fx.write("a.txt", "1\n"));
+  // second message: the parse callback returns null at this moment (simulating the old scheme scanning an empty file)
+  failResolve = true;
+  e.onUserMessage("第二轮");
+  await runSimpleOp(e, "r2", "write", { path: "b.txt" }, () => fx.write("b.txt", "2\n"));
+  const rows = readRows(ledgerFileFor(fx.dataDir, "s-race"));
+  // the old implementation would have rows[1] inherit round-1 attribution here (msgSeq=1/prompt=round 1/userEntryId=u-ok)
+  assert.equal(rows[1].msgSeq, 2);
+  assert.equal(rows[1].prompt, "第二轮");
+  assert.equal(rows[1].userEntryId, null); // parse failed → null, UI grouping falls back to msgSeq
+});
+
+test("resume 守卫：无消息边界（engine 重建后未收到 message_end）不解析 entryId，防误配旧条目", async (t) => {
+  const fx = mkFixture(t);
+  let calls = 0;
+  const e = newEngine(fx, "s-resume", { findUserEntryId: () => { calls += 1; return "u-stale"; } });
+  await e.init();
+  await runSimpleOp(e, "rs1", "write", { path: "a.txt" }, () => fx.write("a.txt", "1\n"));
+  let rows = readRows(ledgerFileFor(fx.dataDir, "s-resume"));
+  assert.equal(rows[0].userEntryId, null);
+  assert.equal(calls, 0); // the callback must not fire (no pendingUserText)
+  // a later message arrives → parses normally
+  e.onUserMessage("resume 后第一条");
+  await runSimpleOp(e, "rs2", "write", { path: "b.txt" }, () => fx.write("b.txt", "2\n"));
+  rows = readRows(ledgerFileFor(fx.dataDir, "s-resume"));
+  assert.equal(rows[1].userEntryId, "u-stale");
 });
 
 test("清理自愈：store 目录被删后引擎自动重建空仓并继续配对", async (t) => {
   const fx = mkFixture(t);
   const e = newEngine(fx, "s-heal");
   await e.init();
-  await e.onTurnStart({ userEntryId: "u1", text: "before wipe" });
+  e.onUserMessage("before wipe");
   await runSimpleOp(e, "h1", "write", { path: "a.txt" }, () => fx.write("a.txt", "1\n"));
   assert.equal(readRows(ledgerFileFor(fx.dataDir, "s-heal")).length, 1);
   // 模拟用户在工作区面板深清理：删掉追踪仓
   fs.rmSync(path.join(fx.repo, ".aiti-trace"), { recursive: true, force: true });
   // 下一操作：引擎自愈重建，不抛错、不影响原命令
-  await e.onTurnStart({ userEntryId: "u2", text: "after wipe" });
+  e.onUserMessage("after wipe");
   await runSimpleOp(e, "h2", "write", { path: "b.txt" }, () => fx.write("b.txt", "2\n"));
   assert.equal(fs.existsSync(path.join(fx.repo, ".aiti-trace", "HEAD")), true); // 空仓已重建
   const rows = readRows(ledgerFileFor(fx.dataDir, "s-heal"));
