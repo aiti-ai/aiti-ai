@@ -7,7 +7,7 @@
  *   - doc/win 指向 iframe 文档 → 弹层渲染进 iframe（坐标/滚动/层叠自洽，见方案 D1）；
  *   - float:true → 块级元素也走 fixed 浮层（iframe 里 setInline 是 body 追加层，in-flow 会掉底）；
  *   - decorateQuote → 引用带 `@<file>#Lx[-Ly]` 源码定位；
- *   - caps → 预览语境关掉 question/providers/跨仓分辨。
+ *   - caps → preview context turns off question/cross-repo (providers stay open: share via extension point).
  * 服务缺席（aiti-msg-smart 未装/禁用）→ 全程静默降级：预览照常，只是没有弹层。
  */
 import { extSvc } from "./host-shim.ts";
@@ -96,7 +96,7 @@ export function previewClickInfo(msg: PreviewClickMsg, opts: ClickInfoOpts): Rec
     float: true, // 块级也 fixed（iframe 内 setInline 是 body 追加层）
     paragraphId: "mdprev:" + filePath + ":" + msg.blk + ":" + (isLine ? String(msg.row) : "-"),
     decorateQuote: (q: string) => ref + "\n" + q,
-    caps: { question: false, providers: false, fileExternalRoots: false },
+    caps: { question: false, fileExternalRoots: false }, // providers open (msg-popover-action: share etc.)
     setInline: (node: unknown) => {
       try {
         if (!layer) { layer = doc.createElement("div"); doc.body.appendChild(layer); }
@@ -124,4 +124,40 @@ export function mdSmartEnabled(): boolean {
     const f = c && typeof c.getFeatures === "function" ? (c.getFeatures() || {}) : {};
     return f["editor.mdPreviewSmart"] !== false;
   } catch { return true; }
+}
+
+/**
+ * Selection container registration (aiti-msg-smart.selection-container): msg-smart attaches
+ * pointerup directly inside the preview iframe document (detect/read selection/render in one
+ * document — the standard approach). Service absent/disabled → silent degradation.
+ */
+const SEL_CONTAINER_SVC = "aiti-msg-smart.selection-container";
+
+export function registerSelectionContainer(doc: any, win: any, meta: (range: any, el: any) => any): void {
+  const svc = extSvc<any>(SEL_CONTAINER_SVC);
+  try { svc && typeof svc.register === "function" && svc.register({ doc, win, meta }); } catch { /* degrade */ }
+}
+
+export function unregisterSelectionContainer(doc: any): void {
+  const svc = extSvc<any>(SEL_CONTAINER_SVC);
+  try { svc && typeof svc.unregister === "function" && svc.unregister({ doc }); } catch { /* degrade */ }
+}
+
+/**
+ * Selection metadata (called by msg-smart at selection time): cwd = the file's directory; quotes
+ * carry @<file>#Lx[-Ly] source refs (line range derived from the el's data-src-start/end block
+ * annotation; unannotated areas like TOC degrade to a bare @file). Preview context turns off
+ * question/cross-repo; providers stay open (share button rides the msg-popover-action topic).
+ */
+export function previewSelectionMeta(filePath: string) {
+  return (_range: any, el: any) => ({
+    cwd: dirOf(filePath),
+    caps: { question: false, fileExternalRoots: false }, // providers open (msg-popover-action: share etc.)
+    decorateQuote: (q: string) => {
+      const blk = el && el.closest ? el.closest("[data-src-start]") : null;
+      const s = blk ? +blk.getAttribute("data-src-start") : NaN;
+      const e = blk ? +blk.getAttribute("data-src-end") : NaN;
+      return srcRef(filePath, s, e) + "\n" + q;
+    },
+  });
 }
