@@ -4,8 +4,7 @@ import { dirname, join } from "path";
 import webpush from "web-push";
 import { writePrivateFileAtomicSync } from "./atomic-file.ts";
 import { runOutcomeNotifies, truncateRunError, type SessionLastRun } from "./run-outcome.ts";
-import { enLocale } from "./i18n/messages/en.ts";
-import { zhCNLocale } from "./i18n/messages/zh-CN.ts";
+import { getLocalePlugin } from "./i18n/registry.ts";
 import { getAgentDir } from "./session-reader.ts";
 
 export interface PushSubscriptionRecord {
@@ -141,10 +140,8 @@ export function localeText(
   params?: { project?: string; error?: string },
 ): string {
   const messageKey = NOTIFICATION_I18N_KEYS[key];
-  const message = locale === "zh-CN"
-    ? zhCNLocale.messages[messageKey]
-    : enLocale.messages[messageKey];
-  const template = message ?? NOTIFICATION_FALLBACKS[key];
+  const template = getLocalePlugin(locale)?.messages[messageKey]
+    ?? NOTIFICATION_FALLBACKS[key];
   return params
     ? template
       .replace(/\{project\}/g, params.project ?? "")
