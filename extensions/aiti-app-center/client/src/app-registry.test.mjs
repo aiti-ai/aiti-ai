@@ -378,7 +378,7 @@ test("matchApp：拼音索引 + 连写宽松 + 错字容忍（extman 同款，20
   assert.ok(matchApp(app, "fuwusuida"), "拼音尾字符缺失在错字容忍内（8字允1错）");
   assert.ok(matchApp(app, "服务"), "中文词命中 label");
   assert.ok(!matchApp(app, "helloworld"), "完全无关词不命中（错字容忍不误报）");
-  // 无 pinyin 字段的卡片：连写/错字照常作用在其余 hay 上（降级安全）
+  // cards without a pinyin field: concatenation/typo matching still applies to the rest of the hay (safe degradation)
   const noPinyin = { label: "服务隧道", extId: "service-tunnels", extName: "Service Tunnels", keywords: [] };
   assert.ok(matchApp(noPinyin, "servcie"), "错字容忍：英文 label 错字命中（无 pinyin 也可用）");
   assert.ok(matchApp(noPinyin, "tunnels service"), "双语名分词 AND 命中");
