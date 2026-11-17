@@ -41,7 +41,7 @@ export default {
         "anchor.sessionTitle": "会话标题",
         "anchor.hint": "点击跳转到该输入",
       },
-      en: {
+      "en": {
         "feat.show.banner.desc": "Persistent banner at the top of the message area showing the user input owning the current viewport",
         "feat.display.mode.desc": "current = user input owning the current viewport (scroll-follow); first = session's first input; latest = most recent input; title = session title",
         "feat.display.title.desc": "Banner line 1 shows the current session title (name; falls back to the first input when absent)",
@@ -56,8 +56,7 @@ export default {
         "feat.display.input": "Show current input row",
         "feat.display.opacity": "Banner opacity",
         "feat.text.maxLen": "Text truncation length",
-      },
-      "en": {
+      
         "anchor.currentInput": "Current input",
         "anchor.firstInput": "First input",
         "anchor.latestInput": "Latest input",

@@ -30,14 +30,13 @@ export default {
         "nav.latestHint": "到最新消息（长按保持屏幕常亮）",
         "nav.keepAwakeOn": "屏幕保持常亮",
       },
-      en: {
+      "en": {
         "feat.show.toolbar.desc": "Jump-to-earliest/jump-to-latest/prev/next buttons on the right of the message area",
         "feat.behavior.keepAwake.desc": "Long-press the bottom-most button while the agent runs to keep the screen awake (Screen Wake Lock API)",
         "ext.displayName": "Message Scroll Nav",
         "feat.show.toolbar": "Show the message scroll nav bar",
         "feat.behavior.keepAwake": "Keep screen awake while long-pressing \"jump to latest\"",
-      },
-      "en": {
+      
         "nav.earliest": "Jump to earliest message",
         "nav.prevUser": "Previous user message",
         "nav.nextUser": "Next user message",
