@@ -26,7 +26,7 @@
 import { useState, useEffect, useRef } from "react";
 import type { ReactNode } from "react";
 import { t } from "./host-shim";
-import { act, archiveSessions, archiveExtSession, deleteLiveSession, hideExtSession, collectSubtreeIds, useStore, markPendingRemoval, clearPendingRemoval } from "./store";
+import { act, archiveSessions, archiveExtSession, deleteLiveSession, hideExtSession, collectSubtreeIds, useStore, beginOptimisticRemoval } from "./store";
 import { showConfirm } from "./confirm-dialog";
 import { ensureReadability, SIc } from "./helpers";
 
@@ -167,37 +167,46 @@ export function ArchiveMenuHost() {
   const canTrueArchive = !Array.isArray(capList) || capList.length === 0
     || capList.includes(String(openRow?.agent));
 
-  /** 实际执行：children-first（叶子优先）先处理子会话，再处理主会话。 */
+  /** Actual execution: children-first (leaves before parents), then the main session.
+   *  Optimistic removal (2026-11-29): rows leave the list on fire (archive-type rows also appear in
+   *  the archive group optimistically); the backend runs in the background; on failure rollback
+   *  restores all rows (incl. child sessions), on success refreshListChannels's landing prune
+   *  clears markers automatically. */
   const doRun = async (sessionId: string, mode: Mode, childIds: string[], together: boolean) => {
     if (busy) return;
     setBusy(true);
     setErr(null);
-    // 涉及的行 id（含子会话）——执行即置灰标注（后台刷新慢，让用户知道在动），
-    // 失败 clear 恢复样式；成功不 clear，等 refreshSessions 落地后 prune 自动清。
+    // involved row ids (incl. child sessions) — optimistically cleared on fire, rollback restores on
+    // failure; on success no rollback, prune clears automatically after refreshSessions lands.
     const involved = together && childIds.length ? [sessionId, ...childIds] : [sessionId];
-    for (const id of involved) markPendingRemoval(id, "live");
-    const fail = () => { for (const id of involved) clearPendingRemoval(id); };
+    const rowOf = (id: string) => (store.sessions ?? []).find((r) => String(r.id) === String(id)) as Record<string, unknown> | undefined;
+    const rollback = beginOptimisticRemoval(involved.map((id) => {
+      const row = rowOf(id);
+      return mode === "delete"
+        ? { id, bucket: "live" as const }
+        : { id, bucket: "live" as const, ...(row ? { row, to: "archived" as const } : {}) };
+    }));
     try {
       if (mode === "delete") {
         if (together && childIds.length) {
           // 先删子会话（叶子优先，core 重挂扫描已无可挂子级）
           for (const cid of childIds) {
             const e = await deleteLiveSession(cid);
-            if (e) { fail(); setErr(`${t("sm.deleteFailed") ?? "删除失败"}：${e}`); return; }
+            if (e) { rollback(); setErr(`${t("sm.deleteFailed") ?? "删除失败"}：${e}`); return; }
           }
         }
         const e = await deleteLiveSession(sessionId);
-        if (e) { fail(); setErr(`${t("sm.deleteFailed") ?? "删除失败"}：${e}`); return; }
+        if (e) { rollback(); setErr(`${t("sm.deleteFailed") ?? "删除失败"}：${e}`); return; }
       } else {
         if (mode === "resolved" || mode === "unresolved") {
           const tagPath = mode === "resolved" ? t("sm.archiveTagResolved") : t("sm.archiveTagUnresolved");
           const ok = await act("assign", { sessionId, path: tagPath });
-          if (!ok) { fail(); setErr(`${sessionId.slice(0, 8)} tag 失败`); return; }
+          if (!ok) { rollback(); setErr(`${sessionId.slice(0, 8)} tag 失败`); return; }
         }
         const ids = together && childIds.length ? [sessionId, ...childIds] : [sessionId];
         const r = await archiveSessions(ids);
         if (!r.ok) {
-          fail();
+          rollback();
           // 全部被守卫跳过：区分「会话在打开/运行中（或未被索引）」与真实失败，避免误导
           setErr(r.skippedIds.length
             ? `${sessionId.slice(0, 8)} 无法归档：会话正在打开/运行中（或未被索引），请先关闭页面或等待结束`
@@ -238,18 +247,22 @@ export function ArchiveMenuHost() {
   /** ext 行执行：视图层移除（收进归档分组，源数据不动，可随时恢复接管）。
    *  ids 为要移除的行集合——「同时移除」= 主 + 全部子会话（先子后主，与 pi 归档
    *  同序）；「只移除自己」= [主]。无删除入口：外部行不可彻底删除（服务端同样
-   *  拒绝），数据主权在源应用。 */
+   *  refuses); data sovereignty stays with the source app. Optimistic removal: rows vanish from
+   *  live instantly + the archive group appears instantly. */
   const extRun = async (ids: string[]) => {
     if (busy || !open) return;
     setErr(null);
     setBusy(true);
     const involved = ids.length ? ids : [open.sessionId];
-    for (const id of involved) markPendingRemoval(id, "live");
-    const fail = () => { for (const id of involved) clearPendingRemoval(id); };
+    const rowOf = (id: string) => (store.sessions ?? []).find((r) => String(r.id) === String(id)) as Record<string, unknown> | undefined;
+    const rollback = beginOptimisticRemoval(involved.map((id) => {
+      const row = rowOf(id);
+      return { id, bucket: "live" as const, ...(row ? { row, to: "archived" as const } : {}) };
+    }));
     try {
       for (const id of involved) {
         const ok = await hideExtSession(id, true);
-        if (!ok) { fail(); setErr(`${id.slice(0, 8)} 移除失败`); return; }
+        if (!ok) { rollback(); setErr(`${id.slice(0, 8)} 移除失败`); return; }
       }
       closeArchiveMenu();
       closeSubMenu();
@@ -257,15 +270,16 @@ export function ArchiveMenuHost() {
   };
 
   /** A03 真归档：源数据收进 .pwarc 归档库并从源应用移除（可 ext-restore 放回）。
-   *  失败原因如实透出（运行中/不可解析/不支持 remove 等服务端判定）。 */
+   *  failure reasons surface verbatim (running / unparseable / remove unsupported etc. — server-side verdicts). Optimistic removal as above. */
   const extArchive = async (id: string) => {
     if (busy || !open) return;
     setErr(null);
     setBusy(true);
-    markPendingRemoval(id, "live");
+    const row = (store.sessions ?? []).find((r) => String(r.id) === String(id)) as Record<string, unknown> | undefined;
+    const rollback = beginOptimisticRemoval([{ id, bucket: "live", ...(row ? { row, to: "archived" as const } : {}) }]);
     try {
       const r = await archiveExtSession(id);
-      if (!r.ok) { clearPendingRemoval(id); setErr(`${id.slice(0, 8)} 真归档失败：${r.error ?? "?"}`); return; }
+      if (!r.ok) { rollback(); setErr(`${id.slice(0, 8)} 真归档失败：${r.error ?? "?"}`); return; }
       closeArchiveMenu();
       closeSubMenu();
     } finally { setBusy(false); }
