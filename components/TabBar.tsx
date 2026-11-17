@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { getFileIcon, FolderIcon } from "./FileIcons.tsx";
+import { renderExtItemIcon } from "./ExtItemIcon";
+import type { ExtUiItemIcon } from "@/lib/ext/types";
 import { useI18n } from "@/hooks/useI18n";
 import type { FileViewerDisplayMode, FileViewerState } from "@/lib/file-viewer-state";
 
@@ -147,6 +149,14 @@ export interface Tab {
    *  agent tabs render the read-only subagent transcript viewer (right-panel tab),
    *  side tabs render the upstream side-chat panel (SessionChatPanel, #1469) */
   kind?: "file" | "folder" | "terminal" | "dock" | "agent" | "side";
+  /** dock tabs only: declarative icon from the registering entry's meta.icon
+   *  ({svg} markup / ".svg" asset path / emoji-text; ExtUiItemIcon contract, rendered
+   *  by renderExtItemIcon). Absent → the generic four-cell grid glyph. Lets a docked
+   *  block show its semantic icon on the tab (folder/clock/bot/…) — the sidebar
+   *  collapsed header already shows icons via its own title renderer. */
+  icon?: ExtUiItemIcon;
+  /** dock tabs only: registering extension id (resolves meta.icon ".svg" asset paths). */
+  extId?: string;
   /** Pinned marker (maintained by the extension; core only passes it through — no eviction/close policy in core) */
   pinned?: boolean;
   /** Close/restart in progress (terminal tab: the raw "close"/"restart" value is passed through
@@ -548,11 +558,15 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab
                   <polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" />
                 </svg>
               ) : tab.kind === "dock" ? (
-                // Docked tab (floating-dock extension v0.5.0): four-cell grid glyph, distinct from the file/terminal glyphs
+                // Docked tab (floating-dock extension v0.5.0): the registering entry's
+                // meta.icon (semantic icon: folder/clock/bot/…) when declared; the
+                // four-cell grid glyph stays as the generic fallback.
+                (renderExtItemIcon(tab.icon, tab.extId, 13) ?? (
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <rect x="3" y="3" width="8" height="8" rx="1" /><rect x="13" y="3" width="8" height="8" rx="1" />
                   <rect x="3" y="13" width="8" height="8" rx="1" /><rect x="13" y="13" width="8" height="8" rx="1" />
                 </svg>
+                ))
               ) : tab.kind === "agent" ? (
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <rect x="5" y="7" width="14" height="11" rx="2" /><path d="M9 11h.01M15 11h.01M9 15h6M12 7V4M10 4h4" />
