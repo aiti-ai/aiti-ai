@@ -13,7 +13,8 @@
  * 组件经 subscribe() 订阅变化（React useSyncExternalStore / useState+useEffect）。
  */
 
-import { toSpeechSegments, filterSegments } from "./toSpeechText.js";
+import { toSpeechSegments, filterSegments, chunkFileForSpeech } from "./toSpeechText.js";
+import { extSvc } from "./host-shim.ts";
 
 const LS_SETTINGS = "aiti-ai-speek:settings";
 const LS_FOLLOW = "aiti-ai-speek:follow";
@@ -71,6 +72,9 @@ const state = {
   lastError: null,
   pageFocused: true,
   apiUrl: (p) => p,
+  // file-read bucket (aiti-editor 🔊 read entry; null = not fileMode)
+  // { id: "file:<path>", path, name, returnTo, chunkStartLine: { [chunkId]: startLine } }
+  fileBucket: null,
 };
 
 const listeners = new Set();
@@ -137,6 +141,8 @@ export function setFollow(on) {
     }
   } else {
     stop(); state.barVisible = false; readOnFollowSuppress = false;
+    // Turning off follow-read = ending file-read semantics: clear the bucket + clear editor follow highlights
+    if (state.fileBucket) { state.fileBucket = null; clearEditorFollow(); }
   }
   persist();
   notify();
@@ -442,7 +448,8 @@ function readableSegs(raw, opts) {
   const min = Math.max(0, parseInt(String(state.settings.minChars), 10) || 0);
   const t = String(raw || "");
   if (!opts?.noMinChars && min > 0 && t.trim().length <= min) return [];
-  return filterSegments(toSpeechSegments(t), state.settings.mode);
+  // trackLines: file-bucket sentence-level follow needs line numbers (the AI-message path doesn't pass them — zero impact)
+  return filterSegments(toSpeechSegments(t, opts?.trackLines ? { trackLines: true } : undefined), state.settings.mode);
 }
 
 /** 选择器 hover 补拉：确保一组消息文本已缓存（缺失一次拉取，回填 textCache）——返回 { id: text } */
@@ -468,14 +475,20 @@ function loadRangeIntoCur(sessionId, from, token, opts) {
     const allSegs = [];
     const idOrder = [];
     const segStartMap = {}; // id → 在 allSegs 中的起始句索引
+    const fb = fileBucketOf(sessionId); // file bucket: sentences get _line attached (for follow)
     for (const it of slice) {
       const raw = textMap[it.id];
       if (!raw) continue;
-      const segs = readableSegs(raw, opts);
+      const segs = readableSegs(raw, fb ? { ...opts, trackLines: true } : opts);
       if (!segs.length) continue;
       segStartMap[it.id] = allSegs.length;
       idOrder.push(it.id);
-      for (const s of segs) allSegs.push({ ...s, _id: it.id });
+      const blockStart = fb ? (fb.chunkStartLine[it.id] || 1) : 1;
+      for (const s of segs) {
+        allSegs.push(fb
+          ? { ...s, _id: it.id, _line: (s.line || 1) + blockStart - 1 } // absolute line = in-block line + block start - 1
+          : { ...s, _id: it.id });
+      }
     }
     console.log('[speek][loadRangeIntoCur] segs', { allSegsLen: allSegs.length, idOrder });
     // 手动导航（opts.direction）：目标消息（窗口第一条）必须落在它上面——无内容 → 同方向继续找，直到有内容为止
@@ -538,6 +551,76 @@ function loadRangeIntoCur(sessionId, from, token, opts) {
     console.log('[speek][loadRangeIntoCur] playCurrentSeg', { curSegsLen: allSegs.length, startSeg, firstId, curIndex: state.curIndex });
     playCurrentSeg();
   });
+}
+
+// ── File read (aiti-editor 🔊 read entry; docs/aiti-ai-speek-file-read-plan.md §3.1/§3.2) ──
+/** fileMode check: sessionId points at the current file bucket */
+function fileBucketOf(sessionId) {
+  const fb = state.fileBucket;
+  return fb && sessionId === fb.id ? fb : null;
+}
+/** Line-follow debounce (no repeated reveal for the same line) */
+let lastFollowLine = -1;
+/** Clear editor follow highlights (on stop / return-switch / follow-off; silent when the service is absent) */
+function clearEditorFollow() {
+  lastFollowLine = -1;
+  try { extSvc("aiti-editor.speekFollow")?.clearFollow?.(); } catch { /* noop */ }
+}
+/**
+ * Read file text aloud (the editor "read" button entry; text is passed in by the editor, including
+ * unsaved edits). Installs a virtual session bucket (file:<path>) → auto-enters follow-read state →
+ * plays from the first block; the whole playback chain (sentence split / edge prefetch / pause-skip /
+ * progress) reuses the existing machinery.
+ * @returns {Promise<{ok: boolean, chunks?: number, error?: string}>}
+ */
+export async function readFileText(payload) {
+  const p = payload || {};
+  const path = String(p.path || "").trim();
+  const name = String(p.name || (path ? path.split(/[\\/]/).pop() : "") || "未命名文件");
+  const chunks = chunkFileForSpeech(p.text, name);
+  if (!chunks) return { ok: false, error: "文件内容为空，无可朗读内容" };
+  const fileId = "file:" + (path || name);
+  // capture the return-switch target: reading another file consecutively keeps the original AI session
+  const prevFb = state.fileBucket;
+  const returnTo = prevFb ? prevFb.returnTo : activeSessionId;
+  // install the bucket (textCache prefilled → loadRangeIntoCur's fetchTextBatch hits fully, zero
+  // network; install the bucket before setCurrentSession so its ensureSessionLoaded hits directly
+  // and sends no request)
+  state.msgList[fileId] = chunks.map((c) => ({ id: c.id, key: false }));
+  state.textCache[fileId] = {};
+  for (const c of chunks) state.textCache[fileId][c.id] = c.text;
+  state.allMessagesLoaded[fileId] = true;
+  state.fileBucket = {
+    id: fileId, path, name, returnTo,
+    chunkStartLine: Object.fromEntries(chunks.map((c) => [c.id, c.startLine])),
+  };
+  setCurrentSession(fileId); // clears old playback / old session cache (the file: prefix does not trigger fileBucket cleanup; the new bucket overwrites right after)
+  if (!state.followOn) state.followOn = true;
+  if (!state.barVisible) state.barVisible = true;
+  persist();
+  readOnFollowSuppress = true; // self-started this time; "auto-read on enable" will not kick off another round (prevents double start)
+  lastIntentionalStartAt = Date.now();
+  // engine readiness gate: on first use (heavy chunk just loaded) the /voices probe is still in
+  // flight; not waiting for it would mis-select the browser engine (hard error on phones without
+  // Web Speech)
+  await ensureEngineReady();
+  // defense: if the bucket was cleared externally during the await (in theory already excluded by
+  // the HeavyFollowToggle effect's fileMode early return) → reinstall to recover
+  if (!state.fileBucket || state.fileBucket.id !== fileId) {
+    state.msgList[fileId] = chunks.map((c) => ({ id: c.id, key: false }));
+    state.textCache[fileId] = {};
+    for (const c of chunks) state.textCache[fileId][c.id] = c.text;
+    state.allMessagesLoaded[fileId] = true;
+    state.fileBucket = {
+      id: fileId, path, name, returnTo,
+      chunkStartLine: Object.fromEntries(chunks.map((c) => [c.id, c.startLine])),
+    };
+    setCurrentSession(fileId);
+    console.log("[speek][readFile] 桶在引擎等待期间被外部清理，已重装", { fileId });
+  }
+  playAtSourceId(fileId, chunks[0].id, { noMinChars: true });
+  notify();
+  return { ok: true, chunks: chunks.length };
 }
 
 // ── 三个对外入口 ──
@@ -622,6 +705,20 @@ async function playCurrentSeg() {
   state.playing = true; state.paused = false; state.starting = true;
   // 播放中保持屏幕常亮（听书不灭屏）
   acquireWakeLock();
+  // file bucket: sentence-level follow (the editor/preview scrolls to the line being read; same-line debounce; silent when the service is absent)
+  const fb = fileBucketOf(activeSessionId);
+  if (fb && seg && seg._line && lastFollowLine !== seg._line) {
+    lastFollowLine = seg._line;
+    try {
+      const svc = extSvc("aiti-editor.speekFollow");
+      if (!svc || typeof svc.followLine !== "function") {
+        if (!fb._svcWarned) { fb._svcWarned = true; console.log("[speek][follow] speekFollow 服务缺席（editor 未开/旧版 client）", { path: fb.path }); }
+      } else {
+        const ok = svc.followLine(fb.path, seg._line, seg.match || "");
+        console.log("[speek][follow]", { line: seg._line, match: String(seg.match || "").slice(0, 20), ok });
+      }
+    } catch (e) { console.log("[speek][follow] err", String(e)); }
+  }
   if (!readerBC) { /* 首次进入播放时声明一次 */ }
   else broadcastClaim();
   const useEdge = resolvedEngine() === "edge" || (state.browserUnsupported && state.edgeAvailable);
@@ -754,6 +851,17 @@ function advanceToNextMessage() {
     // 播完了 → 释放屏幕唤醒锁
     releaseWakeLock();
     notify();
+    // file bucket finished → auto return-switch to returnTo (AI-session follow read resumes
+    // naturally; null = stay stopped); files have no "new message" concept so handleSettledResume
+    // is skipped (its fileMode early return already went dead when the fileBucket was cleared)
+    const fb = state.fileBucket;
+    if (fb && fb.id === activeSessionId) {
+      state.fileBucket = null;
+      clearEditorFollow();
+      if (fb.returnTo) { setCurrentSession(fb.returnTo); return; } // setCurrentSession does stop + notify + list preload internally
+      notify();
+      return;
+    }
     // 末条播完：保守续读——拉一次服务端最新列表，若有新消息（lastId 变了）则继续播；
     // 没有则 handleSettledResume 的 lastReadPos===lastId / 防循环守卫拦下（不重播、不循环）。
     handleSettledResume(activeSessionId);
@@ -1090,6 +1198,9 @@ export function stop() {
   }
   recordProgress();
   saveProgress(); // 停止 = 关键点：立即落盘（progress 防抖 400ms，停止时必须立刻持久化）
+  // file bucket: clear editor follow highlights (stopping mid-read leaves no highlight behind; the
+  // fileBucket is kept — progress / block navigation stay usable)
+  if (state.fileBucket) clearEditorFollow();
   // 停止 = 释放屏幕唤醒锁
   releaseWakeLock();
   try { if (state.audio) { state.audio.pause(); state.audio = null; } window.speechSynthesis?.cancel(); } catch { /* noop */ }
@@ -1215,6 +1326,7 @@ export function cacheMessageText(listId, m) {
  *  （长 turn 多工具调用不再等到 settle 才出声）；暂停 → 只刷列表不打断。
  *  内部 1.5s 节流合并连续帧。 */
 function handleUpdating(listId) {
+  if (state.fileBucket) return; // during file read: AI message updates neither append to the queue nor preempt playback (onopen reconciliation fallback)
   resetSettledTurn(); // 新一轮活动：上一轮的 settled 认领失效（先于节流早退）
   try {
     const now2 = Date.now();
@@ -1262,6 +1374,7 @@ function handleUpdating(listId) {
  *  （同一轮的追加/续读判定已由上一路做过）；settled 轮账本已认领（15s 内同会话）→ 跳过。
  *  本路无 text 可写，跳过零损失——消除 agent_settled 与 settled 双推的二次全量解析 + 双 resume 竞态。 */
 function handleSettledResume(listId) {
+  if (state.fileBucket) return; // during file read: no preempting
   const now2 = Date.now();
   if (now2 - lastForceRefreshAt < 2000) return;
   if (!claimSettledTurn(listId)) return;
@@ -1390,6 +1503,7 @@ export function subscribeSession(sessionId, listSessionId) {
     };
     es.addEventListener("settled", (ev) => {
       sseSettledCount++;
+      if (state.fileBucket) return; // during file read: AI messages never mix into the file queue (fileMode)
       try {
         const d = JSON.parse(ev.data || "{}");
         const text = d && d.text;
@@ -1494,8 +1608,13 @@ export function browserSpeechSupported() {
  *   - edge-tts 已装 → 默认引擎 auto（优先 edge，效果好）——新用户直接生效；
  *     老用户持久化过 browser（旧默认）→ 一次性升级到 auto（edge 可用时优先），用户可再手选回落。
  *   - edge 未装 / 浏览器不支持 → 引擎回落 browser（或报错提示）。
+ *   in-flight dedupe: autoSelectEngine started by entry and readFileText's ensureEngineReady share
+ *   one probe when concurrent (/voices is not requested twice).
  */
+let initEngineInflight = null;
 export async function initEngine() {
+  if (initEngineInflight) return initEngineInflight;
+  initEngineInflight = (async () => {
   const supported = browserSpeechSupported();
   state.browserUnsupported = !supported;
   // 探测 edge 可用性（服务端 autoEnableEdge 首次自动开 feature；用户显式关闭不会被覆盖）
@@ -1516,6 +1635,16 @@ export async function initEngine() {
   }
   persist();
   notify();
+  })();
+  try { await initEngineInflight; } finally { initEngineInflight = null; }
+}
+/** Engine readiness gate (once the first probe settles, state lives in state/settings and later
+ *  calls pass through) — awaited before file-read playback starts: avoids the "probe not back →
+ *  mis-select browser → error" race on phones without Web Speech */
+let engineReadyOnce = null;
+function ensureEngineReady() {
+  if (!engineReadyOnce) engineReadyOnce = initEngine().catch(() => { /* probe failure never blocks (browser fallback semantics) */ });
+  return engineReadyOnce;
 }
 /** 旧名保留（entry.tsx 仍引用） */
 export async function autoSelectEngine() { return initEngine(); }
@@ -1621,6 +1750,13 @@ export function setCurrentSession(sessionId) {
       delete state.textCache[activeSessionId];
     }
     activeSessionId = next;
+    // switching back to a real session (non-file: bucket) = file-read semantics end: clear the
+    // bucket + clear follow highlights (not cleared when readFileText installs a file: bucket — the
+    // new bucket overwrites right after; the END return-switch clears first, then setCurrentSession)
+    if (state.fileBucket && (!next || !String(next).startsWith("file:"))) {
+      state.fileBucket = null;
+      clearEditorFollow();
+    }
     // 切会话：只有【从未读过】的会话才置零（0/新总数）；
     // 【读过的】等列表加载后直接恢复 lastReadPos 历史进度显示（用户要求：读完过就该显示读到哪）
     state.curIndex = -1; state.curSeg = 0; state.curSegs = [];
