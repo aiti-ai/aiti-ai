@@ -9,6 +9,7 @@ interface Props {
   loading: boolean;
   tools: ToolEntry[] | null;
   translate: Translate;
+  onClose: () => void;
 }
 
 interface ParameterField {
@@ -95,7 +96,7 @@ function EmptyState({ children }: { children: string }) {
   return <div className="tool-definitions-empty">{children}</div>;
 }
 
-export function ToolDefinitionsPanel({ loading, tools, translate }: Props) {
+export function ToolDefinitionsPanel({ loading, tools, translate, onClose }: Props) {
   // What the model is sent: under codemode's "only" mode the active built-in tools are reached
   // from scripts, and codemode's description lists them.
   const declaredTools = useMemo(
@@ -119,6 +120,23 @@ export function ToolDefinitionsPanel({ loading, tools, translate }: Props) {
 
   return (
     <div className="tool-definitions-panel">
+      {/* Header bar spanning both columns: title + close at the top-right
+          (parity with the session-info popover's sticky top bar in AppShell). */}
+      <div className="tool-definitions-header">
+        <span className="tool-definitions-title">{translate("tools.title")}</span>
+        <button
+          type="button"
+          className="tool-definitions-close"
+          title={translate("i18n.close")}
+          aria-label={translate("i18n.close")}
+          onClick={onClose}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </div>
       <nav className="tool-definitions-sidebar" aria-label={translate("tools.title")}>
         <div className="tool-definitions-list">
           {declaredTools && declaredTools.length > 0 ? declaredTools.map((tool) => {
@@ -215,11 +233,46 @@ export function ToolDefinitionsPanel({ loading, tools, translate }: Props) {
         .tool-definitions-panel {
           display: grid;
           grid-template-columns: clamp(112px, 26%, 220px) minmax(0, 1fr);
+          grid-template-rows: auto minmax(0, 1fr);
           height: min(600px, 75dvh);
           min-height: 240px;
           overflow: hidden;
           background: var(--bg-panel);
           border-bottom: 1px solid var(--border);
+        }
+        .tool-definitions-header {
+          grid-column: 1 / -1;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          padding: 8px 16px 7px;
+          background: var(--bg-panel);
+          border-bottom: 1px solid var(--border);
+        }
+        .tool-definitions-title {
+          color: var(--text);
+          font-size: 11px;
+          font-weight: 700;
+        }
+        .tool-definitions-close {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 22px;
+          height: 22px;
+          padding: 0;
+          color: var(--text-muted);
+          background: var(--bg-panel);
+          border: 1px solid var(--border);
+          border-radius: 4px;
+          cursor: pointer;
+          flex: 0 0 auto;
+          transition: color 0.12s, border-color 0.12s;
+        }
+        .tool-definitions-close:hover {
+          color: var(--accent);
+          border-color: var(--accent);
         }
         .tool-definitions-sidebar,
         .tool-definition-detail {
