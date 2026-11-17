@@ -16,6 +16,7 @@
 
 import type { ReactNode } from "react";
 import type { ExtSlotName, ExtUiItem, ExtUiItemIcon, NewSessionPrepareResult } from "@/lib/ext/types";
+import { apiUrl } from "./base-path.ts";
 
 export interface ExtRenderProps {
   /** Current selected session (null for a fresh new-session composer). */
@@ -59,6 +60,12 @@ export interface ExtUiItemRegistered {
      *  standard toolbar button when render is absent); once provided, the extension's
      *  render menu branch is no longer used. */
     icon?: ExtUiItemIcon;
+    /** Resolved absolute URL for the ".svg"-relative asset form of meta.icon
+     *  (basePath-aware apiUrl; static items only). Consumed by the dock static shell
+     *  (aiti-float StaticDockFace → DockBody {url} icon form) — the shell bundle has
+     *  no ctx and cannot resolve extension asset URLs itself. meta.icon stays verbatim
+     *  for the toolbar renderer (renderExtItemIcon re-resolves with extId). */
+    iconUrl?: string;
     /** Declarative item click callback (toolbar, pairs with meta.icon; only client
      *  registrations can carry it — server ui: intent declarations are not serializable):
      *  invoked for both ⋯ menu row clicks and standard toolbar button clicks
@@ -300,6 +307,8 @@ export function registerStaticItems(
   const store = getStore();
   const built: ExtUiItemRegistered[] = items.map((decl) => {
     const compositeId = `${extId}:${decl.id}`;
+    // Declared icon (verbatim; the toolbar renderer re-resolves it with extId).
+    const icon = decl.meta?.icon ?? decl.icon;
     return {
       ...decl,
       id: compositeId,
@@ -312,7 +321,14 @@ export function registerStaticItems(
         noMenuLabel: decl.meta?.noMenuLabel,
         hidden: decl.meta?.hidden ?? (decl as { hidden?: boolean }).hidden, // 静态条目隐藏标记（底行收编不渲染，快速上手闪现修复）
         hideOnMobile: decl.meta?.hideOnMobile ?? (decl as { hideOnMobile?: boolean }).hideOnMobile, // 移动端视口隐藏（同 hidden 白名单透传）
-        icon: decl.meta?.icon ?? decl.icon,
+        icon,
+        // Resolved absolute URL for the ".svg"-relative asset form (basePath-aware).
+        // Consumer: the dock static shell (aiti-float StaticDockFace → DockBody), which
+        // has no ctx and cannot resolve extension asset URLs itself; meta.icon stays
+        // verbatim for the toolbar renderer (renderExtItemIcon re-resolves with extId).
+        iconUrl: typeof icon === "string" && icon.endsWith(".svg") && extId
+          ? apiUrl(`/api/extensions/${extId}/assets/${icon}`)
+          : undefined,
         onClick: (e?: unknown) => {
           void Promise.resolve(staticClickHandler?.(extId, compositeId, slot, e)).catch(() => {});
         },
