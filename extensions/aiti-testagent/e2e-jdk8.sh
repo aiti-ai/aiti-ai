@@ -81,20 +81,20 @@ for i in $(seq 1 120); do sleep 0.5; curl -s --max-time 1 http://127.0.0.1:$PORT
 API="http://127.0.0.1:$PORT_HTTP/testagent"; APP="http://127.0.0.1:$PORT_APP"
 [ "$(curl -s --max-time 2 $APP/jdbc2 | head -c 2)" = "[{" ] || { echo "应用未就绪"; tail -5 /tmp/e2e-jdk8.log; exit 1; }
 
-say "JDK 8：基础 + 方法级 mock/篡改"
+say "JDK 8：基础 + 方法级 mock/打桩"
 jcheck "API 在线" "d.get('ok')" "$(curl -s $API/api/ping)"
 jcheck "应用正常（/jdbc2 2 条）" "isinstance(d,list) and len(d)==2" "$(curl -s $APP/jdbc2)"
-wait_post "篡改-过滤（真实 2 → bob）" "isinstance(d,list) and len(d)==1 and d[0]['NAME']=='bob'" "$APP/jdbc2" 'mock-method {"action":"add","className":"com.demo2.Ctl2","method":"jdbc2","filter":"AGE < 28"}'
-wait_post "篡改-修改（SELECT AGE+1）" "isinstance(d,list) and all(u['AGE']>=26 for u in d)" "$APP/jdbc2" 'mock-method {"action":"add","className":"com.demo2.Ctl2","method":"jdbc2","filter":"SELECT NAME, AGE + 1 AS AGE FROM RESULTS"}'
-wait_post "篡改-复制（真实 2 → 50）" "isinstance(d,list) and len(d)==50" "$APP/jdbc2" 'mock-method {"action":"add","className":"com.demo2.Ctl2","method":"jdbc2","copies":[{"path":"","size":50}]}'
+wait_post "打桩-过滤（真实 2 → bob）" "isinstance(d,list) and len(d)==1 and d[0]['NAME']=='bob'" "$APP/jdbc2" 'mock-method {"action":"add","className":"com.demo2.Ctl2","method":"jdbc2","filter":"AGE < 28"}'
+wait_post "打桩-修改（SELECT AGE+1）" "isinstance(d,list) and all(u['AGE']>=26 for u in d)" "$APP/jdbc2" 'mock-method {"action":"add","className":"com.demo2.Ctl2","method":"jdbc2","filter":"SELECT NAME, AGE + 1 AS AGE FROM RESULTS"}'
+wait_post "打桩-复制（真实 2 → 50）" "isinstance(d,list) and len(d)==50" "$APP/jdbc2" 'mock-method {"action":"add","className":"com.demo2.Ctl2","method":"jdbc2","copies":[{"path":"","size":50}]}'
 wait_post "纯 mock（数组 data + size → 5）" "isinstance(d,list) and len(d)==5 and d[0]['NAME']=='MOCK'" "$APP/jdbc2" 'mock-method {"action":"add","className":"com.demo2.Ctl2","method":"jdbc2","data":"[{\"ID\":9,\"NAME\":\"MOCK\",\"AGE\":99}]","size":5}'
 wait_post "还原（/jdbc2 2 条）" "isinstance(d,list) and len(d)==2" "$APP/jdbc2" 'mock-method {"action":"delete","className":"com.demo2.Ctl2","method":"jdbc2"}' 
 
-say "JDK 8：URL mock（mock + 篡改——resolveUrlMethod Spring 5.3）"
+say "JDK 8：URL mock（mock + 打桩——resolveUrlMethod Spring 5.3）"
 wait_post "URL mock（对象 data + size → 5）" "isinstance(d,list) and len(d)==5" "$APP/jdbc2" 'mock-url {"action":"add","url":"/jdbc2","data":"{\"ID\":9,\"NAME\":\"MOCK\",\"AGE\":99}","size":5}'
 post mock-url '{"action":"delete","url":"/jdbc2"}' > /dev/null
 sleep 1
-wait_post "URL 篡改（放行真实 → 方法层过滤）" "isinstance(d,list) and len(d)==1 and d[0]['NAME']=='bob'" "$APP/jdbc2" 'mock-url {"action":"add","url":"/jdbc2","filter":"AGE < 28"}'
+wait_post "URL 打桩（放行真实 → 方法层过滤）" "isinstance(d,list) and len(d)==1 and d[0]['NAME']=='bob'" "$APP/jdbc2" 'mock-url {"action":"add","url":"/jdbc2","filter":"AGE < 28"}'
 post mock-url '{"action":"delete","url":"/jdbc2"}' > /dev/null
 wait_expect "还原 2 条" "isinstance(d,list) and len(d)==2" "$APP/jdbc2"
 
