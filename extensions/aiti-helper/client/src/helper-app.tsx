@@ -6,7 +6,35 @@
  * 全局弹窗 AI 按钮（MutationObserver 注入）见 ./dialog-ai-button.ts。
  */
 import { useState, useEffect, useRef, useCallback } from "react";
-import { apiUrl, hostCtx, extSvc } from "./host-shim";
+import { apiUrl, hostCtx, extSvc, t } from "./host-shim";
+
+// Locale-change event (same string as host ExtSlots LOCALE_CHANGED_EVENT; client bundles
+// never import host code). t() reads the table live on every call (see host-shim), but
+// components do not re-render by themselves — an open dialog needs this event to redraw
+// after the user switches the UI language.
+const LOCALE_CHANGED_EVENT = "pi-web:locale-changed";
+
+/** Current UI locale (localStorage pi-locale, same source as host useI18n; defaults to en).
+ * Used by non-t() spots like fmtTime. */
+function uiLocale(): string {
+  try { return window.localStorage.getItem("pi-locale") === "zh-CN" ? "zh-CN" : "en"; } catch { return "en"; }
+}
+
+/** Locale-aware pick of a skill data field. Multilingual overrides live in hp.i18n[locale][field]
+ * (normalized server-side from SKILL.md frontmatter `title.en` / `summary.ja` / legacy `titleEn` keys).
+ * Cascade: exact locale → short code (zh-CN → zh) → base field (zh). Adding a language is pure data
+ * (new SKILL.md lines); no code change. */
+function pickI(hp: any, field: string): string {
+  if (!hp) return "";
+  const loc = uiLocale();
+  if (loc !== "zh-CN") {
+    const t = hp.i18n || {};
+    const v = (t[loc] ?? t[loc.split("-")[0]])?.[field];
+    if (typeof v === "string" && v) return v;
+  }
+  const base = hp[field];
+  return base == null ? "" : String(base);
+}
 import { dismissOnBack } from "../../../_shared/overlay-back-client";
 import { extDisplayName } from "../../../_shared/ext-display-names";
 
@@ -226,7 +254,8 @@ export function AiHelperDialog(props: Record<string, any>) {
   useEffect(() => {
     const fn = () => force((n) => n + 1);
     _listeners.add(fn);
-    return () => { _listeners.delete(fn); };
+    window.addEventListener(LOCALE_CHANGED_EVENT, fn);   // UI language switch → t() reads the new table live; just trigger a redraw
+    return () => { _listeners.delete(fn); window.removeEventListener(LOCALE_CHANGED_EVENT, fn); };
   }, []);
 
   const isOpen = _state.open;
@@ -274,7 +303,7 @@ export function AiHelperDialog(props: Record<string, any>) {
   const [viewingSkill, setViewingSkill] = useState<any>(null);   // 正在查看的 skill 说明
   const [skillLoading, setSkillLoading] = useState(false);
   const [showSkillForm, setShowSkillForm] = useState(false);     // 新增 skill 表单显隐
-  const [skillForm, setSkillForm] = useState({ name: "", owner: "", title: "", summary: "", body: "" });
+  const [skillForm, setSkillForm] = useState({ name: "", owner: "", title: "", titleEn: "", summary: "", summaryEn: "", body: "" });
   const [savingSkill, setSavingSkill] = useState(false);
   const [skillMsg, setSkillMsg] = useState<{ status: string; msg: string } | null>(null);
   const [historyList, setHistoryList] = useState<any[] | null>(null);
@@ -306,9 +335,9 @@ export function AiHelperDialog(props: Record<string, any>) {
       byOwner.get(o)!.push(hp);
     }
     const groups: { key: string; label: string; items: any[]; kind: string; extId: string }[] = [];
-    if (extId && byOwner.has(extId)) groups.push({ key: "ext:" + extId, label: "本扩展 · " + extDisplayName(extId, extName || extId), items: byOwner.get(extId)!, kind: "ext", extId });
+    if (extId && byOwner.has(extId)) groups.push({ key: "ext:" + extId, label: t("dlg.grp.thisExt", { name: extDisplayName(extId, extName || extId) }), items: byOwner.get(extId)!, kind: "ext", extId });
     const genItems = [...(byOwner.get("") || []), ...(byOwner.get("aiti-helper") || [])];
-    if (genItems.length) groups.push({ key: "general", label: "通用 Skills", items: genItems, kind: "general", extId: "aiti-helper" });
+    if (genItems.length) groups.push({ key: "general", label: t("dlg.grp.general"), items: genItems, kind: "general", extId: "aiti-helper" });
     const others = [...byOwner.keys()].filter((o) => o && o !== "aiti-helper" && o !== extId).sort();
     // 分组头显示友好名（id → 双语表），表外扩展回退技术 id
     for (const o of others) groups.push({ key: "other:" + o, label: extDisplayName(o, o), items: byOwner.get(o)!, kind: "other", extId: o });
@@ -373,7 +402,7 @@ export function AiHelperDialog(props: Record<string, any>) {
       _state.historyId = payload.historyId || null;
       _state.error = null;   // 成功必须清旧错误（并发/重试场景下先失败后成功时残留会误导）
     } else {
-      _state.error = (payload && payload.error) || "取结果失败";
+      _state.error = (payload && payload.error) || t("dlg.err.result");
     }
     _state.loading = false;
     notify();
@@ -391,7 +420,7 @@ export function AiHelperDialog(props: Record<string, any>) {
       const d = await r.json().catch(() => null);
       if (d && d.ok) applyResult(d);              // 已结算（含 history 回落）→ 直接落地
       else if (d && d.code === "running") { /* 仍在执行：保持 loading，继续等 result 帧（不是错误） */ }
-      else { _state.error = (d && d.error) || "取结果失败"; _state.loading = false; }
+      else { _state.error = (d && d.error) || t("dlg.err.result"); _state.loading = false; }
     } catch (e: any) {
       if (!opts?.silent) { _state.error = String(e.message || e); _state.loading = false; }
     } finally {
@@ -419,7 +448,7 @@ export function AiHelperDialog(props: Record<string, any>) {
       setMonitor((m: any) => (m ? { ...m, status: "degraded" } : { status: "degraded" }));
       if (_state.loading && _state.sessionId === sid) void fetchSnapshot(sid, { silent: true });
     };
-    if (!topics || typeof topics.subscribeTopics !== "function") { goDegraded("事件总线服务不可用"); return; }
+    if (!topics || typeof topics.subscribeTopics !== "function") { goDegraded(t("dlg.err.bus")); return; }
     const onFrame = (frame: any) => {
       const evt = frame?.evt;
       if (evt === "message_start") {
@@ -449,7 +478,7 @@ export function AiHelperDialog(props: Record<string, any>) {
         setMonitor((m: any) => m && ({ ...m, status: "done", tools: (m.tools || []).map((t: any) => ({ ...t, status: "done" })) }));
       } else if (evt === "unsupported") {
         // 宿主无 subscribeEvent（旧 pi-web）：无实时推送 → 降级
-        goDegraded("宿主不支持实时事件");
+        goDegraded(t("dlg.err.hostEvents"));
       } else if (evt === "end") {
         // 会话结束/回收：未结算 → 快照拿明确终态（no_result / not_found）
         detach();
@@ -467,7 +496,7 @@ export function AiHelperDialog(props: Record<string, any>) {
     monitorRef.current = { off: () => { try { sub.off(); } catch {} }, sid };
     // 订阅先行、快照对齐：ready 后拉一次——订阅生效前已结算/结果帧已错过，这次快照补齐（唯一空窗）
     sub.ready.then(() => { if (_state.loading && _state.sessionId === sid) void fetchSnapshot(sid); })
-      .catch(() => goDegraded("总线连接失败"));
+      .catch(() => goDegraded(t("dlg.err.busConn")));
   }, [fetchSnapshot, applyResult]);
 
   // 后台执行：隐藏弹窗，AI 会话继续在服务端跑；提示用户在哪个 session、可从历史或该会话恢复
@@ -478,7 +507,7 @@ export function AiHelperDialog(props: Record<string, any>) {
     _state.open = false;
     notify();
     try {
-      const n = new Notification("AI Helper 后台执行中", { body: "任务在 session " + String(sid).slice(0, 8) + " 后台运行。从 🕘 历史或该会话可恢复查看。" });
+      const n = new Notification(t("dlg.notif.bg.title"), { body: t("dlg.notif.bg.body", { sid: String(sid).slice(0, 8) }) });
       void n;
     } catch {}
   }, []);
@@ -490,7 +519,7 @@ export function AiHelperDialog(props: Record<string, any>) {
     _state.sessionId = sid;
     _state.activeTab = "ai";
     _state.loading = true; _state.error = null; _state.lastResult = ""; _state.historyId = null;
-    setRestoreNote("已接回后台任务 · 第" + (t.turn || 1) + "轮执行中");
+    setRestoreNote(t("dlg.note.bgResume", { turn: t.turn || 1 }));
     setMonitor({ status: "connecting", text: "", thinking: "", tools: [], startedAt: Date.now() });
     notify();
     openMonitor(sid);
@@ -521,17 +550,17 @@ export function AiHelperDialog(props: Record<string, any>) {
         }
         _state.sessionId = cur;
         if (d.status === "running") {
-          setRestoreNote("已接回后台任务 · 第" + (o.turn || 1) + "轮执行中");
+          setRestoreNote(t("dlg.note.bgResume", { turn: o.turn || 1 }));
           _state.loading = true; _state.error = null; _state.lastResult = ""; _state.historyId = null;
           setMonitor({ status: "connecting", text: "", thinking: "", tools: [], startedAt: Date.now() });
           notify();
           openMonitor(cur);
         } else if (d.result) {
-          setRestoreNote("已恢复该会话上次结果（第" + (o.turn || 1) + "轮）");
+          setRestoreNote(t("dlg.note.lastResult", { turn: o.turn || 1 }));
           _state.lastResult = d.result.text || ""; _state.historyId = d.result.historyId || null; _state.loading = false;
           notify();
         } else if (d.failedError) {
-          setRestoreNote("该会话本轮未产生结果");
+          setRestoreNote(t("dlg.note.noResult"));
           _state.error = d.failedError; _state.loading = false;
           notify();
         }
@@ -701,7 +730,7 @@ export function AiHelperDialog(props: Record<string, any>) {
   // action.fields 结构：数组（字符串=直接当 label 匹配）或 [{ key, label }]（AI key → 表单 label）
   const doFill = useCallback((parsed: Record<string, unknown>, action: any) => {
     const dialog = _state.dialogEl;
-    if (!dialog || !document.body.contains(dialog)) { setLanding({ status: "err", msg: "原弹窗已关闭，无法回填（请从弹窗 AI 按钮唤起）" }); return 0; }
+    if (!dialog || !document.body.contains(dialog)) { setLanding({ status: "err", msg: t("dlg.err.dialogGone") }); return 0; }
     const fields = action.fields || null;
     const mapping = action.mapping || null;   // 兼容：{ aiKey: label }
     let filled = 0;
@@ -724,7 +753,7 @@ export function AiHelperDialog(props: Record<string, any>) {
     return filled;
   }, [findField, setNativeValue]);
   const doLand = useCallback(async (resultText: string, helper: any, historyId: string | null) => {
-    if (!resultText || !helper?.action) { setLanding({ status: "err", msg: "该条无落地动作（自由发挥结果）" }); return; }
+    if (!resultText || !helper?.action) { setLanding({ status: "err", msg: t("dlg.err.noAction") }); return; }
     const action = helper.action;
     let parsed: any = null;
     try {
@@ -732,7 +761,7 @@ export function AiHelperDialog(props: Record<string, any>) {
       t = t.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
       parsed = JSON.parse(t);
     } catch (e: any) {
-      setLanding({ status: "err", msg: "结果不是有效 JSON：" + (e.message || e) });
+      setLanding({ status: "err", msg: t("dlg.err.badJson", { err: e.message || e }) });
       return;
     }
     // action: fill → 回填弹窗表单（AI 输出两种：①工具链已填，filled 对象确认；②未填，{字段:值} 让前端兜底）
@@ -742,8 +771,8 @@ export function AiHelperDialog(props: Record<string, any>) {
         : parsed;
       const filled = doFill(source, action);
       const detail = filled > 0
-        ? "已回填 " + filled + " 个表单字段" + (parsed.note ? "（" + parsed.note + "）" : "")
-        : (parsed.note ? parsed.note : "没有可回填的字段（AI 输出需为 {字段:值} JSON）");
+        ? (parsed.note ? t("dlg.land.filled.note", { n: filled, note: parsed.note }) : t("dlg.land.filled", { n: filled }))
+        : (parsed.note ? parsed.note : t("dlg.land.noFields"));
       setLanding({ status: filled > 0 ? "ok" : "info", msg: detail });
       if (historyId) {
         try { await fetch(apiUrl("/api/extensions/aiti-helper/history/" + historyId + "/land"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ detail }) }); } catch {}
@@ -772,16 +801,16 @@ export function AiHelperDialog(props: Record<string, any>) {
       });
       const d = await r.json().catch(() => null);
       if (!r.ok || (d && d.ok === false)) {
-        setLanding({ status: "err", msg: "入库失败：" + ((d && d.error) || r.status) });
+        setLanding({ status: "err", msg: t("dlg.err.apiFail", { err: (d && d.error) || r.status }) });
       } else {
-        const detail = "已入库" + (d && d.command ? "：「" + (d.command.name || d.command.cmd) + "」" : "");
+        const detail = d && d.command ? t("dlg.land.stored", { name: d.command.name || d.command.cmd }) : t("dlg.land.stored.plain");
         setLanding({ status: "ok", msg: detail });
         if (historyId) {
           try { await fetch(apiUrl("/api/extensions/aiti-helper/history/" + historyId + "/land"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ detail }) }); } catch {}
         }
       }
     } catch (e: any) {
-      setLanding({ status: "err", msg: "入库异常：" + (e.message || e) });
+      setLanding({ status: "err", msg: t("dlg.err.apiExc", { err: e.message || e }) });
     }
   }, [doFill]);
 
@@ -808,13 +837,13 @@ export function AiHelperDialog(props: Record<string, any>) {
   const viewSkill = useCallback(async (helper: any) => {
     if (!helper || !helper.id) return;
     setSkillLoading(true);
-    setViewingSkill({ id: helper.id, title: helper.title || helper.id, body: "", summary: helper.summary || "" });
+    setViewingSkill({ id: helper.id, title: pickI(helper, "title") || helper.title, body: "", summary: pickI(helper, "summary") });
     try {
       const r = await fetch(apiUrl("/api/extensions/aiti-helper/skill/" + encodeURIComponent(helper.id)), { cache: "no-store" });
       const d = await r.json();
-      if (d.ok) setViewingSkill({ id: helper.id, title: d.helper?.title || helper.title || helper.id, body: d.body || "", summary: d.helper?.summary || helper.summary || "", meta: d.meta || {}, tools: d.tools || null });
-      else setViewingSkill((v: any) => v && { ...v, body: "", err: d.error || "读取失败" });
-    } catch { setViewingSkill((v: any) => v && { ...v, body: "", err: "读取失败" }); }
+      if (d.ok) setViewingSkill({ id: helper.id, title: pickI(d.helper, "title") || d.helper?.title || helper.title || helper.id, body: d.body || "", summary: pickI(d.helper, "summary") || d.helper?.summary || helper.summary || "", meta: d.meta || {}, tools: d.tools || null });
+      else setViewingSkill((v: any) => v && { ...v, body: "", err: d.error || t("dlg.readFailed") });
+    } catch { setViewingSkill((v: any) => v && { ...v, body: "", err: t("dlg.readFailed") }); }
     setSkillLoading(false);
   }, []);
   const closeSkillView = useCallback(() => setViewingSkill(null), []);
@@ -822,23 +851,23 @@ export function AiHelperDialog(props: Record<string, any>) {
   // 保存用户自定义 skill：POST /user-skills → 写 data 目录 → 刷新帮助点列表
   const saveUserSkill = useCallback(async () => {
     const name = (skillForm.name || "").trim();
-    if (!name) { setSkillMsg({ status: "err", msg: "请填写 skill 名" }); return; }
-    if (!/^[a-zA-Z0-9_-]+$/.test(name)) { setSkillMsg({ status: "err", msg: "skill 名只能用字母/数字/下划线/连字符" }); return; }
+    if (!name) { setSkillMsg({ status: "err", msg: t("dlg.err.nameRequired") }); return; }
+    if (!/^[a-zA-Z0-9_-]+$/.test(name)) { setSkillMsg({ status: "err", msg: t("dlg.err.nameChars") }); return; }
     setSavingSkill(true); setSkillMsg(null);
     try {
       const r = await fetch(apiUrl("/api/extensions/aiti-helper/user-skills"), {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name, owner: (skillForm.owner || "").trim() || undefined, title: (skillForm.title || name).trim(), summary: (skillForm.summary || "").trim() || undefined, body: skillForm.body || "" }),
+        body: JSON.stringify({ name, owner: (skillForm.owner || "").trim() || undefined, title: (skillForm.title || name).trim(), titleEn: (skillForm.titleEn || "").trim() || undefined, summary: (skillForm.summary || "").trim() || undefined, summaryEn: (skillForm.summaryEn || "").trim() || undefined, body: skillForm.body || "" }),
       });
       const d = await r.json();
-      if (!d.ok) { setSkillMsg({ status: "err", msg: d.error || "保存失败" }); return; }
-      setSkillMsg({ status: "ok", msg: "已保存到 data 目录（归属 " + (d.skill?.owner || "aiti-helper") + "）" });
+      if (!d.ok) { setSkillMsg({ status: "err", msg: d.error || t("dlg.err.saveFailed") }); return; }
+      setSkillMsg({ status: "ok", msg: t("dlg.land.skillSaved", { owner: d.skill?.owner || "aiti-helper" }) });
       // 刷新帮助点列表（新 skill 立即出现）
       const hr = await fetch(apiUrl("/api/extensions/aiti-helper/helpers"), { cache: "no-store" });
       const hd = await hr.json();
       if (hd.ok) setHelpers(hd.helpers || []);
-      setSkillForm({ name: "", owner: "", title: "", summary: "", body: "" });
-    } catch (e: any) { setSkillMsg({ status: "err", msg: "保存失败: " + (e.message || e) }); }
+      setSkillForm({ name: "", owner: "", title: "", titleEn: "", summary: "", summaryEn: "", body: "" });
+    } catch (e: any) { setSkillMsg({ status: "err", msg: t("dlg.err.saveFailed.err", { err: e.message || e }) }); }
     setSavingSkill(false);
   }, [skillForm]);
   // 关闭新增表单
@@ -894,7 +923,7 @@ export function AiHelperDialog(props: Record<string, any>) {
 
   const fmtTime = (ts: number) => {
     const d = new Date(ts);
-    return d.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+    return d.toLocaleString(uiLocale() === "zh-CN" ? "zh-CN" : "en-US", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
   };
 
   // 弹窗定位：pos.x 有值用 pos，否则默认右上角（距顶 72，距右 16）
@@ -904,7 +933,13 @@ export function AiHelperDialog(props: Record<string, any>) {
   // ---- skills 分组与搜索（工具条按钮 + 内联 chips 共用）----
   const skillGroups = buildGroups(helpers || [], (opts.extId as string) || "", (opts.extName as string) || "");
   const skillSearchLc = skillSearch.trim().toLowerCase();
-  const matchSearch = (hp: any) => !skillSearchLc || (hp.title || "").toLowerCase().includes(skillSearchLc) || (hp.summary || "").toLowerCase().includes(skillSearchLc) || (hp.id || "").toLowerCase().includes(skillSearchLc);
+  const matchSearch = (hp: any) => {
+    if (!skillSearchLc) return true;
+    // Multilingual match: base fields + every locale in hp.i18n participate (any hit shows the chip).
+    const fields = ["title", "summary", "id"];
+    if (fields.some((f) => String(hp[f] || "").toLowerCase().includes(skillSearchLc))) return true;
+    try { return Object.values(hp.i18n || {}).some((tbl: any) => fields.some((f) => String(tbl?.[f] || "").toLowerCase().includes(skillSearchLc))); } catch { return false; }
+  };
   // 默认全部收起（只显示分组标题=扩展云，点击展开 skills 云）；搜索时强制展开
   const groupIsCollapsed = (g: { key: string }) => (g.key in collapsedGroups) ? !!collapsedGroups[g.key] : true;
   const allExpandedNow = skillGroups.length > 0 && skillGroups.every((g) => !groupIsCollapsed(g));
@@ -923,7 +958,7 @@ export function AiHelperDialog(props: Record<string, any>) {
     return (
       <button key={"hdr-" + g.key}
         onClick={() => { setCollapsedGroups((m) => ({ ...m, [g.key]: !collapsed })); notify(); }}
-        title={(expanded ? "收起 " : "展开 ") + g.label + " 的 skills"}
+        title={expanded ? t("dlg.grp.collapse", { name: g.label }) : t("dlg.grp.expand", { name: g.label })}
         style={{ display: "inline-flex", alignItems: "center", gap: 4, cursor: "pointer", userSelect: "none",
           padding: "3px 8px", borderRadius: 8, fontSize: 11, fontWeight: 700, flexShrink: 0, maxWidth: "100%",
           border: "1px solid " + (g.kind === "ext" || expanded ? "var(--accent,#2563eb)" : "rgba(128,128,128,.38)"),
@@ -947,7 +982,7 @@ export function AiHelperDialog(props: Record<string, any>) {
         if (!ot || ot.total <= 0) return null;
         const pend = ot.pending > 0;
         return (
-          <span title={`共 ${ot.total} 个 AI 工具，当前待启用 ${ot.pending} 个（默认关；经 🤖 执行该扩展的 skill 时自动带上）`}
+          <span title={t("dlg.tools.badge.title", { total: ot.total, pending: ot.pending })}
             style={{ fontSize: 10, fontWeight: 600, flexShrink: 0, lineHeight: 1, padding: "2px 5px", borderRadius: 7,
               background: pend ? "rgba(250,204,21,.18)" : "rgba(128,128,128,.22)",
               color: pend ? "var(--warn,#b45309)" : "inherit",
@@ -963,9 +998,9 @@ export function AiHelperDialog(props: Record<string, any>) {
     <button key={hp.id}
       onClick={() => {
         setSelHelper(selHelper && selHelper.id === hp.id ? null : hp);
-        if (hp.placeholder) { if (_state.opts) _state.opts.placeholder = hp.placeholder; notify(); }
+        if (hp.placeholder) { if (_state.opts) _state.opts.placeholder = pickI(hp, "placeholder"); notify(); }
       }}
-      title={hp.summary || ""}
+      title={pickI(hp, "summary")}
       style={{
         // skill chip：与扩展分组头（方角+填充+加粗）反向区分——全圆角、透明底、常规字重、淡描边
         padding: "3px 10px", borderRadius: 999, cursor: "pointer", fontSize: 11, fontWeight: 400,
@@ -973,7 +1008,7 @@ export function AiHelperDialog(props: Record<string, any>) {
         background: hp.user ? "rgba(250,204,21,.08)" : (selHelper && selHelper.id === hp.id ? "rgba(37,99,235,.12)" : "transparent"),
         color: "inherit",
       }}>
-      {(selHelper && selHelper.id === hp.id ? "✓ " : "") + (hp.user ? "✦ " : "") + hp.title}
+      {(selHelper && selHelper.id === hp.id ? "✓ " : "") + (hp.user ? "✦ " : "") + pickI(hp, "title")}
     </button>
   );
 
@@ -1002,11 +1037,11 @@ export function AiHelperDialog(props: Record<string, any>) {
           </span>
           {/* tab 切换 */}
           <div key="tabs" style={{ display: "flex", gap: 2, marginLeft: 12 }}>
-            <button key="ai" onClick={() => { _state.activeTab = "ai"; notify(); }} title="AI 助手" style={tabStyle(activeTab === "ai")}>
-              助手
+            <button key="ai" onClick={() => { _state.activeTab = "ai"; notify(); }} title={t("dlg.tab.ai.title")} style={tabStyle(activeTab === "ai")}>
+              {t("dlg.tab.ai")}
             </button>
-            <button key="hist" onClick={() => { _state.activeTab = "history"; notify(); }} title="执行历史" style={tabStyle(activeTab === "history")}>
-              历史
+            <button key="hist" onClick={() => { _state.activeTab = "history"; notify(); }} title={t("dlg.tab.hist.title")} style={tabStyle(activeTab === "history")}>
+              {t("dlg.tab.hist")}
             </button>
           </div>
           {opts.contextLabel
@@ -1016,7 +1051,7 @@ export function AiHelperDialog(props: Record<string, any>) {
           {skillToolbar ? (
             <button key="sk-expand"
               onClick={() => { setCollapsedGroups(Object.fromEntries(skillGroups.map((g) => [g.key, allExpandedNow]))); notify(); }}
-              title={allExpandedNow ? "收起全部" : "展开全部"}
+              title={allExpandedNow ? t("dlg.collapseAll") : t("dlg.expandAll")}
               style={closeBtnStyle()}>
               <Ic size={14} paths={ICONS.expand} />
             </button>
@@ -1024,12 +1059,12 @@ export function AiHelperDialog(props: Record<string, any>) {
           {skillToolbar ? (
             <button key="sk-new"
               onClick={() => { setShowSkillForm(true); setSelHelper(null); }}
-              title="新增 Skill（存 data 目录）"
+              title={t("dlg.newSkill.title")}
               style={closeBtnStyle()}>
               <Ic size={14} paths={ICONS.plus} />
             </button>
           ) : null}
-          <button key="close" onClick={closePanel} title="关闭（历史已保存，可随时从 🕘 历史找回）" style={closeBtnStyle()}>
+          <button key="close" onClick={closePanel} title={t("dlg.close.title")} style={closeBtnStyle()}>
             <Ic size={12} paths={ICONS.x} />
           </button>
         </div>
@@ -1041,7 +1076,7 @@ export function AiHelperDialog(props: Record<string, any>) {
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ fontSize: 13, fontWeight: 600, flex: 1, display: "inline-flex", alignItems: "center", gap: 5 }}><Ic size={13} paths={ICONS.help} />{viewingSkill.title}</span>
-                <button onClick={closeSkillView} style={btnStyle()}>← 返回</button>
+                <button onClick={closeSkillView} style={btnStyle()}>{t("dlg.back")}</button>
               </div>
               {viewingSkill.summary ? <div style={{ fontSize: 12, opacity: 0.75, background: "var(--bg-subtle,#f5f5f5)", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border,#e0e0e0)" }}>{viewingSkill.summary}</div> : null}
               {/* 归属扩展的 AI 工具清单（“看看它能做什么”也带上 tools 信息） */}
@@ -1053,8 +1088,8 @@ export function AiHelperDialog(props: Record<string, any>) {
                     display: "flex", flexDirection: "column", gap: 6 }}>
                     <div style={{ opacity: 0.9, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                       <Ic size={12} paths={ICONS.wrench} />
-                      <span style={{ fontWeight: 600 }}>AI 工具</span>
-                      <span style={{ opacity: 0.7 }}>共 {viewingSkill.tools.total} 个{pend ? ` · 当前待启用 ${viewingSkill.tools.pending} 个` : " · 已全部启用"}</span>
+                      <span style={{ fontWeight: 600 }}>{t("dlg.aiTools")}</span>
+                      <span style={{ opacity: 0.7 }}>{pend ? t("dlg.tools.pending", { total: viewingSkill.tools.total, pending: viewingSkill.tools.pending }) : t("dlg.tools.allOn", { total: viewingSkill.tools.total })}</span>
                     </div>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
                       {(viewingSkill.tools.names || []).map((n: string) => (
@@ -1062,11 +1097,11 @@ export function AiHelperDialog(props: Record<string, any>) {
                           fontFamily: "ui-monospace, SFMono-Regular, monospace", color: "inherit" }}>{n}</code>
                       ))}
                     </div>
-                    {pend ? <div style={{ fontSize: 11, opacity: 0.7 }}>默认关：点「执行」经本 skill 建的任务会话会自动带上这些工具（会话级，用完即还原，不全局开启）。</div> : null}
+                    {pend ? <div style={{ fontSize: 11, opacity: 0.7 }}>{t("dlg.tools.defaultOff")}</div> : null}
                   </div>
                 );
               })() : null}
-              {skillLoading ? <div style={{ fontSize: 12, opacity: 0.6 }}>加载说明…</div> : null}
+              {skillLoading ? <div style={{ fontSize: 12, opacity: 0.6 }}>{t("dlg.skillLoading")}</div> : null}
               {viewingSkill.err ? <div style={{ color: "var(--danger, #ef4444)", fontSize: 12 }}>⚠️ {viewingSkill.err}</div> : null}
               {viewingSkill.body ? <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", padding: "12px 14px", background: "var(--bg-subtle,#f5f5f5)", color: "inherit", borderRadius: 8, fontSize: 12, lineHeight: 1.6, border: "1px solid var(--border,#e0e0e0)", maxHeight: 320, overflow: "auto", margin: 0 }}>{viewingSkill.body}</pre> : null}
             </div>
@@ -1074,28 +1109,32 @@ export function AiHelperDialog(props: Record<string, any>) {
             /* 新增 skill 表单（用户自己给扩展加 skill，存 data 目录） */
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 13, fontWeight: 600, flex: 1, display: "inline-flex", alignItems: "center", gap: 5 }}><Ic size={13} paths={ICONS.plus} />新增 Skill</span>
-                <button onClick={closeSkillForm} style={btnStyle()}>← 返回</button>
+                <span style={{ fontSize: 13, fontWeight: 600, flex: 1, display: "inline-flex", alignItems: "center", gap: 5 }}><Ic size={13} paths={ICONS.plus} />{t("dlg.newSkill")}</span>
+                <button onClick={closeSkillForm} style={btnStyle()}>{t("dlg.back")}</button>
               </div>
-              <div style={{ fontSize: 11, opacity: 0.6 }}>自定义 skill 存到 data 目录（不覆盖任何扩展的部署产物）；归属扩展不打标签则默认归 ai-helper。</div>
-              <label style={{ fontSize: 12, opacity: 0.8 }}>名称（必填，字母/数字/_/-）</label>
-              <input value={skillForm.name} onInput={(e: any) => setSkillForm((f) => ({ ...f, name: e.target.value }))} placeholder="如 session-archive-30d" style={inputStyle()} />
-              <label style={{ fontSize: 12, opacity: 0.8 }}>归属扩展（不指定归 ai-helper）</label>
+              <div style={{ fontSize: 11, opacity: 0.6 }}>{t("dlg.newSkill.intro")}</div>
+              <label style={{ fontSize: 12, opacity: 0.8 }}>{t("dlg.f.name")}</label>
+              <input value={skillForm.name} onInput={(e: any) => setSkillForm((f) => ({ ...f, name: e.target.value }))} placeholder={t("dlg.f.name.ph")} style={inputStyle()} />
+              <label style={{ fontSize: 12, opacity: 0.8 }}>{t("dlg.f.owner")}</label>
               <select value={skillForm.owner} onInput={(e: any) => setSkillForm((f) => ({ ...f, owner: e.target.value }))} style={{ ...inputStyle(), padding: "7px 10px" }}>
-                <option key="__none__" value="">（不指定 · 归 ai-helper）</option>
+                <option key="__none__" value="">{t("dlg.f.owner.none")}</option>
                 {(helpers || []).filter((x) => x.owner && x.owner !== "aiti-helper").map((x) => x.owner).filter((v, i, a) => a.indexOf(v) === i).map((o) => <option key={o} value={o}>{o}</option>)}
               </select>
-              <label style={{ fontSize: 12, opacity: 0.8 }}>显示标题（可空，默认用名称）</label>
-              <input value={skillForm.title} onInput={(e: any) => setSkillForm((f) => ({ ...f, title: e.target.value }))} placeholder="如 AI 帮我归档 30 天会话" style={inputStyle()} />
-              <label style={{ fontSize: 12, opacity: 0.8 }}>一句话说明（可空）</label>
-              <input value={skillForm.summary} onInput={(e: any) => setSkillForm((f) => ({ ...f, summary: e.target.value }))} placeholder="这个 skill 能做什么" style={inputStyle()} />
-              <label style={{ fontSize: 12, opacity: 0.8 }}>正文手册（可空；可让 AI 帮你写）</label>
-              <textarea value={skillForm.body} onInput={(e: any) => setSkillForm((f) => ({ ...f, body: e.target.value }))} placeholder="SKILL.md 正文（任务说明、API、输出格式…）。留空则先建骨架，再用「AI 帮我新增/修改 skill」补全。" style={{ ...inputStyle(), minHeight: 90, resize: "vertical", lineHeight: 1.5 }} />
+              <label style={{ fontSize: 12, opacity: 0.8 }}>{t("dlg.f.title")}</label>
+              <input value={skillForm.title} onInput={(e: any) => setSkillForm((f) => ({ ...f, title: e.target.value }))} placeholder={t("dlg.f.title.ph")} style={inputStyle()} />
+              <label style={{ fontSize: 12, opacity: 0.8 }}>{t("dlg.f.titleEn")}</label>
+              <input value={skillForm.titleEn} onInput={(e: any) => setSkillForm((f) => ({ ...f, titleEn: e.target.value }))} placeholder={t("dlg.f.titleEn.ph")} style={inputStyle()} />
+              <label style={{ fontSize: 12, opacity: 0.8 }}>{t("dlg.f.summary")}</label>
+              <input value={skillForm.summary} onInput={(e: any) => setSkillForm((f) => ({ ...f, summary: e.target.value }))} placeholder={t("dlg.f.summary.ph")} style={inputStyle()} />
+              <label style={{ fontSize: 12, opacity: 0.8 }}>{t("dlg.f.summaryEn")}</label>
+              <input value={skillForm.summaryEn} onInput={(e: any) => setSkillForm((f) => ({ ...f, summaryEn: e.target.value }))} placeholder={t("dlg.f.summaryEn.ph")} style={inputStyle()} />
+              <label style={{ fontSize: 12, opacity: 0.8 }}>{t("dlg.f.body")}</label>
+              <textarea value={skillForm.body} onInput={(e: any) => setSkillForm((f) => ({ ...f, body: e.target.value }))} placeholder={t("dlg.f.body.ph")} style={{ ...inputStyle(), minHeight: 90, resize: "vertical", lineHeight: 1.5 }} />
               {skillMsg ? <div style={{ fontSize: 12, padding: "7px 10px", borderRadius: 6, background: skillMsg.status === "ok" ? "color-mix(in srgb, var(--ok, #10b981) 12%, transparent)" : "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)", color: skillMsg.status === "ok" ? "#16a34a" : "#dc2626" }}>{skillMsg.msg}</div> : null}
               <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
-                <button onClick={() => saveUserSkill()} disabled={savingSkill} style={btnStyle("primary")}>{savingSkill ? "保存中…" : "保存"}</button>
+                <button onClick={() => saveUserSkill()} disabled={savingSkill} style={btnStyle("primary")}>{savingSkill ? t("dlg.saving") : t("dlg.save")}</button>
                 <button onClick={() => { setShowSkillForm(false); setSelHelper(helpers && helpers.find((x) => x.id === "skill-manage") || null); }} style={{ ...btnStyle(), display: "inline-flex", alignItems: "center", gap: 5 }}>
-                  <Ic size={13} paths={ICONS.bot} />让 AI 写
+                  <Ic size={13} paths={ICONS.bot} />{t("dlg.aiWrite")}
                 </button>
               </div>
             </div>
@@ -1105,24 +1144,24 @@ export function AiHelperDialog(props: Record<string, any>) {
               {restoreNote ? <div style={{ fontSize: 11, padding: "5px 10px", borderRadius: 6, background: "rgba(37,99,235,.10)", border: "1px solid rgba(37,99,235,.3)", color: "inherit" }}>↩ {restoreNote}</div> : null}
               {bgActive && bgActive.length ? (
                 <div style={{ fontSize: 11, padding: "5px 10px", borderRadius: 6, background: "color-mix(in srgb, var(--warn, #f59e0b) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--warn, #f59e0b) 35%, transparent)", color: "inherit", display: "flex", flexDirection: "column", gap: 2 }}>
-                  <span>{bgActive.length} 个后台任务执行中</span>
-                  {bgActive.slice(0, 3).map((t: any) => (
-                    <button key={t.sessionId} onClick={() => restoreActive(t)} title="接回此会话的实时进度"
+                  <span>{t("dlg.bgActive.n", { n: bgActive.length })}</span>
+                  {bgActive.slice(0, 3).map((bt: any) => (
+                    <button key={bt.sessionId} onClick={() => restoreActive(bt)} title={t("dlg.bgActive.rejoin")}
                       style={{ textAlign: "left", background: "none", border: "none", color: "inherit", cursor: "pointer", fontSize: 11, padding: 0, opacity: 0.8 }}>
-                      · {String(t.sessionId).slice(0, 8)}「{(t.message || "").slice(0, 30)}」
+                      {t("dlg.bgActive.item", { sid: String(bt.sessionId).slice(0, 8), msg: (bt.message || "").slice(0, 30) })}
                     </button>
                   ))}
                 </div>
               ) : null}
               {/* 帮助点选择（分组：本扩展 / 通用 / 其他扩展） */}
-              {!skillGroups.length && helpers === null ? <div style={{ fontSize: 12, opacity: 0.6 }}>加载帮助点…</div> : null}
-              {!skillGroups.length && helpers !== null ? <div style={{ fontSize: 12, opacity: 0.6 }}>暂无 skills（可新增自定义）</div> : null}
+              {!skillGroups.length && helpers === null ? <div style={{ fontSize: 12, opacity: 0.6 }}>{t("dlg.loadingHelpers")}</div> : null}
+              {!skillGroups.length && helpers !== null ? <div style={{ fontSize: 12, opacity: 0.6 }}>{t("dlg.noSkills")}</div> : null}
               {skillGroups.length ? (
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                   {/* 搜索框 */}
                   <input value={skillSearch}
                     onInput={(e: any) => setSkillSearch(e.target.value)}
-                    placeholder="搜索 skills…（标题 / 说明 / id）"
+                    placeholder={t("dlg.search.ph")}
                     style={{ width: "100%", padding: "6px 10px", borderRadius: 8, border: "1px solid var(--border,#e0e0e0)",
                       background: "var(--bg-subtle,#f5f5f5)", color: "inherit", fontSize: 12, outline: "none", boxSizing: "border-box" }} />
                   {/* 分组 tag 云：收起的扩展 pill 在同一容器里流式换行（不各占一行）；
@@ -1141,33 +1180,33 @@ export function AiHelperDialog(props: Record<string, any>) {
                       );
                     })}
                     {skillSearchLc && !skillGroups.some((g) => g.items.some(matchSearch))
-                      ? <div style={{ fontSize: 12, opacity: 0.55, padding: "4px 2px" }}>无匹配 skill</div> : null}
+                      ? <div style={{ fontSize: 12, opacity: 0.55, padding: "4px 2px" }}>{t("dlg.noMatch")}</div> : null}
                   </div>
                 </div>
               ) : null}
               {/* 已选帮助点 + 查看说明按钮（输入框上方，较大易点） */}
               {selHelper ? (
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 2 }}>
-                  <span style={{ fontSize: 12, fontWeight: 500, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", opacity: 0.85 }}><SparkIcon size={12} />{" 已选：" + selHelper.title}</span>
-                  <button onClick={() => viewSkill(selHelper)} title="查看这个帮助点（skill）能做什么"
+                  <span style={{ fontSize: 12, fontWeight: 500, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", opacity: 0.85 }}><SparkIcon size={12} />{" " + t("dlg.selected", { title: pickI(selHelper, "title") })}</span>
+                  <button onClick={() => viewSkill(selHelper)} title={t("dlg.viewSkill.title")}
                     style={{ padding: "6px 14px", borderRadius: 8, cursor: "pointer", fontSize: 12, flexShrink: 0,
                       border: "1px dashed var(--border,#e0e0e0)", background: "rgba(128,128,128,.07)", color: "inherit", display: "inline-flex", alignItems: "center", gap: 4 }}>
-                    <Ic size={13} paths={ICONS.help} />看看它能做什么
+                    <Ic size={13} paths={ICONS.help} />{t("dlg.viewSkill")}
                   </button>
                 </div>
               ) : null}
               {/* 输入框（增高；回车提交，Shift+Enter 换行；双击或 Tab 把 placeholder 复制进输入框） */}
               <textarea ref={taRef} value={input}
                 onInput={(e: any) => setInput(e.target.value)}
-                placeholder={opts.placeholder || "描述你想让 AI 做什么…"}
+                placeholder={opts.placeholder || t("dlg.ph.default")}
                 disabled={loading}
                 style={{ width: "100%", minHeight: 110, maxHeight: 220, resize: "vertical",
                   padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border,#e0e0e0)",
                   background: "var(--bg-subtle,#f5f5f5)", color: "inherit", fontSize: 13, lineHeight: 1.5,
                   boxSizing: "border-box", outline: "none", opacity: loading ? 0.6 : 1 }}
-                onDoubleClick={() => { const ph = opts.placeholder || "描述你想让 AI 做什么…"; if (ph && !input) setInput(ph); }}
+                onDoubleClick={() => { const ph = opts.placeholder || t("dlg.ph.default"); if (ph && !input) setInput(ph); }}
                 onKeyDown={(e: any) => {
-                  const ph = opts.placeholder || "描述你想让 AI 做什么…";
+                  const ph = opts.placeholder || t("dlg.ph.default");
                   if (e.key === "Tab") { e.preventDefault(); if (ph && !input) setInput(ph); return; }
                   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); doInvoke(); }
                 }} />
@@ -1175,35 +1214,35 @@ export function AiHelperDialog(props: Record<string, any>) {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
                 {/* 后台执行：loading 中可用——隐藏弹窗，会话在服务端继续跑 */}
                 {loading ? (
-                  <button onClick={goBackground} title="隐藏弹窗，AI 继续在后台执行（可从历史或该会话恢复）"
+                  <button onClick={goBackground} title={t("dlg.bg.title")}
                     style={{ ...btnStyle(), display: "inline-flex", alignItems: "center", gap: 5 }}>
-                    <Ic size={13} paths={ICONS.moon} />后台执行
+                    <Ic size={13} paths={ICONS.moon} />{t("dlg.bg")}
                   </button>
                 ) : <span />}
                 <button onClick={() => doInvoke()} disabled={loading || !input.trim()}
                   style={{ padding: "6px 15px", borderRadius: 8, cursor: "pointer",
                     border: "1px solid var(--accent,#2563eb)", background: loading ? "rgba(37,99,235,.08)" : "rgba(37,99,235,.12)",
                     color: "inherit", fontSize: 13, fontWeight: 500, opacity: (loading || !input.trim()) ? 0.5 : 1, display: "inline-flex", alignItems: "center", gap: 5 }}>
-                  {loading ? "执行中…" : (<><SparkIcon size={13} />执行</>)}
+                  {loading ? t("dlg.running") : (<><SparkIcon size={13} />{t("dlg.run")}</>)}
                 </button>
               </div>
               {/* 流式监听 monitor（loading 中显示 AI 实时进度） */}
               {loading && monitor ? (() => {
-                const sl: Record<string, string> = { connecting: "正在连接 AI 会话…", thinking: "AI 思考中…", tool: "调用工具…", done: "完成", reconnecting: "重新连接…", degraded: "无实时推送（任务仍在执行）" };
+                const sl: Record<string, string> = { connecting: t("dlg.st.connecting"), thinking: t("dlg.st.thinking"), tool: t("dlg.st.tool"), done: t("dlg.st.done"), reconnecting: t("dlg.st.reconnecting"), degraded: t("dlg.st.degraded") };
                 return (
                   <div style={{ border: "1px solid var(--border,#e0e0e0)", borderRadius: 8, background: "var(--bg-subtle,#f5f5f5)", padding: "8px 10px", display: "flex", flexDirection: "column", gap: 6 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 500 }}>
                       <span style={{ width: 7, height: 7, borderRadius: "50%", background: monitor.status === "done" ? "#16a34a" : "var(--accent,#2563eb)", flexShrink: 0, opacity: monitor.status === "done" ? 1 : 0.85 }} />
-                      <span style={{ flex: 1 }}>{sl[monitor.status] || "执行中…"}</span>
+                      <span style={{ flex: 1 }}>{sl[monitor.status] || t("dlg.running")}</span>
                       {_state.sessionId ? <span style={{ fontSize: 10, opacity: 0.5 }}>session {String(_state.sessionId).slice(0, 8)}</span> : null}
                     </div>
                     {monitor.tools && monitor.tools.length ? (
                       <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                        {monitor.tools.map((t: any, i: number) => (
+                        {monitor.tools.map((mt: any, i: number) => (
                           <div key={i} style={{ fontSize: 11, display: "flex", alignItems: "center", gap: 5, minWidth: 0 }}>
-                            <span style={{ color: t.status === "done" ? "#16a34a" : "var(--accent,#2563eb)", flexShrink: 0 }}>{t.status === "done" ? "✓" : "▹"}</span>
-                            <span style={{ opacity: 0.85, flexShrink: 0 }}>{t.name}</span>
-                            {t.partial ? <span style={{ opacity: 0.5, fontSize: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>{String(t.partial).replace(/\s+/g, " ").slice(0, 80)}</span> : null}
+                            <span style={{ color: mt.status === "done" ? "#16a34a" : "var(--accent,#2563eb)", flexShrink: 0 }}>{mt.status === "done" ? "✓" : "▹"}</span>
+                            <span style={{ opacity: 0.85, flexShrink: 0 }}>{mt.name}</span>
+                            {mt.partial ? <span style={{ opacity: 0.5, fontSize: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>{String(mt.partial).replace(/\s+/g, " ").slice(0, 80)}</span> : null}
                           </div>
                         ))}
                       </div>
@@ -1217,10 +1256,10 @@ export function AiHelperDialog(props: Record<string, any>) {
               {/* 总线不可用降级（拍板：不做轮询；任务在后台跑，结果可从会话里看） */}
               {degraded ? (
                 <div style={{ fontSize: 12, padding: "7px 10px", borderRadius: 6, background: "rgba(234,179,8,.12)", border: "1px solid rgba(234,179,8,.35)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <span style={{ flex: 1, minWidth: 0 }}>⚠ {degraded}：无实时推送。任务仍在后台执行，结果就绪后可直接打开会话查看。</span>
+                  <span style={{ flex: 1, minWidth: 0 }}>{t("dlg.degraded.body", { why: degraded })}</span>
                   {_state.sessionId ? (
                     <button onClick={() => window.open(apiUrl("/") + "?session=" + encodeURIComponent(String(_state.sessionId)), "_blank", "noopener")}
-                      style={{ ...btnStyle(), flexShrink: 0 }}>打开会话</button>
+                      style={{ ...btnStyle(), flexShrink: 0 }}>{t("dlg.openSession")}</button>
                   ) : null}
                 </div>
               ) : null}
@@ -1229,34 +1268,34 @@ export function AiHelperDialog(props: Record<string, any>) {
               {/* 结果预览 */}
               {result ? (
                 <div>
-                  <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 5, display: "inline-flex", alignItems: "center", gap: 4 }}><Ic size={12} paths={ICONS.copy} /> 结果预览（审核后落地；关闭后可在历史找回）</div>
+                  <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 5, display: "inline-flex", alignItems: "center", gap: 4 }}><Ic size={12} paths={ICONS.copy} /> {t("dlg.resultPreview")}</div>
                   <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", padding: "10px 12px",
                     background: "var(--bg-subtle,#f5f5f5)", color: "inherit", borderRadius: 8, fontSize: 12, lineHeight: 1.5,
                     border: "1px solid var(--border,#e0e0e0)", maxHeight: 220, overflow: "auto", margin: 0 }}>{result}</pre>
                   {/* 操作行 */}
                   <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-                    {selHelper?.action ? <button onClick={() => doLand(result, selHelper, _state.historyId)} style={btnStyle("primary")}>{selHelper.action.type === "fill" ? "回填弹窗" : "入库"}</button> : null}
-                    <button onClick={() => adoptChat(result)} style={{ ...btnStyle(), display: "inline-flex", alignItems: "center", gap: 5 }}><Ic size={13} paths={ICONS.msg} />填入聊天框</button>
-                    <button onClick={() => copyResult(result)} style={{ ...btnStyle(), display: "inline-flex", alignItems: "center", gap: 5 }}><Ic size={13} paths={ICONS.copy} />复制</button>
-                    <button onClick={retry} style={{ ...btnStyle(), display: "inline-flex", alignItems: "center", gap: 5 }}><Ic size={13} paths={ICONS.refresh} />重来</button>
+                    {selHelper?.action ? <button onClick={() => doLand(result, selHelper, _state.historyId)} style={btnStyle("primary")}>{selHelper.action.type === "fill" ? t("dlg.actionFill") : t("dlg.actionApi")}</button> : null}
+                    <button onClick={() => adoptChat(result)} style={{ ...btnStyle(), display: "inline-flex", alignItems: "center", gap: 5 }}><Ic size={13} paths={ICONS.msg} />{t("dlg.adopt")}</button>
+                    <button onClick={() => copyResult(result)} style={{ ...btnStyle(), display: "inline-flex", alignItems: "center", gap: 5 }}><Ic size={13} paths={ICONS.copy} />{t("dlg.copy")}</button>
+                    <button onClick={retry} style={{ ...btnStyle(), display: "inline-flex", alignItems: "center", gap: 5 }}><Ic size={13} paths={ICONS.refresh} />{t("dlg.retry")}</button>
                   </div>
                   {/* 追问（结果不满意 → 追加要求继续迭代；带上下文） */}
                   <div style={{ marginTop: 10, display: "flex", gap: 8, alignItems: "flex-start" }}>
                     <input value={followup}
                       onInput={(e: any) => setFollowup(e.target.value)}
                       onKeyDown={(e: any) => { if (e.key === "Enter") { e.preventDefault(); doInvoke(true); } }}
-                      placeholder="不满意？输入追加要求继续，如「改成中文输出」「加个确认」「再详细点」…"
+                      placeholder={t("dlg.followup.ph")}
                       disabled={loading}
                       style={{ flex: 1, minWidth: 0, padding: "7px 10px", borderRadius: 8, border: "1px solid var(--border,#e0e0e0)",
                         background: "var(--bg-subtle,#f5f5f5)", color: "inherit", fontSize: 12, outline: "none" }} />
                     <button onClick={() => doInvoke(true)} disabled={loading || !followup.trim()}
                       style={{ padding: "6px 12px", borderRadius: 8, cursor: "pointer", flexShrink: 0,
                         border: "1px solid var(--accent,#2563eb)", background: loading ? "rgba(37,99,235,.08)" : "rgba(37,99,235,.12)",
-                        color: "inherit", fontSize: 12, opacity: (loading || !followup.trim()) ? 0.5 : 1 }}>↪ 追问</button>
+                        color: "inherit", fontSize: 12, opacity: (loading || !followup.trim()) ? 0.5 : 1 }}>{t("dlg.followup")}</button>
                   </div>
                   {/* 对话轮次指示 */}
                   {(_state.sessionId || turns.length) ? (
-                    <div style={{ marginTop: 5, fontSize: 10, opacity: 0.55 }}>💬 已{_state.sessionId ? "在同一 AI 会话延续（上下文完整）" : "迭代 " + (turns.length + 1) + " 轮·追问带手工上下文"}</div>
+                    <div style={{ marginTop: 5, fontSize: 10, opacity: 0.55 }}>{_state.sessionId ? t("dlg.turnSame") : t("dlg.turnN", { n: turns.length + 1 })}</div>
                   ) : null}
                   {/* 落地状态 */}
                   {landing ? (
@@ -1269,17 +1308,17 @@ export function AiHelperDialog(props: Record<string, any>) {
           {/* ===== 历史 tab ===== */}
           {activeTab === "history" ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <div style={{ fontSize: 11, opacity: 0.6, display: "inline-flex", alignItems: "center", gap: 4 }}><Ic size={12} paths={ICONS.clock} />{" 历史记录（server 持久化，关闭不丢）" + (historyList && historyList.length ? " · " + historyList.length + " 条" : "")}</div>
-              {!historyList ? <div style={{ fontSize: 12, opacity: 0.5, padding: 12 }}>加载中…</div> :
-               !historyList.length ? <div style={{ fontSize: 12, opacity: 0.5, padding: 12 }}>暂无历史记录。用 ✨ AI 生成一次就有了。</div> :
+              <div style={{ fontSize: 11, opacity: 0.6, display: "inline-flex", alignItems: "center", gap: 4 }}><Ic size={12} paths={ICONS.clock} />{" " + t("dlg.hist.header") + (historyList && historyList.length ? t("dlg.hist.count", { n: historyList.length }) : "")}</div>
+              {!historyList ? <div style={{ fontSize: 12, opacity: 0.5, padding: 12 }}>{t("dlg.loading")}</div> :
+               !historyList.length ? <div style={{ fontSize: 12, opacity: 0.5, padding: 12 }}>{t("dlg.hist.empty")}</div> :
                historyList.map((rec) => (
-                 <div key={rec.id} onClick={() => restoreHistory(rec)} title="点击恢复此结果"
+                 <div key={rec.id} onClick={() => restoreHistory(rec)} title={t("dlg.hist.restore")}
                    style={{ border: "1px solid var(--border,#e0e0e0)", borderRadius: 8, padding: "8px 10px", cursor: "pointer", background: "var(--bg-subtle,#f5f5f5)" }}>
                    <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between" }}>
-                     <span style={{ fontSize: 10, opacity: 0.6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{(rec.contextLabel || rec.helperId || "自由发挥") + (rec.turn && rec.turn > 1 ? " · 第" + rec.turn + "轮" : "") + " · " + fmtTime(rec.at)}</span>
-                     <span style={{ fontSize: 10, padding: "1px 7px", borderRadius: 9, border: "1px solid " + (rec.landed ? "rgba(22,163,74,.5)" : "rgba(220,38,38,.4)"), color: rec.landed ? "#16a34a" : "#dc2626" }}>{rec.landed ? "已落地" : "未落地"}</span>
+                     <span style={{ fontSize: 10, opacity: 0.6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{(rec.contextLabel || rec.helperId || t("dlg.hist.freeform")) + (rec.turn && rec.turn > 1 ? t("dlg.hist.turnN", { n: rec.turn }) : "") + " · " + fmtTime(rec.at)}</span>
+                     <span style={{ fontSize: 10, padding: "1px 7px", borderRadius: 9, border: "1px solid " + (rec.landed ? "rgba(22,163,74,.5)" : "rgba(220,38,38,.4)"), color: rec.landed ? "#16a34a" : "#dc2626" }}>{rec.landed ? t("dlg.hist.landed") : t("dlg.hist.unlanded")}</span>
                    </div>
-                   <div style={{ fontSize: 12, fontWeight: 500, marginTop: 3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", lineHeight: 1.4 }}>💬 {(rec.message || "（早期记录无输入）").slice(0, 200)}</div>
+                   <div style={{ fontSize: 12, fontWeight: 500, marginTop: 3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", lineHeight: 1.4 }}>💬 {(rec.message || t("dlg.hist.noMsg")).slice(0, 200)}</div>
                    <div style={{ fontSize: 11, opacity: 0.75, marginTop: 3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{(rec.result || "").slice(0, 200)}</div>
                    {rec.landed && rec.landDetail ? <div style={{ fontSize: 10, color: "#16a34a", marginTop: 4 }}>{rec.landDetail}</div> : null}
                  </div>
