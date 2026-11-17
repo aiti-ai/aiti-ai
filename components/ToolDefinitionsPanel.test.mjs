@@ -4,6 +4,7 @@ import test from "node:test";
 
 const panelSource = await readFile(new URL("./ToolDefinitionsPanel.tsx", import.meta.url), "utf8");
 const systemSource = await readFile(new URL("./SystemPromptPanel.tsx", import.meta.url), "utf8");
+const debugSource = await readFile(new URL("./DebugPanel.tsx", import.meta.url), "utf8");
 const appShellSource = await readFile(new URL("./AppShell.tsx", import.meta.url), "utf8");
 
 test("keeps System and Tools in separate adjacent toolbar actions", () => {
@@ -26,6 +27,16 @@ test("header bar carries a title and a top-right close button (session-info pari
   assert.match(panelSource, /onClick=\{onClose\}/);
   assert.match(panelSource, /translate\("i18n\.close"\)/);
   assert.match(appShellSource, /<ToolDefinitionsPanel[\s\S]*?onClose=\{\(\) => setActiveTopPanel\(null\)\}/);
+  // System prompt panel: same header bar + close, wired through AppShell.
+  assert.match(systemSource, /className="system-prompt-header"/);
+  assert.match(systemSource, /\{translate\("system\.prompt"\)\}/);
+  assert.match(systemSource, /onClick=\{onClose\}/);
+  assert.match(appShellSource, /<SystemPromptPanel[\s\S]*?onClose=\{\(\) => setActiveTopPanel\(null\)\}/);
+  // Debug panel: the header keeps its copy button and gains the same close button,
+  // routed through the panel's own onClose (same path as its Escape listener).
+  assert.match(debugSource, /class[N]ame="debug-panel-close"/);
+  assert.match(debugSource, /onClose=\{\(\) => onCloseRef\.current\(true\)\}/);
+  assert.match(debugSource, /onClick=\{onClose\} title=\{t\("i18n\.close"\)\}/);
 });
 
 test("renders declared tool definitions in a selectable master-detail layout", () => {

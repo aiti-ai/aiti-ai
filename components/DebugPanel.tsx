@@ -261,6 +261,7 @@ export function DebugPanel({ readerRef, selectedSessionId, sessions, onClose }: 
       sessions={sessions}
       copied={copied}
       onCopy={handleCopy}
+      onClose={() => onCloseRef.current(true)}
       t={t}
       sectionRef={sectionRef}
     />
@@ -282,6 +283,8 @@ interface ViewProps {
   sessions: readonly SessionInfo[];
   copied: boolean;
   onCopy(): void;
+  /** The header's top-right close button; same path as Escape (focus restore included). */
+  onClose(): void;
   t: Translate;
   /** The panel's element, for the Escape that closes it to tell whether focus was inside. */
   sectionRef?: Ref<HTMLElement>;
@@ -300,7 +303,7 @@ interface Ctx {
 }
 
 /** The panel itself, from what DebugPanel read; pure, so tests render it from fixtures. */
-export function DebugPanelView({ page, server, samples = EMPTY_DEBUG_SAMPLES, selectedSessionId, sessions, copied, onCopy, t, sectionRef }: ViewProps) {
+export function DebugPanelView({ page, server, samples = EMPTY_DEBUG_SAMPLES, selectedSessionId, sessions, copied, onCopy, onClose, t, sectionRef }: ViewProps) {
   const now = page?.at ?? server.receivedAt ?? 0;
   const client = page?.client ?? null;
   const targetSessionId = debugTargetSessionId(client, selectedSessionId);
@@ -328,6 +331,12 @@ export function DebugPanelView({ page, server, samples = EMPTY_DEBUG_SAMPLES, se
         <VerdictView verdict={verdict} t={t} />
         <button type="button" className="debug-panel-copy" onClick={onCopy} title={t("debug.copyTitle")}>
           {copied ? t("debug.copied") : t("debug.copyJson")}
+        </button>
+        <button type="button" className="debug-panel-close" onClick={onClose} title={t("i18n.close")} aria-label={t("i18n.close")}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
         </button>
       </div>
       {page !== null && (
@@ -1540,6 +1549,24 @@ const DEBUG_PANEL_CSS = `
   .debug-panel-copy:hover {
     background: var(--bg-hover);
     color: var(--text);
+  }
+  .debug-panel-close {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    color: var(--text-muted);
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .debug-panel-close:hover {
+    color: var(--accent);
+    border-color: var(--accent);
   }
   .debug-panel-scroll {
     display: flex;
