@@ -84,9 +84,9 @@ export default {
     toolbar: [{ id: "aiti-ai-schedule-open", label: "i18n:sh.app.label", title: "i18n:sh.app.title", icon: "icons/clock.svg" }],
     // aiti-float dock v3 + v4 对齐分组：停靠槽静态声明（懒扩展物化触发 + 静态入口；id 与 client 注册一致）
     rightFileDock: [{ id: "panel", label: "i18n:sh.app.label" }],
-    sidebarExplorerDock: [{ id: "panel", label: "i18n:sb.tasks" }],
+    sidebarExplorerDock: [{ id: "panel", label: "i18n:sb.tasks", icon: "clock" }],
     pages: [{ id: "aiti-ai-schedule-page", label: "i18n:sh.app.label", title: "i18n:sh.app.title" }],
-    // UI 词条（zh-CN / en 双语）：插槽 label/title（i18n: 前缀）+ client 管理页 t() 全量文案
+    // UI entries (zh-CN / en bilingual): slot label/title (i18n: prefix) + the client management page's full t() copy
     i18n: {
       "zh-CN": {
         "ext.displayName": "AI 定时任务",        "sh.app.label": "调度",
