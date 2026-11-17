@@ -11,6 +11,7 @@
  */
 import { __setCtx } from "./host-shim";
 import { seedDockDefault, declareDockZones, sidebarZoneOf } from "../../../_shared/ext-float-dock";
+import { dockIconDecl } from "../../../_shared/dock-icons";
 // 薄壳版：面板组件名保持不变（内部是懒加载包装），新增 requestForkDialog（用到才拉重 chunk）
 import { WatchToolbarButton, TimelineToolbarButton, TimelineComposerButton, WatchPanelSlot, WatchDockLeft, WatchDockRight, TimelineSlot, TimelineDockRight, TimelineDockLeft, ForkDialogSlot, BannerSlot, MessageBadge, installSessionService, requestForkDialog } from "./trace-app";
 import { TraceFilesRow } from "./trace-files-row";
@@ -27,8 +28,8 @@ export default function register(ctx: Record<string, any>) {
   declareDockZones("aiti-git-trace:timeline", ["right-panel", sidebarZoneOf("aiti-git-trace:timeline")], "right-panel");
   declareDockZones("aiti-git-trace:watch", [sidebarZoneOf("aiti-git-trace:watch"), "right-panel"], sidebarZoneOf("aiti-git-trace:watch"));
   ctx.registerItems?.("rightFileDock", [
-    { id: "timeline", render: TimelineDockRight, meta: { title: "i18n:gt.timeline.short" } },
-    { id: "watch", render: WatchDockRight, meta: { title: "i18n:gt.watch.short" } },
+    { id: "timeline", render: TimelineDockRight, meta: { title: "i18n:gt.timeline.short", icon: dockIconDecl("history") } },
+    { id: "watch", render: WatchDockRight, meta: { title: "i18n:gt.watch.short", icon: dockIconDecl("git-branch") } },
   ]);
   ctx.registerItems?.("sidebarExplorerDock", [
     { id: "timeline", render: TimelineDockLeft, meta: { title: "i18n:gt.timeline.short", priority: 3 } },
