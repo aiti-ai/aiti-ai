@@ -79,11 +79,15 @@ export default {
     ],
     i18n: {
       "zh-CN": {
+        "it.open.label": "追加系统提示词",
+        "it.panel.title": "提示词",
         "it.aiti-append-system-panel.label": "追加系统提示词",
         "ext.displayName": "追加系统提示词",      "ap.open.label": "提示词",
       "ap.open.title": "aiti-append-system：追加系统提示词（全局 / 项目）",
       },
       en: {
+        "it.open.label": "Append system prompt",
+        "it.panel.title": "Prompts",
         "feat.behavior.showToolbar.desc": "Hidden by default: open the panel from the extension manager; a persistent toolbar button appears once opened",
         "it.aiti-append-system-panel.label": "Append system prompt",
         "ext.displayName": "Append System Prompt",
@@ -95,7 +99,7 @@ export default {
       },
     },
 
-    pages: [{ id: "aiti-append-system-panel", label: "i18n:it.aiti-append-system-panel.label" }], // 实际注册在 pages 插槽（client），声明与之一致
+    pages: [{ id: "aiti-append-system-panel", label: "i18n:it.aiti-append-system-panel.label" }], // actually registered in the pages slot (client); declaration kept in sync
   },
 
   // 功能管理：工具条按钮默认隐藏（低频入口；面板从扩展管理器「打开」进入）。
