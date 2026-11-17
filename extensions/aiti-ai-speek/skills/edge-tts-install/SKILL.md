@@ -1,8 +1,11 @@
 ---
 name: edge-tts-install
 title: AI 帮我安装/验证 edge-tts 后端（各平台）
+title.en: "AI: install/verify the edge-tts backend (per platform)"
 placeholder: 帮我在当前机器上安装 edge-tts，让跟读模式用更自然的语音…
+placeholder.en: "Install edge-tts on this machine so follow-read gets more natural voices…"
 summary: 各平台（Linux/macOS/Windows）安装 edge-tts + 验证 + 启用 + 排障，让 aiti-ai-speek 跟读模式用上服务端音质
+summary.en: "Install edge-tts per platform (Linux/macOS/Windows) + verify + enable + troubleshoot, so aiti-ai-speek's follow-read mode gets server-side voice quality"
 ---
 
 # edge-tts-install · 给 aiti-ai-speek 安装后端语音引擎
