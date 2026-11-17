@@ -62,12 +62,13 @@ import {
 } from "@/lib/ext-ui-store";
 import {
   entryOf,
+  declaredAllFailed,
   getBootGraph,
   immediateEntriesByPriority,
   isImmediateEntry,
-  isServerDeclarationsKnown,
   materialize,
   materializedIds,
+  onMaterializeSettled,
   pendingForSlot,
   pendingForSlotAuto,
   seedServerDeclarations,
@@ -753,6 +754,13 @@ async function fetchManifestData(): Promise<ManifestData | null> {
  *  has no takeover". */
 let extBootSettled = false;
 const extBootSettledListeners = new Set<() => void>();
+
+/** Reactive subscription for the boot-settled signal (TakeoverSlot waiting window:
+ *  "boot settled" is one of the deterministic release signals). */
+export function subscribeExtBootSettled(fn: () => void): () => void {
+  extBootSettledListeners.add(fn);
+  return () => { extBootSettledListeners.delete(fn); };
+}
 
 function notifyExtBootSettled(): void {
   extBootSettled = true;
@@ -1501,6 +1509,10 @@ export const MemoExtSlot = memo(ExtSlot, (prev, next) =>
 //    extension was disabled/uninstalled) → clear the memory when the window
 //    elapses and keep the fallback.
 const TAKEOVER_MEM_PREFIX = "pi-web:takeover:";
+/** Anti-deadlock ceiling for the TakeoverSlot waiting window (slow-flash fix):
+ *  only a hung network (no boot settle / no materialize-settle event) waits this
+ *  out; deterministic failures release the fallback much sooner. */
+const TAKEOVER_HOLD_CEILING_MS = 15000;
 const emptySubscribe = () => () => {};
 export function takeoverMemKey(name: string): string { return TAKEOVER_MEM_PREFIX + name; }
 function readTakeoverMem(name: string, legacyKey?: string): boolean {
@@ -1533,13 +1545,17 @@ export function useTakeoverHint(name: string, legacyKey?: string): boolean {
   return hint;
 }
 
-export function TakeoverSlot({ name, fallback, extra, legacyKey, currentSession }: {
+export function TakeoverSlot({ name, fallback, extra, legacyKey, currentSession, placeholder }: {
   name: ExtSlotName;
   fallback: ReactNode;
   extra?: Record<string, unknown>;
   /** Legacy takeover memory key (migration entry for historical private keys; no migration by default). */
   legacyKey?: string;
   currentSession?: { id: string; cwd: string; name?: string; firstMessage?: string } | null;
+  /** Rendered while holding the waiting window (declared / memory hit but the taker
+   *  has not registered yet). Default null = blank. Slow-network refreshes keep this
+   *  on screen instead of flashing the native fallback UI (slow-flash fix). */
+  placeholder?: ReactNode;
 }) {
   const items = useExtSlotItems(name).filter(hasExtRender);
   const takeover = items.length > 0;
@@ -1552,15 +1568,42 @@ export function TakeoverSlot({ name, fallback, extra, legacyKey, currentSession 
   const memRef = useRef<boolean | null>(null);
   if (memRef.current === null) memRef.current = readTakeoverMem(name, legacyKey);
   const everSeenRef = useRef<boolean | null>(null); // null = registration state not yet observed this session
-  // Waiting window (companion to §7-2): memory hit but items not yet arrived →
-  // render a blank placeholder instead of the whole fallback — prevents the
-  // old sidebar flashing in as one block. hintPending must be hydration-safe:
-  // always false during SSR/first frame (matching the server, preventing a
-  // #418 mismatch); after mount it flips true before paint via uSES's
-  // hydrated marker.
-  const [hintCleared, setHintCleared] = useState(false);
   const hydrated = useSyncExternalStore(emptySubscribe, () => true, () => false);
-  const hintPending = hydrated && !hintCleared && memRef.current === true;
+  // [Slow-flash fix] Deterministic release signals — hold the placeholder until
+  // one settles, instead of racing the network with fixed short timers (the old
+  // 800ms/1500ms windows flashed the native fallback UI whenever the bundle took
+  // longer than the timer to arrive):
+  //  · settledAbsent: boot settled (manifest + all immediate materializations
+  //    done/failed) and nobody declares the slot anymore (disabled/uninstalled);
+  //  · allFailed: every declarer's bundle deterministically failed (fetch error /
+  //    no register export / register threw — loader materializeFailures registry);
+  //  · timedOut: anti-deadlock ceiling (15s) for a hung network where no settle
+  //    signal ever fires. Fast failures release much sooner through the first two.
+  const bootSettled = useSyncExternalStore(subscribeExtBootSettled, () => extBootSettled, () => false);
+  const [, bumpTick] = useState(0);
+  useEffect(() => onMaterializeSettled(() => bumpTick((t) => t + 1)), []);
+  // [§5 Server-authoritative] The first frame already knows whether the slot has
+  // a taker via the SSR-delivered declaration seed (server registry ground truth);
+  // SSR and first-frame client inputs are identical (props, not localStorage), so
+  // there is no hydration mismatch. Holding the placeholder also keeps the fallback
+  // sidebar from fetching the full session list on mount (measured 1.59MB decoded)
+  // only to be replaced by the takeover.
+  const declared = slotDeclared(name);
+  const allFailed = declared && declaredAllFailed(name);
+  const settledAbsent = bootSettled && !declared;
+  const [timedOut, setTimedOut] = useState(false);
+  useEffect(() => {
+    if (!hydrated || takeover || settledAbsent || allFailed || timedOut) return;
+    const timer = setTimeout(() => setTimedOut(true), TAKEOVER_HOLD_CEILING_MS);
+    return () => clearTimeout(timer);
+  }, [hydrated, takeover, settledAbsent, allFailed, timedOut]);
+  const released = settledAbsent || allFailed || timedOut;
+  // Waiting window: declared on the first frame or the memory hit, but items not
+  // yet arrived → render the placeholder instead of the whole fallback. hintPending
+  // must be hydration-safe: always false during SSR/first frame (matching the
+  // server, preventing a #418 mismatch); after mount it flips true before paint
+  // via uSES's hydrated marker.
+  const hintPending = hydrated && memRef.current === true;
   useEffect(() => {
     if (takeover) {
       everSeenRef.current = true;
@@ -1570,40 +1613,24 @@ export function TakeoverSlot({ name, fallback, extra, legacyKey, currentSession 
     if (everSeenRef.current === true) {
       everSeenRef.current = false;
       if (memRef.current) { memRef.current = false; writeTakeoverMem(name, false); window.dispatchEvent(new Event(TAKEOVER_MEM_EVENT)); }
-      setHintCleared(true);
     }
     // While the first frame has no registration (everSeen===null), leave the memory untouched: wait for the registration event to decide, avoiding wiping a genuine takeover memory
   }, [takeover, name]);
-  // Fallback: memory hit but the extension never registers (stale cache) → after a one-shot 800ms check, clear the memory and release the fallback (plan §3.8)
+  // Deterministic release → clear a stale takeover memory once, so the next
+  // refresh does not hold the placeholder off a verdict that already settled.
+  const releasedMemClearedRef = useRef(false);
   useEffect(() => {
-    if (!hydrated || hintCleared || memRef.current !== true) return;
-    const timer = setTimeout(() => {
-      if (takeoverRef.current) return;
+    if (!released || releasedMemClearedRef.current || takeover) return;
+    releasedMemClearedRef.current = true;
+    if (memRef.current) {
       memRef.current = false;
       writeTakeoverMem(name, false);
-      setHintCleared(true);
       window.dispatchEvent(new Event(TAKEOVER_MEM_EVENT));
-    }, 800);
-    return () => clearTimeout(timer);
-  }, [hydrated, hintCleared, name]);
-  // [§5 Server-authoritative] The first frame already knows whether the slot
-  // has a taker: the SSR-delivered declaration seed (server registry ground
-  // truth) or declarations after the client manifest settles. With a taker,
-  // the first frame holds the placeholder and never mounts the fallback —
-  // avoiding the fallback sidebar fetching the full session list on mount
-  // (measured 1.59MB decoded) only to be replaced by the takeover.
-  // Note: SSR and first-frame client render inputs are identical (props, not
-  // localStorage), so there is no hydration mismatch.
-  const declared = slotDeclared(name);
-  const declaredDecided = isServerDeclarationsKnown() || extBootSettled;
-  const [declaredReleased, setDeclaredReleased] = useState(false);
-  useEffect(() => {
-    if (!declaredDecided || !declared || takeover || declaredReleased) return;
-    // Takeover declared but never materializes (bundle failure / disable race) → after the fallback window, release the fallback
-    const timer = setTimeout(() => setDeclaredReleased(true), 1500);
-    return () => clearTimeout(timer);
-  }, [declaredDecided, declared, takeover, declaredReleased]);
+    }
+  }, [released, takeover, name]);
+
   if (takeover) return <ExtSlot name={name} currentSession={currentSession} extra={extra as never} />;
-  if ((declaredDecided && declared && !declaredReleased) || hintPending) return null;
+  if (released) return <>{fallback}</>;
+  if (declared || hintPending) return <>{placeholder ?? null}</>;
   return <>{fallback}</>;
 }
