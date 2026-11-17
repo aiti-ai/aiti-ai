@@ -54,6 +54,10 @@ test("streaming Enter queues a follow-up; Alt+Enter is the exact inverse (steer 
     ["empty-input Alt+Enter promotes the queue to steer (no queueable text to invert)", { altKey: true }, { value: "" }, "steer"],
     ["empty-input Enter promotes the queue to steer", { }, { value: "" }, "steer"],
     ["no follow-up capability falls back to steer", { }, { onFollowUp: undefined }, "steer"],
+    // Upstream 0.17's mobile matrix rows (mobile Alt/Ctrl/Cmd+Enter …) encode the
+    // upstream mobile Enter semantics the fork deliberately replaced (ada119b4:
+    // mobile bare Enter sends) — they contradict the fork matrix above and are
+    // covered by the mobile-send pin instead.
     ["Shift+Enter inserts a newline", { shiftKey: true }, {}, "native"],
     // Fork pins: plain (no Alt) variants of the IME/grace guards and menu priorities,
     // plus both-capabilities-missing falling through to a normal send.
@@ -70,11 +74,6 @@ test("streaming Enter queues a follow-up; Alt+Enter is the exact inverse (steer 
     ["native composition blocks sending", { altKey: true, nativeEvent: { isComposing: true } }, {}, "native"],
     ["IME keyCode blocks sending", { altKey: true, nativeEvent: { keyCode: 229 } }, {}, "native"],
     ["composition grace blocks sending", { altKey: true }, { lastCompositionEndAtRef: { current: 950 } }, "prevented"],
-    ["mobile Alt+Enter keeps native behavior", { altKey: true }, { isMobile: true }, "native"],
-    ["mobile composition grace cannot send", { altKey: true }, { isMobile: true, lastCompositionEndAtRef: { current: 950 } }, "native"],
-    ["mobile Ctrl+Alt+Enter follows up", { altKey: true, ctrlKey: true }, { isMobile: true }, "followup"],
-    ["mobile Cmd+Alt+Enter follows up", { altKey: true, metaKey: true }, { isMobile: true }, "followup"],
-    ["mobile modified Enter respects composition grace", { altKey: true, ctrlKey: true }, { isMobile: true, lastCompositionEndAtRef: { current: 950 } }, "prevented"],
     ["Enter falls back to follow-up", {}, { onSteer: undefined }, "followup"],
     ["Alt+Enter falls back to steer", { altKey: true }, { onFollowUp: undefined }, "steer"],
     ["slash completion takes priority", { altKey: true }, { slashMenuOpen: true, slashQuery: "help" }, "slash"],
@@ -85,13 +84,15 @@ test("streaming Enter queues a follow-up; Alt+Enter is the exact inverse (steer 
     ["history selection takes priority", { altKey: true }, { historyMenuOpen: true }, "history"],
     ["Ctrl+Enter mode: Enter inserts a newline", {}, { enterSendMode: "ctrlEnter", isStreaming: false }, "native"],
     ["Ctrl+Enter mode: Ctrl+Enter sends", { ctrlKey: true }, { enterSendMode: "ctrlEnter", isStreaming: false }, "send"],
-    ["Ctrl+Enter mode: Cmd+Enter steers", { metaKey: true }, { enterSendMode: "ctrlEnter" }, "steer"],
+    // [fork] upstream sends Cmd+Enter to steer in ctrlEnter mode; the fork's queue
+    // inversion is Alt-only (ada119b4) — Cmd+Enter stays the send shortcut, which
+    // while streaming queues a follow-up.
+    ["Ctrl+Enter mode: Cmd+Enter queues a follow-up (fork: inversion is Alt-only)", { metaKey: true }, { enterSendMode: "ctrlEnter" }, "followup"],
     ["Ctrl+Enter mode: composition grace blocks the newline", {}, { enterSendMode: "ctrlEnter", lastCompositionEndAtRef: { current: 950 } }, "prevented"],
     ["Ctrl+Enter mode: Enter picks a file", {}, { enterSendMode: "ctrlEnter", atMenuOpen: true, atQuery: {} }, "file"],
     ["Ctrl+Enter mode: Enter picks from history", {}, { enterSendMode: "ctrlEnter", historyMenuOpen: true }, "history"],
     ["Ctrl+Enter mode: Enter completes an exact slash command instead of sending it", {}, { enterSendMode: "ctrlEnter", isStreaming: false, slashMenuOpen: true, slashQuery: "copy", value: "/copy", displayedSlashCommands: [{ name: "copy", source: "builtin" }] }, "slash"],
     ["Ctrl+Enter mode: Ctrl+Enter sends an exact slash command", { ctrlKey: true }, { enterSendMode: "ctrlEnter", isStreaming: false, slashMenuOpen: true, slashQuery: "copy", value: "/copy", displayedSlashCommands: [{ name: "copy", source: "builtin" }] }, "send"],
-    ["mobile ignores Ctrl+Enter mode for plain Enter", {}, { enterSendMode: "ctrlEnter", isMobile: true }, "native"],
     // An extension's dialog hides the menus (#1678): Enter must not pick from one the user cannot see.
     ["an open extension dialog hides slash completion", {}, { isStreaming: false, extensionUiOpen: true, slashMenuOpen: true, slashQuery: "help" }, "send"],
     ["an open extension dialog hides file completion", {}, { isStreaming: false, extensionUiOpen: true, atMenuOpen: true, atQuery: {} }, "send"],
@@ -634,7 +635,8 @@ test("caps an upward menu to the visible space above its anchor", () => {
 
 test("file mention menu applies the measured upward height cap", () => {
   const source = readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8");
-  const start = source.indexOf("{atMenuOpen && atQuery !== null && (() => {");
+  // Fused guard: fork's at-menu block + upstream's #1678 extension-dialog hide.
+  const start = source.indexOf("{atMenuOpen && atQuery !== null && !extensionUiOpen && (() => {");
   assert.notEqual(start, -1);
   const block = source.slice(start, start + 4000);
   assert.match(block, /ref=\{atMenuRef\}/);

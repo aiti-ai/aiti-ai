@@ -161,7 +161,7 @@ async function handleFileIndex(cwd: string, query: string): Promise<NextResponse
 // callers; cwd/q are also accepted via a POST JSON body (same path, same semantics). Absolute
 // paths never land in URLs (access logs/proxy logs), so new code must use POST.
 export async function GET(req: NextRequest) {
-  const cwd = req.nextUrl.searchParams.get("cwd")?.trim() ?? "";
+  const cwd = req.nextUrl.searchParams.get("cwd") ?? "";
   const query = req.nextUrl.searchParams.get("q")?.slice(0, MAX_QUERY_LENGTH) ?? "";
   return handleFileIndex(cwd, query);
 }
@@ -171,7 +171,7 @@ export async function POST(req: NextRequest) {
   let query = "";
   try {
     const body = (await req.json()) as { cwd?: unknown; q?: unknown };
-    cwd = typeof body.cwd === "string" ? body.cwd.trim() : "";
+    cwd = typeof body.cwd === "string" ? body.cwd : "";
     query = typeof body.q === "string" ? body.q.slice(0, MAX_QUERY_LENGTH) : "";
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });

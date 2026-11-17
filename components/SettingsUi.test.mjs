@@ -340,5 +340,7 @@ test("Settings › MCP switches whole groups from the heading too, and a disable
   assert.match(templateSource, /export function ConfigNotice\(\{ id, action, children \}[\s\S]*?<div id=\{id\} role="status"/);
   assert.match(templateSource, /export function ConfigTrustNotice\(\{\n\s*id,[\s\S]*?<ConfigNotice\n\s*id=\{id\}/);
   assert.match(mcp, /describedBy=\{block \? blockNoticeId : undefined\}/);
-  assert.match(mcp, /<ConfigSwitch[\s\S]*?describedBy=\{note \? noteId : undefined\}/);
+  // 合并注：v0.17 把开关的描述目标统一为 whyId（note ? noteId : block ? blockNoticeId : undefined），
+  // 「禁用原因可见」意图不变，pin 跟随合并后形态。
+  assert.match(mcp, /<ConfigSwitch[\s\S]*?describedBy=\{whyId\}/);
 });

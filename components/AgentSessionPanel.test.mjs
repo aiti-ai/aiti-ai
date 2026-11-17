@@ -22,8 +22,11 @@ test("sorts running subagents first and enables search only for larger families"
 });
 
 test("renders as a compact left-positioned dropdown without a centered inner width", () => {
-  assert.match(source, /borderLeft: "1px solid var\(--border\)"/);
-  assert.match(source, /borderRadius: "0 0 6px 6px"/);
+  // Upstream 0.17 anchors the panel at the chat column's left edge (no left
+  // border — the sidebar's own right border runs there); same left-positioned
+  // intent, evolved shape. Pin follows the adopted form.
+  assert.match(source, /No left border: the panel starts at the chat column's left edge/);
+  assert.match(source, /borderRadius: "0 0 6px 0"/);
   assert.doesNotMatch(source, /maxWidth: 680/);
 });
 
