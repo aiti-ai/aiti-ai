@@ -105,7 +105,8 @@ const TIMEZONE_OPTIONS: { value: string; label: string }[] = (() => {
   });
 })();
 const LOCAL_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
-// i18n：分组名（无 "/" 的 IANA 名归入「其他」）随 UI 语言变化——惰性求值（模块顶层求值早于 ctx 注入，不能预计算）
+// i18n: group names (IANA names without "/" go into "Other") change with the UI language — lazy
+// evaluation (module-top evaluation runs before ctx injection, so no precomputing)
 const tzGroupOf = (value: string): string => (value.includes("/") ? value.slice(0, value.indexOf("/")) : t("tz.other"));
 const tzGroups = (): string[] => [...new Set(TIMEZONE_OPTIONS.map((o) => tzGroupOf(o.value)))].sort();
 
@@ -263,7 +264,7 @@ function TimezonePicker({ value, onChange }: { value: string; onChange: (tz: str
 
 // ---------- 调度输入即时校验工具（本地逐行镜像 parseSchedules/parseCron 语义；服务端 /plans/validate 权威兜底） ----------
 const SCHED_DOW_ALIAS: Record<string, number> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
-// i18n：调度段名随 UI 语言变化——惰性取词（模块顶层求值早于 ctx 注入）
+// i18n: schedule segment names change with the UI language — lazy lookup (module-top evaluation runs before ctx injection)
 const SEG_KEYS = ["sec", "min", "hour", "day", "mon", "dow"] as const;
 const segLabel = (i: number): string => t("seg." + (SEG_KEYS[i] ?? "sec"));
 function schedDowNum(v: string): number {
@@ -418,7 +419,7 @@ function SchedHelp() {
 }
 
 // ---------- 模型下拉选择器（对齐 pi-web ModelSelector「新建 session 同款」：provider 分组 + 搜索过滤 + 缺省/默认模型 + 可用性提示点） ----------
-// i18n：可用性提示点文案随 UI 语言变化——键表惰性取词（模块顶层求值早于 ctx 注入）
+// i18n: availability hint-point copy changes with the UI language — lazy key-table lookup (module-top evaluation runs before ctx injection)
 const AVAIL_DOT: Record<string, [string, string]> = {
   ok: ["var(--ok, #10b981)", "md.ok"],
   rl: ["var(--warn, #f59e0b)", "md.rl"],
@@ -1363,7 +1364,7 @@ function renderScheduleSlot(face?: string) {
       { id: "trigger", title: triggerActive ? t("sb.triggerOnTip") : t("sb.triggerOffTip"), icon: <Ic size={12} paths={triggerActive ? ICONS.pause : ICONS.play} />, active: triggerActive, visibility: "always", onClick: () => { requestDockCommand(SCHED_KEY, "trigger"); } },
     ];
     return (
-      <DockBody itemKey={SCHED_KEY} title={t("sb.tasks")} chrome="section" kind="dockable"
+      <DockBody itemKey={SCHED_KEY} title={t("sb.tasks")} icon="clock" chrome="section" kind="dockable"
         zones={[sidebarZoneOf(SCHED_KEY), "right-panel"]} defaultZone={sidebarZoneOf(SCHED_KEY)}
         headerActions={actions}>
         {dialog}
