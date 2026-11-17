@@ -241,12 +241,15 @@ test("forking stays available during a run while in-session branch switches wait
     source.indexOf("  const handleModelChange = useCallback"),
   );
 
-  // Fork copies into a new file, so only a shell command blocks it; the
+  // Fork copies into a new file, so nothing about a running turn blocks it:
+  // the bashRunning gate retired (2026-11-17 — the button stays visible while
+  // a bash command runs, forkBashRunning drives its busy display); the
   // in-session edit still waits because pi refuses navigate_tree mid-run.
-  // 合并适配：本地能力门（sessionCap("fork")）与上游 bashRunning 门槛并存；
-  // 2026-11-12 merge: handler is forkFromMessage (upstream #1539 prefills the
-  // composer with the forked message) behind the same combined gate.
-  assert.match(chatWindowSource, /onFork=\{bashRunning \|\| isNew \|\| !sessionCap\("fork"\) \? undefined : forkFromMessage\}/);
+  // Local capability gate (sessionCap("fork")); 2026-11-12 merge: handler is
+  // forkFromMessage (upstream #1539 prefills the composer with the forked
+  // message).
+  assert.match(chatWindowSource, /onFork=\{isNew \|\| !sessionCap\("fork"\) \? undefined : forkFromMessage\}/);
+  assert.match(chatWindowSource, /forkBashRunning=\{bashRunning\}/);
   assert.match(chatWindowSource, /onEditContent=\{sessionBusy \? undefined : handleEditContent\}/);
   assert.match(chatWindowSource, /onAskInNewChat && quotedSelection\.sourceEntryId && !bashRunning &&/);
   assert.match(forkSource, /addNotice\(\{ type: "error", message:/);
@@ -271,9 +274,11 @@ test("first user messages expose both branch actions and edit before their own e
   // variant is forbidden by the ChatWindow edit-from-here red test).
   // 2026-09-18: added the fork capability gate (local sessions without caps unchanged;
   // external backends without fork support hide the button).
-  // 合并适配：同一调用点，融合形态 = 本地能力门 ∪ 上游 bashRunning 门槛；
-  // 2026-11-12 merge: handler is forkFromMessage (upstream #1539 composer prefill)
-  assert.match(chatWindowSource, /onFork=\{bashRunning \|\| isNew \|\| !sessionCap\("fork"\) \? undefined : forkFromMessage\}/);
+  // 2026-11-17: the upstream bashRunning gate retired — the button stays visible
+  // while a bash command runs (forkBashRunning drives the busy display).
+  // Same call site; handler is forkFromMessage (upstream #1539 composer prefill).
+  assert.match(chatWindowSource, /onFork=\{isNew \|\| !sessionCap\("fork"\) \? undefined : forkFromMessage\}/);
+  assert.match(chatWindowSource, /forkBashRunning=\{bashRunning\}/);
   assert.doesNotMatch(chatWindowSource, /idx === 0 && msg\.role === "user" \? undefined : handleFork/);
   // Edit-from-here for fork relies on prevAssistantEntryId to locate the branch point (upstream has no such mechanism, so the old doesNotMatch no longer applies).
   assert.match(navigateSource, /type: "navigate_tree",\s*targetId: entryId/);
