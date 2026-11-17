@@ -36,6 +36,7 @@ test("switching main sessions swaps their side tabs without removing subagent ta
     catalogLoaded: true,
     initialSessionRestored: true,
     fileTabs: [], terminalTabs: [], sessionCatalog: sessions,
+    terminalsRestored: true, // effect dependency introduced by the terminal-restore fix; declared above the extracted slice
     restoreSideTabs, sideTabsKey,
     window: { sessionStorage: { getItem: (key) => store.get(key) ?? null } },
     rememberSideTabs(key) {
