@@ -7,7 +7,7 @@
  *   3. 首启自动弹：register 时 fetch /status 一次（事件驱动，无轮询）——
  *      firstRun（无 completedAt/dismissedAt）且存在可用来源 → 打开弹窗（只打扰一次）
  */
-import { __setCtx } from "./host-shim";
+import { __setCtx, t } from "./host-shim";
 import { ImportDialogSlot, setDialogOpen } from "./import-app";
 
 export default function register(ctx: Record<string, unknown>) {
@@ -15,7 +15,7 @@ export default function register(ctx: Record<string, unknown>) {
 
   function ImportButton() {
     return (
-      <button type="button" title="从其他 Agent 导入模型配置（codex / zcode / opencode…）"
+      <button type="button" title={t("mi.shell.title")}
         onClick={() => setDialogOpen(true)}
         style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 36, height: 36, padding: 0, background: "none", borderTop: "none", borderRight: "1px solid var(--border)", color: "var(--text-muted)", cursor: "pointer", fontSize: 15 }}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
