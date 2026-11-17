@@ -1198,3 +1198,36 @@
     transition: none;
   }
 }
+
+/* ── Takeover waiting-window skeleton (slow-flash fix) ──────────────────────
+ * Rendered by AppShell while the sidebarContent taker (session-manager) has not
+ * registered yet on a slow network: a neutral block-shape placeholder that keeps
+ * the native sidebar from flashing in. Colors follow the theme via currentColor
+ * mixes; pulse respects prefers-reduced-motion. */
+@keyframes takeover-skeleton-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+.takeover-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 10px;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+.takeover-skeleton-row {
+  border-radius: 6px;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  animation: takeover-skeleton-pulse 1.6s ease-in-out infinite;
+}
+.takeover-skeleton-header { height: 22px; width: 65%; }
+.takeover-skeleton-head { height: 14px; width: 92%; margin-top: 8px; }
+.takeover-skeleton-line { height: 12px; }
+.takeover-skeleton-line:nth-child(odd) { width: 88%; }
+.takeover-skeleton-line:nth-child(even) { width: 72%; }
+.takeover-skeleton-block .takeover-skeleton-line { margin-top: 6px; }
+@media (prefers-reduced-motion: reduce) {
+  .takeover-skeleton-row { animation: none; opacity: 0.55; }
+}
