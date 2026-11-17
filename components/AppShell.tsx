@@ -723,12 +723,27 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   // onClick and got dropped by the upstream handleRightPanelToggle refactor → expanding the panel no longer
   // loaded history. Converged into an effect: every expansion path (toggle/open file/open folder/extension
   // openFile) triggers it. See AppShell.file-history-restore.test.mjs.
+  // [lazy-materialization window, aiti-editor clientImmediately:false] After a refresh the extension
+  // client is not mounted until some open action materializes it — the probe below would silently no-op
+  // and the one-shot restore would never happen (the effect deps stay unchanged, so a later
+  // materialization does not re-run it). Refresh → expand panel (no file opened yet) was exactly that
+  // dead window: the panel came up empty even though tombstones existed. When the probe misses,
+  // materialize the extension deterministically first, then restore (extension-side one-shot guard keeps
+  // it idempotent); materialization failure (extension removed/disabled) degrades to the old silent no-op.
   useEffect(() => {
     if (!rightPanelOpen) return;
     const restore = window.__aitiEditor?._restoreSession;
     if (typeof restore === "function") {
       setTimeout(() => restore(), 0);
+      return;
     }
+    let cancelled = false;
+    void ensureExtMaterialized("aiti-editor").then((ok) => {
+      if (cancelled || !ok) return;
+      const api = window.__aitiEditor;
+      if (api && typeof api._restoreSession === "function") api._restoreSession();
+    }).catch(() => { /* extension absent — stay silent, same as the probe path */ });
+    return () => { cancelled = true; };
   }, [rightPanelOpen]);
   const chatInputRef = useRef<ChatInputHandle | null>(null);
   // `/side <prompt>`: the text that seeds the side chat's composer, until its panel consumes it.
