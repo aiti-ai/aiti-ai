@@ -1,7 +1,9 @@
 ---
 name: float-dialog-adapter
 title: AI 帮我把弹窗接入浮动契约（拖拽/缩放/小屏全屏/最大化）
+title.en: "AI: wire a dialog into the float contract (drag/resize/mobile fullscreen/maximize)"
 placeholder: 描述你的弹窗（哪个扩展、什么布局、要不要小屏全屏/最大化按钮）…
+placeholder.en: "Describe your dialog (which extension, layout, whether it needs mobile fullscreen/maximize button)…"
 ---
 
 # float-dialog-adapter · 扩展弹窗接入 aiti-float 浮动契约
