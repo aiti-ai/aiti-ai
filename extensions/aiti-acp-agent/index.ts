@@ -358,6 +358,9 @@ export class AcpHandle {
   private loading = false;
   private replayAssistant = "";
   private model: { id: string; provider: string } | undefined;
+  /** configId of the Model item under the new protocol (claude-agent-acp 0.100.0+; recorded from
+   *  configOptions by applySessionMeta); absent on legacy-protocol hosts. */
+  private modelConfigId: string | undefined;
   /** 宿主宣告的权限模式（session/new modes；2026-09-06 claude-code-acp 0.16.1 实测五档与 UI 同名） */
   private availableModes: Array<{ id: string; name?: string }> = [];
   private currentModeId: string | undefined;
@@ -456,18 +459,45 @@ cwd,
   private applySessionMeta(result: {
     models?: { availableModels?: Array<{ modelId: string; name?: string }>; currentModelId?: string };
     modes?: { currentModeId?: string; availableModes?: Array<{ id: string; name?: string }> };
+    configOptions?: Array<{ id?: string; name?: string; currentValue?: unknown; options?: Array<{ value: unknown; name?: string; description?: string }> }>;
   }): void {
     const avail = result.models?.availableModels ?? [];
-    this.models = avail.map((m) => ({
+    let models = avail.map((m) => ({
       id: m.modelId,
       provider: this.agentName,
       ...(m.name ? { label: m.name } : {}),
     }));
+    // Protocol-drift fallback (claude-agent-acp 0.100.0+, verified 2026-11-17): session/new no
+    // longer returns a models field; model semantics moved into configOptions (the name==="Model"
+    // item's options+currentValue, alongside non-model items like Mode/Effort). The legacy models
+    // field takes precedence when present; legacy-protocol hosts are unaffected. Also records the
+    // Model item's configId — used to locate it when switching models via set_config_option.
+    this.modelConfigId = undefined;
+    if (!models.length && Array.isArray(result.configOptions)) {
+      const co = result.configOptions.find((c) => typeof c.name === "string" && c.name.toLowerCase() === "model");
+      if (co && Array.isArray(co.options)) {
+        this.modelConfigId = typeof co.id === "string" ? co.id : undefined;
+        models = co.options
+          .filter((o) => o.value !== undefined && o.value !== null)
+          .map((o) => ({
+            id: String(o.value),
+            provider: this.agentName,
+            ...(o.name ? { label: o.name } : {}),
+          }));
+      }
+    }
+    this.models = models;
     // 权限模式（ACP 原生）：availableModes + currentModeId 存档供 setPermissionMode/白名单用
     this.availableModes = result.modes?.availableModes ?? [];
     this.currentModeId = result.modes?.currentModeId;
-    // agent 侧当前模型（currentModelId 时种子，供选择器回显）
-    const currentModelId = result.models?.currentModelId;
+    // agent-side current model (seeded while currentModelId exists, for selector display); under
+    // the new protocol taken from configOptions' Model item
+    const currentModelId = result.models?.currentModelId
+      ?? (() => {
+        if (!Array.isArray(result.configOptions)) return undefined;
+        const co = result.configOptions.find((c) => typeof c.name === "string" && c.name.toLowerCase() === "model");
+        return typeof co?.currentValue === "string" && co.currentValue ? co.currentValue : undefined;
+      })();
     if (typeof currentModelId === "string" && currentModelId) {
       this.model = { id: currentModelId, provider: this.agentName };
     }
@@ -483,6 +513,7 @@ cwd,
       sessionId?: string;
       models?: { availableModels?: Array<{ modelId: string; name?: string }>; currentModelId?: string };
       modes?: { currentModeId?: string; availableModes?: Array<{ id: string; name?: string }> };
+      configOptions?: Array<{ id?: string; name?: string; currentValue?: unknown; options?: Array<{ value: unknown; name?: string; description?: string }> }>;
     };
     if (!result?.sessionId) throw new Error("[acp] session/new returned no sessionId");
     this.id = `${this.agentKey}:${result.sessionId}`;
@@ -504,6 +535,7 @@ cwd,
       const result = (await this.rpc("session/load", { sessionId, cwd, mcpServers: [] }, 150_000)) as {
         models?: { availableModels?: Array<{ modelId: string; name?: string }>; currentModelId?: string };
         modes?: { currentModeId?: string; availableModes?: Array<{ id: string; name?: string }> };
+        configOptions?: Array<{ id?: string; name?: string; currentValue?: unknown; options?: Array<{ value: unknown; name?: string; description?: string }> }>;
       } | null;
       this.id = `${this.agentKey}:${sessionId}`;
       if (result) this.applySessionMeta(result);
@@ -1044,19 +1076,42 @@ cwd,
   }
 
   /**
-   * 运行时切换模型：session/set_model RPC（ACP 协议方法；宿主 CLI 不支持时
-   * method-not-found/超时 → false，fail-loud）。
+   * Runtime model switch: session/set_model RPC (legacy ACP method); claude-agent-acp 0.100.0+
+   * removed it (Method not found), so fall back to session/set_config_option (new protocol;
+   * configId = the Model item id recorded from configOptions by applySessionMeta; the response
+   * returns the full configOptions — echo back the server-read currentValue). If neither is
+   * supported → false (fail-loud).
    */
   async setModel(model: { id: string; provider: string }): Promise<boolean> {
     if (!this.aliveFlag || !this.sessionId) return false;
+    let applied: { id: string; provider: string } | null = null;
     try {
       await this.rpc("session/set_model", { sessionId: this.sessionId, modelId: model.id }, 30_000);
-    } catch (e) {
-      console.warn(`[acp:${this.agentName}] set_model(${model.id}) failed:`, e instanceof Error ? e.message : e);
-      return false;
+      applied = { id: model.id, provider: this.agentName };
+    } catch {
+      // legacy method missing/failed → new-protocol fallback (no configId recorded = host supports neither)
+      if (!this.modelConfigId) {
+        console.warn(`[acp:${this.agentName}] set_model(${model.id}) failed: no set_model and no Model configOption`);
+        return false;
+      }
+      try {
+        const res = (await this.rpc("session/set_config_option", {
+          sessionId: this.sessionId,
+          configId: this.modelConfigId,
+          value: model.id,
+        }, 30_000)) as { configOptions?: Array<{ id?: string; currentValue?: unknown }> } | undefined;
+        // trust the server-read currentValue (the response returns the full configOptions)
+        const updated = (res?.configOptions ?? []).find((c) => c.id === this.modelConfigId);
+        const current = typeof updated?.currentValue === "string" && updated.currentValue ? updated.currentValue : model.id;
+        applied = { id: current, provider: this.agentName };
+        console.log(`[acp:${this.agentName}] set_model(${model.id}) via set_config_option → current=${current}`);
+      } catch (e2) {
+        console.warn(`[acp:${this.agentName}] set_model(${model.id}) failed (set_model + set_config_option):`, e2 instanceof Error ? e2.message : e2);
+        return false;
+      }
     }
     const prev = this.model;
-    this.model = { id: model.id, provider: this.agentName };
+    this.model = applied;
     this.emit({ type: "model_select", model: this.model, ...(prev ? { previousModel: prev } : {}), source: "set" });
     this.persistModelState();
     return true;
@@ -1235,7 +1290,7 @@ function scanAcpBackends(
       // Availability snapshot: false = CLI missing → dropdown entry greyed out;
       // refreshed on rescan. installHint comes from the agent catalog.
       ...(resolved ? {} : { available: false as const, ...(agent.installHint ? { installHint: agent.installHint } : {}) }),
-      // 模型目录（D15）：缓存条目（启动后台真实获取 + 会话回填）；空 = 跟随 agent 默认；
+      // Model catalog (D15): cache-layer cache + session backfill; empty = follow the agent default.
       // 上次使用的模型置顶（新建页默认项）
       listModels: () => catalogListModels(agent.name, agent.agentKey ?? agent.name),
       refreshModels: () => catalogRefreshModels(agent.name, agent.agentKey ?? agent.name),
@@ -1458,7 +1513,11 @@ async function catalogListModels(agentName: string, agentKey?: string): Promise<
   const store = catalogStore;
   if (!store) return [];
   const entry = store.get(agentName);
-  if (!entry || !store.isFresh(agentName)) {
+  // Missing/expired and not in the negative-cache window: await briefly if a probe is in flight;
+  // otherwise refresh in the background (never blocks the new-session page).
+  // Within the negative-cache window no automatic probe is issued (unauthenticated backends fail
+  // deterministically; a manual "refresh model list" force is exempt).
+  if ((!entry || !store.isFresh(agentName)) && !store.probeSuppressed(agentName)) {
     if (catalogRefresher?.inFlight(agentName)) {
       await Promise.race([
         catalogRefresher.refresh(agentName).catch(() => null),
@@ -1486,7 +1545,15 @@ async function catalogRefreshModels(agentName: string, agentKey?: string): Promi
   return withLastUsedFirst(list, lastUsed?.id);
 }
 
-/** 启动目录：cache 层缓存 + 分层探测刷新器（探测描述按注册表动态解析）。 */
+/**
+ * Lazy catalog (since 2026-11-16): cache-layer cache + tiered probe refresher + negative cache.
+ * startup no longer runs refreshAll — the model catalog is probed on demand only when the
+ * new-session page consumes listModels (triggered in the background inside catalogListModels,
+ * never blocking the return); probe failures enter the negative cache (no automatic retry within
+ * 1h; a manual "refresh model list" force is exempt). Previously startup spawned all 25 built-in
+ * backends in turn (unauthenticated CLIs always fail and there was no negative cache → rerun every
+ * startup; the qoder probe even pulled Electron) — tens of seconds of pure waste.
+ */
 function initModelCatalog(ctx: { configDir: string; cacheDir?: string }): void {
   const cacheDir = ctx.cacheDir || join(dirname(ctx.configDir), "cache");
   catalogProbeCwd = join(cacheDir, "acp-probe");
@@ -1511,9 +1578,8 @@ function initModelCatalog(ctx: { configDir: string; cacheDir?: string }): void {
       });
     return descs;
   });
-  // 启动后台刷新（不阻塞 startup；失败静默）
-  void catalogRefresher.refreshAll().catch((e) =>
-    console.warn("[acp-catalog] refreshAll failed:", e instanceof Error ? e.message : e));
+  // no startup full pass: the catalog is fully lazy (see the function header; single-flight probes
+  // + negative cache live in the refresher/store)
 }
 
 export default {
@@ -1545,7 +1611,7 @@ export default {
     },
 
     // aiti-float dock v3：停靠槽静态声明（懒扩展物化触发 + 静态入口；id 与 client 注册一致）
-    sidebarExplorerDock: [{ id: "manage", label: "ACP" }],
+    sidebarExplorerDock: [{ id: "manage", label: "ACP", icon: "plug" }],
     rightFileDock: [{ id: "manage", label: "ACP" }],
     dialogs: [{ id: "acp-manage-dialog", label: "ACP Backend Agents" }],
     newSessionBackendOptions: [{ id: "acp-manage-option", label: "Manage ACP Agents…" }],
@@ -1637,7 +1703,8 @@ export default {
       if (acpScan.unavailable.length) {
         console.log(`[aiti-acp-agent] startup scan: ${acpScan.unavailable.length} agent(s) not installed (greyed out in the dropdown)`);
       }
-      // 模型目录（D15）：cache 层缓存 + 启动后台真实获取（不阻塞 startup）
+      // Model catalog (D15): cache-layer cache + lazy probing (background refresh on first
+      // listModels consumption; no startup full pass)
       initModelCatalog(ctx);
     },
 

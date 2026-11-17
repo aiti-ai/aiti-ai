@@ -1,7 +1,9 @@
 ---
 name: acp-agent-add
 title: AI 帮我添加 ACP 后端 agent
+title.en: "AI: add an ACP backend agent"
 placeholder: 描述要接入的 agent（如：我想接 kimi-cli，它支持 ACP，命令是 kimi --acp）…
+placeholder.en: "Describe the agent (e.g. I want to connect kimi-cli; it supports ACP, command is kimi --acp)…"
 outputs:
   format: json-obj
   schema:
