@@ -1,8 +1,11 @@
 ---
 name: model-config
 title: AI 帮我调整模型探测配置
+title.en: "AI: adjust model probe config"
 placeholder: 要调整什么？（如：探测超时 / 哨兵间隔 / 并发）…
+placeholder.en: "What to adjust? (e.g. probe timeout / sentinel interval / concurrency)…"
 summary: 查看/修改 aiti-model-check 配置（modelsPath / probe / watch / history）
+summary.en: "View/modify aiti-model-check config (modelsPath / probe / watch / history)"
 outputs:
   format: json-obj
   schema:
