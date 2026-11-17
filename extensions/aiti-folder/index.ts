@@ -151,10 +151,10 @@ export default {
   icon: "icon.svg",
   ui: {
     fileViewer: [
-      { id: "aiti-folder", label: "文件夹", title: "aiti-folder：文件夹浏览器（树 + git 状态 + 切换）" },
+      { id: "aiti-folder", label: "i18n:it.folder.label", title: "i18n:it.folder.title" },
     ],
     pathPicker: [
-      { id: "aiti-folder-picker", label: "目录选择", title: "aiti-folder：目录选择器能力（FolderSwitcher，不切 cwd）" },
+      { id: "aiti-folder-picker", label: "i18n:it.folder-picker.label", title: "i18n:it.folder-picker.title" },
     ],
     // 命令目录槽（dialogs 同型无渲染点；ai-app-center 动作卡 + 输入命令提示消费，方案
     // docs/aiti-ai-input-app-command-hints-plan.md §9）。静态声明 = extman 插槽详情可见 +
@@ -167,6 +167,10 @@ export default {
     // 翻译与 core lib/i18n/messages 对齐——新增 t()/tt() 调用记得同步补 key。
     i18n: {
       "zh-CN": {
+        "it.folder.label": "文件夹",
+        "it.folder.title": "aiti-folder：文件夹浏览器（树 + git 状态 + 切换）",
+        "it.folder-picker.label": "目录选择",
+        "it.folder-picker.title": "aiti-folder：目录选择器能力（FolderSwitcher，不切 cwd）",
         "ext.displayName": "文件夹浏览器",        "files.cancel": "取消",
         "files.refresh": "刷新",
         "files.changedCount": "{count} 个文件",
@@ -278,13 +282,16 @@ export default {
         "sidebar.useDefaultDirectory": "使用默认目录",
         "i18n.networkError": "网络错误",
       },
-      en: {
+      "en": {
         "ext.displayName": "Folder Browser",        "ext.description": "Folder browser (fileViewer folder takeover) + directory picker capability (pathPicker FolderSwitcher). Reuses core endpoints; UI lives entirely in the extension.",
         "feat.aiti-folder": "Folders",
+        "it.folder.label": "Folders",
+        "it.folder.title": "aiti-folder: folder browser (tree + git status + switching)",
+        "it.folder-picker.label": "Directory picker",
+        "it.folder-picker.title": "aiti-folder: directory picker capability (FolderSwitcher, no cwd switching)",
         "feat.aiti-folder-picker": "Directory picker",
         "feat.open-terminal": "Open terminal",
-      },
-      "en": {
+      
         "files.cancel": "Cancel",
         "files.refresh": "Refresh",
         "files.changedCount": "{count} files",
