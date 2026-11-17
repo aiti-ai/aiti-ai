@@ -26,6 +26,8 @@ export const zhTWLocale: LocalePlugin = {
     "settings.monoFontPlaceholder": "預設 Noto Sans Mono",
     "settings.resetUiFont": "重設介面字體",
     "settings.resetMonoFont": "重設等寬字體",
+    "settings.panelUiScale": "面板介面縮放",
+    "settings.resetPanelUiScale": "重設面板介面縮放",
     "settings.fontDescription": "填寫本機已安裝的字體名稱，多個以逗號分隔，留空使用預設。等寬字體用於程式碼和終端。僅儲存在目前瀏覽器。",
     "settings.uiFontWeight": "介面字體字重",
     "settings.monoFontWeight": "等寬字體字重",

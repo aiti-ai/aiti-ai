@@ -172,10 +172,13 @@ test("groups fonts, chat font size and width in one section, chat behavior in an
 
   assert.doesNotMatch(appearanceSection, /settings-chat-content|<FontSettings/);
   assert.match(typographySection, /className="settings-chat-options"[\s\S]*<FontSettings \/>/);
-  assert.equal((typographySection.match(/className="settings-chat-option settings-chat-range-option"/g) ?? []).length, 2);
-  for (const key of ["chatContentWidth", "chatContentFontSize", "fontDescription"]) {
+  assert.equal((typographySection.match(/className="settings-chat-option settings-chat-range-option"/g) ?? []).length, 3);
+  for (const key of ["chatContentWidth", "chatContentFontSize", "fontDescription", "panelUiScale", "resetPanelUiScale"]) {
     assert.match(typographySection, new RegExp(`t\\("settings\\.${key}"\\)`));
   }
+  // The panel UI scale row: same range pattern as the chat rows, own slider id.
+  assert.match(typographySection, /id="settings-panel-ui-scale"/);
+  assert.match(typographySection, /type="range"[\s\S]*?value=\{panelUiScale\}/);
   assert.match(chatSection, /className="settings-chat-options"/);
   assert.doesNotMatch(chatSection, /settings-chat-content/);
   assert.equal((chatSection.match(/className="settings-chat-option(?: |")/g) ?? []).length, 3);
