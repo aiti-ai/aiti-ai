@@ -6,6 +6,7 @@
 //   node scripts/release-tag.mjs --dry-run      # 只校验和打印，不写任何东西
 //   node scripts/release-tag.mjs --suggest      # 只建议当前基线的下一个 -aiti.N 构建号
 //   node scripts/release-tag.mjs --force        # 工作树不干净时强行走（默认拒绝）
+//   node scripts/release-tag.mjs --skip-notes   # 豁免 release notes 文件守卫（热修场景，显式警告）
 //
 // 版本约定（Debian/Ubuntu 后缀模型）：
 //   package.json version = "X.Y.Z-aiti.N"（fork 构建号；同上游基线重构建递增 N）
@@ -17,6 +18,9 @@
 //   ② tag v<version> 本地与 origin 均不存在
 //   ③ 工作树干净（--force 豁免）
 //   ④ tag 名只由 package.json 推导，不接受手工传入（防错位版本 / 裸 v* 混入）
+//   ⑤ release notes 文件 releases/v<version>.md 存在且非空（>=3 non-empty lines;
+//      TODO placeholder → soft warning; --skip-notes 豁免并显式警告）——
+//      draft via scripts/draft-release-notes.mjs
 
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -47,6 +51,20 @@ export function nextForkNumber(tags, coreVersion) {
     if (m) max = Math.max(max, Number(m[1]));
   }
   return max + 1;
+}
+
+// Guard ⑤: release notes file must exist and be non-empty (see draft-release-notes.mjs)
+export function checkNotesFile(content) {
+  if (content == null) {
+    return { ok: false, reason: `release notes file releases/v<version>.md is missing — draft one with: node scripts/draft-release-notes.mjs (or pass --skip-notes to waive)` };
+  }
+  const nonEmpty = String(content).split("\n").filter((l) => l.trim()).length;
+  if (nonEmpty < 3) {
+    return { ok: false, reason: `release notes file is essentially empty (${nonEmpty} non-empty line(s) < 3) — write real notes or pass --skip-notes` };
+  }
+  const warns = [];
+  if (/\bTODO\b/.test(content)) warns.push("draft placeholder (TODO) still present in the notes file — rewrite Highlights before tagging");
+  return { ok: true, ...(warns.length ? { warn: warns.join("; ") } : {}) };
 }
 
 export function planRelease({ version, tags = [], clean = true }) {
@@ -109,6 +127,23 @@ async function main() {
     console.error(`[release-tag] ✗ ${plan.reason}`);
     process.exit(1);
   }
+
+  // Guard ⑤: release notes file (waivable via --skip-notes)
+  const skipNotes = args.includes("--skip-notes");
+  const notesPath = join(REPO, "releases", `${plan.tag}.md`);
+  let notesContent = null;
+  try { notesContent = readFileSync(notesPath, "utf8"); } catch {}
+  const notes = checkNotesFile(notesContent);
+  if (!notes.ok) {
+    if (!skipNotes) {
+      console.error(`[release-tag] ✗ ${notes.reason}`);
+      process.exit(1);
+    }
+    console.error(`[release-tag] ⚠ release notes guard waived via --skip-notes: ${notes.reason}`);
+  } else if (notes.warn) {
+    console.error(`[release-tag] ⚠ ${notes.warn}`);
+  }
+  if (notesContent != null) console.log(`[release-tag] notes: releases/${plan.tag}.md (${String(notesContent).split("\n").filter((l) => l.trim()).length} lines)`);
 
   console.log(`[release-tag] version=${plan.version} → tag=${plan.tag}`);
   if (dryRun) {

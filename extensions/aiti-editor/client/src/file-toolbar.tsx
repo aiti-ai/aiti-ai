@@ -12,7 +12,7 @@
  * （= 顶栏剩余空间，天然涵盖 git 徽标/保存按钮/信息位等真实占用），带滞回防抖。
  */
 import { useState, useEffect, useRef } from "react";
-import { extSvc, t } from "./host-shim.ts";
+import { extSvc, t, getTopicItems } from "./host-shim.ts";
 import { dismissOnBack } from "../../../_shared/overlay-back-client";
 
 export type MenuAction = { label: string; title?: string; /** 可选图标（ReactNode，如 aiti-git-review 的统一 GrEyeIcon）；渲染在文案左侧 */ icon?: any; onClick: () => void };
@@ -471,6 +471,23 @@ export function FileToolbar(props: {
           {closeBtn(closeActions.all, t("关闭全部"), <MiCloseAll size={14} />)}
         </div>
       )}
+      {/* External file actions via editor-file-action topic (e.g. share file/selection).
+          icon: plain string renders as text; { svg } renders as a 13px currentColor
+          line icon (same form manifest declarative icons use). */}
+      {getTopicItems<{ id: string; label: string; icon?: string | { svg: string }; onClick: (file: { filePath: string; selectionText?: string }) => void }>("editor-file-action").map((a) => (
+        <button key={a.id} type="button" title={a.label}
+          onClick={() => {
+            const svc = extSvc<{ getSelectionText?: () => string }>("aiti-editor.selection");
+            a.onClick({ filePath, selectionText: svc?.getSelectionText?.() });
+          }}
+          style={{ ...S.btn, padding: "3px 8px", fontSize: 13, flexShrink: 0 }}>
+          {a.icon && typeof a.icon === "object" && typeof a.icon.svg === "string" ? (
+            <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7}
+              strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+              dangerouslySetInnerHTML={{ __html: a.icon.svg }} />
+          ) : (a.icon as string) || "↗"}
+        </button>
+      ))}
       {/* 更多菜单（⋮，2026-09-16 重排）：钉住 → 关闭排 → 上/下一文件 → 保存组 → @组 → 查看/整理/打开 */}
       <div style={{ position: "relative", flexShrink: 0 }}>
         <button type="button" onClick={() => setMenuOpen(!menuOpen)}

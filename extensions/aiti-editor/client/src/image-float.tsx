@@ -19,7 +19,7 @@
  * （DockBody chrome="tab"，页签 ⇱/✕ 由宿主 TabBar 承担）。
  */
 import { useEffect, useState } from "react";
-import { t } from "./host-shim.ts";
+import { t, getTopicItems } from "./host-shim.ts";
 import {
   DockBody, present, presentState, useGate, clearDockPref, declareDockZones,
 } from "../../../_shared/ext-float-dock";
@@ -139,6 +139,21 @@ export function ImageFloatFace() {
           <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={titleOf(img)}>
             {titleOf(img)}
           </h3>
+          {/* External image-viewer actions via editor-image-action topic (e.g. share).
+              icon: plain string renders as text; { svg } renders as a 13px currentColor
+              line icon (same form manifest declarative icons use). */}
+          {getTopicItems<{ id: string; label: string; icon?: string | { svg: string }; onClick: (img: { src: string; alt: string }) => void }>("editor-image-action").map((a) => (
+            <button key={a.id} type="button" title={a.label} aria-label={a.label}
+              onClick={() => a.onClick({ src: img.src, alt: titleOf(img) })}
+              style={{ background: "none", border: "none", color: "var(--text-muted, #888)", cursor: "pointer", fontSize: 13, padding: "2px 8px", fontFamily: "inherit", display: "inline-flex", alignItems: "center" }}
+            >
+              {a.icon && typeof a.icon === "object" && typeof a.icon.svg === "string" ? (
+                <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7}
+                  strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+                  dangerouslySetInnerHTML={{ __html: a.icon.svg }} />
+              ) : (a.icon as string) || "↗"}
+            </button>
+          ))}
           <button
             type="button" aria-label={t("关闭")} title={t("关闭")} onClick={closeImagePreview}
             style={{ background: "none", border: "none", color: "var(--text-muted, #888)", cursor: "pointer", fontSize: 14, padding: "2px 8px", fontFamily: "inherit" }}

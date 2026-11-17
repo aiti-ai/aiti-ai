@@ -11,7 +11,7 @@
  * host-shim ctx 双注入约定）。selected 为当前高亮路径；onSelect 只回传不落库。
  */
 import { useState, useEffect, useRef, useLayoutEffect } from "react";
-import { clampToViewport, fixedOrigin } from "../../../_shared/popup-anchor";
+import { clampToViewport, fixedOrigin, zoomFactorOf } from "../../../_shared/popup-anchor";
 import { dedupeFetch } from "../../../_shared/dedupe-fetch";
 import { apiUrl, extSvc } from "./host-shim";
 import { ct as t } from "./comp-i18n"; // 组件自带多语：内置字典优先，回落宿主 t
@@ -78,7 +78,8 @@ export function WorkspaceDropdown({ selected, onSelect, onClose, align = "left",
     if (m.height > below && above > below) top = a.top - gap - m.height; // 上翻
     const c = clampToViewport(left, top, m.width, m.height, pad);
     const o = fixedOrigin(el);
-    const next = { left: c.left - o.x, top: c.top - o.y, width: m.width };
+    const z = zoomFactorOf(el);
+    const next = { left: (c.left - o.x) / z, top: (c.top - o.y) / z, width: m.width };
     setPos((cur) => cur && cur.left === next.left && cur.top === next.top && cur.width === next.width ? cur : next);
   });
   // fixed 弹层不随内容滚动（滞留旧位 = 错位）——任意容器滚动即关；弹层内部滚动（项目列表/

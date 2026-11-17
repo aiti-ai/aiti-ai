@@ -90,16 +90,16 @@ del '{"url":"/user*"}' > /dev/null
 sleep 1
 jcheck "全部删除后 /users 还原 2 条" "isinstance(d,list) and len(d)==2" "$(curl -s $APP/users)"
 
-say "方法级 mock（/api/mock-method——任意接口方法，字节码插桩改返回值；篡改：过滤/修改/复制）"
+say "方法级 mock（/api/mock-method——任意接口方法，字节码插桩改返回值；打桩：过滤/修改/复制）"
 postm '{"action":"add","className":"com.demo.UserController","method":"users","filter":"AGE < 28"}' > /dev/null
 sleep 2
-jcheck "篡改-过滤（真实结果 WHERE AGE<28 → bob）" "isinstance(d,list) and len(d)==1 and d[0]['NAME']=='bob'" "$(curl -s $APP/users)"
+jcheck "打桩-过滤（真实结果 WHERE AGE<28 → bob）" "isinstance(d,list) and len(d)==1 and d[0]['NAME']=='bob'" "$(curl -s $APP/users)"
 postm '{"action":"add","className":"com.demo.UserController","method":"users","filter":"SELECT NAME, AGE + 1 AS AGE FROM RESULTS"}' > /dev/null
 sleep 1
-jcheck "篡改-修改（完整 SELECT 表达式 AGE+1）" "isinstance(d,list) and all(u['AGE']>=26 for u in d)" "$(curl -s $APP/users)"
+jcheck "打桩-修改（完整 SELECT 表达式 AGE+1）" "isinstance(d,list) and all(u['AGE']>=26 for u in d)" "$(curl -s $APP/users)"
 postm '{"action":"add","className":"com.demo.UserController","method":"users","copies":[{"path":"","size":50}]}' > /dev/null
 sleep 1
-jcheck "篡改-复制（真实 2 条 → 50 条）" "isinstance(d,list) and len(d)==50" "$(curl -s $APP/users)"
+jcheck "打桩-复制（真实 2 条 → 50 条）" "isinstance(d,list) and len(d)==50" "$(curl -s $APP/users)"
 delm '{"className":"com.demo.UserController","method":"users"}' > /dev/null
 sleep 1
 jcheck "删除还原 2 条" "isinstance(d,list) and len(d)==2" "$(curl -s $APP/users)"
@@ -114,13 +114,13 @@ delm '{"className":"com.demo.UserController","method":"users"}' > /dev/null
 sleep 2
 jcheck "删除后还原 2 条" "isinstance(d,list) and len(d)==2" "$(curl -s $APP/users)"
 
-say "URL mock 篡改（url + filter——HTTP 放行真实 → 方法层篡改真实返回值）"
+say "URL mock 打桩（url + filter——HTTP 放行真实 → 方法层打桩真实返回值）"
 post '{"action":"add","url":"/users","filter":"AGE < 28"}' > /dev/null
 sleep 2
-jcheck "URL 篡改-过滤（/users + WHERE → bob）" "isinstance(d,list) and len(d)==1 and d[0]['NAME']=='bob'" "$(curl -s $APP/users)"
+jcheck "URL 打桩-过滤（/users + WHERE → bob）" "isinstance(d,list) and len(d)==1 and d[0]['NAME']=='bob'" "$(curl -s $APP/users)"
 post '{"action":"add","url":"/users","filter":"SELECT NAME, AGE + 1 AS AGE FROM RESULTS ORDER BY AGE DESC"}' > /dev/null
 sleep 1
-jcheck "URL 篡改-修改（SELECT AGE+1 → 31/26）" "isinstance(d,list) and [u['AGE'] for u in d]==[31,26]" "$(curl -s $APP/users)"
+jcheck "URL 打桩-修改（SELECT AGE+1 → 31/26）" "isinstance(d,list) and [u['AGE'] for u in d]==[31,26]" "$(curl -s $APP/users)"
 del '{"url":"/users"}' > /dev/null
 sleep 2
 jcheck "删除还原 2 条" "isinstance(d,list) and len(d)==2" "$(curl -s $APP/users)"

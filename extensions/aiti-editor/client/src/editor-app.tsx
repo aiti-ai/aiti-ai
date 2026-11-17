@@ -5,14 +5,14 @@
  * M2：Markdown 双模式（编辑/预览 tab + Ctrl+B/I） + 注册表开放（window.__aitiEditor）
  */
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { apiUrl, editorBase, ensureEditorTicket, ticketedEditorPath, extSvc, regSvc, t } from "./host-shim.ts";
+import { apiUrl, editorBase, ensureEditorTicket, ticketedEditorPath, extSvc, getTopicItems, regSvc, t } from "./host-shim.ts";
 import { getCtx, editorRefHolder } from "./env";
 import { ENCODINGS, encDisplay, formatSize, mdSlug, sourceLinesForText, isDarkTheme, describeMonacoError } from "./lib";
 import { detectLanguage, mdFenceDescriptors } from "./registry";
 import { markdownPreviewHtml, markdownRenderHtml } from "./markdown";
 import { previewKindOf, defaultViewModeOf, previewModeItems } from "./preview";
 import { sameDiskSig, shouldAutoReload, throttleOk, sigOfFrame, type DiskSig } from "./disk-refresh";
-import { getPopover, previewClickInfo, closePreviewPopover, mdSmartEnabled } from "./md-smart";
+import { getPopover, previewClickInfo, registerSelectionContainer, unregisterSelectionContainer, previewSelectionMeta, closePreviewPopover, mdSmartEnabled } from "./md-smart";
 import { openViewerWindow } from "../../../_shared/open-viewer-window";
 import { openNewSessionWithExtSvc } from "../../../_shared/new-session-cwd";
 import { uiConfirm, uiPrompt } from "../../../_shared/ui-dialogs";
@@ -1379,11 +1379,23 @@ useEffect(() => {
     if (!ifr) return;
     // 重建前先收掉预览里的弹层：srcdoc 重赋值会整体销毁 iframe 文档，弹层/监听随之消失
     // （不显式关 → msg-smart 的 state.opening 残留，下次点同段被判为 toggle 直接关闭）
+    // and unregister the old document's selection container (its listener dies with the
+    // document, but msg-smart's Map still holds the ref — clear it)
+    const prevDoc = ifr.contentDocument;
+    if (prevDoc) unregisterSelectionContainer(prevDoc);
     closePreviewPopover();
     const content = editorRef.current ? editorRef.current.getValue() : (meta ? meta.content : "");
     const dark = isDarkTheme();
     ifr.srcdoc = markdownPreviewHtml(content, dark, mdChgRanges.length ? mdChgRanges : undefined, mdSmartEnabled(), mdFenceDescriptors(dark));
-  }, [viewMode, meta, previewKind, previewTick, mdChgRanges]);
+    // New preview doc ready → register the selection container (msg-smart attaches pointerup
+    // inside the iframe document directly: detect/read selection/render in one document — the
+    // standard approach; the old five-step postMessage relay kept breaking, removed).
+    ifr.addEventListener("load", () => {
+      const doc = ifr.contentDocument;
+      const win = ifr.contentWindow;
+      if (doc && win) registerSelectionContainer(doc, win, previewSelectionMeta(filePath));
+    }, { once: true });
+  }, [viewMode, meta, previewKind, previewTick, mdChgRanges, filePath]);
 
   // 预览滚动消息 → 编辑器联动（分栏双向）
   useEffect(() => {
@@ -1433,7 +1445,9 @@ useEffect(() => {
     return () => window.removeEventListener("message", onMsg);
   }, []);
 
-  // 预览内点击语义块/代码行 → 交 aiti-msg-smart 弹层引擎（弹层渲染在 iframe 内，见 md-smart.ts）
+  // In-preview click on a semantic block/code line → aiti-msg-smart popover engine (card renders
+  // inside the iframe, see md-smart.ts). Selection does NOT go through here: container
+  // registration (in the srcdoc effect) lets msg-smart attach pointerup inside the iframe itself.
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
       const d = e.data;
@@ -2507,6 +2521,14 @@ useEffect(() => {
               {isMarkdown && detectTable(editorRef.current) && (
                 <button title={t("按列宽对齐光标所在 Markdown 表格（Alt+Shift+F 同款）")} onClick={() => { formatTable(editorRef.current); setAiPop(null); }} style={{ ...T.btn, padding: "2px 8px", gap: 4 }}>表格优化</button>
               )}
+              {/* External selection actions — same msg-popover-top-action contract as msg-smart
+                  cards (registerTopicItem(topic, { id, label, title?, onClick(text, cwd) })).
+                  e.g. aiti-msg-share renders its share button here automatically. */}
+              {getTopicItems<{ id: string; label: string; title?: string; onClick: (text: string, cwd?: string) => void }>("msg-popover-top-action").map((a) => (
+                <button key={a.id || a.label} title={a.title || a.label || ""}
+                  onClick={() => { try { a.onClick(selText, cwd); } catch { /* provider error must not break the bar */ } setAiPop(null); }}
+                  style={{ ...T.btn, padding: "2px 8px", gap: 4 }}>{a.label}</button>
+              ))}
             </div>
           )}
         </div>

@@ -356,6 +356,10 @@ export interface ExtUiItem {
   title?: string;
   /** slot-specific placement hints (e.g. sidebar badge) */
   badge?: boolean;
+  /** Dual-mount slot placement (assistantMessageActions): "top" = the top
+   *  meta row, "bottom" = under the message content, "both" = on both sides.
+   *  Absent → "bottom". */
+  placement?: "top" | "bottom" | "both";
   /** The menu already carries full content (e.g. a search input); the host adds no text label */
   noMenuLabel?: boolean;
   /**

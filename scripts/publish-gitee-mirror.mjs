@@ -43,6 +43,20 @@ const ghApi = (path) => {
 };
 
 // ---- get gitee release (by tag), create if missing ----
+// Release body: mirror the GitHub notes (assembled by release.yml from
+// releases/<tag>.md). The fixed line stays first — GitHub links inside the
+// notes are unreachable from CN networks, which is exactly why this mirror
+// exists; the notes text itself is still worth carrying.
+let ghBody = "";
+try {
+  const ghRel = await (await ghApi(`/releases/tags/${TAG}`)).json();
+  if (ghRel && ghRel.body && String(ghRel.body).trim()) ghBody = String(ghRel.body).trim();
+} catch {}
+const MIRROR_NOTE = `Prebuilt release mirror of https://github.com/${GH_REPO}/releases/tag/${TAG} (identical assets + checksums).`;
+const mirrorBody = ghBody ? `${MIRROR_NOTE}\n\n---\n\n${ghBody}` : MIRROR_NOTE;
+if (ghBody) console.log(`[gitee] GitHub release body found (${ghBody.length} chars) — will mirror as release body`);
+else console.error(`[gitee] ⚠ no GitHub release body for ${TAG} — keeping the plain mirror note`);
+
 let rel = await (await api(`/releases/tags/${TAG}?access_token=${TOKEN}`)).json();
 if (!rel || !rel.id || rel.message) {
   console.log(`[gitee] release ${TAG} not found — creating (target_commitish=main)`);
@@ -54,13 +68,25 @@ if (!rel || !rel.id || rel.message) {
       tag_name: TAG,
       target_commitish: "main",
       name: `aiti-web ${TAG}`,
-      body: `Prebuilt release mirror of https://github.com/${GH_REPO}/releases/tag/${TAG} (identical assets + checksums).`,
+      body: mirrorBody,
     }),
   });
   rel = await r.json();
   if (!rel.id) throw new Error(`gitee release create failed: ${JSON.stringify(rel).slice(0, 300)}`);
 }
 console.log(`[gitee] release id=${rel.id} tag=${rel.tag_name}`);
+
+// Keep the body in sync even when the release already existed (idempotent
+// re-publish) — the GitHub notes assembled by release.yml are the source of
+// truth. A failed PATCH is a warning, not a failure: attachments are the
+// core of the mirror, and the release.yml job is continue-on-error anyway.
+const pr = await api(`/releases/${rel.id}`, {
+  method: "PATCH",
+  headers: { "Content-Type": "application/x-www-form-urlencoded" },
+  body: new URLSearchParams({ access_token: TOKEN, body: mirrorBody }),
+});
+if (pr.ok) console.log(`[gitee] body synced (${mirrorBody.length} chars${ghBody ? ", from GitHub notes" : ", mirror note only"})`);
+else console.error(`[gitee] ⚠ body PATCH failed: HTTP ${pr.status} — release keeps its previous body`);
 
 // ---- gather assets ----
 let files = [];

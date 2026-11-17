@@ -5,7 +5,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { t } from "../host-shim";
 import { truncateRunErrorText, type SessionLastRun } from "./pure";
-import { clampToViewport, fixedOrigin } from "../../../../_shared/popup-anchor";
+import { clampToViewport, fixedOrigin, zoomFactorOf } from "../../../../_shared/popup-anchor";
 
 /** 左省略路径标签（宿主 PathLabel 复制：rtl 容器让省略号出现在左侧）。 */
 export function PathLabel({ text, style }: { text: string; style?: CSSProperties }) {
@@ -112,7 +112,8 @@ export function AnimatedDropdown({ open, children, style, fixedAnchor = false }:
     if (height > below && above > below) top = a.top - gap - height; // 下方装不下且上方更大 → 上翻
     const c = clampToViewport(a.left, top, width, height, pad);
     const o = fixedOrigin(el);
-    const next = { left: c.left - o.x, top: c.top - o.y, width };
+    const z = zoomFactorOf(el);
+    const next = { left: (c.left - o.x) / z, top: (c.top - o.y) / z, width };
     setFixedPos((cur) => (cur && cur.left === next.left && cur.top === next.top && cur.width === next.width ? cur : next));
   });
 

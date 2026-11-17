@@ -15,11 +15,35 @@
  */
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { t, apiUrl } from "./host-shim";
+import { t, apiUrl, getCtx } from "./host-shim";
 import { ensureReadability, sessionTitle, SIc } from "./helpers";
 import { refreshSessions, applySessionNameLocal } from "./store";
 import { showRelatedDocs } from "./related-docs";
 import { showToast } from "./toast";
+
+/** Topic-item icon → menu ReactNode: "{ svg }" (inner markup of a 24×24 line
+ *  icon, the same form manifest declarative icons use) renders as a 13px
+ *  currentColor icon; plain strings pass through; missing → the legacy ↗
+ *  placeholder (e.g. aiti-msg-share registers its share-2 glyph). */
+function extTopicIcon(icon: string | { svg: string } | undefined): ReactNode {
+  if (icon && typeof icon === "object" && typeof icon.svg === "string") {
+    return (
+      <svg
+        width={13}
+        height={13}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.7}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+        dangerouslySetInnerHTML={{ __html: icon.svg }}
+      />
+    );
+  }
+  return icon || "↗";
+}
 
 export type MenuItem = {
   key: string;
@@ -141,6 +165,16 @@ export function buildLivePiRowMenuItems(opts: {
   }
   items.push({ key: "related-docs", icon: <SIc name="fileText" size={13} />, label: t("sm.relatedDocs") ?? "相关文档", onClick: () => showRelatedDocs(sess.id, sessionTitle(sess)) });
   items.push({ key: "timeline", icon: "⎇", label: t("sm.timeline") ?? "时间线", onClick: () => openSessionTimeline(sess.id) });
+  // External row-menu actions via topic extension point (e.g. aiti-msg-share's
+  // "share session"). Providers register at client boot and gate themselves via match().
+  try {
+    const getTopicItems = getCtx()?.getTopicItems as ((topic: string) => Array<{ id: string; label: string; icon?: string | { svg: string }; match?: (s: unknown) => boolean; onClick: (s: unknown) => void }>) | undefined;
+    const ext = getTopicItems?.("session-row-menu-action") ?? [];
+    for (const a of ext) {
+      try { if (a.match && !a.match(sess)) continue; } catch { continue; }
+      items.push({ key: "ext:" + a.id, icon: extTopicIcon(a.icon), label: a.label, onClick: () => a.onClick(sess) });
+    }
+  } catch { /* topic unavailable — no external actions */ }
   return items;
 }
 
