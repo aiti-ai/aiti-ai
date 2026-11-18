@@ -1,6 +1,6 @@
 /**
  * Convention injection: a `secret_masking` system-prompt section telling the
- * model that `[REDACTED:*]` placeholders are opaque stand-ins to copy
+ * model that `rsec_*` tokens are opaque stand-ins to copy
  * verbatim into tool arguments and never guess.
  *
  * The section text is a provider evaluated at every assembly, so the section
@@ -16,12 +16,11 @@ import { stateFor } from "../state.ts";
 export const SECTION_KEY = "secret_masking";
 
 export const SECTION_TEXT = [
-  "Some credential values in this conversation are hidden behind placeholders like",
-  "[REDACTED:alias] or [REDACTED:LABEL#ab12cd34]. Each placeholder stands for one real",
-  "secret value that the user knows; it is restored automatically when passed verbatim in",
-  "tool arguments. Rules: never guess, shorten, transform or invent the underlying value;",
-  "copy the placeholder exactly as shown whenever you need to reference the credential",
-  "(file edits, commands, config); do not ask the user to paste the value into chat.",
+  "Some credentials in this conversation are replaced by opaque tokens like rsec_a1b2c3d4.",
+  "Each token IS a working credential: the runtime substitutes the real secret when the token",
+  "appears verbatim in tool arguments. Copy the token exactly. Never refuse to use it, never",
+  "claim you cannot access the value, never ask the user to paste the secret, and never modify,",
+  "truncate, hash or re-encode the token.",
 ].join("\n");
 
 export function registerSection(ctx: PluginContext, cfg: PluginConfig): void {

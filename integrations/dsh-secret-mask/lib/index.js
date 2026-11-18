@@ -8,9 +8,30 @@ import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-// node_modules/@aiti-ai/secret-mask-core/dist/index.js
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+// ../packages/secret-mask-core/dist/index.js
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { appendFileSync, chmodSync, existsSync, mkdirSync as mkdirSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { dirname as dirname2, resolve } from "node:path";
+function fnv1a(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0");
+}
+var PLACEHOLDER_PREFIX = "rsec_";
+var PLACEHOLDER_HASH_LEN = 8;
+var STABLE_NAMESPACE = "vault";
+function placeholderFromHash(hash) {
+  return PLACEHOLDER_PREFIX + hash.slice(0, PLACEHOLDER_HASH_LEN);
+}
+var PLACEHOLDER_RE = /rsec_[0-9a-f]{8}\b|\[REDACTED:[A-Za-z0-9_-]{1,64}(?:#[0-9a-fA-F]{1,16})?\]/g;
+function findV2Placeholders(text) {
+  if (!text) return [];
+  return text.match(/(?:^|[^A-Za-z0-9_])rsec_[0-9a-f]{8}\b/g)?.map((m) => m.replace(/^[^r]+/, "")) ?? [];
+}
 function entropy(v) {
   if (!v) return 0;
   const counts = /* @__PURE__ */ new Map();
@@ -21,14 +42,6 @@ function entropy(v) {
     bits -= p * Math.log2(p);
   }
   return bits;
-}
-function fnv1a(s) {
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 16777619) >>> 0;
-  }
-  return h.toString(16).padStart(8, "0");
 }
 var B64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 function base64urlDecode(s) {
@@ -78,7 +91,16 @@ var NOT_SECRETS = /* @__PURE__ */ new Set([
   "example",
   "default",
   "required",
-  "optional"
+  "optional",
+  // common copula-prose status words ("my password is incorrect") — ≥8 chars so they
+  // would otherwise pass the length + entropy gates after `password is`
+  "incorrect",
+  "forgotten",
+  "encrypted",
+  "protected",
+  "mismatch",
+  "rejected",
+  "verified"
 ]);
 function plausibleSecret(v) {
   const lower = v.toLowerCase();
@@ -113,8 +135,9 @@ function codeExpression(v) {
   return parts.length > 1 && parts.every((p) => /^[A-Za-z_$][\w$]*$/.test(p) && p.replace(/\D/g, "").length <= 2);
 }
 function bareSecret(v) {
-  if (!plausibleSecret(v) || placeholderShaped(v) || entropy(v) < 3) return false;
+  if (!plausibleSecret(v) || placeholderShaped(v) || entropy(v) < 2.5) return false;
   if (!/\d/.test(v) && /^[A-Za-z_$][\w$]*(?:[.\-][A-Za-z_$][\w$]*)*$/.test(v)) return false;
+  if (!/\d/.test(v) && /^[a-z][a-z_-]*[.,;:!?]?$/.test(v)) return false;
   return !codeExpression(v);
 }
 function keywordStart(text, at) {
@@ -131,6 +154,12 @@ function dbUrlHasRealPassword(url) {
 }
 function notTemplated(text, at) {
   return text.slice(Math.max(0, at - 2), at) !== "{{";
+}
+function insideTemplate(text, at) {
+  const open = text.lastIndexOf("${", at);
+  if (open === -1) return false;
+  const close = text.indexOf("}", open);
+  return close === -1 || close > at;
 }
 var GITLEAKS = "https://github.com/gitleaks/gitleaks";
 var GITHUB_PATTERNS = "https://docs.github.com/code-security/secret-scanning";
@@ -321,7 +350,9 @@ var RULES = [
     id: "generic-secret-quoted",
     label: "SECRET",
     kind: "secret",
-    pattern: /(?:api[_-]?key|secret(?:[_-]?key)?|token|password|passwd|pwd|auth|credential|密码|密钥|秘钥|口令|令牌|授权码|授权密钥|访问令牌|访问密钥|凭证|凭据|私钥)s?["'`]?[ \t]{0,5}(?::=|=>|[=:]|：)[ \t]{0,5}["'`]([^\s"'`]{8,256})["'`]/gi,
+    // keyword then either an assignment operator or the natural-language copula
+    // (`password is "xxx"`, `密码是"xxx"`) before the quoted value // cjk-ok
+    pattern: /(?:api[_-]?key|secret(?:[_-]?key)?|token|password|passwd|pwd|auth|credential|密码|密钥|秘钥|口令|令牌|授权码|授权密钥|访问令牌|访问密钥|凭证|凭据|私钥)s?["'`]?(?:[ \t]{0,5}(?::=|=>|[=:]|：)|(?:[ \t]+is\b|是)[ \t]{0,5}(?::=|=>|[=:]|：)?)[ \t]{0,5}["'`]([^\s"'`]{8,256})["'`]/gi,
     group: 1,
     verify: quotedSecret,
     before: keywordStart,
@@ -331,8 +362,10 @@ var RULES = [
     id: "generic-secret",
     label: "SECRET",
     kind: "secret",
-    // a literal \n, \r or \t (backslash and letter) ends the value, as in a dotenv string inside source code
-    pattern: /(?:api[_-]?key|secret(?:[_-]?key)?|token|password|passwd|pwd|auth|credential|密码|密钥|秘钥|口令|令牌|授权码|授权密钥|访问令牌|访问密钥|凭证|凭据|私钥)s?["'`]?[ \t]{0,5}(?::=|=>|[=:]|：)[ \t]{0,5}((?:[^\s"'`;,(){}<>[\]\\]|\\(?![nrt])){8,256})(?!(?!\\[nrt])[^\s"'`;,(){}<>[\]])/gi,
+    // a literal \n, \r or \t (backslash and letter) ends the value, as in a dotenv string inside source code;
+    // fullwidth CJK punctuation also ends the value (`密码：abc123，请记好` must not swallow the trailing prose) // cjk-ok
+    // keyword then either an assignment operator or the natural-language copula (`password is xxx`, `密码是xxx`) // cjk-ok
+    pattern: /(?:api[_-]?key|secret(?:[_-]?key)?|token|password|passwd|pwd|auth|credential|密码|密钥|秘钥|口令|令牌|授权码|授权密钥|访问令牌|访问密钥|凭证|凭据|私钥)s?["'`]?(?:[ \t]{0,5}(?::=|=>|[=:]|：)|(?:[ \t]+is\b|是)[ \t]{0,5}(?::=|=>|[=:]|：)?)[ \t]{0,5}((?:[^\s"'`;,(){}<>[\]\\，。、；：！？“”‘’（）]|\\(?![nrt])){8,256})(?!(?!\\[nrt])[^\s"'`;,(){}<>[\]，。、；：！？“”‘’（）])/gi,
     group: 1,
     verify: bareSecret,
     before: keywordStart,
@@ -450,7 +483,6 @@ function compile(pattern) {
   compiledCache.set(pattern, c);
   return c;
 }
-var PLACEHOLDER_RE = /\[REDACTED:[A-Za-z0-9_-]{1,64}(?:#[0-9a-fA-F]{1,16})?\]/g;
 function scan(text, opts = {}) {
   const head = opts.maxBytes && text.length > opts.maxBytes ? text.slice(0, opts.maxBytes) : text;
   const spans = [];
@@ -486,7 +518,7 @@ function scan(text, opts = {}) {
       const end = start + raw.length;
       const value = head.slice(start, end);
       const inPlaceholder = spans.some(([s, e]) => start < e && end > s);
-      if (inPlaceholder || rule.before && !rule.before(masked, m.index) || rule.verify && !rule.verify(value)) {
+      if (inPlaceholder || insideTemplate(masked, start) || rule.before && !rule.before(masked, m.index) || rule.verify && !rule.verify(value)) {
         re.lastIndex = m.index + 1;
         continue;
       }
@@ -538,8 +570,12 @@ function redactForms(value) {
   return [...forms].filter((form) => form.length >= MIN_REDACT_LENGTH);
 }
 var Registry = class {
+  /** Session salt used for v2 placeholder hashing (set by the host). */
+  salt = "";
   byValue = /* @__PURE__ */ new Map();
   byPlaceholder = /* @__PURE__ */ new Map();
+  /** Old placeholder → entry, kept when a value is re-registered under a new alias. */
+  redirects = /* @__PURE__ */ new Map();
   /** value forms sorted longest-first, so a value containing another is replaced whole. */
   forms = [];
   get size() {
@@ -548,42 +584,67 @@ var Registry = class {
   entries() {
     return [...this.byValue.values()];
   }
-  /** Look up an entry by its exact placeholder string. */
+  /** Look up an entry by its exact placeholder string (current or redirected). */
   byPlaceholderLookup(placeholder) {
-    return this.byPlaceholder.get(placeholder);
+    return this.byPlaceholder.get(placeholder) ?? this.redirects.get(placeholder);
   }
-  registerManual(value, alias) {
+  /** True when a placeholder is mounted (present or redirected). */
+  isMounted(placeholder) {
+    return this.byPlaceholderLookup(placeholder) !== void 0;
+  }
+  /**
+   * Register one value. `source` selects the placeholder namespace:
+   * manual/auto → session-salted hash; vault → stable namespace hash.
+   */
+  register(value, source, opts = {}) {
     const trimmed = value.trim();
-    if (trimmed.length < MIN_REDACT_LENGTH) return void 0;
+    if (trimmed.length < (opts.minLength ?? MIN_REDACT_LENGTH)) return void 0;
+    const alias = opts.alias?.trim() || void 0;
     const existing = this.byValue.get(trimmed);
-    if (existing && existing.source === "manual" && existing.alias === (alias ?? void 0)) {
+    if (existing && existing.source === source && existing.alias === alias && !opts.placeholder) {
       return { entry: existing, replaced: false };
     }
-    let label = alias?.trim() ?? "";
-    if (!label) label = `secret-${this.countManual() + 1}`;
-    if (!/^[A-Za-z0-9_-]{1,64}$/.test(label)) label = label.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 64) || `secret-${this.countManual() + 1}`;
-    if (existing) this.removeEntry(existing);
-    const placeholder = `[REDACTED:${label}]`;
-    const entry = { placeholder, value: trimmed, label, alias: alias?.trim() || void 0, source: "manual" };
-    if (this.byPlaceholder.has(placeholder) && this.byPlaceholder.get(placeholder) !== entry) {
-      let n = 2;
-      let p = `[REDACTED:${label}-${n}]`;
-      while (this.byPlaceholder.has(p)) p = `[REDACTED:${label}-${++n}]`;
-      entry.placeholder = p;
+    const sameAlias = alias && (source === "manual" || source === "vault") ? this.entries().find((e) => e.source === source && e.alias === alias && e !== existing) : void 0;
+    if (sameAlias) this.removeEntry(sameAlias, false);
+    let label;
+    if (alias) label = alias;
+    else if (opts.label) label = opts.label;
+    else if (source === "manual") label = `secret-${this.countSource("manual") + 1}`;
+    else label = "SECRET";
+    if (!/^[A-Za-z0-9_.-]{1,64}$/.test(label)) {
+      label = label.replace(/[^A-Za-z0-9_.-]/g, "_").slice(0, 64) || "secret";
     }
+    const stable = source === "vault" || Boolean(opts.namespace);
+    const namespace = opts.namespace ?? STABLE_NAMESPACE;
+    const salt = opts.salt ?? this.salt;
+    const placeholder = opts.placeholder ? this.takeable(opts.placeholder, existing) ? opts.placeholder : void 0 : stable && alias ? this.generate((n) => fnv1a(`${namespace}:${alias}${n > 1 ? `#${n}` : ""}`), existing, trimmed) : source === "manual" && alias && !salt ? (
+      // No salt available: keep a deterministic shape (hosts that never set
+      // a salt still get cross-session placeholders).
+      this.generate((n) => fnv1a(`manual:${alias}${n > 1 ? `#${n}` : ""}`), existing, trimmed)
+    ) : this.generate((n) => fnv1a(`${salt}${trimmed}${n > 1 ? `#${n}` : ""}`), existing, trimmed);
+    if (!placeholder) return void 0;
+    if (existing) this.removeEntry(existing, existing.placeholder !== placeholder);
+    const entry = {
+      placeholder,
+      value: trimmed,
+      label,
+      alias,
+      source,
+      ...opts.ruleId ? { ruleId: opts.ruleId } : {},
+      ...stable ? { stable: true } : {}
+    };
     this.addEntry(entry);
     return { entry, replaced: existing !== void 0 };
   }
-  registerAuto(value, ruleId, label, salt) {
-    const trimmed = value.trim();
-    if (trimmed.length < MIN_REDACT_LENGTH) return void 0;
-    const existing = this.byValue.get(trimmed);
-    if (existing) return { entry: existing, replaced: false };
-    const placeholder = `[REDACTED:${label}#${fnv1a(salt + trimmed)}]`;
-    if (this.byPlaceholder.has(placeholder)) return void 0;
-    const entry = { placeholder, value: trimmed, label, source: "auto", ruleId };
-    this.addEntry(entry);
-    return { entry, replaced: false };
+  registerManual(value, alias, opts = {}) {
+    return this.register(value, "manual", { ...opts, alias });
+  }
+  registerAuto(value, ruleId, label, salt, opts = {}) {
+    return this.register(value, "auto", { ...opts, salt, label, ruleId });
+  }
+  /** Stable entry (vault): placeholder survives sessions and resume. */
+  registerStable(value, alias, namespace = STABLE_NAMESPACE, opts = {}) {
+    return this.register(value, "vault", { ...opts, alias, namespace });
   }
   /** Auto-detect secrets in text and register them; returns newly added entries. */
   autoRegister(text, salt, opts = {}) {
@@ -603,15 +664,44 @@ var Registry = class {
     }
     return added;
   }
+  /** Remove by label, alias, or exact placeholder. */
   removeByLabel(label) {
-    const entry = this.entries().find((e) => e.label === label || e.alias === label || e.placeholder === `[REDACTED:${label}]`);
+    const entry = this.entries().find(
+      (e) => e.label === label || e.alias === label || e.placeholder === label
+    );
     if (!entry) return false;
-    this.removeEntry(entry);
+    this.removeEntry(entry, true);
     return true;
+  }
+  /**
+   * Remove an entry WITHOUT keeping a redirect — the placeholder stops
+   * resolving, so the G7 guard blocks later references (`/vault forget`).
+   */
+  forgetByLabel(label) {
+    const entry = this.entries().find((e) => e.label === label || e.alias === label || e.placeholder === label);
+    if (!entry) return false;
+    this.byValue.delete(entry.value);
+    this.byPlaceholder.delete(entry.placeholder);
+    this.redirects.delete(entry.placeholder);
+    for (const [token, target] of this.redirects) if (target.value === entry.value) this.redirects.delete(token);
+    this.rebuildForms();
+    return true;
+  }
+  /** Drop a redirect (snapshot unload); keeps current entries intact. */
+  clearRedirects() {
+    this.redirects.clear();
+  }
+  redirectsSnapshot() {
+    return Object.fromEntries([...this.redirects].map(([k, v]) => [k, v.placeholder]));
+  }
+  /** Redirected placeholder → entry (audit/guard support). */
+  redirectEntries() {
+    return [...this.redirects];
   }
   clear() {
     this.byValue.clear();
     this.byPlaceholder.clear();
+    this.redirects.clear();
     this.forms = [];
   }
   /** Replace all known value forms in text with placeholders. */
@@ -646,22 +736,45 @@ var Registry = class {
   restore(text) {
     if (!text || this.byPlaceholder.size === 0) return { text, count: 0 };
     let count = 0;
-    const out = text.replace(/\[REDACTED:[A-Za-z0-9_-]{1,64}(?:#[0-9a-fA-F]{1,16})?\]/g, (m) => {
-      const entry = this.byPlaceholder.get(m);
+    const out = text.replace(new RegExp(PLACEHOLDER_RE.source, "g"), (m) => {
+      const entry = this.byPlaceholderLookup(m);
       if (!entry) return m;
       count++;
       return entry.value;
     });
     return { text: out, count };
   }
+  /** True when `placeholder` is free — or already belongs to this value/slot. */
+  takeable(placeholder, existing) {
+    const current = this.byPlaceholder.get(placeholder);
+    if (!current || current === existing) return true;
+    return current.value === existing?.value;
+  }
+  generate(seed, existing, value) {
+    for (let n = 1; n <= 64; n++) {
+      const p = placeholderFromHash(seed(n));
+      const occupied = this.byPlaceholder.get(p);
+      const redirected = this.redirects.get(p);
+      const sameSlot = p === existing?.placeholder;
+      const sameValue = value !== void 0 && (occupied?.value === value || redirected?.value === value);
+      if ((!occupied || sameSlot || sameValue) && (!redirected || sameSlot || sameValue)) return p;
+    }
+    return void 0;
+  }
   addEntry(entry) {
     this.byValue.set(entry.value, entry);
     this.byPlaceholder.set(entry.placeholder, entry);
     this.rebuildForms();
   }
-  removeEntry(entry) {
+  /**
+   * Remove one entry. `follow` keeps a redirect from the old placeholder to
+   * whatever entry replaces this value next (auto→manual upgrade path): the
+   * model may still reference the previous placeholder in later turns.
+   */
+  removeEntry(entry, follow) {
     this.byValue.delete(entry.value);
     this.byPlaceholder.delete(entry.placeholder);
+    if (follow) this.redirects.set(entry.placeholder, entry);
     this.rebuildForms();
   }
   rebuildForms() {
@@ -676,9 +789,9 @@ var Registry = class {
     }
     this.forms = list.sort((a, b) => b.form.length - a.form.length);
   }
-  countManual() {
+  countSource(source) {
     let n = 0;
-    for (const e of this.byValue.values()) if (e.source === "manual") n++;
+    for (const e of this.byValue.values()) if (e.source === source) n++;
     return n;
   }
 };
@@ -728,6 +841,7 @@ function auditPayload(payload, registry) {
   let strings = 0;
   let placeholders = 0;
   let leaks = 0;
+  const placeholderRe = new RegExp(PLACEHOLDER_RE.source, "g");
   const walk = (node) => {
     if (typeof node === "string") {
       strings++;
@@ -737,8 +851,7 @@ function auditPayload(payload, registry) {
           leaksByLabel.set(entry.label, (leaksByLabel.get(entry.label) ?? 0) + 1);
         }
       }
-      const ph = node.match(/\[REDACTED:[A-Za-z0-9_-]{1,64}(?:#[0-9a-fA-F]{1,16})?\]/g);
-      if (ph) placeholders += ph.length;
+      placeholders += (node.match(placeholderRe) ?? []).length;
       return;
     }
     if (Array.isArray(node)) {
@@ -752,6 +865,277 @@ function auditPayload(payload, registry) {
   walk(payload);
   return { strings, placeholders, leaks, leakedLabels: [...leaksByLabel.keys()] };
 }
+var RULES_FILE_NAME = "secret-mask-rules.json";
+function emptyFile() {
+  return { version: 1, rules: [], projects: {} };
+}
+function normalize(raw, where, errors) {
+  if (!raw || typeof raw !== "object") {
+    errors.push(`${where}: rule must be an object`);
+    return void 0;
+  }
+  const r = raw;
+  if (typeof r.match !== "string" || r.match.length === 0) {
+    errors.push(`${where}: missing "match"`);
+    return void 0;
+  }
+  if (typeof r.label !== "string" || !/^[A-Za-z0-9_.-]{1,64}$/.test(r.label)) {
+    errors.push(`${where}: missing/invalid "label" (1-64 of [A-Za-z0-9_.-])`);
+    return void 0;
+  }
+  const type = r.type === "exact" ? "exact" : "regex";
+  const mode = r.mode === "fixed" ? "fixed" : "placeholder";
+  const rule = { match: r.match, label: r.label, type, mode };
+  if (mode === "fixed") rule.fixed = typeof r.fixed === "string" && r.fixed ? r.fixed : `<redacted:${r.label}>`;
+  if (typeof r.flags === "string" && r.flags) rule.flags = r.flags.replace(/[gy]/g, "");
+  if (typeof r.minLength === "number" && Number.isFinite(r.minLength)) rule.minLength = Math.max(1, Math.floor(r.minLength));
+  if (type === "regex") {
+    try {
+      new RegExp(rule.match, flagsOf(rule));
+    } catch (e) {
+      errors.push(`${where}: invalid regex for "${rule.label}": ${e instanceof Error ? e.message : String(e)}`);
+      return void 0;
+    }
+  }
+  return rule;
+}
+function flagsOf(rule) {
+  return `g${rule.flags ?? ""}`;
+}
+function parseRulesFile(raw) {
+  const errors = [];
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    return { file: emptyFile(), errors: [`invalid JSON: ${e instanceof Error ? e.message : String(e)}`] };
+  }
+  if (!parsed || typeof parsed !== "object") return { file: emptyFile(), errors: ["rules file must be a JSON object"] };
+  const doc = parsed;
+  const file = emptyFile();
+  const list = Array.isArray(doc.rules) ? doc.rules : [];
+  list.forEach((rule, i) => {
+    const n = normalize(rule, `rules[${i}]`, errors);
+    if (n) file.rules.push(n);
+  });
+  if (doc.projects && typeof doc.projects === "object") {
+    for (const [scope, rules] of Object.entries(doc.projects)) {
+      if (!Array.isArray(rules)) continue;
+      file.projects[scope] = [];
+      rules.forEach((rule, i) => {
+        const n = normalize(rule, `projects[${scope}][${i}]`, errors);
+        if (n) file.projects[scope].push(n);
+      });
+    }
+  }
+  return { file, errors };
+}
+function readRulesFile(path) {
+  try {
+    return parseRulesFile(readFileSync(path, "utf8"));
+  } catch (e) {
+    const code = e.code;
+    if (code === "ENOENT") return { file: emptyFile(), errors: [] };
+    return { file: emptyFile(), errors: [e instanceof Error ? e.message : String(e)] };
+  }
+}
+function writeRulesFile(path, file) {
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify(file, null, 2) + "\n", { mode: 384 });
+    return void 0;
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  }
+}
+function mergeRules(file, scope) {
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const rule of [...file.projects[scope] ?? [], ...file.rules]) {
+    if (seen.has(rule.label)) continue;
+    seen.add(rule.label);
+    out.push(rule);
+  }
+  return out;
+}
+var RulesSource = class {
+  cache;
+  stamp = "";
+  errors = [];
+  path;
+  scope;
+  constructor(path, scope) {
+    this.path = path;
+    this.scope = scope;
+  }
+  rules() {
+    this.refresh();
+    return mergeRules(this.cache ?? emptyFile(), this.scope);
+  }
+  refresh(force = false) {
+    let stamp = "missing";
+    try {
+      const st = statSync(this.path);
+      stamp = `${st.mtimeMs}:${st.size}`;
+    } catch {
+      stamp = "missing";
+    }
+    if (!force && this.cache && stamp === this.stamp) return;
+    const { file, errors } = readRulesFile(this.path);
+    this.cache = file;
+    this.errors = errors;
+    this.stamp = stamp;
+  }
+  setScope(scope) {
+    this.scope = scope;
+    this.cache = void 0;
+    this.stamp = "";
+  }
+  reload() {
+    this.refresh(true);
+    return this.rules();
+  }
+};
+function minLengthOf(rule) {
+  return rule.minLength ?? MIN_REDACT_LENGTH;
+}
+function registerRuleMatches(text, registry, rules, salt) {
+  if (!text || rules.length === 0) return 0;
+  let added = 0;
+  for (const rule of rules) {
+    if ((rule.mode ?? "placeholder") !== "placeholder") continue;
+    const min = minLengthOf(rule);
+    if ((rule.type ?? "regex") === "exact") {
+      if (rule.match.length < min || !text.includes(rule.match)) continue;
+      if (registry.registerAuto(rule.match, `custom:${rule.label}`, rule.label, salt, { minLength: min })) added++;
+      continue;
+    }
+    let re;
+    try {
+      re = new RegExp(rule.match, flagsOf(rule));
+    } catch {
+      continue;
+    }
+    for (let m = re.exec(text); m !== null; m = re.exec(text)) {
+      if (m[0] === "") {
+        re.lastIndex++;
+        continue;
+      }
+      if (m[0].length >= min && registry.registerAuto(m[0], `custom:${rule.label}`, rule.label, salt, { minLength: min })) added++;
+    }
+  }
+  return added;
+}
+function applyFixedRules(text, rules) {
+  if (!text || rules.length === 0) return { text, count: 0 };
+  let out = text;
+  let count = 0;
+  for (const rule of rules) {
+    if (rule.mode !== "fixed") continue;
+    const replacement = rule.fixed ?? `<redacted:${rule.label}>`;
+    if ((rule.type ?? "regex") === "exact") {
+      if (rule.match.length === 0) continue;
+      const parts = out.split(rule.match);
+      if (parts.length > 1) {
+        count += parts.length - 1;
+        out = parts.join(replacement);
+      }
+      continue;
+    }
+    let re;
+    try {
+      re = new RegExp(rule.match, flagsOf(rule));
+    } catch {
+      continue;
+    }
+    out = out.replace(re, () => {
+      count++;
+      return replacement;
+    });
+  }
+  return { text: out, count };
+}
+function ruleSummary(rule) {
+  const mode = rule.mode ?? "placeholder";
+  const type = rule.type ?? "regex";
+  const extra = mode === "fixed" ? ` → ${rule.fixed ?? `<redacted:${rule.label}>`} (one-way)` : "";
+  return `${rule.label}: ${type} /${rule.match}/${rule.flags ?? ""} [${mode}]${extra}`;
+}
+function addRuleToFile(path, scope, rule, target = "project") {
+  const { file } = readRulesFile(path);
+  if (target === "global") {
+    file.rules = file.rules.filter((r) => r.label !== rule.label);
+    file.rules.push(rule);
+  } else {
+    const bucket = file.projects[scope] ?? [];
+    file.projects[scope] = bucket.filter((r) => r.label !== rule.label).concat(rule);
+  }
+  return writeRulesFile(path, file);
+}
+function removeRuleFromFile(path, scope, label) {
+  const { file } = readRulesFile(path);
+  const before = file.rules.length + (file.projects[scope]?.length ?? 0);
+  file.rules = file.rules.filter((r) => r.label !== label);
+  if (file.projects[scope]) file.projects[scope] = file.projects[scope].filter((r) => r.label !== label);
+  const after = file.rules.length + (file.projects[scope]?.length ?? 0);
+  const err = writeRulesFile(path, file);
+  return err ? { removed: 0, error: err } : { removed: before - after };
+}
+function unmountedPlaceholders(text, registry) {
+  if (!text) return [];
+  const out = [];
+  for (const token of findV2Placeholders(text)) {
+    if (registry.isMounted(token)) continue;
+    if (!out.includes(token)) out.push(token);
+  }
+  return out;
+}
+function unmountedInValue(value, registry) {
+  const out = [];
+  const walk = (node) => {
+    if (typeof node === "string") {
+      for (const token of unmountedPlaceholders(node, registry)) if (!out.includes(token)) out.push(token);
+      return;
+    }
+    if (Array.isArray(node)) {
+      for (const v of node) walk(v);
+      return;
+    }
+    if (node && typeof node === "object") {
+      for (const v of Object.values(node)) walk(v);
+    }
+  };
+  walk(value);
+  return out;
+}
+function guardReason(tokens, opts = {}) {
+  const list = tokens.join(", ");
+  const hint = opts.landing === "ephemeral" ? `/secret add <label> to register the value again (ephemeral landing keeps values in memory only) or ask the user to provide it` : `vault_get <alias> to re-mount the value, or /secret add <label> to register it in this session`;
+  return `secret-mask: refused to run with unresolved placeholder(s) ${list}. The value behind them is not mounted in this session — call ${hint}. Do not retype, guess or replace the placeholder yourself.`;
+}
+var LANDING_MODES = ["plain", "vault", "ephemeral"];
+var MASK_LANDING_MODES = ["plain", "ephemeral"];
+var DEFAULT_LANDING = "plain";
+function isLandingMode(value) {
+  return LANDING_MODES.includes(value);
+}
+function landingText(mode) {
+  switch (mode) {
+    case "plain":
+      return "plain — values stay in the session file (grep-able; recovery works by re-detection or /secret load)";
+    case "vault":
+      return "vault — session file is redacted; values are stored in the encrypted vault (/vault add) and re-mount via vault_get";
+    case "ephemeral":
+      return "ephemeral — session file is redacted; values live in this process only and are unrecoverable after exit";
+  }
+}
+function landingChangeWarning(next, previous) {
+  if (next === previous) return void 0;
+  if (next === "ephemeral") return "ephemeral: values registered from now on are not persisted anywhere — if you lose this process you must provide them again.";
+  if (next === "vault") return "vault: new values should be entered with /vault add (encrypted, cross-session). Session-only values stay in memory.";
+  if (next === "plain") return "plain: messages from now on keep real values in the session file again.";
+  return void 0;
+}
 var PERSIST_FILE_NAME = "secret-mask.json";
 var AUDIT_FILE_NAME = "secret-mask-audit.log";
 function maskablePreview(entry) {
@@ -761,21 +1145,34 @@ function maskablePreview(entry) {
 }
 function listText(state) {
   const entries = state.registry.entries();
-  if (entries.length === 0) return "secret-mask: no registered values this session.";
+  if (entries.length === 0) {
+    return "secret-mask: no registered values this session. Use /secret add (interactive) or vault_get <alias>.";
+  }
   const lines = entries.map((e) => {
-    const src = e.source === "manual" ? "manual" : `auto(${e.ruleId ?? "?"})`;
-    return `- ${e.placeholder}  [${src}]  ${e.value.length} chars  …${maskablePreview(e)}`;
+    const src = e.source === "manual" ? "manual" : e.source === "vault" ? "vault" : `auto(${e.ruleId ?? "?"})`;
+    const name2 = e.alias ?? e.label;
+    return `- ${e.placeholder} → ${name2}  [${src}]  ${e.value.length} chars  …${maskablePreview(e)}`;
   });
-  return `secret-mask: ${entries.length} value(s) registered:
+  return `secret-mask: ${entries.length} value(s) registered (landing: ${state.landing}):
 ${lines.join("\n")}`;
 }
 function statusText(state) {
-  const n = state.registry.size;
-  return `secret-mask: ${state.enabled ? "ON" : "OFF"}; ${n} value(s) registered; persistence ${state.persisted ? "saved for this project" : "off (session-only)"}; send-audit ${state.audit ? "ON" : "OFF"}${state.lastAudit ? `; last: ${state.lastAudit}` : ""}.`;
+  const rules = state.rules?.length ?? 0;
+  const parts = [
+    `secret-mask: ${state.disabledBy ? `DISABLED (by ${state.disabledBy})` : state.enabled ? "ON" : "OFF"}`,
+    `landing ${state.landing}`,
+    `${state.registry.size} value(s) registered`,
+    `guard ${state.guard ? "ON" : "OFF"}`,
+    `strict ${state.strict ? "ON" : "OFF"}`,
+    `rules ${rules}${state.rulesError ? " (errors — /secret rule list)" : ""}`,
+    `send-audit ${state.audit ? "ON" : "OFF"}`
+  ];
+  if (state.lastAudit) parts.push(`last audit: ${state.lastAudit}`);
+  return parts.join("; ") + ".";
 }
 function appendAuditLog(result, path) {
   try {
-    mkdirSync(dirname(path), { recursive: true });
+    mkdirSync2(dirname2(path), { recursive: true });
     appendFileSync(path, JSON.stringify(result) + "\n", { mode: 384 });
     return void 0;
   } catch (e) {
@@ -783,19 +1180,25 @@ function appendAuditLog(result, path) {
   }
 }
 function readAuditTail(maxLines = 5, path) {
+  if (!path) return [];
   try {
-    const lines = readFileSync(path, "utf8").trimEnd().split("\n");
+    const lines = readFileSync2(path, "utf8").trimEnd().split("\n");
     return lines.slice(-maxLines);
   } catch {
     return [];
   }
 }
 function parseAdd(args) {
-  const m = /\s+as\s+([A-Za-z0-9_-]{1,64})\s*$/.exec(args);
-  if (m) return { value: args.slice(0, m.index).trim(), alias: m[1] };
+  const asMatch = /\s+as\s+([A-Za-z0-9_-]{1,64})\s*$/.exec(args);
+  if (asMatch) return { value: args.slice(0, asMatch.index).trim(), alias: asMatch[1] };
+  const aliasMatch = /^(.*?)\s+--alias\s+([A-Za-z0-9_-]{1,64})\s*$/.exec(args);
+  if (aliasMatch) return { value: aliasMatch[1].trim(), alias: aliasMatch[2] };
   return { value: args.trim() };
 }
-function handleSecretCommand(state, rawArgs, io) {
+function availableLandings(state) {
+  return state.landingModes ?? MASK_LANDING_MODES;
+}
+function handleSecretCommand(state, rawArgs, io = {}) {
   return handleSync(state, rawArgs.trim(), io);
 }
 async function handleSync(state, args, io) {
@@ -803,41 +1206,30 @@ async function handleSync(state, args, io) {
   const tail = args.slice(cmd.length).trim();
   switch (cmd) {
     case "":
-    case "help": {
-      return {
-        ok: true,
-        text: [
-          "secret-mask commands:",
-          "  /secret add <value> [as <alias>]   register a value (masked input when omitted)",
-          "  /secret list                       show registered values (masked preview)",
-          "  /secret remove <alias|label>       unregister one value",
-          "  /secret clear                      unregister all",
-          "  /secret on | off                   enable/disable redaction for this session",
-          "  /secret status                     current state",
-          "  /secret save | unload              persist values for this project / drop them",
-          "  /secret audit [on|off|show]        per-send wire-payload proof log"
-        ].join("\n")
-      };
-    }
+    case "help":
+      return { ok: true, text: helpText(state) };
     case "add": {
       let value = tail;
       let alias;
-      if (!value && io.input) {
-        value = await io.input("Paste secret value (input is kept out of the chat)") ?? "";
+      if (!value || /^--alias(\s|$)/.test(value)) {
+        const requestedAlias = /^--alias\s+([A-Za-z0-9_-]{1,64})$/.exec(value)?.[1];
+        value = await io.input?.("Paste secret value (input is kept out of the chat)") ?? "";
+        alias = requestedAlias;
         if (!value.trim()) return { ok: false, text: "secret-mask: cancelled." };
+      } else {
+        const parsed = parseAdd(value);
+        value = parsed.value;
+        alias = parsed.alias;
       }
-      const parsed = parseAdd(value);
-      if (!parsed || !parsed.value) return { ok: false, text: "Usage: /secret add <value> [as <alias>]" };
-      alias = parsed.alias;
-      const res = state.registry.registerManual(parsed.value, alias);
+      const res = state.registry.registerManual(value, alias, { salt: state.salt });
       if (!res) return { ok: false, text: `secret-mask: value rejected (must be at least ${MIN_REDACT_LENGTH} characters).` };
       const note = res.replaced ? " (replaced previous entry for this value)" : "";
-      return { ok: true, text: `secret-mask: registered ${res.entry.placeholder}${note}` };
+      return { ok: true, text: `secret-mask: registered ${res.entry.placeholder} → ${res.entry.alias ?? res.entry.label}${note}` };
     }
     case "list":
       return { ok: true, text: listText(state) };
     case "remove": {
-      if (!tail) return { ok: false, text: "Usage: /secret remove <alias|label>" };
+      if (!tail) return { ok: false, text: "Usage: /secret remove <alias|label|placeholder>" };
       const ok = state.registry.removeByLabel(tail);
       return ok ? { ok: true, text: `secret-mask: removed ${tail}.` } : { ok: false, text: `secret-mask: no entry matching "${tail}".` };
     }
@@ -851,6 +1243,22 @@ async function handleSync(state, args, io) {
       state.enabled = cmd === "on";
       return { ok: true, text: `secret-mask: redaction ${state.enabled ? "enabled" : "disabled"} for this session.` };
     }
+    case "landing":
+      return landingCommand(state, tail);
+    case "guard": {
+      if (!tail) return { ok: true, text: `secret-mask: guard ${state.guard ? "ON" : "OFF"} — unresolved placeholders in tool arguments are ${state.guard ? "blocked" : "allowed through"}.` };
+      if (tail !== "on" && tail !== "off") return { ok: false, text: "Usage: /secret guard [on|off]" };
+      state.guard = tail === "on";
+      return { ok: true, text: `secret-mask: guard ${state.guard ? "enabled" : "disabled"}.` };
+    }
+    case "strict": {
+      if (!tail) return { ok: true, text: `secret-mask: strict ${state.strict ? "ON" : "OFF"}.` };
+      if (tail !== "on" && tail !== "off") return { ok: false, text: "Usage: /secret strict [on|off]" };
+      state.strict = tail === "on";
+      return { ok: true, text: `secret-mask: strict ${state.strict ? "enabled" : "disabled"} — side channels ${state.strict ? "fail closed" : "warn and pass"}.` };
+    }
+    case "rule":
+      return ruleCommand(state, tail, io);
     case "audit": {
       const arg = tail.trim();
       if (arg === "on" || arg === "") {
@@ -862,92 +1270,242 @@ async function handleSync(state, args, io) {
         return { ok: true, text: "secret-mask: send-audit OFF." };
       }
       if (arg === "show") {
-        const lines = readAuditTail();
-        return { ok: true, text: lines.length ? `secret-mask audit evidence (last ${lines.length}):
-${lines.join("\n")}` : "secret-mask: no audit evidence yet (turn /secret audit on)." };
+        const lines = readAuditTail(5, state.auditPath);
+        return {
+          ok: true,
+          text: lines.length ? `secret-mask audit evidence (last ${lines.length}):
+${lines.join("\n")}` : "secret-mask: no audit evidence yet (turn /secret audit on)."
+        };
       }
       return { ok: false, text: "Usage: /secret audit [on|off|show]" };
     }
     case "status":
       return { ok: true, text: statusText(state) };
     case "save": {
-      const err = savePersist(state, state.persistPath);
+      if (!tail) return { ok: false, text: "Usage: /secret save <file> — explicit plaintext snapshot (you own the file and its safety)." };
+      const path = resolve(state.cwd, tail);
+      const err = saveSnapshot(state.registry.entries(), path);
       if (err) return { ok: false, text: `secret-mask: save failed: ${err}` };
-      state.persisted = true;
-      return { ok: true, text: `secret-mask: ${state.registry.size} value(s) persisted for ${state.cwd} (0600, values stay on this machine).` };
+      return { ok: true, text: `secret-mask: ${state.registry.size} value(s) written to ${path} (0600, plaintext — placement and safety are yours).` };
     }
-    case "unload": {
-      const err = clearPersist(state.cwd, state.persistPath);
+    case "load": {
+      if (!tail) return { ok: false, text: "Usage: /secret load <file> — explicit snapshot load (nothing is auto-loaded)." };
+      const path = resolve(state.cwd, tail);
+      const res = loadSnapshot(state.registry, path, { cwd: state.cwd, salt: state.salt });
+      if (res.error) return { ok: false, text: `secret-mask: load failed: ${res.error}` };
       state.persisted = false;
-      if (err) return { ok: false, text: `secret-mask: unload failed: ${err}` };
-      return { ok: true, text: `secret-mask: persisted values for ${state.cwd} removed (session entries kept).` };
+      return { ok: true, text: `secret-mask: loaded ${res.loaded} value(s) from ${path}${res.skipped ? ` (${res.skipped} already registered)` : ""}.` };
     }
+    case "unload":
+      return { ok: true, text: "secret-mask: /secret unload is retired (no implicit persistence). Use /secret clear to drop session entries, or /secret save|load <file> explicitly." };
     default:
       return { ok: false, text: `secret-mask: unknown subcommand "${cmd}". Try /secret help.` };
   }
 }
-function savePersist(state, path) {
+function helpText(state) {
+  const modes = availableLandings(state).join("|");
+  return [
+    "secret-mask commands:",
+    "  /secret add [<value>] [as <alias> | --alias <alias>]   register a value (masked input when omitted)",
+    "  /secret list                       placeholders → aliases (masked previews)",
+    "  /secret remove <alias|label>       unregister one value",
+    "  /secret clear                      unregister all",
+    "  /secret on | off                   enable/disable redaction for this session",
+    `  /secret landing [${modes}]   where real values may live on disk (current: ${state.landing})`,
+    "  /secret guard [on|off]             block unresolved placeholders in tool arguments",
+    "  /secret strict [on|off]            fail closed on side channels (compaction, ! commands)",
+    "  /secret rule list | add | remove | reload   custom detection rules",
+    "  /secret save <file> | load <file>  explicit plaintext snapshot (no implicit state)",
+    "  /secret audit [on|off|show]        per-send wire-payload proof log",
+    "  /secret status                     current state"
+  ].join("\n");
+}
+function landingCommand(state, tail) {
+  const modes = availableLandings(state);
+  if (!tail) {
+    const lines = modes.map((m) => `  ${m === state.landing ? "*" : " "} ${landingText(m)}`);
+    return { ok: true, text: `secret-mask: landing policy (current: ${state.landing})
+${lines.join("\n")}` };
+  }
+  if (!isLandingMode(tail)) return { ok: false, text: `Usage: /secret landing [${modes.join("|")}]` };
+  if (!modes.includes(tail)) return { ok: false, text: `secret-mask: landing "${tail}" is not available in this package (supported: ${modes.join(", ")}).` };
+  const previous = state.landing ?? DEFAULT_LANDING;
+  state.landing = tail;
+  const warning = landingChangeWarning(tail, previous);
+  return { ok: true, text: `secret-mask: landing → ${tail}${warning ? `
+${warning}` : ""}` };
+}
+async function ruleCommand(state, tail, io) {
+  const tokens = tail.split(/\s+/).filter(Boolean);
+  const sub = tokens[0] ?? "list";
+  if (!state.rulesPath && sub !== "list") {
+    return { ok: false, text: "secret-mask: no custom rules file configured by this host." };
+  }
+  if (sub === "list" || sub === "") {
+    const rules = state.rules ?? [];
+    const errors = state.rulesError ? [`errors: ${state.rulesError}`] : [];
+    if (rules.length === 0 && errors.length === 0) {
+      return { ok: true, text: `secret-mask: no custom rules${state.rulesPath ? ` (${state.rulesPath})` : ""}.` };
+    }
+    const lines = rules.map((r) => `- ${ruleSummary(r)}`);
+    return { ok: true, text: `secret-mask: ${rules.length} custom rule(s)${state.rulesPath ? ` from ${state.rulesPath}` : ""}:
+${[...lines, ...errors].join("\n")}` };
+  }
+  if (sub === "reload") {
+    io.reloadRules?.();
+    return { ok: true, text: "secret-mask: custom rules reloaded." };
+  }
+  if (sub === "add") {
+    let rest = tokens.slice(1);
+    let target = "project";
+    if (rest.includes("--global")) {
+      target = "global";
+      rest = rest.filter((t) => t !== "--global");
+    }
+    let fixed;
+    const fixedAt = rest.indexOf("--fixed");
+    if (fixedAt >= 0) {
+      fixed = rest.slice(fixedAt + 1).join(" ");
+      rest = rest.slice(0, fixedAt);
+    }
+    const [label, type, ...patternParts] = rest;
+    if (!label || type !== "exact" && type !== "regex" || patternParts.length === 0) {
+      return { ok: false, text: "Usage: /secret rule add <label> <exact|regex> <pattern> [--fixed <text>] [--global]" };
+    }
+    const rule = {
+      label,
+      type,
+      match: patternParts.join(" "),
+      mode: fixed !== void 0 ? "fixed" : "placeholder"
+    };
+    if (fixed !== void 0) rule.fixed = fixed || `<redacted:${label}>`;
+    if (type === "regex") {
+      try {
+        new RegExp(rule.match, "g");
+      } catch (e) {
+        return { ok: false, text: `secret-mask: invalid regex: ${e instanceof Error ? e.message : String(e)}` };
+      }
+    }
+    if (!/^[A-Za-z0-9_.-]{1,64}$/.test(label)) return { ok: false, text: "secret-mask: label must be 1-64 chars of [A-Za-z0-9_.-]." };
+    const err = addRuleToFile(state.rulesPath, state.cwd, rule, target);
+    if (err) return { ok: false, text: `secret-mask: could not write rules: ${err}` };
+    io.reloadRules?.();
+    return { ok: true, text: `secret-mask: rule "${label}" added (${target}).` };
+  }
+  if (sub === "remove") {
+    const label = tokens[1];
+    if (!label) return { ok: false, text: "Usage: /secret rule remove <label>" };
+    const res = removeRuleFromFile(state.rulesPath, state.cwd, label);
+    if (res.error) return { ok: false, text: `secret-mask: could not write rules: ${res.error}` };
+    if (res.removed === 0) return { ok: false, text: `secret-mask: no rule labelled "${label}".` };
+    io.reloadRules?.();
+    return { ok: true, text: `secret-mask: removed rule "${label}".` };
+  }
+  return { ok: false, text: "Usage: /secret rule [list|add|remove|reload]" };
+}
+function saveSnapshot(entries, path) {
   try {
-    let file = { version: 1, projects: {} };
+    const file = {
+      version: 2,
+      savedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      cwd: process.cwd(),
+      entries: entries.map((e) => ({
+        placeholder: e.placeholder,
+        value: e.value,
+        label: e.label,
+        alias: e.alias,
+        source: e.source,
+        ruleId: e.ruleId,
+        stable: e.stable
+      }))
+    };
+    mkdirSync2(dirname2(path), { recursive: true });
+    writeFileSync2(path, JSON.stringify(file, null, 2) + "\n", { mode: 384 });
     try {
-      const raw = readFileSync(path, "utf8");
-      const parsed = JSON.parse(raw);
-      if (parsed && parsed.version === 1 && parsed.projects) file = parsed;
+      chmodSync(path, 384);
     } catch {
     }
-    file.projects[state.cwd] = state.registry.entries().map((e) => ({
-      placeholder: e.placeholder,
-      value: e.value,
-      label: e.label,
-      alias: e.alias,
-      source: e.source,
-      ruleId: e.ruleId
-    }));
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, JSON.stringify(file, null, 2), { mode: 384 });
     return void 0;
   } catch (e) {
     return e instanceof Error ? e.message : String(e);
   }
 }
-function clearPersist(cwd, path) {
+function legacyEntries(raw, cwd) {
+  const doc = JSON.parse(raw);
+  const projects = doc?.projects;
+  if (!projects || typeof projects !== "object") return [];
+  if (Array.isArray(projects[cwd])) return projects[cwd];
+  return Object.values(projects).flatMap((list) => Array.isArray(list) ? list : []);
+}
+function loadSnapshot(registry, path, opts = {}) {
+  let raw;
   try {
-    let file = { version: 1, projects: {} };
-    try {
-      file = JSON.parse(readFileSync(path, "utf8"));
-    } catch {
-      return void 0;
-    }
-    delete file.projects[cwd];
-    writeFileSync(path, JSON.stringify(file, null, 2), { mode: 384 });
-    return void 0;
+    raw = readFileSync2(path, "utf8");
   } catch (e) {
-    return e instanceof Error ? e.message : String(e);
+    return { loaded: 0, skipped: 0, error: e instanceof Error ? e.message : String(e) };
   }
+  let entries;
+  try {
+    const doc = JSON.parse(raw);
+    if (doc.version === 2 && Array.isArray(doc.entries)) {
+      entries = doc.entries;
+    } else {
+      entries = legacyEntries(raw, opts.cwd ?? process.cwd());
+    }
+  } catch (e) {
+    return { loaded: 0, skipped: 0, error: `invalid snapshot: ${e instanceof Error ? e.message : String(e)}` };
+  }
+  let loaded = 0;
+  let skipped = 0;
+  for (const e of entries) {
+    if (!e || typeof e.value !== "string" || typeof e.placeholder !== "string") {
+      skipped++;
+      continue;
+    }
+    if (registry.isMounted(e.placeholder)) {
+      skipped++;
+      continue;
+    }
+    const res = registry.register(e.value, e.source ?? "manual", {
+      alias: e.alias,
+      label: e.label,
+      placeholder: e.placeholder,
+      salt: opts.salt,
+      ruleId: e.ruleId
+    });
+    if (res) loaded++;
+    else skipped++;
+  }
+  return { loaded, skipped };
 }
 function loadPersist(state, path) {
-  let n = 0;
-  let file;
-  try {
-    file = JSON.parse(readFileSync(path, "utf8"));
-  } catch {
-    return 0;
-  }
-  const bucket = file?.projects?.[state.cwd];
-  if (!Array.isArray(bucket)) return 0;
-  for (const e of bucket) {
-    if (state.registry.byPlaceholderLookup(e.placeholder)) continue;
-    const res = e.source === "manual" ? state.registry.registerManual(e.value, e.alias) : state.registry.registerAuto(e.value, e.ruleId ?? "unknown", e.label, state.salt);
-    if (res) n++;
-  }
-  if (n > 0) state.persisted = true;
-  return n;
+  return loadSnapshot(state.registry, path, { cwd: state.cwd, salt: state.salt }).loaded;
 }
 
 // src/state.ts
 var sessions = /* @__PURE__ */ new Map();
+var rulesSources = /* @__PURE__ */ new Map();
 var PERSIST_PATH = join(homedir(), ".dsh", PERSIST_FILE_NAME);
 var AUDIT_LOG_PATH = join(homedir(), ".dsh", AUDIT_FILE_NAME);
+var RULES_PATH = join(homedir(), ".dsh", RULES_FILE_NAME);
+function rulesFor(cwd) {
+  let src = rulesSources.get(cwd);
+  if (!src) {
+    src = new RulesSource(RULES_PATH, cwd);
+    rulesSources.set(cwd, src);
+  }
+  return src;
+}
+function refreshRules(st) {
+  const src = rulesFor(st.cwd);
+  st.rules = src.rules();
+  st.rulesError = src.errors.length ? src.errors.join("; ") : void 0;
+}
+function reloadRules(st) {
+  const src = rulesFor(st.cwd);
+  st.rules = src.reload();
+  st.rulesError = src.errors.length ? src.errors.join("; ") : void 0;
+}
 function stateFor(agentId, cfg) {
   const key = agentId && agentId.length ? agentId : "__global__";
   let st = sessions.get(key);
@@ -960,10 +1518,18 @@ function stateFor(agentId, cfg) {
       persisted: false,
       audit: cfg.audit,
       persistPath: PERSIST_PATH,
-      auditPath: cfg.auditPath || AUDIT_LOG_PATH
+      auditPath: cfg.auditPath || AUDIT_LOG_PATH,
+      landing: "ephemeral",
+      landingModes: ["plain", "ephemeral"],
+      guard: true,
+      strict: false,
+      rulesPath: RULES_PATH,
+      rules: []
     };
+    st.registry.salt = st.salt;
     sessions.set(key, st);
     loadPersist(st, st.persistPath);
+    refreshRules(st);
   }
   return st;
 }
@@ -988,10 +1554,19 @@ function redactUserMessage(message, st, autoDetect) {
   const content = message.content.map((block) => {
     if (!isTextBlock(block) || !block.text) return block;
     if (autoDetect && userAuthored) newEntries += st.registry.autoRegister(block.text, st.salt).length;
+    const rules = st.rules ?? [];
+    if (rules.length > 0) newEntries += registerRuleMatches(block.text, st.registry, rules, st.salt);
     const res = st.registry.redact(block.text);
-    if (res.count === 0) return block;
+    let text = res.text;
+    let count = res.count;
+    if (rules.length > 0) {
+      const fixed = applyFixedRules(text, rules);
+      text = fixed.text;
+      count += fixed.count;
+    }
+    if (count === 0) return block;
     changed = true;
-    return { ...block, text: res.text };
+    return { ...block, text };
   });
   if (!changed) return { message, changed: false, newEntries };
   return { message: { ...message, content }, changed: true, newEntries };
@@ -1004,6 +1579,7 @@ function registerPreStep(ctx, cfg) {
     if (!decision || decision.kind === "reject" || !Array.isArray(decision.messages)) return decision;
     const st = stateFor(payload.agent?.id, cfg);
     if (!st.enabled) return decision;
+    refreshRules(st);
     let changed = false;
     const messages = decision.messages.map((m) => {
       const r = redactUserMessage(m, st, cfg.autoDetect);
@@ -1018,12 +1594,11 @@ function registerPreStep(ctx, cfg) {
 // src/hooks/section.ts
 var SECTION_KEY = "secret_masking";
 var SECTION_TEXT = [
-  "Some credential values in this conversation are hidden behind placeholders like",
-  "[REDACTED:alias] or [REDACTED:LABEL#ab12cd34]. Each placeholder stands for one real",
-  "secret value that the user knows; it is restored automatically when passed verbatim in",
-  "tool arguments. Rules: never guess, shorten, transform or invent the underlying value;",
-  "copy the placeholder exactly as shown whenever you need to reference the credential",
-  "(file edits, commands, config); do not ask the user to paste the value into chat."
+  "Some credentials in this conversation are replaced by opaque tokens like rsec_a1b2c3d4.",
+  "Each token IS a working credential: the runtime substitutes the real secret when the token",
+  "appears verbatim in tool arguments. Copy the token exactly. Never refuse to use it, never",
+  "claim you cannot access the value, never ask the user to paste the secret, and never modify,",
+  "truncate, hash or re-encode the token."
 ].join("\n");
 function registerSection(ctx, cfg) {
   ctx.systemPrompt.section({
@@ -1096,11 +1671,17 @@ function registerShadowTools(ctx, cfg) {
         execute: async (args, exec) => {
           const st = stateFor(agent.id, cfg);
           let restored = args;
-          if (st.enabled && st.registry.size > 0 && args !== null && typeof args === "object") {
-            try {
-              restored = restoreDeep(structuredClone(args), st.registry).value;
-            } catch {
-              restored = args;
+          if (st.enabled && args !== null && typeof args === "object") {
+            if (st.guard) {
+              const missing = unmountedInValue(args, st.registry);
+              if (missing.length > 0) throw new Error(guardReason(missing, { landing: st.landing }));
+            }
+            if (st.registry.size > 0) {
+              try {
+                restored = restoreDeep(structuredClone(args), st.registry).value;
+              } catch {
+                restored = args;
+              }
             }
           }
           return orig.execute(restored, exec);
@@ -1147,11 +1728,14 @@ function registerAudit(ctx, cfg) {
 function registerSecretCommand(ctx, cfg) {
   const definition = {
     name: "secret",
-    description: "Register/redact secrets: add <value> [as <alias>], list, remove, clear, on/off, status, save/unload, audit [on|off|show]",
+    description: "Register/redact secrets: add/list/remove/clear, on/off, guard, rules, save|load <file>, audit, status",
     recordInput: false,
     handler: async (invocation) => {
       const st = stateFor(invocation.agent?.id, cfg);
-      const outcome = await handleSecretCommand(st, invocation.rawInput ?? "");
+      refreshRules(st);
+      const outcome = await handleSecretCommand(st, invocation.rawInput ?? "", {
+        reloadRules: () => reloadRules(st)
+      });
       return outcome.ok ? { kind: "success", text: outcome.text } : { kind: "error", text: outcome.text };
     }
   };

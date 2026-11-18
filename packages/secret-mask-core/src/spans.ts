@@ -13,7 +13,8 @@
  * The span contract covers both: `set` may mutate or the host may rebuild.
  */
 
-import type { Registry, ScanMaxOptions } from "./mask.ts";
+import { applyFixedRules, registerRuleMatches, type CustomRule } from "./rules.ts";
+import type { Registry, RegistryEntry, ScanMaxOptions } from "./mask.ts";
 
 export interface TextSpan {
   get(): string;
@@ -23,6 +24,19 @@ export interface TextSpan {
 export interface SpanRedactResult {
   changed: boolean;
   newEntries: number;
+}
+
+export interface SpanRedactOptions extends ScanMaxOptions {
+  /** Register new auto-detected secrets from this span. */
+  autoDetect?: boolean;
+  /** User-defined rules merged on top of the built-in detection rules. */
+  rules?: CustomRule[];
+  /**
+   * Called with newly detected entries BEFORE redaction, so a host can mount
+   * them differently (vault landing: stable alias placeholder in place of the
+   * session token).
+   */
+  onDetected?: (entries: RegistryEntry[]) => void;
 }
 
 /**
@@ -35,17 +49,31 @@ export function redactTextSpans(
   spans: TextSpan[],
   registry: Registry,
   salt: string,
-  opts: { autoDetect?: boolean } & ScanMaxOptions = {},
+  opts: SpanRedactOptions = {},
 ): SpanRedactResult {
   let newEntries = 0;
   let changed = false;
   for (const span of spans) {
     const text = span.get();
     if (!text) continue;
-    if (opts.autoDetect) newEntries += registry.autoRegister(text, salt, opts).length;
+    if (opts.autoDetect) {
+      const added = registry.autoRegister(text, salt, opts);
+      if (added.length > 0) {
+        opts.onDetected?.(added);
+        newEntries += added.length;
+      }
+    }
+    if (opts.rules && opts.rules.length > 0) newEntries += registerRuleMatches(text, registry, opts.rules, salt);
     const res = registry.redact(text);
-    if (res.count > 0) {
-      span.set(res.text);
+    let next = res.text;
+    let count = res.count;
+    if (opts.rules && opts.rules.length > 0) {
+      const fixed = applyFixedRules(next, opts.rules);
+      next = fixed.text;
+      count += fixed.count;
+    }
+    if (count > 0) {
+      span.set(next);
       changed = true;
     }
   }

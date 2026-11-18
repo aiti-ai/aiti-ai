@@ -1,144 +1,111 @@
 # pi-secret-mask
 
-> **随手贴，不泄密。** — Paste-safe by default.
+> **随手贴，不泄密。**
 
-[pi](https://github.com/earendil-works/pi-coding-agent) 的会话级 AI 脱敏插件：你贴进 prompt 的 token / API key / 凭据，在**发送给模型之前**自动替换为稳定占位符（如 `[REDACTED:github-token]`）；模型在工具参数里引用占位符时，**工具执行之前**自动还原为真实值。
+pi（[pi coding agent](https://github.com/earendil-works/pi-coding-agent)）的会话级密钥脱敏插件：你在 prompt 里粘贴的 token/API key/凭据，在**发送给模型之前**就被替换为形似凭据的不可读令牌 `rsec_a1b2c3d4`；模型在工具参数里原样引用该令牌时，执行前自动还原真值。
 
-pi 包形态，零运行时依赖。装一次即覆盖 TUI 和全部 pi-web 会话（pi-web 的每个 pi 会话都是独立 `pi --mode rpc` 子进程，加载全局 packages）。
+零运行时依赖（检测/替换引擎与加密持久版共享 `@aiti-ai/secret-mask-core`）。一次安装覆盖 TUI 与全部 pi-web 会话。
 
 English: [README.md](README.md)
 
 ```
-你：  我的 api key 是 sk-ant-api03-<80位> —— 帮我写进 .env 的 ANTHROPIC_KEY
-模型看到：我的 api key 是 [REDACTED:ANTHROPIC_KEY#a1b2c3d4] —— 帮我写进 .env ...
-write 工具：ANTHROPIC_KEY=sk-ant-api03-<80位>   ← 执行时已还原为真值
-session 文件：原文保留（context 钩子是非破坏性的）
+你:    我的 api key 是 sk-ant-api03-<80 字符>，写进 .env 的 ANTHROPIC_KEY
+模型看到:  我的 api key 是 rsec_a1b2c3d4，写进 .env 的 ANTHROPIC_KEY
+write 工具: ANTHROPIC_KEY=sk-ant-api03-<80 字符>   ← 执行前还原
+session 文件: plain 档=原文；ephemeral 档=rsec_a1b2c3d4
 ```
 
+为什么用 `rsec_<hash8>` 而不是 `[REDACTED:别名]`：安全对齐训练让模型把 `[REDACTED:*]` 理解为「已被拦截、拿不到明文」，从而拒绝放进工具参数。看起来像真凭据的令牌会被自然引用，而真值始终不出现在模型上下文里。
 
-## 关于 aiti
-
-本包是 **aiti** 生态的一部分——一个以 [pi](https://pi.dev) 为引擎的个人 AI 开发工作台生态。
-
-- **aiti Web 工作台**（自托管、浏览器主操作面，本插件默认预装）：npm 包 **`@aiti-ai/pi-web`** —— <https://github.com/aiti-ai/pi-web> · 官网 <https://aiti.pw>
-- 生态 monorepo（文档站、扩展、集成）： <https://github.com/aiti-ai/aiti-ai>
-
-**可独立使用**：任何 pi（coding agent）用户均可直接 `pi install npm:@aiti-ai/pi-secret-mask`，单独获得全部能力，与 aiti 其它组件无任何依赖。
-
-**也可配合 aiti Web 使用**：从 Web 工作台发起的会话自动带上本插件（第一方插件，启动时自动预配）。
+> 需要**跨会话持久、加密落盘、可被模型按别名查询**？装持久版 **`@aiti-ai/pi-secret-vault`**（`/vault add`、`vault_list` / `vault_get`）。两包共享同一引擎、同一会话内互斥（vault 优先，mask 自动停用）。
 
 ## 安装
 
 ```bash
-pi install npm:@aiti-ai/pi-secret-mask@latest     # 开发期也可用本地路径
+pi install npm:@aiti-ai/pi-secret-mask@latest
+# 或把路径加进 ~/.pi/agent/settings.json 的 packages
 ```
 
-或在 `~/.pi/agent/settings.json` 加：
-
-```json
-{ "packages": ["npm:@aiti-ai/pi-secret-mask@latest"] }
-```
-
-**新开的会话生效**（每个新 TUI / pi-web 会话都会新起一个 pi 进程）；已运行的会话不受影响。
+对**新启动**的会话生效（TUI / pi-web 每个会话都是独立 pi 进程）。运行中的会话不受影响。
 
 ## 命令
 
 | 命令 | 作用 |
 |---|---|
-| `/secret add <值> [as <别名>]` | 登记一个值（省略值时进入交互输入，值不进对话）。别名让占位符可读。 |
-| `/secret list` | 已登记值清单（打码预览 `…****abcd`、来源、规则 id）。 |
-| `/secret remove <别名\|标签>` | 移除一个值。 |
+| `/secret add [<值>] [as <别名> \| --alias <别名>]` | 登记一个值（省略值时走隐藏输入，值不进对话）。别名让占位符在 `/secret list` 可读。 |
+| `/secret list` | 占位符 → 别名/规则 的映射 + 打码预览。 |
+| `/secret remove <别名\|标签\|占位符>` | 注销一个值（本会话内旧占位符引用仍可还原）。 |
 | `/secret clear` | 清空全部。 |
-| `/secret on` / `off` | 本会话开/关脱敏。 |
-| `/secret status` | 状态总览（含审计状态与最近一次审计结果）。 |
-| `/secret save` / `unload` | 把当前项目的值持久化到 `~/.pi/agent/secret-mask.json`（0600，显式 opt-in）/ 清除。 |
-| `/secret audit on\|off` | 每次发送的线上 payload 证明日志（见下文[测试与验证](#测试与验证)）。 |
-| `/secret audit show` | 查看最近的审计证据行。 |
+| `/secret on` / `off` | 本会话脱敏开关。 |
+| `/secret landing [plain\|ephemeral]` | 落盘策略（见下）。 |
+| `/secret guard on\|off` | 拦截引用「本会话未挂载占位符」的工具调用（默认开）。 |
+| `/secret strict on\|off` | 旁路一律拒绝（`!` 命令、摘要路径）而不是告警放行。 |
+| `/secret rule list \| add <标签> <exact\|regex> <模式> [--fixed <文本>] [--global] \| remove <标签> \| reload` | 自定义规则（`~/.pi/agent/secret-mask-rules.json`，改动即时生效）。 |
+| `/secret save <文件>` / `load <文件>` | 显式明文快照（0600）：文件名由你指定，系统不记忆、不自动加载，位置与安全自负。 |
+| `/secret audit on\|off` / `show` | 每次发送的线上 payload 证明日志。 |
+| `/secret status` | 状态摘要：landing、guard、strict、规则数、登记数、审计开关。 |
 
-## 工作机制
+## 落盘三态（真值住在哪里）
 
-| 环节 | 钩子 | 行为 |
+| 档位 | session 文件 | 重启后找回 | 说明 |
+|---|---|---|---|
+| `plain`（默认） | 原文 | grep session / `/secret load <文件>` / 重新粘贴 | 现状；本地 transcript 本来就含你输入的值 |
+| `ephemeral` | 只有 `rsec_*` 令牌 | **设计上不可能**（只在进程内存） | `message_end` 用脱敏副本替换落盘消息 |
+| `vault` | 只有 `rsec_*` 令牌 | `/vault unlock` + `vault_get <别名>` 复活**稳定令牌** | 仅 `@aiti-ai/pi-secret-vault` 提供 |
+
+档位只作用于当前会话，新会话回到默认档。
+
+## 钩子一览
+
+| 阶段 | 钩子 | 行为 |
 |---|---|---|
-| 发送边界 | `context` | 对所有角色（user / assistant 文本 / 工具结果 / `!` bash 命令与输出 / 压缩摘要）做脱敏；自动检测（高置信规则）只对**用户手写文本**登记新值。该钩子拿到的是深拷贝：session 原文不受影响，只有发往模型的副本被改写。 |
-| 约定注入 | `before_agent_start` | 追加 `secret_masking` 系统提示节：占位符是不透明替身，引用时原样照抄进工具参数，禁止猜测真值。 |
-| 返回边界 | `tool_call` | 就地还原工具参数中的占位符（pi 只接受就地修改字段）。bash 默认包含——核心场景就是"用这个 key 跑命令"；若你的威胁模型不接受，`/secret off` 可整体关闭。 |
-| 工具输出 | `tool_result` | 工具输出进入上下文与 session 记录前替换已登记值（防止 `cat .env` 把值再次灌进对话）。 |
-| 证明层 | `before_provider_request` | 开启 `/secret audit on` 后：在**最终线上 payload**（provider 序列化完成、HTTP 发出前）扫描已登记真值与占位符出现次数。每次发送 `leaks=0` 且 `placeholders>0` = 只有占位符上线的直接证据；出现任何真值立即报警。该检查独立于脱敏主链路——无论之前钩子链怎么改写，它看到的就是最终上线内容。 |
+| 输入边界 | `input` | vault/ephemeral 档：在**你输入的 prompt** 落盘前检测并改写成令牌（只靠 message_end 会晚于原文落盘）。plain 档原样放行。 |
+| 发送边界 | `context` | 全 role 脱敏（user / assistant 文本与 thinking / toolResult / `!` 命令与输出 / 摘要消息）；自动检测只扫用户手写文本；钩子拿到的是深拷贝。 |
+| system 段 | `context_with_system` | 补 `context` 看不到的 system prompt（AGENTS.md/项目说明里的值）。 |
+| 用法约定 | `before_agent_start` | 注入 `secret_masking` 段：令牌**就是**可用凭据，原样复制，禁止拒用/索要明文/改写。 |
+| 守卫 + 还原 | `tool_call` | 未挂载占位符 → `block` 并给出确切的恢复命令；已挂载 → 就地还原（任意工具任意参数）。 |
+| 工具输出 | `tool_result` | 回显脱敏（`cat .env` 不再回灌上下文/落盘）。 |
+| 落盘副本 | `message_end` | vault/ephemeral 档返回脱敏替换消息（role 保持不变）。 |
+| 摘要 | `session_before_compact` / `session_before_tree` | 深替换摘要模型输入（messagesToSummarize / turnPrefixMessages / previousSummary / 树条目）。 |
+| `!` 命令 | `user_bash` | 命中已登记值默认告警放行（尊重用户意图），`strict` 直接拒绝。 |
+| 防护 + 证明 | `before_provider_request` | 改写兜底（默认开，无值零开销）+ `/secret audit on` 时对**最终 wire payload** 做真值泄漏扫描与占位符计数。 |
 
-## 检测规则
+不透明 provider 字段（thinking/thought/text signature）一律不动。
 
-确定性正则 + 校验和规则，无网络请求、无模型调用：AWS、GitHub、GitLab、Slack（token + webhook）、Stripe live、SendGrid、Twilio、Google API/OAuth、Anthropic、OpenAI、Hugging Face、npm、PyPI、Azure storage、JWT（须解出 alg 头）、PEM 私钥（完整 + 截断）、带真实密码的 DB URL、`Authorization` 头、泛型 `key = "value"` / `key = value` 赋值（香农熵阈值 + 代码标识符/模板/URL 排除）。base64 包装的前缀型 token 解码后整段命中。短于 6 字符的值忽略（噪音防护）。
+## 检测规则与自定义规则
 
-**中文关键词**（v0.1.x）：泛型赋值词表包含 `密码 / 密钥 / 秘钥 / 口令 / 令牌 / 授权码 / 授权密钥 / 访问令牌 / 访问密钥 / 凭证 / 凭据 / 私钥`；赋值分隔符支持全角冒号（`密码：xxx`、`授权码：xxx`、`Authorization：Bearer xxx`）；中英邻接（`API密钥`、`db密码`）与纯中文前缀（`数据库密码`）都算词边界。bare 值熵下限为 **2.5 bits/字符**（自 cc-redact 的 3.0 调降——该值按文件扫描场景调参，对话场景下只拦人类自设密码 2.5-3.0 区段，而中文说明句熵横跨旧阈值两侧；21 万本地文件实测调降后仅新增 keyword+冒号说明句/minified 形态误报，无真实凭据）。bare 值终止符含全角标点（`密码：xxx，请记好` 不吞尾注）。极低熵值（约 6 个不同字符以下）引号包裹或用 `/secret add`。
+24 条确定性规则（正则 + 校验和 + 熵阈值 + 误报排除），无网络、无模型调用：AWS / GitHub / GitLab / Slack / Stripe / SendGrid / Twilio / Google / Anthropic / OpenAI / Hugging Face / npm / PyPI / Azure / JWT / PEM 私钥 / 带真密码的 DB URL / Authorization 头 / 泛型赋值；base64 包裹的令牌解码后再匹配；短于 6 字符的值不登记。中文关键词（密码/密钥/口令/令牌/授权码/凭证…）、全角冒号、拉丁-CJK 邻接均支持。
 
-误报三重防护：`plausibleSecret` 排除集（模板槽位、`${VAR}`、路径、URL、`process.env.*`、`example`/`changeme` 等填充值）、熵下限（引号形态 ≥2.0 / 裸值 ≥3.0 bits/字符）、代码标识符/成员链排除（`Uint8Array`、`jose.base64url.decode` 不是密码值）。规则形状对标公开的 gitleaks/GitHub secret-scanning 语料库（以 MIT 许可的 `claude-code-redact` 项目实现为参照）；`tools/fp-corpus.mjs` 复用其 11 个锁定公共仓库（4.2 万+ 文件）做误报复测。完整归属、许可文本与商标说明见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
+自定义规则文件（`mode: "placeholder"` 走正常脱敏+还原；`"fixed"` 单向替换）：
 
-## 占位符格式
-
-- 显式登记（带别名）：`[REDACTED:github-token]`——别名即语义。
-- 自动检测：`[REDACTED:GITHUB_TOKEN#a1b2c3d4]`——hash = fnv1a(会话盐 + 值)；同会话内同值同占位符（幂等、缓存友好），跨会话无意义（防碰撞猜测）。
-
-## 测试与验证
-
-四层手段，从单测到线上证明：
-
-### 1. 单元测试（`npm test`）
-
-`node --test`，38 个用例。覆盖：每条规则族（正匹配 + **近 miss** fixture——形状相邻但必须不命中的非密串）、熵/校验和辅助函数、中文关键词形态（全角冒号、中英邻接、`密码规则如下：` 等文字性近 miss）、占位符幂等、子串包含时长值优先、多形态匹配（PEM 正文被行号拆散仍命中）、还原往返、工具输入深遍历、按角色的消息脱敏、命令处理、持久化往返、线上 payload 审计扫描。
-
-### 2. 误报语料（`npm run fp-corpus`）
-
-扫描与 claude-code-redact 的 fp-corpus 相同的 11 个锁定公共仓库（lockfile、go.sum、Kubernetes/Terraform 清单、含示例凭据的 compose、重文档 Markdown、压缩 JS、JWT/PEM 测试向量、JOSE 向量、`.env` fixture；约 6 万文本文件，单文件 <2MB）。锁定时点结果：**66 处命中全部为真实形状（测试 PEM 私钥、签名 JWT 向量、示例 DB 凭据）——0 误报**，与上游基线（42,836 文件 / 68 命中 / 0 误报）对齐。判定标准：作为测试向量发布的完整私钥 / 签名 JWT / 示例 DB 凭据**就是密钥、应当被脱敏**，不算误报。结果写入 `tools/fp-corpus-results.md`；仓库缓存在 `/tmp/pi-secret-mask-fp-corpus/`，热跑约 20 秒。
-
-局限：语料为英文仓。中文误报行为由单测近 miss 覆盖（`密码规则如下：` / `密码策略：` 必须不命中）。
-
-### 3. 端到端冒烟（行为学证明）
-
-新会话里——**模型说不出它没收到的东西**：
-
-```
-你：  把这个 key 存到 /tmp/k.txt：sk-ant-api03-<80位假值>
-      （模型只看到 [REDACTED:ANTHROPIC_KEY#hash]；它发出的 write 工具参数就是占位符）
-你：  /tmp/k.txt 里是什么？原样输出
-      → 说得出真值 = 脱敏失败；只给占位符 = 生效
-cat /tmp/k.txt   → 文件里是真实值（tool_call 还原生效）
+```jsonc
+{
+  "version": 1,
+  "rules": [{ "label": "corp-token", "type": "regex", "match": "acme_[A-Za-z0-9]{32}" }],
+  "projects": { "/home/me/repo": [{ "label": "local", "type": "exact", "match": "..." }] }
+}
 ```
 
-### 4. 线上 payload 审计（每次发送自带证据）
+非法规则会被跳过并在 `/secret rule list` 中报告；文件按 mtime/size 懒加载（无定时器、无轮询）。
 
-`/secret audit on`——之后每次 provider 请求都会在最后一刻（`before_provider_request`，所有其他钩子之后）被扫描，并向 `~/.pi/agent/secret-mask-audit.log`（0600）追加一条证据：
+## 验证
 
-```json
-{"time":"...","sessionId":"...","strings":299,"placeholders":2,"leaks":0,"leakedLabels":[]}
-```
+- `npm test`（22 用例）+ 共享引擎套件（`@aiti-ai/secret-mask-core` 62 用例）：引擎 + pi 适配层 + 钩子接线（mock pi host 驱动 input/脱敏/guard/还原/message_end/compact/user_bash/provider/握手）。
+- `npm run fp-corpus`：11 个固定公开仓（~42k 文本文件）误报语料。基线 65 命中全为真实形状 = **0 误报**（顺带清除 `token is configured.` 散文与 `${VAR:default}` 模板默认值两类误报）。
+- 端到端：新会话里让模型复述刚写入文件的内容——它说不出真值才算生效。
+- 线上证明：`/secret audit on` 每次发送追加一行证据（只含标签，绝不含真值）。
 
-- `leaks=0` 且 `placeholders>0` = 该次发送只有占位符上线的直接证据
-- `placeholders` 随对话轮递增（对话携带占位符）——与脱敏生效的表现一致
-- payload 中发现任何已登记真值 → 立即弹出 `secret-mask LEAK: ...` 报警通知
-- 证据文件永不含真值（只有标签名）；`/secret audit show` 在会话内直接查看尾部
+## 已知边界
 
-## 不做的事（已知局限，与业界同类一致）
-
-- **session 文件保留原文**。pi 没有改写历史记录的钩子；脱敏只作用于模型/provider 边界。本地 transcript 本来就有你输入的原文。
-- **无关键字上下文的裸值不自动检测**。直接贴一段没有 `key =` / `Authorization:` 形态的高熵串，规则看不见——这类用 `/secret add`。这是刻意的：裸高熵检测会在压缩 JS 上全面误报。
-- **纯中文裸短语**不足约 8 个不同汉字时低于熵下限；加引号或 `/secret add`。
-- **变换逃逸**（`${T:0:10}` 切片、重新编码的 base64）——`redactForms` 能兜住多形态（被行号拆散的 PEM 正文、JSON key 文件），其余如实存在局限。
-- **图片不扫描**。
-- 被提示注入的 agent 仍可把还原后的值发进网络命令外传——本工具防**意外泄露**，不防恶意 agent。审计层能发现真值出现在模型边界，但发现不了经还原后的 Bash 命令外传的值。同款警告见 keyshroud 的 security model。
+- 无关键词上下文的裸值不会被自动检测（用 `/secret add`）。这是刻意设计：裸高熵检测会在压缩 JS 上狂误报。
+- 低熵纯中文裸短语不检测；加引号或 `/secret add`。
+- 变形值（切片、再编码）逃逸（`redactForms` 覆盖的多形态除外）。
+- 图片不扫描。
+- 流式工具输出不进模型上下文（pi 只把最终 toolResult 回灌，`tool_execution_update` 仅 UI 展示，已按 pi 1.5 核实），无需流式 scrub。
+- plain 档下本机进程仍可读 session；在意就用 ephemeral/vault 档。另外被注入的模型仍可把还原后的真值塞进外联命令——本插件防**意外**泄漏，不防恶意 agent。
 
 ## 共存
 
-与 `keyshroud`（vault 系脱敏）及其他 `tool_result`/`context` 改写类扩展安全共存：钩子链按加载顺序链接，精确匹配的替换集互不相交（vault 值 vs 会话登记值）。
+与 keyshroud 等改写 `context`/`tool_result` 的扩展可共存（钩子链组合、替换集不相交）。与 **`@aiti-ai/pi-secret-vault`** 同会话时握手互斥：vault 优先，mask 自动停用。
 
-## 致谢与第三方声明
-
-规则形状与方法论参照两个 MIT 项目——[claude-code-redact](https://github.com/karanb192/claude-code-redact)（Karan Bansal）与 [keyshroud](https://github.com/dinhkarate/keyshroud)（Daniel / EONSR）——以及公开的 [gitleaks](https://github.com/gitleaks/gitleaks) token 语料。本项目为独立实现；完整归属与许可文本见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。规则标签中的产品/厂商名仅是对凭据格式的指称性使用，无任何隶属或背书关系。
-
-## 开发
-
-```bash
-npm test            # node --test，38 用例
-npm run fp-corpus   # 误报语料复测（热缓存约 20 秒）
-```
-
-License: MIT。
+License: MIT.

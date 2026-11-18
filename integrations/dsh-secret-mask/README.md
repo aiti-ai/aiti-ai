@@ -2,7 +2,7 @@
 
 > **Paste-safe by default.** — 随手贴，不泄密。
 
-Session-level secret redaction for **DSH (DeepSeek Harness)**: values you paste into prompts (tokens, API keys, credentials) are replaced with stable placeholders like `[REDACTED:github-token]` **before a step enters the model**, and placeholders the model echoes back inside whitelisted tool arguments are **restored to the real values before the tool executes**. Zero runtime dependencies.
+Session-level secret redaction for **DSH (DeepSeek Harness)**: values you paste into prompts (tokens, API keys, credentials) are replaced with opaque tokens like `rsec_a1b2c3d4` **before a step enters the model**, and placeholders the model echoes back inside whitelisted tool arguments are **restored to the real values before the tool executes**. Zero runtime dependencies.
 
 Detection core is ported verbatim from [@aiti-ai/pi-secret-mask](https://www.npmjs.com/package/@aiti-ai/pi-secret-mask) — same rules, entropy thresholds, placeholder format and restore semantics. Also see the official `@deepseek-ai/dsh-client-ui-secret-mask`, which masks the *display* of sent text only (model input keeps the raw characters); this plugin complements it at the model boundary.
 
@@ -10,10 +10,17 @@ Detection core is ported verbatim from [@aiti-ai/pi-secret-mask](https://www.npm
 
 ```
 你：  我的 api key 是 sk-ant-api03-<80位> —— 帮我写进 .env 的 ANTHROPIC_KEY
-模型看到：我的 api key 是 [REDACTED:ANTHROPIC_KEY#a1b2c3d4] —— 帮我写进 .env ...
+模型看到：我的 api key 是 rsec_a1b2c3d4 —— 帮我写进 .env ...
 bash 工具：ANTHROPIC_KEY=sk-ant-api03-<80位>   ← shadow wrapper 执行时已还原为真值
 session 日志：占位符持久落盘（pre-step 替换是 durable 的）
 ```
+
+## 0.2.0 highlights (shared engine v2)
+
+- Placeholder format is now `rsec_<hash8>` (credential-shaped; models stop refusing to use it). Legacy `[REDACTED:*]` tokens remain restorable.
+- Unresolved-placeholder guard: a shadow tool that receives a token not mounted in this session fails with an actionable error instead of executing a literal fake value (the session log is durable, so after a restart old tokens would otherwise be meaningless).
+- Custom rules: `~/.dsh/secret-mask-rules.json` (global + per-workspace, hot reloaded) with placeholder / one-way (`fixed`) modes, via `/secret rule …`.
+- Landing policy is `ephemeral` by design (pre-step replacement is durable; values live in this process only) — `/secret status` shows it; `/secret save|load <file>` stays an explicit plaintext snapshot.
 
 ## Install
 
