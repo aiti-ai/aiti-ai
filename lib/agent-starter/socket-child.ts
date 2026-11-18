@@ -31,6 +31,14 @@ import {
   type Frame,
 } from "./wire.ts";
 
+/**
+ * Event emitted once the replayed history has been dispatched: everything before
+ * it came from the wrapper's journal, everything after it is live. Handles that
+ * keep a protocol state machine (ACP JSON-RPC) use it to treat replayed frames as
+ * history instead of new input.
+ */
+export const REPLAY_END_EVENT = "replay_end";
+
 export type SocketChildOptions = {
   /** Agent process pid reported by the wrapper's hello frame. */
   pid: number;
@@ -73,6 +81,13 @@ export class SocketChild extends EventEmitter {
   private readonly parser = new FrameParser();
   private closed = false;
   private released = false;
+  /**
+   * Journal replay is dispatched on a macrotask (setImmediate) so the handle that
+   * owns this child can attach its listeners in its constructor first; live bytes
+   * that arrive in between are buffered to keep the wire order.
+   */
+  private preludePending = true;
+  private pendingLive: Buffer[] = [];
 
   constructor(socket: Socket, options: SocketChildOptions, prelude?: SocketChildPrelude) {
     super();
@@ -99,16 +114,23 @@ export class SocketChild extends EventEmitter {
     socket.on("error", (err: Error) => this.onSocketError(err));
     socket.on("close", () => this.onSocketClose());
 
-    if (prelude && (prelude.frames.length > 0 || prelude.bytes)) {
-      process.nextTick(() => {
-        if (this.closed) return;
-        if (prelude.bytes && prelude.bytes.length > 0) this.onData(prelude.bytes);
-        for (const frame of prelude.frames) {
-          if (this.closed) break;
-          this.dispatchFrame(frame);
-        }
-      });
-    }
+    setImmediate(() => {
+      if (this.closed) return;
+      const frames = prelude?.frames ?? [];
+      if (prelude?.bytes && prelude.bytes.length > 0) this.#dispatchReplayBytes(prelude.bytes);
+      for (const frame of frames) {
+        if (this.closed) break;
+        this.dispatchFrame(frame);
+      }
+      this.preludePending = false;
+      const buffered = this.pendingLive;
+      this.pendingLive = [];
+      for (const chunk of buffered) {
+        if (this.closed) break;
+        this.onData(chunk);
+      }
+      if (!this.closed) this.emit(REPLAY_END_EVENT, frames.length);
+    });
   }
 
   /** Convenience cast for code typed against node's ChildProcess. */
@@ -176,7 +198,27 @@ export class SocketChild extends EventEmitter {
     }
   }
 
+  /** Parse dispatched replay bytes (they may complete frames across chunks). */
+  #dispatchReplayBytes(bytes: Buffer): void {
+    let frames;
+    try {
+      frames = this.parser.push(bytes);
+    } catch (err) {
+      this.onSocketError(err as Error);
+      return;
+    }
+    for (const frame of frames) {
+      if (this.closed) break;
+      this.dispatchFrame(frame);
+    }
+  }
+
   private onData(chunk: Buffer): void {
+    if (this.preludePending) {
+      // Keep the wire order (replay first, then live) until the boundary is crossed.
+      this.pendingLive.push(chunk);
+      return;
+    }
     let frames;
     try {
       frames = this.parser.push(chunk);

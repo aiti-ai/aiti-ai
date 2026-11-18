@@ -31,7 +31,7 @@ import type { AgentStarter, WrapperStarter } from "./types.ts";
 export type { AgentStarter, AgentStarterSpawnOptions, WrapperStarter } from "./types.ts";
 export { DirectStarter } from "./direct.ts";
 export { LinuxMacWrapperStarter, materializeWrapper } from "./wrapper.ts";
-export { SocketChild, isDetachableChild } from "./socket-child.ts";
+export { SocketChild, isDetachableChild, REPLAY_END_EVENT } from "./socket-child.ts";
 export {
   starterRoot,
   registryDir,

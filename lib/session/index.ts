@@ -390,6 +390,18 @@ export async function openExternalSession(
   throw lastError ?? new Error(`No provider could open ${compositeId}`);
 }
 
+/**
+ * Stop a wrapper-hosted session (delete path for placeholder/external rows, which
+ * bypass the shared cascade engine). Returns false when nothing was hosted.
+ */
+export async function stopDetachedSession(sessionId: string): Promise<boolean> {
+  if (!sessionId) return false;
+  const wrapper = await getWrapperStarter().catch(() => undefined);
+  if (!wrapper) return false;
+  if (!wrapper.describe(sessionId)) return false;
+  return wrapper.kill(sessionId).catch(() => false);
+}
+
 /** Detach availability for UI surfaces (new-session toggle, greying). */
 export async function detachSupport(): Promise<DetachSupportInfo> {
   return describeDetachSupport();
