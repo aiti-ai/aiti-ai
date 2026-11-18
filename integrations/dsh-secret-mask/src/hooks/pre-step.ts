@@ -9,7 +9,7 @@
  */
 
 import type { PluginConfig, PluginContext, PreStepDecision, PreStepPayload } from "../dsh-types.ts";
-import { stateFor } from "../state.ts";
+import { refreshRules, stateFor } from "../state.ts";
 import { redactUserMessage } from "../spans.ts";
 
 export function registerPreStep(ctx: PluginContext, cfg: PluginConfig): void {
@@ -18,6 +18,7 @@ export function registerPreStep(ctx: PluginContext, cfg: PluginConfig): void {
     if (!decision || decision.kind === "reject" || !Array.isArray(decision.messages)) return decision;
     const st = stateFor(payload.agent?.id, cfg);
     if (!st.enabled) return decision;
+    refreshRules(st);
     let changed = false;
     const messages = decision.messages.map((m) => {
       const r = redactUserMessage(m, st, cfg.autoDetect);

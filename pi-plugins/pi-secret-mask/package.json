@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/pi-secret-mask",
-  "version": "0.2.4",
-  "description": "Paste-safe by default — session-level secret redaction for pi: values pasted into prompts become [REDACTED:*] placeholders before the model sees them and are restored inside tool arguments before execution. Detection engine shared with the DSH edition via @aiti-ai/secret-mask-core. Part of the aiti ecosystem (@aiti-ai/pi-web); also works standalone.",
+  "version": "0.3.0",
+  "description": "Paste-safe by default \u2014 session-level secret redaction for pi: values pasted into prompts become opaque, credential-shaped tokens (rsec_<hash8>) before the model sees them and are restored inside tool arguments before execution. Adds on-disk redaction (landing plain|ephemeral), unresolved-placeholder guard, custom rules, compaction/tree scrubbing, `!`-command gate, provider payload rewrite + audit, and explicit /secret save|load snapshots. Engine shared with @aiti-ai/pi-secret-vault (encrypted persistent edition) and the DSH edition via @aiti-ai/secret-mask-core.",
   "keywords": [
     "pi",
     "pi-package",
@@ -30,7 +30,7 @@
     "test": "node --test"
   },
   "dependencies": {
-    "@aiti-ai/secret-mask-core": "^0.1.2"
+    "@aiti-ai/secret-mask-core": "^0.2.0"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
@@ -44,8 +44,5 @@
     "access": "public"
   },
   "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
-  "contentHash": "56969a379a7bfa68",
-  "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-ai/issues"
-  }
+  "contentHash": "56969a379a7bfa68"
 }

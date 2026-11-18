@@ -79,10 +79,10 @@ test("pre-step: pasted key is redacted with a stable auto placeholder; second pa
   const d1 = (await fire("agent/pre-step", { agent, messages: [m1], turn: 0, step: 0, signal: (new AbortController().signal) }, nextDecision([m1])))[0];
   assert.equal(d1.kind, "enter");
   assert.ok(!JSON.stringify(d1.messages).includes(SECRET), "raw value gone");
-  assert.match(JSON.stringify(d1.messages), /\[REDACTED:ANTHROPIC_KEY#[0-9a-f]{8}\]/);
+  assert.match(JSON.stringify(d1.messages), /rsec_[0-9a-f]{8}/);
   const m2 = userMsg(`again ${SECRET}`, "m2");
   const d2 = (await fire("agent/pre-step", { agent, messages: [m2], turn: 0, step: 1, signal: (new AbortController().signal) }, nextDecision([m2])))[0];
-  assert.match(JSON.stringify(d2.messages), /\[REDACTED:ANTHROPIC_KEY#[0-9a-f]{8}\]/, "same value → same placeholder within session");
+  assert.match(JSON.stringify(d2.messages), /rsec_[0-9a-f]{8}/, "same value → same placeholder within session");
 });
 
 test("pre-step: reject decision passes through untouched; disabled session passes through", async () => {
@@ -127,7 +127,7 @@ test("post-execute: canonical value path (object) and content path (render-only 
   )[0];
   assert.equal(d1.kind, "accept");
   assert.ok(!JSON.stringify(d1.value).includes(SECRET), "canonical value redacted");
-  assert.match(JSON.stringify(d1.value), /\[REDACTED:/);
+  assert.match(JSON.stringify(d1.value), /rsec_/);
 
   // content path: upstream replaced content only (no value key)
   const d2 = (
@@ -188,6 +188,23 @@ test("shadow tools: whitelisted tools re-registered; placeholders restored into 
   assert.equal(frozenArgs.command, `echo ${placeholder}`, "frozen original untouched");
 });
 
+test("shadow tools: unresolved placeholders are guarded (block instead of executing a fake value)", async () => {
+  let executed = false;
+  const defs = new Map([
+    ["bash", { name: "bash", description: "d", parameters: {}, output: { schema: {}, render: () => [] }, execute: async () => { executed = true; return { ok: true }; } }],
+  ]);
+  const { ctx, fire, registered } = mockCtx(defs);
+  apply(ctx, CFG);
+  const agent = { id: "agent-guard1", ctx: { tools: { register: ctx.tools.register, get: ctx.tools.get } } };
+  await fire("agent/session-start", { agent });
+  const shadow = registered.tools[0];
+  await assert.rejects(
+    () => shadow.execute(Object.freeze({ command: "echo rsec_deadbeef" }), { token: "t", callId: "c", name: "bash", arguments: {}, signal: new AbortController().signal, agent }),
+    /unresolved placeholder/,
+  );
+  assert.equal(executed, false, "the original tool never ran with a literal token");
+});
+
 test("shadow tools: restoreToolArgs=false registers nothing", async () => {
   const defs = new Map([["bash", { name: "bash", description: "d", parameters: {}, output: { schema: {}, render: () => [] }, execute: async () => ({}) }]]);
   const { ctx, fire, registered } = mockCtx(defs);
@@ -203,11 +220,11 @@ test("agent/disposed drops the session state", async () => {
   const m = userMsg(`k=${SECRET}`);
   await fire("agent/pre-step", { agent, messages: [m], turn: 0, step: 0, signal: (new AbortController().signal) }, nextDecision([m]));
   const d1 = (await fire("agent/pre-step", { agent, messages: [userMsg(`again ${SECRET}`, "m2")], turn: 0, step: 1, signal: (new AbortController().signal) }, nextDecision([m])))[0];
-  assert.match(JSON.stringify(d1.messages), /\[REDACTED:ANTHROPIC_KEY#[0-9a-f]{8}\]/, "same session → same placeholder");
+  assert.match(JSON.stringify(d1.messages), /rsec_[0-9a-f]{8}/, "same session → same placeholder");
   await fire("agent/disposed", { agent });
   const d2 = (await fire("agent/pre-step", { agent, messages: [userMsg(`again ${SECRET}`, "m3")], turn: 0, step: 0, signal: (new AbortController().signal) }, nextDecision([m])))[0];
-  const p1 = /\[REDACTED:ANTHROPIC_KEY#([0-9a-f]{8})\]/.exec(JSON.stringify(d1.messages));
-  const p2 = /\[REDACTED:ANTHROPIC_KEY#([0-9a-f]{8})\]/.exec(JSON.stringify(d2.messages));
+  const p1 = /rsec_([0-9a-f]{8})/.exec(JSON.stringify(d1.messages));
+  const p2 = /rsec_([0-9a-f]{8})/.exec(JSON.stringify(d2.messages));
   assert.ok(p1 && p2 && p1[1] !== p2[1], "fresh session → fresh salt → different hash");
 });
 
@@ -224,7 +241,7 @@ test("audit: /secret audit on then llm/stream appends leak-free evidence and cou
     const on = await cmd.handler({ agent, rawInput: "audit on", attachments: [], signal: (new AbortController().signal), commandId: "c" });
     assert.match(on.text, /ON/);
 
-    const placeholderMsg = `[REDACTED:audit-key]`;
+    const placeholderMsg = add.text.match(/rsec_[0-9a-f]{8}/)[0];
     const options = { provider: "p", model: "m", sessionId: agent.id, messages: [{ id: "m", role: "user", content: [{ type: "text", text: placeholderMsg }], source: { kind: "user" } }] };
     function* emptyStream() {}
     await fire("llm/stream", options, () => emptyStream());
@@ -254,11 +271,11 @@ test("command add/list/status round-trip via the registered handler", async () =
   const agent = { id: "agent-cmd1" };
   const cmd = registered.commands.find((c) => c.name === "secret");
   const add = await cmd.handler({ agent, rawInput: `add ${SECRET} as k1`, attachments: [], signal: (new AbortController().signal), commandId: "c" });
-  assert.match(add.text, /\[REDACTED:k1\]/);
+  assert.match(add.text, /rsec_[0-9a-f]{8}/);
   const list = await cmd.handler({ agent, rawInput: "list", attachments: [], signal: (new AbortController().signal), commandId: "c" });
   assert.match(list.text, /1 value\(s\) registered/);
   const status = await cmd.handler({ agent, rawInput: "status", attachments: [], signal: (new AbortController().signal), commandId: "c" });
-  assert.match(status.text, /ON; 1 value\(s\)/);
+  assert.match(status.text, /ON; landing ephemeral; 1 value\(s\)/);
   const bad = await cmd.handler({ agent, rawInput: "bogus", attachments: [], signal: (new AbortController().signal), commandId: "c" });
   assert.equal(bad.kind, "error");
 });

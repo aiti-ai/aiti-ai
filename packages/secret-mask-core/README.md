@@ -2,14 +2,15 @@
 
 > **Host-agnostic secret redaction engine.** — 脱敏基础能力包，任何 TS/JS agent 均可快速适配。
 
-Deterministic credential detection + the `[REDACTED:*]` placeholder registry + deep traversal + payload auditing + `/secret` command logic — everything except host wiring. Zero runtime dependencies.
+Deterministic credential detection + the `rsec_<hash8>` placeholder registry (legacy `[REDACTED:*]` still restorable) + deep traversal + pi message adapters + unresolved-placeholder guard + landing policy + custom rules + payload auditing + `/secret` command logic — everything except host wiring. Zero runtime dependencies.
 
-Two production consumers:
+Production consumers:
 
-- **[@aiti-ai/pi-secret-mask](https://www.npmjs.com/package/@aiti-ai/pi-secret-mask)** — pi (coding agent) session-level redaction
+- **[@aiti-ai/pi-secret-mask](https://www.npmjs.com/package/@aiti-ai/pi-secret-mask)** — pi session-level redaction (plain/ephemeral landing)
+- **[@aiti-ai/pi-secret-vault](https://www.npmjs.com/package/@aiti-ai/pi-secret-vault)** / **[@aiti-ai/secret-vault-core](https://www.npmjs.com/package/@aiti-ai/secret-vault-core)** — encrypted persistent edition (stable vault tokens, vault landing, AI tools)
 - **[@aiti-ai/dsh-secret-mask](https://www.npmjs.com/package/@aiti-ai/dsh-secret-mask)** — DSH (DeepSeek Harness) session-level redaction
 
-Detection rules, entropy thresholds, placeholder format and restore semantics are shared verbatim across hosts (single test corpus, single fp-corpus baseline).
+Detection rules, entropy thresholds, placeholder semantics and restore behaviour are shared verbatim across hosts (single test corpus, single fp-corpus baseline).
 
 中文说明见下半部分。
 
@@ -19,51 +20,62 @@ Detection rules, entropy thresholds, placeholder format and restore semantics ar
 
 | module | exports | role |
 |---|---|---|
-| `detect` | `scan`, `RULES`, `entropy`, `fnv1a`, `plausibleSecret`, `PLACEHOLDER_RE` | deterministic regex + checksum rules (AWS/GitHub/GitLab/Slack/Stripe/SendGrid/Twilio/Google/Anthropic/OpenAI/HF/npm/PyPI/Azure/JWT/PEM/DB URL/Authorization header/generic assignments + Chinese keywords + base64-wrapped tokens), Shannon-entropy floors, false-positive guards; no network, no model calls |
-| `mask` | `Registry`, `redactForms`, `restoreDeep`, `redactDeep`, `auditPayload`, `MIN_REDACT_LENGTH` | value↔placeholder registry (`[REDACTED:alias]` / `[REDACTED:LABEL#hash]`, fnv1a(sessionSalt+value), idempotent, longest-form-wins), deep JSON traversal, final-payload leak proof |
-| `spans` | `redactTextSpans`, `TextSpan`, `spanOf` | the send-boundary loop: map your message shapes to text spans; auto-detection runs **only** on spans you flag as user-authored |
-| `commands` | `handleSecretCommand`, `SecretState`, `savePersist`/`loadPersist`/`clearPersist`, `appendAuditLog` | the `/secret add/list/remove/clear/on/off/status/save/unload/audit` logic; storage paths come from your state object |
+| `detect` | `scan`, `RULES`, `entropy`, `plausibleSecret` | deterministic regex + checksum rules (AWS/GitHub/GitLab/Slack/Stripe/SendGrid/Twilio/Google/Anthropic/OpenAI/HF/npm/PyPI/Azure/JWT/PEM/DB URL/Authorization header/generic assignments + Chinese keywords + base64-wrapped tokens), entropy floors, false-positive guards; no network, no model calls |
+| `hash` | `fnv1a` | 32-bit FNV-1a digest used for placeholder hashing |
+| `placeholder` | `PLACEHOLDER_RE`, `sessionPlaceholder`, `stablePlaceholder`, `findPlaceholders`, `isPlaceholderToken` | v2 format `rsec_<8 hex>` (credential-shaped so models use it naturally) + legacy `[REDACTED:alias]` / `[REDACTED:LABEL#hash]` compatibility |
+| `mask` | `Registry`, `registerManual`/`registerAuto`/`registerStable`, `redactForms`, `restoreDeep`, `redactDeep`, `redactDeepInPlace`, `auditPayload`, `MIN_REDACT_LENGTH` | value↔placeholder registry (session-salted for session values, `vault:`-namespaced/stable for vault aliases; idempotent; longest-form-wins; redirects keep old references alive), deep JSON traversal, final-payload leak proof |
+| `spans` | `redactTextSpans`, `TextSpan`, `spanOf`, `onDetected` | the send-boundary loop: map your message shapes to text spans; auto-detection runs **only** on spans you flag as user-authored; `onDetected` lets a host re-mount newly found values (vault landing) |
+| `messages` | `collectSpans`, `collectSystemSpans`, `redactMessages`, `redactSystemMessages`, `redactMessageDeep` | pi `AgentMessage` adapters: `context` (deep copy), `context_with_system` (system prompt/AGENTS.md blind spot), `message_end` (role-preserving replacement for on-disk redaction) |
+| `guard` | `unmountedPlaceholders`, `unmountedInValue`, `guardReason` | G7: block tool calls that reference placeholders no longer mounted, with the exact recovery command |
+| `landing` | `LandingMode`, `redactOnDisk`, `landingText` | G1 policy: `plain` / `vault` / `ephemeral` |
+| `rules` | `RulesSource`, `CustomRule`, `registerRuleMatches`, `applyFixedRules`, `addRuleToFile` | G6 custom rules file (`secret-mask-rules.json`, global + per-project, hot reload by mtime, placeholder vs fixed modes) |
+| `commands` | `handleSecretCommand`, `SecretState`, `saveSnapshot`/`loadSnapshot`, `appendAuditLog` | `/secret add/list/remove/clear/on/off/status/landing/guard/strict/rule/save/load/audit`; explicit snapshots only (no implicit persistence) |
 
 ## Adapt another TS/JS agent in four steps
 
 ```ts
-import { Registry, redactTextSpans, spanOf, auditPayload } from "@aiti-ai/secret-mask-core";
+import { Registry, redactTextSpans, spanOf, restoreDeep, auditPayload } from "@aiti-ai/secret-mask-core";
 
-// 1. One registry per session (fresh salt → same value maps to the same
-//    placeholder within the session, different across sessions).
+// 1. One registry per session; set the salt so placeholders stay stable
+//    within the session (same value → same token, cache-friendly).
 const registry = new Registry();
-const salt = crypto.randomBytes(4).toString("hex");
+registry.salt = crypto.randomBytes(4).toString("hex");
 
-// 2. At your send boundary, map the outgoing messages to text spans and run
-//    the loop. Flag spans authored by the USER for auto-detection; model/tool
-//    text only gets redaction of already-registered values.
+// 2. At your send boundary, map outgoing messages to text spans. Flag spans
+//    authored by the USER for auto-detection; everything else is redact-only.
 function redactOutgoing(messages) {
   for (const m of messages) {
-    const spans = m.role === "user"
-      ? m.content.filter(b => b.type === "text").map(b => spanOf(() => b.text, t => { b.text = t; }))
-      : /* assistant/tool text: redact-only, never mined */
-        m.content.filter(b => b.type === "text").map(b => spanOf(() => b.text, t => { b.text = t; }));
-    redactTextSpans(spans, registry, salt, { autoDetect: m.role === "user" });
+    const spans = m.content.filter(b => b.type === "text").map(b => spanOf(() => b.text, t => { b.text = t; }));
+    redactTextSpans(spans, registry, registry.salt, { autoDetect: m.role === "user" });
   }
 }
 
-// 3. Before a tool executes with model-written arguments, restore placeholders
+// 3. Before a tool executes with model-written arguments, restore tokens
 //    (deep clone if your arguments are frozen):
-import { restoreDeep } from "@aiti-ai/secret-mask-core";
-const args2 = restoreDeep(structuredClone(args), registry).value;
+const { value: args2 } = restoreDeep(structuredClone(args), registry);
 
 // 4. Before the request leaves the machine, audit the FINAL payload:
-import { auditPayload } from "@aiti-ai/secret-mask-core";
-const a = auditPayload(payload, registry);   // { strings, placeholders, leaks, leakedLabels }
+const a = auditPayload(payload, registry); // { strings, placeholders, leaks, leakedLabels }
 if (a.leaks > 0) panic(`raw secret on the wire: ${a.leakedLabels.join(", ")}`);
 ```
 
-Optional: `handleSecretCommand` gives you the whole `/secret` command surface against a `SecretState` (you provide `persistPath` / `auditPath` and a command dispatcher).
+Activating the guard and custom rules:
 
-## Guarantees & limits (shared with both hosts)
+```ts
+import { unmountedInValue, guardReason, RulesSource, loadSnapshot } from "@aiti-ai/secret-mask-core";
 
-- Session-scoped: fresh salt per session; registered values live in memory, opt-in persistence to your own file.
-- No-keyword bare high-entropy strings are NOT auto-detected (deliberate: bare entropy detection false-positives on minified JS) — expose manual registration.
+const missing = unmountedInValue(toolInput, registry);
+if (missing.length) return { block: true, reason: guardReason(missing) };
+
+const rules = new RulesSource("/home/me/.pi/agent/secret-mask-rules.json", cwd);
+redactTextSpans(spans, registry, salt, { autoDetect: true, rules: rules.rules() });
+```
+
+## Guarantees & limits (shared with all hosts)
+
+- Session-scoped by default: fresh salt per session; session values live in memory. Vault entries use a stable namespace instead so resume/rotation keeps the same token.
+- Placeholder strings look like credentials on purpose (`rsec_<hash8>`): models stop refusing to use them; the digest reveals nothing about the value.
+- No-keyword bare high-entropy strings are NOT auto-detected (deliberate: bare entropy detection false-positives on minified JS) — expose manual registration or custom rules.
 - Transform escapes (string slicing, re-encoded base64) beyond `redactForms` remain a real limit.
 - Prevents accidental leaks, not malicious agents; the audit layer detects raw values at the model boundary, not post-restore exfiltration through network-executing tools.
 - Images are not scanned.
@@ -71,9 +83,9 @@ Optional: `handleSecretCommand` gives you the whole `/secret` command surface ag
 ## Testing
 
 ```bash
-npm test          # node --test — engine, span-loop and command suites
+npm test          # node --test — engine, adapters, guard, landing, rules, commands
 npm run build     # esbuild → dist/index.js
-npm run fp-corpus # false-positive corpus over 11 locked public repos (60k+ files)
+npm run fp-corpus # false-positive corpus over 11 locked public repos (43k+ files scanned, 65 hits / 0 prose-template FP)
 ```
 
 License: MIT. Detection rule shapes follow the public gitleaks / GitHub secret-scanning corpus (see THIRD-PARTY-NOTICES.md for attribution).
@@ -82,17 +94,17 @@ License: MIT. Detection rule shapes follow the public gitleaks / GitHub secret-s
 
 ## 中文说明
 
-主机无关的脱敏基础能力包（零运行时依赖），已由 pi 与 DSH 两个生产宿主验证。四步接入任意 TS/JS agent：
+主机无关的脱敏基础能力包（零运行时依赖），已由 pi（轻量版 + 加密持久版）与 DSH 三个生产宿主验证。四步接入任意 TS/JS agent：
 
-1. **每会话一个 `Registry`**（随机盐——同会话同值同占位符，跨会话不可预测）；
-2. **发送边界**把消息映射为文本 span（`spanOf(get, set)`），调 `redactTextSpans`：只有你标记为用户手写的 span 做自动检测登记，其余只做已登记值脱敏；
-3. **工具执行前**用 `restoreDeep` 把模型回抄的占位符还原成真值（参数被冻结就先 structuredClone）；
-4. **请求发出前**用 `auditPayload` 扫描最终 payload——`leaks=0` 即"只有占位符上线"的直接证据，`leaks>0` 立即报警。
+1. **每会话一个 `Registry`**（设置 `salt`——同会话同值同令牌，跨会话不可预测；vault 别名用稳定命名空间）；
+2. **发送边界**把消息映射为文本 span（`spanOf(get, set)`），调 `redactTextSpans`：只有你标记为用户手写的 span 做自动检测登记；`onDetected` 可把新值改挂到 vault 库（稳定令牌）；
+3. **工具执行前**用 `restoreDeep` / `restoreDeepInPlace` 还原令牌；`unmountedInValue` + `guardReason` 拦截未挂载占位符；
+4. **请求发出前**用 `auditPayload` 扫描最终 payload——`leaks=0` 即「只有令牌上线」的直接证据。
 
-`/secret` 命令逻辑（登记/列表/开关/持久化/审计）在 `handleSecretCommand` 里，给你自己的命令分发器套上即可。
+新增能力（0.2.0）：占位符 v2 `rsec_<hash8>`（模型不再拒用）、`message_end` 深替换适配（落盘脱敏）、system 段覆盖、落盘三态（plain/vault/ephemeral）、自定义规则（`RulesSource`，mtime 懒加载）、显式快照（`saveSnapshot`/`loadSnapshot`，无隐式持久化）。
 
-## 已知取舍（与两个宿主一致）
+## 已知取舍（与所有宿主一致）
 
-- 无关键字上下文的裸高熵串不自动检测（防压缩 JS 误报的刻意取舍）——提供手动登记入口；
+- 无关键字上下文的裸高熵串不自动检测（防压缩 JS 误报的刻意取舍）——提供手动登记/自定义规则入口；
 - 防意外泄露不防恶意 agent；审计层能发现真值出现在模型边界，发现不了还原后经外传工具泄露的值；
 - 图片不扫描。

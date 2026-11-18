@@ -6,6 +6,7 @@
  * entering a step (the aiti-devtools-dsh pre-step pattern).
  */
 
+import { applyFixedRules, registerRuleMatches } from "@aiti-ai/secret-mask-core";
 import type { ContentBlock, Message, SessionState, TextBlock, UserMessage } from "./dsh-types.ts";
 
 export interface TextSpan {
@@ -65,10 +66,19 @@ export function redactUserMessage(
   const content = message.content.map((block) => {
     if (!isTextBlock(block) || !block.text) return block;
     if (autoDetect && userAuthored) newEntries += st.registry.autoRegister(block.text, st.salt).length;
+    const rules = st.rules ?? [];
+    if (rules.length > 0) newEntries += registerRuleMatches(block.text, st.registry, rules, st.salt);
     const res = st.registry.redact(block.text);
-    if (res.count === 0) return block;
+    let text = res.text;
+    let count = res.count;
+    if (rules.length > 0) {
+      const fixed = applyFixedRules(text, rules);
+      text = fixed.text;
+      count += fixed.count;
+    }
+    if (count === 0) return block;
     changed = true;
-    return { ...block, text: res.text };
+    return { ...block, text };
   });
   if (!changed) return { message, changed: false, newEntries };
   return { message: { ...message, content }, changed: true, newEntries };
