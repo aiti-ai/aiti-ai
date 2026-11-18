@@ -25,7 +25,7 @@ import { existsSync } from "node:fs";
 import { DirectStarter } from "./direct.ts";
 import { LinuxMacWrapperStarter } from "./wrapper.ts";
 import { probeRunner } from "./runner.ts";
-import { pruneDeadEntries } from "./registry.ts";
+import { pruneDeadEntries, starterRoot } from "./registry.ts";
 import type { AgentStarter, WrapperStarter } from "./types.ts";
 
 export type { AgentStarter, AgentStarterSpawnOptions, WrapperStarter } from "./types.ts";
@@ -114,15 +114,15 @@ export async function getWrapperStarter(): Promise<WrapperStarter | undefined> {
  */
 export function selectStarter(
   starters: AgentStarters,
-  options: { detach?: boolean; providerDetachable?: boolean; pidFile?: boolean },
+  options: { detach?: boolean; providerDetachable?: boolean },
 ): AgentStarter {
   if (options.detach === false) return starters.direct;
   // Opt-in only: a provider must declare `detachable: true` to receive the
   // wrapper strategy. Everything else keeps today's plain child process (a
   // backend that never calls options.agentStarter is unaffected either way).
+  // Providers that need node IPC (`child.send`) or non-pipe stdio simply do not
+  // opt in: a facade child cannot represent either.
   if (options.providerDetachable !== true) return starters.direct;
-  // A wrapper child has no node IPC channel and no pidfile of its own.
-  if (options.pidFile) return starters.direct;
   if (!starters.wrapper) return starters.direct;
   return starters.wrapper;
 }
@@ -135,5 +135,5 @@ export function resetAgentStartersForTest(): void {
 
 /** Registry health snapshot (diagnostics endpoint / tests). */
 export function starterHomeExists(): boolean {
-  return existsSync(process.env.PI_AGENT_STARTER_DIR || "");
+  return existsSync(starterRoot());
 }
