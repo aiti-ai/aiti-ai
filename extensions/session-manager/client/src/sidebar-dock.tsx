@@ -19,7 +19,7 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { apiUrl, t, getLocale } from "./host-shim";
-import { useStore, refreshSessions, refreshListChannels, refreshWorkspaces, refreshProjectSessions, isProjectSessionsLoaded, noteDraftSession, removePendingDraft, ensureTags, togglePinSession, togglePinProject, hidePendingRow, subscribePendingRemovals, type WorkspaceEntry } from "./store";
+import { useStore, refreshSessions, refreshListChannels, refreshWorkspaces, refreshProjectSessions, isProjectSessionsLoaded, noteDraftSession, removePendingDraft, ensureTags, togglePinSession, togglePinProject, hidePendingRow, hasLoadedSessionsOnce, subscribePendingRemovals, type WorkspaceEntry } from "./store";
 import { matchesTags, tagPath } from "./helpers";
 import {
   SESSION_LIST_ITEM_HEIGHT,
@@ -139,7 +139,21 @@ export function SidebarList(props: SidebarDockProps) {
     bindPickerOpener,
   } = props;
 
-  const sessions = ((store.projectSessions ?? []) as SessionInfo[]).filter((r) => !hidePendingRow(r));
+  const sessions = ((store.projectSessions ?? []) as SessionInfo[]).filter((r) => {
+    if (hidePendingRow(r)) return false;
+    // Belt against stale scoped rows (2026-11 anti-flicker): the scoped channel is
+    // slower than the full one (marker prune now waits for it, but the TTL fuse
+    // and other marker-clear paths do not). Once the full list has landed, a row
+    // absent from BOTH server buckets has been removed server-side — do not
+    // render it from the stale scoped snapshot. Before the first full landing
+    // the scoped rows are the only truth → unfiltered.
+    if (!hasLoadedSessionsOnce()) return true;
+    const id = String(r.id);
+    const known = ((store.sessions ?? []) as SessionInfo[]).some((x) => String(x.id) === id)
+      || ((store.archived ?? []) as SessionInfo[]).some((x) => String(x.id) === id);
+    if (known) return true;
+    return ((store.pendingDrafts ?? []) as Array<{ session: { id?: unknown } }>).some((p) => String(p.session.id) === id);
+  });
   // [通道拆分] 全量通道仍供宿主 catalog（家族树）/草稿判定/兜底 projectFor；
   // 侧栏列表/项目 picker 改由 scoped + workspaces 两条快通道供数（见下方各 useMemo）。
   const allSessions = (store.sessions ?? []) as SessionInfo[];
