@@ -1,8 +1,8 @@
 # fp-corpus results
 
 - corpus: changesets/changesets, psf/requests, spf13/cobra, GoogleCloudPlatform/microservices-demo, docker/awesome-compose, tldr-pages/tldr, twbs/bootstrap, highlightjs/cdn-release, auth0/node-jsonwebtoken, panva/jose, motdotla/dotenv
-- files: 60190/82928 scanned (<2MB text, binary skipped) in 7.6s
-- secret-rule hits: 66
+- files: 42837/43065 scanned (<2MB text, binary skipped) in 6.8s
+- secret-rule hits: 65
 
 Judgement: complete private keys / signed JWTs / sample DB credentials published as test vectors are real-shaped hits (should be redacted), not false positives.
 
@@ -17,7 +17,6 @@ Judgement: complete private keys / signed JWTs / sample DB credentials published
 | psf/requests | tests/certs/mtls/client/client.key | private-key | 1 | 1703 | `----****************` |
 | psf/requests | tests/certs/valid/server/server.key | private-key | 1 | 1703 | `----****************` |
 | psf/requests | tests/test_requests.py | auth-header | 2223 | 12 | `roxy-Authorization": "Basic dXNl********` |
-| docker/awesome-compose | react-java-mysql/backend/src/main/resources/application.properties | generic-secret | 8 | 8 | `ource.password=${MYSQL_PASSWORD:db-5****` |
 | docker/awesome-compose | wasmedge-kafka-mysql/README.md | db-connection-url | 56 | 37 | `      DATABASE_URL: mysq****************` |
 | docker/awesome-compose | wasmedge-kafka-mysql/compose.yml | db-connection-url | 27 | 37 | `      DATABASE_URL: mysq****************` |
 | docker/awesome-compose | wasmedge-mysql-nginx/README.md | db-connection-url | 48 | 37 | `      DATABASE_URL: mysq****************` |

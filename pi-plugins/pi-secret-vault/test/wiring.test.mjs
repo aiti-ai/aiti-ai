@@ -1,0 +1,230 @@
+// Vault extension wiring: hooks + tools + /vault commands + handshake.
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const SECRET = "7fJk2mN9pQrStUvWx3y4z5A6b7C8d9E0";
+const OTHER = "9pQrStUvWx3y4z5A6b7C8d9E0f1";
+
+// One HOME for the whole file: module-level path constants are resolved once
+// (same as a real pi process), so tests share the sandbox home and vary only
+// settings/vault content.
+const HOME = mkdtempSync(join(tmpdir(), "vault-wiring-"));
+process.env.HOME = HOME;
+process.env.USERPROFILE = HOME;
+test.after(() => rmSync(HOME, { recursive: true, force: true }));
+
+function makeHost() {
+  const handlers = new Map();
+  const commands = new Map();
+  const tools = new Map();
+  const bus = new Map();
+  const pi = {
+    on(name, fn) {
+      if (!handlers.has(name)) handlers.set(name, []);
+      handlers.get(name).push(fn);
+    },
+    events: {
+      on(name, cb) {
+        if (!bus.has(name)) bus.set(name, []);
+        bus.get(name).push(cb);
+      },
+      emit(name, data) {
+        for (const cb of bus.get(name) ?? []) cb(data);
+      },
+    },
+    registerCommand(name, def) {
+      commands.set(name, def);
+    },
+    registerTool(def) {
+      tools.set(def.name, def);
+    },
+  };
+  const run = async (name, event, ctx) => {
+    let out;
+    for (const fn of handlers.get(name) ?? []) {
+      const res = await fn(event, ctx);
+      if (res !== undefined) out = res;
+    }
+    return out;
+  };
+  return { pi, handlers, commands, tools, bus, run };
+}
+
+function makeCtx(cwd, opts = {}) {
+  const notices = [];
+  const inputs = [...(opts.inputs ?? [])];
+  const ctx = {
+    cwd,
+    notices,
+    sessionManager: { getSessionId: () => "sess-1" },
+    ui: {
+      notify: (text, level) => notices.push({ text, level }),
+      input: async () => inputs.shift(),
+      confirm: async () => true,
+      editor: () => {},
+    },
+  };
+  return ctx;
+}
+
+let loaded;
+async function loadExtension() {
+  if (!loaded) loaded = (await import("../src/index.ts")).default;
+  return loaded;
+}
+
+function writeSettings(packages) {
+  mkdirSync(join(HOME, ".pi", "agent"), { recursive: true });
+  writeFileSync(join(HOME, ".pi", "agent", "settings.json"), JSON.stringify({ packages }));
+}
+
+const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+test("vault wiring: landing captures into the vault; tools and commands work", async () => {
+  const home = HOME;
+  {
+    writeSettings([]);
+    const cwd = join(home, "proj");
+    mkdirSync(cwd, { recursive: true });
+    const factory = await loadExtension();
+    const host = makeHost();
+    await factory(host.pi);
+    for (const hook of [
+      "session_start",
+      "context",
+      "context_with_system",
+      "before_agent_start",
+      "tool_call",
+      "tool_result",
+      "message_end",
+      "session_before_compact",
+      "session_before_tree",
+      "user_bash",
+      "before_provider_request",
+    ]) {
+      assert.ok(host.handlers.has(hook), `hook ${hook} registered`);
+    }
+    assert.ok(host.tools.has("vault_list"));
+    assert.ok(host.tools.has("vault_get"));
+    assert.ok(host.commands.has("vault"));
+    assert.ok(host.commands.has("secret"));
+
+    const ctx = makeCtx(cwd);
+    await host.run("session_start", { reason: "startup" }, ctx);
+    await tick();
+
+    // landing=vault: the input hook stores the value encrypted and rewrites the
+    // text to the STABLE token before the message becomes a session entry
+    const input = await host.run("input", { text: `my token: ${SECRET}`, source: "interactive" }, ctx);
+    assert.ok(input);
+    assert.equal(input.action, "transform");
+    assert.ok(!input.text.includes(SECRET));
+    const inputToken = input.text.match(/rsec_[0-9a-f]{8}/)?.[0];
+    assert.ok(inputToken);
+    const vaultFileEarly = join(home, ".pi", "agent", "secret-vault", "global.json");
+    assert.ok(existsSync(vaultFileEarly), "input landing created the vault");
+
+    // landing=vault also covers values that reach context without the input hook
+    const messages = [{ role: "user", content: `my token: ${SECRET}`, timestamp: 1 }];
+    assert.ok(await host.run("context", { messages }, ctx));
+    const ph = messages[0].content.match(/rsec_[0-9a-f]{8}/)?.[0];
+    assert.ok(ph);
+    const vaultFile = join(home, ".pi", "agent", "secret-vault", "global.json");
+    assert.ok(existsSync(vaultFile), "vault file created by landing");
+    const raw = readFileSync(vaultFile, "utf8");
+    assert.ok(!raw.includes(SECRET), "value encrypted at rest");
+    assert.match(raw, /auto-/);
+
+    // message_end persists only the placeholder
+    const replaced = await host.run("message_end", { message: { role: "user", content: SECRET, timestamp: 2 } }, ctx);
+    assert.ok(replaced);
+    assert.ok(!JSON.stringify(replaced.message).includes(SECRET));
+
+    // vault_list never leaks; vault_get returns a token; tool_call restores it
+    const list = await host.tools.get("vault_list").execute("t1", {}, null, null, ctx);
+    assert.ok(!list.content[0].text.includes(SECRET));
+    const alias = list.content[0].text.match(/auto-[A-Za-z0-9_-]+/)?.[0];
+    assert.ok(alias, "alias listed");
+    const got = await host.tools.get("vault_get").execute("t2", { alias }, null, null, ctx);
+    const token = got.content[0].text.match(/rsec_[0-9a-f]{8}/)?.[0];
+    assert.ok(token);
+    assert.match(got.content[0].text, /working credential/);
+    const toolInput = { command: `echo ${token}` };
+    assert.equal(await host.run("tool_call", { input: toolInput }, ctx), undefined);
+    assert.equal(toolInput.command, `echo ${SECRET}`);
+    // unknown token blocked
+    const blocked = await host.run("tool_call", { input: { command: "echo rsec_deadbeef" } }, ctx);
+    assert.equal(blocked.block, true);
+
+    // /vault add via masked input → list → get
+    const addCtx = makeCtx(cwd, { inputs: [OTHER] });
+    await host.commands.get("vault").handler("add manual-key manual entry", addCtx);
+    assert.ok(addCtx.notices.at(-1).text.includes('added "manual-key"'));
+    assert.ok(!addCtx.notices.at(-1).text.includes(OTHER));
+    const listCtx = makeCtx(cwd);
+    await host.commands.get("vault").handler("list", listCtx);
+    assert.match(listCtx.notices.at(-1).text, /manual-key/);
+
+    // session state file records mount names only
+    await host.run("session_start", { reason: "reload" }, makeCtx(cwd));
+    const stateFile = join(home, ".pi", "agent", "secret-vault", "session-state.json");
+    assert.ok(existsSync(stateFile));
+    const stateRaw = readFileSync(stateFile, "utf8");
+    assert.ok(!stateRaw.includes(SECRET));
+    assert.ok(!stateRaw.includes(OTHER));
+
+    // tool_result reverse redaction keeps the value out of context
+    const result = await host.run("tool_result", { content: [{ type: "text", text: SECRET }] }, ctx);
+    assert.ok(result);
+    assert.ok(!JSON.stringify(result).includes(SECRET));
+
+    // audit evidence never contains values
+    await host.commands.get("secret").handler("audit on", ctx);
+    await host.run("before_provider_request", { payload: { messages: [{ role: "user", content: "clean" }] } }, ctx);
+    const audit = readFileSync(join(home, ".pi", "agent", "secret-vault-audit.log"), "utf8");
+    assert.ok(!audit.includes(SECRET));
+  }
+});
+
+test("vault wiring: mask handshake wins (mask yields, vault stays active)", async () => {
+  {
+    const cwd = join(HOME, "proj");
+    writeSettings(["npm:@aiti-ai/pi-secret-mask@0.3.0"]);
+    const factory = await loadExtension();
+    const host = makeHost();
+    await factory(host.pi);
+    // mask 0.3 announces itself before/around session_start (both orders OK)
+    host.pi.events.emit("aiti-secret:hello", { ext: "mask", active: true });
+    const ctx = makeCtx(cwd);
+    await host.run("session_start", { reason: "startup" }, ctx);
+    await tick();
+    const messages = [{ role: "user", content: `my token: ${SECRET}` }];
+    assert.ok(await host.run("context", { messages }, ctx), "vault keeps working when mask yields");
+    await host.commands.get("secret").handler("status", ctx);
+    assert.match(ctx.notices.at(-1).text, /secret-mask: ON|secret-mask: [0-9]/);
+    assert.ok(!/DISABLED/.test(ctx.notices.at(-1).text));
+  }
+});
+
+test("vault wiring: legacy mask (no handshake) makes the vault yield", async () => {
+  {
+    const cwd = join(HOME, "proj");
+    writeSettings(["npm:@aiti-ai/pi-secret-mask@0.2.3"]);
+    const factory = await loadExtension();
+    const host = makeHost();
+    await factory(host.pi);
+    const ctx = makeCtx(cwd);
+    await host.run("session_start", { reason: "startup" }, ctx);
+    await tick();
+    assert.ok(ctx.notices.some((n) => /old pi-secret-mask/.test(n.text)));
+    const messages = [{ role: "user", content: `my token: ${SECRET}` }];
+    assert.equal(await host.run("context", { messages }, ctx), undefined, "vault disabled");
+    await host.tools.get("vault_get").execute("t", { alias: "x" }, null, null, ctx);
+    // command still informs the user
+    await host.commands.get("secret").handler("status", ctx);
+    assert.match(ctx.notices.at(-1).text, /DISABLED/);
+  }
+});
