@@ -45,11 +45,15 @@ export function stablePlaceholder(namespace: string, alias: string): string {
   return placeholderFromHash(fnv1a(`${namespace}:${alias}`));
 }
 
-/** Matches v2 and legacy v1 placeholders. */
-export const PLACEHOLDER_RE = /rsec_[0-9a-f]{8}\b|\[REDACTED:[A-Za-z0-9_-]{1,64}(?:#[0-9a-fA-F]{1,16})?\]/g;
+/**
+ * Matches v2 and legacy v1 placeholders. A v2 token must be a standalone
+ * token: the npm scope prefix in a package name and identifiers such as
+ * `prefix-rsec_...` are not placeholders.
+ */
+export const PLACEHOLDER_RE = /(?<![A-Za-z0-9_@$.-])rsec_[0-9a-f]{8}\b|\[REDACTED:[A-Za-z0-9_-]{1,64}(?:#[0-9a-fA-F]{1,16})?\]/g;
 
 /** v2-only matcher (used by the guard; legacy tokens are handled permissively). */
-export const V2_PLACEHOLDER_RE = /rsec_[0-9a-f]{8}\b/g;
+export const V2_PLACEHOLDER_RE = /(?<![A-Za-z0-9_@$.-])rsec_[0-9a-f]{8}\b/g;
 
 /** True when the whole string is exactly one placeholder. */
 export function isPlaceholderToken(text: string): boolean {
@@ -67,7 +71,7 @@ export function findPlaceholders(text: string): string[] {
 /** Extract v2 placeholder tokens from a text (guard input). */
 export function findV2Placeholders(text: string): string[] {
   if (!text) return [];
-  return text.match(/(?:^|[^A-Za-z0-9_])rsec_[0-9a-f]{8}\b/g)?.map((m) => m.replace(/^[^r]+/, "")) ?? [];
+  return text.match(/(?<![A-Za-z0-9_@$.-])rsec_[0-9a-f]{8}\b/g) ?? [];
 }
 
 /** Human-readable placeholder origin, for /secret list and vault notes. */

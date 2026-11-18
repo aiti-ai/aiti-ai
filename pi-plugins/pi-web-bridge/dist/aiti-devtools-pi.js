@@ -100,7 +100,7 @@ function createPairModule(deps) {
     if (!iid || !validateInstance(iid)) return null;
     const pageId = String(msg && msg.pageId || "") || iid + "/host";
     const named = names.get(iidOf(pageId));
-    const self = deps.getDevices().filter((d) => d.id === pageId || d.id === iid)[0];
+    const self = deps.getDevices().filter((d) => d.instanceId === iid || d.id === pageId || d.id === iid)[0];
     const name = String(msg && msg.name || named && named.name || self && self.name || pageId).slice(0, 80);
     return { id: pageId, name, kind: "page" };
   }
@@ -433,6 +433,138 @@ function createPairModule(deps) {
     pageInbox.clear();
     files.clear();
   } };
+}
+
+// ../aiti-devtools-core/src/ua-parse.js
+var BRAND_NAMES = [
+  [/Microsoft Edge/i, "Edge"],
+  [/Opera|Opera GX/i, "Opera"],
+  [/Brave/i, "Brave"],
+  [/Vivaldi/i, "Vivaldi"],
+  [/Samsung Internet/i, "Samsung Internet"],
+  [/YaBrowser|Yandex/i, "Yandex"],
+  [/DuckDuckGo/i, "DuckDuckGo"],
+  [/Google Chrome/i, "Chrome"],
+  [/Chromium/i, "Chromium"]
+];
+var UA_TOKENS = [
+  ["EdgiOS", "Edge"],
+  ["EdgA", "Edge"],
+  ["Edg", "Edge"],
+  ["Edge", "Edge"],
+  // legacy EdgeHTML
+  ["OPiOS", "Opera"],
+  ["OPR", "Opera"],
+  ["SamsungBrowser", "Samsung Internet"],
+  ["YaBrowser", "Yandex"],
+  ["Vivaldi", "Vivaldi"],
+  ["DuckDuckGo", "DuckDuckGo"],
+  ["Whale", "Whale"],
+  ["Electron", "Electron"],
+  ["FxiOS", "Firefox"],
+  ["Firefox", "Firefox"],
+  ["CriOS", "Chrome"],
+  ["Chrome", "Chrome"]
+];
+var VERSION_TOKENS = {
+  Edge: ["Edg", "EdgA", "EdgiOS", "Edge"],
+  Opera: ["OPR", "OPiOS"],
+  "Samsung Internet": ["SamsungBrowser"],
+  Yandex: ["YaBrowser"],
+  Vivaldi: ["Vivaldi"],
+  DuckDuckGo: ["DuckDuckGo"],
+  Whale: ["Whale"],
+  Electron: ["Electron"],
+  Firefox: ["Firefox", "FxiOS"],
+  Chrome: ["Chrome", "CriOS"]
+};
+function tokenVersion(ua, tokens) {
+  for (const t of tokens || []) {
+    const i = ua.indexOf(t + "/");
+    if (i < 0) continue;
+    const m = ua.slice(i + t.length + 1).match(/^[\d.]+/);
+    if (m) return m[0];
+  }
+  return "";
+}
+function parseUa(ua, nav) {
+  const s = String(ua || "");
+  const out = { browser: "?", version: "", os: "?", osVer: "", deviceType: "desktop", mobile: false, source: "" };
+  try {
+    const brands = nav && nav.userAgentData && Array.isArray(nav.userAgentData.brands) ? nav.userAgentData.brands : null;
+    if (brands && brands.length) {
+      for (const [re, name] of BRAND_NAMES) {
+        const hit = brands.filter((b) => b && re.test(String(b.brand)))[0];
+        if (!hit) continue;
+        out.browser = name;
+        out.version = String(hit.version || "");
+        out.source = "ua-ch";
+        break;
+      }
+      if (out.browser !== "?" && out.browser !== "Chromium") {
+        const full = tokenVersion(s, VERSION_TOKENS[out.browser]);
+        if (full) out.version = full;
+      }
+    }
+  } catch (e) {
+  }
+  if (out.browser === "?" || out.browser === "Chromium") {
+    for (const [tok, name] of UA_TOKENS) {
+      if (s.indexOf(tok + "/") < 0) continue;
+      out.browser = name;
+      out.version = tokenVersion(s, VERSION_TOKENS[name]);
+      if (!out.source) out.source = "ua-string";
+      break;
+    }
+    if (out.browser === "?") {
+      const vm = s.match(/Version\/([\d.]+).*Safari/);
+      if (vm) {
+        out.browser = "Safari";
+        out.version = vm[1];
+        out.source = "ua-string";
+      } else if (/MSIE|Trident/.test(s)) {
+        out.browser = "IE";
+        const mi = s.match(/rv:([\d.]+)/);
+        out.version = mi ? mi[1] : "";
+        out.source = "ua-string";
+      }
+    }
+  }
+  let ipadLike = false;
+  try {
+    const touch = nav && typeof nav.maxTouchPoints === "number" ? nav.maxTouchPoints : 0;
+    ipadLike = touch > 1 && /Mac OS X/.test(s) && !/Chrome|CriOS|Firefox|FxiOS|Edg|OPR/.test(s);
+    if (/Windows Phone/.test(s)) {
+      out.os = "Windows Phone";
+    } else if (/Windows NT/.test(s)) {
+      out.os = "Windows";
+      out.osVer = /Windows NT 10\.0/.test(s) ? "10/11" : /Windows NT 6\.[123]/.test(s) ? "7/8" : "10/11";
+    } else if (/iPhone|iPad|iPod/.test(s)) {
+      out.os = "iOS";
+      const im = s.match(/OS (\d+[_\d]*)/);
+      out.osVer = im ? im[1].replace(/_/g, ".") : "";
+    } else if (/Android/.test(s)) {
+      out.os = "Android";
+      const am = s.match(/Android ([\d.]+)/);
+      out.osVer = am ? am[1] : "";
+    } else if (/CrOS/.test(s)) {
+      out.os = "ChromeOS";
+    } else if (ipadLike) {
+      out.os = "iOS";
+      out.osVer = "";
+    } else if (/Mac OS X/.test(s)) {
+      out.os = "macOS";
+      const mm = s.match(/Mac OS X ([\d_.]+)/);
+      out.osVer = mm ? mm[1].replace(/_/g, ".") : "";
+    } else if (/Linux|X11/.test(s)) {
+      out.os = "Linux";
+    }
+  } catch (e) {
+  }
+  out.mobile = /Android|iPhone|iPod|Mobile|Windows Phone|IEMobile/i.test(s) || out.os === "iOS" && /iPhone|iPod/.test(s);
+  const tablet = /iPad|Tablet|Silk|PlayBook/i.test(s) || /Android/i.test(s) && !/Mobile/i.test(s) || ipadLike;
+  out.deviceType = tablet ? "tablet" : out.mobile ? "mobile" : "desktop";
+  return out;
 }
 
 // ../aiti-devtools-core/src/bridge.ts
@@ -2415,10 +2547,11 @@ ${String(pl.stack).slice(0, 400)}` : "");
       const dev = self.device || null;
       const pageId = pageReg && pageReg.pageId ? String(pageReg.pageId) : iid + "/host";
       const nm = pair.nameFor(iid) || (dev && (dev.os || dev.browser) ? [dev.os, dev.browser].filter(Boolean).join(" · ") : self.title || pageReg?.url || pageId);
-      out.push({ kind: "page", id: pageId, name: nm, url: pageReg?.url || null, title: pageReg?.title || null, device: dev, deviceLabel: dev ? [dev.browser, dev.os, dev.screen].filter(Boolean).join(" · ") : null, online: true, lastSeen: self.lastSeen || Date.now() });
+      out.push({ kind: "page", id: pageId, instanceId: iid, name: nm, url: pageReg?.url || null, title: pageReg?.title || null, device: dev, deviceLabel: dev ? [dev.browser, dev.os, dev.screen].filter(Boolean).join(" · ") : null, online: true, lastSeen: self.lastSeen || Date.now() });
     }
     for (const [instanceId, page] of pages) {
-      out.push({ kind: "page", id: instanceId, name: pair.nameFor(instanceId) || page.title || page.url || instanceId, url: page.url || null, title: page.title || null, device: page.device || null, deviceLabel: page.deviceLabel || null, online: true, lastSeen: Date.now() });
+      if (seenPages.has(instanceId)) continue;
+      out.push({ kind: "page", id: instanceId, instanceId, name: pair.nameFor(instanceId) || page.title || page.url || instanceId, url: page.url || null, title: page.title || null, device: page.device || null, deviceLabel: page.deviceLabel || null, online: true, lastSeen: Date.now() });
     }
     for (const [key, a] of agents) {
       if (!a.registered && !agentOnline(a) && !a.outbox.length) continue;
@@ -2437,71 +2570,26 @@ ${String(pl.stack).slice(0, 400)}` : "");
     if (!dev) {
       const ua = req.headers.get("user-agent") || "";
       if (ua) {
-        let browser = "?", bver = "";
-        try {
-          const sp = ua.match(/(EdgA|Edg|OPR|CriOS|FxiOS)\/([\d.]+)/);
-          if (sp) {
-            const b = sp[1];
-            browser = b === "EdgA" || b === "Edg" ? "Edge" : b === "OPR" ? "Opera" : b === "CriOS" ? "Chrome" : "Firefox";
-            bver = sp[2];
-          } else if (/FxiOS|Firefox\//.test(ua)) {
-            const m = ua.match(/(?:Firefox|FxiOS)\/([\d.]+)/);
-            browser = "Firefox";
-            bver = m ? m[1] : "";
-          } else if (/Chrome\//.test(ua)) {
-            const m = ua.match(/Chrome\/([\d.]+)/);
-            browser = "Chrome";
-            bver = m ? m[1] : "";
-          } else {
-            const vm = ua.match(/Version\/([\d.]+).*Safari/);
-            if (vm) {
-              browser = "Safari";
-              bver = vm[1];
-            } else if (/MSIE|Trident/.test(ua)) {
-              browser = "IE";
-              const mi = ua.match(/rv:([\d.]+)/);
-              bver = mi ? mi[1] : "";
-            }
-          }
-        } catch {
-        }
-        let os = "?", osv = "";
-        try {
-          if (/Windows NT/.test(ua)) {
-            os = "Windows";
-            osv = /Windows NT 10\.0/.test(ua) ? "10/11" : /Windows NT 6\.[123]/.test(ua) ? "7/8" : "10/11";
-          } else if (/iPhone|iPad|iPod/.test(ua)) {
-            os = "iOS";
-            const im = ua.match(/OS (\d+[_\d]*)/);
-            osv = im ? im[1].replace(/_/g, ".") : "";
-          } else if (/Android/.test(ua)) {
-            os = "Android";
-            const am = ua.match(/Android ([\d.]+)/);
-            osv = am ? am[1] : "";
-          } else if (/Mac OS X/.test(ua)) {
-            os = "macOS";
-            const mm = ua.match(/Mac OS X ([\d_.]+)/);
-            osv = mm ? mm[1].replace(/_/g, ".") : "";
-          } else if (/CrOS/.test(ua)) {
-            os = "ChromeOS";
-          } else if (/Linux/.test(ua)) {
-            os = "Linux";
-          }
-        } catch {
-        }
-        const mobile = /Android|iPhone|iPad|iPod|Mobile|Windows Phone/i.test(ua);
-        const isTablet = /iPad|Tablet|Silk/i.test(ua) || /Android/i.test(ua) && !/Mobile/i.test(ua);
-        dev = { browser, version: bver, os, osVer: osv, deviceType: mobile || isTablet ? isTablet ? "tablet" : "mobile" : "desktop" };
+        const p = parseUa(ua, null);
+        dev = { browser: p.browser, version: p.version, os: p.os, osVer: p.osVer, deviceType: p.deviceType };
       }
     }
     return dev;
+  }
+  function pageRegMatches(reg, bare, full) {
+    if (!reg) return false;
+    if (String(reg.instanceId) === bare) return true;
+    const pid = reg.pageId ? String(reg.pageId) : "";
+    if (!pid) return false;
+    return pid === full || pid === bare + "/host" || pid.split("/")[0] === bare;
   }
   function deliverToInstance(iidOrPageId, envelope) {
     const bare = iidOrPageId.indexOf("/") >= 0 ? iidOrPageId.split("/")[0] : iidOrPageId;
     const full = iidOrPageId;
     for (const w of aiConns) {
-      const reg = aiSelfReg.get(w) || aiPageReg.get(w);
-      if (reg && (String(reg.instanceId) === bare || reg.pageId && String(reg.pageId) === full)) {
+      const self = aiSelfReg.get(w);
+      const pageReg = aiPageReg.get(w);
+      if (pageRegMatches(self, bare, full) || pageRegMatches(pageReg, bare, full)) {
         let ok = false;
         try {
           ok = !!w.write(envelope);
@@ -2526,6 +2614,17 @@ ${String(pl.stack).slice(0, 400)}` : "");
     }
     return false;
   }
+  function pageInstanceFor(iidOrPageId) {
+    const bare = iidOrPageId.indexOf("/") >= 0 ? iidOrPageId.split("/")[0] : iidOrPageId;
+    const full = iidOrPageId;
+    for (const w of aiConns) {
+      const self = aiSelfReg.get(w);
+      const pageReg = aiPageReg.get(w);
+      if (pageRegMatches(self, bare, full)) return self && self.instanceId ? String(self.instanceId) : bare;
+      if (pageRegMatches(pageReg, bare, full)) return pageReg && pageReg.instanceId ? String(pageReg.instanceId) : bare;
+    }
+    return pages.has(bare) ? bare : null;
+  }
   function routePairSend(fromDev, to, payload) {
     const q = String(to || "all").trim() || "all";
     const from = { id: fromDev.id, kind: fromDev.kind || "page", name: fromDev.name };
@@ -2545,7 +2644,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       for (const d of r && r.delivered || []) delivered.push({ kind: "agent", id: d.agentKey, status: d.status });
     };
     const pushPageRow = (row) => {
-      const iid = String(row.id).split("/")[0];
+      const iid = pageInstanceFor(String(row.id)) || String(row.id).split("/")[0];
       const rid = "pair_" + randomBytes2(4).toString("hex");
       let ok = false;
       let frame = null;
@@ -2557,8 +2656,9 @@ ${String(pl.stack).slice(0, 400)}` : "");
         const body = String(payload.text || "");
         const card = { kind: "notify", title: from.name, body, timeoutMs: 3e4, fromPair: from };
         for (const w of aiConns) {
-          const reg = aiSelfReg.get(w) || aiPageReg.get(w);
-          if (reg && String(reg.instanceId) === iid) {
+          const self = aiSelfReg.get(w);
+          const pageReg = aiPageReg.get(w);
+          if (pageRegMatches(self, iid, row.id) || pageRegMatches(pageReg, iid, row.id)) {
             try {
               ok = !!w.write({ type: "interaction", requestId: rid, interaction: card, frameId: "ai", via: "self" });
             } catch {
@@ -2593,10 +2693,11 @@ ${String(pl.stack).slice(0, 400)}` : "");
       const row = devRows.find((d) => d.id === raw);
       return row ? pushPageRow(row) : false;
     };
+    const selfIid = pageInstanceFor(String(fromDev.id)) || (fromDev.id.indexOf("/") >= 0 ? fromDev.id.split("/")[0] : fromDev.id);
+    const rowIsSelf = (row) => (pageInstanceFor(String(row.id)) || String(row.id).split("/")[0]) === selfIid;
     if (q === "all" || q === "pages") {
-      const selfIid = fromDev.id.indexOf("/") >= 0 ? fromDev.id.split("/")[0] : fromDev.id;
       for (const row of devRows) {
-        if (String(row.id).split("/")[0] === selfIid) continue;
+        if (rowIsSelf(row)) continue;
         pushPageRow(row);
       }
       return { ok: delivered.length > 0, delivered };
@@ -2616,9 +2717,8 @@ ${String(pl.stack).slice(0, 400)}` : "");
       return { ok: delivered.length > 0, delivered };
     }
     if (q === "all-kinds") {
-      const selfIid = fromDev.id.indexOf("/") >= 0 ? fromDev.id.split("/")[0] : fromDev.id;
       for (const row of devRows) {
-        if (String(row.id).split("/")[0] === selfIid) continue;
+        if (rowIsSelf(row)) continue;
         pushPageRow(row);
       }
       pushAgent("all");
@@ -2635,11 +2735,17 @@ ${String(pl.stack).slice(0, 400)}` : "");
       pushPageRaw(q);
       return { ok: delivered.length > 0, delivered };
     }
+    const qBase = q.indexOf("/") >= 0 ? q.split("/")[0] : q;
+    const byIid = devRows.filter((d) => d.instanceId && String(d.instanceId) === qBase);
+    if (byIid.length === 1) {
+      pushPageRow(byIid[0]);
+      return { ok: delivered.length > 0, delivered };
+    }
     if (agents.has(q) || agentIdx.has(q)) {
       pushAgent(q);
       return { ok: delivered.length > 0, delivered };
     }
-    const devMatches = devRows.filter((d) => (d.name || "").includes(q) || d.id.includes(q));
+    const devMatches = devRows.filter((d) => (d.name || "").includes(q) || d.id.includes(q) || d.instanceId && String(d.instanceId).includes(q));
     if (devMatches.length === 1) {
       pushPageRaw(devMatches[0].id);
       return { ok: delivered.length > 0, delivered };

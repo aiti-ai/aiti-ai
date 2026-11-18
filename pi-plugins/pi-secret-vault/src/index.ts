@@ -36,11 +36,19 @@ import {
   redactOnDisk,
   redactSystemMessages,
   redactTextSpans,
+  registerExtractedSecrets,
+  registerMessageToolSecrets,
+  registerValueSecrets,
+  registerWeakCandidates,
   restoreDeepInPlace,
+  sensitiveReadTargets,
   unmountedInValue,
+  inspectToolTargets,
+  fnv1a,
   LANDING_MODES,
   type CustomRule,
   type SecretState,
+  type WeakCandidate,
 } from "@aiti-ai/secret-mask-core";
 import { appendAuditLog, handleSecretCommand } from "@aiti-ai/secret-mask-core";
 import {
@@ -78,13 +86,68 @@ const SECTION_TEXT = [
 
 interface ExtensionState extends SecretState {
   sessionId: string;
+  sessionFile?: string;
+  sessionName?: string;
   peerSeen: boolean;
   peerExpected: boolean;
+  weakNotified: Set<string>;
   notice?: (text: string, level?: "info" | "warning" | "error") => void;
 }
 
 function active(state: ExtensionState): boolean {
   return state.enabled && !state.disabledBy;
+}
+
+function messageText(message: unknown): string {
+  const m = message as { content?: unknown } | null;
+  if (!m) return "";
+  if (typeof m.content === "string") return m.content;
+  if (Array.isArray(m.content)) {
+    return m.content
+      .map((part) => {
+        const p = part as { type?: string; text?: string } | null;
+        return p?.type === "text" && typeof p.text === "string" ? p.text : "";
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+  return "";
+}
+
+/** Explicit /name, else a redacted first-user-message excerpt (never raw values). */
+function deriveSessionTitle(state: ExtensionState, ctx: { sessionManager?: any }, fallbackMessage?: unknown): string | undefined {
+  const explicit = ctx.sessionManager?.getSessionName?.();
+  if (explicit) return String(explicit).slice(0, 120);
+  const candidates: string[] = [];
+  const fromMessage = fallbackMessage ? messageText(fallbackMessage) : "";
+  if (fromMessage) candidates.push(fromMessage);
+  if (!fromMessage) {
+    try {
+      const entries = ctx.sessionManager?.getEntries?.() ?? [];
+      for (const entry of entries) {
+        if (entry?.type !== "message" || entry.message?.role !== "user") continue;
+        const text = messageText(entry.message);
+        if (text) {
+          candidates.push(text);
+          break;
+        }
+      }
+    } catch {
+      // history is best effort
+    }
+  }
+  for (const text of candidates) {
+    try {
+      state.registry.autoRegister(text, state.salt);
+      registerWeakCandidates(text, state.registry, state.salt, {});
+      const red = state.registry.redact(text).text.replace(/\s+/g, " ").trim();
+      if (red) return red.slice(0, 80);
+    } catch {
+      const red = text.replace(/\s+/g, " ").trim();
+      if (red) return red.slice(0, 80);
+    }
+  }
+  return undefined;
 }
 
 /** True when ~/.pi/agent/settings.json lists the given package. */
@@ -121,6 +184,11 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     sessionId: "",
     peerSeen: false,
     peerExpected: false,
+    weakNotified: new Set(),
+    extract: true,
+    filePolicy: "learn",
+    weakMode: "notify",
+    lastToolOutput: "",
   };
   state.registry.salt = state.salt;
   const rules = new RulesSource(RULES_PATH, state.cwd);
@@ -146,12 +214,30 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       writeSessionRecord(SESSION_STATE_PATH, state.sessionId || "unknown", {
         cwd: state.cwd,
         landing: state.landing,
+        name: state.sessionName,
+        file: state.sessionFile,
         mounted: state.registry.entries().filter((e) => e.source === "vault").map((e) => e.alias ?? e.label),
+        pid: process.pid,
       });
     } catch {
       // state file is auxiliary; never break a hook because of it
     }
   };
+
+  const notifyWeak = (candidate: WeakCandidate): void => {
+    if (state.weakMode !== "notify") return;
+    const hash = fnv1a(candidate.value);
+    if (state.weakNotified.has(hash)) return;
+    state.weakNotified.add(hash);
+    state.notice?.(
+      candidate.registered
+        ? "secret-vault: detected a known weak password — masked automatically; consider rotating it to a stronger one (value hidden)."
+        : "secret-vault: detected a possible weak password in your message — /secret add to register it (the value is hidden; /secret weak auto to auto-register).",
+      "warning",
+    );
+  };
+  const weakOptions = () =>
+    state.weakMode === "off" ? undefined : { auto: state.weakMode === "auto", onCandidate: notifyWeak };
 
   // --- coexistence handshake (vault wins; legacy mask wins by fallback) ----
   pi.events.on(HELLO_EVENT, (data: unknown) => {
@@ -164,6 +250,8 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     state.salt = randomBytes(4).toString("hex");
     state.registry.salt = state.salt;
     state.cwd = ctx.cwd || process.cwd();
+    state.sessionFile = ctx.sessionManager?.getSessionFile?.() ?? undefined;
+    state.sessionName = deriveSessionTitle(state, ctx);
     store.updateCwd(state.cwd);
     rules.setScope(state.cwd);
     reloadRules();
@@ -214,10 +302,33 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     const res = redactTextSpans([{ get: () => text, set: (t) => { text = t; } }], state.registry, state.salt, {
       autoDetect: true,
       rules,
+      weak: weakOptions(),
       onDetected: state.landing === "vault" ? landOnDetect : undefined,
     });
     if (res.changed && state.landing === "vault") persistSessionState();
     return res.changed ? { action: "transform" as const, text } : { action: "continue" as const };
+  });
+
+  // The in-memory registry dies with the process; clear the mounted list so the
+  // management UI only shows sessions that are actually holding aliases.
+  pi.on("session_shutdown", () => {
+    try {
+      writeSessionRecord(SESSION_STATE_PATH, state.sessionId || "unknown", {
+        cwd: state.cwd,
+        landing: state.landing,
+        name: state.sessionName,
+        file: state.sessionFile,
+        mounted: [],
+        pid: process.pid,
+      });
+    } catch {
+      // auxiliary state only
+    }
+  });
+
+  pi.on("session_info_changed", (event: { name?: string }, _ctx) => {
+    state.sessionName = event?.name ? String(event.name).slice(0, 120) : undefined;
+    persistSessionState();
   });
 
   pi.on("context", (event) => {
@@ -225,6 +336,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     const before = new Set(state.registry.entries().map((e) => e.placeholder));
     const res = redactMessages(event.messages as unknown[], state.registry, state.salt, {
       rules: currentRules(),
+      weak: weakOptions(),
       onDetected:
         state.landing === "vault"
           ? (entries) => {
@@ -255,7 +367,22 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   });
 
   pi.on("tool_call", (event) => {
-    if (!active(state) || state.registry.size === 0) return undefined;
+    if (!active(state)) return undefined;
+    const toolName = String((event as { toolName?: string }).toolName ?? "");
+    const input = (event as { input?: unknown }).input;
+    if (state.extract !== false) {
+      const targets = inspectToolTargets(toolName, input);
+      for (const content of targets.contents) registerExtractedSecrets(content, state.registry, state.salt);
+      const sensitive = sensitiveReadTargets(toolName, input);
+      if (state.filePolicy === "block" && sensitive.length > 0) {
+        const list = sensitive.map((x) => x.path).slice(0, 3).join(", ");
+        return {
+          block: true,
+          reason: `secret-vault: reading sensitive file(s) is blocked by policy (/secret files learn|off to allow): ${list}`,
+        };
+      }
+    }
+    if (state.registry.size === 0) return undefined;
     if (state.guard) {
       const missing = unmountedInValue(event.input, state.registry);
       if (missing.length > 0) return { block: true, reason: guardReason(missing, { landing: state.landing }) };
@@ -265,7 +392,54 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   });
 
   pi.on("tool_result", (event) => {
-    if (!active(state) || state.registry.size === 0) return undefined;
+    if (!active(state)) return undefined;
+    const eventAny0 = event as { toolName?: string; input?: unknown; details?: unknown; structuredContent?: unknown };
+    const textParts = Array.isArray(event.content)
+      ? event.content.filter((p): p is { type: "text"; text: string } => {
+          const part = p as { type?: string; text?: string };
+          return part?.type === "text" && typeof part.text === "string";
+        })
+      : [];
+    const joined = textParts.map((p) => p.text).join("\n");
+    if (joined) state.lastToolOutput = joined.slice(0, 65_536);
+    if (state.extract !== false) {
+      let extracted = 0;
+      if (joined) extracted += registerExtractedSecrets(joined, state.registry, state.salt).count;
+      if (eventAny0.details !== undefined && eventAny0.details !== null) {
+        extracted += registerValueSecrets(eventAny0.details, state.registry, state.salt).count;
+      }
+      if (eventAny0.structuredContent !== undefined && eventAny0.structuredContent !== null) {
+        extracted += registerValueSecrets(eventAny0.structuredContent, state.registry, state.salt).count;
+      }
+      const sensitive = sensitiveReadTargets(eventAny0.toolName ?? "", eventAny0.input);
+      const dedicated = sensitive.find((x) => x.info.dedicated);
+      const trimmed = joined.trim();
+      let withheld: string | undefined;
+      if (state.filePolicy === "learn" && dedicated && extracted === 0 && trimmed.length >= 6 && trimmed.length <= 8192) {
+        const label = (dedicated.path.split(/[/\\]/).pop() ?? "FILE").toUpperCase().replace(/[^A-Z0-9_.-]/g, "_").slice(0, 48) || "FILE";
+        state.registry.registerAuto(trimmed, "file:secret", label, state.salt);
+        withheld = `[secret-vault: sensitive file content withheld (${trimmed.length} bytes). The value is registered in this session — use its placeholder in tool arguments, or /secret list to see the alias.]`;
+      } else if (state.filePolicy === "block" && sensitive.length > 0) {
+        withheld = "[secret-vault: sensitive file content withheld by policy (/secret files learn|off to allow).]";
+      }
+      if (withheld) {
+        const images = Array.isArray(event.content)
+          ? event.content.filter((p) => (p as { type?: string }).type !== "text")
+          : [];
+        const detailsRedacted =
+          eventAny0.details !== undefined && eventAny0.details !== null ? redactDeep(eventAny0.details, state.registry).value : undefined;
+        const structuredRedacted =
+          eventAny0.structuredContent !== undefined && eventAny0.structuredContent !== null
+            ? redactDeep(eventAny0.structuredContent, state.registry).value
+            : undefined;
+        return {
+          content: [{ type: "text", text: withheld }, ...images],
+          ...(detailsRedacted !== undefined ? { details: detailsRedacted } : {}),
+          ...(structuredRedacted !== undefined ? { structuredContent: structuredRedacted } : {}),
+        } as never;
+      }
+    }
+    if (state.registry.size === 0) return undefined;
     let changed = false;
     const content = Array.isArray(event.content)
       ? event.content.map((part) => {
@@ -306,7 +480,19 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   });
 
   pi.on("message_end", (event) => {
-    if (!active(state) || !redactOnDisk(state.landing)) return undefined;
+    if (!active(state)) return undefined;
+    const msgRole = (event.message as { role?: string } | null)?.role;
+    if (msgRole === "user" && !state.sessionName) {
+      const title = deriveSessionTitle(state, { sessionManager: { getSessionName: () => undefined } }, event.message);
+      if (title) {
+        state.sessionName = title;
+        persistSessionState();
+      }
+    }
+    if (state.extract !== false && msgRole === "assistant") {
+      registerMessageToolSecrets(event.message, state.registry, state.salt);
+    }
+    if (!redactOnDisk(state.landing)) return undefined;
     const rules = currentRules();
     if (state.registry.size === 0 && rules.length === 0) return undefined;
     const res = redactMessageDeep(event.message, state.registry, { rules });

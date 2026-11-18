@@ -2,7 +2,7 @@
 // (Complements the engine tests; no model/provider needed.)
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -168,6 +168,83 @@ test("mask wiring: send-boundary redaction, guard/restore, message_end, compact,
     const status = ctx.notices.at(-1).text;
     assert.match(status, /landing ephemeral/);
     assert.match(status, /guard ON/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("mask wiring: structured extraction, sensitive files, weak values, learn", async () => {
+  const home = mkdtempSync(join(tmpdir(), "mask-wiring-weak-"));
+  try {
+    const cwd = join(home, "proj");
+    const factory = await loadExtension(home);
+    const host = makeHost();
+    await factory(host.pi);
+    const ctx = makeCtx(cwd);
+    await host.run("session_start", { reason: "startup" }, ctx);
+    const secretCmd = (line) => host.commands.get("secret").handler(line, ctx);
+
+    // 1) write-tool content is mined before execution; later reads are redacted
+    const writeInput = { path: "/tmp/proj/.env", content: "DB_PASSWORD=abc12345\nPORT=3000" };
+    await host.run("tool_call", { toolName: "write", toolCallId: "w1", input: writeInput }, ctx);
+    await secretCmd("list");
+    const listed = ctx.notices.at(-1).text;
+    assert.match(listed, /DB_PASSWORD/);
+    assert.ok(!listed.includes("abc12345"));
+    const cat = await host.run(
+      "tool_result",
+      { toolName: "bash", toolCallId: "c1", input: { command: "cat /tmp/proj/.env" }, content: [{ type: "text", text: "DB_PASSWORD=abc12345\nPORT=3000" }], isError: false },
+      ctx,
+    );
+    assert.ok(cat);
+    assert.ok(!JSON.stringify(cat).includes("abc12345"), "env value redacted in tool output");
+    assert.ok(JSON.stringify(cat).includes("DB_PASSWORD="), "keys stay readable for structured files");
+
+    // 2) dedicated secret file: content withheld and registered
+    const secretTxt = await host.run(
+      "tool_result",
+      { toolName: "bash", toolCallId: "c2", input: { command: "cat /tmp/secret.txt" }, content: [{ type: "text", text: "123abc" }], isError: false },
+      ctx,
+    );
+    assert.ok(secretTxt);
+    assert.match(secretTxt.content[0].text, /withheld/);
+    assert.ok(!JSON.stringify(secretTxt).includes("123abc"));
+    assert.ok(ctx.notices.length >= 0);
+
+    // 3) block policy stops sensitive reads at tool_call
+    await secretCmd("files block");
+    const blocked = await host.run("tool_call", { toolName: "read", toolCallId: "r1", input: { path: "/tmp/proj/.env" } }, ctx);
+    assert.equal(blocked.block, true);
+    assert.match(blocked.reason, /sensitive file/);
+    await secretCmd("files learn");
+
+    // 4) weak candidate from a strong context: dictionary hit registers + redacts
+    const weakMsg = { role: "user", content: "我的密码是123abc", timestamp: 1 };
+    const changed = await host.run("context", { messages: [weakMsg] }, ctx);
+    assert.ok(changed);
+    const ph = weakMsg.content.match(/rsec_[0-9a-f]{8}/)?.[0];
+    assert.ok(ph, "dictionary weak password registered and redacted");
+    assert.equal(weakMsg.content, `我的密码是${ph}`);
+    // prose status is not registered
+    const prose = { role: "user", content: "password is required", timestamp: 2 };
+    assert.equal(await host.run("context", { messages: [prose] }, ctx), undefined);
+
+    // 5) explicit learn from a file
+    const learnFile = join(home, "learn.env");
+    writeFileSync(learnFile, "API_TOKEN=xyz987654\n");
+    await secretCmd(`learn ${learnFile}`);
+    const learned = ctx.notices.at(-1).text;
+    assert.match(learned, /learned 1/);
+    assert.ok(!learned.includes("xyz987654"));
+
+    // 6) extract off disables tool-output mining
+    await secretCmd("extract off");
+    const off = await host.run(
+      "tool_result",
+      { toolName: "bash", toolCallId: "c3", input: { command: "cat /tmp/other.env" }, content: [{ type: "text", text: "PASSWORD=zzz999999" }], isError: false },
+      ctx,
+    );
+    assert.equal(off, undefined, "extract off leaves unknown values untouched");
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

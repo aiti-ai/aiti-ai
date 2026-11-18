@@ -11,10 +11,20 @@ import { writeFileAtomic } from "./crypto.ts";
 export interface VaultSessionRecord {
   cwd: string;
   landing: string;
+  /** Display name (explicit /name, or a redacted first-message excerpt). */
+  name?: string;
+  /** Session JSONL file; the web UI opens it via the pi-web:open-session event. */
+  file?: string;
   /** Aliases mounted in this session (names only). */
   mounted: string[];
+  /** Owning pi process (same host); used by the management UI to hide dead sessions. */
+  pid?: number;
   updatedAt: string;
 }
+
+/** Session records older than this are pruned when they have no owning PID. */
+export const SESSION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+export const MAX_SESSION_RECORDS = 50;
 
 export interface VaultSessionStateFile {
   version: 1;
@@ -34,10 +44,22 @@ export function readSessionState(path: string): VaultSessionStateFile {
   }
 }
 
+/** Drop stale pid-less records and enforce the size cap. */
+function prune(file: VaultSessionStateFile, now = Date.now()): VaultSessionStateFile {
+  const entries = Object.entries(file.sessions)
+    .filter(([, rec]) => {
+      if (rec.pid) return true; // a live/dead process is judged by the reader
+      const at = Date.parse(rec.updatedAt);
+      return Number.isFinite(at) ? now - at <= SESSION_RETENTION_MS : false;
+    })
+    .sort((a, b) => b[1].updatedAt.localeCompare(a[1].updatedAt))
+    .slice(0, MAX_SESSION_RECORDS);
+  return { version: 1, sessions: Object.fromEntries(entries) };
+}
+
 export function writeSessionRecord(path: string, sessionId: string, record: Omit<VaultSessionRecord, "updatedAt">): void {
   const file = readSessionState(path);
   file.sessions[sessionId || "unknown"] = { ...record, updatedAt: new Date().toISOString() };
-  // keep the file bounded: the 50 most recently updated sessions
-  const entries = Object.entries(file.sessions).sort((a, b) => b[1].updatedAt.localeCompare(a[1].updatedAt)).slice(0, 50);
-  writeFileAtomic(path, JSON.stringify({ version: 1, sessions: Object.fromEntries(entries) }, null, 2) + "\n");
+  // bounded by age (pid-less records) and by the 50 most recently updated records
+  writeFileAtomic(path, JSON.stringify(prune(file), null, 2) + "\n");
 }

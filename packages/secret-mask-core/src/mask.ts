@@ -126,6 +126,11 @@ export class Registry {
     return this.byPlaceholder.get(placeholder) ?? this.redirects.get(placeholder);
   }
 
+  /** True when this exact value is already registered. */
+  hasValue(value: string): boolean {
+    return this.byValue.has(value.trim());
+  }
+
   /** True when a placeholder is mounted (present or redirected). */
   isMounted(placeholder: string): boolean {
     return this.byPlaceholderLookup(placeholder) !== undefined;

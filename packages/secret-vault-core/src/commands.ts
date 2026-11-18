@@ -8,6 +8,7 @@
  */
 
 import { existsSync } from "node:fs";
+import { assessPasswordStrength, describePasswordWeakness } from "@aiti-ai/secret-mask-core";
 import { Registry } from "@aiti-ai/secret-mask-core";
 import { captureIntoVault, importEnvFile, importProcessEnv, type ImportResult } from "./entries.ts";
 import { VaultError, type AddResult, type VaultScope, type VaultStore } from "./store.ts";
@@ -69,7 +70,8 @@ function flag(tokens: string[], name: string): boolean {
 }
 
 function importSummary(label: string, res: ImportResult): string {
-  return `${label}: ${res.added} added, ${res.rotated} rotated, ${res.skipped} skipped.`;
+  const weak = res.weak.length ? ` ⚠ weak password: ${res.weak.join(", ")}` : "";
+  return `${label}: ${res.added} added, ${res.rotated} rotated, ${res.skipped} skipped.${weak}`;
 }
 
 export async function handleVaultCommand(
@@ -154,7 +156,16 @@ export async function handleVaultCommand(
         return { ok: false, text: errorText(e) };
       }
       if (entries.length === 0) return { ok: true, text: "vault: no entries (add one with /vault add <alias>)." };
-      return { ok: true, text: `vault: ${entries.length} entr${entries.length === 1 ? "y" : "ies"}:\n${entries.map(formatEntryLine).join("\n")}` };
+      const lines = entries.map((e) => {
+        let weak = false;
+        try {
+          weak = assessPasswordStrength(state.store.get(e.alias).value).weak;
+        } catch {
+          // locked entries are not flagged
+        }
+        return formatEntryLine(e, weak);
+      });
+      return { ok: true, text: `vault: ${entries.length} entr${entries.length === 1 ? "y" : "ies"}:\n${lines.join("\n")}` };
     }
 
     case "remove": {
@@ -178,9 +189,11 @@ export async function handleVaultCommand(
         if (!io.show && !io.copy) return { ok: false, text: "vault: this host has no dialog/clipboard surface; refusing to print the value into the transcript." };
         io.show?.(`vault: ${alias}`, entry.value);
         io.copy?.(entry.value);
+        const strength = assessPasswordStrength(entry.value);
+        const weakNote = strength.weak ? ` ⚠ weak password (${describePasswordWeakness(strength)}); consider rotating it.` : "";
         return {
           ok: true,
-          text: `vault: "${alias}" ${io.show ? "shown in a dialog" : ""}${io.show && io.copy ? " and " : ""}${io.copy ? "copied to the clipboard" : ""} — never printed into the session.`,
+          text: `vault: "${alias}" ${io.show ? "shown in a dialog" : ""}${io.show && io.copy ? " and " : ""}${io.copy ? "copied to the clipboard" : ""} — never printed into the session.${weakNote}`,
         };
       } catch (e) {
         return { ok: false, text: errorText(e) };
@@ -192,7 +205,8 @@ export async function handleVaultCommand(
       if (!alias) return { ok: false, text: "Usage: /vault get <alias> (mounts the alias; prints only its placeholder)" };
       try {
         const mounted = mountAlias(state, alias);
-        return { ok: true, text: `vault: mounted "${alias}" as ${mounted.placeholder} (v${mounted.version}, ${mounted.scope}).` };
+        const weakNote = mounted.weak ? " ⚠ weak password — consider rotating it." : "";
+        return { ok: true, text: `vault: mounted "${alias}" as ${mounted.placeholder} (v${mounted.version}, ${mounted.scope}).${weakNote}` };
       } catch (e) {
         return { ok: false, text: errorText(e) };
       }
@@ -272,7 +286,8 @@ export async function handleVaultCommand(
 function describeAdd(res: AddResult): string {
   const scope = res.scope === "project" ? "project" : "global";
   const shadow = res.shadowed ? " (warning: a same-alias project entry shadows this global value)" : "";
-  return `vault: ${res.created ? "added" : "rotated"} "${res.alias}" v${res.version} [${scope}]${shadow}`;
+  const weak = res.weak ? ` ⚠ weak password (${res.weakReasons.join(", ")}) — stored anyway; consider rotating to a stronger one.` : "";
+  return `vault: ${res.created ? "added" : "rotated"} "${res.alias}" v${res.version} [${scope}]${shadow}${weak}`;
 }
 
 function errorText(e: unknown): string {

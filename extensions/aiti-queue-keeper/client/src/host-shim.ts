@@ -93,3 +93,11 @@ export function t(key: string, params?: Record<string, unknown>): string {
   const fn = _ctx?.t as ((key: string, params?: Record<string, unknown>) => string) | undefined;
   return typeof fn === "function" ? fn(key, params) : key;
 }
+
+/** ensureMaterialized(id): ensure a lazy extension's client is materialized (idempotent;
+ *  cross-extension interaction-time bootstrap, same as session-manager pulling aiti-folder).
+ *  Older hosts without the API resolve(false). */
+export function ensureMaterialized(id: string): Promise<boolean> {
+  const fn = _ctx?.ensureMaterialized as ((id: string) => Promise<boolean>) | undefined;
+  return typeof fn === "function" ? fn(id) : Promise.resolve(false);
+}

@@ -80,7 +80,6 @@ const staticFiles = {
   '/host-protocol.js': { type: 'application/javascript; charset=utf-8', content: read(join(assetsDir, 'host-protocol.js')) }, // 宿主协议层（浏览器模块）
   '/cdp-core.js': { type: 'application/javascript; charset=utf-8', content: read(join(assetsDir, 'cdp-core.js')) }, // self-exec 执行核心（M1）
   '/pair-client.js': { type: 'application/javascript; charset=utf-8', content: read(join(assetsDir, 'pair-client.js')) }, // pair 设备互连公共库（浏览器模块）
-  '/pair.html': { type: 'text/html; charset=utf-8', content: read(join(assetsDir, 'pair.html')) }, // pair 手机/外部浏览器独立轻页（widget 宿主）
 };
 
 // --assets-extra <dir>（可多次）：追加挂载目录内全部文件（同名覆盖内置；典型：opencode client 脚本）

@@ -55,6 +55,10 @@ Takes effect in **newly started sessions**. Running sessions are unaffected.
 | `/secret guard [on\|off]` | Block tool calls that reference placeholders not mounted in this session (default ON). |
 | `/secret strict [on\|off]` | Fail closed on side channels (`!` commands, summarizer paths) instead of warn-and-pass. |
 | `/secret rule list \| add <label> <exact\|regex> <pattern> [--fixed <text>] [--global] \| remove <label> \| reload` | Custom detection rules (`~/.pi/agent/secret-mask-rules.json`, hot reloaded). |
+| `/secret extract on\|off` | Structured extraction from tool output / write inputs (default ON). |
+| `/secret files learn\|block\|off` | Sensitive-file policy (default `learn`): register & redact values, withhold dedicated secret files, or block reads. |
+| `/secret weak notify\|auto\|off` | Weak-password candidates after `password is` / `密码是` (dictionary hits register; others notify or auto-register). |
+| `/secret learn [last\|<file>]` | Register values from the latest tool output or a local file (after-the-fact recovery). |
 | `/secret save <file>` / `load <file>` | Explicit plaintext snapshot to/from a file you choose (0600). No implicit persistence, no remembered paths — placement and safety are yours. |
 | `/secret audit on\|off` / `show` | Per-send wire-payload proof log (see below). |
 | `/secret status` | State summary: landing, guard, strict, rule count, registry size, audit state. |
@@ -85,6 +89,32 @@ Session mode only affects a session; new sessions start at the default.
 | Proof layer | `before_provider_request` | Rewrites any raw value that survived every other hook (safety net, on by default, zero cost when nothing is registered) and, with `/secret audit on`, scans the **final wire payload** for raw values + placeholder counts. `leaks=0` + `placeholders>0` is direct evidence that only tokens went out. |
 
 Opaque provider fields (thinking signatures, thought signatures, text signatures) are never modified.
+
+## Weak values: values that do not look like credentials
+
+A human password such as `123abc`, `qwerty` or `password=abcdefgh` is not shaped like a machine
+credential, so entropy/length rules miss it. Three context signals close that gap:
+
+1. **Structured extraction (default ON)** — every tool result and every `write`/`edit` input is
+   scanned for key/value pairs whose *key* is credential-like (`DB_PASSWORD=…`,
+   `"password": "…"`, `api_key: …`, `Authorization: …`, URL userinfo, netrc). Values are
+   registered **without an entropy gate** (≥6 chars) and redacted immediately; keys stay readable
+   so the model can still use the structure.
+2. **Sensitive-file policy (default `learn`)** — `.env*`, `id_rsa`, `.pgpass`, `.netrc`,
+   `.npmrc`, `.git-credentials`, `credentials.json`, `secret.txt`, `*.key/p12/pfx`, kube/aws
+   credential paths: structured values are redacted; a dedicated unstructured secret file is
+   registered as a whole and **withheld** from the model (placeholder notice). `block` refuses
+   the read before execution; `off` disables the path policy.
+3. **Weak-password candidates** — after a strong context (`password is`, `PWD=`, `密码是`), a
+   small embedded dictionary (`qwerty`, `123abc`, `1qaz2wsx`, …) registers automatically; other
+   weak-shaped values only raise a one-time notice (`/secret weak auto` to register them).
+
+`/secret learn [last|<file>]` is the after-the-fact net: register values from the latest tool
+output or a local file; the next `context` call then replaces them in the model history too.
+
+Honest limit: a context-free low-entropy value with no key name, no file name and no dictionary
+hit cannot be detected reliably; the complete fix is to keep such files away from the model
+(`/secret files block` or the vault). Values shorter than 6 characters are not registered.
 
 ## Detection rules
 

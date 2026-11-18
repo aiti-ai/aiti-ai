@@ -70,12 +70,254 @@ function fnv1a(s) {
   }
   return h.toString(16).padStart(8, "0");
 }
+function entropy(v) {
+  if (!v) return 0;
+  const counts = /* @__PURE__ */ new Map();
+  for (const ch of v) counts.set(ch, (counts.get(ch) ?? 0) + 1);
+  let bits = 0;
+  for (const n of counts.values()) {
+    const p = n / v.length;
+    bits -= p * Math.log2(p);
+  }
+  return bits;
+}
 var B64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 var B64_VALUE = new Int8Array(128).fill(-1);
 for (let i = 0; i < 64; i++) B64_VALUE[B64URL.charCodeAt(i)] = i;
 B64_VALUE[43] = 62;
 B64_VALUE[47] = 63;
 var MIN_REDACT_LENGTH = 6;
+var EXTRACT_MAX_BYTES = 256 * 1024;
+var WEAK_PASSWORDS = /* @__PURE__ */ new Set([
+  "password",
+  "passw0rd",
+  "password1",
+  "password12",
+  "password123",
+  "p@ssw0rd",
+  "passw0rd1",
+  "123456",
+  "1234567",
+  "12345678",
+  "123456789",
+  "1234567890",
+  "0123456789",
+  "9876543210",
+  "123456a",
+  "a123456",
+  "a12345678",
+  "rsec_035c2182",
+  "abc123",
+  "abc12345",
+  "abcd1234",
+  "abc123!",
+  "qwerty",
+  "qwertyui",
+  "qwertyuiop",
+  "qwerty12",
+  "qwerty123",
+  "qwe123",
+  "qweasd",
+  "qweasdzxc",
+  "asdfgh",
+  "asdfghjkl",
+  "asdf1234",
+  "zxcvbnm",
+  "zxcvbnm123",
+  "poiuytrewq",
+  "1qaz2wsx",
+  "1qazxsw2",
+  "1qaz2wsx3edc",
+  "1qaz@wsx",
+  "1q2w3e4r",
+  "1q2w3e4r5t",
+  "q1w2e3r4",
+  "zaq12wsx",
+  "qazwsx",
+  "qazwsxedc",
+  "abcdef",
+  "abcdefg",
+  "abcdefgh",
+  "iloveyou",
+  "iloveu",
+  "loveme",
+  "loveyou",
+  "mylove",
+  "forever",
+  "admin",
+  "admin123",
+  "admin888",
+  "administrator",
+  "root",
+  "root123",
+  "toor",
+  "guest",
+  "guest123",
+  "user",
+  "user123",
+  "user1234",
+  "test",
+  "test123",
+  "test1234",
+  "demo",
+  "demo123",
+  "temp123",
+  "temp1234",
+  "letmein",
+  "letmein123",
+  "welcome",
+  "welcome1",
+  "welcome123",
+  "changeme",
+  "secret",
+  "secret123",
+  "monkey",
+  "monkey123",
+  "dragon",
+  "dragon123",
+  "master",
+  "sunshine",
+  "sunshine1",
+  "princess",
+  "princess1",
+  "football",
+  "football1",
+  "baseball",
+  "baseball1",
+  "shadow",
+  "shadow1",
+  "superman",
+  "superman1",
+  "michael",
+  "michael1",
+  "jennifer",
+  "jennifer1",
+  "trustno1",
+  "whatever",
+  "nothing",
+  "trustme",
+  "woaini",
+  "woaini1314",
+  "woaini520",
+  "5201314",
+  "5201314520",
+  "1314520",
+  "1314521",
+  "7758521",
+  "7758258",
+  "888888",
+  "88888888",
+  "666666",
+  "66666666",
+  "111111",
+  "11111111",
+  "000000",
+  "00000000",
+  "999999",
+  "555555",
+  "777777",
+  "123123",
+  "112233",
+  "11223344",
+  "121212",
+  "159753",
+  "147258369",
+  "123321",
+  "654321",
+  "987654321",
+  "123654",
+  "159357",
+  "159951",
+  "1234554321",
+  "25252525",
+  "mysql",
+  "postgres",
+  "postgresql",
+  "oracle",
+  "sybase",
+  "sa123456",
+  "system",
+  "manager",
+  "company",
+  "computer",
+  "internet",
+  "service",
+  "server",
+  "backup",
+  "default",
+  "oracle123",
+  "mysql123",
+  "fuckyou",
+  "fuckyou1",
+  "fuckoff",
+  "asshole",
+  "bitch",
+  "suckit",
+  "biteme",
+  "killer",
+  "access",
+  "flower",
+  "hello",
+  "hello123",
+  "freedom",
+  "whatever1",
+  "starwars",
+  "pokemon",
+  "naruto",
+  "batman",
+  "matrix",
+  "mustang",
+  "mercedes",
+  "ferrari",
+  "corvette",
+  "porsche",
+  "yamaha",
+  "hunter",
+  "ranger",
+  "buster",
+  "soccer",
+  "hockey",
+  "tennis",
+  "golfer",
+  "cookie",
+  "orange",
+  "banana",
+  "purple",
+  "silver",
+  "golden",
+  "diamond",
+  "pepper",
+  "ginger",
+  "summer",
+  "winter",
+  "spring",
+  "autumn",
+  "january",
+  "february"
+]);
+function assessPasswordStrength(value) {
+  const v = value.trim();
+  const lower = v.toLowerCase();
+  const reasons = [];
+  if (WEAK_PASSWORDS.has(lower)) reasons.push("dictionary");
+  if (v.length < 8) reasons.push("short");
+  if (/^\d+$/.test(v) && v.length < 12) reasons.push("digits-only");
+  if (/^[a-z]+$/.test(v) && v.length < 12) reasons.push("lowercase-only");
+  if (v.length >= 8 && !WEAK_PASSWORDS.has(lower) && entropy(v) < 2.5) reasons.push("low-entropy");
+  if (/^(.)\1+$/.test(v) || /(0123|1234|2345|3456|4567|5678|6789|abcd|bcde|qwer|asdf|zxcv|password|admin)/i.test(v)) reasons.push("sequence");
+  return { weak: reasons.length > 0, reasons };
+}
+function describePasswordWeakness(strength) {
+  const labels = {
+    dictionary: "common weak password",
+    short: "shorter than 8 characters",
+    "digits-only": "digits only",
+    "lowercase-only": "lowercase letters only",
+    "low-entropy": "low entropy",
+    sequence: "sequential pattern"
+  };
+  return strength.reasons.map((r) => labels[r]).join(", ");
+}
 
 // src/keychain.ts
 import { spawn, spawnSync } from "node:child_process";
@@ -493,6 +735,7 @@ var VaultStore = class {
     if (trimmed.length < MIN_REDACT_LENGTH) {
       throw new VaultError("too-short", `vault: value must be at least ${MIN_REDACT_LENGTH} characters (shorter values cannot be masked safely)`);
     }
+    const strength = assessPasswordStrength(trimmed);
     const key = this.keyFor(true);
     const scope = opts.project ? "project" : "global";
     const file = this.load(scope) ?? this.emptyFile(key);
@@ -508,7 +751,7 @@ var VaultStore = class {
     };
     this.save(file, scope);
     const shadowed = scope === "global" && Boolean(this.load("project")?.entries?.[alias]);
-    return { alias, scope, version: file.entries[alias].version, created: !previous, shadowed };
+    return { alias, scope, version: file.entries[alias].version, created: !previous, shadowed, weak: strength.weak, weakReasons: strength.reasons };
   }
   /** Remove an alias from both buckets. Returns how many records were deleted. */
   remove(alias) {
@@ -630,7 +873,7 @@ function aliasFromEnvName(name) {
   return name.toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64) || "env-value";
 }
 function importPairs(store, pairs, opts = {}) {
-  const result = { added: 0, rotated: 0, skipped: 0, aliases: [] };
+  const result = { added: 0, rotated: 0, skipped: 0, aliases: [], weak: [] };
   for (const pair of pairs) {
     const alias = aliasFromEnvName(pair.key);
     if (valueExists(store, pair.value)) {
@@ -642,6 +885,7 @@ function importPairs(store, pairs, opts = {}) {
       if (res.created) result.added++;
       else result.rotated++;
       result.aliases.push(res.alias);
+      if (res.weak) result.weak.push(res.alias);
     } catch {
       result.skipped++;
     }
@@ -682,11 +926,21 @@ function suggestAutoAlias(label, value) {
 
 // src/tools.ts
 var VAULT_GET_NOTE = "This token IS a working credential: pass it verbatim into tool arguments \u2014 the runtime materializes the real secret at execution time. Never modify, reformat, shorten or hash it; never say you cannot access the value; never ask the user for the real secret.";
-function formatEntryLine(info) {
+function formatEntryLine(info, weak = false) {
   const tags = info.tags?.length ? ` (${info.tags.join(",")})` : "";
   const desc = info.desc ? ` \u2014 ${info.desc}` : "";
   const used = info.lastUsedAt ? ` \xB7 last used ${info.lastUsedAt}` : "";
-  return `- ${info.alias} [${info.scope}] v${info.version}${desc}${tags}${used}`;
+  return `- ${info.alias} [${info.scope}] v${info.version}${desc}${tags}${used}${weak ? " \u26A0 weak password" : ""}`;
+}
+function weakAliases(store) {
+  const out = {};
+  for (const info of store.list()) {
+    try {
+      out[info.alias] = assessPasswordStrength(store.get(info.alias).value).weak;
+    } catch {
+    }
+  }
+  return out;
 }
 function vaultList(state, params = {}) {
   let entries;
@@ -708,17 +962,25 @@ function vaultList(state, params = {}) {
       details: { entries: [] }
     };
   }
+  const weak = weakAliases(state.store);
   const text = [
     `Secret vault: ${entries.length} alias(es). Values are never returned \u2014 call vault_get with an alias to receive a placeholder.`,
-    ...entries.map(formatEntryLine)
+    ...entries.map((e) => formatEntryLine(e, weak[e.alias] === true))
   ].join("\n");
-  return { content: [{ type: "text", text }], details: { entries } };
+  return { content: [{ type: "text", text }], details: { entries: entries.map((e) => ({ ...e, weak: weak[e.alias] === true })) } };
 }
 function mountAlias(state, alias) {
   const entry = state.store.get(alias, { touch: true, sessionId: state.sessionId });
   const res = state.registry.registerStable(entry.value, alias);
   if (!res) throw new VaultError("mount-failed", `vault: could not mount "${alias}" (placeholder collision \u2014 /vault status)`);
-  return { alias, placeholder: res.entry.placeholder, desc: entry.info.desc, scope: entry.scope, version: entry.info.version };
+  return {
+    alias,
+    placeholder: res.entry.placeholder,
+    desc: entry.info.desc,
+    scope: entry.scope,
+    version: entry.info.version,
+    weak: assessPasswordStrength(entry.value).weak
+  };
 }
 function vaultGet(state, params) {
   const alias = params.alias?.trim();
@@ -732,11 +994,12 @@ function vaultGet(state, params) {
           mounted.placeholder,
           "",
           VAULT_GET_NOTE,
-          `(alias: ${mounted.alias}${mounted.desc ? ` \u2014 ${mounted.desc}` : ""}, v${mounted.version})`
+          `(alias: ${mounted.alias}${mounted.desc ? ` \u2014 ${mounted.desc}` : ""}, v${mounted.version})`,
+          ...mounted.weak ? ["Note: this credential is a weak password \u2014 advise the user to rotate it."] : []
         ].join("\n")
       }
     ],
-    details: { placeholder: mounted.placeholder, alias: mounted.alias, desc: mounted.desc, version: mounted.version, scope: mounted.scope }
+    details: { placeholder: mounted.placeholder, alias: mounted.alias, desc: mounted.desc, version: mounted.version, scope: mounted.scope, weak: mounted.weak }
   };
 }
 
@@ -789,7 +1052,8 @@ function flag(tokens, name) {
   return true;
 }
 function importSummary(label, res) {
-  return `${label}: ${res.added} added, ${res.rotated} rotated, ${res.skipped} skipped.`;
+  const weak = res.weak.length ? ` \u26A0 weak password: ${res.weak.join(", ")}` : "";
+  return `${label}: ${res.added} added, ${res.rotated} rotated, ${res.skipped} skipped.${weak}`;
 }
 async function handleVaultCommand(state, rawArgs, io = {}) {
   const args = rawArgs.trim();
@@ -862,8 +1126,16 @@ async function handleVaultCommand(state, rawArgs, io = {}) {
         return { ok: false, text: errorText(e) };
       }
       if (entries.length === 0) return { ok: true, text: "vault: no entries (add one with /vault add <alias>)." };
+      const lines = entries.map((e) => {
+        let weak = false;
+        try {
+          weak = assessPasswordStrength(state.store.get(e.alias).value).weak;
+        } catch {
+        }
+        return formatEntryLine(e, weak);
+      });
       return { ok: true, text: `vault: ${entries.length} entr${entries.length === 1 ? "y" : "ies"}:
-${entries.map(formatEntryLine).join("\n")}` };
+${lines.join("\n")}` };
     }
     case "remove": {
       const alias = tokens[0];
@@ -883,9 +1155,11 @@ ${entries.map(formatEntryLine).join("\n")}` };
         if (!io.show && !io.copy) return { ok: false, text: "vault: this host has no dialog/clipboard surface; refusing to print the value into the transcript." };
         io.show?.(`vault: ${alias}`, entry.value);
         io.copy?.(entry.value);
+        const strength = assessPasswordStrength(entry.value);
+        const weakNote = strength.weak ? ` \u26A0 weak password (${describePasswordWeakness(strength)}); consider rotating it.` : "";
         return {
           ok: true,
-          text: `vault: "${alias}" ${io.show ? "shown in a dialog" : ""}${io.show && io.copy ? " and " : ""}${io.copy ? "copied to the clipboard" : ""} \u2014 never printed into the session.`
+          text: `vault: "${alias}" ${io.show ? "shown in a dialog" : ""}${io.show && io.copy ? " and " : ""}${io.copy ? "copied to the clipboard" : ""} \u2014 never printed into the session.${weakNote}`
         };
       } catch (e) {
         return { ok: false, text: errorText(e) };
@@ -896,7 +1170,8 @@ ${entries.map(formatEntryLine).join("\n")}` };
       if (!alias) return { ok: false, text: "Usage: /vault get <alias> (mounts the alias; prints only its placeholder)" };
       try {
         const mounted = mountAlias(state, alias);
-        return { ok: true, text: `vault: mounted "${alias}" as ${mounted.placeholder} (v${mounted.version}, ${mounted.scope}).` };
+        const weakNote = mounted.weak ? " \u26A0 weak password \u2014 consider rotating it." : "";
+        return { ok: true, text: `vault: mounted "${alias}" as ${mounted.placeholder} (v${mounted.version}, ${mounted.scope}).${weakNote}` };
       } catch (e) {
         return { ok: false, text: errorText(e) };
       }
@@ -966,7 +1241,8 @@ ${entries.map(formatEntryLine).join("\n")}` };
 function describeAdd(res) {
   const scope = res.scope === "project" ? "project" : "global";
   const shadow = res.shadowed ? " (warning: a same-alias project entry shadows this global value)" : "";
-  return `vault: ${res.created ? "added" : "rotated"} "${res.alias}" v${res.version} [${scope}]${shadow}`;
+  const weak = res.weak ? ` \u26A0 weak password (${res.weakReasons.join(", ")}) \u2014 stored anyway; consider rotating to a stronger one.` : "";
+  return `vault: ${res.created ? "added" : "rotated"} "${res.alias}" v${res.version} [${scope}]${shadow}${weak}`;
 }
 function errorText(e) {
   if (e instanceof VaultError) return e.message;
@@ -991,6 +1267,8 @@ function helpText() {
 
 // src/session-state.ts
 import { existsSync as existsSync4, readFileSync as readFileSync5 } from "node:fs";
+var SESSION_RETENTION_MS = 7 * 24 * 60 * 60 * 1e3;
+var MAX_SESSION_RECORDS = 50;
 var EMPTY_SESSION_STATE = { version: 1, sessions: {} };
 function readSessionState(path) {
   if (!existsSync4(path)) return { version: 1, sessions: {} };
@@ -1002,11 +1280,18 @@ function readSessionState(path) {
     return { version: 1, sessions: {} };
   }
 }
+function prune(file, now = Date.now()) {
+  const entries = Object.entries(file.sessions).filter(([, rec]) => {
+    if (rec.pid) return true;
+    const at = Date.parse(rec.updatedAt);
+    return Number.isFinite(at) ? now - at <= SESSION_RETENTION_MS : false;
+  }).sort((a, b) => b[1].updatedAt.localeCompare(a[1].updatedAt)).slice(0, MAX_SESSION_RECORDS);
+  return { version: 1, sessions: Object.fromEntries(entries) };
+}
 function writeSessionRecord(path, sessionId, record) {
   const file = readSessionState(path);
   file.sessions[sessionId || "unknown"] = { ...record, updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
-  const entries = Object.entries(file.sessions).sort((a, b) => b[1].updatedAt.localeCompare(a[1].updatedAt)).slice(0, 50);
-  writeFileAtomic(path, JSON.stringify({ version: 1, sessions: Object.fromEntries(entries) }, null, 2) + "\n");
+  writeFileAtomic(path, JSON.stringify(prune(file), null, 2) + "\n");
 }
 export {
   ALIAS_RE,
@@ -1019,7 +1304,9 @@ export {
   GLOBAL_FILE,
   KEY_BYTES,
   MASTER_KEY_FILE,
+  MAX_SESSION_RECORDS,
   MODE_FILE,
+  SESSION_RETENTION_MS,
   VAULT_GET_NOTE,
   VaultError,
   VaultStore,
@@ -1045,6 +1332,7 @@ export {
   valueExists,
   vaultGet,
   vaultList,
+  weakAliases,
   writeFileAtomic,
   writeSessionRecord
 };

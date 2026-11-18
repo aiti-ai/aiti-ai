@@ -10,7 +10,7 @@
  * 为空时也渲染（保留「导入历史」入口 + 通知条）。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { QueueRow } from "./QueueRow";
+import { AttachIcons, QueueRow } from "./QueueRow";
 import type { QueuePanelProps, QueueTrashItem } from "./types";
 import { t } from "./host-shim";
 import { setPanelCommands } from "./panel-bus";
@@ -393,6 +393,8 @@ export function QueuePanel(props: QueuePanelProps) {
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, transform: "rotate(-90deg)" }}>
             <polyline points="6 9 12 15 18 9" />
           </svg>
+          {/* First entry's attachment marker: a collapsed image-carrying prompt must not look text-only. */}
+          <AttachIcons hasImages={(steering?.[0] ?? followUp?.[0])?.hasImages} hasFiles={(steering?.[0] ?? followUp?.[0])?.hasFiles} />
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", flex: 1 }}>
             {(steering?.[0]?.text ?? followUp?.[0]?.text ?? "")}
           </span>

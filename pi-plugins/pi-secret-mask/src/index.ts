@@ -37,11 +37,18 @@ import {
   redactOnDisk,
   redactSystemMessages,
   redactTextSpans,
+  registerExtractedSecrets,
+  registerMessageToolSecrets,
+  registerValueSecrets,
   restoreDeepInPlace,
+  sensitiveReadTargets,
   unmountedInValue,
+  inspectToolTargets,
+  fnv1a,
   MASK_LANDING_MODES,
   type CustomRule,
   type SecretState,
+  type WeakCandidate,
 } from "./commands.ts";
 import { appendAuditLog, handleSecretCommand } from "./commands.ts";
 import { AUDIT_LOG_PATH, PERSIST_PATH, RULES_PATH } from "./mask.ts";
@@ -64,6 +71,7 @@ interface ExtensionState extends SecretState {
   peerSeen: boolean;
   legacyNotified: boolean;
   peerNoticeShown: boolean;
+  weakNotified: Set<string>;
   /** Established on session_start so the handshake can surface a notice. */
   notice?: (text: string, level?: "info" | "warning" | "error") => void;
 }
@@ -92,6 +100,11 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     peerSeen: false,
     legacyNotified: false,
     peerNoticeShown: false,
+    weakNotified: new Set(),
+    extract: true,
+    filePolicy: "learn",
+    weakMode: "notify",
+    lastToolOutput: "",
   };
   state.registry.salt = state.salt;
   const rules = new RulesSource(RULES_PATH, state.cwd);
@@ -114,12 +127,29 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     if (state.disabledBy) return;
     state.disabledBy = "pi-secret-vault";
     try {
-      state.notice?.("pi-secret-vault detected (functional superset) — pi-secret-mask is disabled for this session.", "warning");
+      state.notice?.("pi-secret-vault is active (functional superset) — pi-secret-mask is disabled for this session.", "info");
     } catch {
       // notification is best-effort; the handshake itself must not fail
     }
     pi.events.emit(HELLO_EVENT, { ext: SELF, active: false });
   });
+
+  const notifyWeak = (ctx: { ui: { notify: (text: string, level?: string) => void } }, candidate: WeakCandidate): void => {
+    if (state.weakMode !== "notify") return;
+    const hash = fnv1a(candidate.value);
+    if (state.weakNotified.has(hash)) return;
+    state.weakNotified.add(hash);
+    try {
+      const text = candidate.registered
+        ? "secret-mask: detected a known weak password — masked automatically; consider changing it (value hidden)."
+        : "secret-mask: detected a possible weak password in your message — /secret add to register it (the value is hidden; /secret weak auto to auto-register).";
+      (ctx.ui.notify as (text: string, level?: "info" | "warning" | "error") => void)(text, "warning");
+    } catch {
+      // notification is best effort
+    }
+  };
+  const weakOptions = (ctx: { ui: { notify: (text: string, level?: string) => void } }) =>
+    state.weakMode === "off" ? undefined : { auto: state.weakMode === "auto", onCandidate: (c: WeakCandidate) => notifyWeak(ctx, c) };
 
   pi.on("session_start", (_event, ctx) => {
     state.salt = randomBytes(4).toString("hex");
@@ -139,7 +169,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     }
     if (state.disabledBy && !state.peerNoticeShown) {
       state.peerNoticeShown = true;
-      state.notice?.("pi-secret-vault detected (functional superset) — pi-secret-mask is disabled for this session.", "warning");
+      state.notice?.("pi-secret-vault is active (functional superset) — pi-secret-mask is disabled for this session.", "info");
     }
     if (!state.legacyNotified && legacyPersistExists(PERSIST_PATH)) {
       state.legacyNotified = true;
@@ -156,7 +186,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   // Input boundary: in vault/ephemeral landing the user's own message must be
   // redacted BEFORE it becomes a session entry (message_end alone fires after
   // the raw prompt would already be persisted).
-  pi.on("input", (event) => {
+  pi.on("input", (event, ctx) => {
     if (!active(state) || !redactOnDisk(state.landing)) return { action: "continue" as const };
     if ((event as { source?: string }).source === "extension") return { action: "continue" as const };
     const rules = currentRules();
@@ -164,15 +194,19 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     const res = redactTextSpans([{ get: () => text, set: (t) => { text = t; } }], state.registry, state.salt, {
       autoDetect: true,
       rules,
+      weak: weakOptions(ctx),
     });
     return res.changed ? { action: "transform" as const, text } : { action: "continue" as const };
   });
 
   // Send-boundary redaction. The event carries a deep copy: edits here never
   // reach the session transcript, only the provider payload.
-  pi.on("context", (event) => {
+  pi.on("context", (event, ctx) => {
     if (!active(state)) return undefined;
-    const res = redactMessages(event.messages as unknown[], state.registry, state.salt, { rules: currentRules() });
+    const res = redactMessages(event.messages as unknown[], state.registry, state.salt, {
+      rules: currentRules(),
+      weak: weakOptions(ctx),
+    });
     return res.changed ? { messages: event.messages } : undefined;
   });
 
@@ -199,7 +233,22 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   // Guard unresolved placeholders, then restore real values right before the
   // tool executes (any tool, any argument position).
   pi.on("tool_call", (event) => {
-    if (!active(state) || state.registry.size === 0) return undefined;
+    if (!active(state)) return undefined;
+    const toolName = String((event as { toolName?: string }).toolName ?? "");
+    const input = (event as { input?: unknown }).input;
+    if (state.extract !== false) {
+      const targets = inspectToolTargets(toolName, input);
+      for (const content of targets.contents) registerExtractedSecrets(content, state.registry, state.salt);
+      const sensitive = sensitiveReadTargets(toolName, input);
+      if (state.filePolicy === "block" && sensitive.length > 0) {
+        const list = sensitive.map((x) => x.path).slice(0, 3).join(", ");
+        return {
+          block: true,
+          reason: `secret-mask: reading sensitive file(s) is blocked by policy (/secret files learn|off to allow): ${list}`,
+        };
+      }
+    }
+    if (state.registry.size === 0) return undefined;
     if (state.guard) {
       const missing = unmountedInValue(event.input, state.registry);
       if (missing.length > 0) return { block: true, reason: guardReason(missing, { landing: state.landing }) };
@@ -211,7 +260,60 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   // Keep registered values out of tool output that is about to enter the
   // context (and the session record). Also scrubs details/structured data.
   pi.on("tool_result", (event) => {
-    if (!active(state) || state.registry.size === 0) return undefined;
+    if (!active(state)) return undefined;
+    const eventAny0 = event as { toolName?: string; input?: unknown; details?: unknown; structuredContent?: unknown };
+    const textParts = Array.isArray(event.content)
+      ? event.content.filter((p): p is { type: "text"; text: string } => {
+          const part = p as { type?: string; text?: string };
+          return part?.type === "text" && typeof part.text === "string";
+        })
+      : [];
+    const joined = textParts.map((p) => p.text).join("\n");
+    if (joined) state.lastToolOutput = joined.slice(0, 65_536);
+    let withheld: string | undefined;
+    if (state.extract !== false) {
+      let extracted = 0;
+      if (joined) extracted += registerExtractedSecrets(joined, state.registry, state.salt).count;
+      if (eventAny0.details !== undefined && eventAny0.details !== null) {
+        extracted += registerValueSecrets(eventAny0.details, state.registry, state.salt).count;
+      }
+      if (eventAny0.structuredContent !== undefined && eventAny0.structuredContent !== null) {
+        extracted += registerValueSecrets(eventAny0.structuredContent, state.registry, state.salt).count;
+      }
+      const sensitive = sensitiveReadTargets(eventAny0.toolName ?? "", eventAny0.input);
+      const dedicated = sensitive.find((x) => x.info.dedicated);
+      const trimmed = joined.trim();
+      if (
+        state.filePolicy === "learn" &&
+        dedicated &&
+        extracted === 0 &&
+        trimmed.length >= 6 &&
+        trimmed.length <= 8192
+      ) {
+        const label = (dedicated.path.split(/[/\\]/).pop() ?? "FILE").toUpperCase().replace(/[^A-Z0-9_.-]/g, "_").slice(0, 48) || "FILE";
+        state.registry.registerAuto(trimmed, "file:secret", label, state.salt);
+        withheld = `[secret-mask: sensitive file content withheld (${trimmed.length} bytes). The value is registered in this session — use its placeholder in tool arguments, or /secret list to see the alias.]`;
+      } else if (state.filePolicy === "block" && sensitive.length > 0) {
+        withheld = "[secret-mask: sensitive file content withheld by policy (/secret files learn|off to allow).]";
+      }
+      if (withheld) {
+        const images = Array.isArray(event.content)
+          ? event.content.filter((p) => (p as { type?: string }).type !== "text")
+          : [];
+        const detailsRedacted =
+          eventAny0.details !== undefined && eventAny0.details !== null ? redactDeep(eventAny0.details, state.registry).value : undefined;
+        const structuredRedacted =
+          eventAny0.structuredContent !== undefined && eventAny0.structuredContent !== null
+            ? redactDeep(eventAny0.structuredContent, state.registry).value
+            : undefined;
+        return {
+          content: [{ type: "text", text: withheld }, ...images],
+          ...(detailsRedacted !== undefined ? { details: detailsRedacted } : {}),
+          ...(structuredRedacted !== undefined ? { structuredContent: structuredRedacted } : {}),
+        } as never;
+      }
+    }
+    if (state.registry.size === 0) return undefined;
     let changed = false;
     const content = Array.isArray(event.content)
       ? event.content.map((part) => {
@@ -255,7 +357,11 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   // Landing policy: in vault/ephemeral modes the persisted message is the
   // redacted copy (role preserved); plain keeps today's behaviour.
   pi.on("message_end", (event) => {
-    if (!active(state) || !redactOnDisk(state.landing)) return undefined;
+    if (!active(state)) return undefined;
+    if (state.extract !== false && (event.message as { role?: string } | null)?.role === "assistant") {
+      registerMessageToolSecrets(event.message, state.registry, state.salt);
+    }
+    if (!redactOnDisk(state.landing)) return undefined;
     const rules = currentRules();
     if (state.registry.size === 0 && rules.length === 0) return undefined;
     const res = redactMessageDeep(event.message, state.registry, { rules });

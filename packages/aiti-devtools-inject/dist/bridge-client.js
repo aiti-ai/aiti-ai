@@ -38,6 +38,17 @@
   var viaBus = false;      // 当前连接是否走总线（探测结果；重连时重新探测，可能切换模式）
   var busOff = null;       // 总线订阅退订函数
   var busHb = null;        // 总线型连接保活心跳定时器
+  // Bus handover self-heal: the event-bus extension broadcasts piwe-event-bus-ready on register/
+  // re-register; the broker may have been silently rebuilt (old subscriptions dissolved with the
+  // old instance, busOff pointing at a dead instance) — on receipt, probe once more. connect is
+  // idempotent (re-attach-bus + re-subscribe); low-frequency event, negligible cost. The pair
+  // downlink (pair_msg) depends on this channel.
+  if (!global.__aitiBusReadyHook) {
+    global.__aitiBusReadyHook = true;
+    global.addEventListener('piwe-event-bus-ready', function () {
+      if (cfg.base && !cfg.disposed) connect(cfg);
+    });
+  }
 
   function stopBus() {
     viaBus = false;
@@ -253,6 +264,10 @@
     if (m && m.type === 'ready') {
       // 服务端已把本连接登记进注册表（ready 在注册之后发送）→ 此时 isConnected() 才为真、onReady 触发
       sseReady = true;
+      // Page identity exposure (read-only): claim completed, instanceId/secret ready — components
+      // inside the pi-web page (e.g. the device-interconnect panel) call the pair REST API with
+      // this (page-identity endorsement)
+      try { if (cfg.instanceId) global.__aitiBridgeIdentity = { instanceId: cfg.instanceId, secret: cfg.secret || '' }; } catch (e) {}
       reconnectAttempt = 0; // 服务端确认 → 重连周期结束
       httpFailStreak = 0; httpBreakerUntil = 0; // SSE 恢复 → 熔断清零（回桥通道已通）
       tryFlushPendingResults(); // 补发暂存结果（ready：通道已恢复）
@@ -310,9 +325,21 @@
     } else if (m.type === 'interaction') {
       // 用户交互消息（AI 提问 → AI 窗口/页面作答）；宿主转发场景转发给 parent 由宿主面板处理
       if (cfg.onInteraction) cfg.onInteraction(m);
+      // pair chat downlink (notify cards delivered via the same user_notify channel) → dispatch the
+      // chat event synchronously (consumed by the widget chat stream).
+      // requestId "pair_" prefix = pair-domain marker (keeps the AI Q&A panel protocol unpolluted).
+      if (m.interaction && m.interaction.kind === 'notify' && String(m.requestId || '').indexOf('pair_') === 0) {
+        try {
+          global.dispatchEvent(new CustomEvent('aiti-pair-msg', {
+            detail: { id: m.requestId, type: 'text', from: { id: null, kind: 'page', name: m.interaction.title || null }, to: null, ts: Date.now(), text: m.interaction.body },
+          }));
+        } catch (e) {}
+      }
     } else if (m.type === 'pair_msg') {
       // pair 设备互连消息（text/file：设备→页面投递；pair 协议在 core bridge.ts routePairSend）
       if (cfg.onPairMsg) cfg.onPairMsg(m);
+      // in-page dispatch (pure forwarding): the device-interconnect panel (aiti-pair extension) listens for aiti-pair-msg to render chat
+      try { global.dispatchEvent(new CustomEvent('aiti-pair-msg', { detail: m })); } catch (e) {}
     } else if (m.type === 'event') {
       if (cfg.onEvent) cfg.onEvent(m.event || m);
     }
@@ -365,11 +392,20 @@
         if (cfg.disposed) return;
         startBusHeartbeat(); // 总线型连接保活（服务端 sweep 扫超时）
         reconnectAttempt = 0;
+        // Page identity exposure (read-only, deterministic spot: set as soon as the subscription is live,
+        // not gated on the ready frame — a ready frame inside a broker reconnect window gets dropped
+        // by the bus) — in-page components (the pair panel) use this to call pair REST with page identity
+        try { if (cfg.instanceId) global.__aitiBridgeIdentity = { instanceId: cfg.instanceId, secret: cfg.secret || '' }; } catch (e) {}
         // 兑底置就绪（防假死脑裂）：attach 的 ready 帧若落在 broker 断线重连窗口内会被
         // 总线丢弃（sink 为空/旧 sink 已死）且服务端不会重发——但订阅生效即通道就绪，
         // 后续下行必达。幂等：ready 帧先到时 handleMessage 已置过。onReady 仍由 ready 帧
         // 触发（保留首次登记语义）。
+        var firstReady = !sseReady;
         if (!sseReady) sseReady = true;
+        // If the ready frame was truly dropped (attached before the first subscription took effect),
+        // re-emit onReady once — downstream identity registration (reportAiPage/reportSelfPage, both
+        // idempotently deduped) depends on it; losing it means the page never shows up in the device view.
+        if (firstReady && cfg.onReady) { try { cfg.onReady({ type: 'ready', bridge: cfg.base, instanceId: cfg.instanceId, token: cfg.token, role: cfg.role, via: 'bus' }); } catch (e) {} }
       }).catch(function () {
         if (!cfg.disposed) scheduleReconnect(); // 总线不可达（POST 4xx/5xx）→ 退避重连（重新探测模式）
       });
