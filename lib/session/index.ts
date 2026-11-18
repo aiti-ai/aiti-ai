@@ -567,11 +567,21 @@ export async function resolveDetachedSession(id: string): Promise<WrappedSession
   if (!id) return undefined;
   const existing = lookupHandle(id);
   if (existing?.alive()) return new HandleSessionAdapter(existing);
-  const recovery = await attachDetachedSession(id);
-  if (recovery.status === "blocked") throw new BridgeOccupiedError(id, recovery.reason);
-  if (recovery.status !== "attached") return undefined;
-  putHandle(recovery.handle);
-  return recovery.handle.alive() ? new HandleSessionAdapter(recovery.handle) : undefined;
+  // Routes see composite ids ("claude:<sid>") while the registry is keyed by the
+  // native id — try both spellings before giving up.
+  const candidates = id.includes(":") ? [id, id.slice(id.indexOf(":") + 1)] : [id];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const existingForCandidate = lookupHandle(candidate);
+    if (existingForCandidate?.alive()) return new HandleSessionAdapter(existingForCandidate);
+    const recovery = await attachDetachedSession(candidate);
+    if (recovery.status === "blocked") throw new BridgeOccupiedError(id, recovery.reason);
+    if (recovery.status !== "attached") continue;
+    putHandle(recovery.handle);
+    if (candidate !== id) putHandleAt(id, recovery.handle);
+    return recovery.handle.alive() ? new HandleSessionAdapter(recovery.handle) : undefined;
+  }
+  return undefined;
 }
 
 /**
