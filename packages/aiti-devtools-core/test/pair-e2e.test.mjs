@@ -21,7 +21,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createBridge } from "../src/bridge.ts";
 import { startHttpServer } from "../src/http.ts";
-import { createPairFed } from "../../../pi-web-ext/aiti-devtools/server/pair-fed.ts";
+import { createPairFed } from "../../../extensions/aiti-devtools/server/pair-fed.ts";
 
 async function startBridge(tag) {
   const dataDir = mkdtempSync(join(tmpdir(), "pair-e2e-" + tag + "-"));

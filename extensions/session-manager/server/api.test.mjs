@@ -662,7 +662,7 @@ test("workspaces：项目级聚合（同源口径）+ running/unread 计数 + 30
       { id: "s1", path: "/w/s1.jsonl", cwd: "/home/x/proj", projectRoot: "/home/x/proj", projectKey: "/home/x/proj", created: "2026-09-07T00:00:00.000Z", modified: "2026-09-07T00:00:00.000Z", messageCount: 3, firstMessage: "hello", lastMessage: "world" },
       { id: "s2", path: "/w/s2.jsonl", cwd: "/home/x/proj", projectRoot: "/home/x/proj", projectKey: "/home/x/proj", created: "2026-09-07T00:00:00.000Z", modified: "2026-09-08T00:00:00.000Z", messageCount: 1, firstMessage: "a", lastMessage: "b" },
       // windows 盘符 + 反斜杠：normalize 后与 posix 不同 key
-      { id: "s3", path: "w:\\s3.jsonl", cwd: "d:\\workspace\\workspace-tools", projectRoot: "d:\\workspace\\workspace-tools", projectKey: "d:\\workspace\\workspace-tools", created: "x", modified: "2026-09-09T00:00:00.000Z", messageCount: 1, firstMessage: "c", lastMessage: "d" },
+      { id: "s3", path: "w:\\s3.jsonl", cwd: "d:\\workspace\\demo-repo", projectRoot: "d:\\workspace\\demo-repo", projectKey: "d:\\workspace\\demo-repo", created: "x", modified: "2026-09-09T00:00:00.000Z", messageCount: 1, firstMessage: "c", lastMessage: "d" },
     ];
     const core = {
       async listSessions() { return rows.map((r) => ({ ...r })); },
@@ -682,12 +682,12 @@ test("workspaces：项目级聚合（同源口径）+ running/unread 计数 + 30
     assert.equal(p1.unreadCount, 1);
     assert.equal(p1.lastModified, "2026-09-08T00:00:00.000Z");
     assert.equal(p1.name, "proj");
-    const p2 = byKey.get("d:/workspace/workspace-tools");
+    const p2 = byKey.get("d:/workspace/demo-repo");
     assert.ok(p2, "win 项目按 lowercase+slash 归一");
     assert.equal(p2.runningCount, 0);
     assert.equal(p2.unreadCount, 1);
     // 排序：modified 降序
-    assert.equal(b.workspaces[0].key, "d:/workspace/workspace-tools");
+    assert.equal(b.workspaces[0].key, "d:/workspace/demo-repo");
     // rev 稳定 + 304
     const r2 = await api(req("http://x/", "GET"), ctx);
     assert.equal(r2.status, 200);
@@ -708,7 +708,7 @@ test("sessions project=<key> 作用域：只回该项目行；不带 project 仍
     const rows = [
       { id: "s1", path: "/w/s1.jsonl", cwd: "/home/x/proj", projectRoot: "/home/x/proj", projectKey: "/home/x/proj", created: now, modified: now, messageCount: 3, firstMessage: "hello", lastMessage: "world" },
       { id: "s2", path: "/w/s2.jsonl", cwd: "/home/x/other", projectRoot: "/home/x/other", projectKey: "/home/x/other", created: now, modified: now, messageCount: 1, firstMessage: "a", lastMessage: "b" },
-      { id: "s3", path: "w:\\s3.jsonl", cwd: "d:\\workspace\\workspace-tools", projectRoot: "d:\\workspace\\workspace-tools", projectKey: "d:\\workspace\\workspace-tools", created: now, modified: now, messageCount: 1, firstMessage: "c", lastMessage: "d" },
+      { id: "s3", path: "w:\\s3.jsonl", cwd: "d:\\workspace\\demo-repo", projectRoot: "d:\\workspace\\demo-repo", projectKey: "d:\\workspace\\demo-repo", created: now, modified: now, messageCount: 1, firstMessage: "c", lastMessage: "d" },
     ];
     const core = { async listSessions() { return rows.map((r) => ({ ...r })); }, async getRunningSessionIds() { return []; } };
     const base = { configDir: cfgOf(dir), path: ["sessions"] };
@@ -780,6 +780,47 @@ test("workspaces：pi 站位接管（placeholder）的 ext 行不重复计数/�
     assert.ok(!keys.includes("/tmp/ghost"), "幽灵目录不得出现（ext 行已被 pi 站位接管）");
     const proj = b.workspaces.find((w) => w.key === "/home/x/proj");
     assert.equal(proj.sessionCount, 1, "被接管 ext 行不重复计数");
+  } finally {
+    await rmRf(dir, { closeSessionIndex: true, sessionIndexConfigDir: cfgOf(dir) });
+  }
+});
+
+test("recently-removed tombstone: just-archived id stays out of the live bucket for the window", async () => {
+  // Regression pin (2026-11 anti-flicker fix): within the 20s tombstone window after
+  // archive/delete, neither the host's 5s scan cache (still reporting the deleted file)
+  // nor an ext source-sync resurrection may flash the row back into the live bucket
+  // (delete → flash-in → flash-out). The archived bucket is never tombstoned.
+  const dir = mkdtempSync(join(tmpdir(), "sm-tomb-"));
+  const { writeFileSync } = await import("fs");
+  try {
+    const now = new Date().toISOString();
+    const header = (id, ts) => JSON.stringify({ type: "session", version: 3, id, timestamp: ts, cwd: "/w" });
+    const msg = (id, role, text, ts) => JSON.stringify({ type: "message", id, parentId: null, timestamp: ts, message: { role, content: role === "assistant" ? [{ type: "text", text }] : text } });
+    const sA = join(dir, "a.jsonl");
+    writeFileSync(sA, header("sA", now) + "\n" + msg("m1", "user", "will be archived", now) + "\n");
+    // Stale host scan cache: keeps reporting the file the whole test (5s TTL window).
+    const core = {
+      async listSessions() { return [{ id: "sA", path: sA, cwd: "/w", modified: now }]; },
+      async getRunningSessionIds() { return []; },
+    };
+    const { runtime, markRecentlyRemoved, clearRecentlyRemoved } = await import("./runtime.ts");
+    await runtime(cfgOf(dir)).index.sync([{ path: sA, id: "sA", cwd: "/w" }]);
+    const listCtx = { configDir: cfgOf(dir), path: ["sessions"], searchParams: new URLSearchParams(), core };
+
+    // baseline: row visible in the live bucket
+    const before = await (await api(req("http://x/"), listCtx)).json();
+    assert.equal(before.sessions.length, 1);
+
+    // tombstone (as runArchive / hideExtSession do right after success)
+    markRecentlyRemoved(cfgOf(dir), ["sA"]);
+    const after = await (await api(req("http://x/"), listCtx)).json();
+    assert.equal(after.sessions.length, 0, "tombstoned id suppressed from the live bucket");
+    assert.equal(after.archived.length, 0, "tombstone hides, it does not archive");
+
+    // restore path clears the tombstone → row reappears immediately
+    clearRecentlyRemoved(cfgOf(dir), ["sA"]);
+    const back = await (await api(req("http://x/"), listCtx)).json();
+    assert.equal(back.sessions.length, 1, "cleared tombstone lets the row return");
   } finally {
     await rmRf(dir, { closeSessionIndex: true, sessionIndexConfigDir: cfgOf(dir) });
   }

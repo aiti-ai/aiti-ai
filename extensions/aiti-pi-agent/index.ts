@@ -12,7 +12,7 @@
  */
 
 import { join } from "node:path";
-import { PiSpawnHandle, PI_SPEC } from "./pi-handle.ts";
+import { PiSpawnHandle, PI_SPEC, type AgentStarterLike, type AttachedChildOptions } from "./pi-handle.ts";
 import { capabilitiesFor } from "./fork-rpc/spec.ts";
 import { resolveForkCli } from "./fork-rpc/cli-resolve.ts";
 import { spawnEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, captureSpawnEnvFeatures } from "@aiti-ai/ext-shared/agent-spawn-env";
@@ -55,12 +55,18 @@ export default {
           label: string;
           order?: number;
           agentKey?: string;
+          /** Opt-in: host the agent in a detachable wrapper (survives pi-web restarts). */
+          detachable?: boolean;
           maxCapabilities: SessionCapabilitiesLike;
           createSession(options: {
             sessionId?: string;
             cwd?: string;
             model?: { provider: string; id: string };
             env?: Record<string, string>;
+            /** Host-injected process strategy (pi-web core agent-starter). */
+            agentStarter?: AgentStarterLike;
+            /** Host recovery: adopt a live process instead of spawning (detached sessions). */
+            attached?: AttachedChildOptions;
           }): Promise<PiSpawnHandle>;
         }): string;
       };
@@ -73,8 +79,18 @@ export default {
           label: spec.label,
           order: spec.order,
           agentKey: spec.agentKey,
+          // The core may host this backend's process in a detachable wrapper; the
+          // handle adopts the live process on reattach (see PiSpawnHandle.attach).
+          detachable: true,
           maxCapabilities: capabilitiesFor(spec),
-          createSession: (options) => PiSpawnHandle.start(options, spec),
+          createSession: (options) =>
+            // options.attached = the core reattached to a wrapper-hosted agent after
+            // a restart; options.agentStarter = the injected process strategy
+            // (Direct today, detachable when enabled). Both are optional so an
+            // older host keeps working unchanged.
+            options.attached
+              ? PiSpawnHandle.attach(options.attached, spec)
+              : PiSpawnHandle.start(options, spec),
         }),
       ];
       // P2 协议委托：launch 服务（pi 单 fork；launch.target 恒忽略为 pi）
@@ -82,7 +98,10 @@ export default {
         agentKey: "pi",
         capabilities: capabilitiesFor(spec),
         members: [{ name: spec.id, agentKey: spec.agentKey ?? "pi", label: spec.label }],
-        createSessionFromLaunch: (launch: LaunchOverride, options: { sessionId?: string; cwd?: string; env?: Record<string, string> }) => {
+        createSessionFromLaunch: (
+          launch: LaunchOverride,
+          options: { sessionId?: string; cwd?: string; env?: Record<string, string>; agentStarter?: AgentStarterLike },
+        ) => {
           return PiSpawnHandle.start({ ...options, launchOverride: launch }, spec);
         },
       });

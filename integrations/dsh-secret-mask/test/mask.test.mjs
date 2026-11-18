@@ -63,10 +63,10 @@ test("textBlocks collects only text blocks", () => {
 
 test("restoreDeep on frozen input does not mutate the original (DSH args are frozen)", () => {
   const r = new Registry();
-  r.registerManual(SECRET, "k");
-  const frozen = Object.freeze({ cmd: "run [REDACTED:k]", opts: Object.freeze({ v: "[REDACTED:k]" }) });
+  const ph = r.registerManual(SECRET, "k").entry.placeholder;
+  const frozen = Object.freeze({ cmd: `run ${ph}`, opts: Object.freeze({ v: ph }) });
   const res = restoreDeep(structuredClone(frozen), r);
   assert.equal(res.count, 2);
   assert.equal(res.value.cmd, `run ${SECRET}`);
-  assert.equal(frozen.cmd, "run [REDACTED:k]", "frozen original untouched");
+  assert.equal(frozen.cmd, `run ${ph}`, "frozen original untouched");
 });

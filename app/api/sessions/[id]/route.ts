@@ -578,11 +578,13 @@ export async function DELETE(
       invalidateSessionListCache();
       return NextResponse.json({ ok: true });
     }
-    const { missing } = await deleteSessions([id]);
+    const { missing, preserved } = await deleteSessions([id]);
     if (missing.length > 0) {
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
-    return NextResponse.json({ ok: true });
+    // A file written after its agent was stopped is kept (never lose data):
+    // report it so the caller does not believe the row is gone.
+    return NextResponse.json(preserved && preserved.length > 0 ? { ok: true, preserved } : { ok: true });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }

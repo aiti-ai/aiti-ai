@@ -282,24 +282,24 @@ export function AuxAiUsageRows({ locale, sessionId }: { locale?: string; session
 
   const bc = aiUsage?.byCaller || {};
   const rows: string[][] = [];
-  const sceneLabel = (k: string) => k.includes("/voice-fix") ? "AI 语音修正" : k.includes("/complete") ? "AI 续写" : k;
+  const sceneLabel = (k: string) => k.includes("/voice-fix") ? t("aux.voiceFix") : k.includes("/complete") ? t("aux.complete") : k;
   for (const [k, v] of Object.entries(bc)) {
     if (!k.startsWith("aiti-ai-input")) continue; // 只展示本扩展（补全/语音）场景
     rows.push([sceneLabel(k), `${v.toLocaleString(loc)} in`]);
   }
   if (aiUsage?.totals?.calls) {
     const tot = aiUsage.totals;
-    rows.push([sessionId ? "本会话合计" : "AI 合计", `${tot.in.toLocaleString(loc)} in / ${tot.out.toLocaleString(loc)} out · ${tot.calls} 次`]);
+    rows.push([sessionId ? t("aux.sessionTotal") : t("aux.aiTotal"), `${tot.in.toLocaleString(loc)} in / ${tot.out.toLocaleString(loc)} out · ${t("aux.calls", { n: tot.calls })}`]);
   } else if (sessionId) {
-    rows.push(["本会话合计", "本会话暂无 AI 调用"]);
+    rows.push([t("aux.sessionTotal"), t("aux.sessionEmpty")]);
   }
   if (rows.length === 0) return null;
   const g = aiUsage?.global;
-  const fmtCalls = (n: number) => `${n.toLocaleString(loc)} 次`;
+  const fmtCalls = (n: number) => t("aux.calls", { n: n.toLocaleString(loc) });
 
   return (
     <div style={{ minWidth: 0 }}>
-      <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>其他辅助 AI 用量</div>
+      <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>{t("aux.title")}</div>
       <div style={{ display: "grid", gridTemplateColumns: "max-content max-content", columnGap: 14, rowGap: 4, justifyContent: "start" }}>
         {rows.map(([label, value]) => (
           <div key={label} style={{ display: "contents" }}>
@@ -309,8 +309,8 @@ export function AuxAiUsageRows({ locale, sessionId }: { locale?: string; session
         ))}
         {g && g.calls > 0 && (
           <div style={{ display: "contents" }}>
-            <div style={{ color: "var(--text-dim)", whiteSpace: "nowrap" }}>全部会话累计</div>
-            <div style={{ color: "var(--text-dim)", minWidth: 0, textAlign: "right", whiteSpace: "nowrap", fontSize: 10.5 }}>{g.in.toLocaleString(loc)} in · {fmtCalls(g.calls)}（进程级）</div>
+            <div style={{ color: "var(--text-dim)", whiteSpace: "nowrap" }}>{t("aux.allSessions")}</div>
+            <div style={{ color: "var(--text-dim)", minWidth: 0, textAlign: "right", whiteSpace: "nowrap", fontSize: 10.5 }}>{g.in.toLocaleString(loc)} in · {fmtCalls(g.calls)}{t("aux.globalHint")}</div>
           </div>
         )}
       </div>

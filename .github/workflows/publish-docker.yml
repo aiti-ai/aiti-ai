@@ -50,6 +50,7 @@ on:
 
 permissions:
   contents: read
+  packages: write
 
 env:
   IMAGE: aitiai/pi-web
@@ -155,6 +156,19 @@ jobs:
       # provenance attestations included), so ACR digests match Docker Hub digests 1:1.
       # Plain `docker tag`+`docker push` would re-serialize manifests in the classic image
       # store and silently drift digests.
+      - name: Mirror to GHCR (public package — same manifest lists as Hub)
+        env:
+          GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/aiti-ai
+          VER: ${{ steps.ver.outputs.version }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          for ref in "${VER}-core" "${VER}-full" core full latest; do
+            docker tag "${IMAGE}:${ref}" "${GHCR_IMAGE}:${ref}"
+            docker push "${GHCR_IMAGE}:${ref}"
+          done
+          docker logout ghcr.io
+
       - name: Mirror to Aliyun ACR
         env:
           ACR_IMAGE: registry.cn-hangzhou.aliyuncs.com/aiti-ai/pi-web

@@ -15,7 +15,7 @@
   ],
   "scripts": {
     "build": "esbuild src/index.ts --bundle --format=esm --outfile=dist/index.js --target=es2022 --platform=node",
-    "test": "node test/endpoints.test.mjs && node test/connect.test.mjs && node test/mcp-config.test.mjs && node test/send-rewrite.test.mjs && node test/host-protocol-assets.test.mjs",
+    "test": "node test/endpoints.test.mjs && node test/connect.test.mjs && node test/mcp-config.test.mjs && node test/send-rewrite.test.mjs && node test/host-protocol-assets.test.mjs && node --experimental-strip-types --test --test-force-exit test/user-notify-target.test.mjs",
     "prepublishOnly": "npm run build"
   },
   "repository": {

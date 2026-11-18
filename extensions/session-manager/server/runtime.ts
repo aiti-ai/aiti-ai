@@ -73,6 +73,9 @@ export async function releaseIdleFor(ids: string[], core: ExtCoreLike): Promise<
 interface Runtime {
   index: SessionIndex;
   settings: Settings;
+  /** Tombstones: ids just archived/deleted/removed → timestamp. Drives the 20s
+   *  live-bucket suppression in the sessions assembly (see recentRemovedIds). */
+  recentRemoved: Map<string, number>;
 }
 
 const runtimes = new Map<string, Runtime>();
@@ -89,6 +92,7 @@ export function runtime(configDir: string, opts?: { extDir?: string }): Runtime 
         workerPath: opts?.extDir ? join(opts.extDir, "dist", "index-worker.mjs") : undefined,
       }),
       settings: loadSettings(configDir),
+      recentRemoved: new Map(),
     };
     runtimes.set(configDir, r);
   }
@@ -125,6 +129,45 @@ export function saveSettings(configDir: string, s: Settings): void {
   writeFileSync(p, JSON.stringify(s, null, 2));
 }
 
+// ── Recently-removed tombstones (2026-11) ──────────────────────────────
+// Archive / real-archive / remove-from-list / delete all "mark then settle" — the
+// row leaves the live view at once, but several windows can still report it and
+// flash it back before the next refresh removes it again (delete → flash-in →
+// flash-out): the host's 5s scan cache still lists the deleted file, an in-flight
+// ext source sync re-lists a just-removed session, and stale in-flight responses
+// assembled pre-operation land afterwards. The sessions assembly therefore
+// suppresses tombstoned ids from the live bucket for a short window. The archived
+// bucket is NOT tombstoned — moving into the archive view is the destination.
+export const RECENT_REMOVED_MS = 20_000;
+
+/** Record ids as recently removed (call right after the backend op succeeded). */
+export function markRecentlyRemoved(configDir: string, ids: string[]): void {
+  if (!ids.length) return;
+  const m = runtime(configDir).recentRemoved;
+  const now = Date.now();
+  for (const id of ids) m.set(String(id), now);
+}
+
+/** Drop tombstones for ids that legitimately return to the live list (restore). */
+export function clearRecentlyRemoved(configDir: string, ids: string[]): void {
+  if (!ids.length) return;
+  const m = runtime(configDir).recentRemoved;
+  for (const id of ids) m.delete(String(id));
+}
+
+/** Active (unexpired) tombstoned ids; expired entries are pruned in passing. */
+export function recentRemovedIds(configDir: string): Set<string> {
+  const m = runtime(configDir).recentRemoved;
+  if (!m.size) return new Set();
+  const now = Date.now();
+  const out = new Set<string>();
+  for (const [id, at] of m) {
+    if (now - at >= RECENT_REMOVED_MS) m.delete(id);
+    else out.add(id);
+  }
+  return out;
+}
+
 /** Incremental index sync against core's live session list.
  *  opts.refresh = 强制重扫磁盘（绕过 core 的 5s 缓存）——归档前调用，确保刚落盘/
  *  新出现的会话一定入索引（否则 markArchived 0 行 → 归档后无记录不可恢复）。 */
@@ -141,7 +184,7 @@ export async function runArchive(
   core: ExtCoreLike,
   overrides?: Partial<Pick<Settings, "archiveAgeDays" | "maxLiveSizeMb">>,
   ids?: string[],
-): Promise<{ archived: number; deleted: number; packageName: string | null; sizeBytes: number; candidates: number; skippedIds?: string[] }> {
+): Promise<{ archived: number; deleted: number; packageName: string | null; sizeBytes: number; candidates: number; skippedIds?: string[]; archivedIds?: string[] }> {
   // Sync the index first: sessions created since the last sync must be indexed
   // before archiving, or they'd vanish from the merged list (not live, not archived).
   // refresh = 强制重扫磁盘（绕过 5s 缓存）：落盘但未被缓存的会话必须入索引，
@@ -217,6 +260,7 @@ export async function runArchive(
 
   let archived = 0;
   let deleted = 0;
+  const archivedIds: string[] = [];
   let lastPkg: string | null = null;
   let lastPkgBytes = 0;
   for (const batch of batches) {
@@ -242,10 +286,14 @@ export async function runArchive(
     }
     deleted += deleteOriginals(batch.map((c) => c.path));
     archived += entries.length;
+    archivedIds.push(...entries.map((e) => e.sessionId));
+    // Tombstone the batch: the host scan cache may still report the deleted files
+    // for up to its TTL — suppress them from the live bucket for the window.
+    markRecentlyRemoved(configDir, entries.map((e) => e.sessionId));
     lastPkg = pkg;
     lastPkgBytes = existsSync(pkgPath) ? statSync(pkgPath).size : 0;
   }
-  return { archived, deleted, packageName: lastPkg, sizeBytes: lastPkgBytes, candidates: candidates.length, ...(skippedIds ? { skippedIds } : {}) };
+  return { archived, deleted, packageName: lastPkg, sizeBytes: lastPkgBytes, candidates: candidates.length, ...(skippedIds ? { skippedIds } : {}), archivedIds };
 }
 
 export async function archiveStatus(
@@ -283,10 +331,15 @@ export function restoreArchived(configDir: string, sessionId: string): boolean {
   const row = r.index.getSession(sessionId);
   if (!row?.archived) return false;
   // ext 视图层归档行（无 .pwarc 包）：直接翻回 live
-  if (row.archiveRef === EXT_ARCHIVE_REF) return unhideExtSession(configDir, sessionId);
+  if (row.archiveRef === EXT_ARCHIVE_REF) {
+    const ok = unhideExtSession(configDir, sessionId);
+    if (ok) clearRecentlyRemoved(configDir, [sessionId]); // restored rows must reappear immediately
+    return ok;
+  }
   const restored = restoreFromArchive(configDir, sessionId);
   if (!restored) return false;
   r.index.restoreToLive(sessionId, restored);
+  clearRecentlyRemoved(configDir, [sessionId]); // restored rows must reappear immediately
   return true;
 }
 
@@ -304,6 +357,7 @@ export function deleteArchived(configDir: string, sessionId: string): boolean {
   if (row.archiveRef === EXT_ARCHIVE_REF) return false;
   if (!removeFromArchive(configDir, sessionId)) return false;
   r.index.removeSession(sessionId);
+  markRecentlyRemoved(configDir, [sessionId]);
   return true;
 }
 
@@ -314,7 +368,9 @@ export function hideExtSession(configDir: string, sessionId: string): boolean {
   const row = r.index.getSession(sessionId);
   if (!row || !row.agent || row.agent === "pi") return false;
   if (row.archived) return true; // 已在归档分组 → 幂等成功
-  return r.index.setExtArchived(sessionId, true) > 0;
+  const ok = r.index.setExtArchived(sessionId, true) > 0;
+  if (ok) markRecentlyRemoved(configDir, [sessionId]);
+  return ok;
 }
 
 /** 移除过的 ext 行放回列表（archived=0）。 */
@@ -406,6 +462,7 @@ export async function runExtArchive(
   if (r.index.setExtArchived(id, true) <= 0) {
     console.error(`[ext-archive] setExtArchived 0 行：${id}（包 ${pkgName} 保留，数据不丢）`);
   }
+  markRecentlyRemoved(configDir, [id]);
   console.log(`[ext-archive] ${id} → ${pkgName}（${snap.bytes.length} bytes）`);
   return { ok: true, id, agent: adapter.id, sid, packageName: pkgName };
 }
@@ -443,6 +500,7 @@ export async function restoreExtArchive(
   removeFromArchive(configDir, id);
   const r = runtime(configDir);
   r.index.setExtArchived(id, false);
+  clearRecentlyRemoved(configDir, [id]); // restored rows must reappear immediately
   console.log(`[ext-restore] ${id} ← ${hit.packagePath}`);
   return { ok: true, id, agent: adapter.id, sid };
 }

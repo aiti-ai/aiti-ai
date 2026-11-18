@@ -15,7 +15,7 @@ import { dockIconDecl } from "../../../_shared/dock-icons";
 import { PANEL_KEY } from "./prompts-app";
 import { openFromToolbar, PromptsPanelSlot, PromptsDockLeft, PromptsDockRight, PromptsSaveSlot, PromptsMessageAction, __bindSendChat, __openExternal, setAppCtx } from "./prompts-app";
 import { exportPromptsOnClick, ExportPromptsDialog } from "./export-dialog";
-import { t as t2 } from "./host-shim";
+import { t as t2, apiUrl as tApiUrl } from "./host-shim";
 
 export default function register(ctx: Record<string, any>) {
   setAppCtx(ctx);   // DI 方案 P2：extSvc 消费用（services 通道）
@@ -34,6 +34,41 @@ export default function register(ctx: Record<string, any>) {
       onClick: () => openFromToolbar(),
     },
   }]);
+
+  // share-sink（aiti-msg-share 拥有契约）：把 Prompt 片段做成分享中心里固定的「收藏」目标。
+  // 与 content-share 的 target provider 语义不同——这里只做本地落库，不生成 URL、不做脱敏。
+  try {
+    (ctx as any).registerTopicItem?.("share-sink", {
+      id: "aiti-prompts.prompt",
+      order: 20,
+      get label() { return t2("share.sink.prompt"); },
+      icon: { svg: '<path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>' },
+      // A snippet is text: whole sessions/images/files are not prompt material.
+      accepts: (payload: any) => {
+        if (!payload || typeof payload.text !== "string" || !payload.text.trim()) return false;
+        if (payload.kind === "image" || payload.kind === "file") return false;
+        return payload.text.length <= 4000;
+      },
+      async save(payload: any) {
+        const text = String(payload?.text || "").trim();
+        if (!text) return { ok: false, message: t2("share.sink.prompt.empty") };
+        try {
+          const r = await fetch(tApiUrl("/api/extensions/aiti-prompts/prompts"), {
+            method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ text, source: "input", tags: payload.tags ? String(payload.tags).split(/[,，]/).map((x: string) => x.trim()).filter(Boolean) : [] }),
+          }).then((x) => x.json());
+          if (!r || !r.ok) return { ok: false, message: (r && r.error) || t2("share.sink.prompt.failed") };
+          return {
+            ok: true,
+            message: t2("share.sink.prompt.saved") + String(r.prompt?.name || ""),
+            action: { label: t2("share.sink.prompt.open"), run: () => openFromToolbar() },
+          };
+        } catch (e: any) {
+          return { ok: false, message: String(e?.message || e) };
+        }
+      },
+    });
+  } catch (e) { /* old host without topic registry */ }
 
   // 跨扩展打开（plan-first「方案先行」prompt 编辑等）：window.dispatchEvent(new CustomEvent("aiti-prompts-open", { detail }))
   if (typeof window !== "undefined") {

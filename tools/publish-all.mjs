@@ -27,7 +27,10 @@ const SCOPE = "@aiti-ai";
 // 示例/模板目录不对外发布
 // v3：_shared（@aiti-ai/ext-shared 共享层）纳入发布——4 个扩展 package.json 声明依赖它，
 // 不上源则官方安装不可解析（审核 D12）
-const EXCLUDE = new Set(["demo", "demo-lazy", "sm-demo-source", "templates", "shared"]); // _shared 是 @aiti-ai/ext-shared 包源，必须发布（22 扩展的运行时依赖）
+// demo/ is published on purpose (the canonical reference extension for authors); it stays out of the
+// pi-web distribution through package.json files ("!extensions/demo"), the docker EXCLUDE and the
+// bundled-package skip list — those are independent of npm publishing.
+const EXCLUDE = new Set(["demo-lazy", "sm-demo-source", "templates", "shared"]); // _shared 是 @aiti-ai/ext-shared 包源，必须发布（22 扩展的运行时依赖）
 // 仓根 pi 插件根（相对 REPO）：自身或一级子目录有 package.json 即纳入。
 // packages/ = aiti-devtools 全家桶（vite/webpack/nuxt/astro 载体插件 + core/inject/bridge/agent/pi）
 // ——用户应用「npm i -D @aiti-ai/aiti-devtools-vite」的接入面，不发布则文档安装方式全是空谈
@@ -35,6 +38,9 @@ const PLUGIN_ROOTS = ["pi-plugins", "packages"];
 // integrations/ = 外部 agent 载体适配（DSH/DeepSeek Harness、opencode、openclaw、browser-ext）——
 // 两层嵌套（integrations/<repo>/<pkg>），2026-11-15 起 dsh 系插件走同一发布链（docs/pi-secret-mask-dsh-port-plan.md §6）
 const INTEGRATION_ROOTS = ["integrations"];
+// examples/ = runnable reference integrations published for docs/deeplinks. They are standalone:
+// each one depends on the published carrier plugin and never pulls the pi-web distribution.
+const EXAMPLE_ROOTS = ["examples"];
 
 const args = process.argv.slice(2);
 const has = (f) => args.includes(f);
@@ -76,7 +82,7 @@ function contentHash(pkgDir) {
     }
   };
   collect(pkgDir);
-  files.sort((a, b) => a.rel.localeCompare(b.rel));
+  files.sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0)); // 字节序确定性排序 —— localeCompare 依赖 ICU locale，CI/本地排序不同会让同内容算出不同 hash（2026-11-18 实测）
   for (const f of files) {
     hash.update(f.rel);
     try { hash.update(readFileSync(f.p)); } catch {}
@@ -170,6 +176,14 @@ for (const rel of INTEGRATION_ROOTS) {
     for (const d of readdirSync(repoDir, { withFileTypes: true })) {
       if (d.isDirectory() && existsSync(join(repoDir, d.name, "package.json"))) addPkg(join(repoDir, d.name));
     }
+  }
+}
+
+for (const rel of EXAMPLE_ROOTS) {
+  const abs = join(REPO, rel);
+  if (!existsSync(abs)) continue;
+  for (const d of readdirSync(abs, { withFileTypes: true })) {
+    if (d.isDirectory() && existsSync(join(abs, d.name, "package.json"))) addPkg(join(abs, d.name));
   }
 }
 

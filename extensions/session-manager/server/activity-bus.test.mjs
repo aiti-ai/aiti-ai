@@ -16,7 +16,7 @@ import test from "node:test";
 
 const mod = await import("./activity-bus.ts");
 const {
-  applyMessageToRow, noteAssembledRows, publishSessionActivity,
+  applyMessageToRow, dropActivityRows, noteAssembledRows, publishSessionActivity,
   bindActivityPublisher, resetActivityBusState, __setActivityMinIntervalForTest,
   __peekRowCache,
 } = mod;
@@ -141,4 +141,22 @@ test("bindActivityPublisher(null) 后静默；resetActivityBusState 清缓存", 
   assert.equal(frames.length, 1, "发布口清空后静默");
   resetActivityBusState();
   assert.equal(__peekRowCache("s1"), undefined);
+});
+
+test("dropActivityRows: cached row removed → trailing frames carry no row (anti-flicker)", () => {
+  resetActivityBusState();
+  __setActivityMinIntervalForTest(0);
+  const frames = [];
+  bindActivityPublisher((type, data) => frames.push({ type, ...data }));
+  noteAssembledRows([baseRow()]);
+  dropActivityRows(["s1"]);
+  publishSessionActivity("s1", { role: "user", timestamp: Date.now(), content: "after archive" });
+  assert.equal(frames.length, 1);
+  assert.equal(frames[0].row, undefined, "dropped row must not ride the frame");
+  // next assembly re-registers → frames carry rows again
+  noteAssembledRows([baseRow()]);
+  publishSessionActivity("s1", { role: "user", timestamp: Date.now(), content: "after resync" });
+  assert.equal(frames.length, 2);
+  assert.ok(frames[1].row, "re-registered row rides the frame again");
+  resetActivityBusState();
 });

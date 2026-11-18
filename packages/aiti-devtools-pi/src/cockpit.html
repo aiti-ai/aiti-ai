@@ -307,7 +307,7 @@
     </div>
     <button class="btn ghost" id="helpBtn" title="帮助与引导">❓</button>
     <button class="btn ghost" id="settingsBtn" title="设置：注入代码 / MCP 配置 / 连接端点">⚙</button>
-    <button class="btn ghost" id="pairBtn" style="position:relative" title="设备互连：临时聊天 / 互传文件（连同一桥的设备，手机打开 /aiti/pair.html 即上线）">✉<span id="pairDot" style="display:none;position:absolute;top:4px;right:4px;width:8px;height:8px;border-radius:50%;background:#ef4444;pointer-events:none"></span></button>
+    <button class="btn ghost" id="pairBtn" style="position:relative" title="设备互连：临时聊天 / 互传文件（连同一桥的设备；手机打开 pi-web 工作台即弹出面板）">✉<span id="pairDot" style="display:none;position:absolute;top:4px;right:4px;width:8px;height:8px;border-radius:50%;background:#ef4444;pointer-events:none"></span></button>
     <div class="dd-wrap" id="frameSelWrap">
       <button class="status" id="status" title="调试帧：主页/iframe（下拉树形选择；选择后发消息携带该帧 pageId）">未连接</button>
       <div class="dd frame-dd" id="frameDd">
@@ -419,10 +419,10 @@
   </div>
 </div>
 
-<!-- 设备互连弹窗（pair widget：临时聊天 / 互传文件；手机端独立页 = /aiti/pair.html） -->
+<!-- 设备互连弹窗（pair widget：临时聊天 / 互传文件；手机端 = pi-web 工作台深链 ?pair=1） -->
 <div class="modal-mask" id="pairModal">
   <div class="modal" style="height:min(78vh,620px);display:flex;flex-direction:column;overflow:hidden">
-    <h3>✉ 设备互连 <span style="font-size:10px;color:var(--muted);font-weight:400">连同一桥即互发 · 手机打开 <b>/aiti/pair.html</b></span> <button class="btn ghost close" onclick="closePair()">✕</button></h3>
+    <h3>✉ 设备互连 <span style="font-size:10px;color:var(--muted);font-weight:400">连同一桥即互发 · 手机打开 pi-web 工作台即弹出</span> <button class="btn ghost close" onclick="closePair()">✕</button></h3>
     <div id="pairHost" style="flex:1;min-height:0"></div>
   </div>
 </div>
@@ -750,7 +750,7 @@ let selectedFrame = null; // 当前选中帧 { pageId, frameId, title, url }（�
 let bootFrameRows = []; // 宿主 boot 帧树（launcher 直报；桥未展开时本地渲染用）
 let collapsedFrames = new Set(); // 已折叠的父帧（默认全展开）
 let pendingFrames = null; // 宿主帧树上报到桥未确认 { pageId, frames } → onSessions 轮询重试
-// 短路径：取最后 2 段（如 /home/pi/workspace/workspace-tools → workspace/aiti-ai）
+// 短路径：取最后 2 段（如 /home/pi/workspace/demo-repo → workspace/aiti-ai）
 function shortCwd(cwd) {
   const s = String(cwd || '').replace(/[\\/]+$/, '');
   const parts = s.split(/[\\/]/).filter(Boolean);

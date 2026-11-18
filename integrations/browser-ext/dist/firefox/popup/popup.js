@@ -1,5 +1,5 @@
 /*
- * aiti-devtools browser extension · popup (v2)
+ * aiti-devtools browser extension · popup
  *
  * This-page state card (default off / allowlisted / denied / restricted page) + three buttons:
  *   ⚡ Enable on this page (once) — pure runtime injection (postMessage override, dies on navigation;

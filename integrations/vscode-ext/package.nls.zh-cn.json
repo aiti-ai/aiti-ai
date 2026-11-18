@@ -1,0 +1,15 @@
+{
+  "extension.description": "aiti-devtools 最后一公里：一键完成 dev server 代理注入 + aiti-bridge 生命周期 + .vscode/mcp.json 自动配置，让 IDE 内置 AI agent（Copilot Chat 等）直接操作你正在跑的页面",
+  "command.enableDebug.title": "aiti: 启用页面调试（注入 + 起桥 + 配置 MCP）",
+  "command.stopDebug.title": "aiti: 停止调试",
+  "command.openPanel.title": "aiti: 打开桥面板",
+  "command.reinject.title": "aiti: 重新注入（重启代理，刷新页面生效）",
+  "setting.bridgePort.description": "aiti-bridge 独立桥端口（与独立桥/systemd 默认一致）",
+  "setting.bridgePath.description": "aiti-bridge.mjs 绝对路径（留空自动探测：安装态 ~/.pi/web/node_modules/@aiti-ai/aiti-bridge → 仓库检出 packages/aiti-bridge）",
+  "setting.shimPath.description": "aiti-mcp-shim.cjs 绝对路径（留空自动探测，顺序同 bridgePath）",
+  "setting.proxyPort.description": "本地反向代理监听端口（浏览器访问该端口 = 经代理的 dev server，HTML 已注入）",
+  "setting.targetUrl.description": "目标 dev server 地址（留空 = 自动扫描常见端口检测；也可面板/命令里选）",
+  "setting.aiUrl.description": "AI 窗地址（留空 = 本地桥 cockpit；可指向 pi-web 实例，如 https://pi.example.com/——页面右下角 💬 打开的就是它）",
+  "setting.autoOpenBrowser.description": "启用调试后自动打开代理地址（注入后的页面）",
+  "setting.autoEnable.description": "扩展激活时自动执行「启用页面调试」（工作区级设置；Extension Development Host 自动化测试/一打开工程即调试）"
+}

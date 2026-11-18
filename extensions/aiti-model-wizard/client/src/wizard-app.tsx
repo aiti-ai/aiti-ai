@@ -9,7 +9,7 @@
  * 架构：toolbar 🧙 按钮 → 独立置顶 dialog（pages slot）+ banners
  */
 import { useState, useEffect, useCallback, useRef } from "react";
-import { apiUrl, extSvc, regSvc, getCtx, t } from "./host-shim";
+import { apiUrl, extSvc, regSvc, getCtx, t as ti, srvFix } from "./host-shim";
 import { uiConfirm } from "../../../_shared/ui-dialogs";
 import { api, jsonBody, Ic, ICONS, LINK, genName, fetchNewModelsOnce, fetchNewModelsWithToast, invalidateNewModels } from "./wizard-lib";
 import { ProviderAvatar } from "./provider-icons";
@@ -91,15 +91,15 @@ const modelVersion = (id: string) => {
 const cmpModel = (x: string, y: string) => { const va = modelVersion(x), vb = modelVersion(y); if (va !== vb) return vb - va; return x < y ? -1 : x > y ? 1 : 0; };
 
 /** 反填来源摘要（#3）：[{id, fills:{field:源}}] → "glm-5(cost←models.dev·ctx←厂商models)、k3(推理←内置目录)"（截断） */
-const FIELD_ABBR = { contextWindow: "ctx", maxTokens: "out", reasoning: "推理", input: "输入", cost: "cost", compat: "兼容", thinkingLevelMap: "思考映射", samplingParams: "采样", name: "名", api: "api", baseUrl: "地址" } as const;
+const FIELD_ABBR = { contextWindow: "ctx", maxTokens: "out", reasoning: ti("mw.a.1"), input: ti("mw.a.2"), cost: "cost", compat: ti("mw.a.3"), thinkingLevelMap: ti("mw.a.4"), samplingParams: ti("mw.a.5"), name: ti("mw.a.6"), api: "api", baseUrl: ti("mw.a.7") } as const;
 const summarizeFills = (fills: any): string => {
   if (!Array.isArray(fills) || !fills.length) return "";
   const parts = fills.slice(0, 4).map((f: any) => {
     const srcs = Object.entries(f.fills || {}).map(([k, v]) => ((FIELD_ABBR as any)[k] || k) + "←" + v).join("·");
     return f.id + "（" + srcs + "）";
   });
-  const more = fills.length > 4 ? " 等 " + fills.length + " 个" : "";
- return ("自动反填：" + parts.join(", ") + more).slice(0, 220);
+  const more = fills.length > 4 ? ti("mw.a.8") + fills.length + ti("mw.a.9") : "";
+ return (ti("mw.a.10") + parts.join(", ") + more).slice(0, 220);
 };
 
 /** 弹出 ai-helper（model-params-fill skill 预选 + 提示词预填），让用户点击让 AI 上网查权威数据补全缺参数的模型。
@@ -112,22 +112,22 @@ function invokeAiHelperForMissing(provider: string, missing: { id: string; name?
   if (typeof invokeFn !== "function") return false;
   const ids = missing.map((m) => m.id).join("、");
   const prompt = [
-    "我在模型向导里保存了 provider「" + provider + "」，但以下模型在所有数据源（models.json / 内置目录 models-store / 厂商 /models / models.dev / OpenRouter / LiteLLM）都查不到参数，被保存成了裸条目（缺 contextWindow / maxTokens 等）：",
+    ti("mw.a.11") + provider + ti("mw.a.12"),
     ids,
-    "请按 model-params-fill 手册：1) 上网查权威数据（官方文档 / /models 接口 / models.dev / OpenRouter）；",
-    "2) 把权威数据写入 ~/.pi/agent/models-store.json（provider=" + provider + " 的 models 数组，只增改目标模型，勿动其它条目）；",
-    "3) 在模型向导已打开的「模型参数」弹窗里回填这些参数，让我点击保存生效。",
-    "权威来源请标注。查不到的字段宁缺毋滥，绝不瞎编。",
+    ti("mw.a.13"),
+    ti("mw.a.14") + provider + ti("mw.a.15"),
+    ti("mw.a.16"),
+    ti("mw.a.17"),
   ].join("\n");
   try {
     invokeFn({
       extId: "aiti-model-wizard",
-      extName: "模型添加向导",
+      extName: ti("mw.a.18"),
       helperId: "model-params-fill",
       message: prompt,
       autoSend: true,  // 预填后自动发送：AI 直接开查，用户无需再点「生成」
-      placeholder: "AI 正在查权威数据并补全参数…",
-      contextLabel: "模型缺参数 · " + provider + " · " + ids,
+      placeholder: ti("mw.a.19"),
+      contextLabel: ti("mw.a.20") + provider + " · " + ids,
       dialogEl: dialogEl || null,
     });
     return true;
@@ -154,8 +154,8 @@ const usageText = (entry: any) => {
       parts.push((b.label ? b.label + " " : "") + (b.remaining != null ? Number(b.remaining).toLocaleString() : "?") + (b.limit != null ? "/" + Number(b.limit).toLocaleString() : ""));
     }
   }
-  if (!parts.length) return r.exhausted ? "已用尽" : "";
-  return parts.join(" · ") + (buckets.length > 3 ? " 等 " + buckets.length + " 项" : "");
+  if (!parts.length) return r.exhausted ? ti("mw.a.21") : "";
+  return parts.join(" · ") + (buckets.length > 3 ? ti("mw.a.8") + buckets.length + ti("mw.a.22") : "");
 };
 
 /** 一键体检报告卡（P1-A）：逐 provider 探测结论（延迟/HTTP/明细），失败行可直达详情修复 */
@@ -174,18 +174,18 @@ function CheckupDialog({ st, onClose, onFix, onRerun }: { st: any; onClose: () =
       } as any)} onClick={(e) => e.stopPropagation()} className="amw-float-panel" style={{ width: "min(600px, 100%)", maxHeight: "84dvh", padding: 14, display: "flex", flexDirection: "column" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
           <Ic size={14} paths={ICONS.stethoscope} />
-          <span style={{ fontWeight: 700, fontSize: 13, flex: 1 }}>{"一键体检" + (st?.running ? " · 进行中…" : "")}</span>
-          <button className="amw-btn" onClick={onClose} aria-label="关闭"><Ic size={12} paths={ICONS.x} /></button>
+          <span style={{ fontWeight: 700, fontSize: 13, flex: 1 }}>{ti("mw.a.23") + (st?.running ? ti("mw.a.24") : "")}</span>
+          <button className="amw-btn" onClick={onClose} aria-label={ti("mw.a.25")}><Ic size={12} paths={ICONS.x} /></button>
         </div>
         {st?.running ? (
-          <div className="amw-note">正在逐 provider 串行探测（每家最长约 12 秒；跳过聚合组/禁用/无凭据）……测完自动出报告并留存结论。</div>
+          <div className="amw-note">{ti("mw.tx.1")}</div>
         ) : !res || !res.ok ? (
-          <div className="amw-note is-err">{"❌ " + ((res && res.error) || "体检失败")}</div>
+          <div className="amw-note is-err">{"❌ " + ((res && res.error) || ti("mw.a.26"))}</div>
         ) : (
           <>
             <div className="amw-note" style={{ marginBottom: 8 }}>
-              {"✅ " + res.pass + " 可用 · 🟡 " + (res.rateLimited || 0) + " 限流 · ❌ " + (res.fail || 0) + " 失败" + (res.skip ? " · ⏭ " + res.skip + " 跳过" : "")}
-              {"　（结论已留存，树上徽标/详情健康条同步）"}
+              {"✅ " + res.pass + ti("mw.a.27") + (res.rateLimited || 0) + ti("mw.a.28") + (res.fail || 0) + ti("mw.a.29") + (res.skip ? " · ⏭ " + res.skip + ti("mw.a.30") : "")}
+              {ti("mw.a.31")}
             </div>
             <div style={{ overflow: "auto", flex: 1, minHeight: 80, display: "flex", flexDirection: "column", gap: 3 }} aria-live="polite">
               {rows.map((r: any) => (
@@ -196,19 +196,19 @@ function CheckupDialog({ st, onClose, onFix, onRerun }: { st: any; onClose: () =
                   <span className="amw-mono" style={{ fontWeight: 650, flexShrink: 0, minWidth: 90 }}>{r.provider}</span>
                   <span style={{ flex: 1, minWidth: 0, color: r.skipped ? "var(--text-subtle,#999)" : "var(--text-muted,#555)", wordBreak: "break-all" }}>
                     {r.skipped ? r.reason
-                      : (r.status ? "HTTP " + r.status + " · " : "网络异常 · ") + (r.latencyMs != null ? fmtLat(r.latencyMs) + " · " : "") + (r.detail || "")
-                      + (r.model ? "（探针 " + r.model + "）" : "")}
+                      : (r.status ? "HTTP " + r.status + " · " : ti("mw.a.32")) + (r.latencyMs != null ? fmtLat(r.latencyMs) + " · " : "") + (r.detail || "")
+                      + (r.model ? ti("mw.a.33") + r.model + "）" : "")}
                   </span>
                   {!r.skipped && r.masked ? <span className="amw-mono" style={{ flexShrink: 0, color: "var(--text-subtle,#999)" }}>{r.keyName + " " + r.masked}</span> : null}
                   {!r.skipped && !r.pass ? (
-                    <button className="amw-btn" style={{ padding: "1px 8px", fontSize: 10.5, flexShrink: 0 }} onClick={() => onFix(r.provider)}>去修</button>
+                    <button className="amw-btn" style={{ padding: "1px 8px", fontSize: 10.5, flexShrink: 0 }} onClick={() => onFix(r.provider)}>{ti("mw.tx.2")}</button>
                   ) : null}
                 </div>
               ))}
             </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 10, flexShrink: 0 }}>
-              <button className="amw-btn" onClick={onRerun}>↻ 重跑体检</button>
-              <button className="amw-btn is-ok" onClick={onClose}>完成</button>
+              <button className="amw-btn" onClick={onRerun}>{ti("mw.tx.3")}</button>
+              <button className="amw-btn is-ok" onClick={onClose}>{ti("mw.tx.4")}</button>
             </div>
           </>
         )}
@@ -246,8 +246,8 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     (async () => {
       try {
-        const d = await (await api("/config")).json();
-        if (d && d.ok) setCfg(d.config); else setErr((d && d.error) || "读取配置失败");
+        const d = srvFix(await (await api("/config")).json());
+        if (d && d.ok) setCfg(d.config); else setErr((d && d.error) || ti("mw.a.34"));
       } catch (e: any) { setErr(String(e.message || e)); }
     })();
   }, []);
@@ -256,17 +256,17 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
     if (!cfg) return;
     setSaving(true); setErr(""); setMsg("");
     try {
-      const d = await (await api("/config", { method: "POST", ...jsonBody({ set: cfg }) })).json();
-      if (d && d.ok) { setMsg("已保存，即时生效"); setTimeout(onClose, 700); }
-      else setErr((d && d.error) || "保存失败");
+      const d = srvFix(await (await api("/config", { method: "POST", ...jsonBody({ set: cfg }) })).json());
+      if (d && d.ok) { setMsg(ti("mw.a.35")); setTimeout(onClose, 700); }
+      else setErr((d && d.error) || ti("mw.a.36"));
     } catch (e: any) { setErr(String(e.message || e)); }
     setSaving(false);
   };
   const refreshCatalog = async () => {
     setCatBusy(true); setMsg(""); setErr("");
     try {
-      const d = await (await api("/refresh-catalog", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).json();
-      setMsg(d && d.ok ? "目录已刷新（" + (d.providers ?? "?") + " 家 · " + (d.source || "?") + " · " + fmtLat(d.elapsedMs) + "）" : "❌ " + ((d && d.error) || "刷新失败"));
+      const d = srvFix(await (await api("/refresh-catalog", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).json());
+      setMsg(d && d.ok ? ti("mw.a.37") + (d.providers ?? "?") + ti("mw.a.38") + (d.source || "?") + " · " + fmtLat(d.elapsedMs) + "）" : "❌ " + ((d && d.error) || ti("mw.a.39")));
     } catch (e: any) { setErr(String(e.message || e)); }
     setCatBusy(false);
   };
@@ -277,50 +277,50 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
     <>
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
         <Ic size={14} paths={ICONS.settings} />
-        <span style={{ fontWeight: 700, fontSize: 13, flex: 1 }}>向导设置</span>
-        <button className="amw-btn" onClick={onClose} aria-label="关闭"><Ic size={12} paths={ICONS.x} /></button>
+        <span style={{ fontWeight: 700, fontSize: 13, flex: 1 }}>{ti("mw.tx.5")}</span>
+        <button className="amw-btn" onClick={onClose} aria-label={ti("mw.a.25")}><Ic size={12} paths={ICONS.x} /></button>
       </div>
       {err ? <div className="amw-note is-err" style={{ marginBottom: 6 }}>{"❌ " + err}</div> : null}
       {msg ? <div className="amw-note is-ok" style={{ marginBottom: 6 }}>{msg}</div> : null}
-      {!cfg ? <div style={{ color: "var(--text-subtle,#666)", fontSize: 12 }}>加载中…</div> : (
+      {!cfg ? <div style={{ color: "var(--text-subtle,#666)", fontSize: 12 }}>{ti("mw.tx.6")}</div> : (
         <div style={{ overflow: "auto", display: "flex", flexDirection: "column", gap: 12 }}>
           <div>
-            <div className="amw-section" style={{ margin: "0 0 5px" }}>新模型检测与提醒</div>
+            <div className="amw-section" style={{ margin: "0 0 5px" }}>{ti("mw.tx.7")}</div>
             <label style={{ fontSize: 12, display: "inline-flex", gap: 5, alignItems: "center", marginBottom: 6 }}>
-              <input type="checkbox" checked={r?.enabled !== false} onChange={(e) => upd("reminder", "enabled", e.target.checked)} />启用后台扫描与提醒
+              <input type="checkbox" checked={r?.enabled !== false} onChange={(e) => upd("reminder", "enabled", e.target.checked)} />{ti("mw.tx.207")}
             </label>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-              <SetNum label="扫描间隔（分钟）" value={r ? Math.round((r.checkIntervalMs || 1800000) / 60000) : ""} onChange={(v) => upd("reminder", "checkIntervalMs", Math.max(1, Math.floor(Number(v) || 0)) * 60000)} />
-              <SetNum label="单家拉取超时（秒）" value={r ? Math.round((r.fetchTimeoutMs || 8000) / 1000) : ""} onChange={(v) => upd("reminder", "fetchTimeoutMs", Math.max(1, Math.floor(Number(v) || 0)) * 1000)} />
-              <SetNum label="toast 每日上限" hint="超出后静默（徽标不受影响）" value={r ? r.maxPerDay ?? "" : ""} onChange={(v) => upd("reminder", "maxPerDay", Math.max(0, Math.floor(Number(v) || 0)))} />
-              <SetNum label="toast 最小间隔（秒）" value={r ? Math.round((r.minGapMs || 30000) / 1000) : ""} onChange={(v) => upd("reminder", "minGapMs", Math.max(0, Math.floor(Number(v) || 0)) * 1000)} />
-              <SetNum label="toast 展示时长（秒）" value={r ? Math.round((r.toastMs || 10000) / 1000) : ""} onChange={(v) => upd("reminder", "toastMs", Math.max(1, Math.floor(Number(v) || 0)) * 1000)} />
+              <SetNum label={ti("mw.a.40")} value={r ? Math.round((r.checkIntervalMs || 1800000) / 60000) : ""} onChange={(v) => upd("reminder", "checkIntervalMs", Math.max(1, Math.floor(Number(v) || 0)) * 60000)} />
+              <SetNum label={ti("mw.a.41")} value={r ? Math.round((r.fetchTimeoutMs || 8000) / 1000) : ""} onChange={(v) => upd("reminder", "fetchTimeoutMs", Math.max(1, Math.floor(Number(v) || 0)) * 1000)} />
+              <SetNum label={ti("mw.a.42")} hint={ti("mw.a.43")} value={r ? r.maxPerDay ?? "" : ""} onChange={(v) => upd("reminder", "maxPerDay", Math.max(0, Math.floor(Number(v) || 0)))} />
+              <SetNum label={ti("mw.a.44")} value={r ? Math.round((r.minGapMs || 30000) / 1000) : ""} onChange={(v) => upd("reminder", "minGapMs", Math.max(0, Math.floor(Number(v) || 0)) * 1000)} />
+              <SetNum label={ti("mw.a.45")} value={r ? Math.round((r.toastMs || 10000) / 1000) : ""} onChange={(v) => upd("reminder", "toastMs", Math.max(1, Math.floor(Number(v) || 0)) * 1000)} />
             </div>
           </div>
           <div>
-            <div className="amw-section" style={{ margin: "0 0 5px" }}>目录（models.dev）</div>
+            <div className="amw-section" style={{ margin: "0 0 5px" }}>{ti("mw.tx.8")}</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <div><label style={lbl}>主源 URL</label><input className="amw-input" style={{ width: "100%", fontFamily: "ui-monospace,monospace" }} value={cat?.primaryUrl ?? ""} onChange={(e) => upd("catalog", "primaryUrl", e.target.value)} /></div>
-              <div><label style={lbl}>镜像 URL（竞速兜底）</label><input className="amw-input" style={{ width: "100%", fontFamily: "ui-monospace,monospace" }} value={cat?.mirrorUrl ?? ""} onChange={(e) => upd("catalog", "mirrorUrl", e.target.value)} /></div>
+              <div><label style={lbl}>{ti("mw.tx.9")}</label><input className="amw-input" style={{ width: "100%", fontFamily: "ui-monospace,monospace" }} value={cat?.primaryUrl ?? ""} onChange={(e) => upd("catalog", "primaryUrl", e.target.value)} /></div>
+              <div><label style={lbl}>{ti("mw.tx.10")}</label><input className="amw-input" style={{ width: "100%", fontFamily: "ui-monospace,monospace" }} value={cat?.mirrorUrl ?? ""} onChange={(e) => upd("catalog", "mirrorUrl", e.target.value)} /></div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "end" }}>
-                <SetNum label="缓存 TTL（小时）" value={cat ? cat.ttlHours ?? "" : ""} onChange={(v) => upd("catalog", "ttlHours", Math.max(1, Math.floor(Number(v) || 0)))} />
-                <button className="amw-btn" disabled={catBusy} style={{ marginBottom: 14 }} title="立即重新下载目录（官方 + 镜像竞速）" onClick={refreshCatalog}>{catBusy ? "刷新中…" : "↻ 立即刷新"}</button>
+                <SetNum label={ti("mw.a.46")} value={cat ? cat.ttlHours ?? "" : ""} onChange={(v) => upd("catalog", "ttlHours", Math.max(1, Math.floor(Number(v) || 0)))} />
+                <button className="amw-btn" disabled={catBusy} style={{ marginBottom: 14 }} title={ti("mw.a.47")} onClick={refreshCatalog}>{catBusy ? ti("mw.a.48") : ti("mw.a.49")}</button>
               </div>
             </div>
           </div>
           <div>
-            <div className="amw-section" style={{ margin: "0 0 5px" }}>探测与测试</div>
+            <div className="amw-section" style={{ margin: "0 0 5px" }}>{ti("mw.tx.11")}</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-              <SetNum label="连接测试超时（秒）" hint="一键体检同用" value={ts ? Math.round((ts.timeoutMs || 12000) / 1000) : ""} onChange={(v) => upd("test", "timeoutMs", Math.max(1, Math.floor(Number(v) || 0)) * 1000)} />
-              <SetNum label="端点探测超时（秒）" value={pr ? Math.round((pr.timeoutMs || 12000) / 1000) : ""} onChange={(v) => upd("probe", "timeoutMs", Math.max(1, Math.floor(Number(v) || 0)) * 1000)} />
-              <SetNum label="探针 maxTokens" hint="测试连接的最小探针输出上限" value={pr ? pr.maxTokens ?? "" : ""} onChange={(v) => upd("probe", "maxTokens", Math.max(1, Math.floor(Number(v) || 0)))} />
+              <SetNum label={ti("mw.a.50")} hint={ti("mw.a.51")} value={ts ? Math.round((ts.timeoutMs || 12000) / 1000) : ""} onChange={(v) => upd("test", "timeoutMs", Math.max(1, Math.floor(Number(v) || 0)) * 1000)} />
+              <SetNum label={ti("mw.a.52")} value={pr ? Math.round((pr.timeoutMs || 12000) / 1000) : ""} onChange={(v) => upd("probe", "timeoutMs", Math.max(1, Math.floor(Number(v) || 0)) * 1000)} />
+              <SetNum label={ti("mw.a.53")} hint={ti("mw.a.54")} value={pr ? pr.maxTokens ?? "" : ""} onChange={(v) => upd("probe", "maxTokens", Math.max(1, Math.floor(Number(v) || 0)))} />
             </div>
           </div>
         </div>
       )}
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 10, flexShrink: 0 }}>
-        <button className="amw-btn" onClick={onClose}>取消</button>
-        <button className="amw-btn is-ok" disabled={!cfg || saving} onClick={save}>{saving ? "保存中…" : "保存"}</button>
+        <button className="amw-btn" onClick={onClose}>{ti("mw.tx.12")}</button>
+        <button className="amw-btn is-ok" disabled={!cfg || saving} onClick={save}>{saving ? ti("mw.a.55") : ti("mw.a.56")}</button>
       </div>
     </>
   );
@@ -359,7 +359,7 @@ function MemberPicker({ pool, exclude, onPick }: { pool: any[]; exclude: string[
   });
   return (
     <div style={{ marginTop: 6, borderTop: "1px dashed var(--border-subtle,#e5e7eb)", paddingTop: 6 }}>
-      <input className="amw-input" style={{width: "100%", padding: "4px 8px", fontSize: 12}} value={q} placeholder="搜索成员（已配置 provider/模型）…"
+      <input className="amw-input" style={{width: "100%", padding: "4px 8px", fontSize: 12}} value={q} placeholder={ti("mw.a.57")}
         onChange={(e) => setQ(e.target.value)} />
       <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 5 }}>
         {candsDedup.map((m: any) => (
@@ -370,8 +370,8 @@ function MemberPicker({ pool, exclude, onPick }: { pool: any[]; exclude: string[
             {m.provider}/{m.model}
           </button>
         ))}
-        {!cands.length ? <span style={{ fontSize: 11, color: "var(--text-subtle,#999)" }}>{pool.length ? "无匹配成员" : "没有可作成员的已配置模型——先在「添加」页配置真实模型"}</span>
-        : all.length > MATCH_CAP ? <span style={{ fontSize: 11, color: "var(--text-subtle,#999)" }}>{"共 " + all.length + " 个匹配，仅显示前 " + MATCH_CAP + " 个——请输入关键字缩小范围"}</span> : null}
+        {!cands.length ? <span style={{ fontSize: 11, color: "var(--text-subtle,#999)" }}>{pool.length ? ti("mw.a.58") : ti("mw.a.59")}</span>
+        : all.length > MATCH_CAP ? <span style={{ fontSize: 11, color: "var(--text-subtle,#999)" }}>{ti("mw.a.60") + all.length + ti("mw.a.61") + MATCH_CAP + ti("mw.a.62")}</span> : null}
       </div>
     </div>
   );
@@ -385,7 +385,7 @@ function OauthCodeInput({ onSubmit, placeholder, allowEmpty }: { onSubmit: (v: s
       <input className="amw-input" style={{flex: 1, fontFamily: "ui-monospace,monospace"}} value={v} placeholder={placeholder || ""}
         onChange={(e) => setV(e.target.value)}
         onKeyDown={(e) => { if (e.key === "Enter" && (allowEmpty || v.trim())) onSubmit(v); }} />
-      <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff" }} disabled={!allowEmpty && !v.trim()} onClick={() => onSubmit(v)}>提交</button>
+      <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff" }} disabled={!allowEmpty && !v.trim()} onClick={() => onSubmit(v)}>{ti("mw.tx.13")}</button>
     </div>
   );
 }
@@ -420,14 +420,14 @@ const SAVE_FLOAT_PROPS: any = {
  *  返回 { r }（单模型结果：ok/status/latencyMs/label/error/predictedAvailableAt/perKey）或 { error }。 */
 async function probeModelNow(provider: string, model: string): Promise<{ r?: any; error?: string }> {
   try {
-    const d = await (await fetch(apiUrl("/api/extensions/aiti-model-check/probe"), {
+    const d = await srvFix(await (await fetch(apiUrl("/api/extensions/aiti-model-check/probe"), {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider, model }),
-    })).json();
+    })).json());
     const r = d && Array.isArray(d.results) ? d.results.find((x: any) => x.provider === provider && x.model === model) : null;
-    if (!d || !d.ok) return { error: (d && d.error) || "探测不可用（aiti-model-check 未启用？）" };
-    if (!r) return { error: (d && d.reason) || "无探测结果（该模型可能不在运行清单里）" };
+    if (!d || !d.ok) return { error: (d && d.error) || ti("mw.a.63") };
+    if (!r) return { error: (d && d.reason) || ti("mw.a.64") };
     return { r };
-  } catch (e: any) { return { error: "探测失败：" + ((e && e.message) || e) };
+  } catch (e: any) { return { error: ti("mw.a.65") + ((e && e.message) || e) };
   }
 }
 
@@ -439,15 +439,15 @@ function ProbeOut({ r }: { r: any }) {
     <span style={{ minWidth: 0, display: "inline-flex", flexDirection: "column", gap: 1 }}>
       {r.ok ? (
         <span style={{ color: "#16a34a", fontWeight: 650, fontSize: 11.5 }}>
-          {"可用" + (r.status ? " · HTTP " + r.status : "") + (r.latencyMs != null ? " · " + fmtMs(r.latencyMs) : "")}
+          {ti("mw.a.66") + (r.status ? " · HTTP " + r.status : "") + (r.latencyMs != null ? " · " + fmtMs(r.latencyMs) : "")}
         </span>
       ) : r.status === 429 ? (
         <span style={{ color: "#d97706", fontWeight: 650, fontSize: 11.5 }}>
-          {"🟡 限流（key/端点正确，稍后重试即可）" + (r.predictedAvailableAt ? " · 预计恢复 " + new Date(r.predictedAvailableAt).toLocaleString("zh-CN", { hour12: false }) : "")}
+          {ti("mw.a.67") + (r.predictedAvailableAt ? ti("mw.a.68") + new Date(r.predictedAvailableAt).toLocaleString("zh-CN", { hour12: false }) : "")}
         </span>
       ) : (
         <span style={{ color: "#dc2626", fontWeight: 650, fontSize: 11.5 }}>
-          {("❌ " + (r.label || "异常") + (r.status ? " · HTTP " + r.status : "") + (r.latencyMs != null ? " · " + fmtMs(r.latencyMs) : ""))}
+          {("❌ " + (r.label || ti("mw.a.69")) + (r.status ? " · HTTP " + r.status : "") + (r.latencyMs != null ? " · " + fmtMs(r.latencyMs) : ""))}
         </span>
       )}
       {r.error ? <span style={{ color: r.ok ? "var(--text-subtle,#666)" : "#dc2626", fontSize: 11, wordBreak: "break-all" }}>{String(r.error).slice(0, 160)}</span> : null}
@@ -514,17 +514,17 @@ function ParamPanel({ data, onClose, onSaved, dialogEl, embedded }: { data: any;
       <>
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
           <Ic size={14} paths={ICONS.card} />
-          <span className="amw-mono" style={{ fontWeight: 700, fontSize: 13, flex: 1 }}>{"模型参数 · " + data.id}</span>
+          <span className="amw-mono" style={{ fontWeight: 700, fontSize: 13, flex: 1 }}>{ti("mw.a.70") + data.id}</span>
           {embedded
-            ? <button className="amw-btn" onClick={onClose}>← 返回</button>
-            : <button className="amw-btn" onClick={onClose} aria-label="关闭"><Ic size={12} paths={ICONS.x} /></button>}
+            ? <button className="amw-btn" onClick={onClose}>{ti("mw.tx.14")}</button>
+            : <button className="amw-btn" onClick={onClose} aria-label={ti("mw.a.25")}><Ic size={12} paths={ICONS.x} /></button>}
         </div>
-        {data.loading ? <div style={{ color: "var(--text-subtle,#666)", fontSize: 12 }}>加载中…</div>
+        {data.loading ? <div style={{ color: "var(--text-subtle,#666)", fontSize: 12 }}>{ti("mw.tx.6")}</div>
           : data.error ? <div style={{ color: "#dc2626", fontSize: 12 }}>{"❌ " + data.error}</div>
-          : <div style={{ color: "var(--text-subtle,#666)", fontSize: 12 }}>{data.readOnly ? "目录未收录该模型的详细参数（仅 id 清单）。" : "未取到该模型参数——provider 的模型清单为空或模型已被移除。"}</div>}
+          : <div style={{ color: "var(--text-subtle,#666)", fontSize: 12 }}>{data.readOnly ? ti("mw.a.71") : ti("mw.a.72")}</div>}
         {!data.loading && !data.error && data.readOnly ? (
           <div style={{ marginTop: 10 }}>
-            <button className="amw-btn is-ok" onClick={() => invokeAiHelperForMissing(data.provider, [{ id: data.id }], dialogEl || null)}>AI 帮我补参数（查权威数据 → 写 models-store）</button>
+            <button className="amw-btn is-ok" onClick={() => invokeAiHelperForMissing(data.provider, [{ id: data.id }], dialogEl || null)}>{ti("mw.tx.15")}</button>
           </div>
         ) : null}
       </>
@@ -601,11 +601,11 @@ function ParamPanel({ data, onClose, onSaved, dialogEl, embedded }: { data: any;
         const il = (draft.inputLimits && typeof draft.inputLimits === "object") ? JSON.parse(JSON.stringify(draft.inputLimits)) : {};
         il.images = { ...(il.images || {}), resize: { ...((il.images || {}).resize || {}), maxBytes: Number(imgRaw) } };
         m.inputLimits = il;
-      } else { setErrMsg("图片大小上限需为正整数字节数（留空=默认 4.5MiB）"); setSaving(false); return; }
+      } else { setErrMsg(ti("mw.a.73")); setSaving(false); return; }
       if (draft.api) m.api = draft.api;
-      const d = await (await api("/save", { method: "POST", ...jsonBody({ provider: data.provider, baseUrl: data.baseUrl, api: data.api || "openai-completions", keepKey: true, models: [m] }) })).json();
+      const d = srvFix(await (await api("/save", { method: "POST", ...jsonBody({ provider: data.provider, baseUrl: data.baseUrl, api: data.api || "openai-completions", keepKey: true, models: [m] }) })).json());
       if (d.ok) { onSaved && onSaved(d); onClose(); }
-      else setErrMsg(d.error || "保存失败");
+      else setErrMsg(d.error || ti("mw.a.36"));
     } catch (e: any) { setErrMsg(String(e.message || e)); }
     setSaving(false);
   };
@@ -614,44 +614,44 @@ function ParamPanel({ data, onClose, onSaved, dialogEl, embedded }: { data: any;
     <>
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
           <Ic size={14} paths={ICONS.card} />
-          <span className="amw-mono" style={{ fontWeight: 700, fontSize: 13, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{(edit ? "编辑模型 · " : "模型参数 · ") + (draft.id || data.id)}</span>
-          {data.readOnly ? <span className="amw-tag is-ro">只读 · 目录反填</span>
-            : !edit ? <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} onClick={() => setEdit(true)}>编辑</button> : null}
+          <span className="amw-mono" style={{ fontWeight: 700, fontSize: 13, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{(edit ? ti("mw.a.74") : ti("mw.a.70")) + (draft.id || data.id)}</span>
+          {data.readOnly ? <span className="amw-tag is-ro">{ti("mw.tx.16")}</span>
+            : !edit ? <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} onClick={() => setEdit(true)}>{ti("mw.tx.17")}</button> : null}
           {!embedded ? (
             <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11, fontWeight: 650 }}
               disabled={!!(probeSt && probeSt.busy)} onClick={doModelProbe}
-              title="发起可用性探测（与「检查」页同款探针，结果写入同一份状态/历史，树上 可用/限流/异常 标记同步更新）——测完立即就地展示">
-              {(probeSt && probeSt.busy) ? "测试中…" : "测试"}
+              title={ti("mw.a.75")}>
+              {(probeSt && probeSt.busy) ? ti("mw.a.76") : ti("mw.a.77")}
             </button>
           ) : null}
           {embedded
-            ? <button className="amw-btn" onClick={onClose}>← 返回</button>
-            : <button className="amw-btn" onClick={onClose} aria-label="关闭"><Ic size={12} paths={ICONS.x} /></button>}
+            ? <button className="amw-btn" onClick={onClose}>{ti("mw.tx.14")}</button>
+            : <button className="amw-btn" onClick={onClose} aria-label={ti("mw.a.25")}><Ic size={12} paths={ICONS.x} /></button>}
         </div>
         {/* 🩺 测试结果行：仅独立弹窗显示，测完立即就地展示（读/编两态都在） */}
         {!embedded && probeSt ? (
           <div style={{ display: "flex", alignItems: "flex-start", gap: 8, flexWrap: "wrap", padding: "6px 9px", border: "1px solid var(--border,#eee)", borderRadius: 8, background: "var(--bg-subtle,#fafafa)", marginBottom: 8 }}>
-            {probeSt.busy ? <span style={{ color: "var(--text-subtle,#666)", fontSize: 11.5 }}>{"正在探测 " + data.id + " …（单条最长约 10 秒）"}</span> : null}
+            {probeSt.busy ? <span style={{ color: "var(--text-subtle,#666)", fontSize: 11.5 }}>{ti("mw.a.78") + data.id + ti("mw.a.79")}</span> : null}
             {probeSt.done ? <ProbeOut r={probeSt.done} /> : null}
             {probeSt.error ? <span style={{ color: "#b45309", fontSize: 11.5, minWidth: 0, wordBreak: "break-all" }}>{"⚠️ " + probeSt.error}</span> : null}
           </div>
         ) : null}
         <div style={{ overflow: "auto", flex: 1, display: "flex", flexDirection: "column", gap: 10 }}>
           <div className="amw-mono" style={{ fontSize: 11, color: "var(--text-subtle,#666)", wordBreak: "break-all" }}>{"provider: " + data.provider + " · api: " + (data.api || "—")}</div>
-          {data.crossFrom ? <div style={{ padding: "4px 8px", borderRadius: 8, background: "color-mix(in srgb, var(--warn, #f59e0b) 12%, transparent)", color: "#b45309", fontSize: 11 }}>{"本 provider 目录未收录该模型，参数借其它网关同 id 条目互证（来源：" + data.crossFrom + "）—— 价格以该网关为准"}</div> : null}
+          {data.crossFrom ? <div style={{ padding: "4px 8px", borderRadius: 8, background: "color-mix(in srgb, var(--warn, #f59e0b) 12%, transparent)", color: "#b45309", fontSize: 11 }}>{ti("mw.a.80") + data.crossFrom + ti("mw.a.81")}</div> : null}
         {edit ? (
           <>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-              <div><label style={lbl}>显示名</label><input className="amw-input" style={{ width: "100%" }} value={draft.name || ""} onChange={(e) => D({ name: e.target.value })} placeholder="Display name" /></div>
-              <div><label style={lbl}>上下文窗口</label><input className="amw-input" style={{ width: "100%" }} type="number" value={draft.contextWindow ?? ""} onChange={(e) => D({ contextWindow: e.target.value ? Number(e.target.value) : "" })} placeholder="128000" /></div>
-              <div><label style={lbl}>最大输出 maxTokens</label><input className="amw-input" style={{ width: "100%" }} type="number" value={draft.maxTokens ?? ""} onChange={(e) => D({ maxTokens: e.target.value ? Number(e.target.value) : "" })} placeholder="16384" /></div>
+              <div><label style={lbl}>{ti("mw.tx.18")}</label><input className="amw-input" style={{ width: "100%" }} value={draft.name || ""} onChange={(e) => D({ name: e.target.value })} placeholder="Display name" /></div>
+              <div><label style={lbl}>{ti("mw.a.560")}</label><input className="amw-input" style={{ width: "100%" }} type="number" value={draft.contextWindow ?? ""} onChange={(e) => D({ contextWindow: e.target.value ? Number(e.target.value) : "" })} placeholder="128000" /></div>
+              <div><label style={lbl}>{ti("mw.tx.19")}</label><input className="amw-input" style={{ width: "100%" }} type="number" value={draft.maxTokens ?? ""} onChange={(e) => D({ maxTokens: e.target.value ? Number(e.target.value) : "" })} placeholder="16384" /></div>
             </div>
             <div style={{ display: "flex", gap: 18, flexWrap: "wrap", alignItems: "center" }}>
-              <label style={{ fontSize: 12, display: "inline-flex", gap: 5, alignItems: "center" }}><input type="checkbox" checked={!!draft.reasoning} onChange={(e) => D({ reasoning: e.target.checked })} />推理（reasoning）</label>
-              <label style={{ fontSize: 12, display: "inline-flex", gap: 5, alignItems: "center" }}><input type="checkbox" checked={Array.isArray(draft.input) && draft.input.includes("image")} onChange={(e) => D({ input: e.target.checked ? ["text", "image"] : ["text"] })} />图片输入</label>
-              <label style={{ fontSize: 12, display: "inline-flex", gap: 5, alignItems: "center", marginLeft: "auto" }}>API 覆盖
+              <label style={{ fontSize: 12, display: "inline-flex", gap: 5, alignItems: "center" }}><input type="checkbox" checked={!!draft.reasoning} onChange={(e) => D({ reasoning: e.target.checked })} />{ti("mw.tx.20")}</label>
+              <label style={{ fontSize: 12, display: "inline-flex", gap: 5, alignItems: "center" }}><input type="checkbox" checked={Array.isArray(draft.input) && draft.input.includes("image")} onChange={(e) => D({ input: e.target.checked ? ["text", "image"] : ["text"] })} />{ti("mw.tx.21")}</label>
+              <label style={{ fontSize: 12, display: "inline-flex", gap: 5, alignItems: "center", marginLeft: "auto" }}>{ti("mw.a.95")}
                 <select className="amw-input" style={{width: 190}} value={draft.api || ""} onChange={(e) => D({ api: e.target.value })}>
-                  <option value="">（跟随 provider）</option>
+                  <option value="">{ti("mw.tx.22")}</option>
                   {API_OVERRIDE_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
                 </select>
               </label>
@@ -659,27 +659,27 @@ function ParamPanel({ data, onClose, onSaved, dialogEl, embedded }: { data: any;
             {/* G4：模型级 baseUrl 覆盖 / 图片大小上限 / Claude 自适应思考（原生高级设置三件套补齐） */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
               <div>
-                <label style={lbl}>Base URL 覆盖（留空=跟随 provider）</label>
+                <label style={lbl}>{ti("mw.tx.23")}</label>
                 <input className="amw-input" style={{ width: "100%", fontFamily: "ui-monospace,monospace" }} value={draft.baseUrl || ""}
                   onChange={(e) => D({ baseUrl: e.target.value })} placeholder={(data.baseUrl || "https://api.example.com/v1")} />
               </div>
               {((Array.isArray(draft.input) && draft.input.includes("image")) || (draft.inputLimits && draft.inputLimits.images && draft.inputLimits.images.resize && draft.inputLimits.images.resize.maxBytes !== undefined)) ? (
                 <div>
-                  <label style={lbl}>图片大小上限（字节，留空=默认 4.5MiB）</label>
+                  <label style={lbl}>{ti("mw.tx.24")}</label>
                   <input className="amw-input" style={{ width: "100%" }} type="text" inputMode="numeric" value={draft.imageMaxBytes ?? ""}
                     onChange={(e) => D({ imageMaxBytes: e.target.value })} placeholder="4718592" />
-                  <span style={{ fontSize: 10, color: "var(--text-subtle,#666)" }}>单张图片 base64 后的上限 · <code>inputLimits.images.resize.maxBytes</code></span>
+                  <span style={{ fontSize: 10, color: "var(--text-subtle,#666)" }}>{ti("mw.tx.25")} <code>inputLimits.images.resize.maxBytes</code></span>
                 </div>
               ) : null}
             </div>
             {(draft.api || data.api) === "anthropic-messages" && !!draft.reasoning ? (
               <label style={{ fontSize: 12, display: "inline-flex", gap: 5, alignItems: "center" }}>
                 <input type="checkbox" checked={!!(draft.compat && draft.compat.forceAdaptiveThinking)} onChange={(e) => setCompat({ forceAdaptiveThinking: e.target.checked || undefined })} />
-                Claude 自适应思考（effort 等级）<code className="amw-mono" style={{ fontSize: 10, color: "var(--text-subtle,#666)" }}>compat.forceAdaptiveThinking</code>
+                {ti("mw.tx.183")}<code className="amw-mono" style={{ fontSize: 10, color: "var(--text-subtle,#666)" }}>compat.forceAdaptiveThinking</code>
               </label>
             ) : null}
             <div>
-              <div className="amw-section" style={{margin: "0 0 4px"}}>成本（$/M tokens，四项都填才生效）</div>
+              <div className="amw-section" style={{margin: "0 0 4px"}}>{ti("mw.tx.26")}</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8 }}>
                 {["input", "output", "cacheRead", "cacheWrite"].map((k) => (
                   <div key={k}><label style={lbl}>{k}</label><input className="amw-input" style={{ width: "100%" }} type="number" step="0.01" value={cost[k] ?? ""} onChange={(e) => setCost(k, e.target.value)} placeholder="0" /></div>
@@ -687,7 +687,7 @@ function ParamPanel({ data, onClose, onSaved, dialogEl, embedded }: { data: any;
               </div>
             </div>
             <div>
-              <div className="amw-section" style={{margin: "0 0 4px"}}>思考级别映射（留空=删除该级）</div>
+              <div className="amw-section" style={{margin: "0 0 4px"}}>{ti("mw.tx.27")}</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 6 }}>
                 {THINKING_LEVELS.map((lv) => (
                   <div key={lv}><label style={lbl}>{lv}</label><input className="amw-input" style={{ width: "100%" }} value={tlm[lv] ?? ""} onChange={(e) => setTlm(lv, e.target.value)} placeholder="—" /></div>
@@ -695,11 +695,11 @@ function ParamPanel({ data, onClose, onSaved, dialogEl, embedded }: { data: any;
               </div>
             </div>
             <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
-              <label style={{ fontSize: 12, display: "inline-flex", gap: 5, alignItems: "center" }}><input type="checkbox" checked={hasDeepseek} onChange={(e) => setDeepseek(e.target.checked)} />DeepSeek 思考兼容</label>
-              <label style={{ fontSize: 12, display: "inline-flex", gap: 5, alignItems: "center" }}><input type="checkbox" checked={!devRoleOff} onChange={(e) => e.target.checked ? delCompatKey("supportsDeveloperRole") : setCompat({ supportsDeveloperRole: false })} />支持 developer 角色</label>
+              <label style={{ fontSize: 12, display: "inline-flex", gap: 5, alignItems: "center" }}><input type="checkbox" checked={hasDeepseek} onChange={(e) => setDeepseek(e.target.checked)} />{ti("mw.tx.28")}</label>
+              <label style={{ fontSize: 12, display: "inline-flex", gap: 5, alignItems: "center" }}><input type="checkbox" checked={!devRoleOff} onChange={(e) => e.target.checked ? delCompatKey("supportsDeveloperRole") : setCompat({ supportsDeveloperRole: false })} />{ti("mw.tx.29")}</label>
             </div>
             <div>
-              <div className="amw-section" style={{margin: "0 0 4px"}}>请求头（模型级，空行忽略）</div>
+              <div className="amw-section" style={{margin: "0 0 4px"}}>{ti("mw.tx.30")}</div>
               {hdrRows.map((r, i) => (
                 <div key={i} style={{ display: "flex", gap: 6, marginBottom: 4 }}>
                   <input className="amw-input" style={{flex: 1, fontFamily: "ui-monospace,monospace"}} placeholder="Header-Name" value={r.k} onChange={(e) => setHdrRows((prev) => prev.map((x, j) => j === i ? { ...x, k: e.target.value } : x))} />
@@ -707,24 +707,24 @@ function ParamPanel({ data, onClose, onSaved, dialogEl, embedded }: { data: any;
                   <button className="amw-btn" style={{ padding: "2px 8px", color: "#dc2626" }} onClick={() => setHdrRows((prev) => prev.filter((_x, j) => j !== i))}>✕</button>
                 </div>
               ))}
-              <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} onClick={() => setHdrRows((prev) => [...prev, { k: "", v: "" }])}>＋ 加一行</button>
+              <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} onClick={() => setHdrRows((prev) => [...prev, { k: "", v: "" }])}>{ti("mw.tx.31")}</button>
             </div>
           </>
         ) : (() => {
           const fmtVal = (v: any): string | null => {
             if (v === undefined || v === null) return null;
-            if (typeof v === "boolean") return v ? "是" : "否";
+            if (typeof v === "boolean") return v ? ti("mw.a.82") : ti("mw.a.83");
             if (typeof v === "number") return v.toLocaleString();
-            if (Array.isArray(v)) return v.join("，") || "（空）";
+            if (Array.isArray(v)) return v.join("，") || ti("mw.a.84");
             if (typeof v === "object") return Object.keys(v).length ? JSON.stringify(v) : null;
             return String(v);
           };
           const FIELDS: [string, string][] = [
-            ["id", "模型 id"], ["name", "名称"], ["reasoning", "推理"],
-            ["contextWindow", "上下文窗口（contextWindow）"], ["maxTokens", "最大输出（maxTokens）"],
-            ["input", "输入（input）"], ["cost", "成本（cost）"], ["compat", "兼容（compat）"],
-            ["inputLimits", "输入限制（inputLimits）"],
-            ["thinkingLevelMap", "思考级别映射"], ["samplingParams", "采样参数"], ["api", "API 覆盖"], ["baseUrl", "Base URL"],
+            ["id", ti("mw.a.85")], ["name", ti("mw.a.86")], ["reasoning", ti("mw.a.1")],
+            ["contextWindow", ti("mw.a.87")], ["maxTokens", ti("mw.a.88")],
+            ["input", ti("mw.a.89")], ["cost", ti("mw.a.90")], ["compat", ti("mw.a.91")],
+            ["inputLimits", ti("mw.a.92")],
+            ["thinkingLevelMap", ti("mw.a.93")], ["samplingParams", ti("mw.a.94")], ["api", ti("mw.a.95")], ["baseUrl", "Base URL"],
           ];
           return FIELDS.map(([k, label]) => {
             const v = fmtVal(k === "id" ? draft.id : draft[k]);
@@ -741,8 +741,8 @@ function ParamPanel({ data, onClose, onSaved, dialogEl, embedded }: { data: any;
         {edit ? (
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 10, alignItems: "center", flexShrink: 0 }}>
             {errMsg ? <span style={{ color: "#dc2626", fontSize: 11, flex: 1 }}>{errMsg}</span> : <span style={{ flex: 1 }} />}
-            <button className="amw-btn" disabled={saving} onClick={() => { setDraft(data.params ? JSON.parse(JSON.stringify(data.params)) : null); setHdrRows(Object.entries((data.params && data.params.headers) || {}).map(([k, v]: any) => ({ k, v: String(v) }))); setErrMsg(""); setEdit(false); }}>取消</button>
-            <button className="amw-btn is-ok" disabled={saving} onClick={save}>{saving ? "保存中…" : "保存修改"}</button>
+            <button className="amw-btn" disabled={saving} onClick={() => { setDraft(data.params ? JSON.parse(JSON.stringify(data.params)) : null); setHdrRows(Object.entries((data.params && data.params.headers) || {}).map(([k, v]: any) => ({ k, v: String(v) }))); setErrMsg(""); setEdit(false); }}>{ti("mw.tx.12")}</button>
+            <button className="amw-btn is-ok" disabled={saving} onClick={save}>{saving ? ti("mw.a.55") : ti("mw.a.96")}</button>
           </div>
         ) : null}
     </>
@@ -802,15 +802,15 @@ function HeaderRowsEditor({ rows, onChange, hint }: { rows: HeaderRowUI[]; onCha
       {rows.map((r, i) => (
         <div key={i} style={{ display: "flex", gap: 4, alignItems: "center" }}>
           <input className="amw-input" style={{ flex: 1, fontFamily: "ui-monospace,monospace" }} placeholder="Header-Name" value={r.k} readOnly={!!r.masked}
-            title={r.masked ? "打码回显的行不可改名（服务端按名回填原值）——如需改名请删除后新增" : undefined}
+            title={r.masked ? ti("mw.a.97") : undefined}
             onChange={(e) => onChange(rows.map((x, j) => j === i ? { ...x, k: e.target.value } : x))} />
-          <input className="amw-input" style={{ flex: 1, fontFamily: "ui-monospace,monospace" }} placeholder={r.masked ? "（已存值，不改则保留）" : "value"} value={r.v}
-            title={r.masked ? "打码回显：不修改则保存时保留原值" : undefined}
+          <input className="amw-input" style={{ flex: 1, fontFamily: "ui-monospace,monospace" }} placeholder={r.masked ? ti("mw.a.98") : "value"} value={r.v}
+            title={r.masked ? ti("mw.a.99") : undefined}
             onChange={(e) => onChange(rows.map((x, j) => j === i ? { ...x, k: x.k, v: e.target.value, masked: false } : x))} />
-          <button className="amw-btn" style={{ padding: "2px 8px", color: "#dc2626" }} title="删除此行（保存时移除该头）" onClick={() => onChange(rows.filter((_x, j) => j !== i))}>✕</button>
+          <button className="amw-btn" style={{ padding: "2px 8px", color: "#dc2626" }} title={ti("mw.a.100")} onClick={() => onChange(rows.filter((_x, j) => j !== i))}>✕</button>
         </div>
       ))}
-      <button className="amw-btn" style={{ padding: "3px 12px", fontSize: 11, alignSelf: "flex-start" }} onClick={() => onChange([...rows, { k: "", v: "" }])}>＋ 加一行</button>
+      <button className="amw-btn" style={{ padding: "3px 12px", fontSize: 11, alignSelf: "flex-start" }} onClick={() => onChange([...rows, { k: "", v: "" }])}>{ti("mw.tx.31")}</button>
       {hint ? <div style={{ fontSize: 10.5, color: "var(--text-subtle,#777)" }}>{hint}</div> : null}
     </div>
   );
@@ -830,9 +830,9 @@ function EditHeadersEditor({ initialHeaders, initialMasked, onChange }: {
   };
   return (
     <>
-      <HeaderRowsEditor rows={rows} onChange={apply} hint="敏感头（Authorization/Key/Token…）打码回显：不修改则保存时保留原值；删除行=删除该头" />
-      <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11, marginTop: 6 }} title="清空本 provider 的全部已存请求头（保存后生效）"
-        onClick={() => apply([])}>清除已存请求头</button>
+      <HeaderRowsEditor rows={rows} onChange={apply} hint={ti("mw.a.101")} />
+      <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11, marginTop: 6 }} title={ti("mw.a.102")}
+        onClick={() => apply([])}>{ti("mw.tx.32")}</button>
     </>
   );
 }
@@ -936,7 +936,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     try {
       const res = await fetch(apiUrl("/api/extensions/aiti-model-check/status"), { cache: "no-store" });
       if (!res.ok) { setCheckAvail(false); setChk(null); return; } // 404/5xx → 检查扩展未启用
-      const d = await res.json();
+      const d = srvFix(await res.json());
       setCheckAvail(true);
       setChk(d && d.state && d.models ? d : null);
     } catch { setCheckAvail(false); setChk(null); }
@@ -956,23 +956,23 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   // 运行期错误主导类别：最近事件状态 → {icon,label,color,hot}；429=⚡限流 / 402=💸欠费 / 401=🔑key 无效 / ⛔无权限 / ⚠️服务端错 / 🔌网络错
   const rtErrInfo = useCallback((status: number): { icon: string; label: string; color: string } => {
     const s = Number(status) || 0;
-    if (s === 429) return { icon: "⚡", label: "限流", color: "#dc2626" };
-    if (s === 402) return { icon: "💸", label: "欠费", color: "#dc2626" };
-    if (s === 401) return { icon: "🔑", label: "key 无效", color: "#dc2626" };
-    if (s === 403) return { icon: "⛔", label: "无权限", color: "#dc2626" };
-    if (s >= 500) return { icon: "⚠️", label: s === 502 || s === 504 ? "网络/超时" : "服务端错", color: "#d97706" };
-    return { icon: "⚠️", label: s ? "HTTP " + s : "异常", color: "#d97706" };
+    if (s === 429) return { icon: "⚡", label: ti("mw.a.103"), color: "#dc2626" };
+    if (s === 402) return { icon: "💸", label: ti("mw.a.104"), color: "#dc2626" };
+    if (s === 401) return { icon: "🔑", label: ti("mw.a.105"), color: "#dc2626" };
+    if (s === 403) return { icon: "⛔", label: ti("mw.a.106"), color: "#dc2626" };
+    if (s >= 500) return { icon: "⚠️", label: s === 502 || s === 504 ? ti("mw.a.107") : ti("mw.a.108"), color: "#d97706" };
+    return { icon: "⚠️", label: s ? "HTTP " + s : ti("mw.a.69"), color: "#d97706" };
   }, []);
   const rtTip = useCallback((rt: any) =>
-    "运行期错误观测（带外 · 代理真实流量非 2xx/3xx，非主动探测）：近 1 小时 " + rt.count1h + " 次 / 24 小时 " + rt.count24h + " 次"
+    ti("mw.a.109") + rt.count1h + ti("mw.a.110") + rt.count24h + ti("mw.a.111")
     + Object.entries(rt.byStatus || {}).map(([s, b]: any) => "\n  " + rtErrInfo(Number(s)).icon + " " + rtErrInfo(Number(s)).label + " ×" + b.count24h).join("")
-    + (rt.lastAt ? "\n最近 " + new Date(rt.lastAt).toLocaleString("zh-CN", { hour12: false }) + (rt.lastKey ? " · key " + rt.lastKey : "") : "")
-    + "——可能仍处于故障中，建议重检确认", [rtErrInfo]);
+    + (rt.lastAt ? ti("mw.a.112") + new Date(rt.lastAt).toLocaleString("zh-CN", { hour12: false }) + (rt.lastKey ? " · key " + rt.lastKey : "") : "")
+    + ti("mw.a.113"), [rtErrInfo]);
   // 余额/欠费快照（aiti-model-check /balance，服务端 TTL 缓存；失效字段 exhausted 已内置欠费归一）
   const [bals, setBals] = useState<any>(null);
   const loadBalances = useCallback(async () => {
     try {
-      const d = await (await fetch(apiUrl("/api/extensions/aiti-model-check/balance"), { cache: "no-store" })).json();
+      const d = srvFix(await srvFix(await (await fetch(apiUrl("/api/extensions/aiti-model-check/balance"), { cache: "no-store" })).json()));
       if (d && d.ok) { const m: any = {}; for (const b of d.balances || []) m[b.provider] = b; setBals(m); }
     } catch { setBals(null); }
   }, []);
@@ -980,7 +980,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   // last-test.json 的客户端缓存：provider → 最近一次向导测试结论（服务端打码）
   const [lastTestMap, setLastTestMap] = useState<any>({});
   const loadLastTest = useCallback(async () => {
-    try { const d = await (await api("/last-test")).json(); if (d && d.ok) setLastTestMap(d.providers || {}); } catch {}
+    try { const d = srvFix(await (await api("/last-test")).json()); if (d && d.ok) setLastTestMap(d.providers || {}); } catch {}
   }, []);
   // 一键体检：null=未开过；{running} | {running:false, res}
   const [checkupSt, setCheckupSt] = useState<any>(null);
@@ -988,21 +988,21 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     if (checkupSt && checkupSt.running) return;
     setCheckupSt({ running: true });
     try {
-      const d = await (await api("/checkup", { method: "POST", ...jsonBody({}) })).json();
+      const d = srvFix(await (await api("/checkup", { method: "POST", ...jsonBody({}) })).json());
       setCheckupSt({ running: false, res: d });
       if (d && d.ok) {
-        setMsg("体检完成：" + d.pass + " 可用 · " + (d.rateLimited || 0) + " 限流 · " + (d.fail || 0) + " 失败" + (d.skip ? " · " + d.skip + " 跳过" : ""));
+        setMsg(ti("mw.a.114") + d.pass + ti("mw.a.115") + (d.rateLimited || 0) + ti("mw.a.116") + (d.fail || 0) + ti("mw.a.29") + (d.skip ? " · " + d.skip + ti("mw.a.30") : ""));
         loadLastTest();
-      } else setMsg("体检失败：" + ((d && d.error) || ""));
-    } catch (e: any) { setCheckupSt({ running: false, res: null }); setMsg("体检失败：" + (e?.message || e)); }
+      } else setMsg(ti("mw.a.117") + ((d && d.error) || ""));
+    } catch (e: any) { setCheckupSt({ running: false, res: null }); setMsg(ti("mw.a.117") + (e?.message || e)); }
   };
   // 余额健康条（aiti-provider-usage 服务，服务端软依赖）：provider → {phase, entry?, capturedAt?, error?}
   const [usageMap, setUsageMap] = useState<any>({});
   const loadUsage = useCallback(async (provider: string, force?: boolean) => {
     setUsageMap((prev: any) => ({ ...prev, [provider]: { phase: "loading" } }));
     try {
-      const d = await (await api("/usage?provider=" + encodeURIComponent(provider) + (force ? "&force=1" : ""))).json();
-      if (!d || !d.ok) { setUsageMap((prev: any) => ({ ...prev, [provider]: { phase: "err", message: (d && d.error) || "查询失败" } })); return; }
+      const d = srvFix(await (await api("/usage?provider=" + encodeURIComponent(provider) + (force ? "&force=1" : ""))).json());
+      if (!d || !d.ok) { setUsageMap((prev: any) => ({ ...prev, [provider]: { phase: "err", message: (d && d.error) || ti("mw.a.118") } })); return; }
       if (d.available === false) { setUsageMap((prev: any) => ({ ...prev, [provider]: { phase: "na" } })); return; }
       setUsageMap((prev: any) => ({ ...prev, [provider]: { phase: "ok", entry: d.entry, capturedAt: d.capturedAt, error: d.error } }));
     } catch (e: any) { setUsageMap((prev: any) => ({ ...prev, [provider]: { phase: "err", message: String(e.message || e) } })); }
@@ -1021,7 +1021,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     setQuickTest((prev: any) => ({ ...prev, [provider]: { busy: true } }));
     try {
       const body: any = { provider, baseUrl: p.baseUrl, api: p.api || "openai-completions", ...(p.keyCount > 1 ? { allKeys: true } : {}) };
-      const d = await (await api("/test", { method: "POST", ...jsonBody(body) })).json();
+      const d = srvFix(await (await api("/test", { method: "POST", ...jsonBody(body) })).json());
       setQuickTest((prev: any) => ({ ...prev, [provider]: { busy: false, res: d } }));
       loadLastTest();
     } catch (e: any) { setQuickTest((prev: any) => ({ ...prev, [provider]: { busy: false, res: { pass: false, error: String(e.message || e) } } })); }
@@ -1029,19 +1029,19 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   // 订阅登出（P0-B）：provider → busy
   const [logoutBusy, setLogoutBusy] = useState<string>("");
   const doOauthLogout = async (pid: string, pname: string) => {
-    const okr = await uiConfirm({ title: "登出 " + (pname || pid) + "？", message: "登出后该 provider 的全部模型立即不可用（凭据从 auth.json 清除）；随时可重新登录恢复。", danger: true, confirmText: "登出" });
+    const okr = await uiConfirm({ title: ti("mw.a.119") + (pname || pid) + "？", message: ti("mw.a.120"), danger: true, confirmText: ti("mw.a.121") });
     if (!okr) return;
     setLogoutBusy(pid);
     try {
-      const d = await (await api("/oauth-logout", { method: "POST", ...jsonBody({ provider: pid }) })).json();
+      const d = srvFix(await (await api("/oauth-logout", { method: "POST", ...jsonBody({ provider: pid }) })).json());
       if (d && d.ok) {
         delete oauthInfoRef.current[pid];
         setSubActive(null);
         await loadSubs(); loadStatus();
         try { window.dispatchEvent(new CustomEvent("pi-web:models-changed")); } catch {}
-        setToast({ msg: "已登出 " + (pname || pid), ok: true }); setTimeout(() => setToast(null), 4000);
-      } else { setToast({ msg: "登出失败：" + ((d && d.error) || ""), ok: false }); setTimeout(() => setToast(null), 5000); }
-    } catch (e: any) { setToast({ msg: "登出失败：" + (e?.message || e), ok: false }); setTimeout(() => setToast(null), 5000); }
+        setToast({ msg: ti("mw.a.122") + (pname || pid), ok: true }); setTimeout(() => setToast(null), 4000);
+      } else { setToast({ msg: ti("mw.a.123") + ((d && d.error) || ""), ok: false }); setTimeout(() => setToast(null), 5000); }
+    } catch (e: any) { setToast({ msg: ti("mw.a.123") + (e?.message || e), ok: false }); setTimeout(() => setToast(null), 5000); }
     setLogoutBusy("");
   };
   // 设置面板（P1-C）：开关 + 组件自取 /config
@@ -1052,34 +1052,34 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     const key = model ? provider + "/" + model : provider;
     setProbeBusy((prev) => ({ ...prev, [key]: true }));
     try {
-      const d = await (await fetch(apiUrl("/api/extensions/aiti-model-check/probe"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(model ? { provider, model } : { provider }) })).json();
-      setMsg(d.ok ? "探测完成：" + (d.probed ?? "?") + " 项，树上标记已更新" : "探测失败：" + (d.error || ""));
+      const d = srvFix(await srvFix(await (await fetch(apiUrl("/api/extensions/aiti-model-check/probe"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(model ? { provider, model } : { provider }) })).json()));
+      setMsg(d.ok ? ti("mw.a.124") + (d.probed ?? "?") + ti("mw.a.125") : ti("mw.a.65") + (d.error || ""));
       await loadCheck(); await loadBalances();
-    } catch (e: any) { setMsg("探测失败：" + (e?.message || e)); }
+    } catch (e: any) { setMsg(ti("mw.a.65") + (e?.message || e)); }
     finally { setProbeBusy((prev) => { const n = { ...prev }; delete n[key]; return n; }); }
   };
   const checkDot = (provider: string, id: string) => {
-    if (probeBusy[provider + "/" + id]) return <span style={{ fontSize: 9, color: "var(--warn, #f59e0b)", flexShrink: 0 }} title="探测中…">⏳</span>;
+    if (probeBusy[provider + "/" + id]) return <span style={{ fontSize: 9, color: "var(--warn, #f59e0b)", flexShrink: 0 }} title={ti("mw.a.126")}>⏳</span>;
     const ck = chk && chk.state && chk.state.models ? chk.state.models[provider + "/" + id] : null;
     const rt = rtOf(provider, id); // 运行期错误观测（带外）：真实流量出错，未探测也可能故障中
     const rtDot = rt && rt.count24h > 0 ? (
       <span style={{ fontSize: 9, color: rt.count1h > 0 ? "#dc2626" : "#d97706", flexShrink: 0, cursor: "default" }} title={rtTip(rt)}>{rtErrInfo(rt.lastStatus).icon}</span>
     ) : null;
     const dot = !ck ? null
-      : ck.lastOk ? <span className="amw-vdot" style={{ background: "#16a34a" }} title="可用（最近探测通过）" />
-      : ck.rateLimited ? <span className="amw-vdot" style={{ background: "var(--warn, #f59e0b)" }} title="限流中（429）——key 额度/速率受限" />
-      : <span className="amw-vdot" style={{ background: "var(--danger, #ef4444)" }} title="异常（非 429）——可能欠费/失效，建议重检" />;
+      : ck.lastOk ? <span className="amw-vdot" style={{ background: "#16a34a" }} title={ti("mw.a.127")} />
+      : ck.rateLimited ? <span className="amw-vdot" style={{ background: "var(--warn, #f59e0b)" }} title={ti("mw.a.128")} />
+      : <span className="amw-vdot" style={{ background: "var(--danger, #ef4444)" }} title={ti("mw.a.129")} />;
     if (!dot && !rtDot) return null;
     return <span style={{ display: "inline-flex", alignItems: "center", gap: 2, flexShrink: 0 }}>{dot}{rtDot}</span>;
   };
 
   const loadNewInfo = useCallback(async () => {
-    try { const d = await (await api("/new-models")).json(); setNewInfo(d && d.ok ? d : null); } catch {}
+    try { const d = srvFix(await (await api("/new-models")).json()); setNewInfo(d && d.ok ? d : null); } catch {}
   }, []);
 
   const ackNew = useCallback(async () => {
     try {
-      const d = await (await api("/new-models/ack", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).json();
+      const d = srvFix(await (await api("/new-models/ack", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).json());
       if (d && d.ok) {
         setNewInfo((prev: any) => ({ ...(prev || {}), ok: true, scanning: false, total: d.total || 0, providers: d.providers || {} }));
         invalidateNewModels(); // 工具栏徽标同步消失
@@ -1094,7 +1094,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     (async () => {
       for (const name of Object.keys(newInfo.providers || {})) {
         try {
-          const d = await (await api("/modelParams?provider=" + encodeURIComponent(name))).json();
+          const d = srvFix(await (await api("/modelParams?provider=" + encodeURIComponent(name))).json());
           if (dead || !d || !d.ok) continue;
           const map: any = {};
           for (const m of d.models || []) map[m.id] = m;
@@ -1106,18 +1106,18 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   }, [newInfo]);
 
   const loadStatus = useCallback(async () => {
-    try { const d = await (await api("/status")).json(); setSt(d); return d; } catch { return null; }
+    try { const d = srvFix(await (await api("/status")).json()); setSt(d); return d; } catch { return null; }
   }, []);
   // 刷新运行中代理：从 models.json 重新加载某 provider（或不传=全部）的槽位配置（多 key / 聚合改动后立即生效，不重启会话）
   const doRefreshProxies = useCallback(async (provider?: string) => {
     setBusy(true);
     try {
-      const d = await (await api("/refresh", { method: "POST", ...jsonBody(provider ? { provider } : {}) })).json();
+      const d = srvFix(await (await api("/refresh", { method: "POST", ...jsonBody(provider ? { provider } : {}) })).json());
       const names = ((d && d.refreshed) || []).length ? "：" + (d.refreshed || []).join(", ") : "";
-      setToast({ msg: (d && d.ok ? "已刷新代理" : "刷新失败：" + ((d && d.error) || "未知错误")) + (d && d.ok ? names : ""), ok: !!(d && d.ok) });
+      setToast({ msg: (d && d.ok ? ti("mw.a.130") : ti("mw.a.131") + ((d && d.error) || ti("mw.a.132"))) + (d && d.ok ? names : ""), ok: !!(d && d.ok) });
       setTimeout(() => setToast(null), 4000);
     } catch (e: any) {
-      setToast({ msg: "刷新代理失败：" + ((e && e.message) || e), ok: false });
+      setToast({ msg: ti("mw.a.133") + ((e && e.message) || e), ok: false });
       setTimeout(() => setToast(null), 4000);
     }
     setBusy(false);
@@ -1127,9 +1127,9 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   const doToggleModel = useCallback(async (provider: string, model: string, enabled: boolean) => {
     setBusy(true);
     try {
-      const d = await (await api("/model-enable", { method: "POST", ...jsonBody({ provider, model, enabled }) })).json();
+      const d = srvFix(await (await api("/model-enable", { method: "POST", ...jsonBody({ provider, model, enabled }) })).json());
       if (d.ok) {
-        setToast({ msg: (enabled ? "▶ 已启用 " : "已禁用 ") + provider + "/" + model + "（临时，未删除配置）", ok: true });
+        setToast({ msg: (enabled ? ti("mw.a.134") : ti("mw.a.135")) + provider + "/" + model + ti("mw.a.136"), ok: true });
         try { window.dispatchEvent(new CustomEvent("pi-web:models-changed")); } catch {}
         // 同步草稿缓存的 enabled 标记（若有缓存），详情面板视觉即时更新
         setEditModels((prev: any) => {
@@ -1137,10 +1137,10 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           if (!Array.isArray(arr)) return prev;
           return { ...prev, [provider]: arr.map((x: any) => (typeof x === "string" ? x : x.id) === model ? { id: model, enabled: !enabled } : x) };
         });
-      } else setToast({ msg: "❌ " + (d.error || "操作失败"), ok: false });
+      } else setToast({ msg: "❌ " + (d.error || ti("mw.a.137")), ok: false });
       setTimeout(() => setToast(null), 4000);
     } catch (e: any) {
-      setToast({ msg: "操作失败：" + (e.message || e), ok: false });
+      setToast({ msg: ti("mw.a.138") + (e.message || e), ok: false });
       setTimeout(() => setToast(null), 4000);
     }
     setBusy(false);
@@ -1150,14 +1150,14 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   const doToggleProvider = useCallback(async (provider: string, enabled: boolean) => {
     setBusy(true);
     try {
-      const d = await (await api("/enable", { method: "POST", ...jsonBody({ provider, enabled }) })).json();
+      const d = srvFix(await (await api("/enable", { method: "POST", ...jsonBody({ provider, enabled }) })).json());
       if (d.ok) {
-        setToast({ msg: (enabled ? "▶ 已启用 " : "已禁用 ") + provider + "（临时，未删除配置）", ok: true });
+        setToast({ msg: (enabled ? ti("mw.a.134") : ti("mw.a.135")) + provider + ti("mw.a.136"), ok: true });
         try { window.dispatchEvent(new CustomEvent("pi-web:models-changed")); } catch {}
-      } else setToast({ msg: "❌ " + (d.error || "操作失败"), ok: false });
+      } else setToast({ msg: "❌ " + (d.error || ti("mw.a.137")), ok: false });
       setTimeout(() => setToast(null), 4000);
     } catch (e: any) {
-      setToast({ msg: "操作失败：" + (e.message || e), ok: false });
+      setToast({ msg: ti("mw.a.138") + (e.message || e), ok: false });
       setTimeout(() => setToast(null), 4000);
     }
     setBusy(false);
@@ -1173,7 +1173,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       if (!id || capProbesRef.current[provider + "/" + id]) continue;
       setCapProbes((prev: any) => ({ ...prev, [provider + "/" + id]: { phase: "probing" } }));
       try {
-        const d = await (await api("/probe-cap", { method: "POST", ...jsonBody({ provider, model: id }) })).json();
+        const d = srvFix(await (await api("/probe-cap", { method: "POST", ...jsonBody({ provider, model: id }) })).json());
         setCapProbes((prev: any) => ({ ...prev, [provider + "/" + id]: d.ok && !d.skipped ? { phase: "done", corrected: !!d.corrected, detail: d.detail } : { phase: "done", skipped: true, detail: d.detail || d.error } }));
       } catch (e: any) {
         setCapProbes((prev: any) => ({ ...prev, [provider + "/" + id]: { phase: "done", error: String(e.message || e) } }));
@@ -1186,16 +1186,16 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   const [undoInfo, setUndoInfo] = useState<string | null>(null); // 提示文案（受影响 provider）
   useEffect(() => {
     if (tab !== "status" || undoInfo) return;
-    api("/undo-status").then((r2) => r2.json()).then((d) => {
-      if (d && d.ok) setUndoInfo("上次保存（" + (d.providers || []).join(", ") + "）");
+    api("/undo-status").then((r2) => srvFix(r2.json())).then((d) => {
+      if (d && d.ok) setUndoInfo(ti("mw.a.139") + (d.providers || []).join(", ") + "）");
     }).catch(() => {});
   }, [tab, undoInfo]);
   const undoSave = useCallback(async () => {
     try {
-      const d = await (await api("/undo", { method: "POST" })).json();
-      if (d.ok) { setUndoInfo(null); setMsg("↩ 已撤销上次保存（恢复 " + (d.restored || []).join(", ") + "），刷新页面生效"); loadStatus(); try { window.dispatchEvent(new CustomEvent("pi-web:models-changed")); } catch {} }
-      else setMsg("撤销失败：" + (d.error || ""));
-    } catch (e: any) { setMsg("撤销失败：" + (e.message || e)); }
+      const d = srvFix(await (await api("/undo", { method: "POST" })).json());
+      if (d.ok) { setUndoInfo(null); setMsg(ti("mw.a.140") + (d.restored || []).join(", ") + ti("mw.a.141")); loadStatus(); try { window.dispatchEvent(new CustomEvent("pi-web:models-changed")); } catch {} }
+      else setMsg(ti("mw.a.142") + (d.error || ""));
+    } catch (e: any) { setMsg(ti("mw.a.142") + (e.message || e)); }
   }, [loadStatus]);
 
 
@@ -1206,9 +1206,9 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     try {
       const merged = [...new Set([...(p.models || []), ...selIds])];
       const res = await api("/save", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: prov, baseUrl: p.baseUrl, api: p.api, keepKey: true, models: merged }) });
-      const d = await res.json();
+      const d = srvFix(await res.json());
       if (d && d.ok) {
-        const da = await (await api("/new-models/ack", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: prov, ids: selIds }) })).json();
+        const da = srvFix(await (await api("/new-models/ack", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: prov, ids: selIds }) })).json());
         // 用 ack 响应（重算后的剩余待告知集）同步本地状态：已启用的模型从通知里移除，
         // 该 provider 无剩余新模型则整行消失，全部清完则横幅收起
         if (da && da.ok) setNewInfo((prev: any) => (prev ? { ...prev, total: da.total || 0, providers: da.providers || {} } : prev));
@@ -1216,9 +1216,9 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         setNmSel((prev: any) => { if (!(prov in prev)) return prev; const n = { ...prev }; delete n[prov]; return n; });
         invalidateNewModels();
         await Promise.all([loadStatus(), loadCheck()]);
-        setMsg("已启用 " + prov + " 的 " + selIds.length + " 个新模型，刷新页面后生效");
-      } else setMsg("启用失败：" + ((d && d.error) || ""));
-    } catch (e) { setMsg("启用失败：" + e); }
+        setMsg(ti("mw.a.143") + prov + ti("mw.a.144") + selIds.length + ti("mw.a.145"));
+      } else setMsg(ti("mw.a.146") + ((d && d.error) || ""));
+    } catch (e) { setMsg(ti("mw.a.146") + e); }
     setNmBusy("");
   }, [st, loadStatus, loadCheck]);
 
@@ -1228,7 +1228,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     const ids = (v && v.newModels) || [];
     if (!ids.length) return;
     try {
-      const d = await (await api("/new-models/ack", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: prov, ids }) })).json();
+      const d = srvFix(await (await api("/new-models/ack", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider: prov, ids }) })).json());
       if (d && d.ok) {
         setNewInfo((prev: any) => (prev ? { ...prev, total: d.total || 0, providers: d.providers || {} } : prev));
         // 同上：忽略整批后清勾选残留，恢复缺省全选
@@ -1238,7 +1238,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     } catch {}
   }, [newInfo]);
   const loadCatalog = useCallback(async () => {
-    try { const d = await (await api("/catalog")).json(); setCat(d); } catch {}
+    try { const d = srvFix(await (await api("/catalog")).json()); setCat(d); } catch {}
   }, []);
   // 手动刷新 models.dev 目录（justget 官方+镜像竞速；服务端 single-flight 去重）→ 完成后重拉目录状态
   const [catRefreshing, setCatRefreshing] = useState(false);
@@ -1246,11 +1246,11 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   const doRefreshCatalog = useCallback(async () => {
     setCatRefreshing(true); setCatMsg("");
     try {
-      const r = await (await api("/refresh-catalog", { method: "POST" })).json();
-      if (!r.ok) throw new Error(r.error || "下载失败");
+      const r = srvFix(await (await api("/refresh-catalog", { method: "POST" })).json());
+      if (!r.ok) throw new Error(r.error || ti("mw.a.147"));
       await loadCatalog();
-      setCatMsg("目录已刷新" + (r.providers ? " · " + r.providers + " 家 · " + Math.round((r.bytes || 0) / 1024) + "KB" : ""));
-    } catch (e: any) { setCatMsg("刷新失败：" + ((e && e.message) || e)); }
+      setCatMsg(ti("mw.a.148") + (r.providers ? " · " + r.providers + ti("mw.a.38") + Math.round((r.bytes || 0) / 1024) + "KB" : ""));
+    } catch (e: any) { setCatMsg(ti("mw.a.131") + ((e && e.message) || e)); }
     finally { setCatRefreshing(false); }
   }, [loadCatalog]);
   // ── 浏览目录：全部 models.dev 提供商按名称首字符分组展开（models.dev 顶层即提供商、无更细分类），
@@ -1278,8 +1278,8 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     if (!opening || browseDetail[id]) return;
     setBrowseDetail((prev: any) => ({ ...prev, [id]: { loading: true } }));
     try {
-      const d = await (await api("/provider?id=" + encodeURIComponent(id))).json();
-      setBrowseDetail((prev: any) => ({ ...prev, [id]: d && d.ok ? { models: (d.provider && d.provider.models) || [] } : { error: (d && d.error) || "加载失败" } }));
+      const d = srvFix(await (await api("/provider?id=" + encodeURIComponent(id))).json());
+      setBrowseDetail((prev: any) => ({ ...prev, [id]: d && d.ok ? { models: (d.provider && d.provider.models) || [] } : { error: (d && d.error) || ti("mw.a.149") } }));
     } catch (e: any) { setBrowseDetail((prev: any) => ({ ...prev, [id]: { error: String(e.message || e) } })); }
   };
   const pickBrowse = (p: any) => {
@@ -1291,7 +1291,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   const viewModelParams = useCallback(async (provider: string, id: string, autoEdit?: boolean, embedded?: boolean) => {
     setViewParam({ provider, id, params: null, loading: true, error: null, readOnly: false, autoEdit: !!autoEdit, embedded: !!embedded });
     try {
-      const d = await (await api("/modelParams?provider=" + encodeURIComponent(provider) + "&id=" + encodeURIComponent(id))).json();
+      const d = srvFix(await (await api("/modelParams?provider=" + encodeURIComponent(provider) + "&id=" + encodeURIComponent(id))).json());
       const found = d && d.models && d.models.find((m: any) => m.id === id);
       setViewParam({ provider, id, params: found || null, baseUrl: d && d.baseUrl, api: d && d.api, readOnly: !!(d && d.readOnly), crossFrom: d && d.crossFilled ? d.crossFilled[id] : undefined, loading: false, error: d && d.error, autoEdit: !!autoEdit, embedded: !!embedded });
     } catch (e: any) {
@@ -1300,18 +1300,18 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   }, []);
 
   const loadRecommend = useCallback(async () => {
-    try { const d = await (await api("/recommend")).json(); setRec(d.cards || []); } catch {}
+    try { const d = srvFix(await (await api("/recommend")).json()); setRec(d.cards || []); } catch {}
   }, []);
   // 推荐卡片选形态（如 ark 按量 / Coding 套餐）→ 直接进入 token 流程
   const loadAffiliate = useCallback(async () => {
-    try { const d = await (await api("/affiliate")).json(); setAff(d.items || {}); } catch {}
+    try { const d = srvFix(await (await api("/affiliate")).json()); setAff(d.items || {}); } catch {}
   }, []);
   const pickPlan = (pl: any) => {
     const p = pl.provider;
     setSel({ ...p, id: "plan-" + pl.id, name: p.name, cnName: p.cnName || "", baseUrl: p.baseUrl, apiType: p.apiType, doc: p.doc || "", signupUrl: p.signupUrl || "", tokenUrl: p.tokenUrl || "", register: p.register || "", models: p.models || [] });
     setToken(""); setTestRes(null); setChecked([]); setManual(""); setSavedMsg(""); setSearchDetect(null); setReverseRes(null);
     setKnown((p.models || []).map((m: any) => m.id));
-    setMsg("已选「" + pl.label + "」：" + p.baseUrl + "（" + p.apiType + "）—— 填入 token 后点「测试连接」");
+    setMsg(ti("mw.a.150") + pl.label + "」：" + p.baseUrl + "（" + p.apiType + ti("mw.a.151"));
   };
   // 清空选择回到搜索/推荐（已选状态不再显示列表，避免无从配置）
   const resetSel = () => { setSel(null); setToken(""); setTestRes(null); setChecked([]); setManual(""); setModelFilter(""); setSavedMsg(""); setSearchDetect(null); setReverseRes(null); setResults(null); setProbeKey(""); setProvName(""); setSaveDlg(null); setMsg(""); setDiscMsg(""); setProvHeaders([]); setHeadersTouched(false); setCustomDetect(null); setProvNameTouched(false); };
@@ -1323,12 +1323,12 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     const det = reverseRes && reverseRes.detect && reverseRes.detect.ok ? reverseRes.detect : null;
     const baseUrl = (det && (det.suggestedBaseUrl || det.baseUrl)) || (isUrl ? raw : "");
     const apiType = (det && det.api) || "openai-completions";
-    setSel({ id: "custom", name: genName(baseUrl) || "自定义端点", cnName: "", baseUrl, apiType, doc: "", signupUrl: "", tokenUrl: "", register: "", models: [] });
+    setSel({ id: "custom", name: genName(baseUrl) || ti("mw.a.152"), cnName: "", baseUrl, apiType, doc: "", signupUrl: "", tokenUrl: "", register: "", models: [] });
     setToken(""); setTestRes(null); setChecked([]); setManual(""); setSavedMsg("");
     setKnown(det && det.models ? det.models.map((m: any) => m.id) : []);
     setProvName(genName(baseUrl) || "custom"); setProvNameTouched(false);
     setProvHeaders([]); setHeadersTouched(false); setCustomDetect(det ? { api: det.api, baseUrl: det.baseUrl, rawBaseUrl: det.rawBaseUrl, hint: det.hint } : null);
-    setMsg("自定义端点：填 Base URL / API 类型 / 请求头 → 测试连接 → 选模型保存" + (det ? "（已预填探测结果，可改）" : ""));
+    setMsg(ti("mw.a.153") + (det ? ti("mw.a.154") : ""));
   };
   /** 自定义面板「🔍 探测」：带当前 token/请求头重探（探测链路透传 headers）。 */
   const detectCustom = async () => {
@@ -1336,8 +1336,8 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     if (!u) return;
     setCustomDetecting(true); setCustomDetect(null);
     try {
-      const d = await (await api("/detect", { method: "POST", ...jsonBody({ baseUrl: u, apiKey: token || undefined, headers: rowsToHeaders(provHeaders) }) })).json();
-      setCustomDetect(d.ok ? { api: d.api, baseUrl: d.baseUrl, rawBaseUrl: d.rawBaseUrl, hint: d.hint, providerGuess: d.providerGuess, models: d.models || null, modelCount: d.modelCount, modelsError: d.modelsError, brands: d.brands || [], openApi: d.openApi } : { error: d.hint || "未探测到可辨识端点" });
+      const d = srvFix(await (await api("/detect", { method: "POST", ...jsonBody({ baseUrl: u, apiKey: token || undefined, headers: rowsToHeaders(provHeaders) }) })).json());
+      setCustomDetect(d.ok ? { api: d.api, baseUrl: d.baseUrl, rawBaseUrl: d.rawBaseUrl, hint: d.hint, providerGuess: d.providerGuess, models: d.models || null, modelCount: d.modelCount, modelsError: d.modelsError, brands: d.brands || [], openApi: d.openApi } : { error: d.hint || ti("mw.a.155") });
     } catch (e: any) { setCustomDetect({ error: String(e?.message || e) }); }
     setCustomDetecting(false);
   };
@@ -1347,7 +1347,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     const base = d.baseUrl || (sel && sel.baseUrl);
     setSel((prev: any) => ({ ...prev, baseUrl: base, apiType: d.api }));
     if (d.models && d.models.length) setKnown((prev) => [...new Set([...prev, ...d.models.map((m: any) => m.id)])]);
-    setMsg("已应用探测端点：" + base + "（" + d.api + "）");
+    setMsg(ti("mw.a.156") + base + "（" + d.api + "）");
   };
 
   useEffect(() => { if (open) { loadStatus(); loadCatalog(); loadRecommend(); loadAffiliate(); loadNewInfo(); loadCheck(); loadBalances(); loadLastTest(); } }, [open, initialTab, loadStatus, loadCatalog, loadRecommend, loadAffiliate, loadNewInfo, loadCheck, loadBalances, loadLastTest]);
@@ -1373,14 +1373,14 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     setSearching(true); setMsg(""); setResults(null); setSel(null); setTestRes(null); setSearchDetect(null); setReverseRes(null);
     let ranReverse = false;
     try {
-      const d = await (await api("/search?q=" + encodeURIComponent(query))).json();
+      const d = srvFix(await (await api("/search?q=" + encodeURIComponent(query))).json());
       const res = d.results || [];
       // [native] pi 内置 provider（auth 声明，46+ 家：Bedrock/Azure/Cerebras/…）并入搜索结果：
       // 仅未配置的；目录已命中同 id 的不重复（目录版带完整预填与注册说明，优先）。
       try {
         let np = nativeProv;
         if (!np) {
-          const ad = await (await fetch(apiUrl("/api/auth/providers"), { cache: "no-store" })).json();
+          const ad = srvFix(await srvFix(await (await fetch(apiUrl("/api/auth/providers"), { cache: "no-store" })).json()));
           np = (ad.apiKeyProviders || []).map((p: any) => ({ id: p.id, name: p.displayName, cnName: "", modelCount: p.modelCount || 0, configured: !!p.configured, source: "native" }));
           setNativeProv(np);
         }
@@ -1397,16 +1397,16 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         const exact = res.some((r: any) => r.matchedBaseUrl && normUrl(r.matchedBaseUrl) === normUrl(query));
         if (!exact) { ranReverse = true; await autoReverse(query); }
       }
-      if (!res.length && !ranReverse) setMsg("未命中 —— 检查拼写（或贴完整 API 地址，会自动反向匹配+探测）；也可用「＋ 自定义」手工接入");
-      else if (!res.length && ranReverse) setMsg("目录未收录该地址 —— 已自动反向匹配+探测（见下方卡片，可直接用探测结果）；未识别就点最下方「🛠 自定义端点」手工接入");
-    } catch (e2: any) { setMsg("搜索失败：" + (e2.message || e2)); }
+      if (!res.length && !ranReverse) setMsg(ti("mw.a.157"));
+      else if (!res.length && ranReverse) setMsg(ti("mw.a.158"));
+    } catch (e2: any) { setMsg(ti("mw.a.159") + (e2.message || e2)); }
     setSearching(false);
   };
   // URL 自动反向匹配 + 自动探测（并行）：目录候选 + 探测结果一起输出；无 key 时网关统一 401 无法
   // 区分真实路径 → 提示填 key 精探
   const autoReverse = async (query: string) => {
     try {
-      const d = await (await api("/reverse", { method: "POST", ...jsonBody({ baseUrl: query }) })).json();
+      const d = srvFix(await (await api("/reverse", { method: "POST", ...jsonBody({ baseUrl: query }) })).json());
       const item = (d.urls && d.urls[0]) || {};
       const res = { url: item.url || query, candidates: item.candidates || [], detect: item.detect || d.detect || null, usedKey: !!item.usedKey, probeModel: item.probeModel || "" };
       setReverseRes(res);
@@ -1417,18 +1417,18 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           // 目录精确命中（归一化含端点尾巴剥净后比对 100 分）→ 自动选中该品牌，不落「自定义」
           setSel({ id: top.id, name: top.name, cnName: top.cnName || "", baseUrl: db, apiType: res.detect.api, doc: top.doc || "", signupUrl: top.signupUrl || "", tokenUrl: top.tokenUrl || "", register: top.register || "", env: top.env || "", models: top.models || [] });
           setKnown([...new Set([...(top.models || []).map((m: any) => m.id || m), ...(res.detect.models || []).map((m: any) => m.id)])]);
-          setMsg("已识别为「" + (top.cnName || top.name) + "」（地址精确命中）：" + db + "（api=" + res.detect.api + "）—— 填 token 后点「测试连接」");
+          setMsg(ti("mw.a.160") + (top.cnName || top.name) + ti("mw.a.161") + db + "（api=" + res.detect.api + ti("mw.a.162"));
         } else {
-          setSel({ id: "custom", name: "自定义端点（自动探测）", cnName: "", baseUrl: db, apiType: res.detect.api, doc: "", signupUrl: "", tokenUrl: "", register: "", models: [] });
+          setSel({ id: "custom", name: ti("mw.a.163"), cnName: "", baseUrl: db, apiType: res.detect.api, doc: "", signupUrl: "", tokenUrl: "", register: "", models: [] });
           if (res.detect.models && res.detect.models.length) setKnown(res.detect.models.map((m: any) => m.id));
           setMsg(res.usedKey
-            ? "已带 key 探测端点：" + db + "（api=" + res.detect.api + "）—— 填 token 后点「测试连接」即可保存"
-            : "已探测端点：" + db + "（api=" + res.detect.api + "）—— ⚠️ 无 key 仅判断 api 类型，建议填 key 精探确认");
+            ? ti("mw.a.164") + db + "（api=" + res.detect.api + ti("mw.a.165")
+            : ti("mw.a.166") + db + "（api=" + res.detect.api + ti("mw.a.167"));
         }
       } else {
-        setMsg((res.detect && res.detect.hint) ? "探测未识别端点：" + String(res.detect.hint).slice(0, 90) : "反向匹配与自动探测均未命中 —— 检查地址（可去掉 /v1 /v2 再试），或点最下方「🛠 自定义端点」手工接入");
+        setMsg((res.detect && res.detect.hint) ? ti("mw.a.168") + String(res.detect.hint).slice(0, 90) : ti("mw.a.169"));
       }
-    } catch (e2: any) { setMsg("自动反向匹配失败：" + (e2.message || e2)); }
+    } catch (e2: any) { setMsg(ti("mw.a.170") + (e2.message || e2)); }
   };
   // 用户填 key 后重新反向匹配+探测（精准定位真实路径，如火山 api/plan → api/plan/v3）
   const doReverseWithKey = async () => {
@@ -1436,7 +1436,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     if (!key || !reverseRes) return;
     setReprobing(true); setMsg("");
     try {
-      const d = await (await api("/reverse", { method: "POST", ...jsonBody({ baseUrl: reverseRes.url, apiKey: key }) })).json();
+      const d = srvFix(await (await api("/reverse", { method: "POST", ...jsonBody({ baseUrl: reverseRes.url, apiKey: key }) })).json());
       const item = (d.urls && d.urls[0]) || {};
       const res = { url: item.url || reverseRes.url, candidates: item.candidates || [], detect: item.detect || d.detect || null, usedKey: true, probeModel: item.probeModel || "" };
       setReverseRes(res);
@@ -1447,16 +1447,16 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           // 同上：精确命中 → 切换到该品牌（保留用户已勾模型与已填 token）
           setSel((prev: any) => ({ ...(prev || {}), id: top.id, name: top.name, cnName: top.cnName || "", baseUrl: db, apiType: res.detect.api, doc: top.doc || "", signupUrl: top.signupUrl || "", tokenUrl: top.tokenUrl || "", register: top.register || "", env: top.env || "", models: top.models || [] }));
           setKnown((prev: any) => [...new Set([...prev, ...(top.models || []).map((m: any) => m.id || m), ...(res.detect.models || []).map((m: any) => m.id)])]);
-          setMsg("带 key 探测确认：「" + (top.cnName || top.name) + "」· " + db + "（" + res.detect.api + "）—— 继续测试/保存即可");
+          setMsg(ti("mw.a.171") + (top.cnName || top.name) + "」· " + db + "（" + res.detect.api + ti("mw.a.172"));
         } else {
-          setSel((prev: any) => ({ ...(prev || {}), id: "custom", name: "自定义端点（带 key 探测）", cnName: "", baseUrl: db, apiType: res.detect.api, doc: "", signupUrl: "", tokenUrl: "", register: "", models: [] }));
+          setSel((prev: any) => ({ ...(prev || {}), id: "custom", name: ti("mw.a.173"), cnName: "", baseUrl: db, apiType: res.detect.api, doc: "", signupUrl: "", tokenUrl: "", register: "", models: [] }));
           if (res.detect.models && res.detect.models.length) setKnown(res.detect.models.map((m: any) => m.id));
-          setMsg("带 key 探测确认端点：" + db + "（" + res.detect.api + "）—— 继续填 token / 测试即可");
+          setMsg(ti("mw.a.174") + db + "（" + res.detect.api + ti("mw.a.175"));
         }
       } else {
-        setMsg((res.detect && res.detect.hint) ? "带 key 探测未识别：" + String(res.detect.hint).slice(0, 90) : "带 key 探测仍未命中 —— 检查 key 和地址，或点最下方「🛠 自定义端点」手工接入");
+        setMsg((res.detect && res.detect.hint) ? ti("mw.a.176") + String(res.detect.hint).slice(0, 90) : ti("mw.a.177"));
       }
-    } catch (e2: any) { setMsg("带 key 探测失败：" + (e2.message || e2)); }
+    } catch (e2: any) { setMsg(ti("mw.a.178") + (e2.message || e2)); }
     setReprobing(false);
   };
   // 应用自动探测结果（reverseRes）到 sel
@@ -1466,7 +1466,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     const db = cd.suggestedBaseUrl || cd.baseUrl;
     setSel((prev: any) => ({ ...prev, baseUrl: db, apiType: cd.api }));
     if (cd.models && cd.models.length) setKnown(cd.models.map((m: any) => m.id));
-    setMsg("已应用探测端点：" + db + "（" + cd.api + "）—— 填 token 测试");
+    setMsg(ti("mw.a.156") + db + "（" + cd.api + ti("mw.a.179"));
   };
   const pickProvider = (p: any) => {
     if (p.native) {
@@ -1474,7 +1474,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       // api 默认 openai-completions（可在详情改）；key 保存后模型清单由运行时自动加载。
       setSel({ id: p.id, name: p.name, cnName: "", baseUrl: "", apiType: "openai-completions", doc: p.doc || "", signupUrl: "", tokenUrl: "", register: "", models: [], native: true, modelCount: p.modelCount });
       setToken(""); setTestRes(null); setChecked([]); setManual(""); setSavedMsg(""); setSearchDetect(null); setDiscMsg("");
-      setMsg("pi 内置 provider —— 填 API Key 保存即可（存 auth.json 托管），模型清单由 pi 内置目录自动加载");
+      setMsg(ti("mw.a.180"));
       return;
     }
     const base = p.reverseInputUrl || p.baseUrl;   // 反向命中 → 保留用户贴的地址（套餐防混，探测再权威确认）
@@ -1485,8 +1485,8 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   };
   const doSearchDetect = async (u: string) => {
     try {
-      const d = await (await api("/detect", { method: "POST", ...jsonBody({ baseUrl: u, apiKey: token || undefined }) })).json();
-      setSearchDetect(d.ok ? { api: d.api, baseUrl: d.baseUrl, suggestedBaseUrl: d.suggestedBaseUrl, hint: d.hint, providerGuess: d.providerGuess, models: d.models || null, modelCount: d.modelCount, modelsError: d.modelsError, brands: d.brands || [], openApi: d.openApi } : { error: d.hint || "未探测到可辨识端点" });
+      const d = srvFix(await (await api("/detect", { method: "POST", ...jsonBody({ baseUrl: u, apiKey: token || undefined }) })).json());
+      setSearchDetect(d.ok ? { api: d.api, baseUrl: d.baseUrl, suggestedBaseUrl: d.suggestedBaseUrl, hint: d.hint, providerGuess: d.providerGuess, models: d.models || null, modelCount: d.modelCount, modelsError: d.modelsError, brands: d.brands || [], openApi: d.openApi } : { error: d.hint || ti("mw.a.155") });
     } catch (e2: any) { setSearchDetect({ error: String(e2.message || e2) }); }
   };
   const applySearchDetect = () => {
@@ -1495,23 +1495,23 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     const db = cd.suggestedBaseUrl || cd.baseUrl;
     setSel((prev: any) => ({ ...prev, baseUrl: db, apiType: cd.api }));
     if (cd.models && cd.models.length) setKnown(cd.models.map((m: any) => m.id));
-    setMsg("已应用探测端点：" + db + "（" + cd.api + "）");
+    setMsg(ti("mw.a.156") + db + "（" + cd.api + "）");
   };
   // 拉厂商 /models 实时列表合并进可选集（silent=true：测试连接通过后自动拉，不弹反馈）
   const doDiscover = async (baseUrl: string, apiType: string, key: string, silent?: boolean, headers?: Record<string, string>) => {
     if (!silent) { setDiscBusy(true); setDiscMsg(""); }
     try {
       const r = await api("/discover", { method: "POST", ...jsonBody({ baseUrl, api: apiType, apiKey: key, headers }) });
-      const d = await r.json();
+      const d = srvFix(await r.json());
       if (d.ok && d.models && d.models.length) {
         const ids = (sel && sel.models || []).map((m: any) => m.id);
         const before = known.length;
         const fresh = d.models.map((m: any) => m.id).filter((id: string) => !ids.includes(id));
         setKnown((prev) => { const all = [...ids, ...d.models.map((m: any) => m.id)]; return [...new Set(all)]; });
-        if (!silent) setDiscMsg("已拉取 /models " + d.models.length + " 个（新增 " + fresh.length + " · 原 " + before + " 个），目录旧模型已补全");
-      } else if (!silent) setDiscMsg("拉取失败：" + (d.error || "未返回模型（检查 token 或地址）"));
+        if (!silent) setDiscMsg(ti("mw.a.181") + d.models.length + ti("mw.a.182") + fresh.length + ti("mw.a.183") + before + ti("mw.a.184"));
+      } else if (!silent) setDiscMsg(ti("mw.a.185") + (d.error || ti("mw.a.186")));
       return d;
-    } catch (e: any) { if (!silent) setDiscMsg("拉取失败：" + (e.message || e)); return null; }
+    } catch (e: any) { if (!silent) setDiscMsg(ti("mw.a.185") + (e.message || e)); return null; }
     finally { if (!silent) setDiscBusy(false); }
   };
   // 刷新模型（多 key 感知）：token + 多 key 行依次试，任一把成功即停；全部失败才报错
@@ -1523,24 +1523,24 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     for (let i = 0; i < creds.length; i++) {
       last = await doDiscover(baseUrl, apiType, creds[i], true, headers);
       if (last && last.ok && last.models && last.models.length) {
-        setDiscMsg("已拉取 /models " + last.models.length + " 个（用第 " + (i + 1) + " 把凭据" + (creds.length > 1 ? " · 共 " + creds.length + " 把" : "") + "），目录旧模型已补全");
+        setDiscMsg(ti("mw.a.181") + last.models.length + ti("mw.a.187") + (i + 1) + ti("mw.a.188") + (creds.length > 1 ? ti("mw.a.189") + creds.length + ti("mw.a.190") : "") + ti("mw.a.191"));
         setDiscBusy(false);
         return;
       }
     }
-    setDiscMsg("拉取失败：" + ((last && last.error) || "全部凭据均未拉到模型") + (creds.length > 1 ? "（已依次试 " + creds.length + " 把 key）" : "（检查 key 或地址）"));
+    setDiscMsg(ti("mw.a.185") + ((last && last.error) || ti("mw.a.192")) + (creds.length > 1 ? ti("mw.a.193") + creds.length + ti("mw.a.194") : ti("mw.a.195")));
     setDiscBusy(false);
   };
   const doTest = async (baseUrl: string, apiType: string, key: string, model?: string | null, headers?: Record<string, string>) => {
     setTesting(true); setTestRes(null); setSavedMsg("");
     try {
       const r = await api("/test", { method: "POST", ...jsonBody({ baseUrl, api: apiType, apiKey: key, model: model || null, headers }) });
-      const d = await r.json();
+      const d = srvFix(await r.json());
       // 通过即尝试拉模型列表：无已知模型（model=null）时也必须拉，否则用户只能一个个手动输入。
       // （此前仅当 model 非空才 discover —— URL 探测无 key 时 known 为空 → model=null → 模型永远不加载）
       if (d.pass && d.status !== 429) doDiscover(baseUrl, apiType, key, true, headers);
       setTestRes(d);
-    } catch (e: any) { setTestRes({ pass: false, detail: "请求失败：" + (e.message || e) }); }
+    } catch (e: any) { setTestRes({ pass: false, detail: ti("mw.a.196") + (e.message || e) }); }
     setTesting(false);
   };
   // 凭据测试：顶部 token + 多 key 行合并成一次分 key 测试（只填 token 或只填行都能测）；
@@ -1554,11 +1554,11 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     if (rows.length === 1) { await doTest(baseUrl, apiType, rows[0].key, known[0] || null, headers); return; }
     setTesting(true); setTestRes(null); setSavedMsg("");
     try {
-      const d = await (await api("/test", { method: "POST", ...jsonBody({ baseUrl, api: apiType, keys: rows, headers }) })).json();
+      const d = srvFix(await (await api("/test", { method: "POST", ...jsonBody({ baseUrl, api: apiType, keys: rows, headers }) })).json());
       setTestRes(d);
       const okRow = (d.results || []).map((x: any, i: number) => ({ ...x, raw: rows[i] && rows[i].key })).find((x: any) => x.pass);
       if (okRow) doDiscover(baseUrl, apiType, okRow.raw, true, headers);
-    } catch (e: any) { setTestRes({ pass: false, detail: "请求失败：" + (e.message || e) }); }
+    } catch (e: any) { setTestRes({ pass: false, detail: ti("mw.a.196") + (e.message || e) }); }
     setTesting(false);
   };
   const toggleModel = (id: string) => {
@@ -1591,15 +1591,15 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     if (validKeys.length) body.keys = validKeys;
     try {
       const r = await api("/save", { method: "POST", ...jsonBody(body) });
-      const d = await r.json();
+      const d = srvFix(await r.json());
       if (d.ok) {
         const fillTxt = summarizeFills(d.fills);
         const miss = Array.isArray(d.missingParams) ? d.missingParams.filter((m: any) => m && m.id) : [];
-        const okMsg = "已保存 " + d.provider + " · " + d.modelCount + " 个模型" + (fillTxt ? " · " + fillTxt : "") + (miss.length ? " · ⚠️ " + miss.length + " 个模型缺参数" : "");
+        const okMsg = ti("mw.a.197") + d.provider + " · " + d.modelCount + ti("mw.a.198") + (fillTxt ? " · " + fillTxt : "") + (miss.length ? " · ⚠️ " + miss.length + ti("mw.a.199") : "");
         setSavedMsg(okMsg);
-        setToast({ msg: okMsg + " → 已写入 models.json，立即生效", ok: true });
+        setToast({ msg: okMsg + ti("mw.a.200"), ok: true });
         setTimeout(() => setToast(null), 4000);
-        setUndoInfo(d.undoable ? ("已保存「" + d.provider + "」") : null);
+        setUndoInfo(d.undoable ? (ti("mw.a.201") + d.provider + "」") : null);
         // 缺参数的模型（所有源都查不到，被落裸条目）→ 自动弹 ai-helper（model-params-fill skill 预选 + 提示词预填），
         // 让用户点击让 AI 上网查权威数据 → 写 models-store.json → 回填参数弹窗；同时打开第一个缺参模型参数弹窗（编辑态）供回填
         if (miss.length) {
@@ -1619,12 +1619,12 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         setTab("status");
         selectNode({ type: "provider", provider: d.provider });
       } else {
-        const err = "保存失败：" + (d.error || "未知错误");
+        const err = ti("mw.a.202") + (d.error || ti("mw.a.132"));
         setSavedMsg(err);
         setToast({ msg: err, ok: false });
       }
     } catch (e: any) {
-      const err = "保存失败：" + (e.message || e);
+      const err = ti("mw.a.202") + (e.message || e);
       setSavedMsg(err);
       setToast({ msg: err, ok: false });
     }
@@ -1632,16 +1632,16 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   };
 
   const doDelete = async (provider: string) => {
-    if (!(await uiConfirm({ message: "删除 provider " + provider + "？", danger: true }))) return;
+    if (!(await uiConfirm({ message: ti("mw.a.203") + provider + "？", danger: true }))) return;
     setBusy(true); setMsg("");
     try {
-      const d = await (await api("/delete", { method: "POST", ...jsonBody({ provider }) })).json();
-      setMsg(d.ok ? "已删除 " + provider : "失败：" + (d.error || ""));
+      const d = srvFix(await (await api("/delete", { method: "POST", ...jsonBody({ provider }) })).json());
+      setMsg(d.ok ? ti("mw.a.204") + provider : ti("mw.a.205") + (d.error || ""));
       if (d.ok && selNode && selNode.provider === provider) setSelNode(null); // 双栏：删中的 provider 清空选中
       loadStatus();
       loadNewInfo();
       try { window.dispatchEvent(new CustomEvent("pi-web:models-changed")); } catch {}
-    } catch (e: any) { setMsg("删除失败：" + (e.message || e)); }
+    } catch (e: any) { setMsg(ti("mw.a.206") + (e.message || e)); }
     setBusy(false);
   };
   const doSaveEdit = async (provider: string, p: any) => {
@@ -1679,10 +1679,10 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     const baseUrl = (f.baseUrl !== undefined ? f.baseUrl : p.baseUrl || "").replace(/\/+$/, "");
     const apiType = f.api !== undefined ? f.api : (p.api || "openai-completions");
     try {
-      const d = await (await api("/save", { method: "POST", ...jsonBody({ provider: newName, renameFrom: provider, baseUrl, api: apiType, keepKey: !newTok, models, replaceModels: replaced, ...(hdrDraft ? { headers: hdrDraft, ...(Array.isArray(hdrMasked) ? { maskedHeaders: hdrMasked } : {}) } : {}), ...(listExtras.length ? { listExtras } : {}), ...(newTok ? { apiKey: newTok } : {}) }) })).json();
-      setMsg(d.ok ? "已保存 " + newName + "（" + models.length + " 模型" + (newTok ? " · token 已更新" : "") + (newName !== provider ? " · 已从 " + provider + " 改名" : "") + (summarizeFills(d.fills) ? " · " + summarizeFills(d.fills) : "") + "）" : "失败：" + (d.error || ""));
+      const d = srvFix(await (await api("/save", { method: "POST", ...jsonBody({ provider: newName, renameFrom: provider, baseUrl, api: apiType, keepKey: !newTok, models, replaceModels: replaced, ...(hdrDraft ? { headers: hdrDraft, ...(Array.isArray(hdrMasked) ? { maskedHeaders: hdrMasked } : {}) } : {}), ...(listExtras.length ? { listExtras } : {}), ...(newTok ? { apiKey: newTok } : {}) }) })).json());
+      setMsg(d.ok ? ti("mw.a.197") + newName + "（" + models.length + ti("mw.a.207") + (newTok ? ti("mw.a.208") : "") + (newName !== provider ? ti("mw.a.209") + provider + ti("mw.a.210") : "") + (summarizeFills(d.fills) ? " · " + summarizeFills(d.fills) : "") + "）" : ti("mw.a.205") + (d.error || ""));
       if (d.ok) {
-        setUndoInfo("已编辑「" + newName + "」");
+        setUndoInfo(ti("mw.a.211") + newName + "」");
         const ids = models.map((m: any) => m.id);
         if (replaced && ids.length) void runProbeCaps(newName, ids); // 新勾选的模型实测上限
         // G6 改名跟随：enabledModels 模式同步重写（宿主 resync op；失败静默不阻塞改名主流程）
@@ -1707,7 +1707,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       loadNewInfo();
       invalidateNewModels(); // 工具栏徽标同步（新模型已配置 → 待告知集减少）
       try { window.dispatchEvent(new CustomEvent("pi-web:models-changed")); } catch {}
-    } catch (e: any) { setMsg("保存失败：" + (e.message || e)); }
+    } catch (e: any) { setMsg(ti("mw.a.202") + (e.message || e)); }
     setBusy(false);
   };
   // 首次增删时草稿尚未初始化，必须沿用界面显示的现有模型；空草稿则表示用户已清空，不可回退。
@@ -1728,7 +1728,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   const refreshEditModels = async (provider: string, p: any) => {
     setRefreshBusy((prev: any) => ({ ...prev, [provider]: true })); setMsg("");
     try {
-      const d = await (await api("/discoverStored", { method: "POST", ...jsonBody({ provider, apiKey: (editTok[provider] || "").trim() || undefined, headers: (editFields[provider] || {}).headers, maskedHeaders: (editFields[provider] || {}).headersMasked }) })).json();
+      const d = srvFix(await (await api("/discoverStored", { method: "POST", ...jsonBody({ provider, apiKey: (editTok[provider] || "").trim() || undefined, headers: (editFields[provider] || {}).headers, maskedHeaders: (editFields[provider] || {}).headersMasked }) })).json());
       if (d.ok && d.models && d.models.length) {
         const cur = ((editModels[provider] ?? p.models) || []).map((m: any) => (typeof m === "string" ? m : m.id));
         const available = d.models.map((m: any) => m.id);
@@ -1738,10 +1738,10 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         setEditAvail((prev: any) => ({ ...prev, [provider]: { models: available, objs: d.models, checked: curChecked, newModels: newOnes } }));
         setAvailFilter((prev: any) => ({ ...prev, [provider]: "" }));
         setMsg(newOnes.length
-          ? "已拉取 " + available.length + " 个可选模型 —— ✨ 发现 " + newOnes.length + " 个新模型，已自动勾选（带「新」标），点保存即可启用"
-          : "已拉取 " + available.length + " 个可选模型（已保留原勾选 " + curChecked.length + " 个）—— 勾选后点保存");
-      } else setMsg("刷新模型失败：" + (d.error || ""));
-    } catch (e: any) { setMsg("刷新模型失败：" + (e.message || e)); }
+          ? ti("mw.a.212") + available.length + ti("mw.a.213") + newOnes.length + ti("mw.a.214")
+          : ti("mw.a.212") + available.length + ti("mw.a.215") + curChecked.length + ti("mw.a.216"));
+      } else setMsg(ti("mw.a.217") + (d.error || ""));
+    } catch (e: any) { setMsg(ti("mw.a.217") + (e.message || e)); }
     setRefreshBusy((prev: any) => ({ ...prev, [provider]: false }));
   };
   const toggleEditAvail = (provider: string, id: string) => {
@@ -1777,8 +1777,8 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       const keep: string[] = [], remove: any[] = [], soft: any[] = [];
       for (const id of ids) {
         const info = statuses[p.provider + "/" + id];
-        if (info && info.s === "err" && CLEANUP_HARD_FAIL_KINDS.includes(info.kind)) remove.push({ id, label: info.label || "异常" });
-        else if (info && info.s === "err") soft.push({ id, label: info.label || "异常" }); // 暂时性错误（5xx/网络/超时）→ 保留但提示
+        if (info && info.s === "err" && CLEANUP_HARD_FAIL_KINDS.includes(info.kind)) remove.push({ id, label: info.label || ti("mw.a.69") });
+        else if (info && info.s === "err") soft.push({ id, label: info.label || ti("mw.a.69") }); // transient errors (5xx/network/timeout) -> keep but warn
         else keep.push(id);
       }
       plan.push({ provider: p.provider, keep, remove, soft });
@@ -1798,8 +1798,8 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     });
     const nRemove = plan.reduce((s: number, e: any) => s + (e.remove || []).length, 0);
     setMsg(nRemove
-      ? "一键整理就绪：已按检查结果取消勾选 " + nRemove + " 个硬性异常模型（key 不对/欠费/不存在等）——核对后点「保存」生效；限流/未测/暂时性错误默认保留"
-      : "一键整理：没有发现硬性异常模型（限流/未测/暂时性错误均保留）——如需调整可逐家「编辑」");
+      ? ti("mw.a.218") + nRemove + ti("mw.a.219")
+      : ti("mw.a.220"));
   };
   // 有改动的家数（预选了移除且仍有保留、尚未保存）——「全部保存」按钮文案与可用性
   const cleanupPending = cleanupEdit ? cleanupEdit.plan.filter((e: any) => !e.skip && !e.saved && e.remove.length && e.keep.length) : [];
@@ -1826,7 +1826,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     }
     setCleanupBusy(null);
     setCleanupEdit(null);
-    setToast({ msg: "一键整理完成：" + targets.length + " 个 provider 已保存，移除 " + removed + " 个异常模型（代理已刷新，立即生效）", ok: true });
+    setToast({ msg: ti("mw.a.221") + targets.length + ti("mw.a.222") + removed + ti("mw.a.223"), ok: true });
     setTimeout(() => setToast(null), 6000);
   };
   const cleanupCancel = () => {
@@ -1837,7 +1837,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       for (const e of cleanupEdit.plan) { if (!e.skip) delete next[e.provider]; }
       return next;
     });
-    setMsg("已取消一键整理（未保存任何改动）");
+    setMsg(ti("mw.a.224"));
   };
   // 独立路径消费：检查面板 deposit（services 信箱 / window.__aitiModelWizardCleanupEdit 双轨）+ openTab("status")
   // → App 就绪（st 加载完）后应用。（内嵌模式不走信箱：检查 tab 经 onCleanupEdit 回调直呼 applyCleanupEdit）
@@ -1847,7 +1847,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     if (!g) return;
     cleanupEditMailbox = null;
     delete window.__aitiModelWizardCleanupEdit;
-    try { applyCleanupEdit(g); } catch (e) { console.error("[aiti-model-wizard] 一键整理应用失败", e); }
+    try { applyCleanupEdit(g); } catch (e) { console.error(ti("mw.a.225"), e); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, st, initialTab]);
   // 👁 模型参数查看入口（供 aiti-model-check「眼睛」等外部复用）：App 挂载期间有效，
@@ -1867,8 +1867,8 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     const apiType = String(f.api !== undefined ? f.api : p.api || "openai-completions");
     setKeyTests((prev: any) => ({ ...prev, [prov]: { busy: true } }));
     try {
-      const d = await (await api("/test", { method: "POST", ...jsonBody({ baseUrl, api: apiType, provider: prov, allKeys: true, headers: (editFields[prov] || {}).headers, maskedHeaders: (editFields[prov] || {}).headersMasked }) })).json();
-      if (!d.ok && !d.results) setKeyTests((prev: any) => ({ ...prev, [prov]: { busy: false, error: d.error || d.detail || "测试失败" } }));
+      const d = srvFix(await (await api("/test", { method: "POST", ...jsonBody({ baseUrl, api: apiType, provider: prov, allKeys: true, headers: (editFields[prov] || {}).headers, maskedHeaders: (editFields[prov] || {}).headersMasked }) })).json());
+      if (!d.ok && !d.results) setKeyTests((prev: any) => ({ ...prev, [prov]: { busy: false, error: d.error || d.detail || ti("mw.a.226") } }));
       else setKeyTests((prev: any) => ({ ...prev, [prov]: { busy: false, results: d.results || [], passCount: d.passCount, total: d.total } }));
     } catch (e: any) { setKeyTests((prev: any) => ({ ...prev, [prov]: { busy: false, error: (e && e.message) || String(e) } })); }
   };
@@ -1879,7 +1879,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   const loadEditKeys = async (provider: string) => {
     setEditKeys((prev: any) => ({ ...prev, [provider]: { ...(prev[provider] || {}), busy: true, error: "" } }));
     try {
-      const d = await (await api("/keys?provider=" + encodeURIComponent(provider))).json();
+      const d = srvFix(await (await api("/keys?provider=" + encodeURIComponent(provider))).json());
       setEditKeys((prev: any) => ({ ...prev, [provider]: { ...(prev[provider] || {}), list: (d && d.keys) || [], busy: false, error: "" } }));
       return d && d.keys ? d.keys : [];
     } catch (e: any) { setEditKeys((prev: any) => ({ ...prev, [provider]: { ...(prev[provider] || {}), busy: false, error: (e && e.message) || String(e) } })); return []; }
@@ -1891,12 +1891,12 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     if (!key) return;
     setEditKeys((prev: any) => ({ ...prev, [provider]: { ...(prev[provider] || {}), busy: true, error: "" } }));
     try {
-      const d = await (await api("/keys", { method: "POST", ...jsonBody({ provider, action: "add", name, key, rpm: e.newRpm, minIntervalMs: mivNorm(e.newMiv) }) })).json();
+      const d = srvFix(await (await api("/keys", { method: "POST", ...jsonBody({ provider, action: "add", name, key, rpm: e.newRpm, minIntervalMs: mivNorm(e.newMiv) }) })).json());
       if (d && d.ok) {
         await loadEditKeys(provider);
         setEditKeys((prev: any) => ({ ...prev, [provider]: { ...(prev[provider] || {}), newName: "", newKey: "", newRpm: "", newMiv: "", busy: false } }));
         loadStatus();
-      } else { setEditKeys((prev: any) => ({ ...prev, [provider]: { ...(prev[provider] || {}), busy: false, error: (d && d.error) || "add 失败" } })); }
+      } else { setEditKeys((prev: any) => ({ ...prev, [provider]: { ...(prev[provider] || {}), busy: false, error: (d && d.error) || ti("mw.a.227") } })); }
     } catch (e: any) { setEditKeys((prev: any) => ({ ...prev, [provider]: { ...(prev[provider] || {}), busy: false, error: (e && e.message) || String(e) } })); }
   };
   const editKeySave = async (provider: string, k: any) => {
@@ -1909,31 +1909,31 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     if (!newName && !newKey && rpm === undefined && miv === undefined) return;
     setEditKeys((prev: any) => ({ ...prev, [provider]: { ...(prev[provider] || {}), busy: true, error: "" } }));
     try {
-      const d = await (await api("/keys", { method: "POST", ...jsonBody({ provider, action: "update", name: k.name, ...(newName && newName !== k.name ? { newName } : {}), newKey, rpm, minIntervalMs: miv !== undefined ? mivNorm(miv) : undefined }) })).json();
+      const d = srvFix(await (await api("/keys", { method: "POST", ...jsonBody({ provider, action: "update", name: k.name, ...(newName && newName !== k.name ? { newName } : {}), newKey, rpm, minIntervalMs: miv !== undefined ? mivNorm(miv) : undefined }) })).json());
       if (d && d.ok) {
         await loadEditKeys(provider);
         const rest = { ...((editKeys[provider] || {}).rows || {}) };
         delete rest[k.name];
         setEditKeys((prev: any) => ({ ...prev, [provider]: { ...(prev[provider] || {}), rows: rest, busy: false } }));
         loadStatus();
-      } else setEditKeys((prev: any) => ({ ...prev, [provider]: { ...(prev[provider] || {}), busy: false, error: (d && d.error) || "保存失败" } }));
+      } else setEditKeys((prev: any) => ({ ...prev, [provider]: { ...(prev[provider] || {}), busy: false, error: (d && d.error) || ti("mw.a.36") } }));
     } catch (e2: any) { setEditKeys((prev: any) => ({ ...prev, [provider]: { ...(prev[provider] || {}), busy: false, error: (e2 && e2.message) || String(e2) } })); }
   };
   const editKeyRemove = async (provider: string, name: string) => {
     setEditKeys((prev: any) => ({ ...prev, [provider]: { ...(prev[provider] || {}), busy: true, error: "" } }));
     try {
-      const d = await (await api("/keys", { method: "POST", ...jsonBody({ provider, action: "remove", name }) })).json();
+      const d = srvFix(await (await api("/keys", { method: "POST", ...jsonBody({ provider, action: "remove", name }) })).json());
       if (d && d.ok) { await loadEditKeys(provider); setEditKeys((prev: any) => ({ ...prev, [provider]: { ...(prev[provider] || {}), busy: false } })); loadStatus(); }
-      else setEditKeys((prev: any) => ({ ...prev, [provider]: { ...(prev[provider] || {}), busy: false, error: (d && d.error) || "删除失败" } }));
+      else setEditKeys((prev: any) => ({ ...prev, [provider]: { ...(prev[provider] || {}), busy: false, error: (d && d.error) || ti("mw.a.228") } }));
     } catch (e: any) { setEditKeys((prev: any) => ({ ...prev, [provider]: { ...(prev[provider] || {}), busy: false, error: (e && e.message) || String(e) } })); }
   };
   // 单把 key 临时禁用/启用（enabled:false 标记，不删除；不参与轮转，随时可切回）
   const editKeyToggle = async (provider: string, name: string, enabled: boolean) => {
     setEditKeys((prev: any) => ({ ...prev, [provider]: { ...(prev[provider] || {}), busy: true, error: "" } }));
     try {
-      const d = await (await api("/keys", { method: "POST", ...jsonBody({ provider, action: "update", name, enabled }) })).json();
+      const d = srvFix(await (await api("/keys", { method: "POST", ...jsonBody({ provider, action: "update", name, enabled }) })).json());
       if (d && d.ok) { await loadEditKeys(provider); setEditKeys((prev: any) => ({ ...prev, [provider]: { ...(prev[provider] || {}), busy: false } })); loadStatus(); }
-      else setEditKeys((prev: any) => ({ ...prev, [provider]: { ...(prev[provider] || {}), busy: false, error: (d && d.error) || "切换失败" } }));
+      else setEditKeys((prev: any) => ({ ...prev, [provider]: { ...(prev[provider] || {}), busy: false, error: (d && d.error) || ti("mw.a.229") } }));
     } catch (e: any) { setEditKeys((prev: any) => ({ ...prev, [provider]: { ...(prev[provider] || {}), busy: false, error: (e && e.message) || String(e) } })); }
   };
 
@@ -1950,11 +1950,11 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       setE({ busy: true, error: "", refreshOut: "" });
       await loadEditKeys(p.provider);
       try {
-        const d = await (await api("/refresh", { method: "POST", ...jsonBody({ provider: p.provider }) })).json();
+        const d = srvFix(await (await api("/refresh", { method: "POST", ...jsonBody({ provider: p.provider }) })).json());
         const names = ((d && d.refreshed) || []).length ? "（" + (d.refreshed || []).join(", ") + "）" : "";
-        setE({ busy: false, refreshOut: d && d.ok ? "列表已刷新 · 代理已刷新" + names : "列表已刷新，代理刷新失败：" + ((d && d.error) || "未知错误") });
+        setE({ busy: false, refreshOut: d && d.ok ? ti("mw.a.230") + names : ti("mw.a.231") + ((d && d.error) || ti("mw.a.132")) });
       } catch (e2: any) {
-        setE({ busy: false, refreshOut: "列表已刷新，代理刷新失败：" + ((e2 && e2.message) || e2) });
+        setE({ busy: false, refreshOut: ti("mw.a.231") + ((e2 && e2.message) || e2) });
       }
       loadStatus();
     };
@@ -1962,13 +1962,13 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       <div style={{ marginTop: 10, borderTop: "1px solid var(--border,#eee)", paddingTop: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 6, padding: "7px 10px", border: "1px solid rgba(99,102,241,.4)", borderRadius: 9, background: "rgba(99,102,241,.05)", flexWrap: "wrap" }}>
           <button className="amw-btn" style={{ padding: "3px 11px", fontSize: 11, fontWeight: 650 }} onClick={() => { if (!open) loadEditKeys(p.provider); setE({ show: !open }); }}>
-            {open ? "▾ 收起" : "多 Key 轮转" + (list.length ? "（" + list.length + " 把）" : "")}
+            {open ? ti("mw.a.232") : ti("mw.a.233") + (list.length ? "（" + list.length + ti("mw.a.234") : "")}
           </button>
-          <button className="amw-btn" style={{ padding: "3px 11px", fontSize: 11 }} disabled={e.busy} title="① 重新读取 models.json 的 key 列表（外部改动立即可见）② 刷新运行中代理（立即生效）"
+          <button className="amw-btn" style={{ padding: "3px 11px", fontSize: 11 }} disabled={e.busy} title={ti("mw.a.235")}
             onClick={doKeysRefresh}>
-            {e.busy ? "刷新中…" : (<><Ic size={11} paths={ICONS.refresh} /> 刷新</>)}
+            {e.busy ? ti("mw.a.48") : (<><Ic size={11} paths={ICONS.refresh} /> {ti("mw.tx.33")}</>)}
           </button>
-          <span style={{ color: "var(--text-subtle,#666)", fontSize: 10.5 }}>多个 key 自动轮转分摊限流 · 每把可设 rpm 上限 + 等间距间隔（留空=auto 按 rpm 折算 · 0=突发滑窗 · 数字=毫秒）· 刷新 = 重读列表 + 刷新代理</span>
+          <span style={{ color: "var(--text-subtle,#666)", fontSize: 10.5 }}>{ti("mw.tx.34")}</span>
         </div>
         {e.error ? <div className="amw-note is-err">❌ {e.error}</div> : null}
         {e.refreshOut && !e.error ? <div style={{ fontSize: 11, marginBottom: 4, color: e.refreshOut.startsWith("⚠️") ? "#d97706" : "#15803d" }}>{e.refreshOut}</div> : null}
@@ -1981,26 +1981,26 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
               return (
                 <div key={i} style={{ display: "flex", gap: 4, alignItems: "center", fontSize: 11, flexWrap: small ? "wrap" : "nowrap", ...(k.enabled === false ? { background: "rgba(127,127,127,.09)", borderRadius: 6, padding: "2px 4px" } : {}) }}>
                   <span style={{ width: 16, flexShrink: 0, textAlign: "right", color: "var(--text-subtle,#aaa)", fontSize: 10 }}>{i + 1}</span>
-                  <input className="amw-input" disabled={k.enabled === false} style={{flex: small ? "1 1 40%" : "0 0 88px", minWidth: small ? 0 : 88, fontFamily: "ui-monospace,monospace", ...(k.enabled === false ? { color: "var(--text-subtle,#999)" } : {})}} title="key 名称（轮转/识别用）" value={row.name ?? k.name} onChange={(ev) => rowSet({ name: ev.target.value })} />
-                  <input className="amw-input" disabled={k.enabled === false} style={{flex: small ? "1 1 50%" : "1 1 auto", minWidth: small ? 0 : 120, fontFamily: "ui-monospace,monospace", ...(k.enabled === false ? { color: "var(--text-subtle,#999)" } : {})}} type="password" placeholder={k.key ? "当前 " + k.key + "（留空=保留）" : "API key"} value={row.key || ""} onChange={(ev) => rowSet({ key: ev.target.value })} />
-                  <input className="amw-input" disabled={k.enabled === false} style={{width: 56, flexShrink: 0}} type="number" min={1} placeholder="rpm" title="每分钟请求上限（可选）" value={row.rpm !== undefined ? row.rpm : (k.rpm || "")} onChange={(ev) => rowSet({ rpm: ev.target.value })} />
-                  <input className="amw-input" disabled={k.enabled === false} style={{width: 72, flexShrink: 0}} placeholder="间隔ms·0=突发" title="等间距节流（默认匀速）三种填法：\n① 留空 = auto：按 rpm 自动折算（60000÷rpm，rpm30→每2s一个），默认\n② 0 = 关闭匀速：仅 rpm 滑动窗口（突发模式，允许瞬间打满配额）\n③ 数字 = 固定间隔毫秒（如 2000 = 每2s一个）\n与 rpm 同时生效，取最大等待" value={row.minIntervalMs !== undefined ? row.minIntervalMs : (k.minIntervalMs ?? "")} onChange={(ev) => rowSet({ minIntervalMs: ev.target.value })} />
-                  <button className="amw-btn" style={{ padding: "2px 8px", flexShrink: 0 }} title={dirty ? "保存修改（改名/换 key/改 rpm/改间隔，立即写入 models.json）" : "无改动"} disabled={e.busy || !dirty} onClick={() => editKeySave(p.provider, k)}>💾</button>
+                  <input className="amw-input" disabled={k.enabled === false} style={{flex: small ? "1 1 40%" : "0 0 88px", minWidth: small ? 0 : 88, fontFamily: "ui-monospace,monospace", ...(k.enabled === false ? { color: "var(--text-subtle,#999)" } : {})}} title={ti("mw.a.236")} value={row.name ?? k.name} onChange={(ev) => rowSet({ name: ev.target.value })} />
+                  <input className="amw-input" disabled={k.enabled === false} style={{flex: small ? "1 1 50%" : "1 1 auto", minWidth: small ? 0 : 120, fontFamily: "ui-monospace,monospace", ...(k.enabled === false ? { color: "var(--text-subtle,#999)" } : {})}} type="password" placeholder={k.key ? ti("mw.a.237") + k.key + ti("mw.a.238") : "API key"} value={row.key || ""} onChange={(ev) => rowSet({ key: ev.target.value })} />
+                  <input className="amw-input" disabled={k.enabled === false} style={{width: 56, flexShrink: 0}} type="number" min={1} placeholder="rpm" title={ti("mw.a.239")} value={row.rpm !== undefined ? row.rpm : (k.rpm || "")} onChange={(ev) => rowSet({ rpm: ev.target.value })} />
+                  <input className="amw-input" disabled={k.enabled === false} style={{width: 72, flexShrink: 0}} placeholder={ti("mw.a.240")} title={ti("mw.a.241")} value={row.minIntervalMs !== undefined ? row.minIntervalMs : (k.minIntervalMs ?? "")} onChange={(ev) => rowSet({ minIntervalMs: ev.target.value })} />
+                  <button className="amw-btn" style={{ padding: "2px 8px", flexShrink: 0 }} title={dirty ? ti("mw.a.242") : ti("mw.a.243")} disabled={e.busy || !dirty} onClick={() => editKeySave(p.provider, k)}>💾</button>
                   <button className="amw-btn" style={{ padding: "2px 8px", flexShrink: 0, ...(k.enabled === false ? { color: "#b45309", borderColor: "var(--warn, #f59e0b)", background: "color-mix(in srgb, var(--warn, #f59e0b) 12%, transparent)" } : {}) }}
-                    title={k.enabled === false ? "临时禁用中（不参与轮转，配置未删除）——点击重新启用" : "临时禁用此 key（不参与轮转，配置未删除，随时可一键启用）"}
+                    title={k.enabled === false ? ti("mw.a.244") : ti("mw.a.245")}
                     disabled={e.busy} onClick={() => editKeyToggle(p.provider, k.name, k.enabled === false)}>
                     {k.enabled === false ? "▶" : "⏸"}
                   </button>
-                  <button className="amw-btn" style={{ padding: "2px 8px", flexShrink: 0 }} title="删除此 key（立即写入 models.json）" disabled={e.busy} onClick={() => editKeyRemove(p.provider, k.name)}>✕</button>
+                  <button className="amw-btn" style={{ padding: "2px 8px", flexShrink: 0 }} title={ti("mw.a.246")} disabled={e.busy} onClick={() => editKeyRemove(p.provider, k.name)}>✕</button>
                 </div>
               );
-            }) : e.busy ? <div style={{ color: "var(--text-subtle,#999)", fontSize: 11 }}>加载中…</div> : <div style={{ color: "var(--text-subtle,#999)", fontSize: 11 }}>（还没有多 key —— 下方添加）</div>}
+            }) : e.busy ? <div style={{ color: "var(--text-subtle,#999)", fontSize: 11 }}>{ti("mw.tx.6")}</div> : <div style={{ color: "var(--text-subtle,#999)", fontSize: 11 }}>{ti("mw.tx.35")}</div>}
             <div style={{ display: "flex", gap: 4, alignItems: "center", marginTop: 4, flexWrap: small ? "wrap" : "nowrap" }}>
-              <input className="amw-input" style={{flex: small ? "1 1 40%" : "0 0 88px", minWidth: small ? 0 : 88, fontFamily: "ui-monospace,monospace"}} placeholder="名（默认自动 key-N）" value={e.newName || ""} onChange={(ev) => setE({ newName: ev.target.value })} />
-              <input className="amw-input" style={{flex: small ? "1 1 50%" : "1 1 auto", minWidth: small ? 0 : 120, fontFamily: "ui-monospace,monospace"}} type="password" placeholder="新 API key（sk-…）" value={e.newKey || ""} onChange={(ev) => setE({ newKey: ev.target.value })} />
+              <input className="amw-input" style={{flex: small ? "1 1 40%" : "0 0 88px", minWidth: small ? 0 : 88, fontFamily: "ui-monospace,monospace"}} placeholder={ti("mw.a.247")} value={e.newName || ""} onChange={(ev) => setE({ newName: ev.target.value })} />
+              <input className="amw-input" style={{flex: small ? "1 1 50%" : "1 1 auto", minWidth: small ? 0 : 120, fontFamily: "ui-monospace,monospace"}} type="password" placeholder={ti("mw.a.248")} value={e.newKey || ""} onChange={(ev) => setE({ newKey: ev.target.value })} />
               <input className="amw-input" style={{width: 56, flexShrink: 0}} type="number" min={1} placeholder="rpm" value={e.newRpm || ""} onChange={(ev) => setE({ newRpm: ev.target.value })} />
-              <input className="amw-input" style={{width: 72, flexShrink: 0}} placeholder="间隔ms·0=突发" title="等间距节流：留空 = auto（按 rpm 折算，默认匀速）；0 = 突发滑窗；数字 = 固定毫秒" value={e.newMiv || ""} onChange={(ev) => setE({ newMiv: ev.target.value })} />
-              <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff", padding: "4px 10px", flexShrink: 0 }} disabled={e.busy || !((e.newKey || "").trim())} onClick={() => editKeyAdd(p.provider)}>＋ 添加</button>
+              <input className="amw-input" style={{width: 72, flexShrink: 0}} placeholder={ti("mw.a.240")} title={ti("mw.a.249")} value={e.newMiv || ""} onChange={(ev) => setE({ newMiv: ev.target.value })} />
+              <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff", padding: "4px 10px", flexShrink: 0 }} disabled={e.busy || !((e.newKey || "").trim())} onClick={() => editKeyAdd(p.provider)}>{ti("mw.tx.36")}</button>
             </div>
           </div>
         ) : null}
@@ -2012,9 +2012,9 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     const cp = capProbes[provider + "/" + id];
     if (!cp) return null;
     const t = cp.phase === "probing"
-      ? <span title="实测验证 maxTokens 上限…" style={{ color: "var(--warn, #f59e0b)" }}>⏳</span>
-      : cp.corrected ? <span title={cp.detail || "元数据虚报，已自动下调并回写"} style={{ color: "var(--ok, #10b981)", fontWeight: 700 }}>↓</span>
-      : cp.error || (!cp.skipped && !cp.corrected) ? <span title={cp.detail || cp.error || "实测失败"} style={{ color: "var(--danger, #ef4444)" }}>!</span>
+      ? <span title={ti("mw.a.250")} style={{ color: "var(--warn, #f59e0b)" }}>⏳</span>
+      : cp.corrected ? <span title={cp.detail || ti("mw.a.251")} style={{ color: "var(--ok, #10b981)", fontWeight: 700 }}>↓</span>
+      : cp.error || (!cp.skipped && !cp.corrected) ? <span title={cp.detail || cp.error || ti("mw.a.252")} style={{ color: "var(--danger, #ef4444)" }}>!</span>
       : null;
     return t;
   };
@@ -2027,7 +2027,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       return (
         <div data-amw-edit="1" style={{ marginTop: 10, borderTop: "1px solid var(--border,#eee)", paddingTop: 10 }}>
           <div style={{ fontSize: 11, color: "var(--text-subtle,#666)", marginBottom: 6 }}>
-            订阅登录型 provider：凭据由登录流程管理（auth.json、自动刷新），不走 models.json、无 key 可改 —— 下方可直接查看登录态 / 账号 / 额度，需要时重新登录 / 换号。
+            {ti("mw.tx.184")}
           </div>
           {oauthLoginPanel({ id: pid, name: p.provider })}
         </div>
@@ -2044,41 +2044,41 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     return (
       <div data-amw-edit="1" style={{ marginTop: 10, borderTop: "1px solid var(--border,#eee)", paddingTop: 10 }}>
         {/* ── 名称（改名）── */}
-        <div className="amw-section" style={{margin: "0 0 6px"}}>名称（改后即重命名 provider）</div>
+        <div className="amw-section" style={{margin: "0 0 6px"}}>{ti("mw.tx.37")}</div>
         <input className="amw-input" style={{width: "100%", marginBottom: 10, fontWeight: 600}} value={eff("name", p.provider)} onChange={(e) => setField("name", e.target.value)} placeholder={p.provider} />
         {/* ── 模型（刷新可选 / 增删）── */}
-        <div className="amw-section" style={{margin: "0 0 6px"}}>{"模型（" + (avail ? availChecked.length + " 已选 / " + avail.models.length + " 可选" : draft.length + " 个") + "）"}</div>
+        <div className="amw-section" style={{margin: "0 0 6px"}}>{ti("mw.a.253") + (avail ? availChecked.length + ti("mw.a.254") + avail.models.length + ti("mw.a.255") : draft.length + ti("mw.a.9")) + "）"}</div>
         <div style={{ display: "flex", gap: 6, marginBottom: 8, alignItems: "center", flexWrap: "wrap" }}>
           <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff", padding: "3px 10px" }} onClick={() => refreshEditModels(p.provider, p)} disabled={!!refreshBusy[p.provider]}>
-            {refreshBusy[p.provider] ? "刷新中…" : (<><Ic size={12} paths={ICONS.refresh} />{" "}刷新可选模型</>)}
+            {refreshBusy[p.provider] ? ti("mw.a.48") : (<><Ic size={12} paths={ICONS.refresh} />{" "}{ti("mw.tx.185")}</>)}
           </button>
-          {avail ? <button className="amw-btn" onClick={() => setEditAvail((prev: any) => { const { [p.provider]: _drop, ...rest } = prev; return rest; })}>收起列表</button> : null}
-          {avail ? <input className="amw-input" style={{flex: 1, minWidth: 140}} placeholder="过滤可选模型" value={availFilter[p.provider] || ""} onChange={(e) => setAvailFilter((prev: any) => ({ ...prev, [p.provider]: e.target.value }))} /> : null}
-          {avail ? <button className="amw-btn" style={{ padding: "2px 10px" }} title="勾选当前筛选出的全部（保留筛选外已选）" onClick={() => setEditAvail((prev: any) => ({ ...prev, [p.provider]: { ...prev[p.provider], checked: [...new Set([...availChecked, ...availIds])] } }))}>全选</button> : null}
-          {avail ? <button className="amw-btn" style={{ padding: "2px 10px" }} title="当前筛选范围内反选" onClick={() => setEditAvail((prev: any) => {
+          {avail ? <button className="amw-btn" onClick={() => setEditAvail((prev: any) => { const { [p.provider]: _drop, ...rest } = prev; return rest; })}>{ti("mw.tx.38")}</button> : null}
+          {avail ? <input className="amw-input" style={{flex: 1, minWidth: 140}} placeholder={ti("mw.a.256")} value={availFilter[p.provider] || ""} onChange={(e) => setAvailFilter((prev: any) => ({ ...prev, [p.provider]: e.target.value }))} /> : null}
+          {avail ? <button className="amw-btn" style={{ padding: "2px 10px" }} title={ti("mw.a.257")} onClick={() => setEditAvail((prev: any) => ({ ...prev, [p.provider]: { ...prev[p.provider], checked: [...new Set([...availChecked, ...availIds])] } }))}>{ti("mw.tx.39")}</button> : null}
+          {avail ? <button className="amw-btn" style={{ padding: "2px 10px" }} title={ti("mw.a.258")} onClick={() => setEditAvail((prev: any) => {
             const av = prev[p.provider];
             const inv = availIds.filter((id) => !av.checked.includes(id));
             return { ...prev, [p.provider]: { ...av, checked: [...av.checked.filter((id: string) => !availIds.includes(id)), ...inv] } };
-          })}>反选</button> : null}
-          {avail ? <button className="amw-btn" style={{ padding: "2px 10px" }} title="取消当前筛选范围内的勾选（筛选外不受影响）" onClick={() => setEditAvail((prev: any) => ({ ...prev, [p.provider]: { ...prev[p.provider], checked: prev[p.provider].checked.filter((id: string) => !availIds.includes(id)) } }))}>清空</button> : null}
+          })}>{ti("mw.tx.40")}</button> : null}
+          {avail ? <button className="amw-btn" style={{ padding: "2px 10px" }} title={ti("mw.a.259")} onClick={() => setEditAvail((prev: any) => ({ ...prev, [p.provider]: { ...prev[p.provider], checked: prev[p.provider].checked.filter((id: string) => !availIds.includes(id)) } }))}>{ti("mw.tx.41")}</button> : null}
         </div>
         {avail ? (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 8, maxHeight: 190, overflow: "auto", border: "1px solid var(--border,#eee)", borderRadius: 8, padding: 6 }}>
             {availIds.length ? availIds.map((id) => {
               const nmd = (nmMeta[p.provider] || {})[id];
               const isNew = availNew.includes(id);
-              const mtags = isNew && nmd ? [nmd.contextWindow ? fmtTok(nmd.contextWindow) + " ctx" : "", nmd.reasoning ? "推理" : ""].filter(Boolean) : [];
+              const mtags = isNew && nmd ? [nmd.contextWindow ? fmtTok(nmd.contextWindow) + " ctx" : "", nmd.reasoning ? ti("mw.a.1") : ""].filter(Boolean) : [];
               return (
                 <label key={id} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 8px", borderRadius: 8, border: isNew ? "1px solid color-mix(in srgb, var(--ok, #22c55e) 50%, transparent)" : "1px solid var(--border,#e0e0e0)", cursor: "pointer", background: availChecked.includes(id) ? "rgba(37,99,235,.12)" : (isNew ? "color-mix(in srgb, var(--ok, #22c55e) 7%, transparent)" : "var(--bg,#fff)") }}>
                   <input type="checkbox" checked={availChecked.includes(id)} onChange={() => toggleEditAvail(p.provider, id)} style={{ margin: 0 }} />
                   <span style={{ fontFamily: "ui-monospace,monospace", fontSize: 11 }}>{id}</span>
-                  <EyeBtn title={"查看 " + id + " 参数（目录反填，未配置也可看）"} onClick={() => viewModelParams(p.provider, id)} />
+                  <EyeBtn title={ti("mw.a.260") + id + ti("mw.a.261")} onClick={() => viewModelParams(p.provider, id)} />
                   {capBadge(p.provider, id)}
                   {mtags.length ? <span style={{ color: "var(--text-muted, #6b7280)", fontSize: 9 }}>{mtags.join(" · ")}</span> : null}
-                  {isNew ? <span style={{ padding: "0 5px", borderRadius: 6, background: "color-mix(in srgb, var(--ok, #22c55e) 16%, transparent)", color: "#15803d", fontSize: 9, fontWeight: 700 }}>新</span> : null}
+                  {isNew ? <span style={{ padding: "0 5px", borderRadius: 6, background: "color-mix(in srgb, var(--ok, #22c55e) 16%, transparent)", color: "#15803d", fontSize: 9, fontWeight: 700 }}>{ti("mw.tx.42")}</span> : null}
                 </label>
               );
-            }) : <span style={{ color: "var(--text-subtle,#999)", fontSize: 11 }}>（无匹配）</span>}
+            }) : <span style={{ color: "var(--text-subtle,#999)", fontSize: 11 }}>{ti("mw.tx.43")}</span>}
           </div>
         ) : (
           <div>
@@ -2089,50 +2089,50 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                 return (
                 <span key={mid} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 8, border: mEn ? "1px solid var(--border,#e0e0e0)" : "1px dashed var(--warn, #f59e0b)", background: mEn ? "var(--bg-subtle,#f5f5f5)" : "color-mix(in srgb, var(--warn, #f59e0b) 10%, transparent)", fontSize: 11, fontFamily: "ui-monospace,monospace", ...(mEn ? {} : { color: "#b45309" }) }}>
                   {mid}
-                  {!mEn ? <span style={{ fontSize: 9, color: "#b45309", fontWeight: 700 }}>禁用</span> : null}
+                  {!mEn ? <span style={{ fontSize: 9, color: "#b45309", fontWeight: 700 }}>{ti("mw.a.495")}</span> : null}
                   {capBadge(p.provider, mid)}
-                  <EyeBtn title="查看/编辑完整参数（窗口/上下文/成本等）" onClick={() => viewModelParams(p.provider, mid)} />
+                  <EyeBtn title={ti("mw.a.262")} onClick={() => viewModelParams(p.provider, mid)} />
                   <button style={{ border: "none", background: "none", cursor: "pointer", color: "#d97706", padding: 0, fontSize: 12, lineHeight: 1 }}
-                    title={mEn ? "临时禁用此模型（从可用列表隐藏、组合成员跳过，不删除配置）" : "重新启用此模型（恢复可见）"}
+                    title={mEn ? ti("mw.a.263") : ti("mw.a.264")}
                     onClick={() => doToggleModel(p.provider, mid, !mEn)}>{mEn ? "⏸" : "▶"}</button>
-                  <button style={{ border: "none", background: "none", cursor: "pointer", color: "#dc2626", padding: 0, fontSize: 12, lineHeight: 1 }} onClick={() => removeEditModel(p.provider, mid, p.models)} aria-label={"移除 " + mid}>✕</button>
+                  <button style={{ border: "none", background: "none", cursor: "pointer", color: "#dc2626", padding: 0, fontSize: 12, lineHeight: 1 }} onClick={() => removeEditModel(p.provider, mid, p.models)} aria-label={ti("mw.a.265") + mid}>✕</button>
                 </span>
                 );
-              }) : <span style={{ color: "var(--text-subtle,#999)", fontSize: 11 }}>（无模型）</span>}
+              }) : <span style={{ color: "var(--text-subtle,#999)", fontSize: 11 }}>{ti("mw.tx.44")}</span>}
             </div>
             <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-              <input className="amw-input" style={{flex: 1, fontFamily: "ui-monospace,monospace"}} placeholder="添加模型 id（逗号分隔，如 glm-4.7,kimi-k3）" value={newModel} onChange={(e) => setNewModel(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addEditModel(p.provider, p.models); }} />
-              <button className="amw-btn" onClick={() => addEditModel(p.provider, p.models)}>＋ 添加</button>
+              <input className="amw-input" style={{flex: 1, fontFamily: "ui-monospace,monospace"}} placeholder={ti("mw.a.266")} value={newModel} onChange={(e) => setNewModel(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addEditModel(p.provider, p.models); }} />
+              <button className="amw-btn" onClick={() => addEditModel(p.provider, p.models)}>{ti("mw.tx.36")}</button>
             </div>
           </div>
         )}
         {/* ── 连接配置 ── */}
-        <div className="amw-section" style={{margin: "0 0 6px"}}>连接配置</div>
+        <div className="amw-section" style={{margin: "0 0 6px"}}>{ti("mw.tx.45")}</div>
         <label style={{ fontSize: 11, color: "var(--text-subtle,#666)", display: "block", marginBottom: 3 }}>Base URL</label>
         <input className="amw-input" style={{width: "100%", marginBottom: 6, fontFamily: "ui-monospace,monospace"}} placeholder="https://api.example.com/v1" value={eff("baseUrl", p.baseUrl || "")} onChange={(e) => setField("baseUrl", e.target.value)} />
-        <label style={{ fontSize: 11, color: "var(--text-subtle,#666)", display: "block", marginBottom: 3 }}>API 类型</label>
+        <label style={{ fontSize: 11, color: "var(--text-subtle,#666)", display: "block", marginBottom: 3 }}>{ti("mw.tx.46")}</label>
         <select className="amw-input" style={{width: "100%", marginBottom: 6}} value={eff("api", p.api || "openai-completions")} onChange={(e) => setField("api", e.target.value)}>
           {apiOpts.map((o) => <option key={o} value={o}>{o}</option>)}
         </select>
-        <label style={{ fontSize: 11, color: "var(--text-subtle,#666)", display: "block", marginBottom: 3 }}>API Key（留空=保留原 key；支持字面量 / 环境变量名 / <code className="amw-mono">!命令</code>）</label>
-        <input className="amw-input" style={{width: "100%", fontFamily: "ui-monospace,monospace"}} type="password" placeholder={p.apiKeyMasked ? "保留原 key（" + p.apiKeyMasked + "）" : "粘贴新 key / ENV_NAME / !cmd"} value={editTok[p.provider] || ""} onChange={(e) => setEditTok((prev: any) => ({ ...prev, [p.provider]: e.target.value }))} />
-        <label style={{ fontSize: 11, color: "var(--text-subtle,#666)", display: "block", margin: "8px 0 3px" }}>请求头（provider 级；不改则保留已存）</label>
+        <label style={{ fontSize: 11, color: "var(--text-subtle,#666)", display: "block", marginBottom: 3 }}>{ti("mw.tx.47")} <code className="amw-mono">{ti("mw.tx.48")}</code>）</label>
+        <input className="amw-input" style={{width: "100%", fontFamily: "ui-monospace,monospace"}} type="password" placeholder={p.apiKeyMasked ? ti("mw.a.267") + p.apiKeyMasked + "）" : ti("mw.a.268")} value={editTok[p.provider] || ""} onChange={(e) => setEditTok((prev: any) => ({ ...prev, [p.provider]: e.target.value }))} />
+        <label style={{ fontSize: 11, color: "var(--text-subtle,#666)", display: "block", margin: "8px 0 3px" }}>{ti("mw.tx.49")}</label>
         <EditHeadersEditor key={p.provider} initialHeaders={eff("headers", p.headers)} initialMasked={eff("headersMasked", p.maskedHeaders)}
           onChange={(headers, maskedHeaders) => setEditFields((prev: any) => ({ ...prev, [p.provider]: { ...(prev[p.provider] || {}), headers, headersMasked } }))} />
         {/* ── 连接测试（用已配置的全部 key，逐个测）── */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
           <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff", padding: "3px 10px" }} disabled={!!(keyTests[p.provider] && keyTests[p.provider].busy)} onClick={() => doTestStored(p)}>
-            {(keyTests[p.provider] && keyTests[p.provider].busy) ? "测试中…" : (<>测试连接（全部已存 key）</>)}
+            {(keyTests[p.provider] && keyTests[p.provider].busy) ? ti("mw.a.76") : (<>{ti("mw.tx.50")}</>)}
           </button>
-          <span style={{ color: "var(--text-subtle,#666)", fontSize: 10 }}>逐个串行测 models.json 已配的多把 key（非只第一个），每把单独出结果</span>
+          <span style={{ color: "var(--text-subtle,#666)", fontSize: 10 }}>{ti("mw.tx.51")}</span>
         </div>
         {keyTests[p.provider] && keyTests[p.provider].error ? <div className="amw-note is-err" style={{marginTop: 4}}>❌ {keyTests[p.provider].error}</div> : null}
         {keyTests[p.provider] && keyTests[p.provider].results ? testBadge({ multiKey: true, results: keyTests[p.provider].results, passCount: keyTests[p.provider].passCount, total: keyTests[p.provider].total }) : null}
         {renderEditKeys(p)}
         {/* ── 操作 ── */}
         <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-          <button className="amw-btn is-ok" onClick={() => doSaveEdit(p.provider, p)} disabled={busy}>保存（模型 + 配置）</button>
-          <button className="amw-btn" onClick={() => { setEditFields((prev: any) => { const { [p.provider]: _drop, ...rest } = prev; return rest; }); setEditAvail((prev: any) => { const { [p.provider]: _drop2, ...rest } = prev; return rest; }); setEditModels((prev: any) => { const { [p.provider]: _drop3, ...rest } = prev; return rest; }); }}>取消</button>
+          <button className="amw-btn is-ok" onClick={() => doSaveEdit(p.provider, p)} disabled={busy}>{ti("mw.tx.52")}</button>
+          <button className="amw-btn" onClick={() => { setEditFields((prev: any) => { const { [p.provider]: _drop, ...rest } = prev; return rest; }); setEditAvail((prev: any) => { const { [p.provider]: _drop2, ...rest } = prev; return rest; }); setEditModels((prev: any) => { const { [p.provider]: _drop3, ...rest } = prev; return rest; }); }}>{ti("mw.tx.12")}</button>
         </div>
       </div>
     );
@@ -2157,13 +2157,13 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       <div style={{ border: "1px solid var(--border,#eee)", borderRadius: 10, padding: "10px 12px", background: "var(--bg-subtle,#fafafa)", marginBottom: 2 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
           {p.baseUrl ? <span title={p.baseUrl + " · " + p.apiType} className="amw-mono" style={{ padding: "3px 10px", borderRadius: 999, background: "var(--bg,#fff)", border: "1px solid var(--border,#e5e5e5)", fontSize: 11, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.baseUrl}<span style={{ color: "var(--text-subtle,#999)" }}>{" · " + p.apiType}</span></span> : null}
-          {(p.models && p.models.length) ? <span style={{ fontSize: 11, color: "var(--text-subtle,#666)", flexShrink: 0 }}>{"目录模型 " + p.models.length + " 个"}</span> : null}
+          {(p.models && p.models.length) ? <span style={{ fontSize: 11, color: "var(--text-subtle,#666)", flexShrink: 0 }}>{ti("mw.a.269") + p.models.length + ti("mw.a.9")}</span> : null}
         </div>
         {hasLinks ? (
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: p.baseUrl ? 8 : 0 }}>
-            {p.doc ? infoLink(ICONS.file, "官网文档", p.doc) : null}
-            {p.signupUrl ? infoLink(ICONS.pencil, "注册账号", p.signupUrl) : null}
-            {p.tokenUrl ? infoLink(ICONS.key, "获取 Token", p.tokenUrl) : null}
+            {p.doc ? infoLink(ICONS.file, ti("mw.a.270"), p.doc) : null}
+            {p.signupUrl ? infoLink(ICONS.pencil, ti("mw.a.271"), p.signupUrl) : null}
+            {p.tokenUrl ? infoLink(ICONS.key, ti("mw.a.272"), p.tokenUrl) : null}
           </div>
         ) : null}
         {p.register ? <div style={{ marginTop: 8, fontSize: 11, lineHeight: 1.55, color: "var(--text-subtle,#666)" }}>{p.register}</div> : null}
@@ -2178,7 +2178,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     if (!ids.length) return;
     for (const id of ids) {
       try {
-        const d = await (await api("/oauth-info?id=" + encodeURIComponent(id))).json();
+        const d = srvFix(await (await api("/oauth-info?id=" + encodeURIComponent(id))).json());
         if (d.ok) { oauthInfoRef.current[id] = d; setOauthInfoVer((v) => v + 1); }
       } catch {}
     }
@@ -2211,7 +2211,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         es.close(); oauthEsRef.current = null; setOauthLs({ phase: "idle" });
       }
     };
-    es.onerror = () => { es.close(); oauthEsRef.current = null; setOauthLs((prev: any) => (prev.phase === "success" ? prev : { phase: "error", message: "连接中断" })); };
+    es.onerror = () => { es.close(); oauthEsRef.current = null; setOauthLs((prev: any) => (prev.phase === "success" ? prev : { phase: "error", message: ti("mw.a.273") })); };
   }, [checkOauthStatus]);
   useEffect(() => () => { oauthEsRef.current?.close(); }, []);
 
@@ -2221,7 +2221,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       const all = t.passCount === t.total;
       return (
         <div className={"amw-note " + (all ? "is-ok" : t.passCount > 0 ? "is-warn" : "is-err")} style={{ marginTop: 4 }}>
-          {(all ? "✅" : t.passCount > 0 ? "🟡" : "❌") + " 分 key 测试：" + t.passCount + "/" + t.total + " 可用"}
+          {(all ? "✅" : t.passCount > 0 ? "🟡" : "❌") + ti("mw.a.274") + t.passCount + "/" + t.total + ti("mw.a.275")}
           <div style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 3 }}>
             {t.results.map((x: any) => (
               <div key={x.name} style={{ fontFamily: "ui-monospace,monospace", fontSize: 11, color: x.pass ? ("var(--ok,#15803d)") : ("var(--err,#b91c1c)") }}>
@@ -2233,22 +2233,22 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       );
     }
     return t.pass
-      ? <div className={"amw-note " + (t.rateLimited ? "is-warn" : "is-ok")}>{t.rateLimited ? "🟡 通过（429 限流）——key/端点正确，稍后重试即可 · " + t.detail : "通过（HTTP " + t.status + " · " + t.detail + " · " + (t.latencyMs != null ? t.latencyMs + "ms" : "") + "）"}</div>
-      : <div className="amw-note is-err">{"失败（HTTP " + (t.status || "net") + "）· " + (t.detail || t.error || "")}</div>;
+      ? <div className={"amw-note " + (t.rateLimited ? "is-warn" : "is-ok")}>{t.rateLimited ? ti("mw.a.276") + t.detail : ti("mw.a.277") + t.status + " · " + t.detail + " · " + (t.latencyMs != null ? t.latencyMs + "ms" : "") + "）"}</div>
+      : <div className="amw-note is-err">{ti("mw.a.278") + (t.status || "net") + "）· " + (t.detail || t.error || "")}</div>;
   };
 
   /** 订阅登录型（authType=oauth）面板：替代 token 输入流 */
   // ── 订阅服务 tab：列出 pi 运行时全部 OAuth 登录型提供商，一键登录/查看状态 ──
   const OAUTH_META: Record<string, string> = {
-    "anthropic": "Claude Pro/Max 订阅 · claude.ai 账号授权",
-    "openai-codex": "ChatGPT Plus/Pro 订阅 · OpenAI 官方背书第三方接入",
-    "github-copilot": "GitHub Copilot 订阅 · github.com 授权",
-    "xai": "xAI Grok/X Premium 订阅",
-    "openrouter": "OpenRouter 账号授权（PKCE，充值计费）",
-    "radius": "Radius 动态网关",
-    "kimi-coding": "Kimi Code 订阅 · auth.kimi.com 设备码登录",
-    "qoder": "Qoder 国际订阅 · 浏览器设备码 / PAT。Free 无 credits，付费额度才可推理",
-    "qoder-cn": "Qoder CN 国内 · Pro+ credits 在此区。PAT 入口：账号页 → 集成；本机 qoderclicn 登录可自动导入。仅限本人自用",
+    "anthropic": ti("mw.a.279"),
+    "openai-codex": ti("mw.a.280"),
+    "github-copilot": ti("mw.a.281"),
+    "xai": ti("mw.a.282"),
+    "openrouter": ti("mw.a.283"),
+    "radius": ti("mw.a.284"),
+    "kimi-coding": ti("mw.a.285"),
+    "qoder": ti("mw.a.286"),
+    "qoder-cn": ti("mw.a.287"),
   };
   // ── G3 凭据管理（docs/aiti-model-wizard-settings-takeover-plan.md）：apiKey 型内置 provider 的
   // auth.json key 管理（宿主 /api/auth/api-key/<id> POST 保存·更换 / DELETE 移除）。
@@ -2259,14 +2259,14 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   const [akMsg, setAkMsg] = useState<Record<string, string>>({});  // pid → 行内反馈
   const saveAuthKey = async (id: string, key: string): Promise<boolean> => {
     const k = (key || "").trim();
-    if (!k) { setAkMsg((m) => ({ ...m, [id]: "先填 API Key" })); return false; }
+    if (!k) { setAkMsg((m) => ({ ...m, [id]: ti("mw.a.288") })); return false; }
     setAkBusy(id); setAkMsg((m) => ({ ...m, [id]: "" }));
     try {
       const r = await fetch(apiUrl("/api/auth/api-key/" + encodeURIComponent(id)), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ apiKey: k }) });
-      const d = await r.json() as { success?: boolean; error?: string };
+      const d = srvFix(await r.json()) as { success?: boolean; error?: string };
       if (!r.ok || d.error) { setAkMsg((m) => ({ ...m, [id]: "❌ " + (d.error || "HTTP " + r.status) })); return false; }
       setAkDraft((prev) => { const { [id]: _drop, ...rest } = prev; return rest; });
-      setAkMsg((m) => ({ ...m, [id]: "已保存（auth.json）——模型清单已生效" }));
+      setAkMsg((m) => ({ ...m, [id]: ti("mw.a.289") }));
       try { window.dispatchEvent(new CustomEvent("pi-web:models-changed")); } catch {}
       void loadStatus();
       return true;
@@ -2277,9 +2277,9 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     setAkBusy(id); setAkMsg((m) => ({ ...m, [id]: "" }));
     try {
       const r = await fetch(apiUrl("/api/auth/api-key/" + encodeURIComponent(id)), { method: "DELETE" });
-      const d = await r.json() as { success?: boolean; error?: string };
+      const d = srvFix(await r.json()) as { success?: boolean; error?: string };
       if (!r.ok || d.error) { setAkMsg((m) => ({ ...m, [id]: "❌ " + (d.error || "HTTP " + r.status) })); return false; }
-      setAkMsg((m) => ({ ...m, [id]: "已移除——该 provider 模型已下线" }));
+      setAkMsg((m) => ({ ...m, [id]: ti("mw.a.290") }));
       try { window.dispatchEvent(new CustomEvent("pi-web:models-changed")); } catch {}
       void loadStatus();
       return true;
@@ -2289,16 +2289,16 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   // apiKey 型行内编辑器（订阅页 / 状态页 api_key 详情共用）
   const apiKeyRow = (id: string, displayName: string, configured: boolean, compact?: boolean) => (
     <div style={compact ? { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 6 } : { display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>
-      <span style={{ width: 7, height: 7, borderRadius: "50%", background: configured ? "var(--ok, #4ade80)" : "var(--border,#ddd)", flexShrink: 0 }} title={configured ? "已配置" : "未配置"} />
+      <span style={{ width: 7, height: 7, borderRadius: "50%", background: configured ? "var(--ok, #4ade80)" : "var(--border,#ddd)", flexShrink: 0 }} title={configured ? ti("mw.a.291") : ti("mw.a.292")} />
       <input className="amw-input" style={{ flex: 1, minWidth: 160, fontFamily: "ui-monospace,monospace" }} type="password"
-        placeholder={configured ? "输入新 key 更换…" : "sk-…"} value={akDraft[id] || ""}
+        placeholder={configured ? ti("mw.a.293") : "sk-…"} value={akDraft[id] || ""}
         onChange={(e) => setAkDraft((prev) => ({ ...prev, [id]: e.target.value }))}
         onKeyDown={(e: any) => { if (e.key === "Enter" && (akDraft[id] || "").trim()) void saveAuthKey(id, akDraft[id]); }} />
       <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff", flexShrink: 0 }} disabled={akBusy === id || !(akDraft[id] || "").trim()}
-        onClick={() => void saveAuthKey(id, akDraft[id])}>{akBusy === id ? "保存中…" : "保存"}</button>
+        onClick={() => void saveAuthKey(id, akDraft[id])}>{akBusy === id ? ti("mw.a.55") : ti("mw.a.56")}</button>
       {configured ? (
-        <button className="amw-btn" style={{ color: "#dc2626", flexShrink: 0 }} disabled={akBusy === id} title="移除该 provider 的 key（auth.json），其全部模型立即不可用"
-          onClick={() => void removeAuthKey(id)}>{akBusy === id ? "…" : "移除"}</button>
+        <button className="amw-btn" style={{ color: "#dc2626", flexShrink: 0 }} disabled={akBusy === id} title={ti("mw.a.294")}
+          onClick={() => void removeAuthKey(id)}>{akBusy === id ? "…" : ti("mw.a.295")}</button>
       ) : null}
       {akMsg[id] ? <span style={{ fontSize: 11, color: akMsg[id].startsWith("✅") ? "#16a34a" : "#dc2626", flexBasis: "100%" }}>{akMsg[id]}</span> : null}
     </div>
@@ -2306,7 +2306,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
 
   const loadSubs = useCallback(async () => {
     try {
-      const d = await (await fetch(apiUrl("/api/auth/providers"), { cache: "no-store" })).json();
+      const d = srvFix(await srvFix(await (await fetch(apiUrl("/api/auth/providers"), { cache: "no-store" })).json()));
       setSubList(Array.isArray(d.providers) ? d.providers : []);
       setAkList(Array.isArray(d.apiKeyProviders) ? d.apiKeyProviders : []);
     } catch { setSubList([]); setAkList([]); }
@@ -2319,8 +2319,8 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   // catalog = 目录静态清单（运行时未注册该 provider）→ id 可能与选择器实际不符，刷新也不会变。
   const modelSourceTag = (source?: string) => (
     source === "runtime"
-      ? <span style={{ fontWeight: 400, fontSize: 11, color: "var(--text-subtle,#666)" }}> · 运行时实时</span>
-      : <span style={{ fontWeight: 400, fontSize: 11, color: "var(--warn,#b45309)" }}> · ⚠ 目录静态清单</span>
+      ? <span style={{ fontWeight: 400, fontSize: 11, color: "var(--text-subtle,#666)" }}> {ti("mw.tx.53")}</span>
+      : <span style={{ fontWeight: 400, fontSize: 11, color: "var(--warn,#b45309)" }}> {ti("mw.tx.54")}</span>
   );
   // 厂商常返回混淆 id（如 Qoder 网关的 dmodel/gm51model），而选择器里显示的是 display name
   // （DeepSeek-V4-Pro/GLM-5.2）→ pill 同时给出两者，用户才认得出该选哪个。
@@ -2336,33 +2336,33 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           const label = !mname || redundant ? mid : (mid + "（" + mname + "）");
           return <span key={mid + "#" + i} className="amw-mono" title={mname ? (mid + " · " + mname) : mid} style={{ padding: "1px 8px", borderRadius: 999, background: "var(--bg-subtle,#f5f5f5)", fontSize: 11, display: "inline-flex", alignItems: "center", gap: 4 }}>
             {label}
-            <EyeBtn title={"查看 " + mid + " 参数（目录反填，只读）"} onClick={() => viewModelParams(pid, mid)} />
+            <EyeBtn title={ti("mw.a.260") + mid + ti("mw.a.296")} onClick={() => viewModelParams(pid, mid)} />
           </span>;
         })}
       </div>
       {source === "catalog" ? (
-        <div style={{ fontSize: 11, color: "var(--warn,#b45309)", marginTop: 3 }}>⚠ 这是目录静态清单，运行时未注册「{pid}」的这些 id —— 选择器里可能找不到，点「刷新」也不会变。</div>
+        <div style={{ fontSize: 11, color: "var(--warn,#b45309)", marginTop: 3 }}>{ti("mw.tx.186", { pid })}</div>
       ) : null}
       {related && related.length ? (
         <div style={{ fontSize: 11, color: "var(--text-subtle,#666)", marginTop: 3 }}>
-          同账号其它 provider：{related.map((r: any) => r.provider + "（" + r.count + " 个）").join(" · ")}
+          {ti("mw.tx.187")}{related.map((r: any) => r.provider + "（" + r.count + ti("mw.a.297")).join(" · ")}
         </div>
       ) : null}
     </div>
   );
 
   const renderSubscriptions = () => {
-    if (!subList) return <div className="amw-note">加载中…</div>;
+    if (!subList) return <div className="amw-note">{ti("mw.tx.6")}</div>;
     const oauthEmpty = !subList.length;
     return (
       <div>
-        {oauthEmpty ? <div className="amw-note">未发现订阅登录型提供商。</div> : (
+        {oauthEmpty ? <div className="amw-note">{ti("mw.tx.55")}</div> : (
         <>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-          <span className="amw-section" style={{margin: 0, flex: 1}}>{"订阅登录型提供商（" + subList.length + "）—— 无需 API token，点登录获取凭据"}</span>
-          <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} onClick={() => { loadSubs(); checkOauthStatus(subActive ? [subActive] : []); }}>刷新列表</button>
+          <span className="amw-section" style={{margin: 0, flex: 1}}>{ti("mw.a.298") + subList.length + ti("mw.a.299")}</span>
+          <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} onClick={() => { loadSubs(); checkOauthStatus(subActive ? [subActive] : []); }}>{ti("mw.tx.56")}</button>
         </div>
-        <div className="amw-note">这些提供商走订阅/OAuth 登录（凭据存 auth.json 自动刷新），与 token 型 provider 并列使用。仅限本人账号自用，禁止共享/转售。</div>
+        <div className="amw-note">{ti("mw.tx.57")}</div>
         {subList.map((pr: any) => {
           const pid = pr.id;
           const active = subActive === pid;
@@ -2377,39 +2377,39 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                 <ProviderAvatar id={pid} name={pr.name || pid} size={26} radius={8} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 650, fontSize: 13 }}>{pr.name || pid}</div>
-                  <div style={{ color: "var(--text-subtle,#666)", fontSize: 11 }}>{OAUTH_META[pid] || "OAuth 登录"}</div>
+                  <div style={{ color: "var(--text-subtle,#666)", fontSize: 11 }}>{OAUTH_META[pid] || ti("mw.a.300")}</div>
                 </div>
                 <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff", padding: "3px 10px", fontSize: 11 }}
                   onClick={() => { setSubActive(active ? null : pid); checkOauthStatus([pid]); if (!active) startOauthLogin(pid); }}>
-                  🔐 登录
+                  {ti("mw.tx.188")}
                 </button>
                 <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }}
-                  title="查看登录状态 / 账号 / credits"
+                  title={ti("mw.a.301")}
                   onClick={() => { setSubActive(active ? null : pid); checkOauthStatus([pid]); }}>
-                  {active ? "收起" : "详情"}
+                  {active ? ti("mw.a.302") : ti("mw.a.303")}
                 </button>
                 {(info?.loggedIn || pr.loggedIn) ? (
                   <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11, color: "#dc2626" }} disabled={logoutBusy === pid}
-                    title="登出：清除该 provider 的登录凭据（auth.json），其全部模型立即不可用；可随时重新登录"
+                    title={ti("mw.a.304")}
                     onClick={() => void doOauthLogout(pid, pr.name || pid)}>
-                    {logoutBusy === pid ? "登出中…" : "登出"}
+                    {logoutBusy === pid ? ti("mw.a.305") : ti("mw.a.121")}
                   </button>
                 ) : null}
               </div>
               {(info?.loggedIn || pr.loggedIn) ? (
                 <div className="amw-note is-ok" style={{marginTop: 6, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center"}}>
-                  <span>已登录</span>
+                  <span>{ti("mw.tx.58")}</span>
                   {info?.account?.name ? <span>👤 {info.account.name}{info.account.plan ? " · " + info.account.plan : ""}</span> : null}
-                  {cr ? <span><b>{cr.remaining}</b> / {cr.total} {cr.unit}{cr.expiresAt ? " · 到期 " + new Date(cr.expiresAt).toLocaleDateString() : ""}</span> : null}
-                  {info?.addOn ? <span title="额外购买的加量包">➕ 加量包 {info.addOn.remaining}/{info.addOn.total}{info.addOn.used != null ? "（已用 " + info.addOn.used + "）" : ""}</span> : null}
-                  {info?.packages?.length ? <span title="专属资源包（选定系列模型时优先抵扣）">🎁 {info.packages.map((p: any) => p.name + " " + p.remaining + "/" + p.total).join(" · ")}</span> : null}
-                  {cr?.exceeded ? <span style={{ color: "#dc2626", fontWeight: 700 }}>额度已用完</span> : null}
+                  {cr ? <span><b>{cr.remaining}</b> / {cr.total} {cr.unit}{cr.expiresAt ? ti("mw.a.306") + new Date(cr.expiresAt).toLocaleDateString() : ""}</span> : null}
+                  {info?.addOn ? <span title={ti("mw.a.307")}>{ti("mw.tx.189")} {info.addOn.remaining}/{info.addOn.total}{info.addOn.used != null ? ti("mw.a.308") + info.addOn.used + "）" : ""}</span> : null}
+                  {info?.packages?.length ? <span title={ti("mw.a.309")}>🎁 {info.packages.map((p: any) => p.name + " " + p.remaining + "/" + p.total).join(" · ")}</span> : null}
+                  {cr?.exceeded ? <span style={{ color: "#dc2626", fontWeight: 700 }}>{ti("mw.tx.59")}</span> : null}
                 </div>
-              ) : active ? <div className="amw-note is-warn">未登录 —— 点「登录」开始</div> : null}
+              ) : active ? <div className="amw-note is-warn">{ti("mw.tx.60")}</div> : null}
               {active ? oauthLoginPanel({ id: pid, name: pr.name || pid }) : null}
               {active && models.length ? (
                 <div style={{ marginTop: 6 }}>
-                  <div style={{ color: "var(--text-subtle,#666)", fontSize: 11, marginBottom: 3 }}>可用模型（{models.length}）：{modelSourceTag(d?.modelsSource)}</div>
+                  <div style={{ color: "var(--text-subtle,#666)", fontSize: 11, marginBottom: 3 }}>{ti("mw.tx.190", { n: models.length })}{modelSourceTag(d?.modelsSource)}</div>
                   {renderModelPills(pid, models, d?.modelsSource, d?.related)}
                 </div>
               ) : null}
@@ -2421,19 +2421,19 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         {/* ── G3：API Key 型内置 provider（auth.json key 托管）——凭据管理段（docs/aiti-model-wizard-settings-takeover-plan.md）── */}
         <div style={{ marginTop: 14, borderTop: "1px solid var(--border,#eee)", paddingTop: 10 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-            <span className="amw-section" style={{ margin: 0, flex: 1 }}>{"API Key 型提供商（" + ((akList && akList.length) || 0) + "）—— key 存 auth.json（pi 托管）"}</span>
-            <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} onClick={loadSubs}>刷新列表</button>
+            <span className="amw-section" style={{ margin: 0, flex: 1 }}>{ti("mw.a.310") + ((akList && akList.length) || 0) + ti("mw.a.311")}</span>
+            <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} onClick={loadSubs}>{ti("mw.tx.56")}</button>
           </div>
-          <div className="amw-note">pi 内置 provider（openai / anthropic / google 等）的 API key 管理入口：保存后模型清单由 pi 内置目录自动加载，与订阅登录型并列；已配置的在左树/选择器直接可见。</div>
-          {!akList ? <div className="amw-note">加载中…</div>
-            : !akList.length ? <div className="amw-note">没有 apiKey 型内置 provider（本机 pi 版本未声明，或全部已由自定义 provider 覆盖）。</div>
+          <div className="amw-note">{ti("mw.tx.61")}</div>
+          {!akList ? <div className="amw-note">{ti("mw.tx.6")}</div>
+            : !akList.length ? <div className="amw-note">{ti("mw.tx.62")}</div>
             : akList.map((pr: any) => (
               <div key={pr.id} className="amw-card" style={{ marginBottom: 6 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <ProviderAvatar id={pr.id} name={pr.displayName || pr.id} size={24} radius={7} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 650, fontSize: 12.5 }}>{pr.displayName || pr.id}</div>
-                    <div style={{ color: "var(--text-subtle,#666)", fontSize: 10.5 }}>{(pr.modelCount === 1 ? "1 个模型" : (pr.modelCount || 0) + " 个模型") + (pr.supportsOAuth ? " · 也可订阅登录" : "")}</div>
+                    <div style={{ color: "var(--text-subtle,#666)", fontSize: 10.5 }}>{(pr.modelCount === 1 ? ti("mw.a.312") : (pr.modelCount || 0) + ti("mw.a.198")) + (pr.supportsOAuth ? ti("mw.a.313") : "")}</div>
                   </div>
                 </div>
                 {apiKeyRow(pr.id, pr.displayName || pr.id, !!pr.configured, true)}
@@ -2457,64 +2457,64 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     const msrc = (d?.models && d.models.length) ? (d.modelsSource || "catalog") : "catalog";
     return (
       <div>
-        <div className="amw-section">订阅登录型 · 无需 API token</div>
-        <div className="amw-note">订阅制提供商：点「登录」获取凭据（自动存入 auth.json 并刷新，无需手动保存）。仅限本人账号自用，禁止共享/转售。</div>
+        <div className="amw-section">{ti("mw.tx.63")}</div>
+        <div className="amw-note">{ti("mw.tx.64")}</div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
           <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff" }} onClick={() => startOauthLogin(pid)} disabled={working}>
-            🔐 登录 {p.name || pid}
+            {ti("mw.tx.191", { name: p.name || pid })}
           </button>
-          {working ? <button className="amw-btn" onClick={stopOauthLogin}>取消</button> : null}
-          <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} onClick={() => checkOauthStatus([pid])}>{info ? "刷新信息" : "刷新状态"}</button>
+          {working ? <button className="amw-btn" onClick={stopOauthLogin}>{ti("mw.tx.12")}</button> : null}
+          <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} onClick={() => checkOauthStatus([pid])}>{info ? ti("mw.a.314") : ti("mw.a.315")}</button>
           {info?.loggedIn || (p as any).loggedIn ? (
             <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11, color: "#dc2626" }} disabled={logoutBusy === pid}
-              title="登出：清除该 provider 的登录凭据（auth.json），其全部模型立即不可用"
+              title={ti("mw.a.316")}
               onClick={() => void doOauthLogout(pid, p.name || pid)}>
-              {logoutBusy === pid ? "登出中…" : "登出"}
+              {logoutBusy === pid ? ti("mw.a.305") : ti("mw.a.121")}
             </button>
           ) : null}
-          {info ? (info.loggedIn ? <span className="amw-note is-ok">已登录</span> : <span className="amw-note is-warn">未登录</span>) : null}
+          {info ? (info.loggedIn ? <span className="amw-note is-ok">{ti("mw.tx.58")}</span> : <span className="amw-note is-warn">{ti("mw.tx.65")}</span>) : null}
         </div>
         {info?.loggedIn ? (
           <div className="amw-note is-ok" style={{display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center"}}>
             {info.account?.name ? <span>👤 {info.account.name}{info.account.plan ? " · " + info.account.plan : ""}</span> : null}
             {info.account?.email ? <span>{info.account.email}</span> : null}
-            {cr ? <span><b>{cr.remaining}</b> / {cr.total} {cr.unit}{cr.used != null ? "（已用 " + cr.used + "）" : ""}{cr.expiresAt ? " · 到期 " + new Date(cr.expiresAt).toLocaleDateString() : ""}</span> : null}
-            {info?.addOn ? <span title="额外购买的加量包">加量包 <b>{info.addOn.remaining}</b> / {info.addOn.total} {info.addOn.unit}{info.addOn.used != null ? "（已用 " + info.addOn.used + "）" : ""}</span> : null}
-            {info?.packages?.length ? <span title="专属资源包（选定系列模型时优先抵扣）">🎁 {info.packages.map((p: any) => p.name + " " + p.remaining + "/" + p.total).join(" · ")}</span> : null}
-            {cr?.exceeded ? <span style={{ color: "#dc2626", fontWeight: 700 }}>额度已用完</span> : null}
+            {cr ? <span><b>{cr.remaining}</b> / {cr.total} {cr.unit}{cr.used != null ? ti("mw.a.308") + cr.used + "）" : ""}{cr.expiresAt ? ti("mw.a.306") + new Date(cr.expiresAt).toLocaleDateString() : ""}</span> : null}
+            {info?.addOn ? <span title={ti("mw.a.307")}>{ti("mw.tx.66")} <b>{info.addOn.remaining}</b> / {info.addOn.total} {info.addOn.unit}{info.addOn.used != null ? ti("mw.a.308") + info.addOn.used + "）" : ""}</span> : null}
+            {info?.packages?.length ? <span title={ti("mw.a.309")}>🎁 {info.packages.map((p: any) => p.name + " " + p.remaining + "/" + p.total).join(" · ")}</span> : null}
+            {cr?.exceeded ? <span style={{ color: "#dc2626", fontWeight: 700 }}>{ti("mw.tx.59")}</span> : null}
           </div>
         ) : null}
-        {info?.loggedIn && !info.credits && !info.quotaError ? <div className="amw-note">该账号无 credits 信息（Free 账号或接口不可用）</div> : null}
-        {info?.quotaError ? <div className="amw-note is-warn">credits 查询失败：{info.quotaError}</div> : null}
+        {info?.loggedIn && !info.credits && !info.quotaError ? <div className="amw-note">{ti("mw.tx.67")}</div> : null}
+        {info?.quotaError ? <div className="amw-note is-warn">{ti("mw.tx.192")}{info.quotaError}</div> : null}
         {info?.loggedIn && models.length ? (
           <div style={{ marginBottom: 6 }}>
-            <div className="amw-section" style={{margin: "0 0 4px"}}>可用模型（{models.length} 个，选择器里直接选）{modelSourceTag(msrc)}</div>
+            <div className="amw-section" style={{margin: "0 0 4px"}}>{ti("mw.tx.193", { n: models.length })}{modelSourceTag(msrc)}</div>
             {renderModelPills(pid, models, msrc, d?.related)}
           </div>
         ) : null}
-        {ls.phase === "connecting" ? <div className="amw-note">连接登录服务…</div> : null}
+        {ls.phase === "connecting" ? <div className="amw-note">{ti("mw.tx.68")}</div> : null}
         {ls.phase === "progress" ? <div className="amw-note">{ls.message}</div> : null}
         {ls.phase === "auth" ? (
           <div className="amw-note">
-            已打开授权页：<a href={LINK(ls.url)} target="_blank" rel="noreferrer" className="amw-link">{ls.url}</a><br />
-            登录完成后浏览器会跳到一个打不开的 localhost 地址——把那个完整地址粘贴到这里提交：
+            {ti("mw.tx.194")}<a href={LINK(ls.url)} target="_blank" rel="noreferrer" className="amw-link">{ls.url}</a><br />
+            {ti("mw.tx.195")}
             <OauthCodeInput onSubmit={(v) => submitOauthCode(pid, ls.token, v)} placeholder="http://localhost:…/callback?code=…" />
           </div>
         ) : null}
         {ls.phase === "device_code" ? (
           <div className="amw-note">
-            打开授权页并输入码 <b>{ls.userCode}</b>：<a href={LINK(ls.verificationUri)} target="_blank" rel="noreferrer" className="amw-link">{ls.verificationUri}</a>
+            {ti("mw.tx.196", { code: ls.userCode })} <b>{ls.userCode}</b>：<a href={LINK(ls.verificationUri)} target="_blank" rel="noreferrer" className="amw-link">{ls.verificationUri}</a>
           </div>
         ) : null}
         {ls.phase === "prompt" ? (
           <div className="amw-note">
             {ls.message}
-            <OauthCodeInput onSubmit={(v) => submitOauthCode(pid, ls.token, v)} placeholder={ls.placeholder || "留空直接提交 = 浏览器登录"} allowEmpty />
+            <OauthCodeInput onSubmit={(v) => submitOauthCode(pid, ls.token, v)} placeholder={ls.placeholder || ti("mw.a.317")} allowEmpty />
           </div>
         ) : null}
         {ls.phase === "select" ? (
           <div className="amw-note">
-            {ls.message || "请选择："}
+            {ls.message || ti("mw.a.318")}
             <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
               {(ls.options || []).map((o: any) => (
                 <button key={o.id} className="amw-btn" style={{ textAlign: "left", padding: "7px 10px" }} onClick={() => submitOauthCode(pid, ls.token, o.id)}>{o.label || o.id}</button>
@@ -2522,7 +2522,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             </div>
           </div>
         ) : null}
-        {ls.phase === "success" ? <div className="amw-note is-ok">登录成功！上方已显示账号与可用模型。</div> : null}
+        {ls.phase === "success" ? <div className="amw-note is-ok">{ti("mw.tx.69")}</div> : null}
         {ls.phase === "error" ? <div className="amw-note is-err">❌ {ls.message}</div> : null}
       </div>
     );
@@ -2536,11 +2536,11 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     if (p.native) {
       return (
         <div>
-          <div className="amw-section" style={{ margin: "12px 0 6px" }}>{"🔑 " + (p.name || p.id) + "（pi 内置 · 托管凭据）"}</div>
-          <div className="amw-note">key 保存进 auth.json（pi 托管，同订阅登录型位置）；模型清单由 pi 内置目录自动加载，无需手选。需要自定义 baseUrl / 多 key 轮转请改用「🛠 自定义端点」。</div>
+          <div className="amw-section" style={{ margin: "12px 0 6px" }}>{"🔑 " + (p.name || p.id) + ti("mw.a.319")}</div>
+          <div className="amw-note">{ti("mw.tx.70")}</div>
           {apiKeyRow(p.id, p.name || p.id, false)}
           <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid var(--border,#eee)" }}>
-            <span style={{ fontSize: 11, color: "var(--text-subtle,#666)" }}>保存后回「模型列表」即可看到该 provider 与其全部模型。</span>
+            <span style={{ fontSize: 11, color: "var(--text-subtle,#666)" }}>{ti("mw.tx.71")}</span>
           </div>
         </div>
       );
@@ -2549,82 +2549,82 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     <div>
       {p.id === "custom" ? (
         <>
-          <div className="amw-section" style={{ margin: "12px 0 6px" }}>连接配置（自定义端点）</div>
+          <div className="amw-section" style={{ margin: "12px 0 6px" }}>{ti("mw.tx.72")}</div>
           <label style={{ fontSize: 11, color: "var(--text-subtle,#666)", display: "block", marginBottom: 3 }}>Base URL</label>
           <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
             <input className="amw-input" style={{ flex: 1, fontFamily: "ui-monospace,monospace" }} placeholder="https://api.example.com/v1" value={p.baseUrl || ""}
               onChange={(e) => setSel((prev: any) => ({ ...(prev || {}), baseUrl: e.target.value }))} />
             <button className="amw-btn" style={{ flexShrink: 0 }} disabled={!p.baseUrl?.trim() || customDetecting}
-              title="用当前地址 + token/请求头重新探测 api 类型与真实地址（漏 /v1 /v2 也能补）" onClick={detectCustom}>{customDetecting ? "探测中…" : "探测"}</button>
+              title={ti("mw.a.320")} onClick={detectCustom}>{customDetecting ? ti("mw.a.126") : ti("mw.a.321")}</button>
           </div>
-          <label style={{ fontSize: 11, color: "var(--text-subtle,#666)", display: "block", marginBottom: 3 }}>API 类型</label>
+          <label style={{ fontSize: 11, color: "var(--text-subtle,#666)", display: "block", marginBottom: 3 }}>{ti("mw.tx.46")}</label>
           <select className="amw-input" style={{ width: "100%", marginBottom: 8 }} value={p.apiType || "openai-completions"}
             onChange={(e) => setSel((prev: any) => ({ ...(prev || {}), apiType: e.target.value }))}>
             {["openai-completions", "anthropic-messages", "openai-responses", "google-generative-ai"].map((o) => <option key={o} value={o}>{o}</option>)}
           </select>
           {p.apiType === "anthropic-messages" && /\/v1\/?$/i.test(String(p.baseUrl || "")) ? (
-            <div className="amw-note is-warn" style={{ marginBottom: 6 }} title="pi 的 Anthropic 请求 = baseUrl + /v1/messages；base 带 /v1 会变成 /v1/v1/messages（404）。建议去掉尾部 /v1。">Anthropic 的 Base URL 不要带尾部 /v1（运行时会在其后拼 /v1/messages）</div>
+            <div className="amw-note is-warn" style={{ marginBottom: 6 }} title={ti("mw.a.322")}>{ti("mw.tx.73")}</div>
           ) : null}
-          <div className="amw-section" style={{ margin: "0 0 6px" }}>请求头（可选）</div>
-          <HeaderRowsEditor rows={provHeaders} hint="仅本 provider 的请求携带（如 User-Agent / x-opencode-session）；空行忽略"
+          <div className="amw-section" style={{ margin: "0 0 6px" }}>{ti("mw.tx.74")}</div>
+          <HeaderRowsEditor rows={provHeaders} hint={ti("mw.a.323")}
             onChange={(rows) => { setProvHeaders(rows); setHeadersTouched(true); }} />
           {customDetect ? <div style={{ marginTop: 8 }}>{renderDetectCard(customDetect, applyCustomDetect)}</div> : null}
           <div style={{ borderBottom: "1px solid var(--border,#eee)", margin: "12px 0 2px" }} />
         </>
       ) : null}
-      <StepHead n={1} title="提供商名称" hint="写入 models.json 的标识 · 自动生成可改" />
-      <input className="amw-input" style={{width: "100%", height: 32, fontWeight: 600}} value={provName || genName(p.baseUrl) || "custom"} onChange={(e) => { setProvName(e.target.value); setProvNameTouched(true); }} placeholder="provider 名（用于 models.json 标识）" />
+      <StepHead n={1} title={ti("mw.a.324")} hint={ti("mw.a.325")} />
+      <input className="amw-input" style={{width: "100%", height: 32, fontWeight: 600}} value={provName || genName(p.baseUrl) || "custom"} onChange={(e) => { setProvName(e.target.value); setProvNameTouched(true); }} placeholder={ti("mw.a.326")} />
 
-      <StepHead n={2} title="凭据与连接测试"
-        hint="支持字面量（sk-…）· 环境变量名 · !命令"
-        right={testRes ? <span style={{ fontSize: 11, fontWeight: 700, color: testRes.pass ? "#16a34a" : "#dc2626", whiteSpace: "nowrap" }}>{testRes.pass ? "已连通" : "未通过"}</span> : null} />
+      <StepHead n={2} title={ti("mw.a.327")}
+        hint={ti("mw.a.328")}
+        right={testRes ? <span style={{ fontSize: 11, fontWeight: 700, color: testRes.pass ? "#16a34a" : "#dc2626", whiteSpace: "nowrap" }}>{testRes.pass ? ti("mw.a.329") : ti("mw.a.330")}</span> : null} />
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <input className="amw-input" style={{flex: 1, height: 32, fontFamily: "ui-monospace,monospace"}} type="password" placeholder="粘贴 API token —— 仅用于测试/保存，不回显" value={token} onChange={(e) => setToken(e.target.value)} />
-        <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff", height: 32, flexShrink: 0 }} title="顶部 token + 下方多 key 行一起逐个串行测，每把单独出结果"
+        <input className="amw-input" style={{flex: 1, height: 32, fontFamily: "ui-monospace,monospace"}} type="password" placeholder={ti("mw.a.331")} value={token} onChange={(e) => setToken(e.target.value)} />
+        <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff", height: 32, flexShrink: 0 }} title={ti("mw.a.332")}
           onClick={() => doTestCreds(p.baseUrl, p.apiType, hdrs)} disabled={testing || (!token.trim() && !validKeyRows.length)}>
-          {testing ? "测试中…" : (<><Ic size={13} paths={ICONS.search} />测试连接</>)}
+          {testing ? ti("mw.a.76") : (<><Ic size={13} paths={ICONS.search} />{ti("mw.tx.75")}</>)}
         </button>
       </div>
-      <div style={{ color: "var(--text-subtle,#999)", fontSize: 10.5, marginTop: 4 }}>环境变量名（如 OPENROUTER_KEY）或 <code className="amw-mono">!命令</code>（取 stdout）：保存时原样写入 models.json 由 pi 解析</div>
+      <div style={{ color: "var(--text-subtle,#999)", fontSize: 10.5, marginTop: 4 }}>{ti("mw.tx.76")} <code className="amw-mono">{ti("mw.tx.48")}</code>{ti("mw.tx.77")}</div>
 
       {/* ── 多 Key 轮转：产品亮点，常驻卡片展示（不再藏进折叠区）── */}
       <div style={{ marginTop: 12, border: "1px solid rgba(99,102,241,.45)", borderRadius: 10, background: "rgba(99,102,241,.05)", padding: "10px 12px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontWeight: 700, fontSize: 12.5, color: "#4f46e5" }}><Ic size={14} paths={ICONS.key} />多 Key 自动轮转</span>
-          <span style={{ padding: "1px 8px", borderRadius: 999, background: "#4f46e5", color: "#fff", fontSize: 9.5, fontWeight: 700 }}>亮点</span>
-          {validKeyRows.length ? <span style={{ padding: "1px 8px", borderRadius: 999, background: "rgba(79,70,229,.14)", color: "#4f46e5", fontSize: 10.5, fontWeight: 700 }}>{validKeyRows.length + " 把"}</span> : null}
-          <span style={{ fontSize: 10.5, color: "var(--text-subtle,#777)", flex: 1, minWidth: 180 }}>多把 key 分摊限流、用尽自动切换 · 每把可设 rpm 上限 + 等间距间隔（留空=auto · 0=突发 · 数字=毫秒）</span>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontWeight: 700, fontSize: 12.5, color: "#4f46e5" }}><Ic size={14} paths={ICONS.key} />{ti("mw.tx.78")}</span>
+          <span style={{ padding: "1px 8px", borderRadius: 999, background: "#4f46e5", color: "#fff", fontSize: 9.5, fontWeight: 700 }}>{ti("mw.tx.79")}</span>
+          {validKeyRows.length ? <span style={{ padding: "1px 8px", borderRadius: 999, background: "rgba(79,70,229,.14)", color: "#4f46e5", fontSize: 10.5, fontWeight: 700 }}>{validKeyRows.length + ti("mw.a.190")}</span> : null}
+          <span style={{ fontSize: 10.5, color: "var(--text-subtle,#777)", flex: 1, minWidth: 180 }}>{ti("mw.tx.80")}</span>
         </div>
         <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
           {keyRows.map((r, i) => (
             <div key={i} style={{ display: "flex", gap: 4, alignItems: "center" }}>
-              <input className="amw-input" style={{width: 64, fontFamily: "ui-monospace,monospace"}} placeholder="名" value={r.name} onChange={(e) => setKeyRows((prev) => prev.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} />
+              <input className="amw-input" style={{width: 64, fontFamily: "ui-monospace,monospace"}} placeholder={ti("mw.a.6")} value={r.name} onChange={(e) => setKeyRows((prev) => prev.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} />
               <input className="amw-input" style={{flex: 1, fontFamily: "ui-monospace,monospace"}} type="password" placeholder="API key（sk-…）" value={r.key} onChange={(e) => setKeyRows((prev) => prev.map((x, j) => j === i ? { ...x, key: e.target.value } : x))} />
-              <input className="amw-input" style={{width: 56}} type="number" min={1} placeholder="rpm" title="每分钟请求上限（可选）" value={r.rpm || ""} onChange={(e) => setKeyRows((prev) => prev.map((x, j) => j === i ? { ...x, rpm: e.target.value } : x))} />
-              <input className="amw-input" style={{width: 72}} placeholder="间隔ms·0=突发" title="等间距节流（默认匀速）三种填法：留空 = auto（按 rpm 折算 60000÷rpm，rpm30→每2s）；0 = 关闭匀速（突发滑窗）；数字 = 固定间隔毫秒。与 rpm 取最大等待" value={r.minIntervalMs ?? ""} onChange={(e) => setKeyRows((prev) => prev.map((x, j) => j === i ? { ...x, minIntervalMs: e.target.value } : x))} />
-              <button className="amw-btn" style={{ padding: "2px 8px" }} title="删除此 key" onClick={() => setKeyRows((prev) => prev.filter((_x, j) => j !== i))}>✕</button>
+              <input className="amw-input" style={{width: 56}} type="number" min={1} placeholder="rpm" title={ti("mw.a.239")} value={r.rpm || ""} onChange={(e) => setKeyRows((prev) => prev.map((x, j) => j === i ? { ...x, rpm: e.target.value } : x))} />
+              <input className="amw-input" style={{width: 72}} placeholder={ti("mw.a.240")} title={ti("mw.a.333")} value={r.minIntervalMs ?? ""} onChange={(e) => setKeyRows((prev) => prev.map((x, j) => j === i ? { ...x, minIntervalMs: e.target.value } : x))} />
+              <button className="amw-btn" style={{ padding: "2px 8px" }} title={ti("mw.a.334")} onClick={() => setKeyRows((prev) => prev.filter((_x, j) => j !== i))}>✕</button>
             </div>
           ))}
-          <button className="amw-btn" style={{ padding: "3px 12px", fontSize: 11, alignSelf: "flex-start" }} onClick={() => setKeyRows((prev) => [...prev, { name: "key-" + (prev.length + 1), key: "", rpm: "", minIntervalMs: "" }])}>＋ 添加一把 key</button>
+          <button className="amw-btn" style={{ padding: "3px 12px", fontSize: 11, alignSelf: "flex-start" }} onClick={() => setKeyRows((prev) => [...prev, { name: "key-" + (prev.length + 1), key: "", rpm: "", minIntervalMs: "" }])}>{ti("mw.tx.81")}</button>
         </div>
       </div>
       {testBadge(testRes)}
 
-      <StepHead n={3} title="选择模型" hint={known.length ? "勾选要启用的模型 · 👁 可看参数详情" : undefined}
+      <StepHead n={3} title={ti("mw.a.335")} hint={known.length ? ti("mw.a.336") : undefined}
         right={<>
-          <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff", padding: "3px 10px", fontSize: 11 }} title="用已填凭据（token + 多 key 行）逐把拉厂商 /models 实时列表，任一把成功即用（目录旧也能补全）" disabled={discBusy || (!token.trim() && !validKeyRows.length)} onClick={() => doDiscoverCreds(p.baseUrl, p.apiType, hdrs)}>
-            {discBusy ? "拉取中…" : (<><Ic size={11} paths={ICONS.refresh} />刷新模型</>)}
+          <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff", padding: "3px 10px", fontSize: 11 }} title={ti("mw.a.337")} disabled={discBusy || (!token.trim() && !validKeyRows.length)} onClick={() => doDiscoverCreds(p.baseUrl, p.apiType, hdrs)}>
+            {discBusy ? ti("mw.a.338") : (<><Ic size={11} paths={ICONS.refresh} />{ti("mw.tx.82")}</>)}
           </button>
-          {known.length ? <span style={{ fontSize: 11, color: "var(--text-subtle,#666)", whiteSpace: "nowrap" }}>{"已选 " + checked.length + " / " + known.length}</span> : null}
+          {known.length ? <span style={{ fontSize: 11, color: "var(--text-subtle,#666)", whiteSpace: "nowrap" }}>{ti("mw.a.339") + checked.length + " / " + known.length}</span> : null}
         </>} />
       {known.length ? (
         <div>
           <div style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center", flexWrap: "wrap" }}>
-            <input className="amw-input" style={{flex: 1, minWidth: 180}} placeholder="搜索过滤模型（如 glm / flash / free…）" value={modelFilter} onChange={(e) => setModelFilter(e.target.value)} />
-            <button className="amw-btn" style={{ padding: "3px 11px" }} onClick={() => setChecked([...new Set([...checked, ...filteredModels()])])}>全选</button>
-            <button className="amw-btn" style={{ padding: "3px 11px" }} onClick={() => setChecked((prev) => [...prev.filter((id) => !filteredModels().includes(id)), ...filteredModels().filter((id) => !prev.includes(id))])}>反选</button>
-            <button className="amw-btn" style={{ padding: "3px 11px" }} onClick={() => setChecked((prev) => prev.filter((id) => !filteredModels().includes(id)))}>清空</button>
-            {modelFilter.trim() ? <span style={{ color: "var(--text-subtle,#666)", fontSize: 11 }}>{"筛中 " + filteredModels().length + " / " + known.length}</span> : null}
+            <input className="amw-input" style={{flex: 1, minWidth: 180}} placeholder={ti("mw.a.340")} value={modelFilter} onChange={(e) => setModelFilter(e.target.value)} />
+            <button className="amw-btn" style={{ padding: "3px 11px" }} onClick={() => setChecked([...new Set([...checked, ...filteredModels()])])}>{ti("mw.tx.39")}</button>
+            <button className="amw-btn" style={{ padding: "3px 11px" }} onClick={() => setChecked((prev) => [...prev.filter((id) => !filteredModels().includes(id)), ...filteredModels().filter((id) => !prev.includes(id))])}>{ti("mw.tx.40")}</button>
+            <button className="amw-btn" style={{ padding: "3px 11px" }} onClick={() => setChecked((prev) => prev.filter((id) => !filteredModels().includes(id)))}>{ti("mw.tx.41")}</button>
+            {modelFilter.trim() ? <span style={{ color: "var(--text-subtle,#666)", fontSize: 11 }}>{ti("mw.a.341") + filteredModels().length + " / " + known.length}</span> : null}
           </div>
           {discMsg ? <div className={"amw-note " + (discMsg.startsWith("✅") ? "is-ok" : "is-err")} style={{ marginBottom: 6 }}>{discMsg}</div> : null}
           <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 8, maxHeight: 220, overflow: "auto", padding: 2 }}>
@@ -2634,29 +2634,29 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                 onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border,#e0e0e0)"; }}>
                 <input type="checkbox" checked={checked.includes(id)} onChange={() => toggleModel(id)} style={{ margin: 0 }} />
                 <span style={{ fontFamily: "ui-monospace,monospace", fontSize: 11 }}>{id}</span>
-                <EyeBtn title={"查看 " + id + " 参数（窗口/能力/价格，目录反填；未收录按同 id 跨网关互证）"} onClick={() => viewModelParams(sel.id || p.name || "custom", id)} />
+                <EyeBtn title={ti("mw.a.260") + id + ti("mw.a.342")} onClick={() => viewModelParams(sel.id || p.name || "custom", id)} />
               </label>
             ))}
           </div>
         </div>
-      ) : <div className="amw-note">暂无已知模型 —— 填好 token 点「测试连接」或「刷新模型」自动拉取 /models 列表（目录列表可能过时，以实时拉取为准）</div>}
+      ) : <div className="amw-note">{ti("mw.tx.83")}</div>}
       <div style={{ display: "flex", gap: 6, marginBottom: 2, alignItems: "center" }}>
-        <input className="amw-input" style={{flex: 1}} placeholder="手动补充模型 id（逗号分隔，如 deepseek-chat,deepseek-reasoner）" value={manual} onChange={(e) => setManual(e.target.value)} />
-        <button className="amw-btn" onClick={addManual}>＋ 添加</button>
+        <input className="amw-input" style={{flex: 1}} placeholder={ti("mw.a.343")} value={manual} onChange={(e) => setManual(e.target.value)} />
+        <button className="amw-btn" onClick={addManual}>{ti("mw.tx.36")}</button>
       </div>
 
       {/* 底部操作条：提示居左，主按钮右对齐加大（符合习惯的确认位置） */}
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 16, paddingTop: 12, borderTop: "1px solid var(--border,#eee)" }}>
         <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: "var(--text-subtle,#666)", lineHeight: 1.5 }}>
-          {checked.length ? "已选 " + checked.length + " 个模型" : "先在 ③ 勾选模型"}
-          {validKeyRows.length ? " · 多 key " + validKeyRows.length + " 把" : ""}
-          {!token && !validKeyRows.length ? " · ⚠️ 未填凭据（同名校已存 key 会保留）" : ""}
-          <br />保存后刷新页面模型即生效
+          {checked.length ? ti("mw.a.339") + checked.length + ti("mw.a.198") : ti("mw.a.344")}
+          {validKeyRows.length ? ti("mw.a.345") + validKeyRows.length + ti("mw.a.190") : ""}
+          {!token && !validKeyRows.length ? ti("mw.a.346") : ""}
+          <br />{ti("mw.tx.197")}
         </span>
         <button className="amw-btn is-ok" style={{ height: 36, padding: "0 20px", fontSize: 13.5, fontWeight: 700, flexShrink: 0 }}
           onClick={() => { setSaveForce(false); setSaveDlg({ name: (provName || genName(p.baseUrl) || "custom"), baseUrl: p.baseUrl, api: p.apiType, modelCount: checked.length }); }}
           disabled={saving || !checked.length}>
-          {saving ? "保存中…" : checked.length ? "保存 " + checked.length + " 个模型" : "保存到配置"}
+          {saving ? ti("mw.a.55") : checked.length ? ti("mw.a.347") + checked.length + ti("mw.a.198") : ti("mw.a.348")}
         </button>
       </div>
       {savedMsg ? <div className={"amw-note " + (savedMsg.startsWith("✅") ? "is-ok" : "is-err")} style={{ marginTop: 8 }}>{savedMsg}</div> : null}
@@ -2668,8 +2668,8 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   // ── P2-A 脱敏导出/导入（G6）：导出白名单字段永无明文 key；导入差异预览 → /save-batch（undo 一步回整批）──
   const doExport = useCallback(async () => {
     try {
-      const d = await (await api("/export")).json();
-      if (!d || !d.ok) { setToast({ msg: "导出失败：" + ((d && d.error) || "?"), ok: false }); setTimeout(() => setToast(null), 4000); return; }
+      const d = srvFix(await (await api("/export")).json());
+      if (!d || !d.ok) { setToast({ msg: ti("mw.a.349") + ((d && d.error) || "?"), ok: false }); setTimeout(() => setToast(null), 4000); return; }
       const blob = new Blob([JSON.stringify(d, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -2678,24 +2678,24 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 0);
       const cnt = Object.keys(d.providers || {}).length;
-      setToast({ msg: "已导出 " + cnt + " 个 provider（无明文 key）" + (Array.isArray(d.skippedCombos) && d.skippedCombos.length ? " · 聚合组 " + d.skippedCombos.length + " 个未含" : ""), ok: true });
+      setToast({ msg: ti("mw.a.350") + cnt + ti("mw.a.351") + (Array.isArray(d.skippedCombos) && d.skippedCombos.length ? ti("mw.a.352") + d.skippedCombos.length + ti("mw.a.353") : ""), ok: true });
       setTimeout(() => setToast(null), 4000);
     } catch (e: any) {
-      setToast({ msg: "导出失败：" + (e.message || e), ok: false });
+      setToast({ msg: ti("mw.a.349") + (e.message || e), ok: false });
       setTimeout(() => setToast(null), 4000);
     }
   }, []);
   const doImportParse = useCallback(async (text: string) => {
     let parsed: any;
-    try { parsed = JSON.parse(text); } catch (e: any) { setToast({ msg: "JSON 解析失败：" + (e.message || e), ok: false }); setTimeout(() => setToast(null), 4000); return; }
+    try { parsed = JSON.parse(text); } catch (e: any) { setToast({ msg: ti("mw.a.354") + (e.message || e), ok: false }); setTimeout(() => setToast(null), 4000); return; }
     const providers = parsed && parsed.providers && typeof parsed.providers === "object" ? parsed.providers : parsed;
     setImpDlg((prev: any) => ({ ...(prev || {}), phase: "preview", text, rows: null, applying: false }));
     try {
-      const d = await (await api("/import", { method: "POST", ...jsonBody({ providers, apply: false }) })).json();
-      if (!d || !d.ok) { setToast({ msg: "预览失败：" + ((d && d.error) || "?"), ok: false }); setTimeout(() => setToast(null), 4000); setImpDlg(null); return; }
+      const d = srvFix(await (await api("/import", { method: "POST", ...jsonBody({ providers, apply: false }) })).json());
+      if (!d || !d.ok) { setToast({ msg: ti("mw.a.355") + ((d && d.error) || "?"), ok: false }); setTimeout(() => setToast(null), 4000); setImpDlg(null); return; }
       setImpDlg((prev: any) => ({ ...(prev || {}), phase: "preview", rows: d.rows || [], errors: d.errors || [], conflictCount: d.conflictCount || 0 }));
     } catch (e: any) {
-      setToast({ msg: "预览失败：" + (e.message || e), ok: false }); setTimeout(() => setToast(null), 4000); setImpDlg(null);
+      setToast({ msg: ti("mw.a.355") + (e.message || e), ok: false }); setTimeout(() => setToast(null), 4000); setImpDlg(null);
     }
   }, []);
   const doImportApply = useCallback(async () => {
@@ -2704,34 +2704,34 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     try { parsed = JSON.parse((impDlg && impDlg.text) || ""); } catch { setImpDlg(null); return; }
     const providers = parsed && parsed.providers && typeof parsed.providers === "object" ? parsed.providers : parsed;
     try {
-      const d = await (await api("/import", { method: "POST", ...jsonBody({ providers, apply: true }) })).json();
+      const d = srvFix(await (await api("/import", { method: "POST", ...jsonBody({ providers, apply: true }) })).json());
       setImpDlg(null);
       if (d && d.ok) {
         const okN = (d.results || []).filter((x: any) => x.ok).length;
-        setToast({ msg: "已导入 " + okN + " 个 provider（/undo 可一步回整批）", ok: true });
+        setToast({ msg: ti("mw.a.356") + okN + ti("mw.a.357"), ok: true });
         setTimeout(() => setToast(null), 4500);
         loadStatus();
       } else {
-        setToast({ msg: "导入失败：" + ((d && d.error) || "?"), ok: false });
+        setToast({ msg: ti("mw.a.358") + ((d && d.error) || "?"), ok: false });
         setTimeout(() => setToast(null), 4500);
       }
     } catch (e: any) {
       setImpDlg(null);
-      setToast({ msg: "导入失败：" + (e.message || e), ok: false });
+      setToast({ msg: ti("mw.a.358") + (e.message || e), ok: false });
       setTimeout(() => setToast(null), 4500);
     }
   }, [impDlg]);
   const renderImportDlg = () => {
     const rows: any[] = impDlg?.rows || [];
     const kindColor: any = { new: "#16a34a", same: "#b45309", conflict: "#dc2626" };
-    const kindLabel: any = { new: "新增", same: "覆盖", conflict: "冲突" };
+    const kindLabel: any = { new: ti("mw.a.359"), same: ti("mw.a.360"), conflict: ti("mw.a.361") };
     return (
       <div className="amw-overlay" onClick={(e) => { if (e.target === e.currentTarget) setImpDlg(null); }}>
         <div {...{ "data-ext-float": "1", "data-ext-float-key": "aiti-model-wizard:import-dialog", "data-ext-float-w": 560, "data-ext-float-autoh": "1" }} onClick={(e) => e.stopPropagation()} className="amw-float-panel" style={{ width: "min(560px, 100%)", padding: 14 }}>
-          <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}><Ic size={14} paths={ICONS.file} />⇪ 导入 provider 配置</div>
+          <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}><Ic size={14} paths={ICONS.file} />{ti("mw.tx.84")}</div>
           {impDlg.phase === "paste" ? (
             <>
-              <div className="amw-note" style={{ marginBottom: 6 }}>粘贴导出的 JSON（⇩ 导出文件；无明文 key——导入后现有 key 保留，缺 key 的新 provider 落禁用态需补 key）。也可选本地文件：</div>
+              <div className="amw-note" style={{ marginBottom: 6 }}>{ti("mw.tx.85")}</div>
               <input type="file" accept=".json,application/json" style={{ fontSize: 11, marginBottom: 6 }}
                 onChange={async (e) => {
                   const f = e.target.files && e.target.files[0];
@@ -2748,14 +2748,14 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                 onChange={(e) => setImpDlg((prev: any) => ({ ...(prev || { phase: "paste" }), phase: "paste", text: e.target.value }))}
               />
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 }}>
-                <button className="amw-btn" onClick={() => setImpDlg(null)}>取消</button>
-                <button className="amw-btn is-ok" disabled={!(impDlg.text || "").trim()} onClick={() => void doImportParse(impDlg.text)}>解析预览</button>
+                <button className="amw-btn" onClick={() => setImpDlg(null)}>{ti("mw.tx.12")}</button>
+                <button className="amw-btn is-ok" disabled={!(impDlg.text || "").trim()} onClick={() => void doImportParse(impDlg.text)}>{ti("mw.tx.86")}</button>
               </div>
             </>
           ) : (
             <>
               <div className="amw-note" style={{ marginBottom: 6 }}>
-                {"差异预览：" + rows.length + " 条（新增 " + rows.filter((r) => r.kind === "new").length + " · 覆盖 " + rows.filter((r) => r.kind === "same").length + " · 冲突 " + (impDlg.conflictCount || 0) + "）。确认后走批量保存，/undo 可一步回整批。"}
+                {ti("mw.a.362") + rows.length + ti("mw.a.363") + rows.filter((r) => r.kind === "new").length + ti("mw.a.364") + rows.filter((r) => r.kind === "same").length + ti("mw.a.365") + (impDlg.conflictCount || 0) + ti("mw.a.366")}
               </div>
               <div style={{ maxHeight: 260, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 6 }}>
                 {rows.map((r) => (
@@ -2763,17 +2763,17 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                     <span style={{ flexShrink: 0, padding: "1px 7px", borderRadius: 8, color: "#fff", background: kindColor[r.kind], fontSize: 10 }}>{kindLabel[r.kind]}</span>
                     <span style={{ fontWeight: 600, minWidth: 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</span>
                     <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-subtle,#666)" }}>
-                      {r.kind === "conflict" && r.reason ? r.reason : r.modelsExisting + " → " + r.modelsIncoming + " 模型"}
+                      {r.kind === "conflict" && r.reason ? r.reason : r.modelsExisting + " → " + r.modelsIncoming + ti("mw.a.207")}
                     </span>
-                    {r.keepKey ? <span style={{ flexShrink: 0, fontSize: 10, color: "#16a34a" }}>保留现有 key</span> : null}
+                    {r.keepKey ? <span style={{ flexShrink: 0, fontSize: 10, color: "#16a34a" }}>{ti("mw.tx.87")}</span> : null}
                   </div>
                 ))}
-                {!rows.length ? <div style={{ padding: 10, fontSize: 11, color: "var(--text-subtle,#666)" }}>无可导入条目</div> : null}
+                {!rows.length ? <div style={{ padding: 10, fontSize: 11, color: "var(--text-subtle,#666)" }}>{ti("mw.tx.88")}</div> : null}
               </div>
               {(impDlg.errors || []).length ? <div className="amw-note is-warn" style={{ marginTop: 6, fontSize: 11 }}>{impDlg.errors.join("；")}</div> : null}
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 }}>
-                <button className="amw-btn" onClick={() => setImpDlg((prev: any) => ({ ...(prev || {}), phase: "paste" }))} disabled={impDlg.applying}>返回修改</button>
-                <button className="amw-btn is-ok" disabled={impDlg.applying || !rows.length} onClick={() => void doImportApply()}>{impDlg.applying ? "导入中…" : "确认导入（" + rows.length + " 条）"}</button>
+                <button className="amw-btn" onClick={() => setImpDlg((prev: any) => ({ ...(prev || {}), phase: "paste" }))} disabled={impDlg.applying}>{ti("mw.tx.89")}</button>
+                <button className="amw-btn is-ok" disabled={impDlg.applying || !rows.length} onClick={() => void doImportApply()}>{impDlg.applying ? ti("mw.a.367") : ti("mw.a.368") + rows.length + ti("mw.a.369")}</button>
               </div>
             </>
           )}
@@ -2793,34 +2793,34 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     return (
     <div className="amw-overlay" onClick={(e) => { if (e.target === e.currentTarget) setSaveDlg(null); }}>
       <div {...SAVE_FLOAT_PROPS} onClick={(e) => e.stopPropagation()} className="amw-float-panel" style={{ width: "min(440px, 100%)", padding: 14 }}>
-        <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}><Ic size={14} paths={ICONS.tag} />确认保存 —— 提供商名称</div>
-        <label style={{ fontSize: 11, color: "var(--text-subtle,#666)", display: "block", marginBottom: 3 }}>名称（自动生成，可修改；用于 models.json 标识）</label>
+        <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}><Ic size={14} paths={ICONS.tag} />{ti("mw.tx.90")}</div>
+        <label style={{ fontSize: 11, color: "var(--text-subtle,#666)", display: "block", marginBottom: 3 }}>{ti("mw.tx.91")}</label>
         <input className="amw-input" style={{width: "100%", marginBottom: 8, fontWeight: 600}} value={saveDlg.name} onChange={(e) => setSaveDlg((prev: any) => ({ ...prev, name: e.target.value }))} />
         <div className="amw-mono" style={{ fontSize: 11, color: "var(--text-subtle,#666)", marginBottom: 4, wordBreak: "break-all" }}>{"baseUrl: " + saveDlg.baseUrl}</div>
-        <div style={{ fontSize: 11, color: "var(--text-subtle,#666)", marginBottom: 8 }}>{"api: " + saveDlg.api + " · 模型 " + saveDlg.modelCount + " 个" + (token ? " · 已填 token" : validKeyRowsDlg.length ? " · 多 key " + validKeyRowsDlg.length + " 把（随保存写入）" : " · ⚠️ 未填凭据（同名校已存 key 会保留）")}</div>
+        <div style={{ fontSize: 11, color: "var(--text-subtle,#666)", marginBottom: 8 }}>{"api: " + saveDlg.api + ti("mw.a.370") + saveDlg.modelCount + ti("mw.a.9") + (token ? ti("mw.a.371") : validKeyRowsDlg.length ? ti("mw.a.345") + validKeyRowsDlg.length + ti("mw.a.372") : ti("mw.a.346"))}</div>
         {ltPass ? (
-          <div style={{ ...barStyle, background: "rgba(22,163,74,.12)", color: "#16a34a" }}>✅ 最近测试通过{lt.latencyMs != null ? "（" + lt.latencyMs + "ms）" : ""}——可保存</div>
+          <div style={{ ...barStyle, background: "rgba(22,163,74,.12)", color: "#16a34a" }}>{ti("mw.tx.198")}{lt.latencyMs != null ? " (" + lt.latencyMs + "ms)" : ""} — safe to save</div>
         ) : ltFail ? (
           <div style={{ ...barStyle, background: "rgba(220,38,38,.12)", color: "#dc2626" }}>
-            <span style={{ minWidth: 0, flex: "1 1 auto", overflow: "hidden", textOverflow: "ellipsis" }}>{"最近测试失败：" + String(lt.detail || "").slice(0, 80)}</span>
+            <span style={{ minWidth: 0, flex: "1 1 auto", overflow: "hidden", textOverflow: "ellipsis" }}>{ti("mw.a.373") + String(lt.detail || "").slice(0, 80)}</span>
             <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer", flexShrink: 0, color: "var(--text,#333)" }}>
               <input type="checkbox" checked={saveForce} onChange={(e) => setSaveForce(e.target.checked)} />
-              仍要保存（禁用态）
+              {ti("mw.a.375")}
             </label>
           </div>
         ) : (
           <div style={{ ...barStyle, background: "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)", color: "#b45309" }}>
-            <span style={{ flex: "1 1 auto" }}>尚未测试——保存后立即生效，建议先测一次</span>
+            <span style={{ flex: "1 1 auto" }}>{ti("mw.tx.92")}</span>
             <button
               className="amw-btn"
               style={{ flexShrink: 0, padding: "3px 10px" }}
               disabled={testing}
               onClick={async () => { await doTest(saveDlg.baseUrl, saveDlg.api, token || undefined, null); await loadLastTest(); }}
-            >{testing ? "测试中…" : "先测试"}</button>
+            >{testing ? ti("mw.a.76") : ti("mw.a.374")}</button>
           </div>
         )}
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <button className="amw-btn" onClick={() => { setSaveForce(false); setSaveDlg(null); }} disabled={saving}>取消</button>
+          <button className="amw-btn" onClick={() => { setSaveForce(false); setSaveDlg(null); }} disabled={saving}>{ti("mw.tx.12")}</button>
           <button
             className="amw-btn is-ok"
             disabled={saving || !saveDlg.name.trim() || !checked.length || (ltFail && !saveForce)}
@@ -2830,7 +2830,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
               setSaveForce(false); setSaveDlg(null);
               doSave(nm, saveDlg.baseUrl, saveDlg.api, token, !token, force ? false : undefined);
             }}
-          >{saving ? "保存中…" : ltFail && saveForce ? "仍要保存（禁用态）" : "确认保存"}</button>
+          >{saving ? ti("mw.a.55") : ltFail && saveForce ? ti("mw.a.375") : ti("mw.a.376")}</button>
         </div>
       </div>
     </div>
@@ -2843,11 +2843,11 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     const rows: any[] = [];
     if (cd.brands && cd.brands.length) {
       for (const b of cd.brands) {
-        if (b.provider) rows.push({ text: (<><Ic size={11} paths={ICONS.tag} />{" 品牌：" + [b.provider.cnName, b.provider.name].filter(Boolean).join(" / ")}</>), src: b.source === "openapi" ? "OpenAPI 声明" : "模型前缀", strong: true });
-        else if (b.source === "openapi" && b.title) rows.push({ text: (<><Ic size={11} paths={ICONS.file} />{" OpenAPI: " + b.title}</>), src: "未匹配目录", strong: false });
+        if (b.provider) rows.push({ text: (<><Ic size={11} paths={ICONS.tag} />{ti("mw.a.377") + [b.provider.cnName, b.provider.name].filter(Boolean).join(" / ")}</>), src: b.source === "openapi" ? ti("mw.a.378") : ti("mw.a.379"), strong: true });
+        else if (b.source === "openapi" && b.title) rows.push({ text: (<><Ic size={11} paths={ICONS.file} />{" OpenAPI: " + b.title}</>), src: ti("mw.a.380"), strong: false });
       }
     }
-    if (!rows.length && cd.providerGuess) rows.push({ text: (<><Ic size={11} paths={ICONS.tag} />{" " + (cd.providerGuess.confident ? "品牌：" : "疑似：") + [cd.providerGuess.cnName, cd.providerGuess.name].filter(Boolean).join(" / ")}</>), src: cd.providerGuess.confident ? "地址匹配" : "同域名（可能是其它套餐）", strong: cd.providerGuess.confident });
+    if (!rows.length && cd.providerGuess) rows.push({ text: (<><Ic size={11} paths={ICONS.tag} />{" " + (cd.providerGuess.confident ? ti("mw.a.381") : ti("mw.a.382")) + [cd.providerGuess.cnName, cd.providerGuess.name].filter(Boolean).join(" / ")}</>), src: cd.providerGuess.confident ? ti("mw.a.383") : ti("mw.a.384"), strong: cd.providerGuess.confident });
     return (
       <div>
         <div className="amw-note is-ok">{"✅ " + cd.hint}</div>
@@ -2857,28 +2857,28 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             <span style={{ color: "var(--text-subtle,#666)", fontSize: 11 }}>{r.src}</span>
           </div>
         ))}
-        {cd.models && cd.models.length ? <div style={{ marginBottom: 4, fontSize: 12, color: "#16a34a" }}>{"模型列表已拉取（" + cd.modelCount + " 个）—— 在下方「③ 选择模型」勾选即可"}</div>
-          : cd.modelsError ? <div style={{ marginBottom: 4, fontSize: 11, color: "var(--text-subtle,#666)" }}>{"模型列表：" + cd.modelsError.slice(0, 90)}</div> : null}
+        {cd.models && cd.models.length ? <div style={{ marginBottom: 4, fontSize: 12, color: "#16a34a" }}>{ti("mw.a.385") + cd.modelCount + ti("mw.a.386")}</div>
+          : cd.modelsError ? <div style={{ marginBottom: 4, fontSize: 11, color: "var(--text-subtle,#666)" }}>{ti("mw.a.387") + cd.modelsError.slice(0, 90)}</div> : null}
         <div style={{ display: "flex", gap: 6, margin: "8px 0", alignItems: "center", flexWrap: "wrap" }}>
           {cd.baseUrl ? <span className="amw-mono" style={{ padding: "3px 8px", borderRadius: 8, background: "var(--bg-subtle,#f5f5f5)" }}>{"api=" + cd.api + " · baseUrl=" + cd.baseUrl}</span> : null}
-          {cd.api ? <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff" }} onClick={onApply}>用此端点继续</button> : null}
+          {cd.api ? <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff" }} onClick={onApply}>{ti("mw.tx.93")}</button> : null}
         </div>
       </div>
     );
   };
 
   const submitOauthCode = useCallback(async (providerId: string, token2: string, code: string) => {
-    setOauthLs({ phase: "progress", message: "验证中…" });
+    setOauthLs({ phase: "progress", message: ti("mw.a.388") });
     try {
       const res = await fetch(apiUrl("/api/auth/login/" + encodeURIComponent(providerId)), {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: token2, code }),
       });
       if (!res.ok) {
-        const d = await res.json().catch(() => ({} as any));
-        setOauthLs({ phase: "error", message: d.error ?? "服务端错误 " + res.status });
+        const d = srvFix(await res.json()).catch(() => ({} as any));
+        setOauthLs({ phase: "error", message: d.error ?? ti("mw.a.389") + res.status });
       }
     } catch (e) {
-      setOauthLs({ phase: "error", message: e instanceof Error ? e.message : "网络错误" });
+      setOauthLs({ phase: "error", message: e instanceof Error ? e.message : ti("mw.a.390") });
     }
   }, []);
 
@@ -2889,18 +2889,18 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
 
   // 浏览目录列表：按首字符分组（models.dev 无更细分类）→ 展开显示基本信息 + 已知模型清单；点「＋ 添加」/模型进入接入流程
   const renderBrowse = () => {
-    if (!cat || !Array.isArray(cat.providers)) return <div className="amw-note">目录未加载 —— 点「↻ 刷新目录」拉取 models.dev 后重试</div>;
+    if (!cat || !Array.isArray(cat.providers)) return <div className="amw-note">{ti("mw.tx.94")}</div>;
     const groups = browseGroups() as any;
     const total = groups.reduce((s: number, [, ps]: any) => s + ps.length, 0);
-    if (!total) return <div className="amw-note">无匹配提供商</div>;
+    if (!total) return <div className="amw-note">{ti("mw.tx.95")}</div>;
     return (
       <div style={{ marginBottom: 4 }}>
-        <div className="amw-section" style={{marginTop: 4}}>{"全部目录（" + cat.count + " 家 · models.dev 无细分分类，按首字符分组；点「＋ 添加」直接接入）"}</div>
-        <input className="amw-input" style={{width: "100%", marginBottom: 8}} placeholder="过滤提供商（中英文名 / ID / API 地址）" value={browseQ} onChange={(e) => setBrowseQ(e.target.value)} />
+        <div className="amw-section" style={{marginTop: 4}}>{ti("mw.a.391") + cat.count + ti("mw.a.392")}</div>
+        <input className="amw-input" style={{width: "100%", marginBottom: 8}} placeholder={ti("mw.a.393")} value={browseQ} onChange={(e) => setBrowseQ(e.target.value)} />
         <div style={{ maxHeight: "min(52dvh, 460px)", overflow: "auto", border: "1px solid var(--border,#eee)", borderRadius: 10, padding: "0 8px" }}>
           {groups.map(([g, provs]: any) => (
             <div key={g}>
-              <div style={{ position: "sticky", top: 0, zIndex: 1, background: "var(--bg,#fff)", fontWeight: 700, fontSize: 12, color: "var(--text-subtle,#666)", padding: "6px 2px", borderBottom: "1px solid var(--border,#eee)" }}>{g}<span style={{ fontWeight: 400, marginLeft: 6, fontSize: 10.5 }}>{provs.length + " 家"}</span></div>
+              <div style={{ position: "sticky", top: 0, zIndex: 1, background: "var(--bg,#fff)", fontWeight: 700, fontSize: 12, color: "var(--text-subtle,#666)", padding: "6px 2px", borderBottom: "1px solid var(--border,#eee)" }}>{g}<span style={{ fontWeight: 400, marginLeft: 6, fontSize: 10.5 }}>{provs.length + ti("mw.a.394")}</span></div>
               {provs.map((p: any) => {
                 const open = !!browseOpen[p.id];
                 const det = browseDetail[p.id] || {};
@@ -2908,7 +2908,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                 return (
                   <div key={p.id} style={{ borderBottom: "1px solid var(--border,#f4f4f4)" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 2px", cursor: "pointer", borderRadius: 8 }}
-                      onClick={() => browseToggleProv(p.id)} title={open ? "收起" : "展开基本信息与模型列表"}
+                      onClick={() => browseToggleProv(p.id)} title={open ? ti("mw.a.302") : ti("mw.a.395")}
                       onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-subtle,#f7f7fb)"; }}
                       onMouseLeave={(e) => { e.currentTarget.style.background = ""; }}>
                       <span style={{ width: 13, color: "var(--text-subtle,#999)", fontSize: 11, flexShrink: 0 }}>{open ? "▾" : "▸"}</span>
@@ -2916,29 +2916,29 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                           {[p.cnName, p.name].filter(Boolean).join(" / ") || p.id}
-                          {p.hasCn ? <span style={{ marginLeft: 6, padding: "0 6px", borderRadius: 8, background: "rgba(37,99,235,.1)", color: "var(--accent,#2563eb)", fontSize: 9 }}>国内</span> : null}
+                          {p.hasCn ? <span style={{ marginLeft: 6, padding: "0 6px", borderRadius: 8, background: "rgba(37,99,235,.1)", color: "var(--accent,#2563eb)", fontSize: 9 }}>{ti("mw.tx.96")}</span> : null}
                         </div>
                         <div className="amw-mono" style={{ fontSize: 10.5, color: "var(--text-subtle,#999)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {p.baseUrl || p.id}{det.models && det.models.length ? " · " + det.models.length + " 模型" : ""}
+                          {p.baseUrl || p.id}{det.models && det.models.length ? " · " + det.models.length + ti("mw.a.207") : ""}
                         </div>
                       </div>
-                      <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11, flexShrink: 0 }} onClick={(e) => { e.stopPropagation(); pickBrowse(p); }}>＋ 添加</button>
+                      <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11, flexShrink: 0 }} onClick={(e) => { e.stopPropagation(); pickBrowse(p); }}>{ti("mw.tx.36")}</button>
                     </div>
                     {open ? (
                       <div style={{ padding: "0 2px 8px 43px" }}>
-                        {det.loading ? <div style={{ color: "var(--text-subtle,#666)", fontSize: 11 }}>加载模型列表…</div>
+                        {det.loading ? <div style={{ color: "var(--text-subtle,#666)", fontSize: 11 }}>{ti("mw.tx.97")}</div>
                           : det.error ? <div className="amw-note is-err" style={{fontSize: 11}}>{"❌ " + det.error}</div> : null}
                         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", fontSize: 11, marginBottom: 3, alignItems: "center" }}>
                           {p.apiType ? <span className="amw-mono" style={{color: "var(--text-subtle,#666)"}}>{"api: " + p.apiType}</span> : null}
-                          {p.doc ? <a href={LINK(p.doc)} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid var(--border,#e0e0e0)", background: "var(--bg,#fff)", color: "var(--accent,#2563eb)", fontSize: 12, textDecoration: "none" }} title="打开官网/文档（新窗口）">官网/文档</a> : null}
-                          {p.signupUrl ? <a href={LINK(p.signupUrl)} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid color-mix(in srgb, var(--ok, #22c55e) 40%, transparent)", background: "color-mix(in srgb, var(--ok, #22c55e) 6%, transparent)", color: "#15803d", fontSize: 12, fontWeight: 600, textDecoration: "none" }} title="打开注册页（新窗口）">注册</a> : null}
-                          {p.tokenUrl ? <a href={LINK(p.tokenUrl)} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid rgba(99,102,241,.4)", background: "rgba(99,102,241,.06)", color: "#4f46e5", fontSize: 12, fontWeight: 600, textDecoration: "none" }} title="打开取 token 页（新窗口）">取 token</a> : null}
+                          {p.doc ? <a href={LINK(p.doc)} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid var(--border,#e0e0e0)", background: "var(--bg,#fff)", color: "var(--accent,#2563eb)", fontSize: 12, textDecoration: "none" }} title={ti("mw.a.396")}>{ti("mw.tx.98")}</a> : null}
+                          {p.signupUrl ? <a href={LINK(p.signupUrl)} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid color-mix(in srgb, var(--ok, #22c55e) 40%, transparent)", background: "color-mix(in srgb, var(--ok, #22c55e) 6%, transparent)", color: "#15803d", fontSize: 12, fontWeight: 600, textDecoration: "none" }} title={ti("mw.a.397")}>{ti("mw.tx.99")}</a> : null}
+                          {p.tokenUrl ? <a href={LINK(p.tokenUrl)} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid rgba(99,102,241,.4)", background: "rgba(99,102,241,.06)", color: "#4f46e5", fontSize: 12, fontWeight: 600, textDecoration: "none" }} title={ti("mw.a.398")}>{ti("mw.tx.100")}</a> : null}
                         </div>
                         {p.register ? <div style={{ fontSize: 11, color: "var(--text-subtle,#555)", margin: "2px 0" }}>{String(p.register).slice(0, 160)}</div> : null}
                         {det.models && det.models.length ? (
                           <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
                             {det.models.map((m: any, i: number) => (
-                              <span key={(m.id || "") + "#" + i} title={(m.name && m.name !== m.id ? m.name + " — " : "") + "点击选用该提供商接入"} onClick={() => pickBrowse(p)}
+                              <span key={(m.id || "") + "#" + i} title={(m.name && m.name !== m.id ? m.name + " — " : "") + ti("mw.a.399")} onClick={() => pickBrowse(p)}
                                 className="amw-mono" style={{ padding: "2px 8px", borderRadius: 8, border: "1px solid var(--border,#e5e5e5)", background: "var(--bg-subtle,#fafafa)", fontSize: 11, cursor: "pointer" }}
                                 onMouseEnter={(e) => { e.currentTarget.style.borderColor = "rgba(99,102,241,.5)"; }}
                                 onMouseLeave={(e) => { e.currentTarget.style.borderColor = ""; }}>
@@ -2946,7 +2946,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                               </span>
                             ))}
                           </div>
-                        ) : !det.loading && !det.error ? <div style={{ color: "var(--text-subtle,#999)", fontSize: 11 }}>（目录无已知模型——添加后可用「刷新模型」实时拉取 /models）</div> : null}
+                        ) : !det.loading && !det.error ? <div style={{ color: "var(--text-subtle,#999)", fontSize: 11 }}>{ti("mw.tx.101")}</div> : null}
                       </div>
                     ) : null}
                   </div>
@@ -2966,30 +2966,30 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         <div style={{ marginTop: 4 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 7, minWidth: 0 }}><ProviderAvatar id={sel.id} name={[sel.cnName, sel.name].filter(Boolean).join(" / ")} size={24} radius={8} /><span style={{ fontWeight: 700, fontSize: 14.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{[sel.cnName, sel.name].filter(Boolean).join(" / ")}</span></span>
-            <button className="amw-btn" style={{ flexShrink: 0 }} title="清空当前选择，重新搜索 / 换一家" onClick={resetSel}>更换</button>
+            <button className="amw-btn" style={{ flexShrink: 0 }} title={ti("mw.a.400")} onClick={resetSel}>{ti("mw.tx.102")}</button>
           </div>
           {providerInfo(sel)}
           {sel.authType === "oauth" ? oauthLoginPanel(sel) : credTestSave(sel)}
         </div>
       ) : (
         <div>
-          <StepHead n={1} title="搜索提供商" hint="中英文名 / 别名 / 模型 id；贴 API 地址自动反向匹配+探测（漏 /v1 /v2 也能补）" />
+          <StepHead n={1} title={ti("mw.a.401")} hint={ti("mw.a.402")} />
           <form style={{ display: "flex", gap: 8, marginBottom: 10 }} onSubmit={doSearch}>
-            <input className="amw-input" style={{flex: 1}} placeholder="DeepSeek / 智谱 GLM / qwen… 或贴 https://api.xxx.com/v1" value={q} onChange={(e) => { setQ(e.target.value); setSearchDetect(null); setReverseRes(null); }} />
-            <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff" }} disabled={searching}>{searching ? "搜…" : <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><Ic size={13} paths={ICONS.search} />搜索</span>}</button>
+            <input className="amw-input" style={{flex: 1}} placeholder={ti("mw.a.403")} value={q} onChange={(e) => { setQ(e.target.value); setSearchDetect(null); setReverseRes(null); }} />
+            <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff" }} disabled={searching}>{searching ? ti("mw.a.404") : <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><Ic size={13} paths={ICONS.search} />{ti("mw.tx.103")}</span>}</button>
             {/* 常驻「＋ 自定义」：不搜索也能直接进面板（2026-09-17 拍板） */}
-            <button type="button" className="amw-btn" style={{ flexShrink: 0 }} title="不搜索直接手工添加自定义端点（Base URL / API 类型 / 请求头）" onClick={startCustom}>＋ 自定义</button>
+            <button type="button" className="amw-btn" style={{ flexShrink: 0 }} title={ti("mw.a.405")} onClick={startCustom}>{ti("mw.tx.104")}</button>
           </form>
           {cat ? (
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", color: cat.cache && cat.cache.stale ? "#b45309" : "var(--text-subtle,#666)", fontSize: 11, marginBottom: 8 }}>
               {(() => { const c = cat.cache || {}; const hours = c.ageMs != null ? c.ageMs / 3600000 : null;
-                const ageTxt = hours == null ? "" : hours < 1 ? "刚刚更新" : hours < 48 ? Math.round(hours) + " 小时前" : Math.round(hours / 24) + " 天前";
+                const ageTxt = hours == null ? "" : hours < 1 ? ti("mw.a.406") : hours < 48 ? Math.round(hours) + ti("mw.a.407") : Math.round(hours / 24) + ti("mw.a.408");
                 return [
-                  <span key="t">{"目录 " + cat.count + " 家 · models.dev " + (c.from === "cache" ? (ageTxt ? ageTxt : "缓存") : c.from === "snapshot" ? "内嵌快照（旧，启动时自动拉新）" : c.from === "none" ? "未缓存" : c.from || "")
-                    + (c.stale && c.from !== "none" ? " · ⚠ 已超 TTL（保存未知模型时会自动强刷，或点右侧手动刷新）" : "")
-                    + (c.from === "none" ? "（搜索为空时点右侧按钮拉取）" : "")}</span>,
-                  <button key="btn" className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} disabled={catRefreshing} onClick={doRefreshCatalog} title="重新下载 models.dev 目录（官方 + Gitee 镜像竞速）">{catRefreshing ? "刷新中…" : "↻ 刷新目录"}</button>,
-                  <button key="browse" className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} onClick={() => setBrowse((v) => !v)} title="浏览目录全部提供商（按首字符分组展开，点添加直接接入）">{browse ? "▾ 收起目录" : "浏览目录"}</button>,
+                  <span key="t">{ti("mw.a.409") + cat.count + ti("mw.a.410") + (c.from === "cache" ? (ageTxt ? ageTxt : ti("mw.a.411")) : c.from === "snapshot" ? ti("mw.a.412") : c.from === "none" ? ti("mw.a.413") : c.from || "")
+                    + (c.stale && c.from !== "none" ? ti("mw.a.414") : "")
+                    + (c.from === "none" ? ti("mw.a.415") : "")}</span>,
+                  <button key="btn" className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} disabled={catRefreshing} onClick={doRefreshCatalog} title={ti("mw.a.416")}>{catRefreshing ? ti("mw.a.48") : ti("mw.a.417")}</button>,
+                  <button key="browse" className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} onClick={() => setBrowse((v) => !v)} title={ti("mw.a.418")}>{browse ? ti("mw.a.419") : ti("mw.a.420")}</button>,
                 ]; })()}
               {catMsg ? <span style={{ color: catMsg.startsWith("✅") ? "#15803d" : "#b91c1c" }}>{catMsg}</span> : null}
             </div>
@@ -2997,7 +2997,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           {/* 浏览目录开启 → 替换热门推荐区位置；关闭时未搜索才展示推荐卡片。 */}
           {!results && browse ? renderBrowse() : (!results && rec && rec.length ? (
             <div style={{ marginBottom: 4 }}>
-              <div className="amw-section" style={{marginTop: 4}}>热门提供商（点下方套餐直接接入；多形态选对应套餐）</div>
+              <div className="amw-section" style={{marginTop: 4}}>{ti("mw.tx.105")}</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(228px,1fr))", gap: 7 }}>
                 {rec.map((c: any) => {
                   const logo = (c.main.cnName || c.main.name || "?").trim().charAt(0).toUpperCase();
@@ -3012,11 +3012,11 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                           <div style={{ fontSize: 10, color: "var(--text-subtle,#999)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.main.name || ""}</div>
                         </div>
                       </div>
-                      <div style={{ fontSize: 10.5, color: "var(--text-subtle,#777)", margin: "0 0 5px", lineHeight: 1.4, height: 29, overflow: "hidden" }}>{(c.main.register || "点选下方套餐接入").slice(0, 110)}</div>
+                      <div style={{ fontSize: 10.5, color: "var(--text-subtle,#777)", margin: "0 0 5px", lineHeight: 1.4, height: 29, overflow: "hidden" }}>{(c.main.register || ti("mw.a.421")).slice(0, 110)}</div>
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
-                        {c.main.doc ? <a href={LINK(c.main.doc)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid var(--border,#e0e0e0)", background: "var(--bg,#fff)", color: "var(--accent,#2563eb)", fontSize: 12, textDecoration: "none" }} title={"打开官网/文档（新窗口）"}>官网</a> : null}
-                        {c.main.signupUrl ? <a href={LINK(c.main.signupUrl)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid color-mix(in srgb, var(--ok, #22c55e) 40%, transparent)", background: "color-mix(in srgb, var(--ok, #22c55e) 6%, transparent)", color: "#15803d", fontSize: 12, fontWeight: 600, textDecoration: "none" }} title={"打开注册页（新窗口）"}>注册</a> : null}
-                        {c.main.tokenUrl ? <a href={LINK(c.main.tokenUrl)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid rgba(99,102,241,.4)", background: "rgba(99,102,241,.06)", color: "#4f46e5", fontSize: 12, fontWeight: 600, textDecoration: "none" }} title={"打开取 token 页（新窗口）"}>取 token</a> : null}
+                        {c.main.doc ? <a href={LINK(c.main.doc)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid var(--border,#e0e0e0)", background: "var(--bg,#fff)", color: "var(--accent,#2563eb)", fontSize: 12, textDecoration: "none" }} title={ti("mw.a.396")}>{ti("mw.tx.106")}</a> : null}
+                        {c.main.signupUrl ? <a href={LINK(c.main.signupUrl)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid color-mix(in srgb, var(--ok, #22c55e) 40%, transparent)", background: "color-mix(in srgb, var(--ok, #22c55e) 6%, transparent)", color: "#15803d", fontSize: 12, fontWeight: 600, textDecoration: "none" }} title={ti("mw.a.397")}>{ti("mw.tx.99")}</a> : null}
+                        {c.main.tokenUrl ? <a href={LINK(c.main.tokenUrl)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid rgba(99,102,241,.4)", background: "rgba(99,102,241,.06)", color: "#4f46e5", fontSize: 12, fontWeight: 600, textDecoration: "none" }} title={ti("mw.a.398")}>{ti("mw.tx.100")}</a> : null}
                       </div>
                       <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
                         {c.plans.map((pl: any) => (
@@ -3026,7 +3026,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                             title={pl.provider.baseUrl + "（" + pl.provider.apiType + "）"} onClick={() => pickPlan(pl)}>{pl.label}</button>
                         ))}
                         {aff && aff[c.id] && aff[c.id].link ? (
-                          <a key={"aff-" + c.id} href={aff[c.id].link} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", padding: "3px 10px", fontSize: 11, fontWeight: 600, borderRadius: 7, background: "color-mix(in srgb, var(--ok, #22c55e) 8%, transparent)", border: "1px solid color-mix(in srgb, var(--ok, #22c55e) 35%, transparent)", color: "#15803d", textDecoration: "none" }} title={aff[c.id].note || "通过本链接注册，双方得免费额度（新窗口）"}>有礼</a>
+                          <a key={"aff-" + c.id} href={aff[c.id].link} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", padding: "3px 10px", fontSize: 11, fontWeight: 600, borderRadius: 7, background: "color-mix(in srgb, var(--ok, #22c55e) 8%, transparent)", border: "1px solid color-mix(in srgb, var(--ok, #22c55e) 35%, transparent)", color: "#15803d", textDecoration: "none" }} title={aff[c.id].note || ti("mw.a.422")}>{ti("mw.tx.107")}</a>
                         ) : null}
                       </div>
                     </div>
@@ -3036,14 +3036,14 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             </div>
           ) : null)}
           {!results ? null : results.length === 0
-            ? <div className="amw-note">目录未命中 —— 贴完整 API 地址会自动反向匹配+自动探测</div>
+            ? <div className="amw-note">{ti("mw.tx.108")}</div>
             : results.map((p: any) => (
               <div key={p.id} className={"amw-card" + (sel && sel.id === p.id ? " is-on" : "")} onClick={() => pickProvider(p)}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontWeight: 600 }}>{[p.cnName, p.name].filter(Boolean).join(" / ")}{p.hasCn ? <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 8, background: "rgba(37,99,235,.1)", color: "var(--accent,#2563eb)", fontSize: 10 }}>国内</span> : null}{p.native ? <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 8, background: "rgba(22,163,74,.12)", color: "#15803d", fontSize: 10 }}>pi 内置</span> : null}{p.matched && p.matched !== "text" ? <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 8, background: "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)", color: "#b45309", fontSize: 10 }}><Ic size={10} paths={ICONS.refresh} />{" 地址反向命中 " + p.reverseScore}</span> : null}</span>
+                  <span style={{ fontWeight: 600 }}>{[p.cnName, p.name].filter(Boolean).join(" / ")}{p.hasCn ? <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 8, background: "rgba(37,99,235,.1)", color: "var(--accent,#2563eb)", fontSize: 10 }}>{ti("mw.tx.96")}</span> : null}{p.native ? <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 8, background: "rgba(22,163,74,.12)", color: "#15803d", fontSize: 10 }}>{ti("mw.tx.109")}</span> : null}{p.matched && p.matched !== "text" ? <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 8, background: "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)", color: "#b45309", fontSize: 10 }}><Ic size={10} paths={ICONS.refresh} />{ti("mw.a.423") + p.reverseScore}</span> : null}</span>
                   <span className="amw-mono" style={{ color: "var(--text-subtle,#666)", fontSize: 11 }}>{p.matchedBaseUrl || p.baseUrl || ""}</span>
                 </div>
-                <div style={{ color: "var(--text-subtle,#555)", fontSize: 11, marginTop: 4, maxHeight: 30, overflow: "hidden" }}>{p.native ? "pi 内置 provider · " + p.modelCount + " 个模型 · 填 API Key 接入" : ([p.register || p.doc || ""].filter(Boolean)[0] || (p.models && p.models.length ? "已知模型 " + p.models.length + " 个" : "点击查看详情"))}</div>
+                <div style={{ color: "var(--text-subtle,#555)", fontSize: 11, marginTop: 4, maxHeight: 30, overflow: "hidden" }}>{p.native ? ti("mw.a.424") + p.modelCount + ti("mw.a.425") : ([p.register || p.doc || ""].filter(Boolean)[0] || (p.models && p.models.length ? ti("mw.a.426") + p.models.length + ti("mw.a.9") : ti("mw.a.427")))}</div>
               </div>
             ))}
           {searchDetect ? <div style={{ marginTop: 8 }}>{renderDetectCard(searchDetect, applySearchDetect)}</div> : null}
@@ -3051,10 +3051,10 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             <div style={{ marginTop: 8 }}>
               {reverseRes.candidates && reverseRes.candidates.length ? (
                 <div>
-                  <StepHead n={2} title="反向匹配候选" hint="目录 · 100=地址完全一致 · 30=同域名其它套餐/版本，以探测结果为准" />
+                  <StepHead n={2} title={ti("mw.a.428")} hint={ti("mw.a.429")} />
                   {reverseRes.candidates.map((cand: any) => (
                     <div key={cand.id} className={"amw-card" + (sel && sel.id === cand.id ? " is-on" : "")} onClick={() => { setSel({ ...cand, baseUrl: cand.matchedBaseUrl || cand.baseUrl }); setToken(""); setTestRes(null); setChecked([]); setManual(""); setKnown((cand.models || []).map((m: any) => m.id)); }}>
-                      <div style={{ fontWeight: 600 }}>{[cand.cnName, cand.name].filter(Boolean).join(" / ") + "（匹配度 " + cand.score + "）"}</div>
+                      <div style={{ fontWeight: 600 }}>{[cand.cnName, cand.name].filter(Boolean).join(" / ") + ti("mw.a.430") + cand.score + "）"}</div>
                       <div className="amw-mono" style={{ color: "var(--text-subtle,#666)", fontSize: 11 }}>{cand.matchedBaseUrl || cand.baseUrl}</div>
                     </div>
                   ))}
@@ -3063,10 +3063,10 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
               {reverseRes.detect ? <div style={{ marginTop: 6 }}>{renderDetectCard(reverseRes.detect, applyReverseDetect)}</div> : null}
               {!reverseRes.usedKey ? (
                 <div style={{ marginTop: 8, padding: 10, border: "1px dashed var(--border,#e0e0e0)", borderRadius: 8 }}>
-                  <div style={{ fontSize: 12, marginBottom: 6, color: "var(--text-subtle,#666)" }} title="无 key 探测只能判断 api 类型，真实版本路径（/v1 /v2 /v3）可能不准；key 只用于探测，不回传">无 key 仅判断 api 类型，填 key 精探更准</div>
+                  <div style={{ fontSize: 12, marginBottom: 6, color: "var(--text-subtle,#666)" }} title={ti("mw.a.431")}>{ti("mw.tx.110")}</div>
                   <div style={{ display: "flex", gap: 8 }}>
                     <input className="amw-input" style={{flex: 1, fontFamily: "ui-monospace,monospace"}} type="password" placeholder="API key / token" value={probeKey} onChange={(e) => setProbeKey(e.target.value)} />
-                    <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff" }} onClick={doReverseWithKey} disabled={reprobing || !probeKey.trim()}>{reprobing ? "精探中…" : "带 key 精探"}</button>
+                    <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff" }} onClick={doReverseWithKey} disabled={reprobing || !probeKey.trim()}>{reprobing ? ti("mw.a.432") : ti("mw.a.433")}</button>
                   </div>
                 </div>
               ) : null}
@@ -3074,13 +3074,13 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           ) : null}
           {/* 常驻自定义入口（最末）：有没有匹配到都在（2026-09-17 拍板「有没有匹配到都加」） */}
           <div className="amw-card" style={{ marginTop: 8, borderStyle: "dashed", display: "flex", alignItems: "center", gap: 10 }} onClick={startCustom}
-            title="不搜索也能直接进入自定义端点面板（Base URL / API 类型 / 请求头）">
+            title={ti("mw.a.434")}>
             <span style={{ width: 28, height: 28, borderRadius: 8, background: "var(--bg-subtle,#f5f5f5)", display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Ic size={14} paths={ICONS.plus} /></span>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 600 }}>自定义端点（手工配置）</div>
-              <div style={{ fontSize: 11, color: "var(--text-subtle,#666)" }}>{"目录没收录？贴过地址？都从这里进：手工填 Base URL / API 类型 / 请求头，无需目录匹配"}</div>
+              <div style={{ fontWeight: 600 }}>{ti("mw.tx.111")}</div>
+              <div style={{ fontSize: 11, color: "var(--text-subtle,#666)" }}>{ti("mw.a.435")}</div>
             </div>
-            <span className="amw-btn" style={{ flexShrink: 0 }}>进入</span>
+            <span className="amw-btn" style={{ flexShrink: 0 }}>{ti("mw.tx.112")}</span>
           </div>
         </div>
       )}
@@ -3121,36 +3121,36 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     <aside className="amw-sidebar">
       <div className="amw-sidebar-search">
         <div style={{ position: "relative" }}>
-          <input className="amw-input" style={{ width: "100%", paddingRight: 26 }} placeholder="搜索 provider / 模型 id…（多词空格分隔）"
+          <input className="amw-input" style={{ width: "100%", paddingRight: 26 }} placeholder={ti("mw.a.436")}
             value={treeQ} onChange={(e) => setTreeQ(e.target.value)} />
           {treeQ ? (
             <button className="amw-close" style={{ position: "absolute", right: 3, top: "50%", transform: "translateY(-50%)", width: 20, height: 20, fontSize: 13 }}
-              onClick={() => setTreeQ("")} aria-label="清除搜索" title="清除搜索">✕</button>
+              onClick={() => setTreeQ("")} aria-label={ti("mw.a.437")} title={ti("mw.a.437")}>✕</button>
           ) : null}
         </div>
         <button className="amw-btn" style={{ width: "100%", justifyContent: "center", marginTop: 6 }} disabled={!!(checkupSt && checkupSt.running)}
-          title="逐个已配置 provider 发一个真实探针（跳过聚合组/禁用/无凭据；结论留存，树上/详情显示延迟）"
+          title={ti("mw.a.438")}
           onClick={runCheckup}>
-          {(checkupSt && checkupSt.running) ? "体检中…" : "一键体检"}
+          {(checkupSt && checkupSt.running) ? ti("mw.a.439") : ti("mw.a.23")}
         </button>
       </div>
       <div className="amw-sidebar-list">
-        <div className="amw-group-label">{"已配置 · " + st.providers.length + (kws.length ? " · 过滤 " + provs.length + "/" + st.providers.length + " provider" : "")}</div>
+        <div className="amw-group-label">{ti("mw.a.440") + st.providers.length + (kws.length ? ti("mw.a.441") + provs.length + "/" + st.providers.length + " provider" : "")}</div>
         {checkAvail === false ? (
           <div style={{ padding: "0 8px 4px", fontSize: 11, color: "#d97706", lineHeight: 1.5, display: "flex", alignItems: "flex-start", gap: 4 }}>
-            <span>检查未启用——可用性/余额不可见。请在「扩展管理」启用 aiti-model-check 后刷新。</span>
+            <span>{ti("mw.tx.113")}</span>
           </div>
         ) : chk ? (
           <div style={{ padding: "0 8px 4px", fontSize: 11, color: "var(--text-dim,#9ca3af)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", whiteSpace: "nowrap" }}>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span className="amw-vdot" style={{ background: "#16a34a" }} />可用</span>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span className="amw-vdot" style={{ background: "var(--warn, #f59e0b)" }} />限流</span>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span className="amw-vdot" style={{ background: "var(--danger, #ef4444)" }} />异常/欠费</span>
-            <span title="运行期错误观测（带外）：代理真实流量里的非 2xx/3xx（429 限流/402 欠费/401 key 无效/5xx 等，带 key 归因），未探测也能看到">运行异常</span>
-            <span>无标 = 未测</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span className="amw-vdot" style={{ background: "#16a34a" }} />{ti("mw.a.66")}</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span className="amw-vdot" style={{ background: "var(--warn, #f59e0b)" }} />{ti("mw.a.103")}</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span className="amw-vdot" style={{ background: "var(--danger, #ef4444)" }} />{ti("mw.tx.114")}</span>
+            <span title={ti("mw.a.442")}>{ti("mw.tx.115")}</span>
+            <span>{ti("mw.tx.116")}</span>
           </div>
         ) : null}
         {!provs.length ? (
-          <div style={{ padding: "14px 8px", fontSize: 11, color: "var(--text-dim,#9ca3af)", textAlign: "center" }}>{"无匹配「" + treeQ.trim() + "」"}</div>
+          <div style={{ padding: "14px 8px", fontSize: 11, color: "var(--text-dim,#9ca3af)", textAlign: "center" }}>{ti("mw.a.443") + treeQ.trim() + "」"}</div>
         ) : provs.map((p: any) => {
           const allIds = (p.models || []).map((m: any) => (typeof m === "string" ? m : m.id));
           // provider 名命中 → 全量模型；否则只显示命中的模型
@@ -3167,11 +3167,11 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                 onClick={() => selectNode({ type: "provider", provider: p.provider })}>
                 <ProviderAvatar id={p.provider} name={p.provider} size={16} radius={5} />
                 <span className="amw-sb-text is-grow">{p.provider}</span>
-                {probeBusy[p.provider] ? <span style={{ fontSize: 11, color: "var(--warn, #f59e0b)", flexShrink: 0 }} title="探测中…">⏳</span>
+                {probeBusy[p.provider] ? <span style={{ fontSize: 11, color: "var(--warn, #f59e0b)", flexShrink: 0 }} title={ti("mw.a.126")}>⏳</span>
                   : agg && (agg.ok || agg.rl || agg.err) ? (
                   <span style={{ fontSize: 11, display: "inline-flex", gap: 3, flexShrink: 0 }}>
                     {agg.ok > 0 ? <span style={{ color: "#16a34a", fontWeight: 600 }}>{agg.ok}✓</span> : null}
-                    {agg.rl > 0 ? <span style={{ color: "var(--warn, #f59e0b)", fontWeight: 600 }}>{agg.rl}限</span> : null}
+                    {agg.rl > 0 ? <span style={{ color: "var(--warn, #f59e0b)", fontWeight: 600 }}>{agg.rl}{ti("mw.tx.199")}</span> : null}
                     {agg.err > 0 ? <span style={{ color: "var(--danger, #ef4444)", fontWeight: 600 }}>{agg.err}✗</span> : null}
                   </span>
                 ) : null}
@@ -3180,18 +3180,18 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                   // model-check 已有该 provider 探测聚合时让位（避免同屏两套 ✓/✗ 语义打架）。
                   const lt = lastTestMap[p.provider];
                   if (!lt || (agg && (agg.ok || agg.rl || agg.err))) return null;
-                  const age = lt.ts ? " · 测于 " + fmtTimeStr(lt.ts) : "";
-                  const okTxt = lt.rateLimited ? "429 限流（key/端点正确）" : "通过";
+                  const age = lt.ts ? ti("mw.a.444") + fmtTimeStr(lt.ts) : "";
+                  const okTxt = lt.rateLimited ? ti("mw.a.445") : ti("mw.a.446");
                   if (lt.pass && !lt.partial) {
                     return <span style={{ fontSize: 10, color: lt.rateLimited ? "#d97706" : "#16a34a", fontWeight: 600, flexShrink: 0, cursor: "default" }}
-                      title={"向导测试：" + okTxt + (lt.latencyMs != null ? " · " + fmtLat(lt.latencyMs) : "") + age + (lt.keyName ? " · key " + lt.keyName : "")}>
+                      title={ti("mw.a.447") + okTxt + (lt.latencyMs != null ? " · " + fmtLat(lt.latencyMs) : "") + age + (lt.keyName ? " · key " + lt.keyName : "")}>
                       {lt.rateLimited ? "🟡" : "✓"}{lt.latencyMs != null ? " " + fmtLat(lt.latencyMs) : ""}</span>;
                   }
                   return <span style={{ fontSize: 10, color: lt.partial ? "#d97706" : "#dc2626", fontWeight: 600, flexShrink: 0, cursor: "default" }}
-                    title={"向导测试：" + (lt.detail || (lt.partial ? "部分 key 失败" : "失败")) + age}>
+                    title={ti("mw.a.447") + (lt.detail || (lt.partial ? ti("mw.a.448") : ti("mw.a.449"))) + age}>
                     {lt.partial ? "🟡" : "✗"}</span>;
                 })()}
-                {bal && bal.exhausted ? <span className="amw-chip is-err" title={bal.text || "余额不足"}>💸</span> : null}
+                {bal && bal.exhausted ? <span className="amw-chip is-err" title={bal.text || ti("mw.a.450")}>💸</span> : null}
                 {(() => {
                   // 运行期错误观测（带外 · 代理真实流量非 2xx/3xx）：该 provider 组 24h 计数徽标（主导类别图标）
                   const rt = chk && chk.state && chk.state.runtimeErrors && chk.state.runtimeErrors.models;
@@ -3208,16 +3208,16 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                     title={rtTip({ count1h: c1h, count24h: c24, byStatus: null, lastAt, lastStatus })}>{info.icon}{c24}</span>;
                 })()}
                 {p.combo ? <span className="amw-tag is-combo">🧩</span> : null}
-                {p.enabled === false ? <span className="amw-tag" style={{ color: "#b45309", borderColor: "var(--warn, #f59e0b)", background: "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)" }} title="临时禁用中（配置未删除，点击详情页可重新启用）">禁用</span> : null}
+                {p.enabled === false ? <span className="amw-tag" style={{ color: "#b45309", borderColor: "var(--warn, #f59e0b)", background: "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)" }} title={ti("mw.a.451")}>{ti("mw.a.495")}</span> : null}
                 {(() => {
                   // 树上禁用 key 数徽标：不点详情也能看到有 key 处于禁用态
                   const dis = (p.keys || []).filter((k: any) => k && k.enabled === false).length;
                   if (!dis) return null;
                   return <span style={{ fontSize: 9, flexShrink: 0, color: "#b45309", border: "1px solid color-mix(in srgb, var(--warn, #f59e0b) 50%, transparent)", background: "color-mix(in srgb, var(--warn, #f59e0b) 12%, transparent)", borderRadius: 5, padding: "0 4px", cursor: "default" }}
-                    title={dis + " 把 key 临时禁用中（详情页「多 Key 轮转」可启用）"}>🔑⏸{dis}</span>;
+                    title={dis + ti("mw.a.452")}>🔑⏸{dis}</span>;
                 })()}
                 {p.authType === "oauth" ? <span className="amw-tag is-oauth">🔐</span> : null}
-                {p.runtime ? <span className="amw-tag is-ro">运行时</span> : null}
+                {p.runtime ? <span className="amw-tag is-ro">{ti("mw.tx.117")}</span> : null}
                 {ni && ni.count > 0 ? <span className="amw-tag is-new">{"+" + ni.count}</span> : null}
               </button>
               {ids.map((id: string) => {
@@ -3229,10 +3229,10 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                   <button key={id} className="amw-sb-item is-indent" aria-current={isModelSel ? "page" : undefined}
                     onClick={() => selectNode({ type: "model", provider: p.provider, id })}>
                     <span className="amw-sb-text is-grow" style={{ color: mEn ? "var(--text-muted)" : "#b45309", ...(mEn ? {} : { textDecoration: "line-through", opacity: 0.55 }) }}>{id}</span>
-                    {!mEn ? <span style={{ fontSize: 9, color: "#b45309", flexShrink: 0 }} title="临时禁用中（未删除，详情页可重新启用）">⏸</span> : null}
+                    {!mEn ? <span style={{ fontSize: 9, color: "#b45309", flexShrink: 0 }} title={ti("mw.a.453")}>⏸</span> : null}
                     {checkDot(p.provider, id)}
-                    {probe?.phase === "probing" ? <span style={{ fontSize: 9, color: "var(--warn, #f59e0b)", flexShrink: 0 }} title="实测最大输出中">⏳</span> : null}
-                    {probe?.phase === "done" && !probe.error ? <span style={{ fontSize: 9, color: "var(--ok, #10b981)", flexShrink: 0 }} title={probe.corrected ? "实测已校正 maxTokens" : "实测通过"}>{probe.corrected ? "↓" : "✓"}</span> : null}
+                    {probe?.phase === "probing" ? <span style={{ fontSize: 9, color: "var(--warn, #f59e0b)", flexShrink: 0 }} title={ti("mw.a.454")}>⏳</span> : null}
+                    {probe?.phase === "done" && !probe.error ? <span style={{ fontSize: 9, color: "var(--ok, #10b981)", flexShrink: 0 }} title={probe.corrected ? ti("mw.a.455") : ti("mw.a.456")}>{probe.corrected ? "↓" : "✓"}</span> : null}
                     {probe?.phase === "done" && probe.error ? <span style={{ fontSize: 9, color: "var(--danger, #ef4444)", flexShrink: 0 }} title={probe.error}>!</span> : null}
                   </button>
                 );
@@ -3250,14 +3250,14 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     if (!selNode || !p) {
       return (
         <div className="amw-detail" style={{ flex: 1, minWidth: 0 }}>
-          <div className="amw-empty">← 从左侧选择 provider / 模型查看与编辑详情</div>
+          <div className="amw-empty">{ti("mw.tx.118")}</div>
         </div>
       );
     }
     // 小屏钻取返回条（大屏无）
     const back = !small ? null : (
       <div className="amw-header" style={{ padding: "6px 10px" }}>
-        <button className="amw-btn" onClick={() => selectNode(selNode.type === "model" ? { type: "provider", provider: selNode.provider } : null)}>← 返回</button>
+        <button className="amw-btn" onClick={() => selectNode(selNode.type === "model" ? { type: "provider", provider: selNode.provider } : null)}>{ti("mw.tx.14")}</button>
         <span style={{ fontWeight: 650, fontSize: 13, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{selNode.type === "model" ? selNode.id : selNode.provider}</span>
       </div>
     );
@@ -3272,10 +3272,10 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           {back}
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderBottom: "1px solid var(--border,#eee)", flexShrink: 0 }}>
             <span className="amw-mono" style={{ fontWeight: 650, fontSize: 12.5 }}>{selNode.id}</span>
-            {probing ? <span style={{ fontSize: 11, color: "var(--warn, #f59e0b)" }}>探测中…</span>
-              : checkAvail === false ? <span style={{ fontSize: 11, color: "#d97706" }}>检查未启用</span>
-              : ck ? <span style={{ fontSize: 11, fontWeight: 600, color: ck.lastOk ? "#16a34a" : ck.rateLimited ? "var(--warn, #f59e0b)" : "var(--danger, #ef4444)" }}>{ck.lastOk ? "● 可用" : ck.rateLimited ? "● 限流" : "● 异常（可能欠费/失效）"}</span>
-              : <span style={{ fontSize: 11, color: "var(--text-dim,#999)" }}>未测</span>}
+            {probing ? <span style={{ fontSize: 11, color: "var(--warn, #f59e0b)" }}>{ti("mw.a.126")}</span>
+              : checkAvail === false ? <span style={{ fontSize: 11, color: "#d97706" }}>{ti("mw.tx.119")}</span>
+              : ck ? <span style={{ fontSize: 11, fontWeight: 600, color: ck.lastOk ? "#16a34a" : ck.rateLimited ? "var(--warn, #f59e0b)" : "var(--danger, #ef4444)" }}>{ck.lastOk ? ti("mw.a.457") : ck.rateLimited ? ti("mw.a.458") : ti("mw.a.459")}</span>
+              : <span style={{ fontSize: 11, color: "var(--text-dim,#999)" }}>{ti("mw.a.475")}</span>}
             {(() => {
               const rt = rtOf(selNode.provider, selNode.id);
               if (!rt || !rt.count24h) return null;
@@ -3284,13 +3284,13 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
               return (
                 <span style={{ fontSize: 10.5, fontWeight: 600, color: hot ? "#dc2626" : info.color, cursor: "default" }}
                   title={rtTip(rt)}>
-                  {info.icon + " 运行" + info.label + " ×" + rt.count24h + (hot ? "（1h×" + rt.count1h + "）" : "")}
+                  {info.icon + ti("mw.a.460") + info.label + " ×" + rt.count24h + (hot ? "（1h×" + rt.count1h + "）" : "")}
                 </span>
               );
  })()}
             <div style={{ flex: 1 }} />
-            <button className="amw-btn" style={{ padding: "3px 8px" }} disabled={checkAvail === false || probing} title={checkAvail === false ? "需先启用 aiti-model-check（扩展管理）" : "探测此模型可用性"} onClick={() => void runCheck(selNode.provider, selNode.id)}>
-              {probing ? "探测中…" : (<><Ic size={12} paths={ICONS.stethoscope} /> 重检</>)}
+            <button className="amw-btn" style={{ padding: "3px 8px" }} disabled={checkAvail === false || probing} title={checkAvail === false ? ti("mw.a.461") : ti("mw.a.462")} onClick={() => void runCheck(selNode.provider, selNode.id)}>
+              {probing ? ti("mw.a.126") : (<><Ic size={12} paths={ICONS.stethoscope} /> {ti("mw.tx.120")}</>)}
             </button>
           </div>
           <ParamPanel
@@ -3320,10 +3320,10 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     const agg = aggCheck(p.provider);
     const segs: any[] = [];
     if (agg) {
-      if (agg.ok) segs.push({ t: agg.ok + " 可用", c: "#16a34a" });
-      if (agg.rl) segs.push({ t: agg.rl + " 限流", c: "#dc2626" });
-      if (agg.err) segs.push({ t: agg.err + " 异常", c: "#d97706" });
-      if (agg.pend) segs.push({ t: agg.pend + " 待测试", c: "#9ca3af" });
+      if (agg.ok) segs.push({ t: agg.ok + ti("mw.a.275"), c: "#16a34a" });
+      if (agg.rl) segs.push({ t: agg.rl + ti("mw.a.463"), c: "#dc2626" });
+      if (agg.err) segs.push({ t: agg.err + ti("mw.a.464"), c: "#d97706" });
+      if (agg.pend) segs.push({ t: agg.pend + ti("mw.a.465"), c: "#9ca3af" });
     }
     // 运行期错误观测（带外 · 代理真实流量非 2xx/3xx）：与探测状态独立，临时故障可能尚未反映到探测
     {(() => {
@@ -3334,7 +3334,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         if (!k.startsWith(p.provider + "/") || !m.count24h) continue;
         n++; c1h += m.count1h || 0; c24 += m.count24h || 0;
       }
-      if (n) segs.push({ t: "⚡ " + n + " 模型运行异常 ×" + c24 + "/24h" + (c1h ? "（1h×" + c1h + "）" : ""), c: c1h ? "#dc2626" : "#d97706" });
+      if (n) segs.push({ t: "⚡ " + n + ti("mw.a.466") + c24 + "/24h" + (c1h ? "（1h×" + c1h + "）" : ""), c: c1h ? "#dc2626" : "#d97706" });
     })()}
     const ids = (p.models || []).map((m: any) => (typeof m === "string" ? m : m.id));
     return (
@@ -3346,21 +3346,21 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <span className="amw-detail-title">{p.provider}</span>
-                {p.combo ? <span className="amw-tag is-combo">模型聚合</span> : null}
-                {p.authType === "oauth" ? <span className="amw-tag is-oauth">订阅登录</span> : null}
-                {p.runtime ? <span className="amw-tag is-ro">运行时注册</span> : null}
+                {p.combo ? <span className="amw-tag is-combo">{ti("mw.a.596")}</span> : null}
+                {p.authType === "oauth" ? <span className="amw-tag is-oauth">{ti("mw.a.593")}</span> : null}
+                {p.runtime ? <span className="amw-tag is-ro">{ti("mw.tx.121")}</span> : null}
                 {ni && ni.count > 0 ? <span className="amw-tag is-new">{"+" + ni.count}</span> : null}
               </div>
               <div style={{ fontSize: 11, display: "flex", gap: 6, flexWrap: "wrap", marginTop: 2 }}>
-                {segs.length ? segs.map((s, i) => <span key={i} style={{ color: s.c, fontWeight: 600 }}>{(i ? " · " : "") + s.t}</span>) : checkAvail === false ? <span style={{ color: "#d97706" }}>检查未启用（启用 aiti-model-check 后显示可用性）</span> : <span style={{ color: "var(--text-subtle,#999)" }}>未检查</span>}
-                <span style={{ color: "var(--text-subtle,#999)" }}>{p.runtime ? ids.length + " 模型 · 扩展动态注册（只读）" : ids.length + " 模型 · " + (p.hasKey ? (p.keyCount > 1 ? p.keyCount + " keys" : "已配 key") : "无 key")}</span>
+                {segs.length ? segs.map((s, i) => <span key={i} style={{ color: s.c, fontWeight: 600 }}>{(i ? " · " : "") + s.t}</span>) : checkAvail === false ? <span style={{ color: "#d97706" }}>{ti("mw.tx.122")}</span> : <span style={{ color: "var(--text-subtle,#999)" }}>{ti("mw.tx.123")}</span>}
+                <span style={{ color: "var(--text-subtle,#999)" }}>{p.runtime ? ids.length + ti("mw.a.467") : ids.length + ti("mw.a.468") + (p.hasKey ? (p.keyCount > 1 ? p.keyCount + " keys" : ti("mw.a.469")) : ti("mw.a.470"))}</span>
                 {(() => {
                   // 禁用 key 计数徽标：禁用态只在「多 Key 轮转」折叠区可见，摘要层面
                   // 不提示的话"是否禁用"完全不可知（keys 由 /status 带出，maskKeyEntry 保留 enabled）
                   const dis = (p.keys || []).filter((k: any) => k && k.enabled === false).length;
                   if (!dis) return null;
                   return <span className="amw-tag" style={{ color: "#b45309", borderColor: "var(--warn, #f59e0b)", background: "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)" }}
-                    title={"有 " + dis + " 把 key 临时禁用中（不参与轮转，配置未删除）——展开下方「多 Key 轮转」可查看 / 一键启用"}>🔑⏸ {dis} 禁用</span>;
+                    title={ti("mw.a.471") + dis + ti("mw.a.472")}>{ti("mw.tx.200", { n: dis })}</span>;
                 })()}
                 {(() => {
                   // 健康条（P1-A/P1-B）：①向导测试留存结论 + 就地重测（服务端自动留存）
@@ -3379,7 +3379,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                   if (!hasAny) {
                     return (
                       <span style={{ width: "100%", display: "inline-flex", alignItems: "center", gap: 8, color: "var(--text-subtle,#999)", flexWrap: "wrap" }}>
-                        <span>尚未测试连接（点右侧「测试」验证 key/端点，结论将留存）</span>
+                        <span>{ti("mw.tx.124")}</span>
                       </span>
                     );
                   }
@@ -3388,30 +3388,30 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                       {/* ① 向导测试结论（留存）+ 重测 */}
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
                         <span style={{ color: !lt ? "var(--text-subtle,#999)" : lt.pass ? (lt.rateLimited ? "#d97706" : "#16a34a") : lt.partial ? "#d97706" : "#dc2626", fontWeight: 600 }}
-                          title={lt ? ("上次向导测试：" + (lt.detail || "") + (lt.ts ? " · 测于 " + fmtTimeStr(lt.ts) : "") + (lt.keyName ? " · key " + lt.keyName : "")) : "尚未用向导测过该 provider"}>
-                          {"🩺 " + (!lt ? "未测" : lt.pass && !lt.partial ? (lt.rateLimited ? "🟡 429 通过" : "通过") : lt.partial ? "🟡 部分 key 失败" : "失败") + (lt && lt.latencyMs != null ? " · " + fmtLat(lt.latencyMs) : "")}
+                          title={lt ? (ti("mw.a.473") + (lt.detail || "") + (lt.ts ? ti("mw.a.444") + fmtTimeStr(lt.ts) : "") + (lt.keyName ? " · key " + lt.keyName : "")) : ti("mw.a.474")}>
+                          {"🩺 " + (!lt ? ti("mw.a.475") : lt.pass && !lt.partial ? (lt.rateLimited ? ti("mw.a.476") : ti("mw.a.446")) : lt.partial ? ti("mw.a.477") : ti("mw.a.449")) + (lt && lt.latencyMs != null ? " · " + fmtLat(lt.latencyMs) : "")}
                         </span>
                         <button className="amw-btn" style={{ padding: "1px 8px", fontSize: 10.5 }} disabled={!!(qt && qt.busy)}
-                          title="用已存凭据发一个真实探针（多 key 逐把测）；结论自动留存并更新树上徽标"
-                          onClick={() => void runQuickTest(p)}>{qt && qt.busy ? "测试中…" : "重测"}</button>
+                          title={ti("mw.a.478")}
+                          onClick={() => void runQuickTest(p)}>{qt && qt.busy ? ti("mw.a.76") : ti("mw.a.479")}</button>
                       </span>
                       {/* ② 余额：provider-usage 优先；qt.res 测试反馈行内展示 */}
                       {us && us.phase === "ok" && us.entry && us.entry.status === "ready" && uText ? (
                         <span style={{ color: uBad ? "#dc2626" : "var(--text-subtle,#999)", fontWeight: uBad ? 600 : 400, cursor: "default" }}
-                          title={(us.entry.report && Array.isArray(us.entry.report.buckets) ? us.entry.report.buckets.map((b: any) => (b.label || b.id) + ": " + [b.used != null ? "已用 " + b.used : "", b.remaining != null ? "余 " + b.remaining : "", b.limit != null ? "限 " + b.limit : ""].filter(Boolean).join("/")).join("\n") : "")
-                            + (us.capturedAt ? "\n更新于 " + fmtTimeStr(us.capturedAt) + "（服务端缓存 5 分钟）" : "")}>
-                          {"💰 " + (uBad ? "额度受限：" : "余额：") + uText}
+                          title={(us.entry.report && Array.isArray(us.entry.report.buckets) ? us.entry.report.buckets.map((b: any) => (b.label || b.id) + ": " + [b.used != null ? ti("mw.a.480") + b.used : "", b.remaining != null ? ti("mw.a.481") + b.remaining : "", b.limit != null ? ti("mw.a.482") + b.limit : ""].filter(Boolean).join("/")).join("\n") : "")
+                            + (us.capturedAt ? ti("mw.a.483") + fmtTimeStr(us.capturedAt) + ti("mw.a.484") : "")}>
+                          {"💰 " + (uBad ? ti("mw.a.485") : ti("mw.a.486")) + uText}
                         </span>
-                      ) : us && us.phase === "loading" ? <span style={{ color: "var(--text-subtle,#999)" }}>余额查询中…</span>
+                      ) : us && us.phase === "loading" ? <span style={{ color: "var(--text-subtle,#999)" }}>{ti("mw.tx.125")}</span>
                         : us && (us.phase === "err" || (us.phase === "ok" && us.error)) ? (
                           <span style={{ display: "inline-flex", gap: 5, alignItems: "center", color: "#d97706" }}>
-                            <span title={us.message || us.error}>余额暂不可用</span>
-                            <button className="amw-btn" style={{ padding: "1px 8px", fontSize: 10.5 }} onClick={() => void loadUsage(p.provider, true)}>重查</button>
+                            <span title={us.message || us.error}>{ti("mw.tx.126")}</span>
+                            <button className="amw-btn" style={{ padding: "1px 8px", fontSize: 10.5 }} onClick={() => void loadUsage(p.provider, true)}>{ti("mw.tx.127")}</button>
                           </span>
                         ) : us && us.phase === "na" ? null
                         : (bal || bad) ? (
                           <span style={{ color: balBad ? "#dc2626" : "var(--text-subtle,#999)", fontWeight: balBad ? 600 : 400 }}>
-                            {"💰 " + (bal && bal.exhausted ? "已欠费/余额不足" : bad ? "存在异常模型（可能欠费/失效）" : (bal && bal.text) || "正常")}
+                            {"💰 " + (bal && bal.exhausted ? ti("mw.a.487") : bad ? ti("mw.a.488") : (bal && bal.text) || ti("mw.a.489"))}
                           </span>
                         ) : null}
                       {qt && qt.res ? testBadge(qt.res) : null}
@@ -3420,37 +3420,37 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                 })()}
               </div>
             </div>
-            <button className="amw-btn" style={{ padding: "3px 8px" }} disabled={checkAvail === false || !!probeBusy[p.provider]} title={checkAvail === false ? "需先启用 aiti-model-check（扩展管理）" : "发起可用性探测（更新树上的 可用/限流/异常 标记，可能需数十秒）"} onClick={() => void runCheck(p.provider)}>
-              {probeBusy[p.provider] ? "探测中…" : (<><Ic size={12} paths={ICONS.stethoscope} /> 重检</>)}
+            <button className="amw-btn" style={{ padding: "3px 8px" }} disabled={checkAvail === false || !!probeBusy[p.provider]} title={checkAvail === false ? ti("mw.a.461") : ti("mw.a.490")} onClick={() => void runCheck(p.provider)}>
+              {probeBusy[p.provider] ? ti("mw.a.126") : (<><Ic size={12} paths={ICONS.stethoscope} /> {ti("mw.tx.120")}</>)}
             </button>
-            {p.runtime ? null : <button className="amw-btn" style={{ padding: "3px 8px" }} title="刷新该 provider 的运行中代理（改 models.json / 多 key 后立即生效，不重启会话）" onClick={() => doRefreshProxies(p.provider)}><Ic size={12} paths={ICONS.refresh} /></button>}
+            {p.runtime ? null : <button className="amw-btn" style={{ padding: "3px 8px" }} title={ti("mw.a.491")} onClick={() => doRefreshProxies(p.provider)}><Ic size={12} paths={ICONS.refresh} /></button>}
             {p.runtime || p.authType === "oauth" ? null : (
               <button className="amw-btn" style={{ padding: "3px 8px", ...(p.enabled === false ? { color: "#b45309", borderColor: "var(--warn, #f59e0b)", background: "color-mix(in srgb, var(--warn, #f59e0b) 12%, transparent)" } : {}) }}
-                title={p.enabled === false ? "临时禁用中——模型已从列表隐藏、代理已停（配置未删除）。点击重新启用" : "临时禁用（不删除配置）：模型从列表隐藏、代理停止，随时可一键启用"}
+                title={p.enabled === false ? ti("mw.a.492") : ti("mw.a.493")}
                 onClick={() => doToggleProvider(p.provider, p.enabled === false)}>
-                {p.enabled === false ? "▶ 启用" : "禁用"}
+                {p.enabled === false ? ti("mw.a.494") : ti("mw.a.495")}
               </button>
             )}
-            {p.runtime ? null : <button className="amw-btn is-danger" style={{ padding: "3px 8px" }} title="删除 provider" onClick={() => doDelete(p.provider)}><Ic size={12} paths={ICONS.trash} /></button>}
+            {p.runtime ? null : <button className="amw-btn is-danger" style={{ padding: "3px 8px" }} title={ti("mw.a.496")} onClick={() => doDelete(p.provider)}><Ic size={12} paths={ICONS.trash} /></button>}
           </div>
           {p.combo ? (
             <div className="amw-note" style={{ marginBottom: 0, display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ flex: 1 }}>聚合组成员 / 权重 / 粘性在「模型聚合」页编辑</span>
-              <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} onClick={() => { setTab("combo"); loadCombos(); }}>去编辑</button>
+              <span style={{ flex: 1 }}>{ti("mw.tx.128")}</span>
+              <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} onClick={() => { setTab("combo"); loadCombos(); }}>{ti("mw.tx.129")}</button>
             </div>
           ) : null}
           {p.authType === "oauth" ? (
             <div className="amw-note" style={{ marginBottom: 0, display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ flex: 1 }}>登录态 / 账号额度在「订阅服务」页管理</span>
-              <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} onClick={() => { setTab("subs"); loadSubs(); }}>去管理</button>
+              <span style={{ flex: 1 }}>{ti("mw.tx.130")}</span>
+              <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} onClick={() => { setTab("subs"); loadSubs(); }}>{ti("mw.tx.131")}</button>
             </div>
           ) : null}
           {p.runtime ? (
-            <div className="amw-note" style={{ marginBottom: 0 }}>运行时注册 provider：由 pi 扩展（如 pi-freeflow）动态注册，模型经 /api/models 实时可见；不受 models.json 管理，这里只读展示。</div>
+            <div className="amw-note" style={{ marginBottom: 0 }}>{ti("mw.tx.132")}</div>
           ) : null}
           {p.authType === "api_key" ? (
             <div className="amw-note" style={{ marginBottom: 0 }}>
-              🔑 API Key 型内置 provider：凭据存 auth.json（pi 托管）——下方可更换 / 移除；「订阅」页有全部同类 provider 的汇总管理。
+              {ti("mw.tx.201")}
               {apiKeyRow(p.provider, p.provider, true, true)}
             </div>
           ) : null}
@@ -3463,11 +3463,11 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   };
 
   const renderStatus = () => {
-    if (!st) return <div className="amw-note">加载中…</div>;
+    if (!st) return <div className="amw-note">{ti("mw.tx.6")}</div>;
     if (!st.providers.length) return (
       <div style={{ display: "flex", flexDirection: "column", gap: 10, alignItems: "flex-start" }}>
-        <div className="amw-note" style={{ marginBottom: 0 }}>{"还没有配置任何 provider —— 点下方按钮搜索或贴 API 地址添加。models.json：" + (st.file || "")}</div>
-        <button className="amw-btn is-primary" onClick={() => { setTab("add"); setMsg(""); }}>＋ 添加 provider</button>
+        <div className="amw-note" style={{ marginBottom: 0 }}>{ti("mw.a.497") + (st.file || "")}</div>
+        <button className="amw-btn is-primary" onClick={() => { setTab("add"); setMsg(""); }}>{ti("mw.tx.133")}</button>
       </div>
     );
     // 新模型醒目横幅：每个新模型可勾选 + 元数据标签；一键启用 / 编辑 / 知道了（不自动清）
@@ -3514,16 +3514,16 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           <div style={{ marginBottom: 10, padding: "10px 12px", borderRadius: 10, background: "rgba(37,99,235,.08)", border: "1px solid rgba(37,99,235,.4)" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <span style={{ fontWeight: 700, fontSize: 13, color: "var(--accent,#2563eb)", flex: 1, minWidth: 220 }}>
-                {"一键整理（基于 " + new Date(cleanupEdit.ts).toLocaleTimeString("zh-CN", { hour12: false }) + " 模型检查）：已按探测结果预选——硬性异常取消勾选，限流/未测/暂时性错误保留"}
+                {ti("mw.a.498") + new Date(cleanupEdit.ts).toLocaleTimeString("zh-CN", { hour12: false }) + ti("mw.a.499")}
               </span>
               {cleanupBusy ? (
-                <span style={{ fontSize: 12, color: "var(--accent,#2563eb)", fontWeight: 600 }}>{"保存中 " + (cleanupBusy.done + 1) + "/" + cleanupBusy.total + " · " + cleanupBusy.cur + "…"}</span>
+                <span style={{ fontSize: 12, color: "var(--accent,#2563eb)", fontWeight: 600 }}>{ti("mw.a.500") + (cleanupBusy.done + 1) + "/" + cleanupBusy.total + " · " + cleanupBusy.cur + "…"}</span>
               ) : (
                 <>
                   <button className="amw-btn is-ok" disabled={busy || !cleanupPending.length}
-                    title={cleanupPending.length ? "逐个保存有改动的 provider（写 models.json + 刷新代理，立即生效）" : "没有需要保存的改动（无硬性异常模型）"}
-                    onClick={cleanupSaveAll}>{"全部保存（" + cleanupPending.length + " 家有改动）"}</button>
-                  <button className="amw-btn" disabled={busy || !!cleanupBusy} title="放弃本次预选（不保存任何改动）" onClick={cleanupCancel}>取消</button>
+                    title={cleanupPending.length ? ti("mw.a.501") : ti("mw.a.502")}
+                    onClick={cleanupSaveAll}>{ti("mw.a.503") + cleanupPending.length + ti("mw.a.504")}</button>
+                  <button className="amw-btn" disabled={busy || !!cleanupBusy} title={ti("mw.a.505")} onClick={cleanupCancel}>{ti("mw.tx.12")}</button>
                 </>
               )}
             </div>
@@ -3531,29 +3531,29 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
               {cleanupEdit.plan.map((e: any) => (
                 <div key={e.provider} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 11.5, padding: "2px 0" }}>
                   <span style={{ fontWeight: 650 }}>{e.provider}</span>
-                  {e.skip === "combo" ? <span style={{ color: "var(--text-subtle,#666)" }}>聚合组——不参与（在「聚合」页管理）</span>
-                    : e.skip === "oauth" ? <span style={{ color: "var(--text-subtle,#666)" }}>订阅登录——不参与（凭据由登录流程管理）</span>
-                    : e.skip === "runtime" ? <span style={{ color: "var(--text-subtle,#666)" }}>运行时注册——不参与（由扩展动态注册，只读）</span>
-                    : e.saved ? <span style={{ color: "#16a34a", fontWeight: 600 }}>已保存</span>
+                  {e.skip === "combo" ? <span style={{ color: "var(--text-subtle,#666)" }}>{ti("mw.tx.134")}</span>
+                    : e.skip === "oauth" ? <span style={{ color: "var(--text-subtle,#666)" }}>{ti("mw.tx.135")}</span>
+                    : e.skip === "runtime" ? <span style={{ color: "var(--text-subtle,#666)" }}>{ti("mw.tx.136")}</span>
+                    : e.saved ? <span style={{ color: "#16a34a", fontWeight: 600 }}>{ti("mw.tx.137")}</span>
                     : <>
-                      <span style={{ color: "#16a34a" }}>{"保留 " + e.keep.length}</span>
+                      <span style={{ color: "#16a34a" }}>{ti("mw.a.506") + e.keep.length}</span>
                       {e.remove.length ? (
-                        <span style={{ color: "#dc2626" }} title={"保存后将从 models.json 删除：" + e.remove.map((r: any) => r.id + "（" + r.label + "）").join("、")}>
-                          {"移除 " + e.remove.length + "：" + e.remove.slice(0, 4).map((r: any) => r.id + "（" + r.label + "）").join("、") + (e.remove.length > 4 ? " 等" : "")}
+                        <span style={{ color: "#dc2626" }} title={ti("mw.a.507") + e.remove.map((r: any) => r.id + "（" + r.label + "）").join("、")}>
+                          {ti("mw.a.265") + e.remove.length + "：" + e.remove.slice(0, 4).map((r: any) => r.id + "（" + r.label + "）").join("、") + (e.remove.length > 4 ? ti("mw.a.508") : "")}
                         </span>
                       ) : null}
                       {e.soft.length ? (
-                        <span style={{ color: "#d97706" }} title={"暂时性错误（服务端/网络/超时类），默认保留——如确认不再需要，可在编辑区手工取消勾选：" + e.soft.map((r: any) => r.id + "（" + r.label + "）").join("、")}>
-                          {"暂时异常 " + e.soft.length + " 保留"}
+                        <span style={{ color: "#d97706" }} title={ti("mw.a.509") + e.soft.map((r: any) => r.id + "（" + r.label + "）").join("、")}>
+                          {ti("mw.a.510") + e.soft.length + ti("mw.a.511")}
                         </span>
                       ) : null}
                       {e.remove.length && !e.keep.length ? (
-                        <span style={{ color: "#dc2626", fontWeight: 600 }} title="该 provider 下所有模型都是硬性异常：请检查 key/余额后重测，或确认后整家删除">全部硬性异常——未预选（编辑区手工处理）</span>
+                        <span style={{ color: "#dc2626", fontWeight: 600 }} title={ti("mw.a.512")}>{ti("mw.tx.138")}</span>
                       ) : null}
                       <span style={{ marginLeft: "auto", display: "inline-flex", gap: 6 }}>
-                        <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} title="展开该 provider 编辑区（已按预选勾好，可再调整后保存）" onClick={() => openEdit(e.provider)}>编辑</button>
+                        <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} title={ti("mw.a.513")} onClick={() => openEdit(e.provider)}>{ti("mw.tx.17")}</button>
                         {e.remove.length && e.keep.length ? (
-                          <button className="amw-btn is-ok" style={{ padding: "2px 10px", fontSize: 11 }} disabled={busy || !!cleanupBusy} onClick={() => cleanupSaveOne(e)}>保存</button>
+                          <button className="amw-btn is-ok" style={{ padding: "2px 10px", fontSize: 11 }} disabled={busy || !!cleanupBusy} onClick={() => cleanupSaveOne(e)}>{ti("mw.a.56")}</button>
                         ) : null}
                       </span>
                     </>}
@@ -3561,41 +3561,41 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
               ))}
             </div>
             <div style={{ marginTop: 6, fontSize: 11, color: "var(--text-subtle,#666)" }}>
-              预选只改勾选状态，不写配置——逐家或「全部保存」后才写入 models.json 并刷新代理（可撤销：保存后点「↩ 撤销上次保存」）
+              {ti("mw.tx.202")}
             </div>
           </div>
         ) : null}
         {niRows.length ? (
           <div style={{ marginBottom: 10, padding: "10px 12px", borderRadius: 10, background: "color-mix(in srgb, var(--ok, #22c55e) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--ok, #22c55e) 40%, transparent)" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontWeight: 700, fontSize: 13, color: "#15803d", flex: 1 }}>{"发现 " + niTotal + " 个新模型"}</span>
-              <button className="amw-btn" style={{ padding: "3px 10px", fontSize: 11 }} title="清除提醒，不再标注这些新模型" onClick={() => ackNew()}>知道了</button>
+              <span style={{ fontWeight: 700, fontSize: 13, color: "#15803d", flex: 1 }}>{ti("mw.a.514") + niTotal + ti("mw.a.515")}</span>
+              <button className="amw-btn" style={{ padding: "3px 10px", fontSize: 11 }} title={ti("mw.a.516")} onClick={() => ackNew()}>{ti("mw.tx.139")}</button>
             </div>
             {niRows.map(([name, v]: any) => {
               const all = v.newModels || [];
               return (
                 <div key={name} style={{ marginTop: 8, padding: "7px 9px", background: "rgba(255,255,255,.6)", borderRadius: 8 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontWeight: 650, fontSize: 12, color: "#15803d", flex: 1 }}>{name + " · 新增 " + v.count}</span>
-                    <button disabled={nmBusy === name || !all.length} onClick={() => selAllNew(name, all)} title="勾选全部新模型" className="amw-btn" style={{ padding: "2px 8px", fontSize: 11 }}>全选</button>
-                    <button disabled={nmBusy === name || !all.length} onClick={() => selInvNew(name, all)} title="在全部新模型范围内反选" className="amw-btn" style={{ padding: "2px 8px", fontSize: 11 }}>反选</button>
-                    <button disabled={nmBusy === name || !all.length} onClick={() => selNoneNew(name)} title="全部取消勾选（不启用）" className="amw-btn" style={{ padding: "2px 8px", fontSize: 11 }}>清空</button>
+                    <span style={{ fontWeight: 650, fontSize: 12, color: "#15803d", flex: 1 }}>{name + ti("mw.a.517") + v.count}</span>
+                    <button disabled={nmBusy === name || !all.length} onClick={() => selAllNew(name, all)} title={ti("mw.a.518")} className="amw-btn" style={{ padding: "2px 8px", fontSize: 11 }}>{ti("mw.tx.39")}</button>
+                    <button disabled={nmBusy === name || !all.length} onClick={() => selInvNew(name, all)} title={ti("mw.a.519")} className="amw-btn" style={{ padding: "2px 8px", fontSize: 11 }}>{ti("mw.tx.40")}</button>
+                    <button disabled={nmBusy === name || !all.length} onClick={() => selNoneNew(name)} title={ti("mw.a.520")} className="amw-btn" style={{ padding: "2px 8px", fontSize: 11 }}>{ti("mw.tx.41")}</button>
                     <button disabled={nmBusy === name || !all.length}
                       onClick={() => enableNewModels(name, nmSel[name] !== undefined ? nmSel[name] : all)}
                       className="amw-btn" style={{ background: nmBusy === name ? "#9ca3af" : "#16a34a", color: "#fff", border: "none", borderRadius: 6, padding: "3px 10px", fontSize: 11, fontWeight: 650, cursor: "pointer" }}>
-                      {nmBusy === name ? "启用中…" : "启用所选"}
+                      {nmBusy === name ? ti("mw.a.521") : ti("mw.a.522")}
                     </button>
-                    <button onClick={() => openEdit(name)} title="展开编辑该 provider（可看全部模型/改 key）" className="amw-btn" style={{ padding: "3px 10px", fontSize: 11 }}>编辑</button>
+                    <button onClick={() => openEdit(name)} title={ti("mw.a.523")} className="amw-btn" style={{ padding: "3px 10px", fontSize: 11 }}>{ti("mw.tx.17")}</button>
                     <button disabled={nmBusy === name || !all.length}
-                      onClick={() => ignoreNew(name)} title="忽略该 provider 的这些新模型（其他 provider 下次继续提醒）"
-                      className="amw-btn" style={{ padding: "3px 10px", fontSize: 11 }}>忽略</button>
+                      onClick={() => ignoreNew(name)} title={ti("mw.a.524")}
+                      className="amw-btn" style={{ padding: "3px 10px", fontSize: 11 }}>{ti("mw.tx.140")}</button>
                   </div>
                   {all.map((id: string) => {
                     const md = (nmMeta[name] || {})[id] || null;
                     const tags = [];
                     if (md && md.contextWindow) tags.push(fmtTok(md.contextWindow) + " ctx");
                     if (md && md.maxTokens) tags.push(fmtTok(md.maxTokens) + " out");
-                    if (md && md.reasoning) tags.push("推理");
+                    if (md && md.reasoning) tags.push(ti("mw.a.1"));
                     if (md && Array.isArray(md.input)) tags.push(md.input.join("/"));
                     return (
                       <label key={id} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11, padding: "2px 0 2px 2px", cursor: "pointer" }}>
@@ -3611,10 +3611,10 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           </div>
         ) : null}
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-          <span style={{ color: "var(--text-subtle,#666)", fontSize: 11, flex: 1 }}>{"已配置 " + st.providers.length + " 个 provider · " + st.file}</span>
-          {undoInfo ? <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11, color: "#b45309" }} title={"撤销上次保存（" + undoInfo + "）——恢复保存前的 provider 条目"} onClick={undoSave}>↩ 撤销上次保存</button> : null}
-          <button className="amw-btn" title="从 models.json 重新加载所有运行中代理的槽位配置（多 key / 聚合改动后立即生效，不重启会话）" onClick={() => doRefreshProxies()}><Ic size={12} paths={ICONS.refresh} /> 刷新代理</button>
-          <button className="amw-btn" onClick={loadStatus} disabled={busy}>刷新</button>
+          <span style={{ color: "var(--text-subtle,#666)", fontSize: 11, flex: 1 }}>{ti("mw.a.525") + st.providers.length + ti("mw.a.526") + st.file}</span>
+          {undoInfo ? <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11, color: "#b45309" }} title={ti("mw.a.527") + undoInfo + ti("mw.a.528")} onClick={undoSave}>{ti("mw.tx.141")}</button> : null}
+          <button className="amw-btn" title={ti("mw.a.529")} onClick={() => doRefreshProxies()}><Ic size={12} paths={ICONS.refresh} /> {ti("mw.tx.142")}</button>
+          <button className="amw-btn" onClick={loadStatus} disabled={busy}>{ti("mw.tx.33")}</button>
         </div>
         {small ? (
           // B4 小屏钻取：无选中 → 整屏树；有选中 → 整屏详情（带返回条）；高度由 CSS 小屏媒体查询弹性填充（aiti-float 全屏同断点）
@@ -3646,19 +3646,19 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   // ── 免费模型页签：列表（含 installed 徽标）+ 一键安装/更新/卸载（转发 pi-web /api/plugins，scope=global）──
   const loadFree = useCallback(async () => {
     setFreeLoading(true);
-    try { const d = await (await api("/free-models")).json(); setFreeItems(d && d.ok ? Object.entries(d.items || {}).map(([id, it]: any) => ({ id, ...it })) : []); } catch { setFreeItems([]); } finally { setFreeLoading(false); }
+    try { const d = srvFix(await (await api("/free-models")).json()); setFreeItems(d && d.ok ? Object.entries(d.items || {}).map(([id, it]: any) => ({ id, ...it })) : []); } catch { setFreeItems([]); } finally { setFreeLoading(false); }
   }, []);
   const freeAction = useCallback(async (id: string, action: string) => {
     setFreeBusy(id + ":" + action); setFreeMsg(""); setFreeConfirm("");
     try {
-      const d = await (await api("/free-install", { method: "POST", ...jsonBody({ id, action }) })).json();
-      if (!d.ok) setFreeMsg("❌ " + (d.error || "操作失败"));
-      else setFreeMsg("✅ " + (d.message || "已完成"));
+      const d = srvFix(await (await api("/free-install", { method: "POST", ...jsonBody({ id, action }) })).json());
+      if (!d.ok) setFreeMsg("❌ " + (d.error || ti("mw.a.137")));
+      else setFreeMsg("✅ " + (d.message || ti("mw.a.530")));
     } catch (err: any) { setFreeMsg("❌ " + (err?.message || String(err))); } finally { setFreeBusy(""); loadFree(); }
   }, [loadFree]);
 
   const loadCombos = useCallback(async () => {
-    try { const d = await (await api("/combos")).json(); setComboData(d && d.ok ? d : null); } catch {}
+    try { const d = srvFix(await (await api("/combos")).json()); setComboData(d && d.ok ? d : null); } catch {}
   }, []);
   const comboPoolMap = new Map<string, any>();
   for (const m of (comboData?.members || [])) comboPoolMap.set(m.provider + "/" + m.model, m);
@@ -3666,29 +3666,29 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   // 编辑器内：单个虚拟模型的差异告警分级（🔴阻止 / 🟡需勾选确认 / 🟢提示）
   const comboWarns = (vm: any): { block: string[]; warn: string[]; hint: string[] } => {
     const block: string[] = [], warn: string[] = [], hint: string[] = [];
-    if (!vm.members.length) block.push("至少一个成员");
-    else if (!vm.members.some((r: any) => r.enabled !== false)) block.push("所有成员已禁用——至少保留一个启用的成员（临时全停请用聚合组级禁用）");
+    if (!vm.members.length) block.push(ti("mw.a.531"));
+    else if (!vm.members.some((r: any) => r.enabled !== false)) block.push(ti("mw.a.532"));
     const metas = vm.members.map((r: any) => comboPoolMap.get(r.provider + "/" + r.model)).filter(Boolean);
-    if (metas.length !== vm.members.length) block.push("存在已失效的成员引用");
+    if (metas.length !== vm.members.length) block.push(ti("mw.a.533"));
     const apis = [...new Set(metas.map((m: any) => m.api))];
-    if (apis.length > 1) block.push("跨协议成员（" + apis.join(" vs ") + "）——仅支持同协议聚合");
+    if (apis.length > 1) block.push(ti("mw.a.534") + apis.join(" vs ") + ti("mw.a.535"));
     const ctxs = metas.map((m: any) => m.contextWindow).filter((x: any) => typeof x === "number");
-    if (ctxs.length >= 2 && Math.min(...ctxs) < Math.max(...ctxs) / 2) warn.push("上下文窗口悬殊（最矮 < 最高一半）：取最小值，长会话可能提前裁剪");
+    if (ctxs.length >= 2 && Math.min(...ctxs) < Math.max(...ctxs) / 2) warn.push(ti("mw.a.536"));
     const outs = metas.map((m: any) => m.maxTokens).filter((x: any) => typeof x === "number");
-    if (outs.length >= 2 && Math.min(...outs) * 1.2 < Math.max(...outs)) warn.push("最大输出差异 >20%：取最小值");
+    if (outs.length >= 2 && Math.min(...outs) * 1.2 < Math.max(...outs)) warn.push(ti("mw.a.537"));
     const vis = metas.map((m: any) => (m.input || []).includes("image"));
-    if (vis.length >= 2 && vis.some((v: boolean) => v !== vis[0])) warn.push("能力不一致（部分成员无 vision）：带图请求会自动避开无 vision 成员");
-    if (vis.length >= 1 && vis.every((v: boolean) => !v) && vm.members.length >= 1) hint.push("全部成员均无 vision：不能处理图片输入");
+    if (vis.length >= 2 && vis.some((v: boolean) => v !== vis[0])) warn.push(ti("mw.a.538"));
+    if (vis.length >= 1 && vis.every((v: boolean) => !v) && vm.members.length >= 1) hint.push(ti("mw.a.539"));
     // —— types（承接类别）——
     const enabledRefs = vm.members.filter((r: any) => r.enabled !== false);
     // ① 无成员承接纯文本：全部启用成员都显式排除了 text（仅图形/仅媒体）→ 纯文本请求无成员可用
     const hasText = enabledRefs.some((r: any) => !Array.isArray(r.types) || r.types.length === 0 || r.types.includes("text"));
-    if (enabledRefs.length >= 1 && !hasText) warn.push("无成员承接纯文本请求（全部仅图形/仅媒体）：不带图的会话将无可用成员——确认仍要保存？");
+    if (enabledRefs.length >= 1 && !hasText) warn.push(ti("mw.a.540"));
     // ② 死配置：types 含 vision 但模型 input 无 image → 带图请求仍被能力过滤排除，勾选永不生效
     for (const r of enabledRefs) {
       if (Array.isArray(r.types) && r.types.includes("vision")) {
         const m = comboPoolMap.get(r.provider + "/" + r.model);
-        if (m && !(m.input || []).includes("image")) warn.push(`成员 ${r.provider}/${r.model} types 含「图形」但模型不支持图片输入——带图请求仍会被能力过滤排除，该勾选不会生效`);
+        if (m && !(m.input || []).includes("image")) warn.push(ti("mw.tx.203", { id: r.provider + "/" + r.model }));
       }
     }
     return { block, warn, hint };
@@ -3701,9 +3701,9 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       if (!ed) return;
       setBusy(true);
       try {
-        const d = await (await api("/combo-save", { method: "POST", ...jsonBody({ provider: String(ed.provider || "").trim() || String(ed.displayName || "").trim(), displayName: ed.displayName, renameFrom: ed.renameFrom, models: ed.models }) })).json();
-        if (!d.ok) { setMsg("❌ " + (d.error || "保存失败")); return; }
-        setComboEditor(null); setMsg("聚合组已保存：" + d.provider + "（" + d.modelCount + " 个虚拟模型）——已刷新运行中代理，新会话模型列表立即可见");
+        const d = srvFix(await (await api("/combo-save", { method: "POST", ...jsonBody({ provider: String(ed.provider || "").trim() || String(ed.displayName || "").trim(), displayName: ed.displayName, renameFrom: ed.renameFrom, models: ed.models }) })).json());
+        if (!d.ok) { setMsg("❌ " + (d.error || ti("mw.a.36"))); return; }
+        setComboEditor(null); setMsg(ti("mw.a.541") + d.provider + "（" + d.modelCount + ti("mw.a.542"));
         await loadCombos(); loadStatus();
         // 广播模型变更 → pi-web 刷新模型列表（新会话 dropdown 立即出现聚合模型）
         try { window.dispatchEvent(new CustomEvent("pi-web:models-changed")); } catch {}
@@ -3725,19 +3725,19 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       return (
         <div>
           <div style={{ marginBottom: 6 }}>
-            <button className="amw-btn" onClick={() => setComboEditor(null)}>← 返回列表</button>
+            <button className="amw-btn" onClick={() => setComboEditor(null)}>{ti("mw.tx.143")}</button>
           </div>
-          <div className="amw-hint-lg" style={{ marginBottom: 8 }}>虚拟模型 = 多个真实成员组成一个可调用模型；同会话粘性路由（TTL 内固定同一成员，最大化 prompt cache），429 冷却自动切换</div>
+          <div className="amw-hint-lg" style={{ marginBottom: 8 }}>{ti("mw.tx.144")}</div>
           <div className="amw-card" style={{ padding: "10px 12px", marginBottom: 10 }}>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <span style={{ fontSize: 12, fontWeight: 650, whiteSpace: "nowrap" }}>聚合组名称</span>
-              <input className="amw-input" style={{flex: "1 1 140px", minWidth: 120}} value={ed.displayName} placeholder="显示名（如：快速组）"
+              <span style={{ fontSize: 12, fontWeight: 650, whiteSpace: "nowrap" }}>{ti("mw.tx.145")}</span>
+              <input className="amw-input" style={{flex: "1 1 140px", minWidth: 120}} value={ed.displayName} placeholder={ti("mw.a.543")}
                 onChange={(e) => setComboEditor({ ...ed, displayName: e.target.value })} />
               <span style={{ fontSize: 12, fontWeight: 650, whiteSpace: "nowrap" }}>provider id</span>
-              <input className="amw-input" style={{width: 160, minWidth: 120, fontFamily: "ui-monospace,monospace"}} value={ed.provider} placeholder="留空=同显示名"
+              <input className="amw-input" style={{width: 160, minWidth: 120, fontFamily: "ui-monospace,monospace"}} value={ed.provider} placeholder={ti("mw.a.544")}
                 onChange={(e) => setComboEditor({ ...ed, provider: e.target.value })} />
             </div>
-            {nameBad ? <div style={{ fontSize: 11, color: "#dc2626", marginTop: 4 }}>🔴 显示名 / provider id 至少填一个</div> : null}
+            {nameBad ? <div style={{ fontSize: 11, color: "#dc2626", marginTop: 4 }}>{ti("mw.tx.146")}</div> : null}
           </div>
           {ed.models.map((vm: any, i: number) => {
             const w = comboWarns(vm);
@@ -3749,28 +3749,28 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             return (
               <div key={i} className="amw-card" style={{ padding: "10px 12px", marginBottom: 10 }}>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 12, fontWeight: 650, whiteSpace: "nowrap" }}>虚拟模型 id</span>
-                  <input className="amw-input" style={{width: small ? 130 : 200, minWidth: 110, fontFamily: "ui-monospace,monospace"}} value={vm.id} placeholder="如 fast"
+                  <span style={{ fontSize: 12, fontWeight: 650, whiteSpace: "nowrap" }}>{ti("mw.tx.147")}</span>
+                  <input className="amw-input" style={{width: small ? 130 : 200, minWidth: 110, fontFamily: "ui-monospace,monospace"}} value={vm.id} placeholder={ti("mw.a.545")}
                     onChange={(e) => setVm(i, { id: e.target.value })} />
                   {String(vm.id || "").trim() && (String(ed.provider || "").trim() || String(ed.displayName || "").trim()) ? (
                     <span style={{ fontSize: 11, color: "var(--text-subtle,#888)" }}>
-                      模型列表中将显示：<b className="amw-mono" style={{ color: "#4f46e5" }}>{(String(ed.provider || "").trim() || String(ed.displayName || "").trim())}/{String(vm.id).trim()}</b>
+                      {ti("mw.tx.204")}<b className="amw-mono" style={{ color: "#4f46e5" }}>{(String(ed.provider || "").trim() || String(ed.displayName || "").trim())}/{String(vm.id).trim()}</b>
                     </span>
                   ) : null}
-                  <span style={{ fontSize: 11, color: "var(--text-subtle,#888)", flex: 1 }}>{apis.length === 1 ? "协议 " + apis[0] : apis.length ? "混合协议" : ""}</span>
+                  <span style={{ fontSize: 11, color: "var(--text-subtle,#888)", flex: 1 }}>{apis.length === 1 ? ti("mw.a.546") + apis[0] : apis.length ? ti("mw.a.547") : ""}</span>
                   <button className="amw-btn" style={{ padding: "3px 8px", ...(vm.enabled === false ? { color: "#16a34a", borderColor: "var(--ok, #22c55e)" } : { color: "#d97706", borderColor: "var(--warn, #f59e0b)" }) }}
-                    title={vm.enabled === false ? "临时禁用中（此虚拟模型从列表隐藏，配置未删除）——点击重新启用" : "临时禁用此虚拟模型（从模型列表隐藏，不删除配置，随时可启用）"}
+                    title={vm.enabled === false ? ti("mw.a.548") : ti("mw.a.549")}
                     onClick={() => setVm(i, { enabled: vm.enabled === false ? undefined : false })}>
-                    {vm.enabled === false ? "▶ 启用" : "禁用"}
+                    {vm.enabled === false ? ti("mw.a.494") : ti("mw.a.495")}
                   </button>
-                  {ed.models.length > 1 ? <button className="amw-btn is-danger" style={{ padding: "3px 8px" }} onClick={() => setComboEditor({ ...ed, models: ed.models.filter((_: any, j: number) => j !== i) })}>删模型</button> : null}
+                  {ed.models.length > 1 ? <button className="amw-btn is-danger" style={{ padding: "3px 8px" }} onClick={() => setComboEditor({ ...ed, models: ed.models.filter((_: any, j: number) => j !== i) })}>{ti("mw.tx.148")}</button> : null}
                 </div>
                 {/* 自动计算预览 */}
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
                   {[ctxs.length ? "ctx ⌊" + Math.min(...ctxs) / 1000 + "k⌋" : null,
-                    outs.length ? "输出 ⌊" + Math.min(...outs) + "⌋" : null,
-                    inputs.size ? "能力 " + [...inputs].join("+") : null,
-                    vm.stickyTtlMin ? "粘性 TTL " + vm.stickyTtlMin + "min" : "粘性 TTL 15min(默认)"].filter(Boolean).map((t: any, j: number) => (
+                    outs.length ? ti("mw.a.550") + Math.min(...outs) + "⌋" : null,
+                    inputs.size ? ti("mw.a.551") + [...inputs].join("+") : null,
+                    vm.stickyTtlMin ? ti("mw.a.552") + vm.stickyTtlMin + "min" : ti("mw.a.553")].filter(Boolean).map((t: any, j: number) => (
                     <span key={j} className="amw-pill">{t}</span>
                   ))}
                 </div>
@@ -3797,30 +3797,30 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                     const noVision = someVision && !(meta && (meta.input || []).includes("image")); // 组内有 vision 而它没有
                     const abnormal = isCtxMin || isOutMin || noVision;
                     return (
-                    <div key={mi} title={!rEn ? "临时禁用中（不参与路由，配置未删除）" : abnormal
-                      ? (isCtxMin ? "上下文最短：把组合 contextWindow 拉低到 " + fmtK(cw) + "（长会话可能提前裁剪）" : "")
-                        + (isOutMin ? "最大输出最小：" + fmtK(ot) : "")
-                        + (noVision ? "无 vision：带图请求会自动避开它" : "")
+                    <div key={mi} title={!rEn ? ti("mw.a.554") : abnormal
+                      ? (isCtxMin ? ti("mw.a.555") + fmtK(cw) + ti("mw.a.556") : "")
+                        + (isOutMin ? ti("mw.a.557") + fmtK(ot) : "")
+                        + (noVision ? ti("mw.a.558") : "")
                       : "ctx=" + fmtK(cw) + " · out=" + fmtK(ot)}
                       style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", borderRadius: 8, background: "rgba(127,127,127,.06)", marginBottom: 4, flexWrap: small ? "wrap" : "nowrap",
                         ...(abnormal && rEn ? { boxShadow: "inset 0 0 0 1.5px rgba(217,119,6,.55)", background: "rgba(217,119,6,.06)" } : {}),
                         ...(!rEn ? { boxShadow: "inset 0 0 0 1.5px color-mix(in srgb, var(--warn, #f59e0b) 50%, transparent)", background: "color-mix(in srgb, var(--warn, #f59e0b) 8%, transparent)" } : {}) }}>
                       <ProviderAvatar id={r.provider} name={r.provider} size={20} radius={6} />
                       <span style={{ fontSize: 12, fontWeight: 600, flex: "0 0 auto", ...(!rEn ? { color: "#b45309" } : {}) }}>{r.provider}</span>
-                      <span className="amw-mono" style={{ fontSize: 12, flex: 1, minWidth: small ? 140 : 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", ...(!rEn ? { color: "#b45309", textDecoration: "line-through", opacity: 0.7 } : {}) }} title={meta ? "ctx=" + (meta.contextWindow ?? "?") + " · out=" + (meta.maxTokens ?? "?") + " · keys=" + meta.keyCount : "已失效"}>{r.model}</span>
-                      {!rEn ? <span style={{ fontSize: 9, color: "#b45309", fontWeight: 700, flexShrink: 0 }}>禁用</span> : null}
+                      <span className="amw-mono" style={{ fontSize: 12, flex: 1, minWidth: small ? 140 : 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", ...(!rEn ? { color: "#b45309", textDecoration: "line-through", opacity: 0.7 } : {}) }} title={meta ? "ctx=" + (meta.contextWindow ?? "?") + " · out=" + (meta.maxTokens ?? "?") + " · keys=" + meta.keyCount : ti("mw.a.559")}>{r.model}</span>
+                      {!rEn ? <span style={{ fontSize: 9, color: "#b45309", fontWeight: 700, flexShrink: 0 }}>{ti("mw.a.495")}</span> : null}
                       {meta ? <>
-                        <span title="上下文窗口" className="amw-mono" style={{ fontSize: 10, color: isCtxMin ? "#d97706" : "var(--text-subtle,#888)", fontWeight: isCtxMin ? 700 : 400, background: isCtxMin ? "rgba(217,119,6,.14)" : "transparent", padding: "0 4px", borderRadius: 6, flexShrink: 0 }}>{"ctx " + fmtK(cw)}{isCtxMin ? " ⚠" : ""}</span>
-                        <span title="最大输出" className="amw-mono" style={{ fontSize: 10, color: isOutMin ? "#d97706" : "var(--text-subtle,#888)", fontWeight: isOutMin ? 700 : 400, background: isOutMin ? "rgba(217,119,6,.14)" : "transparent", padding: "0 4px", borderRadius: 6, flexShrink: 0 }}>{"out " + fmtK(ot)}{isOutMin ? " ⚠" : ""}</span>
-                        {(meta.input || []).includes("image") ? <span style={{ fontSize: 10, color: "#15803d", fontWeight: 650, flexShrink: 0 }}>vision</span> : noVision ? <span style={{ fontSize: 10, color: "#d97706", fontWeight: 700, flexShrink: 0 }}>无 vision ⚠</span> : null}
-                        {meta.reasoning ? <span style={{ fontSize: 10, color: "#7c3aed", fontWeight: 650, flexShrink: 0 }}>推理</span> : null}
+                        <span title={ti("mw.a.560")} className="amw-mono" style={{ fontSize: 10, color: isCtxMin ? "#d97706" : "var(--text-subtle,#888)", fontWeight: isCtxMin ? 700 : 400, background: isCtxMin ? "rgba(217,119,6,.14)" : "transparent", padding: "0 4px", borderRadius: 6, flexShrink: 0 }}>{"ctx " + fmtK(cw)}{isCtxMin ? " ⚠" : ""}</span>
+                        <span title={ti("mw.a.561")} className="amw-mono" style={{ fontSize: 10, color: isOutMin ? "#d97706" : "var(--text-subtle,#888)", fontWeight: isOutMin ? 700 : 400, background: isOutMin ? "rgba(217,119,6,.14)" : "transparent", padding: "0 4px", borderRadius: 6, flexShrink: 0 }}>{"out " + fmtK(ot)}{isOutMin ? " ⚠" : ""}</span>
+                        {(meta.input || []).includes("image") ? <span style={{ fontSize: 10, color: "#15803d", fontWeight: 650, flexShrink: 0 }}>vision</span> : noVision ? <span style={{ fontSize: 10, color: "#d97706", fontWeight: 700, flexShrink: 0 }}>{ti("mw.tx.149")}</span> : null}
+                        {meta.reasoning ? <span style={{ fontSize: 10, color: "#7c3aed", fontWeight: 650, flexShrink: 0 }}>{ti("mw.a.1")}</span> : null}
                         <span style={{ fontSize: 10, color: "var(--text-subtle,#999)", flexShrink: 0 }}>{meta.keyCount + " key"}</span>
-                      </> : <span style={{ fontSize: 10, color: "#dc2626", fontWeight: 650 }}>已失效</span>}
-                      <span style={{ fontSize: 11, color: "var(--text-subtle,#777)", whiteSpace: "nowrap", flexShrink: 0 }}>权重</span>
+                      </> : <span style={{ fontSize: 10, color: "#dc2626", fontWeight: 650 }}>{ti("mw.a.559")}</span>}
+                      <span style={{ fontSize: 11, color: "var(--text-subtle,#777)", whiteSpace: "nowrap", flexShrink: 0 }}>{ti("mw.tx.150")}</span>
                       <input type="number" min={1} step={1} className="amw-input" disabled={!rEn} style={{width: 64, padding: "3px 6px", flexShrink: 0}} value={r.weight ?? 10}
-                        title="默认 10；按权重占比随机选点（成员级）"
+                        title={ti("mw.a.562")}
                         onChange={(e) => { const v = Math.max(1, Math.floor(Number(e.target.value) || 1)); const members = vm.members.map((x: any, j: number) => j === mi ? { ...x, weight: v } : x); setVm(i, { members }); }} />
-                      <span style={{ fontSize: 11, color: "var(--text-subtle,#777)", whiteSpace: "nowrap", flexShrink: 0 }} title="该成员承接哪些请求类别（按模型能力自动过滤：没声明的能力不显示可勾选项；全部勾选 = 承接全部，与不限定等价）">承接</span>
+                      <span style={{ fontSize: 11, color: "var(--text-subtle,#777)", whiteSpace: "nowrap", flexShrink: 0 }} title={ti("mw.a.563")}>{ti("mw.tx.151")}</span>
                       {(() => {
                         const rTypes: string[] = Array.isArray(r.types) ? r.types : [];
                         const hasVision = !!(meta && (meta.input || []).includes("image"));      // 能力决定可勾选项
@@ -3846,15 +3846,15 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                           </label>
                         );
                         return <>
-                          {chip("text", "文本", textOn, !hasVision, hasVision ? "取消 = 该成员只接带图请求（仅图形）" : "基础类别：所有模型都处理纯文本，不可取消")}
-                          {hasVision ? chip("vision", "图形", visionOn, false, "取消 = 该成员不收带图请求（仅文本）") : null}
+                          {chip("text", ti("mw.a.564"), textOn, !hasVision, hasVision ? ti("mw.a.565") : ti("mw.a.566"))}
+                          {hasVision ? chip("vision", ti("mw.a.567"), visionOn, false, ti("mw.a.568")) : null}
                         </>;
                       })()}
                       {!(Array.isArray(r.types) && r.types.length > 0)
-                        ? <span style={{ fontSize: 10, color: "var(--text-subtle,#999)", whiteSpace: "nowrap", flexShrink: 0 }} title="全部可勾类别已勾选 = 承接全部请求（与不限定等价；将来新增类别自动承接）">全收</span>
+                        ? <span style={{ fontSize: 10, color: "var(--text-subtle,#999)", whiteSpace: "nowrap", flexShrink: 0 }} title={ti("mw.a.569")}>{ti("mw.tx.152")}</span>
                         : null}
                       <button className="amw-btn" style={{ padding: "2px 7px", flexShrink: 0, ...(rEn ? { color: "#d97706", borderColor: "var(--warn, #f59e0b)" } : { color: "#16a34a", borderColor: "var(--ok, #22c55e)" }) }}
-                        title={rEn ? "临时禁用此成员（不参与路由，配置未删除，随时可启用）" : "重新启用此成员（恢复参与路由）"}
+                        title={rEn ? ti("mw.a.570") : ti("mw.a.571")}
                         onClick={() => setVm(i, { members: vm.members.map((x: any, j: number) => j === mi ? { ...x, enabled: !rEn } : x) })}>{rEn ? "⏸" : "▶"}</button>
                       <button className="amw-btn is-danger" style={{ padding: "2px 7px", flexShrink: 0 }} onClick={() => setVm(i, { members: vm.members.filter((_: any, j: number) => j !== mi) })}>✕</button>
                     </div>
@@ -3865,7 +3865,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                 <MemberPicker pool={pool} exclude={(vm.members || []).map((r: any) => r.provider + "/" + r.model)} onPick={(p: any) => setVm(i, { members: [...(vm.members || []), { provider: p.provider, model: p.model, weight: 10 }] })} />
                 {/* stickyTtl 高级项 */}
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
-                  <span style={{ fontSize: 11, color: "var(--text-subtle,#777)", whiteSpace: "nowrap" }}>粘性空闲 TTL（分钟，默认 15）</span>
+                  <span style={{ fontSize: 11, color: "var(--text-subtle,#777)", whiteSpace: "nowrap" }}>{ti("mw.tx.153")}</span>
                   <input type="number" min={1} className="amw-input" style={{width: 72, padding: "3px 6px"}} value={vm.stickyTtlMin ?? ""} placeholder="15"
                     onChange={(e) => setVm(i, { stickyTtlMin: e.target.value ? Math.max(1, Math.floor(Number(e.target.value) || 15)) : undefined })} />
                 </div>
@@ -3876,7 +3876,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                     {w.warn.map((t: string, j: number) => <div key={j} style={{ fontSize: 11, color: "#d97706" }}>🟡 {t}</div>)}
                     <label style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 4, fontSize: 11, cursor: "pointer", color: "#d97706", fontWeight: 600 }}>
                       <input type="checkbox" checked={!!vm.confirmDiff} onChange={(e) => setVm(i, { confirmDiff: e.target.checked })} />
-                      我已知悉上述差异，仍要保存
+                      {ti("mw.tx.205")}
                     </label>
                   </div>
                 ) : null}
@@ -3885,10 +3885,10 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             );
           })}
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <button className="amw-btn" onClick={() => setComboEditor({ ...ed, models: [...ed.models, { id: "", members: [], confirmDiff: false }] })}>＋ 加一个虚拟模型</button>
+            <button className="amw-btn" onClick={() => setComboEditor({ ...ed, models: [...ed.models, { id: "", members: [], confirmDiff: false }] })}>{ti("mw.tx.154")}</button>
             <div style={{ flex: 1 }} />
-            {allWarn.length ? <span style={{ fontSize: 11, color: "#d97706" }}>{allWarn.length} 项差异待确认</span> : null}
-            <button className="amw-btn is-primary" style={{ opacity: canSave ? 1 : 0.45 }} disabled={!canSave || busy} onClick={doSaveCombo}>保存聚合组</button>
+            {allWarn.length ? <span style={{ fontSize: 11, color: "#d97706" }}>{ti("mw.tx.206", { n: allWarn.length })}</span> : null}
+            <button className="amw-btn is-primary" style={{ opacity: canSave ? 1 : 0.45 }} disabled={!canSave || busy} onClick={doSaveCombo}>{ti("mw.tx.155")}</button>
           </div>
         </div>
       );
@@ -3900,16 +3900,16 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       <div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <button className="amw-btn is-primary" onClick={() => setComboEditor({ provider: "", displayName: "", models: [{ id: "", members: [] }] })}>＋ 新建聚合组</button>
-            <button className="amw-btn" title="从 models.json 重新加载所有运行中代理的槽位配置（聚合/多key 改动后立即生效，不重启会话）"
-              onClick={async () => { setBusy(true); try { const d = await (await api("/refresh", { method: "POST" })).json(); setMsg(d.ok ? "已刷新代理：" + ((d.refreshed || []).join(", ") || "(无)") : "❌ " + (d.error || "刷新失败")); try { window.dispatchEvent(new CustomEvent("pi-web:models-changed")); } catch {} } catch (e: any) { setMsg("刷新失败: " + (e?.message || e)); } finally { setBusy(false); } }}>
-              <Ic size={12} paths={ICONS.refresh} /> 刷新代理</button>
+            <button className="amw-btn is-primary" onClick={() => setComboEditor({ provider: "", displayName: "", models: [{ id: "", members: [] }] })}>{ti("mw.tx.156")}</button>
+            <button className="amw-btn" title={ti("mw.a.572")}
+              onClick={async () => { setBusy(true); try { const d = srvFix(await (await api("/refresh", { method: "POST" })).json()); setMsg(d.ok ? ti("mw.a.573") + ((d.refreshed || []).join(", ") || ti("mw.a.574")) : "❌ " + (d.error || ti("mw.a.39"))); try { window.dispatchEvent(new CustomEvent("pi-web:models-changed")); } catch {} } catch (e: any) { setMsg(ti("mw.a.575") + (e?.message || e)); } finally { setBusy(false); } }}>
+              <Ic size={12} paths={ICONS.refresh} /> {ti("mw.tx.142")}</button>
             <div style={{ flex: 1 }} />
             <MultiKeyStatusSummary onOpen={() => setSStatusOpen(true)} />
           </div>
-          <div className="amw-hint-lg">把多个真实模型聚成一个虚拟模型暴露给 pi；需要 pi-models-combo 引擎（多 key 代理）在运行时接管路由。同协议才能同组。</div>
+          <div className="amw-hint-lg">{ti("mw.tx.157")}</div>
         </div>
-        {!combos.length ? <div className="amw-note">还没有聚合组。点「新建聚合组」把已配置的多个模型组合成一个虚拟模型。</div> : null}
+        {!combos.length ? <div className="amw-note">{ti("mw.tx.158")}</div> : null}
         {combos.map((cb: any) => (
           <div key={cb.providerId} className="amw-card" style={{ marginBottom: 8, padding: "11px 12px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -3917,34 +3917,34 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <span style={{ fontWeight: 650, fontSize: 13 }}>{cb.name}</span>
-                  {cb.enabled === false ? <span style={{ fontSize: 10, color: "#b45309", border: "1px solid color-mix(in srgb, var(--warn, #f59e0b) 50%, transparent)", borderRadius: 999, padding: "0 8px", fontWeight: 700 }}>已禁用</span> : null}
+                  {cb.enabled === false ? <span style={{ fontSize: 10, color: "#b45309", border: "1px solid color-mix(in srgb, var(--warn, #f59e0b) 50%, transparent)", borderRadius: 999, padding: "0 8px", fontWeight: 700 }}>{ti("mw.tx.159")}</span> : null}
                   <span className="amw-mono" style={{fontSize: 10, color: "var(--text-subtle,#999)"}}>{cb.providerId}</span>
                 </div>
                 <div style={{ fontSize: 11, color: "var(--text-subtle,#888)", marginTop: 3 }}>
-                  {cb.models.length + " 个虚拟模型 · 协议 " + (cb.api || "?")}
+                  {cb.models.length + ti("mw.a.576") + (cb.api || "?")}
                 </div>
               </div>
               <button className="amw-btn" onClick={() => setComboEditor({
                 provider: cb.providerId, displayName: cb.name, renameFrom: cb.providerId,
                 models: cb.models.map((m: any) => ({ id: m.id, stickyTtlMin: m.stickyTtlMin ?? undefined, ...(m.enabled === false ? { enabled: false } : {}), members: (m.members || []).map((r: any) => ({ provider: r.provider, model: r.model, weight: r.weight, ...(Array.isArray(r.types) && r.types.length > 0 ? { types: r.types } : {}), ...(r.enabled === false ? { enabled: false } : {}) })) })),
-              })}>编辑</button>
+              })}>{ti("mw.tx.17")}</button>
               <button className="amw-btn" style={{ padding: "3px 8px", ...(cb.enabled === false ? { color: "#16a34a", borderColor: "var(--ok, #22c55e)" } : { color: "#d97706", borderColor: "var(--warn, #f59e0b)" }) }}
-                title={cb.enabled === false ? "临时禁用中（模型从列表隐藏、代理已停，配置未删除）——点击重新启用" : "临时禁用整个聚合组（不删除配置，模型从列表隐藏、代理停止，随时可一键启用）"}
+                title={cb.enabled === false ? ti("mw.a.577") : ti("mw.a.578")}
                 onClick={() => doToggleProvider(cb.providerId, cb.enabled === false)}>
-                {cb.enabled === false ? "▶ 启用" : "禁用"}
+                {cb.enabled === false ? ti("mw.a.494") : ti("mw.a.495")}
               </button>
-              <button className="amw-btn is-danger" style={{ padding: "3px 8px" }} title="删除聚合组" onClick={() => doDelete(cb.providerId)}><Ic size={12} paths={ICONS.trash} /></button>
+              <button className="amw-btn is-danger" style={{ padding: "3px 8px" }} title={ti("mw.a.579")} onClick={() => doDelete(cb.providerId)}><Ic size={12} paths={ICONS.trash} /></button>
             </div>
             {cb.models.map((m: any) => (
               <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 7, padding: "6px 8px", borderRadius: 8, background: "rgba(127,127,127,.06)", ...(m.enabled === false ? { opacity: 0.62, boxShadow: "inset 0 0 0 1.5px color-mix(in srgb, var(--warn, #f59e0b) 45%, transparent)" } : {}) }}>
                 <span className="amw-mono" style={{fontSize: 12, fontWeight: 700, color: m.enabled === false ? "#b45309" : "#4f46e5"}}>{cb.providerId}/{m.id}</span>
-                {m.enabled === false ? <span style={{ fontSize: 10, color: "#b45309", fontWeight: 700 }}>已禁用</span> : null}
+                {m.enabled === false ? <span style={{ fontSize: 10, color: "#b45309", fontWeight: 700 }}>{ti("mw.tx.159")}</span> : null}
                 <span style={{ color: "var(--text-subtle,#aaa)", fontSize: 11 }}>＝</span>
                 {(m.members || []).map((r: any, j: number) => (
                   <span key={j} className="amw-mono" style={{ padding: "2px 8px", borderRadius: 999, background: r.enabled === false ? "color-mix(in srgb, var(--warn, #f59e0b) 10%, transparent)" : "rgba(127,127,127,.09)", border: r.enabled === false ? "1px dashed var(--warn, #f59e0b)" : "1px solid rgba(127,127,127,.18)", fontSize: 11, ...(r.enabled === false ? { color: "#b45309", textDecoration: "line-through" } : {}) }}>
                     {r.provider}/{r.model}{r.enabled === false ? " ⏸" : ""}{r.weight != null && r.weight !== 10 ? <b style={{ color: "#4f46e5" }}> ×{r.weight}</b> : null}
                     {Array.isArray(r.types) && r.types.length > 0
-                      ? <span style={{ fontSize: 10, color: "#0891b2", fontWeight: 650 }}> [{r.types.map((x: string) => x === "text" ? "文本" : x === "vision" ? "图形" : "媒体").join("/")}]</span>
+                      ? <span style={{ fontSize: 10, color: "#0891b2", fontWeight: 650 }}> [{r.types.map((x: string) => x === "text" ? ti("mw.a.564") : x === "vision" ? ti("mw.a.567") : ti("mw.a.580")).join("/")}]</span>
                       : null}
                   </span>
                 ))}
@@ -3961,12 +3961,12 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   const renderFree = () => (
     <div>
       <div className="amw-note" style={{ marginBottom: 10 }}>
-        <div>免费模型来自第三方 pi 扩展，安装即用、无需 API Key；安装后<b>新会话</b>生效。</div>
-        <div style={{ marginTop: 4 }}>免费 AI 通常是<b>限流</b>或<b>降级</b>了的，除非赶上新模型测试大放送，一般效果不好——适合试用与轻量任务，重要工作请用付费模型。</div>
+        <div>{ti("mw.tx.160")}<b>{ti("mw.tx.161")}</b>{ti("mw.tx.162")}</div>
+        <div style={{ marginTop: 4 }}>{ti("mw.tx.163")}<b>{ti("mw.a.103")}</b>{ti("mw.tx.164")}<b>{ti("mw.tx.165")}</b>{ti("mw.tx.166")}</div>
       </div>
       {freeMsg && <div className="amw-note" style={{ marginBottom: 8 }}>{freeMsg}</div>}
-      {freeLoading && <div className="amw-note">加载中…</div>}
-      {!freeLoading && !freeItems.length && <div className="amw-note">暂无免费模型（中心配置为空或加载失败）</div>}
+      {freeLoading && <div className="amw-note">{ti("mw.tx.6")}</div>}
+      {!freeLoading && !freeItems.length && <div className="amw-note">{ti("mw.tx.167")}</div>}
       <div style={{ display: "grid", gap: 8 }}>
         {freeItems.map((it: any) => {
           const busy = freeBusy === it.id + ":install" || freeBusy === it.id + ":update" || freeBusy === it.id + ":remove";
@@ -3977,7 +3977,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                 <div style={{ fontWeight: 600, fontSize: 13 }}>
                   {it.name || it.id}
                   {it.installed
-                    ? <span style={{ marginLeft: 8, fontSize: 11, color: "#16a34a", border: "1px solid rgba(22,163,74,.35)", borderRadius: 999, padding: "1px 8px" }}>已安装 ✓</span>
+                    ? <span style={{ marginLeft: 8, fontSize: 11, color: "#16a34a", border: "1px solid rgba(22,163,74,.35)", borderRadius: 999, padding: "1px 8px" }}>{ti("mw.tx.168")}</span>
                     : null}
                 </div>
                 {it.desc ? <div style={{ fontSize: 12, opacity: 0.85, marginTop: 2 }}>{it.desc}</div> : null}
@@ -3991,22 +3991,22 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                 )}
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 3 }}>
                   <span className="amw-mono" style={{ fontSize: 11, opacity: 0.55 }}>{it.npm}</span>
-                  {it.url ? <a href={it.url} target="_blank" rel="noreferrer" style={{ fontSize: 11, opacity: 0.6 }} onMouseDown={(e: any) => e.stopPropagation()}>官网/仓库 ↗</a> : null}
+                  {it.url ? <a href={it.url} target="_blank" rel="noreferrer" style={{ fontSize: 11, opacity: 0.6 }} onMouseDown={(e: any) => e.stopPropagation()}>{ti("mw.tx.169")}</a> : null}
                 </div>
               </div>
               <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
                 {!it.installed && (
                   <button className="amw-btn is-primary" disabled={busy} onClick={() => freeAction(it.id, "install")}>
-                    {busy ? "安装中…" : "安装"}
+                    {busy ? ti("mw.a.581") : ti("mw.a.582")}
                   </button>
                 )}
                 {it.installed && (
                   <>
-                    <button className="amw-btn" disabled={busy} title="重新安装最新版" onClick={() => freeAction(it.id, "update")}>{busy ? "…" : "更新"}</button>
+                    <button className="amw-btn" disabled={busy} title={ti("mw.a.583")} onClick={() => freeAction(it.id, "update")}>{busy ? "…" : ti("mw.a.584")}</button>
                     <button className="amw-btn" disabled={busy} style={freeConfirm === it.id ? { color: "#dc2626", borderColor: "#dc2626" } : undefined}
-                      title={freeConfirm === it.id ? "再点一次确认卸载" : "卸载（新会话起不再加载）"}
+                      title={freeConfirm === it.id ? ti("mw.a.585") : ti("mw.a.586")}
                       onClick={() => { if (freeConfirm === it.id) freeAction(it.id, "remove"); else setFreeConfirm(it.id); }}>
-                      {busy ? "…" : freeConfirm === it.id ? "确认卸载" : "卸载"}
+                      {busy ? "…" : freeConfirm === it.id ? ti("mw.a.587") : ti("mw.a.588")}
                     </button>
                   </>
                 )}
@@ -4037,8 +4037,8 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     const CheckApp = extSvc<any>("aiti-model-check.app") || window.__aitiModelCheckApp || null; // DI 方案 P2 双轨
     if (typeof CheckApp !== "function") {
       return checkExtState === "loading"
-        ? <div className="amw-note">正在加载模型检查（aiti-model-check）…</div>
-        : <div className="amw-note">未能加载模型检查（aiti-model-check 拉起失败，请刷新页面重试）</div>;
+        ? <div className="amw-note">{ti("mw.tx.170")}</div>
+        : <div className="amw-note">{ti("mw.tx.171")}</div>;
     }
     // t 可选：模型检查「去启用」传 "status" → 关闭检查浮层回主视图并选中新模型 provider；"add" → 打开添加浮层。
     return <CheckApp open={true} embedded={true} onGotoWizard={(t?: string) => { setTab(typeof t === "string" ? t : "status"); setMsg(""); }} onCleanupEdit={(payload: any) => applyCleanupEdit(payload)} />;
@@ -4060,16 +4060,16 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   };
   // 功能菜单（辅助操作弹出）：主视图头部与各浮层头部共用——功能切换随处可达（含回主视图）；✕ 永远只做关闭
   const funcMenuItems = () => ([
-    { key: "status", icon: ICONS.list, label: "模型列表", hint: "主视图", go: () => setTab("status") },
-    { key: "add", icon: ICONS.plus, label: "添加 provider", hint: "目录/贴地址", go: () => setTab("add") },
-    { key: "subs", icon: ICONS.key, label: "订阅登录", hint: "OAuth", go: () => { setTab("subs"); loadSubs(); } },
-    { key: "free", icon: ICONS.gift, label: "免费模型", hint: "一键安装", go: () => { setTab("free"); loadFree(); } },
-    { key: "combo", icon: ICONS.layers, label: "模型聚合", hint: "组合模型", go: () => { setTab("combo"); loadCombos(); } },
-    { key: "check", icon: ICONS.stethoscope, label: "模型检查", hint: "可用性监测", go: () => { setTab("check"); loadCheck(); } },
+    { key: "status", icon: ICONS.list, label: ti("mw.a.589"), hint: ti("mw.a.590"), go: () => setTab("status") },
+    { key: "add", icon: ICONS.plus, label: ti("mw.a.591"), hint: ti("mw.a.592"), go: () => setTab("add") },
+    { key: "subs", icon: ICONS.key, label: ti("mw.a.593"), hint: "OAuth", go: () => { setTab("subs"); loadSubs(); } },
+    { key: "free", icon: ICONS.gift, label: ti("mw.a.594"), hint: ti("mw.a.595"), go: () => { setTab("free"); loadFree(); } },
+    { key: "combo", icon: ICONS.layers, label: ti("mw.a.596"), hint: ti("mw.a.597"), go: () => { setTab("combo"); loadCombos(); } },
+    { key: "check", icon: ICONS.stethoscope, label: ti("mw.a.598"), hint: ti("mw.a.599"), go: () => { setTab("check"); loadCheck(); } },
   ] as any[]);
   const funcMenu = () => (
     <div style={{ position: "relative" }} ref={menuRef}>
-      <button className="amw-btn amw-tb-btn" aria-haspopup="menu" aria-expanded={menuOpen} title="功能菜单（切换/返回各功能）" onClick={() => setMenuOpen(!menuOpen)}>☰<span className="amw-tb-label">功能</span>▾</button>
+      <button className="amw-btn amw-tb-btn" aria-haspopup="menu" aria-expanded={menuOpen} title={ti("mw.a.600")} onClick={() => setMenuOpen(!menuOpen)}>☰<span className="amw-tb-label">{ti("mw.tx.172")}</span>▾</button>
       {menuOpen ? (
         <div className="amw-menu" role="menu">
           {funcMenuItems().map((it: any) => (
@@ -4084,8 +4084,8 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           <div className="amw-menu-sep" />
           <button role="menuitem" className="amw-menu-item" onClick={() => { setMenuOpen(false); doRefreshProxies(); }}>
             <span style={{ width: 18, display: "flex", justifyContent: "center" }}><Ic size={14} paths={ICONS.refresh} /></span>
-            <span style={{ flex: 1, textAlign: "left" }}>刷新全部代理</span>
-            <span className="amw-menu-hint">即时生效</span>
+            <span style={{ flex: 1, textAlign: "left" }}>{ti("mw.tx.173")}</span>
+            <span className="amw-menu-hint">{ti("mw.tx.174")}</span>
           </button>
         </div>
       ) : null}
@@ -4106,43 +4106,43 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   return (
     <div className="amw-shell" {...floatProps} {...(embedded ? { "data-amw-embedded": "1" } : {})} ref={rootRef}>
       <div className="amw-header" style={headStyle}>
-        <span className="amw-title"><Ic size={15} paths={ICONS.wand} />{small ? null : <span className="amw-title-text">模型管理</span>}</span>
+        <span className="amw-title"><Ic size={15} paths={ICONS.wand} />{small ? null : <span className="amw-title-text">{ti("mw.a.614")}</span>}</span>
         <div className="amw-tabs">
-          {[["status", "模型列表", ICONS.list], ["subs", "订阅", ICONS.key], ["free", "免费", ICONS.gift], ["combo", "聚合", ICONS.layers], ["check", "检查", ICONS.stethoscope]].map(([k, label, icon]: any) => (
+          {[["status", ti("mw.a.589"), ICONS.list], ["subs", ti("mw.a.601"), ICONS.key], ["free", ti("mw.a.602"), ICONS.gift], ["combo", ti("mw.a.603"), ICONS.layers], ["check", ti("mw.a.604"), ICONS.stethoscope]].map(([k, label, icon]: any) => (
             <button key={k} className={"amw-tab" + (tab === k ? " is-on" : "")} onClick={() => { setTab(k); setMsg(""); if (k === "status") { loadNewInfo(); loadCheck(); } if (k === "subs") loadSubs(); if (k === "free") loadFree(); if (k === "combo") loadCombos(); if (k === "check") loadCheck(); }}><Ic size={11} paths={icon} />{label}</button>
           ))}
         </div>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-          <button className="amw-btn amw-tb-btn" title="向导设置（新模型提醒 / 目录 / 探测与测试超时）" onClick={() => setCfgOpen(true)}><Ic size={13} paths={ICONS.settings} /></button>
-          <button className="amw-btn amw-tb-btn" title="导出 provider 配置（脱敏 JSON——无明文 key，P2-A）" onClick={() => void doExport()}>⇩<span className="amw-tb-label">导出</span></button>
-          <button className="amw-btn amw-tb-btn" title="导入 provider 配置（差异预览 + 批量保存，可 undo）" onClick={() => setImpDlg({ phase: "paste", text: "" })}>⇪<span className="amw-tb-label">导入</span></button>
+          <button className="amw-btn amw-tb-btn" title={ti("mw.a.605")} onClick={() => setCfgOpen(true)}><Ic size={13} paths={ICONS.settings} /></button>
+          <button className="amw-btn amw-tb-btn" title={ti("mw.a.606")} onClick={() => void doExport()}>⇩<span className="amw-tb-label">{ti("mw.tx.175")}</span></button>
+          <button className="amw-btn amw-tb-btn" title={ti("mw.a.607")} onClick={() => setImpDlg({ phase: "paste", text: "" })}>⇪<span className="amw-tb-label">{ti("mw.tx.176")}</span></button>
           {funcMenu()}
           {tab === "add" ? (
-            <button className="amw-btn is-primary amw-tb-btn" title="返回模型列表" onClick={() => { setTab("status"); setMsg(""); }} style={{ boxShadow: "inset 0 0 0 2px rgba(255,255,255,.5)" }}>
-              ✓<span className="amw-tb-label"> 添加中</span>
+            <button className="amw-btn is-primary amw-tb-btn" title={ti("mw.a.608")} onClick={() => { setTab("status"); setMsg(""); }} style={{ boxShadow: "inset 0 0 0 2px rgba(255,255,255,.5)" }}>
+              ✓<span className="amw-tb-label"> {ti("mw.tx.177")}</span>
             </button>
           ) : (
-            <button className="amw-btn is-primary amw-tb-btn" title="添加 provider（目录搜索 / 贴地址）" onClick={() => { setTab("add"); setMsg(""); }}>
-              ＋<span className="amw-tb-label"> 添加<span className="amw-label-long"> provider</span></span>
+            <button className="amw-btn is-primary amw-tb-btn" title={ti("mw.a.609")} onClick={() => { setTab("add"); setMsg(""); }}>
+              ＋<span className="amw-tb-label"> {ti("mw.tx.178")}<span className="amw-label-long"> provider</span></span>
             </button>
           )}
-          {isSettings ? null : <button className="amw-btn" onClick={onClose} aria-label="关闭" title="关闭模型管理面板"><Ic size={12} paths={ICONS.x} /></button>}
+          {isSettings ? null : <button className="amw-btn" onClick={onClose} aria-label={ti("mw.a.25")} title={ti("mw.a.610")}><Ic size={12} paths={ICONS.x} /></button>}
         </div>
       </div>
       <div key={"body-" + tab} className="amw-body" style={bodyStyle}>
-        {busy ? <div style={{ color: "var(--text-subtle,#666)", marginBottom: 6 }}>处理中…</div> : null}
+        {busy ? <div style={{ color: "var(--text-subtle,#666)", marginBottom: 6 }}>{ti("mw.tx.179")}</div> : null}
         {msg ? <div className="amw-note">{msg}</div> : null}
         {missingInfo && Array.isArray(missingInfo.models) && missingInfo.models.length ? (
           <div className="amw-note is-warn" style={{marginBottom: 8}}>
-            <div style={{ fontWeight: 600, marginBottom: 3 }}>{"⚠️ " + missingInfo.models.length + " 个模型在所有数据源都查不到参数（已落裸条目，pi 按 128k/16k 硬默认用）：" + missingInfo.models.map((m: any) => m.id).join("、")}</div>
+            <div style={{ fontWeight: 600, marginBottom: 3 }}>{"⚠️ " + missingInfo.models.length + ti("mw.a.611") + missingInfo.models.map((m: any) => m.id).join("、")}</div>
             <div style={{ fontSize: 11, lineHeight: 1.7, color: "var(--text-subtle,#666)" }}>
-              {"已自动唤起 AI 助手（skill：model-params-fill）正在上网查权威数据 → 写入 ~/.pi/agent/models-store.json → 回填参数弹窗。AI 完成后打开各模型「✎ 编辑参数」核对并保存；下次保存会自动反填。"}
+              {ti("mw.a.612")}
               <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 6 }}>
                 {missingInfo.models.map((m: any) => (
                   <button key={m.id} className="amw-btn" style={{ padding: "2px 9px", fontSize: 11 }} onClick={() => void viewModelParams(missingInfo.provider, m.id, true)}>✎ {m.id}</button>
                 ))}
-                <button className="amw-btn" style={{ padding: "2px 9px", fontSize: 11 }} title="重新弹出 AI 助手" onClick={() => invokeAiHelperForMissing(missingInfo.provider, missingInfo.models, rootRef.current)}>重新唤 AI</button>
-                <button className="amw-btn" style={{ padding: "2px 9px", fontSize: 11 }} onClick={() => setMissingInfo(null)}>收起</button>
+                <button className="amw-btn" style={{ padding: "2px 9px", fontSize: 11 }} title={ti("mw.a.613")} onClick={() => invokeAiHelperForMissing(missingInfo.provider, missingInfo.models, rootRef.current)}>{ti("mw.tx.180")}</button>
+                <button className="amw-btn" style={{ padding: "2px 9px", fontSize: 11 }} onClick={() => setMissingInfo(null)}>{ti("mw.a.302")}</button>
               </div>
             </div>
           </div>
@@ -4198,7 +4198,7 @@ export function WizardButton() {
   const open = () => { try { (window.__aitiModelWizardOpenTab || window.__aitiModelWizardOpen)!(newTotal ? "status" : undefined); } catch {} };
   return (
     <button
-      title={newTotal ? t("mw.shell.newFound", { n: newTotal }) : t("mw.shell.title")}
+      title={newTotal ? ti("mw.shell.newFound", { n: newTotal }) : ti("mw.shell.title")}
       onClick={open}
       onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
       onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}
@@ -4261,7 +4261,7 @@ export function WizardDockFace() {
   const docked = useGate(WIZARD_KEY, { dock: "right-panel" });
   if (!docked) return null;
   return (
-    <DockBody itemKey={WIZARD_KEY} zone="right-panel" title="模型管理" chrome="tab"
+    <DockBody itemKey={WIZARD_KEY} zone="right-panel" title={ti("mw.a.614")} chrome="tab"
       zones={["right-panel"]} defaultZone="right-panel">
       <App open={true} initialTab="status" initialProvider={null} embedded onClose={() => closePanel(WIZARD_KEY)} />
     </DockBody>
@@ -4327,7 +4327,7 @@ export function Banner() {
     const pullAvailOnce = async () => {
       if (dead || document.hidden || latestAvail) return;
       try {
-        const av = await (await fetch(apiUrl("/api/extensions/aiti-model-check/availability"), { cache: "no-store" })).json();
+        const av = srvFix(await srvFix(await (await fetch(apiUrl("/api/extensions/aiti-model-check/availability"), { cache: "no-store" })).json()));
         applyAvail(av);
       } catch { /* 无帧也无拉取 → 横幅不显示，等事件 */ }
     };
@@ -4336,7 +4336,7 @@ export function Banner() {
     // 这里只判 providers 空否；打开向导面板的 openTab("status") 走完整 /status。
     const checkModels = async () => {
       try {
-        const d = await (await api("/status?light=1")).json();
+        const d = srvFix(await (await api("/status?light=1")).json());
         if (dead) return;
         const noModels = d && Array.isArray(d.providers) && d.providers.length === 0;
         if (noModels) { setState({ noModels: true, allUnavailable: false, avail: null }); setReady(true); return; }
@@ -4376,12 +4376,12 @@ export function Banner() {
   const avail = state.allUnavailable && state.avail ? state.avail : null;
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 12px", margin: "6px 0 0", flexWrap: "wrap", background: state.allUnavailable ? "rgba(220,38,38,.07)" : "rgba(37,99,235,.08)", border: "1px solid " + (state.allUnavailable ? "rgba(220,38,38,.3)" : "rgba(37,99,235,.25)"), borderRadius: 10, fontSize: 12.5 }}>
-      <span style={{ fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 5 }}><Ic size={14} paths={ICONS.wand} />{state.allUnavailable ? "所有模型都不可用" : "还没有可用模型"}</span>
+      <span style={{ fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 5 }}><Ic size={14} paths={ICONS.wand} />{state.allUnavailable ? ti("mw.a.615") : ti("mw.a.616")}</span>
       <span style={{ color: "var(--text-subtle,#666)" }}>{state.allUnavailable
-        ? (avail ? "（" + avail.rateLimited + " 限流 · " + avail.errorCount + " 异常" + (avail.lastBlocked && avail.lastBlocked.marked ? " · 运行期被大量 429 阻断标记" : "") + "）检查记录看恢复时间，或换个模型" : "各模型均不可用（429 限流 / 出错），检查记录看恢复时间，或换个模型")
-        : "添加 AI 提供商：搜索或贴 API 地址 → 填 token → 测试 → 选模型"}</span>
-      {state.allUnavailable && hasCheck() ? <button className="amw-btn" style={{ background: "#dc2626", color: "#fff", padding: "3px 10px" }} onClick={openCheck}>查看模型检查</button> : null}
-      <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff", padding: "3px 10px" }} onClick={openWizard}>{state.allUnavailable ? "去换模型" : "去添加"}</button>
+        ? (avail ? "（" + avail.rateLimited + ti("mw.a.116") + avail.errorCount + ti("mw.a.464") + (avail.lastBlocked && avail.lastBlocked.marked ? ti("mw.a.617") : "") + ti("mw.a.618") : ti("mw.a.619"))
+        : ti("mw.a.620")}</span>
+      {state.allUnavailable && hasCheck() ? <button className="amw-btn" style={{ background: "#dc2626", color: "#fff", padding: "3px 10px" }} onClick={openCheck}>{ti("mw.tx.181")}</button> : null}
+      <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff", padding: "3px 10px" }} onClick={openWizard}>{state.allUnavailable ? ti("mw.a.621") : ti("mw.a.622")}</button>
     </div>
   );
 }
@@ -4402,7 +4402,7 @@ export function ReminderToast() {
       const names = entries.map(([name, v]: any) => name + "+" + v.count).join("、");
       const sum = entries.reduce((s: number, [, v]: any) => s + v.count, 0);
       // 常驻提示：不自动消失，直到用户点击（进向导）或 ✕（知道了）
-      setToast("发现 " + d.total + " 个新模型（" + names + (d.total > sum ? "…" : "") + "）· 点击查看");
+      setToast(ti("mw.a.514") + d.total + ti("mw.a.623") + names + (d.total > sum ? "…" : "") + ti("mw.a.624"));
       return true;
     };
     const visibleAtMount = document.visibilityState === "visible";
@@ -4446,9 +4446,9 @@ export function ReminderToast() {
     >
       <Ic size={15} paths={ICONS.sparkles} />
       <span>{toast}</span>
-      <span style={{ fontSize: 11, fontWeight: 500, opacity: .85, whiteSpace: "nowrap" }}>点击查看</span>
+      <span style={{ fontSize: 11, fontWeight: 500, opacity: .85, whiteSpace: "nowrap" }}>{ti("mw.tx.182")}</span>
       <button
-        title="知道了，不再提醒" aria-label="知道了，不再提醒"
+        title={ti("mw.a.625")} aria-label={ti("mw.a.625")}
         onClick={(e) => { e.stopPropagation(); dismiss(); }}
         style={{ background: "rgba(255,255,255,.18)", border: "none", color: "#fff", width: 20, height: 20,
           borderRadius: "50%", fontSize: 12, lineHeight: 1, cursor: "pointer", display: "flex",

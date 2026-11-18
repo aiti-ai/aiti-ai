@@ -34,6 +34,39 @@ Sharing happens only when you say so, and the preview is always editable first.
 
 Every entry is a **host slot or extension topic** — this extension registers providers, other extensions render them. No hard-coded buttons.
 
+## Save-to (local favourite sinks)
+
+Above the network targets the dialog always shows a **Save to** row — the same idea as a mobile
+share sheet, where "Copy" and "Save to…" sit next to the upload targets:
+
+| Sink | Provider | Effect |
+| --- | --- | --- |
+| Copy | built in | Copies the content to the clipboard |
+| Save as command | `aiti-cmd` | Adds it to the saved-commands library (one click, editable later) |
+| Save as prompt | `aiti-prompts` | Adds it to the prompt snippet library |
+
+Sinks are a **different provider family** from targets: they store locally — no upload, no URL,
+no redaction — and they never appear in the target manager.
+
+### Extension point (topic `share-sink`)
+
+```js
+ctx.registerTopicItem("share-sink", {
+  id: "my-ext.thing",              // unique
+  order: 30,                        // optional, lower = further left
+  label: "Save as thing",          // string or () => string
+  icon: { svg: "<path .../>" },     // optional 24×24 inner markup
+  accepts: (payload) => true,       // payload = { kind, text, title, tags, ...original }
+  async save(payload) {
+    return { ok: true, message: "Saved", action: { label: "Open", run() {} } };
+  },
+});
+```
+
+`payload.text` is the **unredacted** body with the page-info stamp removed (local storage is not an upload, and the stamp is sharing metadata — it must never end up inside a saved command). The consumer
+(`aiti-msg-share`) renders the chips, shows the receipt and runs `action.run` on click.
+Providers that are not loaded simply do not appear.
+
 ## Targets
 
 161 built-in targets come from [`@aiti-ai/content-share`](https://www.npmjs.com/package/@aiti-ai/content-share):

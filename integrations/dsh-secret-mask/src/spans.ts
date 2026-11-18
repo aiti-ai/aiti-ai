@@ -6,6 +6,7 @@
  * entering a step (the aiti-devtools-dsh pre-step pattern).
  */
 
+import { applyFixedRules, registerRuleMatches, registerWeakCandidates, type WeakCandidate } from "@aiti-ai/secret-mask-core";
 import type { ContentBlock, Message, SessionState, TextBlock, UserMessage } from "./dsh-types.ts";
 
 export interface TextSpan {
@@ -58,17 +59,30 @@ export function redactUserMessage(
   message: UserMessage,
   st: SessionState,
   autoDetect: boolean,
+  weak?: { auto?: boolean; onCandidate?: (candidate: WeakCandidate) => void },
 ): MessageRedactResult {
   let changed = false;
   let newEntries = 0;
   const userAuthored = (message.source as { kind?: string } | undefined)?.kind === "user";
   const content = message.content.map((block) => {
     if (!isTextBlock(block) || !block.text) return block;
-    if (autoDetect && userAuthored) newEntries += st.registry.autoRegister(block.text, st.salt).length;
+    if (autoDetect && userAuthored) {
+      newEntries += st.registry.autoRegister(block.text, st.salt).length;
+      if (weak) newEntries += registerWeakCandidates(block.text, st.registry, st.salt, weak).filter((c) => c.registered).length;
+    }
+    const rules = st.rules ?? [];
+    if (rules.length > 0) newEntries += registerRuleMatches(block.text, st.registry, rules, st.salt);
     const res = st.registry.redact(block.text);
-    if (res.count === 0) return block;
+    let text = res.text;
+    let count = res.count;
+    if (rules.length > 0) {
+      const fixed = applyFixedRules(text, rules);
+      text = fixed.text;
+      count += fixed.count;
+    }
+    if (count === 0) return block;
     changed = true;
-    return { ...block, text: res.text };
+    return { ...block, text };
   });
   if (!changed) return { message, changed: false, newEntries };
   return { message: { ...message, content }, changed: true, newEntries };

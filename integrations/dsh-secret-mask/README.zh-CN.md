@@ -2,16 +2,23 @@
 
 > **随手贴，不泄密。** — Paste-safe by default.
 
-[DSH（DeepSeek Harness）](https://github.com/deepseek-ai/deepseek-harness)的会话级 AI 脱敏插件：你贴进 prompt 的 token / API key / 凭据，在**一步进入模型之前**（`agent/pre-step`）自动替换为稳定占位符（如 `[REDACTED:github-token]`）；模型在工具参数里引用占位符时，在白名单工具的 shadow 包装层内**执行前还原为真值**。零运行时依赖。
+[DSH（DeepSeek Harness）](https://github.com/deepseek-ai/deepseek-harness)的会话级 AI 脱敏插件：你贴进 prompt 的 token / API key / 凭据，在**一步进入模型之前**（`agent/pre-step`）自动替换为不透明令牌（如 `rsec_a1b2c3d4`）；模型在工具参数里引用占位符时，在白名单工具的 shadow 包装层内**执行前还原为真值**。零运行时依赖。
 
 检测核心逐字移植自 [@aiti-ai/pi-secret-mask](https://www.npmjs.com/package/@aiti-ai/pi-secret-mask)——同规则、同熵阈值、同占位符格式、同还原语义。与官方 `@deepseek-ai/dsh-client-ui-secret-mask`（只遮挡**浏览器显示**，模型输入保留原始字符）互补：本插件工作在**模型边界**。
 
 ```
 你：  我的 api key 是 sk-ant-api03-<80位> —— 帮我写进 .env 的 ANTHROPIC_KEY
-模型看到：我的 api key 是 [REDACTED:ANTHROPIC_KEY#a1b2c3d4] —— 帮我写进 .env ...
+模型看到：我的 api key 是 rsec_a1b2c3d4 —— 帮我写进 .env ...
 bash 工具：ANTHROPIC_KEY=sk-ant-api03-<80位>   ← shadow wrapper 执行时已还原为真值
 session 日志：占位符持久落盘（pre-step 替换是 durable 的）
 ```
+
+## 0.2.0 变化（共享引擎 v2）
+
+- 占位符改为 `rsec_<hash8>`（形似凭据，模型不再拒用）；legacy `[REDACTED:*]` 仍可还原。
+- 未挂载占位符守卫：shadow 工具收到本会话未挂载的令牌时直接报错（带恢复指引），不再用字面量令牌执行命令（DSH 会话日志是持久的，重启后旧令牌本就会失效）。
+- 自定义规则：`~/.dsh/secret-mask-rules.json`（global + 每 workspace，mtime 热加载），placeholder / fixed 两种模式，`/secret rule …` 管理。
+- 落盘策略固定为 `ephemeral` 语义（pre-step 替换持久化；值只在进程内存），`/secret status` 明示；`/secret save|load <文件>` 仍是显式明文快照。
 
 ## 安装
 

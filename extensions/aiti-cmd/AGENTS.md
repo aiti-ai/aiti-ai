@@ -5,9 +5,18 @@
 - `src/` 源码（client/src + 服务端 ts/cjs）· `dist/` 构建产物（禁手改）· `tools/` 构建/部署脚本
 - npm 包形态的扩展：本目录 package.json 含 version 与 aitiConfigs 声明
 
+## 客户端结构（三弹窗应用，2026-11-18 拆分）
+- `client/src/index.js` = 胶水（register / 插槽 / 服务 / 全局桥 / 消息识别 provider）
+- `client/src/kit.js`（ctx 运行时）· `state.js`（应用 store）· `window.js`（浮窗外壳 + 三应用切换器）
+- `client/src/apps/{favorites,running,terminal}.js`：★命令收藏 / ▶运行中 / 🖥终端 三个独立 dialog
+- `client/src/views/{terminal-view,pi-command-view,command-detail,workspace-terminal}.js`：xterm 视图、agent 命令输出、消息识别命令卡、工作区页签接管与归属状态机
+- `client/src/entry.js`：`composerTools` 运行态势入口（与 ops timeline / import 同排）
+- `client/src/sinks.js`：分享中心 `share-sink` 提供方（命令收藏为固定收藏目标）
+- 服务端 API 与 UI 拆分无关：`/run` `/shell` `/sessions*` `/pi-commands*` `/commands*` `/history*` 保持原样
+
 ## 小改现场流程（改文案/样式/小逻辑）
 1. 改 `src/` 下对应源码
-2. `node tools/build.mjs`（client 有构建产物的扩展；纯服务端改动跳过）
+2. `node tools/build-client.mjs`（client 有构建产物的扩展；纯服务端改动跳过）
 3. `curl -X POST http://127.0.0.1:3001/api/extensions/reload`（dev；prod 3002；外部经 nginx 带 basePath：/dev、/mac、/mdev、/win、/wdev → `/xxx/api/extensions/reload`）
 4. 浏览器刷新页面验证
 

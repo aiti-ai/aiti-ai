@@ -15,7 +15,7 @@ var PAIR_FILE_MAX = parseInt(process.env.AITI_PAIR_FILE_MAX || String(200 * 1024
 var CHUNK_MAX = 2 * 1024 * 1024;
 var INBOX_MAX = 200;
 function createPairModule(deps) {
-  const { TAG, dataDir, cors, json, sseResponse } = deps;
+  const { TAG, dataDir, cors, json, sseResponse, validateInstance, deliverToPage } = deps;
   const peers = /* @__PURE__ */ new Map();
   const files = /* @__PURE__ */ new Map();
   const filesDir = dataDir ? join(dataDir, "aiti-bridge", "pair-files") : "";
@@ -47,7 +47,15 @@ function createPairModule(deps) {
       }
     }
   }
-  function register(msg) {
+  const PRIVATE_IP_RE = /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1|fc|fd)/;
+  function clientIp(req) {
+    const real = (req.headers.get("x-real-ip") || "").trim();
+    if (real) return real;
+    const xff = (req.headers.get("x-forwarded-for") || "").trim();
+    if (xff) return xff.split(",")[0].trim() || null;
+    return null;
+  }
+  function register(msg, meta) {
     const now = Date.now();
     const name = safeName(String(msg && msg.name || "")).slice(0, 40) || "\u8BBE\u5907";
     const pid = msg && msg.peerId && String(msg.peerId) || genId("p_");
@@ -56,9 +64,9 @@ function createPairModule(deps) {
     let p = peers.get(pid);
     if (!p) {
       if (devLabel) console.log(TAG + "   \u8BBE\u5907\uFF1A" + devLabel + (dev && dev.lang ? " \xB7 " + dev.lang : ""));
-      p = { peerId: pid, token: "t_" + randomBytes(18).toString("hex"), name, ua: String(msg && msg.ua || "").slice(0, 200), device: dev, deviceLabel: devLabel, lastSeen: now, writer: null, offlineAt: null, inbox: [] };
+      p = { peerId: pid, token: "t_" + randomBytes(18).toString("hex"), name, ua: String(msg && msg.ua || "").slice(0, 200), device: dev, deviceLabel: devLabel, lastSeen: now, writer: null, offlineAt: null, inbox: [], ip: meta && meta.ip || null, regAt: now };
       peers.set(pid, p);
-      console.log(TAG + " pair \u8BBE\u5907\u6CE8\u518C\uFF1A" + name + " (" + pid + ")");
+      console.log(TAG + " pair \u8BBE\u5907\u6CE8\u518C\uFF1A" + name + " (" + pid + ")" + (p.ip ? " @ " + p.ip : ""));
       broadcastToPeers({ type: "peer-join", peer: { id: pid, kind: "pair", name } });
       deps.getDevices().length;
     } else {
@@ -70,8 +78,16 @@ function createPairModule(deps) {
         p.device = dev;
         p.deviceLabel = devLabel;
       }
+      if (meta && meta.ip) p.ip = meta.ip;
     }
     return { peerId: p.peerId, token: p.token, name: p.name };
+  }
+  function pageIdentity(msg) {
+    const iid = String(msg && msg.instanceId || "");
+    if (!iid || !validateInstance(iid)) return null;
+    const self = deps.getDevices().filter((d) => d.id === iid)[0];
+    const name = String(msg && msg.name || self && self.name || iid).slice(0, 80);
+    return { id: iid, name, kind: "page" };
   }
   function checkPeer(peerId, token) {
     const p = peers.get(String(peerId || ""));
@@ -89,6 +105,8 @@ function createPairModule(deps) {
       offlineAt: p.offlineAt || null,
       lastSeen: p.lastSeen,
       pending: p.inbox.filter((m) => m.status === "pending").length,
+      ip: p.ip || null,
+      regAt: p.regAt || null,
       _now: now
     })).map(({ _now, ...row }) => row);
   }
@@ -153,12 +171,12 @@ function createPairModule(deps) {
     return { ok: true, file: publicFile(f) };
   }
   const publicFile = (f) => ({ fileId: f.fileId, name: f.name, size: f.size, mime: f.mime, from: f.from, to: f.to, at: f.at });
-  function fileDownload(p, fileId) {
-    if (!p) return json({ ok: false, error: "bad peer/token" }, 401);
+  function fileDownload(auth, fileId) {
+    if (!auth || !validateInstance(auth.instanceId)) return json({ ok: false, error: "bad instanceId" }, 401);
     const f = files.get(String(fileId || ""));
     if (!f) return json({ ok: false, error: "unknown fileId" }, 404);
     if (f.status !== "ready") return json({ ok: false, error: "file not ready" }, 409);
-    if (f.to && f.to !== "all" && f.to !== p.peerId && f.to !== p.name) return json({ ok: false, error: "not the receiver" }, 403);
+    if (f.to && f.to !== "all" && f.to !== auth.instanceId && f.from.id !== auth.instanceId) return json({ ok: false, error: "not the receiver" }, 403);
     if (!existsSync(f.path)) return json({ ok: false, error: "file expired" }, 410);
     let stream;
     try {
@@ -258,7 +276,7 @@ function createPairModule(deps) {
       const msg = await req.json().catch(() => null);
       const denied = gateAdmission(req, msg && msg.regToken || null);
       if (denied) return denied;
-      const r = register(msg);
+      const r = register(msg, { ip: clientIp(req) });
       return json({ ok: true, ...r });
     }
     if (seg[0] === "devices" && method === "GET") {
@@ -284,19 +302,38 @@ function createPairModule(deps) {
     }
     if (seg[0] === "message" && method === "POST") {
       const msg = await req.json().catch(() => null);
-      const p = checkPeer(msg && msg.peer, msg && msg.token);
-      if (!p) return json({ ok: false, error: "bad peer/token" }, 401);
+      const from = pageIdentity(msg);
+      if (!from) return json({ ok: false, error: "bad instanceId\uFF08\u9875\u9762\u672A\u5728\u6865\u4E0A\uFF09" }, 401);
       const text = String(msg && msg.text || "").slice(0, 64e3);
       if (!text.trim()) return json({ ok: false, error: "bad request\uFF08\u9700\u8981 text\uFF09" }, 400);
-      const r = deps.routeSend({ id: p.peerId, name: p.name }, String(msg && msg.to || "all"), { text });
+      const r = deps.routeSend(from, String(msg && msg.to || "all"), { text });
       return json(r, r.ok ? 200 : r.candidates ? 300 : 400);
+    }
+    if (seg[0] === "notify" && method === "POST") {
+      const msg = await req.json().catch(() => null);
+      const from = pageIdentity(msg);
+      if (!from) return json({ ok: false, error: "bad instanceId\uFF08\u9875\u9762\u672A\u5728\u6865\u4E0A\uFF09" }, 401);
+      const identify = !!(msg && msg.identify);
+      const title = String(msg && msg.title || (identify ? "\u{1F50E} \u8BBE\u5907\u8BC6\u522B" : "\u{1F514} \u8BBE\u5907\u4E92\u8FDE"));
+      const body = String(msg && msg.body || "");
+      const timeoutMs = Math.max(3e3, Math.min(6e5, Number(msg && msg.timeoutMs || 5e4)));
+      const to = String(msg && msg.to || "all");
+      const targets = deps.getDevices().filter((d) => d.kind === "page" && d.id !== from.id && (to === "all" || d.id === to || d.name === to || String(d.name).includes(to)));
+      const delivered = [];
+      for (const t of targets) {
+        const notif = { kind: "notify", title, body, timeoutMs };
+        if (deliverToPage(t.id, { type: "interaction", requestId: "pair_notify_" + randomBytes(4).toString("hex"), interaction: notif, pageId: t.id })) delivered.push({ id: t.id, kind: "page" });
+      }
+      return json({ ok: delivered.length > 0, delivered });
     }
     if (seg[0] === "file") {
       if (seg[1] === "init" && method === "POST") {
         const msg = await req.json().catch(() => null);
-        const p = checkPeer(msg && msg.peer, msg && msg.token);
-        if (!p) return json({ ok: false, error: "bad peer/token" }, 401);
-        const r = fileInit({ id: p.peerId, name: p.name }, String(msg && msg.to || ""), String(msg && msg.name || ""), Number(msg && msg.size || 0), String(msg && msg.mime || ""));
+        const from = pageIdentity(msg);
+        if (!from) return json({ ok: false, error: "bad instanceId\uFF08\u9875\u9762\u672A\u5728\u6865\u4E0A\uFF09" }, 401);
+        const denied = gateAdmission(req, null);
+        if (denied) return denied;
+        const r = fileInit(from, String(msg && msg.to || ""), String(msg && msg.name || ""), Number(msg && msg.size || 0), String(msg && msg.mime || ""));
         return r.error ? json({ ok: false, error: r.error }, 400) : json({ ok: true, ...r });
       }
       if (seg[1] === "chunk" && method === "POST") {
@@ -314,7 +351,7 @@ function createPairModule(deps) {
         return json(r);
       }
       if (seg.length === 2 && method === "GET") {
-        return fileDownload(checkPeer(searchParams.get("peer"), searchParams.get("token")), String(seg[1] || ""));
+        return fileDownload({ instanceId: searchParams.get("instanceId") || "", secret: searchParams.get("secret") || "" }, String(seg[1] || ""));
       }
     }
     if (seg[0] === "inbox" && method === "GET") {
@@ -453,7 +490,7 @@ var BRIDGE_TOOLS = [
       body: { type: "string", description: "\u901A\u77E5\u5185\u5BB9" },
       timeout: { type: "number", description: "\u53EF\u9009\uFF1A\u901A\u77E5\u5361\u81EA\u52A8\u5173\u95ED\u65F6\u9650 ms\uFF085000-600000\uFF09\u3002\u4E0D\u4F20=\u5E38\u9A7B\u76F4\u5230\u7528\u6237\u5173\u95ED" },
       async: { type: "boolean", description: "true=\u5F02\u6B65\uFF1A\u7ACB\u5373\u8FD4\u56DE\u5DF2\u5F02\u6B65\u53D1\u51FA\uFF0C\u7528\u6237\u4F5C\u7B54\u7ED3\u679C\u7ECF AI \u6D88\u606F\u7A97\u53D1\u9001\uFF1B\u7F3A\u7701=\u540C\u6B65\u7B49\u5F85" },
-      pageId: { type: "string" }
+      pageId: { type: "string", description: "\u76EE\u6807\u9875\u9762\uFF1A\u5B8C\u6574 pageId\uFF08iid/frameId\uFF09/url/title\uFF08resolvePageId \u540C\u6B3E\uFF09\u6216\u88F8 instanceId\uFF08pair \u8BBE\u5907 id \u540C\u6E90\uFF09\u3002\u7F3A\u7701=\u5E7F\u64AD\u5168\u90E8 AI \u7A97 + \u4F1A\u8BDD\u9ED8\u8BA4\u9875" }
     }, required: ["body"] }
   },
   // ---- 方案 G · P2：agent 接入 + 消息主通道 ----
@@ -1127,19 +1164,19 @@ ${String(pl.stack).slice(0, 400)}` : "");
     const addMine = (row) => {
       row.mine = !!(boundPageId && row.pageId === boundPageId);
     };
-    for (const [instanceId, page] of pages) {
-      for (const frameId of page.frames) {
-        const fi = page.frameInfo && page.frameInfo.get(frameId) || null;
+    for (const [instanceId, page2] of pages) {
+      for (const frameId of page2.frames) {
+        const fi = page2.frameInfo && page2.frameInfo.get(frameId) || null;
         const isHost = frameId === "host";
-        const fUrl = fi && fi.url || (isHost ? page.url : null);
-        const fTitle = fi && fi.title || (isHost ? page.title : null);
+        const fUrl = fi && fi.url || (isHost ? page2.url : null);
+        const fTitle = fi && fi.title || (isHost ? page2.title : null);
         const row = {
           instanceId,
           frameId,
           pageId: instanceId + "/" + frameId,
-          url: page.url,
-          title: page.title || null,
-          frameworks: page.frameworks,
+          url: page2.url,
+          title: page2.title || null,
+          frameworks: page2.frameworks,
           active: true,
           lastSeen: Date.now(),
           frameUrl: fUrl || null,
@@ -1149,7 +1186,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
           frameParent: isHost ? null : fi && fi.parentId || null,
           root: isHost || !(fi && fi.parentId)
         };
-        withDevice(row, page.device, page.deviceLabel);
+        withDevice(row, page2.device, page2.deviceLabel);
         seen.add(row.pageId);
         addMine(row);
         out.push(row);
@@ -1445,7 +1482,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
   ;
   function execOnPage(cmd, args, pageId, signal, mcpReqId, cancelId) {
     const { instanceId, frameId } = parsePageId(pageId || LEGACY_TOKEN);
-    const page = pages.get(instanceId);
+    const page2 = pages.get(instanceId);
     return new Promise((resolve) => {
       const requestId = "mcp_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
       const rec = { resolve, agentId: null, t0: Date.now(), signal: null, onAbort: null, mcpReqId: mcpReqId || null, cancelId: cancelId || null };
@@ -1462,8 +1499,8 @@ ${String(pl.stack).slice(0, 400)}` : "");
         signal.addEventListener("abort", rec.onAbort, { once: true });
       }
       console.log(TAG + " exec \u2192", cmd, JSON.stringify(args || {}), "\u2192 pageId=" + pageId);
-      if (page) {
-        if (!page.writer.write({ type: "exec", requestId, cmd, args: args || {}, frameId })) {
+      if (page2) {
+        if (!page2.writer.write({ type: "exec", requestId, cmd, args: args || {}, frameId })) {
           const irec = idRegistry.get(instanceId);
           if (irec) irec.lastSeen = Date.now();
           pages.delete(instanceId);
@@ -1598,7 +1635,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
   };
   function interactOnPage(interaction, pageId, timeoutMs, signal, mcpReqId, cancelId) {
     const { instanceId, frameId } = parsePageId(pageId || LEGACY_TOKEN);
-    const page = pages.get(instanceId);
+    const page2 = pages.get(instanceId);
     let aiTarget = null;
     if (frameId === "ai") {
       for (const [w, rec] of aiSelfReg) if (rec.instanceId === instanceId) {
@@ -1644,8 +1681,8 @@ ${String(pl.stack).slice(0, 400)}` : "");
           } else return noExecutor();
         }
       } else if (payload.kind === "pick_element") {
-        if (page) {
-          if (!page.writer.write({ type: "interaction", requestId, interaction: payload, frameId })) {
+        if (page2) {
+          if (!page2.writer.write({ type: "interaction", requestId, interaction: payload, frameId })) {
             pages.delete(instanceId);
             return noExecutor();
           }
@@ -1653,8 +1690,8 @@ ${String(pl.stack).slice(0, 400)}` : "");
           for (const w of aiConns) w.write({ type: "interaction", requestId, interaction: payload, pageId, via: "ai" });
         } else return noExecutor();
       } else {
-        if (page) {
-          if (!page.writer.write({ type: "interaction", requestId, interaction: payload, frameId })) {
+        if (page2) {
+          if (!page2.writer.write({ type: "interaction", requestId, interaction: payload, frameId })) {
             pages.delete(instanceId);
             return noExecutor();
           }
@@ -1692,7 +1729,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
             "page_logs / page_network\uFF1A\u6392\u67E5\u9875\u9762\u62A5\u9519/\u8BF7\u6C42\u5931\u8D25\u9996\u9009\u2014\u2014page_logs \u67E5 console\uFF08\u53EF level/since/limit \u8FC7\u6EE4\uFF0C\u5148\u770B warn/error\uFF09\uFF1Bpage_network \u67E5 ajax/fetch \u5B8C\u6210\u6001\uFF08status\u2265400 \u6216 errorOnly:true \u53EA\u770B\u5931\u8D25\uFF09\u3002\u4E24\u8005\u5747\u8BFB\u9875\u9762\u672C\u5730\u7F13\u51B2\uFF08CDP Runtime.evaluate \u6309\u9700\u62C9\u53D6\uFF0C\u4E0D\u518D\u5B9E\u65F6\u4E0A\u62A5\uFF09\u3002",
             "user_confirm / user_choose / user_input / user_pick_element / user_presence\uFF1AAI \u4E0E\u4EBA\u7C7B\u7528\u6237\u5728\u9875\u9762\u4E0A\u534F\u4F5C\u2014\u2014prompt \u7ED9\u7528\u6237\u770B\uFF0C\u9ED8\u8BA4\u540C\u6B65\u7B49\u5F85\u4E14\u6C38\u4E45\u7B49\u5F85\uFF08\u4E0D\u4F20 timeout\uFF1A\u9762\u677F\u5E38\u9A7B\u76F4\u5230\u7528\u6237\u4F5C\u7B54\uFF0C\u65E0\u8BFB\u79D2\uFF1B\u4EC5\u5728\u786E\u9700\u9650\u65F6\u50AC\u4FC3\u65F6\u4F20 timeout ms\uFF0C\u9762\u677F\u663E\u793A\u8BFB\u79D2\u5012\u8BA1\u65F6\u53EF\u6682\u505C\uFF0C\u5230\u70B9\u8FD4\u56DE status:'timeout'\uFF09\uFF0C\u54CD\u5E94\u4FE1\u5C01 {status:'answered'|'rejected'|'timeout'|'error', value?, reason?, tookMs, timeoutMs}\u3002\u4F20 async:true \u53EF\u7ACB\u5373\u8FD4\u56DE\uFF08\u7ED3\u679C\u7ECF AI \u6D88\u606F\u7A97\u9001\u8FBE\uFF09\u3002",
             "user_notify\uFF1A\u975E\u963B\u585E\u6D4F\u89C8\u5668\u901A\u77E5\uFF0C\u4E0D\u7B49\u5F85\u56DE\u7B54\u3002",
-            "\u8BBE\u5907\u4E92\u8FDE\uFF1Abridge_status \u8FD4\u56DE devices\uFF08kind=page/agent/pair \u7EDF\u4E00\u8BBE\u5907\u89C6\u56FE\uFF09\u2014\u2014aiti_pair_send \u7ED9\u4EFB\u610F\u8BBE\u5907\u53D1\u6587\u672C\u3001aiti_pair_file \u63A8\u672C\u5730\u6587\u4EF6\u3001aiti_pair_fetch \u53D6\u56DE\u6536\u5230\u7684\u6587\u4EF6\uFF08fileId \u5728 aiti_inbox \u6D88\u606F payload.file\uFF09\uFF1B\u624B\u673A\u7B49\u6D4F\u89C8\u5668\u8BBE\u5907\u6253\u5F00\u6865\u7684 pair.html \u5373\u4E0A\u7EBF\u3002",
+            "\u8BBE\u5907\u4E92\u8FDE\uFF1Abridge_status \u8FD4\u56DE devices\uFF08kind=page/agent/pair \u7EDF\u4E00\u8BBE\u5907\u89C6\u56FE\uFF09\u2014\u2014aiti_pair_send \u7ED9\u4EFB\u610F\u8BBE\u5907\u53D1\u6587\u672C\u3001aiti_pair_file \u63A8\u672C\u5730\u6587\u4EF6\u3001aiti_pair_fetch \u53D6\u56DE\u6536\u5230\u7684\u6587\u4EF6\uFF08fileId \u5728 aiti_inbox \u6D88\u606F payload.file\uFF09\uFF1B\u4EFB\u4F55\u6D4F\u89C8\u5668\u6253\u5F00 pi-web \u9875\u9762\u5373\u53EF\u5728\u8BBE\u5907\u4E92\u8FDE\u9762\u677F\u4E0A\u7EBF\u3002",
             "\u5E38\u89C1\u7528\u6CD5\uFF1A\u9875\u9762\u62A5\u9519\u2192page_logs(level:warn/error) \u6216 page_network(errorOnly:true)\uFF1B\u64CD\u4F5C\u9875\u9762\u2192page_exec(cmd:'Runtime.evaluate', args:{expression:'...'})\uFF1B\u5B9A\u4F4D\u5143\u7D20\u2192page_snapshot \u540E\u518D page_exec \u6216\u8BF7\u7528\u6237 user_pick_element\u3002"
           ].join("\n")
         };
@@ -1771,8 +1808,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
             return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "\u6587\u4EF6\u4E0D\u5B58\u5728: " + fp }) }], isError: true };
           }
           const me = { id: recAgentKey || "agent", name: (recAgentKey && agents.get(recAgentKey) || {}).name || recAgentKey || "agent", kind: "agent" };
-          const pf0 = pair.resolvePeerFuzzy(to);
-          const toId = pf0.hit && pf0.hit.peerId || to;
+          const toId = to;
           const init = pair.fileInit(me, toId, fp.split(/[\\/]/).pop() || "file", st.size, "application/octet-stream");
           if (init.error) {
             recToolCall("\u{1F6E0} aiti_pair_file \u2192 " + init.error, false);
@@ -1953,6 +1989,56 @@ ${String(pl.stack).slice(0, 400)}` : "");
         if (params.name === "user_notify") {
           const notif = { kind: "notify", title: String(a.title || "\u{1F916} AI \u6709\u4E00\u6761\u6D88\u606F"), body: String(a.body || a.prompt || ""), timeoutMs: clampTimeout(a.timeout) };
           const rid = "notify_" + Date.now();
+          if (a.pageId) {
+            const raw = String(a.pageId);
+            let iid = "";
+            let frameId = null;
+            let fullPageId = "";
+            if (raw.indexOf("/") >= 0) {
+              const resolved = resolvePageId(raw);
+              if (resolved.multiple) {
+                recToolCall("\u{1F514} user_notify \u2192 \u26A0 \u9875\u9762\u5339\u914D\u591A\u4E2A", false);
+                return { content: [{ type: "text", text: "\u9875\u9762\u5339\u914D\u591A\u4E2A\uFF1A" + resolved.multiple.join(", ") + "\u2014\u2014\u8BF7\u7528\u5177\u4F53 pageId \u6307\u5B9A" }], isError: true };
+              }
+              if (resolved.notFound || !resolved.pageId) {
+                recToolCall("\u{1F514} user_notify(" + raw + ") \u2192 \u26A0 \u672A\u627E\u5230\u5339\u914D\u9875\u9762", false);
+                return { content: [{ type: "text", text: "\u672A\u627E\u5230\u5339\u914D\u9875\u9762\uFF08pageId/url/title \u5747\u672A\u547D\u4E2D\uFF09\u2014\u2014\u7528 bridge_status \u67E5\u770B\u53EF\u7528 pageId" }], isError: true };
+              }
+              const pid = parsePageId(resolved.pageId);
+              iid = pid.instanceId;
+              frameId = pid.frameId;
+              fullPageId = resolved.pageId;
+            } else {
+              iid = raw;
+            }
+            let delivered = false;
+            for (const w of aiConns) {
+              const reg = aiSelfReg.get(w) || aiPageReg.get(w);
+              if (reg && String(reg.instanceId) === iid) {
+                try {
+                  delivered = !!w.write({ type: "interaction", requestId: rid, interaction: notif, frameId: "ai", via: "self" });
+                } catch {
+                  delivered = false;
+                }
+                if (!delivered) {
+                  aiConns.delete(w);
+                  aiSelfReg.delete(w);
+                  aiPageReg.delete(w);
+                }
+                break;
+              }
+            }
+            if (!delivered) {
+              const pg2 = pages.get(iid);
+              if (pg2) delivered = !!pg2.writer.write({ type: "interaction", requestId: rid, interaction: notif, frameId, render: "notify-only" });
+            }
+            if (!delivered) {
+              recToolCall("\u{1F514} user_notify(" + iid + ") \u2192 \u26A0 \u76EE\u6807\u672A\u8FDE\u63A5", false);
+              return { content: [{ type: "text", text: "\u76EE\u6807\u9875\u9762\u672A\u8FDE\u63A5\uFF08instanceId \u672A\u547D\u4E2D\u6216\u5DF2\u6389\u7EBF\uFF09\u2014\u2014\u7528 bridge_status \u67E5\u770B\u53EF\u7528 pageId" }], isError: true };
+            }
+            recToolCall("\u{1F514} user_notify(" + iid + ") \u2192 " + String(notif.body).slice(0, 60), true);
+            return { content: [{ type: "text", text: JSON.stringify({ status: "sent", notified: true, title: notif.title, pageId: fullPageId || iid }) }], isError: false };
+          }
           for (const w of aiConns) w.write({ type: "interaction", requestId: rid, interaction: notif, pageId });
           const pg = pages.get(parsePageId(pageId || LEGACY_TOKEN).instanceId);
           if (pg) pg.writer.write({ type: "interaction", requestId: rid, interaction: notif, frameId: parsePageId(pageId || LEGACY_TOKEN).frameId, render: "notify-only" });
@@ -2179,12 +2265,45 @@ ${String(pl.stack).slice(0, 400)}` : "");
     json,
     sseResponse: (onClose, opts2) => sseResponse(onClose, opts2),
     getDevices: () => listDevices(),
-    routeSend: (fromDev, to, payload) => routePairSend(fromDev, to, payload)
+    routeSend: (fromDev, to, payload) => routePairSend(fromDev, to, payload),
+    verifyInstance: (instanceId) => validInstance(instanceId),
+    // role=ai 自标识同信任模型（与 validateInstance 同义；公网伪造由 gateAdmission 门控）
+    // 页面下行直投:aiConns(role=ai)按 instanceId 匹配定向 write——pair 下行的现成在线直连通道
+    deliverToPage: (instanceId, envelope) => {
+      for (const w of aiConns) {
+        const reg = aiSelfReg.get(w) || aiPageReg.get(w);
+        if (reg && String(reg.instanceId) === String(instanceId)) {
+          let ok = false;
+          try {
+            ok = !!w.write(envelope);
+          } catch {
+            ok = false;
+          }
+          if (!ok) {
+            aiConns.delete(w);
+            aiSelfReg.delete(w);
+            aiPageReg.delete(w);
+          }
+          return ok;
+        }
+      }
+      return false;
+    }
   });
   function listDevices() {
     const out = [];
-    for (const [instanceId, page] of pages) {
-      out.push({ kind: "page", id: instanceId, name: page.title || page.url || instanceId, url: page.url || null, title: page.title || null, device: page.device || null, deviceLabel: page.deviceLabel || null, online: true, lastSeen: Date.now() });
+    const seenPages = /* @__PURE__ */ new Set();
+    for (const w of aiConns) {
+      const reg = aiSelfReg.get(w) || aiPageReg.get(w);
+      const iid = reg && String(reg.instanceId);
+      if (!iid || seenPages.has(iid)) continue;
+      seenPages.add(iid);
+      const dev = reg.device || null;
+      const nm = dev && (dev.os || dev.browser) ? [dev.os, dev.browser].filter(Boolean).join(" \xB7 ") : reg.title || page.url || iid;
+      out.push({ kind: "page", id: iid, name: nm, url: reg.url || null, title: reg.title || null, device: dev, deviceLabel: dev ? [dev.browser, dev.os, dev.screen].filter(Boolean).join(" \xB7 ") : null, online: true, lastSeen: reg.lastSeen || Date.now() });
+    }
+    for (const [instanceId, page2] of pages) {
+      out.push({ kind: "page", id: instanceId, name: page2.title || page2.url || instanceId, url: page2.url || null, title: page2.title || null, device: page2.device || null, deviceLabel: page2.deviceLabel || null, online: true, lastSeen: Date.now() });
     }
     for (const [key, a] of agents) {
       if (!a.registered && !agentOnline(a) && !a.outbox.length) continue;
@@ -2193,13 +2312,83 @@ ${String(pl.stack).slice(0, 400)}` : "");
     for (const p of pair.listPeers()) out.push(p);
     return out.sort((x, y) => (y.lastSeen || 0) - (x.lastSeen || 0));
   }
+  function aiDeviceFrom(req, msg) {
+    let dev = null;
+    try {
+      const dq = msg && msg.device || null;
+      if (dq) dev = typeof dq === "string" ? JSON.parse(dq) : dq;
+    } catch (e) {
+    }
+    if (!dev) {
+      const ua = req.headers.get("user-agent") || "";
+      if (ua) {
+        let browser = "?", bver = "";
+        try {
+          const m = ua.match(/(EdgA?|Chrome|Firefox|OPR|Safari)\/([\d.]+)/);
+          if (m) {
+            browser = m[1] === "Edg" || m[1] === "Edge" ? "Edge" : m[1] === "OPR" ? "Opera" : m[1];
+            bver = m[2];
+          } else if (/MSIE|Trident/.test(ua)) {
+            browser = "IE";
+            const mi = ua.match(/rv:([\d.]+)/);
+            bver = mi ? mi[1] : "";
+          }
+        } catch {
+        }
+        let os = "?", osv = "";
+        try {
+          if (/Windows NT/.test(ua)) {
+            os = "Windows";
+            osv = /Windows NT 10\.0/.test(ua) ? "10/11" : /Windows NT 6\.[123]/.test(ua) ? "7/8" : "10/11";
+          } else if (/iPhone|iPad|iPod/.test(ua)) {
+            os = "iOS";
+            const im = ua.match(/OS (\d+[_\d]*)/);
+            osv = im ? im[1].replace(/_/g, ".") : "";
+          } else if (/Android/.test(ua)) {
+            os = "Android";
+            const am = ua.match(/Android ([\d.]+)/);
+            osv = am ? am[1] : "";
+          } else if (/Mac OS X/.test(ua)) {
+            os = "macOS";
+            const mm = ua.match(/Mac OS X ([\d_.]+)/);
+            osv = mm ? mm[1].replace(/_/g, ".") : "";
+          } else if (/CrOS/.test(ua)) {
+            os = "ChromeOS";
+          } else if (/Linux/.test(ua)) {
+            os = "Linux";
+          }
+        } catch {
+        }
+        const mobile = /Android|iPhone|iPad|iPod|Mobile|Windows Phone/i.test(ua);
+        dev = { browser, version: bver, os, osVer: osv, deviceType: mobile ? /iPad|Tablet|Silk/i.test(ua) ? "tablet" : "mobile" : "desktop" };
+      }
+    }
+    return dev;
+  }
   function routePairSend(fromDev, to, payload) {
     const q = String(to || "all").trim() || "all";
-    const from = { id: fromDev.id, kind: fromDev.kind || "pair", name: fromDev.name };
+    const from = { id: fromDev.id, kind: fromDev.kind || "page", name: fromDev.name };
     const env = (type, extra) => ({ id: randomBytes2(4).toString("hex"), type, from, to: q, ts: Date.now(), ...extra });
     const delivered = [];
-    const pushPair = (pid) => {
-      if (pair.deliverToPeer(pid, env(payload.file ? "file" : "text", payload.file ? { file: payload.file } : { text: payload.text }))) delivered.push({ kind: "pair", id: pid });
+    const pageIds = () => {
+      const s = /* @__PURE__ */ new Set();
+      for (const w of aiConns) {
+        const reg = aiSelfReg.get(w) || aiPageReg.get(w);
+        if (reg && reg.instanceId) s.add(String(reg.instanceId));
+      }
+      return [...s];
+    };
+    const pushPage = (instanceId) => {
+      for (const w of aiConns) {
+        const reg = aiSelfReg.get(w) || aiPageReg.get(w);
+        if (!reg || String(reg.instanceId) !== instanceId) continue;
+        const msg = env(payload.file ? "file" : "text", payload.file ? { file: payload.file } : { text: payload.text });
+        try {
+          if (w.write({ type: "pair_msg", ...msg })) delivered.push({ kind: "page", id: instanceId });
+        } catch {
+        }
+        return;
+      }
     };
     const pushAgent = (target) => {
       const label = "[\u53D1\u81EA pair: " + fromDev.name + "]";
@@ -2215,21 +2404,9 @@ ${String(pl.stack).slice(0, 400)}` : "");
       const r = pushToAgents(target, text, payload.file ? "pair_file" : "user_message", pl);
       for (const d of r && r.delivered || []) delivered.push({ kind: "agent", id: d.agentKey, status: d.status });
     };
-    const pushPage = (instanceId) => {
-      const msg = env(payload.file ? "file" : "text", payload.file ? { file: payload.file } : { text: payload.text });
-      let n = 0;
-      for (const [w, rec] of aiSelfReg) {
-        if (instanceId && String(rec.instanceId) !== instanceId) continue;
-        if (w.write({ type: "pair_msg", ...msg })) n++;
-      }
-      if (n) delivered.push({ kind: "page", id: instanceId });
-      return n;
-    };
     if (q === "all") {
-      const peers = pair.listPeers();
-      for (const p of peers) {
-        if (p.id === fromDev.id) continue;
-        pushPair(p.id);
+      for (const pid of pageIds()) {
+        if (pid !== fromDev.id) pushPage(pid);
       }
       const label = "[\u53D1\u81EA pair: " + fromDev.name + "]";
       const pl = { source: "pair", sourceLabel: "Pair \xB7 " + fromDev.name, fromDevice: from };
@@ -2238,20 +2415,20 @@ ${String(pl.stack).slice(0, 400)}` : "");
       for (const d of ra && ra.delivered || []) delivered.push({ kind: "agent", id: d.agentKey, status: d.status });
       return { ok: delivered.length > 0, delivered };
     }
-    const pf = pair.resolvePeerFuzzy(q);
-    if (pf.hit) {
-      if (pf.hit.peerId !== fromDev.id) pushPair(pf.hit.peerId);
-      return { ok: true, delivered };
+    if (pageIds().includes(q)) {
+      pushPage(q);
+      return { ok: delivered.length > 0, delivered };
     }
     if (agents.has(q) || agentIdx.has(q)) {
       pushAgent(q);
       return { ok: delivered.length > 0, delivered };
     }
-    if (pages.has(q)) {
-      const n = pushPage(q);
-      return n ? { ok: true, delivered } : { ok: false, error: "\u9875\u9762\u8FDE\u63A5\u5DF2\u65AD\u5F00" };
+    const devMatches = listDevices().filter((d) => d.kind === "page" && ((d.name || "").includes(q) || d.id.includes(q)));
+    if (devMatches.length === 1) {
+      pushPage(devMatches[0].id);
+      return { ok: delivered.length > 0, delivered };
     }
-    if (pf.multiple) return { ok: false, candidates: pf.multiple, error: "pair \u8BBE\u5907\u540D\u5339\u914D\u591A\u4E2A" };
+    if (devMatches.length > 1) return { ok: false, candidates: devMatches.map((d) => ({ kind: "page", id: d.id, name: d.name })), error: "\u9875\u9762\u540D\u5339\u914D\u591A\u4E2A" };
     const agentRows = listAgentSessions().filter((a) => (a.name || "").includes(q) || a.agentKey.includes(q));
     if (agentRows.length === 1) {
       pushAgent(agentRows[0].agentKey);
@@ -2261,8 +2438,8 @@ ${String(pl.stack).slice(0, 400)}` : "");
     const resolved = resolvePageId(q);
     if (resolved.pageId) {
       const inst = String(resolved.pageId).split("/")[0];
-      const n = pushPage(inst);
-      if (n) return { ok: true, delivered };
+      pushPage(inst);
+      if (delivered.length) return { ok: true, delivered };
     }
     if (resolved.multiple) return { ok: false, candidates: resolved.multiple.map((pid) => ({ kind: "page", id: pid })), error: "\u9875\u9762\u5339\u914D\u591A\u4E2A" };
     return { ok: false, error: "\u65E0\u5339\u914D\u8BBE\u5907\uFF08to \u652F\u6301\u8BBE\u5907 id/\u540D\u5B57\uFF1Bbridge_status \u6216 /bridge/pair/devices \u67E5\u770B\u5728\u7EBF\u8BBE\u5907\uFF09" };
@@ -2344,25 +2521,25 @@ ${String(pl.stack).slice(0, 400)}` : "");
     if (endpoint === "bridge" && sub === "register" && req.method === "POST") {
       const msg = await req.json().catch(() => null);
       if (!msg || !validInstance(msg.instanceId)) return json({ ok: false, error: "bad instanceId" }, 401);
-      const page = pages.get(msg.instanceId);
-      if (!page) return json({ ok: false, error: "no active page" }, 404);
+      const page2 = pages.get(msg.instanceId);
+      if (!page2) return json({ ok: false, error: "no active page" }, 404);
       const list = Array.isArray(msg.frames) ? msg.frames : [msg.frameId].filter(Boolean);
-      page.frames.clear();
-      page.frameInfo.clear();
+      page2.frames.clear();
+      page2.frameInfo.clear();
       for (const f of list) {
         if (typeof f === "string" && f) {
-          page.frames.add(f);
+          page2.frames.add(f);
           continue;
         }
         if (f && f.id) {
-          page.frames.add(String(f.id));
+          page2.frames.add(String(f.id));
           if (f.title || f.url || f.name || f.src || f.parentId) {
-            page.frameInfo.set(String(f.id), { title: f.title || null, url: f.url || null, name: f.name || null, src: f.src || null, parentId: f.parentId || null });
+            page2.frameInfo.set(String(f.id), { title: f.title || null, url: f.url || null, name: f.name || null, src: f.src || null, parentId: f.parentId || null });
           }
         }
       }
-      console.log(TAG + " register frames \u2192", msg.instanceId, [...page.frames].join(","));
-      return json({ ok: true, frames: [...page.frames] });
+      console.log(TAG + " register frames \u2192", msg.instanceId, [...page2.frames].join(","));
+      return json({ ok: true, frames: [...page2.frames] });
     }
     if (endpoint === "bridge" && sub === "agent" && path[2] === "tools" && path[3] === "call" && req.method === "POST") {
       const msg = await req.json().catch(() => null);
@@ -2466,8 +2643,9 @@ ${String(pl.stack).slice(0, 400)}` : "");
       };
       if (role === "ai") {
         aiConns.add(writer);
+        const aiDev = aiDeviceFrom(req, { device: searchParams.get("device") || null });
         aiPageReg.set(writer, { instanceId, pageId: null, title: null, url: null, frames: null, lastSeen: Date.now() });
-        aiSelfReg.set(writer, { instanceId, url: searchParams.get("url") || null, title: searchParams.get("title") || null, lastSeen: Date.now() });
+        aiSelfReg.set(writer, { instanceId, url: searchParams.get("url") || null, title: searchParams.get("title") || null, frames: /* @__PURE__ */ new Set(["host"]), frameInfo: /* @__PURE__ */ new Map(), device: aiDev, deviceLabel: aiDev ? [aiDev.browser, aiDev.os].filter(Boolean).join(" \xB7 ") : null, lastSeen: Date.now() });
         bindAgentFromAiSelf(aiSelfReg.get(writer));
         console.log(TAG + " AI \u63A7\u5236\u53F0\u5DF2\u8FDE\u63A5\uFF1AinstanceId=" + instanceId);
       } else {
@@ -2531,8 +2709,9 @@ ${String(pl.stack).slice(0, 400)}` : "");
       };
       if (role === "ai") {
         aiConns.add(writer);
+        const aiDev = aiDeviceFrom(req, msg);
         aiPageReg.set(writer, { instanceId, pageId: null, title: msg && msg.title || null, url: msg && msg.url || null, frames: null, lastSeen: Date.now() });
-        aiSelfReg.set(writer, { instanceId, url: msg && msg.url || null, title: msg && msg.title || null, lastSeen: Date.now() });
+        aiSelfReg.set(writer, { instanceId, url: msg && msg.url || null, title: msg && msg.title || null, device: aiDev, deviceLabel: aiDev ? [aiDev.browser, aiDev.os].filter(Boolean).join(" \xB7 ") : null, lastSeen: Date.now() });
         bindAgentFromAiSelf(aiSelfReg.get(writer));
         console.log(TAG + " AI \u63A7\u5236\u53F0\u5DF2\u8FDE\u63A5\uFF08\u603B\u7EBF\uFF09\uFF1AinstanceId=" + instanceId);
       } else {

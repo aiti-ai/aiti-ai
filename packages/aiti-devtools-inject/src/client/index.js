@@ -1,24 +1,24 @@
-// 页面内注入的迷你 __dbg client（真实 JS 文件；构建时由 vite 插件 esbuild 打包成字符串注入）
-// 注入方式：宿主自身 new Function('__DBG_POST__', code)（__DBG_POST__ 为自由变量）；同源 iframe 用 <script>.textContent
-// 注意：此文件保持单一 IIFE 结构（共享闭包状态），任何改动必须过 21 项自检
+// Mini in-page __dbg client (a real JS file; bundled by the vite plugin's esbuild into a string injected at build time)
+// Injection: the host itself runs new Function('__DBG_POST__', code) (__DBG_POST__ is a free variable); same-origin iframe uses <script>.textContent
+// Note: this file must stay a single IIFE (shared closure state); any change must pass the 21-point self-check
 /* global __DBG_POST__, __DBG_VERSION__ */
 
   (function () {
     'use strict';
-    // 幂等检查：同版本且关键能力齐全才跳过；旧版残留（缺新能力/退出不清理）→ 清理监听 + 覆盖（防退出后仍可点选）
+    // Idempotency check: skip only if same version and all key capabilities exist; stale old version (missing new capabilities / no cleanup on exit) → clean up listeners + overwrite (prevents picking after exit)
     if (window.__dbg && window.__dbg.__version__ && typeof window.__dbg.getSelectionPayload === 'function') return;
     if (window.__dbg && window.__dbg.__version__) {
       try { if (typeof window.__dbg.exitInspector === 'function') window.__dbg.exitInspector(); } catch (e) {}
       try { delete window.__dbg; } catch (e) {}
     }
 
-    // hover：标准蓝实线描边，不填充背景（fill 的 rgba(79,70,229,.10) 叠加页面=淡蓝透明罩，用户误认遮罩）
+    // hover: standard solid blue outline, no background fill (fill's rgba(79,70,229,.10) overlaid on the page = a translucent light-blue veil users mistook for a mask)
     var OUTLINE_HOVER = '2px solid #4f46e5';
     var OUTLINE_SEL   = '2px dashed #059669';
 
-    // 真实 URL 探测：launcher 注入在顶层时 location.href 即地址栏 URL；
-    // 注入在 iframe 内（如 pi-web 预览壳嵌真实站点）时，用户地址栏看到的是外层 URL——
-    // 同源可读 window.top/window.parent；跨域读不到则用 document.referrer（跨域 iframe 的 referrer 是外层页 URL）兜底。
+    // Real URL detection: when the launcher is injected at top level, location.href is the address-bar URL;
+    // when injected inside an iframe (e.g. pi-web preview shell wrapping a real site), the user's address bar shows the outer URL —
+    // same-origin can read window.top/window.parent; cross-origin falls back to document.referrer (a cross-origin iframe's referrer is the outer page URL).
     function topUrl() {
       var isTop = false;
       try { isTop = (window.self === window.top); } catch (e) {}
@@ -32,15 +32,15 @@
 
     var state = {
       active: false,
-      engaged: false, // 临时选择状态：点击后进入（hover 停用、工具条保留），✓确认/✕取消退出
+      engaged: false, // temporary selection state: entered on click (hover disabled, toolbar kept); ✓ confirms / ✕ cancels and exits
       hovered: null,
       selected: null,
       hoverOutline: { node: null },
       selOutline: { node: null },
     };
 
-    // ---------- 工具 ----------
-    // post 可注入：self 模式（注入宿主页自身）用 __DBG_POST__ 回调；iframe 模式走 parent.postMessage
+    // ---------- Utilities ----------
+    // Injectable post: self mode (injected into the host page itself) uses the __DBG_POST__ callback; iframe mode goes through parent.postMessage
     var POST = (typeof __DBG_POST__ === 'function') ? __DBG_POST__ : null;
     function post(msg) {
       if (POST) { try { POST({ __dbg: 1, ...msg }); } catch (e) {} return; }
@@ -84,7 +84,7 @@
       return '/' + parts.join('/');
     }
 
-    // computedStyles 白名单（§3.7 参考实现：默认值跳过）
+    // computedStyles whitelist (§3.7 reference implementation: default values skipped)
     var CSS_WHITELIST = [
       'display', 'position', 'top', 'left', 'width', 'height',
       'padding', 'margin', 'border', 'borderRadius', 'zIndex',
@@ -99,8 +99,8 @@
       opts = opts || {};
       var out = { tag: el.tagName.toLowerCase() };
       var r = el.getBoundingClientRect();
-      // 视口坐标 rect（CDP Input.dispatchMouseEvent 同系，可直接点元素）+ 文档坐标 docRect（滚动无关，判断页面绝对位置/滚动后仍可定位）
-      // + scroll（采样时滚动偏移 = 坐标系上下文标注：docRect = rect + scroll）
+      // viewport-coordinate rect (same coordinate system as CDP Input.dispatchMouseEvent, clicks elements directly) + document-coordinate docRect (scroll-independent, for absolute page position / locating after scrolling)
+      // + scroll (scroll offset at sampling time = coordinate-system context note: docRect = rect + scroll)
       var _sx = window.scrollX || document.documentElement.scrollLeft || document.body.scrollLeft || 0;
       var _sy = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
       out.rect = { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
@@ -130,7 +130,7 @@
       return out;
     }
 
-    // ---------- 框架识别（§3.4 四框架 fileLocation） ----------
+    // ---------- Framework detection (§3.4 four-framework fileLocation) ----------
     function findFiber(el) {
       if (!el) return null;
       var keys = Object.getOwnPropertyNames(el);
@@ -155,29 +155,29 @@
       if (!n) return null;
       return cleanComponentName(n);
     }
-    // 去 React 钩子推断名后缀（MarkdownBody.useMemo[components] → MarkdownBody），显示更可读
+    // Strip React hook-inferred name suffixes (MarkdownBody.useMemo[components] → MarkdownBody) for more readable display
     function cleanComponentName(n) {
       if (!n) return null;
       return String(n).replace(/\.use(Memo|Callback|Effect|Ref|State|Reducer)\s*\[[^\]]*\]$/, '');
     }
 
-    // ---------- React 19.2+ 源码定位（fiber._debugSource 已移除，改读 _debugStack） ----------
-    // React 19.2+ 的 jsxDEV 不再收 source 对象，改为在调用处捕获 Error("react-stack-top-frame")：
-    //   fiber._debugStack.stack 首帧 = jsx-dev-runtime 内部，第二帧 = JSX 调用点（chunk URL:line:col）；
-    //   Next dev(Turbopack) 为 chunk 提供 .map 源映射 → 精确还原源文件+行。
-    // 返回 {url, line, column, component}（首个非 react 内部帧 = JSX 调用点）；
-    // 首帧 UnknownOwner（预算耗尽）→ 返回 {__unknownOwner:true}（调用方可据此停止向上遍历，防跳远处祖先）。
+    // ---------- React 19.2+ source location (_debugSource removed; read _debugStack instead) ----------
+    // In React 19.2+, jsxDEV no longer takes a source object; an Error("react-stack-top-frame") is captured at the call site instead:
+    //   fiber._debugStack.stack first frame = inside jsx-dev-runtime, second frame = the JSX call site (chunk URL:line:col);
+    //   Next dev (Turbopack) ships .map source maps for chunks → exact source file+line recovery.
+    // Returns {url, line, column, component} (first non-react-internal frame = the JSX call site);
+    // first frame UnknownOwner (budget exhausted) → returns {__unknownOwner:true} (caller can stop walking up, avoiding distant ancestors).
     function react19StackSrc(err) {
       try {
         var stack = (err && err.stack) || '';
         if (!stack) return null;
         var lines = stack.split('\n');
-        // React 19.2 owner-stack 预算（recentlyCreatedOwnerStacks，1e4 次）耗尽后，jsxDEV 给所有新元素
-        // 共享模块初始化时捕获的 unknownOwnerDebugStack（首帧 UnknownOwner，后续帧指向 jsx-dev-runtime
-        // chunk 内部/模块求值）——这种栈无真实调用点，误当首帧会把 node_modules chunk 报成组件源码。
-        // 真实栈首帧必是 exports.jsxDEV；首帧是 UnknownOwner → 整栈无真实定位，返回哨兵。
+        // After the React 19.2 owner-stack budget (recentlyCreatedOwnerStacks, 1e4 entries) is exhausted, jsxDEV gives all new elements
+        // the unknownOwnerDebugStack captured at module init time (first frame UnknownOwner, later frames pointing inside jsx-dev-runtime
+        // chunk internals / module evaluation) — such stacks have no real call site; treating one as the first frame would report node_modules chunks as component sources.
+        // A real stack's first frame is always exports.jsxDEV; first frame UnknownOwner → the whole stack has no real location, return the sentinel.
         var firstFn = null;
-        // 归一化 Turbopack 路径转义（$2d=- $2f=/ …）便于匹配 react 内部帧
+        // Normalize Turbopack path escaping ($2d=- $2f=/ ...) to ease matching react-internal frames
         var norm = function (s) { return String(s || '').replace(/\$([0-9a-fA-F]{2})/g, function (_, h) { return String.fromCharCode(parseInt(h, 16)); }); };
         for (var i = 1; i < lines.length; i++) {
           var ln = lines[i];
@@ -187,7 +187,7 @@
           m = ln.match(/^(?:([^@]*)@)?(.*?):(\d+)(?::(\d+))?$/);
           if (m && m[2]) { fn = m[1]; url = m[2]; line = parseInt(m[3], 10); col = m[4] ? parseInt(m[4], 10) : null; }
           else {
-            // Chrome: at fn (url:line:col)  /  at fn@url:line:col（webpack-internal 风格）  /  at url:line:col
+            // Chrome: at fn (url:line:col)  /  at fn@url:line:col (webpack-internal style)  /  at url:line:col
             m = ln.match(/^\s*at ([^\s(]+) ?\((.*?):(\d+)(?::(\d+))?\)$/);
             if (m) { fn = m[1]; url = m[2]; line = parseInt(m[3], 10); col = m[4] ? parseInt(m[4], 10) : null; }
             else {
@@ -200,11 +200,11 @@
           var fn0 = (fn || '').replace(/^exports\.|^Object\./, '');
           if (firstFn === null) {
             firstFn = fn0 || '';
-            if (/^(UnknownOwner)$/.test(firstFn)) return { __unknownOwner: true }; // 共享栈（预算耗尽）→ 无真实定位
+            if (/^(UnknownOwner)$/.test(firstFn)) return { __unknownOwner: true }; // shared stack (budget exhausted) → no real location
           }
-          // react 内部帧跳过：jsx-dev-runtime / jsx-runtime / react-dom / scheduler / next compiled react / turbopack 运行时 / HMR / 栈标记帧
-          //   + RSC/SSR 伪帧：about://React/Server（服务端渲染）、react-server-dom-turbopack（RSC 反序列化）、
-          //   fakeJSXCallSite（RSC 元素创建）、[root-of-the-server]/server chunks（SSR 根 chunk）——这些不是客户端真实 JSX 调用点
+          // Skip react-internal frames: jsx-dev-runtime / jsx-runtime / react-dom / scheduler / next compiled react / turbopack runtime / HMR / stack-marker frames
+          //   + RSC/SSR pseudo frames: about://React/Server (server-side rendering), react-server-dom-turbopack (RSC deserialization),
+          //   fakeJSXCallSite (RSC element creation), [root-of-the-server]/server chunks (SSR root chunks) — none are real client-side JSX call sites
           if (/jsx[-.]dev[-.]runtime|jsx[-.]runtime|\.react-dom|react-dom[./]|scheduler[./]|next[./]dist[./]compiled[./]react[./]|turbopack[./_]|hmr-client|about:\/\/React\/Server|react-server-dom-turbopack|fakeJSXCallSite|root-of-the-server|\.next[-_]dev|server[./_]chunks/.test(nu)) continue;
           if (/^(jsxDEV|jsxs|jsx|createElement|react_stack_bottom_frame|react-stack-top-frame|fakeJSXCallSite)$/.test(fn0)) continue;
           var cname = fn0 || null;
@@ -215,8 +215,8 @@
       } catch (e) { return null; }
     }
 
-    // Turbopack dev chunk 名 → 源文件路径（同步近似：components_AppShell_tsx_0s7278a._.js → components/AppShell.tsx）；
-    // 解析失败返回 null（调用方回退用 chunk URL 原样）。行号需 sourcemap 精确化（react19Chunk 异步补全）。
+    // Turbopack dev chunk name → source file path (sync approximation: components_AppShell_tsx_0s7278a._.js → components/AppShell.tsx);
+    // returns null on failure (caller falls back to the chunk URL as-is). Line numbers need sourcemap refinement (completed async via react19Chunk).
     function chunkNameToPath(chunkUrl) {
       try {
         var u = String(chunkUrl || '').split('?')[0];
@@ -225,16 +225,16 @@
         if (!m) return null;
         var segs = m[1].split('_');
         var extSeg = segs.pop() || '';
-        if (!/^[a-z]{2,5}$/.test(extSeg)) return null; // 非源码 chunk（目录/工具 chunk）→ 放弃
+        if (!/^[a-z]{2,5}$/.test(extSeg)) return null; // not a source chunk (directory/utility chunk) → give up
         var dec = function (s) { return s.replace(/\$([0-9a-fA-F]{2})/g, function (_, h) { return String.fromCharCode(parseInt(h, 16)); }); };
         var p = segs.map(dec).join('/') + '.' + extSeg;
         return p || null;
       } catch (e) { return null; }
     }
 
-    // ---- sourcemap v3 解码（VLQ + sections）——把 chunk 位置映射到源文件 ----
+    // ---- sourcemap v3 decoding (VLQ + sections) — maps chunk positions to source files ----
     var _SM_BASE64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-    // 解析结果缓存：同一 map 对象只解析一次（大 map 的 mappings 全量重解析开销可观，confirm 流程同 chunk 查 2 次）
+    // Parse-result cache: each map object is parsed only once (fully re-parsing a large map's mappings is costly; the confirm flow queries the same chunk twice)
     var _smRowsCache = typeof WeakMap !== 'undefined' ? new WeakMap() : null;
     function smSegFields(seg) {
       var fields = [], pos = 0, result, shift, digit;
@@ -257,7 +257,7 @@
       for (var i = 0; i < lines.length; i++) {
         var segs = lines[i] ? lines[i].split(',') : [];
         var row = null;
-        var genCol = 0; // 生成列是每行内增量（行首归零）
+        var genCol = 0; // generated column is a per-line delta (reset at line start)
         for (var j = 0; j < segs.length; j++) {
           if (!segs[j]) continue;
           var f = smSegFields(segs[j]);
@@ -273,7 +273,7 @@
       return rows;
     }
     function smLookup(mapData, line0, col0) {
-      // line0/col0 为 0 基；支持 sections 索引映射
+      // line0/col0 are 0-based; supports sections index mapping
       if (mapData.sections && mapData.sections.length) {
         for (var i = 0; i < mapData.sections.length; i++) {
           var sec = mapData.sections[i];
@@ -285,7 +285,7 @@
         }
         return null;
       }
-      // 解析结果缓存（同 map 只解析一次）；无 WeakMap 环境回退每次都解析
+      // Parse-result cache (each map parsed only once); without WeakMap, fall back to parsing every time
       var rows;
       if (_smRowsCache) {
         rows = _smRowsCache.get(mapData);
@@ -306,25 +306,25 @@
       var u = String(chunkUrl).split('#')[0];
       var cached = _chunkMapCache[u];
       if (cached !== undefined) {
-        // 失败（null）不永久缓存——重试（页面网络抖动首次拉取失败会让整 chunk 永远解析不出 → 显示 chunk URL）
+        // Failures (null) are not cached forever — retry (a first-fetch network hiccup would leave the whole chunk unresolvable forever → the chunk URL gets displayed)
         return cached.then(function (d) { return d ? d : _doFetchMap(u); });
       }
       _chunkMapCache[u] = _doFetchMap(u);
       return _chunkMapCache[u];
     }
     function _doFetchMap(u) {
-      // Turbopack/Next dev 的 stack chunk URL 带 ?id= 查询串，原样拼 .map 会 404——先剥查询串再取；
-      // 失败回退原样拼（Vite dev 的 ?t= 时间戳等场景查询串参与寻址）
+      // Turbopack/Next dev stack chunk URLs carry a ?id= query; appending .map as-is would 404 — strip the query first;
+      // on failure fall back to appending as-is (Vite dev's ?t= timestamps and similar cases where the query participates in addressing)
       return fetch(u.replace(/\?.*$/, '') + '.map', { cache: 'force-cache' })
         .then(function (r) {
           return r.ok ? r.json() : fetch(u + '.map', { cache: 'force-cache' }).then(function (r2) { return r2.ok ? r2.json() : null; });
         })
         .catch(function () { return null; });
     }
-    // chunk 位置 → 真实源文件（file:/// 前缀剥离；webpack:// 前缀剥离；[project]/ 前缀剥离）
-    // 精确行列未命中时邻域回退（±1 行/列，上限 ±40 行）：React owner-stack 帧（jsxDEV 多行调用的收尾行 }、this),）
-    // 常与映射段差几行几列；多行 jsxDEV 调用结尾行（如 }, this)）在 sourcemap 里是空白（只映射开头），
-    // 需要更宽的行扫描才能命中同文件邻近映射段。
+    // chunk position → real source file (strip file:/// prefix; strip webpack:// prefix; strip [project]/ prefix)
+    // Neighborhood fallback when exact line/col misses (±1 line/col, up to ±40 lines): React owner-stack frames (closing lines of multi-line jsxDEV calls: }, this),)
+    // are often a few lines/cols off their mapping segments; the closing line of a multi-line jsxDEV call (e.g. }, this)) is blank in the sourcemap (only the start is mapped),
+    // so a wider line scan is needed to hit a nearby mapping segment in the same file.
     function resolveChunkSource(chunkUrl, line, column) {
       return fetchChunkMap(chunkUrl).then(function (mapData) {
         if (!mapData) return null;
@@ -339,8 +339,8 @@
           }
         }
         if (!hit) {
-          // 更宽行扫描（±40 行，仅精确+近邻都 miss 时）：覆盖多行 jsxDEV 调用收尾行等空白区，
-          // 取最近命中（同文件邻近段）——宁可给出真实行也不留 chunk URL
+          // Wider line scan (±40 lines, only when both exact and neighborhood miss): covers blank regions like the closing lines of multi-line jsxDEV calls,
+          // taking the nearest hit (adjacent segment in the same file) — prefer a real line over leaving a chunk URL
           for (var dist = 5; dist <= 40 && !hit; dist++) {
             if (l0 - dist >= 0) hit = smLookup(mapData, l0 - dist, c0);
             if (!hit) hit = smLookup(mapData, l0 + dist, c0);
@@ -356,10 +356,10 @@
       }).catch(function () { return null; });
     }
 
-    // ---- 组件名 → 源文件（预算耗尽兜底） ----
-    // React 19.2 owner-stack 预算（1e4）耗尽后新元素全部 UnknownOwner，元素级行号不可得（React 硬限制）。
-    // 但组件名仍可从 fiber 链拿到——扫描已加载 chunks 的 sourcemap sourcesContent，按组件定义模式找归属文件，
-    // 至少给用户「文件」（无行号，可打开编辑器定位）。懒构建 + 缓存。
+    // ---- Component name → source file (budget-exhausted fallback) ----
+    // After the React 19.2 owner-stack budget (1e4) is exhausted, all new elements are UnknownOwner and element-level line numbers are unavailable (a hard React limit).
+    // But component names are still available from the fiber chain — scan loaded chunks' sourcemap sourcesContent for component-definition patterns to find the owning file,
+    // at least giving the user the "file" (no line number, openable in an editor for locating). Lazy-built + cached.
     var _compFileCache = null; // {componentName: file|null}
     var _compFilePatternCache = null; // {name: RegExp}
     function compDefPattern(name) {
@@ -420,10 +420,10 @@
       });
     }
 
-    // ---- 预算耗尽兜底（真实行号）：组件函数 toString → 定位 chunk 行 → sourcemap 精确源文件+行 ----
-    // React 19.2 owner-stack 预算耗尽时元素级行号不可得，但组件函数对象始终在 fiber 上。
-    // 开发构建 chunk 保留可读函数签名（function MarkdownBody({…})），用 toString 前几行的独特子串
-    // 定位函数在 chunk 里的行号，再经 sourcemap 还原源文件+行（组件定义行，非 JSX 调用行，但真实可打开）。
+    // ---- Budget-exhausted fallback (real line numbers): component fn toString → locate chunk line → sourcemap exact source file+line ----
+    // When the React 19.2 owner-stack budget is exhausted, element-level line numbers are unavailable, but the component function object is always on the fiber.
+    // Dev-build chunks keep readable function signatures (function MarkdownBody({…})); use unique substrings from the first lines of toString
+    // to locate the function's line in the chunk, then recover source file+line via sourcemap (the component definition line, not the JSX call line, but real and openable).
     var _chunkTextCache = null; // {url: text}
     function fetchChunkText(url) {
       var u = String(url || '').split('?')[0];
@@ -433,8 +433,8 @@
         .catch(function () { return null; })
         .then(function (t) { if (!_chunkTextCache) _chunkTextCache = {}; _chunkTextCache[u] = t; return t; });
     }
-    // 函数 toString → 独特搜索子串候选：函数体多个较长单行（≥20 字符，独特且可单行精确搜索）+ 签名首行。
-    // 注意 chunk 保留原始换行/缩进，跨行拼接子串会因换行符匹配不上——必须用单行精确搜索。
+    // Function toString → unique search-substring candidates: several longer single lines from the body (≥20 chars, unique and exactly searchable within one line) + the signature's first line.
+    // Note chunks keep original newlines/indentation; substrings spanning lines fail to match across newlines — must use single-line exact search.
     function fnLocSignature(fn) {
       try {
         var src = String(fn);
@@ -458,7 +458,7 @@
           if (/\/_next\/static\/chunks\/.*\._\.js$/.test(u)) push(u.split('?')[0]);
         });
       } catch (e) {}
-      // 优先 components 目录 chunk（应用组件所在地），再补其他
+      // Prefer components-directory chunks (where app components live), then others
       return urls.sort(function (a, b) {
         var ar = /components_/.test(a) ? 0 : 1, br = /components_/.test(b) ? 0 : 1;
         return ar - br;
@@ -471,9 +471,9 @@
       var line0 = upTo.split('\n').length - 1;
       return { line1: line0 + 1, col: upTo.split('\n').pop().length };
     }
-    // fnLocs: [{name, sigs:[]}]（离元素最近的函数组件在前）→ 真实 {file,line,column}。
-    // 鲁棒性：同一 fnLoc 的多个独特行须 ≥2 行解析到同一文件才采信（防通用行跨文件撞车），
-    // 否则跳过该 fnLoc 试下一个；跳过 node_modules。
+    // fnLocs: [{name, sigs:[]}] (function components nearest to the element first) → real {file,line,column}.
+    // Robustness: a fnLoc's multiple unique lines must resolve ≥2 of them to the same file to be trusted (guards against generic lines colliding across files),
+    // otherwise skip that fnLoc and try the next; skip node_modules.
     function resolveFnLine(fnLocs) {
       if (!fnLocs || !fnLocs.length) return Promise.resolve(null);
       var urls = collectChunkTextUrls();
@@ -489,15 +489,15 @@
               var pos = text ? locateFnSig(text, sig) : null;
               if (!pos) return nextChunk(ui + 1);
               return resolveChunkSource(urls[ui], pos.line1, pos.col).then(function (res) {
-                if (res && res.file && !/node_modules/.test(res.file)) return res; // 应用文件 → 采用
-                return nextChunk(ui + 1); // node_modules/未命中 → 继续
+                if (res && res.file && !/node_modules/.test(res.file)) return res; // app file → adopt
+                return nextChunk(ui + 1); // node_modules / miss → continue
               });
             });
           }
           return nextChunk(0).then(function (res) { results.push(res); return nextSig(si + 1); });
         }
         return nextSig(0).then(function () {
-          // 一致性：≥2 行解析到同一文件名才采信
+          // Consistency: trust only when ≥2 lines resolve to the same file name
           var counts = {};
           results.forEach(function (r) { if (r && r.file) { var base = r.file.split('/').pop(); counts[base] = (counts[base] || 0) + 1; } });
           var best = null, bestCount = 0;
@@ -505,7 +505,7 @@
           if (bestCount >= 2) {
             for (var i = 0; i < results.length; i++) { if (results[i] && results[i].file.split('/').pop() === best) return results[i]; }
           }
-          return null; // 无一致确认 → 跳过该 fnLoc
+          return null; // no consistent confirmation → skip this fnLoc
         });
       }
       function step(fi) {
@@ -515,15 +515,15 @@
       return step(0);
     }
 
-    // framework 载荷异步补全：react19Chunk/usedAtChunk（chunk 定位）→ sourcemap 精确源文件+行。
-    // 返回复制后的 framework（不改原对象）；无 chunk 字段立即 resolve 原样。
-    // 供 confirmSelection（预览）与 AI 点选/候选（dbg_ai_picked → dbg_ai_element）共用——
-    // 目录聚合 chunk（components_03gcaqz._.js 之类）chunk 名无法解码，必须 sourcemap 才能还原真实源文件。
+    // Async framework payload completion: react19Chunk/usedAtChunk (chunk locations) → sourcemap exact source file+line.
+    // Returns a copied framework (original object untouched); resolves as-is immediately when there are no chunk fields.
+    // Shared by confirmSelection (preview) and AI pick/candidates (dbg_ai_picked → dbg_ai_element) —
+    // directory-aggregated chunks (components_03gcaqz._.js and the like) cannot be decoded by name; sourcemap is required to recover the real source file.
     function resolveFrameworkLoc(fl) {
       if (!fl || typeof fl !== 'object') return Promise.resolve(fl);
       var fc = fl.react19Chunk, uc = fl.usedAtChunk;
       if (!fc && !uc) {
-        // 预算耗尽（无 chunk 定位）：先组件函数→真实行号，再降级组件名→文件（无行号）
+        // Budget exhausted (no chunk location): component fn → real line first, then degrade to component name → file (no line number)
         if (!fl.file && fl.fnLocs) return resolveFnLine(fl.fnLocs).then(function (r) {
           if (r && r.file) { var o = Object.assign({}, fl); o.file = r.file; o.line = r.line; o.column = r.column; return o; }
           if (fl.component) return resolveComponentFile(fl.component).then(function (f) {
@@ -548,7 +548,7 @@
         if (r && r.file) { out.file = r.file; out.line = r.line; out.column = r.column; }
         if (u && u.file && out.usedAt) out.usedAt = Object.assign({}, out.usedAt, { file: u.file, line: u.line });
         delete out.react19Chunk; delete out.usedAtChunk;
-        // chunk 解析失败 + 有函数签名/组件名：组件函数→真实行号 → 组件名→文件
+        // chunk resolution failed + function signature/component name present: component fn → real line → component name → file
         if (!out.file) {
           if (out.fnLocs) return resolveFnLine(out.fnLocs).then(function (r2) {
             if (r2 && r2.file) { out.file = r2.file; out.line = r2.line; out.column = r2.column; return out; }
@@ -561,10 +561,10 @@
       });
     }
 
-    /** vue-inspector 行号查找：BFS 组件子树 vnode，找 el 对应 vnode 的 __v_inspector / data-v-inspector（"相对root路径:行:列"）
-     *  vite-plugin-vue-inspector 编译注入 + _interopVNode 运行时从 data-v-inspector 挪到 props.__v_inspector；
-     *  Vue DevTools "Open in Editor" 行号即此来源（与 __file 是否注入无关，全环境可用）。
-     *  缓存：vnode 重渲染后 el 不变但模板位置不变——WeakMap + TTL 避免 hover 高频重复 BFS */
+        /** vue-inspector line lookup: BFS the component subtree vnodes to find the vnode matching el and read its __v_inspector / data-v-inspector ("relative-root-path:line:col")
+          *  Injected by vite-plugin-vue-inspector at compile time; _interopVNode moves data-v-inspector into props.__v_inspector at runtime;
+          *  Vue DevTools "Open in Editor" line numbers come from this source (independent of __file injection, works in all environments).
+          *  Cache: el stays the same across vnode re-renders while the template position is unchanged — WeakMap + TTL avoids repeating the high-frequency BFS on hover */
     var _vInspCache = typeof WeakMap !== 'undefined' ? new WeakMap() : null;
     var _vInspTTL = 2000;
     function findVInspector(comp, el) {
@@ -597,14 +597,14 @@
       return found;
     }
 
-    /** 统一输出 {framework, file, line, column, component} —— AI 侧不感知框架差异 */
+    /** Unified output of {framework, file, line, column, component} — the AI side stays framework-agnostic */
     function fileLocation(el) {
       if (!el) return null;
       var loc = null;
-      // --- React / Next.js：fiber._debugSource（dev 构建才有） ---
+      // --- React / Next.js: fiber._debugSource (dev builds only) ---
       var fiber = findFiber(el);
       if (!fiber) {
-        // 向上 5 层找挂载 fiber 的祖先
+        // Walk up at most 5 levels to find an ancestor carrying a mounted fiber
         var p = el.parentElement, depth = 0;
         while (p && depth < 5 && !fiber) { fiber = findFiber(p); p = p.parentElement; depth++; }
       }
@@ -612,26 +612,26 @@
         var fw = (window.next || window.__NEXT_DATA__ || window.__next_f || document.getElementById('__next'))
           ? 'next' : 'react';
         var node = fiber;
-        var prodComp = null; // 生产构建（无 _debugSource）兜底：记录组件名
-        var nearComp = null; // 最近可读组件名（跳钩子推断名/单小写字母名）——预算耗尽无可定位时的兜底显示
-        var uoStreak = 0;    // 连续 UnknownOwner（React 19.2 owner-stack 预算耗尽）计数——超阈值即停，防把远处祖先（如 AppShell）误报为组件
-        var fnLocs = null;   // 离元素最近的函数组件 toString 签名（预算耗尽兜底算真实行号用）
+        var prodComp = null; // production-build (no _debugSource) fallback: records the component name
+        var nearComp = null; // nearest readable component name (skips hook-inferred / single-lowercase-letter names) — fallback display when budget exhaustion leaves nothing locatable
+        var uoStreak = 0;    // consecutive UnknownOwner count (React 19.2 owner-stack budget exhausted) — stop above the threshold to avoid misreporting distant ancestors (e.g. AppShell) as the component
+        var fnLocs = null;   // toString signatures of the function components nearest to the element (used by the budget-exhausted fallback to compute real line numbers)
         for (var i = 0; node && i < 30; i++) {
           var src = node._debugSource;
           var r19 = null;
-          // React 19.2+：_debugSource 已移除，源码信息在 _debugStack（Error，stack 含 JSX 调用帧 → chunk URL:line:col）
+          // React 19.2+: _debugSource removed; source info lives in _debugStack (an Error whose stack contains the JSX call frame → chunk URL:line:col)
           if (!src) {
             r19 = node._debugStack ? react19StackSrc(node._debugStack) : null;
             if (r19 && !r19.__unknownOwner) { src = r19; uoStreak = 0; }
-            else { if (++uoStreak > 8) break; } // 预算耗尽（UnknownOwner 共享栈）/无栈/解析失败 → 无真实定位；连续过多即停（防跳远处祖先 AppShell）
+            else { if (++uoStreak > 8) break; } // budget exhausted (UnknownOwner shared stack) / no stack / parse failure → no real location; stop after too many consecutive (guards against distant ancestor AppShell)
           } else {
             uoStreak = 0;
           }
           if (src && src.fileName) {
-            // host fiber（type 为字符串）也有 _debugSource，继续向上找真正的组件
+            // host fibers (string type) also carry _debugSource; keep walking up for the real component
             var compFiber = node;
             while (compFiber && typeof compFiber.type !== 'function') compFiber = compFiber.return;
-            // 调用位置：向上找渲染当前组件的父组件（return.return 链上第一个 function 组件）的 _debugSource
+            // Used-at location: walk up for the parent rendering this component (first function component on the return chain) and read its _debugSource
             var usedAt = null;
             if (compFiber && compFiber.return) {
               var pf = compFiber.return;
@@ -647,8 +647,8 @@
             };
             break;
           } else if (r19 && r19.url) {
-            // React 19.2+：file 先取 chunk 名解码路径（同步，无行号——chunk 行号≠源行号）；
-            // 精确 文件+行 由 confirm 流程异步 sourcemap 解析（react19Chunk 字段携带 chunk 定位）
+            // React 19.2+: file first takes the chunk-name-decoded path (sync, no line number — chunk lines ≠ source lines);
+            // exact file+line is resolved async via sourcemap in the confirm flow (the react19Chunk field carries the chunk location)
             var dec = chunkNameToPath(r19.url);
             loc = {
               framework: fw,
@@ -657,14 +657,14 @@
               component: cleanComponentName(r19.component) || componentNameOf(node.type),
               react19Chunk: { url: r19.url, line: r19.line, column: r19.column },
             };
-            // 调用位置：本元素所属组件（return 链第一个 function）的 _debugOwner = 渲染它的父组件；
-            // 父组件 fiber 的 _debugStack 含其 JSX 帧（父组件源码位置，异步补精确行列）
+            // Used-at location: the owning component's (first function on the return chain) _debugOwner = the parent rendering it;
+            // the parent fiber's _debugStack contains its JSX frame (the parent's source position; exact line/col filled in async)
             var compFiber2 = node;
             while (compFiber2 && typeof compFiber2.type !== 'function') compFiber2 = compFiber2.return;
             var ow = compFiber2 && compFiber2._debugOwner;
             if (ow) {
               var os = ow._debugStack ? react19StackSrc(ow._debugStack) : null;
-              // 仅当父组件定位可恢复（非预算耗尽/非 RSC 伪帧）才记调用位置——否则 usedAt 会变成 about://React/Server 之类的伪 URL
+              // Record the used-at location only when the parent's location is recoverable (not budget-exhausted / not an RSC pseudo frame) — otherwise usedAt becomes a fake URL like about://React/Server
               if (os && os.url && !os.__unknownOwner) {
                 var od = chunkNameToPath(os.url);
                 loc.usedAt = { file: od || os.url, line: null, component: componentNameOf(ow.type) || os.component };
@@ -673,21 +673,21 @@
             }
             break;
           }
-          // 生产构建：无 _debugSource——记录第一个 function 组件名（后续循环可能拿到祖先的 src，兜底只在最后用）
+          // Production build: no _debugSource — record the first function component name (later iterations may pick up an ancestor's src; the fallback is applied only at the end)
           if (!prodComp && typeof node.type === 'function') prodComp = componentNameOf(node.type);
-          // 最深可读组件名（兜底显示用）：跳钩子推断名（useMemo[…] 等）与单小写字母（如 p）名
+          // Deepest readable component name (for fallback display): skip hook-inferred names (useMemo[…] etc.) and single-lowercase-letter names (e.g. p)
           if (typeof node.type === 'function') {
             var _nc = componentNameOf(node.type);
             if (_nc && !/useMemo|useCallback|\.bind|_this\d|^[a-z]{1,3}$/.test(_nc)) nearComp = _nc;
           }
-          // 捕获最近 2 个函数组件的 toString 签名（预算耗尽时定位真实行号用；离元素最近优先）
+          // Capture toString signatures of the last 2 function components (to locate real lines when the budget is exhausted; nearest to the element first)
           if (typeof node.type === 'function' && (!fnLocs || fnLocs.length < 2)) {
             var _sigs = fnLocSignature(node.type);
             if (_sigs.length) (fnLocs = fnLocs || []).push({ name: componentNameOf(node.type) || null, sigs: _sigs });
           }
           node = node.return;
         }
-        // 生产构建兜底：源码不可得，但组件名/调用链组件名仍在（fiber.return 链第一个 function 组件 = 本组件，再上 = 调用方）
+        // Production-build fallback: source is unavailable, but the component name / call-chain component names remain (first function component on the fiber.return chain = this component, one above = the caller)
         if (!loc && (nearComp || prodComp)) {
           var pu = null;
           var cur = fiber;
@@ -699,16 +699,16 @@
           loc = { framework: fw, file: null, line: null, column: null, component: nearComp || prodComp, usedAt: pu, fnLocs: fnLocs || null };
         }
       }
-      // --- Vue 3：el.__vueParentComponent.type.__file（dev 构建真实注入） ---
-      // 注意：__file 不是总有（部分项目 dev 构建未注入——plugin-vue 与 compiler-sfc 版本不匹配/定制插件），
-      //   但组件名（__name/name）与父组件名始终可得——无 __file 时仍输出 framework/component/usedAt（组件名级），file 置 null
+      // --- Vue 3: el.__vueParentComponent.type.__file (really injected in dev builds) ---
+      // Note: __file is not always present (some projects don't inject it in dev builds — plugin-vue/compiler-sfc version mismatch or custom plugins),
+      //   but component name (__name/name) and parent component name are always available — without __file still output framework/component/usedAt (name level), file null
       if (!loc && el.__vueParentComponent && el.__vueParentComponent.type) {
         var vp = el.__vueParentComponent.type;
         var vpFile = vp.__file || null;
         var vpName = vp.__name || vp.name || null;
         if (vpFile || vpName) {
-          // 行号：vue-inspector 编译注入（vnode.props.__v_inspector = "相对root路径:行:列"——模板元素源码位置），
-          //   与 __file 无关全环境可用（无 vue-inspector 的构建则为空——行号不可得）
+          // Line number: injected at compile time by vue-inspector (vnode.props.__v_inspector = "relative-root-path:line:col" — the template element's source position),
+          //   independent of __file and available in all environments (empty in builds without vue-inspector — line number unavailable)
           var inspLine = null, inspCol = null, inspRel = null;
           try {
             var _insp = findVInspector(el.__vueParentComponent, el);
@@ -717,7 +717,7 @@
               if (_im && _im[1] && _im[2]) { inspRel = _im[1]; inspLine = parseInt(_im[2], 10); inspCol = _im[3] ? parseInt(_im[3], 10) : null; }
             }
           } catch (e) {}
-          // 相对路径 → 绝对：__file 绝对路径末尾匹配相对路径（src/views/...）→ 前缀即项目根；无 __file 时保留相对路径（行号可显示）
+          // Relative → absolute: if the relative path (src/views/...) matches the tail of the absolute __file, the prefix is the project root; without __file keep the relative path (line number still displayable)
           var absFile = vpFile || null;
           if (inspRel) {
             var _rel2 = inspRel.replace(/^\.\//, '');
@@ -730,7 +730,7 @@
               absFile = inspRel;
             }
           }
-          // 调用位置：真实产物无 __usedAt，从父实例推导（渲染本组件的组件 = .parent.type）
+          // Used-at location: real builds have no __usedAt; derive from the parent instance (the component rendering this one = .parent.type)
           var vu = vp.__usedAt || null;
           if (!vu && el.__vueParentComponent.parent && el.__vueParentComponent.parent.type) {
             var vpt = el.__vueParentComponent.parent.type;
@@ -742,7 +742,7 @@
           loc = { framework: 'vue', file: absFile, line: inspLine, column: inspCol, component: vpName, usedAt: vu };
         }
       }
-      // --- Vue 2：el.__vue__.$options.__file（无 __file 时也给出组件名/父组件名） ---
+      // --- Vue 2: el.__vue__.$options.__file (component/parent names also given when __file is absent) ---
       if (!loc && el.__vue__ && el.__vue__.$options) {
         var o = el.__vue__.$options;
         var oName = o.name || null;
@@ -756,13 +756,13 @@
           loc = { framework: 'vue', file: o.__file || null, component: oName, usedAt: vu2 };
         }
       }
-      // --- Svelte 5：el.__svelte_meta.loc（dev 编译器真实装饰） + __svelte_meta.parent（dev_stack） ---
-      // 静态 HTML 页：Vite staticLocPlugin 注入的 __svelte_meta.loc 也是同一结构（真实 file/line/column + component）
+      // --- Svelte 5: el.__svelte_meta.loc (real dev-compiler decoration) + __svelte_meta.parent (dev_stack) ---
+      // Static HTML pages: the __svelte_meta.loc injected by Vite staticLocPlugin uses the same structure (real file/line/column + component)
       if (!loc && el.__svelte_meta && el.__svelte_meta.loc) {
         var sMeta = el.__svelte_meta;
-        // 调用位置：旧模拟页手写 __svelte_used_at；真实 Svelte 5 dev 产物用 __svelte_meta.parent（dev_stack）
-        // dev_stack 条目 { type:'component', file:<调用方文件>, line, column, componentTag:<组件名>, parent }，
-        // 首个 component 条目 = 当前元素所属组件在父模板中的使用位置（根组件元素无条目 → null）
+        // Used-at location: old mock pages hand-write __svelte_used_at; real Svelte 5 dev output uses __svelte_meta.parent (dev_stack)
+        // dev_stack entries are { type:'component', file:<caller file>, line, column, componentTag:<component name>, parent },
+        // the first component entry = where this element's owning component is used in the parent template (root component elements have no entry → null)
         var su = el.__svelte_used_at || null;
         if (!su && sMeta.parent) {
           var st = sMeta.parent;
@@ -773,9 +773,9 @@
         }
         loc = { framework: 'svelte', file: sMeta.loc.file, line: sMeta.loc.line, column: sMeta.loc.column, component: sMeta.component || null, usedAt: su };
       }
-      // --- 通用自定义组件元数据（Preact/Solid/Lit/Alpine 等新框架页手动挂载：__dbg_component，framework 名准确） ---
-      //   页面/组件侧挂 {framework:'preact'|'solid'|'lit'|'alpine', file, line, column, component, usedAt}——
-      //   未命中真实框架检测时兜底读取（优先真实 React/Vue/Svelte，避免覆盖）；有任意组件信息即用（file 可缺）
+      // --- Generic custom component metadata (pages on newer frameworks like Preact/Solid/Lit/Alpine mount it manually: __dbg_component, accurate framework name) ---
+      //   the page/component side attaches {framework:'preact'|'solid'|'lit'|'alpine', file, line, column, component, usedAt} —
+      //   read as fallback when real-framework detection misses (real React/Vue/Svelte take priority to avoid overwriting); used whenever any component info exists (file optional)
       if (!loc && el.__dbg_component && (el.__dbg_component.file || el.__dbg_component.component || el.__dbg_component.usedAt)) {
         var _dc = el.__dbg_component;
         loc = {
@@ -790,9 +790,9 @@
       return loc;
     }
 
-    // 深度优先遍历前 N 个元素，探测 React fiber / Svelte __svelte_meta 等 DOM 级标记
-    // （React DevTools 扩展会在任意页面注入 __REACT_DEVTOOLS_GLOBAL_HOOK__，不能当证据；
-    //  真实 React 18/19 挂载后元素上必有 __reactFiber$ 键）
+    // DFS the first N elements, probing DOM-level markers such as React fiber / Svelte __svelte_meta
+    // (the React DevTools extension injects __REACT_DEVTOOLS_GLOBAL_HOOK__ into any page — not evidence;
+    //  after a real React 18/19 mount, elements always carry __reactFiber$ keys)
     function probeDomFrameworks() {
       var found = { react: false, svelte: false };
       var stack = [document.body || document.documentElement];
@@ -818,40 +818,40 @@
 
     var _fwCache = { t: 0, v: null };
     function detectFrameworks() {
-      // 探针有 DOM 遍历成本：hover 高频调用时 1.5s 内复用结果
+      // The probe costs DOM traversal: reuse the result for 1.5s when hover calls at high frequency
       var now = Date.now();
       if (_fwCache.v && now - _fwCache.t < 1500) return _fwCache.v;
       var fw = [];
       var w = window;
       var pf = probeDomFrameworks();
-      // React 18/19：fiber 键 + 旧版标记；扩展注入的 hook 不作数（任何页面都有）
+      // React 18/19: fiber keys + legacy markers; extension-injected hooks don't count (present on any page)
       if (pf.react || w.React || document.querySelector('[data-reactroot]')) fw.push('react');
       if ((w.Vue && w.Vue.version) || w.__VUE_DEVTOOLS_GLOBAL_HOOK__ || document.querySelector('[data-v-app]')) fw.push('vue');
       if (w.next || w.__NEXT_DATA__ || w.__next_f || document.getElementById('__next')) fw.push('next');
-      if (pf.svelte) fw.push('svelte'); // Svelte 5 dev：元素上必有 __svelte_meta（含挂载容器下的深层元素）
+      if (pf.svelte) fw.push('svelte'); // Svelte 5 dev: elements always carry __svelte_meta (including deep elements under the mount container)
       _fwCache = { t: now, v: fw };
       return fw;
     }
 
-    // ---------- 选区状态机（hover → step 放大缩小 → confirm） ----------
+    // ---------- Selection state machine (hover → step in/out → confirm) ----------
     function setHovered(el, mouseX, mouseY) {
-      if (state.engaged) return; // 点击暂停后 hover 完全停用（工具条不乱跑）
+      if (state.engaged) return; // after click-pause, hover is fully disabled (the toolbar stays put)
       if (state.hovered === el) return;
       clearOutline(state.hoverOutline);
       state.hovered = el;
       if (!el) return;
-      // 不 hover 占满视口的容器（body/html/全宽层）——淡蓝背景盖全窗像遮罩（用户：inspect 打开时浅蓝透明遮罩盖全部内容）
+      // Don't hover viewport-filling containers (body/html/full-width layers) — a light-blue background covering the whole window looks like a mask (user: when inspect opens, a translucent light-blue veil covers all content)
       try {
         var _hr = el.getBoundingClientRect();
         var _hw = (document.documentElement && document.documentElement.clientWidth) || innerWidth;
         var _hh = (document.documentElement && document.documentElement.clientHeight) || innerHeight;
         if (_hr.width > _hw * 0.85 && _hr.height > _hh * 0.85) { state.hovered = null; return; }
       } catch (e) {}
-      drawOutline(state.hoverOutline, el, OUTLINE_HOVER, '', 'HOVER'); // 空 bg=不填充（避免淡蓝透明罩叠加页面）
-      // 低频回传（只在切换元素时），供宿主工具条显示当前选区标签
+      drawOutline(state.hoverOutline, el, OUTLINE_HOVER, '', 'HOVER'); // empty bg = no fill (avoids a translucent light-blue veil overlaying the page)
+      // Low-frequency report (only when switching elements), for the host toolbar to display the current selection label
       var fl = fileLocation(el);
       var r = el.getBoundingClientRect();
-      // 鼠标坐标（HUD/弹窗以鼠标位置为中心——不在元素中心）
+      // Mouse coordinates (HUD/dialog center on the mouse position — not the element center)
       var mx = (typeof mouseX === 'number') ? mouseX : Math.round(r.x + r.width / 2);
       var my = (typeof mouseY === 'number') ? mouseY : Math.round(r.y + r.height / 2);
       var cs = getComputedStyle(el);
@@ -863,27 +863,27 @@
           component: fl && fl.component,
           file: fl && fl.file, line: fl && fl.line,
           usedAt: fl && fl.usedAt,
-          // 完整 framework（含 react19Chunk/usedAtChunk）：悬停载荷也会成为 lastSelfPayload → 确认发送给 AI 时
-          // 经 picksAddElement→resolveElLoc 做 sourcemap 解析，缺了它 chunk URL 就无法还原成真实源文件
+          // Full framework (including react19Chunk/usedAtChunk): the hover payload also becomes lastSelfPayload → when confirmed and sent to the AI,
+          // picksAddElement→resolveElLoc runs sourcemap resolution; without it, chunk URLs cannot be recovered into real source files
           framework: fl,
           frameworks: detectFrameworks(),
           rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) },
-          mouseX: mx, mouseY: my, // 鼠标坐标（HUD 以鼠标位置为中心）
+          mouseX: mx, mouseY: my, // mouse coordinates (the HUD centers on the mouse position)
           xpath: xpathOf(el), text: txt,
           bg: cs.backgroundColor, color: cs.color, fontSize: cs.fontSize,
         },
       });
     }
 
-    // ---------- 模拟 hover 事件（真实派发，让页面 JS hover 逻辑生效并持久保持） ----------
-    // 思路：freezeEvent 冻结矩阵把 mouseout/mouseleave 拦掉（hover 类）→ 页面永远收不到 mouseleave，
-    // 所以「临时放行 hover 类拦截 → 真实派发 mouseover/mouseenter 事件序列 → 立即恢复拦截」后，
-    // 页面 JS（mouseenter 展开 tooltip/菜单/动画等）真正跑起来，且因 mouseleave 仍被冻结而持久保持 hover 态。
-    var _hoverSimEl = null; // 记忆模拟 hover 的目标（退出时对其派发 mouseleave 清除）
+    // ---------- Simulated hover events (really dispatched so the page's JS hover logic runs and persists) ----------
+    // Idea: the freezeEvent freeze matrix blocks mouseout/mouseleave (hover class) → the page never receives mouseleave,
+    // so after "temporarily release hover-class interception → really dispatch the mouseover/mouseenter sequence → immediately re-block",
+    // the page's JS (mouseenter-expanding tooltips/menus/animations etc.) actually runs, and the hover state persists because mouseleave stays frozen.
+    var _hoverSimEl = null; // remembers the simulated hover target (mouseleave dispatched to it on exit to clear)
     function dispatchHoverEvents(el, enter) {
       if (!el) return;
-      // 1. 临时放行 hover 类事件（mouseout/mouseleave 被冻结矩阵拦）→ 派发 → 立即恢复（保持原 released 状态）
-      //    仅 Inspector 激活时做放行/恢复；退出后（exitInspector 已 uninstallFreeze）直接派发，避免把冻结重新挂回去
+      // 1. Temporarily release hover-class events (mouseout/mouseleave blocked by the freeze matrix) → dispatch → restore immediately (keeping the original released state)
+      //    Release/restore only while the Inspector is active; after exit (exitInspector already ran uninstallFreeze) dispatch directly, avoiding re-installing the freeze
       var needFreeze = !!state.active;
       if (needFreeze) {
         var hadRelease = Object.prototype.hasOwnProperty.call(released, 'hover');
@@ -899,7 +899,7 @@
         for (var k in opts) noBubble[k] = opts[k];
         noBubble.bubbles = false;
         if (enter) {
-          // 对齐真实指针进入顺序：pointerover → pointerenter → mouseover → mouseenter（React 等常监听 pointer/mouse 双份）
+          // Match the real pointer-enter order: pointerover → pointerenter → mouseover → mouseenter (React and friends often listen to pointer and mouse both)
           if (window.PointerEvent) {
             try { el.dispatchEvent(new PointerEvent('pointerover', opts)); } catch (e) {}
             try { el.dispatchEvent(new PointerEvent('pointerenter', noBubble)); } catch (e) {}
@@ -907,7 +907,7 @@
           try { el.dispatchEvent(new MouseEvent('mouseover', opts)); } catch (e) {}
           try { el.dispatchEvent(new MouseEvent('mouseenter', noBubble)); } catch (e) {}
         } else {
-          // 退出：pointerout → pointerleave → mouseout → mouseleave（清除 JS hover 态）
+          // Exit: pointerout → pointerleave → mouseout → mouseleave (clears the page's JS hover state)
           if (window.PointerEvent) {
             try { el.dispatchEvent(new PointerEvent('pointerout', opts)); } catch (e) {}
             try { el.dispatchEvent(new PointerEvent('pointerleave', noBubble)); } catch (e) {}
@@ -925,7 +925,7 @@
     function simulateHover(el) {
       var target = el || state.selected || state.hovered;
       if (!target) return { ok: false, error: 'no element' };
-      // 切换目标：先清掉上一个模拟 hover 元素（不留双 hover）
+      // Switching targets: clear the previous simulated hover element first (no double hover)
       if (_hoverSimEl && _hoverSimEl !== target) dispatchHoverEvents(_hoverSimEl, false);
       dispatchHoverEvents(target, true);
       _hoverSimEl = target;
@@ -937,8 +937,8 @@
       return { ok: true };
     }
 
-    // AI 点选确认回传的元素载荷（tag/rect/selector/xpath/text/attributes/computed/framework/pageId/url）
-    // —— 给 AI 的完整画像：大小尺寸/样式/内容/组件源码与位置/调用代码与位置/网页 url/pageId（MCP 桥操作需要）
+    // Element payload returned on AI pick confirmation (tag/rect/selector/xpath/text/attributes/computed/framework/pageId/url)
+    // — a complete picture for the AI: size/dimensions / styles / content / component source & location / calling code & location / page url / pageId (needed for MCP bridge operations)
     function aiPickPayload(el) {
       var fl = fileLocation(el);
       var r = el.getBoundingClientRect();
@@ -952,7 +952,7 @@
       var attrs = {};
       var _attrs = el.attributes;
       for (var i = 0; i < _attrs.length && i < 20; i++) attrs[_attrs[i].name] = String(_attrs[i].value).slice(0, 120);
-      // 视口坐标 rect（CDP 点击坐标）+ 文档坐标 docRect（= rect + scroll，滚动无关）+ scroll（坐标系上下文标注）
+      // viewport-coordinate rect (CDP click coordinates) + document-coordinate docRect (= rect + scroll, scroll-independent) + scroll (coordinate-system context note)
       var _sx2 = window.scrollX || document.documentElement.scrollLeft || document.body.scrollLeft || 0;
       var _sy2 = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
       return {
@@ -965,7 +965,7 @@
         attributes: attrs,
         computed: computed,
         framework: fl, component: fl && fl.component, file: fl && fl.file, line: fl && fl.line, usedAt: fl && fl.usedAt,
-        // 页面上下文：url/title + pageId（MCP 桥 instanceId/frameId；桥未连时为 null，宿主侧补全）
+        // Page context: url/title + pageId (MCP bridge instanceId/frameId; null when the bridge isn't connected — filled in on the host side)
         frame: { url: topUrl().slice(0, 500), title: (document.title || '').slice(0, 200) },
         pageId: null,
       };
@@ -995,9 +995,9 @@
       return parts.join(' > ');
     }
 
-    // 忽略注入元素：launcher 整树（HUD/工具条/fab/AI 窗/提示条/下拉/面板/确认卡等，closest #__dbg_launcher）
-    //   + 注入样式标签（__dbg_launcher_css）+ 选区/悬停 outline 框（fixed zIndex 2147483646）+ SCRIPT/STYLE（含注入的 client script）
-    // 导航（DOM 树/几何）都可能落到它们上（body 直接子级 #__dbg_launcher / outline div / 页面自身 script）——一律跳过（非可见内容元素）
+    // Ignore injected elements: the whole launcher tree (HUD/toolbar/fab/AI window/notice bar/dropdowns/panels/confirmation cards etc., closest #__dbg_launcher)
+    //   + injected style tag (__dbg_launcher_css) + selection/hover outline boxes (fixed zIndex 2147483646) + SCRIPT/STYLE (including the injected client script)
+    // Navigation (DOM tree/geometry) can land on them (body direct children #__dbg_launcher / outline div / the page's own scripts) — always skip (not visible content elements)
     function isDbgEl(el) {
       if (!el || el.nodeType !== 1) return false;
       try {
@@ -1010,11 +1010,11 @@
       return false;
     }
 
-    // 文本提取：排除 aiti 自身注入内容（#__dbg_launcher 是 body 直接子级——html/body 的 innerText 会把 HUD/拦截提示条/fab/
-    // 工具条等自身 UI 文本当页面内容，AI inspect 时全数看到）。减法实现（cloneNode 全量克隆大页面成本高，hover 高频调用不可用）：
-    //   取 el 的 innerText → 若 launcher 在 el 内（html/body 等祖先）则扣掉 launcher 自身文本（innerText 块级连续，是子串）
+    // Text extraction: exclude aiti's own injected content (#__dbg_launcher is a direct child of body — html/body's innerText would include HUD/blocked-notice bar/fab/
+    // toolbar UI text as page content, all of it visible to AI inspect). Subtractive implementation (cloneNode of a large page is too costly; unusable at hover frequency):
+    //   take el's innerText → if the launcher is inside el (html/body and similar ancestors) subtract the launcher's own text (innerText is block-continuous, so it's a substring)
     function cleanTextOf(el, max) {
-      if (isDbgEl(el)) return ''; // aiti 自身元素：无页面文本
+      if (isDbgEl(el)) return ''; // aiti's own element: no page text
       var full = '';
       try { full = (el.innerText || el.textContent || '').trim(); } catch (e) {}
       try {
@@ -1030,7 +1030,7 @@
       } catch (e) {}
       return full.slice(0, max || 512);
     }
-    /** 任意字符串去 aiti 自身文本（Runtime.evaluate 的 innerText 类结果；页面文本恰好含相同子串时也会被去掉，可接受） */
+    /** Strip aiti's own text from any string (Runtime.evaluate innerText-like results; page text that happens to contain the same substring is removed too — acceptable) */
     function stripAitiText(s) {
       if (!s || typeof s !== 'string') return s;
       try {
@@ -1043,7 +1043,7 @@
       return s;
     }
 
-    // 几何相邻：在页面上找指定方向的最近可见元素（左/右/上/下相邻；跳过注入元素）
+    // Geometric neighbors: find the nearest visible element in the given direction on the page (left/right/up/down neighbor; skip injected elements)
     function neighborInDirection(el, dir) {
       var r = el.getBoundingClientRect();
       var best = null, bestScore = Infinity;
@@ -1051,7 +1051,7 @@
       for (var i = 0; i < all.length; i++) {
         var c = all[i];
         if (c === el) continue;
-        if (isDbgEl(c)) continue; // 忽略注入元素（launcher/HUD/outline 框等）
+        if (isDbgEl(c)) continue; // ignore injected elements (launcher/HUD/outline boxes etc.)
         var cr = c.getBoundingClientRect();
         if (cr.width === 0 || cr.height === 0) continue;
         var overY = Math.min(cr.bottom, r.bottom) - Math.max(cr.top, r.top);
@@ -1068,13 +1068,13 @@
 
     function stepSelection(dir) {
       if (!state.active) return;
-      var cur = state.selected || state.hovered; // 导航（按钮/键盘）都发生在锁定态：selected 优先；hovered 兜底
-      if (isDbgEl(cur)) cur = null; // 保险：选区不可能在注入元素上（点选已排除 launcher UI），异常时兜底
+      var cur = state.selected || state.hovered; // navigation (buttons/keys) happens in the locked state: selected takes priority; hovered as fallback
+      if (isDbgEl(cur)) cur = null; // safety: the selection can never sit on an injected element (picking already excludes launcher UI); fallback for anomalies
       if (!cur) cur = document.body;
       var next = null;
-      if (dir === 'up') { next = cur.parentElement; while (next && isDbgEl(next)) next = next.parentElement; if (!next) next = cur; } // 父级（跳过注入链）
-      else if (dir === 'down') { next = cur.firstElementChild; while (next && isDbgEl(next)) next = next.nextElementSibling; if (!next) next = cur; } // 子级（跳过注入元素）
-      else if (dir === 'downOrNext') {                                                          // Enter：子级优先，无子级 → 回溯 next（DFS 遍历整树）
+      if (dir === 'up') { next = cur.parentElement; while (next && isDbgEl(next)) next = next.parentElement; if (!next) next = cur; } // parent (skipping the injection chain)
+      else if (dir === 'down') { next = cur.firstElementChild; while (next && isDbgEl(next)) next = next.nextElementSibling; if (!next) next = cur; } // child (skipping injected elements)
+      else if (dir === 'downOrNext') {                                                          // Enter: child first; no child → backtrack to next (DFS over the whole tree)
         next = cur.firstElementChild;
         while (next && isDbgEl(next)) next = next.nextElementSibling;
         if (!next) {
@@ -1085,7 +1085,7 @@
           if (!next) next = cur;
         }
       }
-      // 平级前后：有平级兄弟走兄弟（跳过注入）；到平级最头/末尾 → 回上级（再按即上级的前后——一路向上快速导航）
+      // Same-level prev/next: walk siblings when they exist (skipping injected); at the level's start/end → step up a level (pressing again moves through the parent's siblings — fast navigation up the tree)
       else if (dir === 'prev' || dir === 'left') {
         next = cur.previousElementSibling;
         while (next && isDbgEl(next)) next = next.previousElementSibling;
@@ -1096,37 +1096,37 @@
         while (next && isDbgEl(next)) next = next.nextElementSibling;
         if (!next) next = cur.parentElement || cur;
       }
-      else if (dir === 'first') { next = cur.firstElementChild; while (next && isDbgEl(next)) next = next.nextElementSibling; if (!next) next = cur; } // 最前（DOM 子级首，跳过注入）
-      else if (dir === 'last') { next = cur.lastElementChild; while (next && isDbgEl(next)) next = next.previousElementSibling; if (!next) next = cur; } // 最后（DOM 子级末，跳过注入）
-      else if (dir === 'leftN') next = neighborInDirection(cur, 'left') || cur;                 // 页面左边相邻
-      else if (dir === 'rightN') next = neighborInDirection(cur, 'right') || cur;               // 页面右边相邻
-      else if (dir === 'topN') next = neighborInDirection(cur, 'top') || cur;                   // 页面上边相邻
-      else if (dir === 'bottomN') next = neighborInDirection(cur, 'bottom') || cur;             // 页面下边相邻
+      else if (dir === 'first') { next = cur.firstElementChild; while (next && isDbgEl(next)) next = next.nextElementSibling; if (!next) next = cur; } // first (first DOM child, skipping injected)
+      else if (dir === 'last') { next = cur.lastElementChild; while (next && isDbgEl(next)) next = next.previousElementSibling; if (!next) next = cur; } // last (last DOM child, skipping injected)
+      else if (dir === 'leftN') next = neighborInDirection(cur, 'left') || cur;                 // page-left neighbor
+      else if (dir === 'rightN') next = neighborInDirection(cur, 'right') || cur;               // page-right neighbor
+      else if (dir === 'topN') next = neighborInDirection(cur, 'top') || cur;                   // page-above neighbor
+      else if (dir === 'bottomN') next = neighborInDirection(cur, 'bottom') || cur;             // page-below neighbor
       if (!next) return;
-      // 导航后滚动到可见：DOM 树/几何导航可能到屏外元素（用户看不到）——scrollIntoView 让用户看到它
-      // 避让 HUD/工具条：元素在视口外或被底部 HUD/工具条遮挡区 → 滚到居中（上下都不挡）；
-      //   已在视口内（未进遮挡区）→ nearest 最小滚动（不打断阅读位置）
-      // 注意：宿主选区滚宿主文档、target 选区滚 target 文档（同一份 client，各自文档内 scrollIntoView 生效）
+      // Scroll into view after navigation: DOM-tree/geometry navigation may reach off-screen elements (invisible to the user) — scrollIntoView makes it visible
+      // Dodge HUD/toolbar: element off-viewport or inside the bottom HUD/toolbar occlusion zone → scroll to center (clear of both);
+      //   already in viewport (outside the occlusion zone) → nearest minimal scrolling (doesn't interrupt reading position)
+      // Note: a host selection scrolls the host document, a target selection scrolls the target document (same client; scrollIntoView applies within each document)
       try {
         var _sv = window.visualViewport && window.visualViewport.height > 0 ? window.visualViewport.height : window.innerHeight;
         if (!_sv || _sv <= 0) _sv = 800;
         var _sr = next.getBoundingClientRect();
-        var _reserve = 96; // 底部 HUD/工具条视觉占位估算（HUD ~40-60px + 间距；小屏 HUD 固定底部）
+        var _reserve = 96; // estimated visual footprint of the bottom HUD/toolbar (HUD ~40-60px + spacing; HUD fixed to the bottom on small screens)
         if (_sr.top < 0 || _sr.bottom > _sv - _reserve) {
           try { next.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
           catch (e) { try { next.scrollIntoView(true); } catch (e2) {} }
         } else {
           next.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
         }
-        // 微调：center 后仍被底部 HUD 挡（极小元素/大 HUD）→ 向上补偿
+        // Fine-tune: still occluded by the bottom HUD after centering (tiny element / large HUD) → compensate upward
         try {
           var _r2 = next.getBoundingClientRect();
           var _vh2 = window.visualViewport && window.visualViewport.height > 0 ? window.visualViewport.height : window.innerHeight;
           if (_vh2 > 0 && _r2.bottom > _vh2 - 8) window.scrollBy({ top: _r2.bottom - (_vh2 - 8), behavior: 'smooth' });
         } catch (e) {}
       } catch (e) { try { next.scrollIntoView(true); } catch (e2) {} }
-      // 导航 = 选区移动：有 selected（锁定/触屏选中）→ 更新 selected（工具条跟随，AI 命令引用）；
-      // 纯 hover 快选（无 selected）→ 移动 hover（HUD 跟随，不进入锁定——鼠标移动仍可自由快选）
+      // Navigation = selection move: with selected (locked/touch-picked) → update selected (toolbar follows, referenced by AI commands);
+      // pure hover quick-select (no selected) → move hover (HUD follows, no locking — mouse movement still allows free quick-select)
       if (state.selected) {
         setTouchSelection(next);
         post({ type: 'dbg_element_hover_refresh', payload: null });
@@ -1141,7 +1141,7 @@
       var s = String(selector || '').trim();
       try {
         if (s.indexOf('//') === 0 || s.indexOf('(//') === 0) {
-          // xpath path：document.evaluate 定位
+          // xpath path: locate via document.evaluate
           var res = document.evaluate(s, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
           el = res.singleNodeValue || null;
         } else {
@@ -1149,7 +1149,7 @@
         }
       } catch (e) { el = null; }
       if (el) {
-        setTouchSelection(el); // # 选择 = 选中（selected + 高亮 + 工具条显示），AI 命令可引用
+        setTouchSelection(el); // # select = select it (selected + highlight + toolbar shown); AI commands can reference it
         state.engaged = true;
       } else {
         setHovered(null);
@@ -1161,18 +1161,18 @@
       if (!state.active) return;
       var el = state.hovered || state.selected || fallback;
       if (!el) { post({ type: 'dbg_element_selected', payload: null }); return; }
-      // 确认态：selected 固定（虚线 outline），hover 高亮清除
+      // Confirmed state: selected fixed (dashed outline), hover highlight cleared
       state.selected = el;
       clearOutline(state.hoverOutline);
       drawOutline(state.selOutline, el, OUTLINE_SEL, 'rgba(5,150,105,.08)', 'SEL');
       var _pl = serialize(el, { attrs: 1, xpath: 1, text: 1, computed: 1, framework: 1 });
-      // React 19.2+：chunk 定位 → 异步 sourcemap 解析出精确源文件+行，解析完再发（预览/打开文件用真实路径）
+      // React 19.2+: chunk location → async sourcemap resolution for exact source file+line; post after resolving (preview/open-file use real paths)
       var _fw = _pl && _pl.framework;
       if (_fw && (_fw.react19Chunk || _fw.usedAtChunk)) {
         resolveFrameworkLoc(_fw).then(function (fw) {
           if (fw && _pl) {
             _pl.framework = fw;
-            _pl.file = fw.file; _pl.line = fw.line; _pl.usedAt = fw.usedAt; // 顶层同步（显示层 framework.file 优先，保持一致）
+            _pl.file = fw.file; _pl.line = fw.line; _pl.usedAt = fw.usedAt; // sync to top level (the display layer prefers framework.file; keep consistent)
           }
           post({ type: 'dbg_element_selected', payload: _pl });
         });
@@ -1181,10 +1181,10 @@
       post({ type: 'dbg_element_selected', payload: _pl });
     }
 
-    // ---------- 页面调速/拦截选项（dbg_set_options；独立于 Inspector，退出后保持） ----------
+    // ---------- Page speed/blocking options (dbg_set_options; independent of the Inspector, persists after exit) ----------
     var OPT = { animSpeed: 1, blockScroll: false, blockWheel: false, slowTimers: 1, darkMode: false, reducedMotion: false, timeOffsetMs: 0, simulateTouch: false };
     var animObs = null;
-    // 保存原始定时器函数引用：慢放包装时不放大内部扫描
+    // Keep references to the original timer functions: internal scans aren't amplified by the slow-motion wrapper
     var _origSetTimeout = window.setTimeout, _origSetInterval = window.setInterval, _origClearTimeout = window.clearTimeout;
 
     function applyAnimSpeedOnce() {
@@ -1199,7 +1199,7 @@
         animObs = new MutationObserver(function () { applyAnimSpeedOnce(); });
         animObs.observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'style'] });
       } catch (e) {}
-      // 定时兜底（WAAPI 动画创建不触发 DOM 变化）；用原始 setTimeout 防自伤
+      // Timer-based fallback (WAAPI animation creation doesn't trigger DOM changes); use the original setTimeout to avoid self-interference
       var tick = function () { applyAnimSpeedOnce(); _origSetTimeout(tick, 400); };
       _origSetTimeout(tick, 400);
     }
@@ -1232,11 +1232,11 @@
       if (opts.reducedMotion !== undefined) OPT.reducedMotion = !!opts.reducedMotion;
       if (opts.timeOffsetMs !== undefined) OPT.timeOffsetMs = opts.timeOffsetMs;
       if (opts.simulateTouch !== undefined) OPT.simulateTouch = !!opts.simulateTouch;
-      if (NET.delay > 0 || NET.offline) installNetSim(); // 需要时才劫持
-      emulateMedia();     // 深色/减少动效（matchMedia 劫持）
-      installTimeOffset(); // 时间偏移（Date 劫持，0 则还原）
+      if (NET.delay > 0 || NET.offline) installNetSim(); // hijack only when needed
+      emulateMedia();     // dark mode / reduced motion (matchMedia hijack)
+      installTimeOffset(); // time offset (Date hijack; 0 restores)
       if (OPT.animSpeed !== prevAnim) {
-        if (OPT.animSpeed === 1) { stopAnimWatch(); applyAnimSpeedOnce(); } // 恢复原速
+        if (OPT.animSpeed === 1) { stopAnimWatch(); applyAnimSpeedOnce(); } // restore original speed
         else { applyAnimSpeedOnce(); startAnimWatch(); }
       }
       document[OPT.blockScroll ? 'addEventListener' : 'removeEventListener']('scroll', onScrollBlock, true);
@@ -1244,7 +1244,7 @@
       if (OPT.slowTimers !== 1) installTimerSlow(); else restoreTimerSlow();
     }
 
-    // ---------- 网络模拟（fetch/XHR 劫持：延迟/离线；对应 CDP Network.emulateNetworkConditions） ----------
+    // ---------- Network simulation (fetch/XHR hijack: delay/offline; mirrors CDP Network.emulateNetworkConditions) ----------
     var NET = { delay: 0, offline: false };
     var _origFetch = window.fetch;
     var _origXhrOpen = XMLHttpRequest.prototype.open;
@@ -1254,7 +1254,7 @@
     function installNetSim() {
       if (netSimInstalled) return;
       netSimInstalled = true;
-      // fetch：离线立即拒；在线延迟 resolve
+      // fetch: reject immediately when offline; delay resolve when online
       window.fetch = function (input, init) {
         if (NET.offline) return Promise.reject(new TypeError('Failed to fetch（dbg 模拟离线）'));
         if (NET.delay > 0) {
@@ -1264,7 +1264,7 @@
         }
         return _origFetch(input, init);
       };
-      // XHR：延迟 send；离线触发 error
+      // XHR: delay send; trigger error when offline
       XMLHttpRequest.prototype.open = function (m, u) { this.__dbgUrl = String(u); return _origXhrOpen.apply(this, arguments); };
       XMLHttpRequest.prototype.send = function () {
         var self = this, args = arguments;
@@ -1283,7 +1283,7 @@
       };
     }
 
-    // ---------- 强制报错（验证错误收集/上报链路 + 给 AI 造错误场景） ----------
+    // ---------- Forced errors (validate the error collection/reporting chain + create error scenarios for the AI) ----------
     function forceError(kind) {
       var K = kind || 'sync';
       if (K === 'sync') _origSetTimeout(function () { throw new Error('[dbg] 强制同步异常 forced sync error'); }, 100);
@@ -1291,23 +1291,23 @@
       else if (K === 'console') console.error('[dbg] 强制 console.error forced console error');
       else if (K === 'resource') {
         var img = new Image();
-        img.src = '/__dbg_force_404__/' + Date.now() + '.png'; // 404 资源加载失败
+        img.src = '/__dbg_force_404__/' + Date.now() + '.png'; // 404 resource load failure
         document.body.appendChild(img);
       }
       return K;
     }
 
-    // ---------- 错误 hook：捕获页面错误上报宿主（去重防风暴，§7） ----------
-    // 顶层去重状态（跨 installErrorHook 可访问——window.__dbg.resetErrorDedup 引用它；
-    // 若定义在 installErrorHook 内则作用域不可达，调用即 ReferenceError 被静默吞掉，实测清理无效）
+    // ---------- Error hook: capture page errors and report to host (dedup anti-storm, §7) ----------
+    // Top-level dedup state (accessible across installErrorHook calls — window.__dbg.resetErrorDedup references it;
+    // defined inside installErrorHook it would be out of scope and the call would throw a silently swallowed ReferenceError — cleanup verified ineffective that way)
     var errSeen = {};
     function resetErrDedup() { errSeen = {}; }
     function installErrorHook() {
       if (window.__dbgErrHook) return;
       window.__dbgErrHook = true;
-      // 浏览器已知良性错误：ResizeObserver 循环（回调期间容器尺寸又变，通知延迟送达即收敛）
-      // 是 Chrome 规范明确可忽略的噪音——多扩展观察同一容器（聊天流式渲染/列表高度变化）时偶发正常，
-      // 无任何功能影响。过滤掉：不弹 AI、不占去重位，但保留入 console 环（page_logs 可查，带 [benign] 标记）。
+      // Known benign browser error: the ResizeObserver loop (container resized again during the callback; the delayed notification converges)
+      // is noise Chrome explicitly allows ignoring — occasional occurrences are normal when multiple extensions observe the same container (chat streaming / list height changes),
+      // with no functional impact. Filter it out: no AI notification, no dedup slot, but keep it in the console ring (queryable via page_logs, tagged [benign]).
       var BENIGN_ERROR_RE = /ResizeObserver loop (completed with undelivered notifications|limit exceeded)/;
       function report(kind, msg, stack) {
         var text = String(msg);
@@ -1316,24 +1316,24 @@
           return;
         }
         var key = text.slice(0, 80);
-        if (errSeen[key]) return; // 同消息只报一次（未清理前）
+        if (errSeen[key]) return; // report the same message only once (until cleanup)
         errSeen[key] = 1;
-        // 统一错误队列：未捕获异常（uncaught/rejection/resource）同时并入 console 日志环形缓冲，
-        // 使 AI 消息（dbg_page_error）与 page_logs 查询读到一致的内容。
-        // console.error 除外——它已由 installConsoleHook 的 console hook 入队（level=error），避免重复。
+        // Unified error queue: uncaught exceptions (uncaught/rejection/resource) are also merged into the console log ring buffer,
+        // so AI messages (dbg_page_error) and page_logs queries read the same content.
+        // console.error is excluded — installConsoleHook's console hook already enqueues it (level=error), avoiding duplicates.
         if (kind !== 'console.error') {
           var label = { error: 'uncaught', unhandledrejection: 'rejection', resource: 'resource' }[kind] || kind;
           pushConsoleLog('error', '[' + label + '] ' + String(msg).slice(0, 300));
         }
         post({ type: 'dbg_page_error', payload: { kind: kind, message: String(msg).slice(0, 300), stack: stack ? String(stack).slice(0, 500) : null } });
-        // P3：页面错误事件不再由页面直发桥——经 launcher → AI 窗（dbg_bridge_event）→ BridgeClient 上报，与其他事件同链路
+        // P3: page error events are no longer posted to the bridge directly from the page — they go through launcher → AI window (dbg_bridge_event) → BridgeClient, the same chain as other events
       }
-      // 脚本执行错误（冒泡）：同源报真实消息；跨源被浏览器遮蔽为 Script error.（尽力补充 filename/行号/资源 URL）
+      // Script execution errors (bubbling): same-origin reports the real message; cross-origin is masked by the browser as Script error. (best-effort supplement of filename/line/resource URL)
       window.addEventListener('error', function (e) {
         var msg = e.message;
         var meta = '';
         if (msg === 'Script error.') {
-          // 跨源脚本：拿不到真实消息——补充能拿到的所有定位信息（浏览器可能仍为空，尽力而为）
+          // Cross-origin script: the real message is unavailable — append every locatable detail (the browser may still provide nothing; best effort)
           if (e.filename) meta += ' @ ' + e.filename + (e.lineno ? ':' + e.lineno + (e.colno ? ':' + e.colno : '') : '');
           var t = e.target;
           if (t && t.tagName) meta += (meta ? ' · ' : '') + '资源=' + (t.tagName + (t.src || t.href || t.currentSrc ? ' ' + String(t.src || t.href || t.currentSrc).slice(0, 200) : ''));
@@ -1341,7 +1341,7 @@
         }
         report('error', msg + meta, e.error && e.error.stack);
       });
-      // 资源加载失败（script/img/link 404 等）：不冒泡，需 capture 阶段监听；e.target 为触发元素
+      // Resource load failures (script/img/link 404 etc.): don't bubble, need capture-phase listening; e.target is the triggering element
       window.addEventListener('error', function (e) {
         var t = e.target;
         if (t && t.tagName && (t.src || t.href)) {
@@ -1359,10 +1359,10 @@
       };
     }
 
-    // ---------- console 日志采集（方案 F-1：全量 log/debug/info/warn/error → 环形缓冲 → 连桥重放/实时批量） ----------
-    var CONSOLE_RING = [];   // {ts, level, text, count}（连桥前缓冲 + 连桥重放）
+    // ---------- Console log capture (plan F-1: full log/debug/info/warn/error → ring buffer → replay on bridge connect / real-time batching) ----------
+    var CONSOLE_RING = [];   // {ts, level, text, count} (pre-connect buffer + replay on bridge connect)
     var consoleDropped = 0;
-    var _consoleBatch = [];  // 100ms 聚合批（≤10 条）
+    var _consoleBatch = [];  // 100ms aggregation batch (≤10 entries)
     var _consoleTimer = null;
     var _consoleLevels = ['log', 'debug', 'info', 'warn', 'error'];
     var _origConsoles = {};
@@ -1374,7 +1374,7 @@
     function pushConsoleLog(level, text) {
       var now = Date.now();
       var last = CONSOLE_RING[CONSOLE_RING.length - 1];
-      // 连续相同（同文本且间隔 < 500ms）→ 合并 count
+      // consecutive identical entries (same text within <500ms) → merge into count
       if (last && last.level === level && last.text === text && now - last.ts < 500) {
         last.count = (last.count || 1) + 1;
         last.ts = now;
@@ -1390,15 +1390,15 @@
     function flushConsoleBatch() {
       if (_consoleTimer) { _origClearTimeout(_consoleTimer); _consoleTimer = null; }
       if (!_consoleBatch.length) return;
-      // 不再实时上报（方案 F-3：数据留在本地缓冲，page_logs 工具按需拉取）
+      // No more real-time reporting (plan F-3: data stays in the local buffer, pulled on demand by the page_logs tool)
       _consoleBatch.splice(0);
     }
     function installConsoleHook() {
       if (window.__dbgConsoleHook) return;
       window.__dbgConsoleHook = true;
-      // 重入保护：fmtArg 的 JSON.stringify/String() 会触发参数对象的 getter/toString/Symbol.toPrimitive，
-      // 若 getter 内部打日志（业务代理/懒加载警告等）会再进本 hook → 同步无限递归 → 主线程卡死（页面冻结）。
-      // 重入时跳过采集只透传，递归链立即斩断。
+      // Re-entrancy guard: fmtArg's JSON.stringify/String() triggers the argument object's getter/toString/Symbol.toPrimitive,
+      // and a getter that logs (business proxies/lazy-load warnings etc.) re-enters this hook → synchronous infinite recursion → main-thread deadlock (page freeze).
+      // On re-entry, skip capture and pass through only, cutting the recursion chain immediately.
       var _inHook = 0;
       _consoleLevels.forEach(function (lv) {
         _origConsoles[lv] = console[lv];
@@ -1408,15 +1408,15 @@
             try {
               var text = Array.prototype.map.call(arguments, fmtArg).join(' ').slice(0, 300);
               pushConsoleLog(lv, text);
-            } catch (e) {} // 格式化彻底失败也不影响透传
+            } catch (e) {} // even total formatting failure doesn't affect pass-through
             _inHook = 0;
           }
-          _origConsoles[lv].apply(console, arguments); // 透传原 console，页面行为不变
+          _origConsoles[lv].apply(console, arguments); // pass through to the original console; page behavior unchanged
         };
       });
     }
 
-    // ---------- 网络观察（方案 F-2：XHR/fetch 完成态采集；与 installNetSim 组合顺序无关） ----------
+    // ---------- Network observation (plan F-2: XHR/fetch completion capture; composition order with installNetSim doesn't matter) ----------
     var NET_RING = [];     // {id, kind:'xhr'|'fetch', method, url, status, statusText, durationMs, size, error, ts}
     var netDropped = 0;
     var _netBatch = [];
@@ -1431,20 +1431,20 @@
     function flushNetBatch() {
       if (_netTimer) { _origClearTimeout(_netTimer); _netTimer = null; }
       if (!_netBatch.length) return;
-      // 不再实时上报（方案 F-3：数据留在本地缓冲，page_network 工具按需拉取）
+      // No more real-time reporting (plan F-3: data stays in the local buffer, pulled on demand by the page_network tool)
       _netBatch.splice(0);
     }
     function installNetObserver() {
       if (window.__dbgNetObserver) return;
       window.__dbgNetObserver = true;
-      // XHR 完成态（包安装时引用——netSim 先装则包 sim 版，顺序无关）
+      // XHR completion (captured by reference at install time — if netSim installed first the sim version gets wrapped; order doesn't matter)
       var _oOpen = XMLHttpRequest.prototype.open, _oSend = XMLHttpRequest.prototype.send;
       XMLHttpRequest.prototype.open = function (m, u) { this.__dbgNet = { m: m, u: String(u).slice(0, 300), t0: performance.now() }; return _oOpen.apply(this, arguments); };
       XMLHttpRequest.prototype.send = function () {
         var self = this, net = this.__dbgNet || { m: '', u: '', t0: performance.now() };
         ['load', 'error', 'abort', 'timeout'].forEach(function (ev) {
           self.addEventListener(ev, function () {
-            // 排除 dbg 自身请求（桥上报/扩展资源——否则采集→上报→新请求→再采集的自激循环）
+            // Exclude dbg's own requests (bridge reporting/extension resources — otherwise a self-exciting capture → report → new request → capture loop)
             if (net.u.indexOf('/bridge/') >= 0 || net.u.indexOf('/api/extensions/') >= 0 || net.u.indexOf('__dbg') >= 0) return;
             pushNet({
               id: 'xhr_' + Math.random().toString(36).slice(2, 8), kind: 'xhr', method: net.m, url: net.u,
@@ -1457,13 +1457,13 @@
         });
         return _oSend.apply(this, arguments);
       };
-      // fetch 完成态
+      // fetch completion
       var _of = window.fetch;
       window.fetch = function (input, init) {
         var _m = (init && init.method) || (input && input.method) || 'GET';
         var _u = String((input && input.url) || input).slice(0, 300);
         return _of.apply(this, arguments).then(function (res) {
-          // 排除 dbg 自身请求（防自激循环）
+          // Exclude dbg's own requests (prevents a self-exciting loop)
           if (_u.indexOf('/bridge/') < 0 && _u.indexOf('/api/extensions/') < 0 && _u.indexOf('__dbg') < 0) {
             pushNet({ id: 'f_' + Math.random().toString(36).slice(2, 8), kind: 'fetch', method: _m, url: _u,
               status: res.status, statusText: res.statusText, durationMs: 0, size: null, error: null, ts: Date.now() });
@@ -1480,12 +1480,12 @@
     }
 
 
-    // ---------- 场景模拟：环境（matchMedia 劫持）+ 时间偏移（Date 劫持） ----------
+    // ---------- Scenario simulation: environment (matchMedia hijack) + time offset (Date hijack) ----------
     var _origMatchMedia = window.matchMedia;
     var _origDate = window.Date;
 
     function emulateMedia() {
-      // 深色/减少动效：JS 侧判断（matchMedia.matches）可模拟；纯 CSS media query 无法强制（P1 用注入样式兜底）
+      // Dark mode/reduced motion: JS-side checks (matchMedia.matches) can be simulated; pure CSS media queries cannot be forced (P1 falls back to injected styles)
       window.matchMedia = function (query) {
         var m = _origMatchMedia(query);
         var q = String(query);
@@ -1493,7 +1493,7 @@
         if (OPT.darkMode && q.indexOf('prefers-color-scheme') >= 0) fake = q.indexOf('dark') >= 0;
         if (OPT.reducedMotion && q.indexOf('prefers-reduced-motion') >= 0) fake = q.indexOf('reduce') >= 0;
         if (OPT.simulateTouch && (q.indexOf('pointer') >= 0 || q.indexOf('hover') >= 0)) {
-          // 模拟触屏：pointer:coarse / any-pointer:coarse / hover:none / any-hover:none
+          // Simulated touch: pointer:coarse / any-pointer:coarse / hover:none / any-hover:none
           fake = (q.indexOf('coarse') >= 0 || q.indexOf('none') >= 0);
         }
         if (fake === null) return m;
@@ -1504,7 +1504,7 @@
           dispatchEvent: function (e) { return m.dispatchEvent(e); },
         };
       };
-      // 深色：color-scheme 影响表单控件/滚动条渲染
+      // Dark mode: color-scheme affects form control/scrollbar rendering
       var old = document.getElementById('__dbg_dark__');
       if (OPT.darkMode) {
         if (!old) {
@@ -1522,7 +1522,7 @@
       window.Date = (function (OrigDate) {
         function DbgDate() {
           var d;
-          if (!(this instanceof DbgDate)) return new OrigDate(OrigDate.now() + offset).toString(); // Date() 调用
+          if (!(this instanceof DbgDate)) return new OrigDate(OrigDate.now() + offset).toString(); // Date() call form
           if (arguments.length === 0) d = new OrigDate(OrigDate.now() + offset);
           else if (arguments.length === 1) d = new OrigDate(arguments[0]);
           else d = new OrigDate(arguments[0], arguments[1], arguments[2], arguments[3], arguments[4], arguments[5], arguments[6]);
@@ -1536,14 +1536,14 @@
       })(_origDate);
     }
 
-    // ---------- MCP 桥：页面与桥零直接连接（设计决策） ----------
-    // 所有桥通信集中在 AI 窗（cockpit / pi-web aiti 扩展 client）：launcher 经 postToAi 把页面事件
-    // （page_log/page_network/page_error/open_file/user_answer…）交给 AI 窗，由其 BridgeClient.postEvent 上报桥。
-    // 历史 client 直连桥代码（mcpConnect/claim/SSE/postBridge*）已删——直连形态遗留，全形态无人触发。
+    // ---------- MCP bridge: zero direct page-to-bridge connection (design decision) ----------
+    // All bridge communication is centralized in the AI window (cockpit / pi-web aiti extension client): launcher hands page events
+    // (page_log/page_network/page_error/open_file/user_answer…) to the AI window via postToAi; its BridgeClient.postEvent reports to the bridge.
+    // Historical direct-to-bridge client code (mcpConnect/claim/SSE/postBridge*) has been removed — a legacy of the direct form, never triggered in any mode.
 
-    // ---------- 事件冻结 → 升级为「锁定 + 事件放行矩阵」 ----------
-    // 默认全锁（页面交互收不到任何事件，弹出层保持）；按类别临时放行（click/key/wheel/scroll/hover/touch/focus），
-    // 到期自动回锁或持续到手动锁回；✓ 确认在任何状态下可用
+    // ---------- Event freeze → upgraded to "lock + event release matrix" ----------
+    // Everything locked by default (the page receives no interaction events, keeping popup layers intact); temporary release per category (click/key/wheel/scroll/hover/touch/focus),
+    // auto re-lock on expiry or sustained until manually locked; ✓ confirm available in any state
     var FROZEN_CATEGORIES = {
       click: ['mousedown', 'mouseup', 'click', 'dblclick', 'pointerdown', 'pointerup', 'contextmenu'],
       key: ['keydown', 'keyup'],
@@ -1553,13 +1553,13 @@
       touch: ['touchstart', 'touchmove', 'touchend'],
       focus: ['focusin', 'focusout'],
     };
-    var aiPick = false;    // AI 窗口点选模式：点击回传元素（dbg_ai_picked），可连续选择，不弹窗/不暂停
-    var passClick = false; // 真实点击穿透：放行一次 click 让页面交互发生（如打开按钮菜单）
-    var inspectorMode = 'mouse'; // 'mouse'（hover+点击确认）| 'touch'（点击=移动选区，✓才确认）
+    var aiPick = false;    // AI window pick mode: clicks return the element (dbg_ai_picked); continuous picking, no dialog / no pause
+    var passClick = false; // real click pass-through: release one click so page interaction happens (e.g. opening a button menu)
+    var inspectorMode = 'mouse'; // 'mouse' (hover + click confirm) | 'touch' (click = move selection, ✓ to confirm)
     var released = {};         // category -> until(ts) | Infinity
     var _frozenEvents = [];
     var _releaseTimers = {};
-    var _blockReported = {};   // category -> ts（拦截提示防抖：同类事件 2.5s 只提示一次）
+    var _blockReported = {};   // category → ts (blocked-notice debounce: same category notified once per 2.5s)
 
     function allFrozenEvents() {
       var list = [];
@@ -1570,23 +1570,23 @@
       return list;
     }
     function freezeEvent(e) {
-      // self 模式（注入宿主页自身）：launcher UI（#__dbg_launcher）放行，工具条始终可用；其余页面元素都可选
+      // self mode (injected into the host page itself): launcher UI (#__dbg_launcher) released, toolbar always usable; all other page elements are pickable
       if (e.target && e.target.closest && e.target.closest('#__dbg_launcher, .dbg-fab, .dbg-toolbar, .dbg-speed, .dbg-dialog, .dbg-extreme-menu, .dbg-profile-menu, .dbg-tooltip, .dbg-sel-input-row, .dbg-ai-detail-mask, .dbg-ai-win, .dbg-overlay, .dbg-settings')) return;
-      // 只冻结鼠标左键（click 冻结）；右键/中键放行（页面右键菜单/中键行为正常）
+      // Freeze only the left mouse button (click frozen); right/middle buttons released (page context menu / middle-click behavior stays normal)
       if (e.button && e.button !== 0) return;
-      // aiti 自身键盘功能（Esc 退出 Inspector / 方向键导航选区）优先于事件冻结——兜底特判：
-      // keydown 冻结会连我们自己在 document/window bubble 注册的 Esc 处理一起拦掉（freezeEvent 在
-      // window capture + stopImmediatePropagation），导致「按 Esc 退不出 + 误报『keydown 被拦截』」。
-      // 正常路径由键盘捕获监听（onKey，注册先于本函数）先行接管并 stopImmediatePropagation；
-      // 此特判保证任何注册顺序下 Esc 都不被冻结、不弹拦截提示（事件可冒泡到宿主 hostKey 退出）。
+      // aiti's own keyboard features (Esc exits the Inspector / arrow keys navigate the selection) take precedence over event freezing — defensive special case:
+      // keydown freezing would also block our own Esc handlers registered on document/window bubble (freezeEvent runs on
+      // window capture + stopImmediatePropagation), causing "Esc can't exit + a false 'keydown blocked' notice".
+      // The normal path is the keyboard capture listener (onKey, registered before this function) taking over first and calling stopImmediatePropagation;
+      // this special case guarantees Esc is never frozen and never triggers a blocked notice under any registration order (the event can bubble to the host hostKey for exit).
       if (e.type === 'keydown' && e.key === 'Escape') return;
-      // capture 阶段最后一个执行者：页面其余监听器全部收不到
+      // Last runner in the capture phase: no other page listeners receive the event
       e.stopImmediatePropagation();
       if (e.cancelable) e.preventDefault();
-      // 拦截提示：被冻结的页面交互 → 通知宿主底部提示（类别与放行方案维度一致：click/hover/key/wheel/scroll/touch/focus）
+      // Blocked notice: frozen page interactions → notify the host's bottom notice (categories match the release-profile dimensions: click/hover/key/wheel/scroll/touch/focus)
       reportBlocked(e);
     }
-    /** 拦截提示上报：反查事件类别（FROZEN_CATEGORIES 同源），防抖后 post 宿主显示提示条 */
+    /** Blocked-notice report: reverse-look-up the event category (same source as FROZEN_CATEGORIES), debounce, then post for the host to show the notice bar */
     function reportBlocked(e) {
       var cat = null;
       for (var c in FROZEN_CATEGORIES) {
@@ -1596,8 +1596,8 @@
       var now = Date.now();
       if (_blockReported[cat] && now - _blockReported[cat] < 2500) return;
       _blockReported[cat] = now;
-      // 拦截点坐标（鼠标/触摸事件才有；键盘/scroll/focus 无坐标传 null）：
-      // 宿主提示条据此闪避——拦截发生在视口下半部 → 提示挪上半屏，反之亦然
+      // Blocked-point coordinates (only mouse/touch events have them; keyboard/scroll/focus pass null):
+      // the host notice bar dodges accordingly — a block in the lower half of the viewport moves the notice to the upper half, and vice versa
       var _mx = null, _my = null;
       if (typeof e.clientX === 'number') { _mx = Math.round(e.clientX); _my = Math.round(e.clientY); }
       else if (e.changedTouches && e.changedTouches[0]) { _mx = Math.round(e.changedTouches[0].clientX); _my = Math.round(e.changedTouches[0].clientY); }
@@ -1608,29 +1608,37 @@
       uninstallFreeze();
       _frozenEvents = allFrozenEvents();
       _frozenEvents.forEach(function (t) { window.addEventListener(t, freezeEvent, true); });
-      ensureUiMousedownGuard(); // launcher UI mousedown 守卫（与放行方案无关，见 uiMousedownGuard）
+      ensureUiMousedownGuard(); // launcher UI mousedown guard (independent of release profiles, see uiMousedownGuard)
     }
     function uninstallFreeze() {
       _frozenEvents.forEach(function (t) { window.removeEventListener(t, freezeEvent, true); });
       _frozenEvents = [];
       removeUiMousedownGuard();
     }
-    // launcher UI 的 mousedown 守卫：页面菜单/编辑器（session-manager 标签编辑等）用 document **捕获相位** mousedown 关闭
-    // （点外部关）。放行方案（尤其全部放行）不应影响 launcher 自身 UI——launcher HUD 在 inspect 模式永远按“默认放行”
-    // 处理：mousedown 无条件拦掉（stopImmediatePropagation），页面捕获监听收不到 → 点工具条放行按钮不会关掉刚打开的
-    // 页面菜单（用户实测）。挂在 window 捕获相位（先于 document，不依赖注册顺序）。launcher 输入框豁免（需 mousedown 聚焦）；
-    // AI 窗/fab/工具条拖动均用 pointerdown，不受影响。
+    // Launcher UI mousedown guard: page menus/editors (e.g. session-manager tab rename) close via
+    // document **capture-phase** mousedown listeners (close on outside click). Release profiles
+    // (especially full-release) must not let launcher's own UI trigger those listeners: mousedown is
+    // always stopped (stopImmediatePropagation) so page capture listeners never see it -> clicking a
+    // toolbar release button does not close the page menu that just opened (verified).
+    // Bound on window capture phase (runs before document, independent of registration order).
+    // stopImmediatePropagation applies unconditionally inside launcher UI; preventDefault applies only
+    // while click interception is active (see below). Launcher inputs are exempt (they need focus);
+    // AI window/fab/toolbar drags use pointerdown and are unaffected.
     var _uiMouseBound = false;
     function uiMousedownGuard(e) {
-      if (e.target && e.target.closest && e.target.closest('#__dbg_launcher, .dbg-fab, .dbg-toolbar, .dbg-speed, .dbg-dialog, .dbg-extreme-menu, .dbg-profile-menu, .dbg-tooltip, .dbg-sel-input-row, .dbg-ai-detail-mask, .dbg-ai-win, .dbg-overlay, .dbg-settings')) {
-        if (e.target.closest && e.target.closest('input, textarea, select')) return; // 输入框：放行（聚焦）
-        e.stopImmediatePropagation();
-        if (e.cancelable) e.preventDefault(); // 焦点保护：防 launcher UI 点击把页面输入框焦点夺走
-      }
+      if (!(e.target && e.target.closest && e.target.closest('#__dbg_launcher, .dbg-fab, .dbg-toolbar, .dbg-speed, .dbg-dialog, .dbg-extreme-menu, .dbg-profile-menu, .dbg-tooltip, .dbg-sel-input-row, .dbg-ai-detail-mask, .dbg-ai-win, .dbg-overlay, .dbg-settings'))) return;
+      if (e.target.closest && e.target.closest('input, textarea, select')) return; // inputs: let through (need focus)
+      e.stopImmediatePropagation(); // keep page close-on-outside-click listeners off (kept for inspect AND release profiles)
+      // preventDefault only while Inspector click interception is actually active (state.active, click not
+      // released): protects launcher UI from being picked as the inspect target + keeps page input focus.
+      // Release profiles (released.click) / inactive state must not touch the default behavior -- panel
+      // bodies need to stay selectable and button clicks need to focus the document (Clipboard API /
+      // execCommand both require it; unconditional preventDefault kills selection + copy, verified).
+      if (state.active && !released.click && e.cancelable) e.preventDefault();
     }
     function ensureUiMousedownGuard() { if (!_uiMouseBound) { _uiMouseBound = true; window.addEventListener('mousedown', uiMousedownGuard, true); } }
     function removeUiMousedownGuard() { if (_uiMouseBound) { _uiMouseBound = false; window.removeEventListener('mousedown', uiMousedownGuard, true); } }
-    /** 放行一组事件类别：durationMs>0 定时回锁；0/Infinity 持续到手动锁回 */
+    /** Release a set of event categories: durationMs>0 re-locks on a timer; 0/Infinity stays released until manually locked */
     function releaseEvents(categories, durationMs) {
       var now = Date.now();
       (categories || []).forEach(function (cat) {
@@ -1640,7 +1648,7 @@
       if (durationMs > 0) {
         var until = now + durationMs;
         var key = (categories || []).slice().sort().join('+');
-        if (_releaseTimers[key]) clearTimeout(_releaseTimers[key]); // clearTimeout 的 id 不变，无需包装
+        if (_releaseTimers[key]) clearTimeout(_releaseTimers[key]); // clearTimeout's id is unchanged, no wrapping needed
         _releaseTimers[key] = _origSetTimeout(function () {
           (categories || []).forEach(function (cat) { if (released[cat] === until) delete released[cat]; });
           installFreeze();
@@ -1651,7 +1659,7 @@
       released = {};
       installFreeze();
     }
-    /** 放行方案：一次性设置（release 数组 = 放行的类别，其余冻结）——默认方案由 enterInspector 设置 */
+    /** Release profile: set in one shot (release array = the released categories, everything else frozen) — the default profile is set by enterInspector */
     function applyProfile(pf) {
       released = {};
       var rel = (pf && pf.release) || [];
@@ -1661,7 +1669,7 @@
       installFreeze();
       return { name: pf && pf.name, released: Object.keys(released) };
     }
-    /** 单类别开关：enabled=true 持续放行，false 立即冻结（用户可控状态，非临时） */
+    /** Single-category toggle: enabled=true sustains release, false freezes immediately (user-controlled state, not temporary) */
     function toggleEvent(category, enabled) {
       if (!FROZEN_CATEGORIES[category]) return { error: 'unknown category: ' + category };
       if (enabled) released[category] = Infinity;
@@ -1670,21 +1678,21 @@
       return { category: category, released: !!released[category] };
     }
 
-    // ---------- 事件 ----------
+    // ---------- Events ----------
     var lastMoveX = 0, lastMoveY = 0;
-    var _touchBlockHoverUntil = 0; // 触摸点击后一段时间内禁止 hover（tap 合成 mouseover 会圈蓝框）
-    var _realMouseEver = false; // 是否见过真实鼠标移动（isTrusted 且 movement>0）——tap 合成 mouseover(movement=0) 不触发 hover
+    var _touchBlockHoverUntil = 0; // suppress hover for a while after touch taps (tap-synthesized mouseover would draw the blue outline)
+    var _realMouseEver = false; // whether a real mouse move has been seen (isTrusted with movement>0) — tap-synthesized mouseover (movement=0) must not trigger hover
     var _onTouch = function () { _touchBlockHoverUntil = Date.now() + 800; };
     document.addEventListener('touchstart', _onTouch, true);
     document.addEventListener('pointerdown', function (e) { if (e.pointerType === 'touch') _onTouch(); }, true);
     function onOver(e) {
       if (state.active && inspectorMode === 'mouse' && !state.engaged) {
-        // 触摸点击（tap）后抑制 hover：真机 tap 合成 mouseover（即便 isTouchDevice 漏报）→ 圈蓝框盖整窗
+        // Suppress hover after touch taps: real-device taps synthesize mouseover (even when isTouchDevice under-reports) → a blue outline covering the whole window
         if (Date.now() < _touchBlockHoverUntil) return;
-        // 真机 tap 合成 mouseover(isTrusted=true, 无真实鼠标移动) 不触发 hover；自检 dispatch(isTrusted=false) 放行
+        // real-device tap-synthesized mouseover (isTrusted=true, no real mouse movement) must not trigger hover; self-check dispatch (isTrusted=false) passes through
         if (e.isTrusted !== false && !_realMouseEver) return;
         var t = e.target;
-        if (!t || t === document.body || t === document.documentElement) return; // 不 hover body/html 容器（占满视口 → 淡蓝背景盖全窗）
+        if (!t || t === document.body || t === document.documentElement) return; // don't hover body/html containers (viewport-filling → a light-blue background covering the whole window)
         if (t.closest && t.closest('#__dbg_launcher, .dbg-fab, .dbg-toolbar, .dbg-speed, .dbg-dialog, .dbg-extreme-menu, .dbg-profile-menu, .dbg-tooltip, .dbg-sel-input-row, .dbg-ai-detail-mask, .dbg-ai-win, .dbg-overlay, .dbg-settings')) return;
         setHovered(t, e.clientX, e.clientY);
       }
@@ -1698,35 +1706,35 @@
       if (el && el.closest && el.closest('#__dbg_launcher, .dbg-fab, .dbg-toolbar, .dbg-speed, .dbg-dialog, .dbg-extreme-menu, .dbg-profile-menu, .dbg-tooltip, .dbg-sel-input-row, .dbg-ai-detail-mask, .dbg-ai-win, .dbg-overlay, .dbg-settings')) return;
       if (state.hovered) post({ type: 'dbg_mouse_move', payload: { mouseX: e.clientX, mouseY: e.clientY } });
     }
-    // disabled 元素不派发 click（HTML 规范），Inspector 的 window 捕获 click（onClick）永远收不到 →
-    // 点 disabled 按钮（如 aiti-prompts「新建分组」确认钮初始 disabled）不选中、不弹 HUD。
-    // 补 pointerdown 捕获检测：目标本身 disabled / aria-disabled / 处于 fieldset[disabled] 内 → 当点击选中
-    // （与 onClick 同语义：冻结页面交互、进入/移动选区、AI 点选回传）。pointerdown 同时覆盖桌面与触屏。
+    // Disabled elements don't dispatch click (HTML spec), so the Inspector's window-capture click (onClick) never sees them →
+    // clicking a disabled button (e.g. aiti-prompts' "new group" confirm button, initially disabled) neither selects nor pops the HUD.
+    // Add a pointerdown capture check: target itself disabled / aria-disabled / inside fieldset[disabled] → treat as a click selection
+    // (same semantics as onClick: freeze page interaction, enter/move the selection, return the AI pick). pointerdown covers desktop and touch alike.
     function isDisabledEl(el) {
       if (!el || el.nodeType !== 1) return false;
-      if (el.disabled === true) return true; // button/input/textarea/select 原生 disabled
+      if (el.disabled === true) return true; // native disabled on button/input/textarea/select
       var a = el.getAttribute && el.getAttribute('aria-disabled');
       if (a && a !== 'false' && a !== '') return true;
-      try { if (el.closest && el.closest('fieldset[disabled]')) return true; } catch (e) {} // fieldset[disabled] 禁其内全部表单控件
+      try { if (el.closest && el.closest('fieldset[disabled]')) return true; } catch (e) {} // fieldset[disabled] disables every form control inside it
       return false;
     }
     function onPickDisabled(e) {
       if (!state.active) return;
-      if (e.button && e.button !== 0) return; // 左键
+      if (e.button && e.button !== 0) return; // left button
       var t = e.target;
       if (!t || t.nodeType !== 1) return;
-      if (t.closest && t.closest('#__dbg_launcher, .dbg-fab, .dbg-toolbar, .dbg-speed, .dbg-dialog, .dbg-extreme-menu, .dbg-profile-menu, .dbg-tooltip, .dbg-sel-input-row, .dbg-ai-detail-mask, .dbg-ai-win, .dbg-overlay, .dbg-settings')) return; // launcher UI 放行
-      if (released.click) return; // click 已放行（放行方案）：交给页面，不拦 pointerdown
-      if (!isDisabledEl(t)) return; // 只处理 disabled 元素（enabled 走正常 click 路径）
+      if (t.closest && t.closest('#__dbg_launcher, .dbg-fab, .dbg-toolbar, .dbg-speed, .dbg-dialog, .dbg-extreme-menu, .dbg-profile-menu, .dbg-tooltip, .dbg-sel-input-row, .dbg-ai-detail-mask, .dbg-ai-win, .dbg-overlay, .dbg-settings')) return; // launcher UI released
+      if (released.click) return; // click already released (release profile): hand it to the page, don't intercept pointerdown
+      if (!isDisabledEl(t)) return; // handle disabled elements only (enabled ones take the normal click path)
       e.preventDefault();
-      e.stopImmediatePropagation(); // 先于 freezeEvent（enterInspector 注册在前）：不弹「被冻结」拦截提示
+      e.stopImmediatePropagation(); // runs before freezeEvent (enterInspector registered first): no "frozen" blocked notice
       if (aiPick) {
         state.engaged = true;
         setTouchSelection(t, e.clientX, e.clientY);
         return;
       }
       if (inspectorMode === 'touch' || state.engaged) {
-        if (state.engaged && state.selected === t) { // 已选中点击同一 disabled 元素 → toggle 恢复快选（与 onClick 一致）
+        if (state.engaged && state.selected === t) { // clicking the same selected disabled element → toggle back to quick-select (consistent with onClick)
           state.engaged = false;
           state.selected = null;
           clearOutline(state.selOutline);
@@ -1743,15 +1751,15 @@
     }
     function onClick(e) {
       if (!state.active) return;
-      // 只拦截鼠标左键（button=0）：右键（contextmenu）/中键（auxclick）放行给页面（页面右键菜单/中键行为正常）
+      // Intercept only the left mouse button (button=0): right (contextmenu) / middle (auxclick) released to the page (page context menu / middle-click behavior stays normal)
       if (e.button && e.button !== 0) return;
-      // self 模式：点击 launcher UI（fab/AI 窗/工具条/面板）放行，不选中；其余页面元素（含控制按钮）都可选
+      // self mode: clicks on launcher UI (fab/AI window/toolbar/panels) are released, not selected; all other page elements (including control buttons) are pickable
       if (e.target && e.target.closest && e.target.closest('#__dbg_launcher, .dbg-fab, .dbg-toolbar, .dbg-speed, .dbg-dialog, .dbg-extreme-menu, .dbg-profile-menu, .dbg-tooltip, .dbg-sel-input-row, .dbg-ai-detail-mask, .dbg-ai-win, .dbg-overlay, .dbg-settings')) return;
-      // click 已放行（事件放行开关）：点击交给页面（按钮可交互），不选中；通知宿主隐藏 HUD——
-      // 菜单/弹层正是在点击处弹出，可见 HUD（pointer-events:auto 时代）会盖住并拦截其下方交互（用户实测无法选择菜单项）
+      // click already released (event release switch): hand clicks to the page (buttons interactive), no selection; notify the host to hide the HUD —
+      // menus/popups pop up right at the click point; a visible HUD (from the pointer-events:auto era) would cover and block interactions beneath it (user-verified: menu items couldn't be selected)
       if (released.click) { post({ type: 'dbg_click_released', payload: {} }); return; }
       if (passClick) {
-        // 真实点击穿透：放行本次 click（页面打开菜单等逻辑正常发生），短暂后恢复冻结
+        // Real click pass-through: release this click (page menu-opening logic runs normally), restore the freeze shortly after
         passClick = false;
         post({ type: 'dbg_click_released', payload: {} });
         setTimeout(function () { installFreeze(); }, 600);
@@ -1759,36 +1767,36 @@
       }
       e.preventDefault(); e.stopImmediatePropagation();
       if (aiPick) {
-        // AI 窗口点选：点击 = 与外部 Inspector 一致——进入临时选择（工具条弹出跟随选区，可微调）；✓ 确认才回传 AI 窗
+        // AI window pick: click = same as the external Inspector — enter temporary selection (toolbar pops up following the selection, fine-tunable); only ✓ returns to the AI window
         state.engaged = true;
         setTouchSelection(e.target, e.clientX, e.clientY);
         return;
       }
       if (inspectorMode === 'touch' || state.engaged) {
-        // 已选中状态下点击同一元素 → 恢复快选（toggle：选中↔快选）
+        // Clicking the same element while selected → back to quick-select (toggle: selected ↔ quick-select)
         if (state.engaged && state.selected === e.target) {
           state.engaged = false;
           state.selected = null;
           clearOutline(state.selOutline);
           state.hovered = null;
-          setHovered(e.target); // 恢复 hover 高亮 + HUD
+          setHovered(e.target); // restore hover highlight + HUD
           post({ type: 'dbg_element_hover_refresh', payload: null });
           return;
         }
-        setTouchSelection(e.target, e.clientX, e.clientY); // 触屏/已进入临时状态：点击 = 移动选区（不弹窗，✓ 才确认）
+        setTouchSelection(e.target, e.clientX, e.clientY); // touch / already in the temporary state: click = move selection (no dialog, ✓ to confirm)
       } else {
-        // 大屏首次点击：进入临时选择状态（不立即弹窗），hover 停用、工具条保留，可继续调整
+        // Large-screen first click: enter the temporary selection state (no dialog immediately), hover disabled, toolbar kept, further adjustment possible
         state.engaged = true;
         setTouchSelection(e.target, e.clientX, e.clientY);
       }
     }
-    function onScroll() { if (state.hovered && !state.engaged) setHovered(state.hovered); } // engaged 后滚动不再重发 hover
+    function onScroll() { if (state.hovered && !state.engaged) setHovered(state.hovered); } // after engaged, scrolling no longer re-posts hover
 
-    // 触屏选区：点击/step 直接更新 selected（高亮虚线），回传轻量标签更新，不弹窗
+    // Touch selection: click/step updates selected directly (highlight dashed outline), returns a lightweight label update, no dialog
     function setTouchSelection(el, mX, mY) {
       if (!el) return;
       state.selected = el;
-      state.hovered = el; // 同步 hovered：后续 step（Enter/导航）基于最新选区
+      state.hovered = el; // sync hovered: later steps (Enter/navigation) build on the latest selection
       clearOutline(state.hoverOutline);
       drawOutline(state.selOutline, el, OUTLINE_SEL, 'rgba(5,150,105,.08)', 'SEL');
       var fl = fileLocation(el);
@@ -1802,11 +1810,11 @@
           component: fl && fl.component,
           file: fl && fl.file, line: fl && fl.line,
           usedAt: fl && fl.usedAt,
-          // 完整 framework（含 react19Chunk/usedAtChunk）：触屏选区同样会变 lastSelfPayload → 确认发送给 AI 时
-          // 经 picksAddElement→resolveElLoc 做 sourcemap 解析；缺了它 chunk URL 无法还原成真实源文件（触屏设备必带）
+          // Full framework (including react19Chunk/usedAtChunk): the touch selection also becomes lastSelfPayload → when confirmed and sent to the AI,
+          // picksAddElement→resolveElLoc runs sourcemap resolution; without it, chunk URLs cannot be recovered into real source files (mandatory on touch devices)
           framework: fl,
           frameworks: detectFrameworks(),
-          touchMode: true, engaged: true, // 点击暂停：工具条显示
+          touchMode: true, engaged: true, // click-paused: toolbar shown
           rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) },
           mouseX: (typeof mX === 'number') ? mX : Math.round(r.x + r.width / 2),
           mouseY: (typeof mY === 'number') ? mY : Math.round(r.y + r.height / 2),
@@ -1818,20 +1826,20 @@
 
     window.__dbg = {
       __version__: '__DBG_VERSION__',
-      resetErrorDedup: function () { try { resetErrDedup(); } catch (e) {} }, // 打开 AI 窗清理 → 同消息下次触发重新上报
+      resetErrorDedup: function () { try { resetErrDedup(); } catch (e) {} }, // cleared when the AI window opens → the same message reports again on its next occurrence
       enterInspector: function (mode) {
-        if (state.active && inspectorMode === (mode || 'mouse')) return; // 幂等
-        if (state.active) window.__dbg.exitInspector(); // 模式切换先退出再进
+        if (state.active && inspectorMode === (mode || 'mouse')) return; // idempotent
+        if (state.active) window.__dbg.exitInspector(); // mode switch: exit first, then enter
         state.active = true;
         inspectorMode = mode || 'mouse';
         passClick = false;
-        // 默认放行不影响 Inspector 点选的事件（页面交互正常：滚动/键盘/触摸/焦点），只锁 click/hover（防误选中 + 防弹出层消失）
+        // By default release events that don't affect Inspector picking (page interaction stays normal: scroll/keyboard/touch/focus); lock only click/hover (prevents accidental picks + popup layers disappearing)
         released = {};
         ['key', 'wheel', 'scroll', 'touch', 'focus'].forEach(function (c) { released[c] = Infinity; });
-        if (inspectorMode === 'touch') released.touch = Infinity; // 触屏：放行 touch（tap 需合成 click 供“点击=移动选区”）
+        if (inspectorMode === 'touch') released.touch = Infinity; // touch: release touch (taps need to synthesize click for "click = move selection")
         if (inspectorMode === 'mouse') window.addEventListener('mouseover', onOver, true);
         window.addEventListener('mousemove', onMouseMove, true);
-        window.addEventListener('pointerdown', onPickDisabled, true); // disabled 元素不派发 click，用 pointerdown 补选（注册先于 installFreeze）
+        window.addEventListener('pointerdown', onPickDisabled, true); // disabled elements don't dispatch click; pointerdown provides picking (registered before installFreeze)
         window.addEventListener('click', onClick, true);
         window.addEventListener('scroll', onScroll, true);
         installFreeze();
@@ -1847,11 +1855,11 @@
         window.removeEventListener('pointerdown', onPickDisabled, true);
         window.removeEventListener('click', onClick, true);
         window.removeEventListener('scroll', onScroll, true);
-        uninstallFreeze(); // 解除冻结
+        uninstallFreeze(); // unfreeze
         released = {};
         clearOutline(state.hoverOutline);
-        clearOutline(state.selOutline); // 退出时清掉全部选区框（蓝框不残留）
-        // 兜底：扫除页面上所有残留的选区框 div（引用丢失/异常时也能清干净）
+        clearOutline(state.selOutline); // clear all selection outlines on exit (no leftover blue boxes)
+        // Fallback: sweep every leftover selection outline div off the page (cleans up even when references are lost / on anomalies)
         try {
           document.querySelectorAll('body > div').forEach(function (n) {
             if (n.style && n.style.position === 'fixed' && n.style.outline && String(n.style.zIndex) === '2147483646') {
@@ -1862,48 +1870,48 @@
         state.hovered = null;
         state.selected = null;
         document.body.style.cursor = '';
-        try { simulateHoverOff(); } catch (e) {} // 退出 Inspector：对模拟 hover 的目标派发 mouseleave 清除持久态
+        try { simulateHoverOff(); } catch (e) {} // Inspector exit: dispatch mouseleave to the simulated hover target to clear the persistent state
       },
-      simulateHover: simulateHover, // 真实派发 mouseover/mouseenter（页面 JS hover 逻辑生效并持久保持）
+      simulateHover: simulateHover, // really dispatches mouseover/mouseenter (page JS hover logic runs and persists)
       simulateHoverOff: simulateHoverOff,
       fileLocation: fileLocation,
       serialize: serialize,
       detectFrameworks: detectFrameworks,
-      // Turbopack chunk 定位 → 源文件（sourcemap，异步）：launcher 候选/点选补全真实源文件路径用（resolveFrameworkLoc 同源）
+      // Turbopack chunk location → source file (sourcemap, async): completes real source file paths for launcher candidates/picks (same source as resolveFrameworkLoc)
       resolveChunkSource: resolveChunkSource,
-      // 组件名 → 源文件（预算耗尽时无 chunk 定位，按组件名扫 sourcemap sourcesContent 找文件；异步，懒构建缓存）
+      // Component name → source file (no chunk location when the budget is exhausted; scan sourcemap sourcesContent by component name; async, lazily built + cached)
       resolveComponentFile: resolveComponentFile,
-      // 组件函数 toString → 定位 chunk 行 → sourcemap 精确源文件+行（预算耗尽兜底拿真实行号）
+      // Component fn toString → locate chunk line → sourcemap exact source file+line (budget-exhausted fallback for real line numbers)
       resolveFnLine: resolveFnLine,
-      setOptions: applyOptions, // 页面调速/拦截选项（动画减速/事件拦截/定时器慢放）
+      setOptions: applyOptions, // page speed/blocking options (animation slowdown / event blocking / timer slow-motion)
       resumeHover: function () {
-        // 恢复快选：退出临时选择状态（hover 高亮重新生效，选区保留可继续点击切换）
+        // Resume quick-select: leave the temporary selection state (hover highlight re-enabled, selection kept for further click toggling)
         state.engaged = false;
         return { engaged: state.engaged };
       },
       pauseHover: function () {
-        // 暂停点选：等同点击进入临时状态（hover 停用、清 hover 高亮、选区保留）——鼠标进入工具条时自动触发
+        // Pause picking: equivalent to click-entering the temporary state (hover disabled, hover highlight cleared, selection kept) — triggered automatically when the mouse enters the toolbar
         state.engaged = true;
         clearOutline(state.hoverOutline);
         state.hovered = null;
         return { engaged: true };
       },
-      applyProfile: applyProfile, // 放行方案（工具条多态切换 / 调速面板管理）
-      // 当前选区载荷（AI 确认回传用）；__state 调试用——必须挂在 window.__dbg（此前误放 CDP.DOM 表导致
-      // ensureClientFresh 幂等检查 getSelectionPayload 失败 → 每次 enterInspector 重注入 → 旧 message 监听残留 →
-      // dbg_exec 被旧（空 state）client 先处理返回 null（自检⑤⑫ 失败根因）
+      applyProfile: applyProfile, // release profile (toolbar mode switching / speed panel management)
+      // Current selection payload (for the AI confirm return); __state is debug-only — it must hang on window.__dbg (it was previously misplaced in the CDP.DOM table, which made
+      // ensureClientFresh's idempotency check on getSelectionPayload fail → re-injection on every enterInspector → stale message listeners left behind →
+      // dbg_exec handled first by the stale (empty-state) client, returning null (root cause of self-checks ⑤⑫ failing))
       getSelectionPayload: function () { var el = state.selected || state.hovered; return el ? aiPickPayload(el) : null; },
       __state: function () { return { active: state.active, engaged: state.engaged, hasOver: true, hasClick: true }; },
-      // 本地缓冲暴露（方案 F-3：page_logs/page_network 工具通过 CDP Runtime.evaluate 按需拉取，不再实时上报）
+      // Local buffer exposure (plan F-3: page_logs/page_network tools pull on demand via CDP Runtime.evaluate; no more real-time reporting)
       __consoleRing: CONSOLE_RING,
       __netRing: NET_RING,
     };
 
-    // ---------- 写入可编辑元素：React 兼容“真实键入”（等价 CDP Input.insertText） ----------
-    // contenteditable（富文本/<p> 可编辑块）→ focus + 光标定位 + document.execCommand('insertText')
-    //   浏览器原生输入路径触发真实 beforeinput/input(inputType=insertText)，React onChange 正确接收，值不被重置
-    // input/textarea → 原生原型 value setter（React 受控 value tracker 同步）+ input/change
-    // select → 设值 + change；replace=true 清空现有内容再写入（setValue/type 语义），false 仅光标处插入（insertText 语义）
+    // ---------- Writing editable elements: React-compatible "real typing" (equivalent to CDP Input.insertText) ----------
+    // contenteditable (rich text / <p> editable blocks) → focus + caret positioning + document.execCommand('insertText')
+    //   the browser's native input path fires real beforeinput/input (inputType=insertText); React onChange receives it correctly and the value isn't reset
+    // input/textarea → native prototype value setter (syncs React's controlled value tracker) + input/change
+    // select → set value + change; replace=true clears existing content then writes (setValue/type semantics), false inserts at the caret only (insertText semantics)
     function writeEditable(el, text, replace) {
       if (!el) return { ok: false, error: 'no element', tag: null };
       var value = String(text == null ? '' : text);
@@ -1946,14 +1954,14 @@
       return { ok: false, error: 'not an editable element（目标非 input/textarea/select/contenteditable）', tag: el.tagName || null };
     }
 
-    // ---------- CDP-like 命令集（浏览器端等价实现，全部纯函数可序列化） ----------
-    // 命名对齐 CDP 域：DOM / CSS / Input / Page / Runtime / Storage / Performance
+    // ---------- CDP-like command set (browser-side equivalents; all pure, serializable functions) ----------
+    // Naming aligned to CDP domains: DOM / CSS / Input / Page / Runtime / Storage / Performance
     var EXCLUDED_PROPS = {
       constructor: 1, '__proto__': 1, 'prototype': 1, 'innerHTML': 1, 'outerHTML': 1,
       'hasOwnProperty': 1, 'isPrototypeOf': 1, 'propertyIsEnumerable': 1, 'toString': 1,
       'valueOf': 1, 'toLocaleString': 1, 'onclick': 1, 'onmouseover': 1, 'onload': 1,
     };
-    var evalEnabled = true; // 调试会话内默认放行（等价于用户自己在 Console eval）；面板可关；由 dbgToken 认证边界 + eval 审计日志兜底
+    var evalEnabled = true; // enabled by default within the debug session (equivalent to the user evaluating in Console themselves); can be turned off in the panel; backed by the dbgToken auth boundary + eval audit logs
 
     function resolveEl(args) {
       var el = null;
@@ -1965,12 +1973,12 @@
         } catch (e) {}
       }
       if (!el) el = state.selected || state.hovered || null;
-      return (el && isDbgEl(el)) ? null : el; // aiti 自身元素不可寻址（inspect/操作排除自身 UI）
+      return (el && isDbgEl(el)) ? null : el; // aiti's own elements are not addressable (inspect/operations exclude its own UI)
     }
 
     function treeSummary(node, depth) {
       if (!node || depth <= 0) return null;
-      if (isDbgEl(node)) return null; // 排除 aiti 自身注入内容（launcher 整树/outline 框/样式）
+      if (isDbgEl(node)) return null; // exclude aiti's own injected content (whole launcher tree / outline boxes / styles)
       var out = {
         tag: node.tagName ? node.tagName.toLowerCase() : '#' + node.nodeName,
         id: node.id || undefined,
@@ -1998,7 +2006,7 @@
           var els = document.querySelectorAll(args.selector);
           var out = [];
           for (var i = 0; i < els.length && out.length < 20; i++) {
-            if (isDbgEl(els[i])) continue; // 排除 aiti 自身内容（launcher 整树/outline 框/样式）
+            if (isDbgEl(els[i])) continue; // exclude aiti's own content (whole launcher tree / outline boxes / styles)
             out.push({ tag: els[i].tagName.toLowerCase(), id: els[i].id, cls: els[i].className && String(els[i].className).slice(0, 60), text: cleanTextOf(els[i], 80), xpath: xpathOf(els[i]) });
           }
           return out;
@@ -2035,7 +2043,7 @@
           for (var i = 0; i < document.styleSheets.length; i++) {
             var ss = document.styleSheets[i];
             var rules;
-            try { rules = ss.cssRules || ss.rules; } catch (e) { continue; } // 跨域样式表
+            try { rules = ss.cssRules || ss.rules; } catch (e) { continue; } // cross-origin stylesheet
             if (!rules) continue;
             for (var j = 0; j < rules.length; j++) {
               var rule = rules[j];
@@ -2098,7 +2106,7 @@
           var r = writeEditable(el, text, true);
           return { ok: r.ok, editable: !!r.editable, value: r.value, len: text.length, error: r.error };
         },
-        // 对齐 CDP Input.insertText：在光标处插入文本（不替换已有内容）——React 受控/富文本通用
+        // Aligns with CDP Input.insertText: insert text at the caret (doesn't replace existing content) — works for React controlled inputs / rich text
         insertText: function (args) {
           var el = resolveEl(args) || document.activeElement;
           var text = (args && args.text !== undefined) ? String(args.text) : '';
@@ -2129,13 +2137,13 @@
         },
         reload: function () { location.reload(); return true; },
         navigate: function (args) { if (args && args.url) location.href = args.url; return true; },
-        // 截屏：直连路径（无手势卡）兜底——有 activation 就能成（Chrome 桌面），
-        // 否则浏览器拒绝 → 提示走 AI 窗手势卡路径（launcher danger.js 同名实现会弹用户确认）
+        // Screenshot: direct path (no gesture card) fallback — works when activation exists (Chrome desktop),
+        // otherwise the browser rejects → point to the AI window gesture-card path (launcher danger.js's same-named implementation shows a user confirmation)
         captureScreenshot: function () {
-          // 旧 getDisplayMedia 直连截屏已下线——统一由 launcher 截屏卡流程接管（见 danger.js）
+          // The old getDisplayMedia direct screenshot path is retired — the launcher screenshot-card flow handles it uniformly (see danger.js)
           return Promise.resolve({ error: 'Page.captureScreenshot 已由 launcher 截屏卡接管（意图说明→调整页面→预览确认），此直连路径已停用' });
         },
-        // 页面 frame 树（iframe 嵌套）：同域可读 title/url/readyState；跨域仅 iframe 元素属性（src/name）
+        // Page frame tree (nested iframes): same-origin can read title/url/readyState; cross-origin only iframe element attributes (src/name)
         getFrameTree: function () {
           function walk(win, path) {
             var doc = null, frames = [];
@@ -2164,7 +2172,7 @@
       Runtime: {
         evaluate: function (args) {
           if (!evalEnabled) return { error: 'Runtime.evaluate 已关闭：面板里可重新开启（Runtime.setEvalEnabled {enabled:true}）' };
-          // contextId：进 iframe 上下文执行（同域——iframe 索引从 1 开始；跨域返回错误）。顶层不传/0。
+          // contextId: execute inside an iframe context (same-origin — the iframe index starts at 1; cross-origin returns an error). Top level: omit or 0.
           var targetWin = null;
           if (args && args.contextId) {
             var _ifrs = document.querySelectorAll('iframe, frame');
@@ -2174,7 +2182,7 @@
           }
           try {
             var val = targetWin ? targetWin.eval(String(args.expression)) : eval(String(args.expression));
-            // awaitPromise（MCP 标准）：结果若是 Promise → 等待最终值（异步 handler，宿主已支持 Promise 回传）
+            // awaitPromise (MCP standard): if the result is a Promise → wait for the final value (async handler; the host already supports Promise returns)
             if (args && args.awaitPromise && val && typeof val.then === 'function') {
               return val.then(function (v) {
                 var out = { type: typeof v, value: (typeof v === 'string' ? stripAitiText(v).slice(0, 2000) : v), awaited: true };
@@ -2182,19 +2190,19 @@
                 return out;
               }).catch(function (e) { return { error: String((e && e.message) || e) }; });
             }
-            // 未 awaitPromise 且结果是 Promise：不能直接回传（postMessage 结构化克隆 Promise 会抛错 → 结果丢失 → 桥超时）
+            // No awaitPromise and the result is a Promise: cannot return it directly (postMessage structured clone throws on Promises → result lost → bridge timeout)
             if (val && typeof val.then === 'function') {
               return { type: 'promise', isPromise: true, value: 'Promise（如需最终结果传 awaitPromise: true）' };
             }
             var out = { type: typeof val, value: (typeof val === 'string' ? stripAitiText(val).slice(0, 2000) : val) };
-            // eval 审计：表达式 + 结果摘要上报宿主面板（用户可见）
+            // eval audit: expression + result summary reported to the host panel (user-visible)
             post({ type: 'dbg_eval_log', payload: { expression: String(args.expression).slice(0, 200), result: JSON.stringify(out).slice(0, 300), ts: new Date().toISOString() } });
             return out;
           } catch (e) { return { error: String((e && e.message) || e) }; }
         },
         setEvalEnabled: function (args) { evalEnabled = !!(args && args.enabled); return { evalEnabled: evalEnabled }; },
         fetch: function (args) {
-          // 在目标页上下文发 JS 请求（同源，无 CORS；受网络模拟影响，体现场景一致性）
+          // Send the JS request in the target page's context (same-origin, no CORS; affected by network simulation, preserving scenario fidelity)
           if (!args || !args.url) return { error: '需要 url' };
           var url = args.url, init = args.init || {};
           return window.fetch(url, init).then(function (res) {
@@ -2236,7 +2244,7 @@
           } catch (err) { return []; }
         },
       },
-      // 浏览器受限操作（剪贴板/下载/弹窗/全屏/播放）：程序化执行会被浏览器拦截，需用户真实点击（手势桥）
+      // Browser-restricted operations (clipboard/download/popup/fullscreen/play): programmatic execution gets blocked by the browser and needs a real user click (gesture bridge)
       Browser: {
         copy: function (args) {
           return navigator.clipboard.writeText(String(args.text || '')).then(
@@ -2257,8 +2265,8 @@
           var w = window.open(args.url || 'about:blank', '_blank');
           return w ? { opened: true } : { error: '弹窗被浏览器拦截（需要用户手势）' };
         },
-        // 以下三个与宿主手势卡同款（launcher danger.js）：这里仅直连兑底——无 activation 大多被拒，
-        // 报错文本引导重试（经 AI 窗转发的路径会弹确认卡，用户点确认后执行）
+        // The following three mirror the host gesture cards (launcher danger.js): here only the direct-path fallback — most get rejected without activation,
+        // the error text guides a retry (the path forwarded via the AI window shows a confirmation card that executes after the user confirms)
         paste: function () {
           if (!(navigator.clipboard && navigator.clipboard.readText)) return Promise.resolve({ error: '当前浏览器不支持剪贴板读取' });
           return navigator.clipboard.readText().then(
@@ -2290,33 +2298,33 @@
       },
     };
 
-    // 旧命令别名（向后兼容）
+    // Legacy command aliases (backward compatibility)
     var CMD_ALIASES = {
       getInfo: 'DOM.querySelector',
       highlight: 'DOM.querySelector',
       scrollIntoView: 'Page.scrollIntoView',
     };
 
-    // ---------- 宿主命令通道（含 AI 转发的 dbg_exec，全部异步往返） ----------
-    // 键盘导航（锁定态 engaged 才拦截）：转发到 host 统一处理（host 调 doNav → postToTarget dbg_step）
+    // ---------- Host command channel (including AI-forwarded dbg_exec; all async round-trips) ----------
+    // Keyboard navigation (intercepted only in the locked/engaged state): forwarded to host for unified handling (host calls doNav → postToTarget dbg_step)
     var NAV_KEYS = {
       ArrowUp: 'topN', ArrowDown: 'bottomN', ArrowLeft: 'leftN', ArrowRight: 'rightN',
       PageUp: 'prev', PageDown: 'next', Home: 'first', End: 'last',
       Backspace: 'up', Delete: 'up', Enter: 'downOrNext',
     };
-    // 键盘接管（Esc 退出 / 方向键导航选区）：必须 capture 阶段且注册在 freezeEvent 之前——
-    // freezeEvent（window capture，enterInspector 时 installFreeze 重注册，排在本监听之后）会
-    // stopImmediatePropagation 冻结 keydown；bubble 阶段监听（含宿主 document hostKey）一律收不到，
-    // 导致「Esc 退出从未生效 + 误报『keydown 被拦截』」。本监听 capture 先行（注册早于 freezeEvent）
-    // + stopImmediatePropagation → freezeEvent 收不到：既不冻结页面也不弹拦截提示。
-    // 同时消除默认放行下 hostKey(document bubble) 与本站监听(window bubble) 的双重 Esc/导航处理。
+    // Keyboard takeover (Esc exit / arrow-key selection navigation): must be capture-phase and registered before freezeEvent —
+    // freezeEvent (window capture; installFreeze re-registers on enterInspector, after this listener) would
+    // freeze keydown via stopImmediatePropagation; bubble-phase listeners (including the host document hostKey) would never receive it,
+    // causing "Esc exit never works + a false 'keydown blocked' notice". This capture listener runs first (registered earlier than freezeEvent)
+    // + stopImmediatePropagation → freezeEvent never sees it: the page isn't frozen and no blocked notice is shown.
+    // It also removes the double Esc/navigation handling between hostKey (document bubble) and this page's listener (window bubble) under the default release profile.
     window.addEventListener('keydown', function (e) {
       if (!state.active) return;
       if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
       var k = e.key;
       if (k === 'Escape') {
-        // Inspector 内 Esc 一律退出（提示语「Esc 退出」）：键盘焦点在目标 iframe 时宿主 document 收不到
-        // keydown，由 client 转发 host 统一退出——快选态同样接管（否则 iframe 焦点下 Esc 无反应，Inspector 退不出）
+        // Inside the Inspector, Esc always exits (the hint reads "Esc exits"): when keyboard focus is in the target iframe the host document never receives
+        // keydown, so the client forwards to host for a unified exit — the quick-select state is taken over the same way (otherwise Esc does nothing while the iframe has focus and the Inspector can't be exited)
         e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
         if (aiPick) post({ type: 'dbg_ai_escape', payload: {} });
         else post({ type: 'dbg_inspect_escape', payload: {} });
@@ -2324,13 +2332,13 @@
       }
       var dir = NAV_KEYS[k];
       if (!dir) return;
-      // 导航优先于页面滚动：Inspector 激活且已有选区（锁定 或 hover 快选/HUD 弹出）时拦截方向键；
-      // 无选区（鼠标不在页面元素上）不拦截——页面滚动/页面自身键盘行为保持正常
+      // Navigation takes precedence over page scrolling: intercept arrow keys while the Inspector is active and a selection exists (locked or hover quick-select/HUD shown);
+      // no selection (mouse not on a page element) → don't intercept — page scrolling / the page's own keyboard behavior stays normal
       if (!state.engaged && !state.hovered) return;
       e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
-      // 直接执行（不等 host 往返——target 内的 stepSelection 最快）
+      // Execute directly (no host round-trip wait — stepSelection inside the target is fastest)
       stepSelection(dir);
-      // 同时转发到 host（host 可同步工具条标签/HUD/选区状态）
+      // Also forward to host (the host can sync toolbar label/HUD/selection state)
       post({ type: 'dbg_key_nav', payload: { dir: dir } });
     }, true);
 
@@ -2345,17 +2353,17 @@
         case 'dbg_simulate_hover':     window.__dbg.simulateHover(); break;
         case 'dbg_simulate_hover_off': window.__dbg.simulateHoverOff(); break;
         case 'dbg_passthrough_click':
-          // 真实点击穿透：放行一次 click（先解冻 click，让页面打开菜单），随即恢复冻结
+          // Real click pass-through: release one click (unfreeze click first so the page can open menus), then restore the freeze
           passClick = true;
           window.removeEventListener('click', freezeEvent, true);
           setTimeout(function () { if (state.active) window.addEventListener('click', freezeEvent, true); }, 600);
           break;
         case 'dbg_release_events':
-          // 事件放行矩阵：临时放行一组事件类别（click/key/wheel/scroll/hover/touch/focus），到期自动回锁
+          // Event release matrix: temporarily release a set of event categories (click/key/wheel/scroll/hover/touch/focus); auto re-lock on expiry
           releaseEvents((m.payload && m.payload.categories) || [], (m.payload && m.payload.durationMs) || 0);
           break;
         case 'dbg_lock_events':
-          lockEvents(); // 立即锁回全部
+          lockEvents(); // lock everything back immediately
           break;
         case 'dbg_toggle_event':
           toggleEvent(m.payload && m.payload.category, m.payload && m.payload.enabled);
@@ -2364,7 +2372,7 @@
           window.__dbg.resumeHover();
           break;
         case 'dbg_ai_pick':
-          aiPick = !!(m.payload && m.payload.active); // onClick/hover 由宿主进入 Inspector 提供
+          aiPick = !!(m.payload && m.payload.active); // onClick/hover are provided by the host entering the Inspector
           break;
         case 'dbg_pause_hover':
           window.__dbg.pauseHover();
@@ -2373,7 +2381,7 @@
           applyProfile(m.payload && m.payload.profile);
           break;
         case 'dbg_cancel': {
-          // 取消选区：清 selected + 退出临时状态 + 高亮清除（工具条保留可继续点选）
+          // Cancel selection: clear selected + leave the temporary state + clear highlights (toolbar kept for further picking)
           state.selected = null;
           state.engaged = false;
           state.hovered = null;
@@ -2385,12 +2393,12 @@
         case 'dbg_step':            stepSelection(m.payload && m.payload.dir); break;
         case 'dbg_select':          selectBySelector(m.payload && m.payload.selector); break;
         case 'dbg_ai_confirm': {
-          // AI 点选确认：回传当前选区给 AI 窗（累积待发送）+ 恢复 hover（可继续连续选择下一个）
+          // AI pick confirm: return the current selection to the AI window (accumulated pending send) + resume hover (continue picking the next element)
           var aiEl = state.selected || state.hovered;
           if (aiEl) {
             var _ap = aiPickPayload(aiEl);
-            // React 19.2+：chunk 定位 → 异步 sourcemap 解析出真实源文件+行再回传（AI 窗详情/候选显示真实路径，
-            // 而不是目录聚合 chunk URL——components_03gcaqz._.js 这类名字无法解码，必须 sourcemap 还原）
+            // React 19.2+: chunk location → resolve the real source file+line via sourcemap asynchronously before returning (AI window details/candidates show real paths,
+            // not directory-aggregated chunk URLs — names like components_03gcaqz._.js cannot be decoded; sourcemap recovery is required)
             if (_ap && _ap.framework && (_ap.framework.react19Chunk || _ap.framework.usedAtChunk)) {
               resolveFrameworkLoc(_ap.framework).then(function (fw) {
                 if (fw && _ap) {
@@ -2405,13 +2413,13 @@
           }
           state.engaged = false;
           clearOutline(state.selOutline);
-          // 恢复 hover 快选（工具条隐藏 + 宿主 hover 恢复）——先置空避免 setHovered 同元素短路
+          // Resume hover quick-select (toolbar hidden + host hover restored) — clear first to avoid setHovered short-circuiting on the same element
           state.hovered = null;
           setHovered(aiEl);
           break;
         }
         case 'dbg_key_nav': {
-          // client 转发的键盘导航——同步工具条标签/选区状态
+          // Keyboard navigation forwarded by the client — syncs toolbar label / selection state
           if (m.payload && m.payload.dir) {
             addMsg('sys', '↩ 导航: ' + m.payload.dir);
           }
@@ -2437,7 +2445,7 @@
             if (!handler) {
               done(false, { error: 'unknown command: ' + p.cmd + '（可用域：DOM/CSS/Input/Page/Runtime/Storage/Performance/Browser；裸 eval 默认禁用）' });
             } else {
-              // 支持 async handler（如 Runtime.fetch）：Promise 结果异步回传
+              // Supports async handlers (e.g. Runtime.fetch): Promise results are returned asynchronously
               Promise.resolve(handler(p.args || {})).then(
                 function (r) { done(true, r); },
                 function (err) { done(false, { error: String((err && err.message) || err) }); }
@@ -2450,7 +2458,7 @@
     });
 
     post({ type: 'dbg_iframe_ready', payload: { frameworks: detectFrameworks(), url: topUrl().slice(0, 200) } });
-    installErrorHook(); // 错误 hook 注入即生效（上报宿主）
-    installConsoleHook(); // console 全量采集（方案 F-1：早期日志缓冲 + 连桥重放）
-    installNetObserver(); // 网络完成态采集（方案 F-2：XHR/fetch）
+    installErrorHook(); // error hook active immediately on injection (reports to host)
+    installConsoleHook(); // full console capture (plan F-1: early log buffering + replay on bridge connect)
+    installNetObserver(); // network completion capture (plan F-2: XHR/fetch)
   })();

@@ -11,7 +11,7 @@
  */
 
 import { join } from "node:path";
-import { OmpSpawnHandle, OMP_SPEC } from "./omp-handle.ts";
+import { OmpSpawnHandle, OMP_SPEC, type AgentStarterLike, type AttachedChildOptions } from "./omp-handle.ts";
 import { capabilitiesFor } from "./fork-rpc/spec.ts";
 import { resolveForkCli } from "./fork-rpc/cli-resolve.ts";
 import { spawnEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, captureSpawnEnvFeatures } from "@aiti-ai/ext-shared/agent-spawn-env";
@@ -62,11 +62,17 @@ export default {
           maxCapabilities: SessionCapabilitiesLike;
           available?: boolean;
           installHint?: string;
+          /** Opt-in: host the agent in a detachable wrapper (survives pi-web restarts). */
+          detachable?: boolean;
           createSession(options: {
             sessionId?: string;
             cwd?: string;
             model?: { provider: string; id: string };
             env?: Record<string, string>;
+            /** Host-injected process strategy (pi-web core agent-starter). */
+            agentStarter?: AgentStarterLike;
+            /** Host recovery: adopt a live process instead of spawning (detached sessions). */
+            attached?: AttachedChildOptions;
           }): Promise<OmpSpawnHandle>;
         }): string;
       };
@@ -125,9 +131,15 @@ export default {
         order: spec.order,
         agentKey: spec.agentKey,
         maxCapabilities: capabilitiesFor(spec),
+        // The core may host this backend's process in a detachable wrapper; the
+        // handle adopts the live process on reattach (see OmpSpawnHandle.attach).
+        detachable: true,
         // Availability snapshot: false = CLI missing → dropdown entry greyed out
         ...(ompReady ? {} : { available: false as const, installHint: "bun install -g @oh-my-pi/pi-coding-agent (bun ≥ 1.3.14, or OMP_CLI env)" }),
-        createSession: (options) => wireB4Rebind(OmpSpawnHandle.start(options, spec).then(withHostTools), options),
+        createSession: (options) =>
+          options.attached
+            ? OmpSpawnHandle.attach(options.attached, spec).then(withHostTools)
+            : wireB4Rebind(OmpSpawnHandle.start(options, spec).then(withHostTools), options),
       };
       ompProviderRef = ompProvider;
       ctx.sessionProviders.register(ompProvider);
