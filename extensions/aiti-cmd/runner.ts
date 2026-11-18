@@ -204,6 +204,9 @@ export interface RunSession {
   /** Detached host client (mode = "host"); the session lives in the host process. */
   host?: { writeInput: (d: string) => void; resize: (c: number, r: number) => void; kill: (sig?: string) => void; close: () => void } | null;
   hostEntry?: HostEntry | null;
+  /** Transport not ready yet (spawn is async): buffer the kill/input arriving in that window. */
+  pendingKill?: boolean;
+  pendingInput?: string;
 }
 
 // 帧主题（aiti-event-bus v0.2 主题订阅）：每个终端一个专属 type（cmd-<sessionId>），
@@ -253,6 +256,27 @@ export function createRunner(audit: { append: (r: AuditRecord) => void; writeOut
     s.lastSeen = Date.now();
     // 总线实时增量（小帧走 event-bus；大回放不走——快照走 REST /sessions/{id}/buffered）
     pub(ptyTopic(s.id), { evt: "data", seq, data });
+  }
+
+  /** Spawn completed: flush input/kill that arrived while the transport was starting. */
+  function flushPending(s: RunSession) {
+    if (s.pendingInput) {
+      const data = s.pendingInput;
+      s.pendingInput = "";
+      try {
+        if (s.host) s.host.writeInput(data);
+        else if (s.pty) s.pty.write(data);
+        else s.child?.stdin.write(data);
+      } catch {}
+    }
+    if (s.pendingKill && s.status === "running") {
+      s.pendingKill = false;
+      try {
+        if (s.host) s.host.kill("SIGTERM");
+        else if (s.pty) s.pty.kill("SIGTERM");
+        else s.child?.kill("SIGTERM");
+      } catch {}
+    }
   }
 
   /** 会话退出：刷审计 + 通知监听 + 启动队列下一个 */
@@ -333,6 +357,7 @@ export function createRunner(audit: { append: (r: AuditRecord) => void; writeOut
       s.host = handle;
       // the shell may already have printed its prompt → ask for the current journal
       try { handle.resize(100, 30); } catch {}
+      flushPending(s);
       return true;
     } catch (e) {
       // fall back silently (diagnostic line only once the local path runs)
@@ -408,6 +433,7 @@ export function createRunner(audit: { append: (r: AuditRecord) => void; writeOut
           pub(ptyTopic(s.id), { evt: "pid", pid: s.pid });
           if (stdinCmd) { try { p.write(stdinCmd + "\nexit\n"); } catch {} }
           p.onData((d: string) => feed(s, d));
+          flushPending(s);
           p.onExit(({ exitCode, signal }: { exitCode: number; signal: number }) => {
             s.exitCode = exitCode;
             s.signal = signalName(signal);
@@ -512,7 +538,8 @@ export function createRunner(audit: { append: (r: AuditRecord) => void; writeOut
     try {
       if (s.host) s.host.writeInput(data);
       else if (s.pty) s.pty.write(data);
-      else s.child?.stdin.write(data);
+      else if (s.child) s.child.stdin.write(data);
+      else s.pendingInput = (s.pendingInput || "") + data; // transport still starting
     } catch (e) { return json({ ok: false, error: String((e as Error)?.message || e) }); }
     return json({ ok: true });
   }
@@ -548,6 +575,7 @@ export function createRunner(audit: { append: (r: AuditRecord) => void; writeOut
       return json({ ok: true, cancelled: true });
     }
     if (s.status !== "running") return json({ ok: false, error: "session 已退出" }, 409);
+    if (!s.host && !s.pty && !s.child) { s.pendingKill = true; return json({ ok: true, pending: true }); }
     try {
       if (s.host) {
         // detached host owns the PTY: SIGTERM, then the host escalates to SIGKILL after its grace
