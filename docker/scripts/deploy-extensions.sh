@@ -61,6 +61,13 @@ done
 if [ -d "$BUILD_HOME/.pi/web/extensions" ]; then
   cp -a "$BUILD_HOME/.pi/web/extensions/." "$DEST/"
   echo "[deploy-ext] deployed -> $DEST ($(ls "$DEST" | wc -l) extensions)"
+  # dev-only crash drills must never reach the production image (the allow-list above already
+  # skips them; this guard catches a deploy.mjs that writes outside its dev-only HOME)
+  for dev_only in aiti-crash-fatal; do
+    if [ -d "$DEST/$dev_only" ]; then
+      echo "[deploy-ext] ERROR: dev-only extension $dev_only leaked into the production image"; exit 1
+    fi
+  done
   # aiti-editor Monaco gate: syncMonaco copies from the dev-installed monaco-editor — a
   # silently failed deps install would ship an editor that 404s on loader.js
   if [ -f "$DEST/aiti-editor/index.ts" ] && [ ! -f "$DEST/aiti-editor/monaco/vs/loader.js" ]; then

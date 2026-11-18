@@ -31,6 +31,8 @@
     "!extensions/demo/**",
     "!extensions/sm-demo-source",
     "!extensions/sm-demo-source/**",
+    "!extensions/aiti-crash-fatal",
+    "!extensions/aiti-crash-fatal/**",
     ".next",
     "!.next/cache",
     "!.next/dev",
