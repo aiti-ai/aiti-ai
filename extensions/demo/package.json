@@ -44,5 +44,6 @@
   },
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "contentHash": "79dc93915f9520eb"
 }
