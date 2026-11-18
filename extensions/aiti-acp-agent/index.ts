@@ -1414,10 +1414,13 @@ function scanAcpBackends(
       // 上次使用的模型置顶（新建页默认项）
       listModels: () => catalogListModels(agent.name, agent.agentKey ?? agent.name),
       refreshModels: () => catalogRefreshModels(agent.name, agent.agentKey ?? agent.name),
-      // Adoption is implemented (AcpHandle.start's attach path + replay boundary),
-      // but the family stays opt-OUT until a post-adoption turn is verified end to
-      // end on these dialects: a half-working adoption would leave live agents that
-      // nobody can drive. aiti-qoder-agent carries the verified ACP path.
+      // Adoption is implemented (AcpHandle.start's attach path + the replay
+      // boundary) but the family stays opt-OUT: on claude-code an adopted session
+      // answered a prompt in one run and produced nothing in the next (the agent's
+      // own MCP bridge re-registration gates the first turn). Shipping a flaky
+      // adoption across 25 providers would leave live agents nobody can drive, so
+      // it stays off until that is understood. aiti-qoder-agent's ACP shape is the
+      // verified path.
       detachable: false,
       async createSession(options) {
         // 接管既有会话：以原 cwd 优先（session/load）；新会话用宿主 cwd。
@@ -1892,7 +1895,7 @@ export default {
               maxCapabilities: ACP_CAPABILITIES,
               listModels: () => catalogListModels(body.name, body.agentKey ?? body.name),
               refreshModels: () => catalogRefreshModels(body.name, body.agentKey ?? body.name),
-              detachable: false, // see the builtin-provider note: adoption not verified yet
+              detachable: false, // see the builtin-provider note: adoption is flaky
               createSession: async (opts) => {
                 const handle = new AcpHandle(body.name, binPath, body.args ?? [], body.agentKey ?? body.name);
                 const restored = opts.sessionId ? await restoreCwdFn?.(body.agentKey ?? body.name, opts.sessionId) : undefined;
