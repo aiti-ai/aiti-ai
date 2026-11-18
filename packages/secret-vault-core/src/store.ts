@@ -15,7 +15,7 @@
 import { homedir } from "node:os";
 import { chmodSync, existsSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { fnv1a, MIN_REDACT_LENGTH } from "@aiti-ai/secret-mask-core";
+import { assessPasswordStrength, fnv1a, MIN_REDACT_LENGTH, type PasswordStrength } from "@aiti-ai/secret-mask-core";
 import {
   createKeyFile,
   decryptValue,
@@ -104,6 +104,9 @@ export interface AddResult {
   created: boolean;
   /** True when a global add is hidden by a same-alias project entry. */
   shadowed?: boolean;
+  /** Weak-password assessment for the stored value (no value is returned). */
+  weak: boolean;
+  weakReasons: PasswordStrength["reasons"];
 }
 
 /** Read a vault JSON file; throws on malformed content (fail-closed). */
@@ -407,6 +410,7 @@ export class VaultStore {
     if (trimmed.length < MIN_REDACT_LENGTH) {
       throw new VaultError("too-short", `vault: value must be at least ${MIN_REDACT_LENGTH} characters (shorter values cannot be masked safely)`);
     }
+    const strength = assessPasswordStrength(trimmed);
     const key = this.keyFor(true);
     const scope: VaultScope = opts.project ? "project" : "global";
     const file = this.load(scope) ?? this.emptyFile(key);
@@ -422,7 +426,7 @@ export class VaultStore {
     };
     this.save(file, scope);
     const shadowed = scope === "global" && Boolean(this.load("project")?.entries?.[alias]);
-    return { alias, scope, version: file.entries[alias]!.version, created: !previous, shadowed };
+    return { alias, scope, version: file.entries[alias]!.version, created: !previous, shadowed, weak: strength.weak, weakReasons: strength.reasons };
   }
 
   /** Remove an alias from both buckets. Returns how many records were deleted. */

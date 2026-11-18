@@ -13,6 +13,7 @@
  * The span contract covers both: `set` may mutate or the host may rebuild.
  */
 
+import { registerWeakCandidates, type WeakCandidate } from "./extract.ts";
 import { applyFixedRules, registerRuleMatches, type CustomRule } from "./rules.ts";
 import type { Registry, RegistryEntry, ScanMaxOptions } from "./mask.ts";
 
@@ -37,6 +38,8 @@ export interface SpanRedactOptions extends ScanMaxOptions {
    * session token).
    */
   onDetected?: (entries: RegistryEntry[]) => void;
+  /** L3 weak-value candidates (only on user-authored spans). */
+  weak?: { auto?: boolean; onCandidate?: (candidate: WeakCandidate) => void; minLength?: number };
 }
 
 /**
@@ -61,6 +64,10 @@ export function redactTextSpans(
       if (added.length > 0) {
         opts.onDetected?.(added);
         newEntries += added.length;
+      }
+      if (opts.weak) {
+        const weak = registerWeakCandidates(text, registry, salt, opts.weak);
+        newEntries += weak.filter((c) => c.registered).length;
       }
     }
     if (opts.rules && opts.rules.length > 0) newEntries += registerRuleMatches(text, registry, opts.rules, salt);

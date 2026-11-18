@@ -152,3 +152,90 @@ test("contextUsage 机会式：无 usage 帧 → getContextUsage undefined（不
   assert.equal(totals.turns, 0);
   assert.equal(totals.inputTokens, 0);
 });
+
+// ---- agent-starter adoption (detachable host): injected spawn / attached adopt / release-on-dispose ----
+
+const { PassThrough, EventEmitter } = await import("node:stream").then(async (streams) => ({
+  PassThrough: streams.PassThrough,
+  EventEmitter: (await import("node:events")).EventEmitter,
+}));
+
+/** Fake CLI child: pipe-like stdio + EventEmitter surface (no real process). */
+function fakeChild() {
+  const child = new EventEmitter();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.stdin = new PassThrough();
+  child.exitCode = null;
+  child.killed = false;
+  child.kill = (signal) => {
+    child.killed = true;
+    child.emit("exit", 0, signal ?? null);
+  };
+  return child;
+}
+
+const tick = () => new Promise((resolve) => setTimeout(resolve, 20));
+
+async function providerWithStarter() {
+  let created = null;
+  const providers = { register(p) { created = p; return "aiti-cursor-agent/cursor-agent"; } };
+  await mod.default.server.startup({ sessionProviders: providers, configDir: "/tmp" });
+  assert.ok(created, "startup 应注册 provider");
+  return created;
+}
+
+test("detached host: the turn CLI is spawned through the injected starter with the native key", async () => {
+  const provider = await providerWithStarter();
+  const calls = [];
+  const starter = {
+    kind: "wrapper",
+    async spawn(command, args, options) {
+      calls.push({ command, args, options });
+      return fakeChild();
+    },
+  };
+  const h = await provider.createSession({ cwd: "/tmp", agentStarter: starter });
+  assert.equal(h.starter, starter);
+  assert.match(h.nativeKey, /^new-/, "fresh session uses one placeholder uuid as the registry key");
+  await h.prompt("hello there");
+  await tick();
+  assert.equal(calls.length, 1, "exactly one CLI process per turn");
+  assert.match(calls[0].args.join(" "), /agent -p hello there/);
+  assert.equal(calls[0].options.agentKey, "cursor");
+  assert.equal(calls[0].options.sessionId, h.nativeKey, "spawn key == handle placeholder key (rekey can find it)");
+});
+
+test("attached: adopting a facade rebuilds the turn from its replayed frames", async () => {
+  const provider = await providerWithStarter();
+  const child = fakeChild();
+  child.detachable = true;
+  child.release = () => { child.released = true; };
+  const h = await provider.createSession({
+    cwd: "/tmp",
+    sessionId: "chat-1",
+    attached: { child, sessionId: "chat-1", agentKey: "cursor" },
+  });
+  assert.equal(h.id, "cursor:chat-1");
+  assert.equal(h.isRunning(), true, "an adopted mid-turn process counts as running until the result frame");
+  child.stdout.write(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "replayed" }] } }) + "\n");
+  child.stdout.write(JSON.stringify({ type: "result", result: "replayed", is_error: false }) + "\n");
+  await tick();
+  assert.equal(h.isRunning(), false, "result frame settles the adopted turn");
+  assert.equal(h.history.at(-1)?.content?.[0]?.text, "replayed");
+});
+
+test("dispose releases a wrapper-hosted child instead of killing it", async () => {
+  const provider = await providerWithStarter();
+  const child = fakeChild();
+  child.detachable = true;
+  child.release = () => { child.released = true; };
+  const h = await provider.createSession({
+    cwd: "/tmp",
+    sessionId: "chat-2",
+    attached: { child, sessionId: "chat-2", agentKey: "cursor" },
+  });
+  await h.dispose();
+  assert.equal(child.released, true, "facade child must be released (agent keeps running)");
+  assert.equal(child.killed, false, "a wrapper-hosted child must never be SIGTERM'd by dispose");
+});

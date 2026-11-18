@@ -44,14 +44,5 @@
   },
   "engines": {
     "dsh": ">=0.1.1-rc.0"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
-    "directory": "integrations/dsh-web-ext/aiti-devtools-dsh"
-  },
-  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
-  "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }

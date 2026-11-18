@@ -12,6 +12,7 @@
  */
 
 import type { Registry } from "@aiti-ai/secret-mask-core";
+import { assessPasswordStrength } from "@aiti-ai/secret-mask-core";
 import { VaultError, type VaultEntryInfo, type VaultStore } from "./store.ts";
 
 export const VAULT_GET_NOTE =
@@ -29,11 +30,24 @@ export interface TextToolResult {
   details?: unknown;
 }
 
-export function formatEntryLine(info: VaultEntryInfo): string {
+export function formatEntryLine(info: VaultEntryInfo, weak = false): string {
   const tags = info.tags?.length ? ` (${info.tags.join(",")})` : "";
   const desc = info.desc ? ` — ${info.desc}` : "";
   const used = info.lastUsedAt ? ` · last used ${info.lastUsedAt}` : "";
-  return `- ${info.alias} [${info.scope}] v${info.version}${desc}${tags}${used}`;
+  return `- ${info.alias} [${info.scope}] v${info.version}${desc}${tags}${used}${weak ? " ⚠ weak password" : ""}`;
+}
+
+/** Weak-password flag per alias (decrypts; no lastUsed touch). */
+export function weakAliases(store: VaultStore): Record<string, boolean> {
+  const out: Record<string, boolean> = {};
+  for (const info of store.list()) {
+    try {
+      out[info.alias] = assessPasswordStrength(store.get(info.alias).value).weak;
+    } catch {
+      // locked / undecryptable entries are simply not flagged
+    }
+  }
+  return out;
 }
 
 /** `vault_list` implementation (zero values). */
@@ -59,11 +73,12 @@ export function vaultList(state: VaultToolState, params: { tag?: string } = {}):
       details: { entries: [] },
     };
   }
+  const weak = weakAliases(state.store);
   const text = [
     `Secret vault: ${entries.length} alias(es). Values are never returned — call vault_get with an alias to receive a placeholder.`,
-    ...entries.map(formatEntryLine),
+    ...entries.map((e) => formatEntryLine(e, weak[e.alias] === true)),
   ].join("\n");
-  return { content: [{ type: "text", text }], details: { entries } };
+  return { content: [{ type: "text", text }], details: { entries: entries.map((e) => ({ ...e, weak: weak[e.alias] === true })) } };
 }
 
 export interface MountResult {
@@ -72,6 +87,7 @@ export interface MountResult {
   desc?: string;
   scope: string;
   version: number;
+  weak: boolean;
 }
 
 /**
@@ -82,7 +98,14 @@ export function mountAlias(state: VaultToolState, alias: string): MountResult {
   const entry = state.store.get(alias, { touch: true, sessionId: state.sessionId });
   const res = state.registry.registerStable(entry.value, alias);
   if (!res) throw new VaultError("mount-failed", `vault: could not mount "${alias}" (placeholder collision — /vault status)`);
-  return { alias, placeholder: res.entry.placeholder, desc: entry.info.desc, scope: entry.scope, version: entry.info.version };
+  return {
+    alias,
+    placeholder: res.entry.placeholder,
+    desc: entry.info.desc,
+    scope: entry.scope,
+    version: entry.info.version,
+    weak: assessPasswordStrength(entry.value).weak,
+  };
 }
 
 /** `vault_get` implementation: mounts the alias and returns its placeholder. */
@@ -99,9 +122,10 @@ export function vaultGet(state: VaultToolState, params: { alias?: string }): Tex
           "",
           VAULT_GET_NOTE,
           `(alias: ${mounted.alias}${mounted.desc ? ` — ${mounted.desc}` : ""}, v${mounted.version})`,
+          ...(mounted.weak ? ["Note: this credential is a weak password — advise the user to rotate it."] : []),
         ].join("\n"),
       },
     ],
-    details: { placeholder: mounted.placeholder, alias: mounted.alias, desc: mounted.desc, version: mounted.version, scope: mounted.scope },
+    details: { placeholder: mounted.placeholder, alias: mounted.alias, desc: mounted.desc, version: mounted.version, scope: mounted.scope, weak: mounted.weak },
   };
 }

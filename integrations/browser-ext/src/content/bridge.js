@@ -1,7 +1,7 @@
 /*
  * aiti-devtools browser extension · isolated-world config bridge (Chrome / Edge / Firefox)
  *
- * v2 role: read storage.sync config (incl. v1 migration) → **site-rule evaluation**
+ * Role: read storage.sync config (incl. legacy field mapping) → **site-rule evaluation**
  *          (denySites > defaultEnabled||allowSites) → write the **resolved** result
  *          (enabled/bridgeUrl/aiUrl) to localStorage (synchronous read by MAIN world) + postMessage live update.
  * On-demand: popup "Enable on this page (once)" → runtime.onMessage('aiti-ext:once') → posts a single
@@ -15,9 +15,9 @@
   window.__aitiExtBridgeLoaded = true;
 
   const LS_KEY = 'aiti-ext:cfg';
-  const V2_DEFAULTS = {
+  const DEFAULTS = {
     v: 2,
-    defaultEnabled: false,        // ★ v2: default off
+    defaultEnabled: false,        // ★ default off
     allowSites: [],
     denySites: [],
     aiTarget: { kind: 'cockpit', baseUrl: '', cockpitUrl: '' },
@@ -31,11 +31,11 @@
     stored = stored || {};
     const cfg = {
       v: 2,
-      defaultEnabled: typeof stored.defaultEnabled === 'boolean' ? stored.defaultEnabled : V2_DEFAULTS.defaultEnabled,
+      defaultEnabled: typeof stored.defaultEnabled === 'boolean' ? stored.defaultEnabled : DEFAULTS.defaultEnabled,
       allowSites: Array.isArray(stored.allowSites) ? stored.allowSites : [],
       denySites: Array.isArray(stored.denySites) ? stored.denySites : [],
       aiTarget: stored.aiTarget && stored.aiTarget.kind ? stored.aiTarget : { kind: 'cockpit', baseUrl: '', cockpitUrl: '' },
-      bridgeUrl: stored.bridgeUrl || V2_DEFAULTS.bridgeUrl,
+      bridgeUrl: stored.bridgeUrl || DEFAULTS.bridgeUrl,
     };
     if (stored.v !== 2) {
       if (typeof stored.enabled === 'boolean' && stored.defaultEnabled === undefined)

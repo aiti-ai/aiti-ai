@@ -87,6 +87,27 @@ test("lock/unlock and mode switching", async () => {
   });
 });
 
+test("weak password warnings are surfaced to the UI", async () => {
+  await withTmp(async ({ call }) => {
+    const add = await (await call("POST", "entries", { alias: "weak-key", value: "123abc" })).json();
+    assert.equal(add.ok, true);
+    assert.equal(add.result.weak, true);
+    assert.match(add.warning, /Weak password/);
+    assert.ok(!JSON.stringify(add).includes('"123abc"'), "value never returned");
+    const list = await (await call("GET", "entries")).json();
+    assert.equal(list.entries.find((e) => e.alias === "weak-key").weak, true);
+    const status = await (await call("GET", "status")).json();
+    assert.equal(status.status.weakEntries, 1);
+    const reveal = await (await call("POST", "entries/weak-key/reveal")).json();
+    assert.equal(reveal.weak, true);
+    assert.equal(reveal.value, "123abc");
+    // strong value: no warning/flag
+    const strong = await (await call("POST", "entries", { alias: "strong-key", value: "Xk9#mP2!vQ7" })).json();
+    assert.ok(!strong.warning);
+    assert.equal(strong.result.weak, false);
+  });
+});
+
 test("validation errors and 404", async () => {
   await withTmp(async ({ call }) => {
     assert.equal((await (await call("POST", "entries", { alias: "", value: "" })).json()).ok, false);
@@ -99,8 +120,15 @@ test("sessions endpoint returns the zero-value records", async () => {
   await withTmp(async ({ call, sessionStatePath }) => {
     mkdirSync(join(sessionStatePath, ".."), { recursive: true });
     writeSessionRecord(sessionStatePath, "sess-1", { cwd: "/proj", landing: "vault", mounted: ["openai-key"] });
+    writeSessionRecord(sessionStatePath, "sess-live", { cwd: "/proj", landing: "vault", mounted: ["openai-key"], pid: process.pid });
+    writeSessionRecord(sessionStatePath, "sess-dead", { cwd: "/proj", landing: "vault", mounted: ["openai-key"], pid: 999999 });
+    writeSessionRecord(sessionStatePath, "sess-named", { cwd: "/proj", landing: "vault", mounted: ["openai-key"], name: "Named session", file: "/tmp/sess-named.jsonl", pid: process.pid });
     const res = await (await call("GET", "sessions")).json();
     assert.deepEqual(res.sessions["sess-1"].mounted, ["openai-key"]);
+    assert.ok(res.sessions["sess-live"], "live pid is kept");
+    assert.equal(res.sessions["sess-dead"], undefined, "dead pid is hidden");
+    assert.equal(res.sessions["sess-named"].name, "Named session");
+    assert.equal(res.sessions["sess-named"].file, "/tmp/sess-named.jsonl");
     const status = await (await call("GET", "status")).json();
     assert.ok(status.sessions["sess-1"]);
   });

@@ -15,7 +15,7 @@
  */
 
 import type { ContentBlock, PluginConfig, PluginContext, PostToolDecision, ToolExecution, ToolExecutionResult } from "../dsh-types.ts";
-import { redactDeep } from "@aiti-ai/secret-mask-core";
+import { redactDeep, registerExtractedSecrets, registerValueSecrets, sensitiveReadTargets } from "@aiti-ai/secret-mask-core";
 import { stateFor } from "../state.ts";
 import { isTextBlock, rewriteTextBlock } from "../spans.ts";
 
@@ -30,7 +30,45 @@ export function registerPostExecute(ctx: PluginContext, cfg: PluginConfig): void
       const decision = await next();
       if (!decision || decision.kind !== "accept") return decision;
       const st = stateFor(exec.agent?.id, cfg);
-      if (!st.enabled || st.registry.size === 0) return decision;
+      if (!st.enabled) return decision;
+
+      // L1/L2: weak-value discovery from tool output / write arguments.
+      const contentBlocks = (decision.content as ContentBlock[] | undefined) ?? (result.content as ContentBlock[]);
+      const text = Array.isArray(contentBlocks)
+        ? contentBlocks.filter(isTextBlock).map((b) => b.text).join("\n")
+        : "";
+      if (text) st.lastToolOutput = text.slice(0, 65_536);
+      if (st.extract !== false) {
+        let extracted = 0;
+        if (text) extracted += registerExtractedSecrets(text, st.registry, st.salt).count;
+        if ("value" in decision && decision.value !== undefined) {
+          extracted += registerValueSecrets(decision.value, st.registry, st.salt).count;
+        }
+        const sensitive = sensitiveReadTargets(exec.name, exec.arguments);
+        const dedicated = sensitive.find((x) => x.info.dedicated);
+        const trimmed = text.trim();
+        const policy = st.filePolicy ?? "learn";
+        if (policy === "block" && sensitive.length > 0) {
+          return {
+            kind: "block",
+            feedback: [{ type: "text", text: "dsh-secret-mask: sensitive file content withheld by policy (/secret files learn|off to allow)." }],
+          };
+        }
+        if (policy === "learn" && dedicated && extracted === 0 && trimmed.length >= 6 && trimmed.length <= 8192) {
+          const label = (dedicated.path.split(/[/\\]/).pop() ?? "FILE").toUpperCase().replace(/[^A-Z0-9_.-]/g, "_").slice(0, 48) || "FILE";
+          st.registry.registerAuto(trimmed, "file:secret", label, st.salt);
+          return {
+            kind: "block",
+            feedback: [
+              {
+                type: "text",
+                text: `dsh-secret-mask: sensitive file content withheld (${trimmed.length} bytes). The value is registered in this session — use its placeholder in tool arguments.`,
+              },
+            ],
+          };
+        }
+      }
+      if (st.registry.size === 0) return decision;
 
       // 1) canonical value path (never mutate the frozen original)
       if (Object.prototype.hasOwnProperty.call(decision, "value")) {

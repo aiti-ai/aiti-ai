@@ -15,6 +15,12 @@ bash 工具：ANTHROPIC_KEY=sk-ant-api03-<80位>   ← shadow wrapper 执行时�
 session 日志：占位符持久落盘（pre-step 替换是 durable 的）
 ```
 
+## 0.3.0: weak values
+
+- Structured extraction from tool output and write arguments (`DB_PASSWORD=…`, JSON/YAML/header/URL) with **no entropy gate**; keys stay readable, values are registered and redacted at `tools/post-execute`.
+- Sensitive files (`.env*`, `id_*`, `.pgpass`, `secret.txt`, …): dedicated unstructured files are registered as a whole and the result is **blocked** (fail-closed) instead of returning raw content.
+- Weak-password candidates after `密码是` / `password is`; dictionary hits register, other weak-shaped values notify (`/secret weak auto|off`).
+
 ## 0.2.0 highlights (shared engine v2)
 
 - Placeholder format is now `rsec_<hash8>` (credential-shaped; models stop refusing to use it). Legacy `[REDACTED:*]` tokens remain restorable.

@@ -384,7 +384,6 @@ export default {
   "✕ Can't handle now (tell AI why)": "✕ 现在无法处理（告诉 AI 原因）",
   "✕ Cancel": "✕ 取消",
   "✕ Clear": "✕ 清除",
-  "✕ Copy failed": "✕ 复制失败",
   "✕ Deny": "✕ 拒绝",
   "✕ Exited Inspector (picking closed on host and all iframes).": "✕ 已退出 Inspector（宿主与全部 iframe 点选已关闭）。",
   "✕ Session-tracked URL cleared — AI window fell back": "✕ 已清除会话追踪 URL——AI 窗已回退",

@@ -4,7 +4,7 @@ Web management surface for the encrypted vault owned by the pi package
 `@aiti-ai/pi-secret-vault`.
 
 - Toolbar key icon → dialog with two tabs:
-  - **Vault**: entries (alias / scope / description / tags / version / last use), add or rotate
+  - **Vault**: weak-password warning on add/rotate (dictionary/short/low-entropy), weak-entry count and per-row `⚠` badge; entries (alias / scope / description / tags / version / last use), add or rotate
     (value field is write-only), reveal (display + copy), delete (two-step), lock/unlock,
     unlock-mode switch (keyfile ↔ OS keychain, re-encrypts with a fresh key).
   - **Sessions**: zero-value records written by the pi extension (session id, cwd, landing mode,

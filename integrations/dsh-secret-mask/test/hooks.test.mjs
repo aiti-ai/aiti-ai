@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { apply } from "../src/index.ts";
+const WEAK = "rsec_" + "035c" + "2182";
 import { stateFor } from "../src/state.ts";
 
 const SECRET = "sk-ant-api03-" + "aBc9DeF0GhI1JkL2MnO3PqR4StU5Vw6X";
@@ -139,6 +140,48 @@ test("post-execute: canonical value path (object) and content path (render-only 
     )
   )[0];
   assert.ok(!JSON.stringify(d2.content).includes(SECRET), "rendered content redacted");
+});
+
+test("weak values: pre-step dictionary hit and tool-output extraction", async () => {
+  const { ctx, fire } = mockCtx();
+  apply(ctx, CFG);
+  const agent = { id: "agent-weak1" };
+  const m = userMsg("我的密码是" + WEAK, "w1");
+  const d = (await fire("agent/pre-step", { agent, messages: [m], turn: 0, step: 0, signal: new AbortController().signal }, nextDecision([m])))[0];
+  assert.ok(!JSON.stringify(d.messages).includes(WEAK), "dictionary weak password redacted in the prompt");
+  assert.match(JSON.stringify(d.messages), /rsec_/);
+
+  // tool output carries a weak value under a sensitive key → mined and redacted
+  const result = { isError: false, value: { stdout: "DB_PASSWORD=abc12345" }, content: [{ type: "text", text: "DB_PASSWORD=abc12345" }] };
+  const pe = (
+    await fire(
+      "tools/post-execute",
+      { token: "t", callId: "c1", name: "read", arguments: { path: "/tmp/.env" }, signal: new AbortController().signal, agent },
+      result,
+      async () => ({ kind: "accept", value: result.value, content: result.content }),
+    )
+  )[0];
+  assert.equal(pe.kind, "accept");
+  assert.ok(!JSON.stringify(pe.value).includes("abc12345"), "extracted env value redacted from the canonical value");
+  assert.match(JSON.stringify(pe.value), /rsec_/);
+});
+
+test("sensitive dedicated files are withheld (fail-closed) after registration", async () => {
+  const { ctx, fire } = mockCtx();
+  apply(ctx, CFG);
+  const agent = { id: "agent-file1" };
+  const result = { isError: false, value: "123abc", content: [{ type: "text", text: "123abc" }] };
+  const d = (
+    await fire(
+      "tools/post-execute",
+      { token: "t", callId: "c1", name: "bash", arguments: { command: "cat /tmp/secret.txt" }, signal: new AbortController().signal, agent },
+      result,
+      async () => ({ kind: "accept", value: result.value, content: result.content }),
+    )
+  )[0];
+  assert.equal(d.kind, "block");
+  assert.ok(!JSON.stringify(d).includes("123abc"));
+  assert.match(d.feedback[0].text, /withheld/);
 });
 
 test("post-execute: upstream block decision untouched; disabled session pass-through", async () => {

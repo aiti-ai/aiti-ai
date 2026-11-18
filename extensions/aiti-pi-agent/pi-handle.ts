@@ -127,6 +127,34 @@ export const PI_SPEC: PiForkSpec = {
   commands: PI_COMMANDS,
 };
 
+/**
+ * Host-injected process strategy (pi-web core `agent-starter`). Older pi-web
+ * builds do not pass it — the extension then falls back to a plain spawn, which
+ * is the historical behavior. When the host injects the detachable variant the
+ * agent process outlives pi-web and a reattach adopts it (see `attach`).
+ */
+export interface AgentStarterLike {
+  readonly kind: "direct" | "wrapper";
+  spawn(
+    command: string,
+    args: string[],
+    options?: {
+      env?: Record<string, string>;
+      cwd?: string;
+      shell?: boolean | string;
+      agentKey?: string;
+      sessionId?: string;
+    },
+  ): Promise<ChildProcess>;
+}
+
+/** Adopt an already-live agent process (core recovery after a pi-web restart). */
+export interface AttachedChildOptions {
+  child: ChildProcess;
+  sessionId: string;
+  agentKey?: string;
+}
+
 interface PendingUI {
   id: string;
   requestId: string;
@@ -194,9 +222,14 @@ export class PiSpawnHandle extends RpcChildHost {
       model?: { provider: string; id: string };
       env?: Record<string, string>;
       launchOverride?: LaunchOverride;
+      /** Injected by the pi-web core (detachable hosting); absent = plain spawn. */
+      agentStarter?: AgentStarterLike;
+      /** Core recovery: adopt this live process instead of spawning. */
+      attached?: AttachedChildOptions;
     },
     spec: PiForkSpec = PI_SPEC,
   ): Promise<PiSpawnHandle> {
+    if (opts.attached) return PiSpawnHandle.attach(opts.attached, spec);
     const resolved = resolveForkCli(spec);
     if (!resolved) {
       throw new Error(`[aiti-pi-agent] ${spec.pathBin} CLI 未找到（PATH 无 ${spec.pathBin}，且无包内 SDK）。`);
@@ -227,13 +260,37 @@ export class PiSpawnHandle extends RpcChildHost {
       cwd: opts.cwd || process.cwd(),
       warn: (m) => console.log(`[aiti-pi-agent] ${m}`),
     });
-    const child = spawn(launch.command, launch.args, {
-            shell: launch.shell,
-cwd: opts.cwd || process.cwd(),
-      stdio: ["pipe", "pipe", "pipe"],
-      env: launch.env,
-    });
-    const handle = new PiSpawnHandle(spec, recordId, child, opts.cwd || process.cwd());
+    // Process strategy comes from the host (agent-starter injection). Without it
+    // (older pi-web) this is the historical child_process.spawn.
+    const child = opts.agentStarter
+      ? await opts.agentStarter.spawn(launch.command, launch.args, {
+          shell: launch.shell,
+          cwd: opts.cwd || process.cwd(),
+          env: launch.env as Record<string, string>,
+          agentKey: spec.agentKey,
+          sessionId: recordId,
+        })
+      : spawn(launch.command, launch.args, {
+          shell: launch.shell,
+          cwd: opts.cwd || process.cwd(),
+          stdio: ["pipe", "pipe", "pipe"],
+          env: launch.env,
+        });
+    return PiSpawnHandle.adopt(spec, recordId, child, opts.cwd || process.cwd());
+  }
+
+  /**
+   * Build a handle over an existing agent process: a just-spawned child, or (after
+   * a pi-web restart) the facade of a detached wrapper the core reattached to.
+   * Shared by start() and attach() so both paths get identical warm-up.
+   */
+  static async adopt(
+    spec: PiForkSpec,
+    recordId: string,
+    child: ChildProcess,
+    cwd: string,
+  ): Promise<PiSpawnHandle> {
+    const handle = new PiSpawnHandle(spec, recordId, child, cwd);
     await handle.whenReady;
     if (!handle.alive()) {
       // fail-loud（加固 P1-5）：进程启动即崩时给清晰错误，替代静默死 handle
@@ -256,6 +313,15 @@ cwd: opts.cwd || process.cwd(),
       } catch { /* 状态读取失败不影响会话（model 待 pi model_select 事件） */ }
     })();
     return handle;
+  }
+
+  /**
+   * Recovery path: pi-web restarted while the agent kept running in a detached
+   * wrapper (agent-starter). The child is the reattached facade (its journal was
+   * replayed before we got here), so building a handle is enough.
+   */
+  static async attach(opts: AttachedChildOptions, spec: PiForkSpec = PI_SPEC): Promise<PiSpawnHandle> {
+    return PiSpawnHandle.adopt(spec, opts.sessionId, opts.child, process.cwd());
   }
 
   /** 覆写：非 response 帧的 pi 语义分发。 */
@@ -295,8 +361,20 @@ cwd: opts.cwd || process.cwd(),
     await this.request({ type: "abort" }, { timeoutMs: RPC_CTRL_TIMEOUT_MS });
   }
 
+  /**
+   * Release this handle. A plain child is killed (historical behavior); a
+   * wrapper-hosted child is DETACHED — the agent keeps running so it can be
+   * reattached after a pi-web restart / extension reload. Killing such a session
+   * is the core's decision (starter.kill) and arrives as an exit frame.
+   */
   async dispose(): Promise<void> {
     if (!this.aliveFlag) return;
+    const facade = this.child as unknown as { detachable?: unknown; release?: () => void };
+    if (facade.detachable === true && typeof facade.release === "function") {
+      facade.release();
+      this.markDead("detached");
+      return;
+    }
     await shutdownChild(this.child, 1000);
     this.markDead("disposed");
   }

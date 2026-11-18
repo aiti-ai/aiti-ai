@@ -26,7 +26,7 @@ export interface TextSpan {
   set(text: string): void;
 }
 
-export interface MessageRedactOptions extends ScanMaxOptions, Pick<SpanRedactOptions, "onDetected"> {
+export interface MessageRedactOptions extends ScanMaxOptions, Pick<SpanRedactOptions, "onDetected" | "weak"> {
   rules?: CustomRule[];
   /** Also redact tool-call arguments / tool-result details (message_end). */
   deep?: boolean;

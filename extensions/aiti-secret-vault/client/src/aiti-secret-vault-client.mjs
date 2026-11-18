@@ -34,6 +34,7 @@ function setOpen(v) {
   var a = floatApi();
   if (a) { a.present(SV_KEY, v ? "open" : "close"); return; }
   localOpen = v;
+  try { window.dispatchEvent(new Event("piwe-float-present-change")); } catch (e) {}
 }
 
 var ICONS = {
@@ -87,7 +88,8 @@ function VaultTab(props) {
         setBusy(false);
         if (!d.ok) { fl("err", t("sv.failed") + " " + (d.error || "")); return; }
         setAlias(""); setDesc(""); setTags(""); setValue("");
-        fl("ok", t("sv.saved") + " · " + d.result.alias + " v" + d.result.version);
+        if (d.warning) fl("warn", t("sv.saved") + " · " + d.result.alias + " — " + d.warning);
+        else fl("ok", t("sv.saved") + " · " + d.result.alias + " v" + d.result.version);
         props.reload();
       })
       .catch(function (e) { setBusy(false); fl("err", t("sv.failed") + " " + String(e)); });
@@ -95,7 +97,7 @@ function VaultTab(props) {
   function reveal(a) {
     fetch(API("/entries/" + encodeURIComponent(a) + "/reveal"), { method: "POST" })
       .then(function (r) { return r.json(); })
-      .then(function (d) { if (d.ok) setRevealed({ alias: d.alias, value: d.value }); else fl("err", t("sv.failed") + " " + (d.error || "")); });
+      .then(function (d) { if (d.ok) setRevealed({ alias: d.alias, value: d.value, weak: d.weak }); else fl("err", t("sv.failed") + " " + (d.error || "")); });
   }
   function remove(a) {
     if (pendingDelete !== a) { setPendingDelete(a); return; }
@@ -131,6 +133,7 @@ function VaultTab(props) {
   var statusLine = h("div", { style: { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", fontSize: 11.5, color: "var(--text-muted)" } },
     h("span", null, (st.locked ? "🔒 " + t("sv.locked") : "🔓 " + t("sv.unlocked"))),
     h("span", null, t("sv.entries") + ": " + (props.entries ? props.entries.length : 0)),
+    st.weakEntries ? h("span", { style: { color: "var(--danger,#ef4444)" } }, "⚠ " + t("sv.weakCount") + ": " + st.weakEntries) : null,
     h("span", null, t("sv.mode") + ": " + (st.mode || "keyfile")),
     h("span", null, t("sv.keychain") + ": " + (st.keychainBackend || "-")),
     h("span", { style: { flex: 1 } }),
@@ -161,6 +164,7 @@ function VaultTab(props) {
     background: "color-mix(in srgb, var(--warning,#f59e0b) 10%, transparent)" } },
     h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
       h("code", { style: { flex: 1, fontSize: 12, wordBreak: "break-all" } }, revealed.alias + " = " + revealed.value),
+      revealed.weak ? h("span", { style: { color: "var(--danger,#ef4444)", fontSize: 11.5 } }, "⚠ " + t("sv.weak")) : null,
       h("button", { style: btn("var(--bg)"), onClick: function () { try { navigator.clipboard.writeText(revealed.value); fl("ok", t("sv.copied")); } catch (e) {} } }, t("sv.copy")),
       h("button", { style: btn("var(--bg)"), onClick: function () { setRevealed(null); } }, t("sv.hide")))) : null;
 
@@ -172,7 +176,8 @@ function VaultTab(props) {
         }))),
         h("tbody", null, entries.map(function (e) {
           return h("tr", { key: e.scope + ":" + e.alias },
-            h("td", { style: tdStyle }, h("b", null, e.alias), e.scope === "project" ? h("span", { style: { color: "var(--text-muted)" } }, " [" + t("sv.project") + "]") : null),
+            h("td", { style: tdStyle }, h("b", null, e.alias), e.scope === "project" ? h("span", { style: { color: "var(--text-muted)" } }, " [" + t("sv.project") + "]") : null,
+              e.weak ? h("span", { style: { color: "var(--danger,#ef4444)", marginLeft: 6 } }, "⚠ " + t("sv.weak")) : null),
             h("td", { style: tdStyle }, e.desc || ""),
             h("td", { style: tdStyle }, (e.tags || []).join(", ")),
             h("td", { style: tdStyle }, String(e.version)),
@@ -189,21 +194,39 @@ function VaultTab(props) {
 
 function SessionsTab(props) {
   var sessions = props.sessions || {};
-  var ids = Object.keys(sessions);
-  if (ids.length === 0) return h("div", { style: { padding: "18px 0", textAlign: "center", color: "var(--text-muted)" } }, t("sv.session.empty"));
+  // Only sessions that actually have an alias mounted: empty historical
+  // records are noise (every session writes one on startup).
+  var ids = Object.keys(sessions).filter(function (id) {
+    var s = sessions[id];
+    return !!(s && Array.isArray(s.mounted) && s.mounted.length > 0);
+  });
+  if (ids.length === 0) {
+    return h("div", { style: { padding: "18px 0", textAlign: "center", color: "var(--text-muted)" } },
+      h("div", null, t("sv.session.empty")),
+      h("div", { style: { fontSize: 11, marginTop: 6 } }, t("sv.session.retention")));
+  }
   return h("table", { style: { width: "100%", borderCollapse: "collapse", marginTop: 4 } },
-    h("thead", null, h("tr", null, ["session", "cwd", t("sv.session.landing"), t("sv.session.mounted"), t("sv.updated")].map(function (x) {
+    h("thead", null, h("tr", null, ["session", "cwd", t("sv.session.landing"), t("sv.session.mounted"), t("sv.updated"), ""].map(function (x) {
       return h("th", { key: x, style: { textAlign: "left", padding: "4px 8px", borderBottom: "1px solid var(--border,#ddd)", color: "var(--text-muted)", fontWeight: 600 } }, x);
     }))),
     h("tbody", null, ids.map(function (id) {
       var s = sessions[id] || {};
-      return h("tr", { key: id },
-        h("td", { style: Object.assign({}, tdStyle, { fontFamily: "monospace" }) }, id.slice(0, 8)),
+      var meta = (props.names && props.names[id]) || {};
+      var first = meta.firstMessage ? String(meta.firstMessage).replace(/\s+/g, " ").trim().slice(0, 80) : "";
+      var title = s.name || meta.name || first || id.slice(0, 8);
+      var openIt = function (e) { if (e) e.stopPropagation(); if (props.onOpen) props.onOpen(s, id); };
+      return h("tr", { key: id, onClick: openIt, style: { cursor: "pointer" }, title: id },
+        h("td", { style: Object.assign({}, tdStyle, { fontFamily: "inherit" }) },
+          h("div", { style: { fontWeight: 600 } }, title),
+          h("div", { style: { fontFamily: "monospace", fontSize: 10.5, color: "var(--text-muted)" } }, id.slice(0, 8))),
         h("td", { style: Object.assign({}, tdStyle, { maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }), title: s.cwd }, s.cwd || ""),
         h("td", { style: tdStyle }, s.landing || ""),
         h("td", { style: tdStyle }, (s.mounted || []).join(", ")),
-        h("td", { style: tdStyle }, s.updatedAt ? String(s.updatedAt).slice(0, 16).replace("T", " ") : ""));
-    })));
+        h("td", { style: tdStyle }, s.updatedAt ? String(s.updatedAt).slice(0, 16).replace("T", " ") : ""),
+        h("td", { style: Object.assign({}, tdStyle, { whiteSpace: "nowrap" }) },
+          h("button", { style: btn("var(--bg)"), onClick: openIt, title: id }, t("sv.open"))));
+    })),
+    h("tfoot", null, h("tr", null, h("td", { colSpan: 6, style: { padding: "8px", fontSize: 11, color: "var(--text-muted)" } }, t("sv.session.retention")))));
 }
 
 function VaultPanel() {
@@ -211,30 +234,49 @@ function VaultPanel() {
   var [status, setStatus] = useState(null);
   var [entries, setEntries] = useState([]);
   var [sessions, setSessions] = useState({});
+  var [sessionNames, setSessionNames] = useState({});
   var fl = useFlash();
   var [busy, setBusy] = useState(false);
+  var [openTick, setOpenTick] = useState(0);
+
+  // The dialog is registered as a React dialog and must render nothing while
+  // aiti-float says it is closed; otherwise the panel stays visible and its
+  // close button only changes the float state (window "cannot be closed").
+  useEffect(function () {
+    var sync = function () { setOpenTick(function (n) { return n + 1; }); };
+    window.addEventListener("piwe-float-present-change", sync);
+    return function () { window.removeEventListener("piwe-float-present-change", sync); };
+  }, []);
+  var open = isOpen();
 
   function reload() {
     setBusy(true);
     Promise.all([
       fetch(API("/status")).then(function (r) { return r.json(); }),
       fetch(API("/entries")).then(function (r) { return r.json(); }),
+      fetch(apiUrl("/api/sessions")).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; }),
     ]).then(function (res) {
       setBusy(false);
       if (res[0] && res[0].ok) { setStatus(res[0].status); setSessions(res[0].sessions || {}); }
       else if (res[0] && !res[0].ok) fl[1]("err", t("sv.failed") + " " + (res[0].error || ""));
       if (res[1] && res[1].ok) setEntries(res[1].entries || []);
+      var rows = (res[2] && res[2].sessions) || [];
+      var map = {};
+      rows.forEach(function (row) { if (row && row.id) map[row.id] = row; });
+      setSessionNames(map);
     }).catch(function (e) { setBusy(false); fl[1]("err", t("sv.failed") + " " + String(e)); });
   }
-  useEffect(function () { reload(); }, []);
+  useEffect(function () { if (open) reload(); }, [open]);
 
+  if (!open) return null;
+  void openTick;
   var tabBtn = function (id, label) {
     return h("button", { key: id, onClick: function () { setTab(id); }, disabled: busy,
       style: btn(tab === id ? "var(--accent,#2563eb)" : "var(--bg)", tab === id ? "#fff" : undefined) }, label);
   };
   var msg = fl[0] && h("div", { role: "alert", style: { margin: "0 12px 0", padding: "6px 10px", borderRadius: 6, fontSize: 12,
-    background: fl[0].kind === "ok" ? "color-mix(in srgb, var(--ok,#10b981) 12%, transparent)" : "color-mix(in srgb, var(--danger,#ef4444) 12%, transparent)",
-    color: fl[0].kind === "ok" ? "var(--ok,#10b981)" : "var(--danger,#ef4444)" } }, fl[0].text);
+    background: fl[0].kind === "ok" ? "color-mix(in srgb, var(--ok,#10b981) 12%, transparent)" : fl[0].kind === "warn" ? "color-mix(in srgb, var(--warning,#f59e0b) 14%, transparent)" : "color-mix(in srgb, var(--danger,#ef4444) 12%, transparent)",
+    color: fl[0].kind === "ok" ? "var(--ok,#10b981)" : fl[0].kind === "warn" ? "var(--warning,#b45309)" : "var(--danger,#ef4444)" } }, fl[0].text);
 
   return h("div", { "data-ext-float": "1", "data-ext-float-key": SV_KEY, "data-ext-float-w": 760, "data-ext-float-h": 560,
     "data-ext-float-full": "1", style: dlgRoot },
@@ -248,7 +290,11 @@ function VaultPanel() {
     h("div", { style: { flex: 1, minHeight: 0, overflowY: "auto", padding: 12 } },
       tab === "vault"
         ? h(VaultTab, { status: status, entries: entries, reload: reload, flash: fl[1] })
-        : h(SessionsTab, { sessions: sessions })));
+        : h(SessionsTab, { sessions: sessions, names: sessionNames, onOpen: function (record, id) {
+          if (!id) return;
+          try { window.dispatchEvent(new CustomEvent("pi-web:open-session", { detail: { id } })); } catch (e) {}
+          setOpen(false);
+        } })));
 }
 
 function register(ctx) {

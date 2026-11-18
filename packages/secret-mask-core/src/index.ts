@@ -35,4 +35,5 @@ export * from "./messages.ts";
 export * from "./guard.ts";
 export * from "./landing.ts";
 export * from "./rules.ts";
+export * from "./extract.ts";
 export * from "./commands.ts";

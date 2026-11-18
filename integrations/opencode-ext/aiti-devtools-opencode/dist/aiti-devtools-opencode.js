@@ -818,7 +818,7 @@ var AitiDevtoolsPlugin = async (input) => {
   const hooks = { event: void 0, tool: {} };
   if (!bridgeTools.length) {
     log("bridge not reachable at " + BRIDGE_BASE + " \u2014 cold-start: " + BRIDGE_TOOLS.length + " self-healing placeholder tools registered");
-    const errText = "\u6865\u4E0D\u53EF\u8FBE\uFF1A" + BRIDGE_BASE + "\u3002\u672C\u5DE5\u5177\u5904\u4E8E\u51B7\u542F\u52A8\u964D\u7EA7\u6A21\u5F0F\uFF08\u5360\u4F4D\u6E05\u5355\uFF09\uFF1B\u6865\u542F\u52A8/\u6062\u590D\u540E\u518D\u6B21\u8C03\u7528\u5373\u81EA\u52A8\u6D3E\u53D1\u771F\u5B9E\u5DE5\u5177\uFF0C\u65E0\u9700\u91CD\u542F opencode\u3002\u542F\u52A8\u72EC\u7ACB\u6865\uFF1Anode ~/workspace/pi-work/packages/aiti-bridge/bin/aiti-bridge.mjs\uFF08\u9ED8\u8BA4 127.0.0.1:8777\uFF09\u3002";
+    const errText = "\u6865\u4E0D\u53EF\u8FBE\uFF1A" + BRIDGE_BASE + "\u3002\u672C\u5DE5\u5177\u5904\u4E8E\u51B7\u542F\u52A8\u964D\u7EA7\u6A21\u5F0F\uFF08\u5360\u4F4D\u6E05\u5355\uFF09\uFF1B\u6865\u542F\u52A8/\u6062\u590D\u540E\u518D\u6B21\u8C03\u7528\u5373\u81EA\u52A8\u6D3E\u53D1\u771F\u5B9E\u5DE5\u5177\uFF0C\u65E0\u9700\u91CD\u542F opencode\u3002\u542F\u52A8\u72EC\u7ACB\u6865\uFF1Anode ~/workspace/aiti-dev/packages/aiti-bridge/bin/aiti-bridge.mjs\uFF08\u9ED8\u8BA4 127.0.0.1:8777\uFF09\u3002";
     const healExecute = (toolName) => async (args, ctx) => {
       const fresh = await fetchBridgeTools(BRIDGE_BASE);
       if (!fresh.length) return errText;

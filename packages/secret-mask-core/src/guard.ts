@@ -20,7 +20,9 @@ export function unmountedPlaceholders(text: string, registry: Registry): string[
   if (!text) return [];
   const out: string[] = [];
   for (const token of findV2Placeholders(text)) {
-    if (registry.isMounted(token)) continue;
+    // A token that is itself a registered value is a real secret that happens
+    // to look like a placeholder (weak-password case), not an unresolved ref.
+    if (registry.isMounted(token) || registry.hasValue(token)) continue;
     if (!out.includes(token)) out.push(token);
   }
   return out;
