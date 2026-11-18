@@ -1503,28 +1503,30 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
         backendUnavailableRef.current = missingTypes;
         const missText = nowMissing.map((p) => `${p.label}${p.installHint ? ` (${p.installHint})` : ""}`).join(", ");
         const note = pickedUp.length > 0
-          ? `rescan: ${pickedUp.join(", ")} now available${nowMissing.length ? ` — ${nowMissing.length} still not installed` : ""}`
+          ? nowMissing.length > 0
+            ? t("chat.rescanNowAvailableMissing", { names: pickedUp.join(", "), count: nowMissing.length })
+            : t("chat.rescanNowAvailable", { names: pickedUp.join(", ") })
           : nowMissing.length > 0
-            ? `rescan: ${nowMissing.length} not installed — ${missText}`
-            : "rescan: all backends ready";
+            ? t("chat.rescanMissing", { count: nowMissing.length, details: missText })
+            : t("chat.rescanAllReady");
         if (backendRescanNoteTimer.current) clearTimeout(backendRescanNoteTimer.current);
         setBackendRescanNote(note);
         // Install hints need reading time: keep the note longer when something is missing.
         backendRescanNoteTimer.current = setTimeout(() => setBackendRescanNote(null), nowMissing.length ? 15000 : 8000);
       } else {
         if (backendRescanNoteTimer.current) clearTimeout(backendRescanNoteTimer.current);
-        setBackendRescanNote("rescan failed");
+        setBackendRescanNote(t("chat.rescanFailed"));
         backendRescanNoteTimer.current = setTimeout(() => setBackendRescanNote(null), 8000);
       }
     } catch {
       // network failure: keep the current list, note the failure transiently
       if (backendRescanNoteTimer.current) clearTimeout(backendRescanNoteTimer.current);
-      setBackendRescanNote("rescan failed");
+      setBackendRescanNote(t("chat.rescanFailed"));
       backendRescanNoteTimer.current = setTimeout(() => setBackendRescanNote(null), 8000);
     } finally {
       setBackendsRescanning(false);
     }
-  }, [backendsRescanning]);
+  }, [backendsRescanning, t]);
   useScrollbarVisibility(scrollContainerRef, Boolean(session?.id) || !isEmptyNew);
   const hasStreamingContent = Boolean(streamState.streamingMessage?.content.length);
   const messageCwd = session?.cwd ?? newSessionCwd ?? undefined;
@@ -2421,7 +2423,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                   session. */}
               {workspaceOptions.length > 0 && (
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0, maxWidth: "100%" }}>
-                  <span style={{ color: "var(--text-muted)" }}>Workspace</span>
+                  <span style={{ color: "var(--text-muted)" }}>{t("chat.newSessionWorkspace")}</span>
                   <select
                     value={newSessionWorkspace ?? newSessionCwd ?? ""}
                     onChange={(e) => onNewSessionWorkspaceChange?.(e.target.value || null)}
@@ -2446,7 +2448,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
               )}
               {(backendOptions.length > 0 || backendExtraOptions.length > 0 || backendRescanable) && (
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0, maxWidth: "100%" }}>
-                  <span style={{ color: "var(--text-muted)" }}>Backend</span>
+                  <span style={{ color: "var(--text-muted)" }}>{t("chat.newSessionBackend")}</span>
                   <select
                     value={sessionBackend ?? ""}
                     onChange={(e) => {
@@ -2476,10 +2478,10 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                     }}
                     style={NEW_SESSION_SELECT_STYLE}
                   >
-                    <option value="">Pi (local)</option>
+                    <option value="">{t("chat.backendPiLocal")}</option>
                     {backendOptions.map((b) => (
                       <option key={b.type} value={b.type} disabled={b.available === false} title={b.installHint}>
-                        {b.available === false ? `${b.label} — not installed` : b.label}
+                        {b.available === false ? t("chat.backendNotInstalled", { label: b.label }) : b.label}
                       </option>
                     ))}
                     {/* Backend management entries are an extension point: each backend
@@ -2497,7 +2499,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                         specific backends — extensions opt in via server.rescanBackends). */}
                     {backendRescanable && (
                       <option value={BACKEND_RESCAN_OPTION_VALUE} disabled={backendsRescanning}>
-                        {backendsRescanning ? "Rescanning backends…" : "⟳ Rescan backends (pick up new CLIs)"}
+                        {backendsRescanning ? t("chat.rescanningBackends") : t("chat.rescanBackends")}
                       </option>
                     )}
                   </select>
@@ -2510,7 +2512,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                 const selected = backendOptions.find((b) => b.type === sessionBackend);
                 const supported = Boolean(selected?.detachable) && detachSupport?.available === true;
                 if (!supported) return null;
-                const hint = `Keep the agent process alive across pi-web restarts and extension reloads (runner: ${detachSupport?.runner ?? "auto"}). Turn off to run it as a plain child process.`;
+                const hint = t("chat.detachHint", { runner: detachSupport?.runner ?? "auto" });
                 return (
                   <label
                     title={hint}
@@ -2528,17 +2530,12 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                       }}
                       style={{ cursor: "pointer" }}
                     />
-                    Detach
+                    {t("chat.surviveRestarts")}
                   </label>
                 );
               })()}
               {backendRescanNote && (
                 <span style={{ color: "var(--text-dim)", fontSize: 11 }}>{backendRescanNote}</span>
-              )}
-              {sessionBackend && (
-                <span style={{ color: "var(--text-dim)", fontSize: 11 }}>
-                  session runs via: {sessionBackend}
-                </span>
               )}
             </div>
           </div>

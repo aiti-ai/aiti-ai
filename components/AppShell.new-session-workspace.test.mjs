@@ -84,8 +84,9 @@ test("extension entries are built into the Backend dropdown (management entry in
 });
 
 test("the Workspace selector renders before Backend", () => {
-  const workspaceAt = chatWindow.indexOf(">Workspace</span>");
-  const backendAt = chatWindow.indexOf(">Backend</span>");
+  // Labels are localized (chat.newSessionWorkspace / chat.newSessionBackend).
+  const workspaceAt = chatWindow.indexOf('{t("chat.newSessionWorkspace")}');
+  const backendAt = chatWindow.indexOf('{t("chat.newSessionBackend")}');
   assert.notEqual(workspaceAt, -1, "Workspace label missing");
   assert.notEqual(backendAt, -1, "Backend label missing");
   assert.ok(workspaceAt < backendAt, "Workspace should render before Backend");
