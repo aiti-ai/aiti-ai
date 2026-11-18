@@ -4,9 +4,9 @@
 - **背景**：qoderclicn 1.1.81+ 移除 SDK worker 会话（CLI 原话 "SDK worker sessions are no longer supported... roll back the CLI to 1.1.80 or earlier"），stream-json 模式的入站 control_request 通道（interrupt/set_model/set_permission_mode）全部断链——生产事故：CN 1.1.83 忙时无视 interrupt，前端「停止中」永挂。
 - **现状**：spawn `qodercli/qoderclicn --acp`（JSON-RPC over stdio，传输层 `qoder-acp.ts`）。控制面：`session/prompt`（回合）、`session/cancel`（停止，秒回 `stopReason:cancelled`）、`session/set_model`（运行时切模型）、`session/set_mode`（权限档；`yolo`↔bypassPermissions 映射；**plan 档 ACP 面无**→返 false）。事件面：`session/update`（agent_message/thought_chunk 双气泡、tool_call/tool_call_update 卡（真名在 `_meta.qoder.toolName`）、plan→taskList、available_commands_update→斜杠面板、usage_update→contextUsage）、`session/request_permission`→interaction 账本（应答 accept→allow 选项 / decline→deny 选项）。
 - **接管既有会话**：`session/load`（不再 `--resume`/seedHistory——CLI 回放更权威，双喂会重复）；stream-json 时代的老会话也能 load（CLI 会话存储共享，2026-11-13 探针验证）。
-- **steer 恒关**：stream-json 的注入面随 SDK worker 移除失效，ACP 注入面未探针——运行中输入一律本地 followUp 队列。要开需按 steer-gate 纪律对 --acp 实跑取证。
+- **steer（运行中注入）**：ACP 注入面 = 主轮 `session/prompt` 在途时**再发一条 `session/prompt`**（CLI initialize 自报 `agentCapabilities._meta.qoder.promptQueueing`；入队默认 `priority:"next"`，AgentLoop 工具间隙吸收）。能力位仍按 steer-gate 纪律实跑取证后才开；未开门前运行中输入一律本地 followUp 队列。
 - **credits**：session/prompt 响应无 credits 字段（只有 usage tokens）→ 面板额度继续走 REST（WASM client），不变。
-- 探针工具（tools/steer-probe.mjs 等）保留；版本敏感行为重验时先跑探针再点亮能力。
+- 探针工具（tools/steer-probe-acp.mjs 为 ACP 现行版；tools/steer-probe.mjs 为 stream-json 旧版）保留；版本敏感行为重验时先跑探针再点亮能力。
 
 ## 结构
 - 运行时文件平铺在本目录根（index.ts / core.cjs …，宿主 loader 按相对路径加载——**禁手改运行时平铺文件**，改 src/ 再 build）
@@ -44,12 +44,13 @@
 - 历史 bug（已修）：未确认时只 `console.warn` 不兜底 → 前端「停止中」永挂（CLI 照跑、无终态帧）；另 control_response 曾不按 request_id 分发，任意回执（如 set_permission_mode）会误放 interrupt waiter——均已回归钉死（`qoder-hardening.test.mjs`）。
 
 ## steer（运行中注入）能力门控
-- `steer` **不看代码看证据**：只有 `<stateDir>/steer-probe.json`（= `<PI_WEB_DATA_DIR|~/.pi/web/data>/aiti-qoder-agent/state/`）里**本 CLI 二进制的 realpath 键**记着 `verdict:"pass"`，`QODER_CAPABILITIES.steer` 才为 true、`backend-queue` 才挂 `steer` 钩子；否则运行中输入一律本地排队（诚实降级，非 bug）。
-- 开门：`node tools/steer-probe.mjs --record`（pass 才写开门证据）→ reload 扩展 → **新开会话**（存量会话能力表创建时已固化）。
-- 注入档位 = `priority:"next"`（AgentLoop 轮内吸收）。**别改成 `now`**：`now` 会抢占本轮（≈ stop + 重发），语义不是 steer，探针的 C2a 判据会直接拒判 pass。
-- 当前账实（2026-09-22）：`qodercn`（`~/.qoder-cn/bin/qoderclicn/qoderclicn-1.1.44`）已 pass → steer=true；国际版 `qoder` 二进制无记录 → 仍 steer=false。排障先分清变体，别拿一个的结论说另一个。
+- `steer` **不看代码看证据**：只有 `<stateDir>/steer-probe.json`（= `<PI_WEB_DATA_DIR|~/.pi/web/data>/aiti-qoder-agent/state/`）里**本 CLI 二进制的 realpath 键**记着 `verdict:"pass"` **且 `driver:"acp"`**，`QODER_CAPABILITIES.steer` 才为 true、`backend-queue` 才挂 `steer` 钩子；否则运行中输入一律本地排队（诚实降级，非 bug）。stream-json 时代的旧证据（无 driver / `driver:"stream-json"`）**不给 ACP 开门**。
+- 开门：`node tools/steer-probe-acp.mjs --record`（ACP 版探针：initialize → session/new → 主轮 4×sleep → 首个工具完成后并发第二条 session/prompt，判据 C0 promptQueueing / C1 注入早于主轮收口 / C2 注入后再无 tool_call 且出现 INJECTED-OK）→ reload 扩展 → **新开会话**（存量会话能力表创建时已固化）。
+- 注入实现（`index.ts`）：`steer()` → 共享层 `routePrompt` → `injectSteer()` → `sendPromptTurn(..., "steer")`。`promptsInFlight` 计数归零才 `finishTurn`（注入可能另起一段 loop，UI 不得中途闪回空闲）；注入失败自动降级入本地队列。
+- CLI 未自报 `promptQueueing` 时注入会 fail-loud → 共享层降级入队（能力位是账本级的，运行时能力是二次闸）。
 - **禁手改账本伪造 pass**：键是二进制路径、值是行为级判据（注入后模型当轮改口），假证据=假按钮复发；`index.ts` 的 `QODER_CAPABILITIES` 基表也保持 `steer:false`。
-- 协议取证、探针判据、为何不重发 → `docs/aiti-qoder-steer-injection-plan.md`。
+- 当前账实：1.1.87 二进制自报 `_meta.qoder.promptQueueing:true`（2026-11-18 二进制取证），但 ACP 实跑探针尚未记账——**steer 保持关闭**，跑 `tools/steer-probe-acp.mjs --record` 取证后才会开。
+- 协议取证细节 → `docs/aiti-qoder-steer-injection-plan.md`（stream-json 时代判据，ACP 版判据见 `tools/steer-probe-acp.mjs` 头注释）。
 
 ## 红线
 - 禁轮询（setInterval 拉取）；需要等待用事件/回调/SSE（桥的 SSE、aiti-event-bus topics）
