@@ -6,8 +6,11 @@
 //
 // 提示改用自定义弹窗（原生 confirm/alert 无法复制）：可选中文本 + 复制按钮，
 // 方便把「如何还原」等提示消息复制出去（发 AI / 记录）。createElement 构建，无 innerHTML。
+// 文案统一走 ctx.t（manifest ui.i18n 的 zh-CN/en 表）——静态 i18n: 前缀只用于宿主渲染的
+// 静态 items，普通 DOM 文本必须先 t() 解析，否则会把键名原样显示出来。
 export default function register(ctx) {
   const { h, apiUrl } = ctx;
+  const t = (key, params) => (typeof ctx.t === "function" ? ctx.t(key, params) : key);
 
   /** 可复制确认/结果弹窗。title 标题、body 正文（可选中+复制）、buttons 底部按钮。
    *  按钮 onClick 收到 close()，primary 高亮。返回 close。 */
@@ -23,15 +26,15 @@ export default function register(ctx) {
     bodyEl.style.cssText = "white-space:pre-wrap;word-break:break-word;user-select:text;line-height:1.5;margin-bottom:12px;color:#e8e8e8;";
     bodyEl.textContent = body;
     const copyBtn = document.createElement("button");
-    copyBtn.textContent = "复制";
+    copyBtn.textContent = t("it.copy.label");
     copyBtn.style.cssText = "padding:4px 10px;font-size:12px;background:#333;color:#e8e8e8;border:1px solid #444;border-radius:6px;cursor:pointer;margin-right:6px;";
     copyBtn.onclick = async () => {
-      const t = `${title}\n\n${body}`;
-      try { await navigator.clipboard.writeText(t); } catch {
-        const ta = document.createElement("textarea"); ta.value = t; ta.style.position = "fixed"; ta.style.opacity = "0"; document.body.appendChild(ta); ta.select(); try { document.execCommand("copy"); } catch {} document.body.removeChild(ta);
+      const text = `${title}\n\n${body}`;
+      try { await navigator.clipboard.writeText(text); } catch {
+        const ta = document.createElement("textarea"); ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0"; document.body.appendChild(ta); ta.select(); try { document.execCommand("copy"); } catch {} document.body.removeChild(ta);
       }
-      copyBtn.textContent = "已复制 ✓";
-      setTimeout(() => { copyBtn.textContent = "复制"; }, 1600);
+      copyBtn.textContent = t("it.copied.label");
+      setTimeout(() => { copyBtn.textContent = t("it.copy.label"); }, 1600);
     };
     const btnRow = document.createElement("div");
     btnRow.style.cssText = "display:flex;gap:8px;justify-content:flex-end;align-items:center;";
@@ -71,47 +74,47 @@ export default function register(ctx) {
           await ctx.reloadExtensions?.();
         };
         const buttons = [
-          { label: "取消" },
+          { label: t("it.cancel.label") },
         ];
         if (buildCorrupted) {
           buttons.push({
-            label: "立即恢复编译（restore-build）", primary: true,
+            label: t("it.restore-build.label"), primary: true,
             onClick: async (close) => {
               try {
                 await fetch(apiUrl("/api/extensions/aiti-crash-fatal/restore-build"), { method: "POST" });
               } finally {
                 close();
-                showPopup({ title: "已还原 AppShell.tsx", body: "等 HMR 自动恢复（或刷新页面）→ Build Error 消失。若页面已全屏 overlay，从 /dev/rescue.html 发指令让 AI 跑 restore-build。", buttons: [{ label: "i18n:it.close.label" }] });
+                showPopup({ title: t("it.restore-build.done.title"), body: t("it.restore-build.done.body"), buttons: [{ label: t("it.close.label") }] });
               }
             },
           });
         }
         if (extCrashed) {
           buttons.push({
-            label: "立即恢复扩展", primary: true,
+            label: t("it.restore-ext.label"), primary: true,
             onClick: async (close) => {
               try { await restoreExt(); } finally { close(); }
-              showPopup({ title: "已恢复", body: "startup 崩溃标志已清除并 reload。左下角 ⚠ 应已消失（若还在，刷新页面）。", buttons: [{ label: "i18n:it.close.label" }] });
+              showPopup({ title: t("it.restore-ext.done.title"), body: t("it.restore-ext.done.body"), buttons: [{ label: t("it.close.label") }] });
             },
           });
         }
         buttons.push(
           {
-            label: "崩扩展 startup",
+            label: t("it.crash-ext.label"),
             ...(extCrashed ? {} : { primary: true }),
             onClick: async (close) => {
               let timer = null;
               const doRestore = async () => {
                 if (timer) { clearTimeout(timer); timer = null; }
                 try { await restoreExt(); } finally {
-                  showPopup({ title: "扩展已恢复", body: "startup 崩溃标志已清除并 reload，左下角 ⚠ 应已消失。", buttons: [{ label: "i18n:it.close.label" }] });
+                  showPopup({ title: t("it.crash-ext.done.title"), body: t("it.crash-ext.done.body"), buttons: [{ label: t("it.close.label") }] });
                 }
               };
               try {
                 const r = await fetch(apiUrl("/api/extensions/aiti-crash-fatal/crash-ext"), { method: "POST" });
                 const d = await r.json();
                 if (!d.ok) {
-                  showPopup({ title: "失败", body: String(d.error || r.status), buttons: [{ label: "i18n:it.close.label" }] });
+                  showPopup({ title: t("it.fail.title"), body: t("it.fail.body", { error: String(d.error || r.status) }), buttons: [{ label: t("it.close.label") }] });
                   return;
                 }
                 // 宿主 reload → startup throw → manifest failed → ⚠ 指示器出现
@@ -120,64 +123,64 @@ export default function register(ctx) {
                 // 60s 自动恢复（页面刷新则定时器丢失，可重开本弹窗手动恢复）
                 timer = setTimeout(() => { void doRestore(); }, 60000);
                 showPopup({
-                  title: "扩展 startup 已崩（部分崩）",
-                  body: "startup 入口已崩，页面 / API / 本扩展按钮全部存活（部分崩）。\n\n· 左下角出现黄色 ⚠ 按钮，点开见「aiti-crash-fatal · 启动失败」完整消息（含恢复提示）\n· 点 ⚠ 弹层里的 🚑 也可叫急救 AI\n· 60s 后自动恢复；或点下方按钮立即恢复",
+                  title: t("it.crash-ext.crashed.title"),
+                  body: t("it.crash-ext.crashed.body"),
                   buttons: [
-                    { label: "立即恢复", primary: true, onClick: (c) => { void doRestore().then(() => c()); } },
-                    { label: "i18n:it.close.label" },
+                    { label: t("it.restore-now.label"), primary: true, onClick: (c) => { void doRestore().then(() => c()); } },
+                    { label: t("it.close.label") },
                   ],
                 });
               } catch (e) {
-                showPopup({ title: "网络错误", body: String(e), buttons: [{ label: "i18n:it.close.label" }] });
+                showPopup({ title: t("it.network-error.title"), body: String(e), buttons: [{ label: t("it.close.label") }] });
               }
             },
           },
           {
-            label: "崩编译（Build Error）",
+            label: t("it.crash-build.label"),
             onClick: async (close) => {
               try {
                 const r = await fetch(apiUrl("/api/extensions/aiti-crash-fatal/corrupt-build"), { method: "POST" });
                 const d = await r.json();
                 close();
                 showPopup({
-                  title: d.ok ? "已注入编译错误（AppShell.tsx）" : "失败",
+                  title: d.ok ? t("it.crash-build.done.title") : t("it.fail.title"),
                   body: d.ok
-                    ? "已向 components/AppShell.tsx 顶部注入不存在导出的 import（备份在 " + (d.bak || "") + "）。\n\n等 HMR / 刷新页面 → 全屏 Build Error overlay（global-error 接不住编译错）→ rescue-hook 🚑 横幅 → 自动引导进 /rescue.html 静态急救页（不进编译图，模块图坏时依然可达）。\n\n还原：本弹窗重开点「立即恢复编译」，或访问 /api/extensions/aiti-crash-fatal/restore-build，或在急救页发指令让 AI 跑。"
-                    : ("失败：" + (d.error || r.status)),
-                  buttons: [{ label: "i18n:it.close.label" }],
+                    ? t("it.crash-build.done.body", { bak: d.bak || "" })
+                    : t("it.fail.body", { error: String(d.error || r.status) }),
+                  buttons: [{ label: t("it.close.label") }],
                 });
               } catch (e) {
-                showPopup({ title: "网络错误", body: String(e), buttons: [{ label: "i18n:it.close.label" }] });
+                showPopup({ title: t("it.network-error.title"), body: String(e), buttons: [{ label: t("it.close.label") }] });
               }
             },
           },
           {
-            label: "崩页面",
+            label: t("it.crash-page.label"),
             onClick: async (close) => {
               try {
                 const r = await fetch(apiUrl("/api/extensions/aiti-crash-fatal/corrupt"), { method: "POST" });
                 const d = await r.json();
                 close();
                 showPopup({
-                  title: d.ok ? "已破坏 app/page.tsx" : "失败",
+                  title: d.ok ? t("it.crash-page.done.title") : t("it.fail.title"),
                   body: d.ok
-                    ? "已破坏 app/page.tsx（备份在 " + (d.bak || "") + "）。\n\n现在刷新页面（Cmd/Ctrl+R）→ 页面崩到 🚑 急救页（chat UI 进不去）。\n\n在急救页发指令测试急救 AI，或直接访问 /api/extensions/aiti-crash-fatal/restore（GET）还原。"
-                    : ("失败：" + (d.error || r.status)),
-                  buttons: [{ label: "i18n:it.close.label" }],
+                    ? t("it.crash-page.done.body", { bak: d.bak || "" })
+                    : t("it.fail.body", { error: String(d.error || r.status) }),
+                  buttons: [{ label: t("it.close.label") }],
                 });
               } catch (e) {
-                showPopup({ title: "网络错误", body: String(e), buttons: [{ label: "i18n:it.close.label" }] });
+                showPopup({ title: t("it.network-error.title"), body: String(e), buttons: [{ label: t("it.close.label") }] });
               }
             },
           },
         );
         showPopup({
-          title: "i18n:it.fatal.title",
-          body: "选择崩溃模式（均有备份 / 可恢复）：\n\n🧨 崩扩展 startup（部分崩）— 本扩展 startup 入口崩：页面 / API / client 全活着，左下角出现 ⚠「启动失败」指示器，可看加载失败消息。60s 自动恢复。\n\n💥 崩页面 — 破坏 app/page.tsx：刷新后整页崩到 🚑 global-error 急救页（chat UI 进不去）。\n\n🧱 崩编译 — 注入不存在导出：Build Error overlay 全屏接管（编译错 global-error 接不住）→ rescue-hook 🚑 横幅自动引导进 /rescue.html 静态急救页。\n" + (extCrashed ? "\n⚠ 当前正处于 startup 崩溃态，可点「立即恢复扩展」。" : "") + (buildCorrupted ? "\n🧱 当前正处于编译错误态，可点「立即恢复编译」。" : ""),
+          title: t("it.fatal.title"),
+          body: t("it.fatal.body") + (extCrashed ? t("it.fatal.ext-crashed") : "") + (buildCorrupted ? t("it.fatal.build-broken") : ""),
           buttons,
         });
       },
-      title: "i18n:it.fatal.title.2",
+      title: t("it.fatal.title.2"),
       style: {
         fontSize: 11, padding: "2px 8px", borderRadius: 5, cursor: "pointer",
         background: "#dc2626", color: "#fff", border: "none", fontWeight: 600,
