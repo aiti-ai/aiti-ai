@@ -3067,12 +3067,20 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         setQueuedMessages((prev) => {
           const steering = [...((event.steering as string[] | undefined) ?? [])];
           const followUp = [...((event.followUp as string[] | undefined) ?? [])];
+          // Authoritative attachment flags ride on the frame since the server-side
+          // enrichment (text-only before): prefer them when length-aligned; the stale-
+          // state alignment remains the fallback for older backends that report text only.
+          const eventSteerFlags = event.steeringHasImages as boolean[] | undefined;
+          const eventFollowFlags = event.followUpHasImages as boolean[] | undefined;
           return {
             steering,
             followUp,
-            // pi reports text only: align the attachment flags against the local stale values (fresh values are written from the queue RPC response).
-            steeringHasImages: alignQueueAttachmentFlags(prev.steeringHasImages, steering.length),
-            followUpHasImages: alignQueueAttachmentFlags(prev.followUpHasImages, followUp.length),
+            steeringHasImages: eventSteerFlags && eventSteerFlags.length === steering.length
+              ? eventSteerFlags.map(Boolean)
+              : alignQueueAttachmentFlags(prev.steeringHasImages, steering.length),
+            followUpHasImages: eventFollowFlags && eventFollowFlags.length === followUp.length
+              ? eventFollowFlags.map(Boolean)
+              : alignQueueAttachmentFlags(prev.followUpHasImages, followUp.length),
           };        });
         break;
       }
