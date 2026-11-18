@@ -1,4 +1,5 @@
 /* aiti-devtools launcher · 单文件注入版（构建产物，勿手改）*/
+"use strict";
 (() => {
   var __defProp = Object.defineProperty;
   var __getOwnPropSymbols = Object.getOwnPropertySymbols;
@@ -626,7 +627,8 @@
   }
 
   // dbg:dbg-client
-  var MINI_DBG_CLIENT = `(() => {
+  var MINI_DBG_CLIENT = `"use strict";
+(() => {
   var __defProp = Object.defineProperty;
   var __getOwnPropSymbols = Object.getOwnPropertySymbols;
   var __hasOwnProp = Object.prototype.hasOwnProperty;
@@ -2357,7 +2359,7 @@
         window.Date = _origDate;
         return;
       }
-      window.Date = function(OrigDate) {
+      window.Date = (function(OrigDate) {
         function DbgDate() {
           var d;
           if (!(this instanceof DbgDate)) return new OrigDate(OrigDate.now() + offset).toString();
@@ -2373,7 +2375,7 @@
         DbgDate.parse = OrigDate.parse;
         DbgDate.UTC = OrigDate.UTC;
         return DbgDate;
-      }(_origDate);
+      })(_origDate);
     }
     var FROZEN_CATEGORIES = {
       click: ["mousedown", "mouseup", "click", "dblclick", "pointerdown", "pointerup", "contextmenu"],
@@ -3557,11 +3559,11 @@
       return false;
     }
   }
-  var _fixedVisual = function() {
+  var _fixedVisual = (function() {
     var ua = String(navigator.userAgent || "");
     var pf = String(navigator.platform || "");
     return /iPhone|iPad|iPod/i.test(ua) && (/iPhone|iPad|iPod/i.test(pf) || /MacIntel/i.test(pf));
-  }();
+  })();
   function positionPhysical(el2, visX, visY, scale, scaleY) {
     if (!isFinite(visX)) visX = 0;
     if (!isFinite(visY)) visY = 0;
@@ -4082,6 +4084,10 @@
     "s no response) — fell back to this window; check the URL and retry": "s 无响应）——已回退本窗口，请确认地址后重试",
     "s then auto-allow (or click the button below)": "s 后自动允许执行（也可手动点下方按钮）",
     "s then auto-allow (unattended)": "s 后自动允许执行（无人值守）",
+    "session": "会话",
+    "Source session info": "来源会话信息",
+    "🧠 Source session": "🧠 来源会话",
+    "📋 Copy session key": "📋 复制会话标识",
     "⇈ Dock top": "⇈ 顶部横排",
     "⇊ Dock bottom": "⇊ 底部横排",
     "⇤ Split left": "⇤ 左侧并排",
@@ -4838,9 +4844,9 @@
               }
               ctx.finishPickPanel({ status: "async", payload: _pl, note: t("Candidate placed in AI pending area") });
             } else {
-              var _fin = function(p2) {
-                _pp.el = p2;
-                ctx.finishPickPanel({ status: "answered", payload: p2, selector: p2.xpath || null });
+              var _fin = function(p22) {
+                _pp.el = p22;
+                ctx.finishPickPanel({ status: "answered", payload: p22, selector: p22.xpath || null });
               };
               if (typeof ctx.resolveElLoc === "function") ctx.resolveElLoc(_pl).then(function(pl2) {
                 _fin(pl2 || _pl);
@@ -5703,17 +5709,17 @@
 
   // src/launcher/danger.js
   function initDanger(ctx) {
-    ctx.handleAiCommand = function(p2) {
+    ctx.handleAiCommand = function(p22) {
       var sendResult = function(ok, result) {
-        ctx.postToAi({ type: "dbg_command_result", payload: { requestId: p2.requestId, cmdHint: p2.cmd, ok, result } });
+        ctx.postToAi({ type: "dbg_command_result", payload: { requestId: p22.requestId, cmdHint: p22.cmd, ok, result } });
       };
-      if (p2.cmd === "__snapshot__") {
+      if (p22.cmd === "__snapshot__") {
         var snap = {
           url: location.href.slice(0, 500),
-          targetUrl: function() {
+          targetUrl: (function() {
             var tw = (ctx.listFrames()[0] || {}).win;
             return tw && tw.location ? tw.location.href.slice(0, 500) : null;
-          }(),
+          })(),
           selected: ctx.lastPayload ? { tag: ctx.lastPayload.tag, xpath: ctx.lastPayload.xpath } : null,
           conditions: { animSpeed: ctx.optState.animSpeed, netDelay: ctx.optState.netDelay, netOffline: ctx.optState.netOffline, darkMode: ctx.optState.darkMode, timeOffsetMs: ctx.optState.timeOffsetMs },
           errors: ctx.errLog.slice(0, 10)
@@ -5722,40 +5728,40 @@
         sendResult(true, snap);
         return Promise.resolve({ ok: true, result: snap });
       }
-      if (GESTURE_COMMANDS[p2.cmd]) {
+      if (GESTURE_COMMANDS[p22.cmd]) {
         return new Promise(function(resolve) {
-          ctx.showGestureCard(p2, function() {
-            var hostResult = ctx.execBrowserInHost(p2.cmd, p2.args);
+          ctx.showGestureCard(p22, function() {
+            var hostResult = ctx.execBrowserInHost(p22.cmd, p22.args);
             if (hostResult) {
               hostResult.then(function(r) {
                 sendResult(!r.error, r);
                 resolve({ ok: !r.error, result: r });
               });
             } else {
-              ctx.execInPage(p2.cmd, p2.args, ctx.frameIdOf(p2.frameId)).then(function(result) {
+              ctx.execInPage(p22.cmd, p22.args, ctx.frameIdOf(p22.frameId)).then(function(result) {
                 sendResult(result.ok, result.result);
                 resolve(result);
               });
             }
           }, function() {
-            sendResult(false, { error: t("User cancelled the gesture ") + p2.cmd });
-            resolve({ ok: false, result: { error: t("User cancelled ") + p2.cmd } });
+            sendResult(false, { error: t("User cancelled the gesture ") + p22.cmd });
+            resolve({ ok: false, result: { error: t("User cancelled ") + p22.cmd } });
           });
         });
       }
-      if (p2.cmd === "Page.captureScreenshot") {
-        return Promise.resolve(ctx.execBrowserInHost(p2.cmd, p2.args)).then(function(r) {
+      if (p22.cmd === "Page.captureScreenshot") {
+        return Promise.resolve(ctx.execBrowserInHost(p22.cmd, p22.args)).then(function(r) {
           sendResult(!r.error, r);
           return { ok: !!(r && !r.error), result: r };
         });
       }
-      if (DANGER_COMMANDS[p2.cmd] && !ctx.sessionDangerOk) {
+      if (DANGER_COMMANDS[p22.cmd] && !ctx.sessionDangerOk) {
         return new Promise(function(resolve) {
-          ctx.dangerQueue.push({ p2, resolve });
+          ctx.dangerQueue.push({ p2: p22, resolve });
           ctx.pumpDangerQueue();
         });
       }
-      return ctx.execInPage(p2.cmd, p2.args, ctx.frameIdOf(p2.frameId)).then(function(result) {
+      return ctx.execInPage(p22.cmd, p22.args, ctx.frameIdOf(p22.frameId)).then(function(result) {
         sendResult(result.ok, result.result);
         return result;
       });
@@ -5859,10 +5865,10 @@
         );
       }
       if (cmd === "Browser.fullscreen") {
-        var fsEl = function() {
+        var fsEl = (function() {
           var fr = ctx.listFrames()[parseInt(String(ctx.selFrameId()).slice(1), 10) || 0];
           return fr && fr.el || document.documentElement;
-        }();
+        })();
         if (fsEl && fsEl.requestFullscreen) {
           return fsEl.requestFullscreen().then(
             function() {
@@ -6044,10 +6050,24 @@
             });
           });
         };
-        var buildShotCard = function(titleText) {
+        var buildShotCard = function(titleText, srcIt) {
           var card = el("div", { class: "dbg-pick-dialog" });
           var head = el("div", { class: "dbg-pick-head" });
           head.appendChild(el("span", { class: "dbg-pick-title" }, [titleText]));
+          var shotSrc = ctx.agentSrcInfoBtn(srcIt);
+          if (shotSrc) {
+            head.appendChild(shotSrc);
+            shotSrc.addEventListener("click", function(e) {
+              e.stopPropagation();
+              var b = card.querySelector(".dbg-pick-body");
+              if (b) ctx.toggleAgentSrcInfo(shotSrc, b, function() {
+                try {
+                  placeShotCard(card, card.__shotW);
+                } catch (e2) {
+                }
+              });
+            });
+          }
           var timerSpan = el("span", { style: "font-weight:400;color:#93c5fd;font-size:11px;flex-shrink:0;margin-left:auto" }, [""]);
           head.appendChild(timerSpan);
           card.appendChild(head);
@@ -6088,7 +6108,7 @@
         var runShotCard = function(reason) {
           return new Promise(function(resAll) {
             try {
-              var ui = buildShotCard(t("📸 AI wants a screenshot"));
+              var ui = buildShotCard(t("📸 AI wants a screenshot"), p2);
               var card = ui.card, timerSpan = ui.timerSpan;
               var body = el("div", { class: "dbg-pick-body" });
               card.appendChild(body);
@@ -6222,19 +6242,20 @@
       }
       return null;
     };
-    ctx.showGestureCard = function(p2, onDone, onCancel) {
+    ctx.showGestureCard = function(p22, onDone, onCancel) {
       if (!ctx.gestureCard) ctx.buildGestureCard();
-      ctx.gestureCard.querySelector(".dbg-gesture-note").textContent = GESTURE_COMMANDS[p2.cmd] || t("Browser-restricted action");
-      ctx.gestureCard.querySelector(".dbg-gesture-cmd").textContent = p2.cmd + " " + JSON.stringify(p2.args || {});
+      ctx.gestureCard.querySelector(".dbg-gesture-note").textContent = GESTURE_COMMANDS[p22.cmd] || t("Browser-restricted action");
+      ctx.bindAgentSrcInfoButton(ctx.gestureCard, p22);
+      ctx.gestureCard.querySelector(".dbg-gesture-cmd").textContent = p22.cmd + " " + JSON.stringify(p22.args || {});
       ctx.gestureCard.classList.add("dbg-open");
       ctx.gestureCard.querySelector(".dbg-gesture-ok").onclick = function() {
         ctx.gestureCard.classList.remove("dbg-open");
-        ctx.addMsg("sys", t("🖱 User clicked to complete gesture: ") + p2.cmd);
+        ctx.addMsg("sys", t("🖱 User clicked to complete gesture: ") + p22.cmd);
         onDone();
       };
       ctx.gestureCard.querySelector(".dbg-gesture-cancel").onclick = function() {
         ctx.gestureCard.classList.remove("dbg-open");
-        ctx.addMsg("sys", t("⛔ User cancelled gesture: ") + p2.cmd);
+        ctx.addMsg("sys", t("⛔ User cancelled gesture: ") + p22.cmd);
         onCancel();
       };
     };
@@ -6266,25 +6287,26 @@
       if (ctx.confirmingDanger || !ctx.dangerQueue.length) return;
       ctx.confirmingDanger = true;
       var job = ctx.dangerQueue.shift();
-      var p2 = job.p2;
+      var p22 = job.p2;
       var finish = function(ok, result) {
         ctx.confirmingDanger = false;
-        ctx.postToAi({ type: "dbg_command_result", payload: { requestId: p2.requestId, cmdHint: p2.cmd, ok, result } });
+        ctx.postToAi({ type: "dbg_command_result", payload: { requestId: p22.requestId, cmdHint: p22.cmd, ok, result } });
         job.resolve({ ok, result });
         ctx.pumpDangerQueue();
       };
-      ctx.showDangerConfirm(p2, function() {
-        ctx.execInPage(p2.cmd, p2.args).then(function(r) {
+      ctx.showDangerConfirm(p22, function() {
+        ctx.execInPage(p22.cmd, p22.args).then(function(r) {
           finish(r.ok, r.result);
         });
       }, function() {
-        finish(false, { error: t("User denied execution ") + p2.cmd });
+        finish(false, { error: t("User denied execution ") + p22.cmd });
       });
     };
-    ctx.showDangerConfirm = function(p2, onAllow, onDeny) {
+    ctx.showDangerConfirm = function(p22, onAllow, onDeny) {
       if (!ctx.confirmCard) ctx.buildConfirmCard();
-      ctx.confirmCard.querySelector(".dbg-confirm-cmd").textContent = p2.cmd + " " + JSON.stringify(p2.args || {});
-      ctx.confirmCard.querySelector(".dbg-confirm-note").textContent = DANGER_COMMANDS[p2.cmd] || t("Dangerous action");
+      ctx.confirmCard.querySelector(".dbg-confirm-cmd").textContent = p22.cmd + " " + JSON.stringify(p22.args || {});
+      ctx.confirmCard.querySelector(".dbg-confirm-note").textContent = DANGER_COMMANDS[p22.cmd] || t("Dangerous action");
+      ctx.bindAgentSrcInfoButton(ctx.confirmCard, p22);
       ctx.confirmCard.classList.add("dbg-open");
       var allowBtn = ctx.confirmCard.querySelector(".dbg-allow");
       var denyBtn = ctx.confirmCard.querySelector(".dbg-deny");
@@ -6322,13 +6344,13 @@
           ctx.sessionDangerOk = true;
           ctx.addMsg("sys", t("🔓 Remembered for this session: dangerous commands no longer confirmed one by one (refresh the page to reset)."));
         }
-        ctx.addMsg("sys", (auto ? t("🤖 Auto-allow on timeout (unattended): ") : t("✅ User allowed: ")) + p2.cmd);
+        ctx.addMsg("sys", (auto ? t("🤖 Auto-allow on timeout (unattended): ") : t("✅ User allowed: ")) + p22.cmd);
         onAllow();
       };
       denyBtn.onclick = function() {
         stopCountdown();
         ctx.confirmCard.classList.remove("dbg-open");
-        ctx.addMsg("sys", t("⛔ User denied: ") + p2.cmd);
+        ctx.addMsg("sys", t("⛔ User denied: ") + p22.cmd);
         onDeny();
       };
     };
@@ -6423,6 +6445,97 @@
         ctx.showPickToast(t('🖱 Click a page element to select<br><span style="color:#a5b4fc;font-size:11px">Confirm on the toolbar with ✓ after picking</span>'));
       } catch (e) {
       }
+    };
+    ctx.formatAgentSrc = function(it) {
+      var ak = it && it.agentId ? String(it.agentId).trim() : "";
+      if (!ak) return null;
+      var name = it && it.agentName ? String(it.agentName).trim() : "";
+      var parts = ak.split("/");
+      var aid = parts[0] || ak;
+      var sid = parts.slice(1).join("/");
+      var sidShort = sid && sid.length > 10 ? sid.slice(0, 8) + "…" : sid;
+      var dev = it && it.targetDevice ? String(it.targetDevice).trim() : "";
+      var segs = ["from " + aid];
+      if (sidShort) segs.push(t("session") + " " + sidShort);
+      if (name && name !== aid) segs.push(name);
+      if (dev) segs.push(dev);
+      return { key: ak, aid, sid, name, dev, text: segs.join(" · ") };
+    };
+    ctx.agentSrcInfoBtn = function(it) {
+      var src = ctx.formatAgentSrc(it);
+      if (!src) return null;
+      var btn = el("button", { class: "dbg-src-info-btn", title: t("Source session info") }, ["ⓘ"]);
+      btn.style.cssText = "border:none;background:none;color:#93c5fd;font-size:13px;cursor:pointer;padding:2px 5px;line-height:1;font-weight:700";
+      btn.__agentSrc = src;
+      return btn;
+    };
+    ctx.buildAgentSrcInfo = function(src) {
+      var wrap = el("div", { class: "dbg-src-info" });
+      wrap.style.cssText = "margin-top:6px;padding:7px 9px;border:1px solid rgba(148,163,184,.3);border-radius:8px;background:rgba(15,23,42,.45);font-size:11px;line-height:1.7;color:#cbd5e1";
+      var head = el("div", { style: "font-weight:700;color:#93c5fd;margin-bottom:2px" }, [t("🧠 Source session")]);
+      wrap.appendChild(head);
+      var row = function(k, v) {
+        var r = el("div", {});
+        var kb = el("span", { style: "color:#94a3b8;display:inline-block;min-width:52px" }, [k]);
+        var vb = el("span", { style: "word-break:break-all;user-select:text" }, [v]);
+        r.appendChild(kb);
+        r.appendChild(vb);
+        wrap.appendChild(r);
+        return vb;
+      };
+      row("agent", src.aid);
+      if (src.sid) {
+        var sidV = row(t("session"), src.sid);
+        sidV.title = src.key;
+      }
+      if (src.name && src.name !== src.aid) row("name", src.name);
+      if (src.dev) row("device", src.dev);
+      var copyBtn = el("button", { style: "margin-top:4px;border:1px solid rgba(148,163,184,.4);border-radius:6px;background:none;color:#93c5fd;font-size:10px;cursor:pointer;padding:3px 8px" }, [t("📋 Copy session key")]);
+      copyBtn.addEventListener("click", function(e) {
+        e.stopPropagation();
+        if (ctx.copyToClipboard) ctx.copyToClipboard(src.key, function(ok) {
+          copyBtn.textContent = ok ? t("✓ Copied") : "✕";
+          setTimeout(function() {
+            copyBtn.textContent = t("📋 Copy session key");
+          }, 1200);
+        });
+      });
+      wrap.appendChild(copyBtn);
+      return wrap;
+    };
+    ctx.toggleAgentSrcInfo = function(btn, bodyEl, reflow) {
+      var existing = bodyEl.querySelector(".dbg-src-info");
+      if (existing) {
+        existing.parentNode.removeChild(existing);
+        if (reflow) reflow(false);
+        return;
+      }
+      bodyEl.appendChild(ctx.buildAgentSrcInfo(btn.__agentSrc));
+      if (reflow) reflow(true);
+    };
+    ctx.bindAgentSrcInfoButton = function(card, it) {
+      var head = card.querySelector(".dbg-dialog-head");
+      var body = card.querySelector(".dbg-dialog-body");
+      if (!head || !body) return null;
+      var old = body.querySelector(".dbg-src-info");
+      if (old) old.parentNode.removeChild(old);
+      var btn = head.querySelector(".dbg-src-info-btn");
+      var src = ctx.formatAgentSrc(it);
+      if (!src) {
+        if (btn && btn.parentNode) btn.parentNode.removeChild(btn);
+        return null;
+      }
+      if (!btn) {
+        btn = el("button", { class: "dbg-src-info-btn", title: t("Source session info") }, ["ⓘ"]);
+        btn.style.cssText = "border:none;background:none;color:#93c5fd;font-size:16px;cursor:pointer;padding:0 6px;line-height:1;font-weight:700";
+        head.appendChild(btn);
+      }
+      btn.__agentSrc = src;
+      btn.onclick = function(e) {
+        e.stopPropagation();
+        ctx.toggleAgentSrcInfo(btn, body, null);
+      };
+      return btn;
     };
     ctx.NOTIFY = { timer: null, origTitle: document.title, audio: null };
     ctx.notifyUser = function(title, body, opts) {
@@ -6765,6 +6878,23 @@
       var head = el("div", { class: "dbg-pick-head" });
       var kindTitle = { confirm: t("🤖 AI needs your confirmation"), choose: t("🤖 AI asks you to choose"), input: t("✍️ AI asks for your input"), presence: t("🙋 AI asks if you're present") };
       head.appendChild(el("span", { class: "dbg-pick-title" }, [kindTitle[kind] || t("🤖 AI needs your answer")]));
+      var askSrc = ctx.agentSrcInfoBtn(it);
+      if (askSrc) {
+        head.appendChild(askSrc);
+        askSrc.addEventListener("click", function(e) {
+          e.stopPropagation();
+          ctx.toggleAgentSrcInfo(askSrc, body, function() {
+            try {
+              placePhysPanel(dialog, { visW: Math.min(420, Math.round(getPhysViewport().w) - 24), dock: "bottom", gap: 12, offsetY: 64, minH: 40, maxWidth: "420px", overflowY: "auto" });
+            } catch (e2) {
+            }
+            try {
+              ctx.dodgeToolbarAboveDialog(dialog);
+            } catch (e2) {
+            }
+          });
+        });
+      }
       var noTimeout = !(timeoutMs > 0);
       var timerSpan = el("span", { style: "font-weight:400;color:#93c5fd;font-size:11px" }, [noTimeout ? t("♾ Waiting") : "⏱ " + Math.ceil(timeoutMs / 1e3) + "s"]);
       var pauseBtn = el("button", { title: t("Pause countdown") }, ["⏸"]);
@@ -6898,7 +7028,7 @@
           if (e.key === "Enter") send.click();
         });
       } else {
-        let refreshAskSend = function() {
+        let refreshAskSend2 = function() {
           var hasSel = sel.custom || (multiple ? Object.keys(sel.idxs).length > 0 : sel.v !== null);
           var hasCmt = !!(commentInp && commentInp.value.trim());
           if (sendBtn) sendBtn.disabled = !(hasSel || hasCmt);
@@ -6907,6 +7037,7 @@
             if (multiple) footSend.textContent = t("✅ Send selected (") + Object.keys(sel.idxs).length + "）";
           }
         };
+        var refreshAskSend = refreshAskSend2;
         var optBtns = optWrap.querySelectorAll(".dbg-ask-opt");
         Array.prototype.forEach.call(optBtns, function(o) {
           o.addEventListener("click", function() {
@@ -6924,7 +7055,7 @@
                 } catch (e) {
                 }
               }
-              refreshAskSend();
+              refreshAskSend2();
               return;
             }
             sel.custom = false;
@@ -6946,7 +7077,7 @@
                 x.classList.toggle("dbg-on", x === o);
               });
             }
-            refreshAskSend();
+            refreshAskSend2();
             if (!(kind === "choose" && multiple)) {
               setTimeout(finishAskCustom, 0);
             }
@@ -6954,14 +7085,14 @@
         });
         if (sendBtn) sendBtn.addEventListener("click", finishAskCustom);
         if (commentInp) {
-          commentInp.addEventListener("input", refreshAskSend);
+          commentInp.addEventListener("input", refreshAskSend2);
           commentInp.addEventListener("keydown", function(e) {
             if (e.key !== "Enter") return;
             if (sendBtn && !sendBtn.disabled) sendBtn.click();
             else if (footSend) footSend.click();
           });
         }
-        refreshAskSend();
+        refreshAskSend2();
       }
       body.appendChild(ctl);
       if (it.rejectable !== false && kind !== "presence") {
@@ -7143,6 +7274,19 @@
       var dialog = el("div", { class: "dbg-pick-dialog" });
       var head = el("div", { class: "dbg-pick-head" });
       head.appendChild(el("span", { class: "dbg-pick-title" }, ["🔔 " + (it.title || t("AI notification"))]));
+      var notifSrc = ctx.agentSrcInfoBtn(it);
+      if (notifSrc) {
+        head.appendChild(notifSrc);
+        notifSrc.addEventListener("click", function(e) {
+          e.stopPropagation();
+          ctx.toggleAgentSrcInfo(notifSrc, body, function() {
+            try {
+              restackNotifyCards();
+            } catch (e2) {
+            }
+          });
+        });
+      }
       var noTimeout = !(timeoutMs > 0);
       var timerSpan = el("span", { style: "font-weight:400;color:#93c5fd;font-size:11px" }, [noTimeout ? t("♾ Persistent") : "⏱ " + Math.ceil(timeoutMs / 1e3) + "s"]);
       var pauseBtn = el("button", { title: t("Pause countdown") }, ["⏸"]);
@@ -7254,7 +7398,9 @@
         ctx.showNotifyPanel(payload.requestId, it);
         return;
       }
-      ctx.notifyUser(t("🤖 AI needs you"), itKind === "pick_element" ? it.prompt || t("Please click an element on the page") : it.prompt || t("Please answer on the page"));
+      var _src = ctx.formatAgentSrc(it);
+      var _promptBody = itKind === "pick_element" ? it.prompt || t("Please click an element on the page") : it.prompt || t("Please answer on the page");
+      ctx.notifyUser(t("🤖 AI needs you"), (_src ? "[" + _src.text + "] " : "") + _promptBody);
       if (itKind === "pick_element") {
         ctx.showPickElementPanel(payload.requestId, it);
       } else {
@@ -10134,9 +10280,9 @@
           break;
         }
         case "dbg_mcp_result": {
-          var p2 = m.payload || {};
-          if (ctx.closeHostAskPanel) ctx.closeHostAskPanel(p2.requestId);
-          if (ctx.closePickPanel) ctx.closePickPanel(p2.requestId);
+          var p22 = m.payload || {};
+          if (ctx.closeHostAskPanel) ctx.closeHostAskPanel(p22.requestId);
+          if (ctx.closePickPanel) ctx.closePickPanel(p22.requestId);
           if (ctx.shotCardCleanup) ctx.shotCardCleanup();
           break;
         }
@@ -10809,8 +10955,8 @@
       }
       if (!host) return Promise.resolve(payload);
       var p1 = host.resolveChunkSource(fc.url, fc.line, fc.column);
-      var p2 = uc ? host.resolveChunkSource(uc.url, uc.line, uc.column) : Promise.resolve(null);
-      return Promise.all([p1, p2]).then(function(rs) {
+      var p22 = uc ? host.resolveChunkSource(uc.url, uc.line, uc.column) : Promise.resolve(null);
+      return Promise.all([p1, p22]).then(function(rs) {
         var r = rs[0], u = rs[1];
         if (r && r.file) {
           fw.file = r.file;
@@ -11562,14 +11708,14 @@
 
   // src/standalone.js
   (function() {
-    const myScript = function() {
+    const myScript = (function() {
       try {
         if (document.currentScript && document.currentScript.src) return document.currentScript;
         return [...document.querySelectorAll("script")].find((x) => (x.src || "").indexOf("aiti-launcher") >= 0) || null;
       } catch (e) {
         return null;
       }
-    }();
+    })();
     function takeoverCrossInstance() {
       try {
         if (!myScript || !myScript.src) return false;

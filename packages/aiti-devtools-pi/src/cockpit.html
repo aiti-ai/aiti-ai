@@ -1360,7 +1360,7 @@ function renderInteraction(m) {
   const card = document.createElement('div');
   card.className = 'card';
   const kindLabel = { confirm: '❓ 确认', choose: '🔀 选择', input: '⌨️ 输入', pick_element: '🖱️ 点选', presence: '🙋 在场' }[it.kind] || it.kind || '?';
-  const agentLabel = it.agentId || m.agentId || '';
+  const agentLabel = it.agentName || it.agentId || m.agentId || ''; // registered display name first (falls back to raw agentKey)
   card.__ix = { kind: it.kind, kindLabel, prompt: it.prompt || '', agentId: agentLabel }; // 完成 → 消息流记录存根
   card.innerHTML = `<div class="k">${esc(kindLabel)}${agentLabel ? ' · from ' + esc(agentLabel) : ''}</div><div class="p">${esc(it.prompt || '')}</div>`;
   if (!isNotify) {

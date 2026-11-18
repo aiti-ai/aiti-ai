@@ -267,10 +267,20 @@ export function initDanger(ctx) {
         };
         // —— 截屏卡片公共壳：右下角浮动小卡（无遮罩不挡页面、可拖动——点选面板/AI 窗同款） ——
         // 物理适配：placePhysPanel 定位（与问答/确认窗同套视觉坐标算法）；makeCardDrag 头部拖拽
-        var buildShotCard = function (titleText) {
+        var buildShotCard = function (titleText, srcIt) {
           var card = el('div', { class: 'dbg-pick-dialog' });
           var head = el('div', { class: 'dbg-pick-head' });
           head.appendChild(el('span', { class: 'dbg-pick-title' }, [titleText]));
+          var shotSrc = ctx.agentSrcInfoBtn(srcIt); // ⓘ: source block toggled in the card body
+          if (shotSrc) {
+            head.appendChild(shotSrc);
+            shotSrc.addEventListener('click', function (e) {
+              e.stopPropagation();
+              // body is built after this head (runShotCard) — look it up on the card at click time
+              var b = card.querySelector('.dbg-pick-body');
+              if (b) ctx.toggleAgentSrcInfo(shotSrc, b, function () { try { placeShotCard(card, card.__shotW); } catch (e2) {} });
+            });
+          }
           var timerSpan = el('span', { style: 'font-weight:400;color:#93c5fd;font-size:11px;flex-shrink:0;margin-left:auto' }, ['']);
           head.appendChild(timerSpan);
           card.appendChild(head);
@@ -305,7 +315,7 @@ export function initDanger(ctx) {
         var runShotCard = function (reason) {
           return new Promise(function (resAll) {
             try {
-              var ui = buildShotCard(t('📸 AI wants a screenshot'));
+              var ui = buildShotCard(t('📸 AI wants a screenshot'), p2);
               var card = ui.card, timerSpan = ui.timerSpan;
               var body = el('div', { class: 'dbg-pick-body' });
               card.appendChild(body);
@@ -418,6 +428,7 @@ export function initDanger(ctx) {
   ctx.showGestureCard = function (p2, onDone, onCancel) {
       if (!ctx.gestureCard) ctx.buildGestureCard();
       ctx.gestureCard.querySelector('.dbg-gesture-note').textContent = GESTURE_COMMANDS[p2.cmd] || t('Browser-restricted action');
+      ctx.bindAgentSrcInfoButton(ctx.gestureCard, p2); // ⓘ per-show bind; sourceless payload removes the button
       ctx.gestureCard.querySelector('.dbg-gesture-cmd').textContent = p2.cmd + ' ' + JSON.stringify(p2.args || {});
       ctx.gestureCard.classList.add('dbg-open');
       ctx.gestureCard.querySelector('.dbg-gesture-ok').onclick = function () {
@@ -474,6 +485,7 @@ export function initDanger(ctx) {
       if (!ctx.confirmCard) ctx.buildConfirmCard();
       ctx.confirmCard.querySelector('.dbg-confirm-cmd').textContent = p2.cmd + ' ' + JSON.stringify(p2.args || {});
       ctx.confirmCard.querySelector('.dbg-confirm-note').textContent = DANGER_COMMANDS[p2.cmd] || t('Dangerous action');
+      ctx.bindAgentSrcInfoButton(ctx.confirmCard, p2); // ⓘ per-show bind; sourceless payload removes the button
       ctx.confirmCard.classList.add('dbg-open');
       var allowBtn = ctx.confirmCard.querySelector('.dbg-allow');
       var denyBtn = ctx.confirmCard.querySelector('.dbg-deny');
