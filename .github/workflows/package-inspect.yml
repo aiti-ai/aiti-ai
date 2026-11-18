@@ -1,0 +1,30 @@
+# One-shot diagnostic: report the GHCR container package's real visibility
+# (via GITHUB_TOKEN packages:read) and test anonymous pullability from the
+# runner (clean network, no mirrors). Dispatch-only; harmless read-only.
+name: Package Inspect
+
+on:
+  workflow_dispatch:
+
+permissions:
+  packages: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Package metadata (authenticated)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for scope in "user/packages/container/aiti-ai" "orgs/${{ github.repository_owner }}/packages/container/aiti-ai"; do
+            echo "--- $scope ---"
+            gh api "$scope" 2>&1 | head -c 400 || true
+            echo
+          done
+
+      - name: Anonymous pull test (clean runner network)
+        run: |
+          echo "--- anonymous skopeo/docker pull of ghcr.io/${{ github.repository }}:0.15.15-aiti.10 ---"
+          docker pull "ghcr.io/${{ github.repository }}:0.15.15-aiti.10" 2>&1 | tail -3 || true
