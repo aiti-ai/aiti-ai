@@ -203,11 +203,29 @@ export function openSessionIndex(dbPath: string): SessionIndex {
 }
 
 function openSessionIndexInner(dbPath: string): SessionIndex {
-  const db = new DatabaseSync(dbPath);
+  // The constructor itself can transiently fail with SQLITE_BUSY before any
+  // connection-scoped busy_timeout exists: the peer instance (dev/prod share one
+  // dataDir) may hold an exclusive WAL checkpoint / recovery / write-storm window
+  // right at open time. Short synchronous backoff — first attempt is free in the
+  // normal path, worst case ~1.5s, far below the >5s storms the async facade
+  // already documented (2026-11-15 "startup: database is locked" incident).
+  let db: DatabaseSync | null = null;
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 7; attempt++) {
+    try { db = new DatabaseSync(dbPath); break; }
+    catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      lastErr = e;
+      if (!/locked|busy/i.test(msg)) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+    }
+  }
+  if (db === null) throw lastErr;
   // dev/prod 双实例共享同一 dataDir（PI_WEB_DATA_DIR）时两进程并发写本库：
   // 无 busy_timeout 时并发写立即 SQLITE_BUSY → sync 事务回滚 → 行间歇性丢失（实测
-  // 站位行时有时无）。5s 重试窗口足够另一进程事务提交。
-  try { db.exec("PRAGMA busy_timeout = 5000"); } catch { /* old node without pragma support */ }
+  // 站位行时有时无）。15s 重试窗口：实测对端全量 sync 写风暴可持锁 >5s（2026-11-15
+  // startup 事故 + 2026-11-19 workspaces API 瞬时 500），5s 档不够。
+  try { db.exec("PRAGMA busy_timeout = 15000"); } catch { /* old node without pragma support */ }
   // WAL：写不阻塞读、COMMIT 免全量 journal 同步——3G 级索引库大事务 COMMIT 从秒级降到
   // 毫秒级（journal_mode 持久化进库文件，设一次永久生效；synchronous=NORMAL 为 WAL 推荐档）。
   try { db.exec("PRAGMA journal_mode = WAL"); db.exec("PRAGMA synchronous = NORMAL"); } catch { /* old node */ }
