@@ -919,6 +919,17 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   const [impDlg, setImpDlg] = useState<any>(null);
   const [selNode, setSelNode] = useState<any>(null);               // B 阶段双栏：左树选中节点 { type: "provider"|"model", provider, id? }
   const [treeQ, setTreeQ] = useState("");                         // 左树搜索（多词 AND 匹配 provider/模型 id）
+  // Provider row collapsed state (persisted in localStorage; default rule: collapse a provider holding more than 3 models, force-expand while searching or on selection).
+  const [treeCollapsed, setTreeCollapsed] = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(localStorage.getItem("pi:model-wizard:tree-collapsed") || "{}") || {}; } catch { return {}; }
+  });
+  const setTreeCollapsedP = (provider: string, collapsed: boolean) => {
+    setTreeCollapsed((prev) => {
+      const next = { ...prev, [provider]: collapsed };
+      try { localStorage.setItem("pi:model-wizard:tree-collapsed", JSON.stringify(next)); } catch { /* storage blocked */ }
+      return next;
+    });
+  };
   const [editAvail, setEditAvail] = useState<any>({});      // provider → {models[], checked[]} 刷新出的可选模型
   const [availFilter, setAvailFilter] = useState<any>({});  // provider → 刷新列表搜索词
   const [refreshBusy, setRefreshBusy] = useState<any>({});  // provider → 刷新中
@@ -3153,6 +3164,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           <div style={{ padding: "14px 8px", fontSize: 11, color: "var(--text-dim,#9ca3af)", textAlign: "center" }}>{ti("mw.a.443") + treeQ.trim() + "」"}</div>
         ) : provs.map((p: any) => {
           const allIds = (p.models || []).map((m: any) => (typeof m === "string" ? m : m.id));
+          const selUnder = !!selNode && selNode.provider === p.provider;
           // provider 名命中 → 全量模型；否则只显示命中的模型
           const pNameHit = !kws.length || kws.every((k) => hay(p.provider).includes(k));
           const ids = pNameHit ? allIds : allIds.filter((id: string) => kws.every((k) => hay(p.provider, id).includes(k)));
@@ -3160,11 +3172,13 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           const agg = aggCheck(p.provider);
           const bal = bals && bals[p.provider];
           const isProvSel = selNode?.type === "provider" && selNode.provider === p.provider;
+          const allCount = allIds.length;
+          const isCollapsed = (kws.length || selUnder) ? false : (treeCollapsed[p.provider] ?? allCount > 3);
           return (
             <div key={p.provider}>
               <button className="amw-sb-item" aria-current={isProvSel ? "page" : undefined}
                 title={(p.baseUrl || "") + " · " + (p.api || "") + (bal && bal.text ? "\n💰 " + bal.text : "")}
-                onClick={() => selectNode({ type: "provider", provider: p.provider })}>
+                onClick={() => { selectNode({ type: "provider", provider: p.provider }); if (isCollapsed) setTreeCollapsedP(p.provider, true); }}>
                 <ProviderAvatar id={p.provider} name={p.provider} size={16} radius={5} />
                 <span className="amw-sb-text is-grow">{p.provider}</span>
                 {probeBusy[p.provider] ? <span style={{ fontSize: 11, color: "var(--warn, #f59e0b)", flexShrink: 0 }} title={ti("mw.a.126")}>⏳</span>
@@ -3219,8 +3233,12 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                 {p.authType === "oauth" ? <span className="amw-tag is-oauth">🔐</span> : null}
                 {p.runtime ? <span className="amw-tag is-ro">{ti("mw.tx.117")}</span> : null}
                 {ni && ni.count > 0 ? <span className="amw-tag is-new">{"+" + ni.count}</span> : null}
+                {isCollapsed && allCount ? <span className="amw-sb-count">{allCount}</span> : null}
+                <span role="button" tabIndex={-1} className="amw-tree-toggle" aria-expanded={!isCollapsed}
+                  title={isCollapsed ? ti("mw.tx.209", { n: allCount }) : ti("mw.tx.208", { n: allCount })}
+                  onClick={(e) => { e.stopPropagation(); setTreeCollapsedP(p.provider, !isCollapsed); }}>{isCollapsed ? "▸" : "▾"}</span>
               </button>
-              {ids.map((id: string) => {
+              {!isCollapsed && ids.map((id: string) => {
                 const isModelSel = selNode?.type === "model" && selNode.provider === p.provider && selNode.id === id;
                 const probe = capProbes[p.provider + "/" + id];
                 const mDef = (p.models || []).find((m: any) => (typeof m === "string" ? m : m && m.id) === id);
