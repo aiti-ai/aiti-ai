@@ -41,7 +41,8 @@ const root = resolve(import.meta.dirname, '..', '..', '..'); // repo root
 const injectRoot = resolve(root, 'packages/aiti-devtools-inject');
 const injectDist = resolve(injectRoot, 'dist');
 const coreSrc = resolve(root, 'packages/aiti-devtools-core/src');
-const extSrc = resolve(root, 'pi-web-ext/aiti-devtools');
+// Extension sources live under extensions/ in this repo (older layout nested them under pi-web-ext/).
+const extSrc = existsSync(resolve(root, 'extensions/aiti-devtools')) ? resolve(root, 'extensions/aiti-devtools') : resolve(root, 'pi-web-ext/aiti-devtools');
 // 部署目标：dev 实例（PI_WEB_DEV_DIST=1，扩展根 ~/.pi/web-dev）与生产（~/.pi/web）
 const only = process.argv[2] === '--prod' ? 'prod' : process.argv[2] === '--dev' ? 'dev' : 'both';
 const TARGETS = [
