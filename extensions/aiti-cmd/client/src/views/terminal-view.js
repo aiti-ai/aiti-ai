@@ -59,6 +59,7 @@ export function createTerminalView(kit) {
     const [status, setStatus] = useState("connecting");
     const [meta, setMeta] = useState(null);
     const [exitInfo, setExitInfo] = useState(null);
+    const [missing, setMissing] = useState(false); // session no longer exists (server restart / TTL / cleanup)
     const [linkConfirm, setLinkConfirm] = useState(null); // {uri} — terminal URL click confirmation
     const termRef = useRef(null);
     const fitRef = useRef(null);
@@ -229,8 +230,15 @@ export function createTerminalView(kit) {
       // exit → one full snapshot, no subscription/keepalive;
       // running/queued → subscribe first (zero gap), snapshot after ready;
       // probe failure → conservative live path
-      fetch(api(`/sessions/${sid}`)).then((r) => r.json()).then((info) => {
+      fetch(api(`/sessions/${sid}`)).then((r) => (r.ok ? r.json().then((j) => ({ ...j, httpOk: true })) : { ok: false, httpOk: false, status: r.status })).then((info) => {
         if (disposed) return;
+        // 404 = the runner no longer knows this session (extension reload / TTL cleanup / old id).
+        // Subscribing would leave a black terminal forever, so surface it and stop.
+        if (info && info.httpOk === false && info.status === 404) {
+          setMissing(true);
+          setStatus("missing");
+          return;
+        }
         if (info && info.ok) {
           if (info.status === "exit") {
             setMeta({ sessionId: sid, cmd: info.cmd, cwd: info.cwd });
@@ -412,8 +420,8 @@ export function createTerminalView(kit) {
             : (exitInfo?.signal ? t("cmd.k83") + exitInfo.signal + t("cmd.k25") : exitInfo && (exitInfo.code ?? 0) !== 0 ? t("cmd.k85") + exitInfo.code + "）" : t("cmd.k84")))
         : h("span", { style: { color: status === "running" ? (killPending ? "var(--warn, #f59e0b)" : "var(--ok, #4ade80)") : "var(--text)" } },
           isSmall
-            ? (killPending ? "⏳" : status === "running" ? "●" : status === "queued" ? "⏳" : status === "replaying" ? "⟳" : status === "reconnecting" ? "⚠" : "…")
-            : (killPending && status === "running" ? t("cmd.k321") : status === "running" ? t("cmd.k60") : status === "queued" ? t("cmd.k239") : status === "replaying" ? t("cmd.k61") : status === "reconnecting" ? t("cmd.k370") : t("cmd.k51"))),
+            ? (killPending ? "⏳" : status === "running" ? "●" : status === "queued" ? "⏳" : status === "missing" ? "⚠" : status === "replaying" ? "⟳" : status === "reconnecting" ? "⚠" : "…")
+            : (status === "missing" ? t("cmd.app.missing") : killPending && status === "running" ? t("cmd.k321") : status === "running" ? t("cmd.k60") : status === "queued" ? t("cmd.k239") : status === "replaying" ? t("cmd.k61") : status === "reconnecting" ? t("cmd.k370") : t("cmd.k51"))),
         meta && !isSmall && h("span", { title: meta.cwd, style: { fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, flexShrink: 1 } }, "📁 " + (meta.cwd || "")),
         meta && !isSmall && h("code", { style: { ...smallStyle, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flexShrink: 2 } }, "$ " + String(meta.cmd).slice(0, 60)),
         // window size (fit / fixed presets); Ctrl+Shift+S also cycles
@@ -434,7 +442,17 @@ export function createTerminalView(kit) {
         exitInfo && onReopen && h("button", { onClick: onReopen, title: t("cmd.app.reopen"), style: miniBtn }, isSmall ? "↻" : t("cmd.app.reopen")),
         exitInfo && h("span", { style: { fontWeight: 700, color: exitInfo.signal ? "var(--danger, #ef4444)" : (exitInfo.code ?? 0) !== 0 ? "#b45309" : "var(--text-muted)" } }, `${t("cmd.k375")}${exitInfo.code ?? "?"}${exitInfo.signal ? " · " + exitInfo.signal : ""} · ${((exitInfo.durationMs || 0) / 1000).toFixed(1)}s`),
       ),
-      h("div", { ref, style: { flex: 1, minHeight: 0, background: "#0f172a", borderRadius: 8, padding: 6, overflow: isFit ? "hidden" : "auto", touchAction: "none" } }),
+      h("div", { style: { flex: 1, minHeight: 0, position: "relative", display: "flex" } },
+        h("div", { ref, style: { flex: 1, minHeight: 0, background: "#0f172a", borderRadius: 8, padding: 6, overflow: isFit ? "hidden" : "auto", touchAction: "none" } }),
+        missing && h("div", { style: { position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, padding: 24, background: "rgba(15,23,42,0.86)", color: "#cbd5e1", fontSize: 13, textAlign: "center" } },
+          h("div", { style: { fontSize: 14, fontWeight: 700 } }, t("cmd.app.missingTitle")),
+          h("div", { style: { fontSize: 12, opacity: 0.8, maxWidth: 420, lineHeight: 1.6 } }, t("cmd.app.missingHint")),
+          h("div", { style: { display: "flex", gap: 8 } },
+            onNewShell && h("button", { onClick: onNewShell, style: { ...btnStyle, background: "var(--accent)", color: "#fff", border: "none", padding: "6px 14px", fontWeight: 600 } }, t("cmd.k404")),
+            onNewPiSession && h("button", { onClick: onNewPiSession, style: { ...btnStyle, padding: "6px 14px" } }, t("cmd.k259")),
+          ),
+        ),
+      ),
       // small screens: bottom status bar (cwd/command + counts) since the top row collapses
       isSmall && meta && h("div", { style: { flexShrink: 0, display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--text-muted)", padding: "4px 6px 0", overflow: "hidden", minHeight: 0, whiteSpace: "nowrap" } },
         counts && h("span", { title: t("cmd.k217"), style: { flexShrink: 0 } }, "🤖" + counts.piRunning + "/" + counts.piTotal + " 🖥" + counts.ptyRunning),
