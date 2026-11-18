@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/secret-vault-core",
   "version": "0.2.0",
-  "description": "Local encrypted secret vault engine for AI agents: AES-256-GCM store with keyfile unlock, scope buckets (global + project), rotation with attribution fields, AI read-only tools (vault_list / vault_get \u2192 stable rsec_ placeholders), capture/import helpers, and the /vault command logic. Shares the placeholder/redaction engine with @aiti-ai/secret-mask-core.",
+  "description": "Local encrypted secret vault engine for AI agents: AES-256-GCM store with keyfile unlock, scope buckets (global + project), rotation with attribution fields, AI read-only tools (vault_list / vault_get → stable rsec_ placeholders), capture/import helpers, and the /vault command logic. Shares the placeholder/redaction engine with @aiti-ai/secret-mask-core.",
   "keywords": [
     "secrets",
     "vault",
@@ -37,5 +37,9 @@
   "publishConfig": {
     "access": "public"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-ai#readme"
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  },
+  "contentHash": "528f4f3a446a1af8"
 }
