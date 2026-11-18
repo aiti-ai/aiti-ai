@@ -181,9 +181,14 @@ export function listEntries(): SessionEntry[] {
  */
 export function rebindEntry(oldSessionId: string, newSessionId: string): boolean {
   if (!oldSessionId || !newSessionId || oldSessionId === newSessionId) return false;
-  const entry = findEntryBySession(oldSessionId);
+  // Backends announce the id in handle form ("claude:<sid>") while the registry is
+  // keyed by the native id: accept either spelling on both sides.
+  const nativeId = (value: string) => (value.includes(":") ? value.slice(value.indexOf(":") + 1) : value);
+  const entry = findEntryBySession(oldSessionId) ?? findEntryBySession(nativeId(oldSessionId));
   if (!entry) return false;
-  writeEntry({ ...entry, sessionId: newSessionId });
+  const next = nativeId(newSessionId);
+  if (!next || next === entry.sessionId) return false;
+  writeEntry({ ...entry, sessionId: next });
   return true;
 }
 
