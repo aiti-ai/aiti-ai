@@ -74,13 +74,16 @@ export function createTerminalApp(kit, store, deps) {
         setTimeout(() => setKillBusy((prev) => { const n = new Set(prev); n.delete(id); return n; }), 3500);
       });
     };
+    // host-side "current project directory" (selected workspace); also the fallback for
+    // sessions created without an explicit cwd (e.g. a bare /shell on the new-session page)
+    const hostCwd = () => kit.ctx?.getExtService?.("pi-web.ui")?.get?.("selectedCwd") || undefined;
     // new shell at the current terminal's live cwd (falls back to the host's selected cwd)
     const newShell = async () => {
       if (newBusy) return;
       setNewBusy(true);
       setErr(null);
       try {
-        const cwd = sid ? await kit.liveCwdOf(sid, cur?.cwd) : (kit.ctx?.getExtService?.("pi-web.ui")?.get?.("selectedCwd") || undefined);
+        const cwd = (sid ? await kit.liveCwdOf(sid, cur?.cwd) : undefined) || cur?.cwd || hostCwd();
         const r = await fetch(api("/shell"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cwd, name: t("cmd.k325"), ttlMs: 24 * 3600 * 1000 }) }).then((x) => x.json()).catch(() => ({ ok: false, error: t("cmd.k336") }));
         if (!r || !r.ok) { setErr((r && r.error) || t("cmd.k122")); return; }
         store.openApp("terminal", { sessionId: r.sessionId, title: r.name || t("cmd.k325") });
@@ -96,9 +99,12 @@ export function createTerminalApp(kit, store, deps) {
       if (!meta || !meta.cmd) return;
       store.openApp("favorites", { create: { cmd: String(meta.cmd), cwd: meta.cwd || "" } });
     };
-    // ⇱ move to the workspace tab (ownership hand-over; the dialog shows a placeholder afterwards)
-    const moveToTab = () => {
-      const r = tabs.sendToTab(cur || { id: sid, cwd: cur?.cwd, name: st.terminal.title });
+    // ⇱ move to the workspace tab (ownership hand-over; the dialog shows a placeholder afterwards).
+    // A session created without a cwd still needs one to locate/create the project tab → host cwd.
+    const moveToTab = async () => {
+      // prefer the shell's live pwd (survives `cd`), then the recorded cwd, then the host project
+      const cwd = (await kit.liveCwdOf(sid, cur?.cwd)) || cur?.cwd || hostCwd();
+      const r = tabs.sendToTab({ ...(cur || {}), id: sid, cwd, name: cur?.name || st.terminal.title });
       if (!r.ok) setErr(r.error || "");
       else store.closeApp("terminal");
     };

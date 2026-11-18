@@ -116,7 +116,7 @@ export default {
   // AI 自管理清单（docs/aiti-ai-helper-plan.md §3.2）：告诉 AI 怎么管理本扩展
   ai: {
     manage: true,
-    intro: "AI 能帮我写命令（描述需求 → JSON → 校验 → 入库）",
+    intro: "AI 能帮我写命令（描述需求 → JSON → 校验 → 入库）；命令、运行态势、终端是三个独立窗口",
     skills: "skills",
   },
 
@@ -2069,16 +2069,20 @@ export default {
         const body = await req.json().catch(() => ({}));
         const rawSource = body.source ? String(body.source) : "shell";
         const ttl = Number(body.ttlMs);
+        // Always record a concrete cwd: the UI needs one for "move to workspace tab" (which is
+        // project-scoped) and for the session row's 📁 hint. Falls back to this process's cwd,
+        // which is exactly where the shell would start anyway.
+        const shellCwd = body.cwd ? String(body.cwd) : process.cwd();
         const r = runner.run({
           command: "$SHELL",
-          cwd: body.cwd ? String(body.cwd) : undefined,
+          cwd: shellCwd,
           name: body.name ? String(body.name) : "终端",
           source: KNOWN_SOURCES.has(rawSource) ? rawSource : "unknown",
           ttlMs: Number.isFinite(ttl) && ttl > 0 ? ttl : undefined,
           sandbox: "none",
         });
         if (!r.ok) return json(r, 400);
-        return json({ ok: true, sessionId: r.sessionId, name: body.name ? String(body.name) : "终端" });
+        return json({ ok: true, sessionId: r.sessionId, cwd: shellCwd, name: body.name ? String(body.name) : "终端" });
       }
 
       // GET /sessions
