@@ -41,6 +41,10 @@ pi install npm:@aiti-ai/pi-secret-mask@latest
 | `/secret guard on\|off` | 拦截引用「本会话未挂载占位符」的工具调用（默认开）。 |
 | `/secret strict on\|off` | 旁路一律拒绝（`!` 命令、摘要路径）而不是告警放行。 |
 | `/secret rule list \| add <标签> <exact\|regex> <模式> [--fixed <文本>] [--global] \| remove <标签> \| reload` | 自定义规则（`~/.pi/agent/secret-mask-rules.json`，改动即时生效）。 |
+| `/secret extract on\|off` | 工具输出/写入内容的结构化提取（默认开）。 |
+| `/secret files learn\|block\|off` | 敏感文件策略（默认 learn）：提取登记并脱敏；无结构专用密码文件整段收敛；或直接拦截读取。 |
+| `/secret weak notify\|auto\|off` | `密码是`/`password is` 后的弱密码候选（字典命中自动登记；其余提示或自动登记）。 |
+| `/secret learn [last\|<文件>]` | 从最近一次工具输出或本地文件补登记（事后补救）。 |
 | `/secret save <文件>` / `load <文件>` | 显式明文快照（0600）：文件名由你指定，系统不记忆、不自动加载，位置与安全自负。 |
 | `/secret audit on\|off` / `show` | 每次发送的线上 payload 证明日志。 |
 | `/secret status` | 状态摘要：landing、guard、strict、规则数、登记数、审计开关。 |
@@ -71,6 +75,18 @@ pi install npm:@aiti-ai/pi-secret-mask@latest
 | 防护 + 证明 | `before_provider_request` | 改写兜底（默认开，无值零开销）+ `/secret audit on` 时对**最终 wire payload** 做真值泄漏扫描与占位符计数。 |
 
 不透明 provider 字段（thinking/thought/text signature）一律不动。
+
+## 弱值：不像密钥的密码
+
+`123abc`、`qwerty`、`password=abcdefgh` 这类人工密码不符合机器凭据形状，熵/长度规则会漏。三层上下文信号补齐：
+
+1. **结构化提取（默认开）**：所有 tool_result 与 `write`/`edit` 输入按**键名**提取（`DB_PASSWORD=…`、`"password": "…"`、`api_key:`、`Authorization:`、URL userinfo、netrc）——**不看熵**（≥6 字符即登记）并当场脱敏；键名保留，模型仍能理解结构。
+2. **敏感文件策略（默认 learn）**：`.env*`、`id_rsa`、`.pgpass`、`.netrc`、`.npmrc`、`.git-credentials`、`credentials.json`、`secret.txt`、`*.key/p12/pfx`、kube/aws 凭据路径——结构化值脱敏；无结构专用密码文件整段登记并**不把原文给模型**（占位提示）。`block` 在执行前拒绝读取；`off` 关闭路径策略。
+3. **弱密码候选**：强上下文（`密码是`/`password is`/`PWD=`）后，内置小字典（`qwerty`/`123abc`/`1qaz2wsx`…）自动登记；其他弱形状值只做一次性提示（`/secret weak auto` 可自动登记）。
+
+`/secret learn [last|<文件>]` 是事后网：把最近一次工具输出或本地文件里的值补登记；下一轮 `context` 会把历史里的该值也替换掉。
+
+诚实边界：无键名、无文件名、无字典命中的裸弱值无法可靠识别；彻底方案是 `/secret files block` 或走 vault。小于 6 字符的值不登记。
 
 ## 检测规则与自定义规则
 

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "aiti devtools",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "aiti-devtools 浏览器扩展：任意网页（无需目标应用改造）注入页面内 AI 调试助手（FAB + Inspector + AI 窗），支持 Chrome / Edge / Firefox（含 Firefox Android）",
   "author": "aiti-ai",
   "homepage_url": "https://aiti.pw",

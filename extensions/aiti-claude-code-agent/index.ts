@@ -167,6 +167,34 @@ const CC_CAPABILITIES: SessionCapabilitiesLike = {  steer: false,
 // ============================================================================
 
 /** 导出仅供单测直接驱动（宿主 loader 只消费 default 导出）。 */
+/**
+ * Host-injected process strategy (pi-web core `agent-starter`). Older pi-web
+ * builds do not pass it — the extension then falls back to a plain spawn, which
+ * is the historical behavior. When the host injects the detachable variant the
+ * agent process outlives pi-web and a reattach adopts it (see `start`).
+ */
+export interface AgentStarterLike {
+  readonly kind: "direct" | "wrapper";
+  spawn(
+    command: string,
+    args: string[],
+    options?: {
+      env?: Record<string, string>;
+      cwd?: string;
+      shell?: boolean | string;
+      agentKey?: string;
+      sessionId?: string;
+    },
+  ): Promise<ChildProcess>;
+}
+
+/** Adopt an already-live agent process (core recovery after a pi-web restart). */
+export interface AttachedChildOptions {
+  child: ChildProcess;
+  sessionId: string;
+  agentKey?: string;
+}
+
 export class ClaudeCodeHandle {
   readonly source = "aiti-claude-code-agent/claude-code";
   readonly capabilities: SessionCapabilitiesLike = CC_CAPABILITIES;
@@ -534,7 +562,12 @@ export class ClaudeCodeHandle {
     launchOverride?: LaunchOverride;
     /** 会话真实原 directory（冷恢复 meta.cwd；仅用于历史 jsonl 定位，spawn cwd 仍走 opts.cwd）。 */
     historyCwd?: string;
+    /** Injected by the pi-web core (detachable hosting); absent = plain spawn. */
+    agentStarter?: AgentStarterLike;
+    /** Core recovery: adopt this live process instead of spawning. */
+    attached?: AttachedChildOptions;
   }): Promise<ClaudeCodeHandle> {
+    if (opts.attached) return ClaudeCodeHandle.adopt(opts, opts.attached.child, opts.attached.sessionId);
     const cli = opts.bin ?? process.env.CLAUDE_CLI_PATH ?? "claude";
     const settingsPath = opts.profile
       ? join(homedir(), ".claude", `${opts.profile}.json`)
@@ -579,31 +612,68 @@ export class ClaudeCodeHandle {
       cwd: opts.cwd || process.cwd(),
       warn: (m) => console.log(`[aiti-claude-code-agent] ${m}`),
     });
-    const child = spawn(launch.command, launch.args, {
-            shell: launch.shell,
-cwd: opts.cwd || process.cwd(),
-      stdio: ["pipe", "pipe", "pipe"],
-      env: launch.env,
-    });
+    // Process strategy comes from the host (agent-starter injection). Without it
+    // (older pi-web) this is the historical child_process.spawn. The registry key
+    // is the NATIVE id (resume sid, or a raw placeholder uuid for a fresh session):
+    // the host re-keys it to the real sid when the init frame arrives.
+    const spawnSessionId = opts.sessionId ?? `new-${randomUUID()}`;
+    const child = opts.agentStarter
+      ? await opts.agentStarter.spawn(launch.command, launch.args, {
+          shell: launch.shell,
+          cwd: opts.cwd || process.cwd(),
+          env: launch.env as Record<string, string>,
+          agentKey: "claude",
+          sessionId: spawnSessionId,
+        })
+      : spawn(launch.command, launch.args, {
+          shell: launch.shell,
+          cwd: opts.cwd || process.cwd(),
+          stdio: ["pipe", "pipe", "pipe"],
+          env: launch.env,
+        });
+    // Same native/placeholder id on both sides: the wrapper registry key and the
+    // handle's provisional id must agree so the init-frame rekey can find the entry.
+    return ClaudeCodeHandle.adopt(opts, child, opts.sessionId ?? spawnSessionId);
+  }
 
-    // 占位 id：fresh 会话的真实 session_id 在首条消息后的 system/init 帧才出现
-    // （CLI 懒初始化）——立即返回；init 到达时发 session_backend_ready，
-    // 宿主（createSessionHandle）监听该事件换绑真实复合 id。
-    // randomUUID 防并发建会话同毫秒同 id 撞 store 键（加固 P2）
-    const provisionalId = opts.sessionId ? `claude:${opts.sessionId}` : `claude:new-${randomUUID()}`;
+  /**
+   * Build a handle over an existing agent process: a just-spawned child, or (after
+   * a pi-web restart) the facade of a detached wrapper the core reattached to.
+   *
+   * Provisional id: a fresh session only learns its real session_id from the
+   * system/init frame after the first message (the CLI initializes lazily), so the
+   * handle is returned immediately; when init arrives the handle emits
+   * `session_backend_ready` and the host rekeys its store entry (and the detached
+   * registry) to the real composite id. randomUUID keeps two sessions created in
+   * the same millisecond from colliding on one store key (hardening P2).
+   */
+  static async adopt(
+    opts: {
+      sessionId?: string;
+      cwd?: string;
+      model?: { provider: string; id: string };
+      permissionMode?: string;
+      caps?: SessionCapabilitiesLike;
+      historyCwd?: string;
+    },
+    child: ChildProcess,
+    nativeSessionId?: string,
+  ): Promise<ClaudeCodeHandle> {
+    const resumeSid = nativeSessionId ?? opts.sessionId;
+    const provisionalId = resumeSid ? `claude:${resumeSid}` : `claude:new-${randomUUID()}`;
     const handle = new ClaudeCodeHandle(provisionalId, child, opts.cwd || process.cwd(), opts.caps);
-    handle.resumeSourceSid = opts.sessionId;
+    handle.resumeSourceSid = resumeSid;
     handle.historyCwd = opts.historyCwd;
     // 种子模型：显式指定 > 状态文件恢复（重开会话不丢上次切换）> init 帧回报
     if (opts.model?.id) {
       handle.model = { id: opts.model.id, provider: "claude-code" };
-    } else if (opts.sessionId) {
-      const restored = await readExtModelState("claude", `claude:${opts.sessionId}`);
+    } else if (resumeSid) {
+      const restored = await readExtModelState("claude", `claude:${resumeSid}`);
       if (restored?.selected?.id) handle.model = { id: restored.selected.id, provider: "claude-code" };
     }
     // 新会话（无显式模型/无同会话恢复）→ 该 agent 上次使用的模型（per-agent last used）
     // ⚠ 仅新会话：resume 会话的模型以 CLI/会话自身为准，不得用 agent 级默认覆盖
-    if (!handle.model && !opts.sessionId) {
+    if (!handle.model && !resumeSid) {
       const lastUsed = await readAgentLastUsedModel("claude");
       if (lastUsed?.id) handle.model = { id: lastUsed.id, provider: "claude-code" };
     }
@@ -691,6 +761,14 @@ cwd: opts.cwd || process.cwd(),
 
   async dispose(): Promise<void> {
     if (!this.aliveFlag) return;
+    // Wrapper-hosted child: disconnect and leave the agent running so a reattach
+    // can continue it (killing such a session is the core's decision).
+    const facade = this.child as unknown as { detachable?: unknown; release?: () => void };
+    if (facade.detachable === true && typeof facade.release === "function") {
+      facade.release();
+      this.markDead("detached");
+      return;
+    }
     this.child.kill("SIGTERM");
     await new Promise<void>((resolve) => {
       const t = setTimeout(() => {
@@ -1079,6 +1157,9 @@ function scanCcBackends(
       label: member.label,
       agentKey: member.agentKey,
       priority: 10,
+      // The core may host this backend's process in a detachable wrapper; the
+      // handle adopts the live process on reattach (see ClaudeCodeHandle.adopt).
+      detachable: true,
       maxCapabilities: capsFor(member),
       // Availability snapshot: false = CLI missing → dropdown entry greyed out;
       // refreshed on rescan.
@@ -1386,6 +1467,8 @@ export default {
           agentKey?: string;
           priority?: number;
           maxCapabilities: SessionCapabilitiesLike;
+          /** Opt-in: host the agent in a detachable wrapper (survives pi-web restarts). */
+          detachable?: boolean;
           createSession(options: {
             sessionId?: string;
             cwd?: string;
@@ -1394,6 +1477,10 @@ export default {
             bin?: string;
             permissionMode?: string;
             listModels?: () => Promise<Array<{ id: string; provider: string; label?: string }>>;
+            /** Host-injected process strategy (pi-web core agent-starter). */
+            agentStarter?: AgentStarterLike;
+            /** Host recovery: adopt a live process instead of spawning (detached sessions). */
+            attached?: AttachedChildOptions;
           }): Promise<ClaudeCodeHandle>;
         }): string;
       };

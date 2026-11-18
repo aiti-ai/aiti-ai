@@ -64,30 +64,34 @@
     return svg;
   }
   var LUCIDE = {
-    crosshair: ["M22 12h-4", "M6 12H2", "M12 6V2", "M12 22v-4", "M12 12"]
+    crosshair: ["M22 12h-4", "M6 12H2", "M12 6V2", "M12 22v-4", "M12 12"],
+    // copy (overlapping squares) / check (tick): header one-click copy + success feedback on the notify
+    // card -- same shapes as the pi-web host message copy button
+    copy: ["M9 11a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-9a2 2 0 0 1-2-2z", "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"],
+    check: ["M20 6 9 17l-5-5"]
   };
   function ensureStyles(accent) {
     if (document.getElementById("__dbg_launcher_css")) return;
     var css = document.createElement("style");
     css.id = "__dbg_launcher_css";
     css.textContent = `
-      /* launcher 整体为最上层覆盖层（z-index 最高，任何 iframe/div 都盖不住）；pointer-events 穿透不挡页面交互 */
-      /* 禁用本工具 UI 的浏览器触摸点击高亮（Android Chrome/HarmonyOS 点圆形按钮会叠淡蓝透明遮罩，看起来像方形背景/整窗遮罩）+ 长按菜单 */
+      /* The launcher is the topmost overlay (highest z-index, no iframe/div can cover it); pointer-events pass-through so page interaction is not blocked */
+      /* Disable the browser touch tap highlight on this tool's UI (Android Chrome/HarmonyOS overlays a pale translucent blue mask on round buttons, looking like a square background/full-window mask) + long-press menu */
       #__dbg_launcher, #__dbg_launcher * { -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; }
       #__dbg_launcher {
         all: initial; font: 13px/1.5 system-ui, sans-serif; color: #1f2937;
         position: fixed; inset: 0; z-index: 2147483647; pointer-events: none;
       }
-      #__dbg_launcher > * { pointer-events: auto; } /* 交互子元素恢复可点 */
-      /* 信息/提示类覆盖层始终点击穿透：#__dbg_launcher > * 恢复可点会误伤它们（opacity:0 隐藏时仍拦截下方元素点击，block-tip/tooltip 实测挡点击）；
-         hud 抓手 .dbg-hud-grip 子级显式 pointer-events:auto 覆盖继承的 none，仍可拖动 */
+      #__dbg_launcher > * { pointer-events: auto; } /* interactive children become clickable again */
+      /* Info/tooltip overlays always pass clicks through: making #__dbg_launcher > * clickable would accidentally catch them (at opacity:0 they still intercept clicks on elements below -- block-tip/tooltip were observed blocking clicks);
+         the hud grip .dbg-hud-grip sets pointer-events:auto explicitly on children to override the inherited none, staying draggable */
       #__dbg_launcher > .dbg-hud,
       #__dbg_launcher > .dbg-tooltip,
       #__dbg_launcher > .dbg-block-tip,
       #__dbg_launcher > .dbg-pick-toast { pointer-events: none; }
       #__dbg_launcher *, #__dbg_launcher *::before, #__dbg_launcher *::after { box-sizing: border-box; }
       .dbg-fab { position: fixed; right: 18px; z-index: 2147483646; display: flex; flex-direction: column; gap: 8px; touch-action: none; user-select: none; -webkit-user-select: none; }
-      .dbg-fab.dbg-horz { flex-direction: row; } /* 贴顶/贴底：按钮左右排列 */
+      .dbg-fab.dbg-horz { flex-direction: row; } /* docked top/bottom: buttons laid out horizontally */
       .dbg-fab button {
         display: flex; align-items: center; justify-content: center; gap: 4px; width: 40px; height: 40px; padding: 0;
         border: 1px solid rgba(0,0,0,.12); border-radius: 50%; cursor: pointer;
@@ -95,26 +99,26 @@
       }
       .dbg-fab button::after { content: attr(data-label); font-size: 11px; opacity: 0; max-width: 0; overflow: hidden; transition: all .25s; }
       .dbg-fab button:hover { transform: translateY(-1px); }
-      /* tooltip 展开文字：固定圆形按钮（40px）后 inline 推不动——left/right 都改绝对定位，不推图标/布局 */
+      /* Tooltip expanding text: with fixed round buttons (40px) inline flow cannot push it -- left/right both switch to absolute positioning so icons/layout are not pushed */
       .dbg-fab button::after { content: attr(data-label); font-size: 11px; opacity: 0; max-width: 0; overflow: hidden; transition: all .25s; color: inherit; }
       .dbg-fab button[data-tip='left'], .dbg-fab button[data-tip='right'] { position: relative; }
       .dbg-fab button[data-tip='left']::after, .dbg-fab button[data-tip='right']::after {
         position: absolute; top: 50%; transform: translateY(-50%);
         max-width: 0; opacity: 0; overflow: hidden; white-space: nowrap; transition: all .25s;
-        color: #374151; /* 深字——dbg-on 时按钮 color:#fff，若继承会白字白底看不见 */
+        color: #374151; /* dark text -- when dbg-on sets button color:#fff, inheriting would give white-on-white invisible text */
       }
       .dbg-fab button[data-tip='left']::after { right: calc(100% + 2px); }
       .dbg-fab button[data-tip='right']::after { left: calc(100% + 2px); }
       .dbg-fab button[data-tip='left']:hover::after, .dbg-fab button[data-tip='right']:hover::after {
         max-width: 90px; opacity: 1; padding: 2px 6px; background: rgba(255,255,255,.95); border-radius: 8px;
       }
-      /* 拖动中：禁用 hover 上浮 + 隐藏 tooltip（避免闪动） */
+      /* While dragging: disable hover lift + hide the tooltip (avoids flicker) */
       .dbg-fab.dbg-dragging button { transform: none !important; }
       .dbg-fab.dbg-dragging button::after { opacity: 0 !important; max-width: 0 !important; }
       .dbg-fab button.dbg-on { background: ${accent}; color: #fff; border-color: ${accent}; }
-      /* 页面错误提醒：AI 按钮红描边 + 角标（红点/数字）+ 脉冲闪烁（每个新错误触发；节奏慢、时长足，保证看得见） */
+      /* Page error alert: AI button red outline + corner badge (dot/count) + pulse animation (triggered per new error; slow rhythm, long enough duration to stay visible) */
       .dbg-fab button.dbg-err { position: relative; border-color: #ef4444; box-shadow: 0 0 0 1px rgba(239,68,68,.35) inset; }
-      .dbg-fab button.dbg-err-pulse { animation: dbg-fab-err-pulse 1.5s ease-out 4; } /* 慢速光晕扩散 4 轮 ≈ 6s */
+      .dbg-fab button.dbg-err-pulse { animation: dbg-fab-err-pulse 1.5s ease-out 4; } /* slow glow spread, 4 cycles ≈ 6s */
       @keyframes dbg-fab-err-pulse {
         0% { box-shadow: 0 0 0 0 rgba(239,68,68,.7), 0 0 0 1px rgba(239,68,68,.35) inset; }
         25% { box-shadow: 0 0 0 6px rgba(239,68,68,.35), 0 0 0 1px rgba(239,68,68,.35) inset; }
@@ -127,12 +131,12 @@
         background: #ef4444; color: #fff; font-size: 10px; font-weight: 700; line-height: 16px;
         display: flex; align-items: center; justify-content: center; border: 1.5px solid #fff;
       }
-      /* touch 点击：tooltip 立即显示，2s 后消失（touch 无 :hover out，展开会一直挂着） */
+      /* Touch tap: show the tooltip immediately and hide it after 2s (touch has no :hover out, so it would stay expanded forever) */
       .dbg-fab button.dbg-tip::after { opacity: 1; max-width: 90px; padding-left: 2px; }
       .dbg-fab button[data-tip='left'].dbg-tip::after, .dbg-fab button[data-tip='right'].dbg-tip::after { max-width: 90px; opacity: 1; padding: 2px 6px; background: rgba(255,255,255,.95); }
       .dbg-fab.dbg-nohover button:hover::after, .dbg-fab.dbg-nohover button.dbg-tip::after { opacity: 0 !important; max-width: 0 !important; }
-      /* 触屏：禁用 fab/工具条/菜单按钮的 :hover 视觉（touch 点击后 :hover 残留，形成'hover整个窗口'错乱）——
-         dbg-tip 类显式触发的 tooltip 不受影响（tap 仍显示 2s）；按钮的 :hover 背景/上浮全压掉 */
+      /* Touch: disable :hover visuals on fab/toolbar/menu buttons (after a touch tap the :hover state sticks, causing a 'hovering the whole window' mess) --
+         tooltips explicitly triggered via the dbg-tip class are unaffected (still shown 2s per tap); button :hover background/lift fully suppressed */
       #__dbg_launcher.dbg-touch-ui .dbg-fab button:hover,
       #__dbg_launcher.dbg-touch-ui .dbg-toolbar button:hover,
       #__dbg_launcher.dbg-touch-ui .dbg-extreme-menu button:hover,
@@ -141,8 +145,8 @@
       #__dbg_launcher.dbg-touch-ui .dbg-settings button:hover,
       #__dbg_launcher.dbg-touch-ui .dbg-speed button:hover { background: inherit !important; border-color: inherit !important; transform: none !important; }
       #__dbg_launcher.dbg-touch-ui .dbg-fab button:hover::after { opacity: 0 !important; max-width: 0 !important; }
-      /* ---- Inspector 工具条（悬浮按钮排：选区微调） ---- */
-      /* 工具条：双行（行1=选区信息稳定，行2=按钮稳定不跳）；色块区分（导航浅灰/✓绿/🖱紫/⏱橙/🔒靛/✕红） */
+      /* ---- Inspector toolbar (floating button row: selection adjustments) ---- */
+      /* Toolbar: two rows (row 1 = stable selection info, row 2 = stable buttons that do not jump); color coding (nav light gray / ✓ green / 🖱 purple / ⏱ orange / 🔒 indigo / ✕ red) */
       .dbg-toolbar {
         display: none; flex-direction: column; padding: 4px 6px;
         background: rgba(255,255,255,.98); border: 1px solid #e2e8f0; border-radius: 10px;
@@ -150,7 +154,7 @@
         touch-action: none; user-select: none; -webkit-user-select: none;
       }
       .dbg-toolbar.dbg-on { display: flex; }
-      .dbg-toolbar.dbg-floating { position: fixed; z-index: 2147483647; } /* 最高层：确认弹窗（2147483645）打开时工具条仍可点 */
+      .dbg-toolbar.dbg-floating { position: fixed; z-index: 2147483647; } /* topmost layer: toolbar stays clickable while the confirm dialog (2147483645) is open */
       .dbg-toolbar-row { display: flex; align-items: center; gap: 2px; white-space: nowrap; }
       .dbg-toolbar-row.dbg-toolbar-btns { margin-top: 3px; flex-wrap: wrap; }
       .dbg-toolbar .dbg-sel-label {
@@ -170,15 +174,15 @@
       .dbg-toolbar .dbg-nav-profile { background: #e0e7ff; color: #4338ca; }
       .dbg-toolbar .dbg-nav-close { background: #fee2e2; color: #b91c1c; }
       .dbg-toolbar .dbg-nav-help { background: #fef3c7; color: #b45309; }
-      /* selector 快速选择输入行 */
-      .dbg-sel-input-row { display: none; margin-top: 3px; flex-direction: column; } /* 输入框独占一行，示例指示单独一行 */
+      /* Selector quick-pick input row */
+      .dbg-sel-input-row { display: none; margin-top: 3px; flex-direction: column; } /* input on its own row, example hint on a separate row */
       .dbg-sel-input-row input {
         width: 100%; box-sizing: border-box; border: 1px solid #c7d2fe; border-radius: 6px; padding: 4px 8px;
         font: inherit; font-size: 11px; background: #eef2ff;
       }
       .dbg-sel-hint { font-size: 10px; color: #94a3b8; line-height: 1.5; margin-top: 2px; }
-      /* 小屏自适应（目标页未适配小屏，工具条自主放大优化）：
-         compact = 视口<768 或触屏 → 按钮 38px/16px；touch = 触屏或 <480 → 按钮 44px/18px（触控标准） */
+      /* Small-screen adaptation (the target page may not be small-screen friendly, so the toolbar scales itself up):
+         compact = viewport <768 or touch → buttons 38px/16px; touch = touch or <480 → buttons 44px/18px (touch standard) */
       .dbg-toolbar.dbg-compact {
         padding: 5px 8px; max-width: calc(100vw - 16px); flex-wrap: wrap; gap: 4px;
       }
@@ -192,20 +196,20 @@
       .dbg-toolbar.dbg-touch .dbg-sel-label { min-width: 170px; font-size: 14px; padding: 4px 8px; }
       .dbg-toolbar.dbg-touch .dbg-toolbar-btns { gap: 6px; }
       .dbg-toolbar.dbg-touch .dbg-sel-input-row input { font-size: 14px; padding: 8px 10px; }
-      /* 按钮点击 tooltip（几秒后消失） */
+      /* Button-click tooltip (disappears after a few seconds) */
       .dbg-hud {
-        position: fixed; z-index: 2147483647; /* 最高层：拖动/显示不被任何 UI（fab/工具条/面板）覆盖 */
+        position: fixed; z-index: 2147483647; /* topmost layer: drag/display not covered by any UI (fab/toolbar/panel) */
         background: rgba(17,24,39,.94); color: #e5e7eb; border-radius: 10px; padding: 7px 12px;
         font-size: 11px; line-height: 1.65; min-width: 140px;
         transition: opacity .25s; pointer-events: none; opacity: 0; box-shadow: 0 6px 20px rgba(0,0,0,.4);
       }
-      /* 小屏/触屏：HUD（按真实屏幕物理视口，layout 980 时媒体查询失效）；图标紧凑（小屏信息密度高不占屏） */
+      /* Small screen/touch: HUD (based on the real physical viewport; media queries fail when layout=980); compact icons (small screens are info-dense, keep them from taking screen space) */
       #__dbg_launcher.dbg-phys-small .dbg-hud { font-size: 11px; padding: 6px 9px; min-width: 128px; line-height: 1.5; }
       #__dbg_launcher.dbg-phys-small .dbg-hud-path { max-width: 46vw; }
-      /* 小屏工具条按钮换行（保证最右 ✓ 确认可见）：dbg-phys-small（设备<768）强制 wrap，
-         不依赖 dbg-compact（受 isSmallScreen/isTouchCompact 影响，真机可能未触发） */
+      /* Wrap toolbar buttons on small screens (keep the rightmost ✓ confirm visible): dbg-phys-small (device <768) forces wrap,
+         not relying on dbg-compact (subject to isSmallScreen/isTouchCompact; may never trigger on real devices) */
       #__dbg_launcher.dbg-phys-small .dbg-toolbar-btns { flex-wrap: wrap; }
-      /* 小屏 dialog（确认预览弹窗）与 speed（调速/网络/错误）：字体图标放大（响应式，参照 AI 窗；14px 基准） */
+      /* Small-screen dialog (confirm/preview dialog) and speed (throttle/network/errors): enlarge fonts/icons (responsive, per the AI window; 14px baseline) */
       #__dbg_launcher.dbg-phys-small .dbg-dialog { font-size: 14px; }
       #__dbg_launcher.dbg-phys-small .dbg-dialog-head { padding: 14px 16px; }
       #__dbg_launcher.dbg-phys-small .dbg-dialog-head code { font-size: 13px; }
@@ -227,16 +231,16 @@
       .dbg-hud b { color: #fff; }
       .dbg-hud i { color: #93c5fd; font-style: normal; }
       .dbg-hud .dbg-hud-path { color: #94a3b8; word-break: break-all; }
-      /* HUD 本体 pointer-events:none（不拦截页面交互——盖住弹出菜单时下方仍可 hover/点击）；
-         右上角抓手 = 唯一拖动入口；.dbg-open-file 链接单独放行可点击 */
+      /* HUD body is pointer-events:none (does not intercept page interaction -- elements under a covered popup menu stay hoverable/clickable);
+         the top-right grip is the only drag handle; .dbg-open-file links are individually allowed through as clickable */
       .dbg-hud .dbg-hud-grip {
         position: absolute; top: 2px; right: 4px; z-index: 2;
         font-size: 10px; line-height: 1; color: #64748b; cursor: grab; user-select: none;
         padding: 1px 2px; pointer-events: auto;
-        touch-action: none; -webkit-user-select: none; /* 触屏拖动：禁浏览器把手势当滚动（否则 pointercancel → 拖拽中断） */
+        touch-action: none; -webkit-user-select: none; /* touch drag: stop the browser treating gestures as scroll (otherwise pointercancel → drag aborted) */
       }
       .dbg-hud .dbg-hud-grip:hover { color: #c7d2fe; }
-      /* pick HUD 按钮行：内容超高滚动时按钮 sticky 贴底始终可见（背景铺满 HUD 底边，不露穿帮） */
+      /* pick HUD action row: when content overflows and scrolls, buttons stay stuck to the bottom and visible (background covers the HUD bottom edge, no visual seams) */
       .dbg-hud .dbg-hud-actions {
         position: sticky; bottom: 0; margin-top: 6px; margin-left: -12px; margin-right: -12px;
         padding: 3px 12px 7px; background: rgba(17,24,39,.94); border-radius: 0 0 10px 10px;
@@ -244,16 +248,16 @@
       #__dbg_launcher.dbg-phys-small .dbg-hud .dbg-hud-actions {
         margin-left: -9px; margin-right: -9px; padding: 3px 9px 6px;
       }
-      /* 工具条模拟 hover 按钮（真实事件派发）：开态高亮 */
+      /* Toolbar simulated-hover button (dispatches real events): highlighted while on */
       .dbg-toolbar .dbg-nav-hover { background: #ccfbf1; color: #0f766e; }
       .dbg-toolbar .dbg-nav-hover.dbg-on, .dbg-toolbar .dbg-nav-hover.dbg-on:hover { background: #0f766e; color: #fff; box-shadow: inset 0 0 0 1px rgba(204,251,241,.5); }
-      /* 箭头指向选区（默认在选区下方：箭头朝上指向选区） */
+      /* Arrow points at the selection (default position: below the selection, arrow pointing up at it) */
       .dbg-hud::before {
         content: ''; position: absolute; top: -8px; left: 18px;
         width: 0; height: 0; border-left: 8px solid transparent; border-right: 8px solid transparent;
         border-bottom: 8px solid rgba(17,24,39,.94);
       }
-      /* 翻到选区上方：箭头在底部指向选区 */
+      /* Flipped above the selection: arrow at the bottom points at the selection */
       .dbg-hud.dbg-hud-up::before {
         top: auto; bottom: -8px;
         border-bottom: 0; border-top: 8px solid rgba(17,24,39,.94);
@@ -262,13 +266,13 @@
       .dbg-hud i { color: #93c5fd; font-style: normal; }
       .dbg-hud .dbg-hud-path { color: #94a3b8; }
       .dbg-tooltip {
-        position: fixed; z-index: 2147483648; background: rgba(17,24,39,.94); color: #e5e7eb; /* hover popup 同款：dark/圆角/多行 */
+        position: fixed; z-index: 2147483648; background: rgba(17,24,39,.94); color: #e5e7eb; /* same style as the hover popup: dark/rounded/multiline */
         font-size: 11px; line-height: 1.65; padding: 7px 12px; border-radius: 10px; max-width: min(340px, 90vw);
         transition: opacity .3s; pointer-events: none; opacity: 0; box-shadow: 0 6px 20px rgba(0,0,0,.4);
       }
       @media (max-width: 768px), (pointer: coarse) { .dbg-tooltip { font-size: 14px; padding: 9px 14px; } }
-      /* 事件拦截提示条（底部/顶部 toast，闪避鼠标）：纯信息展示 pointer-events 常关——不吞下方元素点击；
-         垂直位置由 showBlockedTip 按拦截点所在半屏写 inline top/bottom（下半屏拦截 → 上半展示），此处仅创建时兑底 */
+      /* Event-interception tip bar (bottom/top toast, dodging the mouse): pure information display, pointer-events always off -- never swallows clicks on elements below;
+         vertical position is written inline top/bottom by showBlockedTip based on the half-screen where the intercept happened (lower half → shown in upper half); this is only the creation-time fallback */
       .dbg-block-tip {
         position: fixed; left: 50%; bottom: 10px; transform: translateX(-50%);
         z-index: 2147483648; background: rgba(15,23,42,.95); color: #fde68a;
@@ -280,24 +284,24 @@
       }
       .dbg-block-tip b { color: #fff; }
       .dbg-profile-menu {
-        position: fixed; z-index: 2147483647; min-width: 220px; background: #fff; /* 最高层（与工具条同级，后创建在上）：下拉不被工具条盖 */
+        position: fixed; z-index: 2147483647; min-width: 220px; background: #fff; /* topmost layer (same tier as the toolbar, later-created renders on top): dropdown not covered by the toolbar */
         border: 1px solid rgba(0,0,0,.15); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.2);
         padding: 4px; font-size: 12px;
       }
       .dbg-profile-item { display: flex; justify-content: space-between; gap: 8px; align-items: center; padding: 6px 10px; border-radius: 7px; cursor: pointer; }
       .dbg-profile-item:hover { background: #eef2ff; }
       .dbg-profile-item.dbg-on { background: #e0e7ff; font-weight: 600; }
-      /* 放行下拉：常驻动作项「⚙️ 自定义…」+ 分隔线 */
+      /* Allow-scheme dropdown: persistent action item "⚙️ Custom…" + divider */
       .dbg-profile-divider { height: 1px; background: #e2e8f0; margin: 3px 4px; }
       .dbg-profile-item.dbg-profile-action { color: #4338ca; }
       .dbg-profile-item.dbg-profile-action:hover { background: #eef2ff; }
       .dbg-profile-label { font-weight: 600; }
       .dbg-profile-desc { font-size: 10px; color: #6b7280; }
-      /* 小屏：放行方案下拉字体跟随（原 12px/10px 固定） */
+      /* Small screen: allow-scheme dropdown font scales with the menu (was fixed 12px/10px) */
       #__dbg_launcher.dbg-phys-small .dbg-profile-menu { font-size: 13px; min-width: 250px; }
       #__dbg_launcher.dbg-phys-small .dbg-profile-item { padding: 8px 11px; }
       #__dbg_launcher.dbg-phys-small .dbg-profile-desc { font-size: 11px; }
-      /* ❓ 帮助窗（help 子系统）：底部居中浮层，可滚动，头部可拖；z-index 2147483648 盖工具条 */
+      /* ❓ Help window (help subsystem): bottom-centered floating layer, scrollable, draggable by its head; z-index 2147483648 covers the toolbar */
       .dbg-help-dialog { position: fixed; z-index: 2147483648; background: #fff; border-radius: 12px;
         box-shadow: 0 10px 30px rgba(0,0,0,.25); max-height: 70vh;
         display: flex; flex-direction: column; font-size: 11px; color: #334155; overflow: hidden; }
@@ -320,7 +324,7 @@
       #__dbg_launcher.dbg-phys-small .dbg-help-dialog { font-size: 13px; max-height: 78vh; border-radius: 14px; }
       #__dbg_launcher.dbg-phys-small .dbg-help-body td { padding: 5px 9px; }
       #__dbg_launcher.dbg-phys-small .dbg-help-body kbd { font-size: 12px; padding: 1px 6px; }
-      #__dbg_launcher.dbg-phys-small .dbg-help-nav-row button { padding: 10px 14px; } /* 触控 44px 目标 */
+      #__dbg_launcher.dbg-phys-small .dbg-help-nav-row button { padding: 10px 14px; } /* 44px touch target */
       .dbg-toolbar .dbg-sel-label { color: #4f46e5; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: min(60vw, 360px); word-break: break-all; overflow-wrap: anywhere; }
       .dbg-toolbar button {
         border: 1px solid #c7d2fe; background: #fff; border-radius: 8px; padding: 2px 8px;
@@ -344,7 +348,7 @@
       .dbg-input-row { display: flex; gap: 6px; padding: 8px; border-top: 1px solid #e5e7eb; }
       .dbg-input-row input { flex: 1; border: 1px solid #d1d5db; border-radius: 8px; padding: 7px 9px; font: inherit; }
       .dbg-input-row button { border: 0; border-radius: 8px; padding: 7px 12px; background: ${accent}; color: #fff; cursor: pointer; font: inherit; }
-      /* ---- AI 悬浮窗（可拖拽/贴边/调宽高） ---- */
+      /* ---- AI floating window (draggable / dock-to-edge / resizable width-height) ---- */
       .dbg-ai-win {
         position: fixed; z-index: 2147483642; display: none;
         background: #fff; border: 1px solid rgba(0,0,0,.18); border-radius: 12px;
@@ -356,9 +360,9 @@
         height: 30px; display: flex; align-items: center; gap: 3px;
         padding: 0 8px; background: #f9fafb; border-bottom: 1px solid #e5e7eb;
         font-size: 12px; cursor: grab; user-select: none; -webkit-user-select: none;
-        touch-action: none; /* 触屏拖动：禁止浏览器把手势当滚动（否则 pointercancel → 拖拽中断，pad 实测卡住；pointerdown preventDefault 管不了触屏滚动） */
-        -webkit-touch-callout: none; /* iOS 长按不弹系统菜单 */
-        position: relative; z-index: 3; /* 盖住 resize 手柄（z2）：右缘拖拽条(.dbg-ai-resize-r 14px)会盖到关闭按钮 → 点关闭变拖动（用户实测） */
+        touch-action: none; /* touch drag: stop the browser treating gestures as scroll (otherwise pointercancel → drag aborted; observed stuck on pads; pointerdown preventDefault cannot stop touch scrolling) */
+        -webkit-touch-callout: none; /* no iOS long-press system menu */
+        position: relative; z-index: 3; /* covers the resize handle (z2): the right-edge drag strip (.dbg-ai-resize-r, 14px) overlaps the close button → clicking close starts a drag (user-observed) */
       }
       .dbg-ai-bar .dbg-ai-title { font-weight: 600; margin-right: auto; color: #374151; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 38vw; flex-shrink: 1; display: flex; align-items: center; gap: 5px; }
       .dbg-ai-bar .dbg-ai-favicon { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; }
@@ -366,19 +370,19 @@
         border: 1px solid #d1d5db; background: #fff;
         padding: 0; width: 26px; height: 26px; border-radius: 50%;
         cursor: pointer; font: inherit; font-size: 11px; color: #4b5563;
-      } /* 图标按钮（最大化/新窗口/设置/关闭）正圆 */
+      } /* icon buttons (maximize/new window/settings/close) are perfect circles */
       .dbg-ai-bar button:hover { background: #eef2ff; border-color: #c7d2fe; }
       .dbg-ai-bar .dbg-ai-close { color: #dc2626; }
-      /* 小屏：AI 窗标题栏精简——默认全屏贴边（最大化），仅 最大化/新窗口/设置/关闭 四钮 */
+      /* Small screen: simplified AI window title bar -- defaults to fullscreen docked (maximized), with only maximize/new window/settings/close */
       #__dbg_launcher.dbg-phys-small .dbg-ai-bar { height: 34px; padding: 0 6px; font-size: 12px; gap: 4px; }
       #__dbg_launcher.dbg-phys-small .dbg-ai-bar .dbg-ai-title { font-size: 12px; }
       #__dbg_launcher.dbg-phys-small .dbg-ai-bar button { min-width: 26px; min-height: 26px; font-size: 12px; padding: 1px 5px; }
-      /* 分组间距：右侧固定组（⛶⧉⚙✕）前留白（不再挤成一团，触屏不易误触） */
+      /* Group spacing: whitespace before the right fixed group (⛶⧉⚙✕) (no longer clumped together, harder to mis-tap on touch) */
       #__dbg_launcher.dbg-phys-small .dbg-ai-bar .dbg-ai-max { margin-left: 10px; }
       #__dbg_launcher.dbg-phys-small .dbg-ai-bar .dbg-ai-pop { margin-left: 10px; }
-      #__dbg_launcher.dbg-phys-small .dbg-ai-resize { display: none; } /* 小屏全宽贴边，尺寸自适应，无角柄 */
-      /* 小屏：resize 边缘拖条（右/下/左）隐藏——小屏手势已被 filter:!small 禁用（拖不动），
-         却仍覆盖 iframe 对应边缘（底部 24px 命中区挡住内容点击、点击无效）→ 纯遮挡，隐藏释放边缘 */
+      #__dbg_launcher.dbg-phys-small .dbg-ai-resize { display: none; } /* small screen is full-width docked with self-fitting size, no corner handle */
+      /* Small screen: resize edge strips (right/bottom/left) hidden -- small-screen gestures are already disabled via filter:!small (cannot drag),
+         yet the strips still cover the matching iframe edges (bottom 24px hit zone blocks content clicks, clicks do nothing) → pure occlusion; hiding frees the edge */
       #__dbg_launcher.dbg-phys-small .dbg-ai-resize-r,
       #__dbg_launcher.dbg-phys-small .dbg-ai-resize-b,
       #__dbg_launcher.dbg-phys-small .dbg-ai-resize-l { display: none; }
@@ -386,15 +390,15 @@
       .dbg-ai-resize {
         position: absolute; right: 0; bottom: 0; width: 20px; height: 20px;
         cursor: nwse-resize; z-index: 2;
-        touch-action: none; -webkit-user-select: none; /* 触屏 resize 手柄同拖动条：禁浏览器滚动手势 */
+        touch-action: none; -webkit-user-select: none; /* touch resize handle same as the drag strip: disable browser scroll gestures */
       }
-      /* 左缘拖条（镜像右缘）：单轴调宽（左缘跟手、右缘锚定）——小屏也保留（用户实测左下角拖不了，只有右/下有缘条） */
+      /* Left-edge strip (mirror of the right edge): single-axis width resize (left edge follows the pointer, right edge anchored) -- kept on small screens too (user-observed: the bottom-left corner was not draggable, only right/bottom had edge strips) */
       .dbg-ai-resize-l {
         position: absolute; left: 0; top: 0; width: 14px; height: 100%;
         cursor: ew-resize; z-index: 2; touch-action: none; -webkit-user-select: none;
       }
-      /* 边缘拖条（右/下）：单轴调宽/调高——触屏只有右下角手柄必须斜拖且贴屏底时落在系统手势区，
-         真实手指很难用；边缘条长且好点。默认透明，hover/触屏加宽命中区（44px）可见提示 */
+      /* Edge strips (right/bottom): single-axis width/height resize -- on touch the bottom-right corner handle requires diagonal dragging and, when docked to the screen bottom, lands in the system gesture area,
+         hard to use with a real finger; edge strips are long and easy to hit. Transparent by default; hover/touch widens the hit zone (44px) with a visible hint */
       .dbg-ai-resize-r {
         position: absolute; right: 0; top: 0; width: 14px; height: 100%;
         cursor: ew-resize; z-index: 2; touch-action: none; -webkit-user-select: none;
@@ -409,20 +413,20 @@
       .dbg-ai-resize-r::after { right: 3px; top: 25%; bottom: 25%; width: 4px; }
       .dbg-ai-resize-l::after { left: 3px; top: 25%; bottom: 25%; width: 4px; }
       .dbg-ai-resize-b::after { bottom: 3px; left: 25%; right: 25%; height: 4px; }
-      /* 只在悬停指示条本身时点亮（原 .dbg-ai-win:hover = 鼠标在窗口任意位置都亮 → 看着"一直显示"，触屏 sticky-hover 更明显）；
-         真正要拖动该位置（指针到边缘条）才提示 */
+      /* Light up only when hovering the indicator strip itself (old .dbg-ai-win:hover lit up anywhere in the window → looked "always on", more obvious with touch sticky-hover);
+         the hint appears only when actually about to drag there (pointer over the edge strip) */
       .dbg-ai-resize-r:hover::after, .dbg-ai-resize-b:hover::after, .dbg-ai-resize-l:hover::after { background: rgba(99,102,241,.35); }
-      /* 拖动中才亮（含触屏——替代旧"触屏常显"方案：常显是视觉噪音，用的时候给反馈即可）：
-         dbg-resizing class 由手势层挂/摘（拖动开始加、结束去） */
+      /* Lit only while resizing (touch included -- replaces the old "always visible on touch" scheme: always-on is visual noise, feedback when in use is enough):
+         the dbg-resizing class is added/removed by the gesture layer (added on drag start, removed on end) */
       .dbg-ai-win.dbg-resizing .dbg-ai-resize-r::after, .dbg-ai-win.dbg-resizing .dbg-ai-resize-b::after, .dbg-ai-win.dbg-resizing .dbg-ai-resize-l::after, .dbg-ai-win.dbg-resizing .dbg-ai-resize::after { background: rgba(99,102,241,.6); }
-      /* 右下角 L 抓手：默认隐藏，hover 才亮（与边缘条一致——常显是视觉噪音） */
+      /* Bottom-right L handle: hidden by default, lit on hover (consistent with the edge strips -- always-on is visual noise) */
       .dbg-ai-resize::after {
         content: ''; position: absolute; right: 3px; bottom: 3px;
         width: 8px; height: 8px; border-right: 2px solid transparent; border-bottom: 2px solid transparent;
         border-radius: 2px; transition: border-color .15s;
       }
       .dbg-ai-resize:hover::after { border-color: rgba(99,102,241,.6); }
-      /* ---- ⧉ 新窗口布局下拉（Chrome Inspector 式：独立弹窗 / 左右分屏 / 上下分屏） ---- */
+      /* ---- ⧉ New-window layout dropdown (Chrome Inspector style: separate popup / side-by-side split / top-bottom split) ---- */
       .dbg-ai-pop-menu {
         position: fixed; z-index: 2147483647; min-width: 200px;
         background: #fff; border: 1px solid rgba(0,0,0,.15); border-radius: 10px;
@@ -432,7 +436,7 @@
       .dbg-ai-pop-menu-item:hover { background: #eef2ff; }
       .dbg-ai-pop-menu-item.dbg-on { background: #4f46e5; color: #fff; }
       .dbg-ai-pop-menu-desc { font-size: 10px; opacity: .72; }
-      /* ---- 调速/拦截面板 ---- */
+      /* ---- Throttle/intercept panel ---- */
       .dbg-speed {
         position: fixed; right: 18px; bottom: 76px; z-index: 2147483643;
         width: 340px; max-height: calc(100vh - 96px); overflow-y: auto;
@@ -459,8 +463,8 @@
       .dbg-release-row { align-items: flex-start; }
       .dbg-release-row > label:first-child { padding-top: 3px; }
       .dbg-rel-wrap { display: flex; flex-direction: column; gap: 4px; flex: 1; }
-      /* ---- 危险命令确认卡 ---- */
-      /* AI 窗设置弹窗（⚙）：小屏高度%+贴边 / 大屏宽高+位置；z 高于 AI 窗（2147483642）——不被自身遮挡；浅色主题与 launcher 弹窗一致 */
+      /* ---- Dangerous-command confirm card ---- */
+      /* AI window settings popup (⚙): small screen height % + docked / large screen width-height + position; z above the AI window (2147483642) -- not occluded by it; light theme consistent with launcher dialogs */
       .dbg-ai-settings-pop {
         position: fixed; z-index: 2147483647; background: #fff; color: #111827;
         border-radius: 12px; padding: 10px 12px; font-size: 12px; min-width: 210px;
@@ -474,22 +478,22 @@
         position: fixed; inset: 0; z-index: 2147483645; display: none;
         background: rgba(17,24,39,.45); align-items: center; justify-content: center;
       }
-      /* 点选/问答/通知面板（aiti-user-*）：右下角浮层——不覆盖全屏、可拖拽可最小化；
-       * 宽度运行时由 placePhysPanel 内联接管（问答面板 520、小屏自动 w-24），CSS 值仅挂载前瞬间生效 */
+      /* Pick/ask/notify panels (aiti-user-*): bottom-right floating layer -- no fullscreen cover, draggable and minimizable;
+       * width is taken over inline at runtime by placePhysPanel (ask panel 520, small screen auto w-24); the CSS value only applies for the instant before mount */
       .dbg-pick-dialog {
         position: fixed; right: 12px; bottom: 12px; z-index: 2147483646; width: 520px; max-width: 92vw;
         background: linear-gradient(180deg, rgba(30,41,59,.98), rgba(17,24,39,.98)); color: #e5e7eb; border-radius: 14px;
         border: 1px solid rgba(148,163,184,.22);
         box-shadow: 0 12px 40px rgba(0,0,0,.5); font-size: 14px; overflow: hidden;
       }
-      /* 短暂提示（toast）：交互到达时提示用户，几秒自动消失——不阻塞、不弹确认窗 */
+      /* Transient toast: notifies the user when an interaction arrives, auto-dismisses after a few seconds -- non-blocking, no confirm dialog */
       .dbg-pick-toast {
         position: fixed; z-index: 2147483648; background: rgba(17,24,39,.95); color: #e5e7eb;
         border-radius: 10px; padding: 8px 12px; font-size: 12px; line-height: 1.6;
         box-shadow: 0 8px 30px rgba(0,0,0,.4); text-align: center; pointer-events: none;
         transition: opacity .4s; word-break: break-all;
       }
-      .dbg-pick-head { padding: 10px 14px; font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 8px; cursor: grab; touch-action: none; background: rgba(255,255,255,.045); border-bottom: 1px solid rgba(148,163,184,.16); } /* cursor grab + touch-action:none：头部可拖拽（makePointerDrag，AI 窗同款） */
+      .dbg-pick-head { padding: 10px 14px; font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 8px; cursor: grab; touch-action: none; background: rgba(255,255,255,.045); border-bottom: 1px solid rgba(148,163,184,.16); } /* cursor grab + touch-action:none: draggable head (makePointerDrag, same as the AI window) */
       .dbg-pick-dialog.dbg-dragging { cursor: grabbing; opacity: .92; box-shadow: 0 14px 44px rgba(0,0,0,.55); }
       .dbg-pick-head .dbg-pick-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .dbg-pick-head button { border: 1px solid transparent; background: rgba(255,255,255,.12); color: #e5e7eb; border-radius: 6px; padding: 3px 10px; cursor: pointer; font: inherit; font-size: 13px; }
@@ -498,11 +502,16 @@
       .dbg-pick-body input::placeholder { color: #64748b; }
       .dbg-pick-body .dbg-pick-sel { margin: 6px 0; font-size: 14px; color: #93c5fd; word-break: break-all; }
       .dbg-pick-body button { border: 0; border-radius: 7px; padding: 9px 14px; cursor: pointer; font: inherit; font-size: 15px; }
-      /* ---- 问答面板（aiti-user-*）视觉契约（2026-09 优化：可读性/配色/宽度/编号/小屏） ----
-       * 问题区（.dbg-ask-prompt）：大字号高对比 + 左侧强调条——AI 的问题是面板最重要信息
-       * 选项区：垂直全宽列表（长文案不挤压换行）+ 数字徽标（1/2/3…，与键盘快捷键 1-9 对应）
-       * 语义配色：主操作（是/确认/我在）绿色渐变；否定/取消红字浅红 hover；「都不适合」虚线灰 */
-      .dbg-ask-prompt { white-space: pre-wrap; font-size: 15px; font-weight: 600; color: #f8fafc; line-height: 1.7; word-break: break-word; background: rgba(96,165,250,.08); border-left: 3px solid #60a5fa; border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; }
+      /* ---- Ask panel (aiti-user-*) visual contract (2026-09 polish: readability/colors/width/numbering/small screen) ----
+       * Question area (.dbg-ask-prompt): large high-contrast font + left accent bar -- the AI's question is the panel's most important information
+       * Options area: vertical full-width list (long copy wraps without squeezing) + number badges (1/2/3…, matching keyboard shortcuts 1-9)
+       * Semantic colors: primary action (yes/confirm/I'm here) green gradient; negative/cancel red text with light-red hover; "none of these fit" dashed gray */
+      .dbg-ask-prompt { white-space: pre-wrap; font-size: 15px; font-weight: 600; color: #f8fafc; line-height: 1.7; word-break: break-word; background: rgba(96,165,250,.08); border-left: 3px solid #60a5fa; border-radius: 6px; padding: 10px 74px 10px 12px; margin-bottom: 10px; }
+      /* Copyable message areas (user-select: text); one-click copy lives in the panel header
+       * (lucide copy button, same as the notify card) -- no floating body button anymore.
+       * .dbg-copyable .dbg-msg-copy CSS removed with it (keys stay in locales: aiwin/debug still use them). */
+      .dbg-copyable { position: relative; user-select: text; -webkit-user-select: text; }
+      .dbg-notify-body { white-space: pre-wrap; font-size: 14px; line-height: 1.7; color: #e5e7eb; word-break: break-word; overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; }
       .dbg-pick-body .dbg-ask-opt { display: flex; align-items: center; gap: 9px; width: 100%; min-width: 0; justify-content: flex-start; text-align: left; padding: 10px 12px; border-radius: 9px; background: rgba(255,255,255,.07); border: 1px solid rgba(148,163,184,.28); color: #eef2f7; transition: background .12s, border-color .12s; }
       .dbg-pick-body .dbg-ask-opt:hover { background: rgba(255,255,255,.13); border-color: rgba(165,180,252,.6); }
       .dbg-ask-num { flex: 0 0 auto; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 6px; background: rgba(99,102,241,.22); border: 1px solid rgba(129,140,248,.5); color: #c7d2fe; font-size: 12px; font-weight: 700; line-height: 1; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; }
@@ -515,12 +524,12 @@
       .dbg-ask-opt.dbg-on { outline: 2px solid #a5b4fc; outline-offset: 1px; }
       .dbg-pick-body .dbg-ask-opt.dbg-on.dbg-primary { background: linear-gradient(135deg, #16a34a, #15803d); }
       .dbg-ask-label { display: block; font-size: 13px; color: #94a3b8; margin-top: 10px; }
-      /* 「现在无法处理」拒绝区按钮（原 inline 样式收编进 CSS：跨面板统一） */
+      /* "Can't handle right now" reject-area button (inline styles consolidated into CSS: unified across panels) */
       .dbg-ask-reject { font-size: 13px; padding: 8px 12px; background: rgba(255,255,255,.06); border: 1px solid rgba(148,163,184,.3); color: #e5e7eb; border-radius: 8px; cursor: pointer; }
       .dbg-ask-reject:hover { background: rgba(255,255,255,.13); }
       .dbg-pick-ok { background: #4f46e5; color: #fff; }
       .dbg-pick-cancel { background: rgba(255,255,255,.12); color: #e5e7eb; margin-right: 6px; }
-      /* 问答面板发送按钮（手写输入/多选发送）：亮绿高亮——原无底色透明、深色面板上几乎看不见（用户实测） */
+      /* Ask panel send button (free-text input / multi-select send): bright green highlight -- previously transparent with no fill, nearly invisible on the dark panel (user-observed) */
       .dbg-pick-body .dbg-ask-send {
         background: linear-gradient(135deg, #22c55e, #16a34a); color: #fff; font-weight: 700; border: 0;
         box-shadow: 0 2px 12px rgba(34,197,94,.45), inset 0 1px 0 rgba(255,255,255,.25);
@@ -531,22 +540,22 @@
       .dbg-pick-result { background: rgba(79,70,229,.15); border-radius: 8px; padding: 6px 8px; margin-top: 6px; font-size: 11px; word-break: break-all; }
       .dbg-dialog.dbg-open { display: flex; }
       .dbg-dialog-card { width: min(460px, 90vw); max-height: 82vh; overflow: auto; background: #fff; border-radius: 14px; box-shadow: 0 20px 60px rgba(0,0,0,.35); }
-      .dbg-dialog-head { padding: 12px 14px; font-weight: 600; border-bottom: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: center; gap: 8px; cursor: grab; touch-action: none; } /* cursor grab + touch-action:none：头部可拖拽（makeCardDrag） */
+      .dbg-dialog-head { padding: 12px 14px; font-weight: 600; border-bottom: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: center; gap: 8px; cursor: grab; touch-action: none; } /* cursor grab + touch-action:none: draggable head (makeCardDrag) */
       .dbg-dialog-card.dbg-dragging { cursor: grabbing; opacity: .95; box-shadow: 0 24px 70px rgba(0,0,0,.4); }
       .dbg-dialog-head code { font-size: 11px; color: ${accent}; background: ${accent}18; padding: 2px 6px; border-radius: 6px; }
       .dbg-dialog-head .dbg-loc { font-size: 11px; color: #6b7280; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .dbg-dialog-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
-      /* ---- 预览界面 ---- */
+      /* ---- Preview UI ---- */
       .dbg-preview { border: 1px solid #e5e7eb; border-radius: 8px; background: #f9fafb; padding: 8px 10px; font-size: 11px; }
       .dbg-preview .dbg-pv-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
       .dbg-preview .dbg-pv-row:last-child { margin-bottom: 0; }
       .dbg-preview b { color: #374151; }
       .dbg-preview .dbg-pv-kv { color: #6b7280; background: #fff; border: 1px solid #e5e7eb; border-radius: 4px; padding: 1px 5px; }
       .dbg-preview .dbg-pv-file { color: #059669; word-break: break-all; }
-      /* 行复制按钮：hover 显示（📋）——iframe 内 Clipboard 失败时经 dbg_copy 协议转发宿主 */
+      /* Row copy button: shown on hover (📋) -- when Clipboard fails inside an iframe, forwards to the host via the dbg_copy protocol */
       .dbg-preview .dbg-pv-copy { opacity: 0; transition: opacity .15s; margin-left: 4px; padding: 0 6px; font-size: 10px; cursor: pointer; border: 1px solid #d1d5db; border-radius: 4px; background: #fff; color: #374151; vertical-align: middle; }
       .dbg-preview .dbg-pv-row:hover .dbg-pv-copy { opacity: 1; }
-      /* 文件行操作按钮（📂 后台 / 🖥 前端）：同样 hover 才显示，避免默认铺满干扰阅读 */
+      /* File-row action buttons (📂 backend / 🖥 frontend): also shown only on hover, avoiding a cluttered default look that hurts readability */
       .dbg-preview .dbg-mini-open { opacity: 0; transition: opacity .15s; vertical-align: middle; }
       .dbg-preview .dbg-pv-row:hover .dbg-mini-open { opacity: 1; }
       .dbg-open-file { color: #2563eb; text-decoration: underline; cursor: pointer; pointer-events: auto; }
@@ -558,11 +567,11 @@
       .dbg-dialog-foot button { border-radius: 8px; padding: 7px 14px; cursor: pointer; font: inherit; }
       .dbg-dialog-foot .dbg-primary { background: ${accent}; color: #fff; border: 0; }
       .dbg-dialog-foot .dbg-ghost { background: #fff; border: 1px solid #d1d5db; }
-      /* ---- 调试信息窗口（替代临时 toast）+ 设置弹窗 ---- */
-      .dbg-overlay { position: fixed; inset: 0; z-index: 2147483644; background: rgba(17,24,39,0); display: none; } /* 遮罩改透明：不盖页面（用户误认'浅蓝全窗遮罩'）——点击卡片外空白即关闭 */
+      /* ---- Debug info window (replaces transient toast) + settings popup ---- */
+      .dbg-overlay { position: fixed; inset: 0; z-index: 2147483644; background: rgba(17,24,39,0); display: none; } /* mask made transparent: does not cover the page (users mistook it for a 'pale blue full-window mask') -- clicking blank space outside the card closes it */
       .dbg-overlay.dbg-open { display: block; }
       .dbg-overlay-card { position: fixed; top: 0; left: 0; background: #fff; border-radius: 14px; box-shadow: 0 20px 60px rgba(0,0,0,.4); max-width: 92vw; display: flex; flex-direction: column; }
-      .dbg-overlay-card .dbg-dialog-body { flex: 1 1 auto; overflow: auto; min-height: 0; } /* 头/尾固定，中间滚动——底部按钮始终可见 */
+      .dbg-overlay-card .dbg-dialog-body { flex: 1 1 auto; overflow: auto; min-height: 0; } /* head/foot fixed, middle scrolls -- bottom buttons always visible */
       .dbg-debug-info { font: 11px/1.6 ui-monospace,monospace; white-space: pre-wrap; word-break: break-all; background: #0f172a; color: #e5e7eb; border-radius: 8px; padding: 10px 12px; }
       .dbg-debug-help { font-size: 12px; color: #4b5563; line-height: 1.85; }
       .dbg-debug-help b { color: #111827; display: block; margin-bottom: 4px; }
@@ -571,20 +580,20 @@
       .dbg-settings label { display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; }
       .dbg-settings button { border: 1px solid #d1d5db; background: #fff; border-radius: 6px; padding: 6px 10px; cursor: pointer; font: inherit; font-size: 12px; }
       .dbg-settings button:hover { background: #f9fafb; }
-      /* hover 调试面板（点 inspect/HUD 后 hover 是否被抑制；可复制贴给 AI） */
+      /* Hover debug panel (whether hover is suppressed after clicking inspect/HUD; copyable to paste to the AI) */
 
-      /* ===== 小屏自适应（主页面是否适配小屏不管，我们自己的 UI 适配） ===== */
-      /* 小屏判断按设备物理尺寸（screen.width）加 class——不依赖 layout 视口（移动端 layout=980 会误判）；不用视觉视口（用户缩放会变→小屏误判大屏） */
+      /* ===== Small-screen adaptation (whether the host page adapts is not our concern; we adapt our own UI) ===== */
+      /* Small-screen detection adds the class by device physical size (screen.width) -- not the layout viewport (mobile layout=980 misdetects); not the visual viewport either (user zoom changes it → small screens misdetect as large) */
       .dbg-fab.dbg-smal button { width: 46px; height: 46px; font-size: 12px; }
       .dbg-fab.dbg-tiny button { width: 48px; height: 48px; font-size: 13px; }
-      /* 小屏：AI/inspect 按钮被选中（dbg-on）不显示实心方形背景——胶囊/圆形上加 accent 实底看起来像方块。
-         保持透明底 + accent 描边 + 图标即可区分，无方块感 */
+      /* Small screen: selected (dbg-on) AI/inspect buttons show no solid square background -- a solid accent fill on a pill/round button looks like a square.
+         Transparent background + accent outline + icon is enough to distinguish, no square look */
       #__dbg_launcher.dbg-phys-small .dbg-fab button.dbg-on { background: transparent !important; background-color: transparent !important; box-shadow: inset 0 0 0 2px ${accent}; }
-      /* 触屏或窄视口 <768：AI 窗尺寸已由 JS placePhysBox（capVisW/capVisH）精确控制，
-         这里只留 bar/panel 视觉尺寸——移除 .dbg-ai-win 的 !important 宽高（与 placePhysBox 冲突：
-         pointer:coarse 在无 meta 触屏页 100vw=980 → width 960 超屏；响应式页 78vh/100vw 高度也不对） */
-      /* 窄视口 <768 才放大按钮尺寸——用户实测宽触屏（777px）吃 pointer:coarse 档后标题栏图标偏大（首载正常、后来变大）
-         故只按宽度触发；resize 手柄仍单独走 @media (pointer: coarse)（见下） */
+      /* Touch or narrow viewport <768: AI window size is already precisely controlled by JS placePhysBox (capVisW/capVisH),
+         only bar/panel visual sizes remain here -- remove .dbg-ai-win's !important width/height (conflicts with placePhysBox:
+         pointer:coarse on meta-less touch pages 100vw=980 → width 960 overflows the screen; on responsive pages 78vh/100vw heights are wrong too) */
+      /* Enlarge button sizes only for narrow viewport <768 -- user-observed: a wide touch screen (777px) hitting the pointer:coarse tier made title bar icons oversized (fine on first load, grew later),
+         so trigger by width only; resize handles still go through @media (pointer: coarse) separately (see below) */
       @media (max-width: 767px) {
         .dbg-ai-bar { height: 32px; }
         .dbg-ai-bar button { min-width: 28px; min-height: 28px; font-size: 14px; }
@@ -592,18 +601,18 @@
         .dbg-speed { right: 10px; width: calc(100vw - 20px); max-height: calc(100vh - 90px); }
         .dbg-panel { right: 10px; width: calc(100vw - 20px); }
       }
-      /* 触屏或 <480：最大触控尺寸 */
+      /* Touch or <480: maximum touch sizes */
       @media (max-width: 479px) {
-        /* 仅窄屏手机：32px 触控按钮；宽触屏（平板/大屏触控）用上一档 28px——用户实测 38/32px 过大（标题栏图标嫌大） */
+        /* Narrow phones only: 32px touch buttons; wide touch screens (tablets/large touch) use the previous tier 28px -- user-observed 38/32px too large (title bar icons felt oversized) */
         .dbg-ai-bar button { min-width: 32px; min-height: 32px; font-size: 15px; }
       }
       @media (pointer: coarse) {
-        /* resize 手柄/边缘拖条：命中区放大到触控标准（视觉标不变，::after 锚在角落）——
-           否则手指按不到小角落（按到窗外/iframe 上），触屏完全用不了；
-           视觉提示不再常显（旧方案）——拖动中才亮（.dbg-resizing，见上），平时隐形 */
-        /* 角柄热区从角落内移 10px：窗口贴屏缘（全宽/贴边）时角柄压在屏幕角落——Android 系统手势区
-           （back swipe 竖边 + home 横条），真实手指一碰就被系统抢走（pointercancel 提前结束，
-           实测"角柄没反应"）；内移后中心离屏缘 32px 避开手势带（视觉三角仍锚角落） */
+        /* Resize handle/edge strips: hit zone enlarged to the touch standard (visual marker unchanged, ::after anchored in the corner) --
+           otherwise fingers cannot press the tiny corner (presses land outside the window/on the iframe), unusable on touch;
+           the visual hint is no longer always visible (old scheme) -- lit only while resizing (.dbg-resizing, see above), invisible otherwise */
+        /* Corner handle hot zone moved 10px inward from the corner: when the window docks to the screen edge (full-width/docked) the handle sits on the screen corner -- the Android system gesture area
+           (back-swipe vertical edge + home horizontal bar), where a real finger touching it gets the gesture stolen by the system (pointercancel ends the drag early,
+           observed "corner handle unresponsive"); after the shift the center is 32px from the screen edge, clear of the gesture band (visual triangle still anchored in the corner) */
         .dbg-ai-resize { width: 44px; height: 44px; right: 10px; bottom: 10px; }
         .dbg-ai-resize::after { right: 5px; bottom: 5px; width: 11px; height: 11px; }
         .dbg-ai-resize-r { width: 24px; }
@@ -685,7 +694,7 @@
     var state = {
       active: false,
       engaged: false,
-      // 临时选择状态：点击后进入（hover 停用、工具条保留），✓确认/✕取消退出
+      // temporary selection state: entered on click (hover disabled, toolbar kept); ✓ confirms / ✕ cancels and exits
       hovered: null,
       selected: null,
       hoverOutline: { node: null },
@@ -1575,14 +1584,14 @@
           file: fl && fl.file,
           line: fl && fl.line,
           usedAt: fl && fl.usedAt,
-          // 完整 framework（含 react19Chunk/usedAtChunk）：悬停载荷也会成为 lastSelfPayload → 确认发送给 AI 时
-          // 经 picksAddElement→resolveElLoc 做 sourcemap 解析，缺了它 chunk URL 就无法还原成真实源文件
+          // Full framework (including react19Chunk/usedAtChunk): the hover payload also becomes lastSelfPayload → when confirmed and sent to the AI,
+          // picksAddElement→resolveElLoc runs sourcemap resolution; without it, chunk URLs cannot be recovered into real source files
           framework: fl,
           frameworks: detectFrameworks(),
           rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) },
           mouseX: mx,
           mouseY: my,
-          // 鼠标坐标（HUD 以鼠标位置为中心）
+          // mouse coordinates (the HUD centers on the mouse position)
           xpath: xpathOf(el),
           text: txt,
           bg: cs.backgroundColor,
@@ -1698,7 +1707,7 @@
         file: fl && fl.file,
         line: fl && fl.line,
         usedAt: fl && fl.usedAt,
-        // 页面上下文：url/title + pageId（MCP 桥 instanceId/frameId；桥未连时为 null，宿主侧补全）
+        // Page context: url/title + pageId (MCP bridge instanceId/frameId; null when the bridge isn't connected — filled in on the host side)
         frame: { url: topUrl().slice(0, 500), title: (document.title || "").slice(0, 200) },
         pageId: null
       };
@@ -2348,7 +2357,7 @@
         window.Date = _origDate;
         return;
       }
-      window.Date = (function(OrigDate) {
+      window.Date = function(OrigDate) {
         function DbgDate() {
           var d;
           if (!(this instanceof DbgDate)) return new OrigDate(OrigDate.now() + offset).toString();
@@ -2364,7 +2373,7 @@
         DbgDate.parse = OrigDate.parse;
         DbgDate.UTC = OrigDate.UTC;
         return DbgDate;
-      })(_origDate);
+      }(_origDate);
     }
     var FROZEN_CATEGORIES = {
       click: ["mousedown", "mouseup", "click", "dblclick", "pointerdown", "pointerup", "contextmenu"],
@@ -2442,11 +2451,10 @@
     }
     var _uiMouseBound = false;
     function uiMousedownGuard(e) {
-      if (e.target && e.target.closest && e.target.closest("#__dbg_launcher, .dbg-fab, .dbg-toolbar, .dbg-speed, .dbg-dialog, .dbg-extreme-menu, .dbg-profile-menu, .dbg-tooltip, .dbg-sel-input-row, .dbg-ai-detail-mask, .dbg-ai-win, .dbg-overlay, .dbg-settings")) {
-        if (e.target.closest && e.target.closest("input, textarea, select")) return;
-        e.stopImmediatePropagation();
-        if (e.cancelable) e.preventDefault();
-      }
+      if (!(e.target && e.target.closest && e.target.closest("#__dbg_launcher, .dbg-fab, .dbg-toolbar, .dbg-speed, .dbg-dialog, .dbg-extreme-menu, .dbg-profile-menu, .dbg-tooltip, .dbg-sel-input-row, .dbg-ai-detail-mask, .dbg-ai-win, .dbg-overlay, .dbg-settings"))) return;
+      if (e.target.closest && e.target.closest("input, textarea, select")) return;
+      e.stopImmediatePropagation();
+      if (state.active && !released.click && e.cancelable) e.preventDefault();
     }
     function ensureUiMousedownGuard() {
       if (!_uiMouseBound) {
@@ -2630,13 +2638,13 @@
           file: fl && fl.file,
           line: fl && fl.line,
           usedAt: fl && fl.usedAt,
-          // 完整 framework（含 react19Chunk/usedAtChunk）：触屏选区同样会变 lastSelfPayload → 确认发送给 AI 时
-          // 经 picksAddElement→resolveElLoc 做 sourcemap 解析；缺了它 chunk URL 无法还原成真实源文件（触屏设备必带）
+          // Full framework (including react19Chunk/usedAtChunk): the touch selection also becomes lastSelfPayload → when confirmed and sent to the AI,
+          // picksAddElement→resolveElLoc runs sourcemap resolution; without it, chunk URLs cannot be recovered into real source files (mandatory on touch devices)
           framework: fl,
           frameworks: detectFrameworks(),
           touchMode: true,
           engaged: true,
-          // 点击暂停：工具条显示
+          // click-paused: toolbar shown
           rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) },
           mouseX: typeof mX === "number" ? mX : Math.round(r.x + r.width / 2),
           mouseY: typeof mY === "number" ? mY : Math.round(r.y + r.height / 2),
@@ -2656,7 +2664,7 @@
         } catch (e) {
         }
       },
-      // 打开 AI 窗清理 → 同消息下次触发重新上报
+      // cleared when the AI window opens → the same message reports again on its next occurrence
       enterInspector: function(mode) {
         if (state.active && inspectorMode === (mode || "mouse")) return;
         if (state.active) window.__dbg.exitInspector();
@@ -2707,19 +2715,19 @@
         }
       },
       simulateHover,
-      // 真实派发 mouseover/mouseenter（页面 JS hover 逻辑生效并持久保持）
+      // really dispatches mouseover/mouseenter (page JS hover logic runs and persists)
       simulateHoverOff,
       fileLocation,
       serialize,
       detectFrameworks,
-      // Turbopack chunk 定位 → 源文件（sourcemap，异步）：launcher 候选/点选补全真实源文件路径用（resolveFrameworkLoc 同源）
+      // Turbopack chunk location → source file (sourcemap, async): completes real source file paths for launcher candidates/picks (same source as resolveFrameworkLoc)
       resolveChunkSource,
-      // 组件名 → 源文件（预算耗尽时无 chunk 定位，按组件名扫 sourcemap sourcesContent 找文件；异步，懒构建缓存）
+      // Component name → source file (no chunk location when the budget is exhausted; scan sourcemap sourcesContent by component name; async, lazily built + cached)
       resolveComponentFile,
-      // 组件函数 toString → 定位 chunk 行 → sourcemap 精确源文件+行（预算耗尽兜底拿真实行号）
+      // Component fn toString → locate chunk line → sourcemap exact source file+line (budget-exhausted fallback for real line numbers)
       resolveFnLine,
       setOptions: applyOptions,
-      // 页面调速/拦截选项（动画减速/事件拦截/定时器慢放）
+      // page speed/blocking options (animation slowdown / event blocking / timer slow-motion)
       resumeHover: function() {
         state.engaged = false;
         return { engaged: state.engaged };
@@ -2731,10 +2739,10 @@
         return { engaged: true };
       },
       applyProfile,
-      // 放行方案（工具条多态切换 / 调速面板管理）
-      // 当前选区载荷（AI 确认回传用）；__state 调试用——必须挂在 window.__dbg（此前误放 CDP.DOM 表导致
-      // ensureClientFresh 幂等检查 getSelectionPayload 失败 → 每次 enterInspector 重注入 → 旧 message 监听残留 →
-      // dbg_exec 被旧（空 state）client 先处理返回 null（自检⑤⑫ 失败根因）
+      // release profile (toolbar mode switching / speed panel management)
+      // Current selection payload (for the AI confirm return); __state is debug-only — it must hang on window.__dbg (it was previously misplaced in the CDP.DOM table, which made
+      // ensureClientFresh's idempotency check on getSelectionPayload fail → re-injection on every enterInspector → stale message listeners left behind →
+      // dbg_exec handled first by the stale (empty-state) client, returning null (root cause of self-checks ⑤⑫ failing))
       getSelectionPayload: function() {
         var el = state.selected || state.hovered;
         return el ? aiPickPayload(el) : null;
@@ -2742,7 +2750,7 @@
       __state: function() {
         return { active: state.active, engaged: state.engaged, hasOver: true, hasClick: true };
       },
-      // 本地缓冲暴露（方案 F-3：page_logs/page_network 工具通过 CDP Runtime.evaluate 按需拉取，不再实时上报）
+      // Local buffer exposure (plan F-3: page_logs/page_network tools pull on demand via CDP Runtime.evaluate; no more real-time reporting)
       __consoleRing: CONSOLE_RING,
       __netRing: NET_RING
     };
@@ -3051,7 +3059,7 @@
           var r = writeEditable(el, text, true);
           return { ok: r.ok, editable: !!r.editable, value: r.value, len: text.length, error: r.error };
         },
-        // 对齐 CDP Input.insertText：在光标处插入文本（不替换已有内容）——React 受控/富文本通用
+        // Aligns with CDP Input.insertText: insert text at the caret (doesn't replace existing content) — works for React controlled inputs / rich text
         insertText: function(args2) {
           var el = resolveEl(args2) || document.activeElement;
           var text = args2 && args2.text !== void 0 ? String(args2.text) : "";
@@ -3089,12 +3097,12 @@
           if (args2 && args2.url) location.href = args2.url;
           return true;
         },
-        // 截屏：直连路径（无手势卡）兜底——有 activation 就能成（Chrome 桌面），
-        // 否则浏览器拒绝 → 提示走 AI 窗手势卡路径（launcher danger.js 同名实现会弹用户确认）
+        // Screenshot: direct path (no gesture card) fallback — works when activation exists (Chrome desktop),
+        // otherwise the browser rejects → point to the AI window gesture-card path (launcher danger.js's same-named implementation shows a user confirmation)
         captureScreenshot: function() {
           return Promise.resolve({ error: "Page.captureScreenshot 已由 launcher 截屏卡接管（意图说明→调整页面→预览确认），此直连路径已停用" });
         },
-        // 页面 frame 树（iframe 嵌套）：同域可读 title/url/readyState；跨域仅 iframe 元素属性（src/name）
+        // Page frame tree (nested iframes): same-origin can read title/url/readyState; cross-origin only iframe element attributes (src/name)
         getFrameTree: function() {
           function walk(win, path) {
             var doc = null, frames = [];
@@ -3246,7 +3254,7 @@
           }
         }
       },
-      // 浏览器受限操作（剪贴板/下载/弹窗/全屏/播放）：程序化执行会被浏览器拦截，需用户真实点击（手势桥）
+      // Browser-restricted operations (clipboard/download/popup/fullscreen/play): programmatic execution gets blocked by the browser and needs a real user click (gesture bridge)
       Browser: {
         copy: function(args2) {
           return navigator.clipboard.writeText(String(args2.text || "")).then(
@@ -3271,8 +3279,8 @@
           var w = window.open(args2.url || "about:blank", "_blank");
           return w ? { opened: true } : { error: "弹窗被浏览器拦截（需要用户手势）" };
         },
-        // 以下三个与宿主手势卡同款（launcher danger.js）：这里仅直连兑底——无 activation 大多被拒，
-        // 报错文本引导重试（经 AI 窗转发的路径会弹确认卡，用户点确认后执行）
+        // The following three mirror the host gesture cards (launcher danger.js): here only the direct-path fallback — most get rejected without activation,
+        // the error text guides a retry (the path forwarded via the AI window shows a confirmation card that executes after the user confirms)
         paste: function() {
           if (!(navigator.clipboard && navigator.clipboard.readText)) return Promise.resolve({ error: "当前浏览器不支持剪贴板读取" });
           return navigator.clipboard.readText().then(
@@ -3549,11 +3557,11 @@
       return false;
     }
   }
-  var _fixedVisual = (function() {
+  var _fixedVisual = function() {
     var ua = String(navigator.userAgent || "");
     var pf = String(navigator.platform || "");
     return /iPhone|iPad|iPod/i.test(ua) && (/iPhone|iPad|iPod/i.test(pf) || /MacIntel/i.test(pf));
-  })();
+  }();
   function positionPhysical(el2, visX, visY, scale, scaleY) {
     if (!isFinite(visX)) visX = 0;
     if (!isFinite(visY)) visY = 0;
@@ -3719,9 +3727,9 @@
   function _trackPhysPanel(el2, opts) {
     if (!el2) return;
     var found = false;
-    _physPanels.forEach(function(t) {
-      if (t.el === el2) {
-        t.opts = opts;
+    _physPanels.forEach(function(t2) {
+      if (t2.el === el2) {
+        t2.opts = opts;
         found = true;
       }
     });
@@ -3736,13 +3744,13 @@
       if (timer) return;
       timer = setTimeout(function() {
         timer = null;
-        _physPanels.forEach(function(t) {
+        _physPanels.forEach(function(t2) {
           try {
-            if (!t.el || !t.el.isConnected) {
-              _physPanels.delete(t);
+            if (!t2.el || !t2.el.isConnected) {
+              _physPanels.delete(t2);
               return;
             }
-            placePhysPanel(t.el, t.opts);
+            placePhysPanel(t2.el, t2.opts);
           } catch (e) {
           }
         });
@@ -3750,23 +3758,556 @@
     });
   }
 
+  // src/launcher/locales/zh-cn.js
+  var zh_cn_default = {
+    " (framework: ": "（框架：",
+    " auto-show debug info on refresh": " 刷新时自动显示调试信息",
+    " errors · ": " 条错误 · ",
+    " items": " 项",
+    " non-default emulation flags": " 个非默认模拟条件",
+    " on-screen ": " 屏上 ",
+    " s without a pick → auto-allow (same as clicking Allow)": " 秒内无人点选 → 自动允许执行（等同点「允许执行」）",
+    " · Space/Tab": " · 空格/Tab",
+    " · baseline ": " · 判定基准 ",
+    " — taken over by aiti-agent": "——由 aiti-agent 接管",
+    " ← called at ": " ← 调用于 ",
+    ' ← called at <a class="dbg-open-file" data-file="': ' ← 调用于 <a class="dbg-open-file" data-file="',
+    " → placed in AI composer pending area ([error": " → 已放入 AI 输入框候选区（[错误",
+    " ✓in-viewport": " ✓屏内",
+    " ✗offscreen": " ✗屏外",
+    '" (allow-all default, categories editable).': "」（默认全放行，可编辑类别）。",
+    '" saved: allow ': "」已保存：放行 ",
+    '" title="Copy this content">📋</button>': '" title="复制此内容">📋</button>',
+    "# Specify": "# 指定",
+    "(10s protocol probe; success required; auto-fallback on failure)": "（10s 协议探测，成功才生效；失败自动回退）",
+    "(10s protocol probe; takes effect only on success)": "（10s 协议探测，成功才生效）",
+    "(AI gave no capture reason — cancel and ask the AI to retry with a reason)": "（AI 未说明截取意图——可取消后让 AI 补充 reason 再试）",
+    "(async — MCP notified)": "（异步——已通知 MCP）",
+    "(async — placed in AI pending area, click [answer N] to send)": "（异步——已放入 AI 待选，点击 [回答N] 发送给 AI）",
+    "(can combine with network/error tweaks)": "（可继续配合网络/错误区微调）",
+    "(can report to the AI in its window for fixes)": "（可在 AI 窗口就地反馈给 AI 修复）",
+    "(click 💬 to reopen)": "（点 💬 可重新打开）",
+    "(current session kept)": "（当前会话仍保留）",
+    "(experimental)": "（实验性）",
+    "(large↔small switch, media queries live)": "（大屏↔小屏切换，媒体查询实时生效）",
+    "(none = freeze all)": "（无，=全冻结）",
+    "(none — auto-tracked after AI window loads/navigates)": "（无——AI 窗加载/导航后自动记录）",
+    "(not configured)": "（未配置）",
+    "(re-tracked after AI window navigation)": "（AI 窗导航后将重新追踪）",
+    "(re-tracked after navigation)": "（导航后重新追踪）",
+    "(unattended)": "（无人值守）",
+    "(waiting for the page error hook report)": "（等待页面错误 hook 上报）",
+    ") to AI — [element N] placed in the composer, press send.": "）给 AI——输入框已放入 [元素N]，点发送即达。",
+    ") — Space/Tab to switch back": "）——空格/Tab 可切回",
+    ") — after installing, enter its URL below and the AI window will be taken over by it (this window no longer used).": "）——下载安装后，把它的访问地址填到下面，AI 窗将直接由它接管（本窗口不再使用）。",
+    ") — close it to return to the in-page window": "）——关闭该窗口即回到页面内",
+    ") — hover to highlight, click to lock, confirm on the toolbar.": "）——移到元素高亮、点击锁定，工具条上确认。",
+    ") — install it, set the URL, and the AI window is taken over; 10s protocol probe after apply, success required, auto-fallback on failure.": "）——装好后设地址，AI 窗直接由它接管；应用后 10s 协议探测，成功才生效，失败自动回退。",
+    "): page interaction frozen — use toolbar 🔒 Allow plan to let events through (Space/Tab toggles)": "）：页面交互已冻结——放行请用工具条 🔒 放行方案（空格/Tab 一键切换）",
+    "): pick on both host and target pages — ": "）：宿主页与目标页均可点选——",
+    ", page popup menus stay open": "，页面弹出菜单保持打开",
+    ", reported after the error hook captures": "，错误 hook 捕获后上报",
+    "</b> events (": "</b> 事件（",
+    "<b>Field notes</b>": "<b>字段说明</b>",
+    "<b>🎯 Click to select</b> <b>&lt;": "<b>🎯 点击选择</b> <b>&lt;",
+    "🌐 Language": "🌐 语言",
+    "Auto (follow browser)": "跟随浏览器",
+    "🌐 Language switched (applies to newly opened panels)": "🌐 语言已切换（对新开面板生效）",
+    "\nCalled at: ": "\n调用于: ",
+    "\nComponent source: ": "\n组件源码: ",
+    "<b>📋 Copied</b>": "<b>📋 已复制</b>",
+    "<b>📋 Forwarded to host for copy</b>": "<b>📋 已转发宿主复制</b>",
+    "<br>⚠ System screen capture unavailable, fell back to DOM-render screenshot": "<br>⚠ 系统屏幕捕获不可用，已回退到 DOM 渲染截屏",
+    '<br>📄 Component source <span title="': '<br>📄 组件源码 <span title="',
+    "<br>📍 Called at ": "<br>📍 调用于 ",
+    '<br>📍 Called at <span title="': '<br>📍 调用于 <span title="',
+    '<button data-dir="first">⏮ First</button>': '<button data-dir="first">⏮ 最前</button>',
+    '<button data-dir="last">⏭ Last</button>': '<button data-dir="last">⏭ 最后</button>',
+    '<button data-dir="next">▶ Next</button>': '<button data-dir="next">▶ 后一个</button>',
+    '<button data-dir="prev">◀ Prev</button>': '<button data-dir="prev">◀ 前一个</button>',
+    "<code>AI iframe</code> = width as seen by ai.html; should ≈ visual width (mobile layout); too large (900+) = desktop layout shrunk into ants": "<code>AI iframe</code> = ai.html 看到的宽度，应≈视觉宽（移动布局）；过大（900+）= 桌面布局被缩成蚂蚁",
+    "<code>FIXED layout/visual</code> = fixed-element coordinate systems: layout needs counter-zoom, visual (iOS) uses visual coords directly<br>": "<code>FIXED layout/visual</code> = fixed 元素坐标系：layout 需 counter-zoom，visual（iOS）直接视觉坐标<br>",
+    "<code>baseline</code> = screen.width (÷dpr correction for old WebViews reporting physical pixels; tablets with UA-CH mobile=false are not divided); ≥768 large, &lt;480 tiny<br>": "<code>判定基准</code> = screen.width（老 WebView 报物理像素时 ÷dpr 修正；UA-CH mobile=false 的平板不除）；≥768 大屏、&lt;480 tiny<br>",
+    "<code>on-screen</code> = the element's real visual position (rect×scale); ✓in-viewport = visible<br>": "<code>屏上</code> = 元素实际视觉位置（rect×scale）；✓屏内 = 可见<br>",
+    "<code>scale / sy</code> = layout→visual CSS scale (screen.width/innerWidth, screen.height/innerHeight); differ when non-uniform; counter-zoom uses scale<br>": "<code>scale / sy</code> = 布局→视觉 CSS 缩放（屏宽/innerWidth、屏高/innerHeight）；非等比时不同，counter-zoom 用 scale<br>",
+    '<div class="dbg-help-note">Mapped to PageUp/PageDown/Home/End.</div>': '<div class="dbg-help-note">对应快捷键 PageUp/PageDown/Home/End。</div>',
+    '<div class="dbg-help-note">Shortcuts work while the toolbar is shown; typing in inputs is never intercepted.</div>': '<div class="dbg-help-note">快捷键在工具条显示时生效；光标在输入框时不劫持。</div>',
+    "<div>Hover page elements to preview, click to lock and this toolbar appears — fine-tune with arrow keys, <b>✓ to send to AI</b>.<br>": "<div>划过页面元素高亮预览，点击锁定后出现这个工具条——用方向键微调选区，<b>✓ 确认发送给 AI</b>。<br>",
+    '<div>More: <b>👆 Simulate hover</b> handles JS hover expansions (not CSS :hover); <b># quick pick</b> accepts <code>.card button</code> and <code>//div[@class="card"]</code>.</div>': '<div>其他：<b>👆 模拟 hover</b> 对付 JS 悬停展开（CSS :hover 除外）；<b># 快速选择</b>支持 <code>.card button</code> 与 <code>//div[@class="card"]</code>。</div>',
+    "<h4>1. Buttons</h4>": "<h4>① 按钮一览</h4>",
+    "<h4>2. Keyboard shortcuts</h4>": "<h4>② 快捷键总表</h4>",
+    "<h4>3. Advanced: can't click page buttons? Allow → trigger → switch back → select</h4>": "<h4>③ 进阶：点不动页面按钮？「放行 → 触发 → 切回 → 选中」</h4>",
+    "<h4>4. No keyboard (touch): tap direction buttons</h4>": "<h4>④ 键盘没有时（触屏）：以下方向点按钮直达</h4>",
+    "<h4>What is this</h4>": "<h4>这是什么</h4>",
+    "<li>Click the target button → real event fires, menu opens</li>": "<li>点击目标按钮 → 真实事件触发，菜单展开</li>",
+    "<li>Hover/arrow-key onto menu items, <b>✓</b> to send</li>": "<li>划过/方向键选中菜单项，<b>✓</b> 发送</li>",
+    "<li>Press <kbd>Space</kbd> or <kbd>Tab</kbd> → switch to 🔓 <b>allow all</b></li>": "<li>按 <kbd>空格</kbd> 或 <kbd>Tab</kbd> → 切到 🔓 <b>全部放行</b></li>",
+    "<li>Press <kbd>Space</kbd>/<kbd>Tab</kbd> again → back to 🔒 <b>default allow</b> (opened menus stay open)</li>": "<li>再按 <kbd>空格</kbd>/<kbd>Tab</kbd> → 切回 🔒 <b>默认放行</b>（展开的菜单不会收起）</li>",
+    "<tr><td><b>#</b></td><td>Quick pick: type a CSS selector or XPath to locate</td></tr>": "<tr><td><b>#</b></td><td>快速选择：输入 CSS selector 或 XPath 定位</td></tr>",
+    "<tr><td><b>← ↑ ↓ →</b></td><td>Elements adjacent by <b>geometry</b> (same positions as arrow keys)</td></tr>": "<tr><td><b>← ↑ ↓ →</b></td><td>页面<b>几何位置</b>相邻元素（与键盘方向键同位）</td></tr>",
+    "<tr><td><b>↖ Parent / ↘ Child</b></td><td>Up/down the DOM tree (diagonal = tree walk); auto next sibling when no child</td></tr>": "<tr><td><b>↖ 父级 / ↘ 子级</b></td><td>沿 DOM 树上/下一层（斜向=走树）；子级没有时自动同级下一个</td></tr>",
+    "<tr><td><b>✕ / ✓</b></td><td>Cancel exit / confirm send</td></tr>": "<tr><td><b>✕ / ✓</b></td><td>取消退出 / 确认发送</td></tr>",
+    "<tr><td><b>👆 Simulate hover</b></td><td>Dispatches real mouseenter on the selection, JS hover expansions persist; click again to clear</td></tr>": "<tr><td><b>👆 模拟hover</b></td><td>给选中元素派发真实 mouseenter，JS 悬停展开持久保持；再点清除</td></tr>",
+    '<tr><td><b>🔒 Allow plan</b></td><td>Page events frozen by default while locked; switch plans in the dropdown, "⚙️ Custom…" at the end opens the panel to manage custom plans</td></tr>': "<tr><td><b>🔒 放行方案</b></td><td>锁定后页面事件默认冻结；下拉切换方案，末尾「⚙️ 自定义…」打开设置面板管理多个自定义方案</td></tr>",
+    "<tr><td><b>🖱 Restore quick-pick</b></td><td>Back to hover-to-pick (paused while locked to prevent mis-switch)</td></tr>": "<tr><td><b>🖱 恢复快选</b></td><td>回到「划过即选」（锁定后 hover 快选暂停防误切）</td></tr>",
+    "<tr><td><kbd>Backspace</kbd> / <kbd>Delete</kbd></td><td>Parent</td></tr>": "<tr><td><kbd>Backspace</kbd> / <kbd>Delete</kbd></td><td>父级</td></tr>",
+    "<tr><td><kbd>Enter</kbd></td><td>Child (none → sibling next; keep pressing to walk the DOM tree)</td></tr>": "<tr><td><kbd>Enter</kbd></td><td>子级（无子级→同级 next，一路按遍历整棵 DOM 树）</td></tr>",
+    "<tr><td><kbd>Esc</kbd></td><td>Close help → cancel/exit</td></tr>": "<tr><td><kbd>Esc</kbd></td><td>关帮助窗 → 取消/退出</td></tr>",
+    "<tr><td><kbd>Home</kbd> / <kbd>End</kbd></td><td>First / last child (as above)</td></tr>": "<tr><td><kbd>Home</kbd> / <kbd>End</kbd></td><td>子级首个 / 末个（同上）</td></tr>",
+    "<tr><td><kbd>PageUp</kbd> / <kbd>PageDown</kbd></td><td>Prev / next DOM sibling (buttons hidden, shortcuts only)</td></tr>": "<tr><td><kbd>PageUp</kbd> / <kbd>PageDown</kbd></td><td>DOM 平级前一个 / 后一个（按钮已收起，仅快捷键）</td></tr>",
+    "<tr><td><kbd>Space</kbd> / <kbd>Tab</kbd></td><td>One-key allow-plan toggle: default allow ⇄ allow all (both keys work, in case the system grabs Space)</td></tr>": "<tr><td><kbd>空格</kbd> / <kbd>Tab</kbd></td><td>放行方案一键切换：默认放行 ⇄ 全部放行（两键同效，防系统监控占据空格）</td></tr>",
+    "<tr><td><kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd></td><td>Geometrically adjacent elements</td></tr>": "<tr><td><kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd></td><td>页面几何相邻元素</td></tr>",
+    "A plan = which event categories are allowed (rest frozen). Default locks only click/hover; allow-all includes click. Saved custom plans appear in the toolbar dropdown. While locked, press Space to toggle default-allow/allow-all (page popup menus stay open).": "方案 = 放行哪些事件类别（其余冻结）。默认只锁 click/hover；全放行含 click。自定义方案保存后在工具条下拉可选。锁定态按 空格 在默认放行/全部放行之间一键切换（页面弹出菜单不收起）。",
+    "AI assistant with web UI (": "带 Web 界面的 AI 助手（",
+    "AI channel not configured (aiUrl/endpoint empty), echoed to console.": "AI 通道未配置（aiUrl/endpoint 为空），已回显到 console。",
+    "AI message": "AI 消息",
+    'AI needs you to pick a page element. Click "Start selecting" to begin — hover to highlight, click to lock, then confirm on the toolbar.': "AI 需要你帮忙在页面上点选一个元素。点「现在开始选择」进入点选——移到元素上高亮、点击锁定，然后在工具条上确认发送。",
+    "AI new-window layout: floating / split left·right / dock bottom·top (close it to return to embedded mode)": "AI 新窗口布局：浮动 / 左·右并排 / 底·顶横排（关闭新窗口即回到内嵌模式）",
+    "AI notification": "AI 通知",
+    "AI stopped": "AI 已停止",
+    "Add/edit/delete custom plans": "添加/编辑/删除自定义方案",
+    'Added plan "': "已添加方案「",
+    'Adjust the page to the desired state first: this card doesn\'t block interaction and can be dragged aside by its title bar. Click "Start screenshot" to capture the current viewport directly (page re-render, no system dialogs; the card auto-hides for the shot).': "可先把页面调整到想要的状态：本卡片不遮挡操作、按住标题栏可拖到角落。点「开始截屏」后直接截取当前视口（页面重绘方式，不弹任何系统窗口；截屏瞬间本卡会自动隐藏不入镜）。",
+    "After a dangerous-command confirm card pops up ": "危险命令确认卡弹出后 ",
+    "After apply, auto-negotiates with the host to reopen the AI window with a 10s protocol probe; takes effect only on success (auto-used afterwards), auto-falls back to this window on failure (edit and retry).": "应用后自动与宿主协商重开 AI 窗，10 秒内协议探测；连接成功才生效（此后重开自动使用），失败自动回退本窗口（可修改重试）。",
+    "Allow ": "放行 ",
+    "Allow all": "全部放行",
+    "Allow plan": "放行方案",
+    'Allow plan (dropdown): 🔒 default allow / 🔓 allow all / ⛔ freeze all / custom plans; "⚙️ Custom…" at the end opens the panel to manage plans. Shortcuts: Space/Tab = one-key toggle default allow ⇄ allow all (while locked, page popup menus stay open)': "放行方案（下拉选择）：🔒默认放行 / 🔓全部放行 / ⛔全部冻结 / 自定义方案；下拉末尾「⚙️ 自定义…」打开设置面板管理多个方案。快捷键：空格/Tab=默认放行⇄全部放行一键切换（锁定态生效，页面弹出菜单不收起）",
+    "Allow plan applied: ": "已应用放行方案：",
+    "Animation speed": "动画速度",
+    "Apply": "应用",
+    "Apply & switch": "应用并切换",
+    "Attributes": "属性",
+    "Auto-fit": "自适应",
+    "Auto-fit (restore width)": "自适应（恢复原宽）",
+    "Auto-inferred": "默认推断",
+    "Background": "背景色",
+    "Browser requires a user gesture: AI programmatic execution is blocked — click the button below to complete it.": "浏览器要求用户手势：AI 程序化执行会被拦截，需你点击下方按钮代为完成。",
+    "Browser-restricted action": "浏览器受限操作",
+    "Built-in plan (cannot delete)": "固定方案（不可删除）",
+    "CSS selector or XPath, Enter to locate": "CSS selector 或 XPath，Enter 定位",
+    "Can't find/select it right now": "暂时找不到/选不了",
+    "Cancel": "取消",
+    "Cancel (decline this request)": "取消（拒绝本次请求）",
+    "Cancelled (agent stopped)": "已取消（agent 停止）",
+    "Candidate placed in AI pending area": "候选已放入 AI 待选",
+    "Capture snapshot": "现场快照",
+    "Check items (multi-select) then press Send:": "勾选（可多选）后点「发送」：",
+    "Child/depth traversal (↘=expand tree; first child if any, else sibling next — keep pressing to walk the whole DOM tree) · key Enter": "子级/深度遍历（↘=展开树；有子级→进入首子级；无子级→同级 next，一路点遍历整棵 DOM 树）· 快捷键 Enter",
+    "Clear localStorage (persistent data)": "清空 localStorage（持久数据）",
+    "Clear selection & exit Inspector": "取消选区并退出 Inspector",
+    "Cleared (mouseleave dispatched)": "已清除（mouseleave 已派发）",
+    "Click": "点击",
+    "Click = move selection, ✓ to confirm.": "点击=移动选区，✓确认。",
+    "Click an option or press 1-9 to answer:": "点选项或按数字键 1-9 立即作答：",
+    "Click to open in backend": "点击在后台打开",
+    "Clipboard read denied (needs clipboard-read permission): ": "剪贴板读取被拒（需授权 clipboard-read）：",
+    "Clipboard read not supported in this browser (no navigator.clipboard.readText)": "当前浏览器不支持剪贴板读取（无 navigator.clipboard.readText）",
+    "Clipboard unavailable in the AI window — content below is auto-selected, press Ctrl/Cmd+C to copy: ": "剪贴板在 AI 窗不可用——已自动全选下方内容，Ctrl/Cmd+C 直接复制：",
+    "Close": "关闭",
+    "Close (Esc)": "关闭（Esc）",
+    "Confirm manually every time": "每次手动确认",
+    "Confirm selection & show preview": "确认选中并弹出预览",
+    "Copy all": "复制全部内容",
+    "Copy failed": "复制失败",
+    "Copy failed: ": "复制失败：",
+    "Copy to clipboard": "复制到剪贴板",
+    "Current iframe viewport: ": "当前 iframe 视口：",
+    "Current iframe viewport: —": "当前 iframe 视口：—",
+    "Custom px": "自定义px",
+    "DOM screenshot failed (abnormal viewport size ": "DOM 截屏失败（视口尺寸异常 ",
+    "DOM screenshot failed (page render to SVG errored)": "DOM 截屏失败（页面渲染到 SVG 出错）",
+    "DOM screenshot failed: ": "DOM 截屏失败：",
+    "Dangerous action": "危险操作",
+    "Dangerous command": "危险命令",
+    "Dangerous command: ": "危险命令：",
+    "Default URL": "默认地址",
+    "Default URL (re-tracked after navigation)": "默认地址（导航后重新追踪）",
+    "Default allow": "默认放行",
+    "Default plan saved: allow ": "默认放行已保存：放行 ",
+    "Delete": "删除",
+    "Delete page element (irreversible)": "删除页面元素（不可恢复）",
+    'Deleted plan "': "已删除方案「",
+    "Desktop": "桌面",
+    "Do not auto-show next time": "下次不再自动显示",
+    "Dock to browser bottom (top/bottom split)": "贴靠浏览器底部，上下分屏",
+    "Dock to browser left edge (side-by-side split)": "贴靠浏览器左缘，与页面左右分屏",
+    "Dock to browser right edge (side-by-side split)": "贴靠浏览器右缘，与页面左右分屏",
+    "Dock to browser top (top/bottom split)": "贴靠浏览器顶部，上下分屏",
+    "Download file": "下载文件",
+    "Drag to pin HUD (stop following the selection)": "拖动固定 HUD（不跟随选区）",
+    "Element adjacent above · key ↑": "页面上边相邻元素 · 快捷键 ↑",
+    "Element adjacent below · key ↓": "页面下边相邻元素 · 快捷键 ↓",
+    "Element adjacent left · key ←": "页面左边相邻元素 · 快捷键 ←",
+    "Element adjacent right · key →": "页面右边相邻元素 · 快捷键 →",
+    "Emulate touch": "模拟触屏",
+    "Emulate touch device traits (pointer:coarse / hover:none)": "模拟触屏设备特征（pointer:coarse / hover:none）",
+    "Enter URL": "请输入地址",
+    "Enter fullscreen": "进入全屏",
+    "Failed to open video stream": "视频流打开失败",
+    "Failed to show screenshot card: ": "截屏卡显示失败：",
+    "File too large/non-text: listing only (for large images/files ask the user to upload manually or pick a smaller one)": "文件过大/非文本：仅返回清单（大图/大文件请让用户手动上传或缩小后重选）",
+    "Focus": "聚焦",
+    "Font size": "字号",
+    "Force error": "强制报错",
+    "Foreground": "前景色",
+    "Framework": "框架",
+    "Framework / file location": "框架/文件位置",
+    "Freeze all": "全部冻结",
+    "Fullscreen failed: ": "全屏失败：",
+    "Fullscreen not supported": "不支持全屏",
+    "H": "高",
+    "Handle it later": "等会再处理",
+    "Height": "高度",
+    "Help: buttons / shortcut table / advanced tips (allow workflow, touch navigation)": "使用帮助：按钮说明 / 快捷键总表 / 进阶技巧（含放行工作流、触屏导航入口）",
+    "Hover": "悬停",
+    "Hover to highlight, click to select, Esc to exit.": "划过高亮，点击选中，Esc 退出。",
+    "I can't fulfill this right now": "我暂时无法满足你的要求",
+    "I'm here, continue": "我在，继续",
+    "Interrupted by new interaction": "新的交互打断",
+    "Invalid URL format": "地址格式不对",
+    "Keyboard": "键盘",
+    "Large": "大屏",
+    "Later / Away": "稍后 / 不在",
+    "Locate": "定位",
+    "MCP bridge": "MCP 桥",
+    "Manual confirm": "手动确认",
+    "Maximize (fill the page; click again to restore)": "最大化窗口（铺满页面；再点还原）",
+    "Navigate to another URL": "导航到其他地址",
+    "Network throttle": "网络模拟",
+    "New plan name: ": "新方案名称：",
+    "No / Cancel": "否 / 取消",
+    "No file selected": "未选择文件",
+    "No selectable element (blank page?)": "没有可选的元素（页面是空白？）",
+    "No user response (away)": "用户无响应（不在线）",
+    "None of these": "都不适合",
+    "None of these (type an answer)": "都不适合（输入回答）",
+    "None of these work (type an answer)": "这些都不适合（输入回答）",
+    "Normal": "正常",
+    "On (page renders as touch device)": "开（页面按触屏设备渲染）",
+    "One-click scenarios: ": "一键应用场景：",
+    "Open new window": "打开新窗口",
+    "Option A": "选项 A",
+    "Option B": "选项 B",
+    "Package the current error state (errors + emulation flags + page state) and send to AI": "把当前出错现场（错误列表+模拟条件+页面状态）打包发给 AI",
+    "Page": "页面",
+    "Parent (up one DOM level, ↖=to parent) · keys Backspace / Delete": "父级（DOM 树上一层，↖=向父层）· 快捷键 Backspace / Delete",
+    "Pass the pageId parameter to operate this page (MCP: page_exec / extension: aiti_page_exec)": "传 pageId 参数即可操作该页面（MCP: page_exec / 扩展: aiti_page_exec）",
+    "Pause countdown": "暂停倒计时",
+    "Pick a local file (opens file picker; small files return content / small images as dataUrl)": "选择本地文件（弹文件选择器；小文件直接返回内容/小图片转 dataUrl）",
+    "Pick elements on the host page itself (skip target iframes)": "在宿主页自身点选元素（不进入目标 iframe）",
+    "Pinned (mouseover/mouseenter dispatched, persistent; click again or exit to clear)": "已 pin（mouseover/mouseenter 已派发，持久保持；再点或退出清除）",
+    'Plan "': "方案「",
+    "Plan editor (incl. default allow, click to expand)": "方案编辑（含默认放行，点击展开）",
+    "Play media (autoplay policy)": "播放音视频（自动播放策略）",
+    "Please answer on the page": "请在页面回答",
+    "Please click an element on the page": "请点击页面上的一个元素",
+    "Popup blocked": "弹窗被拦截",
+    "Quick pick: type a CSS selector (.card) or xpath (//div[@class=card]) to locate an element": "快速选择：输入 CSS selector（.card）或 xpath（//div[@class=card]）定位元素",
+    "Read clipboard (browser may ask permission)": "读取剪贴板内容（浏览器可能弹授权）",
+    "Real click pass-through: allow one click so the page opens menus/popups (menus won't vanish while frozen)": "真实点击穿透：放行一次点击让页面打开菜单/弹层（冻结期间菜单不会消失）",
+    "Reconnect pending": "待重连",
+    "Reconnecting": "重连中",
+    "Reload target page": "重载目标页面",
+    "Remember for this session (no per-command confirm)": "本次会话记住（不再逐个确认）",
+    "Reset position/size + URL (new session)": "重置位置/尺寸 + URL（新会话）",
+    "Restore all emulation to defaults": "恢复所有模拟为默认",
+    "Restore quick-pick: exit temp state, hover highlight back on (hover to preview/move the selection)": "恢复快选：退出临时状态，hover 高亮重新生效（鼠标划过快速预览/切换选区）",
+    "Restore window (exit maximize)": "还原窗口（退出最大化）",
+    "Save": "保存",
+    "Scenario presets": "场景预设",
+    "Screenshot failed": "截屏失败",
+    "Screenshot failed: ": "截屏失败：",
+    "Screenshot flow timeout (user didn't confirm)": "截图流程超时（用户未完成确认）",
+    "Screenshot timeout (15s)": "截屏超时（15s）",
+    "Scroll": "滚动",
+    "Selection tools": "选区工具",
+    "Send": "发送",
+    "Send to AI": "发送给 AI",
+    "Sent selected element (": "已发送选中元素（",
+    "Set up aiti-agent": "设置 aiti-agent",
+    "Settings": "设置",
+    "Share cancelled/denied: ": "分享被取消/拒绝：",
+    "Simulate hover (dispatches real mouseover/mouseenter, page JS hover logic runs and persists; click again or exit to clear)": "模拟 hover（真实派发 mouseover/mouseenter，页面 JS hover 逻辑生效并持久保持；再点或退出清除）",
+    "Small": "小屏",
+    "Specify selection by CSS selector": "按 CSS 选择器指定选区",
+    "Standalone window, freely movable & resizable": "独立小窗，可自由移动、调整大小",
+    "Styles": "样式",
+    "System share sheet (title/text/link)": "系统分享面板（标题/文本/链接）",
+    "Tablet 768": "平板768",
+    "Tag": "标签",
+    "Temporarily hide (click to restore)": "暂时隐藏（再点恢复）",
+    "Text": "文本",
+    "Timer slowdown": "定时器慢放",
+    "Off": "关",
+    "Touch": "触屏",
+    "Touch events": "触摸",
+    "Touch emulation: ": "触屏模拟：",
+    "Trigger on target page ": "在目标页触发 ",
+    "Type a CSS selector to set the selection, e.g. .card:nth-child(2)": "输入 CSS 选择器指定选区，例如 .card:nth-child(2)",
+    "Type your answer…": "输入你的回答…",
+    "User cancelled": "用户取消",
+    "User cancelled ": "用户取消 ",
+    "User cancelled screenshot": "用户取消截图",
+    "User cancelled sending screenshot": "用户取消发送截图",
+    "User cancelled the gesture ": "用户取消了手势操作 ",
+    "User cancelled with Esc": "用户按 Esc 取消",
+    "User chose not to select now": "用户暂不选择",
+    "User denied execution ": "用户拒绝执行 ",
+    "User temporarily away": "用户暂时不在",
+    "User-set URL": "用户设置地址",
+    "User-set URL (re-tracked after navigation)": "用户设置地址（导航后重新追踪）",
+    "Video first-frame timeout": "视频首帧就绪超时",
+    "Video stream has no frame size": "视频流无画面尺寸",
+    "Video stream playback failed: ": "视频流播放失败：",
+    "Viewport emulation": "视口模拟",
+    "Viewport emulation: ": "视口模拟：",
+    "Visual viewport ": "视觉视口 ",
+    "W": "宽",
+    "Wait for manual confirm on every dangerous command (default, safest)": "每次危险命令都等人工点选（默认，最安全）",
+    "Web Share not supported in this browser (mobile only)": "当前浏览器不支持 Web Share（移动端可用）",
+    "Wheel": "滚轮",
+    "Write localStorage (persistent data)": "写入 localStorage（持久数据）",
+    "Yes / Confirm": "是 / 确认",
+    "dom (getDisplayMedia denied: ": "dom（getDisplayMedia 被拒：",
+    "dom (getDisplayMedia no picker/no response)": "dom（getDisplayMedia 未弹选择器/无响应）",
+    "dom (no getDisplayMedia)": "dom（无 getDisplayMedia）",
+    "dom (page re-render mode)": "dom（页面渲染模式）",
+    "fab on-screen ": "fab 屏上 ",
+    "fetch fails immediately / XHR fires error (simulate offline)": "fetch 立即失败 / XHR 触发 error（模拟断网）",
+    "https://your-aiti-agent-url": "https://你的-aiti-agent-地址",
+    "iframe ready: ": "iframe 就绪：",
+    "no response ": "无响应 ",
+    "s no response) — fell back to this window; check the URL and retry": "s 无响应）——已回退本窗口，请确认地址后重试",
+    "s then auto-allow (or click the button below)": "s 后自动允许执行（也可手动点下方按钮）",
+    "s then auto-allow (unattended)": "s 后自动允许执行（无人值守）",
+    "⇈ Dock top": "⇈ 顶部横排",
+    "⇊ Dock bottom": "⇊ 底部横排",
+    "⇤ Split left": "⇤ 左侧并排",
+    "⇥ Split right": "⇥ 右侧并排",
+    "⏱ Pick timeout (no user response)": "⏱ 点选超时（用户无响应）",
+    "⏱ Timeout": "⏱ 超时",
+    "⏱ Timing / 🌐 Network / ⚠ Errors": "⏱ 调速 / 🌐 网络 / ⚠ 错误",
+    "⏱ Timing / 🌐 Network / ⚠ Errors (popup panel)": "⏱ 调速 / 🌐 网络 / ⚠ 错误（弹出面板）",
+    "⏱ Wait timeout (no user response)": "⏱ 等待超时（用户无响应）",
+    "⏳ AI window loading — runs when ready (no response for long? check the AI window opened properly)": "⏳ AI 窗加载中——就绪后自动执行（如长时间无反应，检查 AI 窗是否正常打开）",
+    "⏳ Capturing current viewport…": "⏳ 正在截取当前视口……",
+    "⏳ Expired +7d": "⏳ 过期+7天",
+    "⏳ Later": "⏳ 稍后",
+    "⏳ Not now": "⏳ 暂不选择",
+    "⏳ Unattended: ": "⏳ 无人值守：",
+    "⏸ Pause": "⏸ 暂停",
+    "⏸ Paused (": "⏸ 已暂停（剩 ",
+    "▶ Resume": "▶ 继续",
+    "♾ Persistent": "♾ 常驻",
+    "♾ Waiting": "♾ 等待操作",
+    "⚙ AI URL switched: ": "⚙ AI 地址已切换：",
+    "⚙ Set URL": "⚙ 设置地址",
+    "⚙ aiti-agent URL applied: ": "⚙ 已应用 aiti-agent 地址：",
+    "⚙️ Custom…": "⚙️ 自定义…",
+    "⚠ AI URL connection failed (": "⚠ AI 地址连接失败（",
+    "⚠ AI window auto-restore failed: ": "⚠ AI 窗口自动恢复失败：",
+    "⚠ AI window session URL failed to load (10s no response) — fell back": "⚠ AI 窗会话 URL 加载失败（10s 无响应）——已回退",
+    "⚠ Browser blocked the standalone window — fell back to in-page (click ⧉ to retry; user-gesture opens are never blocked)": "⚠ 浏览器拦截了独立窗口——已退回页面内窗口（点 ⧉ 可再次尝试；直接点击时不会被拦截）",
+    "⚠ Confirm dangerous action": "⚠ 确认危险操作",
+    "⚠ DOM-render screenshot: system screen capture unavailable; this re-renders the page — external images/some styles may differ from the real picture.": "⚠ DOM 渲染截屏：系统屏幕捕获不可用，本次为重绘页面，外部图片/部分样式可能与实际画面有差异。",
+    "⚠ Page error [": "⚠ 页面错误 [",
+    "⚠ Resource 404": "⚠ 资源404",
+    "⚠ Sync error": "⚠ 同步异常",
+    "⚡ Default allow": "⚡ 默认放行",
+    "⚡ Forced error triggered: ": "⚡ 已触发强制错误：",
+    "⚡ Switched: ": "⚡ 已切换：",
+    "⚡⚡ Allow all": "⚡⚡ 全部放行",
+    "⛔ Freeze all": "⛔ 全部冻结",
+    "⛔ User cancelled gesture: ": "⛔ 用户取消手势：",
+    "⛔ User denied: ": "⛔ 用户拒绝：",
+    "✅ AI URL connected: ": "✅ AI 地址连接成功：",
+    "✅ Answered": "✅ 已作答",
+    "✅ Click to complete this action": "✅ 点击完成此操作",
+    "✅ Copied": "✅ 已复制",
+    "✅ Screenshot taken (": "✅ 截图成功（",
+    "✅ Send": "✅ 发送",
+    "✅ Send selected (": "✅ 发送所选（",
+    "✅ Send selected (0)": "✅ 发送所选（0）",
+    "✅ User allowed: ": "✅ 用户允许：",
+    "✅ Yes": "✅ 是",
+    "✍ Fill & edit": "✍ 填入修改",
+    "✍️ AI asks for your input": "✍️ AI 请你输入",
+    "✍️ None of these": "✍️ 都不适合",
+    "✓ Allow": "✓ 允许执行",
+    "✓ Copied": "✓ 已复制",
+    "✓ Filled in": "✓ 已填入",
+    "✓ Send": "✓ 发送",
+    "✕ Can't handle now (tell AI why)": "✕ 现在无法处理（告诉 AI 原因）",
+    "✕ Cancel": "✕ 取消",
+    "✕ Clear": "✕ 清除",
+    "✕ Deny": "✕ 拒绝",
+    "✕ Exited Inspector (picking closed on host and all iframes).": "✕ 已退出 Inspector（宿主与全部 iframe 点选已关闭）。",
+    "✕ Session-tracked URL cleared — AI window fell back": "✕ 已清除会话追踪 URL——AI 窗已回退",
+    "✕ User cancelled/declined: ": "✕ 用户取消/拒绝：",
+    "✕ User declined selection: ": "✕ 用户拒绝选择：",
+    "✕ User denied: ": "✕ 用户拒绝：",
+    "✕ User-set URL cleared — AI window fell back to default": "✕ 已清除用户设置地址——AI 窗回退默认地址",
+    "✥ Free": "✥ 自由",
+    "❌ Denied: ": "❌ 拒绝：",
+    "❌ No": "❌ 否",
+    "❌ Screenshot failed: ": "❌ 截图失败：",
+    "❓ Selection toolbar · Help": "❓ 选区工具条 · 使用帮助",
+    "➕ Add plan": "➕ 添加方案",
+    "➡ Dock right": "➡ 贴右",
+    "⟲ Reset": "⟲ 重置",
+    "⟲ Reset: AI window position/size to default, URL to initial (new session)": "⟲ 已重置：AI 窗位置/尺寸回默认，URL 回初始（新会话）",
+    "⧉ Floating window": "⧉ 浮动窗口",
+    "⬅ Dock left": "⬅ 贴左",
+    "⬆ Dock top": "⬆ 贴顶",
+    "⬇ Dock bottom": "⬇ 贴底",
+    "⭐ Set aiti-agent URL": "⭐ 设置 aiti-agent 地址",
+    "⭐ Set up aiti-agent (recommended)": "⭐ 设置 aiti-agent（第一推荐）",
+    "⭐ User-set (aiti-agent)": "⭐ 用户设置（aiti-agent）",
+    "🌙 Dark": "🌙 深色",
+    "🎬 Scenario applied: ": "🎬 场景已应用：",
+    "🎯 AI asks you to pick a page element": "🎯 AI 请你选择页面元素",
+    "🎯 AI pick: hover-select on both host and target pages (click → toolbar → ✓ confirm back to the AI window). Esc to exit.": "🎯 AI 点选：宿主页与目标页均可 hover 选择（点击 → 工具条 → ✓ 确认回传 AI 窗）。Esc 退出。",
+    "🎯 Element selected": "🎯 已选元素",
+    "🎯 Pick mode (": "🎯 点选模式（",
+    "🎯 Selected (candidate in AI pending area, click [element N] to send)": "🎯 已选中（候选已放入 AI 待选，点击 [元素N] 发送给 AI）",
+    "🎯 User picked an element (sent to AI)": "🎯 用户已选元素（回传 AI）",
+    "🐢 Slow network": "🐢 弱网",
+    "👁 Hide": "👁 隐藏",
+    "👁 Show": "👁 显示",
+    "👆 Pass-through": "👆 穿透",
+    "👆 Real click: allow one click (page menus/popups open normally, then freeze resumes).": "👆 真实点击：放行一次点击（页面菜单/弹层可正常打开，随后恢复冻结）。",
+    "👆 Simulate hover: ": "👆 模拟 hover：",
+    "💡 Click the tag row text (<code>&lt;div&gt; 320×48 …</code>) to open the details/preview dialog.</div>": "💡 点顶部标签行文字（<code>&lt;div&gt; 320×48 …</code>）可打开详情预览弹窗。</div>",
+    "💬 User answered (sent to AI)": "💬 用户已回答（回传 AI）",
+    "💬 User answered: ": "💬 用户已回答：",
+    "📂 Backend": "📂 后台",
+    "📂 Requested backend open: ": "📂 已请求后台打开：",
+    "📋 Copied (host)": "📋 已复制（host）",
+    "📋 Copied to clipboard": "📋 已复制到剪贴板",
+    "📋 Copied: ": "📋 已复制：",
+    "📋 Copy": "📋 复制",
+    "📋 Copy content": "📋 复制内容",
+    "📋 Forwarded to host for copy": "📋 已转发宿主复制",
+    "📋 Retry copy": "📋 再试复制",
+    "📋 View debug info": "📋 查看调试信息",
+    "📍 Called at ": "📍 调用于 ",
+    "📝 Extra note (optional)": "📝 补充说明（可选）",
+    "📝 Extra note (optional; added when you click an option)": "📝 补充说明（可选，填好后点选项一并发送）",
+    "📱 Narrow 375": "📱 窄屏375",
+    "📱 Small (% height)": "📱 小屏（按 % 高度）",
+    "📴 Offline": "📴 离线",
+    "📸 AI wants a screenshot": "📸 AI 想截屏",
+    "📸 Capture state & send to AI": "📸 捕获现场发 AI",
+    "📸 Snapshot sent to AI: ": "📸 现场已发送给 AI：",
+    "📸 Start screenshot": "📸 开始截屏",
+    "🔁 AI window bridge lost — auto-reloaded (": "🔁 AI 窗桥连接断开——已自动重载（",
+    "🔁 Current AI window navigation: ": "🔁 当前 AI 窗导航：",
+    "🔁 Current session (reported by AI window, priority)": "🔁 当前会话（AI 窗上报，优先）",
+    "🔄 All emulation flags reset.": "🔄 已重置全部模拟条件。",
+    "🔄 Debug session restored (AI window was open before refresh, auto-reopened).": "🔄 已恢复调试会话（刷新前 AI 窗口开着，现已自动重开）。",
+    "🔄 Reset all": "🔄 重置全部",
+    "🔄 Restoring AI standalone window (waiting for response…)": "🔄 正在恢复 AI 独立窗口（等待窗口回应…）",
+    "🔄 Retake": "🔄 重拍",
+    "🔍 Click for details/preview (✓ to send)": "🔍 点击查看详情/预览（发送直接点 ✓）",
+    "🔍 Debug info (copy for AI diagnosis)": "🔍 调试信息（复制给 AI 协助诊断）",
+    "🔓 Remembered for this session: dangerous commands no longer confirmed one by one (refresh the page to reset).": "🔓 本次会话已记住：危险命令不再逐个确认（可刷新页面重置）。",
+    "🔗 AI URL": "🔗 AI 地址",
+    "🔗 AI window bound to bridge: ": "🔗 AI 窗已绑定桥：",
+    "🔗 AI window bridge reconnected": "🔗 AI 窗桥连接已恢复",
+    "🔗 Connection handled by the AI window: page ↔ AI window via postMessage (the only channel); the bridge connection (role=ai) lives on the AI window side.": "🔗 连接由 AI 窗口负责：页面 ↔ AI 窗经 postMessage 交互（唯一通道），桥连接（role=ai）在 AI 窗侧。",
+    "🔗 Open aiti.pw": "🔗 打开 aiti.pw",
+    "🔧 Debug": "🔧 调试",
+    "🖥 Frontend": "🖥 前端",
+    "🖥 Host page": "🖥 宿主页",
+    "🖥 Large (specific size/position)": "🖥 大屏（具体尺寸/位置）",
+    "🖥 Requested frontend open (pi-web file tab): ": "🖥 已请求前端打开（pi-web 文件标签页）：",
+    '🖱 Click a page element to select<br><span style="color:#a5b4fc;font-size:11px">Confirm on the toolbar with ✓ after picking</span>': '🖱 点击页面元素选择<br><span style="color:#a5b4fc;font-size:11px">点选后工具条 ✓ 确认发送</span>',
+    "🖱 Needs your real click": "🖱 需要你的真实点击",
+    "🖱 Quick-pick restored: hover highlight back on (hover to preview, click to move the selection).": "🖱 已恢复快选：hover 高亮重新生效（划过快速预览，点击即选新位置）。",
+    "🖱 Start selecting": "🖱 现在开始选择",
+    "🖱 User clicked to complete gesture: ": "🖱 用户点击完成手势：",
+    "🙋 AI asks if you're present": "🙋 AI 问你是否在场",
+    "🙋 I'm here": "🙋 我在",
+    "🛠 Inspector settings": "🛠 Inspector 设置",
+    "🛡 Blocked <b>": "🛡 已拦截 <b>",
+    "🤖 AI asks you to choose": "🤖 AI 请你选择",
+    "🤖 AI has a message": "🤖 AI 有一条消息",
+    "🤖 AI needs you": "🤖 AI 需要你",
+    "🤖 AI needs your answer": "🤖 AI 需要你回答",
+    "🤖 AI needs your confirmation": "🤖 AI 需要你确认",
+    "🤖 Auto-allow on timeout (unattended): ": "🤖 超时自动允许（无人值守）：",
+    "🪟 AI opened in a standalone window — close it to return to the in-page window": "🪟 AI 已在独立窗口打开——关闭该窗口即回到页面内窗口",
+    "🪟 AI opened in standalone window (": "🪟 AI 已在独立窗口打开（",
+    "🪟 AI standalone window closed — back to the in-page window": "🪟 AI 独立窗口已关闭——已回到页面内窗口",
+    "🪟 Closed stale AI standalone window (now in-page; click ⧉ to reopen the standalone window if needed)": "🪟 已关闭残留的 AI 独立窗口（当前为页面内窗口；需要时可点 ⧉ 重新打开独立窗口）",
+    "🪟 Reconnected to the AI standalone window (not reloaded, session kept)": "🪟 已重新连接 AI 独立窗口（窗口未重载，会话保持）"
+  };
+
+  // src/launcher/i18n.js
+  var langCache = null;
+  function detectLang() {
+    try {
+      var saved = localStorage.getItem("__dbg_lang");
+      if (saved === "zh" || saved === "en") return saved;
+    } catch (e) {
+    }
+    try {
+      var nav = String(typeof navigator !== "undefined" && (navigator.language || navigator.userLanguage) || "en");
+      return /^zh/i.test(nav) ? "zh" : "en";
+    } catch (e) {
+      return "en";
+    }
+  }
+  function getLang() {
+    if (langCache !== "zh" && langCache !== "en") langCache = detectLang();
+    return langCache;
+  }
+  function setLang(l) {
+    langCache = l === "zh" || l === "en" ? l : null;
+    try {
+      if (l === "zh" || l === "en") localStorage.setItem("__dbg_lang", l);
+      else localStorage.removeItem("__dbg_lang");
+    } catch (e) {
+    }
+  }
+  function getLangPref() {
+    try {
+      return localStorage.getItem("__dbg_lang");
+    } catch (e) {
+      return null;
+    }
+  }
+  function t(key) {
+    var s = key;
+    if (getLang() === "zh") {
+      var hit = zh_cn_default[key];
+      if (typeof hit === "string") s = hit;
+    }
+    for (var i = 1; i < arguments.length; i++) {
+      s = s.split("{" + (i - 1) + "}").join(String(arguments[i]));
+    }
+    return s;
+  }
+
   // src/launcher/constants.js
   var DANGER_COMMANDS = {
-    "DOM.removeNode": "删除页面元素（不可恢复）",
-    "Page.reload": "重载目标页面",
-    "Page.navigate": "导航到其他地址",
-    "Storage.localStorageClear": "清空 localStorage（持久数据）",
-    "Storage.localStorageSet": "写入 localStorage（持久数据）"
+    "DOM.removeNode": t("Delete page element (irreversible)"),
+    "Page.reload": t("Reload target page"),
+    "Page.navigate": t("Navigate to another URL"),
+    "Storage.localStorageClear": t("Clear localStorage (persistent data)"),
+    "Storage.localStorageSet": t("Write localStorage (persistent data)")
   };
   var GESTURE_COMMANDS = {
-    "Browser.copy": "复制到剪贴板",
-    "Browser.paste": "读取剪贴板内容（浏览器可能弹授权）",
-    "Browser.pickFile": "选择本地文件（弹文件选择器；小文件直接返回内容/小图片转 dataUrl）",
-    "Browser.share": "系统分享面板（标题/文本/链接）",
-    "Browser.download": "下载文件",
-    "Browser.openWindow": "打开新窗口",
-    "Browser.fullscreen": "进入全屏",
-    "Browser.play": "播放音视频（自动播放策略）"
+    "Browser.copy": t("Copy to clipboard"),
+    "Browser.paste": t("Read clipboard (browser may ask permission)"),
+    "Browser.pickFile": t("Pick a local file (opens file picker; small files return content / small images as dataUrl)"),
+    "Browser.share": t("System share sheet (title/text/link)"),
+    "Browser.download": t("Download file"),
+    "Browser.openWindow": t("Open new window"),
+    "Browser.fullscreen": t("Enter fullscreen"),
+    "Browser.play": t("Play media (autoplay policy)")
     // Page.captureScreenshot 不在 gesture/danger 列表：页面渲染截取无需用户手势、无危险副作用——
     //   直接进 launcher 截屏卡流程（意图说明 → 可先调整页面 → 预览确认才发送）
   };
@@ -3917,7 +4458,7 @@
         return !!active;
       },
       cancel: finish
-      // 主动结束（ESC 等）：与正常结束同链路（冲刷末帧 + onEnd），幂等，返回是否确有手势被结束
+      // explicit end (ESC etc.): same path as a normal end (flush pending frame + onEnd), idempotent, returns whether a gesture was actually ended
     };
   }
   function makeCardDrag(handle, card) {
@@ -3927,7 +4468,7 @@
       raf: true,
       preventStart: true,
       filter: function(e) {
-        return !(e.target && e.target.tagName === "BUTTON");
+        return !(e.target && e.target.closest && e.target.closest("button"));
       },
       onStart: function() {
         var r = card.getBoundingClientRect();
@@ -4174,7 +4715,7 @@
       var toolbar = el("div", { class: "dbg-toolbar dbg-float-toolbar" });
       var toolbarRow1 = el("div", { class: "dbg-toolbar-row" });
       var selLabel = el("span", { class: "dbg-sel-label" }, ["——"]);
-      selLabel.title = "🔍 点击查看详情/预览（发送直接点 ✓）";
+      selLabel.title = t("🔍 Click for details/preview (✓ to send)");
       selLabel.style.cursor = "pointer";
       selLabel.style.textDecoration = "underline dotted";
       selLabel.style.textUnderlineOffset = "3px";
@@ -4204,12 +4745,12 @@
       var toolbarRow2 = el("div", { class: "dbg-toolbar-row dbg-toolbar-btns" });
       toolbar.appendChild(toolbarRow2);
       var NAV_DEFS = [
-        ["up", "↖", "父级（DOM 树上一层，↖=向父层）· 快捷键 Backspace / Delete"],
-        ["downOrNext", "↘", "子级/深度遍历（↘=展开树；有子级→进入首子级；无子级→同级 next，一路点遍历整棵 DOM 树）· 快捷键 Enter"],
-        ["leftN", "←", "页面左边相邻元素 · 快捷键 ←"],
-        ["topN", "↑", "页面上边相邻元素 · 快捷键 ↑"],
-        ["bottomN", "↓", "页面下边相邻元素 · 快捷键 ↓"],
-        ["rightN", "→", "页面右边相邻元素 · 快捷键 →"]
+        ["up", "↖", t("Parent (up one DOM level, ↖=to parent) · keys Backspace / Delete")],
+        ["downOrNext", "↘", t("Child/depth traversal (↘=expand tree; first child if any, else sibling next — keep pressing to walk the whole DOM tree) · key Enter")],
+        ["leftN", "←", t("Element adjacent left · key ←")],
+        ["topN", "↑", t("Element adjacent above · key ↑")],
+        ["bottomN", "↓", t("Element adjacent below · key ↓")],
+        ["rightN", "→", t("Element adjacent right · key →")]
       ];
       function anchorPopup(popupEl, anchorEl, opts) {
         opts = opts || {};
@@ -4248,7 +4789,7 @@
         });
         toolbarRow2.appendChild(b);
       });
-      var selBtn = el("button", { "data-tip": "快速选择：输入 CSS selector（.card）或 xpath（//div[@class=card]）定位元素" }, ["#"]);
+      var selBtn = el("button", { "data-tip": t("Quick pick: type a CSS selector (.card) or xpath (//div[@class=card]) to locate an element") }, ["#"]);
       selBtn.addEventListener("click", function() {
         if (selInputRow.style.display === "flex") {
           selInputRow.style.display = "none";
@@ -4263,7 +4804,7 @@
       });
       toolbarRow2.appendChild(selBtn);
       var selInputRow = el("div", { class: "dbg-toolbar-row dbg-sel-input-row" });
-      var selInput = el("input", { placeholder: "CSS selector 或 XPath，Enter 定位", "aria-label": "selector" });
+      var selInput = el("input", { placeholder: t("CSS selector or XPath, Enter to locate"), "aria-label": "selector" });
       var selHint = el("div", { class: "dbg-sel-hint" }, ['CSS：.card / .card button / #main > li:nth-child(2)　XPath：//div[@class="card"]']);
       selInput.addEventListener("keydown", function(e) {
         if (e.key === "Enter") {
@@ -4281,7 +4822,7 @@
       selInputRow.appendChild(selInput);
       selInputRow.appendChild(selHint);
       toolbar.appendChild(selInputRow);
-      var confirmBtn = el("button", { "data-tip": "确认选中并弹出预览", class: "dbg-nav-ok" }, ["✓"]);
+      var confirmBtn = el("button", { "data-tip": t("Confirm selection & show preview"), class: "dbg-nav-ok" }, ["✓"]);
       confirmBtn.addEventListener("click", function() {
         if (ctx.pickPanel) {
           var _pp = ctx.pickPanel;
@@ -4295,7 +4836,7 @@
                 ctx.picksAddElement(ctx.enrichElPayload ? ctx.enrichElPayload(_pl) : _pl);
               } catch (e) {
               }
-              ctx.finishPickPanel({ status: "async", payload: _pl, note: "候选已放入 AI 待选" });
+              ctx.finishPickPanel({ status: "async", payload: _pl, note: t("Candidate placed in AI pending area") });
             } else {
               var _fin = function(p2) {
                 _pp.el = p2;
@@ -4406,14 +4947,14 @@
         }
         ctx.selfAiRequested = false;
       };
-      var resumeBtn = el("button", { "data-tip": "恢复快选：退出临时状态，hover 高亮重新生效（鼠标划过快速预览/切换选区）", class: "dbg-nav-resume" }, ["🖱"]);
+      var resumeBtn = el("button", { "data-tip": t("Restore quick-pick: exit temp state, hover highlight back on (hover to preview/move the selection)"), class: "dbg-nav-resume" }, ["🖱"]);
       resumeBtn.addEventListener("click", function() {
         if (ctx.selfClient && typeof ctx.selfClient.resumeHover === "function") ctx.selfClient.resumeHover();
         ctx.postToFrame(ctx.selFrameId(), { type: "dbg_resume_hover" });
-        ctx.addMsg("sys", "🖱 已恢复快选：hover 高亮重新生效（划过快速预览，点击即选新位置）。");
+        ctx.addMsg("sys", t("🖱 Quick-pick restored: hover highlight back on (hover to preview, click to move the selection)."));
       });
       toolbarRow2.appendChild(resumeBtn);
-      var hoverSimBtn = el("button", { "data-tip": "模拟 hover（真实派发 mouseover/mouseenter，页面 JS hover 逻辑生效并持久保持；再点或退出清除）", class: "dbg-nav-hover" }, ["👆"]);
+      var hoverSimBtn = el("button", { "data-tip": t("Simulate hover (dispatches real mouseover/mouseenter, page JS hover logic runs and persists; click again or exit to clear)"), class: "dbg-nav-hover" }, ["👆"]);
       hoverSimBtn.addEventListener("click", function() {
         ctx.hudHoverOn = !ctx.hudHoverOn;
         try {
@@ -4421,10 +4962,10 @@
         } catch (e) {
         }
         hoverSimBtn.classList.toggle("dbg-on", !!ctx.hudHoverOn);
-        ctx.addMsg("sys", "👆 模拟 hover：" + (ctx.hudHoverOn ? "已 pin（mouseover/mouseenter 已派发，持久保持；再点或退出清除）" : "已清除（mouseleave 已派发）") + "。");
+        ctx.addMsg("sys", t("👆 Simulate hover: ") + (ctx.hudHoverOn ? t("Pinned (mouseover/mouseenter dispatched, persistent; click again or exit to clear)") : t("Cleared (mouseleave dispatched)")) + "。");
       });
       toolbarRow2.appendChild(hoverSimBtn);
-      var profileBtn = el("button", { "data-tip": "放行方案（下拉选择）：🔒默认放行 / 🔓全部放行 / ⛔全部冻结 / 自定义方案；下拉末尾「⚙️ 自定义…」打开设置面板管理多个方案。快捷键：空格/Tab=默认放行⇄全部放行一键切换（锁定态生效，页面弹出菜单不收起）", class: "dbg-nav-profile" }, [ctx.RELEASE_PROFILES.default.label]);
+      var profileBtn = el("button", { "data-tip": t('Allow plan (dropdown): 🔒 default allow / 🔓 allow all / ⛔ freeze all / custom plans; "⚙️ Custom…" at the end opens the panel to manage plans. Shortcuts: Space/Tab = one-key toggle default allow ⇄ allow all (while locked, page popup menus stay open)'), class: "dbg-nav-profile" }, [ctx.RELEASE_PROFILES.default.label]);
       var profileMenu = null;
       function closeProfileMenu() {
         if (profileMenu && profileMenu.parentNode) profileMenu.parentNode.removeChild(profileMenu);
@@ -4441,21 +4982,21 @@
         ctx.getProfileOrder().forEach(function(name) {
           var pf = ctx.getProfiles()[name];
           var item = el("div", { class: "dbg-profile-item" + (name === ctx.currentProfile ? " dbg-on" : "") }, []);
-          item.appendChild(el("span", { class: "dbg-profile-label" }, [pf.label + (name === "default" || name === "all" ? " · 空格/Tab" : "")]));
-          item.appendChild(el("span", { class: "dbg-profile-desc" }, [pf.release.length ? "放行 " + pf.release.join("/") : "全部冻结"]));
+          item.appendChild(el("span", { class: "dbg-profile-label" }, [pf.label + (name === "default" || name === "all" ? t(" · Space/Tab") : "")]));
+          item.appendChild(el("span", { class: "dbg-profile-desc" }, [pf.release.length ? t("Allow ") + pf.release.join("/") : t("Freeze all")]));
           item.addEventListener("click", function(ev) {
             ev.stopPropagation();
             var applied = ctx.applyProfile(name);
             profileBtn.textContent = applied.label;
             closeProfileMenu();
-            ctx.addMsg("sys", "已应用放行方案：" + applied.label + "（" + (applied.release.length ? "放行 " + applied.release.join("/") : "全部冻结") + "）");
+            ctx.addMsg("sys", t("Allow plan applied: ") + applied.label + "（" + (applied.release.length ? t("Allow ") + applied.release.join("/") : t("Freeze all")) + "）");
           });
           profileMenu.appendChild(item);
         });
         profileMenu.appendChild(el("div", { class: "dbg-profile-divider" }));
         var pfCustom = el("div", { class: "dbg-profile-item dbg-profile-action" }, []);
-        pfCustom.appendChild(el("span", { class: "dbg-profile-label" }, ["⚙️ 自定义…"]));
-        pfCustom.appendChild(el("span", { class: "dbg-profile-desc" }, ["添加/编辑/删除自定义方案"]));
+        pfCustom.appendChild(el("span", { class: "dbg-profile-label" }, [t("⚙️ Custom…")]));
+        pfCustom.appendChild(el("span", { class: "dbg-profile-desc" }, [t("Add/edit/delete custom plans")]));
         pfCustom.addEventListener("click", function(ev) {
           ev.stopPropagation();
           closeProfileMenu();
@@ -4472,12 +5013,12 @@
         });
       });
       toolbarRow2.appendChild(profileBtn);
-      var helpBtn = el("button", { "data-tip": "使用帮助：按钮说明 / 快捷键总表 / 进阶技巧（含放行工作流、触屏导航入口）", class: "dbg-nav-help" }, ["❓"]);
+      var helpBtn = el("button", { "data-tip": t("Help: buttons / shortcut table / advanced tips (allow workflow, touch navigation)"), class: "dbg-nav-help" }, ["❓"]);
       helpBtn.addEventListener("click", function() {
         ctx.toggleHelpDialog();
       });
       toolbarRow2.appendChild(helpBtn);
-      var exitInspBtn = el("button", { "data-tip": "取消选区并退出 Inspector", class: "dbg-nav-close" }, ["✕"]);
+      var exitInspBtn = el("button", { "data-tip": t("Clear selection & exit Inspector"), class: "dbg-nav-close" }, ["✕"]);
       exitInspBtn.addEventListener("click", function() {
         if (ctx.selfClientActive) {
           try {
@@ -4505,7 +5046,7 @@
         ctx.sweepTargetOutlinesGlobal();
         setTimeout(ctx.sweepTargetOutlinesGlobal, 500);
         setTimeout(ctx.sweepTargetOutlinesGlobal, 1500);
-        ctx.addMsg("sys", "✕ 已退出 Inspector（宿主与全部 iframe 点选已关闭）。");
+        ctx.addMsg("sys", t("✕ Exited Inspector (picking closed on host and all iframes)."));
       });
       toolbarRow2.appendChild(el("span", { class: "dbg-toolbar-sep" }));
       toolbarRow2.appendChild(exitInspBtn);
@@ -4609,8 +5150,8 @@
       }
       var d = el("div", { class: "dbg-help-dialog" });
       var head = el("div", { class: "dbg-help-head" });
-      head.appendChild(el("span", {}, ["❓ 选区工具条 · 使用帮助"]));
-      var hClose = el("button", { title: "关闭（Esc）" }, ["✕"]);
+      head.appendChild(el("span", {}, [t("❓ Selection toolbar · Help")]));
+      var hClose = el("button", { title: t("Close (Esc)") }, ["✕"]);
       hClose.addEventListener("click", function(ev) {
         ev.stopPropagation();
         ctx.closeHelpDialog();
@@ -4619,46 +5160,46 @@
       d.appendChild(head);
       var body = el("div", { class: "dbg-help-body" });
       body.innerHTML = [
-        "<h4>这是什么</h4>",
-        "<div>划过页面元素高亮预览，点击锁定后出现这个工具条——用方向键微调选区，<b>✓ 确认发送给 AI</b>。<br>",
-        "💡 点顶部标签行文字（<code>&lt;div&gt; 320×48 …</code>）可打开详情预览弹窗。</div>",
-        "<h4>① 按钮一览</h4>",
+        t("<h4>What is this</h4>"),
+        t("<div>Hover page elements to preview, click to lock and this toolbar appears — fine-tune with arrow keys, <b>✓ to send to AI</b>.<br>"),
+        t("💡 Click the tag row text (<code>&lt;div&gt; 320×48 …</code>) to open the details/preview dialog.</div>"),
+        t("<h4>1. Buttons</h4>"),
         "<table>",
-        "<tr><td><b>↖ 父级 / ↘ 子级</b></td><td>沿 DOM 树上/下一层（斜向=走树）；子级没有时自动同级下一个</td></tr>",
-        "<tr><td><b>← ↑ ↓ →</b></td><td>页面<b>几何位置</b>相邻元素（与键盘方向键同位）</td></tr>",
-        "<tr><td><b>#</b></td><td>快速选择：输入 CSS selector 或 XPath 定位</td></tr>",
-        "<tr><td><b>🖱 恢复快选</b></td><td>回到「划过即选」（锁定后 hover 快选暂停防误切）</td></tr>",
-        "<tr><td><b>👆 模拟hover</b></td><td>给选中元素派发真实 mouseenter，JS 悬停展开持久保持；再点清除</td></tr>",
-        "<tr><td><b>🔒 放行方案</b></td><td>锁定后页面事件默认冻结；下拉切换方案，末尾「⚙️ 自定义…」打开设置面板管理多个自定义方案</td></tr>",
-        "<tr><td><b>✕ / ✓</b></td><td>取消退出 / 确认发送</td></tr>",
+        t("<tr><td><b>↖ Parent / ↘ Child</b></td><td>Up/down the DOM tree (diagonal = tree walk); auto next sibling when no child</td></tr>"),
+        t("<tr><td><b>← ↑ ↓ →</b></td><td>Elements adjacent by <b>geometry</b> (same positions as arrow keys)</td></tr>"),
+        t("<tr><td><b>#</b></td><td>Quick pick: type a CSS selector or XPath to locate</td></tr>"),
+        t("<tr><td><b>🖱 Restore quick-pick</b></td><td>Back to hover-to-pick (paused while locked to prevent mis-switch)</td></tr>"),
+        t("<tr><td><b>👆 Simulate hover</b></td><td>Dispatches real mouseenter on the selection, JS hover expansions persist; click again to clear</td></tr>"),
+        t('<tr><td><b>🔒 Allow plan</b></td><td>Page events frozen by default while locked; switch plans in the dropdown, "⚙️ Custom…" at the end opens the panel to manage custom plans</td></tr>'),
+        t("<tr><td><b>✕ / ✓</b></td><td>Cancel exit / confirm send</td></tr>"),
         "</table>",
-        "<h4>② 快捷键总表</h4>",
+        t("<h4>2. Keyboard shortcuts</h4>"),
         "<table>",
-        "<tr><td><kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd></td><td>页面几何相邻元素</td></tr>",
-        "<tr><td><kbd>Enter</kbd></td><td>子级（无子级→同级 next，一路按遍历整棵 DOM 树）</td></tr>",
-        "<tr><td><kbd>Backspace</kbd> / <kbd>Delete</kbd></td><td>父级</td></tr>",
-        "<tr><td><kbd>PageUp</kbd> / <kbd>PageDown</kbd></td><td>DOM 平级前一个 / 后一个（按钮已收起，仅快捷键）</td></tr>",
-        "<tr><td><kbd>Home</kbd> / <kbd>End</kbd></td><td>子级首个 / 末个（同上）</td></tr>",
-        "<tr><td><kbd>空格</kbd> / <kbd>Tab</kbd></td><td>放行方案一键切换：默认放行 ⇄ 全部放行（两键同效，防系统监控占据空格）</td></tr>",
-        "<tr><td><kbd>Esc</kbd></td><td>关帮助窗 → 取消/退出</td></tr>",
+        t("<tr><td><kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd></td><td>Geometrically adjacent elements</td></tr>"),
+        t("<tr><td><kbd>Enter</kbd></td><td>Child (none → sibling next; keep pressing to walk the DOM tree)</td></tr>"),
+        t("<tr><td><kbd>Backspace</kbd> / <kbd>Delete</kbd></td><td>Parent</td></tr>"),
+        t("<tr><td><kbd>PageUp</kbd> / <kbd>PageDown</kbd></td><td>Prev / next DOM sibling (buttons hidden, shortcuts only)</td></tr>"),
+        t("<tr><td><kbd>Home</kbd> / <kbd>End</kbd></td><td>First / last child (as above)</td></tr>"),
+        t("<tr><td><kbd>Space</kbd> / <kbd>Tab</kbd></td><td>One-key allow-plan toggle: default allow ⇄ allow all (both keys work, in case the system grabs Space)</td></tr>"),
+        t("<tr><td><kbd>Esc</kbd></td><td>Close help → cancel/exit</td></tr>"),
         "</table>",
-        '<div class="dbg-help-note">快捷键在工具条显示时生效；光标在输入框时不劫持。</div>',
-        "<h4>③ 进阶：点不动页面按钮？「放行 → 触发 → 切回 → 选中」</h4>",
+        t('<div class="dbg-help-note">Shortcuts work while the toolbar is shown; typing in inputs is never intercepted.</div>'),
+        t("<h4>3. Advanced: can't click page buttons? Allow → trigger → switch back → select</h4>"),
         "<ol>",
-        "<li>按 <kbd>空格</kbd> 或 <kbd>Tab</kbd> → 切到 🔓 <b>全部放行</b></li>",
-        "<li>点击目标按钮 → 真实事件触发，菜单展开</li>",
-        "<li>再按 <kbd>空格</kbd>/<kbd>Tab</kbd> → 切回 🔒 <b>默认放行</b>（展开的菜单不会收起）</li>",
-        "<li>划过/方向键选中菜单项，<b>✓</b> 发送</li>",
+        t("<li>Press <kbd>Space</kbd> or <kbd>Tab</kbd> → switch to 🔓 <b>allow all</b></li>"),
+        t("<li>Click the target button → real event fires, menu opens</li>"),
+        t("<li>Press <kbd>Space</kbd>/<kbd>Tab</kbd> again → back to 🔒 <b>default allow</b> (opened menus stay open)</li>"),
+        t("<li>Hover/arrow-key onto menu items, <b>✓</b> to send</li>"),
         "</ol>",
-        '<div>其他：<b>👆 模拟 hover</b> 对付 JS 悬停展开（CSS :hover 除外）；<b># 快速选择</b>支持 <code>.card button</code> 与 <code>//div[@class="card"]</code>。</div>',
-        "<h4>④ 键盘没有时（触屏）：以下方向点按钮直达</h4>",
+        t('<div>More: <b>👆 Simulate hover</b> handles JS hover expansions (not CSS :hover); <b># quick pick</b> accepts <code>.card button</code> and <code>//div[@class="card"]</code>.</div>'),
+        t("<h4>4. No keyboard (touch): tap direction buttons</h4>"),
         '<div class="dbg-help-nav-row">',
-        '<button data-dir="prev">◀ 前一个</button>',
-        '<button data-dir="next">▶ 后一个</button>',
-        '<button data-dir="first">⏮ 最前</button>',
-        '<button data-dir="last">⏭ 最后</button>',
+        t('<button data-dir="prev">◀ Prev</button>'),
+        t('<button data-dir="next">▶ Next</button>'),
+        t('<button data-dir="first">⏮ First</button>'),
+        t('<button data-dir="last">⏭ Last</button>'),
         "</div>",
-        '<div class="dbg-help-note">对应快捷键 PageUp/PageDown/Home/End。</div>'
+        t('<div class="dbg-help-note">Mapped to PageUp/PageDown/Home/End.</div>')
       ].join("");
       body.querySelectorAll(".dbg-help-nav-row button").forEach(function(b) {
         b.addEventListener("click", function() {
@@ -4674,7 +5215,7 @@
           raf: true,
           preventStart: true,
           filter: function(e) {
-            return !(e.target && e.target.tagName === "BUTTON");
+            return !(e.target && e.target.closest && e.target.closest("button"));
           },
           onStart: function() {
             d.classList.add("dbg-dragging");
@@ -4744,7 +5285,7 @@
     ctx.buildSpeedPanel = function() {
       ctx.speedPanel = el("div", { class: "dbg-speed" });
       var head = el("div", { class: "dbg-speed-head" });
-      head.appendChild(el("span", {}, ["⏱ 调速 / 🌐 网络 / ⚠ 错误"]));
+      head.appendChild(el("span", {}, [t("⏱ Timing / 🌐 Network / ⚠ Errors")]));
       var hClose = el("button", {}, ["✕"]);
       hClose.addEventListener("click", function() {
         ctx.speedPanel.classList.remove("dbg-open");
@@ -4753,9 +5294,9 @@
       ctx.speedPanel.appendChild(head);
       var body = el("div", { class: "dbg-speed-body" });
       var rowNet = el("div", { class: "dbg-speed-row" });
-      rowNet.appendChild(el("label", {}, ["网络模拟"]));
+      rowNet.appendChild(el("label", {}, [t("Network throttle")]));
       var netBtns = el("div", { class: "dbg-seg", "data-opt": "net" });
-      [[0, "正常"], [500, "500ms"], [1e3, "1s"], [2e3, "2s"]].forEach(function(o) {
+      [[0, t("Normal")], [500, "500ms"], [1e3, "1s"], [2e3, "2s"]].forEach(function(o) {
         var b = el("button", { "data-v": String(o[0]) }, [o[1]]);
         if (ctx.optState.netDelay === o[0] && !ctx.optState.netOffline) b.classList.add("dbg-on");
         b.addEventListener("click", function() {
@@ -4769,7 +5310,7 @@
         });
         netBtns.appendChild(b);
       });
-      var offBtn = el("button", { "data-v": "off", title: "fetch 立即失败 / XHR 触发 error（模拟断网）" }, ["📴 离线"]);
+      var offBtn = el("button", { "data-v": "off", title: t("fetch fails immediately / XHR fires error (simulate offline)") }, [t("📴 Offline")]);
       if (ctx.optState.netOffline) offBtn.classList.add("dbg-on");
       offBtn.addEventListener("click", function() {
         ctx.optState.netOffline = !ctx.optState.netOffline;
@@ -4785,10 +5326,10 @@
       rowNet.appendChild(netBtns);
       body.appendChild(rowNet);
       var rowDanger = el("div", { class: "dbg-speed-row" });
-      rowDanger.appendChild(el("label", {}, ["危险命令", "（无人值守）"]));
+      rowDanger.appendChild(el("label", {}, [t("Dangerous command"), t("(unattended)")]));
       var dangerBtns = el("div", { class: "dbg-seg", "data-opt": "dangerAutoOkMs" });
-      [[0, "手动确认"], [1e4, "10s"], [3e4, "30s"], [6e4, "60s"]].forEach(function(o) {
-        var b = el("button", { "data-v": String(o[0]), title: o[0] ? "危险命令确认卡弹出后 " + o[0] / 1e3 + " 秒内无人点选 → 自动允许执行（等同点「允许执行」）" : "每次危险命令都等人工点选（默认，最安全）" }, [o[1]]);
+      [[0, t("Manual confirm")], [1e4, "10s"], [3e4, "30s"], [6e4, "60s"]].forEach(function(o) {
+        var b = el("button", { "data-v": String(o[0]), title: o[0] ? t("After a dangerous-command confirm card pops up ") + o[0] / 1e3 + t(" s without a pick → auto-allow (same as clicking Allow)") : t("Wait for manual confirm on every dangerous command (default, safest)") }, [o[1]]);
         if ((ctx.optState.dangerAutoOkMs || 0) === o[0]) b.classList.add("dbg-on");
         b.addEventListener("click", function() {
           ctx.optState.dangerAutoOkMs = o[0];
@@ -4796,36 +5337,36 @@
             x.classList.toggle("dbg-on", x === b);
           });
           ctx.saveOptState();
-          ctx.addMsg("sys", "危险命令：" + (o[0] ? "无响应 " + o[0] / 1e3 + "s 后自动允许执行（无人值守）" : "每次手动确认"));
+          ctx.addMsg("sys", t("Dangerous command: ") + (o[0] ? t("no response ") + o[0] / 1e3 + t("s then auto-allow (unattended)") : t("Confirm manually every time")));
         });
         dangerBtns.appendChild(b);
       });
       rowDanger.appendChild(dangerBtns);
       body.appendChild(rowDanger);
       var rowErr = el("div", { class: "dbg-speed-row" });
-      rowErr.appendChild(el("label", {}, ["强制报错"]));
+      rowErr.appendChild(el("label", {}, [t("Force error")]));
       var errBtns = el("div", { class: "dbg-seg" });
-      [["sync", "⚠ 同步异常"], ["promise", "⚠ Promise"], ["console", "⚠ console.error"], ["resource", "⚠ 资源404"]].forEach(function(o) {
-        var b = el("button", { title: "在目标页触发 " + o[1] + "，错误 hook 捕获后上报" }, [o[1]]);
+      [["sync", t("⚠ Sync error")], ["promise", "⚠ Promise"], ["console", "⚠ console.error"], ["resource", t("⚠ Resource 404")]].forEach(function(o) {
+        var b = el("button", { title: t("Trigger on target page ") + o[1] + t(", reported after the error hook captures") }, [o[1]]);
         b.addEventListener("click", function() {
           ctx.postToFrame(ctx.selFrameId(), { type: "dbg_force_error", payload: { kind: o[0] } });
-          ctx.addMsg("sys", "⚡ 已触发强制错误：" + o[1] + "（等待页面错误 hook 上报）");
+          ctx.addMsg("sys", t("⚡ Forced error triggered: ") + o[1] + t("(waiting for the page error hook report)"));
         });
         errBtns.appendChild(b);
       });
       rowErr.appendChild(errBtns);
       body.appendChild(rowErr);
       var rowScene = el("div", { class: "dbg-speed-row dbg-scene-row" });
-      rowScene.appendChild(el("label", {}, ["场景预设"]));
+      rowScene.appendChild(el("label", {}, [t("Scenario presets")]));
       var sceneBtns = el("div", { class: "dbg-seg" });
       [
-        ["mobile", "📱 窄屏375", { viewportW: 375 }],
-        ["dark", "🌙 深色", { darkMode: true }],
-        ["expired", "⏳ 过期+7天", { timeOffsetMs: 7 * 24 * 3600 * 1e3 }],
-        ["slow", "🐢 弱网", { netDelay: 500, animSpeed: 0.5 }],
-        ["reset", "🔄 重置全部", null]
+        ["mobile", t("📱 Narrow 375"), { viewportW: 375 }],
+        ["dark", t("🌙 Dark"), { darkMode: true }],
+        ["expired", t("⏳ Expired +7d"), { timeOffsetMs: 7 * 24 * 3600 * 1e3 }],
+        ["slow", t("🐢 Slow network"), { netDelay: 500, animSpeed: 0.5 }],
+        ["reset", t("🔄 Reset all"), null]
       ].forEach(function(o) {
-        var b = el("button", { title: o[0] === "reset" ? "恢复所有模拟为默认" : "一键应用场景：" + o[1] }, [o[1]]);
+        var b = el("button", { title: o[0] === "reset" ? t("Restore all emulation to defaults") : t("One-click scenarios: ") + o[1] }, [o[1]]);
         b.addEventListener("click", function() {
           if (o[0] === "reset") {
             var keepDangerOk = ctx.optState.dangerAutoOkMs || 0;
@@ -4844,35 +5385,55 @@
             ctx.saveOptState();
             ctx.applyOptsToTarget();
             ctx.syncSpeedPanelUI();
-            ctx.addMsg("sys", "🔄 已重置全部模拟条件。");
+            ctx.addMsg("sys", t("🔄 All emulation flags reset."));
             return;
           }
           Object.assign(ctx.optState, o[2]);
           ctx.saveOptState();
           ctx.applyOptsToTarget();
           ctx.syncSpeedPanelUI();
-          ctx.addMsg("sys", "🎬 场景已应用：" + o[1] + "（可继续配合网络/错误区微调）");
+          ctx.addMsg("sys", t("🎬 Scenario applied: ") + o[1] + t("(can combine with network/error tweaks)"));
         });
         sceneBtns.appendChild(b);
       });
       rowScene.appendChild(sceneBtns);
       body.appendChild(rowScene);
+      var rowLang = el("div", { class: "dbg-speed-row" });
+      rowLang.appendChild(el("label", {}, [t("🌐 Language")]));
+      var langSel = el("select", { class: "dbg-lang-sel", style: "flex:1;padding:4px 6px;border-radius:6px;border:1px solid rgba(148,163,184,.35);background:rgba(15,23,42,.6);color:#e5e7eb;font:inherit;font-size:12px" });
+      [["", "🌐 " + t("Auto (follow browser)")], [
+        "zh",
+        "中文"
+        /* i18n-keep: language endonym */
+      ], ["en", "English"]].forEach(function(it) {
+        var op = el("option", { value: it[0] }, [it[1]]);
+        var pref = getLangPref();
+        if (pref === it[0] || it[0] === "" && (pref === null || pref === void 0)) op.setAttribute("selected", "");
+        langSel.appendChild(op);
+      });
+      langSel.addEventListener("change", function() {
+        var v = langSel.value;
+        setLang(v === "" ? null : v);
+        ctx.addMsg("sys", t("🌐 Language switched (applies to newly opened panels)"));
+      });
+      rowLang.appendChild(langSel);
+      body.appendChild(rowLang);
       var rowSnap = el("div", { class: "dbg-speed-row" });
-      rowSnap.appendChild(el("label", {}, ["现场快照"]));
-      var snapBtn = el("button", { class: "dbg-snap-btn", title: "把当前出错现场（错误列表+模拟条件+页面状态）打包发给 AI" }, ["📸 捕获现场发 AI"]);
+      rowSnap.appendChild(el("label", {}, [t("Capture snapshot")]));
+      var snapBtn = el("button", { class: "dbg-snap-btn", title: t("Package the current error state (errors + emulation flags + page state) and send to AI") }, [t("📸 Capture state & send to AI")]);
       snapBtn.addEventListener("click", ctx.captureSceneSend);
       rowSnap.appendChild(snapBtn);
       body.appendChild(rowSnap);
       var PROFILE_CATS = ["click", "hover", "key", "wheel", "scroll", "touch", "focus"];
       var rowProfile = el("div", { class: "dbg-speed-row dbg-release-row" });
-      rowProfile.appendChild(el("label", {}, ["放行方案"]));
+      rowProfile.appendChild(el("label", {}, [t("Allow plan")]));
       var pfWrap = el("div", { class: "dbg-rel-wrap" });
       var pfBtns = el("div", { class: "dbg-seg" });
       ctx.getProfileOrder().forEach(function(name) {
         var b = el("button", { "data-pf": name }, [ctx.getProfiles()[name].label]);
         b.addEventListener("click", function() {
           var pf = ctx.applyProfile(name);
-          ctx.addMsg("sys", "已应用放行方案：" + pf.label + "（" + (pf.release.length ? "放行 " + pf.release.join("/") : "全部冻结") + "）");
+          ctx.addMsg("sys", t("Allow plan applied: ") + pf.label + "（" + (pf.release.length ? t("Allow ") + pf.release.join("/") : t("Freeze all")) + "）");
         });
         pfBtns.appendChild(b);
       });
@@ -4883,7 +5444,7 @@
       var pfCount = el("span", {}, ["0"]);
       pfEditHeader.appendChild(pfArrow);
       pfEditHeader.appendChild(pfCount);
-      pfEditHeader.appendChild(el("span", {}, ["方案编辑（含默认放行，点击展开）"]));
+      pfEditHeader.appendChild(el("span", {}, [t("Plan editor (incl. default allow, click to expand)")]));
       var pfEditBody = el("div", { style: "display:none" });
       pfEditHeader.addEventListener("click", function() {
         var open = pfEditBody.style.display === "none";
@@ -4913,7 +5474,7 @@
           l2.appendChild(document.createTextNode(cat));
           dChecks.appendChild(l2);
         });
-        var dSave = el("button", { style: "border:1px solid #d1d5db;background:#fff;border-radius:6px;padding:1px 8px;cursor:pointer;font:inherit;font-size:10px" }, ["保存"]);
+        var dSave = el("button", { style: "border:1px solid #d1d5db;background:#fff;border-radius:6px;padding:1px 8px;cursor:pointer;font:inherit;font-size:10px" }, [t("Save")]);
         dSave.addEventListener("click", function() {
           dpf.release = PROFILE_CATS.filter(function(c) {
             return dboxes[c].checked;
@@ -4923,12 +5484,12 @@
           } catch (e) {
           }
           if (ctx.currentProfile === "default") ctx.applyProfile("default");
-          ctx.addMsg("sys", "默认放行已保存：放行 " + (dpf.release.join("/") || "（无，=全冻结）"));
+          ctx.addMsg("sys", t("Default plan saved: allow ") + (dpf.release.join("/") || t("(none = freeze all)")));
           rebuildProfileUI();
         });
         dRow.appendChild(dChecks);
         dRow.appendChild(dSave);
-        dRow.appendChild(el("span", { style: "font-size:10px;color:#9ca3af" }, ["固定方案（不可删除）"]));
+        dRow.appendChild(el("span", { style: "font-size:10px;color:#9ca3af" }, [t("Built-in plan (cannot delete)")]));
         pfEditBody.appendChild(dRow);
         ctx.userProfiles.forEach(function(u) {
           var row = el("div", { style: "display:flex;align-items:center;gap:4px;flex-wrap:wrap;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:4px 6px" });
@@ -4944,22 +5505,22 @@
             label.appendChild(document.createTextNode(cat));
             catChecks.appendChild(label);
           });
-          var saveBtn = el("button", { style: "border:1px solid #d1d5db;background:#fff;border-radius:6px;padding:1px 8px;cursor:pointer;font:inherit;font-size:10px" }, ["保存"]);
+          var saveBtn = el("button", { style: "border:1px solid #d1d5db;background:#fff;border-radius:6px;padding:1px 8px;cursor:pointer;font:inherit;font-size:10px" }, [t("Save")]);
           saveBtn.addEventListener("click", function() {
             u.label = nameInput.value.trim() || u.label;
             u.release = PROFILE_CATS.filter(function(c) {
               return pboxes[c].checked;
             });
             ctx.saveUserProfiles();
-            ctx.addMsg("sys", "方案「" + u.label + "」已保存：放行 " + (u.release.join("/") || "（无，=全冻结）"));
+            ctx.addMsg("sys", t('Plan "') + u.label + t('" saved: allow ') + (u.release.join("/") || t("(none = freeze all)")));
             rebuildProfileUI();
           });
-          var delBtn = el("button", { style: "border:1px solid #fecaca;background:#fee2e2;border-radius:6px;padding:1px 8px;cursor:pointer;font:inherit;font-size:10px;color:#b91c1c" }, ["删除"]);
+          var delBtn = el("button", { style: "border:1px solid #fecaca;background:#fee2e2;border-radius:6px;padding:1px 8px;cursor:pointer;font:inherit;font-size:10px;color:#b91c1c" }, [t("Delete")]);
           delBtn.addEventListener("click", function() {
             ctx.removeUserProfile(u.name);
             renderUserProfiles();
             rebuildProfileUI();
-            ctx.addMsg("sys", "已删除方案「" + u.label + "」");
+            ctx.addMsg("sys", t('Deleted plan "') + u.label + "」");
           });
           row.appendChild(nameInput);
           row.appendChild(catChecks);
@@ -4968,24 +5529,24 @@
           pfEditBody.appendChild(row);
         });
       }
-      var addBtn = el("button", { style: "border:1px solid #a5b4fc;background:#e0e7ff;border-radius:6px;padding:3px 10px;cursor:pointer;font:inherit;font-size:11px;color:#4338ca;margin-top:4px" }, ["➕ 添加方案"]);
+      var addBtn = el("button", { style: "border:1px solid #a5b4fc;background:#e0e7ff;border-radius:6px;padding:3px 10px;cursor:pointer;font:inherit;font-size:11px;color:#4338ca;margin-top:4px" }, [t("➕ Add plan")]);
       addBtn.addEventListener("click", function() {
-        var baseName = "放行方案";
+        var baseName = t("Allow plan");
         var n = 1;
         var profiles = ctx.getProfiles();
         while (profiles[baseName + n] || ctx.userProfiles.some(function(u) {
           return u.label === baseName + n;
         })) n++;
-        var label = prompt("新方案名称：", baseName + n);
+        var label = prompt(t("New plan name: "), baseName + n);
         if (!label) return;
         var name = ctx.addUserProfile(label);
         renderUserProfiles();
         rebuildProfileUI();
-        ctx.addMsg("sys", "已添加方案「" + label + "」（默认全放行，可编辑类别）。");
+        ctx.addMsg("sys", t('Added plan "') + label + t('" (allow-all default, categories editable).'));
       });
       pfWrap.appendChild(pfEditWrap);
       pfWrap.appendChild(addBtn);
-      var pfTip = el("div", { style: "font-size:10px;color:#6b7280" }, ["方案 = 放行哪些事件类别（其余冻结）。默认只锁 click/hover；全放行含 click。自定义方案保存后在工具条下拉可选。锁定态按 空格 在默认放行/全部放行之间一键切换（页面弹出菜单不收起）。"]);
+      var pfTip = el("div", { style: "font-size:10px;color:#6b7280" }, [t("A plan = which event categories are allowed (rest frozen). Default locks only click/hover; allow-all includes click. Saved custom plans appear in the toolbar dropdown. While locked, press Space to toggle default-allow/allow-all (page popup menus stay open).")]);
       pfWrap.appendChild(pfTip);
       rowProfile.appendChild(pfWrap);
       body.appendChild(rowProfile);
@@ -4995,7 +5556,7 @@
           var b = el("button", { "data-pf": name }, [ctx.getProfiles()[name].label]);
           b.addEventListener("click", function() {
             var pf = ctx.applyProfile(name);
-            ctx.addMsg("sys", "已应用放行方案：" + pf.label);
+            ctx.addMsg("sys", t("Allow plan applied: ") + pf.label);
           });
           pfBtns.appendChild(b);
         });
@@ -5003,43 +5564,43 @@
       }
       renderUserProfiles();
       var rowViewport = el("div", { class: "dbg-speed-row dbg-release-row" });
-      rowViewport.appendChild(el("label", {}, ["视口模拟"]));
+      rowViewport.appendChild(el("label", {}, [t("Viewport emulation")]));
       var vpWrap = el("div", { class: "dbg-rel-wrap" });
       var vpBtns = el("div", { class: "dbg-seg" });
-      var vpDefs = [[375, "📱 375"], [414, "414"], [768, "平板768"], [1024, "1024"], [1280, "🖥 1280"], [1440, "1440"], [0, "自适应"]];
-      var vpCur = el("span", { style: "font-size:10px;color:#6b7280" }, ["当前 iframe 视口：—"]);
+      var vpDefs = [[375, "📱 375"], [414, "414"], [768, t("Tablet 768")], [1024, "1024"], [1280, "🖥 1280"], [1440, "1440"], [0, t("Auto-fit")]];
+      var vpCur = el("span", { style: "font-size:10px;color:#6b7280" }, [t("Current iframe viewport: —")]);
       vpDefs.forEach(function(o) {
         var b = el("button", { "data-v": String(o[0]) }, [o[1]]);
         b.addEventListener("click", function() {
           ctx.optState.viewportW = o[0];
           ctx.saveOptState();
           ctx.applyOptsToTarget();
-          ctx.addMsg("sys", "视口模拟：" + (o[0] ? o[0] + "px" : "自适应（恢复原宽）") + "（大屏↔小屏切换，媒体查询实时生效）");
+          ctx.addMsg("sys", t("Viewport emulation: ") + (o[0] ? o[0] + "px" : t("Auto-fit (restore width)")) + t("(large↔small switch, media queries live)"));
         });
         vpBtns.appendChild(b);
       });
-      var vpCustom = el("input", { type: "number", placeholder: "自定义px", style: "width:74px;border:1px solid #d1d5db;border-radius:6px;padding:2px 6px;font:inherit;font-size:11px" });
-      var vpGo = el("button", {}, ["应用"]);
+      var vpCustom = el("input", { type: "number", placeholder: t("Custom px"), style: "width:74px;border:1px solid #d1d5db;border-radius:6px;padding:2px 6px;font:inherit;font-size:11px" });
+      var vpGo = el("button", {}, [t("Apply")]);
       vpGo.addEventListener("click", function() {
         var v = parseInt(vpCustom.value, 10);
         if (v > 0) {
           ctx.optState.viewportW = v;
           ctx.saveOptState();
           ctx.applyOptsToTarget();
-          ctx.addMsg("sys", "视口模拟：" + v + "px");
+          ctx.addMsg("sys", t("Viewport emulation: ") + v + "px");
         }
       });
-      var vpTouch = el("label", { class: "dbg-chk", style: "margin-top:4px", title: "模拟触屏设备特征（pointer:coarse / hover:none）" }, []);
+      var vpTouch = el("label", { class: "dbg-chk", style: "margin-top:4px", title: t("Emulate touch device traits (pointer:coarse / hover:none)") }, []);
       var vpTouchBox = el("input", { type: "checkbox" });
       vpTouchBox.checked = !!ctx.optState.simulateTouch;
       vpTouchBox.addEventListener("change", function() {
         ctx.optState.simulateTouch = vpTouchBox.checked;
         ctx.saveOptState();
         ctx.applyOptsToTarget();
-        ctx.addMsg("sys", "触屏模拟：" + (vpTouchBox.checked ? "开（页面按触屏设备渲染）" : "关"));
+        ctx.addMsg("sys", t("Touch emulation: ") + (vpTouchBox.checked ? t("On (page renders as touch device)") : t("Off")));
       });
       vpTouch.appendChild(vpTouchBox);
-      vpTouch.appendChild(document.createTextNode("模拟触屏"));
+      vpTouch.appendChild(document.createTextNode(t("Emulate touch")));
       vpWrap.appendChild(vpBtns);
       var vpRow2 = el("div", { style: "display:flex;gap:4px;margin-top:4px;align-items:center" });
       vpRow2.appendChild(vpCustom);
@@ -5051,28 +5612,28 @@
       body.appendChild(rowViewport);
       function refreshViewportLabel() {
         var tw = (ctx.listFrames()[0] || {}).win;
-        if (tw && vpCur) vpCur.textContent = "当前 iframe 视口：" + (tw.innerWidth || "—") + "px";
+        if (tw && vpCur) vpCur.textContent = t("Current iframe viewport: ") + (tw.innerWidth || "—") + "px";
       }
       setInterval(refreshViewportLabel, 1e3);
       var rowMcp = el("div", { class: "dbg-speed-row" });
-      rowMcp.appendChild(el("label", {}, ["MCP 桥"]));
+      rowMcp.appendChild(el("label", {}, [t("MCP bridge")]));
       var mcpWrap = el("div", { class: "dbg-rel-wrap", style: "font-size:11px;color:#6b7280" });
-      mcpWrap.appendChild(document.createTextNode("🔗 连接由 AI 窗口负责：页面 ↔ AI 窗经 postMessage 交互（唯一通道），桥连接（role=ai）在 AI 窗侧。"));
+      mcpWrap.appendChild(document.createTextNode(t("🔗 Connection handled by the AI window: page ↔ AI window via postMessage (the only channel); the bridge connection (role=ai) lives on the AI window side.")));
       rowMcp.appendChild(mcpWrap);
       body.appendChild(rowMcp);
       var rowSelTools = el("div", { class: "dbg-speed-row" });
-      rowSelTools.appendChild(el("label", {}, ["选区工具"]));
+      rowSelTools.appendChild(el("label", {}, [t("Selection tools")]));
       var selTools = el("div", { class: "dbg-seg" });
-      var t1 = el("button", { title: "按 CSS 选择器指定选区" }, ["# 指定"]);
-      var t2 = el("button", { title: "真实点击穿透：放行一次点击让页面打开菜单/弹层（冻结期间菜单不会消失）" }, ["👆 穿透"]);
-      var t3 = el("button", { title: "在宿主页自身点选元素（不进入目标 iframe）" }, ["🖥 宿主页"]);
+      var t1 = el("button", { title: t("Specify selection by CSS selector") }, [t("# Specify")]);
+      var t2 = el("button", { title: t("Real click pass-through: allow one click so the page opens menus/popups (menus won't vanish while frozen)") }, [t("👆 Pass-through")]);
+      var t3 = el("button", { title: t("Pick elements on the host page itself (skip target iframes)") }, [t("🖥 Host page")]);
       t1.addEventListener("click", function() {
-        var s = prompt("输入 CSS 选择器指定选区，例如 .card:nth-child(2)");
+        var s = prompt(t("Type a CSS selector to set the selection, e.g. .card:nth-child(2)"));
         if (s) ctx.postToFrame(ctx.selFrameId(), { type: "dbg_select", payload: { selector: s } });
       });
       t2.addEventListener("click", function() {
         ctx.postToFrame(ctx.selFrameId(), { type: "dbg_passthrough_click" });
-        ctx.addMsg("sys", "👆 真实点击：放行一次点击（页面菜单/弹层可正常打开，随后恢复冻结）。");
+        ctx.addMsg("sys", t("👆 Real click: allow one click (page menus/popups open normally, then freeze resumes)."));
       });
       t3.addEventListener("click", function() {
         if (ctx.selfClientActive) {
@@ -5090,9 +5651,9 @@
       rowSelTools.appendChild(selTools);
       body.appendChild(rowSelTools);
       var row1 = el("div", { class: "dbg-speed-row" });
-      row1.appendChild(el("label", {}, ["动画速度"]));
+      row1.appendChild(el("label", {}, [t("Animation speed")]));
       var animBtns = el("div", { class: "dbg-seg", "data-opt": "animSpeed" });
-      [[0, "⏸ 暂停"], [0.1, "0.1x"], [0.25, "0.25x"], [0.5, "0.5x"], [1, "1x"]].forEach(function(o) {
+      [[0, t("⏸ Pause")], [0.1, "0.1x"], [0.25, "0.25x"], [0.5, "0.5x"], [1, "1x"]].forEach(function(o) {
         var b = el("button", { "data-v": String(o[0]) }, [o[1]]);
         if (ctx.optState.animSpeed === o[0]) b.classList.add("dbg-on");
         b.addEventListener("click", function() {
@@ -5108,7 +5669,7 @@
       row1.appendChild(animBtns);
       body.appendChild(row1);
       var row3 = el("div", { class: "dbg-speed-row" });
-      row3.appendChild(el("label", {}, ["定时器慢放", "（实验性）"]));
+      row3.appendChild(el("label", {}, [t("Timer slowdown"), t("(experimental)")]));
       var timerBtns = el("div", { class: "dbg-seg", "data-opt": "slowTimers" });
       [[1, "1x"], [2, "2x"], [5, "5x"]].forEach(function(o) {
         var b = el("button", { "data-v": String(o[0]) }, [o[1]]);
@@ -5149,10 +5710,10 @@
       if (p2.cmd === "__snapshot__") {
         var snap = {
           url: location.href.slice(0, 500),
-          targetUrl: (function() {
+          targetUrl: function() {
             var tw = (ctx.listFrames()[0] || {}).win;
             return tw && tw.location ? tw.location.href.slice(0, 500) : null;
-          })(),
+          }(),
           selected: ctx.lastPayload ? { tag: ctx.lastPayload.tag, xpath: ctx.lastPayload.xpath } : null,
           conditions: { animSpeed: ctx.optState.animSpeed, netDelay: ctx.optState.netDelay, netOffline: ctx.optState.netOffline, darkMode: ctx.optState.darkMode, timeOffsetMs: ctx.optState.timeOffsetMs },
           errors: ctx.errLog.slice(0, 10)
@@ -5177,8 +5738,8 @@
               });
             }
           }, function() {
-            sendResult(false, { error: "用户取消了手势操作 " + p2.cmd });
-            resolve({ ok: false, result: { error: "用户取消 " + p2.cmd } });
+            sendResult(false, { error: t("User cancelled the gesture ") + p2.cmd });
+            resolve({ ok: false, result: { error: t("User cancelled ") + p2.cmd } });
           });
         });
       }
@@ -5207,7 +5768,7 @@
             return { copied: true };
           },
           function(e) {
-            return { error: "复制失败：" + String(e && e.message || e) };
+            return { error: t("Copy failed: ") + String(e && e.message || e) };
           }
         );
       }
@@ -5222,18 +5783,18 @@
       }
       if (cmd === "Browser.openWindow") {
         var w = window.open(args.url || "about:blank", "_blank");
-        return Promise.resolve(w ? { opened: true } : { error: "弹窗被拦截" });
+        return Promise.resolve(w ? { opened: true } : { error: t("Popup blocked") });
       }
       if (cmd === "Browser.paste") {
         if (!(navigator.clipboard && navigator.clipboard.readText)) {
-          return Promise.resolve({ error: "当前浏览器不支持剪贴板读取（无 navigator.clipboard.readText）" });
+          return Promise.resolve({ error: t("Clipboard read not supported in this browser (no navigator.clipboard.readText)") });
         }
         return navigator.clipboard.readText().then(
           function(text) {
             return { text: String(text || "").slice(0, 1e5) };
           },
           function(e) {
-            return { error: "剪贴板读取被拒（需授权 clipboard-read）：" + String(e && e.message || e) };
+            return { error: t("Clipboard read denied (needs clipboard-read permission): ") + String(e && e.message || e) };
           }
         );
       }
@@ -5256,7 +5817,7 @@
           };
           inp.onchange = function() {
             var files = Array.prototype.slice.call(inp.files || []);
-            if (!files.length) return finish2({ error: "未选择文件" });
+            if (!files.length) return finish2({ error: t("No file selected") });
             var list = files.map(function(f) {
               return { name: f.name, size: f.size, type: f.type || "" };
             });
@@ -5264,8 +5825,8 @@
             var isText = /^text\//.test(readFirst.type) || /\.(txt|md|json|log|csv|xml|ya?ml|ini|conf|js|ts|css|html?|py|java|c|cpp|go|rs|sh|toml)$/i.test(readFirst.name);
             var isImage = /^image\//.test(readFirst.type);
             if (isText && readFirst.size <= 262144) {
-              readFirst.text().then(function(t) {
-                finish2({ files: list, name: readFirst.name, text: t.slice(0, 2e5) });
+              readFirst.text().then(function(t2) {
+                finish2({ files: list, name: readFirst.name, text: t2.slice(0, 2e5) });
               }, function() {
                 finish2({ files: list });
               });
@@ -5279,7 +5840,7 @@
               };
               fr.readAsDataURL(readFirst);
             } else {
-              finish2({ files: list, note: isImage || readFirst.size > 262144 ? "文件过大/非文本：仅返回清单（大图/大文件请让用户手动上传或缩小后重选）" : "" });
+              finish2({ files: list, note: isImage || readFirst.size > 262144 ? t("File too large/non-text: listing only (for large images/files ask the user to upload manually or pick a smaller one)") : "" });
             }
           };
           document.body.appendChild(inp);
@@ -5287,32 +5848,32 @@
         });
       }
       if (cmd === "Browser.share") {
-        if (!navigator.share) return Promise.resolve({ error: "当前浏览器不支持 Web Share（移动端可用）" });
+        if (!navigator.share) return Promise.resolve({ error: t("Web Share not supported in this browser (mobile only)") });
         return navigator.share({ title: args.title, text: args.text, url: args.url }).then(
           function() {
             return { shared: true };
           },
           function(e) {
-            return { error: "分享被取消/拒绝：" + String(e && e.message || e) };
+            return { error: t("Share cancelled/denied: ") + String(e && e.message || e) };
           }
         );
       }
       if (cmd === "Browser.fullscreen") {
-        var fsEl = (function() {
+        var fsEl = function() {
           var fr = ctx.listFrames()[parseInt(String(ctx.selFrameId()).slice(1), 10) || 0];
           return fr && fr.el || document.documentElement;
-        })();
+        }();
         if (fsEl && fsEl.requestFullscreen) {
           return fsEl.requestFullscreen().then(
             function() {
               return { fullscreen: true };
             },
             function(e) {
-              return { error: "全屏失败：" + String(e && e.message || e) };
+              return { error: t("Fullscreen failed: ") + String(e && e.message || e) };
             }
           );
         }
-        return Promise.resolve({ error: "不支持全屏" });
+        return Promise.resolve({ error: t("Fullscreen not supported") });
       }
       if (cmd === "Page.captureScreenshot") {
         var a2 = args || {};
@@ -5326,7 +5887,7 @@
               if (launcherEl) launcherEl.style.display = "none";
               var vw = window.innerWidth || 0, vh = window.innerHeight || 0;
               if (vw < 40 || vh < 40) {
-                resolveP({ error: "DOM 截屏失败（视口尺寸异常 " + vw + "×" + vh + "）" });
+                resolveP({ error: t("DOM screenshot failed (abnormal viewport size ") + vw + "×" + vh + "）" });
                 return;
               }
               var xml = new XMLSerializer().serializeToString(document.documentElement);
@@ -5350,23 +5911,23 @@
                   var dataUrl = asPng2 ? c.toDataURL("image/png") : c.toDataURL("image/jpeg", a2.quality || 0.72);
                   resolveP({ dataUrl, width: c.width, height: c.height, format: asPng2 ? "png" : "jpeg", bytes: Math.round(dataUrl.length * 3 / 4), mode: note || "dom" });
                 } catch (e2) {
-                  resolveP({ error: "DOM 截屏失败：" + String(e2 && e2.message || e2) });
+                  resolveP({ error: t("DOM screenshot failed: ") + String(e2 && e2.message || e2) });
                 }
               };
               img.onerror = function() {
                 restore();
-                resolveP({ error: "DOM 截屏失败（页面渲染到 SVG 出错）" });
+                resolveP({ error: t("DOM screenshot failed (page render to SVG errored)") });
               };
               img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
             } catch (e3) {
-              resolveP({ error: "DOM 截屏失败：" + String(e3 && e3.message || e3) });
+              resolveP({ error: t("DOM screenshot failed: ") + String(e3 && e3.message || e3) });
             }
           });
         };
         var captureOnce = function(forceDom) {
-          if (forceDom) return domShot("dom（页面渲染模式）");
+          if (forceDom) return domShot(t("dom (page re-render mode)"));
           var md = navigator.mediaDevices || {};
-          if (typeof md.getDisplayMedia !== "function") return domShot("dom（无 getDisplayMedia）");
+          if (typeof md.getDisplayMedia !== "function") return domShot(t("dom (no getDisplayMedia)"));
           var gm = { video: { frameRate: 10 } };
           try {
             if (a2.preferCurrentTab) gm.preferCurrentTab = true;
@@ -5397,8 +5958,8 @@
               stopHang();
               if (done) {
                 try {
-                  stream.getTracks().forEach(function(t) {
-                    t.stop();
+                  stream.getTracks().forEach(function(t2) {
+                    t2.stop();
                   });
                 } catch (e2) {
                 }
@@ -5413,8 +5974,8 @@
               resG({ gdmError: e });
             });
           }).then(function(g) {
-            if (g && g.hang) return domShot("dom（getDisplayMedia 未弹选择器/无响应）");
-            if (g && g.gdmError) return domShot("dom（getDisplayMedia 被拒：" + String(g.gdmError && g.gdmError.message || g.gdmError) + "）");
+            if (g && g.hang) return domShot(t("dom (getDisplayMedia no picker/no response)"));
+            if (g && g.gdmError) return domShot(t("dom (getDisplayMedia denied: ") + String(g.gdmError && g.gdmError.message || g.gdmError) + "）");
             var stream = g.stream;
             return new Promise(function(resolveP) {
               var settled = false;
@@ -5422,8 +5983,8 @@
                 if (settled) return;
                 settled = true;
                 try {
-                  stream.getTracks().forEach(function(t) {
-                    t.stop();
+                  stream.getTracks().forEach(function(t2) {
+                    t2.stop();
                   });
                 } catch (e2) {
                 }
@@ -5436,7 +5997,7 @@
               var drawShot = function() {
                 try {
                   var vw2 = v.videoWidth || 0, vh2 = v.videoHeight || 0;
-                  if (!vw2 || !vh2) return finish({ error: "视频流无画面尺寸" });
+                  if (!vw2 || !vh2) return finish({ error: t("Video stream has no frame size") });
                   var sc = Math.min(1, maxW2 / vw2);
                   var c = document.createElement("canvas");
                   c.width = Math.round(vw2 * sc);
@@ -5445,7 +6006,7 @@
                   var dataUrl = asPng2 ? c.toDataURL("image/png") : c.toDataURL("image/jpeg", a2.quality || 0.72);
                   finish({ dataUrl, width: c.width, height: c.height, format: asPng2 ? "png" : "jpeg", bytes: Math.round(dataUrl.length * 3 / 4) });
                 } catch (e2) {
-                  finish({ error: "截屏失败：" + String(e2 && e2.message || e2) });
+                  finish({ error: t("Screenshot failed: ") + String(e2 && e2.message || e2) });
                 }
               };
               v.onloadeddata = function() {
@@ -5466,19 +6027,19 @@
                       });
                     } else if (tries >= 60) {
                       clearInterval(pollIv);
-                      finish({ error: "视频首帧就绪超时" });
+                      finish({ error: t("Video first-frame timeout") });
                     }
                   }, 50);
                 }, function(e2) {
-                  finish({ error: "视频流播放失败：" + String(e2 && e2.message || e2) });
+                  finish({ error: t("Video stream playback failed: ") + String(e2 && e2.message || e2) });
                 });
               };
               v.onerror = function() {
-                finish({ error: "视频流打开失败" });
+                finish({ error: t("Failed to open video stream") });
               };
               v.srcObject = stream;
               setTimeout(function() {
-                finish({ error: "截屏超时（15s）" });
+                finish({ error: t("Screenshot timeout (15s)") });
               }, 15e3);
             });
           });
@@ -5527,7 +6088,7 @@
         var runShotCard = function(reason) {
           return new Promise(function(resAll) {
             try {
-              var ui = buildShotCard("📸 AI 想截屏");
+              var ui = buildShotCard(t("📸 AI wants a screenshot"));
               var card = ui.card, timerSpan = ui.timerSpan;
               var body = el("div", { class: "dbg-pick-body" });
               card.appendChild(body);
@@ -5544,12 +6105,12 @@
                 resAll(r);
               };
               var cleanupHook = function() {
-                finishAll({ error: "已取消（agent 停止）" });
+                finishAll({ error: t("Cancelled (agent stopped)") });
               };
               ctx.shotCardCleanup = cleanupHook;
               var shotCdMs = parseInt(a2.timeout, 10) > 0 ? parseInt(a2.timeout, 10) : 28e4;
               stopCd = startShotCountdown(timerSpan, shotCdMs, function() {
-                finishAll({ error: "截图流程超时（用户未完成确认）" });
+                finishAll({ error: t("Screenshot flow timeout (user didn't confirm)") });
               });
               var clearBody = function() {
                 while (body.firstChild) body.removeChild(body.firstChild);
@@ -5558,7 +6119,7 @@
                 return el(
                   "div",
                   { style: "font-size:12px;color:#e5e7eb;line-height:1.6;background:rgba(79,70,229,.22);border-radius:8px;padding:7px 10px;margin-bottom:8px;word-break:break-all" },
-                  ["🎯 " + (reason || "（AI 未说明截取意图——可取消后让 AI 补充 reason 再试）")]
+                  ["🎯 " + (reason || t("(AI gave no capture reason — cancel and ask the AI to retry with a reason)"))]
                 );
               };
               var mkBtns = function(defs) {
@@ -5573,12 +6134,12 @@
               var renderPrepare = function() {
                 clearBody();
                 body.appendChild(reasonLine());
-                body.appendChild(el("div", { style: "font-size:11px;color:#94a3b8;line-height:1.6" }, ["可先把页面调整到想要的状态：本卡片不遮挡操作、按住标题栏可拖到角落。点「开始截屏」后直接截取当前视口（页面重绘方式，不弹任何系统窗口；截屏瞬间本卡会自动隐藏不入镜）。"]));
+                body.appendChild(el("div", { style: "font-size:11px;color:#94a3b8;line-height:1.6" }, [t(`Adjust the page to the desired state first: this card doesn't block interaction and can be dragged aside by its title bar. Click "Start screenshot" to capture the current viewport directly (page re-render, no system dialogs; the card auto-hides for the shot).`)]));
                 body.appendChild(mkBtns([
-                  ["✕ 取消", "dbg-pick-cancel", function() {
-                    finishAll({ error: "用户取消截图" });
+                  [t("✕ Cancel"), "dbg-pick-cancel", function() {
+                    finishAll({ error: t("User cancelled screenshot") });
                   }],
-                  ["📸 开始截屏", "dbg-pick-ok", function() {
+                  [t("📸 Start screenshot"), "dbg-pick-ok", function() {
                     shotOnce();
                   }]
                 ]));
@@ -5587,14 +6148,14 @@
               var renderCapturing = function() {
                 clearBody();
                 body.appendChild(reasonLine());
-                body.appendChild(el("div", { style: "font-size:11px;color:#94a3b8;line-height:1.6" }, ["⏳ 正在截取当前视口……"]));
+                body.appendChild(el("div", { style: "font-size:11px;color:#94a3b8;line-height:1.6" }, [t("⏳ Capturing current viewport…")]));
                 placeShotCard(card, 480);
               };
               var renderPreview = function(r) {
                 clearBody();
                 body.appendChild(reasonLine());
                 var isDom = !!(r.mode && r.mode.indexOf("dom") >= 0);
-                if (isDom) body.appendChild(el("div", { style: "font-size:11px;color:#fbbf24;line-height:1.6;background:rgba(251,191,36,.08);border-radius:6px;padding:6px 8px;margin-bottom:6px" }, ["⚠ DOM 渲染截屏：系统屏幕捕获不可用，本次为重绘页面，外部图片/部分样式可能与实际画面有差异。"]));
+                if (isDom) body.appendChild(el("div", { style: "font-size:11px;color:#fbbf24;line-height:1.6;background:rgba(251,191,36,.08);border-radius:6px;padding:6px 8px;margin-bottom:6px" }, [t("⚠ DOM-render screenshot: system screen capture unavailable; this re-renders the page — external images/some styles may differ from the real picture.")]));
                 var img = el("img", { src: r.dataUrl, style: "max-width:100%;max-height:52vh;border-radius:8px;object-fit:contain;background:#fff;display:block" });
                 body.appendChild(img);
                 var replan = function() {
@@ -5607,13 +6168,13 @@
                   requestAnimationFrame(replan);
                 });
                 body.appendChild(mkBtns([
-                  ["🔄 重拍", "dbg-pick-cancel", function() {
+                  [t("🔄 Retake"), "dbg-pick-cancel", function() {
                     shotOnce();
                   }],
-                  ["✕ 取消", "dbg-pick-cancel", function() {
-                    finishAll({ error: "用户取消发送截图" });
+                  [t("✕ Cancel"), "dbg-pick-cancel", function() {
+                    finishAll({ error: t("User cancelled sending screenshot") });
                   }],
-                  ["✅ 发送", "dbg-ask-send", function() {
+                  [t("✅ Send"), "dbg-ask-send", function() {
                     finishAll({ result: r });
                   }, "padding:9px 18px;font-size:14px;font-weight:700"]
                 ]));
@@ -5623,7 +6184,7 @@
                 renderCapturing();
                 Promise.resolve(captureOnce(true)).then(function(r) {
                   if (!r || r.error || !r.dataUrl) {
-                    finishAll(r && r.error ? r : { error: "截屏失败" });
+                    finishAll(r && r.error ? r : { error: t("Screenshot failed") });
                     return;
                   }
                   renderPreview(r);
@@ -5631,7 +6192,7 @@
               };
               renderPrepare();
             } catch (e4) {
-              resAll({ error: "截屏卡显示失败：" + String(e4 && e4.message || e4) });
+              resAll({ error: t("Failed to show screenshot card: ") + String(e4 && e4.message || e4) });
             }
           });
         };
@@ -5642,13 +6203,13 @@
         shotP.then(function(r) {
           try {
             if (r && r.error) {
-              ctx.showPickToast("❌ 截图失败：" + String(r.error).slice(0, 120), 1e4);
+              ctx.showPickToast(t("❌ Screenshot failed: ") + String(r.error).slice(0, 120), 1e4);
             } else if (r && r.dataUrl) {
               var isDom = !!(r.mode && r.mode.indexOf("dom") >= 0);
-              var msg = "✅ 截图成功（" + r.width + "×" + r.height + "）";
+              var msg = t("✅ Screenshot taken (") + r.width + "×" + r.height + "）";
               if (isDom) {
                 var reason = String(r.mode).replace(/^dom[（(]|）\)$/g, "").trim();
-                msg = msg + "<br>⚠ 系统屏幕捕获不可用，已回退到 DOM 渲染截屏" + (reason ? "（" + reason + "）" : "");
+                msg = msg + t("<br>⚠ System screen capture unavailable, fell back to DOM-render screenshot") + (reason ? "（" + reason + "）" : "");
                 ctx.showPickToast(msg, 9e3);
               } else {
                 ctx.showPickToast(msg, 5e3);
@@ -5663,17 +6224,17 @@
     };
     ctx.showGestureCard = function(p2, onDone, onCancel) {
       if (!ctx.gestureCard) ctx.buildGestureCard();
-      ctx.gestureCard.querySelector(".dbg-gesture-note").textContent = GESTURE_COMMANDS[p2.cmd] || "浏览器受限操作";
+      ctx.gestureCard.querySelector(".dbg-gesture-note").textContent = GESTURE_COMMANDS[p2.cmd] || t("Browser-restricted action");
       ctx.gestureCard.querySelector(".dbg-gesture-cmd").textContent = p2.cmd + " " + JSON.stringify(p2.args || {});
       ctx.gestureCard.classList.add("dbg-open");
       ctx.gestureCard.querySelector(".dbg-gesture-ok").onclick = function() {
         ctx.gestureCard.classList.remove("dbg-open");
-        ctx.addMsg("sys", "🖱 用户点击完成手势：" + p2.cmd);
+        ctx.addMsg("sys", t("🖱 User clicked to complete gesture: ") + p2.cmd);
         onDone();
       };
       ctx.gestureCard.querySelector(".dbg-gesture-cancel").onclick = function() {
         ctx.gestureCard.classList.remove("dbg-open");
-        ctx.addMsg("sys", "⛔ 用户取消手势：" + p2.cmd);
+        ctx.addMsg("sys", t("⛔ User cancelled gesture: ") + p2.cmd);
         onCancel();
       };
     };
@@ -5681,7 +6242,7 @@
       ctx.gestureCard = el("div", { class: "dbg-dialog" });
       var card = el("div", { class: "dbg-dialog-card dbg-confirm-card" });
       var head = el("div", { class: "dbg-dialog-head" });
-      head.appendChild(el("span", {}, ["🖱 需要你的真实点击"]));
+      head.appendChild(el("span", {}, [t("🖱 Needs your real click")]));
       card.appendChild(head);
       try {
         makeCardDrag(head, card);
@@ -5690,11 +6251,11 @@
       var body = el("div", { class: "dbg-dialog-body" });
       body.appendChild(el("div", { class: "dbg-confirm-note dbg-gesture-note" }));
       body.appendChild(el("div", { class: "dbg-gesture-cmd dbg-pv-kv" }));
-      body.appendChild(el("div", { style: "font-size:11px;color:#6b7280" }, ["浏览器要求用户手势：AI 程序化执行会被拦截，需你点击下方按钮代为完成。"]));
+      body.appendChild(el("div", { style: "font-size:11px;color:#6b7280" }, [t("Browser requires a user gesture: AI programmatic execution is blocked — click the button below to complete it.")]));
       card.appendChild(body);
       var foot = el("div", { class: "dbg-dialog-foot" });
-      var cancel = el("button", { class: "dbg-ghost dbg-gesture-cancel" }, ["✕ 取消"]);
-      var ok = el("button", { class: "dbg-primary dbg-gesture-ok" }, ["✅ 点击完成此操作"]);
+      var cancel = el("button", { class: "dbg-ghost dbg-gesture-cancel" }, [t("✕ Cancel")]);
+      var ok = el("button", { class: "dbg-primary dbg-gesture-ok" }, [t("✅ Click to complete this action")]);
       foot.appendChild(cancel);
       foot.appendChild(ok);
       card.appendChild(foot);
@@ -5717,13 +6278,13 @@
           finish(r.ok, r.result);
         });
       }, function() {
-        finish(false, { error: "用户拒绝执行 " + p2.cmd });
+        finish(false, { error: t("User denied execution ") + p2.cmd });
       });
     };
     ctx.showDangerConfirm = function(p2, onAllow, onDeny) {
       if (!ctx.confirmCard) ctx.buildConfirmCard();
       ctx.confirmCard.querySelector(".dbg-confirm-cmd").textContent = p2.cmd + " " + JSON.stringify(p2.args || {});
-      ctx.confirmCard.querySelector(".dbg-confirm-note").textContent = DANGER_COMMANDS[p2.cmd] || "危险操作";
+      ctx.confirmCard.querySelector(".dbg-confirm-note").textContent = DANGER_COMMANDS[p2.cmd] || t("Dangerous action");
       ctx.confirmCard.classList.add("dbg-open");
       var allowBtn = ctx.confirmCard.querySelector(".dbg-allow");
       var denyBtn = ctx.confirmCard.querySelector(".dbg-deny");
@@ -5743,7 +6304,7 @@
         cdEl.style.display = "block";
         var tick = function() {
           var left = Math.max(0, deadline - Date.now());
-          cdEl.textContent = "⏳ 无人值守：" + Math.ceil(left / 1e3) + "s 后自动允许执行（也可手动点下方按钮）";
+          cdEl.textContent = t("⏳ Unattended: ") + Math.ceil(left / 1e3) + t("s then auto-allow (or click the button below)");
           if (left <= 0) {
             allowBtn.onclick(true);
             return;
@@ -5759,15 +6320,15 @@
         ctx.confirmCard.classList.remove("dbg-open");
         if (rememberBox.checked) {
           ctx.sessionDangerOk = true;
-          ctx.addMsg("sys", "🔓 本次会话已记住：危险命令不再逐个确认（可刷新页面重置）。");
+          ctx.addMsg("sys", t("🔓 Remembered for this session: dangerous commands no longer confirmed one by one (refresh the page to reset)."));
         }
-        ctx.addMsg("sys", (auto ? "🤖 超时自动允许（无人值守）：" : "✅ 用户允许：") + p2.cmd);
+        ctx.addMsg("sys", (auto ? t("🤖 Auto-allow on timeout (unattended): ") : t("✅ User allowed: ")) + p2.cmd);
         onAllow();
       };
       denyBtn.onclick = function() {
         stopCountdown();
         ctx.confirmCard.classList.remove("dbg-open");
-        ctx.addMsg("sys", "⛔ 用户拒绝：" + p2.cmd);
+        ctx.addMsg("sys", t("⛔ User denied: ") + p2.cmd);
         onDeny();
       };
     };
@@ -5775,7 +6336,7 @@
       ctx.confirmCard = el("div", { class: "dbg-dialog" });
       var card = el("div", { class: "dbg-dialog-card dbg-confirm-card" });
       var head = el("div", { class: "dbg-dialog-head" });
-      head.appendChild(el("span", {}, ["⚠ 确认危险操作"]));
+      head.appendChild(el("span", {}, [t("⚠ Confirm dangerous action")]));
       card.appendChild(head);
       try {
         makeCardDrag(head, card);
@@ -5788,12 +6349,12 @@
       var rememberRow = el("label", { class: "dbg-chk", style: "align-self:flex-start" }, []);
       var box = el("input", { type: "checkbox", class: "dbg-remember" });
       rememberRow.appendChild(box);
-      rememberRow.appendChild(document.createTextNode("本次会话记住（不再逐个确认）"));
+      rememberRow.appendChild(document.createTextNode(t("Remember for this session (no per-command confirm)")));
       body.appendChild(rememberRow);
       card.appendChild(body);
       var foot = el("div", { class: "dbg-dialog-foot" });
-      var deny = el("button", { class: "dbg-ghost dbg-deny" }, ["✕ 拒绝"]);
-      var allow = el("button", { class: "dbg-primary dbg-allow" }, ["✓ 允许执行"]);
+      var deny = el("button", { class: "dbg-ghost dbg-deny" }, [t("✕ Deny")]);
+      var allow = el("button", { class: "dbg-primary dbg-allow" }, [t("✓ Allow")]);
       foot.appendChild(deny);
       foot.appendChild(allow);
       card.appendChild(foot);
@@ -5805,18 +6366,18 @@
   // src/launcher/interact.js
   function describeAnswer(kind, v) {
     v = v || {};
-    if (kind === "confirm") return v.approved === false ? "❌ 否" : "✅ 是";
+    if (kind === "confirm") return v.approved === false ? t("❌ No") : t("✅ Yes");
     if (kind === "choose") {
-      if (Array.isArray(v.indexes)) return v.labels && v.labels.length ? v.labels.join("、") : v.indexes.length + " 项";
-      return v.custom || v.index === -1 ? "✍️ 都不适合" : String(v.label != null ? v.label : v.index);
+      if (Array.isArray(v.indexes)) return v.labels && v.labels.length ? v.labels.join("、") : v.indexes.length + t(" items");
+      return v.custom || v.index === -1 ? t("✍️ None of these") : String(v.label != null ? v.label : v.index);
     }
     if (kind === "input") return String(v.text || "");
-    if (kind === "presence") return v.present === false ? "⏳ 稍后" : "🙋 我在";
+    if (kind === "presence") return v.present === false ? t("⏳ Later") : t("🙋 I'm here");
     if (kind === "pick_element") {
       if (v.tag || v.text) return "🎯 <" + (v.tag || "?") + ">" + (v.text ? " " + String(v.text).trim().slice(0, 40) : "");
-      return "🎯 已选元素";
+      return t("🎯 Element selected");
     }
-    return "✅ 已作答";
+    return t("✅ Answered");
   }
   function initInteract(ctx) {
     ctx.hudSmallOffset = 0;
@@ -5843,14 +6404,14 @@
         for (var i = 0; i < olds.length; i++) {
           if (olds[i].parentNode) olds[i].parentNode.removeChild(olds[i]);
         }
-        var t = el("div", { class: "dbg-pick-toast" });
-        t.innerHTML = html;
-        ctx.root.appendChild(t);
-        placePhysPanel(t, { visW: Math.min(360, Math.round(getPhysViewport().w) - 24), dock: "bottom", gap: 12, offsetY: 64, minH: 30, maxWidth: "360px", overflowY: "" });
+        var t2 = el("div", { class: "dbg-pick-toast" });
+        t2.innerHTML = html;
+        ctx.root.appendChild(t2);
+        placePhysPanel(t2, { visW: Math.min(360, Math.round(getPhysViewport().w) - 24), dock: "bottom", gap: 12, offsetY: 64, minH: 30, maxWidth: "360px", overflowY: "" });
         setTimeout(function() {
-          t.style.opacity = "0";
+          t2.style.opacity = "0";
           setTimeout(function() {
-            if (t.parentNode) t.parentNode.removeChild(t);
+            if (t2.parentNode) t2.parentNode.removeChild(t2);
           }, 450);
         }, ms || 4500);
       } catch (e) {
@@ -5859,12 +6420,13 @@
     ctx.showPickHint = function() {
       try {
         if (!detectScreenMode().small) return;
-        ctx.showPickToast('🖱 点击页面元素选择<br><span style="color:#a5b4fc;font-size:11px">点选后工具条 ✓ 确认发送</span>');
+        ctx.showPickToast(t('🖱 Click a page element to select<br><span style="color:#a5b4fc;font-size:11px">Confirm on the toolbar with ✓ after picking</span>'));
       } catch (e) {
       }
     };
     ctx.NOTIFY = { timer: null, origTitle: document.title, audio: null };
-    ctx.notifyUser = function(title, body) {
+    ctx.notifyUser = function(title, body, opts) {
+      opts = opts || {};
       var shown = false;
       if ("Notification" in window) {
         if (Notification.permission === "granted") {
@@ -5889,15 +6451,15 @@
           }
         }
       }
-      if (!shown) {
+      if (!shown && !opts.noToastFallback) {
         try {
           ctx.showPickToast("🔔 " + title + (body ? "<br>" + body : ""), 6e3);
         } catch (e) {
         }
-        if (document.hidden) {
-          ctx.flashTitle("🔔 " + title);
-          ctx.beepAttention();
-        }
+      }
+      if (!shown && document.hidden) {
+        ctx.flashTitle("🔔 " + title);
+        ctx.beepAttention();
       }
     };
     ctx.flashTitle = function(prefix) {
@@ -5925,14 +6487,14 @@
         if (!ctx.NOTIFY.audio) ctx.NOTIFY.audio = new AC();
         var ac = ctx.NOTIFY.audio;
         if (ac.state === "suspended") ac.resume();
-        [[880, 0, 0.12], [660, 0.16, 0.18]].forEach(function(t) {
+        [[880, 0, 0.12], [660, 0.16, 0.18]].forEach(function(t2) {
           var o = ac.createOscillator(), g = ac.createGain();
-          o.frequency.value = t[0];
+          o.frequency.value = t2[0];
           g.gain.value = 0.06;
           o.connect(g);
           g.connect(ac.destination);
-          o.start(ac.currentTime + t[1]);
-          o.stop(ac.currentTime + t[1] + t[2]);
+          o.start(ac.currentTime + t2[1]);
+          o.stop(ac.currentTime + t2[1] + t2[2]);
         });
       } catch (e) {
       }
@@ -6043,22 +6605,22 @@
       result.tookMs = Date.now() - pp.startedAt;
       if (pp.silent) return;
       if (pp.it && pp.it.async) {
-        ctx.addMsg("sys", result.status === "answered" ? "🎯 已选中（候选已放入 AI 待选，点击 [元素N] 发送给 AI）" : result.status === "rejected" ? "✕ 用户取消/拒绝：" + (result.reason || "") : "⏱ 点选超时（用户无响应）");
+        ctx.addMsg("sys", result.status === "answered" ? t("🎯 Selected (candidate in AI pending area, click [element N] to send)") : result.status === "rejected" ? t("✕ User cancelled/declined: ") + (result.reason || "") : t("⏱ Pick timeout (no user response)"));
         return;
       }
       ctx.sendInteractionResult(pp.requestId, result);
-      ctx.addMsg("sys", result.status === "answered" ? "🎯 用户已选元素（回传 AI）" : result.status === "rejected" ? "✕ 用户拒绝选择：" + (result.reason || "") : "⏱ 点选超时（用户无响应）");
+      ctx.addMsg("sys", result.status === "answered" ? t("🎯 User picked an element (sent to AI)") : result.status === "rejected" ? t("✕ User declined selection: ") + (result.reason || "") : t("⏱ Pick timeout (no user response)"));
     };
     ctx.closePickPanel = function(requestId) {
       var pp = ctx.pickPanel;
       if (pp && pp.requestId === requestId) {
         pp.silent = true;
-        ctx.finishPickPanel({ status: "cancelled", error: "AI 已停止" });
+        ctx.finishPickPanel({ status: "cancelled", error: t("AI stopped") });
       }
     };
     ctx.showPickElementPanel = function(requestId, it) {
       if (ctx.pickPanel && ctx.pickPanel.requestId === requestId) return;
-      if (ctx.pickPanel) ctx.finishPickPanel({ status: "rejected", reason: "新的交互打断" });
+      if (ctx.pickPanel) ctx.finishPickPanel({ status: "rejected", reason: t("Interrupted by new interaction") });
       try {
         var _olds = ctx.root.querySelectorAll(".dbg-pick-dialog");
         for (var _i = 0; _i < _olds.length; _i++) {
@@ -6072,22 +6634,22 @@
       var asyncMode = !!it.async;
       var dialog = el("div", { class: "dbg-pick-dialog" });
       var head = el("div", { class: "dbg-pick-head" });
-      head.appendChild(el("span", { class: "dbg-pick-title" }, ["🎯 AI 请你选择页面元素"]));
+      head.appendChild(el("span", { class: "dbg-pick-title" }, [t("🎯 AI asks you to pick a page element")]));
       var noTimeout = !(timeoutMs > 0);
-      var timerSpan = el("span", { style: "font-weight:400;color:#93c5fd;font-size:11px" }, [noTimeout ? "♾ 等待操作" : "⏱ " + Math.ceil(timeoutMs / 1e3) + "s"]);
-      var pauseBtn = el("button", { title: "暂停倒计时" }, ["⏸"]);
+      var timerSpan = el("span", { style: "font-weight:400;color:#93c5fd;font-size:11px" }, [noTimeout ? t("♾ Waiting") : "⏱ " + Math.ceil(timeoutMs / 1e3) + "s"]);
+      var pauseBtn = el("button", { title: t("Pause countdown") }, ["⏸"]);
       if (noTimeout) pauseBtn.style.display = "none";
-      var minBtn = el("button", { title: "暂时隐藏（再点恢复）" }, ["👁 隐藏"]);
+      var minBtn = el("button", { title: t("Temporarily hide (click to restore)") }, [t("👁 Hide")]);
       head.appendChild(timerSpan);
       head.appendChild(pauseBtn);
       head.appendChild(minBtn);
       dialog.appendChild(head);
       var body = el("div", { class: "dbg-pick-body" });
       if (it.prompt) body.appendChild(el("div", { style: "white-space:pre-wrap" }, [it.prompt]));
-      body.appendChild(el("div", { style: "color:#94a3b8;line-height:1.5;margin-top:4px" }, ["AI 需要你帮忙在页面上点选一个元素。点「现在开始选择」进入点选——移到元素上高亮、点击锁定，然后在工具条上确认发送。"]));
+      body.appendChild(el("div", { style: "color:#94a3b8;line-height:1.5;margin-top:4px" }, [t('AI needs you to pick a page element. Click "Start selecting" to begin — hover to highlight, click to lock, then confirm on the toolbar.')]));
       var c = el("div", { style: "margin-top:8px;display:flex;gap:6px;justify-content:center" });
-      var startBtn = el("button", { class: "dbg-pick-ok" }, ["🖱 现在开始选择"]);
-      var laterBtn = el("button", { class: "dbg-pick-cancel" }, ["⏳ 暂不选择"]);
+      var startBtn = el("button", { class: "dbg-pick-ok" }, [t("🖱 Start selecting")]);
+      var laterBtn = el("button", { class: "dbg-pick-cancel" }, [t("⏳ Not now")]);
       c.appendChild(laterBtn);
       c.appendChild(startBtn);
       body.appendChild(c);
@@ -6106,7 +6668,7 @@
           raf: true,
           preventStart: true,
           filter: function(e) {
-            return !(e.target && e.target.tagName === "BUTTON");
+            return !(e.target && e.target.closest && e.target.closest("button"));
           },
           onStart: function() {
             dialog.classList.add("dbg-dragging");
@@ -6129,7 +6691,7 @@
       minBtn.addEventListener("click", function() {
         var hidden = body.style.display === "none";
         body.style.display = hidden ? "" : "none";
-        minBtn.textContent = hidden ? "👁 隐藏" : "👁 显示";
+        minBtn.textContent = hidden ? t("👁 Hide") : t("👁 Show");
         if (dialog.parentNode) placePhysPanel(dialog, { visW: Math.min(420, Math.round(getPhysViewport().w) - 24), dock: "bottom", gap: 12, offsetY: 64, minH: 40, maxWidth: "420px", overflowY: "auto" });
       });
       function startInspect() {
@@ -6140,7 +6702,7 @@
         ctx.activateNestedIframes(isTouchDevice() ? "touch" : "mouse");
         ctx.broadcast({ type: "dbg_enter_inspector", payload: { mode: "mouse" } });
         ctx.broadcast({ type: "dbg_ai_pick", payload: { active: true } });
-        ctx.addMsg("sys", "🎯 点选模式（" + String(it.prompt || "").slice(0, 40) + "）——移到元素高亮、点击锁定，工具条上确认。");
+        ctx.addMsg("sys", t("🎯 Pick mode (") + String(it.prompt || "").slice(0, 40) + t(") — hover to highlight, click to lock, confirm on the toolbar."));
         try {
           if (ctx.showPickHint) ctx.showPickHint();
         } catch (e) {
@@ -6155,7 +6717,7 @@
         ctx.pickPanel.dialog = null;
       });
       laterBtn.addEventListener("click", function() {
-        ctx.finishPickPanel({ status: "rejected", reason: "用户暂不选择" });
+        ctx.finishPickPanel({ status: "rejected", reason: t("User chose not to select now") });
       });
       var deadline = Date.now() + timeoutMs;
       var paused = false;
@@ -6164,13 +6726,13 @@
         if (paused) return;
         var left = Math.max(0, deadline - Date.now());
         if (timerSpan) timerSpan.textContent = "⏱ " + Math.ceil(left / 1e3) + "s";
-        if (left <= 0) ctx.finishPickPanel({ status: "timeout", error: "用户无响应（不在线）" });
+        if (left <= 0) ctx.finishPickPanel({ status: "timeout", error: t("No user response (away)") });
       }
       if (!noTimeout) pauseBtn.addEventListener("click", function() {
         paused = !paused;
         if (paused) {
           remainingMs = Math.max(0, deadline - Date.now());
-          if (timerSpan) timerSpan.textContent = "⏸ 已暂停（剩 " + Math.ceil(remainingMs / 1e3) + "s）";
+          if (timerSpan) timerSpan.textContent = t("⏸ Paused (") + Math.ceil(remainingMs / 1e3) + "s）";
           pauseBtn.textContent = "▶";
         } else {
           deadline = Date.now() + remainingMs;
@@ -6201,28 +6763,47 @@
       }
       var dialog = el("div", { class: "dbg-pick-dialog" });
       var head = el("div", { class: "dbg-pick-head" });
-      var kindTitle = { confirm: "🤖 AI 需要你确认", choose: "🤖 AI 请你选择", input: "✍️ AI 请你输入", presence: "🙋 AI 问你是否在场" };
-      head.appendChild(el("span", { class: "dbg-pick-title" }, [kindTitle[kind] || "🤖 AI 需要你回答"]));
+      var kindTitle = { confirm: t("🤖 AI needs your confirmation"), choose: t("🤖 AI asks you to choose"), input: t("✍️ AI asks for your input"), presence: t("🙋 AI asks if you're present") };
+      head.appendChild(el("span", { class: "dbg-pick-title" }, [kindTitle[kind] || t("🤖 AI needs your answer")]));
       var noTimeout = !(timeoutMs > 0);
-      var timerSpan = el("span", { style: "font-weight:400;color:#93c5fd;font-size:11px" }, [noTimeout ? "♾ 等待操作" : "⏱ " + Math.ceil(timeoutMs / 1e3) + "s"]);
-      var pauseBtn = el("button", { title: "暂停倒计时" }, ["⏸"]);
+      var timerSpan = el("span", { style: "font-weight:400;color:#93c5fd;font-size:11px" }, [noTimeout ? t("♾ Waiting") : "⏱ " + Math.ceil(timeoutMs / 1e3) + "s"]);
+      var pauseBtn = el("button", { title: t("Pause countdown") }, ["⏸"]);
       if (noTimeout) pauseBtn.style.display = "none";
-      var minBtn = el("button", { title: "暂时隐藏（再点恢复）" }, ["👁 隐藏"]);
+      var minBtn = el("button", { title: t("Temporarily hide (click to restore)") }, [t("👁 Hide")]);
       head.appendChild(timerSpan);
       head.appendChild(pauseBtn);
       head.appendChild(minBtn);
-      var cancelHead = el("button", { title: "取消（拒绝本次请求）", style: "font-size:15px;font-weight:700;padding:2px 10px" }, ["✕"]);
+      var copyBtn = el("button", { title: t("Copy all"), style: "padding:3px 7px" }, [elSvg(LUCIDE.copy, 13)]);
+      copyBtn.addEventListener("click", function(e) {
+        e.stopPropagation();
+        var done2 = function(ok) {
+          copyBtn.innerHTML = "";
+          copyBtn.appendChild(ok ? elSvg(LUCIDE.check, 13) : document.createTextNode("✕"));
+          copyBtn.style.color = ok ? "#4ade80" : "#f87171";
+          setTimeout(function() {
+            copyBtn.innerHTML = "";
+            copyBtn.appendChild(elSvg(LUCIDE.copy, 13));
+            copyBtn.style.color = "";
+          }, 1200);
+        };
+        if (ctx.copyToClipboard) ctx.copyToClipboard(it.prompt || "", done2);
+        else done2(false);
+      });
+      head.appendChild(copyBtn);
+      var cancelHead = el("button", { title: t("Cancel (decline this request)"), style: "font-size:15px;font-weight:700;padding:2px 10px" }, ["✕"]);
       cancelHead.addEventListener("click", function() {
-        finishAsk({ status: "rejected", reason: "用户取消" });
+        finishAsk({ status: "rejected", reason: t("User cancelled") });
       });
       head.appendChild(cancelHead);
       dialog.appendChild(head);
       var body = el("div", { class: "dbg-pick-body" });
-      body.appendChild(el("div", { class: "dbg-ask-prompt" }, [it.prompt || ""]));
+      var promptBlock = el("div", { class: "dbg-ask-prompt dbg-copyable" });
+      promptBlock.appendChild(el("span", {}, [it.prompt || ""]));
+      body.appendChild(promptBlock);
       minBtn.addEventListener("click", function() {
         var hidden = body.style.display === "none";
         body.style.display = hidden ? "" : "none";
-        minBtn.textContent = hidden ? "👁 隐藏" : "👁 显示";
+        minBtn.textContent = hidden ? t("👁 Hide") : t("👁 Show");
         try {
           reflowPanel();
         } catch (e) {
@@ -6232,7 +6813,7 @@
       var multiple = !!it.multiple;
       var singleShot = !(kind === "choose" && multiple);
       if (kind !== "input") {
-        ctl.appendChild(el("div", { class: "dbg-ask-label" }, [singleShot ? "点选项或按数字键 1-9 立即作答：" : "勾选（可多选）后点「发送」："]));
+        ctl.appendChild(el("div", { class: "dbg-ask-label" }, [singleShot ? t("Click an option or press 1-9 to answer:") : t("Check items (multi-select) then press Send:")]));
       }
       var optWrap = el("div", { style: "display:flex;flex-direction:column;gap:8px;margin-top:8px" });
       var sel = { v: null, idxs: {}, custom: false };
@@ -6240,9 +6821,9 @@
         var comment = commentInp ? commentInp.value.trim() : "";
         var cv = comment ? { comment } : {};
         if (sel.custom) {
-          if (kind === "choose") finishAsk({ status: "answered", value: { index: -1, label: comment || "都不适合", custom: true } });
-          else if (kind === "confirm") finishAsk({ status: "answered", value: { approved: null, custom: comment || "都不适合" } });
-          else finishAsk({ status: "answered", value: { present: null, custom: comment || "都不适合" } });
+          if (kind === "choose") finishAsk({ status: "answered", value: { index: -1, label: comment || t("None of these"), custom: true } });
+          else if (kind === "confirm") finishAsk({ status: "answered", value: { approved: null, custom: comment || t("None of these") } });
+          else finishAsk({ status: "answered", value: { present: null, custom: comment || t("None of these") } });
           return;
         }
         if (kind === "choose") {
@@ -6271,7 +6852,7 @@
         } else if (kind === "presence") {
           if (sel.v === null && !comment) return;
           if (sel.v === null) finishAsk({ status: "answered", value: { present: null, custom: comment } });
-          else if (sel.v === "later") finishAsk(__spreadValues({ status: "rejected", reason: "用户暂时不在" }, cv));
+          else if (sel.v === "later") finishAsk(__spreadValues({ status: "rejected", reason: t("User temporarily away") }, cv));
           else finishAsk({ status: "answered", value: Object.assign({ present: true }, cv) });
         }
       }
@@ -6279,33 +6860,33 @@
         return el("span", { class: "dbg-ask-num" }, [String(n)]);
       }
       if (kind === "confirm") {
-        optWrap.appendChild(el("button", { class: "dbg-primary dbg-ask-opt", "data-v": "yes" }, [askNum(1), "是 / 确认"]));
-        optWrap.appendChild(el("button", { class: "dbg-ghost dbg-ask-opt dbg-ask-no", "data-v": "no" }, [askNum(2), "否 / 取消"]));
-        optWrap.appendChild(el("button", { class: "dbg-ghost dbg-ask-opt dbg-ask-opt-custom", "data-custom": "1" }, [askNum(3), "都不适合（输入回答）"]));
+        optWrap.appendChild(el("button", { class: "dbg-primary dbg-ask-opt", "data-v": "yes" }, [askNum(1), t("Yes / Confirm")]));
+        optWrap.appendChild(el("button", { class: "dbg-ghost dbg-ask-opt dbg-ask-no", "data-v": "no" }, [askNum(2), t("No / Cancel")]));
+        optWrap.appendChild(el("button", { class: "dbg-ghost dbg-ask-opt dbg-ask-opt-custom", "data-custom": "1" }, [askNum(3), t("None of these (type an answer)")]));
       } else if (kind === "choose") {
-        var choices = it.choices && it.choices.length ? it.choices : ["选项 A", "选项 B"];
+        var choices = it.choices && it.choices.length ? it.choices : [t("Option A"), t("Option B")];
         choices.forEach(function(c, i) {
           optWrap.appendChild(el("button", { class: "dbg-ghost dbg-ask-opt", "data-i": String(i) }, [askNum(i + 1), String(c)]));
         });
-        optWrap.appendChild(el("button", { class: "dbg-ghost dbg-ask-opt dbg-ask-opt-custom", "data-custom": "1" }, [askNum(choices.length + 1), "这些都不适合（输入回答）"]));
+        optWrap.appendChild(el("button", { class: "dbg-ghost dbg-ask-opt dbg-ask-opt-custom", "data-custom": "1" }, [askNum(choices.length + 1), t("None of these work (type an answer)")]));
       } else if (kind === "presence") {
-        optWrap.appendChild(el("button", { class: "dbg-primary dbg-ask-opt", "data-v": "yes" }, [askNum(1), "我在，继续"]));
-        optWrap.appendChild(el("button", { class: "dbg-ghost dbg-ask-opt dbg-ask-no", "data-v": "later" }, [askNum(2), "稍后 / 不在"]));
+        optWrap.appendChild(el("button", { class: "dbg-primary dbg-ask-opt", "data-v": "yes" }, [askNum(1), t("I'm here, continue")]));
+        optWrap.appendChild(el("button", { class: "dbg-ghost dbg-ask-opt dbg-ask-no", "data-v": "later" }, [askNum(2), t("Later / Away")]));
       }
       if (kind !== "input") ctl.appendChild(optWrap);
       var commentInp = null, sendBtn = null;
       if (kind === "confirm" || kind === "choose" || kind === "presence") {
-        ctl.appendChild(el("div", { class: "dbg-ask-label" }, ["📝 补充说明（可选）"]));
+        ctl.appendChild(el("div", { class: "dbg-ask-label" }, [t("📝 Extra note (optional)")]));
         var commentRow = el("div", { style: "display:flex;gap:6px" });
-        commentInp = el("input", { type: "text", placeholder: singleShot ? "📝 补充说明（可选，填好后点选项一并发送）" : "📝 补充说明（可选）", style: "background:rgba(255,255,255,.06);border:1px solid rgba(148,163,184,.35);color:#f1f5f9;border-radius:8px;padding:9px 11px;font:inherit;flex:1" });
-        sendBtn = multiple ? null : el("button", { class: "dbg-primary dbg-ask-send", style: (singleShot ? "display:none;" : "") + "flex:1;font-weight:700;font-size:13px;padding:9px 12px" }, ["✓ 发送"]);
+        commentInp = el("input", { type: "text", placeholder: singleShot ? t("📝 Extra note (optional; added when you click an option)") : t("📝 Extra note (optional)"), style: "background:rgba(255,255,255,.06);border:1px solid rgba(148,163,184,.35);color:#f1f5f9;border-radius:8px;padding:9px 11px;font:inherit;flex:1" });
+        sendBtn = multiple ? null : el("button", { class: "dbg-primary dbg-ask-send", style: (singleShot ? "display:none;" : "") + "flex:1;font-weight:700;font-size:13px;padding:9px 12px" }, [t("✓ Send")]);
         commentRow.appendChild(commentInp);
         if (sendBtn) commentRow.appendChild(sendBtn);
         ctl.appendChild(commentRow);
       }
       if (kind === "input") {
-        var inp = el("input", { type: "text", value: it.defaultValue || "", placeholder: "输入你的回答…", style: "background:rgba(255,255,255,.06);border:1px solid rgba(148,163,184,.35);color:#f1f5f9;border-radius:8px;padding:9px 11px;font:inherit;flex:1" });
-        var send = el("button", { class: "dbg-primary dbg-ask-send" }, ["发送"]);
+        var inp = el("input", { type: "text", value: it.defaultValue || "", placeholder: t("Type your answer…"), style: "background:rgba(255,255,255,.06);border:1px solid rgba(148,163,184,.35);color:#f1f5f9;border-radius:8px;padding:9px 11px;font:inherit;flex:1" });
+        var send = el("button", { class: "dbg-primary dbg-ask-send" }, [t("Send")]);
         var r3 = el("div", { style: "display:flex;gap:6px" });
         r3.appendChild(inp);
         r3.appendChild(send);
@@ -6323,7 +6904,7 @@
           if (sendBtn) sendBtn.disabled = !(hasSel || hasCmt);
           if (footSend) {
             footSend.disabled = !(hasSel || hasCmt);
-            if (multiple) footSend.textContent = "✅ 发送所选（" + Object.keys(sel.idxs).length + "）";
+            if (multiple) footSend.textContent = t("✅ Send selected (") + Object.keys(sel.idxs).length + "）";
           }
         };
         var optBtns = optWrap.querySelectorAll(".dbg-ask-opt");
@@ -6385,9 +6966,9 @@
       body.appendChild(ctl);
       if (it.rejectable !== false && kind !== "presence") {
         var det2 = el("details", {}, []);
-        det2.appendChild(el("summary", { style: "cursor:pointer;font-size:13px;color:#cbd5e1;margin-top:10px;padding:4px 0;user-select:none" }, ["✕ 现在无法处理（告诉 AI 原因）"]));
+        det2.appendChild(el("summary", { style: "cursor:pointer;font-size:13px;color:#cbd5e1;margin-top:10px;padding:4px 0;user-select:none" }, [t("✕ Can't handle now (tell AI why)")]));
         var rr2 = el("div", { style: "display:flex;flex-wrap:wrap;gap:8px;margin-top:6px" });
-        ["我暂时无法满足你的要求", "暂时找不到/选不了", "等会再处理"].forEach(function(r) {
+        [t("I can't fulfill this right now"), t("Can't find/select it right now"), t("Handle it later")].forEach(function(r) {
           rr2.appendChild(el("button", { class: "dbg-ask-reject", "data-reason": r }, [r]));
         });
         det2.appendChild(rr2);
@@ -6402,8 +6983,8 @@
       dialog.appendChild(body);
       if (kind === "choose" && multiple) {
         var footRow = el("div", { style: "display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:10px" });
-        footRow.appendChild(el("button", { class: "dbg-pick-cancel dbg-ask-cancel" }, ["✕ 取消"]));
-        var footSend = el("button", { class: "dbg-primary dbg-ask-send", style: "flex:1;font-weight:800;font-size:16px;padding:12px 18px;border-radius:10px;letter-spacing:.5px;display:flex;align-items:center;justify-content:center;gap:6px" }, ["✅ 发送所选（0）"]);
+        footRow.appendChild(el("button", { class: "dbg-pick-cancel dbg-ask-cancel" }, [t("✕ Cancel")]));
+        var footSend = el("button", { class: "dbg-primary dbg-ask-send", style: "flex:1;font-weight:800;font-size:16px;padding:12px 18px;border-radius:10px;letter-spacing:.5px;display:flex;align-items:center;justify-content:center;gap:6px" }, [t("✅ Send selected (0)")]);
         footSend.disabled = true;
         footSend.addEventListener("click", finishAskCustom);
         footRow.appendChild(footSend);
@@ -6426,9 +7007,9 @@
           raf: true,
           preventStart: true,
           filter: function(e) {
-            return !(e.target && e.target.tagName === "BUTTON");
+            return !(e.target && e.target.closest && e.target.closest("button"));
           },
-          // 头部按钮（⏸/👁/✕）不触发拖拽
+          // header buttons (⏸/👁/✕) do not trigger dragging
           onStart: function() {
             dialog.classList.add("dbg-dragging");
             return { left: dialog.offsetLeft || 0, top: dialog.offsetTop || 0 };
@@ -6468,15 +7049,15 @@
           if (res.status === "answered") {
             var txt = describeAnswer(kind, res.value);
             ctx.postBridgeEvent("user_answer", { kind, answer: txt, status: "answered" });
-            ctx.addMsg("sys", "💬 用户已回答：" + txt + "（异步——已放入 AI 待选，点击 [回答N] 发送给 AI）");
+            ctx.addMsg("sys", t("💬 User answered: ") + txt + t("(async — placed in AI pending area, click [answer N] to send)"));
           } else {
-            ctx.postBridgeEvent("user_answer", { kind, answer: res.status === "rejected" ? "❌ 拒绝：" + (res.reason || "") : "⏱ 超时", status: res.status === "rejected" ? "rejected" : "timeout", reason: res.reason || "" });
-            ctx.addMsg("sys", res.status === "rejected" ? "✕ 用户拒绝：" + (res.reason || "") + "（异步——已通知 MCP）" : "⏱ 等待超时（用户无响应）");
+            ctx.postBridgeEvent("user_answer", { kind, answer: res.status === "rejected" ? t("❌ Denied: ") + (res.reason || "") : t("⏱ Timeout"), status: res.status === "rejected" ? "rejected" : "timeout", reason: res.reason || "" });
+            ctx.addMsg("sys", res.status === "rejected" ? t("✕ User denied: ") + (res.reason || "") + t("(async — MCP notified)") : t("⏱ Wait timeout (no user response)"));
           }
           return;
         }
         ctx.sendInteractionResult(requestId, res);
-        ctx.addMsg("sys", res.status === "answered" ? "💬 用户已回答（回传 AI）" : res.status === "rejected" ? "✕ 用户拒绝：" + (res.reason || "") : "⏱ 等待超时（用户无响应）");
+        ctx.addMsg("sys", res.status === "answered" ? t("💬 User answered (sent to AI)") : res.status === "rejected" ? t("✕ User denied: ") + (res.reason || "") : t("⏱ Wait timeout (no user response)"));
       }
       ctx.hostAskPanels = ctx.hostAskPanels || {};
       var silent = false;
@@ -6489,26 +7070,26 @@
         if (paused) return;
         var left = Math.max(0, deadline - Date.now());
         timerSpan.textContent = "⏱ " + Math.ceil(left / 1e3) + "s";
-        if (left <= 0) finishAsk({ status: "timeout", error: "用户无响应（不在线）" });
+        if (left <= 0) finishAsk({ status: "timeout", error: t("No user response (away)") });
       }
       if (!noTimeout) pauseBtn.addEventListener("click", function() {
         paused = !paused;
         if (paused) {
           remainingMs = Math.max(0, deadline - Date.now());
-          timerSpan.textContent = "⏸ 已暂停（剩 " + Math.ceil(remainingMs / 1e3) + "s）";
-          pauseBtn.textContent = "▶ 继续";
+          timerSpan.textContent = t("⏸ Paused (") + Math.ceil(remainingMs / 1e3) + "s）";
+          pauseBtn.textContent = t("▶ Resume");
         } else {
           deadline = Date.now() + remainingMs;
           timerSpan.textContent = "⏱ " + Math.ceil(remainingMs / 1e3) + "s";
-          pauseBtn.textContent = "⏸ 暂停";
+          pauseBtn.textContent = t("⏸ Pause");
         }
         ctx.sendInteractionControl(requestId, paused ? "pause" : "resume");
       });
       var keyHandler = function(e) {
         if (done) return;
         if (seq !== ctx.askPanelSeq) return;
-        var t = e.target;
-        if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+        var t2 = e.target;
+        if (t2 && (t2.tagName === "INPUT" || t2.tagName === "TEXTAREA" || t2.isContentEditable)) return;
         var n = parseInt(e.key, 10);
         if (!(n >= 1) || n > 9) return;
         var btns = optWrap.querySelectorAll(".dbg-ask-opt");
@@ -6519,47 +7100,82 @@
       };
       document.addEventListener("keydown", keyHandler);
       dialog.addEventListener("click", function(e) {
-        var t = e.target.closest("button");
-        if (!t) return;
-        if (t.classList.contains("dbg-ask-yes")) {
+        var t2 = e.target.closest("button");
+        if (!t2) return;
+        if (t2.classList.contains("dbg-ask-yes")) {
           finishAsk(kind === "confirm" ? { status: "answered", value: { approved: true } } : { status: "answered", value: { present: true } });
-        } else if (t.classList.contains("dbg-ask-no")) {
-          finishAsk(kind === "confirm" ? { status: "answered", value: { approved: false } } : { status: "rejected", reason: "用户暂时不在" });
-        } else if (t.classList.contains("dbg-ask-choice")) {
-          var i = parseInt(t.getAttribute("data-i"), 10);
+        } else if (t2.classList.contains("dbg-ask-no")) {
+          finishAsk(kind === "confirm" ? { status: "answered", value: { approved: false } } : { status: "rejected", reason: t2("User temporarily away") });
+        } else if (t2.classList.contains("dbg-ask-choice")) {
+          var i = parseInt(t2.getAttribute("data-i"), 10);
           var ch = it.choices || [];
           finishAsk({ status: "answered", value: { index: i, label: ch[i] != null ? ch[i] : String(i) } });
-        } else if (t.classList.contains("dbg-ask-reject")) {
-          finishAsk({ status: "rejected", reason: t.getAttribute("data-reason") });
-        } else if (t.classList.contains("dbg-ask-cancel")) {
-          finishAsk({ status: "rejected", reason: "用户取消" });
+        } else if (t2.classList.contains("dbg-ask-reject")) {
+          finishAsk({ status: "rejected", reason: t2.getAttribute("data-reason") });
+        } else if (t2.classList.contains("dbg-ask-cancel")) {
+          finishAsk({ status: "rejected", reason: t2("User cancelled") });
         }
       });
       ctx.closeHostAskPanel = function(requestId2) {
         var p = ctx.hostAskPanels[requestId2];
         if (p) {
           silent = true;
-          p.finishAsk({ status: "cancelled", error: "AI 已停止" });
+          p.finishAsk({ status: "cancelled", error: t("AI stopped") });
         }
       };
     };
+    ctx.notifyCards = [];
+    function restackNotifyCards() {
+      var offsetY = 64;
+      for (var i = 0; i < ctx.notifyCards.length; i++) {
+        var c = ctx.notifyCards[i];
+        if (!c.dialog.isConnected || c.userMoved) continue;
+        try {
+          var r = placePhysPanel(c.dialog, { visW: c.visW, dock: "bottom", gap: 12, offsetY, minH: 40, maxWidth: "520px", overflowY: "auto" });
+          c.visH = r.visH;
+          offsetY += r.visH + 12;
+        } catch (e) {
+        }
+      }
+    }
     ctx.showNotifyPanel = function(requestId, it) {
       var timeoutMs = parseInt(it.timeoutMs, 10) > 0 ? parseInt(it.timeoutMs, 10) : 0;
       var dialog = el("div", { class: "dbg-pick-dialog" });
       var head = el("div", { class: "dbg-pick-head" });
-      head.appendChild(el("span", { class: "dbg-pick-title" }, ["🔔 " + (it.title || "AI 通知")]));
+      head.appendChild(el("span", { class: "dbg-pick-title" }, ["🔔 " + (it.title || t("AI notification"))]));
       var noTimeout = !(timeoutMs > 0);
-      var timerSpan = el("span", { style: "font-weight:400;color:#93c5fd;font-size:11px" }, [noTimeout ? "♾ 常驻" : "⏱ " + Math.ceil(timeoutMs / 1e3) + "s"]);
-      var pauseBtn = el("button", { title: "暂停倒计时" }, ["⏸"]);
+      var timerSpan = el("span", { style: "font-weight:400;color:#93c5fd;font-size:11px" }, [noTimeout ? t("♾ Persistent") : "⏱ " + Math.ceil(timeoutMs / 1e3) + "s"]);
+      var pauseBtn = el("button", { title: t("Pause countdown") }, ["⏸"]);
       if (noTimeout) pauseBtn.style.display = "none";
       head.appendChild(timerSpan);
       head.appendChild(pauseBtn);
-      var closeBtn = el("button", { title: "关闭", style: "font-size:15px;font-weight:700;padding:2px 10px" }, ["✕"]);
+      var copyBtn = el("button", { title: t("Copy all"), style: "padding:3px 7px" }, [elSvg(LUCIDE.copy, 13)]);
+      copyBtn.addEventListener("click", function(e) {
+        e.stopPropagation();
+        var done2 = function(ok) {
+          copyBtn.innerHTML = "";
+          copyBtn.appendChild(ok ? elSvg(LUCIDE.check, 13) : document.createTextNode("✕"));
+          copyBtn.style.color = ok ? "#4ade80" : "#f87171";
+          setTimeout(function() {
+            copyBtn.innerHTML = "";
+            copyBtn.appendChild(elSvg(LUCIDE.copy, 13));
+            copyBtn.style.color = "";
+          }, 1200);
+        };
+        if (ctx.copyToClipboard) ctx.copyToClipboard(it.body || "", done2);
+        else done2(false);
+      });
+      head.appendChild(copyBtn);
+      var closeBtn = el("button", { title: t("Close"), style: "font-size:15px;font-weight:700;padding:2px 10px" }, ["✕"]);
       head.appendChild(closeBtn);
       dialog.appendChild(head);
-      var body = el("div", { class: "dbg-pick-body" });
-      body.appendChild(el("div", { style: "white-space:pre-wrap;font-size:14px;line-height:1.7;color:#e5e7eb;word-break:break-word;overflow-wrap:anywhere" }, [it.body || ""]));
+      var body = el("div", { class: "dbg-pick-body dbg-notify-body" });
+      body.appendChild(el("span", {}, [it.body || ""]));
       dialog.appendChild(body);
+      var visW = Math.min(520, Math.round(getPhysViewport().w) - 24);
+      var card = { dialog, visW, visH: 0, userMoved: false, close: function() {
+        closeCard();
+      } };
       try {
         makePointerDrag({
           handle: head,
@@ -6567,13 +7183,14 @@
           raf: true,
           preventStart: true,
           filter: function(e) {
-            return !(e.target && e.target.tagName === "BUTTON");
+            return !(e.target && e.target.closest && e.target.closest("button"));
           },
           onStart: function() {
             dialog.classList.add("dbg-dragging");
             return { left: dialog.offsetLeft || 0, top: dialog.offsetTop || 0 };
           },
           onMove: function(ev, st, dx, dy) {
+            card.userMoved = true;
             dialog.style.left = Math.min(Math.max(0, st.left + dx), Math.max(40, (window.innerWidth || 0) - 60)) + "px";
             dialog.style.top = Math.min(Math.max(0, st.top + dy), Math.max(24, (window.innerHeight || 0) - 40)) + "px";
             dialog.style.right = "auto";
@@ -6590,7 +7207,10 @@
         if (done) return;
         done = true;
         clearInterval(timer);
+        var i = ctx.notifyCards.indexOf(card);
+        if (i >= 0) ctx.notifyCards.splice(i, 1);
         if (dialog.parentNode) dialog.parentNode.removeChild(dialog);
+        restackNotifyCards();
       };
       var deadline = Date.now() + timeoutMs, paused = false, remainingMs = timeoutMs;
       var timer = noTimeout ? null : setInterval(function() {
@@ -6603,20 +7223,26 @@
         paused = !paused;
         if (paused) {
           remainingMs = Math.max(0, deadline - Date.now());
-          timerSpan.textContent = "⏸ 已暂停（剩 " + Math.ceil(remainingMs / 1e3) + "s）";
-          pauseBtn.textContent = "▶ 继续";
+          timerSpan.textContent = t("⏸ Paused (") + Math.ceil(remainingMs / 1e3) + "s）";
+          pauseBtn.textContent = t("▶ Resume");
         } else {
           deadline = Date.now() + remainingMs;
           timerSpan.textContent = "⏱ " + Math.ceil(remainingMs / 1e3) + "s";
-          pauseBtn.textContent = "⏸ 暂停";
+          pauseBtn.textContent = t("⏸ Pause");
         }
       });
       closeBtn.addEventListener("click", closeCard);
       ctx.root.appendChild(dialog);
-      try {
-        placePhysPanel(dialog, { visW: Math.min(520, Math.round(getPhysViewport().w) - 24), dock: "bottom", gap: 12, offsetY: 64, minH: 40, maxWidth: "520px", overflowY: "auto" });
-      } catch (e) {
+      ctx.notifyCards.push(card);
+      while (ctx.notifyCards.length > 6) {
+        var oldest = ctx.notifyCards[0];
+        if (oldest && oldest.close && oldest.dialog.isConnected) oldest.close();
+        else {
+          ctx.notifyCards.shift();
+          if (oldest && oldest.dialog.parentNode) oldest.dialog.parentNode.removeChild(oldest.dialog);
+        }
       }
+      restackNotifyCards();
     };
     ctx.handleMcpInteraction = function(payload) {
       var it = payload && payload.interaction ? payload.interaction : {};
@@ -6624,11 +7250,11 @@
       if (itKind === "notify") {
         if (ctx.lastNotifyId === payload.requestId) return;
         ctx.lastNotifyId = payload.requestId;
-        ctx.notifyUser(it.title || "🤖 AI 有一条消息", it.body || "");
+        ctx.notifyUser(it.title || t("🤖 AI has a message"), it.body || "", { noToastFallback: true });
         ctx.showNotifyPanel(payload.requestId, it);
         return;
       }
-      ctx.notifyUser("🤖 AI 需要你", itKind === "pick_element" ? it.prompt || "请点击页面上的一个元素" : it.prompt || "请在页面回答");
+      ctx.notifyUser(t("🤖 AI needs you"), itKind === "pick_element" ? it.prompt || t("Please click an element on the page") : it.prompt || t("Please answer on the page"));
       if (itKind === "pick_element") {
         ctx.showPickElementPanel(payload.requestId, it);
       } else {
@@ -6732,7 +7358,7 @@
         return '<span style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%">' + s + "</span>";
       };
       var rows = [];
-      var head = "<b>🎯 点击选择</b> <b>&lt;" + (p.tag || "?") + "&gt;</b>";
+      var head = t("<b>🎯 Click to select</b> <b>&lt;") + (p.tag || "?") + "&gt;</b>";
       if (p.rect) head += " <i>" + p.rect.w + "×" + p.rect.h + "</i>";
       rows.push(rowHtml(head));
       if (p.text) rows.push(rowHtml("“" + escapeHtml(p.text.trim().slice(0, 60)) + "”"));
@@ -6743,12 +7369,12 @@
       if (colors.length) rows.push(rowHtml(colors.join(" · ")));
       if (p.component || p.file) {
         var _fl = p.component ? p.component + " · " : "";
-        if (p.file) _fl += '<a class="dbg-open-file" data-file="' + escapeHtml(p.file).replace(/"/g, "&quot;") + '" data-line="' + (p.line || "") + '" title="点击在后台打开">' + escapeHtml(p.file) + (p.line ? ":" + p.line : "") + "</a>";
+        if (p.file) _fl += '<a class="dbg-open-file" data-file="' + escapeHtml(p.file).replace(/"/g, "&quot;") + '" data-line="' + (p.line || "") + '" title="' + t("Click to open in backend") + '">' + escapeHtml(p.file) + (p.line ? ":" + p.line : "") + "</a>";
         if (p.usedAt && (p.usedAt.file || p.usedAt.component)) {
           if (p.usedAt.file) {
-            _fl += ' ← 调用于 <a class="dbg-open-file" data-file="' + escapeHtml(p.usedAt.file).replace(/"/g, "&quot;") + '" data-line="' + (p.usedAt.line || "") + '" title="点击在后台打开">' + escapeHtml(p.usedAt.file) + ":" + (p.usedAt.line || "") + "</a>";
+            _fl += t(' ← called at <a class="dbg-open-file" data-file="') + escapeHtml(p.usedAt.file).replace(/"/g, "&quot;") + '" data-line="' + (p.usedAt.line || "") + '" title="' + t("Click to open in backend") + '">' + escapeHtml(p.usedAt.file) + ":" + (p.usedAt.line || "") + "</a>";
           } else if (p.usedAt.component) {
-            _fl += " ← 调用于 " + escapeHtml(p.usedAt.component);
+            _fl += t(" ← called at ") + escapeHtml(p.usedAt.component);
           }
         }
         rows.push('<span style="display:block;white-space:pre-wrap;word-break:break-all;max-width:100%">📄 ' + _fl + "</span>");
@@ -6756,7 +7382,7 @@
       if (p.xpath) rows.push(rowHtml('<span class="dbg-hud-path">' + escapeHtml(p.xpath) + "</span>"));
       ctx.hud.innerHTML = rows.join("");
       if (!ctx.hud.querySelector(".dbg-hud-grip")) {
-        ctx.hud.appendChild(el("span", { class: "dbg-hud-grip", title: "拖动固定 HUD（不跟随选区）" }, ["⠿"]));
+        ctx.hud.appendChild(el("span", { class: "dbg-hud-grip", title: t("Drag to pin HUD (stop following the selection)") }, ["⠿"]));
       }
       if (p.rect && !ctx.hudUserPos && Date.now() > ctx.navHoldT) {
         var vp = getPhysViewport();
@@ -7021,7 +7647,7 @@
       }
       if (k === "Escape") {
         if (ctx.pickPanel) {
-          ctx.finishPickPanel({ status: "rejected", reason: "用户按 Esc 取消" });
+          ctx.finishPickPanel({ status: "rejected", reason: t("User cancelled with Esc") });
           return;
         }
         if (ctx.dialog.classList.contains("dbg-open")) ctx.closeDialog();
@@ -7042,7 +7668,7 @@
           var _next = ctx.currentProfile === "default" ? "all" : "default";
           var _pfv = ctx.applyProfile(_next);
           if (_pBtn) _pBtn.textContent = _pfv.label;
-          ctx.addMsg("sys", "⚡ 已切换：" + _pfv.label + "（" + (_pfv.release.length ? "放行 " + _pfv.release.join("/") : "全部冻结") + "）——空格/Tab 可切回" + (_next === "default" ? "全部放行" : "默认放行") + "，页面弹出菜单保持打开");
+          ctx.addMsg("sys", t("⚡ Switched: ") + _pfv.label + "（" + (_pfv.release.length ? t("Allow ") + _pfv.release.join("/") : t("Freeze all")) + t(") — Space/Tab to switch back") + (_next === "default" ? t("Allow all") : t("Default allow")) + t(", page popup menus stay open"));
         }
         return;
       }
@@ -7291,7 +7917,7 @@
       if (!ctx.aiMaxBtn || !ctx.aiState) return;
       var maxed = detectScreenMode().small ? (ctx.aiState.smallHeightPct > 0 ? ctx.aiState.smallHeightPct : 100) >= 100 : !!ctx.aiState.__max;
       ctx.aiMaxBtn.textContent = maxed ? "❐" : "⛶";
-      ctx.aiMaxBtn.title = maxed ? "还原窗口（退出最大化）" : "最大化窗口（铺满页面；再点还原）";
+      ctx.aiMaxBtn.title = maxed ? t("Restore window (exit maximize)") : t("Maximize (fill the page; click again to restore)");
     };
     ctx.aiDropMax = function() {
       if (ctx.aiState && ctx.aiState.__max) {
@@ -7335,8 +7961,8 @@
       }
     };
     ctx.trackedAiUrl = function() {
-      var t = ctx.loadAiUrl();
-      if (!t) return "";
+      var t2 = ctx.loadAiUrl();
+      if (!t2) return "";
       var bases = [];
       try {
         var c = ctx.loadCustomAiUrl ? ctx.loadCustomAiUrl() : "";
@@ -7344,7 +7970,7 @@
       } catch (e) {
       }
       if (ctx.cfg.aiUrl) bases.push(ctx.cfg.aiUrl);
-      for (var i = 0; i < bases.length; i++) if (t.indexOf(bases[i]) === 0) return t;
+      for (var i = 0; i < bases.length; i++) if (t2.indexOf(bases[i]) === 0) return t2;
       return "";
     };
     ctx.withAiWinMark = function(url) {
@@ -7387,7 +8013,7 @@
         }
         ctx.aiReady = false;
         try {
-          if (ctx.addMsg) ctx.addMsg("sys", "⚠ AI 窗会话 URL 加载失败（10s 无响应）——已回退" + (ctx.loadCustomAiUrl && ctx.loadCustomAiUrl() ? "用户设置地址" : "默认地址") + "（AI 窗导航后将重新追踪）");
+          if (ctx.addMsg) ctx.addMsg("sys", t("⚠ AI window session URL failed to load (10s no response) — fell back") + (ctx.loadCustomAiUrl && ctx.loadCustomAiUrl() ? t("User-set URL") : t("Default URL")) + t("(re-tracked after AI window navigation)"));
         } catch (e) {
         }
       }, 1e4);
@@ -7403,36 +8029,36 @@
       var sx = window.screenX || 0, sy = window.screenY || 0;
       var ow = window.outerWidth || availW, oh = window.outerHeight || availH;
       var defW = Math.min(560, Math.max(380, Math.round(availW * 0.42)));
-      var w, h, l, t;
+      var w, h, l, t2;
       if (layout === "left") {
         w = defW;
         h = Math.round(oh);
         l = Math.max(0, sx);
-        t = Math.max(0, sy);
+        t2 = Math.max(0, sy);
       } else if (layout === "right") {
         w = defW;
         h = Math.round(oh);
         l = Math.min(sx + ow - w, Math.max(0, availW - w));
-        t = Math.max(0, sy);
+        t2 = Math.max(0, sy);
       } else if (layout === "bottom") {
         w = Math.round(ow);
         h = Math.max(260, Math.round(oh / 2));
         l = Math.max(0, sx);
-        t = Math.min(sy + oh - h, Math.max(0, availH - h));
+        t2 = Math.min(sy + oh - h, Math.max(0, availH - h));
       } else if (layout === "top") {
         w = Math.round(ow);
         h = Math.max(260, Math.round(oh / 2));
         l = Math.max(0, sx);
-        t = Math.max(0, sy);
+        t2 = Math.max(0, sy);
       } else {
         w = defW;
         h = Math.min(760, Math.max(520, Math.round(availH * 0.82)));
         l = Math.max(0, Math.round((availW - w) / 2));
-        t = Math.max(0, Math.round((availH - h) / 3));
+        t2 = Math.max(0, Math.round((availH - h) / 3));
       }
       l = Math.min(Math.max(0, l), Math.max(0, availW - w));
-      t = Math.min(Math.max(0, t), Math.max(0, availH - h));
-      return "popup=yes,width=" + w + ",height=" + h + ",left=" + l + ",top=" + t + ",location=no";
+      t2 = Math.min(Math.max(0, t2), Math.max(0, availH - h));
+      return "popup=yes,width=" + w + ",height=" + h + ",left=" + l + ",top=" + t2 + ",location=no";
     };
     ctx.openAiPopup = function(url) {
       if (!ctx.cfg.aiUrl) return null;
@@ -7448,7 +8074,7 @@
         var _tracked = !url && !!(ctx.trackedAiUrl && ctx.trackedAiUrl());
         var pop = window.open(effUrl, "aiti-ai-popup", ctx.aiPopupFeatures());
         if (!pop) {
-          ctx.addMsg("sys", "⚠ 浏览器拦截了独立窗口——已退回页面内窗口（点 ⧉ 可再次尝试；直接点击时不会被拦截）");
+          ctx.addMsg("sys", t("⚠ Browser blocked the standalone window — fell back to in-page (click ⧉ to retry; user-gesture opens are never blocked)"));
           ctx.setAiMode("iframe");
           ctx.aiOpen = true;
           try {
@@ -7480,7 +8106,7 @@
                 if (ctx.aiMode === "popup") {
                   var _wasOpen = ctx.aiOpen;
                   ctx.setAiMode("iframe");
-                  ctx.addMsg("sys", "🪟 AI 独立窗口已关闭——已回到页面内窗口" + (_wasOpen ? "" : "（点 💬 可重新打开）"));
+                  ctx.addMsg("sys", t("🪟 AI standalone window closed — back to the in-page window") + (_wasOpen ? "" : t("(click 💬 to reopen)")));
                   if (_wasOpen) {
                     ctx.aiOpen = true;
                     try {
@@ -7520,11 +8146,11 @@
         menu.style.zIndex = "2147483647";
         var layout = ctx.aiState && ctx.aiState.popupLayout || "float";
         [
-          ["float", "⧉ 浮动窗口", "独立小窗，可自由移动、调整大小"],
-          ["left", "⇤ 左侧并排", "贴靠浏览器左缘，与页面左右分屏"],
-          ["right", "⇥ 右侧并排", "贴靠浏览器右缘，与页面左右分屏"],
-          ["bottom", "⇊ 底部横排", "贴靠浏览器底部，上下分屏"],
-          ["top", "⇈ 顶部横排", "贴靠浏览器顶部，上下分屏"]
+          ["float", t("⧉ Floating window"), t("Standalone window, freely movable & resizable")],
+          ["left", t("⇤ Split left"), t("Dock to browser left edge (side-by-side split)")],
+          ["right", t("⇥ Split right"), t("Dock to browser right edge (side-by-side split)")],
+          ["bottom", t("⇊ Dock bottom"), t("Dock to browser bottom (top/bottom split)")],
+          ["top", t("⇈ Dock top"), t("Dock to browser top (top/bottom split)")]
         ].forEach(function(d) {
           var item = el("div", { class: "dbg-ai-pop-menu-item" + (layout === d[0] ? " dbg-on" : "") }, []);
           item.appendChild(el("span", {}, [d[1]]));
@@ -7561,7 +8187,7 @@
             }
             if (ctx.aiBtn) ctx.aiBtn.classList.add("dbg-on");
             ctx.saveDbgState();
-            ctx.addMsg("sys", "🪟 AI 已在独立窗口打开（" + d[1] + "）——关闭该窗口即回到页面内");
+            ctx.addMsg("sys", t("🪟 AI opened in standalone window (") + d[1] + t(") — close it to return to the in-page window"));
           });
           menu.appendChild(item);
         });
@@ -7679,13 +8305,13 @@
       } catch (e) {
       }
     };
-    ctx.setAiTitle = function(t) {
-      ctx.setAiMeta({ title: t });
+    ctx.setAiTitle = function(t2) {
+      ctx.setAiMeta({ title: t2 });
     };
     ctx.setAiMeta = function(payload) {
-      var t = payload && payload.title || "";
+      var t2 = payload && payload.title || "";
       var icon = payload && payload.icon;
-      ctx._aiTitle = t || "";
+      ctx._aiTitle = t2 || "";
       var el2 = ctx.aiTitleEl || ctx.root && ctx.root.querySelector(".dbg-ai-title");
       if (!el2) return;
       el2.textContent = "";
@@ -7695,7 +8321,7 @@
         el2.appendChild(img);
       }
       var txt = el("span", { class: "dbg-ai-txt" });
-      txt.textContent = t || "AI";
+      txt.textContent = t2 || "AI";
       el2.appendChild(txt);
     };
     ctx.ensureAi = function() {
@@ -7725,7 +8351,7 @@
       });
       bar.appendChild(maxBtn);
       ctx.aiSyncMaxBtn();
-      var popBtn = el("button", { class: "dbg-ai-pop", title: "AI 新窗口布局：浮动 / 左·右并排 / 底·顶横排（关闭新窗口即回到内嵌模式）" }, ["⧉"]);
+      var popBtn = el("button", { class: "dbg-ai-pop", title: t("AI new-window layout: floating / split left·right / dock bottom·top (close it to return to embedded mode)") }, ["⧉"]);
       popBtn.addEventListener("click", function(e) {
         e.stopPropagation();
         if (detectScreenMode().small) {
@@ -7733,19 +8359,19 @@
           ctx.setAiMode("popup");
           ctx.aiBtn.classList.add("dbg-on");
           ctx.saveDbgState();
-          ctx.addMsg("sys", "🪟 AI 已在独立窗口打开——关闭该窗口即回到页面内窗口");
+          ctx.addMsg("sys", t("🪟 AI opened in a standalone window — close it to return to the in-page window"));
           return;
         }
         ctx.aiPopupMenu(popBtn);
       });
       bar.appendChild(popBtn);
-      var setBtn = el("button", { class: "dbg-ai-settings", title: "设置" }, ["⚙"]);
+      var setBtn = el("button", { class: "dbg-ai-settings", title: t("Settings") }, ["⚙"]);
       setBtn.addEventListener("click", function(e) {
         e.stopPropagation();
         ctx.aiWinSettings(setBtn);
       });
       bar.appendChild(setBtn);
-      var closeBtn = el("button", { class: "dbg-ai-close", title: "关闭" }, ["✕"]);
+      var closeBtn = el("button", { class: "dbg-ai-close", title: t("Close") }, ["✕"]);
       closeBtn.addEventListener("click", function() {
         ctx.showAi(false);
         ctx.aiOpen = false;
@@ -8052,7 +8678,7 @@
         var pop = el("div", { class: "dbg-ai-settings-pop" });
         pop.style.zIndex = "2147483647";
         var small = detectScreenMode().small;
-        var sec = el("div", { style: "font-size:11px;font-weight:600;color:#4f46e5;margin-bottom:6px" }, [small ? "📱 小屏（按 % 高度）" : "🖥 大屏（具体尺寸/位置）"]);
+        var sec = el("div", { style: "font-size:11px;font-weight:600;color:#4f46e5;margin-bottom:6px" }, [small ? t("📱 Small (% height)") : t("🖥 Large (specific size/position)")]);
         pop.appendChild(sec);
         if (small) {
           var hRow = el("div", { style: "display:flex;align-items:center;gap:8px;font-size:12px" });
@@ -8065,12 +8691,12 @@
             ctx.saveAiState();
             ctx.applyAiState();
           });
-          hRow.appendChild(el("span", {}, ["高度"]));
+          hRow.appendChild(el("span", {}, [t("Height")]));
           hRow.appendChild(slider);
           hRow.appendChild(pctLabel);
           pop.appendChild(hRow);
           var dRow = el("div", { style: "display:flex;gap:8px;margin-top:8px" });
-          [["bottom", "⬇ 贴底"], ["top", "⬆ 贴顶"]].forEach(function(d) {
+          [["bottom", t("⬇ Dock bottom")], ["top", t("⬆ Dock top")]].forEach(function(d) {
             var b = el("button", { style: "flex:1;border:1px solid #d1d5db;border-radius:6px;padding:4px 8px;cursor:pointer;font:inherit;font-size:12px;color:#374151;background:" + (ctx.aiState.smallDock === d[0] ? "#4f46e5;color:#fff" : "#fff") }, [d[1]]);
             b.addEventListener("click", function() {
               ctx.aiState.smallDock = d[0];
@@ -8097,13 +8723,13 @@
             ctx.saveAiState();
             ctx.applyAiState();
           });
-          whRow.appendChild(el("span", {}, ["宽"]));
+          whRow.appendChild(el("span", {}, [t("W")]));
           whRow.appendChild(wInp);
-          whRow.appendChild(el("span", {}, ["高"]));
+          whRow.appendChild(el("span", {}, [t("H")]));
           whRow.appendChild(hInp);
           pop.appendChild(whRow);
           var posRow = el("div", { style: "display:flex;gap:8px;margin-top:8px" });
-          [["left", "⬅ 贴左"], ["right", "➡ 贴右"], ["free", "✥ 自由"]].forEach(function(d) {
+          [["left", t("⬅ Dock left")], ["right", t("➡ Dock right")], ["free", t("✥ Free")]].forEach(function(d) {
             var cur = ctx.aiState.dock || (d[0] === "right" ? "right" : "");
             var b = el("button", { style: "flex:1;border:1px solid #d1d5db;border-radius:6px;padding:4px 8px;cursor:pointer;font:inherit;font-size:12px;color:#374151;background:" + (cur === d[0] ? "#4f46e5;color:#fff" : "#fff") }, [d[1]]);
             b.addEventListener("click", function() {
@@ -8122,7 +8748,7 @@
           pop.appendChild(posRow);
         }
         var urlSec = el("div", { style: "margin-top:10px;border-top:1px solid rgba(255,255,255,.15);padding-top:8px" });
-        urlSec.appendChild(el("div", { style: "font-size:11px;font-weight:600;color:#4f46e5;margin-bottom:4px" }, ["🔗 AI 地址"]));
+        urlSec.appendChild(el("div", { style: "font-size:11px;font-weight:600;color:#4f46e5;margin-bottom:4px" }, [t("🔗 AI URL")]));
         var urlMono = "font-family:ui-monospace,SFMono-Regular,monospace;font-size:11px;line-height:1.5;word-break:break-all;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:6px 8px;color:#334155;user-select:all";
         var _reopenSettings = function() {
           try {
@@ -8146,8 +8772,8 @@
         var tracked2 = (ctx.trackedAiUrl ? ctx.trackedAiUrl() : "") || "";
         var trkRow = el("div", { style: "margin-bottom:8px" });
         var trkHead = el("div", { style: "display:flex;align-items:center;gap:6px;margin-bottom:3px;font-size:11px;color:#6b7280" });
-        trkHead.appendChild(el("span", {}, ["🔁 当前会话（AI 窗上报，优先）"]));
-        var trkClear = el("button", { style: "margin-left:auto;border:1px solid #d1d5db;border-radius:5px;padding:1px 8px;cursor:pointer;font:inherit;font-size:11px;background:#fff;color:#374151" }, ["✕ 清除"]);
+        trkHead.appendChild(el("span", {}, [t("🔁 Current session (reported by AI window, priority)")]));
+        var trkClear = el("button", { style: "margin-left:auto;border:1px solid #d1d5db;border-radius:5px;padding:1px 8px;cursor:pointer;font:inherit;font-size:11px;background:#fff;color:#374151" }, [t("✕ Clear")]);
         trkClear.addEventListener("click", function() {
           try {
             ctx.clearAiUrl();
@@ -8155,36 +8781,36 @@
           }
           _navAi(ctx.aiFallbackUrl());
           try {
-            ctx.addMsg("sys", "✕ 已清除会话追踪 URL——AI 窗已回退" + (ctx.loadCustomAiUrl && ctx.loadCustomAiUrl() ? "用户设置地址（导航后重新追踪）" : "默认地址（导航后重新追踪）"));
+            ctx.addMsg("sys", t("✕ Session-tracked URL cleared — AI window fell back") + (ctx.loadCustomAiUrl && ctx.loadCustomAiUrl() ? t("User-set URL (re-tracked after navigation)") : t("Default URL (re-tracked after navigation)")));
           } catch (e) {
           }
           _reopenSettings();
         });
         trkHead.appendChild(trkClear);
         trkRow.appendChild(trkHead);
-        trkRow.appendChild(el("div", { style: urlMono, title: tracked2 || "（无——AI 窗加载/导航后自动记录）" }, [tracked2 || "（无——AI 窗加载/导航后自动记录）"]));
+        trkRow.appendChild(el("div", { style: urlMono, title: tracked2 || t("(none — auto-tracked after AI window loads/navigates)") }, [tracked2 || t("(none — auto-tracked after AI window loads/navigates)")]));
         urlSec.appendChild(trkRow);
         var customUrl = (ctx.loadCustomAiUrl ? ctx.loadCustomAiUrl() : "") || "";
         var setRow = el("div", {});
         var setHead = el("div", { style: "display:flex;align-items:center;gap:6px;margin-bottom:3px;font-size:11px;color:#6b7280" });
-        setHead.appendChild(el("span", {}, [customUrl ? "⭐ 用户设置（aiti-agent）" : "默认推断"]));
-        var cpBtn = el("button", { style: "border:1px solid #d1d5db;border-radius:5px;padding:1px 8px;cursor:pointer;font:inherit;font-size:11px;background:#fff;color:#374151" }, ["📋 复制"]);
+        setHead.appendChild(el("span", {}, [customUrl ? t("⭐ User-set (aiti-agent)") : t("Auto-inferred")]));
+        var cpBtn = el("button", { style: "border:1px solid #d1d5db;border-radius:5px;padding:1px 8px;cursor:pointer;font:inherit;font-size:11px;background:#fff;color:#374151" }, [t("📋 Copy")]);
         cpBtn.addEventListener("click", function() {
           try {
             navigator.clipboard.writeText(customUrl || ctx.cfg.aiUrl || "").then(function() {
-              cpBtn.textContent = "✓ 已复制";
+              cpBtn.textContent = t("✓ Copied");
               setTimeout(function() {
-                cpBtn.textContent = "📋 复制";
+                cpBtn.textContent = t("📋 Copy");
               }, 1200);
             }, function() {
-              cpBtn.textContent = "复制失败";
+              cpBtn.textContent = t("Copy failed");
             });
           } catch (e) {
           }
         });
         setHead.appendChild(cpBtn);
         if (customUrl) {
-          var cstClear = el("button", { style: "border:1px solid #d1d5db;border-radius:5px;padding:1px 8px;cursor:pointer;font:inherit;font-size:11px;background:#fff;color:#374151" }, ["✕ 清除"]);
+          var cstClear = el("button", { style: "border:1px solid #d1d5db;border-radius:5px;padding:1px 8px;cursor:pointer;font:inherit;font-size:11px;background:#fff;color:#374151" }, [t("✕ Clear")]);
           cstClear.addEventListener("click", function() {
             try {
               ctx.clearCustomAiUrl();
@@ -8200,7 +8826,7 @@
             var backUrl = ctx.aiUrlFor();
             _navAi(backUrl);
             try {
-              ctx.addMsg("sys", "✕ 已清除用户设置地址——AI 窗回退默认地址" + (trkLeft ? "（当前会话仍保留）" : "（导航后重新追踪）"));
+              ctx.addMsg("sys", t("✕ User-set URL cleared — AI window fell back to default") + (trkLeft ? t("(current session kept)") : t("(re-tracked after navigation)")));
             } catch (e) {
             }
             _reopenSettings();
@@ -8208,15 +8834,15 @@
           setHead.appendChild(cstClear);
         }
         setRow.appendChild(setHead);
-        setRow.appendChild(el("div", { style: urlMono, title: customUrl || ctx.cfg.aiUrl || "（未配置）" }, [customUrl || ctx.cfg.aiUrl || "（未配置）"]));
+        setRow.appendChild(el("div", { style: urlMono, title: customUrl || ctx.cfg.aiUrl || t("(not configured)") }, [customUrl || ctx.cfg.aiUrl || t("(not configured)")]));
         urlSec.appendChild(setRow);
         pop.appendChild(urlSec);
         var setSec = el("div", { style: "margin-top:10px;border-top:1px solid rgba(255,255,255,.15);padding-top:8px" });
-        var setLbl = el("div", { style: "font-size:11px;font-weight:600;color:#4f46e5;margin-bottom:4px" }, ["⭐ 设置 aiti-agent（第一推荐）"]);
+        var setLbl = el("div", { style: "font-size:11px;font-weight:600;color:#4f46e5;margin-bottom:4px" }, [t("⭐ Set up aiti-agent (recommended)")]);
         setSec.appendChild(setLbl);
         var aitiLink = el("a", { href: "https://aiti.pw", target: "_blank", rel: "noopener", style: "color:#4f46e5;text-decoration:underline" }, ["aiti.pw ↗"]);
-        setSec.appendChild(el("div", { style: "font-size:11px;color:#6b7280;line-height:1.5;margin-bottom:6px" }, ["带 Web 界面的 AI 助手（", aitiLink, "）——装好后设地址，AI 窗直接由它接管；应用后 10s 协议探测，成功才生效，失败自动回退。"]));
-        var setBtn = el("button", { style: "width:100%;border:1px solid #4f46e5;border-radius:6px;padding:4px 8px;cursor:pointer;font:inherit;font-size:12px;background:#eef2ff;color:#4338ca" }, ["⚙ 设置地址"]);
+        setSec.appendChild(el("div", { style: "font-size:11px;color:#6b7280;line-height:1.5;margin-bottom:6px" }, [t("AI assistant with web UI ("), aitiLink, t(") — install it, set the URL, and the AI window is taken over; 10s protocol probe after apply, success required, auto-fallback on failure.")]));
+        var setBtn = el("button", { style: "width:100%;border:1px solid #4f46e5;border-radius:6px;padding:4px 8px;cursor:pointer;font:inherit;font-size:12px;background:#eef2ff;color:#4338ca" }, [t("⚙ Set URL")]);
         setBtn.addEventListener("click", function() {
           try {
             pop.remove();
@@ -8227,9 +8853,9 @@
         setSec.appendChild(setBtn);
         pop.appendChild(setSec);
         var resetSec = el("div", { style: "margin-top:10px;border-top:1px solid rgba(255,255,255,.15);padding-top:8px" });
-        var resetLbl = el("div", { style: "font-size:11px;font-weight:600;color:#4f46e5;margin-bottom:4px" }, ["⟲ 重置"]);
+        var resetLbl = el("div", { style: "font-size:11px;font-weight:600;color:#4f46e5;margin-bottom:4px" }, [t("⟲ Reset")]);
         resetSec.appendChild(resetLbl);
-        var resetBtn = el("button", { style: "width:100%;border:1px solid #fca5a5;border-radius:6px;padding:5px 8px;cursor:pointer;font:inherit;font-size:12px;background:#fef2f2;color:#b91c1c" }, ["重置位置/尺寸 + URL（新会话）"]);
+        var resetBtn = el("button", { style: "width:100%;border:1px solid #fca5a5;border-radius:6px;padding:5px 8px;cursor:pointer;font:inherit;font-size:12px;background:#fef2f2;color:#b91c1c" }, [t("Reset position/size + URL (new session)")]);
         resetBtn.addEventListener("click", function() {
           ctx.resetAiDefault();
           ctx.clearAiUrl();
@@ -8243,7 +8869,7 @@
             var sep = ctx.cfg.aiUrl.indexOf("?") >= 0 ? "&" : "?";
             ctx.aiIframe.src = ctx.withAiWinMark(ctx.cfg.aiUrl + sep + "_dbg=" + Date.now() + ctx.aiPageParams());
           }
-          ctx.addMsg("sys", "⟲ 已重置：AI 窗位置/尺寸回默认，URL 回初始（新会话）");
+          ctx.addMsg("sys", t("⟲ Reset: AI window position/size to default, URL to initial (new session)"));
           try {
             pop.remove();
           } catch (e) {
@@ -8252,7 +8878,7 @@
         resetSec.appendChild(resetBtn);
         pop.appendChild(resetSec);
         var dbgSec = el("div", { style: "margin-top:10px;border-top:1px solid rgba(255,255,255,.15);padding-top:8px" });
-        var dbgLbl = el("div", { style: "font-size:11px;font-weight:600;color:#4f46e5;margin-bottom:4px" }, ["🔧 调试"]);
+        var dbgLbl = el("div", { style: "font-size:11px;font-weight:600;color:#4f46e5;margin-bottom:4px" }, [t("🔧 Debug")]);
         dbgSec.appendChild(dbgLbl);
         var lbl = el("label", { style: "display:flex;align-items:center;gap:4px;font-size:12px" }, []);
         var cb = el("input", { type: "checkbox" });
@@ -8267,9 +8893,9 @@
           }
         });
         lbl.appendChild(cb);
-        lbl.appendChild(document.createTextNode(" 刷新时自动显示调试信息"));
+        lbl.appendChild(document.createTextNode(t(" auto-show debug info on refresh")));
         dbgSec.appendChild(lbl);
-        var viewBtn = el("button", { style: "margin-top:6px;border:1px solid #94a3b8;border-radius:6px;padding:3px 10px;cursor:pointer;font:inherit;font-size:12px;background:#fff;color:#374151" }, ["📋 查看调试信息"]);
+        var viewBtn = el("button", { style: "margin-top:6px;border:1px solid #94a3b8;border-radius:6px;padding:3px 10px;cursor:pointer;font:inherit;font-size:12px;background:#fff;color:#374151" }, [t("📋 View debug info")]);
         viewBtn.addEventListener("click", function() {
           pop.remove();
           try {
@@ -8280,9 +8906,9 @@
         dbgSec.appendChild(viewBtn);
         pop.appendChild(dbgSec);
         var inspSec = el("div", { style: "margin-top:10px;border-top:1px solid rgba(255,255,255,.15);padding-top:8px" });
-        var inspLbl = el("div", { style: "font-size:11px;font-weight:600;color:#4f46e5;margin-bottom:6px" }, ["🛠 Inspector 设置"]);
+        var inspLbl = el("div", { style: "font-size:11px;font-weight:600;color:#4f46e5;margin-bottom:6px" }, [t("🛠 Inspector settings")]);
         inspSec.appendChild(inspLbl);
-        var inspBtn = el("button", { style: "width:100%;border:1px solid #a5b4fc;border-radius:6px;padding:5px 8px;cursor:pointer;font:inherit;font-size:12px;background:#eef2ff;color:#4338ca" }, ["⏱ 调速 / 🌐 网络 / ⚠ 错误（弹出面板）"]);
+        var inspBtn = el("button", { style: "width:100%;border:1px solid #a5b4fc;border-radius:6px;padding:5px 8px;cursor:pointer;font:inherit;font-size:12px;background:#eef2ff;color:#4338ca" }, [t("⏱ Timing / 🌐 Network / ⚠ Errors (popup panel)")]);
         inspBtn.addEventListener("click", function() {
           try {
             pop.remove();
@@ -8337,25 +8963,25 @@
       try {
         if (ctx.root) {
           var _dup = ctx.root.querySelector(".dbg-dialog-card");
-          if (_dup && _dup.innerText.indexOf("设置 aiti-agent") >= 0) return;
+          if (_dup && _dup.innerText.indexOf(t("Set up aiti-agent")) >= 0) return;
         }
         var dlg = el("div", { class: "dbg-dialog" });
         var card = el("div", { class: "dbg-dialog-card", style: "width:min(520px, 90vw)" });
         var head = el("div", { class: "dbg-dialog-head" });
-        head.appendChild(el("span", {}, ["⭐ 设置 aiti-agent 地址"]));
+        head.appendChild(el("span", {}, [t("⭐ Set aiti-agent URL")]));
         var close = el("button", { style: "border:0;background:none;cursor:pointer;font-size:14px;color:#6b7280" }, ["✕"]);
         head.appendChild(close);
         var body = el("div", { class: "dbg-dialog-body" });
         var aitiLink = el("a", { href: "https://aiti.pw", target: "_blank", rel: "noopener", style: "color:#4f46e5;text-decoration:underline" }, ["aiti.pw ↗"]);
-        body.appendChild(el("div", { style: "font-size:12.5px;color:#374151;line-height:1.6" }, ["带 Web 界面的 AI 助手（", aitiLink, "）——下载安装后，把它的访问地址填到下面，AI 窗将直接由它接管（本窗口不再使用）。"]));
-        body.appendChild(el("div", { style: "font-size:11.5px;color:#6b7280;line-height:1.6" }, ["应用后自动与宿主协商重开 AI 窗，10 秒内协议探测；连接成功才生效（此后重开自动使用），失败自动回退本窗口（可修改重试）。"]));
-        var inp = el("input", { type: "url", spellcheck: "false", placeholder: "https://你的-aiti-agent-地址", value: (ctx.loadCustomAiUrl ? ctx.loadCustomAiUrl() : "") || "", style: "width:100%;box-sizing:border-box;border:1px solid #d1d5db;border-radius:8px;padding:8px 10px;font:inherit;font-size:13px;outline:none" });
+        body.appendChild(el("div", { style: "font-size:12.5px;color:#374151;line-height:1.6" }, [t("AI assistant with web UI ("), aitiLink, t(") — after installing, enter its URL below and the AI window will be taken over by it (this window no longer used).")]));
+        body.appendChild(el("div", { style: "font-size:11.5px;color:#6b7280;line-height:1.6" }, [t("After apply, auto-negotiates with the host to reopen the AI window with a 10s protocol probe; takes effect only on success (auto-used afterwards), auto-falls back to this window on failure (edit and retry).")]));
+        var inp = el("input", { type: "url", spellcheck: "false", placeholder: t("https://your-aiti-agent-url"), value: (ctx.loadCustomAiUrl ? ctx.loadCustomAiUrl() : "") || "", style: "width:100%;box-sizing:border-box;border:1px solid #d1d5db;border-radius:8px;padding:8px 10px;font:inherit;font-size:13px;outline:none" });
         body.appendChild(inp);
         var _cur = (ctx.trackedAiUrl ? ctx.trackedAiUrl() : "") || "";
         if (_cur) {
           var curRow = el("div", { style: "margin-top:6px;font-size:11px;color:#6b7280;line-height:1.5" });
-          curRow.appendChild(el("span", {}, ["🔁 当前 AI 窗导航："]));
-          var curBtn = el("button", { style: "margin-left:4px;border:1px solid #d1d5db;border-radius:5px;padding:1px 8px;cursor:pointer;font:inherit;font-size:11px;background:#fff;color:#374151" }, ["✍ 填入修改"]);
+          curRow.appendChild(el("span", {}, [t("🔁 Current AI window navigation: ")]));
+          var curBtn = el("button", { style: "margin-left:4px;border:1px solid #d1d5db;border-radius:5px;padding:1px 8px;cursor:pointer;font:inherit;font-size:11px;background:#fff;color:#374151" }, [t("✍ Fill & edit")]);
           curBtn.addEventListener("click", function() {
             try {
               inp.value = String(_cur);
@@ -8365,9 +8991,9 @@
                 inp.setSelectionRange(u0.length, u0.length);
               } catch (e) {
               }
-              curBtn.textContent = "✓ 已填入";
+              curBtn.textContent = t("✓ Filled in");
               setTimeout(function() {
-                curBtn.textContent = "✍ 填入修改";
+                curBtn.textContent = t("✍ Fill & edit");
               }, 1200);
             } catch (e) {
             }
@@ -8378,9 +9004,9 @@
           body.appendChild(curRow);
         }
         var foot = el("div", { class: "dbg-dialog-foot" });
-        var openAiti = el("button", { class: "dbg-ghost" }, ["🔗 打开 aiti.pw"]);
-        var cancelBtn = el("button", { class: "dbg-ghost" }, ["取消"]);
-        var applyBtn = el("button", { class: "dbg-primary" }, ["应用并切换"]);
+        var openAiti = el("button", { class: "dbg-ghost" }, [t("🔗 Open aiti.pw")]);
+        var cancelBtn = el("button", { class: "dbg-ghost" }, [t("Cancel")]);
+        var applyBtn = el("button", { class: "dbg-primary" }, [t("Apply & switch")]);
         var closeDlg = function() {
           try {
             dlg.remove();
@@ -8401,9 +9027,9 @@
         applyBtn.addEventListener("click", function() {
           var u = (inp.value || "").trim();
           if (!u) {
-            applyBtn.textContent = "请输入地址";
+            applyBtn.textContent = t("Enter URL");
             setTimeout(function() {
-              applyBtn.textContent = "应用并切换";
+              applyBtn.textContent = t("Apply & switch");
             }, 1500);
             return;
           }
@@ -8414,15 +9040,15 @@
             if (/\s/.test(p.hostname) || p.hostname.indexOf("%") >= 0) throw 1;
             u = p.href.replace(/\/+$/, "");
           } catch (e) {
-            applyBtn.textContent = "地址格式不对";
+            applyBtn.textContent = t("Invalid URL format");
             setTimeout(function() {
-              applyBtn.textContent = "应用并切换";
+              applyBtn.textContent = t("Apply & switch");
             }, 1500);
             return;
           }
           ctx.applyCustomAiUrl(u);
           try {
-            ctx.addMsg("sys", "⚙ 已应用 aiti-agent 地址：" + String(u).slice(0, 60) + "（10s 协议探测，成功才生效）");
+            ctx.addMsg("sys", t("⚙ aiti-agent URL applied: ") + String(u).slice(0, 60) + t("(10s protocol probe; takes effect only on success)"));
           } catch (e) {
           }
           closeDlg();
@@ -8484,13 +9110,13 @@
       if (ctx.aiMode === "popup") {
         ctx.clearAiUrl();
         ctx.openAiPopup(ctx.aiUrlWithBridge(base, token));
-        ctx.addMsg("sys", "🔗 AI 窗已绑定桥：" + base + " token=" + token);
+        ctx.addMsg("sys", t("🔗 AI window bound to bridge: ") + base + " token=" + token);
         return;
       }
       if (!ctx.aiIframe) return;
       var sep = ctx.cfg.aiUrl.indexOf("?") >= 0 ? "&" : "?";
       ctx.aiIframe.src = ctx.withAiWinMark(ctx.cfg.aiUrl + sep + "bridge=" + encodeURIComponent(base) + "&token=" + encodeURIComponent(token) + "&_dbg=" + Date.now() + ctx.aiPageParams());
-      ctx.addMsg("sys", "🔗 AI 窗已绑定桥：" + base + " token=" + token);
+      ctx.addMsg("sys", t("🔗 AI window bound to bridge: ") + base + " token=" + token);
     };
   }
 
@@ -8523,7 +9149,7 @@
         return conditions[k] && conditions[k] !== 1;
       }).length;
       ctx.sendToAi({ kind: "scene_report", report: scene });
-      ctx.addMsg("sys", "📸 现场已发送给 AI：" + ctx.errLog.length + " 条错误 · " + condCount + " 个非默认模拟条件");
+      ctx.addMsg("sys", t("📸 Snapshot sent to AI: ") + ctx.errLog.length + t(" errors · ") + condCount + t(" non-default emulation flags"));
     };
     ctx.addMsg = function(role, text) {
       ctx.postToAi({ type: "dbg_system_log", payload: { role, text } });
@@ -8534,16 +9160,16 @@
         ctx.copyFallbackCard = el("div", { class: "dbg-dialog" });
         var card = el("div", { class: "dbg-dialog-card", style: "width:min(560px, 94%);max-height:90%" });
         var head = el("div", { class: "dbg-dialog-head" });
-        head.appendChild(el("span", {}, ["📋 复制内容"]));
+        head.appendChild(el("span", {}, [t("📋 Copy content")]));
         card.appendChild(head);
         var body = el("div", { class: "dbg-dialog-body" });
-        body.appendChild(el("div", {}, ["剪贴板在 AI 窗不可用——已自动全选下方内容，Ctrl/Cmd+C 直接复制："]));
+        body.appendChild(el("div", {}, [t("Clipboard unavailable in the AI window — content below is auto-selected, press Ctrl/Cmd+C to copy: ")]));
         var ta = el("textarea", { readonly: "readonly", spellcheck: "false", style: "width:100%;height:220px;box-sizing:border-box;white-space:pre-wrap;word-break:break-all;color:#0f172a" });
         body.appendChild(ta);
         card.appendChild(body);
         var foot = el("div", { class: "dbg-dialog-foot" });
-        var retry = el("button", { class: "dbg-primary" }, ["📋 再试复制"]);
-        var close = el("button", { class: "dbg-ghost" }, ["关闭"]);
+        var retry = el("button", { class: "dbg-primary" }, [t("📋 Retry copy")]);
+        var close = el("button", { class: "dbg-ghost" }, [t("Close")]);
         foot.appendChild(retry);
         foot.appendChild(close);
         card.appendChild(foot);
@@ -8557,7 +9183,7 @@
             navigator.clipboard.writeText(ta.value).then(function() {
               ctx.copyFallbackCard.classList.remove("dbg-open");
               try {
-                if (ctx.addMsg) ctx.addMsg("sys", "📋 已复制到剪贴板");
+                if (ctx.addMsg) ctx.addMsg("sys", t("📋 Copied to clipboard"));
               } catch (e) {
               }
             }, function() {
@@ -8712,7 +9338,7 @@
       } catch (e) {
       }
       try {
-        if (ctx.addMsg) ctx.addMsg("sys", "⚙ AI 地址已切换：" + String(url).slice(0, 80) + "（10s 协议探测，成功才生效；失败自动回退）");
+        if (ctx.addMsg) ctx.addMsg("sys", t("⚙ AI URL switched: ") + String(url).slice(0, 80) + t("(10s protocol probe; success required; auto-fallback on failure)"));
       } catch (e) {
       }
       clearTimeout(ctx._aiSwapT);
@@ -8735,7 +9361,7 @@
         }
         ctx.aiReady = false;
         try {
-          if (ctx.addMsg) ctx.addMsg("sys", "⚠ AI 地址连接失败（" + Math.round(swapTimeout / 1e3) + "s 无响应）——已回退本窗口，请确认地址后重试");
+          if (ctx.addMsg) ctx.addMsg("sys", t("⚠ AI URL connection failed (") + Math.round(swapTimeout / 1e3) + t("s no response) — fell back to this window; check the URL and retry"));
         } catch (e) {
         }
       }, swapTimeout);
@@ -8837,7 +9463,7 @@
           tool: "page_exec",
           pageId: pageId || null,
           bridge: out.bridge,
-          note: "传 pageId 参数即可操作该页面（MCP: page_exec / 扩展: aiti_page_exec）"
+          note: t("Pass the pageId parameter to operate this page (MCP: page_exec / extension: aiti_page_exec)")
         };
         return out;
       } catch (e) {
@@ -8938,7 +9564,7 @@
     ctx.openFileAt = function(file, line) {
       if (!file) return;
       ctx.postBridgeEvent("open_file", { file, line: line || null });
-      ctx.addMsg("sys", "📂 已请求后台打开：" + file + (line ? ":" + line : ""));
+      ctx.addMsg("sys", t("📂 Requested backend open: ") + file + (line ? ":" + line : ""));
     };
     ctx.execInPage = function(cmd, args, frameId) {
       frameId = frameId || ctx.T_HOST;
@@ -8999,7 +9625,7 @@
           });
         } else {
           console.log("[dbg-launcher] → AI（console 模式）", JSON.stringify(payload, null, 2));
-          ctx.addMsg("sys", "AI 通道未配置（aiUrl/endpoint 为空），已回显到 console。");
+          ctx.addMsg("sys", t("AI channel not configured (aiUrl/endpoint empty), echoed to console."));
         }
       }
     };
@@ -9030,9 +9656,9 @@
         tip = el("div", { class: "dbg-block-tip" });
         ctx.root.appendChild(tip);
       }
-      var labels = { click: "点击", hover: "悬停", key: "键盘", wheel: "滚轮", scroll: "滚动", touch: "触摸", focus: "聚焦" };
+      var labels = { click: t("Click"), hover: t("Hover"), key: t("Keyboard"), wheel: t("Wheel"), scroll: t("Scroll"), touch: t("Touch events"), focus: t("Focus") };
       var label = labels[category] || category || "";
-      tip.innerHTML = "🛡 已拦截 <b>" + label + "</b> 事件（" + (type || category || "") + "）：页面交互已冻结——放行请用工具条 🔒 放行方案（空格/Tab 一键切换）";
+      tip.innerHTML = t("🛡 Blocked <b>") + label + t("</b> events (") + (type || category || "") + t("): page interaction frozen — use toolbar 🔒 Allow plan to let events through (Space/Tab toggles)");
       try {
         var _small = ctx.root.classList.contains("dbg-phys-small");
         var _vh = window.innerHeight || 800;
@@ -9068,7 +9694,7 @@
         } catch (e) {
         }
         try {
-          if (ctx.addMsg) ctx.addMsg("sys", "🪟 已关闭残留的 AI 独立窗口（当前为页面内窗口；需要时可点 ⧉ 重新打开独立窗口）");
+          if (ctx.addMsg) ctx.addMsg("sys", t("🪟 Closed stale AI standalone window (now in-page; click ⧉ to reopen the standalone window if needed)"));
         } catch (e) {
         }
       }
@@ -9084,7 +9710,7 @@
           } catch (e) {
           }
           try {
-            if (ctx.addMsg) ctx.addMsg("sys", "🪟 已重新连接 AI 独立窗口（窗口未重载，会话保持）");
+            if (ctx.addMsg) ctx.addMsg("sys", t("🪟 Reconnected to the AI standalone window (not reloaded, session kept)"));
           } catch (e) {
           }
         }
@@ -9105,7 +9731,7 @@
           break;
         case "dbg_iframe_ready":
           if (source === "self") break;
-          ctx.addMsg("sys", "iframe 就绪：" + (m.payload && m.payload.url) + (m.payload && m.payload.frameworks && m.payload.frameworks.length ? "（框架：" + m.payload.frameworks.join("/") + "）" : ""));
+          ctx.addMsg("sys", t("iframe ready: ") + (m.payload && m.payload.url) + (m.payload && m.payload.frameworks && m.payload.frameworks.length ? t(" (framework: ") + m.payload.frameworks.join("/") + "）" : ""));
           break;
         case "dbg_ai_confirm": {
           var aiEl = state.selected || state.hovered;
@@ -9176,7 +9802,7 @@
             var labelEl = ctx.root.querySelector(".dbg-sel-label");
             labelEl.textContent = label;
             var tipParts = ["<" + p.tag + ">" + (p.text ? " “" + p.text.trim().slice(0, 60) + "”" : "")];
-            if (p.usedAt && (p.usedAt.file || p.usedAt.component)) tipParts.push("📍 调用于 " + (p.usedAt.file ? p.usedAt.file + (p.usedAt.line ? ":" + p.usedAt.line : "") : String(p.usedAt.component)));
+            if (p.usedAt && (p.usedAt.file || p.usedAt.component)) tipParts.push(t("📍 Called at ") + (p.usedAt.file ? p.usedAt.file + (p.usedAt.line ? ":" + p.usedAt.line : "") : String(p.usedAt.component)));
             if (p.color) tipParts.push("fg " + p.color);
             if (p.bg && p.bg !== "rgba(0, 0, 0, 0)") tipParts.push("bg " + p.bg);
             if (p.fontSize) tipParts.push("font " + p.fontSize);
@@ -9235,7 +9861,7 @@
         case "dbg_element_selected": {
           var payload = m.payload;
           if (!payload) {
-            ctx.addMsg("sys", "没有可选的元素（页面是空白？）");
+            ctx.addMsg("sys", t("No selectable element (blank page?)"));
             break;
           }
           ctx.lastPayload = payload;
@@ -9301,7 +9927,7 @@
           ctx.activateNestedIframes(isTouchDevice() ? "touch" : "mouse");
           ctx.broadcast({ type: "dbg_enter_inspector", payload: { mode: "mouse" } });
           ctx.broadcast({ type: "dbg_ai_pick", payload: { active: true } });
-          ctx.addMsg("sys", "🎯 AI 点选：宿主页与目标页均可 hover 选择（点击 → 工具条 → ✓ 确认回传 AI 窗）。Esc 退出。");
+          ctx.addMsg("sys", t("🎯 AI pick: hover-select on both host and target pages (click → toolbar → ✓ confirm back to the AI window). Esc to exit."));
           try {
             if (ctx.showPickHint) ctx.showPickHint();
           } catch (e) {
@@ -9366,7 +9992,7 @@
               navigator.clipboard.writeText(_ctxt).then(
                 function() {
                   try {
-                    ctx.addMsg("sys", "📋 已复制（host）");
+                    ctx.addMsg("sys", t("📋 Copied (host)"));
                   } catch (e) {
                   }
                 },
@@ -9417,7 +10043,7 @@
               } catch (e) {
               }
               try {
-                if (ctx.addMsg) ctx.addMsg("sys", "✅ AI 地址连接成功：" + String(_okUrl).slice(0, 80) + "——由 aiti-agent 接管");
+                if (ctx.addMsg) ctx.addMsg("sys", t("✅ AI URL connected: ") + String(_okUrl).slice(0, 80) + t(" — taken over by aiti-agent"));
               } catch (e) {
               }
             }
@@ -9454,7 +10080,7 @@
                 } catch (e) {
                 }
                 try {
-                  if (ctx.addMsg) ctx.addMsg("sys", "🔁 AI 窗桥连接断开——已自动重载（" + (st === "reconnecting" ? "重连中" : "待重连") + "）");
+                  if (ctx.addMsg) ctx.addMsg("sys", t("🔁 AI window bridge lost — auto-reloaded (") + (st === "reconnecting" ? t("Reconnecting") : t("Reconnect pending")) + "）");
                 } catch (e) {
                 }
                 setTimeout(function() {
@@ -9467,7 +10093,7 @@
               } catch (e) {
               }
               try {
-                if (ctx.addMsg) ctx.addMsg("sys", "🔗 AI 窗桥连接已恢复");
+                if (ctx.addMsg) ctx.addMsg("sys", t("🔗 AI window bridge reconnected"));
               } catch (e) {
               }
             }
@@ -9488,7 +10114,7 @@
           break;
         case "dbg_ai_escape":
           if (ctx.pickPanel) {
-            ctx.finishPickPanel({ status: "rejected", reason: "用户按 Esc 取消" });
+            ctx.finishPickPanel({ status: "rejected", reason: t("User cancelled with Esc") });
             break;
           }
           ctx.exitAiInspect();
@@ -9530,7 +10156,7 @@
           var pe = m.payload || {};
           ctx.errLog.unshift({ kind: pe.kind, message: pe.message, stack: pe.stack, at: (/* @__PURE__ */ new Date()).toISOString() });
           if (ctx.errLog.length > 20) ctx.errLog.pop();
-          ctx.addMsg("sys", "⚠ 页面错误 [" + pe.kind + "] " + pe.message + (pe.stack ? "\n" + pe.stack : ""));
+          ctx.addMsg("sys", t("⚠ Page error [") + pe.kind + "] " + pe.message + (pe.stack ? "\n" + pe.stack : ""));
           try {
             if (ctx.picksAddError) ctx.picksAddError(pe.kind, pe.message, pe.stack, ctx.sourceFrameId ? ctx.sourceFrameId(source) : null);
           } catch (e) {
@@ -9702,7 +10328,7 @@
       ctx.enterSelfClient(mode);
       ctx.activateNestedIframes(mode);
       ctx.broadcast({ type: "dbg_enter_inspector", payload: { mode } });
-      ctx.addMsg("sys", "🎯 Inspector（" + (mode === "touch" ? "触屏" : "桌面") + "）：宿主页与目标页均可点选——" + (mode === "touch" ? "点击=移动选区，✓确认。" : "划过高亮，点击选中，Esc 退出。"));
+      ctx.addMsg("sys", "🎯 Inspector（" + (mode === "touch" ? t("Touch") : t("Desktop")) + t("): pick on both host and target pages — ") + (mode === "touch" ? t("Click = move selection, ✓ to confirm.") : t("Hover to highlight, click to select, Esc to exit.")));
       try {
         if (ctx.showPickHint) ctx.showPickHint();
       } catch (e) {
@@ -9860,11 +10486,16 @@
       fallback();
       function fallback() {
         try {
+          if (!document.hasFocus()) window.focus();
+        } catch (e) {
+        }
+        try {
           var ta = document.createElement("textarea");
           ta.value = text;
           ta.style.position = "fixed";
           ta.style.opacity = "0";
           document.body.appendChild(ta);
+          ta.focus();
           ta.select();
           var ok = document.execCommand("copy");
           document.body.removeChild(ta);
@@ -9874,6 +10505,7 @@
         }
       }
     }
+    ctx.copyToClipboard = copyToClipboard;
     ctx.renderPreview = function(p) {
       ctx.preview.innerHTML = "";
       var rows = [];
@@ -9881,7 +10513,7 @@
         rows.push([label, html, plain || ""]);
       };
       var _tagPlain = p.tag + (p.rect ? " " + p.rect.w + "×" + p.rect.h : "");
-      addRow("标签", "<b>" + p.tag + "</b> " + (p.rect ? p.rect.w + "×" + p.rect.h : ""), _tagPlain);
+      addRow(t("Tag"), "<b>" + p.tag + "</b> " + (p.rect ? p.rect.w + "×" + p.rect.h : ""), _tagPlain);
       var fl = p.framework || {};
       var _fw = fl.framework || null;
       var _comp = fl.component || p.component || null;
@@ -9891,25 +10523,25 @@
       if (_fw || _comp || _file || _ua && (_ua.file || _ua.component)) {
         var _flTxt = (_fw || "") + (_comp ? (_fw ? " · " : "") + _comp : "");
         var _miniBtn = function(act, fp, ln) {
-          return ' <button class="dbg-mini-open" style="border:1px solid #c7d2fe;border-radius:5px;padding:0 6px;font-size:10px;cursor:pointer;background:#eef2ff;color:#4338ca;vertical-align:middle" data-act="' + act + '" data-file="' + escAttr(fp) + '" data-line="' + (ln || "") + '">' + (act === "frontend" ? "🖥 前端" : "📂 后台") + "</button>";
+          return ' <button class="dbg-mini-open" style="border:1px solid #c7d2fe;border-radius:5px;padding:0 6px;font-size:10px;cursor:pointer;background:#eef2ff;color:#4338ca;vertical-align:middle" data-act="' + act + '" data-file="' + escAttr(fp) + '" data-line="' + (ln || "") + '">' + (act === "frontend" ? t("🖥 Frontend") : t("📂 Backend")) + "</button>";
         };
         if (_file) {
-          _flTxt += '<br>📄 组件源码 <span title="' + escAttr(_file) + '">' + escapeHtml(String(_file).split("/").pop()) + (_line ? ":" + _line : "") + "</span>" + _miniBtn("backend", _file, _line) + _miniBtn("frontend", _file, _line);
+          _flTxt += t('<br>📄 Component source <span title="') + escAttr(_file) + '">' + escapeHtml(String(_file).split("/").pop()) + (_line ? ":" + _line : "") + "</span>" + _miniBtn("backend", _file, _line) + _miniBtn("frontend", _file, _line);
         }
         if (_ua && (_ua.file || _ua.component)) {
           if (_ua.file) {
-            _flTxt += '<br>📍 调用于 <span title="' + escAttr(_ua.file) + '">' + escapeHtml(String(_ua.file).split("/").pop()) + (_ua.line ? ":" + _ua.line : "") + "</span>" + _miniBtn("backend", _ua.file, _ua.line) + _miniBtn("frontend", _ua.file, _ua.line);
+            _flTxt += t('<br>📍 Called at <span title="') + escAttr(_ua.file) + '">' + escapeHtml(String(_ua.file).split("/").pop()) + (_ua.line ? ":" + _ua.line : "") + "</span>" + _miniBtn("backend", _ua.file, _ua.line) + _miniBtn("frontend", _ua.file, _ua.line);
           } else if (_ua.component) {
-            _flTxt += "<br>📍 调用于 " + escapeHtml(_ua.component);
+            _flTxt += t("<br>📍 Called at ") + escapeHtml(_ua.component);
           }
         }
         var _flPlain = ((_fw || "") + (_comp ? (_fw ? " " : "") + _comp : "")).trim();
-        if (_file) _flPlain += "\n组件源码: " + _file + (_line ? ":" + _line : "");
-        if (_ua && _ua.file) _flPlain += "\n调用于: " + _ua.file + (_ua.line ? ":" + _ua.line : "");
-        else if (_ua && _ua.component) _flPlain += "\n调用于: " + _ua.component;
-        addRow("框架", '<span class="dbg-pv-file">' + _flTxt + "</span>", _flPlain);
+        if (_file) _flPlain += t("\nComponent source: ") + _file + (_line ? ":" + _line : "");
+        if (_ua && _ua.file) _flPlain += t("\nCalled at: ") + _ua.file + (_ua.line ? ":" + _ua.line : "");
+        else if (_ua && _ua.component) _flPlain += t("\nCalled at: ") + _ua.component;
+        addRow(t("Framework"), '<span class="dbg-pv-file">' + _flTxt + "</span>", _flPlain);
       }
-      if (p.text) addRow("文本", escapeHtml(p.text.trim().slice(0, 80)), String(p.text).trim().slice(0, 200));
+      if (p.text) addRow(t("Text"), escapeHtml(p.text.trim().slice(0, 80)), String(p.text).trim().slice(0, 200));
       if (p.xpath) addRow("path", '<span class="dbg-pv-kv">' + p.xpath + "</span>", p.xpath);
       if (p.selector) addRow("css selector", '<span class="dbg-pv-kv">' + p.selector + "</span>", p.selector);
       if (p.attributes) {
@@ -9930,14 +10562,14 @@
             _attrPlain.push(k + "=" + String(p.attributes[k]).slice(0, 60));
           }
         });
-        if (_attrBits.length) addRow("属性", '<span class="dbg-pv-kv">' + _attrBits.slice(0, 10).join(" ") + "</span>", _attrPlain.slice(0, 10).join(" "));
+        if (_attrBits.length) addRow(t("Attributes"), '<span class="dbg-pv-kv">' + _attrBits.slice(0, 10).join(" ") + "</span>", _attrPlain.slice(0, 10).join(" "));
       }
       if (p.computed) {
         var bits = [];
         ["display", "position", "width", "height", "flexDirection", "gap", "padding", "margin", "border", "borderRadius", "fontSize", "fontWeight", "color", "backgroundColor", "opacity", "boxShadow", "zIndex", "overflow"].forEach(function(k) {
           if (p.computed[k]) bits.push(k + ":" + p.computed[k]);
         });
-        addRow("样式", bits.map(function(b) {
+        addRow(t("Styles"), bits.map(function(b) {
           var m = b.match(/^(color|backgroundColor):(.*)$/);
           if (m) {
             return '<span class="dbg-pv-kv" style="color:' + m[2] + '"><span style="display:inline-block;width:10px;height:10px;background:' + m[2] + ';border-radius:2px;vertical-align:middle;margin-right:3px;border:1px solid rgba(255,255,255,.3)"></span>' + m[2] + "</span>";
@@ -9945,14 +10577,14 @@
           return '<span class="dbg-pv-kv">' + b + "</span>";
         }).join("<br>"), bits.join("; "));
       }
-      if (p.color && !(p.computed && p.computed.color)) addRow("前景色", escapeHtml(p.color), p.color);
-      if (p.bg && !(p.computed && p.computed.backgroundColor) && p.bg !== "rgba(0, 0, 0, 0)") addRow("背景色", escapeHtml(p.bg), p.bg);
-      if (p.fontSize && !(p.computed && p.computed.fontSize)) addRow("字号", escapeHtml(p.fontSize), p.fontSize);
-      if (p.frame && p.frame.url) addRow("页面", escapeHtml(String(p.frame.url).slice(0, 200)), String(p.frame.url));
+      if (p.color && !(p.computed && p.computed.color)) addRow(t("Foreground"), escapeHtml(p.color), p.color);
+      if (p.bg && !(p.computed && p.computed.backgroundColor) && p.bg !== "rgba(0, 0, 0, 0)") addRow(t("Background"), escapeHtml(p.bg), p.bg);
+      if (p.fontSize && !(p.computed && p.computed.fontSize)) addRow(t("Font size"), escapeHtml(p.fontSize), p.fontSize);
+      if (p.frame && p.frame.url) addRow(t("Page"), escapeHtml(String(p.frame.url).slice(0, 200)), String(p.frame.url));
       if (p.pageId) addRow("pageId", escapeHtml(String(p.pageId)), String(p.pageId));
       rows.forEach(function(r) {
         var row = el("div", { class: "dbg-pv-row" });
-        row.innerHTML = "<b>" + r[0] + "</b> " + r[1] + ' <button class="dbg-pv-copy" data-copy="' + escAttr(r[2] || "") + '" title="复制此内容">📋</button>';
+        row.innerHTML = "<b>" + r[0] + "</b> " + r[1] + ' <button class="dbg-pv-copy" data-copy="' + escAttr(r[2] || "") + t('" title="Copy this content">📋</button>');
         ctx.preview.appendChild(row);
       });
     };
@@ -9973,15 +10605,15 @@
             copyToClipboard(ctxt, function(ok) {
               if (ok) {
                 try {
-                  ctx.addMsg("sys", "📋 已复制：" + ctxt.slice(0, 40));
-                  if (ctx.showPickToast) ctx.showPickToast("<b>📋 已复制</b>");
+                  ctx.addMsg("sys", t("📋 Copied: ") + ctxt.slice(0, 40));
+                  if (ctx.showPickToast) ctx.showPickToast(t("<b>📋 Copied</b>"));
                 } catch (e) {
                 }
               } else {
                 try {
                   ctx.postToAi({ type: "dbg_copy", payload: { text: ctxt } });
-                  ctx.addMsg("sys", "📋 已转发宿主复制");
-                  if (ctx.showPickToast) ctx.showPickToast("<b>📋 已转发宿主复制</b>");
+                  ctx.addMsg("sys", t("📋 Forwarded to host for copy"));
+                  if (ctx.showPickToast) ctx.showPickToast(t("<b>📋 Forwarded to host for copy</b>"));
                 } catch (e) {
                 }
               }
@@ -10003,14 +10635,14 @@
             if (b.getAttribute("data-act") === "frontend") {
               try {
                 ctx.postToAi({ type: "dbg_ai_open_file", payload: { file: fp2, line: ln2 } });
-                ctx.addMsg("sys", "🖥 已请求前端打开（pi-web 文件标签页）：" + fp2 + (ln2 ? ":" + ln2 : ""));
-                if (!ctx.aiReady) ctx.addMsg("sys", "⏳ AI 窗加载中——就绪后自动执行（如长时间无反应，检查 AI 窗是否正常打开）");
+                ctx.addMsg("sys", t("🖥 Requested frontend open (pi-web file tab): ") + fp2 + (ln2 ? ":" + ln2 : ""));
+                if (!ctx.aiReady) ctx.addMsg("sys", t("⏳ AI window loading — runs when ready (no response for long? check the AI window opened properly)"));
               } catch (e) {
               }
             } else {
               ctx.openFileAt(fp2, ln2);
               try {
-                if (!ctx.aiReady) ctx.addMsg("sys", "⏳ AI 窗加载中——就绪后自动执行（如长时间无反应，检查 AI 窗是否正常打开）");
+                if (!ctx.aiReady) ctx.addMsg("sys", t("⏳ AI window loading — runs when ready (no response for long? check the AI window opened properly)"));
               } catch (e) {
               }
             }
@@ -10133,7 +10765,7 @@
           });
         }, 2e3);
       }
-      ctx.addMsg("sys", "⚠ 页面错误 [" + (kind || "error") + "] " + String(message || "").slice(0, 80) + " → 已放入 AI 输入框候选区（[错误" + ctx.picksErrCount + "]）");
+      ctx.addMsg("sys", t("⚠ Page error [") + (kind || "error") + "] " + String(message || "").slice(0, 80) + t(" → placed in AI composer pending area ([error") + ctx.picksErrCount + "]）");
     };
     ctx.picksElSeq = 0;
     ctx.picksElLastAt = {};
@@ -10277,12 +10909,12 @@
     ctx.saveShowDebug = function(v) {
       lsSetString(DBG_SHOW_KEY, v ? "on" : "off");
     };
-    ctx._dbgCopy = function(t) {
+    ctx._dbgCopy = function(t2) {
       try {
-        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t);
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t2);
         else {
           var _ta = document.createElement("textarea");
-          _ta.value = t;
+          _ta.value = t2;
           _ta.style.cssText = "position:fixed;left:0;top:0;opacity:0";
           document.body.appendChild(_ta);
           _ta.focus();
@@ -10300,22 +10932,22 @@
       var uadM = navigator.userAgentData && typeof navigator.userAgentData.mobile === "boolean" ? navigator.userAgentData.mobile : "∅";
       var L = [];
       L.push("URL " + (location.href || "∅"));
-      L.push("📱 " + (m.small ? "小屏" : "大屏") + (m.tiny ? "(tiny)" : m.small ? "(smal)" : "") + " · 判定基准 " + m.deviceCssW + "px");
+      L.push("📱 " + (m.small ? t("Small") : t("Large")) + (m.tiny ? "(tiny)" : m.small ? "(smal)" : "") + t(" · baseline ") + m.deviceCssW + "px");
       L.push("screen " + m.screenW + "×" + m.screenH + " dpr " + m.dpr + " · outerW " + (window.outerWidth || "∅"));
       L.push("inner " + Math.round(innerWidth) + "×" + Math.round(innerHeight) + " · vv.scale " + vvs + " · UA-CH.mobile " + uadM);
-      L.push("视觉视口 " + m.vpW + "×" + m.vpH + " · " + (m.mobileUA ? "mobile" : "desktop"));
+      L.push(t("Visual viewport ") + m.vpW + "×" + m.vpH + " · " + (m.mobileUA ? "mobile" : "desktop"));
       L.push("vp " + Math.round(vp.w) + "×" + Math.round(vp.h) + " s " + vp.scale.toFixed(3) + (Math.abs(vp.scale - vp.scaleY) > 1e-3 ? " sy " + vp.scaleY.toFixed(3) : "") + " · FIXED " + (_fixedVisual ? "visual" : "layout"));
       L.push("platform " + (navigator.platform || "∅") + "\nUA " + (navigator.userAgent || "∅").replace(/\s+/g, " ").slice(0, 140));
       try {
         var fr = ctx.fab.getBoundingClientRect();
-        L.push("fab 屏上 " + Math.round(fr.left * fx) + "×" + Math.round(fr.top * fy) + " (" + Math.round(fr.width * fx) + "×" + Math.round(fr.height * fy) + ")" + (ctx.fabInScreen() ? " ✓屏内" : " ✗屏外") + " tr " + (ctx.fab.style.transform || "none"));
+        L.push(t("fab on-screen ") + Math.round(fr.left * fx) + "×" + Math.round(fr.top * fy) + " (" + Math.round(fr.width * fx) + "×" + Math.round(fr.height * fy) + ")" + (ctx.fabInScreen() ? t(" ✓in-viewport") : t(" ✗offscreen")) + " tr " + (ctx.fab.style.transform || "none"));
       } catch (e) {
       }
       try {
         if (ctx.aiWin) {
           var ar = ctx.aiWin.getBoundingClientRect();
           var iw = ctx.aiIframe && ctx.aiIframe.contentWindow ? ctx.aiIframe.contentWindow.innerWidth : 0;
-          L.push("AI win display " + getComputedStyle(ctx.aiWin).display + " CSS " + ctx.aiWin.style.width + "×" + ctx.aiWin.style.height + " 屏上 " + Math.round(ar.left * fx) + "×" + Math.round(ar.top * fy) + " (" + Math.round(ar.width * fx) + "×" + Math.round(ar.height * fy) + ") iframe " + iw);
+          L.push("AI win display " + getComputedStyle(ctx.aiWin).display + " CSS " + ctx.aiWin.style.width + "×" + ctx.aiWin.style.height + t(" on-screen ") + Math.round(ar.left * fx) + "×" + Math.round(ar.top * fy) + " (" + Math.round(ar.width * fx) + "×" + Math.round(ar.height * fy) + ") iframe " + iw);
         }
       } catch (e) {
       }
@@ -10334,7 +10966,7 @@
         ctx.debugPanel = el("div", { class: "dbg-overlay" });
         var card = el("div", { class: "dbg-overlay-card" });
         var head = el("div", { class: "dbg-dialog-head" });
-        head.appendChild(el("span", {}, ["🔍 调试信息（复制给 AI 协助诊断）"]));
+        head.appendChild(el("span", {}, [t("🔍 Debug info (copy for AI diagnosis)")]));
         var x = el("button", { class: "dbg-ghost", style: "border:1px solid #d1d5db;background:#fff;border-radius:6px;padding:2px 8px;cursor:pointer;font:inherit;" }, ["✕"]);
         x.addEventListener("click", function() {
           ctx.debugPanel.classList.remove("dbg-open");
@@ -10344,7 +10976,7 @@
         var body = el("div", { class: "dbg-dialog-body" });
         var info = el("div", { class: "dbg-debug-info" });
         var help = el("div", { class: "dbg-debug-help" });
-        help.innerHTML = "<b>字段说明</b><code>判定基准</code> = screen.width（老 WebView 报物理像素时 ÷dpr 修正；UA-CH mobile=false 的平板不除）；≥768 大屏、&lt;480 tiny<br><code>scale / sy</code> = 布局→视觉 CSS 缩放（屏宽/innerWidth、屏高/innerHeight）；非等比时不同，counter-zoom 用 scale<br><code>FIXED layout/visual</code> = fixed 元素坐标系：layout 需 counter-zoom，visual（iOS）直接视觉坐标<br><code>屏上</code> = 元素实际视觉位置（rect×scale）；✓屏内 = 可见<br><code>AI iframe</code> = ai.html 看到的宽度，应≈视觉宽（移动布局）；过大（900+）= 桌面布局被缩成蚂蚁";
+        help.innerHTML = t("<b>Field notes</b>") + t("<code>baseline</code> = screen.width (÷dpr correction for old WebViews reporting physical pixels; tablets with UA-CH mobile=false are not divided); ≥768 large, &lt;480 tiny<br>") + t("<code>scale / sy</code> = layout→visual CSS scale (screen.width/innerWidth, screen.height/innerHeight); differ when non-uniform; counter-zoom uses scale<br>") + t("<code>FIXED layout/visual</code> = fixed-element coordinate systems: layout needs counter-zoom, visual (iOS) uses visual coords directly<br>") + t("<code>on-screen</code> = the element's real visual position (rect×scale); ✓in-viewport = visible<br>") + t("<code>AI iframe</code> = width as seen by ai.html; should ≈ visual width (mobile layout); too large (900+) = desktop layout shrunk into ants");
         body.appendChild(info);
         body.appendChild(help);
         card.appendChild(body);
@@ -10356,13 +10988,13 @@
           ctx.saveShowDebug(!cb.checked);
         });
         lbl.appendChild(cb);
-        lbl.appendChild(document.createTextNode("下次不再自动显示"));
-        var copyBtn = el("button", { class: "dbg-primary" }, ["📋 复制"]);
+        lbl.appendChild(document.createTextNode(t("Do not auto-show next time")));
+        var copyBtn = el("button", { class: "dbg-primary" }, [t("📋 Copy")]);
         copyBtn.addEventListener("click", function() {
           ctx._dbgCopy(info.textContent);
-          copyBtn.textContent = "✅ 已复制";
+          copyBtn.textContent = t("✅ Copied");
           setTimeout(function() {
-            copyBtn.textContent = "📋 复制";
+            copyBtn.textContent = t("📋 Copy");
           }, 1200);
         });
         foot.appendChild(lbl);
@@ -10394,9 +11026,9 @@
         ctx.saveShowDebug(cb.checked);
       });
       lbl.appendChild(cb);
-      lbl.appendChild(document.createTextNode(" 刷新时自动显示调试信息"));
+      lbl.appendChild(document.createTextNode(t(" auto-show debug info on refresh")));
       pop.appendChild(lbl);
-      var viewBtn = el("button", {}, ["📋 查看调试信息"]);
+      var viewBtn = el("button", {}, [t("📋 View debug info")]);
       viewBtn.addEventListener("click", function() {
         pop.remove();
         ctx.showDebugPanel();
@@ -10479,7 +11111,7 @@
     ctx.root = el("div", { id: "__dbg_launcher" });
     ctx.mountRoot();
     ctx.fab = el("div", { class: "dbg-fab" });
-    ctx.aiBtn = el("button", { "data-label": "AI 消息" }, ["💬"]);
+    ctx.aiBtn = el("button", { "data-label": t("AI message") }, ["💬"]);
     ctx.inspBtn = el("button", { "data-label": "Inspector" }, [elSvg(LUCIDE.crosshair, 15)]);
     ctx.fab.appendChild(ctx.aiBtn);
     ctx.fab.appendChild(ctx.inspBtn);
@@ -10553,8 +11185,8 @@
         e.preventDefault();
       }
     }, true);
-    ["click", "mousedown", "mouseup", "touchstart", "touchend"].forEach(function(t) {
-      ctx.fab.addEventListener(t, function(e) {
+    ["click", "mousedown", "mouseup", "touchstart", "touchend"].forEach(function(t2) {
+      ctx.fab.addEventListener(t2, function(e) {
         e.stopPropagation();
       });
     });
@@ -10579,13 +11211,14 @@
       "focusout",
       "input",
       "change"
-    ].forEach(function(t) {
-      ctx.root.addEventListener(t, function(e) {
+    ].forEach(function(t2) {
+      ctx.root.addEventListener(t2, function(e) {
         e.stopPropagation();
       });
     });
     ctx.root.addEventListener("mousedown", function(e) {
       if (e.target && e.target.closest && e.target.closest("input, textarea, select")) return;
+      if (e.target.closest && e.target.closest(".dbg-pick-dialog")) return;
       try {
         e.preventDefault();
       } catch (err) {
@@ -10639,7 +11272,7 @@
       viewportW: 0,
       simulateTouch: false,
       dangerAutoOkMs: 3e4
-      // 危险命令无人值守默认 30s：确认卡弹出后无响应 30s 自动允许执行（调速面板可改 0/10/30/60s）
+      // dangerous command unattended default 30s: if no response 30s after the confirm card pops, execution is auto-approved (speed panel can change to 0/10/30/60s)
     }, ctx.loadOptState());
     ctx.errLog = [];
     ctx.aiInspectActive = false;
@@ -10655,9 +11288,9 @@
     ctx.dangerQueue = [];
     ctx.confirmingDanger = false;
     ctx.RELEASE_PROFILES = {
-      default: { name: "default", label: "⚡ 默认放行", release: ["key", "wheel", "scroll", "touch", "focus"], builtin: true },
-      all: { name: "all", label: "⚡⚡ 全部放行", release: ["click", "hover", "key", "wheel", "scroll", "touch", "focus"], builtin: true },
-      frozen: { name: "frozen", label: "⛔ 全部冻结", release: [], builtin: true }
+      default: { name: "default", label: t("⚡ Default allow"), release: ["key", "wheel", "scroll", "touch", "focus"], builtin: true },
+      all: { name: "all", label: t("⚡⚡ Allow all"), release: ["click", "hover", "key", "wheel", "scroll", "touch", "focus"], builtin: true },
+      frozen: { name: "frozen", label: t("⛔ Freeze all"), release: [], builtin: true }
     };
     try {
       var _dr = localStorage.getItem(DEFAULT_RELEASE_KEY);
@@ -10728,11 +11361,11 @@
     ctx.dBody.appendChild(ctx.preview);
     ctx.checks = el("div", { class: "dbg-checks" });
     ctx.checkDefs = [
-      ["text", "文本"],
-      ["computed", "样式"],
-      ["attrs", "属性"],
-      ["xpath", "定位"],
-      ["framework", "框架/文件位置"]
+      ["text", t("Text")],
+      ["computed", t("Styles")],
+      ["attrs", t("Attributes")],
+      ["xpath", t("Locate")],
+      ["framework", t("Framework / file location")]
     ];
     ctx.checkBoxes = {};
     ctx.checkDefs.forEach(function(c) {
@@ -10746,8 +11379,8 @@
     });
     ctx.dBody.appendChild(ctx.checks);
     ctx.dFoot = el("div", { class: "dbg-dialog-foot" });
-    ctx.dCancel = el("button", { class: "dbg-ghost" }, ["取消"]);
-    ctx.dSend = el("button", { class: "dbg-primary" }, ["发送给 AI"]);
+    ctx.dCancel = el("button", { class: "dbg-ghost" }, [t("Cancel")]);
+    ctx.dSend = el("button", { class: "dbg-primary" }, [t("Send to AI")]);
     ctx.dFoot.appendChild(ctx.dCancel);
     ctx.dFoot.appendChild(ctx.dSend);
     ctx.cardDlg.appendChild(ctx.dHead);
@@ -10773,7 +11406,7 @@
       } catch (e) {
         ctx.postToAi({ type: "dbg_ai_element", _selfAttrib: false, payload: ctx.lastPayload });
       }
-      ctx.addMsg("sys", "已发送选中元素（" + ctx.lastPayload.tag + "）给 AI——输入框已放入 [元素N]，点发送即达。");
+      ctx.addMsg("sys", t("Sent selected element (") + ctx.lastPayload.tag + t(") to AI — [element N] placed in the composer, press send."));
     });
     window.addEventListener("message", ctx.onHostMessage);
     ;
@@ -10801,7 +11434,7 @@
           ctx.aiOpen = true;
           ctx.aiBtn.classList.add("dbg-on");
           ctx.saveDbgState();
-          ctx.addMsg("sys", "🔄 正在恢复 AI 独立窗口（等待窗口回应…）");
+          ctx.addMsg("sys", t("🔄 Restoring AI standalone window (waiting for response…)"));
           setTimeout(function() {
             try {
               if (ctx.aiPopup && !ctx.aiPopup.closed) {
@@ -10818,9 +11451,9 @@
             ctx.showAi(true);
             ctx.aiOpen = true;
             ctx.aiBtn.classList.add("dbg-on");
-            ctx.addMsg("sys", "🔄 已恢复调试会话（刷新前 AI 窗口开着，现已自动重开）。");
+            ctx.addMsg("sys", t("🔄 Debug session restored (AI window was open before refresh, auto-reopened)."));
           } catch (e) {
-            ctx.addMsg("sys", "⚠ AI 窗口自动恢复失败：" + (e && e.message || e) + "（可在 AI 窗口就地反馈给 AI 修复）");
+            ctx.addMsg("sys", t("⚠ AI window auto-restore failed: ") + (e && e.message || e) + t("(can report to the AI in its window for fixes)"));
           }
         }
       }
@@ -10850,18 +11483,18 @@
       enterSelfClient: ctx.enterSelfClient,
       exitSelfClient: ctx.exitSelfClient,
       applyProfile: ctx.applyProfile,
-      // 放行方案切换（default/all/p1/p2/p3/frozen）
+      // release profile switch (default/all/p1/p2/p3/frozen)
       applyViewport: function(v) {
         ctx.optState.viewportW = v;
         ctx.saveOptState();
         ctx.saveDbgState();
         ctx.applyOptsToTarget();
       },
-      // 视口模拟（改 iframe 宽度）
+      // viewport emulation (change iframe width)
       open: ctx.toggleAi,
       sendMessage: ctx.sendText,
       execInPage: ctx.execInPage,
-      // 目标路由层（方案 C）：T_HOST / listFrames / frameClient / postToFrame
+      // Target routing layer (plan C): T_HOST / listFrames / frameClient / postToFrame
       T_HOST: ctx.T_HOST,
       listFrames: ctx.listFrames,
       frameClient: ctx.frameClient,
@@ -10875,10 +11508,10 @@
         ctx.aiBtn.classList.add("dbg-on");
         ctx.saveDbgState();
       },
-      // 自动弹 AI 窗（不退出 Inspector，与 toggleAi 互斥逻辑区分）
+      // auto-open the AI window (doesn't exit Inspector; distinct from toggleAi's mutual-exclusion logic)
       postToAi: ctx.postToAi,
       broadcast: ctx.broadcast,
-      // 兼容：targetWindow() = 第一个宿主 iframe 的 window（hub 摆的目标页）
+      // Compat: targetWindow() = the first host iframe's window (the target page placed by the hub)
       targetWindow: function() {
         return (ctx.listFrames()[0] || {}).win || null;
       },
@@ -10886,7 +11519,7 @@
       simulateAiCommand: function(cmd, args) {
         return ctx.handleAiCommand({ cmd, args: args || {}, requestId: "sim_" + ++ctx.simReqN });
       },
-      // 模拟 AI 发命令（含危险确认）；自检/测试用
+      // simulate an AI command (with danger confirmation); for self-check/testing
       destroy: ctx.destroy
     };
     var _nestN = 0, _nestIv = setInterval(function() {
@@ -10929,14 +11562,14 @@
 
   // src/standalone.js
   (function() {
-    const myScript = (function() {
+    const myScript = function() {
       try {
         if (document.currentScript && document.currentScript.src) return document.currentScript;
         return [...document.querySelectorAll("script")].find((x) => (x.src || "").indexOf("aiti-launcher") >= 0) || null;
       } catch (e) {
         return null;
       }
-    })();
+    }();
     function takeoverCrossInstance() {
       try {
         if (!myScript || !myScript.src) return false;

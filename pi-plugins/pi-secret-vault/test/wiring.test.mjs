@@ -189,6 +189,96 @@ test("vault wiring: landing captures into the vault; tools and commands work", a
   }
 });
 
+test("vault wiring: session record carries name/file; derived titles are redacted", async () => {
+  {
+    writeSettings([]);
+    const cwd = join(HOME, "proj");
+    const factory = await loadExtension();
+    const host = makeHost();
+    await factory(host.pi);
+    const ctx = makeCtx(cwd);
+    ctx.sessionManager = {
+      getSessionId: () => "sess-named",
+      getSessionName: () => "Named Session",
+      getSessionFile: () => "/tmp/named.jsonl",
+      getEntries: () => [],
+    };
+    await host.run("session_start", { reason: "startup" }, ctx);
+    const stateFile = join(HOME, ".pi", "agent", "secret-vault", "session-state.json");
+    let doc = JSON.parse(readFileSync(stateFile, "utf8"));
+    assert.equal(doc.sessions["sess-named"].name, "Named Session");
+    assert.equal(doc.sessions["sess-named"].file, "/tmp/named.jsonl");
+
+    // no explicit name: first user message becomes a redacted title
+    const ctx2 = makeCtx(cwd);
+    ctx2.sessionManager = {
+      getSessionId: () => "sess-derived",
+      getSessionFile: () => "/tmp/derived.jsonl",
+      getEntries: () => [{ type: "message", message: { role: "user", content: `my token: ${SECRET}` } }],
+    };
+    await host.run("session_start", { reason: "startup" }, ctx2);
+    doc = JSON.parse(readFileSync(stateFile, "utf8"));
+    assert.ok(doc.sessions["sess-derived"].name);
+    assert.ok(!doc.sessions["sess-derived"].name.includes(SECRET), "title is redacted");
+    assert.match(doc.sessions["sess-derived"].name, /rsec_/);
+  }
+});
+
+test("vault wiring: weak-value extraction, sensitive files and learn", async () => {
+  {
+    writeSettings([]);
+    const cwd = join(HOME, "proj");
+    const factory = await loadExtension();
+    const host = makeHost();
+    await factory(host.pi);
+    const ctx = makeCtx(cwd);
+    await host.run("session_start", { reason: "startup" }, ctx);
+    await tick();
+    const secretCmd = (line) => host.commands.get("secret").handler(line, ctx);
+
+    // structured extraction from a .env read: value redacted, keys readable
+    const cat = await host.run(
+      "tool_result",
+      { toolName: "bash", toolCallId: "c1", input: { command: "cat /tmp/proj/.env" }, content: [{ type: "text", text: "DB_PASSWORD=abc12345\nPORT=3000" }], isError: false },
+      ctx,
+    );
+    assert.ok(cat);
+    assert.ok(!JSON.stringify(cat).includes("abc12345"));
+    assert.ok(JSON.stringify(cat).includes("DB_PASSWORD="));
+
+    // dedicated secret file is withheld and registered
+    const withheld = await host.run(
+      "tool_result",
+      { toolName: "bash", toolCallId: "c2", input: { command: "cat /tmp/secret.txt" }, content: [{ type: "text", text: "123abc" }], isError: false },
+      ctx,
+    );
+    assert.ok(withheld);
+    assert.match(withheld.content[0].text, /withheld/);
+    assert.ok(!JSON.stringify(withheld).includes("123abc"));
+
+    // block policy
+    await secretCmd("files block");
+    const blocked = await host.run("tool_call", { toolName: "read", toolCallId: "r1", input: { path: "/tmp/proj/.env" } }, ctx);
+    assert.equal(blocked.block, true);
+    await secretCmd("files learn");
+
+    // weak candidate on the input boundary (vault landing transforms it)
+    const input = await host.run("input", { text: "密码是123abc", source: "interactive" }, ctx);
+    assert.ok(input);
+    assert.equal(input.action, "transform");
+    assert.ok(!input.text.includes("123abc"));
+    assert.match(input.text, /rsec_[0-9a-f]{8}/);
+
+    // explicit learn from a file
+    const learnFile = join(HOME, "vault-learn.env");
+    writeFileSync(learnFile, "API_TOKEN=xyz987654\n");
+    await secretCmd(`learn ${learnFile}`);
+    const learned = ctx.notices.at(-1).text;
+    assert.match(learned, /learned 1/);
+    assert.ok(!learned.includes("xyz987654"));
+  }
+});
+
 test("vault wiring: mask handshake wins (mask yields, vault stays active)", async () => {
   {
     const cwd = join(HOME, "proj");

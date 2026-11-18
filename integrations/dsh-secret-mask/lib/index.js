@@ -11,8 +11,8 @@ import { join } from "node:path";
 // ../packages/secret-mask-core/dist/index.js
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { appendFileSync, chmodSync, existsSync, mkdirSync as mkdirSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2 } from "node:fs";
-import { dirname as dirname2, resolve } from "node:path";
+import { appendFileSync, chmodSync, existsSync, mkdirSync as mkdirSync2, readFileSync as readFileSync2, statSync as fileStat, writeFileSync as writeFileSync2 } from "node:fs";
+import { basename, dirname as dirname2, resolve } from "node:path";
 function fnv1a(s) {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) {
@@ -27,10 +27,10 @@ var STABLE_NAMESPACE = "vault";
 function placeholderFromHash(hash) {
   return PLACEHOLDER_PREFIX + hash.slice(0, PLACEHOLDER_HASH_LEN);
 }
-var PLACEHOLDER_RE = /rsec_[0-9a-f]{8}\b|\[REDACTED:[A-Za-z0-9_-]{1,64}(?:#[0-9a-fA-F]{1,16})?\]/g;
+var PLACEHOLDER_RE = /(?<![A-Za-z0-9_@$.-])rsec_[0-9a-f]{8}\b|\[REDACTED:[A-Za-z0-9_-]{1,64}(?:#[0-9a-fA-F]{1,16})?\]/g;
 function findV2Placeholders(text) {
   if (!text) return [];
-  return text.match(/(?:^|[^A-Za-z0-9_])rsec_[0-9a-f]{8}\b/g)?.map((m) => m.replace(/^[^r]+/, "")) ?? [];
+  return text.match(/(?<![A-Za-z0-9_@$.-])rsec_[0-9a-f]{8}\b/g) ?? [];
 }
 function entropy(v) {
   if (!v) return 0;
@@ -588,6 +588,10 @@ var Registry = class {
   byPlaceholderLookup(placeholder) {
     return this.byPlaceholder.get(placeholder) ?? this.redirects.get(placeholder);
   }
+  /** True when this exact value is already registered. */
+  hasValue(value) {
+    return this.byValue.has(value.trim());
+  }
   /** True when a placeholder is mounted (present or redirected). */
   isMounted(placeholder) {
     return this.byPlaceholderLookup(placeholder) !== void 0;
@@ -865,6 +869,654 @@ function auditPayload(payload, registry) {
   walk(payload);
   return { strings, placeholders, leaks, leakedLabels: [...leaksByLabel.keys()] };
 }
+var EXTRACT_MIN_LENGTH = MIN_REDACT_LENGTH;
+var EXTRACT_MAX_BYTES = 256 * 1024;
+var SENSITIVE_SEGMENT = /(?:^|[._-])(?:pass(?:word|wd|phrase)?|pwd|secret|token|credentials?|bearer|dsn)(?:$|[._-])/i;
+var SENSITIVE_KEY_PREFIX = /(?:^|[._-])(?:api|access|private|secret|client)[_-]?key(?:$|[._-])/i;
+var SENSITIVE_CONNECTION = /^(?:connection|conn)[_-]?(?:string|str)$/i;
+var SENSITIVE_AUTH_TOKEN = /(?:^|[._-])auth[_-]?token(?:$|[._-])/i;
+function isSensitiveKey(key) {
+  const k = key.trim();
+  if (!k) return false;
+  if (/^authorization$/i.test(k)) return true;
+  if (k.replace(/^[_-]+/, "") === "authToken") return true;
+  return SENSITIVE_SEGMENT.test(k) || SENSITIVE_KEY_PREFIX.test(k) || SENSITIVE_CONNECTION.test(k) || SENSITIVE_AUTH_TOKEN.test(k) || /^_?authToken$/i.test(k);
+}
+var STOP_VALUES = /* @__PURE__ */ new Set(
+  [
+    "true",
+    "false",
+    "null",
+    "none",
+    "nil",
+    "undefined",
+    "yes",
+    "no",
+    "on",
+    "off",
+    "required",
+    "optional",
+    "default",
+    "changeme",
+    "example",
+    "placeholder",
+    "redacted",
+    "dummy",
+    "sample",
+    "insert",
+    "enabled",
+    "disabled",
+    "invalid",
+    "expired",
+    "configured",
+    "incorrect",
+    "forgotten",
+    "encrypted",
+    "protected",
+    "mismatch",
+    "rejected",
+    "verified",
+    "unknown",
+    "hidden",
+    "empty",
+    "todo",
+    "tbd",
+    "string",
+    "number",
+    "boolean",
+    "hash",
+    "stored",
+    "used",
+    "set",
+    "changed",
+    "shown",
+    "provided",
+    "supplied",
+    "managed",
+    "rotated",
+    "generated",
+    "sent",
+    "passed",
+    "given",
+    "needed",
+    "accepted",
+    "defined",
+    "specified",
+    "documented",
+    "discussed",
+    "reset",
+    "updated",
+    "saved",
+    "checked",
+    "validated"
+  ]
+);
+function isPlaceholderish(v) {
+  if (/^\[REDACTED:/.test(v)) return true;
+  if (/^(?:\$\{.*\}|\$\(?[A-Za-z_]\w*\)?|%[A-Za-z_]\w*%|\{\{.*\}\}|<.*>|__.*__)$/.test(v)) return true;
+  if (/^(?:process\.env|os\.environ|env\.|import\.meta\.env|vault:\/\/|file:\/\/|secret:\/\/)/i.test(v)) return true;
+  if (/^[x*.]+$/i.test(v) || /^(?:x{4,}|\*{3,}|\.{3,})/.test(v)) return true;
+  if (/\$\{|\{\{|process\.env\./.test(v)) return true;
+  return false;
+}
+function cleanValue(raw, minLength) {
+  let v = raw.trim();
+  if (!v) return void 0;
+  const quoted = /^(['"`])([\s\S]*)\1$/.exec(v);
+  if (quoted) {
+    v = quoted[2];
+  } else {
+    const comment = v.search(/\s+#/);
+    if (comment > 0) v = v.slice(0, comment).trim();
+  }
+  if (v.length < minLength || v.length > 4096) return void 0;
+  if (isPlaceholderish(v)) return void 0;
+  if (STOP_VALUES.has(v.toLowerCase())) return void 0;
+  return v;
+}
+function pushHit(out, seen, key, raw, format, minLength) {
+  if (!isSensitiveKey(key)) return;
+  if (/^authorization$/i.test(key) && format !== "header") return;
+  const value = cleanValue(raw, minLength);
+  if (!value) return;
+  const dedupe = `${key.toLowerCase()}\0${value}`;
+  if (seen.has(dedupe)) return;
+  seen.add(dedupe);
+  out.push({ key, value, format });
+}
+function extractJsonTree(value, out, seen, minLength) {
+  if (Array.isArray(value)) {
+    for (const item of value) extractJsonTree(item, out, seen, minLength);
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  for (const [key, child] of Object.entries(value)) {
+    if (typeof child === "string") pushHit(out, seen, key, child, "json", minLength);
+    else extractJsonTree(child, out, seen, minLength);
+  }
+}
+function tryJson(text, out, seen, minLength) {
+  const trimmed = text.trim();
+  const start = Math.min(...["{", "["].map((c) => trimmed.indexOf(c) < 0 ? Number.MAX_SAFE_INTEGER : trimmed.indexOf(c)));
+  if (!Number.isFinite(start) || start === Number.MAX_SAFE_INTEGER) return false;
+  let parsed;
+  try {
+    parsed = JSON.parse(trimmed.slice(start));
+  } catch {
+    return false;
+  }
+  extractJsonTree(parsed, out, seen, minLength);
+  return true;
+}
+function extractStructuredSecrets(text, opts = {}) {
+  const minLength = opts.minLength ?? 3;
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  if (!text) return out;
+  tryJson(text, out, seen, minLength);
+  for (const m of text.matchAll(/"([A-Za-z_][\w.-]*)"\s*:\s*"((?:[^"\\]|\\.)*)"/g)) {
+    let value = m[2];
+    try {
+      value = JSON.parse(`"${m[2]}"`);
+    } catch {
+    }
+    pushHit(out, seen, m[1], value, "json", minLength);
+  }
+  for (const line of text.split(/\r?\n/)) {
+    const eq = /^\s*(?:export\s+)?([A-Za-z_][\w.-]*)\s*=\s*(.+?)\s*$/.exec(line);
+    if (eq) pushHit(out, seen, eq[1], eq[2], "env", minLength);
+  }
+  for (const line of text.split(/\r?\n/)) {
+    if (/^\s*(?:#|\/\/|--)/.test(line)) continue;
+    const kv = /^\s*([A-Za-z_][\w.-]*)\s*:\s*(.+?)\s*$/.exec(line);
+    if (kv) pushHit(out, seen, kv[1], kv[2], "yaml", minLength);
+  }
+  for (const m of text.matchAll(/\bAuthorization\s*:\s*(?:Bearer|Basic|Token|Digest)\s+([^\s,;]+)/gi)) {
+    pushHit(out, seen, "authorization", m[1], "header", minLength);
+  }
+  for (const m of text.matchAll(/\b[a-z][a-z0-9+.-]*:\/\/([^/\s:@]+):([^/\s@]+)@/gi)) {
+    pushHit(out, seen, "url-password", m[2], "url", minLength);
+  }
+  for (const m of text.matchAll(/^\s*(?:machine|default)\b.*?\bpassword\s+([^\s]+)/gim)) {
+    pushHit(out, seen, "password", m[1], "netrc", minLength);
+  }
+  return out;
+}
+function labelFor(key) {
+  return key.toUpperCase().replace(/[^A-Z0-9_.-]/g, "_").slice(0, 48) || "EXTRACTED";
+}
+function registerExtractedSecrets(text, registry, salt, opts = {}) {
+  if (!text || text.length > EXTRACT_MAX_BYTES) return { count: 0, keys: [], entries: [] };
+  const minLength = opts.minLength ?? EXTRACT_MIN_LENGTH;
+  const keys = [];
+  const entries = [];
+  for (const hit of extractStructuredSecrets(text, { minLength: 2 })) {
+    if (hit.value.length < minLength) continue;
+    if (registry.hasValue(hit.value) || registry.isMounted(hit.value)) continue;
+    const label = labelFor(hit.key);
+    const res = registry.registerAuto(hit.value, `extract:${hit.key}`, label, salt, { minLength });
+    if (res) {
+      entries.push(res.entry);
+      keys.push(label);
+    }
+  }
+  return { count: entries.length, keys: [...new Set(keys)], entries };
+}
+var PRIVATE_KEY_FILE = /(?:^|\/)id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?$/i;
+var KEY_FILE_EXT = /\.(?:key|p12|pfx|jks|keystore)$/i;
+var CONFIG_EXT = /* @__PURE__ */ new Set(["", ".txt", ".env", ".conf", ".ini", ".properties", ".cfg", ".yml", ".yaml", ".json", ".toml", ".xml"]);
+var SECRET_STEM = /(?:^|[._-])(?:secret|secrets|password|passwd|pwd|credential|credentials|token|apikey|api-key|private-key|db-password)(?:$|[._-])/i;
+function inspectSensitivePath(input) {
+  const path = String(input ?? "").trim().replace(/\\/g, "/");
+  if (!path) return { sensitive: false, dedicated: false };
+  const base = path.split("/").pop() ?? path;
+  const lower = base.toLowerCase();
+  const extMatch = /\.[a-z0-9]+$/i.exec(lower);
+  const ext = extMatch ? extMatch[0] : "";
+  const stem = ext ? lower.slice(0, -ext.length) : lower;
+  if (PRIVATE_KEY_FILE.test(path) && !/\.pub$/i.test(lower)) return { sensitive: true, dedicated: true, category: "ssh-key" };
+  if (/(?:^|\/)\.ssh\/id_[^/]+$/.test(path) && !/\.pub$/i.test(lower)) return { sensitive: true, dedicated: true, category: "ssh-key" };
+  if (/\/\.aws\/credentials$/.test(path)) return { sensitive: true, dedicated: false, category: "aws" };
+  if (/\/\.kube\/config$/.test(path) || /(?:^|\/)kubeconfig$/i.test(lower)) return { sensitive: true, dedicated: false, category: "kube" };
+  if (/\/\.docker\/config\.json$/.test(path)) return { sensitive: true, dedicated: false, category: "docker" };
+  if (/\/\.config\/(?:gcloud|gh)\//.test(path) || /\/\.azure\//.test(path)) return { sensitive: true, dedicated: false, category: "cloud" };
+  if (lower === ".netrc") return { sensitive: true, dedicated: true, category: "netrc" };
+  if (lower === ".pgpass") return { sensitive: true, dedicated: true, category: "pgpass" };
+  if (lower === ".my.cnf" || lower === ".npmrc" || lower === ".git-credentials") {
+    return { sensitive: true, dedicated: false, category: "dotfile" };
+  }
+  if (/^\.env(?:\.|$)/.test(lower)) return { sensitive: true, dedicated: false, category: "dotenv" };
+  if (KEY_FILE_EXT.test(lower)) {
+    return { sensitive: true, dedicated: true, category: "key-file" };
+  }
+  const configLike = CONFIG_EXT.has(ext) || ext === "";
+  if (configLike && (SECRET_STEM.test(stem) || /^(?:secret|secrets|password|passwd|pwd|credential|credentials|token)$/i.test(stem))) {
+    const dedicated = ext === "" || ext === ".txt" || ext === ".conf" || ext === ".cfg";
+    return { sensitive: true, dedicated, category: "secret-file" };
+  }
+  return { sensitive: false, dedicated: false };
+}
+var READ_COMMANDS = /* @__PURE__ */ new Set([
+  "cat",
+  "head",
+  "tail",
+  "less",
+  "more",
+  "strings",
+  "xxd",
+  "od",
+  "base64",
+  "grep",
+  "egrep",
+  "fgrep",
+  "rg",
+  "ag",
+  "sed",
+  "awk",
+  "cut",
+  "sort",
+  "uniq",
+  "source",
+  ".",
+  "type",
+  "Get-Content",
+  "gc",
+  "get-content"
+]);
+var PATTERN_FIRST = /* @__PURE__ */ new Set(["grep", "egrep", "fgrep", "rg", "ag", "sed", "awk"]);
+var BARE_SENSITIVE = /* @__PURE__ */ new Set([
+  "id_rsa",
+  "id_dsa",
+  "id_ecdsa",
+  "id_ed25519",
+  "kubeconfig",
+  "credentials",
+  "secret",
+  "secrets",
+  "password",
+  "passwd",
+  "pwd",
+  "token",
+  "apikey",
+  "api-key",
+  "private-key",
+  ".netrc",
+  ".pgpass",
+  ".npmrc",
+  ".git-credentials"
+]);
+var WRITE_COMMANDS = /* @__PURE__ */ new Set(["tee", "Set-Content", "set-content", "Out-File", "out-file", "Add-Content", "add-content"]);
+function dequote(token) {
+  const t = token.trim();
+  if (/^(['"]).*\1$/.test(t)) return t.slice(1, -1);
+  return t;
+}
+function looksLikePath(token) {
+  const t = dequote(token);
+  if (!t || t.startsWith("-") || t.startsWith("$") || t.includes("=")) return false;
+  return /[/\\]/.test(t) || /^\.[^.]/.test(t) || /\.[a-z0-9]{1,8}$/i.test(t) || BARE_SENSITIVE.has(t.toLowerCase());
+}
+function shellTokens(segment) {
+  const tokens = [];
+  const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  for (let m = re.exec(segment); m; m = re.exec(segment)) tokens.push(m[1] ?? m[2] ?? m[3] ?? "");
+  return tokens.filter(Boolean);
+}
+function bashTargets(command) {
+  const reads = [];
+  const writes = [];
+  for (const rawSegment of command.split(/&&|\|\||[;|\n]/)) {
+    const segment = rawSegment.trim();
+    if (!segment) continue;
+    for (const m of segment.matchAll(/(?:^|\s)(?:>>?)\s*([^\s;|&]+)/g)) writes.push(dequote(m[1]));
+    for (const m of segment.matchAll(/(?:^|\s)<\s*([^\s;|&]+)/g)) reads.push(dequote(m[1]));
+    const tokens = shellTokens(segment);
+    if (tokens.length === 0) continue;
+    const name2 = (tokens[0].split(/[/\\]/).pop() ?? "").toLowerCase();
+    if (READ_COMMANDS.has(name2) || READ_COMMANDS.has(tokens[0])) {
+      let start = 1;
+      while (start < tokens.length && tokens[start].startsWith("-")) start++;
+      if (PATTERN_FIRST.has(name2) || PATTERN_FIRST.has(tokens[0])) start++;
+      for (const token of tokens.slice(start)) if (looksLikePath(token)) reads.push(dequote(token));
+    } else if (WRITE_COMMANDS.has(name2)) {
+      for (const token of tokens.slice(1)) if (!token.startsWith("-") && looksLikePath(token)) writes.push(dequote(token));
+    }
+  }
+  return { reads, writes, contents: [command] };
+}
+function inspectToolTargets(toolName, input) {
+  const i = input && typeof input === "object" ? input : {};
+  const reads = [];
+  const writes = [];
+  const contents = [];
+  const str = (v) => typeof v === "string" ? v : void 0;
+  const path = str(i.path) ?? str(i.file_path) ?? str(i.filePath) ?? str(i.filename);
+  const name2 = String(toolName ?? "").toLowerCase();
+  if (name2 === "read" && path) reads.push(path);
+  if ((name2 === "write" || name2 === "edit" || name2 === "apply_patch") && path) writes.push(path);
+  for (const key of ["content", "text", "newText", "new_string", "newString", "patch"]) {
+    const v = str(i[key]);
+    if (v) contents.push(v);
+  }
+  const edits = i.edits;
+  if (Array.isArray(edits)) {
+    for (const e of edits) {
+      const obj = e && typeof e === "object" ? e : {};
+      for (const key of ["newText", "new_string", "content"]) {
+        const v = str(obj[key]);
+        if (v) contents.push(v);
+      }
+    }
+  }
+  const command = str(i.command) ?? str(i.script) ?? str(i.code);
+  if (command && (name2 === "bash" || name2 === "powershell" || name2 === "shell" || name2 === "exec")) {
+    const t = bashTargets(command);
+    reads.push(...t.reads);
+    writes.push(...t.writes);
+    contents.push(command);
+  } else if (command) {
+    contents.push(command);
+  }
+  if (path && name2 !== "bash" && name2 !== "powershell" && name2 !== "shell" && name2 !== "exec" && !/write|edit|create|patch|append/i.test(name2)) {
+    reads.push(path);
+  }
+  return { reads: [...new Set(reads)], writes: [...new Set(writes)], contents };
+}
+function registerValueSecrets(value, registry, salt, opts = {}) {
+  let count = 0;
+  const keys = [];
+  const walk = (node) => {
+    if (typeof node === "string") {
+      const r = registerExtractedSecrets(node, registry, salt, opts);
+      count += r.count;
+      keys.push(...r.keys);
+      return;
+    }
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item);
+      return;
+    }
+    if (node && typeof node === "object") {
+      for (const item of Object.values(node)) walk(item);
+    }
+  };
+  walk(value);
+  return { count, keys: [...new Set(keys)] };
+}
+function sensitiveReadTargets(toolName, input) {
+  return inspectToolTargets(toolName, input).reads.map((path) => ({ path, info: inspectSensitivePath(path) })).filter((x) => x.info.sensitive);
+}
+var WEAK_PASSWORDS = /* @__PURE__ */ new Set([
+  "password",
+  "passw0rd",
+  "password1",
+  "password12",
+  "password123",
+  "p@ssw0rd",
+  "passw0rd1",
+  "123456",
+  "1234567",
+  "12345678",
+  "123456789",
+  "1234567890",
+  "0123456789",
+  "9876543210",
+  "123456a",
+  "a123456",
+  "a12345678",
+  "rsec_035c2182",
+  "abc123",
+  "abc12345",
+  "abcd1234",
+  "abc123!",
+  "qwerty",
+  "qwertyui",
+  "qwertyuiop",
+  "qwerty12",
+  "qwerty123",
+  "qwe123",
+  "qweasd",
+  "qweasdzxc",
+  "asdfgh",
+  "asdfghjkl",
+  "asdf1234",
+  "zxcvbnm",
+  "zxcvbnm123",
+  "poiuytrewq",
+  "1qaz2wsx",
+  "1qazxsw2",
+  "1qaz2wsx3edc",
+  "1qaz@wsx",
+  "1q2w3e4r",
+  "1q2w3e4r5t",
+  "q1w2e3r4",
+  "zaq12wsx",
+  "qazwsx",
+  "qazwsxedc",
+  "abcdef",
+  "abcdefg",
+  "abcdefgh",
+  "iloveyou",
+  "iloveu",
+  "loveme",
+  "loveyou",
+  "mylove",
+  "forever",
+  "admin",
+  "admin123",
+  "admin888",
+  "administrator",
+  "root",
+  "root123",
+  "toor",
+  "guest",
+  "guest123",
+  "user",
+  "user123",
+  "user1234",
+  "test",
+  "test123",
+  "test1234",
+  "demo",
+  "demo123",
+  "temp123",
+  "temp1234",
+  "letmein",
+  "letmein123",
+  "welcome",
+  "welcome1",
+  "welcome123",
+  "changeme",
+  "secret",
+  "secret123",
+  "monkey",
+  "monkey123",
+  "dragon",
+  "dragon123",
+  "master",
+  "sunshine",
+  "sunshine1",
+  "princess",
+  "princess1",
+  "football",
+  "football1",
+  "baseball",
+  "baseball1",
+  "shadow",
+  "shadow1",
+  "superman",
+  "superman1",
+  "michael",
+  "michael1",
+  "jennifer",
+  "jennifer1",
+  "trustno1",
+  "whatever",
+  "nothing",
+  "trustme",
+  "woaini",
+  "woaini1314",
+  "woaini520",
+  "5201314",
+  "5201314520",
+  "1314520",
+  "1314521",
+  "7758521",
+  "7758258",
+  "888888",
+  "88888888",
+  "666666",
+  "66666666",
+  "111111",
+  "11111111",
+  "000000",
+  "00000000",
+  "999999",
+  "555555",
+  "777777",
+  "123123",
+  "112233",
+  "11223344",
+  "121212",
+  "159753",
+  "147258369",
+  "123321",
+  "654321",
+  "987654321",
+  "123654",
+  "159357",
+  "159951",
+  "1234554321",
+  "25252525",
+  "mysql",
+  "postgres",
+  "postgresql",
+  "oracle",
+  "sybase",
+  "sa123456",
+  "system",
+  "manager",
+  "company",
+  "computer",
+  "internet",
+  "service",
+  "server",
+  "backup",
+  "default",
+  "oracle123",
+  "mysql123",
+  "fuckyou",
+  "fuckyou1",
+  "fuckoff",
+  "asshole",
+  "bitch",
+  "suckit",
+  "biteme",
+  "killer",
+  "access",
+  "flower",
+  "hello",
+  "hello123",
+  "freedom",
+  "whatever1",
+  "starwars",
+  "pokemon",
+  "naruto",
+  "batman",
+  "matrix",
+  "mustang",
+  "mercedes",
+  "ferrari",
+  "corvette",
+  "porsche",
+  "yamaha",
+  "hunter",
+  "ranger",
+  "buster",
+  "soccer",
+  "hockey",
+  "tennis",
+  "golfer",
+  "cookie",
+  "orange",
+  "banana",
+  "purple",
+  "silver",
+  "golden",
+  "diamond",
+  "pepper",
+  "ginger",
+  "summer",
+  "winter",
+  "spring",
+  "autumn",
+  "january",
+  "february"
+]);
+var WEAK_CONTEXT = /(password|passwd|pwd|passphrase|密码|口令|令牌|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|credential)s?["'`]?[ \t]{0,5}(?::=|=>|[=:]|：|(?:[ \t]+is\b)|是)[ \t]{0,5}["'`]?([^\s"'`;,(){}<>[\]\\，。、；：！？“”‘’（）]{3,64})/gi;
+function weakPasswordCandidates(text) {
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  if (!text || text.length > EXTRACT_MAX_BYTES) return out;
+  WEAK_CONTEXT.lastIndex = 0;
+  for (let m = WEAK_CONTEXT.exec(text); m; m = WEAK_CONTEXT.exec(text)) {
+    const key = m[1];
+    const raw = m[2];
+    if (raw.length < 3 || isPlaceholderish(raw)) continue;
+    const lower = raw.toLowerCase();
+    const normalized = lower.replace(/[.,;:!?]+$/, "");
+    const dictionary = WEAK_PASSWORDS.has(lower) || WEAK_PASSWORDS.has(normalized);
+    const weakShape = raw.length < 8 || !/[A-Z0-9]/.test(raw) || entropy(raw) < 2.5;
+    if (!dictionary && !weakShape) continue;
+    if (!dictionary && STOP_VALUES.has(normalized)) continue;
+    const dedupe = lower;
+    if (seen.has(dedupe)) continue;
+    seen.add(dedupe);
+    out.push({ key: key || "password", value: raw, dictionary });
+  }
+  return out;
+}
+function registerWeakCandidates(text, registry, salt, opts = {}) {
+  const minLength = opts.minLength ?? EXTRACT_MIN_LENGTH;
+  const out = [];
+  for (const candidate of weakPasswordCandidates(text)) {
+    if (registry.hasValue(candidate.value) || registry.isMounted(candidate.value)) {
+      out.push({ ...candidate, registered: false });
+      continue;
+    }
+    const wantRegister = (candidate.dictionary || opts.auto === true) && candidate.value.length >= minLength;
+    if (wantRegister) {
+      const label = candidate.key.toUpperCase().replace(/[^A-Z0-9_.-]/g, "_").slice(0, 48) || "WEAK";
+      const res = registry.registerAuto(candidate.value, `weak:${candidate.key}`, label, salt, { minLength });
+      const registered = Boolean(res);
+      try {
+        opts.onCandidate?.({ ...candidate, registered });
+      } catch {
+      }
+      out.push({ ...candidate, registered });
+    } else {
+      try {
+        opts.onCandidate?.(candidate);
+      } catch {
+      }
+      out.push({ ...candidate, registered: false });
+    }
+  }
+  return out;
+}
+function learnFromText(text, registry, salt, opts = {}) {
+  const minLength = opts.minLength ?? EXTRACT_MIN_LENGTH;
+  const extracted = registerExtractedSecrets(text, registry, salt, { minLength });
+  if (extracted.count > 0 || !opts.whole) {
+    return { count: extracted.count, keys: extracted.keys, entries: extracted.entries };
+  }
+  const trimmed = text.trim();
+  if (trimmed.length < minLength || trimmed.length > 1048576) return { count: 0, keys: [], entries: [] };
+  if (registry.hasValue(trimmed) || registry.isMounted(trimmed)) return { count: 0, keys: [], entries: [] };
+  const label = (opts.label ?? "FILE").toUpperCase().replace(/[^A-Z0-9_.-]/g, "_").slice(0, 48) || "FILE";
+  const res = registry.registerAuto(trimmed, "learn:whole", label, salt, { minLength });
+  return res ? { count: 1, keys: [label], wholeRegistered: true, entries: [res.entry] } : { count: 0, keys: [], entries: [] };
+}
 var RULES_FILE_NAME = "secret-mask-rules.json";
 function emptyFile() {
   return { version: 1, rules: [], projects: {} };
@@ -1085,7 +1737,7 @@ function unmountedPlaceholders(text, registry) {
   if (!text) return [];
   const out = [];
   for (const token of findV2Placeholders(text)) {
-    if (registry.isMounted(token)) continue;
+    if (registry.isMounted(token) || registry.hasValue(token)) continue;
     if (!out.includes(token)) out.push(token);
   }
   return out;
@@ -1165,6 +1817,9 @@ function statusText(state) {
     `guard ${state.guard ? "ON" : "OFF"}`,
     `strict ${state.strict ? "ON" : "OFF"}`,
     `rules ${rules}${state.rulesError ? " (errors — /secret rule list)" : ""}`,
+    `extract ${state.extract === false ? "OFF" : "ON"}`,
+    `files ${state.filePolicy ?? "learn"}`,
+    `weak ${state.weakMode ?? "notify"}`,
     `send-audit ${state.audit ? "ON" : "OFF"}`
   ];
   if (state.lastAudit) parts.push(`last audit: ${state.lastAudit}`);
@@ -1281,6 +1936,53 @@ ${lines.join("\n")}` : "secret-mask: no audit evidence yet (turn /secret audit o
     }
     case "status":
       return { ok: true, text: statusText(state) };
+    case "extract": {
+      if (!tail) return { ok: true, text: `secret-mask: extract ${state.extract === false ? "OFF" : "ON"} — structured key-value extraction from tool output and write inputs.` };
+      if (tail !== "on" && tail !== "off") return { ok: false, text: "Usage: /secret extract [on|off]" };
+      state.extract = tail === "on";
+      return { ok: true, text: `secret-mask: extract ${state.extract ? "enabled" : "disabled"}.` };
+    }
+    case "files": {
+      if (!tail) return { ok: true, text: `secret-mask: sensitive-file policy = ${state.filePolicy ?? "learn"} (learn | block | off).` };
+      if (tail !== "learn" && tail !== "block" && tail !== "off") return { ok: false, text: "Usage: /secret files [learn|block|off]" };
+      state.filePolicy = tail;
+      const note = tail === "learn" ? " — structured values are registered; dedicated secret files are withheld as a placeholder" : tail === "block" ? " — reads of sensitive paths are blocked before execution" : " — path policy disabled";
+      return { ok: true, text: `secret-mask: file policy → ${tail}${note}.` };
+    }
+    case "weak": {
+      if (!tail) return { ok: true, text: `secret-mask: weak candidates = ${state.weakMode ?? "notify"} (notify | auto | off).` };
+      if (tail !== "notify" && tail !== "auto" && tail !== "off") return { ok: false, text: "Usage: /secret weak [notify|auto|off]" };
+      state.weakMode = tail;
+      return { ok: true, text: `secret-mask: weak candidates → ${tail}${tail === "notify" ? " (dictionary hits register, other candidates only notify)" : tail === "auto" ? " (all weak candidates register)" : ""}.` };
+    }
+    case "learn": {
+      const arg = tail.trim();
+      let text;
+      let label;
+      let whole = false;
+      if (!arg || arg === "last") {
+        if (!state.lastToolOutput) return { ok: false, text: "secret-mask: no recent tool output to learn from." };
+        text = state.lastToolOutput;
+      } else {
+        const path = resolve(state.cwd, arg);
+        try {
+          const st = fileStat(path);
+          if (!st.isFile()) return { ok: false, text: `secret-mask: not a file: ${path}` };
+          if (st.size > 1048576) return { ok: false, text: `secret-mask: file too large (${st.size} bytes; limit 1MB).` };
+          text = readFileSync2(path, "utf8");
+          label = basename(path);
+          whole = inspectSensitivePath(path).dedicated;
+        } catch (e) {
+          return { ok: false, text: `secret-mask: cannot read ${path}: ${e instanceof Error ? e.message : String(e)}` };
+        }
+      }
+      const res = learnFromText(text, state.registry, state.salt, { whole, label });
+      const keys = res.keys.slice(0, 8).join(", ") + (res.keys.length > 8 ? ", …" : "");
+      return {
+        ok: true,
+        text: res.count ? `secret-mask: learned ${res.count} value(s)${keys ? ` (${keys})` : ""}${res.wholeRegistered ? " — whole file registered" : ""}.` : "secret-mask: nothing new to learn (no structured value, or already registered)."
+      };
+    }
     case "save": {
       if (!tail) return { ok: false, text: "Usage: /secret save <file> — explicit plaintext snapshot (you own the file and its safety)." };
       const path = resolve(state.cwd, tail);
@@ -1315,6 +2017,10 @@ function helpText(state) {
     "  /secret guard [on|off]             block unresolved placeholders in tool arguments",
     "  /secret strict [on|off]            fail closed on side channels (compaction, ! commands)",
     "  /secret rule list | add | remove | reload   custom detection rules",
+    "  /secret extract [on|off]           structured extraction from tool output / write inputs",
+    "  /secret files [learn|block|off]    sensitive-file policy (learn = register & redact)",
+    "  /secret weak [notify|auto|off]     weak-password candidates (L3)",
+    "  /secret learn [last|<file>]        register values from the last tool output or a file",
     "  /secret save <file> | load <file>  explicit plaintext snapshot (no implicit state)",
     "  /secret audit [on|off|show]        per-send wire-payload proof log",
     "  /secret status                     current state"
@@ -1519,6 +2225,10 @@ function stateFor(agentId, cfg) {
       audit: cfg.audit,
       persistPath: PERSIST_PATH,
       auditPath: cfg.auditPath || AUDIT_LOG_PATH,
+      extract: true,
+      filePolicy: "learn",
+      weakMode: "notify",
+      lastToolOutput: "",
       landing: "ephemeral",
       landingModes: ["plain", "ephemeral"],
       guard: true,
@@ -1547,13 +2257,16 @@ function rewriteTextBlock(block, fn) {
   if (next === block.text) return { block, changed: false };
   return { block: { ...block, text: next }, changed: true };
 }
-function redactUserMessage(message, st, autoDetect) {
+function redactUserMessage(message, st, autoDetect, weak) {
   let changed = false;
   let newEntries = 0;
   const userAuthored = message.source?.kind === "user";
   const content = message.content.map((block) => {
     if (!isTextBlock(block) || !block.text) return block;
-    if (autoDetect && userAuthored) newEntries += st.registry.autoRegister(block.text, st.salt).length;
+    if (autoDetect && userAuthored) {
+      newEntries += st.registry.autoRegister(block.text, st.salt).length;
+      if (weak) newEntries += registerWeakCandidates(block.text, st.registry, st.salt, weak).filter((c) => c.registered).length;
+    }
     const rules = st.rules ?? [];
     if (rules.length > 0) newEntries += registerRuleMatches(block.text, st.registry, rules, st.salt);
     const res = st.registry.redact(block.text);
@@ -1574,15 +2287,29 @@ function redactUserMessage(message, st, autoDetect) {
 
 // src/hooks/pre-step.ts
 function registerPreStep(ctx, cfg) {
+  const notified = /* @__PURE__ */ new Set();
+  const weakOptions = (st) => st.weakMode === "off" ? void 0 : {
+    auto: st.weakMode === "auto",
+    onCandidate: (c) => {
+      if (st.weakMode !== "notify") return;
+      const hash = fnv1a(c.value);
+      if (notified.has(hash)) return;
+      notified.add(hash);
+      ctx.logger.warn(
+        c.registered ? "dsh-secret-mask: known weak password detected — masked automatically; consider changing it (value hidden)" : "dsh-secret-mask: possible weak password detected — run /secret add to register it (the value is hidden; /secret weak auto to auto-register)"
+      );
+    }
+  };
   ctx.on("agent/pre-step", async (payload, next) => {
     const decision = await next();
     if (!decision || decision.kind === "reject" || !Array.isArray(decision.messages)) return decision;
     const st = stateFor(payload.agent?.id, cfg);
     if (!st.enabled) return decision;
     refreshRules(st);
+    const weak = weakOptions(st);
     let changed = false;
     const messages = decision.messages.map((m) => {
-      const r = redactUserMessage(m, st, cfg.autoDetect);
+      const r = redactUserMessage(m, st, cfg.autoDetect, weak);
       if (r.changed) changed = true;
       return r.message;
     });
@@ -1621,7 +2348,41 @@ function registerPostExecute(ctx, cfg) {
       const decision = await next();
       if (!decision || decision.kind !== "accept") return decision;
       const st = stateFor(exec.agent?.id, cfg);
-      if (!st.enabled || st.registry.size === 0) return decision;
+      if (!st.enabled) return decision;
+      const contentBlocks = decision.content ?? result.content;
+      const text = Array.isArray(contentBlocks) ? contentBlocks.filter(isTextBlock).map((b) => b.text).join("\n") : "";
+      if (text) st.lastToolOutput = text.slice(0, 65536);
+      if (st.extract !== false) {
+        let extracted = 0;
+        if (text) extracted += registerExtractedSecrets(text, st.registry, st.salt).count;
+        if ("value" in decision && decision.value !== void 0) {
+          extracted += registerValueSecrets(decision.value, st.registry, st.salt).count;
+        }
+        const sensitive = sensitiveReadTargets(exec.name, exec.arguments);
+        const dedicated = sensitive.find((x) => x.info.dedicated);
+        const trimmed = text.trim();
+        const policy = st.filePolicy ?? "learn";
+        if (policy === "block" && sensitive.length > 0) {
+          return {
+            kind: "block",
+            feedback: [{ type: "text", text: "dsh-secret-mask: sensitive file content withheld by policy (/secret files learn|off to allow)." }]
+          };
+        }
+        if (policy === "learn" && dedicated && extracted === 0 && trimmed.length >= 6 && trimmed.length <= 8192) {
+          const label = (dedicated.path.split(/[/\\]/).pop() ?? "FILE").toUpperCase().replace(/[^A-Z0-9_.-]/g, "_").slice(0, 48) || "FILE";
+          st.registry.registerAuto(trimmed, "file:secret", label, st.salt);
+          return {
+            kind: "block",
+            feedback: [
+              {
+                type: "text",
+                text: `dsh-secret-mask: sensitive file content withheld (${trimmed.length} bytes). The value is registered in this session — use its placeholder in tool arguments.`
+              }
+            ]
+          };
+        }
+      }
+      if (st.registry.size === 0) return decision;
       if (Object.prototype.hasOwnProperty.call(decision, "value")) {
         const candidate = decision.value;
         if (candidate !== void 0 && candidate !== null && typeof candidate === "object") {
@@ -1644,7 +2405,7 @@ function registerPostExecute(ctx, cfg) {
       if (Array.isArray(content)) {
         let changed = false;
         const nextContent = content.map((block) => {
-          const r = rewriteTextBlock(block, (text) => st.registry.redact(text).text);
+          const r = rewriteTextBlock(block, (text2) => st.registry.redact(text2).text);
           if (r.changed) changed = true;
           return r.block;
         });
@@ -1670,6 +2431,11 @@ function registerShadowTools(ctx, cfg) {
         ...orig,
         execute: async (args, exec) => {
           const st = stateFor(agent.id, cfg);
+          if (st.extract !== false) {
+            for (const content of inspectToolTargets(name2, args).contents) {
+              registerExtractedSecrets(content, st.registry, st.salt);
+            }
+          }
           let restored = args;
           if (st.enabled && args !== null && typeof args === "object") {
             if (st.guard) {

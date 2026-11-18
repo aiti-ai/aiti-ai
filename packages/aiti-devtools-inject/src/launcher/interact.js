@@ -1,18 +1,18 @@
-// interact 子系统（ctx 模式）：AI ↔ 人在页面上协作的交互工具
-//   - 浏览器通知：交互消息到达时 Notification API + 标题闪烁 + 提示音（用户可能在其他标签页）
-//   - pick_element：收起 AI 窗 → 进入点选（宿主+iframe 广播）→ 弹点选面板（✓ 确认 / ✕ 拒绝 / 超时）
-//   - 其余 Q&A（confirm/choose/input/presence）：AI 窗口渲染作答卡（ai.html）；宿主通知；
-//     AI 窗未连接时宿主兜底渲染问答面板
-// 结果回桥：window.postMessage dbg_mcp_result → MINI client postBridgeResult → POST /bridge/result
-import { el, escapeHtml } from './dom.js';
+// interact subsystem (ctx mode): interaction tools for AI ↔ human collaboration on the page
+//   - Browser notification: Notification API + title flashing + attention beep when an interaction arrives (the user may be on another tab)
+//   - pick_element: collapse the AI window → enter pick mode (host + iframe broadcast) → show the pick panel (✓ confirm / ✕ reject / timeout)
+//   - Other Q&A (confirm/choose/input/presence): the AI window renders answer cards (ai.html); host notification;
+//     when the AI window is not connected, the host falls back to rendering the Q&A panel
+// Result back to bridge: window.postMessage dbg_mcp_result → MINI client postBridgeResult → POST /bridge/result
+import { el, escapeHtml, elSvg, LUCIDE } from './dom.js';
 import { dbgMsg } from './protocol.js';
 import { isTouchDevice, detectScreenMode, getPhysViewport, capVisW, placePhysPanel, _fixedVisual } from './viewport.js';
 import { makePointerDrag } from './drag.js';
 import { t } from './i18n.js';
 
-// 可读回答描述（异步交互 user_answer 事件文案）。
-// AI 窗 cockpit.html 有同语义实现（吃整 result 含 status）；这里适配 launcher 侧入参（直接传 value 层），
-// 并覆盖多选（indexes/labels）——finishAsk 异步分支调用，仅 answered 态进入，无需 status 分支。
+// Human-readable answer description (copy text for the async interaction user_answer event).
+// The AI window cockpit.html has a same-semantics implementation (consumes the whole result incl. status); this adapts the launcher-side input (takes the value layer directly),
+// and covers multi-select (indexes/labels) — called from the finishAsk async branch, entered only in the answered state, so no status branch is needed.
 function describeAnswer(kind, v) {
   v = v || {};
   if (kind === 'confirm') return v.approved === false ? t('❌ No') : t('✅ Yes');
@@ -30,7 +30,7 @@ function describeAnswer(kind, v) {
 }
 
 export function initInteract(ctx) {
-  // HUD 小屏位置偏移记忆（▲ 上移避开遮挡 / ▼ 下移回贴底 → localStorage 持久化）
+  // HUD small-screen offset memory (▲ move up to dodge occlusion / ▼ move down back to bottom → persisted in localStorage)
   ctx.hudSmallOffset = 0;
   try { ctx.hudSmallOffset = parseInt(localStorage.getItem('__dbg_hud_off') || '0', 10) || 0; } catch (e) {}
   ctx.adjustHudOffset = function (dy) {
@@ -38,13 +38,13 @@ export function initInteract(ctx) {
       var vp = getPhysViewport();
       var visVh = _fixedVisual ? ((window.visualViewport && window.visualViewport.height) || window.innerHeight)
                                : (window.innerHeight * vp.scaleY);
-      // 偏移上限 = 可视高 - 底部余量（防止把 HUD 推出屏幕顶）
+      // Offset cap = visible height - bottom margin (prevents pushing the HUD off the top of the screen)
       var maxOff = Math.max(0, Math.round(visVh) - 120);
       ctx.hudSmallOffset = Math.min(Math.max((ctx.hudSmallOffset || 0) + dy, 0), maxOff);
       try { localStorage.setItem('__dbg_hud_off', String(ctx.hudSmallOffset)); } catch (e) {}
     } catch (e) {}
   };
-  // 短暂提示（toast）：交互到达时提示用户，几秒自动消失——不阻塞、不弹确认窗（用户要求）
+  // Transient toast: notifies the user when an interaction arrives, auto-dismisses after a few seconds — non-blocking, no confirm dialog (per user request)
   ctx.showPickToast = function (html, ms) {
     try {
       var olds = ctx.root.querySelectorAll('.dbg-pick-toast');
@@ -59,7 +59,7 @@ export function initInteract(ctx) {
       }, ms || 4500);
     } catch (e) {}
   };
-  // 小屏进入点选：底部 toast 提示“点击元素选择”（inspect 入口统一调用）
+  // Small-screen pick entry: bottom toast hint "click an element to select" (called uniformly at the inspect entry)
   ctx.showPickHint = function () {
     try {
       if (!detectScreenMode().small) return;
@@ -67,29 +67,17 @@ export function initInteract(ctx) {
     } catch (e) {}
   };
 
-  // 消息区（prompt/通知正文）+ 右上角「📋 复制」按钮：一键复制全文（长 URL/命令免手动拖选）——
-  // 文本本身也可自由选中（CSS .dbg-copyable user-select:text）；复制走 ctx.copyToClipboard（dialog.js，Clipboard API → execCommand 兜底）
-  function makeCopyableBlock(text, cls) {
-    var wrap = el('div', { class: cls + ' dbg-copyable' });
-    wrap.appendChild(el('span', {}, [text]));
-    var btn = el('button', { class: 'dbg-msg-copy', title: t('Copy all') }, [t('📋 Copy')]);
-    btn.addEventListener('click', function (e) {
-      e.stopPropagation(); // 不触发面板内其他点击委托（问答面板 dialog 级 click 委托）
-      var done = function (ok) {
-        btn.textContent = ok ? t('✓ Copied') : t('✕ Copy failed');
-        btn.classList.toggle('dbg-msg-copy-ok', !!ok);
-        setTimeout(function () { btn.textContent = t('📋 Copy'); btn.classList.remove('dbg-msg-copy-ok'); }, 1200);
-      };
-      if (ctx.copyToClipboard) ctx.copyToClipboard(text, done); else done(false);
-    });
-    wrap.appendChild(btn);
-    return wrap;
-  }
+  // (The legacy makeCopyableBlock floating copy button was removed: Q&A panels now put a lucide copy
+  // button in the header -- same interaction as the notify card; the body stays plain selectable text.)
 
-  // ---- 浏览器通知（Notification API + 标题闪烁 + 提示音） ----
+  // ---- Browser notification (Notification API + title flashing + attention beep) ----
+  // opts.noToastFallback: skip the in-page toast fallback (used by the notify path, which always also
+  // renders the persistent notify card -- toast + card at the same dock spot would duplicate content);
+  // hidden-tab title flash + beep are kept regardless (they do not overlap the card).
   ctx.NOTIFY = { timer: null, origTitle: document.title, audio: null };
-  ctx.notifyUser = function (title, body) {
-    var shown = false; // 系统通知是否真正弹出（授权 + 创建成功）
+  ctx.notifyUser = function (title, body, opts) {
+    opts = opts || {};
+    var shown = false; // whether the system notification actually popped (granted + created successfully)
     if ('Notification' in window) {
       if (Notification.permission === 'granted') {
         try {
@@ -98,16 +86,16 @@ export function initInteract(ctx) {
           shown = true;
         } catch (e) {}
       } else if (Notification.permission !== 'denied') {
-        // 未决：静默请求一次权限（浏览器可能要求用户手势，失败不阻塞交互面板本身）
+        // Undecided: silently request permission once (the browser may require a user gesture; failure does not block the interaction panel itself)
         try { Notification.requestPermission().then(function (p) { if (p === 'granted') ctx.notifyUser(title, body); }); } catch (e) {}
       }
     }
-    // 兜底降级：系统通知未弹出（权限被拒/不可用）→ 页面内 toast 兜底，保证用户一定看到；
-    // 页面不可见时额外标题闪烁 + 提示音（toast 在别的标签页看不到）
-    if (!shown) {
+    // Fallback degradation: the system notification did not pop (permission denied/unavailable) → in-page toast fallback so the user definitely sees it;
+    // when the page is hidden, also flash the title + beep (the toast is invisible from other tabs)
+    if (!shown && !opts.noToastFallback) {
       try { ctx.showPickToast('🔔 ' + title + (body ? '<br>' + body : ''), 6000); } catch (e) {}
-      if (document.hidden) { ctx.flashTitle('🔔 ' + title); ctx.beepAttention(); }
     }
+    if (!shown && document.hidden) { ctx.flashTitle('🔔 ' + title); ctx.beepAttention(); }
   };
   ctx.flashTitle = function (prefix) {
     var orig = ctx.NOTIFY.origTitle || document.title;
@@ -139,38 +127,38 @@ export function initInteract(ctx) {
     } catch (e) {}
   };
 
-  // ---- 交互结果回桥（AI 主窗口直接回 / 宿主经 AI 窗转发 → POST /bridge/result） ----
+  // ---- Interaction result back to bridge (AI main window replies directly / host relays via the AI window → POST /bridge/result) ----
   ctx.sendInteractionResult = function (requestId, result) {
-    // 回桥优先级：
-    //   1) 本窗口有 BridgeClient（AI 主窗口连桥，自己就是桥端点）→ 直接 postResult（pageId 空走兼容 token，绕过非 idRegistry 实例）
-    //   2) 宿主页面（不连桥）→ postToAi 经 AI 窗转发 → AI 窗 BridgeClient → 桥
-    // 修复：此前一律 postToAi——AI 主窗口无 popup/iframe target 时静默丢弃 → 用户作答后 AI 仍超时。
+    // Bridge return priority:
+    //   1) This window has a BridgeClient (the AI main window is bridge-connected, it is itself a bridge endpoint) → postResult directly (empty pageId goes through the compat token path, bypassing non-idRegistry instances)
+    //   2) Host page (not bridge-connected) → postToAi relays via the AI window → AI window BridgeClient → bridge
+    // Fix: previously always postToAi — when the AI main window has no popup/iframe target it silently drops → the AI still times out after the user answers.
     var ok = result.status !== 'timeout';
     try {
       if (global.BridgeClient && typeof global.BridgeClient.postResult === 'function') { global.BridgeClient.postResult(requestId, ok, result); return; }
     } catch (e) {}
     try { ctx.postToAi(dbgMsg({ type: 'dbg_mcp_result', payload: { requestId: requestId, ok: ok, result: result } })); } catch (e) {}
   };
-  // 宿主 → 桥事件（经 AI 窗 BridgeClient.postEvent → POST /bridge/event——桥的唯一浏览器端点是 AI 窗，
-  // 页面与桥零直接连接；AI 窗未开/未就绪时事件丢弃，client 侧环形缓冲不重放（频控在桥侧））
+  // Host → bridge events (via the AI window's BridgeClient.postEvent → POST /bridge/event — the AI window is the bridge's only browser endpoint,
+  // the page has zero direct connection to the bridge; events are dropped when the AI window is closed/not ready, and the client-side ring buffer does not replay them (rate control is bridge-side))
   ctx.postBridgeEvent = function (type, payload) {
     try { ctx.postToAi(dbgMsg({ type: 'dbg_bridge_event', payload: { type: type, payload: payload || {} } })); } catch (e) {}
   };
-  // 交互倒计时控制（暂停/继续）：经 MINI client postBridgeControl → POST /bridge/interaction（服务器同步暂停计时）
+  // Interaction countdown control (pause/resume): via MINI client postBridgeControl → POST /bridge/interaction (the server pauses its countdown in sync)
   ctx.sendInteractionControl = function (requestId, action) {
-    // 同上协议：控制一律经 AI 窗回桥，不向自身投递
+    // Same protocol as above: control always goes back to the bridge via the AI window, never delivered to itself
     try { ctx.postToAi(dbgMsg({ type: 'dbg_mcp_interaction_control', payload: { requestId: requestId, action: action } })); } catch (e) {}
   };
 
-  // 交互超时模型（timeout 可选，非默认）：AI 不传 timeout → 永久等待——面板常驻直到用户操作，不读秒不超时；
-  // AI 明确传 timeout → 面板显示 ⏱ 读秒倒计时（可暂停，服务器同步计时），到点超时结算。
-  // 各面板按 it.timeoutMs>0 自行分支，无需共享控件。
+  // Interaction timeout model (timeout optional, not the default): AI omits timeout → wait forever — the panel stays persistent until the user acts, no countdown, no timeout;
+  // AI explicitly passes timeout → the panel shows a ⏱ countdown (pausable, server keeps time in sync), settling as timeout when it expires.
+  // Each panel branches on it.timeoutMs>0 by itself; no shared control needed.
 
-  // ---- 点选面板状态（pick_element）：面板 + 双区点选 ----
+  // ---- Pick panel state (pick_element): panel + two-zone picking ----
   ctx.pickPanel = null;
   ctx.hideAiForPick = function () { ctx.aiOpen = false; ctx.showAi(false); ctx.aiBtn.classList.remove('dbg-on'); };
   ctx.exitPickInspect = function () {
-    // 退出点选（宿主/iframe client 退出 + 工具条隐藏）+ 恢复 AI 窗口
+    // Exit pick mode (host/iframe client exit + toolbar hidden) + restore the AI window
     try { ctx.postToAi({ type: 'dbg_ai_inspect_off', payload: {} }); } catch (e) {}
     try { ctx.broadcast({ type: 'dbg_ai_pick', payload: { active: false } }); } catch (e) {}
     try { ctx.broadcast({ type: 'dbg_exit_inspector' }); } catch (e) {}
@@ -185,7 +173,7 @@ export function initInteract(ctx) {
     ctx.showAi(true);
     ctx.aiBtn.classList.add('dbg-on');
   };
-  // 取当前选区载荷（iframe 客户端优先，宿主 self 兜底，hover 缓存再兜底）
+  // Get the current selection payload (iframe clients first, host self as fallback, then the hover cache as final fallback)
   ctx.getPickPayload = function () {
     try {
       var frames = ctx.listFrames();
@@ -212,45 +200,45 @@ export function initInteract(ctx) {
     clearInterval(pp.timer);
     if (pp.dialog && pp.dialog.parentNode) pp.dialog.parentNode.removeChild(pp.dialog);
     try { ctx.exitPickInspect(); } catch (e) {}
-    // 清小屏 HUD 撑开的空间（exitPickInspect 不走 exitInspector，需自行清理）
+    // Clear the space the small-screen HUD padded open (exitPickInspect does not go through exitInspector, so clean it up here)
     if (document.body.style.paddingBottom) document.body.style.paddingBottom = '';
-    // 退出点选：HUD 隐藏（恢复 hover 显示由 updateHud 原版控制）
+    // Exit pick: hide the HUD (hover-show restore is controlled by the original updateHud)
     if (ctx.hud) { try { ctx.hud.style.opacity = '0'; } catch (e) {} }
     result.tookMs = Date.now() - pp.startedAt;
-    if (pp.silent) return; // 服务端已结算（超时/取消/agent 停止）——只关面板，不回桥
+    if (pp.silent) return; // already settled server-side (timeout/cancel/agent stop) — just close the panel, no bridge return
     if (pp.it && pp.it.async) {
-      // 异步：候选已在确认选中时进 AI 待选——只关窗/清 HUD（桥已异步返回；发送/拒绝消息由对应分支 postBridgeEvent）
+      // Async: the candidate already entered the AI pending area on confirm — just close the window/clear the HUD (the bridge already returned async; send/decline messages are posted by the matching branch via postBridgeEvent)
       ctx.addMsg('sys', result.status === 'answered' ? t('🎯 Selected (candidate in AI pending area, click [element N] to send)') : (result.status === 'rejected' ? t('✕ User cancelled/declined: ') + (result.reason || '') : t('⏱ Pick timeout (no user response)')));
       return;
     }
     ctx.sendInteractionResult(pp.requestId, result);
     ctx.addMsg('sys', result.status === 'answered' ? t('🎯 User picked an element (sent to AI)') : (result.status === 'rejected' ? t('✕ User declined selection: ') + (result.reason || '') : t('⏱ Pick timeout (no user response)')));
   };
-  // 服务端结算（agent 停止/取消）→ 静默关闭点选面板（不回桥——桥已 settle，回传会报“无 pending”）
+  // Server-side settlement (agent stop/cancel) → silently close the pick panel (no bridge return — the bridge already settled; sending back would report "no pending")
   ctx.closePickPanel = function (requestId) {
     var pp = ctx.pickPanel;
     if (pp && pp.requestId === requestId) { pp.silent = true; ctx.finishPickPanel({ status: 'cancelled', error: t('AI stopped') }); }
   };
   ctx.showPickElementPanel = function (requestId, it) {
-    // 去重：同 requestId 重复投递（桥双 writer/双转发兜底）→ 跳过，否则第二条会立刻拒绝第一条（'新的交互打断'）
+    // Dedup: duplicate delivery of the same requestId (bridge dual-writer/dual-relay fallback) → skip, otherwise the second one would instantly reject the first ('interrupted by a new interaction')
     if (ctx.pickPanel && ctx.pickPanel.requestId === requestId) return;
     if (ctx.pickPanel) ctx.finishPickPanel({ status: 'rejected', reason: t('Interrupted by new interaction') });
-    // 清理可能残留的弹窗（MCP 调用中断/超时可能留下未清理的确认窗——用户看到多个堆叠）
+    // Clean up possibly leftover dialogs (an interrupted/timed-out MCP call may leave an uncleaned confirm dialog — the user sees several stacked)
     try {
       var _olds = ctx.root.querySelectorAll('.dbg-pick-dialog');
       for (var _i = 0; _i < _olds.length; _i++) { if (_olds[_i].parentNode) _olds[_i].parentNode.removeChild(_olds[_i]); }
     } catch (e) {}
-    // 不包装 updateHud——点选 UI 走原有工具条（target.js hover/锁定 + ✓ 确认），一套 inspect 系统（用户要求）
-    ctx.selfAiRequested = false; // 桥 pick_element 交互（AI 发起）：结果/候选归 AI 窗（原逻辑，谁触发归谁）
-    var timeoutMs = parseInt(it.timeoutMs, 10) > 0 ? parseInt(it.timeoutMs, 10) : 0; // timeout 可选：>0 才倒计时读秒/到点超时；0=永久等待（面板常驻直到用户操作）
+    // Do not wrap updateHud — the pick UI uses the existing toolbar (target.js hover/lock + ✓ confirm), one inspect system (per user request)
+    ctx.selfAiRequested = false; // bridge pick_element interaction (AI-initiated): results/candidates belong to the AI window (original logic: it belongs to whoever triggered it)
+    var timeoutMs = parseInt(it.timeoutMs, 10) > 0 ? parseInt(it.timeoutMs, 10) : 0; // timeout optional: only >0 starts the countdown/expiry timeout; 0 = wait forever (panel stays persistent until the user acts)
     var startedAt = Date.now();
     var asyncMode = !!it.async;
-    // 确认弹窗（告诉用户现在要选：现在开始/暂不选择）——toast 4.5s 太容易消失看不见（用户实测），恢复弹窗；
-    //   确认后才进入点选（工具条 hover/锁定），后续点选/结果全走原有工具条（一套 inspect 系统）
+    // Confirm dialog (tells the user a pick is coming: start now / not now) — the 4.5s toast disappears too fast to notice (user-tested), dialog restored;
+    //   pick mode (toolbar hover/lock) starts only after confirmation; subsequent picking/results all go through the existing toolbar (one inspect system)
     var dialog = el('div', { class: 'dbg-pick-dialog' });
     var head = el('div', { class: 'dbg-pick-head' });
     head.appendChild(el('span', { class: 'dbg-pick-title' }, [t('🎯 AI asks you to pick a page element')]));
-    var noTimeout = !(timeoutMs > 0); // 永久等待：无倒计时/暂停（⏸ 藏掉——没东西可暂停），头部静态 ♾ 标记面板常驻直到用户操作
+    var noTimeout = !(timeoutMs > 0); // wait forever: no countdown/pause (⏸ hidden — nothing to pause), static ♾ in the header marks the panel persistent until the user acts
     var timerSpan = el('span', { style: 'font-weight:400;color:#93c5fd;font-size:11px' }, [noTimeout ? t('♾ Waiting') : ('⏱ ' + Math.ceil(timeoutMs / 1000) + 's')]);
     var pauseBtn = el('button', { title: t('Pause countdown') }, ['⏸']);
     if (noTimeout) pauseBtn.style.display = 'none';
@@ -265,19 +253,19 @@ export function initInteract(ctx) {
     var c = el('div', { style: 'margin-top:8px;display:flex;gap:6px;justify-content:center' });
     var startBtn = el('button', { class: 'dbg-pick-ok' }, [t('🖱 Start selecting')]);
     var laterBtn = el('button', { class: 'dbg-pick-cancel' }, [t('⏳ Not now')]);
-    c.appendChild(laterBtn); c.appendChild(startBtn); // 手机惯例：主操作（现在开始选择）在右侧
+    c.appendChild(laterBtn); c.appendChild(startBtn); // mobile convention: primary action (start selecting now) on the right
     body.appendChild(c);
     dialog.appendChild(body);
     ctx.root.appendChild(dialog);
-    dialog.style.zIndex = '2147483648'; // 盖住工具条（2147483647）——否则按钮区域被工具条盖住点不了
-    // 公共浮层定位（placePhysPanel——与 AI 窗/HUD 同套视觉坐标算法）：底部居中、限宽 420、自适应内容高、≤可视区（offsetY 抬高，同上）
+    dialog.style.zIndex = '2147483648'; // cover the toolbar (2147483647) — otherwise the toolbar covers the button area and it cannot be clicked
+    // Shared floating-layer positioning (placePhysPanel — same visual coordinate algorithm as the AI window/HUD): bottom-centered, width capped at 420, content-fit height, ≤ visible area (offsetY lifts it, same as above)
     placePhysPanel(dialog, { visW: Math.min(420, Math.round(getPhysViewport().w) - 24), dock: 'bottom', gap: 12, offsetY: 64, minH: 40, maxWidth: '420px', overflowY: 'auto' });
-    try { ctx.dodgeToolbarAboveDialog(dialog); } catch (e) {} // 工具条已显示 → 立即避让（含无选区/拖动过的情形，重锚对它们 no-op）
-    // 拖拽移动：按住头部（非按钮）拖动面板（makePointerDrag——AI 窗/fab/问答面板同款基础设施）
+    try { ctx.dodgeToolbarAboveDialog(dialog); } catch (e) {} // toolbar already shown → dodge immediately (covers the no-selection/dragged cases; re-anchor is a no-op for them)
+    // Drag to move: hold the header (non-button) to drag the panel (makePointerDrag — same infrastructure as the AI window/fab/Q&A panel)
     try {
       makePointerDrag({
         handle: head, capture: 'now', raf: true, preventStart: true,
-        filter: function (e) { return !(e.target && e.target.tagName === 'BUTTON'); },
+        filter: function (e) { return !(e.target && e.target.closest && e.target.closest('button')); },
         onStart: function () {
           dialog.classList.add('dbg-dragging');
           return { left: dialog.offsetLeft || 0, top: dialog.offsetTop || 0 };
@@ -298,10 +286,10 @@ export function initInteract(ctx) {
       body.style.display = hidden ? '' : 'none';
       minBtn.textContent = hidden ? t('👁 Hide') : t('👁 Show');
       if (dialog.parentNode) placePhysPanel(dialog, { visW: Math.min(420, Math.round(getPhysViewport().w) - 24), dock: 'bottom', gap: 12, offsetY: 64, minH: 40, maxWidth: '420px', overflowY: 'auto' });
-      // offsetY 必须保留：丢了会贴到屏幕最底，正好压住底部贴合的 inspect 工具条
+      // offsetY must be kept: without it the panel sits flush at the very bottom of the screen, right on top of the bottom-docked inspect toolbar
     });
     function startInspect() {
-      ctx.hideAiForPick(); // 隐藏 AI 窗（用户直接去选择）
+      ctx.hideAiForPick(); // hide the AI window (the user goes straight to picking)
       ctx.aiInspectActive = true;
       ctx.selfEngaged = false;
       ctx.enterSelfClient(isTouchDevice() ? 'touch' : 'mouse');
@@ -309,18 +297,18 @@ export function initInteract(ctx) {
       ctx.broadcast({ type: 'dbg_enter_inspector', payload: { mode: 'mouse' } });
       ctx.broadcast({ type: 'dbg_ai_pick', payload: { active: true } });
       ctx.addMsg('sys', t('🎯 Pick mode (') + String(it.prompt || '').slice(0, 40) + t(') — hover to highlight, click to lock, confirm on the toolbar.'));
-      try { if (ctx.showPickHint) ctx.showPickHint(); } catch (e) {} // 小屏底部 toast：点击元素选择
+      try { if (ctx.showPickHint) ctx.showPickHint(); } catch (e) {} // small-screen bottom toast: click an element to select
     }
     startBtn.addEventListener('click', function () {
       try { if (dialog.parentNode) dialog.parentNode.removeChild(dialog); } catch (e) {}
       startInspect();
-      ctx.pickPanel.dialog = null; // 确认窗已移除——finishPickPanel 不再动它
+      ctx.pickPanel.dialog = null; // confirm dialog already removed — finishPickPanel no longer touches it
     });
     laterBtn.addEventListener('click', function () { ctx.finishPickPanel({ status: 'rejected', reason: t('User chose not to select now') }); });
-    // 倒计时（支持暂停/继续：⏸ 后服务器计时同步暂停）
+    // Countdown (pausable/resumable: after ⏸ the server pauses its timer in sync)
     var deadline = Date.now() + timeoutMs;
     var paused = false;
-    var remainingMs = timeoutMs; // 暂停时冻结剩余时间；恢复时按它重建 deadline（原逻辑用旧 deadline 丢失暂停时长 → 恢复后数字跳）
+    var remainingMs = timeoutMs; // freeze remaining time while paused; rebuild the deadline from it on resume (the original logic reused the stale deadline, losing the paused duration → the number jumped after resume)
     function tickCountdown() {
       if (paused) return;
       var left = Math.max(0, deadline - Date.now());
@@ -341,11 +329,11 @@ export function initInteract(ctx) {
       ctx.sendInteractionControl(requestId, paused ? 'pause' : 'resume');
     });
     ctx.pickPanel = { requestId: requestId, it: it, dialog: dialog, timerSpan: timerSpan, startedAt: startedAt, el: null, asyncMode: asyncMode, phase: 'confirm' };
-    ctx.pickPanel.timer = noTimeout ? null : setInterval(tickCountdown, 500); // 永久等待无计时器（finishPickPanel clearInterval(null) 安全）
+    ctx.pickPanel.timer = noTimeout ? null : setInterval(tickCountdown, 500); // wait forever has no timer (finishPickPanel clearInterval(null) is safe)
   };
 
-  // pick_element 交互：点选锁定后 UI 走原有工具条（target.js hover/锁定 + ✓ 确认）——一套 inspect 系统。
-  //   这里只记录当前选区 + 结果描述（供工具条 ✓ 确认发送用），不再渲染第二套 pick HUD（用户要求去掉）。
+  // pick_element interaction: once a pick is locked, the UI uses the existing toolbar (target.js hover/lock + ✓ confirm) — one inspect system.
+  //   Here we only record the current selection + result description (for the toolbar ✓ confirm to send); no second pick HUD is rendered (removed per user request).
   ctx.updatePickPanelLabel = function (p) {
     if (!ctx.pickPanel || !p) return;
     ctx.pickPanel.el = p;
@@ -355,24 +343,24 @@ export function initInteract(ctx) {
         + (p.xpath ? ' · ' + String(p.xpath).slice(0, 60) : '');
     }
   };
-  // ---- 兜底问答面板（AI 窗口未连接时宿主直接渲染：confirm/choose/input/presence） ----
+  // ---- Fallback Q&A panel (host renders directly when the AI window is not connected: confirm/choose/input/presence) ----
   ctx.showHostAskPanel = function (requestId, it) {
-    // 去重：同 requestId 重复投递（桥双 writer/双转发兜底）→ 跳过，不堆叠双面板（用户会看到两个、点一个留一个）
+    // Dedup: duplicate delivery of the same requestId (bridge dual-writer/dual-relay fallback) → skip, do not stack two panels (the user would see two, click one and leave the other behind)
     if (ctx.hostAskPanels && ctx.hostAskPanels[requestId]) return;
     var kind = it.kind || 'confirm';
-    var timeoutMs = parseInt(it.timeoutMs, 10) > 0 ? parseInt(it.timeoutMs, 10) : 0; // timeout 可选：>0 才倒计时读秒/到点超时；0=永久等待（面板常驻直到用户操作）
+    var timeoutMs = parseInt(it.timeoutMs, 10) > 0 ? parseInt(it.timeoutMs, 10) : 0; // timeout optional: only >0 starts the countdown/expiry timeout; 0 = wait forever (panel stays persistent until the user acts)
     var startedAt = Date.now();
-    var seq = (ctx.askPanelSeq = (ctx.askPanelSeq || 0) + 1); // 面板序号：键盘快捷键只响应最新面板（多面板并存防双响应）
-    // 面板宽度：桌面 520（问题/选项长文案一屏读完，不再 360 挤压换行）；小屏自动收缩到可视宽 -24（物理适配由 placePhysPanel 统一裁决）
+    var seq = (ctx.askPanelSeq = (ctx.askPanelSeq || 0) + 1); // panel sequence number: keyboard shortcuts respond only to the newest panel (prevents double responses when multiple panels coexist)
+    // Panel width: desktop 520 (long prompt/option text reads on one screen instead of wrapping cramped at 360); small screens auto-shrink to visible width - 24 (physical adaptation is decided uniformly by placePhysPanel)
     function reflowPanel() {
       var w = Math.min(520, Math.round(getPhysViewport().w) - 24);
       placePhysPanel(dialog, { visW: w, dock: 'bottom', gap: 12, offsetY: 64, minH: 40, maxWidth: w + 'px', overflowY: 'auto' });
     }
-    var dialog = el('div', { class: 'dbg-pick-dialog' }); // 浮层面板（右下角，不覆盖全屏）
+    var dialog = el('div', { class: 'dbg-pick-dialog' }); // floating panel (bottom-right, does not cover the whole screen)
     var head = el('div', { class: 'dbg-pick-head' });
     var kindTitle = { confirm: t('🤖 AI needs your confirmation'), choose: t('🤖 AI asks you to choose'), input: t('✍️ AI asks for your input'), presence: t('🙋 AI asks if you\'re present') };
     head.appendChild(el('span', { class: 'dbg-pick-title' }, [kindTitle[kind] || t('🤖 AI needs your answer')]));
-    var noTimeout = !(timeoutMs > 0); // 永久等待：无倒计时/暂停（⏸ 藏掉），头部静态 ♾ 标记面板常驻直到用户操作
+    var noTimeout = !(timeoutMs > 0); // wait forever: no countdown/pause (⏸ hidden), static ♾ in the header marks the panel persistent until the user acts
     var timerSpan = el('span', { style: 'font-weight:400;color:#93c5fd;font-size:11px' }, [noTimeout ? t('♾ Waiting') : ('⏱ ' + Math.ceil(timeoutMs / 1000) + 's')]);
     var pauseBtn = el('button', { title: t('Pause countdown') }, ['⏸']);
     if (noTimeout) pauseBtn.style.display = 'none';
@@ -380,37 +368,57 @@ export function initInteract(ctx) {
     head.appendChild(timerSpan);
     head.appendChild(pauseBtn);
     head.appendChild(minBtn);
-    // 取消（拒绝本次请求）：全面板头部右上角 ✕（标准关闭位）；多选底部另有「✕ 取消 + ✅ 发送所选」（用户认可，保留）
+    // One-click copy-all in the header (same interaction as the notify card): lucide copy icon -> green check.
+    // Copies the full prompt (long URLs/auth links are painful to hand-select); body stays plain/selectable.
+    var copyBtn = el('button', { title: t('Copy all'), style: 'padding:3px 7px' }, [elSvg(LUCIDE.copy, 13)]);
+    copyBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var done = function (ok) {
+        copyBtn.innerHTML = '';
+        copyBtn.appendChild(ok ? elSvg(LUCIDE.check, 13) : document.createTextNode('✕'));
+        copyBtn.style.color = ok ? '#4ade80' : '#f87171';
+        setTimeout(function () {
+          copyBtn.innerHTML = '';
+          copyBtn.appendChild(elSvg(LUCIDE.copy, 13));
+          copyBtn.style.color = '';
+        }, 1200);
+      };
+      if (ctx.copyToClipboard) ctx.copyToClipboard(it.prompt || '', done); else done(false);
+    });
+    head.appendChild(copyBtn);
+    // Cancel (decline this request): ✕ at the top-right of the panel header (standard close position); multi-select additionally has "✕ Cancel + ✅ Send selected" at the bottom (user-approved, kept)
     var cancelHead = el('button', { title: t('Cancel (decline this request)'), style: 'font-size:15px;font-weight:700;padding:2px 10px' }, ['✕']);
     cancelHead.addEventListener('click', function () { finishAsk({ status: 'rejected', reason: t('User cancelled') }); });
     head.appendChild(cancelHead);
     dialog.appendChild(head);
     var body = el('div', { class: 'dbg-pick-body' });
-    // 问题区：大字号高对比 + 左侧强调条（.dbg-ask-prompt）——AI 的问题是面板最重要信息（布局分区）
-    // 右上角「📋 复制」：消息全文一键复制（用户要求——长 URL/授权链接等场景）
-    body.appendChild(makeCopyableBlock(it.prompt || '', 'dbg-ask-prompt'));
+    // Prompt area: large font, high contrast + left accent bar (.dbg-ask-prompt) — the AI's question is the panel's most important content.
+    // Plain selectable text; one-click copy-all lives in the header (lucide copy, same as the notify card)
+    var promptBlock = el('div', { class: 'dbg-ask-prompt dbg-copyable' });
+    promptBlock.appendChild(el('span', {}, [it.prompt || '']));
+    body.appendChild(promptBlock);
     minBtn.addEventListener('click', function () {
       var hidden = body.style.display === 'none';
       body.style.display = hidden ? '' : 'none';
       minBtn.textContent = hidden ? t('👁 Hide') : t('👁 Show');
-      // 重算面板高度：隐藏时收起成头部细栏（原固定高 → body 藏了但高度不变 = 空盒子，很搞笑），显示时恢复内容高
+      // Recompute panel height: when hidden, collapse to a thin header bar (previously fixed height → body hidden but height unchanged = an empty box, quite comical); restore content height when shown
       try { reflowPanel(); } catch (e) {}
     });
     var ctl = el('div', { style: 'display:flex;flex-direction:column;gap:6px;margin-top:8px' });
-    var multiple = !!it.multiple; // choose 支持多选
-    var singleShot = !(kind === 'choose' && multiple); // 单选：点选项立即作答；多选/自定义：两步（选完点发送）
-    // 选项区标签（非 input 时显示）——文案随交互模式引导（编号徽标 + 键盘 1-9 快捷键）
+    var multiple = !!it.multiple; // choose supports multi-select
+    var singleShot = !(kind === 'choose' && multiple); // single-select: clicking an option answers immediately; multi-select/custom: two steps (pick, then click Send)
+    // Options-area label (shown when kind is not input) — copy guides per interaction mode (numbered badges + keyboard 1-9 shortcuts)
     if (kind !== 'input') {
       ctl.appendChild(el('div', { class: 'dbg-ask-label' }, [singleShot ? t('Click an option or press 1-9 to answer:') : t('Check items (multi-select) then press Send:')]));
     }
-    var optWrap = el('div', { style: 'display:flex;flex-direction:column;gap:8px;margin-top:8px' }); // 垂直全宽列表：长文案不挤压、扫读快
+    var optWrap = el('div', { style: 'display:flex;flex-direction:column;gap:8px;margin-top:8px' }); // vertical full-width list: long text is not squeezed and scans fast
     var sel = { v: null, idxs: {}, custom: false };
-    // finishAskCustom 提升到函数级：原在 else 块内声明——块级函数声明在 ESM/strict 下作用域限于块内，
-    // 底部多选「发送所选 ✓」（else 块外）引用它 → ReferenceError → 多选面板构建中断、永远弹不出
+    // finishAskCustom hoisted to function level: it was declared inside the else block — block-level function declarations are scoped to their block in ESM/strict mode,
+    // so the bottom multi-select "Send selected ✓" (outside the else block) referencing it → ReferenceError → multi-select panel construction aborts and never pops up
     function finishAskCustom() {
       var comment = commentInp ? commentInp.value.trim() : '';
       var cv = comment ? { comment: comment } : {};
-      // 固定选项「都不适合」→ 自定义回答（补充说明字段始终可用，与是否选此项无关）
+      // The fixed "None of these" option → custom answer (the extra-note field is always available, regardless of whether this option is picked)
       if (sel.custom) {
         if (kind === 'choose') finishAsk({ status: 'answered', value: { index: -1, label: comment || t('None of these'), custom: true } });
         else if (kind === 'confirm') finishAsk({ status: 'answered', value: { approved: null, custom: comment || t('None of these') } });
@@ -440,7 +448,7 @@ export function initInteract(ctx) {
         else finishAsk({ status: 'answered', value: Object.assign({ present: true }, cv) });
       }
     }
-    // 选项按钮顺序契约（2026-09 用户指定）：编号选项 1/2/3… → 确认（主操作）→ 取消/否定 → 「都不适合」（自上而下）
+    // Option button order contract (user-specified, 2026-09): numbered options 1/2/3… → Confirm (primary action) → Cancel/Negative → "None of these" (top to bottom)
     function askNum(n) { return el('span', { class: 'dbg-ask-num' }, [String(n)]); }
     if (kind === 'confirm') {
       optWrap.appendChild(el('button', { class: 'dbg-primary dbg-ask-opt', 'data-v': 'yes' }, [askNum(1), t('Yes / Confirm')]));
@@ -455,15 +463,15 @@ export function initInteract(ctx) {
       optWrap.appendChild(el('button', { class: 'dbg-ghost dbg-ask-opt dbg-ask-no', 'data-v': 'later' }, [askNum(2), t('Later / Away')]));
     }
     if (kind !== 'input') ctl.appendChild(optWrap);
-    // 独立补充说明（confirm/choose/presence）：选了任何选项后都能再补充；仅填补充 = 自定义回答
+    // Standalone extra note (confirm/choose/presence): can be added after picking any option; filling only the note = custom answer
     var commentInp = null, sendBtn = null;
     if (kind === 'confirm' || kind === 'choose' || kind === 'presence') {
       ctl.appendChild(el('div', { class: 'dbg-ask-label' }, [t('📝 Extra note (optional)')]));
       var commentRow = el('div', { style: 'display:flex;gap:6px' });
       commentInp = el('input', { type: 'text', placeholder: singleShot ? t('📝 Extra note (optional; added when you click an option)') : t('📝 Extra note (optional)'), style: 'background:rgba(255,255,255,.06);border:1px solid rgba(148,163,184,.35);color:#f1f5f9;border-radius:8px;padding:9px 11px;font:inherit;flex:1' });
-      // 发送按钮：亮绿高亮（CSS .dbg-ask-send）——加宽加粗（用户实测「确认按钮明显、发送完全不明显」）；
-      // 单选即答默认隐藏（点选项已直接发送），仅在「都不适合」（需打字）时出现；
-      // 多选：发送按钮并入底部主操作行（footSend）——此处不创建，避免两个「发送所选 ✓」
+      // Send button: bright green highlight (CSS .dbg-ask-send) — widened and bolded (user testing: "the confirm button is obvious but Send is not obvious at all");
+      // hidden by default for single-shot answering (clicking an option already sends); appears only for "None of these" (which requires typing);
+      // multi-select: the send button merges into the bottom action row (footSend) — not created here, avoiding two "Send selected ✓" buttons
       sendBtn = multiple ? null : el('button', { class: 'dbg-primary dbg-ask-send', style: (singleShot ? 'display:none;' : '') + 'flex:1;font-weight:700;font-size:13px;padding:9px 12px' }, [t('✓ Send')]);
       commentRow.appendChild(commentInp);
       if (sendBtn) commentRow.appendChild(sendBtn);
@@ -478,7 +486,7 @@ export function initInteract(ctx) {
       send.addEventListener('click', function () { finishAsk({ status: 'answered', value: { text: inp.value } }); });
       inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') send.click(); });
     } else {
-      // 选项（单选/多选）+ 补充说明组合发送
+      // Options (single/multi-select) + extra note sent together
       var optBtns = optWrap.querySelectorAll('.dbg-ask-opt');
       function refreshAskSend() {
         var hasSel = sel.custom || (multiple ? Object.keys(sel.idxs).length > 0 : sel.v !== null);
@@ -491,12 +499,12 @@ export function initInteract(ctx) {
       }
       Array.prototype.forEach.call(optBtns, function (o) {
         o.addEventListener('click', function () {
-          // 固定选项「都不适合」：普通选项之一（排他），点选后聚焦补充输入框（补充说明本身始终可用）
+          // Fixed "None of these" option: one of the regular options (exclusive); picking it focuses the extra-note input (the extra note itself is always available)
           if (o.hasAttribute('data-custom')) {
             sel.custom = true;
             sel.v = null; sel.idxs = {};
             Array.prototype.forEach.call(optBtns, function (x) { x.classList.toggle('dbg-on', x === o); });
-            if (sendBtn) sendBtn.style.display = ''; // 「都不适合」需打字 → 显示发送按钮（单选模式下默认隐藏）
+            if (sendBtn) sendBtn.style.display = ''; // "None of these" requires typing → show the send button (hidden by default in single-shot mode)
             if (commentInp) { try { commentInp.focus(); } catch (e) {} }
             refreshAskSend();
             return;
@@ -514,9 +522,9 @@ export function initInteract(ctx) {
             Array.prototype.forEach.call(optBtns, function (x) { x.classList.toggle('dbg-on', x === o); });
           }
           refreshAskSend();
-          // 单选即答：confirm/presence/choose(单选) 点击选项立即作答（已输入的补充说明随答案带上）——
-          // 曾是两步（先选后点发送）：用户点 ✅ 无反应以为坏了，实测「点了不生效」；
-          // 多选（需组合勾选）与「都不适合」（需打字）仍为两步——它们的 ✓ 发送按钮不消失
+          // Single-shot answering: confirm/presence/choose (single) answers immediately when an option is clicked (any typed extra note rides along with the answer) —
+          // it used to be two steps (pick, then click Send): users clicked ✅, saw no reaction and assumed it was broken (user testing: "clicked but nothing happened");
+          // multi-select (requires combined checking) and "None of these" (requires typing) remain two steps — their ✓ send button does not disappear
           if (!(kind === 'choose' && multiple)) {
             setTimeout(finishAskCustom, 0);
           }
@@ -528,7 +536,7 @@ export function initInteract(ctx) {
         commentInp.addEventListener('keydown', function (e) {
           if (e.key !== 'Enter') return;
           if (sendBtn && !sendBtn.disabled) sendBtn.click();
-          else if (footSend) footSend.click(); // 多选：Enter 触发底部「发送所选 ✓」（footSend var 提升，点击时已赋值）
+          else if (footSend) footSend.click(); // multi-select: Enter triggers the bottom "Send selected ✓" (footSend is a hoisted var, assigned by the time of the click)
         });
       }
       refreshAskSend();
@@ -536,7 +544,7 @@ export function initInteract(ctx) {
     body.appendChild(ctl);
     if (it.rejectable !== false && kind !== 'presence') {
       var det2 = el('details', {}, []);
-      // 拒绝区：文字/点击区域放大（用户实测 11px 太小不好点）
+      // Reject area: enlarged text/click target (user testing: 11px was too small to tap)
       det2.appendChild(el('summary', { style: 'cursor:pointer;font-size:13px;color:#cbd5e1;margin-top:10px;padding:4px 0;user-select:none' }, [t('✕ Can\'t handle now (tell AI why)')]));
       var rr2 = el('div', { style: 'display:flex;flex-wrap:wrap;gap:8px;margin-top:6px' });
       [t('I can\'t fulfill this right now'), t('Can\'t find/select it right now'), t('Handle it later')].forEach(function (r) {
@@ -544,41 +552,41 @@ export function initInteract(ctx) {
       });
       det2.appendChild(rr2);
       body.appendChild(det2);
-      // 展开/收起「无法处理」时重算面板高度：placePhysPanel 创建时按收起态定高（固定高），
-      // 展开后内容变高 → 固定高溢出出滚动条（用户实测）；toggle 后重新定位（底部锚定 → 向上长）
+      // Recompute panel height when the "can't handle now" section expands/collapses: placePhysPanel fixes the height at creation based on the collapsed state,
+      // after expanding the content grows taller → the fixed height overflows with a scrollbar (user-tested); reposition after toggle (bottom-anchored → grows upward)
       det2.addEventListener('toggle', function () {
         try { reflowPanel(); } catch (e) {}
       });
     }
     dialog.appendChild(body);
-    // 底部主操作行：仅多选（用户认可：取消靠左 + 发送靠右）；单选/确认/输入的取消已移到头部 ✕
+    // Bottom action row: multi-select only (user-approved: Cancel on the left + Send on the right); cancel for single-select/confirm/input has moved to the header ✕
     if (kind === 'choose' && multiple) {
       var footRow = el('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:10px' });
       footRow.appendChild(el('button', { class: 'dbg-pick-cancel dbg-ask-cancel' }, [t('✕ Cancel')]));
-      // 底部主发送按钮：更大更醒目（✅ + 已选数量动态更新 + 未选禁用）——用户实测原来两个「发送所选 ✓」重复且看不清
+      // Bottom primary send button: bigger and more prominent (✅ + live selected count + disabled when nothing is selected) — user testing: the original two "Send selected ✓" buttons were duplicated and hard to read
       var footSend = el('button', { class: 'dbg-primary dbg-ask-send', style: 'flex:1;font-weight:800;font-size:16px;padding:12px 18px;border-radius:10px;letter-spacing:.5px;display:flex;align-items:center;justify-content:center;gap:6px' }, [t('✅ Send selected (0)')]);
-      footSend.disabled = true; // 初始无勾选：禁用（refreshAskSend 在 else 块内先跑、此时 footSend 未赋值，创建后显式初始化）
+      footSend.disabled = true; // nothing checked initially: disabled (refreshAskSend runs first inside the else block while footSend is still unassigned, so initialize explicitly after creation)
       footSend.addEventListener('click', finishAskCustom);
       footRow.appendChild(footSend);
       body.appendChild(footRow);
     }
     ctx.root.appendChild(dialog);
-    dialog.style.zIndex = '2147483648'; // 盖住工具条（2147483647）——同上，按钮可点
-    // 公共浮层定位（placePhysPanel——与 AI 窗/HUD/确认窗同套算法）：底部居中、限宽 520/小屏自适应、内容自适高、≤可视区
-    // offsetY: 抬高底部留空（展开「无法处理」拒绝区/多选时面板向上长，底部不被 AI 窗/FAB 压着）
+    dialog.style.zIndex = '2147483648'; // cover the toolbar (2147483647) — same as above, keeps the buttons clickable
+    // Shared floating-layer positioning (placePhysPanel — same algorithm as the AI window/HUD/confirm dialog): bottom-centered, width capped at 520/auto-shrunk on small screens, content-fit height, ≤ visible area
+    // offsetY: lift the bottom to leave clearance (with the "can't handle now" reject area expanded or in multi-select the panel grows upward, keeping the bottom clear of the AI window/FAB)
     try { reflowPanel(); } catch (e) {}
-    try { ctx.dodgeToolbarAboveDialog(dialog); } catch (e) {} // 工具条已显示 → 立即避让（同点选确认窗）
-    // 拖拽移动：按住头部（非按钮）拖动面板——公共手势 makePointerDrag（AI 窗/fab 同款基础设施，drag.js）
+    try { ctx.dodgeToolbarAboveDialog(dialog); } catch (e) {} // toolbar already shown → dodge immediately (same as the pick confirm dialog)
+    // Drag to move: hold the header (non-button) to drag the panel — shared gesture makePointerDrag (same infrastructure as the AI window/fab, drag.js)
     try {
       makePointerDrag({
         handle: head, capture: 'now', raf: true, preventStart: true,
-        filter: function (e) { return !(e.target && e.target.tagName === 'BUTTON'); }, // 头部按钮（⏸/👁/✕）不触发拖拽
+        filter: function (e) { return !(e.target && e.target.closest && e.target.closest('button')); }, // header buttons (⏸/👁/✕) do not trigger dragging
         onStart: function () {
           dialog.classList.add('dbg-dragging');
           return { left: dialog.offsetLeft || 0, top: dialog.offsetTop || 0 };
         },
         onMove: function (ev, st, dx, dy) {
-          // left/top 为 CSS px（positionPhysical 同坐标系）；clamp 视口内
+          // left/top are CSS px (same coordinate system as positionPhysical); clamped to the viewport
           var nl = Math.min(Math.max(0, st.left + dx), Math.max(40, (window.innerWidth || 0) - 60));
           var nt = Math.min(Math.max(0, st.top + dy), Math.max(24, (window.innerHeight || 0) - 40));
           dialog.style.left = nl + 'px';
@@ -600,10 +608,10 @@ export function initInteract(ctx) {
       res.tookMs = Date.now() - startedAt;
       dialog.classList.remove('dbg-open');
       setTimeout(function () { if (dialog.parentNode) dialog.parentNode.removeChild(dialog); }, 200);
-      try { ctx.floatToolbarReAnchor(); } catch (e) {} // 浮窗关闭 → 工具条回选区旁（弹出时曾为避让浮窗挪位）
-      if (silent) return; // 服务端已结算（超时/取消/agent 停止）——只关面板，不回桥
+      try { ctx.floatToolbarReAnchor(); } catch (e) {} // floating window closed → the toolbar re-anchors next to the selection (it was moved aside to dodge the floating window when the panel popped up)
+      if (silent) return; // already settled server-side (timeout/cancel/agent stop) — just close the panel, no bridge return
       if (it.async) {
-        // 异步：成功/拒绝消息经桥 event 发 MCP（不阻塞——桥已异步返回）；answered 结果同时进 AI 待选（候选 [回答N]——与 HUD 一致）
+        // Async: success/decline messages go to MCP via bridge events (non-blocking — the bridge already returned async); answered results also enter the AI pending area (candidate [answer N] — consistent with the HUD)
         if (res.status === 'answered') {
           var txt = describeAnswer(kind, res.value);
           ctx.postBridgeEvent('user_answer', { kind: kind, answer: txt, status: 'answered' });
@@ -620,11 +628,11 @@ export function initInteract(ctx) {
     ctx.hostAskPanels = ctx.hostAskPanels || {};
     var silent = false;
     ctx.hostAskPanels[requestId] = { finishAsk: finishAsk, startedAt: startedAt };
-    var timer = noTimeout ? null : setInterval(tickCountdown, 500); // 永久等待无计时器（finishAsk clearInterval(null) 安全）
-    // 倒计时（支持暂停/继续：⏸ 后服务器计时同步暂停，用户有充足时间处理）——仅 AI 传了 timeout 时存在
+    var timer = noTimeout ? null : setInterval(tickCountdown, 500); // wait forever has no timer (finishAsk clearInterval(null) is safe)
+    // Countdown (pausable/resumable: after ⏸ the server pauses its timer in sync, giving the user ample time to handle it) — exists only when the AI passed a timeout
     var deadline = Date.now() + timeoutMs;
     var paused = false;
-    var remainingMs = timeoutMs; // 暂停时冻结剩余时间；恢复时按它重建 deadline（原逻辑用旧 deadline 丢失暂停时长 → 恢复后数字跳）
+    var remainingMs = timeoutMs; // freeze remaining time while paused; rebuild the deadline from it on resume (the original logic reused the stale deadline, losing the paused duration → the number jumped after resume)
     function tickCountdown() {
       if (paused) return;
       var left = Math.max(0, deadline - Date.now());
@@ -644,7 +652,7 @@ export function initInteract(ctx) {
       }
       ctx.sendInteractionControl(requestId, paused ? 'pause' : 'resume');
     });
-    // 键盘快捷键：数字键 1-9 直选对应选项（与徽标编号一致；输入框聚焦时忽略——打字优先）；仅最新面板响应（多面板并存防双响应）
+    // Keyboard shortcuts: number keys 1-9 directly pick the matching option (matching the badge numbers; ignored while an input is focused — typing takes priority); only the newest panel responds (prevents double responses when multiple panels coexist)
     var keyHandler = function (e) {
       if (done) return;
       if (seq !== ctx.askPanelSeq) return;
@@ -673,38 +681,77 @@ export function initInteract(ctx) {
         finishAsk({ status: 'rejected', reason: t('User cancelled') });
       }
     });
-    // 服务端结算（agent 停止/取消）→ 静默关闭问答面板（不回桥——桥已 settle，回传会报“无 pending”）
+    // Server-side settlement (agent stop/cancel) → silently close the Q&A panel (no bridge return — the bridge already settled; sending back would report "no pending")
     ctx.closeHostAskPanel = function (requestId) {
       var p = ctx.hostAskPanels[requestId];
       if (p) { silent = true; p.finishAsk({ status: 'cancelled', error: t('AI stopped') }); }
     };
   };
 
-  // ---- 纯通知卡（user_notify）：右下角浮动小卡——系统 Notification 之外页面内也可见可回看 ----
-  // 无需作答/不回桥（notify 即发即忘）：timeout 可选——不传=常驻直到 ✕（♾ 不读秒不自动收卡）；传了才倒计时读秒，到点自动收卡（⏸ 可暂停）
+  // ---- Pure notification card (user_notify): small floating card at the bottom-right — visible and reviewable in-page beyond the system Notification ----
+  // No answer needed / no bridge return (notify is fire-and-forget): timeout optional — omitted = persistent until ✕ (♾ no countdown, no auto-close); if passed, a countdown runs and the card auto-closes on expiry (⏸ pausable)
+  // Multi-card stacking: active-card stack -- new cards pile upward instead of stacking on the same spot
+  //   (historical bug: every card docked at one point, persistent cards piled up with only the top visible);
+  //   closing/expiring a card re-stacks the rest; user-dragged cards keep their position (restack skips them);
+  //   stack capped at 6, oldest card auto-closed beyond that.
+  ctx.notifyCards = [];
+  function restackNotifyCards() {
+    var offsetY = 64; // bottom baseline (same clearance as fab/answer cards)
+    for (var i = 0; i < ctx.notifyCards.length; i++) {
+      var c = ctx.notifyCards[i];
+      if (!c.dialog.isConnected || c.userMoved) continue;
+      try {
+        var r = placePhysPanel(c.dialog, { visW: c.visW, dock: 'bottom', gap: 12, offsetY: offsetY, minH: 40, maxWidth: '520px', overflowY: 'auto' });
+        c.visH = r.visH;
+        offsetY += r.visH + 12;
+      } catch (e) {}
+    }
+  }
   ctx.showNotifyPanel = function (requestId, it) {
-    var timeoutMs = parseInt(it.timeoutMs, 10) > 0 ? parseInt(it.timeoutMs, 10) : 0; // timeout 可选：>0 才倒计时读秒/到点自动收卡；0=常驻直到用户 ✕
+    var timeoutMs = parseInt(it.timeoutMs, 10) > 0 ? parseInt(it.timeoutMs, 10) : 0; // timeout optional: only >0 runs the countdown/auto-closes on expiry; 0 = persistent until the user clicks ✕
     var dialog = el('div', { class: 'dbg-pick-dialog' });
     var head = el('div', { class: 'dbg-pick-head' });
     head.appendChild(el('span', { class: 'dbg-pick-title' }, ['🔔 ' + (it.title || t('AI notification'))]));
-    var noTimeout = !(timeoutMs > 0); // 无 timeout：通知卡常驻（♾ 不读秒、不自动收卡）
+    var noTimeout = !(timeoutMs > 0); // no timeout: the notification card is persistent (♾ no countdown, no auto-close)
     var timerSpan = el('span', { style: 'font-weight:400;color:#93c5fd;font-size:11px' }, [noTimeout ? t('♾ Persistent') : ('⏱ ' + Math.ceil(timeoutMs / 1000) + 's')]);
     var pauseBtn = el('button', { title: t('Pause countdown') }, ['⏸']);
     if (noTimeout) pauseBtn.style.display = 'none';
     head.appendChild(timerSpan);
     head.appendChild(pauseBtn);
+    // one-click copy-all lives in the header (the floating body-corner button moved up here: body stays
+    // clean and freely selectable); icon is the lucide copy line icon (same shapes as the host message
+    // copy button -- the color emoji clashed), success feedback swaps to a green check
+    var copyBtn = el('button', { title: t('Copy all'), style: 'padding:3px 7px' }, [elSvg(LUCIDE.copy, 13)]);
+    copyBtn.addEventListener('click', function (e) {
+      e.stopPropagation(); // keep panel-level click delegation out
+      var done = function (ok) {
+        copyBtn.innerHTML = '';
+        copyBtn.appendChild(ok ? elSvg(LUCIDE.check, 13) : document.createTextNode('✕'));
+        copyBtn.style.color = ok ? '#4ade80' : '#f87171';
+        setTimeout(function () {
+          copyBtn.innerHTML = '';
+          copyBtn.appendChild(elSvg(LUCIDE.copy, 13));
+          copyBtn.style.color = '';
+        }, 1200);
+      };
+      if (ctx.copyToClipboard) ctx.copyToClipboard(it.body || '', done); else done(false);
+    });
+    head.appendChild(copyBtn);
     var closeBtn = el('button', { title: t('Close'), style: 'font-size:15px;font-weight:700;padding:2px 10px' }, ['✕']);
     head.appendChild(closeBtn);
     dialog.appendChild(head);
-    var body = el('div', { class: 'dbg-pick-body' });
-    body.appendChild(makeCopyableBlock(it.body || '', 'dbg-notify-body')); // 通知正文同款「📋 复制」（常驻卡可回看，复制需求同问答面板）
+    var body = el('div', { class: 'dbg-pick-body dbg-notify-body' });
+    body.appendChild(el('span', {}, [it.body || ''])); // plain-text body: freely selectable / Ctrl+C / context-menu copy (CSS .dbg-notify-body user-select:text)
     dialog.appendChild(body);
+    var visW = Math.min(520, Math.round(getPhysViewport().w) - 24);
+    var card = { dialog: dialog, visW: visW, visH: 0, userMoved: false, close: function () { closeCard(); } }; // stack entry (closeCard declared later, defined by call time)
     try {
       makePointerDrag({
         handle: head, capture: 'now', raf: true, preventStart: true,
-        filter: function (e) { return !(e.target && e.target.tagName === 'BUTTON'); },
+        filter: function (e) { return !(e.target && e.target.closest && e.target.closest('button')); },
         onStart: function () { dialog.classList.add('dbg-dragging'); return { left: dialog.offsetLeft || 0, top: dialog.offsetTop || 0 }; },
         onMove: function (ev, st, dx, dy) {
+          card.userMoved = true; // user-dragged card keeps its placement: restack skips it
           dialog.style.left = Math.min(Math.max(0, st.left + dx), Math.max(40, (window.innerWidth || 0) - 60)) + 'px';
           dialog.style.top = Math.min(Math.max(0, st.top + dy), Math.max(24, (window.innerHeight || 0) - 40)) + 'px';
           dialog.style.right = 'auto'; dialog.style.bottom = 'auto';
@@ -713,9 +760,14 @@ export function initInteract(ctx) {
       });
     } catch (e) {}
     var done = false;
-    var closeCard = function () { if (done) return; done = true; clearInterval(timer); if (dialog.parentNode) dialog.parentNode.removeChild(dialog); };
-    var deadline = Date.now() + timeoutMs, paused = false, remainingMs = timeoutMs; // 暂停冻结剩余时间，恢复重建 deadline（问答面板同款）
-    var timer = noTimeout ? null : setInterval(function () { // 永久等待无计时器（closeCard clearInterval(null) 安全）
+    var closeCard = function () {
+      if (done) return; done = true; clearInterval(timer);
+      var i = ctx.notifyCards.indexOf(card); if (i >= 0) ctx.notifyCards.splice(i, 1);
+      if (dialog.parentNode) dialog.parentNode.removeChild(dialog);
+      restackNotifyCards(); // re-stack remaining cards to fill the gap
+    };
+    var deadline = Date.now() + timeoutMs, paused = false, remainingMs = timeoutMs; // pause freezes the remaining time, resume rebuilds the deadline (same as the Q&A panel)
+    var timer = noTimeout ? null : setInterval(function () { // wait forever has no timer (closeCard clearInterval(null) is safe)
       if (paused) return;
       var left = Math.max(0, deadline - Date.now());
       timerSpan.textContent = '⏱ ' + Math.ceil(left / 1000) + 's';
@@ -734,30 +786,38 @@ export function initInteract(ctx) {
       }
     });
     closeBtn.addEventListener('click', closeCard);
-    ctx.root.appendChild(dialog); // 先挂载再定位：placePhysPanel 按内容量高，未挂载时 scrollHeight=0 会把卡量成最小高度
-    try { placePhysPanel(dialog, { visW: Math.min(520, Math.round(getPhysViewport().w) - 24), dock: 'bottom', gap: 12, offsetY: 64, minH: 40, maxWidth: '520px', overflowY: 'auto' }); } catch (e) {}
+    ctx.root.appendChild(dialog); // mount before positioning: placePhysPanel measures height from content; when unmounted scrollHeight=0 would measure the card at its minimum height
+    ctx.notifyCards.push(card);
+    while (ctx.notifyCards.length > 6) { // too many persistent cards would fill the screen -> auto-close the oldest (normal closeCard cleanup)
+      var oldest = ctx.notifyCards[0];
+      if (oldest && oldest.close && oldest.dialog.isConnected) oldest.close();
+      else { ctx.notifyCards.shift(); if (oldest && oldest.dialog.parentNode) oldest.dialog.parentNode.removeChild(oldest.dialog); }
+    }
+    restackNotifyCards(); // unified stack layout (measures + positions the new card too)
   };
 
-  // ---- MCP 桥交互入口：通知 + 路由（pick_element → 点选面板；Q&A → AI 窗/兜底面板） ----
+  // ---- MCP bridge interaction entry: notification + routing (pick_element → pick panel; Q&A → AI window/fallback panel) ----
   ctx.handleMcpInteraction = function (payload) {
     var it = payload && payload.interaction ? payload.interaction : {};
     var itKind = it.kind || 'confirm';
-    // 纯通知（user_notify）：只弹浏览器通知，不渲染问答面板——notify 无 prompt/无选项，
-    // 走问答面板会弹「点击选项立即作答」但一个选项都没有的荒诞空卡（历史 bug：通知当问答渲染）
+    // Pure notification (user_notify): only pop the browser notification, do not render the Q&A panel — notify has no prompt/no options,
+    // and going through the Q&A panel would pop an absurd empty card saying "click an option to answer instantly" with not a single option (historical bug: a notification rendered as Q&A)
     if (itKind === 'notify') {
-      // 双通道去重：独立桥下桥直发页面 + AI 窗转发两条路都可能到 launcher → 只弹一次（问答面板在 showHostAskPanel 内按 requestId 去重，通知路径无面板故在此去重）
+      // Dual-channel dedup: with the standalone bridge, both paths — bridge direct-to-page and AI window relay — can reach the launcher → pop only once (the Q&A panel dedups by requestId inside showHostAskPanel; the notification path has no panel, so dedup here)
       if (ctx.lastNotifyId === payload.requestId) return;
       ctx.lastNotifyId = payload.requestId;
-      ctx.notifyUser(it.title || t('🤖 AI has a message'), it.body || '');
-      ctx.showNotifyPanel(payload.requestId, it); // 页面内通知卡：可拖动、可回看（timeout 可选：不传=常驻直到 ✕；系统通知会自动消失）
+      // noToastFallback: the persistent notify card below already presents the content in-page --
+      // the toast fallback would duplicate it at the same dock spot (small-screen report: toast on top of the card)
+      ctx.notifyUser(it.title || t('🤖 AI has a message'), it.body || '', { noToastFallback: true });
+      ctx.showNotifyPanel(payload.requestId, it); // in-page notification card: draggable and reviewable (timeout optional: omitted = persistent until ✕; the system notification auto-dismisses)
       return;
     }
-    // 浏览器通知（Notification + 标题闪烁 + 提示音）：通知用户有消息要处理
+    // Browser notification (Notification + title flashing + attention beep): tell the user a message needs handling
     ctx.notifyUser(t('🤖 AI needs you'), itKind === 'pick_element' ? (it.prompt || t('Please click an element on the page')) : (it.prompt || t('Please answer on the page')));
     if (itKind === 'pick_element') {
-      ctx.showPickElementPanel(payload.requestId, it); // 收起 AI 窗 + 进入点选 + 弹面板（✓/✕/超时回桥）
+      ctx.showPickElementPanel(payload.requestId, it); // collapse the AI window + enter pick mode + pop the panel (✓/✕/timeout returned to the bridge)
     } else {
-      // 当前 AI 窗 = pi-web 直接嵌入（aiti 扩展无作答卡渲染器）——confirm/choose/input/presence 一律走宿主兜底问答面板
+      // Current AI window = pi-web direct embed (the aiti extension has no answer-card renderer) — confirm/choose/input/presence always go through the host fallback Q&A panel
       ctx.showHostAskPanel(payload.requestId, it);
     }
   };

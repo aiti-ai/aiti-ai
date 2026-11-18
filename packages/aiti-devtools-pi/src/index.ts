@@ -338,10 +338,18 @@ function injectAgentEvent(pi: ExtensionAPI, m: any) {
     // 页面事件（订阅后实时推；text 已在桥格式化：⚠ 页面报错 [pageId · url] ...）
     text = (m.text || "");
   } else if (m.type === "agent_push") {
-    if (m.kind === "user_answer") text = "💬 你的交互请求有人作答（来自 aiti-devtools）：" + (m.text || "");
-    else text = "💬 人发来消息（来自 aiti-devtools）：" + (m.text || "");
-    // 记录结构化来源（桥已补 pageId/url/sourceLabel）→ 回答时拼展示标注
+    // Sender wording by real source (payload.fromDevice.kind, 2026-11-17): messages from agent
+    // sessions are labeled session (with name/id), never "human/user"; only page/pair device/AI
+    // window (human-operated) sources show "user".
     const p = m.payload || {};
+    const fd = p.fromDevice || null;
+    if (m.kind === "user_answer") text = "💬 你的交互请求有人作答（来自 aiti-devtools）：" + (m.text || "");
+    else if (fd && fd.kind === "agent") {
+      const id = String(fd.id || fd.name || "?");
+      const nm = String(fd.name || id);
+      text = "💬 session " + (nm !== id ? nm + "（" + id + "）" : id) + " 发来消息（来自 aiti-devtools）：" + (m.text || "");
+    } else text = "💬 用户发来消息（来自 aiti-devtools）：" + (m.text || "");
+    // 记录结构化来源（桥已补 pageId/url/sourceLabel）→ 回答时拼展示标注
     if (p.pageId || p.sourceLabel) lastUserSrc = { pageId: p.pageId || null, url: p.url || null, sourceLabel: p.sourceLabel || null };
   }
   if (!text) return;

@@ -189,6 +189,37 @@ test("import .env file + env scan", async () => {
   });
 });
 
+test("weak password warnings on add/list/get/reveal and AI tools", async () => {
+  await withDir(async (dir) => {
+    const { state } = mk(dir);
+    const add = await handleVaultCommand(state, "add weak-key", { input: async () => "123abc" });
+    assert.ok(add.ok, add.text);
+    assert.match(add.text, /weak password/);
+    assert.ok(!add.text.includes("123abc"), "value never in the warning");
+    const list = await handleVaultCommand(state, "list", {});
+    assert.match(list.text, /weak-key/);
+    assert.match(list.text, /weak password/);
+    const got = await handleVaultCommand(state, "get weak-key", {});
+    assert.match(got.text, /weak password/);
+    let shown = "";
+    const reveal = await handleVaultCommand(state, "reveal weak-key", { show: (_t, v) => { shown = v; } });
+    assert.match(reveal.text, /weak password/);
+    assert.equal(shown, "123abc");
+    // strong value is not flagged
+    const strong = await handleVaultCommand(state, "add strong-key", { input: async () => "Xk9#mP2!vQ7" });
+    assert.ok(strong.ok);
+    assert.ok(!/weak password/.test(strong.text));
+    // AI tools surface the flag (metadata only)
+    const vlist = vaultList(state);
+    assert.match(vlist.content[0].text, /weak-key.*weak password/);
+    assert.ok(!vlist.content[0].text.includes("123abc"));
+    const vget = vaultGet(state, { alias: "weak-key" });
+    assert.equal(vget.details.weak, true);
+    assert.match(vget.content[0].text, /weak password/);
+    assert.ok(!vget.content[0].text.includes("123abc"));
+  });
+});
+
 test("AI tools: vault_list returns metadata only, vault_get mounts", () => {
   withDir((dir) => {
     const { state } = mk(dir);

@@ -9,7 +9,7 @@
     "test": "node --test"
   },
   "dependencies": {
-    "@aiti-ai/secret-vault-core": "^0.1.0"
+    "@aiti-ai/secret-vault-core": "^0.2.0"
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",

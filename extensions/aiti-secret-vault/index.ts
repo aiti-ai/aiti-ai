@@ -30,6 +30,90 @@ import {
   readSessionState,
   type VaultKeyMode,
 } from "@aiti-ai/secret-vault-core";
+import * as secretVaultCore from "@aiti-ai/secret-vault-core";
+
+// Local copy: the installed core may be older than the pi package that writes
+// the records (7 days matches the core constant).
+const SESSION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+// Weak-password assessment lives here so the dialog works with any installed
+// core version (the pi side uses the richer core helper; UI warnings must not
+// depend on a staged dependency refresh).
+const WEAK_DICTIONARY = new Set([
+  "password", "passw0rd", "password1", "password123", "p@ssw0rd", "123456", "12345678",
+  "123456789", "qwerty", "qwerty12", "qwerty123", "abc123", "abc12345", "abcd1234",
+  "abcdef", "abcdefgh", "iloveyou", "admin", "admin123", "root", "root123", "letmein",
+  "welcome", "welcome123", "monkey", "dragon", "master", "sunshine", "princess", "football",
+  "baseball", "shadow", "superman", "trustno1", "1qaz2wsx", "qazwsx", "woaini", "5201314",
+  "7758521", "88888888", "111111", "000000", "123123", "112233", "654321", "987654321",
+]);
+
+function entropy(value: string): number {
+  if (!value) return 0;
+  const counts = new Map<string, number>();
+  for (const ch of value) counts.set(ch, (counts.get(ch) ?? 0) + 1);
+  let bits = 0;
+  for (const n of counts.values()) {
+    const p = n / value.length;
+    bits -= p * Math.log2(p);
+  }
+  return bits;
+}
+
+interface WeakAssessment {
+  weak: boolean;
+  reasons: string[];
+}
+
+function assessWeak(value: string): WeakAssessment {
+  const v = String(value ?? "").trim();
+  const lower = v.toLowerCase();
+  const reasons: string[] = [];
+  if (WEAK_DICTIONARY.has(lower)) reasons.push("dictionary");
+  if (/^rsec_[0-9a-f]{8}$/.test(v)) reasons.push("token-shape");
+  if (v.length < 8) reasons.push("short");
+  if (/^[0-9]+$/.test(v) && v.length < 12) reasons.push("digits-only");
+  if (/^[a-z]+$/.test(v) && v.length < 12) reasons.push("lowercase-only");
+  if (v.length >= 8 && !WEAK_DICTIONARY.has(lower) && entropy(v) < 2.5) reasons.push("low-entropy");
+  const repeated = v.length > 1 && new Set(v).size === 1;
+  if (repeated || /(0123|1234|2345|3456|4567|5678|6789|abcd|bcde|qwer|asdf|zxcv|password|admin)/i.test(v)) reasons.push("sequence");
+  return { weak: reasons.length > 0, reasons };
+}
+
+/** Same-host liveness check for pi sessions (EPERM means alive but not ours). */
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/** Hide sessions whose process is gone; pid-less legacy records keep a 7-day TTL. */
+function liveSessions(records: Record<string, { mounted?: string[]; pid?: number; updatedAt?: string }>): Record<string, unknown> {
+  const now = Date.now();
+  return Object.fromEntries(
+    Object.entries(records).filter(([, rec]) => {
+      if (!rec.mounted || rec.mounted.length === 0) return false; // only sessions that actually hold aliases
+      if (rec.pid) return pidAlive(rec.pid);
+      const at = rec.updatedAt ? Date.parse(rec.updatedAt) : Number.NaN;
+      return Number.isFinite(at) && now - at <= SESSION_RETENTION_MS;
+    }),
+  );
+}
+
+const weakMap = (store: VaultStore): Record<string, boolean> => {
+  const out: Record<string, boolean> = {};
+  for (const info of store.list()) {
+    try {
+      out[info.alias] = assessWeak(store.get(info.alias).value).weak;
+    } catch {
+      // locked / undecryptable entries are simply not flagged
+    }
+  }
+  return out;
+};
 
 const VAULT_DIR = process.env.PI_SECRET_VAULT_DIR || join(homedir(), ".pi", "agent", "secret-vault");
 const SESSION_STATE_PATH = join(VAULT_DIR, "session-state.json");
@@ -65,11 +149,17 @@ export function createVaultApi(deps: VaultApiDeps) {
     try {
       if (req.method === "GET" && head === "status" && !second) {
         const sessions = readSessionState(deps.sessionStatePath);
-        return json({ ok: true, status: store.status(), sessions: sessions.sessions });
+        const weak = weakMap(store);
+        return json({
+          ok: true,
+          status: { ...store.status(), weakEntries: Object.values(weak).filter(Boolean).length },
+          sessions: liveSessions(sessions.sessions),
+        });
       }
 
       if (req.method === "GET" && head === "entries" && !second) {
-        return json({ ok: true, entries: store.list() });
+        const weak = weakMap(store);
+        return json({ ok: true, entries: store.list().map((e) => ({ ...e, weak: weak[e.alias] === true })) });
       }
 
       if (req.method === "POST" && head === "entries" && !second) {
@@ -84,7 +174,12 @@ export function createVaultApi(deps: VaultApiDeps) {
           tags: parseTags(body?.tags),
           project: body?.project === true,
         });
-        return json({ ok: true, result: res });
+        const strength = assessWeak(value);
+        return json({
+          ok: true,
+          result: { ...res, weak: strength.weak, weakReasons: strength.reasons },
+          warning: strength.weak ? `Weak password (${strength.reasons.join(", ")}); stored anyway — consider rotating it.` : undefined,
+        });
       }
 
       if (req.method === "DELETE" && head === "entries" && second) {
@@ -94,7 +189,7 @@ export function createVaultApi(deps: VaultApiDeps) {
 
       if (req.method === "POST" && head === "entries" && second && third === "reveal") {
         const entry = store.get(String(second));
-        return json({ ok: true, alias: entry.alias, scope: entry.scope, value: entry.value });
+        return json({ ok: true, alias: entry.alias, scope: entry.scope, value: entry.value, weak: assessWeak(entry.value).weak });
       }
 
       if (req.method === "POST" && head === "lock" && !second) {
@@ -116,7 +211,7 @@ export function createVaultApi(deps: VaultApiDeps) {
       }
 
       if (req.method === "GET" && head === "sessions" && !second) {
-        return json({ ok: true, sessions: readSessionState(deps.sessionStatePath).sessions });
+        return json({ ok: true, sessions: liveSessions(readSessionState(deps.sessionStatePath).sessions) });
       }
 
       return json({ ok: false, error: "not found" }, 404);
@@ -182,8 +277,12 @@ export default {
         "sv.session.mounted": "挂载别名",
         "sv.session.landing": "落盘策略",
         "sv.session.empty": "暂无会话记录",
+        "sv.session.retention": "只显示有挂载别名的活跃会话；无进程标记的旧记录保留 7 天（上限 50 条）。",
+        "sv.open": "打开",
         "sv.updated": "更新于",
         "sv.entries": "条目",
+        "sv.weak": "弱密码",
+        "sv.weakCount": "弱密码条目",
         "sv.keychain": "钥匙串后端",
         "sv.hint": "值只存本机加密库（AES-256-GCM）；AI 只能拿到占位令牌，看不到明文。",
       },
@@ -222,8 +321,12 @@ export default {
         "sv.session.mounted": "Mounted aliases",
         "sv.session.landing": "Landing",
         "sv.session.empty": "No session records yet",
+        "sv.session.retention": "Only live sessions with mounted aliases are listed; pid-less records expire after 7 days (max 50).",
+        "sv.open": "Open",
         "sv.updated": "updated",
         "sv.entries": "entries",
+        "sv.weak": "weak",
+        "sv.weakCount": "weak entries",
         "sv.keychain": "keychain backend",
         "sv.hint": "Values are stored only in the local encrypted vault (AES-256-GCM). The AI sees placeholders, never plaintext.",
       },

@@ -5,8 +5,8 @@
  * 转 followUp/取回/删除）。差异：不接收 onXXX props，统一经 props.actions 原语调用；
  * isCoarsePointer 由核心传入（扩展无该 hook）。
  */
-import { useRef } from "react";
-import { t } from "./host-shim";
+import { useRef, useState } from "react";
+import { ensureMaterialized, t } from "./host-shim";
 import type { QueuePanelActions, QueueImage } from "./types";
 
 export interface QueueRowProps {
@@ -47,18 +47,67 @@ const iconBtn: Record<string, string | number> = {
   flexShrink: 0,
 };
 
+/** Pick an entry's images out of an export live list (flat mirror order → per-kind index). */
+export function entryImagesFromExport(live: Array<{ kind: string; images?: QueueImage[] }>, kind: "steer" | "followUp", index: number): QueueImage[] {
+  const sameKind = (live ?? []).filter((e) => e.kind === kind);
+  const entry = sameKind[index];
+  return (entry?.images ?? []).filter((im) => Boolean(im && typeof im.data === "string" && im.data.length > 0));
+}
+
+/** File extension for a downloaded image, from its MIME type (png default). */
+function extFromMime(mime: string): string {
+  const m = /image\/(png|jpeg|webp|gif|bmp|svg\+xml)/.exec(mime || "");
+  if (!m) return "png";
+  if (m[1] === "jpeg") return "jpg";
+  return m[1] === "svg+xml" ? "svg" : m[1];
+}
+
+/**
+ * Open in the editor extension's unified viewer (zoom/pan/rotate/download — the
+ * same full preview chat messages use). aiti-editor is a lazy extension
+ * (clientImmediately:false — its client bundle only loads when something pulls
+ * it), so pull it explicitly first: ctx.ensureMaterialized is the official
+ * cross-extension interaction-time bootstrap API (how session-manager pulls
+ * aiti-folder/app-center). Idempotent, resolves false when truly absent → the
+ * caller falls back to its own inline overlay.
+ */
+async function openFullImagePreview(dataUrl: string, alt: string): Promise<boolean> {
+  await ensureMaterialized("aiti-editor");
+  const ed = (globalThis as { __aitiEditor?: { openImagePreview?: (src: string, options?: { alt?: string }) => boolean } }).__aitiEditor;
+  if (ed && typeof ed.openImagePreview === "function") {
+    return ed.openImagePreview(dataUrl, { alt }) !== false;
+  }
+  return false;
+}
+
 /** 队列行附件图标（lucide image / paperclip）：消息文本前标记该条带图片/文件。 */
-function AttachIcons({ hasImages, hasFiles }: { hasImages?: boolean; hasFiles?: boolean }) {
+export function AttachIcons({ hasImages, hasFiles, onImageClick }: { hasImages?: boolean; hasFiles?: boolean; onImageClick?: () => void }) {
   if (!hasImages && !hasFiles) return null;
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 2, flexShrink: 0, color: "var(--text-dim)" }}>
       {hasImages && (
         <span title={t("chat.queueHasImages")} style={{ display: "inline-flex", alignItems: "center" }}>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-            <circle cx="8.5" cy="8.5" r="1.5" />
-            <polyline points="21 15 16 10 5 21" />
-          </svg>
+          {onImageClick ? (
+            <button
+              type="button"
+              title={t("chat.queueViewAttachments")}
+              aria-label={t("chat.queueViewAttachments")}
+              onClick={(e) => { e.stopPropagation(); onImageClick(); }}
+              style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0, border: "none", background: "transparent", color: "inherit", cursor: "pointer" }}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                <circle cx="8.5" cy="8.5" r="1.5" />
+                <polyline points="21 15 16 10 5 21" />
+              </svg>
+            </button>
+          ) : (
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+              <circle cx="8.5" cy="8.5" r="1.5" />
+              <polyline points="21 15 16 10 5 21" />
+            </svg>
+          )}
         </span>
       )}
       {hasFiles && (
@@ -79,6 +128,27 @@ export function QueueRow({ kind, text, images, hasImages, hasFiles, index, total
   // 「插队此条目」的入口只在 core 下发 steerSend 时存在（存在即本会话有 steer 注入面）：
   // steer:false 的后端点了只会把条目 remove 掉而消息发不出去——静默吞输入，必须收起。
   const canSteerOut = Boolean(actions.steerSend);
+  // Attachment viewer: click the row's image marker → list this entry's images with
+  // preview + download. Images travel only in the export view (live projection
+  // strips base64), so the fetch goes through actions.exportAll.
+  const [viewer, setViewer] = useState<{ images: QueueImage[] } | null>(null);
+  const canViewAttachments = Boolean(hasImages) || (images?.length ?? 0) > 0;
+  const openAttachments = async () => {
+    let imgs = (images ?? []).filter((im) => Boolean(im && im.data));
+    if (!imgs.length) {
+      const data = await actions.exportAll();
+      if (data?.live) imgs = entryImagesFromExport(data.live, kind === "steer" ? "steer" : "followUp", index);
+    }
+    if (!imgs.length) return;
+    // Single image (the common case): straight into the message-style full viewer
+    // (zoom/pan/download). The alt doubles as the viewer's download filename.
+    // Multiple images need a picker first — the viewer is single-image.
+    if (imgs.length === 1) {
+      const name = `queued-image-1.${extFromMime(imgs[0].mimeType)}`;
+      if (await openFullImagePreview(`data:${imgs[0].mimeType};base64,${imgs[0].data}`, name)) return;
+    }
+    setViewer({ images: imgs });
+  };
   // 注意：扩展 host-shim 的 t() 走 ctx 委托（扩展 i18n 表）。
   // 行内取回（append 合并）→ actions.recallOne（core 置 edit-intent + 写值）
   const doRecall = () => { void actions.recallOne(kind === "follow-up" ? "followUp" : "steer", index); };
@@ -151,6 +221,7 @@ export function QueueRow({ kind, text, images, hasImages, hasFiles, index, total
   };
 
   return (
+    <>
     <div
       title={text}
       data-queue-row="1"
@@ -210,7 +281,7 @@ export function QueueRow({ kind, text, images, hasImages, hasFiles, index, total
       >
         {kind === "steer" ? t("chat.steer") : t("chat.followUp")}
       </span>
-      <AttachIcons hasImages={hasImages || (images && images.length > 0)} hasFiles={hasFiles} />
+      <AttachIcons hasImages={hasImages || (images && images.length > 0)} hasFiles={hasFiles} onImageClick={canViewAttachments ? () => { void openAttachments(); } : undefined} />
       <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{text}</span>
       {images && images.length > 0 && (
         <span style={{ display: "inline-flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
@@ -338,6 +409,54 @@ export function QueueRow({ kind, text, images, hasImages, hasFiles, index, total
       </button>
       )}
     </div>
+    {viewer && (
+      <div
+        role="dialog"
+        aria-label={t("chat.queueAttachmentsTitle")}
+        onClick={() => setViewer(null)}
+        style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+      >
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{ background: "var(--bg-panel)", border: "1px solid var(--border)", borderRadius: 10, maxWidth: "min(560px, 92vw)", maxHeight: "82vh", overflowY: "auto", padding: "12px 14px", boxShadow: "0 12px 40px rgba(0,0,0,0.35)" }}
+        >
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 10 }}>
+            <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--text)" }}>{t("chat.queueAttachmentsTitle")}</span>
+            <button
+              type="button"
+              aria-label="close"
+              onClick={() => setViewer(null)}
+              style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 22, height: 22, padding: 0, border: "none", borderRadius: 5, background: "transparent", color: "var(--text-dim)", cursor: "pointer" }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+            </button>
+          </div>
+          {viewer.images.map((im, i) => {
+            const dataUrl = `data:${im.mimeType};base64,${im.data}`;
+            return (
+              <div key={i} style={{ marginBottom: 12 }}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={dataUrl}
+                  alt=""
+                  style={{ maxWidth: "100%", maxHeight: 300, display: "block", borderRadius: 6, border: "1px solid var(--border)", cursor: "zoom-in" }}
+                  onClick={() => { const name = `queued-image-${i + 1}.${extFromMime(im.mimeType)}`; void openFullImagePreview(dataUrl, name); }}
+                />
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4 }}>
+                  <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{t("chat.queueAttachmentImage", { n: String(i + 1) })} · {im.mimeType}</span>
+                  <a
+                    href={dataUrl}
+                    download={`queued-image-${i + 1}.${extFromMime(im.mimeType)}`}
+                    style={{ fontSize: 11, color: "var(--accent)" }}
+                  >{t("chat.queueAttachmentDownload")}</a>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 

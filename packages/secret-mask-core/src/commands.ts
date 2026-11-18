@@ -12,11 +12,12 @@
  *   audit [on|off|show]               per-send wire-payload proof log
  */
 
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, statSync as fileStat, writeFileSync } from "node:fs";
+import { basename, dirname, resolve } from "node:path";
 import { MIN_REDACT_LENGTH, Registry, type EntrySource, type RegistryEntry } from "./mask.ts";
 import { DEFAULT_LANDING, LANDING_MODES, MASK_LANDING_MODES, isLandingMode, landingChangeWarning, landingText, type LandingMode } from "./landing.ts";
 import { addRuleToFile, removeRuleFromFile, ruleSummary, type CustomRule } from "./rules.ts";
+import { inspectSensitivePath, learnFromText } from "./extract.ts";
 
 export interface SecretState {
   registry: Registry;
@@ -44,6 +45,14 @@ export interface SecretState {
   strict: boolean;
   /** Set when another package in the same session supersedes this one. */
   disabledBy?: string;
+  /** L1 structured extraction from tool output / write inputs (default on). */
+  extract?: boolean;
+  /** L2 sensitive-file policy (default "learn"). */
+  filePolicy?: "learn" | "block" | "off";
+  /** L3 weak candidate handling (default "notify"). */
+  weakMode?: "notify" | "auto" | "off";
+  /** Latest tool output, bounded by the host (/secret learn last). */
+  lastToolOutput?: string;
   /** Custom rules snapshot (host refreshes from RulesSource). */
   rules?: CustomRule[];
   rulesPath?: string;
@@ -86,6 +95,9 @@ export function statusText(state: SecretState): string {
     `guard ${state.guard ? "ON" : "OFF"}`,
     `strict ${state.strict ? "ON" : "OFF"}`,
     `rules ${rules}${state.rulesError ? " (errors — /secret rule list)" : ""}`,
+    `extract ${state.extract === false ? "OFF" : "ON"}`,
+    `files ${state.filePolicy ?? "learn"}`,
+    `weak ${state.weakMode ?? "notify"}`,
     `send-audit ${state.audit ? "ON" : "OFF"}`,
   ];
   if (state.lastAudit) parts.push(`last audit: ${state.lastAudit}`);
@@ -226,6 +238,55 @@ async function handleSync(state: SecretState, args: string, io: CommandIo): Prom
     }
     case "status":
       return { ok: true, text: statusText(state) };
+    case "extract": {
+      if (!tail) return { ok: true, text: `secret-mask: extract ${state.extract === false ? "OFF" : "ON"} — structured key-value extraction from tool output and write inputs.` };
+      if (tail !== "on" && tail !== "off") return { ok: false, text: "Usage: /secret extract [on|off]" };
+      state.extract = tail === "on";
+      return { ok: true, text: `secret-mask: extract ${state.extract ? "enabled" : "disabled"}.` };
+    }
+    case "files": {
+      if (!tail) return { ok: true, text: `secret-mask: sensitive-file policy = ${state.filePolicy ?? "learn"} (learn | block | off).` };
+      if (tail !== "learn" && tail !== "block" && tail !== "off") return { ok: false, text: "Usage: /secret files [learn|block|off]" };
+      state.filePolicy = tail;
+      const note = tail === "learn" ? " — structured values are registered; dedicated secret files are withheld as a placeholder" : tail === "block" ? " — reads of sensitive paths are blocked before execution" : " — path policy disabled";
+      return { ok: true, text: `secret-mask: file policy → ${tail}${note}.` };
+    }
+    case "weak": {
+      if (!tail) return { ok: true, text: `secret-mask: weak candidates = ${state.weakMode ?? "notify"} (notify | auto | off).` };
+      if (tail !== "notify" && tail !== "auto" && tail !== "off") return { ok: false, text: "Usage: /secret weak [notify|auto|off]" };
+      state.weakMode = tail;
+      return { ok: true, text: `secret-mask: weak candidates → ${tail}${tail === "notify" ? " (dictionary hits register, other candidates only notify)" : tail === "auto" ? " (all weak candidates register)" : ""}.` };
+    }
+    case "learn": {
+      const arg = tail.trim();
+      let text: string;
+      let label: string | undefined;
+      let whole = false;
+      if (!arg || arg === "last") {
+        if (!state.lastToolOutput) return { ok: false, text: "secret-mask: no recent tool output to learn from." };
+        text = state.lastToolOutput;
+      } else {
+        const path = resolve(state.cwd, arg);
+        try {
+          const st = fileStat(path);
+          if (!st.isFile()) return { ok: false, text: `secret-mask: not a file: ${path}` };
+          if (st.size > 1_048_576) return { ok: false, text: `secret-mask: file too large (${st.size} bytes; limit 1MB).` };
+          text = readFileSync(path, "utf8");
+          label = basename(path);
+          whole = inspectSensitivePath(path).dedicated;
+        } catch (e) {
+          return { ok: false, text: `secret-mask: cannot read ${path}: ${e instanceof Error ? e.message : String(e)}` };
+        }
+      }
+      const res = learnFromText(text, state.registry, state.salt, { whole, label });
+      const keys = res.keys.slice(0, 8).join(", ") + (res.keys.length > 8 ? ", …" : "");
+      return {
+        ok: true,
+        text: res.count
+          ? `secret-mask: learned ${res.count} value(s)${keys ? ` (${keys})` : ""}${res.wholeRegistered ? " — whole file registered" : ""}.`
+          : "secret-mask: nothing new to learn (no structured value, or already registered).",
+      };
+    }
     case "save": {
       if (!tail) return { ok: false, text: "Usage: /secret save <file> — explicit plaintext snapshot (you own the file and its safety)." };
       const path = resolve(state.cwd, tail);
@@ -261,6 +322,10 @@ function helpText(state: SecretState): string {
     "  /secret guard [on|off]             block unresolved placeholders in tool arguments",
     "  /secret strict [on|off]            fail closed on side channels (compaction, ! commands)",
     "  /secret rule list | add | remove | reload   custom detection rules",
+    "  /secret extract [on|off]           structured extraction from tool output / write inputs",
+    "  /secret files [learn|block|off]    sensitive-file policy (learn = register & redact)",
+    "  /secret weak [notify|auto|off]     weak-password candidates (L3)",
+    "  /secret learn [last|<file>]        register values from the last tool output or a file",
     "  /secret save <file> | load <file>  explicit plaintext snapshot (no implicit state)",
     "  /secret audit [on|off|show]        per-send wire-payload proof log",
     "  /secret status                     current state",

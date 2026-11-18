@@ -134,10 +134,12 @@ export interface ImportResult {
   rotated: number;
   skipped: number;
   aliases: string[];
+  /** Aliases whose values were assessed as weak passwords. */
+  weak: string[];
 }
 
 export function importPairs(store: VaultStore, pairs: EnvPair[], opts: { project?: boolean } = {}): ImportResult {
-  const result: ImportResult = { added: 0, rotated: 0, skipped: 0, aliases: [] };
+  const result: ImportResult = { added: 0, rotated: 0, skipped: 0, aliases: [], weak: [] };
   for (const pair of pairs) {
     const alias = aliasFromEnvName(pair.key);
     if (valueExists(store, pair.value)) {
@@ -149,6 +151,7 @@ export function importPairs(store: VaultStore, pairs: EnvPair[], opts: { project
       if (res.created) result.added++;
       else result.rotated++;
       result.aliases.push(res.alias);
+      if (res.weak) result.weak.push(res.alias);
     } catch {
       result.skipped++;
     }

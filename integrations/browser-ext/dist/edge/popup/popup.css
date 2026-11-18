@@ -1,4 +1,4 @@
-/* aiti-devtools 浏览器扩展 · popup（v2）——深浅色跟随系统，aiti 品牌紫 */
+/* aiti-devtools 浏览器扩展 · popup——深浅色跟随系统，aiti 品牌紫 */
 :root {
   --bg: #0f172a; --panel: #1e293b; --panel2: #111827; --border: #334155;
   --text: #e2e8f0; --muted: #94a3b8;
@@ -42,6 +42,9 @@ body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
 .btn.primary:hover:not(:disabled) { background: var(--accent-2); border-color: var(--accent-2); }
 .btn.mini { flex: 0 0 auto; padding: 5px 10px; font-size: 12px; }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
+.doc { margin-top: 10px; font-size: 11px; text-align: center; }
+.doc a { color: var(--muted); text-decoration: none; }
+.doc a:hover { color: var(--accent-2); }
 .foot { margin-top: 10px; font-size: 11px; color: var(--muted); min-height: 14px; line-height: 1.5; }
 .foot.ok { color: var(--green); }
 .foot.err { color: var(--red); }

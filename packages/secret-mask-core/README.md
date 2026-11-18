@@ -29,6 +29,7 @@ Detection rules, entropy thresholds, placeholder semantics and restore behaviour
 | `guard` | `unmountedPlaceholders`, `unmountedInValue`, `guardReason` | G7: block tool calls that reference placeholders no longer mounted, with the exact recovery command |
 | `landing` | `LandingMode`, `redactOnDisk`, `landingText` | G1 policy: `plain` / `vault` / `ephemeral` |
 | `rules` | `RulesSource`, `CustomRule`, `registerRuleMatches`, `applyFixedRules`, `addRuleToFile` | G6 custom rules file (`secret-mask-rules.json`, global + per-project, hot reload by mtime, placeholder vs fixed modes) |
+| `extract` | `extractStructuredSecrets`, `registerExtractedSecrets`, `inspectSensitivePath`, `inspectToolTargets`, `weakPasswordCandidates`, `registerWeakCandidates`, `learnFromText`, `WEAK_PASSWORDS` | weak-value discovery: key-name-based extraction (`.env`/JSON/YAML/header/URL/netrc), sensitive-file classification, weak-password dictionary + strong-context candidates, explicit learn |
 | `commands` | `handleSecretCommand`, `SecretState`, `saveSnapshot`/`loadSnapshot`, `appendAuditLog` | `/secret add/list/remove/clear/on/off/status/landing/guard/strict/rule/save/load/audit`; explicit snapshots only (no implicit persistence) |
 
 ## Adapt another TS/JS agent in four steps
@@ -70,6 +71,28 @@ if (missing.length) return { block: true, reason: guardReason(missing) };
 const rules = new RulesSource("/home/me/.pi/agent/secret-mask-rules.json", cwd);
 redactTextSpans(spans, registry, salt, { autoDetect: true, rules: rules.rules() });
 ```
+
+## Weak values (L1/L2/L3)
+
+`extract.ts` closes the "human password that does not look like a credential" gap without
+lowering the global entropy gates:
+
+- **Structured extraction**: `DB_PASSWORD=123abc`, `"password": "qwerty"`, `api_key: …`,
+  `Authorization: Bearer …`, URL userinfo, netrc — key-name driven, **no entropy floor**
+  (values ≥6 chars). Mine tool results, write/edit contents and assistant tool calls.
+- **Sensitive paths**: `inspectSensitivePath` classifies `.env*`, `id_*`, `.pgpass`, `.netrc`,
+  `.npmrc`, `.git-credentials`, `credentials.json`, `secret.txt`, `*.key/p12/pfx`,
+  kube/aws paths; `dedicated` marks files whose whole content is one secret (for withholding).
+- **Weak candidates**: `weakPasswordCandidates` + `WEAK_PASSWORDS` (strong keyword/copula
+  context only); dictionary hits register, other weak-shaped values are reported for a host
+  prompt or auto-registered.
+- **Strength assessment**: `assessPasswordStrength` (dictionary, <8 chars, single character
+  class, low entropy, sequences) for long-term stores; `describePasswordWeakness` for warnings.
+- **Learn**: `learnFromText` (structured first, whole-content fallback for dedicated files).
+
+`inspectToolTargets(toolName, input)` turns read/write/edit/bash/powershell calls into read
+paths, write paths and mineable content; `registerValueSecrets` mines nested `details` /
+`structuredContent` leaves.
 
 ## Guarantees & limits (shared with all hosts)
 

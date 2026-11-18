@@ -3,7 +3,7 @@
  *
  * 背景（2026-12-17 实测）：Linux 内核对 execve 的单个 argv/env 字符串有硬上限
  * MAX_ARG_STRLEN = 32 * PAGE_SIZE = 128 KiB，与总量预算（stack rlimit/4 ≈ 2 MB）
- * 是两道独立限制。大工作区（workspace-tools，~3k 变更文件）的 _turn_flush 快照曾把全量
+ * 是两道独立限制。大工作区（aiti-dev，~3k 变更文件）的 _turn_flush 快照曾把全量
  * 文件路径内联进一条 commit-tree -m message，单串超 128 KiB，spawn 直接 E2BIG，
  * 整个 turn_end 记账失败（报「Extension error: spawn E2BIG」）。
  * 修复：buildMessage 出口统一 clamp（MAX_MESSAGE_BYTES = 64 KiB，双倍余量），

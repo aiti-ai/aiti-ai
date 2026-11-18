@@ -8,17 +8,24 @@
  * 小屏收敛：顶栏宽度不足（ResizeObserver 实测 < COMPACT_AT）时进入 compact 态——
  * ‹› 遍历/计数/⬇/↗/类型·大小 标签全部收进 ⋯ 菜单（‹› 变「上一个/下一个文件」菜单项），
  * 只留 状态点 + 路径 + @ + 插槽（保存/模式切换）+ ⋯；@ 是最高优先级动作恒留外面。
+ * Mid-band overflow squeeze: between COMPACT_AT and the toolbar's full natural width the row
+ * genuinely overflows (all right-side buttons are flexShrink:0 → the tail incl. ⋮ gets clipped
+ * with no scrollbar). measure() watches scrollWidth > clientWidth and strips one group per
+ * overflow tick (every stripped group already has an equivalent entry inside the ⋯ menu):
+ *   squeeze L1 close icon row → L2 new-window/terminal/download → L3 ‹› nav + count.
+ * Still overflowing at max level → force compact (exit threshold ratchets to width+60 so the
+ * exit render keeps the stripped level and cannot loop). Restore needs real spacer slack
+ * (≥ RESTORE_SLACK, larger than any single group) — resize dragging won't oscillate.
  * modes 模式切换（编辑/分栏/预览）默认内联 tabs；空间不够时才变下拉——判据用弹性占位的实测宽度
  * （= 顶栏剩余空间，天然涵盖 git 徽标/保存按钮/信息位等真实占用），带滞回防抖。
  */
 import { useState, useEffect, useRef } from "react";
 import { extSvc, t, getTopicItems } from "./host-shim.ts";
 import { dismissOnBack } from "../../../_shared/overlay-back-client";
+import { squeezeStep } from "./toolbar-squeeze.ts";
 
 export type MenuAction = { label: string; title?: string; /** 可选图标（ReactNode，如 aiti-git-review 的统一 GrEyeIcon）；渲染在文案左侧 */ icon?: any; onClick: () => void };
 
-/** 顶栏宽度低于该值（px）判定为小屏 compact 态：次要按钮收进 ⋯ 菜单 */
-const COMPACT_AT = 620;
 /** modes 模式切换内联↔下拉的空间判据（px，读弹性占位宽度）：
  *  下拉→内联：占位 ≥ MODE_INLINE_NEED（≈ 内联 tabs 比下拉钮多占的 ~90px + 余量，切换后仍留正空隙）；
  *  内联→下拉：占位被压到 minWidth(8) 附近（≤ MODE_INLINE_SQUEEZED）= 内容真挤不下。
@@ -178,14 +185,27 @@ export function FileToolbar(props: {
   // modes 内联↔下拉看弹性占位实测宽度（= 剩余空间的直接读数，事件驱动非轮询非估算）
   const [compact, setCompact] = useState(false);
   const [tiny, setTiny] = useState(false);
+  // Graduated overflow squeeze (0..SQUEEZE_MAX, see header): true-overflow band between the
+  // compact threshold and the toolbar's full natural width
+  const [squeeze, setSqueeze] = useState(0);
+  const squeezeRef = useRef(0);
+  const forceCompactAtRef = useRef(0); // exit width threshold for forced compact (ratchets up only on overflow)
+  squeezeRef.current = squeeze;
   const spacerRef = useRef<any>(null);
   const measure = () => {
     const el = barRef.current;
     if (!el) return;
-    setCompact(el.clientWidth < COMPACT_AT);
     const sp = spacerRef.current ? spacerRef.current.clientWidth : 0;
+    const overflow = el.scrollWidth > el.clientWidth + 1;
+    // Squeeze state machine (pure fn, see toolbar-squeeze.ts): overflow strips one group per
+    // tick / still-overflowing at max forces compact with a ratcheted exit threshold / hysteresis
+    // on restore; the plain compact (<620) decision is folded in here too.
+    const step = squeezeStep(squeezeRef.current, forceCompactAtRef.current, el.clientWidth, overflow, sp - 8);
+    forceCompactAtRef.current = step.forceCompactAt;
+    setCompact(step.compact);
     // 滞回：下拉态占位≥NEED 才升内联；内联态占位≤SQUEEZED 才降回下拉（两阈值间隔大于切换宽度差，不抖）
     setTiny((cur) => (cur ? sp < MODE_INLINE_NEED : sp <= MODE_INLINE_SQUEEZED));
+    setSqueeze(step.squeeze);
   };
   useEffect(() => {
     const el = barRef.current;
@@ -331,8 +351,8 @@ export function FileToolbar(props: {
           background: (dot && dot.color) || "var(--border,#e0e0e0)" }} />
       {/* 文件名（完整路径进 title 悬浮）——信息紧随其后，长路径不再挤爆工具条 */}
       <span style={{ ...S.path, flex: "0 1 auto", minWidth: 40, maxWidth: "42%" }} title={filePath}>{filePath.split("/").pop() || filePath}</span>
-      {/* ‹› 同目录深度遍历（compact 收进菜单） */}
-      {nav && !compact && (
+      {/* ‹› same-dir deep walk (squeeze L3 / compact: collapsed into the menu "browse" row) */}
+      {nav && !compact && squeeze < 3 && (
         <div style={{ display: "flex", gap: 2, flexShrink: 0 }}>
           <button type="button" title={t("上一个文件（深度遍历）")} disabled={navDisabled}
             onClick={() => nav.onStep(-1)}
@@ -342,7 +362,7 @@ export function FileToolbar(props: {
             style={{ ...(navDisabled ? S.btnD : S.btn), padding: "3px 9px", display: "inline-flex", alignItems: "center" }}><MiChevronR size={14} /></button>
         </div>
       )}
-      {hasSibs && !compact && (
+      {hasSibs && !compact && squeeze < 3 && (
         <span title={sibIndex >= 0
           ? t("深度遍历共 {n} 个文件（仅文件，不含文件夹）", { n: nav!.siblings!.length })
           : t("当前文件不在遍历清单内，按路径序定位相邻文件（共 {n} 个）", { n: nav!.siblings!.length })}
@@ -445,25 +465,26 @@ export function FileToolbar(props: {
           onClick={onMention}
           style={{ ...S.btn, padding: "2px 8px", fontSize: 13, flexShrink: 0, fontFamily: "inherit" }}>{"\u0040"}</button>
       )}
-      {/* 快捷下载（可选；compact 收进菜单——菜单内本就有「下载文件」） */}
-      {props.downloadBtn && props.onDownload && !compact && (
+      {/* quick download (optional; squeeze L2 / compact: menu already has "download file") */}
+      {props.downloadBtn && props.onDownload && !compact && squeeze < 2 && (
         <button type="button" title={t("下载文件")} onClick={props.onDownload}
           style={{ ...S.btn, padding: "3px 8px", fontSize: 13, flexShrink: 0 }}>⬇</button>
       )}
       {/* 右侧插槽（保存/扩展动作） */}
       {rightExtra}
-      {/* 独立窗口快捷打开（B 图形 SVG，与 dock 图标规范统一；compact 收进菜单） */}
-      {props.onNewWindow && !compact && (
+      {/* open-in-new-window (squeeze L2 / compact: collapsed into the menu) */}
+      {props.onNewWindow && !compact && squeeze < 2 && (
         <button type="button" title={t("在新窗口打开（独立查看窗口）")} onClick={props.onNewWindow}
           style={{ ...S.btn, padding: "3px 8px", display: "inline-flex", alignItems: "center", flexShrink: 0 }}><MiExternal size={14} /></button>
       )}
-      {/* 终端快捷打开（🖥；compact 收进菜单——菜单内本就有「打开终端」） */}
-      {props.onTerminal && !compact && (
+      {/* terminal quick open (squeeze L2 / compact: menu already has "open terminal") */}
+      {props.onTerminal && !compact && squeeze < 2 && (
         <button type="button" title={t("打开终端（当前文件所在目录）")} onClick={props.onTerminal}
           style={{ ...S.btn, padding: "3px 8px", fontSize: 13, flexShrink: 0 }}>🖥</button>
       )}
-      {/* 关闭图标排（左侧/自己/右侧/全部；大屏常驻，compact 收进 ⋯ 菜单） */}
-      {closeActions && !compact && (
+      {/* close icon row (squeeze L1 strips it first: batch close is low-frequency and the menu
+          has the same labelled row; compact collapses it the same way) */}
+      {closeActions && !compact && squeeze < 1 && (
         <div data-ext-close-toolbar-row="1" style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
           {closeBtn(closeActions.left, t("关闭左侧"), <MiCloseLeft size={14} />)}
           {closeBtn(closeActions.self, t("关闭"), <MiX size={14} />)}
