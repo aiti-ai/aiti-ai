@@ -24,7 +24,7 @@ summary.en: "The full creation flow — copy the template, edit index.ts/vite.co
 - **生效**：`POST {basePath}/api/extensions/reload`（热重载 server 端；client 改动刷新页面即拉新——注入脚本带内容哈希）
 
 > 开发者源码参考（**仅源码仓库环境**，安装目录不可访问）：`pi-web-ext/demo/`（可运行例子）、
-> `pi-web-ext/templates/ext-jsx-client/`（模板源）、方案文档 `workspace-tools/docs/aiti-ext-jsx-vite-plan.md`。
+> `pi-web-ext/templates/ext-jsx-client/`（模板源）、方案文档 `aiti-dev/docs/aiti-ext-jsx-vite-plan.md`。
 > 安装环境的 AI 用上面 `{basePath}` 的 API 拿信息，不依赖这些源码路径。
 
 ## 创建流程（照做）

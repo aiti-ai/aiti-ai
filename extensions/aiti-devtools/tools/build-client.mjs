@@ -31,7 +31,7 @@ import { fileURLToPath } from "node:url";
 const extRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const warn = (m) => console.log("[build-client] ⚠ " + m);
 
-// 仓库根：向上找含 packages/aiti-devtools-inject 的祖先（workspace-tools 三层 / 发布仓两层布局都兼容）
+// 仓库根：向上找含 packages/aiti-devtools-inject 的祖先（aiti-dev 三层 / 发布仓两层布局都兼容）
 let repoRoot = dirname(extRoot);
 while (repoRoot !== dirname(repoRoot) && !existsSync(resolve(repoRoot, "packages", "aiti-devtools-inject", "tools", "build.mjs"))) {
   repoRoot = dirname(repoRoot);
