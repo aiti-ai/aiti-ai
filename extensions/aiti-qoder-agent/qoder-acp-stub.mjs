@@ -12,7 +12,7 @@
  *   .sent            — every JSON-RPC frame the handle wrote (requests + notifications)
  *   .notify(update)  — push a session/update notification to the handle
  *   .request(method, params) — push an agent→client *request* (e.g. session/request_permission)
- *   .answerPrompt(result)    — resolve the oldest parked session/prompt
+ *   .answerPrompt(result, index?) — resolve a parked session/prompt (default: oldest)
  *   .respond(id, result)     — raw response to anything (incl. pending agent requests)
  */
 import { PassThrough } from "node:stream";
@@ -74,7 +74,11 @@ export function createAcpChild(opts = {}) {
           respond(msg.id, {
             protocolVersion: 1,
             agentInfo: { name: "qoder-cli-cn", version: opts.cliVersion ?? "1.1.83-test" },
-            agentCapabilities: { loadSession: true },
+            // qoder CLI 自报 ACP prompt queueing；`promptQueueing: false` 模拟旧版/不支持的 CLI。
+            agentCapabilities: {
+              loadSession: true,
+              ...(opts.promptQueueing === false ? {} : { _meta: { qoder: { promptQueueing: true } } }),
+            },
           });
           break;
         case "session/new":
@@ -134,10 +138,11 @@ export function createAcpChild(opts = {}) {
       this.writeFrame({ jsonrpc: "2.0", id, method, params });
       return id;
     },
-    /** Resolve the oldest parked session/prompt. Returns false if none parked. */
-    answerPrompt(result) {
-      const p = pendingPrompts.shift();
+    /** Resolve one parked session/prompt (default: the oldest). Returns false if none parked. */
+    answerPrompt(result, index = 0) {
+      const p = pendingPrompts[index];
       if (!p) return false;
+      pendingPrompts.splice(index, 1);
       respond(p.id, result ?? { stopReason: "end_turn", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } });
       return true;
     },

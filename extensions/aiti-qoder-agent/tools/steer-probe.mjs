@@ -271,6 +271,7 @@ let book = {};
 try { book = gate.parseSteerProbeBook(readFileSync(gate.steerProbePath(stateDir), "utf8")); } catch { /* 首次 */ }
 const next = gate.mergeSteerProbeRecord(book, cli, {
   verdict,
+  driver: "stream-json", // 本探针只证明 stream-json 注入面；ACP 驱动不认这份证据
   ...(cliVersion ? { cliVersion } : {}),
   at: new Date().toISOString(),
   evidence,
@@ -279,7 +280,8 @@ const path = gate.steerProbePath(stateDir);
 writeFileSync(path, JSON.stringify({ probes: next }, null, 2) + "\n");
 log(`已记账 ${path}`);
 log(`证据键 ${gate.canonicalCliKey(cli)}`);
-log(`门控结果: ${gate.describeSteerGate(next, cli)}`);
+log(`门控结果(stream-json): ${gate.describeSteerGate(next, cli, "stream-json")}`);
+log(`ACP 驱动门控: ${gate.describeSteerGate(next, cli, "acp")}（ACP 请跑 tools/steer-probe-acp.mjs）`);
 if (verdict === "pass") {
   log("下一步：POST /api/extensions/reload（或 node tools/deploy.mjs），**新开会话**验证插队");
 } else if (verdict === "blocked") {

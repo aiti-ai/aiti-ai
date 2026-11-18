@@ -2,17 +2,21 @@
  * steer-gate — Qoder 运行中注入（steer）能力的**探针门控**（只做判定，不写盘；fs 仅
  * realpath 一处，用于把证据键归一）。
  *
- * 背景：qodercli（CC 族 headless stream-json）的入站 `user` 帧带 `priority`
- * （now/next/later）→ 进它自己的全局消息队列，当前轮工具间隙被 AgentLoop drain。
- * 这条注入面**存在**，但同族 codebuddy 有吞输入前科，且没有投递失败的显式错误——
- * 所以能力位不能凭读代码就打开（那就是刚修掉的「假 steer 按钮」换个地方复发）。
+ * 背景：驱动换代后注入面换了协议——stream-json 时代是 stdin `user` 帧带
+ * `priority:"next"`（AgentLoop 工具间隙 drain），ACP 时代是**在途 session/prompt 旁
+ * 再发一条 session/prompt**（CLI 在 initialize 里以 `agentCapabilities._meta.qoder.
+ * promptQueueing` 自报能力，入队默认 priority:"next"）。两代的实跑证据**不能互认**：
+ * 同族 codebuddy 有吞输入前科、CLI 也没有投递失败的显式错误，凭读代码开能力位就是
+ * 「假 steer 按钮」换个地方复发。
  *
- * 门控规则（唯一开门条件）：探针账本里**这个 CLI 二进制**有 `verdict:"pass"` 记录。
- * 键 = realpath 归一后的绝对路径（PATH 上的 `~/.local/bin/qoderclicn` 是符号链接，
- * 升级会把它指向新版本 → 不归一就等于旧证据永久继承）；记录里的 `cliVersion` 作二次
- * 新鲜度校验（运行时 init 帧回报的版本对不上就提示重跑探针，见 steerEvidenceStale）。
+ * 门控规则（唯一开门条件）：探针账本里**这个 CLI 二进制 + 同一驱动**有
+ * `verdict:"pass"` 记录。键 = realpath 归一后的绝对路径（PATH 上的 `~/.local/bin/
+ * qoderclicn` 是符号链接，升级会把它指向新版本 → 不归一就等于旧证据永久继承）；
+ * 记录里的 `cliVersion` 作二次新鲜度校验（运行时 init 回报的版本对不上就提示重跑，
+ * 见 steerEvidenceStale）。
  *
- * 探针：`node tools/steer-probe.mjs --record`（判据与日志见 tools/steer-probe.mjs 头注释）。
+ * 探针：ACP 用 `node tools/steer-probe-acp.mjs --record`；stream-json 旧探针
+ * `tools/steer-probe.mjs --record` 仍在，但其记录只对 stream-json 驱动有效。
  */
 
 import { homedir } from "node:os";
@@ -21,9 +25,14 @@ import { join } from "node:path";
 
 export type SteerProbeVerdict = "pass" | "fail" | "blocked";
 
+/** 证据所属驱动：两代注入面互认 = 假证据（见头注释）。 */
+export type SteerProbeDriver = "stream-json" | "acp";
+
 export interface SteerProbeRecord {
   verdict: SteerProbeVerdict;
-  /** CLI `--version` 原文（仅人读追溯；开门只看路径键）。 */
+  /** 该结论对应的驱动协议；缺省 = 旧账本（任何驱动都不认）。 */
+  driver?: SteerProbeDriver;
+  /** CLI `--version` 原文（仅人读追溯；开门只看路径键 + 驱动）。 */
   cliVersion?: string;
   /** ISO 时间（探针跑完的时刻）。 */
   at?: string;
@@ -73,8 +82,10 @@ export function parseSteerProbeBook(text: string | null | undefined): SteerProbe
     const r = rec as Record<string, unknown>;
     const verdict = r.verdict;
     if (verdict !== "pass" && verdict !== "fail" && verdict !== "blocked") continue;
+    const driver = r.driver;
     book[cliPath] = {
       verdict,
+      ...(driver === "stream-json" || driver === "acp" ? { driver } : {}),
       ...(typeof r.cliVersion === "string" ? { cliVersion: r.cliVersion } : {}),
       ...(typeof r.at === "string" ? { at: r.at } : {}),
       ...(r.evidence && typeof r.evidence === "object" ? { evidence: r.evidence as Record<string, unknown> } : {}),
@@ -97,10 +108,18 @@ export function canonicalCliKey(cliPath: string | null | undefined): string {
   }
 }
 
-/** 唯一开门判据：该 CLI 二进制（规范路径）有 pass 记录（fail/blocked/缺记录一律关）。 */
-export function steerProbePassed(book: SteerProbeBook | null | undefined, cliPath: string | null | undefined): boolean {
+/**
+ * 唯一开门判据：该 CLI 二进制（规范路径）在**该驱动**下有 pass 记录
+ * （fail/blocked/缺记录/驱动不符一律关）。
+ */
+export function steerProbePassed(
+  book: SteerProbeBook | null | undefined,
+  cliPath: string | null | undefined,
+  driver: SteerProbeDriver,
+): boolean {
   if (!book || !cliPath) return false;
-  return book[canonicalCliKey(cliPath)]?.verdict === "pass";
+  const rec = book[canonicalCliKey(cliPath)];
+  return rec?.verdict === "pass" && rec.driver === driver;
 }
 
 /** 合并一条探针结论（覆盖同二进制旧记录；fail/blocked 也写——留痕，且能撤下旧 pass）。 */
@@ -119,12 +138,14 @@ export function withSteerGate<T extends Record<string, boolean>>(base: T, enable
 }
 
 /** 人读一行状态（startup 日志 / 探针输出共用口径）。 */
-export function describeSteerGate(book: SteerProbeBook, cliPath: string | null): string {
-  if (!cliPath) return "steer=off（未解析到 CLI 路径）";
+export function describeSteerGate(book: SteerProbeBook, cliPath: string | null, driver?: SteerProbeDriver): string {
+  const tag = driver ? `${driver} ` : "";
+  if (!cliPath) return `steer=off（未解析到 CLI 路径）`;
   const rec = book[canonicalCliKey(cliPath)];
   if (!rec) return `steer=off（${cliPath} 无探针记录）`;
-  if (rec.verdict === "pass") return `steer=on（探针 pass @${rec.at ?? "?"}）`;
-  return `steer=off（探针 ${rec.verdict} @${rec.at ?? "?"}）`;
+  if (rec.verdict === "pass" && (!driver || rec.driver === driver)) return `steer=on（${tag}探针 pass @${rec.at ?? "?"}）`;
+  if (rec.verdict === "pass") return `steer=off（探针 pass 属于 ${rec.driver ?? "旧驱动"}，不是 ${driver} @${rec.at ?? "?"}）`;
+  return `steer=off（${tag}探针 ${rec.verdict} @${rec.at ?? "?"}）`;
 }
 
 /**
@@ -137,8 +158,10 @@ export function steerEvidenceStale(
   book: SteerProbeBook,
   cliPath: string,
   reportedVersion: string,
+  driver: SteerProbeDriver = "acp",
 ): string | null {
   const want = book[canonicalCliKey(cliPath)]?.cliVersion;
   if (!want || !reportedVersion || want === reportedVersion) return null;
-  return `steer 探针记录版本 ${want} ≠ 本轮 CLI ${reportedVersion}（${cliPath}）→ 重跑 tools/steer-probe.mjs --record`;
+  const probe = driver === "acp" ? "tools/steer-probe-acp.mjs" : "tools/steer-probe.mjs";
+  return `steer 探针记录版本 ${want} ≠ 本轮 CLI ${reportedVersion}（${cliPath}）→ 重跑 ${probe} --record`;
 }
