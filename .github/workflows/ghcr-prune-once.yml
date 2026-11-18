@@ -36,7 +36,7 @@ jobs:
                 for try in 1 2 3; do
                   CODE=$(curl -s --retry 2 --max-time 30 -o /dev/null -w '%{http_code}' -X DELETE \
                     -H "Authorization: Bearer ${{ github.token }}" \
-                    "$PKG/versions/$VID") || CODE=ERR
+                    "https://api.github.com/$PKG/versions/$VID") || CODE=ERR
                   [ "$CODE" = "ERR" ] && sleep 3
                   [ "$CODE" != "ERR" ] && break
                 done
