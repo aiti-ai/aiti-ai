@@ -76,7 +76,7 @@ function contentHash(pkgDir) {
     }
   };
   collect(pkgDir);
-  files.sort((a, b) => a.rel.localeCompare(b.rel));
+  files.sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0)); // 字节序确定性排序 —— localeCompare 依赖 ICU locale，CI/本地排序不同会让同内容算出不同 hash（2026-11-18 实测）
   for (const f of files) {
     hash.update(f.rel);
     try { hash.update(readFileSync(f.p)); } catch {}
