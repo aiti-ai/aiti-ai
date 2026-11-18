@@ -80,7 +80,7 @@ function BatchMoveDialog(props: { ids: string[]; allSessions: any[]; onDone: () 
   const [results, setResults] = useState<string | null>(null);
   // 行会话：只取 live pi 会话（外部 agent/归档记录不适用 move，标记跳过）
   const rows = props.ids.map((id) => props.allSessions.find((x) => x.id === id)).filter(Boolean);
-  const movables = rows.filter((s: any) => !s.agent && !s.archived);
+  const movables = rows.filter((s: any) => (!s.agent || s.agent === "pi") && !s.archived);
 
   // 逐会话识别真实 cwd（串行限流）
   useEffect(() => {

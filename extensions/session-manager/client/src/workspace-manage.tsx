@@ -41,7 +41,8 @@ function saveHidden(roots: readonly string[]): void {
 
 /** 该项目下的 live pi 会话（归档记录/外部 agent 会话不算——move/archive 只作用于 live）。 */
 function sessionsInProject(root: string): any[] {
-  return (store.sessions as any[]).filter((s) => !s.archived && !s.agent && (s.projectRoot ?? s.cwd) === root);
+  // agent==="pi" = aiti-pi-agent rpc sessions — real pi session files, treated as native here.
+  return (store.sessions as any[]).filter((s) => !s.archived && (!s.agent || s.agent === "pi") && (s.projectRoot ?? s.cwd) === root);
 }
 
 const overlayStyle: Record<string, string | number> = {
