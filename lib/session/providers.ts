@@ -28,6 +28,8 @@
  *   or each other, and are auto-unregistered on extension shutdown/reload.
  */
 
+import type { ChildProcess } from "node:child_process";
+import type { AgentStarter } from "../agent-starter/types.ts";
 import type { SessionCapabilities, SessionHandle } from "./types.ts";
 
 /** Options accepted by every provider's createSession. */
@@ -49,6 +51,32 @@ export interface CreateSessionOptions {
   socketPath?: string;
   /** Extra environment for spawned processes (spawn provider). */
   env?: Record<string, string>;
+
+  // ---- agent process hosting (agent-starter injection) ----
+
+  /**
+   * Strategy for starting the agent process, chosen by the core (never by the
+   * extension): DirectStarter = a plain child process (today's behavior);
+   * WrapperStarter = a detachable, socket-hosted process that survives a
+   * pi-web restart. Extensions call `options.agentStarter.spawn(...)` instead of
+   * importing child_process.spawn.
+   */
+  agentStarter?: AgentStarter;
+  /**
+   * Session-level detach preference (UI toggle / per-extension feature).
+   * false = force a direct child for this session; undefined = core default.
+   */
+  detach?: boolean;
+  /**
+   * Adopt an already-live agent process instead of spawning one (recovery after
+   * a restart: the core attached to the session's detached wrapper and hands
+   * the child process facade to the provider).
+   */
+  attached?: {
+    child: ChildProcess;
+    sessionId: string;
+    agentKey?: string;
+  };
 }
 
 export interface SessionProvider {
@@ -149,6 +177,16 @@ export interface SessionProvider {
    * belongs to the extension — the core only asks "who claims it".
    */
   ownsFile?(sessionFile: string): Promise<boolean> | boolean;
+
+  /**
+   * Can this provider host its agent as a detached wrapper process?
+   *
+   * false = no: the backend uses node IPC (`child.send`), non-pipe stdio, or a
+   * pidfile — a wrapper child cannot represent those. The core then always
+   * injects DirectStarter for this provider (no silent degradation).
+   * Undefined/true = the provider honors `options.agentStarter` when given.
+   */
+  readonly detachable?: boolean;
 
   /**
    * Tear down any provider-global resources (socket servers, connection
