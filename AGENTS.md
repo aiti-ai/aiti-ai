@@ -8,7 +8,7 @@ npm run dev   # port 30141
 
 Typecheck: `node_modules/.bin/tsc --noEmit` · Lint: `npm run lint`
 
-**Never run `next build` during dev**: it pollutes `.next/` and breaks `npm run dev`.
+**Never run `next build` during dev**: it pollutes `.next/` and breaks `npm run dev`. A build that fails mid-flight leaves `.next/` unusable (a leftover `dev/` tree and no `BUILD_ID`), after which every rebuild fails the same way and a running server starts answering 500 for `/_next/static/*`: `rm -rf .next` before rebuilding. To tell a product defect from a poisoned build directory, build a clean `git worktree` of the same commit — if that succeeds, the working directory is the problem, not the code.
 
 ### Dev server troubleshooting
 
@@ -175,14 +175,21 @@ Design decisions and traps live in `docs/agents/`, one note per area. Read every
 
 ---
 
-## extensions/ (aiti ecosystem)
+## Package trees (aiti ecosystem)
 
-`extensions/` holds the extension packages of the aiti ecosystem — full sources, not generated output — so extman can install them from local paths or git sources. **Not part of this Next.js app**: excluded from tsc/eslint, `next build` never touches it.
+This repo is the single source for the whole ecosystem: the Next app above, plus four independently published package trees. All four are **excluded from tsc/eslint and never bundled by `next build`** (see `tsconfig.json` / `eslint.config.mjs`), and each package has its own build and release lifecycle.
+
+| Tree | What it is | Notes |
+|---|---|---|
+| `extensions/` | 66 pi-web extensions (`@aiti-ai/aiti-*`), full sources | edit here; `_shared/` is `@aiti-ai/ext-shared`, `sm-demo-source/` the session-manager agent template |
+| `pi-plugins/` | pi CLI plugins (`@aiti-ai/pi-*`) | published from here; `pi-plugins.manifest.json` pins what the runtime auto-provisions |
+| `packages/` | shared libraries (`@aiti-ai/aiti-bridge`, `aiti-devtools-*`, `secret-*`) | consumed by extensions and by the app at runtime |
+| `integrations/` | carriers for other agents/hosts (`vscode-ext`, `browser-ext`, `dsh-*`, `opencode-ext`, `openclaw-web-ext`) | one level deeper than the others: `integrations/<carrier>/<pkg>` |
 
 - **These are the sources**: edit them here. There is no upstream mirror to sync back to and no redaction step.
-- Each extension is an independent package (`node_modules`/`dist` gitignored); run `npm install && npm run build:client` in the extension directory before use.
-- `_shared/` is the extension shared layer (`@aiti-ai/ext-shared`); `sm-demo-source/` is the session-manager third-party agent source template.
-- Code gates (protocol declarations, hand-written version lines, unregistered globals, comment language, release redaction) live in the separate policy workspace and run against this checkout: `node gates/gate-all.mjs --root <this repo>`.
+- Runtime dependency note: extensions declare repo dependencies in their own `package.json`; the installed `<webRoot>/node_modules` tree is reconciled by the extman extension — never hand-edit it.
+- `tools/` holds publish/release tooling (`publish-all.mjs`, `release-audit.mjs`, asset materializers); `scripts/` holds build/release automation (`deploy-all.mjs` and the release chain).
+- Code gates (protocol declarations, hand-written version lines, unregistered globals, comment language, release redaction) live in a separate policy workspace and run against this checkout: `node gates/gate-all.mjs --root <this repo>`.
 
 ---
 
