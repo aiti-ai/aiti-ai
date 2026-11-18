@@ -15,7 +15,9 @@
   "license": "MIT",
   "type": "module",
   "files": [
-    "src"
+    "src",
+    "LICENSE",
+    "README.md"
   ],
   "exports": {
     ".": "./src/index.ts"

@@ -103,5 +103,6 @@
   "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
     "url": "https://github.com/aiti-ai/aiti-ai/issues"
-  }
+  },
+  "private": true
 }
