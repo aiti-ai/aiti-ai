@@ -89,8 +89,8 @@ test("--force：版本高于当前时仍重写", () => {
 
 test("--version 覆盖 + --name 自定义条目名", () => {
   const { home, cfg } = sandbox();
-  run(["--version", "42", "--name", "aiti-dev"], home);
-  const e = JSON.parse(readFileSync(cfg, "utf8")).mcpServers["aiti-dev"];
+  run(["--version", "42", "--name", "demo-repo"], home);
+  const e = JSON.parse(readFileSync(cfg, "utf8")).mcpServers["demo-repo"];
   assert.equal(e.env.AITI_SHIM_VERSION, "42");
   assert.equal(JSON.parse(readFileSync(cfg, "utf8")).mcpServers.aiti, undefined, "默认名未写");
 });

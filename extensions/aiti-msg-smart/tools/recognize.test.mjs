@@ -86,9 +86,9 @@ test("extractFiles: dedupe", () => {
 
 test("extractFiles: Windows 盘符路径（反斜杠/正斜杠/UNC/尾分隔符目录）识别并归一化为 /", () => {
   // 回归——Windows 反斜杠路径此前完全不识别（只捞到裸文件名 SKILL.md），正斜杠形式丢盘符前缀
-  const bs = extractFilePaths("Successfully wrote to D:\\workspace\\aiti-dev\\pi-web-ext\\aiti-editor\\skills\\install-soffice\\SKILL.md");
+  const bs = extractFilePaths("Successfully wrote to D:\\workspace\\demo-repo\\pi-web-ext\\aiti-editor\\skills\\install-soffice\\SKILL.md");
   assert.ok(
-    bs.some((p) => p.path === "D:/workspace/aiti-dev/pi-web-ext/aiti-editor/skills/install-soffice/SKILL.md" && !p.isDir),
+    bs.some((p) => p.path === "D:/workspace/demo-repo/pi-web-ext/aiti-editor/skills/install-soffice/SKILL.md" && !p.isDir),
     JSON.stringify(bs),
   );
   const fwd = extractFilePaths("看 D:/workspace/pi-web/docs/plan.md 与 C:\\Users\\user\\.pi\\agent\\settings.json");
@@ -122,9 +122,9 @@ test("extractFiles: 裸词无后缀与版本串不误判", () => {
 
 test("extractFiles: MSYS 挂载形式（git-bash 输出 /d/...）识别并归一化为盘符", () => {
   // /d/foo、//d/foo → D:/foo；/usr/ 多字母首段不命中锚（不误转，保持旧相对行为）
-  const msys = extractFilePaths("git-bash 里跑的 /d/workspace/aiti-dev/pi-web-ext/aiti-msg-smart/client/src/recognize.js");
+  const msys = extractFilePaths("git-bash 里跑的 /d/workspace/demo-repo/pi-web-ext/aiti-msg-smart/client/src/recognize.js");
   assert.ok(
-    msys.some((p) => p.path === "D:/workspace/aiti-dev/pi-web-ext/aiti-msg-smart/client/src/recognize.js" && !p.isDir),
+    msys.some((p) => p.path === "D:/workspace/demo-repo/pi-web-ext/aiti-msg-smart/client/src/recognize.js" && !p.isDir),
     JSON.stringify(msys),
   );
   const dbl = extractFilePaths("产物在 //d/workspace/pi-web/.next-prod/ 下");
@@ -142,9 +142,9 @@ test("extractFiles: MSYS 挂载形式（git-bash 输出 /d/...）识别并归一
 test("extractFiles: Unix 多字母根绝对路径保留前导 /（不再丢首斜杠当相对）", () => {
   // 回归（2026-09-16）——write 工具行 {"file_path": "/home/pi/….html"} 点击不识别：
   // PATH_SEG 此前无 /+多字母段 锚，匹配从 home 开始丢前导 / → 被当相对路径拼 cwd 探测必 404
-  const json = extractFilePaths('{"file_path": "/home/pi/workspace/aiti-dev/docs/mockups/session-manager-branch-chip-effect.html"}');
+  const json = extractFilePaths('{"file_path": "/home/pi/workspace/demo-repo/docs/mockups/session-manager-branch-chip-effect.html"}');
   assert.ok(
-    json.some((p) => p.path === "/home/pi/workspace/aiti-dev/docs/mockups/session-manager-branch-chip-effect.html" && !p.isDir),
+    json.some((p) => p.path === "/home/pi/workspace/demo-repo/docs/mockups/session-manager-branch-chip-effect.html" && !p.isDir),
     JSON.stringify(json),
   );
   // 与相对/盘符/MSYS 候选共存互不干扰
@@ -184,7 +184,7 @@ test("extractFiles: 全角标点不误入路径段（全角冒号/句号）", ()
 });
 
 test("mergeExternalRoots: MSYS 形式根归一化为盘符", () => {
-  const roots = mergeExternalRoots("D:/workspace/aiti-dev", [], [{ path: "/d/workspace/pi-web/" }, { path: "D:\\workspace\\other" }]);
+  const roots = mergeExternalRoots("D:/workspace/demo-repo", [], [{ path: "/d/workspace/pi-web/" }, { path: "D:\\workspace\\other" }]);
   assert.deepEqual(roots, ["D:/workspace/pi-web", "D:/workspace/other"]);
 });
 test("extractUrls: strips trailing punctuation", () => {
@@ -234,8 +234,8 @@ test("encodeFilePathForApi: keeps / separators (no leading slash)", () => {
 
 test("mergeExternalRoots: stores + watch paths, dedup, strip cwd/trailing slash, order", () => {
   const roots = mergeExternalRoots(
-    "/home/pi/workspace/aiti-dev",
-    [{ root: "/home/pi/workspace/aiti-dev/", role: "primary" }, { root: "/home/pi/workspace/pi-web", role: "secondary" }],
+    "/home/pi/workspace/demo-repo",
+    [{ root: "/home/pi/workspace/demo-repo/", role: "primary" }, { root: "/home/pi/workspace/pi-web", role: "secondary" }],
     [{ path: "/home/pi/workspace/pi-web" }, { path: "/home/pi/workspace/other-repo/" }],
   );
   // cwd 同名根被剔除；pi-web 去重保序；关注路径补充在后
@@ -264,10 +264,10 @@ test("candidatesFromRoots: relative path joined per root, absolute/~ skipped", (
 });
 
 test("selfNameCandidates: rel 首段 = 基名 → 父目录 + rel（自带名字自引用）", () => {
-  // 用户需求场景：session cwd 在 aiti-dev 内，AI 从父目录视角写 aiti-dev/docs/…（自引用）
+  // user scenario: session cwd inside demo-repo, AI writes demo-repo/docs/... from the parent view (self-reference)
   assert.deepEqual(
-    selfNameCandidates("aiti-dev/docs/carbon-expert-hotswapagent-plugin-needs.md", "/home/pi/workspace/aiti-dev"),
-    ["/home/pi/workspace/aiti-dev/docs/carbon-expert-hotswapagent-plugin-needs.md"],
+    selfNameCandidates("demo-repo/docs/carbon-expert-hotswapagent-plugin-needs.md", "/home/pi/workspace/demo-repo"),
+    ["/home/pi/workspace/demo-repo/docs/carbon-expert-hotswapagent-plugin-needs.md"],
   );
   // 外部根同理：会话处理过 cwd 外仓，按兄弟仓名引用
   assert.deepEqual(
@@ -275,11 +275,11 @@ test("selfNameCandidates: rel 首段 = 基名 → 父目录 + rel（自带名字
     ["/home/pi/workspace/pi-web/docs/x.md"],
   );
   // 精确等于基名（裸目录名引用自己）
-  assert.deepEqual(selfNameCandidates("aiti-dev", "/home/pi/workspace/aiti-dev"), ["/home/pi/workspace/aiti-dev"]);
+  assert.deepEqual(selfNameCandidates("demo-repo", "/home/pi/workspace/demo-repo"), ["/home/pi/workspace/demo-repo"]);
   // Windows 基/rel 反斜杠归一化
   assert.deepEqual(
-    selfNameCandidates("aiti-dev\\docs\\x.md", "D:\\workspace\\aiti-dev"),
-    ["D:/workspace/aiti-dev/docs/x.md"],
+    selfNameCandidates("demo-repo\\docs\\x.md", "D:\\workspace\\demo-repo"),
+    ["D:/workspace/demo-repo/docs/x.md"],
   );
   // workspace 根作为分辨基：workspace/pi-web/… 也能解析
   assert.deepEqual(
@@ -289,23 +289,23 @@ test("selfNameCandidates: rel 首段 = 基名 → 父目录 + rel（自带名字
 });
 
 test("selfNameCandidates: 首段 ≠ 基名 → 无候选；绝对/~ /盘符跳过；基无父目录/非法跳过", () => {
-  assert.deepEqual(selfNameCandidates("docs/x.md", "/home/pi/workspace/aiti-dev"), []);
-  assert.deepEqual(selfNameCandidates("pi-prod/docs/x.md", "/home/pi/workspace/aiti-dev"), []);
-  assert.deepEqual(selfNameCandidates("/abs/aiti-dev/x.md", "/home/pi/workspace/aiti-dev"), []);
-  assert.deepEqual(selfNameCandidates("~/aiti-dev/x.md", "/home/pi/workspace/aiti-dev"), []);
-  assert.deepEqual(selfNameCandidates("C:\\aiti-dev\\x.md", "/home/pi/workspace/aiti-dev"), []);
-  assert.deepEqual(selfNameCandidates("aiti-dev/x.md", "/"), []);
-  assert.deepEqual(selfNameCandidates("aiti-dev/x.md", "D:/"), []);
-  assert.deepEqual(selfNameCandidates("", "/home/pi/workspace/aiti-dev"), []);
-  assert.deepEqual(selfNameCandidates("aiti-dev/x.md", ""), []);
-  assert.deepEqual(selfNameCandidates("aiti-dev/x.md", "/home/pi/workspace/aiti-dev/"), ["/home/pi/workspace/aiti-dev/x.md"]);
+  assert.deepEqual(selfNameCandidates("docs/x.md", "/home/pi/workspace/demo-repo"), []);
+  assert.deepEqual(selfNameCandidates("pi-prod/docs/x.md", "/home/pi/workspace/demo-repo"), []);
+  assert.deepEqual(selfNameCandidates("/abs/demo-repo/x.md", "/home/pi/workspace/demo-repo"), []);
+  assert.deepEqual(selfNameCandidates("~/demo-repo/x.md", "/home/pi/workspace/demo-repo"), []);
+  assert.deepEqual(selfNameCandidates("C:\\demo-repo\\x.md", "/home/pi/workspace/demo-repo"), []);
+  assert.deepEqual(selfNameCandidates("demo-repo/x.md", "/"), []);
+  assert.deepEqual(selfNameCandidates("demo-repo/x.md", "D:/"), []);
+  assert.deepEqual(selfNameCandidates("", "/home/pi/workspace/demo-repo"), []);
+  assert.deepEqual(selfNameCandidates("demo-repo/x.md", ""), []);
+  assert.deepEqual(selfNameCandidates("demo-repo/x.md", "/home/pi/workspace/demo-repo/"), ["/home/pi/workspace/demo-repo/x.md"]);
 });
 
 test("extractFiles: 自带名字路径（自引用）正常提取——首段是 cwd 名", () => {
-  // 用户需求场景的完整链路：识别阶段先把 aiti-dev/docs/… 当普通相对路径提取
-  const out = extractFilePaths("参考 aiti-dev/docs/carbon-expert-hotswapagent-plugin-needs.md 的方案");
+  // full chain: recognition first extracts demo-repo/docs/... as an ordinary relative path
+  const out = extractFilePaths("参考 demo-repo/docs/carbon-expert-hotswapagent-plugin-needs.md 的方案");
   assert.ok(
-    out.some((p) => p.path === "aiti-dev/docs/carbon-expert-hotswapagent-plugin-needs.md" && !p.isDir),
+    out.some((p) => p.path === "demo-repo/docs/carbon-expert-hotswapagent-plugin-needs.md" && !p.isDir),
     JSON.stringify(out),
   );
 });
