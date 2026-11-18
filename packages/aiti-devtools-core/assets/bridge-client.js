@@ -316,7 +316,7 @@
         // pi-web 内嵌 AI 窗：宿主与 AI 窗同窗口（无 opener/parent）→ 转发给自身窗口
         //（postMessage 自发自收异步送达，launcher 路由只认 __dbg 标记，无回环风险）
         if (!host) host = global;
-        if (host) { try { host.postMessage({ __dbg: 1, type: 'dbg_command', payload: { requestId: m.requestId, cmd: m.cmd, args: m.args || {}, frameId: m.frameId } }, '*'); } catch (e) {} }
+        if (host) { try { host.postMessage({ __dbg: 1, type: 'dbg_command', payload: { requestId: m.requestId, cmd: m.cmd, args: m.args || {}, frameId: m.frameId, agentId: m.agentId || null, agentName: m.agentName || null, targetDevice: m.targetDevice || null } }, '*'); } catch (e) {} }
         forwarded = true;
       }
       if (cfg.onExec) cfg.onExec(m, forwarded);

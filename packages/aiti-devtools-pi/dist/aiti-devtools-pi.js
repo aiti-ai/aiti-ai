@@ -1106,6 +1106,7 @@ function createBridge(dataDir = "", opts = {}) {
       let srcPageId = payload && payload.pageId || null;
       let srcUrl = payload && payload.url || null;
       let srcTitle = payload && payload.title || null;
+      let srcDevice = payload && payload.deviceLabel || null;
       if (!srcPageId) {
         const bind = a && a.boundPageId ? resolvePageId(a.boundPageId) : null;
         const rows = listSessions().filter((r) => r.active && r.pageId);
@@ -1114,12 +1115,14 @@ function createBridge(dataDir = "", opts = {}) {
           srcPageId = pick.pageId;
           srcUrl = pick.url;
           srcTitle = pick.title || null;
+          srcDevice = srcDevice || devShortLabel(pick.device);
         }
       } else if (!srcUrl) {
         const row = listSessions().find((r) => r.pageId === srcPageId);
         if (row) {
           srcUrl = row.url || null;
           srcTitle = srcTitle || row.title || null;
+          srcDevice = srcDevice || devShortLabel(row.device);
         }
       }
       const clipMid = (s, max) => {
@@ -1133,6 +1136,7 @@ function createBridge(dataDir = "", opts = {}) {
         const parts = [srcPageId];
         if (srcUrl) parts.push(clipMid(srcUrl, 64));
         if (srcTitle) parts.push(clipMid(srcTitle, 40));
+        if (srcDevice) parts.push(clipMid(srcDevice, 40));
         tText = tText + "\n[发自: " + parts.join(" · ") + "（" + srcLabel + "：pageId 参数用它）]";
       }
       payload = { ...payload || {}, source: payload.source || a && a.source || null, sourceLabel: payload.sourceLabel || srcLabel, pageId: srcPageId, url: srcUrl, title: srcTitle };
@@ -1724,7 +1728,40 @@ ${String(pl.stack).slice(0, 400)}` : "");
     } catch (e) { return { error: String((e && e.message) || e) }; }
   }`;
   ;
-  function execOnPage(cmd, args, pageId, signal, mcpReqId, cancelId) {
+  const devShortLabel = (d) => d ? [d.browser, d.os].filter(Boolean).join(" · ") || null : null;
+  const deviceShort = (pid) => {
+    try {
+      if (!pid) return null;
+      const s = String(pid);
+      let dev = null;
+      let iid = null;
+      try {
+        const p = parsePageId(s);
+        iid = String(p.instanceId);
+        dev = pages.get(iid)?.device || null;
+      } catch {
+      }
+      if (!dev) {
+        for (const rec of aiPageReg.values()) {
+          const base = String(rec.pageId || "").replace(/\/host$/, "");
+          if (String(rec.pageId) === s || base && base === s) {
+            dev = rec.device;
+            break;
+          }
+        }
+        if (!dev && iid) {
+          for (const rec of aiSelfReg.values()) if (String(rec.instanceId) === iid) {
+            dev = rec.device;
+            break;
+          }
+        }
+      }
+      return devShortLabel(dev);
+    } catch {
+      return null;
+    }
+  };
+  function execOnPage(cmd, args, pageId, signal, mcpReqId, cancelId, src) {
     const { instanceId, frameId } = parsePageId(pageId || LEGACY_TOKEN);
     const page = pages.get(instanceId);
     return new Promise((resolve2) => {
@@ -1733,6 +1770,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       pendingRequests.set(requestId, rec);
       if (rec.mcpReqId) mcpReqMap.set(rec.mcpReqId, requestId);
       if (rec.cancelId) cancelIdMap.set(rec.cancelId, requestId);
+      const srcExt = src && src.agentId ? { agentId: src.agentId || null, agentName: src.agentName || null, targetDevice: src.targetDevice || null } : {};
       rec.onAbort = () => cancelPending(requestId, "已取消（agent 停止）");
       if (signal) {
         if (signal.aborted) {
@@ -1744,7 +1782,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       }
       console.log(TAG + " exec →", cmd, JSON.stringify(args || {}), "→ pageId=" + pageId);
       if (page) {
-        if (!page.writer.write({ type: "exec", requestId, cmd, args: args || {}, frameId })) {
+        if (!page.writer.write({ type: "exec", requestId, cmd, args: args || {}, frameId, ...srcExt })) {
           const irec = idRegistry.get(instanceId);
           if (irec) irec.lastSeen = Date.now();
           pages.delete(instanceId);
@@ -1760,14 +1798,14 @@ ${String(pl.stack).slice(0, 400)}` : "");
           }
         }
         if (target) {
-          if (!target.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "self" })) {
+          if (!target.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "self", ...srcExt })) {
             aiConns.delete(target);
             aiSelfReg.delete(target);
             settlePending(requestId, false, { error: "目标 AI 主窗口连接已断开（刷新后自动重连）" });
             return;
           }
         } else if (aiConns.size > 0) {
-          for (const w of aiConns) w.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "self" });
+          for (const w of aiConns) w.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "self", ...srcExt });
         } else {
           setTimeout(() => settlePending(requestId, false, { error: "无执行端（AI 主窗口未连接），先连接桥" }), 100);
           return;
@@ -1787,20 +1825,20 @@ ${String(pl.stack).slice(0, 400)}` : "");
         if (target && targetRec) {
           const baseId = String(targetRec.pageId || "").replace(/\/host$/, "");
           if (pageId && baseId && String(pageId).indexOf(baseId + "/") === 0) viaFrameId = String(pageId).slice(baseId.length + 1) || "host";
-          if (!target.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "ai", frameId: viaFrameId })) {
+          if (!target.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "ai", frameId: viaFrameId, ...srcExt })) {
             aiConns.delete(target);
             aiPageReg.delete(target);
             settlePending(requestId, false, { error: "目标 AI 窗连接已断开（页面刷新后自动重连，稍后重试）" });
             return;
           }
         } else if (aiConns.size > 0) {
-          for (const w of aiConns) w.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "ai" });
+          for (const w of aiConns) w.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "ai", ...srcExt });
         } else {
           setTimeout(() => settlePending(requestId, false, { error: "无执行端（页面/AI 通道均未连接），先连接桥" }), 100);
           return;
         }
       } else if (aiConns.size > 0) {
-        for (const w of aiConns) w.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "ai" });
+        for (const w of aiConns) w.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "ai", ...srcExt });
       } else {
         setTimeout(() => settlePending(requestId, false, { error: "无执行端（页面/AI 通道均未连接），先连接桥" }), 100);
         return;
@@ -2029,6 +2067,11 @@ ${String(pl.stack).slice(0, 400)}` : "");
         delete cmdArgs.target;
         delete cmdArgs.token;
         const recAgentKey = session && session.agentKey || (session && session.agentId ? session.agentId + (session.id ? "/" + session.id : "") : null) || null;
+        const agentSrc = () => {
+          const key = session && session.agentKey || (session && session.agentId ? session.agentId + (session.id ? "/" + session.id : "") : null) || a.agentId || null;
+          const agRec = key ? agents.get(String(key)) : null;
+          return { agentId: key || null, agentName: agRec && agRec.name || null };
+        };
         const recToolCall = (text, ok, detail) => {
           if (!recAgentKey) return;
           const m = { id: randomBytes2(4).toString("hex"), kind: "agent_tool", from: "agent", agentKey: recAgentKey, agentId: recAgentKey.split("/")[0], sessionId: recAgentKey.split("/").slice(1).join("/") || null, source: (agents.get(recAgentKey) || {}).source || "unknown", text: String(text).slice(0, 2e3), detail: detail === void 0 ? null : typeof detail === "string" ? detail : JSON.stringify(detail).slice(0, 4e3), at: (/* @__PURE__ */ new Date()).toISOString(), status: ok ? "ok" : "error" };
@@ -2146,7 +2189,8 @@ ${String(pl.stack).slice(0, 400)}` : "");
             return { content: [{ type: "text", text: "未找到匹配页面（pageId/url/title 均未命中）——用 bridge_status 查看可用 pageId" }], isError: true };
           }
           const mcpReqId = req && req.id !== void 0 ? String(req.id) : null;
-          return execOnPage("Runtime.evaluate", { expression: ringExpr }, resolved.pageId, signal, mcpReqId, cancelId).then((r) => {
+          const execSrc = { ...agentSrc(), targetDevice: deviceShort(resolved.pageId) };
+          return execOnPage("Runtime.evaluate", { expression: ringExpr }, resolved.pageId, signal, mcpReqId, cancelId, execSrc).then((r) => {
             const raw = r.ok && r.result && r.result.value !== void 0 ? r.result.value : [];
             let rows = Array.isArray(raw) ? raw : [];
             if (isLog) {
@@ -2179,10 +2223,10 @@ ${String(pl.stack).slice(0, 400)}` : "");
             return { content: [{ type: "text", text: "未找到匹配页面（pageId/url/title 均未命中）——用 bridge_status 查看可用 pageId" }], isError: true };
           }
           const mcpReqId = req && req.id !== void 0 ? String(req.id) : null;
-          const runPageTool = params.name === "page_exec" ? execOnPage(cmd, cmdArgs, resolved.pageId, signal, mcpReqId, cancelId) : execOnPage("__snapshot__", {}, resolved.pageId, signal, mcpReqId, cancelId).then((r) => {
+          const runPageTool = params.name === "page_exec" ? execOnPage(cmd, cmdArgs, resolved.pageId, signal, mcpReqId, cancelId, { ...agentSrc(), targetDevice: deviceShort(resolved.pageId) }) : execOnPage("__snapshot__", {}, resolved.pageId, signal, mcpReqId, cancelId, { ...agentSrc(), targetDevice: deviceShort(resolved.pageId) }).then((r) => {
             const txt = JSON.stringify(r.result || r);
             if (r.ok || txt.indexOf("unknown command: __snapshot__") === -1) return r;
-            return execOnPage("Runtime.evaluate", { expression: SNAPSHOT_FALLBACK, returnByValue: true }, resolved.pageId, signal, mcpReqId, cancelId).then((r2) => {
+            return execOnPage("Runtime.evaluate", { expression: SNAPSHOT_FALLBACK, returnByValue: true }, resolved.pageId, signal, mcpReqId, cancelId, { ...agentSrc(), targetDevice: deviceShort(resolved.pageId) }).then((r2) => {
               if (!r2.ok) return r2;
               const ro = r2.result && r2.result.result ? r2.result.result : r2.result;
               let val = ro && ro.value !== void 0 ? ro.value : ro;
@@ -2208,7 +2252,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
             return { content: [{ type: "text", text: "未找到目标页面——需 AI 主窗口已连接（bridge_status 可见 xxx/ai），或指定 pageId" }], isError: true };
           }
           const mcpReqId = req && req.id !== void 0 ? String(req.id) : null;
-          return execOnPage("Runtime.evaluate", { expression: SELF_UI_SCAN }, resolved.pageId, signal, mcpReqId, cancelId).then((r) => {
+          return execOnPage("Runtime.evaluate", { expression: SELF_UI_SCAN }, resolved.pageId, signal, mcpReqId, cancelId, { ...agentSrc(), targetDevice: deviceShort(resolved.pageId) }).then((r) => {
             const val = r.ok && r.result && r.result.value !== void 0 ? r.result.value : r.result || r;
             recToolCall("🛠 self_ui(" + resolved.pageId + ") → " + (r.ok ? val && val.dialogs ? val.dialogs.length + " 个弹窗" : "无弹窗" : "失败"), !!r.ok, { tool: "self_ui", pageId: resolved.pageId, response: val });
             return { content: [{ type: "text", text: JSON.stringify(val) }], isError: !r.ok };
@@ -2224,7 +2268,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
           const mcpReqId = req && req.id !== void 0 ? String(req.id) : null;
           const opts2 = { dialog: a.dialog || null, fields: a.fields || [], button: a.button || null };
           const expression = "(" + FORM_FILL_FN + ")(" + JSON.stringify(opts2) + ")";
-          return execOnPage("Runtime.evaluate", { expression }, resolved.pageId, signal, mcpReqId, cancelId).then((r) => {
+          return execOnPage("Runtime.evaluate", { expression }, resolved.pageId, signal, mcpReqId, cancelId, { ...agentSrc(), targetDevice: deviceShort(resolved.pageId) }).then((r) => {
             const val = r.ok && r.result && r.result.value !== void 0 ? r.result.value : r.result || r;
             recToolCall("🛠 form_fill(" + resolved.pageId + ") → " + (r.ok ? val && val.foundDialog ? "填 " + val.filled + " 字段" + (val.clicked ? "，点按钮" : "") : "未找到弹窗" : "失败"), !!r.ok, { tool: "form_fill", pageId: resolved.pageId, response: val });
             return { content: [{ type: "text", text: JSON.stringify(val) }], isError: !r.ok };
@@ -2233,7 +2277,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
         const interact = (interaction, timeout) => {
           const mcpReqId = req && req.id !== void 0 ? String(req.id) : null;
           const targetPageId = pageId || boundPageIdFor(session) || void 0;
-          return interactOnPage({ ...interaction, agentId: session && session.agentKey || session && session.agentId || a.agentId || null }, targetPageId, timeout, signal, mcpReqId, cancelId).then((r) => {
+          return interactOnPage({ ...interaction, ...agentSrc(), targetDevice: deviceShort(targetPageId) }, targetPageId, timeout, signal, mcpReqId, cancelId).then((r) => {
             recToolCall("🛠 " + interaction.kind + " → " + (r.ok ? "已作答" : r.result && r.result.status || "失败/拒绝"), !!r.ok);
             return { content: [{ type: "text", text: JSON.stringify(r.result || r) }], isError: !r.ok };
           });
@@ -2255,7 +2299,8 @@ ${String(pl.stack).slice(0, 400)}` : "");
           return interact({ kind: "presence", prompt: String(a.prompt || "你在吗？需要你配合继续开发"), rejectable: false, async: a.async === true }, a.timeout);
         }
         if (params.name === "user_notify") {
-          const notif = { kind: "notify", title: String(a.title || "🤖 AI 有一条消息"), body: String(a.body || a.prompt || ""), timeoutMs: clampTimeout(a.timeout) };
+          const srcN = agentSrc();
+          const notif = { kind: "notify", title: String(a.title || "🤖 AI 有一条消息"), body: String(a.body || a.prompt || ""), timeoutMs: clampTimeout(a.timeout), agentId: srcN.agentId, agentName: srcN.agentName, targetDevice: deviceShort(pageId || boundPageIdFor(session)) };
           const rid = "notify_" + Date.now();
           if (a.pageId) {
             const raw = String(a.pageId);
@@ -2281,6 +2326,10 @@ ${String(pl.stack).slice(0, 400)}` : "");
             }
             let delivered = false;
             const tgt = fullPageId ? resolveAiTarget(fullPageId) : resolveAiTarget(iid + "/ai");
+            try {
+              notif.targetDevice = deviceShort(fullPageId || iid + "/ai") || notif.targetDevice;
+            } catch {
+            }
             if (tgt) {
               try {
                 delivered = !!tgt.w.write({ type: "interaction", requestId: rid, interaction: notif, frameId: tgt.frameId, via: tgt.via });
@@ -4357,7 +4406,12 @@ async function index_default(pi) {
     if (!sid) sid = "s_" + Date.now().toString(36);
     currentSessionId = sid;
     currentCwd = ctx.cwd || "";
-    const name = agentDisplayName();
+    let name = agentDisplayName();
+    try {
+      const sn = ctx.sessionManager.getSessionName();
+      if (sn && String(sn).trim()) name = String(sn).trim();
+    } catch {
+    }
     await probeBridge2(base, 800);
     if (bridgeUp) registerBridgeTools(pi);
     connectAgentStream(pi, base, sid, name, currentCwd, (m) => injectAgentEvent(pi, m));
