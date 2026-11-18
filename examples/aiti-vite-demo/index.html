@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>aiti-vite-demo</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { font: 15px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 760px; margin: 0 auto; padding: 28px 20px 64px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  p.sub { color: #888; margin: 0 0 24px; font-size: 13px; }
+  section { border: 1px solid rgba(128,128,128,.3); border-radius: 12px; padding: 16px 18px; margin: 0 0 16px; }
+  h2 { font-size: 14px; margin: 0 0 10px; text-transform: uppercase; letter-spacing: .04em; color: #888; }
+  .card { display: flex; gap: 12px; align-items: center; border: 1px solid rgba(128,128,128,.25); border-radius: 10px; padding: 10px 14px; margin-bottom: 8px; }
+  .avatar { width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg,#6366f1,#a855f7); flex: 0 0 auto; }
+  .name { font-weight: 600; }
+  .meta { color: #888; font-size: 12px; }
+  button { font: inherit; padding: 6px 14px; border-radius: 8px; border: 1px solid rgba(128,128,128,.4); background: transparent; cursor: pointer; }
+  button:hover { background: rgba(128,128,128,.12); }
+  code { background: rgba(128,128,128,.15); padding: 1px 6px; border-radius: 5px; font-size: 12.5px; }
+  ul { margin: 8px 0 0; padding-left: 20px; }
+  li { margin: 4px 0; }
+</style>
+</head>
+<body>
+  <h1>aiti-vite-demo</h1>
+  <p class="sub">A plain vite page. The only thing added is one plugin in <code>vite.config.js</code>.</p>
+
+  <section>
+    <h2>Elements to inspect</h2>
+    <div class="card">
+      <div class="avatar"></div>
+      <div>
+        <div class="name">Card with an avatar</div>
+        <div class="meta">Hover it in inspect mode to see the component/file/line annotation</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="avatar"></div>
+      <div>
+        <div class="name">Second card</div>
+        <div class="meta">Two siblings make the annotation pick the right one</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Elements to interact with</h2>
+    <button id="count">Clicked 0 times</button>
+  </section>
+
+  <section>
+    <h2>What the plugin put on this server</h2>
+    <ul>
+      <li><code>/aiti/aiti-launcher.js</code> — the injected script (comes with the page)</li>
+      <li><code>/aiti/cockpit.html</code> — the agent cockpit / AI window</li>
+      <li><code>/aiti/bridge/*</code> — bridge HTTP API used by the launcher</li>
+      <li><code>/aiti/mcp/*</code> — MCP endpoint, registered with agent CLIs at startup</li>
+    </ul>
+  </section>
+
+  <script type="module">
+    let n = 0;
+    const btn = document.getElementById("count");
+    btn.addEventListener("click", () => { btn.textContent = `Clicked ${++n} times`; });
+  </script>
+</body>
+</html>
