@@ -1421,7 +1421,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         deleteSessionViewSnapshot(sid);
         return null;
       }
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        // Surface the server's reason (e.g. BridgeOccupiedError's "owned by another pi
+        // process …") instead of an opaque status code — genuine 409s are actionable,
+        // and the spurious-race ones are fixed server-side (attach in-flight dedupe).
+        const body = await res.json().catch(() => null) as { error?: string } | null;
+        throw new Error(body?.error || `HTTP ${res.status}`);
+      }
       const d = await res.json() as SessionData;
       if (sessionIdRef.current !== sid) return null;
       // Placeholder/alias id canonicalization: when the server resolves new-*/aliases into the real composite id,
