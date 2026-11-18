@@ -3,7 +3,7 @@
   "version": "0.2.1",
   "type": "module",
   "homepage": "https://aiti.pw/extensions/demo.html",
-  "description": "demo 扩展 —— 同时演示两种 client 写法：纯 hyperscript（demo-client.mjs）与 JSX + npm 依赖（client/src/*.tsx → demo-jsx.mjs，vite 构建）",
+  "description": "Reference extension demonstrating every extension point: two client styles side by side (plain hyperscript, and JSX with npm dependencies built by vite), config files, skills and server-side hooks. Meant to be read as the canonical example of how an aiti extension is put together.",
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "deploy": "node tools/deploy.mjs"
@@ -22,5 +22,27 @@
       "humor-flag.json"
     ]
   },
-  "aitiExtProtocol": "1.0"
+  "aitiExtProtocol": "1.0",
+  "keywords": [
+    "aiti",
+    "aiti-devtools",
+    "pi-web",
+    "extension",
+    "example",
+    "reference",
+    "slots",
+    "widgets"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/demo"
+  },
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }
