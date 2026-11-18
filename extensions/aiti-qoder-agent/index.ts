@@ -97,9 +97,9 @@ export function loadSteerProbeBook(stateDir: string): SteerProbeBook {
   return book;
 }
 
-/** 某个 CLI 二进制的实际能力表（基表 + 探针门控的 steer）。 */
+/** 某个 CLI 二进制的实际能力表（基表 + 探针门控的 steer；只认 ACP 驱动证据）。 */
 function qoderCapabilitiesFor(cliPath: string | null | undefined): SessionCapabilitiesLike {
-  return withSteerGate(QODER_CAPABILITIES, steerProbePassed(steerProbeBook, cliPath));
+  return withSteerGate(QODER_CAPABILITIES, steerProbePassed(steerProbeBook, cliPath, "acp"));
 }
 
 /**
@@ -393,10 +393,11 @@ export function qoderContextWindow(modelId?: string): number | undefined {
  * 基能力表（**不是**最终值：`steer` 由探针门控逐 CLI 覆盖，见 qoderCapabilitiesFor）。
  */
 const QODER_CAPABILITIES: SessionCapabilitiesLike = {
-  // ACP 驱动（2026-11-13 重写）：stream-json 的注入面（user 帧 priority 三档 + 认领回执）
-  // 随 1.1.81+ SDK worker 移除一并失效，ACP 注入面未探针 → steer 恒关（构造器里 withSteerGate(x, false)）。
-  // 运行中输入一律入本地 followUp 队列（收口后自动续轮）。若未来要开：按 steer-gate.ts 的
-  // 探针纪律对 --acp 模式实跑取证后再点亮。
+  // ACP 驱动（2026-11-13 重写）：运行中注入 = 在途 session/prompt 旁再发一条
+  // session/prompt（CLI initialize 自报 `_meta.qoder.promptQueueing`，入队默认
+  // priority:"next" → AgentLoop 工具间隙吸收）。能力位仍由 ACP 实跑探针开门
+  // （tools/steer-probe-acp.mjs --record → steer-gate.ts）；无证据 = 运行中输入
+  // 一律入本地 followUp 队列。
   steer: false,
   followUp: true,
   queueManage: true, // 共享层全 CRUD（followUp 组；steer 组只读——注入后归 CLI 自己的队列管）
@@ -578,7 +579,7 @@ const REPLAY_END_EVENT = "replay_end";
 
 export class QoderHandle {
   source: string;
-  /** 能力表（ACP 驱动：steer 未探针恒关，运行中输入一律本地队列）。 */
+  /** 能力表（ACP 驱动：steer 由 ACP 探针门控，未取证时运行中输入走本地队列）。 */
   readonly capabilities: SessionCapabilitiesLike;
   /** 本会话 CLI 二进制路径（日志/排障用）。 */
   readonly cliPath: string;
@@ -594,6 +595,15 @@ export class QoderHandle {
   private listeners = new Set<Listener>();
   private aliveFlag = true;
   private running = false;
+  /**
+   * 在途 session/prompt 计数（主轮 + 运行中注入）。注入轮可能在主轮之后另起一段
+   * agent loop——计数器归零才算整轮收口（agent_settled 只发一次，UI 不会在中途闪回空闲）。
+   */
+  private promptsInFlight = 0;
+  /** 注入序号（steer 镜像 id 用；协议无 ack，镜像随该请求响应出队）。 */
+  private steerSeq = 0;
+  /** CLI 在 initialize 里自报的 ACP prompt queueing 能力（`_meta.qoder.promptQueueing`）。 */
+  private promptQueueing = false;
   private model: { id: string; provider: string } | undefined;
   /** 最近一轮 usage（session/prompt 响应机会式提取；部分版本恒缺） */
   private lastUsage: {
@@ -698,18 +708,18 @@ export class QoderHandle {
     this.variant = variant;
     this.source = `aiti-qoder-agent/${qoderVariant(variant).type}`;
     this.cliPath = cliPath;
-    // ACP 驱动：steer（运行中注入）通道未探针（stream-json 时代的 user 帧/命令生命周期
-    // 认领已随 1.1.81+ SDK worker 移除失效）——恒关，运行中输入一律本地队列（共享层）。
-    const steerOn = false;
-    void steerProbePassed; // 探针工具保留（tools/steer-probe.mjs），未重验前不点亮
+    // ACP 驱动：steer = 在途 session/prompt 旁再发一条（CLI 自报 promptQueueing）。
+    // 能力位与行为同一把门：只有 ACP 探针 pass 才给共享层挂 steer 钩子。
+    const steerOn = steerProbePassed(steerProbeBook, cliPath, "acp");
     this.capabilities = withSteerGate(QODER_CAPABILITIES, steerOn);
     this.queueSupport = createBackendQueueSupport({
       isRunning: () => this.running || !this.aliveFlag,
       alive: () => this.aliveFlag,
       dispatch: (text, images) => this.prompt(text, images?.length ? { images: images as never } : {}),
+      ...(steerOn ? { steer: (text, images) => this.injectSteer(text, images as never) } : {}),
       onEvent: (ev) => this.emit(ev),
       log: (m) => console.warn(`[aiti-qoder-agent] ${m}`),
-      // steer 钩子不挂：运行中输入一律本地排队（能力位与行为必须同一把门）。
+      // steer 钩子缺省 = 运行中输入一律本地排队；开着时注入失败由共享层降级入队。
       persistence: createQueueFilePersistence(
         () => (queueStateDir ? join(queueStateDir, "queues", sidecarBase(this.id)) : undefined),
         (m) => console.warn(m),
@@ -743,6 +753,7 @@ export class QoderHandle {
     if (!this.aliveFlag) return;
     this.aliveFlag = false;
     this.acp?.close();
+    this.promptsInFlight = 0; // 传输已关：在途请求永远不会再响应
     for (const w of this.readyWaiters.splice(0)) w(); // 挂起的 prompt 放行 → 后半段 aliveFlag 检查抛错
     
     // 未决权限请求随进程一起作废（resolve cancelled，避免 CLI 侧悬挂等响应）
@@ -835,7 +846,8 @@ export class QoderHandle {
         return;
       }
       if (kind === "agent_message_chunk") {
-        this.running = true; // late chunk must not resurrect a settled turn, but running flag follows reality
+        // 不在这里置 running：回合由 sendPromptTurn 置真、响应收口；超时后 CLI 仍会
+        // 推迟到 chunk，置真会让已放弃的回合永远「运行中」（无后续帧可收口）。
         this.appendChunk("text", text);
       } else {
         this.appendChunk("thinking", text);
@@ -1216,11 +1228,20 @@ export class QoderHandle {
   private async startSession(opts: { sessionId?: string; seedModel?: string }): Promise<void> {
     if (!this.acp) return;
     try {
-      await this.acp.request(
+      const init = await this.acp.request(
         "initialize",
         { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false } },
         60_000,
-      );
+      ) as Record<string, unknown> | null;
+      const initMeta = ((init?.agentCapabilities as Record<string, unknown> | undefined)?._meta ?? {}) as Record<string, unknown>;
+      const qoderMeta = (initMeta.qoder ?? {}) as Record<string, unknown>;
+      this.promptQueueing = qoderMeta.promptQueueing === true;
+      if (this.capabilities.steer && !this.promptQueueing) {
+        console.warn(`[aiti-qoder-agent] steer 探针已通过但本 CLI 未自报 ACP promptQueueing — 注入将降级为本地队列`);
+      }
+      const cliVersion = String((init?.agentInfo as Record<string, unknown> | undefined)?.version ?? "");
+      const stale = this.capabilities.steer && cliVersion ? steerEvidenceStale(steerProbeBook, this.cliPath, cliVersion) : null;
+      if (stale) console.warn(`[aiti-qoder-agent] ${stale}`);
       this.acp.notify("initialized", {});
       const { agentKey } = qoderVariant(this.variant);
       if (opts.sessionId) {
@@ -1328,13 +1349,13 @@ export class QoderHandle {
     options?: {
       images?: Array<{ type: "image"; data: string; mimeType: string }>;
       files?: Array<{ data: string; mimeType: string; filename?: string }>;
-      /** 运行中排队语义（core 透传）：ACP 驱动下 steer 通道未开放，一律收敛到本地队列。 */
+      /** 运行中排队语义（core 透传）：steer=注入（探针开门 + CLI 自报 promptQueueing），followUp=本地队列。 */
       streamingBehavior?: "steer" | "followUp";
     },
   ): Promise<void> {
     if (!this.aliveFlag) throw new Error("[aiti-qoder-agent] not running");
     if (this.running) {
-      // 运行中：收敛到本地队列（queue_update 上面板，收口后自动续轮）。
+      // 运行中：分流归共享层——有 steer 钩子则注入（失败自降级），否则/明确 followUp 入本地队列。
       await this.q.routePrompt(text, {
         ...(options?.images?.length ? { images: options.images as never } : {}),
         streamingBehavior: options?.streamingBehavior,
@@ -1352,21 +1373,100 @@ export class QoderHandle {
     for (const img of options?.images ?? []) {
       prompt.push({ type: "image", data: img.data, mimeType: img.mimeType });
     }
-    // 写成功后才置 running（加固 A4）：request 抛错时 running 保持 false，会话不被卡死
-    this.running = true;
     this.liveHistory.push({ role: "user", content: text });
+    await this.sendPromptTurn(prompt, "primary");
+  }
+
+  /** session/prompt 应答上限：一次回合可跨数十次工具调用，按小时计；超时按传输失败收口。 */
+  static PROMPT_TIMEOUT_MS = 6 * 60 * 60 * 1000;
+
+  /**
+   * 发一条 session/prompt 并记账（主轮与运行中注入共用）：
+   *  - `promptsInFlight` 归零才算整轮收口（注入轮可能在主轮之后另起一段 loop）；
+   *  - 注入请求的响应不触发 agent_settled，失败自降级回本地 followUp 队列
+   *    （共享层在注入时已按 "steered" 返回，必须由 handle 自己兜住消息不丢）。
+   */
+  private async sendPromptTurn(
+    prompt: Array<Record<string, unknown>>,
+    kind: "primary" | "steer",
+    steer?: {
+      text: string;
+      images?: Array<{ data: string; mimeType: string }>;
+      mirrorId: string;
+      historyEntry: unknown;
+    },
+  ): Promise<void> {
+    const sid = realSidOf(this.id);
+    if (!sid || !this.acp) return;
+    this.promptsInFlight += 1;
+    this.running = true;
     let result: Record<string, unknown> | null = null;
+    let failure: string | null = null;
     try {
-      result = await this.acp.request("session/prompt", { sessionId: sid, prompt }) as Record<string, unknown> | null;
+      result = await this.acp.request(
+        "session/prompt",
+        { sessionId: sid, prompt },
+        QoderHandle.PROMPT_TIMEOUT_MS,
+      ) as Record<string, unknown> | null;
     } catch (e) {
       // transport-level failure (dead pipe / timeout): let markDead settle the UI via
-      // session_backend_dead; reset running here so the queue stays drainable.
+      // session_backend_dead; reset running below so the queue stays drainable.
+      failure = e instanceof Error ? e.message : String(e);
+    }
+    this.settlePromptTurn(kind, result, failure, steer);
+  }
+
+  private settlePromptTurn(
+    kind: "primary" | "steer",
+    result: Record<string, unknown> | null,
+    failure: string | null,
+    steer?: { text: string; images?: Array<{ data: string; mimeType: string }>; mirrorId: string; historyEntry: unknown },
+  ): void {
+    this.promptsInFlight = Math.max(0, this.promptsInFlight - 1);
+    if (steer) {
+      // 协议无认领帧：请求响应 = CLI 已处理该条 → 镜像出队；失败则撤回气泡、转本地队列。
+      this.q.drainSteer([steer.mirrorId]);
+      if (failure) {
+        const i = this.liveHistory.indexOf(steer.historyEntry);
+        if (i >= 0) this.liveHistory.splice(i, 1);
+        this.q.enqueueFollowUp(steer.text, steer.images as never);
+      }
+    }
+    // 本段 loop 结束：先把流式气泡落成消息（注入轮可能在主轮后继续，各段边界都收一次）
+    this.flushStreamMessages();
+    if (this.promptsInFlight > 0) return; // 还有注入在途：收口等最后一个响应
+    if (failure !== null) {
       this.running = false;
-      this.flushStreamMessages();
-      console.warn(`[aiti-qoder-agent] session/prompt failed: ${e instanceof Error ? e.message : String(e)}`);
+      console.warn(`[aiti-qoder-agent] session/prompt failed${kind === "steer" ? " (steer)" : ""}: ${failure}`);
       return;
     }
     this.finishTurn(result);
+  }
+
+  /**
+   * 运行中注入（共享层 steer 钩子）：在途 session/prompt 旁再发一条 session/prompt。
+   * CLI 侧入队 priority:"next"（工具间隙被本轮 AgentLoop 吸收；主轮无间隙时成为下一段
+   * loop）。不阻塞等待应答——应答在消费该条的 loop 结束时到达。
+   */
+  private async injectSteer(
+    text: string,
+    images?: Array<{ data: string; mimeType: string }>,
+  ): Promise<void> {
+    if (!this.aliveFlag) throw new Error("[aiti-qoder-agent] not running");
+    if (!this.running) throw new Error("[aiti-qoder-agent] steer requires a running turn");
+    if (!this.promptQueueing) throw new Error("[aiti-qoder-agent] CLI does not advertise ACP promptQueueing");
+    const sid = realSidOf(this.id);
+    if (!sid || !this.acp) throw new Error("[aiti-qoder-agent] session not ready");
+    // ACP content blocks: text + optional images（与 prompt() 同一构造）。
+    const prompt: Array<Record<string, unknown>> = [{ type: "text", text }];
+    for (const img of images ?? []) {
+      prompt.push({ type: "image", data: img.data, mimeType: img.mimeType });
+    }
+    const historyEntry = { role: "user", content: text };
+    this.liveHistory.push(historyEntry);
+    const mirrorId = `acp-steer-${++this.steerSeq}`;
+    this.q.registerSteer(mirrorId, text);
+    void this.sendPromptTurn(prompt, "steer", { text, images, mirrorId, historyEntry });
   }
 
   /**
@@ -1690,18 +1790,20 @@ export class QoderHandle {
   }
 
   /**
-   * @capability steer —— 运行中注入（探针 pass 才开放；空闲时等同普通发送）。
-   * 门控关时保持 fail-loud：宿主已按能力位把 steer 降级成 followUp，走到这里只能是
-   * 有人直连 RPC——静默改语义（悄悄排队）比抛错更坏。
+   * @capability steer —— 运行中注入（ACP 探针 pass 才开放；空闲时等同普通发送）。
+   * 分流归共享层：运行中 → steer 钩子（在途 session/prompt 旁再发一条）；空闲 → dispatch；
+   * 注入失败 → 自动降级入本地 followUp 队列（消息不丢、不打断原轮）。
+   * 门控关时保持 fail-loud：宿主已按能力位降级成 followUp，走到这里只能是有人直连 RPC。
    */
   async steer(text: string): Promise<void> {
     if (!this.aliveFlag) throw new Error("[aiti-qoder-agent] not running");
-    // ACP 驱动下 steer 通道未探针（stream-json 的注入面随 1.1.81+ SDK worker 移除）——
-    // 保持 fail-loud：宿主已按能力位把 steer 降级成 followUp，走到这里只能是有人直连 RPC。
-    throw new Error(
-      `Capability "steer" is not enabled for CLI "${this.cliPath || "?"}"：` +
-      "ACP 驱动的运行中注入面未经验证（运行中输入一律走 followUp 本地队列）",
-    );
+    if (!this.capabilities.steer) {
+      throw new Error(
+        `Capability "steer" is not enabled for CLI "${this.cliPath || "?"}"：` +
+        "ACP 注入面未通过探针（运行中输入一律走 followUp 本地队列）",
+      );
+    }
+    await this.q.routePrompt(text);
   }
 
   /** @capability followUp —— 运行中入本地队列（result 后自动续轮，可撤回）；空闲等同普通 prompt。 */
@@ -1960,7 +2062,7 @@ function scanQoderBackends(
     if (bin) {
       installedVariants.add(v.variant);
       registered.push(`${key}(${bin})`);
-      console.log(`[aiti-qoder-agent] ${v.agentKey}: ${describeSteerGate(steerProbeBook, bin)}`);
+      console.log(`[aiti-qoder-agent] ${v.agentKey}: ${describeSteerGate(steerProbeBook, bin, "acp")}`);
     } else {
       unavailable.push(key); // PATH 与安装位均无 → 条目常驻但灰显（装机后 rescan 自动点亮）
     }
@@ -2048,7 +2150,7 @@ export default {
       // 免得 CLI 等一个没人回答的请求把回合永久钉住（2026-09-19 挂 5 小时事故）
       interactionDir = join(queueStateDir, "interactions");
       try { mkdirSync(interactionDir, { recursive: true }); } catch { /* exists */ }
-      // steer 探针账本（<stateDir>/steer-probe.json，tools/steer-probe.mjs --record 写入）：
+      // steer 探针账本（<stateDir>/steer-probe.json，tools/steer-probe-acp.mjs --record 写入）：
       // 必须在注册会话后端之前读入——能力表与 steer 钩子都在句柄创建时同步判定。
       loadSteerProbeBook(queueStateDir);
       ctx.services?.provide?.("aiti-qoder-agent.sessionDormantState", readTaskSnapshot);

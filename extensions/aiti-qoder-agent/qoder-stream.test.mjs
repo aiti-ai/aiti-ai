@@ -142,6 +142,21 @@ test("回合收口：气泡 flush 落 message_end + agent_settled（stopReason �
   await h.dispose();
 });
 
+test("迟到 chunk 不复活已收口回合（session/prompt 超时失步兜底）", async () => {
+  const { h, stub } = await makeReadyHandle(QoderHandle, { stubOpts: { autoAnswerPrompt: false } });
+  const p = h.prompt("hi");
+  await flush();
+  stub.answerPrompt({ stopReason: "end_turn" });
+  await p;
+  await flush();
+  assert.equal(h.isRunning(), false);
+  // 回合已收口后 CLI 仍可能继续推送 chunk（例如请求帧已过期丢弃）；不得置回运行中
+  stub.notify({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "迟到帧" } });
+  await flush();
+  assert.equal(h.isRunning(), false, "迟到 chunk 不得让已收口回合永远「运行中」");
+  await h.dispose();
+});
+
 test("failed 工具更新 → toolResult 带 isError + 空输出占位文案", async () => {
   const { h, events, stub } = await makeReadyHandle(QoderHandle);
   stub.notify({ sessionUpdate: "tool_call", toolCallId: "call_x", status: "pending", title: "Bash", rawInput: {} });
