@@ -33,6 +33,7 @@ import { trashFileSync } from "./session-trash.ts";
 import type { SessionEntry } from "./types.ts";
 import { readSideRelation } from "./side-session.ts";
 import { getWrapperStarter } from "./agent-starter/index.ts";
+import { getHandle, removeHandle } from "./session/handle-store.ts";
 
 /** Most ids one POST /api/sessions/delete takes; the sidebar sends a bigger project in parts. */
 export const MAX_SESSION_DELETE_IDS = 500;
@@ -78,7 +79,9 @@ export async function deleteSessions(
   for (const id of new Set(ids)) {
     const filePath = await resolveSessionPath(id);
     if (filePath) targets.set(id, filePath);
-    else if (hosted.has(id)) pathless.add(id); // live agent, no file to move
+    // Live agent with no file to move: a detached wrapper session, or a provider
+    // handle whose backend never wrote a session file (spawn without a first turn).
+    else if (hosted.has(id) || getHandle(id)?.alive()) pathless.add(id);
     else missing.push(id);
   }
   if (targets.size === 0 && pathless.size === 0) return { deleted: [], missing, running: [] };
@@ -267,6 +270,19 @@ export async function deleteSessions(
     const hosted = [...deletedSessionIds].filter((id) => held.has(id));
     await Promise.all(hosted.map((id) => wrapper.kill(id).catch(() => false)));
   }
+  // Provider handles with no session file: dispose stops a plain child (a wrapper
+  // child was already stopped above and dispose/release is a no-op detach).
+  for (const id of pathless) {
+    const handle = getHandle(id);
+    if (!handle) continue;
+    try {
+      await handle.dispose();
+    } catch {
+      /* best effort: the session is being deleted anyway */
+    }
+    removeHandle(id);
+  }
+
   // Guard timestamp: taken AFTER the agents were stopped. Anything written
   // clearly after that belongs to a writer we do not control (another pi-web
   // instance resuming the file, a daemon) — keep the file, losing a

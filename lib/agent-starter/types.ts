@@ -20,7 +20,7 @@
  */
 
 import type { ChildProcess } from "node:child_process";
-import type { SessionEntry } from "./registry.ts";
+import type { RunnerKind, SessionEntry } from "./registry.ts";
 
 /** Spawn options accepted by both strategies (node spawn fields we honor). */
 export type AgentStarterSpawnOptions = {
@@ -55,6 +55,8 @@ export interface AgentStarter {
 /** Capabilities a detachable implementation adds (used by the core, not extensions). */
 export interface WrapperStarter extends AgentStarter {
   readonly kind: "wrapper";
+  /** Which runner hosts wrappers on this host. */
+  readonly runner: RunnerKind;
   /** Reattach to a session that outlived pi-web (journal replay included). */
   attach(sessionId: string): Promise<ChildProcess>;
   /** Registry probe: is this session hosted by a live wrapper right now? */

@@ -75,7 +75,8 @@ import type { SessionCapabilities, SessionHandle } from "./types.ts";
 import { getHandle as lookupHandle, putHandle, putHandleAt, listAllHandles } from "./handle-store.ts";
 import { HandleSessionAdapter, type WrappedSessionLike } from "./handle-adapter.ts";
 import { findBridgeSessionFileById, invalidateSessionListCache, readSessionHeader, resolveSessionPath } from "../session-reader.ts"; // relative path + explicit extension: jiti does not resolve the @/ alias, and ESM requires extensions
-import { getAgentStarters, getWrapperStarter, selectStarter } from "../agent-starter/index.ts";
+import { describeDetachSupport, getAgentStarters, getWrapperStarter, selectStarter } from "../agent-starter/index.ts";
+import type { DetachSupportInfo } from "../agent-starter/index.ts";
 import type { ChildProcess } from "node:child_process";
 import { ensurePlaceholder, rebindPlaceholder, aliasPlaceholder, getPlaceholder, isProvisionalExtSid } from "./placeholder.ts";
 
@@ -87,6 +88,8 @@ function listProviderNames(): string[] {
 export type ProviderInfo = {
   type: string;
   label: string;
+  /** Backend opted in to detachable hosting (agent outlives a pi-web restart). */
+  detachable?: boolean;
   /** External agent key this backend can drive (all-sessions join key), if any. */
   agentKey?: string;
   maxCapabilities: SessionCapabilities;
@@ -101,6 +104,7 @@ export function listProviderInfos(): ProviderInfo[] {
     type: p.type,
     label: p.label,
     ...(p.agentKey ? { agentKey: p.agentKey } : {}),
+    ...(p.detachable === true ? { detachable: true } : {}),
     maxCapabilities: p.maxCapabilities,
     ...(p.available === false ? { available: false } : {}),
     ...(p.available === false && p.installHint ? { installHint: p.installHint } : {}),
@@ -384,6 +388,11 @@ export async function openExternalSession(
     }
   }
   throw lastError ?? new Error(`No provider could open ${compositeId}`);
+}
+
+/** Detach availability for UI surfaces (new-session toggle, greying). */
+export async function detachSupport(): Promise<DetachSupportInfo> {
+  return describeDetachSupport();
 }
 
 /** Registry key of the attach provider (registered by the attach extension at startup; undefined when the extension is not installed). */
