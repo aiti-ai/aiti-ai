@@ -47,7 +47,7 @@ composer 插 [元素N] ──用户发送──▶ 插件 messages.transform：
 ```bash
 # 1) npm 包（npm.example.com）
 #    opencode.json: { "plugin": ["@aiti-ai/aiti-devtools-opencode"] }
-# 2) 本地：cd ~/workspace/pi-work/opencode-ext/aiti-devtools-opencode && npm run deploy
+# 2) 本地：cd ~/workspace/the source repo/opencode-ext/aiti-devtools-opencode && npm run deploy
 ```
 
 桥默认 `http://127.0.0.1:8777/aiti`（`AITI_BRIDGE_URL` 覆盖）。

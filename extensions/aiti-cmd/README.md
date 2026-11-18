@@ -1,6 +1,6 @@
 # @aiti-ai/aiti-cmd
 
-> Command manager — real PTY terminal + favorite commands + message-click recognition execution + live agent command observation + a unified cross-extension execution outlet
+> Three command apps in one extension — **Saved commands** (groups/tags/lexicon + one-click run), **Running** (terminal sessions + agent bash + execution log) and **Terminal** (real PTY), plus message-click recognition, a composer run-status entry, a share-center "save as command" target and a unified cross-extension execution outlet
 
 English · [简体中文](./README.zh-CN.md)
 

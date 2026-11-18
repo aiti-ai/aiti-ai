@@ -210,11 +210,25 @@ export type DockHeaderState = Record<string, unknown>;
 /** 命令实现表（id → 函数）；payload 可用于传递锚点矩形等参数。 */
 export type DockHeaderCommands = Record<string, ((payload?: unknown) => void) | undefined>;
 
-/** ⋮ 菜单附加项（内容注册，渲染在「工具」组之后的扩展分组）。 */
+/** 图标排注册项（iconsRow 行内按钮；icon 接受 React 元素——与 DockIconRowItem 的 DockIconName 区分）。 */
+export interface MenuIconRowItem {
+  key: string;
+  icon: unknown;
+  label: string;
+  run: () => void;
+}
+
+/** ⋮ 菜单附加项（内容注册，渲染在「工具」组之后的扩展分组）。
+ *  iconsRow（2026-11-24）：单行「label 居左 + 图标钮排居右」（v5 图标排同款），供同段多动作合并；
+ *  items 内 icon 接受任意 React 元素（React 端 DockBody 渲染）。 */
 export type DockMenuItem =
   | { kind: "item"; id?: string; label: string; icon?: unknown; hint?: string; active?: boolean; alwaysRun?: boolean; disabled?: boolean; run: () => void }
   | { kind: "sep"; id?: string }
-  | { kind: "head"; label: string; id?: string };
+  | { kind: "head"; label: string; id?: string }
+  | { kind: "iconsRow"; id?: string; label?: string; items: MenuIconRowItem[] }
+  /** 移动行占位：DockBody 在该位置插入固定「移动」图标行（含 moveRowPin 钉住钮），
+   *  并跳过区块段末尾的默认移动行（前移语义）；无占位时维持区块段末尾现状。 */
+  | { kind: "moveRow"; id?: string };
 
 export type DockHeaderRegistration = {
   actions?: DockHeaderAction[] | null;
@@ -249,7 +263,10 @@ function menuSig(list: DockMenuItem[] | null): string {
   if (!list) return "";
   return list.map((m) => m.kind === "item"
     ? `i:${m.id ?? m.label}:${m.label}:${m.hint ?? ""}:${m.active ? 1 : 0}:${m.alwaysRun ? 1 : 0}:${m.disabled ? 1 : 0}`
-    : m.kind === "head" ? `h:${m.label}` : "s").join("§");
+    : m.kind === "head" ? `h:${m.label}`
+    : m.kind === "iconsRow" ? `r:${m.label ?? ""}:${m.items.map((i) => i.key).join(",")}`
+    : m.kind === "moveRow" ? "mv-row"
+    : "s").join("§");
 }
 function stateSig(s: DockHeaderState): string {
   try { return JSON.stringify(s); } catch { return `keys:${Object.keys(s).length}`; }
@@ -616,9 +633,23 @@ if (typeof window !== "undefined") {
 /* ── 位置菜单（v3 §2-D：DockBody 头行 📍，停靠态一键换位） ──
  *  数据源 = 调用方传入的 zones/defaultZone（扩展自己知道自己声明了什么；
  *  createDockFaces 自动传）。float 状态机不存 DOM 属性，故不经全局查询。 */
+/** Dock-menu word table (core layer lives in _shared without ctx.t; resolve via the
+ *  same localStorage pi-locale source as the host useI18n; en default). */
+const DOCK_WORDS: Record<string, { "zh-CN": string; en: string }> = {
+  newWindow: { "zh-CN": "新窗口打开", en: "Open in new window" },
+  float: { "zh-CN": "浮窗", en: "Float" },
+  zoneSidebar: { "zh-CN": "左栏 · 区块", en: "Left · blocks" },
+  zoneRight: { "zh-CN": "右栏 · 面板", en: "Right · panels" },
+};
+export function dockWord(key: keyof typeof DOCK_WORDS): string {
+  let loc = "en";
+  try { loc = window.localStorage.getItem("pi-locale") || "en"; } catch { /* storage unavailable */ }
+  const w = DOCK_WORDS[key];
+  return (w as any)[loc === "zh-CN" ? "zh-CN" : "en"] ?? w.en;
+}
 export const DOCK_ZONE_LABELS: Record<string, string> = {
-  "sidebar-explorer": "左栏 · 区块",
-  "right-panel": "右栏 · 面板",
+  "sidebar-explorer": dockWord("zoneSidebar"),
+  "right-panel": dockWord("zoneRight"),
 };
 
 /** ── 图标排模型（v5，方案 docs/pi-web-dock-icon-row-plan.md §3.4）──────────────────
@@ -685,8 +716,8 @@ export function positionMenuItems(k: string, zones: DockZone[], defaultZone: Doc
 export function positionMenuModel(k: string, zones: DockZone[], defaultZone: DockZone | undefined, cur: PresentState, opts?: { onNewWindow?: (() => void) | null }): PositionMenuItem[] {
   const newWindow = opts?.onNewWindow ?? dockWindowOpenerOf(k);
   return [
-    ...(newWindow ? [{ key: "new-window", icon: "new-window" as const, label: "新窗口打开", run: newWindow }] : []),
-    { key: "float", icon: "float", label: "浮窗", active: cur === "floating", run: () => undockToFloat(k) },
+    ...(newWindow ? [{ key: "new-window", icon: "new-window" as const, label: dockWord("newWindow"), run: newWindow }] : []),
+    { key: "float", icon: "float", label: dockWord("float"), active: cur === "floating", run: () => undockToFloat(k) },
     ...positionMenuItems(k, zones, defaultZone, cur),
   ];
 }

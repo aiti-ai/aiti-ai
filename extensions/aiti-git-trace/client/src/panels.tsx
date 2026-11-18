@@ -711,9 +711,26 @@ function renderTimeline(props?: any, face?: string): any { bindSession(props);
   const ovMultiRoot = new Set(ovFiles.map((f: any) => f.root)).size > 1; // 跨仓会话路径带仓根标注消歧
   const ovHits = fileFilter ? ovFiles.filter((f: any) => fileMatches(f, fileFilter)) : ovFiles;
   const ovMissing = ovStores.length > 0 && ovStores.every((s: any) => s.storeMissing);
+  // View-scope totals: the stat bar follows the turn/file filter — numbers collapse to the
+  // current scope so the user can see the filter take effect (matches the file list below).
+  const ovFiltered = !!(turnFilter || fileFilter);
+  const ovViewTotals = (() => {
+    const opIds = new Set<string>();
+    const rbOps = new Set<string>();
+    let adds = 0, dels = 0;
+    for (const f of ovHits) {
+      adds += f.adds || 0; dels += f.dels || 0;
+      for (const x of f.touches || []) {
+        if (x.op == null) continue;
+        opIds.add(String(x.op));
+        if (x.kind === "rollback") rbOps.add(String(x.op));
+      }
+    }
+    return { ops: opIds.size, files: ovHits.length, adds, dels, rollbacks: rbOps.size };
+  })();
   const ovPerRoot = (() => {
     const m = new Map<string, { root: string; adds: number; dels: number; files: number }>();
-    for (const f of ovFiles) {
+    for (const f of ovHits) {
       const e = m.get(f.root) || { root: f.root, adds: 0, dels: 0, files: 0 };
       e.adds += f.adds || 0; e.dels += f.dels || 0; e.files += 1;
       m.set(f.root, e);
@@ -731,6 +748,7 @@ function renderTimeline(props?: any, face?: string): any { bindSession(props);
       turnOptions.push({ id, label: "#" + String(op.msgSeq ?? "?") + " · " + String(op.prompt || t("gt.timeline.group")).slice(0, 40) });
     }
   }
+  const turnLabel = turnFilter ? (turnOptions.find((x) => x.id === turnFilter)?.label || turnFilter) : "";
   // 「↩ 回撤记录」区块（总览折叠条与操作视图共用）
   const rollbackRowsBlock = (
     <div style={{ border: "1px solid #f0c674", borderRadius: 6, overflow: "hidden" }}>
@@ -838,12 +856,6 @@ function renderTimeline(props?: any, face?: string): any { bindSession(props);
             {t("gt.timeline.showAll")}
           </label>
         )}
-        {view === "overview" && fileFilter && (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, padding: "2px 8px", borderRadius: 6, background: "color-mix(in srgb, var(--warn, #f59e0b) 12%, transparent)", color: "#f59e09", border: "1px solid color-mix(in srgb, var(--warn, #f59e0b) 35%, transparent)", whiteSpace: "nowrap", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis" }}>
-            📄 {fileFilter.split("/").pop()}
-            <button onClick={() => setFileFilter(null)} title="清除单文件过滤" style={{ background: "transparent", border: "none", color: "inherit", cursor: "pointer", padding: 0, fontWeight: 700 }}>×</button>
-          </span>
-        )}
         {view === "msg" && selGroups.length > 0 && (
           <button style={btnStyle} title={t("gt.timeline.reviewSelTip")} onClick={() => reviewGroups(selGroups, groups)}>
             📋 {t("gt.timeline.reviewSel") + " (" + selGroups.length + ")"}
@@ -906,27 +918,49 @@ function renderTimeline(props?: any, face?: string): any { bindSession(props);
       ) : view === "overview" ? (
         <>
         {filesLoading && !filesData ? <div style={{ opacity: 0.6 }}>{t("gt.ov.loading")}</div> : null}
-        {/* 汇总条（§2）：N 次操作 · M 个文件 · +A −B 行 · ↩R 次回撤（+绿/−红）；leaks chip 点击切按操作视图 */}
+        {/* Scope bar: filter context chips (turn/file) + live totals — numbers always reflect the
+            filtered scope so filtering is visible; global anomaly chips (binary/leak) only when unfiltered */}
         {ovTotals ? (
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", border: "1px solid var(--border)", borderRadius: 6, padding: "6px 10px", marginBottom: 8, fontSize: 12 }}>
-            <span><b>{fmtN(ovTotals.ops)}</b> {t("gt.ov.ops")}</span>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", border: "1px solid " + (ovFiltered ? "color-mix(in srgb, var(--warn, #f59e0b) 35%, var(--border))" : "var(--border)"), background: ovFiltered ? "color-mix(in srgb, var(--warn, #f59e0b) 8%, transparent)" : undefined, borderRadius: 6, padding: "6px 10px", marginBottom: 8, fontSize: 12 }}>
+            {ovFiltered ? (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 4, flexWrap: "wrap", minWidth: 0 }}>
+                {turnLabel ? (
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, padding: "2px 8px", borderRadius: 6, background: "color-mix(in srgb, var(--warn, #f59e0b) 12%, transparent)", color: "#f59e09", border: "1px solid color-mix(in srgb, var(--warn, #f59e0b) 35%, transparent)", whiteSpace: "nowrap", maxWidth: 280, overflow: "hidden" }}>
+                    <span style={{ flexShrink: 0 }}>⏱</span>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{turnLabel}</span>
+                    <button onClick={() => setTurnFilter("")} title={t("gt.timeline.allTurns")} style={{ background: "transparent", border: "none", color: "inherit", cursor: "pointer", padding: 0, fontWeight: 700, flexShrink: 0 }}>×</button>
+                  </span>
+                ) : null}
+                {fileFilter ? (
+                  <span title={fileFilter} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, padding: "2px 8px", borderRadius: 6, background: "color-mix(in srgb, var(--warn, #f59e0b) 12%, transparent)", color: "#f59e09", border: "1px solid color-mix(in srgb, var(--warn, #f59e0b) 35%, transparent)", whiteSpace: "nowrap", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis" }}>
+                    <span style={{ flexShrink: 0 }}>📄</span>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{fileFilter.split("/").pop()}</span>
+                    <button onClick={() => setFileFilter(null)} title={t("gt.ov.clearFilter")} style={{ background: "transparent", border: "none", color: "inherit", cursor: "pointer", padding: 0, fontWeight: 700, flexShrink: 0 }}>×</button>
+                  </span>
+                ) : null}
+              </span>
+            ) : null}
             <span style={{ opacity: 0.4 }}>·</span>
-            <span><b>{fmtN(ovTotals.files)}</b> {t("gt.ov.files")}</span>
+            <span><b>{fmtN(ovViewTotals.ops)}</b> {t("gt.ov.ops")}</span>
             <span style={{ opacity: 0.4 }}>·</span>
-            <span style={{ color: "#1a7f37", fontWeight: 600 }}>+{fmtN(ovTotals.adds)}</span>
-            <span style={{ color: "#cf222e", fontWeight: 600 }}>−{fmtN(ovTotals.dels)}</span>
-            {ovTotals.rollbacks > 0 ? (<><span style={{ opacity: 0.4 }}>·</span><span style={{ color: "#9a6700" }}>↩ {fmtN(ovTotals.rollbacks)} {t("gt.ov.rollbacks")}</span></>) : null}
-            {ovTotals.binary > 0 ? (<><span style={{ opacity: 0.4 }}>·</span><span style={{ opacity: 0.6, fontSize: 11 }}>{t("gt.ov.binary")} {fmtN(ovTotals.binary)}</span></>) : null}
-            {ovTotals.leaks > 0 ? (
+            <span><b>{fmtN(ovViewTotals.files)}</b> {t("gt.ov.files")}</span>
+            <span style={{ opacity: 0.4 }}>·</span>
+            <span style={{ color: "#1a7f37", fontWeight: 600 }} title={t("gt.ov.netNote")}>+{fmtN(ovViewTotals.adds)}</span>
+            <span style={{ color: "#cf222e", fontWeight: 600 }} title={t("gt.ov.netNote")}>−{fmtN(ovViewTotals.dels)}</span>
+            {!ovFiltered && ovViewTotals.rollbacks > 0 ? (<><span style={{ opacity: 0.4 }}>·</span><span style={{ color: "#9a6700" }}>↩ {fmtN(ovViewTotals.rollbacks)} {t("gt.ov.rollbacks")}</span></>) : null}
+            {!ovFiltered && ovTotals.binary > 0 ? (<><span style={{ opacity: 0.4 }}>·</span><span style={{ opacity: 0.6, fontSize: 11 }}>{t("gt.ov.binary")} {fmtN(ovTotals.binary)}</span></>) : null}
+            {!ovFiltered && ovTotals.leaks > 0 ? (
               <span style={{ ...badgeStyle("leak"), marginLeft: 0, cursor: "pointer" }} title={t("gt.timeline.leak")} onClick={() => switchView("msg")}>{t("gt.timeline.leak")} {fmtN(ovTotals.leaks)}</span>
             ) : null}
             <span style={{ flex: 1 }} />
-            <span style={{ opacity: 0.55, fontSize: 10.5 }}>{t("gt.ov.netNote")}</span>
+            {ovFiltered ? (
+              <button style={{ ...chipStyle, marginLeft: 0 }} onClick={() => { setTurnFilter(""); setFileFilter(null); }}>✕ {t("gt.ov.clearFilter")}</button>
+            ) : null}
           </div>
         ) : null}
         {filesData?.filesTruncated ? <div style={{ color: "#9a6700", fontSize: 11, marginBottom: 6 }}>{t("gt.ov.filesTruncated")}</div> : null}
-        {/* 跨仓会话：按仓分列小标（§2） */}
-        {ovPerRoot.length > 1 ? (
+        {/* cross-repo per-root chips (§2) — hidden when filtered (single scope; totals already collapsed in the scope bar) */}
+        {!ovFiltered && ovPerRoot.length > 1 ? (
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
             {ovPerRoot.map((r) => (
               <span key={r.root} style={chipStyle} title={r.root}>
@@ -938,7 +972,12 @@ function renderTimeline(props?: any, face?: string): any { bindSession(props);
         {/* 空态三文案（§4.5）：仅在加载完成且数据已返回后展示，避免与加载提示同时出现。 */}
         {filesLoading || !filesData ? null : !ops || ops.length === 0 ? <div style={{ opacity: 0.7 }}>{t("gt.timeline.empty")}</div>
           : ovMissing ? <div style={{ opacity: 0.7 }}>{t("gt.ov.storeMissing")}</div>
-          : ovHits.length === 0 ? <div style={{ opacity: 0.7 }}>{t("gt.ov.noFiles")}</div>
+          : ovHits.length === 0 ? (
+            <div style={{ opacity: 0.75, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span>{ovFiltered ? t("gt.ov.noMatch") : t("gt.ov.noFiles")}</span>
+              {ovFiltered ? <button style={{ ...chipStyle, marginLeft: 0 }} onClick={() => { setTurnFilter(""); setFileFilter(null); }}>{t("gt.ov.clearFilter")}</button> : null}
+            </div>
+          )
           : ovHits.map((f: any) => {
           const key = f.root + "\u0000" + f.path;
           const expanded = expandedFiles.includes(key);
@@ -946,19 +985,23 @@ function renderTimeline(props?: any, face?: string): any { bindSession(props);
           const hasRange = !!(st && st.base && st.target && st.base !== st.target && !st.storeMissing && !st.rejected);
           return (
             <div key={key} style={{ borderBottom: "1px solid var(--border)", padding: "6px 0" }}>
-              {/* 文件行（整行可点 = 展开/收起）：状态 A绿/M珀/D红/R蓝 · 路径 · 触达 ops 数 · ±行数 · 最后触达 */}
+              {/* file row (whole-row click = expand/collapse): wide panes fit one line
+                  (status + path + meta + actions); narrow panes wrap into two —
+                  line 1 = status A/M/D/R + path (single-line ellipsis, no char wrapping),
+                  line 2 = ops · ±lines · last touch · actions (right-aligned) */}
               <div onClick={() => toggleFile(key)} title={t("gt.timeline.fileExpand")}
-                style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", cursor: "pointer" }}>
+                style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", justifyContent: "flex-end", cursor: "pointer" }}>
                 <span style={{ ...chipStyle, flexShrink: 0, padding: "0 4px" }}>{expanded ? "▾" : "▸"}</span>
                 <span title={f.status + (f.renamedFrom ? " ← " + f.renamedFrom : "")} style={{ color: statusColor(f.status), fontWeight: 700, fontSize: 11.5, flexShrink: 0 }}>{f.status}</span>
-                <span title={f.root + "/" + f.path} style={{ fontFamily: "monospace", fontSize: 12, wordBreak: "break-all", flex: 1, minWidth: 0 }}>
+                <span title={f.root + "/" + f.path} style={{ fontFamily: "monospace", fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: "1 1 auto", minWidth: 0 }}>
                   {f.path}{ovMultiRoot ? <span style={{ opacity: 0.55 }}> · {repoBase(f.root)}</span> : null}
                 </span>
-                <span style={{ ...badgeStyle("dim"), marginLeft: 0, flexShrink: 0 }} title={t("gt.timeline.fileTouch")}>{f.touches.length + " " + t("gt.timeline.fileTouch")}</span>
-                <span style={{ color: "#1a7f37", fontSize: 11, flexShrink: 0 }}>+{fmtN(f.adds)}</span>
-                <span style={{ color: "#cf222e", fontSize: 11, flexShrink: 0 }}>−{fmtN(f.dels)}</span>
-                <span style={{ opacity: 0.5, fontSize: 11, flexShrink: 0 }}>{fmtTime(f.lastT)}</span>
-                <span style={{ display: "inline-flex", gap: 3, flexShrink: 0, flexWrap: "wrap" }} onClick={(e: any) => e.stopPropagation()}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 1, minWidth: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                  <span style={{ ...badgeStyle("dim"), marginLeft: 0, flexShrink: 0 }} title={t("gt.timeline.fileTouch")}>{f.touches.length + " " + t("gt.timeline.fileTouch")}</span>
+                  <span style={{ color: "#1a7f37", fontSize: 11, flexShrink: 0 }}>+{fmtN(f.adds)}</span>
+                  <span style={{ color: "#cf222e", fontSize: 11, flexShrink: 0 }}>−{fmtN(f.dels)}</span>
+                  <span style={{ opacity: 0.5, fontSize: 11, flexShrink: 0 }}>{fmtTime(f.lastT)}</span>
+                  <span style={{ display: "inline-flex", gap: 3, flexShrink: 0, flexWrap: "wrap" }} onClick={(e: any) => e.stopPropagation()}>
                   {f.status !== "D" ? (
                     <button style={openBtnStyle} title={t("gt.timeline.openFileTip") + " · " + f.root + "/" + f.path}
                       onClick={() => openFile(f.root + "/" + f.path, String(f.path || "").split("/").pop() || f.path)}>{t("gt.timeline.openFile")}</button>
@@ -966,6 +1009,7 @@ function renderTimeline(props?: any, face?: string): any { bindSession(props);
                   <button style={actBtnStyle} title={t("gt.timeline.atRefTip")} onClick={() => appendText(atTextFor(f.root, f.path))}><b style={{ fontWeight: 700 }}>@</b>{t("gt.timeline.atRef")}</button>
                   <button style={actBtnStyle} title={t("gt.timeline.atNewTip")} onClick={() => atNewSessionFile(f, st)}><b style={{ fontWeight: 700 }}>@</b>{t("gt.timeline.atNew")}</button>
                   <button style={actBtnStyle} title={t("gt.timeline.copyPathTip")} onClick={(e: any) => copyWithFeedback(f.root + "/" + f.path, e.currentTarget)}>{t("gt.timeline.copyPath")}</button>
+                  </span>
                 </span>
               </div>
               {expanded ? (

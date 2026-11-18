@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { isApiRequestAllowed } from "@/lib/request-security";
 import { getRegistry } from "@/lib/ext/registry";
-import { listProviderInfos } from "@/lib/session";
+import { detachSupport, listProviderInfos } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -26,11 +26,14 @@ export async function POST(req: Request) {
   }
   try {
     const { reports } = await getRegistry().rescanBackends();
+    // detach: same availability block as GET (the client updates both in place).
+    const detach = await detachSupport().catch(() => ({ available: false, reason: "probe failed" }));
     return NextResponse.json({
       ok: true,
       reports,
       providers: listProviderInfos(),
       rescanable: true,
+      detach,
     });
   } catch (e) {
     return NextResponse.json({ ok: false, error: String(e) }, { status: 500 });

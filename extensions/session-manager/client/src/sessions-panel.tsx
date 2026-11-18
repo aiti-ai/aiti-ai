@@ -4,7 +4,7 @@
  */
 import { useState, useEffect, useRef, useLayoutEffect } from "react"
 import type { ReactNode } from "react";
-import { t, apiUrl, openFile } from "./host-shim";
+import { t, apiUrl, openFile, getExtService } from "./host-shim";
 import {
   store, useStore, panelOpen, managerOpen, refreshSessions, refreshListChannels, ensureTags, collapsePanelIfCovering,
   archiveSessions, restoreSession, deleteArchivedSession, act, notifySessionsChanged, hideExtSession,
@@ -42,8 +42,20 @@ import { truncateRunErrorText } from "./sidebar/pure";
 
 const PAGE_SIZE = 20;
 
+/** Select-session resolution: slot props first, then the host "pi-web.ui" client
+ *  service (2026-09-16 contract: slots pass data only — callbacks live in the
+ *  service). The docked right-panel face receives no onSelectSession prop at
+ *  all; without the fallback every row click in the docked All-Sessions panel
+ *  was a silent no-op (no chat switch, no ?session= URL write). */
+function resolveSelectSession(props: any) {
+  const svc = getExtService<{ get: (name: string) => unknown }>("pi-web.ui");
+  return (props?.onSelectSession ?? svc?.get?.("onSelectSession")) as
+    | ((s: any, isRestore?: boolean, entryId?: string, blockIndex?: number, options?: any) => void)
+    | undefined;
+}
+
 /** 目录过滤匹配：cwd 是否精确等于所选目录（root）—— 只匹配该目录本身的会话，
- * 不包含其子目录（如选 ~/workspace 不覆盖 ~/workspace/pi-work）；兼容 \\ 与 / 。 */
+ * excludes its subdirectories (picking ~/workspace does not cover ~/workspace/demo-repo); accepts both \\ and / . */
 const normDir = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "") + "/";
 const underRoot = (cwd: string | undefined, root: string) =>
   !!cwd && !!root && normDir(cwd) === normDir(root);
@@ -377,7 +389,7 @@ function renderExtViewer(props: any, face?: string) {
     closeExtViewer();
     const piSession = (store.sessions as any[]).find((x) => x.id === newId)
       ?? { id: newId, cwd: data?.meta?.cwd ?? "", name: `[${data?.agent}] ${(data?.meta?.firstMessage ?? "").slice(0, 40)}` };
-    props.onSelectSession?.(piSession);
+    resolveSelectSession(props)?.(piSession);
     collapsePanelIfCovering();
   };
   const doImport = async () => {
@@ -401,7 +413,7 @@ function renderExtViewer(props: any, face?: string) {
         closeExtViewer();
         // 合成 SessionInfo 切主聊天窗：loadSession 对未知 id 走 404 空态，
         // SSE/命令经 handle adapter 打到 live 后端。
-        props.onSelectSession?.({
+        resolveSelectSession(props)?.({
           id: result.sessionId,
           path: "",
           cwd: data?.meta?.cwd ?? "",
@@ -607,7 +619,7 @@ function viewerAction(
       if (row.archiveRef === "__ext__") {
         void openLiveSession(sessionId, row.cwd ?? data?.meta?.cwd ?? "").then((r) => {
           if (r.ok) {
-            props?.onSelectSession?.({
+            resolveSelectSession(props)?.({
               id: r.sessionId,
               cwd: row.cwd ?? data?.meta?.cwd ?? "",
               name: row.name ?? undefined,
@@ -621,7 +633,7 @@ function viewerAction(
         });
         return;
       }
-      props?.onSelectSession?.({
+      resolveSelectSession(props)?.({
         id: sessionId,
         cwd: row.cwd ?? data?.meta?.cwd ?? "",
         name: row.name ?? undefined,
@@ -1364,7 +1376,7 @@ export function SessionsPanel(props: any) {
         // 还在看 All Sessions」）——那种场合才让位。
         if (sess.archived) openViewer(sess.id);
         else if (sess.agent && sess.agent !== "pi") openExtViewer(sess.id);
-        else props.onSelectSession?.(sess);
+        else resolveSelectSession(props)?.(sess);
         collapsePanelIfCovering();
       }}
       style={{
@@ -1509,7 +1521,7 @@ export function SessionsPanel(props: any) {
               void openLiveSession(sess.id, sess.cwd)
                 .then((r) => {
                   if (r.ok) {
-                    props.onSelectSession?.({
+                    resolveSelectSession(props)?.({
                       id: r.sessionId,
                       path: "",
                       cwd: sess.cwd ?? "",
@@ -1619,10 +1631,10 @@ export function SessionsPanel(props: any) {
                 // ext 视图层归档行：恢复后直接走后端扩展接管（⚡ 同链路）
                 if (isExtArchived) {
                   return openLiveSession(sess.id, sess.cwd).then((r) => {
-                    if (r.ok) props.onSelectSession?.({ ...sess, archived: false, id: r.sessionId, transient: true });
+                    if (r.ok) resolveSelectSession(props)?.({ ...sess, archived: false, id: r.sessionId, transient: true });
                   });
                 }
-                props.onSelectSession?.({ ...sess, archived: false });
+                resolveSelectSession(props)?.({ ...sess, archived: false });
                 collapsePanelIfCovering();
               }).finally(() => markDone(sess.id));
             },

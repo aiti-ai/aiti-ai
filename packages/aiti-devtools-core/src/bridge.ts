@@ -14,6 +14,7 @@ import { spawn } from "node:child_process";
 import { mkdirSync, appendFileSync, readdirSync, readFileSync, existsSync, statSync, rmSync, writeFileSync, renameSync, openSync, readSync, closeSync, unlinkSync, copyFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { createPairModule } from "./pair.ts";
+import { parseUa } from "./ua-parse.js";
 
 const ID_TTL = parseInt(process.env.AITI_BRIDGE_TTL || "600000", 10); // 断开后保留（ms）
 // ---- agent 会话治理：历史 agent 清理 / 群发排除 / 显示用 CWD ----
@@ -110,7 +111,7 @@ export const BRIDGE_TOOLS = [
       body: { type: "string", description: "通知内容" },
       timeout: { type: "number", description: "可选：通知卡自动关闭时限 ms（5000-600000）。不传=常驻直到用户关闭" },
       async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送；缺省=同步等待" },
-      pageId: { type: "string" },
+      pageId: { type: "string", description: "目标页面：完整 pageId（iid/frameId）/url/title（resolvePageId 同款）或裸 instanceId（pair 设备 id 同源）。缺省=广播全部 AI 窗 + 会话默认页" },
     }, required: ["body"] } },
   // ---- 方案 G · P2：agent 接入 + 消息主通道 ----
   { name: "aiti_hello", description: "agent 自我介绍/注册：覆盖 agentId（默认 clientInfo.name）与 sessionId（默认 Mcp-Session-Id 或桥随机）、绑定默认目标页 pageId、订阅页面事件（page_error）。注意：page_log/page_network 不再实时推送，改用 page_logs/page_network 工具按需拉取。建议会话开始时调用一次——注册后消息可定向到本会话（agentKey=agentId/sessionId）。",
@@ -133,9 +134,9 @@ export const BRIDGE_TOOLS = [
       ack: { description: "已处理消息 id 列表，或 { ids: [...], summary: '执行总结' }——summary（必带）会作为 agent 处理记录显示在操作台消息流", oneOf: [ { type: "array", items: { type: "string" } }, { type: "object", properties: { ids: { type: "array", items: { type: "string" } }, summary: { type: "string" } } } ] },
     } } },
   // ---- pair 设备互连（临时聊天/互传文件；设备发现走 bridge_status 的 devices 统一视图） ----
-  { name: "aiti_pair_send", description: "给桥上另一台设备发文本消息（pair web 设备如手机 / 其他 agent 会话 / 注入页面）。to 传设备 id 或名字（模糊匹配，唯一命中即发，多个/无命中返回候选清单——照候选重调即可）；to 省略或传 'all' 群发全部 pair 设备与 agent。对方是 agent 时消息进其 aiti_inbox（带 [发自 pair: <名>] 标注）。文件传输用 aiti_pair_file。",
+  { name: "aiti_pair_send", description: "给桥上另一台设备发文本消息（页面 / 其他 agent 会话 / pair web 设备如手机）。to 传设备 id 或名字（模糊匹配，唯一命中即发，多个/无命中返回候选清单）；to 省略或传 'all' = 全部页面（不跨类）；'agents' = 全部 agent；'pairs' = 全部 pair 设备。文件传输用 aiti_pair_file。",
     inputSchema: { type: "object", properties: {
-      to: { type: "string", description: "目标设备 id 或名字（bridge_status 的 devices 里选；缺省=群发）" },
+      to: { type: "string", description: "目标设备 id 或名字（bridge_status 的 devices 里选；缺省/'all'=全部页面；'agents'=全部代理；'pairs'=全部 pair 设备）" },
       text: { type: "string", description: "消息文本" },
     }, required: ["text"] } },
   { name: "aiti_pair_file", description: "把桥所在机器上的本地文件推给另一台设备（pair web 设备在浏览器里直接下载；agent 收到 file-meta 后用 aiti_pair_fetch 取回）。to 传设备 id 或名字。单文件上限 200MB，中转暂存 1 小时。",
@@ -713,6 +714,54 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
     return { notFound: true };
   }
 
+  // Targeted resolution for AI connections (unified pageId identity): AI windows have two id families —
+  //   ① iid/ai (the AI window's own connection; aiSelfReg/aiPageReg match by instanceId)
+  //   ② baseId/frame (host-page identity family om183/host, om183/fN, registered into aiPageReg.pageId
+  //   via reportAiPage — a connection's own instanceId is iid ≠ baseId, so looking up the connection
+  //   table with parsePageId's iid always misses; user_notify once misreported "target page not
+  //   connected" for the pageId carried by the sender-attribution line of om183/host).
+  // This function unifies both families: a host-page identity resolves to its owning connection via
+  // exact pageId match / baseId prefix match (when multiple windows registered the same host page,
+  // the latest lastSeen wins — same semantics as execOnPage).
+  // Returns { w, via, frameId, connInstanceId }: via=self (render inside the AI window) / via=ai
+  // (forwarded to host rendering via useForward); null on miss (caller falls back to the real page
+  // connection / broadcast on its own).
+  function resolveAiTarget(pageIdStr: string): { w: any; via: "self" | "ai"; frameId: any; connInstanceId: string } | null {
+    const full = String(pageIdStr || "");
+    if (!full) return null;
+    const pid = parsePageId(full);
+    if (pid.frameId === "ai") {
+      for (const [w, rec] of aiSelfReg) {
+        if (String(rec.instanceId) === String(pid.instanceId)) return { w, via: "self", frameId: "ai", connInstanceId: String(rec.instanceId) };
+      }
+      for (const [w, rec] of aiPageReg) { // aiPageReg fallback (self not registered / connection flap window; same matching semantics as the old aiConns)
+        if (rec.pageId && String(rec.instanceId) === String(pid.instanceId)) return { w, via: "self", frameId: "ai", connInstanceId: String(rec.instanceId) };
+      }
+    }
+    let hit: any = null; let bestSeen = 0;
+    for (const [w, rec] of aiPageReg) {
+      if (!rec.pageId) continue; // page identity not registered yet → cannot target (same readiness gate as listDevices)
+      const baseId = String(rec.pageId).replace(/\/host$/, "");
+      if (rec.pageId === full || (baseId && full.indexOf(baseId + "/") === 0)) {
+        if (!hit || (rec.lastSeen || 0) > bestSeen) { hit = { w, rec, baseId }; bestSeen = rec.lastSeen || 0; }
+      }
+    }
+    if (!hit) {
+      // Fallback form: <AI-window instanceId>/host (root-page form: the AI window shares the host page,
+      // and reportAiPage without debugTarget never registers a real host-page identity → listDevices
+      // device ids are exactly this fallback form). Resolution accepts it too: the iid uniquely owns the
+      // window so routing is always correct; the real identity family (om183/host) was already matched
+      // exactly/by prefix above — this only catches windows without a real identity.
+      if (pid.frameId === "host") {
+        for (const [w, rec] of aiSelfReg) {
+          if (String(rec.instanceId) === String(pid.instanceId)) return { w, via: "ai", frameId: "host", connInstanceId: String(rec.instanceId) };
+        }
+      }
+      return null;
+    }
+    const frame = full.length > String(hit.baseId).length ? full.slice(String(hit.baseId).length + 1) : "host";
+    return { w: hit.w, via: "ai", frameId: frame || "host", connInstanceId: String(hit.rec.instanceId) };
+  }
   // 设备信息附加到 session 行（仅注册了 device 才带，保持 JSON 精简）；deviceLabel 缺省时用最小兜底
   const withDevice = (row: any, dev: any, label: any) => {
     if (dev && typeof dev === "object") {
@@ -799,6 +848,23 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
       withDevice(selfRow, rec.device, rec.deviceLabel);
       addMine(selfRow);
       out.push(selfRow);
+    }
+    // AI-window host-page fallback row (root-page form: AI window = host page, reportAiPage without
+    // debugTarget never registers a real host-page identity): listDevices device id uses the iid/host
+    // fallback form (same source) — sessions outputs the same fallback row so that every id advertised
+    // in the device view stays resolvable for resolvePageId / aiti_* tools (identity unification; no
+    // more "tool does not recognize the device id")
+    for (const [w, rec] of aiPageReg) {
+      if (rec.pageId) continue; // has a real host-page identity → covered by the aiByBase row above; no fallback row
+      const self2 = aiSelfReg.get(w);
+      const iid = self2 && String(self2.instanceId);
+      const fbPageId = iid ? iid + "/host" : null;
+      if (!fbPageId || seen.has(fbPageId)) continue;
+      seen.add(fbPageId);
+      const fbRow = { instanceId: iid, frameId: "host", pageId: fbPageId, url: rec.url || (self2 && self2.url) || null, title: rec.title || (self2 && self2.title) || null, frameworks: null, active: true, viaAI: true, lastSeen: rec.lastSeen };
+      withDevice(fbRow, self2 && self2.device, self2 && self2.deviceLabel);
+      addMine(fbRow);
+      out.push(fbRow);
     }
     return out;
   }
@@ -1171,9 +1237,15 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
   function interactOnPage(interaction: Record<string, any>, pageId?: string, timeoutMs?: number, signal?: AbortSignal, mcpReqId?: string | null, cancelId?: string | null) {
     const { instanceId, frameId } = parsePageId(pageId || LEGACY_TOKEN);
     const page = pages.get(instanceId);
-    // M1·AI 主窗口定向：pageId=<instanceId>/ai → 直接推对应 AI 连接（self 窗口内渲染作答卡，不广播）
-    let aiTarget: any = null;
+    // M1·AI main-window targeting: pageId=<instanceId>/ai → push directly to that AI connection
+    // (render the reply card inside the self window, no broadcast); host-page identity (om183/host
+    // family) → resolveAiTarget finds the owning AI connection (via=ai forwards to host rendering)
+    let aiTarget: any = null; let aiTargetVia: any = "self"; let aiTargetFrameId: any = "ai";
     if (frameId === "ai") { for (const [w, rec] of aiSelfReg) if (rec.instanceId === instanceId) { aiTarget = w; break; } }
+    if (!aiTarget) {
+      const t = resolveAiTarget(pageId || "");
+      if (t) { aiTarget = t.w; aiTargetVia = t.via; aiTargetFrameId = t.frameId; }
+    }
     const ms = clampTimeout(timeoutMs);
     const t0 = Date.now();
     const payload = { ...interaction, timeoutMs: ms };
@@ -1199,9 +1271,13 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
       }
       const noExecutor = () => { clearInteractionTimer(requestId); cancelPending(requestId, "无执行端（页面/AI 通道均未连接），先连接桥"); };
       if (aiTarget) {
-        // 定向 AI 主窗口（frameId=ai）：self 窗口内直接渲染作答卡；连接失效则退广播
-        if (!aiTarget.write({ type: "interaction", requestId, interaction: payload, frameId: "ai", via: "self" })) {
-          aiConns.delete(aiTarget); aiSelfReg.delete(aiTarget);
+        // Targeted AI connection: iid/ai → render the reply card inside the self window; host-page
+        // identity → via=ai forward to host (useForward); fall back to broadcast if the connection is dead
+        const env: any = { type: "interaction", requestId, interaction: payload, frameId: aiTargetFrameId };
+        if (aiTargetVia === "ai") env.pageId = pageId;
+        env.via = aiTargetVia;
+        if (!aiTarget.write(env)) {
+          aiConns.delete(aiTarget); aiSelfReg.delete(aiTarget); aiPageReg.delete(aiTarget);
           if (aiConns.size > 0) { for (const w of aiConns) w.write({ type: "interaction", requestId, interaction: payload, pageId, via: "ai" }); }
           else return noExecutor();
         }
@@ -1252,7 +1328,7 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
           "page_logs / page_network：排查页面报错/请求失败首选——page_logs 查 console（可 level/since/limit 过滤，先看 warn/error）；page_network 查 ajax/fetch 完成态（status≥400 或 errorOnly:true 只看失败）。两者均读页面本地缓冲（CDP Runtime.evaluate 按需拉取，不再实时上报）。",
           "user_confirm / user_choose / user_input / user_pick_element / user_presence：AI 与人类用户在页面上协作——prompt 给用户看，默认同步等待且永久等待（不传 timeout：面板常驻直到用户作答，无读秒；仅在确需限时催促时传 timeout ms，面板显示读秒倒计时可暂停，到点返回 status:'timeout'），响应信封 {status:'answered'|'rejected'|'timeout'|'error', value?, reason?, tookMs, timeoutMs}。传 async:true 可立即返回（结果经 AI 消息窗送达）。",
           "user_notify：非阻塞浏览器通知，不等待回答。",
-          "设备互连：bridge_status 返回 devices（kind=page/agent/pair 统一设备视图）——aiti_pair_send 给任意设备发文本、aiti_pair_file 推本地文件、aiti_pair_fetch 取回收到的文件（fileId 在 aiti_inbox 消息 payload.file）；手机等浏览器设备打开桥的 pair.html 即上线。",
+          "设备互连：bridge_status 返回 devices（kind=page/agent/pair 统一设备视图）——aiti_pair_send 给任意设备发文本、aiti_pair_file 推本地文件、aiti_pair_fetch 取回收到的文件（fileId 在 aiti_inbox 消息 payload.file）；任何浏览器打开 pi-web 页面即可在设备互连面板上线。",
           "常见用法：页面报错→page_logs(level:warn/error) 或 page_network(errorOnly:true)；操作页面→page_exec(cmd:'Runtime.evaluate', args:{expression:'...'})；定位元素→page_snapshot 后再 page_exec 或请用户 user_pick_element。",
         ].join("\n"),
       };
@@ -1299,8 +1375,22 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
           const text = String(a.text || "").slice(0, 64000);
           if (!text.trim()) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "bad request（需要 text）" }) }], isError: true };
           const me = { id: recAgentKey || "agent", name: ((recAgentKey && agents.get(recAgentKey)) || {}).name || recAgentKey || "agent", kind: "agent" };
-          const r = routePairSend(me, a.to ? String(a.to) : "all", { text });
-          recToolCall("🛠 aiti_pair_send(" + (a.to || "all") + ") → " + (r.ok ? "已投递 " + (r.delivered || []).length + " 端" : (r.error || "失败")), !!r.ok, r);
+          // Blast guard (2026-11-17): omitting to no longer defaults to broadcast — broadcasting now
+          // requires an explicit to:"all". Prevents an agent that failed to resolve its target page
+          // from accidentally blasting every device and other agent sessions on the bridge (once
+          // disturbed 4 unrelated sessions in one blast).
+          if (!a.to || !String(a.to).trim()) {
+            const cands = [
+              ...listDevices().filter((d) => d.kind === "page").map((d) => ({ kind: "page", id: d.id, name: d.name })),
+              ...listAgentSessions().filter((x) => x.agentKey !== recAgentKey).map((x) => ({ kind: "agent", id: x.agentKey, name: x.name })),
+              ...pair.listPeers().map((pd) => ({ kind: "pair", id: pd.id, name: pd.name || pd.id })),
+            ];
+            const resp = { ok: false, error: "to 未指定——不再默认群发（广播须显式传 to:\"all\"）；请按 bridge_status devices 选目标 id/名字重调", candidates: cands };
+            recToolCall("🛠 aiti_pair_send → 拒绝缺省群发（广播须显式 to:\"all\"）", false, resp);
+            return { content: [{ type: "text", text: JSON.stringify(resp) }], isError: true };
+          }
+          const r = routePairSend(me, String(a.to), { text });
+          recToolCall("🛠 aiti_pair_send(" + a.to + ") → " + (r.ok ? "已投递 " + (r.delivered || []).length + " 端" : (r.error || "失败")), !!r.ok, r);
           return { content: [{ type: "text", text: JSON.stringify(r.ok ? { ok: true, delivered: r.delivered } : r) }], isError: !r.ok };
         }
         if (params.name === "aiti_pair_file") {
@@ -1311,9 +1401,8 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
           try { st = statSync(fp); } catch {}
           if (!st || !st.isFile()) { recToolCall("🛠 aiti_pair_file → 文件不存在: " + fp, false); return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "文件不存在: " + fp }) }], isError: true }; }
           const me = { id: recAgentKey || "agent", name: ((recAgentKey && agents.get(recAgentKey)) || {}).name || recAgentKey || "agent", kind: "agent" };
-          // pair 目标先归一成 peerId（下载接收方校验按 peerId 精确比对）；agent/page 目标原样传（file-meta 路由再解析）
-          const pf0 = pair.resolvePeerFuzzy(to);
-          const toId = (pf0.hit && pf0.hit.peerId) || to;
+          // target resolution is left to the pair_msg/file-meta routing (fuzzy name matching in routePairSend)
+          const toId = to;
           // Split the name on both separators (Windows paths have no "/" — split("/").pop()
           // would send the whole path as the file name)
           const init = pair.fileInit(me, toId, fp.split(/[\\/]/).pop() || "file", st.size, "application/octet-stream");
@@ -1475,9 +1564,40 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
           return interact({ kind: "presence", prompt: String(a.prompt || "你在吗？需要你配合继续开发"), rejectable: false, async: a.async === true }, a.timeout);
         }
         if (params.name === "user_notify") {
-          // 非阻塞：推给 AI 窗 + 页面（页面走浏览器通知），立即返回
+          // Non-blocking: default = broadcast to all AI windows + the session default page (original
+          // behavior); explicit pageId = targeted single delivery (identify-card and similar pair
+          // scenarios) — full pageId/url/title or bare instanceId (pair device ids share the bridge
+          // instanceId space). Miss = error. Fix: the old implementation ignored args.pageId and
+          // always blasted aiConns → the card popped up on other people's screens.
           const notif = { kind: "notify", title: String(a.title || "🤖 AI 有一条消息"), body: String(a.body || a.prompt || ""), timeoutMs: clampTimeout(a.timeout) };
           const rid = "notify_" + Date.now();
+          if (a.pageId) {
+            const raw = String(a.pageId);
+            let iid: any = ""; let frameId: any = null; let fullPageId: any = "";
+            if (raw.indexOf("/") >= 0) {
+              const resolved: any = resolvePageId(raw);
+              if (resolved.multiple) { recToolCall("🔔 user_notify → ⚠ 页面匹配多个", false); return { content: [{ type: "text", text: "页面匹配多个：" + resolved.multiple.join(", ") + "——请用具体 pageId 指定" }], isError: true }; }
+              if (resolved.notFound || !resolved.pageId) { recToolCall("🔔 user_notify(" + raw + ") → ⚠ 未找到匹配页面", false); return { content: [{ type: "text", text: "未找到匹配页面（pageId/url/title 均未命中）——用 bridge_status 查看可用 pageId" }], isError: true }; }
+              const pid = parsePageId(resolved.pageId); iid = pid.instanceId; frameId = pid.frameId; fullPageId = resolved.pageId;
+            } else { iid = raw; } // bare instanceId (same id space as pair devices)
+            // Targeted delivery: resolveAiTarget unifies both id families (iid/ai → render in self
+            // window; host-page identity families like om183/host → forward to the owning AI window's
+            // host rendering); bare instanceId falls back to appending /ai (legacy instanceId matching);
+            // then falls back to notify-only injected pages; all misses → target offline
+            let delivered = false;
+            const tgt = fullPageId ? resolveAiTarget(fullPageId) : resolveAiTarget(iid + "/ai");
+            if (tgt) {
+              try { delivered = !!tgt.w.write({ type: "interaction", requestId: rid, interaction: notif, frameId: tgt.frameId, via: tgt.via }); } catch { delivered = false; }
+              if (!delivered) { aiConns.delete(tgt.w); aiSelfReg.delete(tgt.w); aiPageReg.delete(tgt.w); }
+            }
+            if (!delivered) {
+              const pg2 = pages.get(iid);
+              if (pg2) delivered = !!pg2.writer.write({ type: "interaction", requestId: rid, interaction: notif, frameId, render: "notify-only" });
+            }
+            if (!delivered) { recToolCall("🔔 user_notify(" + iid + ") → ⚠ 目标未连接", false); return { content: [{ type: "text", text: "目标页面未连接（instanceId 未命中或已掉线）——用 bridge_status 查看可用 pageId" }], isError: true }; }
+            recToolCall("🔔 user_notify(" + iid + ") → " + String(notif.body).slice(0, 60), true);
+            return { content: [{ type: "text", text: JSON.stringify({ status: "sent", notified: true, title: notif.title, pageId: fullPageId || iid }) }], isError: false };
+          }
           for (const w of aiConns) w.write({ type: "interaction", requestId: rid, interaction: notif, pageId });
           const pg = pages.get(parsePageId(pageId || LEGACY_TOKEN).instanceId);
           if (pg) pg.writer.write({ type: "interaction", requestId: rid, interaction: notif, frameId: parsePageId(pageId || LEGACY_TOKEN).frameId, render: "notify-only" });
@@ -1683,18 +1803,46 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
     sseResponse: (onClose, opts) => sseResponse(onClose, opts),
     getDevices: () => listDevices(),
     routeSend: (fromDev, to, payload) => routePairSend(fromDev, to, payload),
+    // Page identity check: idRegistry (claim registrations) U aiSelfReg (role=ai self-attested connections
+    // carry ai- prefixed ids and never enter idRegistry — see the connect handler); public forgery is gated by gateAdmission
+    validateInstance: (instanceId) => validInstance(instanceId) || [...aiSelfReg.values()].some((r) => String(r.instanceId) === String(instanceId)),
   });
 
   /** 统一设备视图：桥上一切连接端 = 设备（page 注入页 / agent 会话 / pair web 设备）——
    *  bridge_status 与 /bridge/pair/devices 同源（本函数）。pair 不另造设备宇宙。 */
   function listDevices() {
     const out: any[] = [];
+    // Page devices: aiConns (role=ai, one per pi-web page) — id = host-page pageId (full
+    // instanceId/frameId form, e.g. ou354/host; falls back to instanceId/host when the AI window
+    // has not registered its host page) — pair identity unified with the bridge pageId system
+    const seenPages = new Set<string>();
+    for (const w of aiConns) {
+      const self = aiSelfReg.get(w);
+      const pageReg = aiPageReg.get(w);
+      const iid = self && String(self.instanceId);
+      if (!iid || seenPages.has(iid)) continue;
+      seenPages.add(iid);
+      const dev = (self as any).device || null;
+      // output verbatim as in bridge_status (aiti_* tool pageId semantics): aiPageReg.pageId first, fall back to instanceId/host when not co-registered
+      const pageId = pageReg && pageReg.pageId ? String(pageReg.pageId) : iid + "/host";
+      const nm = pair.nameFor(iid) || (dev && (dev.os || dev.browser) ? [dev.os, dev.browser].filter(Boolean).join(" · ") : (self.title || pageReg?.url || pageId));
+      // `instanceId` = canonical bridge identity of the row (pageId may carry a different host-page identity,
+      // e.g. launcher `nf409/host` vs claim `ai-i4ru73e5`) — consumers (pair widget self badge, sender naming)
+      // need the canonical id to recognize the same physical page across both id systems.
+      out.push({ kind: "page", id: pageId, instanceId: iid, name: nm, url: pageReg?.url || null, title: pageReg?.title || null, device: dev, deviceLabel: dev ? [dev.browser, dev.os, dev.screen].filter(Boolean).join(" · ") : null, online: true, lastSeen: self.lastSeen || Date.now() });
+    }
+
     for (const [instanceId, page] of pages) {
-      out.push({ kind: "page", id: instanceId, name: page.title || page.url || instanceId, url: page.url || null, title: page.title || null, device: (page as any).device || null, deviceLabel: (page as any).deviceLabel || null, online: true, lastSeen: Date.now() });
+      // One physical page must not appear twice: the aiConns row above already represents it (host page id /
+      // device / url). A page SSE registration for the same instanceId only adds a second row with a
+      // bare-instanceId id and the document title as its name — exactly the "two rows for my own page"
+      // symptom in the pair panel. pages rows stay for injected pages that never opened an AI window.
+      if (seenPages.has(instanceId)) continue;
+      out.push({ kind: "page", id: instanceId, instanceId, name: pair.nameFor(instanceId) || page.title || page.url || instanceId, url: page.url || null, title: page.title || null, device: (page as any).device || null, deviceLabel: (page as any).deviceLabel || null, online: true, lastSeen: Date.now() });
     }
     for (const [key, a] of agents) {
       if (!a.registered && !agentOnline(a) && !a.outbox.length) continue; // 未注册且无消息的占位 agent 不进设备视图
-      out.push({ kind: "agent", id: key, name: a.name || a.agentId, cwd: a.cwd || null, source: a.source || "unknown", transportKind: a.transportKind, online: agentOnline(a), offlineAt: a.offlineAt || null, lastSeen: a.lastSeen });
+      out.push({ kind: "agent", id: key, name: a.name || a.agentId, cwd: a.cwd || null, sessionId: a.sessionId || (key.includes("/") ? key.split("/").slice(1).join("/") : null), source: a.source || "unknown", transportKind: a.transportKind, online: agentOnline(a), offlineAt: a.offlineAt || null, lastSeen: a.lastSeen });
     }
     for (const p of pair.listPeers()) out.push(p);
     return out.sort((x, y) => (y.lastSeen || 0) - (x.lastSeen || 0));
@@ -1702,73 +1850,219 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
 
   /** pair 跨 kind 投递：to 解析（精确 pair peerId / agentKey / agentId / page instanceId → 名字模糊）+ 分发。
    *  消费方：pair REST message/complete（浏览器发起）与 MCP aiti_pair_send/aiti_pair_file（agent 发起）。 */
-  function routePairSend(fromDev: { id: string; name: string; kind?: string }, to: string, payload: { text?: string; file?: Record<string, unknown> }) {
-    const q = String(to || "all").trim() || "all";
-    const from = { id: fromDev.id, kind: fromDev.kind || "pair", name: fromDev.name };
-    const env = (type: string, extra: Record<string, unknown>) => ({ id: randomBytes(4).toString("hex"), type, from, to: q, ts: Date.now(), ...extra });
-    const delivered: any[] = [];
-    const pushPair = (pid: string) => { if (pair.deliverToPeer(pid, env(payload.file ? "file" : "text", payload.file ? { file: payload.file } : { text: payload.text }))) delivered.push({ kind: "pair", id: pid }); };
-    const pushAgent = (target: string) => {
-      // agent 方向：走既有消息主通道（outbox/agentStream/inProcessSink）；文本带 [发自 pair: <名>] 标注（agent 会话可见，照页面消息来源标注先例）
-      const label = "[发自 pair: " + fromDev.name + "]";
-      let text: string;
-      const pl: Record<string, unknown> = { source: "pair", sourceLabel: "Pair · " + fromDev.name, fromDevice: from };
-      if (payload.file) {
-        const f = payload.file as any;
-        text = "📎 收到文件：" + f.name + "（" + Math.max(1, Math.round((f.size || 0) / 1024)) + "KB）— 调 aiti_pair_fetch {fileId:'" + f.fileId + "'} 取回\n" + label;
-        pl.file = { fileId: f.fileId, name: f.name, size: f.size, mime: f.mime };
-      } else {
-        text = String(payload.text || "") + "\n" + label;
+  /** AI connection device info: device query first, UA fallback parsing (OS + browser + form factor) — for page device name display */
+  function aiDeviceFrom(req: Request, msg: any): any {
+    let dev: any = null;
+    try { const dq = (msg && msg.device) || null; if (dq) dev = typeof dq === "string" ? JSON.parse(dq) : dq; } catch (e) {}
+    if (!dev) {
+      const ua = req.headers.get("user-agent") || "";
+      if (ua) {
+        // One shared parser (see ua-parse.js): leftmost-match regexes misreport every Chromium derivative
+        // (Edge/Opera/Samsung… embed `Chrome/<v>` before their own token) — the browser side reports device
+        // info itself, this is only the fallback for clients that do not.
+        const p = parseUa(ua, null);
+        dev = { browser: p.browser, version: p.version, os: p.os, osVer: p.osVer, deviceType: p.deviceType };
       }
+    }
+    return dev;
+  }
+
+  /** Page identity match for one AI connection: a device row id (pageId, `xxx/host` or `xxx/ai`) or a bare
+   *  instanceId addresses the AI conn that owns the page. BOTH registries must be consulted: aiSelfReg
+   *  (AI main window self-registration) and aiPageReg (host page identity reported by the AI window) can
+   *  carry different ids for the same writer — the old `aiSelfReg.get(w) || aiPageReg.get(w)` shadowed the
+   *  host page id, so every device row whose aiPageReg.pageId differed from its instanceId was listed in
+   *  bridge_status / the pair panel yet undeliverable ("message sent, never arrives"). */
+  function pageRegMatches(reg: any, bare: string, full: string): boolean {
+    if (!reg) return false;
+    if (String(reg.instanceId) === bare) return true;
+    const pid = reg.pageId ? String(reg.pageId) : "";
+    if (!pid) return false;
+    return pid === full || pid === bare + "/host" || pid.split("/")[0] === bare;
+  }
+
+  /** Targeted delivery by instanceId (same semantics as user_notify — pair downlink and notifications
+   *  share this one proven channel): aiConns exact-matched by aiSelfReg/aiPageReg identity → write;
+   *  fallback to injected pages. Half-dead connections (write failure) are evicted from all three
+   *  tables immediately. Returns whether the delivery succeeded. */
+  function deliverToInstance(iidOrPageId: string, envelope: Record<string, unknown>): boolean {
+    // Dual-form match: bare instanceId (ai-xxx) OR registered host pageId (om183/host form) — the pair
+    // widget addresses devices by their bridge_status pageId row, which may be either form.
+    const bare = iidOrPageId.indexOf("/") >= 0 ? iidOrPageId.split("/")[0] : iidOrPageId;
+    const full = iidOrPageId;
+    for (const w of aiConns) {
+      const self = aiSelfReg.get(w);
+      const pageReg = aiPageReg.get(w);
+      if (pageRegMatches(self, bare, full) || pageRegMatches(pageReg, bare, full)) {
+        let ok = false;
+        try { ok = !!w.write(envelope); } catch { ok = false; }
+        if (!ok) { aiConns.delete(w); aiSelfReg.delete(w); aiPageReg.delete(w); }
+        return ok;
+      }
+    }
+    const pg = pages.get(bare);
+    if (pg && pg.writer) { try { return !!pg.writer.write(envelope); } catch { return false; } }
+    return false;
+  }
+
+  /** Canonical bridge instanceId of a page row id: the owning AI conn's instanceId (aiSelfReg/aiPageReg),
+   *  falling back to the row's own base segment (injected page rows keyed by instanceId). Callers that
+   *  need a stable receiver key for side channel state (pair page inbox polling) must use this — the
+   *  widget pulls its inbox by its bridge instanceId, while the row id may carry a different host-page
+   *  identity (e.g. launcher `nf409/host` vs claim `ai-i4ru73e5`), which silently broke the poll catch-up. */
+  function pageInstanceFor(iidOrPageId: string): string | null {
+    const bare = iidOrPageId.indexOf("/") >= 0 ? iidOrPageId.split("/")[0] : iidOrPageId;
+    const full = iidOrPageId;
+    for (const w of aiConns) {
+      const self = aiSelfReg.get(w);
+      const pageReg = aiPageReg.get(w);
+      if (pageRegMatches(self, bare, full)) return self && self.instanceId ? String(self.instanceId) : bare;
+      if (pageRegMatches(pageReg, bare, full)) return pageReg && pageReg.instanceId ? String(pageReg.instanceId) : bare;
+    }
+    return pages.has(bare) ? bare : null;
+  }
+
+  /** pair cross-kind delivery: page addressing is exactly the same as user_notify (resolvePageId /
+   *  bare instanceId / deliverToInstance); agents go through the existing message main channel; pair
+   *  peers (fed relay etc.) go through deliverToPeer. Consumers: pair REST message/complete
+   *  (browser-initiated) and MCP aiti_pair_send/aiti_pair_file (agent-initiated). */
+  function routePairSend(fromDev: { id: string; name: string; kind?: string }, to: string, payload: { text?: string; file?: Record<string, unknown>; pageId?: string }) {
+    const q = String(to || "all").trim() || "all";
+    const from = { id: fromDev.id, kind: fromDev.kind || "page", name: fromDev.name };
+    const env = (type: string, extra: Record<string, unknown>) => ({ id: randomBytes(4).toString("hex"), type, from, to: q, ts: Date.now(), ...extra });
+    const devRows = listDevices().filter((d) => d.kind === "page"); // same view as bridge_status (consistent within this call)
+    const delivered: any[] = [];
+    const pushAgent = (target: string) => {
+      // Sender attribution by real kind (2026-11-17): agent session → an agent-style attribution
+      // prefix (never labeled as pair/human); page/pair device (human-operated) → a pair-style
+      // prefix. Receiver wording (user/session) is disambiguated in the adapter layer / pi connector
+      // by payload.fromDevice.kind — both ends agree, so messages sent by a session are no longer
+      // read as "from a human". See the label construction below for the exact prefixes.
+      const fromIsAgent = from.kind === "agent";
+      const fromId = String(fromDev.id || fromDev.name || "?");
+      const fromName = String(fromDev.name || fromId);
+      const fromShown = fromName !== fromId ? fromName + "（" + fromId + "）" : fromId;
+      const label = fromIsAgent ? "[发自 session: " + fromShown + "]" : "[发自 pair: " + fromName + "]";
+      const pl: Record<string, unknown> = { source: "pair", sourceLabel: (fromIsAgent ? "Session · " : "Pair · ") + fromName, fromDevice: from };
+      const text = payload.file
+        ? "📎 收到文件：" + (payload.file as any).name + "（" + Math.max(1, Math.round(((payload.file as any).size || 0) / 1024)) + "KB）— 调 aiti_pair_fetch {fileId:'" + (payload.file as any).fileId + "'} 取回\n" + label
+        : String(payload.text || "") + "\n" + label;
+      if (payload.file) pl.file = { fileId: (payload.file as any).fileId, name: (payload.file as any).name, size: (payload.file as any).size, mime: (payload.file as any).mime };
       const r = pushToAgents(target, text, payload.file ? "pair_file" : "user_message", pl);
       for (const d of (r && r.delivered) || []) delivered.push({ kind: "agent", id: d.agentKey, status: d.status });
     };
-    const pushPage = (instanceId: string) => {
-      // page 方向：aiConns SSE pair_msg（bridge-client onPairMsg 分发；aiwin/cockpit 渲染）
-      const msg = env(payload.file ? "file" : "text", payload.file ? { file: payload.file } : { text: payload.text });
-      let n = 0;
-      for (const [w, rec] of aiSelfReg) {
-        if (instanceId && String(rec.instanceId) !== instanceId) continue;
-        if (w.write({ type: "pair_msg", ...msg })) n++;
+    /** Page delivery (final): addressing = the same rows as listDevices() (deliver to exactly what
+     *  bridge_status shows, never re-resolve); text goes through the literal user_notify path
+     *  (aiConns instanceId match → pages fallback; envelope = interaction notify card); files go
+     *  through the pair_msg envelope (fileId download card). On success, double-write the page inbox
+     *  (poll catch-up when SSE drops frames). */
+    const pushPageRow = (row: any) => {
+      // canonical receiver instanceId (see pageInstanceFor): the pair page inbox is polled by the widget
+      // under its bridge instanceId, so delivery bookkeeping must not key on a divergent host page id.
+      const iid = pageInstanceFor(String(row.id)) || String(row.id).split("/")[0];
+      const rid = "pair_" + randomBytes(4).toString("hex");
+      let ok = false;
+      let frame: Record<string, unknown> | null = null;
+      if (payload.file) {
+        // files: pair_msg envelope (file-meta download card), via deliverToInstance (same matching as user_notify)
+        const msg = env("file", { file: payload.file });
+        frame = { ...msg, type: "pair_msg" };
+        ok = deliverToInstance(iid, frame);
+      } else if (payload.notify) {
+        // 🔔 popup send: interaction notify card (rendered by launcher/page as-is, same envelope as
+        // user_notify); inbox recorded too (chat flow dispatched via bridge-client pair_*)
+        const body = String(payload.text || "");
+        const card = { kind: "notify", title: from.name, body, timeoutMs: 30000, fromPair: from };
+        for (const w of aiConns) {
+          const self = aiSelfReg.get(w);
+          const pageReg = aiPageReg.get(w);
+          if (pageRegMatches(self, iid, row.id) || pageRegMatches(pageReg, iid, row.id)) {
+            try { ok = !!w.write({ type: "interaction", requestId: rid, interaction: card, frameId: "ai", via: "self" }); } catch { ok = false; }
+            break;
+          }
+        }
+        if (!ok) {
+          const pg = pages.get(iid);
+          if (pg && pg.writer) { try { ok = !!pg.writer.write({ type: "interaction", requestId: rid, interaction: card, frameId: null, render: "notify-only" }); } catch { ok = false; } }
+        }
+        if (ok) frame = { id: rid, type: "text", from, to: row.id, ts: Date.now(), text: body };
+      } else {
+        // plain send: pair_msg bubble frame (no popup card); bus frame-drop windows are caught up by
+        // the page inbox polling (≤ one polling period)
+        const msg = env("text", { text: payload.text });
+        frame = { ...msg, type: "pair_msg" };
+        ok = deliverToInstance(iid, frame);
       }
-      if (n) delivered.push({ kind: "page", id: instanceId });
-      return n;
+      if (ok) {
+        delivered.push({ kind: "page", id: row.id });
+        if (frame) pair.notePageInbox(iid, frame); // double-write the page inbox (poll catch-up when SSE drops frames)
+      }
+      return ok;
     };
-
-    if (q === "all") {
-      const peers = pair.listPeers();
-      for (const p of peers) { if (p.id === fromDev.id) continue; pushPair(p.id); } // 跳过发送者自身（本端已本地回显，防重复）
-      // 群发 agent：带标注文本（pushToAgents 内部处理 all 目标解析与掉线过滤）
-      const label = "[发自 pair: " + fromDev.name + "]";
-      const pl: Record<string, unknown> = { source: "pair", sourceLabel: "Pair · " + fromDev.name, fromDevice: from };
-      const text = payload.file
-        ? "📎 收到文件：" + (payload.file as any).name + " — 调 aiti_pair_fetch {fileId:'" + (payload.file as any).fileId + "'} 取回\n" + label
-        : String(payload.text || "") + "\n" + label;
-      const ra = pushToAgents("all", text, payload.file ? "pair_file" : "user_message", pl);
-      for (const d of (ra && ra.delivered) || []) delivered.push({ kind: "agent", id: d.agentKey, status: d.status });
+    const pushPageRaw = (raw: string) => {
+      const row = devRows.find((d) => d.id === raw);
+      return row ? pushPageRow(row) : false;
+    };
+    // Group semantics (user ruling): all = all pages only (never cross-kind); agents/pairs = explicit
+    // groups; all-kinds = every kind (fed inbound broadcast, internal use only)
+    // Sender exclusion compares canonical instanceIds: the sender's own page row may carry a different
+    // host page id (launcher identity vs bridge claim), which made "all" echo the sender's own message
+    // back to itself (rendered as an incoming bubble, since from.id then also ≠ getInstanceId()).
+    const selfIid = pageInstanceFor(String(fromDev.id)) || (fromDev.id.indexOf("/") >= 0 ? fromDev.id.split("/")[0] : fromDev.id);
+    const rowIsSelf = (row: any) => (pageInstanceFor(String(row.id)) || String(row.id).split("/")[0]) === selfIid;
+    if (q === "all" || q === "pages") {
+      for (const row of devRows) {
+        if (rowIsSelf(row)) continue; // skip the sender
+        pushPageRow(row);
+      }
       return { ok: delivered.length > 0, delivered };
     }
-
-    // 精确命中：pair peer / agentKey / agentId / page instanceId
-    const pf = pair.resolvePeerFuzzy(q);
-    if (pf.hit) { if (pf.hit.peerId !== fromDev.id) pushPair(pf.hit.peerId); return { ok: true, delivered }; } // 发给自己=本地已回显，幂等跳过
+    if (q === "agents") {
+      pushAgent("all");
+      return { ok: delivered.length > 0, delivered };
+    }
+    if (q === "pairs") {
+      const penv = env(payload.file ? "file" : "text", payload.file ? { file: payload.file } : { text: payload.text });
+      for (const pd of pair.listPeers()) { try { if (pair.deliverToPeer(pd.id, penv)) delivered.push({ kind: "pair", id: pd.id }); } catch {} }
+      return { ok: delivered.length > 0, delivered };
+    }
+    if (q === "all-kinds") {
+      // all-kind broadcast (fed inbound mirror semantics): pages + agents + pair peers
+      for (const row of devRows) {
+        if (rowIsSelf(row)) continue;
+        pushPageRow(row);
+      }
+      pushAgent("all");
+      const penv = env(payload.file ? "file" : "text", payload.file ? { file: payload.file } : { text: payload.text });
+      for (const pd of pair.listPeers()) { try { if (pair.deliverToPeer(pd.id, penv)) delivered.push({ kind: "pair", id: pd.id }); } catch {} }
+      return { ok: delivered.length > 0, delivered };
+    }
+    // exact hit: row ids from the same view as bridge_status (listDevices) — every id shown in the panel is directly deliverable
+    if (devRows.some((d) => d.id === q)) { pushPageRaw(q); return { ok: delivered.length > 0, delivered }; }
+    // Canonical bridge instanceId addressing (bare `ai-xxx`, or any frame form `ai-xxx/host|ai`): a page row's
+    // id is the host pageId (possibly a launcher identity), so the instanceId is NOT a substring of it. Without
+    // this, deduping the duplicate `pages` row silently broke "send to the instanceId shown in bridge_status".
+    const qBase = q.indexOf("/") >= 0 ? q.split("/")[0] : q;
+    const byIid = devRows.filter((d) => d.instanceId && String(d.instanceId) === qBase);
+    if (byIid.length === 1) { pushPageRow(byIid[0]); return { ok: delivered.length > 0, delivered }; }
     if (agents.has(q) || agentIdx.has(q)) { pushAgent(q); return { ok: delivered.length > 0, delivered }; }
-    if (pages.has(q)) { const n = pushPage(q); return n ? { ok: true, delivered } : { ok: false, error: "页面连接已断开" }; }
-
-    // 名字模糊：pair → agent → page 三层
-    if (pf.multiple) return { ok: false, candidates: pf.multiple, error: "pair 设备名匹配多个" };
+    // fuzzy name: pages (same view as bridge_status) → agents → pair peers fallback
+    const devMatches = devRows.filter((d) => (d.name || "").includes(q) || d.id.includes(q) || (d.instanceId && String(d.instanceId).includes(q)));
+    if (devMatches.length === 1) { pushPageRaw(devMatches[0].id); return { ok: delivered.length > 0, delivered }; }
+    if (devMatches.length > 1) return { ok: false, candidates: devMatches.map((d) => ({ kind: "page", id: d.id, name: d.name })), error: "页面名匹配多个" };
     const agentRows = listAgentSessions().filter((a) => (a.name || "").includes(q) || a.agentKey.includes(q));
     if (agentRows.length === 1) { pushAgent(agentRows[0].agentKey); return { ok: delivered.length > 0, delivered }; }
     if (agentRows.length > 1) return { ok: false, candidates: agentRows.map((a) => ({ kind: "agent", id: a.agentKey, name: a.name })), error: "agent 名匹配多个" };
-    const resolved = resolvePageId(q);
-    if (resolved.pageId) {
-      const inst = String(resolved.pageId).split("/")[0];
-      const n = pushPage(inst);
-      if (n) return { ok: true, delivered };
+    const pr = pair.resolvePeerFuzzy(q) as any;
+    if (pr && pr.hit) {
+      const penv = env(payload.file ? "file" : "text", payload.file ? { file: payload.file } : { text: payload.text });
+      try { if (pair.deliverToPeer(pr.hit.peerId, penv)) delivered.push({ kind: "pair", id: pr.hit.peerId }); } catch {}
+      return { ok: delivered.length > 0, delivered };
     }
-    if (resolved.multiple) return { ok: false, candidates: resolved.multiple.map((pid: string) => ({ kind: "page", id: pid })), error: "页面匹配多个" };
+    if (pr && pr.multiple) return { ok: false, candidates: pr.multiple, error: "pair 设备名匹配多个" };
     return { ok: false, error: "无匹配设备（to 支持设备 id/名字；bridge_status 或 /bridge/pair/devices 查看在线设备）" };
   }
+
 
   // ---------------- 桥端点处理 ----------------
   async function handle(req, path, searchParams) {
@@ -1989,8 +2283,9 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
       };
       if (role === "ai") {
         aiConns.add(writer);
+        const aiDev = aiDeviceFrom(req, { device: searchParams.get("device") || null });
         aiPageReg.set(writer, { instanceId, pageId: null, title: null, url: null, frames: null, lastSeen: Date.now() });
-        aiSelfReg.set(writer, { instanceId, url: searchParams.get("url") || null, title: searchParams.get("title") || null, lastSeen: Date.now() });
+        aiSelfReg.set(writer, { instanceId, url: searchParams.get("url") || null, title: searchParams.get("title") || null, frames: new Set(["host"]), frameInfo: new Map(), device: aiDev, deviceLabel: aiDev ? [aiDev.browser, aiDev.os].filter(Boolean).join(" · ") : null, lastSeen: Date.now() });
         bindAgentFromAiSelf(aiSelfReg.get(writer));  // 自动绑定：AI 主窗口 url session 匹配的 agent（boundPageId 兕底）
         console.log(TAG + " AI 控制台已连接：instanceId=" + instanceId);
       } else {
@@ -2036,9 +2331,19 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
         end() { /* 总线型无流可关：由总线/心跳管理生命周期 */ },
       };
       if (role === "ai") {
+        // Idempotent reconnect: an old writer with the same instanceId (half-dead SSE / old bus
+        // connection during handover) is evicted immediately — the new connection replaces the old,
+        // leaving no zombie device entries (otherwise the stale id lingers in the unified view until
+        // the BUS_CONN_TTL timeout)
+        for (const [w, reg] of [...aiSelfReg]) {
+          if (w !== writer && String(reg.instanceId) === String(instanceId)) {
+            aiConns.delete(w); aiPageReg.delete(w); aiSelfReg.delete(w);
+          }
+        }
         aiConns.add(writer);
+        const aiDev = aiDeviceFrom(req, msg);
         aiPageReg.set(writer, { instanceId, pageId: null, title: (msg && msg.title) || null, url: (msg && msg.url) || null, frames: null, lastSeen: Date.now() });
-        aiSelfReg.set(writer, { instanceId, url: (msg && msg.url) || null, title: (msg && msg.title) || null, lastSeen: Date.now() });
+        aiSelfReg.set(writer, { instanceId, url: (msg && msg.url) || null, title: (msg && msg.title) || null, device: aiDev, deviceLabel: aiDev ? [aiDev.browser, aiDev.os].filter(Boolean).join(" · ") : null, lastSeen: Date.now() });
         bindAgentFromAiSelf(aiSelfReg.get(writer));
         console.log(TAG + " AI 控制台已连接（总线）：instanceId=" + instanceId);
       } else {
@@ -2364,6 +2669,11 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
     }
     const a = agents.get(k);
     a.lastSeen = Date.now();
+    // registered sessions' name/cwd follow-up updates (the pi-web host fills the session name
+    // asynchronously: first message / cwd form)
+    if (opts.name && a.name === k) a.name = String(opts.name);
+    if (opts.name) a.name = String(opts.name);
+    if (opts.cwd) a.cwd = String(opts.cwd);
     if (opts.pageId) a.boundPageId = String(opts.pageId);
     if (Array.isArray(opts.subEvents)) a.subEvents = new Set(opts.subEvents.map(String));
     // 反向匹配：AI 主窗口 URL 的 ?session= 可能已在（AI 窗早于 agent 注册），直接绑定

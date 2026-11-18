@@ -330,6 +330,13 @@ export interface UseAgentSessionOptions {
   newSessionDraftKey: string | null;
   /** Session backend for NEW sessions (providerType from /api/session-backends). null/undefined = local pi. */
   newSessionBackend?: string | null;
+  /**
+   * Detach preference for NEW sessions on a non-local backend: true = host the
+   * agent process in a wrapper that outlives pi-web (default server-side when a
+   * detachable provider is used), false = plain child process. Ignored by local
+   * sessions (they run in-process) and by backends that did not opt in.
+   */
+  newSessionDetach?: boolean;
   /** Preparer pipeline run before new-session creation (extensions register via the newSessionPreparers surface; ChatWindow collects and passes them through).
    *  ensureNewSession awaits them in order before the POST: {cwd} rewrites the target directory (that is how the branch/worktree picker
    *  reuses/creates a worktree), {abort} cancels creation (throw → the existing notice channel). */
@@ -672,6 +679,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // New-session backend (providerType): mirrored in a ref so the ensureNewSession callback stays stable.
   const newSessionBackendRef = useRef<string | null | undefined>(opts.newSessionBackend);
   newSessionBackendRef.current = opts.newSessionBackend;
+  // Mirrored like the backend itself: ensureNewSession's identity must stay stable.
+  const newSessionDetachRef = useRef<boolean | undefined>(opts.newSessionDetach);
+  newSessionDetachRef.current = opts.newSessionDetach;
 
   // New-session preparer pipeline (branch/worktree intents etc.), mirrored in a ref (slot item identities change on
   // every store bump; the ref is what keeps the callback stable); the resolved cwd records the pipeline-rewritten
@@ -1419,7 +1429,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         deleteSessionViewSnapshot(sid);
         return null;
       }
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        // Surface the server's reason (e.g. BridgeOccupiedError's "owned by another pi
+        // process …") instead of an opaque status code — genuine 409s are actionable,
+        // and the spurious-race ones are fixed server-side (attach in-flight dedupe).
+        const body = await res.json().catch(() => null) as { error?: string } | null;
+        throw new Error(body?.error || `HTTP ${res.status}`);
+      }
       const d = await res.json() as SessionData;
       if (sessionIdRef.current !== sid) return null;
       // Placeholder/alias id canonicalization: when the server resolves new-*/aliases into the real composite id,
@@ -1740,6 +1756,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           type: "ensure_session",
           ...(toolNames !== undefined ? { toolNames } : {}),
           ...(backend ? { providerType: backend } : {}),
+          // Only meaningful with a provider; the host decides whether it applies.
+          ...(backend && newSessionDetachRef.current !== undefined ? { detach: newSessionDetachRef.current } : {}),
           ...(selectedModel ? { provider: selectedModel.provider, modelId: selectedModel.modelId } : {}),
           ...(selectedThinkingLevel
             ? { thinkingLevel: selectedThinkingLevel }
@@ -3150,12 +3168,20 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         setQueuedMessages((prev) => {
           const steering = [...((event.steering as string[] | undefined) ?? [])];
           const followUp = [...((event.followUp as string[] | undefined) ?? [])];
+          // Authoritative attachment flags ride on the frame since the server-side
+          // enrichment (text-only before): prefer them when length-aligned; the stale-
+          // state alignment remains the fallback for older backends that report text only.
+          const eventSteerFlags = event.steeringHasImages as boolean[] | undefined;
+          const eventFollowFlags = event.followUpHasImages as boolean[] | undefined;
           return {
             steering,
             followUp,
-            // pi reports text only: align the attachment flags against the local stale values (fresh values are written from the queue RPC response).
-            steeringHasImages: alignQueueAttachmentFlags(prev.steeringHasImages, steering.length),
-            followUpHasImages: alignQueueAttachmentFlags(prev.followUpHasImages, followUp.length),
+            steeringHasImages: eventSteerFlags && eventSteerFlags.length === steering.length
+              ? eventSteerFlags.map(Boolean)
+              : alignQueueAttachmentFlags(prev.steeringHasImages, steering.length),
+            followUpHasImages: eventFollowFlags && eventFollowFlags.length === followUp.length
+              ? eventFollowFlags.map(Boolean)
+              : alignQueueAttachmentFlags(prev.followUpHasImages, followUp.length),
           };        });
         break;
       }

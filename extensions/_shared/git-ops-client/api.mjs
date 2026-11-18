@@ -34,6 +34,7 @@ export function createGitOpsApi({ apiUrl = (p) => p, fetchImpl = (...a) => fetch
     stage: (cwd, paths) => call("/stage", { cwd, paths }),
     unstage: (cwd, paths) => call("/unstage", { cwd, paths }),
     discard: (cwd, paths) => call("/discard", { cwd, paths }),
+    ignoreAdd: (cwd, paths) => call("/ignore-add", { cwd, paths }),
     commit: (cwd, message, amend) => call("/commit", { cwd, message, amend }),
     planExecute: (cwd, groups) => call("/plan/execute", { cwd, groups }),
     planRollback: (cwd, baseHEAD) => call("/plan/rollback", { cwd, baseHEAD }),

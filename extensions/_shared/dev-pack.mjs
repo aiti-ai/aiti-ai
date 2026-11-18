@@ -77,7 +77,7 @@ export function agentsMdTemplate(extId) {
 
 /** 默认 tools/build.mjs（esbuild 单包零配置；扩展自带 tools/build.mjs 则不走到这里）。 */
 function buildMjsTemplate(extId, extRoot, clientOut, entryRel) {
-  const repoHint = "/home/pi/workspace/pi-work"; // 现场构建探测源码仓 node_modules 用（三机各不同，缺失时走 npm exec）
+  // No hardcoded checkout path: candidates are resolved at run time (see the template below).
   return `/**
  * ${extId} · 现场构建入口（dev-pack 默认模板，esbuild 单包零配置）
  * 用法：node tools/build.mjs
@@ -96,12 +96,25 @@ const entryRel = ${JSON.stringify(entryRel || "")};
 
 // esbuild 解析：部署目录 node_modules → 源码仓 node_modules（本机开发场景）→ PATH 上的 esbuild → npm exec 现拉。
 // 注意：node_modules/esbuild/bin/esbuild 是原生二进制（ELF/Mach-O），必须直接执行（不能当 JS 跑）。
+// Checkout roots are discovered by walking up from the extension dir (a root has node_modules/),
+// plus AITI_REPO_ROOT when set — no machine-specific absolute paths baked into generated files.
+function repoCandidates() {
+  const out = [];
+  if (process.env.AITI_REPO_ROOT) out.push(process.env.AITI_REPO_ROOT.split(pathSep).join("/") + "/node_modules/esbuild/bin/esbuild");
+  let d = extRoot;
+  for (let i = 0; i < 8; i++) {
+    out.push(d.split(pathSep).join("/") + "/node_modules/esbuild/bin/esbuild");
+    const up = dirname(d);
+    if (up === d) break;
+    d = up;
+  }
+  return out;
+}
 function findEsbuild() {
   const home = (process.env.HOME || process.env.USERPROFILE || "").split(pathSep).join("/");
   const candidates = [
     extRoot + "/node_modules/esbuild/bin/esbuild",
-    home + "/workspace/pi-work/node_modules/esbuild/bin/esbuild",
-    "D:/workspace/pi-work/node_modules/esbuild/bin/esbuild", // 155 win（源码在 D 盘）
+    ...repoCandidates(),
   ];
   for (const c of candidates) {
     if (!existsSync(c)) continue;

@@ -10,4 +10,5 @@ pnpm-lock.yaml
 
 # 杂项
 *.log
+tools/.tmp-*
 .DS_Store

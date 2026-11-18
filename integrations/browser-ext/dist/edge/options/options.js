@@ -1,13 +1,13 @@
 /*
- * aiti-devtools browser extension · options (v2)
+ * aiti-devtools browser extension · options
  *
  * Site rules (default off + allowlist/deny) + AI target (pi-web probe prefill / compatible agent / cockpit fallback) + advanced (bridge URL / shim).
- * v1 legacy config is mapped by migrate() (enabled→defaultEnabled, excludes→denySites, custom aiUrl→cockpitUrl).
+ * Legacy config fields are mapped by migrate() (enabled→defaultEnabled, excludes→denySites, custom aiUrl→cockpitUrl).
  */
 (function () {
   'use strict';
   const api = globalThis.browser || globalThis.chrome;
-  const V2_DEFAULTS = {
+  const DEFAULTS = {
     v: 2,
     defaultEnabled: false,
     allowSites: [],
@@ -22,11 +22,11 @@
     stored = stored || {};
     const cfg = {
       v: 2,
-      defaultEnabled: typeof stored.defaultEnabled === 'boolean' ? stored.defaultEnabled : V2_DEFAULTS.defaultEnabled,
+      defaultEnabled: typeof stored.defaultEnabled === 'boolean' ? stored.defaultEnabled : DEFAULTS.defaultEnabled,
       allowSites: Array.isArray(stored.allowSites) ? stored.allowSites : [],
       denySites: Array.isArray(stored.denySites) ? stored.denySites : [],
       aiTarget: stored.aiTarget && stored.aiTarget.kind ? stored.aiTarget : { kind: 'cockpit', baseUrl: '', cockpitUrl: '' },
-      bridgeUrl: stored.bridgeUrl || V2_DEFAULTS.bridgeUrl,
+      bridgeUrl: stored.bridgeUrl || DEFAULTS.bridgeUrl,
     };
     if (stored.v !== 2) {
       if (typeof stored.enabled === 'boolean' && stored.defaultEnabled === undefined)
@@ -74,7 +74,7 @@
         baseUrl: $('aiBaseUrl').value.trim(),
         cockpitUrl: $('cockpitUrl').value.trim(),
       },
-      bridgeUrl: $('bridgeUrl').value.trim() || V2_DEFAULTS.bridgeUrl,
+      bridgeUrl: $('bridgeUrl').value.trim() || DEFAULTS.bridgeUrl,
     };
   }
 
@@ -129,7 +129,7 @@
     try { navigator.clipboard.writeText($('shimUrl').textContent); setStatus('已复制', 'ok'); setTimeout(() => setStatus('', ''), 2000); } catch (e) {}
   });
   $('save').addEventListener('click', save);
-  $('reset').addEventListener('click', () => { fill(Object.assign({}, V2_DEFAULTS)); save(); });
+  $('reset').addEventListener('click', () => { fill(Object.assign({}, DEFAULTS)); save(); });
 
   load();
 })();

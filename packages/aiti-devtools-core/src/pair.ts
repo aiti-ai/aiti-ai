@@ -9,7 +9,7 @@
  *   POST /bridge/pair/register        {peerId?, name, ua?} → {peerId, token}（peerId 已知则幂等复用）
  *   GET  /bridge/pair/devices         → {ok, devices}（统一设备视图；与 bridge_status MCP 同源 listDevices()）
  *   GET  /bridge/pair/events?peer&token → SSE（下行 envelope：text/file/devices/peer-join/peer-leave）
- *   POST /bridge/pair/message         {peer, token, to, text} → 跨 kind 投递（bridge routePairSend）
+ *   POST /bridge/pair/message         {instanceId, secret, pageId, to, text, notify?} → pair downlink (bridge routePairSend; to=all=pages/agents/pairs, notify=true=popup card)
  *   POST /bridge/pair/file/init       {peer, token, to, name, size, mime?} → {fileId}
  *   POST /bridge/pair/file/chunk/<fileId>?n=<seq>  二进制 body（≤1MB/块，追加写）
  *   POST /bridge/pair/file/complete/<fileId>       校验收齐 → 投递 file-meta 给接收方
@@ -41,16 +41,28 @@ export function createPairModule(deps: {
   getDevices: () => any[];
   /** 跨 kind 投递（bridge.ts routePairSend）：to 解析 + agent/page/pair 分发；返回 {ok, delivered, candidates?, error?} */
   routeSend: (fromDev: { id: string; name: string }, to: string, payload: { text?: string; file?: Record<string, unknown> }) => { ok: boolean; delivered?: any[]; candidates?: any[]; error?: string };
+  /** Page identity check (bridge validInstance: instanceId registered on the bridge; same trust model as role=ai self-attestation; public forgery gated elsewhere) */
+  validateInstance: (instanceId: string) => boolean;
+  /** Page identity check (bridge validInstance: instanceId registered on the bridge; same trust model as role=ai self-attestation; public forgery gated elsewhere) */
+  validateInstance: (instanceId: string) => boolean;
 }) {
-  const { TAG, dataDir, cors, json, sseResponse } = deps;
+  const { TAG, dataDir, cors, json, sseResponse, validateInstance } = deps;
   // ---------------- 状态 ----------------
-  const peers = new Map(); // peerId -> { peerId, name, token, ua, lastSeen, writer, offlineAt, inbox:[{...env,status}] }
+  const peers = new Map(); // peerId -> { peerId, name, token, ua, lastSeen, writer, offlineAt, inbox:[{...env,status}] } (explicitly registered external web devices: fed relay compat; listPeers feeds the unified device view)
+  // per-page custom device names (keyed by instanceId, in-memory, swept after PAIR_PEER_TTL): POST /pair/name; listDevices prefers it for page rows (decision #4)
+  const names = new Map(); // instanceId -> { name, at }
+  // Page pair inbox (keyed by instanceId): SSE push is primary, polling catch-up is the safety net
+  // (bus delivery has loss windows — write returning true does not mean the peer got the frame).
+  // Cap 100 items per page, swept with TTL; widget pulls deltas alongside the device poll (no extra timer).
+  const pageInbox = new Map(); // instanceId -> { seq: number, items: [{ seq, env }] }
   const files = new Map(); // fileId -> { fileId, name, size, mime, from:{id,name}, to, path, bytes, status:'uploading'|'ready', at }
   const filesDir = dataDir ? join(dataDir, "aiti-bridge", "pair-files") : "";
   if (filesDir) { try { mkdirSync(filesDir, { recursive: true }); } catch {} }
 
   const genId = (p: string) => p + randomBytes(6).toString("hex");
   const safeName = (s: string) => String(s || "file").replace(/[/\\:*?"<>|\x00-\x1f]/g, "_").slice(0, 120) || "file";
+  /** instanceId-segment normalization: full pageId (iid/frameId), bare iid, iid/host, iid/ai all reduce to bare iid */
+  const iidOf = (s: any) => String(s || "").split("/")[0];
 
   // ---- 上线门槛（pair 注册/事件订阅是写入面，外网默认挡）----
   // 实测：nginx 对 /api/extensions/aiti-devtools/ 段免 Authelia（历史水位），pair 不把注册面带到公网。
@@ -78,7 +90,16 @@ export function createPairModule(deps: {
   }
 
   // ---------------- 注册 / 设备 ----------------
-  function register(msg: any) {
+  const PRIVATE_IP_RE = /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1|fc|fd)/;
+  /** Client source IP: nginx x-real-ip (proxy_set_header always overrides spoofed values) → first segment of x-forwarded-for → null (direct connection, no proxy) */
+  function clientIp(req: Request): string | null {
+    const real = (req.headers.get("x-real-ip") || "").trim();
+    if (real) return real;
+    const xff = (req.headers.get("x-forwarded-for") || "").trim();
+    if (xff) return xff.split(",")[0].trim() || null;
+    return null;
+  }
+  function register(msg: any, meta?: { ip?: string | null }) {
     const now = Date.now();
     const name = safeName(String((msg && msg.name) || "")).slice(0, 40) || "设备";
     const pid = (msg && msg.peerId && String(msg.peerId)) || genId("p_");
@@ -87,17 +108,36 @@ export function createPairModule(deps: {
     let p = peers.get(pid);
     if (!p) {
       if (devLabel) console.log(TAG + "   设备：" + devLabel + (dev && dev.lang ? " · " + dev.lang : ""));
-      p = { peerId: pid, token: "t_" + randomBytes(18).toString("hex"), name, ua: String((msg && msg.ua) || "").slice(0, 200), device: dev, deviceLabel: devLabel, lastSeen: now, writer: null, offlineAt: null, inbox: [] };
+      p = { peerId: pid, token: "t_" + randomBytes(18).toString("hex"), name, ua: String((msg && msg.ua) || "").slice(0, 200), device: dev, deviceLabel: devLabel, lastSeen: now, writer: null, offlineAt: null, inbox: [], ip: (meta && meta.ip) || null, regAt: now };
       peers.set(pid, p);
-      console.log(TAG + " pair 设备注册：" + name + " (" + pid + ")");
+      console.log(TAG + " pair 设备注册：" + name + " (" + pid + ")" + (p.ip ? " @ " + p.ip : ""));
       broadcastToPeers({ type: "peer-join", peer: { id: pid, kind: "pair", name } });
       deps.getDevices().length; // 设备视图已变（join 广播已带全量触发客户端刷新）
     } else {
       p.name = name; p.lastSeen = now; p.offlineAt = null;
       if (msg && msg.ua) p.ua = String(msg.ua).slice(0, 200);
       if (dev) { p.device = dev; p.deviceLabel = devLabel; }
+      if (meta && meta.ip) p.ip = meta.ip; // refresh the source IP on every registration (follows network-switch drift)
     }
     return { peerId: p.peerId, token: p.token, name: p.name };
+  }
+
+  /** Sender page identity = the host page's pageId (full instanceId/frameId form, e.g. ou354/host):
+   *  the pair widget reports its page's pageId (the __dbg.pageId injected by devtools; falls back to instanceId/host when absent),
+   *  the bridge matches aiPageReg by pageId for directed delivery — pair identity is unified with the bridge pageId system.
+   *  Auth = instanceId self-attestation (bridge validInstance: registered => allowed; secret is carried by the client but not
+   *  cryptographically verified — same trust model as role=ai connections; public forgery gated by gateAdmission). */
+  function pageIdentity(msg: any): { id: string; name: string; kind: string } | null {
+    const iid = String((msg && msg.instanceId) || "");
+    if (!iid || !validateInstance(iid)) return null;
+    const pageId = String((msg && msg.pageId) || "") || iid + "/host";
+    const named = names.get(iidOf(pageId));
+    // Self row lookup: the device row id may be a host pageId whose base differs from this page's bridge
+    // instanceId (launcher identity vs claim) — match the row's canonical `instanceId` first so messages
+    // are attributed to the device name instead of a raw id.
+    const self = deps.getDevices().filter((d) => d.instanceId === iid || d.id === pageId || d.id === iid)[0];
+    const name = String((msg && msg.name) || (named && named.name) || (self && self.name) || pageId).slice(0, 80);
+    return { id: pageId, name, kind: "page" };
   }
 
   function checkPeer(peerId: string, token: string) {
@@ -105,14 +145,54 @@ export function createPairModule(deps: {
     return p && p.token && token && p.token === String(token) ? p : null;
   }
 
-  /** pair 设备行（统一设备视图的 pair 部分；bridge listDevices 合并用） */
+    /** Page pair inbox write: dual-write after each successful page delivery (the SSE frame may be
+   *  lost; polling catches up by seq). */
+  function notePageInbox(iid: string, env: Record<string, unknown>) {
+    const key = iidOf(iid);
+    if (!key) return;
+    let box = pageInbox.get(key);
+    if (!box) { box = { seq: 0, items: [] }; pageInbox.set(key, box); }
+    box.seq += 1;
+    box.items.push({ seq: box.seq, env });
+    if (box.items.length > 100) box.items.splice(0, box.items.length - 100);
+  }
+
+  /** Page inbox pull: since = last max seq, returns items after it (with seq for continuation). */
+  function pullPageInbox(iid: string, since: number) {
+    const box = pageInbox.get(iidOf(iid));
+    if (!box) return { ok: true, seq: since || 0, items: [] as any[] };
+    const items = box.items.filter((it) => it.seq > (since || 0)).map((it) => ({ seq: it.seq, env: it.env }));
+    return { ok: true, seq: box.seq, items };
+  }
+
+/** pair device rows (pair section of the unified device view) = explicitly registered external web devices (fed relay / standalone pages).
+   *  pi-web page devices come from bridge listDevices via aiConns (kind:page) and are never duplicated here. */
   function listPeers() {
     const now = Date.now();
-    return [...peers.values()].map((p) => ({
-      kind: "pair", id: p.peerId, name: p.name, ua: p.ua || null, deviceLabel: p.deviceLabel || null,
-      online: !!p.writer, offlineAt: p.offlineAt || null, lastSeen: p.lastSeen, pending: p.inbox.filter((m: any) => m.status === "pending").length,
-      _now: now,
-    })).map(({ _now, ...row }) => row);
+    return [...peers.values()].map((p) => {
+      const stale = !p.writer && now - p.lastSeen >= 120000; // no stream past the 2min grace window = offline
+      return {
+        kind: "pair", id: p.peerId, name: p.name, ua: p.ua || null, deviceLabel: p.deviceLabel || null,
+        online: !stale && !p.offlineAt, offlineAt: stale || p.offlineAt ? (p.offlineAt || p.lastSeen) : null, lastSeen: p.lastSeen,
+        ip: p.ip || null, pending: p.inbox.filter((m: any) => m.status === "pending").length,
+      };
+    });
+  }
+
+  /** per-page custom device name (B3/decision #4): nameFor(instanceId) preferred by bridge listDevices for page rows */
+  function nameFor(instanceId: string): string | null {
+    const n = names.get(iidOf(instanceId));
+    return n ? n.name : null;
+  }
+
+  function setName(instanceId: string, name: string): { ok: boolean; name?: string; error?: string } {
+    const iid = iidOf(instanceId);
+    if (!iid || !validateInstance(iid)) return { ok: false, error: "bad instanceId" };
+    const clean = String(name || "").trim().slice(0, 40);
+    if (!clean) return { ok: false, error: "bad name" };
+    names.set(iid, { name: clean, at: Date.now() });
+    console.log(TAG + " pair 页面改名：" + iid + " → " + clean);
+    return { ok: true, name: clean };
   }
 
   // ---------------- 投递（pair 目标；bridge routeSend 的 pair 分支调） ----------------
@@ -179,13 +259,28 @@ export function createPairModule(deps: {
 
   const publicFile = (f: any) => ({ fileId: f.fileId, name: f.name, size: f.size, mime: f.mime, from: f.from, to: f.to, at: f.at });
 
-  function fileDownload(p: { peerId: string; name: string } | null, fileId: string): Response {
-    if (!p) return json({ ok: false, error: "bad peer/token" }, 401);
+  function fileDownload(auth: { instanceId: string } | null, fileId: string, peerAuth?: { peerId: string; token: string } | null): Response {
+    // dual identity: (1) pair peer/token (external web devices / fed relay) (2) page instanceId self-attestation (widget)
+    const peer = peerAuth ? checkPeer(String(peerAuth.peerId || ""), String(peerAuth.token || "")) : null;
+    if (!peer && (!auth || !validateInstance(iidOf(auth.instanceId)))) return json({ ok: false, error: "bad instanceId" }, 401);
     const f = files.get(String(fileId || ""));
     if (!f) return json({ ok: false, error: "unknown fileId" }, 404);
     if (f.status !== "ready") return json({ ok: false, error: "file not ready" }, 409);
-    // 接收方校验：声明 to 命中该 peer（peerId 或设备名；to="all" 或为空放行任意已注册 peer）
-    if (f.to && f.to !== "all" && f.to !== p.peerId && f.to !== p.name) return json({ ok: false, error: "not the receiver" }, 403);
+    if (peer) {
+      // pair device identity: to=all/empty / to hits self (peerId or registered name) / uploader self
+      const okTo = !f.to || f.to === "all" || f.to === peer.peerId || f.to === peer.name;
+      const okFrom = f.from && f.from.id === peer.peerId;
+      if (!okTo && !okFrom) return json({ ok: false, error: "not the receiver" }, 403);
+    } else {
+      // Page identity (A4 normalization): to=all/empty allowed; to vs downloader compared on bare instanceId segment
+      // (full pageId / bare iid / iid/host / iid/ai all pass); to as device name matched against downloader row; uploader always allowed.
+      const selfIid = iidOf(auth.instanceId);
+      if (f.to && f.to !== "all") {
+        const selfRow = deps.getDevices().filter((d: any) => iidOf(d.id) === selfIid)[0];
+        const nameHit = !!(selfRow && selfRow.name && (selfRow.name === f.to || String(selfRow.name).includes(f.to)));
+        if (iidOf(f.to) !== selfIid && iidOf(f.from && f.from.id) !== selfIid && !nameHit) return json({ ok: false, error: "not the receiver" }, 403);
+      }
+    }
     if (!existsSync(f.path)) return json({ ok: false, error: "file expired" }, 410);
     let stream: ReadableStream;
     try {
@@ -235,6 +330,9 @@ export function createPairModule(deps: {
 
   // ---------------- 清理（挂桥 agentSweep，零新增定时器） ----------------
   function sweep(now: number) {
+    for (const [iid, n] of [...names]) {
+      if (now - n.at > PAIR_PEER_TTL) names.delete(iid);
+    }
     for (const [pid, p] of [...peers]) {
       if (p.writer) { p.offlineAt = null; continue; }
       if (now - p.lastSeen <= 120000) continue; // 2min 宽限（无流短连接轮询场景）
@@ -277,7 +375,7 @@ export function createPairModule(deps: {
       const msg = await req.json().catch(() => null);
       const denied = gateAdmission(req, (msg && msg.regToken) || null);
       if (denied) return denied;
-      const r = register(msg);
+      const r = register(msg, { ip: clientIp(req) });
       return json({ ok: true, ...r });
     }
 
@@ -303,14 +401,33 @@ export function createPairModule(deps: {
       return response;
     }
 
-    // POST /bridge/pair/message {peer, token, to, text}
+  /** Request identity resolution (dual auth): (1) page instanceId self-attestation (widget)
+   *  (2) pair peer/token (fed relay / external web devices — credentials issued by register).
+   *  Returns fromDev {id, name, kind} or null. */
+  function requestIdentity(msg: any): { id: string; name: string; kind: string } | null {
+    const pg = pageIdentity(msg);
+    if (pg) return pg;
+    const pp = checkPeer(String((msg && msg.peer) || ""), String((msg && msg.token) || ""));
+    return pp ? { id: pp.peerId, name: pp.name, kind: "pair" } : null;
+  }
+
+    // POST /bridge/pair/name {instanceId, secret, pageId, name} — per-page custom device name (B3/decision #4; in-memory, swept after TTL)
+    if (seg[0] === "name" && method === "POST") {
+      const msg = await req.json().catch(() => null);
+      const from = pageIdentity(msg);
+      if (!from) return json({ ok: false, error: "bad instanceId（页面未在桥上）" }, 401);
+      const r = setName(from.id, String((msg && msg.name) || ""));
+      return json(r, r.ok ? 200 : 400);
+    }
+
+    // POST /bridge/pair/message {instanceId, secret, pageId, to, text, name?} — pair chat channel (page-identity endorsed; downlink via aiConns pair_msg)
     if (seg[0] === "message" && method === "POST") {
       const msg = await req.json().catch(() => null);
-      const p = checkPeer(msg && msg.peer, msg && msg.token);
-      if (!p) return json({ ok: false, error: "bad peer/token" }, 401);
+      const from = requestIdentity(msg);
+      if (!from) return json({ ok: false, error: "bad instanceId（页面未在桥上；外部设备请带 register 的 peer/token）" }, 401);
       const text = String((msg && msg.text) || "").slice(0, 64000);
       if (!text.trim()) return json({ ok: false, error: "bad request（需要 text）" }, 400);
-      const r = deps.routeSend({ id: p.peerId, name: p.name }, String((msg && msg.to) || "all"), { text });
+      const r = deps.routeSend(from, String((msg && msg.to) || "all"), { text, pageId: from.id, notify: !!(msg && msg.notify) }); // notify=true → 🔔 popup card (interaction); default → pair_msg bubble
       return json(r, r.ok ? 200 : (r.candidates ? 300 : 400));
     }
 
@@ -318,9 +435,11 @@ export function createPairModule(deps: {
     if (seg[0] === "file") {
       if (seg[1] === "init" && method === "POST") {
         const msg = await req.json().catch(() => null);
-        const p = checkPeer(msg && msg.peer, msg && msg.token);
-        if (!p) return json({ ok: false, error: "bad peer/token" }, 401);
-        const r = fileInit({ id: p.peerId, name: p.name }, String((msg && msg.to) || ""), String((msg && msg.name) || ""), Number((msg && msg.size) || 0), String((msg && msg.mime) || ""));
+        const from = requestIdentity({ ...msg, name: undefined }); // init msg.name is the file name — keep it out of identity resolution
+        if (!from) return json({ ok: false, error: "bad instanceId（页面未在桥上；外部设备请带 register 的 peer/token）" }, 401);
+        const denied = gateAdmission(req, null);
+        if (denied) return denied;
+        const r = fileInit(from, String((msg && msg.to) || ""), String((msg && msg.name) || ""), Number((msg && msg.size) || 0), String((msg && msg.mime) || ""));
         return r.error ? json({ ok: false, error: r.error }, 400) : json({ ok: true, ...r });
       }
       if (seg[1] === "chunk" && method === "POST") {
@@ -338,12 +457,18 @@ export function createPairModule(deps: {
         deps.routeSend(f.from, f.to || "all", { file: { fileId: f.fileId, name: f.name, size: f.size, mime: f.mime, from: f.from, fromName: f.from.name } });
         return json(r);
       }
-      // GET /bridge/pair/file/<fileId>?peer=&token=
+      // GET /bridge/pair/file/<fileId>?instanceId=&secret=
       if (seg.length === 2 && method === "GET") {
-        return fileDownload(checkPeer(searchParams.get("peer"), searchParams.get("token")), String(seg[1] || ""));
+        return fileDownload({ instanceId: searchParams.get("instanceId") || "" }, String(seg[1] || ""), { peerId: searchParams.get("peer") || "", token: searchParams.get("token") || "" });
       }
     }
 
+    // GET /bridge/pair/inbox?instanceId=&since= — page inbox catch-up (widget pulls alongside device poll; lost-frame safety net)
+    if (seg[0] === "inbox" && method === "GET" && searchParams.get("instanceId")) {
+      const iid = searchParams.get("instanceId") || "";
+      if (!validateInstance(iid)) return json({ ok: false, error: "bad instanceId" }, 401);
+      return json(pullPageInbox(iid, Number(searchParams.get("since") || 0)));
+    }
     // GET /bridge/pair/inbox?peer=&token=
     if (seg[0] === "inbox" && method === "GET") {
       const p = checkPeer(searchParams.get("peer"), searchParams.get("token"));
@@ -357,5 +482,5 @@ export function createPairModule(deps: {
     return null;
   }
 
-  return { handle, listPeers, deliverToPeer, resolvePeerFuzzy, register, checkPeer, fileInit, fileChunk, fileComplete, fileDownload, getFileInfo, fetchToFile, sweep, close: () => { peers.clear(); files.clear(); } };
+  return { handle, listPeers, nameFor, setName, notePageInbox, pullPageInbox, deliverToPeer, resolvePeerFuzzy, register, checkPeer, fileInit, fileChunk, fileComplete, fileDownload, getFileInfo, fetchToFile, sweep, close: () => { peers.clear(); names.clear(); pageInbox.clear(); files.clear(); } };
 }

@@ -479,9 +479,16 @@ function openSessionIndexInner(dbPath: string): SessionIndex {
       // Scoped GC: drop this agent's rows whose artifact vanished. Virtual paths
       // share the same real file — presence of the real file keeps them all alive;
       // fully-virtual refs stay alive by id while the provider keeps listing them.
+      // Archived rows are never GC'd here (same stance as the sync() GC): a
+      // real-archived session (A03) has its artifact gone by design — the row is
+      // the only pointer to its .pwarc entry. Dropping it would wipe the archive
+      // view entry, and a source list that momentarily still lists the session
+      // would re-insert it as a live row (flash-in) until the next sync removes
+      // it again (flash-out).
       tx(() => {
-        const mine = db.prepare("SELECT id, path FROM sessions WHERE agent = ?").all(agent) as Array<{ id: string; path: string | null }>;
+        const mine = db.prepare("SELECT id, path, archived FROM sessions WHERE agent = ?").all(agent) as Array<{ id: string; path: string | null; archived: number }>;
         for (const r of mine) {
+          if (r.archived) continue;
           const rp = r.path?.split("#")[0] ?? null;
           const aliveByFile = rp !== null && livePaths.has(rp);
           const aliveByVirtual = virtualSids.has(r.id);

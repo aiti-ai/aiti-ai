@@ -1,7 +1,7 @@
 {
   "name": "@aiti-ai/dsh-secret-mask",
-  "version": "0.1.2",
-  "description": "Paste-safe by default — session-level secret redaction for DSH (DeepSeek Harness): values pasted into prompts become [REDACTED:*] placeholders before a step enters the model and are restored inside whitelisted tool arguments before execution; tool results are redacted at tools/post-execute and an opt-in llm/stream audit proves no raw value reaches the provider. Zero runtime dependencies; detection core shared with @aiti-ai/pi-secret-mask.",
+  "version": "0.3.0",
+  "description": "Paste-safe by default \u2014 session-level secret redaction for DSH (DeepSeek Harness): values pasted into prompts become opaque rsec_<hash8> tokens before a step enters the model and are restored inside whitelisted tool arguments before execution; unresolved tokens are guarded; sensitive-key extraction and a weak-password dictionary catch low-entropy passwords; tool results are redacted at tools/post-execute and an opt-in llm/stream audit proves no raw value reaches the provider. Detection/placeholder engine shared with the pi editions via @aiti-ai/secret-mask-core.",
   "keywords": [
     "dsh",
     "deepseek-harness",
@@ -47,13 +47,9 @@
   },
   "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "devDependencies": {
-    "@aiti-ai/secret-mask-core": "^0.1.0"
+    "@aiti-ai/secret-mask-core": "^0.3.0"
   },
   "engines": {
     "dsh": ">=0.1.1-rc.0"
-  },
-  "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-ai/issues"
-  },
-  "contentHash": "30762ec56240b572"
+  }
 }

@@ -80,6 +80,37 @@ export interface CodebuddyHandleInit {
   runtime: CodebuddyRuntime;
   /** P2 协议委托：成员级启动包装（custom-agent 路径），优先于 extman spawn.* feature。 */
   launchOverride?: LaunchOverride;
+  /** Host-injected process strategy (pi-web core agent-starter); absent = plain spawn. */
+  agentStarter?: AgentStarterLike;
+  /** Host recovery: adopt a live process instead of spawning (detached sessions). */
+  attached?: AttachedChildOptions;
+}
+
+/**
+ * Injected by the pi-web core (`agent-starter`). Older hosts do not pass it — the
+ * extension then keeps its historical `child_process.spawn`. With the detachable
+ * variant the long-lived cbc connection outlives pi-web and a reattach adopts it.
+ */
+export interface AgentStarterLike {
+  readonly kind: "direct" | "wrapper";
+  spawn(
+    command: string,
+    args: string[],
+    options?: {
+      env?: Record<string, string>;
+      cwd?: string;
+      shell?: boolean | string;
+      agentKey?: string;
+      sessionId?: string;
+    },
+  ): Promise<ChildProcess>;
+}
+
+/** Adopt an already-live agent process (core recovery after a pi-web restart). */
+export interface AttachedChildOptions {
+  child: ChildProcess;
+  sessionId: string;
+  agentKey?: string;
 }
 
 /** 能力表（stream：长连接，control 三通道实测可用 → 运行中切换模型/权限、可应答工具授权）。 */
@@ -508,6 +539,10 @@ export abstract class CodebuddyHandleBase {
 
 export class CodebuddyStreamHandle extends CodebuddyHandleBase {
   private child: ChildProcess | null = null;
+  /** Host-injected process strategy (undefined = plain spawn, historical behavior). */
+  starter?: AgentStarterLike;
+  /** Registry key the host records for this session (cbc session id or placeholder). */
+  nativeKey = "";
   private detachReader: (() => void) | null = null;
   private stdinSeq = 0;
   /** control_request 应答等待（request_id → resolve）。 */
@@ -535,15 +570,21 @@ export class CodebuddyStreamHandle extends CodebuddyHandleBase {
   }
 
   static async start(init: CodebuddyHandleInit): Promise<CodebuddyStreamHandle> {
+    if (init.attached) return CodebuddyStreamHandle.adopt(init, init.attached.child, init.attached.sessionId);
     const cli = init.runtime.resolveCli();
     const args = buildStreamArgs({
       model: init.model?.id && init.model.id !== DEFAULT_MODEL ? init.model.id : undefined,
       permissionMode: init.runtime.permissionMode(),
       resumeSid: init.sessionId,
     });
-    const provisionalId = init.sessionId ? `codebuddy:${init.sessionId}` : `codebuddy:new-${++counter}-${Date.now()}`;
+    // One native key shared by the detached registry and the provisional handle id
+    // (cbc's real session id only arrives with the first init frame).
+    const nativeKey = init.sessionId ?? `new-${++counter}-${Date.now()}`;
+    const provisionalId = `codebuddy:${nativeKey}`;
     const handle = new CodebuddyStreamHandle(provisionalId, init.cwd, init.runtime);
     handle.sessId = init.sessionId;
+    handle.nativeKey = nativeKey;
+    handle.starter = init.agentStarter;
     if (init.model?.id) handle.model = { id: init.model.id, provider: "codebuddy" };
 
     const env = handle.turnEnv();
@@ -560,18 +601,54 @@ export class CodebuddyStreamHandle extends CodebuddyHandleBase {
       cwd: init.cwd || process.cwd(),
       warn: (m) => console.log(`[aiti-codebuddy-agent] ${m}`),
     });
-    const child = spawn(launch.command, launch.args, {
-            shell: launch.shell,
-cwd: init.cwd || process.cwd(),
-      stdio: ["pipe", "pipe", "pipe"],
-      env: launch.env,
-    });
-    handle.child = child;
-    handle.detachReader = lineReader(child.stdout, (line) => handle.onLine(line), {
-      onOverflow: (size) => handle.markDead(`stdout line overflow (${size} bytes)`),
+    const child = init.agentStarter
+      ? await init.agentStarter.spawn(launch.command, launch.args, {
+          shell: launch.shell,
+          cwd: init.cwd || process.cwd(),
+          env: launch.env as Record<string, string>,
+          agentKey: "codebuddy",
+          sessionId: nativeKey,
+        })
+      : spawn(launch.command, launch.args, {
+          shell: launch.shell,
+          cwd: init.cwd || process.cwd(),
+          stdio: ["pipe", "pipe", "pipe"],
+          env: launch.env,
+        });
+    handle.bindChild(child);
+    handle.persistModelState();
+    return handle;
+  }
+
+  /**
+   * Recovery: adopt the still-open cbc connection the core reattached to. The
+   * wrapper replays past frames through the same reader, so live history and any
+   * pending tool-authorization requests come back with it.
+   */
+  static async adopt(
+    init: CodebuddyHandleInit,
+    child: ChildProcess,
+    nativeSessionId: string,
+  ): Promise<CodebuddyStreamHandle> {
+    const handle = new CodebuddyStreamHandle(`codebuddy:${nativeSessionId}`, init.cwd, init.runtime);
+    handle.aliveFlag = true;
+    handle.sessId = nativeSessionId;
+    handle.nativeKey = nativeSessionId;
+    if (init.model?.id) handle.model = { id: init.model.id, provider: "codebuddy" };
+    handle.bindChild(child);
+    handle.persistModelState();
+    return handle;
+  }
+
+  /** Wire one live cbc process to this handle (fresh spawn or adopted facade). */
+  private bindChild(child: ChildProcess): void {
+    this.child = child;
+    this.detachReader?.();
+    this.detachReader = lineReader(child.stdout, (line) => this.onLine(line), {
+      onOverflow: (size) => this.markDead(`stdout line overflow (${size} bytes)`),
     });
     // 三个流必须挂 error 监听（加固 A2）：ECONNRESET/EPIPE 无监听器会崩宿主进程。
-    child.stdout?.on("error", (err) => handle.markDead(`stdout error: ${err.message}`));
+    child.stdout?.on("error", (err) => this.markDead(`stdout error: ${err.message}`));
     child.stderr?.on("error", (err) => console.log(`[aiti-codebuddy-agent] stderr error: ${err.message}`));
     child.stdin?.on("error", (err) => console.log(`[aiti-codebuddy-agent] stdin error: ${err.message}`));
     child.stderr?.on("data", (c: Buffer | string) => {
@@ -579,12 +656,10 @@ cwd: init.cwd || process.cwd(),
       if (text) console.log(`[aiti-codebuddy-agent] ${text.slice(0, 300)}`);
     });
     child.once("exit", (code) => {
-      handle.running = false;
-      handle.markDead(`process exited (${code ?? "signal"})`);
+      this.running = false;
+      this.markDead(`process exited (${code ?? "signal"})`);
     });
-    child.once("error", (err) => handle.markDead(`process error: ${err.message}`));
-    handle.persistModelState();
-    return handle;
+    child.once("error", (err) => this.markDead(`process error: ${err.message}`));
   }
 
   protected cleanupOnDead(): void {
@@ -895,6 +970,17 @@ cwd: init.cwd || process.cwd(),
     this.turn = null;
     this.q.dispose();
     const child = this.child;
+    // Wrapper-hosted connection: disconnect and leave cbc running (the core decides
+    // whether a session should actually be stopped).
+    const facade = child as unknown as { detachable?: unknown; release?: () => void } | null;
+    if (facade && facade.detachable === true && typeof facade.release === "function") {
+      facade.release();
+      this.child = null;
+      this.detachReader?.();
+      this.detachReader = null;
+      this.listeners.clear();
+      return;
+    }
     if (child && child.exitCode === null) {
       try { child.kill("SIGTERM"); } catch { /* already dead */ }
       await new Promise<void>((resolve) => {

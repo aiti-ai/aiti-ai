@@ -239,7 +239,8 @@ jobs:
       - name: Merge checksums
         run: |
           cd release-assets
-          cat *.sha256 > checksums.txt
+          # sha256sum 上游产物带 CI 绝对路径 —— 重写为纯文件名，用户可直接 sha256sum -c checksums.txt
+          awk '{ n = split($2, p, "/"); print $1 "  " p[n] }' *.sha256 > checksums.txt
           rm -f *.sha256
           cat checksums.txt
 

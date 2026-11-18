@@ -289,3 +289,38 @@ test("heal: sync() rebuilds orphan placeholder row and GC keeps rows whose file 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("syncExt GC never drops archived rows (A03 real-archive survivor); unhidden row is GC'd", async () => {
+  // Regression pin (2026-11 anti-flicker fix): after a real archive the source artifact
+  // being gone is the designed state (data lives in .pwarc) and the row is the archive
+  // view's only entry point. A scoped GC that drops it would let a momentarily stale
+  // source list re-insert it as live, until the next sync removes it again
+  // (delete → flash-in → flash-out). Same stance as the sync() GC archived skip.
+  const dir = mkdtempSync(join(tmpdir(), "sm-lc-gc-arch-"));
+  try {
+    mkdirSync(join(dir, "root"));
+    const idx = runtime(cfgOf(dir)).index;
+    const fake = makeFakeAdapter(join(dir, "root"));
+    fake.add("s1", [{ message: { role: "user", content: "to be real-archived" } }]);
+    const refs = [...fake.a.list()];
+    await idx.syncExt("fakeag", refs, (r) => fake.a.parse(r));
+    const id = "fakeag:s1";
+    assert.equal(idx.extRows(["fakeag"]).length, 1);
+
+    // real-archive state: view-archived + artifact removed from the source
+    assert.ok(idx.setExtArchived(id, true) > 0);
+    rmSync(refs[0].path);
+    await idx.syncExt("fakeag", refs, (r) => fake.a.parse(r)); // scoped GC runs
+    const row = idx.getSession(id);
+    assert.ok(row, "archived row must survive the scoped GC");
+    assert.equal(row.archived, 1, "still archived after sync");
+
+    // unhide (put back to the list) → live row with a dead artifact → next sync GC removes it
+    idx.setExtArchived(id, false);
+    await idx.syncExt("fakeag", refs, (r) => fake.a.parse(r));
+    assert.equal(idx.getSession(id), undefined, "unhidden row with vanished artifact is GC'd");
+  } finally {
+    try { runtime(cfgOf(dir)).index.close(); } catch {}
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

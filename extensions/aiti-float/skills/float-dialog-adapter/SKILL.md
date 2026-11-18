@@ -8,7 +8,7 @@ placeholder.en: "Describe your dialog (which extension, layout, whether it needs
 
 # float-dialog-adapter · 扩展弹窗接入 aiti-float 浮动契约
 
-你要帮用户把一个扩展弹窗（面板）接入 aiti-float 浮动契约。权威文档：`docs/aiti-web-ext-float-dialogs.md`（pi-work 仓）；参考实现：`pi-web-ext/aiti-ui-env/client/src/ui-env-app.tsx`、`pi-web-ext/demo`、`pi-web-ext/templates/ext-jsx-client`。
+你要帮用户把一个扩展弹窗（面板）接入 aiti-float 浮动契约。权威文档：`docs/aiti-web-ext-float-dialogs.md`（the source repo 仓）；参考实现：`pi-web-ext/aiti-ui-env/client/src/ui-env-app.tsx`、`pi-web-ext/demo`、`pi-web-ext/templates/ext-jsx-client`。
 
 ## 标准接入（最小改动）
 

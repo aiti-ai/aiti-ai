@@ -6,7 +6,8 @@
 import assert from "node:assert/strict";
 import { randomInt } from "node:crypto";
 import { test } from "node:test";
-import { scan, entropy, fnv1a } from "../src/detect.ts";
+import { scan, entropy } from "../src/detect.ts";
+import { fnv1a } from "../src/hash.ts";
 
 const B36 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 const A2Z7 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
@@ -144,7 +145,31 @@ test("CJK keywords: 密码/密钥/授权码/令牌 with fullwidth colon and lati
   assert.equal(ids(scan(`秘钥：${V2}`)).includes("generic-secret"), true);
   assert.equal(ids(scan(`Authorization：Bearer ${V2}`)).includes("auth-header"), true, "fullwidth colon in auth header");
   // near misses
+  // fullwidth punctuation ends a bare value: trailing prose must not be swallowed
+  const V3 = "xK9mQ2vL8pW4nR7bC5dE6f";
+  assert.equal(scan(`数据库密码：${V3}，请记好`)[0].value, V3, "fullwidth comma ends value");
+  assert.equal(scan(`密码：${V3}。谢谢`)[0].value, V3, "fullwidth period ends value");
+  assert.equal(scan(`密码：${V3}（测试用）`)[0].value, V3, "fullwidth parens end value");
+  assert.equal(scan(`密码：${V3}; note this`)[0].value, V3, "halfwidth semicolon still ends value");
+  assert.equal(scan(`password = ${V3}, then restart`)[0].value, V3, "halfwidth comma still ends value");
   assert.equal(ids(scan(`密码规则如下：不得包含用户名`)).length, 0, "keyword followed by CJK prose");
+  // bare gate lowered 3.0 -> 2.5: human-chosen passwords (2.5-3.0) are now caught
+  assert.ok(ids(scan(`输出我的密码：xxewwer1234`)).includes("generic-secret"), "ascii low-entropy password");
+  assert.ok(ids(scan(`密码：233345电饭锅电饭`)).includes("generic-secret"), "cjk low-entropy password");
+  // ultra-low-entropy filler still rejected by the 2.5 floor
+  assert.equal(ids(scan(`password = 1122334411`)).length, 0, "repeated-digit filler");
+  assert.equal(ids(scan(`password = abcabc12`)).length, 0, "repeated-pattern filler");
+  // natural-language copula between keyword and value (`password is xxx` / `密码是xxx`) // cjk-ok
+  assert.ok(ids(scan(`my password is：xxewwer1234`)).includes("generic-secret"), "copula + fullwidth colon");
+  assert.ok(ids(scan(`password is xxewwer1234`)).includes("generic-secret"), "bare copula");
+  assert.ok(ids(scan(`the token is aB3xK9mQ2wR5tY8u`)).includes("generic-secret"), "copula with article");
+  assert.ok(ids(scan(`密码是：xK9mQ2vL8pW4nR7bC5dE6f`)).includes("generic-secret"), "CJK copula");
+  assert.ok(ids(scan(`password is "xK9mQ2vL8pW4nR"`)).includes("generic-secret-quoted"), "quoted copula");
+  // copula near-misses: prose/filler after "is" must not match
+  assert.equal(ids(scan(`password is required here`)).length, 0, "is + NOT_SECRETS word");
+  assert.equal(ids(scan(`the token is expired now`)).length, 0, "is + short prose");
+  assert.equal(ids(scan(`密码是：changeme`)).length, 0, "CJK copula + filler");
+  assert.equal(ids(scan(`my password is incorrect`)).length, 0, "is + status word");
   assert.equal(ids(scan(`密码策略：长度至少8位`)).length, 0, "policy text");
   assert.equal(ids(scan(`访问令牌：{{token}}`)).length, 0, "template slot");
   assert.equal(ids(scan(`密码 = abc123`)).length, 0, "short low-entropy value");

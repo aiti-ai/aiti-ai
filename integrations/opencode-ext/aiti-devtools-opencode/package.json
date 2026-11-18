@@ -24,15 +24,5 @@
   },
   "peerDependencies": {
     "@opencode-ai/plugin": ">=1.0.0"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
-    "directory": "integrations/opencode-ext/aiti-devtools-opencode"
-  },
-  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
-  "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-ai/issues"
-  },
-  "contentHash": "c010557d6d8de859"
+  }
 }

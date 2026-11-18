@@ -53,14 +53,7 @@ export function entropy(v: string): number {
   return bits;
 }
 
-export function fnv1a(s: string): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193) >>> 0;
-  }
-  return h.toString(16).padStart(8, "0");
-}
+import { fnv1a } from "./hash.ts";
 
 const B64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
@@ -99,6 +92,9 @@ function jwtHeaderHasAlg(token: string): boolean {
 const NOT_SECRETS = new Set([
   "true", "false", "null", "none", "nil", "undefined", "changeme", "password", "passw0rd",
   "secret", "token", "placeholder", "redacted", "example", "default", "required", "optional",
+  // common copula-prose status words ("my password is incorrect") — ≥8 chars so they
+  // would otherwise pass the length + entropy gates after `password is`
+  "incorrect", "forgotten", "encrypted", "protected", "mismatch", "rejected", "verified",
 ]);
 
 /** Obvious non-secrets: template slots, paths, URLs, env references, filler. */
@@ -146,9 +142,18 @@ function codeExpression(v: string): boolean {
 }
 
 function bareSecret(v: string): boolean {
-  if (!plausibleSecret(v) || placeholderShaped(v) || entropy(v) < 3.0) return false;
+  // Entropy gate 2.5 (aligned with notFiller). cc-redact's 3.0 was tuned for its
+  // file-scan corpus; in the chat + CJK scene it only ever rejected human-chosen
+  // passwords, which commonly sit at 2.5-3.0 (xxewwer1234 = 2.91,
+  // 233345电饭锅电饭 = 2.66), while CJK prose straddles the old gate anyway. // cjk-ok
+  // Measured cost of 2.5 on 212k local repo files: ~8-10 new hit shapes, all
+  // keyword+colon prose or minified-code artifacts, no real credentials.
+  if (!plausibleSecret(v) || placeholderShaped(v) || entropy(v) < 2.5) return false;
   // a code identifier or member chain with no digit (getToken, process.env.KEY, my-secret-name) is not a value
   if (!/\d/.test(v) && /^[A-Za-z_$][\w$]*(?:[.\-][A-Za-z_$][\w$]*)*$/.test(v)) return false;
+  // English prose after a keyword ("no token is configured.", "the token is expired."): a single
+  // lowercase word (optionally with sentence punctuation) and no digit is a sentence, not a value
+  if (!/\d/.test(v) && /^[a-z][a-z_-]*[.,;:!?]?$/.test(v)) return false;
   return !codeExpression(v);
 }
 
@@ -175,6 +180,14 @@ function dbUrlHasRealPassword(url: string): boolean {
 
 function notTemplated(text: string, at: number): boolean {
   return text.slice(Math.max(0, at - 2), at) !== "{{";
+}
+
+/** True when the offset is inside a `${...}` expression (template default, not a literal). */
+function insideTemplate(text: string, at: number): boolean {
+  const open = text.lastIndexOf("${", at);
+  if (open === -1) return false;
+  const close = text.indexOf("}", open);
+  return close === -1 || close > at;
 }
 
 // ---------------------------------------------------------------------------
@@ -375,7 +388,9 @@ export const RULES: readonly Rule[] = [
     id: "generic-secret-quoted",
     label: "SECRET",
     kind: "secret",
-    pattern: /(?:api[_-]?key|secret(?:[_-]?key)?|token|password|passwd|pwd|auth|credential|密码|密钥|秘钥|口令|令牌|授权码|授权密钥|访问令牌|访问密钥|凭证|凭据|私钥)s?["'`]?[ \t]{0,5}(?::=|=>|[=:]|：)[ \t]{0,5}["'`]([^\s"'`]{8,256})["'`]/gi,
+    // keyword then either an assignment operator or the natural-language copula
+    // (`password is "xxx"`, `密码是"xxx"`) before the quoted value // cjk-ok
+    pattern: /(?:api[_-]?key|secret(?:[_-]?key)?|token|password|passwd|pwd|auth|credential|密码|密钥|秘钥|口令|令牌|授权码|授权密钥|访问令牌|访问密钥|凭证|凭据|私钥)s?["'`]?(?:[ \t]{0,5}(?::=|=>|[=:]|：)|(?:[ \t]+is\b|是)[ \t]{0,5}(?::=|=>|[=:]|：)?)[ \t]{0,5}["'`]([^\s"'`]{8,256})["'`]/gi,
     group: 1,
     verify: quotedSecret,
     before: keywordStart,
@@ -385,8 +400,10 @@ export const RULES: readonly Rule[] = [
     id: "generic-secret",
     label: "SECRET",
     kind: "secret",
-    // a literal \n, \r or \t (backslash and letter) ends the value, as in a dotenv string inside source code
-    pattern: /(?:api[_-]?key|secret(?:[_-]?key)?|token|password|passwd|pwd|auth|credential|密码|密钥|秘钥|口令|令牌|授权码|授权密钥|访问令牌|访问密钥|凭证|凭据|私钥)s?["'`]?[ \t]{0,5}(?::=|=>|[=:]|：)[ \t]{0,5}((?:[^\s"'`;,(){}<>[\]\\]|\\(?![nrt])){8,256})(?!(?!\\[nrt])[^\s"'`;,(){}<>[\]])/gi,
+    // a literal \n, \r or \t (backslash and letter) ends the value, as in a dotenv string inside source code;
+    // fullwidth CJK punctuation also ends the value (`密码：abc123，请记好` must not swallow the trailing prose) // cjk-ok
+    // keyword then either an assignment operator or the natural-language copula (`password is xxx`, `密码是xxx`) // cjk-ok
+    pattern: /(?:api[_-]?key|secret(?:[_-]?key)?|token|password|passwd|pwd|auth|credential|密码|密钥|秘钥|口令|令牌|授权码|授权密钥|访问令牌|访问密钥|凭证|凭据|私钥)s?["'`]?(?:[ \t]{0,5}(?::=|=>|[=:]|：)|(?:[ \t]+is\b|是)[ \t]{0,5}(?::=|=>|[=:]|：)?)[ \t]{0,5}((?:[^\s"'`;,(){}<>[\]\\，。、；：！？“”‘’（）]|\\(?![nrt])){8,256})(?!(?!\\[nrt])[^\s"'`;,(){}<>[\]，。、；：！？“”‘’（）])/gi,
     group: 1,
     verify: bareSecret,
     before: keywordStart,
@@ -517,8 +534,8 @@ function compile(pattern: RegExp): Compiled {
   return c;
 }
 
-/** Matches our own placeholders (`[REDACTED:name]` / `[REDACTED:LABEL#ab12cd34]`). */
-export const PLACEHOLDER_RE = /\[REDACTED:[A-Za-z0-9_-]{1,64}(?:#[0-9a-fA-F]{1,16})?\]/g;
+// Placeholder shapes live in ./placeholder.ts (v2 `rsec_*` + legacy v1).
+import { PLACEHOLDER_RE } from "./placeholder.ts";
 
 /**
  * Scan text for secret-shaped values. Returns non-overlapping hits in
@@ -563,7 +580,7 @@ export function scan(text: string, opts: ScanOptions = {}): Hit[] {
       const end = start + raw.length;
       const value = head.slice(start, end);
       const inPlaceholder = spans.some(([s, e]) => start < e && end > s);
-      if (inPlaceholder || (rule.before && !rule.before(masked, m.index)) || (rule.verify && !rule.verify(value))) {
+      if (inPlaceholder || insideTemplate(masked, start) || (rule.before && !rule.before(masked, m.index)) || (rule.verify && !rule.verify(value))) {
         re.lastIndex = m.index + 1;
         continue;
       }

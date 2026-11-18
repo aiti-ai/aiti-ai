@@ -290,7 +290,7 @@ export function apply(ctx: Context, config: { bridgeUrl: string }) {
 
 ## 12. 下一步（P0 启动）
 
-1. 起独立桥：`node ~/workspace/pi-work/packages/aiti-bridge/bin/aiti-bridge.mjs --port 8777 --register-mcp`。
+1. 起独立桥：`node ~/workspace/the source repo/packages/aiti-bridge/bin/aiti-bridge.mjs --port 8777 --register-mcp`。
 2. 准备测试页 + 手工注入 `<script src="http://127.0.0.1:8777/aiti-launcher.js" data-ai-url="http://127.0.0.1:8777/cockpit.html" data-bridge-url="http://127.0.0.1:8777">`。
 3. 验证 cockpit 链路 → 进入 P1 写 DSH adapter（复用 `aiti-devtools-agent` 的 AgentHost）。
 

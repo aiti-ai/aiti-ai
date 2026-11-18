@@ -15,7 +15,7 @@
   'use strict';
   const LS_KEY = 'aiti-ext:cfg';
   const DEFAULTS = {
-    enabled: false,   // ★ v2 default off (true only after bridge.js resolves the site rules; 'once' overrides via postMessage)
+    enabled: false,   // ★ default off (true only after bridge.js resolves the site rules; 'once' overrides via postMessage)
     bridgeUrl: 'http://127.0.0.1:8777/aiti',
     aiUrl: 'http://127.0.0.1:8777/cockpit.html',
   };

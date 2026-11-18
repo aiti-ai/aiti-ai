@@ -74,6 +74,40 @@ export function openRowMenu(items: MenuItem[], trigger: HTMLElement | null) {
   for (const l of rowMenuState.subs) l();
 }
 
+/**
+ * "Start detached" → ask the core to reopen an IDLE session as a detached one: the
+ * agent process is then hosted by a wrapper (agent-starter) that outlives pi-web,
+ * so its next turn survives a restart / extension reload and the session is
+ * reattached on the following open.
+ *
+ * Detach is fixed at spawn time (no fd handover), so it only applies to cold
+ * sessions; a running session answers `already` and the UI says so. Which backend
+ * serves the session is the core's decision (session agent family + the provider's
+ * `detachable` opt-in) — this extension never hardcodes a backend name, and a host
+ * without a runner answers 409 with the reason.
+ */
+export async function reopenDetached(sessionId: string): Promise<void> {
+  try {
+    const r = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}/detach`), { method: "POST" });
+    const d = await r.json().catch(() => null) as
+      | { ok?: boolean; already?: boolean; detached?: boolean; runner?: string; error?: string; reason?: string }
+      | null;
+    // 404 = an older host without the endpoint: say so instead of a raw status.
+    if (r.status === 404 && !d?.error) throw new Error(t("sm.detachUnsupported") ?? "此 pi-web 版本未提供 detach（需升级/重新构建宿主）");
+    if (!r.ok) throw new Error(d?.reason || d?.error || `HTTP ${r.status}`);
+    if (d?.already) {
+      showToast(t("sm.detachAlready") ?? "该会话已在运行：detach 只能在启动时定型，请先结束它再重试。");
+      return;
+    }
+    showToast(
+      `${t("sm.detachDone") ?? "已 Detach 启动（agent 将跨重启存活）"}${d?.runner ? ` · ${d.runner}` : ""}`,
+    );
+    void refreshSessions(true);
+  } catch (e) {
+    showToast(`${t("sm.detachFailed") ?? "Detach 启动失败"}：${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
 /** 「时间线」→ 打开该会话的变更时间线：aiti-git-trace-open 公开通道 */
 export function openSessionTimeline(sessionId: string) {
   try {
@@ -162,6 +196,14 @@ export function buildLivePiRowMenuItems(opts: {
       },
     });
     items.push({ key: "move", icon: <SIc name="folder" size={13} />, label: t("sm.move") ?? "移动到…", onClick: onMove });
+    // "Start detached": reopen this cold session hosted in a wrapper so its next
+    // turn survives a pi-web restart. Hidden while running (mode is fixed at spawn).
+    items.push({
+      key: "detach-start",
+      icon: <SIc name="play" size={13} />,
+      label: t("sm.detachStart") ?? "Detach 启动",
+      onClick: () => { void reopenDetached(sess.id); },
+    });
   }
   items.push({ key: "related-docs", icon: <SIc name="fileText" size={13} />, label: t("sm.relatedDocs") ?? "相关文档", onClick: () => showRelatedDocs(sess.id, sessionTitle(sess)) });
   items.push({ key: "timeline", icon: "⎇", label: t("sm.timeline") ?? "时间线", onClick: () => openSessionTimeline(sess.id) });

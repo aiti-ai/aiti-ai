@@ -958,7 +958,7 @@ export default function register(ctx) {
               // 1) 外部根拼接（绝对/~ 路径 candidatesFromRoots 返回空，天然跳过）
               ...candidatesFromRoots(p.path, roots),
               // 2) 「自带名字」自引用消歧：路径首段 = 分辨基末段名（cwd 名/外部根名）→
-              //    按基的父目录 + 完整 rel 解析——会话在 pi-work 里却说 pi-work/docs/x.md，
+              //    resolved against the parent of the base + full rel - the session says <repo>/docs/x.md,
               //    或处理 cwd 外仓时按兄弟仓名引用 pi-web/docs/x.md。主 cwd 与每个外部根都试。
               ...(resCwd ? selfNameCandidates(p.path, resCwd) : []),
               ...roots.flatMap((r) => selfNameCandidates(p.path, r)),
@@ -971,7 +971,7 @@ export default function register(ctx) {
             return null;
           })).then((found) => {
             if (view.closed) return; // 弹层已关闭/切换——晚到的异步结果不再复活旧卡片
-            // 按解析后的 abs 去重：同一文件的两种写法（docs/x.md 与自引用 pi-work/docs/x.md、
+            // dedupe by resolved abs: two spellings of one file (docs/x.md vs self-referencing <repo>/docs/x.md,
             // 跨仓分辨撞同一目标）会解析到同一路径，不去重则出两组按钮 + React key 重复
             const uniq = [];
             for (const f of found) {

@@ -101,6 +101,7 @@ function replaceLocationIfChanged(
 }
 import { registerHostApi } from "@/lib/ext/host-api";
 import { HOST_UI_SERVICE } from "@/lib/ext/host-ui-contract";
+import { openImageInEditorViewer } from "./editor-image-preview";
 import { ProjectTrustDialog, type ProjectTrustFailure } from "./ProjectTrustDialog";
 import { BackendConnBanner } from "./BackendConnBanner";
 // 上游 SessionSidebarControl/SelectSessionOptions 仅类型引用：组件本体走下方
@@ -603,7 +604,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   // Right-panel layout size mode (tri-state expand button): "dock" (three-column
   // default) → "wide" (sidebar collapsed, the right panel absorbs its width, chat
   // width unchanged) → "full" (full-width overlay) → back to "dock". Plan:
-  // pi-work docs/pi-web-right-panel-tri-state-expand-plan.md.
+  // right-panel tri-state expand design.
   const [rightPanelSizeMode, setRightPanelSizeMode] = useState<"dock" | "wide" | "full">("dock");
   const rightPanelFullWidth = rightPanelOpen && rightPanelSizeMode === "full" && !isMobile;
   // Snapshot taken when entering "wide"; restored when leaving it (sidebar open
@@ -1170,6 +1171,9 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   // extension code (the decoupling channel = the same-named event + the
   // `piwe-float-present-command` command event; see the dock branch of handleCloseFileTab).
   const rightDockItems = useExtSlotItems("rightFileDock").filter(hasExtRender);
+  // Extension-level metadata (manifest name/icon) — used to label the extension in panels
+  // and as the dock-tab icon fallback (entry meta.icon absent → manifest icon).
+  const extMetas = useExtMetas();
   const [dockPanelStates, setDockPanelStates] = useState<Map<string, string>>(new Map());
   useEffect(() => {
     const onPresent = (e: Event) => {
@@ -1314,9 +1318,12 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     ...rightDockItems
       .filter((it) => dockPanelStates.get(it.id) === "docked:right-panel")
       .map((it) => ({ id: `dock:${it.id}`, label: translateExtItemText(it.extId, it.meta?.title) || translateExtItemText(it.extId, it.meta?.label) || it.extId || it.id, filePath: "", kind: "dock" as const,
-        // Semantic tab icon from the registering entry's meta.icon ({svg} / ".svg" path /
-        // emoji; TabBar renders it via renderExtItemIcon, generic grid glyph when absent).
-        icon: it.meta?.icon, extId: it.extId })),
+        // Tab icon: the registering entry's meta.icon ({svg} / ".svg" path / emoji) when
+        // declared; otherwise falls back to the extension's manifest icon (every extension
+        // ships one, typically "icon.svg" — CSS-mask render, follows currentColor) so each
+        // docked panel shows its own extension identity instead of the generic grid glyph.
+        // Extensions still override per-panel via meta.icon.
+        icon: it.meta?.icon ?? extMetas[it.extId ?? ""]?.icon ?? undefined, extId: it.extId })),
     // [上游 #1129/#1469] 子代理工作 tab + side chat tab：panel 承载与 handleOpenSubagentTab 挂载同源
     ...agentTabs.map((tab) => {
       const session = tab.side ? sessionCatalog.find((item) => item.id === tab.sessionId) : undefined;
@@ -3341,8 +3348,6 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   const sidebarFooterStaticItems = useExtSlotItems("sidebarFooter").filter((it) => it.static && !hasExtRender(it)
     && (it.meta as { hidden?: boolean } | undefined)?.hidden !== true // hidden：仅收编/转发，不渲染按钮（快速上手闪现修复）
     && !((it.meta as { hideOnMobile?: boolean } | undefined)?.hideOnMobile === true && isMobile)); // hideOnMobile：移动端视口不渲染（如手机访问扫码入口在手机上无意义）
-  // Extension-level metadata (manifest name/icon) — used to label the extension in panels
-  const extMetas = useExtMetas();
 
   const topbarBuiltinIds = useMemo<TopbarItemId[]>(() => {
     // "services" was extracted into an extension along with the tunnel panels
@@ -4377,7 +4382,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   //    the ref on every render; the service registers only once on mount), avoiding
   //    a stale closure registration; unregistered on unmount. ──
   const hostUiRef = useRef<Record<string, unknown>>({});
-  hostUiRef.current = { ...sidebarContentExtra, sidebarFooterRow, onLineMention: handleFileLineMention, closeTopPanels };
+  hostUiRef.current = { ...sidebarContentExtra, sidebarFooterRow, onLineMention: handleFileLineMention, closeTopPanels, openImageInEditorViewer };
   useEffect(() => {
     return registerExtClientService(HOST_UI_SERVICE.provider, HOST_UI_SERVICE.name, {
       /** Fetch a host factory by name (renderTitle/renderSidebarFooter/callbacks …

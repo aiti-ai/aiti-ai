@@ -19,6 +19,34 @@ import { agentSpawnEnv, spawnEnvList, spawnCommand, spawnArgsPrefix, parseArgsLi
 import type { LaunchOverride } from "@aiti-ai/ext-shared/agent-spawn-env";
 import { governanceEnv } from "./external-governance.ts";
 
+/**
+ * Host-injected process strategy (pi-web core `agent-starter`). Older pi-web
+ * builds do not pass it — the extension then falls back to a plain spawn, which
+ * is the historical behavior. When the host injects the detachable variant the
+ * agent process outlives pi-web and a reattach adopts it (see `attach`).
+ */
+export interface AgentStarterLike {
+  readonly kind: "direct" | "wrapper";
+  spawn(
+    command: string,
+    args: string[],
+    options?: {
+      env?: Record<string, string>;
+      cwd?: string;
+      shell?: boolean | string;
+      agentKey?: string;
+      sessionId?: string;
+    },
+  ): Promise<ChildProcess>;
+}
+
+/** Adopt an already-live agent process (core recovery after a pi-web restart). */
+export interface AttachedChildOptions {
+  child: ChildProcess;
+  sessionId: string;
+  agentKey?: string;
+}
+
 const READY_TIMEOUT_MS = 15_000;
 
 const OMP_COMMANDS: PiForkCommands = {
@@ -122,9 +150,14 @@ export class OmpSpawnHandle extends RpcChildHost {
       model?: { provider: string; id: string };
       env?: Record<string, string>;
       launchOverride?: LaunchOverride;
+      /** Injected by the pi-web core (detachable hosting); absent = plain spawn. */
+      agentStarter?: AgentStarterLike;
+      /** Core recovery: adopt this live process instead of spawning. */
+      attached?: AttachedChildOptions;
     },
     spec: PiForkSpec = OMP_SPEC,
   ): Promise<OmpSpawnHandle> {
+    if (opts.attached) return OmpSpawnHandle.attach(opts.attached, spec);
     const resolved = resolveForkCli(spec);
     if (!resolved) {
       throw new Error("[aiti-omp-agent] Oh My Pi CLI 未找到。安装：`bun install -g @oh-my-pi/pi-coding-agent`（bun ≥1.3.14），或设 OMP_CLI 指向 cli.js。");
@@ -153,13 +186,36 @@ export class OmpSpawnHandle extends RpcChildHost {
       cwd: opts.cwd || process.cwd(),
       warn: (m) => console.log(`[aiti-omp-agent] ${m}`),
     });
-    const child = spawn(launch.command, launch.args, {
-            shell: launch.shell,
-cwd: opts.cwd || process.cwd(),
-      stdio: ["pipe", "pipe", "pipe"],
-      env: launch.env,
-    });
-    const handle = new OmpSpawnHandle(spec, recordId, child, opts.cwd || process.cwd());
+    // Process strategy comes from the host (agent-starter injection). Without it
+    // (older pi-web) this is the historical child_process.spawn.
+    const child = opts.agentStarter
+      ? await opts.agentStarter.spawn(launch.command, launch.args, {
+          shell: launch.shell,
+          cwd: opts.cwd || process.cwd(),
+          env: launch.env as Record<string, string>,
+          agentKey: spec.agentKey ?? spec.id, // omp claims no pi history; the family key is still useful for the registry
+          sessionId: recordId,
+        })
+      : spawn(launch.command, launch.args, {
+          shell: launch.shell,
+          cwd: opts.cwd || process.cwd(),
+          stdio: ["pipe", "pipe", "pipe"],
+          env: launch.env,
+        });
+    return OmpSpawnHandle.adopt(spec, recordId, child, opts.cwd || process.cwd());
+  }
+
+  /**
+   * Build a handle over an existing agent process: a just-spawned child, or (after
+   * a pi-web restart) the facade of a detached wrapper the core reattached to.
+   */
+  static async adopt(
+    spec: PiForkSpec,
+    recordId: string,
+    child: ChildProcess,
+    cwd: string,
+  ): Promise<OmpSpawnHandle> {
+    const handle = new OmpSpawnHandle(spec, recordId, child, cwd);
     await handle.whenReady;
     if (!handle.alive()) {
       // fail-loud（加固 P1-5）：进程在 ready 前死亡时给清晰错误（替代静默死 handle）
@@ -168,6 +224,11 @@ cwd: opts.cwd || process.cwd(),
     // omp 新会话 id 由进程生成：ready 后读 get_state.sessionId 回填（信息性）
     void handle.refreshStateUsage().catch(() => {});
     return handle;
+  }
+
+  /** Recovery path: pi-web restarted while the agent kept running in a detached wrapper. */
+  static async attach(opts: AttachedChildOptions, spec: PiForkSpec = OMP_SPEC): Promise<OmpSpawnHandle> {
+    return OmpSpawnHandle.adopt(spec, opts.sessionId, opts.child, process.cwd());
   }
 
   /** 覆写：非 response 帧的 omp 语义分发。 */
@@ -234,10 +295,22 @@ cwd: opts.cwd || process.cwd(),
     await this.request({ type: "abort" }, { timeoutMs: RPC_CTRL_TIMEOUT_MS });
   }
 
+  /**
+   * Release this handle. A plain child is killed (historical behavior); a
+   * wrapper-hosted child is DETACHED — the agent keeps running so it can be
+   * reattached after a pi-web restart / extension reload. Killing such a session
+   * is the core's decision (starter.kill) and arrives as an exit frame.
+   */
   async dispose(): Promise<void> {
     if (!this.aliveFlag) return;
     for (const ac of this.hostToolAborts.values()) ac.abort();
     this.hostToolAborts.clear();
+    const facade = this.child as unknown as { detachable?: unknown; release?: () => void };
+    if (facade.detachable === true && typeof facade.release === "function") {
+      facade.release();
+      this.markDead("detached");
+      return;
+    }
     await shutdownChild(this.child, 1000);
     this.markDead("disposed");
   }
@@ -386,8 +459,19 @@ cwd: opts.cwd || process.cwd(),
       sessionFile?: unknown;
       contextUsage?: { tokens?: unknown; contextWindow?: unknown; percent?: unknown };
     };
-    if (typeof d?.sessionId === "string" && d.sessionId) {
+    if (typeof d?.sessionId === "string" && d.sessionId && d.sessionId !== this.rpcSessionId) {
       this.rpcSessionId = d.sessionId;
+      // Convention shared with other backends: the host re-keys the handle (and
+      // the detached-wrapper registry entry) when the native id becomes known.
+      // Deferred one tick and repeated on every state refresh: the first
+      // get_state can land before the host attached its subscriber (adopt() runs
+      // inside createSession), and the announcement is idempotent host-side.
+      const nativeId = d.sessionId;
+      if (nativeId !== this.id) {
+        setImmediate(() => {
+          if (this.alive()) this.emit({ type: "session_backend_ready", id: nativeId, oldId: this.id });
+        });
+      }
     }
     if (typeof d?.sessionFile === "string" && d.sessionFile) {
       this.sessionFilePath = d.sessionFile;

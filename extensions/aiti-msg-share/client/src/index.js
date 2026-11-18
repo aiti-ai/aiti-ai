@@ -31,10 +31,12 @@ const state = {
   targets: [], history: [],
   payload: null, kind: "message", text: "", rawText: "", baseText: "", title: "", tags: "",
   // Which page-context fields get prepended to the shared content (multi-select).
-  stamp: { os: true, browser: true, url: true, sessionId: false, sessionName: false },
+  stamp: { os: true, browser: true, url: false, sessionId: true, sessionName: true },
   targetId: null, meta: {}, redact: true, redactHits: [],
   result: null, busy: false, error: "", errorDetail: "", errorCode: "", errorTarget: "", errorProvider: "", search: "", probe: [],
   editing: null, form: {},
+  /** Local favourite sinks (share-sink topic): { ok, message, action } of the last run. */
+  sinkResult: null, sinkBusy: "",
 };
 const listeners = new Set();
 
@@ -130,10 +132,12 @@ function btn(label, onClick, opts = {}) {
 function openShare(payload = {}) {
   const kind = payload.kind || "message";
   const raw = payload.text || "";
+  primeSinks();
   set({ open: true, manager: false, payload, kind,
     text: raw, rawText: raw, baseText: raw, title: payload.title || "",
     tags: payload.tags || "", targetId: payload.targetId || null,
-    result: null, error: "", errorDetail: "", errorCode: "", errorTarget: "", errorProvider: "", redact: true, redactHits: [] });
+    result: null, error: "", errorDetail: "", errorCode: "", errorTarget: "", errorProvider: "", redact: true, redactHits: [],
+    sinkResult: null, sinkBusy: "" });
   void refresh();
   // Compose from scratch so the page-info stamp reflects this dialog's context.
   void refreshPreview();
@@ -168,6 +172,121 @@ function targetCard(target, selected, badge) {
       target.kinds.map(kindLabel).join("/"))] : []),
     ...(() => { const b = CFG_BADGE[target.configState]; return b
       ? [h("span", { title: shareT(b.key), style: { fontSize: 10 } }, b.icon)] : []; })());
+}
+
+/**
+ * Local "favourite" sinks — the second, semantically different provider family.
+ *
+ * Contract (owned here): other extensions publish to the `share-sink` topic:
+ *   { id, order?, label, icon? { svg }, accepts?(payload), save(payload) → { ok, message?, action?: { label, run } } }
+ * Sinks store locally (no upload, no URL, no redaction) — unlike content-share *target*
+ * providers, which are upload destinations. payload.text is the UNREDACTED body on purpose.
+ *
+ * A built-in "copy" sink always exists, mirroring mobile share sheets where copy/save sit
+ * next to the network targets.
+ */
+/** Fixed sink partners shipped with this product (commands + prompt snippets). Lazy clients
+ *  register their sink only after materializing, so opening the dialog primes them once;
+ *  any other provider that happens to be loaded is picked up by the topic read anyway. */
+const SINK_PRIME_EXTS = ["aiti-cmd", "aiti-prompts"];
+let sunkPrimed = false;
+function primeSinks() {
+  if (sunkPrimed) return;
+  sunkPrimed = true;
+  const ensure = ctxRef?.ensureMaterialized;
+  if (typeof ensure !== "function") return;
+  for (const id of SINK_PRIME_EXTS) {
+    try { Promise.resolve(ensure(id)).then(() => emit()).catch(() => {}); } catch (e) { /* ignore */ }
+  }
+}
+
+function sinkItems() {
+  const items = [];
+  items.push({
+    id: "copy", order: -1000, builtin: true,
+    get label() { return shareT("share.sink.copy"); },
+    icon: { svg: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>' },
+    run: async () => {
+      try { await navigator.clipboard.writeText(state.text); return { ok: true, message: shareT("share.sink.copied") }; }
+      catch (e) { return { ok: false, message: String((e && e.message) || e) }; }
+    },
+  });
+  try {
+    for (const it of (ctxRef?.getTopicItems?.("share-sink") || [])) if (it && it.id) items.push(it);
+  } catch (e) { /* topic registry absent (old host) — copy only */ }
+  return items.sort((a, b) => (Number(a.order) || 100) - (Number(b.order) || 100));
+}
+
+/** Strip the "page info" stamp block (leading `> **Label**: value` lines) from a body. */
+function stripStamp(text) {
+  const lines = String(text || "").split("\n");
+  let i = 0;
+  while (i < lines.length && /^>\s*\*\*[^*]+\*\*\s*:/.test(lines[i])) i++;
+  return lines.slice(i).join("\n").trim();
+}
+
+/** Sink payload: original body (unredacted, page-info stamp removed) + share metadata. */
+function sinkPayload() {
+  // baseText is the unredacted body; when it is empty the textarea content is the only source
+  // (e.g. a session share fills the body server-side, so the preview holds the stamp only).
+  // Either way the stamp is metadata for external sharing — never part of a local favourite.
+  const raw = (typeof state.baseText === "string" && state.baseText.length) ? state.baseText : state.text;
+  return { ...(state.payload || {}), kind: state.kind, text: stripStamp(raw), title: state.title, tags: state.tags };
+}
+
+async function runSink(item) {
+  if (state.sinkBusy) return;
+  const payload = sinkPayload();
+  if (!item.builtin && typeof item.accepts === "function") {
+    let ok = false;
+    try { ok = !!item.accepts(payload); } catch (e) { ok = false; }
+    if (!ok) {
+      const empty = !String(payload.text || "").trim();
+      set({ sinkResult: { ok: false, message: empty ? shareT("share.sink.empty") : shareT("share.sink.unsupported") } });
+      return;
+    }
+  }
+  set({ sinkBusy: item.id, sinkResult: null });
+  try {
+    const r = item.builtin ? await item.run(payload) : await item.save(payload);
+    set({ sinkBusy: "", sinkResult: r || { ok: true } });
+  } catch (e) {
+    set({ sinkBusy: "", sinkResult: { ok: false, message: String((e && e.message) || e) } });
+  }
+}
+
+function sinkSection() {
+  const items = sinkItems();
+  if (!items.length) return null;
+  const res = state.sinkResult;
+  return h("div", null,
+    h("div", { style: { color: "var(--text-muted, #8b909b)", fontSize: 11, marginBottom: 5 } }, shareT("share.sinks")),
+    h("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } },
+      ...items.map((it) => {
+        const label = typeof it.label === "function" ? it.label() : (it.label || it.id);
+        const svg = it.icon && it.icon.svg;
+        return h("button", {
+          type: "button", key: it.id, disabled: !!state.sinkBusy,
+          onClick: () => { void runSink(it); },
+          title: label,
+          style: { display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 9px",
+            border: "1px solid var(--border, #34363c)", borderRadius: 8,
+            background: "var(--bg-hover, #25272c)", color: "var(--text, #d8dade)",
+            fontSize: 12, cursor: state.sinkBusy ? "default" : "pointer", opacity: state.sinkBusy && state.sinkBusy !== it.id ? 0.55 : 1 },
+        },
+          svg ? h("span", { style: { display: "inline-flex" }, dangerouslySetInnerHTML: { __html: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${svg}</svg>` } }) : null,
+          label,
+          state.sinkBusy === it.id ? h("span", { style: { fontSize: 10, opacity: 0.7 } }, "…") : null,
+        );
+      })),
+    res ? h("div", { style: { marginTop: 6, fontSize: 11, display: "flex", alignItems: "center", gap: 8,
+        color: res.ok ? "var(--ok, #4ade80)" : "#e05d5d", wordBreak: "break-word" } },
+      h("span", null, (res.ok ? "✓ " : "⚠ ") + (res.message || (res.ok ? shareT("share.sink.saved") : ""))),
+      res.ok && res.action && typeof res.action.run === "function"
+        ? h("button", { type: "button", onClick: () => { try { res.action.run(); } catch (e) {} },
+            style: { border: "1px solid var(--accent, #4d8dff)", background: "none", color: "var(--accent, #4d8dff)",
+              borderRadius: 6, padding: "1px 8px", fontSize: 11, cursor: "pointer" } }, res.action.label || "→")
+        : null) : null);
 }
 
 function targetSection() {
@@ -214,10 +333,21 @@ function pageInfo() {
   if (!browser) b(/Version\/([\d.]+).*Safari/, "Safari");
   const svc = ctxRef?.getExtService?.("pi-web.session");
   const cur = (() => { try { return svc?.get?.() ?? svc; } catch { return null; } })();
-  const sessionId = state.payload?.sessionId || cur?.requestedId || cur?.id
+  // Verified snapshot summary: name/firstMessage live under `session`, not on the snapshot itself.
+  const sum = cur?.session || null;
+  // A shared session row (session-manager menu payload) describes its own session and wins
+  // over the currently active one.
+  const rowSess = state.payload?.session;
+  // List title semantics (session-manager sessionTitle): name || first message || id prefix.
+  const listTitle = (s) => (s ? (s.name || s.firstMessage || String(s.id || "").slice(0, 12)) : "");
+  // Session ID is the raw canonical id, never the display title: row id → snapshot summary id
+  // → verified snapshot id → payload id → URL ?session=.
+  const sessionId = rowSess?.id || sum?.id || cur?.sessionId
+    || state.payload?.sessionId || state.payload?.sessionName
     || (typeof location !== "undefined" ? new URL(location.href).searchParams.get("session") : "") || "";
-  const sessionName = cur?.name || state.payload?.sessionName || state.payload?.title
-    || (typeof document !== "undefined" ? String(document.title || "").replace(/\s*[·|-]\s*Pi Web.*$/i, "").trim() : "");
+  // Session name follows the session list title so it stays meaningful even when the
+  // session has no explicit name (falls back to first message, then id prefix).
+  const sessionName = listTitle(rowSess) || listTitle(sum) || state.payload?.sessionName || "";
   return { os, browser, url: typeof location !== "undefined" ? location.href : "", sessionId, sessionName };
 }
 
@@ -392,7 +522,7 @@ function shareDialog() {
       style: { background: "none", border: "none", color: "var(--text-muted, #8b909b)", cursor: "pointer", fontSize: 14 } }, "✕"));
   const body = h("div", { ref: (el) => { dialogBodyEl = el; },
     style: { padding: "12px 14px", display: "flex", flexDirection: "column", gap: 12, flex: 1, minHeight: 0, overflowY: "auto" } },
-    previewSection(), targetSection(),
+    previewSection(), sinkSection(), targetSection(),
     h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9 } },
       h("input", { value: state.title, placeholder: shareT("share.titleField"), onInput: (e) => set({ title: e.target.value }),
         style: { background: "var(--bg-hover, #25272c)", border: "1px solid var(--border, #34363c)", color: "var(--text, #d8dade)", borderRadius: 7, padding: "6px 9px", fontSize: 12 } }),

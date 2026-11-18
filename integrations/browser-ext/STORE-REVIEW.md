@@ -22,7 +22,7 @@
 - **移植路径**：xcrun safari-web-extension-converter dist/chrome → Xcode 工程（Swift 壳 App）→ 构建/签名
 - **前提**：macOS + Xcode；上架 App Store 需 Apple Developer（$99/年）；本地自用可 Xcode 构建免上架
 - **风险点**：① world:MAIN 平台差异——launcher 注入可能需回退 script 标签方案（与页面 CSP 注入设计冲突，需验证）② gecko 专属键剥除 ③ popup/options 无差异
-- **建议优先级**：P2——等 v2（默认关/按需注入）在三大浏览器稳定后；mac 测试机是生态一级平台，Safari 用户值得做，但不阻塞当前
+- **建议优先级**：P2——待默认关/按需注入模式在三大浏览器充分验证后；mac 测试机是生态一级平台，Safari 用户值得做，但不阻塞当前
 
 ## 1. 已达标项（自动化扫描 + 逐项核对）
 
@@ -37,7 +37,7 @@
 | Firefox 稳定签名前置 | ✅ | `gecko.id: aiti-devtools@aiti.ai` + `strict_min_version: 128.0`（gecko_android 同） |
 | Chromium 版本下限 | ✅ | `minimum_chrome_version: "111"`（world:MAIN 依赖；firefox 走 gecko 128） |
 | author / homepage_url | ✅ | aiti-ai / https://aiti.pw |
-| 默认关 + 按需启用 | ✅ | v2：新装不注入任何页面；popup 一键按需 / 白名单——显著降低 `<all_urls>` 审核敏感度 |
+| 默认关 + 按需启用 | ✅ | 新装不注入任何页面；popup 一键按需 / 白名单——显著降低 `<all_urls>` 审核敏感度 |
 | 产物非压缩可读 | ✅ | build 不混淆（launcher 源码内联可读）——AMO 源码审查友好 |
 
 ## 2. 需要审核说明的两项（不可删，是产品功能）
@@ -86,5 +86,5 @@
 
 ## 6. 已知非阻塞项
 
-- `content/main.js` 在默认关时仍以 content script 形式常驻所有页面（零 DOM 副作用退出）——严格隐私模式（移除常驻脚本改事件驱动注入）在 v2 规划 P2
+- `content/main.js` 在默认关时仍以 content script 形式常驻所有页面（零 DOM 副作用退出）——严格隐私模式（移除常驻脚本改事件驱动注入）为后续规划项
 - 人工审核员可能要求演示视频（CWS 对 `<all_urls>` 偶发）——录一段「popup 按需启用 → AI 修页面元素」30s 即可

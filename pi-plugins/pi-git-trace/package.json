@@ -29,7 +29,7 @@
       "./src/index.ts"
     ]
   },
-  "contentHash": "42013c95265a63c1",
+  "contentHash": "b0cc0f169add856b",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",
