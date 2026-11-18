@@ -258,11 +258,13 @@ export async function deleteSessions(
     const hosted = [...deletedSessionIds].filter((id) => held.has(id));
     await Promise.all(hosted.map((id) => wrapper.kill(id).catch(() => false)));
   }
-  // Guard timestamp: taken AFTER the agents were stopped, so a normal shutdown
-  // flush (this process finishing the session) still counts as deletable while a
-  // straggler that keeps writing past the stop keeps its file. Losing a
-  // conversation is worse than a leftover file.
-  const guardFrom = Math.max(requestStartedAt, Date.now());
+  // Guard timestamp: taken AFTER the agents were stopped. Anything written
+  // clearly after that belongs to a writer we do not control (another pi-web
+  // instance resuming the file, a daemon) — keep the file, losing a
+  // conversation is worse than a leftover. The tolerance swallows this
+  // process's own final flush, whose IO callbacks can land a moment later.
+  const KEEP_TOLERANCE_MS = 1000;
+  const guardFrom = Math.max(requestStartedAt, Date.now()) + KEEP_TOLERANCE_MS;
   for (const [deletedId, deletedPath] of deletedPaths) {
     let keep = false;
     try {
