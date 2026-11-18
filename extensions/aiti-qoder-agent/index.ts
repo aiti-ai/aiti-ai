@@ -545,6 +545,37 @@ function buildUserContent(
 // ============================================================================
 
 /** 导出仅供单测直接驱动（宿主 loader 只消费 default 导出）。 */
+/**
+ * Injected by the pi-web core (`agent-starter`). Older hosts do not pass it — the
+ * extension then keeps its historical `child_process.spawn`. With the detachable
+ * variant the long-lived `--acp` process outlives pi-web and a reattach adopts it
+ * (see `QoderHandle.adopt`).
+ */
+export interface AgentStarterLike {
+  readonly kind: "direct" | "wrapper";
+  spawn(
+    command: string,
+    args: string[],
+    options?: {
+      env?: Record<string, string>;
+      cwd?: string;
+      shell?: boolean | string;
+      agentKey?: string;
+      sessionId?: string;
+    },
+  ): Promise<ChildProcess>;
+}
+
+/** Adopt an already-live agent process (core recovery after a pi-web restart). */
+export interface AttachedChildOptions {
+  child: ChildProcess;
+  sessionId: string;
+  agentKey?: string;
+}
+
+/** Core signal: the wrapper's journal replay ended, live frames start here. */
+const REPLAY_END_EVENT = "replay_end";
+
 export class QoderHandle {
   source: string;
   /** 能力表（ACP 驱动：steer 未探针恒关，运行中输入一律本地队列）。 */
@@ -1051,7 +1082,12 @@ export class QoderHandle {
     model?: { provider: string; id: string };
     /** P2 协议委托：成员级启动包装（custom-agent 路径），优先于 extman spawn.* feature。 */
     launchOverride?: LaunchOverride;
+    /** Injected by the pi-web core (detachable hosting); absent = plain spawn. */
+    agentStarter?: AgentStarterLike;
+    /** Core recovery: adopt this live process instead of spawning. */
+    attached?: AttachedChildOptions;
   }): Promise<QoderHandle> {
+    if (opts.attached) return QoderHandle.adopt(opts, opts.attached.child, opts.attached.sessionId);
     // env 覆盖 > PATH > 安装位兜底（Windows qoderclicn 常不在 PATH）；均未命中留约定名让 spawn fail-loud
     const cli = resolveQoderCli(opts.variant) ?? qoderLoginBin(opts.variant);
     const { agentKey, stateKey } = qoderVariant(opts.variant);
@@ -1095,12 +1131,22 @@ export class QoderHandle {
       cwd,
       warn: (m) => console.log(`[aiti-qoder-agent] ${m}`),
     });
-    const child = spawn(launch.command, launch.args, {
-      cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-      env: launch.env,
-    });
-    const provisionalId = opts.sessionId ? `${agentKey}:${opts.sessionId}` : `${agentKey}:${PLACEHOLDER_MARK}${randomUUID()}`;
+    // One native key shared by the detached registry and the provisional handle id
+    // (the ACP session id only arrives with the session/new response).
+    const nativeKey = opts.sessionId ?? `${PLACEHOLDER_MARK}${randomUUID()}`;
+    const child = opts.agentStarter
+      ? await opts.agentStarter.spawn(launch.command, launch.args, {
+          cwd,
+          env: launch.env as Record<string, string>,
+          agentKey,
+          sessionId: nativeKey,
+        })
+      : spawn(launch.command, launch.args, {
+          cwd,
+          stdio: ["pipe", "pipe", "pipe"],
+          env: launch.env,
+        });
+    const provisionalId = `${agentKey}:${nativeKey}`;
     // cliPath 传 CLI 本体（不是启动包装）：steer 门控的证据键要落在实际执行注入的二进制上，
     // spawn.command/launchOverride 只是外层 wrapper，换 wrapper 不该让探针结论失效。
     const handle = new QoderHandle(provisionalId, child, opts.client, cwd, opts.variant, cli);
@@ -1111,6 +1157,54 @@ export class QoderHandle {
     handle.persistModelState();
     // ACP 握手 + 会话引导（异步不阻塞 start 返回；失败 → markDead → 前端复位）
     void handle.startSession({ sessionId: opts.sessionId, seedModel });
+    return handle;
+  }
+
+  /**
+   * Recovery: adopt the still-open `--acp` process the core reattached to.
+   *
+   * ACP is a stateful JSON-RPC stream, so the adopted handle must behave as the
+   * SAME logical client that just reconnected: the agent sees one continuous stdio,
+   * and re-running `initialize`/`session/new` would create a second session.
+   * Therefore: no bootstrap (the negotiated session id is already known), and the
+   * wrapper's journal replay is consumed as history — `loading` keeps
+   * `session/update` frames out of the live stream until the replay boundary
+   * (`replay_end`) arrives. Replayed responses carry request ids this client never
+   * issued, so `AcpRpc` drops them (pending-map miss); replayed permission requests
+   * stay answerable — a request that was genuinely pending before the restart is
+   * exactly what this feature is meant to preserve.
+   */
+  private static adopt(
+    opts: {
+      cwd?: string;
+      variant: "intl" | "cn";
+      client?: QoderClient | null;
+      model?: { provider: string; id: string };
+    },
+    child: ChildProcess,
+    nativeSessionId: string,
+  ): QoderHandle {
+    const cli = resolveQoderCli(opts.variant) ?? qoderLoginBin(opts.variant);
+    const { agentKey } = qoderVariant(opts.variant);
+    const handle = new QoderHandle(`${agentKey}:${nativeSessionId}`, child, opts.client, opts.cwd || process.cwd(), opts.variant, cli);
+    if (opts.model?.id) handle.model = { id: opts.model.id, provider: "qoder" };
+    // The ACP session already exists in the live process: no handshake to replay.
+    handle.sessionReady = true;
+    handle.loading = true; // replay = history, not live streaming
+    const endReplay = () => {
+      handle.loading = false;
+      handle.flushStreamMessages();
+      handle.flushReplayAssistant();
+      for (const w of handle.readyWaiters.splice(0)) w();
+      handle.emit({ type: "agent_start", sessionId: handle.id, model: handle.model });
+    };
+    const facade = child as unknown as { detachable?: unknown; on?: (event: string, listener: () => void) => unknown };
+    if (facade.detachable === true && typeof facade.on === "function") {
+      // Wrapper child: history arrives first, then the boundary (always emitted).
+      facade.on(REPLAY_END_EVENT, endReplay);
+    } else {
+      endReplay(); // plain child: no journal, live from the start
+    }
     return handle;
   }
 
@@ -1563,6 +1657,15 @@ export class QoderHandle {
 
   async dispose(): Promise<void> {
     if (!this.aliveFlag) return;
+    // Wrapper-hosted process: disconnect and leave it running (killing is the
+    // core's decision; a restart then reattaches to the same ACP session).
+    const facade = this.child as unknown as { detachable?: unknown; release?: () => void };
+    if (facade.detachable === true && typeof facade.release === "function") {
+      this.acp?.close();
+      facade.release();
+      this.markDead("detached");
+      return;
+    }
     this.acp?.close();
     this.child.kill("SIGTERM");
     await new Promise<void>((resolve) => {
@@ -1806,6 +1909,8 @@ type QoderScanSlot = {
       cwd?: string;
       extraArgs?: string[];
       model?: { provider: string; id: string };
+      agentStarter?: AgentStarterLike;
+      attached?: AttachedChildOptions;
     }): Promise<QoderHandle>;
   }): string;
 };
@@ -1827,8 +1932,19 @@ const mkQoderProvider = (v: QoderVariantInfo, bin: string | null) => ({
   ...(bin ? {} : { available: false as const, installHint: QODER_INSTALL_HINT }),
   // 静态目录（新建页选后端时给选择器供数据；无会话即可取，WASM 未就绪时仅 pi 目录）——上次使用的模型置顶
   listModels: () => qoderStaticCatalog(sharedClient, v.stateKey),
-  createSession: (options: { sessionId?: string; cwd?: string; extraArgs?: string[]; model?: { provider: string; id: string } }) =>
-    QoderHandle.start({ ...options, variant: v.variant, client: sharedClient }),
+  // The core may host this backend's `--acp` process in a detachable wrapper; the
+  // handle adopts the live process on reattach (see QoderHandle.adopt).
+  detachable: true,
+  createSession: (options: {
+    sessionId?: string;
+    cwd?: string;
+    extraArgs?: string[];
+    model?: { provider: string; id: string };
+    /** Host-injected process strategy (detachable hosting); absent = plain spawn. */
+    agentStarter?: AgentStarterLike;
+    /** Host recovery: adopt a live process instead of spawning. */
+    attached?: AttachedChildOptions;
+  }) => QoderHandle.start({ ...options, variant: v.variant, client: sharedClient }),
 });
 
 function scanQoderBackends(
@@ -1912,6 +2028,8 @@ export default {
             extraArgs?: string[];
             model?: { provider: string; id: string };
             listModels?: () => Promise<Array<{ id: string; provider: string; label?: string }>>;
+            agentStarter?: AgentStarterLike;
+            attached?: AttachedChildOptions;
           }): Promise<QoderHandle>;
         }): string;
       };

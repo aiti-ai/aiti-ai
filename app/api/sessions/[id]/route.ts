@@ -17,7 +17,7 @@ import { resolveAnySession, attachIfBridged, handleModelToClient, extractFirstUs
 import { normalizeRawMessages } from "@/lib/normalize";
 import { buildExternalPagedContext, clampTailParam } from "@/lib/external-session-paging";
 import { listProviders } from "@/lib/session/providers";
-import { resolvePlaceholderSession, removeHandle } from "@/lib/session";
+import { resolvePlaceholderSession, removeHandle, stopDetachedSession } from "@/lib/session";
 import { getPlaceholder, removePlaceholderByUuid } from "@/lib/session/placeholder";
 import { projectTreeForResponse, toSummaryTree } from "@/lib/project-tree";
 import { computeSessionTotalActiveMs } from "@/lib/session-timing";
@@ -572,6 +572,11 @@ export async function DELETE(
       }
     }
     if (deleteHeader?.extId) {
+      // External sessions can be hosted by a detached wrapper (agent-starter): stop
+      // that process here — this branch bypasses the shared cascade engine, which is
+      // where the ordinary delete stops wrapper-hosted agents.
+      const sid = deleteHeader.extId.includes(":") ? deleteHeader.extId.slice(deleteHeader.extId.indexOf(":") + 1) : "";
+      if (sid) await stopDetachedSession(sid).catch(() => false);
       removePlaceholderByUuid(id); // includes unlinking the placeholder file
       removeHandle(id); // retire the live handle (prevents a zombie transient row)
       invalidateSessionPathCache(id);
