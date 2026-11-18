@@ -67,6 +67,92 @@ export function initInteract(ctx) {
     } catch (e) {}
   };
 
+  // ---- Agent session source (from <agentId> · session <short> · <name> · <Browser · OS>) ----
+  // Reads the source fields the bridge adds to interaction/notify/exec envelopes (agentId = agentKey,
+  // agentName = registered display name, targetDevice = browser · OS short label). Order per design:
+  // id first, session name last. Every segment is optional — missing data just drops the segment;
+  // no agentId at all returns null (caller renders nothing). key carries the full agentKey.
+  ctx.formatAgentSrc = function (it) {
+    var ak = it && it.agentId ? String(it.agentId).trim() : '';
+    if (!ak) return null;
+    var name = it && it.agentName ? String(it.agentName).trim() : '';
+    var parts = ak.split('/');
+    var aid = parts[0] || ak;
+    var sid = parts.slice(1).join('/');
+    var sidShort = sid && sid.length > 10 ? sid.slice(0, 8) + '…' : sid;
+    var dev = it && it.targetDevice ? String(it.targetDevice).trim() : '';
+    var segs = ['from ' + aid];
+    if (sidShort) segs.push(t('session') + ' ' + sidShort);
+    if (name && name !== aid) segs.push(name); // session display name last (user preference)
+    if (dev) segs.push(dev);
+    return { key: ak, aid: aid, sid: sid, name: name, dev: dev, text: segs.join(' · ') };
+  };
+  // ⓘ title-bar button (compact — head space is tight, per user feedback): click toggles an info
+  // block in the card body (buildAgentSrcInfo) with full session id + one-click copy of the key.
+  ctx.agentSrcInfoBtn = function (it) {
+    var src = ctx.formatAgentSrc(it);
+    if (!src) return null;
+    var btn = el('button', { class: 'dbg-src-info-btn', title: t('Source session info') }, ['ⓘ']);
+    btn.style.cssText = 'border:none;background:none;color:#93c5fd;font-size:13px;cursor:pointer;padding:2px 5px;line-height:1;font-weight:700';
+    btn.__agentSrc = src;
+    return btn;
+  };
+  // Info block: key/value rows + copy button (appended to the card body when ⓘ is toggled on)
+  ctx.buildAgentSrcInfo = function (src) {
+    var wrap = el('div', { class: 'dbg-src-info' });
+    wrap.style.cssText = 'margin-top:6px;padding:7px 9px;border:1px solid rgba(148,163,184,.3);border-radius:8px;background:rgba(15,23,42,.45);font-size:11px;line-height:1.7;color:#cbd5e1';
+    var head = el('div', { style: 'font-weight:700;color:#93c5fd;margin-bottom:2px' }, [t('🧠 Source session')]);
+    wrap.appendChild(head);
+    var row = function (k, v) {
+      var r = el('div', {});
+      var kb = el('span', { style: 'color:#94a3b8;display:inline-block;min-width:52px' }, [k]);
+      var vb = el('span', { style: 'word-break:break-all;user-select:text' }, [v]);
+      r.appendChild(kb); r.appendChild(vb);
+      wrap.appendChild(r);
+      return vb;
+    };
+    row('agent', src.aid);
+    if (src.sid) { var sidV = row(t('session'), src.sid); sidV.title = src.key; }
+    if (src.name && src.name !== src.aid) row('name', src.name);
+    if (src.dev) row('device', src.dev);
+    var copyBtn = el('button', { style: 'margin-top:4px;border:1px solid rgba(148,163,184,.4);border-radius:6px;background:none;color:#93c5fd;font-size:10px;cursor:pointer;padding:3px 8px' }, [t('📋 Copy session key')]);
+    copyBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (ctx.copyToClipboard) ctx.copyToClipboard(src.key, function (ok) { copyBtn.textContent = ok ? t('✓ Copied') : '✕'; setTimeout(function () { copyBtn.textContent = t('📋 Copy session key'); }, 1200); });
+    });
+    wrap.appendChild(copyBtn);
+    return wrap;
+  };
+  // Toggle helper shared by all panels: appends/removes the info block in the card body, then lets
+  // the caller reflow (placePhysPanel measures content height).
+  ctx.toggleAgentSrcInfo = function (btn, bodyEl, reflow) {
+    var existing = bodyEl.querySelector('.dbg-src-info');
+    if (existing) { existing.parentNode.removeChild(existing); if (reflow) reflow(false); return; }
+    bodyEl.appendChild(ctx.buildAgentSrcInfo(btn.__agentSrc));
+    if (reflow) reflow(true);
+  };
+  // Shared-singleton card binding (danger confirm/gesture): (re)binds the ⓘ button per-show and
+  // collapses any open info block first. Flex-centered .dbg-dialog cards reflow automatically,
+  // so no reflow callback is needed; sourceless payloads just remove the button.
+  ctx.bindAgentSrcInfoButton = function (card, it) {
+    var head = card.querySelector('.dbg-dialog-head');
+    var body = card.querySelector('.dbg-dialog-body');
+    if (!head || !body) return null;
+    var old = body.querySelector('.dbg-src-info');
+    if (old) old.parentNode.removeChild(old); // per-show reset: previous block never lingers
+    var btn = head.querySelector('.dbg-src-info-btn');
+    var src = ctx.formatAgentSrc(it);
+    if (!src) { if (btn && btn.parentNode) btn.parentNode.removeChild(btn); return null; }
+    if (!btn) {
+      btn = el('button', { class: 'dbg-src-info-btn', title: t('Source session info') }, ['ⓘ']);
+      btn.style.cssText = 'border:none;background:none;color:#93c5fd;font-size:16px;cursor:pointer;padding:0 6px;line-height:1;font-weight:700';
+      head.appendChild(btn);
+    }
+    btn.__agentSrc = src;
+    btn.onclick = function (e) { e.stopPropagation(); ctx.toggleAgentSrcInfo(btn, body, null); };
+    return btn;
+  };
+
   // (The legacy makeCopyableBlock floating copy button was removed: Q&A panels now put a lucide copy
   // button in the header -- same interaction as the notify card; the body stays plain selectable text.)
 
@@ -360,6 +446,18 @@ export function initInteract(ctx) {
     var head = el('div', { class: 'dbg-pick-head' });
     var kindTitle = { confirm: t('🤖 AI needs your confirmation'), choose: t('🤖 AI asks you to choose'), input: t('✍️ AI asks for your input'), presence: t('🙋 AI asks if you\'re present') };
     head.appendChild(el('span', { class: 'dbg-pick-title' }, [kindTitle[kind] || t('🤖 AI needs your answer')]));
+    var askSrc = ctx.agentSrcInfoBtn(it); // ⓘ: full source block toggled in the body (head space is tight)
+    if (askSrc) {
+      head.appendChild(askSrc);
+      askSrc.addEventListener('click', function (e) {
+        e.stopPropagation();
+        ctx.toggleAgentSrcInfo(askSrc, body, function () {
+          // reflow with the same placement params as the initial panel
+          try { placePhysPanel(dialog, { visW: Math.min(420, Math.round(getPhysViewport().w) - 24), dock: 'bottom', gap: 12, offsetY: 64, minH: 40, maxWidth: '420px', overflowY: 'auto' }); } catch (e2) {}
+          try { ctx.dodgeToolbarAboveDialog(dialog); } catch (e2) {}
+        });
+      });
+    }
     var noTimeout = !(timeoutMs > 0); // wait forever: no countdown/pause (⏸ hidden), static ♾ in the header marks the panel persistent until the user acts
     var timerSpan = el('span', { style: 'font-weight:400;color:#93c5fd;font-size:11px' }, [noTimeout ? t('♾ Waiting') : ('⏱ ' + Math.ceil(timeoutMs / 1000) + 's')]);
     var pauseBtn = el('button', { title: t('Pause countdown') }, ['⏸']);
@@ -712,6 +810,11 @@ export function initInteract(ctx) {
     var dialog = el('div', { class: 'dbg-pick-dialog' });
     var head = el('div', { class: 'dbg-pick-head' });
     head.appendChild(el('span', { class: 'dbg-pick-title' }, ['🔔 ' + (it.title || t('AI notification'))]));
+    var notifSrc = ctx.agentSrcInfoBtn(it); // ⓘ: source block toggled in the card body
+    if (notifSrc) {
+      head.appendChild(notifSrc);
+      notifSrc.addEventListener('click', function (e) { e.stopPropagation(); ctx.toggleAgentSrcInfo(notifSrc, body, function () { try { restackNotifyCards(); } catch (e2) {} }); });
+    }
     var noTimeout = !(timeoutMs > 0); // no timeout: the notification card is persistent (♾ no countdown, no auto-close)
     var timerSpan = el('span', { style: 'font-weight:400;color:#93c5fd;font-size:11px' }, [noTimeout ? t('♾ Persistent') : ('⏱ ' + Math.ceil(timeoutMs / 1000) + 's')]);
     var pauseBtn = el('button', { title: t('Pause countdown') }, ['⏸']);
@@ -812,8 +915,11 @@ export function initInteract(ctx) {
       ctx.showNotifyPanel(payload.requestId, it); // in-page notification card: draggable and reviewable (timeout optional: omitted = persistent until ✕; the system notification auto-dismisses)
       return;
     }
-    // Browser notification (Notification + title flashing + attention beep): tell the user a message needs handling
-    ctx.notifyUser(t('🤖 AI needs you'), itKind === 'pick_element' ? (it.prompt || t('Please click an element on the page')) : (it.prompt || t('Please answer on the page')));
+    // Browser notification (Notification + title flashing + attention beep): tell the user a message needs handling;
+    // body prefixed with the agent session source (plain text — Notification has no rich formatting)
+    var _src = ctx.formatAgentSrc(it);
+    var _promptBody = itKind === 'pick_element' ? (it.prompt || t('Please click an element on the page')) : (it.prompt || t('Please answer on the page'));
+    ctx.notifyUser(t('🤖 AI needs you'), (_src ? '[' + _src.text + '] ' : '') + _promptBody);
     if (itKind === 'pick_element') {
       ctx.showPickElementPanel(payload.requestId, it); // collapse the AI window + enter pick mode + pop the panel (✓/✕/timeout returned to the bridge)
     } else {

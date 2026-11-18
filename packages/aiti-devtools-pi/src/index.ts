@@ -449,7 +449,11 @@ export default async function (pi: ExtensionAPI) {
     if (!sid) sid = "s_" + Date.now().toString(36);
     currentSessionId = sid;
     currentCwd = ctx.cwd || "";
-    const name = agentDisplayName();
+    // Registration name: pi session display name (getSessionName; same name as the pi-web session list)
+    // falls back to the static agentDisplayName (env/settings/default "pi"). Falls back silently when
+    // the session is unnamed; reconnects (re-register) pick up later-set names naturally.
+    let name = agentDisplayName();
+    try { const sn = ctx.sessionManager.getSessionName(); if (sn && String(sn).trim()) name = String(sn).trim(); } catch {}
     // 快速探测更新桥状态（本地拒绝连接即 1ms）：可达则立刻补注册工具；桥状态也决定 notify 文案
     await probeBridge(base, 800);
     if (bridgeUp) registerBridgeTools(pi);

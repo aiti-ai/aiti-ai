@@ -15,8 +15,10 @@ var PAIR_FILE_MAX = parseInt(process.env.AITI_PAIR_FILE_MAX || String(200 * 1024
 var CHUNK_MAX = 2 * 1024 * 1024;
 var INBOX_MAX = 200;
 function createPairModule(deps) {
-  const { TAG, dataDir, cors, json, sseResponse, validateInstance, deliverToPage } = deps;
+  const { TAG, dataDir, cors, json, sseResponse, validateInstance } = deps;
   const peers = /* @__PURE__ */ new Map();
+  const names = /* @__PURE__ */ new Map();
+  const pageInbox = /* @__PURE__ */ new Map();
   const files = /* @__PURE__ */ new Map();
   const filesDir = dataDir ? join(dataDir, "aiti-bridge", "pair-files") : "";
   if (filesDir) {
@@ -27,6 +29,7 @@ function createPairModule(deps) {
   }
   const genId = (p) => p + randomBytes(6).toString("hex");
   const safeName = (s) => String(s || "file").replace(/[/\\:*?"<>|\x00-\x1f]/g, "_").slice(0, 120) || "file";
+  const iidOf = (s) => String(s || "").split("/")[0];
   const pairPublic = process.env.AITI_PAIR_PUBLIC === "1";
   const pairToken = process.env.AITI_PAIR_TOKEN || "";
   const PRIVATE_IP = /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1|fc|fd)/;
@@ -85,30 +88,64 @@ function createPairModule(deps) {
   function pageIdentity(msg) {
     const iid = String(msg && msg.instanceId || "");
     if (!iid || !validateInstance(iid)) return null;
-    const self = deps.getDevices().filter((d) => d.id === iid)[0];
-    const name = String(msg && msg.name || self && self.name || iid).slice(0, 80);
-    return { id: iid, name, kind: "page" };
+    const pageId = String(msg && msg.pageId || "") || iid + "/host";
+    const named = names.get(iidOf(pageId));
+    const self = deps.getDevices().filter((d) => d.instanceId === iid || d.id === pageId || d.id === iid)[0];
+    const name = String(msg && msg.name || named && named.name || self && self.name || pageId).slice(0, 80);
+    return { id: pageId, name, kind: "page" };
   }
   function checkPeer(peerId, token) {
     const p = peers.get(String(peerId || ""));
     return p && p.token && token && p.token === String(token) ? p : null;
   }
+  function notePageInbox(iid, env) {
+    const key = iidOf(iid);
+    if (!key) return;
+    let box = pageInbox.get(key);
+    if (!box) {
+      box = { seq: 0, items: [] };
+      pageInbox.set(key, box);
+    }
+    box.seq += 1;
+    box.items.push({ seq: box.seq, env });
+    if (box.items.length > 100) box.items.splice(0, box.items.length - 100);
+  }
+  function pullPageInbox(iid, since) {
+    const box = pageInbox.get(iidOf(iid));
+    if (!box) return { ok: true, seq: since || 0, items: [] };
+    const items = box.items.filter((it) => it.seq > (since || 0)).map((it) => ({ seq: it.seq, env: it.env }));
+    return { ok: true, seq: box.seq, items };
+  }
   function listPeers() {
     const now = Date.now();
-    return [...peers.values()].map((p) => ({
-      kind: "pair",
-      id: p.peerId,
-      name: p.name,
-      ua: p.ua || null,
-      deviceLabel: p.deviceLabel || null,
-      online: !!p.writer,
-      offlineAt: p.offlineAt || null,
-      lastSeen: p.lastSeen,
-      pending: p.inbox.filter((m) => m.status === "pending").length,
-      ip: p.ip || null,
-      regAt: p.regAt || null,
-      _now: now
-    })).map(({ _now, ...row }) => row);
+    return [...peers.values()].map((p) => {
+      const stale = !p.writer && now - p.lastSeen >= 12e4;
+      return {
+        kind: "pair",
+        id: p.peerId,
+        name: p.name,
+        ua: p.ua || null,
+        deviceLabel: p.deviceLabel || null,
+        online: !stale && !p.offlineAt,
+        offlineAt: stale || p.offlineAt ? p.offlineAt || p.lastSeen : null,
+        lastSeen: p.lastSeen,
+        ip: p.ip || null,
+        pending: p.inbox.filter((m) => m.status === "pending").length
+      };
+    });
+  }
+  function nameFor(instanceId) {
+    const n = names.get(iidOf(instanceId));
+    return n ? n.name : null;
+  }
+  function setName(instanceId, name) {
+    const iid = iidOf(instanceId);
+    if (!iid || !validateInstance(iid)) return { ok: false, error: "bad instanceId" };
+    const clean = String(name || "").trim().slice(0, 40);
+    if (!clean) return { ok: false, error: "bad name" };
+    names.set(iid, { name: clean, at: Date.now() });
+    console.log(TAG + " pair \u9875\u9762\u6539\u540D\uFF1A" + iid + " \u2192 " + clean);
+    return { ok: true, name: clean };
   }
   function deliverToPeer(peerId, env) {
     const p = peers.get(String(peerId || ""));
@@ -171,12 +208,24 @@ function createPairModule(deps) {
     return { ok: true, file: publicFile(f) };
   }
   const publicFile = (f) => ({ fileId: f.fileId, name: f.name, size: f.size, mime: f.mime, from: f.from, to: f.to, at: f.at });
-  function fileDownload(auth, fileId) {
-    if (!auth || !validateInstance(auth.instanceId)) return json({ ok: false, error: "bad instanceId" }, 401);
+  function fileDownload(auth, fileId, peerAuth) {
+    const peer = peerAuth ? checkPeer(String(peerAuth.peerId || ""), String(peerAuth.token || "")) : null;
+    if (!peer && (!auth || !validateInstance(iidOf(auth.instanceId)))) return json({ ok: false, error: "bad instanceId" }, 401);
     const f = files.get(String(fileId || ""));
     if (!f) return json({ ok: false, error: "unknown fileId" }, 404);
     if (f.status !== "ready") return json({ ok: false, error: "file not ready" }, 409);
-    if (f.to && f.to !== "all" && f.to !== auth.instanceId && f.from.id !== auth.instanceId) return json({ ok: false, error: "not the receiver" }, 403);
+    if (peer) {
+      const okTo = !f.to || f.to === "all" || f.to === peer.peerId || f.to === peer.name;
+      const okFrom = f.from && f.from.id === peer.peerId;
+      if (!okTo && !okFrom) return json({ ok: false, error: "not the receiver" }, 403);
+    } else {
+      const selfIid = iidOf(auth.instanceId);
+      if (f.to && f.to !== "all") {
+        const selfRow = deps.getDevices().filter((d) => iidOf(d.id) === selfIid)[0];
+        const nameHit = !!(selfRow && selfRow.name && (selfRow.name === f.to || String(selfRow.name).includes(f.to)));
+        if (iidOf(f.to) !== selfIid && iidOf(f.from && f.from.id) !== selfIid && !nameHit) return json({ ok: false, error: "not the receiver" }, 403);
+      }
+    }
     if (!existsSync(f.path)) return json({ ok: false, error: "file expired" }, 410);
     let stream;
     try {
@@ -229,6 +278,9 @@ function createPairModule(deps) {
     return { ok: true, path: savePath, name: f.name, size: f.size };
   }
   function sweep(now) {
+    for (const [iid, n] of [...names]) {
+      if (now - n.at > PAIR_PEER_TTL) names.delete(iid);
+    }
     for (const [pid, p] of [...peers]) {
       if (p.writer) {
         p.offlineAt = null;
@@ -300,37 +352,33 @@ function createPairModule(deps) {
       writer.write({ type: "ready", peerId: p.peerId, name: p.name });
       return response;
     }
+    function requestIdentity(msg) {
+      const pg = pageIdentity(msg);
+      if (pg) return pg;
+      const pp = checkPeer(String(msg && msg.peer || ""), String(msg && msg.token || ""));
+      return pp ? { id: pp.peerId, name: pp.name, kind: "pair" } : null;
+    }
+    if (seg[0] === "name" && method === "POST") {
+      const msg = await req.json().catch(() => null);
+      const from = pageIdentity(msg);
+      if (!from) return json({ ok: false, error: "bad instanceId\uFF08\u9875\u9762\u672A\u5728\u6865\u4E0A\uFF09" }, 401);
+      const r = setName(from.id, String(msg && msg.name || ""));
+      return json(r, r.ok ? 200 : 400);
+    }
     if (seg[0] === "message" && method === "POST") {
       const msg = await req.json().catch(() => null);
-      const from = pageIdentity(msg);
-      if (!from) return json({ ok: false, error: "bad instanceId\uFF08\u9875\u9762\u672A\u5728\u6865\u4E0A\uFF09" }, 401);
+      const from = requestIdentity(msg);
+      if (!from) return json({ ok: false, error: "bad instanceId\uFF08\u9875\u9762\u672A\u5728\u6865\u4E0A\uFF1B\u5916\u90E8\u8BBE\u5907\u8BF7\u5E26 register \u7684 peer/token\uFF09" }, 401);
       const text = String(msg && msg.text || "").slice(0, 64e3);
       if (!text.trim()) return json({ ok: false, error: "bad request\uFF08\u9700\u8981 text\uFF09" }, 400);
-      const r = deps.routeSend(from, String(msg && msg.to || "all"), { text });
+      const r = deps.routeSend(from, String(msg && msg.to || "all"), { text, pageId: from.id, notify: !!(msg && msg.notify) });
       return json(r, r.ok ? 200 : r.candidates ? 300 : 400);
-    }
-    if (seg[0] === "notify" && method === "POST") {
-      const msg = await req.json().catch(() => null);
-      const from = pageIdentity(msg);
-      if (!from) return json({ ok: false, error: "bad instanceId\uFF08\u9875\u9762\u672A\u5728\u6865\u4E0A\uFF09" }, 401);
-      const identify = !!(msg && msg.identify);
-      const title = String(msg && msg.title || (identify ? "\u{1F50E} \u8BBE\u5907\u8BC6\u522B" : "\u{1F514} \u8BBE\u5907\u4E92\u8FDE"));
-      const body = String(msg && msg.body || "");
-      const timeoutMs = Math.max(3e3, Math.min(6e5, Number(msg && msg.timeoutMs || 5e4)));
-      const to = String(msg && msg.to || "all");
-      const targets = deps.getDevices().filter((d) => d.kind === "page" && d.id !== from.id && (to === "all" || d.id === to || d.name === to || String(d.name).includes(to)));
-      const delivered = [];
-      for (const t of targets) {
-        const notif = { kind: "notify", title, body, timeoutMs };
-        if (deliverToPage(t.id, { type: "interaction", requestId: "pair_notify_" + randomBytes(4).toString("hex"), interaction: notif, pageId: t.id })) delivered.push({ id: t.id, kind: "page" });
-      }
-      return json({ ok: delivered.length > 0, delivered });
     }
     if (seg[0] === "file") {
       if (seg[1] === "init" && method === "POST") {
         const msg = await req.json().catch(() => null);
-        const from = pageIdentity(msg);
-        if (!from) return json({ ok: false, error: "bad instanceId\uFF08\u9875\u9762\u672A\u5728\u6865\u4E0A\uFF09" }, 401);
+        const from = requestIdentity({ ...msg, name: void 0 });
+        if (!from) return json({ ok: false, error: "bad instanceId\uFF08\u9875\u9762\u672A\u5728\u6865\u4E0A\uFF1B\u5916\u90E8\u8BBE\u5907\u8BF7\u5E26 register \u7684 peer/token\uFF09" }, 401);
         const denied = gateAdmission(req, null);
         if (denied) return denied;
         const r = fileInit(from, String(msg && msg.to || ""), String(msg && msg.name || ""), Number(msg && msg.size || 0), String(msg && msg.mime || ""));
@@ -351,8 +399,13 @@ function createPairModule(deps) {
         return json(r);
       }
       if (seg.length === 2 && method === "GET") {
-        return fileDownload({ instanceId: searchParams.get("instanceId") || "", secret: searchParams.get("secret") || "" }, String(seg[1] || ""));
+        return fileDownload({ instanceId: searchParams.get("instanceId") || "" }, String(seg[1] || ""), { peerId: searchParams.get("peer") || "", token: searchParams.get("token") || "" });
       }
+    }
+    if (seg[0] === "inbox" && method === "GET" && searchParams.get("instanceId")) {
+      const iid = searchParams.get("instanceId") || "";
+      if (!validateInstance(iid)) return json({ ok: false, error: "bad instanceId" }, 401);
+      return json(pullPageInbox(iid, Number(searchParams.get("since") || 0)));
     }
     if (seg[0] === "inbox" && method === "GET") {
       const p = checkPeer(searchParams.get("peer"), searchParams.get("token"));
@@ -364,10 +417,144 @@ function createPairModule(deps) {
     }
     return null;
   }
-  return { handle, listPeers, deliverToPeer, resolvePeerFuzzy, register, checkPeer, fileInit, fileChunk, fileComplete, fileDownload, getFileInfo, fetchToFile, sweep, close: () => {
+  return { handle, listPeers, nameFor, setName, notePageInbox, pullPageInbox, deliverToPeer, resolvePeerFuzzy, register, checkPeer, fileInit, fileChunk, fileComplete, fileDownload, getFileInfo, fetchToFile, sweep, close: () => {
     peers.clear();
+    names.clear();
+    pageInbox.clear();
     files.clear();
   } };
+}
+
+// src/ua-parse.js
+var BRAND_NAMES = [
+  [/Microsoft Edge/i, "Edge"],
+  [/Opera|Opera GX/i, "Opera"],
+  [/Brave/i, "Brave"],
+  [/Vivaldi/i, "Vivaldi"],
+  [/Samsung Internet/i, "Samsung Internet"],
+  [/YaBrowser|Yandex/i, "Yandex"],
+  [/DuckDuckGo/i, "DuckDuckGo"],
+  [/Google Chrome/i, "Chrome"],
+  [/Chromium/i, "Chromium"]
+];
+var UA_TOKENS = [
+  ["EdgiOS", "Edge"],
+  ["EdgA", "Edge"],
+  ["Edg", "Edge"],
+  ["Edge", "Edge"],
+  // legacy EdgeHTML
+  ["OPiOS", "Opera"],
+  ["OPR", "Opera"],
+  ["SamsungBrowser", "Samsung Internet"],
+  ["YaBrowser", "Yandex"],
+  ["Vivaldi", "Vivaldi"],
+  ["DuckDuckGo", "DuckDuckGo"],
+  ["Whale", "Whale"],
+  ["Electron", "Electron"],
+  ["FxiOS", "Firefox"],
+  ["Firefox", "Firefox"],
+  ["CriOS", "Chrome"],
+  ["Chrome", "Chrome"]
+];
+var VERSION_TOKENS = {
+  Edge: ["Edg", "EdgA", "EdgiOS", "Edge"],
+  Opera: ["OPR", "OPiOS"],
+  "Samsung Internet": ["SamsungBrowser"],
+  Yandex: ["YaBrowser"],
+  Vivaldi: ["Vivaldi"],
+  DuckDuckGo: ["DuckDuckGo"],
+  Whale: ["Whale"],
+  Electron: ["Electron"],
+  Firefox: ["Firefox", "FxiOS"],
+  Chrome: ["Chrome", "CriOS"]
+};
+function tokenVersion(ua, tokens) {
+  for (const t of tokens || []) {
+    const i = ua.indexOf(t + "/");
+    if (i < 0) continue;
+    const m = ua.slice(i + t.length + 1).match(/^[\d.]+/);
+    if (m) return m[0];
+  }
+  return "";
+}
+function parseUa(ua, nav) {
+  const s = String(ua || "");
+  const out = { browser: "?", version: "", os: "?", osVer: "", deviceType: "desktop", mobile: false, source: "" };
+  try {
+    const brands = nav && nav.userAgentData && Array.isArray(nav.userAgentData.brands) ? nav.userAgentData.brands : null;
+    if (brands && brands.length) {
+      for (const [re, name] of BRAND_NAMES) {
+        const hit = brands.filter((b) => b && re.test(String(b.brand)))[0];
+        if (!hit) continue;
+        out.browser = name;
+        out.version = String(hit.version || "");
+        out.source = "ua-ch";
+        break;
+      }
+      if (out.browser !== "?" && out.browser !== "Chromium") {
+        const full = tokenVersion(s, VERSION_TOKENS[out.browser]);
+        if (full) out.version = full;
+      }
+    }
+  } catch (e) {
+  }
+  if (out.browser === "?" || out.browser === "Chromium") {
+    for (const [tok, name] of UA_TOKENS) {
+      if (s.indexOf(tok + "/") < 0) continue;
+      out.browser = name;
+      out.version = tokenVersion(s, VERSION_TOKENS[name]);
+      if (!out.source) out.source = "ua-string";
+      break;
+    }
+    if (out.browser === "?") {
+      const vm = s.match(/Version\/([\d.]+).*Safari/);
+      if (vm) {
+        out.browser = "Safari";
+        out.version = vm[1];
+        out.source = "ua-string";
+      } else if (/MSIE|Trident/.test(s)) {
+        out.browser = "IE";
+        const mi = s.match(/rv:([\d.]+)/);
+        out.version = mi ? mi[1] : "";
+        out.source = "ua-string";
+      }
+    }
+  }
+  let ipadLike = false;
+  try {
+    const touch = nav && typeof nav.maxTouchPoints === "number" ? nav.maxTouchPoints : 0;
+    ipadLike = touch > 1 && /Mac OS X/.test(s) && !/Chrome|CriOS|Firefox|FxiOS|Edg|OPR/.test(s);
+    if (/Windows Phone/.test(s)) {
+      out.os = "Windows Phone";
+    } else if (/Windows NT/.test(s)) {
+      out.os = "Windows";
+      out.osVer = /Windows NT 10\.0/.test(s) ? "10/11" : /Windows NT 6\.[123]/.test(s) ? "7/8" : "10/11";
+    } else if (/iPhone|iPad|iPod/.test(s)) {
+      out.os = "iOS";
+      const im = s.match(/OS (\d+[_\d]*)/);
+      out.osVer = im ? im[1].replace(/_/g, ".") : "";
+    } else if (/Android/.test(s)) {
+      out.os = "Android";
+      const am = s.match(/Android ([\d.]+)/);
+      out.osVer = am ? am[1] : "";
+    } else if (/CrOS/.test(s)) {
+      out.os = "ChromeOS";
+    } else if (ipadLike) {
+      out.os = "iOS";
+      out.osVer = "";
+    } else if (/Mac OS X/.test(s)) {
+      out.os = "macOS";
+      const mm = s.match(/Mac OS X ([\d_.]+)/);
+      out.osVer = mm ? mm[1].replace(/_/g, ".") : "";
+    } else if (/Linux|X11/.test(s)) {
+      out.os = "Linux";
+    }
+  } catch (e) {
+  }
+  out.mobile = /Android|iPhone|iPod|Mobile|Windows Phone|IEMobile/i.test(s) || out.os === "iOS" && /iPhone|iPod/.test(s);
+  const tablet = /iPad|Tablet|Silk|PlayBook/i.test(s) || /Android/i.test(s) && !/Mobile/i.test(s) || ipadLike;
+  out.deviceType = tablet ? "tablet" : out.mobile ? "mobile" : "desktop";
+  return out;
 }
 
 // src/bridge.ts
@@ -525,9 +712,9 @@ var BRIDGE_TOOLS = [
   // ---- pair 设备互连（临时聊天/互传文件；设备发现走 bridge_status 的 devices 统一视图） ----
   {
     name: "aiti_pair_send",
-    description: "\u7ED9\u6865\u4E0A\u53E6\u4E00\u53F0\u8BBE\u5907\u53D1\u6587\u672C\u6D88\u606F\uFF08pair web \u8BBE\u5907\u5982\u624B\u673A / \u5176\u4ED6 agent \u4F1A\u8BDD / \u6CE8\u5165\u9875\u9762\uFF09\u3002to \u4F20\u8BBE\u5907 id \u6216\u540D\u5B57\uFF08\u6A21\u7CCA\u5339\u914D\uFF0C\u552F\u4E00\u547D\u4E2D\u5373\u53D1\uFF0C\u591A\u4E2A/\u65E0\u547D\u4E2D\u8FD4\u56DE\u5019\u9009\u6E05\u5355\u2014\u2014\u7167\u5019\u9009\u91CD\u8C03\u5373\u53EF\uFF09\uFF1Bto \u7701\u7565\u6216\u4F20 'all' \u7FA4\u53D1\u5168\u90E8 pair \u8BBE\u5907\u4E0E agent\u3002\u5BF9\u65B9\u662F agent \u65F6\u6D88\u606F\u8FDB\u5176 aiti_inbox\uFF08\u5E26 [\u53D1\u81EA pair: <\u540D>] \u6807\u6CE8\uFF09\u3002\u6587\u4EF6\u4F20\u8F93\u7528 aiti_pair_file\u3002",
+    description: "\u7ED9\u6865\u4E0A\u53E6\u4E00\u53F0\u8BBE\u5907\u53D1\u6587\u672C\u6D88\u606F\uFF08\u9875\u9762 / \u5176\u4ED6 agent \u4F1A\u8BDD / pair web \u8BBE\u5907\u5982\u624B\u673A\uFF09\u3002to \u4F20\u8BBE\u5907 id \u6216\u540D\u5B57\uFF08\u6A21\u7CCA\u5339\u914D\uFF0C\u552F\u4E00\u547D\u4E2D\u5373\u53D1\uFF0C\u591A\u4E2A/\u65E0\u547D\u4E2D\u8FD4\u56DE\u5019\u9009\u6E05\u5355\uFF09\uFF1Bto \u7701\u7565\u6216\u4F20 'all' = \u5168\u90E8\u9875\u9762\uFF08\u4E0D\u8DE8\u7C7B\uFF09\uFF1B'agents' = \u5168\u90E8 agent\uFF1B'pairs' = \u5168\u90E8 pair \u8BBE\u5907\u3002\u6587\u4EF6\u4F20\u8F93\u7528 aiti_pair_file\u3002",
     inputSchema: { type: "object", properties: {
-      to: { type: "string", description: "\u76EE\u6807\u8BBE\u5907 id \u6216\u540D\u5B57\uFF08bridge_status \u7684 devices \u91CC\u9009\uFF1B\u7F3A\u7701=\u7FA4\u53D1\uFF09" },
+      to: { type: "string", description: "\u76EE\u6807\u8BBE\u5907 id \u6216\u540D\u5B57\uFF08bridge_status \u7684 devices \u91CC\u9009\uFF1B\u7F3A\u7701/'all'=\u5168\u90E8\u9875\u9762\uFF1B'agents'=\u5168\u90E8\u4EE3\u7406\uFF1B'pairs'=\u5168\u90E8 pair \u8BBE\u5907\uFF09" },
       text: { type: "string", description: "\u6D88\u606F\u6587\u672C" }
     }, required: ["text"] }
   },
@@ -909,6 +1096,7 @@ function createBridge(dataDir = "", opts = {}) {
       let srcPageId = payload && payload.pageId || null;
       let srcUrl = payload && payload.url || null;
       let srcTitle = payload && payload.title || null;
+      let srcDevice = payload && payload.deviceLabel || null;
       if (!srcPageId) {
         const bind = a && a.boundPageId ? resolvePageId(a.boundPageId) : null;
         const rows = listSessions().filter((r) => r.active && r.pageId);
@@ -917,12 +1105,14 @@ function createBridge(dataDir = "", opts = {}) {
           srcPageId = pick.pageId;
           srcUrl = pick.url;
           srcTitle = pick.title || null;
+          srcDevice = srcDevice || devShortLabel(pick.device);
         }
       } else if (!srcUrl) {
         const row = listSessions().find((r) => r.pageId === srcPageId);
         if (row) {
           srcUrl = row.url || null;
           srcTitle = srcTitle || row.title || null;
+          srcDevice = srcDevice || devShortLabel(row.device);
         }
       }
       const clipMid = (s, max) => {
@@ -936,6 +1126,7 @@ function createBridge(dataDir = "", opts = {}) {
         const parts = [srcPageId];
         if (srcUrl) parts.push(clipMid(srcUrl, 64));
         if (srcTitle) parts.push(clipMid(srcTitle, 40));
+        if (srcDevice) parts.push(clipMid(srcDevice, 40));
         tText = tText + "\n[\u53D1\u81EA: " + parts.join(" \xB7 ") + "\uFF08" + srcLabel + "\uFF1ApageId \u53C2\u6570\u7528\u5B83\uFF09]";
       }
       payload = { ...payload || {}, source: payload.source || a && a.source || null, sourceLabel: payload.sourceLabel || srcLabel, pageId: srcPageId, url: srcUrl, title: srcTitle };
@@ -1151,6 +1342,41 @@ ${String(pl.stack).slice(0, 400)}` : "");
     if (hit.size > 1) return { multiple: [...hit.keys()] };
     return { notFound: true };
   }
+  function resolveAiTarget(pageIdStr) {
+    const full = String(pageIdStr || "");
+    if (!full) return null;
+    const pid = parsePageId(full);
+    if (pid.frameId === "ai") {
+      for (const [w, rec] of aiSelfReg) {
+        if (String(rec.instanceId) === String(pid.instanceId)) return { w, via: "self", frameId: "ai", connInstanceId: String(rec.instanceId) };
+      }
+      for (const [w, rec] of aiPageReg) {
+        if (rec.pageId && String(rec.instanceId) === String(pid.instanceId)) return { w, via: "self", frameId: "ai", connInstanceId: String(rec.instanceId) };
+      }
+    }
+    let hit = null;
+    let bestSeen = 0;
+    for (const [w, rec] of aiPageReg) {
+      if (!rec.pageId) continue;
+      const baseId = String(rec.pageId).replace(/\/host$/, "");
+      if (rec.pageId === full || baseId && full.indexOf(baseId + "/") === 0) {
+        if (!hit || (rec.lastSeen || 0) > bestSeen) {
+          hit = { w, rec, baseId };
+          bestSeen = rec.lastSeen || 0;
+        }
+      }
+    }
+    if (!hit) {
+      if (pid.frameId === "host") {
+        for (const [w, rec] of aiSelfReg) {
+          if (String(rec.instanceId) === String(pid.instanceId)) return { w, via: "ai", frameId: "host", connInstanceId: String(rec.instanceId) };
+        }
+      }
+      return null;
+    }
+    const frame = full.length > String(hit.baseId).length ? full.slice(String(hit.baseId).length + 1) : "host";
+    return { w: hit.w, via: "ai", frameId: frame || "host", connInstanceId: String(hit.rec.instanceId) };
+  }
   const withDevice = (row, dev, label) => {
     if (dev && typeof dev === "object") {
       row.device = dev;
@@ -1164,19 +1390,19 @@ ${String(pl.stack).slice(0, 400)}` : "");
     const addMine = (row) => {
       row.mine = !!(boundPageId && row.pageId === boundPageId);
     };
-    for (const [instanceId, page2] of pages) {
-      for (const frameId of page2.frames) {
-        const fi = page2.frameInfo && page2.frameInfo.get(frameId) || null;
+    for (const [instanceId, page] of pages) {
+      for (const frameId of page.frames) {
+        const fi = page.frameInfo && page.frameInfo.get(frameId) || null;
         const isHost = frameId === "host";
-        const fUrl = fi && fi.url || (isHost ? page2.url : null);
-        const fTitle = fi && fi.title || (isHost ? page2.title : null);
+        const fUrl = fi && fi.url || (isHost ? page.url : null);
+        const fTitle = fi && fi.title || (isHost ? page.title : null);
         const row = {
           instanceId,
           frameId,
           pageId: instanceId + "/" + frameId,
-          url: page2.url,
-          title: page2.title || null,
-          frameworks: page2.frameworks,
+          url: page.url,
+          title: page.title || null,
+          frameworks: page.frameworks,
           active: true,
           lastSeen: Date.now(),
           frameUrl: fUrl || null,
@@ -1186,7 +1412,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
           frameParent: isHost ? null : fi && fi.parentId || null,
           root: isHost || !(fi && fi.parentId)
         };
-        withDevice(row, page2.device, page2.deviceLabel);
+        withDevice(row, page.device, page.deviceLabel);
         seen.add(row.pageId);
         addMine(row);
         out.push(row);
@@ -1255,6 +1481,18 @@ ${String(pl.stack).slice(0, 400)}` : "");
       withDevice(selfRow, rec.device, rec.deviceLabel);
       addMine(selfRow);
       out.push(selfRow);
+    }
+    for (const [w, rec] of aiPageReg) {
+      if (rec.pageId) continue;
+      const self2 = aiSelfReg.get(w);
+      const iid = self2 && String(self2.instanceId);
+      const fbPageId = iid ? iid + "/host" : null;
+      if (!fbPageId || seen.has(fbPageId)) continue;
+      seen.add(fbPageId);
+      const fbRow = { instanceId: iid, frameId: "host", pageId: fbPageId, url: rec.url || self2 && self2.url || null, title: rec.title || self2 && self2.title || null, frameworks: null, active: true, viaAI: true, lastSeen: rec.lastSeen };
+      withDevice(fbRow, self2 && self2.device, self2 && self2.deviceLabel);
+      addMine(fbRow);
+      out.push(fbRow);
     }
     return out;
   }
@@ -1480,15 +1718,49 @@ ${String(pl.stack).slice(0, 400)}` : "");
     } catch (e) { return { error: String((e && e.message) || e) }; }
   }`;
   ;
-  function execOnPage(cmd, args, pageId, signal, mcpReqId, cancelId) {
+  const devShortLabel = (d) => d ? [d.browser, d.os].filter(Boolean).join(" \xB7 ") || null : null;
+  const deviceShort = (pid) => {
+    try {
+      if (!pid) return null;
+      const s = String(pid);
+      let dev = null;
+      let iid = null;
+      try {
+        const p = parsePageId(s);
+        iid = String(p.instanceId);
+        dev = pages.get(iid)?.device || null;
+      } catch {
+      }
+      if (!dev) {
+        for (const rec of aiPageReg.values()) {
+          const base = String(rec.pageId || "").replace(/\/host$/, "");
+          if (String(rec.pageId) === s || base && base === s) {
+            dev = rec.device;
+            break;
+          }
+        }
+        if (!dev && iid) {
+          for (const rec of aiSelfReg.values()) if (String(rec.instanceId) === iid) {
+            dev = rec.device;
+            break;
+          }
+        }
+      }
+      return devShortLabel(dev);
+    } catch {
+      return null;
+    }
+  };
+  function execOnPage(cmd, args, pageId, signal, mcpReqId, cancelId, src) {
     const { instanceId, frameId } = parsePageId(pageId || LEGACY_TOKEN);
-    const page2 = pages.get(instanceId);
+    const page = pages.get(instanceId);
     return new Promise((resolve) => {
       const requestId = "mcp_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
       const rec = { resolve, agentId: null, t0: Date.now(), signal: null, onAbort: null, mcpReqId: mcpReqId || null, cancelId: cancelId || null };
       pendingRequests.set(requestId, rec);
       if (rec.mcpReqId) mcpReqMap.set(rec.mcpReqId, requestId);
       if (rec.cancelId) cancelIdMap.set(rec.cancelId, requestId);
+      const srcExt = src && src.agentId ? { agentId: src.agentId || null, agentName: src.agentName || null, targetDevice: src.targetDevice || null } : {};
       rec.onAbort = () => cancelPending(requestId, "\u5DF2\u53D6\u6D88\uFF08agent \u505C\u6B62\uFF09");
       if (signal) {
         if (signal.aborted) {
@@ -1499,8 +1771,8 @@ ${String(pl.stack).slice(0, 400)}` : "");
         signal.addEventListener("abort", rec.onAbort, { once: true });
       }
       console.log(TAG + " exec \u2192", cmd, JSON.stringify(args || {}), "\u2192 pageId=" + pageId);
-      if (page2) {
-        if (!page2.writer.write({ type: "exec", requestId, cmd, args: args || {}, frameId })) {
+      if (page) {
+        if (!page.writer.write({ type: "exec", requestId, cmd, args: args || {}, frameId, ...srcExt })) {
           const irec = idRegistry.get(instanceId);
           if (irec) irec.lastSeen = Date.now();
           pages.delete(instanceId);
@@ -1516,14 +1788,14 @@ ${String(pl.stack).slice(0, 400)}` : "");
           }
         }
         if (target) {
-          if (!target.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "self" })) {
+          if (!target.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "self", ...srcExt })) {
             aiConns.delete(target);
             aiSelfReg.delete(target);
             settlePending(requestId, false, { error: "\u76EE\u6807 AI \u4E3B\u7A97\u53E3\u8FDE\u63A5\u5DF2\u65AD\u5F00\uFF08\u5237\u65B0\u540E\u81EA\u52A8\u91CD\u8FDE\uFF09" });
             return;
           }
         } else if (aiConns.size > 0) {
-          for (const w of aiConns) w.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "self" });
+          for (const w of aiConns) w.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "self", ...srcExt });
         } else {
           setTimeout(() => settlePending(requestId, false, { error: "\u65E0\u6267\u884C\u7AEF\uFF08AI \u4E3B\u7A97\u53E3\u672A\u8FDE\u63A5\uFF09\uFF0C\u5148\u8FDE\u63A5\u6865" }), 100);
           return;
@@ -1543,20 +1815,20 @@ ${String(pl.stack).slice(0, 400)}` : "");
         if (target && targetRec) {
           const baseId = String(targetRec.pageId || "").replace(/\/host$/, "");
           if (pageId && baseId && String(pageId).indexOf(baseId + "/") === 0) viaFrameId = String(pageId).slice(baseId.length + 1) || "host";
-          if (!target.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "ai", frameId: viaFrameId })) {
+          if (!target.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "ai", frameId: viaFrameId, ...srcExt })) {
             aiConns.delete(target);
             aiPageReg.delete(target);
             settlePending(requestId, false, { error: "\u76EE\u6807 AI \u7A97\u8FDE\u63A5\u5DF2\u65AD\u5F00\uFF08\u9875\u9762\u5237\u65B0\u540E\u81EA\u52A8\u91CD\u8FDE\uFF0C\u7A0D\u540E\u91CD\u8BD5\uFF09" });
             return;
           }
         } else if (aiConns.size > 0) {
-          for (const w of aiConns) w.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "ai" });
+          for (const w of aiConns) w.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "ai", ...srcExt });
         } else {
           setTimeout(() => settlePending(requestId, false, { error: "\u65E0\u6267\u884C\u7AEF\uFF08\u9875\u9762/AI \u901A\u9053\u5747\u672A\u8FDE\u63A5\uFF09\uFF0C\u5148\u8FDE\u63A5\u6865" }), 100);
           return;
         }
       } else if (aiConns.size > 0) {
-        for (const w of aiConns) w.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "ai" });
+        for (const w of aiConns) w.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "ai", ...srcExt });
       } else {
         setTimeout(() => settlePending(requestId, false, { error: "\u65E0\u6267\u884C\u7AEF\uFF08\u9875\u9762/AI \u901A\u9053\u5747\u672A\u8FDE\u63A5\uFF09\uFF0C\u5148\u8FDE\u63A5\u6865" }), 100);
         return;
@@ -1635,12 +1907,22 @@ ${String(pl.stack).slice(0, 400)}` : "");
   };
   function interactOnPage(interaction, pageId, timeoutMs, signal, mcpReqId, cancelId) {
     const { instanceId, frameId } = parsePageId(pageId || LEGACY_TOKEN);
-    const page2 = pages.get(instanceId);
+    const page = pages.get(instanceId);
     let aiTarget = null;
+    let aiTargetVia = "self";
+    let aiTargetFrameId = "ai";
     if (frameId === "ai") {
       for (const [w, rec] of aiSelfReg) if (rec.instanceId === instanceId) {
         aiTarget = w;
         break;
+      }
+    }
+    if (!aiTarget) {
+      const t = resolveAiTarget(pageId || "");
+      if (t) {
+        aiTarget = t.w;
+        aiTargetVia = t.via;
+        aiTargetFrameId = t.frameId;
       }
     }
     const ms = clampTimeout(timeoutMs);
@@ -1673,16 +1955,20 @@ ${String(pl.stack).slice(0, 400)}` : "");
         cancelPending(requestId, "\u65E0\u6267\u884C\u7AEF\uFF08\u9875\u9762/AI \u901A\u9053\u5747\u672A\u8FDE\u63A5\uFF09\uFF0C\u5148\u8FDE\u63A5\u6865");
       };
       if (aiTarget) {
-        if (!aiTarget.write({ type: "interaction", requestId, interaction: payload, frameId: "ai", via: "self" })) {
+        const env = { type: "interaction", requestId, interaction: payload, frameId: aiTargetFrameId };
+        if (aiTargetVia === "ai") env.pageId = pageId;
+        env.via = aiTargetVia;
+        if (!aiTarget.write(env)) {
           aiConns.delete(aiTarget);
           aiSelfReg.delete(aiTarget);
+          aiPageReg.delete(aiTarget);
           if (aiConns.size > 0) {
             for (const w of aiConns) w.write({ type: "interaction", requestId, interaction: payload, pageId, via: "ai" });
           } else return noExecutor();
         }
       } else if (payload.kind === "pick_element") {
-        if (page2) {
-          if (!page2.writer.write({ type: "interaction", requestId, interaction: payload, frameId })) {
+        if (page) {
+          if (!page.writer.write({ type: "interaction", requestId, interaction: payload, frameId })) {
             pages.delete(instanceId);
             return noExecutor();
           }
@@ -1690,8 +1976,8 @@ ${String(pl.stack).slice(0, 400)}` : "");
           for (const w of aiConns) w.write({ type: "interaction", requestId, interaction: payload, pageId, via: "ai" });
         } else return noExecutor();
       } else {
-        if (page2) {
-          if (!page2.writer.write({ type: "interaction", requestId, interaction: payload, frameId })) {
+        if (page) {
+          if (!page.writer.write({ type: "interaction", requestId, interaction: payload, frameId })) {
             pages.delete(instanceId);
             return noExecutor();
           }
@@ -1771,6 +2057,11 @@ ${String(pl.stack).slice(0, 400)}` : "");
         delete cmdArgs.target;
         delete cmdArgs.token;
         const recAgentKey = session && session.agentKey || (session && session.agentId ? session.agentId + (session.id ? "/" + session.id : "") : null) || null;
+        const agentSrc = () => {
+          const key = session && session.agentKey || (session && session.agentId ? session.agentId + (session.id ? "/" + session.id : "") : null) || a.agentId || null;
+          const agRec = key ? agents.get(String(key)) : null;
+          return { agentId: key || null, agentName: agRec && agRec.name || null };
+        };
         const recToolCall = (text, ok, detail) => {
           if (!recAgentKey) return;
           const m = { id: randomBytes2(4).toString("hex"), kind: "agent_tool", from: "agent", agentKey: recAgentKey, agentId: recAgentKey.split("/")[0], sessionId: recAgentKey.split("/").slice(1).join("/") || null, source: (agents.get(recAgentKey) || {}).source || "unknown", text: String(text).slice(0, 2e3), detail: detail === void 0 ? null : typeof detail === "string" ? detail : JSON.stringify(detail).slice(0, 4e3), at: (/* @__PURE__ */ new Date()).toISOString(), status: ok ? "ok" : "error" };
@@ -1790,8 +2081,18 @@ ${String(pl.stack).slice(0, 400)}` : "");
           const text = String(a.text || "").slice(0, 64e3);
           if (!text.trim()) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "bad request\uFF08\u9700\u8981 text\uFF09" }) }], isError: true };
           const me = { id: recAgentKey || "agent", name: (recAgentKey && agents.get(recAgentKey) || {}).name || recAgentKey || "agent", kind: "agent" };
-          const r = routePairSend(me, a.to ? String(a.to) : "all", { text });
-          recToolCall("\u{1F6E0} aiti_pair_send(" + (a.to || "all") + ") \u2192 " + (r.ok ? "\u5DF2\u6295\u9012 " + (r.delivered || []).length + " \u7AEF" : r.error || "\u5931\u8D25"), !!r.ok, r);
+          if (!a.to || !String(a.to).trim()) {
+            const cands = [
+              ...listDevices().filter((d) => d.kind === "page").map((d) => ({ kind: "page", id: d.id, name: d.name })),
+              ...listAgentSessions().filter((x) => x.agentKey !== recAgentKey).map((x) => ({ kind: "agent", id: x.agentKey, name: x.name })),
+              ...pair.listPeers().map((pd) => ({ kind: "pair", id: pd.id, name: pd.name || pd.id }))
+            ];
+            const resp = { ok: false, error: 'to \u672A\u6307\u5B9A\u2014\u2014\u4E0D\u518D\u9ED8\u8BA4\u7FA4\u53D1\uFF08\u5E7F\u64AD\u987B\u663E\u5F0F\u4F20 to:"all"\uFF09\uFF1B\u8BF7\u6309 bridge_status devices \u9009\u76EE\u6807 id/\u540D\u5B57\u91CD\u8C03', candidates: cands };
+            recToolCall('\u{1F6E0} aiti_pair_send \u2192 \u62D2\u7EDD\u7F3A\u7701\u7FA4\u53D1\uFF08\u5E7F\u64AD\u987B\u663E\u5F0F to:"all"\uFF09', false, resp);
+            return { content: [{ type: "text", text: JSON.stringify(resp) }], isError: true };
+          }
+          const r = routePairSend(me, String(a.to), { text });
+          recToolCall("\u{1F6E0} aiti_pair_send(" + a.to + ") \u2192 " + (r.ok ? "\u5DF2\u6295\u9012 " + (r.delivered || []).length + " \u7AEF" : r.error || "\u5931\u8D25"), !!r.ok, r);
           return { content: [{ type: "text", text: JSON.stringify(r.ok ? { ok: true, delivered: r.delivered } : r) }], isError: !r.ok };
         }
         if (params.name === "aiti_pair_file") {
@@ -1878,7 +2179,8 @@ ${String(pl.stack).slice(0, 400)}` : "");
             return { content: [{ type: "text", text: "\u672A\u627E\u5230\u5339\u914D\u9875\u9762\uFF08pageId/url/title \u5747\u672A\u547D\u4E2D\uFF09\u2014\u2014\u7528 bridge_status \u67E5\u770B\u53EF\u7528 pageId" }], isError: true };
           }
           const mcpReqId = req && req.id !== void 0 ? String(req.id) : null;
-          return execOnPage("Runtime.evaluate", { expression: ringExpr }, resolved.pageId, signal, mcpReqId, cancelId).then((r) => {
+          const execSrc = { ...agentSrc(), targetDevice: deviceShort(resolved.pageId) };
+          return execOnPage("Runtime.evaluate", { expression: ringExpr }, resolved.pageId, signal, mcpReqId, cancelId, execSrc).then((r) => {
             const raw = r.ok && r.result && r.result.value !== void 0 ? r.result.value : [];
             let rows = Array.isArray(raw) ? raw : [];
             if (isLog) {
@@ -1911,10 +2213,10 @@ ${String(pl.stack).slice(0, 400)}` : "");
             return { content: [{ type: "text", text: "\u672A\u627E\u5230\u5339\u914D\u9875\u9762\uFF08pageId/url/title \u5747\u672A\u547D\u4E2D\uFF09\u2014\u2014\u7528 bridge_status \u67E5\u770B\u53EF\u7528 pageId" }], isError: true };
           }
           const mcpReqId = req && req.id !== void 0 ? String(req.id) : null;
-          const runPageTool = params.name === "page_exec" ? execOnPage(cmd, cmdArgs, resolved.pageId, signal, mcpReqId, cancelId) : execOnPage("__snapshot__", {}, resolved.pageId, signal, mcpReqId, cancelId).then((r) => {
+          const runPageTool = params.name === "page_exec" ? execOnPage(cmd, cmdArgs, resolved.pageId, signal, mcpReqId, cancelId, { ...agentSrc(), targetDevice: deviceShort(resolved.pageId) }) : execOnPage("__snapshot__", {}, resolved.pageId, signal, mcpReqId, cancelId, { ...agentSrc(), targetDevice: deviceShort(resolved.pageId) }).then((r) => {
             const txt = JSON.stringify(r.result || r);
             if (r.ok || txt.indexOf("unknown command: __snapshot__") === -1) return r;
-            return execOnPage("Runtime.evaluate", { expression: SNAPSHOT_FALLBACK, returnByValue: true }, resolved.pageId, signal, mcpReqId, cancelId).then((r2) => {
+            return execOnPage("Runtime.evaluate", { expression: SNAPSHOT_FALLBACK, returnByValue: true }, resolved.pageId, signal, mcpReqId, cancelId, { ...agentSrc(), targetDevice: deviceShort(resolved.pageId) }).then((r2) => {
               if (!r2.ok) return r2;
               const ro = r2.result && r2.result.result ? r2.result.result : r2.result;
               let val = ro && ro.value !== void 0 ? ro.value : ro;
@@ -1940,7 +2242,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
             return { content: [{ type: "text", text: "\u672A\u627E\u5230\u76EE\u6807\u9875\u9762\u2014\u2014\u9700 AI \u4E3B\u7A97\u53E3\u5DF2\u8FDE\u63A5\uFF08bridge_status \u53EF\u89C1 xxx/ai\uFF09\uFF0C\u6216\u6307\u5B9A pageId" }], isError: true };
           }
           const mcpReqId = req && req.id !== void 0 ? String(req.id) : null;
-          return execOnPage("Runtime.evaluate", { expression: SELF_UI_SCAN }, resolved.pageId, signal, mcpReqId, cancelId).then((r) => {
+          return execOnPage("Runtime.evaluate", { expression: SELF_UI_SCAN }, resolved.pageId, signal, mcpReqId, cancelId, { ...agentSrc(), targetDevice: deviceShort(resolved.pageId) }).then((r) => {
             const val = r.ok && r.result && r.result.value !== void 0 ? r.result.value : r.result || r;
             recToolCall("\u{1F6E0} self_ui(" + resolved.pageId + ") \u2192 " + (r.ok ? val && val.dialogs ? val.dialogs.length + " \u4E2A\u5F39\u7A97" : "\u65E0\u5F39\u7A97" : "\u5931\u8D25"), !!r.ok, { tool: "self_ui", pageId: resolved.pageId, response: val });
             return { content: [{ type: "text", text: JSON.stringify(val) }], isError: !r.ok };
@@ -1956,7 +2258,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
           const mcpReqId = req && req.id !== void 0 ? String(req.id) : null;
           const opts2 = { dialog: a.dialog || null, fields: a.fields || [], button: a.button || null };
           const expression = "(" + FORM_FILL_FN + ")(" + JSON.stringify(opts2) + ")";
-          return execOnPage("Runtime.evaluate", { expression }, resolved.pageId, signal, mcpReqId, cancelId).then((r) => {
+          return execOnPage("Runtime.evaluate", { expression }, resolved.pageId, signal, mcpReqId, cancelId, { ...agentSrc(), targetDevice: deviceShort(resolved.pageId) }).then((r) => {
             const val = r.ok && r.result && r.result.value !== void 0 ? r.result.value : r.result || r;
             recToolCall("\u{1F6E0} form_fill(" + resolved.pageId + ") \u2192 " + (r.ok ? val && val.foundDialog ? "\u586B " + val.filled + " \u5B57\u6BB5" + (val.clicked ? "\uFF0C\u70B9\u6309\u94AE" : "") : "\u672A\u627E\u5230\u5F39\u7A97" : "\u5931\u8D25"), !!r.ok, { tool: "form_fill", pageId: resolved.pageId, response: val });
             return { content: [{ type: "text", text: JSON.stringify(val) }], isError: !r.ok };
@@ -1965,7 +2267,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
         const interact = (interaction, timeout) => {
           const mcpReqId = req && req.id !== void 0 ? String(req.id) : null;
           const targetPageId = pageId || boundPageIdFor(session) || void 0;
-          return interactOnPage({ ...interaction, agentId: session && session.agentKey || session && session.agentId || a.agentId || null }, targetPageId, timeout, signal, mcpReqId, cancelId).then((r) => {
+          return interactOnPage({ ...interaction, ...agentSrc(), targetDevice: deviceShort(targetPageId) }, targetPageId, timeout, signal, mcpReqId, cancelId).then((r) => {
             recToolCall("\u{1F6E0} " + interaction.kind + " \u2192 " + (r.ok ? "\u5DF2\u4F5C\u7B54" : r.result && r.result.status || "\u5931\u8D25/\u62D2\u7EDD"), !!r.ok);
             return { content: [{ type: "text", text: JSON.stringify(r.result || r) }], isError: !r.ok };
           });
@@ -1987,7 +2289,8 @@ ${String(pl.stack).slice(0, 400)}` : "");
           return interact({ kind: "presence", prompt: String(a.prompt || "\u4F60\u5728\u5417\uFF1F\u9700\u8981\u4F60\u914D\u5408\u7EE7\u7EED\u5F00\u53D1"), rejectable: false, async: a.async === true }, a.timeout);
         }
         if (params.name === "user_notify") {
-          const notif = { kind: "notify", title: String(a.title || "\u{1F916} AI \u6709\u4E00\u6761\u6D88\u606F"), body: String(a.body || a.prompt || ""), timeoutMs: clampTimeout(a.timeout) };
+          const srcN = agentSrc();
+          const notif = { kind: "notify", title: String(a.title || "\u{1F916} AI \u6709\u4E00\u6761\u6D88\u606F"), body: String(a.body || a.prompt || ""), timeoutMs: clampTimeout(a.timeout), agentId: srcN.agentId, agentName: srcN.agentName, targetDevice: deviceShort(pageId || boundPageIdFor(session)) };
           const rid = "notify_" + Date.now();
           if (a.pageId) {
             const raw = String(a.pageId);
@@ -2012,20 +2315,21 @@ ${String(pl.stack).slice(0, 400)}` : "");
               iid = raw;
             }
             let delivered = false;
-            for (const w of aiConns) {
-              const reg = aiSelfReg.get(w) || aiPageReg.get(w);
-              if (reg && String(reg.instanceId) === iid) {
-                try {
-                  delivered = !!w.write({ type: "interaction", requestId: rid, interaction: notif, frameId: "ai", via: "self" });
-                } catch {
-                  delivered = false;
-                }
-                if (!delivered) {
-                  aiConns.delete(w);
-                  aiSelfReg.delete(w);
-                  aiPageReg.delete(w);
-                }
-                break;
+            const tgt = fullPageId ? resolveAiTarget(fullPageId) : resolveAiTarget(iid + "/ai");
+            try {
+              notif.targetDevice = deviceShort(fullPageId || iid + "/ai") || notif.targetDevice;
+            } catch {
+            }
+            if (tgt) {
+              try {
+                delivered = !!tgt.w.write({ type: "interaction", requestId: rid, interaction: notif, frameId: tgt.frameId, via: tgt.via });
+              } catch {
+                delivered = false;
+              }
+              if (!delivered) {
+                aiConns.delete(tgt.w);
+                aiSelfReg.delete(tgt.w);
+                aiPageReg.delete(tgt.w);
               }
             }
             if (!delivered) {
@@ -2266,48 +2570,31 @@ ${String(pl.stack).slice(0, 400)}` : "");
     sseResponse: (onClose, opts2) => sseResponse(onClose, opts2),
     getDevices: () => listDevices(),
     routeSend: (fromDev, to, payload) => routePairSend(fromDev, to, payload),
-    verifyInstance: (instanceId) => validInstance(instanceId),
-    // role=ai 自标识同信任模型（与 validateInstance 同义；公网伪造由 gateAdmission 门控）
-    // 页面下行直投:aiConns(role=ai)按 instanceId 匹配定向 write——pair 下行的现成在线直连通道
-    deliverToPage: (instanceId, envelope) => {
-      for (const w of aiConns) {
-        const reg = aiSelfReg.get(w) || aiPageReg.get(w);
-        if (reg && String(reg.instanceId) === String(instanceId)) {
-          let ok = false;
-          try {
-            ok = !!w.write(envelope);
-          } catch {
-            ok = false;
-          }
-          if (!ok) {
-            aiConns.delete(w);
-            aiSelfReg.delete(w);
-            aiPageReg.delete(w);
-          }
-          return ok;
-        }
-      }
-      return false;
-    }
+    // Page identity check: idRegistry (claim registrations) U aiSelfReg (role=ai self-attested connections
+    // carry ai- prefixed ids and never enter idRegistry — see the connect handler); public forgery is gated by gateAdmission
+    validateInstance: (instanceId) => validInstance(instanceId) || [...aiSelfReg.values()].some((r) => String(r.instanceId) === String(instanceId))
   });
   function listDevices() {
     const out = [];
     const seenPages = /* @__PURE__ */ new Set();
     for (const w of aiConns) {
-      const reg = aiSelfReg.get(w) || aiPageReg.get(w);
-      const iid = reg && String(reg.instanceId);
+      const self = aiSelfReg.get(w);
+      const pageReg = aiPageReg.get(w);
+      const iid = self && String(self.instanceId);
       if (!iid || seenPages.has(iid)) continue;
       seenPages.add(iid);
-      const dev = reg.device || null;
-      const nm = dev && (dev.os || dev.browser) ? [dev.os, dev.browser].filter(Boolean).join(" \xB7 ") : reg.title || page.url || iid;
-      out.push({ kind: "page", id: iid, name: nm, url: reg.url || null, title: reg.title || null, device: dev, deviceLabel: dev ? [dev.browser, dev.os, dev.screen].filter(Boolean).join(" \xB7 ") : null, online: true, lastSeen: reg.lastSeen || Date.now() });
+      const dev = self.device || null;
+      const pageId = pageReg && pageReg.pageId ? String(pageReg.pageId) : iid + "/host";
+      const nm = pair.nameFor(iid) || (dev && (dev.os || dev.browser) ? [dev.os, dev.browser].filter(Boolean).join(" \xB7 ") : self.title || pageReg?.url || pageId);
+      out.push({ kind: "page", id: pageId, instanceId: iid, name: nm, url: pageReg?.url || null, title: pageReg?.title || null, device: dev, deviceLabel: dev ? [dev.browser, dev.os, dev.screen].filter(Boolean).join(" \xB7 ") : null, online: true, lastSeen: self.lastSeen || Date.now() });
     }
-    for (const [instanceId, page2] of pages) {
-      out.push({ kind: "page", id: instanceId, name: page2.title || page2.url || instanceId, url: page2.url || null, title: page2.title || null, device: page2.device || null, deviceLabel: page2.deviceLabel || null, online: true, lastSeen: Date.now() });
+    for (const [instanceId, page] of pages) {
+      if (seenPages.has(instanceId)) continue;
+      out.push({ kind: "page", id: instanceId, instanceId, name: pair.nameFor(instanceId) || page.title || page.url || instanceId, url: page.url || null, title: page.title || null, device: page.device || null, deviceLabel: page.deviceLabel || null, online: true, lastSeen: Date.now() });
     }
     for (const [key, a] of agents) {
       if (!a.registered && !agentOnline(a) && !a.outbox.length) continue;
-      out.push({ kind: "agent", id: key, name: a.name || a.agentId, cwd: a.cwd || null, source: a.source || "unknown", transportKind: a.transportKind, online: agentOnline(a), offlineAt: a.offlineAt || null, lastSeen: a.lastSeen });
+      out.push({ kind: "agent", id: key, name: a.name || a.agentId, cwd: a.cwd || null, sessionId: a.sessionId || (key.includes("/") ? key.split("/").slice(1).join("/") : null), source: a.source || "unknown", transportKind: a.transportKind, online: agentOnline(a), offlineAt: a.offlineAt || null, lastSeen: a.lastSeen });
     }
     for (const p of pair.listPeers()) out.push(p);
     return out.sort((x, y) => (y.lastSeen || 0) - (x.lastSeen || 0));
@@ -2322,110 +2609,184 @@ ${String(pl.stack).slice(0, 400)}` : "");
     if (!dev) {
       const ua = req.headers.get("user-agent") || "";
       if (ua) {
-        let browser = "?", bver = "";
-        try {
-          const m = ua.match(/(EdgA?|Chrome|Firefox|OPR|Safari)\/([\d.]+)/);
-          if (m) {
-            browser = m[1] === "Edg" || m[1] === "Edge" ? "Edge" : m[1] === "OPR" ? "Opera" : m[1];
-            bver = m[2];
-          } else if (/MSIE|Trident/.test(ua)) {
-            browser = "IE";
-            const mi = ua.match(/rv:([\d.]+)/);
-            bver = mi ? mi[1] : "";
-          }
-        } catch {
-        }
-        let os = "?", osv = "";
-        try {
-          if (/Windows NT/.test(ua)) {
-            os = "Windows";
-            osv = /Windows NT 10\.0/.test(ua) ? "10/11" : /Windows NT 6\.[123]/.test(ua) ? "7/8" : "10/11";
-          } else if (/iPhone|iPad|iPod/.test(ua)) {
-            os = "iOS";
-            const im = ua.match(/OS (\d+[_\d]*)/);
-            osv = im ? im[1].replace(/_/g, ".") : "";
-          } else if (/Android/.test(ua)) {
-            os = "Android";
-            const am = ua.match(/Android ([\d.]+)/);
-            osv = am ? am[1] : "";
-          } else if (/Mac OS X/.test(ua)) {
-            os = "macOS";
-            const mm = ua.match(/Mac OS X ([\d_.]+)/);
-            osv = mm ? mm[1].replace(/_/g, ".") : "";
-          } else if (/CrOS/.test(ua)) {
-            os = "ChromeOS";
-          } else if (/Linux/.test(ua)) {
-            os = "Linux";
-          }
-        } catch {
-        }
-        const mobile = /Android|iPhone|iPad|iPod|Mobile|Windows Phone/i.test(ua);
-        dev = { browser, version: bver, os, osVer: osv, deviceType: mobile ? /iPad|Tablet|Silk/i.test(ua) ? "tablet" : "mobile" : "desktop" };
+        const p = parseUa(ua, null);
+        dev = { browser: p.browser, version: p.version, os: p.os, osVer: p.osVer, deviceType: p.deviceType };
       }
     }
     return dev;
+  }
+  function pageRegMatches(reg, bare, full) {
+    if (!reg) return false;
+    if (String(reg.instanceId) === bare) return true;
+    const pid = reg.pageId ? String(reg.pageId) : "";
+    if (!pid) return false;
+    return pid === full || pid === bare + "/host" || pid.split("/")[0] === bare;
+  }
+  function deliverToInstance(iidOrPageId, envelope) {
+    const bare = iidOrPageId.indexOf("/") >= 0 ? iidOrPageId.split("/")[0] : iidOrPageId;
+    const full = iidOrPageId;
+    for (const w of aiConns) {
+      const self = aiSelfReg.get(w);
+      const pageReg = aiPageReg.get(w);
+      if (pageRegMatches(self, bare, full) || pageRegMatches(pageReg, bare, full)) {
+        let ok = false;
+        try {
+          ok = !!w.write(envelope);
+        } catch {
+          ok = false;
+        }
+        if (!ok) {
+          aiConns.delete(w);
+          aiSelfReg.delete(w);
+          aiPageReg.delete(w);
+        }
+        return ok;
+      }
+    }
+    const pg = pages.get(bare);
+    if (pg && pg.writer) {
+      try {
+        return !!pg.writer.write(envelope);
+      } catch {
+        return false;
+      }
+    }
+    return false;
+  }
+  function pageInstanceFor(iidOrPageId) {
+    const bare = iidOrPageId.indexOf("/") >= 0 ? iidOrPageId.split("/")[0] : iidOrPageId;
+    const full = iidOrPageId;
+    for (const w of aiConns) {
+      const self = aiSelfReg.get(w);
+      const pageReg = aiPageReg.get(w);
+      if (pageRegMatches(self, bare, full)) return self && self.instanceId ? String(self.instanceId) : bare;
+      if (pageRegMatches(pageReg, bare, full)) return pageReg && pageReg.instanceId ? String(pageReg.instanceId) : bare;
+    }
+    return pages.has(bare) ? bare : null;
   }
   function routePairSend(fromDev, to, payload) {
     const q = String(to || "all").trim() || "all";
     const from = { id: fromDev.id, kind: fromDev.kind || "page", name: fromDev.name };
     const env = (type, extra) => ({ id: randomBytes2(4).toString("hex"), type, from, to: q, ts: Date.now(), ...extra });
+    const devRows = listDevices().filter((d) => d.kind === "page");
     const delivered = [];
-    const pageIds = () => {
-      const s = /* @__PURE__ */ new Set();
-      for (const w of aiConns) {
-        const reg = aiSelfReg.get(w) || aiPageReg.get(w);
-        if (reg && reg.instanceId) s.add(String(reg.instanceId));
-      }
-      return [...s];
-    };
-    const pushPage = (instanceId) => {
-      for (const w of aiConns) {
-        const reg = aiSelfReg.get(w) || aiPageReg.get(w);
-        if (!reg || String(reg.instanceId) !== instanceId) continue;
-        const msg = env(payload.file ? "file" : "text", payload.file ? { file: payload.file } : { text: payload.text });
-        try {
-          if (w.write({ type: "pair_msg", ...msg })) delivered.push({ kind: "page", id: instanceId });
-        } catch {
-        }
-        return;
-      }
-    };
     const pushAgent = (target) => {
-      const label = "[\u53D1\u81EA pair: " + fromDev.name + "]";
-      let text;
-      const pl = { source: "pair", sourceLabel: "Pair \xB7 " + fromDev.name, fromDevice: from };
-      if (payload.file) {
-        const f = payload.file;
-        text = "\u{1F4CE} \u6536\u5230\u6587\u4EF6\uFF1A" + f.name + "\uFF08" + Math.max(1, Math.round((f.size || 0) / 1024)) + "KB\uFF09\u2014 \u8C03 aiti_pair_fetch {fileId:'" + f.fileId + "'} \u53D6\u56DE\n" + label;
-        pl.file = { fileId: f.fileId, name: f.name, size: f.size, mime: f.mime };
-      } else {
-        text = String(payload.text || "") + "\n" + label;
-      }
+      const fromIsAgent = from.kind === "agent";
+      const fromId = String(fromDev.id || fromDev.name || "?");
+      const fromName = String(fromDev.name || fromId);
+      const fromShown = fromName !== fromId ? fromName + "\uFF08" + fromId + "\uFF09" : fromId;
+      const label = fromIsAgent ? "[\u53D1\u81EA session: " + fromShown + "]" : "[\u53D1\u81EA pair: " + fromName + "]";
+      const pl = { source: "pair", sourceLabel: (fromIsAgent ? "Session \xB7 " : "Pair \xB7 ") + fromName, fromDevice: from };
+      const text = payload.file ? "\u{1F4CE} \u6536\u5230\u6587\u4EF6\uFF1A" + payload.file.name + "\uFF08" + Math.max(1, Math.round((payload.file.size || 0) / 1024)) + "KB\uFF09\u2014 \u8C03 aiti_pair_fetch {fileId:'" + payload.file.fileId + "'} \u53D6\u56DE\n" + label : String(payload.text || "") + "\n" + label;
+      if (payload.file) pl.file = { fileId: payload.file.fileId, name: payload.file.name, size: payload.file.size, mime: payload.file.mime };
       const r = pushToAgents(target, text, payload.file ? "pair_file" : "user_message", pl);
       for (const d of r && r.delivered || []) delivered.push({ kind: "agent", id: d.agentKey, status: d.status });
     };
-    if (q === "all") {
-      for (const pid of pageIds()) {
-        if (pid !== fromDev.id) pushPage(pid);
+    const pushPageRow = (row) => {
+      const iid = pageInstanceFor(String(row.id)) || String(row.id).split("/")[0];
+      const rid = "pair_" + randomBytes2(4).toString("hex");
+      let ok = false;
+      let frame = null;
+      if (payload.file) {
+        const msg = env("file", { file: payload.file });
+        frame = { ...msg, type: "pair_msg" };
+        ok = deliverToInstance(iid, frame);
+      } else if (payload.notify) {
+        const body = String(payload.text || "");
+        const card = { kind: "notify", title: from.name, body, timeoutMs: 3e4, fromPair: from };
+        for (const w of aiConns) {
+          const self = aiSelfReg.get(w);
+          const pageReg = aiPageReg.get(w);
+          if (pageRegMatches(self, iid, row.id) || pageRegMatches(pageReg, iid, row.id)) {
+            try {
+              ok = !!w.write({ type: "interaction", requestId: rid, interaction: card, frameId: "ai", via: "self" });
+            } catch {
+              ok = false;
+            }
+            break;
+          }
+        }
+        if (!ok) {
+          const pg = pages.get(iid);
+          if (pg && pg.writer) {
+            try {
+              ok = !!pg.writer.write({ type: "interaction", requestId: rid, interaction: card, frameId: null, render: "notify-only" });
+            } catch {
+              ok = false;
+            }
+          }
+        }
+        if (ok) frame = { id: rid, type: "text", from, to: row.id, ts: Date.now(), text: body };
+      } else {
+        const msg = env("text", { text: payload.text });
+        frame = { ...msg, type: "pair_msg" };
+        ok = deliverToInstance(iid, frame);
       }
-      const label = "[\u53D1\u81EA pair: " + fromDev.name + "]";
-      const pl = { source: "pair", sourceLabel: "Pair \xB7 " + fromDev.name, fromDevice: from };
-      const text = payload.file ? "\u{1F4CE} \u6536\u5230\u6587\u4EF6\uFF1A" + payload.file.name + " \u2014 \u8C03 aiti_pair_fetch {fileId:'" + payload.file.fileId + "'} \u53D6\u56DE\n" + label : String(payload.text || "") + "\n" + label;
-      const ra = pushToAgents("all", text, payload.file ? "pair_file" : "user_message", pl);
-      for (const d of ra && ra.delivered || []) delivered.push({ kind: "agent", id: d.agentKey, status: d.status });
+      if (ok) {
+        delivered.push({ kind: "page", id: row.id });
+        if (frame) pair.notePageInbox(iid, frame);
+      }
+      return ok;
+    };
+    const pushPageRaw = (raw) => {
+      const row = devRows.find((d) => d.id === raw);
+      return row ? pushPageRow(row) : false;
+    };
+    const selfIid = pageInstanceFor(String(fromDev.id)) || (fromDev.id.indexOf("/") >= 0 ? fromDev.id.split("/")[0] : fromDev.id);
+    const rowIsSelf = (row) => (pageInstanceFor(String(row.id)) || String(row.id).split("/")[0]) === selfIid;
+    if (q === "all" || q === "pages") {
+      for (const row of devRows) {
+        if (rowIsSelf(row)) continue;
+        pushPageRow(row);
+      }
       return { ok: delivered.length > 0, delivered };
     }
-    if (pageIds().includes(q)) {
-      pushPage(q);
+    if (q === "agents") {
+      pushAgent("all");
+      return { ok: delivered.length > 0, delivered };
+    }
+    if (q === "pairs") {
+      const penv = env(payload.file ? "file" : "text", payload.file ? { file: payload.file } : { text: payload.text });
+      for (const pd of pair.listPeers()) {
+        try {
+          if (pair.deliverToPeer(pd.id, penv)) delivered.push({ kind: "pair", id: pd.id });
+        } catch {
+        }
+      }
+      return { ok: delivered.length > 0, delivered };
+    }
+    if (q === "all-kinds") {
+      for (const row of devRows) {
+        if (rowIsSelf(row)) continue;
+        pushPageRow(row);
+      }
+      pushAgent("all");
+      const penv = env(payload.file ? "file" : "text", payload.file ? { file: payload.file } : { text: payload.text });
+      for (const pd of pair.listPeers()) {
+        try {
+          if (pair.deliverToPeer(pd.id, penv)) delivered.push({ kind: "pair", id: pd.id });
+        } catch {
+        }
+      }
+      return { ok: delivered.length > 0, delivered };
+    }
+    if (devRows.some((d) => d.id === q)) {
+      pushPageRaw(q);
+      return { ok: delivered.length > 0, delivered };
+    }
+    const qBase = q.indexOf("/") >= 0 ? q.split("/")[0] : q;
+    const byIid = devRows.filter((d) => d.instanceId && String(d.instanceId) === qBase);
+    if (byIid.length === 1) {
+      pushPageRow(byIid[0]);
       return { ok: delivered.length > 0, delivered };
     }
     if (agents.has(q) || agentIdx.has(q)) {
       pushAgent(q);
       return { ok: delivered.length > 0, delivered };
     }
-    const devMatches = listDevices().filter((d) => d.kind === "page" && ((d.name || "").includes(q) || d.id.includes(q)));
+    const devMatches = devRows.filter((d) => (d.name || "").includes(q) || d.id.includes(q) || d.instanceId && String(d.instanceId).includes(q));
     if (devMatches.length === 1) {
-      pushPage(devMatches[0].id);
+      pushPageRaw(devMatches[0].id);
       return { ok: delivered.length > 0, delivered };
     }
     if (devMatches.length > 1) return { ok: false, candidates: devMatches.map((d) => ({ kind: "page", id: d.id, name: d.name })), error: "\u9875\u9762\u540D\u5339\u914D\u591A\u4E2A" };
@@ -2435,13 +2796,16 @@ ${String(pl.stack).slice(0, 400)}` : "");
       return { ok: delivered.length > 0, delivered };
     }
     if (agentRows.length > 1) return { ok: false, candidates: agentRows.map((a) => ({ kind: "agent", id: a.agentKey, name: a.name })), error: "agent \u540D\u5339\u914D\u591A\u4E2A" };
-    const resolved = resolvePageId(q);
-    if (resolved.pageId) {
-      const inst = String(resolved.pageId).split("/")[0];
-      pushPage(inst);
-      if (delivered.length) return { ok: true, delivered };
+    const pr = pair.resolvePeerFuzzy(q);
+    if (pr && pr.hit) {
+      const penv = env(payload.file ? "file" : "text", payload.file ? { file: payload.file } : { text: payload.text });
+      try {
+        if (pair.deliverToPeer(pr.hit.peerId, penv)) delivered.push({ kind: "pair", id: pr.hit.peerId });
+      } catch {
+      }
+      return { ok: delivered.length > 0, delivered };
     }
-    if (resolved.multiple) return { ok: false, candidates: resolved.multiple.map((pid) => ({ kind: "page", id: pid })), error: "\u9875\u9762\u5339\u914D\u591A\u4E2A" };
+    if (pr && pr.multiple) return { ok: false, candidates: pr.multiple, error: "pair \u8BBE\u5907\u540D\u5339\u914D\u591A\u4E2A" };
     return { ok: false, error: "\u65E0\u5339\u914D\u8BBE\u5907\uFF08to \u652F\u6301\u8BBE\u5907 id/\u540D\u5B57\uFF1Bbridge_status \u6216 /bridge/pair/devices \u67E5\u770B\u5728\u7EBF\u8BBE\u5907\uFF09" };
   }
   async function handle(req, path, searchParams) {
@@ -2521,25 +2885,25 @@ ${String(pl.stack).slice(0, 400)}` : "");
     if (endpoint === "bridge" && sub === "register" && req.method === "POST") {
       const msg = await req.json().catch(() => null);
       if (!msg || !validInstance(msg.instanceId)) return json({ ok: false, error: "bad instanceId" }, 401);
-      const page2 = pages.get(msg.instanceId);
-      if (!page2) return json({ ok: false, error: "no active page" }, 404);
+      const page = pages.get(msg.instanceId);
+      if (!page) return json({ ok: false, error: "no active page" }, 404);
       const list = Array.isArray(msg.frames) ? msg.frames : [msg.frameId].filter(Boolean);
-      page2.frames.clear();
-      page2.frameInfo.clear();
+      page.frames.clear();
+      page.frameInfo.clear();
       for (const f of list) {
         if (typeof f === "string" && f) {
-          page2.frames.add(f);
+          page.frames.add(f);
           continue;
         }
         if (f && f.id) {
-          page2.frames.add(String(f.id));
+          page.frames.add(String(f.id));
           if (f.title || f.url || f.name || f.src || f.parentId) {
-            page2.frameInfo.set(String(f.id), { title: f.title || null, url: f.url || null, name: f.name || null, src: f.src || null, parentId: f.parentId || null });
+            page.frameInfo.set(String(f.id), { title: f.title || null, url: f.url || null, name: f.name || null, src: f.src || null, parentId: f.parentId || null });
           }
         }
       }
-      console.log(TAG + " register frames \u2192", msg.instanceId, [...page2.frames].join(","));
-      return json({ ok: true, frames: [...page2.frames] });
+      console.log(TAG + " register frames \u2192", msg.instanceId, [...page.frames].join(","));
+      return json({ ok: true, frames: [...page.frames] });
     }
     if (endpoint === "bridge" && sub === "agent" && path[2] === "tools" && path[3] === "call" && req.method === "POST") {
       const msg = await req.json().catch(() => null);
@@ -2708,6 +3072,13 @@ ${String(pl.stack).slice(0, 400)}` : "");
         }
       };
       if (role === "ai") {
+        for (const [w, reg] of [...aiSelfReg]) {
+          if (w !== writer && String(reg.instanceId) === String(instanceId)) {
+            aiConns.delete(w);
+            aiPageReg.delete(w);
+            aiSelfReg.delete(w);
+          }
+        }
         aiConns.add(writer);
         const aiDev = aiDeviceFrom(req, msg);
         aiPageReg.set(writer, { instanceId, pageId: null, title: msg && msg.title || null, url: msg && msg.url || null, frames: null, lastSeen: Date.now() });
@@ -3018,6 +3389,9 @@ ${String(pl.stack).slice(0, 400)}` : "");
     }
     const a = agents.get(k);
     a.lastSeen = Date.now();
+    if (opts2.name && a.name === k) a.name = String(opts2.name);
+    if (opts2.name) a.name = String(opts2.name);
+    if (opts2.cwd) a.cwd = String(opts2.cwd);
     if (opts2.pageId) a.boundPageId = String(opts2.pageId);
     if (Array.isArray(opts2.subEvents)) a.subEvents = new Set(opts2.subEvents.map(String));
     if (!a.boundPageId) bindAgentFromAiSelfReverse(k, a);
@@ -3803,7 +4177,7 @@ function autoRegisterAitiShim(opts) {
 // src/assets.ts
 import { readFileSync as readFileSync3 } from "node:fs";
 import { join as join4 } from "node:path";
-var ASSET_NAMES = ["aiti-launcher.js", "bridge-client.js", "cockpit.html", "aiwin.js", "host-protocol.js", "pair-client.js", "pair.html"];
+var ASSET_NAMES = ["aiti-launcher.js", "bridge-client.js", "cockpit.html", "aiwin.js", "host-protocol.js", "pair-client.js"];
 function loadAssets(assetsDir) {
   const dir = assetsDir || new URL("../assets/", import.meta.url).pathname;
   const out = {};
@@ -3849,7 +4223,7 @@ function aitiMiddleware(opts = {}) {
 function patchProcessHttp(opts = {}) {
   const prefix = (opts.prefix || "/aiti").replace(/\/+$/, "") || "/aiti";
   const log = opts.log || ((l) => console.log(l));
-  const sym = Symbol.for("aiti-devtools.process-patched");
+  const sym = /* @__PURE__ */ Symbol.for("aiti-devtools.process-patched");
   if (globalThis[sym]) {
     log(`[aiti-devtools] \u8FDB\u7A0B\u7EA7 patch \u5DF2\u5B58\u5728\uFF0C\u8DF3\u8FC7`);
     return { bridge: globalThis.__aitiBridge };

@@ -493,15 +493,16 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
       let srcPageId = (payload && payload.pageId) || null;
       let srcUrl = (payload && payload.url) || null;
       let srcTitle = (payload && payload.title) || null;
+      let srcDevice = (payload && payload.deviceLabel) || null;
       if (!srcPageId) {
         const bind = (a && a.boundPageId) ? resolvePageId(a.boundPageId) : null;
         const rows = listSessions().filter((r) => r.active && r.pageId);
         const pick = (bind && bind.pageId && rows.find((r) => r.pageId === bind.pageId)) || (rows.length === 1 ? rows[0] : null);
-        if (pick) { srcPageId = pick.pageId; srcUrl = pick.url; srcTitle = pick.title || null; }
+        if (pick) { srcPageId = pick.pageId; srcUrl = pick.url; srcTitle = pick.title || null; srcDevice = srcDevice || devShortLabel((pick as any).device); }
       } else if (!srcUrl) {
         // pageId 已有但缺 url/title → 从 sessions 补（同页信息）
         const row = listSessions().find((r) => r.pageId === srcPageId);
-        if (row) { srcUrl = row.url || null; srcTitle = srcTitle || row.title || null; }
+        if (row) { srcUrl = row.url || null; srcTitle = srcTitle || row.title || null; srcDevice = srcDevice || devShortLabel((row as any).device); }
       }
       // 长文本截断：前后保留 + 中间省略（标注用）
       const clipMid = (s: string, max: number) => {
@@ -516,6 +517,7 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
         const parts = [srcPageId];
         if (srcUrl) parts.push(clipMid(srcUrl, 64));
         if (srcTitle) parts.push(clipMid(srcTitle, 40));
+        if (srcDevice) parts.push(clipMid(srcDevice, 40)); // device segment (browser · OS) — lets the agent tell which machine/browser sent it
         tText = tText + "\n[发自: " + parts.join(" · ") + "（" + srcLabel + "：pageId 参数用它）]";
       }
       // 调用方显式带的 source/sourceLabel（如 pair 设备 'Pair · 手机A'、AI 窗 'AI 窗'）优先保留——
@@ -1094,7 +1096,26 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
     } catch (e) { return { error: String((e && e.message) || e) }; }
   }`;;
 
-  function execOnPage(cmd, args, pageId, signal, mcpReqId, cancelId) {
+  // Short device label (browser · OS, no screen) for source badges — from a device record or resolved
+  // via pageId (real page connections keep device on pages; AI-window host/self identities keep it on
+  // their registration records). Returns null when unknown — launcher omits the device segment then.
+  const devShortLabel = (d: any) => (d ? [d.browser, d.os].filter(Boolean).join(" · ") || null : null);
+  const deviceShort = (pid?: string | null) => {
+    try {
+      if (!pid) return null;
+      const s = String(pid);
+      let dev: any = null;
+      let iid: any = null;
+      try { const p = parsePageId(s); iid = String(p.instanceId); dev = (pages.get(iid) as any)?.device || null; } catch {}
+      if (!dev) {
+        for (const rec of aiPageReg.values()) { const base = String(rec.pageId || "").replace(/\/host$/, ""); if (String(rec.pageId) === s || (base && base === s)) { dev = (rec as any).device; break; } }
+        if (!dev && iid) for (const rec of aiSelfReg.values()) if (String(rec.instanceId) === iid) { dev = (rec as any).device; break; }
+      }
+      return devShortLabel(dev);
+    } catch { return null; }
+  };
+
+  function execOnPage(cmd, args, pageId, signal, mcpReqId, cancelId, src?: { agentId?: string | null; agentName?: string | null; targetDevice?: string | null } | null) {
     const { instanceId, frameId } = parsePageId(pageId || LEGACY_TOKEN);
     const page = pages.get(instanceId);
     return new Promise((resolve) => {
@@ -1103,6 +1124,8 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
       pendingRequests.set(requestId, rec);
       if (rec.mcpReqId) mcpReqMap.set(rec.mcpReqId, requestId);
       if (rec.cancelId) cancelIdMap.set(rec.cancelId, requestId);
+      // Agent session source (page dialog badges): spread onto every exec envelope variant below.
+      const srcExt: any = src && src.agentId ? { agentId: src.agentId || null, agentName: src.agentName || null, targetDevice: src.targetDevice || null } : {};
       // 取消支持（pi-web 点停止/SDK abort）→ 立即结算，不等 15s/180s 超时
       rec.onAbort = () => cancelPending(requestId, "已取消（agent 停止）");
       if (signal) {
@@ -1112,7 +1135,7 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
       }
       console.log(TAG + " exec →", cmd, JSON.stringify(args || {}), "→ pageId=" + pageId);
       if (page) { // pageId 定向：直推目标页面连接
-        if (!page.writer.write({ type: "exec", requestId, cmd, args: args || {}, frameId })) {
+        if (!page.writer.write({ type: "exec", requestId, cmd, args: args || {}, frameId, ...srcExt })) {
           // 目标连接已死（页面刷新/断开未及时清理）→ 立即失败，不白等 15s
           const irec = idRegistry.get(instanceId);
           if (irec) irec.lastSeen = Date.now();
@@ -1126,13 +1149,13 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
           if (String(rec.instanceId) === String(instanceId) && (rec.lastSeen || 0) > bestSeen) { target = w; bestSeen = rec.lastSeen || 0; }
         }
         if (target) {
-          if (!target.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "self" })) {
+          if (!target.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "self", ...srcExt })) {
             aiConns.delete(target); aiSelfReg.delete(target);
             settlePending(requestId, false, { error: "目标 AI 主窗口连接已断开（刷新后自动重连）" });
             return;
           }
         } else if (aiConns.size > 0) { // 实例不匹配但可能刚注册——降级推所有 AI 连接（带 via:self 提示）
-          for (const w of aiConns) w.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "self" });
+          for (const w of aiConns) w.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "self", ...srcExt });
         } else { setTimeout(() => settlePending(requestId, false, { error: "无执行端（AI 主窗口未连接），先连接桥" }), 100); return; }
       } else if (aiPageReg.size > 0) { // AI 宿主页定向：pageId/instanceId 匹配 AI 窗注册的宿主页 → 精确推该 AI 连接（via ai → AI 窗 useForward 转发宿主执行）
         let target = null, targetRec = null, viaFrameId = null, bestSeen = 0;
@@ -1147,16 +1170,16 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
           // 帧提取：pageId = <baseId>/<frameId>（host 帧与 rec.pageId 精确匹配）；frameId 随 exec 转发宿主定向执行（嵌套 fN/0 在宿主侧降级到 fN）
           const baseId = String(targetRec.pageId || "").replace(/\/host$/, "");
           if (pageId && baseId && String(pageId).indexOf(baseId + "/") === 0) viaFrameId = String(pageId).slice(baseId.length + 1) || "host";
-          if (!target.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "ai", frameId: viaFrameId })) {
+          if (!target.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "ai", frameId: viaFrameId, ...srcExt })) {
             // 目标 AI 窗连接已死（断线未重连）→ 移除死连接 + 快速失败（不再白等 15s）
             aiConns.delete(target); aiPageReg.delete(target);
             settlePending(requestId, false, { error: "目标 AI 窗连接已断开（页面刷新后自动重连，稍后重试）" });
             return;
           }
-        } else if (aiConns.size > 0) { for (const w of aiConns) w.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "ai" }); }
+        } else if (aiConns.size > 0) { for (const w of aiConns) w.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "ai", ...srcExt }); }
         else { setTimeout(() => settlePending(requestId, false, { error: "无执行端（页面/AI 通道均未连接），先连接桥" }), 100); return; }
       } else if (aiConns.size > 0) { // 降级推 AI 连接
-        for (const w of aiConns) w.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "ai" });
+        for (const w of aiConns) w.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "ai", ...srcExt });
       } else {
         setTimeout(() => settlePending(requestId, false, { error: "无执行端（页面/AI 通道均未连接），先连接桥" }), 100);
         return;
@@ -1353,6 +1376,14 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
         delete cmdArgs.cmd; delete cmdArgs.command; delete cmdArgs.pageId; delete cmdArgs.target; delete cmdArgs.token;
         // agent 工具调用 → cockpit 消息流（用户实时看到 agent 在页面上做了什么；aiti_inbox/aiti_hello 是消息通道原语，不记录避免刷屏）
         const recAgentKey = (session && session.agentKey) || (session && session.agentId ? session.agentId + (session.id ? "/" + session.id : "") : null) || null;
+        // Agent session source for interaction/notify/exec envelopes (page dialog badges):
+        // agentKey = agentId/sessionId + registered display name. targetDevice appended per-call.
+        // Fallback chain mirrors recAgentKey (stateless calls may carry agentId in tool arguments).
+        const agentSrc = () => {
+          const key = (session && session.agentKey) || (session && session.agentId ? session.agentId + (session.id ? "/" + session.id : "") : null) || a.agentId || null;
+          const agRec = key ? agents.get(String(key)) : null;
+          return { agentId: key || null, agentName: (agRec && agRec.name) || null };
+        };
         const recToolCall = (text: string, ok: boolean, detail?: any) => {
           if (!recAgentKey) return;
           const m = { id: randomBytes(4).toString("hex"), kind: "agent_tool", from: "agent", agentKey: recAgentKey, agentId: recAgentKey.split("/")[0], sessionId: recAgentKey.split("/").slice(1).join("/") || null, source: (agents.get(recAgentKey) || {}).source || "unknown", text: String(text).slice(0, 2000), detail: detail === undefined ? null : (typeof detail === "string" ? detail : JSON.stringify(detail).slice(0, 4000)), at: new Date().toISOString(), status: ok ? "ok" : "error" };
@@ -1465,7 +1496,8 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
           if (resolved.multiple) { recToolCall("🛠 " + params.name + " → ⚠ 页面匹配多个", false); return { content: [{ type: "text", text: "页面匹配多个（按 url/title）：" + resolved.multiple.join(", ") + "——请用具体 pageId 指定" }], isError: true }; }
           if (resolved.notFound) { recToolCall("🛠 " + params.name + " → ⚠ 未找到匹配页面", false); return { content: [{ type: "text", text: "未找到匹配页面（pageId/url/title 均未命中）——用 bridge_status 查看可用 pageId" }], isError: true }; }
           const mcpReqId = (req && req.id !== undefined) ? String(req.id) : null;
-          return execOnPage("Runtime.evaluate", { expression: ringExpr }, resolved.pageId, signal, mcpReqId, cancelId).then((r) => {
+          const execSrc = { ...agentSrc(), targetDevice: deviceShort(resolved.pageId) }; // envelope source for page dialog badges
+          return execOnPage("Runtime.evaluate", { expression: ringExpr }, resolved.pageId, signal, mcpReqId, cancelId, execSrc).then((r) => {
             const raw = (r.ok && r.result && r.result.value !== undefined) ? r.result.value : [];
             let rows = Array.isArray(raw) ? raw : [];
             if (isLog) {
@@ -1492,13 +1524,13 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
           if (resolved.notFound) { recToolCall("🛠 " + params.name + (pageId ? "(" + pageId + ")" : "") + " → ⚠ 未找到匹配页面", false); return { content: [{ type: "text", text: "未找到匹配页面（pageId/url/title 均未命中）——用 bridge_status 查看可用 pageId" }], isError: true }; }
           const mcpReqId = (req && req.id !== undefined) ? String(req.id) : null;
           const runPageTool = params.name === "page_exec"
-            ? execOnPage(cmd, cmdArgs, resolved.pageId, signal, mcpReqId, cancelId)
-            : execOnPage("__snapshot__", {}, resolved.pageId, signal, mcpReqId, cancelId).then((r) => {
+            ? execOnPage(cmd, cmdArgs, resolved.pageId, signal, mcpReqId, cancelId, { ...agentSrc(), targetDevice: deviceShort(resolved.pageId) })
+            : execOnPage("__snapshot__", {}, resolved.pageId, signal, mcpReqId, cancelId, { ...agentSrc(), targetDevice: deviceShort(resolved.pageId) }).then((r) => {
                 // 回退：目标页不认内部命令 __snapshot__（AI 主窗口 aiti-client 仅实现 CDP 域）
                 // → 用其支持的 Runtime.evaluate 跑内置快照表达式；结果仍是 {ok,result} 信封
                 const txt = JSON.stringify(r.result || r);
                 if (r.ok || txt.indexOf("unknown command: __snapshot__") === -1) return r;
-                return execOnPage("Runtime.evaluate", { expression: SNAPSHOT_FALLBACK, returnByValue: true }, resolved.pageId, signal, mcpReqId, cancelId).then((r2) => {
+                return execOnPage("Runtime.evaluate", { expression: SNAPSHOT_FALLBACK, returnByValue: true }, resolved.pageId, signal, mcpReqId, cancelId, { ...agentSrc(), targetDevice: deviceShort(resolved.pageId) }).then((r2) => {
                   if (!r2.ok) return r2;
                   const ro = r2.result && r2.result.result ? r2.result.result : r2.result;
                   let val = (ro && ro.value !== undefined) ? ro.value : ro;
@@ -1517,7 +1549,7 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
           const resolved = target ? resolvePageId(target) : { notFound: true };
           if (!resolved.pageId) { recToolCall("🛠 self_ui → 未找到目标页面（无 AI 主窗口连接或 pageId 未命中）", false); return { content: [{ type: "text", text: "未找到目标页面——需 AI 主窗口已连接（bridge_status 可见 xxx/ai），或指定 pageId" }], isError: true }; }
           const mcpReqId = (req && req.id !== undefined) ? String(req.id) : null;
-          return execOnPage("Runtime.evaluate", { expression: SELF_UI_SCAN }, resolved.pageId, signal, mcpReqId, cancelId).then((r) => {
+          return execOnPage("Runtime.evaluate", { expression: SELF_UI_SCAN }, resolved.pageId, signal, mcpReqId, cancelId, { ...agentSrc(), targetDevice: deviceShort(resolved.pageId) }).then((r) => {
             const val = (r.ok && r.result && r.result.value !== undefined) ? r.result.value : (r.result || r);
             recToolCall("🛠 self_ui(" + resolved.pageId + ") → " + (r.ok ? ((val && val.dialogs) ? val.dialogs.length + " 个弹窗" : "无弹窗") : "失败"), !!r.ok, { tool: "self_ui", pageId: resolved.pageId, response: val });
             return { content: [{ type: "text", text: JSON.stringify(val) }], isError: !r.ok };
@@ -1531,7 +1563,7 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
           const mcpReqId = (req && req.id !== undefined) ? String(req.id) : null;
           const opts = { dialog: a.dialog || null, fields: a.fields || [], button: a.button || null };
           const expression = "(" + FORM_FILL_FN + ")(" + JSON.stringify(opts) + ")";
-          return execOnPage("Runtime.evaluate", { expression }, resolved.pageId, signal, mcpReqId, cancelId).then((r) => {
+          return execOnPage("Runtime.evaluate", { expression }, resolved.pageId, signal, mcpReqId, cancelId, { ...agentSrc(), targetDevice: deviceShort(resolved.pageId) }).then((r) => {
             const val = (r.ok && r.result && r.result.value !== undefined) ? r.result.value : (r.result || r);
             recToolCall("🛠 form_fill(" + resolved.pageId + ") → " + (r.ok ? ((val && val.foundDialog) ? "填 " + val.filled + " 字段" + (val.clicked ? "，点按钮" : "") : "未找到弹窗") : "失败"), !!r.ok, { tool: "form_fill", pageId: resolved.pageId, response: val });
             return { content: [{ type: "text", text: JSON.stringify(val) }], isError: !r.ok };
@@ -1541,7 +1573,7 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
         const interact = (interaction: Record<string, any>, timeout?: number) => {
           const mcpReqId = (req && req.id !== undefined) ? String(req.id) : null;
           const targetPageId = pageId || boundPageIdFor(session) || undefined;   // 目的方兕底：agent 绑定页 / 最新 AI 主窗口
-          return interactOnPage({ ...interaction, agentId: (session && session.agentKey) || (session && session.agentId) || a.agentId || null }, targetPageId, timeout, signal, mcpReqId, cancelId)
+          return interactOnPage({ ...interaction, ...agentSrc(), targetDevice: deviceShort(targetPageId) }, targetPageId, timeout, signal, mcpReqId, cancelId)
             .then((r) => {
               recToolCall("🛠 " + interaction.kind + " → " + (r.ok ? "已作答" : (r.result && r.result.status) || "失败/拒绝"), !!r.ok);
               return { content: [{ type: "text", text: JSON.stringify(r.result || r) }], isError: !r.ok };
@@ -1569,7 +1601,8 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
           // scenarios) — full pageId/url/title or bare instanceId (pair device ids share the bridge
           // instanceId space). Miss = error. Fix: the old implementation ignored args.pageId and
           // always blasted aiConns → the card popped up on other people's screens.
-          const notif = { kind: "notify", title: String(a.title || "🤖 AI 有一条消息"), body: String(a.body || a.prompt || ""), timeoutMs: clampTimeout(a.timeout) };
+          const srcN = agentSrc(); // notify card badge: agent session + display name (+ target device below)
+          const notif = { kind: "notify", title: String(a.title || "🤖 AI 有一条消息"), body: String(a.body || a.prompt || ""), timeoutMs: clampTimeout(a.timeout), agentId: srcN.agentId, agentName: srcN.agentName, targetDevice: deviceShort(pageId || boundPageIdFor(session)) };
           const rid = "notify_" + Date.now();
           if (a.pageId) {
             const raw = String(a.pageId);
@@ -1586,6 +1619,7 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
             // then falls back to notify-only injected pages; all misses → target offline
             let delivered = false;
             const tgt = fullPageId ? resolveAiTarget(fullPageId) : resolveAiTarget(iid + "/ai");
+            try { notif.targetDevice = deviceShort(fullPageId || iid + "/ai") || notif.targetDevice; } catch {}
             if (tgt) {
               try { delivered = !!tgt.w.write({ type: "interaction", requestId: rid, interaction: notif, frameId: tgt.frameId, via: tgt.via }); } catch { delivered = false; }
               if (!delivered) { aiConns.delete(tgt.w); aiSelfReg.delete(tgt.w); aiPageReg.delete(tgt.w); }
