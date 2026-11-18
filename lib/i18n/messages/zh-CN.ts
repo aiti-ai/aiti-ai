@@ -2024,6 +2024,8 @@ export const zhCNLocale: LocalePlugin = {
     "extPanel.startupFailed": "启动失败",
     "extPanel.shutdownFailed": "关闭失败",
     "extPanel.loadFailed": "加载失败",
+    "extPanel.clientMissing": "客户端缺失",
+    "extPanel.clientMissingMsg": "扩展 {ext} 缺少浏览器端文件（通常是部署时未构建扩展客户端），相关界面已回退到内置版本。请在扩展目录执行 npm run build:client 重新构建，或重装该扩展。",
     "extPanel.kindUncaught": "未捕获错误",
     "extPanel.kindRender": "渲染失败",
     "extPanel.title": "扩展错误（{count}）— 点击查看 / 可拖动",

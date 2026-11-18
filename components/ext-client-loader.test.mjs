@@ -182,11 +182,90 @@ test("ensureMaterialized: no bundle → false; already materialized → false (i
 // release the fallback deterministically instead of waiting out the ceiling timer.
 
 test("declaredAllFailed: no declarers / pending declarers → false", async () => {
-  const { registerDeclaredSlots, declaredAllFailed } = await import("../components/ext-client-loader.ts");
+  const { setBootGraph, registerDeclaredSlots, declaredAllFailed } = await import("../components/ext-client-loader.ts");
   const SLOT = "test-slot-fail-none-unique";
+  const EXT = "ext-fail-none-a";
   assert.equal(declaredAllFailed(SLOT), false, "no declarers at all → not a failure verdict");
-  registerDeclaredSlots("ext-fail-none-a", [SLOT]);
+  registerDeclaredSlots(EXT, [SLOT]);
+  // The declarer has a graph entry but its materialize never settled → genuinely
+  // pending (entry presence is what separates "pending" from "clientless").
+  setBootGraph({ rev: "fn1", entries: [{ id: EXT, url: "data:text/javascript;base64,ZXhwb3J0IGNvbnN0IHg9MQ==", rev: "fn1" }] });
   assert.equal(declaredAllFailed(SLOT), false, "declarer still pending (never materialized) → not a failure verdict");
+});
+
+// ── clientless declarer (no boot-graph entry) → deterministic failure ──
+// The server keeps extensions whose client file is missing/unreadable out of the
+// boot graph (clientHash ""). They can never fetch a bundle nor register rendered
+// items, so once the graph has landed their absence is a deterministic failure —
+// the takeover waiting window must release to the fallback instead of waiting out
+// the anti-deadlock ceiling (regression: a source-only session-manager install
+// shadowed the bundled build; the sidebar stuck on the takeover skeleton ~15s,
+// then silently fell back — "small screen cannot open the projects takeover").
+
+test("declaredAllFailed: clientless declarer (graph landed, no entry) → deterministic failure", async () => {
+  const { setBootGraph, registerDeclaredSlots, declaredAllFailed } = await import("../components/ext-client-loader.ts");
+  const SLOT = "test-slot-fail-clientless-unique";
+  const CLIENTLESS = "ext-fail-clientless-unique";
+  const PENDING = "ext-fail-clientless-pending-unique";
+  registerDeclaredSlots(CLIENTLESS, [SLOT]);
+  registerDeclaredSlots(PENDING, [SLOT]);
+  // Graph landed WITHOUT the clientless declarer (server: client file missing);
+  // the other declarer still has an entry (bundle may yet arrive and register).
+  setBootGraph({ rev: "cl1", entries: [{ id: PENDING, url: "data:text/javascript;base64,ZXhwb3J0IGNvbnN0IHg9MQ==", rev: "cl1" }] });
+  assert.equal(declaredAllFailed(SLOT), false, "a declarer with an entry may still take over → held");
+  // Sole clientless declarer → no takeover possible → deterministic release.
+  const SLOT2 = "test-slot-fail-clientless-only-unique";
+  registerDeclaredSlots(CLIENTLESS, [SLOT2]);
+  setBootGraph({ rev: "cl2", entries: [{ id: PENDING, url: "data:text/javascript;base64,ZXhwb3J0IGNvbnN0IHg9MQ==", rev: "cl2" }] });
+  assert.equal(declaredAllFailed(SLOT2), true, "sole declarer has no graph entry → deterministic failure");
+});
+
+test("prefetch on a clientless id registers the failure (observable, retryable)", async () => {
+  const { setBootGraph, registerDeclaredSlots, materialize, declaredAllFailed, invalidate } =
+    await import("../components/ext-client-loader.ts");
+  const SLOT = "test-slot-fail-noentry-unique";
+  const EXT = "ext-fail-noentry-unique";
+  registerDeclaredSlots(EXT, [SLOT]);
+  setBootGraph({ rev: "ne1", entries: [] }); // graph landed, extension absent
+  const ok = await materialize(EXT, () => null);
+  assert.equal(ok, false, "no entry → nothing to fetch, materialize fails");
+  assert.equal(declaredAllFailed(SLOT), true, "failure registered (release signal), not a silent bail");
+  // The extension's client is built/reinstalled → it re-enters the graph; reload
+  // invalidation must grant a retry (failure forgotten).
+  setBootGraph({ rev: "ne2", entries: [{ id: EXT, url: "data:text/javascript;base64,ZXhwb3J0IGRlZmF1bHQgZnVuY3Rpb24gcmVnaXN0ZXIoKXt9", rev: "ne2" }] });
+  invalidate(EXT);
+  assert.equal(declaredAllFailed(SLOT), false, "invalidate forgets the clientless failure → retry granted");
+  assert.equal(await materialize(EXT, () => null), true, "fixed install registers");
+});
+
+test("clientlessSlotDeclarers: graph landed → declarers without an entry; not landed → empty", async () => {
+  const loader = await import("../components/ext-client-loader.ts?fresh-clientless-list");
+  const SLOT = "test-slot-clientless-list-unique";
+  const MISSING = "ext-clientless-list-missing-unique";
+  const HEALTHY = "ext-clientless-list-healthy-unique";
+  loader.registerDeclaredSlots(MISSING, [SLOT]);
+  loader.registerDeclaredSlots(HEALTHY, [SLOT]);
+  // Graph not landed → no verdicts at all.
+  assert.deepEqual(loader.clientlessSlotDeclarers(), [], "pre-manifest → empty");
+  // Graph lands with only the healthy extension → the missing one is listed.
+  loader.setBootGraph({ rev: "cll1", entries: [{ id: HEALTHY, url: "/x", rev: "1" }] });
+  assert.deepEqual(loader.clientlessSlotDeclarers(), [{ extId: MISSING, slots: [SLOT] }]);
+});
+
+test("graph not landed yet → absence is no verdict (pre-manifest race safety)", async () => {
+  // Fresh module instance (query param → separate ESM cache entry): boot graph
+  // empty and not landed — the seed already declares the slot (SSR), but entries
+  // may still arrive, so neither the no-entry clause nor prefetch may fail it.
+  const loader = await import("../components/ext-client-loader.ts?fresh-not-landed");
+  const SLOT = "test-slot-fail-premanifest-unique";
+  const EXT = "ext-fail-premanifest-unique";
+  loader.registerDeclaredSlots(EXT, [SLOT]);
+  assert.equal(loader.declaredAllFailed(SLOT), false, "no graph → no clientless verdict");
+  assert.equal(await loader.materialize(EXT, () => null), false, "nothing to fetch pre-manifest");
+  assert.equal(loader.declaredAllFailed(SLOT), false, "pre-manifest prefetch stays silent (entry may still arrive)");
+  // The manifest lands without the extension → the verdict flips deterministically.
+  loader.setBootGraph({ rev: "pm1", entries: [] });
+  assert.equal(loader.declaredAllFailed(SLOT), true, "graph landed without the declarer → deterministic failure");
 });
 
 test("declaredAllFailed: contract-violation bundle (no register export) registers the failure", async () => {
