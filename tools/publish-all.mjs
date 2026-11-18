@@ -35,6 +35,9 @@ const PLUGIN_ROOTS = ["pi-plugins", "packages"];
 // integrations/ = 外部 agent 载体适配（DSH/DeepSeek Harness、opencode、openclaw、browser-ext）——
 // 两层嵌套（integrations/<repo>/<pkg>），2026-11-15 起 dsh 系插件走同一发布链（docs/pi-secret-mask-dsh-port-plan.md §6）
 const INTEGRATION_ROOTS = ["integrations"];
+// examples/ = runnable reference integrations published for docs/deeplinks. They are standalone:
+// each one depends on the published carrier plugin and never pulls the pi-web distribution.
+const EXAMPLE_ROOTS = ["examples"];
 
 const args = process.argv.slice(2);
 const has = (f) => args.includes(f);
@@ -170,6 +173,14 @@ for (const rel of INTEGRATION_ROOTS) {
     for (const d of readdirSync(repoDir, { withFileTypes: true })) {
       if (d.isDirectory() && existsSync(join(repoDir, d.name, "package.json"))) addPkg(join(repoDir, d.name));
     }
+  }
+}
+
+for (const rel of EXAMPLE_ROOTS) {
+  const abs = join(REPO, rel);
+  if (!existsSync(abs)) continue;
+  for (const d of readdirSync(abs, { withFileTypes: true })) {
+    if (d.isDirectory() && existsSync(join(abs, d.name, "package.json"))) addPkg(join(abs, d.name));
   }
 }
 
