@@ -1,0 +1,107 @@
+{
+  "name": "aiti-devtools-vscode",
+  "displayName": "aiti-devtools (vscode)",
+  "description": "%extension.description%",
+  "l10n": "./l10n",
+  "publisher": "aiti-ai",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "integrations/vscode-ext"
+  },
+  "version": "0.3.4",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Debuggers",
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "aiti.enableDebug",
+        "title": "%command.enableDebug.title%",
+        "category": "aiti"
+      },
+      {
+        "command": "aiti.stopDebug",
+        "title": "%command.stopDebug.title%",
+        "category": "aiti"
+      },
+      {
+        "command": "aiti.openPanel",
+        "title": "%command.openPanel.title%",
+        "category": "aiti"
+      },
+      {
+        "command": "aiti.reinject",
+        "title": "%command.reinject.title%",
+        "category": "aiti"
+      }
+    ],
+    "configuration": {
+      "title": "aiti",
+      "properties": {
+        "aiti.bridgePort": {
+          "type": "number",
+          "default": 8777,
+          "description": "%setting.bridgePort.description%"
+        },
+        "aiti.bridgePath": {
+          "type": "string",
+          "default": "",
+          "description": "%setting.bridgePath.description%"
+        },
+        "aiti.shimPath": {
+          "type": "string",
+          "default": "",
+          "description": "%setting.shimPath.description%"
+        },
+        "aiti.proxyPort": {
+          "type": "number",
+          "default": 8788,
+          "description": "%setting.proxyPort.description%"
+        },
+        "aiti.targetUrl": {
+          "type": "string",
+          "default": "",
+          "description": "%setting.targetUrl.description%"
+        },
+        "aiti.aiUrl": {
+          "type": "string",
+          "default": "",
+          "description": "%setting.aiUrl.description%"
+        },
+        "aiti.autoOpenBrowser": {
+          "type": "boolean",
+          "default": true,
+          "description": "%setting.autoOpenBrowser.description%"
+        },
+        "aiti.autoEnable": {
+          "type": "boolean",
+          "default": false,
+          "description": "%setting.autoEnable.description%"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.6.0",
+    "@vscode/test-electron": "^2.5.2"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  }
+}

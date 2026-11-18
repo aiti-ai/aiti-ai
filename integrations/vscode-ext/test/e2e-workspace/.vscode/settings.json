@@ -1,0 +1,5 @@
+{
+  "aiti.autoEnable": true,
+  "aiti.autoOpenBrowser": false,
+  "aiti.targetUrl": "http://127.0.0.1:5173"
+}
