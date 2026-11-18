@@ -436,6 +436,9 @@ async function shutdownStrayLocalRuntime(sessionId: string, sessionFile: string)
  *   - no claim           → undefined (caller takes the local path)
  *   - claimed + attached → adapter
  *   - claimed + failed   → BridgeOccupiedError (refuse local open, never fork silently)
+ *
+ * Concurrent callers for the SAME session join one in-flight attach (see the
+ * inflight map below) instead of each opening their own wrapper client.
  */
 export async function attachIfBridged(
   sessionFile: string,
@@ -446,6 +449,40 @@ export async function attachIfBridged(
   const existingHandle = lookupHandle(sessionFile);
   if (existingHandle?.alive()) return new HandleSessionAdapter(existingHandle);
 
+  // Concurrent-view dedupe: opening a session fires several parallel requests
+  // (GET /api/sessions/[id], /state, /context, meta fallback …) and each one
+  // used to run its own attach here. A wrapper serves a SINGLE client — every
+  // new attach supersedes the previous connection, so the loser fails mid-
+  // adoption ("process exited (signal)") and surfaces as a spurious 409
+  // ("bridge unreachable") exactly on first view after a restart/reload/handle
+  // eviction. Joining one flight makes the race a no-op: one attach, everyone
+  // gets the same adapter. Same pattern as startRpcSession's locks.
+  const inflight = attachInflight().get(sessionFile);
+  if (inflight) return inflight;
+  const flight = attachIfBridgedUncached(sessionFile);
+  attachInflight().set(sessionFile, flight);
+  try {
+    return await flight;
+  } finally {
+    // Only clear while this flight is still the registered one (a newer flight
+    // must not be dropped by a late settler).
+    if (attachInflight().get(sessionFile) === flight) attachInflight().delete(sessionFile);
+  }
+}
+
+declare global {
+  var __attachIfBridgedInflight: Map<string, Promise<WrappedSessionLike | undefined>> | undefined;
+}
+
+function attachInflight(): Map<string, Promise<WrappedSessionLike | undefined>> {
+  if (!globalThis.__attachIfBridgedInflight) globalThis.__attachIfBridgedInflight = new Map();
+  return globalThis.__attachIfBridgedInflight;
+}
+
+/** The actual attach body, guarded by attachIfBridged's in-flight dedupe. */
+async function attachIfBridgedUncached(
+  sessionFile: string,
+): Promise<WrappedSessionLike | undefined> {
   // Detached recovery (core-internal, before any provider probe): a session whose
   // agent is hosted by a wrapper is attached by uuid, and the wrapper's journal
   // replay rebuilds the stream — no extension registry (ownsFile) involved.
