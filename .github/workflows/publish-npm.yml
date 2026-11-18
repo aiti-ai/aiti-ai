@@ -139,13 +139,22 @@ jobs:
           (cd extensions/_shared && npm pack --pack-destination "$PKGS")
           (cd packages/aiti-bridge && npm pack --pack-destination "$PKGS")
           (cd packages/aiti-devtools-core && npm pack --pack-destination "$PKGS")
+          # secret-* engines are extension runtime deps (aiti-secret-vault) and are
+          # published by this same workflow — vendor them so a first publish (not yet
+          # on npmjs) can still build the shared extension root.
+          (cd packages/secret-mask-core && npm pack --pack-destination "$PKGS")
+          (cd packages/secret-vault-core && npm pack --pack-destination "$PKGS")
           SHARED_TGZ=$(ls "$PKGS"/aiti-ai-ext-shared-*.tgz | head -1)
           BRIDGE_TGZ=$(ls "$PKGS"/aiti-ai-aiti-bridge-*.tgz | head -1)
           CORE_TGZ=$(ls "$PKGS"/aiti-ai-aiti-devtools-core-*.tgz | head -1)
+          SECRET_MASK_TGZ=$(ls "$PKGS"/aiti-ai-secret-mask-core-*.tgz | head -1)
+          SECRET_VAULT_TGZ=$(ls "$PKGS"/aiti-ai-secret-vault-core-*.tgz | head -1)
           node scripts/collect-extension-deps.mjs --out "$BUILD/package.json" \
             --file "@aiti-ai/ext-shared=$SHARED_TGZ" \
             --file "@aiti-ai/aiti-bridge=$BRIDGE_TGZ" \
             --file "@aiti-ai/aiti-devtools-core=$CORE_TGZ" \
+            --file "@aiti-ai/secret-mask-core=$SECRET_MASK_TGZ" \
+            --file "@aiti-ai/secret-vault-core=$SECRET_VAULT_TGZ" \
             --file "justget=$PWD/vendor/npm/justget-0.2.4.tgz" \
             --file "service-tunnels=$PWD/vendor/npm/service-tunnels-0.3.76.tgz" \
             --file "@aiti-ti/ddns=$PWD/vendor/npm/aiti-ti-ddns-0.2.0.tgz"
