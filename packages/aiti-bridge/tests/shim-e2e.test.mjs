@@ -1,7 +1,7 @@
 /**
  * aiti-mcp-shim 端到端测试（node --test；依赖本机真实服务）：
- *   独立桥 127.0.0.1:8777（systemd aiti-bridge）/ pi-web dev 3001（/dev basePath）/
- *   pi-web prod 3002。任一未启动则对应用例失败（视为环境问题非代码问题）。
+ *   独立桥 127.0.0.1:8777（systemd aiti-bridge）/ pi-web dev（默认 3001，本机经 AITI_E2E_DEV_PORT 指向 30142）（/dev basePath）/
+ *   pi-web prod（默认 3002，经 AITI_E2E_PROD_PORT 指向 20341）。任一未启动则对应用例失败（视为环境问题非代码问题）。
  *
  * 覆盖：AITI_BRIDGE_URL 各种写法（裸 origin / basePath / 完整端点 / 少写 /mcp）协商、
  * initialize 转发、通知静默转发、tools/list 透传 + aiti_shim_status 合并、
@@ -90,8 +90,15 @@ function fetchSyncGet(url) {
   const [code, redirect] = out.trim().split("\n");
   return { status: Number(code) || 0, headers: { get: (n) => (n.toLowerCase() === "location" ? redirect : null) }, ok: code.startsWith("2") };
 }
-const DEV_BASE = process.env.AITI_E2E_DEV_BASE ?? detectBase("http://127.0.0.1:3001", "/dev");
-const PROD_BASE = process.env.AITI_E2E_PROD_BASE ?? detectBase("http://127.0.0.1:3002", "");
+// Ports default to the sanitized generic values (3001/3002); the real machines
+// set AITI_E2E_DEV_PORT / AITI_E2E_PROD_PORT (30142 / 20341) — same contract as
+// extensions/_shared/reload-instances.mjs.
+const DEV_PORT = process.env.AITI_E2E_DEV_PORT ?? "3001";
+const PROD_PORT = process.env.AITI_E2E_PROD_PORT ?? "3002";
+const DEV_ORIGIN = `http://127.0.0.1:${DEV_PORT}`;
+const PROD_ORIGIN = `http://127.0.0.1:${PROD_PORT}`;
+const DEV_BASE = process.env.AITI_E2E_DEV_BASE ?? detectBase(`${DEV_ORIGIN}`, "/dev");
+const PROD_BASE = process.env.AITI_E2E_PROD_BASE ?? detectBase(`${PROD_ORIGIN}`, "");
 
 // Warm the dev/prod MCP routes before the matrix runs: Next dev compiles route
 // handlers lazily on first hit, and under full-suite parallel load that first
@@ -99,8 +106,8 @@ const PROD_BASE = process.env.AITI_E2E_PROD_BASE ?? detectBase("http://127.0.0.1
 // degrade to self-check mode while later ones ride the warmed route. A tolerant
 // GET forces the compile up front; result is irrelevant.
 for (const warmUrl of [
-  `http://127.0.0.1:3001${DEV_BASE}/api/extensions/aiti-devtools/mcp/mcp`,
-  `http://127.0.0.1:3002${PROD_BASE}/api/extensions/aiti-devtools/mcp/mcp`,
+  `${DEV_ORIGIN}${DEV_BASE}/api/extensions/aiti-devtools/mcp/mcp`,
+  `${PROD_ORIGIN}${PROD_BASE}/api/extensions/aiti-devtools/mcp/mcp`,
 ]) {
   try { await fetch(warmUrl, { method: "GET", signal: AbortSignal.timeout(60000) }); } catch { /* instance down → cases degrade/skip as designed */ }
 }
@@ -109,11 +116,11 @@ for (const t of [
   { label: "独立桥裸 origin（8777）", url: "http://127.0.0.1:8777", expect: "http://127.0.0.1:8777/aiti/mcp" },
   { label: "独立桥带 /aiti", url: "http://127.0.0.1:8777/aiti", expect: "http://127.0.0.1:8777/aiti/mcp" },
   { label: "独立桥完整端点（多写 /mcp）", url: "http://127.0.0.1:8777/aiti/mcp", expect: "http://127.0.0.1:8777/aiti/mcp" },
-  { label: `pi-web dev basePath（3001${DEV_BASE}）`, url: `http://127.0.0.1:3001${DEV_BASE}`, expect: `http://127.0.0.1:3001${DEV_BASE}/api/extensions/aiti-devtools/mcp/mcp` },
-  { label: "pi-web dev 完整端点", url: `http://127.0.0.1:3001${DEV_BASE}/api/extensions/aiti-devtools/mcp/mcp`, expect: `http://127.0.0.1:3001${DEV_BASE}/api/extensions/aiti-devtools/mcp/mcp` },
-  { label: "pi-web dev 少写一个 /mcp", url: `http://127.0.0.1:3001${DEV_BASE}/api/extensions/aiti-devtools/mcp`, expect: `http://127.0.0.1:3001${DEV_BASE}/api/extensions/aiti-devtools/mcp/mcp` },
-  { label: "pi-web dev 裸 origin（basePath 变体探测）", url: "http://127.0.0.1:3001", expect: `http://127.0.0.1:3001${DEV_BASE}/api/extensions/aiti-devtools/mcp/mcp` },
-  { label: "pi-web prod 裸 origin（3002）", url: "http://127.0.0.1:3002", expect: `http://127.0.0.1:3002${PROD_BASE}/api/extensions/aiti-devtools/mcp/mcp` },
+  { label: `pi-web dev basePath（dev:${DEV_PORT}）`, url: `${DEV_ORIGIN}${DEV_BASE}`, expect: `${DEV_ORIGIN}${DEV_BASE}/api/extensions/aiti-devtools/mcp/mcp` },
+  { label: "pi-web dev 完整端点", url: `${DEV_ORIGIN}${DEV_BASE}/api/extensions/aiti-devtools/mcp/mcp`, expect: `${DEV_ORIGIN}${DEV_BASE}/api/extensions/aiti-devtools/mcp/mcp` },
+  { label: "pi-web dev 少写一个 /mcp", url: `${DEV_ORIGIN}${DEV_BASE}/api/extensions/aiti-devtools/mcp`, expect: `${DEV_ORIGIN}${DEV_BASE}/api/extensions/aiti-devtools/mcp/mcp` },
+  { label: "pi-web dev 裸 origin（basePath 变体探测）", url: `${DEV_ORIGIN}`, expect: `${DEV_ORIGIN}${DEV_BASE}/api/extensions/aiti-devtools/mcp/mcp` },
+  { label: "pi-web prod 裸 origin（prod:${PROD_PORT}）", url: `${PROD_ORIGIN}`, expect: `${PROD_ORIGIN}${PROD_BASE}/api/extensions/aiti-devtools/mcp/mcp` },
 ]) {
   test("e2e 协商+全链路：" + t.label, async () => {
     const sh = // Generous probe budget: the matrix cases hit the REAL dev instance, whose lazy
