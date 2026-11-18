@@ -40,7 +40,8 @@ if (!["staging", "official"].includes(TARGET)) {
 // ---- 发布范围（与 publish-all.mjs 同口径）----
 // demo/ is published (reference extension for authors) — keep this list in step with publish-all.mjs,
 // otherwise the per-package gate silently passes with zero packages matched.
-const EXCLUDE = new Set(["demo-lazy", "sm-demo-source", "templates", "shared"]);
+// aiti-crash-fatal is dev-only (it deliberately breaks core files) — never let it reach any registry.
+const EXCLUDE = new Set(["demo-lazy", "sm-demo-source", "templates", "shared", "aiti-crash-fatal"]);
 const PLUGIN_ROOTS = ["pi-plugins", "packages"];
 // integrations/ 外部 agent 载体适配（两层嵌套 integrations/<repo>/<pkg>）——与 publish-all.mjs 同口径
 const INTEGRATION_ROOTS = ["integrations"];

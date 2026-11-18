@@ -143,6 +143,7 @@ const checks = {
   "check-client.mjs（部署拷贝）": count("^package/extensions/aiti-extman/check-client"),
   "onlyoffice token（部署拷贝）": count("^package/extensions/aiti-onlyoffice/token"),
   "_shared 残留（应 0）": count("^package/extensions/_shared/"),
+  "aiti-crash-fatal 残留（应 0）": count("^package/extensions/aiti-crash-fatal/"),
   "extensions/node_modules 残留（应 0）": count("^package/extensions/node_modules/"),
   ".next 条目": count("^package/\\.next/"),
   ".next/trace 残留（应 0）": count("^package/\\.next/trace"),

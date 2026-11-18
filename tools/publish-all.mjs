@@ -30,7 +30,8 @@ const SCOPE = "@aiti-ai";
 // demo/ is published on purpose (the canonical reference extension for authors); it stays out of the
 // pi-web distribution through package.json files ("!extensions/demo"), the docker EXCLUDE and the
 // bundled-package skip list — those are independent of npm publishing.
-const EXCLUDE = new Set(["demo-lazy", "sm-demo-source", "templates", "shared"]); // _shared 是 @aiti-ai/ext-shared 包源，必须发布（22 扩展的运行时依赖）
+// aiti-crash-fatal is dev-only (it deliberately breaks core files) — never let it reach any registry.
+const EXCLUDE = new Set(["demo-lazy", "sm-demo-source", "templates", "shared", "aiti-crash-fatal"]); // _shared 是 @aiti-ai/ext-shared 包源，必须发布（22 扩展的运行时依赖）
 // 仓根 pi 插件根（相对 REPO）：自身或一级子目录有 package.json 即纳入。
 // packages/ = aiti-devtools 全家桶（vite/webpack/nuxt/astro 载体插件 + core/inject/bridge/agent/pi）
 // ——用户应用「npm i -D @aiti-ai/aiti-devtools-vite」的接入面，不发布则文档安装方式全是空谈

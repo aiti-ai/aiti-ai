@@ -91,8 +91,11 @@ rsync -a --delete \
   --exclude '/extensions' --exclude '/pi-plugins' --exclude '/packages' \
   --exclude '/docker' --exclude '/test-results' \
   "$PI_WEB_SRC/" "$STAGE/pi-web/"
+# dev-only extensions (crash drills that sabotage core files) never enter the production
+# context; deploy-extensions.sh also skips them so a stray copy cannot slip into the image
 rsync -a --delete \
   --exclude 'node_modules' --exclude '.git' \
+  --exclude 'aiti-crash-fatal' \
   "$PI_WEB_EXT_SRC/" "$STAGE/pi-web-ext/"
 rsync -a --delete \
   --exclude 'node_modules' --exclude '.git' --exclude 'dist' \

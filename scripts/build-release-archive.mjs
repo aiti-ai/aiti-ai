@@ -52,6 +52,14 @@ const abs = (p) => (p ? resolve(p) : p);
 
 const pkg = JSON.parse(readFileSync(join(REPO, "package.json"), "utf8"));
 const VERSION = pkg.version;
+// files 白名单排除的扩展（demo / aiti-crash-fatal 等 dev-only 件）不构建也不进产物。
+// npm pack 会按 files 过滤 tgz，但本地自包含分支仍会遍历 extensions/ 白建一遍，这里同步跳过。
+const excludedExts = new Set(
+  (pkg.files || [])
+    .filter((f) => f.startsWith("!extensions/"))
+    .map((f) => f.replace("!extensions/", "").split("/")[0])
+    .filter((n) => n && n !== "node_modules" && n !== "_shared"),
+);
 
 const run = (cmd, cwd, label) => {
   console.log(`\n[release] ${label || cmd}`);
@@ -230,6 +238,7 @@ if (!POSTPROCESS_ONLY) {
     let built = 0;
     const failed = [];
     for (const ext of exts) {
+      if (excludedExts.has(ext)) continue;
       const pjPath = join(extRoot, ext, "package.json");
       if (!existsSync(pjPath)) continue;
       let p;
@@ -303,6 +312,9 @@ for (const [k, v] of Object.entries(checks)) {
   } else console.log(`  ✓ ${k}: ${v}`);
 }
 if (bad) throw new Error("产物自检失败——构件缺失");
+// dev-only 件（崩溃演习等）只存在于工作树，任何分发产物都不应带上
+const devOnlyCount = count("^\\./extensions/aiti-crash-fatal/");
+if (devOnlyCount !== 0) throw new Error(`产物自检失败——含 dev-only 扩展 aiti-crash-fatal（${devOnlyCount} 个文件）`);
 
 writeFileSync(join(appDir, "RELEASE.txt"), [
   `version=${VERSION}`,
