@@ -19,6 +19,7 @@
  */
 import { useEffect, useCallback, useState, Fragment } from "react";
 import { api } from "./wizard-lib";
+import { t } from "./host-shim";
 
 interface SlotStat {
   ok: number; err429: number; err4xx: number; err5xx: number; timeout: number; other: number;
@@ -56,22 +57,24 @@ const ZERO_STAT: SlotStat = { ok: 0, err429: 0, err4xx: 0, err5xx: 0, timeout: 0
 const fmtN = (n: number) => (n >= 1000 ? `${Math.round(n / 100) / 10}k` : String(n));
 /** token 紧凑格式：1.2k / 3.4M */
 const fmtTok = (n: number) => (n >= 1e6 ? `${n >= 1e7 ? Math.round(n / 1e6) : Math.round(n / 1e5) / 10}M` : n >= 1000 ? `${Math.round(n / 100) / 10}k` : String(n));
-const ago = (t: number) => {
-  if (!t) return "";
-  const s = Math.max(0, Math.round((Date.now() - t) / 1000));
-  if (s < 60) return `${s}s前`;
-  if (s < 3600) return `${Math.floor(s / 60)}m前`;
-  return `${Math.floor(s / 3600)}h前`;
+const ago = (t0: number) => {
+  if (!t0) return "";
+  const s = Math.max(0, Math.round((Date.now() - t0) / 1000));
+  if (s < 60) return t("mw.st.ago.sec", { s });
+  if (s < 3600) return t("mw.st.ago.min", { m: Math.floor(s / 60) });
+  return t("mw.st.ago.hour", { h: Math.floor(s / 3600) });
 };
 /** 相对剩余（参照 aiti-model-check 的 fmtPredict 相对部分）：<1分→"约 N 秒后"；<1时→"约 N 分 M 秒后"；<1天→"约 N 小时 M 分后"；否则→"约 N 天 M 小时 [K 分] 后" */
 const fmtEta = (sec: number) => {
   const s = Math.max(0, Math.round(sec));
-  if (s < 60) return `约 ${s} 秒后`;
+  if (s < 60) return t("mw.st.eta.sec", { s });
   const m = Math.floor(s / 60), rs = s % 60;
-  if (m < 60) return `约 ${m} 分${rs ? ` ${rs} 秒` : ""}后`;
+  if (m < 60) return rs ? t("mw.st.eta.minSec", { m, s: rs }) : t("mw.st.eta.min", { m });
   const h = Math.floor(m / 60), rm = m % 60;
-  if (h < 24) return `约 ${h} 小时${rm ? ` ${rm} 分` : ""}后`;
-  return `约 ${Math.floor(h / 24)} 天 ${h % 24} 小时${rm ? ` ${rm} 分` : ""}后`;
+  if (h < 24) return rm ? t("mw.st.eta.hourMin", { h, m: rm }) : t("mw.st.eta.hour", { h });
+  return rm
+    ? t("mw.st.eta.dayMin", { d: Math.floor(h / 24), h: h % 24, m: rm })
+    : t("mw.st.eta.day", { d: Math.floor(h / 24), h: h % 24 });
 };
 /** 绝对日期时间 MM-DD HH:mm（参照 aiti-model-check 的 fmtPredict local 部分），鼠标提示用 */
 const fmtClock = (ts: number) => {
@@ -168,10 +171,10 @@ const tokOf = (st: SlotStat) => {
 };
 const emptyText = (d: StatusData) =>
   d.loaded
-    ? "引擎已就绪，当前无多 key / 聚合 provider（给 provider 配 ≥2 个 key 或建聚合组后自动出现）"
+    ? t("mw.st.emptyLoaded")
     : d.present
-      ? "引擎已运行但为旧版本代码——重启 pi-web（或新建会话）后即显示实时状态"
-      : "引擎未加载（尚无 agent 会话启动过 pi-models-combo——开始一次对话后自动就绪）";
+      ? t("mw.st.emptyPresent")
+      : t("mw.st.emptyNotLoaded");
 
 /** 打开时拉一次 + 🔄 手动刷新（零轮询） */
 function useProxyStatus() {
@@ -195,7 +198,7 @@ function RefreshBtn({ load, spin, size = 11 }: { load: () => void; spin: boolean
     <button
       type="button"
       onClick={load}
-      title="刷新"
+      title={t("mw.st.refresh")}
       className="amw-refresh"
       style={{ width: size + 9, height: size + 9 }}
     >
@@ -225,13 +228,13 @@ function StatusProviders({ status }: { status: ProviderStatus[] }) {
             <div className="amw-st-head">
               <span style={{ whiteSpace: "nowrap" }}>{p.provider}</span>
               <span className={"amw-chip " + (p.isCombo ? "is-combo" : "is-key")}>
-                {p.isCombo ? "聚合" : "多key"}
+                {p.isCombo ? t("mw.st.pillCombo") : t("mw.st.pillKey")}
               </span>
               <span className="amw-st-sub">
                 {p.isCombo && p.built === false ? (
-                  p.configError ? "配置错误 · 无法构建" : "未构建 · 首次请求后激活"
+                  p.configError ? t("mw.st.configError") : t("mw.st.unbuilt")
                 ) : (
-                  <>{hostOf(String(p.upstream || ""))} ·:{p.port}{p.sticky === false ? " · 粘性关" : ""}</>
+                  <>{hostOf(String(p.upstream || ""))} ·:{p.port}{p.sticky === false ? ` · ${t("mw.st.stickyOff")}` : ""}</>
                 )}
               </span>
             </div>
@@ -241,17 +244,17 @@ function StatusProviders({ status }: { status: ProviderStatus[] }) {
               return (
                 <div key={s.pool} className={"amw-chip " + (near ? "is-err" : "is-warn")}
                   style={{ display: "inline-flex", margin: "2px 0", fontSize: 11 }}
-                  title="全部槽位持续 429；持续超阈值后代理返回终态错误终止客户端无限重试">
-                  ⛔ 全池限流中 {s.seconds}s{near ? " · 即将终态报错" : ""}
+                  title={t("mw.st.satTitle")}>
+                  {t("mw.st.satChip", { s: s.seconds })}{near ? ` · ${t("mw.st.satNear")}` : ""}
                 </div>
               );
             })}
             {p.isCombo && p.built === false ? (
               <div className="amw-hint" style={{ padding: "4px 2px" }}
-                title={p.configError ? `成员解析失败：${p.configError}` : undefined}>
+                title={p.configError ? t("mw.st.memberFailTitle", { err: p.configError }) : undefined}>
                 {p.configError
-                  ? `无法构建：${p.configError}`
-                  : `${p.configModels ?? 0} 个虚拟模型 · 首次请求后自动构建槽位`}
+                  ? t("mw.st.unbuildable", { err: p.configError })
+                  : t("mw.st.virtualModels", { n: p.configModels ?? 0 })}
               </div>
             ) : (
             <div className="amw-st-grid">
@@ -267,7 +270,7 @@ function StatusProviders({ status }: { status: ProviderStatus[] }) {
                   const label = e.member
                     ? (memberCount.get(e.member)! > 1 ? `${e.member} · ${e.name.includes("/") ? e.name.split("/").pop() : e.name}` : e.member)
                     : e.name;
-                  const mivTxt = e.minIntervalMs ? (e.minIntervalMs === "auto" ? "间隔auto" : `间隔${Math.round(Number(e.minIntervalMs) / 100) / 10}s`) : "";
+                  const mivTxt = e.minIntervalMs ? (e.minIntervalMs === "auto" ? t("mw.st.intervalAuto") : t("mw.st.intervalS", { s: Math.round(Number(e.minIntervalMs) / 100) / 10 })) : "";
                   const suffix = [e.rpm ? `rpm${e.rpm}` : "", mivTxt, e.weight && e.weight !== 10 ? `w${e.weight}` : ""].filter(Boolean).join(" ");
                   // 同一 provider 单 apiKey 被同一聚合的多个成员复用时槽位同名（如 freeds4 的两个 modelscope 成员都是 modelscope/primary）——key 拼成员/模型保唯一
                   return (
@@ -275,7 +278,7 @@ function StatusProviders({ status }: { status: ProviderStatus[] }) {
                       <div className={"amw-st-slot" + (isCur ? " is-cur" : "")}>
                         <span>{isCur ? "▶" : ""}</span>
                         <span className="amw-st-label" title={suffix ? `${label} ${suffix}` : label}>{label}{suffix ? <span style={{ opacity: 0.7, marginLeft: 2 }}>{suffix}</span> : null}</span>
-                        {e.pinned > 0 && <span title="当前有会话粘住此槽位" style={{ fontSize: 10, color: "var(--accent,#2563eb)", opacity: 0.9, flexShrink: 0 }}>粘×{e.pinned}</span>}
+                        {e.pinned > 0 && <span title={t("mw.st.pinnedTitle")} style={{ fontSize: 10, color: "var(--accent,#2563eb)", opacity: 0.9, flexShrink: 0 }}>{t("mw.st.pinned", { n: e.pinned })}</span>}
                       </div>
                       <div className="amw-st-stats">
                         {m.cooldown ? (() => {
@@ -283,24 +286,24 @@ function StatusProviders({ status }: { status: ProviderStatus[] }) {
                           const up = isRl ? m.cooldown.upstreamSec : undefined;
                           const tip = isRl
                             ? (up
-                              ? "上游 retry-after " + up + "s → 最早恢复 " + fmtClock(Date.now() + up * 1000) + "（" + fmtEta(up) + "）"
-                                + (m.cooldown.capped ? " · 超出内部封顶已截断，实际按 cap 雪藏后重试（上游配额可能尚未恢复）" : "")
+                              ? t("mw.st.coolUpstream", { up, clock: fmtClock(Date.now() + up * 1000), eta: fmtEta(up) })
+                                + (m.cooldown.capped ? " · " + t("mw.st.coolCapped") : "")
                                 + (m.cooldown.hint ? " · " + m.cooldown.hint : "")
-                              : "上游未给出 retry-after，按默认冷却：" + m.cooldown.secondsLeft + "s 后重试")
-                            : "上游连续错误，按错误冷却冻结";
+                              : t("mw.st.coolNoRetryAfter", { s: m.cooldown.secondsLeft }))
+                            : t("mw.st.coolError");
                           return (
                             <span className={"amw-chip " + (isRl ? "is-warn" : "is-err")} title={tip}>
-                              🧊{isRl ? "429 冷却" : "错误冷却"}{up ? " · " + fmtEta(up) + (m.cooldown.capped ? "⚠" : "") : m.cooldown.secondsLeft + "s"}{m.linked ? "・联" : ""}
+                              🧊{isRl ? t("mw.st.429cool") : t("mw.st.errCool")}{up ? " · " + fmtEta(up) + (m.cooldown.capped ? "⚠" : "") : m.cooldown.secondsLeft + "s"}{m.linked ? t("mw.st.linked") : ""}
                             </span>
                           );
                         })() : m.health === "failing" ? (
-                          <span className="amw-chip is-err" title={m.linked ? "同一把 key 在其他代理近期全部 429（联动标红）" : "近期请求全部 429（配额耗尽类故障，非瞬时限流）"}>⛔ 全部429{m.linked ? "・联" : ""}</span>
+                          <span className="amw-chip is-err" title={m.linked ? t("mw.st.failLinkedTitle") : t("mw.st.failTitle")}>{t("mw.st.all429")}{m.linked ? t("mw.st.linked") : ""}</span>
                         ) : m.health === "stale" ? (
-                          <span className="amw-chip" style={{ background: "rgba(148,163,184,.14)", color: "var(--text-dim,#9ca3af)" }} title={`最后一次观测在 ${ago(st.lastUsedAt)}，无新数据——旧状态不代表当前可用性`}>
-                            ◌ 未观测{m.linked ? "・联" : ""}
+                          <span className="amw-chip" style={{ background: "rgba(148,163,184,.14)", color: "var(--text-dim,#9ca3af)" }} title={t("mw.st.staleTitle", { ago: ago(st.lastUsedAt) })}>
+                            {t("mw.st.unobserved")}{m.linked ? t("mw.st.linked") : ""}
                           </span>
                         ) : (
-                          <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span className="amw-dot" />正常</span>
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span className="amw-dot" />{t("mw.st.normal")}</span>
                         )}
                         <span style={{ marginLeft: 4 }}>req {fmtN(reqsOf(st))}</span>
                         {st.ok > 0 && <span> · ✓{fmtN(st.ok)}</span>}
@@ -309,7 +312,7 @@ function StatusProviders({ status }: { status: ProviderStatus[] }) {
                         {(() => {
                           const tok = tokOf(st);
                           if (!tok) return null;
-                          return <span title={`token 流量（进程内累计）：↑ 输入 · ↓ 输出${tok.cache > 0 ? " · ↻ 缓存读+写" : ""}`}
+                          return <span title={t("mw.st.tokTitle") + (tok.cache > 0 ? " · " + t("mw.st.tokCache") : "")}
                             style={{ color: "var(--accent,#2563eb)", opacity: 0.85 }}> · {tok.text}</span>;
                         })()}
                         {isCur && st.lastUsedAt > 0 && <span style={{ color: "var(--text-dim)" }}> · {ago(st.lastUsedAt)}</span>}
@@ -336,17 +339,17 @@ export function MultiKeyStatusRows(props: Record<string, unknown>) {
   return (
     <div className="amw-st-rows">
       <div className="amw-st-head-row">
-        <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text)" }}>聚合 / 多 key 运行状态</span>
+        <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text)" }}>{t("mw.st.title")}</span>
         <RefreshBtn load={load} spin={spin} />
         {data && (
           <span className="amw-hint" style={{ marginLeft: "auto", whiteSpace: "nowrap" }}>
-            {sum!.proxies} 代理 · {sum!.slots} 槽位{sum!.reqs > 0 ? ` · ${fmtN(sum!.ok)}✓/${fmtN(sum!.reqs)}` : ""}{tokSummary(sum!)}
+            {t("mw.st.proxiesSlots", { proxies: sum!.proxies, slots: sum!.slots })}{sum!.reqs > 0 ? ` · ${fmtN(sum!.ok)}✓/${fmtN(sum!.reqs)}` : ""}{tokSummary(sum!)}
           </span>
         )}
       </div>
 
       {failed && (
-        <div className="amw-chip is-err">状态读取失败（引擎可能未运行）</div>
+        <div className="amw-chip is-err">{t("mw.st.readFailed")}</div>
       )}
       {!failed && !data && <div className="amw-hint">…</div>}
 
@@ -369,8 +372,8 @@ export function MultiKeyStatusRows(props: Record<string, unknown>) {
 export function MultiKeyStatusSummary({ onOpen, style }: { onOpen: () => void; style?: Record<string, string | number> }) {
   const { data, failed } = useProxyStatus();
   const sum = summaryOf(data);
-  let bg = "rgba(148,163,184,.12)", fg = "var(--text-dim,#9ca3af)", txt = "运行状态…";
-  if (failed) { bg = "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)"; fg = "#dc2626"; txt = "状态读取失败"; }
+  let bg = "rgba(148,163,184,.12)", fg = "var(--text-dim,#9ca3af)", txt = t("mw.st.sum.ready");
+  if (failed) { bg = "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)"; fg = "#dc2626"; txt = t("mw.st.sum.failed"); }
   else if (data) {
     const keyIdx = buildKeyIndex(data.status);
     const anyFailing = data.status.some((p) =>
@@ -378,21 +381,21 @@ export function MultiKeyStatusSummary({ onOpen, style }: { onOpen: () => void; s
     const anyCooling = [...keyIdx.values()].some((o) => o.health === "cooling");
     if (data.status.length > 0 && anyFailing) {
       bg = "color-mix(in srgb, var(--danger, #ef4444) 14%, transparent)"; fg = "#dc2626";
-      txt = `${sum!.proxies} 代理 · 有 key 故障/限流`;
+      txt = t("mw.st.sum.failing", { proxies: sum!.proxies });
     } else if (data.status.length > 0 && anyCooling) {
       bg = "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)"; fg = "#b45309";
-      txt = `${sum!.proxies} 代理 · 有槽位冷却中`;
+      txt = t("mw.st.sum.cooling", { proxies: sum!.proxies });
     } else if (data.status.length > 0) {
       bg = "color-mix(in srgb, var(--ok, #22c55e) 12%, transparent)"; fg = "#16a34a";
-      txt = `${sum!.proxies} 代理` + (sum!.slots ? ` · ${sum!.slots} 槽位` : "") + (sum!.reqs > 0 ? ` · ${fmtN(sum!.ok)}✓/${fmtN(sum!.reqs)}` : "");
-    } else if (data.loaded) { txt = "无聚合/多key 代理"; }
-    else if (data.present) { bg = "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)"; fg = "#b45309"; txt = "引擎旧版·重启生效"; }
-    else { txt = "引擎未加载"; }
+      txt = (sum!.slots ? t("mw.st.proxiesSlots", { proxies: sum!.proxies, slots: sum!.slots }) : t("mw.st.proxies", { proxies: sum!.proxies })) + (sum!.reqs > 0 ? ` · ${fmtN(sum!.ok)}✓/${fmtN(sum!.reqs)}` : "");
+    } else if (data.loaded) { txt = t("mw.st.sum.empty"); }
+    else if (data.present) { bg = "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)"; fg = "#b45309"; txt = t("mw.st.sum.old"); }
+    else { txt = t("mw.st.sum.notLoaded"); }
   }
   return (
     <button
       type="button"
-      title="查看聚合 / 多key 运行时状态：当前 key · 冷却 · 每 key 统计"
+      title={t("mw.st.sumTitle")}
       onClick={onOpen}
       className="amw-sum-chip"
       style={{ background: bg, color: fg, ...(style || {}) }}
@@ -423,23 +426,23 @@ export function MultiKeyStatusDialog({ onClose }: { onClose: () => void }) {
     >
       <div {...floatProps} className="amw-float-panel" style={{ width: "min(760px, 94vw)", maxHeight: "min(76vh, 660px)" }}>
         <div className="amw-st-dlg-head">
-          <span style={{ fontWeight: 700, fontSize: 13 }}>聚合 / 多 key 运行时状态</span>
+          <span style={{ fontWeight: 700, fontSize: 13 }}>{t("mw.st.titleDlg")}</span>
           <RefreshBtn load={load} spin={spin} />
           {data && (
             <span className="amw-hint" style={{ fontSize: 11 }}>
-              {sum!.proxies} 代理 · {sum!.slots} 槽位{sum!.reqs > 0 ? ` · ${fmtN(sum!.ok)}✓/${fmtN(sum!.reqs)} req` : ""}{tokSummary(sum!)} · 进程内累计（重启清零）
+              {t("mw.st.proxiesSlots", { proxies: sum!.proxies, slots: sum!.slots })}{sum!.reqs > 0 ? ` · ${fmtN(sum!.ok)}✓/${fmtN(sum!.reqs)} req` : ""}{tokSummary(sum!)} · {t("mw.st.cumulative")}
             </span>
           )}
           <button
             type="button"
-            title="关闭"
+            title={t("mw.st.close")}
             onClick={onClose}
             className="amw-close"
             style={{ marginLeft: "auto", fontSize: 15, lineHeight: 1, padding: "2px 4px" }}
           >✕</button>
         </div>
         <div className="amw-st-dlg-body">
-          {failed && <div className="amw-note is-err">状态读取失败（引擎可能未运行）</div>}
+          {failed && <div className="amw-note is-err">{t("mw.st.readFailed")}</div>}
           {!failed && !data && <div className="amw-hint-lg">…</div>}
           {!failed && data && (
             data.status.length === 0
@@ -448,7 +451,7 @@ export function MultiKeyStatusDialog({ onClose }: { onClose: () => void }) {
           )}
         </div>
         <div className="amw-st-legend">
-          ▶=最近在用槽位 · 粘×N=当前粘住该槽位的会话数 · 🧊429 冷却带「约 X 后」= 上游 retry-after 的相对剩余（鼠标悬停看最早恢复日期时间；⚠=超出内部封顶已截断，实际按 cap 提前重试）· ⛔=近期全部 429 或全池持续限流 · ◌=观测过时（无新数据）· ・联=同 key 其他代理联动（按最新观测）· ↑↓↻=token 流量（输入/输出/缓存读+写，成功响应解析，无 usage 的上游不计）· 统计为引擎进程内累计，不落盘
+          {t("mw.st.legend")}
         </div>
       </div>
     </div>
