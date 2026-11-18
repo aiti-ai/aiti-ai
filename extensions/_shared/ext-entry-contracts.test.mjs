@@ -8,10 +8,8 @@
  *   3. registerItems 引用的 feature 必须在扩展 features 声明里存在（引用不存在的
  *      feature id = 条目被永远隐藏的死卡——aiti-app-center feature-gate 过滤按此口径）；
  *   4. index.ts 静态 ui 声明的插槽键同样是合法插槽名；
- *   5. 镜像脚本排除契约：__pycache__/*.pyc 必须在 sync 脚本排除集内
- *      （文件系统拷贝绕过 gitignore 的泄露回归，见 sync 脚本 fix c6e38ac0）。
  *
- * Run: node --test pi-web-ext/_shared/ext-entry-contracts.test.mjs
+ * Run: node --test extensions/_shared/ext-entry-contracts.test.mjs（aiti-ai 仓根跑）
  */
 import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -131,10 +129,4 @@ test("index.ts 静态 ui 声明的插槽键全部合法", () => {
     }
   }
   assert.deepEqual(bad, [], "静态 ui 声明使用了未知插槽键");
-});
-
-test("镜像脚本排除契约：__pycache__/.pyc 在 sync 排除集内", () => {
-  const src = readFileSync(join(workRoot, "scripts", "sync-extensions-to-aiti-ai.mjs"), "utf8");
-  assert.match(src, /EXCLUDE_NAMES = new Set\([^\)]*__pycache__/, "EXCLUDE_NAMES 缺 __pycache__");
-  assert.match(src, /EXCLUDE_SUFFIX = \[[^\]]*"\.pyc"/, "EXCLUDE_SUFFIX 缺 .pyc");
 });
