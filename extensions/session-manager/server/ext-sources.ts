@@ -120,8 +120,15 @@ function proxyAdapter(extId: string, desc: AgentSourceDescriptor): AgentAdapter 
       return { ok: mine ? mine.ok !== false : true, count: mine?.count ?? 0, watermarkMs: mine?.watermarkMs ?? 0 };
     },
     async list() {
-      const d = (await callProvider(extId, "list", q())) as { sessions?: Array<{ id: string; artifactPath?: string }> } | null;
-      return (d?.sessions ?? []).map((s) => ({ sid: s.id, path: s.artifactPath ?? `provider:${extId}#${desc.id}:${s.id}` }));
+      const d = (await callProvider(extId, "list", q())) as { sessions?: Array<{ id: string; artifactPath?: string; rev?: number }> } | null;
+      return (d?.sessions ?? []).map((s) => ({
+        sid: s.id,
+        path: s.artifactPath ?? `provider:${extId}#${desc.id}:${s.id}`,
+        // rev pass-through: providers backed by a db (e.g. Qoder IDE) supply a
+        // per-session version so syncExt skips unchanged sessions instead of
+        // reparsing the whole source whenever the db file's mtime moves.
+        ...(typeof s.rev === "number" && Number.isFinite(s.rev) ? { rev: s.rev } : {}),
+      }));
     },
     async parse(ref) {
       const d = (await callProvider(extId, "session", q({ sid: ref.sid }))) as { meta?: unknown; messages?: unknown } | null;

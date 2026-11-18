@@ -30,6 +30,7 @@ import type { LaunchOverride } from "@aiti-ai/ext-shared/agent-spawn-env";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createClient, type QoderClient } from "./qoder-core.mjs";
+import { qoderIdeSourceApi } from "./qoder-ide-source.ts";
 import { createSessionRecycleApi } from "@aiti-ai/ext-shared/session-recycle";
 import {
   readExtModelState, readAgentLastUsedModel, readPiModels, renameExtModelState, writeExtModelState,
@@ -2099,6 +2100,8 @@ export default {
 
 
   ui: {
+    // session-manager §4.8 slot: contribute the Qoder CN IDE history as an agent source
+    provides: ["session-agent-source"],
     // English manifest-text overrides (name/description/feature labels); zh source lives in the manifest.
     i18n: {
       "zh-CN": {
@@ -2218,6 +2221,10 @@ export default {
     async api(req: Request, ctx: { path: string[]; method: string; searchParams: URLSearchParams }) {
       const recycled = await recycleApi(req, ctx);
       if (recycled) return recycled;
+      // session-agent-source provider: must precede ensureClient() — reading the
+      // IDE db has nothing to do with CLI login/model client availability.
+      const sourceRes = qoderIdeSourceApi(ctx);
+      if (sourceRes) return sourceRes;
       const [action] = ctx.path;
       // 账号额度（浏览器 OAuth 档，WASM 解密凭据 → 官方 OpenAPI；未就绪也须可达）
       // 注意：必须在受控登录层之前——controlled-login 对未知 /login/* 返回 404 Response 会吞路由
