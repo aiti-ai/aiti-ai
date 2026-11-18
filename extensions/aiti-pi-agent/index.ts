@@ -12,6 +12,7 @@
  */
 
 import { join } from "node:path";
+import { readFileSync, writeFileSync } from "node:fs";
 import { PiSpawnHandle, PI_SPEC, type AgentStarterLike, type AttachedChildOptions } from "./pi-handle.ts";
 import { capabilitiesFor } from "./fork-rpc/spec.ts";
 import { resolveForkCli } from "./fork-rpc/cli-resolve.ts";
@@ -24,6 +25,54 @@ interface SessionCapabilitiesLike extends Record<string, boolean> {}
 let lastKeys: string[] = [];
 /** 会话 recycle（D8，共享层 session-recycle.ts）：存量 PiSpawnHandle 升级到当前扩展代码。 */
 let recycleApi: ReturnType<typeof createSessionRecycleApi> | null = null;
+
+// ---- spawn-session marker (session-list "Pi" badge) ----
+// Sessions driven by this backend are real pi session files (no agent/extId in the
+// header), so the session list cannot tell them apart from host-native in-process
+// sessions, while cc/qoder/zcode rows get agent badges from their placeholder files.
+// Persist the ids this backend has spawned into stateDir and patch list rows via the
+// sessionAnnotations slot with agent:"pi" — session-manager's agentBadge renders a
+// "Pi" badge for it; native rows carry no agent field at all and stay unmarked.
+interface SpawnIndex {
+  version: 1;
+  sessions: Record<string, { cwd?: string; startedAt: string }>;
+}
+let spawnStateDir: string | null = null;
+let spawnIndex: SpawnIndex | null = null;
+
+function loadSpawnIndex(): SpawnIndex {
+  if (spawnIndex) return spawnIndex;
+  let parsed: SpawnIndex | null = null;
+  if (spawnStateDir) {
+    try {
+      parsed = JSON.parse(readFileSync(join(spawnStateDir, "spawn-sessions.json"), "utf8")) as SpawnIndex;
+    } catch { /* missing or corrupt → fresh index */ }
+  }
+  spawnIndex = parsed && parsed.version === 1 && parsed.sessions && typeof parsed.sessions === "object"
+    ? parsed
+    : { version: 1, sessions: {} };
+  return spawnIndex;
+}
+
+/** Record a session id this backend spawned (idempotent; best-effort persist). */
+function recordSpawnSession(id: string, cwd?: string): void {
+  if (!id) return;
+  const idx = loadSpawnIndex();
+  if (idx.sessions[id]) return;
+  idx.sessions[id] = { ...(cwd ? { cwd } : {}), startedAt: new Date().toISOString() };
+  if (spawnStateDir) {
+    try {
+      writeFileSync(join(spawnStateDir, "spawn-sessions.json"), JSON.stringify(idx));
+    } catch { /* best-effort; in-memory marking still covers this process */ }
+  }
+}
+
+/** Track a handle creation so the session list can badge it as pi. */
+async function trackSpawnSession(pending: Promise<PiSpawnHandle>): Promise<PiSpawnHandle> {
+  const handle = await pending;
+  recordSpawnSession(handle.id, handle.cwd);
+  return handle;
+}
 
 export default {
   id: "aiti-pi-agent",
@@ -49,6 +98,14 @@ export default {
     startup(ctx: {
       /** 跨扩展服务 slot（P2 协议委托；缺省=旧宿主降级）。 */
       services?: { provide<T>(key: string, impl: T): () => void };
+      /** Persistent data area (state tier); hosts without it degrade to in-memory-only marking. */
+      stateDir?: string;
+      /** Session annotation slot: merge extension-owned fields into /api/sessions rows. */
+      sessionAnnotations?: {
+        register(annotator: {
+          annotate(rows: Array<{ id: string; path?: string; cwd?: string }>): Promise<Record<string, Record<string, unknown>> | void>;
+        }): unknown;
+      };
       sessionProviders: {
         register(provider: {
           type: string;
@@ -73,6 +130,21 @@ export default {
     }) {
       captureSpawnEnvFeatures((ctx as any)?.features ?? null); // D1：spawn.env feature 捕获（否则 spawnEnvList 恒空）
       const spec = PI_SPEC;
+      spawnStateDir = ctx.stateDir ?? null;
+      // Badge pi-rpc sessions in the session list (see the marker block above):
+      // rows whose id was spawned by this backend get agent:"pi". Also overwrites
+      // the "spawn" mislabel handle-store derives from source "aiti-pi-agent/spawn"
+      // on live transient rows. Stale index entries never match a row and are harmless.
+      ctx.sessionAnnotations?.register({
+        annotate: async (rows) => {
+          const idx = loadSpawnIndex();
+          const patch: Record<string, Record<string, unknown>> = {};
+          for (const row of rows) {
+            if (row.id && idx.sessions[row.id]) patch[row.id] = { agent: "pi" };
+          }
+          return Object.keys(patch).length > 0 ? patch : undefined;
+        },
+      });
       lastKeys = [
         ctx.sessionProviders.register({
           type: "spawn",
@@ -89,8 +161,8 @@ export default {
             // (Direct today, detachable when enabled). Both are optional so an
             // older host keeps working unchanged.
             options.attached
-              ? PiSpawnHandle.attach(options.attached, spec)
-              : PiSpawnHandle.start(options, spec),
+              ? trackSpawnSession(PiSpawnHandle.attach(options.attached, spec))
+              : trackSpawnSession(PiSpawnHandle.start(options, spec)),
         }),
       ];
       // P2 协议委托：launch 服务（pi 单 fork；launch.target 恒忽略为 pi）
@@ -102,7 +174,7 @@ export default {
           launch: LaunchOverride,
           options: { sessionId?: string; cwd?: string; env?: Record<string, string>; agentStarter?: AgentStarterLike },
         ) => {
-          return PiSpawnHandle.start({ ...options, launchOverride: launch }, spec);
+          return trackSpawnSession(PiSpawnHandle.start({ ...options, launchOverride: launch }, spec));
         },
       });
       // A25-2：agent 账号契约描述符（管理面聚合；docs/pi-web-ext-agent-account-contract.md §1）
