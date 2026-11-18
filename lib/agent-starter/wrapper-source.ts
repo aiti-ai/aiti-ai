@@ -298,9 +298,12 @@ function main() {
     process.exit(1);
   });
 
+  // Windows named pipes have no filesystem entry: listen directly (a live pipe
+  // makes listen fail with EADDRINUSE, which the error handler reports).
+  const IS_PIPE = process.platform === "win32"; // named pipe endpoint: no fs entry
   // Stale socket file from a crashed wrapper: only unlink when nothing listens.
   function startServer() {
-    if (fs.existsSync(socketPath)) {
+    if (!IS_PIPE && fs.existsSync(socketPath)) {
       const probe = net.connect({ path: socketPath });
       let settled = false;
       const retry = function () {
@@ -326,7 +329,9 @@ function main() {
 
   function listen() {
     server.listen(socketPath, function () {
-      try { fs.chmodSync(socketPath, 0o600); } catch (e) { /* ignore */ }
+      if (!IS_PIPE) {
+        try { fs.chmodSync(socketPath, 0o600); } catch (e) { /* ignore */ }
+      }
       try { fs.writeFileSync(readyPath, String(process.pid), { mode: 0o600 }); } catch (e) { /* ignore */ }
       spawnAgent();
     });
