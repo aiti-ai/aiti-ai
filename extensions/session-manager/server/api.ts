@@ -22,12 +22,13 @@ import {
 } from "../lib/session-tags.ts";
 import {
   archiveStatus, clearArchiveCache, deleteArchived, extractArchived, restoreArchived,
-  guardedSessionIds, hideExtSession, loadSettings, releaseIdleFor, runtime, runArchive, runExtArchive, restoreExtArchive, saveSettings, syncIndex,
+  guardedSessionIds, hideExtSession, loadSettings, recentRemovedIds, releaseIdleFor, runtime, runArchive, runExtArchive, restoreExtArchive, saveSettings, syncIndex,
   unhideExtSession,
   type ExtCoreLike,
   type Settings,
 } from "./runtime.ts";
 import { computeStats } from "../lib/session-stats.ts";
+import { dropActivityRows } from "./activity-bus.ts";
 import { activateSource, activeAgents, autoSyncStaleSources, deactivateSource, discoverSources, enrichExtPlaceholders, ensureProviders, getAdapter, refreshLiveExtTimestamps, registerProvider, resolveExtId, syncSource, unregisterProvider } from "./ext-sources.ts";
 import { writePiSession, encodeCwd } from "../lib/agents/to-pi.ts";
 import { archiveCapableAgents } from "../lib/agents/registry.ts";
@@ -386,7 +387,7 @@ async function workspacesEndpoint(ctx: ExtApiCtx, req?: Request): Promise<Respon
   const activeExt = activeAgents(ctx.configDir);
   // 与 /sessions 同一行口径：已由 pi 站位行接管（placeholder）的 ext 行从列表剔除、
   // 由 pi 行代表——workspaces 也须排除，否则该 ext 行的 cwd 会多出一个幽灵项目、
-  // 且在共享目录下重复计数（实测 pi-work sessionCount 1227 虚高到 1085、
+  // 且在共享目录下重复计数（实测 aiti-dev sessionCount 1227 虚高到 1085、
   //   /tmp/cbc/e2e 幽灵项目）。placeholder 来源：注册表（external-session-placeholders.json）
   // + pi live 行索引 ext_id（getSessionBatch）。
   const placeholderExtIds = new Set<string>();
@@ -556,7 +557,7 @@ async function mergedSessionsEndpoint(ctx: ExtApiCtx, req?: Request): Promise<Re
   // relation：fork 子代理可见化（2026-09-07）后 dock 需要区分 subagent/分支图标与
   // 折叠 title——透传宿主行的 relation（仅带 parentSessionId 的行有值，~KB 级）。
   // projectKey：Windows 项目 key 过滤必需（2026-09-08）。服务端 projectIdentityKey
-  // 的 win32 语义是 normalize+lowercase（如 d:\workspace\pi-work），与 projectRoot/cwd
+  // 的 win32 语义是 normalize+lowercase（如 d:\workspace\aiti-dev），与 projectRoot/cwd
   // 原始形态不同形——曾因「客户端零读取」被丢弃，dock sessionsForProject 精确 ===
   // 过滤全部不匹配 → 列表闪现后被清空。dock 已加 normalizeWorkspaceKey 兜底，
   // 此处恢复宿主同构（getRecentProjects 也不再因形态差分裂重复项目条目）。
@@ -722,7 +723,17 @@ async function mergedSessionsEndpoint(ctx: ExtApiCtx, req?: Request): Promise<Re
   // core.listSessions() 有 5s 扫描缓存，归档后缓存未过期仍会报该会话——必须按
   // archivedRows 剔除，否则双桶共存 → 客户端全量应用后 dock 残留归档行（实测复现）。
   const archIdSet = new Set(archived.map((r) => String(r.id)));
-  const sessions = [...withLast, ...extRows].filter((s) => !archIdSet.has(String(s.id)));
+  // Tombstone belt: ids archived/deleted/removed within the last 20s are suppressed
+  // from the live bucket. Windows this closes: the host's 5s scan cache still
+  // reporting the deleted file, an ext source sync re-listing a just-removed
+  // session, and any assembler running between "marked" and "gone on disk" —
+  // without it the row flashes back into the list, then vanishes again on the
+  // next refresh (delete → flash-in → flash-out). The archived bucket is the
+  // destination, so it is never tombstoned.
+  const tombstoned = recentRemovedIds(ctx.configDir);
+  const sessions = [...withLast, ...extRows]
+    .filter((s) => !archIdSet.has(String(s.id)))
+    .filter((s) => !tombstoned.has(String(s.id)));
   // 会话标注（ExtSessionAnnotatorSlot；aiti-plan-first 绑定方案的 planFirst 标等）：
   // 合并进响应行（同进程注册表分发；单标注器异常不阻断）。标注覆盖两桶
   // （归档行的 planFirst 标在归档查看器里仍要显示）。
@@ -1006,6 +1017,9 @@ async function archiveEndpoint(req: Request, ctx: ExtApiCtx, sub: string | undef
         : undefined;
       const ids = Array.isArray(body?.ids) ? body.ids.filter((x): x is string => typeof x === "string") : undefined;
       const result = await runArchive(ctx.configDir, ctx.core, overrides, ids);
+      // Drop the activity-bus row cache: a trailing frame (≤3s) would otherwise
+      // carry the pre-archive live row and flash the session back into lists.
+      if (result.archivedIds?.length) dropActivityRows(result.archivedIds);
       return json(result);
     }
     case "extract": {
@@ -1017,6 +1031,7 @@ async function archiveEndpoint(req: Request, ctx: ExtApiCtx, sub: string | undef
       // put an archived session back to its original live path
       if (!body || typeof body.sessionId !== "string") return json({ error: "sessionId required" }, 400);
       const ok = restoreArchived(ctx.configDir, body.sessionId);
+      if (ok) dropActivityRows([body.sessionId]); // cached archived row is stale now
       return ok ? json({ ok: true }) : json({ error: "not found or not archived" }, 404);
     }
     case "ext-run": {
@@ -1026,6 +1041,7 @@ async function archiveEndpoint(req: Request, ctx: ExtApiCtx, sub: string | undef
       const resolved = resolveExtId(ctx.configDir, body.sessionId);
       if (!resolved) return json({ ok: false, error: "unknown external session id" }, 404);
       const result = await runExtArchive(ctx.configDir, ctx.core, resolved.adapter, resolved.sid);
+      if (result.ok) dropActivityRows([result.id]);
       return json(result, result.ok ? 200 : 422);
     }
     case "ext-restore": {
@@ -1035,12 +1051,14 @@ async function archiveEndpoint(req: Request, ctx: ExtApiCtx, sub: string | undef
       const resolved = resolveExtId(ctx.configDir, body.sessionId);
       if (!resolved) return json({ ok: false, error: "unknown external session id" }, 404);
       const result = await restoreExtArchive(ctx.configDir, ctx.core, resolved.adapter, resolved.sid);
+      if (result.ok) dropActivityRows([result.id]);
       return json(result, result.ok ? 200 : 422);
     }
     case "delete": {
       // permanent delete — archive records only (live files must be archived first)
       if (!body || typeof body.sessionId !== "string") return json({ error: "sessionId required" }, 400);
       const ok = deleteArchived(ctx.configDir, body.sessionId);
+      if (ok) dropActivityRows([body.sessionId]);
       return ok ? json({ ok: true }) : json({ error: "not found or not archived" }, 404);
     }
     case "ext": {
@@ -1050,6 +1068,7 @@ async function archiveEndpoint(req: Request, ctx: ExtApiCtx, sub: string | undef
       const ok = hidden
         ? hideExtSession(ctx.configDir, body.sessionId)
         : unhideExtSession(ctx.configDir, body.sessionId);
+      if (ok) dropActivityRows([body.sessionId]);
       return ok ? json({ ok: true }) : json({ error: "not found or not an ext row" }, 404);
     }
     case "session": {
