@@ -1213,8 +1213,14 @@ export class QoderHandle {
     };
     const facade = child as unknown as { detachable?: unknown; on?: (event: string, listener: () => void) => unknown };
     if (facade.detachable === true && typeof facade.on === "function") {
-      // Wrapper child: history arrives first, then the boundary (always emitted).
+      // Wrapper child: history arrives first, then the boundary.
       facade.on(REPLAY_END_EVENT, endReplay);
+      // Older hosts predate the boundary event: the replay is one batch written
+      // before any live traffic, so a short fallback keeps the session usable
+      // (otherwise `loading` would swallow every update forever).
+      setTimeout(() => {
+        if (handle.loading) endReplay();
+      }, 3000).unref?.();
     } else {
       endReplay(); // plain child: no journal, live from the start
     }
