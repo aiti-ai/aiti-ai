@@ -40,6 +40,7 @@ import {
   launchConfigPath,
   listEntries,
   logPath,
+  rebindEntry,
   readEntry,
   readyPath,
   registryDir,
@@ -504,6 +505,15 @@ export class LinuxMacWrapperStarter implements WrapperStarter {
 
   list(): SessionEntry[] {
     return listEntries();
+  }
+
+  /**
+   * Follow a backend that learns its native session id after start (omp,
+   * codebuddy …): the entry keeps its socket/log and just adopts the new id, so
+   * a later reattach by the native id finds the same live process.
+   */
+  rebind(oldSessionId: string, newSessionId: string): boolean {
+    return rebindEntry(oldSessionId, newSessionId);
   }
 
   private drop(key: string): void {
