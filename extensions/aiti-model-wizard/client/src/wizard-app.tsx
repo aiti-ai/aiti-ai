@@ -930,6 +930,8 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       return next;
     });
   };
+  // status legend chips (footer bar): "" | ok | rl | bad | rt | untested; single-select toggle
+  const [treeStatusFilter, setTreeStatusFilter] = useState("");
   const [editAvail, setEditAvail] = useState<any>({});      // provider → {models[], checked[]} 刷新出的可选模型
   const [availFilter, setAvailFilter] = useState<any>({});  // provider → 刷新列表搜索词
   const [refreshBusy, setRefreshBusy] = useState<any>({});  // provider → 刷新中
@@ -3120,14 +3122,31 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     // 搜索过滤：多词 AND 匹配 provider 名 / 模型 id；provider 命中展开全部模型，仅模型命中则只显示匹配行
     const kws = treeQ.trim().toLowerCase().split(/\s+/).filter(Boolean);
     const hay = (provider: string, id?: string) => (provider + " " + (id || "")).toLowerCase();
-    const provs = kws.length
+    // legend-chip filter (single-select toggle); predicate mirrors the per-model dot in checkDot
+    const stMatch = (provider: string, id: string, f: string) => {
+      const ck = chk && chk.state && chk.state.models ? chk.state.models[provider + "/" + id] : null;
+      const rt = rtOf(provider, id);
+      if (f === "ok") return !!ck && ck.lastOk;
+      if (f === "rl") return !!ck && ck.rateLimited;
+      if (f === "bad") return !!ck && !ck.lastOk && !ck.rateLimited;
+      if (f === "rt") return !!(rt && rt.count24h > 0);
+      if (f === "untested") return !ck && !(rt && rt.count24h > 0);
+      return true;
+    };
+    const sf = treeStatusFilter;
+    const provs = (kws.length
       ? st.providers.filter((p: any) => {
           const pMatch = kws.every((k) => hay(p.provider).includes(k));
           if (pMatch) return true;
           const ids = (p.models || []).map((m: any) => (typeof m === "string" ? m : m.id));
           return ids.some((id: string) => kws.every((k) => hay(p.provider, id).includes(k)));
         })
-      : st.providers;
+      : st.providers
+    ).filter((p: any) => {
+      if (!sf) return true;
+      const ids = (p.models || []).map((m: any) => (typeof m === "string" ? m : m.id));
+      return ids.some((id: string) => stMatch(p.provider, id, sf));
+    });
     return (
     <aside className="amw-sidebar">
       <div className="amw-sidebar-search">
@@ -3139,25 +3158,12 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
               onClick={() => setTreeQ("")} aria-label={ti("mw.a.437")} title={ti("mw.a.437")}>✕</button>
           ) : null}
         </div>
-        <button className="amw-btn" style={{ width: "100%", justifyContent: "center", marginTop: 6 }} disabled={!!(checkupSt && checkupSt.running)}
-          title={ti("mw.a.438")}
-          onClick={runCheckup}>
-          {(checkupSt && checkupSt.running) ? ti("mw.a.439") : ti("mw.a.23")}
-        </button>
       </div>
       <div className="amw-sidebar-list">
         <div className="amw-group-label">{ti("mw.a.440") + st.providers.length + (kws.length ? ti("mw.a.441") + provs.length + "/" + st.providers.length + " provider" : "")}</div>
         {checkAvail === false ? (
           <div style={{ padding: "0 8px 4px", fontSize: 11, color: "#d97706", lineHeight: 1.5, display: "flex", alignItems: "flex-start", gap: 4 }}>
             <span>{ti("mw.tx.113")}</span>
-          </div>
-        ) : chk ? (
-          <div style={{ padding: "0 8px 4px", fontSize: 11, color: "var(--text-dim,#9ca3af)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", whiteSpace: "nowrap" }}>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span className="amw-vdot" style={{ background: "#16a34a" }} />{ti("mw.a.66")}</span>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span className="amw-vdot" style={{ background: "var(--warn, #f59e0b)" }} />{ti("mw.a.103")}</span>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><span className="amw-vdot" style={{ background: "var(--danger, #ef4444)" }} />{ti("mw.tx.114")}</span>
-            <span title={ti("mw.a.442")}>{ti("mw.tx.115")}</span>
-            <span>{ti("mw.tx.116")}</span>
           </div>
         ) : null}
         {!provs.length ? (
@@ -3167,7 +3173,8 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           const selUnder = !!selNode && selNode.provider === p.provider;
           // provider 名命中 → 全量模型；否则只显示命中的模型
           const pNameHit = !kws.length || kws.every((k) => hay(p.provider).includes(k));
-          const ids = pNameHit ? allIds : allIds.filter((id: string) => kws.every((k) => hay(p.provider, id).includes(k)));
+          let ids = pNameHit ? allIds : allIds.filter((id: string) => kws.every((k) => hay(p.provider, id).includes(k)));
+          if (sf) ids = ids.filter((id: string) => stMatch(p.provider, id, sf));
           const ni = newInfo && newInfo.providers && newInfo.providers[p.provider];
           const agg = aggCheck(p.provider);
           const bal = bals && bals[p.provider];
@@ -3628,8 +3635,21 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             })}
           </div>
         ) : null}
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-          <span style={{ color: "var(--text-subtle,#666)", fontSize: 11, flex: 1 }}>{ti("mw.a.525") + st.providers.length + ti("mw.a.526") + st.file}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+          {([["ok", ti("mw.a.66"), "#16a34a", ti("mw.a.127")], ["rl", ti("mw.a.103"), "var(--warn, #f59e0b)", ti("mw.a.128")], ["bad", ti("mw.tx.114"), "var(--danger, #ef4444)", ti("mw.a.129")], ["rt", ti("mw.tx.115"), "#d97706", ti("mw.a.442")], ["untested", ti("mw.a.475"), "var(--text-dim,#9ca3af)", ti("mw.tx.116")]] as [string, string, string, string][]).map(([key, label, color, tip]) => (
+            <button key={key} className="amw-legend-chip" aria-pressed={treeStatusFilter === key}
+              title={tip}
+              style={treeStatusFilter === key ? { borderColor: "var(--accent, #2563eb)", color: "var(--accent, #2563eb)", background: "color-mix(in srgb, var(--accent, #2563eb) 10%, transparent)" } : undefined}
+              onClick={() => setTreeStatusFilter(treeStatusFilter === key ? "" : key)}>
+              <span className="amw-vdot" style={{ background: color }} />{label}
+            </button>
+          ))}
+          <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} disabled={!!(checkupSt && checkupSt.running)}
+            title={ti("mw.a.438")}
+            onClick={runCheckup}>
+            {(checkupSt && checkupSt.running) ? ti("mw.a.439") : ti("mw.a.23")}
+          </button>
+          <span style={{ color: "var(--text-subtle,#666)", fontSize: 11, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ti("mw.a.525") + st.providers.length + ti("mw.a.526") + st.file}</span>
           {undoInfo ? <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11, color: "#b45309" }} title={ti("mw.a.527") + undoInfo + ti("mw.a.528")} onClick={undoSave}>{ti("mw.tx.141")}</button> : null}
           <button className="amw-btn" title={ti("mw.a.529")} onClick={() => doRefreshProxies()}><Ic size={12} paths={ICONS.refresh} /> {ti("mw.tx.142")}</button>
           <button className="amw-btn" onClick={loadStatus} disabled={busy}>{ti("mw.tx.33")}</button>
