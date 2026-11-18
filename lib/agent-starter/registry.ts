@@ -173,6 +173,20 @@ export function listEntries(): SessionEntry[] {
   return entries;
 }
 
+/**
+ * Re-key an entry after the backend reported its real native session id
+ * (omp/codebuddy style backends learn it only after start). The registry key
+ * (socket/log/entry file names) stays unchanged; only `sessionId` moves, so
+ * recovery lookups by the native id hit the same hosted process.
+ */
+export function rebindEntry(oldSessionId: string, newSessionId: string): boolean {
+  if (!oldSessionId || !newSessionId || oldSessionId === newSessionId) return false;
+  const entry = findEntryBySession(oldSessionId);
+  if (!entry) return false;
+  writeEntry({ ...entry, sessionId: newSessionId });
+  return true;
+}
+
 /** Registry entry for a native session id (undefined = not managed / already pruned). */
 export function findEntryBySession(sessionId: string): SessionEntry | undefined {
   if (!sessionId) return undefined;

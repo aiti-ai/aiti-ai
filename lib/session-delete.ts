@@ -67,14 +67,21 @@ export async function deleteSessions(
   // an agent that is still flushing (a detached process dying, a just-finished
   // turn). Such a file is kept — losing a conversation is worse than a leftover.
   const requestStartedAt = Date.now();
+  // Detached wrapper registry: an agent may be running with no session file at
+  // all (omp, codebuddy, ACP bridges) — deleting it still has to stop it.
+  const wrapper = await getWrapperStarter().catch(() => undefined);
+  const hosted = new Set(wrapper ? wrapper.list().map((entry) => entry.sessionId) : []);
+
   const targets = new Map<string, string>();
+  const pathless = new Set<string>();
   const missing: string[] = [];
   for (const id of new Set(ids)) {
     const filePath = await resolveSessionPath(id);
     if (filePath) targets.set(id, filePath);
+    else if (hosted.has(id)) pathless.add(id); // live agent, no file to move
     else missing.push(id);
   }
-  if (targets.size === 0) return { deleted: [], missing, running: [] };
+  if (targets.size === 0 && pathless.size === 0) return { deleted: [], missing, running: [] };
 
   // Read only the bounded headers before deleting.
   const parentPathByKey = new Map<string, string | undefined>();
@@ -136,6 +143,9 @@ export async function deleteSessions(
   // parent: wrappers are shut down in this order.
   const runningIds = options.keepRunning ? new Set(getRunningRpcSessionIds()) : new Set<string>();
   const deletedSessionIds = new Set<string>();
+  // File-less sessions (live agent, no file) are deleted too — nothing to move,
+  // but the agent below is stopped through the starter.
+  for (const id of pathless) deletedSessionIds.add(id);
   const running: string[] = [];
   for (const id of targets.keys()) {
     if (deletedSessionIds.has(id)) continue;
@@ -252,7 +262,6 @@ export async function deleteSessions(
   // through the starter BEFORE touching the files (a live agent would keep
   // writing, and the mtime guard below would then keep every file).
   const preserved: string[] = [];
-  const wrapper = await getWrapperStarter().catch(() => undefined);
   if (wrapper) {
     const held = new Set(wrapper.list().map((entry) => entry.sessionId));
     const hosted = [...deletedSessionIds].filter((id) => held.has(id));
@@ -296,7 +305,8 @@ export async function deleteSessions(
     console.warn(`[pi-web] could not clear the sidebar state of deleted sessions: ${error instanceof Error ? error.message : String(error)}`);
   }
   invalidateSessionListCache();
+  const deleted = [...deletedSessionIds];
   return preserved.length > 0
-    ? { deleted: [...deletedSessionIds], missing, running, preserved }
-    : { deleted: [...deletedSessionIds], missing, running };
+    ? { deleted, missing, running, preserved }
+    : { deleted, missing, running };
 }
