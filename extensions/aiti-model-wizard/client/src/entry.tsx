@@ -53,8 +53,8 @@ function SessionStatsShell(_props: Record<string, unknown>) {
     return () => { dead = true; };
   }, []);
   const base: any = { fontSize: 11, color: "var(--text-dim,#6b7280)", lineHeight: 1.5 };
-  if (failed) return <div style={{ ...base, color: "#dc2626" }}>聚合 / 多 key 运行状态：读取失败（引擎可能未运行）</div>;
-  if (!d) return <div style={base}>聚合 / 多 key 运行状态 …</div>;
+  if (failed) return <div style={{ ...base, color: "#dc2626" }}>{t("mw.st.shellFailed")}</div>;
+  if (!d) return <div style={base}>{t("mw.st.shellLoading")}</div>;
   // 汇总（简版；完整版覆盖后展示每槽位详情）
   let slots = 0, cooling = 0, fail = 0, sat = 0;
   for (const p of d.status || []) {
@@ -68,22 +68,22 @@ function SessionStatsShell(_props: Record<string, unknown>) {
     sat += (p.saturation || []).length;
   }
   const chips: string[] = [];
-  if (sat > 0) chips.push(`⛔ 全池限流 ${sat}`);
-  if (cooling > 0) chips.push(`🧊 冷却 ${cooling}`);
-  if (fail > 0) chips.push(`⛔ 全部429 ${fail}`);
+  if (sat > 0) chips.push(t("mw.st.chipPoolLimit", { n: sat }));
+  if (cooling > 0) chips.push(t("mw.st.chipCooling", { n: cooling }));
+  if (fail > 0) chips.push(t("mw.st.chipAll429", { n: fail }));
   return (
     <div style={{ minWidth: 0 }}>
-      <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text,#1a1a1a)", marginBottom: 3 }}>聚合 / 多 key 运行状态</div>
+      <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text,#1a1a1a)", marginBottom: 3 }}>{t("mw.st.title")}</div>
       {d.status.length === 0 ? (
         <div style={base}>
           {d.loaded
-            ? "引擎已就绪，当前无多 key / 聚合 provider（给 provider 配 ≥2 个 key 或建聚合组后自动出现）"
+            ? t("mw.st.emptyLoaded")
             : d.present
-              ? "引擎已运行但为旧版本代码——重启 pi-web（或新建会话）后即显示实时状态"
-              : "引擎未加载（尚无 agent 会话启动过 pi-models-combo——开始一次对话后自动就绪）"}
+              ? t("mw.st.emptyPresent")
+              : t("mw.st.emptyNotLoaded")}
         </div>
       ) : (
-        <div style={base}>{d.status.length} 代理 · {slots} 槽位{chips.length ? " · " + chips.join(" · ") : ""}</div>
+        <div style={base}>{t("mw.st.proxiesSlots", { proxies: d.status.length, slots })}{chips.length ? " · " + chips.join(" · ") : ""}</div>
       )}
     </div>
   );
