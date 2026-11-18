@@ -184,11 +184,22 @@ function armPendingTtl(id: string) {
   disarmPendingTtl(id);
   pendingTtlTimers.set(id, setTimeout(() => {
     pendingTtlTimers.delete(id);
+    // In-flight backend op (slow archive / delete — large-file brotli can run tens
+    // of seconds): keep the row hidden and re-arm instead of flashing it back in
+    // mid-operation (delete → flash-in → flash-out). One notice on the first
+    // expiry; the marker still clears on the second consecutive expiry (~60s) so
+    // a truly hung request cannot hide the row forever (fuse preserved).
+    if (hasPendingOp(id) && !pendingSlowNoted.has(id)) {
+      pendingSlowNoted.add(id);
+      toastSlowNotice();
+      armPendingTtl(id);
+      return;
+    }
     const hadP = pendingRemovals.delete(id);
     const hadM = optimisticMoved.delete(id);
     if (hadP || hadM) {
       notifyPendingRemovals();
-      toastSlowNotice();
+      if (!hasPendingOp(id)) toastSlowNotice();
     }
   }, PENDING_TTL_MS));
 }
@@ -216,6 +227,25 @@ export function subscribePendingRemovals(l: () => void) {
   pendingRemovalSubs.add(l);
   return () => { pendingRemovalSubs.delete(l); };
 }
+
+/* In-flight backend operation registry (id → count). The TTL fuse consults it:
+ * while an op touching the id is still running, expiry re-arms instead of
+ * clearing the marker. Registration happens inside the store's own API functions
+ * (archiveSessions / deleteLiveSession / …) — call sites stay unchanged. */
+const pendingOps = new Map<string, number>();
+const pendingSlowNoted = new Set<string>();
+function opBegin(id: string) {
+  const k = String(id);
+  pendingOps.set(k, (pendingOps.get(k) ?? 0) + 1);
+  pendingSlowNoted.delete(k);
+}
+function opEnd(id: string) {
+  const k = String(id);
+  const n = (pendingOps.get(k) ?? 1) - 1;
+  if (n <= 0) pendingOps.delete(k);
+  else pendingOps.set(k, n);
+}
+function hasPendingOp(id: string): boolean { return pendingOps.has(String(id)); }
 
 /* ── Optimistic bucket-move rows (2026-11-29): archive/restore = a row moving between views,
  * a snapshot row steps in immediately ──
@@ -291,9 +321,18 @@ function prunePendingRemovals() {
   if (!pendingRemovals.size && !optimisticMoved.size) return;
   const liveIds = new Set((store.sessions ?? []).map((r) => String(r.id)));
   const archIds = new Set((store.archived ?? []).map((r) => String(r.id)));
+  // The dock renders store.projectSessions (the scoped channel) — a marker must
+  // survive until the row has left THAT bucket too, or clearing it on the full
+  // landing exposes the stale scoped row (dock delete → flash-in → flash-out):
+  // the full and scoped requests race, and whichever lands last decides what the
+  // dock shows. (archive/delete/remove rows leave both buckets; move rows keep
+  // their markers unset, so adding the scoped check hides nothing extra.)
+  const projIds = new Set((store.projectSessions ?? []).map((r) => String(r.id)));
   let changed = false;
   for (const [id, v] of [...pendingRemovals]) {
-    const gone = v.bucket === "live" ? !liveIds.has(id) : !archIds.has(id);
+    const gone = v.bucket === "live"
+      ? (!liveIds.has(id) && !projIds.has(id))
+      : !archIds.has(id);
     if (gone) { pendingRemovals.delete(id); if (!optimisticMoved.has(id)) disarmPendingTtl(id); changed = true; }
   }
   for (const [id, m] of [...optimisticMoved]) {
@@ -563,6 +602,9 @@ export function onOmpRebindFrame(frame: Record<string, unknown>): void {
 // 首拉是否已落地：noteDraftSession 的前提判据——列表未加载过时「不在列表」
 // 无法证明「未落盘」，误记会触发无谓的 refresh=1 补拉链（首载风暴推手之一）。
 let sessionsLoadedOnce = false;
+/** Whether at least one full list has landed (exported for dock-side render
+ *  filtering: before the first full landing the scoped rows are the only truth). */
+export function hasLoadedSessionsOnce(): boolean { return sessionsLoadedOnce; }
 
 function reconcilePendingDrafts(now = Date.now()): void {
   const liveIds = new Set((store.sessions ?? []).map((s) => String(s.id)));
@@ -633,6 +675,20 @@ export function onSessionActivityFrame(frame: Record<string, unknown>) {
   // 帧无 row（旧服务端/服务端行缓存未命中）→ 回退既有增量刷新。
   const row = frame.row as Record<string, unknown> | undefined;
   if (row && typeof row === "object" && String(row.id) === id) {
+    // Stale-frame guard (2026-11 anti-flicker): frames are throttled server-side
+    // (3s + trailing) and the attached row comes from the server's assembly-time
+    // row cache — a frame built before an archive landed still carries the old
+    // live row. Applying it would yank the row out of the archived bucket back
+    // into the live list (delete → flash-in → flash-out) even after the
+    // optimistic markers are gone (incl. archives done from another tab).
+    //   · live frame for an id the store only knows as archived → stale → skip;
+    //   · archived frame while an archive op is in flight (marker in the live
+    //     bucket) → skip, the fetch landing moves the row;
+    //   · frames that agree with the store still apply (content refresh;
+    //     archived-flag frames remain a valid landing signal for a live row).
+    const liveHit = ((store.sessions ?? []) as Record<string, unknown>[]).some((x) => String(x.id) === id);
+    if (!row.archived && !liveHit) return;
+    if (row.archived && isPendingRemoval(id, "live")) return;
     applyActivityRow(row);
     return;
   }
@@ -829,6 +885,7 @@ export async function refreshProjectSessions(key: string, opts: { refresh?: bool
       store.projectSessions = decoded;
       store.projectSessionsKey = k;
       reconcileLocalNames("scoped"); // 乐观改名套回（dock 渲染本源；只套本桶，不 purge）
+      prunePendingRemovals(); // scoped landing is a bucket change too: clear converged markers (else they linger until the TTL fuse misreports "still processing")
       const nextEtag = res.headers.get("etag");
       if (nextEtag) projectSessionsEtagByKey.set(k, nextEtag);
       emit();
@@ -1246,6 +1303,7 @@ export function collectSubtreeIds(sessions: any[], rootId: string): string[] {
 /** Archive a batch of sessions now (explicit ids — bypasses age/size heuristics). Server skips open (running/alive) ids and reports them in skippedIds. */
 export interface ArchiveSessionsResult { ok: boolean; skippedIds: string[]; }
 export async function archiveSessions(ids: string[]): Promise<ArchiveSessionsResult> {
+  for (const id of ids) opBegin(id);
   try {
     const res = await fetch(apiUrl("/api/extensions/session-manager/archive/run"), {
       method: "POST", headers: { "content-type": "application/json" },
@@ -1264,6 +1322,7 @@ export async function archiveSessions(ids: string[]): Promise<ArchiveSessionsRes
     refreshListChannels({ force: true });
     return { ok: res.ok, skippedIds: skipped };
   } catch { return { ok: false, skippedIds: [] }; }
+  finally { for (const id of ids) opEnd(id); }
 }
 
 /** Archive one session now (explicit id — bypasses age/size heuristics). Server refuses running ids. */
@@ -1277,6 +1336,7 @@ export async function archiveSession(id: string): Promise<ArchiveSessionsResult>
  *  A03 真归档：外部源复合 id（agent:sid）先试 /archive/ext-restore（.pwarc 解出 → putBack
  *  写回源 → 源列表确认）——无包（纯视图移除）时服务端 422，回退既有 pi 恢复/ext unhide 链。 */
 export async function restoreSession(id: string) {
+  opBegin(id);
   try {
     if (id.includes(":")) {
       const r = await fetch(apiUrl("/api/extensions/session-manager/archive/ext-restore"), {
@@ -1298,10 +1358,12 @@ export async function restoreSession(id: string) {
     refreshListChannels({ force: true });
     return res.ok;
   } catch { return false; }
+  finally { opEnd(id); }
 }
 
 /** A03 真归档：外部源会话 → .pwarc 快照 → 删源（adapter 需 remove 能力；可 /archive/ext-restore 放回）。 */
 export async function archiveExtSession(id: string): Promise<{ ok: boolean; error?: string }> {
+  opBegin(id);
   try {
     const res = await fetch(apiUrl("/api/extensions/session-manager/archive/ext-run"), {
       method: "POST", headers: { "content-type": "application/json" },
@@ -1314,10 +1376,12 @@ export async function archiveExtSession(id: string): Promise<{ ok: boolean; erro
     }
     return { ok: false, error: d?.error || "HTTP " + res.status };
   } catch (e: any) { return { ok: false, error: e?.message || String(e) }; }
+  finally { opEnd(id); }
 }
 
 /** Permanently delete an archived session (archive records only — 先归档才能删除). */
 export async function deleteArchivedSession(id: string) {
+  opBegin(id);
   try {
     const res = await fetch(apiUrl("/api/extensions/session-manager/archive/delete"), {
       method: "POST", headers: { "content-type": "application/json" },
@@ -1326,10 +1390,12 @@ export async function deleteArchivedSession(id: string) {
     refreshListChannels({ force: true });
     return res.ok;
   } catch { return false; }
+  finally { opEnd(id); }
 }
 
 /** ext 源行（zcode/cursor 等只读镜像行）「从列表移除」/恢复：视图层归档，源数据不动。 */
 export async function hideExtSession(id: string, hidden = true) {
+  opBegin(id);
   try {
     const res = await fetch(apiUrl("/api/extensions/session-manager/archive/ext"), {
       method: "POST", headers: { "content-type": "application/json" },
@@ -1338,6 +1404,7 @@ export async function hideExtSession(id: string, hidden = true) {
     refreshListChannels({ force: true });
     return res.ok;
   } catch { return false; }
+  finally { opEnd(id); }
 }
 
 /** 相关文档（server 端进程内消费 aiti-doc-center services.docs；available:false = 文档中心缺席）。 */
@@ -1409,6 +1476,7 @@ export async function detectSessionCwd(id: string): Promise<SessionCwdResult | n
  *  (for per-row rollback of optimistic removal — 2026-11-29: skipped rows were not archived and
  *  must be shown again). */
 export async function archiveBatchSession(ids: string[]): Promise<{ ok: boolean; archived: number; skipped: number; skippedIds: string[] }> {
+  for (const id of ids) opBegin(id);
   try {
     const res = await fetch(apiUrl("/api/extensions/session-manager/archive/run"), {
       method: "POST", headers: { "content-type": "application/json" },
@@ -1422,11 +1490,13 @@ export async function archiveBatchSession(ids: string[]): Promise<{ ok: boolean;
   } catch {
     return { ok: false, archived: 0, skipped: 0, skippedIds: [] };
   }
+  finally { for (const id of ids) opEnd(id); }
 }
 
 /** Permanently delete a LIVE session file (core DELETE：级联重挂子会话 + 停 rpc + 删文件)。
  *  Returns the error message from the server on failure, null on success. */
 export async function deleteLiveSession(id: string): Promise<string | null> {
+  opBegin(id);
   try {
     const res = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(id)}`), { method: "DELETE" });
     const d = await res.json().catch(() => ({}));
@@ -1436,6 +1506,7 @@ export async function deleteLiveSession(id: string): Promise<string | null> {
   } catch (e) {
     return e instanceof Error ? e.message : String(e);
   }
+  finally { opEnd(id); }
 }
 
 /** POST an action; handles the optimistic-lock 409 by re-fetching + retrying once. */
