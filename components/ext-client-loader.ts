@@ -90,6 +90,8 @@ async function loadBundleRegistry(): Promise<Map<string, (ctx: unknown) => unkno
 }
 /** Extensions already warned about for "no register export" (prevents duplicate log spam). */
 const warnedNullRegister = new Set<string>();
+/** Extensions already warned about for "no boot-graph entry" (see prefetch). */
+const warnedNoEntry = new Set<string>();
 let bootGraph: PiWebBootGraph = { rev: "", entries: [] };
 
 /**
@@ -139,6 +141,20 @@ export function isImmediateEntry(entry: PiWebBootEntry): boolean {
   return entry.immediately !== false;
 }
 
+/** Slot declarers with no boot-graph entry (meaningful once the graph has landed):
+ *  the server kept them out — client file missing/unreadable — so they can never
+ *  register rendered items and every slot they declare falls back to the host ui.
+ *  Consumed by the bottom-left error indicator: in practice this is almost always
+ *  a deployment that shipped the extension source without building its client. */
+export function clientlessSlotDeclarers(): Array<{ extId: string; slots: string[] }> {
+  if (!bootGraphLanded) return [];
+  const out: Array<{ extId: string; slots: string[] }> = [];
+  for (const [extId, slots] of declaredSlots) {
+    if (slots.length > 0 && !entryOf(extId)) out.push({ extId, slots });
+  }
+  return out;
+}
+
 /** Targets for the startup batch: immediate items only — lazy extensions are neither prefetched nor materialized. */
 export function immediateEntries(graph: PiWebBootGraph): PiWebBootEntry[] {
   return graph.entries.filter(isImmediateEntry);
@@ -171,8 +187,15 @@ export function getBootGraph(): PiWebBootGraph {
 }
 
 /** Writes the latest graph after the manifest is fetched (first load / refresh after reload). */
+let bootGraphLanded = false;
+/** Whether the manifest's boot graph has landed (client inventory known). "No graph entry"
+ *  is only a deterministic verdict after this — before it, entries may still arrive. */
+export function hasBootGraphLanded(): boolean {
+  return bootGraphLanded;
+}
 export function setBootGraph(graph: PiWebBootGraph): void {
   bootGraph = graph;
+  bootGraphLanded = true;
 }
 
 /** A given extension's entry in the graph; unknown ids return undefined. */
@@ -205,19 +228,43 @@ function notifyMaterializeSettled(id: string, ok: boolean): void {
 
 /** Whether every extension declaring the slot failed to materialize (and at
  *  least one declarer exists). False while any declarer is still pending or
- *  succeeded — only a total failure is a deterministic "no takeover" signal. */
+ *  succeeded — only a total failure is a deterministic "no takeover" signal.
+ *  A declarer with no boot-graph entry (the server kept it out: its client file
+ *  is missing/unreadable → clientHash "") is likewise deterministic: it can
+ *  never fetch a bundle nor register rendered items. Only evaluated once the
+ *  graph has landed — before that, entries may still arrive with the manifest. */
 export function declaredAllFailed(slot: string): boolean {
   const ids = [...declaredSlots.entries()]
     .filter(([, slots]) => slots.includes(slot))
     .map(([id]) => id);
   if (ids.length === 0) return false;
-  return ids.every((id) => materializeFailures.has(id));
+  if (!bootGraphLanded) return false;
+  return ids.every((id) => materializeFailures.has(id) || !entryOf(id));
 }
 
 /** Phase one: fetch the bundle and grab the register entry (never called, no side effects). */
 export async function prefetch(id: string): Promise<void> {
   const entry = entryOf(id);
-  if (!entry) return;
+  if (!entry) {
+    // Graph not landed yet: the entry may still arrive with the manifest — stay
+    // silent (no verdict). Once the graph has landed, absence is authoritative:
+    // the server kept the extension out of the boot graph — its client file is
+    // missing or unreadable (clientHash ""), so it can never fetch a bundle nor
+    // register. Register the failure (not a silent bail) so takeover waiting
+    // windows release to the fallback immediately instead of waiting out the
+    // anti-deadlock ceiling with no signal at all. invalidate() (reload) forgets
+    // it and grants a retry once a built/reinstalled client puts the extension
+    // back into the graph.
+    if (hasBootGraphLanded()) {
+      materializeFailures.set(id, "no client bundle (not in the boot graph — client file missing/unreadable; build the extension's client or reinstall it)");
+      if (!warnedNoEntry.has(id)) {
+        warnedNoEntry.add(id);
+        console.warn(`[ext] ${id}: declares ui slot(s) but has no loadable client bundle (missing client file) — takeover slots will fall back to the host ui`);
+      }
+      notifyMaterializeSettled(id, false);
+    }
+    return;
+  }
   const sourceUrl = moduleSourceUrl(entry);
   const existing = modules.get(id);
   if (existing && existing.url === sourceUrl && existing.rev === entry.rev) return; // same source, same rev: already tracked

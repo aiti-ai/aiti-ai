@@ -2023,6 +2023,8 @@ export const zhTWLocale: LocalePlugin = {
     "extPanel.startupFailed": "啟動失敗",
     "extPanel.shutdownFailed": "關閉失敗",
     "extPanel.loadFailed": "載入失敗",
+    "extPanel.clientMissing": "用戶端缺失",
+    "extPanel.clientMissingMsg": "擴充功能 {ext} 缺少瀏覽器端檔案（通常是部署時未建置擴充功能的用戶端），相關介面已回退至內建版本。請在擴充功能目錄執行 npm run build:client 重新建置，或重新安裝該擴充功能。",
     "extPanel.kindUncaught": "未捕獲錯誤",
     "extPanel.kindRender": "渲染失敗",
     "extPanel.title": "擴充功能錯誤（{count}）— 點選查看 / 可拖動",

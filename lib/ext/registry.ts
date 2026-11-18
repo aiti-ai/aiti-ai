@@ -726,6 +726,14 @@ export class ExtRegistryImpl {
         if (!existsSync(stateDir)) mkdirSync(stateDir, { recursive: true });
         const cacheDir = join(extRoot, "cache");
         if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true });
+        // Client-file presence check (non-fatal): the server half still works, but the
+        // extension is kept out of the boot graph (clientHash "") so ui slots that need
+        // rendered items — takeover slots like sidebarContent — can never materialize.
+        // The client side releases those deterministically (ext-client-loader); this warn
+        // makes the root cause visible server-side instead of a silent fallback.
+        if (ext.client && !existsSync(join(dir, ext.client))) {
+          console.warn(`[ext] ${id}: client file missing: ${ext.client} — client ui slots cannot load (build the extension's client, e.g. npm run build:client, or reinstall the extension)`);
+        }
         // Version source of truth = package.json (the release flow maintains it);
         // the entry-declared version is only a fallback for package.json-less
         // extensions. Hand-written entry versions historically drifted stale
