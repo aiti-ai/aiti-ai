@@ -252,6 +252,11 @@ export function SidebarContentDock(props: Record<string, any>) {
 
   /* ── 初始恢复（原宿主恢复 effect 同构迁移：?session= 恢复 / 默认项目自动选）── */
   const restoredRef = useRef(false);
+  // Fresh host state mirror for async closures below (the effect closes over a
+  // stale prop): when the user picks a session while the restore is still in
+  // flight, the restore must yield instead of yanking them back.
+  const selectedSessionIdRef = useRef<string | null>(selectedSessionId ?? null);
+  selectedSessionIdRef.current = selectedSessionId ?? null;
   // URL 恢复定案前挂起默认项目自动选：initialSessionId 由宿主 post-hydration 派生
   //（首帧为 null），且恢复 effect 会随 store.sessions/workspaces 落地多次重跑——仅靠
   // restoredRef 防不住：重跑时 restoredRef 已 true 会直接落入默认选分支，把右侧切到
@@ -268,6 +273,15 @@ export function SidebarContentDock(props: Record<string, any>) {
     if ((sessions.length === 0 && workspaces.length === 0) || skipInitialProjectSelection) return;
     // URL 恢复优先（?session= 可能晚于首帧到达——宿主 post-hydration 才派生 initialSessionId）
     if (initialSessionId && !restoredRef.current) {
+      // A genuine user pick landed while the restore was still waiting for the
+      // lists (large catalogs land slowly): the URL restore yields — restoring
+      // now would switch the user off the session they just opened and rewrite
+      // ?session= back to the URL id. Settle as done, skip restore AND default pick.
+      if (selectedSessionId && selectedSessionId !== initialSessionId) {
+        restoredRef.current = true;
+        restorePendingRef.current = false;
+        return;
+      }
       restoredRef.current = true;
       const target = sessions.find((s) => s.id === initialSessionId);
       if (target) {
@@ -293,6 +307,10 @@ export function SidebarContentDock(props: Record<string, any>) {
         }
         onInitialRestoreDone?.();
         restorePendingRef.current = false; // 定案：恢复成功即止，失败才补默认选
+        // The user picked a session while this by-id restore was in flight (host
+        // yields and returns false in that case): skip the default project pick
+        // too — any cwd notification now would fight the user's pick.
+        if (selectedSessionIdRef.current && selectedSessionIdRef.current !== initialSessionId) return;
         if (ok) return;
         if (cwdRef.current === null) {
           const projects = sessions.length > 0
@@ -324,7 +342,7 @@ export function SidebarContentDock(props: Record<string, any>) {
         onCwdChangeRef.current?.(projects[0].root);
       }
     }
-  }, [store.sessions, store.workspaces, initialSessionId, skipInitialProjectSelection, onSelectSession, onOpenById, onInitialRestoreDone]);
+  }, [store.sessions, store.workspaces, initialSessionId, skipInitialProjectSelection, onSelectSession, onOpenById, onInitialRestoreDone, selectedSessionId]);
 
   /* ── running/unread（store 权威；宿主过渡逻辑的接管态迁移）── */
   const runningSessionIds = store.running as Set<string>;
