@@ -23,7 +23,7 @@ jobs:
           pass=0
           while :; do
             pass=$((pass+1))
-            IDS=$(gh api "$PKG/versions?per_page=100&page=1" --jq '.[] | "\(.id)|\(.metadata.container.tags // [] | join(","))"' 2>/dev/null)
+            IDS=$(gh api "$PKG/versions?per_page=100&page=1" --jq '.[] | "\(.id)|\(.metadata.container.tags // [] | join(","))"' 2>/dev/null) || { sleep 5; continue; }
             [ -z "$IDS" ] && break
             pending=0
             while IFS='|' read -r VID TAGS; do
@@ -32,9 +32,14 @@ jobs:
                 kept=$((kept+1))
                 echo "KEEP  $VID tags=[$TAGS]"
               else
-                CODE=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE \
-                  -H "Authorization: Bearer ${{ github.token }}" \
-                  "$PKG/versions/$VID")
+                CODE=ERR
+                for try in 1 2 3; do
+                  CODE=$(curl -s --retry 2 --max-time 30 -o /dev/null -w '%{http_code}' -X DELETE \
+                    -H "Authorization: Bearer ${{ github.token }}" \
+                    "$PKG/versions/$VID") || CODE=ERR
+                  [ "$CODE" = "ERR" ] && sleep 3
+                  [ "$CODE" != "ERR" ] && break
+                done
                 deleted=$((deleted+1))
                 pending=1
                 echo "DEL   $VID tags=[$TAGS] → $CODE"
