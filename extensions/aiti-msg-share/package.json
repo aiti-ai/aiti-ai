@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-msg-share",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "type": "module",
   "description": "Share sessions, messages, selections, files and images through pluggable targets with secret redaction and QR codes",
   "license": "MIT",

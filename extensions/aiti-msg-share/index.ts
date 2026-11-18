@@ -11,21 +11,30 @@ import { ShareStore, makeRedactor, publicTarget, exportSessionMarkdown } from ".
 
 let configDir = "";
 let stateDir = "";
+let cacheDir = "";
 let store;
 let registry = null;
 let redact = (t) => ({ text: t, hits: [] });
 let secretEngineReady = false;
+
+/** Published audit catalog (dead markings + bilingual notes); overridable for tests/dev. */
+const CATALOG_URL = process.env.AITI_SHARE_TARGETS_URL || "https://aiti.pw/share-targets.json";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
   headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
 });
 
-async function ensureRuntime() {
-  if (registry) return registry;
+async function ensureRuntime(force = false) {
+  if (registry && !force) return registry;
   const cs = await import("@aiti-ai/content-share");
-  registry = new cs.Registry();
-  await registry.init();
+  registry = new cs.Registry({
+    // Remote overlay: dead markings, bilingual notes and labels from the
+    // published audit doc; falls back to the bundled catalog when unreachable.
+    url: CATALOG_URL,
+    cacheDir: cacheDir || undefined,
+  });
+  await registry.init(force);
   const { customProvider } = cs;
   registry.register(customProvider());
   // Re-register user-imported .sxcu configs (persisted on the target record) —
@@ -385,10 +394,17 @@ export default {
     if (!configDir) {
       configDir = ctx.configDir || "";
       stateDir = ctx.stateDir || join(dirname(configDir), "state", "aiti-msg-share");
+      cacheDir = ctx.cacheDir || join(dirname(configDir), "cache", "aiti-msg-share");
       store = new ShareStore(configDir, stateDir);
     }
     const reg = await ensureRuntime();
     await ensureSecretEngine();
+
+    // POST /refresh — force-reload the remote catalog overlay (bypasses TTL).
+    if (p[0] === "refresh" && req.method === "POST") {
+      const fresh = await ensureRuntime(true);
+      return json({ ok: true, count: fresh.catalog().length });
+    }
 
     // GET /catalog — all targets + metadata
     if (p[0] === "catalog" && req.method === "GET") {
