@@ -65,4 +65,6 @@ export interface WrapperStarter extends AgentStarter {
   kill(sessionId: string, signal?: string): Promise<boolean>;
   /** Every entry the registry currently knows about. */
   list(): SessionEntry[];
+  /** Follow a backend that reports its native session id only after start. */
+  rebind(oldSessionId: string, newSessionId: string): boolean;
 }

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { resolveSessionPath } from "@/lib/session-reader";
 import { getOfflineSessionStats, startRpcSession, getRpcSession, setRpcSessionTools } from "@/lib/rpc-manager";
 import { cwdMissingBody, missingCwdFromBody } from "@/lib/missing-cwd";
-import { resolveAnySession, resolveAttachBySessionId, attachIfBridged, resolvePlaceholderSession, resolveExternalCompositeSession } from "@/lib/session";
+import { resolveAnySession, resolveAttachBySessionId, resolveDetachedSession, attachIfBridged, resolvePlaceholderSession, resolveExternalCompositeSession } from "@/lib/session";
 import { sendWithAcceptWindow } from "@/lib/agent-command-accept";
 import { EXTENSION_REPORTED_CODE } from "@/lib/agent-client";
 
@@ -81,6 +81,12 @@ export async function POST(
     if (!existing?.isAlive()) {
       const ph = await resolvePlaceholderSession(id).catch(() => undefined);
       if (ph?.isAlive()) existing = ph;
+    }
+    // Detached wrapper (file-less backends included): the agent outlived a
+    // restart/reload, so drive the live process instead of starting a new one.
+    if (!existing?.isAlive()) {
+      const detached = await resolveDetachedSession(id).catch(() => undefined);
+      if (detached?.isAlive()) existing = detached;
     }
 
     // Upstream v0.8.10: set_tools hot-updates the tool set (rebuilds from the file path when the session isn't running).

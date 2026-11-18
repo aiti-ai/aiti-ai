@@ -119,6 +119,32 @@ export function splitHandleId(id: string): { agent: string; sid: string } {
 }
 
 /**
+ * Host markers every agent process must inherit.
+ *
+ * Port discovery (service-tunnels) attributes a listening socket to this pi-web
+ * instance either through the process tree or through the marker in
+ * `/proc/<pid>/environ`. A detached agent leaves the process tree, so the marker
+ * is the only remaining link — and agent backends build a curated env (account
+ * isolation), which drops it. Re-adding it at the DI seam keeps discovery
+ * working for BOTH strategies (it is an opaque id, never a credential).
+ */
+const HOST_MARKER_ENVS = ["SERVICE_TUNNELS_MARKER", "PI_WEB_CHILD_MARKER"] as const;
+
+function withHostMarkers<T extends { env?: Record<string, string | undefined> }>(options: T): T {
+  if (!options.env) return options; // no env override → the child inherits process.env
+  const env = { ...options.env };
+  let changed = false;
+  for (const name of HOST_MARKER_ENVS) {
+    const value = process.env[name];
+    if (value && env[name] === undefined) {
+      env[name] = value;
+      changed = true;
+    }
+  }
+  return changed ? { ...options, env } : options;
+}
+
+/**
  * Attach the core's chosen agent-process strategy to the createSession options
  * (the DI seam). Providers never import the factory; they call
  * `options.agentStarter.spawn(...)` when present and fall back to their own
@@ -145,14 +171,14 @@ async function withAgentStarter(
     // address exactly the provider that started the process (agentKey alone is
     // ambiguous: several backends can drive "pi").
     const owner = provider?.type;
-    const tagged =
-      owner && starter.kind === "wrapper"
-        ? {
-            kind: starter.kind,
-            spawn: (command: string, args: string[], spawnOptions?: Record<string, unknown>) =>
-              starter.spawn(command, args, { ...(spawnOptions ?? {}), owner }),
-          }
-        : starter;
+    const tagged = {
+      kind: starter.kind,
+      spawn: async (command: string, args: string[], spawnOptions?: Record<string, unknown>) =>
+        starter.spawn(command, args, {
+          ...withHostMarkers((spawnOptions ?? {}) as { env?: Record<string, string | undefined> }),
+          ...(owner ? { owner } : {}),
+        }),
+    };
     return { ...options, agentStarter: tagged };
   } catch (err) {
     // Never block session creation on a starter probe failure — the provider's
@@ -176,6 +202,27 @@ type DetachedRecovery =
   | { status: "none" }
   | { status: "attached"; handle: SessionHandle }
   | { status: "blocked"; reason: string };
+
+/**
+ * Follow a backend that only learns its native session id after start (omp,
+ * codebuddy …): the wrapper registry entry is re-keyed so a later recovery can
+ * find the still-running process by that id.
+ */
+function watchBackendRebind(handle: SessionHandle, spawnKey: string): void {
+  handle.subscribe((event) => {
+    if (event.type !== "session_backend_ready" || typeof event.id !== "string") return;
+    const oldId = (event as unknown as { oldId?: unknown }).oldId;
+    const from = typeof oldId === "string" ? oldId : spawnKey;
+    if (!from || from === event.id) return;
+    void getWrapperStarter()
+      .then((wrapper) => {
+        if (!wrapper) return;
+        const moved = wrapper.rebind(from, event.id as string);
+        if (moved) console.log(`[session] detached registry re-keyed ${from} → ${event.id}`);
+      })
+      .catch((err) => console.warn(`[session] registry re-key failed: ${err instanceof Error ? err.message : String(err)}`));
+  });
+}
 
 /**
  * Reattach to a session whose agent process is hosted by a detached wrapper
@@ -231,6 +278,9 @@ async function attachDetachedSession(
         ...(entry.cwd ? { cwd: entry.cwd } : {}),
         attached: { child, sessionId, agentKey: entry.agentKey },
       });
+      // A backend that learns its native id late may announce it right after the
+      // adopt (omp): keep the registry entry addressable by that id.
+      watchBackendRebind(handle, sessionId);
       return { status: "attached", handle };
     } catch (err) {
       lastError = err;
@@ -483,6 +533,10 @@ export function resolveAnySession(id: string): WrappedSessionLike | undefined {
  * attachment for /api/agent/[id] (GET/SSE) this way; the file is history replay only.
  */
 export async function resolveAttachBySessionId(id: string): Promise<WrappedSessionLike | undefined> {
+  // File-less backends (omp/codebuddy/…): the session has no pi session file, so
+  // the only door is the detached-wrapper registry, keyed by the native id.
+  const detached = await resolveDetachedSession(id).catch(() => undefined);
+  if (detached) return detached;
   const bridgeFile = await findBridgeSessionFileById(id);
   if (!bridgeFile) return undefined;
   try {
@@ -491,6 +545,24 @@ export async function resolveAttachBySessionId(id: string): Promise<WrappedSessi
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Resolve a session whose agent process is hosted by a detached wrapper, by its
+ * native id. This is the reattach door for backends WITHOUT a pi session file
+ * (omp, codebuddy, ACP bridges): no file means no `attachIfBridged` uuid and no
+ * placeholder row, so the wrapper registry is the only place that knows the
+ * process is still alive.
+ */
+export async function resolveDetachedSession(id: string): Promise<WrappedSessionLike | undefined> {
+  if (!id) return undefined;
+  const existing = lookupHandle(id);
+  if (existing?.alive()) return new HandleSessionAdapter(existing);
+  const recovery = await attachDetachedSession(id);
+  if (recovery.status === "blocked") throw new BridgeOccupiedError(id, recovery.reason);
+  if (recovery.status !== "attached") return undefined;
+  putHandle(recovery.handle);
+  return recovery.handle.alive() ? new HandleSessionAdapter(recovery.handle) : undefined;
 }
 
 /**
@@ -526,6 +598,10 @@ export async function createSessionHandle(
       : await provider.createSession(await withAgentStarter(provider, options));
   if (type !== DEFAULT_PROVIDER_TYPE) {
     putHandle(handle);
+    // A detached wrapper recorded the spawn under the id we asked for; if the
+    // backend later reports its real native id, move the registry entry so the
+    // session stays recoverable by the id its file carries.
+    if (detached.status === "none") watchBackendRebind(handle, options.sessionId ?? handle.id);
     // The backend may only learn its real native id after the first message (e.g.
     // lazy CLI initialization) — listen for session_backend_ready and additionally
     // register the handle under the real composite id; the original key is kept and
