@@ -29,9 +29,11 @@ test("slot contract: newSessionSelectors + newSessionPreparers are declared in E
 });
 
 test("render-point DOM order: Workspace < newSessionSelectors < Backend", () => {
-  const workspaceAt = chatWindow.indexOf(">Workspace</span>");
+  // Labels are localized now (chat.newSessionWorkspace / chat.newSessionBackend);
+  // locate them by their i18n key so the DOM-order contract survives copy changes.
+  const workspaceAt = chatWindow.indexOf('{t("chat.newSessionWorkspace")}');
   const selectorsAt = chatWindow.indexOf('name="newSessionSelectors"');
-  const backendAt = chatWindow.indexOf(">Backend</span>");
+  const backendAt = chatWindow.indexOf('{t("chat.newSessionBackend")}');
   assert.notEqual(workspaceAt, -1, "Workspace label missing");
   assert.notEqual(selectorsAt, -1, "newSessionSelectors slot missing");
   assert.notEqual(backendAt, -1, "Backend label missing");
