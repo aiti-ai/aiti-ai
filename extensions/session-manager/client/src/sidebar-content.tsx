@@ -343,7 +343,7 @@ export function SidebarContentDock(props: Record<string, any>) {
         return next;
       });
     }
-    if (completedInBackground.length > 0) onBackgroundTaskDone?.();
+    if (completedInBackground.length > 0) onBackgroundTaskDone?.(completedInBackground);
     prevRunningRef.current = runningSessionIds;
   }, [runningSessionIds, selectedSessionId, onBackgroundTaskDone]);
   useEffect(() => { onRunningSessionIdsChange?.(runningSessionIds); }, [runningSessionIds, onRunningSessionIdsChange]);
@@ -659,7 +659,9 @@ export function SidebarContentDock(props: Record<string, any>) {
           staticShell={StaticDockShell}
           filler={(appCenterApi || quickstartApi)
             ? () => {
-                if (!appCenterApi) return quickstartApi ? quickstartApi.renderQuickstart() : null;
+                // Standalone guide (no app center): the DockStack spacer has no padding,
+                // so restore the 12px side gutter the filler no longer carries itself.
+                if (!appCenterApi) return quickstartApi ? <div style={{ padding: "0 12px" }}>{quickstartApi.renderQuickstart()}</div> : null;
                 return appCenterApi.renderAppCenter({ header: quickstartApi ? quickstartApi.renderQuickstart() : null });
               }
             : undefined}
