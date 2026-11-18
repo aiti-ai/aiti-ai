@@ -3,6 +3,11 @@
 The smallest complete example of attaching aiti-devtools to a web app: a plain
 vite project whose only addition is one plugin call.
 
+Published as **`@aiti-ai/example-vite`** (the `examples/aiti-vite-demo` directory).
+The package is **standalone**: it depends on the vite carrier plugin and vite
+only — it does not ship or pull the pi-web distribution, and the tarball is four
+files plus a lockfile.
+
 ```bash
 npm install
 npm run dev          # http://127.0.0.1:5199
