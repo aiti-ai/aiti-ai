@@ -579,11 +579,13 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, f
 
       </div>
 
-      {/* Bottom row: action buttons + timestamp */}
+      {/* Bottom row: action buttons + timestamp. Wraps on narrow phones:
+          a flex-end row that overflows spills past the LEFT edge (copy would
+          vanish off-screen), so wrap instead of letting it overflow. */}
       {(time || canFork || canEdit || true) && (
         <div style={{
           display: "flex", alignItems: "center", justifyContent: "flex-end",
-          gap: 6, marginTop: 3,
+          flexWrap: "wrap", gap: 6, marginTop: 3,
         }}>
           <div style={{
             display: "flex", gap: 3,
@@ -623,7 +625,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, f
           </div>
           {(canFork || canNavigate || canEditFromHere || canEdit || canCancelEdit) && (
             <div style={{
-              display: "flex", gap: 3,
+              display: "flex", flexWrap: "wrap", gap: 6,
               opacity: (hovered || forking || canCancelEdit) ? 1 : 0,
               pointerEvents: (hovered || forking || canCancelEdit) ? "auto" : "none",
               transition: "opacity 0.12s",
@@ -1069,7 +1071,8 @@ function AssistantMessageView({
         {textContent && !isStreaming && (
           <div
             style={{
-              display: "flex", alignItems: "center", gap: 6, marginLeft: "auto",
+              display: "flex", alignItems: "center", flexWrap: "wrap",
+              gap: 6, marginLeft: "auto",
               opacity: hovered ? 1 : 0,
               pointerEvents: hovered ? "auto" : "none",
               transition: "opacity 0.12s",
@@ -1100,7 +1103,8 @@ function AssistantMessageView({
       {textContent && !isStreaming && (
         <div
           style={{
-            display: "flex", alignItems: "center", gap: 6, marginTop: 2,
+            display: "flex", alignItems: "center", flexWrap: "wrap",
+            gap: 6, marginTop: 2,
             opacity: hovered ? 1 : 0,
             pointerEvents: hovered ? "auto" : "none",
             transition: "opacity 0.12s",
