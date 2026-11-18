@@ -1,7 +1,7 @@
 // x-opencode-session 自学习单测：上游 400 MissingSessionID → 学习 host（全局标记）+ 带头重发一次
 // 覆盖：testConnection 经 httpPostJson 自愈 / 学习后后续请求首跳即带头 / 普通 400 不重试原样透传
 import { createRequire } from "module";
-import { makeUpstream, Tester } from "../../../pi-models-combo/test/util.mjs";
+import { makeUpstream, Tester } from "../../../pi-plugins/pi-models-combo/test/util.mjs";
 
 const require = createRequire(import.meta.url);
 const wz = require("../core.cjs");
