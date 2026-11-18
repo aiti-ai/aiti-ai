@@ -2024,6 +2024,8 @@ export const enLocale: LocalePlugin = {
     "extPanel.startupFailed": "Startup failed",
     "extPanel.shutdownFailed": "Shutdown failed",
     "extPanel.loadFailed": "Load failed",
+    "extPanel.clientMissing": "Client bundle missing",
+    "extPanel.clientMissingMsg": "Extension {ext} has no browser client bundle (usually deployed without building the extension's client). Affected UI has fallen back to the built-in version — build it (npm run build:client in the extension dir) or reinstall the extension.",
     "extPanel.kindUncaught": "Uncaught error",
     "extPanel.kindRender": "Render failed",
     "extPanel.title": "Extension errors ({count}) — click to view / draggable",

@@ -61,6 +61,7 @@ import {
   type ExtUiItemRegistered,
 } from "@/lib/ext-ui-store";
 import {
+  clientlessSlotDeclarers,
   entryOf,
   declaredAllFailed,
   getBootGraph,
@@ -416,6 +417,33 @@ function syncLoadErrors(failed: { id: string; error: string }[] | undefined): vo
   for (const k of next) registeredLoadErrors.add(k);
 }
 
+// ── Clientless slot declarers → bottom-left error indicator ──
+// A slot declarer with no boot-graph entry (the server kept it out: client file
+// missing/unreadable) can never register rendered items — takeover slots like
+// sidebarContent silently fall back to the host ui. In practice this is almost
+// always a deployment that shipped the extension source without building its
+// client (dist/) — surface it visibly instead of a silent fallback. Same id
+// overwrites for dedup; a reload that fixes the extension (client now in the
+// graph) removes the error automatically.
+const registeredClientlessErrors = new Set<string>();
+function syncClientlessDeclarers(): void {
+  const next = new Set<string>();
+  for (const { extId } of clientlessSlotDeclarers()) {
+    const key = `ext-clientless-${extId}`;
+    next.add(key);
+    if (registeredClientlessErrors.has(key)) continue;
+    registerExtSlotError({
+      id: key, extId, slot: "(client)", kind: "load", reset: () => {},
+      itemId: extI18nSnapshot?.t("extPanel.clientMissing") ?? "Client missing",
+      message: extI18nSnapshot?.t("extPanel.clientMissingMsg", { ext: extId })
+        ?? `Extension ${extId} has no browser client bundle (usually deployed without building the extension's client). Affected UI has fallen back to the built-in version — build it (npm run build:client in the extension dir) or reinstall the extension.`,
+    });
+  }
+  for (const key of registeredClientlessErrors) if (!next.has(key)) unregisterExtSlotError(key);
+  registeredClientlessErrors.clear();
+  for (const k of next) registeredClientlessErrors.add(k);
+}
+
 let loadStarted = false;
 let reloadInFlight: Promise<{ invalidated: string[] }> | null = null;
 
@@ -753,6 +781,8 @@ async function fetchManifestData(): Promise<ManifestData | null> {
     pruneStaticItems(data.extensions.map((e) => e.id));
     // server-side load failures → error indicator (same id overwrites for dedup; removed automatically once fixed)
     syncLoadErrors(data.failed);
+    // clientless slot declarers (client file missing on the deployment) → same indicator
+    syncClientlessDeclarers();
     return data;
   } catch (e) {
     console.error("[ext] failed to fetch extension manifest:", e);
@@ -1603,7 +1633,10 @@ export function TakeoverSlot({ name, fallback, extra, legacyKey, currentSession,
   //  · settledAbsent: boot settled (manifest + all immediate materializations
   //    done/failed) and nobody declares the slot anymore (disabled/uninstalled);
   //  · allFailed: every declarer's bundle deterministically failed (fetch error /
-  //    no register export / register threw — loader materializeFailures registry);
+  //    no register export / register threw — loader materializeFailures registry),
+  //    or has no boot-graph entry at all once the graph landed (client file
+  //    missing/unreadable — the server kept it out of the graph; it can never
+  //    register rendered items);
   //  · timedOut: anti-deadlock ceiling (15s) for a hung network where no settle
   //    signal ever fires. Fast failures release much sooner through the first two.
   const bootSettled = useSyncExternalStore(subscribeExtBootSettled, () => extBootSettled, () => false);
