@@ -49,19 +49,19 @@ test("enrich：plan 行（fm tags + 状态 tag；无 fm 只路径）", () => {
   const dir = tagsConfigDir([], {});
   const svc = {
     planDocsWithTags: (sids) => sids.map((sid) => sid === "p1"
-      ? { sessionId: "p1", path: "/r/docs/a.md", fmTags: ["方案", "aiti-dev"], statusPhase: null }
+      ? { sessionId: "p1", path: "/r/docs/a.md", fmTags: ["方案", "demo-repo"], statusPhase: null }
       : { sessionId: "p2", path: "/r/docs/b.md", fmTags: [], statusPhase: "方案/已实施" }),
   };
   const m = enrichForSession(["p1", "p2"], dir, () => noTags(), svc);
-  assert.equal(m.get("p1"), "plan: /r/docs/a.md [方案, aiti-dev]");
+  assert.equal(m.get("p1"), "plan: /r/docs/a.md [方案, demo-repo]");
   assert.equal(m.get("p2"), "plan: /r/docs/b.md（状态: 方案/已实施）");
 });
 
 test("enrich：tags + plan 两行合并（tags 在前；状态项不入方括号）", () => {
   const dir = tagsConfigDir(TAGS, { both: ["t3"] });
-  const svc = { planDocsWithTags: () => [{ sessionId: "both", path: "/r/p.md", fmTags: ["方案", "aiti-dev", "方案/评审中"], statusPhase: "方案/评审中" }] };
+  const svc = { planDocsWithTags: () => [{ sessionId: "both", path: "/r/p.md", fmTags: ["方案", "demo-repo", "方案/评审中"], statusPhase: "方案/评审中" }] };
   const m = enrichForSession(["both"], dir, readTagsFromDisk, svc);
-  assert.equal(m.get("both"), "tags: urgent\nplan: /r/p.md [方案, aiti-dev]（状态: 方案/评审中）");
+  assert.equal(m.get("both"), "tags: urgent\nplan: /r/p.md [方案, demo-repo]（状态: 方案/评审中）");
 });
 
 test("enrich 降级：configDir 无 tags 文件 / readTagData 抛错 / svc 抛错 / 空 sids → 无行不炸", () => {

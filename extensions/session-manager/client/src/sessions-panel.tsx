@@ -55,7 +55,7 @@ function resolveSelectSession(props: any) {
 }
 
 /** 目录过滤匹配：cwd 是否精确等于所选目录（root）—— 只匹配该目录本身的会话，
- * 不包含其子目录（如选 ~/workspace 不覆盖 ~/workspace/aiti-dev）；兼容 \\ 与 / 。 */
+ * excludes its subdirectories (picking ~/workspace does not cover ~/workspace/demo-repo); accepts both \\ and / . */
 const normDir = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "") + "/";
 const underRoot = (cwd: string | undefined, root: string) =>
   !!cwd && !!root && normDir(cwd) === normDir(root);

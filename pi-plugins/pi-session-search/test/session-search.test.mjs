@@ -321,7 +321,7 @@ function fixtureDataDir() {
     sessionTags: { [ID_A]: ["t2"], [ID_B]: ["t3"] },
   }));
   const planMd = join(dataDir, "plan.md");
-  writeFileSync(planMd, "---\ntags: [方案, aiti-dev, 方案/评审中]\nstatus: 方案/评审中\n---\n\n# 标题\n正文");
+  writeFileSync(planMd, "---\ntags: [方案, demo-repo, 方案/评审中]\nstatus: 方案/评审中\n---\n\n# 标题\n正文");
   const planMdNoFm = join(dataDir, "plain.md");
   writeFileSync(planMdNoFm, "# 没有 front-matter 的文档\n正文");
   writeFileSync(join(dataDir, "aiti-plan-first", "config", "plans.json"), JSON.stringify({
@@ -332,7 +332,7 @@ function fixtureDataDir() {
 }
 
 test("enrich: parseFmTags/statusPhaseOf/readMdFmTags（正常/无 fm/坏文件/截断）", () => {
-  assert.deepEqual(enrichMod.parseFmTags("---\ntags: [方案, aiti-dev]\n---\n正文"), ["方案", "aiti-dev"]);
+  assert.deepEqual(enrichMod.parseFmTags("---\ntags: [方案, demo-repo]\n---\n正文"), ["方案", "demo-repo"]);
   assert.deepEqual(enrichMod.parseFmTags("---\ntags:\n  - a\n  - b\n---\n"), ["a", "b"]);
   assert.deepEqual(enrichMod.parseFmTags("# 无 fm"), []);
   assert.deepEqual(enrichMod.parseFmTags("---\ntags: [未闭合"), []); // unclosed fm → []
@@ -342,7 +342,7 @@ test("enrich: parseFmTags/statusPhaseOf/readMdFmTags（正常/无 fm/坏文件/�
   const dir = fixtureDataDir();
   try {
     const good = enrichMod.readMdFmTags(join(dir, "plan.md"));
-    assert.deepEqual(good, { fmTags: ["方案", "aiti-dev", "方案/评审中"], statusPhase: "方案/评审中" });
+    assert.deepEqual(good, { fmTags: ["方案", "demo-repo", "方案/评审中"], statusPhase: "方案/评审中" });
     assert.deepEqual(enrichMod.readMdFmTags(join(dir, "plain.md")), { fmTags: [], statusPhase: null });
     assert.deepEqual(enrichMod.readMdFmTags(join(dir, "missing.md")), { fmTags: [], statusPhase: null });
   } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -355,12 +355,12 @@ test("enrich: loadTagPaths/loadPlanRows/enrichLines + 降级", () => {
     assert.deepEqual(enrichMod.loadTagPaths(dir, sids).get(ID_A), "tags: 项目A/todo");
     assert.deepEqual(enrichMod.loadTagPaths(dir, sids).get(ID_B), "tags: urgent");
     const rows = enrichMod.loadPlanRows(dir, sids);
-    assert.deepEqual(rows.get(ID_A), { path: join(dir, "plan.md"), fmTags: ["方案", "aiti-dev", "方案/评审中"], statusPhase: "方案/评审中" });
+    assert.deepEqual(rows.get(ID_A), { path: join(dir, "plan.md"), fmTags: ["方案", "demo-repo", "方案/评审中"], statusPhase: "方案/评审中" });
     assert.deepEqual(rows.get(ID_B), { path: join(dir, "plain.md"), fmTags: [], statusPhase: null });
     assert.equal(rows.has(ID_B2), false); // plan=null → no binding
 
     const lines = enrichMod.enrichLines([ID_A, ID_B], dir);
-    assert.equal(lines.get(ID_A), `tags: 项目A/todo\nplan: ${join(dir, "plan.md")} [方案, aiti-dev]（状态: 方案/评审中）`);
+    assert.equal(lines.get(ID_A), `tags: 项目A/todo\nplan: ${join(dir, "plan.md")} [方案, demo-repo]（状态: 方案/评审中）`);
     assert.equal(lines.get(ID_B), `tags: urgent\nplan: ${join(dir, "plain.md")}`);
     assert.deepEqual([...enrichMod.enrichLines([ID_A], null)], []); // no dataDir → empty
     assert.deepEqual([...enrichMod.enrichLines([], dir)], []);

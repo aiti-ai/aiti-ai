@@ -9,7 +9,7 @@ import test from "node:test";
 
 const { dirOf, srcRef, previewClickInfo } = await import("./md-smart.ts");
 
-const FILE = "/home/pi/workspace/aiti-dev/docs/x.md";
+const FILE = "/home/pi/workspace/demo-repo/docs/x.md";
 
 /** 极简 iframe 文档/窗口桩（只需 createElement/body/querySelector） */
 function fakeDoc(el) {
@@ -22,16 +22,16 @@ function fakeDoc(el) {
 }
 
 test("dirOf：相对路径基准取文件所在目录（非会话 cwd）", () => {
-  assert.equal(dirOf(FILE), "/home/pi/workspace/aiti-dev/docs");
+  assert.equal(dirOf(FILE), "/home/pi/workspace/demo-repo/docs");
   assert.equal(dirOf("/a.md"), "");
   assert.equal(dirOf("D:\\w\\p\\a.md"), "D:\\w\\p");
 });
 
 test("srcRef：源码行区间 → @ 定位串", () => {
-  assert.equal(srcRef(FILE, 12, 14), "@/home/pi/workspace/aiti-dev/docs/x.md#L12-L14");
-  assert.equal(srcRef(FILE, 7, 7), "@/home/pi/workspace/aiti-dev/docs/x.md#L7");
-  assert.equal(srcRef(FILE, 0), "@/home/pi/workspace/aiti-dev/docs/x.md"); // 无有效行号 → 纯引用
-  assert.equal(srcRef(FILE, 3, 2), "@/home/pi/workspace/aiti-dev/docs/x.md#L3"); // end < start 忽略
+  assert.equal(srcRef(FILE, 12, 14), "@/home/pi/workspace/demo-repo/docs/x.md#L12-L14");
+  assert.equal(srcRef(FILE, 7, 7), "@/home/pi/workspace/demo-repo/docs/x.md#L7");
+  assert.equal(srcRef(FILE, 0), "@/home/pi/workspace/demo-repo/docs/x.md"); // no valid line number -> plain reference
+  assert.equal(srcRef(FILE, 3, 2), "@/home/pi/workspace/demo-repo/docs/x.md#L3"); // end < start ignored
 });
 
 test("previewClickInfo：块级点击 → info 字段齐备（float/doc/win/caps/引用前缀）", () => {
@@ -48,7 +48,7 @@ test("previewClickInfo：块级点击 → info 字段齐备（float/doc/win/caps
   assert.equal(info.float, true); // 块级也走 fixed（iframe 内 setInline 是 body 追加层）
   assert.equal(info.rowIndex, null);
   assert.equal(info.text, "一段正文");
-  assert.equal(info.cwd, "/home/pi/workspace/aiti-dev/docs");
+  assert.equal(info.cwd, "/home/pi/workspace/demo-repo/docs");
   assert.equal(info.paragraphId, "mdprev:" + FILE + ":3:-");
   // 引用带源码定位（msg-smart 的 formatQuote 结果接在后面）
   assert.equal(info.decorateQuote("> 一段正文\n"), srcRef(FILE, 12, 14) + "\n> 一段正文\n");
@@ -104,7 +104,7 @@ test("selection-container: 容器注册封装（服务缺席 → 静默降级不
   const meta = previewSelectionMeta(FILE);
   const blkEl = { closest: (sel) => (sel === "[data-src-start]" ? { getAttribute: (a) => (a === "data-src-start" ? "20" : "24") } : null) };
   const m1 = meta(null, blkEl);
-  assert.equal(m1.cwd, "/home/pi/workspace/aiti-dev/docs");
+  assert.equal(m1.cwd, "/home/pi/workspace/demo-repo/docs");
   assert.deepEqual(m1.caps, { question: false, fileExternalRoots: false }); // providers open (share button)
   assert.equal(m1.decorateQuote("> 选中文本\n"), srcRef(FILE, 20, 24) + "\n> 选中文本\n");
   const m2 = meta(null, null);
