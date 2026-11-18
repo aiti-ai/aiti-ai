@@ -1,6 +1,6 @@
 // 模型聚合（combo provider）core 单元测试：保存校验 / 自动计算 / 列表 / 改名
 import { createRequire } from "module";
-import { Tester } from "../../../pi-models-combo/test/util.mjs";
+import { Tester } from "../../../pi-plugins/pi-models-combo/test/util.mjs";
 
 const require = createRequire(import.meta.url);
 const wz = require("../core.cjs");

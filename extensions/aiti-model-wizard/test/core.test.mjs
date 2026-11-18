@@ -1,7 +1,7 @@
 // wizard core 单元测试：多 key 写入/清空/删除/改名/状态打码（models.json provider.apiKeys 存储）
 import { createRequire } from "module";
 import fs from "node:fs"; import path from "node:path"; import os from "node:os";
-import { Tester } from "../../../pi-models-combo/test/util.mjs";
+import { Tester } from "../../../pi-plugins/pi-models-combo/test/util.mjs";
 
 const require = createRequire(import.meta.url);
 const wz = require("../core.cjs");

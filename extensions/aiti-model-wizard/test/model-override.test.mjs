@@ -2,7 +2,7 @@
 // 覆盖：setModelOverrideData 纯变换（新建/更新/删除/空容器/空条目清理）+ getModelOverrides 读值
 // + providersStatus 过滤 overrides-only 幽灵行 + MODEL_META_FIELDS 含 inputLimits（G4 透传）
 import { createRequire } from "module";
-import { Tester } from "../../../pi-models-combo/test/util.mjs";
+import { Tester } from "../../../pi-plugins/pi-models-combo/test/util.mjs";
 
 const require = createRequire(import.meta.url);
 const wz = require("../core.cjs");
