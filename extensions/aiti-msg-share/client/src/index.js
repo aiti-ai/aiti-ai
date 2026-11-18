@@ -40,6 +40,18 @@ const state = {
 };
 const listeners = new Set();
 
+/** Host locale: window.__PI_LOCALE__ is set by the host layout ("en" | "zh-CN"/"zh-*"). */
+function locale() {
+  try { return (typeof window !== "undefined" && String(window.__PI_LOCALE__ || "").startsWith("zh")) ? "zh" : "en"; }
+  catch { return "en"; }
+}
+/** Bilingual catalog data: note may be a {zh,en} pair (remote overlay) or a plain string. */
+function noteText(note) {
+  if (!note) return "";
+  if (typeof note === "object") return String(note[locale()] || note.zh || note.en || "").trim();
+  return String(note);
+}
+
 function api(path) {
   // Use the host's apiUrl() (basePath-aware, /dev-safe) when available; fall back
   // to the absolute extension API path otherwise.
@@ -161,7 +173,7 @@ function targetCard(target, selected, badge) {
   const disabled = target.status === "dead" || target.enabled === false;
   return h("button", { type: "button", key: target.id, disabled,
     onClick: () => set({ targetId: target.id, error: "" }),
-    title: target.note || target.name,
+    title: noteText(target.note) || target.name,
     style: { display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 9px",
       border: "1px solid " + (selected ? "var(--accent, #4d8dff)" : "var(--border, #34363c)"), borderRadius: 8,
       background: selected ? "rgba(77, 141, 255, 0.15)" : "var(--bg-hover, #25272c)", color: disabled ? "var(--text-muted, #8b909b)" : "var(--text, #d8dade)",
@@ -567,7 +579,7 @@ function managerDialog() {
     h("span", null, t.status === "dead" ? "💀" : t.category === "archive" ? "📓" : "🔗"),
     h("div", { style: { flex: 1, minWidth: 0 } },
       h("div", { style: { fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, t.name || t.id),
-      h("div", { style: { fontSize: 10, color: "var(--text-muted, #8b909b)" } }, (t.kinds || []).map(kindLabel).join("/") + (t.note ? " · " + t.note : ""))),
+      h("div", { style: { fontSize: 10, color: "var(--text-muted, #8b909b)" } }, (t.kinds || []).map(kindLabel).join("/") + (() => { const n = noteText(t.note); return n ? " · " + n : ""; })())),
     (() => { const b = CFG_BADGE[t.configState]; return b ? h("span", { title: shareT(b.key),
       style: { color: b.color, fontSize: 9, whiteSpace: "nowrap", flexShrink: 0 } }, b.icon) : null; })(),
     t.recommended ? h("span", { style: { color: "var(--accent, #4d8dff)", fontSize: 10 } }, "★") : null,
@@ -587,7 +599,7 @@ function managerDialog() {
   const fields = edit?.fields || [];
   const form = edit ? h("div", { style: { flex: 1, padding: 14, display: "flex", flexDirection: "column", gap: 12, overflowY: "auto" } },
     h("div", { style: { fontWeight: 600 } }, edit.name || edit.id),
-    edit.note ? h("div", { style: { fontSize: 11, color: "var(--text-muted, #8b909b)" } }, edit.note) : null,
+    (() => { const n = noteText(edit.note); return n ? h("div", { style: { fontSize: 11, color: "var(--text-muted, #8b909b)" } }, n) : null; })(),
     ...fields.map((f) => {
       const key = typeof f === "string" ? f : f.key;
       const label = typeof f === "string" ? f : (f.label || f.key);
