@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/pi-secret-mask",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Paste-safe by default \u2014 session-level secret redaction for pi: values pasted into prompts become opaque, credential-shaped tokens (rsec_<hash8>) before the model sees them and are restored inside tool arguments before execution. Adds on-disk redaction (landing plain|ephemeral), unresolved-placeholder guard, custom rules, compaction/tree scrubbing, `!`-command gate, provider payload rewrite + audit, and explicit /secret save|load snapshots. Engine shared with @aiti-ai/pi-secret-vault (encrypted persistent edition) and the DSH edition via @aiti-ai/secret-mask-core.",
   "keywords": [
     "pi",

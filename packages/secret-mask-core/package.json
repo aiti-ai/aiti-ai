@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/secret-mask-core",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Host-agnostic secret redaction engine: deterministic credential detection rules (regex + checksums + entropy + false-positive guards), credential-shaped placeholders (rsec_<hash8>, session-salted for session values and stable for vault aliases) with legacy [REDACTED:*] compatibility, deep redact/restore traversal, pi AgentMessage adapters (context / system / message_end), unresolved-placeholder guard, three-state landing policy (plain/vault/ephemeral), custom JSON rules, final-payload leak auditing, and the /secret command logic. Shared by @aiti-ai/pi-secret-mask, @aiti-ai/pi-secret-vault (via @aiti-ai/secret-vault-core) and @aiti-ai/dsh-secret-mask; any TS/JS agent can adapt it by mapping its message shapes to text spans.",
   "keywords": [
     "secrets",
