@@ -781,7 +781,12 @@ export class AgentSessionWrapper {
       this.emit(
         event.type === "message_end" ? this.withTranscriptNotices(event)
           : event.type === "agent_settled" ? this.withSubagentsActive(event)
-            : event,
+            // pi's queue_update reports text only: forward the merged view (pi's queue
+            // + parked prompts) with authoritative attachment flags instead, so queue
+            // rows mark image-carrying entries at once (same projection as get_state).
+            : event.type === "queue_update"
+              ? { type: "queue_update", ...this.mergedQueuedMessages(), ...this.getQueueAttachmentView() } as AgentEvent
+              : event,
       );
       if (event.type === "agent_settled") this.notifyAgentRunCompleteIfIdle();
     });
@@ -1170,7 +1175,10 @@ export class AgentSessionWrapper {
   }
 
   private emitQueueUpdate(): void {
-    this.emit({ type: "queue_update", ...this.mergedQueuedMessages() });
+    // Attachment flags ride along: the rows would otherwise show no image marker
+    // until the next authoritative snapshot (SSE reconnect / run end), because the
+    // text-only frame makes the page align flags from stale state.
+    this.emit({ type: "queue_update", ...this.mergedQueuedMessages(), ...this.getQueueAttachmentView() });
   }
 
   private parkDuringCompaction(entry: ParkedPrompt): void {
