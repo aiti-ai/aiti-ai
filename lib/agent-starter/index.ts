@@ -102,6 +102,22 @@ async function buildStarters(): Promise<AgentStarters> {
   }
 }
 
+/** Detach availability as the UI needs it (one cheap, cached probe). */
+export type DetachSupportInfo = {
+  /** Can a provider host its agent in a wrapper on this host right now? */
+  available: boolean;
+  /** Which runner would be used ("systemd-run" | "plain"). */
+  runner?: string;
+  /** Why it is unavailable / which runner was chosen (shown as a tooltip). */
+  reason: string;
+};
+
+export async function describeDetachSupport(): Promise<DetachSupportInfo> {
+  const starters = await getAgentStarters();
+  if (!starters.wrapper) return { available: false, reason: starters.detail };
+  return { available: true, runner: starters.wrapper.runner, reason: starters.detail };
+}
+
 /** Wrapper strategy only when it exists (recovery routing: holds/attach). */
 export async function getWrapperStarter(): Promise<WrapperStarter | undefined> {
   const starters = await getAgentStarters();

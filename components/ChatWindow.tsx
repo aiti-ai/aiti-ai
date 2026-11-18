@@ -156,6 +156,13 @@ function ElapsedBadge({ startedAt }: { startedAt: number }) {
 const CHAT_MINIMAP_WIDTH = 36;
 const CHAT_COLUMN_PADDING = 16;
 const LAST_BACKEND_KEY = "pi-web:last-session-backend";
+/**
+ * Detach preference for NEW sessions: host the backend's agent process in a
+ * wrapper that outlives pi-web (turn survives restarts / extension reloads).
+ * Only offered for providers that opted in (`detachable`) on a host whose
+ * agent-starter has a runner; default on (the point of the feature).
+ */
+const NEW_SESSION_DETACH_KEY = "pi-web:new-session-detach";
 /** Option value prefix for extension entries (newSessionBackendOptions) in the
  *  new-session Backend dropdown. Selecting one runs the entry's action (e.g. opening
  *  ACP agent management) without changing the current backend selection. */
@@ -401,7 +408,18 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   // (extension-registered backends appear automatically).
   // null = local pi (the default; absent from the list and needs no request).
   // The last chosen backend is kept in localStorage and preselected on the next new session.
-  const [backendOptions, setBackendOptions] = useState<Array<{ type: string; label: string; agentKey?: string; available?: boolean; installHint?: string }>>([]);
+  const [backendOptions, setBackendOptions] = useState<Array<{ type: string; label: string; agentKey?: string; available?: boolean; installHint?: string; detachable?: boolean }>>([]);
+  // Detach availability on this host (agent-starter): runner + reason shipped by
+  // the same endpoint; the per-session toggle shows only when available AND the
+  // selected backend opted in.
+  const [detachSupport, setDetachSupport] = useState<{ available: boolean; runner?: string; reason?: string } | null>(null);
+  const [detachNewSession, setDetachNewSession] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(NEW_SESSION_DETACH_KEY) !== "0";
+    } catch {
+      return true;
+    }
+  });
   // Whether any extension declares a backend rescan hook (GET response field).
   // When true the dropdown renders even with zero extension backends ("Pi (local)"
   // + the rescan entry) so newly installed CLIs can be picked up without a restart.
@@ -536,7 +554,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands, loadAllModels, scrollToBottom, scrollUserMsgToTop,
     loadContext, activeLeafId, scrollToMessage, reloadCurrentSession, addNotice,
   } = useAgentSession({
-    session, sessionRunning, newSessionCwd, newSessionBackend: sessionBackend, newSessionPreparers, newSessionDraftKey, initialNewSessionChoices, onNewSessionChoicesChange, onAgentEnd: wrappedOnAgentEnd, onToolEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onSessionIdCanonicalized, onSideSession,
+    session, sessionRunning, newSessionCwd, newSessionBackend: sessionBackend,
+    newSessionDetach: detachNewSession, newSessionPreparers, newSessionDraftKey, initialNewSessionChoices, onNewSessionChoicesChange, onAgentEnd: wrappedOnAgentEnd, onToolEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onSessionIdCanonicalized, onSideSession,
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsPanelOpen,
     onOpenSettings, onDebugSnapshotReaderChange, t,
     deferInitialScroll: Boolean(pendingScrollRestore),
@@ -1436,9 +1455,10 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     // dedupeFetch: StrictMode double effect / remounts share one request (the backend list is stable; 2.5s micro-cache).
     dedupeFetch(apiUrl("/api/session-backends"))
       .then((r) => (r.ok ? r.json() : { providers: [] }))
-      .then((d: { providers?: Array<{ type: string; label: string; agentKey?: string; available?: boolean; installHint?: string }>; rescanable?: boolean }) => {
+      .then((d: { providers?: Array<{ type: string; label: string; agentKey?: string; available?: boolean; installHint?: string; detachable?: boolean }>; rescanable?: boolean; detach?: { available: boolean; runner?: string; reason?: string } }) => {
         if (cancelled) return;
         setBackendOptions(d.providers ?? []);
+        setDetachSupport(d.detach ?? null);
         setBackendRescanable(Boolean(d.rescanable));
         backendUnavailableRef.current = new Set((d.providers ?? []).filter((p) => p.available === false).map((p) => p.type));
         // Fall back to local pi when the remembered backend no longer exists or is unavailable (extension
@@ -1460,10 +1480,11 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     try {
       const r = await fetch(apiUrl("/api/session-backends/rescan"), { method: "POST" });
       const d = await r.json().catch(() => null) as
-        | { ok?: boolean; providers?: Array<{ type: string; label: string; agentKey?: string; available?: boolean; installHint?: string }> }
+        | { ok?: boolean; providers?: Array<{ type: string; label: string; agentKey?: string; available?: boolean; installHint?: string; detachable?: boolean }>; detach?: { available: boolean; runner?: string; reason?: string } }
         | null;
       if (d?.ok) {
         setBackendOptions(d.providers ?? []);
+        setDetachSupport(d.detach ?? null);
         setBackendRescanable(true);
         setSessionBackend((cur) => (cur && (d.providers ?? []).some((p) => p.type === cur && p.available !== false) ? cur : null));
         // Outcome note: newly picked-up entries first (was unavailable, now ready),
@@ -2474,6 +2495,35 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                   </select>
                 </span>
               )}
+              {(() => {
+                // Per-session detach toggle: only for a backend that opted in AND a
+                // host whose agent-starter has a runner (otherwise the choice would
+                // silently fall back to a plain child).
+                const selected = backendOptions.find((b) => b.type === sessionBackend);
+                const supported = Boolean(selected?.detachable) && detachSupport?.available === true;
+                if (!supported) return null;
+                const hint = `Keep the agent process alive across pi-web restarts and extension reloads (runner: ${detachSupport?.runner ?? "auto"}). Turn off to run it as a plain child process.`;
+                return (
+                  <label
+                    title={hint}
+                    style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", color: "var(--text-muted)", userSelect: "none" }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={detachNewSession}
+                      onChange={(e) => {
+                        const next = e.target.checked;
+                        setDetachNewSession(next);
+                        try {
+                          localStorage.setItem(NEW_SESSION_DETACH_KEY, next ? "1" : "0");
+                        } catch {}
+                      }}
+                      style={{ cursor: "pointer" }}
+                    />
+                    Detach
+                  </label>
+                );
+              })()}
               {backendRescanNote && (
                 <span style={{ color: "var(--text-dim)", fontSize: 11 }}>{backendRescanNote}</span>
               )}
