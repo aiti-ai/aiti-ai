@@ -1,0 +1,80 @@
+# Docker Hub + Aliyun ACR 旧版镜像 tag 清理（workflow_dispatch 手动，confirm 门禁）。
+# 背景：v0.15.15-aiti.N 预发布迭代产物历史版本（aiti.9 及更早）错误较多，不值得留存
+#（2026-11-18 决策）。仅保留 latest/core/full 浮动 tag 与当前版本 v0.15.15-aiti.10-*。
+# 删除走两套 API：
+#   - Docker Hub: hub.docker.com v2 REST（JWT via DOCKERHUB_USERNAME/DOCKERHUB_TOKEN）
+#   - ACR 个人版: registry v2 协议（GET tag→manifest digest→DELETE manifest，
+#     ALIYUN_ACR_USERNAME/ALIYUN_ACR_PASSWORD login）
+# npm 与 GitHub Releases 不在本 workflow 范围（分别走 npm unpublish 政策 / gh release delete）。
+name: Registry Prune
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type PRUNE to confirm deleting old v0.15.15-aiti.* tags (keep aiti.10)'
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Gate
+        run: |
+          test "${{ inputs.confirm }}" = "PRUNE" || { echo "::error::confirm must be PRUNE"; exit 1; }
+
+      - name: Prune Docker Hub (aitiai/pi-web)
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -e
+          JWT=$(curl -sf -X POST https://hub.docker.com/v2/users/login \
+            -H 'Content-Type: application/json' \
+            -d "{\"username\":\"$DOCKERHUB_USERNAME\",\"password\":\"$DOCKERHUB_TOKEN\"}" | sed -E 's/.*"token":"([^"]+)".*/\1/')
+          AUTH="Authorization: Bearer $JWT"
+          PAGE=1
+          TAGS=""
+          while :; do
+            RESP=$(curl -sf "https://hub.docker.com/v2/repositories/aitiai/pi-web/tags?page_size=100&page=$PAGE" -H "$AUTH")
+            TAGS="$TAGS $(echo "$RESP" | grep -oE '"name": *"[^"]+"' | sed 's/"name": *"//;s/"$//')"
+            NEXT=$(echo "$RESP" | grep -oE '"next": *"[^"]+"' | grep -c null || true)
+            echo "$RESP" | grep -q '"next": *null' && break
+            PAGE=$((PAGE+1))
+          done
+          KEEP='^(latest|core|full|v0\.15\.15-aiti\.10-.*)$'
+          for t in $TAGS; do
+            echo "$t" | grep -qE "$KEEP" && continue
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE \
+              "https://hub.docker.com/v2/repositories/aitiai/pi-web/tags/$t" -H "$AUTH")
+            echo "hub $t → $CODE"
+          done
+
+      - name: Prune Aliyun ACR (registry.cn-hangzhou.aliyuncs.com/aiti-ai/pi-web)
+        env:
+          ALIYUN_ACR_USERNAME: ${{ secrets.ALIYUN_ACR_USERNAME }}
+          ALIYUN_ACR_PASSWORD: ${{ secrets.ALIYUN_ACR_PASSWORD }}
+        run: |
+          set -e
+          REG=registry.cn-hangzhou.aliyuncs.com
+          REPO=aiti-ai/pi-web
+          # ACR 个人版 registry v2：basic login（docker login 兼容；直接用 curl -u）
+          AUTH=$(printf '%s:%s' "$ALIYUN_ACR_USERNAME" "$ALIYUN_ACR_PASSWORD" | base64 -w0)
+          ACCEPT='Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.index.v1+json'
+          PAGE=1000
+          TAGS=$(curl -sf "https://$REG/v2/$REPO/tags/list?n=$PAGE" -u "$ALIYUN_ACR_USERNAME:$ALIYUN_ACR_PASSWORD" | grep -oE '"tags":\[[^]]*\]' | sed 's/"tags":\[//;s/\]//;s/"//g;s/,/ /g')
+          KEEP='^(latest|core|full|v0\.15\.15-aiti\.10-.*)$'
+          for t in $TAGS; do
+            echo "$t" | grep -qE "$KEEP" && continue
+            DIGEST=$(curl -sf -I -H "$ACCEPT" "https://$REG/v2/$REPO/manifests/$t" \
+              -u "$ALIYUN_ACR_USERNAME:$ALIYUN_ACR_PASSWORD" | grep -iE '^docker-content-digest:' | tr -d '\r' | awk '{print $2}')
+            [ -n "$DIGEST" ] || { echo "acr $t → no digest"; continue; }
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE \
+              "https://$REG/v2/$REPO/manifests/$DIGEST" \
+              -u "$ALIYUN_ACR_USERNAME:$ALIYUN_ACR_PASSWORD")
+            echo "acr $t ($DIGEST) → $CODE"
+          done
