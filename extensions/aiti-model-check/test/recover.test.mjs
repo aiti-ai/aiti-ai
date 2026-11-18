@@ -3,7 +3,7 @@
 // 设计：docs/aiti-model-check-recovery-notify-plan.md
 import { createRequire } from "module";
 import fs from "node:fs"; import path from "node:path"; import os from "node:os";
-import { Tester } from "../../../pi-models-combo/test/util.mjs";
+import { Tester } from "../../../pi-plugins/pi-models-combo/test/util.mjs";
 
 const require = createRequire(import.meta.url);
 const mc = require("../core.cjs");

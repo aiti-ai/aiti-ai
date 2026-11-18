@@ -2,7 +2,7 @@
 // 用临时 models.json + 假 LLM 上游（三个 provider 各自 200，返回不同文本以追踪命中顺序），不碰真实配置。
 import { createRequire } from "module";
 import fs from "node:fs"; import path from "node:path"; import os from "node:os";
-import { makeUpstream, Tester } from "../../../pi-models-combo/test/util.mjs";
+import { makeUpstream, Tester } from "../../../pi-plugins/pi-models-combo/test/util.mjs";
 
 const require = createRequire(import.meta.url);
 const mc = require("../core.cjs");

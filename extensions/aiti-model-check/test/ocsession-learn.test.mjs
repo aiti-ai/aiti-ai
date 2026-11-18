@@ -2,7 +2,7 @@
 // 覆盖：probeOneKey 首测自愈 / 学习后后续探测首跳即带头 / 普通 400 不重试原样归类 badreq
 import { createRequire } from "module";
 import fs from "node:fs"; import path from "node:path"; import os from "node:os";
-import { makeUpstream, Tester } from "../../../pi-models-combo/test/util.mjs";
+import { makeUpstream, Tester } from "../../../pi-plugins/pi-models-combo/test/util.mjs";
 
 const require = createRequire(import.meta.url);
 const mc = require("../core.cjs");
