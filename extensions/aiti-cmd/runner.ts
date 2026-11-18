@@ -9,6 +9,7 @@
 import { createRequire } from "node:module";
 import { whichBin } from "@aiti-ai/ext-shared/exec-async";
 import { randomBytes } from "node:crypto";
+import { attachHost, listEntries, probeDetach, pruneEntries, removeEntry, spawnHost, writeEntry, type HostEntry } from "./detach/index.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AuditRecord } from "./audit.js";
@@ -198,6 +199,11 @@ export interface RunSession {
   confirm: boolean;
   /** 沙箱模式（审计用）：none / bwrap-ro / bwrap-offline / bwrap-tmp */
   sandbox?: "none" | "bwrap-ro" | "bwrap-offline" | "bwrap-tmp";
+  /** Transport: "local" = in-process node-pty (default), "host" = detached pty-host (survives reload/restart) */
+  mode?: "local" | "host";
+  /** Detached host client (mode = "host"); the session lives in the host process. */
+  host?: { writeInput: (d: string) => void; resize: (c: number, r: number) => void; kill: (sig?: string) => void; close: () => void } | null;
+  hostEntry?: HostEntry | null;
 }
 
 // 帧主题（aiti-event-bus v0.2 主题订阅）：每个终端一个专属 type（cmd-<sessionId>），
@@ -254,6 +260,9 @@ export function createRunner(audit: { append: (r: AuditRecord) => void; writeOut
     if (s.status === "exit") return;
     s.status = "exit";
     s.lastSeen = Date.now();
+    try { s.host?.close(); } catch {}
+    s.host = null;
+    if (s.mode === "host") { try { removeEntry(s.id); } catch {} }
     const durationMs = Date.now() - s.startTs;
     const out = audit.writeOutput(s.id, s.all);
     const rec: AuditRecord = {
@@ -289,12 +298,51 @@ export function createRunner(audit: { append: (r: AuditRecord) => void; writeOut
   const queue: RunSession[] = [];
   const queuePosition = (id: string) => queue.findIndex((q) => q.id === id) + 1;
 
-  /** 真正 spawn（running 时调用；queued 已先行发布） */
+  /** The real spawn (called when running; queued sessions already published).
+   *  Transport is one of two: a detached pty-host (survives reload/restart) is
+   *  preferred, with any failure falling back to in-process node-pty. */
   function spawnSession(s: RunSession) {
     s.status = "running";
     s.startTs = Date.now();
     s.lastSeen = Date.now();
     pub(ptyTopic(s.id), { evt: "started", sessionId: s.id, pid: null, cmd: s.cmd, cwd: s.cwd, status: "running" });
+    if (s.sandbox && s.sandbox !== "none") { spawnLocal(s); return; } // sandboxed sessions stay in-process (bwrap depends on this process environment)
+    void startDetached(s).then((ok) => { if (!ok) spawnLocal(s); }).catch(() => spawnLocal(s));
+  }
+
+  /** Start the session inside a detached pty-host. false = not available / failed (caller falls back). */
+  async function startDetached(s: RunSession): Promise<boolean> {
+    try {
+      const probe = await probeDetach();
+      if (!probe.available) return false;
+      const entry = await spawnHost({ sid: s.id, cmd: s.cmd, cwd: s.cwd, cols: 100, rows: 30, name: s.name });
+      s.mode = "host";
+      s.hostEntry = entry;
+      if (entry.pid) { s.pid = entry.pid; pub(ptyTopic(s.id), { evt: "pid", pid: s.pid }); }
+      const handle = attachHost(entry, {
+        onData: (d) => feed(s, d),
+        onHello: (m) => { if (m.pid && m.pid !== s.pid) { s.pid = m.pid; pub(ptyTopic(s.id), { evt: "pid", pid: s.pid }); } },
+        onExit: (m) => {
+          s.exitCode = m.code;
+          s.signal = m.signal;
+          s.sigNum = m.signal && SIGNAL_NUM[m.signal] != null ? SIGNAL_NUM[m.signal] : null;
+          finish(s);
+        },
+        onError: (e) => { feed(s, "\r\n[aiti-cmd] pty-host: " + e.message + "\r\n"); },
+      });
+      s.host = handle;
+      // the shell may already have printed its prompt → ask for the current journal
+      try { handle.resize(100, 30); } catch {}
+      return true;
+    } catch (e) {
+      // fall back silently (diagnostic line only once the local path runs)
+      try { removeEntry(s.id); } catch {}
+      return false;
+    }
+  }
+
+  function spawnLocal(s: RunSession) {
+    s.mode = "local";
     try {
       if (ptyMod) {
         const isWin = process.platform === "win32";
@@ -462,7 +510,8 @@ export function createRunner(audit: { append: (r: AuditRecord) => void; writeOut
     if (!s) return json({ ok: false, error: "unknown session" }, 404);
     if (s.status !== "running") return json({ ok: false, error: "session 已退出" }, 409);
     try {
-      if (s.pty) s.pty.write(data);
+      if (s.host) s.host.writeInput(data);
+      else if (s.pty) s.pty.write(data);
       else s.child?.stdin.write(data);
     } catch (e) { return json({ ok: false, error: String((e as Error)?.message || e) }); }
     return json({ ok: true });
@@ -475,7 +524,8 @@ export function createRunner(audit: { append: (r: AuditRecord) => void; writeOut
     const c = Math.max(20, Math.min(500, parseInt(String(cols), 10) || 100));
     const r = Math.max(5, Math.min(200, parseInt(String(rows), 10) || 30));
     try {
-      if (s.pty) s.pty.resize(c, r);
+      if (s.host) s.host.resize(c, r);
+      else if (s.pty) s.pty.resize(c, r);
     } catch {}
     return json({ ok: true, cols: c, rows: r });
   }
@@ -499,6 +549,11 @@ export function createRunner(audit: { append: (r: AuditRecord) => void; writeOut
     }
     if (s.status !== "running") return json({ ok: false, error: "session 已退出" }, 409);
     try {
+      if (s.host) {
+        // detached host owns the PTY: SIGTERM, then the host escalates to SIGKILL after its grace
+        s.host.kill("SIGTERM");
+        return json({ ok: true, transport: "host" });
+      }
       if (s.pty) {
         if (process.platform === "win32") {
           // node-pty Windows：kill(signal) 直接抛 "Signals not supported on windows."；
@@ -565,8 +620,57 @@ export function createRunner(audit: { append: (r: AuditRecord) => void; writeOut
     return null;
   }
 
+  /**
+   * Reattach sessions hosted by detached pty-hosts that are still alive (extension reload /
+   * pi-web restart). Their journal is replayed by the host on attach, so the ring buffer —
+   * and therefore the terminal's snapshot — comes back without a restart of the PTYs.
+   */
+  async function reattach(): Promise<number> {
+    pruneEntries();
+    let n = 0;
+    for (const e of listEntries()) {
+      if (sessions.has(e.sid)) continue;
+      const s: RunSession = {
+        id: e.sid, pty: null, cmd: e.cmd, cwd: e.cwd, name: undefined,
+        source: "shell", startTs: e.createdAt, status: "running",
+        exitCode: null, signal: null, sigNum: null, pid: e.pid ?? null,
+        ring: [], ringBytes: 0, all: "", allBytes: 0, seq: 0,
+        allDroppedStart: false, truncated: false,
+        ttlMs: SESSION_TTL, lastSeen: Date.now(), danger: [], confirm: false,
+        sandbox: "none", mode: "host", hostEntry: e,
+      };
+      const handlers = {
+        onData: (d: string) => feed(s, d),
+        onExit: (m: { code: number | null; signal: string | null }) => {
+          s.exitCode = m.code;
+          s.signal = m.signal;
+          s.sigNum = m.signal && SIGNAL_NUM[m.signal] != null ? SIGNAL_NUM[m.signal] : null;
+          finish(s);
+        },
+        onError: () => {},
+      };
+      const ok = await new Promise<boolean>((resolve) => {
+        const timer = setTimeout(() => resolve(false), 2000);
+        try {
+          s.host = attachHost(e, { ...handlers, onHello: () => { clearTimeout(timer); resolve(true); } });
+        } catch { clearTimeout(timer); resolve(false); }
+      });
+      if (!ok || s.status === "exit") {
+        try { s.host?.close(); } catch {}
+        s.host = null;
+        try { removeEntry(e.sid); } catch {}
+        continue;
+      }
+      sessions.set(s.id, s);
+      n++;
+      pub(ptyTopic(s.id), { evt: "started", sessionId: s.id, pid: s.pid, cmd: s.cmd, cwd: s.cwd, status: "running", reattached: true });
+    }
+    if (n) publishSessions();
+    return n;
+  }
+
   function diag() {
-    return { nodePty: !!ptyMod, sessions: sessions.size, running: [...sessions.values()].filter((x) => x.status === "running").length, queued: queue.length, maxConcurrent: MAX_CONCURRENT, bwrap: bwrapPath(), sandbox: "bwrap-ro" };
+    return { nodePty: !!ptyMod, sessions: sessions.size, running: [...sessions.values()].filter((x) => x.status === "running").length, queued: queue.length, maxConcurrent: MAX_CONCURRENT, bwrap: bwrapPath(), sandbox: "bwrap-ro", detached: [...sessions.values()].filter((x) => x.mode === "host").length };
   }
 
   /**
@@ -588,7 +692,7 @@ export function createRunner(audit: { append: (r: AuditRecord) => void; writeOut
     };
   }
 
-  return { run, input, resize, kill, list, getInfo, diag, buffered, liveCwd, sessions };
+  return { run, input, resize, kill, list, getInfo, diag, buffered, liveCwd, sessions, reattach };
 }
 
 export type Runner = ReturnType<typeof createRunner>;
