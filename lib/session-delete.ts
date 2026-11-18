@@ -13,7 +13,7 @@
  * each would read every file of the folder once per session.
  */
 
-import { readdirSync, readFileSync, writeFileSync } from "fs";
+import { readdirSync, readFileSync, statSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { abortSubagent, getRpcSession, getRpcSessionInfos, getRunningRpcSessionIds } from "./rpc-manager.ts";
 import {
@@ -32,6 +32,7 @@ import { removeQueue } from "./queue-store.ts";
 import { trashFileSync } from "./session-trash.ts";
 import type { SessionEntry } from "./types.ts";
 import { readSideRelation } from "./side-session.ts";
+import { getWrapperStarter } from "./agent-starter/index.ts";
 
 /** Most ids one POST /api/sessions/delete takes; the sidebar sends a bigger project in parts. */
 export const MAX_SESSION_DELETE_IDS = 500;
@@ -43,6 +44,8 @@ export interface SessionDeleteResult {
   missing: string[];
   /** Named ids kept because a session of theirs runs (`keepRunning` only). */
   running: string[];
+  /** Sessions whose files were kept: written after the delete request (mtime guard). */
+  preserved?: string[];
 }
 
 function addChild(childrenByParent: Map<string, string[]>, parentId: string, childId: string): void {
@@ -60,6 +63,10 @@ export async function deleteSessions(
   ids: readonly string[],
   options: { keepRunning?: boolean } = {},
 ): Promise<SessionDeleteResult> {
+  // Timestamp of the delete request: a file whose mtime is newer was written by
+  // an agent that is still flushing (a detached process dying, a just-finished
+  // turn). Such a file is kept — losing a conversation is worse than a leftover.
+  const requestStartedAt = Date.now();
   const targets = new Map<string, string>();
   const missing: string[] = [];
   for (const id of new Set(ids)) {
@@ -241,16 +248,42 @@ export async function deleteSessions(
     try { await abortSubagent(deletedId); } catch { /* ordinary session, idle or completed */ }
     await getRpcSession(deletedId)?.shutdown();
   }
+  // Detached agents are owned by their wrapper, not by this process: stop them
+  // through the starter BEFORE touching the files (a live agent would keep
+  // writing, and the mtime guard below would then keep every file).
+  const preserved: string[] = [];
+  const wrapper = await getWrapperStarter().catch(() => undefined);
+  if (wrapper) {
+    const held = new Set(wrapper.list().map((entry) => entry.sessionId));
+    const hosted = [...deletedSessionIds].filter((id) => held.has(id));
+    await Promise.all(hosted.map((id) => wrapper.kill(id).catch(() => false)));
+  }
+  // Guard timestamp: taken AFTER the agents were stopped, so a normal shutdown
+  // flush (this process finishing the session) still counts as deletable while a
+  // straggler that keeps writing past the stop keeps its file. Losing a
+  // conversation is worse than a leftover file.
+  const guardFrom = Math.max(requestStartedAt, Date.now());
   for (const [deletedId, deletedPath] of deletedPaths) {
+    let keep = false;
     try {
-      // Session files go to the trash (recoverable after a slip) instead of a hard
-      // unlink; runtime session files that were never flushed (and thus don't
-      // exist) are silently skipped (upstream #440).
-      trashFileSync(deletedPath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      keep = statSync(deletedPath).mtimeMs > guardFrom;
+    } catch {
+      // stat failed: fall through to the trash call, which reports ENOENT
     }
-    removeQueue(deletedPath);
+    if (keep) {
+      preserved.push(deletedId);
+      console.warn(`[pi-web] kept "${deletedPath}": still being written after the stop`);
+    } else {
+      try {
+        // Session files go to the trash (recoverable after a slip) instead of a hard
+        // unlink; runtime session files that were never flushed (and thus don't
+        // exist) are silently skipped (upstream #440).
+        trashFileSync(deletedPath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      removeQueue(deletedPath);
+    }
     invalidateSessionPathCache(deletedId);
     invalidateSessionManagerCache(deletedPath);
   }
@@ -261,5 +294,7 @@ export async function deleteSessions(
     console.warn(`[pi-web] could not clear the sidebar state of deleted sessions: ${error instanceof Error ? error.message : String(error)}`);
   }
   invalidateSessionListCache();
-  return { deleted: [...deletedSessionIds], missing, running };
+  return preserved.length > 0
+    ? { deleted: [...deletedSessionIds], missing, running, preserved }
+    : { deleted: [...deletedSessionIds], missing, running };
 }
