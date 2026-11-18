@@ -23,7 +23,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-export type RunnerKind = "systemd-run" | "plain";
+export type RunnerKind = "systemd-run" | "plain" | "windows-cim";
 
 export type SessionEntry = {
   /** Native session id (pi uuid, ACP sid, …) — the recovery routing key. */
@@ -113,8 +113,25 @@ export function entryPath(key: string): string {
   return join(registryDir(), `${key}.json`);
 }
 
-export function socketPath(key: string): string {
+/**
+ * Endpoint the wrapper listens on.
+ *
+ * POSIX: a unix socket next to the registry (chmod 0600). Windows: a named pipe
+ * — `\\.\pipe\<name>` needs no filesystem entry, has no path-length limit and
+ * survives the same way (the run dir is still used for the ready marker/log).
+ */
+export function socketPathFor(platform: NodeJS.Platform, key: string): string {
+  if (platform === "win32") return `\\\\.\\pipe\\aiti-agent-${key}`;
   return join(runDir(), `${key}.sock`);
+}
+
+export function socketPath(key: string): string {
+  return socketPathFor(process.platform, key);
+}
+
+/** True when the endpoint is a Windows named pipe (no unlink/chmod, no existsSync). */
+export function isPipeEndpoint(path: string): boolean {
+  return path.startsWith("\\\\.\\pipe\\");
 }
 
 export function readyPath(key: string): string {
@@ -148,7 +165,8 @@ export function readEntry(key: string): SessionEntry | undefined {
 }
 
 export function deleteEntry(key: string): void {
-  for (const path of [entryPath(key), socketPath(key), readyPath(key), launchConfigPath(key)]) {
+  const socket = socketPath(key);
+  for (const path of [entryPath(key), readyPath(key), launchConfigPath(key), ...(isPipeEndpoint(socket) ? [] : [socket])]) {
     try {
       unlinkSync(path);
     } catch {

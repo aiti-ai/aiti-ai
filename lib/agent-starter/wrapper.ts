@@ -458,7 +458,11 @@ export class LinuxMacWrapperStarter implements WrapperStarter {
     const entry = findEntryBySession(sessionId);
     if (!entry) return false;
     let signalled = false;
-    if (typeof entry.wrapperPid === "number" && entry.wrapperPid > 0) {
+    // Windows: a signal terminates the wrapper process outright (Node cannot run a
+    // SIGTERM handler there), which would orphan the agent in the same process tree.
+    // The control frame is the portable way to stop it, so use that there.
+    const useFrame = process.platform === "win32";
+    if (!useFrame && typeof entry.wrapperPid === "number" && entry.wrapperPid > 0) {
       try {
         process.kill(entry.wrapperPid, signal as NodeJS.Signals);
         signalled = true;
