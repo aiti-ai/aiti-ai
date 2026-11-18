@@ -96,6 +96,19 @@ function replaceLocationIfChanged(
       ? `?${targetQuery}` === window.location.search
       : !window.location.search;
     if (samePath && sameQuery) return;
+    // Pure query-only updates (?session=… on the same path) write the address bar
+    // directly via the history API: router.replace() goes through the App Router
+    // navigation queue and can sit pending for tens of seconds while a takeover/
+    // loading transition suspenses — sidebar row clicks then look like "the URL
+    // never updates". Next 15+ syncs router state from native history updates,
+    // and this call site never wants the RSC refetch a soft navigation triggers.
+    if (queryOnly) {
+      const nextUrl = targetQuery
+        ? `${window.location.pathname}?${targetQuery}`
+        : window.location.pathname;
+      window.history.replaceState(null, "", nextUrl);
+      return;
+    }
   }
   router.replace(href, options);
 }
