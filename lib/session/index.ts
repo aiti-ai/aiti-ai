@@ -68,13 +68,15 @@ export { createLocalHandle } from "./local.ts";
 // Wrapper-compatible adapter (lets existing /api/agent/* routes drive handles)
 export { HandleSessionAdapter, handleModelToClient, type WrappedSessionLike } from "./handle-adapter.ts";
 
-import { getProvider, findProvidersForAgent, listProviders, DEFAULT_PROVIDER_TYPE } from "./providers.ts";
+import { getProvider, findProvidersForAgent, listProviders, DEFAULT_PROVIDER_TYPE, type SessionProvider } from "./providers.ts";
 import type { CreateSessionOptions } from "./providers.ts";
 import { BridgeOccupiedError } from "./types.ts";
 import type { SessionCapabilities, SessionHandle } from "./types.ts";
 import { getHandle as lookupHandle, putHandle, putHandleAt, listAllHandles } from "./handle-store.ts";
 import { HandleSessionAdapter, type WrappedSessionLike } from "./handle-adapter.ts";
 import { findBridgeSessionFileById, invalidateSessionListCache, readSessionHeader, resolveSessionPath } from "../session-reader.ts"; // relative path + explicit extension: jiti does not resolve the @/ alias, and ESM requires extensions
+import { getAgentStarters, getWrapperStarter, selectStarter } from "../agent-starter/index.ts";
+import type { ChildProcess } from "node:child_process";
 import { ensurePlaceholder, rebindPlaceholder, aliasPlaceholder, getPlaceholder, isProvisionalExtSid } from "./placeholder.ts";
 
 function listProviderNames(): string[] {
@@ -117,6 +119,138 @@ export function splitHandleId(id: string): { agent: string; sid: string } {
 }
 
 /**
+ * Attach the core's chosen agent-process strategy to the createSession options
+ * (the DI seam). Providers never import the factory; they call
+ * `options.agentStarter.spawn(...)` when present and fall back to their own
+ * child_process.spawn when absent (older hosts).
+ *
+ * Selection is per session and made HERE — never inside a provider:
+ *   PI_WEB_AGENT_DETACH=0                   → direct for everyone
+ *   provider.detachable === false           → direct (node IPC / non-pipe stdio)
+ *   createSession({ detach: false })        → direct for this session
+ *   otherwise                               → the wrapper strategy when available
+ */
+async function withAgentStarter(
+  provider: SessionProvider | undefined,
+  options: CreateSessionOptions,
+): Promise<CreateSessionOptions> {
+  if (options.agentStarter) return options;
+  try {
+    const starters = await getAgentStarters();
+    const starter = selectStarter(starters, {
+      detach: options.detach,
+      providerDetachable: provider?.detachable,
+    });
+    // Tag the spawn with the owning provider so a reattach after a restart can
+    // address exactly the provider that started the process (agentKey alone is
+    // ambiguous: several backends can drive "pi").
+    const owner = provider?.type;
+    const tagged =
+      owner && starter.kind === "wrapper"
+        ? {
+            kind: starter.kind,
+            spawn: (command: string, args: string[], spawnOptions?: Record<string, unknown>) =>
+              starter.spawn(command, args, { ...(spawnOptions ?? {}), owner }),
+          }
+        : starter;
+    return { ...options, agentStarter: tagged };
+  } catch (err) {
+    // Never block session creation on a starter probe failure — the provider's
+    // own spawn path stays the historical behavior.
+    console.warn(`[session] agent-starter unavailable: ${err instanceof Error ? err.message : String(err)}`);
+    return options;
+  }
+}
+
+/**
+ * Outcome of the detached-recovery probe.
+ *
+ *   none      nothing to recover (no registry entry / wrapper gone) → callers
+ *             continue with the historical paths
+ *   attached  the live agent process is now driven by this handle
+ *   blocked   a wrapper holds the session but no provider could adopt it —
+ *             callers must FAIL (single-writer rule: a second agent on the same
+ *             session file would double-write it)
+ */
+type DetachedRecovery =
+  | { status: "none" }
+  | { status: "attached"; handle: SessionHandle }
+  | { status: "blocked"; reason: string };
+
+/**
+ * Reattach to a session whose agent process is hosted by a detached wrapper
+ * (it outlived a pi-web restart / extension reload).
+ *
+ * The registry entry names the agent family, so the provider that can drive it
+ * is found by agentKey; the child process facade replays the wrapper's journal
+ * before any new traffic, so the handle rebuilds the live stream.
+ */
+async function attachDetachedSession(
+  sessionId: string,
+  sessionFile?: string,
+): Promise<DetachedRecovery> {
+  if (!sessionId) return { status: "none" };
+  const wrapper = await getWrapperStarter();
+  if (!wrapper) return { status: "none" };
+  const entry = wrapper.describe(sessionId);
+  if (!entry) return { status: "none" };
+  if (!(await wrapper.holds(sessionId))) return { status: "none" };
+  // Exact provider first (the one that spawned the process), then other
+  // providers that opted into detachable hosting. A backend that ignores
+  // `attached` would spawn a SECOND agent on the same session file — never
+  // offer the session to it.
+  const candidates: SessionProvider[] = [];
+  const owner = entry.providerType ? getProvider(entry.providerType) : undefined;
+  if (owner && owner.detachable === true) candidates.push(owner);
+  for (const provider of findProvidersForAgent(entry.agentKey)) {
+    if (provider.detachable === true && !candidates.includes(provider)) candidates.push(provider);
+  }
+  if (candidates.length === 0) {
+    return {
+      status: "blocked",
+      reason: `session is hosted by a detached ${entry.agentKey} agent, but no installed backend can drive "${entry.agentKey}"`,
+    };
+  }
+
+  let child: ChildProcess | undefined;
+  try {
+    child = await wrapper.attach(sessionId);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    // The wrapper may have exited between the probe and the attach → the file
+    // resume path is correct after all.
+    if (!(await wrapper.holds(sessionId))) return { status: "none" };
+    return { status: "blocked", reason: `detached attach failed: ${message}` };
+  }
+  let lastError: unknown;
+  for (const provider of candidates) {
+    try {
+      const handle = await provider.createSession({
+        ...(sessionFile ? { sessionFile } : {}),
+        sessionId,
+        ...(entry.cwd ? { cwd: entry.cwd } : {}),
+        attached: { child, sessionId, agentKey: entry.agentKey },
+      });
+      return { status: "attached", handle };
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  // No provider could adopt the process: disconnect and leave the agent hosted
+  // by its wrapper (killing it would lose the in-flight turn).
+  const facade = child as unknown as { release?: () => void };
+  try {
+    facade.release?.();
+  } catch {
+    /* already gone */
+  }
+  return {
+    status: "blocked",
+    reason: `no backend could adopt the detached ${entry.agentKey} session: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+  };
+}
+
+/**
  * Open a LIVE session for an all-sessions historical row (attach-from-history).
  *
  * Given a composite id like "claude:<sid>", resolves providers whose agentKey
@@ -132,6 +266,22 @@ export async function openExternalSession(
   const requestedId = compositeId;
   const { agent } = splitHandleId(compositeId);
   let sid = splitHandleId(compositeId).sid;
+  // Detached recovery first: a wrapper-hosted agent outlived the old instance, so
+  // reopening the session must attach to it instead of spawning a second agent.
+  const recovery = await attachDetachedSession(sid);
+  if (recovery.status === "blocked") {
+    throw new BridgeOccupiedError(compositeId, recovery.reason);
+  }
+  if (recovery.status === "attached") {
+    const revived = recovery.handle;
+    putHandle(revived);
+    if (requestedId !== revived.id) putHandleAt(requestedId, revived);
+    // Same placeholder wiring as the from-scratch path below (external agents only).
+    if (findProvidersForAgent(agent).some((p) => p.agentKey)) {
+      wireExternalPlaceholder(revived, true, options.cwd, options.name);
+    }
+    return revived;
+  }
   // new- placeholder revival guard (observed 2026-09-07): after the handle store is
   // emptied (extension reload/restart), an unmigrated ?session=agent:new-… URL in the
   // browser would hit the fallback branch below and re-instantiate the placeholder id
@@ -162,10 +312,12 @@ export async function openExternalSession(
   let lastError: unknown;
   for (const provider of candidates) {
     try {
-      const handle = await provider.createSession({
-        ...options,
-        sessionId: options.sessionId ?? sid,
-      });
+      const handle = await provider.createSession(
+        await withAgentStarter(provider, {
+          ...options,
+          sessionId: options.sessionId ?? sid,
+        }),
+      );
       putHandle(handle);
       // Placeholder-alias revival path: the handle is stored under the real composite
       // id and double-registered under the requested id (old placeholder key), so
@@ -235,6 +387,24 @@ export async function attachIfBridged(
   const existingHandle = lookupHandle(sessionFile);
   if (existingHandle?.alive()) return new HandleSessionAdapter(existingHandle);
 
+  // Detached recovery (core-internal, before any provider probe): a session whose
+  // agent is hosted by a wrapper is attached by uuid, and the wrapper's journal
+  // replay rebuilds the stream — no extension registry (ownsFile) involved.
+  const detachedUuid = sessionFile.match(/_([0-9a-f-]{36})\.jsonl$/)?.[1];
+  if (detachedUuid) {
+    const recovery = await attachDetachedSession(detachedUuid, sessionFile);
+    if (recovery.status === "blocked") {
+      // Fail loud: the agent is alive elsewhere, opening locally would double-write.
+      throw new BridgeOccupiedError(sessionFile, recovery.reason);
+    }
+    if (recovery.status === "attached") {
+      const revived = recovery.handle;
+      putHandle(revived);
+      putHandleAt(sessionFile, revived);
+      return new HandleSessionAdapter(revived);
+    }
+  }
+
   const candidates = listProviders().filter((p) => p.ownsFile);
   for (const provider of candidates) {
     let claimed = false;
@@ -252,10 +422,12 @@ export async function attachIfBridged(
       // live state. Double-key registration: uuid (authoritative) + file path
       // (compat with the existing lookupHandle(sessionFile) reuse semantics).
       const sessionUuid = (sessionFile.match(/_([0-9a-f-]{36})\.jsonl$/) ?? [null, sessionFile])[1];
-      const handle = await provider.createSession({
-        sessionFile,
-        sessionId: sessionUuid,
-      });
+      const handle = await provider.createSession(
+        await withAgentStarter(provider, {
+          sessionFile,
+          sessionId: sessionUuid,
+        }),
+      );
       putHandle(handle);
       if (sessionUuid !== sessionFile) putHandleAt(sessionFile, handle);
       // Single-writer cleanup: the bridge claimed the session → the local twin started
@@ -338,7 +510,20 @@ export async function createSessionHandle(
         (listProviders().length === 0 ? " (none registered — backend extensions not loaded?)" : ""),
     );
   }
-  const handle = await provider.createSession(options);
+  // A detached agent may already host this session (extension reload, recycle,
+  // a second door into the same id): adopt it instead of starting a second
+  // process on the same session file.
+  const detached =
+    options.sessionId && type !== DEFAULT_PROVIDER_TYPE
+      ? await attachDetachedSession(options.sessionId, options.sessionFile)
+      : ({ status: "none" } as DetachedRecovery);
+  if (detached.status === "blocked") {
+    throw new BridgeOccupiedError(options.sessionFile ?? options.sessionId ?? type, detached.reason);
+  }
+  const handle =
+    detached.status === "attached"
+      ? detached.handle
+      : await provider.createSession(await withAgentStarter(provider, options));
   if (type !== DEFAULT_PROVIDER_TYPE) {
     putHandle(handle);
     // The backend may only learn its real native id after the first message (e.g.

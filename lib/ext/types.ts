@@ -77,6 +77,13 @@ export interface ExtSessionProviderRegistration {
   label: string;
   /** Capability ceiling declaration (fail-loud contract; the UI shows/hides controls based on it). */
   maxCapabilities: import("../session/types.ts").SessionCapabilities;
+  /**
+   * Opt in to detachable hosting (pi-web core agent-starter): the host injects
+   * `options.agentStarter` and this provider may host the agent in a wrapper that
+   * outlives a pi-web restart, adopting it later through `options.attached`.
+   * Absent/false = plain child process (the historical behavior).
+   */
+  detachable?: boolean;
   /** Static model catalog (fetchable without a session; feeds the picker when choosing a backend on the new-session page). Optional; falls back to the local catalog. */
   listModels?(): Promise<Array<{ id: string; provider: string; label?: string }>>;
   /** Manual model catalog refresh (force probe bypassing the cache; data source for the "refresh model list" button on the new-session page). Optional; the button is hidden when absent. */
