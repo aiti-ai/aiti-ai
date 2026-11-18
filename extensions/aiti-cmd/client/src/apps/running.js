@@ -87,6 +87,7 @@ export function createRunningApp(kit, store, deps) {
       setErr(null);
       try {
         const cwd = kit.ctx?.getExtService?.("pi-web.ui")?.get?.("selectedCwd") || undefined;
+        if (!cwd) { setErr(t("cmd.k363")); return; }
         const r = await fetch(api("/shell"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cwd, name: t("cmd.k325"), ttlMs: 24 * 3600 * 1000 }) }).then((x) => x.json()).catch(() => ({ ok: false, error: t("cmd.k336") }));
         if (!r || !r.ok) { setErr((r && r.error) || t("cmd.k122")); return; }
         store.openApp("terminal", { sessionId: r.sessionId, title: r.name || t("cmd.k325") });

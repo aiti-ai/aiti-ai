@@ -14,6 +14,7 @@ export function createTabs(kit, store, deps) {
   const { h, t, api, Ic, ICONS, useState, useEffect, useRef, liveCwdOf, openNewPiSession } = kit;
   const { TerminalView } = deps;
 
+  const mountCounts = new Map(); // tabId → live component instances (host remount tolerance)
   const tabAttached = {};   // { [tabId]: { sessionId, title, cwd } | undefined }
   const tabDetached = {};   // { [tabId]: true } — true = the view lives in the dialog
   const tabAttachedListeners = new Set();
@@ -124,21 +125,36 @@ export function createTabs(kit, store, deps) {
         setAttaching(false);
       }
     };
-    // first activation takes over, three paths: ① a dialog "move to tab" pending takeover;
-    // ② liveness check of a restored binding; ③ no binding → create (restored tabs show the button).
-    useEffect(() => {
-      if (!active || triedRef.current) return;
+    /** Consume a dialog "move to tab" request for this tab (true when a session was bound). */
+    const consumePendingTakeover = () => {
       const now = Date.now();
       for (let i = 0; i < pendingTakeovers.length; i++) {
         if (now - pendingTakeovers[i].ts >= PENDING_TAKEOVER_TTL) { pendingTakeovers.splice(i, 1); i--; }
       }
-      const pIdx = pendingTakeovers.findIndex((p) => p.cwd === cwd);
-      if (pIdx >= 0) {
-        triedRef.current = true;
-        const p = pendingTakeovers.splice(pIdx, 1)[0];
-        setTabEntry(tabId, { sessionId: p.sessionId, title: p.title, cwd });
-        return;
+      // match by cwd; the host may normalize the path (trailing slash, resolved workspace root),
+      // so a single fresh pending entry is unambiguously ours (the tab was just created for it)
+      let pIdx = pendingTakeovers.findIndex((p) => p.cwd === cwd || String(p.cwd).replace(/\/+$/, "") === String(cwd || "").replace(/\/+$/, ""));
+      if (pIdx < 0) {
+        const fresh = pendingTakeovers.map((p, i) => ({ p, i })).filter(({ p }) => now - p.ts < PENDING_TAKEOVER_TTL);
+        if (fresh.length === 1) pIdx = fresh[0].i;
       }
+      if (pIdx < 0) return false;
+      const p = pendingTakeovers.splice(pIdx, 1)[0];
+      setTabEntry(tabId, { sessionId: p.sessionId, title: p.title, cwd });
+      return true;
+    };
+    // ⓪ "move to tab" creates a tab that the host may still report as inactive — bind the pending
+    // session right away so ownership transfers without a manual click.
+    useEffect(() => {
+      if (triedRef.current) return;
+      if (consumePendingTakeover()) triedRef.current = true;
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+    // first activation takes over, three paths: ① a dialog "move to tab" pending takeover;
+    // ② liveness check of a restored binding; ③ no binding → create (restored tabs show the button).
+    useEffect(() => {
+      if (!active || triedRef.current) return;
+      if (consumePendingTakeover()) { triedRef.current = true; return; }
       // ② restored binding: check the session once — alive/exited both stay; 404 clears the binding
       if (attached.entry && !attached.detached) {
         triedRef.current = true;
@@ -156,7 +172,21 @@ export function createTabs(kit, store, deps) {
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [active, restored, attached.entry]);
     // tab close: the host unmounts us → cleanup releases the binding (the shell survives)
-    useEffect(() => () => clearTabEntry(tabId), [tabId]);
+    // Tab close → release the binding. The host may also remount this component while the tab
+    // stays open (new element identity per dock render), so a plain unmount cleanup would wipe a
+    // just-transferred session. Count mounts and only release when no instance comes back.
+    useEffect(() => {
+      mountCounts.set(tabId, (mountCounts.get(tabId) || 0) + 1);
+      return () => {
+        const left = (mountCounts.get(tabId) || 1) - 1;
+        if (left > 0) { mountCounts.set(tabId, left); return; }
+        mountCounts.set(tabId, 0);
+        setTimeout(() => {
+          if ((mountCounts.get(tabId) || 0) > 0) return; // remounted: keep the binding
+          clearTabEntry(tabId);
+        }, 400);
+      };
+    }, [tabId]);
 
     const detachedEntry = attached.entry && attached.detached;
     // pull back into the window: hand ownership to the dialog and open that session

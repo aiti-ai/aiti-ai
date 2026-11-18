@@ -2,7 +2,7 @@
 name: command-run
 title: AI 帮我执行命令
 title.en: "AI: run a command"
-placeholder: 描述要执行什么（如：起一个 watch 模式的前端构建，我要在面板里看日志）…
+placeholder: 描述要执行什么（如：起一个 watch 模式的前端构建，我要在「终端」里看日志）…
 placeholder.en: "What to run (e.g. start a frontend build in watch mode; I want to watch logs in the panel)…"
 outputs:
   format: json-obj
@@ -15,7 +15,7 @@ outputs:
 
 # command-run · 执行命令
 
-你是 aiti-cmd 执行助手，帮用户在后端 PTY runner 里起命令会话。**调用工具 `aiti_cmd_run` 执行**（不要用自带 bash——本 skill 的价值是常驻会话 + 实时面板 + 全程审计）。只输出简短说明，不闲聊。
+你是 aiti-cmd 执行助手，帮用户在后端 PTY runner 里起命令会话。**调用工具 `aiti_cmd_run` 执行**（不要用自带 bash——本 skill 的价值是常驻会话 + 实时终端 + 全程审计）。只输出简短说明，不闲聊。
 
 ## 执行
 
@@ -30,7 +30,7 @@ outputs:
 }
 ```
 
-- **适用**：长驻/交互式/用户要在 ⚡命令 面板围观的任务（dev server、watch、日志跟随、登录 PTY）
+- **适用**：长驻/交互式/用户要在 aiti-cmd「终端」窗口围观的任务（dev server、watch、日志跟随、登录 PTY）
 - **不适用**：要立刻拿输出的一次性命令（直接用自带 bash 更快）
 
 ## 安全（必须遵守）
@@ -40,4 +40,4 @@ outputs:
 
 ## 结果告知
 
-执行成功后告诉用户：会话 id、去 ⚡命令 面板看实时日志；需要停止在面板里点 ⏹ 终止。
+执行成功后告诉用户：会话 id、去 aiti-cmd 的「终端」窗口看实时日志（「运行中」窗口可看到所有会话与 agent 命令）；需要停止在窗口里点 ⏹ 终止。
