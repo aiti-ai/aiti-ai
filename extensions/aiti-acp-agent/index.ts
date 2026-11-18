@@ -35,7 +35,7 @@ import { whichBin } from "@aiti-ai/ext-shared/exec-async";
 import { governanceEnv } from "./external-governance.ts";
 import { agentSpawnEnv, spawnEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, spawnEnvList, spawnCommand, spawnArgsPrefix, parseArgsLines, resolveCliLaunch, captureSpawnEnvFeatures } from "@aiti-ai/ext-shared/agent-spawn-env";
 import type { LaunchOverride } from "@aiti-ai/ext-shared/agent-spawn-env";
-import { readAgentLastUsedModel, withLastUsedFirst, writeExtModelState, type ExtModelEntry } from "@aiti-ai/ext-shared/ext-model-state";
+import { readAgentLastUsedModel, readExtModelState, withLastUsedFirst, writeExtModelState, type ExtModelEntry } from "@aiti-ai/ext-shared/ext-model-state";
 // 队列共享实现层（权威源 pi-web-ext/_shared/backend-queue.ts，副本随扩展部署——改动须双向同步）
 import { createBackendQueueSupport, createQueueFilePersistence, type BackendQueue } from "@aiti-ai/ext-shared/backend-queue";
 // 工具结果空白占位（权威源 pi-web-ext/_shared/seed-tool.ts；D18 各家同口径——卡片不裸奔）
@@ -322,6 +322,36 @@ const ACP_CAPABILITIES: SessionCapabilitiesLike = {
 // ============================================================================
 
 /** 导出仅供单测直接驱动（宿主 loader 只消费 default 导出）。 */
+/**
+ * Injected by the pi-web core (`agent-starter`). Older hosts do not pass it — the
+ * extension then keeps its historical `child_process.spawn`. With the detachable
+ * variant the long-lived ACP process outlives pi-web and a reattach adopts it.
+ */
+export interface AgentStarterLike {
+  readonly kind: "direct" | "wrapper";
+  spawn(
+    command: string,
+    args: string[],
+    options?: {
+      env?: Record<string, string>;
+      cwd?: string;
+      shell?: boolean | string;
+      agentKey?: string;
+      sessionId?: string;
+    },
+  ): Promise<ChildProcess>;
+}
+
+/** Adopt an already-live agent process (core recovery after a pi-web restart). */
+export interface AttachedChildOptions {
+  child: ChildProcess;
+  sessionId: string;
+  agentKey?: string;
+}
+
+/** Core signal: the wrapper's journal replay ended, live frames start here. */
+const REPLAY_END_EVENT = "replay_end";
+
 export class AcpHandle {
   readonly source: string;
   /** 实例级拷贝（initialize 后按宿主宣告收敛：promptCapabilities.image 不支持 → fileAttachments=false） */
@@ -337,6 +367,12 @@ export class AcpHandle {
   private readonly bin: string;
   private readonly binArgs: string[];
   private child: ChildProcess | null = null;
+  /** Pending `session_backend_ready` announcement (host may not be listening yet). */
+  private pendingAnnounce: { oldId: string; id: string } | null = null;
+  /** Host-injected process strategy (undefined = plain spawn). */
+  starter?: AgentStarterLike;
+  /** Registry key the host records (ACP session id / placeholder). */
+  nativeKey = "";
   private detachReader: (() => void) | null = null;
   private listeners = new Set<Listener>();
   private pending = new Map<string | number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
@@ -402,7 +438,28 @@ export class AcpHandle {
 
   // ---- 进程与初始化 ----------------------------------------------------------
 
-  async start(cwd: string): Promise<void> {
+  async start(cwd: string, attach?: { child: ChildProcess; sessionId: string }): Promise<void> {
+    if (attach) {
+      // Recovery: the ACP session already exists in the live process, so the adopted
+      // client must NOT re-handshake (initialize/session/new would create a second
+      // session on the same stdio). Journal replay is history until `replay_end`.
+      this.child = attach.child;
+      this.aliveFlag = true;
+      this.id = `${this.agentKey}:${attach.sessionId}`;
+      this.nativeKey = attach.sessionId;
+      this.wireChild(attach.child);
+      this.loading = true;
+      const facade = attach.child as unknown as { detachable?: unknown; on?: (event: string, listener: () => void) => unknown };
+      if (facade.detachable === true && typeof facade.on === "function") {
+        facade.on(REPLAY_END_EVENT, () => {
+          this.loading = false;
+          this.flushReplayAssistant();
+        });
+      } else {
+        this.loading = false;
+      }
+      return;
+    }
     const resolvedBin = which(this.bin) ?? this.bin;
     // P1' 启动包装（docs/aiti-custom-agent-plan.md）：extman spawn.command/spawn.argsPrefix，缺省 = 行为不变
     // P2：launchOverride（custom-agent 委托路径）优先于 extman feature
@@ -418,14 +475,52 @@ export class AcpHandle {
       cwd,
       warn: (m) => console.log(`[aiti-acp-agent] ${m}`),
     });
-    const child = spawn(launch.command, launch.args, {
-            shell: launch.shell,
-cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-      env: launch.env,
-    });
+    // One native key shared by the detached registry and the handle id.
+    this.nativeKey ||= `${this.agentName}-${Date.now().toString(36)}`;
+    const child = this.starter
+      ? await this.starter.spawn(launch.command, launch.args, {
+          shell: launch.shell,
+          cwd,
+          env: launch.env as Record<string, string>,
+          agentKey: this.agentKey,
+          sessionId: this.nativeKey,
+        })
+      : spawn(launch.command, launch.args, {
+          shell: launch.shell,
+          cwd,
+          stdio: ["pipe", "pipe", "pipe"],
+          env: launch.env,
+        });
     this.child = child;
     this.aliveFlag = true;
+    this.wireChild(child);
+
+    // initialize (30s grace): converge the image capability by host announcement (image is a
+    // standard ACP-level capability, but each host decides via promptCapabilities.image;
+    // claude-code-acp 0.16.1 verified = true)
+    const initResult = await this.rpc("initialize", {
+      protocolVersion: 1,
+      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+    }, 30_000) as { agentCapabilities?: { promptCapabilities?: { image?: boolean } } };
+    if (initResult?.agentCapabilities?.promptCapabilities?.image !== true) {
+      (this.capabilities as { fileAttachments: boolean }).fileAttachments = false;
+    }
+  }
+
+  /** Deliver a pending native-id announcement (idempotent; clears once sent). */
+  private flushAnnounce(): void {
+    const announce = this.pendingAnnounce;
+    if (!announce || !this.aliveFlag) return;
+    // Nobody listening yet (createSession returns before the host subscribes) →
+    // keep it pending and retry on the next outward event.
+    if (this.listeners.size === 0) return;
+    this.pendingAnnounce = null;
+    this.emit({ type: "session_backend_ready", oldId: announce.oldId, id: announce.id });
+  }
+
+  /** Wire one live ACP process to this handle (fresh spawn or adopted facade). */
+  private wireChild(child: ChildProcess): void {
+    this.detachReader?.();
     this.detachReader = lineReader(child.stdout, (l) => this.onLine(l), {
       onOverflow: (size) => this.markDead(`stdout line overflow (${size} bytes)`),
     });
@@ -443,16 +538,15 @@ cwd,
       this.markDead(`process exited (${code ?? "signal"})`);
     });
     child.once("error", (err) => this.markDead(`spawn error: ${err.message}`));
+  }
 
-    // initialize（宽限 30s）：按宿主宣告收敛发图能力（ACP 协议级 image 是标准能力，
-    // 但逐宿主以 promptCapabilities.image 为准；claude-code-acp 0.16.1 实测 = true）
-    const initResult = await this.rpc("initialize", {
-      protocolVersion: 1,
-      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
-    }, 30_000) as { agentCapabilities?: { promptCapabilities?: { image?: boolean } } };
-    if (initResult?.agentCapabilities?.promptCapabilities?.image !== true) {
-      (this.capabilities as { fileAttachments: boolean }).fileAttachments = false;
-    }
+  /**
+   * Record the model the live agent is already running (adoption only — no protocol
+   * call; the ACP session keeps its own model).
+   */
+  adoptModel(id: string): void {
+    if (!id) return;
+    this.model = { id, provider: this.agentName };
   }
 
   /** session/new|load 共用的会话元数据应用（models/modes/currentModel）。 */
@@ -516,7 +610,22 @@ cwd,
       configOptions?: Array<{ id?: string; name?: string; currentValue?: unknown; options?: Array<{ value: unknown; name?: string; description?: string }> }>;
     };
     if (!result?.sessionId) throw new Error("[acp] session/new returned no sessionId");
+    // Announce the native id: the host rekeys the handle store AND the detached
+    // registry entry (which was created under the placeholder key at spawn time).
+    // Deferred one tick: createSession returns before the host attaches its
+    // subscribers, and the announcement is idempotent host-side.
+    const previousId = this.id;
     this.id = `${this.agentKey}:${result.sessionId}`;
+    if (previousId !== this.id) {
+      const nativeId = this.id;
+      // oldId = the id the host knows (placeholder key on a fresh session).
+      const previousKey = previousId || this.nativeKey;
+      // Repeat-safe: the host attaches its subscribers after createSession returns,
+      // so the announcement is re-sent on the next outward event (prompt) if nobody
+      // was listening yet.
+      this.pendingAnnounce = { oldId: previousKey, id: nativeId };
+      setImmediate(() => this.flushAnnounce());
+    }
     this.applySessionMeta(result);
     await this.applyTrustMode();
     this.emit({ type: "agent_start", sessionId: this.id, backend: this.agentName });
@@ -885,7 +994,10 @@ cwd,
     streamingBehavior?: "steer" | "followUp";
   }): Promise<void> {
     if (!this.aliveFlag) throw new Error("[acp] not running");
+    // The host attaches its listener after createSession; announce here too.
+    this.flushAnnounce();
     if (this.running) {
+
       // D3：分流归共享层——运行中输入入本地 followUp 队列（可撤回，settle 后自动续轮）。
       // running 中 routePrompt 不会 dispatch（dispatch 回本方法，空闲时走下方执行路径）。
       await this.q.routePrompt(text, {
@@ -1049,6 +1161,14 @@ cwd,
 
   async dispose(): Promise<void> {
     if (!this.aliveFlag) return;
+    // Wrapper-hosted process: disconnect and leave the ACP session running (the
+    // core decides whether a session should actually be stopped).
+    const facade = this.child as unknown as { detachable?: unknown; release?: () => void } | null;
+    if (facade && facade.detachable === true && typeof facade.release === "function") {
+      facade.release();
+      this.markDead("detached");
+      return;
+    }
     this.child?.kill("SIGTERM");
     await new Promise<void>((resolve) => {
       const t = setTimeout(() => {
@@ -1294,6 +1414,11 @@ function scanAcpBackends(
       // 上次使用的模型置顶（新建页默认项）
       listModels: () => catalogListModels(agent.name, agent.agentKey ?? agent.name),
       refreshModels: () => catalogRefreshModels(agent.name, agent.agentKey ?? agent.name),
+      // Adoption is implemented (AcpHandle.start's attach path + replay boundary),
+      // but the family stays opt-OUT until a post-adoption turn is verified end to
+      // end on these dialects: a half-working adoption would leave live agents that
+      // nobody can drive. aiti-qoder-agent carries the verified ACP path.
+      detachable: false,
       async createSession(options) {
         // 接管既有会话：以原 cwd 优先（session/load）；新会话用宿主 cwd。
         // cwd 先算后构造：handle 信息面（/api/sessions info.cwd）在 start 完成前的
@@ -1301,6 +1426,15 @@ function scanAcpBackends(
         const restored = options.sessionId ? await restoreCwdFn?.(agent.agentKey ?? agent.name, options.sessionId) : undefined;
         const cwd = restored ?? options.cwd ?? process.cwd();
         const handle = new AcpHandle(agent.name, resolved.bin, resolved.args, agent.agentKey ?? agent.name, cwd);
+        handle.starter = options.agentStarter;
+        if (options.attached) {
+          // Recovery: the ACP session lives on in the wrapper's process — adopt it and
+          // skip the handshake (start's adopt path, no session/new|load).
+          await handle.start(cwd, { child: options.attached.child, sessionId: options.attached.sessionId });
+          const saved = await readExtModelState(`acp-${agent.agentKey ?? agent.name}`, `${agent.agentKey ?? agent.name}:${options.attached.sessionId}`);
+          if (saved?.selected?.id) handle.adoptModel(saved.selected.id);
+          return handle as unknown as AcpHandle;
+        }
         await handle.start(cwd);
         if (options.sessionId) await handle.loadSession(options.sessionId, cwd);
         else await handle.newSession(cwd);
@@ -1758,10 +1892,18 @@ export default {
               maxCapabilities: ACP_CAPABILITIES,
               listModels: () => catalogListModels(body.name, body.agentKey ?? body.name),
               refreshModels: () => catalogRefreshModels(body.name, body.agentKey ?? body.name),
+              detachable: false, // see the builtin-provider note: adoption not verified yet
               createSession: async (opts) => {
                 const handle = new AcpHandle(body.name, binPath, body.args ?? [], body.agentKey ?? body.name);
                 const restored = opts.sessionId ? await restoreCwdFn?.(body.agentKey ?? body.name, opts.sessionId) : undefined;
                 const cwd = restored ?? opts.cwd ?? process.cwd();
+                handle.starter = opts.agentStarter;
+                if (opts.attached) {
+                  await handle.start(cwd, { child: opts.attached.child, sessionId: opts.attached.sessionId });
+                  const saved = await readExtModelState(`acp-${body.agentKey ?? body.name}`, `${body.agentKey ?? body.name}:${opts.attached.sessionId}`);
+                  if (saved?.selected?.id) handle.adoptModel(saved.selected.id);
+                  return handle as unknown as AcpHandle;
+                }
                 await handle.start(cwd);
                 if (opts.sessionId) await handle.loadSession(opts.sessionId, cwd);
                 else await handle.newSession(cwd);
