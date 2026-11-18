@@ -26,5 +26,13 @@ jobs:
 
       - name: Anonymous pull test (clean runner network)
         run: |
-          echo "--- anonymous skopeo/docker pull of ghcr.io/${{ github.repository }}:0.15.15-aiti.10 ---"
-          docker pull "ghcr.io/${{ github.repository }}:0.15.15-aiti.10" 2>&1 | tail -3 || true
+          echo "--- anonymous docker pull of ghcr.io/${{ github.repository }}:0.15.15-aiti.10 ---"
+          docker pull "ghcr.io/${{ github.repository }}:0.15.15-aiti.10" 2>&1 | tail -2 || true
+
+      - name: Authenticated pull test (GITHUB_TOKEN packages:read)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "--- authenticated docker pull (login with github.token) ---"
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker pull "ghcr.io/${{ github.repository }}:0.15.15-aiti.10" 2>&1 | tail -3
