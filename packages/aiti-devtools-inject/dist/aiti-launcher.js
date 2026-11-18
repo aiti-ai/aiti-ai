@@ -1,4 +1,5 @@
 /* aiti-devtools launcher · 单文件注入版（构建产物，勿手改）*/
+"use strict";
 (() => {
   var __defProp = Object.defineProperty;
   var __getOwnPropSymbols = Object.getOwnPropertySymbols;
@@ -626,7 +627,8 @@
   }
 
   // dbg:dbg-client
-  var MINI_DBG_CLIENT = `(() => {
+  var MINI_DBG_CLIENT = `"use strict";
+(() => {
   var __defProp = Object.defineProperty;
   var __getOwnPropSymbols = Object.getOwnPropertySymbols;
   var __hasOwnProp = Object.prototype.hasOwnProperty;
@@ -6898,7 +6900,7 @@
           if (e.key === "Enter") send.click();
         });
       } else {
-        let refreshAskSend = function() {
+        let refreshAskSend2 = function() {
           var hasSel = sel.custom || (multiple ? Object.keys(sel.idxs).length > 0 : sel.v !== null);
           var hasCmt = !!(commentInp && commentInp.value.trim());
           if (sendBtn) sendBtn.disabled = !(hasSel || hasCmt);
@@ -6907,6 +6909,7 @@
             if (multiple) footSend.textContent = t("✅ Send selected (") + Object.keys(sel.idxs).length + "）";
           }
         };
+        var refreshAskSend = refreshAskSend2;
         var optBtns = optWrap.querySelectorAll(".dbg-ask-opt");
         Array.prototype.forEach.call(optBtns, function(o) {
           o.addEventListener("click", function() {
@@ -6924,7 +6927,7 @@
                 } catch (e) {
                 }
               }
-              refreshAskSend();
+              refreshAskSend2();
               return;
             }
             sel.custom = false;
@@ -6946,7 +6949,7 @@
                 x.classList.toggle("dbg-on", x === o);
               });
             }
-            refreshAskSend();
+            refreshAskSend2();
             if (!(kind === "choose" && multiple)) {
               setTimeout(finishAskCustom, 0);
             }
@@ -6954,14 +6957,14 @@
         });
         if (sendBtn) sendBtn.addEventListener("click", finishAskCustom);
         if (commentInp) {
-          commentInp.addEventListener("input", refreshAskSend);
+          commentInp.addEventListener("input", refreshAskSend2);
           commentInp.addEventListener("keydown", function(e) {
             if (e.key !== "Enter") return;
             if (sendBtn && !sendBtn.disabled) sendBtn.click();
             else if (footSend) footSend.click();
           });
         }
-        refreshAskSend();
+        refreshAskSend2();
       }
       body.appendChild(ctl);
       if (it.rejectable !== false && kind !== "presence") {

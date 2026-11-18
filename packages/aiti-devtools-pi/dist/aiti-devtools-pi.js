@@ -3705,10 +3705,8 @@ function autoRegisterAitiShim(opts) {
 
 // ../aiti-devtools-agent/src/bridge-client.ts
 var AgentBridgeClient = class {
-  _bridgeUp = false;
-  /** 桥地址（已剥尾部斜杠，含 /aiti 路径前缀等） */
-  base;
   constructor(base) {
+    this._bridgeUp = false;
     this.base = base.replace(/\/+$/, "");
   }
   /** 桥当前连通状态（probe/register 成功置 true，失败置 false） */
