@@ -32,7 +32,12 @@ function updateContentBlock(
   update: (current: AssistantContentBlock | undefined) => AssistantContentBlock | null,
 ): StreamingState {
   const message = state.streamingMessage;
-  if (!message || !Number.isInteger(contentIndex) || contentIndex < 0) return state;
+  // Reject indices that point past the end of the content array. Assigning at
+  // `contentIndex > content.length` would create a sparse hole; the next
+  // `[...content]` spread densifies that hole into `undefined`, which every
+  // downstream `block.type` read then crashes on. `*_end` events carry the
+  // authoritative block, so a gap-creating `*_start` can be dropped safely.
+  if (!message || !Number.isInteger(contentIndex) || contentIndex < 0 || contentIndex > message.content.length) return state;
 
   const content = [...message.content];
   const nextBlock = update(content[contentIndex]);

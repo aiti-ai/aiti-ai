@@ -47,9 +47,14 @@ function normalizeAssistantToolCalls(
   if (msg.role !== "assistant") return msg;
   const content = (msg as AssistantMessage).content;
   if (!Array.isArray(content)) return msg;
-  const normalized = content.map((block) => {
+  const normalized = content.flatMap((block) => {
+    // Session files are parsed without validation and streaming can briefly
+    // produce gaps: a null/undefined block would crash every downstream
+    // `block.type` read, so drop it here (the shared normalization boundary)
+    // instead of patching each render path.
+    if (block == null) return [];
     const result = normalizeToolCallBlock(block, options);
-    return result ?? block;
+    return [result ?? block];
   });
   return { ...msg, content: normalized } as AgentMessage;
 }
