@@ -1878,7 +1878,14 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     }
   }, [activeCwd, activeFileTabId, changeFileWorkspace, invalidateWorkspaceRestore, newSessionCwd, router, selectedSession, restoreWorkspaceContext]);
 
+  // A genuine user session pick (handleSelectSession with isRestore=false) — once
+  // set, the still-in-flight ?session= restore must yield: restoring afterwards
+  // would yank the user off the session they just opened and rewrite ?session=
+  // back (observed as "clicked a sidelist row, the URL flashed the new id then
+  // snapped back to the URL session" while the sessions list was still loading).
+  const userPickedSessionRef = useRef(false);
   const handleSelectSession = useCallback((session: SessionInfo, isRestore = false, entryId?: string, blockIndex?: number, options?: SelectSessionOptions) => {
+    if (!isRestore) userPickedSessionRef.current = true;
     setSearchTarget(entryId ? { sessionId: session.id, entryId, blockIndex } : null);
     // Advance the project identity to the selected session's project BEFORE the
     // sidebar cwd-sync effect fires. Otherwise handleCwdChange sees a project
@@ -2146,8 +2153,17 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
 
   const handleOpenSession = useCallback(async (sessionId: string, options?: { initialRestore?: boolean }) => {
     try {
+      // The by-id restore is part of the initial ?session= restore. If the user
+      // picked another session while this fetch was in flight (slow sessions
+      // list / slow backend), yield to that pick: selecting the restored id here
+      // would yank the user back and the 404 branch below would wipe their URL.
+      if (options?.initialRestore && userPickedSessionRef.current) return false;
       const response = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}`), { cache: "no-store" });
       const data = await response.json() as { info?: SessionInfo; error?: string };
+      // Re-check after the await: the pick typically happens while this fetch is
+      // in flight (the restore only reaches this by-id path when the list does
+      // not contain the id, and the fetch is what the user races against).
+      if (options?.initialRestore && userPickedSessionRef.current) return false;
       if (!response.ok || !data.info) {
         // The initial ?session= restore pointed at a deleted session (404): clear the
         // stale last-open record + clear the URL immediately. On the normal path the
