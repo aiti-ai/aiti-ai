@@ -185,7 +185,16 @@ test("resolveCli：显式路径优先 → 不存在 throw；npx 兜底 = node + 
   assert.equal(direct.kind, "direct");
   assert.equal(direct.cmd, bin);
   assert.throws(() => resolveCli({ featurePath: "/nonexistent/cbc" }), /路径不存在/);
-  const npx = resolveCli({});
+  // The npx fallback only applies when no cbc/codebuddy sits on PATH: a developer
+  // box with the CLI installed must not change this assertion.
+  const savedPath = process.env.PATH;
+  process.env.PATH = "/nonexistent-bin";
+  let npx;
+  try {
+    npx = resolveCli({});
+  } finally {
+    process.env.PATH = savedPath;
+  }
   assert.equal(npx.kind, "npx");
   assert.equal(npx.cmd, process.execPath);
   assert.equal(npx.baseArgs[1], "-y");

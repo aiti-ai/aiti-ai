@@ -49,6 +49,7 @@ import {
 // handle 实现（stream 长连接 + exec 单发双模式；能力表/目录/SID_RE 同源）
 import {
   CBC_CAPABILITIES, SID_RE, codebuddyCatalog, createCodebuddyHandle, setCodebuddyQueueStateDir,
+  type AgentStarterLike, type AttachedChildOptions,
   type CodebuddyHandleBase, type CodebuddyRuntime,
 } from "./codebuddy-handles.ts";
 
@@ -643,7 +644,15 @@ export default {
 
       // createSession 主体（provider 与 P2 launch 服务共用：复活/种子模型/状态文件全链路一致）
       const createCbcSession = async (
-        options: { sessionId?: string; cwd?: string; model?: { provider: string; id: string } },
+        options: {
+          sessionId?: string;
+          cwd?: string;
+          model?: { provider: string; id: string };
+          /** Host-injected process strategy (detachable hosting); absent = plain spawn. */
+          agentStarter?: AgentStarterLike;
+          /** Host recovery: adopt a live process instead of spawning. */
+          attached?: AttachedChildOptions;
+        },
         launchOverride?: LaunchOverride,
       ) => {
         const rawSid = options.sessionId ?? "";
@@ -690,6 +699,8 @@ export default {
           cwd: restoredCwd || options.cwd || process.cwd(),
           model: seedModel,
           runtime,
+          ...(options.agentStarter ? { agentStarter: options.agentStarter } : {}),
+          ...(options.attached ? { attached: options.attached } : {}),
         });
         if (isRealSid && restoredParsed?.messages?.length) handle.seedHistory(restoredParsed.messages as never[]);
         handle.launchOverride = launchOverride;
@@ -709,6 +720,9 @@ export default {
           await refreshCbcModelCatalog(cacheDir, cli);
           return codebuddyCatalog();
         },
+        // The core may host this backend's connection in a detachable wrapper; the
+        // stream handle adopts the live process on reattach (exec mode stays plain).
+        detachable: true,
         createSession: (options) => createCbcSession(options),
       });
       // agent 描述符：agent 管理面（aiti-agent-manager）动态发现用——manager 不写死各家，
