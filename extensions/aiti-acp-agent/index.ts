@@ -450,11 +450,17 @@ export class AcpHandle {
       this.wireChild(attach.child);
       this.loading = true;
       const facade = attach.child as unknown as { detachable?: unknown; on?: (event: string, listener: () => void) => unknown };
+      const endReplay = () => {
+        if (!this.loading) return;
+        this.loading = false;
+        this.flushReplayAssistant();
+      };
       if (facade.detachable === true && typeof facade.on === "function") {
-        facade.on(REPLAY_END_EVENT, () => {
-          this.loading = false;
-          this.flushReplayAssistant();
-        });
+        facade.on(REPLAY_END_EVENT, endReplay);
+        // Older hosts predate the boundary event: the replay is one batch written
+        // before any live traffic, so close the window anyway after a grace period
+        // (otherwise every update would be swallowed into history forever).
+        setTimeout(endReplay, 3000).unref?.();
       } else {
         this.loading = false;
       }
