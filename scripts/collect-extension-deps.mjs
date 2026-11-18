@@ -33,8 +33,11 @@ const OVERRIDES = {};
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--override") {
       const spec = String(argv[i + 1] || "");
+      // accept name@version or name=version
       const at = spec.lastIndexOf("@");
-      if (at > 0) OVERRIDES[spec.slice(0, at)] = spec.slice(at + 1);
+      const eq = spec.lastIndexOf("=");
+      const sep = at > eq ? at : eq;
+      if (sep > 0) OVERRIDES[spec.slice(0, sep)] = spec.slice(sep + 1);
       i++;
     }
   }
