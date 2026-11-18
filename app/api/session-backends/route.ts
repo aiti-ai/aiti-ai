@@ -4,6 +4,7 @@ import { getRegistry } from "@/lib/ext/registry";
 import {
   listProviderInfos,
   createSessionHandle,
+  detachSupport,
   getHandle,
   removeHandle,
   getProvider,
@@ -72,7 +73,11 @@ export async function GET(req: Request) {
   try {
     rescanable = getRegistry().hasBackendRescan();
   } catch { /* registry not ready (early boot) → treat as absent */ }
-  return NextResponse.json({ providers: infos, rescanable });
+  // Detach availability (one cached probe, no per-provider work): the UI shows
+  // the per-session "detach" toggle only when the host can host a wrapper AND
+  // the selected provider opted in (provider.detachable).
+  const detach = await detachSupport().catch(() => ({ available: false, reason: "probe failed" }));
+  return NextResponse.json({ providers: infos, rescanable, detach });
 }
 
 export async function POST(req: Request) {
@@ -85,6 +90,8 @@ export async function POST(req: Request) {
       sessionFile?: string;
       cwd?: string;
       socketPath?: string;
+      /** Per-session detach preference (false = plain child for this session). */
+      detach?: boolean;
       options?: Record<string, unknown>;
     };
     if (!body.providerType) {
@@ -102,6 +109,7 @@ export async function POST(req: Request) {
       ...(body.sessionFile ? { sessionFile: body.sessionFile } : {}),
       ...(body.cwd ? { cwd: body.cwd } : {}),
       ...(body.socketPath ? { socketPath: body.socketPath } : {}),
+      ...(typeof body.detach === "boolean" ? { detach: body.detach } : {}),
       ...(body.options ?? {}),
     });
 

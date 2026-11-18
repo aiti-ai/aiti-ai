@@ -27,7 +27,15 @@ export async function POST(req: Request) {
   let commandType: string | undefined;
   let promptAccepted = false;
   try {
-    const body = await req.json() as { cwd?: string; providerType?: string; socketPath?: string; profile?: string; [key: string]: unknown };
+    const body = await req.json() as {
+      cwd?: string;
+      providerType?: string;
+      socketPath?: string;
+      profile?: string;
+      /** Per-session detach preference for non-local backends (undefined = provider default). */
+      detach?: boolean;
+      [key: string]: unknown;
+    };
     const { cwd, providerType, socketPath, profile, ...command } = body;
     commandType = typeof command.type === "string" ? command.type : undefined;
 
@@ -65,6 +73,7 @@ export async function POST(req: Request) {
           ...(socketPath ? { socketPath } : {}),
           ...(reqModel ? { model: reqModel } : {}),
           ...(profile ? { profile } : {}),
+          ...(typeof body.detach === "boolean" ? { detach: body.detach } : {}),
         });
         // ensure_session only provisions; prompt flows through /api/agent/[id]
         // (handle adapter) exactly like local sessions.
