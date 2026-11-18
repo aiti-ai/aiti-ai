@@ -8,7 +8,8 @@
  * Shape:
  *   { id, order?, label, icon?, accepts?(payload), save(payload) }
  *   save → { ok, message?, action?: { label, run } }
- *   payload = { kind, text, title, tags, ...original payload }  (text = unredacted body)
+ *   payload = { kind, text, title, tags, ...original payload }
+ *   (text = unredacted body, page-info stamp already stripped by the consumer)
  */
 export function registerShareSink(ctx, kit, store) {
   const { t, api } = kit;
@@ -27,7 +28,9 @@ export function registerShareSink(ctx, kit, store) {
       return text.length <= 500;
     },
     async save(payload) {
-      const text = String(payload?.text || "").trim();
+      // messages often quote commands as "$ npm run dev" — drop the prompt symbol, it is not
+      // part of the command (a leading "$ " only; shell variables are unaffected)
+      const text = String(payload?.text || "").split("\n").map((line) => line.replace(/^\s*\$\s+/, "")).join("\n").trim();
       if (!text) return { ok: false, message: t("cmd.k171") };
       const firstLine = text.split("\n").map((s) => s.trim()).find(Boolean) || text;
       const name = firstLine.slice(0, 60);
