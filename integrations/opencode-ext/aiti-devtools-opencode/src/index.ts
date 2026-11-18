@@ -147,7 +147,7 @@ export const AitiDevtoolsPlugin: Plugin = async (input) => {
     // （opencode 插件工具表进程级静态、无运行时新增 API，故桥重启后【新增】的工具仍需重启才进模型工具列表；
     //   已知工具的冷启动可用性则由本占位层兜住。）
     log("bridge not reachable at " + BRIDGE_BASE + " — cold-start: " + BRIDGE_TOOLS.length + " self-healing placeholder tools registered");
-    const errText = "桥不可达：" + BRIDGE_BASE + "。本工具处于冷启动降级模式（占位清单）；桥启动/恢复后再次调用即自动派发真实工具，无需重启 opencode。启动独立桥：node ~/workspace/workspace-tools/packages/aiti-bridge/bin/aiti-bridge.mjs（默认 127.0.0.1:8777）。";
+    const errText = "桥不可达：" + BRIDGE_BASE + "。本工具处于冷启动降级模式（占位清单）；桥启动/恢复后再次调用即自动派发真实工具，无需重启 opencode。启动独立桥：node ~/workspace/demo-repo/packages/aiti-bridge/bin/aiti-bridge.mjs（默认 127.0.0.1:8777）。";
     interface HealCtx { sessionID: string; directory: string; abort?: AbortSignal; callID?: string }
     const healExecute = (toolName: string) => async (args: Record<string, unknown>, ctx: HealCtx) => {
       const fresh = await fetchBridgeTools(BRIDGE_BASE);

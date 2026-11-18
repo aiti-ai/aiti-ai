@@ -131,6 +131,38 @@ const CURSOR_CAPABILITIES: SessionCapabilitiesLike = {
 };
 
 // ============================================================================
+// Agent-starter contract (host-injected process strategy)
+// ============================================================================
+
+/**
+ * Injected by the pi-web core (`agent-starter`). Older hosts do not pass it — the
+ * extension then keeps its historical `child_process.spawn`. The detachable
+ * variant hosts the per-turn CLI process in a wrapper so an in-flight turn
+ * survives a pi-web restart, and a reattach adopts it (see `createCursorSession`).
+ */
+export interface AgentStarterLike {
+  readonly kind: "direct" | "wrapper";
+  spawn(
+    command: string,
+    args: string[],
+    options?: {
+      env?: Record<string, string>;
+      cwd?: string;
+      shell?: boolean | string;
+      agentKey?: string;
+      sessionId?: string;
+    },
+  ): Promise<ChildProcess>;
+}
+
+/** Adopt an already-live agent process (core recovery after a pi-web restart). */
+export interface AttachedChildOptions {
+  child: ChildProcess;
+  sessionId: string;
+  agentKey?: string;
+}
+
+// ============================================================================
 // CursorHandle
 // ============================================================================
 
@@ -142,6 +174,10 @@ class CursorHandle {
   readonly cwd: string;
 
   private child: ChildProcess | null = null;
+  /** Host-injected process strategy (undefined = plain spawn, historical behavior). */
+  starter?: AgentStarterLike;
+  /** Registry key the host records for this session (resume chatId or one placeholder uuid). */
+  nativeKey = "";
   private detachReader: (() => void) | null = null;
   private listeners = new Set<Listener>();
   private aliveFlag = true;
@@ -315,7 +351,7 @@ class CursorHandle {
   }
 
   /** spawn 一轮（print 模式；多轮经 --resume）。 */
-  private runTurn(text: string): void {
+  private async runTurn(text: string): Promise<void> {
     // 上一轮子进程若仍残活（CLI 打完 result 后可能因 stdin 未关而挂着）——
     // 结果已入库（finishTurn 已收尾），直接收割避免进程堆积。
     if (this.child && this.child.exitCode === null && !this.child.killed) {
@@ -349,17 +385,47 @@ class CursorHandle {
       cwd: this.cwd || process.cwd(),
       warn: (m) => console.log(`[aiti-cursor-agent] ${m}`),
     });
-    const child = spawn(launch.command, launch.args, {
-            shell: launch.shell,
-cwd: this.cwd || process.cwd(),
-      stdio: ["pipe", "pipe", "pipe"],
-      env: launch.env,
-    });
+    const child = this.starter
+      ? await this.starter.spawn(launch.command, launch.args, {
+          shell: launch.shell,
+          cwd: this.cwd || process.cwd(),
+          env: launch.env as Record<string, string>,
+          agentKey: "cursor",
+          sessionId: this.nativeKey,
+        })
+      : spawn(launch.command, launch.args, {
+          shell: launch.shell,
+          cwd: this.cwd || process.cwd(),
+          stdio: ["pipe", "pipe", "pipe"],
+          env: launch.env,
+        });
+    this.bindChild(child, true);
+  }
+
+  /**
+   * Adopt an already-live CLI process (core recovery): the wrapper replays the
+   * turn's frames through the reader, which rebuilds history/usage and settles the
+   * turn exactly as if this handle had spawned it.
+   */
+  adoptChild(child: ChildProcess): void {
+    this.aliveFlag = true;
+    this.bindChild(child, false);
+  }
+
+  /**
+   * Wire one CLI process to this handle (per-turn spawn, or the facade of a
+   * detached wrapper the core reattached to). For a plain turn the handle also
+   * announces `agent_start`; on adoption the wrapper's journal replay re-emits the
+   * CLI's own frames through `consumeLine`, which rebuilds the same state.
+   */
+  private bindChild(child: ChildProcess, freshTurn: boolean): void {
     this.child = child;
-    this.lastText = "";
-    this.turnEnded = false;
+    if (freshTurn) {
+      this.lastText = "";
+      this.turnEnded = false;
+    }
     this.running = true;
-    this.emit({ type: "agent_start", sessionId: this.id, model: this.model });
+    if (freshTurn) this.emit({ type: "agent_start", sessionId: this.id, model: this.model });
 
     this.detachReader?.();
     this.detachReader = lineReader(child.stdout, (line) => this.consumeLine(line), {
@@ -407,7 +473,9 @@ cwd: this.cwd || process.cwd(),
       return;
     }
     this.history.push({ role: "user", content: text });
-    this.runTurn(text);
+    void this.runTurn(text).catch((err) => {
+      this.finishTurn(this.lastText, `cursor agent spawn failed: ${err instanceof Error ? err.message : String(err)}`);
+    });
   }
 
   /** @capability followUp —— 运行中入本地队列（settle 后自动续轮，可撤回）；空闲等同普通 prompt。 */
@@ -458,6 +526,16 @@ cwd: this.cwd || process.cwd(),
   }
 
   async dispose(): Promise<void> {
+    // Wrapper-hosted child: disconnect and leave the process running (an in-flight
+    // turn then completes and survives a restart; killing is the core's decision).
+    const facade = this.child as unknown as { detachable?: unknown; release?: () => void } | null;
+    if (facade && facade.detachable === true && typeof facade.release === "function") {
+      facade.release();
+      this.child = null;
+      this.aliveFlag = false;
+      this.q.dispose();
+      return;
+    }
     if (this.child && this.running) {
       this.child.kill("SIGTERM");
     }
@@ -748,12 +826,23 @@ export default {
       loginCtl = login;
       // P2 协议委托：createSession 主体抽出供 launch 服务复用（cwd 解析/模型种子/状态文件同链路）
       const createCursorSession = async (
-        options: { cwd?: string; sessionId?: string; model?: { provider: string; id: string } },
+        options: {
+          cwd?: string;
+          sessionId?: string;
+          model?: { provider: string; id: string };
+          /** Host-injected process strategy (detachable hosting); absent = plain spawn. */
+          agentStarter?: AgentStarterLike;
+          /** Host recovery: adopt a live process instead of spawning. */
+          attached?: AttachedChildOptions;
+        },
         launchOverride?: LaunchOverride,
       ) => {
         // sessionId = cursor chatId（All Sessions 历史行 / ?session= URL 恢复）
         const resume = typeof options.sessionId === "string" && options.sessionId ? options.sessionId : undefined;
-        const id = resume ? `cursor:${resume}` : `cursor:new-${randomUUID()}`;
+        // Native key shared by the detached-wrapper registry and the provisional
+        // handle id (the chatId is only known after the first frame).
+        const nativeKey = resume ?? `new-${randomUUID()}`;
+        const id = `cursor:${nativeKey}`;
         // 尊重会话原 cwd：resume 优先用会话自己落盘的工作区（CLI 按工作区隔离
         // 历史 —— 用页面 cwd 会把续轮分叉到新 workspaceKey 目录）。
         let cwd = "";
@@ -772,6 +861,18 @@ export default {
         handle.launchOverride = launchOverride;
         handle.resumeChatId = resume;
         handle.chatId = resume;
+        handle.starter = options.agentStarter;
+        handle.nativeKey = nativeKey;
+        // Recovery: the core reattached to the wrapper this session's last turn ran
+        // in — adopt the facade (its journal replay rebuilds the turn state).
+        const attached = options.attached;
+        if (attached) {
+          handle.nativeKey = attached.sessionId;
+          handle.resumeChatId = attached.sessionId;
+          handle.chatId = attached.sessionId;
+          handle.id = `cursor:${attached.sessionId}`;
+          handle.adoptChild(attached.child);
+        }
         // 种子模型：显式指定 > 状态文件恢复 > store 真实模型（优先级递减，zcode 同序）
         if (options.model?.id) {
           handle.model = { id: options.model.id, provider: "aiti-cursor-agent" };
@@ -799,6 +900,9 @@ export default {
         label: "Cursor Agent CLI",
         agentKey: "cursor",
         priority: 10,
+        // The core may host this backend's process in a detachable wrapper (an
+        // in-flight CLI turn then survives a restart); adoption via `attached`.
+        detachable: true,
         maxCapabilities: CURSOR_CAPABILITIES,
         // Availability snapshot: false = CLI missing → dropdown entry greyed out
         ...(cursorReady ? {} : { available: false as const, installHint: "Cursor Agent CLI (https://cursor.com/install)" }),

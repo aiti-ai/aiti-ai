@@ -204,7 +204,12 @@ function onPush(ident, m) {
   let text = '';
   if (m.type === 'page_event') text = String(m.text || '');
   else if (m.type === 'agent_push') {
-    text = (m.kind === 'user_answer' ? '💬 你的交互请求有人作答（来自 aiti-devtools）：' : '💬 人发来消息（来自 aiti-devtools）：') + (m.text || '');
+    const fd = (m.payload && m.payload.fromDevice) || null;
+    if (m.kind === 'user_answer') text = '💬 你的交互请求有人作答（来自 aiti-devtools）：' + (m.text || '');
+    else if (fd && fd.kind === 'agent') {
+      const id = String(fd.id || fd.name || '?'); const nm = String(fd.name || id);
+      text = '💬 session ' + (nm !== id ? nm + '（' + id + '）' : id) + ' 发来消息（来自 aiti-devtools）：' + (m.text || '');
+    } else text = '💬 用户发来消息（来自 aiti-devtools）：' + (m.text || '');
   }
   if (!text) return;
   try { console.log('[aiti-devtools-openclaw] 推送 → 会话 ' + ident.sessionKey + '：' + text.slice(0, 120)); } catch {}

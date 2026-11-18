@@ -106,3 +106,34 @@ export function t(key: string, params?: Record<string, unknown>): string {
   const fn = _ctx?.t as ((key: string, params?: Record<string, unknown>) => string) | undefined;
   return typeof fn === "function" ? fn(key, params) : key;
 }
+
+/** Translate a server message envelope ("i18n:key|{params}") to the UI language; anything else passes through. */
+export function tsrv(v: unknown): string {
+  const s = v == null ? "" : String(v);
+  if (!s.startsWith("i18n:")) return s;
+  const body = s.slice(5);
+  const bar = body.indexOf("|");
+  const key = bar < 0 ? body : body.slice(0, bar);
+  let params: Record<string, unknown> | undefined;
+  if (bar >= 0) {
+    try {
+      const raw = JSON.parse(body.slice(bar + 1)) as Record<string, unknown>;
+      for (const k of Object.keys(raw)) if (typeof raw[k] === "string") raw[k] = tsrv(raw[k]);
+      params = raw;
+    } catch { /* malformed envelope: return the key as-is */ }
+  }
+  return t(key, params);
+}
+/** Fix up top-level i18n envelopes in a server JSON payload (error/detail/message/reason + results[] items). */
+export function srvFix<T>(d: T): T {
+  if (d && typeof d === "object") {
+    const o = d as Record<string, unknown>;
+    for (const k of ["error", "detail", "message", "reason"]) {
+      const v = o[k];
+      if (typeof v === "string") o[k] = tsrv(v);
+    }
+    if (Array.isArray(o.results)) for (const it of o.results as unknown[]) srvFix(it);
+    if (Array.isArray(o.rows)) for (const it of o.rows as unknown[]) srvFix(it);
+  }
+  return d;
+}

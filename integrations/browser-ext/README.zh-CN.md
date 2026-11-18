@@ -1,14 +1,12 @@
 # aiti-devtools 浏览器扩展（Chrome / Edge / Firefox）
 
-> ✅ **v2 已实施（P0）**：**默认关闭**——popup「⚡ 本页启用（本次）」一键按需注入 / 「★ 总是启用此站点」白名单；AI 窗默认指向 **pi-web**（设置页自动探测预填）或任意兼容 agent 宿主，cockpit 降为兜底档。P1/P2（快捷键、per-site 目标等）见 `docs/aiti-devtools-browser-ext-v2-plan.md`。
+> **默认关闭**——popup「⚡ 本页启用（本次）」一键按需注入 / 「★ 总是启用此站点」白名单；AI 窗默认指向 **pi-web**（设置页自动探测预填）或任意兼容 agent 宿主，cockpit 降为兜底档。
 >
 > 🇬🇧 English: see [README.md](README.md)
 
 任意网页——**无需目标应用任何改造**——按需注入 aiti-devtools 页面内 AI 调试助手
 （FAB 💬 AI + 十字准星 Inspector、点选、AI 窗），AI 窗默认指向 **pi-web 工作台**，
 配合 aiti-devtools 桥（本地独立桥或 pi-web）即可用 pi / claude / opencode 等 agent 操作任意页面。
-
-方案设计见 `docs/aiti-devtools-browser-ext-plan.md`（同仓）；v2 增强规划见 `docs/aiti-devtools-browser-ext-v2-plan.md`。
 
 ## 快速开始
 
@@ -32,7 +30,7 @@ npm run package     # → dist/*.zip + dist/aiti-devtools-firefox.xpi（需系�
   「从文件安装」即可永久使用（免签名）；正式版 / Android 永久安装需 AMO 签名
   （`web-ext sign --channel=unlisted` 或 AMO 后台上传本 xpi 走 unlisted；稳定 gecko id `aiti-devtools@aiti.ai` 已固定）
 
-## 使用（v2：默认关）
+## 使用
 
 1. 装好后默认**不注入**任何页面——工具栏弹窗显示本页状态。
 2. **按需启用**：popup「⚡ 本页启用（本次）」一键注入当前页（导航后失效）；或「★ 总是启用此站点」加入白名单，之后该站导航自动注入。
@@ -43,7 +41,7 @@ npm run package     # → dist/*.zip + dist/aiti-devtools-firefox.xpi（需系�
    - **stdio shim**：env `AITI_BRIDGE_URL=http://127.0.0.1:8777/aiti`（options 页一键复制）
    - **MCP**：mcp.json 加 `{ type: "http", url: "<bridgeUrl>/mcp/mcp" }`
 
-## 配置（options 页，v2）
+## 配置（options 页）
 
 - **AI 目标三档**：pi-web 工作台（推荐）/ 兼容 agent 宿主 / cockpit 兜底；目标地址 + **🔍 一键探测本机 pi-web**（30141/30142 自动预填；选中 pi-web 联动预填同源桥地址）
 - **站点规则**：默认关 + **白名单站点**（每行一个正则，命中自动注入）+ **排除站点**（优先级最高，白名单命中也不注入）
@@ -66,7 +64,7 @@ npm run package     # → dist/*.zip + dist/aiti-devtools-firefox.xpi（需系�
 browser-ext/
 ├── src/
 │   ├── content/   bridge.js(隔离世界配置+规则求值) + main.js(主世界注入)
-│   ├── background/ sw.js（安装初始化 + v1 迁移）
+│   ├── background/ sw.js（安装初始化 + 旧配置字段映射）
 │   ├── popup/     popup.html/css/js（本页状态 + 按需启用/白名单）
 │   └── options/   options.html/css/js（AI 目标 + 站点规则 + 高级）
 ├── scripts/       build.mjs + package.mjs

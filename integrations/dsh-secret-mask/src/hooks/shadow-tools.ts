@@ -23,7 +23,7 @@
  */
 
 import type { AgentLike, PluginConfig, PluginContext, SessionStartPayload, ToolDefinition, ToolExecution } from "../dsh-types.ts";
-import { restoreDeep } from "@aiti-ai/secret-mask-core";
+import { guardReason, inspectToolTargets, registerExtractedSecrets, restoreDeep, unmountedInValue } from "@aiti-ai/secret-mask-core";
 import { stateFor } from "../state.ts";
 
 export const SHADOW_WHITELIST = ["bash", "write", "edit", "str_replace_editor"] as const;
@@ -41,12 +41,23 @@ export function registerShadowTools(ctx: PluginContext, cfg: PluginConfig): void
         ...orig,
         execute: async (args: unknown, exec: ToolExecution) => {
           const st = stateFor(agent.id, cfg);
+          if (st.extract !== false) {
+            for (const content of inspectToolTargets(name, args).contents) {
+              registerExtractedSecrets(content, st.registry, st.salt);
+            }
+          }
           let restored = args;
-          if (st.enabled && st.registry.size > 0 && args !== null && typeof args === "object") {
-            try {
-              restored = restoreDeep(structuredClone(args), st.registry).value;
-            } catch {
-              restored = args; // non-cloneable args: execute unchanged rather than block
+          if (st.enabled && args !== null && typeof args === "object") {
+            if (st.guard) {
+              const missing = unmountedInValue(args, st.registry);
+              if (missing.length > 0) throw new Error(guardReason(missing, { landing: st.landing }));
+            }
+            if (st.registry.size > 0) {
+              try {
+                restored = restoreDeep(structuredClone(args), st.registry).value;
+              } catch {
+                restored = args; // non-cloneable args: execute unchanged rather than block
+              }
             }
           }
           return orig.execute(restored, exec);

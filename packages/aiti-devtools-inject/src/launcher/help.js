@@ -1,8 +1,8 @@
-// help 子系统（ctx 模式：initX(ctx) 注册本子系统函数，Phase A 调用）
-// 选区工具条 ❓ 使用帮助窗：按钮一览 / 快捷键总表 / 进阶技巧（放行工作流）/ 触屏导航可点入口。
-// 打开时工具条保持显示（对照选区读帮助——与预览弹窗「打开即关工具条」刻意相反）。
-// 定位 placePhysPanel 底部居中 + 头部 makePointerDrag 拖动（pick dialog 同款模式）；
-// 不用 data-ext-float（那是 pi-web 客户端扩展契约，launcher 跑在任意目标页无接管方）。
+// help subsystem (ctx pattern: initX(ctx) registers this subsystem's functions, invoked in Phase A)
+// Selection toolbar ❓ help dialog: button overview / shortcut table / advanced tricks (allow workflow) / tappable touch navigation entries.
+// The toolbar stays visible while open (read help alongside the selection — deliberately the opposite of the preview dialog's "toolbar closes on open").
+// Positioned via placePhysPanel bottom-center + header dragged with makePointerDrag (same pattern as the pick dialog);
+// no data-ext-float (that's the pi-web client extension contract; the launcher runs on arbitrary target pages with no takeover party).
 import { el } from './dom.js';
 import { getPhysViewport, placePhysPanel } from './viewport.js';
 import { makePointerDrag } from './drag.js';
@@ -30,7 +30,7 @@ export function initHelp(ctx) {
       d.appendChild(head);
 
       var body = el('div', { class: 'dbg-help-body' });
-      // 静态文案用 innerHTML（全部只读内容，无用户输入拼接）
+      // Static copy is rendered with innerHTML (all read-only content, no user-input concatenation)
       body.innerHTML = [
         t('<h4>What is this</h4>'),
         t('<div>Hover page elements to preview, click to lock and this toolbar appears — fine-tune with arrow keys, <b>✓ to send to AI</b>.<br>'),
@@ -73,18 +73,18 @@ export function initHelp(ctx) {
         '</div>',
         t('<div class="dbg-help-note">Mapped to PageUp/PageDown/Home/End.</div>'),
       ].join('');
-      // 触屏导航兜底：◀▶⏮⏭ 可点入口（按钮已从工具条撤下，触屏无 PageUp/PageDown/Home/End）
+      // Touch navigation fallback: tappable ◀▶⏮⏭ entries (those buttons were removed from the toolbar; touch has no PageUp/PageDown/Home/End)
       body.querySelectorAll('.dbg-help-nav-row button').forEach(function (b) {
         b.addEventListener('click', function () { ctx.doNav(b.getAttribute('data-dir')); });
       });
       d.appendChild(body);
 
-      d.style.zIndex = '2147483648'; // 盖工具条（2147483647）
-      // 头部拖动（pick dialog 同款模式）：按住头部移动面板，头部内按钮交互不拖
+      d.style.zIndex = '2147483648'; // above the toolbar (2147483647)
+      // Header drag (same pattern as the pick dialog): hold the header to move the panel; button interactions inside the header don't drag
       try {
         makePointerDrag({
           handle: head, capture: 'now', raf: true, preventStart: true,
-          filter: function (e) { return !(e.target && e.target.tagName === 'BUTTON'); },
+          filter: function (e) { return !(e.target && e.target.closest && e.target.closest('button')); },
           onStart: function () {
             d.classList.add('dbg-dragging');
             return { left: d.offsetLeft || 0, top: d.offsetTop || 0 };
@@ -101,7 +101,7 @@ export function initHelp(ctx) {
         });
       } catch (e) {}
       ctx.root.appendChild(d);
-      // 公共浮层定位：底部居中、限宽、自适应内容高、≤可视区（visualViewport 跟踪自动注册）
+      // Shared floating-panel placement: bottom-center, width-capped, content-adaptive height, ≤ visual viewport (visualViewport tracking auto-registered)
       placePhysPanel(d, { visW: Math.min(480, Math.round(getPhysViewport().w) - 24), dock: 'bottom', gap: 12, maxWidth: '480px', overflowY: 'auto' });
       ctx.helpDialog = d;
       }

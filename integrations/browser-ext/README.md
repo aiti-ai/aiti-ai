@@ -1,12 +1,10 @@
 # aiti-devtools browser extension (Chrome / Edge / Firefox)
 
-> ✅ **v2 shipped (P0)**: **off by default** — popup "⚡ Enable on this page (once)" for one-click on-demand injection / "★ Always enable this site" allowlist; the AI window defaults to **pi-web** (auto-probed and prefilled on the options page) or any compatible agent host, with cockpit as the explicit fallback. P1/P2 (shortcuts, per-site targets) are specified in `docs/aiti-devtools-browser-ext-v2-plan.md`.
+> **Off by default** — popup "⚡ Enable on this page (once)" for one-click on-demand injection / "★ Always enable this site" allowlist; the AI window defaults to **pi-web** (auto-probed and prefilled on the options page) or any compatible agent host, with cockpit as the explicit fallback.
 >
 > 🇨🇳 中文：见 [README.zh-CN.md](README.zh-CN.md)
 
 Inject the aiti-devtools in-page AI debugging assistant into any webpage **on demand — with zero changes to the target app** (FAB 💬 AI + crosshair Inspector, element picking, AI window). The AI window defaults to the **pi-web workbench**; together with the aiti-devtools bridge (local standalone bridge or pi-web), pi / claude / opencode agents can operate any page.
-
-Design: `docs/aiti-devtools-browser-ext-plan.md`; v2 enhancement plan: `docs/aiti-devtools-browser-ext-v2-plan.md` (same repo).
 
 ## Origin · aiti ecosystem
 
@@ -38,7 +36,7 @@ npm run package     # → dist/*.zip + dist/aiti-devtools-firefox.xpi (needs sys
   "Install Add-on From File" works permanently (signature-free); release / Android permanent installs need AMO signing
   (`web-ext sign --channel=unlisted` or upload the xpi on AMO as unlisted; the stable gecko id `aiti-devtools@aiti.ai` is pinned)
 
-## Usage (v2: off by default)
+## Usage
 
 1. After installing, **nothing is injected** on any page — the toolbar popup shows this page's state.
 2. **On-demand**: popup "⚡ Enable on this page (once)" injects into the current page immediately (gone on navigation); or "★ Always enable this site" adds it to the allowlist, after which navigation to that site auto-injects.
@@ -49,7 +47,7 @@ npm run package     # → dist/*.zip + dist/aiti-devtools-firefox.xpi (needs sys
    - **stdio shim**: env `AITI_BRIDGE_URL=http://127.0.0.1:8777/aiti` (one-click copy on the options page)
    - **MCP**: add `{ type: "http", url: "<bridgeUrl>/mcp/mcp" }` to mcp.json
 
-## Options (v2)
+## Options
 
 - **AI target, three kinds**: pi-web workbench (recommended) / compatible agent host / cockpit fallback; target address + **🔍 one-click local pi-web probe** (ports 30141/30142 auto-prefill; selecting pi-web also prefills the same-origin bridge address)
 - **Site rules**: off by default + **allowlist** (one regex per line; matching sites auto-inject) + **denylist** (highest priority — wins even over the allowlist)
@@ -76,7 +74,7 @@ Chrome Web Store / Edge Add-ons / AMO 的合规清单与逐步发布手册：[ST
 browser-ext/
 ├── src/
 │   ├── content/   bridge.js (isolated-world config + rule evaluation) + main.js (MAIN-world injection)
-│   ├── background/ sw.js (install init + v1 migration)
+│   ├── background/ sw.js (install init + legacy config mapping)
 │   ├── popup/     popup.html/css/js (this-page state + on-demand enable / allowlist)
 │   └── options/   options.html/css/js (AI target + site rules + advanced)
 ├── scripts/       build.mjs + package.mjs

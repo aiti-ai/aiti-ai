@@ -441,14 +441,21 @@ export function AiHelperDialog(props: Record<string, any>) {
       try { monitorRef.current.off(); } catch {}
       monitorRef.current = null;
     };
-    const topics = extSvc<{ subscribeTopics: (h: (f: any) => void, types: string[], onStatus?: (s: string) => void) => { ready: Promise<void>; off: () => void } }>("aiti-event-bus.subscribe-topics");
+    // Service contract: `aiti-event-bus.subscribe-topics` registers the subscribeTopics FUNCTION itself
+    // (aiti-event-bus/client/src/aiti-event-bus-client.mjs `registerExtService(key, subscribeTopics)`),
+    // not an object wrapping it — every other consumer calls it directly. Accept both shapes defensively:
+    // reading `.subscribeTopics` off the function returned undefined and always degraded (2026-11-18 fix).
+    type SubscribeTopics = (h: (f: any) => void, types: string[], onStatus?: (s: string) => void) => { ready: Promise<void>; off: () => void };
+    const topicsSvc = extSvc<SubscribeTopics | { subscribeTopics?: SubscribeTopics }>("aiti-event-bus.subscribe-topics");
+    const subscribeTopics: SubscribeTopics | undefined =
+      typeof topicsSvc === "function" ? topicsSvc : (topicsSvc && typeof topicsSvc.subscribeTopics === "function" ? topicsSvc.subscribeTopics : undefined);
     // 总线不可用降级（拍板：保持简单，绝不轮询）——提示 + 「打开会话」按钮；再试一次快照（可能已结算）。
     const goDegraded = (why: string) => {
       setDegraded(why);
       setMonitor((m: any) => (m ? { ...m, status: "degraded" } : { status: "degraded" }));
       if (_state.loading && _state.sessionId === sid) void fetchSnapshot(sid, { silent: true });
     };
-    if (!topics || typeof topics.subscribeTopics !== "function") { goDegraded(t("dlg.err.bus")); return; }
+    if (typeof subscribeTopics !== "function") { goDegraded(t("dlg.err.bus")); return; }
     const onFrame = (frame: any) => {
       const evt = frame?.evt;
       if (evt === "message_start") {
@@ -485,7 +492,7 @@ export function AiHelperDialog(props: Record<string, any>) {
         if (_state.loading) void fetchSnapshot(sid);
       }
     };
-    const sub = topics.subscribeTopics(onFrame, ["helper-" + sid], (status) => {
+    const sub = subscribeTopics(onFrame, ["helper-" + sid], (status) => {
       // broker 重连中/恢复：仅更新状态文案；重连与重发订阅由 broker 自管
       if (status === "reconnecting") setMonitor((m: any) => m && (m.status === "done" ? m : { ...m, status: "reconnecting" }));
       else if (status === "up") {

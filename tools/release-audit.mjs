@@ -38,10 +38,14 @@ if (!["staging", "official"].includes(TARGET)) {
 }
 
 // ---- 发布范围（与 publish-all.mjs 同口径）----
-const EXCLUDE = new Set(["demo", "demo-lazy", "sm-demo-source", "templates", "shared"]);
+// demo/ is published (reference extension for authors) — keep this list in step with publish-all.mjs,
+// otherwise the per-package gate silently passes with zero packages matched.
+const EXCLUDE = new Set(["demo-lazy", "sm-demo-source", "templates", "shared"]);
 const PLUGIN_ROOTS = ["pi-plugins", "packages"];
 // integrations/ 外部 agent 载体适配（两层嵌套 integrations/<repo>/<pkg>）——与 publish-all.mjs 同口径
 const INTEGRATION_ROOTS = ["integrations"];
+// examples/ = published reference integrations (standalone; no pi-web dependency)
+const EXAMPLE_ROOTS = ["examples"];
 
 // ---- 敏感规则从本机持久化配置加载（~/.aiti/release-redact.json，不进任何仓库；CI 用 env AITI_RELEASE_REDACT 注入等价 JSON）。----
 // 规则缺失时脱敏/扫描退化为空（非敏感检查不受影响；本机发布请确保配置存在）。
@@ -114,6 +118,13 @@ for (const rel of PLUGIN_ROOTS) {
   if (!existsSync(abs)) continue;
   for (const d of readdirSync(abs, { withFileTypes: true })) {
     if (d.isDirectory() && existsSync(join(abs, d.name, "package.json"))) addPkg(join(abs, d.name), "plugin");
+  }
+}
+for (const rel of EXAMPLE_ROOTS) {
+  const abs = join(REPO, rel);
+  if (!existsSync(abs)) continue;
+  for (const d of readdirSync(abs, { withFileTypes: true })) {
+    if (d.isDirectory() && existsSync(join(abs, d.name, "package.json"))) addPkg(join(abs, d.name), "example");
   }
 }
 for (const rel of INTEGRATION_ROOTS) {

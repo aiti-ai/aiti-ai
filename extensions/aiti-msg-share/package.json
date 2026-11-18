@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-msg-share",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "type": "module",
   "description": "Share sessions, messages, selections, files and images through pluggable targets with secret redaction and QR codes",
   "license": "MIT",
@@ -26,6 +26,5 @@
   "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
     "url": "https://github.com/aiti-ai/aiti-ai/issues"
-  },
-  "contentHash": "fc64a697086abafe"
+  }
 }

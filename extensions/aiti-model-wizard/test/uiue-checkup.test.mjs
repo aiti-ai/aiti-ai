@@ -2,7 +2,7 @@
 // 覆盖：pickProviderCredential 凭据优先级 / runCheckup 跳过与聚合 / recordLastTest 打码落盘 / saveConfig+loadConfig 嵌套合并
 import { createRequire } from "module";
 import fs from "node:fs"; import path from "node:path"; import os from "node:os";
-import { Tester } from "../../../pi-models-combo/test/util.mjs";
+import { Tester } from "../../../pi-plugins/pi-models-combo/test/util.mjs";
 
 const require = createRequire(import.meta.url);
 const wz = require("../core.cjs");

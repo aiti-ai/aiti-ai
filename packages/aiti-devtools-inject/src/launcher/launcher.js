@@ -1,5 +1,5 @@
 /**
- * launcher.js —— 页面内 AI 调试助手 · 宿主入口（自 dbg-launcher.js 拆分，阶段 A+B：闭包 + 纯提取）
+ * launcher.js — in-page AI debug assistant · host entry (split from dbg-launcher.js, phase A+B: closure + pure extraction)
  */
 import { VERSION, DEFAULTS } from './config.js';
 import { el, elSvg, LUCIDE, ensureStyles } from './dom.js';
@@ -29,10 +29,10 @@ import { initPicks } from './picks.js';
 import { initDebug } from './debug.js';
 import { t } from './i18n.js';
 
-// AI 窗特征检测（防嵌套）：popup 同名窗口 / _dbg URL 参数（aiwin 拼 AI 窗地址的专有参数）/
-// 共享库特征对象 __AITI_AI_WIN__（aiti-client 顶层按「AI 窗身份」判定后置——带 _dbg/popup 名才置，
-// 普通 pi-web 页不置不误杀；覆盖参数被清洗/重复注入兑底）。
-// 注意不用 AitiHostProtocol：它在所有 pi-web 页都加载，会把普通页的 launcher 误杀。
+// AI window feature detection (anti-nesting): popup same-name window / _dbg URL param (aiwin-specific param when composing the AI window URL) /
+// shared library marker object __AITI_AI_WIN__ (aiti-client sets it at top level after judging "AI window identity" — only set when it has the _dbg/popup name,
+// ordinary pi-web pages don't set it so there are no false kills; falls back when the override param gets cleaned/duplicated).
+// Note: do not use AitiHostProtocol — it loads on all pi-web pages and would falsely kill the launcher on ordinary pages.
 function aiWindowMarkers() {
   try {
     return window.name === 'aiti-ai-popup'
@@ -43,21 +43,21 @@ function aiWindowMarkers() {
 }
 
 export function createDbgLauncher(url, opts) {
-  // 防嵌套：本页若是 aiti AI 窗 → 不启动 launcher。
-  // 否则 AI 窗里再预创建 AI 窗、逐层嵌套（dev ai 里套 prod ai…），同站 iframe 共享 renderer 主线程，
-  // 几层下来主线程被拖死——被调试页直接卡死（多刷新几次必现）。
-  // 特征（任一命中即认定）：
-  //   ① window.name = aiti-ai-popup（popup 模式，openAiPopup 同名窗口）
-  //   ② URL 带 _dbg=（aiwin 拼 AI 窗 URL 的专有参数，业务页不会碰巧命中）
-  //   ③ 共享库特征对象：window.__AITI_AI_WIN__（aiti-client 顶层按「AI 窗身份」判定后置——
-  //       带 _dbg/popup 名才置，普通 pi-web 页不置不误杀；覆盖参数被清洗/重复注入兜底）
+  // Anti-nesting: if this page is already an aiti AI window → do not start the launcher.
+  // Otherwise AI windows would pre-create more AI windows, nesting layer by layer (dev ai inside prod ai…); same-site iframes share the renderer main thread,
+  // and a few layers in, the main thread is dragged to death — the debugged page freezes outright (reproduces after a few refreshes).
+  // Markers (any one hit counts):
+  //   ① window.name = aiti-ai-popup (popup mode, same-name window from openAiPopup)
+  //   ② URL carries _dbg= (aiwin-specific param when composing the AI window URL; business pages won't hit it by chance)
+  //   ③ shared library marker object: window.__AITI_AI_WIN__ (aiti-client sets it at top level after judging "AI window identity" —
+  //       only set when it has the _dbg/popup name, ordinary pi-web pages don't set it so there are no false kills; falls back when the override param gets cleaned/duplicated)
   try {
     if (aiWindowMarkers()) {
       if (window.console && console.info) console.info('[aiti] 检测到 AI 窗特征（popup 名/_dbg 参数/共享库对象）——不加载 launcher（防嵌套）');
       return null;
     }
   } catch (e) {}
-  // ---- 共享 ctx（全部闭包变量/函数上 ctx；Phase A 注册 = 原函数声明提升） ----
+  // ---- Shared ctx (all closure variables/functions live on ctx; Phase A registration = original function declaration hoisting) ----
   const ctx = {};
   ctx.url = url;
   initState(ctx);
@@ -70,7 +70,7 @@ export function createDbgLauncher(url, opts) {
   initProfiles(ctx);
   initHud(ctx);
   initToolbar(ctx);
-  initHelp(ctx); // ❓ 帮助窗（hostKey 最前一档依赖 helpDialogOpen/closeHelpDialog，先于 routing/inspector 事件消费即可）
+  initHelp(ctx); // ❓ help window (the first hostKey tier depends on helpDialogOpen/closeHelpDialog; consuming events before routing/inspector suffices)
   initInject(ctx);
   initAiwin(ctx);
   initRouting(ctx);
@@ -78,126 +78,126 @@ export function createDbgLauncher(url, opts) {
   initDialog(ctx);
   initPicks(ctx);
   initDebug(ctx);
-  // ---- Phase B：原文顺序执行初始化语句（var→ctx 赋值 / DOM 创建 / 事件绑定 / 顶层调用） ----
-    // 幂等：一次 inject 只有一个 launcher（一个 Inspector 按钮）；重复调用返回已有实例
+  // ---- Phase B: run initialization statements in the original order (var→ctx assignment / DOM creation / event binding / top-level calls) ----
+    // Idempotent: one inject has only one launcher (one Inspector button); repeated calls return the existing instance
   ctx.existingLauncher = window.document && document.getElementById('__dbg_launcher');
     if (ctx.existingLauncher && ctx.existingLauncher.__dbgLauncher) return ctx.existingLauncher.__dbgLauncher;
   ctx.cfg = Object.assign({}, DEFAULTS, opts || {});
-  // self 宿主页（opts.selfHostPage，由 standalone 注入入口按「launcher 与页面同源 + pi-web 应用页」判定）：
-  // 不预建/不恢复 AI 窗、隐藏 💬 按钮、退出点选不弹回 AI 窗——页面自身即 AI 窗，顶部 InspectButton
-  // + 页面内点选闭环已足够。跨实例 launcher（同源判定不过）不进此模式，保持原行为。
+  // Self host page (opts.selfHostPage, decided by the standalone injection entry when "launcher same-origin with the page + pi-web app page"):
+  // no pre-creating/restoring of the AI window, hide the 💬 button, exiting pick doesn't bounce back to the AI window — the page itself is the AI window; the top InspectButton
+  // plus the in-page pick loop already suffice. Cross-instance launchers (same-origin check fails) don't enter this mode; original behavior is kept.
   ctx.selfHostPage = !!(opts && opts.selfHostPage);
-  ctx.iframeObservers = []; // 保存所有 observer 供 destroy 断开（须在 watchIframes 调用前赋值）
-    // 阶段 3：url 可选（目标 = 宿主 + 宿主真实 iframe；url 仅作历史参数保留）
+  ctx.iframeObservers = []; // keep all observers for destroy to disconnect (must be assigned before watchIframes is called)
+    // Phase 3: url is optional (target = host + host's real iframes; url kept only as a legacy parameter)
 
     ensureStyles(ctx.cfg.accent);
 
-    // ---- launcher 状态持久化：刷新（HMR 整刷/手动 F5）后自动恢复（AI 窗口/位置/方案/视口等） ----
+    // ---- launcher state persistence: auto-restore after refresh (HMR full reload / manual F5) (AI window/position/profile/viewport etc.) ----
 
   ctx.dbgState = ctx.loadDbgState();
-  ctx.aiOpen = !!ctx.dbgState.aiOpen; // 刷新前 AI 窗口开着 → 刷新后自动重开（记忆恢复）
+  ctx.aiOpen = !!ctx.dbgState.aiOpen; // AI window was open before refresh → auto reopen after refresh (restore from memory)
 
 
 
   ctx.root = el('div', { id: '__dbg_launcher' });
-    // 提前挂载：head 同步 script 时 body 可能未就绪——body 出现立即挂（不依赖页面 load，AI 窗口尽早出现）
+    // Early mount: with a synchronous head script the body may not be ready — mount as soon as the body appears (not relying on page load, so the AI window appears ASAP)
 
-    ctx.mountRoot(); // 只负责提前挂载 + 注入；AI 窗口恢复在末尾（aiBtn 就绪后）
-    // 注：launcher 不负责连桥——所有连接由 AI 窗口负责（AI 窗连桥 role=ai + 操作经 host-protocol 转发宿主执行）；
-    // 页面连桥仅独立桥场景手动触发（面板 🔌 按钮 → dbg_mcp_connect），launcher 启动不自动连
+    ctx.mountRoot(); // only handles early mount + injection; AI window restore happens at the end (after aiBtn is ready)
+    // Note: the launcher does not handle bridge connection — all connections are owned by the AI window (the AI window connects as role=ai and operations are forwarded to the host via host-protocol);
+    // page bridge connection is only triggered manually in the standalone-bridge scenario (panel 🔌 button → dbg_mcp_connect); the launcher does not auto-connect at startup
 
-    // ---------------- 两个浮动按钮（最开始只注入它们） ----------------
+    // ---------------- Two floating buttons (only these are injected at first) ----------------
   ctx.fab = el('div', { class: 'dbg-fab' });
   ctx.aiBtn = el('button', { 'data-label': t('AI message') }, ['💬']);
   ctx.inspBtn = el('button', { 'data-label': 'Inspector' }, [elSvg(LUCIDE.crosshair, 15)]);
     ctx.fab.appendChild(ctx.aiBtn);
     ctx.fab.appendChild(ctx.inspBtn);
-    // self 宿主页：💬（无 AI 窗可开）和 🎯（顶部工具条已有 InspectButton）都不需要——
-    // 整个 FAB 隐藏，只用顶部一个工具条按钮（用户要求）。跨实例 launcher 不进此模式，FAB 照常。
+    // Self host page: 💬 (no AI window to open) and 🎯 (top toolbar already has the InspectButton) are both unneeded —
+    // hide the whole FAB and keep only the top toolbar button (user request). Cross-instance launchers don't enter this mode; FAB stays as usual.
     if (ctx.selfHostPage) ctx.fab.style.display = 'none';
-    // ---- fab 拖放沿边滑行（小屏自适应核心）：按住空白区拖动，松手吸附最近边；贴边后可沿边继续拖动滑行 ----
-    // 贴边规则：右边=上下滑行 / 底部=左右滑行 / 左边=上下滑行 / 顶部=左右滑行；位置 localStorage 持久化（刷新恢复）
-    // ---- 视觉边界 + 缩放系数（视觉 px 统一坐标）： ----
-    //   w/h = 屏宽/高（移动无 meta：layout=980 明显宽于屏时用 screen；桌面：窗口=innerWidth）——恒不随 pinch 变
-    //   scale = "屏/布局" 归一化系数（布局坐标 ×scale = 视觉 px；counter-zoom ÷scale 换算布局）
-    //   关键坑（iOS Safari/微信老内核）：visualViewport.scale 可能缺失或语义相反（报"布局/屏"而非"屏/布局"），
-    //   且无 meta 页面 pinch 时 innerWidth×scale ≠ 屏宽——按钮贴边会飞屏外/屏内错位。
-    //   检测：vv.width×scale 命中屏宽 = 正向；vv.width÷scale 命中屏宽 = 反向（取倒数）
+    // ---- fab drag with edge sliding (small-screen adaptation core): drag from a blank area, release snaps to the nearest edge; after snapping to an edge, keep dragging to slide along it ----
+    // Snap rules: right=vertical sliding / bottom=horizontal sliding / left=vertical sliding / top=horizontal sliding; position persisted to localStorage (restored on refresh)
+    // ---- Visual bounds + scale factor (visual px as the unified coordinate system): ----
+    //   w/h = screen width/height (mobile without meta: layout=980 much wider than screen, use screen; desktop: window=innerWidth) — never changes with pinch
+    //   scale = "screen/layout" normalization factor (layout coords ×scale = visual px; counter-zoom ÷scale converts back to layout)
+    //   Key pitfall (iOS Safari/old WeChat kernel): visualViewport.scale may be missing or semantically reversed (reports "layout/screen" instead of "screen/layout"),
+    //   and on meta-less pages innerWidth×scale ≠ screen width while pinching — snapped buttons fly off-screen or misalign inside it.
+    //   Detection: vv.width×scale hitting screen width = forward; vv.width÷scale hitting screen width = reversed (take the reciprocal)
 
-    // ---- clientX 坐标系检测：触摸/鼠标坐标在真实设备是视觉屏坐标（ppk/Chromium），
-    //      但 CDP 模拟/部分 WebView 报布局坐标——用 rect(布局) 与 rect×scale(视觉) 的接近度判断，拖动按语义换算 1:1 跟手 ----
+    // ---- clientX coordinate system detection: touch/mouse coords on real devices are visual screen coords (ppk/Chromium),
+    //      but CDP emulation/some WebViews report layout coords — judge by the closeness of rect(layout) vs rect×scale(visual); the drag converts 1:1 by semantics to track the pointer ----
 
-    // ---- position:fixed 语义：Chrome/Android/桌面相对 layout viewport（需 /scale + vv.offset 补偿）；
-    //      iOS（Safari/Chrome/微信等均为 WebKit 内核）fixed 相对 visual viewport（left/width 直接视觉值）——
-    //      纯 layout 在 iOS：fab left=845 布局被当视觉 → 屏外（Inspect 不可见）、AI 窗 width=927 超屏（用户实测小屏无缩放时看不见）----
+    // ---- position:fixed semantics: Chrome/Android/desktop are relative to the layout viewport (needs /scale + vv.offset compensation);
+    //      iOS (Safari/Chrome/WeChat are all WebKit-based) fixed is relative to the visual viewport (left/width are direct visual values) —
+    //      pure layout on iOS: fab left=845 layout treated as visual → off-screen (Inspect invisible), AI window width=927 overflows the screen (verified: invisible on small screens without zoom)----
 
-    // ---- 统一物理固定函数：把元素固定在屏幕视觉 (visX, visY) 处（任意缩放/滚动/pan 都不动）----
-    //   原理：position:fixed 相对 layout viewport（缩放会动）→ counter-zoom transform 抵消缩放；
-    //   pinch 后 pan 时视觉视口在布局中偏移（vv.offsetLeft/Top）→ 浏览器渲染 fixed：屏上 = (布局left − offsetLeft)×scale，
-    //   故布局 left = visX/scale **+** offsetLeft（加！MDN 官方方案同向：fixed left = vv.offsetLeft）——屏上恒 = visX
-    //   注意方向：减号会把按钮随 pan 越推越远直到屏外（用户实测"pan 到左边才能看到按钮"）
+    // ---- Unified physical pinning function: pin the element at visual screen (visX, visY) (unmoved by any zoom/scroll/pan)----
+    //   Principle: position:fixed is relative to the layout viewport (moves with zoom) → the counter-zoom transform cancels the zoom;
+    //   after pinch+pan the visual viewport is offset within layout (vv.offsetLeft/Top) → the browser renders fixed as: on-screen = (layout left − offsetLeft)×scale,
+    //   so layout left = visX/scale **+** offsetLeft (plus! MDN's official approach goes the same way: fixed left = vv.offsetLeft) — on-screen is always = visX
+    //   Mind the direction: a minus sign pushes the button further away with each pan until it goes off-screen (verified: "had to pan all the way left to see the button")
 
-    // 视觉尺寸 ↔ CSS 尺寸（counter-zoom 非等比——唯一换算源，别再手算 ×scale/scaleY！）
-    //   transform scale(1/scale) 恒等比（origin top-left）；页面横向缩 scale、纵向 scaleY：
-    //     visual_w = css_w                  （横向：1/scale × scale = 1 精确抵消）
-    //     visual_h = css_h × scaleY/scale   （纵向：1/scale × scaleY ≠ 1）
-    //   故 css_w = visW，css_h = visH × scale/scaleY（_fixedVisual 无 transform，css=visual 直接）
+    // Visual size ↔ CSS size (counter-zoom is not uniform — this is the only conversion source; stop hand-computing ×scale/scaleY!)
+    //   transform scale(1/scale) is always uniform (origin top-left); the page scales horizontally by scale, vertically by scaleY:
+    //     visual_w = css_w                  (horizontal: 1/scale × scale = 1, exact cancel)
+    //     visual_h = css_h × scaleY/scale   (vertical: 1/scale × scaleY ≠ 1)
+    //   so css_w = visW, css_h = visH × scale/scaleY (_fixedVisual has no transform, css=visual directly)
 
-    // 视觉宽度上限（与调试卡同一源）：取 vp.w 与 visualViewport.width（恒 CSS、最可靠）的较小值减边距——防 vp.w 偏大
+    // Visual width cap (same source as the debug card): min of vp.w and visualViewport.width (always CSS, most reliable) minus margin — guards against vp.w being too large
 
-    // 视觉高度上限（同 capVisW）：vp.h（屏高，恒）
-
-
-    // ---- 设备物理尺寸（CSS px，不随页面缩放/窗口 resize 变化）：screen.width/height ----
-    //   页面缩放（pinch/ctrl+/-）只改 visualViewport.scale，screen 不变——大小屏判定稳定（适配"物理尺寸"而非"缩放后的尺寸"）
-    //   注：screen.width = 设备物理像素 / devicePixelRatio（如 iPhone 375CSS×dpr3 → 375；桌面 1280CSS×dpr1 → 1280）
-
-    // ---- 大小屏识别（多信号融合，ppk 视口研究结论）----
-    //  ① screen.width（CSS px）：现代移动浏览器 = 理想视口（设备 DIP，如 375）；桌面 Chrome/Safari = 物理屏
-    //  ② 老浏览器坑：Android 老 WebView screen 返回物理像素（1080+）→ 误判大屏
-    //     修正：getPhysScreen 多信号判定（UA-CH mobile + outerWidth/availWidth 交叉，平板不误伤）
-    //  ③ 桌面 Firefox/Edge 坑：screen.width 随 page-zoom 变（ppk）——低频，接受（Chrome/Safari 稳定）
+    // Visual height cap (same as capVisW): vp.h (screen height, constant)
 
 
+    // ---- Device physical size (CSS px, unaffected by page zoom/window resize): screen.width/height ----
+    //   Page zoom (pinch/ctrl+/-) only changes visualViewport.scale; screen stays the same — large/small screen detection is stable (adapt to "physical size", not "zoomed size")
+    //   Note: screen.width = device physical pixels / devicePixelRatio (e.g. iPhone 375CSS×dpr3 → 375; desktop 1280CSS×dpr1 → 1280)
 
-    // ---- fab 物理锚点：视觉位置固定（页面缩放时 counter-zoom，按钮悬停页边不跟着缩放） ----
+    // ---- Large/small screen detection (multi-signal fusion, per ppk viewport research)----
+    //  ① screen.width (CSS px): modern mobile browsers = ideal viewport (device DIP, e.g. 375); desktop Chrome/Safari = physical screen
+    //  ② Old browser pitfall: Android old WebViews return physical pixels from screen (1080+) → misjudged as a large screen
+    //     Fix: getPhysScreen multi-signal decision (UA-CH mobile + outerWidth/availWidth cross-check, tablets not falsely flagged)
+    //  ③ Desktop Firefox/Edge pitfall: screen.width changes with page-zoom (ppk) — low frequency, accepted (Chrome/Safari stable)
+
+
+
+    // ---- fab physical anchor: visual position pinned (counter-zoom on page zoom, a button hovering at the page edge doesn't scale with it) ----
   ctx.fabEdge = null; // 'left'|'right'|'top'|'bottom'
-  ctx.navHoldT = 0; // 导航保持时间戳（doNav 设置，updateHud/floatToolbar 读取）
-    // ---- 导航（工具条按钮 / 键盘 hostKey 共用）：选区来源路由（宿主 selfEngaged → selfClient.step；target → postToTarget）----
-    // 注意：必须顶层定义（键盘 hostKey 顶层调用；原定义在 buildToolbar 内 → ReferenceError: doNav is not defined → 键盘全失效）
+  ctx.navHoldT = 0; // navigation hold timestamp (set by doNav, read by updateHud/floatToolbar)
+    // ---- Navigation (shared by toolbar button / keyboard hostKey): selection source routing (host selfEngaged → selfClient.step; target → postToTarget)----
+    // Note: must be defined at top level (keyboard hostKey calls it at top level; it was originally defined inside buildToolbar → ReferenceError: doNav is not defined → keyboard fully dead)
 
-  ctx.fabPhys = null; // {x, y} 物理像素位置（视觉目标，缩放不变）
-  ctx.suppressClick = false; // fab 拖动结束标志：拦截随后的 click（避免误触按钮 toggle）
-    // touch 点击 tooltip：立即显示展开文字，2s 后自动消失（touch 无 :hover out，:hover 展开会一直挂着）
+  ctx.fabPhys = null; // {x, y} physical pixel position (visual target, unchanged by zoom)
+  ctx.suppressClick = false; // fab drag end flag: swallow the following click (avoid accidentally toggling the button)
+    // touch click tooltip: show the expanded text immediately, auto-hide after 2s (touch has no :hover out, the :hover expansion would stay stuck)
     ctx.fab.addEventListener('pointerdown', function (e) {
       if (e.pointerType === 'touch') {
-        ctx.fab.classList.remove('dbg-nohover'); // 新触摸：恢复 tooltip 能力
+        ctx.fab.classList.remove('dbg-nohover'); // new touch: restore tooltip capability
         ctx.fab.querySelectorAll('button').forEach(function (x) { x.classList.remove('dbg-tip'); });
         var b = e.target && e.target.closest ? e.target.closest('button') : null;
         if (b) b.classList.add('dbg-tip');
         if (ctx.fab.__tipT) clearTimeout(ctx.fab.__tipT);
         ctx.fab.__tipT = setTimeout(function () {
           ctx.fab.querySelectorAll('button').forEach(function (x) { x.classList.remove('dbg-tip'); });
-          ctx.fab.classList.add('dbg-nohover'); // 压掉 :hover 残留展开（tap 后 :hover 保持到下次 tap）
+          ctx.fab.classList.add('dbg-nohover'); // suppress leftover :hover expansion (after a tap, :hover persists until the next tap)
         }, 2000);
       }
     });
-    // FAB 拖动（公共手势工具 makePointerDrag）：按钮区域也可开始拖动——移动超阈值（6px）即变拖动；
-    // 未移动 = 正常点击（不 preventDefault / 不立即捕获，保 click 落按钮；捕获策略 capture:'late' 由公共层处理）
+    // FAB drag (shared gesture utility makePointerDrag): the button area can also start a drag — movement beyond the threshold (6px) turns into a drag;
+    // no movement = normal click (no preventDefault / no immediate capture, keeping the click landing on the button; capture strategy capture:'late' handled by the shared layer)
     makePointerDrag({
       handle: ctx.fab, threshold: 6, capture: 'late',
       onStart: function (e) {
-        // 偏移用视觉目标 fabPhys（不是布局 rect——rect 是布局坐标，clientX 是视觉坐标，混合会让拖动目标恒=初始布局位置拖不走）
+        // Offset uses the visual target fabPhys (not the layout rect — rect is layout coords, clientX is visual coords; mixing pins the drag target to the initial layout position, unable to drag away)
         var vp0 = getPhysViewport();
-        var coordLayout = detectCoordSemantics(ctx.fab, e.clientX); // clientX 是布局还是视觉（CDP/WebView 可能布局）
-        // ox/oy 恒为视觉偏移：clientX 按语义 ×scale 转视觉后与 fabPhys（视觉）同源相减
+        var coordLayout = detectCoordSemantics(ctx.fab, e.clientX); // is clientX layout or visual (CDP/WebView may report layout)
+        // ox/oy are always visual offsets: clientX converted to visual by the detected semantics ×scale, then subtracted from fabPhys (visual) in the same frame
         var xv = e.clientX * (coordLayout ? vp0.scale : 1);
         var yv = e.clientY * (coordLayout ? vp0.scaleY : 1);
         return { ox: xv - (ctx.fabPhys ? ctx.fabPhys.x : 0), oy: yv - (ctx.fabPhys ? ctx.fabPhys.y : 0), coordLayout: coordLayout };
       },
       onMove: function (ev, st) {
-        ctx.fab.classList.add('dbg-dragging'); // 拖动中：禁 hover 上浮/tooltip
-        // clientX/Y 按检测语义换算视觉：布局源 ×scale（横向）/×scaleY（纵向）→ 视觉目标；视觉源直接用
+        ctx.fab.classList.add('dbg-dragging'); // while dragging: disable hover lift/tooltip
+        // clientX/Y converted to visual by the detected semantics: layout source ×scale (horizontal) / ×scaleY (vertical) → visual target; visual source used as-is
         var vp = getPhysViewport();
         var sx = st.coordLayout ? vp.scale : 1;
         var sy = st.coordLayout ? vp.scaleY : 1;
@@ -206,139 +206,144 @@ export function createDbgLauncher(url, opts) {
       },
       onEnd: function (ev, st, moved) {
         ctx.fab.classList.remove('dbg-dragging');
-        if (moved) { ctx.suppressClick = true; setTimeout(function () { ctx.suppressClick = false; }, 80); } // 拦截随后的 click（避免误触按钮 toggle）
+        if (moved) { ctx.suppressClick = true; setTimeout(function () { ctx.suppressClick = false; }, 80); } // swallow the following click (avoid accidentally toggling the button)
         if (!moved) return;
         var vp = getPhysViewport();
         var r = ctx.fab.getBoundingClientRect();
-        var vw = vp.w, vh = vp.h; // 物理视口
-        // rect 语义：Chrome layout rect=布局坐标（×scale→视觉）；iOS visual rect=视觉坐标（直接）
+        var vw = vp.w, vh = vp.h; // physical viewport
+        // rect semantics: Chrome layout rect = layout coords (×scale→visual); iOS visual rect = visual coords (direct)
         var _rm = _fixedVisual ? 1 : vp.scale;
         var cx = (r.left + r.width / 2) * _rm, cy = (r.top + r.height / 2) * (_fixedVisual ? 1 : vp.scaleY);
         var dl = cx, dr = vw - cx, dt = cy, db = vh - cy;
         var minH = Math.min(dl, dr), minV = Math.min(dt, db);
-        // 吸附最近边（拖过屏幕一半即对边）；沿边位置（另一轴）由 refreshFabAnchor clamp 保留
+        // Snap to the nearest edge (dragged past half the screen snaps to the opposite edge); the along-edge position (other axis) is kept by the refreshFabAnchor clamp
         ctx.fabEdge = (minV <= minH) ? (dt <= db ? 'top' : 'bottom') : (dl <= dr ? 'left' : 'right');
         ctx.fabPhys = { x: cx, y: cy };
         ctx.applyFabOrient();
-        ctx.refreshFabAnchor(); // 按新 edge/方向重算贴边锚点（横竖切换后 offsetWidth/Height 已变）
+        ctx.refreshFabAnchor(); // recompute the snap anchor for the new edge/orientation (offsetWidth/Height changed after the orientation switch)
         ctx.persistFabPos();
       },
     });
-    // capture 阶段拦截：拖动（移动超阈值）后吞掉按钮 click，避免误触发 toggle
+    // capture-phase interception: after a drag (movement beyond the threshold) swallow the button click to avoid accidentally triggering toggle
     ctx.fab.addEventListener('click', function (e) {
       if (ctx.suppressClick) { e.stopPropagation(); e.preventDefault(); }
     }, true);
-    // 吞掉 fab 上 click/touch 事件的冒泡——防止传给页面/底部 iframe 元素（小屏点击 inspect 触发底部 hover popup）
-    // 注意：不含 pointerdown/pointerup/pointermove——拖动依赖它们在 window 上的监听（onMove/onEnd）
+    // Swallow bubbling of click/touch events on the fab — prevents them reaching the page/bottom iframe elements (a small-screen inspect click triggers the bottom hover popup)
+    // Note: excludes pointerdown/pointerup/pointermove — dragging relies on their window-level listeners (onMove/onEnd)
     ['click', 'mousedown', 'mouseup', 'touchstart', 'touchend'].forEach(function (t) {
       ctx.fab.addEventListener(t, function (e) { e.stopPropagation(); });
     });
-    // 吞掉 launcher UI（HUD/工具条/面板/弹窗等全部自有浮层）事件的冒泡——放行方案（尤其 click）只应作用于页面元素，
-    // 我们自己的 UI 事件绝不能传到原网页：否则「全部放行」时点工具条 🔒 放行方案下拉切回默认，
-    // 该点击冒泡到页面被『点外部关菜单』逻辑捕获 → 页面刚打开的菜单被收起（用户实测）。
-    // 统一挂在 #__dbg_launcher 根（所有自有浮层都是其子级）：冒泡到根即 stopPropagation，页面监听器收不到；
-    // 我们 UI 自身的 handler 都在元素/根内层（先于根执行），不受影响。
-    // 注意：不含 pointermove/pointerup——fab/工具条/HUD 拖动依赖 window 上的 pointermove/up（onMove/onEnd）
-    // mousedown 必须含：页面弹出菜单常用 document mousedown 关闭（点外部关菜单）——launcher UI 的 mousedown 若漏到页面，
-    // 会关掉刚打开的菜单（inspect 流程：放行→点页面 + 弹菜单→点工具条放行按钮→菜单被关，用户实测）。fab 已吞 mousedown，根补齐。
-    // 不含 pointercancel：四套拖拽（AI 窗拖动/缩放、fab、工具条、HUD）的结束监听都挂 window pointercancel——
-    // 根若吞掉它，触屏滚动接管/系统手势触发 cancel 时结束监听收不到 → dragState 残留、窗口卡住（pad 实测“拖一下就卡住”）。
+    // Swallow bubbling of launcher UI events (HUD/toolbar/panels/dialogs — all our own overlays) — release profiles (especially click) should only act on page elements:
+    // our own UI events must never reach the original page. Otherwise, with "release all" active, clicking the toolbar 🔒 release profile dropdown to switch back to default,
+    // that click bubbles to the page and gets caught by the "click outside closes menu" logic → the just-opened menu collapses (verified).
+    // Attached uniformly at the #__dbg_launcher root (all our own overlays are its children): bubbling to the root triggers stopPropagation, page listeners receive nothing;
+    // our UI's own handlers sit at element/root inner layers (they run before the root), unaffected.
+    // Note: excludes pointermove/pointerup — fab/toolbar/HUD dragging depends on window pointermove/up (onMove/onEnd)
+    // mousedown must be included: page popup menus commonly close on document mousedown (click outside closes menu) — if launcher UI mousedown leaks to the page,
+    // it closes the just-opened menu (inspect flow: release → click page + popup menu → click the toolbar release button → menu closed, verified). fab already swallows mousedown; the root completes it.
+    // Excludes pointercancel: the end listeners of all four drags (AI window drag/resize, fab, toolbar, HUD) hang on window pointercancel —
+    // if the root swallowed it, when touch scroll takeover/system gestures trigger cancel the end listener receives nothing → dragState residue, window stuck (verified on pad: "drag once and it sticks").
     ['mouseup', 'mousedown', 'click', 'dblclick', 'contextmenu', 'pointerdown',
      'touchstart', 'touchmove', 'touchend', 'touchcancel',
      'mouseover', 'mouseout', 'mousemove', 'wheel', 'keydown', 'keyup', 'focusin', 'focusout', 'input', 'change'].forEach(function (t) {
       ctx.root.addEventListener(t, function (e) { e.stopPropagation(); });
     });
-    // mousedown 单独处理（capture 相位，先于 fab/工具条等内部 stopPropagation）：preventDefault 防止 launcher UI 点击把页面焦点夺走。
-    // 页面弹出菜单常靠“输入框失焦关闭”（如会话管理器的标签编辑器 onBlur→setEditing(false)→整个 picker 卸载）：
-    // 全部放行点开菜单后，点我们 🔒 放行下拉 → 页面输入框失焦 → onBlur → 菜单被关闭（用户实测）。
-    // preventDefault 阻止默认聚焦行为（焦点留在页面输入框）；launcher 自己的输入框（selector 等）除外
+    // mousedown handled separately (capture phase, before the fab/toolbar internal stopPropagation): preventDefault stops launcher UI clicks from stealing page focus.
+    // Page popup menus often rely on "close on input blur" (e.g. the session manager's tag editor onBlur→setEditing(false)→the whole picker unmounts):
+    // with release-all on, after opening the menu, clicking our 🔒 release dropdown → the page input blurs → onBlur → menu closed (verified).
+    // preventDefault blocks the default focusing (focus stays in the page input); the launcher's own inputs (selector etc.) are exempt.
+    // Panel cards (.dbg-pick-dialog: notify/Q&A/pick-confirm) are exempt -- their bodies must stay
+    // selectable and button clicks must be able to focus the document (Clipboard API requires a
+    // focused document; unconditional preventDefault kills selection + copy, verified). Pages still
+    // receive none of these events thanks to the root-level stopPropagation listeners above.
     ctx.root.addEventListener('mousedown', function (e) {
       if (e.target && e.target.closest && e.target.closest('input, textarea, select')) return;
+      if (e.target.closest && e.target.closest('.dbg-pick-dialog')) return;
       try { e.preventDefault(); } catch (err) {}
     }, true);
     ctx.root.appendChild(ctx.fab);
-    ctx.restoreFabPos(); // 挂载后恢复（宽高正确才能算物理锚点）
-    // 样式完全应用后校正一次贴边锚点（rAF 后 offsetWidth/font 才是最终值——否则小屏首次位置可能偏右超屏）
+    ctx.restoreFabPos(); // restore after mount (width/height must be correct to compute the physical anchor)
+    // Correct the snap anchor once after styles fully apply (offsetWidth/font is only final after rAF — otherwise the first small-screen position may sit too far right and off-screen)
     requestAnimationFrame(function () { if (ctx.fabEdge) ctx.refreshFabAnchor(); });
-    // 兜底延迟重算："没有缩放"时 vv resize/scroll 事件不触发（scale 无变化），首次计算若 vv.scale 未就绪（=1）会用错 scale——
-    //   位置错后永不重算 → 不可见。主动延迟多重算，确保 vv.scale/尺寸就绪后位置正确（pinch 后刷新"出来"即此机制）
+    // Fallback delayed recompute: with "no zoom", vv resize/scroll events don't fire (scale unchanged); if vv.scale isn't ready (=1) at first computation the wrong scale is used —
+    //   the position stays wrong and is never recomputed → invisible. Proactively recompute with delays to ensure the position is correct once vv.scale/size are ready (the "appears after refresh following a pinch" case is exactly this mechanism)
 
     [150, 600, 2000].forEach(function (ms) { setTimeout(ctx.safeFabRefresh, ms); });
     window.addEventListener('load', ctx.safeFabRefresh);
-    // 缩放/窗口变化监听：页面缩放时 counter-zoom 保持视觉位置；窗口物理变化时贴边锚点重算
+    // Zoom/window change listeners: page zoom → counter-zoom keeps the visual position; physical window change → recompute the snap anchor
     if (window.visualViewport) {
-      // 缩放/pan 变化：重算贴边锚点（refreshFabAnchor——vv 首次就绪/scale 变化时修正初始错位）+ 应用视觉位置
+      // Zoom/pan change: recompute the snap anchor (refreshFabAnchor — fixes initial misalignment when vv first becomes ready/scale changes) + apply the visual position
       window.visualViewport.addEventListener('resize', function () { ctx.refreshFabAnchor(); ctx.applyFabView(); ctx.applyToolbarZoom(); ctx.applyToolbarCompact(); ctx.applyHudZoom(); ctx.applyAiState(); });
       window.visualViewport.addEventListener('scroll', function () { ctx.refreshFabAnchor(); ctx.applyFabView(); ctx.applyToolbarZoom(); ctx.applyToolbarCompact(); ctx.applyHudZoom(); ctx.applyAiState(); });
     }
     window.addEventListener('resize', function () {
-      ctx.refreshFabAnchor(); // 视口改变一律重算贴边锚点 + clamp（含 mobile 模拟 scale≠1：旧位置会超屏，必须重算）
+      ctx.refreshFabAnchor(); // any viewport change recomputes the snap anchor + clamp (incl. mobile emulation scale≠1: the old position would overflow the screen, must recompute)
       ctx.applyToolbarZoom();
     });
 
-    // ---------------- 目标 = 宿主 + 宿主真实 iframe（阶段 3：无自建预览） ----------------
+    // ---------------- Target = host + host's real iframes (phase 3: no self-built preview) ----------------
   ctx.aiIframe;
   ctx.inspectorOn = false;
-  ctx.hudHoverOn = false; // HUD 模拟 hover 开关（真实事件派发，pin 在当前元素）
-  ctx.pendingCommands = {};   // requestId -> {resolve, reject}（AI 命令往返）
+  ctx.hudHoverOn = false; // HUD simulated hover switch (real event dispatch, pinned on the current element)
+  ctx.pendingCommands = {};   // requestId -> {resolve, reject} (AI command round trips)
 
-    // ---------------- 页面调速/拦截选项（动画减速/事件拦截/定时器慢放） ----------------
+    // ---------------- Page speed/intercept options (animation slowdown/event interception/timer slowdown) ----------------
 
   ctx.optState = Object.assign({
       animSpeed: 1, blockScroll: false, blockWheel: false, slowTimers: 1,
       netDelay: 0, netOffline: false, darkMode: false, reducedMotion: false,
       timeOffsetMs: 0, viewportW: 0, simulateTouch: false,
-      dangerAutoOkMs: 30000, // 危险命令无人值守默认 30s：确认卡弹出后无响应 30s 自动允许执行（调速面板可改 0/10/30/60s）
+      dangerAutoOkMs: 30000, // dangerous command unattended default 30s: if no response 30s after the confirm card pops, execution is auto-approved (speed panel can change to 0/10/30/60s)
     }, ctx.loadOptState());
-  ctx.errLog = []; // 页面错误日志（捕获现场用，上限 20）
-  ctx.aiInspectActive = false; // AI 窗口点选模式（选择元素回传 AI 窗，不弹窗可连续选）
-  ctx.selfEngaged = false;     // 宿主页选区锁定（AI 点选确认时区分回传宿主/target）
-  ctx.lastSelfPayload = null;  // 宿主页最近选区 payload（hover/engaged 消息自带——回传 AI 窗用）
+  ctx.errLog = []; // page error log (for scene capture, cap 20)
+  ctx.aiInspectActive = false; // AI window pick mode (picked elements are reported back to the AI window; no dialog, continuous picking)
+  ctx.selfEngaged = false;     // host page selection locked (distinguishes host/target when an AI pick is confirmed)
+  ctx.lastSelfPayload = null;  // host page latest selection payload (carried by hover/engaged messages — for reporting back to the AI window)
   ctx.speedPanel = null;
 
 
 
 
-    /** 确保目标 iframe 已创建且注入完成（自检/测试用） */
+    /** Ensure the target iframe is created and injection completed (for self-check/testing) */
 
 
-    // 强制校验 client 是最新版（防旧版残留——缺退出清理/新能力导致退出后仍可点选）
-    // 旧版实例：exitInspector 清理监听 + 删除 + 重注入最新 MINI_DBG_CLIENT
+    // Force-verify the client is the latest version (guards against stale leftovers — missing exit cleanup/new capabilities would allow picking after exit)
+    // Old instance: exitInspector cleans up listeners + removes + reinjects the latest MINI_DBG_CLIENT
 
 
 
 
-    // ---------------- 危险命令用户确认（AI 经 postMessage 模拟 CDP 时，破坏性/持久类命令需用户批准） ----------------
+    // ---------------- Dangerous command user confirmation (when the AI simulates CDP via postMessage, destructive/persistent commands need user approval) ----------------
 ;
-    // 浏览器受限操作：程序化执行会被拦截，必须用户真实点击提供 user activation（每次都要，不可“记住”）
+    // Browser-restricted operations: programmatic execution is blocked; a real user click must provide user activation (every time, cannot be "remembered")
 ;
   ctx.gestureCard = null;
-  ctx.sessionDangerOk = false; // “本次会话记住”——勾选后本会话危险命令不再逐个确认
+  ctx.sessionDangerOk = false; // "remember for this session" — once checked, dangerous commands skip per-command confirmation for the rest of the session
   ctx.confirmCard = null;
   ctx.simReqN = 0;
-  ctx.dangerQueue = [];     // 危险命令确认队列（并发时逐个确认，防止确认卡互相覆盖）
+  ctx.dangerQueue = [];     // dangerous command confirmation queue (confirmed one by one under concurrency, preventing confirm cards overwriting each other)
   ctx.confirmingDanger = false;
 
-    /** AI 命令入口（含危险确认/手势桥）：dbg_command 消息 / simulateAiCommand / MCP 桥共用，返回结果 promise */
+    /** AI command entry (with danger confirmation/gesture bridge): shared by the dbg_command message / simulateAiCommand / MCP bridge; returns a result promise */
 
 
-    // Browser 命令在宿主执行：手势卡点击发生在宿主（有 transient activation），target iframe 内无手势会被浏览器拒绝
-
-
-
+    // Browser commands run in the host: the gesture card click happens in the host (has transient activation); without a gesture inside the target iframe the browser rejects it
 
 
 
 
 
-    // 放行方案（多态）：默认=当前方案（只锁 click/hover）；全放行（含 click）/ 全冻结 / 自定义 p1-p3（调速面板管理）
-    // 放行方案：内置（默认/全放行/全冻结，不可删）+ 用户自定义（方案名+内容可增删改，localStorage 持久化）
+
+
+
+    // Release profiles (polymorphic): default = current profile (locks click/hover only); release all (incl. click) / freeze all / custom p1-p3 (managed by the speed panel)
+    // Release profiles: built-in (default/release all/freeze all, undeletable) + user-defined (profile name+content can be added/removed/edited, persisted to localStorage)
   ctx.RELEASE_PROFILES = {
       default: { name: 'default', label: t('⚡ Default allow'),   release: ['key', 'wheel', 'scroll', 'touch', 'focus'], builtin: true },
       all:     { name: 'all',     label: t('⚡⚡ Allow all'), release: ['click', 'hover', 'key', 'wheel', 'scroll', 'touch', 'focus'], builtin: true },
       frozen:  { name: 'frozen',  label: t('⛔ Freeze all'), release: [], builtin: true },
     };
-    // 默认放行类别用户可编辑（持久化；默认 = 除 click/hover 外全放行）
+    // Default release categories are user-editable (persisted; default = everything released except click/hover)
 
     try {
       var _dr = localStorage.getItem(DEFAULT_RELEASE_KEY);
@@ -352,7 +357,7 @@ export function createDbgLauncher(url, opts) {
     } catch (e) {}
 
   ctx.userProfiles = ctx.loadUserProfiles();
-  ctx.userProfileSeq = 0; // 生成唯一 name
+  ctx.userProfileSeq = 0; // generate a unique name
 
 
 
@@ -362,21 +367,21 @@ export function createDbgLauncher(url, opts) {
   ctx.currentProfile = 'default';
 
 
-  ctx.toolbarHovering = false; // 鼠标在工具条上：冻结位置，允许点击（避免跟随死循环）
-    // 底部信息条（HUD）：hover 快选时实时显示备选元素信息 + 点击提示（参考 Chrome inspector）
+  ctx.toolbarHovering = false; // mouse on the toolbar: freeze position, allow clicks (avoids a follow loop)
+    // Bottom info bar (HUD): live display of candidate element info during hover quick-pick + click hint (modeled on the Chrome inspector)
   ctx.hud = null;
-  ctx.hudUserPos = null; // HUD 用户拖动固定位置（不跟随选区；退出 Inspector 重置）
+  ctx.hudUserPos = null; // HUD user-dragged fixed position (doesn't follow the selection; reset on exiting Inspector)
 
- // 退出 Inspector 重置（恢复跟随选区）
+ // Reset on exiting Inspector (restore following the selection)
 
-  ctx.lastHud = null; // 最近 hover 数据（resize 重定位用——setHovered 同元素短路时不重新 post）
+  ctx.lastHud = null; // latest hover data (for resize repositioning — setHovered short-circuits on the same element without re-posting)
 
     window.addEventListener('resize', function () {
-      // 视口变化（小屏/窗口缩放）→ HUD 重新定位（保持显示全——setHovered 同元素短路不重新 post）
+      // Viewport change (small screen/window resize) → HUD reposition (keep it fully visible — setHovered same-element short-circuit doesn't re-post)
       if (ctx.hud && ctx.hud.style.opacity === '1' && ctx.lastHud) {
         if (!ctx.hudUserPos) ctx.updateHud(ctx.lastHud.p, ctx.lastHud.source);
         else {
-          // 拖动固定位置也 clamp 视口内（视觉 px——避免缩放后超视口隐藏）
+          // The dragged fixed position is also clamped within the viewport (visual px — avoids hiding beyond the viewport after zoom)
           var _vp = getPhysViewport();
           var _r = ctx.hud.getBoundingClientRect();
           var _ux = ctx.hudUserPos.x, _uy = ctx.hudUserPos.y;
@@ -389,51 +394,51 @@ export function createDbgLauncher(url, opts) {
       }
     });
 
-    // HUD counter-zoom：按真实屏幕尺寸（visualViewport.scale × inner = 物理视口）——页面缩放时视觉尺寸/位置固定
+    // HUD counter-zoom: by the real screen size (visualViewport.scale × inner = physical viewport) — visual size/position stays fixed while the page zooms
 
 
 
 
 
-    // 工具条跟随选区悬浮（选区上方，避开手指/鼠标）
-  ctx.toolbarDragged = false; // 用户拖动工具条后：位置优先保持（选区变化才智能贴合）
-  ctx.lastSelRect = null;     // 上次选区 rect（拖动后比较：同选区不移动，新选区贴合）
+    // Toolbar floats following the selection (above it, avoiding the finger/mouse)
+  ctx.toolbarDragged = false; // after the user drags the toolbar: position takes priority (only re-fits on selection change)
+  ctx.lastSelRect = null;     // last selection rect (compared after a drag: same selection doesn't move, new selection re-fits)
 
-    // 重新贴合工具条（# 弹窗开/关后工具条高度变化 → 避让重算；不触发拖动保持逻辑）
+    // Re-fit the toolbar (# dialog open/close changes the toolbar height → avoidance recompute; doesn't trigger the drag-priority logic)
 
-    // 工具条 counter-zoom：页面缩放时反向缩放 + 位置÷scale，视觉尺寸/位置固定（不跟着页面缩放）
+    // Toolbar counter-zoom: inverse scale on page zoom + position÷scale, visual size/position stays fixed (doesn't follow the page zoom)
 
-    // ---- 工具条鼠标拖动（按住非按钮区域如选区信息条）：拖动后位置优先；选区变化自动贴合 ----
-    // 注意：不能用工具栏构建子函数里的 toolbar 变量（window.toolbar 是 BOM 对象），一律动态查找
+    // ---- Toolbar mouse drag (hold a non-button area such as the selection info bar): after dragging, position takes priority; selection change auto-fits ----
+    // Note: cannot use the toolbar variable from toolbar build subfunctions (window.toolbar is a BOM object); always look it up dynamically
 
     ctx.attachToolbarDrag();
 
 
-    // ---------------- 调速/拦截面板（动画减速/事件拦截/定时器慢放） ----------------
+    // ---------------- Speed/intercept panel (animation slowdown/event interception/timer slowdown) ----------------
 
 
 
-    // ---------------- 一份 client 注入宿主自身 + 递归注入同源 iframe（self-inspect 双区统一） ----------------
-    // 宿主页与 iframe 用同一份 MINI_DBG_CLIENT：宿主页以 __DBG_POST__ 回调模式执行；iframe 走 parent.postMessage
-  ctx.selfClient = null; // 宿主页自身的 client 实例
-  ctx.selfClientActive = false; // 🖥 按钮独立激活状态
+    // ---------------- One client injected into the host itself + recursively into same-origin iframes (self-inspect, unified across both zones) ----------------
+    // The host page and iframes share one MINI_DBG_CLIENT: the host page runs it in __DBG_POST__ callback mode; iframes go through parent.postMessage
+  ctx.selfClient = null; // the host page's own client instance
+  ctx.selfClientActive = false; // 🖥 button independent activation state
 
 
-    // 注入单个同源 iframe：未加载等 load，注入后递归其子页面
+    // Inject a single same-origin iframe: wait for load if not loaded, then recurse into its child pages after injection
 
-    // 注入所有同源 iframe（子页面一次都被注入；AI iframe 跳过）
+    // Inject all same-origin iframes (child pages all get injected at once; the AI iframe is skipped)
 
-    // 持续监听：每个已注入的文档（宿主 + 各 iframe）都观察，动态添加的 iframe 自动注入（链式）
-
-
-
+    // Continuous watching: observe every injected document (host + each iframe); dynamically added iframes are auto-injected (chained)
 
 
 
-    // 现场快照：错误列表 + 模拟条件 + 页面状态 → 发给 AI
 
 
-    // ---------------- AI 悬浮窗（aiUrl；可拖拽/贴边/自由调宽高，位置记忆 localStorage） ----------------
+
+    // Scene snapshot: error list + simulated conditions + page state → sent to the AI
+
+
+    // ---------------- AI floating window (aiUrl; draggable/snap-to-edge/free width & height, position remembered in localStorage) ----------------
   ctx.aiReady = false;
   ctx.aiQueue = [];
   ctx.aiWin = null;
@@ -445,24 +450,24 @@ export function createDbgLauncher(url, opts) {
 
 
 
-    // AI 窗是否在屏内可见（视觉面积>40%）——旧数据/视口变化导致超屏/不可见时重置默认
+    // Whether the AI window is visible on screen (visual area>40%) — reset to default when stale data/viewport changes push it off-screen/invisible
 
 
 
 
 
 
-    // 允许连接后绑定 AI iframe URL：桥地址+token 注入 AI 窗（ai.html 读参数显示状态，供路径 1 桥→AI 窗→页面）
+    // Bind the AI iframe URL after connection is allowed: bridge address+token injected into the AI window (ai.html reads the params to show status, for path 1 bridge→AI window→page)
 
 
-    // ---------------- 系统日志（AI 主窗口 = ai.html：对话 + CDP 模拟一体化；日志转发 AI 窗口显示） ----------------
+    // ---------------- System log (AI main window = ai.html: chat + CDP simulation unified; logs forwarded to the AI window for display) ----------------
 
 
-    // ---------------- 消息路由：宿主 ⇄ 目标UI ⇄ AI（全部异步 postMessage） ----------------
+    // ---------------- Message routing: host ⇄ target UI ⇄ AI (all async postMessage) ----------------
 
 
 
-    /** AI 命令经宿主转发给目标 UI，requestId 关联异步结果后原路返回 */
+    /** AI command forwarded to the target UI via the host; requestId correlates the async result, which returns via the same path */
 
     ctx.execInPage._n = 0;
 
@@ -470,35 +475,35 @@ export function createDbgLauncher(url, opts) {
 
 
 
-    // ---------------- 开关 ----------------
+    // ---------------- Switches ----------------
 
     ctx.aiBtn.addEventListener('click', ctx.toggleAi);
 
-    // ---------------- Inspector：三步点选 + 选区微调（桌面 hover / 触屏点击移动） ----------------
+    // ---------------- Inspector: three-step pick + selection fine-tuning (desktop hover / touch tap-to-move) ----------------
 
-    // 触屏：压掉按钮 :hover 残留（点击后不形成'hover整个窗口'错乱视觉）——不依赖工具条就绪
+    // Touch: suppress button :hover leftovers (after a tap, avoids the messy visual of 'hovering the whole window') — doesn't depend on toolbar readiness
     ctx.root.classList.toggle('dbg-touch-ui', isTouchDevice());
-    // 小屏检测（分级）：目标页可能未适配小屏，但我们的工具条自主检测并放大
-    //   compact = 视口<768 或触屏 → 按钮 38px/16px；touch = 触屏或视口<480 → 按钮 44px/18px（触控目标标准）
+    // Small-screen detection (tiered): the target page may not adapt to small screens, but our toolbar detects on its own and scales up
+    //   compact = viewport<768 or touch → buttons 38px/16px; touch = touch or viewport<480 → buttons 44px/18px (touch target standard)
 
 
 
-    ctx.root.classList.toggle('dbg-touch-ui', isTouchDevice()); // 触屏：压掉按钮 :hover 残留（点击后不'hover整个窗口'）
+    ctx.root.classList.toggle('dbg-touch-ui', isTouchDevice()); // touch: suppress button :hover leftovers (after a tap, avoids 'hovering the whole window')
     window.addEventListener('resize', function () { ctx.applyToolbarCompact(); });
-    // Inspect 打开后延迟 1s 扫描：列出覆盖视口大的 fixed/透明层（定位'浅蓝全窗遮罩'来源）→ 顶部弹独立可复制框 + console
-    // body/html 染色属性诊断（用户：'body 被附近属性导致淡蓝、删 body 重建才好'）——不弹大框，只右上角小角标，可复制
+    // Delayed 1s scan after Inspect opens: list fixed/transparent layers covering a large viewport area (locating the source of the 'light-blue full-window overlay') → pop an independent copyable box at the top + console
+    // body/html tinting attribute diagnostics (user: 'body got tinted light blue by nearby attributes; deleting and rebuilding body fixed it') — no big dialog, just a small corner badge at the top-right, copyable
 
-    // 独立兜底：移除 target 文档残留的选区框 div（纯 DOM 操作，无递归；即使 exitInspector 内部异常也调用）
+    // Independent fallback: remove selection frame divs left in the target document (pure DOM ops, no recursion; called even if exitInspector throws internally)
 
 
 
     ctx.inspBtn.addEventListener('click', function (e) { e.stopPropagation(); ctx.inspectorOn ? ctx.exitInspector() : ctx.enterInspector(); });
 
-    // 激活/退出宿主页内同源 iframe 的 client（嵌套——AI 点选/Inspector 可选中 iframe 内元素；launcher 内 target/AI 排除）
+    // Activate/exit the client of same-origin iframes inside the host page (nested — AI pick/Inspector can select elements inside iframes; launcher-internal target/AI are excluded)
 
 
 
-    // ---------------- 预览 + 勾选 + 指示 弹窗（第三步） ----------------
+    // ---------------- Preview + checkboxes + indicator dialog (step three) ----------------
   ctx.dialog = el('div', { class: 'dbg-dialog' });
   ctx.cardDlg = el('div', { class: 'dbg-dialog-card' });
   ctx.dHead = el('div', { class: 'dbg-dialog-head' });
@@ -510,11 +515,11 @@ export function createDbgLauncher(url, opts) {
     ctx.dHead.appendChild(ctx.dClose);
   ctx.dBody = el('div', { class: 'dbg-dialog-body' });
 
-    // 预览区：元素摘要（确认选中的是什么）
+    // Preview area: element summary (confirm what got selected)
   ctx.preview = el('div', { class: 'dbg-preview' });
     ctx.dBody.appendChild(ctx.preview);
 
-    // 勾选区：哪些信息带给 AI（R7 可选）
+    // Checkbox area: which info to bring to the AI (R7 optional)
   ctx.checks = el('div', { class: 'dbg-checks' });
   ctx.checkDefs = [
       ['text', t('Text')], ['computed', t('Styles')], ['attrs', t('Attributes')], ['xpath', t('Locate')], ['framework', t('Framework / file location')],
@@ -546,70 +551,70 @@ export function createDbgLauncher(url, opts) {
 
   ctx.lastPayload = null;
 
-    ctx.dClose.addEventListener('click', ctx.closePreview); // 预览关闭 → 返回工具条（不退出 inspect——用户要求预览为可选）
+    ctx.dClose.addEventListener('click', ctx.closePreview); // preview close → back to the toolbar (doesn't exit inspect — the user wants the preview to be optional)
     ctx.dCancel.addEventListener('click', ctx.closePreview);
 
     ctx.dSend.addEventListener('click', function () {
       if (!ctx.lastPayload) return;
       ctx.closeDialog();
-      // 确保 AI 窗存在（否则 postToAi 丢弃——候选发不出去）
+      // Ensure the AI window exists (otherwise postToAi drops it — the candidate never gets sent)
       try { ctx.ensureAi(); ctx.showAi(true); ctx.aiOpen = true; ctx.aiBtn.classList.add('dbg-on'); } catch (e) {}
-      // host 🎯 inspect 发送给 AI：走扩展可处理路径（dbg_ai_element 候选 → pi-web 输入框 [元素N]）——
-      //   原 sendToAi(db_user_message) 到 pi-web 被扩展丢弃（用户实测"点击发送到AI发不过来"）
+      // host 🎯 inspect sent to the AI: go through the extension-handled path (dbg_ai_element candidate → pi-web composer [element N]) —
+      //   the original sendToAi(db_user_message) to pi-web was dropped by the extension (verified: "clicking send-to-AI didn't deliver")
       try { ctx.picksAddElement(ctx.enrichElPayload ? ctx.enrichElPayload(ctx.lastPayload) : ctx.lastPayload); }
-      // 兜底 catch（picksAddElement 异常才走）：本设备是「host 发元素给 AI」，归属恒为 AI（_selfAttrib:false）——
-      // 即使此刻 selfAiRequested 被干扰，也强制发到 AI 窗，不落 host self。
+      // Fallback catch (only on picksAddElement exception): this device is the "host sending an element to AI" side, so attribution is always AI (_selfAttrib:false) —
+      // even if selfAiRequested is disturbed at this moment, force-send to the AI window instead of landing on host self.
       catch (e) { ctx.postToAi({ type: 'dbg_ai_element', _selfAttrib: false, payload: ctx.lastPayload }); }
       ctx.addMsg('sys', t('Sent selected element (') + ctx.lastPayload.tag + t(') to AI — [element N] placed in the composer, press send.'));
     });
 
-    // ---------------- 全局消息入口（宿主 ⇄ 目标UI / AI） ----------------
-    // hover 调试面板：hover 生效或被抑制/排除时显示细节，可复制（用户贴给 AI 分析'蓝框圈住整页'场景）
+    // ---------------- Global message entry (host ⇄ target UI / AI) ----------------
+    // hover debug panel: shows details when a hover takes effect or is suppressed/excluded, copyable (for the user pasting to the AI to analyze the 'blue box around the whole page' scenario)
 
 
 
     window.addEventListener('message', ctx.onHostMessage);
 
-    // 键盘导航：工具条显示（engaged 锁定）时拦截快捷键自己用；非 Inspector / hover 快选放行页面
+    // Keyboard navigation: when the toolbar is shown (engaged locked) intercept the shortcuts for our own use; outside Inspector / hover quick-pick, release keys to the page
 ;
-    // 键盘处理共用（宿主 + target iframe 转发）：工具条显示（锁定态）时拦截快捷键自己用；非锁定放行页面
+    // Keyboard handling shared (host + target iframe forwarding): when the toolbar is shown (locked state) intercept the shortcuts for our own use; when unlocked, release keys to the page
 
     document.addEventListener('keydown', function (e) { ctx.hostKey(e); });
-    // target iframe 内键盘：点选 iframe 元素后键盘焦点在 iframe（宿主 document keydown 收不到——"完全没有监听键盘事件的感觉"）
-    // 注意：iframe 由 ensureTarget() 创建（本块在其前）——绑定调用在尾部 ensureTarget() 之后执行 + load re-bind
+    // Keyboard inside the target iframe: after picking an iframe element, keyboard focus is in the iframe (the host document keydown won't receive it — "feels like there is no keyboard listener at all")
+    // Note: the iframe is created by ensureTarget() (this block sits before it) — the binding runs after the trailing ensureTarget() and re-binds on load
 
 
-    // 销毁：移除消息监听 + 整个浮层（测试中心切换框架用）
+    // Destroy: remove message listeners + the whole overlay (used by the test center when switching frameworks)
 
 
-    // ---------------- 暴露句柄 ----------------
-    // ---- 工具条构建（阶段 3：独立于任何 iframe；选区定向按 selFrameId） ----
+    // ---------------- Exposed handles ----------------
+    // ---- Toolbar build (phase 3: independent of any iframe; selection directed by selFrameId) ----
     try { ctx.buildToolbar(); } catch (e) {}
-    // ---- AI 窗口预创建（隐藏 + iframe 预加载，打开即就绪）+ 刷新记忆恢复 ----
-    // 生命周期：launcher 加载即创建 AI 窗（iframe 预热），但默认隐藏（CSS .dbg-ai-win{display:none}）；
-    //   仅当"上次关前开着"（dbgState.aiOpen）或用户点 AI 按钮时才显示
-    // 新窗口模式恢复：先置恢复标志——ensureAi 弹窗分支见标志不立即 window.open（同名窗口会被复用并导航，弹窗会话丢失），
-    //   改等弹窗心跳 adopt（10s 定时器兜底：无心跳才 openAiPopup）
+    // ---- AI window pre-creation (hidden + iframe preload, ready on open) + restore from memory on refresh ----
+    // Lifecycle: the AI window is created at launcher load (iframe warm-up) but hidden by default (CSS .dbg-ai-win{display:none});
+    //   shown only when "it was open before the last close" (dbgState.aiOpen) or when the user clicks the AI button
+    // New-window mode restore: set the restore flag first — the ensureAi popup branch sees the flag and doesn't window.open immediately (the same-name window would be reused and navigated away, losing the popup session),
+    //   instead it waits for the popup heartbeat adopt (10s timer fallback: only calls openAiPopup if there's no heartbeat)
     try { ctx._restoringPopup = !!(ctx.dbgState.aiOpen && (ctx.loadAiState ? (ctx.loadAiState().mode === 'popup') : false)); } catch (e) { ctx._restoringPopup = false; }
     if (ctx.selfHostPage) {
-      ctx.aiOpen = false; // self 宿主页：跳过 AI 窗预创建与刷新恢复——页面自身即 AI 窗，再建一个是嵌套冗余
+      ctx.aiOpen = false; // self host page: skip AI window pre-creation and refresh restore — the page itself is the AI window; building another is nesting redundancy
     } else {
     try { ctx.ensureAi(); } catch (e) {}
     if (ctx.dbgState.aiOpen) {
       if (ctx.aiMode === 'popup') {
-        // 新窗口模式恢复：宿主刷新后 ctx.aiPopup 句柄丢失，但弹窗的 window.opener 仍指向本窗口（跨刷新保留）——
-        // 先等弹窗心跳（aiti-client 每 5s 发 dbg_ai_ready）→ handleClientMessage 自动 adopt e.source 重建引用，
-        // 弹窗不重载、会话不丢。若 10s 无心跳（弹窗已关/导航走了）→ window.open 同名窗口：还在则复用回收（导航回 AI URL），
-        // 不在则新建（无用户手势多半被拦 → openAiPopup 内部回退内嵌）
+        // New-window mode restore: after a host refresh the ctx.aiPopup handle is lost, but the popup's window.opener still points here (preserved across refreshes) —
+        // first wait for the popup heartbeat (aiti-client sends dbg_ai_ready every 5s) → handleClientMessage auto-adopts e.source, rebuilding the reference;
+        // the popup doesn't reload, so the session survives. If 10s pass with no heartbeat (popup closed/navigated away) → window.open the same-name window: if present, reuse and reclaim (navigate back to the AI URL);
+        // if absent, create a new one (without a user gesture it's mostly blocked → openAiPopup falls back to embedded internally)
         ctx.aiOpen = true;
         ctx.aiBtn.classList.add('dbg-on');
         ctx.saveDbgState();
         ctx.addMsg('sys', t('🔄 Restoring AI standalone window (waiting for response…)'));
         setTimeout(function () {
           try {
-            if (ctx.aiPopup && !ctx.aiPopup.closed) { ctx.showAi(true); return; } // 心跳已认领，弹窗未重载
+            if (ctx.aiPopup && !ctx.aiPopup.closed) { ctx.showAi(true); return; } // heartbeat already claimed, popup didn't reload
             ctx._restoringPopup = false;
-            ctx.openAiPopup(); // 无心跳 → 弹窗已关/未开：同名复用或新建（被拦截 → openAiPopup 内部回退内嵌）
+            ctx.openAiPopup(); // no heartbeat → popup closed/never opened: same-name reuse or create new (blocked → openAiPopup falls back to embedded internally)
           } catch (e) {}
         }, 10000);
       } else {
@@ -624,25 +629,25 @@ export function createDbgLauncher(url, opts) {
       }
     }
     }
-    ctx.saveDbgState(); // 首次写入状态（含当前配置）
+    ctx.saveDbgState(); // first state write (includes the current config)
 
-    // ---- 加载完成 toast：显示识别的大小屏信息（调试：真机上核对 screen/视觉视口/判定）----
-    // 2026-08 重新打开（本轮修复 scaleY/transform 等比后，真机验证用；不需要时改回 if (false)）
-    // ---- 调试信息窗口（替代临时 toast）+ 设置（AI 窗头部 ⚙）----
-    // 持久化：是否刷新时自动显示调试信息（默认开；关闭后下次不再自动弹，仍可从设置里手动查看）
+    // ---- Load-complete toast: show the detected large/small screen info (debug: verify screen/visual viewport/detection on real devices)----
+    // 2026-08 re-enabled (for real-device verification after this round's scaleY/transform uniform-ratio fix; change back to if (false) when unneeded)
+    // ---- Debug info window (replaces the temporary toast) + settings (AI window header ⚙)----
+    // Persistence: whether to auto-show the debug info on refresh (default on; once off, it won't auto-pop next time, still viewable manually from settings)
 
- // 默认关：on-load 不自动弹 debug 卡（会盖住页面）
+ // Default off: don't auto-pop the debug card on load (it would cover the page)
 
 
-    // 调试信息文本（screen/inner/vp/fab/AI）——复制给 AI 协助诊断
+    // Debug info text (screen/inner/vp/fab/AI) — copy to the AI to assist diagnosis
 
-    // 居中卡片定位（小屏 counter-zoom 内容可读；桌面常规）
+    // Centered card positioning (small screens counter-zoom for readable content; desktop normal)
 
   ctx.debugPanel = null;
 
-    // 设置弹窗（AI 窗头部 ⚙ 触发）：调试信息自动显示开关 + 手动查看
+    // Settings dialog (triggered from the AI window header ⚙): debug info auto-show toggle + manual view
 
-    // 刷新时自动显示调试信息窗口（可在设置/调试窗里关闭；关闭后下次不再自动弹）
+    // Auto-show the debug info window on refresh (can be turned off in settings/the debug window; once off, it won't auto-pop next time)
     if (ctx.loadShowDebug()) {
       try {
         ctx.showDebugPanel();
@@ -654,24 +659,24 @@ export function createDbgLauncher(url, opts) {
       url: ctx.url, version: VERSION, cfg: ctx.cfg,
       enterInspector: ctx.enterInspector, exitInspector: ctx.exitInspector,
       enterSelfClient: ctx.enterSelfClient, exitSelfClient: ctx.exitSelfClient,
-      applyProfile: ctx.applyProfile, // 放行方案切换（default/all/p1/p2/p3/frozen）
-      applyViewport: function (v) { ctx.optState.viewportW = v; ctx.saveOptState(); ctx.saveDbgState(); ctx.applyOptsToTarget(); }, // 视口模拟（改 iframe 宽度）
+      applyProfile: ctx.applyProfile, // release profile switch (default/all/p1/p2/p3/frozen)
+      applyViewport: function (v) { ctx.optState.viewportW = v; ctx.saveOptState(); ctx.saveDbgState(); ctx.applyOptsToTarget(); }, // viewport emulation (change iframe width)
       open: ctx.toggleAi, sendMessage: ctx.sendText, execInPage: ctx.execInPage,
-      // 目标路由层（方案 C）：T_HOST / listFrames / frameClient / postToFrame
+      // Target routing layer (plan C): T_HOST / listFrames / frameClient / postToFrame
       T_HOST: ctx.T_HOST, listFrames: ctx.listFrames, frameClient: ctx.frameClient, postToFrame: ctx.postToFrame, selFrameId: ctx.selFrameId, currentFrameId: ctx.currentFrameId,
-      openAi: function () { ctx.aiOpen = true; ctx.ensureAi(); ctx.showAi(true); ctx.aiBtn.classList.add('dbg-on'); ctx.saveDbgState(); }, // 自动弹 AI 窗（不退出 Inspector，与 toggleAi 互斥逻辑区分）
+      openAi: function () { ctx.aiOpen = true; ctx.ensureAi(); ctx.showAi(true); ctx.aiBtn.classList.add('dbg-on'); ctx.saveDbgState(); }, // auto-open the AI window (doesn't exit Inspector; distinct from toggleAi's mutual-exclusion logic)
       postToAi: ctx.postToAi, broadcast: ctx.broadcast,
-      // 兼容：targetWindow() = 第一个宿主 iframe 的 window（hub 摆的目标页）
+      // Compat: targetWindow() = the first host iframe's window (the target page placed by the hub)
       targetWindow: function () { return (ctx.listFrames()[0] || {}).win || null; },
       captureSceneSend: ctx.captureSceneSend,
       simulateAiCommand: function (cmd, args) {
         return ctx.handleAiCommand({ cmd: cmd, args: args || {}, requestId: 'sim_' + (++ctx.simReqN) });
-      }, // 模拟 AI 发命令（含危险确认）；自检/测试用
+      }, // simulate an AI command (with danger confirmation); for self-check/testing
       destroy: ctx.destroy,
     };
-    // 防嵌套兑底观察窗：启动时共享库特征可能还没加载出来（aiti-client/host-protocol 均晚于 defer script），
-    // 且业务路由可能清洗掉 _dbg 参数——启动后短窗内轮询，特征一出现立即自毁（UI/预创建的 AI 窗 iframe 一并移除，
-    // 防 dev ai 里套 prod ai 的逐层嵌套拖死主线程）
+    // Anti-nesting fallback watch window: at startup the shared library markers may not have loaded yet (aiti-client/host-protocol both load later than the defer script),
+    // and business routing may strip the _dbg param — poll briefly after startup and self-destruct as soon as a marker appears (the UI/pre-created AI window iframe are removed together,
+    // preventing dev ai inside prod ai from nesting layer by layer and dragging the main thread to death)
     var _nestN = 0, _nestIv = setInterval(function () {
       _nestN++;
       if (aiWindowMarkers()) {
@@ -680,7 +685,7 @@ export function createDbgLauncher(url, opts) {
         try { ctx.destroy(); } catch (e) {}
         try { if (ctx.aiIframe) { ctx.aiIframe.src = 'about:blank'; ctx.aiIframe.remove(); ctx.aiIframe = null; } } catch (e) {}
         try { var _r = document.getElementById('__dbg_launcher'); if (_r && _r.parentNode) _r.parentNode.removeChild(_r); } catch (e) {}
-      } else if (_nestN > 40) { clearInterval(_nestIv); _nestIv = null; } // 10s 后停轮询
+      } else if (_nestN > 40) { clearInterval(_nestIv); _nestIv = null; } // stop polling after 10s
     }, 250);
 
     return ctx.root.__dbgLauncher;

@@ -155,6 +155,15 @@ export function __peekRowCache(id: string): Record<string, unknown> | undefined 
   return rowCache.get(id);
 }
 
+/** Drop cached rows so trailing activity frames stop carrying them (archive /
+ *  restore / delete just invalidated the cached bucket). The next list assembly
+ *  re-registers current rows via noteAssembledRows. Without the drop a trailing
+ *  frame (≤3s, row cached pre-archive) would deliver a stale live row and flash
+ *  the archived session back into clients' lists (delete → flash-in → flash-out). */
+export function dropActivityRows(ids: string[]): void {
+  for (const id of ids) rowCache.delete(String(id));
+}
+
 /**
  * 会话活动事件入口（agent onAgentSession 的 message_end 回调）。
  * 1) 缓存行增量更新（缓存缺席 → 帧不带 row，客户端回退增量刷新）；
