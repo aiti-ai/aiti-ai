@@ -1414,14 +1414,18 @@ function scanAcpBackends(
       // 上次使用的模型置顶（新建页默认项）
       listModels: () => catalogListModels(agent.name, agent.agentKey ?? agent.name),
       refreshModels: () => catalogRefreshModels(agent.name, agent.agentKey ?? agent.name),
-      // Adoption is implemented (AcpHandle.start's attach path + the replay
-      // boundary) but the family stays opt-OUT: on claude-code an adopted session
-      // answered a prompt in one run and produced nothing in the next (the agent's
-      // own MCP bridge re-registration gates the first turn). Shipping a flaky
-      // adoption across 25 providers would leave live agents nobody can drive, so
-      // it stays off until that is understood. aiti-qoder-agent's ACP shape is the
-      // verified path.
-      detachable: false,
+      // The core may host this backend's ACP process in a detachable wrapper; the
+      // handle adopts the live session on reattach (AcpHandle.start's attach path +
+      // the replay boundary).
+      //
+      // Verified on claude-code (the flagship of 25 providers, same AcpHandle):
+      // after a real `systemctl restart pi-web-dev` the adopted session answers the
+      // next prompt (10-15s), and a turn that was IN FLIGHT during the restart
+      // completes and its output is visible after attach. Earlier "no reply" runs
+      // were slow/blocked turns (the agent's harness refuses a foreground `sleep`),
+      // not adopt failures — allow up to ~2 minutes for the first turn after a
+      // reattach, when the agent re-registers its MCP bridge.
+      detachable: true,
       async createSession(options) {
         // 接管既有会话：以原 cwd 优先（session/load）；新会话用宿主 cwd。
         // cwd 先算后构造：handle 信息面（/api/sessions info.cwd）在 start 完成前的
@@ -1895,7 +1899,7 @@ export default {
               maxCapabilities: ACP_CAPABILITIES,
               listModels: () => catalogListModels(body.name, body.agentKey ?? body.name),
               refreshModels: () => catalogRefreshModels(body.name, body.agentKey ?? body.name),
-              detachable: false, // see the builtin-provider note: adoption is flaky
+              detachable: true, // same adopt path as the builtin providers
               createSession: async (opts) => {
                 const handle = new AcpHandle(body.name, binPath, body.args ?? [], body.agentKey ?? body.name);
                 const restored = opts.sessionId ? await restoreCwdFn?.(body.agentKey ?? body.name, opts.sessionId) : undefined;
