@@ -3,6 +3,8 @@
  * 运行：node --test test/frameworks.test.mjs
  */
 import { test } from "node:test";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import fs from "node:fs";
@@ -11,9 +13,10 @@ import path from "node:path";
 
 const require = createRequire(import.meta.url);
 const esbuild = require("esbuild");
+const PKG = dirname(fileURLToPath(import.meta.url)) + "/..";
 esbuild.buildSync({
-  entryPoints: ["src/frameworks.ts"],
-  outdir: "dist-test",
+  entryPoints: [path.join(PKG, "src/frameworks.ts")],
+  outdir: path.join(PKG, "dist-test"),
   bundle: true,
   format: "esm",
   platform: "node",
@@ -21,7 +24,7 @@ esbuild.buildSync({
   logLevel: "silent",
 });
 
-const { detectFrameworks, applyFramework, INTEGRATION_CATALOG, DEVTOOLS_HOME } = await import("../dist-test/frameworks.js");
+const { detectFrameworks, applyFramework, INTEGRATION_CATALOG, DEVTOOLS_HOME } = await import(path.join(PKG, "dist-test/frameworks.js"));
 
 function mkProject(pkgDeps = {}, files = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aiti-fw-"));

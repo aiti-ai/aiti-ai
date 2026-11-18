@@ -4,14 +4,18 @@
 // forks (Qoder.exe/Cursor.exe/... contain neither) -> root=undefined -> discovery always empty
 // -> no port candidates, no injection. anchorIdeRoot anchors on the host's own exe name.
 import { test } from "node:test";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const esbuild = require("esbuild");
+const PKG = dirname(fileURLToPath(import.meta.url)) + "/..";
 esbuild.buildSync({
-  entryPoints: ["src/port-scan.ts"],
-  outdir: "dist-test",
+  entryPoints: [path.join(PKG, "src/port-scan.ts")],
+  outdir: path.join(PKG, "dist-test"),
   bundle: true,
   format: "esm",
   platform: "node",
@@ -19,7 +23,7 @@ esbuild.buildSync({
   logLevel: "silent",
 });
 
-const { anchorIdeRoot } = await import("../dist-test/port-scan.js");
+const { anchorIdeRoot } = await import(path.join(PKG, "dist-test/port-scan.js"));
 
 function forkTable(forkExe) {
   // explorer -> fork main process -> fork ext host -> powershell -> node (dev server)
