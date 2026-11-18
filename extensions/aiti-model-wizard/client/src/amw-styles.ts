@@ -289,6 +289,15 @@ export const STYLES = `
 .amw-sb-item.is-add:not(:disabled):hover { color: var(--accent, #2563eb); }
 .amw-sb-text { display: block; min-width: 0; overflow: hidden; font-size: 14px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 .amw-sb-text.is-grow { flex: 1; }
+.amw-tree-toggle { flex: 0 0 auto; width: 16px; height: 16px; margin-left: 2px; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; line-height: 1; color: var(--text-dim, #9ca3af); border-radius: 4px; cursor: pointer; user-select: none; }
+.amw-tree-toggle:hover { color: var(--text, #374151); background: var(--bg-hover, rgba(0,0,0,0.06)); }
+.amw-sb-count { flex: 0 0 auto; font-size: 9.5px; color: var(--text-dim, #9ca3af); background: var(--bg-hover, rgba(0,0,0,0.05)); border-radius: 6px; padding: 0 5px; line-height: 1.5; }
+.amw-legend-chip {
+  display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; padding: 1px 8px; font-size: 11px; line-height: 1.6;
+  color: var(--text-muted, #6b7280); background: none; border: 1px solid var(--border, #e5e7eb); border-radius: 999px; cursor: pointer; white-space: nowrap;
+}
+.amw-legend-chip:hover { color: var(--text, #374151); background: var(--bg-hover, rgba(0,0,0,0.04)); }
+.amw-legend-chip[aria-pressed="true"] { font-weight: 600; }
 .amw-detail { flex: 1; min-width: 0; min-height: 0; padding: 16px 18px; overflow-y: auto; font-size: 13px; line-height: 1.5; }
 .amw-detail-stack { display: flex; flex-direction: column; gap: 16px; width: 100%; min-width: 0; }
 .amw-detail-title { color: var(--text, #1a1a1a); font-size: 14px; font-weight: 600; line-height: 1.35; }

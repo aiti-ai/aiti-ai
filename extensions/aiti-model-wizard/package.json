@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-model-wizard",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "type": "module",
   "description": ".dev + domestic AI catalog, Chinese/English, paste an API URL to reverse-search) → enter token → test (both 2xx/429 count as pass) → pick/type a model → write models.json; on miss, baseUr",
   "scripts": {
