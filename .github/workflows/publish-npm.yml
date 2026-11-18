@@ -150,6 +150,7 @@ jobs:
           SECRET_MASK_TGZ=$(ls "$PKGS"/aiti-ai-secret-mask-core-*.tgz | head -1)
           SECRET_VAULT_TGZ=$(ls "$PKGS"/aiti-ai-secret-vault-core-*.tgz | head -1)
           node scripts/collect-extension-deps.mjs --out "$BUILD/package.json" \
+            --override "@superdoc/docx-engine=0.31.0" \
             --file "@aiti-ai/ext-shared=$SHARED_TGZ" \
             --file "@aiti-ai/aiti-bridge=$BRIDGE_TGZ" \
             --file "@aiti-ai/aiti-devtools-core=$CORE_TGZ" \
