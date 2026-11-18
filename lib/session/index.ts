@@ -216,7 +216,9 @@ function watchBackendRebind(handle: SessionHandle, spawnKey: string): void {
   handle.subscribe((event) => {
     if (event.type !== "session_backend_ready" || typeof event.id !== "string") return;
     const oldId = (event as unknown as { oldId?: unknown }).oldId;
-    const from = typeof oldId === "string" ? oldId : spawnKey;
+    // An empty oldId means the backend never had an id before the announcement —
+    // fall back to the key the session was spawned under.
+    const from = typeof oldId === "string" && oldId ? oldId : spawnKey;
     if (!from || from === event.id) return;
     void getWrapperStarter()
       .then((wrapper) => {
