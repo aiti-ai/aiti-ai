@@ -662,7 +662,7 @@ test("workspaces：项目级聚合（同源口径）+ running/unread 计数 + 30
       { id: "s1", path: "/w/s1.jsonl", cwd: "/home/x/proj", projectRoot: "/home/x/proj", projectKey: "/home/x/proj", created: "2026-09-07T00:00:00.000Z", modified: "2026-09-07T00:00:00.000Z", messageCount: 3, firstMessage: "hello", lastMessage: "world" },
       { id: "s2", path: "/w/s2.jsonl", cwd: "/home/x/proj", projectRoot: "/home/x/proj", projectKey: "/home/x/proj", created: "2026-09-07T00:00:00.000Z", modified: "2026-09-08T00:00:00.000Z", messageCount: 1, firstMessage: "a", lastMessage: "b" },
       // windows 盘符 + 反斜杠：normalize 后与 posix 不同 key
-      { id: "s3", path: "w:\\s3.jsonl", cwd: "d:\\workspace\\aiti-dev", projectRoot: "d:\\workspace\\aiti-dev", projectKey: "d:\\workspace\\aiti-dev", created: "x", modified: "2026-09-09T00:00:00.000Z", messageCount: 1, firstMessage: "c", lastMessage: "d" },
+      { id: "s3", path: "w:\\s3.jsonl", cwd: "d:\\workspace\\demo-repo", projectRoot: "d:\\workspace\\demo-repo", projectKey: "d:\\workspace\\demo-repo", created: "x", modified: "2026-09-09T00:00:00.000Z", messageCount: 1, firstMessage: "c", lastMessage: "d" },
     ];
     const core = {
       async listSessions() { return rows.map((r) => ({ ...r })); },
@@ -682,12 +682,12 @@ test("workspaces：项目级聚合（同源口径）+ running/unread 计数 + 30
     assert.equal(p1.unreadCount, 1);
     assert.equal(p1.lastModified, "2026-09-08T00:00:00.000Z");
     assert.equal(p1.name, "proj");
-    const p2 = byKey.get("d:/workspace/aiti-dev");
+    const p2 = byKey.get("d:/workspace/demo-repo");
     assert.ok(p2, "win 项目按 lowercase+slash 归一");
     assert.equal(p2.runningCount, 0);
     assert.equal(p2.unreadCount, 1);
     // 排序：modified 降序
-    assert.equal(b.workspaces[0].key, "d:/workspace/aiti-dev");
+    assert.equal(b.workspaces[0].key, "d:/workspace/demo-repo");
     // rev 稳定 + 304
     const r2 = await api(req("http://x/", "GET"), ctx);
     assert.equal(r2.status, 200);
@@ -708,7 +708,7 @@ test("sessions project=<key> 作用域：只回该项目行；不带 project 仍
     const rows = [
       { id: "s1", path: "/w/s1.jsonl", cwd: "/home/x/proj", projectRoot: "/home/x/proj", projectKey: "/home/x/proj", created: now, modified: now, messageCount: 3, firstMessage: "hello", lastMessage: "world" },
       { id: "s2", path: "/w/s2.jsonl", cwd: "/home/x/other", projectRoot: "/home/x/other", projectKey: "/home/x/other", created: now, modified: now, messageCount: 1, firstMessage: "a", lastMessage: "b" },
-      { id: "s3", path: "w:\\s3.jsonl", cwd: "d:\\workspace\\aiti-dev", projectRoot: "d:\\workspace\\aiti-dev", projectKey: "d:\\workspace\\aiti-dev", created: now, modified: now, messageCount: 1, firstMessage: "c", lastMessage: "d" },
+      { id: "s3", path: "w:\\s3.jsonl", cwd: "d:\\workspace\\demo-repo", projectRoot: "d:\\workspace\\demo-repo", projectKey: "d:\\workspace\\demo-repo", created: now, modified: now, messageCount: 1, firstMessage: "c", lastMessage: "d" },
     ];
     const core = { async listSessions() { return rows.map((r) => ({ ...r })); }, async getRunningSessionIds() { return []; } };
     const base = { configDir: cfgOf(dir), path: ["sessions"] };

@@ -12,8 +12,8 @@
 // Grouping by conventional prefix:
 //   feat → Features · fix → Bug Fixes · perf → Performance
 //   everything else (sync/chore/docs/test/refactor/build/ci/no prefix) → Internal
-// The "(mirror pi-work <hash>)" trailer is stripped — internal bookkeeping, and
-// pi-work hashes have no target on GitHub.
+// The "(sync <hash>)" trailer is stripped — internal bookkeeping, and
+// those hashes have no target on GitHub.
 //
 // The draft carries only the human-written part (Highlights + grouped changes).
 // Install/assets/compare sections are appended by release.yml at publish time.
@@ -31,7 +31,7 @@ function git(args) {
 // ---- pure helpers (fixture-testable) ----
 
 export function stripMirrorTrailer(subject) {
-  return String(subject || "").replace(/\s*\(mirror pi-work[^\)]*\)\s*$/i, "").trim();
+  return String(subject || "").replace(/\s*\(mirror [^)]*\)\s*$/i, "").trim();
 }
 
 const GROUPS = [

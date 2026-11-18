@@ -593,7 +593,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   // Right-panel layout size mode (tri-state expand button): "dock" (three-column
   // default) → "wide" (sidebar collapsed, the right panel absorbs its width, chat
   // width unchanged) → "full" (full-width overlay) → back to "dock". Plan:
-  // pi-work docs/pi-web-right-panel-tri-state-expand-plan.md.
+  // right-panel tri-state expand design.
   const [rightPanelSizeMode, setRightPanelSizeMode] = useState<"dock" | "wide" | "full">("dock");
   const rightPanelFullWidth = rightPanelOpen && rightPanelSizeMode === "full" && !isMobile;
   // Snapshot taken when entering "wide"; restored when leaving it (sidebar open

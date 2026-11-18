@@ -2,8 +2,8 @@
 name: rollback-session
 title: 回滚会话的文件变更（恢复到指定提交）
 title.en: "Roll back a session's file changes (to a given commit)"
-placeholder: 描述回滚需求，例如：把 aiti-dev 会话 7942… 的文件恢复到 op1 之前
-placeholder.en: "Describe the rollback, e.g. restore aiti-dev session 7942… files to before op1"
+placeholder: 描述回滚需求，例如：把 the source repo 会话 7942… 的文件恢复到 op1 之前
+placeholder.en: "Describe the rollback, e.g. restore the source repo session 7942… files to before op1"
 summary: 用 aiti-git-trace 的安全机制把工作区文件恢复到追踪历史中的某个提交（先自动打 safety 存档，可再回滚）。涉及 storeRoot/sessionId/targetCommit 三个参数。
 summary.en: "Use aiti-git-trace's safety mechanism to restore workspace files to a commit in the trace history (an automatic safety archive is taken first and can be restored). Involves storeRoot/sessionId/targetCommit."
 outputs:

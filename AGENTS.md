@@ -175,13 +175,14 @@ Design decisions and traps live in `docs/agents/`, one note per area. Read every
 
 ---
 
-## extensions/ mirror (aiti ecosystem)
+## extensions/ (aiti ecosystem)
 
-`extensions/` is a one-way mirror of the extension packages from the pi-work source repo (`pi-web-ext/`), for extman to install from local paths / git sources. **Not part of this Next.js app**: excluded from tsc/eslint, `next build` never touches it.
+`extensions/` holds the extension packages of the aiti ecosystem — full sources, not generated output — so extman can install them from local paths or git sources. **Not part of this Next.js app**: excluded from tsc/eslint, `next build` never touches it.
 
-- **One-way snapshot, do not edit**: fix bugs in pi-work, then re-run its `scripts/sync-extensions-to-aiti-ai.mjs` to re-mirror (the sync applies mechanical redaction automatically).
+- **These are the sources**: edit them here. There is no upstream mirror to sync back to and no redaction step.
 - Each extension is an independent package (`node_modules`/`dist` gitignored); run `npm install && npm run build:client` in the extension directory before use.
 - `_shared/` is the extension shared layer (`@aiti-ai/ext-shared`); `sm-demo-source/` is the session-manager third-party agent source template.
+- Code gates (protocol declarations, hand-written version lines, unregistered globals, comment language, release redaction) live in the separate policy workspace and run against this checkout: `node gates/gate-all.mjs --root <this repo>`.
 
 ---
 
