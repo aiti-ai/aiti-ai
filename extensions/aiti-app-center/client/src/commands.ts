@@ -1,6 +1,6 @@
 /**
  * aiti-app-center · commands —— 应用命令提示查询服务（aiti-ai-input suggest 的 kind="app" 候选数据源）。
- * 方案：workspace-tools docs/aiti-ai-input-app-command-hints-plan.md。
+ * 方案：aiti-dev docs/aiti-ai-input-app-command-hints-plan.md。
  *
  * 服务 key：`aiti-app-center.commands`（客户端服务，entry register 时经 regSvc 注册——materialize
  * 即可用，不依赖 DockStack 渲染 AppCenter）。
