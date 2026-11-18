@@ -197,6 +197,7 @@ export function RestartRecoveryWizard() {
           padding: isMobile ? "10px 12px" : "12px 14px",
           borderBottom: "1px solid var(--border)",
           display: "flex", alignItems: "flex-start", gap: isMobile ? 10 : 12,
+          flexWrap: "wrap", // small screens: action cluster wraps to its own row below the title
         }}>
           {active && (
             <button
@@ -234,7 +235,11 @@ export function RestartRecoveryWizard() {
             <div style={{ color: "var(--text)", fontSize: isMobile ? 14 : 15, fontWeight: 700 }}>
               {stepTitle}
             </div>
-            <div style={{ marginTop: 3, color: "var(--text-muted)", fontSize: isMobile ? 11 : 12.5, lineHeight: 1.5 }}>
+            <div style={{
+              marginTop: 3, color: "var(--text-muted)", fontSize: isMobile ? 11 : 12.5, lineHeight: 1.5,
+              // step-1 hint is a one-liner on desktop (ellipsis); step-2 prompt is content, always wraps
+              ...(active || isMobile ? {} : { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }),
+            }}>
               {active
                 ? (active.lastPrompt
                   ? t("chat.restartRecoveryWasRunning", { prompt: active.lastPrompt })
@@ -242,25 +247,31 @@ export function RestartRecoveryWizard() {
                 : t("chat.restartRecoveryDesc", { continue: t("chat.continue") })}
             </div>
           </div>
-          {active && <OpenSessionButton sessionId={active.sessionId} />}
-          {!active && (
-            <button
-              onClick={() => setReport({ items: [], pendingCount: 0, totalQueued: 0 })}
-              title={t("chat.close")}
-              aria-label={t("chat.close")}
-              style={{
-                display: "inline-flex", alignItems: "center", justifyContent: "center",
-                width: 28, height: 28, flexShrink: 0,
-                borderRadius: 7, border: "1px solid transparent",
-                background: "transparent", color: "var(--text-dim)", cursor: "pointer",
-              }}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
-          )}
+          {/* Header action cluster — wraps to its own row below the title on small screens (same layout as QueueRecoveryDialog) */}
+          <div style={{
+            display: "flex", alignItems: "center", gap: 2, flexShrink: 0,
+            ...(isMobile ? { marginLeft: 40, width: "calc(100% - 40px)", justifyContent: "flex-end" } : {}),
+          }}>
+            {active && <OpenSessionButton sessionId={active.sessionId} />}
+            {!active && (
+              <button
+                onClick={() => setReport({ items: [], pendingCount: 0, totalQueued: 0 })}
+                title={t("chat.close")}
+                aria-label={t("chat.close")}
+                style={{
+                  display: "inline-flex", alignItems: "center", justifyContent: "center",
+                  width: 28, height: 28, flexShrink: 0,
+                  borderRadius: 7, border: "1px solid transparent",
+                  background: "transparent", color: "var(--text-dim)", cursor: "pointer",
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Body */}
