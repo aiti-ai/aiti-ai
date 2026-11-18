@@ -48,14 +48,19 @@ test("updates a reused message when its written files change", () => {
   assert.equal(MessageView.compare(props, { ...props, writtenFiles: [{ path: "/tmp/result.txt" }] }), false);
 });
 
-test("on a narrow phone a message's actions drop their labels and keep their titles", () => {
-  const html = renderMessage({ role: "user", content: "Hi", timestamp: 1 }, { entryId: "entry", onFork: () => {}, onEditContent: () => {} });
-  assert.equal(html.match(/class="message-action-label"/g)?.length, 3);
+test("message actions keep labels and wrap onto new lines instead of overflowing", () => {
+  const userHtml = renderMessage({ role: "user", content: "Hi", timestamp: 1 }, { entryId: "entry", onFork: () => {}, onEditContent: () => {} });
+  assert.equal(userHtml.match(/class="message-action-label"/g)?.length, 3);
   // 合并适配：fork 的 editFromHereTitle 文案（上游文案是 branches within this session）。
+  // renderToStaticMarkup escapes apostrophes, so match against the escaped form.
+  const escapeHtml = (s) => s.replace(/'/g, "&#x27;");
   for (const title of ["Copy message", "Put this message's text into the composer to tweak and resend (does not branch the session)", "New session — creates an independent copy from here"]) {
+    assert.ok(userHtml.includes(escapeHtml(title)), `expected title ${title}`);
   }
-  const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
-  assert.match(css, /@media \(max-width: 380px\) \{\s*\.message-action-label \{\s*display: none;\s*\}\s*\}/);
+  const assistantHtml = renderMessage({ role: "assistant", content: [{ type: "text", text: "Hey" }] });
+  // user bottom row + its edit/fork sub-row + assistant top/bottom action rows all wrap
+  const wraps = (userHtml.match(/flex-wrap:wrap/g) ?? []).length + (assistantHtml.match(/flex-wrap:wrap/g) ?? []).length;
+  assert.ok(wraps >= 4, `expected >=4 wrapped action rows, got ${wraps}`);
 });
 
 test("assistantMessageActions mounts at both placements and routes items by meta.placement", async () => {
