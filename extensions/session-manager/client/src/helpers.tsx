@@ -96,7 +96,9 @@ export const AGENT_META: Record<string, { short: string; color: string; icon?: s
 
 /** Small colored agent badge (e.g. [CC]) — pi rows render nothing. */
 export function agentBadge(agent?: string) {
-  if (!agent || agent === "pi") return null;
+  // agent:"pi" = aiti-pi-agent rpc-subprocess session (stamped via sessionAnnotations);
+  // native in-process rows carry NO agent field at all, so only rpc sessions badge here.
+  if (!agent) return null;
   const m = AGENT_META[agent] ?? AGENT_META.default;
   return (
     <span
