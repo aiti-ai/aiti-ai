@@ -29,6 +29,10 @@ export const HOST_UI_FIELDS = {
    *  extension entries inside a top-bar panel call this before opening another fullscreen surface, so on small
    *  screens the old panel doesn't cover the new surface. */
   closeTopPanels: "callback",
+  /** Callback: open an image (src URL or data URL) in the editor extension's unified viewer — the same
+   *  message-image preview (lazily materializes aiti-editor, 1.5s fallback timeout). Resolves false when the
+   *  extension is absent/unimplemented → caller falls back to its own viewer. */
+  openImageInEditorViewer: "callback",
   /** Callbacks: remaining navigation/mention callbacks, same set as sidebarContent extra (onSelectSession/onOpenFile/onAtMention...; classification in AppShell sidebarContentExtra). */
   sidebarContentExtra: "callback-or-factory",
 } as const;

@@ -101,6 +101,7 @@ function replaceLocationIfChanged(
 }
 import { registerHostApi } from "@/lib/ext/host-api";
 import { HOST_UI_SERVICE } from "@/lib/ext/host-ui-contract";
+import { openImageInEditorViewer } from "./editor-image-preview";
 import { ProjectTrustDialog, type ProjectTrustFailure } from "./ProjectTrustDialog";
 import { BackendConnBanner } from "./BackendConnBanner";
 // 上游 SessionSidebarControl/SelectSessionOptions 仅类型引用：组件本体走下方
@@ -4340,7 +4341,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   //    the ref on every render; the service registers only once on mount), avoiding
   //    a stale closure registration; unregistered on unmount. ──
   const hostUiRef = useRef<Record<string, unknown>>({});
-  hostUiRef.current = { ...sidebarContentExtra, sidebarFooterRow, onLineMention: handleFileLineMention, closeTopPanels };
+  hostUiRef.current = { ...sidebarContentExtra, sidebarFooterRow, onLineMention: handleFileLineMention, closeTopPanels, openImageInEditorViewer };
   useEffect(() => {
     return registerExtClientService(HOST_UI_SERVICE.provider, HOST_UI_SERVICE.name, {
       /** Fetch a host factory by name (renderTitle/renderSidebarFooter/callbacks …
