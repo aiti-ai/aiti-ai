@@ -1891,6 +1891,11 @@ export default {
         } catch {}
       };
       runner = createRunner(audit, store, dirCache, publish);
+      // Sessions hosted by a detached pty-host survive a reload / restart — reattach them and
+      // let the host replay its journal so the terminal snapshot comes back.
+      if (typeof (runner as { reattach?: () => Promise<number> }).reattach === "function") {
+        void runner.reattach().then((n) => { if (n) console.log("[aiti-cmd] 重新接管 " + n + " 个 detached 终端会话"); }).catch(() => {});
+      }
       piCommands = createPiCommands(publish);
       piCommands.lateCatchUp(); // 扩展加载晚于 wrapper 创建：扫 registry 补订阅存量会话
 

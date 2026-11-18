@@ -17,6 +17,10 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 
+// Unit tests must be hermetic: no detached pty hosts (systemd units) — the in-process
+// node-pty path is what these assertions cover.
+process.env.AITI_CMD_DETACH = "0";
+
 const here = dirname(fileURLToPath(import.meta.url));
 const srcIndex = join(here, "..", "index.ts");
 
