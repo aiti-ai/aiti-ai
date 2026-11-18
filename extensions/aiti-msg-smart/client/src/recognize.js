@@ -194,11 +194,11 @@ export function candidatesFromRoots(relPath, roots) {
 
 /**
  * 「自带名字」路径候选（自引用消歧）：
- * AI 会话 cwd 在 X 内时，消息却写 X 自身名字开头的路径（如 cwd=~/workspace/pi-work，
- * 消息说 pi-work/docs/x.md）——这是从父目录视角引用自己目录（自引用），尤其会话处理过
- * cwd 外目录时与兄弟仓/目录区分（pi-work/… vs pi-web/…）。对每个分辨基（主 cwd + 外部根）
+ * AI 会话 cwd 在 X 内时，消息却写 X 自身名字开头的路径（如 cwd=~/workspace/aiti-dev，
+ * 消息说 aiti-dev/docs/x.md）——这是从父目录视角引用自己目录（自引用），尤其会话处理过
+ * cwd 外目录时与兄弟仓/目录区分（aiti-dev/… vs pi-web/…）。对每个分辨基（主 cwd + 外部根）
  * 单独调用：rel 首段 === 基的末段名 → 候选 = 基的父目录 + rel。
- * 例：base=/home/pi/workspace/pi-work, rel=pi-work/docs/x.md → /home/pi/workspace/pi-work/docs/x.md；
+ * 例：base=/home/pi/workspace/aiti-dev, rel=aiti-dev/docs/x.md → /home/pi/workspace/aiti-dev/docs/x.md；
  *     base=/home/pi/workspace/pi-web, rel=pi-web/docs/x.md → /home/pi/workspace/pi-web/docs/x.md。
  * 绝对/~ /盘符路径不走自引用（candidatesFromRoots 同款过滤）；基无父目录（根/盘符根）返回 []。
  * 反斜杠分隔（Windows 消息/基）统一归一化为 /（与 mergeExternalRoots 同策略）。

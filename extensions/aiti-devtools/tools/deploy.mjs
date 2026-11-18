@@ -25,7 +25,7 @@ import { notifyReconcile } from '../../_shared/reconcile-deps.mjs';
 
 // 容忍拷贝：发布仓（aiti-ai）的 packages/aiti-devtools-core 镜像不含 pair 三件
 // (pair.ts / pair-client.js) — skipped when missing in npm/docker form (pair.html retired: phone entry = workbench deep link ?pair=1),
-// 不让整个 aiti-devtools 扩展部署失败；本仓（pi-work）core/src 有源，行为不变。
+// 不让整个 aiti-devtools 扩展部署失败；本仓（aiti-dev）core/src 有源，行为不变。
 const copyIfPresent = (src, dst, note) => {
   if (existsSync(src)) { copyFileSync(src, dst); return; }
   console.log('[deploy] ⚠ 源缺失，跳过 ' + note + '（发布仓 core 镜像不含 pair 三件 → pair 功能降级）');
@@ -37,7 +37,7 @@ const copyIfPresent = (src, dst, note) => {
   checkClientDir(fileURLToPath(new URL("../client", import.meta.url)), { log: (m) => console.log("[deploy] " + m) });
 }
 
-const root = resolve(import.meta.dirname, '..', '..', '..'); // 仓库根（pi-work）
+const root = resolve(import.meta.dirname, '..', '..', '..'); // 仓库根（aiti-dev）
 const injectRoot = resolve(root, 'packages/aiti-devtools-inject');
 const injectDist = resolve(injectRoot, 'dist');
 const coreSrc = resolve(root, 'packages/aiti-devtools-core/src');

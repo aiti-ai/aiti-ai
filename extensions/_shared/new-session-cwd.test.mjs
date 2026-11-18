@@ -115,7 +115,7 @@ test("resolveNewSessionCwd v2：关注路径配置在目标子层（目标目录
 test("resolveNewSessionCwd v2：已知 workspace 覆盖 → 最长匹配", () => {
   const r = resolveNewSessionCwd({
     targetDir: "/home/w/pi-web/lib", targetPath: "/home/w/pi-web/lib/x.ts",
-    currentCwd: "/home/w/pi-work",
+    currentCwd: "/home/w/aiti-dev",
     knownWorkspaces: ["/home/w", "/home/w/pi-web", "/home/w/other"],
   });
   assert.equal(r.cwd, "/home/w/pi-web");
@@ -135,8 +135,8 @@ test("resolveNewSessionCwd v2：常规目录剥离（无 workspace 命中）", (
 test("resolveNewSessionCwd v2：剥离后命中 workspace → 用 workspace", () => {
   const r = resolveNewSessionCwd({
     targetDir: "/home/w/pi-web/docs", targetPath: "/home/w/pi-web/docs/guide.md",
-    currentCwd: "/home/w/pi-work",
-    knownWorkspaces: ["/home/w/pi-work", "/home/w/pi-web"],
+    currentCwd: "/home/w/aiti-dev",
+    knownWorkspaces: ["/home/w/aiti-dev", "/home/w/pi-web"],
   });
   assert.equal(r.cwd, "/home/w/pi-web"); // 剥 docs 后 /home/w/pi-web 命中已知 workspace
 });
@@ -246,7 +246,7 @@ test("resolveNewSessionCwdClient：端点失败/缺席 → 本地判定兜底（
   // git-trace 端点 fetch 抛异常（未装/404）→ 兜底 = 本地 resolveNewSessionCwd（knownWorkspaces 已从 sessions 派生）
   const cwd = await resolveNewSessionCwdClient({
     targetDir: "/home/w/pi-web/docs", targetPath: "/home/w/pi-web/docs/guide.md",
-    currentCwd: "/home/w/pi-work",
+    currentCwd: "/home/w/aiti-dev",
     apiUrl: (p) => "http://host" + p,
     fetchFn: (async (url) => {
       if (String(url).includes("/api/sessions")) return { ok: true, json: async () => ({ sessions: [{ cwd: "/home/w/pi-web" }] }) };
