@@ -5,6 +5,8 @@
  * 运行：node --test test/smoke.test.mjs（先自动 esbuild 出 dist-test/）
  */
 import { test, before, after } from "node:test";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import http from "node:http";
 import fs from "node:fs";
@@ -14,16 +16,17 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const esbuild = require("esbuild");
+const PKG = dirname(fileURLToPath(import.meta.url)) + "/..";
 
 // 构建（模块顶层，先于下方静态 import 的动态解析）
 await esbuild.build({
   entryPoints: [
-    "src/proxy-server.ts",
-    "src/bridge-manager.ts",
-    "src/paths.ts",
-    "src/mcp-config.ts",
+    path.join(PKG, "src/proxy-server.ts"),
+    path.join(PKG, "src/bridge-manager.ts"),
+    path.join(PKG, "src/paths.ts"),
+    path.join(PKG, "src/mcp-config.ts"),
   ],
-  outdir: "dist-test",
+  outdir: path.join(PKG, "dist-test"),
   bundle: true,
   format: "esm",
   platform: "node",
@@ -31,10 +34,10 @@ await esbuild.build({
   logLevel: "silent",
 });
 
-const { startProxy, launcherScriptTag } = await import("../dist-test/proxy-server.js");
-const { BridgeManager } = await import("../dist-test/bridge-manager.js");
-const { resolveBridgePath, resolveShimPath } = await import("../dist-test/paths.js");
-const { upsertMcpConfig } = await import("../dist-test/mcp-config.js");
+const { startProxy, launcherScriptTag } = await import(path.join(PKG, "dist-test/proxy-server.js"));
+const { BridgeManager } = await import(path.join(PKG, "dist-test/bridge-manager.js"));
+const { resolveBridgePath, resolveShimPath } = await import(path.join(PKG, "dist-test/paths.js"));
+const { upsertMcpConfig } = await import(path.join(PKG, "dist-test/mcp-config.js"));
 
 // ---------- mock dev server ----------
 let mock;

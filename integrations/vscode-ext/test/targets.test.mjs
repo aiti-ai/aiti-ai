@@ -3,14 +3,18 @@
 // 2026-11-14 regression pin: for scheme-less input (localhost:5199) new URL yields the origin
 // string "null" -> the next new URL("null") throws Invalid URL -> proxy startup fails.
 import { test } from "node:test";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const esbuild = require("esbuild");
+const PKG = dirname(fileURLToPath(import.meta.url)) + "/..";
 esbuild.buildSync({
-  entryPoints: ["src/targets.ts"],
-  outdir: "dist-test",
+  entryPoints: [path.join(PKG, "src/targets.ts")],
+  outdir: path.join(PKG, "dist-test"),
   bundle: true,
   format: "esm",
   platform: "node",
@@ -18,7 +22,7 @@ esbuild.buildSync({
   logLevel: "silent",
 });
 
-const { normalizeTargetInput, originOf, isProxyableOrigin } = await import("../dist-test/targets.js");
+const { normalizeTargetInput, originOf, isProxyableOrigin } = await import(path.join(PKG, "dist-test/targets.js"));
 
 test("originOf: scheme-less localhost:port (old implementation returned 'null' regression pin)", () => {
   assert.equal(originOf("localhost:5199"), "http://localhost:5199");
