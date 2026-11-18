@@ -923,7 +923,9 @@ export function QuickstartFiller() {
 
   return (
     <div style={{
-      flexShrink: 0, margin: "10px 12px 8px", padding: "10px 12px",
+      // The header slot sits inside the app-center scroll body padding; no outer horizontal
+      // margin here, so a dismissed guide leaves no empty flex item above the search row.
+      flexShrink: 0, margin: "10px 0 8px", padding: "10px 12px",
       border: "1px solid var(--border, #3a3a3a)", borderRadius: 10,
       display: "flex", flexDirection: "column", gap: 8, fontFamily: "inherit",
     }}>

@@ -1,4 +1,4 @@
-// src/frameworks.ts
+// integrations/vscode-ext/src/frameworks.ts
 import { existsSync, readFileSync, writeFileSync, copyFileSync } from "fs";
 import { readdirSync } from "fs";
 import { join } from "path";
