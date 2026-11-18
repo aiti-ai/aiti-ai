@@ -155,6 +155,7 @@
         "qwen3-max",
         "qwen3-coder",
         "qwen4-max-preview",
+        "qwen4-max",
         "qwen-vl-max",
         "qwen2.5-coder-32b-instruct"
       ]
