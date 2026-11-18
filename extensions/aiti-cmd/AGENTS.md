@@ -12,7 +12,15 @@
 - `client/src/views/{terminal-view,pi-command-view,command-detail,workspace-terminal}.js`：xterm 视图、agent 命令输出、消息识别命令卡、工作区页签接管与归属状态机
 - `client/src/entry.js`：`composerTools` 运行态势入口（与 ops timeline / import 同排）
 - `client/src/sinks.js`：分享中心 `share-sink` 提供方（命令收藏为固定收藏目标）
+- `detach/`（**服务端**）：detached PTY host —— 终端会话的跨 reload/重启存活层，见下
 - 服务端 API 与 UI 拆分无关：`/run` `/shell` `/sessions*` `/pi-commands*` `/commands*` `/history*` 保持原样
+
+## 终端会话的传输层（2026-11-19 起）
+
+- 默认走 **detached pty-host**：每个会话一个独立进程（`systemd-run --user` 瞬态服务，跑在 `user.slice`），socket 协议 + 环形 journal 重放 + 磁盘 registry（`~/.pi/agent/aiti-cmd-host/`）。扩展 reload 或 `systemctl restart pi-web*` 后由 `runner.reattach()` 重新接管，PTY 不重启、历史输出由 host 重放。模式参考宿主 `lib/agent-starter`（外部 agent detach 同源思路）。
+- 回落：沙箱会话（bwrap）、win32、系统无 systemd user manager、`AITI_CMD_DETACH=0` → 进程内 node-pty（原路径不变）。
+- 相关文件：`detach/index.ts`（probe / spawn / attach / registry）、`detach/pty-host-source.ts`（内联 host 程序，物化到 `~/.pi/agent/aiti-cmd-host/pty-host.<hash>.mjs`）、`runner.ts` 的 `spawnSession → startDetached | spawnLocal`。
+- 改 `pty-host-source.ts` 后**必须重新 deploy**（deploy 会把 `detach/` 整个目录拷过去），旧 hash 文件自动清理。
 
 ## 小改现场流程（改文案/样式/小逻辑）
 1. 改 `src/` 下对应源码

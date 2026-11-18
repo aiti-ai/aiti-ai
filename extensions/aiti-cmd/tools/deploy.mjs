@@ -44,6 +44,8 @@ execSync("node " + resolve(root, "tools/build-client.mjs"), { cwd: root, stdio: 
 // 2) 服务端源码 + 3) client bundle（两个实例目录）
 for (const extDir of targets) {
   mkdirSync(extDir, { recursive: true });
+  // detach/ = the pty-host client + inline host program (imported by runner.ts; must be deployed)
+  cpSync(resolve(root, "detach"), resolve(extDir, "detach"), { recursive: true });
   for (const f of ["index.ts", "icon.svg", "runner.ts", "store.ts", "recognize.ts", "audit.ts", "pi-commands.ts"]) {
     copyFileSync(resolve(root, f), resolve(extDir, f));
     console.log("[deploy] 源码 → " + resolve(extDir, f));
