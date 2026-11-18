@@ -31,7 +31,7 @@ const state = {
   targets: [], history: [],
   payload: null, kind: "message", text: "", rawText: "", baseText: "", title: "", tags: "",
   // Which page-context fields get prepended to the shared content (multi-select).
-  stamp: { os: true, browser: true, url: true, sessionId: false, sessionName: false },
+  stamp: { os: true, browser: true, url: false, sessionId: true, sessionName: true },
   targetId: null, meta: {}, redact: true, redactHits: [],
   result: null, busy: false, error: "", errorDetail: "", errorCode: "", errorTarget: "", errorProvider: "", search: "", probe: [],
   editing: null, form: {},
@@ -214,10 +214,21 @@ function pageInfo() {
   if (!browser) b(/Version\/([\d.]+).*Safari/, "Safari");
   const svc = ctxRef?.getExtService?.("pi-web.session");
   const cur = (() => { try { return svc?.get?.() ?? svc; } catch { return null; } })();
-  const sessionId = state.payload?.sessionId || cur?.requestedId || cur?.id
+  // Verified snapshot summary: name/firstMessage live under `session`, not on the snapshot itself.
+  const sum = cur?.session || null;
+  // A shared session row (session-manager menu payload) describes its own session and wins
+  // over the currently active one.
+  const rowSess = state.payload?.session;
+  // List title semantics (session-manager sessionTitle): name || first message || id prefix.
+  const listTitle = (s) => (s ? (s.name || s.firstMessage || String(s.id || "").slice(0, 12)) : "");
+  // Session ID is the raw canonical id, never the display title: row id → snapshot summary id
+  // → verified snapshot id → payload id → URL ?session=.
+  const sessionId = rowSess?.id || sum?.id || cur?.sessionId
+    || state.payload?.sessionId || state.payload?.sessionName
     || (typeof location !== "undefined" ? new URL(location.href).searchParams.get("session") : "") || "";
-  const sessionName = cur?.name || state.payload?.sessionName || state.payload?.title
-    || (typeof document !== "undefined" ? String(document.title || "").replace(/\s*[·|-]\s*Pi Web.*$/i, "").trim() : "");
+  // Session name follows the session list title so it stays meaningful even when the
+  // session has no explicit name (falls back to first message, then id prefix).
+  const sessionName = listTitle(rowSess) || listTitle(sum) || state.payload?.sessionName || "";
   return { os, browser, url: typeof location !== "undefined" ? location.href : "", sessionId, sessionName };
 }
 
