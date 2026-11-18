@@ -20,9 +20,14 @@
 const fs = require("fs");
 const path = require("path");
 const { createHash } = require("crypto");
-const { spawnSync } = require("child_process");
+const { spawn } = require("child_process");
 
 const MARKER = ".bundled-reconcile.json";
+// Cool-down after a failed install: a persistent failure (ETARGET for a version
+// that does not exist anywhere, offline machine) would otherwise re-run npm and
+// stall diagnostics on every single startup. Within the cool-down window the
+// retry is skipped; a dependency-set change (new fingerprint) always retries.
+const FAIL_COOLDOWN_MS = 30 * 60_000;
 const EXCLUDED_DIRS = new Set(["node_modules", ".git", "__pycache__", "vendor", "dist"]);
 const N = (s) => (s || "").trim();
 
@@ -55,11 +60,38 @@ function depsFingerprint(depsUnion) {
   return hash.digest("hex").slice(0, 16);
 }
 
+// Asynchronous counterpart of the old spawnSync: bin/pi-web.js runs the
+// reconcile in the background while the server is already serving traffic —
+// a synchronous spawn would freeze the event loop for the whole install.
+function spawnShell(cmdLine, timeoutMs) {
+  return new Promise((resolve) => {
+    const child = spawn(cmdLine, {
+      shell: true,
+      env: { ...process.env, npm_config_update_notifier: "false" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let output = "";
+    child.stdout.on("data", (d) => { output += d; });
+    child.stderr.on("data", (d) => { output += d; });
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; try { child.kill("SIGKILL"); } catch {} }, timeoutMs);
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve({ status: timedOut ? -1 : code, stdout: output, stderr: output });
+    });
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      resolve({ status: -1, stdout: "", stderr: String(error && error.message ? error.message : error) });
+    });
+  });
+}
+
 /**
  * Reconcile bundled extensions' runtime dependencies into the shared root.
- * @returns {{ran:boolean, installed:boolean, skipped:string, count:number}|null} null = nothing to do
+ * Async: the npm install runs without blocking the caller (server boot).
+ * @returns {Promise<{ran:boolean, installed:boolean, skipped:string, count:number}|null>} null = nothing to do
  */
-function reconcileBundledExtensions(pkgDir) {
+async function reconcileBundledExtensions(pkgDir) {
   const extDirs = listExtensionDirs(pkgDir);
   if (extDirs.length === 0) return null;
   const depsUnion = {};
@@ -105,7 +137,14 @@ function reconcileBundledExtensions(pkgDir) {
   let prev = null;
   try { prev = JSON.parse(fs.readFileSync(markerPath, "utf8")); } catch {}
   if (prev && prev.fingerprint === fingerprint) {
-    return { ran: true, installed: false, skipped: "fingerprint-match", count: withDeps };
+    if (!prev.failed) {
+      return { ran: true, installed: false, skipped: "fingerprint-match", count: withDeps };
+    }
+    const age = prev.at ? Date.now() - new Date(prev.at).getTime() : Infinity;
+    if (age < FAIL_COOLDOWN_MS) {
+      return { ran: false, installed: false, skipped: "failed-cooldown", count: withDeps };
+    }
+    // cool-down expired — fall through and retry
   }
 
   fs.mkdirSync(sharedRoot, { recursive: true });
@@ -125,12 +164,10 @@ function reconcileBundledExtensions(pkgDir) {
     return `"${spec}"`;
   });
   const cmdLine = `npm install --prefix "${path.dirname(sharedRoot)}" --omit=dev --legacy-peer-deps --no-audit --no-fund --loglevel=error ${specs.join(" ")}`;
-  const shell = spawnSync(cmdLine, {
-    encoding: "utf8", timeout: 10 * 60_000, shell: true,
-    env: { ...process.env, npm_config_update_notifier: "false" },
-  });
+  const shell = await spawnShell(cmdLine, 10 * 60_000);
   if (shell.status !== 0) {
-    process.stderr.write(`[pi-web] bundled 扩展依赖 reconcile 失败（扩展将按缺失依赖降级，下次启动重试）:\n${(shell.stderr || shell.stdout || "").slice(-600)}\n`);
+    process.stderr.write(`[pi-web] bundled 扩展依赖 reconcile 失败（扩展将按缺失依赖降级，30 分钟后下次启动重试）:\n${(shell.stderr || shell.stdout || "").slice(-600)}\n`);
+    try { fs.writeFileSync(markerPath, JSON.stringify({ fingerprint, failed: true, at: new Date().toISOString() })); } catch {}
     return { ran: true, installed: false, skipped: "failed", count: withDeps };
   }
   try { fs.writeFileSync(markerPath, JSON.stringify({ fingerprint, at: new Date().toISOString(), count: names.length })); } catch {}
@@ -143,8 +180,16 @@ module.exports = { reconcileBundledExtensions };
 if (require.main === module) {
   const pkgDir = path.resolve(__dirname, "..");
   const t0 = Date.now();
-  const res = reconcileBundledExtensions(pkgDir);
-  if (!res) { console.log("[pi-web] 无 bundled 扩展，跳过 reconcile"); process.exit(0); }
-  if (res.installed) console.log(`[pi-web] bundled 扩展依赖已 reconcile（${res.count} 个扩展，${((Date.now() - t0) / 1000).toFixed(1)}s）`);
-  else if (res.skipped === "fingerprint-match") console.log("[pi-web] bundled 扩展依赖指纹未变，跳过 reconcile");
+  reconcileBundledExtensions(pkgDir)
+    .then((res) => {
+      if (!res) { console.log("[pi-web] 无 bundled 扩展，跳过 reconcile"); return; }
+      if (res.installed) console.log(`[pi-web] bundled 扩展依赖已 reconcile（${res.count} 个扩展，${((Date.now() - t0) / 1000).toFixed(1)}s）`);
+      else if (res.skipped === "fingerprint-match") console.log("[pi-web] bundled 扩展依赖指纹未变，跳过 reconcile");
+      else if (res.skipped === "failed-cooldown") console.log("[pi-web] bundled 扩展依赖上次安装失败，冷却期内跳过重试");
+      else if (res.skipped === "failed") process.exitCode = 1;
+    })
+    .catch((error) => {
+      console.error(`[pi-web] bundled 扩展依赖 reconcile 异常: ${error && error.message ? error.message : error}`);
+      process.exitCode = 1;
+    });
 }

@@ -28,6 +28,8 @@ const { openWhenServing } = require("./browser-opener");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { createRunRecordTracker, getOpenUrl, getRunDir } = require("./run-records");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
+const { provisionPiPlugins } = require("./pi-plugins-provision.js");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { getPackageVersion, runCommand } = require("./pi-web-commands");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { formatReachableAddresses } = require("./network-addresses");
@@ -84,16 +86,22 @@ async function startServer({ port, hostname, openBrowser }) {
   // 同语义。指纹匹配时零开销直通；失败不阻塞启动（扩展各自降级，下次启动重试）。
   // AITI_SKIP_BUNDLED_RECONCILE=1 可跳过（CI/离线场景）。
   if (process.env.AITI_SKIP_BUNDLED_RECONCILE !== "1") {
-    try {
-      const t0 = Date.now();
-      const { reconcileBundledExtensions } = require("./bundled-extensions-reconcile");
-      const res = reconcileBundledExtensions(pkgDir);
-      if (res && res.installed) {
-        console.log(`[pi-web] bundled 扩展依赖已 reconcile（${res.count} 个扩展，${((Date.now() - t0) / 1000).toFixed(1)}s）`);
-      }
-    } catch (error) {
-      console.warn(`[pi-web] bundled 扩展依赖 reconcile 失败（不影响启动；缺失依赖的扩展将降级）: ${error.message}`);
-    }
+    // Fire-and-forget: the npm install (and its ETARGET / network failures) runs
+    // in the background so server boot never waits on it — a failed install is
+    // retried after its cool-down on a later start, extensions degrade meanwhile.
+    Promise.resolve()
+      .then(() => {
+        const { reconcileBundledExtensions } = require("./bundled-extensions-reconcile");
+        return reconcileBundledExtensions(pkgDir);
+      })
+      .then((res) => {
+        if (res && res.installed) {
+          console.log(`[pi-web] bundled 扩展依赖已 reconcile（${res.count} 个扩展，后台完成）`);
+        }
+      })
+      .catch((error) => {
+        console.warn(`[pi-web] bundled 扩展依赖 reconcile 失败（不影响启动；缺失依赖的扩展将降级）: ${error.message}`);
+      });
   }
 
   // Bundled pi plugins provision (v4): register the first-party
@@ -102,16 +110,18 @@ async function startServer({ port, hostname, openBrowser }) {
   // sessions. npm runs only on first startup or when the manifest pins change;
   // every other startup is a fingerprint no-op. Failures never block startup.
   if (process.env.AITI_SKIP_PI_PLUGINS !== "1") {
-    try {
-      const t0 = Date.now();
-      const { provisionPiPlugins } = require("./pi-plugins-provision");
-      const res = await provisionPiPlugins({ pkgDir });
-      if (res && res.changed) {
-        console.log(`[pi-web] pi plugins provisioned (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
-      }
-    } catch (error) {
-      console.warn(`[pi-web] pi plugins provision failed (non-blocking; declarations and installs self-heal on the next start): ${error.message}`);
-    }
+    // Fire-and-forget: a slow or failing npm install (offline, ETARGET, registry
+    // flake) must never delay server boot — declarations persist inside the
+    // provisioner and pi's own startup reconcile self-heals leftover installs.
+    provisionPiPlugins({ pkgDir })
+      .then((res) => {
+        if (res && res.changed) {
+          console.log(`[pi-web] pi plugins provisioned in background: ${(res.provisioned || []).join(", ")}`);
+        }
+      })
+      .catch((error) => {
+        console.warn(`[pi-web] pi plugins provision failed (non-blocking; declarations and installs self-heal on the next start): ${error.message}`);
+      });
   }
 
   // Resolve next's CLI entry directly to avoid relying on .bin symlinks (which
