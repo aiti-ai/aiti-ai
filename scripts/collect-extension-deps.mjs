@@ -27,6 +27,18 @@ const OMIT = (() => {
   const i = process.argv.indexOf("--omit");
   return i >= 0 ? process.argv[i + 1].split(",").map((s) => s.trim()) : [];
 })();
+const OVERRIDES = {};
+{
+  const argv = process.argv;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === "--override") {
+      const spec = String(argv[i + 1] || "");
+      const at = spec.lastIndexOf("@");
+      if (at > 0) OVERRIDES[spec.slice(0, at)] = spec.slice(at + 1);
+      i++;
+    }
+  }
+}
 const FILE_MAP = {};
 {
   const argv = process.argv;
@@ -59,11 +71,14 @@ const pkg = {
   private: true,
   dependencies: union,
 };
+if (Object.keys(OVERRIDES).length) {
+  pkg.overrides = { ...(pkg.overrides || {}), ...OVERRIDES };
+}
 if (Object.keys(FILE_MAP).length) {
   // 直接依赖：值直接写 file:（npm 接受 file: 直接依赖，name 按包内 package.json 对号）；
   // 传递依赖（不在直接 deps，如 bridge→core）：用 overrides 钉住——override 与直接依赖
   // 值不同会报 EOVERRIDE，因此二者必须区分。file: 依赖自身的传递解析由后者兜住。
-  pkg.overrides = {};
+  pkg.overrides = { ...(pkg.overrides || {}) };
   for (const [name, path] of Object.entries(FILE_MAP)) {
     if (pkg.dependencies[name]) pkg.dependencies[name] = `file:${path}`;
     else pkg.overrides[name] = `file:${path}`;
