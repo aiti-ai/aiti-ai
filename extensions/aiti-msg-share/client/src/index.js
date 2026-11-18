@@ -217,12 +217,21 @@ function sinkItems() {
   return items.sort((a, b) => (Number(a.order) || 100) - (Number(b.order) || 100));
 }
 
-/** Sink payload: original body (unredacted, no page-info stamp) + share metadata. */
+/** Strip the "page info" stamp block (leading `> **Label**: value` lines) from a body. */
+function stripStamp(text) {
+  const lines = String(text || "").split("\n");
+  let i = 0;
+  while (i < lines.length && /^>\s*\*\*[^*]+\*\*\s*:/.test(lines[i])) i++;
+  return lines.slice(i).join("\n").trim();
+}
+
+/** Sink payload: original body (unredacted, page-info stamp removed) + share metadata. */
 function sinkPayload() {
-  // baseText is the unredacted body; it can be empty (e.g. a session share filled by the server),
-  // in which case the current textarea content is the body.
-  const text = (typeof state.baseText === "string" && state.baseText.length) ? state.baseText : state.text;
-  return { ...(state.payload || {}), kind: state.kind, text, title: state.title, tags: state.tags };
+  // baseText is the unredacted body; when it is empty the textarea content is the only source
+  // (e.g. a session share fills the body server-side, so the preview holds the stamp only).
+  // Either way the stamp is metadata for external sharing — never part of a local favourite.
+  const raw = (typeof state.baseText === "string" && state.baseText.length) ? state.baseText : state.text;
+  return { ...(state.payload || {}), kind: state.kind, text: stripStamp(raw), title: state.title, tags: state.tags };
 }
 
 async function runSink(item) {
@@ -231,7 +240,11 @@ async function runSink(item) {
   if (!item.builtin && typeof item.accepts === "function") {
     let ok = false;
     try { ok = !!item.accepts(payload); } catch (e) { ok = false; }
-    if (!ok) { set({ sinkResult: { ok: false, message: shareT("share.sink.unsupported") } }); return; }
+    if (!ok) {
+      const empty = !String(payload.text || "").trim();
+      set({ sinkResult: { ok: false, message: empty ? shareT("share.sink.empty") : shareT("share.sink.unsupported") } });
+      return;
+    }
   }
   set({ sinkBusy: item.id, sinkResult: null });
   try {

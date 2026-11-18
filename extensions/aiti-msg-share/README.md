@@ -63,7 +63,7 @@ ctx.registerTopicItem("share-sink", {
 });
 ```
 
-`payload.text` is the **unredacted** body (local storage is not an upload). The consumer
+`payload.text` is the **unredacted** body with the page-info stamp removed (local storage is not an upload, and the stamp is sharing metadata — it must never end up inside a saved command). The consumer
 (`aiti-msg-share`) renders the chips, shows the receipt and runs `action.run` on click.
 Providers that are not loaded simply do not appear.
 
