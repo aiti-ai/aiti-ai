@@ -30,7 +30,7 @@ An extension declares built-in capabilities it takes over in `ui.provides: strin
 
 ## service-tunnels (extracted extension)
 
-Service port discovery / virtual-host proxying / tunnels / auth / self-exposure live in the `service-tunnels` extension (source mirrored under `extensions/service-tunnels/`, deployed to `~/.pi/web/extensions/service-tunnels/`):
+Service port discovery / virtual-host proxying / tunnels / auth / self-exposure live in the `service-tunnels` extension (source in `extensions/service-tunnels/`, deployed to `~/.pi/web/extensions/service-tunnels/`):
 
 - `server.startup` creates the library singleton (`globalThis.__piServiceTunnels`); `server.middleware` handles service vhosts (`st.proxy.parseHost/resolve`) and the allowlocal direct-access gate ahead of the core gates; `server.api` serves `/api/extensions/service-tunnels/*` (discovery/expose/tunnels/users/TOTP/self-exposure).
 - core keeps only the generic security gates (DNS-rebinding + `PI_WEB_PASSWORD`); `request-security.ts` still reads the extension-written `globalThis.__piWebExposeConfig` / `__piWebAllowHostsOverride` for allowHost exceptions.
