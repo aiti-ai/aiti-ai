@@ -614,9 +614,11 @@ export function AppCenter(props: { ctx: Record<string, any>; header?: any }) {
     <div data-aiti-app-center="1" style={{ flex: 1, minHeight: 0, position: "relative", display: "flex", flexDirection: "column" }}>
       {/* 单滚动体（v3.1）：快速上手（header 插槽，session-manager filler 传入）随内容滚出视口，
           搜索行 sticky 顶吸——负 margin 全幅 + bg-panel 不透明背景盖住滚过内容；
-          InfoSheet top:48 与吸顶搜索行下沿对齐。 */}
+          InfoSheet top:48 与吸顶搜索行下沿对齐。
+          Render header directly: a dismissed guide returns null, so no empty flex item (and no
+          flex gap) is left above the sticky search row. */}
       <div ref={attachBody} data-app-center-body="1" style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", padding: "0 12px 12px", display: "flex", flexDirection: "column", gap: 12 }}>
-        {header ? <div style={{ margin: "0 -12px" }}>{header}</div> : null}
+        {header}
         {/* 搜索行：搜索框吸收挤压 + 三枚方形图标按钮（不额外占行） */}
         <div data-app-center-search="1" style={{ position: "sticky", top: 0, zIndex: 3, flexShrink: 0, display: "flex", alignItems: "center", gap: 5, margin: "0 -12px", padding: "10px 12px 8px", background: "var(--bg-panel, #1b1b1b)" }}>
           <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 6, background: "var(--bg-hover, #232323)", border: "1px solid var(--border, #3a3a3a)", borderRadius: 8, padding: "5px 9px" }}>

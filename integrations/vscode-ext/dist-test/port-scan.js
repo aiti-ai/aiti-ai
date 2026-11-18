@@ -1,4 +1,4 @@
-// src/port-scan.ts
+// integrations/vscode-ext/src/port-scan.ts
 import { readdirSync, readFileSync, readlinkSync } from "fs";
 import { execFile } from "child_process";
 import { basename } from "path";
