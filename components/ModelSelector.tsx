@@ -59,6 +59,8 @@ interface ModelSelectorProps {
   allOptions?: ModelSelectorOption[] | null;
   /** Set only while `enabledModels` narrows `options`: shows pi's `/model` "scoped | all" row and loads `allOptions`. */
   onShowAll?: () => void;
+  /** Open-state mirror (fires on every open/close). Mobile hosts pin the composer's expanded state while the fullscreen panel is up — see ChatInput mobileExpanded. */
+  onOpenChange?: (open: boolean) => void;
 }
 
 const MODEL_FILTER_THRESHOLD = 8;
@@ -286,6 +288,7 @@ export function ModelSelector({
   onSetDefault,
   allOptions,
   onShowAll,
+  onOpenChange,
 }: ModelSelectorProps) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
@@ -316,6 +319,17 @@ export function ModelSelector({
   // Re-read recents each time the panel opens (other windows / other ModelSelector instances may have updated them)
   useEffect(() => {
     if (open) setRecentList(readRecentModels());
+  }, [open]);
+
+  // Open-state mirror. Ref-wrapped: hosts may pass inline closures; the effect must
+  // only fire on real open/close transitions, not on callback identity changes.
+  // The cleanup releases the pin if the component unmounts while the panel is up
+  // (host-side conditional rendering) — otherwise the host state would stay stuck at open.
+  const onOpenChangeRef = useRef(onOpenChange);
+  onOpenChangeRef.current = onOpenChange;
+  useEffect(() => {
+    onOpenChangeRef.current?.(open);
+    return () => { onOpenChangeRef.current?.(false); };
   }, [open]);
 
   // Track the visible viewport while the panel is open: the mobile keyboard popping up/collapsing

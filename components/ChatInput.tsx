@@ -2956,7 +2956,14 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   // is not registered).
   const composerAffixExtCount = useExtSlotItems("composerAffix").length;
   const [inputFocused, setInputFocused] = useState(false);
-  const mobileExpanded = !isMobile || inputFocused || hasContent || isStreaming;
+  // While the mobile fullscreen model panel is open the composer must stay expanded:
+  // tapping the panel's filter box moves focus off the textarea (inputFocused false),
+  // and with an empty idle input that would flip mobileExpanded → the conditionally
+  // rendered ModelSelector unmounts → the open panel (rendered inside it) vanishes
+  // together with its open state. The selector mirrors its open state back here so
+  // expansion is pinned for the panel's lifetime.
+  const [modelPanelOpen, setModelPanelOpen] = useState(false);
+  const mobileExpanded = !isMobile || inputFocused || hasContent || isStreaming || modelPanelOpen;
   // Opening the ⓘ sheet: first close other popups + cancel recording (S28
   // mutual exclusion), then position bottom from the input row's location.
   // maxHeight tightens in sync to "the space above the input row" — on the
@@ -5091,6 +5098,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     onRefresh={onRefreshModels}
                     refreshing={modelsRefreshing}
                     hideIcon
+                    onOpenChange={setModelPanelOpen}
                   />
                 </div>
               )}
