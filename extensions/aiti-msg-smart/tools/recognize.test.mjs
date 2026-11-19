@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseParagraph, formatQuote, extractFilePaths, summarizeSegment, encodeFilePathForApi, extractUrls, mergeExternalRoots, candidatesFromRoots, selfNameCandidates } from "../client/src/recognize.js";
+import { parseParagraph, detectOptions, splitQuestions, formatQuote, extractFilePaths, summarizeSegment, encodeFilePathForApi, extractUrls, mergeExternalRoots, candidatesFromRoots, selfNameCandidates } from "../client/src/recognize.js";
 
 test("question: closed yes/no with action → 好，X / 不用", () => {
   const segs = parseParagraph("要我帮你修改这个文件吗？");
@@ -91,6 +91,137 @@ test("question: English ';' stays inside the sentence → choice keeps both halv
 test("splitQuestions: Chinese ';' still splits sentences", () => {
   const segs = parseParagraph("先改 A 吗；还是先改 B？");
   assert.ok(segs.length >= 2, JSON.stringify(segs.map((s) => s.text)));
+});
+
+test("splitQuestions: 。 and ！ end sentences → per-sentence rows + clean action labels", () => {
+  const segs = parseParagraph("已经改好了。要我加测试吗？");
+  assert.deepEqual(segs.map((s) => s.text), ["已经改好了。", "要我加测试吗？"]);
+  assert.deepEqual(segs[1].options?.map((o) => o.label), ["好，加测试", "不用"]);
+
+  const bang = parseParagraph("改完了！要发布吗？");
+  assert.deepEqual(bang.map((s) => s.text), ["改完了！", "要发布吗？"]);
+  assert.deepEqual(bang[1].options?.map((o) => o.label), ["好，要发布", "不用"]);
+});
+
+test("splitQuestions: brackets/quotes protect their content (；？ stay inside the pair)", () => {
+  assert.deepEqual(splitQuestions("选A（说明1；继续），B（说明2；继续）"), ["选A（说明1；继续），B（说明2；继续）"]);
+  assert.deepEqual(splitQuestions("选 A（不确定？）还是 B？"), ["选 A（不确定？）还是 B？"]);
+  assert.deepEqual(splitQuestions("他说「真的吗？」，然后走了。"), ["他说「真的吗？」，然后走了。"]);
+});
+
+test("splitQuestions: URL query and code '?' stay intact", () => {
+  assert.deepEqual(splitQuestions("看 https://x.io/a?b=1 这个链接吗？"), ["看 https://x.io/a?b=1 这个链接吗？"]);
+  assert.deepEqual(splitQuestions("访问 /dev/?tab=1 页面。要我刷新吗？"), ["访问 /dev/?tab=1 页面。", "要我刷新吗？"]);
+  assert.deepEqual(splitQuestions("调用 foo(a?b:c) 还是 bar()？"), ["调用 foo(a?b:c) 还是 bar()？"]);
+});
+
+test("question: 'or/还是' inside brackets is not the option separator", () => {
+  const cn = parseParagraph("用 A（支持 Python or Go）还是 B（支持 JS）？")[0].options;
+  assert.deepEqual(cn.map((o) => o.value), ["A（支持 Python or Go）", "B（支持 JS）"]);
+  const en = parseParagraph("Use A (supports Python or Go) or B (supports JS)?")[0].options;
+  assert.deepEqual(en.map((o) => o.value), ["A (supports Python or Go)", "B (supports JS)"]);
+  const q = parseParagraph("选 A（不确定？）还是 B？")[0].options;
+  assert.deepEqual(q.map((o) => o.value), ["A（不确定？）", "B"]);
+});
+
+test("question: enumerated options with parenthetical notes (选 A（…），B（…）)", () => {
+  const opts = parseParagraph("选A（说明1，继续），B（说明2，继续）")[0].options;
+  assert.deepEqual(opts.map((o) => o.value), ["A（说明1，继续）", "B（说明2，继续）"]);
+  // no lead-in / no bracketed items → not an option list
+  assert.equal(detectOptions("看 A 图，B 图"), null);
+});
+
+test("label truncation keeps brackets balanced (no dangling opener)", () => {
+  const opts = parseParagraph("选 A（这是一个很长的说明文字用来触发截断继续继续继续）还是 B？")[0].options;
+  assert.equal(opts[0].label, "A（这是一个很长的说明文…）");
+});
+
+test("question: English multi-sentence → action frame found in the last sentence", () => {
+  assert.deepEqual(parseParagraph("Tests pass. Should I proceed?")[0].options.map((o) => o.label), ["Yes, proceed", "No"]);
+  assert.deepEqual(
+    parseParagraph("The build is green. Would you like me to deploy it?")[0].options.map((o) => o.label),
+    ["Yes, deploy it", "No"],
+  );
+});
+
+test("question: Chinese '要 A 还是 B' strips the bare lead-in", () => {
+  const opts = parseParagraph("已完成。要 A 还是 B？")[1].options;
+  assert.deepEqual(opts.map((o) => o.value), ["A", "B"]);
+});
+
+test("splitQuestions: statement-only paragraphs stay one row (no row explosion)", () => {
+  const t = "已完成。下一步我会运行测试。日志在 /tmp/a.md。";
+  assert.deepEqual(splitQuestions(t), [t]);
+});
+
+test("splitQuestions: question before/after 。 splits, and the question row keeps options", () => {
+  // question first (the 。 tail must not be glued into the action label)
+  const prev = parseParagraph("要我改吗。然后我会跑测试。");
+  assert.deepEqual(prev.map((s) => s.text), ["要我改吗。", "然后我会跑测试。"]);
+  assert.deepEqual(prev[0].options?.map((o) => o.label), ["好，改", "不用"]);
+
+  // question in the middle → three rows, only the middle one has options
+  const mid = parseParagraph("部署完成。要发布吗？我会等确认。");
+  assert.deepEqual(mid.map((s) => s.text), ["部署完成。", "要发布吗？", "我会等确认。"]);
+  assert.deepEqual(mid[1].options?.map((o) => o.label), ["好，要发布", "不用"]);
+  assert.equal(mid[0].options, null);
+  assert.equal(mid[2].options, null);
+});
+
+test("nested brackets: inner 'or' is ignored, label truncation stays balanced", () => {
+  const opts = parseParagraph("用 A（支持 X（旧版）or Y）还是 B？")[0].options;
+  assert.deepEqual(opts.map((o) => o.value), ["A（支持 X（旧版）or Y）", "B"]);
+  assert.equal(opts[0].label, "A（支持 X（旧版）or…）");
+});
+
+test("brackets: unbalanced opener (streaming) does not block sentence splitting", () => {
+  const segs = splitQuestions("他说“好的。要我改吗？");
+  assert.deepEqual(segs, ["他说“好的。", "要我改吗？"]);
+  // balanced leading note must not swallow the boundary behind it
+  assert.deepEqual(splitQuestions("（提示）要我改吗？"), ["（提示）要我改吗？"]);
+  assert.deepEqual(parseParagraph("（提示）要我改吗？")[0].options?.map((o) => o.value), ["是的", "不用了"]);
+});
+
+test("question: 【】 notes work for splitting and enumeration", () => {
+  assert.deepEqual(splitQuestions("选A【说明1；继续】，B【说明2；继续】"), ["选A【说明1；继续】，B【说明2；继续】"]);
+  const opts = parseParagraph("选A【说明1；继续】，B【说明2；继续】")[0].options;
+  assert.deepEqual(opts.map((o) => o.value), ["A【说明1；继续】", "B【说明2；继续】"]);
+});
+
+test("question: enumeration supports 3+ items and ASCII brackets", () => {
+  const three = parseParagraph("选 A（快），B（稳），C（省）")[0].options;
+  assert.deepEqual(three.map((o) => o.value), ["A（快）", "B（稳）", "C（省）"]);
+  const en = parseParagraph("Option A (fast), B (slow)?")[0].options;
+  assert.deepEqual(en.map((o) => o.value), ["A (fast)", "B (slow)"]);
+});
+
+test("truncation: ASCII bracket notes also close when cut", () => {
+  const opts = parseParagraph("Use A (a very long explanatory note that keeps going and going) or B (short)?")[0].options;
+  assert.equal(opts[0].label, "A (a very lo…)");
+});
+
+test("splitQuestions: straight double quotes protect their content", () => {
+  assert.deepEqual(splitQuestions('他说 "真的要改吗？" 然后走了。'), ['他说 "真的要改吗？" 然后走了。']);
+  // unmatched straight quote (streaming tail) must not block sentence boundaries
+  assert.deepEqual(splitQuestions('他说 "好的。要我改吗？'), ['他说 "好的。', '要我改吗？']);
+});
+
+test("question: quoted question still gets actions (wrapper quotes stripped)", () => {
+  assert.deepEqual(parseParagraph('"Should I proceed?"')[0].options.map((o) => o.label), ["Yes, proceed", "No"]);
+  assert.deepEqual(parseParagraph("「要我改吗？」")[0].options.map((o) => o.label), ["好，改", "不用"]);
+});
+
+test("splitQuestions: ellipsis / em dash / '...' end a sentence before a question", () => {
+  assert.deepEqual(splitQuestions("已经改好了……要我改吗？"), ["已经改好了……", "要我改吗？"]);
+  assert.deepEqual(splitQuestions("改完了——要发布吗？"), ["改完了——", "要发布吗？"]);
+  assert.deepEqual(splitQuestions("Done... Should I proceed?"), ["Done...", "Should I proceed?"]);
+  assert.deepEqual(parseParagraph("已经改好了……要我改吗？")[1].options.map((o) => o.label), ["好，改", "不用"]);
+});
+
+test("splitQuestions: mid-sentence ellipsis/dash and version ranges don't split", () => {
+  assert.deepEqual(splitQuestions("我改了……但是没测。要测吗？"), ["我改了……但是没测。", "要测吗？"]);
+  assert.deepEqual(splitQuestions("版本 v1...3 发布了吗？"), ["版本 v1...3 发布了吗？"]);
+  assert.deepEqual(splitQuestions("A——B 要改吗？"), ["A——B 要改吗？"]);
 });
 
 test("question: streaming tail — blockquote stays literal", () => {
