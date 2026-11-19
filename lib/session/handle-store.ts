@@ -12,6 +12,7 @@
 
 import type { SessionHandle } from "./types.ts";
 import { hasPlaceholder } from "./placeholder.ts";
+import { getWrapperStarter } from "../agent-starter/index.ts";
 
 // ============================================================================
 // firstMessage lazy cache (2026-09-14)
@@ -128,6 +129,7 @@ export function putHandle(handle: SessionHandle): void {
   }
   store().set(handle.id, handle);
   watchHandleRunning(handle);
+  armHandleIdle(handle);
 }
 
 export function getHandle(id: string): SessionHandle | undefined {
@@ -230,6 +232,7 @@ function armDeferredDispose(h: SessionHandle): void {
 
 /** Remove by object identity + dispose (alias keys cleared too). */
 function removeHandleEverywhere(h: SessionHandle): void {
+  disarmHandleIdle(h.id);
   for (const [key, stored] of [...store()]) {
     if (stored === h) store().delete(key);
   }
@@ -284,6 +287,7 @@ export function getHandleSessionInfos(): Array<{
 }
 
 export function removeHandle(id: string): void {
+  disarmHandleIdle(id);
   const h = store().get(id);
   if (h) void h.dispose().catch(() => {});
   store().delete(id);
@@ -347,6 +351,10 @@ export function watchHandleRunning(handle: { id: string; subscribe(listener: (e:
   if (runningWatched.has(handle)) return;
   runningWatched.add(handle);
   handle.subscribe((event) => {
+    // Any event means the hosted process just produced output — the idle
+    // governor treats that as activity and re-arms (same contract as the
+    // wrapper-side reaper, which also resets on output).
+    noteHandleActivity(handle.id);
     const t = event.type;
     if (t === "agent_start" || t === "agent_end" || t === "agent_settled" || t === "turn_start" || t === "turn_end") {
       notifyHandleRunningChange();
@@ -362,4 +370,107 @@ export function watchHandleRunning(handle: { id: string; subscribe(listener: (e:
       timer.unref?.();
     }
   });
+}
+
+// ============================================================================
+// Idle governor (2026-11-19) — unified lifecycle for wrapper-hosted sessions.
+//
+// Mirrors the in-process rpc wrapper GC (rpc-manager resetIdleTimer) with the
+// SAME env knob (PI_WEB_IDLE_TIMEOUT_MS): activity re-arms a full timeout, a
+// fire while the session runs re-arms, and a fire while idle really stops the
+// agent process. Scope: only handles the wrapper registry knows (spawn-type
+// backends hosted by agent-starter) — those are the ones that can outlive
+// pi-web and linger forever. Bridge handles (keyed by a file path), external
+// desktop backends (zcode/codex own their processes) and plain direct children
+// (they die with pi-web) are not pi-web's to reap.
+//
+// The stop MUST go through wrapper.kill: handle.dispose() on a detachable
+// child only RELEASES it (detach), which leaves the process running — exactly
+// the leftover this governor exists to prevent.
+//
+// While a pi-web handle is attached here, the wrapper's own reaper is
+// disarmed (the client connection suppresses it); the two timers never fight.
+// ============================================================================
+
+interface HandleIdleEntry {
+  timer: NodeJS.Timeout;
+  handle: SessionHandle;
+}
+
+declare global {
+  // globalThis: survives dev HMR module recreation, same as __sessionHandles.
+  // eslint-disable-next-line no-var
+  var __handleIdleTimers: Map<string, HandleIdleEntry> | undefined;
+}
+
+function idleMap(): Map<string, HandleIdleEntry> {
+  if (!globalThis.__handleIdleTimers) globalThis.__handleIdleTimers = new Map();
+  return globalThis.__handleIdleTimers;
+}
+
+/**
+ * Same contract as rpc-manager.resolveSessionIdleTimeoutMs (kept local to avoid
+ * the rpc-manager import cycle): unset/blank → 10 minutes, "0" → disabled,
+ * otherwise the value clamped to Node's timer range; invalid falls back with a
+ * warning.
+ */
+export function resolveHandleIdleTimeoutMs(rawValue: string | undefined = process.env.PI_WEB_IDLE_TIMEOUT_MS): number {
+  if (rawValue !== undefined && rawValue.trim() !== "") {
+    const parsed = Number(rawValue);
+    if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 2_147_483_647) return parsed;
+    console.warn(`[pi-web] invalid PI_WEB_IDLE_TIMEOUT_MS "${rawValue}", falling back to 10 minutes`);
+  }
+  return 10 * 60 * 1000;
+}
+
+/** Start/re-start the idle clock for one handle (putHandle and every activity). */
+function armHandleIdle(handle: SessionHandle): void {
+  const timeoutMs = resolveHandleIdleTimeoutMs();
+  if (!(timeoutMs > 0)) return;
+  // Wrapper-hosted only (see the section comment for the scope rationale).
+  void getWrapperStarter()
+    .catch(() => undefined)
+    .then((wrapper) => {
+      if (!wrapper?.describe(handle.id)) return;
+      const prev = idleMap().get(handle.id);
+      if (prev?.timer) clearTimeout(prev.timer);
+      const timer = setTimeout(() => {
+        void reapIdleHandle(handle);
+      }, timeoutMs);
+      timer.unref?.();
+      idleMap().set(handle.id, { timer, handle });
+    });
+}
+
+function disarmHandleIdle(id: string): void {
+  const prev = globalThis.__handleIdleTimers?.get(id);
+  if (prev?.timer) clearTimeout(prev.timer);
+  globalThis.__handleIdleTimers?.delete(id);
+}
+
+/** Any handle event = the hosted process produced output → re-arm. */
+function noteHandleActivity(id: string): void {
+  const entry = globalThis.__handleIdleTimers?.get(id);
+  if (entry) armHandleIdle(entry.handle);
+}
+
+/** Fire while idle: really stop the hosted process and drop the handle. */
+async function reapIdleHandle(handle: SessionHandle): Promise<void> {
+  idleMap().delete(handle.id);
+  if (!handle.alive()) {
+    removeHandleEverywhere(handle);
+    return;
+  }
+  // Mid-turn guard, same as the in-process GC's isRunning re-arm: a turn that
+  // streamed nothing for the whole timeout (a long silent tool call) must not
+  // be cut off; re-arm and let the next fire (or its events) decide.
+  if (typeof handle.isRunning === "function" && handle.isRunning()) {
+    armHandleIdle(handle);
+    return;
+  }
+  try {
+    const wrapper = await getWrapperStarter().catch(() => undefined);
+    if (wrapper?.describe(handle.id)) await wrapper.kill(handle.id).catch(() => false);
+  } catch { /* best effort — the removal below still runs */ }
+  removeHandleEverywhere(handle);
 }
