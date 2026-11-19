@@ -20,6 +20,7 @@ import { getHandleSessionInfos, getRunningHandleIds, getHandle, warmHandleFirstM
 import { getBridgeRunningIds } from "@/lib/session/bridge-running";
 import { getRegistry } from "@/lib/ext/registry";
 import { stampExternalSessions } from "@/lib/session/placeholder";
+import { listDetachedPreferenceIds } from "@/lib/agent-starter/registry";
 import { startServerPerf } from "@/lib/perf";
 
 export const dynamic = "force-dynamic";
@@ -82,6 +83,16 @@ export async function GET(req: Request) {
       }
     }
     if (refreshPatched) sessions.sort((a, b) => b.modified.localeCompare(a.modified));
+    // Survive-restart markers: cold pi sessions that were last hosted detached
+    // (row-menu shows "Start in process" only on those; the marker also makes
+    // the next open re-host detached). One readdir, then a Set lookup per row.
+    const detachedPrefIds = listDetachedPreferenceIds();
+    if (detachedPrefIds.size > 0) {
+      const runningIds = new Set([...getRunningRpcSessionIds(), ...getRunningHandleIds(), ...getBridgeRunningIds()]);
+      for (const s of sessions) {
+        if (!runningIds.has(s.id) && detachedPrefIds.has(s.id)) s.detachPref = true;
+      }
+    }
     // Session annotation slot: extensions append their own fields (e.g. the TUI bridge's
     // in-use marker). Data ownership stays with the extension -- the core knows nothing
     // about bridge registries or other concrete formats.

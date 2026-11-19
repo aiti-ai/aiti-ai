@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { resolveSessionPath } from "@/lib/session-reader";
 import { getOfflineSessionStats, startRpcSession, getRpcSession, setRpcSessionTools } from "@/lib/rpc-manager";
 import { cwdMissingBody, missingCwdFromBody } from "@/lib/missing-cwd";
-import { resolveAnySession, resolveAttachBySessionId, resolveDetachedSession, attachIfBridged, resolvePlaceholderSession, resolveExternalCompositeSession } from "@/lib/session";
+import { resolveAnySession, resolveAttachBySessionId, resolveDetachedSession, attachIfBridged, resolvePlaceholderSession, resolveExternalCompositeSession, openDetachedPreferred, prefersDetached } from "@/lib/session";
+import { HandleSessionAdapter } from "@/lib/session";
 import { sendWithAcceptWindow } from "@/lib/agent-command-accept";
 import { EXTENSION_REPORTED_CODE } from "@/lib/agent-client";
 
@@ -142,6 +143,18 @@ export async function POST(
     // online path above has already returned, so this is unaffected.
     if (body.type === "get_session_stats") {
       return NextResponse.json({ success: true, data: getOfflineSessionStats(id, filePath) });
+    }
+
+    // Survive-restart preference: this cold pi session was last hosted detached
+    // ("Start · survive restarts"), so re-host it the same way instead of
+    // silently downgrading to a local child. Spawn failure falls through to the
+    // local path — the marker is a preference, never a lock.
+    if (!id.includes(":") && prefersDetached(id)) {
+      const hosted = await openDetachedPreferred(id, filePath).catch(() => undefined);
+      const adapter = hosted ? new HandleSessionAdapter(hosted) : undefined;
+      if (adapter?.isAlive()) {
+        return await sendAccepted(adapter, body, () => { promptAccepted = body.type === "prompt"; });
+      }
     }
 
     const { session } = await startRpcSession(id, filePath, undefined, {
