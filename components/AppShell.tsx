@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo, useSyncExternalStore, type ReactNode } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { apiUrl, inAppPathname, withBasePath } from "@/lib/base-path";
 import { openViewerWindowHost } from "@/lib/open-viewer-window-host";
 import { fmtMoney, fmtMoneySmall, fxNote, useMoneySynced } from "@/lib/money";
@@ -73,22 +73,6 @@ const NO_PATH_PICKER_ITEMS: ExtUiItemRegistered[] = [];
  * replace gains nothing). Query-string comparison is kept: real changes such as
  * "clear ?session= and go home" still replace as usual.
  */
-/** How many times the selection→URL mirror may re-assert after one write. Next's
- *  HistoryUpdater can rewrite the address bar from its own canonical URL on the
- *  commit that follows (phones: picking a session also closes the sidebar drawer),
- *  so a single write can lose the race; the bound keeps this from ever looping. */
-const URL_MIRROR_ATTEMPTS = 4;
-/** The address the app wants but has not written yet (pathname + query). Writes are
- *  deferred to a post-commit effect: Next's HistoryUpdater rewrites the address bar
- *  from the router's canonical URL in every commit's insertion effect, so a write made
- *  while the click's own commit is still pending is simply overwritten (phones: the
- *  pick also closes the sidebar drawer, so that commit always follows). */
-let pendingUrlWrite: { url: string; href: string } | null = null;
-/** Remaining re-assert budget (module scope: the writer is a module function). */
-let urlMirrorBudget = 0;
-/** Monotonic write sequence: a stale re-assert must not clobber a newer pick. */
-let urlWriteSeq = 0;
-
 /** Trailing-slash-insensitive comparison for filesystem paths (cwd equality). */
 function normPath(p: string): string {
   return p.replace(/[\\/]+$/, "");
@@ -117,16 +101,6 @@ function replaceLocationIfChanged(
       ? `?${targetQuery}` === window.location.search
       : !window.location.search;
     if (samePath && sameQuery) return;
-    if (samePath) {
-      // Register only — the AppShell mirror effect applies it after this commit.
-      pendingUrlWrite = {
-        url: targetQuery ? `${window.location.pathname}?${targetQuery}` : window.location.pathname,
-        href,
-      };
-      urlMirrorBudget = URL_MIRROR_ATTEMPTS;
-      urlWriteSeq += 1;
-      return;
-    }
   }
   router.replace(href, options);
 }
@@ -429,7 +403,6 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   // ?session=/?cwd= restore would never fire. Read the query string straight
   // from the location on mount; a re-render after that is harmless.
   const [initialNavigation, setInitialNavigation] = useState<InitialNavigation>(() => getInitialNavigation(searchParams));
-  const pathname = usePathname();
   useEffect(() => {
     if (typeof window !== "undefined") {
       const nav = getInitialNavigation(new URLSearchParams(window.location.search));
@@ -1921,35 +1894,6 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   // back (observed as "clicked a sidelist row, the URL flashed the new id then
   // snapped back to the URL session" while the sessions list was still loading).
   const userPickedSessionRef = useRef(false);
-  // Selection → URL mirror. The address bar is derived from the selection, so a stale
-  // write from Next's HistoryUpdater (its canonical URL lags when the click also
-  // unmounts the surface — the phone drawer) is corrected instead of leaving the pick
-  // rolled back. Bounded: the budget is armed by replaceLocationIfChanged and spent
-  // one re-assert at a time, so this can never loop.
-  useEffect(() => {
-    if (pendingUrlWrite === null) return;
-    if (urlMirrorBudget <= 0) {
-      pendingUrlWrite = null;
-      return;
-    }
-    const pending = pendingUrlWrite;
-    if (`${window.location.pathname}${window.location.search}` === pending.url) {
-      pendingUrlWrite = null;
-      urlMirrorBudget = 0;
-      return;
-    }
-    // The native History API is the documented way to update searchParams without a
-    // navigation; Next tracks it (it patches replaceState) and adopts the new URL into
-    // the router, so later commits keep it. Retried via this effect only if that
-    // adoption is still racing a commit — bounded by urlMirrorBudget.
-    urlMirrorBudget -= 1;
-    window.history.replaceState(null, "", pending.url);
-    // The click's own router.replace is interrupted when the same event also closes
-    // the phone drawer (its commit supersedes the pending navigation, leaving Next's
-    // canonical URL at the old address, which then wins every later commit). Re-issue
-    // it here — after that commit — so the router adopts the target and keeps it.
-    router.replace(pending.href, { scroll: false });
-  }, [selectedSession?.id, searchParams, pathname, router]);
   const handleSelectSession = useCallback((session: SessionInfo, isRestore = false, entryId?: string, blockIndex?: number, options?: SelectSessionOptions) => {
     if (!isRestore) {
       userPickedSessionRef.current = true;
@@ -2015,7 +1959,14 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     setInitialSessionRestored(true);
     // On mobile, collapse the overlay drawer so the chat is revealed after pick
     // (unless the sidebar still has something to show: a fork's row and toast).
-    if (isMobile && !isRestore && !options?.keepSidebarOpen) setSidebarOpen(false);
+    if (isMobile && !isRestore && !options?.keepSidebarOpen) {
+      // Close the drawer on the next frame, not in this event: this same handler also
+      // asks the router to write ?session=, and a state commit from the same event
+      // supersedes that navigation — Next then keeps its stale canonical URL and
+      // rewrites the address bar back on every later commit (reproducible only on
+      // phones, where the pick also closes the drawer).
+      requestAnimationFrame(() => setSidebarOpen(false));
+    }
     if (isRestore) {
       // Suppress the redundant sessionKey bump that would come from the
       // onCwdChange effect firing after setSelectedCwd in the sidebar
