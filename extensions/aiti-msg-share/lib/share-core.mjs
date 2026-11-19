@@ -10,6 +10,34 @@ import { join, dirname } from "node:path";
 
 const HISTORY_MAX = 200;
 
+/** Files above this size are rejected before reading (provider limits are checked later). */
+export const MAX_SHARE_FILE_BYTES = 200 * 1024 * 1024;
+
+const IMAGE_MIME = {
+  png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif",
+  webp: "image/webp", bmp: "image/bmp", svg: "image/svg+xml", ico: "image/x-icon", avif: "image/avif",
+};
+const TEXT_EXT = new Set([
+  "txt", "md", "markdown", "json", "js", "mjs", "cjs", "ts", "tsx", "jsx", "py", "rb", "go", "rs", "java",
+  "c", "h", "cpp", "hpp", "cs", "php", "sh", "bash", "zsh", "yml", "yaml", "toml", "ini", "cfg", "conf",
+  "csv", "tsv", "log", "html", "htm", "css", "scss", "xml", "sql", "env", "properties", "gradle", "vim",
+  "dockerfile", "makefile", "gitignore", "license",
+]);
+
+/**
+ * Classify a shared file: image (binary, image/* mime), text (decoded as utf8),
+ * or binary (byte-exact buffer, application/octet-stream). Mirrors the client's
+ * kind filter so both ends agree on what the content is.
+ */
+export function classifyFile(filename) {
+  const ext = String(filename || "").split(".").pop()?.toLowerCase() || "";
+  if (IMAGE_MIME[ext]) return { kind: "image", mime: IMAGE_MIME[ext] };
+  if (TEXT_EXT.has(ext)) return { kind: "text", mime: "text/plain" };
+  // Executables/scripts without extension sometimes carry a shebang — still treat
+  // unknown types as binary: byte-exact upload never corrupts, utf8 decode can.
+  return { kind: "binary", mime: "application/octet-stream" };
+}
+
 /** Mask a secret for display: keep first 2 / last 4 chars only. */
 export function maskSecret(value) {
   if (!value || typeof value !== "string") return "";

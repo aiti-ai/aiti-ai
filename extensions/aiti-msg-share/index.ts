@@ -7,7 +7,7 @@
  */
 import { join, dirname } from "node:path";
 // @ts-ignore pure JS core shared with tests
-import { ShareStore, makeRedactor, publicTarget, exportSessionMarkdown } from "./lib/share-core.mjs";
+import { ShareStore, makeRedactor, publicTarget, exportSessionMarkdown, classifyFile, MAX_SHARE_FILE_BYTES } from "./lib/share-core.mjs";
 
 let configDir = "";
 let stateDir = "";
@@ -135,6 +135,9 @@ export default {
     i18n: {
       "en": {
         "share.err.forbidden": "That path is outside the allowed roots — only session workspaces can be shared.",
+        "share.err.kind": "This target doesn't accept {kind} content ({detail}). Pick a target that supports it.",
+        "share.noCompatible": "No targets support {kind} — add one via \"Add more\".",
+        "share.notCompatible": "Doesn't accept {kind}",
         "share.err.endpoint": "「{name}」的 API 端点无响应或不支持该操作（{detail}）。该服务的 API 可能已变更，请在「管理目标」检查端点配置。",
         "share.err.network": "Cannot reach 「{name}」 (network unreachable / blocked / service down). Pick another target in Manage targets, or use local-link.",
         "share.err.timeout": "「{name}」 timed out.",
@@ -217,6 +220,9 @@ export default {
       },
       "zh-CN": {
         "share.err.forbidden": "该路径不在允许范围内——只能分享会话工作区内的文件。",
+        "share.err.kind": "该目标不支持{kind}内容（{detail}）。请换一个支持该类型的目标。",
+        "share.noCompatible": "没有支持{kind}的目标——可在「加更多…」里添加。",
+        "share.notCompatible": "不接受{kind}",
         "share.err.endpoint": "「{name}」的 API 端点无效或已变更（{detail}）。请在「管理目标」检查端点配置。",
         "share.err.network": "无法连接「{name}」的服务端（网络不可达 / 被拦截 / 服务宕机）。可在「管理目标」换一个服务，或用 local-link。",
         "share.err.timeout": "「{name}」响应超时。",
@@ -299,6 +305,9 @@ export default {
       },
       "zh-TW": {
         "share.err.forbidden": "該路徑不在允許範圍內——只能分享工作階段工作區內的檔案。",
+        "share.err.kind": "該目標不支援{kind}內容（{detail}）。請換一個支援該類型的目標。",
+        "share.noCompatible": "沒有支援{kind}的目標——可在「加更多…」裡添加。",
+        "share.notCompatible": "不接受{kind}",
         "share.err.endpoint": "「{name}」的 API 端點無效或已變更（{detail}）。請在「管理目標」檢查端點設定。",
         "share.err.network": "無法連線「{name}」的伺服端（網路不可達 / 被封鎖 / 服務當機）。可在「管理目標」換一個服務，或用 local-link。",
         "share.err.timeout": "「{name}」回應逾時。",
@@ -470,17 +479,29 @@ export default {
         const text = body.rawText || exportSessionMarkdown(session, { full: !!body.full, title: meta.title,
           tags: String(meta.tags).split(",").map((s) => s.trim()).filter(Boolean) });
         content = { text };
-      } else if (body.imageSrc) {
-        // Same-origin only: image previews are served by pi-web itself
-        // (`/api/sessions/.../tool-result-image`). Blocks SSRF to arbitrary hosts.
-        const url = new URL(body.imageSrc, "http://localhost");
-        const sameOrigin = url.host === "localhost" || url.host === (typeof location !== "undefined" ? location.host : "")
-          || url.hostname === "127.0.0.1";
-        if (!sameOrigin) return json({ ok: false, errorCode: "badRequest",
-          error: "imageSrc must be a pi-web relative path or 127.0.0.1 URL", detail: url.host }, 400);
-        const r = await fetch(url);
-        if (!r.ok) return json({ ok: false, error: `image fetch ${r.status}`, errorCode: "imageFetch", detail: String(r.status) }, 502);
-        content = { buffer: new Uint8Array(await r.arrayBuffer()), filename: body.filename || "image.png", mime: r.headers.get("content-type") || "image/png" };
+      } else if (body.imageBase64 || body.imageSrc) {
+        // Preferred path: the browser already loaded the image (same-origin or
+        // data: URL) and sends base64 — no server-side fetch, no CORS, works for
+        // pasted data: URLs too.
+        if (body.imageBase64) {
+          const m = /^data:([^;,]+)?(;base64)?,([\s\S]*)$/.exec(String(body.imageBase64));
+          const b64 = (m ? m[3] : String(body.imageBase64)).trim();
+          if (!b64) return json({ ok: false, errorCode: "badRequest", error: "empty image payload" }, 400);
+          const mime = (m?.[1] || body.mime || "image/png").split(";")[0];
+          content = { buffer: Buffer.from(b64, "base64"), filename: body.filename || "image.png", mime };
+        } else {
+          // Fallback: relative /api/... paths resolved against THIS request's
+          // origin (the old "http://localhost" base hit port 80 / nginx → 404).
+          // Same-origin only: image previews are served by pi-web itself; blocks SSRF.
+          const origin = new URL(req.url).origin;
+          const url = new URL(String(body.imageSrc), origin);
+          const sameOrigin = url.origin === origin || url.hostname === "127.0.0.1" || url.hostname === "localhost";
+          if (!sameOrigin) return json({ ok: false, errorCode: "badRequest",
+            error: "imageSrc must be a pi-web relative path or same-origin URL", detail: url.host }, 400);
+          const r = await fetch(url);
+          if (!r.ok) return json({ ok: false, error: `image fetch ${r.status}`, errorCode: "imageFetch", detail: String(r.status) }, 502);
+          content = { buffer: Buffer.from(await r.arrayBuffer()), filename: body.filename || "image.png", mime: r.headers.get("content-type") || "image/png" };
+        }
       } else if (body.filePath) {
         // Respect pi-web allowed-roots (session cwds): never read arbitrary
         // server files on behalf of the caller.
@@ -491,13 +512,17 @@ export default {
           if (!allowed) return json({ ok: false, errorCode: "forbidden",
             error: "path is outside the allowed roots", detail: body.filePath }, 403);
         }
-        const { readFile } = await import("node:fs/promises");
+        const { readFile, stat } = await import("node:fs/promises");
+        const st = await stat(body.filePath).catch(() => null);
+        if (!st?.isFile()) return json({ ok: false, errorCode: "badRequest", error: "file not found", detail: body.filePath }, 400);
+        if (st.size > MAX_SHARE_FILE_BYTES) return json({ ok: false, errorCode: "tooLarge",
+          error: `file too large: ${st.size} bytes`, detail: String(st.size) }, 413);
+        const name = body.filename || body.filePath.split("/").pop() || "file";
+        const cls = classifyFile(name);
         const buffer = await readFile(body.filePath);
-        const ext = body.filePath.split(".").pop()?.toLowerCase() || "txt";
-        const mime = ext === "png" ? "image/png" : ext === "jpg" || ext === "jpeg" ? "image/jpeg" : "text/plain";
-        content = ext === "png" || ext === "jpg" || ext === "jpeg"
-          ? { buffer, filename: body.filename || body.filePath.split("/").pop(), mime }
-          : { text: buffer.toString("utf8"), filename: body.filename || body.filePath.split("/").pop() };
+        content = cls.kind === "text"
+          ? { text: buffer.toString("utf8"), filename: name }
+          : { buffer, filename: name, mime: cls.mime };
       } else {
         content = { text: body.text || "" };
       }
@@ -505,6 +530,15 @@ export default {
       const doRedact = body.redact !== false && "text" in content;
       const hooks = doRedact ? { transformText: redact } : undefined;
       const cs = await import("@aiti-ai/content-share");
+      // Kind guard (defense in depth — the pipeline checks too): an image buffer
+      // to a text-only target would silently produce garbage on the service.
+      const contentKind = "text" in content ? "text" : /^image\//i.test(content.mime) ? "image" : "file";
+      const kinds = (provider as any).kinds || [];
+      if (kinds.length && !kinds.includes(contentKind)) {
+        return json({ ok: false, errorCode: "kind", errorTarget: target.id, providerLabel: (provider as any).label,
+          error: `kind mismatch: ${contentKind} not in [${kinds.join("/")}]`,
+          detail: `${(provider as any).label} accepts: ${kinds.join(", ")}` }, 400);
+      }
       let result;
       try {
         result = await cs.share(provider, content,
