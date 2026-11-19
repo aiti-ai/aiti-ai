@@ -56,6 +56,15 @@ export interface ExtUiItemRegistered {
      *  on both sides. Absent → "bottom" (the majority). Unknown to other
      *  slots — they ignore it. */
     placement?: "top" | "bottom" | "both";
+    /** Slot-item display order (inline slots): items declaring `order` sort
+     *  first (ascending) among themselves, before all unordered items — the
+     *  latter keep the manifest listing order (extension order, then
+     *  registration order). Host-rendered built-ins (e.g. the message Copy
+     *  button) are not slot items and always precede the slot, so a small
+     *  `order` pins an extension's button right after them regardless of the
+     *  alphabetical manifest order of the contributing extensions (e.g.
+     *  aiti-msg-share after Copy, ahead of aiti-git-trace's badge). */
+    order?: number;
     /** Static item hide marker (manifest ui[slot][]): the host skips rendering the
      *  static entry (bottom-row absorbed items, quickstart flash fix). */
     hidden?: boolean;
@@ -433,7 +442,13 @@ export function getExtUiItems(slot: ExtSlotName): ExtUiItemRegistered[] {
       const filtered = merged.filter((it) => !(it.feature && it.extId && !getExtFeature(it.extId, it.feature)));
       next[s] = filtered
         .map((it, idx) => ({ it, idx }))
-        .sort((a, b) => (extSortKey(a.it.extId) - extSortKey(b.it.extId)) || (a.idx - b.idx))
+        .sort((a, b) =>
+          // Declared meta.order wins first (unordered items sort last, keeping
+          // manifest order — see the meta.order doc), then manifest listing
+          // order, then registration order as the tiebreaker.
+          ((a.it.meta?.order ?? Number.MAX_SAFE_INTEGER) - (b.it.meta?.order ?? Number.MAX_SAFE_INTEGER))
+          || (extSortKey(a.it.extId) - extSortKey(b.it.extId))
+          || (a.idx - b.idx))
         .map((x) => x.it);
     }
     gatedCache = { store, version: store.version, items: next };
