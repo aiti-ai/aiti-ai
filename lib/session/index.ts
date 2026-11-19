@@ -282,7 +282,7 @@ async function attachDetachedSession(
         ...(sessionFile ? { sessionFile } : {}),
         sessionId,
         ...(entry.cwd ? { cwd: entry.cwd } : {}),
-        attached: { child, sessionId, agentKey: entry.agentKey },
+        attached: { child, sessionId, agentKey: entry.agentKey, ...(entry.cwd ? { cwd: entry.cwd } : {}) },
       });
       // A backend that learns its native id late may announce it right after the
       // adopt (omp): keep the registry entry addressable by that id.
@@ -322,6 +322,18 @@ export async function openExternalSession(
   const requestedId = compositeId;
   const { agent } = splitHandleId(compositeId);
   let sid = splitHandleId(compositeId).sid;
+  // Resume-without-cwd recovery (composite-id URL restore after a host restart): the
+  // caller only knows the session id — the workspace lives in the session file header.
+  // Resolve it once so backend children spawn in the session's real workspace instead
+  // of the host process's cwd (pi buckets session files per project dir — spawning in
+  // the wrong cwd makes --session-id resume miss and create a blank same-id session).
+  if (!options.cwd && sid) {
+    try {
+      const { findSessionHeaderById } = await import("../session-reader.ts");
+      const header = await findSessionHeaderById(sid);
+      if (header?.cwd) options = { ...options, cwd: header.cwd };
+    } catch { /* best-effort: providers fall back to their own workspace resolution */ }
+  }
   // Detached recovery first: a wrapper-hosted agent outlived the old instance, so
   // reopening the session must attach to it instead of spawning a second agent.
   const recovery = await attachDetachedSession(sid);

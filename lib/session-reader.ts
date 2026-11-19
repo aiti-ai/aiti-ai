@@ -1298,6 +1298,18 @@ export async function resolveSessionPath(sessionId: string): Promise<string | nu
 }
 
 /**
+ * Bounded header lookup by id (project-bucket scan, NO catalogue fallback): reads the
+ * session header of the matching file, or null. Purpose-built for callers that only
+ * want a session's metadata (e.g. its workspace cwd) and must not pay the full
+ * catalogue scan / incremental watcher startup for ids that have no local file
+ * (external-backend sessions).
+ */
+export async function findSessionHeaderById(sessionId: string): Promise<SessionHeader | null> {
+  const path = await findSessionPathById(sessionId);
+  return path ? readSessionHeader(path) : null;
+}
+
+/**
  * For empty sessions (file lazily not yet written), look up the TUI bridge
  * registry by id and return the registry key (= sessionFile path). Attach
  * detection prioritizes the socket (bridge-registry.json); the file is only

@@ -153,6 +153,8 @@ export interface AttachedChildOptions {
   child: ChildProcess;
   sessionId: string;
   agentKey?: string;
+  /** True workspace of the adopted process (core passes the wrapper registry entry's cwd); falls back to the host process cwd. */
+  cwd?: string;
 }
 
 interface PendingUI {
@@ -321,7 +323,10 @@ export class PiSpawnHandle extends RpcChildHost {
    * replayed before we got here), so building a handle is enough.
    */
   static async attach(opts: AttachedChildOptions, spec: PiForkSpec = PI_SPEC): Promise<PiSpawnHandle> {
-    return PiSpawnHandle.adopt(spec, opts.sessionId, opts.child, process.cwd());
+    // opts.cwd = the adopted process's true workspace (wrapper registry entry) — never
+    // the host's process.cwd(): the handle cwd feeds the UI workspace identity, and a
+    // wrong value pins the session to the wrong project (sidebar/files pointed away).
+    return PiSpawnHandle.adopt(spec, opts.sessionId, opts.child, opts.cwd || process.cwd());
   }
 
   /** 覆写：非 response 帧的 pi 语义分发。 */

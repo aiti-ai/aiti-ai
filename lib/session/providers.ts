@@ -76,6 +76,8 @@ export interface CreateSessionOptions {
     child: ChildProcess;
     sessionId: string;
     agentKey?: string;
+    /** True workspace of the adopted process (wrapper registry entry); providers project it onto the handle. */
+    cwd?: string;
   };
 }
 
