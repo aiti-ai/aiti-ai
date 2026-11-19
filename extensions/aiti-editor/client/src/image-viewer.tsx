@@ -354,7 +354,7 @@ export function ImageViewer(props: {
     return () => window.removeEventListener("keydown", onKey);
   }, [zoomAt, zoomStep]);
 
-  const name = (displayName || "").trim() || (filePath ? filePath.split("/").pop() || filePath : "") || "image";
+  const name = (displayName || "").trim() || (filePath ? filePath.split(/[\\/]/).pop() || filePath : "") || "image";
   const ext = (name.includes(".") ? (name.split(".").pop() || "") : guessImageExt(src)).toUpperCase() || "—";
   const isDataUrl = src.startsWith("data:");
   const pct = Math.round(scale * 100);

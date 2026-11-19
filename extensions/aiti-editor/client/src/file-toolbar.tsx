@@ -350,7 +350,7 @@ export function FileToolbar(props: {
         style={{ width: 7, height: 7, borderRadius: "50%", flexShrink: 0,
           background: (dot && dot.color) || "var(--border,#e0e0e0)" }} />
       {/* 文件名（完整路径进 title 悬浮）——信息紧随其后，长路径不再挤爆工具条 */}
-      <span style={{ ...S.path, flex: "0 1 auto", minWidth: 40, maxWidth: "42%" }} title={filePath}>{filePath.split("/").pop() || filePath}</span>
+      <span style={{ ...S.path, flex: "0 1 auto", minWidth: 40, maxWidth: "42%" }} title={filePath}>{filePath.split(/[\\/]/).pop() || filePath}</span>
       {/* ‹› same-dir deep walk (squeeze L3 / compact: collapsed into the menu "browse" row) */}
       {nav && !compact && squeeze < 3 && (
         <div style={{ display: "flex", gap: 2, flexShrink: 0 }}>
