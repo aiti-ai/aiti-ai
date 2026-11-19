@@ -64,6 +64,17 @@ export function ReviewApp({ onClose, init, onExitToList }: {
   const [err, setErr] = useState("");
   // 视图：小屏默认「合并」（并排在窄屏不可读）；用户手动选过后不再跟随断点切换
   const [view, setView] = useState(() => (window.matchMedia(SMALL_MQ).matches ? "inline" : "side"));
+  // Outline is navigation, not a render mode: it can be toggled on any view.
+  const [outlineOpen, setOutlineOpen] = useState<boolean>(() => {
+    try { return localStorage.getItem("aiti-git-review.outline") === "1"; } catch { return false; }
+  });
+  const toggleOutline = () => {
+    setOutlineOpen((on) => {
+      const next = !on;
+      try { localStorage.setItem("aiti-git-review.outline", next ? "1" : "0"); } catch { /* ignore */ }
+      return next;
+    });
+  };
   const viewTouchedRef = useRef(false);
   const setViewUser = (v: string) => { viewTouchedRef.current = true; setView(v); };
   // 加注模式：点 diff 行加注。触屏无右键 → 小屏默认开；桌面默认关（右键可用）
@@ -135,7 +146,7 @@ export function ReviewApp({ onClose, init, onExitToList }: {
   const widthBucketRef = useRef(widthBucket);
 
   function restoreConfig(cfg: any, bucket: number | null, markTouched?: boolean) {
-    setView(cfg.view || "inline");
+    setView(cfg.view === "outline" ? "inline" : (cfg.view || "inline"));
     viewTouchedRef.current = true; // 已恢复用户配置 → 不再跟随断点自动切换
     setShowFiles(cfg.showFiles !== false);
     setShowDiff(cfg.showDiff !== false);
@@ -906,12 +917,13 @@ export function ReviewApp({ onClose, init, onExitToList }: {
       if (backStops.length) setAnnoStop(backStops.length - 1);
     }
   }
-  // 大纲：直接跳到指定 hunk（reveal 到 hunk 行内中间）
+  // Outline jump: dispatch to the modified side (diff) or the single editor (current view).
   function jumpToHunk(hk: any) {
     if (!hk) return;
-    const line = hk.newStart || 1;
+    const line = Math.max(1, hk.newStart || 1);
     const ed = (containerRef.current as any) && (containerRef.current as any)._aitiGrEd;
-    try { ed && ed.revealPositionInCenter ? ed.revealPositionInCenter({ lineNumber: Math.max(1, line), column: 1 }, true) : null; } catch {}
+    const target = ed && ed.getModifiedEditor ? ed.getModifiedEditor() : ed;
+    try { target && target.revealPositionInCenter ? target.revealPositionInCenter({ lineNumber: line, column: 1 }, true) : null; } catch {}
   }
   // ── 键盘快捷键（M4）：▸ F7/Shift+F7 上下条 diff 变更；▸ Alt+↑/↓ 跨文件导航；▸ Esc 关闭标注气泡 ──
   useEffect(() => {
@@ -1014,8 +1026,16 @@ export function ReviewApp({ onClose, init, onExitToList }: {
             <option key="side" value="side">并排</option>
             <option key="inline" value="inline">合并</option>
             <option key="current" value="current">纯新</option>
-            <option key="outline" value="outline">大纲</option>
           </select>
+        )}
+        {(isMobile ? mobilePane === "diff" : showDiff) && diff && (
+          <button
+            onClick={toggleOutline}
+            aria-pressed={outlineOpen}
+            title={(outlineOpen ? "隐藏变更大纲" : "显示变更大纲") + "（" + hunks.length + " 个变更区）"}
+            style={{ ...segBtn, fontSize: 13, lineHeight: 1, padding: "3px 7px", height: 26,
+              background: outlineOpen ? "rgba(37,99,235,.10)" : "var(--bg,#fff)", color: "var(--text,#333)" }}
+          >☰</button>
         )}
         {/* ↩ 标记回滚（trace 专属）：点击=标记/取消标记（不执行）；提交时按开关执行或打包给 AI */}
         {isTrace && (
@@ -1133,10 +1153,12 @@ export function ReviewApp({ onClose, init, onExitToList }: {
               无变更行（纯新/删除文件）
             </div>
           )}
-          {view === "outline" && diff && (
-            <div style={{ position: "absolute", top: 6, left: 6, bottom: 6, width: 240, overflowY: "auto", background: "var(--bg,#fff)", border: "1px solid var(--border,#ddd)", borderRadius: 8, boxShadow: "0 4px 16px rgba(0,0,0,.12)", zIndex: 20, padding: 6 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-dim,#888)", padding: "4px 6px" }}>
-                {"大纲 · " + hunks.length + " 个变更区"}
+          {outlineOpen && diff && (
+            <div style={{ position: "absolute", top: 6, right: 6, bottom: 6, width: "min(240px, 45vw)", overflowY: "auto", background: "var(--bg,#fff)", border: "1px solid var(--border,#ddd)", borderRadius: 8, boxShadow: "0 4px 16px rgba(0,0,0,.12)", zIndex: 20, padding: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, fontSize: 11, fontWeight: 700, color: "var(--text-dim,#888)", padding: "4px 6px" }}>
+                <span>{"大纲 · " + hunks.length + " 个变更区"}</span>
+                <button onClick={toggleOutline} title="隐藏变更大纲"
+                  style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--text-dim,#888)", fontSize: 12, lineHeight: 1, padding: 2 }}>✕</button>
               </div>
               {hunks.length === 0 && <div style={{ color: "var(--text-muted,#999)", fontSize: 12, padding: 8 }}>纯新增/删除文件无 hunk（整文件变更）</div>}
               {hunks.map((hk, i) => (
