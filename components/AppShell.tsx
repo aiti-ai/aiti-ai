@@ -1894,6 +1894,21 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   // back (observed as "clicked a sidelist row, the URL flashed the new id then
   // snapped back to the URL session" while the sessions list was still loading).
   const userPickedSessionRef = useRef(false);
+  /** Session id whose ?session= write is owed by the post-commit effect below. The
+   *  router navigation cannot be started from the pick's own event: the same click
+   *  also commits state (phones close the drawer), that commit supersedes the pending
+   *  navigation, and Next then rewrites the address bar from its stale canonical URL. */
+  const pendingPickNavRef = useRef<string | null>(null);
+  // Post-commit ?session= write for user picks: by the time this runs the pick's own
+  // commits (chat switch, phone drawer close) have landed, so the navigation is not
+  // superseded and the router's canonical URL follows it.
+  useEffect(() => {
+    const id = pendingPickNavRef.current;
+    if (!id) return;
+    pendingPickNavRef.current = null;
+    if (new URLSearchParams(window.location.search).get("session") === id) return;
+    router.replace(`?session=${encodeURIComponent(id)}`, { scroll: false });
+  }, [selectedSession?.id, router]);
   const handleSelectSession = useCallback((session: SessionInfo, isRestore = false, entryId?: string, blockIndex?: number, options?: SelectSessionOptions) => {
     if (!isRestore) {
       userPickedSessionRef.current = true;
@@ -1959,14 +1974,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     setInitialSessionRestored(true);
     // On mobile, collapse the overlay drawer so the chat is revealed after pick
     // (unless the sidebar still has something to show: a fork's row and toast).
-    if (isMobile && !isRestore && !options?.keepSidebarOpen) {
-      // Close the drawer on the next frame, not in this event: this same handler also
-      // asks the router to write ?session=, and a state commit from the same event
-      // supersedes that navigation — Next then keeps its stale canonical URL and
-      // rewrites the address bar back on every later commit (reproducible only on
-      // phones, where the pick also closes the drawer).
-      requestAnimationFrame(() => setSidebarOpen(false));
-    }
+    if (isMobile && !isRestore && !options?.keepSidebarOpen) setSidebarOpen(false);
     if (isRestore) {
       // Suppress the redundant sessionKey bump that would come from the
       // onCwdChange effect firing after setSelectedCwd in the sidebar
@@ -1976,7 +1984,11 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     // replace in production Next.js triggers a Suspense remount loop.
     // Tab-memory restore lands on `/` and must write `?session=` so reload
     // and copy-link keep this session.
-    if (!isRestore || new URLSearchParams(window.location.search).get("session") !== session.id) {
+    if (!isRestore) {
+      // Written by the post-commit effect (see pendingPickNavRef): starting the router
+      // navigation here would be superseded by this same event's state commits.
+      pendingPickNavRef.current = session.id;
+    } else if (new URLSearchParams(window.location.search).get("session") !== session.id) {
       replaceLocationIfChanged(router, `?session=${encodeURIComponent(session.id)}`, { scroll: false });
     }
   }, [activeCwd, changeFileWorkspace, invalidateWorkspaceRestore, router, isMobile, newSessionCwd, selectedSession]);
