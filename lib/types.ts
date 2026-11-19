@@ -400,6 +400,9 @@ export interface SessionInfo {
   /** Backend/agent tag for non-local sessions (e.g. "claude-code", "spawn").
    *  Absent (= "pi") for host-native local sessions. Rendered as a sidebar badge. */
   agent?: string;
+  /** True when the session was last hosted detached (survive-restart marker; the
+   *  sessions API sets it, session-manager row-menu reads it to offer re-hosting). */
+  detachPref?: boolean;
   /** Terminal run outcome of the most recent run (see lib/run-outcome.ts). undefined = unknown or
    *  no assistant messages yet; the session runtime UI prefers a running indicator over this.
    *  failed/aborted/interrupted drive error badges in the list and completion-notify routing
