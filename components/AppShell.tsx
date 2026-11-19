@@ -83,7 +83,7 @@ const URL_MIRROR_ATTEMPTS = 4;
  *  from the router's canonical URL in every commit's insertion effect, so a write made
  *  while the click's own commit is still pending is simply overwritten (phones: the
  *  pick also closes the sidebar drawer, so that commit always follows). */
-let pendingUrlWrite: string | null = null;
+let pendingUrlWrite: { url: string; href: string } | null = null;
 /** Remaining re-assert budget (module scope: the writer is a module function). */
 let urlMirrorBudget = 0;
 /** Monotonic write sequence: a stale re-assert must not clobber a newer pick. */
@@ -119,9 +119,10 @@ function replaceLocationIfChanged(
     if (samePath && sameQuery) return;
     if (samePath) {
       // Register only — the AppShell mirror effect applies it after this commit.
-      pendingUrlWrite = targetQuery
-        ? `${window.location.pathname}?${targetQuery}`
-        : window.location.pathname;
+      pendingUrlWrite = {
+        url: targetQuery ? `${window.location.pathname}?${targetQuery}` : window.location.pathname,
+        href,
+      };
       urlMirrorBudget = URL_MIRROR_ATTEMPTS;
       urlWriteSeq += 1;
       return;
@@ -1931,8 +1932,8 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
       pendingUrlWrite = null;
       return;
     }
-    const target = pendingUrlWrite;
-    if (`${window.location.pathname}${window.location.search}` === target) {
+    const pending = pendingUrlWrite;
+    if (`${window.location.pathname}${window.location.search}` === pending.url) {
       pendingUrlWrite = null;
       urlMirrorBudget = 0;
       return;
@@ -1942,8 +1943,13 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     // the router, so later commits keep it. Retried via this effect only if that
     // adoption is still racing a commit — bounded by urlMirrorBudget.
     urlMirrorBudget -= 1;
-    window.history.replaceState(null, "", target);
-  }, [selectedSession?.id, searchParams, pathname]);
+    window.history.replaceState(null, "", pending.url);
+    // The click's own router.replace is interrupted when the same event also closes
+    // the phone drawer (its commit supersedes the pending navigation, leaving Next's
+    // canonical URL at the old address, which then wins every later commit). Re-issue
+    // it here — after that commit — so the router adopts the target and keeps it.
+    router.replace(pending.href, { scroll: false });
+  }, [selectedSession?.id, searchParams, pathname, router]);
   const handleSelectSession = useCallback((session: SessionInfo, isRestore = false, entryId?: string, blockIndex?: number, options?: SelectSessionOptions) => {
     if (!isRestore) {
       userPickedSessionRef.current = true;
