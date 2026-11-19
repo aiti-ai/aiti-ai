@@ -740,12 +740,15 @@ export default function register(ctx) {
         session: sess, title: sess?.name || sess?.title || "" }),
     });
     // File card's first-row action (file recognition).
+    // `order` follows the msg-smart row order: built-in Open = 10, external = 20,
+    // Reveal = 30 — so Share sits right after Open and before Reveal.
     ctx.registerTopicItem("msg-file-action", {
       id: "aiti-msg-share-file",
       label: shareT("share.action"),
       title: shareT("share.fileTip"),
       icon: SHARE_ICON,
       type: "share",
+      order: 20,
       match: (abs, isDir) => !isDir,
       onClick: (abs) => openShare({ kind: "file", filePath: abs, filename: abs.split("/").pop() }),
     });
