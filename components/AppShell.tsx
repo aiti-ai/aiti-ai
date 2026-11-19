@@ -73,6 +73,17 @@ const NO_PATH_PICKER_ITEMS: ExtUiItemRegistered[] = [];
  * replace gains nothing). Query-string comparison is kept: real changes such as
  * "clear ?session= and go home" still replace as usual.
  */
+/** How many times the selection→URL mirror may re-assert after one write. Next's
+ *  HistoryUpdater can rewrite the address bar from its own canonical URL on the
+ *  commit that follows (phones: picking a session also closes the sidebar drawer),
+ *  so a single write can lose the race; the bound keeps this from ever looping. */
+const URL_MIRROR_ATTEMPTS = 4;
+/** Remaining re-assert budget for the selection→URL mirror (module scope: the
+ *  writer below is a module function; the app is a single page). */
+let urlMirrorBudget = 0;
+/** Monotonic write sequence: a delayed re-assert must not clobber a newer pick. */
+let urlWriteSeq = 0;
+
 /** Trailing-slash-insensitive comparison for filesystem paths (cwd equality). */
 function normPath(p: string): string {
   return p.replace(/[\\/]+$/, "");
@@ -101,13 +112,25 @@ function replaceLocationIfChanged(
       ? `?${targetQuery}` === window.location.search
       : !window.location.search;
     if (samePath && sameQuery) return;
+    if (samePath) {
+      const nextUrl = targetQuery
+        ? `${window.location.pathname}?${targetQuery}`
+        : window.location.pathname;
+      // Do NOT write here: Next's HistoryUpdater rewrites the address bar from its own
+      // canonical URL on the commit that follows (phones: the pick also unmounts the
+      // drawer, and the write-back lands ~60-130ms later), so an eager write only
+      // produces a visible set→revert→set flip. Give the router its chance and let the
+      // bounded re-assert below settle the address bar once nothing else is writing.
+      urlMirrorBudget = URL_MIRROR_ATTEMPTS;
+      const seq = ++urlWriteSeq;
+      window.setTimeout(() => {
+        if (urlWriteSeq !== seq) return; // a newer pick owns the address bar
+        if (`${window.location.pathname}${window.location.search}` === nextUrl) return;
+        window.history.replaceState(null, "", nextUrl);
+        urlMirrorBudget = Math.max(0, urlMirrorBudget - 1);
+      }, 400);
+    }
   }
-  // Always go through the router: the App Router keeps its own canonical URL per
-  // committed tree and Next's HistoryUpdater rewrites the address bar from it on
-  // later commits. A direct history.replaceState therefore gets rolled back (on
-  // phones a session pick also closes the sidebar drawer — a transition — and the
-  // pick's ?session= was reverted to the page-load id ~60ms later). The router is
-  // the only writer that keeps both the URL and that canonical state in step.
   router.replace(href, options);
 }
 import { registerHostApi } from "@/lib/ext/host-api";
@@ -1900,6 +1923,27 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   // back (observed as "clicked a sidelist row, the URL flashed the new id then
   // snapped back to the URL session" while the sessions list was still loading).
   const userPickedSessionRef = useRef(false);
+  // Selection → URL mirror. The address bar is derived from the selection, so a stale
+  // write from Next's HistoryUpdater (its canonical URL lags when the click also
+  // unmounts the surface — the phone drawer) is corrected instead of leaving the pick
+  // rolled back. Bounded: the budget is armed by replaceLocationIfChanged and spent
+  // one re-assert at a time, so this can never loop.
+  useEffect(() => {
+    if (urlMirrorBudget <= 0) return;
+    const target = selectedSession?.id;
+    if (!target) {
+      urlMirrorBudget = 0;
+      return;
+    }
+    if (new URLSearchParams(window.location.search).get("session") === target) {
+      urlMirrorBudget = 0;
+      return;
+    }
+    urlMirrorBudget -= 1;
+    const href = `?session=${encodeURIComponent(target)}`;
+    window.history.replaceState(null, "", `${window.location.pathname}${href}`);
+    router.replace(href, { scroll: false });
+  }, [selectedSession?.id, searchParams, router]);
   const handleSelectSession = useCallback((session: SessionInfo, isRestore = false, entryId?: string, blockIndex?: number, options?: SelectSessionOptions) => {
     if (!isRestore) {
       userPickedSessionRef.current = true;
