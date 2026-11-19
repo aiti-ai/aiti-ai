@@ -10,8 +10,10 @@
  *     contract: registerTopicItem("msg-popover-top-action", { id, label, title?, onClick(text, cwd) })
  *   - provider 区：外部 msg-popover-action 主题 provider（aiti-cmd 命令识别等）
  *   - file section: external msg-file-action topic providers (e.g. aiti-msg-share)
- *     contract: registerTopicItem("msg-file-action", { id, label, match(abs, isDir), onClick(abs, isDir) }) —
+ *     contract: registerTopicItem("msg-file-action", { id, label, title?, type?, order?, match(abs, isDir), onClick(abs, isDir) }) —
  *     the file card renders one button per matching item; providers own their gating.
+ *     Row order: ascending `order` (built-ins: Open = 10, external default = 20, Reveal = 30 —
+ *     see file-actions.js), so the default row reads Open → external (Share) → Reveal.
  *   - 复制全文：长段落附加动作
  * 异步（file 校验 / provider 识别）到达后重渲染同一卡片。
  * 「同一时刻只开一个」模块级 state（切段先关旧段、同段再点=关闭 toggle）。
@@ -20,6 +22,7 @@ import {
   parseParagraph, formatQuote, summarizeSegment, extractFilePaths,
   extractUrls, mergeExternalRoots, candidatesFromRoots, selfNameCandidates,
 } from "./recognize.js";
+import { FILE_ACTION_ORDER, sortFileActions } from "./file-actions.js";
 import { openNewSession } from "../../../_shared/new-session-cwd";
 
 const state = { opening: null };
@@ -442,32 +445,47 @@ export default function register(ctx) {
       nodes.push(h(SegmentRow, { key: "seg" + i, segment: seg, onPick: view.onPick, T, view }));
     }
 
-    // ── file section (shown after path validation): open / reveal + external actions
+    // ── file section (shown after path validation): one action row per resolved path.
+    //   Row order: ascending `order` (see file-actions.js) — built-ins bracket the
+    //   external providers, so the default row reads Open → external (Share) → Reveal.
     if (view.paths.length) {
       // External file actions via topic extension point (msg-file-action).
       // Providers register at client boot; read synchronously at interaction time.
       const fileActions = typeof ctx.getTopicItems === "function"
         ? ctx.getTopicItems("msg-file-action") : [];
       nodes.push(h("span", { key: "files", style: { display: "flex", flexWrap: "wrap", gap: 4 } },
-        ...view.paths.map(({ path: abs, isDir }) =>
-          h("span", { key: abs, style: { display: "inline-flex", flexWrap: "wrap", gap: 4 } },
-            ...fileActions.filter((a) => {
-              try { return !a.match || a.match(abs, isDir); } catch { return false; }
-            }).map((a) => h("button", {
-              key: "topic-" + (a.id || a.label), type: "button",
-              onClick: (e) => { e.stopPropagation(); a.onClick(abs, isDir); view.close(); },
-              title: a.title || a.label, style: abStyle,
-            }, a.type ? typeIcon(a.type) : null, `${a.label}: ${abs.split("/").pop()}`)),
-            !isDir && h("button", {
+        ...view.paths.map(({ path: abs, isDir }) => {
+          const name = abs.split("/").pop() ?? abs;
+          const entries = [];
+          for (const a of fileActions) {
+            let matched = false;
+            try { matched = !a.match || a.match(abs, isDir); } catch { matched = false; }
+            if (!matched) continue;
+            entries.push({
+              order: a.order,
+              node: h("button", {
+                key: "topic-" + (a.id || a.label), type: "button",
+                onClick: (e) => { e.stopPropagation(); a.onClick(abs, isDir); view.close(); },
+                title: a.title || a.label, style: abStyle,
+              }, a.type ? typeIcon(a.type) : null, `${a.label}: ${name}`),
+            });
+          }
+          if (!isDir) entries.push({
+            order: FILE_ACTION_ORDER.open,
+            node: h("button", {
               key: "open", type: "button",
-              onClick: (e) => { e.stopPropagation(); ctx.openFile(abs, abs.split("/").pop() ?? abs); view.close(); },
+              onClick: (e) => { e.stopPropagation(); ctx.openFile(abs, name); view.close(); },
               title: T.openFile, style: abStyle,
-            }, h(FolderOpenIcon), `${T.openFile}: ${abs.split("/").pop()}`),
-            h("button", {
+            }, h(FolderOpenIcon), `${T.openFile}: ${name}`),
+          });
+          entries.push({
+            order: FILE_ACTION_ORDER.reveal,
+            node: h("button", {
               key: "reveal", type: "button",
-              // 定位 → 右侧打开文件浏览器（FolderViewer）并选中本文件（旧版只 revealDir 左侧树：
-              // 树以 cwd 为根、cwd 自身无节点，文件在 cwd 根时高亮落空）。
-              // label 用文件名而非目录名——同目录多文件时按钮不再长得一样。
+              // Reveal → open the right-hand folder viewer and select this file.
+              // (The old path only hit the sidebar tree: it is rooted at cwd, the cwd
+              // itself has no node, so files at the cwd root never highlighted.)
+              // Label carries the file name — same-directory files stay distinct.
               onClick: (e) => {
                 e.stopPropagation();
                 openFolderReveal(abs, isDir);
@@ -475,10 +493,12 @@ export default function register(ctx) {
               },
               title: isDir ? T.openFolder : `${T.revealDir}: ${abs}`, style: abStyle,
             }, h(FolderIcon), isDir
-              ? `${T.openFolder}: ${abs.split("/").pop()}`
-              : `${T.revealDir}: ${abs.split("/").pop()}`),
-          ),
-        ),
+              ? `${T.openFolder}: ${name}`
+              : `${T.revealDir}: ${name}`),
+          });
+          return h("span", { key: abs, style: { display: "inline-flex", flexWrap: "wrap", gap: 4 } },
+            ...sortFileActions(entries).map((x) => x.node));
+        }),
       ));
     }
 
