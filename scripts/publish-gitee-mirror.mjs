@@ -123,17 +123,19 @@ for (const f of files) {
   }
   const parts = Math.ceil(size / PART_SIZE);
   console.log(`[split] ${f.name}: ${(size / 1048576).toFixed(1)} MB → ${parts} part(s)`);
-  rmSync(join(WORK, f.name), { recursive: true, force: true });
-  mkdirSync(join(WORK, f.name), { recursive: true });
-  execFileSync("split", ["-b", String(PART_SIZE), "-d", "-a", "2", f.path, join(WORK, f.name, "p.")]);
+  // Chunk dir must not collide with the downloaded file's own path (split reads it).
+  const partsDir = join(WORK, `${f.name}.parts`);
+  rmSync(partsDir, { recursive: true, force: true });
+  mkdirSync(partsDir, { recursive: true });
+  execFileSync("split", ["-b", String(PART_SIZE), "-d", "-a", "2", f.path, join(partsDir, "p.")]);
   for (let i = 0; i < parts; i++) {
     const n = String(i).padStart(2, "0");
-    const from = join(WORK, f.name, `p.${n}`);
-    const to = join(WORK, f.name, `${f.name}.part-${i + 1}`);
+    const from = join(partsDir, `p.${n}`);
+    const to = join(partsDir, `${f.name}.part-${i + 1}`);
     if (from !== to) execFileSync("mv", [from, to]);
     uploads.push({ name: `${f.name}.part-${i + 1}`, path: to });
   }
-  const manifest = join(WORK, f.name, `${f.name}.split`);
+  const manifest = join(partsDir, `${f.name}.split`);
   writeFileSync(manifest, String(parts) + "\n");
   uploads.push({ name: `${f.name}.split`, path: manifest });
 }
