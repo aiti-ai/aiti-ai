@@ -14,6 +14,22 @@ const API = (path) => `/api/extensions/aiti-msg-share/${path}`;
 /** i18n lookup via host ctx.t (extman pattern); {param} interpolation. */
 let tFn = null;
 function kindLabel(k) { return shareT("share.kind." + k); }
+
+/** Image/binary extension maps — must stay in sync with the server's classifyFile. */
+const IMG_EXT = /\.(png|jpe?g|gif|webp|bmp|svg|ico|avif)$/i;
+const BIN_EXT = /\.(pdf|zip|7z|rar|gz|tgz|tar|bz2|xz|mp3|wav|ogg|flac|mp4|mkv|webm|mov|avi|docx|doc|xlsx|xls|pptx|epub|bin|exe|dmg|iso|apk|psd|woff2?|ttf)$/i;
+
+/** Content kind of the pending share: decides which targets are compatible. */
+function contentKind() {
+  if (state.kind === "image") return "image";
+  if (state.kind === "file" && state.payload?.filePath) {
+    const f = state.payload.filePath;
+    if (IMG_EXT.test(f)) return "image";
+    if (BIN_EXT.test(f)) return "file";
+  }
+  return "text";
+}
+function supportsKind(t, kind) { return !(t.kinds || []).length || (t.kinds || []).includes(kind); }
 function shareT(key, params) {
   if (!tFn) return key;
   try {
@@ -303,12 +319,14 @@ function sinkSection() {
 
 function targetSection() {
   const recent = recentGet();
+  const kind = contentKind();
+  const compat = (x) => supportsKind(x, kind);
   const t = state.targets;
   const byId = new Map(t.map((x) => [x.id, x]));
-  const recentItems = recent.map((id) => byId.get(id)).filter(Boolean).slice(0, 5);
+  const recentItems = recent.map((id) => byId.get(id)).filter(Boolean).filter(compat).slice(0, 5);
   // Targets the user has configured (saved) are always visible here.
-  const mine = t.filter((x) => x.custom && !recent.includes(x.id));
-  const recs = t.filter((x) => x.recommended && !recent.includes(x.id) && !x.custom).slice(0, 8);
+  const mine = t.filter((x) => x.custom && !recent.includes(x.id) && compat(x));
+  const recs = t.filter((x) => x.recommended && !recent.includes(x.id) && !x.custom && compat(x)).slice(0, 8);
   const shown = [];
   for (const item of recentItems) shown.push(targetCard(item, state.targetId === item.id, "recent"));
   for (const item of mine) shown.push(targetCard(item, state.targetId === item.id, null));
@@ -317,6 +335,10 @@ function targetSection() {
   const sel = byId.get(state.targetId);
   if (sel && !recent.includes(sel.id) && !sel.custom && !sel.recommended) {
     shown.unshift(targetCard(sel, true, null));
+  }
+  if (!recentItems.length && !mine.length && !recs.length) {
+    shown.push(h("span", { style: { color: "var(--text-muted, #8b909b)", fontSize: 11, padding: "4px 2px" } },
+      shareT("share.noCompatible", { kind: kindLabel(kind) })));
   }
   shown.push(h("button", { type: "button", onClick: () => set({ manager: true }),
     style: { border: "1px dashed var(--border, #34363c)", background: "none", color: "var(--text-muted, #8b909b)",
@@ -396,7 +418,7 @@ function errorText() {
     disabled: "share.err.disabled", unknownTarget: "share.err.unknownTarget",
     noSession: "share.err.noSession", imageFetch: "share.err.imageFetch", endpoint: "share.err.endpoint",
     badRequest: "share.err.badRequest", badSxcu: "share.err.badSxcu", noProbe: "share.err.noProbe",
-    forbidden: "share.err.forbidden",
+    forbidden: "share.err.forbidden", kind: "share.err.kind",
   }[code];
   if (key) return shareT(key, { name, detail });
   return state.error || shareT("share.err.generic", { detail });
@@ -493,6 +515,21 @@ async function doShare() {
     // so upload exactly what the user sees; no second redaction on the server.
     const body = { ...(state.payload || {}), targetId: state.targetId, kind: state.kind,
       text: state.text, title: state.title, tags: state.tags, redact: false };
+    // Images: load in the browser (same-origin /api/... or data: URLs — no CORS,
+    // no server-side fetch) and hand the server base64 bytes.
+    if (state.kind === "image" && body.imageSrc) {
+      const blob = await fetch(body.imageSrc).then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.blob(); })
+        .catch((e) => { throw Object.assign(new Error(shareT("share.err.imageFetch", { detail: e?.message || e })), { detail: String(e?.message || e) }); });
+      const dataUrl = await new Promise((res, rej) => {
+        const fr = new FileReader();
+        fr.onload = () => res(String(fr.result));
+        fr.onerror = () => rej(new Error("FileReader failed"));
+        fr.readAsDataURL(blob);
+      });
+      body.imageBase64 = dataUrl;
+      body.mime = blob.type || "image/png";
+      body.filename = body.filename || ("image." + (blob.type.split("/")[1] || "png").replace("jpeg", "jpg"));
+    }
     const r = await getJSON("share", { method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify(body) });
     recentAdd(state.targetId);
@@ -584,7 +621,10 @@ function managerDialog() {
       style: { color: b.color, fontSize: 9, whiteSpace: "nowrap", flexShrink: 0 } }, b.icon) : null; })(),
     t.recommended ? h("span", { style: { color: "var(--accent, #4d8dff)", fontSize: 10 } }, "★") : null,
     // "Use" closes the loop: pick this target for the pending share and return to it.
-    t.status !== "dead" && t.configState !== "needs-setup"
+    !supportsKind(t, contentKind())
+      ? h("span", { title: shareT("share.notCompatible", { kind: kindLabel(contentKind()) }),
+        style: { color: "var(--text-muted, #8b909b)", fontSize: 9, whiteSpace: "nowrap", flexShrink: 0 } }, "∅")
+      : t.status !== "dead" && t.configState !== "needs-setup"
       ? h("button", { type: "button", title: shareT("share.useTarget"),
         onClick: (e) => { e.stopPropagation(); chooseTarget(t.id); },
         style: { border: "1px solid var(--accent, #4d8dff)", background: state.targetId === t.id ? "var(--accent, #4d8dff)" : "none",
