@@ -112,6 +112,20 @@ start_bridge() {
   echo "[entrypoint] bridge :${AITI_BRIDGE_PORT:-8777}"
 }
 
+# ── phase: bundled-ext reconcile (background; union of the bundled extensions'
+# runtime deps → /opt/aiti/node_modules so jiti walk-up from /opt/aiti/extensions/*
+# resolves — same semantics as bin/pi-web.js, whose CLI boot path the standalone
+# server.js entry bypasses; first boot may still degrade until the install lands,
+# fingerprint marker keeps later boots zero-cost) ───────────────────────────────────
+start_reconcile() {
+  [ -d /opt/aiti/extensions ] || return 0
+  [ -f /opt/aiti/app/bin/bundled-extensions-reconcile.js ] || return 0
+  as_aiti env PI_WEB_PKG_DIR=/opt/aiti PI_WEB_EXTENSIONS_ROOT=/opt/aiti/extensions \
+    node /opt/aiti/app/bin/bundled-extensions-reconcile.js &
+  CHILD_PIDS+=("$!")
+  echo "[entrypoint] bundled-ext reconcile (background → /opt/aiti/node_modules)"
+}
+
 # ── phase: piweb (standalone server.js first; AITI_DEV=1 mounts sources and runs next dev, R8) ────
 start_piweb() {
   if [ "${AITI_DEV:-0}" = "1" ]; then
@@ -160,7 +174,7 @@ start_term() {
 # forwarding per pid is the only reliable way.
 CHILD_PIDS=()
 want bridge && start_bridge
-want piweb  && start_piweb
+want piweb  && { start_reconcile; start_piweb; }
 want gui    && start_gui
 want asr    && start_asr
 want term   && start_term
