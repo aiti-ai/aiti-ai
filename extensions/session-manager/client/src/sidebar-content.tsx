@@ -190,7 +190,9 @@ export function SidebarContentDock(props: Record<string, any>) {
       await Promise.allSettled([
         refreshSessions({ force: true }),
         refreshWorkspaces(undefined, true),
-        refreshProjectSessions(getProjectSessionsTarget(), { refresh: true }),
+        // force: an in-flight request issued before the click lacks the refresh scan —
+        // merging into it would report the green check while skipping the forced rescan
+        refreshProjectSessions(getProjectSessionsTarget(), { refresh: true, force: true }),
       ]);
     } catch { /* keep last */ }
     refreshBusyRef.current = false;

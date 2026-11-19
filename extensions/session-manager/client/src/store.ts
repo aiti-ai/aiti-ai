@@ -851,18 +851,19 @@ export function isProjectSessionsLoaded(key: string): boolean {
  *   · ETag 按 key 分开，且仅当驻留行就是本 key（store.projectSessionsKey === key）时
  *     才作为 If-None-Match 发出——跨 key 复用会拿 A 的 etag 问 B，304 时提前 return
  *     不写行不打已加载标记 → 死锁。
- *   · 响应落地守卫：k !== projectSessionsTarget（已有更新的目标）→ 丢弃。
- * 失败 keep-last 不 throw（与全量通道同 stance）。
+ *   · Response landing guard: k !== projectSessionsTarget (a newer target exists) → drop.
+ *   · Force chain (2026-11-19): a post-mutation force refresh that hits an in-flight
+ *     request no longer merges into it — it waits for the landing, then re-fetches once
+ *     (the in-flight payload lacks the change that just completed).
+ * Failure keep-last, never throws (same stance as the full channel).
  */
 const projectSessionsInFlight = new Map<string, Promise<void>>();
+const projectSessionsForceChain = new Map<string, Promise<void>>();
 const projectSessionsEtagByKey = new Map<string, string>();
-export async function refreshProjectSessions(key: string, opts: { refresh?: boolean } = {}): Promise<void> {
-  const k = String(key ?? "");
-  if (!k) return;
-  projectSessionsTarget = k; // 最新目标；旧 key 的在途响应据此作废
-  const existing = projectSessionsInFlight.get(k);
-  if (existing) return existing; // 仅同 key 合流（异 key 不吞，各自发出）
-  const refresh = opts?.refresh === true;
+/** Single request (the actual issuer after merge/force-chain convergence). url/etag are
+ *  taken at issue time — the force-chain follow-up therefore reads the latest etag/resident
+ *  key left by the previous landing, which is the correct semantics. */
+function fetchProjectSessionsOnce(k: string, refresh: boolean): Promise<void> {
   const url = apiUrl("/api/extensions/session-manager/sessions?fmt=2&project=" + encodeURIComponent(k)
     + (refresh ? "&refresh=1" : ""));
   // If-None-Match 仅当驻留行就是本 key（行与 etag 同源；跨 key 304 死锁根因）
@@ -896,6 +897,37 @@ export async function refreshProjectSessions(key: string, opts: { refresh?: bool
   projectSessionsInFlight.set(k, req);
   return req;
 }
+export async function refreshProjectSessions(key: string, opts: { refresh?: boolean; force?: boolean } = {}): Promise<void> {
+  const k = String(key ?? "");
+  if (!k) return;
+  projectSessionsTarget = k; // latest target; in-flight responses for older keys are dropped by this
+  const existing = projectSessionsInFlight.get(k);
+  if (existing) {
+    if (!opts?.force) return existing; // same-key merge only (different keys never swallow)
+    // Force must land (same semantics as the full channel's sessionsForceChain): the
+    // in-flight request was issued before the mutation, so its payload lacks the change
+    // that just completed — merging directly means a late stale response writes the
+    // deleted/archived row back into the scoped bucket (the dock's render source). The
+    // belt hides it afterwards, but the pending marker is pinned until prune sees the
+    // row gone from the scoped bucket too; the 30s TTL fuse then clears the marker and
+    // misreports "still processing" — and before the first full landing (belt unarmed)
+    // the row flashes straight back in. Wait for the in-flight landing, then issue one
+    // follow-up fetch; concurrent forces share the same follow-up.
+    let chain = projectSessionsForceChain.get(k);
+    if (!chain) {
+      const wantRefresh = opts.refresh === true;
+      chain = existing
+        .catch(() => { /* keep last */ })
+        .then(() => fetchProjectSessionsOnce(k, wantRefresh))
+        .finally(() => {
+          if (projectSessionsForceChain.get(k) === chain) projectSessionsForceChain.delete(k);
+        });
+      projectSessionsForceChain.set(k, chain);
+    }
+    return chain;
+  }
+  return fetchProjectSessionsOnce(k, opts?.refresh === true);
+}
 
 /**
  * [通道拆分] 列表写操作（归档/移除/删除/恢复/移动）后的统一对齐：全量通道（面板/看板/
@@ -910,7 +942,9 @@ export async function refreshProjectSessions(key: string, opts: { refresh?: bool
 export function refreshListChannels(opts: { force?: boolean; refresh?: boolean } = { force: true }) {
   void refreshSessions(opts);
   const key = projectSessionsTarget;
-  if (key) void refreshProjectSessions(key, { refresh: opts.refresh });
+  // force passes through to the scoped channel: the post-mutation scoped alignment must
+  // land post-mutation data (see the force-chain comment above)
+  if (key) void refreshProjectSessions(key, { refresh: opts.refresh, force: opts.force });
   notifySessionsChanged();
 }
 

@@ -19,7 +19,7 @@ import { SIc } from "../helpers";
 // 一次后浏览器模块缓存，后续零延迟）。buildLivePiRowMenuItems/openRowMenu/showMoveDialog
 // 均从已加载模块调用。
 const menuChunk = () => Promise.all([import("../row-menu"), import("../move-dialog")]);
-import { markPendingRemoval, clearPendingRemoval, isPendingRemoval, subscribePendingRemovals, applySessionNameLocal } from "../store";
+import { markPendingRemoval, clearPendingRemoval, isPendingRemoval, subscribePendingRemovals, applySessionNameLocal, deleteLiveSession } from "../store";
 
 export interface SessionTreeItemProps {
   node: SessionTreeNode;
@@ -180,19 +180,20 @@ function SessionItem({
     setDeleting(true);
     // 行移除进行中置灰（与 All Sessions 面板同源 pendingRemovals：后台刷新慢，让用户知道在动）
     markPendingRemoval(session.id, "live");
-    try {
-      const res = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(session.id)}`), { method: "DELETE" });
-      if (!res.ok) {
-        // rollback immediately on failure (optimistically hidden rows reappear; dock list filtering is driven by pendingRemovals)
-        clearPendingRemoval(session.id);
-        setDeleting(false);
-        return;
-      }
-      onDeleted?.(session.id);
-    } catch {
+    // Store channel (2026-11-19): deleteLiveSession registers a pendingOp (the TTL fuse
+    // re-arms while a slow delete / large-family cascade runs - no mid-op flash-in) and
+    // runs the force refreshListChannels on success. This site used to fetch DELETE
+    // directly: a delete slower than the 30s fuse cleared the marker mid-op, the row
+    // flashed back in with a misleading "still processing" toast, then vanished again
+    // when DELETE completed (delete -> flash-in -> flash-out).
+    const e = await deleteLiveSession(session.id);
+    if (e) {
+      // rollback immediately on failure (optimistically hidden rows reappear; dock list filtering is driven by pendingRemovals)
       clearPendingRemoval(session.id);
       setDeleting(false);
+      return;
     }
+    onDeleted?.(session.id);
   }, [session.id, session.transient, onDeleted]);
 
   const handleDeleteClick = useCallback((e: { shiftKey: boolean; stopPropagation: () => void }) => {
