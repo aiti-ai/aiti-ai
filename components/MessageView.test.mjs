@@ -58,9 +58,13 @@ test("message actions keep labels and wrap onto new lines instead of overflowing
     assert.ok(userHtml.includes(escapeHtml(title)), `expected title ${title}`);
   }
   const assistantHtml = renderMessage({ role: "assistant", content: [{ type: "text", text: "Hey" }] });
-  // user bottom row + its edit/fork sub-row + assistant top/bottom action rows all wrap
+  // user bottom row + its single action group + assistant top/bottom action rows all wrap
   const wraps = (userHtml.match(/flex-wrap:wrap/g) ?? []).length + (assistantHtml.match(/flex-wrap:wrap/g) ?? []).length;
   assert.ok(wraps >= 4, `expected >=4 wrapped action rows, got ${wraps}`);
+  // Narrow phones go icon-only (<=480px narrow-mobile breakpoint) so the
+  // toolbar fits one line; wrap is only the fallback.
+  const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
+  assert.match(css, /@media \(max-width: 480px\) \{\s*\.message-action-label \{\s*display: none;\s*\}\s*\}/);
 });
 
 test("assistantMessageActions mounts at both placements and routes items by meta.placement", async () => {
