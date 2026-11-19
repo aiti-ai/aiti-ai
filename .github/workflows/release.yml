@@ -101,9 +101,18 @@ jobs:
           # 脚手架全部放 /tmp：.build-root 的 package.json 含 CI 绝对路径 file: 依赖，
           # 若落在 extensions/ 下会被打进主包、且用户机 reconcile 会把它当扩展读 deps → ENOENT
           BUILD=/tmp/aiti-build-root
-          mkdir -p "$BUILD"
+          PKGS=/tmp/aiti-local-pkgs
+          mkdir -p "$BUILD" "$PKGS"
+          # secret-* cores are vendored from this same tree (same release train as the
+          # aiti-secret-vault extension — their official publish may trail this workflow;
+          # same mechanism as publish-npm.yml). ext-shared/bridge/devtools-core stay on
+          # registry resolution.
+          (cd packages/secret-mask-core && npm pack --pack-destination "$PKGS")
+          (cd packages/secret-vault-core && npm pack --pack-destination "$PKGS")
           node scripts/collect-extension-deps.mjs --out "$BUILD/package.json" \
-            --file "@aiti-ti/ddns=$PWD/vendor/npm/aiti-ti-ddns-0.2.0.tgz"
+            --file "@aiti-ti/ddns=$PWD/vendor/npm/aiti-ti-ddns-0.2.0.tgz" \
+            --file "@aiti-ai/secret-mask-core=$(ls "$PKGS"/aiti-ai-secret-mask-core-*.tgz | head -1)" \
+            --file "@aiti-ai/secret-vault-core=$(ls "$PKGS"/aiti-ai-secret-vault-core-*.tgz | head -1)"
           # @aiti-ai/ext-shared / aiti-bridge / aiti-devtools-core / justget / service-tunnels
           # 走 registry 解析（NPM Publish 发布的版本；service-tunnels@0.3.76 exports 含
           # ./i18n ./ui-shared，子路径 import 正常——旧私仓 0.3.9 的问题不再适用）
