@@ -691,12 +691,15 @@ export default function register(ctx) {
     style: { display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 8px", height: 22,
       border: "none", background: "none", borderRadius: 5, color: "var(--text-dim, #8b909b)", cursor: "pointer", fontSize: 11 },
   }, icon("share", 12), label);
-  ctx.registerItems("userMessageActions", [{ id: "aiti-msg-share-user", render: shareAction(shareT("share.action")) }]);
+  // meta.order: 1 pins Share right after the host's built-in Copy button,
+  // ahead of unordered slot items (git-trace badge, quote, bookmark — manifest
+  // order would otherwise put aiti-git-trace first).
+  ctx.registerItems("userMessageActions", [{ id: "aiti-msg-share-user", render: shareAction(shareT("share.action")), meta: { order: 1 } }]);
   // Assistant messages mount the same share button at both ends (meta.placement):
   // long replies put one end off-screen, so top (meta row) + bottom carry identical buttons.
   ctx.registerItems("assistantMessageActions", [
-    { id: "aiti-msg-share-assistant", render: shareAction(shareT("share.action")) },
-    { id: "aiti-msg-share-assistant-top", render: shareAction(shareT("share.action")), meta: { placement: "top" } },
+    { id: "aiti-msg-share-assistant", render: shareAction(shareT("share.action")), meta: { order: 1 } },
+    { id: "aiti-msg-share-assistant-top", render: shareAction(shareT("share.action")), meta: { placement: "top", order: 1 } },
   ]);
   // Session row share lives in session-manager's ⋯ more-menu, not as a bare row
   // button (too many row actions). Registered via that extension's topic contract.
