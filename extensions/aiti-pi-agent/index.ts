@@ -111,6 +111,8 @@ export default {
           type: string;
           label: string;
           order?: number;
+          /** Claim-resolution priority for a shared agentKey (higher wins; native driver beats generic ACP adapters). */
+          priority?: number;
           agentKey?: string;
           /** Opt-in: host the agent in a detachable wrapper (survives pi-web restarts). */
           detachable?: boolean;
@@ -150,19 +152,40 @@ export default {
           type: "spawn",
           label: spec.label,
           order: spec.order,
+          // Native pi driver beats generic adapters that claim agentKey "pi" (the
+          // `pi-acp` bridge member in aiti-acp-agent): composite-id session restore
+          // (openExternalSession candidate ordering) must resolve to THIS provider,
+          // not to a parallel-session ACP identity.
+          priority: 10,
           agentKey: spec.agentKey,
           // The core may host this backend's process in a detachable wrapper; the
           // handle adopts the live process on reattach (see PiSpawnHandle.attach).
           detachable: true,
           maxCapabilities: capabilitiesFor(spec),
-          createSession: (options) =>
+          createSession: (options) => {
+            // Resume-without-cwd recovery (composite-id restore after a host restart):
+            // the caller only knows the session id — the workspace lives in the spawn
+            // index (recorded at spawn time). Without it the child spawns in the host
+            // process's cwd, misses the project-scoped session file (pi buckets
+            // sessions per project dir) and creates a blank session under the same id
+            // (empty chat on ?session=<agentKey>:<uuid> URLs).
+            if (!options.cwd && options.sessionId) {
+              const recorded = loadSpawnIndex().sessions[options.sessionId]?.cwd;
+              if (recorded) options = { ...options, cwd: recorded };
+            }
             // options.attached = the core reattached to a wrapper-hosted agent after
             // a restart; options.agentStarter = the injected process strategy
             // (Direct today, detachable when enabled). Both are optional so an
             // older host keeps working unchanged.
-            options.attached
-              ? trackSpawnSession(PiSpawnHandle.attach(options.attached, spec))
-              : trackSpawnSession(PiSpawnHandle.start(options, spec)),
+            return options.attached
+              ? trackSpawnSession(PiSpawnHandle.attach(
+                  // options.cwd (wrapper registry entry, passed by the core at the top level)
+                  // is the adopted process's true workspace — keep it on the attached record.
+                  { ...options.attached, ...(options.cwd ? { cwd: options.cwd } : {}) },
+                  spec,
+                ))
+              : trackSpawnSession(PiSpawnHandle.start(options, spec));
+          },
         }),
       ];
       // P2 协议委托：launch 服务（pi 单 fork；launch.target 恒忽略为 pi）
