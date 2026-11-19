@@ -1827,8 +1827,14 @@ pre, code {
 }
 
 /* Message action rows wrap onto extra lines when narrow (MessageView sets
-   flex-wrap); .message-action-label spans stay visible at every width and
-   each button keeps its title tooltip. */
+   flex-wrap). On phones (<=480px, the narrow-mobile breakpoint) the labels
+   are hidden so the whole toolbar fits one line; every button keeps its
+   title tooltip. */
+@media (max-width: 480px) {
+  .message-action-label {
+    display: none;
+  }
+}
 
 .chat-scroll-to-bottom {
   display: inline-flex;

@@ -587,10 +587,14 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, f
           display: "flex", alignItems: "center", justifyContent: "flex-end",
           flexWrap: "wrap", gap: 6, marginTop: 3,
         }}>
+          {/* One flat action group: copy + extension actions + fork/edit share
+              a single wrap context, so lines fill greedily instead of jumping
+              a whole sub-group to its own line. Narrow phones hide the labels
+              via globals.css (icon-only), keeping the toolbar to one line. */}
           <div style={{
-            display: "flex", gap: 3,
-            opacity: hovered ? 1 : 0,
-            pointerEvents: hovered ? "auto" : "none",
+            display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6,
+            opacity: (hovered || forking || canCancelEdit) ? 1 : 0,
+            pointerEvents: (hovered || forking || canCancelEdit) ? "auto" : "none",
             transition: "opacity 0.12s",
           }}>
             <button
@@ -622,21 +626,15 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, f
               )}
                <span className="message-action-label">{copied ? t("i18n.copied") : t("i18n.copy")}</span>
             </button>
-          </div>
-          {(canFork || canNavigate || canEditFromHere || canEdit || canCancelEdit) && (
-            <div style={{
-              display: "flex", flexWrap: "wrap", gap: 6,
-              opacity: (hovered || forking || canCancelEdit) ? 1 : 0,
-              pointerEvents: (hovered || forking || canCancelEdit) ? "auto" : "none",
-              transition: "opacity 0.12s",
-            }}>
-              {entryId && (
-                <ExtSlot
-                  name="userMessageActions"
-                  currentSession={null}
-                  extra={{ entryId }}
-                />
-              )}
+            {(canFork || canNavigate || canEditFromHere || canEdit || canCancelEdit) && (
+              <>
+                {entryId && (
+                  <ExtSlot
+                    name="userMessageActions"
+                    currentSession={null}
+                    extra={{ entryId }}
+                  />
+                )}
               {canEditFromHere && (
                 <button
                   onClick={() => {
@@ -748,8 +746,9 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, f
                    <span className="message-action-label">{forking ? t("i18n.creating") : t("i18n.newSession")}</span>
                 </button>
               )}
-            </div>
-          )}
+              </>
+            )}
+          </div>
           {time && <span style={{ fontSize: 10, color: "var(--text-dim)" }}>{time}</span>}
         </div>
       )}
