@@ -19,6 +19,11 @@
  *   PI_AGENT_STARTER_RUNNER=...  force systemd-run | plain (verification matrix)
  *   provider.detachable !== true / createSession({ detach: false })
  *   default: wrapper when the factory produced one
+ *
+ * Idle lifecycle: PI_WEB_IDLE_TIMEOUT_MS is shared with pi-web's in-process
+ * session GC. A wrapper-hosted agent with no attached client and no output for
+ * that long is reaped by the wrapper itself (see wrapper-source.ts); while a
+ * client is attached, pi-web owns the lifecycle (handle-store idle governor).
  */
 
 import { existsSync } from "node:fs";
@@ -68,6 +73,22 @@ export function detachDisabledByEnv(): boolean {
 }
 
 /**
+ * Idle reap timeout handed to wrappers — the same env var and contract as the
+ * in-process session GC (rpc-manager.resolveSessionIdleTimeoutMs, kept local
+ * to avoid the import cycle): unset/blank → 10 minutes, "0" → disabled,
+ * otherwise the value clamped to Node's timer range; invalid falls back to the
+ * default with a warning.
+ */
+function resolveWrapperIdleTimeoutMs(rawValue: string | undefined = process.env.PI_WEB_IDLE_TIMEOUT_MS): number {
+  if (rawValue !== undefined && rawValue.trim() !== "") {
+    const parsed = Number(rawValue);
+    if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 2_147_483_647) return parsed;
+    console.warn(`[agent-starter] invalid PI_WEB_IDLE_TIMEOUT_MS "${rawValue}", falling back to 10 minutes`);
+  }
+  return 10 * 60 * 1000;
+}
+
+/**
  * Build (once per process) the strategy set. Runner probing is async (a single
  * `systemctl --user is-system-running` call), so this returns a promise and the
  * session layer awaits it only when a session actually needs a starter.
@@ -86,7 +107,7 @@ async function buildStarters(): Promise<AgentStarters> {
   }
   try {
     const probe = await probeRunner();
-    const wrapper = new LinuxMacWrapperStarter({ runner: probe.kind, runnerEnv: probe.env });
+    const wrapper = new LinuxMacWrapperStarter({ runner: probe.kind, runnerEnv: probe.env, idleTimeoutMs: resolveWrapperIdleTimeoutMs() });
     if (!globalThis.__agentStartersPruned) {
       globalThis.__agentStartersPruned = true;
       // Startup sweep: entries whose wrapper died (crash, reboot) are noise in
