@@ -178,7 +178,9 @@ module.exports = { reconcileBundledExtensions };
 
 // CLI 直跑（bin/pi-web.js 内部使用；亦支持 node bundled-extensions-reconcile.js 手动触发）
 if (require.main === module) {
-  const pkgDir = path.resolve(__dirname, "..");
+  // Manual runs (container entrypoint, ops) may point at a layout where the app
+  // and the bundled extensions/ are sibling dirs — honor the same env the host uses.
+  const pkgDir = path.resolve(N(process.env.PI_WEB_PKG_DIR) || path.join(__dirname, ".."));
   const t0 = Date.now();
   reconcileBundledExtensions(pkgDir)
     .then((res) => {
