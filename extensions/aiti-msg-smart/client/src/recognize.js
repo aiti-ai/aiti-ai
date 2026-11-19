@@ -11,8 +11,43 @@
  */
 
 // ── 通用：截断 ─────────────────────────────────────────────
+// Bracket pairs whose content must never be torn apart by question splitting
+// (notes containing ";" or "?", code like a?b:c) or by label truncation.
+// Straight double quotes join the set; single quotes stay out (apostrophes in
+// "don't"/"it's" would mispair and mask ordinary text).
+const BRACKET_PAIRS = { "（": "）", "(": ")", "【": "】", "[": "]", "「": "」", "『": "』", "《": "》", "“": "”", "‘": "’", "\"": "\"", "`": "`" };
+
+/** Mask of the chars inside *matched* bracket/quote pairs. Unclosed openers stay plain
+ *  text on purpose: streaming tails still reach sentence boundaries. */
+function protectedMask(text) {
+  const mask = new Uint8Array(text.length);
+  const stack = [];
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    const top = stack[stack.length - 1];
+    if (top !== undefined && ch === BRACKET_PAIRS[text[top]]) {
+      for (let k = top; k <= i; k++) mask[k] = 1;
+      stack.pop();
+      continue;
+    }
+    if (BRACKET_PAIRS[ch]) stack.push(i);
+  }
+  return mask;
+}
+
+/** Truncation that keeps brackets/quotes balanced: a cut inside a pair closes it
+ *  first, so labels never end with a dangling opener.
+ */
 function truncate(s, n) {
-  return s.length > n ? s.slice(0, n).trimEnd() + "…" : s;
+  if (s.length <= n) return s;
+  const cut = s.slice(0, n).trimEnd();
+  const open = [];
+  for (const ch of cut) {
+    if (open.length && ch === BRACKET_PAIRS[open[open.length - 1]]) open.pop();
+    else if (BRACKET_PAIRS[ch]) open.push(ch);
+  }
+  if (!open.length) return cut + "…";
+  return cut + "…" + open.reverse().map((o) => BRACKET_PAIRS[o]).join("");
 }
 
 /** 按 / 分段编码并保留分隔符（/api/files 路由按段解析，整体 encodeURIComponent 会把 / 变 %2F）。 */
@@ -62,23 +97,92 @@ export function extractUrls(text) {
 // ──────────────────────────────────────────────────────────────
 
 // ── question 识别（从剥离的 quote-reply 原样搬入）──┐
-export function splitQuestions(text) {
-  const t = text.trim();
-  if (!t) return [];
-  // Sentence-final ？/? always splits. ASCII ";" is a separator only inside CJK
-  // text — English uses it mid-sentence ("Shall I update the docs; or wait?"), and
-  // splitting there would strand the first half of the choice.
-  const out = [];
-  for (const chunk of t.split(/(?<=[？?])/u)) {
-    const c = chunk.trim();
-    if (!c) continue;
-    const sep = /\p{Script=Han}/u.test(c) ? /[；;]/u : /；/u;
-    for (const s of c.split(sep)) {
-      const v = s.trim();
-      if (v) out.push(v);
-    }
+// Yes/no question signals shared by the splitter (does this sentence deserve its own
+// row?) and detectOptions (does this segment get option buttons?).
+const EN_INVERSION = /^[\s"'“”‘’「『]*\s*(?:should|shall|can|could|may|would|will|do|does|did|is|are|was|were|have|has)\s+(?:i|we|you|he|she|it|they|this|that|these|those|there)\b/iu;
+const EN_OFFER_SIGNAL = /\blet\s+me\s+know\s+(?:if|whether)\s+you(?:'d|\s+would)?\s+(?:like|want|need)\s+me\s+to\b/iu;
+const EN_OFFER_ACTION = /\blet\s+me\s+know\s+(?:if|whether)\s+you(?:'d|\s+would)?\s+(?:like|want|need)\s+me\s+to\s+(.+)$/iu;
+// Sentence punctuation may be followed by closing quotes/brackets ("…?" / 「…？」).
+const TAIL_CLOSERS = "[”\"’」』）)\\]]*";
+const Q_END = new RegExp(`[？?]${TAIL_CLOSERS}\\s*$`, "u");
+const ZH_YESNO_END = new RegExp(`(?:吗|吧|呢)[？?。！]?${TAIL_CLOSERS}\\s*$`, "u");
+// What may follow a soft boundary (ellipsis/dash/...): blank, CJK/fullwidth, closing
+// punct, EOF — so "v1...3" or "A——B" codes stay intact.
+const AFTER_GUARD = /[\s\u3000-\u9fff\uff00-\uffef"”’)\]】」』]/u;
+
+/** Strip one pair of *matched* wrapper quotes/brackets surrounding the whole text
+ *  ("Should I proceed?" / a quoted CJK question) so signals see the bare sentence. */
+function stripWrapperQuotes(t) {
+  const PAIRS = [["\"", "\""], ["“", "”"], ["‘", "’"], ["「", "」"]];
+  for (const [o, c] of PAIRS) {
+    if (t.length < 3 || !t.startsWith(o) || !t.endsWith(c)) continue;
+    const mask = protectedMask(t);
+    if (mask[0] && mask[t.length - 1]) return t.slice(1, t.length - 1).trim();
   }
-  return out;
+  return t;
+}
+
+/** Would this sentence produce question actions? Gates soft boundaries (。！…—)
+ *  so plain multi-sentence statements stay one compact row. */
+function looksLikeQuestion(s) {
+  const t = stripWrapperQuotes(String(s || "").trim());
+  if (!t) return false;
+  return (
+    Q_END.test(t) ||
+    ZH_YESNO_END.test(t) ||
+    /是否|要不要|能不能|可不可以|要不要我|需要我/u.test(t) ||
+    EN_INVERSION.test(t) ||
+    EN_OFFER_SIGNAL.test(t)
+  );
+}
+
+export function splitQuestions(text) {
+  const t = String(text == null ? "" : text).trim();
+  if (!t) return [];
+  // Candidate boundaries, bracket/quote-aware: nothing inside ()（）【】「」""… splits.
+  // ？? needs a blank/CJK/punct/EOF after it (protects URL queries, a?b:c); ；; only
+  // inside CJK text (English uses it mid-sentence). 。！…— and "..." are *soft*:
+  // they only cut when a question sits on either side.
+  const mask = protectedMask(t);
+  const cand = [];
+  let chunkStart = 0;
+  for (let i = 0; i < t.length; i++) {
+    if (mask[i]) continue;
+    const ch = t[i];
+    const next = t[i + 1] ?? "";
+    let cut = -1;
+    let soft = false;
+    if (ch === "。" || ch === "！") { cut = i; soft = true; }
+    else if ((ch === "？" || ch === "?") && (!next || /[\s\u3000-\u9fff\uff00-\uffef"'”’)\]]/u.test(next))) cut = i;
+    else if ((ch === "；" || ch === ";") && /\p{Script=Han}/u.test(t.slice(chunkStart, i))) cut = i;
+    else if ((ch === "…" || ch === "—") && next !== ch && (!next || AFTER_GUARD.test(next))) { cut = i; soft = true; }
+    else if (ch === "." && t.startsWith("...", i) && t[i + 3] !== "." && (!t[i + 3] || AFTER_GUARD.test(t[i + 3]))) { cut = i + 2; soft = true; }
+    if (cut < 0) continue;
+    cand.push({ cut, soft, start: chunkStart });
+    chunkStart = cut + 1;
+    if (cut > i) i = cut; // consume the rest of an ellipsis/dash run
+  }
+  // Soft boundaries only split when a question sits on either side — otherwise a long
+  // statement paragraph would explode into one row per sentence in the popover.
+  const keep = [];
+  for (let k = 0; k < cand.length; k++) {
+    const c = cand[k];
+    if (c.soft) {
+      const nextEnd = cand[k + 1] ? cand[k + 1].cut : t.length - 1;
+      const prev = t.slice(c.start, c.cut);
+      const nextSentence = t.slice(c.cut + 1, nextEnd + 1);
+      if (!looksLikeQuestion(prev) && !looksLikeQuestion(nextSentence)) continue;
+    }
+    keep.push(c.cut);
+  }
+  const out = [];
+  let start = 0;
+  for (const cut of keep) {
+    out.push(t.slice(start, cut + 1).trim());
+    start = cut + 1;
+  }
+  out.push(t.slice(start).trim());
+  return out.filter(Boolean);
 }
 
 // English lead-in frames stripped from an option ("Would you prefer tabs" → "tabs"),
@@ -93,14 +197,56 @@ function cleanOption(s) {
   for (let i = 0; i < 3; i++) {
     const before = out;
     out = out
-      .replace(/^(我要|我想我?|你想要?|你想我?|你想要?|想要?|需要|你来|你来?|用|使用|选|选择|我|你)\s*/u, "")
+      .replace(/^(我要|我想我?|你想要?|你想我?|你想要?|想要?|需要|要不要|要|你来|你来?|用|使用|选|选择|我|你)\s*/u, "")
       .replace(EN_OPTION_PREFIX, "");
     if (out === before) break;
   }
   return out
     .replace(/[吗吧呢]?$/u, "")
-    .replace(/[？?，,。.!！、;；]$/gu, "")
+    .replace(/[？?，,。.!！、;；：:]$/gu, "")
     .trim();
+}
+
+const ENUM_LEADIN = /^(?:请?选择?|选|用|采用|方案|option|choose|pick)\s*/iu;
+// One enumerated option: short name + a note in any of the bracket styles we protect.
+const BRACKETED_ITEM = /^[\w.\-\u4e00-\u9fff]+\s*(?:[（(][^（()）]*[）)]|【[^【】]*】|「[^「」]*」|《[^《》]*》)$/u;
+
+/** First top-level choice separator ("A or B" / Chinese choice words). Separators
+ *  inside brackets/quotes are skipped, so a nested "or" cannot split a pair. */
+function splitAtChoice(text) {
+  const mask = protectedMask(text);
+  for (let i = 0; i < text.length; i++) {
+    if (mask[i]) continue;
+    const m = /^(?:或者还是|还是|或者|or\b)/iu.exec(text.slice(i));
+    if (!m) continue;
+    if (/^or$/iu.test(m[0]) && /[\w\u4e00-\u9fff]/.test(text[i - 1] ?? "")) continue; // store/word
+    const a = text.slice(0, i).trim();
+    const b = text.slice(i + m[0].length).trim();
+    if (a && b) return [a, b];
+  }
+  return null;
+}
+
+/** "Pick A (note), B (note)" enumerations → one option per top-level comma item.
+ *  Requires a choice lead-in and every item to be `name(...)`, so prose stays prose. */
+function enumeratedOptions(text, maxL) {
+  const body = text.replace(/[？?]\s*$/u, "");
+  if (!ENUM_LEADIN.test(body)) return null;
+  const mask = protectedMask(body);
+  const parts = [];
+  let start = 0;
+  for (let i = 0; i < body.length; i++) {
+    if (mask[i]) continue;
+    const ch = body[i];
+    if (ch === "，" || ch === "," || ch === "、") {
+      parts.push(body.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(body.slice(start));
+  const items = parts.map((p, idx) => (idx === 0 ? p.replace(ENUM_LEADIN, "") : p).trim()).filter(Boolean);
+  if (items.length < 2 || !items.every((s) => BRACKETED_ITEM.test(s))) return null;
+  return items.map((s) => ({ label: truncate(s, maxL), value: s }));
 }
 
 /** 识别段内选项；无清晰选项返回 null（调用方退回纯引用回复）。 */
@@ -109,12 +255,12 @@ export function detectOptions(seg, labelMax = 12) {
   if (!t) return null;
   const maxL = Number.isFinite(labelMax) && labelMax >= 4 ? labelMax : 12;
 
-  // 1) 显式选择："A 还是 B" / "A 或者 B" / "A or B"（\bor\b 防 store/word 内拆）。
-  //    最长备选在前（或者还是 > 还是/或者），否则 "A 或者还是 B" 的 b 会解析成 "还是 B"。
-  const choice = t.match(/^(.+?)\s*(?:或者还是|还是|或者|\bor\b)\s*(.+?)[？?]?\s*$/iu);
+  // 1) Explicit choice: "A or B" / Chinese choice words. The separator is only
+  //    recognized at top level — a nested "or" inside parentheses must not split.
+  const choice = splitAtChoice(t);
   if (choice) {
-    const a = cleanOption(choice[1]);
-    const b = cleanOption(choice[2]);
+    const a = cleanOption(choice[0]);
+    const b = cleanOption(choice[1]);
     if (a && b && a !== b) {
       return [
         { label: truncate(a, maxL), value: a },
@@ -123,24 +269,31 @@ export function detectOptions(seg, labelMax = 12) {
     }
   }
 
+  // 1b) Option enumerations with notes ("pick A (fast), B (stable)") → one button
+  //     each, parenthetical notes kept verbatim.
+  const enumerated = enumeratedOptions(t, maxL);
+  if (enumerated) return enumerated;
+
   // 2) 是非问（中文信号 + 尾 ？）。开放问（怎么做/哪个/什么/…）不在此列 → 退回纯引用。
+  //    Signals run on `probe` (wrapper quotes stripped) so a quoted question
+  //    ("Should I proceed?" / a quoted CJK question) still gets actions and a clean label.
+  const probe = stripWrapperQuotes(t);
   //    English open-ended set adds when/whose/whom plus request verbs ("Can you explain …")
   //    so imperative/wh-questions do not degrade into Yes/No buttons.
-  const openEnded = /怎么|如何|怎样|哪个|哪些|什么|为什么|为何|谁|多少|几(个|点|时)?|\b(?:what|how|why|who|whose|whom|when|where|which)\b|\b(?:explain|describe|list|summari[sz]e|outline|show\s+me|tell\s+me|help\s+me|walk\s+me\s+through)\b/iu.test(t);
+  const openEnded = /怎么|如何|怎样|哪个|哪些|什么|为什么|为何|谁|多少|几(个|点|时)?|\b(?:what|how|why|who|whose|whom|when|where|which)\b|\b(?:explain|describe|list|summari[sz]e|outline|show\s+me|tell\s+me|help\s+me|walk\s+me\s+through)\b/iu.test(probe);
   // English subject-auxiliary inversion ("Should I proceed", "Do you want me to add tests")
   // is a yes/no question even without a trailing "?" — streaming text often drops it.
-  const enInversion = /^\s*(?:should|shall|can|could|may|would|will|do|does|did|is|are|was|were|have|has)\s+(?:i|we|you|he|she|it|they|this|that|these|those|there)\b/iu.test(t);
   // "Let me know if you'd like me to <action>" is an explicit offer — treat it as a
   // yes/no question (wins over openEnded: the wh-word sits in the offered action itself).
-  const enOffer = t.match(/\blet\s+me\s+know\s+(?:if|whether)\s+you(?:'d|\s+would)?\s+(?:like|want|need)\s+me\s+to\s+(.+)$/iu);
-  const yesNo = !!enOffer || (!openEnded && (/[？?]\s*$/u.test(t) || /(?:吗|吧|呢)[？?]?\s*$/u.test(t) || /是否|要不要|能不能|可不可以|要不要我|需要我/u.test(t) || enInversion));
+  const enOffer = probe.match(EN_OFFER_ACTION);
+  const yesNo = !!enOffer || (!openEnded && (Q_END.test(probe) || ZH_YESNO_END.test(probe) || /是否|要不要|能不能|可不可以|要不要我|需要我/u.test(probe) || EN_INVERSION.test(probe)));
   if (yesNo) {
-    const hasHan = /\p{Script=Han}/u.test(t);
+    const hasHan = /\p{Script=Han}/u.test(probe);
     if (hasHan) {
       // "要我X吗" → "好，X": a concrete action label beats a bare yes/no pair. cjk-ok
-      const action = t
+      const action = probe
         .replace(/^(要我|需要我|要不要我?|是否|能不能|可不可以|要不要|或者|还是|你能|你可以|请|麻烦)\s*/u, "")
-        .replace(/[吗吧呢啊呀]?[？?]+$/u, "")
+        .replace(/[吗吧呢啊呀]?[？?。！]+$/u, "")
         .replace(/[吗吧呢啊呀]$/u, "")
         .trim();
       if (action && action.length > 0) {
@@ -158,8 +311,8 @@ export function detectOptions(seg, labelMax = 12) {
     }
     // English: known action frame → "Yes, <action>" (the counterpart of the CJK
     // "好，X" label); generic inversions such as "Is it done?" keep plain Yes/No. cjk-ok
-    const frame = t.match(/^\s*(?:(?:should|shall)\s+(?:i|we)\s+|(?:do|would|will)\s+you\s+(?:want|like|need|prefer)\s+me\s+to\s+|(?:do|would|will)\s+you\s+(?:want|like|need|prefer)\s+to\s+|(?:can|may|could)\s+i\s+)/iu);
-    const rawAction = enOffer ? enOffer[1] : frame ? t.slice(frame[0].length) : "";
+    const frame = probe.match(/(?:^|[.!?。！？…—]\s*)(?:(?:should|shall)\s+(?:i|we)\s+|(?:do|would|will)\s+you\s+(?:want|like|need|prefer)\s+me\s+to\s+|(?:do|would|will)\s+you\s+(?:want|like|need|prefer)\s+to\s+|(?:do|would|will)\s+you\s+(?:want|like|need|prefer)\s+|(?:can|may|could)\s+i\s+)/iu);
+    const rawAction = enOffer ? enOffer[1] : frame ? probe.slice(frame.index + frame[0].length) : "";
     const enAction = rawAction.replace(/[?？!.]+\s*$/u, "").trim();
     if (enAction) {
       return [
