@@ -295,8 +295,9 @@ jobs:
           fi
 
   # Phase 2 consumer: aiti-docs sync-changelogs workflow pulls release bodies
-  # into the aiti.pw/changelogs page. Harmless 204 while that workflow is
-  # absent; guarded by continue-on-error so docs sync never blocks a release.
+  # into the aiti.pw/changelogs page. Best-effort by design: continue-on-error
+  # keeps docs sync from blocking a release, but a failing dispatch (missing or
+  # broken token) must mark this job red instead of passing silently.
   changelog-sync:
     needs: release
     runs-on: ubuntu-latest
@@ -306,7 +307,13 @@ jobs:
         env:
           AITI_DOCS_TOKEN: ${{ secrets.AITI_DOCS_TOKEN }}
         run: |
-          curl -sS -o /dev/null -w "%{http_code}\n" -X POST \
+          if [ -z "$AITI_DOCS_TOKEN" ]; then
+            echo "::warning::AITI_DOCS_TOKEN not set — skipping aiti-docs changelog sync (set it to a PAT with contents:write on ${{ github.repository_owner }}/aiti-docs)"
+            exit 0
+          fi
+          # curl -f: a non-2xx dispatch (expired/under-scoped token, renamed repo)
+          # fails the step so the job goes red — silent success hid a 401 here.
+          curl -fsS -o /dev/null -w "%{http_code}\n" -X POST \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $AITI_DOCS_TOKEN" \
             "https://api.github.com/repos/${{ github.repository_owner }}/aiti-docs/dispatches" \
