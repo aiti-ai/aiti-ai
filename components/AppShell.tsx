@@ -1906,13 +1906,20 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     const id = pendingPickNavRef.current;
     if (!id) return;
     pendingPickNavRef.current = null;
-    if (new URLSearchParams(window.location.search).get("session") === id) return;
-    // Native History API only — no router navigation. Next adopts a native write into
-    // its canonical URL (verified in-page: the write held and Next re-wrote the same
-    // value), but a router navigation started around the same time commits with the
-    // previous canonical URL and undoes it. Running after the pick's own commit means
-    // nothing else is rewriting the bar while Next adopts.
-    window.history.replaceState(null, "", `${window.location.pathname}?session=${encodeURIComponent(id)}`);
+    // Native History API only — no router navigation, so nothing is left in flight to
+    // commit an older canonical URL later. Timing is what matters: the pick's own
+    // commits (chat remount, phone drawer/panel close) keep landing for a few hundred
+    // ms, and Next rewrites the bar from its still-stale canonical URL in each of them
+    // (measured: writes inside ~400ms are reverted; a write at 600ms holds). Attempt in
+    // that window and verify with bounded follow-ups — no early write, so the address
+    // bar changes once instead of flashing.
+    const href = `?session=${encodeURIComponent(id)}`;
+    const writeIfDrifted = () => {
+      if (new URLSearchParams(window.location.search).get("session") === id) return;
+      window.history.replaceState(null, "", `${window.location.pathname}${href}`);
+    };
+    const timers = [300, 600, 900].map((delay) => window.setTimeout(writeIfDrifted, delay));
+    return () => timers.forEach((slot) => window.clearTimeout(slot));
   }, [selectedSession?.id]);
   const handleSelectSession = useCallback((session: SessionInfo, isRestore = false, entryId?: string, blockIndex?: number, options?: SelectSessionOptions) => {
     if (!isRestore) {
