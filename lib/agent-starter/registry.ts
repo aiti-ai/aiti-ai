@@ -72,13 +72,18 @@ export function logDir(): string {
   return join(starterRoot(), "logs");
 }
 
+/** Per-session survive-restart preference marker ("this session was last hosted detached"). */
+export function prefsDir(): string {
+  return join(starterRoot(), "prefs");
+}
+
 export function wrapperPath(): string {
   return join(starterRoot(), "wrapper.mjs");
 }
 
 /** Create the directory skeleton (0700: launch files carry the full agent env). */
 export function ensureStarterDirs(): void {
-  for (const dir of [starterRoot(), registryDir(), runDir(), launchDir(), logDir()]) {
+  for (const dir of [starterRoot(), registryDir(), runDir(), launchDir(), logDir(), prefsDir()]) {
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
@@ -264,5 +269,65 @@ export function entryMtime(key: string): number {
     return statSync(entryPath(key)).mtimeMs;
   } catch {
     return 0;
+  }
+}
+
+/* ── Survive-restart preference markers ──
+ *
+ * The wrapper registry only tracks LIVE wrappers: pruneDeadEntries deletes the
+ * entry as soon as the agent process exits, so "this session was last hosted
+ * detached" would be lost exactly when it matters (the session is cold and the
+ * next open must decide how to host it). A small per-session marker file keeps
+ * that fact:
+ *
+ *   <root>/prefs/<sessionId>.json   { providerType, agentKey, cwd?, at }
+ *
+ * Written on a successful detached spawn, kept when the wrapper dies, cleared
+ * when the user converts the session back to in-process hosting. Shared by dev
+ * + prod like the rest of the starter root. */
+export type DetachedPreference = {
+  providerType?: string;
+  agentKey?: string;
+  cwd?: string;
+  /** Epoch ms when the marker was (re)written. */
+  at: number;
+};
+
+function prefPath(sessionId: string): string {
+  return join(prefsDir(), `${sanitize(sessionId, 80)}.json`);
+}
+
+export function setDetachedPreference(sessionId: string, meta: Partial<DetachedPreference> = {}): void {
+  ensureStarterDirs();
+  const entry: DetachedPreference = { ...meta, at: Date.now() };
+  const target = prefPath(sessionId);
+  const tmp = `${target}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(entry, null, 2), { mode: 0o600 });
+  renameSync(tmp, target);
+}
+
+export function getDetachedPreference(sessionId: string): DetachedPreference | undefined {
+  try {
+    const raw = JSON.parse(readFileSync(prefPath(sessionId), "utf8")) as DetachedPreference;
+    return raw && typeof raw.at === "number" ? raw : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function clearDetachedPreference(sessionId: string): void {
+  try {
+    unlinkSync(prefPath(sessionId));
+  } catch {
+    /* already gone — clearing is idempotent */
+  }
+}
+
+/** All session ids that currently carry a survive-restart marker. */
+export function listDetachedPreferenceIds(): Set<string> {
+  try {
+    return new Set(readdirSync(prefsDir()).filter((f) => f.endsWith(".json")).map((f) => f.slice(0, -".json".length)));
+  } catch {
+    return new Set();
   }
 }

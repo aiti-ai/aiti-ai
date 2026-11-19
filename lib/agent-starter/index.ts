@@ -43,11 +43,17 @@ export {
   runDir,
   logDir,
   launchDir,
+  prefsDir,
   sessionKey,
   listEntries,
   findEntryBySession,
   pruneDeadEntries,
+  setDetachedPreference,
+  getDetachedPreference,
+  clearDetachedPreference,
+  listDetachedPreferenceIds,
   type SessionEntry,
+  type DetachedPreference,
   type RunnerKind,
 } from "./registry.ts";
 

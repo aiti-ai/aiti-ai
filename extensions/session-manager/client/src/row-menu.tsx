@@ -93,18 +93,44 @@ export async function reopenDetached(sessionId: string): Promise<void> {
       | { ok?: boolean; already?: boolean; detached?: boolean; runner?: string; error?: string; reason?: string }
       | null;
     // 404 = an older host without the endpoint: say so instead of a raw status.
-    if (r.status === 404 && !d?.error) throw new Error(t("sm.detachUnsupported") ?? "此 pi-web 版本未提供 detach（需升级/重新构建宿主）");
+    if (r.status === 404 && !d?.error) throw new Error(t("sm.detachUnsupported") ?? "此 pi-web 版本未提供跨重启托管（需升级/重新构建宿主）");
     if (!r.ok) throw new Error(d?.reason || d?.error || `HTTP ${r.status}`);
     if (d?.already) {
-      showToast(t("sm.detachAlready") ?? "该会话已在运行：detach 只能在启动时定型，请先结束它再重试。");
+      showToast(t("sm.detachAlready") ?? "该会话已在运行：启动方式只能在启动时定型，请先结束它再重试。");
       return;
     }
     showToast(
-      `${t("sm.detachDone") ?? "已 Detach 启动（agent 将跨重启存活）"}${d?.runner ? ` · ${d.runner}` : ""}`,
+      `${t("sm.detachDone") ?? "已启动（agent 将跨重启存活）"}${d?.runner ? ` · ${d.runner}` : ""}`,
     );
     void refreshSessions(true);
   } catch (e) {
-    showToast(`${t("sm.detachFailed") ?? "Detach 启动失败"}：${e instanceof Error ? e.message : String(e)}`);
+    showToast(`${t("sm.detachFailed") ?? "跨重启启动失败"}：${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+/**
+ * "Start in process" → convert a previously detached (survive-restart) session
+ * back to the plain in-process hosting: clears the preference marker and starts
+ * the local RPC child right away. Pi sessions only; shown in the row menu only
+ * on cold sessions that carry the marker.
+ */
+export async function startInProcess(sessionId: string): Promise<void> {
+  try {
+    const r = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}/attach`), { method: "POST" });
+    const d = await r.json().catch(() => null) as
+      | { ok?: boolean; already?: boolean; started?: boolean; error?: string }
+      | null;
+    // 404 = an older host without the endpoint: say so instead of a raw status.
+    if (r.status === 404 && !d?.error) throw new Error(t("sm.inprocessUnsupported") ?? "此 pi-web 版本未提供进程内启动（需升级/重新构建宿主）");
+    if (!r.ok) throw new Error(d?.error || `HTTP ${r.status}`);
+    if (d?.already) {
+      showToast(t("sm.inprocessAlready") ?? "该会话已在运行。");
+      return;
+    }
+    showToast(t("sm.inprocessDone") ?? "已以进程内方式启动（常规模式，不再跨重启）");
+    void refreshSessions(true);
+  } catch (e) {
+    showToast(`${t("sm.inprocessFailed") ?? "进程内启动失败"}：${e instanceof Error ? e.message : String(e)}`);
   }
 }
 
@@ -196,12 +222,23 @@ export function buildLivePiRowMenuItems(opts: {
       },
     });
     items.push({ key: "move", icon: <SIc name="folder" size={13} />, label: t("sm.move") ?? "移动到…", onClick: onMove });
-    // "Start detached": reopen this cold session hosted in a wrapper so its next
+    // "Start in process": only on cold pi sessions that were last hosted
+    // detached (detachPref row flag from the core) — converts back to plain
+    // in-process hosting and clears the survive-restart marker.
+    if ((sess as { detachPref?: boolean } | null)?.detachPref) {
+      items.push({
+        key: "inprocess-start",
+        icon: <SIc name="cpu" size={13} />,
+        label: t("sm.inprocessStart") ?? "进程内启动",
+        onClick: () => { void startInProcess(sess.id); },
+      });
+    }
+    // "Start · survive restarts": reopen this cold session hosted in a wrapper so its next
     // turn survives a pi-web restart. Hidden while running (mode is fixed at spawn).
     items.push({
       key: "detach-start",
       icon: <SIc name="play" size={13} />,
-      label: t("sm.detachStart") ?? "Detach 启动",
+      label: t("sm.detachStart") ?? "跨重启启动",
       onClick: () => { void reopenDetached(sess.id); },
     });
   }
