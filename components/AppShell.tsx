@@ -1907,8 +1907,13 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     if (!id) return;
     pendingPickNavRef.current = null;
     if (new URLSearchParams(window.location.search).get("session") === id) return;
-    router.replace(`?session=${encodeURIComponent(id)}`, { scroll: false });
-  }, [selectedSession?.id, router]);
+    // Native History API only — no router navigation. Next adopts a native write into
+    // its canonical URL (verified in-page: the write held and Next re-wrote the same
+    // value), but a router navigation started around the same time commits with the
+    // previous canonical URL and undoes it. Running after the pick's own commit means
+    // nothing else is rewriting the bar while Next adopts.
+    window.history.replaceState(null, "", `${window.location.pathname}?session=${encodeURIComponent(id)}`);
+  }, [selectedSession?.id]);
   const handleSelectSession = useCallback((session: SessionInfo, isRestore = false, entryId?: string, blockIndex?: number, options?: SelectSessionOptions) => {
     if (!isRestore) {
       userPickedSessionRef.current = true;
