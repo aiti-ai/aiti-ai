@@ -73,6 +73,11 @@ const NO_PATH_PICKER_ITEMS: ExtUiItemRegistered[] = [];
  * replace gains nothing). Query-string comparison is kept: real changes such as
  * "clear ?session= and go home" still replace as usual.
  */
+/** Trailing-slash-insensitive comparison for filesystem paths (cwd equality). */
+function normPath(p: string): string {
+  return p.replace(/[\\/]+$/, "");
+}
+
 function replaceLocationIfChanged(
   router: ReturnType<typeof useRouter>,
   href: string,
@@ -1775,6 +1780,13 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
       });
   }, [router, sessionCatalog]);
 
+  /** The last user pick: its project key and cwd. The sidebar's cwd notification for
+   *  that pick must not be read as a user project switch (that path tears the just
+   *  selected session down and clears ?session=). One-shot: the first notification
+   *  consumes it, and it only suppresses when it actually matches the pick — a later
+   *  genuine switch arrives with another project/cwd and runs normally. */
+  const pickedSessionSyncRef = useRef<{ project: string; cwd: string | null } | null>(null);
+
   const handleCwdChange = useCallback((
     cwd: string | null,
     projectRoot?: string | null,
@@ -1803,6 +1815,17 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     if (suppressCwdBumpRef.current) {
       suppressCwdBumpRef.current = false;
       return;
+    }
+    // The cwd notification that follows a user session pick belongs to that pick:
+    // the selection and the ?session= URL are already authoritative, so never run
+    // the cross-project teardown below (it sets selectedSession to null and clears
+    // the query). Judging this from `selectedSession` instead is a stale-closure
+    // race: the notification can arrive with the pre-pick render's value.
+    const picked = pickedSessionSyncRef.current;
+    if (picked !== null) {
+      pickedSessionSyncRef.current = null;
+      const sameCwd = Boolean(picked.cwd) && normPath(picked.cwd as string) === normPath(cwd);
+      if (newProject === picked.project || sameCwd) return;
     }
     // The server may hydrate a normalized key after a custom cwd is already
     // active. Updating identity for the exact same cwd is not a user switch.
@@ -1887,7 +1910,11 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   // snapped back to the URL session" while the sessions list was still loading).
   const userPickedSessionRef = useRef(false);
   const handleSelectSession = useCallback((session: SessionInfo, isRestore = false, entryId?: string, blockIndex?: number, options?: SelectSessionOptions) => {
-    if (!isRestore) userPickedSessionRef.current = true;
+    if (!isRestore) {
+      userPickedSessionRef.current = true;
+      // Armed BEFORE the sidebar cwd-sync effect can fire (same tick as the pick).
+      pickedSessionSyncRef.current = { project: workspaceKeyOf(session), cwd: session.cwd ?? null };
+    }
     setSearchTarget(entryId ? { sessionId: session.id, entryId, blockIndex } : null);
     // Advance the project identity to the selected session's project BEFORE the
     // sidebar cwd-sync effect fires. Otherwise handleCwdChange sees a project
