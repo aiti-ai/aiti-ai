@@ -98,7 +98,12 @@ globalThis.fetch = async (url, init = {}) => {
     const project = new URLSearchParams(search).get("project");
     const live = project ? SERVER.live.filter((r) => r.projectKey === project) : SERVER.live;
     const archived = project ? SERVER.archived.filter((r) => r.projectKey === project) : SERVER.archived;
-    return json({ sessions: live, archived });
+    // Payload is snapshotted at request time (pre-mutation state); holdScoped lets a test
+    // delay the DELIVERY of that stale snapshot until after the mutation completed —
+    // reproducing "stale in-flight response lands after the delete".
+    const payload = { sessions: live, archived };
+    if (holdScoped) await holdScoped;
+    return json(payload);
   }
   if (method === "DELETE" && u.includes("/api/sessions/")) {
     const id = decodeURIComponent(u.split("/api/sessions/")[1]);
@@ -134,6 +139,8 @@ function movedBack(id) {
   return { ...src, archived: 0 };
 }
 const movedStore = new Map();
+/** Test gate: when set, GET /sessions responses are delayed (payload stays pre-mutation). */
+let holdScoped = null;
 
 const rowOf = (id) => ({ id, cwd: "/wa", projectKey: PROJECT, modified: "2026-09-22T00:00:00Z", messageCount: 1 });
 
@@ -218,4 +225,37 @@ test("dock 已挂载：恢复把行放回 scoped 列表（反向残留）", asyn
   await settle();
   assert.ok(calls.some((c) => c.url.includes("project=")), "恢复也要刷 scoped");
   assert.ok(store.sessions.some((x) => x.id === "r1"), "全量 live 桶回到该行了");
+});
+
+test("scoped 在途旧请求不吞 force 对齐：删除后补拉一次，ghost 离开 scoped 桶", async () => {
+  SERVER.live = [rowOf("g1")];
+  SERVER.archived = [];
+  await refreshSessions({ force: true });
+  await refreshProjectSessions(PROJECT);
+  await settle();
+  assert.deepEqual(store.projectSessions.map((r) => r.id), ["g1"], "前置：行在 scoped 桶");
+  markPendingRemoval("g1", "live"); // same as the real UI: the row delete marks optimistic hiding first
+
+  calls = [];
+  // Step 1: a scoped request already in flight before the mutation (payload snapshotted pre-mutation, held back)
+  let release;
+  holdScoped = new Promise((r) => { release = r; });
+  const stale = refreshProjectSessions(PROJECT);
+  for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0)); // ensure the stale fetch was issued (held)
+  assert.ok(calls.some((c) => c.url.includes("project=")), "前置：stale scoped 请求已发出");
+  // Step 2: the delete completes while the stale request is still in flight (store channel: DELETE + force alignment)
+  const del = deleteLiveSession("g1");
+  await settle(); // DELETE lands; the force alignment hits the held in-flight stale request
+  release();      // release the stale response (lands late, writes the ghost back)
+  await stale;
+  await del;
+  await settle(); // the force-chain follow-up lands
+  holdScoped = null;
+
+  const scopedCalls = calls.filter((c) => c.url.includes("project="));
+  assert.ok(scopedCalls.length >= 2,
+    `删除的 force 对齐不得合流进写前在途请求（须补拉一次），实际 scoped 请求数=${scopedCalls.length}`);
+  assert.deepEqual(store.projectSessions.map((x) => x.id), [], "补拉落地后 ghost 离开 scoped 桶（dock 渲染源干净）");
+  assert.ok(!store.sessions.some((x) => x.id === "g1"), "全量 live 桶无该行");
+  assert.equal(isPendingRemoval("g1"), false, "pending 标记随两桶收敛清干净（TTL 熔断不再误报）");
 });
