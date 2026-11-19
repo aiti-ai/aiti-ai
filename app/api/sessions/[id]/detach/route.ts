@@ -7,6 +7,7 @@ import {
   findProvidersForAgent,
   resolveAnySession,
 } from "@/lib/session";
+import { setDetachedPreference } from "@/lib/agent-starter/registry";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -72,6 +73,11 @@ export async function POST(
       ...(header?.cwd ? { cwd: header.cwd } : {}),
       detach: true,
     });
+    // Remember the hosting choice so the session stays detached across its own
+    // cold cycles: when this wrapper exits, the next open re-hosts detached
+    // instead of silently downgrading to a local child (cleared by the
+    // in-process start endpoint when the user converts it back).
+    setDetachedPreference(sessionId, { providerType: provider.type, agentKey, ...(header?.cwd ? { cwd: header.cwd } : {}) });
     return NextResponse.json({
       ok: true,
       already: false,

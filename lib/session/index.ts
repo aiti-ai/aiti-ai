@@ -75,7 +75,7 @@ import type { SessionCapabilities, SessionHandle } from "./types.ts";
 import { getHandle as lookupHandle, putHandle, putHandleAt, listAllHandles } from "./handle-store.ts";
 import { HandleSessionAdapter, type WrappedSessionLike } from "./handle-adapter.ts";
 import { findBridgeSessionFileById, invalidateSessionListCache, readSessionHeader, resolveSessionPath } from "../session-reader.ts"; // relative path + explicit extension: jiti does not resolve the @/ alias, and ESM requires extensions
-import { describeDetachSupport, getAgentStarters, getWrapperStarter, selectStarter } from "../agent-starter/index.ts";
+import { describeDetachSupport, getAgentStarters, getDetachedPreference, getWrapperStarter, selectStarter } from "../agent-starter/index.ts";
 import type { DetachSupportInfo } from "../agent-starter/index.ts";
 import type { ChildProcess } from "node:child_process";
 import { ensurePlaceholder, rebindPlaceholder, aliasPlaceholder, getPlaceholder, isProvisionalExtSid } from "./placeholder.ts";
@@ -419,6 +419,39 @@ export async function stopDetachedSession(sessionId: string): Promise<boolean> {
 /** Detach availability for UI surfaces (new-session toggle, greying). */
 export async function detachSupport(): Promise<DetachSupportInfo> {
   return describeDetachSupport();
+}
+
+/**
+ * Re-host a cold session that carries a survive-restart preference marker.
+ *
+ * The marker is written when the user explicitly starts the session detached
+ * ("Start · survive restarts"); when that wrapper later exits, the next open
+ * re-hosts detached instead of silently downgrading to a plain local child.
+ * Uses the provider recorded on the marker, falling back to any detachable
+ * provider of the "pi" family. Throws when the spawn fails — callers degrade
+ * to their local path (never block opening the session).
+ */
+export async function openDetachedPreferred(
+  sessionId: string,
+  sessionFile: string,
+): Promise<SessionHandle | undefined> {
+  const pref = getDetachedPreference(sessionId);
+  const provider =
+    (pref?.providerType ? getProvider(pref.providerType) : undefined) ??
+    findProvidersForAgent("pi").find((p) => p.detachable === true);
+  if (!provider) return undefined;
+  return createSessionHandle({
+    providerType: provider.type,
+    sessionId,
+    sessionFile,
+    ...(pref?.cwd ? { cwd: pref.cwd } : {}),
+    detach: true,
+  });
+}
+
+/** Does this cold session prefer survive-restart hosting (preference marker present)? */
+export function prefersDetached(sessionId: string): boolean {
+  return getDetachedPreference(sessionId) !== undefined;
 }
 
 /** Registry key of the attach provider (registered by the attach extension at startup; undefined when the extension is not installed). */

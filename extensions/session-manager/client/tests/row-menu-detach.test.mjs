@@ -1,11 +1,13 @@
 /**
- * row-menu "Start detached" regression — node --test.
+ * row-menu "Start · survive restarts" / "Start in process" regression — node --test.
  *
- * Detach is fixed at spawn time (no fd handover), so the menu entry is only
- * meaningful for COLD sessions:
- *   - cold session  → "Start detached" appears; clicking POSTs /api/sessions/<id>/detach
+ * Hosting mode is fixed at spawn time (no fd handover), so the menu entries are
+ * only meaningful for COLD sessions:
+ *   - cold session  → "survive restarts" appears; clicking POSTs /api/sessions/<id>/detach
  *   - running       → absent (the core could only answer `already`)
  *   - host without a runner (409) / already running → toast carries the reason
+ *   - "Start in process" only on cold sessions carrying the detachPref row flag;
+ *     clicking POSTs /api/sessions/<id>/attach
  *
  * Also pins the i18n contract: every key the menu uses must exist in the en and
  * zh-CN tables — the host's t() returns the key itself for a missing entry (truthy),
@@ -95,17 +97,36 @@ function menuKeys(items) {
   return items.map((i) => i.key);
 }
 
-test("cold session gets a 'Detach 启动' menu item; a running one does not", async (t) => {
+test("cold session gets a 'survive restarts' menu item; a running one does not", async (t) => {
   const mod = await loadRowMenu(t);
   const base = { sess: { id: "11111111-1111-1111-1111-111111111111", cwd: "/tmp" }, startRename: () => {}, onMove: () => {} };
   const cold = mod.buildLivePiRowMenuItems({ ...base, running: false });
   const detach = cold.find((i) => i.key === "detach-start");
   assert.ok(detach, `cold session must offer detach-start, got ${JSON.stringify(menuKeys(cold))}`);
-  assert.equal(detach.label, "Detach 启动");
+  assert.equal(detach.label, "跨重启启动");
 
   const running = mod.buildLivePiRowMenuItems({ ...base, running: true });
   assert.equal(running.some((i) => i.key === "detach-start"), false,
     `running session must not offer detach-start, got ${JSON.stringify(menuKeys(running))}`);
+});
+
+test("'Start in process' only appears on cold sessions carrying the detachPref flag", async (t) => {
+  const mod = await loadRowMenu(t);
+  const mk = (sess) => ({ sess, startRename: () => {}, onMove: () => {} });
+  const id = "22222222-3333-4444-5555-666666666666";
+
+  const coldMarked = mod.buildLivePiRowMenuItems({ ...mk({ id, cwd: "/tmp", detachPref: true }), running: false });
+  const inproc = coldMarked.find((i) => i.key === "inprocess-start");
+  assert.ok(inproc, `marked cold session must offer inprocess-start, got ${JSON.stringify(menuKeys(coldMarked))}`);
+  assert.equal(inproc.label, "进程内启动");
+
+  const coldPlain = mod.buildLivePiRowMenuItems({ ...mk({ id, cwd: "/tmp" }), running: false });
+  assert.equal(coldPlain.some((i) => i.key === "inprocess-start"), false,
+    `unmarked cold session must not offer inprocess-start, got ${JSON.stringify(menuKeys(coldPlain))}`);
+
+  const runningMarked = mod.buildLivePiRowMenuItems({ ...mk({ id, cwd: "/tmp", detachPref: true }), running: true });
+  assert.equal(runningMarked.some((i) => i.key === "inprocess-start"), false,
+    `running session must not offer inprocess-start, got ${JSON.stringify(menuKeys(runningMarked))}`);
 });
 
 test("reopenDetached posts to the session detach endpoint and reports the runner", async (t) => {
@@ -119,7 +140,21 @@ test("reopenDetached posts to the session detach endpoint and reports the runner
   t.after(() => { globalThis.fetch = previous; });
   await mod.reopenDetached("abc-123");
   assert.deepEqual(calls, [["/api/sessions/abc-123/detach", "POST"]]);
-  assert.match(String(globalThis.__smToast), /Detach 启动|systemd-run/);
+  assert.match(String(globalThis.__smToast), /跨重启|systemd-run/);
+});
+
+test("startInProcess posts to the session attach endpoint and toasts success", async (t) => {
+  const mod = await loadRowMenu(t);
+  const calls = [];
+  const previous = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push([String(url), init?.method]);
+    return { ok: true, status: 200, json: async () => ({ ok: true, already: false, started: true }) };
+  };
+  t.after(() => { globalThis.fetch = previous; });
+  await mod.startInProcess("abc-123");
+  assert.deepEqual(calls, [["/api/sessions/abc-123/attach", "POST"]]);
+  assert.match(String(globalThis.__smToast), /进程内|常规模式/);
 });
 
 test("reopenDetached surfaces the host's reason (409) and the already-running case", async (t) => {
