@@ -35,11 +35,62 @@ test("question: long action (>16 chars) still gets 好，X summary", () => {
   assert.equal(opts[1].label, "不用");
 });
 
-test("question: English yes/no → Yes/No buttons", () => {
-  const segs = parseParagraph("Should I proceed?");
-  const opts = segs[0].options;
-  assert.ok(opts && opts.length === 2);
+test("question: English yes/no → action-aware Yes/No buttons", () => {
+  const opts = parseParagraph("Should I proceed?").flatMap((s) => s.options ?? []);
+  assert.deepEqual(opts.map((o) => o.label), ["Yes, proceed", "No"]);
+  assert.deepEqual(opts.map((o) => o.value), ["Yes", "No"]);
+});
+
+test("question: English yes/no without trailing '?' (streaming tail) still recognized", () => {
+  const opts = parseParagraph("Do you want me to add tests").flatMap((s) => s.options ?? []);
+  assert.deepEqual(opts.map((o) => o.label), ["Yes, add tests", "No"]);
+});
+
+test("question: English offer 'let me know if you want me to X' → Yes/No with action", () => {
+  const opts = parseParagraph("Done. Let me know if you'd like me to continue.").flatMap((s) => s.options ?? []);
+  assert.deepEqual(opts.map((o) => o.label), ["Yes, continue", "No"]);
+});
+
+test("question: English generic inversion keeps plain Yes/No (no action label)", () => {
+  const opts = parseParagraph("Is it done?").flatMap((s) => s.options ?? []);
   assert.deepEqual(opts.map((o) => o.label), ["Yes", "No"]);
+});
+
+test("question: English 'X or Y' choice strips lead-in frames", () => {
+  const cases = [
+    ["Would you prefer tabs or spaces?", ["tabs", "spaces"]],
+    ["Do you want to use A or B?", ["A", "B"]],
+    ["Can I use A or B?", ["A", "B"]],
+    ["Use shell or python?", ["shell", "python"]],
+  ];
+  for (const [text, want] of cases) {
+    const opts = parseParagraph(text).flatMap((s) => s.options ?? []);
+    assert.deepEqual(opts.map((o) => o.value), want, text);
+  }
+});
+
+test("question: English open-ended / request questions → no options", () => {
+  for (const text of [
+    "When should we ship?",
+    "Whose branch should we merge?",
+    "Which one do you prefer?",
+    "Can you explain the architecture?",
+    "Can you help me fix this?",
+  ]) {
+    assert.equal(parseParagraph(text)[0].options, null, text);
+  }
+});
+
+test("question: English ';' stays inside the sentence → choice keeps both halves", () => {
+  // ASCII ';' splits CJK sentences only; splitting here used to strand "or wait?"
+  const segs = parseParagraph("Shall I update the docs; or wait?");
+  assert.equal(segs.length, 1, JSON.stringify(segs.map((s) => s.text)));
+  assert.deepEqual(segs[0].options?.map((o) => o.value), ["update the docs", "wait"]);
+});
+
+test("splitQuestions: Chinese ';' still splits sentences", () => {
+  const segs = parseParagraph("先改 A 吗；还是先改 B？");
+  assert.ok(segs.length >= 2, JSON.stringify(segs.map((s) => s.text)));
 });
 
 test("question: streaming tail — blockquote stays literal", () => {

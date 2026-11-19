@@ -65,18 +65,41 @@ export function extractUrls(text) {
 export function splitQuestions(text) {
   const t = text.trim();
   if (!t) return [];
-  // 句末 ？/? 与 ；; 切分；但 还是/或者 前不切（"A 还是 B" 保持整段供 detectOptions）
-  return t
-    .split(/(?<=[？?])|[；;]/u)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
+  // Sentence-final ？/? always splits. ASCII ";" is a separator only inside CJK
+  // text — English uses it mid-sentence ("Shall I update the docs; or wait?"), and
+  // splitting there would strand the first half of the choice.
+  const out = [];
+  for (const chunk of t.split(/(?<=[？?])/u)) {
+    const c = chunk.trim();
+    if (!c) continue;
+    const sep = /\p{Script=Han}/u.test(c) ? /[；;]/u : /；/u;
+    for (const s of c.split(sep)) {
+      const v = s.trim();
+      if (v) out.push(v);
+    }
+  }
+  return out;
 }
 
+// English lead-in frames stripped from an option ("Would you prefer tabs" → "tabs"),
+// mirroring the Chinese prefixes below. Longest alternatives first; frames can stack
+// ("Do you want to use A" → "use A" → "A"), hence the repeated passes in cleanOption.
+const EN_OPTION_PREFIX =
+  /^(?:(?:do|would|will|should)\s+(?:i|we|you)\s+(?:want|like|need|prefer)\s+me\s+to\s+|(?:do|would|will)\s+you\s+(?:want|like|need|prefer)\s+to\s+|(?:do|would|will)\s+you\s+(?:want|like|need|prefer)\s+|(?:should|shall|do|does|can|could|would|will|may)\s+(?:i|we)\s+|(?:can|could|would|will|should|do)\s+you\s+|(?:are|is)\s+(?:we|you|i)\s+(?:using|going\s+with)\s+|i(?:'d|'ll|\s+would|\s+will)?\s+(?:want|need|like|prefer)\s+to\s+|me\s+to\s+|please\s+|use\s+|using\s+|choose\s+|pick\s+|go\s+with\s+|either\s+)/iu;
+
 function cleanOption(s) {
-  return s
-    .replace(/^(我要|我想我?|你想要?|你想我?|你想要?|想要?|需要|你来|你来?|用|使用|选|选择|我|你)\s*/u, "")
+  let out = String(s);
+  // Repeat so stacked frames peel off one per pass; stop as soon as nothing changes.
+  for (let i = 0; i < 3; i++) {
+    const before = out;
+    out = out
+      .replace(/^(我要|我想我?|你想要?|你想我?|你想要?|想要?|需要|你来|你来?|用|使用|选|选择|我|你)\s*/u, "")
+      .replace(EN_OPTION_PREFIX, "");
+    if (out === before) break;
+  }
+  return out
     .replace(/[吗吧呢]?$/u, "")
-    .replace(/[？?，,。.!！、]$/gu, "")
+    .replace(/[？?，,。.!！、;；]$/gu, "")
     .trim();
 }
 
@@ -101,33 +124,52 @@ export function detectOptions(seg, labelMax = 12) {
   }
 
   // 2) 是非问（中文信号 + 尾 ？）。开放问（怎么做/哪个/什么/…）不在此列 → 退回纯引用。
-  const openEnded = /怎么|如何|怎样|哪个|哪些|什么|为什么|为何|谁|多少|几(个|点|时)?|\b(?:what|how|why|who|where|which)\b/iu.test(t);
-  const yesNo = !openEnded && (/[？?]\s*$/u.test(t) || /(?:吗|吧|呢)[？?]?\s*$/u.test(t) || /是否|要不要|能不能|可不可以|要不要我|需要我/u.test(t));
+  //    English open-ended set adds when/whose/whom plus request verbs ("Can you explain …")
+  //    so imperative/wh-questions do not degrade into Yes/No buttons.
+  const openEnded = /怎么|如何|怎样|哪个|哪些|什么|为什么|为何|谁|多少|几(个|点|时)?|\b(?:what|how|why|who|whose|whom|when|where|which)\b|\b(?:explain|describe|list|summari[sz]e|outline|show\s+me|tell\s+me|help\s+me|walk\s+me\s+through)\b/iu.test(t);
+  // English subject-auxiliary inversion ("Should I proceed", "Do you want me to add tests")
+  // is a yes/no question even without a trailing "?" — streaming text often drops it.
+  const enInversion = /^\s*(?:should|shall|can|could|may|would|will|do|does|did|is|are|was|were|have|has)\s+(?:i|we|you|he|she|it|they|this|that|these|those|there)\b/iu.test(t);
+  // "Let me know if you'd like me to <action>" is an explicit offer — treat it as a
+  // yes/no question (wins over openEnded: the wh-word sits in the offered action itself).
+  const enOffer = t.match(/\blet\s+me\s+know\s+(?:if|whether)\s+you(?:'d|\s+would)?\s+(?:like|want|need)\s+me\s+to\s+(.+)$/iu);
+  const yesNo = !!enOffer || (!openEnded && (/[？?]\s*$/u.test(t) || /(?:吗|吧|呢)[？?]?\s*$/u.test(t) || /是否|要不要|能不能|可不可以|要不要我|需要我/u.test(t) || enInversion));
   if (yesNo) {
-    // 现状："要我X吗" → "好，X" 更具体的按钮
-    const action = t
-      .replace(/^(要我|需要我|要不要我?|是否|能不能|可不可以|要不要|或者|还是|你能|你可以|请|麻烦)\s*/u, "")
-      .replace(/[吗吧呢啊呀]?[？?]+$/u, "")
-      .replace(/[吗吧呢啊呀]$/u, "")
-      .trim();
-    if (action && action.length > 0 && /\p{Script=Han}/u.test(t)) {
-      // 中文 action 按钮只在文本含汉字时用——英文问句（"Should I proceed?"）走
-      // 这里会得到 "好，Should I p…"/"不用" 混搭，应落入英文 Yes/No 分支。
-      // label 截断显示（摘要带上下文），value 完整预填。
+    const hasHan = /\p{Script=Han}/u.test(t);
+    if (hasHan) {
+      // "要我X吗" → "好，X": a concrete action label beats a bare yes/no pair. cjk-ok
+      const action = t
+        .replace(/^(要我|需要我|要不要我?|是否|能不能|可不可以|要不要|或者|还是|你能|你可以|请|麻烦)\s*/u, "")
+        .replace(/[吗吧呢啊呀]?[？?]+$/u, "")
+        .replace(/[吗吧呢啊呀]$/u, "")
+        .trim();
+      if (action && action.length > 0) {
+        // Action label is CJK-only (English questions take the branch below);
+        // label is truncated for display, value is the full prefill.
+        return [
+          { label: `好，${truncate(action, maxL)}`, value: "是的" },
+          { label: "不用", value: "不用了" },
+        ];
+      }
       return [
-        { label: `好，${truncate(action, maxL)}`, value: "是的" },
-        { label: "不用", value: "不用了" },
+        { label: "是", value: "是的" },
+        { label: "否", value: "不用了" },
       ];
     }
-    if (!/\p{Script=Han}/u.test(t)) {
+    // English: known action frame → "Yes, <action>" (the counterpart of the CJK
+    // "好，X" label); generic inversions such as "Is it done?" keep plain Yes/No. cjk-ok
+    const frame = t.match(/^\s*(?:(?:should|shall)\s+(?:i|we)\s+|(?:do|would|will)\s+you\s+(?:want|like|need|prefer)\s+me\s+to\s+|(?:do|would|will)\s+you\s+(?:want|like|need|prefer)\s+to\s+|(?:can|may|could)\s+i\s+)/iu);
+    const rawAction = enOffer ? enOffer[1] : frame ? t.slice(frame[0].length) : "";
+    const enAction = rawAction.replace(/[?？!.]+\s*$/u, "").trim();
+    if (enAction) {
       return [
-        { label: "Yes", value: "Yes" },
+        { label: `Yes, ${truncate(enAction, maxL)}`, value: "Yes" },
         { label: "No", value: "No" },
       ];
     }
     return [
-      { label: "是", value: "是的" },
-      { label: "否", value: "不用了" },
+      { label: "Yes", value: "Yes" },
+      { label: "No", value: "No" },
     ];
   }
 
