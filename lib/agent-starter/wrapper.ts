@@ -66,6 +66,13 @@ export type WrapperStarterOptions = {
   runnerEnv: Record<string, string>;
   /** Node binary used to run wrapper.mjs (defaults to this process's). */
   nodePath?: string;
+  /**
+   * Idle reap timeout handed to the wrapper (ms; 0 disables). Same value and
+   * contract as pi-web's in-process session GC (PI_WEB_IDLE_TIMEOUT_MS): with
+   * no client attached and no output for this long, the wrapper stops its
+   * agent so a spawn whose host died cannot linger forever.
+   */
+  idleTimeoutMs?: number;
 };
 
 type Handshake = {
@@ -278,12 +285,14 @@ export class LinuxMacWrapperStarter implements WrapperStarter {
 
   private readonly runnerEnv: Record<string, string>;
   private readonly nodePath: string;
+  private readonly idleTimeoutMs: number;
   private wrapperPath: string | undefined;
 
   constructor(options: WrapperStarterOptions) {
     this.runner = options.runner;
     this.runnerEnv = options.runnerEnv;
     this.nodePath = options.nodePath ?? process.execPath;
+    this.idleTimeoutMs = options.idleTimeoutMs ?? 0;
   }
 
   private wrapper(): string {
@@ -355,6 +364,7 @@ export class LinuxMacWrapperStarter implements WrapperStarter {
         cwd: options.cwd,
         env: options.env ?? process.env,
         shell: options.shell,
+        idleTimeoutMs: this.idleTimeoutMs,
       }),
       { mode: 0o600 },
     );
@@ -428,7 +438,11 @@ export class LinuxMacWrapperStarter implements WrapperStarter {
     try {
       handshake = await connectWithHandshake(entry.socket);
     } catch (err) {
-      deleteEntry(entry.key);
+      // Drop the entry only when the socket is really dead. A transient
+      // failure (busy wrapper, backlog, timeout) must not unlink a live
+      // wrapper's tracking files — the registry is the only path to reattach
+      // or kill the process afterwards.
+      if (!(await isSocketAlive(entry.socket))) deleteEntry(entry.key);
       throw err;
     }
     const child = childFrom(handshake, {
@@ -471,10 +485,37 @@ export class LinuxMacWrapperStarter implements WrapperStarter {
       }
     }
     if (signalled) {
-      await waitForFileGone(entry.socket, runDir(), 8000);
-    } else if (await isSocketAlive(entry.socket)) {
-      await this.sendKillFrame(entry.socket, signal);
+      const gone = await waitForFileGone(entry.socket, runDir(), 8000);
+      if (gone) {
+        deleteEntry(entry.key);
+        return true;
+      }
+      // Hard signal (SIGKILL): the wrapper died without cleanup, leaving a
+      // stale socket file. Nothing listens behind it — clear the leftovers.
+      if (!(await isSocketAlive(entry.socket))) {
+        deleteEntry(entry.key);
+        return true;
+      }
+      // The wrapper is still shutting the agent down (orderly shutdown of a
+      // mid-turn run can exceed the wait). Deleting the entry now would orphan
+      // a LIVE wrapper outside every registry — reattach and any later kill
+      // both route through it (the 2026-11-19 zombie incident: four
+      // wrapper+agent pairs nobody could reach or stop). Keep the entry and
+      // report not-stopped; the wrapper removes its own files on exit.
+      return false;
     }
+    if (await isSocketAlive(entry.socket)) {
+      await this.sendKillFrame(entry.socket, signal);
+      const gone = await waitForFileGone(entry.socket, runDir(), 8000);
+      if (!gone) {
+        if (!(await isSocketAlive(entry.socket))) {
+          deleteEntry(entry.key);
+          return true;
+        }
+        return false;
+      }
+    }
+    // Socket dead: the wrapper exited (or was never there) — clear the leftovers.
     deleteEntry(entry.key);
     return true;
   }

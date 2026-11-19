@@ -22,7 +22,14 @@ export const WRAPPER_SOURCE = String.raw`#!/usr/bin/env node
  *   2. serve a unix socket so a pi-web instance can attach/detach freely,
  *   3. journal output (4 MB ring) so an attach replays the agent's history,
  *   4. enforce single writer (a newer client supersedes the old one),
- *   5. clean up (socket, ready marker, registry entry) when the agent is gone.
+ *   5. clean up (socket, ready marker, registry entry) when the agent is gone,
+ *   6. idle reap: with no client attached, an agent that produces no output
+ *      for cfg.idleTimeoutMs is stopped (SIGTERM, then SIGKILL after the kill
+ *      grace). A client (pi-web) attached disables the reaper — the host owns
+ *      the lifecycle then. Output resets the timer, so a streaming turn keeps
+ *      the process alive; a silent stretch longer than the timeout ends in a
+ *      SIGTERM, which the agent treats as an orderly shutdown (pending work
+ *      finishes first).
  *
  * Framing: [1 byte channel][4 byte BE length][payload]
  *   ch0 stdin (client -> agent), ch1 stdout, ch2 stderr, ch3 control JSON.
@@ -42,6 +49,7 @@ const LOG_LIMIT = 4 * 1024 * 1024;
 const CLIENT_BUFFER_LIMIT = 8 * 1024 * 1024;
 const EXIT_LINGER_MS = 15000;
 const KILL_GRACE_MS = 3000;
+const IDLE_LOG_MARK = "wrapper: idle reap (no output, no client)\n";
 
 function parseArgs(argv) {
   let config = "";
@@ -81,6 +89,9 @@ function main() {
   const readyPath = String(cfg.ready || socketPath + ".ready");
   const logPath = String(cfg.log || "");
   const entryPath = String(cfg.registryEntry || "");
+  // Idle reap timeout in ms (same value pi-web's in-process GC uses, handed
+  // over at spawn time). 0 disables the reaper.
+  const idleTimeoutMs = Number(cfg.idleTimeoutMs) > 0 ? Number(cfg.idleTimeoutMs) : 0;
 
   // ---- per-session stderr log (4 MB cap, truncated when it grew) -----------
   let logFd = null;
@@ -143,6 +154,32 @@ function main() {
   let explicitStop = false;
   let lingerTimer = null;
   let killGraceTimer = null;
+  let idleTimer = null;
+
+  // ---- idle reap (no client attached, no output) ---------------------------
+  // Same lifecycle contract as pi-web's in-process session GC: while a client
+  // (pi-web) is attached the host manages the agent, so the reaper is
+  // disarmed; the moment the last client goes away the timer starts, every
+  // output byte re-arms it, and a fire stops the agent. The SIGTERM lets a
+  // mid-turn agent finish orderly before the SIGKILL grace.
+  function disarmIdle() {
+    if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+  }
+  function armIdle() {
+    disarmIdle();
+    if (!idleTimeoutMs || shuttingDown || !child || exitInfo) return;
+    idleTimer = setTimeout(function () { idleTimer = null; reapIdle(); }, idleTimeoutMs);
+    idleTimer.unref();
+  }
+  function reapIdle() {
+    if (client || shuttingDown || !child || exitInfo) return;
+    appendLog(Buffer.from(IDLE_LOG_MARK, "utf8"));
+    try { child.kill("SIGTERM"); } catch (e) { /* already gone */ }
+    killGraceTimer = setTimeout(function () {
+      try { child.kill("SIGKILL"); } catch (e) { /* already gone */ }
+    }, KILL_GRACE_MS);
+    killGraceTimer.unref();
+  }
 
   function writeClient(buf) {
     if (!client) return;
@@ -228,6 +265,7 @@ function main() {
 
   function attachClient(sock) {
     everConnected = true;
+    disarmIdle();
     if (lingerTimer) { clearTimeout(lingerTimer); lingerTimer = null; }
     if (client && client !== sock) {
       const previous = client;
@@ -259,10 +297,10 @@ function main() {
       if (offset > 0) pending = pending.subarray(offset);
     });
     sock.on("error", function () {
-      if (client === sock) { client = null; handshakeSent = false; }
+      if (client === sock) { client = null; handshakeSent = false; armIdle(); }
     });
     sock.on("close", function () {
-      if (client === sock) { client = null; handshakeSent = false; }
+      if (client === sock) { client = null; handshakeSent = false; armIdle(); }
     });
     if (hello || spawnError) sendHandshake(sock);
   }
@@ -353,6 +391,7 @@ function main() {
       return;
     }
     child.on("spawn", function () {
+      armIdle();
       hello = {
         t: "hello",
         pid: child.pid,
@@ -372,6 +411,7 @@ function main() {
     if (child.stdout) {
       child.stdout.on("data", function (buf) {
         appendJournal(CH_STDOUT, buf);
+        if (!client) armIdle();
         if (client && handshakeSent) writeClient(encodeFrame(CH_STDOUT, buf));
       });
       child.stdout.on("error", function () { /* child died mid-read */ });
@@ -380,6 +420,7 @@ function main() {
       child.stderr.on("data", function (buf) {
         appendLog(buf);
         appendJournal(CH_STDERR, buf);
+        if (!client) armIdle();
         if (client && handshakeSent) writeClient(encodeFrame(CH_STDERR, buf));
       });
       child.stderr.on("error", function () { /* child died mid-read */ });
@@ -389,6 +430,7 @@ function main() {
     }
     child.on("exit", function (code, signal) {
       exitInfo = { code: typeof code === "number" ? code : null, signal: signal || null };
+      disarmIdle();
       if (killGraceTimer) { clearTimeout(killGraceTimer); killGraceTimer = null; }
       if (client && handshakeSent) {
         finish();
