@@ -114,6 +114,13 @@ function replaceLocationIfChanged(
         ? `${window.location.pathname}?${targetQuery}`
         : window.location.pathname;
       window.history.replaceState(null, "", nextUrl);
+      // Keep the App Router's own canonical URL in step. Next keeps the URL it
+      // last navigated to and writes it back when a later transition commits —
+      // reproducible on phones, where picking a session closes the sidebar
+      // drawer (a state transition) and the pick's ?session= was reverted to the
+      // page-load id 60ms later. Targeting the URL we just wrote makes that
+      // write-back a no-op instead of a rollback.
+      router.replace(href, options);
       return;
     }
   }
