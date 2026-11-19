@@ -101,29 +101,13 @@ function replaceLocationIfChanged(
       ? `?${targetQuery}` === window.location.search
       : !window.location.search;
     if (samePath && sameQuery) return;
-    // Same-path, query-only deltas (write ?session=… / clear params for the
-    // new-session page) write the address bar directly via the history API:
-    // router.replace() goes through the App Router navigation queue and can sit
-    // pending for tens of seconds while a takeover/loading transition suspenses —
-    // sidebar row clicks then look like "the URL never updates" and the
-    // new-session param clear looks like "?session= never goes away". Next 15+
-    // syncs router state from native history updates, and these call sites never
-    // want the RSC refetch a soft navigation triggers (the UI switch is state-driven).
-    if (samePath) {
-      const nextUrl = targetQuery
-        ? `${window.location.pathname}?${targetQuery}`
-        : window.location.pathname;
-      window.history.replaceState(null, "", nextUrl);
-      // Keep the App Router's own canonical URL in step. Next keeps the URL it
-      // last navigated to and writes it back when a later transition commits —
-      // reproducible on phones, where picking a session closes the sidebar
-      // drawer (a state transition) and the pick's ?session= was reverted to the
-      // page-load id 60ms later. Targeting the URL we just wrote makes that
-      // write-back a no-op instead of a rollback.
-      router.replace(href, options);
-      return;
-    }
   }
+  // Always go through the router: the App Router keeps its own canonical URL per
+  // committed tree and Next's HistoryUpdater rewrites the address bar from it on
+  // later commits. A direct history.replaceState therefore gets rolled back (on
+  // phones a session pick also closes the sidebar drawer — a transition — and the
+  // pick's ?session= was reverted to the page-load id ~60ms later). The router is
+  // the only writer that keeps both the URL and that canonical state in step.
   router.replace(href, options);
 }
 import { registerHostApi } from "@/lib/ext/host-api";
