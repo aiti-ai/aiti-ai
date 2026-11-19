@@ -96,13 +96,15 @@ function replaceLocationIfChanged(
       ? `?${targetQuery}` === window.location.search
       : !window.location.search;
     if (samePath && sameQuery) return;
-    // Pure query-only updates (?session=… on the same path) write the address bar
-    // directly via the history API: router.replace() goes through the App Router
-    // navigation queue and can sit pending for tens of seconds while a takeover/
-    // loading transition suspenses — sidebar row clicks then look like "the URL
-    // never updates". Next 15+ syncs router state from native history updates,
-    // and this call site never wants the RSC refetch a soft navigation triggers.
-    if (queryOnly) {
+    // Same-path, query-only deltas (write ?session=… / clear params for the
+    // new-session page) write the address bar directly via the history API:
+    // router.replace() goes through the App Router navigation queue and can sit
+    // pending for tens of seconds while a takeover/loading transition suspenses —
+    // sidebar row clicks then look like "the URL never updates" and the
+    // new-session param clear looks like "?session= never goes away". Next 15+
+    // syncs router state from native history updates, and these call sites never
+    // want the RSC refetch a soft navigation triggers (the UI switch is state-driven).
+    if (samePath) {
       const nextUrl = targetQuery
         ? `${window.location.pathname}?${targetQuery}`
         : window.location.pathname;
