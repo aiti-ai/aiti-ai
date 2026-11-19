@@ -8,7 +8,7 @@
  * 后续（M2+）：注册表开放（window.__aitiEditor）、语言服务桥、ContentProvider 自定义、Markdown 增强
  */
 import { createHash, randomBytes } from "node:crypto";
-import { createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, watch, writeFileSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, closeSync, statSync, watch, writeFileSync } from "node:fs";
 import { Readable } from "node:stream";
 import { homedir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, sep } from "node:path";
@@ -486,6 +486,37 @@ async function gitRunBuf(repo: string, args: string[], maxBuffer = 8 * 1024 * 10
   });
 }
 const GIT_CHANGE_LABEL: Record<string, string> = { M: "已修改", A: "新增", D: "已删除", R: "重命名" };
+
+/** EOL classification of a text blob (diagnostics only; never rewrites content). */
+function textEolKind(text: string): "lf" | "crlf" | "mixed" | "none" {
+  let crlf = 0, lf = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) !== 10) continue;
+    if (i > 0 && text.charCodeAt(i - 1) === 13) crlf++; else lf++;
+  }
+  if (!crlf && !lf) return "none";
+  if (crlf && lf) return "mixed";
+  return crlf ? "crlf" : "lf";
+}
+
+/** EOL classification from a small head sample of the worktree file. */
+function fileEolKind(absPath: string, sampleBytes = 64 * 1024): "lf" | "crlf" | "mixed" | "none" {
+  let fd: number | null = null;
+  try {
+    fd = openSync(absPath, "r");
+    const buf = Buffer.alloc(sampleBytes);
+    const n = readSync(fd, buf, 0, sampleBytes, 0);
+    let crlf = 0, lf = 0;
+    for (let i = 0; i < n; i++) {
+      if (buf[i] !== 10) continue;
+      if (i > 0 && buf[i - 1] === 13) crlf++; else lf++;
+    }
+    if (!crlf && !lf) return "none";
+    if (crlf && lf) return "mixed";
+    return crlf ? "crlf" : "lf";
+  } catch { return "none"; }
+  finally { if (fd !== null) { try { closeSync(fd); } catch { /* ignore */ } } }
+}
 /** 解析 porcelain -z 首条记录 → 简化 status（M/A/D/R）+ rename 旧路径（-z 下旧路径在第二条记录） */
 function parsePorcelain(recs: string[]): { status: string; oldPath: string } {
   const xy = (recs[0] || "").slice(0, 2);
@@ -938,6 +969,13 @@ export default {
         "大小": "大小",
         "大纲": "大纲",
         "大纲 · {n} 个变更区": "大纲 · {n} 个变更区",
+        "仅行尾差异（CRLF/LF），内容一致": "仅行尾差异（CRLF/LF），内容一致",
+        "行尾差异": "行尾差异",
+        "显示变更大纲（{n} 个变更区）": "显示变更大纲（{n} 个变更区）",
+        "隐藏变更大纲": "隐藏变更大纲",
+        "无法读取 HEAD 基线（视图与大纲暂不可用）": "无法读取 HEAD 基线（视图与大纲暂不可用）",
+        "基线 {ref}（{eol} · {lines} 行 · {bytes}B）· 工作区 {weol} · {wlines} 行": "基线 {ref}（{eol} · {lines} 行 · {bytes}B）· 工作区 {weol} · {wlines} 行",
+        "宽度不足，当前自动使用合并视图": "宽度不足，当前自动使用合并视图",
         "定位到下一个 git 变更块（循环）": "定位到下一个 git 变更块（循环）",
         "实时": "实时",
         "实现：": "实现：",
@@ -1403,6 +1441,13 @@ export default {
         "大小": "Size",
         "大纲": "Outline",
         "大纲 · {n} 个变更区": "Outline · {n} change hunks",
+        "仅行尾差异（CRLF/LF），内容一致": "Line endings only (CRLF/LF); content is identical",
+        "行尾差异": "EOL difference",
+        "显示变更大纲（{n} 个变更区）": "Show change outline ({n} hunks)",
+        "隐藏变更大纲": "Hide change outline",
+        "无法读取 HEAD 基线（视图与大纲暂不可用）": "Cannot read the HEAD baseline (change view and outline are unavailable)",
+        "基线 {ref}（{eol} · {lines} 行 · {bytes}B）· 工作区 {weol} · {wlines} 行": "Baseline {ref} ({eol} · {lines} lines · {bytes}B) · Worktree {weol} · {wlines} lines",
+        "宽度不足，当前自动使用合并视图": "Not enough width; inline view is used automatically",
         "定位到下一个 git 变更块（循环）": "Jump to next git change block (loops)",
         "实时": "Live",
         "实现：": "Implementation: ",
@@ -1770,7 +1815,8 @@ export default {
         } catch { return json({ ok: false, error: "文件不存在" }, 404); }
         const info = await gitFileInfo(target);
         return json({ ok: true, isRepo: !!info.repo, changed: info.changed, status: info.status,
-          adds: info.adds ?? null, dels: info.dels ?? null, label: info.status ? (GIT_CHANGE_LABEL[info.status] || "有变更") : undefined });
+          adds: info.adds ?? null, dels: info.dels ?? null, worktreeEol: fileEolKind(target),
+          label: info.status ? (GIT_CHANGE_LABEL[info.status] || "有变更") : undefined });
       }
       // GET /git-base?filePath= → HEAD 基线文本（diff 视图按需懒加载；rename 用旧路径取）
       //   HEAD 无此文件（新增/untracked/空仓库）→ original=""（按全新文件对比）
@@ -1784,11 +1830,15 @@ export default {
         const info = await gitFileInfo(target);
         if (!info.repo) return json({ ok: false, error: "不在 git 仓库内" }, 404);
         const gb = await gitRunBuf(info.repo, ["show", "HEAD:" + (info.oldPath || info.rel)]);
-        if (!gb.ok) return json({ ok: true, original: "", base: "（无 HEAD 基线，按全新文件对比）" });
+        if (!gb.ok) return json({ ok: true, original: "", base: "（无 HEAD 基线，按全新文件对比）",
+          hasBaseline: false, baselineEol: "none", baselineBytes: 0, baselineLines: 0 });
         if (gb.buf.length > 6 * 1024 * 1024) return json({ ok: false, error: "HEAD 版本超过 6MB，不支持内置对比（可用 aiti-git-review 查看）" }, 413);
         // 按字节探测编码解码（与 /raw 同一管线）：GBK/UTF-16 基线不再乱码，diff 才有意义
         const enc = detectEncoding(gb.buf);
-        return json({ ok: true, original: decodeText(gb.buf, enc.encoding, enc.hasBOM), base: "HEAD" });
+        const original = decodeText(gb.buf, enc.encoding, enc.hasBOM);
+        return json({ ok: true, original, base: "HEAD", hasBaseline: true,
+          baselineEol: textEolKind(original), baselineBytes: gb.buf.length,
+          baselineLines: original ? original.split("\n").length - (original.endsWith("\n") ? 1 : 0) : 0 });
       }
       // GET /siblings?filePath=…&root=… → 深度遍历文件清单（仅文件，不含目录；‹ › 上下篇切换用）
       //   深度优先 + 同层按名称排序；仅排除 .git/node_modules；上限 MAX_SIBLINGS 防失控。
