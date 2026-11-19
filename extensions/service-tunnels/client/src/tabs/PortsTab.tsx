@@ -55,10 +55,16 @@ export function PortsTab({
   injectSources: Array<{ id: string; label: string; description?: string; enabled?: boolean }>;
   caps: { portIdentity: boolean; exposeModes: string[] } | null;
   onGoManageUsers: () => void;
+  /** Deep link to aiti-containers (soft dep): open the panel focused on this container. */
+  openContainer?: (name: string) => void;
+  /** Published host port -> owning container (from aiti-containers via the host client
+   *  service; empty object when that extension is absent). */
+  containerByPort?: Record<number, { container: string; image?: string }>;
   refresh: (force?: boolean) => void;
 }) {
   const directUrl = (port: number, addr: string) => `http://${formatAddrForUrl(addr)}:${port}/`;
   // 外部登记端口：点击展开 → 按需 detect（进程发现 + HTTP 识别）
+  const ctrByPort = containerByPort ?? {};
   const [extExpanded, setExtExpanded] = useState<ReadonlySet<number>>(new Set());
   const [extDetect, setExtDetect] = useState<Record<number, { loading: boolean; data: { service?: { pid?: number; process?: string; cmdline?: string; addresses?: string[] } | null; identity?: Record<string, unknown> | null } | null }>>({});
   const detectExt = (port: number) => {
@@ -235,6 +241,16 @@ export function PortsTab({
                     onMouseLeave={(e) => { if (!isOpen) e.currentTarget.style.background = "none"; }}
                   >
                     <span style={{ fontFamily: "var(--font-mono)", fontSize: 14, fontWeight: 600, color: "var(--accent)", minWidth: 52 }}>{s.port}</span>
+                    {ctrByPort[s.port] && (
+                      <button
+                        key="ctr-badge"
+                        onClick={(e) => { e.stopPropagation(); openContainer?.(ctrByPort[s.port].container); }}
+                        title={ctrByPort[s.port].image || ctrByPort[s.port].container}
+                        style={{ fontSize: 10, padding: "1px 6px", borderRadius: 999, border: "1px solid var(--border)", background: "var(--bg-hover)", color: "var(--accent)", cursor: "pointer", flexShrink: 0 }}
+                      >
+                        {ctrByPort[s.port].container}
+                      </button>
+                    )}
                     {(() => {
                       // 折叠行主信息区：默认展示 pid 徽标 + 进程名/识别名 + 完整命令行
                       //（clamp 2 行，悬浮看全量，点击展开区看完整 pre-wrap）——旧版单行
