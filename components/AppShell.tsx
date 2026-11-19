@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo, useSyncExternalStore, type ReactNode } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { apiUrl, inAppPathname, withBasePath } from "@/lib/base-path";
 import { openViewerWindowHost } from "@/lib/open-viewer-window-host";
 import { fmtMoney, fmtMoneySmall, fxNote, useMoneySynced } from "@/lib/money";
@@ -78,10 +78,15 @@ const NO_PATH_PICKER_ITEMS: ExtUiItemRegistered[] = [];
  *  commit that follows (phones: picking a session also closes the sidebar drawer),
  *  so a single write can lose the race; the bound keeps this from ever looping. */
 const URL_MIRROR_ATTEMPTS = 4;
-/** Remaining re-assert budget for the selection→URL mirror (module scope: the
- *  writer below is a module function; the app is a single page). */
+/** The address the app wants but has not written yet (pathname + query). Writes are
+ *  deferred to a post-commit effect: Next's HistoryUpdater rewrites the address bar
+ *  from the router's canonical URL in every commit's insertion effect, so a write made
+ *  while the click's own commit is still pending is simply overwritten (phones: the
+ *  pick also closes the sidebar drawer, so that commit always follows). */
+let pendingUrlWrite: string | null = null;
+/** Remaining re-assert budget (module scope: the writer is a module function). */
 let urlMirrorBudget = 0;
-/** Monotonic write sequence: a delayed re-assert must not clobber a newer pick. */
+/** Monotonic write sequence: a stale re-assert must not clobber a newer pick. */
 let urlWriteSeq = 0;
 
 /** Trailing-slash-insensitive comparison for filesystem paths (cwd equality). */
@@ -113,22 +118,13 @@ function replaceLocationIfChanged(
       : !window.location.search;
     if (samePath && sameQuery) return;
     if (samePath) {
-      const nextUrl = targetQuery
+      // Register only — the AppShell mirror effect applies it after this commit.
+      pendingUrlWrite = targetQuery
         ? `${window.location.pathname}?${targetQuery}`
         : window.location.pathname;
-      // Do NOT write here: Next's HistoryUpdater rewrites the address bar from its own
-      // canonical URL on the commit that follows (phones: the pick also unmounts the
-      // drawer, and the write-back lands ~60-130ms later), so an eager write only
-      // produces a visible set→revert→set flip. Give the router its chance and let the
-      // bounded re-assert below settle the address bar once nothing else is writing.
       urlMirrorBudget = URL_MIRROR_ATTEMPTS;
-      const seq = ++urlWriteSeq;
-      window.setTimeout(() => {
-        if (urlWriteSeq !== seq) return; // a newer pick owns the address bar
-        if (`${window.location.pathname}${window.location.search}` === nextUrl) return;
-        window.history.replaceState(null, "", nextUrl);
-        urlMirrorBudget = Math.max(0, urlMirrorBudget - 1);
-      }, 400);
+      urlWriteSeq += 1;
+      return;
     }
   }
   router.replace(href, options);
@@ -432,6 +428,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   // ?session=/?cwd= restore would never fire. Read the query string straight
   // from the location on mount; a re-render after that is harmless.
   const [initialNavigation, setInitialNavigation] = useState<InitialNavigation>(() => getInitialNavigation(searchParams));
+  const pathname = usePathname();
   useEffect(() => {
     if (typeof window !== "undefined") {
       const nav = getInitialNavigation(new URLSearchParams(window.location.search));
@@ -1929,21 +1926,24 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   // rolled back. Bounded: the budget is armed by replaceLocationIfChanged and spent
   // one re-assert at a time, so this can never loop.
   useEffect(() => {
-    if (urlMirrorBudget <= 0) return;
-    const target = selectedSession?.id;
-    if (!target) {
+    if (pendingUrlWrite === null) return;
+    if (urlMirrorBudget <= 0) {
+      pendingUrlWrite = null;
+      return;
+    }
+    const target = pendingUrlWrite;
+    if (`${window.location.pathname}${window.location.search}` === target) {
+      pendingUrlWrite = null;
       urlMirrorBudget = 0;
       return;
     }
-    if (new URLSearchParams(window.location.search).get("session") === target) {
-      urlMirrorBudget = 0;
-      return;
-    }
+    // The native History API is the documented way to update searchParams without a
+    // navigation; Next tracks it (it patches replaceState) and adopts the new URL into
+    // the router, so later commits keep it. Retried via this effect only if that
+    // adoption is still racing a commit — bounded by urlMirrorBudget.
     urlMirrorBudget -= 1;
-    const href = `?session=${encodeURIComponent(target)}`;
-    window.history.replaceState(null, "", `${window.location.pathname}${href}`);
-    router.replace(href, { scroll: false });
-  }, [selectedSession?.id, searchParams, router]);
+    window.history.replaceState(null, "", target);
+  }, [selectedSession?.id, searchParams, pathname]);
   const handleSelectSession = useCallback((session: SessionInfo, isRestore = false, entryId?: string, blockIndex?: number, options?: SelectSessionOptions) => {
     if (!isRestore) {
       userPickedSessionRef.current = true;
