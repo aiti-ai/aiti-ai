@@ -48,3 +48,14 @@ test("exportSessionMarkdown: role headers + folded tool output", () => {
   assert.ok(md.includes("## User\n\nhello"));
   assert.ok(md.includes("folded"));
 });
+
+test("classifyFile: image / text / binary by extension", async () => {
+  const { classifyFile } = await import("../lib/share-core.mjs");
+  assert.deepEqual(classifyFile("shot.png"), { kind: "image", mime: "image/png" });
+  assert.deepEqual(classifyFile("photo.JPG"), { kind: "image", mime: "image/jpeg" });
+  assert.deepEqual(classifyFile("notes.md"), { kind: "text", mime: "text/plain" });
+  assert.deepEqual(classifyFile("data.json"), { kind: "text", mime: "text/plain" });
+  assert.deepEqual(classifyFile("report.pdf"), { kind: "binary", mime: "application/octet-stream" });
+  assert.deepEqual(classifyFile("archive.tar.gz"), { kind: "binary", mime: "application/octet-stream" });
+  assert.deepEqual(classifyFile("noext"), { kind: "binary", mime: "application/octet-stream" });
+});
