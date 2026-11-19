@@ -12,6 +12,8 @@ import { detectLanguage, mdFenceDescriptors } from "./registry";
 import { markdownPreviewHtml, markdownRenderHtml } from "./markdown";
 import { previewKindOf, defaultViewModeOf, previewModeItems } from "./preview";
 import { sameDiskSig, shouldAutoReload, throttleOk, sigOfFrame, type DiskSig } from "./disk-refresh";
+import { normalizeDiffEol, isEolOnlyChange, hunksFromDiffs, pickDiffCounts, detectEolKind, countLines } from "./diff-eol";
+import { deriveGitViewState, pickJumpTarget, outlinePlacement, type GitView } from "./git-view-model";
 import { getPopover, previewClickInfo, registerSelectionContainer, unregisterSelectionContainer, previewSelectionMeta, closePreviewPopover, mdSmartEnabled } from "./md-smart";
 import { openViewerWindow } from "../../../_shared/open-viewer-window";
 import { openNewSessionWithExtSvc } from "../../../_shared/new-session-cwd";
@@ -784,7 +786,7 @@ export function EditorApp(props: Record<string, any>) {
         try {
           const uri = /^[a-zA-Z]:[\\/]|\//.test(filePath)
             ? monaco.Uri.file(filePath)
-            : monaco.Uri.parse("inmemory://aiti-editor/" + encodeURIComponent(filePath.split("/").pop() || "untitled"));
+            : monaco.Uri.parse("inmemory://aiti-editor/" + encodeURIComponent(filePath.split(/[\\/]/).pop() || "untitled"));
           model = monaco.editor.createModel(content0, modelLang, uri);
         } catch { model = monaco.editor.createModel(content0, modelLang); }
         // 自愈保险：无论上游哪条异步路径污染了语言，创建后强制对齐推断结果
@@ -1034,39 +1036,60 @@ export function EditorApp(props: Record<string, any>) {
     const r = askResolveRef.current; askResolveRef.current = null; setAskState(null); if (r) r(result);
   };
 
-  // ── git 变更视图（工作区 vs HEAD；选项与 aiti-git-review 一致：最新/左右/合并/大纲）──
-  // 服务端只做变更探测与基线文本；hunk 清单由 dmp 行级 diff 实时计算——最新视图变更行标注、大纲、
-  // 徽标计数共用同一数据源（合并侧 = 当前编辑内容，含未保存编辑）。默认「最新」= 最终版，零打扰。
-  const [gitInfo, setGitInfo] = useState<any>(null);   // /git-changes 结果 { changed, status, adds, dels, label }
-  const [gitView, setGitView] = useState("latest");    // latest | side | inline | outline（默认最新 = 最终版）
-  const [gitBase, setGitBase] = useState<any>(null);   // /git-base 结果 { original } | { error }（有变更即拉）
-  const [dmpHunks, setDmpHunks] = useState<any[]>([]); // dmp 行级 diff hunk（标注/大纲/计数共用）
-  const gitHunks = dmpHunks; // 大纲 JSX 沿用旧名
+  // ── git change view: render axis (latest / side / inline) × outline toggle ──
+  // Server only probes changes and serves the HEAD baseline; hunks come from dmp so the
+  // latest-view decorations, the outline list and the badge counts share one data source.
+  const [gitInfo, setGitInfo] = useState<any>(null);   // /git-changes payload
+  const [gitView, setGitView] = useState<GitView>("latest"); // render mode (default: editable final content)
+  const [gitOutlineOpen, setGitOutlineOpen] = useState<boolean>(() => {
+    try { return localStorage.getItem("aiti-editor.gitOutline") === "1"; } catch { return false; }
+  });
+  const [gitBase, setGitBase] = useState<any>(null);   // /git-base payload | { error }
+  const [dmpHunks, setDmpHunks] = useState<any[]>([]); // single source for markers/outline/counts
+  const [dmpComputed, setDmpComputed] = useState(false);
+  const [eolOnly, setEolOnly] = useState(false);
+  const gitHunks = dmpHunks; // outline JSX alias
   const diffContainerRef = useRef<any>(null);
   const diffEditorRef = useRef<any>(null);
   const diffModelsRef = useRef<any>(null); // { original, modified }
-  const [gitTick, setGitTick] = useState(0);           // 事件驱动重探（保存后）
+  const [gitTick, setGitTick] = useState(0);           // event-driven re-probe (after save)
   const refreshGitInfo = useCallback(() => setGitTick((t) => t + 1), []);
-  // 窄屏左右并排不可读（左侧只剩行号列，内容 0 宽——实测 398px 窗口）→ 宽度不足时左右退化为合并渲染
-  // （git-review 同款策略：小屏默认合并）；监听 resize，拖宽窗口自动恢复并排
-  const [wideEnough, setWideEnough] = useState(() => (typeof window !== "undefined" ? window.innerWidth >= 640 : true));
+  // VSCode-style Automatic layout: side-by-side degrades to inline below 900px of the
+  // diff viewport (this docked pane, not the whole window). ResizeObserver = event-driven.
+  const [viewportW, setViewportW] = useState(1440);
+  const contentAreaRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
-    const onR = () => setWideEnough(window.innerWidth >= 640);
-    window.addEventListener("resize", onR);
-    return () => window.removeEventListener("resize", onR);
-  }, []);
-  const sideEffective = gitView === "side" && wideEnough;
-  // 非 repo（gitInfo.isRepo === false）不提供 diff：没有 HEAD 基线可对比
-  const gitHasDelta = !!(gitInfo && gitInfo.isRepo !== false && (gitInfo.changed || dirty));
-  // 新文件（git 新增/未跟踪，status=A）：相对 HEAD 无基线、整篇即新增——UI 显示「新文件」而非「N 处改动」
-  const gitIsNewFile = !!(gitInfo && gitInfo.isRepo !== false && gitInfo.status === "A");
-  const gitSwitchShow = !isBinaryView && status.phase === "ready" && gitHasDelta;
-  const gitViewActive = gitSwitchShow && gitView !== "latest";
-  // 切换文件即重置：每个文件默认以最新（最终版）打开
+    const el = contentAreaRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setViewportW(el.clientWidth || 0));
+    ro.observe(el);
+    setViewportW(el.clientWidth || 0);
+    return () => ro.disconnect();
+  }, [status.phase]);
+  // Markdown preview/split keeps its own change-navigation button; the outline is for text editing.
+  const mdPreviewActive = canPreview && (viewMode === "split" || viewMode === "preview");
+  const gitState = deriveGitViewState({
+    isRepo: !!gitInfo && gitInfo.isRepo !== false,
+    binary: isBinaryView,
+    ready: status.phase === "ready",
+    changed: !!(gitInfo && gitInfo.changed),
+    dirty,
+    status: gitInfo?.status,
+    baseline: !gitBase ? "pending" : (gitBase.error ? "error" : "ready"),
+    hasBaseline: gitBase ? gitBase.hasBaseline !== false : null,
+    view: gitView,
+    outlineOpen: gitOutlineOpen,
+    outlineSuppressed: mdPreviewActive,
+    width: viewportW,
+  });
+  const gitHasDelta = gitState.hasDelta;
+  const gitIsNewFile = gitState.isNewFile;
+  const sideEffective = gitState.renderMode === "side";
+  // Reset per file: each file starts on the editable final content (outline pref is global).
   useEffect(() => {
-    setGitView("latest"); setGitInfo(null); setGitBase(null); setDmpHunks([]);
+    setGitView("latest"); setGitInfo(null); setGitBase(null); setDmpHunks([]); setDmpComputed(false); setEolOnly(false);
   }, [filePath]);
-  // 变更探测：ready / 保存后（事件驱动，零轮询）
+  // Change probe: ready / after save (event-driven, no polling)
   useEffect(() => {
     if (isBinaryView || status.phase !== "ready") return;
     let cancelled = false;
@@ -1076,7 +1099,7 @@ export function EditorApp(props: Record<string, any>) {
       .catch(() => {});
     return () => { cancelled = true; };
   }, [filePath, isBinaryView, status.phase, gitTick]);
-  // 基线文本：有变更（或含未保存编辑）即拉——最新视图标注与 diff 视图共用（干净文件零传输）
+  // Baseline text: fetched once per file on demand (clean files transfer nothing)
   useEffect(() => {
     if (!gitHasDelta || gitBase) return;
     let cancelled = false;
@@ -1086,64 +1109,51 @@ export function EditorApp(props: Record<string, any>) {
       .catch(() => { if (!cancelled) setGitBase({ error: t("网络错误") }); });
     return () => { cancelled = true; };
   }, [gitHasDelta, gitBase, filePath]);
-  // hunk 计算：dmp 行级 diff（HEAD 基线 vs 当前编辑内容）——标注/大纲/徽标计数单一数据源
+  // Hunk computation: dmp line diff over EOL-normalized text (baseline vs current editor content).
   useEffect(() => {
-    if (!gitHasDelta || !gitBase || (gitBase as any).error) { setDmpHunks((h) => (h.length ? [] : h)); return; }
+    if (!gitHasDelta || !gitBase || gitBase.error) { setDmpHunks([]); setDmpComputed(false); setEolOnly(false); return; }
     let cancelled = false;
     (async () => {
       try {
         const dmp = await (window as any).__aitiEditor.loadDmp();
         const cur = editorRef.current ? editorRef.current.getValue() : (meta ? meta.content : "");
         const orig = gitBase.original || "";
-        if (orig.length > 600000 || cur.length > 600000) { if (!cancelled) setDmpHunks((h) => (h.length ? [] : h)); return; } // 大文件跳过 dmp 计算（徽标退回 numstat，避免卡 UI）
-        // vendored dmp 方法名带下划线后缀（diff_linesToChars_）；兼容无后缀变体
+        const eolOnlyNow = isEolOnlyChange(orig, cur);
+        if (!cancelled) setEolOnly(eolOnlyNow);
+        // Large files skip the live diff (badge falls back to numstat to keep the UI responsive)
+        if (orig.length > 600000 || cur.length > 600000) { if (!cancelled) { setDmpHunks([]); setDmpComputed(false); } return; }
+        // Vendored dmp method names carry an underscore suffix; accept both variants.
         const toChars = dmp.diff_linesToChars_ || dmp.diff_linesToChars;
         const toLines = dmp.diff_charsToLines_ || dmp.diff_charsToLines;
-        const a = toChars.call(dmp, orig, cur);
+        const a = toChars.call(dmp, normalizeDiffEol(orig), normalizeDiffEol(cur));
         const diffs = dmp.diff_main(a.chars1, a.chars2, false);
         toLines.call(dmp, diffs, a.lineArray);
-        const lineCount = (t: string) => (t ? (t.match(/\n/g) || []).length + (t.endsWith("\n") ? 0 : 1) : 0);
-        let oldLine = 1, newLine = 1;
-        const hunks: any[] = [];
-        let cur2: any = null;
-        for (const [op, text] of diffs as [number, string][]) {
-          const n = lineCount(text);
-          if (op === 0) {
-            if (cur2) { hunks.push(cur2); cur2 = null; }
-            oldLine += n; newLine += n;
-          } else {
-            if (!cur2) cur2 = { oldStart: oldLine, oldLines: 0, newStart: newLine, newLines: 0, adds: 0, dels: 0, preview: "" };
-            if (op === -1) { cur2.oldLines += n; cur2.dels += n; oldLine += n; }
-            else {
-              cur2.newLines += n; cur2.adds += n; newLine += n;
-              if (!cur2.preview) cur2.preview = String(text.split("\n")[0] || "").slice(0, 80);
-            }
-          }
-        }
-        if (cur2) hunks.push(cur2);
-        if (!cancelled) setDmpHunks(hunks);
-      } catch { if (!cancelled) setDmpHunks([]); }
+        const hunks = hunksFromDiffs(diffs as [number, string][]);
+        if (!cancelled) { setDmpHunks(hunks); setDmpComputed(true); }
+      } catch { if (!cancelled) { setDmpHunks([]); setDmpComputed(false); setEolOnly(false); } }
     })();
     return () => { cancelled = true; };
   }, [gitHasDelta, gitBase, chgTick, filePath, meta]);
-  // diff 编辑器创建（首次进 diff 视图 / 切文件；gitView/sideEffective 不在 deps——后续切换走 updateOptions）
+  // Diff editor creation (first entry into a diff view / file switch). View toggles reuse the instance.
   useEffect(() => {
-    if (!gitViewActive || !gitBase || (gitBase as any).error || !diffContainerRef.current) return;
+    if (!gitState.diffActive || !gitBase || gitBase.error || !diffContainerRef.current) return;
     let cancelled = false;
     let dEd: any = null, oM: any = null, mM: any = null;
     loadMonaco().then((monaco: any) => {
       if (cancelled || !diffContainerRef.current) return;
       const c = diffContainerRef.current;
-      if (c._aitiDiffEd) { try { c._aitiDiffEd.dispose(); } catch { /* 忽略 */ } c._aitiDiffEd = null; }
+      if (c._aitiDiffEd) { try { c._aitiDiffEd.dispose(); } catch { /* ignore */ } c._aitiDiffEd = null; }
       c.removeAttribute?.("data-keybinding-context");
       let dl = detectLanguage(filePath);
       if (!dl || dl === "plaintext") dl = language;
       const curText = editorRef.current ? editorRef.current.getValue() : (meta ? meta.content : "");
       try {
-        oM = monaco.editor.createModel(gitBase.original || "", dl);
-        mM = monaco.editor.createModel(curText, dl);
+        // Normalized text keeps the rendered diff consistent with the dmp counts/markers.
+        oM = monaco.editor.createModel(normalizeDiffEol(gitBase.original || ""), dl);
+        mM = monaco.editor.createModel(normalizeDiffEol(curText), dl);
         dEd = monaco.editor.createDiffEditor(c, {
           renderSideBySide: sideEffective,
+          ignoreTrimWhitespace: true,
           readOnly: true, automaticLayout: true, fontSize: 12.5,
           minimap: { enabled: false }, scrollBeyondLastLine: false,
           theme: document.documentElement.classList.contains("dark") ? "vs-dark" : "vs",
@@ -1153,41 +1163,67 @@ export function EditorApp(props: Record<string, any>) {
         diffModelsRef.current = { original: oM, modified: mM };
         c._aitiDiffEd = dEd;
       } catch (e) {
-        try { if (oM) oM.dispose(); } catch { /* 忽略 */ }
-        try { if (mM) mM.dispose(); } catch { /* 忽略 */ }
+        try { if (oM) oM.dispose(); } catch { /* ignore */ }
+        try { if (mM) mM.dispose(); } catch { /* ignore */ }
       }
     }).catch(() => {});
     return () => {
       cancelled = true;
-      try { if (dEd) dEd.dispose(); } catch { /* 忽略 */ }
-      try { if (oM) oM.dispose(); } catch { /* 忽略 */ }
-      try { if (mM) mM.dispose(); } catch { /* 忽略 */ }
+      try { if (dEd) dEd.dispose(); } catch { /* ignore */ }
+      try { if (oM) oM.dispose(); } catch { /* ignore */ }
+      try { if (mM) mM.dispose(); } catch { /* ignore */ }
       diffEditorRef.current = null; diffModelsRef.current = null;
       if (diffContainerRef.current) diffContainerRef.current._aitiDiffEd = null;
     };
-  }, [gitViewActive, gitBase, filePath]);
-  // 视图切换 / 窗口宽度变化：左右 = 并排（窄屏自动退化合并）；合并/大纲 = inline（同一实例 updateOptions，不重建）
+  }, [gitState.diffActive, gitBase, filePath]);
+  // View / width change: reuse the instance (side-by-side vs inline), never rebuild.
   useEffect(() => {
     const dEd = diffEditorRef.current;
-    if (dEd) try { dEd.updateOptions({ renderSideBySide: sideEffective }); } catch { /* 忽略 */ }
-  }, [gitView, gitViewActive, sideEffective]);
-  // 窄屏进左右视图：提示已退化为合并
+    if (dEd) try { dEd.updateOptions({ renderSideBySide: sideEffective }); } catch { /* ignore */ }
+  }, [gitView, gitState.diffActive, sideEffective]);
+  // Re-entering a diff view or dirty changes (save/merge): refresh the modified side.
   useEffect(() => {
-    if (gitViewActive && gitView === "side" && !wideEnough) showToast("warn", t("窗口太窄，并排不可读，已用合并视图展示（拉宽窗口恢复并排）"));
-  }, [gitViewActive, gitView, wideEnough]);
-  // 重入 diff 视图或 dirty 变化（保存/合并）时刷新合并侧，保证与当前编辑内容一致
-  useEffect(() => {
-    if (!gitViewActive) return;
+    if (!gitState.diffActive) return;
     const mM = diffModelsRef.current && diffModelsRef.current.modified;
     const ed = editorRef.current;
-    if (mM && ed) try { if (mM.getValue() !== ed.getValue()) mM.setValue(ed.getValue()); } catch { /* 忽略 */ }
-  }, [gitViewActive, gitView, dirty]);
+    if (mM && ed) try {
+      const next = normalizeDiffEol(ed.getValue());
+      if (mM.getValue() !== next) mM.setValue(next);
+    } catch { /* ignore */ }
+  }, [gitState.diffActive, gitView, dirty]);
+  // Outline click: editable editor in latest mode, read-only diff otherwise.
   const jumpHunk = (hk: any) => {
-    const dEd = diffEditorRef.current;
-    if (!dEd) return;
-    const med = dEd.getModifiedEditor ? dEd.getModifiedEditor() : dEd;
-    try { med.revealLineInCenter(Math.max(1, hk.newStart)); med.setPosition({ lineNumber: Math.max(1, hk.newStart), column: 1 }); } catch { /* 忽略 */ }
+    const target = pickJumpTarget(gitState.renderMode, hk && hk.newStart);
+    if (target.kind === "diff") {
+      const dEd = diffEditorRef.current;
+      if (!dEd) return;
+      const med = dEd.getModifiedEditor ? dEd.getModifiedEditor() : dEd;
+      try { med.revealLineInCenter(target.line); med.setPosition({ lineNumber: target.line, column: 1 }); } catch { /* ignore */ }
+      return;
+    }
+    const ed = editorRef.current;
+    if (!ed) return;
+    try {
+      ed.revealLineInCenter(target.line);
+      ed.setPosition({ lineNumber: target.line, column: 1 });
+      ed.focus();
+    } catch { /* ignore */ }
   };
+  const toggleGitOutline = () => {
+    setGitOutlineOpen((on) => {
+      const next = !on;
+      try { localStorage.setItem("aiti-editor.gitOutline", next ? "1" : "0"); } catch { /* ignore */ }
+      return next;
+    });
+  };
+  // Wide viewports: right overlay (keeps the line-number gutter clear). Narrow: bottom drawer.
+  const gitOutlineBoxStyle: any = outlinePlacement(viewportW) === "right"
+    ? { position: "absolute", top: 6, right: 6, bottom: 6, width: "min(240px, 45vw)", overflowY: "auto",
+        background: "var(--bg,#fff)", border: "1px solid var(--border,#ddd)", borderRadius: 8,
+        boxShadow: "0 4px 16px rgba(0,0,0,.12)", zIndex: 40, padding: 6 }
+    : { position: "absolute", left: 6, right: 6, bottom: 6, maxHeight: "40%", overflowY: "auto",
+        background: "var(--bg,#fff)", border: "1px solid var(--border,#ddd)", borderRadius: 8,
+        boxShadow: "0 4px 16px rgba(0,0,0,.12)", zIndex: 40, padding: 6 };
 
   const doSave = useCallback((force?: boolean, onSaved?: () => void, encOverride?: { encoding: string; hasBOM: boolean }) => {
     const editor = editorRef.current;
@@ -1243,7 +1279,7 @@ export function EditorApp(props: Record<string, any>) {
     const editor = editorRef.current;
     if (!editor) return;
     const dir = filePath.slice(0, filePath.lastIndexOf("/")) || "/";
-    const name0 = filePath.split("/").pop() || "untitled.txt";
+    const name0 = filePath.split(/[\\/]/).pop() || "untitled.txt";
     const suggested = name0.replace(/(\.[^.]*)$/, "") + t("-副本") + (name0.match(/\.[^.]*$/)?.[0] || "");
     const input = await uiPrompt({ message: t("另存为（输入完整路径或当前目录下的文件名）："), value: dir + "/" + suggested });
     if (!input) return;
@@ -1265,7 +1301,7 @@ export function EditorApp(props: Record<string, any>) {
         }).then(async (r) => {
           const d = await r.json().catch(() => ({} as any));
           if (!r.ok) { setNotice({ kind: "err", text: d.error || t("另存失败 ({status})", { status: r.status }) }); return; }
-          setNotice({ kind: "ok", text: t("已另存为 {name}", { name: newPath.split("/").pop() || newPath }) });
+          setNotice({ kind: "ok", text: t("已另存为 {name}", { name: newPath.split(/[\\/]/).pop() || newPath }) });
           try { getCtx()?.openFile?.(newPath); } catch { /* 打开失败静默 */ }
         });
       })
@@ -1492,7 +1528,7 @@ useEffect(() => {
   }, [viewMode, isMarkdown, previewTick]);
 
   // 模式切换后强制 Monaco resize（含 diff 视图退出后编辑器重排）
-  useEffect(() => { editorRef.current?.layout(); }, [viewMode, canPreview, gitViewActive]);
+  useEffect(() => { editorRef.current?.layout(); }, [viewMode, canPreview, gitState.diffActive]);
 
   // ── AI Inline 编辑：选区跟踪 + 浮动弹窗 ──
   const [aiPop, setAiPop] = useState<any>(null);
@@ -1514,7 +1550,7 @@ useEffect(() => {
     const ed = editorRef.current;
     if (!ed || typeof ed.createDecorationsCollection !== "function") return;
     const deco: any[] = [];
-    if (gitHasDelta && !gitViewActive) {
+    if (gitHasDelta && !gitState.diffActive) {
       const model = ed.getModel();
       const max = model ? model.getLineCount() : 0;
       for (const hk of dmpHunks) {
@@ -1537,7 +1573,7 @@ useEffect(() => {
       chgCollRef.current = { ed, coll: ed.createDecorationsCollection() };
     }
     chgCollRef.current.coll.set(deco);
-  }, [dmpHunks, gitHasDelta, gitViewActive, editorTick]);
+  }, [dmpHunks, gitHasDelta, gitState.diffActive, editorTick]);
   useEffect(() => {
     const editor = editorRef.current;
     if (!editor) return;
@@ -1617,7 +1653,7 @@ useEffect(() => {
   const isReadOnly = isBinaryView ? true : (meta ? meta.size > 1024 * 1024 : false);
 
   // Export functions
-  const fileName = filePath.split("/").pop() || "export";
+  const fileName = filePath.split(/[\\/]/).pop() || "export";
   function doExportHtml(): void {
     const content = editorRef.current ? editorRef.current.getValue() : (meta ? meta.content : "");
     if (!content) return;
@@ -1625,7 +1661,7 @@ useEffect(() => {
       const blob = new Blob([html], { type: "text/html;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      a.href = url; a.download = (filePath.split("/").pop() || "export") + ".html";
+      a.href = url; a.download = (filePath.split(/[\\/]/).pop() || "export") + ".html";
       a.click(); URL.revokeObjectURL(url);
     }).catch(() => {});
   }
@@ -1707,7 +1743,7 @@ useEffect(() => {
       };
       window.addEventListener("message", onMsg);
       try {
-        openerWin.postMessage({ source: "aiti-ext", type: "open-shell", reqId, cwd: parentDir, name: filePath.split("/").pop() || "bash" }, location.origin);
+        openerWin.postMessage({ source: "aiti-ext", type: "open-shell", reqId, cwd: parentDir, name: filePath.split(/[\\/]/).pop() || "bash" }, location.origin);
       } catch (e:any) {
         window.removeEventListener("message", onMsg);
         setNotice({ kind: "err", text: e && e.message ? e.message : String(e) });
@@ -1721,7 +1757,7 @@ useEffect(() => {
     }
     const bridge = (window as any).__aitiCmd;
     if (bridge && typeof bridge.openShell === "function") {
-      bridge.openShell(parentDir, filePath.split("/").pop() || "bash")
+      bridge.openShell(parentDir, filePath.split(/[\\/]/).pop() || "bash")
         .then((r: any) => { if (!r || !r.ok) setNotice({ kind: "err", text: (r && r.error) || t("创建终端失败") }); });
       return;
     }
@@ -1733,7 +1769,7 @@ useEffect(() => {
       .catch((e) => setNotice({ kind: "err", text: String(e) }));
   };
   const doRename = async () => {
-    const oldName = filePath.split("/").pop() || "";
+    const oldName = filePath.split(/[\\/]/).pop() || "";
     const newName = await uiPrompt({ message: t("输入新文件名"), value: oldName });
     if (!newName || newName === oldName) return;
     setSaving(true);
@@ -1751,8 +1787,8 @@ useEffect(() => {
   const doMove = () => { setMoveOpen(true); };
   const onMoveDone = (newPath: string) => {
     setMoveOpen(false);
-    const name = newPath.split("/").pop() || "";
-    setNotice({ kind: "ok", text: t("已移动到 {name} → {dir}", { name: filePath.split("/").pop() || "", dir: newPath.slice(0, newPath.lastIndexOf("/")) }) });
+    const name = newPath.split(/[\\/]/).pop() || "";
+    setNotice({ kind: "ok", text: t("已移动到 {name} → {dir}", { name: filePath.split(/[\\/]/).pop() || "", dir: newPath.slice(0, newPath.lastIndexOf("/")) }) });
     // 打开新路径（新内容由 openFile 重新加载；与重命名行为一致）
     getCtx()?.openFile?.(newPath, name);
   };
@@ -1772,7 +1808,7 @@ useEffect(() => {
     const url = editorBase() + "/t/" + pathTicket + "/file";
     const a = document.createElement("a");
     a.href = url;
-    a.download = filePath.split("/").pop() || "download";
+    a.download = filePath.split(/[\\/]/).pop() || "download";
     document.body.appendChild(a); a.click(); a.remove();
   };
   // @ 提及：构造 @ 引用串（选中区/预览选区/光标行定位）。
@@ -1830,7 +1866,7 @@ useEffect(() => {
   const doMention = () => {
     try {
       const { ref, selOut, clip } = buildMentionRef();
-      const fbase = filePath.split("/").pop();
+      const fbase = filePath.split(/[\\/]/).pop();
       if (clip && navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(clip).catch(() => {});
       }
@@ -1850,7 +1886,7 @@ useEffect(() => {
       const { ref, selOut } = buildMentionRef();
       const out = selOut ? (ref + " " + selOut) : ref;
       sendToNewSession(out + " ");
-      showToast("ok", "\u5DF2\u5728\u65B0\u4F1A\u8BDD\u63D2\u5165 @" + (filePath.split("/").pop() || ""));
+      showToast("ok", "\u5DF2\u5728\u65B0\u4F1A\u8BDD\u63D2\u5165 @" + (filePath.split(/[\\/]/).pop() || ""));
     } catch (e) { showToast("err", String(e)); }
   };
 
@@ -1887,7 +1923,7 @@ useEffect(() => {
       <div style={{ width: 400, maxWidth: "92vw", padding: "16px 18px", borderRadius: 12, background: "var(--bg,#fff)", border: "1px solid var(--border,#ddd)", boxShadow: "0 12px 40px rgba(0,0,0,0.25)", fontSize: 13 }}>
         <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 10 }}>{t("文件信息")}</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 7, fontSize: 12 }}>
-          {infoRow(t("文件名"), filePath.split("/").pop() || "—", true)}
+          {infoRow(t("文件名"), filePath.split(/[\\/]/).pop() || "—", true)}
           {infoRowDir()}
           {infoRow(t("类型"), isBinaryView ? binaryTypeLabel : language)}
           {infoRow(t("大小"), formatSize(fileInfo.size || 0))}
@@ -1905,34 +1941,77 @@ useEffect(() => {
   // ── 公共顶栏（file-toolbar.tsx）：文本/二进制视图共用同一套能力 ──
   const navProps = { siblings, index: sibIndex, insertPos: navIndex, onStep: stepSibling };
 
-  // git 变更视图切换器（文本视图有变更时显示；选项与 aiti-git-review 一致）+ 变更徽标（点击在 最新/左右 间切换）
-  const gitLeading = gitSwitchShow ? (() => {
+  // git change controls: badge + 3 render modes + an orthogonal outline toggle.
+  const gitCurrentText = editorRef.current ? editorRef.current.getValue() : (meta ? meta.content : "");
+  const gitEolLabel = (kind: string) => kind === "crlf" ? "CRLF" : kind === "lf" ? "LF" : kind === "mixed" ? "mixed" : "—";
+  const gitCounts = pickDiffCounts({
+    hunks: dmpHunks as any,
+    dmpComputed,
+    numstat: gitInfo && (typeof gitInfo.adds === "number" || typeof gitInfo.dels === "number")
+      ? { adds: gitInfo.adds ?? null, dels: gitInfo.dels ?? null }
+      : null,
+  });
+  const gitCountText = gitCounts.adds != null ? "+" + gitCounts.adds + " −" + (gitCounts.dels || 0) : "";
+  const gitDiagnostic = gitBase && !gitBase.error
+    ? t("基线 {ref}（{eol} · {lines} 行 · {bytes}B）· 工作区 {weol} · {wlines} 行", {
+        ref: "HEAD",
+        eol: gitEolLabel(gitBase.baselineEol || detectEolKind(gitBase.original || "")),
+        lines: gitBase.baselineLines ?? countLines(gitBase.original || ""),
+        bytes: gitBase.baselineBytes ?? 0,
+        weol: gitEolLabel(gitInfo?.worktreeEol || detectEolKind(gitCurrentText)),
+        wlines: countLines(gitCurrentText),
+      })
+    : "";
+  const gitBadgeTone = gitIsNewFile ? "new" : (eolOnly && dmpComputed ? "eol" : "change");
+  const gitLeading = gitHasDelta ? (() => {
     const stLabel = (gitInfo && gitInfo.label) || t("有变更");
-    // 计数优先用 dmpHunks（实时，含未保存编辑）；基线未加载时退回 numstat（仅干净文件）
-    const counts = dmpHunks.length
-      ? "+" + dmpHunks.reduce((s: number, h: any) => s + h.adds, 0) + " −" + dmpHunks.reduce((s: number, h: any) => s + h.dels, 0)
-      : (!dirty && gitInfo && typeof gitInfo.adds === "number" ? "+" + gitInfo.adds + " −" + (gitInfo.dels || 0) : "");
+    const baseTitle = gitIsNewFile
+      ? t("新文件（相对 HEAD 无基线，整篇均为新增{dirty}）；点击在 最新/左右 视图间切换", { dirty: dirty ? t("，含未保存编辑") : "" })
+      : t("工作区 vs HEAD 有未提交变更（{label}{dirty}）；点击在 最新/左右 视图间切换", { label: stLabel, dirty: dirty ? t("，含未保存编辑") : "" });
+    const badgeTitle = [baseTitle, gitDiagnostic, eolOnly && dmpComputed ? t("仅行尾差异（CRLF/LF），内容一致") : ""]
+      .filter(Boolean).join("\n");
+    const tone = gitBadgeTone === "new"
+      ? { color: "#16a34a", border: "rgba(22,163,74,.35)", bg: "rgba(22,163,74,.12)" }
+      : gitBadgeTone === "eol"
+        ? { color: "var(--text-dim,#6b7280)", border: "var(--border,#d0d0d0)", bg: "transparent" }
+        : { color: "#7c3aed", border: "rgba(124,58,237,.35)", bg: "rgba(124,58,237,.12)" };
     return (
       <div style={{ display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
-        <button type="button"
-          title={gitIsNewFile
-            ? t("新文件（相对 HEAD 无基线，整篇均为新增{dirty}）；点击在 最新/左右 视图间切换", { dirty: dirty ? t("，含未保存编辑") : "" })
-            : t("工作区 vs HEAD 有未提交变更（{label}{dirty}）；点击在 最新/左右 视图间切换", { label: stLabel, dirty: dirty ? t("，含未保存编辑") : "" })}
-          onClick={() => setGitView(gitView === "latest" ? "side" : "latest")}
-          style={{ fontSize: 10, fontFamily: "var(--font-mono, ui-monospace, monospace)", color: gitIsNewFile ? "#16a34a" : "#7c3aed",
-            border: "1px solid " + (gitIsNewFile ? "rgba(22,163,74,.35)" : "rgba(124,58,237,.35)"), borderRadius: 4, padding: "1px 6px",
-            background: gitViewActive ? (gitIsNewFile ? "rgba(22,163,74,.12)" : "rgba(124,58,237,.12)") : "transparent", cursor: "pointer", whiteSpace: "nowrap" }}>
-          {gitIsNewFile ? t("新文件") : "⇋ HEAD" + (counts ? " " + counts : "")}
+        <button type="button" title={badgeTitle}
+          onClick={() => { if (gitState.selectVisible) setGitView(gitView === "latest" ? "side" : "latest"); }}
+          style={{ fontSize: 10, fontFamily: "var(--font-mono, ui-monospace, monospace)", color: tone.color,
+            border: "1px solid " + tone.border, borderRadius: 4, padding: "1px 6px",
+            background: gitState.diffActive ? tone.bg : "transparent",
+            cursor: gitState.selectVisible ? "pointer" : "default", whiteSpace: "nowrap" }}>
+          {gitIsNewFile ? t("新文件") : (eolOnly && dmpComputed ? t("行尾差异") : "⇋ HEAD" + (gitCountText ? " " + gitCountText : ""))}
         </button>
-        <select value={gitView} onChange={(e) => setGitView(e.target.value)}
-          title={t("git 变更视图（工作区 vs HEAD；默认「最新」显示最终版）")}
-          style={{ fontSize: 11, padding: "2px 4px", height: 24, border: "1px solid var(--border,#d0d0d0)",
-            borderRadius: 6, background: "var(--bg,#fff)", color: "var(--text,#1a1a1a)", fontFamily: "inherit", cursor: "pointer" }}>
-          <option value="latest">{t("最新")}</option>
-          <option value="side">{t("左右")}</option>
-          <option value="inline">{t("合并")}</option>
-          <option value="outline">{t("大纲")}</option>
-        </select>
+        {gitState.selectVisible && (
+          <select value={gitView} onChange={(e) => setGitView(e.target.value as GitView)}
+            title={t("git 变更视图（工作区 vs HEAD；默认「最新」显示最终版）")
+              + (gitState.autoInlined ? "\n" + t("宽度不足，当前自动使用合并视图") : "")}
+            style={{ fontSize: 11, padding: "2px 4px", height: 24, border: "1px solid var(--border,#d0d0d0)",
+              borderRadius: 6, background: "var(--bg,#fff)", color: "var(--text,#1a1a1a)", fontFamily: "inherit", cursor: "pointer" }}>
+            <option value="latest">{t("最新")}</option>
+            <option value="side">{t("左右")}</option>
+            <option value="inline">{t("合并")}</option>
+          </select>
+        )}
+        {gitState.outlineToggleVisible && (
+          <button type="button" onClick={toggleGitOutline}
+            title={gitOutlineOpen
+              ? t("隐藏变更大纲")
+              : t("显示变更大纲（{n} 个变更区）", { n: dmpHunks.length })}
+            aria-pressed={gitOutlineOpen}
+            style={{ fontSize: 13, lineHeight: 1, minWidth: 24, height: 24, padding: "0 4px",
+              border: "1px solid var(--border,#d0d0d0)", borderRadius: 6,
+              background: gitOutlineOpen ? "rgba(124,58,237,.10)" : "transparent",
+              color: "var(--text,#1a1a1a)", cursor: "pointer", fontFamily: "inherit" }}>☰</button>
+        )}
+        {gitState.baselineMissing && (
+          <span style={{ fontSize: 10, color: "var(--danger,#f87171)", whiteSpace: "nowrap" }}>
+            {t("无法读取 HEAD 基线（视图与大纲暂不可用）")}
+          </span>
+        )}
       </div>
     );
   })() : undefined;
@@ -2127,7 +2206,7 @@ useEffect(() => {
                       background: i % 2 === 0 ? "transparent" : "rgba(0,0,0,0.02)" }}
                     onClick={() => {
                       // 提取压缩包内文件到临时缓存，然后用 ctx.openFile 打开
-                      const innerName = f.name.split("/").pop() || f.name;
+                      const innerName = f.name.split(/[\\/]/).pop() || f.name;
                       api("/archive-extract?archivePath=" + encodeURIComponent(filePath) + "&innerPath=" + encodeURIComponent(f.name))
                         .then((r) => r.json())
                         .then((d) => {
@@ -2276,13 +2355,13 @@ useEffect(() => {
         </div>
       )}
       {status.phase === "ready" && (
-        <div style={{ flex: 1, minHeight: 0, minWidth: 0, position: "relative", overflow: "hidden" }}>
+        <div ref={contentAreaRef} style={{ flex: 1, minHeight: 0, minWidth: 0, position: "relative", overflow: "hidden" }}>
           {/* ── 文本文件：Monaco 编辑器容器 ── */}
           {!isBinaryView && (
             <div ref={containerRef} style={{
               position: "absolute", top: 0, bottom: 0, left: 0,
               right: canPreview && viewMode === "split" ? "50%" : 0,
-              display: (canPreview && viewMode === "preview") || gitViewActive ? "none" : "block",
+              display: (canPreview && viewMode === "preview") || gitState.diffActive ? "none" : "block",
               overflow: "hidden",
             }} />
           )}
@@ -2303,7 +2382,7 @@ useEffect(() => {
           {/* preview/split 共用一个 wrap（split 占右半，preview 全屏）；git diff 视图激活时一并隐藏。
               预览面按 kind 分派：markdown = srcdoc iframe（本层 ref，fit 效果撑尺寸）；
               html = HtmlPreviewPane（自带 iframe 与预览条，两态切换，见 ./html-preview.tsx） */}
-          {!isBinaryView && canPreview && !gitViewActive && (viewMode === "split" || viewMode === "preview") && (
+          {!isBinaryView && canPreview && !gitState.diffActive && (viewMode === "split" || viewMode === "preview") && (
             <div style={{
               position: "absolute", top: 0, bottom: 0,
               left: viewMode === "split" ? "50%" : 0, right: 0,
@@ -2328,8 +2407,8 @@ useEffect(() => {
               )}
             </div>
           )}
-          {/* ── git 变更视图（左右/合并/大纲）：Monaco diff，基线 = HEAD，合并侧 = 当前编辑内容 ── */}
-          {gitViewActive && (
+          {/* git diff view (side / inline): Monaco diff, baseline = HEAD, modified = current content */}
+          {gitState.diffActive && (
             <div style={{ position: "absolute", inset: 0, overflow: "hidden", background: "var(--bg,#fff)" }}>
               <div ref={diffContainerRef} style={{ position: "absolute", inset: 0 }} />
               {!gitBase && (
@@ -2342,37 +2421,43 @@ useEffect(() => {
                   {(gitBase as any).error}
                 </div>
               )}
-              {/* 大纲：git-review 同款变更区浮层，点击跳到对应变更行 */}
-              {gitView === "outline" && gitBase && !(gitBase as any).error && (
-                <div style={{ position: "absolute", top: 6, left: 6, bottom: 6, width: 240, overflowY: "auto",
-                  background: "var(--bg,#fff)", border: "1px solid var(--border,#ddd)", borderRadius: 8,
-                  boxShadow: "0 4px 16px rgba(0,0,0,.12)", zIndex: 20, padding: 6 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-dim,#888)", padding: "4px 6px" }}>
-                    {t("大纲 · {n} 个变更区", { n: gitHunks.length })}
-                  </div>
-                  {gitHunks.length === 0 && (
-                    <div style={{ color: "var(--text-muted,#999)", fontSize: 12, padding: 8 }}>
-                      {t("无变更行（工作区与 HEAD 一致，或基线尚未加载）")}
-                    </div>
-                  )}
-                  {gitHunks.map((hk: any, i: number) => (
-                    <div key={i} onClick={() => jumpHunk(hk)}
-                      style={{ padding: "5px 8px", borderRadius: 6, cursor: "pointer", fontSize: 11, marginBottom: 2,
-                        fontFamily: "var(--font-mono, ui-monospace, monospace)", color: "var(--text,#333)" }}>
-                      <div style={{ fontWeight: 700 }}>{"@@ +" + hk.newStart + "," + (hk.newLines || 0) + " @@"}</div>
-                      {hk.preview ? (
-                        <div style={{ color: "var(--text-dim,#888)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{hk.preview}</div>
-                      ) : null}
-                      <div style={{ color: "var(--text-dim,#888)", fontSize: 10 }}>{hk.adds + "+ / " + hk.dels + "-"}</div>
-                    </div>
-                  ))}
+              {gitBase && !(gitBase as any).error && gitBase.hasBaseline === false && !gitIsNewFile && (
+                <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--danger, #f87171)", fontSize: 12, padding: 16, textAlign: "center" }}>
+                  {t("无法读取 HEAD 基线（视图与大纲暂不可用）")}
                 </div>
               )}
             </div>
           )}
+          {/* Outline: navigation is orthogonal to the render mode, so it also works on the editable view. */}
+          {gitState.outlineVisible && gitBase && !(gitBase as any).error && (
+            <div style={gitOutlineBoxStyle}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6,
+                fontSize: 11, fontWeight: 700, color: "var(--text-dim,#888)", padding: "4px 6px" }}>
+                <span>{t("大纲 · {n} 个变更区", { n: gitHunks.length })}</span>
+                <button type="button" onClick={toggleGitOutline} title={t("隐藏变更大纲")}
+                  style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--text-dim,#888)", fontSize: 12, lineHeight: 1, padding: 2 }}>✕</button>
+              </div>
+              {gitHunks.length === 0 && (
+                <div style={{ color: "var(--text-muted,#999)", fontSize: 12, padding: 8 }}>
+                  {eolOnly ? t("仅行尾差异（CRLF/LF），内容一致") : t("无变更行（工作区与 HEAD 一致，或基线尚未加载）")}
+                </div>
+              )}
+              {gitHunks.map((hk: any, i: number) => (
+                <div key={i} onClick={() => jumpHunk(hk)}
+                  style={{ padding: "5px 8px", borderRadius: 6, cursor: "pointer", fontSize: 11, marginBottom: 2,
+                    fontFamily: "var(--font-mono, ui-monospace, monospace)", color: "var(--text,#333)" }}>
+                  <div style={{ fontWeight: 700 }}>{"@@ +" + hk.newStart + "," + (hk.newLines || 0) + " @@"}</div>
+                  {hk.preview ? (
+                    <div style={{ color: "var(--text-dim,#888)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{hk.preview}</div>
+                  ) : null}
+                  <div style={{ color: "var(--text-dim,#888)", fontSize: 10 }}>{hk.adds + "+ / " + hk.dels + "-"}</div>
+                </div>
+              ))}
+            </div>
+          )}
           {/* git 变更定位钮（markdown 预览/分栏 + 有变更时）：循环滚动到下一个变更块并闪烁；
               新文件无 HEAD 基线、整篇即新增 → 只显示「新文件」徽标（定位无意义） */}
-          {!isBinaryView && isMarkdown && !gitViewActive && (viewMode === "split" || viewMode === "preview") && (gitIsNewFile || mdChgRanges.length > 0) && (
+          {!isBinaryView && isMarkdown && !gitState.diffActive && (viewMode === "split" || viewMode === "preview") && (gitIsNewFile || mdChgRanges.length > 0) && (
             gitIsNewFile ? (
               <span
                 title={t("新文件：相对 HEAD 无基线，整篇均为新增")}
