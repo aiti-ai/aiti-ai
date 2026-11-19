@@ -90,12 +90,22 @@ jobs:
           set -e
           # Same scheme as release.yml prepare: /tmp scaffold, deps+devDeps union shared root.
           # Dependency source = the npm registry (versions published by "NPM Publish"), so the
-          # bundled dists are built against what installs will resolve at runtime. The only
-          # exception is @aiti-ti/ddns (not on npmjs) — still served from the vendor tgz.
+          # bundled dists are built against what installs will resolve at runtime.
+          # Exceptions (vendored from this same tree):
+          #   - @aiti-ti/ddns — not on npmjs at all, always the vendor tgz
+          #   - secret-* cores — move with the aiti-secret-vault extension inside one release
+          #     train, so their official publish can legitimately trail this workflow; vendoring
+          #     the same-tree tgz keeps the main release self-sufficient (same mechanism as the
+          #     "Prepare shared build root" step in publish-npm.yml)
           BUILD=/tmp/aiti-build-root
-          mkdir -p "$BUILD"
+          PKGS=/tmp/aiti-local-pkgs
+          mkdir -p "$BUILD" "$PKGS"
+          (cd packages/secret-mask-core && npm pack --pack-destination "$PKGS")
+          (cd packages/secret-vault-core && npm pack --pack-destination "$PKGS")
           node scripts/collect-extension-deps.mjs --out "$BUILD/package.json" \
-            --file "@aiti-ti/ddns=$PWD/vendor/npm/aiti-ti-ddns-0.2.0.tgz"
+            --file "@aiti-ti/ddns=$PWD/vendor/npm/aiti-ti-ddns-0.2.0.tgz" \
+            --file "@aiti-ai/secret-mask-core=$(ls "$PKGS"/aiti-ai-secret-mask-core-*.tgz | head -1)" \
+            --file "@aiti-ai/secret-vault-core=$(ls "$PKGS"/aiti-ai-secret-vault-core-*.tgz | head -1)"
           npm install --prefix "$BUILD" --legacy-peer-deps --no-audit --no-fund --loglevel=error
           ln -s "$BUILD/node_modules" extensions/node_modules
       - name: Build extension dists (client + server worker bundles, walk-up resolve)
