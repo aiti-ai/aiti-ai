@@ -720,8 +720,9 @@ export async function gitIgnoreAdd(cwd: string, paths: string[]): Promise<{ ok: 
     const lines = new Set(existing.split(/\r?\n/).map((l) => l.trim()).filter(Boolean));
     const added: string[] = [];
     const skipped: string[] = [];
-    let content = existing;
-    if (content && !content.endsWith("\n")) content += "\n";
+    // A file without a trailing newline would glue the first new entry onto its last line.
+    // Prepend the missing newline to the appended payload so the existing content stays untouched.
+    const needsNewline = existing.length > 0 && !existing.endsWith("\n");
     for (const rel of rels) {
       const entry = rel.replace(/\\/g, "/");
       if (lines.has(entry)) {
@@ -729,13 +730,12 @@ export async function gitIgnoreAdd(cwd: string, paths: string[]): Promise<{ ok: 
         continue;
       }
       lines.add(entry);
-      content += entry + "\n";
       added.push(entry);
     }
-    if (added.length > 0) {
-      await appendFile(giPath, added.map((e) => e + "\n").join(""), "utf8");
-      await audit({ repo, cmd: "ignore-add", paths: added });
-      changed(repo, "stage", `ignore +${added.length}`);
+    if (added.length > 0 || needsNewline) {
+      await appendFile(giPath, (needsNewline ? "\n" : "") + added.map((e) => e + "\n").join(""), "utf8");
+      if (added.length > 0) await audit({ repo, cmd: "ignore-add", paths: added });
+      changed(repo, "stage", added.length > 0 ? `ignore +${added.length}` : "ignore: trailing newline");
     }
     return { ok: true as const, added, skipped };
   });

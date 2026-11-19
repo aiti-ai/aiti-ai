@@ -10,7 +10,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -468,4 +468,41 @@ test("cherry-pick：冲突 409 + 中间态文件清单 + abort 复原", async ()
   assert.equal(readFileSync(join(repo, "a.txt"), "utf8"), "A-side\nshared\n"); // 内容复原
   const st = await call(["git", "refs"], { cwd: repo });
   assert.equal(st.body.dirtyCount, 0); // 工作区干净（走出中间态）
+});
+
+// ── folder "Add to .gitignore": trailing newline handling ───────────────────
+
+test("ignore-add: prepend missing trailing newline, with idempotency / all-skipped / new-file cases", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "git-ops-ignore-"));
+  const r = join(dir, "repo");
+  mkdirSync(r, { recursive: true });
+  execFileSync("git", ["init"], { cwd: r });
+  const gi = join(r, ".gitignore");
+
+  // No trailing newline: the new entry must not be glued to the last line
+  writeFileSync(gi, "keep.txt");
+  const first = await call(["git", "ignore-add"], { cwd: r, paths: ["new-dir"] });
+  assert.equal(first.status, 200);
+  assert.deepEqual(first.body.added, ["new-dir"]);
+  assert.equal(readFileSync(gi, "utf8"), "keep.txt\nnew-dir\n");
+
+  // Repeated add: no duplicate write, content unchanged
+  const again = await call(["git", "ignore-add"], { cwd: r, paths: ["new-dir"] });
+  assert.deepEqual(again.body.added, []);
+  assert.deepEqual(again.body.skipped, ["new-dir"]);
+  assert.equal(readFileSync(gi, "utf8"), "keep.txt\nnew-dir\n");
+
+  // All entries skipped but newline still missing: fix the newline anyway
+  writeFileSync(gi, "new-dir");
+  const fixNl = await call(["git", "ignore-add"], { cwd: r, paths: ["new-dir"] });
+  assert.equal(fixNl.status, 200);
+  assert.deepEqual(fixNl.body.skipped, ["new-dir"]);
+  assert.equal(readFileSync(gi, "utf8"), "new-dir\n");
+
+  // No .gitignore: the new file must not start with an empty line
+  rmSync(gi);
+  const fresh = await call(["git", "ignore-add"], { cwd: r, paths: ["fresh.txt"] });
+  assert.equal(fresh.status, 200);
+  assert.deepEqual(fresh.body.added, ["fresh.txt"]);
+  assert.equal(readFileSync(gi, "utf8"), "fresh.txt\n");
 });
