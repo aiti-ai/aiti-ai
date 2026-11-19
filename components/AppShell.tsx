@@ -1894,33 +1894,34 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   // back (observed as "clicked a sidelist row, the URL flashed the new id then
   // snapped back to the URL session" while the sessions list was still loading).
   const userPickedSessionRef = useRef(false);
-  /** Session id whose ?session= write is owed by the post-commit effect below. The
-   *  router navigation cannot be started from the pick's own event: the same click
-   *  also commits state (phones close the drawer), that commit supersedes the pending
-   *  navigation, and Next then rewrites the address bar from its stale canonical URL. */
-  const pendingPickNavRef = useRef<string | null>(null);
-  // Post-commit ?session= write for user picks: by the time this runs the pick's own
-  // commits (chat switch, phone drawer close) have landed, so the navigation is not
-  // superseded and the router's canonical URL follows it.
+  /** Address the app wants after a view switch (app-relative href) and a tick that
+   *  triggers the writer effect below. Writes go through here instead of router.replace
+   *  because a router navigation started around a click is dropped on phones (the same
+   *  event commits state — the drawer closes — and Next then rewrites the bar from its
+   *  stale canonical URL). */
+  const pendingUrlRef = useRef<string | null>(null);
+  const [urlWriteTick, setUrlWriteTick] = useState(0);
+  const queueUrlWrite = useCallback((href: string) => {
+    pendingUrlRef.current = href;
+    setUrlWriteTick((t) => t + 1);
+  }, []);
+  // Post-commit address write. Timing is the whole point: the switch's own commits
+  // (chat remount, phone drawer/panel close) keep landing for a few hundred ms and each
+  // of them has Next rewrite the bar from its still-stale canonical URL — measured:
+  // writes inside ~400ms are undone, a write at 600ms holds. So write at 300ms and
+  // re-check at 600/900ms, touching the URL only while it has drifted. Nothing is
+  // written eagerly, which is what keeps the bar from flashing.
   useEffect(() => {
-    const id = pendingPickNavRef.current;
-    if (!id) return;
-    pendingPickNavRef.current = null;
-    // Native History API only — no router navigation, so nothing is left in flight to
-    // commit an older canonical URL later. Timing is what matters: the pick's own
-    // commits (chat remount, phone drawer/panel close) keep landing for a few hundred
-    // ms, and Next rewrites the bar from its still-stale canonical URL in each of them
-    // (measured: writes inside ~400ms are reverted; a write at 600ms holds). Attempt in
-    // that window and verify with bounded follow-ups — no early write, so the address
-    // bar changes once instead of flashing.
-    const href = `?session=${encodeURIComponent(id)}`;
+    const href = pendingUrlRef.current;
+    if (!href) return;
+    const absolute = href.startsWith("?") ? `${window.location.pathname}${href}` : withBasePath(href);
     const writeIfDrifted = () => {
-      if (new URLSearchParams(window.location.search).get("session") === id) return;
-      window.history.replaceState(null, "", `${window.location.pathname}${href}`);
+      if (`${window.location.pathname}${window.location.search}` === absolute) return;
+      window.history.replaceState(null, "", absolute);
     };
     const timers = [300, 600, 900].map((delay) => window.setTimeout(writeIfDrifted, delay));
     return () => timers.forEach((slot) => window.clearTimeout(slot));
-  }, [selectedSession?.id]);
+  }, [urlWriteTick]);
   const handleSelectSession = useCallback((session: SessionInfo, isRestore = false, entryId?: string, blockIndex?: number, options?: SelectSessionOptions) => {
     if (!isRestore) {
       userPickedSessionRef.current = true;
@@ -1967,7 +1968,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
         // 仅写真实（非 :new- 占位）id，占位 id 不可恢复故不回写。
         const urlSession = new URLSearchParams(window.location.search).get("session");
         if (urlSession !== session.id && !session.id.includes(":new-")) {
-          replaceLocationIfChanged(router, `?session=${encodeURIComponent(session.id)}`, { scroll: false });
+          queueUrlWrite(`?session=${encodeURIComponent(session.id)}`);
         }
         if (isMobile) setSidebarOpen(false);
         return;
@@ -1997,13 +1998,12 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     // Tab-memory restore lands on `/` and must write `?session=` so reload
     // and copy-link keep this session.
     if (!isRestore) {
-      // Written by the post-commit effect (see pendingPickNavRef): starting the router
-      // navigation here would be superseded by this same event's state commits.
-      pendingPickNavRef.current = session.id;
+      // Queued: a router navigation started here is dropped on phones (see queueUrlWrite).
+      queueUrlWrite(`?session=${encodeURIComponent(session.id)}`);
     } else if (new URLSearchParams(window.location.search).get("session") !== session.id) {
       replaceLocationIfChanged(router, `?session=${encodeURIComponent(session.id)}`, { scroll: false });
     }
-  }, [activeCwd, changeFileWorkspace, invalidateWorkspaceRestore, router, isMobile, newSessionCwd, selectedSession]);
+  }, [activeCwd, changeFileWorkspace, invalidateWorkspaceRestore, router, isMobile, newSessionCwd, selectedSession, queueUrlWrite]);
 
   // [extension] Extension-client open-session channel: pi-web:open-session { id } → resolve
   // by id and reuse handleSelectSession (in-SPA switch, no full page navigation).
@@ -2105,7 +2105,9 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     if (isMobile) setSidebarOpen(false);
     // [URL 规范] 新会话页 URL 只留裸应用路径：清掉残留 ?session=（否则重载会
     // 压过 tab-session 的 kind:"new" 记忆回开旧会话）；cwd 由 tab-session 承载。
-    replaceLocationIfChanged(router, inAppPathname("/"), { scroll: false });
+    // Queued for the same reason as the pick write: on phones router.replace here is
+    // dropped by the switch's own commits and the param survived.
+    queueUrlWrite(inAppPathname("/"));
     // The fresh composer takes the caret once it renders (#1313), unless the
     // move came from the new-session bar, whose control keeps focus instead
     // (newSessionBarFocusRef), or a phone would raise the keyboard for it.
@@ -2116,7 +2118,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
         chatInputRef.current?.focus();
       });
     }
-  }, [activeCwd, changeFileWorkspace, invalidateWorkspaceRestore, isMobile, newSessionCwd, router, selectedSession]);
+  }, [activeCwd, changeFileWorkspace, invalidateWorkspaceRestore, isMobile, newSessionCwd, router, selectedSession, queueUrlWrite]);
 
   // Global keyboard shortcuts (handles Esc, Ctrl+Alt+N etc.)
   useGlobalKeyboardShortcuts({
