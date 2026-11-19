@@ -22,14 +22,22 @@ import { usePresent, DockBody, openFloat, closePanel, seedDockDefault } from "..
 
 // 对话框开关 + 初始页签（工具栏按钮 / 告警条幅共用）；显隐收口展示状态机
 let initialTab: "ports" | "self" | "users" = "ports";
+/** Deep-link target port (expanded in the ports tab); set by openDialog({ port }). */
+let initialPort: number | null = null;
 function setDialog(v: boolean, tab: "ports" | "self" | "users" = initialTab) {
   if (v) initialTab = tab;
   if (v) openFloat(ST_KEY); else closePanel(ST_KEY);
 }
-function openDialog(tab: "ports" | "self" | "users" = "ports") {
+function openDialog(tab: "ports" | "self" | "users" = "ports", opts?: { port?: number }) {
+  const port = opts && Number.isFinite(Number(opts.port)) ? Math.trunc(Number(opts.port)) : 0;
+  if (port > 0) initialPort = port;
   setDialog(true, tab);
   // 已挂载实例（openFloat 幂等不重挂、initialTab 不生效）经事件换页签；未挂载时 initialTab 兜底
   try { window.dispatchEvent(new CustomEvent("piwe-st-switch-tab", { detail: tab })); } catch { /* ignore */ }
+  // Expand the deep-link port's row so its expose form is immediately visible.
+  if (port > 0) {
+    try { window.dispatchEvent(new CustomEvent("piwe-st-expand-port", { detail: port })); } catch { /* ignore */ }
+  }
 }
 // 播种默认落位：用户无偏好时 open 直达右栏 tab
 try {
@@ -99,6 +107,9 @@ export default function register(ctx: {
       onClose: () => setDialog(false),
       onOpenFile: (filePath: string, fileName?: string) => openFileInHost(filePath, fileName),
       initialTab,
+      initialPort,
+      openContainer: openContainerPanel,
+      containerByPort: containerPortMap(),
     });
   }
 
@@ -143,6 +154,41 @@ export default function register(ctx: {
     openFloat(MOBILE_KEY);
   }
   try { (ctx as { registerExtService?: (k: string, impl: unknown) => unknown }).registerExtService?.("service-tunnels.mobile", openMobileWith); } catch (e) { console.warn("[service-tunnels] registerExtService(service-tunnels.mobile) failed", e); }
+
+  /** Deep link into aiti-containers (eager extension, so the service is normally
+   *  registered already; a missing service simply does nothing). */
+  function openContainerPanel(name: string) {
+    try {
+      const open = (ctx as { getExtService?: (k: string) => unknown }).getExtService?.("aiti-containers.open") as ((o: { container: string }) => void) | undefined;
+      if (typeof open === "function") open({ container: name });
+    } catch {
+      /* soft dependency absent */
+    }
+  }
+
+  /** Published port -> container map from aiti-containers (eager extension; the
+   *  service returns its last state snapshot synchronously). */
+  function containerPortMap(): Record<number, { container: string; image?: string }> {
+    try {
+      const get = (ctx as { getExtService?: (k: string) => unknown }).getExtService?.("aiti-containers.port-map") as (() => Record<number, { container: string; image?: string }>) | undefined;
+      const map = typeof get === "function" ? get() : null;
+      return map && typeof map === "object" ? map : {};
+    } catch {
+      return {};
+    }
+  }
+
+  /** Client service "service-tunnels.open-dialog": other extensions (e.g. aiti-containers'
+   *  port tab) open this panel so the human picks provider/auth themselves.
+   *  Consumers must materialize this lazy extension first (ctx.ensureMaterialized). */
+  try {
+    (ctx as { registerExtService?: (k: string, impl: unknown) => unknown }).registerExtService?.(
+      "service-tunnels.open-dialog",
+      (tab?: string, opts?: { port?: number }) => openDialog(tab === "self" || tab === "users" ? tab : "ports", opts),
+    );
+  } catch (e) {
+    console.warn("[service-tunnels] registerExtService(service-tunnels.open-dialog) failed", e);
+  }
 
   // 底行按钮：样式与宿主内建 模型/技能/设置 同规格（flex:1 + 图标 + 2 字短词），
   // 开态高亮跟随展示状态机；icon 内联 svg（禁 emoji）。

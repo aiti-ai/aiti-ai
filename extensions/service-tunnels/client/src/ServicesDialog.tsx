@@ -26,11 +26,18 @@ import { DdnsTab } from "./tabs/DdnsTab";
 import { DoctorTab } from "./tabs/DoctorTab";
 import { visibleTabs, type StCapabilities, type TabId } from "./tabs/registry";
 
-export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports", embedded = false }: {
+export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports", initialPort = null, openContainer, containerByPort, embedded = false }: {
   onClose: () => void;
   onOpenFile?: (filePath: string, fileName: string) => void;
   /** 打开时停靠的标签页：从顶栏无认证告警进入时传 "self"。 */
   initialTab?: TabId;
+  /** Deep-link from another extension (e.g. aiti-containers port tab): expand this
+   *  port's row so the expose form is one click away. */
+  initialPort?: number | null;
+  /** Deep link into aiti-containers for a port's owning container (soft dep). */
+  openContainer?: (name: string) => void;
+  /** Published port -> owning container map (soft dep; empty when absent). */
+  containerByPort?: Record<number, { container: string; image?: string }>;
   /** dock v3（P3 批）：右栏停靠 face 内嵌形态——无遮罩、无浮窗契约、铺满 DockBody、无自身 ✕（TabBar ✕ 关闭） */
   embedded?: boolean;
 }) {
@@ -43,7 +50,9 @@ export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports", embe
   const [loading, setLoading] = useState(true);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set());
+  const [expanded, setExpanded] = useState<ReadonlySet<number>>(
+    () => (initialPort && Number.isFinite(initialPort) ? new Set([Math.trunc(initialPort)]) : new Set()),
+  );
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [logsFor, setLogsFor] = useState<string | null>(null);
   const [logsData, setLogsData] = useState<{ access: string; error: string } | null>(null);
@@ -59,7 +68,19 @@ export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports", embe
       if (id === "ports" || id === "self" || id === "users") setTab(id);
     };
     window.addEventListener("piwe-st-switch-tab", onSwitch);
-    return () => window.removeEventListener("piwe-st-switch-tab", onSwitch);
+    // Deep-link: expand one port's row (already-mounted instance path; the initial
+    // state above covers the first mount).
+    const onExpandPort = (e: Event) => {
+      const port = Number((e as CustomEvent<number>).detail);
+      if (!Number.isInteger(port) || port <= 0) return;
+      setExpanded((prev) => new Set([...prev, port]));
+      setTab("ports");
+    };
+    window.addEventListener("piwe-st-expand-port", onExpandPort);
+    return () => {
+      window.removeEventListener("piwe-st-switch-tab", onSwitch);
+      window.removeEventListener("piwe-st-expand-port", onExpandPort);
+    };
   }, []);
   const [self, setSelf] = useState<SelfState | null>(null);
   const [infoModal, setInfoModal] = useState<"access" | "auth" | null>(null);
@@ -252,7 +273,8 @@ export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports", embe
             suffixes={suffixes} currentDomainSuffix={currentDomainSuffix}
             scheme={scheme} pagePort={pagePort}
             injectSources={injectSources} caps={caps}
-            onGoManageUsers={() => setTab("users")} refresh={refresh}
+            onGoManageUsers={() => setTab("users")}
+            openContainer={openContainer} containerByPort={containerByPort} refresh={refresh}
           />
         )}
         {activeTab === "self" && (
