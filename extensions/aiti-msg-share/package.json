@@ -1,13 +1,13 @@
 {
   "name": "@aiti-ai/aiti-msg-share",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "type": "module",
   "description": "Share sessions, messages, selections, files and images through pluggable targets with secret redaction and QR codes",
   "license": "MIT",
   "aitiExtProtocol": "1.0",
   "soul": "分享出去，是为了让对话继续。",
   "dependencies": {
-    "@aiti-ai/content-share": "^0.1.10",
+    "@aiti-ai/content-share": "^0.1.11",
     "@aiti-ai/secret-mask-core": "^0.1.0",
     "qrcode": "^1.5.4"
   },
