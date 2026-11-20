@@ -230,10 +230,14 @@ function AppCard(props: {
         {app.label}
       </span>
       {showOps ? (
-        <span style={{ position: "absolute", top: 2, right: iconCornerInset, display: "flex", gap: 2, zIndex: 2 }}>
+        <span style={{ position: "absolute", top: 2, left: iconCornerInset, zIndex: 2 }}>
           <button type="button" title={pinned ? t("app.unpin") : t("app.pin")} aria-label={pinned ? t("app.unpin") : t("app.pin")}
             style={cardOpsBtn(pinned)}
             onClick={() => togglePinned(app.id)}>{pinned ? "★" : "☆"}</button>
+        </span>
+      ) : null}
+      {showOps ? (
+        <span style={{ position: "absolute", top: 2, right: iconCornerInset, display: "flex", gap: 2, zIndex: 2 }}>
           {edit ? (
             <button type="button" title={t("app.hide")} aria-label={t("app.hide")} style={cardOpsBtn(false, true)}
               onClick={() => hideApp(app.id)}>✕</button>
@@ -243,7 +247,7 @@ function AppCard(props: {
         </span>
       ) : null}
       {edit && pinned && onMove ? (
-        <span style={{ position: "absolute", top: 2, left: iconCornerInset, display: "flex", gap: 2, zIndex: 2 }}>
+        <span style={{ position: "absolute", top: 32, right: iconCornerInset, display: "flex", gap: 2, zIndex: 2 }}>
           <button type="button" title={t("app.up")} aria-label={t("app.up")} style={cardOpsBtn()} onClick={() => onMove(app.id, -1)}>▲</button>
           <button type="button" title={t("app.down")} aria-label={t("app.down")} style={cardOpsBtn()} onClick={() => onMove(app.id, 1)}>▼</button>
         </span>
