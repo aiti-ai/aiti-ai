@@ -5,7 +5,9 @@
  * 四入口：Git 克隆（本扩展 server API：表单 → POST workspace/clone → event-bus
  * topic 进度帧 → 成功落欢迎页）/ 上传压缩包（session-manager uploadWorkspace
  * 服务复用——开关提为模块级 store，本扩展零重实现）/ 本地目录 / 新建空目录
- * （均 aiti-folder DirectoryBrowser，暂缺时降级手输 + 宿主 API）。
+ * (local / new and the clone tab's target dir: aiti-folder DirectoryBrowser picker, portaled to
+ * body so the float panel's transform/overflow cannot clip it; typing an absolute path by hand
+ * stays available as the fallback path).
  *
  * 「最近」区：GET workspace/history（记录 + ~/workspace 扫描合并——覆盖既往
  * zip 上传无历史的工作区），chip 点击 → pi-web.newSession.setCwd 落欢迎页。
@@ -17,6 +19,7 @@
  */
 import { useState, useEffect, t, extSvc, createPortal, apiUrl } from "./host-shim";
 import { parseGitUrl } from "./quickstart-logic";
+import { DirectoryBrowser } from "../../../aiti-folder/client/src/directory-browser";
 
 /* ── 服务面（全部软依赖，缺席降级） ── */
 
@@ -88,9 +91,36 @@ const goBtn: Record<string, unknown> = {
   background: "none", color: "var(--accent, #2563eb)", cursor: "pointer", fontSize: 12, fontFamily: "inherit",
 };
 const labelStyle: Record<string, unknown> = { fontSize: 11, color: "var(--text-dim, #888)", flexShrink: 0 };
+const browseBtn: Record<string, unknown> = {
+  display: "inline-flex", alignItems: "center", justifyContent: "center", width: 28, flexShrink: 0, padding: 0,
+  background: "var(--bg-hover, #232323)", border: "1px solid var(--border, #3a3a3a)", borderRadius: 8,
+  color: "var(--text-muted, #999)", cursor: "pointer",
+};
 const errStyle: Record<string, unknown> = { fontSize: 11.5, color: "var(--danger, #ef4444)", lineHeight: 1.5, wordBreak: "break-all" };
 
 type Tab = "clone" | "upload" | "local" | "new";
+
+/** Folder glyph for the browse buttons (stroke = currentColor so the hover color applies). */
+function FolderGlyph() {
+  return (
+    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
+    </svg>
+  );
+}
+
+/** DirectoryBrowser mounted on document.body: the Hub panel is a float target (transform + overflow
+ *  hidden), and a fixed-position child would be clipped/offset by it. The wrapper sits above
+ *  aiti-float's front counter (3001+): the float panel would otherwise cover the picker's own
+ *  static z-index 400 overlay. */
+function DirectoryPick(props: { initialPath?: string; onSelect: (p: string) => void; onCancel: () => void }): unknown {
+  return createPortal(
+    <div style={{ position: "fixed", inset: 0, zIndex: 2147483600 }}>
+      <DirectoryBrowser initialPath={props.initialPath} onSelect={props.onSelect} onCancel={props.onCancel} />
+    </div>,
+    document.body,
+  );
+}
 
 /* ── Hub 主组件 ── */
 
@@ -170,6 +200,21 @@ export function WorkspaceHub() {
   );
 }
 
+/** Start directory for a picker: the typed value, else the workspace root (clone default), else home. */
+async function resolveBrowseStart(typed: string): Promise<string> {
+  const value = typed.trim();
+  if (value) return value;
+  try {
+    const res = await fetch(apiUrl("/api/cwd/validate"), {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ cwd: "~/workspace" }),
+    });
+    const d = (await res.json()) as { cwd?: string };
+    if (res.ok && d.cwd) return d.cwd;
+  } catch { /* ignore */ }
+  return "~";
+}
+
 /* ── Git 克隆 tab ── */
 
 function CloneTab(props: { onEnter: (root: string, source: "clone", extra?: { url?: string }) => void; onRefreshHistory: () => void }) {
@@ -178,6 +223,8 @@ function CloneTab(props: { onEnter: (root: string, source: "clone", extra?: { ur
   const [dir, setDir] = useState("");
   const [depth, setDepth] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [browseOpen, setBrowseOpen] = useState(false);
+  const [browseStart, setBrowseStart] = useState<string | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
   const parsed = url.trim() ? parseGitUrl(url) : null;
@@ -214,11 +261,25 @@ function CloneTab(props: { onEnter: (root: string, source: "clone", extra?: { ur
           <span style={labelStyle}>{t("qs.hub.clone.branch")}</span>
           <input style={inputStyle} value={branch} onChange={(e: any) => setBranch(e.target.value)} disabled={busy} />
         </label>
-        <label style={{ flex: 1.4, display: "flex", flexDirection: "column", gap: 4 }}>
+        <div style={{ flex: 1.4, display: "flex", flexDirection: "column", gap: 4 }}>
           <span style={labelStyle}>{t("qs.hub.clone.dir")}</span>
-          <input style={inputStyle} value={dir} onChange={(e: any) => setDir(e.target.value)} placeholder="~/workspace" disabled={busy} />
-        </label>
+          <div style={{ display: "flex", gap: 4 }}>
+            <input style={{ ...inputStyle, flex: 1, minWidth: 0 }} value={dir} onChange={(e: any) => setDir(e.target.value)} placeholder="~/workspace" disabled={busy} />
+            <button type="button" title={t("qs.hub.local.browse")} aria-label={t("qs.hub.local.browse")}
+              disabled={busy} onClick={() => { void resolveBrowseStart(dir).then((p) => { setBrowseStart(p); setBrowseOpen(true); }); }}
+              style={{ ...browseBtn, opacity: busy ? 0.5 : 1 }}>
+              <FolderGlyph />
+            </button>
+          </div>
+        </div>
       </div>
+      {browseOpen ? (
+        <DirectoryPick
+          initialPath={browseStart}
+          onSelect={(p) => { setDir(p); setBrowseOpen(false); }}
+          onCancel={() => setBrowseOpen(false)}
+        />
+      ) : null}
       <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--text-muted, #999)", cursor: "pointer" }}>
         <input type="checkbox" checked={depth} onChange={(e: any) => setDepth(e.target.checked)} disabled={busy} />
         {t("qs.hub.clone.depth")}
@@ -254,17 +315,15 @@ function UploadTab() {
 
 /* ── 本地目录 / 新建空目录 tab（DirectoryBrowser 软依赖 + 宿主 API 降级） ── */
 
-function pickLocalDir(onPick: (p: string) => void, onCancel: () => void): void {
-  try { window.dispatchEvent(new CustomEvent("aiti-quickstart:pick-local", { detail: { onPick, onCancel } })); } catch { /* ignore */ }
-  onCancel(); // v1：无 DirectoryBrowser 接线时直接取消（表单手输是主路径）
-}
-
 function LocalTab(props: { onEnter: (root: string, source: "local") => void }) {
   const [path, setPath] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [browseOpen, setBrowseOpen] = useState(false);
+  const [browseStart, setBrowseStart] = useState<string | undefined>(undefined);
   const go = async () => {
     setError(null);
-    const p = path.trim().replace(/^~(?=\/|$)/, "").trim();
+    // A leading ~ is expanded by the host (/api/cwd/validate normalizeCwd) — pass the text as typed.
+    const p = path.trim();
     if (!p) { setError(t("qs.hub.err.parse")); return; }
     try {
       const res = await fetch(apiUrl("/api/cwd/validate"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cwd: p }) });
@@ -275,12 +334,26 @@ function LocalTab(props: { onEnter: (root: string, source: "local") => void }) {
   };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         <span style={labelStyle}>{t("qs.hub.tab.local")}</span>
-        <input style={inputStyle} value={path} onChange={(e: any) => setPath(e.target.value)} placeholder="/home/you/projects/my-app" />
-      </label>
+        <div style={{ display: "flex", gap: 4 }}>
+          <input style={{ ...inputStyle, flex: 1, minWidth: 0 }} value={path} onChange={(e: any) => setPath(e.target.value)}
+            onKeyDown={(e: any) => { if (e.key === "Enter") void go(); }} placeholder="/home/you/projects/my-app" />
+          <button type="button" title={t("qs.hub.local.browse")} aria-label={t("qs.hub.local.browse")}
+            onClick={() => { void resolveBrowseStart(path).then((p) => { setBrowseStart(p); setBrowseOpen(true); }); }} style={browseBtn}>
+            <FolderGlyph />
+          </button>
+        </div>
+      </div>
+      {browseOpen ? (
+        <DirectoryPick
+          initialPath={browseStart}
+          onSelect={(p) => { setPath(p); setBrowseOpen(false); }}
+          onCancel={() => setBrowseOpen(false)}
+        />
+      ) : null}
       {error ? <div style={errStyle}>{error}</div> : null}
-      <button type="button" style={{ ...goBtn, alignSelf: "flex-start" }} onClick={() => { void go(); }}>{t("qs.hub.tab.local")}</button>
+      <button type="button" style={{ ...goBtn, alignSelf: "flex-start" }} onClick={() => { void go(); }}>{t("qs.hub.local.go")}</button>
     </div>
   );
 }
