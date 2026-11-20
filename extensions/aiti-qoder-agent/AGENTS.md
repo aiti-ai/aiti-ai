@@ -49,7 +49,8 @@
 - 注入实现（`index.ts`）：`steer()` → 共享层 `routePrompt` → `injectSteer()` → `sendPromptTurn(..., "steer")`。`promptsInFlight` 计数归零才 `finishTurn`（注入可能另起一段 loop，UI 不得中途闪回空闲）；注入失败自动降级入本地队列。
 - CLI 未自报 `promptQueueing` 时注入会 fail-loud → 共享层降级入队（能力位是账本级的，运行时能力是二次闸）。
 - **禁手改账本伪造 pass**：键是二进制路径、值是行为级判据（注入后模型当轮改口），假证据=假按钮复发；`index.ts` 的 `QODER_CAPABILITIES` 基表也保持 `steer:false`。
-- 当前账实：1.1.87 二进制自报 `_meta.qoder.promptQueueing:true`（2026-11-18 二进制取证），但 ACP 实跑探针尚未记账——**steer 保持关闭**，跑 `tools/steer-probe-acp.mjs --record` 取证后才会开。
+- 当前账实（2026-11-20 24 机 Windows 帧级取证）：**steer 保持关闭**。qoderclicn 1.1.87 / 1.1.93（CN 通道最新，2026-11-19 发布）ACP 实跑探针均未过 C2——CLI 自报 `promptQueueing:true`，但主轮 `session/prompt` 在途时注入第二条，**CLI 大多数轮次对注入请求零回应**（300s 无 result 也无 error，违反 JSON-RPC 请求必须有响应；`--frames-out` 帧实锤：同通道 id=1-4 正常往返、仅注入 id 悬空），少数轮次能当轮工具间隙吸收（判据全过）。另 CLI 把标准 ACP `initialized` 通知报 `Method not found`（-32601），其 ACP 层实现粗糙。升级 CLI 后重跑 `tools/steer-probe-acp.mjs --record` 即可（pass 自动覆盖 fail 开门）；探针已支持 `--frames-out` 双向帧采集 + 收口 dump CLI stderr 尾部（`[MessageQueue]` 日志），挂死可归因。
+- 探针 Windows 兼容：动态 import 必须走 `pathToFileURL().href`（裸 `D:\` 路径不是合法 ESM specifier）；Node 原生类型剥离不给 node_modules 下的 `.ts` 用——源码仓跑探针需把 `extensions/aiti-qoder-agent/node_modules/@aiti-ai/ext-shared` junction 到**源码** `_shared`（realpath 不含 node_modules 段即可剥离），部署共享根的拷贝不行。
 - 协议取证细节 → `docs/aiti-qoder-steer-injection-plan.md`（stream-json 时代判据，ACP 版判据见 `tools/steer-probe-acp.mjs` 头注释）。
 
 ## 红线
