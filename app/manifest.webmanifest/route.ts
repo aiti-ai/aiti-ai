@@ -14,7 +14,7 @@ export function GET() {
     scope: withBasePath("/"),
     display: "standalone",
     background_color: "#ffffff",
-    theme_color: "#1a1a1a",
+    theme_color: "#1f1f1f",
     categories: ["developer", "productivity"],
     lang: "en",
     icons: [
