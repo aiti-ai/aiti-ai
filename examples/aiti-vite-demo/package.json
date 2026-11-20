@@ -43,5 +43,6 @@
   "dependencies": {
     "@aiti-ai/aiti-devtools-vite": "^0.1.2",
     "vite": "^6.0.0"
-  }
+  },
+  "contentHash": "91cf90350960056a"
 }
