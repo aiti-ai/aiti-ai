@@ -49,6 +49,58 @@ function SectionLabel(props: { children?: unknown }) {
   return <div style={{ fontSize: 10, letterSpacing: 0.5, color: "var(--text-dim,#888)", marginTop: 10, marginBottom: 3, textTransform: "uppercase" }}>{props.children}</div>;
 }
 
+// ---- Loading skeleton ----
+// The first snapshot can take a moment (si computes its internal deltas and may
+// shell out for disks/temperature), so the loading state mirrors the real layout
+// with pulsing placeholder lines instead of scattered "…" markers. The pulse
+// animation is disabled under prefers-reduced-motion.
+let skStyleInjected = false;
+function ensureSkeletonStyle() {
+  if (skStyleInjected || typeof document === "undefined") return;
+  skStyleInjected = true;
+  try {
+    if (document.getElementById("pi-sysmon-sk-style")) return;
+    const st = document.createElement("style");
+    st.id = "pi-sysmon-sk-style";
+    st.textContent = "@keyframes pi-sysmon-sk-pulse{0%,100%{opacity:.45}50%{opacity:1}}"
+      + ".pi-sysmon-sk{animation:pi-sysmon-sk-pulse 1.3s ease-in-out infinite}"
+      + "@media (prefers-reduced-motion: reduce){.pi-sysmon-sk{animation:none!important;opacity:.5}}";
+    document.head.appendChild(st);
+  } catch { /* noop */ }
+}
+
+function SkLine(props: { w: string | number; h?: number; mt?: number }) {
+  ensureSkeletonStyle();
+  return <div className="pi-sysmon-sk" style={{ width: props.w, height: props.h ?? 7, borderRadius: 3, marginTop: props.mt ?? 0, background: "color-mix(in srgb, currentColor 10%, transparent)" }} />;
+}
+
+function LoadingSkeleton() {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 2 }}>
+      <SkLine w="58%" h={13} />
+      <SkLine w="34%" h={10} mt={2} />
+      <SkLine w="30%" h={9} mt={10} />
+      <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+        <SkLine w={52} h={24} />
+        <SkLine w="100%" h={24} />
+      </div>
+      <SkLine w="100%" h={12} />
+      <SkLine w="100%" h={8} />
+      <SkLine w="30%" h={9} mt={8} />
+      <SkLine w="100%" h={6} />
+      <SkLine w="100%" h={6} />
+      <SkLine w="30%" h={9} mt={8} />
+      <SkLine w="100%" h={6} />
+      <SkLine w="88%" h={6} />
+      <SkLine w="30%" h={9} mt={8} />
+      <SkLine w="100%" h={6} />
+      <SkLine w="92%" h={6} />
+      <SkLine w="76%" h={6} />
+      <div style={{ fontSize: 11, color: "var(--text-dim,#888)", marginTop: 4 }}>{t("加载中")}…</div>
+    </div>
+  );
+}
+
 function MeterBar(props: { pct: number; color?: string }) {
   return (
     <div style={{ flex: 1, height: 6, background: "color-mix(in srgb, currentColor 10%, transparent)", borderRadius: 3, overflow: "hidden" }}>
@@ -122,14 +174,18 @@ function SnapshotApp() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", minHeight: 0, height: "100%", overflow: "auto", fontSize: 12, color: "var(--text,#1a1a1a)", padding: "8px 12px 10px" }}>
+      {!data ? (
+        err
+          ? <div style={{ color: "#d4574e", marginTop: 10 }}>{t("快照错误")}：{err}</div>
+          : <LoadingSkeleton />
+      ) : (
+        <>
       {/* OS header */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 8px" }}>
         <b style={{ fontSize: 13 }}>{os?.hostname || "…"}</b>
         <span style={{ color: "var(--text-dim,#888)" }}>{[os?.distro, os?.kernel].filter(Boolean).join(" · ")}</span>
         <span style={{ color: "var(--text-dim,#888)" }}>{t("已运行")} {fmtUptime(os?.uptime)}</span>
       </div>
-
-      {!data && err ? <div style={{ color: "#d4574e", marginTop: 10 }}>{t("快照错误")}：{err}</div> : null}
 
       {/* CPU */}
       <SectionLabel>CPU {cpu ? `· ${cpu.cores} ${t("核")}` : ""}</SectionLabel>
@@ -218,6 +274,8 @@ function SnapshotApp() {
           </div>
         </>
       ) : null}
+        </>
+      )}
 
       {/* Toolbar (always visible, bottom) */}
       <div style={{ marginTop: "auto", paddingTop: 12, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
