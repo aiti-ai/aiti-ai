@@ -33,7 +33,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, accessSync, constan
 let queueStateDir: string | undefined;
 import { whichBin } from "@aiti-ai/ext-shared/exec-async";
 import { governanceEnv } from "./external-governance.ts";
-import { agentSpawnEnv, spawnEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, spawnEnvList, spawnCommand, spawnArgsPrefix, parseArgsLines, resolveCliLaunch, captureSpawnEnvFeatures } from "@aiti-ai/ext-shared/agent-spawn-env";
+import { agentSpawnEnv, spawnEnvFeature, spawnDisplayEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, spawnEnvList, spawnCommand, spawnArgsPrefix, parseArgsLines, resolveCliLaunch, captureSpawnEnvFeatures } from "@aiti-ai/ext-shared/agent-spawn-env";
 import type { LaunchOverride } from "@aiti-ai/ext-shared/agent-spawn-env";
 import { readAgentLastUsedModel, readExtModelState, withLastUsedFirst, writeExtModelState, type ExtModelEntry } from "@aiti-ai/ext-shared/ext-model-state";
 // 队列共享实现层（权威源 pi-web-ext/_shared/backend-queue.ts，副本随扩展部署——改动须双向同步）
@@ -1774,6 +1774,7 @@ export default {
   // 功能管理：入口默认隐藏，用户在 extman 里打开后显示
   features: [
     spawnEnvFeature("ACP"),
+    spawnDisplayEnvFeature("ACP"),
     spawnCommandFeature("ACP"),
     spawnArgsPrefixFeature("ACP"),
     { id: "acp.permissionPolicy",

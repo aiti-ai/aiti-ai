@@ -29,6 +29,10 @@
  *   spawn.command / spawn.argsPrefix extman feature（spawnCommandFeature/spawnArgsPrefixFeature）。
  */
 
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 /** extman feature 源（ctx.features，startup 捕获；DI 方案 P1 同款，缺省走 __piWebExt 兜底） */
 type FeaturesLike = { get(extId: string, fid: string): boolean | string | undefined };
 
@@ -170,12 +174,70 @@ export function spawnArgsPrefix(extId: string): string {
 	return readStringFeature(extId, "spawn.argsPrefix");
 }
 
+// ---------------- UI environment session snapshot (aiti-ui-env) ----------------
+
+/**
+ * aiti-ui-env writes a snapshot of its mode-arbiter decision
+ * (<dataRoot>/aiti-ui-env/cache/session-env.json: which target — Xvfb headless
+ * display or the real desktop — is active, plus the env to reach it) whenever
+ * the resolution changes. agentSpawnEnv merges the snapshot's display keys into
+ * every spawned agent session, so a fresh session's bash tools and stdio MCP
+ * servers land on the chosen display. This is the piece that makes the
+ * extension panel's "display mode" actually take effect for sessions.
+ *
+ * Merge position: after `extra`, BEFORE the registered defaults and the user's
+ * extman spawn.env list — the user can always override (DISPLAY=:0) or remove
+ * (-DISPLAY) the injected keys.
+ *
+ * Per-extension opt-out via the extman feature `spawn.displayEnv`:
+ *   "" / auto (default) → inject whenever a snapshot exists
+ *   off                 → never inject
+ *   headless / desktop  → inject only when the snapshot's target matches
+ *
+ * No snapshot (extension absent / display resolution never succeeded) → zero
+ * behavior change, so defaulting to auto is safe.
+ */
+
+const UI_ENV_SNAPSHOT_KEYS = [
+	"DISPLAY", "XAUTHORITY", "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR",
+	"XDG_SESSION_TYPE", "GDK_BACKEND", "WAYLAND_DISPLAY",
+	"GTK_MODULES", "QT_ACCESSIBILITY", "NO_AT_BRIDGE",
+	"UI_ENV_VNC_PORT", "UI_ENV_VNC_WEB_PORT",
+] as const;
+
+/** Extension data root (<webRoot>/data with the same dev/prod isolation as lib/ext/data-dir.ts) */
+export function uiEnvDataRoot(processEnv: Record<string, string | undefined>): string {
+	const explicit = processEnv.PI_WEB_DATA_DIR;
+	if (explicit) return explicit;
+	const root = processEnv.PI_WEB_DEV_DIST === "1" ? join(homedir(), ".pi", "web-dev", "data") : join(homedir(), ".pi", "web", "data");
+	return root;
+}
+
+export interface UiEnvSnapshot { target: string; mode?: string; rationale?: string; env: Record<string, string>; updatedAt?: string; }
+
+/** Read the aiti-ui-env session-env snapshot; null = absent/corrupt (never throws). */
+export function readUiEnvSnapshot(processEnv?: Record<string, string | undefined>): UiEnvSnapshot | null {
+	const env = processEnv ?? (process.env as Record<string, string | undefined>);
+	try {
+		const raw = readFileSync(join(uiEnvDataRoot(env), "aiti-ui-env", "cache", "session-env.json"), "utf8");
+		const d = JSON.parse(raw) as UiEnvSnapshot;
+		if ((d.target !== "headless" && d.target !== "desktop") || !d.env || typeof d.env !== "object") return null;
+		const out: Record<string, string> = {};
+		for (const k of UI_ENV_SNAPSHOT_KEYS) {
+			const v = (d.env as Record<string, unknown>)[k];
+			if (typeof v === "string") out[k] = v;
+		}
+		return { target: d.target, mode: d.mode, rationale: d.rationale, env: out, updatedAt: d.updatedAt };
+	} catch { return null; }
+}
+
 /**
  * spawn env 统一构造。
  *   - cli + governance：走治理白名单（external-governance.ts 的 governanceEnv）为基底，
  *     自动 bridgeEnv 进 extra（白名单外仍注入）；
  *   - 无 governance（cursor/qoder 等全量透传派）：processEnv 基底 + bridgeEnv + extra；
- *   - 再按序叠加：扩展注册侧默认列表（registerSpawnEnvDefaults）→ 用户 extman spawn.env
+ *   - merged in order: aiti-ui-env display-env snapshot (spawn.displayEnv switch, default auto)
+ *     → registered defaults (registerSpawnEnvDefaults) → user extman spawn.env
  *     （可覆盖/可 -NAME 排除一切，含自动注入项——逃生口）。
  */
 export function agentSpawnEnv(opts: {
@@ -194,6 +256,16 @@ export function agentSpawnEnv(opts: {
 		out = opts.governance(opts.cli, { ...bridge, ...opts.extra });
 	} else {
 		out = { ...(processEnv as Record<string, string>), ...bridge, ...opts.extra };
+	}
+	// aiti-ui-env display snapshot (per-extension spawn.displayEnv switch; default auto)
+	const displayMode = String(readStringFeature(opts.extId ?? "", "spawn.displayEnv") || "auto").trim().toLowerCase();
+	if (displayMode !== "off") {
+		const snap = readUiEnvSnapshot(processEnv);
+		if (snap && (displayMode === "" || displayMode === "auto" || displayMode === snap.target)) {
+			for (const k of UI_ENV_SNAPSHOT_KEYS) {
+				if (k in snap.env) out[k] = snap.env[k];
+			}
+		}
 	}
 	const onWarning = opts.warn ?? ((m: string) => console.warn(`[spawn.env] ${m}`));
 	const warnings: string[] = [];
@@ -222,6 +294,25 @@ export function spawnEnvFeature(group?: string): {
 			"此处可覆盖自动注入的 AITI_BRIDGE_URL，也可 -AITI_BRIDGE_URL 整个去掉。改完下一轮 spawn 生效。",
 		value: "",
 		placeholder: "FOO=bar\nBAR=$FOO\n-UNWANTED_VAR\n# 注释行与空行忽略",
+	};
+}
+
+/** extman feature declaration: spawn.displayEnv (aiti-ui-env display snapshot injection switch) */
+export function spawnDisplayEnvFeature(group?: string): {
+	id: string; type: "string"; label: string; description: string; value: string; placeholder: string; group?: string;
+} {
+	return {
+		id: "spawn.displayEnv",
+		...(group ? { group } : {}),
+		type: "string",
+		label: "显示环境注入",
+		description:
+			"把 aiti-ui-env 显示模式裁决出的显示环境（DISPLAY/XAUTHORITY/DBUS 等）注入本扩展 spawn 的会话进程，" +
+			"新会话里的 GUI 程序与 MCP 即落在对应屏幕（虚拟屏可经浏览器 VNC 查看）。取值：留空或 auto = 跟随显示模式（快照存在即注入）；" +
+			"off = 不注入；headless = 仅虚拟屏快照注入；desktop = 仅真实桌面快照注入。改完下一轮 spawn 生效；" +
+			"spawn.env 里同名变量仍可覆盖（如 DISPLAY=:0）或 -DISPLAY 排除。",
+		value: "",
+		placeholder: "auto",
 	};
 }
 

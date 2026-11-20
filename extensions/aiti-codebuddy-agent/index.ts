@@ -34,7 +34,7 @@
 import { mkdirSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { spawnEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, captureSpawnEnvFeatures } from "@aiti-ai/ext-shared/agent-spawn-env";
+import { spawnEnvFeature, spawnDisplayEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, captureSpawnEnvFeatures } from "@aiti-ai/ext-shared/agent-spawn-env";
 import type { LaunchOverride } from "@aiti-ai/ext-shared/agent-spawn-env";
 import {
   readExtModelState, readAgentLastUsedModel, withLastUsedFirst,
@@ -472,6 +472,7 @@ export default {
 
   features: [
     spawnEnvFeature("CodeBuddy Code"),
+    spawnDisplayEnvFeature("CodeBuddy Code"),
     spawnCommandFeature("CodeBuddy Code"),
     spawnArgsPrefixFeature("CodeBuddy Code"),
     {
