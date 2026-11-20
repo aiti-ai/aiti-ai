@@ -40,7 +40,11 @@ export async function rememberProviderModels(runtime: ModelRuntime): Promise<voi
     if (!extensionProviders.has(model.provider)) {
       if (!runtime.getModel(model.provider, model.id) || runtime.getPhysicalModel(model.provider, model.id)) continue;
     }
-    byProvider.set(model.provider, [...(byProvider.get(model.provider) ?? []), model]);
+    // Idempotent per provider:model — an engine that re-registers its provider (combo groups do
+    // this on every models.json change) can hand the same model back more than once, and the
+    // catalog is replayed into /api/models on every load.
+    const seen = byProvider.get(model.provider) ?? [];
+    if (!seen.some((m) => m.id === model.id)) byProvider.set(model.provider, [...seen, model]);
   }
   globalThis.__piWebProviderNameCatalog ??= new Map();
   for (const provider of runtime.getProviders?.() ?? []) {
