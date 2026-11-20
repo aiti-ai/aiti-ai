@@ -51,6 +51,10 @@ const state = {
   targetId: null, meta: {}, redact: true, redactHits: [],
   result: null, busy: false, error: "", errorDetail: "", errorCode: "", errorTarget: "", errorProvider: "", search: "", probe: [],
   editing: null, form: {},
+  /** Container picker (notebook/folder selection): per-target cache + pending pick.
+   *  containersByTarget[id] = { containers: [{id,label,parent,path}], label } */
+  containersByTarget: {}, containerFor: "", containerOpen: false, containerFilter: "",
+  containerExpanded: {}, containersLoading: false, containerError: "",
   /** Local favourite sinks (share-sink topic): { ok, message, action } of the last run. */
   sinkResult: null, sinkBusy: "",
 };
@@ -109,9 +113,76 @@ function set(partial) { Object.assign(state, partial); emit(); }
 /** Pick a target for the pending share and return to the share dialog. */
 function chooseTarget(id) {
   recentAdd(id);
-  set({ targetId: id, manager: false, editing: null, error: "", errorDetail: "" });
+  set({ targetId: id, manager: false, editing: null, error: "", errorDetail: "", containerOpen: false, containerFilter: "" });
+  syncContainerFor(id);
+  void ensureContainers(id);
 }
 function emit() { listeners.forEach((fn) => fn()); }
+
+// ---------------------------------------------------------------------------
+// Container selection (Joplin notebooks, Obsidian dirs, …): a tree picker with
+// last-selection memory. The pick is recorded server-side immediately so
+// headless/AI shares land in the same notebook. No polling — fetch on demand.
+
+/** Selection follows the target's recorded last pick when the target switches. */
+function syncContainerFor(id) {
+  const t = state.targets.find((x) => x.id === id);
+  set({ containerFor: t?.lastContainer || "" });
+}
+
+/** Fetch the container list for a target (cached per session; force bypasses). */
+async function ensureContainers(targetId, force = false) {
+  const t = state.targets.find((x) => x.id === targetId);
+  if (!t || !t.supportsContainers) return;
+  if (state.containersByTarget[targetId] && !force) return;
+  set({ containersLoading: true, containerError: "" });
+  try {
+    const r = await getJSON("containers", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ targetId }) });
+    set({ containersLoading: false,
+      containersByTarget: { ...state.containersByTarget,
+        [targetId]: { containers: r.containers || [], label: r.containerLabel || null } } });
+  } catch (e) { set({ containersLoading: false, containerError: e.message }); }
+}
+
+/** Open/close the picker panel; expands the selection's ancestor chain by default. */
+function toggleContainerPanel() {
+  if (state.containerOpen) { set({ containerOpen: false, containerFilter: "" }); return; }
+  const items = state.containersByTarget[state.targetId]?.containers || [];
+  const expanded = {};
+  // One visible level below the roots by default (children keep their own names),
+  // plus the full ancestor chain of the current selection.
+  for (const c of items) if (!c.parent) expanded[c.id] = true;
+  const byId = new Map(items.map((c) => [c.id, c]));
+  let cur = byId.get(state.containerFor);
+  while (cur?.parent) { expanded[cur.parent] = true; cur = byId.get(cur.parent); }
+  set({ containerOpen: true, containerFilter: "", containerExpanded: expanded });
+}
+
+/** Record the pick immediately (even the explicit "service default" pick). */
+function pickContainer(c) {
+  const id = c ? c.id : "";
+  const pathLabel = c ? (c.path || c.label) : "";
+  set({ containerFor: id, containerOpen: false, containerFilter: "" });
+  void getJSON("targets/last-container", { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: state.targetId, container: id, label: pathLabel }) })
+    .then(() => set({ targets: state.targets.map((x) => x.id === state.targetId
+      ? { ...x, lastContainer: id, lastContainerLabel: pathLabel } : x) }))
+    .catch(() => {});
+}
+
+/** parent→children map for tree rendering; orphans without a resolvable parent fall back to root. */
+function containerTree(items) {
+  const ids = new Set(items.map((c) => c.id));
+  const childrenOf = new Map();
+  for (const c of items) {
+    const k = (c.parent && ids.has(c.parent)) ? c.parent : "";
+    if (!childrenOf.has(k)) childrenOf.set(k, []);
+    childrenOf.get(k).push(c);
+  }
+  for (const arr of childrenOf.values()) arr.sort((a, b) => String(a.label).localeCompare(String(b.label)));
+  return childrenOf;
+}
 
 // Content-kind labels resolved via shareT() at render time; status uses icons only.
 const STATUS_ICONS = { recent: "🕘", recommended: "★", dead: "⚠", legacy: "⚠" };
@@ -181,6 +252,8 @@ async function refresh(force = false) {
     const targets = catalog.targets || [];
     set({ targets, history: history.items || [], probe: probe.services || [], loading: false,
       targetId: state.targetId || targets.find((t) => t.recommended)?.id || targets[0]?.id });
+    syncContainerFor(state.targetId);
+    void ensureContainers(state.targetId);
     if (force) await getJSON("refresh", { method: "POST" }).catch(() => {});
   } catch (e) { set({ loading: false, error: e.message, errorDetail: e.detail || "catalog/history" }); }
 }
@@ -188,7 +261,8 @@ async function refresh(force = false) {
 function targetCard(target, selected, badge) {
   const disabled = target.status === "dead" || target.enabled === false;
   return h("button", { type: "button", key: target.id, disabled,
-    onClick: () => set({ targetId: target.id, error: "" }),
+    onClick: () => { set({ targetId: target.id, error: "", containerOpen: false, containerFilter: "" });
+      syncContainerFor(target.id); void ensureContainers(target.id); },
     title: noteText(target.note) || target.name,
     style: { display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 9px",
       border: "1px solid " + (selected ? "var(--accent, #4d8dff)" : "var(--border, #34363c)"), borderRadius: 8,
@@ -348,6 +422,105 @@ function targetSection() {
     h("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } }, ...shown));
 }
 
+// --- Container picker UI (tree with named sub-items; search degrades to path list) ---
+
+function containerRow(c, depth, childCount, expanded, selected) {
+  return h("div", { key: c.id, onClick: () => pickContainer(c), title: c.path || c.label,
+    style: { display: "flex", alignItems: "center", gap: 5, padding: "3px 6px 3px " + (6 + depth * 14) + "px",
+      borderRadius: 6, cursor: "pointer", fontSize: 12,
+      background: selected ? "rgba(77, 141, 255, 0.18)" : "transparent",
+      color: selected ? "var(--accent, #4d9dff)" : "var(--text, #d8dade)" } },
+    h("span", { onClick: (e) => { if (!childCount) return; e.stopPropagation();
+        set({ containerExpanded: { ...state.containerExpanded, [c.id]: !expanded } }); },
+      style: { width: 14, textAlign: "center", flexShrink: 0,
+        color: childCount ? "var(--text-muted, #8b909b)" : "transparent",
+        cursor: childCount ? "pointer" : "default" } }, expanded ? "▾" : "▸"),
+    h("span", { style: { flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+        fontWeight: selected ? 600 : 400 } }, c.label),
+    childCount && !expanded ? h("span", { style: { color: "var(--text-muted, #8b909b)", fontSize: 10, flexShrink: 0 } }, childCount) : null);
+}
+
+function renderContainerNodes(childrenOf, nodes, depth) {
+  const out = [];
+  for (const c of nodes) {
+    const kids = childrenOf.get(c.id) || [];
+    const expanded = !!state.containerExpanded[c.id];
+    out.push(containerRow(c, depth, kids.length, expanded, state.containerFor === c.id));
+    if (kids.length && expanded) out.push(...renderContainerNodes(childrenOf, kids, depth + 1));
+  }
+  return out;
+}
+
+function containerRowFlat(c) {
+  return h("div", { key: "flat-" + c.id, onClick: () => pickContainer(c), title: c.path || c.label,
+    style: { padding: "3px 6px", borderRadius: 6, cursor: "pointer", fontSize: 12,
+      background: state.containerFor === c.id ? "rgba(77, 141, 255, 0.18)" : "transparent",
+      color: state.containerFor === c.id ? "var(--accent, #4d9dff)" : "var(--text, #d8dade)",
+      whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } },
+    c.path || c.label);
+}
+
+function containerPanel(items) {
+  const filter = state.containerFilter.trim().toLowerCase();
+  const childrenOf = containerTree(items);
+  const roots = childrenOf.get("") || [];
+  const empty = h("div", { style: { padding: "8px 6px", fontSize: 11, color: "var(--text-muted, #8b909b)" } },
+    shareT("share.container.empty"));
+  // Filtering degrades to a flat list of full paths — disambiguates same-named
+  // notebooks across parents (real Joplin trees often repeat names under roots).
+  const rows = filter
+    ? items.filter((c) => String(c.path || c.label).toLowerCase().includes(filter))
+        .sort((a, b) => String(a.path || a.label).localeCompare(String(b.path || b.label)))
+        .map((c) => containerRowFlat(c))
+    : renderContainerNodes(childrenOf, roots, 0);
+  return h("div", { style: { border: "1px solid var(--border, #34363c)", borderRadius: 7, marginTop: 5,
+      background: "var(--bg-panel, #1e2021)", maxHeight: 240, overflowY: "auto", padding: 4 } },
+    h("input", { value: state.containerFilter, placeholder: shareT("share.container.search"),
+      onInput: (e) => set({ containerFilter: e.target.value }),
+      style: { width: "100%", boxSizing: "border-box", background: "var(--bg-hover, #25272c)",
+        border: "1px solid var(--border, #34363c)", borderRadius: 6, padding: "4px 8px", fontSize: 12,
+        color: "var(--text, #d8dade)", marginBottom: 4 } }),
+    state.containersLoading ? h("div", { style: { padding: "6px", fontSize: 11, color: "var(--text-muted, #8b909b)" } }, "…") : null,
+    rows.length ? rows : empty);
+}
+
+/** Container selection row: hidden unless the current target supports containers. */
+function containerSection() {
+  const t = state.targets.find((x) => x.id === state.targetId);
+  if (!t || !t.supportsContainers) return null;
+  const cache = state.containersByTarget[state.targetId];
+  const items = cache?.containers || [];
+  const selected = items.find((c) => c.id === state.containerFor);
+  const label = noteText(cache?.label) || noteText(t.containerLabel) || shareT("share.container.label");
+  const missing = state.containerFor && items.length && !selected;
+  const btnLabel = selected ? (selected.path || selected.label) : shareT("share.container.default");
+  return h("div", null,
+    h("div", { style: { display: "flex", alignItems: "center", gap: 6 } },
+      h("span", { style: { color: "var(--text-muted, #8b909b)", fontSize: 11, flexShrink: 0 } },
+        "📓 " + label),
+      h("button", { type: "button", onClick: () => { void ensureContainers(state.targetId); toggleContainerPanel(); },
+        title: btnLabel,
+        style: { flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 5, textAlign: "left",
+          border: "1px solid var(--border, #34363c)", background: "var(--bg-hover, #25272c)",
+          color: selected ? "var(--text, #d8dade)" : "var(--text-muted, #8b909b)", borderRadius: 7,
+          padding: "5px 9px", fontSize: 12, cursor: "pointer" } },
+        h("span", { style: { flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, btnLabel),
+        h("span", { style: { color: "var(--text-muted, #8b909b)", fontSize: 10 } }, state.containerOpen ? "▴" : "▾")),
+      h("button", { type: "button", onClick: () => { void ensureContainers(state.targetId, true); },
+        title: shareT("share.container.refresh"),
+        style: { border: "1px solid var(--border, #34363c)", background: "none",
+          color: "var(--text-muted, #8b909b)", borderRadius: 7, padding: "5px 8px", fontSize: 12,
+          cursor: "pointer", flexShrink: 0 } }, "⟳")),
+    missing ? h("div", { style: { color: "#d9a13c", fontSize: 10, marginTop: 4 } }, shareT("share.container.missing")) : null,
+    state.containerOpen ? containerPanel(items) : null,
+    state.containerError ? h("div", { style: { display: "flex", alignItems: "center", gap: 8,
+        color: "#e05d5d", fontSize: 11, marginTop: 4 } },
+      shareT("share.container.fail", { detail: state.containerError }),
+      h("button", { type: "button", onClick: () => { void ensureContainers(state.targetId, true); },
+        style: { border: "none", background: "none", color: "var(--accent, #4d8dff)", cursor: "pointer", fontSize: 11 } },
+        shareT("share.container.refresh"))) : null);
+}
+
 /** Collect page context for the optional "page info" stamp. */
 function pageInfo() {
   const ua = (typeof navigator !== "undefined" && navigator.userAgent) || "";
@@ -418,7 +591,7 @@ function errorText() {
     disabled: "share.err.disabled", unknownTarget: "share.err.unknownTarget",
     noSession: "share.err.noSession", imageFetch: "share.err.imageFetch", endpoint: "share.err.endpoint",
     badRequest: "share.err.badRequest", badSxcu: "share.err.badSxcu", noProbe: "share.err.noProbe",
-    forbidden: "share.err.forbidden", kind: "share.err.kind",
+    forbidden: "share.err.forbidden", kind: "share.err.kind", containerFail: "share.container.fail",
   }[code];
   if (key) return shareT(key, { name, detail });
   return state.error || shareT("share.err.generic", { detail });
@@ -514,7 +687,8 @@ async function doShare() {
     // The textarea already shows the redacted text (preview-redact ran on load/toggle),
     // so upload exactly what the user sees; no second redaction on the server.
     const body = { ...(state.payload || {}), targetId: state.targetId, kind: state.kind,
-      text: state.text, title: state.title, tags: state.tags, redact: false };
+      text: state.text, title: state.title, tags: state.tags, redact: false,
+      container: state.containerFor || "" };
     // Images: load in the browser (same-origin /api/... or data: URLs — no CORS,
     // no server-side fetch) and hand the server base64 bytes.
     if (state.kind === "image" && body.imageSrc) {
@@ -571,7 +745,7 @@ function shareDialog() {
       style: { background: "none", border: "none", color: "var(--text-muted, #8b909b)", cursor: "pointer", fontSize: 14 } }, "✕"));
   const body = h("div", { ref: (el) => { dialogBodyEl = el; },
     style: { padding: "12px 14px", display: "flex", flexDirection: "column", gap: 12, flex: 1, minHeight: 0, overflowY: "auto" } },
-    previewSection(), sinkSection(), targetSection(),
+    previewSection(), sinkSection(), targetSection(), containerSection(),
     h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9 } },
       h("input", { value: state.title, placeholder: shareT("share.titleField"), onInput: (e) => set({ title: e.target.value }),
         style: { background: "var(--bg-hover, #25272c)", border: "1px solid var(--border, #34363c)", color: "var(--text, #d8dade)", borderRadius: 7, padding: "6px 9px", fontSize: 12 } }),

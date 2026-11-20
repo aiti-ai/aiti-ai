@@ -59,3 +59,17 @@ test("classifyFile: image / text / binary by extension", async () => {
   assert.deepEqual(classifyFile("archive.tar.gz"), { kind: "binary", mime: "application/octet-stream" });
   assert.deepEqual(classifyFile("noext"), { kind: "binary", mime: "application/octet-stream" });
 });
+
+test("ShareStore persists container last-selection fields", () => {
+  const dir = mkdtempSync(join(tmpdir(), "share-store-"));
+  const store = new ShareStore(join(dir, "config"), join(dir, "state"));
+  store.upsertTarget({ id: "joplin", provider: "joplin", values: { token: "t" } });
+  const t = store.readTargets()[0];
+  store.upsertTarget({ ...t, lastContainer: "nb1", lastContainerLabel: "My Notebook / Work", lastContainerAt: "2026-11-20T00:00:00.000Z" });
+  const back = store.readTargets()[0];
+  assert.equal(back.lastContainer, "nb1");
+  assert.equal(back.lastContainerLabel, "My Notebook / Work");
+  // Clearing the selection keeps the label empty too.
+  store.upsertTarget({ ...back, lastContainer: "", lastContainerLabel: "" });
+  assert.equal(store.readTargets()[0].lastContainer, "");
+});
