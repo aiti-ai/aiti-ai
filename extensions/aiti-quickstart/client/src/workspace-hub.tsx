@@ -65,7 +65,7 @@ const overlayStyle: Record<string, unknown> = {
   display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
 };
 const panelStyle: Record<string, unknown> = {
-  width: 440, maxWidth: "94vw", maxHeight: "min(560px, 82dvh)", display: "flex", flexDirection: "column",
+  width: 600, maxWidth: "94vw", minHeight: 320, maxHeight: "min(760px, 90dvh)", display: "flex", flexDirection: "column",
   background: "var(--bg, #1a1a1a)", border: "1px solid var(--border, #3a3a3a)", borderRadius: 12,
   boxShadow: "0 10px 40px rgba(0,0,0,0.5)", overflow: "hidden",
 };
@@ -149,7 +149,8 @@ export function WorkspaceHub() {
 
   return createPortal(
     <div style={overlayStyle} onClick={(e: any) => { if (e.target === e.currentTarget) setOpen(false); }}>
-      <div style={{ ...panelStyle }} data-ext-float="1" data-ext-float-full="1" data-ext-float-w="440" data-ext-float-h="420">
+      <div style={{ ...panelStyle }} data-ext-float="1" data-ext-float-full="1" data-ext-float-w="600" data-ext-float-h="600"
+        data-ext-float-autoh="1" data-ext-float-min-h="320">
         <div style={headStyle}>
           <span style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, color: "var(--text, #ddd)" }}>{t("qs.hub.title")}</span>
           <button type="button" title={t("qs.hub.close")} aria-label={t("qs.hub.close")} onClick={() => setOpen(false)}

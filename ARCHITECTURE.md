@@ -130,7 +130,7 @@ fails on typos (a typo = a dead entry point). Major slots:
 - **Sessions**: `sidebarProjects`, `sessionRowActions`, `sessionRowLeading`, `sessionRowMeta`, `workspacePickerActions`
 - **Composer area**: `chatInputTop`, `chatOverlay`, `composerTools`, `composerAffix`, `userMessageActions`, `assistantMessageActions`, `assistantMessageFooter`, `compactLead`, `modelInfoLead`, `queuePanel`
 - **Docks & dialogs**: `dialogs`, `pages`, `rightFileDock`, `sidebarExplorerDock`, `sidebarTasks`, `terminalDock`
-- **Takeovers**: `fileViewer`, `pathPicker`, `modelSelector`, `modelSelectorFooter`, `settingsModels`, `settingsAgents`, `settingsAgentsFeature`, `noWorkspaceGuide`, `newSessionWidgets`, `newSessionSelectors`, `newSessionPreparers`, `newSessionBackendOptions`, `newSessionContextTrailing`, `sessionRequestCard`, `sessionStats`, `recoveryDialog`, `sidebarContent`
+- **Takeovers**: `fileViewer`, `pathPicker`, `modelSelector`, `modelSelectorFooter`, `settingsModels`, `settingsAgents`, `settingsAgentsFeature`, `noWorkspaceGuide`, `newSessionWidgets`, `newSessionSelectors`, `newSessionWorkspacePicker`, `newSessionPreparers`, `newSessionBackendOptions`, `newSessionContextTrailing`, `sessionRequestCard`, `sessionStats`, `recoveryDialog`, `sidebarContent`
 - **Extensions' own slots** (consumed cross-bundle): `sessionInfoPanel`, …
 
 Items carry `meta: { label, icon, onClick }` (declarative — the host renders the button)
