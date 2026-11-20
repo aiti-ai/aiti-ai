@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const source = await readFile(new URL("./ChatWindow.tsx", import.meta.url), "utf8");
+const hookSource = await readFile(new URL("../hooks/useAgentSession.ts", import.meta.url), "utf8");
 
 test("marks a user message for edit-from-here without touching the session", () => {
   // Click-to-mark: purely frontend (prefill composer + highlight + button flips to cancel); no backend operation is initiated
@@ -47,7 +48,19 @@ test("sending with a pending mark rewinds first; bash commands skip the rewind",
   // Send is the actual effect point: with a pending mark, rewind first then send; bash commands prefixed with ! do not consume the mark
   assert.match(source, /const handleSendWrapped = useCallback\(async \(message: string, images\?: AttachedImage\[\], files\?: AttachedFile\[\]\) => \{/);
   assert.match(source, /if \(message\.trim\(\)\.startsWith\("!"\)\) \{[\s\S]*?await handleSend\(message, images[^)]*\);[\s\S]*?return;/);
-  assert.match(source, /setEditFromHerePending\(null\);\n\s+await handleEditFromStartSend\(pending\.targetId, pending\.leafId, message, images\);/);
+  assert.match(source, /setEditFromHerePending\(null\);\n\s+await handleEditFromStartSend\(pending\.targetId, pending\.leafId, pending\.entryId, message, images\);/);
+});
+
+test("rebind-fork handoff (pi spawn): fork carries the edited message id and switches the shell over", () => {
+  // pi-shaped backends fork BEFORE the edited user message — the branch-point entryId
+  // (zcode-shaped contract) would be rejected by pi's fork. The edited message id rides
+  // in editEntryId; when the backend reports the branched child id (forkRebindHandoff),
+  // the shell switches to it and auto-sends there (in-place would read the stale
+  // pre-edit file on disk — the local file shadows the live handle in the context route).
+  assert.match(hookSource, /editEntryId,/);
+  assert.match(hookSource, /if \(sessionCapabilities\.forkRebindHandoff && newSid && newSid !== sid && onEditFromHereHandoff\) \{[\s\S]*?onEditFromHereHandoff\(\{ sessionId: newSid, message, images \}\);/);
+  // zcode-shaped backends stay on the in-place path (old key, rebuilt history).
+  assert.match(hookSource, /\/\/ zcode-shaped in-place reset: same record id[\s\S]*?await loadContext\(sid, null\);/);
 });
 
 test("branch navigation cancels the pending mark automatically", () => {
