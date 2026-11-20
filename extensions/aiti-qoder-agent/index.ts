@@ -1386,6 +1386,10 @@ export class QoderHandle {
 
   /** session/prompt 应答上限：一次回合可跨数十次工具调用，按小时计；超时按传输失败收口。 */
   static PROMPT_TIMEOUT_MS = 6 * 60 * 60 * 1000;
+  /** Steer injection uses a short timeout: a healthy CLI replies in ~5s (probe-measured),
+   *  so 90s is ~18x headroom — a hang must fall back to the local queue fast, not tie
+   *  the turn up for PROMPT_TIMEOUT_MS. */
+  static STEER_TIMEOUT_MS = 90_000;
 
   /**
    * 发一条 session/prompt 并记账（主轮与运行中注入共用）：
@@ -1402,6 +1406,7 @@ export class QoderHandle {
       mirrorId: string;
       historyEntry: unknown;
     },
+    timeoutMs: number = QoderHandle.PROMPT_TIMEOUT_MS,
   ): Promise<void> {
     const sid = realSidOf(this.id);
     if (!sid || !this.acp) return;
@@ -1413,7 +1418,7 @@ export class QoderHandle {
       result = await this.acp.request(
         "session/prompt",
         { sessionId: sid, prompt },
-        QoderHandle.PROMPT_TIMEOUT_MS,
+        timeoutMs,
       ) as Record<string, unknown> | null;
     } catch (e) {
       // transport-level failure (dead pipe / timeout): let markDead settle the UI via
@@ -1445,6 +1450,13 @@ export class QoderHandle {
     if (failure !== null) {
       this.running = false;
       console.warn(`[aiti-qoder-agent] session/prompt failed${kind === "steer" ? " (steer)" : ""}: ${failure}`);
+      // Steer-fallback turn end: the primary settled earlier with promptsInFlight>0
+      // (skipping finishTurn), so the UI still reads "running" and the downgraded
+      // followUp would sit idle until the next manual turn. Settle the UI now — the
+      // extra frame is idempotent (same pattern as the abort path) — and drain the
+      // queue so the fallback message goes out this turn.
+      this.emit({ type: "agent_settled" });
+      this.q.scheduleDrain();
       return;
     }
     this.finishTurn(result);
@@ -1473,7 +1485,7 @@ export class QoderHandle {
     this.liveHistory.push(historyEntry);
     const mirrorId = `acp-steer-${++this.steerSeq}`;
     this.q.registerSteer(mirrorId, text);
-    void this.sendPromptTurn(prompt, "steer", { text, images, mirrorId, historyEntry });
+    void this.sendPromptTurn(prompt, "steer", { text, images, mirrorId, historyEntry }, QoderHandle.STEER_TIMEOUT_MS);
   }
 
   /**
