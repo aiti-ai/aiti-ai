@@ -206,7 +206,7 @@ export function createTerminalView(kit) {
         // reset drops frames that arrived between subscribe-ready and the snapshot response;
         // the snapshot seq becomes the de-dupe baseline → seamless, no duplicates
         if (d.status === "queued") setStatus("queued"); else if (!exited) setStatus(d.status === "exit" ? "exit" : "running");
-        setMeta({ sessionId: sid, pid: d.pid, cmd: d.cmd, cwd: d.cwd });
+        setMeta({ sessionId: sid, pid: d.pid, cmd: d.cmd, cwd: d.cwd, running: d.slots?.running, maxConcurrent: d.slots?.max });
         try { term.reset(); } catch {}
         for (const c of d.chunks || []) { term.write(c.data); if (typeof c.seq === "number" && c.seq > seenSeq) seenSeq = c.seq; }
         if (typeof d.seq === "number" && d.seq > seenSeq) seenSeq = d.seq;
@@ -432,7 +432,7 @@ export function createTerminalView(kit) {
         : h("span", { style: { color: status === "running" ? (killPending ? "var(--warn, #f59e0b)" : "var(--ok, #4ade80)") : "var(--text)" } },
           isSmall
             ? (killPending ? "⏳" : status === "running" ? "●" : status === "queued" ? "⏳" : status === "missing" ? "⚠" : status === "replaying" ? "⟳" : status === "reconnecting" ? "⚠" : "…")
-            : (status === "missing" ? t("cmd.app.missing") : killPending && status === "running" ? t("cmd.k321") : status === "running" ? t("cmd.k60") : status === "queued" ? t("cmd.k239") : status === "replaying" ? t("cmd.k61") : status === "reconnecting" ? t("cmd.k370") : t("cmd.k51"))),
+            : (status === "missing" ? t("cmd.app.missing") : killPending && status === "running" ? t("cmd.k321") : status === "running" ? t("cmd.k60") : status === "queued" ? t("cmd.k239") + (meta && meta.running && meta.maxConcurrent ? " " + meta.running + "/" + meta.maxConcurrent : "") : status === "replaying" ? t("cmd.k61") : status === "reconnecting" ? t("cmd.k370") : t("cmd.k51"))),
         meta && !isSmall && h("span", { title: meta.cwd, style: { fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, flexShrink: 1 } }, "📁 " + (meta.cwd || "")),
         meta && !isSmall && h("code", { style: { ...smallStyle, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flexShrink: 2 } }, "$ " + String(meta.cmd).slice(0, 60)),
         // window size (fit / fixed presets); Ctrl+Shift+S also cycles

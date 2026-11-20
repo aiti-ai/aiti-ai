@@ -372,7 +372,7 @@ export default {
         "cmd.k236": "按词移动光标（readline）",
         "cmd.k237": "排队中",
         "cmd.k238": "排队中 (",
-        "cmd.k239": "排队中（等待并发空位）",
+        "cmd.k239": "排队中（并发已满，可在「运行中」列表关闭旧终端）",
         "cmd.k240": "接管到页签",
         "cmd.k241": "提示词",
         "cmd.k242": "搜索会话",
@@ -787,7 +787,7 @@ export default {
         "cmd.k236": "按词移动光标（readline）",
         "cmd.k237": "排队中",
         "cmd.k238": "排队中 (",
-        "cmd.k239": "排队中（等待并发空位）",
+        "cmd.k239": "排队中（并发已满，可在「运行中」列表关闭旧终端）",
         "cmd.k240": "接管到页签",
         "cmd.k241": "提示词",
         "cmd.k242": "搜索会话",
@@ -1230,7 +1230,7 @@ export default {
         "cmd.k236": "move cursor by word (readline)",
         "cmd.k237": "queued",
         "cmd.k238": "queued (",
-        "cmd.k239": "queued (waiting for a concurrency slot)",
+        "cmd.k239": "queued (concurrency full — close old terminals in Running)",
         "cmd.k240": "Take over to tab",
         "cmd.k241": "Prompts",
         "cmd.k242": "Search sessions",
@@ -1645,7 +1645,7 @@ export default {
         "cmd.k236": "move cursor by word (readline)",
         "cmd.k237": "queued",
         "cmd.k238": "queued (",
-        "cmd.k239": "queued (waiting for a concurrency slot)",
+        "cmd.k239": "queued (concurrency full — close old terminals in Running)",
         "cmd.k240": "Take over to tab",
         "cmd.k241": "Prompts",
         "cmd.k242": "Search sessions",
@@ -2006,7 +2006,7 @@ export default {
               return { content: [{ type: "text", text: "执行失败：" + (r.error || "未知错误") }], isError: true } as never;
             }
             return {
-              content: [{ type: "text", text: "已创建会话 " + r.sessionId + (r.queued ? "（并发已满，排队中 位置 " + r.position + "）" : "") + "。输出实时进 ⚡命令 面板；快照接口 GET /api/extensions/aiti-cmd/sessions/" + r.sessionId + "/buffered 可拉取当前回放。" }],
+              content: [{ type: "text", text: "已创建会话 " + r.sessionId + (r.queued ? "（并发已满，排队中 位置 " + r.position + "；可用 GET /api/extensions/aiti-cmd/sessions 列出会话，POST /api/extensions/aiti-cmd/sessions/{id}/kill 关闭不再使用的终端释放并发）" : "") + "。输出实时进 ⚡命令 面板；快照接口 GET /api/extensions/aiti-cmd/sessions/" + r.sessionId + "/buffered 可拉取当前回放。" }],
             } as never;
           },
         }];
