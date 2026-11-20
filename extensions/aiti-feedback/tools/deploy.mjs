@@ -49,7 +49,7 @@ for (const extDir of targets) {
   console.log("[deploy] client → " + resolve(clientDir, "aiti-feedback-client.mjs"));
 }
 
-for (const t of targets) copyIcons(resolve(t, "icons"), ["flag"], { log: (m) => console.log(m) });
+for (const t of targets) copyIcons(resolve(t, "icons"), ["discussion"], { log: (m) => console.log(m) });
 
 deployCommit({ repo: extRepo, name: "aiti-feedback", paths: ["aiti-feedback"], ident: true, log: (m) => console.log("[deploy] " + m) });
 
