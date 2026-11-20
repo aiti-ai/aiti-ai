@@ -14,7 +14,7 @@ export default {
 
   ui: {
     clientImmediately: false,
-    toolbar: [{ id: "aiti-feedback-open", label: "i18n:fb.open.label", title: "i18n:fb.open.title", icon: "icons/message-circle.svg" }],
+    toolbar: [{ id: "aiti-feedback-open", label: "i18n:fb.open.label", title: "i18n:fb.open.title", icon: "icons/flag.svg" }],
     dialogs: [{ id: "aiti-feedback-dialog", label: "i18n:fb.open.label" }],
     // Full tables per locale (host locales are exactly "zh-CN" / "en"; zh-TW kept
     // for parity with other extensions). Keys are abstract ids — no fallback to
