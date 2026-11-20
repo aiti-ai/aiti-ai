@@ -25,7 +25,17 @@ export async function GET(
         }
         if (bridged?.isAlive()) {
           const state = await bridged.send({ type: "get_state" }).catch(() => null);
-          return NextResponse.json({ running: true, state, bridged: true });
+          return NextResponse.json({
+            running: true,
+            state,
+            bridged: true,
+            // Handle-backed adapters (attach/spawn recovery double-key) also flow through
+            // here — forward their capability declarations so the frontend gates controls
+            // (edit-from-here fork semantics etc.) on the real backend, not fallbacks.
+            capabilities: (bridged as { handle?: { capabilities?: unknown } }).handle
+              ?.capabilities ?? (bridged as unknown as { capabilities?: unknown }).capabilities,
+            backendSource: bridged.source,
+          });
         }
       }
     }

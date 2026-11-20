@@ -498,6 +498,10 @@ export class PiSpawnHandle extends RpcChildHost {
    *    pass entryId through and let pi reject it explicitly.
    *  - non-reset (branch button): entryId IS the user message to branch at, use as-is.
    *
+   * The UI id may be a real pi entry id (local-file context path) or an "ext-N" position
+   * id (handle-projection context path — index into the UI message list); resolveForkTarget
+   * maps both onto a real pi entry.
+   *
    * pi's RPC fork rebinds the subprocess to the branched child session (new file + new
    * id). On success we read get_state.sessionId, announce session_backend_ready (the host
    * re-keys the detached registry record and double-keys the handle store) and return
@@ -505,7 +509,8 @@ export class PiSpawnHandle extends RpcChildHost {
    * child with the draft; edit-from-here with forkRebindHandoff: switches + auto-sends).
    */
   async fork(entryId: string, opts?: { reset?: boolean; editEntryId?: string }): Promise<{ cancelled: boolean; newSessionFile?: string }> {
-    const target = opts?.reset && opts.editEntryId ? opts.editEntryId : entryId;
+    const requested = opts?.reset && opts.editEntryId ? opts.editEntryId : entryId;
+    const target = await this.resolveForkTarget(requested);
     const d = await this.request<{ cancelled?: boolean }>({ type: "fork", entryId: target }, { timeoutMs: RPC_CTRL_TIMEOUT_MS });
     if (d?.cancelled) return { cancelled: true };
     const st = await this.request<{ sessionId?: unknown }>({ type: "get_state" }, { timeoutMs: RPC_CTRL_TIMEOUT_MS }).catch(() => null);
@@ -521,6 +526,34 @@ export class PiSpawnHandle extends RpcChildHost {
 
   async setSessionName(name: string): Promise<void> {
     await this.request({ type: "set_session_name", name }, { timeoutMs: RPC_CTRL_TIMEOUT_MS });
+  }
+
+  /**
+   * Resolve a fork target onto a real pi user-message entry id.
+   *
+   * Real entry ids (local-file context path) hit the exact-id fast path. "ext-N" position
+   * ids (handle-projection context path) index the UI message list — mirror the context
+   * route's filter (message entries minus transcript system, plus compaction/
+   * branch_summary/custom_message) so the index lines up with what the user clicked.
+   * Unresolvable ids throw explicitly — forking the wrong entry would silently rewind
+   * the session to the wrong point, so never guess.
+   */
+  private async resolveForkTarget(id: string): Promise<string> {
+    const d = (await this.request({ type: "get_entries" }, { timeoutMs: RPC_CTRL_TIMEOUT_MS })) as { entries?: unknown[] };
+    const entries = (Array.isArray(d?.entries) ? d.entries : []) as Array<Record<string, unknown>>;
+    const exact = entries.find((e) => e && e.id === id);
+    if (exact) return String(exact.id);
+    const m = /^ext-(\d+)$/.exec(id);
+    if (m) {
+      const ui = entries.filter((e) => {
+        if (!e || typeof e !== "object") return false;
+        if (e.type === "message") return (e.message as { role?: unknown } | undefined)?.role !== "system";
+        return e.type === "compaction" || e.type === "branch_summary" || e.type === "custom_message";
+      });
+      const hit = ui[Number(m[1])];
+      if (hit && (hit.message as { role?: unknown } | undefined)?.role === "user") return String(hit.id);
+    }
+    throw new Error(`[aiti-pi-agent] fork: cannot resolve entry "${id || "(empty)"}" to a pi user message`);
   }
 
   /** compact 无超时（压缩是一个完整 agent 轮次，时长不可预估；死亡仍会 reject）。 */
