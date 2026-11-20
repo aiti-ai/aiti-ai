@@ -16,7 +16,8 @@
  */
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const REGISTRY = { staging: "https://npm.alot.pw", official: "https://registry.npmjs.org" };
 const args = process.argv.slice(2);
@@ -28,7 +29,7 @@ if (!REGISTRY[target]) {
 }
 const registry = REGISTRY[target];
 
-const root = process.cwd();
+const root = dirname(dirname(fileURLToPath(import.meta.url))); // repo root, independent of cwd
 const scope = "@aiti-ai/";
 
 /** In-tree package names (anything declared here is NOT external). */
