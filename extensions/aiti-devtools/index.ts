@@ -116,24 +116,36 @@ function serveAsset(ctx, name, req) {
   }
 }
 
-// Session-name backfill: from the host /api/sessions firstMessage/cwd shape (a uuid means nothing in the pair device list).
-// Only queried while the bridge-side name is still the temp shape ("pi-web · <8 chars>") (throttled); cross-process fetch to the local API.
+// pi-web self base (external URL when AITI_BASE_URL is set, else loopback:PORT; basePath appended) —
+// same negotiation as inject.ts BASE. Session deep links (?session=<id>) must be absolute:
+// the launcher info block renders them on arbitrary injected pages, not on this origin.
+const _selfBase0 = (process.env.AITI_BASE_URL || "http://127.0.0.1:" + (Number(process.env.PORT) || 3000)).replace(/\/+$/, "");
+const _selfBasePath = String(process.env.PI_WEB_BASE_PATH || "").replace(/^\/+|\/+$/g, "");
+const SELF_BASE = _selfBasePath && !_selfBase0.endsWith("/" + _selfBasePath) ? _selfBase0 + "/" + _selfBasePath : _selfBase0;
+const piWebSessionUrl = (sessionId: string) => SELF_BASE + "/?session=" + encodeURIComponent(String(sessionId || ""));
+
+// Session-name backfill: from the host /api/sessions rows (name / firstMessage / cwd — a uuid means
+// nothing to users). Only queried while the bridge-side name is still the temp shape ("pi-web · <8
+// chars>") (throttled); cross-process fetch to the local API (basePath-aware: dev instances serve
+// under PI_WEB_BASE_PATH — a bare /api/sessions falls through to the HTML page and json() throws).
 let _lastNameFetch = 0;
 async function refreshAgentSessionName(key: string, sessionId: string) {
   try {
     if (!bridge) return;
-    const port = Number(process.env.PORT) || 3001;
     if (Date.now() - _lastNameFetch < 1500) return; // throttled
     _lastNameFetch = Date.now();
-    const r = await fetch(`http://127.0.0.1:${port}/api/sessions?fmt=2`, { signal: AbortSignal.timeout(4000) });
+    const r = await fetch(SELF_BASE + "/api/sessions?fmt=2", { signal: AbortSignal.timeout(4000) });
     if (!r.ok) return;
-    const rows = (await r.json()) as any[];
-    const hit = Array.isArray(rows) ? rows.find((x) => x && (x.id === sessionId || String(x.id || "").startsWith(String(sessionId || "").slice(0, 8)))) : null;
+    const body: any = await r.json();
+    const rows: any[] = Array.isArray(body) ? body : Array.isArray(body && body.sessions) ? body.sessions : [];
+    const hit = rows.find((x) => x && (x.id === sessionId || String(x.id || "").startsWith(String(sessionId || "").slice(0, 8))));
     if (!hit) return;
+    // Named sessions keep their name; unnamed fall back to "<cwd tail> · <first message>"
+    const nm = String(hit.name || "").trim();
     const base = String(hit.cwd || "").split("/").filter(Boolean).pop() || "";
-    const fm = String(hit.firstMessage || "").replace(/\s+/g, " ").slice(0, 40);
-    const name = fm ? `${base} · ${fm}` : base || "pi-web";
-    try { bridge.registerAgent(key, { agentId: key, id: sessionId, name, open: false, capabilities: {} }); } catch {}
+    const fm = nm ? "" : String(hit.firstMessage || "").replace(/\s+/g, " ").slice(0, 40);
+    const name = nm || (fm ? `${base} · ${fm}` : base || "pi-web");
+    try { bridge.registerAgent(key, { agentId: key, id: sessionId, name, sessionUrl: piWebSessionUrl(sessionId), open: false, capabilities: {} }); } catch {}
     console.log("[aiti-devtools] 会话名补齐：" + key + " → " + name.slice(0, 50));
   } catch { /* best-effort */ }
 }
@@ -438,7 +450,8 @@ export default {
       onAgentSession(info) {
         if (!bridge) return;
         const key = "pi-web/" + info.sessionId;
-        bridge.registerAgent(key, { agentId: key, id: info.sessionId, name: "pi-web · " + String(info.sessionId || "").slice(0, 8), open: false, capabilities: {} });
+        // sessionUrl up front (deep link works even before the async name backfill lands below)
+        bridge.registerAgent(key, { agentId: key, id: info.sessionId, name: "pi-web · " + String(info.sessionId || "").slice(0, 8), sessionUrl: piWebSessionUrl(info.sessionId), open: false, capabilities: {} });
         // async session-name backfill (host sessions' firstMessage/cwd shape — a uuid means nothing to users);
         // the title is only generated after the first message → follow up again on the first message via setAgentSink
         void refreshAgentSessionName(key, info.sessionId);

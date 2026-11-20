@@ -81,11 +81,12 @@ export function initInteract(ctx) {
     var sid = parts.slice(1).join('/');
     var sidShort = sid && sid.length > 10 ? sid.slice(0, 8) + '…' : sid;
     var dev = it && it.targetDevice ? String(it.targetDevice).trim() : '';
+    var url = it && it.agentSessionUrl ? String(it.agentSessionUrl).trim() : ''; // session deep link (pi-web ?session=)
     var segs = ['from ' + aid];
     if (sidShort) segs.push(t('session') + ' ' + sidShort);
     if (name && name !== aid) segs.push(name); // session display name last (user preference)
     if (dev) segs.push(dev);
-    return { key: ak, aid: aid, sid: sid, name: name, dev: dev, text: segs.join(' · ') };
+    return { key: ak, aid: aid, sid: sid, name: name, dev: dev, url: url, text: segs.join(' · ') };
   };
   // ⓘ title-bar button (compact — head space is tight, per user feedback): click toggles an info
   // block in the card body (buildAgentSrcInfo) with full session id + one-click copy of the key.
@@ -115,12 +116,21 @@ export function initInteract(ctx) {
     if (src.sid) { var sidV = row(t('session'), src.sid); sidV.title = src.key; }
     if (src.name && src.name !== src.aid) row('name', src.name);
     if (src.dev) row('device', src.dev);
-    var copyBtn = el('button', { style: 'margin-top:4px;border:1px solid rgba(148,163,184,.4);border-radius:6px;background:none;color:#93c5fd;font-size:10px;cursor:pointer;padding:3px 8px' }, [t('📋 Copy session key')]);
+    // Action row: open the session in pi-web (deep link from the envelope) + copy the key, side by side.
+    // Link opens a new tab — the launcher may live on any injected page, navigation must not lose it.
+    var actRow = el('div', { style: 'display:flex;gap:6px;margin-top:4px;flex-wrap:wrap;align-items:center' });
+    if (src.url) {
+      var openLink = el('a', { href: src.url, target: '_blank', rel: 'noopener', style: 'border:1px solid rgba(148,163,184,.4);border-radius:6px;background:none;color:#93c5fd;font-size:10px;cursor:pointer;padding:3px 8px;text-decoration:none;display:inline-flex;align-items:center;line-height:1.5;box-sizing:border-box' }, [t('↗ Open session')]);
+      openLink.addEventListener('click', function (e) { e.stopPropagation(); }); // keep panel-level handlers out
+      actRow.appendChild(openLink);
+    }
+    var copyBtn = el('button', { style: 'border:1px solid rgba(148,163,184,.4);border-radius:6px;background:none;color:#93c5fd;font-size:10px;cursor:pointer;padding:3px 8px' }, [t('📋 Copy session key')]);
     copyBtn.addEventListener('click', function (e) {
       e.stopPropagation();
       if (ctx.copyToClipboard) ctx.copyToClipboard(src.key, function (ok) { copyBtn.textContent = ok ? t('✓ Copied') : '✕'; setTimeout(function () { copyBtn.textContent = t('📋 Copy session key'); }, 1200); });
     });
-    wrap.appendChild(copyBtn);
+    actRow.appendChild(copyBtn);
+    wrap.appendChild(actRow);
     return wrap;
   };
   // Toggle helper shared by all panels: appends/removes the info block in the card body, then lets
