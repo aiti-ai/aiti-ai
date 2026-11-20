@@ -13,7 +13,7 @@ const React = await jiti.import("react");
 const { renderToStaticMarkup } = await jiti.import("react-dom/server");
 const { adjacentQueueTarget, autoGrowTextarea, scrollTextareaCaretIntoView, buildExtContextSnapshot, canClearBuiltinCommandInput, canRestoreUserMessage, canRunBuiltinSlashCommandWhileStreaming, ChatInput, cycleListIndex, filterModelOptions, getUpwardMenuMaxHeight, getUserMessageDraftImages, getUserMessageText, isExactSlashCommand, isRunEndStrayClick, mergeSubmission, mergeText, ModelErrorBanner, ModelScopeWarningBanner, modelSupportsImageInput, offersBuiltinSlashCommandWhileStreaming, readImageFile, replaceLinksWithMarkdown, replaceTextareaRange, RUN_END_CLICK_GUARD_MS, stacksComposerLayout, submitsSlashCommandOnEnter } = await jiti.import("./ChatInput.tsx");
 const { isBareMcpCommand } = await jiti.import("@/lib/mcp-command.ts");const { ModelSelector } = await jiti.import("./ModelSelector.tsx");
-const { I18nProvider } = await jiti.import("../hooks/useI18n.tsx");
+const { I18nProvider } = await jiti.import("@/hooks/useI18n");
 test("preserves pasted HTML links as Markdown without changing plain text layout", () => {
   const link = (label, href, occurrence = 0) => ({ label, href, occurrence });
 

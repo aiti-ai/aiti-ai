@@ -6,8 +6,8 @@ import vm from "node:vm";
 import { createJiti } from "jiti";
 
 const source = await readFile(new URL("./AppShell.tsx", import.meta.url), "utf8");
-const jiti = createJiti(import.meta.url);
-const draftStoreRaw = await jiti.import("../lib/draft-store.ts");
+const jiti = createJiti(import.meta.url, { tsconfigPaths: true });
+const draftStoreRaw = await jiti.import("@/lib/draft-store");
 const draftStore = {
   ...draftStoreRaw,
   setDraft(...a) { console.error("TRACE setDraft", a[0], new Error().stack.split("\n")[2]?.trim()); return draftStoreRaw.setDraft(...a); },
