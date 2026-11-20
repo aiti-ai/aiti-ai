@@ -30,6 +30,18 @@ function contentKind() {
   return "text";
 }
 function supportsKind(t, kind) { return !(t.kinds || []).length || (t.kinds || []).includes(kind); }
+/** Mirror of the engine's {{title}} fallback: first meaningful line of the raw
+ *  text (skips the page-info stamp block and markdown decoration) — prefills the
+ *  title input so the user sees and can edit what will be sent. */
+function deriveTitleLocal(text) {
+  for (const raw of String(text || "").split("\n")) {
+    const line = raw.trim();
+    if (!line || /^>\s*\*\*[^*]+\*\*\s*:/.test(line)) continue;
+    const stripped = line.replace(/^#{1,6}\s+/, "").replace(/[*_`]+/g, "").trim();
+    if (stripped) return stripped.length > 80 ? stripped.slice(0, 80).trim() : stripped;
+  }
+  return "";
+}
 function shareT(key, params) {
   if (!tFn) return key;
   try {
@@ -237,7 +249,7 @@ function openShare(payload = {}) {
   const raw = payload.text || "";
   primeSinks();
   set({ open: true, manager: false, payload, kind,
-    text: raw, rawText: raw, baseText: raw, title: payload.title || "",
+    text: raw, rawText: raw, baseText: raw, title: payload.title || deriveTitleLocal(raw),
     tags: payload.tags || "", targetId: payload.targetId || null,
     result: null, error: "", errorDetail: "", errorCode: "", errorTarget: "", errorProvider: "", redact: true, redactHits: [],
     sinkResult: null, sinkBusy: "" });
