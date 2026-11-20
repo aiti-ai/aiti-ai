@@ -336,11 +336,14 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
 /** 模型聚合 · 成员选择器：搜索过滤已配置 provider×model，点击加入聚合组 */
 function MemberPicker({ pool, exclude, onPick }: { pool: any[]; exclude: string[]; onPick: (m: any) => void }) {
   const [q, setQ] = useState("");
+  // Collapsed until asked for: an expanded wall of candidate chips made the editor read as
+  // one dense form (adding a member looked like yet another field).
+  const [open, setOpen] = useState(false);
   // Multi-word AND match (e.g. "openrouter glm", "glm free"); cap at 200 while searching, and show
-  // only the first 24 when idle so the picker does not flood the editor (typing narrows it).
+  // only the first 12 when idle so the picker does not flood the editor (typing narrows it).
   const kws = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const MATCH_CAP = 200;
-  const COLLAPSED_CAP = 24;
+  const COLLAPSED_CAP = 12;
   const all = pool.filter((m: any) => {
     if ((m.keyCount ?? 0) < 1) return false; // 无 key 成员必然被引擎拒绝，不展示
     if (exclude.includes(m.provider + "/" + m.model)) return false;
@@ -360,13 +363,25 @@ function MemberPicker({ pool, exclude, onPick }: { pool: any[]; exclude: string[
     candKeys.add(k);
     return true;
   });
+  if (!open) {
+    return (
+      <button className="amw-btn amw-combo-addmember" disabled={!pool.length}
+        title={pool.length ? ti("mw.tx.223") : ti("mw.a.59")}
+        onClick={() => setOpen(true)}>
+        ＋ {ti("mw.tx.223")}
+      </button>
+    );
+  }
   return (
-    <div style={{ marginTop: 6, borderTop: "1px dashed var(--border-subtle,#e5e7eb)", paddingTop: 6 }}>
-      <input className="amw-input" style={{width: "100%", padding: "4px 8px", fontSize: 12}} value={q} placeholder={ti("mw.a.57")}
-        onChange={(e) => setQ(e.target.value)} />
+    <div className="amw-combo-picker">
+      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        <input className="amw-input" style={{ flex: 1, padding: "4px 8px", fontSize: 12 }} value={q} placeholder={ti("mw.a.57")}
+          autoFocus onChange={(e) => setQ(e.target.value)} />
+        <button className="amw-btn" style={{ padding: "3px 9px", fontSize: 11 }} onClick={() => setOpen(false)}>{ti("mw.tx.224")}</button>
+      </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 5 }}>
         {candsDedup.map((m: any) => (
-          // 点击后保留搜索条件，便于连续点选多个成员
+          // Keep the filter open after a pick so several members can be added in a row.
           <button key={m.provider + "/" + m.model} title={"ctx=" + (m.contextWindow ?? "?") + " · out=" + (m.maxTokens ?? "?") + " · keys=" + m.keyCount}
             style={{ padding: "2px 9px", borderRadius: 999, border: "1px solid rgba(99,102,241,.3)", background: "rgba(99,102,241,.06)", fontSize: 11, cursor: "pointer", fontFamily: "ui-monospace,monospace" }}
             onClick={() => onPick(m)}>
@@ -3853,6 +3868,11 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
               </button>
             </div>
           ) : null}
+          <div className="amw-combo-sect">
+            <span className="amw-step-dot">1</span>
+            <span className="amw-combo-sect-title">{ti("mw.tx.216")}</span>
+            <span className="amw-combo-sect-hint">{ti("mw.tx.218")}</span>
+          </div>
           <div className="amw-card" style={{ padding: "10px 12px", marginBottom: 10 }}>
             <div className="amw-combo-namegrid">
               <label className="amw-field">
@@ -3869,6 +3889,11 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             <div style={{ fontSize: 11, color: "var(--text-subtle,#888)", marginTop: 6 }}>{ti("mw.a.627")}</div>
             {nameBad ? <div style={{ fontSize: 11, color: "#dc2626", marginTop: 4 }}>{ti("mw.tx.146")}</div> : null}
           </div>
+          <div className="amw-combo-sect">
+            <span className="amw-step-dot">2</span>
+            <span className="amw-combo-sect-title">{ti("mw.tx.217")}</span>
+            <span className="amw-combo-sect-hint">{ti("mw.tx.219")}</span>
+          </div>
           {ed.models.map((vm: any, i: number) => {
             const w = comboWarns(vm);
             const metas = vm.members.map((r: any) => ({ r, m: comboPoolMap.get(r.provider + "/" + r.model) })).filter((x: any) => x.m);
@@ -3879,7 +3904,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             return (
               <div key={i} className="amw-card" style={{ padding: "10px 12px", marginBottom: 10 }}>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 12, fontWeight: 650, whiteSpace: "nowrap" }}>{ti("mw.tx.147")}</span>
+                  <span style={{ fontSize: 12, fontWeight: 650, whiteSpace: "nowrap" }}>#{i + 1} · {ti("mw.tx.220")}</span>
                   <input className="amw-input" style={{width: small ? "auto" : 200, flex: small ? "1 1 140px" : undefined, minWidth: 110, fontFamily: "ui-monospace,monospace"}} value={vm.id} placeholder={ti("mw.a.545")}
                     onChange={(e) => setVm(i, { id: e.target.value })} />
                   {String(vm.id || "").trim() && (String(ed.provider || "").trim() || String(ed.displayName || "").trim()) ? (
@@ -3904,7 +3929,11 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                     <span key={j} className="amw-pill">{t}</span>
                   ))}
                 </div>
-                {/* 成员列表（行内显示参数并标注拖后腿的异常成员） */}
+                {/* Members list (inline parameters, outliers highlighted) */}
+                <div className="amw-combo-subhead">
+                  <span>{ti("mw.tx.221")} · {vm.members.length}</span>
+                  <span className="amw-combo-subhead-hint">{ti("mw.tx.222")}</span>
+                </div>
                 {(() => {
                   const mmetas = vm.members.map((r: any) => comboPoolMap.get(r.provider + "/" + r.model)).filter(Boolean);
                   const ctxs = mmetas.map((x: any) => x.contextWindow).filter((x: any) => typeof x === "number");
@@ -3946,7 +3975,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                         {meta.reasoning ? <span style={{ fontSize: 10, color: "#7c3aed", fontWeight: 650, flexShrink: 0 }}>{ti("mw.a.1")}</span> : null}
                         <span style={{ fontSize: 10, color: "var(--text-subtle,#999)", flexShrink: 0 }}>{meta.keyCount + " key"}</span>
                       </> : <span style={{ fontSize: 10, color: "#dc2626", fontWeight: 650 }}>{ti("mw.a.559")}</span>}
-                      <span style={{ fontSize: 11, color: "var(--text-subtle,#777)", whiteSpace: "nowrap", flexShrink: 0 }}>{ti("mw.tx.150")}</span>
+                      <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-subtle,#777)", whiteSpace: "nowrap", flexShrink: 0 }}>{ti("mw.tx.150")}</span>
                       <input type="number" min={1} step={1} className="amw-input" disabled={!rEn} style={{width: 64, padding: "3px 6px", flexShrink: 0}} value={r.weight ?? 10}
                         title={ti("mw.a.562")}
                         onChange={(e) => { const v = Math.max(1, Math.floor(Number(e.target.value) || 1)); const members = vm.members.map((x: any, j: number) => j === mi ? { ...x, weight: v } : x); setVm(i, { members }); }} />
@@ -3995,7 +4024,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                 <MemberPicker pool={pool} exclude={(vm.members || []).map((r: any) => r.provider + "/" + r.model)} onPick={(p: any) => setVm(i, { members: [...(vm.members || []), { provider: p.provider, model: p.model, weight: 10 }] })} />
                 {/* stickyTtl 高级项 */}
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
-                  <span style={{ fontSize: 11, color: "var(--text-subtle,#777)", whiteSpace: "nowrap" }}>{ti("mw.tx.153")}</span>
+                  <span style={{ fontSize: 11, color: "var(--text-subtle,#777)", whiteSpace: "nowrap" }}>{ti("mw.tx.225")}</span>
                   <input type="number" min={1} className="amw-input" style={{width: 72, padding: "3px 6px"}} value={vm.stickyTtlMin ?? ""} placeholder="15"
                     onChange={(e) => setVm(i, { stickyTtlMin: e.target.value ? Math.max(1, Math.floor(Number(e.target.value) || 15)) : undefined })} />
                 </div>
@@ -4048,6 +4077,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             <MultiKeyStatusSummary onOpen={() => setSStatusOpen(true)} />
           </div>
           <div className="amw-hint-lg">{ti("mw.tx.157")}</div>
+          <div style={{ fontSize: 11, color: "var(--text-dim,#6b7280)", marginTop: 4 }}>{ti("mw.tx.226")}</div>
         </div>
         {!combos.length ? <div className="amw-note">{ti("mw.tx.158")}</div> : null}
         {combos.map((cb: any) => {
