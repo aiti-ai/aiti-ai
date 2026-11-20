@@ -98,12 +98,14 @@ function allTargets(reg) {
       return { ...t, custom: true, auth: entry?.auth ?? (t.provider === "custom" ? "key" : "none"),
         kinds: entry?.kinds ?? ["text"], category: entry?.category ?? "publish",
         fields: targetFields(t.provider, reg),
+        ...containerInfo(reg, t.provider),
         configState: configState(entry || { id: t.provider }, t, reg) };
     }),
     ...entries.filter((e) => !userByProvider.has(e.id)).map((e) => ({ id: e.id, name: e.name, provider: e.id,
       kinds: e.kinds, category: e.category, auth: e.auth, recommended: e.recommended, note: e.note,
       status: e.status, source: e.source, values: {},
       fields: targetFields(e.id, reg),
+      ...containerInfo(reg, e.id),
       configState: configState(e, null, reg) })),
   ];
 }
@@ -113,6 +115,13 @@ function findTarget(reg, id) {
   if (user) return user;
   const entry = reg.catalog().find((e) => e.id === id);
   return entry ? { id: entry.id, provider: entry.id, values: {}, name: entry.name, kinds: entry.kinds, category: entry.category } : null;
+}
+
+/** Container selection capability surfaced to the client (picker visibility + label). */
+function containerInfo(reg: any, providerId: string) {
+  const c = reg.get(providerId)?.containers;
+  return c ? { supportsContainers: true, containerLabel: c.label || null }
+    : { supportsContainers: false, containerLabel: null };
 }
 
 export default {
@@ -217,6 +226,13 @@ export default {
         "share.cfg.ready": "Configured",
         "share.cfg.needs": "Needs setup",
         "share.cfg.dead": "Unavailable",
+        "share.container.label": "Notebook",
+        "share.container.default": "Service default",
+        "share.container.refresh": "Refresh containers",
+        "share.container.search": "Search notebooks…",
+        "share.container.empty": "No containers found",
+        "share.container.fail": "Could not list containers: {detail}",
+        "share.container.missing": "Last selection no longer exists — using default",
       },
       "zh-CN": {
         "share.err.forbidden": "该路径不在允许范围内——只能分享会话工作区内的文件。",
@@ -302,6 +318,13 @@ export default {
         "share.cfg.ready": "已配置",
         "share.cfg.needs": "需配置",
         "share.cfg.dead": "不可用",
+        "share.container.label": "笔记本",
+        "share.container.default": "默认位置",
+        "share.container.refresh": "刷新容器列表",
+        "share.container.search": "搜索笔记本…",
+        "share.container.empty": "未找到容器",
+        "share.container.fail": "容器列表获取失败：{detail}",
+        "share.container.missing": "上次选择的容器已不存在，使用默认位置",
       },
       "zh-TW": {
         "share.err.forbidden": "該路徑不在允許範圍內——只能分享工作階段工作區內的檔案。",
@@ -384,9 +407,16 @@ export default {
         "share.deleteTarget": "刪除目標",
         "share.notSet": "（未設定）",
         "share.cfg.anonymous": "匿名可用",
-        "share.cfg.ready": "已設定",
-        "share.cfg.needs": "需設定",
+        "share.cfg.ready": "已配置",
+        "share.cfg.needs": "需配置",
         "share.cfg.dead": "不可用",
+        "share.container.label": "筆記本",
+        "share.container.default": "預設位置",
+        "share.container.refresh": "重新整理容器列表",
+        "share.container.search": "搜尋筆記本…",
+        "share.container.empty": "未找到容器",
+        "share.container.fail": "容器列表取得失敗：{detail}",
+        "share.container.missing": "上次選擇的容器已不存在，使用預設位置",
       },
     },
     dialogs: [{ id: "aiti-msg-share-dialog", label: "aiti-msg-share" }],
@@ -448,6 +478,45 @@ export default {
       const provider = reg.get(body?.provider);
       if (!provider?.probe) return json({ ok: false, error: "target does not support probe", errorCode: "noProbe" }, 400);
       return json(await provider.probe({ provider: body.provider, values: body.values || {} }));
+    }
+
+    // POST /containers — list selectable containers (Joplin notebooks, Obsidian dirs, …).
+    // Saved target: credentials come from the stored values; setup form: ad-hoc values.
+    // Credentials never leave the server — only {id,label,parent,path} are returned.
+    if (p[0] === "containers" && req.method === "POST") {
+      const body = await req.json().catch(() => null);
+      let providerId: string = body?.provider || "";
+      let values: Record<string, string> = body?.values || {};
+      if (body?.targetId) {
+        const t = findTarget(reg, body.targetId);
+        if (!t) return json({ ok: false, error: "unknown target", errorCode: "unknownTarget" }, 404);
+        providerId = t.provider;
+        values = t.values || {};
+      }
+      const provider = providerId ? reg.get(providerId) : null;
+      if (!provider?.containers) return json({ ok: true, supportsContainers: false, containers: [] });
+      try {
+        const containers = await provider.containers.list({ provider: providerId, values, container: "" },
+          typeof body?.parent === "string" ? body.parent : undefined);
+        return json({ ok: true, supportsContainers: true, containerLabel: provider.containers.label || null, containers });
+      } catch (err: any) {
+        return json({ ok: false, errorCode: "containerFail", error: String(err?.message || err),
+          detail: String(err?.message || err) }, 502);
+      }
+    }
+
+    // POST /targets/last-container — record the user's container pick on the target.
+    // Persisted in targets.json (0600): survives restarts and browsers; AI/headless
+    // shares fall back to it when the request carries no explicit container.
+    if (p[0] === "targets" && p[1] === "last-container" && req.method === "POST") {
+      const body = await req.json().catch(() => null);
+      const t = store.readTargets().find((x) => x.id === body?.id);
+      if (!t) return json({ ok: false, error: "unknown target", errorCode: "unknownTarget" }, 404);
+      const container = String(body?.container ?? "");
+      const label = body?.label ? String(body.label) : (container ? t.lastContainerLabel || "" : "");
+      const saved = store.upsertTarget({ ...t, lastContainer: container, lastContainerLabel: label,
+        lastContainerAt: new Date().toISOString() });
+      return json({ ok: true, target: publicTarget(saved, reg.get(saved.provider)) });
     }
 
     // POST /import-sxcu — register a config at runtime + persist as a target
@@ -540,9 +609,12 @@ export default {
           detail: `${(provider as any).label} accepts: ${kinds.join(", ")}` }, 400);
       }
       let result;
+      // Container selection: an explicit request wins ("" = service default);
+      // otherwise fall back to the target's recorded last selection (AI/headless path).
+      const container = typeof body.container === "string" ? body.container : String(target.lastContainer || "");
       try {
         result = await cs.share(provider, content,
-          { provider: target.provider, values: target.values || {}, tags: meta.tags, pathPrefix: target.pathPrefix },
+          { provider: target.provider, values: target.values || {}, tags: meta.tags, pathPrefix: target.pathPrefix, container },
           meta, hooks);
       } catch (err: any) {
         // Turn a bare "fetch failed" into an actionable message (target + cause + hint).
@@ -566,6 +638,12 @@ export default {
       store.appendHistory({ at: new Date().toISOString(), targetId: target.id, kind,
         title: meta.title, url: result.url, extra: result.extra, hits: result.hits,
         redacted: doRedact, bytes: "text" in content ? Buffer.byteLength(content.text) : content.buffer.byteLength });
+      // Refresh the last-selection memory on success (bump timestamp only when the
+      // value changed) so headless/AI shares keep landing in the same notebook.
+      const stored = store.readTargets().find((t) => t.id === target.id);
+      if (stored && String(stored.lastContainer || "") !== container) {
+        store.upsertTarget({ ...stored, lastContainer: container, lastContainerAt: new Date().toISOString() });
+      }
       return json({ ok: true, ...result });
     }
 
