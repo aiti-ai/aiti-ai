@@ -13,7 +13,7 @@ import { orderSelectorModels, resolveVisibleModels, selectInitialModelScope } fr
 import { getAllowedFileRoots, isExistingFilePathAllowed } from "@/lib/file-access";
 import { projectTrustReloadOptions } from "@/lib/project-trust";
 import { readModelsConfig } from "@/lib/models-config-store";
-import { annotateVisibleModels, formatModelCostHint, parseModelCheckState, type AvailKind } from "@/lib/model-visibility";
+import { annotateVisibleModels, comboModelEntries, formatModelCostHint, parseModelCheckState, type AvailKind } from "@/lib/model-visibility";
 import { llamaCppExtension } from "@/lib/pi-sdk-internals";
 import { providerDisplayNames, rememberProviderModels, withDeferredProviderModels } from "@/lib/deferred-provider-models";
 import { inferRemovedWorktree } from "@/lib/worktree";
@@ -76,18 +76,22 @@ async function loadModels(cwd: string, scopeAll = false): Promise<ModelsData> {
   // is annotated (pure logic in lib/model-visibility; unit-testable).
   const modelsCfg = readModelsConfig();
   const providersCfg = (modelsCfg.providers ?? {}) as Record<string, unknown>;
+  const selectorModels = orderSelectorModels(scope).map((m) => ({
+    id: m.id,
+    name: m.name,
+    provider: m.provider,
+    // The selector groups by provider id, but labels the group with its display
+    // name; models.json providers get theirs from `name` too.
+    providerName: providerNames.get(m.provider) ?? m.provider,
+    input: m.input,
+    // Catalog cost rates as the row's dim hint ("$0.6/$2.2 per M"); absent → provider fallback in the picker.
+    hint: formatModelCostHint(m.cost),
+  }));
+  // Combo virtual models live only in a session runtime (the engine registers the provider
+  // there); list them from models.json so the picker can offer them too.
+  const comboModels = comboModelEntries(providersCfg);
   modelList = annotateVisibleModels(
-    orderSelectorModels(scope).map((m) => ({
-      id: m.id,
-      name: m.name,
-      provider: m.provider,
-      // The selector groups by provider id, but labels the group with its display
-      // name; models.json providers get theirs from `name` too.
-      providerName: providerNames.get(m.provider) ?? m.provider,
-      input: m.input,
-      // Catalog cost rates as the row's dim hint ("$0.6/$2.2 per M"); absent → provider fallback in the picker.
-      hint: formatModelCostHint(m.cost),
-    })),
+    [...selectorModels, ...comboModels],
     providersCfg,
     readModelCheckAvail(),
   );
@@ -102,6 +106,12 @@ async function loadModels(cwd: string, scopeAll = false): Promise<ModelsData> {
     thinkingLevels[key] = getSupportedThinkingLevels(m);
     if (m.thinkingLevelMap) thinkingLevelMaps[key] = m.thinkingLevelMap;
   }
+  // Combo models are not in the plugin-less runtime's `visible` list: register their display names
+  // so the top bar and replayed messages resolve them instead of showing raw ids.
+  for (const m of comboModels) {
+    const key = `${m.provider}:${m.id}`;
+    if (pickerVisible.has(key)) nameMap.set(key, m.name);
+  }
 
   const defaultProvider = settings.getDefaultProvider();
   const defaultModelId = settings.getDefaultModel();
@@ -112,6 +122,12 @@ async function loadModels(cwd: string, scopeAll = false): Promise<ModelsData> {
   });
   if (initial.model) {
     defaultModel = { provider: initial.model.provider, modelId: initial.model.id };
+  } else if (
+    defaultProvider && defaultModelId
+    && comboModels.some((m) => m.provider === defaultProvider && m.id === defaultModelId)
+  ) {
+    // A saved default on a combo model does not resolve through the plugin-less scope.
+    defaultModel = { provider: defaultProvider, modelId: defaultModelId };
   }
   const defaultThinkingLevel = initial.thinkingLevel
     ?? (initial.model
