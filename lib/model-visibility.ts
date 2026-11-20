@@ -122,19 +122,35 @@ export function mergeComboModels(
   comboModels: readonly AnnotatedModelEntry[],
 ): AnnotatedModelEntry[] {
   const comboByKey = new Map(comboModels.map((m) => [`${m.provider}:${m.id}`, m]));
-  const merged: AnnotatedModelEntry[] = selectorModels.map((m) => {
+  const out: AnnotatedModelEntry[] = [];
+  const seen = new Set<string>();
+  // The runtime list itself can repeat a model: once a combo provider is registered by a
+  // session, the process-wide deferred catalog may hold it twice (the engine re-registers on
+  // models.json changes). Keep the first occurrence and never emit a key twice.
+  for (const m of selectorModels) {
     const key = `${m.provider}:${m.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
     const combo = comboByKey.get(key);
-    if (!combo) return m;
+    if (!combo) {
+      out.push(m);
+      continue;
+    }
     comboByKey.delete(key);
-    return {
+    out.push({
       ...m,
       providerName: combo.providerName || m.providerName,
       input: combo.input ?? m.input,
       hint: combo.hint ?? m.hint,
-    };
-  });
-  return [...merged, ...comboByKey.values()];
+    });
+  }
+  for (const combo of comboByKey.values()) {
+    const key = `${combo.provider}:${combo.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(combo);
+  }
+  return out;
 }
 
 /**
