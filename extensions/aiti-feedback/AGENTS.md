@@ -14,3 +14,4 @@
 ## 红线
 - 禁手改 dist/（构建产物）
 - 脱敏规则表在 `client/src/feedback-build.ts`（REDACT_RULES），改前跑 `client/tests/feedback-build.test.mjs`
+- **图标必须是 24×24 lucide 线条风**（stroke=currentColor）：宿主 `embedUiSvgIcons` 只取 svg 内部 path、用自己的 svg 根（16px、fill=none）重渲染——fill 实心型（如 GitHub octicon）的根属性被丢弃，16px 下必然糊
