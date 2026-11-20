@@ -69,8 +69,10 @@ import { SidebarEntry, ToolbarSearch } from "./entries";
 import { SidebarDock } from "./sidebar-dock";
 import { SidebarContentDock } from "./sidebar-content";
 import { NewSessionPicker, newSessionPrepare } from "./new-session-picker";
+import { NewSessionWorkspacePicker } from "./new-session-workspace-picker";
 import { useGate, usePresent, seedDockDefault } from "../../../_shared/ext-float-dock-lite";
 import { lazyExtView, createLazyModule } from "../../../_shared/ext-lazy";
+import { MenuActionRow } from "../../../_shared/menu-row";
 import type { WorkspaceManageProps } from "./workspace-manage";
 
 // ---- 懒 chunk 引用（面板/看板/标签树/菜单三件套/工作区管理）----
@@ -202,23 +204,18 @@ function WorkspaceUploadEntryLazy(props: { onSelect: (root: string) => void; onC
   const dialog = lazyExtView({ active: open, load: workspaceUploadRef, pick: "UploadDialog", props: { onSelect: props.onSelect, onCloseDialog: () => setOpen(false) } });
   if (!open) {
     return (
-      <button
-        type="button"
-        onClick={(e) => { e.stopPropagation(); setOpen(true); }}
-        style={{
-          display: "flex", alignItems: "center", gap: 7,
-          width: "100%", padding: "8px 10px", background: "none", border: "none",
-          color: "var(--text-muted)", cursor: "pointer", textAlign: "left", fontSize: 11,
-        }}
+      <MenuActionRow
+        icon={(
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="17 8 12 3 7 8" />
+            <line x1="12" y1="3" x2="12" y2="15" />
+          </svg>
+        )}
+        label={t("sm.uploadWorkspace")}
         title={t("sm.uploadWorkspaceTitle")}
-      >
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-          <polyline points="17 8 12 3 7 8" />
-          <line x1="12" y1="3" x2="12" y2="15" />
-        </svg>
-        {t("sm.uploadWorkspace")}
-      </button>
+        onClick={() => setOpen(true)}
+      />
     );
   }
   return <>{dialog}</>;
@@ -355,22 +352,17 @@ function WorkspaceManageEntryLazy(props: WorkspaceManageProps) {
   const dialog = lazyExtView({ active: open, load: workspaceManageRef, pick: "ManageDialog", props: { ...props, onCloseDialog: () => setOpen(false) } });
   if (!open) {
     return (
-      <button
-        type="button"
-        onClick={(e) => { e.stopPropagation(); setOpen(true); }}
-        style={{
-          display: "flex", alignItems: "center", gap: 7,
-          width: "100%", padding: "8px 10px", background: "none", border: "none",
-          color: "var(--text-muted)", cursor: "pointer", textAlign: "left", fontSize: 11,
-        }}
+      <MenuActionRow
+        icon={(
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
+        )}
+        label={t("sm.manageWorkspaces")}
         title={t("sm.manageWorkspacesTitle")}
-      >
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-          <circle cx="12" cy="12" r="3" />
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-        </svg>
-        {t("sm.manageWorkspaces")}
-      </button>
+        onClick={() => setOpen(true)}
+      />
     );
   }
   return dialog;
@@ -549,6 +541,10 @@ export default function register(ctx: Record<string, unknown>) {
     { id: "upload", render: NewSessionUploadButton },
     { id: "picker", render: NewSessionPicker },
   ]);
+  // Welcome page Workspace selector takeover (host slot newSessionWorkspacePicker): the same
+  // project list and footer actions as the sidebar's project menu, while picks stay staged
+  // (pi-web.newSession.setTarget) exactly like the native <select> it replaces.
+  ctx.registerItems?.("newSessionWorkspacePicker", [{ id: "projects", render: NewSessionWorkspacePicker }]);
   ctx.registerItems?.("newSessionPreparers", [{ id: "picker", meta: { prepare: newSessionPrepare } }]);
 
   // 上传能力服务化（v2 Workspace Hub 复用，aiti-quickstart soft-depend）：UploadDialog

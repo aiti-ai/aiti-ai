@@ -586,7 +586,7 @@ export function SidebarList(props: SidebarDockProps) {
               active={customPathOpen}
               load={dirPickerRef}
               pick="DirectoryPicker"
-              initialPath={customPathValue}
+              initialPath={selectedProject?.root ?? selectedCwd ?? customPathValue}
               busy={customPathValidating}
               error={customPathError}
               onCancel={() => {
