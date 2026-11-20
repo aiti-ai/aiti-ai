@@ -89,7 +89,7 @@
     // toolbar buttons; reported 2026-09-08); the title bar is draggable.
     banner = document.createElement("div");
     banner.style.cssText = "position:fixed;top:12px;right:12px;width:440px;max-width:calc(100vw - 24px);z-index:2147483647;" +
-      "background:#1a1a1a;color:#e8e8e8;border:1px solid #f59e0b;border-radius:10px;" +
+      "background:#1f1f1f;color:#cccccc;border:1px solid #f59e0b;border-radius:10px;" +
       "padding:12px 14px;font:13px/1.5 system-ui,sans-serif;box-shadow:0 12px 40px rgba(0,0,0,.5);";
     var title = document.createElement("div");
     title.style.cssText = "font-weight:700;color:#f59e0b;margin-bottom:4px;cursor:move;user-select:none;display:flex;align-items:center;";
@@ -117,24 +117,24 @@
     var close = document.createElement("button");
     close.textContent = "✕";
     close.title = T().stayTooltip;
-    close.style.cssText = "margin-left:auto;background:transparent;color:#9ca3af;border:none;font-size:14px;cursor:pointer;line-height:1;";
+    close.style.cssText = "margin-left:auto;background:transparent;color:#9d9d9d;border:none;font-size:14px;cursor:pointer;line-height:1;";
     close.onclick = function () { dismissedErr = banner._err.textContent; removeBanner(); };
     title.appendChild(close);
     var err = document.createElement("div");
-    err.style.cssText = "color:#9ca3af;margin-bottom:10px;max-height:3.2em;overflow:hidden;word-break:break-all;";
+    err.style.cssText = "color:#9d9d9d;margin-bottom:10px;max-height:3.2em;overflow:hidden;word-break:break-all;";
     err.textContent = errText;
     banner._err = err;
     var row = document.createElement("div");
     row.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;align-items:center;";
     var go = document.createElement("button");
     go.textContent = T().goRescueBtn;
-    go.style.cssText = "background:#f59e0b;color:#1a1a1a;border:none;border-radius:6px;padding:6px 14px;font-weight:600;cursor:pointer;";
+    go.style.cssText = "background:#f59e0b;color:#1f1f1f;border:none;border-radius:6px;padding:6px 14px;font-weight:600;cursor:pointer;";
     go.onclick = function () { removeBanner(); goRescue(errText); };
     var cd = document.createElement("span");
-    cd.style.cssText = "color:#9ca3af;font-size:12px;";
+    cd.style.cssText = "color:#9d9d9d;font-size:12px;";
     var stay = document.createElement("button");
     stay.textContent = T().stayPage;
-    stay.style.cssText = "background:#333;color:#e8e8e8;border:1px solid #444;border-radius:6px;padding:6px 12px;cursor:pointer;";
+    stay.style.cssText = "background:#2c2c2c;color:#cccccc;border:1px solid #383838;border-radius:6px;padding:6px 12px;cursor:pointer;";
     stay.onclick = function () { dismissedErr = errText; removeBanner(); };
     row.appendChild(go); row.appendChild(stay); row.appendChild(cd);
     banner.appendChild(title); banner.appendChild(err); banner.appendChild(row);
