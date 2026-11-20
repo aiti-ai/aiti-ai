@@ -514,7 +514,8 @@ function containerPanel(items) {
     shareT("share.container.empty"));
   panelVisible = [];
   const flat = panelVisible;
-  const rows = renderContainerNodes(childrenOf, roots, 0, filter ? containerSearchState(items, filter) : null, flat);
+  const search = filter ? containerSearchState(items, filter) : null;
+  const rows = renderContainerNodes(childrenOf, roots, 0, search, flat);
   const kbMove = (delta) => {
     if (!panelVisible.length) return;
     const next = state.kbIndex < 0 ? (delta > 0 ? 0 : panelVisible.length - 1)
@@ -547,7 +548,7 @@ function containerPanel(items) {
           border: "1px solid var(--border, #34363c)", borderRadius: 6, padding: "4px 8px", fontSize: 12,
           color: "var(--text, #d8dade)" } }),
       filter && rows.length ? h("div", { style: { fontSize: 10, color: "var(--text-muted, #8b909b)", marginTop: 3 } },
-        shareT("share.container.matches", { n: String(rows.length) })) : null),
+        shareT("share.container.matches", { n: String(search.match.size) })) : null),
     containerQuickRow(),
     state.containersLoading ? h("div", { style: { padding: "6px", fontSize: 11, color: "var(--text-muted, #8b909b)" } }, "…") : null,
     rows.length ? rows : empty);
