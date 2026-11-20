@@ -16,7 +16,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { PiSpawnHandle, PI_SPEC, type AgentStarterLike, type AttachedChildOptions } from "./pi-handle.ts";
 import { capabilitiesFor } from "./fork-rpc/spec.ts";
 import { resolveForkCli } from "./fork-rpc/cli-resolve.ts";
-import { spawnEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, captureSpawnEnvFeatures } from "@aiti-ai/ext-shared/agent-spawn-env";
+import { spawnEnvFeature, spawnDisplayEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, captureSpawnEnvFeatures } from "@aiti-ai/ext-shared/agent-spawn-env";
 import type { LaunchOverride } from "@aiti-ai/ext-shared/agent-spawn-env";
 import { createSessionRecycleApi } from "@aiti-ai/ext-shared/session-recycle";
 
@@ -79,7 +79,7 @@ export default {
   name: "Pi Spawn (子进程后端)",
   icon: "🚀",
 
-  features: [spawnEnvFeature("Pi"), spawnCommandFeature("Pi"), spawnArgsPrefixFeature("Pi")],
+  features: [spawnEnvFeature("Pi"), spawnDisplayEnvFeature("Pi"), spawnCommandFeature("Pi"), spawnArgsPrefixFeature("Pi")],
 
 
   ui: {

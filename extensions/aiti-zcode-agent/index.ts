@@ -24,7 +24,7 @@ import { DatabaseSync } from "node:sqlite";
 import { writeFile } from "node:fs/promises";
 import type { ChildProcess } from "node:child_process";
 import { governanceEnv } from "./external-governance.ts";
-import { agentSpawnEnv, spawnEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, captureSpawnEnvFeatures } from "@aiti-ai/ext-shared/agent-spawn-env";
+import { agentSpawnEnv, spawnEnvFeature, spawnDisplayEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, captureSpawnEnvFeatures } from "@aiti-ai/ext-shared/agent-spawn-env";
 import type { LaunchOverride } from "@aiti-ai/ext-shared/agent-spawn-env";
 // 队列共享实现层（权威源 pi-web-ext/_shared/backend-queue.ts，副本随扩展部署——改动须双向同步）
 import { createBackendQueueSupport, createQueueFilePersistence, migrateQueueSidecar } from "@aiti-ai/ext-shared/backend-queue";
@@ -1620,6 +1620,7 @@ export default {
       default: false,
     },
     spawnEnvFeature("ZCode CLI"),
+    spawnDisplayEnvFeature("ZCode CLI"),
     spawnCommandFeature("ZCode CLI"),
     spawnArgsPrefixFeature("ZCode CLI"),
   ],

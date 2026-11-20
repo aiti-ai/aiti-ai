@@ -32,7 +32,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { governanceEnv } from "./external-governance.ts";
-import { agentSpawnEnv, spawnEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, spawnEnvList, spawnCommand, spawnArgsPrefix, parseArgsLines, resolveCliLaunch, captureSpawnEnvFeatures } from "@aiti-ai/ext-shared/agent-spawn-env";
+import { agentSpawnEnv, spawnEnvFeature, spawnDisplayEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, spawnEnvList, spawnCommand, spawnArgsPrefix, parseArgsLines, resolveCliLaunch, captureSpawnEnvFeatures } from "@aiti-ai/ext-shared/agent-spawn-env";
 import type { LaunchOverride } from "@aiti-ai/ext-shared/agent-spawn-env";
 // 队列共享实现层（权威源 pi-web-ext/_shared/backend-queue.ts，副本随扩展部署——改动须双向同步）
 import { createBackendQueueSupport, createQueueFilePersistence, migrateQueueSidecar, type BackendQueue } from "@aiti-ai/ext-shared/backend-queue";
@@ -1454,7 +1454,7 @@ export default {
   // 登录 UI 已统一到 aiti-agent-manager（受控登录弹窗退役，2026-09-13）：不再声明
   // client/ui —— 服务端 /login/* 与 .agent 描述符保留（manager 代理消费）。
 
-  features: [spawnEnvFeature("Claude Code"), spawnCommandFeature("Claude Code"), spawnArgsPrefixFeature("Claude Code")],
+  features: [spawnEnvFeature("Claude Code"), spawnDisplayEnvFeature("Claude Code"), spawnCommandFeature("Claude Code"), spawnArgsPrefixFeature("Claude Code")],
 
   server: {
     startup(ctx: {

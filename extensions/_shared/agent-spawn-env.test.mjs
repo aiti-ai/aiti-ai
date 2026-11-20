@@ -18,9 +18,39 @@ import {
 	registerSpawnEnvDefaults,
 	spawnEnvList,
 	spawnEnvFeature,
+	spawnDisplayEnvFeature,
 	captureSpawnEnvFeatures,
 	resolveCliLaunch,
+	readUiEnvSnapshot,
+	uiEnvDataRoot,
 } from "./agent-spawn-env.ts";
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+// ---------------- aiti-ui-env session-env snapshot ----------------
+
+function makeSnapshotRoot(target, envOverrides = {}) {
+	const root = mkdtempSync(join(tmpdir(), "ui-env-snap-test-"));
+	mkdirSync(join(root, "aiti-ui-env", "cache"), { recursive: true });
+	writeFileSync(
+		join(root, "aiti-ui-env", "cache", "session-env.json"),
+		JSON.stringify({
+			target,
+			mode: "prefer-headless",
+			rationale: "test",
+			env: { DISPLAY: ":154", XAUTHORITY: "/tmp/ui-env-154/Xauthority", PATH: "/usr/bin", ...envOverrides },
+			updatedAt: new Date().toISOString(),
+		}),
+	);
+	return root;
+}
+
+test("uiEnvDataRoot：PI_WEB_DATA_DIR 优先，dev/prod 隔离", () => {
+	assert.equal(uiEnvDataRoot({ PI_WEB_DATA_DIR: "/x" }), "/x");
+	assert.match(uiEnvDataRoot({ PI_WEB_DEV_DIST: "1", HOME: tmpdir() }), /web-dev/);
+	assert.match(uiEnvDataRoot({ HOME: tmpdir() }), /\.pi.web..?data|\.pi\/web\/data|\.pi\/web-dev\/data/);
+});
 
 test("piWebSelfBase：PORT + PI_WEB_BASE_PATH 归一（尾斜杠剥除）", () => {
 	assert.equal(piWebSelfBase({ PORT: "3001", PI_WEB_BASE_PATH: "/dev/" }), "http://127.0.0.1:3001/dev");
@@ -155,6 +185,68 @@ test("spawnEnvFeature：声明形状（id/type=textlist，含 -NAME 语法说明
 	assert.equal(f.type, "textlist");
 	assert.equal(f.group, "G");
 	assert.ok(f.description.includes("-NAME"));
+});
+
+test("readUiEnvSnapshot：白名单键过滤 + 坏快照返回 null", () => {
+	const root = makeSnapshotRoot("headless");
+	const snap = readUiEnvSnapshot({ PI_WEB_DATA_DIR: root });
+	assert.ok(snap);
+	assert.equal(snap.target, "headless");
+	assert.equal(snap.env.DISPLAY, ":154");
+	assert.equal(snap.env.XAUTHORITY, "/tmp/ui-env-154/Xauthority");
+	assert.equal("PATH" in snap.env, false, "白名单外键（PATH）不注入");
+	// corrupt JSON / bad target → null
+	writeFileSync(join(root, "aiti-ui-env", "cache", "session-env.json"), "{broken");
+	assert.equal(readUiEnvSnapshot({ PI_WEB_DATA_DIR: root }), null);
+	writeFileSync(join(root, "aiti-ui-env", "cache", "session-env.json"), JSON.stringify({ target: "bogus", env: {} }));
+	assert.equal(readUiEnvSnapshot({ PI_WEB_DATA_DIR: root }), null);
+	assert.equal(readUiEnvSnapshot({ PI_WEB_DATA_DIR: join(root, "missing") }), null, "缺文件 → null");
+	rmSync(root, { recursive: true, force: true });
+});
+
+test("agentSpawnEnv：快照默认注入（auto），off 关闭，target 过滤开关生效", () => {
+	const root = makeSnapshotRoot("headless");
+	const pe = { PI_WEB_DATA_DIR: root, FOO: "f" };
+	captureSpawnEnvFeatures(null); // no feature → default auto
+	const out = agentSpawnEnv({ extId: "aiti-pi-agent", envList: "K=1", processEnv: pe, warn: () => {} });
+	assert.equal(out.DISPLAY, ":154", "默认 auto：快照 DISPLAY 注入");
+	assert.equal(out.K, "1");
+	captureSpawnEnvFeatures({ get: (_e, fid) => (fid === "spawn.displayEnv" ? "off" : undefined) });
+	const outOff = agentSpawnEnv({ extId: "aiti-pi-agent", processEnv: pe, warn: () => {} });
+	assert.equal("DISPLAY" in outOff, false, "off：不注入");
+	captureSpawnEnvFeatures({ get: (_e, fid) => (fid === "spawn.displayEnv" ? "desktop" : undefined) });
+	const outMismatch = agentSpawnEnv({ extId: "aiti-pi-agent", processEnv: pe, warn: () => {} });
+	assert.equal("DISPLAY" in outMismatch, false, "desktop 开关 + headless 快照 → 不注入");
+	const rootD = makeSnapshotRoot("desktop", { DISPLAY: ":1" });
+	const outMatch = agentSpawnEnv({ extId: "aiti-pi-agent", processEnv: { PI_WEB_DATA_DIR: rootD }, warn: () => {} });
+	assert.equal(outMatch.DISPLAY, ":1", "desktop 开关 + desktop 快照 → 注入");
+	captureSpawnEnvFeatures(null);
+	// no snapshot → zero behavior change (PI_WEB_DATA_DIR points at an empty dir so
+	// the test never reads the real ~/.pi snapshot written by a running instance)
+	const emptyRoot = mkdtempSync(join(tmpdir(), "ui-env-snap-empty-"));
+	const outNone = agentSpawnEnv({ extId: "aiti-pi-agent", envList: "K=1", processEnv: { PI_WEB_DATA_DIR: emptyRoot, FOO: "f" }, warn: () => {} });
+	assert.equal("DISPLAY" in outNone, false, "无快照 → 零变化");
+	rmSync(root, { recursive: true, force: true });
+	rmSync(rootD, { recursive: true, force: true });
+	rmSync(emptyRoot, { recursive: true, force: true });
+});
+
+test("agentSpawnEnv：用户 spawn.env 仍最高优先（覆盖 / -DISPLAY 拔除快照注入）", () => {
+	const root = makeSnapshotRoot("headless");
+	const pe = { PI_WEB_DATA_DIR: root };
+	const outOv = agentSpawnEnv({ extId: "aiti-pi-agent", envList: "DISPLAY=:0", processEnv: pe, warn: () => {} });
+	assert.equal(outOv.DISPLAY, ":0", "用户列表覆盖快照");
+	const outRm = agentSpawnEnv({ extId: "aiti-pi-agent", envList: "-DISPLAY", processEnv: pe, warn: () => {} });
+	assert.equal("DISPLAY" in outRm, false, "-DISPLAY 拔除快照注入");
+	rmSync(root, { recursive: true, force: true });
+});
+
+test("spawnDisplayEnvFeature：声明形状（id/type=string）", () => {
+	const f = spawnDisplayEnvFeature("G");
+	assert.equal(f.id, "spawn.displayEnv");
+	assert.equal(f.type, "string");
+	assert.equal(f.group, "G");
+	assert.ok(f.description.includes("headless"));
 });
 
 test("resolveCliLaunch：win32 下 .cmd/.bat command → shell:true（lessons §0.1 欠账收口）", () => {

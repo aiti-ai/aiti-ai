@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { OmpSpawnHandle, OMP_SPEC, type AgentStarterLike, type AttachedChildOptions } from "./omp-handle.ts";
 import { capabilitiesFor } from "./fork-rpc/spec.ts";
 import { resolveForkCli } from "./fork-rpc/cli-resolve.ts";
-import { spawnEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, captureSpawnEnvFeatures } from "@aiti-ai/ext-shared/agent-spawn-env";
+import { spawnEnvFeature, spawnDisplayEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, captureSpawnEnvFeatures } from "@aiti-ai/ext-shared/agent-spawn-env";
 import { hostToolsAllowFeature } from "@aiti-ai/ext-shared/host-tools-allow";
 import type { LaunchOverride } from "@aiti-ai/ext-shared/agent-spawn-env";
 import { createSessionRecycleApi } from "@aiti-ai/ext-shared/session-recycle";
@@ -35,7 +35,7 @@ export default {
   name: "Oh My Pi (omp 子进程后端)",
   icon: "🦉",
 
-  features: [spawnEnvFeature("Omp"), spawnCommandFeature("Omp"), spawnArgsPrefixFeature("Omp"), hostToolsAllowFeature("Omp")],
+  features: [spawnEnvFeature("Omp"), spawnDisplayEnvFeature("Omp"), spawnCommandFeature("Omp"), spawnArgsPrefixFeature("Omp"), hostToolsAllowFeature("Omp")],
 
 
   ui: {
