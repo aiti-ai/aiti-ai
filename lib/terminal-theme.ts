@@ -6,6 +6,11 @@ export type TerminalTheme = "dark" | "light";
 export const TERMINAL_THEME_STORAGE_KEY = "pi-web:terminal-theme";
 export const TERMINAL_THEME_DEFAULT: TerminalTheme = "dark";
 
+/** Fired on `window` when the terminal theme changes in this document: the browser
+    only fires `storage` for other tabs, and extension surfaces (the terminalDock
+    takeover) render in this one, so they follow a host-side switch through this. */
+export const TERMINAL_THEME_EVENT = "pi-web:terminal-theme-change";
+
 export function parseTerminalTheme(raw: string | null): TerminalTheme {
   return raw === "light" ? "light" : TERMINAL_THEME_DEFAULT;
 }
