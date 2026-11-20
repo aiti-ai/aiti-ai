@@ -230,6 +230,7 @@ export default {
   "On (page renders as touch device)": "开（页面按触屏设备渲染）",
   "One-click scenarios: ": "一键应用场景：",
   "Open new window": "打开新窗口",
+  "↗ Open session": "↗ 跳转会话",
   "Option A": "选项 A",
   "Option B": "选项 B",
   "Package the current error state (errors + emulation flags + page state) and send to AI": "把当前出错现场（错误列表+模拟条件+页面状态）打包发给 AI",
