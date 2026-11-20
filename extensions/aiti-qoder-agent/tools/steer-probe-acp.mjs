@@ -85,6 +85,30 @@ child.stdin?.on("error", (e) => log(`${at()} stdin error: ${e.message}`));
 child.stderr?.on("data", (c) => { stderrText += String(c); });
 child.stderr?.on("error", () => { /* 忽略 */ });
 
+// Full-duplex frame capture (--frames-out): raw JSONL lines both ways, prefixed
+// C> (client→agent) / S> (agent→client). This is the evidence that decides
+// "agent never replied" vs "we failed to match the reply".
+if (framesOut) {
+  const stdin = child.stdin;
+  if (stdin) {
+    const origWrite = stdin.write.bind(stdin);
+    stdin.write = (chunk, ...rest) => {
+      try { appendFileSync(framesOut, `C> ${String(chunk).trim()}\n`); } catch { /* ignore */ }
+      return origWrite(chunk, ...rest);
+    };
+  }
+  let rawBuf = "";
+  child.stdout?.on("data", (c) => {
+    rawBuf += String(c);
+    let i;
+    while ((i = rawBuf.indexOf("\n")) >= 0) {
+      const line = rawBuf.slice(0, i).trim();
+      rawBuf = rawBuf.slice(i + 1);
+      if (line) { try { appendFileSync(framesOut, `S> ${line}\n`); } catch { /* ignore */ } }
+    }
+  });
+}
+
 // ---- state ----
 let sessionId = "";
 let cliVersion = "";
@@ -306,6 +330,14 @@ log(`    同轮 marker 证据      : ${sameTurn ? "✔" : "✘"}（marker ${evid
 log(`    主轮收口形态          : ${primaryStopReason || "?"}${interruptLike ? "（中断语义：注入把本轮抢停）" : ""}`);
 if (blockedReason) log(`blocked 原因: ${blockedReason}`);
 log(`结论: ${verdict.toUpperCase()}`);
+
+// CLI-side queue logs ([MessageQueue] enqueue/drain ...) live on stderr — always
+// show the tail so a hang is attributable (agent never drained vs drained late).
+const stderrLines = stderrText.trim().split("\n").filter((l) => l.trim());
+if (stderrLines.length) {
+  log(`--- CLI stderr tail（最后 ${Math.min(40, stderrLines.length)} 行）---`);
+  for (const l of stderrLines.slice(-40)) log(`  ${l}`);
+}
 
 if (!record) {
   log("未记账（加 --record 才写探针账本；不记 = 能力位保持关）");

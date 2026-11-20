@@ -73,7 +73,13 @@ export class AcpRpc {
       // response to one of our requests
       const id = Number(msg.id);
       const entry = this.pending.get(id);
-      if (!entry) return;
+      if (!entry) {
+        // Unknown/late response — never silently swallow it: this is the exact signal
+        // that distinguishes "agent never replied" from "replied after our timeout".
+        const hint = msg.error?.message ?? msg.result?.stopReason ?? "no-payload";
+        this.log(`response for unknown id=${id} dropped (${String(hint)})`);
+        return;
+      }
       this.pending.delete(id);
       if (entry.timer) clearTimeout(entry.timer);
       if (msg.error !== undefined && msg.error !== null) {
