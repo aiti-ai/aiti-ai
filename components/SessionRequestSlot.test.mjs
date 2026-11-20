@@ -13,7 +13,7 @@ const jiti = createJiti(import.meta.url, {
 const React = await jiti.import("react");
 const { renderToStaticMarkup } = await jiti.import("react-dom/server");
 const { pickSessionRequestCard, MinimalRequestCard } = await jiti.import("./SessionRequestSlot.tsx");
-const { I18nProvider } = await jiti.import("../hooks/useI18n.tsx");
+const { I18nProvider } = await jiti.import("@/hooks/useI18n");
 
 test("pickSessionRequestCard: kind match + backend filter + highest priority wins", () => {
   const item = (id, kinds, backend, priority) => ({ id, meta: { kinds, backend, priority }, render: () => null });
