@@ -170,6 +170,13 @@ const miniBtn = (active?: boolean, danger?: boolean) => ({
   color: danger ? "var(--text-dim, #888)" : active ? "var(--accent, #2563eb)" : "var(--text-muted, #888)",
 } as const);
 
+/** Card-corner badge button (18px) — keeps ★/?/▲▼ inside the 52px icon tile. */
+const cardOpsBtn = (active?: boolean, danger?: boolean) => ({
+  ...miniBtn(active, danger), width: 18, height: 18, borderRadius: 5, fontSize: 11,
+} as const);
+/* Offset from cell edge to the centered 52px icon tile corner (+2px inset). */
+const iconCornerInset = "calc((100% - 52px) / 2 + 2px)";
+
 /** 搜索行右侧紧凑图标按钮（28px 方形，不占额外行）。 */
 function HeaderButton(props: { title: string; onClick: () => void; active?: boolean; children: any }) {
   const { title, onClick, active, children } = props;
@@ -223,22 +230,22 @@ function AppCard(props: {
         {app.label}
       </span>
       {showOps ? (
-        <span style={{ position: "absolute", top: -6, right: -2, display: "flex", gap: 2, zIndex: 2 }}>
+        <span style={{ position: "absolute", top: 2, right: iconCornerInset, display: "flex", gap: 2, zIndex: 2 }}>
           <button type="button" title={pinned ? t("app.unpin") : t("app.pin")} aria-label={pinned ? t("app.unpin") : t("app.pin")}
-            style={miniBtn(pinned)}
+            style={cardOpsBtn(pinned)}
             onClick={() => togglePinned(app.id)}>{pinned ? "★" : "☆"}</button>
           {edit ? (
-            <button type="button" title={t("app.hide")} aria-label={t("app.hide")} style={miniBtn(false, true)}
+            <button type="button" title={t("app.hide")} aria-label={t("app.hide")} style={cardOpsBtn(false, true)}
               onClick={() => hideApp(app.id)}>✕</button>
           ) : null}
-          <button type="button" title={t("info.title")} aria-label={t("info.title")} style={miniBtn(infoActive)}
+          <button type="button" title={t("info.title")} aria-label={t("info.title")} style={cardOpsBtn(infoActive)}
             onClick={() => onInfo(app)}>?</button>
         </span>
       ) : null}
       {edit && pinned && onMove ? (
-        <span style={{ position: "absolute", top: -6, left: -2, display: "flex", gap: 2, zIndex: 2 }}>
-          <button type="button" title={t("app.up")} aria-label={t("app.up")} style={miniBtn()} onClick={() => onMove(app.id, -1)}>▲</button>
-          <button type="button" title={t("app.down")} aria-label={t("app.down")} style={miniBtn()} onClick={() => onMove(app.id, 1)}>▼</button>
+        <span style={{ position: "absolute", top: 2, left: iconCornerInset, display: "flex", gap: 2, zIndex: 2 }}>
+          <button type="button" title={t("app.up")} aria-label={t("app.up")} style={cardOpsBtn()} onClick={() => onMove(app.id, -1)}>▲</button>
+          <button type="button" title={t("app.down")} aria-label={t("app.down")} style={cardOpsBtn()} onClick={() => onMove(app.id, 1)}>▼</button>
         </span>
       ) : null}
     </div>
