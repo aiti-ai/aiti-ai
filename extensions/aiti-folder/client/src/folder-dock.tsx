@@ -16,6 +16,7 @@
  */
 import { useState, useEffect } from "react";
 import { openFile, openFolder, getFeatures, apiUrl, t } from "./host-shim";
+import { ct } from "./comp-i18n";
 import { lastSeg } from "./lib";
 import { FolderIcon, CaretIcon, MiSearch, MiRefresh, CheckIcon, PlusIcon, TerminalIcon, ChangesIcon, MiEye } from "./icons";
 import { WorkspaceDropdown } from "./folder-switcher";
@@ -480,7 +481,7 @@ export function FolderDockBlock(props: FolderFaceProps) {
         ...(typeof st.root !== "string" || !st.root.length
           ? [{ label: t("files.openNewWindow"), icon: dockIconEl("new-window", 13), run: () => openFolderWindow(norm, props.cwd) }]
           : []),
-        { label: "显示忽略项", icon: <MiEye />, active: showIgnored, alwaysRun: true, run: () => toggleShowIgnored(path) },
+        { label: ct("files.showIgnored"), icon: <MiEye />, active: showIgnored, alwaysRun: true, run: () => toggleShowIgnored(path) },
       ]}
       moveRowPin={{ isPinned: () => pinned, toggle: () => toggleFolderPin(path) }}
       // 关闭入口分工（2026-11-15 终版，用户拍板）：挂载态 → 「窗口」排 ✕（removeFolderInstance
@@ -525,12 +526,12 @@ export function FolderFloatFace(props: FolderFaceProps) {
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px 6px", flexShrink: 0 }}>
           <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{lastSeg(norm) || norm}</h3>
           <button
-            type="button" aria-label="显示忽略项" title={showIgnored ? "隐藏被忽略项" : "显示被忽略项"}
+            type="button" aria-label={ct("files.showIgnored")} title={showIgnored ? ct("files.hideIgnored") : ct("files.showIgnored")}
             onClick={() => toggleShowIgnored(props.path)}
             style={{ background: "none", border: "none", color: showIgnored ? "var(--accent, #2563eb)" : "var(--text-muted, #888)", cursor: "pointer", padding: "2px 6px", display: "inline-flex", alignItems: "center", fontFamily: "inherit" }}
           ><MiEye /></button>
           <button
-            type="button" aria-label="关闭" title="关闭" onClick={() => closePanel(key)}
+            type="button" aria-label={ct("i18n.close")} title={ct("i18n.close")} onClick={() => closePanel(key)}
             style={{ background: "none", border: "none", color: "var(--text-muted, #888)", cursor: "pointer", fontSize: 14, padding: "2px 8px", fontFamily: "inherit" }}
           >✕</button>
         </div>
@@ -560,8 +561,8 @@ export function FolderDockRightFace(props: FolderFaceProps) {
       defaultZone={sidebarZoneOf(key)}
       collapsed={false}
       extraMenuItems={[
-        { label: "钉住", icon: dockIconEl("pin", 13), active: pinned, alwaysRun: true, run: () => toggleFolderPin(props.path) },
-        { label: "显示忽略项", icon: <MiEye />, active: showIgnored, alwaysRun: true, run: () => toggleShowIgnored(props.path) },
+        { label: ct("files.pin"), icon: dockIconEl("pin", 13), active: pinned, alwaysRun: true, run: () => toggleFolderPin(props.path) },
+        { label: ct("files.showIgnored"), icon: <MiEye />, active: showIgnored, alwaysRun: true, run: () => toggleShowIgnored(props.path) },
       ]}
       onNewWindow={() => openFolderWindow(props.path.replace(/[\\/]+$/, ""), props.cwd)}
     >

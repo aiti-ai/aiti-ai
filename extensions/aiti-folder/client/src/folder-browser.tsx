@@ -828,7 +828,7 @@ function TreeNode(o: any) {
           <svg width={10} height={10} viewBox="0 0 10 10" fill="none" stroke="var(--text-dim)" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0, transform:open?"rotate(90deg)":"none", transition:"transform 0.1s"}}><polyline points="3 2 7 5 3 8"/></svg>
         ) : <span style={{width:10,flexShrink:0}} />}
         <span style={{flexShrink:0, display:"flex", alignItems:"center"}}>{node.isDir?<FolderIcon open={open}/>:(<NodeIcon name={node.name}/>)}</span>
-        <span style={{fontSize:12, color: node.ignored ? "var(--text-dim, #777)" : "var(--text)", fontStyle: node.ignored ? "italic" : "normal", opacity: node.ignored ? 0.75 : 1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", flex:1}} title={node.ignored ? `${node.fullPath}（${node.name === ".git" ? "git 仓库内部，默认隐藏" : "已被 .gitignore/.aitignore 忽略"}）` : node.fullPath}>{node.name}</span>
+        <span style={{fontSize:12, color: node.ignored ? "var(--text-dim, #777)" : "var(--text)", fontStyle: node.ignored ? "italic" : "normal", opacity: node.ignored ? 0.75 : 1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", flex:1}} title={node.ignored ? (node.name === ".git" ? ct("files.ignoredGitInternalTip", { path: node.fullPath }) : ct("files.ignoredByRulesTip", { path: node.fullPath })) : node.fullPath}>{node.name}</span>
         {loading ? <svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth={2} strokeLinecap="round" style={{animation:"spin 0.8s linear infinite"}}><path d="M21 12a9 9 0 1 1-5.7-8.4"/></svg> : null}
         {(!hovered && !node.isDir && git) ? <GitBadge status={git} t={tt} /> : null}
         {(!hovered && containsGit) ? (

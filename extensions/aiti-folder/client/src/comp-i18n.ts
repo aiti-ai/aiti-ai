@@ -24,6 +24,11 @@ const COMPONENT_DICT: Record<string, Record<string, string>> = {
     "sidebar.filterProjects": "Filter projects…",
     "sidebar.noMatchingProjects": "No matching projects",
     "sidebar.useDefaultDirectory": "Use default directory",
+    "files.showIgnored": "Show ignored items",
+    "files.hideIgnored": "Hide ignored items",
+    "files.pin": "Pin",
+    "files.ignoredGitInternalTip": "{path} (internal git metadata, hidden by default)",
+    "files.ignoredByRulesTip": "{path} (ignored by .gitignore/.aitignore)",
 
     "git.branchPanelTitle": "Branch panel (branch / tag / stash)",
     "git.pushTitle": "Push commits",
@@ -81,6 +86,11 @@ const COMPONENT_DICT: Record<string, Record<string, string>> = {
     "sidebar.filterProjects": "筛选项目…",
     "sidebar.noMatchingProjects": "没有匹配的项目",
     "sidebar.useDefaultDirectory": "使用默认目录",
+    "files.showIgnored": "显示忽略项",
+    "files.hideIgnored": "隐藏被忽略项",
+    "files.pin": "钉住",
+    "files.ignoredGitInternalTip": "{path}（git 仓库内部，默认隐藏）",
+    "files.ignoredByRulesTip": "{path}（已被 .gitignore/.aitignore 忽略）",
 
     "git.branchPanelTitle": "分支面板（分支 / tag / stash）",
     "git.pushTitle": "推送提交",
