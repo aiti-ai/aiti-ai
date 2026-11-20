@@ -1115,7 +1115,7 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
     } catch { return null; }
   };
 
-  function execOnPage(cmd, args, pageId, signal, mcpReqId, cancelId, src?: { agentId?: string | null; agentName?: string | null; targetDevice?: string | null } | null) {
+  function execOnPage(cmd, args, pageId, signal, mcpReqId, cancelId, src?: { agentId?: string | null; agentName?: string | null; agentSessionUrl?: string | null; targetDevice?: string | null } | null) {
     const { instanceId, frameId } = parsePageId(pageId || LEGACY_TOKEN);
     const page = pages.get(instanceId);
     return new Promise((resolve) => {
@@ -1125,7 +1125,7 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
       if (rec.mcpReqId) mcpReqMap.set(rec.mcpReqId, requestId);
       if (rec.cancelId) cancelIdMap.set(rec.cancelId, requestId);
       // Agent session source (page dialog badges): spread onto every exec envelope variant below.
-      const srcExt: any = src && src.agentId ? { agentId: src.agentId || null, agentName: src.agentName || null, targetDevice: src.targetDevice || null } : {};
+      const srcExt: any = src && src.agentId ? { agentId: src.agentId || null, agentName: src.agentName || null, agentSessionUrl: src.agentSessionUrl || null, targetDevice: src.targetDevice || null } : {};
       // 取消支持（pi-web 点停止/SDK abort）→ 立即结算，不等 15s/180s 超时
       rec.onAbort = () => cancelPending(requestId, "已取消（agent 停止）");
       if (signal) {
@@ -1382,7 +1382,7 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
         const agentSrc = () => {
           const key = (session && session.agentKey) || (session && session.agentId ? session.agentId + (session.id ? "/" + session.id : "") : null) || a.agentId || null;
           const agRec = key ? agents.get(String(key)) : null;
-          return { agentId: key || null, agentName: (agRec && agRec.name) || null };
+          return { agentId: key || null, agentName: (agRec && agRec.name) || null, agentSessionUrl: (agRec && agRec.sessionUrl) || null };
         };
         const recToolCall = (text: string, ok: boolean, detail?: any) => {
           if (!recAgentKey) return;
@@ -1602,7 +1602,7 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
           // instanceId space). Miss = error. Fix: the old implementation ignored args.pageId and
           // always blasted aiConns → the card popped up on other people's screens.
           const srcN = agentSrc(); // notify card badge: agent session + display name (+ target device below)
-          const notif = { kind: "notify", title: String(a.title || "🤖 AI 有一条消息"), body: String(a.body || a.prompt || ""), timeoutMs: clampTimeout(a.timeout), agentId: srcN.agentId, agentName: srcN.agentName, targetDevice: deviceShort(pageId || boundPageIdFor(session)) };
+          const notif = { kind: "notify", title: String(a.title || "🤖 AI 有一条消息"), body: String(a.body || a.prompt || ""), timeoutMs: clampTimeout(a.timeout), agentId: srcN.agentId, agentName: srcN.agentName, agentSessionUrl: srcN.agentSessionUrl, targetDevice: deviceShort(pageId || boundPageIdFor(session)) };
           const rid = "notify_" + Date.now();
           if (a.pageId) {
             const raw = String(a.pageId);
@@ -2699,7 +2699,7 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
     if (!k) return { ok: false, error: "bad key" };
     if (!agents.has(k)) {
       // conn 从 0 起：在线状态由 setAgentSink 维护（sink 在 = 在线；sink 清 = 掉线）——防止会话结束后永远在线泄漏
-      agents.set(k, { agentId: k, sessionId: (opts.id || k), registered: true, name: opts.name || k, cwd: opts.cwd || null, offlineAt: null, conn: 0, transportKind: "inprocess", source: opts.source || "extension", capabilities: opts.capabilities || {}, stream: null, boundPageId: opts.pageId || null, activeBoundPageId: null, subEvents: new Set(opts.subEvents || []), outbox: [], lastSeen: Date.now(), agentStream: null, inProcessSink: null });
+      agents.set(k, { agentId: k, sessionId: (opts.id || k), registered: true, name: opts.name || k, cwd: opts.cwd || null, sessionUrl: opts.sessionUrl || null, offlineAt: null, conn: 0, transportKind: "inprocess", source: opts.source || "extension", capabilities: opts.capabilities || {}, stream: null, boundPageId: opts.pageId || null, activeBoundPageId: null, subEvents: new Set(opts.subEvents || []), outbox: [], lastSeen: Date.now(), agentStream: null, inProcessSink: null });
     }
     const a = agents.get(k);
     a.lastSeen = Date.now();
@@ -2708,6 +2708,7 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
     if (opts.name && a.name === k) a.name = String(opts.name);
     if (opts.name) a.name = String(opts.name);
     if (opts.cwd) a.cwd = String(opts.cwd);
+    if (opts.sessionUrl) a.sessionUrl = String(opts.sessionUrl); // session deep link (page dialogs render an open-session action)
     if (opts.pageId) a.boundPageId = String(opts.pageId);
     if (Array.isArray(opts.subEvents)) a.subEvents = new Set(opts.subEvents.map(String));
     // 反向匹配：AI 主窗口 URL 的 ?session= 可能已在（AI 窗早于 agent 注册），直接绑定
