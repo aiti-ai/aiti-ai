@@ -170,10 +170,19 @@ const miniBtn = (active?: boolean, danger?: boolean) => ({
   color: danger ? "var(--text-dim, #888)" : active ? "var(--accent, #2563eb)" : "var(--text-muted, #888)",
 } as const);
 
-/** Card-corner badge button (18px) — keeps ★/?/▲▼ inside the 52px icon tile. */
+/** Solid corner badge button (18px, bordered) anchored inside the 52px icon tile. */
 const cardOpsBtn = (active?: boolean, danger?: boolean) => ({
-  ...miniBtn(active, danger), width: 18, height: 18, borderRadius: 5, fontSize: 11,
+  width: 18, height: 18, display: "inline-flex", alignItems: "center", justifyContent: "center",
+  border: "1px solid var(--border, #3a3a3a)", borderRadius: 6, padding: 0, cursor: "pointer",
+  fontFamily: "inherit", fontSize: 11, lineHeight: 1, boxSizing: "border-box" as const,
+  background: active ? "var(--bg-selected, #2a2a2a)" : "var(--bg, #1a1a1a)",
+  color: danger ? "var(--text-dim, #888)" : active ? "var(--accent, #2563eb)" : "var(--text-muted, #999)",
+  boxShadow: "0 1px 2px rgba(0,0,0,0.35)",
 } as const);
+const badgeHover = {
+  onMouseEnter: (e: any) => { e.currentTarget.style.borderColor = "var(--accent, #2563eb)"; },
+  onMouseLeave: (e: any) => { e.currentTarget.style.borderColor = "var(--border, #3a3a3a)"; },
+};
 /* Offset from cell edge to the centered 52px icon tile corner (+2px inset). */
 const iconCornerInset = "calc((100% - 52px) / 2 + 2px)";
 
@@ -232,24 +241,24 @@ function AppCard(props: {
       {showOps ? (
         <span style={{ position: "absolute", top: 2, left: iconCornerInset, zIndex: 2 }}>
           <button type="button" title={pinned ? t("app.unpin") : t("app.pin")} aria-label={pinned ? t("app.unpin") : t("app.pin")}
-            style={cardOpsBtn(pinned)}
+            style={cardOpsBtn(pinned)} {...badgeHover}
             onClick={() => togglePinned(app.id)}>{pinned ? "★" : "☆"}</button>
         </span>
       ) : null}
       {showOps ? (
         <span style={{ position: "absolute", top: 2, right: iconCornerInset, display: "flex", gap: 2, zIndex: 2 }}>
           {edit ? (
-            <button type="button" title={t("app.hide")} aria-label={t("app.hide")} style={cardOpsBtn(false, true)}
+            <button type="button" title={t("app.hide")} aria-label={t("app.hide")} style={cardOpsBtn(false, true)} {...badgeHover}
               onClick={() => hideApp(app.id)}>✕</button>
           ) : null}
-          <button type="button" title={t("info.title")} aria-label={t("info.title")} style={cardOpsBtn(infoActive)}
+          <button type="button" title={t("info.title")} aria-label={t("info.title")} style={cardOpsBtn(infoActive)} {...badgeHover}
             onClick={() => onInfo(app)}>?</button>
         </span>
       ) : null}
       {edit && pinned && onMove ? (
         <span style={{ position: "absolute", top: 32, right: iconCornerInset, display: "flex", gap: 2, zIndex: 2 }}>
-          <button type="button" title={t("app.up")} aria-label={t("app.up")} style={cardOpsBtn()} onClick={() => onMove(app.id, -1)}>▲</button>
-          <button type="button" title={t("app.down")} aria-label={t("app.down")} style={cardOpsBtn()} onClick={() => onMove(app.id, 1)}>▼</button>
+          <button type="button" title={t("app.up")} aria-label={t("app.up")} style={cardOpsBtn()} {...badgeHover} onClick={() => onMove(app.id, -1)}>▲</button>
+          <button type="button" title={t("app.down")} aria-label={t("app.down")} style={cardOpsBtn()} {...badgeHover} onClick={() => onMove(app.id, 1)}>▼</button>
         </span>
       ) : null}
     </div>
