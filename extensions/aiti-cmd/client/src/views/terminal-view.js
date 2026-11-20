@@ -12,13 +12,16 @@
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import xtermCss from "@xterm/xterm/css/xterm.css";
-import { btnStyle, inputStyle, smallStyle, TERM_THEME, TERM_FONT, TERM_SIZES, LS_TERM_SIZE, LS_TERM_KBD, lsGet, lsSet, installTermLinkProvider, installTermClipboard } from "../kit.js";
+import { btnStyle, inputStyle, smallStyle, TERM_THEMES, TERM_FONT, TERM_SIZES, LS_TERM_SIZE, LS_TERM_KBD, lsGet, lsSet, installTermLinkProvider, installTermClipboard, readTermTheme, setTermTheme, subscribeTermTheme } from "../kit.js";
 
 // inject xterm.css (inlined as text at build time)
 if (typeof document !== "undefined" && !document.getElementById("aiti-cmd-xterm-css")) {
   const style = document.createElement("style");
   style.id = "aiti-cmd-xterm-css";
-  style.textContent = xtermCss;
+  // xterm.css paints the viewport #000; the host does the same override for its native
+  // panel (.terminal-xterm .xterm-viewport). This surface is not that element, so it carries
+  // its own class and follows the same --terminal-bg variable the shell choice sets.
+  style.textContent = xtermCss + "\n.aiti-cmd-xterm .xterm-viewport{background-color:var(--terminal-bg,#111318);}";
   document.head.appendChild(style);
 }
 
@@ -63,6 +66,14 @@ export function createTerminalView(kit) {
     const [linkConfirm, setLinkConfirm] = useState(null); // {uri} — terminal URL click confirmation
     const termRef = useRef(null);
     const fitRef = useRef(null);
+    // The shell's light/dark choice is the host's (shared key); repaint this view when it flips.
+    const [termTheme, setTermThemeState] = useState(readTermTheme);
+    useEffect(() => subscribeTermTheme(setTermThemeState), []);
+    useEffect(() => {
+      const term = termRef.current;
+      if (!term) return;
+      try { term.options.theme = TERM_THEMES[termTheme]; } catch {}
+    }, [termTheme]);
     // size / fullscreen / on-screen keyboard / help (size + keyboard preference persisted)
     const [sizeId, setSizeId] = useState(() => lsGet(LS_TERM_SIZE, "fit"));
     const [fullscreen, setFullscreen] = useState(false);
@@ -117,7 +128,7 @@ export function createTerminalView(kit) {
 
     useEffect(() => {
       if (!ref.current) return;
-      const term = new Terminal({ fontFamily: TERM_FONT, fontSize: 13, scrollback: 1000, cursorBlink: true, convertEol: false, rendererType: "dom", theme: TERM_THEME });
+      const term = new Terminal({ fontFamily: TERM_FONT, fontSize: 13, scrollback: 1000, cursorBlink: true, convertEol: false, rendererType: "dom", theme: TERM_THEMES[readTermTheme()] });
       // rendererType "dom": xterm 6 defaults to WebGL where available (e.g. Edge); some GPU/driver
       // combos render nothing until a reopen. The DOM renderer is the stable, GPU-free choice.
       const fit = new FitAddon();
@@ -437,14 +448,16 @@ export function createTerminalView(kit) {
         onNewPiSession && h("button", { onClick: onNewPiSession, title: t("cmd.k264"), "aria-label": t("cmd.k261"), style: miniBtn }, isSmall ? "💬" : t("cmd.k259")),
         onSaveFavorite && saveable && h("button", { onClick: () => onSaveFavorite(meta), title: t("cmd.app.saveFavorite"), "aria-label": t("cmd.app.saveFavorite"), style: miniBtn }, "★"),
         pullBack && h("button", { onClick: pullBack, title: t("cmd.k232"), "aria-label": t("cmd.k231"), style: miniBtn }, isSmall ? "⇲" : t("cmd.k57")),
+        // the shell's own light/dark surface (the host's native header owns this switch; here the takeover replaces that header)
+        h("button", { onClick: () => setTermTheme(termTheme === "dark" ? "light" : "dark"), title: isZh ? "浅色 / 深色终端" : "Light / dark terminal", "aria-label": isZh ? "切换终端浅色/深色" : "Toggle terminal light or dark", style: miniBtn }, termTheme === "dark" ? "🌙" : "☀"),
         // maximize last: sits where aiti-float injects its ⛶/❐ (before close)
         h("button", { onClick: () => setFullscreen((x) => !x), title: t("cmd.k103"), "aria-label": t("cmd.k101"), style: { ...miniBtn, background: fullscreen ? "var(--accent)" : undefined, color: fullscreen ? "#fff" : undefined } }, fullscreen ? "⤡" : "⛶"),
         exitInfo && onReopen && h("button", { onClick: onReopen, title: t("cmd.app.reopen"), style: miniBtn }, isSmall ? "↻" : t("cmd.app.reopen")),
         exitInfo && h("span", { style: { fontWeight: 700, color: exitInfo.signal ? "var(--danger, #ef4444)" : (exitInfo.code ?? 0) !== 0 ? "#b45309" : "var(--text-muted)" } }, `${t("cmd.k375")}${exitInfo.code ?? "?"}${exitInfo.signal ? " · " + exitInfo.signal : ""} · ${((exitInfo.durationMs || 0) / 1000).toFixed(1)}s`),
       ),
       h("div", { style: { flex: 1, minHeight: 0, position: "relative", display: "flex" } },
-        h("div", { ref, style: { flex: 1, minHeight: 0, background: "#0f172a", borderRadius: 8, padding: 6, overflow: isFit ? "hidden" : "auto", touchAction: "none" } }),
-        missing && h("div", { style: { position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, padding: 24, background: "rgba(15,23,42,0.86)", color: "#cbd5e1", fontSize: 13, textAlign: "center" } },
+        h("div", { ref, className: "aiti-cmd-xterm", style: { flex: 1, minHeight: 0, background: "var(--terminal-bg, #111318)", borderRadius: 8, padding: 6, overflow: isFit ? "hidden" : "auto", touchAction: "none" } }),
+        missing && h("div", { style: { position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, padding: 24, background: "color-mix(in srgb, var(--terminal-bg, #111318) 86%, transparent)", color: "var(--terminal-muted, #cbd5e1)", fontSize: 13, textAlign: "center" } },
           h("div", { style: { fontSize: 14, fontWeight: 700 } }, t("cmd.app.missingTitle")),
           h("div", { style: { fontSize: 12, opacity: 0.8, maxWidth: 420, lineHeight: 1.6 } }, t("cmd.app.missingHint")),
           h("div", { style: { display: "flex", gap: 8 } },
