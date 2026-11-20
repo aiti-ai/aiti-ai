@@ -119,8 +119,17 @@ export const PI_SPEC: PiForkSpec = {
   bundledCli() {
     const pkgDir = process.env.PI_WEB_PKG_DIR;
     if (pkgDir) {
-      const bundled = join(pkgDir, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "cli.js");
-      if (existsSync(bundled)) return bundled;
+      const rel = join("@earendil-works", "pi-coding-agent", "dist", "cli.js");
+      // Source-repo layout: pkgDir is the repo root, deps hoisted at <root>/node_modules.
+      // npm install layout: pkgDir is <root>/node_modules/@aiti-ai/pi-web, so the hoisted
+      // dep lives two levels up (also covers npm -g / npx cache roots).
+      const candidates = [
+        join(pkgDir, "node_modules", rel),
+        join(pkgDir, "..", "..", rel),
+      ];
+      for (const bundled of candidates) {
+        if (existsSync(bundled)) return bundled;
+      }
     }
     return undefined;
   },
@@ -233,6 +242,7 @@ export class PiSpawnHandle extends RpcChildHost {
   ): Promise<PiSpawnHandle> {
     if (opts.attached) return PiSpawnHandle.attach(opts.attached, spec);
     const resolved = resolveForkCli(spec);
+    console.log(`[aiti-pi-agent] spawn resolve: origin=${resolved ? resolved.origin : "null"} pkgDir=${process.env.PI_WEB_PKG_DIR ?? "<unset>"}`);
     if (!resolved) {
       throw new Error(`[aiti-pi-agent] ${spec.pathBin} CLI 未找到（PATH 无 ${spec.pathBin}，且无包内 SDK）。`);
     }
