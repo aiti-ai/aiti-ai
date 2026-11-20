@@ -68,6 +68,15 @@ export interface SessionCapabilities {
   setThinkingLevel: boolean;
   /** Fork the session from an entry into a new session file. */
   fork: boolean;
+  /**
+   * fork(reset) — the "edit from here" fork — rebinds the hosted record to a branched
+   * child session and reports the new id via newSessionFile (pi spawn: the RPC fork moves
+   * the subprocess to a new session file, so the old id would keep reading the stale
+   * pre-edit file on disk). The frontend must switch the shell over to that id and hand
+   * the edited message to it. Absent/false = the fork keeps the current record id and
+   * continues in place (zcode-shaped backends rebuild under the old key).
+   */
+  forkRebindHandoff?: boolean;
   /** Set the display name of the session. */
   renameSession: boolean;
   /** Compact (summarize) the conversation context. */
@@ -132,6 +141,7 @@ export const FULL_CAPABILITIES: SessionCapabilities = {
   setModel: true,
   setThinkingLevel: true,
   fork: true,
+  // forkRebindHandoff stays unset for local sessions (they rewind via navigateTree, not fork).
   renameSession: true,
   compact: true,
   executeBash: true,
@@ -452,7 +462,7 @@ export interface SessionHandle {
   /** @capability setThinkingLevel */
   setThinkingLevel?(level: string): void;
   /** @capability fork */
-  fork?(entryId: string, opts?: { reset?: boolean }): Promise<{ cancelled: boolean; newSessionFile?: string }>;
+  fork?(entryId: string, opts?: { reset?: boolean; editEntryId?: string }): Promise<{ cancelled: boolean; newSessionFile?: string }>;
   /** @capability renameSession */
   setSessionName?(name: string): void;
   /** @capability compact */

@@ -179,7 +179,8 @@ const MAX_PENDING_UI = 32;
 export class PiSpawnHandle extends RpcChildHost {
   readonly source: string;
   readonly capabilities: Record<string, boolean>;
-  readonly id: string;
+  /** Current record id — mutable: a fork rebinds the subprocess to a branched child session (new id). */
+  id: string;
   readonly spec: PiForkSpec;
   readonly cwd: string;
 
@@ -214,7 +215,7 @@ export class PiSpawnHandle extends RpcChildHost {
     // 上下文用量：RPC 线协议无该命令字段（hasContextUsage 仅 omp），但扩展侧经
     // get_state（sessionFile/model.contextWindow）+ 会话文件换算自实现了
     // getContextUsage()——presence-based 宿主适配层按方法存在性投影，capability 如实翻 true。
-    this.capabilities = { ...this.capabilities, contextUsage: true };
+    this.capabilities = { ...this.capabilities, contextUsage: true, forkRebindHandoff: true };
     this.id = id;
     this.cwd = cwd;
     this.subscribe((e) => {
@@ -484,10 +485,38 @@ export class PiSpawnHandle extends RpcChildHost {
     void this.request({ type: "set_thinking_level", level }, { timeoutMs: RPC_CTRL_TIMEOUT_MS }).catch(() => {});
   }
 
-  /** pi → fork（{cancelled}）。 */
-  async fork(entryId: string): Promise<{ cancelled: boolean }> {
-    const d = await this.request<{ cancelled?: boolean }>({ type: "fork", entryId }, { timeoutMs: RPC_CTRL_TIMEOUT_MS });
-    return { cancelled: Boolean(d?.cancelled) };
+  /**
+   * fork — shared by the message "branch" button and "edit from here".
+   *
+   * pi's fork(position:"before") only accepts a USER message entry: forking at M drops M
+   * and everything after, and the branched child keeps the prefix before it (M.parentId
+   * empty = first message → fresh empty session linked via parentSession). Input shapes:
+   *  - reset (edit-from-here): entryId is the zcode-shaped branch point (previous
+   *    assistant entry, or "" for the first message) — the real fork target rides in
+   *    opts.editEntryId (the edited user message, sent by the frontend's
+   *    handleEditFromStartSend); pi must use it. Missing editEntryId = legacy client →
+   *    pass entryId through and let pi reject it explicitly.
+   *  - non-reset (branch button): entryId IS the user message to branch at, use as-is.
+   *
+   * pi's RPC fork rebinds the subprocess to the branched child session (new file + new
+   * id). On success we read get_state.sessionId, announce session_backend_ready (the host
+   * re-keys the detached registry record and double-keys the handle store) and return
+   * newSessionFile so the frontend can follow to the child (branch button: opens the
+   * child with the draft; edit-from-here with forkRebindHandoff: switches + auto-sends).
+   */
+  async fork(entryId: string, opts?: { reset?: boolean; editEntryId?: string }): Promise<{ cancelled: boolean; newSessionFile?: string }> {
+    const target = opts?.reset && opts.editEntryId ? opts.editEntryId : entryId;
+    const d = await this.request<{ cancelled?: boolean }>({ type: "fork", entryId: target }, { timeoutMs: RPC_CTRL_TIMEOUT_MS });
+    if (d?.cancelled) return { cancelled: true };
+    const st = await this.request<{ sessionId?: unknown }>({ type: "get_state" }, { timeoutMs: RPC_CTRL_TIMEOUT_MS }).catch(() => null);
+    const newId = typeof st?.sessionId === "string" ? st.sessionId : "";
+    if (newId && newId !== this.id) {
+      const oldId = this.id;
+      this.id = newId;
+      this.emit({ type: "session_backend_ready", oldId, id: newId });
+      return { cancelled: false, newSessionFile: newId };
+    }
+    return { cancelled: false };
   }
 
   async setSessionName(name: string): Promise<void> {
