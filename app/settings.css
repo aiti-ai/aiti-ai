@@ -1123,6 +1123,25 @@
   line-height: 1;
 }
 
+/* The skill's own instructions: rendered markdown, so its first and last
+   blocks drop their margins and the pane keeps a steady rhythm. */
+.skill-instructions {
+  font-size: 13px;
+}
+
+.skill-instructions > :first-child { margin-top: 0; }
+.skill-instructions > :last-child { margin-bottom: 0; }
+
+.skill-instructions-status {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.skill-instructions-status.is-error {
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
+
 .config-footer {
   display: flex;
   flex-shrink: 0;
@@ -1791,12 +1810,40 @@
   }
 }
 
+/* The context window beside its model row: a short numeric field, monospace
+   and right-aligned so digits line up down the list. */
+.model-context-input {
+  flex-shrink: 0;
+  width: calc(8ch + 16px);
+  height: 24px;
+  box-sizing: border-box;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-align: right;
+}
+
+.model-context-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .settings-chat-options {
   display: flex;
   flex-direction: column;
   gap: 12px;
   width: 100%;
   max-width: 420px;
+}
+
+/* The description under the chat options reads as a caption for them, not as
+   another option: a tighter top margin keeps it attached. */
+.settings-chat-options + .settings-general-description {
+  margin: 6px 0 0;
 }
 
 .settings-chat-option {
