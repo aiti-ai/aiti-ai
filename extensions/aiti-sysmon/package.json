@@ -23,5 +23,6 @@
   },
   "devDependencies": {
     "vite": "^6.4.3"
-  }
+  },
+  "contentHash": "d561c996999234a5"
 }
