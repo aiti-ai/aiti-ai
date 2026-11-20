@@ -170,18 +170,16 @@ const miniBtn = (active?: boolean, danger?: boolean) => ({
   color: danger ? "var(--text-dim, #888)" : active ? "var(--accent, #2563eb)" : "var(--text-muted, #888)",
 } as const);
 
-/** Solid corner badge button (18px, bordered) anchored inside the 52px icon tile. */
+/** Bare corner badge (no chip background) — small glyph buttons on one line. */
 const cardOpsBtn = (active?: boolean, danger?: boolean) => ({
-  width: 18, height: 18, display: "inline-flex", alignItems: "center", justifyContent: "center",
-  border: "1px solid var(--border, #3a3a3a)", borderRadius: 6, padding: 0, cursor: "pointer",
-  fontFamily: "inherit", fontSize: 11, lineHeight: 1, boxSizing: "border-box" as const,
-  background: active ? "var(--bg-selected, #2a2a2a)" : "var(--bg, #1a1a1a)",
+  width: 16, height: 16, display: "inline-flex", alignItems: "center", justifyContent: "center",
+  border: "none", borderRadius: 4, padding: 0, cursor: "pointer",
+  fontFamily: "inherit", fontSize: 10, lineHeight: 1, background: "transparent",
   color: danger ? "var(--text-dim, #888)" : active ? "var(--accent, #2563eb)" : "var(--text-muted, #999)",
-  boxShadow: "0 1px 2px rgba(0,0,0,0.35)",
 } as const);
 const badgeHover = {
-  onMouseEnter: (e: any) => { e.currentTarget.style.borderColor = "var(--accent, #2563eb)"; },
-  onMouseLeave: (e: any) => { e.currentTarget.style.borderColor = "var(--border, #3a3a3a)"; },
+  onMouseEnter: (e: any) => { e.currentTarget.style.color = "var(--accent, #2563eb)"; },
+  onMouseLeave: (e: any) => { e.currentTarget.style.color = ""; },
 };
 /* Offset from cell edge to the centered 52px icon tile corner (+2px inset). */
 const iconCornerInset = "calc((100% - 52px) / 2 + 2px)";
@@ -243,7 +241,7 @@ function AppCard(props: {
           <button type="button" title={pinned ? t("app.unpin") : t("app.pin")} aria-label={pinned ? t("app.unpin") : t("app.pin")}
             style={cardOpsBtn(pinned)} {...badgeHover}
             onClick={() => togglePinned(app.id)}>
-            <svg width={12} height={12} viewBox="0 0 24 24" fill={pinned ? "currentColor" : "none"} stroke="currentColor"
+            <svg width={10} height={10} viewBox="0 0 24 24" fill={pinned ? "currentColor" : "none"} stroke="currentColor"
               strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
             </svg>
