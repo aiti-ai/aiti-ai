@@ -1,10 +1,16 @@
 /**
- * sidebar/directory-picker —— 目录选择弹窗（宿主 components/DirectoryPicker.tsx 完整复制）。
- * CWD picker「自定义路径…」入口打开；portal 到 body 避开 transform 祖先。
+ * sidebar/directory-picker — directory picker dialog (browse /api/cwd/browse, create a folder,
+ * select the listed folder). Opened by the project menu's "Browse folders…" and by the
+ * new-session workspace picker; portaled to body so transformed ancestors cannot clip it.
+ *
+ * Address bar: a Windows-Explorer-style breadcrumb (shared _shared/path-breadcrumb): every
+ * segment navigates, the free space / Alt+D / Ctrl+L / typing enters edit mode, Enter
+ * navigates, Escape only leaves edit mode, a copy button copies the current folder.
  */
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiUrl, createPortal, getCtx, t } from "../host-shim";
 import { dismissOnBack } from "../../../../_shared/overlay-back-client";
+import { PathBreadcrumb } from "../../../../_shared/path-breadcrumb";
 
 interface DirectoryEntry {
   name: string;
@@ -20,7 +26,7 @@ interface BrowseResponse {
 }
 
 async function loadDirectories(directory?: string): Promise<BrowseResponse> {
-  // path 走 body 不进 URL（防落入隧道/代理 access log）
+  // path goes in the body, not the URL (keeps it out of tunnel/proxy access logs)
   const response = await fetch(apiUrl("/api/cwd/browse"), {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -86,7 +92,7 @@ export function DirectoryPicker({ onCancel, onSelect, initialPath, busy = false,
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
   const [currentPath, setCurrentPath] = useState("");
   const [parentDirectory, setParentDirectory] = useState<string | null>(null);
-  const [pathInput, setPathInput] = useState(initialPath ?? "");
+  const [pathEditing, setPathEditing] = useState(false);
   const [directories, setDirectories] = useState<DirectoryEntry[]>([]);
   const [drives, setDrives] = useState<DirectoryEntry[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -99,14 +105,15 @@ export function DirectoryPicker({ onCancel, onSelect, initialPath, busy = false,
   const navigateTo = useCallback(async (directory?: string) => {
     setLoading(true);
     setLoadError(null);
-    setNewFolderOpen(false); // 切目录即换新建落点——输入行随之收起（名字留着、目录已换会建错地方）
+    // A navigation moves the new-folder target: collapse its row (a name typed for the old
+    // folder would create elsewhere).
+    setNewFolderOpen(false);
     setNewFolderError(null);
     try {
       const data = await loadDirectories(directory);
       const nextPath = data.path ?? directory ?? "/";
       setCurrentPath(nextPath);
       setParentDirectory(data.parentPath ?? null);
-      setPathInput(nextPath);
       setDirectories(data.directories ?? []);
       setDrives(data.drives ?? null);
     } catch (cause) {
@@ -121,16 +128,11 @@ export function DirectoryPicker({ onCancel, onSelect, initialPath, busy = false,
     void navigateTo(initialPath || undefined);
   }, [initialPath, navigateTo]);
 
-  const handlePathSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const candidate = pathInput.trim();
-    if (candidate) void navigateTo(candidate);
-  };
-  const hasUncommittedPath = pathInput.trim() !== currentPath;
-  const canSelect = Boolean(currentPath) && !hasUncommittedPath && !busy;
+  const canSelect = Boolean(currentPath) && !busy && !loading && !pathEditing;
   const canNavigateUp = Boolean(parentDirectory) || isWindowsDriveRoot(currentPath);
-  // 新建落点=已打开的当前目录：盘符列表视图无落点、路径框有未提交内容时落点含糊，都不开放写操作
-  const canCreateFolder = Boolean(currentPath) && !hasUncommittedPath && drives === null && !loading && !busy;
+  // The new folder lands in the listed folder: no write while the bar is being edited
+  // (the edit may commit a different folder) and none in the drive-list view.
+  const canCreateFolder = Boolean(currentPath) && drives === null && !loading && !busy && !pathEditing;
   const canSubmitNewFolder = canCreateFolder && !newFolderBusy && Boolean(newFolderName.trim());
 
   const submitNewFolder = useCallback(async () => {
@@ -141,7 +143,7 @@ export function DirectoryPicker({ onCancel, onSelect, initialPath, busy = false,
     try {
       const created = await createFolder(currentPath, name);
       setNewFolderName("");
-      await navigateTo(created); // 直接进新目录（回上一级即回到父目录）
+      await navigateTo(created); // open the new folder (going up returns to its parent)
     } catch (cause) {
       setNewFolderError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -154,7 +156,7 @@ export function DirectoryPicker({ onCancel, onSelect, initialPath, busy = false,
     void submitNewFolder();
   };
 
-  // 小屏系统返回 = 取消选择（busy 中不关；与宿主 DirectoryPicker 同款接线）
+  // Mobile system back = cancel (ignored while busy; same wiring as the host picker).
   const busyRef = useRef(busy);
   useEffect(() => { busyRef.current = busy; }, [busy]);
   const cancelRef = useRef(onCancel);
@@ -197,40 +199,27 @@ export function DirectoryPicker({ onCancel, onSelect, initialPath, busy = false,
           </button>
         </div>
 
-        <form onSubmit={handlePathSubmit} style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, padding: "10px 14px", borderBottom: "1px solid var(--border)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, padding: "10px 14px", borderBottom: "1px solid var(--border)" }}>
           <button className="directory-picker-back" type="button" onClick={() => void navigateTo(parentDirectory ?? undefined)} disabled={loading || !canNavigateUp} title={t("directoryPicker.goToParent")} aria-label={t("directoryPicker.goToParent")} style={{ width: 36, height: 36, padding: 0, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, border: "1px solid var(--border)", borderRadius: 6, background: "var(--bg-hover)", color: "var(--text-muted)", cursor: canNavigateUp ? "pointer" : "default", opacity: canNavigateUp ? 1 : 0.45 }}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="m18 15-6-6-6 6" />
             </svg>
           </button>
-          <label htmlFor="sm-directory-path" style={{ position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0, 0, 0, 0)", whiteSpace: "nowrap", border: 0 }}>
-            {t("directoryPicker.directoryPath")}
-          </label>
-          <input
-            className="directory-picker-path"
-            id="sm-directory-path"
-            type="text"
-            value={pathInput}
-            placeholder="/path/to/project or ~/project"
+          <PathBreadcrumb
+            value={currentPath}
+            label={t("directoryPicker.directoryPath")}
+            editLabel={t("directoryPicker.editPath")}
+            editHint={t("directoryPicker.pathEditHint")}
+            copyLabel={t("directoryPicker.copyPath")}
+            copiedLabel={t("directoryPicker.copied")}
+            placeholder={t("directoryPicker.pathPlaceholder")}
+            disabled={loading || busy}
             autoFocus
-            autoComplete="off"
-            spellCheck={false}
-            onChange={(event) => {
-              setPathInput(event.target.value);
-              setLoadError(null);
-            }}
-            style={{ minWidth: 0, flex: 1, height: 36, padding: "0 10px", border: "1px solid var(--border)", borderRadius: 6, outline: "none", background: "var(--bg-panel)", color: "var(--text)", fontFamily: "var(--font-mono)", fontSize: 12 }}
+            onNavigate={(path) => void navigateTo(path)}
+            onEditingChange={setPathEditing}
+            style={{ flex: 1 }}
           />
-          <button
-            className="directory-picker-action"
-            type="submit"
-            disabled={loading || !pathInput.trim()}
-            title={t("directoryPicker.goToDirectory")}
-            style={{ minWidth: 58, height: 36, padding: "0 12px", border: "1px solid var(--border)", borderRadius: 6, background: "var(--bg-hover)", color: "var(--text-muted)", cursor: loading || !pathInput.trim() ? "default" : "pointer", opacity: loading || !pathInput.trim() ? 0.6 : 1 }}
-          >
-            {t("directoryPicker.go")}
-          </button>
-        </form>
+        </div>
 
         <div className="directory-picker-list" style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "8px 10px" }}>
           {loading ? (
@@ -325,7 +314,7 @@ export function DirectoryPicker({ onCancel, onSelect, initialPath, busy = false,
               setNewFolderError(null);
             }}
             disabled={!canCreateFolder}
-            title={hasUncommittedPath ? t("directoryPicker.openBeforeSelecting") : t("directoryPicker.newFolderIn", { path: currentPath })}
+            title={t("directoryPicker.newFolderIn", { path: currentPath })}
             style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", border: "1px solid var(--border)", borderRadius: 6, background: "none", color: "var(--text-muted)", fontSize: 13, opacity: canCreateFolder ? 1 : 0.45, cursor: canCreateFolder ? "pointer" : "default" }}
           >
             <FolderPlusIcon />
@@ -338,7 +327,7 @@ export function DirectoryPicker({ onCancel, onSelect, initialPath, busy = false,
               type="button"
               onClick={() => onSelect(currentPath)}
               disabled={!canSelect}
-              title={hasUncommittedPath ? t("directoryPicker.openBeforeSelecting") : t("directoryPicker.selectCurrentDirectory")}
+              title={t("directoryPicker.selectCurrentDirectory")}
               style={{ padding: "6px 16px", border: 0, borderRadius: 6, background: "var(--accent)", color: "#fff", fontSize: 13, fontWeight: 600, opacity: canSelect ? 1 : 0.6, cursor: canSelect ? "pointer" : "default" }}
             >
               {busy ? t("i18n.checking") : t("directoryPicker.selectThisFolder")}

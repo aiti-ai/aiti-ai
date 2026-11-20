@@ -12,7 +12,6 @@
  * （unread 无数据源，蓝点只按 running 计——选择器语境下不误导）。
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { apiUrl } from "./host-shim";
 import {
   getProjectActivity,
   getRecentProjects,
@@ -26,23 +25,8 @@ import {
 } from "./sidebar/pure";
 import { SidebarCwdPicker } from "./sidebar/picker";
 import { DirectoryBrowser } from "../../../aiti-folder/client/src/directory-browser";
-import { dedupeFetch } from "../../../_shared/dedupe-fetch";
 import { useStore } from "./store";
-
-/** /api/home 的家庭目录缓存（多个 picker 实例共用，避免重复请求；dedupeFetch 再与
- *  其他消费面（侧栏/编辑器/审核 picker 的同窗首拉）合流——开页方案 §10.2 附属收口）。 */
-let cachedHomeDir: string | null = null;
-async function fetchHomeDir(): Promise<string> {
-  if (cachedHomeDir !== null) return cachedHomeDir;
-  try {
-    const r = await dedupeFetch(apiUrl("/api/home"));
-    const d = (await r.json()) as { home?: string };
-    cachedHomeDir = d.home ?? "";
-  } catch {
-    cachedHomeDir = "";
-  }
-  return cachedHomeDir ?? "";
-}
+import { fetchHomeDir } from "./home-dir";
 
 export function MoveCwdPicker(props: { value: string; onChange: (root: string) => void }) {
   const { value, onChange } = props;

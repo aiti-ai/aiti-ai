@@ -20,6 +20,7 @@
  * extra 只读数据（slot-extra 红线）：widget 收 { cwd, isMobile, area }；动作全走服务。
  */
 import { useState, useEffect, t, extSvc, apiUrl, onExtServiceChange } from "./host-shim";
+import { MenuActionRow } from "../../../_shared/menu-row";
 import { readSidebarDismissed, writeSidebarDismissed, resolveQuickstartCwd, topRecentRoot, deriveOnboardingState, splitKbdHint, RUNTIME_ROWS, assembleExampleChips, normalizeExamplesConfig, shuffle, type ExamplesMode, type ExampleChip, type ExamplePromptItem, type OnboardingState } from "./quickstart-logic";
 
 /* ── 公共样式（CSS vars 带兜底，照 app-center 卡片写法；紧凑化 2026-11-12；
@@ -988,20 +989,15 @@ export function QuickstartFiller() {
 
 /* ── Workspace 下拉动作区入口（workspacePickerActions 注册条目） ── */
 
-/** WorkspacePickerActionsProps（宿主 lib/ext/types.ts:506-520）：extra 数据只读；点击开 Hub。 */
+/** workspacePickerActions slot entry: the shared menu row shape (one look with the project
+    menu's own actions). Props are data-only per the host contract; the click opens the Hub. */
 export function WorkspacePickerAcquireEntry() {
   return (
-    <button type="button" title={t("qs.open.hub")} onClick={openWorkspaceHub}
-      style={{
-        display: "flex", alignItems: "center", gap: 6, width: "100%", padding: "5px 8px",
-        background: "none", border: "none", borderRadius: 7, cursor: "pointer",
-        color: "var(--text-muted, #999)", fontSize: 12, fontFamily: "inherit",
-        transition: "background 0.12s, color 0.12s",
-      }}
-      onMouseEnter={(e: any) => { e.currentTarget.style.background = "var(--bg-hover, #232323)"; e.currentTarget.style.color = "var(--text, #ddd)"; }}
-      onMouseLeave={(e: any) => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = "var(--text-muted, #999)"; }}>
-      <FolderPlusIcon size={13} />
-      <span>{t("qs.open.hub")}</span>
-    </button>
+    <MenuActionRow
+      icon={<FolderPlusIcon size={13} />}
+      label={t("qs.open.hub")}
+      title={t("qs.open.hub")}
+      onClick={openWorkspaceHub}
+    />
   );
 }
