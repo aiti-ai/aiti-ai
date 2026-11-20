@@ -21,6 +21,8 @@ const {
   pickRecentOptions,
   excludeRecentOptions,
   recentRowHint,
+  buildSelectorNavRows,
+  selectorRowKey,
 } = await jiti.import("./ModelSelector.tsx");
 const { I18nProvider } = await jiti.import("@/hooks/useI18n");
 
@@ -390,4 +392,39 @@ test("names a current model outside the scope from the loaded full list", () => 
   });
 
   assert.match(html, /GPT-6 Luna/);
+});
+
+test("buildSelectorNavRows flattens selectable rows in visual order (clear / recents / main)", () => {
+  const recent = [opt("a", "r1"), opt("b", "r2")];
+  const main = [opt("a", "m1"), opt("b", "m2")];
+
+  // No clear row → recents first, then the grouped list
+  assert.deepEqual(
+    buildSelectorNavRows({ hasClear: false, recentOptions: recent, mainOptions: main })
+      .map(selectorRowKey),
+    ["recent:a:r1", "recent:b:r2", "main:a:m1", "main:b:m2"],
+  );
+
+  // Clear row rides on top (it renders above the recents section)
+  assert.deepEqual(
+    buildSelectorNavRows({ hasClear: true, recentOptions: recent, mainOptions: main })
+      .map((row) => row.kind),
+    ["clear", "option", "option", "option", "option"],
+  );
+
+  // While filtering: no clear row and no recents section → just the matching options
+  assert.deepEqual(
+    buildSelectorNavRows({ hasClear: false, recentOptions: [], mainOptions: main })
+      .map(selectorRowKey),
+    ["main:a:m1", "main:b:m2"],
+  );
+
+  // Empty panel → no navigable rows (Enter is a no-op, activeHighlight stays -1)
+  assert.deepEqual(buildSelectorNavRows({ hasClear: false, recentOptions: [], mainOptions: [] }), []);
+});
+
+test("selectorRowKey joins provider/modelId field-wise so '/'-containing ids stay unambiguous", () => {
+  const row = { kind: "option", section: "main", option: opt("modelscope", "ZhipuAI/GLM-5.2") };
+  assert.equal(selectorRowKey(row), "main:modelscope:ZhipuAI/GLM-5.2");
+  assert.equal(selectorRowKey({ kind: "clear" }), "clear");
 });
