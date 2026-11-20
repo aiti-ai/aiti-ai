@@ -9,7 +9,7 @@
 import { createRequire } from "node:module";
 import { whichBin } from "@aiti-ai/ext-shared/exec-async";
 import { randomBytes } from "node:crypto";
-import { attachHost, listEntries, probeDetach, pruneEntries, removeEntry, spawnHost, writeEntry, type HostEntry } from "./detach/index.ts";
+import { attachHost, entryProcessesAlive, listEntries, probeDetach, pruneEntries, removeEntry, spawnHost, writeEntry, type HostEntry } from "./detach/index.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AuditRecord } from "./audit.js";
@@ -53,7 +53,9 @@ if (ptyMod) healPtyHelper();
 const RING_MAX_BYTES = 1024 * 1024;   // 环形缓冲（重放）1MB
 const ALL_MAX_BYTES = 6 * 1024 * 1024; // 审计全量捕获上限 6MB（超出丢最旧 + 标记）
 const SESSION_TTL = 60 * 60 * 1000;   // 会话 TTL 1h
-const MAX_CONCURRENT = 4;
+const MAX_CONCURRENT = 4;       // one-shot command pool (short-lived exec commands)
+const MAX_SHELL_CONCURRENT = 8; // interactive terminal pool (source=shell): terminals are long-lived by design, keep them off the command pool
+const isShellSource = (src: string) => src === "shell";
 const MAX_CMD_LEN = 20000;
 
 // ---------------- 沙箱（bubblewrap 只读文件系统） ----------------
@@ -286,7 +288,7 @@ export function createRunner(audit: { append: (r: AuditRecord) => void; writeOut
     s.lastSeen = Date.now();
     try { s.host?.close(); } catch {}
     s.host = null;
-    if (s.mode === "host") { try { removeEntry(s.id); } catch {} }
+    if (s.mode === "host") { try { removeEntry(s.id, { killProcesses: true }); } catch {} }
     const durationMs = Date.now() - s.startTs;
     const out = audit.writeOutput(s.id, s.all);
     const rec: AuditRecord = {
@@ -312,15 +314,19 @@ export function createRunner(audit: { append: (r: AuditRecord) => void; writeOut
     audit.append(rec);
     if (s.commandId) { try { store.touchRun(s.commandId); } catch {} }
     pub(ptyTopic(s.id), { evt: "exit", code: s.exitCode, signal: s.signal, durationMs, truncated: out.outputTruncated });
-    // 队列：有等待者 → 启动下一个
-    const next = queue.shift();
-    if (next) spawnSession(next);
+    // Queue: start the first waiter whose own pool has a free slot (this session already left the running set)
+    const idx = queue.findIndex((q) => { const sh = isShellSource(q.source); return runningCount(sh) < poolCap(sh); });
+    if (idx >= 0) spawnSession(queue.splice(idx, 1)[0]);
     publishSessions();
   }
 
   /** 排队 FIFO（超过并发上限时进入；finish 后自动启动下一个） */
   const queue: RunSession[] = [];
   const queuePosition = (id: string) => queue.findIndex((q) => q.id === id) + 1;
+  // two independent concurrency pools: interactive terminals (source=shell) vs one-shot commands
+  const poolCap = (shell: boolean) => (shell ? MAX_SHELL_CONCURRENT : MAX_CONCURRENT);
+  const runningCount = (shell: boolean) =>
+    [...sessions.values()].filter((x) => x.status === "running" && isShellSource(x.source) === shell).length;
 
   /** The real spawn (called when running; queued sessions already published).
    *  Transport is one of two: a detached pty-host (survives reload/restart) is
@@ -339,7 +345,7 @@ export function createRunner(audit: { append: (r: AuditRecord) => void; writeOut
     try {
       const probe = await probeDetach();
       if (!probe.available) return false;
-      const entry = await spawnHost({ sid: s.id, cmd: s.cmd, cwd: s.cwd, cols: 100, rows: 30, name: s.name });
+      const entry = await spawnHost({ sid: s.id, cmd: s.cmd, cwd: s.cwd, source: s.source, cols: 100, rows: 30, name: s.name });
       s.mode = "host";
       s.hostEntry = entry;
       if (entry.pid) { s.pid = entry.pid; pub(ptyTopic(s.id), { evt: "pid", pid: s.pid }); }
@@ -360,8 +366,8 @@ export function createRunner(audit: { append: (r: AuditRecord) => void; writeOut
       flushPending(s);
       return true;
     } catch (e) {
-      // fall back silently (diagnostic line only once the local path runs)
-      try { removeEntry(s.id); } catch {}
+      // fall back silently (diagnostic line only once the local path runs); reap any half-started host
+      try { removeEntry(s.id, { killProcesses: true }); } catch {}
       return false;
     }
   }
@@ -517,12 +523,15 @@ export function createRunner(audit: { append: (r: AuditRecord) => void; writeOut
       sandbox: opts.sandbox === "bwrap-ro" || opts.sandbox === "bwrap-offline" || opts.sandbox === "bwrap-tmp" || opts.sandbox === "none" ? opts.sandbox : undefined,
     };
     sessions.set(id, s);
-    // 排队：超过并发上限 → FIFO 入队（不拒绝）
-    const running = [...sessions.values()].filter((x) => x.status === "running").length;
-    if (running >= MAX_CONCURRENT) {
+    // Queue when the session's own pool (shell terminals / one-shot commands) is full — FIFO, never reject.
+    // used excludes self: s was already counted (set running above), and the cap is pool capacity.
+    const shell = isShellSource(s.source);
+    const cap = poolCap(shell);
+    const used = runningCount(shell) - 1;
+    if (used >= cap) {
       s.status = "queued";
       queue.push(s);
-      pub(ptyTopic(id), { evt: "queued", position: queue.length, maxConcurrent: MAX_CONCURRENT });
+      pub(ptyTopic(id), { evt: "queued", position: queue.length, maxConcurrent: cap, running: used });
       publishSessions();
       return { ok: true, sessionId: id, queued: true, position: queue.length };
     }
@@ -619,6 +628,7 @@ export function createRunner(audit: { append: (r: AuditRecord) => void; writeOut
       ringBytes: s.ringBytes, truncated: s.truncated, sandbox: s.sandbox,
       queuePosition: s.status === "queued" ? queuePosition(s.id) : undefined,
       queueLength: queue.length,
+      slots: { kind: isShellSource(s.source) ? "shell" : "cmd", running: runningCount(isShellSource(s.source)), max: poolCap(isShellSource(s.source)) },
     }));
   }
 
@@ -660,7 +670,8 @@ export function createRunner(audit: { append: (r: AuditRecord) => void; writeOut
       if (sessions.has(e.sid)) continue;
       const s: RunSession = {
         id: e.sid, pty: null, cmd: e.cmd, cwd: e.cwd, name: undefined,
-        source: "shell", startTs: e.createdAt, status: "running",
+        // entries written before HostEntry.source existed were shell terminals only — keep that default
+        source: (e.source || "shell") as RunSession["source"], startTs: e.createdAt, status: "running",
         exitCode: null, signal: null, sigNum: null, pid: e.pid ?? null,
         ring: [], ringBytes: 0, all: "", allBytes: 0, seq: 0,
         allDroppedStart: false, truncated: false,
@@ -686,7 +697,10 @@ export function createRunner(audit: { append: (r: AuditRecord) => void; writeOut
       if (!ok || s.status === "exit") {
         try { s.host?.close(); } catch {}
         s.host = null;
-        try { removeEntry(e.sid); } catch {}
+        // Claim failed ≠ host dead: another pi-web instance sharing this detach root may have
+        // superseded our connection. Only prune the files when its processes are really gone;
+        // never kill live processes here (reattach has no ownership over them).
+        try { if (!entryProcessesAlive(e)) removeEntry(e.sid); } catch {}
         continue;
       }
       sessions.set(s.id, s);
@@ -698,7 +712,7 @@ export function createRunner(audit: { append: (r: AuditRecord) => void; writeOut
   }
 
   function diag() {
-    return { nodePty: !!ptyMod, sessions: sessions.size, running: [...sessions.values()].filter((x) => x.status === "running").length, queued: queue.length, maxConcurrent: MAX_CONCURRENT, bwrap: bwrapPath(), sandbox: "bwrap-ro", detached: [...sessions.values()].filter((x) => x.mode === "host").length };
+    return { nodePty: !!ptyMod, sessions: sessions.size, running: [...sessions.values()].filter((x) => x.status === "running").length, queued: queue.length, maxConcurrent: MAX_CONCURRENT, maxShellConcurrent: MAX_SHELL_CONCURRENT, shellRunning: runningCount(true), cmdRunning: runningCount(false), bwrap: bwrapPath(), sandbox: "bwrap-ro", detached: [...sessions.values()].filter((x) => x.mode === "host").length };
   }
 
   /**
@@ -717,6 +731,7 @@ export function createRunner(audit: { append: (r: AuditRecord) => void; writeOut
       truncated: s.truncated,
       seq: s.seq,
       chunks: s.ring,
+      slots: { kind: isShellSource(s.source) ? "shell" : "cmd", running: runningCount(isShellSource(s.source)), max: poolCap(isShellSource(s.source)) },
     };
   }
 

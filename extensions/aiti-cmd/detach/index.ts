@@ -43,6 +43,9 @@ export type HostEntry = {
   sid: string;
   cmd: string;
   cwd?: string;
+  /** Runner-side session source ("shell" terminal vs one-shot command) — restored on reattach
+   *  so pool accounting/audit stay correct across reloads. Missing on pre-source entries. */
+  source?: string;
   socket: string;
   ready: string;
   log: string;
@@ -148,9 +151,31 @@ export function writeEntry(entry: HostEntry): void {
   renameSync(tmp, file); // atomic: readers never see a torn entry
 }
 
-export function removeEntry(sid: string): void {
+export function removeEntry(sid: string, opts?: { killProcesses?: boolean }): void {
+  let entry: HostEntry | null = null;
+  if (opts?.killProcesses) {
+    // read before deleting: the entry carries the pids we may need to reap
+    try { entry = JSON.parse(readFileSync(join(registryDir(), sid + ".json"), "utf8")) as HostEntry; } catch (_e) { /* no entry */ }
+  }
   for (const p of [join(registryDir(), sid + ".json"), join(runDir(), sid + ".sock"), join(runDir(), sid + ".sock.ready")]) {
     try { unlinkSync(p); } catch (_e) { /* already gone */ }
+  }
+  if (entry) killEntryProcesses(entry);
+}
+
+/** Last-resort reaping when an entry is dropped while its processes may still be alive
+ *  (reattach failure, half-started spawn, host that missed its exit): SIGTERM the pty-host
+ *  wrapper and the shell pid, escalating to SIGKILL after a grace. Fire-and-forget.
+ *  NEVER use this on a mere failed reattach/claim — the host may have been superseded by
+ *  another pi-web instance sharing this detach root, not dead. */
+function killEntryProcesses(e: HostEntry): void {
+  for (const pid of [e.wrapperPid, e.pid]) {
+    if (!pid || pid <= 0 || !pidAlive(pid)) continue;
+    try { process.kill(pid, "SIGTERM"); } catch (_e) { /* already gone */ }
+    const t = setTimeout(() => {
+      try { if (pidAlive(pid)) process.kill(pid, "SIGKILL"); } catch (_e) { /* already gone */ }
+    }, 3000);
+    if (typeof t.unref === "function") t.unref();
   }
 }
 
@@ -158,6 +183,13 @@ export function removeEntry(sid: string): void {
 function pidAlive(pid: number | null | undefined): boolean {
   if (!pid || pid <= 0) return false;
   try { process.kill(pid, 0); return true; } catch (_e) { return false; }
+}
+
+/** True when the entry's host wrapper or shell process is still alive. Callers dropping an
+ *  entry without killing (failed reattach/claim) use this to decide whether the files may
+ *  be removed at all — a live host means the entry still belongs to someone. */
+export function entryProcessesAlive(e: HostEntry): boolean {
+  return pidAlive(e.wrapperPid) || pidAlive(e.pid);
 }
 
 export function pruneEntries(): void {
@@ -176,6 +208,8 @@ export type SpawnHostOptions = {
   sid: string;
   cmd: string;
   cwd?: string;
+  /** Session source persisted into the registry entry (see HostEntry.source). */
+  source?: string;
   env?: Record<string, string>;
   cols: number;
   rows: number;
@@ -201,6 +235,7 @@ export async function spawnHost(opts: SpawnHostOptions): Promise<HostEntry> {
     sid: opts.sid,
     cmd: opts.cmd,
     cwd: opts.cwd,
+    source: opts.source,
     socket,
     ready,
     log,
