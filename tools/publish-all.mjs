@@ -491,14 +491,23 @@ for (const { dir, pkgDir, pjPath, p } of pkgs) {
       // whose own dependency versions are missing/unsatisfied on npmjs (the
       // secret-vault-core → secret-mask-core ^0.3.0 ETARGET class) at publish
       // time, instead of as a user-side install failure.
+      // npmjs metadata propagation races the publish by seconds — an immediate
+      // ETARGET for the version just pushed is usually the registry edge, not a
+      // real gap, so retry with backoff before declaring failure.
       const smokeDir = mkdtempSync(join(tmpdir(), "pubsmoke-"));
-      const smoke = spawnSync("npm",
-        ["install", "--dry-run", "--ignore-scripts", "--no-audit", "--no-fund", "--prefer-online", `--registry=${REGISTRY}`, `${fullName}@${version}`],
-        { cwd: smokeDir, encoding: "utf8", timeout: 120_000, shell: process.platform === "win32" });
+      const sleepSync = (ms) => { try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch {} };
+      let smoke = null;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        smoke = spawnSync("npm",
+          ["install", "--dry-run", "--ignore-scripts", "--no-audit", "--no-fund", "--prefer-online", `--registry=${REGISTRY}`, `${fullName}@${version}`],
+          { cwd: smokeDir, encoding: "utf8", timeout: 120_000, shell: process.platform === "win32" });
+        if (smoke.status === 0) break;
+        if (attempt < 3) sleepSync(15_000);
+      }
       rmSync(smokeDir, { recursive: true, force: true });
       if (smoke.status !== 0) {
         failed++;
-        const detail = ((smoke.stderr || "") + (smoke.stdout || "")).split("\n").filter((l) => /error|notarget/i.test(l)).slice(-1)[0];
+        const detail = ((smoke.stderr || "") + "\n" + (smoke.stdout || "")).split("\n").filter((l) => /notarget|ETARGET|ERESOLVE|E40[0-9]|EUSAGE/i.test(l)).slice(-1)[0];
         report.push(`!  ${dir}@${version}: 安装冒烟失败（用户将无法安装，检查其 dependencies 是否已全部上源）— ${detail || `exit ${smoke.status}`}`);
       } else {
         report.push(`=  ${dir}@${version}: 安装冒烟 ok`);
