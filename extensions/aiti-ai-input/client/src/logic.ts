@@ -253,7 +253,7 @@ let pickEmptyUser = null;    // suggest-empty（“让 AI 生成”）分派（r
 let runCmdUser = null;       // cmd 候选 ⚡ 一键执行分派（register 注入；依赖 SUG 闭包与 AC.apiUrl）
 let runAppUser = null;       // app 候选执行分派（initSuggest 注入；含条件清空输入框，依赖 SUG 闭包）
 function barSet(kind, list) {
-  BARP.items = [...BARP.items.filter((x) => x.tag !== kind), ...list.map((i) => ({ tag: kind, type: i.type, short: i.short, full: i.full, rich: i.rich, item: i.item }))];
+  BARP.items = [...BARP.items.filter((x) => x.tag !== kind), ...list.map((i) => ({ tag: kind, type: i.type, short: i.short, full: i.full, rich: i.rich, hot: i.hot, item: i.item }))];
   barRender();
 }
 function barClear(kind) {
@@ -316,7 +316,7 @@ function barRender() {
       continue;
     }
     const tail = it.type === "ai" ? "↘" : it.type === "voice" ? "替换" : barIsLong(it) ? "⊕ 占位" : "";
-    const row = acBarRow(barLabel(it.type), barDisplay(it), () => barPick(it), { tail, long: barIsLong(it), multiLine: barMulti(it), rich: it.rich });
+    const row = acBarRow(barLabel(it.type), barDisplay(it), () => barPick(it), { tail, long: barIsLong(it), multiLine: barMulti(it), rich: it.rich, hot: it.hot });
     // suggest ⚡ 一键执行（§3.4；cmd 候选 + feature 开）：独立小胶囊（button 不嵌套），
     // 点按分派 runCmdUser（sugRunCmd 两段式确认），与「填入」胶囊并列
     if (it.type === "cmd" && AC.feats.suggestRun && runCmdUser && it.item) {
@@ -599,6 +599,11 @@ function acBarRow(label, text, onClick, opts) {
     "background:var(--bg,#ffffff);color:var(--text,#1a1a1a);font-size:13px;line-height:1.5;border-radius:999px;",
     "cursor:pointer;touch-action:manipulation;" + (isMulti ? "flex-wrap:wrap;height:auto;" : "white-space:nowrap;overflow:hidden;") + " transition:background .12s;",
   ].join("");
+  // Keyboard highlight (suggest small-screen bar): outline the current item while ↑↓/Tab step through
+  if (opts && opts.hot) {
+    b.style.borderColor = "var(--accent,#2563eb)";
+    b.style.background = "color-mix(in srgb, var(--accent, #2563eb) 14%, transparent)";
+  }
   const tag = document.createElement("span");
   tag.textContent = label;
   tag.style.cssText = "flex-shrink:0;font-size:11px;font-weight:600;color:var(--accent,#2563eb);";
@@ -1076,7 +1081,8 @@ function acAcceptGhost() {
 }
 
 function acHandleKey(e) {
-  // 收藏联想候选显示中：键盘全归 suggest 语义（Tab=接受候选/Enter=发送/↑↓=选择/Esc=关弹窗），AC 键盘静默。
+  // While favorite-suggest candidates are shown, all keys belong to suggest semantics
+  // (↑↓/Tab = move highlight, Enter = accept-or-send, Esc = close); AC stays silent.
   // 双 keydown 都在 document capture 阶段，stopPropagation 拦不住同节点后注册者——
   // 曾实测 Tab 同时接受 ghost+候选 → "深入审核完成度审核完成度"；状态互斥判定不依赖注册顺序
   if (sugActive) return;
@@ -1204,10 +1210,10 @@ export function initSuggest(apiUrl: (p: string) => string) {
       sugActive = false; // 无可见候选：放行 AC
       return;
     }
-    const list = SUG.items.map((x) => {
-      if (x.kind === "app") return { type: "app", short: x.name, full: "", item: x.item }; // 小屏胶囊：点击 = 执行（barPick 分派）
+    const list = SUG.items.map((x, i) => {
+      if (x.kind === "app") return { type: "app", short: x.name, full: "", hot: i === SUG.idx, item: x.item }; // small-screen pill: click = run (dispatched by barPick)
       const t = x.kind === "cmd" ? (x.cmd || "") : (x.text || "");
-      return { type: x.kind === "cmd" ? "cmd" : "prompt", short: x.name, full: t, item: x };
+      return { type: x.kind === "cmd" ? "cmd" : "prompt", short: x.name, full: t, hot: i === SUG.idx, item: x };
     });
     barSet("suggest", list);
     if (ACbar) ACbar.style.display = "flex";
@@ -1325,10 +1331,11 @@ export function initSuggest(apiUrl: (p: string) => string) {
       "border:1px solid var(--border, #e0e0e0)", "borderRadius:10px", "boxShadow:0 6px 24px rgba(0,0,0,.35)",
       "fontSize:13px", "lineHeight:1.4", "padding:4px", "boxSizing:border-box",
     ].join(";");
+    let hotRow: HTMLElement | null = null;   // highlighted row (scrolled into view after positioning)
     document.body.appendChild(pop);
       SUG.items.forEach((it, i) => {
         // 应用命令候选：独立行渲染（徽标+图标+执行），不走填入路径
-        if (it.kind === "app") { pop.appendChild(sugAppRow(it, i)); return; }
+        if (it.kind === "app") { const r = sugAppRow(it, i); if (i === SUG.idx) hotRow = r; pop.appendChild(r); return; }
         // 候选已在上层（sugTrigger）过滤「业已完成输入」；此处直接渲染
         const input = SUG.ta ? SUG.ta.value : "";
         // 上下结构（2026-11-14 二轮修复）：原 name+prev 同行 flex 在长内容下 name(flex-shrink)
@@ -1337,6 +1344,7 @@ export function initSuggest(apiUrl: (p: string) => string) {
         const row = document.createElement("div");
         row.style.cssText = "padding:7px 12px;borderRadius:8px;cursor:pointer;min-width:0;font-size:13px;line-height:1.5;touch-action:manipulation;transition:background .12s";
         if (i === SUG.idx) {
+          hotRow = row;
           row.style.background = "color-mix(in srgb, var(--accent, #2563eb) 18%, transparent)";
           row.style.color = "var(--text, #1a1a1a)";
         } else {
@@ -1388,6 +1396,13 @@ export function initSuggest(apiUrl: (p: string) => string) {
     const h = pop.scrollHeight;                    // 实际内容高度（含 maxHeight 截断）
     const below = rect.bottom + 4;
     pop.style.top = (window.innerHeight - below >= h) ? below + "px" : Math.max(8, rect.top - h - 4) + "px";
+    // Keep the highlight visible: when total content height exceeds maxHeight(240px), scroll the
+    // highlighted row into the viewport (continuous Tab/↓ stepping never "selects unseen").
+    if (hotRow) {
+      const rt = hotRow.offsetTop, rb = rt + hotRow.offsetHeight;
+      if (rt < pop.scrollTop) pop.scrollTop = rt;
+      else if (rb > pop.scrollTop + pop.clientHeight) pop.scrollTop = rb - pop.clientHeight;
+    }
     SUG.popup = pop;
   }
   function sugRender() {
@@ -1400,8 +1415,9 @@ export function initSuggest(apiUrl: (p: string) => string) {
   }
   async function sugTrigger(q, ta, anchorStart, caret) {
     SUG.q = q; SUG.ta = ta; SUG.anchorStart = anchorStart; SUG.anchorCaret = caret;
-    // idx=-1：不预选任何候选（选择权永远留给用户）——只有 ↑↓ 显式选择后才置 moved；
-    // Enter 只认 moved，未选择时回车=正常发送消息（弹窗开着也发送，如单条候选场景不想补全）
+    // idx=-1: never preselect a candidate (the choice always belongs to the user) — moved is set
+    // only by explicit ↑↓/Tab selection; Enter honors moved only, so a plain Enter = normal send
+    // (popup open too, e.g. a single candidate the user doesn't want to complete with).
     SUG.idx = -1; SUG.moved = false;
     const wantHttp = AC.feats.suggest;
     const wantApps = AC.feats.commandHints;
@@ -1493,8 +1509,9 @@ export function initSuggest(apiUrl: (p: string) => string) {
       if (v.trim() === v.slice(aStart, aCaret).trim()) { acSetTaValue(ta, ""); acPlaceCaret(ta, 0); }
     }
   }
-  // 从 from（含）起循环找第一条非 app 候选——键盘自动接受（Tab/→）跳过 app：
-  // 真实副作用（切开关/开面板）必须显式两步（点击或 ↑↓ 选中后 Enter），防打字途中误触执行
+  // From `from` (inclusive), cycle to the first non-app candidate — → auto-accept skips app:
+  // real side effects (toggle/panel) must stay explicit two-step (click or ↑↓/Tab then Enter),
+  // preventing accidental runs while typing.
   function sugNextNonApp(from) {
     const n = SUG.items.length;
     for (let k = 0; k < n; k++) { const i = (from + k) % n; if (SUG.items[i].kind !== "app") return SUG.items[i]; }
@@ -1562,13 +1579,22 @@ export function initSuggest(apiUrl: (p: string) => string) {
       else SUG.idx = e.key === "ArrowDown" ? (SUG.idx + 1) % n : (SUG.idx - 1 + n) % n;
       sugRender(); return;
     }
-    // Tab：自动接受当前选中（或第一条）。app 候选跳过（从当前位置起找下一条非 app；全部为 app →
-    // no-op 弹窗保留）——真实副作用必须显式两步；全跳过且 suggest 开时落 AI 兜底（commandHints-only 不出网）
-    if (e.key === "Tab") { keyConsumedAt = e.timeStamp; e.preventDefault(); e.stopPropagation(); const pick = sugNextNonApp(SUG.idx < 0 ? 0 : SUG.idx); if (pick) sugApply(pick); else if (AC.feats.suggest) sugAiFallback(); return; }
+    // Tab / Shift+Tab: step next / previous exactly like ↓/↑ (highlight only, no commit) —
+    // hold Tab to walk down the list, Enter accepts; no need to reach for the arrow keys.
+    // Highlighting an app candidate is safe: running still needs an explicit Enter (two-step rule).
+    if (e.key === "Tab") {
+      keyConsumedAt = e.timeStamp; e.preventDefault(); e.stopPropagation();
+      const n = SUG.items.length;
+      if (!n) { if (AC.feats.suggest) sugAiFallback(); return; }
+      SUG.moved = true;
+      const step = e.shiftKey ? -1 : 1;
+      SUG.idx = SUG.idx < 0 ? (step > 0 ? 0 : n - 1) : (SUG.idx + step + n) % n;
+      sugRender(); return;
+    }
     if (e.key === "Enter") {
-      // Enter 默认=发送消息：仅当用户已用 ↑↓ 显式选择过某条（moved）才把选中候选上屏。
-      // 系统绝不预选候选（idx=-1 无高亮）——单条候选也不高亮，此时按 ↑↓ 才选中它、再回车才上屏；
-      // 用户没碰 ↑↓ 就回车 = 想发送：关弹窗、放行 Enter 正常发送。Tab（一键接受第一条/选中项）不受影响。
+      // Enter defaults to sending: only an explicit ↑↓/Tab selection (moved) commits the highlighted
+      // candidate. Candidates are never preselected (idx=-1, no highlight) — even a single one is
+      // only committed after ↑↓/Tab selects it; a plain Enter = send (popup closes, Enter passes).
       if (SUG.moved && SUG.items.length) { keyConsumedAt = e.timeStamp; e.preventDefault(); e.stopPropagation(); sugApply(SUG.items[SUG.idx]); }
       else { sugClose(); }
       return;
