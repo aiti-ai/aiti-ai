@@ -43,6 +43,8 @@ export interface AnnotatedModelEntry {
   avail?: AvailKind;
   /** Whether this provider is rate-limited as a whole (all models currently 429) — group-header hint, no auto-disable */
   providerRL?: boolean;
+  /** Catalog cost rates as the picker row's dim hint ("$0.6/$2.2 per M", in/out) */
+  hint?: string;
 }
 
 /** Parse models.json temporary-disable markers: provider-level enabled:false + model-level enabled:false. */
@@ -67,6 +69,43 @@ export function parseDisabledModels(providers: Record<string, unknown>): {
     }
   }
   return { disabledProviders, disabledModelIds };
+}
+
+/**
+ * Virtual models of models.json combo providers (`combo: true`).
+ *
+ * The combo engine (pi-models-combo) registers these providers into a *session* runtime, so a
+ * session sees them — but `/api/models` lists a plugin-less runtime (`createModelRuntimeWithExtensions`
+ * only runs the extensions loaded at the agent dir, not the built-in pi-plugins), and a combo
+ * provider has no apiKey of its own. Without this the picker never offers a combo model even
+ * though the engine routes it at runtime. Entries carry the computed metadata written by the
+ * wizard (contextWindow/maxTokens/input/cost) and go through the same disable/availability pass.
+ */
+export function comboModelEntries(
+  providersCfg: Record<string, unknown> | undefined | null,
+): AnnotatedModelEntry[] {
+  const out: AnnotatedModelEntry[] = [];
+  for (const [pid, raw] of Object.entries(providersCfg ?? {})) {
+    const pcfg = raw as Record<string, unknown> | null;
+    if (!pcfg || typeof pcfg !== "object" || pcfg.combo !== true) continue;
+    if (pcfg.enabled === false) continue;
+    if (!Array.isArray(pcfg.models)) continue;
+    for (const mRaw of pcfg.models) {
+      const m = mRaw as Record<string, unknown> | null;
+      if (!m || typeof m !== "object" || m.enabled === false) continue;
+      const id = String(m.id ?? "");
+      if (!id) continue;
+      out.push({
+        id,
+        name: String(m.name || id),
+        provider: pid,
+        providerName: String(pcfg.name || pid),
+        ...(Array.isArray(m.input) ? { input: m.input.map(String) } : {}),
+        ...(formatModelCostHint(m.cost as { input?: number; output?: number } | null) ? { hint: formatModelCostHint(m.cost as { input?: number; output?: number } | null) } : {}),
+      });
+    }
+  }
+  return out;
 }
 
 /**

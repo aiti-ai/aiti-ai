@@ -3464,7 +3464,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           {p.combo ? (
             <div className="amw-note" style={{ marginBottom: 0, display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ flex: 1 }}>{ti("mw.tx.128")}</span>
-              <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} onClick={() => { setTab("combo"); loadCombos(); }}>{ti("mw.tx.129")}</button>
+              <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} onClick={() => void openComboEditorFor(p.provider)}>{ti("mw.tx.129")}</button>
             </div>
           ) : null}
           {p.authType === "oauth" ? (
@@ -3484,7 +3484,9 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           ) : null}
           {!p.combo ? renderEditControls(p) : null}
           {/* G1+G2 启用作用域（G5 cwd 由宿主 settingsModels 契约透传；浮窗态 cwd=null=全局 scope） */}
-          <EnabledScopeBlock providerId={p.provider} cwd={cwd ?? null} />
+          {/* Combo groups own no key and their virtual models are provided by the runtime engine;
+              the host enabled-models view cannot list them, so the empty state here was misleading. */}
+          {p.combo ? null : <EnabledScopeBlock providerId={p.provider} cwd={cwd ?? null} />}
         </div>
       </div>
     );
@@ -3699,17 +3701,22 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   }, [loadFree]);
 
   const loadCombos = useCallback(async () => {
-    try { const d = srvFix(await (await api("/combos")).json()); setComboData(d && d.ok ? d : null); } catch {}
+    try {
+      const d = srvFix(await (await api("/combos")).json());
+      const data = d && d.ok ? d : null;
+      setComboData(data);
+      return data;
+    } catch { return null; }
   }, []);
   const comboPoolMap = new Map<string, any>();
   for (const m of (comboData?.members || [])) comboPoolMap.set(m.provider + "/" + m.model, m);
 
   // 编辑器内：单个虚拟模型的差异告警分级（🔴阻止 / 🟡需勾选确认 / 🟢提示）
-  const comboWarns = (vm: any): { block: string[]; warn: string[]; hint: string[] } => {
+  const comboWarns = (vm: any, poolMap: Map<string, any> = comboPoolMap): { block: string[]; warn: string[]; hint: string[] } => {
     const block: string[] = [], warn: string[] = [], hint: string[] = [];
     if (!vm.members.length) block.push(ti("mw.a.531"));
     else if (!vm.members.some((r: any) => r.enabled !== false)) block.push(ti("mw.a.532"));
-    const metas = vm.members.map((r: any) => comboPoolMap.get(r.provider + "/" + r.model)).filter(Boolean);
+    const metas = vm.members.map((r: any) => poolMap.get(r.provider + "/" + r.model)).filter(Boolean);
     if (metas.length !== vm.members.length) block.push(ti("mw.a.533"));
     const apis = [...new Set(metas.map((m: any) => m.api))];
     if (apis.length > 1) block.push(ti("mw.a.534") + apis.join(" vs ") + ti("mw.a.535"));
@@ -3728,7 +3735,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     // ② 死配置：types 含 vision 但模型 input 无 image → 带图请求仍被能力过滤排除，勾选永不生效
     for (const r of enabledRefs) {
       if (Array.isArray(r.types) && r.types.includes("vision")) {
-        const m = comboPoolMap.get(r.provider + "/" + r.model);
+        const m = poolMap.get(r.provider + "/" + r.model);
         if (m && !(m.input || []).includes("image")) warn.push(ti("mw.tx.203", { id: r.provider + "/" + r.model }));
       }
     }
@@ -3748,6 +3755,28 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     if (!w.warn.length) return false;
     const ack = vm.ackWarn;
     return !(ack && ack.sig === comboWarnSig(w.warn) && ack.members === comboMemberSig(vm));
+  };
+
+  /** Build editor state from a combo provider entry; `members` overrides the member pool for
+   *  callers that just fetched it (state's comboPoolMap would still be one render behind). */
+  const buildComboEditor = (cb: any, members?: any[]) => {
+    const poolMap = new Map<string, any>();
+    for (const m of (members || comboData?.members || [])) poolMap.set(m.provider + "/" + m.model, m);
+    const models = (cb.models || []).map((m: any) => {
+      const vm: any = { id: m.id, stickyTtlMin: m.stickyTtlMin ?? undefined, ...(m.enabled === false ? { enabled: false } : {}), members: (m.members || []).map((r: any) => ({ provider: r.provider, model: r.model, weight: r.weight, ...(Array.isArray(r.types) && r.types.length > 0 ? { types: r.types } : {}), ...(r.enabled === false ? { enabled: false } : {}) })) };
+      // Baseline pre-existing differences as acknowledged; otherwise the editor opens with Save already blocked
+      return { ...vm, ackWarn: { sig: comboWarnSig(comboWarns(vm, poolMap).warn), members: comboMemberSig(vm) } };
+    });
+    return { provider: cb.providerId, displayName: cb.name, renameFrom: cb.providerId, models };
+  };
+
+  /** Open the combo editor for one provider id (deep-link from the provider detail pane). */
+  const openComboEditorFor = async (providerId: string) => {
+    setTab("combo");
+    const d = await loadCombos();
+    const cb = (d?.combos || []).find((c: any) => c.providerId === providerId);
+    if (cb) setComboEditor(buildComboEditor(cb, d?.members));
+    // When the combo is gone the freshly loaded list stays; the editor simply does not open.
   };
 
   const renderCombos = () => {
@@ -4040,14 +4069,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                   {disabledCount ? <span style={{ color: "#b45309" }}> · {disabledCount}{ti("mw.a.629")}</span> : null}
                 </div>
               </div>
-              <button className="amw-btn" onClick={() => {
-                const models = cb.models.map((m: any) => {
-                  const vm: any = { id: m.id, stickyTtlMin: m.stickyTtlMin ?? undefined, ...(m.enabled === false ? { enabled: false } : {}), members: (m.members || []).map((r: any) => ({ provider: r.provider, model: r.model, weight: r.weight, ...(Array.isArray(r.types) && r.types.length > 0 ? { types: r.types } : {}), ...(r.enabled === false ? { enabled: false } : {}) })) };
-                  // Baseline pre-existing differences as acknowledged; otherwise the editor opens with Save already blocked
-                  return { ...vm, ackWarn: { sig: comboWarnSig(comboWarns(vm).warn), members: comboMemberSig(vm) } };
-                });
-                setComboEditor({ provider: cb.providerId, displayName: cb.name, renameFrom: cb.providerId, models });
-              }}>✎ {ti("mw.tx.17")}</button>
+              <button className="amw-btn" onClick={() => setComboEditor(buildComboEditor(cb))}>✎ {ti("mw.tx.17")}</button>
               <button className="amw-btn" style={{ padding: "3px 8px", ...(cb.enabled === false ? { color: "#16a34a", borderColor: "var(--ok, #22c55e)" } : { color: "#d97706", borderColor: "var(--warn, #f59e0b)" }) }}
                 title={cb.enabled === false ? ti("mw.a.577") : ti("mw.a.578")}
                 onClick={() => doToggleProvider(cb.providerId, cb.enabled === false)}>
