@@ -555,7 +555,13 @@ async function attachIfBridgedUncached(
     if (recovery.status === "attached") {
       const revived = recovery.handle;
       putHandle(revived);
-      putHandleAt(sessionFile, revived);
+      // File-path key only for bridge-held (attach) handles: their file is written by the
+      // TUI bridge, so file-keyed lookups must reuse the live attachment. Detachable spawn
+      // handles (pi spawn, file-backed) must NOT take the file key — it would shadow the
+      // local file read in the state/context routes (attachIfBridged reuse) and degrade
+      // them to handle projections: synthesized ext-N entry ids (pi fork/edit-from-here
+      // needs the real pi entry ids) and a state shape without capabilities.
+      if (revived.source === "aiti-attach-agent/attach") putHandleAt(sessionFile, revived);
       return new HandleSessionAdapter(revived);
     }
   }
