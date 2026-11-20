@@ -35,7 +35,11 @@ export function createPiCommandView(kit) {
     useEffect(() => {
       if (!ref.current) return;
       // read-only terminal: the agent's bash has no stdin — disableStdin also avoids focus stealing
-      const term = new Terminal({ fontFamily: TERM_FONT, fontSize: 13, scrollback: 2000, convertEol: false, rendererType: "dom", cursorBlink: false, disableStdin: true, theme: TERM_THEME });
+      // convertEol: true — the downlink carries the bash tool's raw output text, which is LF-only
+      // (it never went through a real PTY, so no ONLCR turned \n into \r\n). With convertEol: false
+      // each LF moves the cursor down but keeps the column, so the whole log renders column-shifted
+      // and looks scattered. CRLF data (exit banners etc.) is unaffected by the conversion.
+      const term = new Terminal({ fontFamily: TERM_FONT, fontSize: 13, scrollback: 2000, convertEol: true, rendererType: "dom", cursorBlink: false, disableStdin: true, theme: TERM_THEME });
       const fit = new FitAddon();
       term.loadAddon(fit);
       term.open(ref.current);
