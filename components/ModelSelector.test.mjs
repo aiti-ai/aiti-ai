@@ -299,7 +299,7 @@ test("ModelOptionButton shows name + provider suffix + availability status toget
   const React = (await import("react")).default;
   const { renderToStaticMarkup } = await import("react-dom/server");
   const { ModelOptionButton } = await jiti.import("./ModelSelector.tsx");
-  const { I18nProvider } = await jiti.import("../hooks/useI18n.tsx");
+  const { I18nProvider } = await jiti.import("@/hooks/useI18n");
   const html = renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(ModelOptionButton, {
     active: true,
     label: "deepseek-v4-flash",
@@ -317,7 +317,7 @@ test("hideIcon: the trigger button's leading icon can be hidden (saves width in 
   const React = (await import("react")).default;
   const { renderToStaticMarkup } = await import("react-dom/server");
   const { ModelSelector } = await jiti.import("./ModelSelector.tsx");
-  const { I18nProvider } = await jiti.import("../hooks/useI18n.tsx");
+  const { I18nProvider } = await jiti.import("@/hooks/useI18n");
   const props = { options: CATALOG, value: { provider: "zai", modelId: "glm-flash" }, onChange: () => {} };
   const render = (p) => renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(ModelSelector, p)));
   const withIcon = render(props);
