@@ -432,7 +432,13 @@ export class HandleSessionAdapter implements WrappedSessionLike {
         // fork the handle rebinds to the child session and continues in place;
         // zcode-specific); default = plain fork (the message "branch" button,
         // current session untouched).
-        const r = await h.fork!(String(command.entryId ?? ""), { reset: command.reset === true });
+        // opts.editEntryId: the edited user message's entry id (pi-shaped backends
+        // fork BEFORE this message; entryId alone carries the zcode-shaped branch
+        // point — the previous assistant entry — which pi's fork would reject).
+        const r = await h.fork!(String(command.entryId ?? ""), {
+          reset: command.reset === true,
+          editEntryId: typeof command.editEntryId === "string" && command.editEntryId ? command.editEntryId : undefined,
+        });
         return { text: undefined, cancelled: r.cancelled, newSessionId: r.newSessionFile };
       }
 

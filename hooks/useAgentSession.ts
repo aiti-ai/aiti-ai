@@ -350,6 +350,10 @@ export interface UseAgentSessionOptions {
   onAttentionNeeded?: (request: BlockingExtensionUiRequest) => void;
   onSessionCreated?: (session: SessionInfo, sourceDraftKey: string) => void;
   onSessionForked?: (newSessionId: string) => void;
+  /** "Edit from here" on forkRebindHandoff backends (pi spawn): the fork moved the session
+   *  record to a branched child id — the shell switches over and auto-sends the edited
+   *  message there (in-place continuation would read the stale pre-edit file on disk). */
+  onEditFromHereHandoff?: (handoff: { sessionId: string; message: string; images?: AttachedImage[] }) => void;
   /** External-session placeholder/alias ids resolved by the server into the real composite id (e.g. zcode:new-* → zcode:sess_*) —
    *  the client migrates its selection and URL accordingly so the sidebar does not show duplicate rows for one backend session. An in-flight chat is not reset. */
   onSessionIdCanonicalized?: (previousId: string, canonicalId: string) => void;
@@ -665,7 +669,7 @@ export function prefetchModels(cwd: string): void {
 
 export function useAgentSession(opts: UseAgentSessionOptions) {
   const {
-    session, newSessionCwd, newSessionDraftKey, onAgentEnd, onSessionEnded, onToolEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onSideSession,
+    session, newSessionCwd, newSessionDraftKey, onAgentEnd, onSessionEnded, onToolEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onEditFromHereHandoff, onSideSession,
     modelsRefreshKey, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsPanelOpen,
     newSessionBackend,
     onOpenSettings, onDebugSnapshotReaderChange,
@@ -3936,14 +3940,16 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   handleNavigateRef.current = handleNavigate;
 
   /** Runs when "edit from here" is sent: first rewind the session to the branch point (first message → rebuild
-   *  from root), then send the edited message. The click-to-mark stage is purely frontend (prefill + highlight);
-   *  this is where it actually takes effect (nothing moves in place until sent).
-   *  @param targetId rewind target: normally the previous assistant message's entryId; for the first message, the
-   *  message's own entryId (parentId → root)
-   *  @param leafId  leaf loaded after the rewind (first message = null → empty history) */
+   * from root), then send the edited message. The click-to-mark stage is purely frontend (prefill + highlight);
+   * this is where it actually takes effect (nothing moves in place until sent).
+   * @param targetId rewind target: normally the previous assistant message's entryId; for the first message, the
+   * message's own entryId (parentId → root)
+   * @param leafId  leaf loaded after the rewind (first message = null → empty history)
+   * @param editEntryId the edited user message's own entryId (pi-shaped fork target; see the extFork branch) */
   const handleEditFromStartSend = useCallback(async (
     targetId: string,
     leafId: string | null,
+    editEntryId: string,
     message: string,
     images?: AttachedImage[],
   ) => {
@@ -3958,7 +3964,23 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       const extFork = sessionCapabilities != null && !sessionCapabilities.navigateTree && !!sessionCapabilities.fork;
       if (extFork) {
         try {
-          await sendAgentCommand(sid, { type: "fork", entryId: leafId ?? "", reset: true });
+          const r = await sendAgentCommand<{ cancelled?: boolean; newSessionId?: string }>(sid, {
+            type: "fork",
+            entryId: leafId ?? "",
+            // pi-shaped backends fork BEFORE the edited user message (the branch-point entryId
+            // above is the zcode-shaped contract and is ignored there — pi's fork would reject it).
+            editEntryId,
+            reset: true,
+          });
+          // Rebind-shaped fork (pi spawn, forkRebindHandoff): the record moved to a branched child session
+          // (new id, new file on disk) — the old id would keep reading the stale pre-edit file. Hand the shell
+          // over: switch the selection to the child and auto-send the edited message there.
+          const newSid = r?.newSessionId;
+          if (sessionCapabilities.forkRebindHandoff && newSid && newSid !== sid && onEditFromHereHandoff) {
+            onEditFromHereHandoff({ sessionId: newSid, message, images });
+            return;
+          }
+          // zcode-shaped in-place reset: same record id, history rebuilt under the old key.
         } catch (e) {
           // Sending after a failed fork would append the message to the tail of the un-rewound full history (the
           // user believes it was rewound) — abort this send and notify; the pending mark and input are kept for a retry.
@@ -3983,7 +4005,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       await loadContext(sid, leafId);
     }
     await handleSend(message, images);
-  }, [handleSend, loadContext, addNotice, sessionCapabilities]);
+  }, [handleSend, loadContext, addNotice, sessionCapabilities, onEditFromHereHandoff]);
 
   const handleLeafChange = useCallback(async (leafId: string | null) => {
     // pi refuses navigate_tree mid-run: it moves the one leaf the running agent

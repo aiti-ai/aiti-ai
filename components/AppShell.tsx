@@ -205,7 +205,7 @@ import {
 } from "@/lib/panel-layout";
 import type { BlockingExtensionUiRequest, SessionInfo, SessionTreeNode } from "@/lib/types";
 import type { McpErrorResponse, ProjectTrustStatus } from "@/lib/api-types";
-import type { ChatInputHandle } from "./ChatInput";
+import type { ChatInputHandle, AttachedImage } from "./ChatInput";
 import type { AgentEndInfo, NewSessionChoices } from "@/hooks/useAgentSession";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import type { QueueEntry } from "@/lib/queue-store";
@@ -766,7 +766,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   // `/side <prompt>`: the text that seeds the side chat's composer, until its panel consumes it.
   const [sideChatPrompts, setSideChatPrompts] = useState<Record<string, string>>({});
   /** Quote-popover "Ask in new chat": the fork_branch's id → the composer prompt it replays (fork feature). */
-  const [pendingQuotePrompt, setPendingQuotePrompt] = useState<{ sessionId: string; text: string } | null>(null);
+  const [pendingQuotePrompt, setPendingQuotePrompt] = useState<{ sessionId: string; text: string; images?: AttachedImage[] } | null>(null);
   const topBarRef = useRef<HTMLDivElement>(null);
   const themeBtnRef = useRef<HTMLButtonElement>(null);
   const languageBtnRef = useRef<HTMLButtonElement>(null);
@@ -2551,6 +2551,14 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     hydrateSelectedSession(newSessionId);
     replaceLocationIfChanged(router, `?session=${encodeURIComponent(newSessionId)}`, { scroll: false });
   }, [invalidateWorkspaceRestore, router, hydrateSelectedSession]);
+
+  // "Edit from here" on rebind-fork backends (pi spawn): the fork moved the session record
+  // to a branched child id, so the shell switches over and auto-sends the edited message
+  // there (same pipe as quote-fork: pendingQuotePrompt → initialPrompt on the new session).
+  const handleEditFromHereHandoff = useCallback((h: { sessionId: string; message: string; images?: AttachedImage[] }) => {
+    setPendingQuotePrompt({ sessionId: h.sessionId, text: h.message, images: h.images });
+    handleSessionForked(h.sessionId);
+  }, [handleSessionForked]);
 
   // The sidebar calls this when the initial session is not in its list.
   const handleAskInNewChat = useCallback(async (
@@ -5855,11 +5863,13 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
               onAttentionNeeded={handleAttentionNeeded}
               onSessionCreated={handleSessionCreated}
               onSessionForked={handleSessionForked}
+              onEditFromHereHandoff={handleEditFromHereHandoff}
               onSessionIdCanonicalized={handleSessionIdCanonicalized}
               onInitialPromptConsumed={() => setPendingQuotePrompt((prev) => (prev && prev.sessionId === selectedSession?.id ? null : prev))}
               onSideSession={handleSideSession}
               onAskInNewChat={handleAskInNewChat}
               initialPrompt={pendingQuotePrompt?.sessionId === selectedSession?.id ? pendingQuotePrompt?.text : undefined}
+              initialPromptImages={pendingQuotePrompt?.sessionId === selectedSession?.id ? pendingQuotePrompt?.images : undefined}
               modelsRefreshKey={modelsRefreshKey}
               chatInputRef={chatInputRef}
               onBranchDataChange={handleBranchDataChange}
@@ -6165,6 +6175,10 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
               onSessionForked={(newSessionId) => {
                 if (isMobile) setRightPanelOpen(false);
                 handleSessionForked(newSessionId);
+              }}
+              onEditFromHereHandoff={(h) => {
+                if (isMobile) setRightPanelOpen(false);
+                handleEditFromHereHandoff(h);
               }}
               onOpenSettings={openSettingsSection}
               onToolEnd={handleToolEnd}

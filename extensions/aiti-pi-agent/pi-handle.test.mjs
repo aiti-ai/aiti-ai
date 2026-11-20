@@ -101,14 +101,53 @@ test("model_select 事件回填 getModel（执行中模型体现的数据源）"
   assert.deepEqual(h.getModel(), { id: "deepseek-v4-flash", provider: "free" });
 });
 
-test("fork 命令映射：pi 发 fork", async () => {
+test("fork 命令映射：pi 发 fork + 换绑广播（分支按钮形态）", async () => {
   const child = fakeChild();
   const h = createHandleForTest(PI_SPEC, "t4", child);
+  const events = [];
+  h.subscribe((e) => events.push(e));
   const p = h.fork("entry-1");
   await later();
   assert.equal(child.frames()[0].type, "fork");
+  assert.equal(child.frames()[0].entryId, "entry-1");
   feedResponse(h, "r1", { cancelled: false });
+  await later();
+  // fork succeeded → read get_state, found the subprocess rebound to the branched child (new id) → announce session_backend_ready
+  assert.equal(child.frames()[1].type, "get_state");
+  feedResponse(h, "r2", { sessionId: "branched-child" });
+  assert.deepEqual(await p, { cancelled: false, newSessionFile: "branched-child" });
+  assert.equal(h.id, "branched-child", "handle id 换绑到子会话");
+  const ready = events.find((e) => e.type === "session_backend_ready");
+  assert.ok(ready, "广播 session_backend_ready");
+  assert.equal(ready.oldId, "t4");
+  assert.equal(ready.id, "branched-child");
+});
+
+test("fork reset（编辑从此处）：fork 目标 = editEntryId（被编辑的 user 消息）", async () => {
+  const child = fakeChild();
+  const h = createHandleForTest(PI_SPEC, "t4b", child);
+  const p = h.fork("assistant-branch-point", { reset: true, editEntryId: "user-msg-being-edited" });
+  await later();
+  assert.equal(child.frames()[0].type, "fork");
+  assert.equal(child.frames()[0].entryId, "user-msg-being-edited", "pi fork(before) 只认 user 消息，用 editEntryId");
+  feedResponse(h, "r1", { cancelled: false });
+  await later();
+  feedResponse(h, "r2", { sessionId: "child-1" });
+  assert.deepEqual(await p, { cancelled: false, newSessionFile: "child-1" });
+});
+
+test("fork 后子会话 id 与记录一致（或 get_state 失败）→ 不广播、不回传 newSessionFile", async () => {
+  const child = fakeChild();
+  const h = createHandleForTest(PI_SPEC, "same-id", child);
+  const events = [];
+  h.subscribe((e) => events.push(e));
+  const p = h.fork("entry-1");
+  await later();
+  feedResponse(h, "r1", { cancelled: false });
+  await later();
+  feedResponse(h, "r2", { sessionId: "same-id" });
   assert.deepEqual(await p, { cancelled: false });
+  assert.equal(events.find((e) => e.type === "session_backend_ready"), undefined);
 });
 
 test("getMessages：pi 走 get_entries 原样", async () => {
