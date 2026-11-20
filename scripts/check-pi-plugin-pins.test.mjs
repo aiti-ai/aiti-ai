@@ -56,7 +56,7 @@ test("planUpdates: local bump not published yet → pending-release, pin untouch
   assert.equal(rows[0].nextPin, "1.2.2");
 });
 
-test("planUpdates: published local version ahead of the pin → drift to local", () => {
+test("planUpdates: published local version ahead of the pin → drift to the newest", () => {
   const rows = planUpdates(
     [{ pkg: "@x/a", version: "1.2.2" }],
     new Map([["@x/a", reg(["1.2.2", "1.2.3"], "1.2.3")]]),
@@ -64,6 +64,26 @@ test("planUpdates: published local version ahead of the pin → drift to local",
   );
   assert.equal(rows[0].status, "drift");
   assert.equal(rows[0].nextPin, "1.2.3");
+});
+
+test("planUpdates: pin already at registry latest while the repo lags → ok (never downgrade)", () => {
+  const rows = planUpdates(
+    [{ pkg: "@x/a", version: "0.4.14" }],
+    new Map([["@x/a", reg(["0.4.13", "0.4.14"], "0.4.14")]]),
+    new Map([["@x/a", "0.4.13"]]),
+  );
+  assert.equal(rows[0].status, "ok");
+  assert.equal(rows[0].nextPin, "0.4.14");
+});
+
+test("planUpdates: local version published but not tagged latest → follow the local one", () => {
+  const rows = planUpdates(
+    [{ pkg: "@x/a", version: "1.2.3" }],
+    new Map([["@x/a", reg(["1.2.3", "1.2.4"], "1.2.3")]]),
+    new Map([["@x/a", "1.2.4"]]),
+  );
+  assert.equal(rows[0].status, "drift");
+  assert.equal(rows[0].nextPin, "1.2.4");
 });
 
 test("semverCmp orders releases and prereleases", () => {
@@ -74,7 +94,7 @@ test("semverCmp orders releases and prereleases", () => {
   assert.equal(semverCmp("0.17.0-aiti.1", "0.17.0"), -1);
 });
 
-test("planUpdates: repo version behind the registry → local-stale, follow latest", () => {
+test("planUpdates: repo version behind the registry → local-stale, pin stays on latest", () => {
   const rows = planUpdates(
     [{ pkg: "@x/a", version: "0.1.1" }],
     new Map([["@x/a", reg(["0.1.1"], "0.1.1")]]),

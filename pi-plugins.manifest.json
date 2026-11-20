@@ -6,11 +6,11 @@
     },
     {
       "pkg": "@aiti-ai/pi-secret-mask",
-      "version": "0.3.0"
+      "version": "0.4.0"
     },
     {
       "pkg": "@aiti-ai/pi-git-trace",
-      "version": "0.1.10"
+      "version": "0.1.12"
     },
     {
       "pkg": "@aiti-ai/pi-web-bridge",
@@ -24,9 +24,9 @@
     },
     {
       "pkg": "@aiti-ai/pi-secret-vault",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "auto": false,
-      "note": "Encrypted persistent edition (superset of pi-secret-mask); install manually with: pi install npm:@aiti-ai/pi-secret-vault@0.1.0 — install one of the two, the same-session handshake makes mask yield when both are present."
+      "note": "Encrypted persistent edition (superset of pi-secret-mask); install manually with: pi install npm:@aiti-ai/pi-secret-vault@0.2.0 — install one of the two, the same-session handshake makes mask yield when both are present."
     }
   ]
 }

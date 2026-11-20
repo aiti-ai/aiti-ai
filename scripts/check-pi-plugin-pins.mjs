@@ -140,29 +140,29 @@ export function planUpdates(plugins, registryInfo, localVersions) {
     const latest = info?.latest || null;
     const local = localVersions.get(p.pkg) || null;
     const published = info ? info.versions.has(pin) : null;
+    const localPublished = Boolean(local && info?.versions.has(local));
+    // Newest version a fresh install could get: the pin, the registry's latest tag, and a
+    // published local package version all compete; the highest wins so --write never
+    // downgrades a pin just because the committed package.json lags behind.
+    const newest = [published === false ? null : pin, latest, localPublished ? local : null]
+      .filter(Boolean)
+      .reduce((acc, v) => (acc && semverCmp(acc, v) >= 0 ? acc : v), null);
     let status = "ok";
-    let nextPin = pin;
+    let nextPin = newest || pin;
     if (info?.error) status = "unknown";
-    else if (published === false) {
-      status = "unpublished";
-      if (latest) nextPin = latest;
-    } else if (local && !info?.versions.has(local)) {
+    else if (published === false) status = "unpublished";
+    else if (local && !localPublished) {
       // A local version that is not published yet is either ahead of the registry (bump in
       // flight — publish it before raising the pin) or behind it (the registry moved ahead,
       // which happens when CI auto-bumps during publish without committing the bump back).
-      if (latest && semverCmp(local, latest) < 0) {
-        status = "local-stale";
-        nextPin = latest;
-      } else {
+      if (latest && semverCmp(local, latest) >= 0) {
         status = "pending-release";
         nextPin = pin;
+      } else {
+        status = "local-stale";
       }
-    } else if (local && local !== pin) {
+    } else if (newest && newest !== pin) {
       status = "drift";
-      nextPin = local; // local version is published → follow it
-    } else if (latest && latest !== pin) {
-      status = "drift";
-      nextPin = latest;
     }
     return { pkg: p.pkg, pin, latest, local, auto: p.auto !== false, status, nextPin, error: info?.error || null };
   });
@@ -292,7 +292,9 @@ async function main() {
 
   const hardErrors = rows.filter((r) => r.status === "unpublished")
     .concat(rows.filter((r) => r.status === "unknown"));
-  const warnings = rows.filter((r) => r.status === "drift" || r.status === "pending-release" || r.status === "local-stale");
+  // local-stale is an observation about the committed version, not a manifest defect:
+  // it never blocks a release gate.
+  const warnings = rows.filter((r) => r.status === "drift" || r.status === "pending-release");
   const failed = hardErrors.length > 0 || packProblems.length > 0 || (args.strict && warnings.length > 0);
 
   if (args.write) {
@@ -318,7 +320,12 @@ async function main() {
     const pending = rows.filter((r) => r.status === "pending-release");
     const stale = rows.filter((r) => r.status === "local-stale");
     if (pending.length) console.log(`\nnote: ${pending.map((r) => r.pkg).join(", ")} — publish the local version first, then rerun with --write.`);
-    if (stale.length) console.log(`note: ${stale.map((r) => r.pkg).join(", ")} — committed version lags the registry; --write follows the published version.`);
+    if (stale.length) {
+      const behind = stale.filter((r) => r.nextPin !== r.pin);
+      const aligned = stale.filter((r) => r.nextPin === r.pin);
+      if (behind.length) console.log(`note: ${behind.map((r) => r.pkg).join(", ")} — --write follows the published version.`);
+      if (aligned.length) console.log(`note: ${aligned.map((r) => r.pkg).join(", ")} — committed package.json lags the registry; the pin already follows it.`);
+    }
     console.log(failed ? `\nFAILED (${hardErrors.length} pin error(s), ${packProblems.length} pack error(s))` : "\nOK");
   }
   return failed ? 1 : 0;
