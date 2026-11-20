@@ -347,6 +347,36 @@ export function ModelSelector({
   const isListed = (list: ModelSelectorOption[] | null | undefined, ref: { provider: string; modelId: string }) => (
     list?.find((option) => option.modelId === ref.modelId && option.provider === ref.provider)
   );
+
+  // Focus hand-back on close. The panel holds focus while open (filter input / an option row), and
+  // React unmounts that focused node on close → focus falls to <body>, so after picking a model
+  // the composer needs an extra click before typing. Record the element that had focus *before*
+  // the trigger was pressed (pointerdown arrives ahead of the browser's focus move) and hand
+  // focus back on deliberate closes (pick / save default / clear / Esc). Outside clicks are
+  // excluded: there the user is already reaching for another element and must not be yanked back.
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+  const rememberFocusBeforeOpen = () => {
+    const active = document.activeElement;
+    // Focus already inside the selector (repeat click on the trigger, focus on the panel) → no
+    // record: closing then falls back to the trigger button, the nearest sensible target.
+    returnFocusRef.current = active instanceof HTMLElement
+      && active !== document.body
+      && !rootRef.current?.contains(active)
+      ? active
+      : null;
+  };
+  const restoreFocusAfterClose = () => {
+    const recorded = returnFocusRef.current;
+    returnFocusRef.current = null;
+    const target = recorded?.isConnected ? recorded : buttonRef.current;
+    if (!target || target.isConnected === false) return;
+    // After the panel's DOM unmounts (the focused filter row is gone by then). preventScroll: a
+    // hand-back must never scroll the page out from under the user.
+    requestAnimationFrame(() => {
+      if (target.isConnected) target.focus({ preventScroll: true });
+    });
+  };
+
   const switchScope = () => {
     if (!showAll) onShowAll?.();
     setShowAll(!showAll);
@@ -461,6 +491,8 @@ export function ModelSelector({
       ) {
         setOpen(false);
         setFilter("");
+        // Deliberate outside click → no focus hand-back (the user is already aiming elsewhere).
+        returnFocusRef.current = null;
       }
     };
     document.addEventListener("mousedown", handleOutsideClick);
@@ -522,6 +554,7 @@ export function ModelSelector({
     rememberRecentModel(option.provider, option.modelId);
     setOpen(false);
     setFilter("");
+    restoreFocusAfterClose();
     if (!active || isAutoSelection) onChange(option.provider, option.modelId);
     else onReselect?.(option.provider, option.modelId);
   };
@@ -529,6 +562,7 @@ export function ModelSelector({
   const saveDefault = (option: ModelSelectorOption) => {
     setOpen(false);
     setFilter("");
+    restoreFocusAfterClose();
     onSetDefault?.(option.provider, option.modelId);
   };
 
@@ -538,6 +572,7 @@ export function ModelSelector({
       if (refreshing) return; // same guard as the clear row's click handler
       setOpen(false);
       setFilter("");
+      restoreFocusAfterClose();
       onClear?.(); // clear rows only exist when onClear is set (hasClearRow), ? is for the type checker
       return;
     }
@@ -566,6 +601,7 @@ export function ModelSelector({
         event.stopPropagation();
         setFilter("");
         setOpen(false);
+        restoreFocusAfterClose();
       }}
     >
       <button
@@ -578,6 +614,9 @@ export function ModelSelector({
         disabled={locked}
         title={busy ? t("chat.switchingModel") : locked ? currentName : options.length > 0 || onClear ? t("chat.changeModel") : t("chat.noAvailableModels")}
         style={buttonStyle}
+        // Recorded ahead of the browser's focus move (pointerdown → mousedown → focus), so the
+        // element the user was in before opening is what we hand focus back to on close.
+        onPointerDown={rememberFocusBeforeOpen}
         onClick={() => {
           setOpen((current) => {
             if (current) setFilter("");
@@ -792,6 +831,7 @@ export function ModelSelector({
                   if (refreshing) return;
                   setOpen(false);
                   setFilter("");
+                  restoreFocusAfterClose();
                   onClear();
                 }} />
               )}
