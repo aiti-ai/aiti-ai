@@ -239,14 +239,15 @@ function AppCard(props: {
         {app.label}
       </span>
       {showOps ? (
-        <span style={{ position: "absolute", top: 2, left: iconCornerInset, zIndex: 2 }}>
+        <span style={{ position: "absolute", top: 2, right: iconCornerInset, display: "flex", alignItems: "center", gap: 2, zIndex: 2 }}>
           <button type="button" title={pinned ? t("app.unpin") : t("app.pin")} aria-label={pinned ? t("app.unpin") : t("app.pin")}
             style={cardOpsBtn(pinned)} {...badgeHover}
-            onClick={() => togglePinned(app.id)}>{pinned ? "★" : "☆"}</button>
-        </span>
-      ) : null}
-      {showOps ? (
-        <span style={{ position: "absolute", top: 2, right: iconCornerInset, display: "flex", gap: 2, zIndex: 2 }}>
+            onClick={() => togglePinned(app.id)}>
+            <svg width={12} height={12} viewBox="0 0 24 24" fill={pinned ? "currentColor" : "none"} stroke="currentColor"
+              strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+            </svg>
+          </button>
           {edit ? (
             <button type="button" title={t("app.hide")} aria-label={t("app.hide")} style={cardOpsBtn(false, true)} {...badgeHover}
               onClick={() => hideApp(app.id)}>✕</button>
