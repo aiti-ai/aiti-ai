@@ -929,7 +929,7 @@ export default {
         "feat.toolbar.enabled.desc": "Controls whether the icon button appears on the page top toolbar (click = engine switch + engine params + general config: pipeline toggles/env overrides)",
         "feat.voice.enabled.desc": "Controls the 🎤 voice input button on the input box (hold to talk → real-time recognition / second-pass on-screen full-text pipeline). **Not fully tested in non-Chinese locales**",
         "feat.autocomplete.minChars.desc": "No ghost text and no request when the weighted input length is below this (CJK/fullwidth counts as 1.5 — English 3 chars / Chinese 2 chars equivalently)",
-        "feat.ai-input.commandHints.desc": "Independent toggle from prompt/command suggestions: when a typed word hits the App Center app list (toolbar actions/panels/feature toggles), inserts the app into the input box. Tab/→ accepts and skips the app candidate (prevents accidental run)",
+        "feat.ai-input.commandHints.desc": "Independent toggle from prompt/command suggestions: when a typed word hits the App Center app list (toolbar actions/panels/feature toggles), inserts the app into the input box. ↑↓/Tab moves the highlight, Enter runs (explicit two-step, prevents accidental run); → auto-accept skips app candidates",
         "feat.suggest.looseLen.desc": "Queries at or below this length use strict filtering: English ≥3 chars / Chinese ≥2 — loose matching only beyond it (fuzzy)",
         "feat.ai-input.suggestRun.desc": "When enabled, a ⚡ appears next to command suggestion candidates: click to run directly (dangerous commands still double-confirm)",
         "feat.asr.streaming.desc": "Real-time recognition on. Streaming model SenseVoice (default) = VAD-pause sentence split + fast; paraformer WS = true streaming (experimental)",
@@ -1031,7 +1031,7 @@ export default {
     // 组：收藏联想（建议区内嵌候选，词云端显示收藏/命令；关则仅剩 AI 续写与语音修复）
     { id: "suggest.enabled", label: "收藏/命令联想（建议区显示）", group: "suggest", default: true },
     // 应用命令提示（应用中心清单 → suggest kind="app" 候选：点击/↑↓+Enter 直接执行；方案 docs/aiti-ai-input-app-command-hints-plan.md）
-    { id: "ai-input.commandHints", label: "应用命令提示（输入时联想应用中心的应用/面板/开关，点击直接执行）", group: "suggest", default: true, description: "与收藏/命令联想独立的开关：输入词命中应用清单（工具条动作/面板/管理入口/功能开关）时在联想弹窗尾部追加「应用」候选，点击或 ↑↓ 选中后回车直接执行，不向输入框插入文本。Tab/→ 自动接受会跳过应用候选（防误执行）。" },
+    { id: "ai-input.commandHints", label: "应用命令提示（输入时联想应用中心的应用/面板/开关，点击直接执行）", group: "suggest", default: true, description: "与收藏/命令联想独立的开关：输入词命中应用清单（工具条动作/面板/管理入口/功能开关）时在联想弹窗尾部追加「应用」候选，点击或 ↑↓/Tab 选中后回车直接执行，不向输入框插入文本。→ 自动接受会跳过应用候选（防误执行）。" },
     // 短输入严格模式阈值：查询不超过该字符数时走严格过滤（防 1-2 字符英文/中文 substring 命中大量长尾候选）
     { id: "suggest.looseLen", type: "string", label: "短输入严格过滤阈值（字符数，超过才宽松匹配）", group: "suggest", value: "10", placeholder: "10", description: "查询长度 ≤ 该值时走严格过滤：英文≥3字符/中文≥2字，且查询需达标题或内容长度的 1/4 才弹出（防短词命中长正文噪音）；> 该值按 substring 宽松匹配。0=关闭严格过滤。" },
     // suggest ⚡ 一键执行（aiti-cmd-exec-integration-plan.md §3.4；默认关——联想出的命令不自动跑，

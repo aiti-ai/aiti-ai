@@ -183,7 +183,7 @@ export default function register(ctx: Record<string, unknown>) {
   });
 
   // 调试日志（devtools 面板可查）：确认检测/附加是否生效
-  try { console.log("[AI input] 已就绪：语音来源标记 + AI 行内自动补全 + 收藏联想 suggest（Tab/回车/↑↓，静态优先）"); } catch {}
+  try { console.log("[AI input] 已就绪：语音来源标记 + AI 行内自动补全 + 收藏联想 suggest（↑↓/Tab 选择 + 回车接受，静态优先）"); } catch {}
 
   // 语音输入 🎤 统一走 composerAffix 行内插槽（小屏右端组 + 大屏输入框尾部 affix 组）——
   // 桌面浮层绿圆钮（旧 mountVoiceInlineButton）退役删除；热重载/旧版本残留按钮摘除即可。
