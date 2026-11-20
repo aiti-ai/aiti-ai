@@ -46,6 +46,7 @@ import { spawn } from "node:child_process";
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -66,8 +67,9 @@ const stateDir = opt("state-dir", null)
   // 与扩展 ctx.stateDir 同约定（探针脚本没有 ctx）
   : join(process.env.PI_WEB_DATA_DIR || join(homedir(), ".pi", "web", "data"), "aiti-qoder-agent", "state");
 
-const { resolveQoderCli, qoderLoginBin } = await import(join(here, "..", "login-driver.ts"));
-const gate = await import(join(here, "..", "steer-gate.ts"));
+// Windows-safe dynamic imports: bare `D:\...` paths are invalid ESM specifiers.
+const { resolveQoderCli, qoderLoginBin } = await import(pathToFileURL(join(here, "..", "login-driver.ts")).href);
+const gate = await import(pathToFileURL(join(here, "..", "steer-gate.ts")).href);
 
 const cli = opt("cli", "") || resolveQoderCli(variant) || qoderLoginBin(variant);
 const turn1 =
