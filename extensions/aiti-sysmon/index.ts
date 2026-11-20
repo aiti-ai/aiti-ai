@@ -214,6 +214,7 @@ export default {
       // client copy keys are the raw Chinese strings; en table hand-translated.
       "zh-CN": {
         "sy.panel.label": "系统状态",
+        "系统状态": "系统状态",
         "ext.displayName": "服务器状态查看器",
         "暂停": "暂停",
         "恢复": "恢复",
@@ -233,6 +234,7 @@ export default {
       },
       en: {
         "sy.panel.label": "System Status",
+        "系统状态": "System Status",
         "ext.displayName": "Server Status Viewer",
         "暂停": "Pause",
         "恢复": "Resume",
