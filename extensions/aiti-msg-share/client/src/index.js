@@ -424,59 +424,74 @@ function targetSection() {
 
 // --- Container picker UI (tree with named sub-items; search degrades to path list) ---
 
-function containerRow(c, depth, childCount, expanded, selected) {
+function containerRow(c, depth, childCount, expanded, selected, highlighted) {
+  // Depth guides keep the hierarchy readable while every level keeps its own name.
+  const guides = [];
+  for (let i = 0; i < depth; i++) guides.push(h("span", { key: "g" + i,
+    style: { width: 14, textAlign: "center", flexShrink: 0, color: "var(--text-muted, #8b909b)", opacity: 0.45 } }, "│"));
   return h("div", { key: c.id, onClick: () => pickContainer(c), title: c.path || c.label,
-    style: { display: "flex", alignItems: "center", gap: 5, padding: "3px 6px 3px " + (6 + depth * 14) + "px",
-      borderRadius: 6, cursor: "pointer", fontSize: 12,
+    style: { display: "flex", alignItems: "center", gap: 5, padding: "3px 6px", borderRadius: 6, cursor: "pointer", fontSize: 12,
       background: selected ? "rgba(77, 141, 255, 0.18)" : "transparent",
-      color: selected ? "var(--accent, #4d9dff)" : "var(--text, #d8dade)" } },
+      color: "var(--text, #d8dade)" } },
+    ...guides,
     h("span", { onClick: (e) => { if (!childCount) return; e.stopPropagation();
         set({ containerExpanded: { ...state.containerExpanded, [c.id]: !expanded } }); },
       style: { width: 14, textAlign: "center", flexShrink: 0,
         color: childCount ? "var(--text-muted, #8b909b)" : "transparent",
         cursor: childCount ? "pointer" : "default" } }, expanded ? "▾" : "▸"),
     h("span", { style: { flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-        fontWeight: selected ? 600 : 400 } }, c.label),
+        fontWeight: selected ? 600 : 400,
+        color: highlighted && !selected ? "var(--accent, #4d8dff)" : undefined } }, c.label),
+    selected ? h("span", { style: { color: "var(--accent, #4d8dff)", fontSize: 11, flexShrink: 0 } }, "✓") : null,
     childCount && !expanded ? h("span", { style: { color: "var(--text-muted, #8b909b)", fontSize: 10, flexShrink: 0 } }, childCount) : null);
 }
 
-function renderContainerNodes(childrenOf, nodes, depth) {
+/** Search keeps the tree: nodes matching by their own name + their ancestor chain.
+ *  Each hit stays in context (named ancestors show WHERE it lives — real Joplin
+ *  trees repeat names across roots), matches highlighted, branches force-expanded. */
+function containerSearchState(items, query) {
+  const q = query.toLowerCase();
+  const match = new Set();
+  const ancestors = new Set();
+  const byId = new Map(items.map((c) => [c.id, c]));
+  for (const c of items) {
+    if (String(c.label).toLowerCase().includes(q)) {
+      match.add(c.id);
+      let cur = c;
+      while (cur?.parent && byId.has(cur.parent)) { ancestors.add(cur.parent); cur = byId.get(cur.parent); }
+    }
+  }
+  return { match, ancestors };
+}
+
+function renderContainerNodes(childrenOf, nodes, depth, search) {
   const out = [];
   for (const c of nodes) {
+    if (search && !search.match.has(c.id) && !search.ancestors.has(c.id)) continue;
     const kids = childrenOf.get(c.id) || [];
-    const expanded = !!state.containerExpanded[c.id];
-    out.push(containerRow(c, depth, kids.length, expanded, state.containerFor === c.id));
-    if (kids.length && expanded) out.push(...renderContainerNodes(childrenOf, kids, depth + 1));
+    const expanded = search
+      ? search.ancestors.has(c.id) || kids.some((k) => search.match.has(k.id) || search.ancestors.has(k.id))
+      : !!state.containerExpanded[c.id];
+    out.push(containerRow(c, depth, kids.length, expanded, state.containerFor === c.id,
+      !!search && search.match.has(c.id)));
+    if (kids.length && expanded) out.push(...renderContainerNodes(childrenOf, kids, depth + 1, search));
   }
   return out;
 }
 
-function containerRowFlat(c) {
-  return h("div", { key: "flat-" + c.id, onClick: () => pickContainer(c), title: c.path || c.label,
-    style: { padding: "3px 6px", borderRadius: 6, cursor: "pointer", fontSize: 12,
-      background: state.containerFor === c.id ? "rgba(77, 141, 255, 0.18)" : "transparent",
-      color: state.containerFor === c.id ? "var(--accent, #4d9dff)" : "var(--text, #d8dade)",
-      whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } },
-    c.path || c.label);
-}
-
 function containerPanel(items) {
-  const filter = state.containerFilter.trim().toLowerCase();
+  const filter = state.containerFilter.trim();
   const childrenOf = containerTree(items);
   const roots = childrenOf.get("") || [];
   const empty = h("div", { style: { padding: "8px 6px", fontSize: 11, color: "var(--text-muted, #8b909b)" } },
     shareT("share.container.empty"));
-  // Filtering degrades to a flat list of full paths — disambiguates same-named
-  // notebooks across parents (real Joplin trees often repeat names under roots).
-  const rows = filter
-    ? items.filter((c) => String(c.path || c.label).toLowerCase().includes(filter))
-        .sort((a, b) => String(a.path || a.label).localeCompare(String(b.path || b.label)))
-        .map((c) => containerRowFlat(c))
-    : renderContainerNodes(childrenOf, roots, 0);
+  const rows = renderContainerNodes(childrenOf, roots, 0, filter ? containerSearchState(items, filter) : null);
   return h("div", { style: { border: "1px solid var(--border, #34363c)", borderRadius: 7, marginTop: 5,
       background: "var(--bg-panel, #1e2021)", maxHeight: 240, overflowY: "auto", padding: 4 } },
     h("input", { value: state.containerFilter, placeholder: shareT("share.container.search"),
       onInput: (e) => set({ containerFilter: e.target.value }),
+      onKeyDown: (e) => { if (e.key === "Escape") set({ containerOpen: false, containerFilter: "" }); },
+      ref: (el) => { el?.focus?.(); },
       style: { width: "100%", boxSizing: "border-box", background: "var(--bg-hover, #25272c)",
         border: "1px solid var(--border, #34363c)", borderRadius: 6, padding: "4px 8px", fontSize: 12,
         color: "var(--text, #d8dade)", marginBottom: 4 } }),
