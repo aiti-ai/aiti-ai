@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { ExtSlot } from "./ExtSlots";
@@ -233,6 +233,38 @@ export function excludeRecentOptions(
 }
 
 /**
+ * A keyboard-navigable row of the selector panel, in visual order: the "default/clear" row first,
+ * then the recents section, then the grouped list. Group headers and the refresh row are not
+ * navigable (not selectable); refreshing rows stay listed but activation is guarded in the caller.
+ */
+export type SelectorNavRow =
+  | { kind: "clear" }
+  | { kind: "option"; section: "recent" | "main"; option: ModelSelectorOption };
+
+/** Stable identity of a nav row across renders (provider/modelId joined field-wise, never split). */
+export function selectorRowKey(row: SelectorNavRow): string {
+  return row.kind === "clear"
+    ? "clear"
+    : `${row.section}:${row.option.provider}:${row.option.modelId}`;
+}
+
+/**
+ * Flattens the panel's selectable rows for keyboard navigation (ArrowUp/ArrowDown + Enter on the
+ * filter input). Order matches the rendered panel: clear row, recents, grouped options.
+ */
+export function buildSelectorNavRows(opts: {
+  hasClear: boolean;
+  recentOptions: ModelSelectorOption[];
+  mainOptions: ModelSelectorOption[];
+}): SelectorNavRow[] {
+  const rows: SelectorNavRow[] = [];
+  if (opts.hasClear) rows.push({ kind: "clear" });
+  for (const option of opts.recentOptions) rows.push({ kind: "option", section: "recent", option });
+  for (const option of opts.mainOptions) rows.push({ kind: "option", section: "main", option });
+  return rows;
+}
+
+/**
  * Dim suffix text for a recents-section row. The recents section has no provider group header,
  * so when a catalog/price hint is present ("$0.6/$2.2 per M", ext-agent billing "0.5x") the
  * provider display name must ride along after it — a price-only suffix hides which provider the
@@ -299,6 +331,10 @@ export function ModelSelector({
   // Viewport change counter while the panel is open: only triggers re-renders; geometry is recomputed from live values at render time (see the effect below)
   const [viewportTick, setViewportTick] = useState(0);
   const [filter, setFilter] = useState("");
+  // Keyboard navigation highlight index over navRows (-1 = none). Set on open (pre-highlight the
+  // active model), reset while filtering (first hit), moved with ArrowUp/ArrowDown on the filter input.
+  const [highlightIndex, setHighlightIndex] = useState(-1);
+  const panelId = useId();
   const [recentList, setRecentList] = useState<RecentModelEntry[]>([]);
   // pi's /model starts on the scope; Tab on the filter or a tap switches (upstream #1503).
   const [showAll, setShowAll] = useState(false);
@@ -314,6 +350,7 @@ export function ModelSelector({
   const switchScope = () => {
     if (!showAll) onShowAll?.();
     setShowAll(!showAll);
+    setHighlightIndex(-1);
   };
 
   // Re-read recents each time the panel opens (other windows / other ModelSelector instances may have updated them)
@@ -372,6 +409,45 @@ export function ModelSelector({
     [filteredOptions, recentOptions],
   );
   const modelsByProvider = groupModelOptions(mainOptions);
+
+  // Keyboard navigation rows: selectable rows in visual order (clear / recents / grouped list).
+  // Group headers and the refresh row are not navigable; activation is guarded in activateNavRow.
+  const hasClearRow = Boolean(onClear) && !filter.trim();
+  const navRows = useMemo(
+    () => buildSelectorNavRows({ hasClear: hasClearRow, recentOptions, mainOptions }),
+    [hasClearRow, recentOptions, mainOptions],
+  );
+  const navIndexByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    navRows.forEach((row, index) => map.set(selectorRowKey(row), index));
+    return map;
+  }, [navRows]);
+  const activeHighlight = highlightIndex >= 0 && navRows.length > 0
+    ? Math.min(highlightIndex, navRows.length - 1)
+    : -1;
+  const rowDomId = (key: string) => {
+    const index = navIndexByKey.get(key);
+    return index === undefined ? undefined : `${panelId}-row-${index}`;
+  };
+  const moveHighlight = (delta: number) => {
+    setHighlightIndex((current) => {
+      const max = navRows.length - 1;
+      if (max < 0) return -1;
+      if (current < 0) return delta > 0 ? 0 : max;
+      return Math.max(0, Math.min(max, current + delta));
+    });
+  };
+
+  // Keyboard nav: on open, pre-highlight the active model's row (native select behavior); on close,
+  // clear. Depends on [open, recentList] only, on purpose: the recents reload above also fires on
+  // open, so the second pass sees the final rows; filtering/scope switches reset the highlight at
+  // their own call sites (onChange / switchScope).
+  useEffect(() => {
+    if (!open || !value) { setHighlightIndex(-1); return; }
+    const index = navRows.findIndex((row) => row.kind === "option"
+      && row.option.provider === value.provider && row.option.modelId === value.modelId);
+    setHighlightIndex(index >= 0 ? index : -1);
+  }, [open, recentList]);
 
   const currentName = selectedLabel ?? (value
     ? (isListed(options, value) ?? isListed(allOptions, value))?.name ?? value.modelId
@@ -454,6 +530,18 @@ export function ModelSelector({
     setOpen(false);
     setFilter("");
     onSetDefault?.(option.provider, option.modelId);
+  };
+
+  // Enter on the filter input activates the highlighted nav row (clear row or a model option).
+  const activateNavRow = (row: SelectorNavRow) => {
+    if (row.kind === "clear") {
+      if (refreshing) return; // same guard as the clear row's click handler
+      setOpen(false);
+      setFilter("");
+      onClear?.(); // clear rows only exist when onClear is set (hasClearRow), ? is for the type checker
+      return;
+    }
+    choose(row.option);
   };
 
   // Upstream (#930/#1125): the default model's row carries a static star, other rows offer a
@@ -555,6 +643,7 @@ export function ModelSelector({
         return (
           <div
             ref={panelRef}
+            id={panelId}
             role="listbox"
             aria-label={ariaLabel}
             data-input-overlay="1"
@@ -623,14 +712,42 @@ export function ModelSelector({
               <div style={{ flexShrink: 0, padding: "6px 8px", borderBottom: "1px solid var(--border)" }}>
                 <input
                   value={filter}
-                  onChange={(event) => setFilter(event.target.value)}
+                  onChange={(event) => {
+                    setFilter(event.target.value);
+                    // Filtering → pre-highlight the first hit so Enter picks it directly; clearing → none.
+                    setHighlightIndex(event.target.value.trim() ? 0 : -1);
+                  }}
                   onKeyDown={(event) => {
-                    if (!onShowAll || event.key !== "Tab") return;
-                    event.preventDefault();
-                    switchScope();
+                    // Tab stays reserved for the scoped/all scope switch (upstream #1503).
+                    if (onShowAll && event.key === "Tab") {
+                      event.preventDefault();
+                      switchScope();
+                      return;
+                    }
+                    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                      event.preventDefault();
+                      moveHighlight(event.key === "ArrowDown" ? 1 : -1);
+                      return;
+                    }
+                    if (event.key === "Home" || event.key === "End") {
+                      if (navRows.length === 0) return;
+                      event.preventDefault();
+                      setHighlightIndex(event.key === "Home" ? 0 : navRows.length - 1);
+                      return;
+                    }
+                    if (event.key === "Enter") {
+                      if (navRows.length === 0) return;
+                      event.preventDefault();
+                      activateNavRow(navRows[activeHighlight >= 0 ? activeHighlight : 0]);
+                    }
                   }}
                   placeholder={t("chat.filterModels")}
                   aria-label={t("chat.filterModels")}
+                  role="combobox"
+                  aria-expanded="true"
+                  aria-controls={panelId}
+                  aria-autocomplete="list"
+                  aria-activedescendant={activeHighlight >= 0 ? `${panelId}-row-${activeHighlight}` : undefined}
                   // No auto-focus on mobile: auto-focus immediately pops the keyboard, compressing
                   // the visible area and squeezing the just-opened list into a sliver; let the user
                   // browse first — the keyboard pops when they tap the filter box (the geometry
@@ -664,7 +781,14 @@ export function ModelSelector({
                 />
               )}
               {onClear && !filter.trim() && (
-                <ModelOptionButton active={!value} label={emptyLabel ?? "Default"} disabled={refreshing} gutter={Boolean(onSetDefault)} onClick={() => {
+                <ModelOptionButton
+                  id={rowDomId("clear")}
+                  highlighted={navIndexByKey.get("clear") === activeHighlight}
+                  active={!value}
+                  label={emptyLabel ?? "Default"}
+                  disabled={refreshing}
+                  gutter={Boolean(onSetDefault)}
+                  onClick={() => {
                   if (refreshing) return;
                   setOpen(false);
                   setFilter("");
@@ -680,6 +804,8 @@ export function ModelSelector({
                   {recentOptions.map((option) => (
                     <ModelOptionButton
                       key={`recent:${option.provider}:${option.modelId}`}
+                      id={rowDomId(`recent:${option.provider}:${option.modelId}`)}
+                      highlighted={navIndexByKey.get(`recent:${option.provider}:${option.modelId}`) === activeHighlight}
                       active={option.modelId === value?.modelId && option.provider === value?.provider}
                       label={option.name}
                       // Catalog/price hint composed with the provider (no group header here);
@@ -714,6 +840,8 @@ export function ModelSelector({
                   {group.options.map((option) => (
                     <ModelOptionButton
                       key={`${option.provider}:${option.modelId}`}
+                      id={rowDomId(`main:${option.provider}:${option.modelId}`)}
+                      highlighted={navIndexByKey.get(`main:${option.provider}:${option.modelId}`) === activeHighlight}
                       active={option.modelId === value?.modelId && option.provider === value?.provider}
                       label={option.name}
                       hint={option.hint ?? option.provider}
@@ -746,11 +874,16 @@ export function ModelSelector({
 }
 
 /** Option row (exported solely for unit-test render assertions): name + provider suffix + availability status; the same information on desktop and small screens. */
-export function ModelOptionButton({ active, label, hint, status, disabled = false, star, gutter = Boolean(star), onClick }: { active: boolean; label: string; hint?: string; status?: ModelSelectorOption["status"]; disabled?: boolean; /** Upstream star contract (SelectorRow): static star on the default row, hover/focus-revealed save button elsewhere. */ star?: SelectorRowStar; /** Reserve the star gutter so every row of a star menu lines up. */ gutter?: boolean; onClick: () => void }) {
+export function ModelOptionButton({ active, label, hint, status, disabled = false, star, gutter = Boolean(star), highlighted = false, id, onClick }: { active: boolean; label: string; hint?: string; status?: ModelSelectorOption["status"]; disabled?: boolean; /** Upstream star contract (SelectorRow): static star on the default row, hover/focus-revealed save button elsewhere. */ star?: SelectorRowStar; /** Reserve the star gutter so every row of a star menu lines up. */ gutter?: boolean; /** Keyboard-navigation highlight from the filter input (ArrowUp/ArrowDown); visually the same as hover. */ highlighted?: boolean; /** DOM id of the option button (combobox aria-activedescendant target). */ id?: string; onClick: () => void }) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
+  const rowRef = useRef<HTMLDivElement>(null);
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
+  // Keep the highlighted row visible while navigating with the keyboard (long filtered lists).
+  useEffect(() => {
+    if (highlighted) rowRef.current?.scrollIntoView({ block: "nearest" });
+  }, [highlighted]);
   const canSave = Boolean(star && !star.isDefault);
   const showSave = canSave && (hovered || focused || isMobile);
   const statusMark = status === "rl"
@@ -762,6 +895,7 @@ export function ModelOptionButton({ active, label, hint, status, disabled = fals
         : null;
   return (
     <div
+      ref={rowRef}
       style={{ position: "relative" }}
       onFocus={() => setFocused(true)}
       onBlur={(event) => {
@@ -770,13 +904,14 @@ export function ModelOptionButton({ active, label, hint, status, disabled = fals
     >
     <button
       type="button"
+      id={id}
       role="option"
       aria-selected={active}
       disabled={disabled || undefined}
       onClick={onClick}
-      style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: gutter ? "7px 36px 7px 12px" : "7px 12px", border: "none", background: active ? "var(--bg-selected)" : "none", color: active ? "var(--text)" : "var(--text-muted)", cursor: disabled ? "default" : "pointer", fontSize: 12, fontWeight: active ? 600 : 400, textAlign: "left", whiteSpace: "nowrap", opacity: disabled && !active ? 0.55 : undefined }}
-      onMouseEnter={(event) => { setHovered(true); if (!active) event.currentTarget.style.background = "var(--bg-hover)"; }}
-      onMouseLeave={(event) => { setHovered(false); if (!active) event.currentTarget.style.background = "none"; }}
+      style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: gutter ? "7px 36px 7px 12px" : "7px 12px", border: "none", background: active ? "var(--bg-selected)" : hovered || highlighted ? "var(--bg-hover)" : "none", color: active ? "var(--text)" : "var(--text-muted)", cursor: disabled ? "default" : "pointer", fontSize: 12, fontWeight: active ? 600 : 400, textAlign: "left", whiteSpace: "nowrap", opacity: disabled && !active ? 0.55 : undefined }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
     >
       {active
         ? <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }} aria-hidden="true"><polyline points="1.5 5 4 7.5 8.5 2.5" /></svg>
