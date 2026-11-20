@@ -4,6 +4,9 @@
  * The dialog preview IS the final content (redaction applied, user-confirmed
  * before redirect). Full text always goes to the clipboard as the fallback when
  * GitHub truncates the prefilled body. Zero tokens, zero server round-trips.
+ *
+ * i18n: abstract keys (fb.*) resolved via ctx.t against the per-locale tables
+ * in index.ts (host locales are exactly "zh-CN" / "en").
  */
 import { useState, useEffect } from "react";
 import { t } from "./host-shim";
@@ -54,9 +57,9 @@ const input = { width: "100%", boxSizing: "border-box", padding: "6px 9px", bord
 const fieldLabel = { display: "block", fontSize: 11, color: "var(--text-muted)", marginBottom: 4, fontWeight: 500 } as Record<string, string | number>;
 
 const KINDS: Array<{ v: FeedbackKind; label: string }> = [
-  { v: "bug", label: "问题" },
-  { v: "suggestion", label: "建议" },
-  { v: "other", label: "其他" },
+  { v: "bug", label: "fb.kind.bug" },
+  { v: "suggestion", label: "fb.kind.suggestion" },
+  { v: "other", label: "fb.kind.other" },
 ];
 
 async function copyText(text: string): Promise<boolean> {
@@ -87,9 +90,9 @@ export function FeedbackDialog() {
   const missing = !s.desc.trim();
 
   const submit = () => {
-    if (missing) { fbSet({ hint: t("描述是必填项") }); return; }
+    if (missing) { fbSet({ hint: t("fb.err.descRequired") }); return; }
     void copyText(issue.fullBody).then(() => {
-      fbSet({ copied: true, hint: issue.truncated ? t("内容超长已截断，完整内容已复制到剪贴板") : "" });
+      fbSet({ copied: true, hint: issue.truncated ? t("fb.err.tooLong") : "" });
       try { window.open(issue.url, "_blank", "noopener"); } catch { location.href = issue.url; }
     });
   };
@@ -102,54 +105,54 @@ export function FeedbackDialog() {
         onClick={(e) => e.stopPropagation()}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-          <b style={{ fontSize: 14, display: "inline-flex", alignItems: "center", gap: 6 }}><Ic size={15} paths={ICONS.chat} />{t("报告问题")}</b>
-          <button onClick={() => fbSet({ open: false })} style={{ ...btn, padding: "2px 8px" }} aria-label={t("关闭")}><Ic size={12} paths={ICONS.x} /></button>
+          <b style={{ fontSize: 14, display: "inline-flex", alignItems: "center", gap: 6 }}><Ic size={15} paths={ICONS.chat} />{t("fb.open.label")}</b>
+          <button onClick={() => fbSet({ open: false })} style={{ ...btn, padding: "2px 8px" }} aria-label={t("fb.close")}><Ic size={12} paths={ICONS.x} /></button>
         </div>
-        <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 12 }}>{t("将以 GitHub issue 打开（预填内容）；提交前请确认不含敏感信息。")}</div>
+        <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 12 }}>{t("fb.hint.disclaimer")}</div>
 
-        <label style={fieldLabel}>{t("类型")}</label>
+        <label style={fieldLabel}>{t("fb.kind")}</label>
         <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
           {KINDS.map((k) => (
             <button
               key={k.v} type="button"
               onClick={() => fbSet({ kind: k.v })}
               style={{ ...btn, ...(s.kind === k.v ? { background: "color-mix(in srgb, var(--accent) 14%, transparent)", borderColor: "var(--accent)", color: "var(--accent)" } : {}) }}
-            >{k.label}</button>
+            >{t(k.label)}</button>
           ))}
         </div>
 
-        <label style={fieldLabel}>{t("标题")}</label>
-        <input style={{ ...input, marginBottom: 10 }} value={s.title} placeholder={t("一句话摘要")} onChange={(e) => fbSet({ title: e.target.value })} />
+        <label style={fieldLabel}>{t("fb.field.title")}</label>
+        <input style={{ ...input, marginBottom: 10 }} value={s.title} placeholder={t("fb.field.title.ph")} onChange={(e) => fbSet({ title: e.target.value })} />
 
-        <label style={fieldLabel}>{t("描述（必填）")}</label>
-        <textarea style={{ ...input, height: 72, minHeight: 72, resize: "vertical", marginBottom: 10 }} value={s.desc} placeholder={t("发生了什么？期望是什么？")} onChange={(e) => fbSet({ desc: e.target.value })} />
+        <label style={fieldLabel}>{t("fb.field.desc")}</label>
+        <textarea style={{ ...input, height: 72, minHeight: 72, resize: "vertical", marginBottom: 10 }} value={s.desc} placeholder={t("fb.field.desc.ph")} onChange={(e) => fbSet({ desc: e.target.value })} />
 
-        <label style={fieldLabel}>{t("复现步骤（可选）")}</label>
-        <textarea style={{ ...input, height: 56, minHeight: 56, resize: "vertical", marginBottom: 10 }} value={s.steps} placeholder={t("1. 打开…\n2. 点击…")} onChange={(e) => fbSet({ steps: e.target.value })} />
+        <label style={fieldLabel}>{t("fb.field.steps")}</label>
+        <textarea style={{ ...input, height: 56, minHeight: 56, resize: "vertical", marginBottom: 10 }} value={s.steps} placeholder={t("fb.field.steps.ph")} onChange={(e) => fbSet({ steps: e.target.value })} />
 
         <details style={{ marginBottom: 10 }}>
-          <summary style={{ fontSize: 11, color: "var(--text-muted)", cursor: "pointer", userSelect: "none" }}>{t("＋ 会话上下文（可选，自行粘贴）")}</summary>
-          <textarea style={{ ...input, height: 64, minHeight: 64, resize: "vertical", marginTop: 6 }} value={s.context} placeholder={t("粘贴相关日志/输出（将做脱敏处理，预览里请再确认）")} onChange={(e) => fbSet({ context: e.target.value })} />
+          <summary style={{ fontSize: 11, color: "var(--text-muted)", cursor: "pointer", userSelect: "none" }}>{t("fb.field.context")}</summary>
+          <textarea style={{ ...input, height: 64, minHeight: 64, resize: "vertical", marginTop: 6 }} value={s.context} placeholder={t("fb.field.context.ph")} onChange={(e) => fbSet({ context: e.target.value })} />
         </details>
 
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-          <input style={{ width: "100%", boxSizing: "border-box", padding: "6px 9px", borderRadius: 7, border: "1px solid var(--border)", background: "var(--bg-input, transparent)", color: "var(--text)", fontSize: 12.5 }} value={s.contact} placeholder={t("联系方式（可选：邮箱等，公开可见）")} onChange={(e) => fbSet({ contact: e.target.value })} />
+          <input style={{ width: "100%", boxSizing: "border-box", padding: "6px 9px", borderRadius: 7, border: "1px solid var(--border)", background: "var(--bg-input, transparent)", color: "var(--text)", fontSize: 12.5 }} value={s.contact} placeholder={t("fb.field.contact")} onChange={(e) => fbSet({ contact: e.target.value })} />
         </div>
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-muted)", marginBottom: 10, cursor: "pointer" }}>
           <input type="checkbox" checked={s.includeEnv} onChange={(e) => fbSet({ includeEnv: e.target.checked })} />
-          {t("附带环境信息（浏览器/平台，不含会话内容）")}
+          {t("fb.opt.env")}
         </label>
 
-        <label style={fieldLabel}>{t("预览（将提交的内容，已脱敏）")}</label>
+        <label style={fieldLabel}>{t("fb.preview")}</label>
         <pre style={{ margin: "0 0 10px", padding: 10, borderRadius: 8, border: "1px solid var(--border)", background: "color-mix(in srgb, var(--text) 4%, transparent)", fontSize: 11, fontFamily: "var(--font-mono)", maxHeight: 160, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word", color: "var(--text-muted)" }}>{md}</pre>
 
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <button
             type="button" style={btn}
-            onClick={() => { void copyText(issue.fullBody).then((ok) => fbSet({ copied: ok, hint: ok ? "" : t("复制失败") })); }}
-          ><Ic size={12} paths={ICONS.copy} />{s.copied ? t("已复制全文") : t("复制全文")}</button>
-          <button type="button" style={{ ...btnPrimary, opacity: missing ? 0.5 : 1 }} onClick={submit} title={missing ? t("描述是必填项") : undefined}>{t("前往 GitHub 提交")}</button>
-          <span style={{ fontSize: 11, color: issue.truncated ? "var(--danger, #ef4444)" : "var(--text-dim)" }}>{issue.truncated ? t("内容超长已截断，完整内容已复制到剪贴板") : `${md.length} / ${BODY_SAFE}`}</span>
+            onClick={() => { void copyText(issue.fullBody).then((ok) => fbSet({ copied: ok, hint: ok ? "" : t("fb.err.copyFailed") })); }}
+          ><Ic size={12} paths={ICONS.copy} />{s.copied ? t("fb.copied") : t("fb.copy")}</button>
+          <button type="button" style={{ ...btnPrimary, opacity: missing ? 0.5 : 1 }} onClick={submit} title={missing ? t("fb.err.descRequired") : undefined}>{t("fb.submit")}</button>
+          <span style={{ fontSize: 11, color: issue.truncated ? "var(--danger, #ef4444)" : "var(--text-dim)" }}>{issue.truncated ? t("fb.err.tooLong") : `${md.length} / ${BODY_SAFE}`}</span>
         </div>
         {s.hint && <div style={{ marginTop: 8, fontSize: 11.5, color: "var(--danger, #ef4444)" }}>{s.hint}</div>}
       </div>
