@@ -12,7 +12,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readdirSync, statSync, utimesSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -122,6 +122,17 @@ test("mergedHistory：记录优先、扫描去重殿后、截 16", () => {
   assert.ok(merged.some((r) => r.source === "scan" && r.root === join(ws, "zip-2"))); // 扫描补充
   rmSync(dir, { recursive: true, force: true });
   rmSync(home, { recursive: true, force: true });
+});
+
+/* ── expandHomePath ── */
+
+test("expandHomePath：~/ ~\\ 展开为家目录，绝对/相对路径原样返回", () => {
+  const home = homedir();
+  assert.equal(mod.expandHomePath("~"), home);
+  assert.equal(mod.expandHomePath("~/workspace"), join(home, "workspace"));
+  assert.equal(mod.expandHomePath("/tmp/ws"), "/tmp/ws");
+  assert.equal(mod.expandHomePath(""), "");
+  assert.equal(mod.expandHomePath("rel/dir"), "rel/dir"); // still rejected by the isAbsolute check
 });
 
 /* ── handleClone 校验分支（无 git 依赖的快速失败路径） ── */

@@ -214,6 +214,13 @@ export interface CloneResult {
   error?: string;
 }
 
+/** Expand a leading ~ (or ~/ ~\\) with the home directory; anything else is returned as-is. */
+export function expandHomePath(p: string): string {
+  if (p === "~") return homedir();
+  if (/^~[\\/]/.test(p)) return join(homedir(), p.slice(2));
+  return p;
+}
+
 /** 冲突顺延（内联实现；语义同 client pickFinalName）。 */
 function pickFinal(base: string, parent: string): string {
   if (!fs.existsSync(join(parent, base))) return base;
@@ -227,7 +234,7 @@ function pickFinal(base: string, parent: string): string {
 export async function handleClone(body: Record<string, unknown> | null, ctx: ExtApiCtx): Promise<Response> {
   const started = Date.now();
   const url = typeof body?.url === "string" ? body.url.trim() : "";
-  const dir = typeof body?.dir === "string" ? body.dir.trim() : "";
+  const dir = expandHomePath(typeof body?.dir === "string" ? body.dir.trim() : "");
   const branch = typeof body?.branch === "string" ? body.branch.trim() : "";
   const depth = typeof body?.depth === "number" && body.depth > 0 ? Math.floor(body.depth) : 0;
 
