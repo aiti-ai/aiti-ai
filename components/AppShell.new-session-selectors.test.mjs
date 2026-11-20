@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 // Regression protection (2026-09-17 new-session "branch / worktree" selector,
@@ -73,4 +74,39 @@ test("the rewritten cwd is reported on session creation (AppShell switches the a
   const resolvedAt = useAgentSession.indexOf("newSessionResolvedCwdRef.current = prepared.cwd");
   const fetchAt = useAgentSession.indexOf('fetch(apiUrl("/api/agent/new")');
   assert.ok(resolvedAt > -1 && resolvedAt < fetchAt, "resolved cwd must land in the ref before the POST");
+});
+
+test("Workspace selector takeover: declared contract + native fallback, staged through the service", () => {
+  assert.match(extTypes, /"newSessionWorkspacePicker"/);
+  assert.match(extTypes, /newSessionWorkspacePicker: \{ props: NewSessionWorkspacePickerSlotProps \}/);
+  assert.match(extTypes, /newSessionWorkspacePicker\?: ExtUiItem\[\]/);
+  const contract = extTypes.slice(extTypes.indexOf("interface NewSessionWorkspacePickerSlotProps"), extTypes.indexOf("/** noWorkspaceGuide"));
+  // data only (slot-extra red line): no callbacks in the contract
+  assert.match(contract, /cwd: string \| null/);
+  assert.match(contract, /selected: string \| null/);
+  assert.match(contract, /isMobile: boolean/);
+  assert.doesNotMatch(contract, /on[A-Z]\w*\??:/);
+
+  // takeover first, native <select> as the fallback
+  assert.match(chatWindow, /const hasNewSessionWorkspacePicker = useExtSlotItems\("newSessionWorkspacePicker"\)\.some\(hasExtRender\)/);
+  assert.match(chatWindow, /name="newSessionWorkspacePicker"/);
+  assert.match(chatWindow, /selected: newSessionWorkspace \?\? newSessionCwd \?\? null/);
+  // the row (and the takeover) renders with zero workspace options, unlike the native select
+  assert.match(chatWindow, /workspaceOptions\.length > 0 \|\| hasNewSessionWorkspacePicker/);
+  // order: Workspace label < takeover < newSessionSelectors < Backend label
+  const labelAt = chatWindow.indexOf('{t("chat.newSessionWorkspace")}');
+  const takeoverAt = chatWindow.indexOf('name="newSessionWorkspacePicker"');
+  const selectorsAt = chatWindow.indexOf('name="newSessionSelectors"');
+  assert.ok(labelAt !== -1 && takeoverAt > labelAt && takeoverAt < selectorsAt, "takeover slot sits inside the Workspace box, before newSessionSelectors");
+  // the native selector's own path is unchanged for hosts without the extension
+  assert.match(chatWindow, /onChange=\{\(e\) => onNewSessionWorkspaceChange\?\.\(e\.target\.value \|\| null\)\}/);
+});
+
+test("the takeover stages like the native selector: setTarget → handleNewSessionWorkspaceChange", () => {
+  const appShell = readFileSync(new URL("./AppShell.tsx", import.meta.url), "utf8");
+  assert.match(appShell, /newSessionSvcRef = useRef\(\{ setCwd: \(_path: string\) => \{\}, setTarget: \(_path: string \| null\) => \{\} \}\)/);
+  assert.match(appShell, /newSessionSvcRef\.current\.setTarget = \(path: string \| null\) => \{\n\s+handleNewSessionWorkspaceChange\(/);
+  assert.match(appShell, /get setTarget\(\) \{ return newSessionSvcRef\.current\.setTarget; \}/);
+  // setCwd keeps the immediate-move semantics for the upload flow
+  assert.match(appShell, /handleNewSession\(tempId, path, null, \{ carryComposer: true \}\)/);
 });

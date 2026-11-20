@@ -444,6 +444,12 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   // creation/checkout and every other write happens at that moment; the selection phase
   // has zero side effects).
   const hasNewSessionSelectors = useExtSlotItems("newSessionSelectors").some(hasExtRender);
+  // Workspace selector takeover (newSessionWorkspacePicker): once an extension renders one, it
+  // replaces the native <select> (which stays the fallback: unregistered/older hosts are
+  // unchanged). The list itself, the hidden-workspace filter and the footer actions then live
+  // in the extension (session-manager shares the sidebar's projects menu); the target is
+  // staged through the "pi-web.newSession" service, exactly like the native selector.
+  const hasNewSessionWorkspacePicker = useExtSlotItems("newSessionWorkspacePicker").some(hasExtRender);
   const newSessionPreparers: NewSessionPreparer[] = useExtSlotItems("newSessionPreparers")
     .filter((it) => typeof it.meta?.prepare === "function")
     .map((it) => ({ id: it.id, prepare: it.meta!.prepare as NewSessionPreparer["prepare"] }));
@@ -2412,7 +2418,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
             </div>
           </div>
         )}
-        {isEmptyNew && (workspaceOptions.length > 0 || backendOptions.length > 0 || backendExtraOptions.length > 0 || backendRescanable || hasNewSessionSelectors) && (
+        {isEmptyNew && (workspaceOptions.length > 0 || hasNewSessionWorkspacePicker || backendOptions.length > 0 || backendExtraOptions.length > 0 || backendRescanable || hasNewSessionSelectors) && (
           // 820px content column + symmetric 16px gutters (inside the widened max) → inner
           // content left edge lands on the same centerline as the composer/cards (2026-11-15).
           <div className="mx-auto mb-3 w-full" style={{ maxWidth: "calc(var(--chat-content-max-width, 820px) + 32px)", paddingLeft: 16, paddingRight: 16 }}>
@@ -2421,21 +2427,30 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                   only stages a target and doesn't switch immediately — after sending creates
                   the session, AppShell switches into the target workspace and opens the new
                   session. */}
-              {workspaceOptions.length > 0 && (
+              {(workspaceOptions.length > 0 || hasNewSessionWorkspacePicker) && (
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0, maxWidth: "100%" }}>
                   <span style={{ color: "var(--text-muted)" }}>{t("chat.newSessionWorkspace")}</span>
-                  <select
-                    value={newSessionWorkspace ?? newSessionCwd ?? ""}
-                    onChange={(e) => onNewSessionWorkspaceChange?.(e.target.value || null)}
-                    title={newSessionWorkspace ?? newSessionCwd ?? undefined}
-                    style={{ ...NEW_SESSION_SELECT_STYLE, maxWidth: "min(52vw, 360px)", minWidth: 0 }}
-                  >
-                    {workspaceOptions.map((p) => (
-                      <option key={p.key} value={p.root}>
-                        {workspaceLabel(p.root)}
-                      </option>
-                    ))}
-                  </select>
+                  {hasNewSessionWorkspacePicker ? (
+                    // Extension takeover: same trigger look, but the list/actions are the
+                    // sidebar's projects menu (hidden filter, pinned order, activity, browse).
+                    <ExtSlot
+                      name="newSessionWorkspacePicker"
+                      extra={{ cwd: newSessionCwd, selected: newSessionWorkspace ?? newSessionCwd ?? null, isMobile }}
+                    />
+                  ) : (
+                    <select
+                      value={newSessionWorkspace ?? newSessionCwd ?? ""}
+                      onChange={(e) => onNewSessionWorkspaceChange?.(e.target.value || null)}
+                      title={newSessionWorkspace ?? newSessionCwd ?? undefined}
+                      style={{ ...NEW_SESSION_SELECT_STYLE, maxWidth: "min(52vw, 360px)", minWidth: 0 }}
+                    >
+                      {workspaceOptions.map((p) => (
+                        <option key={p.key} value={p.root}>
+                          {workspaceLabel(p.root)}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </span>
               )}
               {/* Extension pickers (branch/worktree pickers etc.): slot rendering wraps no
