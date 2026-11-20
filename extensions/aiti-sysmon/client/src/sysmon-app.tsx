@@ -115,6 +115,7 @@ function SnapshotApp() {
   const disks: any[] = Array.isArray(data?.disks)
     ? data.disks.filter((d: any) => !/squashfs|loop|overlay|efivarfs|devtmpfs|tmpfs/i.test(String(d.type || "") + " " + String(d.fs || "")) && !/^\/sys|^\/proc/i.test(String(d.mount || "")))
     : [];
+  const sensors: any[] = Array.isArray(data?.sensors) ? data.sensors : [];
   const nets: any[] = Array.isArray(data?.net) ? data.net : [];
 
   const btnStyle = { fontSize: 11, padding: "2px 8px", borderRadius: 6, cursor: "pointer", color: "var(--text,#1a1a1a)", background: "transparent", border: "1px solid color-mix(in srgb, currentColor 20%, transparent)" };
@@ -125,30 +126,46 @@ function SnapshotApp() {
       <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 8px" }}>
         <b style={{ fontSize: 13 }}>{os?.hostname || "…"}</b>
         <span style={{ color: "var(--text-dim,#888)" }}>{[os?.distro, os?.kernel].filter(Boolean).join(" · ")}</span>
-        <span style={{ color: "var(--text-dim,#888)" }}>up {fmtUptime(os?.uptime)}</span>
+        <span style={{ color: "var(--text-dim,#888)" }}>{t("已运行")} {fmtUptime(os?.uptime)}</span>
       </div>
 
-      {!data && err ? <div style={{ color: "#d4574e", marginTop: 10 }}>snapshot error: {err}</div> : null}
+      {!data && err ? <div style={{ color: "#d4574e", marginTop: 10 }}>{t("快照错误")}：{err}</div> : null}
 
       {/* CPU */}
-      <SectionLabel>CPU {cpu ? `· ${cpu.cores} cores` : ""}</SectionLabel>
+      <SectionLabel>CPU {cpu ? `· ${cpu.cores} ${t("核")}` : ""}</SectionLabel>
       {cpu ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           <div style={{ display: "flex", alignItems: "flex-end", gap: 8 }}>
             <span style={{ fontSize: 22, fontWeight: 600, lineHeight: 1, color: loadColor(cpu.load) }}>{Math.round(cpu.load)}<span style={{ fontSize: 12, fontWeight: 400 }}>%</span></span>
             <div style={{ flex: 1 }}><Bars values={hist.current} height={26} /></div>
           </div>
-          {Array.isArray(cpu.perCore) && cpu.perCore.length > 1 ? <div title="per-core load"><Bars values={cpu.perCore} height={14} /></div> : null}
+          {Array.isArray(cpu.perCore) && cpu.perCore.length > 1 ? <div title={t("每核占用")}><Bars values={cpu.perCore} height={14} /></div> : null}
           <div style={{ color: "var(--text-dim,#888)", fontSize: 11 }}>
-            load {Array.isArray(cpu.loadavg) ? cpu.loadavg.map((x: number) => Number(x).toFixed(2)).join(" / ") : "—"}
+            {t("负载")} {Array.isArray(cpu.loadavg) ? cpu.loadavg.map((x: number) => Number(x).toFixed(2)).join(" / ") : "—"}
             {showSensors ? (
               <span style={{ marginLeft: 10 }}>
-                {tempVal != null ? `TEMP ${tempVal}°C` : <>TEMP N/A <a href={DOCS_URL} target="_blank" rel="noreferrer" title={t("打开配置指南")}>{t("如何启用？")}</a></>}
+                {tempVal != null ? `${t("温度")} ${tempVal}°C` : <>{t("温度不可用")} <a href={DOCS_URL} target="_blank" rel="noreferrer" title={t("打开配置指南")}>{t("如何启用？")}</a></>}
               </span>
             ) : null}
           </div>
         </div>
       ) : <div style={{ color: "var(--text-dim,#888)" }}>…</div>}
+
+      {/* Sensors (Linux hwmon chips, lm-sensors style; hidden when the platform reports none) */}
+      {showSensors && sensors.length ? (
+        <>
+          <SectionLabel>{t("传感器")}</SectionLabel>
+          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            {sensors.map((s: any, i: number) => (
+              <div key={i} style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+                <span style={{ width: 84, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-dim,#888)" }}>{s.chip}</span>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-dim,#888)" }}>{s.label}</span>
+                <span style={{ marginLeft: "auto", flexShrink: 0, color: loadColor(Number(s.temp)) }}>{s.temp}°C</span>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : null}
 
       {/* Memory */}
       {mem ? (
@@ -211,7 +228,7 @@ function SnapshotApp() {
             <button key={s} onClick={() => setIntervalSel(s)} title={s + "s"}
               style={{ fontSize: 10, padding: "1px 5px", borderRadius: 5, cursor: "pointer", border: "1px solid color-mix(in srgb, currentColor 20%, transparent)", background: intervalSec === s ? "color-mix(in srgb, currentColor 12%, transparent)" : "transparent", color: "inherit" }}>{s}s</button>
           ))}
-          {paused ? <span style={{ color: "#c9a227" }}>paused</span> : null}
+          {paused ? <span style={{ color: "#c9a227" }}>{t("已暂停")}</span> : null}
         </span>
       </div>
     </div>
