@@ -450,13 +450,13 @@ export default {
       return json({ ok: true, targets: allTargets(reg), count: reg.catalog().length });
     }
 
-    // GET /targets — persisted user targets
-    if (p[0] === "targets" && req.method === "GET") {
+    // GET /targets — persisted user targets (!p[1]: sub-resources have own handlers)
+    if (p[0] === "targets" && !p[1] && req.method === "GET") {
       return json({ ok: true, targets: store.readTargets().map((t) => publicTarget(t, reg.get(t.provider))) });
     }
 
     // POST /targets — upsert a target (secrets stored raw, 0600; masked in responses)
-    if (p[0] === "targets" && req.method === "POST") {
+    if (p[0] === "targets" && !p[1] && req.method === "POST") {
       const body = await req.json();
       if (!body?.id || !body?.provider) return json({ ok: false, error: "id and provider required", errorCode: "badRequest" }, 400);
       const saved = store.upsertTarget({ id: body.id, provider: body.provider, name: body.name || body.id,
