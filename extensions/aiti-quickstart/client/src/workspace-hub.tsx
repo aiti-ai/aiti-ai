@@ -17,7 +17,7 @@
  * 打开通道：window 事件 `aiti-quickstart:open-hub`（openWorkspaceHub 派发；
  * entry.tsx 同时注册跨扩展服务 `aiti-quickstart.open`）。
  */
-import { useState, useEffect, t, extSvc, createPortal, apiUrl } from "./host-shim";
+import { useState, useEffect, useRef, t, extSvc, createPortal, apiUrl } from "./host-shim";
 import { parseGitUrl } from "./quickstart-logic";
 import { DirectoryBrowser } from "../../../aiti-folder/client/src/directory-browser";
 
@@ -48,7 +48,7 @@ function setCwd(root: string): void {
   try { extSvc<{ setCwd: (p: string) => void }>("pi-web.newSession")?.setCwd?.(root); } catch { /* ignore */ }
 }
 
-function recordAndEnter(root: string, source: "clone" | "local" | "new", extra?: { url?: string }): void {
+function recordHistory(root: string, source: "clone" | "local" | "new", extra?: { url?: string }): void {
   // 服务端 clone 已记历史；local/new 在前端补一条（幂等：同 root 去重置顶）
   if (source !== "clone") {
     void fetch(apiUrl("/api/extensions/aiti-quickstart/workspace/history"), {
@@ -56,8 +56,8 @@ function recordAndEnter(root: string, source: "clone" | "local" | "new", extra?:
       body: JSON.stringify({ action: "record", source, root, name: root.split(/[\\/]/).filter(Boolean).pop() ?? root, time: Date.now() }),
     }).catch(() => {});
   }
-  setCwd(root);
 }
+
 
 /* ── 样式 ── */
 const overlayStyle: Record<string, unknown> = {
@@ -128,9 +128,14 @@ export function WorkspaceHub() {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<Tab>("clone");
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  /** Optional caller callback: a host picker (video studio etc.) can request a root
+   *  without switching the new-session cwd. Cleared on every close/cancel. */
+  const pickCallback = useRef<((root: string) => void) | null>(null);
 
   useEffect(() => {
-    const onOpen = () => {
+    const onOpen = (event: Event) => {
+      const detail = (event as CustomEvent<{ onSelect?: (root: string) => void } | undefined>).detail;
+      pickCallback.current = typeof detail?.onSelect === "function" ? detail.onSelect : null;
       setOpen(true);
       setTab("clone");
       void fetchHistory().then(setHistory);
@@ -141,19 +146,24 @@ export function WorkspaceHub() {
 
   if (!open) return null;
 
+  const closeHub = () => { pickCallback.current = null; setOpen(false); };
   const refreshHistory = () => { void fetchHistory().then(setHistory); };
   const enter = (root: string, source: "clone" | "local" | "new", extra?: { url?: string }) => {
-    recordAndEnter(root, source, extra);
+    recordHistory(root, source, extra);
+    const cb = pickCallback.current;
+    pickCallback.current = null;
+    if (cb) cb(root);
+    else setCwd(root);
     setOpen(false);
   };
 
   return createPortal(
-    <div style={overlayStyle} onClick={(e: any) => { if (e.target === e.currentTarget) setOpen(false); }}>
+    <div style={overlayStyle} onClick={(e: any) => { if (e.target === e.currentTarget) closeHub(); }}>
       <div style={{ ...panelStyle }} data-ext-float="1" data-ext-float-full="1" data-ext-float-w="600" data-ext-float-h="600"
         data-ext-float-autoh="1" data-ext-float-min-h="320">
         <div style={headStyle}>
           <span style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, color: "var(--text, #ddd)" }}>{t("qs.hub.title")}</span>
-          <button type="button" title={t("qs.hub.close")} aria-label={t("qs.hub.close")} onClick={() => setOpen(false)}
+          <button type="button" title={t("qs.hub.close")} aria-label={t("qs.hub.close")} onClick={closeHub}
             style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 24, height: 24, padding: 0, background: "none", border: "none", borderRadius: 6, color: "var(--text-dim, #888)", cursor: "pointer", fontSize: 13, lineHeight: 1 }}
             onMouseEnter={(e: any) => { e.currentTarget.style.background = "var(--bg-hover, #232323)"; e.currentTarget.style.color = "var(--text, #ddd)"; }}
             onMouseLeave={(e: any) => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = "var(--text-dim, #888)"; }}>✕</button>
@@ -191,7 +201,7 @@ export function WorkspaceHub() {
             ))}
           </div>
           {tab === "clone" ? <CloneTab onEnter={enter} onRefreshHistory={refreshHistory} /> : null}
-          {tab === "upload" ? <UploadTab /> : null}
+          {tab === "upload" ? <UploadTab onEnter={enter} /> : null}
           {tab === "local" ? <LocalTab onEnter={enter} /> : null}
           {tab === "new" ? <NewTab onEnter={enter} /> : null}
         </div>
@@ -296,7 +306,7 @@ function CloneTab(props: { onEnter: (root: string, source: "clone", extra?: { ur
 
 /* ── 上传 tab（session-manager service 复用） ── */
 
-function UploadTab() {
+function UploadTab(props: { onEnter: (root: string, source: "local") => void }) {
   const svc = uploadService();
   if (!svc) {
     return <div style={{ fontSize: 12, color: "var(--text-dim, #888)", lineHeight: 1.6 }}>{t("qs.hub.upload.fallback")}</div>;
@@ -306,8 +316,8 @@ function UploadTab() {
       <span style={{ fontSize: 12, color: "var(--text-muted, #999)" }}>{t("qs.hub.tab.upload")}</span>
       <button type="button" style={{ ...goBtn, alignSelf: "flex-start" }} onClick={() => {
         svc.open({
-          onSelect: (root) => { recordAndEnter(root, "local"); }, // 上传历史由服务端扫描兜底呈现；此处仅进入
-          onClose: () => { /* UploadDialog 自关 */ },
+          onSelect: (root) => props.onEnter(root, "local"), // upload history is rendered by the server-side scan; entering here only
+          onClose: () => { /* UploadDialog closes itself */ },
         });
       }}>{t("qs.hub.tab.upload")}</button>
     </div>
