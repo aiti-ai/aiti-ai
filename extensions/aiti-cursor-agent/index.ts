@@ -24,7 +24,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { fetchCursorQuota, readCursorToken } from "./cursor-quota.ts";
 import { existsSync, mkdirSync } from "node:fs";
 import { whichBin } from "@aiti-ai/ext-shared/exec-async";
-import { agentSpawnEnv, spawnEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, spawnEnvList, spawnCommand, spawnArgsPrefix, parseArgsLines, resolveCliLaunch, captureSpawnEnvFeatures } from "@aiti-ai/ext-shared/agent-spawn-env";
+import { agentSpawnEnv, spawnEnvFeature, spawnDisplayEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, spawnEnvList, spawnCommand, spawnArgsPrefix, parseArgsLines, resolveCliLaunch, captureSpawnEnvFeatures } from "@aiti-ai/ext-shared/agent-spawn-env";
 import type { LaunchOverride } from "@aiti-ai/ext-shared/agent-spawn-env";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
@@ -776,7 +776,7 @@ export default {
   // 登录 UI 已统一到 aiti-agent-manager（受控登录弹窗退役，2026-09-13）：不再声明
   // client/ui —— 服务端 /login/* 与 .agent 描述符保留（manager 代理消费）。
 
-  features: [spawnEnvFeature("Cursor"), spawnCommandFeature("Cursor"), spawnArgsPrefixFeature("Cursor")],
+  features: [spawnEnvFeature("Cursor"), spawnDisplayEnvFeature("Cursor"), spawnCommandFeature("Cursor"), spawnArgsPrefixFeature("Cursor")],
 
   server: {
     startup(ctx: {
