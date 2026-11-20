@@ -66,6 +66,7 @@ async function ensureSecretEngine() {
 /** Derive a target's setup state for the UI: anonymous / ready / needs-setup. */
 function configState(entry: any, userTarget: any, reg: any): string {
   if (entry.status === "dead") return "dead";
+  if (entry.status === "legacy") return "legacy";
   const provider = reg.get(entry.id) || reg.get(userTarget?.provider);
   const required = (provider?.metaFields || []).filter((f: any) => f.required);
   // A user-created target with all required fields filled → ready.
@@ -226,6 +227,7 @@ export default {
         "share.cfg.ready": "Configured",
         "share.cfg.needs": "Needs setup",
         "share.cfg.dead": "Unavailable",
+        "share.cfg.legacy": "Outdated — upload path broken",
         "share.container.label": "Notebook",
         "share.container.default": "Service default",
         "share.container.refresh": "Refresh containers",
@@ -319,6 +321,8 @@ export default {
         "share.cfg.ready": "已配置",
         "share.cfg.needs": "需配置",
         "share.cfg.dead": "不可用",
+        "share.cfg.legacy": "已過時（上傳通道異常）",
+        "share.cfg.legacy": "已过时（上传通道异常）",
         "share.container.label": "笔记本",
         "share.container.default": "默认位置",
         "share.container.refresh": "刷新容器列表",

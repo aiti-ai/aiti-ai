@@ -194,6 +194,7 @@ const CFG_BADGE = {
   ready: { icon: "✓", key: "share.cfg.ready", color: "var(--accent, #4d8dff)" },
   "needs-setup": { icon: "🟠", key: "share.cfg.needs", color: "#d9a13c" },
   dead: { icon: "💀", key: "share.cfg.dead", color: "var(--text-muted, #8b909b)" },
+  legacy: { icon: "⚠", key: "share.cfg.legacy", color: "#d9a13c" },
 };
 
 const ICONS = {
@@ -262,7 +263,7 @@ async function refresh(force = false) {
 }
 
 function targetCard(target, selected, badge) {
-  const disabled = target.status === "dead" || target.enabled === false;
+  const disabled = target.status === "dead" || target.status === "legacy" || target.enabled === false;
   return h("button", { type: "button", key: target.id, disabled,
     onClick: () => { set({ targetId: target.id, error: "", containerOpen: false, containerFilter: "" });
       syncContainerFor(target.id); void ensureContainers(target.id); },
@@ -397,7 +398,7 @@ function sinkSection() {
 function targetSection() {
   const recent = recentGet();
   const kind = contentKind();
-  const compat = (x) => supportsKind(x, kind);
+  const compat = (x) => supportsKind(x, kind) && x.status !== "dead" && x.status !== "legacy";
   const t = state.targets;
   const byId = new Map(t.map((x) => [x.id, x]));
   const recentItems = recent.map((id) => byId.get(id)).filter(Boolean).filter(compat).slice(0, 5);
@@ -869,7 +870,7 @@ function managerDialog() {
     !supportsKind(t, contentKind())
       ? h("span", { title: shareT("share.notCompatible", { kind: kindLabel(contentKind()) }),
         style: { color: "var(--text-muted, #8b909b)", fontSize: 9, whiteSpace: "nowrap", flexShrink: 0 } }, "∅")
-      : t.status !== "dead" && t.configState !== "needs-setup"
+      : t.status !== "dead" && t.status !== "legacy" && t.configState !== "needs-setup"
       ? h("button", { type: "button", title: shareT("share.useTarget"),
         onClick: (e) => { e.stopPropagation(); chooseTarget(t.id); },
         style: { border: "1px solid var(--accent, #4d8dff)", background: state.targetId === t.id ? "var(--accent, #4d8dff)" : "none",
