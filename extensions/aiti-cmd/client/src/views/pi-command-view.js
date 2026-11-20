@@ -188,7 +188,7 @@ export function createPiCommandView(kit) {
         h("button", { onClick: scrollBottom, title: t("cmd.k302"), "aria-label": t("cmd.k302"), style: { ...btnStyle, padding: "2px 8px" } }, isZh ? t("cmd.k54") : "⇊"),
         h("button", { onClick: () => setFs((x) => !x), title: t("cmd.k102"), "aria-label": t("cmd.k101"), style: { ...btnStyle, padding: "2px 8px", color: fs ? "var(--accent)" : undefined } }, fs ? "⤡" : "⛶"),
       ),
-      h("div", { ref, style: { flex: 1, minHeight: 0, background: "#0f172a", borderRadius: 8, padding: 6, overflow: "hidden" } }),
+      h("div", { ref, style: { flex: 1, minHeight: 0, background: "var(--terminal-bg, #111318)", borderRadius: 8, padding: 6, overflow: "hidden" } }),
       // small screens: bottom status bar (meta is always present here)
       isSmall && meta && h("div", { style: { flexShrink: 0, display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--text-muted)", padding: "4px 6px 0", overflow: "hidden", minHeight: 0, whiteSpace: "nowrap" } },
         counts && h("span", { title: t("cmd.k217"), style: { flexShrink: 0 } }, "🤖" + counts.piRunning + "/" + counts.piTotal + " 🖥" + counts.ptyRunning),

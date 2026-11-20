@@ -8,7 +8,7 @@
  * other, which structurally prevents double rendering (double input / double frame
  * consumption).
  */
-import { btnStyle } from "../kit.js";
+import { btnStyle, readTermTheme, subscribeTermTheme } from "../kit.js";
 
 export function createTabs(kit, store, deps) {
   const { h, t, api, Ic, ICONS, useState, useEffect, useRef, liveCwdOf, openNewPiSession } = kit;
@@ -110,6 +110,10 @@ export function createTabs(kit, store, deps) {
     const attachingRef = useRef(false); // same-tick double-click guard (state updates are async)
     const [attaching, setAttaching] = useState(false);
     const [error, setError] = useState(null);
+    // The host owns the shell's light/dark choice (lib/terminal-theme.ts). Mirroring it on the
+    // root element lets the host's --terminal-* variables paint this takeover surface too.
+    const [termTheme, setTermThemeState] = useState(readTermTheme);
+    useEffect(() => subscribeTermTheme(setTermThemeState), []);
     const attach = async () => {
       if (attachingRef.current) return;
       attachingRef.current = true;
@@ -242,7 +246,7 @@ export function createTabs(kit, store, deps) {
         }),
       );
     }
-    return h("div", { style: { height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", background: "#0f172a" } }, body);
+    return h("div", { "data-terminal-theme": termTheme, style: { height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--terminal-bg, #111318)" } }, body);
   }
 
   /** Dialog ⇲ "pull back into the window": hand the view back from the tab (tab shows a placeholder). */

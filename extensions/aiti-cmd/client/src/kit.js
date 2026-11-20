@@ -37,23 +37,37 @@ export const topbarBtnStyle = {
 export const SANDBOX_ORDER = ["none", "bwrap-ro", "bwrap-offline", "bwrap-tmp"];
 
 // ---------- terminal palette ----------
-// slate palette on a dark background: the default white-on-black clashes with a light UI,
-// and brightBlack(#666) is unreadable on black.
-export const TERM_THEME = {
-  background: "#0f172a",
-  foreground: "#e2e8f0",
-  cursor: "#93c5fd",
-  cursorAccent: "#0f172a",
-  selectionBackground: "#334155",
-  black: "#0f172a", brightBlack: "#7c8ba1",
-  red: "#f87171", brightRed: "#fca5a5",
-  green: "#4ade80", brightGreen: "#86efac",
-  yellow: "#facc15", brightYellow: "#fde047",
-  blue: "#60a5fa", brightBlue: "#93c5fd",
-  magenta: "#c084fc", brightMagenta: "#e9d5ff",
-  cyan: "#22d3ee", brightCyan: "#67e8f9",
-  white: "#cbd5e1", brightWhite: "#f8fafc",
+// Two palettes, matching the host's lib/terminal-theme.ts (TERMINAL_XTERM_THEMES). The
+// native TerminalPanel and this extension's PTY views draw the same shell under the same
+// light/dark choice, so both files must stay in step when either palette changes.
+export const TERM_THEMES = {
+  dark: {
+    background: "#111318", foreground: "#d7dce5", cursor: "#60a5fa",
+    selectionBackground: "#365b8a",
+    black: "#1d222b", brightBlack: "#6b7280",
+    red: "#f87171", brightRed: "#fca5a5",
+    green: "#4ade80", brightGreen: "#86efac",
+    yellow: "#facc15", brightYellow: "#fde047",
+    blue: "#60a5fa", brightBlue: "#93c5fd",
+    magenta: "#c084fc", brightMagenta: "#d8b4fe",
+    cyan: "#22d3ee", brightCyan: "#67e8f9",
+    white: "#e5e7eb", brightWhite: "#ffffff",
+  },
+  light: {
+    background: "#fbfbfc", foreground: "#24292f", cursor: "#2563eb",
+    cursorAccent: "#fbfbfc", selectionBackground: "#bfd7fb",
+    black: "#24292f", brightBlack: "#57606a",
+    red: "#cf222e", brightRed: "#a40e26",
+    green: "#116329", brightGreen: "#1a7f37",
+    yellow: "#7d4e00", brightYellow: "#633c01",
+    blue: "#0969da", brightBlue: "#218bff",
+    magenta: "#8250df", brightMagenta: "#a475f9",
+    cyan: "#1b7c83", brightCyan: "#3192aa",
+    white: "#6e7781", brightWhite: "#8c959f",
+  },
 };
+// The read-only pi-command view keeps the dark palette (its output is not an interactive shell).
+export const TERM_THEME = TERM_THEMES.dark;
 // Do not use the page's --font-mono (next/font Noto Sans Mono loads asynchronously — xterm
 // measures cell width with the fallback first, and the font swap leaves the grid misaligned).
 export const TERM_FONT = "ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, 'DejaVu Sans Mono', 'Liberation Mono', monospace";
@@ -77,6 +91,28 @@ export const LS_TERM_SIZE = "aiti-cmd:term-size";
 export const LS_TERM_KBD = "aiti-cmd:term-kbd";
 export function lsGet(key, def) { try { const v = localStorage.getItem(key); if (v == null) return def; return JSON.parse(v); } catch { return def; } }
 export function lsSet(key, v) { try { localStorage.setItem(key, JSON.stringify(v)); } catch {} }
+
+// Terminal light/dark choice: the host owns it (lib/terminal-theme.ts) and stores it under
+// this key. `storage` only fires for other tabs, so the host also fires TERM_THEME_EVENT in
+// this document; the terminalDock takeover follows both (it renders here, not in an iframe).
+export const TERM_THEME_KEY = "pi-web:terminal-theme";
+export const TERM_THEME_EVENT = "pi-web:terminal-theme-change";
+export function readTermTheme() { try { return localStorage.getItem(TERM_THEME_KEY) === "light" ? "light" : "dark"; } catch { return "dark"; } }
+export function setTermTheme(next) {
+  const value = next === "light" ? "light" : "dark";
+  try { localStorage.setItem(TERM_THEME_KEY, value); } catch {}
+  try { window.dispatchEvent(new CustomEvent(TERM_THEME_EVENT, { detail: value })); } catch {}
+}
+export function subscribeTermTheme(cb) {
+  const onStorage = (e) => { if (e.key === null || e.key === TERM_THEME_KEY) cb(readTermTheme()); };
+  const onLocal = () => cb(readTermTheme());
+  window.addEventListener("storage", onStorage);
+  window.addEventListener(TERM_THEME_EVENT, onLocal);
+  return () => {
+    window.removeEventListener("storage", onStorage);
+    window.removeEventListener(TERM_THEME_EVENT, onLocal);
+  };
+}
 
 // UI locale (same source as the host's useI18n: localStorage pi-locale; the host dispatches
 // pi-web:locale-changed when the language changes)
