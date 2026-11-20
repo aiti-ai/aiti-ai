@@ -55,6 +55,8 @@ const state = {
    *  containersByTarget[id] = { containers: [{id,label,parent,path}], label } */
   containersByTarget: {}, containerFor: "", containerOpen: false, containerFilter: "",
   containerExpanded: {}, containersLoading: false, containerError: "",
+  /** Keyboard navigation index over the currently visible picker rows (-1 = none). */
+  kbIndex: -1,
   /** Local favourite sinks (share-sink topic): { ok, message, action } of the last run. */
   sinkResult: null, sinkBusy: "",
 };
@@ -156,18 +158,19 @@ function toggleContainerPanel() {
   const byId = new Map(items.map((c) => [c.id, c]));
   let cur = byId.get(state.containerFor);
   while (cur?.parent) { expanded[cur.parent] = true; cur = byId.get(cur.parent); }
-  set({ containerOpen: true, containerFilter: "", containerExpanded: expanded });
+  set({ containerOpen: true, containerFilter: "", containerExpanded: expanded, kbIndex: -1 });
 }
 
 /** Record the pick immediately (even the explicit "service default" pick). */
 function pickContainer(c) {
   const id = c ? c.id : "";
   const pathLabel = c ? (c.path || c.label) : "";
-  set({ containerFor: id, containerOpen: false, containerFilter: "" });
+  set({ containerFor: id, containerOpen: false, containerFilter: "", kbIndex: -1 });
   void getJSON("targets/last-container", { method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ id: state.targetId, container: id, label: pathLabel }) })
-    .then(() => set({ targets: state.targets.map((x) => x.id === state.targetId
-      ? { ...x, lastContainer: id, lastContainerLabel: pathLabel } : x) }))
+    .then((r) => set({ targets: state.targets.map((x) => x.id === state.targetId && r?.target
+      ? { ...x, lastContainer: r.target.lastContainer, lastContainerLabel: r.target.lastContainerLabel,
+          recentContainers: r.target.recentContainers } : x) }))
     .catch(() => {});
 }
 
@@ -424,14 +427,18 @@ function targetSection() {
 
 // --- Container picker UI (tree with named sub-items; search degrades to path list) ---
 
-function containerRow(c, depth, childCount, expanded, selected, highlighted) {
+/** Visible picker rows in render order — keyboard navigation walks this list. */
+let panelVisible = [];
+
+function containerRow(c, depth, childCount, expanded, selected, highlighted, idx, kbActive) {
   // Depth guides keep the hierarchy readable while every level keeps its own name.
   const guides = [];
   for (let i = 0; i < depth; i++) guides.push(h("span", { key: "g" + i,
     style: { width: 14, textAlign: "center", flexShrink: 0, color: "var(--text-muted, #8b909b)", opacity: 0.45 } }, "│"));
-  return h("div", { key: c.id, onClick: () => pickContainer(c), title: c.path || c.label,
+  return h("div", { key: c.id, "data-kb": String(idx), onClick: () => pickContainer(c), title: c.path || c.label,
     style: { display: "flex", alignItems: "center", gap: 5, padding: "3px 6px", borderRadius: 6, cursor: "pointer", fontSize: 12,
-      background: selected ? "rgba(77, 141, 255, 0.18)" : "transparent",
+      background: selected ? "rgba(77, 141, 255, 0.18)" : kbActive ? "var(--bg-hover, #25272c)" : "transparent",
+      boxShadow: kbActive ? "inset 0 0 0 1px var(--accent, #4d8dff)" : undefined,
       color: "var(--text, #d8dade)" } },
     ...guides,
     h("span", { onClick: (e) => { if (!childCount) return; e.stopPropagation();
@@ -464,7 +471,7 @@ function containerSearchState(items, query) {
   return { match, ancestors };
 }
 
-function renderContainerNodes(childrenOf, nodes, depth, search) {
+function renderContainerNodes(childrenOf, nodes, depth, search, flat) {
   const out = [];
   for (const c of nodes) {
     if (search && !search.match.has(c.id) && !search.ancestors.has(c.id)) continue;
@@ -472,11 +479,30 @@ function renderContainerNodes(childrenOf, nodes, depth, search) {
     const expanded = search
       ? search.ancestors.has(c.id) || kids.some((k) => search.match.has(k.id) || search.ancestors.has(k.id))
       : !!state.containerExpanded[c.id];
+    const idx = flat.length;
+    flat.push(c);
     out.push(containerRow(c, depth, kids.length, expanded, state.containerFor === c.id,
-      !!search && search.match.has(c.id)));
-    if (kids.length && expanded) out.push(...renderContainerNodes(childrenOf, kids, depth + 1, search));
+      !!search && search.match.has(c.id), idx, state.kbIndex === idx));
+    if (kids.length && expanded) out.push(...renderContainerNodes(childrenOf, kids, depth + 1, search, flat));
   }
   return out;
+}
+
+/** Quick-pick chips from the target's recent-container history (≥2 entries to be useful). */
+function containerQuickRow() {
+  const t = state.targets.find((x) => x.id === state.targetId);
+  const recents = (t?.recentContainers || []).filter((r) => r && r.id);
+  if (recents.length < 2) return null;
+  return h("div", { style: { display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center", padding: "0 2px 4px" } },
+    h("span", { style: { color: "var(--text-muted, #8b909b)", fontSize: 10, flexShrink: 0 } }, shareT("share.recent")),
+    ...recents.map((r) => {
+      const sel = state.containerFor === r.id;
+      return h("button", { type: "button", key: r.id, title: r.label, onClick: () => pickContainer({ id: r.id, label: r.label, path: r.label }),
+        style: { border: "1px solid " + (sel ? "var(--accent, #4d8dff)" : "var(--border, #34363c)"),
+          background: sel ? "rgba(77, 141, 255, 0.15)" : "var(--bg-hover, #25272c)",
+          color: "var(--text, #d8dade)", borderRadius: 6, padding: "2px 8px", fontSize: 11, cursor: "pointer",
+          maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, "🕘 " + r.label);
+    }));
 }
 
 function containerPanel(items) {
@@ -485,16 +511,43 @@ function containerPanel(items) {
   const roots = childrenOf.get("") || [];
   const empty = h("div", { style: { padding: "8px 6px", fontSize: 11, color: "var(--text-muted, #8b909b)" } },
     shareT("share.container.empty"));
-  const rows = renderContainerNodes(childrenOf, roots, 0, filter ? containerSearchState(items, filter) : null);
+  panelVisible = [];
+  const flat = panelVisible;
+  const rows = renderContainerNodes(childrenOf, roots, 0, filter ? containerSearchState(items, filter) : null, flat);
+  const kbMove = (delta) => {
+    if (!panelVisible.length) return;
+    const next = state.kbIndex < 0 ? (delta > 0 ? 0 : panelVisible.length - 1)
+      : Math.min(Math.max(state.kbIndex + delta, 0), panelVisible.length - 1);
+    set({ kbIndex: next });
+    setTimeout(() => { try { document.querySelector(`[data-ext-float] [data-kb="${next}"]`)?.scrollIntoView({ block: "nearest" }); } catch (e) {} }, 0);
+  };
   return h("div", { style: { border: "1px solid var(--border, #34363c)", borderRadius: 7, marginTop: 5,
-      background: "var(--bg-panel, #1e2021)", maxHeight: 240, overflowY: "auto", padding: 4 } },
-    h("input", { value: state.containerFilter, placeholder: shareT("share.container.search"),
-      onInput: (e) => set({ containerFilter: e.target.value }),
-      onKeyDown: (e) => { if (e.key === "Escape") set({ containerOpen: false, containerFilter: "" }); },
-      ref: (el) => { el?.focus?.(); },
-      style: { width: "100%", boxSizing: "border-box", background: "var(--bg-hover, #25272c)",
-        border: "1px solid var(--border, #34363c)", borderRadius: 6, padding: "4px 8px", fontSize: 12,
-        color: "var(--text, #d8dade)", marginBottom: 4 } }),
+      background: "var(--bg-panel, #1e2021)", maxHeight: 320, overflowY: "auto", padding: 4 } },
+    h("div", { style: { position: "sticky", top: -4, margin: -4, marginBottom: 0, padding: 4,
+        background: "var(--bg-panel, #1e2021)", zIndex: 1 } },
+      h("input", { value: state.containerFilter, placeholder: shareT("share.container.search"),
+        onInput: (e) => set({ containerFilter: e.target.value, kbIndex: -1 }),
+        onKeyDown: (e) => {
+          if (e.key === "Escape") { set({ containerOpen: false, containerFilter: "" }); return; }
+          if (e.key === "ArrowDown") { e.preventDefault(); kbMove(1); return; }
+          if (e.key === "ArrowUp") { e.preventDefault(); kbMove(-1); return; }
+          if (e.key === "Enter") { e.preventDefault(); const c = panelVisible[state.kbIndex]; if (c) pickContainer(c); return; }
+          const c = panelVisible[state.kbIndex];
+          if ((e.key === "ArrowRight" || e.key === "ArrowLeft") && c) {
+            e.preventDefault();
+            const kids = childrenOf.get(c.id) || [];
+            const expanded = filter ? true : !!state.containerExpanded[c.id];
+            if (e.key === "ArrowRight" && kids.length && !expanded) set({ containerExpanded: { ...state.containerExpanded, [c.id]: true } });
+            if (e.key === "ArrowLeft" && !filter && expanded) set({ containerExpanded: { ...state.containerExpanded, [c.id]: false } });
+          }
+        },
+        ref: (el) => { el?.focus?.(); },
+        style: { width: "100%", boxSizing: "border-box", background: "var(--bg-hover, #25272c)",
+          border: "1px solid var(--border, #34363c)", borderRadius: 6, padding: "4px 8px", fontSize: 12,
+          color: "var(--text, #d8dade)" } }),
+      filter && rows.length ? h("div", { style: { fontSize: 10, color: "var(--text-muted, #8b909b)", marginTop: 3 } },
+        shareT("share.container.matches", { n: String(rows.length) })) : null),
+    containerQuickRow(),
     state.containersLoading ? h("div", { style: { padding: "6px", fontSize: 11, color: "var(--text-muted, #8b909b)" } }, "…") : null,
     rows.length ? rows : empty);
 }
@@ -805,7 +858,10 @@ function managerDialog() {
     h("span", null, t.status === "dead" ? "💀" : t.category === "archive" ? "📓" : "🔗"),
     h("div", { style: { flex: 1, minWidth: 0 } },
       h("div", { style: { fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, t.name || t.id),
-      h("div", { style: { fontSize: 10, color: "var(--text-muted, #8b909b)" } }, (t.kinds || []).map(kindLabel).join("/") + (() => { const n = noteText(t.note); return n ? " · " + n : ""; })())),
+      h("div", { style: { fontSize: 10, color: "var(--text-muted, #8b909b)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } },
+        (t.kinds || []).map(kindLabel).join("/")
+        + (() => { const n = noteText(t.note); return n ? " · " + n : ""; })()
+        + (t.supportsContainers && t.lastContainerLabel ? " · 📓 " + t.lastContainerLabel : ""))),
     (() => { const b = CFG_BADGE[t.configState]; return b ? h("span", { title: shareT(b.key),
       style: { color: b.color, fontSize: 9, whiteSpace: "nowrap", flexShrink: 0 } }, b.icon) : null; })(),
     t.recommended ? h("span", { style: { color: "var(--accent, #4d8dff)", fontSize: 10 } }, "★") : null,

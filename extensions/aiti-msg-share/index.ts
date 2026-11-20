@@ -233,6 +233,7 @@ export default {
         "share.container.empty": "No containers found",
         "share.container.fail": "Could not list containers: {detail}",
         "share.container.missing": "Last selection no longer exists — using default",
+        "share.container.matches": "{n} matches",
       },
       "zh-CN": {
         "share.err.forbidden": "该路径不在允许范围内——只能分享会话工作区内的文件。",
@@ -325,6 +326,7 @@ export default {
         "share.container.empty": "未找到容器",
         "share.container.fail": "容器列表获取失败：{detail}",
         "share.container.missing": "上次选择的容器已不存在，使用默认位置",
+        "share.container.matches": "{n} 条匹配",
       },
       "zh-TW": {
         "share.err.forbidden": "該路徑不在允許範圍內——只能分享工作階段工作區內的檔案。",
@@ -417,6 +419,7 @@ export default {
         "share.container.empty": "未找到容器",
         "share.container.fail": "容器列表取得失敗：{detail}",
         "share.container.missing": "上次選擇的容器已不存在，使用預設位置",
+        "share.container.matches": "{n} 筆匹配",
       },
     },
     dialogs: [{ id: "aiti-msg-share-dialog", label: "aiti-msg-share" }],
@@ -508,14 +511,18 @@ export default {
     // POST /targets/last-container — record the user's container pick on the target.
     // Persisted in targets.json (0600): survives restarts and browsers; AI/headless
     // shares fall back to it when the request carries no explicit container.
+    // recentContainers keeps a small quick-pick history (most recent distinct first).
     if (p[0] === "targets" && p[1] === "last-container" && req.method === "POST") {
       const body = await req.json().catch(() => null);
       const t = store.readTargets().find((x) => x.id === body?.id);
       if (!t) return json({ ok: false, error: "unknown target", errorCode: "unknownTarget" }, 404);
       const container = String(body?.container ?? "");
       const label = body?.label ? String(body.label) : (container ? t.lastContainerLabel || "" : "");
+      const recents: Array<{ id: string; label: string }> = (Array.isArray(t.recentContainers) ? t.recentContainers : [])
+        .filter((r: any) => r && r.id && r.id !== container).slice(0, 2);
+      const recentContainers = container ? [{ id: container, label }, ...recents] : recents;
       const saved = store.upsertTarget({ ...t, lastContainer: container, lastContainerLabel: label,
-        lastContainerAt: new Date().toISOString() });
+        lastContainerAt: new Date().toISOString(), recentContainers });
       return json({ ok: true, target: publicTarget(saved, reg.get(saved.provider)) });
     }
 
