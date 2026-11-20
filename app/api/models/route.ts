@@ -13,7 +13,7 @@ import { orderSelectorModels, resolveVisibleModels, selectInitialModelScope } fr
 import { getAllowedFileRoots, isExistingFilePathAllowed } from "@/lib/file-access";
 import { projectTrustReloadOptions } from "@/lib/project-trust";
 import { readModelsConfig } from "@/lib/models-config-store";
-import { annotateVisibleModels, comboModelEntries, formatModelCostHint, parseModelCheckState, type AvailKind } from "@/lib/model-visibility";
+import { annotateVisibleModels, comboModelEntries, formatModelCostHint, mergeComboModels, parseModelCheckState, type AvailKind } from "@/lib/model-visibility";
 import { llamaCppExtension } from "@/lib/pi-sdk-internals";
 import { providerDisplayNames, rememberProviderModels, withDeferredProviderModels } from "@/lib/deferred-provider-models";
 import { inferRemovedWorktree } from "@/lib/worktree";
@@ -88,10 +88,11 @@ async function loadModels(cwd: string, scopeAll = false): Promise<ModelsData> {
     hint: formatModelCostHint(m.cost),
   }));
   // Combo virtual models live only in a session runtime (the engine registers the provider
-  // there); list them from models.json so the picker can offer them too.
+  // there); list them from models.json so the picker can offer them too. A runtime that already
+  // saw the engine (deferred catalog) lists them as well — merge instead of appending twice.
   const comboModels = comboModelEntries(providersCfg);
   modelList = annotateVisibleModels(
-    [...selectorModels, ...comboModels],
+    mergeComboModels(selectorModels, comboModels),
     providersCfg,
     readModelCheckAvail(),
   );
