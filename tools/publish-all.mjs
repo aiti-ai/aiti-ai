@@ -13,7 +13,7 @@
 // 首次使用先把各包 package.json 的 name 改为 @aiti-ai/<name> 并去掉需要发布的包的 private：
 //   node tools/publish-all.mjs --adopt   # 只做改名/去 private 预处理，不发布（private 包不动）
 
-import { readFileSync, writeFileSync, existsSync, readdirSync, mkdtempSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, readdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join, basename, dirname, resolve, sep, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -136,6 +136,38 @@ function aliyunUserconfig() {
   return f;
 }
 const REGISTRY = REGISTRIES[TARGET];
+
+// --help: enumerate usage instead of silently starting a publish run
+if (has("--help") || has("-h")) {
+  console.log(`usage: node tools/publish-all.mjs [flags]
+
+  --target staging|official|aliyun   registry channel (default: official)
+  --dry-run                          decide + report, publish nothing
+  --only <dir>[,<dir>...]            restrict to package dir names (substring match)
+  --bump patch|minor|major           bump versions before publishing
+  --adopt                            rename / un-private pre-pass only, no publish
+  --allow-missing-protocol           publish without an aitiExtProtocol declaration
+  --yes                              required for a LOCAL (non-CI) official publish
+  -h, --help                         this help`);
+  process.exit(0);
+}
+
+// The default target is official — an accidental bare run must not fire a
+// public, irreversible publish train from an interactive shell. CI passes
+// --target explicitly and is exempt; an explicit --target/--env on the local
+// command line counts as intent and passes without --yes.
+if (
+  TARGET === "official" && DRY === false &&
+  !process.env.CI && !process.env.GITHUB_ACTIONS &&
+  !args.includes("--target") && !process.env.AITI_NPM_TARGET &&
+  !has("--yes")
+) {
+  console.error("[publish-all] refusing an implicit OFFICIAL publish: the default target is the public npmjs registry.\n" +
+    "  - staging (test channel):  node tools/publish-all.mjs --target staging\n" +
+    "  - dry run (no publish):    node tools/publish-all.mjs --dry-run\n" +
+    "  - official (intended):     add --target official (or --yes / AITI_NPM_TARGET=official)");
+  process.exit(1);
+}
 const NPM_ENV_EXTRA = TARGET === "aliyun" ? { NPM_CONFIG_USERCONFIG: aliyunUserconfig() } : {};
 // official 门禁：单包机械审核（--fix 关闭——门禁只拦不改；要改用 release-audit --fix 先行）
 const AUDIT_SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "release-audit.mjs");
@@ -453,6 +485,25 @@ for (const { dir, pkgDir, pjPath, p } of pkgs) {
     });
     published++;
     report.push(`+  ${dir}@${version}: 已发布为 ${fullName}`);
+    if (TARGET === "official") {
+      // Post-publish installability smoke: resolve the just-published package
+      // from the registry exactly as a user would. Catches a published package
+      // whose own dependency versions are missing/unsatisfied on npmjs (the
+      // secret-vault-core → secret-mask-core ^0.3.0 ETARGET class) at publish
+      // time, instead of as a user-side install failure.
+      const smokeDir = mkdtempSync(join(tmpdir(), "pubsmoke-"));
+      const smoke = spawnSync("npm",
+        ["install", "--dry-run", "--ignore-scripts", "--no-audit", "--no-fund", "--prefer-online", `--registry=${REGISTRY}`, `${fullName}@${version}`],
+        { cwd: smokeDir, encoding: "utf8", timeout: 120_000, shell: process.platform === "win32" });
+      rmSync(smokeDir, { recursive: true, force: true });
+      if (smoke.status !== 0) {
+        failed++;
+        const detail = ((smoke.stderr || "") + (smoke.stdout || "")).split("\n").filter((l) => /error|notarget/i.test(l)).slice(-1)[0];
+        report.push(`!  ${dir}@${version}: 安装冒烟失败（用户将无法安装，检查其 dependencies 是否已全部上源）— ${detail || `exit ${smoke.status}`}`);
+      } else {
+        report.push(`=  ${dir}@${version}: 安装冒烟 ok`);
+      }
+    }
     break;   // 成功即出 retry 循环（缺此 break 会空转第二轮、撞同版本 409 假报失败）
   } catch (e) {
     const emsg = e.message || "";

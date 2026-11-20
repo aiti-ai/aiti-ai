@@ -35,23 +35,25 @@ jobs:
   # Fail fast with an actionable message when step 1 of the release order was skipped.
   deps-on-registry:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Verify shared extension deps are on the npm registry
+          cache: npm
+      - name: Verify the bundled-extension dep union resolves from the npm registry
         run: |
-          missing=0
-          for spec in "@aiti-ai/ext-shared" "@aiti-ai/aiti-bridge" "@aiti-ai/aiti-devtools-core" "@aiti-ai/content-share" "justget" "service-tunnels"; do
-            if npm view "$spec" version --registry https://registry.npmjs.org >/dev/null 2>&1; then
-              echo "ok: $spec"
-            else
-              echo "::error::$spec is not on the npm registry — run the 'NPM Publish' workflow first (step 1 of the release order: extensions + pi-plugins + packages)"
-              missing=1
-            fi
-          done
-          exit $missing
+          # The same union the build root installs, resolved against npmjs — catches
+          # missing packages AND unsatisfied version ranges (^0.3.0 vs published
+          # 0.2.0) here, in seconds, instead of minutes into the prepare/archive jobs.
+          # Only @aiti-ti/ddns is vendored (never on npmjs); everything else —
+          # including the secret-* cores — must resolve from the registry.
+          BUILD=/tmp/aiti-guard-root
+          mkdir -p "$BUILD"
+          node scripts/collect-extension-deps.mjs --out "$BUILD/package.json" \
+            --file "@aiti-ti/ddns=$PWD/vendor/npm/aiti-ti-ddns-0.2.0.tgz"
+          npm install --prefix "$BUILD" --dry-run --legacy-peer-deps --no-audit --no-fund --loglevel=error
   prepare:
     # 平台无关构建层：.next + 扩展 dist 只构建一次（产物是纯 JS，archive job 直接复用）。
     # 依赖策略（2026-11-13 vendor 层退役）：扩展共享依赖（@aiti-ai/ext-shared、aiti-bridge、
