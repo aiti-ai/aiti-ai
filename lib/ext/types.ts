@@ -493,6 +493,10 @@ export type ExtSlotName =
   | "newSessionSelectors" // Extension pickers between Workspace×Backend on the new-session welcome page (branch/worktree picker
                     //   etc.). extra carries data only { cwd, isMobile } (slot-extra data-only red line); all write operations
                     //   go uniformly through the newSessionPreparers send-time pipeline (branch/worktree plan §3)
+  | "newSessionWorkspacePicker" // Takeover of the welcome page's Workspace selector (session-manager shares the projects menu):
+                    //   once a renderable item registers, it replaces the native <select>; unregistered → native fallback.
+                    //   extra carries data only { cwd, selected, isMobile }; choosing a target goes through the
+                    //   "pi-web.newSession" client service (setTarget keeps the native "stage, switch on send" semantics)
   | "newSessionPreparers" // Pre-creation preparer pipeline for new sessions (registration surface, no rendering): items
                     //   meta.prepare({cwd}) => { cwd? } rewrites the target directory / { abort } aborts creation —
                     //   ensureNewSession awaits them in order before the POST; errors go through the existing throw→notice
@@ -740,6 +744,17 @@ export interface NewSessionSelectorSlotProps {
   isMobile: boolean;
 }
 
+/** newSessionWorkspacePicker slot props (welcome page Workspace selector takeover).
+ *  extra carries data only: selecting a target goes through the "pi-web.newSession" client service (setTarget stages the
+ *  target exactly like the native <select>; setCwd moves a fresh composer immediately). */
+export interface NewSessionWorkspacePickerSlotProps {
+  /** New-session target cwd the host currently renders (newSessionWorkspace ?? newSessionCwd; null = undecided). */
+  cwd: string | null;
+  /** The workspace actually shown by the selector (the staged target, else the current cwd). */
+  selected: string | null;
+  isMobile: boolean;
+}
+
 /** noWorkspaceGuide slot props — extra carries data only (slot-extra red line): the placeholder state has no
  *  session data; actions go through host services (pi-web.newSession.setCwd etc.). Multiple items render stacked
  *  (the host centers them); with zero renderable items the built-in "Get Started" decoration stays. */
@@ -832,6 +847,8 @@ export interface ExtSlotContractMap {
   sessionRequestCard: { props: SessionRequestCardSlotProps };
   /** Extension picker row on the new-session welcome page (session-manager branch/worktree picker). */
   newSessionSelectors: { props: NewSessionSelectorSlotProps };
+  /** Welcome page Workspace selector takeover (session-manager's projects menu); native <select> when unregistered. */
+  newSessionWorkspacePicker: { props: NewSessionWorkspacePickerSlotProps };
   /** Top/bottom widget area of the new-session welcome page (built-in recent sessions / extension widgets; mobile-desktop widget semantics). */
   noWorkspaceGuide: { props: NoWorkspaceGuideSlotProps };
   newSessionWidgets: { props: NewSessionWidgetSlotProps };
@@ -978,6 +995,9 @@ export interface ExtUiDefinition {
   settingsModels?: ExtUiItem[]; // Settings panel "Models" tab takeover items (springboard-rendered by the core SettingsPanel; once registered, replaces the native ModelsConfig)
   /** Extension pickers between Workspace×Backend on the new-session welcome page (render-type; extra = NewSessionSelectorSlotProps). */
   newSessionSelectors?: ExtUiItem[];
+  /** Welcome page Workspace selector takeover (render-type; extra = NewSessionWorkspacePickerSlotProps).
+   *  Once a renderable item registers it replaces the native <select>; unregistered → native fallback. */
+  newSessionWorkspacePicker?: ExtUiItem[];
   /** Pre-creation preparer pipeline for new sessions (registration-type; meta.prepare({cwd}) => NewSessionPrepareResult). */
   newSessionPreparers?: ExtUiItem[];
   /** Top/bottom widget area of the new-session welcome page (render-type; meta = NewSessionWidgetMeta declares areas/size). */

@@ -3245,7 +3245,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   //    sidebar's startNewSessionIn (draft parking/restore + composer remount), without depending on
   //    sidebarControlRef (null while an extension takes over sidebarContent). Getter delegates to the
   //    latest closure (same ref pattern as hostUiRef); registers once on mount; absent on older hosts.
-  const newSessionSvcRef = useRef({ setCwd: (_path: string) => {} });
+  const newSessionSvcRef = useRef({ setCwd: (_path: string) => {}, setTarget: (_path: string | null) => {} });
   newSessionSvcRef.current.setCwd = (path: string) => {
     if (typeof path !== "string" || !path) return;
     const tempId = typeof crypto.randomUUID === "function"
@@ -3253,9 +3253,16 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
       : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
     handleNewSession(tempId, path, null, { carryComposer: true });
   };
+  // Staging (the welcome page selector's semantics): record the target only; the app workspace
+  // switches when the session is created (handleSessionCreated). The same path the native <select>
+  // takes (handleNewSessionWorkspaceChange), so an extension takeover keeps its behavior.
+  newSessionSvcRef.current.setTarget = (path: string | null) => {
+    handleNewSessionWorkspaceChange(typeof path === "string" && path ? path : null);
+  };
   useEffect(() => {
     return registerExtClientService("pi-web", "pi-web.newSession", {
       get setCwd() { return newSessionSvcRef.current.setCwd; },
+      get setTarget() { return newSessionSvcRef.current.setTarget; },
     });
   }, []);
   const handleOpenFolderForNewSession = useCallback((opener: HTMLElement | null) => {
