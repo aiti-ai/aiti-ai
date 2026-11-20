@@ -339,6 +339,40 @@ export const STYLES = `
   cursor: pointer; font-family: inherit; font-size: 11px; font-weight: 600;
 }
 
+/* ===== Model combo editor ===== */
+/* Sticky action bar: back / current combo / health status / Save always visible (previously Save lived at the bottom of a long form) */
+.amw-combo-toolbar {
+  position: sticky; top: -12px; z-index: 5;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: -12px -14px 8px; padding: 10px 14px;
+  background: var(--bg, #fff);
+  border-bottom: 1px solid var(--border, #e0e0e0);
+}
+.amw-combo-toolbar-title {
+  min-width: 0; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text, #1a1a1a); font-size: 13px; font-weight: 650;
+}
+/* Editor cards are not clickable: drop the list-card pointer/hover affordance */
+.amw-combo-editor .amw-card { cursor: default; }
+.amw-combo-editor .amw-card:not(.is-on):hover { border-color: var(--border, #e0e0e0); box-shadow: none; }
+/* List cards are not clickable as a whole (actions live on buttons); cursor should not imply otherwise */
+.amw-combo-listcard { cursor: default; }
+.amw-combo-namegrid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, 240px); gap: 10px; }
+.amw-combo-member { transition: opacity 0.12s ease; }
+/* Difference warning block: grouped footer instead of scattered colored lines */
+.amw-combo-warn {
+  margin-top: 6px; padding: 6px 9px; border-radius: 6px;
+  background: color-mix(in srgb, var(--warn, #f59e0b) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn, #f59e0b) 30%, transparent);
+}
+.amw-combo-confirm {
+  display: inline-flex; align-items: center; gap: 5px; margin-top: 5px;
+  font-size: 11px; font-weight: 600; color: #b45309; cursor: pointer;
+}
+.amw-combo-confirm > input { accent-color: var(--warn, #f59e0b); cursor: pointer; }
+.amw-combo-confirm.is-done { cursor: default; color: var(--text-subtle, #6b7280); font-weight: 400; }
+.amw-combo-confirm.is-done > input { cursor: default; opacity: 0.6; }
+
 /* ===== 小工具 ===== */
 .amw-hint { color: var(--text-muted, #5f6b7a); font-size: 10.5px; }
 .amw-hint-lg { color: var(--text-muted, #5f6b7a); font-size: 13px; line-height: 1.5; }
@@ -375,6 +409,10 @@ export const STYLES = `
     border-radius: 0; border: none;
   }
   .amw-st-dlg-head { padding-top: max(11px, env(safe-area-inset-top, 0px)); }
+  /* Combo editor: toolbar bleeds to the narrow viewport padding; name/id grid collapses to one column */
+  .amw-combo-toolbar { top: -10px; margin: -10px -10px 8px; padding: 9px 10px; }
+  .amw-combo-toolbar-title { max-width: 100%; }
+  .amw-combo-namegrid { grid-template-columns: 1fr; }
 }
 /* 无 container query 支持的老浏览器兜底：极窄视口同样藏标签 */
 @media (max-width: 430px) {
