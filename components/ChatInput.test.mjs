@@ -1240,16 +1240,21 @@ test("the live model selector can reapply its current model without changing dra
     [false, false, true, "change"],
   ]) {
     const calls = [];
+    const focusCalls = [];
     const choose = script.runInNewContext({
       value: active ? option : null, isAutoSelection: automatic,
       setOpen: (value) => calls.push(["open", value]),
       setFilter: (value) => calls.push(["filter", value]),
       refreshing: false, rememberRecentModel: () => {}, // fork: refresh guard + recents write
+      // Closing hands focus back (enter/click pick must not drop it on <body>) — see
+      // restoreFocusAfterClose in ModelSelector.tsx
+      restoreFocusAfterClose: () => focusCalls.push("restore"),
       onChange: (provider, id) => calls.push(["change", provider, id]),
       onReselect: live ? (provider, id) => calls.push(["reselect", provider, id]) : undefined,
     });
     choose(option);
     assert.deepEqual(calls, [["open", false], ["filter", ""], ...(expected ? [[expected, option.provider, option.modelId]] : [])]);
+    assert.deepEqual(focusCalls, ["restore"]); // picking a model always hands focus back
   }
   assert.match(readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8"), /onReselect=\{onModelChange\}/);
 })
