@@ -50,6 +50,27 @@ npm view @aiti-ai/pi-web@<version> version --registry https://registry.npmjs.org
 git ls-remote --tags origin v<version>                                            # expect empty
 ```
 
+### First-party pi plugin pins
+
+`pi-plugins.manifest.json` pins the exact npm versions that a fresh install provisions into
+`~/.pi/agent` (`@aiti-ai/pi-models-combo`, `pi-secret-mask`, `pi-git-trace`, `pi-web-bridge`).
+The pins are not derived from `package.json` — CI bumps plugin versions during publish without
+committing the bump back, so calibrate them before every release:
+
+```bash
+node scripts/check-pi-plugin-pins.mjs            # report: pin / registry latest / local version
+node scripts/check-pi-plugin-pins.mjs --write    # follow the newest installable version
+node scripts/check-pi-plugin-pins.mjs --strict   # release gate (fails on drift too)
+```
+
+It also packs each plugin with `npm pack --dry-run` and fails when a relative import inside the
+package points at a file the tarball does not ship — that class of gap (a `files` field that drops
+`lib/`) loads fine locally and degrades silently for npm users.
+
+Ordering rule: publish the plugin first, raise its pin afterwards. A pin pointing at an
+unpublished version makes every fresh install fail with `ETARGET`, and the provisioner writes the
+declaration before it installs, so the failure survives restarts.
+
 ## 2. Bump, Commit and Tag
 
 Patch release:
