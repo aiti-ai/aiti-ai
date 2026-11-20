@@ -15,6 +15,8 @@
  *   - Read-only: no config/state writes at all (ctx.configDir untouched).
  */
 import os from "node:os";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 const core = require("./core.cjs");
 
@@ -38,7 +40,44 @@ function loadSi(): any {
 const osCache = new core.TTLCache(600_000);
 const diskCache = new core.TTLCache(30_000);
 const tempCache = new core.TTLCache(5_000);
+const hwmonCache = new core.TTLCache(5_000);
 let tempMissStreak = 0;
+
+interface HwmonSensor { chip: string; label: string; temp: number }
+
+/** Generic sensors scan (lm-sensors style): read /sys/class/hwmon/hwmonN/name plus
+ *  tempN_input (+ optional tempN_label). Kernel-side sysfs — no userspace tools required. Returns
+ *  [] on non-Linux platforms; millidegree values filtered to a sane (0, 150)°C range;
+ *  capped at 16 entries. 5s TTL cache (same cadence as the CPU temperature read). */
+function readHwmonSensors(): HwmonSensor[] {
+  const cached = hwmonCache.get("hwmon");
+  if (cached !== undefined) return cached as HwmonSensor[];
+  const out: HwmonSensor[] = [];
+  if (process.platform === "linux") {
+    try {
+      const base = "/sys/class/hwmon";
+      for (const dir of readdirSync(base).sort()) {
+        const d = join(base, dir);
+        let chip = "";
+        try { chip = readFileSync(join(d, "name"), "utf8").trim(); } catch { continue; }
+        if (!chip) continue;
+        for (const f of readdirSync(d)) {
+          const m = /^temp(\d+)_input$/.exec(f);
+          if (!m) continue;
+          let label = `temp${m[1]}`;
+          try { label = readFileSync(join(d, `temp${m[1]}_label`), "utf8").trim() || label; } catch { /* unlabeled */ }
+          const raw = Number(readFileSync(join(d, f), "utf8").trim()) / 1000;
+          if (Number.isFinite(raw) && raw > 0 && raw < 150) {
+            out.push({ chip, label, temp: Math.round(raw * 10) / 10 });
+          }
+        }
+      }
+    } catch { /* hwmon unavailable */ }
+  }
+  if (out.length > 16) out.length = 16;
+  hwmonCache.set("hwmon", out);
+  return out;
+}
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
@@ -96,6 +135,16 @@ async function buildSnapshot() {
   }
   out.cpu.temp = temp == null ? null : temp;
   if (temp == null) out.tempHint = true;
+
+  // Sensors — full chip list (lm-sensors style). When the platform-specific CPU
+  // temperature is unavailable but a known CPU sensor exists in the list, derive
+  // cpu.temp from it (k10temp / zenpower / coretemp / cpu_thermal).
+  const sensors = readHwmonSensors();
+  out.sensors = sensors;
+  if (out.cpu.temp == null && sensors.length) {
+    const cpuSensor = sensors.find((s: HwmonSensor) => /k10temp|zenpower|coretemp|cpu_thermal/i.test(s.chip));
+    if (cpuSensor) out.cpu.temp = cpuSensor.temp;
+  }
 
   // Memory.
   try {
@@ -169,7 +218,15 @@ export default {
         "暂停": "暂停",
         "恢复": "恢复",
         "刷新": "刷新",
+        "已运行": "已运行",
+        "负载": "负载",
+        "每核占用": "每核占用",
+        "核": "核",
+        "温度": "温度",
         "温度不可用": "温度不可用",
+        "已暂停": "已暂停",
+        "快照错误": "快照错误",
+        "传感器": "传感器",
         "如何启用？": "如何启用？",
         "打开配置指南": "打开配置指南",
       },
@@ -179,7 +236,15 @@ export default {
         "暂停": "Pause",
         "恢复": "Resume",
         "刷新": "Refresh",
+        "已运行": "up",
+        "负载": "load",
+        "每核占用": "per-core load",
+        "核": "cores",
+        "温度": "TEMP",
         "温度不可用": "Temp N/A",
+        "已暂停": "paused",
+        "快照错误": "snapshot error",
+        "传感器": "Sensors",
         "如何启用？": "How to enable?",
         "打开配置指南": "Open setup guide",
       },
