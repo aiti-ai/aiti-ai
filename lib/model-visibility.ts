@@ -109,6 +109,35 @@ export function comboModelEntries(
 }
 
 /**
+ * Merge combo virtual models into a selector list that may already carry them.
+ *
+ * Once a session has run the combo engine, its registration lands in the process-wide
+ * deferred-provider catalog and `/api/models` starts seeing the combo models through the
+ * runtime too; blindly appending `comboModelEntries()` would then list the same model twice.
+ * Keep one entry per `provider:model`, preferring models.json metadata (display name, input,
+ * cost hint) which the catalog copy does not always have.
+ */
+export function mergeComboModels(
+  selectorModels: readonly AnnotatedModelEntry[],
+  comboModels: readonly AnnotatedModelEntry[],
+): AnnotatedModelEntry[] {
+  const comboByKey = new Map(comboModels.map((m) => [`${m.provider}:${m.id}`, m]));
+  const merged: AnnotatedModelEntry[] = selectorModels.map((m) => {
+    const key = `${m.provider}:${m.id}`;
+    const combo = comboByKey.get(key);
+    if (!combo) return m;
+    comboByKey.delete(key);
+    return {
+      ...m,
+      providerName: combo.providerName || m.providerName,
+      input: combo.input ?? m.input,
+      hint: combo.hint ?? m.hint,
+    };
+  });
+  return [...merged, ...comboByKey.values()];
+}
+
+/**
  * Filter disabled models out of the given list and attach availability annotations
  * (avail + provider-wide rate-limit flag).
  * The returned modelList is compatible with ModelsData.modelList (including the optional

@@ -372,6 +372,15 @@ export const STYLES = `
 .amw-combo-confirm > input { accent-color: var(--warn, #f59e0b); cursor: pointer; }
 .amw-combo-confirm.is-done { cursor: default; color: var(--text-subtle, #6b7280); font-weight: 400; }
 .amw-combo-confirm.is-done > input { cursor: default; opacity: 0.6; }
+/* Numbered section heads: group -> virtual model -> members hierarchy made explicit */
+.amw-combo-sect { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin: 14px 2px 8px; }
+.amw-combo-sect-title { color: var(--text, #1a1a1a); font-size: 13px; font-weight: 700; }
+.amw-combo-sect-hint { flex: 1; min-width: 120px; color: var(--text-dim, #6b7280); font-size: 11px; line-height: 1.45; }
+.amw-combo-subhead { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin: 2px 0 5px; }
+.amw-combo-subhead > span:first-child { color: var(--text-muted, #5f6b7a); font-size: 11px; font-weight: 650; }
+.amw-combo-subhead-hint { flex: 1; min-width: 0; color: var(--text-dim, #6b7280); font-size: 11px; }
+.amw-combo-addmember { margin-top: 4px; font-size: 11.5px; }
+.amw-combo-picker { margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--border-subtle, #e5e7eb); }
 
 /* ===== 小工具 ===== */
 .amw-hint { color: var(--text-muted, #5f6b7a); font-size: 10.5px; }
