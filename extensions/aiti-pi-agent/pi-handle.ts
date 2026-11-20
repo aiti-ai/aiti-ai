@@ -548,7 +548,9 @@ export class PiSpawnHandle extends RpcChildHost {
       const ui = entries.filter((e) => {
         if (!e || typeof e !== "object") return false;
         if (e.type === "message") return (e.message as { role?: unknown } | undefined)?.role !== "system";
-        return e.type === "compaction" || e.type === "branch_summary" || e.type === "custom_message";
+        if (e.type === "compaction" || e.type === "custom_message") return true;
+        // branch_summary renders only when it carries a summary (entryToUiMessage parity)
+        return e.type === "branch_summary" && !!e.summary;
       });
       const hit = ui[Number(m[1])];
       if (hit && (hit.message as { role?: unknown } | undefined)?.role === "user") return String(hit.id);
