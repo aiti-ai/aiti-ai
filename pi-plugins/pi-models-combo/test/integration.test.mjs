@@ -1,6 +1,6 @@
 // 三包联调测试：aiti-model-wizard 写入多 key → aiti-model-check 读同一份 keys → 代理用这批 key 轮转。
 // 全部走临时目录，不碰真实 ~/.pi/agent/models.json。
-// 依赖：pi-web-ext 的两个 core.cjs（可用环境变量覆盖路径）。
+// 依赖：单源仓 extensions/ 下的两个 core.cjs（可用环境变量覆盖路径；旧镜像布局 pi-web-ext/ 已随 2026-11-18 单源迁移废止）。
 import { createRequire } from "module";
 import fs from "node:fs"; import path from "node:path"; import os from "node:os";
 import { fileURLToPath } from "node:url";
@@ -8,9 +8,9 @@ import { ProxyServer } from "../src/proxy.ts";
 import { freeP, Tester } from "./util.mjs";
 
 const require = createRequire(import.meta.url);
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".."); // demo-repo/
-const WIZ = process.env.AITI_WIZARD_CORE || path.join(root, "pi-web-ext", "aiti-model-wizard", "core.cjs");
-const CHK = process.env.AITI_CHECK_CORE || path.join(root, "pi-web-ext", "aiti-model-check", "core.cjs");
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", ".."); // 仓根（test 位于 pi-plugins/<pkg>/test/，上三级）
+const WIZ = process.env.AITI_WIZARD_CORE || path.join(root, "extensions", "aiti-model-wizard", "core.cjs");
+const CHK = process.env.AITI_CHECK_CORE || path.join(root, "extensions", "aiti-model-check", "core.cjs");
 
 let wz, mc;
 try { wz = require(WIZ); } catch (e) { console.error("找不到 aiti-model-wizard core：" + WIZ + "\n" + e.message); process.exit(1); }
