@@ -126,8 +126,8 @@ ${error?.stack || T.noStack}`;
 
   useEffect(() => {
     try {
-      document.body.style.background = "#1a1a1a";
-      document.body.style.color = "#e8e8e8";
+      document.body.style.background = "#1f1f1f";
+      document.body.style.color = "#cccccc";
       document.body.style.margin = "0";
       // Override globals.css's overflow:hidden on html/body (set for AppShell-managed scrolling) —
       // the global error page must allow full-page scrolling, otherwise on small screens content
@@ -261,7 +261,7 @@ ${error?.stack || T.noStack}`;
 
   return (
     <html lang={lang} style={{ overflowY: "auto", overflowX: "hidden", height: "auto" }}>
-      <body style={{ margin: 0, background: "#1a1a1a", color: "#e8e8e8", fontFamily: "system-ui, sans-serif", minHeight: "100vh" }}>
+      <body style={{ margin: 0, background: "#1f1f1f", color: "#cccccc", fontFamily: "system-ui, sans-serif", minHeight: "100vh" }}>
         {/* Force html/body to scroll as a full page (globals.css sets overflow:hidden on html,body
             for AppShell-managed scrolling; the global error page must be scrollable, otherwise on
             small screens the send button/input get clipped past the viewport). A style tag is CSS,
@@ -271,8 +271,8 @@ ${error?.stack || T.noStack}`;
         <div style={{ maxWidth: 640, width: "100%", boxSizing: "border-box", margin: "0 auto", padding: "32px 20px 64px" }}>
           <h1 style={{ margin: "0 0 8px", fontSize: 20 }}>{T.title}</h1>
           <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "0 0 8px", flexWrap: "wrap" }}>
-            <p style={{ margin: 0, fontSize: 13, color: "#9ca3af", flex: 1 }}>{T.intro}</p>
-            <button onClick={copyErr} style={{ padding: "4px 10px", fontSize: 12, background: "#333", color: "#e8e8e8", border: "1px solid #444", borderRadius: 6, cursor: "pointer", flexShrink: 0 }}>{copied ? T.copied : T.copyError}</button>
+            <p style={{ margin: 0, fontSize: 13, color: "#9d9d9d", flex: 1 }}>{T.intro}</p>
+            <button onClick={copyErr} style={{ padding: "4px 10px", fontSize: 12, background: "#2c2c2c", color: "#cccccc", border: "1px solid #383838", borderRadius: 6, cursor: "pointer", flexShrink: 0 }}>{copied ? T.copied : T.copyError}</button>
           </div>
           <pre style={{ ...pre, margin: "0 0 16px", padding: 10, background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.4)", borderRadius: 8, color: "#f59e0b", maxHeight: 160, overflow: "auto" }}>
             {error?.message || String(error || T.unknownError)}
@@ -281,7 +281,7 @@ ${error?.stack || T.noStack}`;
 
           <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12, maxHeight: "50vh", overflowY: "auto" }}>
             {log.map((m, i) => (
-              <pre key={i} style={{ ...pre, padding: "6px 8px", borderRadius: 6, borderLeft: `3px solid ${m.role === "u" ? "#444" : "#f59e0b"}`, background: m.role === "u" ? "rgba(255,255,255,0.03)" : "rgba(245,158,11,0.05)" }}>
+              <pre key={i} style={{ ...pre, padding: "6px 8px", borderRadius: 6, borderLeft: `3px solid ${m.role === "u" ? "#383838" : "#f59e0b"}`, background: m.role === "u" ? "rgba(255,255,255,0.03)" : "rgba(245,158,11,0.05)" }}>
                 {m.text}
               </pre>
             ))}
@@ -293,14 +293,14 @@ ${error?.stack || T.noStack}`;
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 12, color: "#9ca3af", flexShrink: 0 }}>{T.modelLabel}</span>
+            <span style={{ fontSize: 12, color: "#9d9d9d", flexShrink: 0 }}>{T.modelLabel}</span>
             {!modelsFailed ? (
               <>
-                <select value={mSel} onChange={(e) => setMSel(e.target.value)} style={{ flex: 1, minWidth: 150, padding: "5px 8px", fontSize: 12, background: "#242424", color: "#e8e8e8", border: "1px solid #444", borderRadius: 6, outline: "none" }}>
+                <select value={mSel} onChange={(e) => setMSel(e.target.value)} style={{ flex: 1, minWidth: 150, padding: "5px 8px", fontSize: 12, background: "#262626", color: "#cccccc", border: "1px solid #383838", borderRadius: 6, outline: "none" }}>
                   <option value="">{T.defaultModel}</option>
                   {mods.map((m) => <option key={m.provider + "|" + m.id} value={m.provider + "|" + m.id}>{m.name || m.id} ({m.provider})</option>)}
                 </select>
-                <button onClick={() => setMOpen((v) => !v)} style={{ padding: "4px 8px", fontSize: 11, background: "#333", color: "#e8e8e8", border: "1px solid #444", borderRadius: 6, cursor: "pointer", flexShrink: 0, whiteSpace: "nowrap" }}>{mOpen ? T.listMode : T.manualMode}</button>
+                <button onClick={() => setMOpen((v) => !v)} style={{ padding: "4px 8px", fontSize: 11, background: "#2c2c2c", color: "#cccccc", border: "1px solid #383838", borderRadius: 6, cursor: "pointer", flexShrink: 0, whiteSpace: "nowrap" }}>{mOpen ? T.listMode : T.manualMode}</button>
               </>
             ) : null}
             {(modelsFailed || mOpen) && (
@@ -308,11 +308,11 @@ ${error?.stack || T.noStack}`;
                 value={mManual}
                 onChange={(e) => setMManual(e.target.value)}
                 placeholder={T.modelPlaceholder}
-                style={{ flex: 1, minWidth: 150, padding: "5px 8px", fontSize: 12, background: "#242424", color: "#e8e8e8", border: "1px solid #444", borderRadius: 6, outline: "none" }}
+                style={{ flex: 1, minWidth: 150, padding: "5px 8px", fontSize: 12, background: "#262626", color: "#cccccc", border: "1px solid #383838", borderRadius: 6, outline: "none" }}
               />
             )}
             {/* session id display */}
-            <span style={{ fontSize: 11, color: "#666", marginLeft: 8, fontFamily: "monospace" }}>sid: {sid || T.sidNone}</span>
+            <span style={{ fontSize: 11, color: "#858585", marginLeft: 8, fontFamily: "monospace" }}>sid: {sid || T.sidNone}</span>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <input
@@ -320,12 +320,12 @@ ${error?.stack || T.noStack}`;
               onChange={(e) => setMsg(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
               placeholder={T.inputPlaceholder}
-              style={{ flex: 1, minWidth: 0, padding: "8px 10px", fontSize: 13, background: "#242424", color: "#e8e8e8", border: "1px solid #444", borderRadius: 6, outline: "none" }}
+              style={{ flex: 1, minWidth: 0, padding: "8px 10px", fontSize: 13, background: "#262626", color: "#cccccc", border: "1px solid #383838", borderRadius: 6, outline: "none" }}
             />
-            <button onClick={send} disabled={!msg.trim()} style={{ padding: "8px 16px", fontSize: 13, background: "#f59e0b", color: "#1a1a1a", border: "none", borderRadius: 6, cursor: "pointer", fontWeight: 600 }}>
+            <button onClick={send} disabled={!msg.trim()} style={{ padding: "8px 16px", fontSize: 13, background: "#f59e0b", color: "#1f1f1f", border: "none", borderRadius: 6, cursor: "pointer", fontWeight: 600 }}>
               {T.send}
             </button>
-            <button onClick={() => window.location.reload()} style={{ padding: "8px 16px", fontSize: 13, background: "#333", color: "#e8e8e8", border: "1px solid #444", borderRadius: 6, cursor: "pointer" }}>
+            <button onClick={() => window.location.reload()} style={{ padding: "8px 16px", fontSize: 13, background: "#2c2c2c", color: "#cccccc", border: "1px solid #383838", borderRadius: 6, cursor: "pointer" }}>
               {T.reloadPage}
             </button>
           </div>
