@@ -336,9 +336,11 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
 /** 模型聚合 · 成员选择器：搜索过滤已配置 provider×model，点击加入聚合组 */
 function MemberPicker({ pool, exclude, onPick }: { pool: any[]; exclude: string[]; onPick: (m: any) => void }) {
   const [q, setQ] = useState("");
-  // 多词 AND 匹配（如 "openrouter glm"、"glm free"），上限放宽到 200 并在截断时明示
+  // Multi-word AND match (e.g. "openrouter glm", "glm free"); cap at 200 while searching, and show
+  // only the first 24 when idle so the picker does not flood the editor (typing narrows it).
   const kws = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const MATCH_CAP = 200;
+  const COLLAPSED_CAP = 24;
   const all = pool.filter((m: any) => {
     if ((m.keyCount ?? 0) < 1) return false; // 无 key 成员必然被引擎拒绝，不展示
     if (exclude.includes(m.provider + "/" + m.model)) return false;
@@ -346,7 +348,8 @@ function MemberPicker({ pool, exclude, onPick }: { pool: any[]; exclude: string[
     const hay = (m.provider + "/" + m.model + " " + (m.name || "")).toLowerCase();
     return kws.every((k) => hay.includes(k));
   });
-  const cands = all.slice(0, MATCH_CAP);
+  const cap = kws.length ? MATCH_CAP : COLLAPSED_CAP;
+  const cands = all.slice(0, cap);
   // 防御：成员池来自 /combos（运行时 provider 合并产物），若同一 `provider/model` 出现两条
   // （如 models.json 与运行时快照都命中），候选 key 用 `${provider}/${model}` 会触发 React
   // "two children with the same key" 告警。先按 key 去重只保一条，零回归。
@@ -371,7 +374,7 @@ function MemberPicker({ pool, exclude, onPick }: { pool: any[]; exclude: string[
           </button>
         ))}
         {!cands.length ? <span style={{ fontSize: 11, color: "var(--text-subtle,#999)" }}>{pool.length ? ti("mw.a.58") : ti("mw.a.59")}</span>
-        : all.length > MATCH_CAP ? <span style={{ fontSize: 11, color: "var(--text-subtle,#999)" }}>{ti("mw.a.60") + all.length + ti("mw.a.61") + MATCH_CAP + ti("mw.a.62")}</span> : null}
+        : all.length > cap ? <span style={{ fontSize: 11, color: "var(--text-subtle,#999)" }}>{ti("mw.a.60") + all.length + ti("mw.a.61") + cap + ti("mw.a.62")}</span> : null}
       </div>
     </div>
   );
@@ -3732,6 +3735,21 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     return { block, warn, hint };
   };
 
+  // Warning-acknowledgement baseline (fix: editing an existing combo always kept Save disabled) --
+  // warnings present when the editor opens are recorded into ackWarn; as long as this edit keeps
+  // the enabled member set and warning categories unchanged, no re-confirmation is needed.
+  // New members or new warning kinds still require an explicit acknowledgement.
+  const comboWarnSig = (warns: string[]) => warns.slice().sort().join("\u0001");
+  const comboMemberSig = (vm: any) => (vm.members || [])
+    .filter((r: any) => r.enabled !== false)
+    .map((r: any) => r.provider + "/" + r.model).sort().join(",");
+  const comboNeedsConfirm = (vm: any) => {
+    const w = comboWarns(vm);
+    if (!w.warn.length) return false;
+    const ack = vm.ackWarn;
+    return !(ack && ack.sig === comboWarnSig(w.warn) && ack.members === comboMemberSig(vm));
+  };
+
   const renderCombos = () => {
     const ed = comboEditor;
     const pool = comboData?.members || [];
@@ -3740,11 +3758,21 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       setBusy(true);
       try {
         const d = srvFix(await (await api("/combo-save", { method: "POST", ...jsonBody({ provider: String(ed.provider || "").trim() || String(ed.displayName || "").trim(), displayName: ed.displayName, renameFrom: ed.renameFrom, models: ed.models }) })).json());
-        if (!d.ok) { setMsg("❌ " + (d.error || ti("mw.a.36"))); return; }
-        setComboEditor(null); setMsg(ti("mw.a.541") + d.provider + "（" + d.modelCount + ti("mw.a.542"));
+        if (!d.ok) {
+          // Mirror failures into the toast: the message banner sits at the top while Save is at the bottom
+          const m = "❌ " + (d.error || ti("mw.a.36"));
+          setMsg(m); setToast({ msg: m, ok: false }); setTimeout(() => setToast(null), 5000);
+          return;
+        }
+        setComboEditor(null);
+        const okMsg = ti("mw.a.541") + d.provider + "（" + d.modelCount + ti("mw.a.542");
+        setMsg(okMsg); setToast({ msg: okMsg, ok: true }); setTimeout(() => setToast(null), 4000);
         await loadCombos(); loadStatus();
         // 广播模型变更 → pi-web 刷新模型列表（新会话 dropdown 立即出现聚合模型）
         try { window.dispatchEvent(new CustomEvent("pi-web:models-changed")); } catch {}
+      } catch (err: any) {
+        const m = "❌ " + (err?.message || String(err));
+        setMsg(m); setToast({ msg: m, ok: false }); setTimeout(() => setToast(null), 5000);
       } finally { setBusy(false); }
     };
 
@@ -3757,24 +3785,59 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
       const nameBad = !effProvider;
       const dupId = new Set<string>(); let idDup = false; let idEmpty = false;
       for (const vm of ed.models) { const k = String(vm.id || "").trim(); if (!k) idEmpty = true; else if (dupId.has(k)) idDup = true; dupId.add(k); }
-      // 每个「含 🟡 警告」的虚拟模型都必须单独勾选确认（ed.confirmDiff 是无效字段——此前导致保存永远被禁）
-      const needConfirm = ed.models.some((vm: any) => { const w = comboWarns(vm); return w.warn.length > 0 && !vm.confirmDiff; });
-      const canSave = !nameBad && !idEmpty && !idDup && allBlock.length === 0 && !needConfirm;
+      // Only newly introduced 🟡 differences require confirmation (pre-existing ones are covered by ackWarn)
+      const needConfirm = ed.models.some((vm: any) => comboNeedsConfirm(vm));
+      // Explain why Save is disabled (previously a bare greyed-out button with no reason)
+      const saveBlockers: string[] = [];
+      if (nameBad) saveBlockers.push(ti("mw.tx.146"));
+      if (idEmpty) saveBlockers.push(ti("mw.tx.210"));
+      if (idDup) saveBlockers.push(ti("mw.tx.211"));
+      for (const b of allBlock) if (!saveBlockers.includes(b)) saveBlockers.push(b);
+      const canSave = saveBlockers.length === 0 && !needConfirm;
+      const saveBlockedReason = [...saveBlockers, ...(needConfirm ? [ti("mw.tx.206", { n: allWarn.length })] : [])].join(" · ");
       return (
-        <div>
-          <div style={{ marginBottom: 6 }}>
-            <button className="amw-btn" onClick={() => setComboEditor(null)}>{ti("mw.tx.143")}</button>
+        <div className="amw-combo-editor">
+          <div className="amw-combo-toolbar">
+            <button className="amw-btn" onClick={() => setComboEditor(null)}>‹ {ti("mw.tx.143")}</button>
+            <span className="amw-combo-toolbar-title">🧩 {String(ed.displayName || ed.provider || ti("mw.a.596"))}</span>
+            {effProvider ? <span className="amw-mono" style={{ fontSize: 10, color: "var(--text-subtle,#999)" }}>{effProvider}</span> : null}
+            <div style={{ flex: 1 }} />
+            {saveBlockers.length ? <span className="amw-chip is-err" title={saveBlockedReason}>⛔ {saveBlockers.length}</span>
+              : needConfirm ? <span className="amw-chip is-warn">{ti("mw.tx.206", { n: allWarn.length })}</span>
+              : <span className="amw-chip is-ok">✓ {ti("mw.tx.213")}</span>}
+            <button className="amw-btn is-primary" disabled={!canSave || busy} title={canSave ? undefined : saveBlockedReason} onClick={doSaveCombo}>
+              {busy ? ti("mw.tx.214") : ti("mw.tx.155")}
+            </button>
           </div>
           <div className="amw-hint-lg" style={{ marginBottom: 8 }}>{ti("mw.tx.144")}</div>
-          <div className="amw-card" style={{ padding: "10px 12px", marginBottom: 10 }}>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <span style={{ fontSize: 12, fontWeight: 650, whiteSpace: "nowrap" }}>{ti("mw.tx.145")}</span>
-              <input className="amw-input" style={{flex: "1 1 140px", minWidth: 120}} value={ed.displayName} placeholder={ti("mw.a.543")}
-                onChange={(e) => setComboEditor({ ...ed, displayName: e.target.value })} />
-              <span style={{ fontSize: 12, fontWeight: 650, whiteSpace: "nowrap" }}>provider id</span>
-              <input className="amw-input" style={{width: 160, minWidth: 120, fontFamily: "ui-monospace,monospace"}} value={ed.provider} placeholder={ti("mw.a.544")}
-                onChange={(e) => setComboEditor({ ...ed, provider: e.target.value })} />
+          {saveBlockers.length ? (
+            <div className="amw-note is-err" style={{ marginBottom: 8 }}>
+              <div style={{ fontWeight: 600, marginBottom: 2 }}>{ti("mw.tx.212")}</div>
+              {saveBlockers.map((b, j) => <div key={j}>· {b}</div>)}
             </div>
+          ) : needConfirm ? (
+            <div className="amw-note is-warn" style={{ marginBottom: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ flex: 1 }}>{ti("mw.tx.206", { n: allWarn.length })}</span>
+              <button className="amw-btn" style={{ padding: "2px 9px", fontSize: 11 }}
+                onClick={() => setComboEditor({ ...ed, models: ed.models.map((vm: any) => ({ ...vm, ackWarn: { sig: comboWarnSig(comboWarns(vm).warn), members: comboMemberSig(vm) } })) })}>
+                {ti("mw.tx.215")}
+              </button>
+            </div>
+          ) : null}
+          <div className="amw-card" style={{ padding: "10px 12px", marginBottom: 10 }}>
+            <div className="amw-combo-namegrid">
+              <label className="amw-field">
+                <span className="amw-field-label">{ti("mw.tx.145")}</span>
+                <input className="amw-input" value={ed.displayName} placeholder={ti("mw.a.543")}
+                  onChange={(e) => setComboEditor({ ...ed, displayName: e.target.value })} />
+              </label>
+              <label className="amw-field">
+                <span className="amw-field-label">provider id</span>
+                <input className="amw-input" style={{ fontFamily: "ui-monospace,monospace" }} value={ed.provider} placeholder={ti("mw.a.544")}
+                  onChange={(e) => setComboEditor({ ...ed, provider: e.target.value })} />
+              </label>
+            </div>
+            <div style={{ fontSize: 11, color: "var(--text-subtle,#888)", marginTop: 6 }}>{ti("mw.a.627")}</div>
             {nameBad ? <div style={{ fontSize: 11, color: "#dc2626", marginTop: 4 }}>{ti("mw.tx.146")}</div> : null}
           </div>
           {ed.models.map((vm: any, i: number) => {
@@ -3788,7 +3851,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
               <div key={i} className="amw-card" style={{ padding: "10px 12px", marginBottom: 10 }}>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
                   <span style={{ fontSize: 12, fontWeight: 650, whiteSpace: "nowrap" }}>{ti("mw.tx.147")}</span>
-                  <input className="amw-input" style={{width: small ? 130 : 200, minWidth: 110, fontFamily: "ui-monospace,monospace"}} value={vm.id} placeholder={ti("mw.a.545")}
+                  <input className="amw-input" style={{width: small ? "auto" : 200, flex: small ? "1 1 140px" : undefined, minWidth: 110, fontFamily: "ui-monospace,monospace"}} value={vm.id} placeholder={ti("mw.a.545")}
                     onChange={(e) => setVm(i, { id: e.target.value })} />
                   {String(vm.id || "").trim() && (String(ed.provider || "").trim() || String(ed.displayName || "").trim()) ? (
                     <span style={{ fontSize: 11, color: "var(--text-subtle,#888)" }}>
@@ -3835,7 +3898,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                     const noVision = someVision && !(meta && (meta.input || []).includes("image")); // 组内有 vision 而它没有
                     const abnormal = isCtxMin || isOutMin || noVision;
                     return (
-                    <div key={mi} title={!rEn ? ti("mw.a.554") : abnormal
+                    <div key={mi} className="amw-combo-member" title={!rEn ? ti("mw.a.554") : abnormal
                       ? (isCtxMin ? ti("mw.a.555") + fmtK(cw) + ti("mw.a.556") : "")
                         + (isOutMin ? ti("mw.a.557") + fmtK(ot) : "")
                         + (noVision ? ti("mw.a.558") : "")
@@ -3889,7 +3952,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                         </>;
                       })()}
                       {!(Array.isArray(r.types) && r.types.length > 0)
-                        ? <span style={{ fontSize: 10, color: "var(--text-subtle,#999)", whiteSpace: "nowrap", flexShrink: 0 }} title={ti("mw.a.569")}>{ti("mw.tx.152")}</span>
+                        ? <span className="amw-chip is-ok" style={{ flexShrink: 0 }} title={ti("mw.a.569")}>{ti("mw.tx.152")}</span>
                         : null}
                       <button className="amw-btn" style={{ padding: "2px 7px", flexShrink: 0, ...(rEn ? { color: "#d97706", borderColor: "var(--warn, #f59e0b)" } : { color: "#16a34a", borderColor: "var(--ok, #22c55e)" }) }}
                         title={rEn ? ti("mw.a.570") : ti("mw.a.571")}
@@ -3910,12 +3973,19 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                 {/* 警告分级 */}
                 {w.block.map((t: string, j: number) => <div key={j} style={{ fontSize: 11, color: "#dc2626", marginTop: 4 }}>🔴 {t}</div>)}
                 {w.warn.length ? (
-                  <div style={{ marginTop: 6 }}>
-                    {w.warn.map((t: string, j: number) => <div key={j} style={{ fontSize: 11, color: "#d97706" }}>🟡 {t}</div>)}
-                    <label style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 4, fontSize: 11, cursor: "pointer", color: "#d97706", fontWeight: 600 }}>
-                      <input type="checkbox" checked={!!vm.confirmDiff} onChange={(e) => setVm(i, { confirmDiff: e.target.checked })} />
-                      {ti("mw.tx.205")}
-                    </label>
+                  <div className="amw-combo-warn">
+                    {w.warn.map((t: string, j: number) => <div key={j} style={{ fontSize: 11, color: "#b45309" }}>🟡 {t}</div>)}
+                    {comboNeedsConfirm(vm) ? (
+                      <label className="amw-combo-confirm">
+                        <input type="checkbox" checked={false} onChange={() => setVm(i, { ackWarn: { sig: comboWarnSig(w.warn), members: comboMemberSig(vm) } })} />
+                        {ti("mw.tx.205")}
+                      </label>
+                    ) : (
+                      <label className="amw-combo-confirm is-done">
+                        <input type="checkbox" checked disabled />
+                        {ti("mw.a.626")}
+                      </label>
+                    )}
                   </div>
                 ) : null}
                 {w.hint.map((t: string, j: number) => <div key={j} style={{ fontSize: 11, color: "var(--text-subtle,#888)", marginTop: 4 }}>🟢 {t}</div>)}
@@ -3923,10 +3993,13 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             );
           })}
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <button className="amw-btn" onClick={() => setComboEditor({ ...ed, models: [...ed.models, { id: "", members: [], confirmDiff: false }] })}>{ti("mw.tx.154")}</button>
+            <button className="amw-btn" onClick={() => setComboEditor({ ...ed, models: [...ed.models, { id: "", members: [] }] })}>{ti("mw.tx.154")}</button>
             <div style={{ flex: 1 }} />
-            {allWarn.length ? <span style={{ fontSize: 11, color: "#d97706" }}>{ti("mw.tx.206", { n: allWarn.length })}</span> : null}
-            <button className="amw-btn is-primary" style={{ opacity: canSave ? 1 : 0.45 }} disabled={!canSave || busy} onClick={doSaveCombo}>{ti("mw.tx.155")}</button>
+            {saveBlockers.length ? <span className="amw-chip is-err">{ti("mw.tx.212")}</span>
+              : needConfirm ? <span className="amw-chip is-warn">{ti("mw.tx.206", { n: allWarn.length })}</span> : null}
+            <button className="amw-btn is-primary" disabled={!canSave || busy} title={canSave ? undefined : saveBlockedReason} onClick={doSaveCombo}>
+              {busy ? ti("mw.tx.214") : ti("mw.tx.155")}
+            </button>
           </div>
         </div>
       );
@@ -3948,8 +4021,11 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           <div className="amw-hint-lg">{ti("mw.tx.157")}</div>
         </div>
         {!combos.length ? <div className="amw-note">{ti("mw.tx.158")}</div> : null}
-        {combos.map((cb: any) => (
-          <div key={cb.providerId} className="amw-card" style={{ marginBottom: 8, padding: "11px 12px" }}>
+        {combos.map((cb: any) => {
+          const allMembers = (cb.models || []).flatMap((m: any) => m.members || []);
+          const disabledCount = allMembers.filter((r: any) => r.enabled === false).length;
+          return (
+          <div key={cb.providerId} className="amw-card amw-combo-listcard" style={{ marginBottom: 8, padding: "11px 12px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ fontSize: 16 }}>🧩</span>
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -3960,12 +4036,18 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                 </div>
                 <div style={{ fontSize: 11, color: "var(--text-subtle,#888)", marginTop: 3 }}>
                   {cb.models.length + ti("mw.a.576") + (cb.api || "?")}
+                  {allMembers.length ? <span> · {allMembers.length}{ti("mw.a.628")}</span> : null}
+                  {disabledCount ? <span style={{ color: "#b45309" }}> · {disabledCount}{ti("mw.a.629")}</span> : null}
                 </div>
               </div>
-              <button className="amw-btn" onClick={() => setComboEditor({
-                provider: cb.providerId, displayName: cb.name, renameFrom: cb.providerId,
-                models: cb.models.map((m: any) => ({ id: m.id, stickyTtlMin: m.stickyTtlMin ?? undefined, ...(m.enabled === false ? { enabled: false } : {}), members: (m.members || []).map((r: any) => ({ provider: r.provider, model: r.model, weight: r.weight, ...(Array.isArray(r.types) && r.types.length > 0 ? { types: r.types } : {}), ...(r.enabled === false ? { enabled: false } : {}) })) })),
-              })}>{ti("mw.tx.17")}</button>
+              <button className="amw-btn" onClick={() => {
+                const models = cb.models.map((m: any) => {
+                  const vm: any = { id: m.id, stickyTtlMin: m.stickyTtlMin ?? undefined, ...(m.enabled === false ? { enabled: false } : {}), members: (m.members || []).map((r: any) => ({ provider: r.provider, model: r.model, weight: r.weight, ...(Array.isArray(r.types) && r.types.length > 0 ? { types: r.types } : {}), ...(r.enabled === false ? { enabled: false } : {}) })) };
+                  // Baseline pre-existing differences as acknowledged; otherwise the editor opens with Save already blocked
+                  return { ...vm, ackWarn: { sig: comboWarnSig(comboWarns(vm).warn), members: comboMemberSig(vm) } };
+                });
+                setComboEditor({ provider: cb.providerId, displayName: cb.name, renameFrom: cb.providerId, models });
+              }}>✎ {ti("mw.tx.17")}</button>
               <button className="amw-btn" style={{ padding: "3px 8px", ...(cb.enabled === false ? { color: "#16a34a", borderColor: "var(--ok, #22c55e)" } : { color: "#d97706", borderColor: "var(--warn, #f59e0b)" }) }}
                 title={cb.enabled === false ? ti("mw.a.577") : ti("mw.a.578")}
                 onClick={() => doToggleProvider(cb.providerId, cb.enabled === false)}>
@@ -3989,7 +4071,8 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
               </div>
             ))}
           </div>
-        ))}
+          );
+        })}
         {sStatusOpen && <MultiKeyStatusDialog onClose={() => setSStatusOpen(false)} />}
       </div>
     );
