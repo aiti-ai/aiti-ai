@@ -50,6 +50,19 @@ export interface ExtUiItemRegistered {
     title?: string;
     badge?: boolean;
     noMenuLabel?: boolean;
+    /**
+     * Parent-tooltip contributor (inline slots): the host renders a container
+     * (e.g. the session-info stats button) whose own tooltip describes host data
+     * only. An inline item whose values belong to that same summary declares this
+     * callback and the host appends its result on hover — so `CPU 8% · MEM 87%`
+     * shows next to the token/cost/context lines instead of only in the chip's
+     * own title.
+     *
+     * Contract: return ONE line of plain text (the host owns line breaks), or
+     * null/undefined when there is nothing to add. Called on hover, so the
+     * implementation may read live state without re-registering.
+     */
+    tooltip?: () => string | null | undefined;
     /** Dual-mount slot placement (assistantMessageActions renders both at the
      *  top meta row and the message's bottom-left): "top" mounts the item in
      *  the meta row, "bottom" under the content, "both" mounts the same item
