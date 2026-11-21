@@ -131,6 +131,10 @@ export function useEnabledModels(cwd?: string | null): EnabledModelsController {
           return;
         }
         setView(data);
+        // Scope writes change the picker's model list and thinking pins: broadcast so
+        // AppShell clears the client model cache and refetches /api/models right away
+        // (previously the picker only caught up when the settings panel closed).
+        try { window.dispatchEvent(new CustomEvent("pi-web:models-changed")); } catch {}
       } catch (error) {
         setFailure({ message: error instanceof Error ? error.message : String(error) });
       } finally {

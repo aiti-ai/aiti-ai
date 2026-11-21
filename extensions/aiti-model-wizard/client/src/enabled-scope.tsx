@@ -112,6 +112,10 @@ export function EnabledScopeBlock({ providerId, cwd }: { providerId: string; cwd
           return;
         }
         setView(d);
+        // Scope writes change the picker list/pins — broadcast so the host clears the
+        // client model cache and refetches /api/models immediately (otherwise the
+        // picker kept showing the pre-toggle list until a manual reload).
+        try { window.dispatchEvent(new CustomEvent("pi-web:models-changed")); } catch {}
       } catch (e: any) {
         if (!deadRef.current) setFailure(String(e && e.message || e));
       } finally {
