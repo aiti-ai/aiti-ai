@@ -23,7 +23,8 @@ export function createGitOpsApi({ apiUrl = (p) => p, fetchImpl = (...a) => fetch
   };
   return {
     refs: (cwd) => call("/refs", { cwd }),
-    log: (cwd, cursor) => call("/log", { cwd, cursor: cursor || 0 }),
+    log: (cwd, cursor, opts) => call("/log", { cwd, cursor: cursor || 0, ...(opts && typeof opts === "object" ? opts : {}) }),
+    tags: (cwd) => call("/tags", { cwd }),
     checkout: (cwd, ref, mode) => call("/checkout", { cwd, ref, mode }),
     branchCreate: (cwd, name, from, checkout = true) => call("/branch-create", { cwd, name, from, checkout }),
     branchDelete: (cwd, name) => call("/branch-delete", { cwd, name }),

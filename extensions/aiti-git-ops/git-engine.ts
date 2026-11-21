@@ -295,18 +295,22 @@ export async function stashFiles(cwd: string, index: number): Promise<{ tracked:
 /**
  * 图谱分页。注意：`git log --graph` 与 `--skip` 不兼容（静默返回空，实测 git 2.48），
  * 改为 --max-count=(skip+count+1) 后本地切片；是否还有下一页用 rev-list --count 判断。
+ * ref (optional, graph-view branch filter): defaults to HEAD; --decorate=short always on so the client can draw ref badges.
  */
-export async function gitLog(cwd: string, cursor: number, count = 50): Promise<{ lines: string[]; nextCursor: number | null }> {
+export async function gitLog(cwd: string, cursor: number, count = 50, ref?: string): Promise<{ lines: string[]; nextCursor: number | null }> {
   const repo = await repoRoot(cwd);
+  const wanted = typeof ref === "string" ? ref.trim() : "";
+  const rev = wanted && wanted !== "HEAD" ? wanted : "HEAD";
+  if (rev !== "HEAD") assertSafeRef(rev, "ref");
   const skip = Number.isInteger(cursor) && cursor > 0 ? cursor : 0;
-  const out = await run(repo, ["log", "--graph", "--oneline", "--date-order", `--max-count=${skip + count + 1}`], 60_000);
+  const out = await run(repo, ["log", "--graph", "--oneline", "--date-order", "--decorate=short", `--max-count=${skip + count + 1}`, rev], 60_000);
   const all = out.split("\n");
   if (all[all.length - 1] === "") all.pop();
   const lines = all.slice(skip, skip + count);
   let nextCursor: number | null = null;
   if (lines.length === count) {
     try {
-      const total = Number((await run(repo, ["rev-list", "--count", "HEAD"], 30_000)).trim());
+      const total = Number((await run(repo, ["rev-list", "--count", rev], 30_000)).trim());
       if (skip + count < total) nextCursor = skip + count;
     } catch { /* 空仓库 */ }
   }
