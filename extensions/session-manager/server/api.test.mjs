@@ -534,7 +534,9 @@ test("archive/run digests an already-archived ghost id idempotently: idle wrappe
     assert.ok(!existsSync(sGhost), "archived: source file gone");
     assert.equal(runtime(cfgOf(dir)).index.getSession("ghost-id").archived, 1);
     // ghost loop: the old URL spins the wrapper back up as a same-id empty in-memory session;
-    // archiving it again must succeed idempotently instead of reporting "open/running (or unindexed)"
+    // archiving it again must succeed idempotently instead of reporting "open/running (or unindexed)".
+    // The UI posts composite ids ("pi:<uuid>") — guard matching must normalize, replies must
+    // keep the caller's spelling for optimistic rollback to match row ids.
     let stopped = [];
     let aliveIds = ["ghost-id"];
     const core1 = {
@@ -543,12 +545,12 @@ test("archive/run digests an already-archived ghost id idempotently: idle wrappe
       async getAliveSessionIds() { return [...aliveIds]; },
       async stopAliveSession(id) { stopped.push(id); aliveIds = aliveIds.filter((x) => x !== id); return "stopped"; },
     };
-    const res = await api(req("http://x/", "POST", { ids: ["ghost-id"] }), { configDir: cfgOf(dir), path: ["archive", "run"], searchParams: new URLSearchParams(), core: core1 });
+    const res = await api(req("http://x/", "POST", { ids: ["pi:ghost-id"] }), { configDir: cfgOf(dir), path: ["archive", "run"], searchParams: new URLSearchParams(), core: core1 });
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.deepEqual(body.skippedIds, []);
-    assert.deepEqual(body.alreadyArchived, ["ghost-id"]);
-    assert.deepEqual(stopped, ["ghost-id"], "idle ghost handle released");
+    assert.deepEqual(body.alreadyArchived, ["pi:ghost-id"], "composite spelling preserved for client rollback");
+    assert.deepEqual(stopped, ["ghost-id"], "idle ghost handle released (bare id matched against registry)");
     assert.equal(body.archived, 0);
   } finally {
     await rmRf(dir, { closeSessionIndex: true, sessionIndexConfigDir: cfgOf(dir) });
@@ -577,10 +579,10 @@ test("archive/run keeps a running ghost (same-id live wrapper over an archived i
       async getAliveSessionIds() { return ["busy-id"]; },
       async stopAliveSession(id) { stopped.push(id); return "running"; },
     };
-    const res = await api(req("http://x/", "POST", { ids: ["busy-id"] }), { configDir: cfgOf(dir), path: ["archive", "run"], searchParams: new URLSearchParams(), core: core1 });
+    const res = await api(req("http://x/", "POST", { ids: ["pi:busy-id"] }), { configDir: cfgOf(dir), path: ["archive", "run"], searchParams: new URLSearchParams(), core: core1 });
     const body = await res.json();
     assert.deepEqual(stopped, [], "running ghost never touched");
-    assert.deepEqual(body.skippedIds, ["busy-id"]);
+    assert.deepEqual(body.skippedIds, ["pi:busy-id"], "skip replies in the caller's spelling");
     assert.equal(body.alreadyArchived, undefined);
   } finally {
     await rmRf(dir, { closeSessionIndex: true, sessionIndexConfigDir: cfgOf(dir) });
