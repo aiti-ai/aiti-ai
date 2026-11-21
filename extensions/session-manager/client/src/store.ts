@@ -1695,6 +1695,12 @@ export const panelOpen = makeFlag();
 panelOpen.onOpen = function () { presentDock("session-manager:panel", "open"); };
 panelOpen.onClose = function () { presentDock("session-manager:panel", "close"); };
 
+/** Dock/float itemKeys — declared up front because the yield helpers below reference them and
+ *  module-level functions must not read a `const` that is still in its TDZ at call time. */
+export const SM_PANEL_KEY = "session-manager:panel";
+export const ARCHIVED_VIEWER_KEY = "session-manager:archived-viewer";
+export const EXT_VIEWER_KEY = "session-manager:ext-viewer";
+
 /** aiti-float global handle (absent when the extension is not installed/ready → optional chain at call sites) */
 function floatApi(): any {
   try { return (window as any).__piweFloat; } catch { return undefined; }
@@ -1757,7 +1763,7 @@ function floatingPanelCoversMainArea(el: HTMLElement | null): boolean {
  *  main area (otherwise the user cannot see what just opened). Docked / closed / normal-size
  *  floats stay open so consecutive picks keep working. */
 export function collapsePanelIfCovering() {
-  const key = "session-manager:panel";
+  const key = SM_PANEL_KEY;
   if (presentState(key) !== "floating") return;
   let covering = floatingPanelCoversMainArea(findFloatPanel(key));
   if (!covering) {
@@ -1827,8 +1833,6 @@ export function savePendingMap(map: Record<string, string[]>) {
  * 归档/外部会话查看器的「看哪个会话」状态是跨 chunk 公共数据：kanban（lazy）行点击、
  * entry 的 sm:open-archived 事件通道都要 openViewer，不依赖面板 chunk 是否已加载。
  * 查看器 UI 本体仍在 sessions-panel（懒 chunk），经本状态 + dock 状态机门控渲染。 */
-export const SM_PANEL_KEY = "session-manager:panel";
-export const ARCHIVED_VIEWER_KEY = "session-manager:archived-viewer";
 const viewerState = { sessionId: null as string | null, subs: new Set<() => void>() };
 export function openViewer(id: string) {
   viewerState.sessionId = id;
@@ -1851,7 +1855,6 @@ export function subscribeViewerSession(fn: () => void): () => void {
   return () => { viewerState.subs.delete(fn); };
 }
 
-export const EXT_VIEWER_KEY = "session-manager:ext-viewer";
 const extViewerState = { id: null as string | null, subs: new Set<() => void>() };
 export function openExtViewer(id: string) {
   extViewerState.id = id;
