@@ -898,6 +898,7 @@ function SettingsDialog() {
   const health = info?.health;
   const localModel = info?.model || health?.model || info?.ready?.model || "—";
   const localAutoStart = info?.autoStart !== false;
+  const localTn = info?.tn !== false;
   const localIdle = Number(info?.idleTimeout ?? health?.idleTimeout ?? 1800) || 0;
   const rtfText = health && health.rtfLast != null ? Number(health.rtfLast).toFixed(2) + "×" : "—";
   const rssText = health && health.rssMb != null ? Math.round(Number(health.rssMb)) + "MB" : "—";
@@ -1074,6 +1075,10 @@ function SettingsDialog() {
             <div className="aisp-row">
               <label title={t("speek.local.autoStartTitle")}>{t("speek.local.autoStart")}</label>
               <input type="checkbox" checked={localAutoStart} onChange={async (e) => { await setFeatureFlagApi("tts.local.autoStart", e.target.checked); await fetchLocalInfo(); }} />
+            </div>
+            <div className="aisp-row">
+              <label title={t("speek.local.tnTitle")}>{t("speek.local.tn")}</label>
+              <input type="checkbox" checked={localTn} onChange={async (e) => { await setFeatureFlagApi("tts.local.tn", e.target.checked); await fetchLocalInfo(); }} />
             </div>
             {localRunning && !localVoices.length && (
               <div className="aisp-mini" style={{ color: "var(--danger,#ef4444)" }}>
