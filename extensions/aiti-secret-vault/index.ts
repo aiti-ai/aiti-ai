@@ -262,7 +262,9 @@ export default {
   client: "dist/aiti-secret-vault-client.mjs",
 
   ui: {
-    clientImmediately: false,
+    // The composer gate is registered by the client bundle, so it must load with
+    // the page — a lazy client would only materialize when the dialog is opened.
+    clientImmediately: true,
     toolbar: [
       {
         id: "aiti-secret-vault-open",
