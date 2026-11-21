@@ -17,7 +17,7 @@ import {
   fetchFeatures, toggleProcess, consumeReadOnFollow, replayCurrentPage, startFollowFromPageTop, resumeSessionFromLastPos, resumeFromCurrentPos, readMessageFrom,
   setCurrentSession, setFollow, resolvedEngine, previewVoice, previewLocalVoice, setEdgeBinPath, jumpToMessage, ensureTexts,
   ensureLocal, controlLocal, fetchLocalInfo, fetchLocalVoices, createLocalVoice, deleteLocalVoice,
-  setFeatureFlagApi, setFeatureValueApi, localReady,
+  setFeatureFlagApi, setFeatureValueApi, localReady, setSettingsOpener,
 } from "./speaker";
 import { highlightSegment, clearHighlight, noteUserScroll, scrollProgrammatic, smartScrollToRow, jumpToPlayRow, isUserDrifted, resolveDrift } from "./highlight";
 
@@ -153,6 +153,9 @@ function useSpeekState() {
 
 // 样式幂等注入：任意组件首次渲染时确保（模块级 guard）
 ensureStyles();
+// Failure recovery entry for other extensions: one-shot speech that cannot start the local
+// service opens this panel (see speaker.js speakOnce / aiti-ai-speek.speak).
+setSettingsOpener(() => openSettings(true));
 
 // ── 图标（lucide 线条风格）───────────────────────────────────────────────
 function Icon({ d, size = 14, filled = false }) {
