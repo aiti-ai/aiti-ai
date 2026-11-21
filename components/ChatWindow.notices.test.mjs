@@ -9,12 +9,12 @@ const globals = await readFile(new URL("../app/globals.css", import.meta.url), "
 test("renders temporary notices once at the top right of the chat column", () => {
   // The fork additionally renders a right-aligned NoticeShelf on the empty
   // new-session page — count the floating chat-column shelf specifically.
-  const floatingChatShelves = source.match(/<NoticeShelf notices=\{notices\} floating onPauseChange=\{setNoticePaused\}/g) ?? [];
+  const floatingChatShelves = source.match(/<NoticeShelf notices=\{notices\} floating onPauseChange=\{setNoticePaused\} onAskAi=\{askAiAboutNotice\} onDismiss=\{dismissNotice\}/g) ?? [];
 
   assert.equal(floatingChatShelves.length, 1);
   assert.match(
     source,
-    /position: "absolute",\s*top: 12,\s*left: 0,\s*right: isMobile(?: \|\| isCompact)? \? 0 : CHAT_MINIMAP_WIDTH,[\s\S]*?justifyContent: "flex-end",[\s\S]*?<NoticeShelf notices=\{notices\} floating onPauseChange=\{setNoticePaused\} onAskAi=\{askAiAboutNotice\} \/>/,
+    /position: "absolute",\s*top: 12,\s*left: 0,\s*right: isMobile(?: \|\| isCompact)? \? 0 : CHAT_MINIMAP_WIDTH,[\s\S]*?justifyContent: "flex-end",[\s\S]*?<NoticeShelf notices=\{notices\} floating onPauseChange=\{setNoticePaused\} onAskAi=\{askAiAboutNotice\} onDismiss=\{dismissNotice\} \/>/,
   );
 });
 
@@ -74,6 +74,24 @@ test("offers an Ask AI button on error and warning notices only", () => {
   assert.match(source, /onAskAi\?: \(message: string\) => void/);
   assert.match(source, /\{\(notice\.type === "error" \|\| notice\.type === "warning"\) && onAskAi && \(/);
   assert.match(source, /onClick=\{\(\) => onAskAi\(notice\.message\)\}/);
+});
+
+test("a notice can be dismissed manually instead of waiting out its timer", () => {
+  // The hook exposes a dismiss that exits exactly the touched notice
+  assert.match(hookSource, /\| \{ type: "dismiss"; id: string \}/);
+  assert.match(hookSource, /const dismissNotice = useCallback\(\(id: string\) => \{\s*dispatchNotice\(\{ type: "dismiss", id \}\);\s*\}, \[\]\);/);
+  assert.match(hookSource, /addNotice,\s*dismissNotice,/);
+  // The card wires tap-to-dismiss, the ✕ button and the swipe-up gesture
+  assert.match(source, /function NoticeToastCard\(\{ notice, floating = false, onPauseChange, onAskAi, onDismiss \}/);
+  assert.match(source, /onDismiss=\{dismissNotice\}/);
+  assert.match(source, /onClick=\{onDismiss \? handleClick : undefined\}/);
+  assert.match(source, /if \(currentSelectionText\(\)\) return;/);
+  assert.match(source, /el\.addEventListener\("touchmove", onTouchMove, \{ passive: false \}\)/);
+  assert.match(source, /if \(-current >= NOTICE_SWIPE_DISMISS_PX\) onDismiss\?\.\(notice\.id\);/);
+  assert.match(source, /aria-label=\{t\("common\.close"\)\}/);
+  // Flicks only start outside the scrollable text area, which keeps reading long notices scrollable
+  assert.match(source, /data-notice-scroll="1"/);
+  assert.match(source, /gesture\.insideText = !\!\(event\.target instanceof Element && event\.target\.closest\("\[data-notice-scroll\]"\)\)/);
 });
 
 test("Ask AI prefills the composer without sending, quoting the notice verbatim", async () => {
