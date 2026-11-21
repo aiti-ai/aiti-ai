@@ -723,6 +723,16 @@ async function mergedSessionsEndpoint(ctx: ExtApiCtx, req?: Request): Promise<Re
   // core.listSessions() 有 5s 扫描缓存，归档后缓存未过期仍会报该会话——必须按
   // archivedRows 剔除，否则双桶共存 → 客户端全量应用后 dock 残留归档行（实测复现）。
   const archIdSet = new Set(archived.map((r) => String(r.id)));
+  // Host rows carry composite ids ("pi:<uuid>") while the archive index keys bare uuids —
+  // exact-match filtering missed ghost rows: an archived session reopened via its old URL
+  // keeps a live composite-id row in the host's active list (same-id empty wrapper session),
+  // and the double-bucket coexistence resurrected it on every refresh. Match both spellings;
+  // the tombstone belt gets the same treatment (markRecentlyRemoved stores bare ids).
+  const bareId = (id: string): string => { const c = id.indexOf(":"); return c > 0 ? id.slice(c + 1) : id; };
+  const suppressed = (id: unknown, set: Set<string>): boolean => {
+    const s = String(id);
+    return set.has(s) || set.has(bareId(s));
+  };
   // Tombstone belt: ids archived/deleted/removed within the last 20s are suppressed
   // from the live bucket. Windows this closes: the host's 5s scan cache still
   // reporting the deleted file, an ext source sync re-listing a just-removed
@@ -732,8 +742,8 @@ async function mergedSessionsEndpoint(ctx: ExtApiCtx, req?: Request): Promise<Re
   // destination, so it is never tombstoned.
   const tombstoned = recentRemovedIds(ctx.configDir);
   const sessions = [...withLast, ...extRows]
-    .filter((s) => !archIdSet.has(String(s.id)))
-    .filter((s) => !tombstoned.has(String(s.id)));
+    .filter((s) => !suppressed(s.id, archIdSet))
+    .filter((s) => !suppressed(s.id, tombstoned));
   // 会话标注（ExtSessionAnnotatorSlot；aiti-plan-first 绑定方案的 planFirst 标等）：
   // 合并进响应行（同进程注册表分发；单标注器异常不阻断）。标注覆盖两桶
   // （归档行的 planFirst 标在归档查看器里仍要显示）。
