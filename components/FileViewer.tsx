@@ -298,12 +298,15 @@ function useTicketUrl(
   return url;
 }
 
-/** Two-step download: POST to exchange a ticket (path stays out of the URL, keeping it out of tunnel/proxy access logs) → ticketed GET streaming download. Extra params (revision ref/gitDir) ride the ticketed GET query. */
+/** Two-step download: POST to exchange a ticket (path stays out of the URL, keeping it out of tunnel/proxy access logs) → ticketed GET streaming download. Revision params must ride the POST body too — the ticket issuer stat-checks the path and would 404 a deleted file. */
 async function downloadViaTicket(filePath: string, params: Record<string, string> = {}): Promise<void> {
+  const body: Record<string, string> = { path: filePath };
+  if (params.ref) body.ref = params.ref;
+  if (params.gitDir) body.gitDir = params.gitDir;
   const res = await fetch(apiUrl("/api/files/ticket"), {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ path: filePath }),
+    body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({})) as { ticket?: string; error?: string };
   if (!res.ok || !data.ticket) throw new Error(data.error ?? `HTTP ${res.status}`);
