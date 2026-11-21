@@ -195,6 +195,20 @@ export async function runArchive(
   const r = runtime(configDir);
   const settings = overrides ? { ...r.settings, ...overrides } : r.settings;
   const sessions = await core.listSessions();
+  // The UI addresses sessions by composite id ("pi:<uuid>"); the disk scan, the index and
+  // the rpc registry all key bare uuids. Normalize up front so the handle-release pass and
+  // every guard below match; replies keep the caller's spelling (skippedIds/alreadyArchived
+  // drive optimistic rollback on the client and must equal row ids as asked).
+  const asked = ids;
+  const toAsked = new Map<string, string>();
+  if (ids && ids.length) {
+    for (let i = 0; i < asked!.length; i++) {
+      const bare = asked![i].startsWith("pi:") ? asked![i].slice(3) : asked![i];
+      toAsked.set(bare, asked![i]);
+      ids![i] = bare;
+    }
+  }
+  const asAsked = (bare: string): string => toAsked.get(bare) ?? bare;
   const running = new Set(await core.getRunningSessionIds());
   let alive = new Set(running);
   try {
@@ -241,9 +255,10 @@ export async function runArchive(
     const digest = skippedIds.filter((id) => !byId.has(id) && !!r.index.getSession(id)?.archived && !alive.has(id));
     if (digest.length) {
       skippedIds = skippedIds.filter((id) => !digest.includes(id));
-      alreadyArchived.push(...digest);
+      alreadyArchived.push(...digest.map(asAsked));
       ids = ids.filter((id) => !digest.includes(id));
     }
+    skippedIds = skippedIds.map(asAsked);
     candidates = ids.map((id) => byId.get(id)).filter((x): x is NonNullable<typeof x> => !!x)
       .filter((s) => !alive.has(s.id))
       .map((s) => ({ sessionId: s.id, cwd: s.cwd, modified: s.modified, path: s.path, sizeBytes: 0, ageDays: 0 }));
