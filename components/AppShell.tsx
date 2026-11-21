@@ -5218,7 +5218,17 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
                     <span style={{ fontWeight: 700, fontSize: 11.5 }}>{contextUsage.percent.toFixed(0)}%</span>
                   </span>
                 )}
-                {/* Density tier (plan: workspace-tools docs/pi-web-topbar-stats-density-plan.md §2 方案 E):
+                {/* Desktop compact tier (viewport 641–959px or a squeezed chat column):
+                    the context percentage is the only survivor (same as the mobile dome
+                    block, minus the icon) — the full groups flow below is desktop-nonCompact
+                    only. Without this the button renders BLANK on the compact tier: the
+                    clock fallback is gated on !ctxStr, which is exactly the case here. */}
+                {!isMobile && rowCompact && ctxStr && (
+                  <span style={{ display: "flex", alignItems: "center", flexShrink: 0, color: ctxColor, animation: ctxBreathe, fontWeight: 700, fontSize: 11.5 }}>
+                    {ctxStr}
+                  </span>
+                )}
+                {/* Density tier (plan: workspace-tools docs/pi-web-topbar-stats-density-plan.md §2 方案 E)：
                     the whole row is ONE nowrap text flow instead of one flex item per stat. The
                     5 flex gaps (10px each) were 50 of the row's 311px; joining the parts into a
                     single inline flow reclaims them. in/out share one ⇅ glyph with an `a/b` pair
