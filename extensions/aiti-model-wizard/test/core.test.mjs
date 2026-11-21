@@ -303,6 +303,14 @@ ok("⑪g 落盘带全参数 + catalogRefreshed=false（未触发下载）", up.o
 ok("⑫a Groq context_window", wz.modelListExtra({ id: "llama-3", context_window: 131072 }).contextWindow === 131072);
 ok("⑫a Mistral max_context_length + Gemini inputTokenLimit/outputTokenLimit", wz.modelListExtra({ max_context_length: 32768 }).contextWindow === 32768 && (() => { const e = wz.modelListExtra({ inputTokenLimit: 1048576, outputTokenLimit: 8192 }); return e.contextWindow === 1048576 && e.maxTokens === 8192; })());
 ok("⑫a 裸 {id} 不猜（无歧义键时返回 null）", wz.modelListExtra({ id: "gpt-x", max_tokens: 4096 }) === null);
+// ⑫a-2 nested models.dev-style entries (seen live on opencode zen /v1/models): limit/capabilities/modalities/cost.text
+const zenFree = wz.modelListExtra({ id: "longcat-2.5-free", limit: { context: 1000000, output: 262144, input: 983040 }, capabilities: { reasoning: { supported: true, toggle: true } }, modalities: { input: ["text", "image"], output: ["text"] }, cost: { text: { input: { price: 0, cache: { read: 0 } }, output: { price: 0 } } } });
+ok("⑫a-2 zen 嵌套 ctx/max/reasoning/input/cost（free=0 也收；limit.input 不误当 ctx）", zenFree && zenFree.contextWindow === 1000000 && zenFree.maxTokens === 262144 && zenFree.reasoning === true && JSON.stringify(zenFree.input) === '["text","image"]' && zenFree.cost.input === 0 && zenFree.cost.output === 0, JSON.stringify(zenFree));
+const zenPaid = wz.modelListExtra({ id: "ds-flash", limit: { context: 262144, output: 131072 }, capabilities: { reasoning: { supported: true, effort: ["low", "high", "max"] } }, modalities: { input: ["text", "image/jpeg", "image/png"] }, cost: { text: { input: { price: 0.15, cache: { read: 0.003 } }, output: { price: 0.6 } } } });
+ok("⑫a-2 effort→thinkingLevelMap + MIME image 归一 + cost 直拷", zenPaid.thinkingLevelMap.off === null && zenPaid.thinkingLevelMap.low === "low" && zenPaid.thinkingLevelMap.high === "high" && zenPaid.thinkingLevelMap.max === "max" && JSON.stringify(zenPaid.input) === '["text","image"]' && zenPaid.cost.input === 0.15 && zenPaid.cost.output === 0.6 && zenPaid.cost.cacheRead === 0.003, JSON.stringify(zenPaid));
+const zenNone = wz.modelListExtra({ id: "hy4", capabilities: { reasoning: { supported: true, effort: ["none", "high"] } } });
+ok("⑫a-2 effort none→off 档取值", zenNone.thinkingLevelMap.off === "none" && zenNone.thinkingLevelMap.high === "high");
+ok("⑫a-2 纯嵌套无名键不误报", wz.modelListExtra({ id: "x", limit: {} }) === null);
 // ⑫b mapOpenRouterModel：ctx/pricing×1e6/modalities/supported_parameters→reasoning/top_provider.max_completion_tokens
 const orm = wz.mapOpenRouterModel({
   id: "deepseek/deepseek-v4-pro", context_length: 1048576,
@@ -352,6 +360,36 @@ ok("⑪h auxUsed 标记两源", rh.auxUsed.openrouter === true && rh.auxUsed.lit
 const d5 = { providers: {} };
 wz.upsertProviderData(d5, { provider: "p", baseUrl: "https://p.com/v1", api: "openai-completions", models: [{ id: "m1" }], store: {}, listExtras: [{ id: "m1", contextWindow: 999 }], mdModels: [{ id: "m1", limit: { context: 888, output: 777 } }] });
 ok("⑪i listExtras 优先于 models.dev", d5.providers.p.models[0].contextWindow === 999);
+// ⑪k local sibling-provider same-id entries (our own models.json list, copied directly):
+// same gateway (normalized baseUrl equal) copies all fields; different gateway copies intrinsic fields only (cost/baseUrl/headers stay — gateway semantics/markup differ)
+const sibFull = { id: "longcat-2.5-free", name: "LongCat 2.5 Free", reasoning: true, input: ["text", "image"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 1000000, maxTokens: 262144, compat: { maxTokensField: "max_tokens" } };
+const sibCross = { id: "shared-model", contextWindow: 40960, maxTokens: 8192, reasoning: false, cost: { input: 9.9, output: 9.9, cacheRead: 0, cacheWrite: 0 }, baseUrl: "https://elsewhere.example/v1", api: "openai-completions", headers: { Authorization: "x" } };
+const dSib = { providers: {
+  "opencode-go": { baseUrl: "https://opencode.ai/zen/go/v1", api: "openai-completions", models: [sibFull, "bare-string-id"], },
+  "other-gw": { baseUrl: "https://gw.example.io/v1", api: "openai-completions", models: [sibCross], },
+} };
+const dSibNew = { providers: dSib.providers };
+wz.upsertProviderData(dSibNew, { provider: "opencode-go-direct", baseUrl: "https://opencode.ai/zen/go/v1/", api: "openai-completions", models: [{ id: "longcat-2.5-free" }, { id: "shared-model" }], store: {} });
+const sn = dSibNew.providers["opencode-go-direct"].models;
+const sibHit = sn.find((m) => m.id === "longcat-2.5-free");
+ok("⑪k 同网关兄弟全字段复制（含 cost/compat；尾斜杠归一命中）", sibHit && sibHit.contextWindow === 1000000 && sibHit.maxTokens === 262144 && sibHit.reasoning === true && sibHit.compat && sibHit.compat.maxTokensField === "max_tokens", JSON.stringify(sibHit));
+const crossHit = sn.find((m) => m.id === "shared-model");
+ok("⑪k 跨网关兄弟只拷内在字段（cost/baseUrl/headers/api 不拷）", crossHit && crossHit.contextWindow === 40960 && crossHit.maxTokens === 8192 && crossHit.reasoning === false && crossHit.cost === undefined && crossHit.baseUrl === undefined && crossHit.headers === undefined && crossHit.api === undefined, JSON.stringify(crossHit));
+ok("⑪k 已配置源路径不回归（自身条目仍命中）", (() => {
+  const out = wz.upsertProviderData({ providers: { me: { baseUrl: "https://a.com/v1", models: [{ id: "m", contextWindow: 555 }] } } }, { provider: "me", baseUrl: "https://a.com/v1", api: "openai-completions", models: [{ id: "m" }], store: {} });
+  return out.ok && out.data.providers.me.models[0].contextWindow === 555; // hit via the configured-entry source (not sibling), path unchanged
+ })());
+ok("⑪k collectSiblingModels 分级正确", (() => { const fresh = { providers: {
+  "opencode-go": { baseUrl: "https://opencode.ai/zen/go/v1", api: "openai-completions", models: [sibFull, "bare-string-id"] },
+  "other-gw": { baseUrl: "https://gw.example.io/v1", api: "openai-completions", models: [sibCross] },
+} }; const s = wz.collectSiblingModels(fresh, "x", "https://opencode.ai/zen/go/v1"); return s.sameBase.length === 1 && s.sameBase[0].id === "longcat-2.5-free" && s.others.length === 1 && s.others[0].id === "shared-model" && s.others.some((m) => m.id === "bare-string-id") === false; })());
+// ⑪l sibling source vs configured/builtin priority: configured > sibling > builtin
+const dPri = { providers: { sib: { baseUrl: "https://z.io/v1", models: [{ id: "mm", contextWindow: 222 }] } } };
+wz.upsertProviderData(dPri, { provider: "newp", baseUrl: "https://z.io/v1", api: "openai-completions", models: [{ id: "mm", contextWindow: 111 }], store: { newp: { models: [{ id: "mm", contextWindow: 333 }] } } });
+ok("⑪l 已配置 > 兄弟 > 内置目录", dPri.providers.newp.models[0].contextWindow === 111, JSON.stringify(dPri.providers.newp.models[0]));
+const dPri2 = { providers: { sib: { baseUrl: "https://z.io/v1", models: [{ id: "mm", contextWindow: 222 }] } } };
+wz.upsertProviderData(dPri2, { provider: "newp", baseUrl: "https://z.io/v1", api: "openai-completions", models: [{ id: "mm" }], store: { newp: { models: [{ id: "mm", contextWindow: 333 }] } } });
+ok("⑪l 兄弟源优先于内置目录", dPri2.providers.newp.models[0].contextWindow === 222, JSON.stringify(dPri2.providers.newp.models[0]));
 // ⑪j 审核修复项：
 // (1) listExtras 字段白名单——任意杂键被剥掉
 const d6 = { providers: {} };

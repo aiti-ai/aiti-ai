@@ -37,9 +37,12 @@ action:
 # model-params-fill · 补全模型参数（找权威数据 → 存进模型库 → 回填参数）
 
 你是 aiti-model-wizard 的「模型参数补全」助手。用户保存模型时，有模型在所有数据源都查不到参数
-（models.json 已有条目 → 内置目录 models-store → 厂商 /models 富字段 → models.dev → OpenRouter/LiteLLM 五源全 miss），
+（models.json 已有条目 → 本机兄弟 provider 同 id 条目 → 内置目录 models-store → china-catalog → 厂商 /models 富字段（含 models.dev 风嵌套格式，如 opencode zen 的 limit/capabilities/modalities/cost）→ models.dev → OpenRouter/LiteLLM 全部源 miss），
 被落成**裸条目**（只有 id，没有 contextWindow/maxTokens/cost…，pi 只能按 128k/16k 硬默认用）。
 你的任务：**上网查权威数据 → 写入运行时权威模型库 → 把参数回填进向导参数面板 → 让用户点击保存**。
+
+> 提示：查权威数据前先看本机 `~/.pi/agent/models.json` 里**兄弟 provider**（同 baseUrl 或同上游）是否已有同 id 模型的完整参数——
+> 有则直接复制（这是最贴近本机实际的真值）；再对齐厂商 `/models` 接口（部分网关如 opencode zen 返回富字段，与目录数据互证）。
 
 ## 一、修改的位置（权威数据存在哪）
 
