@@ -13,7 +13,7 @@
  */
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync, rmSync, openSync, closeSync, appendFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -117,7 +117,12 @@ export function dirBytes(dir: string, depth = 2): number {
 
 function scriptFor(): { cmd: string; file: string; args: string[] } {
   if (process.platform === "win32") {
-    return { cmd: "powershell", file: join(SERVICE_DIR, "start-tts.ps1"), args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"] };
+    // Absolute path first: the host process may run with a trimmed PATH (service/VBS launch) and
+    // then `spawn("powershell")` fails with ENOENT without any visible output.
+    const sysroot = process.env.SystemRoot || process.env.windir || "C:\\Windows";
+    const psExe = join(sysroot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+    const cmd = existsSync(psExe) ? psExe : "powershell";
+    return { cmd, file: join(SERVICE_DIR, "start-tts.ps1"), args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"] };
   }
   return { cmd: "bash", file: join(SERVICE_DIR, "start-tts.sh"), args: [] };
 }
@@ -185,22 +190,54 @@ export async function startService(opts: StartOptions): Promise<{
       console.log("[aiti-ai-speek] aiti-cmd launch threw:", String((e as Error)?.message || e));
     }
   }
-  // Fallback: detached spawn; the script itself tees to <home>/logs/tts.log.
+  // Fallback: detached spawn. The script tees its own log, but an early parse/runtime failure
+  // (e.g. a PowerShell syntax error) would otherwise vanish with stdio=ignore — capture both
+  // streams into logs/spawn.log so such failures are diagnosable from the panel.
   try {
+    let spawnOut: number | "ignore" = "ignore";
+    try {
+      mkdirSync(join(paths.home, "logs"), { recursive: true });
+      spawnOut = openSync(join(paths.home, "logs", "spawn.log"), "a");
+    } catch { spawnOut = "ignore"; }
     // Windows uses named parameters (-Provider ...); the POSIX script uses long flags.
     const startArgs = process.platform === "win32"
       ? [...args, file, "start", "-Provider", opts.provider, "-Port", String(opts.port),
           "-IdleTimeout", String(opts.idleTimeout), "-HomeDir", paths.home, "-VoicesJson", paths.voicesJson,
           ...(opts.hfEndpoint ? ["-HfEndpoint", opts.hfEndpoint] : [])]
       : [...args, file, "start", "--provider", opts.provider, "--port", String(opts.port), "--idle-timeout", String(opts.idleTimeout)];
+    // Record the exact launch line: a silent child (launcher/PATH problems) is otherwise invisible.
+    const spawnLog = join(paths.home, "logs", "spawn.log");
+    try {
+      const envKeys = Object.keys(env).filter((k) => /^(path|systemroot|windir|temp|tmp|userprofile|home|comspec)$/i.test(k));
+      appendFileSync(spawnLog,
+        `\n[spawn] ${cmd} ${startArgs.join(" ")}\n  cwd=${SERVICE_DIR}\n  envKeys=${envKeys.map((k) => k + "=" + String(env[k]).slice(0, 90)).join(" | ")}\n`);
+    } catch { /* logging must never block the launch */ }
+    // Windows: keep the child attached (detached children of a service host exit immediately
+    // returning 0 here) — the service shares pi-web's lifetime, which is the same-life semantics
+    // used by the aiti-cmd PTY path. POSIX keeps detached so an idle-stopped service survives a
+    // dev-server restart.
     const child = spawn(cmd, startArgs, {
       cwd: SERVICE_DIR,
       env,
-      detached: true,
-      stdio: "ignore",
+      detached: process.platform !== "win32",
+      stdio: spawnOut === "ignore" ? "ignore" : ["ignore", spawnOut, spawnOut],
       windowsHide: true,
     });
     child.unref();
+    try { appendFileSync(spawnLog, `[spawn] pid=${child.pid}\n`); } catch { /* ignore */ }
+    child.once("exit", (code, signal) => {
+      try { appendFileSync(spawnLog, `[spawn] exited code=${code} signal=${signal || ""}\n`); } catch { /* ignore */ }
+      console.log("[aiti-ai-speek] spawn child exited", { code, signal, cmd });
+    });
+    if (typeof spawnOut === "number") { try { closeSync(spawnOut); } catch { /* already closed */ } }
+    // Spawn failures (ENOENT/EACCES on the launcher) arrive asynchronously; surface them instead
+    // of reporting a launch that never happened.
+    const spawnErr = await new Promise<Error | null>((resolve) => {
+      let settled = false;
+      child.once("error", (e) => { if (!settled) { settled = true; resolve(e as Error); } });
+      setTimeout(() => { if (!settled) { settled = true; resolve(null); } }, 400);
+    });
+    if (spawnErr) return { ok: false, mode: "spawn", error: `spawn ${cmd} failed: ${spawnErr.message}` };
     return { ok: true, mode: "spawn" };
   } catch (e) {
     return { ok: false, mode: "spawn", error: String((e as Error)?.message || e) };
@@ -223,7 +260,13 @@ export async function stopService(paths: ServicePaths): Promise<{ ok: boolean; e
 export function tailLog(paths: ServicePaths, lines = 20): string {
   try {
     if (!existsSync(paths.log)) return "";
-    const all = readFileSync(paths.log, "utf8").split(/\r?\n/);
+    const buf = readFileSync(paths.log);
+    // PowerShell 5.1 wrote UTF-16LE logs before we switched to Out-File -Encoding utf8; keep old
+    // files readable (BOM FF FE) so the panel never shows NUL-separated garbage.
+    const text = buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe
+      ? buf.subarray(2).toString("utf16le")
+      : buf.toString("utf8");
+    const all = text.split(/\r?\n/);
     return all.slice(Math.max(0, all.length - lines)).join("\n");
   } catch {
     return "";

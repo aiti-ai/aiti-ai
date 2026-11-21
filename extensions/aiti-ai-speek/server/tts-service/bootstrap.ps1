@@ -219,13 +219,18 @@ $stampHash = ""
 if (Test-Path $Stamp) { $stampHash = ([IO.File]::ReadAllText($Stamp)).Trim() }
 
 function Invoke-PipInstall([string[]]$pipArgs) {
+  # $pipArgs starts with the subcommand ("install"); keep it right after `pip` — passing it after
+  # `install --python X` makes uv treat "install" as a package name (No solution found).
+  $sub = $pipArgs[0]
+  $rest = @()
+  if ($pipArgs.Count -gt 1) { $rest = $pipArgs[1..($pipArgs.Count - 1)] }
   # Prefer uv's parallel installer (5-10x faster); it also works for seed-less uv venvs.
   if ($script:UvExe) {
-    & $script:UvExe pip install --python $script:Py @pipArgs
+    & $script:UvExe pip $sub --python $script:Py @rest
     return $LASTEXITCODE
   }
   if ((Invoke-Quiet { & $script:Py -m pip --version }) -eq 0) {
-    & $script:Py -m pip @pipArgs
+    & $script:Py -m pip $sub @rest
     return $LASTEXITCODE
   }
   return 1
@@ -254,7 +259,15 @@ Write-Prepare "deps" 40 "python deps ready"
 # --- optional text normalization (Hojo only; failure degrades to --no-tn) ----------------------
 # Windows note: pynini/WeTextProcessing usually has no prebuilt wheel, so this is expected to
 # degrade to tn-disabled there; the service then runs without text normalization.
-if ($Family -eq "hojo" -and -not $SkipTn) {
+# Windows: pynini (WeTextProcessing) has no prebuilt wheel for CPython 3.12 and the source build
+# fails with the stock MSVC toolchain -> skip by default (fast) unless explicitly forced with
+# AITI_TTS_TN=1. Synthesis still works, numbers/dates are read as written.
+$ForceTn = ($env:AITI_TTS_TN -eq "1")
+if ($Family -eq "hojo" -and -not $SkipTn -and -not $ForceTn) {
+  Write-Log "text normalization skipped on Windows (no pynini wheel; set AITI_TTS_TN=1 to force)"
+  Write-Utf8NoBom (Join-Path $HomeDir "tn-disabled") "no-tn"
+}
+if ($Family -eq "hojo" -and -not $SkipTn -and $ForceTn) {
   if ((Invoke-Quiet { & $script:Py -c "import tn" }) -ne 0) {
     Write-Prepare "deps" 44 "installing text normalization (optional)"
     $pipExtra = @()
