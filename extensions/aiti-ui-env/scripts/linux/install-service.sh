@@ -40,8 +40,8 @@ for a in "$@"; do
 done
 
 case "$WM" in
-  openbox|xfwm4|fluxbox|marco|icewm|metacity) ;;
-  *) echo "[aiti-ui-env] WM '$WM' is not in the whitelist (openbox xfwm4 fluxbox marco icewm metacity), falling back to openbox" >&2; WM="openbox" ;;
+  openbox|xfwm4|fluxbox|icewm|jwm|metacity|pekwm|blackbox) ;;
+  *) echo "[aiti-ui-env] WM '$WM' is not in the whitelist (openbox xfwm4 fluxbox icewm jwm metacity pekwm blackbox), falling back to openbox" >&2; WM="openbox" ;;
 esac
 command -v "$WM" >/dev/null 2>&1 || { echo "[aiti-ui-env] warning: $WM not found on PATH, unit will still be written (install it before starting)" >&2; }
 

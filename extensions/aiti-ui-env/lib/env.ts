@@ -410,7 +410,19 @@ let resolvedDisplayNum: number | null = null;
 /** Window managers allowed for the headless virtual display: EWMH-compatible X11 WMs only
  *  (agent semantic actions — foreground activation, window enumeration — rely on EWMH).
  *  kwin_x11/mutter pull half a desktop stack; i3/sway are not (fully) EWMH/X11 — excluded. */
-export const WM_CHOICES = ["openbox", "xfwm4", "fluxbox", "marco", "icewm", "metacity"] as const;
+/** Window managers selectable for the headless virtual display, in preference order.
+ *  Only WMs verified to run on a bare Xvfb with EWMH support are listed — agent semantic
+ *  actions (foreground activation, window enumeration) depend on EWMH.
+ *  Excluded on purpose:
+ *   - marco: crashes on bare Xvfb (requires MATE's org.mate.* GSettings schemas)
+ *   - twm: ICCCM only, no EWMH at all (wmctrl/_NET_* unusable)
+ *   - kwin_x11/mutter: pull half a desktop stack; i3/sway-class tilers: no decorations and
+ *     auto-tiling makes the virtual desktop hard to read for humans */
+export const WM_CHOICES = ["openbox", "xfwm4", "fluxbox", "icewm", "jwm", "metacity", "pekwm", "blackbox"] as const;
+
+/** Every WM name we recognise for detection/cleanup — a superset of the whitelist so that
+ *  stopping a display also cleans up WMs a user started by hand. */
+const KNOWN_WMS = [...WM_CHOICES, "marco", "twm", "mutter", "kwin_x11", "i3", "awesome", "bspwm", "herbstluftwm", "spectrwm", "fvwm3", "fvwm", "dwm", "xmonad", "ratpoison"] as const;
 
 let resolvedWm: string | null = null;
 
@@ -449,16 +461,44 @@ export function setFeatureValueExt(id: string, value: string): { ok: boolean; er
 
 /** Resolve the WM for the headless virtual display: env UI_ENV_WM > feature behavior.wm > openbox.
  *  Whitelist-external values fall back to openbox (reason surfaced in the probe/status). */
-export function resolveWm(): { wm: string; fromEnv: boolean; fallbackReason?: string } {
+export function resolveWm(): { wm: string; requested: string; source: "env" | "feature" | "default"; fallbackReason?: string } {
+  /** `requested` keeps the raw user value so the panel can show "you asked for X, using Y". */
+  const pick = (wm: string, requested: string, source: "env" | "feature" | "default", fallbackReason?: string) => ({ wm, requested, source, fallbackReason });
   const envWm = process.env.UI_ENV_WM?.trim().toLowerCase();
   if (envWm) {
-    if ((WM_CHOICES as readonly string[]).includes(envWm)) return { wm: envWm, fromEnv: true };
-    return { wm: "openbox", fromEnv: true, fallbackReason: `UI_ENV_WM=${envWm} is not in the whitelist` };
+    if ((WM_CHOICES as readonly string[]).includes(envWm)) return pick(envWm, envWm, "env");
+    return pick("openbox", envWm, "env", `UI_ENV_WM=${envWm} is not a supported WM (whitelist: ${WM_CHOICES.join(", ")})`);
   }
-  const v = (resolvedWm ?? (featureValueString("behavior.wm") || "openbox")).trim().toLowerCase();
-  if ((WM_CHOICES as readonly string[]).includes(v)) { resolvedWm = v; return { wm: v, fromEnv: false }; }
+  const cfg = (featureValueString("behavior.wm") || "").trim().toLowerCase();
+  if (!cfg) return pick("openbox", "openbox", "default");
+  if ((WM_CHOICES as readonly string[]).includes(cfg)) { resolvedWm = cfg; return pick(cfg, cfg, "feature"); }
   resolvedWm = "openbox";
-  return { wm: "openbox", fromEnv: false, fallbackReason: `configured WM "${v}" is not in the whitelist` };
+  return pick("openbox", cfg, "feature", `configured WM "${cfg}" is not a supported WM (whitelist: ${WM_CHOICES.join(", ")})`);
+}
+
+/** Full WM picture for the panel/status: what was asked for, which candidate chain is
+ *  actually usable on this machine, and which WM is live on the virtual display right now. */
+export async function wmStatus(): Promise<{
+  requested: string; source: "env" | "feature" | "default"; resolved: string | null;
+  installedChain: string[]; active: string | null; fallbackReason?: string;
+}> {
+  const sel = resolveWm();
+  const installedChain: string[] = [];
+  for (const cand of wmCandidates(sel.wm)) if (await resolveBin(cand)) installedChain.push(cand);
+  return {
+    requested: sel.requested, source: sel.source, resolved: installedChain[0] ?? null,
+    installedChain, active: (await wmOnDisplay(`:${envDisplayNum()}`))?.comm ?? null,
+    fallbackReason: sel.fallbackReason,
+  };
+}
+
+/** Ordered candidates for automatic adaptation: the requested WM first (when whitelisted),
+ *  then every other supported WM in preference order. Callers walk this list, skipping
+ *  binaries that are not installed and verifying each spawn actually took over the display
+ *  (a WM can exist on PATH and still die at startup — marco does). */
+export function wmCandidates(requested?: string): string[] {
+  const first = requested && (WM_CHOICES as readonly string[]).includes(requested) ? [requested] : [];
+  return [...first, ...WM_CHOICES.filter((w) => w !== requested)];
 }
 
 /** Which whitelisted WM is attached to this exact display (/proc environ scan).
@@ -469,7 +509,7 @@ async function wmOnDisplay(display: string): Promise<{ comm: string; pid: number
       if (!/^\d+$/.test(d)) continue;
       let comm = "";
       try { comm = fs.readFileSync(`/proc/${d}/comm`, "utf8").trim(); } catch { continue; }
-      if (!(WM_CHOICES as readonly string[]).includes(comm)) continue;
+      if (!(KNOWN_WMS as readonly string[]).includes(comm)) continue;
       try {
         const env = fs.readFileSync(`/proc/${d}/environ`, "utf8");
         if (env.split("\0").some((e) => e === `DISPLAY=${display}`)) return { comm, pid: Number(d) };
@@ -928,19 +968,37 @@ export async function ensureHeadless(): Promise<boolean> {
     // Configured WM changed: a whitelisted WM other than the current one is on this display
     // → stop it and let the new one take over (takes effect on next start, not hot-switch).
     ensureOpenboxMenu(); // openbox root-menu fixup (only fills in when missing; openbox-only concern)
-    const wm = resolveWm();
+    const wmSel = resolveWm();
     const curWm = await wmOnDisplay(`:${num}`);
-    if (curWm && curWm.comm !== wm.wm) {
+    if (curWm && curWm.comm !== wmSel.wm) {
       try { process.kill(curWm.pid, "SIGTERM"); } catch { /* already gone */ }
-      try { fs.appendFileSync(logFile, `[${new Date().toISOString()}] WM switch on :${num}: stopped ${curWm.comm}, starting ${wm.wm}${wm.fallbackReason ? ` (${wm.fallbackReason})` : ""}\n`); } catch { /* ignore */ }
+      try { fs.appendFileSync(logFile, `[${new Date().toISOString()}] WM switch on :${num}: stopped ${curWm.comm}, starting ${wmSel.wm}${wmSel.fallbackReason ? ` (${wmSel.fallbackReason})` : ""}\n`); } catch { /* ignore */ }
       await sleep(600);
     }
     if (!(await displayHasWm(`:${num}`, authFile))) {
-      if (await resolveBin(wm.wm)) {
+      // Walk the candidate chain: skip WMs that are not installed and verify each spawn
+      // actually took over the display (a WM can be on PATH and still die — marco does).
+      const tried: string[] = [];
+      for (const cand of wmCandidates(wmSel.wm)) {
+        if (!(await resolveBin(cand))) { tried.push(`${cand}: not installed`); continue; }
         spawn("sh", ["-c",
           `export DISPLAY=:${num}; export XAUTHORITY=${authFile}; export XDG_RUNTIME_DIR=${runtimeDir}; ` +
-          `export DBUS_SESSION_BUS_ADDRESS=unix:path=${busFile}; nohup ${wm.wm} >/dev/null 2>&1 & true`],
+          `export DBUS_SESSION_BUS_ADDRESS=unix:path=${busFile}; nohup ${cand} >/dev/null 2>&1 & true`],
           { detached: true, stdio: "ignore" }).unref();
+        await sleep(1500);
+        if (await displayHasWm(`:${num}`, authFile)) {
+          if (cand !== wmSel.wm) {
+            try { fs.appendFileSync(logFile, `[${new Date().toISOString()}] WM adaptation on :${num}: ${wmSel.wm} unusable, using ${cand} (tried: ${tried.join("; ") || "none"})\n`); } catch { /* ignore */ }
+          }
+          break;
+        }
+        tried.push(`${cand}: did not take over`);
+        // Clean up whatever half-started process the failed candidate left behind.
+        const dead = await wmOnDisplay(`:${num}`);
+        if (dead) { try { process.kill(dead.pid, "SIGKILL"); } catch { /* ignore */ } await sleep(400); }
+      }
+      if (tried.length === WM_CHOICES.length) {
+        try { fs.appendFileSync(logFile, `[${new Date().toISOString()}] WM start failed on :${num}: no usable window manager (tried: ${tried.join("; ")})\n`); } catch { /* ignore */ }
       }
     }
     // tint2 panel (starts with openbox; idempotent per display) — stopHeadless kills it, start brings it back
@@ -1156,7 +1214,7 @@ async function stopHeadlessNums(nums: Set<number>, locale?: string | null): Prom
       //   含 sys 实例（桌面 VNC / QEMU 虚拟机等非本虚拟屏目标）的桥——只能按注册表 pid 精确杀
       //   （上面 step 1 的 vncStop(inst.id) 已做）。2026-09-15 教训：曾把用户正在看的
       //   QEMU 虚拟机视图桥一并杀掉。
-      if (new RegExp(`^(${WM_CHOICES.join("|")})(\\s|$)`).test(cmd) && await procDisplayIs(pid, display)) { await kill(pid, `${cmd.split(/\s+/)[0]}:${num}`); break; }
+      if (new RegExp(`^(${KNOWN_WMS.join("|")})(\\s|$)`).test(cmd) && await procDisplayIs(pid, display)) { await kill(pid, `${cmd.split(/\s+/)[0]}:${num}`); break; }
       if (/at-spi-bus-launcher/.test(cmd) && await procDisplayIs(pid, display)) { await kill(pid, `at-spi:${num}`); break; }
       if (/^tint2(\s|$)/.test(cmd) && await procDisplayIs(pid, display)) { await kill(pid, `tint2:${num}`); break; }
       if (cmd.includes(`ui-env-${num}/bus`)) { await kill(pid, `dbus:${num}`); break; }
@@ -2204,8 +2262,12 @@ const DEPS: DepDef[] = [
     pkg: { apt: "xfwm4", dnf: "xfwm4", yum: "xfwm4", pacman: "xfwm4", apk: "xfwm4", zypper: "xfwm4" } },
   { bin: "fluxbox", label: "窗口管理器（备选，当前配置时必装）", group: "ui", manual: "fluxbox（各发行版同名）",
     pkg: { apt: "fluxbox", dnf: "fluxbox", yum: "fluxbox", pacman: "fluxbox", apk: "fluxbox", zypper: "fluxbox" } },
-  { bin: "marco", label: "窗口管理器（备选，当前配置时必装）", group: "ui", manual: "apt: marco · dnf: marco · pacman: marco",
-    pkg: { apt: "marco", dnf: "marco", yum: "marco", pacman: "marco", apk: "marco", zypper: "marco" } },
+  { bin: "jwm", label: "窗口管理器（备选，当前配置时必装）", group: "ui", manual: "jwm（各发行版同名，体积最小）",
+    pkg: { apt: "jwm", dnf: "jwm", yum: "jwm", pacman: "jwm", apk: "jwm", zypper: "jwm" } },
+  { bin: "pekwm", label: "窗口管理器（备选，当前配置时必装）", group: "ui", manual: "pekwm（各发行版同名）",
+    pkg: { apt: "pekwm", dnf: "pekwm", yum: "pekwm", pacman: "pekwm", apk: "pekwm", zypper: "pekwm" } },
+  { bin: "blackbox", label: "窗口管理器（备选，当前配置时必装）", group: "ui", manual: "blackbox（各发行版同名）",
+    pkg: { apt: "blackbox", dnf: "blackbox", yum: "blackbox", pacman: "blackbox", apk: "blackbox", zypper: "blackbox" } },
   { bin: "icewm", label: "窗口管理器（备选，当前配置时必装）", group: "ui", manual: "icewm（各发行版同名）",
     pkg: { apt: "icewm", dnf: "icewm", yum: "icewm", pacman: "icewm", apk: "icewm", zypper: "icewm" } },
   { bin: "metacity", label: "窗口管理器（备选，当前配置时必装）", group: "ui", manual: "apt: metacity · dnf: metacity · pacman: metacity",
@@ -2311,11 +2373,14 @@ export async function checkDeps(refresh = false, locale?: string | null): Promis
   }
   const plat = await detectPlatform();
   const items: DepStatusItem[] = [];
-  const activeWm = resolveWm().wm;
+  // Alternative WMs: only check the one that will actually be used (the requested WM, or the
+  // first installed candidate in the adaptation chain) — other whitelist members stay out of
+  // the deps panel to avoid a wall of "missing" noise
+  const wmSel = resolveWm();
+  let activeWm: string | null = null;
+  for (const cand of wmCandidates(wmSel.wm)) { if (await resolveBin(cand)) { activeWm = cand; break; } }
   for (const d of DEPS) {
-    // Alternative WMs: only check the currently configured one (other whitelist members stay
-    // out of the deps panel to avoid a wall of "missing" noise)
-    if ((WM_CHOICES as readonly string[]).includes(d.bin) && d.bin !== "openbox" && d.bin !== activeWm) continue;
+    if ((WM_CHOICES as readonly string[]).includes(d.bin) && d.bin !== activeWm) continue;
     const installed = !!(await resolveBin(d.bin));
     items.push({ bin: d.bin, label: tr(locale, "srv.dep." + d.bin), group: d.group, installed, pkg: plat.pkgMgr ? (d.pkg[plat.pkgMgr] || null) : null, manual: trOr(locale, "srv.dep.manual." + d.bin, d.manual) });
   }
