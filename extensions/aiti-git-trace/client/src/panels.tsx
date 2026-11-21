@@ -1006,6 +1006,16 @@ function renderTimeline(props?: any, face?: string): any { bindSession(props);
                     <button style={openBtnStyle} title={t("gt.timeline.openFileTip") + " · " + f.root + "/" + f.path}
                       onClick={() => openFile(f.root + "/" + f.path, String(f.path || "").split("/").pop() || f.path)}>{t("gt.timeline.openFile")}</button>
                   ) : null}
+                  {f.status === "D" && hasRange ? (
+                    // deleted file: nothing on disk to open (VS Code/IDEA convention) — GitLens-style pair:
+                    // "Open" = the pre-deletion version (read-only revision view) + Diff = deletion diff in review
+                    <button style={openBtnStyle} title={t("gt.timeline.openRevisionTip")}
+                      onClick={() => openFile(f.root + "/" + f.path, String(f.path || "").split("/").pop() || f.path, { atRevision: { ref: String(st.base), gitDir: f.root + "/.aiti-trace" } })}>{t("gt.timeline.openFile")}</button>
+                  ) : null}
+                  {f.status === "D" && hasRange ? (
+                    <button style={openBtnStyle} title={t("gt.timeline.fileDiffTip")}
+                      onClick={() => viewRangeDiff(f, st)}>{t("gt.timeline.viewdiff")}</button>
+                  ) : null}
                   <button style={actBtnStyle} title={t("gt.timeline.atRefTip")} onClick={() => appendText(atTextFor(f.root, f.path))}><b style={{ fontWeight: 700 }}>@</b>{t("gt.timeline.atRef")}</button>
                   <button style={actBtnStyle} title={t("gt.timeline.atNewTip")} onClick={() => atNewSessionFile(f, st)}><b style={{ fontWeight: 700 }}>@</b>{t("gt.timeline.atNew")}</button>
                   <button style={actBtnStyle} title={t("gt.timeline.copyPathTip")} onClick={(e: any) => copyWithFeedback(f.root + "/" + f.path, e.currentTarget)}>{t("gt.timeline.copyPath")}</button>

@@ -213,6 +213,7 @@ import { ExportDialog } from "./ExportDialog";
 import { SessionNameDialog } from "./SessionNameDialog";
 import type { FileExplorerHandle } from "./FileExplorer";
 import type { FileViewerState } from "@/lib/file-viewer-state";
+import type { RevisionRef } from "@/lib/file-revision";
 import { PRESET_READ_ONLY, type ToolEntry } from "@/lib/tool-presets";
 import { createSideChat, deleteSideChat } from "@/lib/side-chat-client";
 import { getAgentsBadge, getSessionFamily, isHiddenRelation, sideChatTitle } from "@/lib/session-family";
@@ -2620,19 +2621,24 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   const openHostFileTab = useCallback((
     filePath: string,
     fileName: string,
-    options?: { sourceSessionId?: string | null; modeHint?: "diff"; select?: boolean; page?: number },
+    options?: { sourceSessionId?: string | null; modeHint?: "diff"; select?: boolean; page?: number; atRevision?: RevisionRef },
   ) => {
     const sourceSessionId = options?.sourceSessionId;
     const modeHint = options?.modeHint;
     const select = options?.select !== false; // default true
     const page = options?.page;
-    const tabId = `file:${filePath}`;
+    const atRevision = options?.atRevision;
+    // Revision views are their own tab identity (same path, different blob); the
+    // ref suffix keeps a revision tab from colliding with the working-tree tab.
+    const tabId = atRevision ? `file:${filePath}@${atRevision.ref.slice(0, 12)}` : `file:${filePath}`;
+    const label = atRevision ? `${fileName}@${atRevision.ref.slice(0, 7)}` : fileName;
     setFileTabs((prev) => openFileTab(prev, {
-      fileName,
+      fileName: label,
       filePath,
       modeHint,
       page,
       sourceSessionId,
+      atRevision,
       tabId,
     }));
     if (select) {
@@ -2648,8 +2654,14 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   const handleOpenFile = useCallback((
     filePath: string,
     fileName: string,
-    options?: { sourceSessionId?: string | null; modeHint?: "diff"; select?: boolean; page?: number },
+    options?: { sourceSessionId?: string | null; modeHint?: "diff"; select?: boolean; page?: number; atRevision?: RevisionRef },
   ) => {
+    // Revision views are host tabs only: the file-editor dock face guards below match by
+    // path alone and would hijack a historical blob into a working-tree editor face.
+    if (options?.atRevision) {
+      openHostFileTab(filePath, fileName, options);
+      return;
+    }
     // File dock face guard (file-editor extension file-dock, 2026-09-16): the path is
     // alive as a dock face (float window / left-panel block / right-panel dock tab) →
     // bring it to the front (present open uses dockpref placement / same-state

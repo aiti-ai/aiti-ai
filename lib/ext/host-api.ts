@@ -8,6 +8,7 @@
  * validation/session queries etc.) signatures can be extended to
  * `void | Promise<T>`, with ctx passing the return value through.
  */
+import type { RevisionRef } from "../file-revision";
 /**
  * Options for opening a file tab (passed through by extensions via ctx.openFile;
  * core as-is capability, not interpreted).
@@ -18,6 +19,8 @@ export interface OpenFileOptions {
   sourceSessionId?: string | null;
   modeHint?: "diff";
   select?: boolean;
+  /** Open a historical revision instead of the working-tree file (read-only virtual view; atRevision ref+gitDir are validated server-side). */
+  atRevision?: RevisionRef;
 }
 
 /** Options for opening a folder tab (passed through by extensions via ctx.openFolder; select:false = open in background without activating). */
