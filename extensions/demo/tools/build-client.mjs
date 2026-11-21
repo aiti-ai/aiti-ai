@@ -8,6 +8,7 @@
  * 用法：node tools/build-client.mjs
  */
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -16,7 +17,7 @@ const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 // Windows 上 .bin/vite（无扩展名 sh 脚本）spawn 会 status=null 静默失败；
 // 跨平台统一 node 直跑 vite.js 入口（.bin 垫片的真实目标，npm scripts 内部同做法）。
 const viteJs = resolve(root, "node_modules", "vite", "bin", "vite.js");
-const viteBin = (await import("node:fs")).existsSync(viteJs) ? viteJs : "vite";
+const viteBin = (await import("node:fs")).existsSync(viteJs) ? viteJs : resolve(createRequire(import.meta.url).resolve("vite/package.json"), "..", "bin", "vite.js");
 
 const r = spawnSync(process.execPath, [viteBin, "build", "--config", resolve(root, "vite.config.ts")], {
   cwd: root,

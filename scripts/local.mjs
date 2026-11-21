@@ -34,7 +34,10 @@ import {
   readFileSync,
   realpathSync,
   renameSync,
+  rmSync,
+  lstatSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir, cpus } from "node:os";
@@ -352,11 +355,141 @@ function restorePlugins() {
 }
 
 // ── 3. extension runtime deps ───────────────────────────────────────────────
+/** Union of extension runtime deps (name → first spec seen). */
+function collectExtDeps() {
+  const deps = new Map();
+  for (const ext of listExtensions()) {
+    for (const [name, spec] of Object.entries(ext.pkg.dependencies ?? {})) {
+      if (!deps.has(name)) deps.set(name, spec);
+    }
+  }
+  return deps;
+}
+
+/**
+ * Fallback when the bundled reconcile fails as a whole (one dependency version
+ * missing from the registry aborts the single npm install). Retries the union
+ * package-by-package, dropping unavailable packages so every other extension
+ * still gets its runtime deps.
+ */
+async function installSharedDepsDegraded() {
+  const sharedRoot = join(homedir(), ".pi", "web-dev"); // reconcile runs with PI_WEB_DEV_DIST=1
+  const modules = join(sharedRoot, "node_modules");
+  const link = join(EXT_ROOT, "node_modules");
+  if (!existsSync(link)) {
+    try {
+      mkdirSync(sharedRoot, { recursive: true });
+      symlinkSync(modules, link, "dir");
+    } catch (e) {
+      warn(`cannot link ${link}: ${e.message}`);
+      return;
+    }
+  }
+  const deps = collectExtDeps();
+  const skipped = new Set();
+  for (let round = 0; round < 6; round++) {
+    const specs = [...deps]
+      .filter(([name]) => !skipped.has(name))
+      .map(([name, spec]) => `${name}@${spec}`);
+    if (specs.length === 0) break;
+    const res = await run(
+      NPM,
+      [
+        "install",
+        "--prefix",
+        sharedRoot,
+        "--omit=dev",
+        "--legacy-peer-deps",
+        "--no-audit",
+        "--no-fund",
+        "--no-package-lock",
+        ...specs,
+      ],
+      { cwd: sharedRoot },
+    );
+    if (res.code === 0) {
+      log(`installed ${specs.length} extension deps (degraded mode)`);
+      break;
+    }
+    const missing = res.output.match(/No matching version found for (\S+?)@/);
+    if (!missing) {
+      warn(res.output.split("\n").filter(Boolean).slice(-6).join("\n"));
+      break;
+    }
+    skipped.add(missing[1]);
+    warn(`skip unavailable dependency ${missing[1]}`);
+  }
+  if (skipped.size > 0) warn(`unavailable extension dependencies: ${[...skipped].join(", ")}`);
+}
+
+/**
+ * The in-repo @aiti-ai/ext-shared can be ahead of the published copy (new
+ * exports land in the source tree first). Point the shared root at the
+ * repository directory so in-place extensions resolve the same source the
+ * build does.
+ */
+function linkLocalExtShared() {
+  const src = join(EXT_ROOT, "_shared");
+  const pkg = readJson(join(src, "package.json"));
+  if (!pkg?.name) return;
+  const sharedRoot = join(homedir(), ".pi", "web-dev"); // reconcile runs with PI_WEB_DEV_DIST=1
+  if (!existsSync(join(sharedRoot, "node_modules"))) return;
+  const parts = pkg.name.split("/");
+  const dest = join(sharedRoot, "node_modules", ...parts);
+  const already = (() => {
+    try {
+      return realpathSync(dest) === realpathSync(src);
+    } catch {
+      return false;
+    }
+  })();
+  if (!already) {
+    try {
+      mkdirSync(dirname(dest), { recursive: true });
+      if (existsSync(dest)) rmSync(dest, { recursive: true, force: true });
+      symlinkSync(src, dest, "dir");
+      log(`link ${pkg.name} → ${src} (in-repo source wins)`);
+    } catch (e) {
+      warn(`cannot link ${pkg.name}: ${e.message}`);
+    }
+  }
+  // Per-extension copies installed by the retry npm install shadow the shared root.
+  for (const ext of listExtensions()) {
+    const local = join(ext.dir, "node_modules", ...parts);
+    let present = existsSync(local);
+    if (!present) {
+      try {
+        lstatSync(local);
+        present = true;
+      } catch {
+        present = false;
+      }
+    }
+    if (!present) continue;
+    let same = false;
+    try {
+      same = realpathSync(local) === realpathSync(src);
+    } catch {
+      same = false;
+    }
+    if (same) continue;
+    try {
+      rmSync(local, { recursive: true, force: true });
+      mkdirSync(dirname(local), { recursive: true });
+      symlinkSync(src, local, "dir");
+      log(`link ${pkg.name} → ${src} (${ext.id})`);
+    } catch (e) {
+      warn(`cannot link ${pkg.name} in ${ext.id}: ${e.message}`);
+    }
+  }
+}
+
 async function ensureExtDeps() {
   step(3, "extension runtime dependencies");
   const link = join(EXT_ROOT, "node_modules");
   if (NO_INSTALL) {
     if (!existsSync(link)) warn("extensions/node_modules is missing (--no-install) — extensions may fail to load");
+    linkLocalExtShared();
     return;
   }
   if (existsSync(link)) {
@@ -372,7 +505,11 @@ async function ensureExtDeps() {
     { env: { ...process.env, PI_WEB_DEV_DIST: "1" } },
   );
   for (const line of res.output.split("\n").filter(Boolean)) log(line);
-  if (res.code !== 0) warn("extension dependency reconcile failed — extensions may degrade");
+  if (res.code !== 0) {
+    warn("extension dependency reconcile failed — retrying package-by-package");
+    await installSharedDepsDegraded();
+  }
+  linkLocalExtShared();
 }
 
 // ── 4. extension client builds ──────────────────────────────────────────────
@@ -498,9 +635,30 @@ async function buildExtClients() {
     return result;
   });
   const failed = results.filter((r) => !r.ok);
+  let remaining = failed;
   if (failed.length > 0) {
-    warn(`${failed.length} extension build(s) failed: ${failed.map((f) => f.id).join(", ")}`);
-    warn("install that extension's local deps: cd extensions/<id> && npm install");
+    // The first pass can fail when an extension needs a dependency that lives in
+    // its own package.json (not the shared root). Install locally once and retry.
+    const failedIds = new Set(failed.map((f) => f.id));
+    const retry = todo.filter((ext) => failedIds.has(ext.id));
+    log(`installing local deps for ${retry.length} failed extension(s), then retrying`);
+    for (const ext of retry) {
+      const inst = await run(NPM, ["install", "--no-audit", "--no-fund", "--no-package-lock"], { cwd: ext.dir });
+      if (inst.code !== 0) {
+        warn(`${ext.id}: npm install failed (${inst.output.split("\n").filter(Boolean).slice(-1)[0] ?? "unknown"})`);
+      }
+    }
+    const retried = await runPool(retry, jobs, async (ext) => {
+      const result = await buildOne(ext);
+      console.log(`[local]   ${result.ok ? "✓" : "✗"} ${ext.id} (after npm install)`);
+      if (!result.ok) console.error(result.output);
+      return result;
+    });
+    remaining = retried.filter((r) => !r.ok);
+  }
+  if (remaining.length > 0) {
+    warn(`${remaining.length} extension build(s) failed: ${remaining.map((f) => f.id).join(", ")}`);
+    warn("install that extension's local deps manually: cd extensions/<id> && npm install");
     return false;
   }
   const stillBroken = all.filter((ext) => ext.client && (ONLY.length === 0 || ONLY.includes(ext.id)) && productProblem(ext));
