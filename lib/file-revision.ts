@@ -92,12 +92,14 @@ export async function revisionBlobSize(gitDir: string, ref: string, relPath: str
   return Number.parseInt(stdout.trim(), 10);
 }
 
-/** git cat-file -p <ref>:<relpath> → full blob bytes (caller must cap size via revisionBlobSize first). */
+/** git cat-file -p <ref>:<relpath> → full blob bytes (caller must cap size via revisionBlobSize first).
+ *  maxBuffer covers the largest permitted blob (download cap) — the text read cap is
+ *  smaller, but a single shared ceiling keeps image/download reads from overflowing it. */
 export async function revisionBlobContent(gitDir: string, ref: string, relPath: string): Promise<Buffer> {
   const { stdout } = await execFileAsync(
     "git",
     ["--git-dir", gitDir, "cat-file", "-p", `${ref}:${relPath}`],
-    { timeout: 15_000, maxBuffer: REVISION_TEXT_READ_MAX_BYTES + 1024 * 1024, encoding: "buffer" as BufferEncoding },
+    { timeout: 15_000, maxBuffer: REVISION_DOWNLOAD_MAX_BYTES + 1024 * 1024, encoding: "buffer" as BufferEncoding },
   );
   return stdout as unknown as Buffer;
 }
