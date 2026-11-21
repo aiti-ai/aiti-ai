@@ -905,6 +905,9 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   const [checked, setChecked] = useState<string[]>([]);      // 已勾选模型 id
   const [discBusy, setDiscBusy] = useState(false); // 添加流：拉取 /models 中
   const [discMsg, setDiscMsg] = useState("");       // 添加流：拉取 /models 结果反馈
+  // Add flow: vendor /models rich fields captured by doDiscover, bucketed by baseUrl (avoids cross-candidate
+  // contamination when switching provider cards); passed as listExtras on save
+  const [discExtras, setDiscExtras] = useState<Record<string, Record<string, { contextWindow?: number; maxTokens?: number }>>>({});
   const [modelFilter, setModelFilter] = useState(""); // 模型列表搜索过滤（只影响显示，勾选仍按全量）
   const [manual, setManual] = useState("");
   const [saving, setSaving] = useState(false);
@@ -1541,6 +1544,19 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         const before = known.length;
         const fresh = d.models.map((m: any) => m.id).filter((id: string) => !ids.includes(id));
         setKnown((prev) => { const all = [...ids, ...d.models.map((m: any) => m.id)]; return [...new Set(all)]; });
+        // keep rich fields (contextWindow/maxTokens/reasoning/input/cost/… parsed incl. models.dev-style nested entries) keyed by baseUrl
+        const bk = baseUrl.replace(/\/+$/, "");
+        const EXTRA_KEYS = ["name", "reasoning", "thinkingLevelMap", "input", "cost", "contextWindow", "maxTokens"] as const;
+        setDiscExtras((prev) => {
+          const bucket = { ...(prev[bk] || {}) };
+          for (const m of d.models) {
+            if (!m || !m.id) continue;
+            const o: any = (bucket[m.id] as any) || {};
+            for (const k of EXTRA_KEYS) if ((m as any)[k] !== undefined) o[k] = (m as any)[k];
+            if (Object.keys(o).length) bucket[m.id] = o;
+          }
+          return { ...prev, [bk]: bucket };
+        });
         if (!silent) setDiscMsg(ti("mw.a.181") + d.models.length + ti("mw.a.182") + fresh.length + ti("mw.a.183") + before + ti("mw.a.184"));
       } else if (!silent) setDiscMsg(ti("mw.a.185") + (d.error || ti("mw.a.186")));
       return d;
@@ -1616,6 +1632,11 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     const body: any = { provider, baseUrl, api: apiType, models, keepKey: !!keepKey };
     // G3 保存闸门：显式 false =「测试失败仍要保存」→ 服务端落 enabled:false（禁用态）
     if (enabled === false) body.enabled = false;
+    // vendor /models rich fields captured by doDiscover (keyed by baseUrl) → listExtras backfill source
+    // (server chain: incoming > configured > sibling provider > builtin store > listExtras > models.dev; kept out of models so incoming stays clean)
+    const extrasBucket = discExtras[(baseUrl || "").replace(/\/+$/, "")] || {};
+    const listExtras = checked.filter((id) => extrasBucket[id]).map((id) => ({ id, ...extrasBucket[id] }));
+    if (listExtras.length) body.listExtras = listExtras;
     // 自定义端点的 provider 级请求头（未动则不发，避免覆盖同名已存头；决策 2B/3B）
     if (headersTouched && sel && sel.id === "custom") body.headers = rowsToHeaders(provHeaders);
     if (key) body.apiKey = key;

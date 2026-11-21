@@ -4,8 +4,11 @@
  * 职责：模型添加开机向导的纯逻辑 ——
  *   - 目录：models.dev（justget 多源下载 + Gitee 镜像缓存）+ 内嵌国内 AI 目录（中文名/注册/领 token）；
  *     TTL 过期启动后台刷新；保存/查询未知模型查不到参数时强制刷新一次
- *   - 模型元数据反填三源：models.json 已有条目 → 内置目录 models-store → models.dev（含完整规格映射），
- *     未知模型（stealth 新模型如 ox-alpha-free）不再落裸 {id} 被 pi 落到 128k/16k 硬默认
+ *   - Model metadata backfill (multi-source): models.json existing entries → local sibling-provider same-id
+ *     entries (same gateway: all fields / cross gateway: intrinsic only) → builtin catalog models-store →
+ *     china-catalog embedded params → vendor /models rich fields (incl. models.dev-style nested format)
+ *     → models.dev (full spec mapping) → OpenRouter/LiteLLM fallback;
+ *     unknown models (stealth like ox-alpha-free) no longer land bare {id} with pi's 128k/16k hard defaults
  *   - 搜索（中/英/别名/模型 id）→ 提供商详情（api 地址 / doc / 注册说明 / 领 token 地址）
  *   - 反向匹配（normalizeBaseUrl 剥 /v1 /v2 /v1beta 后比 host+path）
  *   - 自动探测（探 endpoints 判定 api 类型 + 真实地址，用户漏 v1/v2 也能补）
@@ -1580,18 +1583,54 @@ async function probeModelCap({ provider, baseUrl, api = "openai-completions", ap
 }
 
 // ---------------- 模型发现（/models 列表 ∪ 目录已知模型） ----------------
-/** 厂商 /models 列表富字段提取（各家兼容网关实际返回的参数，标准 OpenAI 协议只有 {id}）：
- *  Groq context_window · Mistral max_context_length · Together/Fireworks context_length ·
- *  Gemini inputTokenLimit/outputTokenLimit · vLLM max_model_len。
- *  只取无歧义键（不猜 max_tokens——有的厂商指输出上限有的指总上下文）。返回 pi 风格 meta 片段或 null。 */
+/** Vendor /models rich-field extraction (params actually returned by compatible gateways; standard OpenAI protocol only has {id}):
+ *  Flat keys: Groq context_window · Mistral max_context_length · Together/Fireworks context_length ·
+ *  Gemini inputTokenLimit/outputTokenLimit · vLLM max_model_len.
+ *  Nested keys (models.dev style; seen live on opencode zen /v1/models): limit.{context,output} ·
+ *  capabilities.reasoning.{supported,effort} → reasoning/thinkingLevelMap (effort "none" normalized as the off-level value) ·
+ *  modalities.input → input ("image/jpeg" MIME normalized to image) · cost.text.*.price → cost (USD/M, same unit as pi cost,
+ *  copied as-is; free models keep price=0). Note nested limit.input means per-request input cap (< context) — different semantics, not mapped.
+ *  Only unambiguous keys (never guess max_tokens — some vendors mean output cap, others total context). Returns pi-style meta fragment or null. */
 function modelListExtra(m) {
   if (!m || typeof m !== "object") return null;
   const num = (v) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : null; };
+  const num0 = (v) => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : null; }; // cost allows 0 (free models)
   const out = {};
   const ctx = num(m.context_window) || num(m.context_length) || num(m.max_context_length) || num(m.inputTokenLimit) || num(m.max_model_len);
   if (ctx) out.contextWindow = ctx;
   const maxOut = num(m.max_output_tokens) || num(m.outputTokenLimit);
   if (maxOut) out.maxTokens = maxOut;
+  const lim = m.limit && typeof m.limit === "object" ? m.limit : null;
+  if (lim) {
+    if (!out.contextWindow && num(lim.context)) out.contextWindow = num(lim.context);
+    if (!out.maxTokens && num(lim.output)) out.maxTokens = num(lim.output);
+  }
+  const caps = m.capabilities && typeof m.capabilities === "object" ? m.capabilities : null;
+  const rs = caps && caps.reasoning && typeof caps.reasoning === "object" ? caps.reasoning : null;
+  if (rs && typeof rs.supported === "boolean") out.reasoning = rs.supported;
+  if (rs && Array.isArray(rs.effort) && rs.effort.length) {
+    const tlm = {};
+    for (const lv of ["off", "minimal", "low", "medium", "high", "xhigh", "max"]) {
+      tlm[lv] = rs.effort.includes(lv) ? lv : (lv === "off" && rs.effort.includes("none") ? "none" : null);
+    }
+    out.thinkingLevelMap = tlm;
+  }
+  if (Array.isArray(m.modalities && m.modalities.input)) {
+    const ins = [];
+    for (const x of m.modalities.input) {
+      const s = String(x || "").toLowerCase();
+      if (s === "text") { if (!ins.includes("text")) ins.push("text"); }
+      else if (s === "image" || s.startsWith("image/")) { if (!ins.includes("image")) ins.push("image"); }
+    }
+    if (ins.length) out.input = ins;
+  }
+  const ct = m.cost && typeof m.cost === "object" && m.cost.text && typeof m.cost.text === "object" ? m.cost.text : null;
+  const ip = ct && ct.input && typeof ct.input === "object" ? ct.input : null;
+  const op = ct && ct.output && typeof ct.output === "object" ? ct.output : null;
+  if (ip && op && num0(ip.price) !== null && num0(op.price) !== null) {
+    const cr = ip.cache && typeof ip.cache === "object" ? num0(ip.cache.read) : null;
+    out.cost = { input: num0(ip.price), output: num0(op.price), cacheRead: cr !== null ? cr : 0, cacheWrite: 0 };
+  }
   return Object.keys(out).length ? out : null;
 }
 async function discoverModels({ baseUrl, api = "openai-completions", apiKey }, opts = {}) {
@@ -1745,6 +1784,7 @@ function providersStatus(configDir, cfg) {
 async function modelParams(configDir, cfg, provider, opts = {}) {
   const { data } = loadModelsJson(configDir, cfg);
   const p = data.providers && data.providers[provider];
+  const siblings = collectSiblingModels(data, provider, p ? p.baseUrl : ""); // local sibling-provider same-id entries (read-only synthetic path consumes them too)
   const { data: store } = loadModelsStore(configDir, cfg);
   const storeModels0 = store && store[provider] && Array.isArray(store[provider].models) ? store[provider].models : [];
   // 不在 models.json（OAuth 订阅登录型 / 纯目录型，如 qoder）：合成只读参数视图——
@@ -1777,7 +1817,7 @@ async function modelParams(configDir, cfg, provider, opts = {}) {
     const found = findModelsDevProvider(loadModelsDev(configDir, cfg).data, provider, cn.baseUrl || "");
     const mdModels = found.ok ? found.models : [];
     const { aux, models } = await auxBackfillWithRetry(configDir, cfg, src.map((m) => m.id || m.model).filter((id) => !mdModels.some((x) => String(x.id || x.model) === id)), cn.baseUrl || "",
-      (ex) => src.map((m) => backfillModelMeta(typeof m === "string" ? { id: m } : { id: m.id || m.model || m.name, ...m }, null, storeModels0, mdModels, ex)).filter((m) => m.id));
+      (ex) => src.map((m) => backfillModelMeta(typeof m === "string" ? { id: m } : { id: m.id || m.model || m.name, ...m }, null, siblings, storeModels0, mdModels, ex)).filter((m) => m.id));
     const first = typeof src[0] === "object" ? src[0] : null;
     return {
       ok: true, provider,
@@ -1853,11 +1893,11 @@ async function modelParams(configDir, cfg, provider, opts = {}) {
   const { aux, models } = await auxBackfillWithRetry(configDir, cfg, bareIds, provBaseUrl, (ex) =>
     src.map((m) => {
       const base = typeof m === "string" ? { id: m } : { id: m.id || m.model || m.name, ...m };
-      return backfillModelMeta(base, null, storeModels, mdModels, ex);
+      return backfillModelMeta(base, null, siblings, storeModels, mdModels, ex);
     }).filter((m) => m.id)
   );
   if (wantId && !models.some((m) => m.id === wantId)) {
-    models.unshift(backfillModelMeta({ id: wantId }, null, storeModels, mdModels, aux.extras));
+    models.unshift(backfillModelMeta({ id: wantId }, null, siblings, storeModels, mdModels, aux.extras));
   }
   // 跨提供商同 id 互证：字段级补全——只要缺任一字段就查同 id 条目，只填缺失项（标注跨源）
   // 目录数据只读一次（~2MB JSON），循环内复用——逐模型重读是纯浪费
@@ -1910,24 +1950,52 @@ function storeModelsFor(store, provider) {
   const p = store && store[provider];
   return p && Array.isArray(p.models) ? p.models : [];
 }
+/** Cross-gateway same-id sibling entries copy intrinsic capability fields only: api/baseUrl/headers are
+ *  other-gateway semantics (copying them would misbehave) and cost differs per gateway markup
+ *  (same rule as crossProviderModelMeta) — none of them are copied. */
+const SIBLING_INTRINSIC_FIELDS = ["name", "reasoning", "thinkingLevelMap", "input", "contextWindow", "maxTokens", "samplingParams", "compat", "inputLimits"];
+/** Same-id entries from sibling providers in the local models.json (our own model list, copied directly):
+ *  one gateway is often configured as multiple providers (e.g. opencode-go and opencode-go-direct share a baseUrl);
+ *  when saving a new provider, same-id models already configured under a sibling provider carry real working
+ *  params — closer to this machine's reality than builtin catalog/models.dev.
+ *  Two tiers: sameBase = same gateway (normalized baseUrl equal, incl. model-level baseUrl override; all fields copyable);
+ *  others = different gateway, same id (only SIBLING_INTRINSIC_FIELDS). String bare entries (id only) carry no params, skipped. */
+function collectSiblingModels(data, excludeProvider, baseUrl) {
+  const nb = normalizeBaseUrl(baseUrl);
+  const sameBase = [];
+  const others = [];
+  for (const [name, p] of Object.entries((data && data.providers) || {})) {
+    if (name === excludeProvider || !p || typeof p !== "object") continue;
+    const ms = Array.isArray(p.models) ? p.models : [];
+    for (const m of ms) {
+      if (!m || typeof m !== "object" || !m.id) continue;
+      const mb = normalizeBaseUrl(m.baseUrl || p.baseUrl || "");
+      (nb && mb && mb === nb ? sameBase : others).push(m);
+    }
+  }
+  return { sameBase, others };
+}
 /** 反填模型缺失元数据。优先级（first-wins，只填缺失项，链上前面的源赢了后面的不再覆写）：
- *  incoming → models.json 已有条目 → 内置目录（models-store）→ china-catalog 内嵌参数（stealth 模型）
+ *  incoming → models.json existing entries → local sibling-provider same-id entries (siblings: same gateway full fields / cross gateway intrinsic only)
+ *  → builtin catalog (models-store) → china-catalog embedded params (stealth models)
  *  → 厂商 /models 富字段（listExtras，最权威的在线数据但可能受网关配额限制，故不越过用户显式值）
  *  → models.dev → OpenRouter/LiteLLM（extras）。
  *  解决 wizard 只传 {id,name,reasoning} 时把 contextWindow/maxTokens/compat 剥掉的 BUG，
  *  让 DeepSeek 等已知模型写回时自动带上 1M 上下文/正确 compat，避免“过早压缩”；
  *  未知模型（如 ox-alpha-free）也不再落裸 {id}（pi 会落到 128k/16k 硬默认）。
- *  opts.report 传入对象时，逐字段记录首个命中源（#3 来源标注）：
- *  existing→已配置 / store→内置目录 / china-catalog→国内目录 / listExtras→厂商models /
- *  md→models.dev / extras→openrouter|litellm。 */
-function backfillModelMeta(model, existing, storeModels, mdModels, extras, listExtras, report) {
+ *  opts.report records the first source per filled field (#3 origin label, labels are runtime strings):
+ *  existing→configured / siblings→sibling|cross-provider / store→builtin / china-catalog→CN catalog /
+ *  listExtras→vendor-models / md→models.dev / extras→openrouter|litellm。 */
+function backfillModelMeta(model, existing, siblings, storeModels, mdModels, extras, listExtras, report) {
   const out = { ...model };
-  const sources = [existing ? [existing, "已配置"] : null,
-    ...(Array.isArray(storeModels) ? storeModels.map((s) => [s, "内置目录"]) : [])].filter(Boolean);
-  for (const [src, label] of sources) {
+  const sources = [existing ? [existing, "已配置", MODEL_META_FIELDS] : null,
+    ...(siblings && Array.isArray(siblings.sameBase) ? siblings.sameBase.map((s) => [s, "兄弟provider", MODEL_META_FIELDS]) : []),
+    ...(siblings && Array.isArray(siblings.others) ? siblings.others.map((s) => [s, "跨provider", SIBLING_INTRINSIC_FIELDS]) : []),
+    ...(Array.isArray(storeModels) ? storeModels.map((s) => [s, "内置目录", MODEL_META_FIELDS]) : [])].filter(Boolean);
+  for (const [src, label, fields] of sources) {
     if ((src.id || src.model) !== out.id) continue;
     if (out.name === undefined && src.name !== undefined) { out.name = src.name; if (report) report.name = label; }
-    for (const f of MODEL_META_FIELDS) {
+    for (const f of fields) {
       if (out[f] === undefined && src[f] !== undefined) { out[f] = src[f]; if (report) report[f] = label; }
     }
   }
@@ -1994,7 +2062,10 @@ async function resolveMdForUpsert(configDir, cfg, { provider, baseUrl, models, e
   if (!incoming.length) return { mdModels: [], refreshed: false, slug: "", extras: [], auxUsed: { openrouter: false, litellm: false } };
   const hasMeta = (o) => o && typeof o === "object" && MODEL_META_FIELDS.some((f) => o[f] !== undefined);
   const known = new Set();
-  for (const m of [...(Array.isArray(existingModels) ? existingModels : []), ...storeModelsFor(store, provider)]) {
+  // local sibling-provider same-id entries count as "known" too: with real params there is no need to force-refresh the catalog; bare same-id entries don't count
+  const { data: localData } = loadModelsJson(configDir, cfg);
+  const localSiblings = collectSiblingModels(localData, provider, baseUrl);
+  for (const m of [...(Array.isArray(existingModels) ? existingModels : []), ...localSiblings.sameBase, ...localSiblings.others, ...storeModelsFor(store, provider)]) {
     if (hasMeta(m)) known.add(String(m.id || m.model));
   }
   let missing = incoming.filter((id) => !known.has(id));
@@ -2098,6 +2169,8 @@ function upsertProviderData(data, input) {
     return out;
   }) : [];
   const storeModels = storeModelsFor(input.store, provider);
+  // local sibling-provider same-id entries (our own models.json list): same gateway copies all fields / cross gateway intrinsic only
+  const siblings = collectSiblingModels(data, provider, input.baseUrl || prov.baseUrl || "");
   const mdModels = Array.isArray(input.mdModels) ? input.mdModels : [];
   // listExtras（厂商 /models 富字段）字段白名单：只收 id/name + 元数据字段，剥掉客户端可能塞的任意其它键
   // headers 是用户手动配置的模型级字段，不该由厂商 /models 发现数据注入 → 从白名单排除
@@ -2135,7 +2208,7 @@ function upsertProviderData(data, input) {
     }
     prov.models = newModels.map((m) => {
       const rep = {};
-      const out = backfillModelMeta(m, existingKept.get(String(m.id)) || null, storeModels, mdModels, extras, listExtras, rep);
+      const out = backfillModelMeta(m, existingKept.get(String(m.id)) || null, siblings, storeModels, mdModels, extras, listExtras, rep);
       // 模型级临时禁用（enabled:false）透传保留（反填链不覆盖用户显式值）
       if (m.enabled === false) out.enabled = false;
       if (Object.keys(rep).length) fills.push({ id: out.id, fills: rep });
@@ -2149,7 +2222,7 @@ function upsertProviderData(data, input) {
     }
     for (const m of newModels) {
       const report = {};
-      const merged = backfillModelMeta(m, existing.get(m.id) || null, storeModels, mdModels, extras, listExtras, report);
+      const merged = backfillModelMeta(m, existing.get(m.id) || null, siblings, storeModels, mdModels, extras, listExtras, report);
       // 模型级临时禁用（enabled:false）透传保留
       if (m.enabled === false) merged.enabled = false;
       existing.set(m.id, clampCap(merged));
@@ -2842,7 +2915,7 @@ module.exports = {
   DEFAULT_CONFIG, loadConfig, saveConfig, loadAffiliate, loadFreeModels, matchInstalledFree, freeNpmName,
   getProviderKeys, setProviderKeys, dedupKeyNames, normalizeKeyEntry, maskKeys, maskKeyEntry, maskKey,
   loadModelsDev, saveModelsDevCache, cacheAgeMs, downloadCatalog, ensureCatalog, findJustget,
-  mapModelsDevModel, findModelsDevProvider, resolveMdForUpsert, resetCatalogForceGap, crossProviderModelMeta,
+  mapModelsDevModel, findModelsDevProvider, resolveMdForUpsert, resetCatalogForceGap, crossProviderModelMeta, collectSiblingModels,
   loadAux, ensureAuxAll, modelListExtra, findOpenRouterModel, mapOpenRouterModel, findLiteLlmEntry, mapLiteLlmModel, isOpenRouterBase, updateAuxFromScan, auxBackfillWithRetry,
   loadChinaCatalog, buildIndex, searchProviders,
   normalizeBaseUrl, reverseMatch, reverseDetect, extractUrls, detectBrands, probeOpenApi, brandFromText, brandFromModels,
