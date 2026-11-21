@@ -16,6 +16,7 @@ import {
   removeMcpServer,
   setMcpServerEnabledInProject,
   setMcpServerExposure,
+  setMcpServerExcludedTools,
   setMcpServersEnabled,
   type McpConfigFileTarget,
   type McpEnabledOutcome,
@@ -251,6 +252,25 @@ async function setServerExposure(
   if (target instanceof Refusal) return target.response();
   try {
     const { value: outcome, path } = await setMcpServerExposure(target, server.name, exposure);
+    const refused = outcomeRefusal(outcome, path);
+    if (refused) return refused.response();
+  } catch (error) {
+    return writeRefusal(error).response();
+  }
+  return overviewResponse(agentDir, project);
+}
+
+/** Sets one server's per-tool exclusion list (`excludeTools`); an empty list clears the key. */
+async function setServerExcludedTools(
+  agentDir: string,
+  project: Project | undefined,
+  server: McpServerRef,
+  excludeTools: string[],
+) {
+  const target = writeTarget(server.scope, project, agentDir);
+  if (target instanceof Refusal) return target.response();
+  try {
+    const { value: outcome, path } = await setMcpServerExcludedTools(target, server.name, excludeTools);
     const refused = outcomeRefusal(outcome, path);
     if (refused) return refused.response();
   } catch (error) {
@@ -584,6 +604,7 @@ async function addServer(
 //   enable | disable | remove | sign-out: { scope, name }
 //   set-enabled: { enabled, servers: [{ scope, name }] } → per-server `results`
 //   set-exposure: { scope, name, exposure }
+//   set-excluded-tools: { scope, name, excludeTools } (empty list = clear)
 //   set-in-project: { name, enabled } → a global server on or off in `cwd`'s project alone
 //   undo: { token } (from a remove's `undo`)
 //   add: { text, scope, values?, secretReferences?, server?, name?, rawPi?, trustFolder?, confirmHostEnv? }
@@ -639,6 +660,15 @@ export async function POST(req: Request) {
         }
         return await setServerExposure(agentDir, project, { scope, name }, body.exposure);
       }
+      case "set-excluded-tools": {
+        const scope = readScope(body.scope);
+        const name = readName(body.name);
+        const list = Array.isArray(body.excludeTools) ? body.excludeTools : null;
+        if (!scope || name === undefined || !list || list.some((t: unknown) => typeof t !== "string" || !t.trim()) || list.length > 500) {
+          return refusal(400, "invalid-request", 'scope must be "global" or "project", name a server name, and excludeTools a list of tool names (empty list = clear)');
+        }
+        return await setServerExcludedTools(agentDir, project, { scope, name }, list.map((t: string) => t.trim()));
+      }
       case "set-in-project": {
         const name = readName(body.name);
         if (name === undefined || typeof body.enabled !== "boolean") {
@@ -655,7 +685,7 @@ export async function POST(req: Request) {
       case "add":
         return await addServer(agentDir, project, internals, body);
       default:
-        return refusal(400, "invalid-request", "action must be add, enable, disable, remove, set-enabled, set-exposure, set-in-project, undo or sign-out");
+        return refusal(400, "invalid-request", "action must be add, enable, disable, remove, set-enabled, set-exposure, set-excluded-tools, set-in-project, undo or sign-out");
     }
   } catch (error) {
     return refusal(500, "internal", errorMessage(error));

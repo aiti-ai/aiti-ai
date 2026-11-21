@@ -441,6 +441,7 @@ function describeServer(
     sourcePath,
     configKey,
     enabled: config.enabled !== false,
+    excludedTools: Array.isArray(config.excludeTools) ? config.excludeTools.map(String) : [],
     validated: internals !== undefined,
     envNames: isRecord(config.env) ? Object.keys(config.env) : [],
     headerNames: isRecord(config.headers) ? Object.keys(config.headers) : [],

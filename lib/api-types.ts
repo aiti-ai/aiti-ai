@@ -250,6 +250,8 @@ export interface McpServerInfo {
    */
   configKey: string;
   enabled: boolean;
+  /** Per-tool model-visibility filter (pi-mcp-adapter excludeTools); empty = all visible. */
+  excludedTools?: string[];
   /** False when the SDK's validator was unavailable; nothing below was checked. */
   validated: boolean;
   /** The SDK's reason for refusing the entry; it never connects. */
