@@ -1,0 +1,11 @@
+# aiti-ai-speek · local TTS service deps (Qwen3-TTS family, torch)
+# torch is NOT installed here on purpose: the right wheel depends on the device (CUDA / ROCm /
+# CPU). Install it yourself in this venv, then `pip install -U qwen-tts`.
+fastapi>=0.115
+uvicorn>=0.30
+pydantic>=2.7
+numpy>=1.26.4,<2
+soundfile>=0.13.1
+tokenizers>=0.22.1
+huggingface_hub>=0.33.0
+librosa>=0.11.0

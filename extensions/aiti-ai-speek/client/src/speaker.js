@@ -57,11 +57,21 @@ const state = {
   paused: false,
   starting: false,
   audio: null,         // edge 引擎的 <audio>
-  edgePool: {},        // { [key]: { loaded, loading, errored, audioSrc } }  edge 预取池
+  edgePool: {},        // { [key]: { loaded, loading, errored, audioSrc } }  TTS prefetch pool (edge + local)
   scrollListener: null,    // 滚动事件监听器句柄
   voices: [],
   edgeVoices: [],
   edgeAvailable: false,
+  // local engine (OpenAI-compatible service) state
+  localStatus: "stopped",   // stopped | starting | loading | ready | error | unsupported
+  localProvider: "",        // provider reported by the service (hojo-40m ...)
+  localProviderLabel: "",
+  localSupportsClone: false,
+  localVoices: [],          // [{ id, label, sample, builtin, provider, language }]
+  localPrepare: null,       // prepare.json snapshot { phase, percent, message }
+  localInfo: null,          // GET /tts/info snapshot
+  localBaseUrl: "",
+  localVm: null,            // engines.local status block from /voices
   // { installed, bin, version, platform, featureOn, installHint } —— /voices 富状态
   edgeStatus: null,
   browserUnsupported: false,
@@ -179,13 +189,293 @@ export function setEdgeStatus(status) {
   }
   notify();
 }
-/** 引擎实际生效值：auto → 已装 edge-tts 则 edge，否则 browser；显式 edge 但未装 → 回落 browser */
+// ── local engine (OpenAI-compatible service @127.0.0.1:8768) ──────────────────
+/** Apply the `engines.local` block returned by /voices (or /engine-status). */
+export function setLocalStatus(block) {
+  if (!block || typeof block !== "object") return;
+  const prev = state.localStatus;
+  state.localVm = block;
+  state.localProvider = block.provider || state.localProvider || "";
+  state.localProviderLabel = block.providerLabel || state.localProviderLabel || "";
+  state.localBaseUrl = block.baseUrl || state.localBaseUrl || "";
+  if (typeof block.supportsClone === "boolean") state.localSupportsClone = block.supportsClone;
+  if (block.prepare) state.localPrepare = block.prepare;
+  if (block.available) state.localStatus = "ready";
+  else if (block.status === "loading" || block.status === "starting") state.localStatus = "loading";
+  else if (block.status === "error") state.localStatus = "error";
+  else state.localStatus = "stopped";
+  if (prev !== state.localStatus) notify();
+  else notify();
+}
+/** Replace the local voice list (keep the previous result while the service is not ready). */
+export function setLocalVoices(list) {
+  if (Array.isArray(list)) state.localVoices = list;
+  notify();
+}
+/** Voice list for the active engine (settings panel dropdown). */
+export function engineVoices() {
+  return ttsBackendNow() === "local"
+    ? (state.localVoices || []).map((v) => ({ id: v.id, label: v.label || v.id, sample: v.sample }))
+    : (state.edgeVoices || []).map((v) => ({ id: v.id, label: v.label, sample: v.sample }));
+}
+
+/** GET /tts/info — full local service snapshot (health/prepare/paths/sizes). */
+export async function fetchLocalInfo(opts) {
+  try {
+    const q = opts && opts.log ? "?log=1" : "";
+    const res = await fetch(state.apiUrl("/api/extensions/aiti-ai-speek/tts/info") + q);
+    if (!res.ok) return null;
+    const d = await res.json();
+    if (!d || !d.ok) return null;
+    state.localInfo = d;
+    state.localPrepare = d.prepare || state.localPrepare;
+    if (d.running) state.localStatus = "ready";
+    else if (d.health && (d.health.status === "loading" || d.health.status === "starting")) state.localStatus = "loading";
+    else if (d.health && d.health.status === "error") state.localStatus = "error";
+    else if (d.prepare && ["venv", "deps", "download"].includes(String(d.prepare.phase))) state.localStatus = "loading";
+    else state.localStatus = "stopped";
+    if (d.providerActual) state.localProvider = d.providerActual;
+    if (d.health && d.health.providerLabel) state.localProviderLabel = d.health.providerLabel;
+    if (d.health && d.health.provider) state.localProvider = d.health.provider;
+    if (d.baseUrl) state.localBaseUrl = d.baseUrl;
+    notify();
+    return d;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * POST /tts/ensure — probe, then bootstrap+start when needed.
+ * Returns { running } | { starting } | { error }. Progress arrives via /tts/progress (SSE).
+ */
+export async function ensureLocal(provider) {
+  try {
+    const res = await fetch(state.apiUrl("/api/extensions/aiti-ai-speek/tts/ensure"), {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ provider: provider || undefined }),
+    });
+    const d = await res.json().catch(() => null);
+    if (!d) return { running: false, error: "ensure failed" };
+    if (d.prepare) state.localPrepare = d.prepare;
+    if (d.provider) state.localProvider = d.provider;
+    if (d.running) {
+      state.localStatus = "ready";
+      notify();
+      fetchLocalVoices(true);
+      return d;
+    }
+    if (d.starting) {
+      state.localStatus = "loading";
+      notify();
+      subscribeLocalProgress();
+      return d;
+    }
+    state.localStatus = d.error ? "error" : "stopped";
+    if (d.error) state.lastError = d.error;
+    notify();
+    return d;
+  } catch (e) {
+    return { running: false, error: String((e && e.message) || e) };
+  }
+}
+
+/** POST /tts/control { action: start|stop|restart }. */
+export async function controlLocal(action, provider) {
+  try {
+    if (action === "stop") state.localStatus = "stopped";
+    else state.localStatus = "loading";
+    notify();
+    const res = await fetch(state.apiUrl("/api/extensions/aiti-ai-speek/tts/control"), {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action, provider: provider || undefined }),
+    });
+    const d = await res.json().catch(() => null);
+    if (!d || !d.ok) {
+      state.localStatus = "error";
+      state.lastError = (d && d.error) || `${action} failed`;
+      notify();
+      return d || { ok: false };
+    }
+    if (action === "stop") {
+      state.localStatus = "stopped";
+      state.localVoices = [];
+      notify();
+      return d;
+    }
+    if (d.running) { state.localStatus = "ready"; notify(); fetchLocalInfo(); fetchLocalVoices(true); }
+    else { state.localStatus = "loading"; notify(); subscribeLocalProgress(); }
+    return d;
+  } catch (e) {
+    state.localStatus = "error";
+    state.lastError = String((e && e.message) || e);
+    notify();
+    return { ok: false, error: state.lastError };
+  }
+}
+
+/** GET /tts/voices — local voice list (+ custom count). */
+export async function fetchLocalVoices(force) {
+  try {
+    const res = await fetch(state.apiUrl("/api/extensions/aiti-ai-speek/tts/voices") + (force ? "?force=1" : ""));
+    if (!res.ok) return null;
+    const d = await res.json();
+    if (!d || !d.ok) return null;
+    // Running service wins even when the list is empty (a provider switch to 80M has no built-ins);
+    // a stopped service keeps the previous list so the dropdown is not blanked out.
+    if (Array.isArray(d.voices) && (d.running || !state.localVoices.length)) state.localVoices = d.voices;
+    if (typeof d.supportsClone === "boolean") state.localSupportsClone = d.supportsClone;
+    if (d.provider) state.localProvider = d.provider;
+    state.localCustomVoices = typeof d.custom === "number" ? d.custom : state.localCustomVoices;
+    notify();
+    return d;
+  } catch {
+    return null;
+  }
+}
+
+/** POST /tts/voices (multipart) — create a clone voice; audio is a Blob or File. */
+export async function createLocalVoice({ name, refText, language, xvecOnly, provider, blob, filename }) {
+  try {
+    const fd = new FormData();
+    fd.append("name", String(name || ""));
+    fd.append("refText", String(refText || ""));
+    fd.append("language", String(language || "Chinese"));
+    fd.append("xvecOnly", xvecOnly ? "true" : "false");
+    if (provider) fd.append("provider", provider);
+    fd.append("audio", blob, filename || "ref.wav");
+    const res = await fetch(state.apiUrl("/api/extensions/aiti-ai-speek/tts/voices"), { method: "POST", body: fd });
+    const d = await res.json().catch(() => null);
+    if (d && d.ok) { await fetchLocalVoices(true); return d; }
+    return d || { ok: false, error: `upload failed (${res.status})` };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+}
+
+/** DELETE /tts/voices/<id>. */
+export async function deleteLocalVoice(id) {
+  try {
+    const res = await fetch(state.apiUrl("/api/extensions/aiti-ai-speek/tts/voices/") + encodeURIComponent(id), { method: "DELETE" });
+    const d = await res.json().catch(() => null);
+    if (d && d.ok) { await fetchLocalVoices(true); return d; }
+    return d || { ok: false, error: `delete failed (${res.status})` };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+}
+
+// ── preparation progress (SSE on prepare.json; event driven, no polling) ──────
+let localProgressEs = null;
+let localProgressDone = false;
+export function subscribeLocalProgress() {
+  if (typeof window === "undefined" || typeof EventSource === "undefined") return;
+  if (localProgressEs) return;
+  localProgressDone = false;
+  try {
+    const es = new EventSource(state.apiUrl("/api/extensions/aiti-ai-speek/tts/progress"));
+    localProgressEs = es;
+    es.addEventListener("prepare", (ev) => {
+      try {
+        const p = JSON.parse(ev.data || "null");
+        if (!p) return;
+        state.localPrepare = p;
+        const phase = String(p.phase || "");
+        if (phase === "ready") {
+          localProgressDone = true;
+          state.localStatus = "ready";
+          notify();
+          closeLocalProgress();
+          fetchLocalInfo().then(() => fetchLocalVoices(true));
+          return;
+        }
+        if (phase === "failed") {
+          localProgressDone = true;
+          state.localStatus = "error";
+          state.lastError = p.message || "local TTS preparation failed";
+          notify();
+          closeLocalProgress();
+          return;
+        }
+        if (phase === "idle-stop") {
+          state.localStatus = "stopped";
+          notify();
+          closeLocalProgress();
+          return;
+        }
+        state.localStatus = "loading";
+        notify();
+      } catch { /* bad frame ignored */ }
+    });
+    es.onerror = () => {
+      // EventSource auto-reconnects; stop trying once a terminal phase was seen.
+      if (localProgressDone) closeLocalProgress();
+    };
+  } catch { /* EventSource unavailable */ }
+}
+function closeLocalProgress() {
+  if (!localProgressEs) return;
+  try { localProgressEs.close(); } catch { /* noop */ }
+  localProgressEs = null;
+}
+
+/** Feature writers used by the settings panel (boolean / string). */
+export async function setFeatureFlagApi(id, enabled) {
+  try {
+    const res = await fetch(state.apiUrl("/api/extensions/aiti-ai-speek/feature"), {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id, enabled: !!enabled }),
+    });
+    return res.ok;
+  } catch { return false; }
+}
+export async function setFeatureValueApi(id, value) {
+  try {
+    const res = await fetch(state.apiUrl("/api/extensions/aiti-ai-speek/feature"), {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id, value: String(value ?? "") }),
+    });
+    return res.ok;
+  } catch { return false; }
+}
+
+/** Engine actually in use: auto = edge -> local -> browser (Q1=A); explicit edge without the CLI falls back to browser; explicit local stays local (failures surface). */
 export function resolvedEngine() {
   const e = state.settings.engine;
+  if (e === "local") return "local";
   if (e === "edge") return state.edgeAvailable ? "edge" : "browser";
-  // auto = 静态选择（edge 可用即 edge）；无运行时降级——失败一律弹提示，由用户决定
-  if (e === "auto") return state.edgeAvailable ? "edge" : "browser";
+  if (e === "auto") {
+    if (state.edgeAvailable) return "edge";
+    if (localReady()) return "local";
+    return "browser";
+  }
   return "browser";
+}
+/** True when the local service answered /health (ready). */
+export function localReady() {
+  return state.localStatus === "ready";
+}
+/** Which non-browser backend carries playback right now (null = browser Web Speech). */
+function ttsBackendNow() {
+  const e = resolvedEngine();
+  if (e === "local") return "local";
+  if (e === "edge" || (state.browserUnsupported && state.edgeAvailable)) return "edge";
+  return null;
+}
+/** Voice id used for the active backend (local falls back to the service's first voice). */
+function activeVoiceId() {
+  if (ttsBackendNow() === "local") {
+    return state.settings.voice || (state.localVoices && state.localVoices[0] && state.localVoices[0].id) || "";
+  }
+  return state.settings.voice || defaultEdgeVoice();
+}
+/** Pool key for one sentence under the active backend (local omits rate: playbackRate carries it). */
+function ttsPoolKey(seg) {
+  const backend = ttsBackendNow();
+  if (backend === "local") {
+    return `local|${state.localProvider || ""}|${activeVoiceId()}|${seg.text}`;
+  }
+  return `edge|${activeVoiceId()}|${state.settings.rate}|${seg.text}`;
 }
 /** 朗读失败提示（一次性 toast）：失败即告知用户，不静默降级 */
 export function failToast(text) {
@@ -721,11 +1011,10 @@ async function playCurrentSeg() {
   }
   if (!readerBC) { /* 首次进入播放时声明一次 */ }
   else broadcastClaim();
-  const useEdge = resolvedEngine() === "edge" || (state.browserUnsupported && state.edgeAvailable);
-  if (useEdge) {
-    // 预读热池命中 → speakEdge 直接播本地缓存音频；未命中 → 后台按序继续请求（不阻塞），
-    // 本地语音可用则立即播（speakEdge 无池命中自动回落 speakBrowser）——不出现「启动中」干等
-    prefetchSegEdge(seg); // fire & forget：幂等（已读/在途/失败均不重复发请求）
+  const useServer = ttsBackendNow() !== null;
+  if (useServer) {
+    // Warm pool hit -> speak immediately; miss -> request in the background (ordered prefetch)
+    prefetchSeg(seg); // fire & forget: idempotent (ready / in flight / failed are not re-requested)
   }
   state.starting = false;
   notify();
@@ -735,8 +1024,9 @@ async function playCurrentSeg() {
 }
 
 function speakSeg(seg) {
-  const useEdge = resolvedEngine() === "edge" || (state.browserUnsupported && state.edgeAvailable);
-  if (useEdge) speakEdge(seg);
+  const backend = ttsBackendNow();
+  if (backend === "local") speakLocal(seg);
+  else if (backend === "edge") speakEdge(seg);
   else speakBrowser(seg);
 }
 
@@ -873,15 +1163,73 @@ function advanceToNextMessage() {
   loadRangeIntoCur(activeSessionId, nextListIdx, playToken);
 }
 
-// ── edge-tts 预取与播放 ──
-/** edge 池 key（voice|rate|text 三者定一句，与 tts-cache 服务端 key 同构） */
+// ── TTS prefetch and playback (edge-tts + local service) ──
+// Pool key for the current backend (one entry per sentence; see ttsPoolKey).
 function edgeKey(seg) {
-  return `edge|${state.settings.voice || defaultEdgeVoice()}|${state.settings.rate}|${seg.text}`;
+  return ttsPoolKey(seg);
 }
 
 /**
- * 单句 TTS 预取 —— 逐句独立请求（不批量：每句先完成先入池，避免等整批最慢句）。
- * 幂等：池中已 loaded → 立即就绪；在途 → 复用同一 promise；否则发一次请求。
+ * Local service prefetch — same idempotent contract as the edge path.
+ * Serialization happens server-side (one inference at a time), so the queue stays simple.
+ */
+function prefetchSegLocal(seg) {
+  if (!seg || !seg.text) return Promise.resolve({ ok: false });
+  if (!/[\u4e00-\u9fffA-Za-z0-9]/.test(seg.text)) return Promise.resolve({ ok: true, skip: true });
+  const key = ttsPoolKey(seg);
+  const existing = state.edgePool[key];
+  if (existing) {
+    if (existing.loaded) return Promise.resolve({ ok: true, src: existing.audioSrc });
+    if (existing.loading && existing.promise) return existing.promise;
+  }
+  const entry = { loaded: false, loading: true, errored: false, audioSrc: null, promise: null };
+  state.edgePool[key] = entry;
+  const voice = state.settings.voice || (state.localVoices[0] && state.localVoices[0].id) || "";
+  entry.promise = new Promise((resolve) => {
+    const t0 = Date.now();
+    const attemptOnce = (attempt) => fetch(state.apiUrl("/api/extensions/aiti-ai-speek/tts-batch"), {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ texts: [seg.text], voice, engine: "local" }),
+    })
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => {
+        const it = d && Array.isArray(d.items) ? d.items[0] : null;
+        if (d && d.ok && it && it.cached) {
+          entry.loaded = true; entry.loading = false;
+          entry.audioSrc = state.apiUrl("/api/extensions/aiti-ai-speek/tts-cache/" + it.key);
+          resolve({ ok: true, src: entry.audioSrc });
+          return;
+        }
+        if (it && it.speakable === false) { entry.loading = false; resolve({ ok: true, skip: true }); return; }
+        const code = (it && it.code) || (d && d.code);
+        const retryable = !!(it && it.retryable) || code === "not-ready" || code === "network" || code === "timeout";
+        console.log("[speek][tts-fail-local]", { ms: Date.now() - t0, attempt, voice, code, text: (seg.text || "").slice(0, 30), err: it && it.error });
+        if (attempt < 2 && retryable) { setTimeout(() => attemptOnce(attempt + 1), 1200); return; }
+        entry.loading = false; entry.errored = true;
+        resolve({ ok: false, code, retryable, error: (it && it.error) || (d && d.error) });
+      })
+      .catch((e) => {
+        console.log("[speek][tts-fail-local]", { ms: Date.now() - t0, attempt, err: String(e && e.message ? e.message : e) });
+        if (attempt < 2) { setTimeout(() => attemptOnce(attempt + 1), 1200); return; }
+        entry.loading = false; entry.errored = true;
+        resolve({ ok: false, code: "network", retryable: true });
+      });
+    attemptOnce(1);
+  });
+  return entry.promise;
+}
+
+/** Dispatch to the active backend's prefetch implementation. */
+function prefetchSeg(seg) {
+  const backend = ttsBackendNow();
+  if (backend === "local") return prefetchSegLocal(seg);
+  if (backend === "edge") return prefetchSegEdge(seg);
+  return Promise.resolve({ ok: false });
+}
+
+/**
+ * Single-sentence TTS prefetch — one request per sentence (batch waits for the slowest one).
+ * Idempotent: loaded -> resolve now; in flight -> reuse the same promise; else start one request.
  */
 function prefetchSegEdge(seg) {
   if (!seg || !seg.text) return Promise.resolve({ ok: false });
@@ -944,24 +1292,23 @@ let prefetchInFlight = 0;
 const prefetchQueued = new Set(); // 池 key → 已排队（防重复入队；完成/失败后释放）
 
 function edgeUseNow() {
-  return resolvedEngine() === "edge" || (state.browserUnsupported && state.edgeAvailable);
+  // Backwards-compatible name: true when a server-backed engine (edge or local) is active.
+  return ttsBackendNow() !== null;
 }
 
-/** 逐句入队预读：先查是否已读（loaded/loading/已排队）→ 有则跳过；无则后台加载下一条（不批量） */
+/** Queue sentence prefetch for the active backend (skips loaded/in-flight/queued/failed). */
 function enqueuePrefetch(segs) {
-  if (!segs || !segs.length || !edgeUseNow()) return;
-  const voice = state.settings.voice || defaultEdgeVoice();
-  const rate = state.settings.rate;
+  if (!segs || !segs.length || !ttsBackendNow()) return;
   let n = 0;
   for (const seg of segs) {
     if (!seg || !seg.text) continue;
-    const key = `edge|${voice}|${rate}|${seg.text}`;
+    const key = ttsPoolKey(seg);
     const p = state.edgePool[key];
-    if (p && (p.loaded || p.loading || p.errored)) continue; // 已读/在读/已失败 → 不再重复请求
-    if (prefetchQueued.has(key)) continue;      // 已排队 → 不再排队
+    if (p && (p.loaded || p.loading || p.errored)) continue; // already ready / loading / failed
+    if (prefetchQueued.has(key)) continue;
     prefetchQueued.add(key);
     prefetchQueue.push(seg);
-    if (++n >= PREFETCH_AHEAD + 1) break;       // 最多当前句 + 3 预读
+    if (++n >= PREFETCH_AHEAD + 1) break; // current sentence + 3 ahead
   }
   pumpPrefetch();
 }
@@ -970,9 +1317,10 @@ function pumpPrefetch() {
   while (prefetchInFlight < PREFETCH_MAX_INFLIGHT && prefetchQueue.length) {
     const seg = prefetchQueue.shift();
     prefetchInFlight++;
-    prefetchSegEdge(seg).then(() => {
+    const key = ttsPoolKey(seg);
+    prefetchSeg(seg).then(() => {
       prefetchInFlight--;
-      prefetchQueued.delete(edgeKey(seg)); // 成功由池命中跳过；失败可再排队重试
+      prefetchQueued.delete(key); // hit -> skipped by pool; failure can be queued again
       pumpPrefetch();
     });
   }
@@ -1034,25 +1382,23 @@ function prefetchNextWindow() {
 }
 
 function speakEdge(seg) {
-  const key = `edge|${state.settings.voice || "zh-CN-XiaoxiaoNeural"}|${state.settings.rate}|${seg.text}`;
+  const key = ttsPoolKey(seg);
   try { if (state.audio) { state.audio.pause(); state.audio = null; } } catch { /* noop */ }
   const p = state.edgePool[key];
   if (p && p.audioSrc) { playEdgeAudio(p.audioSrc, seg); return; }
-  // 池未命中 → 等待合成（唯一路径；失败不降级浏览器）
+  // Pool miss -> wait for synthesis (only path; failures are reported, never silently downgraded)
   state.starting = true;
   notify();
   const myToken = playToken;
   const t0 = Date.now();
-  // 「启动中」保持到音频真正出声（playEdgeAudio 的 onplaying 回调）才清除；失败时也清。
-  // 音频未开始前（合成中/加载中）不提前消失——否则用户看到「启动中一闪而过没动静」。
+  // "starting" stays until audio actually plays (playEdgeAudio onplaying) or the attempt fails.
   const clearStarting = () => {
-    // 至少显示 150ms（合成秒回也可见一瞬「启动中」，不静默闪过）
     const remain = Math.max(0, 150 - (Date.now() - t0));
     setTimeout(() => { if (state.playing && myToken === playToken) { state.starting = false; notify(); } }, remain);
   };
   prefetchSegEdge(seg).then((r) => {
     if (!state.playing || myToken !== playToken) return;
-    if (r && r.skip) { clearStarting(); advanceToNextMessage(); return; } // 不可读句（纯符号）：跳过不失败
+    if (r && r.skip) { clearStarting(); advanceToNextMessage(); return; } // unreadable sentence: skip
     if (r && r.ok && r.src) { playEdgeAudio(r.src, seg, clearStarting); return; }
     clearStarting();
     failToast("语音合成失败（edge-tts 无法生成音频），请检查后端或换引擎。");
@@ -1061,6 +1407,76 @@ function speakEdge(seg) {
     clearStarting();
     failToast("语音合成失败（edge-tts 无法生成音频），请检查后端或换引擎。");
   });
+}
+
+/**
+ * Local-engine playback: audio already sits in the extension cache, speed comes from
+ * playbackRate (the service does not implement `speed`; the cache key stays rate-free).
+ * Failures degrade that single sentence to the browser engine with a toast (plan R20).
+ */
+function speakLocal(seg) {
+  const key = ttsPoolKey(seg);
+  try { if (state.audio) { state.audio.pause(); state.audio = null; } } catch { /* noop */ }
+  const p = state.edgePool[key];
+  if (p && p.audioSrc) { playLocalAudio(p.audioSrc, seg); return; }
+  state.starting = true;
+  notify();
+  const myToken = playToken;
+  const t0 = Date.now();
+  const clearStarting = () => {
+    const remain = Math.max(0, 150 - (Date.now() - t0));
+    setTimeout(() => { if (state.playing && myToken === playToken) { state.starting = false; notify(); } }, remain);
+  };
+  prefetchSegLocal(seg).then((r) => {
+    if (!state.playing || myToken !== playToken) return;
+    if (r && r.skip) { clearStarting(); advanceToNextMessage(); return; }
+    if (r && r.ok && r.src) { playLocalAudio(r.src, seg, clearStarting); return; }
+    clearStarting();
+    // Service asleep -> wake it once and tell the user; the current sentence uses the browser.
+    if (r && (r.code === "not-ready" || r.code === "network")) {
+      state.localStatus = "loading";
+      notify();
+      ensureLocal();
+      failToast("本地语音未就绪（正在自动启动），这句先用浏览器朗读；稍后再读即可用本地音色。");
+    } else {
+      failToast("本地语音合成失败：" + String((r && r.error) || "服务未就绪") + "（已用浏览器朗读这句）");
+    }
+    speakBrowser(seg);
+  }).catch(() => {
+    if (!state.playing || myToken !== playToken) return;
+    clearStarting();
+    failToast("本地语音合成失败（已用浏览器朗读这句）");
+    speakBrowser(seg);
+  });
+}
+
+/** Local audio playback with playbackRate-based speed (pitch preserved). */
+function playLocalAudio(src, seg, onStart) {
+  try { if (state.audio) { state.audio.pause(); } } catch { /* noop */ }
+  const audio = new Audio(src);
+  audio.preload = "auto";
+  try {
+    audio.playbackRate = clampRate(state.settings.rate);
+    audio.preservesPitch = true;
+  } catch { /* older browsers */ }
+  state.audio = audio;
+  const myToken = playToken;
+  let attempts = 0;
+  const tryPlay = () => {
+    audio.onended = () => { if (state.playing && myToken === playToken) advanceSeg(); };
+    audio.onplaying = () => { try { onStart && onStart(); } catch { /* noop */ } };
+    audio.onerror = () => {
+      if (attempts < 1) { attempts++; try { audio.load(); audio.play().catch(() => {}); } catch { /* noop */ } return; }
+      try { onStart && onStart(); } catch { /* noop */ }
+      failToast("语音播放失败。");
+    };
+    audio.play().catch(() => {
+      if (attempts < 1) { attempts++; try { audio.load(); audio.play().catch(() => {}); } catch { /* noop */ } return; }
+      try { onStart && onStart(); } catch { /* noop */ }
+      failToast("语音播放失败。");
+    });
+  };
+  tryPlay();
 }
 
 /** edge 音频播放（唯一路径）：切句停旧（防双声）；onended → 推进；失败 → 重试 1 次再弹提示。
@@ -1180,14 +1596,14 @@ export function pause() {
   if (!state.playing) return;
   // 暂停 = 屏保回来（用户已停，不必再保亮）
   releaseWakeLock();
-  if (resolvedEngine() === "edge" && state.audio) { state.audio.pause(); state.paused = true; notify(); return; }
+  if (state.audio && ttsBackendNow()) { state.audio.pause(); state.paused = true; notify(); return; }
   try { window.speechSynthesis.pause(); state.paused = true; notify(); } catch { /* noop */ }
 }
 export function resume() {
   if (!state.playing || !state.paused) return;
   // 恢复播放 = 继续保亮
   acquireWakeLock();
-  if (resolvedEngine() === "edge" && state.audio) { state.audio.play().catch(() => {}); state.paused = false; notify(); return; }
+  if (state.audio && ttsBackendNow()) { state.audio.play().catch(() => {}); state.paused = false; notify(); return; }
   try { window.speechSynthesis.resume(); state.paused = false; notify(); } catch { /* noop */ }
 }
 export function stop() {
@@ -1595,8 +2011,10 @@ export async function fetchEdgeInfo(force = false) {
     if (!res.ok) return;
     const d = await res.json();
     if (d && d.ok) {
-      // 富状态（设置面板展示）+ 音色表（含 sample 试听文案）
+      // Rich status (panel) + voice list (with preview samples) + local engine block
       setEdgeStatus({ ...d, voices: d.voices || [] });
+      if (d.engines && d.engines.local) setLocalStatus(d.engines.local);
+      if (Array.isArray(d.localVoices)) setLocalVoices(d.localVoices);
     }
   } catch { /* noop */ }
 }
@@ -1617,21 +2035,22 @@ export async function initEngine() {
   initEngineInflight = (async () => {
   const supported = browserSpeechSupported();
   state.browserUnsupported = !supported;
-  // 探测 edge 可用性（服务端 autoEnableEdge 首次自动开 feature；用户显式关闭不会被覆盖）
+  // Probe both server engines (/voices carries edge + local status); auto-enable features once.
   await fetchEdgeInfo();
   const s = state.settings.engine;
   if (state.edgeAvailable) {
     if (s === "auto" || (s === "browser" && !state.engineUpgraded)) {
-      // auto（默认）→ 保持 auto（resolved 已优先 edge）；旧 browser 默认 → 升一次到 auto
+      // auto (default) stays auto (resolved prefers edge); legacy browser default upgrades once
       state.engineUpgraded = true;
       if (s === "browser") { state.settings.engine = "auto"; state.lastError = "已检测到 edge-tts，引擎默认切到 edge-tts（更自然）。"; }
     }
     if (state.browserUnsupported) { state.settings.engine = "edge"; state.lastError = "浏览器不支持本地朗读，已自动切换到服务端语音生成。"; }
   } else if (s === "auto") {
-    state.settings.engine = "browser";
+    // auto = edge -> local -> browser: keep "auto" so a later local start is picked up on reload
+    state.settings.engine = localReady() ? "auto" : "browser";
   }
-  if (state.browserUnsupported && !state.edgeAvailable) {
-    state.lastError = "浏览器不支持本地朗读，且服务端语音（edge-tts）未就绪，无法朗读。请确认已安装 edge-tts（~/.local/bin/edge-tts）。";
+  if (state.browserUnsupported && !state.edgeAvailable && !localReady()) {
+    state.lastError = "浏览器不支持本地朗读，且服务端语音（edge-tts / 本地 TTS）未就绪，无法朗读。请安装 edge-tts 或在设置里启动本地引擎。";
   }
   persist();
   notify();
@@ -1653,7 +2072,8 @@ export async function autoSelectEngine() { return initEngine(); }
 let previewAudio = null;
 let previewToken = 0;
 function previewSampleText(voiceId) {
-  const v = (state.edgeVoices || []).find((x) => x.id === voiceId);
+  const pool = ttsBackendNow() === "local" ? (state.localVoices || []) : (state.edgeVoices || []);
+  const v = pool.find((x) => x.id === voiceId);
   if (v && v.sample) return v.sample;
   const name = String(voiceId || "")
     .replace(/^zh-CN-/, "").replace(/Neural$/i, "").replace(/[-_]/g, "");
@@ -1661,29 +2081,32 @@ function previewSampleText(voiceId) {
 }
 export function previewVoice(voiceId) {
   const tok = ++previewToken;
-  // 停掉上一次试听
+  // Stop the previous preview
   try { if (previewAudio) { previewAudio.pause(); previewAudio = null; } window.speechSynthesis?.cancel(); } catch { /* noop */ }
-  const useEdge = resolvedEngine() === "edge";
+  const backend = ttsBackendNow();
   const rate = state.settings.rate || 1;
-  if (useEdge && state.edgeAvailable) {
+  if (backend === "local" || (backend === "edge" && state.edgeAvailable)) {
     const text = previewSampleText(voiceId);
+    const voice = voiceId || (backend === "local" ? ((state.localVoices[0] || {}).id || "") : defaultEdgeVoice());
     const url = state.apiUrl("/api/extensions/aiti-ai-speek/tts") +
       "?text=" + encodeURIComponent(text) +
-      "&voice=" + encodeURIComponent(voiceId || defaultEdgeVoice()) +
-      "&rate=" + encodeURIComponent(String(rate));
+      "&voice=" + encodeURIComponent(voice) +
+      "&rate=" + encodeURIComponent(String(rate)) +
+      (backend === "local" ? "&engine=local" : "");
     fetch(url).then((r) => (r.ok ? r.blob() : null)).then((blob) => {
       if (tok !== previewToken || !blob) return;
       try {
         const src = URL.createObjectURL(blob);
         const a = new Audio(src);
+        if (backend === "local") { try { a.playbackRate = clampRate(rate); a.preservesPitch = true; } catch { /* noop */ } }
         previewAudio = a;
         a.play().catch(() => { URL.revokeObjectURL(src); if (previewAudio === a) previewAudio = null; });
         a.onended = () => { if (previewAudio === a) previewAudio = null; URL.revokeObjectURL(src); };
       } catch { /* noop */ }
-    }).catch(() => { /* 试听失败静默 */ });
+    }).catch(() => { /* preview failures stay silent */ });
     return;
   }
-  // 浏览器引擎：speechSynthesis 直接读一句
+  // Browser engine: speak one sentence via speechSynthesis
   try {
     const synth = window.speechSynthesis;
     if (!synth) return;
@@ -1694,6 +2117,30 @@ export function previewVoice(voiceId) {
     u.rate = rate;
     synth.speak(u);
   } catch { /* noop */ }
+}
+
+/** Preview one local voice regardless of the selected engine (voice management dialog). */
+export async function previewLocalVoice(voiceId) {
+  const tok = ++previewToken;
+  try { if (previewAudio) { previewAudio.pause(); previewAudio = null; } window.speechSynthesis?.cancel(); } catch { /* noop */ }
+  const text = previewSampleText(voiceId);
+  const url = state.apiUrl("/api/extensions/aiti-ai-speek/tts")
+    + "?engine=local&text=" + encodeURIComponent(text)
+    + "&voice=" + encodeURIComponent(voiceId || "");
+  try {
+    const r = await fetch(url);
+    if (!r.ok || tok !== previewToken) return false;
+    const blob = await r.blob();
+    if (!blob || tok !== previewToken) return false;
+    const src = URL.createObjectURL(blob);
+    const a = new Audio(src);
+    previewAudio = a;
+    a.onended = () => { if (previewAudio === a) previewAudio = null; URL.revokeObjectURL(src); };
+    a.play().catch(() => { URL.revokeObjectURL(src); if (previewAudio === a) previewAudio = null; });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ── 兼容旧名（组件层可能仍引用） ──

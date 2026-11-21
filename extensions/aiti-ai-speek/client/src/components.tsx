@@ -15,7 +15,9 @@ import {
   steerSession, fetchEdgeInfo, setVoices, setEdgeInfo, speakMessage, currentSourceId,
   sortBrowserVoices,
   fetchFeatures, toggleProcess, consumeReadOnFollow, replayCurrentPage, startFollowFromPageTop, resumeSessionFromLastPos, resumeFromCurrentPos, readMessageFrom,
-  setCurrentSession, setFollow, resolvedEngine, previewVoice, setEdgeBinPath, jumpToMessage, ensureTexts,
+  setCurrentSession, setFollow, resolvedEngine, previewVoice, previewLocalVoice, setEdgeBinPath, jumpToMessage, ensureTexts,
+  ensureLocal, controlLocal, fetchLocalInfo, fetchLocalVoices, createLocalVoice, deleteLocalVoice,
+  setFeatureFlagApi, setFeatureValueApi, localReady,
 } from "./speaker";
 import { highlightSegment, clearHighlight, noteUserScroll, scrollProgrammatic, smartScrollToRow, jumpToPlayRow, isUserDrifted, resolveDrift } from "./highlight";
 
@@ -116,6 +118,27 @@ function ensureStyles() {
   .aisp-drift button:hover{background:color-mix(in srgb,var(--accent,#3b82f6) 22%,transparent);}
   .aisp-queue .aisp-ab-jump{color:var(--accent,#3b82f6);border-bottom:1px dotted var(--accent,#3b82f6);cursor:pointer;}
   .aisp-toast{position:fixed;left:50%;bottom:64px;transform:translateX(-50%);z-index:2147483200;max-width:min(540px,calc(100vw - 24px));padding:8px 14px;border-radius:8px;background:color-mix(in srgb, var(--danger, #ef4444) 95%, transparent);color:#fff;font-size:12px;line-height:1.5;box-shadow:0 8px 24px rgba(0,0,0,.25);cursor:pointer;}
+
+  /* local TTS engine block */
+  .aisp-box{display:flex;flex-direction:column;gap:8px;padding:10px;border:1px solid var(--border,#ddd);border-radius:8px;background:color-mix(in srgb,var(--bg-hover,#f4f4f5) 55%,transparent);}
+  .aisp-box-hd{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:var(--text,#222);}
+  .aisp-box-hd .aisp-badge{margin-left:auto;}
+  .aisp-prog{height:6px;border-radius:3px;background:var(--bg-hover,#e8e8ea);overflow:hidden;}
+  .aisp-prog>i{display:block;height:100%;background:var(--accent,#3b82f6);transition:width .25s;}
+  .aisp-mini{font-size:11px;color:var(--text-dim,#888);line-height:1.5;}
+  .aisp-btnw{display:inline-flex;align-items:center;gap:4px;height:26px;padding:0 10px;border:1px solid var(--border,#ddd);border-radius:6px;background:var(--bg,#fff);color:var(--text,#222);font-size:11px;cursor:pointer;white-space:nowrap;}
+  .aisp-btnw:hover{background:var(--bg-hover,#eee);}
+  .aisp-btnw:disabled{opacity:.5;cursor:default;}
+  .aisp-btnw.primary{border-color:var(--accent,#3b82f6);color:var(--accent,#3b82f6);}
+  .aisp-btnw.danger{color:var(--danger,#ef4444);border-color:color-mix(in srgb,var(--danger,#ef4444) 40%,var(--border,#ddd));}
+  .aisp-in{flex:1 1 auto;min-width:0;font-size:12px;padding:3px 6px;border:1px solid var(--border,#ddd);border-radius:6px;background:var(--bg,#fff);color:var(--text,#222);}
+  .aisp-ta{width:100%;min-height:54px;font-size:12px;padding:5px 6px;border:1px solid var(--border,#ddd);border-radius:6px;background:var(--bg,#fff);color:var(--text,#222);font-family:inherit;resize:vertical;}
+  .aisp-log{max-height:110px;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.5px;line-height:1.45;white-space:pre-wrap;word-break:break-all;background:var(--bg,#fff);border:1px solid var(--border,#ddd);border-radius:6px;padding:6px;color:var(--text-dim,#666);}
+  .aisp-vrow{display:flex;align-items:center;gap:6px;padding:5px 6px;border-radius:6px;font-size:12px;}
+  .aisp-vrow:nth-child(odd){background:color-mix(in srgb,var(--bg-hover,#f4f4f5) 60%,transparent);}
+  .aisp-vrow .aisp-vo{margin-left:auto;display:flex;gap:4px;}
+  .aisp-rec{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--text-dim,#888);}
+  .aisp-rec.on{color:var(--danger,#ef4444);}
 
   `;
   document.head.appendChild(el);
@@ -778,12 +801,38 @@ function MessagePicker({ sessionId }) {
   );
 }
 
+// ── local engine helpers (shared by the settings dialog and the voices dialog) ──
+const LOCAL_PHASE_LABEL: Record<string, string> = {
+  venv: "Python 环境", deps: "依赖安装", download: "模型下载", load: "模型加载",
+  ready: "就绪", failed: "失败", "idle-stop": "已空闲退出",
+};
+const LOCAL_PROVIDERS: Array<{ id: string; label: string }> = [
+  { id: "hojo-40m", label: "Hojo 40M · CPU · 17 内置音色（~240MB）" },
+  { id: "hojo-80m", label: "Hojo 80M · 克隆音色（~458MB）" },
+  { id: "qwen3-0.6b", label: "Qwen3 0.6B · 需 torch（GPU 推荐）" },
+  { id: "stub", label: "stub · 链路排障（无模型）" },
+];
+
+function localBadge(st: any) {
+  const status = st.localStatus;
+  if (status === "ready") {
+    return { text: "● 运行中" + (st.localProvider ? " · " + st.localProvider : ""), color: "#16a34a", bg: "color-mix(in srgb,#16a34a 14%,transparent)" };
+  }
+  if (status === "loading") return { text: "◌ 准备中", color: "var(--accent,#3b82f6)", bg: "color-mix(in srgb,var(--accent,#3b82f6) 14%,transparent)" };
+  if (status === "error") return { text: "⚠ 失败", color: "var(--danger,#ef4444)", bg: "color-mix(in srgb,var(--danger,#ef4444) 14%,transparent)" };
+  return { text: "○ 未运行", color: "var(--text-dim,#888)", bg: "color-mix(in srgb,var(--text-dim,#888) 14%,transparent)" };
+}
+
 function SettingsDialog() {
   const open = useSettingsOpen();
   const st = useSpeekState();
   const s = st.settings;
+  const [voicesOpen, setVoicesOpen] = useState(false);
+  const [showLog, setShowLog] = useState(false);
+  const [logText, setLogText] = useState("");
+  const [busy, setBusy] = useState(false);
 
-  // 浏览器音色：异步 getVoices + voiceschanged
+  // Browser voices: async getVoices + voiceschanged
   useEffect(() => {
     try {
       const synth = window.speechSynthesis;
@@ -794,25 +843,75 @@ function SettingsDialog() {
       return () => synth.removeEventListener?.("voiceschanged", load);
     } catch { /* noop */ }
   }, []);
-  // 打开设置面板即拉取 edge-tts 富状态（安装/版本/路径/提示）+ 朗读过程 feature 状态
-  useEffect(() => { if (open) { fetchEdgeInfo(); } }, [open]);
+  // Panel open -> probe both engines (edge status + local health/prepare) and process feature state.
+  useEffect(() => {
+    if (!open) return;
+    fetchEdgeInfo();
+    fetchLocalInfo();
+  }, [open]);
   useEffect(() => { if (!st.processLoaded) fetchFeatures(); }, [st.processLoaded]);
 
   const useEdgeNow = resolvedEngine() === "edge";
+  const localSelected = s.engine === "local" || (s.engine === "auto" && !st.edgeAvailable);
   const browserVoices = st.voices || [];
   const edgeVoices = st.edgeVoices || [];
-  const voices = useEdgeNow ? edgeVoices.map((v) => ({ name: v.id, label: v.label })) : browserVoices.map((v) => ({ name: v.name, label: v.name }));
+  const localVoices = st.localVoices || [];
+  const voices = localSelected
+    ? localVoices.map((v) => ({ name: v.id, label: v.label || v.id }))
+    : useEdgeNow ? edgeVoices.map((v) => ({ name: v.id, label: v.label })) : browserVoices.map((v) => ({ name: v.name, label: v.name }));
   const edgeOk = !!(st.edgeStatus?.installed ?? st.edgeAvailable);
-  // 切引擎：当前音色不在目标引擎列表时清空（避免跨引擎残留 / select 显示空白）
-  const setEngine = (engine) => {
-    const patch = { engine };
-    const target = engine === "auto" ? (st.edgeAvailable ? edgeVoices : browserVoices) : (engine === "edge" ? edgeVoices : browserVoices);
+  const localRunning = st.localStatus === "ready";
+  const localPreparing = st.localStatus === "loading";
+  const prepare = st.localPrepare;
+  const preparePct = prepare && typeof prepare.percent === "number" ? Math.max(0, Math.min(100, prepare.percent)) : null;
+  const providerValue = st.localInfo?.provider || st.localProvider || "hojo-40m";
+  const badge = localBadge(st);
+  const info = st.localInfo;
+  const health = info?.health;
+  const localModel = info?.model || health?.model || info?.ready?.model || "—";
+  const localAutoStart = info?.autoStart !== false;
+  const localIdle = Number(info?.idleTimeout ?? health?.idleTimeout ?? 1800) || 0;
+  const rtfText = health && health.rtfLast != null ? Number(health.rtfLast).toFixed(2) + "×" : "—";
+  const rssText = health && health.rssMb != null ? Math.round(Number(health.rssMb)) + "MB" : "—";
+  const lastActText = health && health.lastActivity ? new Date(Number(health.lastActivity) * 1000).toLocaleTimeString() : "—";
+  const prepareFailed = String(prepare?.phase || "") === "failed";
+  const idleStopped = String(prepare?.phase || "") === "idle-stop";
+
+  // Switching engines clears the voice (ids are engine specific) and starts the local service on demand.
+  const setEngine = (engine: string) => {
+    const patch: any = { engine };
+    const target = engine === "local" ? localVoices
+      : engine === "edge" ? edgeVoices
+        : engine === "auto" ? (st.edgeAvailable ? edgeVoices : localVoices) : browserVoices;
     const cur = s.voice || "";
-    if (cur) {
-      const inList = target.some((v) => (v.id || v.name) === cur);
-      if (!inList) patch.voice = "";
-    }
+    if (cur && !target.some((v: any) => (v.id || v.name) === cur)) patch.voice = "";
     setSettings(patch);
+    if (engine === "local") {
+      setFeatureFlagApi("tts.local", true);
+      if (!localReady()) ensureLocal(providerValue);
+    }
+  };
+
+  const applyProvider = async (p: string) => {
+    await setFeatureValueApi("tts.local.provider", p);
+    if (s.voice) setSettings({ voice: "" });
+    await controlLocal(localRunning ? "restart" : "start", p);
+  };
+
+  const startLocal = async () => { setBusy(true); await controlLocal("start", providerValue); setBusy(false); };
+  const ensureNow = async () => { setBusy(true); await ensureLocal(providerValue); await fetchLocalInfo(); setBusy(false); };
+  const stopLocal = async () => { setBusy(true); await controlLocal("stop"); setBusy(false); };
+  const restartLocal = async () => { setBusy(true); await controlLocal("restart", providerValue); setBusy(false); };
+  const toggleLog = async () => {
+    if (showLog) { setShowLog(false); return; }
+    setShowLog(true);
+    setLogText("加载中…");
+    const d = await fetchLocalInfo({ log: true });
+    setLogText(d?.logTail || "（暂无日志）");
+  };
+  const saveBaseUrl = async (v: string) => {
+    await setFeatureValueApi("tts.local.baseUrl", v.trim());
+    await fetchLocalInfo();
   };
 
   if (!open) return null;
@@ -820,7 +919,7 @@ function SettingsDialog() {
 
   return createPortal(
     <div className="aisp-dlg-overlay" onClick={close}>
-      <div className="aisp-dlg aisp-dialog" role="dialog" aria-modal="true" data-ext-float="1" data-ext-float-w={560} data-ext-float-autoh="1" data-ext-float-full="1" onClick={(e) => e.stopPropagation()}>
+      <div className="aisp-dlg aisp-dialog" role="dialog" aria-modal="true" data-ext-float="1" data-ext-float-w={580} data-ext-float-autoh="1" data-ext-float-full="1" onClick={(e) => e.stopPropagation()}>
         <div className="aisp-dlg-hd">
           <span>🔊 {t("speek.settings")}</span>
           <button className="aisp-btn" onClick={close} title="关闭">
@@ -829,7 +928,114 @@ function SettingsDialog() {
         </div>
         <div className="aisp-dlg-bd">
           <div className="aisp-row">
-            <label title="edge-tts 是微软 Edge 的服务端语音合成，音质比浏览器 Web Speech 更自然；已安装时默认优先使用">后端引擎（edge-tts）</label>
+            <label title="自动 = edge-tts 可用则用它，其次本地引擎，最后浏览器 Web Speech">引擎</label>
+            <span className="aisp-seg">
+              <button className={s.engine === "auto" ? "on" : ""} onClick={() => setEngine("auto")}>自动</button>
+              <button className={s.engine === "browser" ? "on" : ""} disabled={st.browserUnsupported} onClick={() => setEngine("browser")}>浏览器</button>
+              <button className={s.engine === "edge" ? "on" : ""} disabled={!st.edgeAvailable} onClick={() => setEngine("edge")}>edge-tts</button>
+              <button className={s.engine === "local" ? "on" : ""} onClick={() => setEngine("local")}>本地</button>
+            </span>
+          </div>
+          {st.browserUnsupported && (
+            <div className="aisp-row" style={{ color: "var(--danger, #ef4444)", fontSize: 11 }}>
+              ⚠ 当前浏览器不支持本地朗读（Web Speech），已自动切换到服务端语音生成。
+            </div>
+          )}
+
+          <div className="aisp-row">
+            <label>音色</label>
+            <select className="aisp-sel" value={s.voice || ""} onChange={(e) => { const v = e.target.value; setSettings({ voice: v }); if (v) previewVoice(v); }}>
+              <option value="">
+                {localSelected
+                  ? (localVoices[0] ? "默认（" + String(localVoices[0].label || localVoices[0].id).split("·")[0].trim() + "）" : "本地默认音色")
+                  : useEdgeNow ? (edgeVoices[0] ? "默认（" + String(edgeVoices[0].label).split("·")[0].trim() + "）" : "默认") : "浏览器默认中文"}
+              </option>
+              {voices.map((v) => (
+                <option key={v.name} value={v.name}>{v.label}</option>
+              ))}
+            </select>
+          </div>
+          {localSelected && (
+            <div className="aisp-row" style={{ marginTop: -6 }}>
+              <span className="aisp-mini">本地音色在下方「音色管理」中查看/新建/删除（克隆音色需 Hojo 80M 或 Qwen3）。</span>
+            </div>
+          )}
+
+          {/* ── local engine block ── */}
+          <div className="aisp-box">
+            <div className="aisp-box-hd">
+              <span>本地 TTS 服务</span>
+              <span className="aisp-badge" style={{ background: badge.bg, color: badge.color }}>{badge.text}</span>
+            </div>
+            {localPreparing && (
+              <>
+                <div className="aisp-prog"><i style={{ width: (preparePct ?? 15) + "%" }} /></div>
+                <div className="aisp-mini">
+                  正在准备：{LOCAL_PHASE_LABEL[String(prepare?.phase || "")] || String(prepare?.phase || "启动中")}
+                  {preparePct != null ? " · " + preparePct + "%" : ""}
+                  {prepare?.message ? " · " + prepare.message : ""}
+                </div>
+              </>
+            )}
+            <div className="aisp-row" style={{ gap: 8 }}>
+              <label style={{ flex: "0 0 auto" }}>provider</label>
+              <select className="aisp-sel" value={providerValue} onChange={(e) => { applyProvider(e.target.value); }}>
+                {LOCAL_PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+              </select>
+            </div>
+            <div className="aisp-row" style={{ gap: 8 }}>
+              <label>服务地址</label>
+              <input
+                className="aisp-in"
+                placeholder="留空 = 127.0.0.1:8768（自动选端口）"
+                defaultValue={st.localInfo?.baseUrl || ""}
+                key={"url-" + (st.localInfo?.baseUrl || "")}
+                onBlur={(e) => saveBaseUrl(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+              />
+            </div>
+            <div className="aisp-mini">{info?.installHint || "选中「本地」引擎会自动准备并启动服务（首次联网约 300MB）。"}</div>
+            <div className="aisp-mini">
+              model {localModel} · 端口 {health?.port ?? info?.runtime?.port ?? "—"} · pid {health?.pid ?? "—"} · RTF {rtfText} · RSS {rssText} · 最近活动 {lastActText}
+              {info?.sizes ? ` · 模型占用 ${info.sizes.modelsMB}MB` : ""}
+            </div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <button className="aisp-btnw primary" disabled={busy || localRunning || localPreparing} onClick={startLocal}>启动</button>
+              <button className="aisp-btnw" disabled={busy || !localRunning} onClick={stopLocal}>停止</button>
+              <button className="aisp-btnw" disabled={busy} onClick={restartLocal}>重启</button>
+              <button className="aisp-btnw" disabled={busy || localPreparing} onClick={ensureNow} title="探测并准备（venv/依赖/模型），不动已在运行的服务">检查/准备</button>
+              <button className="aisp-btnw" onClick={() => setVoicesOpen(true)}>音色管理</button>
+              <button className="aisp-btnw" onClick={toggleLog}>{showLog ? "隐藏日志" : "查看日志"}</button>
+            </div>
+            {showLog && <div className="aisp-log">{logText}</div>}
+            {prepareFailed && (
+              <div className="aisp-mini" style={{ color: "var(--danger,#ef4444)" }}>
+                ⚠ 准备失败：{prepare?.message || "未知错误"}
+                <br />可复现命令：bash {String(info?.paths?.service || "")}/start-tts.sh start --provider {providerValue}
+              </div>
+            )}
+            {idleStopped && <div className="aisp-mini">空闲已退出（模型已释放）；下次朗读或点「检查/准备」会自动再起。</div>}
+            <div className="aisp-row" style={{ gap: 8 }}>
+              <label style={{ flex: "0 0 auto" }}>空闲自动退出（秒，0=常驻）</label>
+              <input
+                className="aisp-sel"
+                type="number"
+                min={0}
+                step={60}
+                defaultValue={String(localIdle)}
+                key={"idle-" + localIdle}
+                onBlur={async (e) => { const v = Math.max(0, parseInt(e.target.value, 10) || 0); await setFeatureValueApi("tts.local.idleTimeout", String(v)); await fetchLocalInfo(); }}
+              />
+            </div>
+            <div className="aisp-row">
+              <label title="选中「本地」引擎时自动准备并启动服务（关闭后只探测，不自动下载/安装）">自动准备并启动</label>
+              <input type="checkbox" checked={localAutoStart} onChange={async (e) => { await setFeatureFlagApi("tts.local.autoStart", e.target.checked); await fetchLocalInfo(); }} />
+            </div>
+            <div className="aisp-mini">启动脚本：server/tts-service/start-tts.sh（Windows 为 .ps1）；空闲退出后下次使用自动再起。</div>
+          </div>
+
+          <div className="aisp-row">
+            <label title="edge-tts 是微软 Edge 的服务端语音合成，音质比浏览器 Web Speech 更自然；已安装时默认优先使用">后端引擎状态（edge-tts）</label>
             <span className="aisp-badge" style={{ background: edgeOk ? "color-mix(in srgb,#16a34a 14%,transparent)" : "color-mix(in srgb,var(--danger, #ef4444) 16%,transparent)", color: edgeOk ? "#16a34a" : "var(--danger, #ef4444)" }}>
               {edgeOk ? "● 已安装" : "○ 未安装"}
             </span>
@@ -855,7 +1061,7 @@ function SettingsDialog() {
               <input
                 className="aisp-sel"
                 type="text"
-                style={{ flex: "1 1 auto", minWidth: 0, width: 260, maxWidth: "none" }}
+                style={{ flex: "1 1 auto", minWidth: 0, width: 240, maxWidth: "none" }}
                 placeholder="自动探测"
                 defaultValue={st.edgeStatus?.edgeBin ?? ""}
                 key={st.edgeStatus?.edgeBin ?? ""}
@@ -864,28 +1070,6 @@ function SettingsDialog() {
               />
               <button className="aisp-btn" style={{ flexShrink: 0, width: "auto", minWidth: 0, padding: "0 8px", whiteSpace: "nowrap", height: 28 }} title="绕过缓存重新探测 edge-tts（AI 刚帮你装好时点这个）" onClick={async () => { await setEdgeBinPath((st.edgeStatus?.edgeBin ?? "")); fetchEdgeInfo(true); }}>重新探测</button>
             </span>
-          </div>
-          <div className="aisp-row">
-            <label title="自动：edge-tts 已装则优先用它（效果好），否则浏览器">引擎（切换音色即试听）</label>
-            <span className="aisp-seg">
-              <button className={s.engine === "auto" ? "on" : ""} onClick={() => setEngine("auto")}>自动</button>
-              <button className={s.engine === "browser" ? "on" : ""} disabled={st.browserUnsupported} onClick={() => setEngine("browser")}>浏览器</button>
-              <button className={s.engine === "edge" ? "on" : ""} disabled={!st.edgeAvailable} onClick={() => setEngine("edge")}>edge-tts</button>
-            </span>
-          </div>
-          {st.browserUnsupported && (
-            <div className="aisp-row" style={{ color: "var(--danger, #ef4444)", fontSize: 11 }}>
-              ⚠ 当前浏览器不支持本地朗读（Web Speech），已自动切换到服务端语音生成（edge-tts）。
-            </div>
-          )}
-          <div className="aisp-row">
-            <label>音色</label>
-            <select className="aisp-sel" value={s.voice || ""} onChange={(e) => { const v = e.target.value; setSettings({ voice: v }); if (v) previewVoice(v); }}>
-              <option value="">{useEdgeNow ? (edgeVoices[0] ? "默认（" + String(edgeVoices[0].label).split("·")[0].trim() + "）" : "默认") : "浏览器默认中文"}</option>
-              {voices.map((v) => (
-                <option key={v.name} value={v.name}>{v.label}</option>
-              ))}
-            </select>
           </div>
           <div className="aisp-row">
             <label title="把 AI 的中间叙述也读出来（如「让我看一下…」「我先确认…」）；跳过思考与工具执行">朗读过程</label>
@@ -899,7 +1083,7 @@ function SettingsDialog() {
             </span>
           </div>
           <div className="aisp-row">
-            <label>语速</label>
+            <label title={localSelected ? "本地引擎用 audio.playbackRate 实现，不进缓存 key" : "edge-tts 服务端语速"}>语速</label>
             <span className="aisp-seg">
               {[0.75, 1, 1.25, 1.5, 2].map((r) => (
                 <button key={r} className={s.rate === r ? "on" : ""} onClick={() => setSettings({ rate: r })}>{r}x</button>
@@ -935,12 +1119,197 @@ function SettingsDialog() {
           </div>
         </div>
       </div>
+      <LocalVoicesDialog open={voicesOpen} onClose={() => { setVoicesOpen(false); }} provider={providerValue} onProviderBlocked={(p) => { setVoicesOpen(false); applyProvider(p); }} />
+    </div>,
+    document.body,
+  );
+}
+
+/** Voice management (list / create with upload or mic / delete / preview) for the local engine. */
+function LocalVoicesDialog({ open, onClose, provider, onProviderBlocked }) {
+  const st = useSpeekState();
+  const [name, setName] = useState("");
+  const [refText, setRefText] = useState("");
+  const [language, setLanguage] = useState("Chinese");
+  const [xvec, setXvec] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+  const recRef = useRef<any>(null);
+  const recTimer = useRef<any>(0);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const cloneProvider = /hojo-80m|qwen3/.test(provider) ? provider : "hojo-80m";
+  const [entryProvider, setEntryProvider] = useState(cloneProvider);
+  const micSupported = (() => {
+    try {
+      return typeof MediaRecorder !== "undefined" && !!navigator.mediaDevices?.getUserMedia
+        && (window.isSecureContext || ["localhost", "127.0.0.1"].includes(location.hostname));
+    } catch { return false; }
+  })();
+
+  useEffect(() => { if (open) { setErr(""); setMsg(""); fetchLocalVoices(true); } }, [open]);
+  useEffect(() => () => { try { recRef.current?.stop?.(); } catch { /* noop */ } if (recTimer.current) clearTimeout(recTimer.current); }, []);
+  if (!open) return null;
+
+  const voices = st.localVoices || [];
+  const running = st.localStatus === "ready";
+  const canCloneNow = running && /hojo-80m|qwen3/.test(st.localProvider || "");
+
+  const startRec = async () => {
+    setErr(""); setMsg("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const rec = new MediaRecorder(stream);
+      const chunks: BlobPart[] = [];
+      rec.ondataavailable = (e: any) => { if (e.data && e.data.size) chunks.push(e.data); };
+      rec.onstop = () => {
+        try { stream.getTracks().forEach((t) => t.stop()); } catch { /* noop */ }
+        const type = rec.mimeType || "audio/webm";
+        const ext = type.includes("ogg") ? "ogg" : type.includes("mp4") ? "m4a" : "webm";
+        const blob = new Blob(chunks, { type });
+        setFile(new File([blob], "record." + ext, { type }));
+        setRecording(false);
+        setMsg("录音完成（" + Math.round(blob.size / 1024) + "KB）— 建议 3-10 秒");
+      };
+      recRef.current = rec;
+      rec.start();
+      setRecording(true);
+      recTimer.current = setTimeout(() => { try { rec.stop(); } catch { /* noop */ } }, 15000);
+    } catch (e: any) {
+      setErr("无法访问麦克风：" + String(e?.message || e));
+    }
+  };
+  const stopRec = () => {
+    if (recTimer.current) clearTimeout(recTimer.current);
+    try { recRef.current?.stop(); } catch { /* noop */ }
+  };
+
+  const submit = async () => {
+    setErr(""); setMsg("");
+    if (!name.trim()) { setErr("请填写音色名"); return; }
+    if (!file) { setErr("请上传参考音频或现场录音（3-30 秒）"); return; }
+    if (!entryProvider.startsWith("qwen3") && !refText.trim()) { setErr("请填写参考音频对应的文字（转录）"); return; }
+    setBusy(true);
+    const r = await createLocalVoice({
+      name: name.trim(), refText: refText.trim(), language, xvecOnly: xvec,
+      provider: entryProvider, blob: file, filename: file.name,
+    });
+    setBusy(false);
+    if (!r || !r.ok) { setErr((r && r.error) || "保存失败"); return; }
+    setName(""); setRefText(""); setFile(null); setMsg("已保存音色：" + (r.voice?.label || name));
+    await fetchLocalVoices(true);
+    if (entryProvider !== (st.localProvider || provider)) {
+      setMsg("已保存。切换到 provider " + entryProvider + " 后即可使用该克隆音色。");
+    }
+  };
+
+  return createPortal(
+    <div className="aisp-dlg-overlay" style={{ zIndex: 2147483150 }} onClick={(e) => { e.stopPropagation(); onClose(); }}>
+      <div
+        className="aisp-dlg"
+        role="dialog"
+        aria-modal="true"
+        data-ext-float="1"
+        data-ext-float-w={560}
+        data-ext-float-h={560}
+        data-ext-float-full="1"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="aisp-dlg-hd">
+          <span>🎙 本地音色管理（{st.localProvider || provider || "—"}）</span>
+          <button className="aisp-btn" onClick={onClose} title="关闭">
+            <Icon d="M18 6 6 18 M6 6l12 12" size={14} />
+          </button>
+        </div>
+        <div className="aisp-dlg-bd">
+          <div className="aisp-mini">
+            内置音色由 provider 直接提供（不可删除）；克隆音色保存在 state 目录（voices.json + 参考音频），切换 provider 后仍可复用。
+          </div>
+          <div>
+            {voices.length === 0 && <div className="aisp-mini">（服务未运行或该 provider 暂无音色 — 先启动本地服务）</div>}
+            {voices.map((v: any) => (
+              <div className="aisp-vrow" key={v.id}>
+                <span>{v.label || v.id}</span>
+                <span className="aisp-mini">{v.builtin === false ? "克隆" : v.language || ""}</span>
+                <span className="aisp-vo">
+                  <button className="aisp-btnw" disabled={!running} onClick={() => previewLocalVoice(v.id)}>▶ 试听</button>
+                  {v.builtin === false && (
+                    <button className="aisp-btnw danger" onClick={async () => {
+                      const r = await deleteLocalVoice(v.id);
+                      if (!r || !r.ok) setErr((r && r.error) || "删除失败"); else setMsg("已删除 " + v.id);
+                    }}>🗑</button>
+                  )}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          <div className="aisp-box">
+            <div className="aisp-box-hd"><span>＋ 新建克隆音色</span></div>
+            <div className="aisp-row" style={{ gap: 8 }}>
+              <label style={{ flex: "0 0 auto" }}>音色名</label>
+              <input className="aisp-in" value={name} placeholder="如 我的声音" onChange={(e) => setName(e.target.value)} />
+            </div>
+            <div className="aisp-row" style={{ gap: 8 }}>
+              <label style={{ flex: "0 0 auto" }}>用于 provider</label>
+              <select className="aisp-sel" value={entryProvider} onChange={(e) => setEntryProvider(e.target.value)}>
+                <option value="hojo-80m">Hojo 80M</option>
+                <option value="qwen3-0.6b">Qwen3 0.6B</option>
+                <option value="qwen3-1.7b">Qwen3 1.7B</option>
+              </select>
+              {entryProvider !== (st.localProvider || provider) && (
+                <button className="aisp-btnw" onClick={() => onProviderBlocked(entryProvider)}>切到该 provider</button>
+              )}
+            </div>
+            <div className="aisp-row" style={{ alignItems: "center", gap: 8 }}>
+              <label style={{ flex: "0 0 auto" }}>参考音频</label>
+              <input ref={fileRef} type="file" accept="audio/*" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) { setFile(f); setMsg("已选择：" + f.name); } }} />
+              <button className="aisp-btnw" onClick={() => fileRef.current?.click()}>上传文件</button>
+              <button className={"aisp-btnw"} disabled={!micSupported || recording} onClick={startRec}>🎙 录音 15s</button>
+              {recording && <button className="aisp-btnw danger" onClick={stopRec}>停止录音</button>}
+              {!micSupported && <span className="aisp-mini">（非安全上下文/不支持录音 → 请上传 wav）</span>}
+            </div>
+            <div className="aisp-mini">{file ? "已选：" + file.name + "（" + Math.round(file.size / 1024) + "KB）" : "支持 wav/mp3/webm（webm 需服务端有 ffmpeg）；时长 3-30 秒、≤10MB。"}</div>
+            <div>
+              <div className="aisp-mini" style={{ marginBottom: 4 }}>参考文本（音频里说的内容；克隆质量关键）</div>
+              <textarea className="aisp-ta" value={refText} placeholder="例：现在的外卖确实坑多，要不咱换家稍微贵点的？" onChange={(e) => setRefText(e.target.value)} />
+            </div>
+            <div className="aisp-row" style={{ gap: 8 }}>
+              <label style={{ flex: "0 0 auto" }}>语言</label>
+              <select className="aisp-sel" value={language} onChange={(e) => setLanguage(e.target.value)}>
+                <option value="Chinese">中文</option>
+                <option value="English">English</option>
+                <option value="Auto">自动</option>
+              </select>
+              {entryProvider.startsWith("qwen3") && (
+                <>
+                  <label style={{ flex: "0 0 auto", marginLeft: 8 }}>仅音色向量</label>
+                  <input type="checkbox" checked={xvec} onChange={(e) => setXvec(e.target.checked)} />
+                </>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <button className="aisp-btnw primary" disabled={busy} onClick={submit}>{busy ? "保存中…" : "保存音色"}</button>
+              {msg && <span className="aisp-mini" style={{ color: "#16a34a" }}>{msg}</span>}
+              {err && <span className="aisp-mini" style={{ color: "var(--danger,#ef4444)" }}>⚠ {err}</span>}
+            </div>
+            {!canCloneNow && (
+              <div className="aisp-mini">
+                提示：当前 provider 为 {st.localProvider || provider || "—"}，克隆音色需要 Hojo 80M 或 Qwen3；保存后可在上方「启动/重启」切换。
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
     </div>,
     document.body,
   );
 }
 
 export { SettingsDialog };
+
 
 // ═══ [D2 拆包] 重 chunk 自注册（薄壳首载本模块时调用一次）═══
 // pages/sessionTopbar/dialogs/assistantMessageActions 全量重注册——PlaybackBar/
