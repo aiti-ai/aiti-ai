@@ -798,7 +798,7 @@ export async function refreshWorkspaces(unreadIds?: Set<string>, force = false):
       // 从「数据没落地」中恢复，照发必被 304 挡回、store 永远空着（手机端一次中断的请求
       // 即可触发，且点刷新也救不回来）——force 一律无条件重拉。
       const headers = !force && workspacesEtag ? { "if-none-match": workspacesEtag } : undefined;
-      const res = await fetch(url, { headers });
+      const res = await fetch(url, { headers, signal: listFetchSignal() });
       if (res.status === 304) { workspacesLanded = true; return; }
       if (!res.ok) { workspacesEtag = ""; return; }
       const d = await res.json() as { rev?: string; workspaces?: WorkspaceEntry[] };
@@ -952,6 +952,16 @@ export function refreshListChannels(opts: { force?: boolean; refresh?: boolean }
 // 操作/running SSE 每帧），且列表指纹含 modified/lastMessage——有会话流式时指纹
 // 必变，304 打不中，每次都是全量 ~186KB。突发触发必须合并；trailing 补拉保最终一致。
 const SESSIONS_MIN_INTERVAL_MS = 3000;
+
+// [restore resilience] Hard cap for list-phase GETs (sessions fmt=2 / workspaces /
+// running). During an extension hot-reload window a request can hang without a
+// response; without a timeout it wedges refreshSessions' in-flight chain (all
+// later refreshes queue behind it) and the URL restore never settles. Aborts land
+// in the existing keep-last catch paths. Optional call: older browsers without
+// AbortSignal.timeout just skip the cap.
+function listFetchSignal(ms = 15000): AbortSignal | undefined {
+  return typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(ms) : undefined;
+}
 let sessionsInFlight: Promise<void> | null = null;
 let sessionsForceChain: Promise<void> | null = null; // force 合流：并发 force 共享一次补拉
 let sessionsForceRefreshQueued = false;              // 待发补拉是否需 refresh=1（任一 refresh 调用置位）
@@ -1024,8 +1034,9 @@ async function refreshSessionsInner(opts?: { refresh?: boolean }): Promise<void>
       // dedupeFetch：与宿主 SessionSidebar 兜底快照同窗口合流，避免加载风暴期重复打 running（重复请求分析 §3.1）
       fetch(url, {
         headers: sessionsEtag && !refresh ? { "if-none-match": sessionsEtag } : undefined,
+        signal: listFetchSignal(),
       }),
-      dedupeFetch(apiUrl("/api/agent/running"), { cache: "no-store" }),
+      dedupeFetch(apiUrl("/api/agent/running"), { cache: "no-store", signal: listFetchSignal() }),
     ]);
     // 304：列表未变，沿用旧数据（跳过解析/emit/重渲染）
     if (res.status === 304) {

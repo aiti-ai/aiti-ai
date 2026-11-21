@@ -537,6 +537,8 @@ export const zhCNLocale: LocalePlugin = {
     "debug.overlay.starts": "启动 {count} 次",
     "workspace.opening": "正在打开工作区...",
     "workspace.openingSession": "正在打开会话...",
+    "workspace.openingSessionStalled": "仍在打开……服务可能正在热重载，可点击重试。",
+    "workspace.openingSessionRetry": "重试",
     "workspace.unable": "无法打开工作区",
     "workspace.selectSession": "从侧边栏选择一个会话",
     "workspace.getStarted": "开始使用",
