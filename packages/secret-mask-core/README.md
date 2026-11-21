@@ -20,7 +20,7 @@ Detection rules, entropy thresholds, placeholder semantics and restore behaviour
 
 | module | exports | role |
 |---|---|---|
-| `detect` | `scan`, `RULES`, `entropy`, `plausibleSecret` | deterministic regex + checksum rules (AWS/GitHub/GitLab/Slack/Stripe/SendGrid/Twilio/Google/Anthropic/OpenAI/HF/npm/PyPI/Azure/JWT/PEM/DB URL/Authorization header/generic assignments + Chinese keywords + base64-wrapped tokens), entropy floors, false-positive guards; no network, no model calls |
+| `detect` | `scan`, `RULES`, `entropy`, `plausibleSecret` | deterministic regex + checksum rules (AWS/GitHub/GitLab/Slack/Stripe/SendGrid/Twilio/Google/Anthropic/OpenAI/HF/npm/PyPI/Azure/JWT/PEM/DB URL/Authorization header/generic assignments + assignment verbs + Chinese keywords + base64-wrapped tokens), entropy floors, false-positive guards; no network, no model calls |
 | `hash` | `fnv1a` | 32-bit FNV-1a digest used for placeholder hashing |
 | `placeholder` | `PLACEHOLDER_RE`, `sessionPlaceholder`, `stablePlaceholder`, `findPlaceholders`, `isPlaceholderToken` | v2 format `rsec_<8 hex>` (credential-shaped so models use it naturally) + legacy `[REDACTED:alias]` / `[REDACTED:LABEL#hash]` compatibility |
 | `mask` | `Registry`, `registerManual`/`registerAuto`/`registerStable`, `redactForms`, `restoreDeep`, `redactDeep`, `redactDeepInPlace`, `auditPayload`, `MIN_REDACT_LENGTH` | value↔placeholder registry (session-salted for session values, `vault:`-namespaced/stable for vault aliases; idempotent; longest-form-wins; redirects keep old references alive), deep JSON traversal, final-payload leak proof |
@@ -83,9 +83,9 @@ lowering the global entropy gates:
 - **Sensitive paths**: `inspectSensitivePath` classifies `.env*`, `id_*`, `.pgpass`, `.netrc`,
   `.npmrc`, `.git-credentials`, `credentials.json`, `secret.txt`, `*.key/p12/pfx`,
   kube/aws paths; `dedicated` marks files whose whole content is one secret (for withholding).
-- **Weak candidates**: `weakPasswordCandidates` + `WEAK_PASSWORDS` (strong keyword/copula
-  context only); dictionary hits register, other weak-shaped values are reported for a host
-  prompt or auto-registered.
+- **Weak candidates**: `weakPasswordCandidates` + `WEAK_PASSWORDS` (strong keyword/copula/assignment-verb
+  context only, e.g. `密码是…`, `密码改成…`, `password to …`); dictionary hits register, other weak-shaped
+  values are reported for a host prompt or auto-registered.
 - **Strength assessment**: `assessPasswordStrength` (dictionary, <8 chars, single character
   class, low entropy, sequences) for long-term stores; `describePasswordWeakness` for warnings.
 - **Learn**: `learnFromText` (structured first, whole-content fallback for dedicated files).
@@ -98,7 +98,7 @@ paths, write paths and mineable content; `registerValueSecrets` mines nested `de
 
 - Session-scoped by default: fresh salt per session; session values live in memory. Vault entries use a stable namespace instead so resume/rotation keeps the same token.
 - Placeholder strings look like credentials on purpose (`rsec_<hash8>`): models stop refusing to use them; the digest reveals nothing about the value.
-- No-keyword bare high-entropy strings are NOT auto-detected (deliberate: bare entropy detection false-positives on minified JS) — expose manual registration or custom rules.
+- No-keyword bare high-entropy strings are NOT auto-detected (deliberate: bare entropy detection false-positives on minified JS) — expose manual registration or custom rules. A bare value after an assignment verb (`设为 X`, `set it to X`) is the one exception, and it still needs a credential keyword in the same passage.
 - Transform escapes (string slicing, re-encoded base64) beyond `redactForms` remain a real limit.
 - Prevents accidental leaks, not malicious agents; the audit layer detects raw values at the model boundary, not post-restore exfiltration through network-executing tools.
 - Images are not scanned.

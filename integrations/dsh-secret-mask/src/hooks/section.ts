@@ -21,6 +21,9 @@ export const SECTION_TEXT = [
   "appears verbatim in tool arguments. Copy the token exactly. Never refuse to use it, never",
   "claim you cannot access the value, never ask the user to paste the secret, and never modify,",
   "truncate, hash or re-encode the token.",
+  "Never present a token to the user as if it were the secret value: it only resolves inside tool",
+  "arguments, so a user cannot type it into a login prompt. When the user asks what the value is, say",
+  "it is masked and point to where the real one lives.",
 ].join("\n");
 
 export function registerSection(ctx: PluginContext, cfg: PluginConfig): void {

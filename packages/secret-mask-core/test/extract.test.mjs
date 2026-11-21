@@ -144,6 +144,10 @@ test("weak candidates: dictionary hits, prose stop words, strong context only", 
   const c = weakPasswordCandidates("密码是abc!@#");
   assert.equal(c.length, 1);
   assert.equal(c[0].dictionary, false);
+  // assignment verbs are a strong context too (the reported miss was "帮我设为 X") // cjk-ok
+  assert.deepEqual(weakPasswordCandidates("把密码改成 qwerty").map((x) => x.value), ["qwerty"]);
+  assert.deepEqual(weakPasswordCandidates("密码设成 abc123").map((x) => x.value), ["abc123"]);
+  assert.equal(weakPasswordCandidates("把端口改成 8080").length, 0, "verb without a credential keyword");
 });
 
 test("weak candidates: dictionary registers, non-dictionary notifies, auto registers", () => {
