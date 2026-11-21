@@ -146,3 +146,21 @@ export function buildSearchTree(paths: string[]): SearchTreeNode[] {
   sort(roots);
   return roots;
 }
+
+// ── Content search grouping (borrow plan §2.5: rg --json details → file groups + preview rows; pure, testable) ──
+export interface ContentMatch { path: string; line: number; col: number; text: string }
+export interface ContentFileGroup { path: string; count: number; previews: ContentMatch[] }
+
+/** Group rg matches by file: keep rg's relevance order, preview capped at previewPerFile lines per file. */
+export function groupContentMatches(matches: ContentMatch[], previewPerFile = 3): ContentFileGroup[] {
+  const order: string[] = [];
+  const byPath = new Map<string, ContentFileGroup>();
+  for (const m of Array.isArray(matches) ? matches : []) {
+    if (!m || typeof m.path !== "string" || !m.path) continue;
+    let g = byPath.get(m.path);
+    if (!g) { g = { path: m.path, count: 0, previews: [] }; byPath.set(m.path, g); order.push(m.path); }
+    g.count++;
+    if (g.previews.length < previewPerFile) g.previews.push(m);
+  }
+  return order.map((p) => byPath.get(p)!);
+}
