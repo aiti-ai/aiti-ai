@@ -1,0 +1,15 @@
+# aiti-ai-speek · local TTS service deps (Hojo-TTS-Light family, ONNX Runtime, no torch)
+# Python 3.10-3.12 (Hojo does not support 3.13 -> bootstrap creates a 3.12 venv with uv)
+fastapi>=0.115
+uvicorn>=0.30
+pydantic>=2.7
+numpy>=1.26.4,<2
+soundfile>=0.13.1
+tokenizers>=0.22.1
+onnx>=1.22.0
+huggingface_hub>=0.33.0
+# CPU runtime pinned: 1.25 breaks the 80M decoder graph on CUDA, 1.21.x is the tested combo
+onnxruntime==1.21.1
+# Text normalization (numbers / dates / units) is installed separately by bootstrap.sh:
+# it needs pynini compilation, and a failure must not break the service (--no-tn degrades).
+# WeTextProcessing>=1.0.4.1

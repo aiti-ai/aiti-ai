@@ -1,98 +1,90 @@
-// 简单本地测试：把 server/tts-cache.ts 拷成 .mjs 跑（保持纯 JS 实现）
-import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync, utimesSync } from "node:fs";
+// Real-module tests for server/tts-cache.ts (transpiled in memory, no build step needed).
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
-
-const TTL_MS = 30 * 24 * 60 * 60 * 1000;
-const MAX_BYTES = 1024 * 1024 * 1024;
-
-function ttsCacheDir(configDir) {
-  return join(configDir || join(homedir(), ".pi", "web", "data", "aiti-ai-speek"), "tts-cache");
-}
-
-function cleanExpired(dir, now = Date.now()) {
-  if (!existsSync(dir)) return { cleaned: 0, bytes: 0 };
-  let cleaned = 0, bytes = 0;
-  for (const f of readdirSync(dir)) {
-    if (!f.endsWith(".mp3")) continue;
-    const p = join(dir, f);
-    try {
-      const st = statSync(p);
-      if (now - st.mtimeMs > TTL_MS || st.size === 0) {
-        unlinkSync(p);
-        cleaned++;
-        bytes += st.size;
-      }
-    } catch {}
-  }
-  return { cleaned, bytes };
-}
-
-function lruEvict(dir, cap = MAX_BYTES) {
-  if (!existsSync(dir)) return { removed: 0, bytes: 0 };
-  const items = [];
-  let total = 0;
-  for (const f of readdirSync(dir)) {
-    if (!f.endsWith(".mp3")) continue;
-    const p = join(dir, f);
-    try {
-      const st = statSync(p);
-      items.push({ p, mtime: st.mtimeMs, size: st.size });
-      total += st.size;
-    } catch {}
-  }
-  if (total <= cap) return { removed: 0, bytes: 0 };
-  items.sort((a, b) => a.mtime - b.mtime);
-  const target = cap * 0.8;
-  let removed = 0, bytes = 0;
-  for (const it of items) {
-    if (total <= target) break;
-    try { unlinkSync(it.p); removed++; bytes += it.size; total -= it.size; } catch {}
-  }
-  return { removed, bytes };
-}
-
-// ── 测试：在 tmp 建一组 fixture，跑 cleanExpired / lruEvict ──
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { transformSync } from "esbuild";
 
-const testDir = mkdtempSync(join(tmpdir(), "tts-cache-test-"));
-console.log("测试目录:", testDir);
+const src = readFileSync(new URL("../server/tts-cache.ts", import.meta.url), "utf8");
+const js = transformSync(src, { loader: "ts", format: "esm", target: "node20" }).code;
+const mod = await import("data:text/javascript;base64," + Buffer.from(js).toString("base64"));
 
-const NOW = Date.now();
 const DAY = 24 * 60 * 60 * 1000;
+const NOW = Date.now();
 
-// 5 个文件：1 个 31 天前（应过期）、1 个 0KB（应过期）、1 个 10 天前（保留）、1 个 1 天前（保留）、1 个刚刚（保留）
-const fixtures = [
-  { name: "old-31d.mp3", size: 1024, ageDays: 31 },
-  { name: "empty.mp3", size: 0, ageDays: 1 },
-  { name: "mid-10d.mp3", size: 2048, ageDays: 10 },
-  { name: "recent-1d.mp3", size: 4096, ageDays: 1 },
-  { name: "fresh.mp3", size: 8192, ageDays: 0 },
-];
-
-for (const f of fixtures) {
-  const p = join(testDir, f.name);
-  writeFileSync(p, Buffer.alloc(f.size, "x"));
-  // 改 mtime
-  const t = (NOW - f.ageDays * DAY) / 1000;
-  utimesSync(p, t, t);
+function fixture() {
+  const dir = mkdtempSync(join(tmpdir(), "tts-cache-"));
+  return dir;
+}
+function put(dir, name, size, ageDays) {
+  const p = join(dir, name);
+  writeFileSync(p, Buffer.alloc(size, "x"));
+  if (ageDays) {
+    const t = (NOW - ageDays * DAY) / 1000;
+    utimesSync(p, t, t);
+  }
+  return p;
 }
 
-const before = readdirSync(testDir);
-console.log("cleanExpired 前:", before);
-const exp = cleanExpired(testDir, NOW);
-console.log("cleanExpired 结果:", exp);
-const after = readdirSync(testDir);
-console.log("cleanExpired 后:", after);
+test("cleanExpired reclaims old and empty cache files of every format", () => {
+  const dir = fixture();
+  try {
+    put(dir, "old.mp3", 2048, 31);
+    put(dir, "old.wav", 4096, 40);
+    put(dir, "empty.wav", 0, 0);
+    put(dir, "keep.mp3", 1024, 2);
+    put(dir, "keep.wav", 1024, 5);
+    writeFileSync(join(dir, "notes.json"), "{}");
+    const r = mod.cleanExpired(dir, NOW);
+    assert.equal(r.cleaned, 3);
+    assert.deepEqual(readdirSync(dir).sort(), ["keep.mp3", "keep.wav", "notes.json"]);
+    assert.equal(mod.cleanExpired(join(dir, "missing"), NOW).cleaned, 0);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
 
-// lruEvict：把 MAX_BYTES 设小，强制触发
-const remaining = after.map(f => ({ f, st: statSync(join(testDir, f)) }));
-const total = remaining.reduce((s, r) => s + r.st.size, 0);
-console.log("剩余总字节:", total, "（不到 MAX_BYTES，lruEvict 不应删）");
-const lru = lruEvict(testDir, 100); // 强制 cap=100B
-console.log("lruEvict(100B) 结果:", lru, "剩:", readdirSync(testDir));
+test("lruEvict removes the oldest files across formats down to 80%", () => {
+  const dir = fixture();
+  try {
+    put(dir, "a.wav", 400, 10);
+    put(dir, "b.mp3", 400, 5);
+    put(dir, "c.wav", 400, 1);
+    const r = mod.lruEvict(dir, 1000);
+    assert.equal(r.removed, 1);            // 1200 > 1000 -> delete oldest until <= 800
+    assert.deepEqual(readdirSync(dir).sort(), ["b.mp3", "c.wav"]);
+    assert.equal(mod.lruEvict(dir, 1000).removed, 0);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
 
-// 清理
-rmSync(testDir, { recursive: true, force: true });
-console.log("✅ 测试通过");
+test("findCacheFile resolves either extension and ignores unknown ones", () => {
+  const dir = fixture();
+  try {
+    put(dir, "abc.wav", 12, 0);
+    put(dir, "def.mp3", 12, 0);
+    assert.deepEqual(mod.findCacheFile(dir, "abc"), { file: join(dir, "abc.wav"), ext: ".wav" });
+    assert.deepEqual(mod.findCacheFile(dir, "def"), { file: join(dir, "def.mp3"), ext: ".mp3" });
+    assert.equal(mod.findCacheFile(dir, "zzz"), null);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("cacheStats counts files and bytes per extension", () => {
+  const dir = fixture();
+  try {
+    put(dir, "a.wav", 100, 0);
+    put(dir, "b.wav", 200, 0);
+    put(dir, "c.mp3", 50, 0);
+    put(dir, "ignore.txt", 999, 0);
+    const s = mod.cacheStats(dir);
+    assert.equal(s.count, 3);
+    assert.equal(s.bytes, 350);
+    assert.deepEqual(s.byExt, { ".wav": 2, ".mp3": 1 });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("content types and cache dir layout", () => {
+  assert.equal(mod.contentTypeOf("x.wav"), "audio/wav");
+  assert.equal(mod.contentTypeOf("x.mp3"), "audio/mpeg");
+  assert.equal(mod.ttsCacheDir("/data/config"), "/data/config/cache/tts-cache");
+  assert.equal(mod.cacheRoot("/data/config"), "/data/cache");
+  assert.ok(mod.isCacheFile("k.wav") && mod.isCacheFile("k.mp3") && !mod.isCacheFile("k.json"));
+});

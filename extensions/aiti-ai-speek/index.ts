@@ -11,19 +11,28 @@
  *   - GET /events?session=<sid>：SSE 流。客户端跟读开启时订阅；连接时先补发该会话
  *     最近若干条已完成的回答（ring buffer），开启跟读即读到当前屏上的回复。
  *   - POST /steer：开启跟读时向会话注入「朗读模式提示词」（可选，feature 门控）。
- *   - GET /tts + GET /voices：edge-tts 后端音质档（可选，feature 门控；
- *     默认引擎 = 浏览器 Web Speech，零后端）。
+ *   - GET /tts + GET /voices: two server-side quality tiers (feature gated):
+ *     edge-tts (CLI) and the local engine (OpenAI-compatible /v1/audio/speech, providers such as
+ *     Hojo-TTS-Light; selecting it bootstraps venv/deps/model automatically and the service
+ *     exits after an idle timeout).
  *
- * 复用原则：朗读清洗/分段/播放全在前端（client/src/toSpeechText.ts），
- * 后端不参与消息识别；edge-tts 复用 novel-web 同款命令行方案 + SHA-256 缓存。
+ * Reuse principle: cleaning/segmenting/playback stay in the frontend (client/src/toSpeechText.ts);
+ * the backend never interprets messages. edge-tts reuses the same CLI approach + SHA-256 cache;
+ * the local engine = server/tts-service/ (Python, swappable provider) + extension-side proxy/cache.
  */
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { execFile } from "node:child_process";
+import { watch as fsWatch } from "node:fs";
 import { filterByMode, flagMessage } from "./server/speech-filter.ts";
-import { ttsCacheDir, cleanExpired, lruEvict } from "./server/tts-cache.ts";
+import { ttsCacheDir, cleanExpired, lruEvict, cacheStats, findCacheFile, contentTypeOf } from "./server/tts-cache.ts";
+import { synthesizeLocal, probeLocal, LocalTtsError } from "./server/tts-local.ts";
+import {
+  localPaths, readPrepare, readRuntime, readReady, startService, stopService, tailLog,
+  dirBytes, readVoiceEntries, saveVoice, deleteVoiceEntry, slugifyVoice, SERVICE_DIR,
+} from "./server/tts-local-service.ts";
 
 /** statSync 的容错包装（文件不存在/竞态删 → 返回 null） */
 function statSyncSafe(p: string) { try { return statSync(p); } catch { return null; } }
@@ -362,6 +371,340 @@ function featureValue(extId: string, fid: string): string {
   } catch { return ""; }
 }
 
+// ── local TTS engine (OpenAI-compatible service; feature tts.local) ──────────
+// One shell (this extension) + a swappable provider (hojo-40m / hojo-80m / qwen3-* / stub) behind
+// `/v1/audio/speech`. The browser only sees "engine=local": synthesis, cache key and voice list
+// are provided by the Python service, the panel shows its preparation phases.
+interface LocalCfg {
+  enabled: boolean;
+  provider: string;
+  baseUrl: string;
+  model: string;
+  voice: string;
+  format: string;
+  sampleRate: number;
+  apiKey: string;
+  autoStart: boolean;
+  idleTimeout: number;
+  hfEndpoint: string;
+  threads: number;
+}
+function localCfg(): LocalCfg {
+  return {
+    enabled: featureEnabled("aiti-ai-speek", "tts.local"),
+    provider: featureValue("aiti-ai-speek", "tts.local.provider").trim() || "hojo-40m",
+    baseUrl: featureValue("aiti-ai-speek", "tts.local.baseUrl").trim(),
+    model: featureValue("aiti-ai-speek", "tts.local.model").trim(),
+    voice: featureValue("aiti-ai-speek", "tts.local.voice").trim(),
+    format: featureValue("aiti-ai-speek", "tts.local.format").trim() || "pcm",
+    sampleRate: parseInt(featureValue("aiti-ai-speek", "tts.local.sampleRate"), 10) || 24000,
+    apiKey: featureValue("aiti-ai-speek", "tts.local.apiKey").trim(),
+    autoStart: featureEnabled("aiti-ai-speek", "tts.local.autoStart"),
+    idleTimeout: parseInt(featureValue("aiti-ai-speek", "tts.local.idleTimeout"), 10) || 1800,
+    hfEndpoint: featureValue("aiti-ai-speek", "tts.local.hfEndpoint").trim(),
+    threads: parseInt(featureValue("aiti-ai-speek", "tts.local.threads"), 10) || 0,
+  };
+}
+interface ApiCtxLike {
+  method: string;
+  path: string[];
+  searchParams: URLSearchParams;
+  configDir?: string;
+  cacheDir?: string;
+  stateDir?: string;
+  core?: { readSession?: (id: string) => Promise<{ messages?: Array<{ role?: string; content?: unknown }> } | null> };
+  services?: { get?: (name: string) => unknown };
+}
+function ttsPaths(ctx: ApiCtxLike) {
+  return localPaths({ configDir: ctx.configDir, cacheDir: ctx.cacheDir, stateDir: ctx.stateDir });
+}
+/** Persist a feature value through the host registry (same store the panel writes). */
+function setFeatureValueSafe(id: string, value: string): void {
+  try {
+    const reg = (globalThis as Record<string, unknown>).__piWebExt as
+      { setFeatureValue?: (extId: string, fid: string, value: boolean | string) => void } | undefined;
+    reg?.setFeatureValue?.("aiti-ai-speek", id, value);
+  } catch { /* non-blocking */ }
+}
+/** Effective base URL: explicit feature value, else the port recorded by the last start (8768 default). */
+function localBaseUrl(paths: ReturnType<typeof ttsPaths>, cfg: LocalCfg): string {
+  if (cfg.baseUrl) return cfg.baseUrl.replace(/\/+$/, "");
+  const rt = readRuntime(paths);
+  const port = Number(rt?.port) || 8768;
+  return `http://127.0.0.1:${port}`;
+}
+interface LocalHealth {
+  ok?: boolean; status?: string; provider?: string; providerLabel?: string; model?: string;
+  model_loaded?: boolean; sample_rate?: number; supportsClone?: boolean; voiceCount?: number;
+  idleTimeout?: number; rssMb?: number | null; rtfLast?: number | null; port?: number; pid?: number;
+  error?: string | null; uptime?: number;
+}
+// Short-lived probe cache: the panel/player ask several times in a burst, the service state cannot
+// change meaningfully inside this window. Never a timer — always request-driven.
+let localProbeCache: { at: number; baseUrl: string; health: LocalHealth | null } = { at: 0, baseUrl: "", health: null };
+async function localHealth(paths: ReturnType<typeof ttsPaths>, cfg: LocalCfg, force = false): Promise<LocalHealth | null> {
+  const baseUrl = localBaseUrl(paths, cfg);
+  const now = Date.now();
+  if (!force && localProbeCache.baseUrl === baseUrl && now - localProbeCache.at < 10000) return localProbeCache.health;
+  const health = await probeLocal(baseUrl);
+  localProbeCache = { at: now, baseUrl, health };
+  return health;
+}
+let localVoicesCache: { at: number; baseUrl: string; data: { voices?: Array<{ id: string; label: string; sample?: string; builtin?: boolean; provider?: string; language?: string }>; provider?: string; providerLabel?: string; supportsClone?: boolean } | null } = { at: 0, baseUrl: "", data: null };
+async function localVoices(paths: ReturnType<typeof ttsPaths>, cfg: LocalCfg, force = false) {
+  const baseUrl = localBaseUrl(paths, cfg);
+  const now = Date.now();
+  if (!force && localVoicesCache.baseUrl === baseUrl && now - localVoicesCache.at < 60000) return localVoicesCache.data;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 4000);
+    const res = await fetch(baseUrl + "/voices", { signal: ctrl.signal });
+    clearTimeout(timer);
+    const data = res.ok ? await res.json().catch(() => null) : null;
+    localVoicesCache = { at: now, baseUrl, data };
+    return data;
+  } catch {
+    localVoicesCache = { at: now, baseUrl, data: null };
+    return null;
+  }
+}
+/** Resolve the voice to synthesize with: explicit request > feature > first service voice. */
+async function localResolveVoice(paths: ReturnType<typeof ttsPaths>, cfg: LocalCfg, requested?: string): Promise<string> {
+  const wanted = (requested || cfg.voice || "").trim();
+  if (wanted) return wanted;
+  const data = await localVoices(paths, cfg);
+  return String(data?.voices?.[0]?.id || "");
+}
+
+// Start state machine (in-process; dev and prod instances are independent)
+let localStart: { status: "idle" | "starting" | "failed"; at: number; sessionId?: string; error?: string } = { status: "idle", at: 0 };
+let localStartInFlight = false;
+const LOCAL_START_TTL_MS = 20 * 60_000; // first run downloads venv + model; do not give up early
+const LOCAL_START_COOLDOWN_MS = 60_000;
+
+async function localLaunch(ctx: ApiCtxLike, provider: string, prepping = false): Promise<{ ok: boolean; sessionId?: string; mode?: string; error?: string }> {
+  const paths = ttsPaths(ctx);
+  const cfg = localCfg();
+  const runner = (ctx.services?.get?.("aiti-cmd.runner") || undefined) as { run?: (o: Record<string, unknown>) => unknown } | undefined;
+  const r = await startService({
+    paths,
+    provider,
+    port: Number(readRuntime(paths)?.port) || 8768,
+    idleTimeout: cfg.idleTimeout,
+    hfEndpoint: cfg.hfEndpoint,
+    runner,
+  });
+  if (r.ok) {
+    localStart = { status: "starting", at: Date.now(), sessionId: r.sessionId };
+    localProbeCache = { at: 0, baseUrl: "", health: null };
+  } else {
+    localStart = { status: "failed", at: Date.now(), error: r.error };
+  }
+  if (prepping) console.log("[aiti-ai-speek] local TTS launch", { provider, mode: r.mode, ok: r.ok, err: r.error });
+  return r;
+}
+
+/** Probe -> ready | starting (launch) | stopped. Never blocks for the whole bootstrap. */
+async function localEnsure(ctx: ApiCtxLike, providerHint?: string) {
+  const paths = ttsPaths(ctx);
+  const cfg = localCfg();
+  const provider = (providerHint || cfg.provider || "hojo-40m").trim();
+  const health = await localHealth(paths, cfg, true);
+  if (health?.ok) {
+    localStart = { status: "idle", at: Date.now() };
+    return { running: true, starting: false, health, baseUrl: localBaseUrl(paths, cfg), prepare: readPrepare(paths), provider: health.provider };
+  }
+  if (health && (health.status === "loading" || health.status === "starting")) {
+    return { running: false, starting: true, health, baseUrl: localBaseUrl(paths, cfg), prepare: readPrepare(paths), provider: health.provider };
+  }
+  // Process alive but the model failed to load: `start` would consider the port healthy and skip,
+  // so an ensure must restart it (the panel's explicit restart does the same thing).
+  if (health && health.status === "error") {
+    if (localStartInFlight) return { running: false, starting: true, prepare: readPrepare(paths), baseUrl: localBaseUrl(paths, cfg), provider };
+    localStartInFlight = true;
+    try {
+      await stopService(paths);
+      await new Promise((r) => setTimeout(r, 800));
+      const r = await localLaunch(ctx, provider, true);
+      localProbeCache = { at: 0, baseUrl: "", health: null };
+      return { running: false, starting: !!r.ok, sessionId: r.sessionId, error: r.ok ? undefined : r.error, prepare: readPrepare(paths), baseUrl: localBaseUrl(paths, cfg), provider };
+    } finally {
+      localStartInFlight = false;
+    }
+  }
+  const now = Date.now();
+  if (localStart.status === "starting" && now - localStart.at < LOCAL_START_TTL_MS) {
+    // A bootstrap we launched may have already failed: report it instead of "starting" for 20min.
+    const prep = readPrepare(paths);
+    if (String(prep?.phase || "") === "failed") {
+      localStart = { status: "failed", at: now, error: prep?.message };
+      return { running: false, starting: false, error: prep?.message, prepare: prep, baseUrl: localBaseUrl(paths, cfg), provider };
+    }
+    return { running: false, starting: true, sessionId: localStart.sessionId, prepare: prep, baseUrl: localBaseUrl(paths, cfg), provider };
+  }
+  if (localStart.status === "failed" && now - localStart.at < LOCAL_START_COOLDOWN_MS) {
+    return { running: false, starting: false, error: localStart.error, prepare: readPrepare(paths), baseUrl: localBaseUrl(paths, cfg), provider };
+  }
+  if (localStartInFlight) {
+    return { running: false, starting: true, prepare: readPrepare(paths), baseUrl: localBaseUrl(paths, cfg), provider };
+  }
+  localStartInFlight = true;
+  let launch: { ok: boolean; sessionId?: string; mode?: string; error?: string };
+  try {
+    launch = await localLaunch(ctx, provider, true);
+  } finally {
+    localStartInFlight = false;
+  }
+  // Fast path: already bootstrapped -> the service usually answers within a few seconds.
+  // Cold bootstrap (venv/deps/download) can take minutes: return "starting" right away and let
+  // /tts/progress drive the panel instead of holding the request open.
+  if (launch.ok) {
+    const prep = readPrepare(paths);
+    const phase = String(prep?.phase || "");
+    const coldStart = ["venv", "deps", "download"].includes(phase);
+    for (let i = 0; i < (coldStart ? 0 : 10); i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      const h = await localHealth(paths, cfg, true);
+      if (h?.ok) return { running: true, starting: false, health: h, baseUrl: localBaseUrl(paths, cfg), prepare: readPrepare(paths), provider: h.provider };
+    }
+  }
+  return {
+    running: false,
+    starting: launch.ok,
+    sessionId: launch.sessionId,
+    error: launch.ok ? undefined : launch.error,
+    mode: launch.mode,
+    prepare: readPrepare(paths),
+    baseUrl: localBaseUrl(paths, cfg),
+    provider,
+  };
+}
+
+interface LocalItem { text: string; key: string; cached: boolean; ext?: string; speakable: boolean; code?: string; retryable?: boolean; error?: string; degraded?: boolean }
+
+/** Synthesize a batch through the local service (serial: local inference is CPU bound). */
+async function localSynthesizeBatch(ctx: ApiCtxLike, texts: string[], voiceIn?: string): Promise<{
+  ok: boolean; engine: "local"; voice: string; provider: string; items: LocalItem[]; error?: string; code?: string;
+}> {
+  const paths = ttsPaths(ctx);
+  const cfg = localCfg();
+  const baseUrl = localBaseUrl(paths, cfg);
+  const cacheDir = ttsCacheDir(ctx.configDir);
+  mkdirSync(cacheDir, { recursive: true });
+  // The running service wins over the feature value: the cache key must describe the audio
+  // that was actually produced (a provider can be started with an explicit override).
+  const health = await localHealth(paths, cfg);
+  const providerId = String(health?.provider || cfg.provider);
+  const voice = await localResolveVoice(paths, cfg, voiceIn);
+  if (!voice) {
+    return { ok: false, engine: "local", voice: "", provider: providerId, items: [], error: "local TTS has no voices (service not ready?)", code: "not-ready" };
+  }
+  const items: LocalItem[] = [];
+  for (const text of texts) {
+    const speakable = /[\u4e00-\u9fffA-Za-z0-9]/.test(text);
+    const key = createHash("sha256").update(`local|${providerId}|${cfg.model}|${voice}|${text}`).digest("hex");
+    const hit = findCacheFile(cacheDir, key);
+    if (hit) {
+      const st = statSyncSafe(hit.file);
+      if (st && st.size > 0) { items.push({ text, key, cached: true, ext: hit.ext, speakable }); continue; }
+      try { unlinkSync(hit.file); } catch { /* ignore */ }
+    }
+    if (!speakable) { items.push({ text, key, cached: false, speakable }); continue; }
+    try {
+      const r = await synthesizeLocal({
+        baseUrl,
+        apiKey: cfg.apiKey || undefined,
+        model: cfg.model || undefined,
+        text,
+        voice,
+        format: (cfg.format as "pcm" | "wav" | "mp3"),
+        sampleRate: cfg.sampleRate,
+      });
+      writeFileSync(join(cacheDir, key + r.ext), r.buf);
+      items.push({ text, key, cached: true, ext: r.ext, speakable });
+    } catch (e) {
+      const err = e as LocalTtsError;
+      items.push({
+        text, key, cached: false, speakable,
+        code: err?.code || "http", retryable: !!err?.retryable,
+        error: String(err?.message || e).slice(0, 300),
+      });
+      // Readiness problems affect the whole batch; stop after the first one (no retry storm).
+      if (err?.code === "not-ready" || err?.code === "network" || err?.code === "timeout") break;
+    }
+  }
+  lruEvict(cacheDir);
+  const firstErr = items.find((it) => it.error);
+  return { ok: true, engine: "local", voice, provider: providerId, items, ...(firstErr && items.every((it) => !it.cached) ? { code: firstErr.code, error: firstErr.error } : {}) };
+}
+
+/** Enable the tts.local feature once when the service is detected (same semantics as edge). */
+const LOCAL_AUTO_STATE = "local-auto-enabled.json";
+function autoEnableLocal(configDir?: string): void {
+  if (featureEnabled("aiti-ai-speek", "tts.local")) return;
+  try {
+    const p = join(configDir || fallbackDataDir(), LOCAL_AUTO_STATE);
+    if (existsSync(p)) return;
+    const reg = (globalThis as Record<string, unknown>).__piWebExt as
+      { setFeatureFlag?: (extId: string, fid: string, enabled: boolean) => void } | undefined;
+    if (!reg?.setFeatureFlag) return;
+    reg.setFeatureFlag("aiti-ai-speek", "tts.local", true);
+    mkdirSync(join(p, ".."), { recursive: true });
+    writeFileSync(p, JSON.stringify({ autoEnabled: true, at: Date.now() }));
+  } catch { /* non-blocking */ }
+}
+
+/**
+ * GET /tts/progress — SSE stream of prepare.json phases (fs.watch, no polling).
+ * Closes itself after a terminal phase so the panel can re-read /tts/info once.
+ */
+function sseLocalProgress(paths: ReturnType<typeof ttsPaths>, req: Request): Response {
+  const encoder = new TextEncoder();
+  let watcher: ReturnType<typeof fsWatch> | null = null;
+  let ping: ReturnType<typeof setInterval> | null = null;
+  let send: ((frame: string) => void) | null = null;
+  let closed = false;
+  let lastFrame = "";
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
+    try { watcher?.close(); } catch { /* noop */ }
+    if (ping) { clearInterval(ping); ping = null; }
+  };
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      send = (frame: string) => { try { controller.enqueue(encoder.encode(frame)); } catch { /* disconnected */ } };
+      const emit = () => {
+        const p = readPrepare(paths);
+        const frame = JSON.stringify(p || { phase: "unknown" });
+        if (frame === lastFrame) return; // fs.watch fires twice per write (rename + change)
+        lastFrame = frame;
+        send?.(`event: prepare\ndata: ${frame}\n\n`);
+        if (p && ["ready", "failed", "idle-stop"].includes(String(p.phase))) {
+          // Terminal phase: let the client react (panel toast) and end the stream.
+          setTimeout(() => { try { controller.close(); } catch { /* noop */ } cleanup(); }, 50);
+        }
+      };
+      emit();
+      try {
+        watcher = fsWatch(paths.home, { persistent: false }, (evt, filename) => {
+          if (!filename || String(filename) !== "prepare.json") return;
+          if (evt === "rename" || evt === "change") emit();
+        });
+        watcher.on?.("error", cleanup);
+      } catch { /* dir missing: initial snapshot only */ }
+      send(": connected\n\n");
+      ping = setInterval(() => send?.(": ping\n\n"), 20000); // transport keepalive (not state polling)
+      ping.unref?.();
+      req.signal.addEventListener("abort", () => { cleanup(); try { controller.close(); } catch { /* noop */ } }, { once: true });
+    },
+    cancel() { cleanup(); },
+  });
+  return new Response(stream, {
+    headers: { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive", "x-accel-buffering": "no" },
+  });
+}
+
 function broadcast(sessionId: string, event: { type?: string }): void {
   // SSE 事件名用帧自身 type（settled/updating）——旧实现一律叫 settled，
   // 客户端 addEventListener("updating") 永远收不到（updating 帧在 settled 监听里因无 text 被丢弃）
@@ -440,8 +783,8 @@ export default {
   },
 
   // 定时任务（注册给 aiti-ai-schedule 聚合执行；不重复造 setInterval）
-  // 每天一次清理 tts-cache：过期 30d 的 mp3 + 0KB 损坏 + 超 1GB 时 LRU 删到 80%
-  // 路径：~/.pi/web/data/aiti-ai-speek/tts-cache/
+  // Daily tts-cache cleanup: expired 30d audio (mp3/wav) + 0-byte corrupt files + LRU down to 80%
+  // Path: ~/.pi/web/data/aiti-ai-speek/cache/tts-cache/
   schedules: [
     {
       id: "tts-cache-gc",
@@ -539,6 +882,18 @@ export default {
     { id: "steer.enabled", label: "朗读提示词注入（开启跟读时提示 AI 优化输出，如先给结论/口语化）", group: "AI 优化", default: true },
     { id: "tts.edge", label: "edge-tts 后端音质档（已安装时自动开启；效果好于浏览器 Web Speech）", group: "引擎", default: false },
     { id: "tts.edge.bin", type: "string", label: "edge-tts 可执行文件路径（留空自动探测 ~/.local/bin、PATH、pipx）", group: "引擎", value: "", placeholder: "如 C:\\Python312\\Scripts\\edge-tts.exe" },
+    { id: "tts.local", label: "本地 TTS 引擎（本机 CPU 合成，服务就绪时自动开启）", group: "引擎", default: false },
+    { id: "tts.local.provider", type: "string", label: "本地 provider（hojo-40m / hojo-80m / qwen3-0.6b / stub；切换后需重启服务）", group: "本地引擎", value: "hojo-40m", placeholder: "hojo-40m" },
+    { id: "tts.local.baseUrl", type: "string", label: "本地服务地址（留空 = 127.0.0.1:8768 自动选端口；也可指向任意 OpenAI 兼容 TTS）", group: "本地引擎", value: "", placeholder: "http://127.0.0.1:8768" },
+    { id: "tts.local.model", type: "string", label: "本地模型名（透传 model 字段；留空由 provider 决定）", group: "本地引擎", value: "" },
+    { id: "tts.local.voice", type: "string", label: "本地音色 ID（留空 = 服务端第一个音色）", group: "本地引擎", value: "" },
+    { id: "tts.local.format", type: "string", label: "请求音频格式（pcm 优先，服务不支持时自动降级 wav/mp3）", group: "本地引擎", value: "pcm", placeholder: "pcm | wav | mp3" },
+    { id: "tts.local.sampleRate", type: "string", label: "PCM 采样率（封装 WAV 头用，默认 24000）", group: "本地引擎", value: "24000" },
+    { id: "tts.local.apiKey", type: "string", label: "本地服务 API Key（回环地址留空即可；指向远端时才需要）", group: "本地引擎", value: "" },
+    { id: "tts.local.autoStart", label: "选中本地引擎时自动准备并启动服务（首次会联网下载约 300MB）", group: "本地引擎", default: true },
+    { id: "tts.local.idleTimeout", type: "string", label: "空闲自动退出秒数（0 = 常驻；默认 1800 = 30 分钟）", group: "本地引擎", value: "1800" },
+    { id: "tts.local.hfEndpoint", type: "string", label: "模型下载源（留空自动探测：官方 → hf-mirror；也可填镜像/代理地址）", group: "本地引擎", value: "" },
+    { id: "tts.local.threads", type: "string", label: "ONNX 线程数（0 = 自动；CPU 少核机器可调低）", group: "本地引擎", value: "0" },
     { id: "process.enabled", label: "朗读过程（把 AI 的中间叙述也读出来，如「让我看一下…」「我先确认…」；跳过 thinking 与工具执行）", group: "朗读内容", default: false },
     { id: "minChars", type: "string", label: "忽略阈值（回复少于 N 字不朗读，避免“好的”“收到”刷屏）", group: "队列", value: "8", placeholder: "8" },
   ],
@@ -548,7 +903,7 @@ export default {
       hostFeatures = (ctx as any)?.features ?? null; // DI 方案 P1
       // edge-tts 已装 → 自动开 tts.edge feature（仅一次；用户此后显式关掉不会被覆盖）
       try { autoEnableEdge(ctx?.configDir); } catch { /* 不阻塞启动 */ }
-      console.log("[aiti-ai-speek] 跟读模式就绪 · onAgentSettled→SSE + steer + edge-tts" + (edgeInstalled() ? "(已安装)" : "(未安装)"));
+      console.log("[aiti-ai-speek] 跟读模式就绪 · onAgentSettled→SSE + steer + edge-tts" + (edgeInstalled() ? "(已安装)" : "(未安装)") + " + 本地引擎(按需启动)");
       // tts-cache 清理不靠 startup（避免拖慢启动 / 双实例 restart race），改由 aiti-ai-schedule 聚合 1 天一次跑（下方 schedules）
     },
 
@@ -615,8 +970,193 @@ export default {
       },
     },
 
-    async api(req: Request, ctx: { method: string; path: string[]; searchParams: URLSearchParams; configDir?: string; core?: { readSession?: (id: string) => Promise<{ messages?: Array<{ role?: string; content?: unknown }> } | null> } }) {
+    async api(req: Request, ctx: ApiCtxLike) {
       const [action] = ctx.path;
+
+      // ── local engine: progress SSE, info, ensure, control, voice management ────────────
+      // GET /tts/progress — prepare.json phase stream (fs.watch; no polling, closes on terminal)
+      if (action === "tts" && ctx.path[1] === "progress" && ctx.method === "GET") {
+        return sseLocalProgress(ttsPaths(ctx), req);
+      }
+
+      // GET /tts/info — local service snapshot (health + prepare + runtime + ready + paths + log tail)
+      if (action === "tts" && ctx.path[1] === "info" && ctx.method === "GET") {
+        const paths = ttsPaths(ctx);
+        const cfg = localCfg();
+        const health = await localHealth(paths, cfg, true);
+        const prepare = readPrepare(paths);
+        const runtime = readRuntime(paths);
+        const ready = readReady(paths);
+        try { if (health?.ok) autoEnableLocal(ctx.configDir); } catch { /* non-blocking */ }
+        const wantSizes = ctx.searchParams.get("sizes") === "1";
+        const modelsBytes = wantSizes ? dirBytes(paths.models, 3) : dirBytes(paths.models, 1);
+        const venvBytes = wantSizes ? dirBytes(paths.venvHojo, 4) + dirBytes(paths.venvQwen3, 4) : 0;
+        return json({
+          ok: true,
+          baseUrl: localBaseUrl(paths, cfg),
+          featureOn: cfg.enabled,
+          provider: cfg.provider,
+          providerActual: health?.provider || ready?.provider || null,
+          autoStart: cfg.autoStart,
+          idleTimeout: cfg.idleTimeout,
+          model: health?.model || null,
+          running: !!health?.ok,
+          health,
+          prepare,
+          runtime,
+          ready,
+          paths: { home: paths.home, models: paths.models, venv: ready?.venv || paths.venvHojo, log: paths.log, voicesJson: paths.voicesJson, service: SERVICE_DIR },
+          sizes: { modelsMB: +(modelsBytes / 1048576).toFixed(1), venvMB: +(venvBytes / 1048576).toFixed(1) },
+          logTail: ctx.searchParams.get("log") === "1" ? tailLog(paths, 40) : undefined,
+          installHint: health?.ok
+            ? `本地服务运行中 · ${health.providerLabel || health.provider || cfg.provider} · pid ${health.pid ?? "?"}`
+            : `本地服务未运行（${cfg.provider}）— 选中「本地」引擎或运行 start-tts.sh start 自动准备`,
+        });
+      }
+
+      // POST /tts/ensure { provider? } — probe, then bootstrap+launch when needed; returns starting
+      if (action === "tts" && ctx.path[1] === "ensure" && ctx.method === "POST") {
+        let body: { provider?: string; } = {};
+        try { body = await req.json(); } catch { /* empty body tolerated */ }
+        const st = await localEnsure(ctx, typeof body?.provider === "string" ? body.provider : undefined);
+        return json({ ok: true, ...st });
+      }
+
+      // POST /tts/control { action: start|stop|restart } — panel buttons (logs via aiti-cmd or file)
+      if (action === "tts" && ctx.path[1] === "control" && ctx.method === "POST") {
+        let body: { action?: string; provider?: string; } = {};
+        try { body = await req.json(); } catch { /* empty */ }
+        const act = String(body?.action || "").trim();
+        const paths = ttsPaths(ctx);
+        const cfg = localCfg();
+        const provider = (typeof body?.provider === "string" && body.provider.trim()) || cfg.provider;
+        if (act === "stop") {
+          const r = await stopService(paths);
+          localStart = { status: "idle", at: Date.now() };
+          localProbeCache = { at: 0, baseUrl: "", health: null };
+          return json({ ok: r.ok, stopped: r.ok, error: r.error });
+        }
+        if (act === "start" || act === "restart") {
+          if (act === "restart") {
+            await stopService(paths);
+            await new Promise((r) => setTimeout(r, 800));
+          }
+          // Keep the feature in sync with the provider that is actually being started.
+          if (provider !== cfg.provider) setFeatureValueSafe("tts.local.provider", provider);
+          localStart = { status: "idle", at: 0 };
+          localProbeCache = { at: 0, baseUrl: "", health: null };
+          const r = await localEnsure(ctx, provider);
+          return json({ ok: true, ...r });
+        }
+        return json({ ok: false, error: "action must be start|stop|restart" }, 400);
+      }
+
+      // GET /tts/voices — local voice list (returns [] instead of failing when the service is down)
+      if (action === "tts" && ctx.path[1] === "voices" && !ctx.path[2] && ctx.method === "GET") {
+        const paths = ttsPaths(ctx);
+        const cfg = localCfg();
+        const health = await localHealth(paths, cfg);
+        const data = health?.ok ? await localVoices(paths, cfg, ctx.searchParams.get("force") === "1") : null;
+        const entries = readVoiceEntries(paths);
+        return json({
+          ok: true, running: !!health?.ok, provider: health?.provider || cfg.provider,
+          supportsClone: !!data?.supportsClone, voices: data?.voices || [],
+          custom: entries.length, voicesJson: paths.voicesJson,
+        });
+      }
+
+      // POST /tts/voices — create a clone voice (multipart: name/refText/language/xvecOnly/provider/audio)
+      if (action === "tts" && ctx.path[1] === "voices" && !ctx.path[2] && ctx.method === "POST") {
+        const paths = ttsPaths(ctx);
+        const cfg = localCfg();
+        let form: FormData;
+        try { form = await req.formData(); } catch { return json({ ok: false, error: "expected multipart/form-data" }, 400); }
+        const name = String(form.get("name") || "").trim();
+        const provider = String(form.get("provider") || cfg.provider).trim();
+        const refText = String(form.get("refText") || "").trim();
+        const language = String(form.get("language") || "Chinese").trim();
+        const xvecOnly = String(form.get("xvecOnly") || "") === "true" || String(form.get("xvecOnly") || "") === "1";
+        const audio = form.get("audio");
+        if (!name) return json({ ok: false, error: "need name" }, 400);
+        const id = slugifyVoice(name);
+        if (!id) return json({ ok: false, error: "name must contain letters or digits" }, 400);
+        const cloneCapable = /hojo-80m|qwen3/.test(provider);
+        if (!cloneCapable) return json({ ok: false, error: `provider ${provider} does not support voice cloning` }, 400);
+        if (!refText && !(xvecOnly && provider.startsWith("qwen3"))) {
+          return json({ ok: false, error: "need refText (transcript of the reference audio)" }, 400);
+        }
+        if (!audio || typeof (audio as { arrayBuffer?: unknown }).arrayBuffer !== "function") {
+          return json({ ok: false, error: "need audio file" }, 400);
+        }
+        try {
+          const buf = Buffer.from(await (audio as File).arrayBuffer());
+          const entry = await saveVoice({
+            paths, id, label: name, refText, language, xvecOnly, provider,
+            audio: { buf, name: (audio as File).name, type: (audio as File).type },
+          });
+          // Hot reload the service voice list (when it is running).
+          const baseUrl = localBaseUrl(paths, cfg);
+          let reloaded: unknown = null;
+          try {
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 5000);
+            const res = await fetch(baseUrl + "/admin/load", { method: "POST", signal: ctrl.signal });
+            clearTimeout(timer);
+            reloaded = res.ok ? await res.json().catch(() => null) : null;
+          } catch { /* service down: voice is stored, next start picks it up */ }
+          localVoicesCache = { at: 0, baseUrl: "", data: null };
+          return json({ ok: true, voice: entry, reloaded });
+        } catch (e) {
+          return json({ ok: false, error: String((e as Error)?.message || e) }, 400);
+        }
+      }
+
+      // DELETE /tts/voices/<id> — remove a clone voice (built-ins refused; id whitelist blocks traversal)
+      if (action === "tts" && ctx.path[1] === "voices" && ctx.path[2] && ctx.method === "DELETE") {
+        const paths = ttsPaths(ctx);
+        const cfg = localCfg();
+        const id = String(ctx.path[2] || "");
+        if (!/^[\p{L}\p{N}._-]{1,64}$/u.test(id)) return json({ ok: false, error: "bad id" }, 400);
+        const hit = readVoiceEntries(paths).find((v) => v.id === id);
+        if (!hit) {
+          // Distinguish built-in voices from unknown ids for a clearer panel message.
+          const data = await localVoices(paths, cfg, true);
+          const builtin = (data?.voices || []).some((v) => v.id === id && v.builtin !== false);
+          return json({ ok: false, error: builtin ? "built-in voices cannot be deleted" : "voice not found" }, builtin ? 409 : 404);
+        }
+        deleteVoiceEntry(paths, id);
+        try {
+          const baseUrl = localBaseUrl(paths, cfg);
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), 5000);
+          await fetch(baseUrl + "/admin/load", { method: "POST", signal: ctrl.signal }).catch(() => null);
+          clearTimeout(timer);
+        } catch { /* service down */ }
+        localVoicesCache = { at: 0, baseUrl: "", data: null };
+        return json({ ok: true, id });
+      }
+
+      // GET /engine-status — availability snapshot for both engines (panel opener; reused for 10s)
+      if (action === "engine-status" && ctx.method === "GET") {
+        const paths = ttsPaths(ctx);
+        const cfg = localCfg();
+        const health = await localHealth(paths, cfg);
+        try { if (health?.ok) autoEnableLocal(ctx.configDir); } catch { /* non-blocking */ }
+        return json({
+          ok: true,
+          edge: { available: edgeInstalled(), featureOn: featureEnabled("aiti-ai-speek", "tts.edge"), version: edgeVersion() },
+          local: {
+            featureOn: cfg.enabled,
+            up: !!health?.ok,
+            status: health?.status || "stopped",
+            provider: health?.provider || cfg.provider,
+            providerLabel: health?.providerLabel || null,
+            baseUrl: localBaseUrl(paths, cfg),
+            prepare: readPrepare(paths),
+            autoStart: cfg.autoStart,
+          },
+        });
+      }
 
       // GET /messages?session=<sid>[&idsOnly=1] —— 返回 assistant 消息
       //   idsOnly=1：仅返回 [{id, key}]（key=true 表示含要点），文本按需走 /messages-content 省内存
@@ -717,23 +1257,53 @@ export default {
         return json({ ok: true, injected: true });
       }
 
-      // GET /voices —— edge-tts 音色表（动态：--list-voices 解析）+ 后端状态（设置面板展示）
+      // GET /voices — voice lists (edge CLI parse + local service) plus both engine states
       if (action === "voices" && ctx.method === "GET") {
-        try { autoEnableEdge(ctx.configDir); } catch { /* 不阻塞 */ }
-        // ?force=1：绕过 --list-voices 缓存与 which 探测缓存（设置面板「重新探测」用，AI 刚装好即见效）
+        try { autoEnableEdge(ctx.configDir); } catch { /* non-blocking */ }
+        // ?force=1 bypasses the --list-voices / which caches (panel "re-probe" button)
         const force = ctx.searchParams.get("force") === "1";
-        // 全异步探测（性能修复：冷缓存不再 execFileSync 冻结主线程；结果写回同步路径缓存）
-        return json(await voicesPayloadAsync(force));
+        const payload = await voicesPayloadAsync(force);
+        const paths = ttsPaths(ctx);
+        const cfg = localCfg();
+        const health = await localHealth(paths, cfg, force);
+        const localData = health?.ok ? await localVoices(paths, cfg, force) : null;
+        try { if (health?.ok) autoEnableLocal(ctx.configDir); } catch { /* non-blocking */ }
+        return json({
+          ...payload,
+          engines: {
+            edge: { available: !!payload.installed, featureOn: featureEnabled("aiti-ai-speek", "tts.edge") },
+            local: {
+              available: !!health?.ok,
+              featureOn: cfg.enabled,
+              status: health?.status || "stopped",
+              provider: health?.provider || cfg.provider,
+              providerLabel: health?.providerLabel || null,
+              baseUrl: localBaseUrl(paths, cfg),
+              supportsClone: !!localData?.supportsClone,
+              prepare: readPrepare(paths),
+            },
+          },
+          // undefined (service down) keeps the client's cached list instead of blanking it
+          localVoices: localData ? (localData.voices || []) : undefined,
+          localVoiceSource: localData ? (health?.provider || cfg.provider) : null,
+        });
       }
 
       // GET /features —— 朗读相关 feature 状态（前端设置面板展示/同步）
       if (action === "features" && ctx.method === "GET") {
+        const cfg = localCfg();
         return json({
           ok: true,
           process: featureEnabled("aiti-ai-speek", "process.enabled"),
           steer: featureEnabled("aiti-ai-speek", "steer.enabled"),
           edge: featureEnabled("aiti-ai-speek", "tts.edge"),
           edgeBin: featureValue("aiti-ai-speek", "tts.edge.bin"),
+          local: cfg.enabled,
+          localProvider: cfg.provider,
+          localBaseUrl: cfg.baseUrl,
+          localVoice: cfg.voice,
+          localAutoStart: cfg.autoStart,
+          localIdleTimeout: cfg.idleTimeout,
         });
       }
 
@@ -744,13 +1314,18 @@ export default {
         const id = body?.id;
         if (!id) return json({ ok: false, error: "need id" }, 400);
         // 仅允许本扩展声明的可控 feature（防任意 id 注入）
-        const ALLOWED = new Set(["process.enabled", "steer.enabled", "tts.edge", "tts.edge.bin"]);
+        const ALLOWED = new Set([
+          "process.enabled", "steer.enabled", "tts.edge", "tts.edge.bin",
+          "tts.local", "tts.local.provider", "tts.local.baseUrl", "tts.local.model", "tts.local.voice",
+          "tts.local.format", "tts.local.sampleRate", "tts.local.apiKey", "tts.local.autoStart",
+          "tts.local.idleTimeout", "tts.local.hfEndpoint", "tts.local.threads",
+        ]);
         if (!ALLOWED.has(id)) return json({ ok: false, error: "unknown id" }, 400);
         const reg = (globalThis as Record<string, unknown>).__piWebExt as
           { setFeatureFlag?: (extId: string, fid: string, enabled: boolean) => void;
             setFeatureValue?: (extId: string, fid: string, value: boolean | string) => void } | undefined;
         if (!reg?.setFeatureFlag || !reg?.setFeatureValue) return json({ ok: false, error: "setFeature 不可用" }, 501);
-        if (id === "tts.edge.bin") {
+        if (typeof body?.value === "string" || id === "tts.edge.bin") {
           const v = String(body?.value ?? "").trim();
           reg.setFeatureValue("aiti-ai-speek", id, v);
           return json({ ok: true, id, value: v });
@@ -759,25 +1334,41 @@ export default {
         return json({ ok: true, id, enabled: body?.enabled !== false });
       }
 
-      // GET /tts?text&voice&rate —— edge-tts 合成（SHA-256 缓存）
+      // GET /tts?text&voice&rate&engine=edge|local — single-sentence synthesis (SHA-256 cache; preview)
       if (action === "tts" && ctx.method === "GET") {
+        const text = (ctx.searchParams.get("text") || "").trim();
+        if (!text) return json({ ok: false, error: "need text" }, 400);
+        const engineParam = (ctx.searchParams.get("engine") || "edge").trim();
+        if (engineParam === "local") {
+          const voice = ctx.searchParams.get("voice") || undefined;
+          const r = await localSynthesizeBatch(ctx, [text], voice);
+          const it = r.items[0];
+          if (!it || !it.cached || !it.ext) {
+            return json({ ok: false, engine: "local", error: it?.error || r.error || "local synthesis failed", code: it?.code || r.code, voice: r.voice }, it?.code === "not-ready" ? 503 : 502);
+          }
+          const file = join(ttsCacheDir(ctx.configDir), it.key + it.ext);
+          try {
+            const buf = readFileSync(file);
+            return new Response(buf, { headers: { "content-type": contentTypeOf(file), "cache-control": "public, max-age=86400", "x-tts-cache": "miss", "x-tts-engine": "local", "accept-ranges": "bytes" } });
+          } catch (e) {
+            return json({ ok: false, error: String(e) }, 500);
+          }
+        }
         if (!featureEnabled("aiti-ai-speek", "tts.edge")) return json({ ok: false, error: "edge-tts disabled by feature" }, 409);
         const bin = resolveEdgeBin();
         if (!bin) return json({ ok: false, error: "edge-tts 未安装" }, 501);
-        const text = (ctx.searchParams.get("text") || "").trim();
-        if (!text) return json({ ok: false, error: "need text" }, 400);
         const voice = ctx.searchParams.get("voice") || defaultEdgeVoice();
         const rate = Math.min(2, Math.max(0.5, parseFloat(ctx.searchParams.get("rate") || "1") || 1));
         const cacheDir = ttsCacheDir(ctx.configDir);
         const key = createHash("sha256").update(`edge|${voice}|${rate}|${text}`).digest("hex");
         const file = join(cacheDir, `${key}.mp3`);
-        // 命中且 >0B 直接返回；0B 视为损坏，删了重新合成
+        // Cache hit with >0B -> serve; 0B counts as corrupt and is re-synthesized.
         if (existsSync(file)) {
           const st = statSyncSafe(file);
           if (st && st.size > 0) {
             return new Response(readFileSync(file), { headers: { "content-type": "audio/mpeg", "cache-control": "public, max-age=86400", "x-tts-cache": "hit" } });
           }
-          try { unlinkSync(file); } catch { /* 删失败忽略 */ }
+          try { unlinkSync(file); } catch { /* ignore */ }
         }
         // 合成（edge-tts CLI；限时 30s）
         try {
@@ -796,29 +1387,30 @@ export default {
       // GET /tts-cache-stats —— 缓存状态（设置面板展示：文件数/总大小/使用率）
       if (action === "tts-cache-stats" && ctx.method === "GET") {
         const dir = ttsCacheDir(ctx.configDir);
-        if (!existsSync(dir)) return json({ ok: true, count: 0, totalBytes: 0, totalMB: "0.00", maxMB: "1024.00", usagePercent: "0.0" });
-        let count = 0, total = 0;
-        for (const f of readdirSync(dir)) {
-          if (!f.endsWith(".mp3")) continue;
-          const st = statSyncSafe(join(dir, f));
-          if (st) { count++; total += st.size; }
-        }
+        const stats = cacheStats(dir);
         const maxBytes = 1024 * 1024 * 1024;
-        return json({ ok: true, count, totalBytes: total, totalMB: (total / 1048576).toFixed(2), maxMB: "1024.00", usagePercent: ((total / maxBytes) * 100).toFixed(1) });
+        return json({
+          ok: true, count: stats.count, totalBytes: stats.bytes,
+          totalMB: (stats.bytes / 1048576).toFixed(2), maxMB: "1024.00",
+          usagePercent: ((stats.bytes / maxBytes) * 100).toFixed(1),
+          byExt: stats.byExt,
+        });
       }
 
-      // GET /tts-cache/<key> —— 返回已合成的缓存 mp3 文件（前端 <audio> 直接用；命中秒回）
+      // GET /tts-cache/<key> — serve cached audio (.mp3 / .wav; used directly by <audio>)
       // ⚠ Range 支持：Chromium 播 <audio> 会发 Range 请求（seek/流式），未返回 206 时部分浏览器
       //   触发 onerror → 前端误报「语音播放失败」。无 Range → 全量 200 + accept-ranges。
       if (action === "tts-cache" && ctx.method === "GET") {
         const key = ctx.path[1] || "";
         if (!/^[a-f0-9]{64}$/.test(key)) return json({ ok: false, error: "bad key" }, 400);
         const cacheDir = ttsCacheDir(ctx.configDir);
-        const file = join(cacheDir, `${key}.mp3`);
-        if (!existsSync(file)) return json({ ok: false, error: "not cached" }, 404);
+        const hit = findCacheFile(cacheDir, key);
+        if (!hit) return json({ ok: false, error: "not cached" }, 404);
+        const { file, ext } = hit;
         const st = statSyncSafe(file);
         if (!st || st.size === 0) { try { unlinkSync(file); } catch { /* */ } return json({ ok: false, error: "corrupted (empty), regenerate" }, 410); }
         const size = st.size;
+        const ctype = contentTypeOf(ext);
         const range = req.headers.get("range");
         if (range) {
           const m = /bytes=(\d*)-(\d*)/.exec(range);
@@ -832,25 +1424,29 @@ export default {
             return new Response(buf, {
               status: 206,
               headers: {
-                "content-type": "audio/mpeg", "cache-control": "public, max-age=86400", "x-tts-cache": "hit",
+                "content-type": ctype, "cache-control": "public, max-age=86400", "x-tts-cache": "hit",
                 "content-range": `bytes ${start}-${end}/${size}`, "accept-ranges": "bytes", "content-length": String(end - start + 1),
               },
             });
           }
         }
-        return new Response(readFileSync(file), { headers: { "content-type": "audio/mpeg", "cache-control": "public, max-age=86400", "x-tts-cache": "hit", "accept-ranges": "bytes" } });
+        return new Response(readFileSync(file), { headers: { "content-type": ctype, "cache-control": "public, max-age=86400", "x-tts-cache": "hit", "accept-ranges": "bytes" } });
       }
 
-      // POST /tts-batch { texts: [], voice?, rate? } —— 一次批量合成多句（命中缓存秒回，未命合并发）
-      //   返回 [{ key, text, cached }]，前端 <<audio>> 用 /tts-cache/<key> 播。
+      // POST /tts-batch { texts: [], voice?, rate?, engine? } — batch synthesis (cache hits return instantly)
+      //   Returns [{ key, text, cached, ext }]; the frontend plays /tts-cache/<key>.
       if (action === "tts-batch" && ctx.method === "POST") {
-        if (!featureEnabled("aiti-ai-speek", "tts.edge")) return json({ ok: false, error: "edge-tts disabled by feature" }, 409);
-        const bin = resolveEdgeBin();
-        if (!bin) return json({ ok: false, error: "edge-tts 未安装" }, 501);
-        let body: { texts?: unknown; voice?: string; rate?: number } = {};
+        let body: { texts?: unknown; voice?: string; rate?: number; engine?: string; provider?: string; } = {};
         try { body = await req.json(); } catch { /* 空 JSON 容忍 */ }
         const texts = Array.isArray(body?.texts) ? body.texts.map((t) => String(t).trim()).filter(Boolean) : [];
         if (!texts.length) return json({ ok: false, error: "need texts" }, 400);
+        // Local engine: same response shape, produced by the OpenAI-compatible local service.
+        if (String(body?.engine || "").trim() === "local") {
+          return json(await localSynthesizeBatch(ctx, texts, body?.voice));
+        }
+        if (!featureEnabled("aiti-ai-speek", "tts.edge")) return json({ ok: false, error: "edge-tts disabled by feature" }, 409);
+        const bin = resolveEdgeBin();
+        if (!bin) return json({ ok: false, error: "edge-tts 未安装" }, 501);
         const voice = body?.voice || defaultEdgeVoice();
         const rate = Math.min(2, Math.max(0.5, parseFloat(String(body?.rate)) || 1));
         const cacheDir = ttsCacheDir(ctx.configDir);

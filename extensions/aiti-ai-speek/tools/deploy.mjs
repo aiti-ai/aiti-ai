@@ -53,14 +53,34 @@ for (const extDir of targets) {
     copyFileSync(resolve(root, f), resolve(extDir, f));
     console.log("[deploy] 源码 → " + resolve(extDir, f));
   }
-  // server/ 辅助模块（speech-filter + tts-cache 等）
+  // server/ helper modules (speech filter + cache + local TTS client/service)
   const srvDir = resolve(extDir, "server");
   mkdirSync(srvDir, { recursive: true });
-  for (const srvFile of ["speech-filter.ts", "tts-cache.ts"]) {
+  for (const srvFile of ["speech-filter.ts", "tts-cache.ts", "tts-local.ts", "tts-local-service.ts"]) {
     try {
       copyFileSync(resolve(root, "server/" + srvFile), resolve(srvDir, srvFile));
       console.log("[deploy] server → " + resolve(srvDir, srvFile));
     } catch (e) { console.warn("[deploy] 跳过 server/" + srvFile + "：", e.message); }
+  }
+  // Local TTS service (python shell + providers + start/stop scripts). Runtime dirs
+  // (venv/models/logs/prepare.json) live in the cache area and are excluded here.
+  const svcSrc = resolve(root, "server/tts-service");
+  const svcDst = resolve(srvDir, "tts-service");
+  if (existsSync(svcSrc)) {
+    mkdirSync(svcDst, { recursive: true });
+    cpSync(svcSrc, svcDst, {
+      recursive: true,
+      filter: (src2) => {
+        const name = src2.split(/[\\/]/).pop() || "";
+        if (["venv-hojo", "venv-qwen3", "models", "logs", "__pycache__", ".cache"].includes(name)) return false;
+        if (/\.(pyc|log)$/.test(name)) return false;
+        if (["prepare.json", "runtime.json", "ready.json", "tn-disabled"].includes(name)) return false;
+        return true;
+      },
+    });
+    console.log("[deploy] tts-service（源码，不含 venv/models/logs） → " + svcDst);
+  } else {
+    console.warn("[deploy] 缺少 server/tts-service（本地 TTS 不可用）");
   }
   const clientDir = resolve(extDir, "dist");
   mkdirSync(clientDir, { recursive: true });
