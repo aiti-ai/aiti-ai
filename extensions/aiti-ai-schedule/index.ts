@@ -16,7 +16,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import { join as pathJoin } from "node:path";
+import { isAbsolute as pathIsAbsolute, join as pathJoin } from "node:path";
 import { Engine } from "./sched/engine.ts";
 import { parseSchedules, nextRunAt } from "./sched/cron.ts";
 import { makeOutbound, resolveCcConfig, CC_TIMEOUT_MS, type CcConfig } from "./sched/outbound.ts";
@@ -913,7 +913,8 @@ function validateTriggerInput(raw: unknown): string | null {
     const list = Array.isArray(t.paths) ? t.paths : (typeof t.paths === "string" ? t.paths.split("\n") : []);
     const paths = list.map((s: any) => String(s).trim()).filter(Boolean);
     if (!paths.length) return "trigger.fs-watch 需至少一个绝对路径（paths 数组或多行字符串）";
-    if (paths.some((s: string) => !s.startsWith("/"))) return "trigger.fs-watch paths 必须是绝对路径（以 / 开头）";
+    // Platform-absolute (POSIX "/…", Windows "C:\\…") — startsWith("/") would reject every Windows path.
+    if (paths.some((s: string) => !pathIsAbsolute(s))) return "trigger.fs-watch paths 必须是绝对路径";
     if (paths.length > 20) return "trigger.fs-watch 最多 20 个路径";
     return null;
   }
@@ -936,7 +937,7 @@ function sanitizeTrigger(b: any): PlanTrigger | null | undefined {
   const cooldown = Number.isFinite(cd) && cd >= 0 ? Math.floor(cd) : undefined;
   if (t.type === "fs-watch") {
     const list = Array.isArray(t.paths) ? t.paths : (typeof t.paths === "string" ? t.paths.split("\n") : []);
-    const paths = [...new Set(list.map((s: any) => String(s).trim()).filter((s: string) => s.startsWith("/")))].slice(0, 20);
+    const paths = [...new Set(list.map((s: any) => String(s).trim()).filter((s: string) => pathIsAbsolute(s)))].slice(0, 20);
     if (!paths.length) return null;
     const out: PlanTrigger = { type: "fs-watch", paths, cooldownSec: cooldown };
     const events = Array.isArray(t.events) ? t.events.filter((e: any) => e === "change" || e === "rename") : [];
