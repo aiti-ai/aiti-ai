@@ -470,6 +470,7 @@ function register(ctx) {
   try {
     if (typeof ctx.registerComposerEnhancement === "function") {
       ctx.registerComposerEnhancement({ id: "aiti-secret-vault-preflight", onBeforeSend: preflightGate });
+      try { console.log("[aiti-secret-vault] pre-send gate registered (onBeforeSend)"); } catch (e) {}
     }
   } catch (e) {}
   try { console.log("[aiti-secret-vault] management dialog attached (toolbar key icon → dialog)"); } catch (e) {}
