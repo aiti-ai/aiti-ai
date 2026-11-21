@@ -45,6 +45,7 @@ const { join } = path;
 import http from "node:http";
 import https from "node:https";
 import { randomUUID } from "node:crypto";
+import { gunzipSync, inflateSync, brotliDecompressSync } from "node:zlib";
 import { StickyRouter } from "./sticky.ts";
 import { t } from "./i18n.ts";
 import {
@@ -169,6 +170,27 @@ export interface SlotQuality { window: number; ttfbMedianMs: number }
  *  字符串匹配足够：上游错误体稳定含这两个标记之一，且调用方已限定 status===400。 */
 function isMissingSessionIdError(text: string): boolean {
   return text.includes("MissingSessionID") || text.includes("x-opencode-session");
+}
+
+/** Error bodies are tiny; keep a hard cap before inflating untrusted bytes. */
+const MAX_ERROR_BODY_BYTES = 1024 * 1024;
+
+/**
+ * Decode an upstream error body for the 400 inspection/pass-through path.
+ * Only honours an explicit Content-Encoding, and falls back to raw UTF-8 text
+ * on failure — a mislabelled/corrupt body must not break plain 400 handling.
+ */
+function decodeErrorBody(raw: Buffer, contentEncoding: string | string[] | undefined): string {
+  const rawText = () => raw.toString("utf8");
+  if (raw.length > MAX_ERROR_BODY_BYTES) return rawText();
+  const enc = (Array.isArray(contentEncoding) ? contentEncoding[0] : contentEncoding)
+    ?.split(",")[0]?.trim().toLowerCase();
+  try {
+    if (enc === "gzip") return gunzipSync(raw).toString("utf8");
+    if (enc === "deflate") return inflateSync(raw).toString("utf8");
+    if (enc === "br") return brotliDecompressSync(raw).toString("utf8");
+  } catch { /* mislabelled or corrupt payload → fall back to raw text */ }
+  return rawText();
 }
 
 /** 每槽位运行时统计（状态面板：聚合/多 key 信息）。进程内累计，配置变更移除槽位时清零。 */
@@ -1548,7 +1570,8 @@ export class ProxyServer {
           const msChunks: Buffer[] = [];
           proxiedRes.on("data", (c: Buffer) => msChunks.push(c));
           proxiedRes.on("end", () => {
-            const text = Buffer.concat(msChunks).toString("utf8");
+            // Decode only when the upstream declares an encoding; plain bodies keep their previous behaviour.
+            const text = decodeErrorBody(Buffer.concat(msChunks), proxiedRes.headers["content-encoding"]);
             if (!isMissingSessionIdError(text)) {
               // 普通 400（参数错等）→ 原样透传，不重试
               if (!res.headersSent) {
