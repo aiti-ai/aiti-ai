@@ -13,7 +13,7 @@ import {
   refreshTrusted, refreshStatus, sortedLocalIds, loadRegistry, loadUpdates, runOp, runInstallZip,
   localMatches, onlineMatches, registryDocUrl, registryInstallSource, onlinePublisher, syncLoader, semverGt,
   extDisplayName, subscribeAll, dependentsOf, execOp, depEdges, hardDependents, clientDependents,
-  invokeHelper, extUi18nExact,
+  invokeHelper, extUi18nExact, featureGroupText,
   EXTMAN_KEY,
 } from "./extman-core";
 import { t, apiUrl } from "./host-shim";
@@ -1591,7 +1591,7 @@ function FeaturePanel({ id, features }: { id: string; features: any[] }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         {groups.map((g, gi) => (
           <div key={gi} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            {g.group && <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", marginTop: gi > 0 ? 6 : 0 }}>{g.group}</div>}
+            {g.group && <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", marginTop: gi > 0 ? 6 : 0 }}>{featureGroupText(id, g.group)}</div>}
             {g.items.map((f) => {
               const key = "set-feature:" + id + ":" + f.id;
               const busy = state.busyKey === key;

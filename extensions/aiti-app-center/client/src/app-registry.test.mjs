@@ -348,8 +348,8 @@ test("translateExtItemText：i18n: 前缀级联（当前 locale → 短码 → e
   };
   assert.equal(translateExtItemText("aiti-extman", "i18n:ext.shortLabel", ui18n, "zh-CN"), "扩展");
   assert.equal(translateExtItemText("aiti-extman", "i18n:ext.shortLabel", ui18n, "en"), "Exts");
-  // zh-TW：zh-TW/zh 表均缺 → en 表命中（级联在表级）
-  assert.equal(translateExtItemText("aiti-extman", "i18n:ext.shortLabel", ui18n, "zh-TW"), "Exts");
+  // zh-TW：无 zh-TW 表 → zh-CN 兜底（同为 zh 语族；扩展只发 en + zh-CN）
+  assert.equal(translateExtItemText("aiti-extman", "i18n:ext.shortLabel", ui18n, "zh-TW"), "扩展");
   // 命中表里缺键 → 裸 key（en 表命中但无 only.zh）
   assert.equal(translateExtItemText("aiti-extman", "i18n:only.zh", ui18n, "en"), "only.zh");
   // en 无表时末位兜底 = 首表（zh-CN）

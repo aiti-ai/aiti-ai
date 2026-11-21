@@ -8,12 +8,26 @@
  * setErr，弹窗被拦截路径会 ReferenceError 且被 .catch(() => {}) 吞掉；正常路径行为不变。
  */
 import { useState, useEffect, useRef } from "react";
-import { apiUrl, t } from "./host-shim";
+import { apiUrl, currentLocale, t } from "./host-shim";
 
 // ── 模块级开关：toolbar 按钮与 dialog 共享（Esc 关闭 / 遮罩点击关闭都走这里） ──
 // dock v3（P3 批）：显隐收口展示状态机（P3 保守：无 default，浮窗照旧；⇱ 菜单可手动右栏）
 import { useGate, usePresent, presentState, DockBody, openFloat, closePanel, seedDockDefault } from "../../../_shared/ext-float-dock";
 import { uiAlert, uiConfirm, uiPrompt } from "../../../_shared/ui-dialogs";
+
+/** API URL with the current UI locale appended: the server localizes every human-readable
+ *  string it returns (modes, rationale, warnings, dependency labels, errors). */
+function api(path: string): string {
+  const sep = path.includes("?") ? "&" : "?";
+  return apiUrl(path + sep + "locale=" + encodeURIComponent(currentLocale()));
+}
+
+/** Translate a semantic key; fall back to the server-provided text when the key is missing
+ *  (host versions without the entry, older table snapshots). */
+function tx(key: string, fallback: string): string {
+  const v = t(key);
+  return v === key ? fallback : v;
+}
 
 const UIENV_KEY = "aiti-ui-env:panel";
 function setPanelOpen(v: boolean) { if (v) openFloat(UIENV_KEY); else closePanel(UIENV_KEY); }
@@ -174,7 +188,7 @@ async function buildVncUrl(instId?: string): Promise<string> {
   const api = new URL(apiUrl("/x"), location.origin); // apiUrl 是相对路径（含 basePath）
   const basePath = api.pathname.endsWith("/x") ? api.pathname.slice(0, -2) : "";
   const wsPath = (basePath + "/aiti-ui-env/vnc/" + d.token + "/ws").replace(/^\/+/, "");
-  const query = "autoconnect=true&resize=scale&path=" + encodeURIComponent(wsPath);
+  const query = "autoconnect=true&resize=scale&lang=" + encodeURIComponent(currentLocale()) + "&path=" + encodeURIComponent(wsPath);
   // view.html = 查看外壳（旋转/双指捏合缩放，直连 RFB 无 iframe）；query 原样透传
   return location.origin + basePath + "/aiti-ui-env/vnc/" + d.token + "/view.html?" + query;
 }
@@ -221,7 +235,7 @@ function renderUiEnvDialog(face?: string) {
 
   async function refresh() {
     try {
-      const r = await fetch(apiUrl("/api/extensions/aiti-ui-env/status?refresh=1"), { cache: "no-store" });
+      const r = await fetch(api("/api/extensions/aiti-ui-env/status?refresh=1"), { cache: "no-store" });
       const d = await r.json();
       if (!r.ok) throw new Error("HTTP " + r.status);
       setData(d); setErr(null);
@@ -238,7 +252,7 @@ function renderUiEnvDialog(face?: string) {
   // 依赖自检（不阻塞主状态）：缺失组件 + 自动安装 + 手动指引
   async function loadDeps() {
     try {
-      const r = await fetch(apiUrl("/api/extensions/aiti-ui-env/deps"), { cache: "no-store" });
+      const r = await fetch(api("/api/extensions/aiti-ui-env/deps"), { cache: "no-store" });
       if (!r.ok) throw new Error("HTTP " + r.status);
       setDeps(await r.json());
     } catch { /* 忽略：deps 区块不强求 */ }
@@ -270,7 +284,7 @@ function renderUiEnvDialog(face?: string) {
    *  密码由 VNC server 自己认证（桥不代答）；返回 false 表示用户取消。 */
   async function ensureVncPassword(): Promise<boolean> {
     try {
-      const st = await fetch(apiUrl("/api/extensions/aiti-ui-env/vnc-password"), { cache: "no-store" });
+      const st = await fetch(api("/api/extensions/aiti-ui-env/vnc-password"), { cache: "no-store" });
       if (st.ok) { const sd = await st.json().catch(() => ({})); if (sd.set) return true; }
     } catch { /* 查不到当作未设置 */ }
     const pw = await uiPrompt({
@@ -280,7 +294,7 @@ function renderUiEnvDialog(face?: string) {
       required: true,
     });
     if (pw == null || !pw.trim()) return false;
-    const r = await fetch(apiUrl("/api/extensions/aiti-ui-env/vnc-password"), {
+    const r = await fetch(api("/api/extensions/aiti-ui-env/vnc-password"), {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ password: pw.trim() }),
     });
@@ -297,7 +311,7 @@ function renderUiEnvDialog(face?: string) {
   async function installDepsBtn() {
     await withBusy("deps", async () => {
       if (isWindowsEnv() && !(await ensureVncPassword())) return; // 用户取消：不装，避免装完无法设密码
-      const r = await fetch(apiUrl("/api/extensions/aiti-ui-env/deps"), {
+      const r = await fetch(api("/api/extensions/aiti-ui-env/deps"), {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ action: "install" }),
       });
@@ -314,7 +328,7 @@ function renderUiEnvDialog(face?: string) {
 
   async function setMode(mode: string) {
     await withBusy("mode", async () => {
-      const r = await fetch(apiUrl("/api/extensions/aiti-ui-env/set-mode"), {
+      const r = await fetch(api("/api/extensions/aiti-ui-env/set-mode"), {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ mode }),
       });
@@ -326,7 +340,7 @@ function renderUiEnvDialog(face?: string) {
 
   async function vncAction(action: string, id?: string) {
     await withBusy("vnc", async () => {
-      const r = await fetch(apiUrl("/api/extensions/aiti-ui-env/vnc"), {
+      const r = await fetch(api("/api/extensions/aiti-ui-env/vnc"), {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ action, id }),
       });
@@ -336,7 +350,7 @@ function renderUiEnvDialog(face?: string) {
   }
   async function rdpAction(action: string, id?: string) {
     await withBusy("rdp", async () => {
-      const r = await fetch(apiUrl("/api/extensions/aiti-ui-env/rdp"), {
+      const r = await fetch(api("/api/extensions/aiti-ui-env/rdp"), {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ action, id }),
       });
@@ -348,7 +362,7 @@ function renderUiEnvDialog(face?: string) {
   async function startRdp(host: string, port: number): Promise<boolean> {
     let ok = false;
     await withBusy("rdp", async () => {
-      const r = await fetch(apiUrl("/api/extensions/aiti-ui-env/rdp"), {
+      const r = await fetch(api("/api/extensions/aiti-ui-env/rdp"), {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ action: "start", host, port }),
       });
@@ -363,7 +377,7 @@ function renderUiEnvDialog(face?: string) {
   async function connectVnc(host: string, port: number): Promise<boolean> {
     let ok = false;
     await withSysBusy(async () => {
-      const r = await fetch(apiUrl("/api/extensions/aiti-ui-env/vnc"), {
+      const r = await fetch(api("/api/extensions/aiti-ui-env/vnc"), {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ action: "sys-open", host, port, label: `${host}:${port}` }),
       });
@@ -402,13 +416,13 @@ function renderUiEnvDialog(face?: string) {
     if (!v.passwordResettable) return;
     const pw = await uiPrompt({
       title: t("重设 VNC 密码"),
-      message: `${t(t("目标："))}${v.kind}${v.display ? " " + v.display : ""}${v.pid ? "（pid " + v.pid + "）" : ""}\n1~8 位（VNC 密码上限 8 位）。${v.passwordNote || ""}`,
+      message: `${t("目标：")}${v.kind}${v.display ? " " + v.display : ""}${v.pid ? "（pid " + v.pid + "）" : ""}\n1~8 位（VNC 密码上限 8 位）。${v.passwordNote || ""}`,
       placeholder: t("1~8 位密码"),
       required: true,
     });
     if (pw == null || !pw.trim()) return;
     await withSysBusy(async () => {
-      const r = await fetch(apiUrl("/api/extensions/aiti-ui-env/vnc-password"), {
+      const r = await fetch(api("/api/extensions/aiti-ui-env/vnc-password"), {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ password: pw.trim(), id: v.id }),
       });
@@ -422,7 +436,7 @@ function renderUiEnvDialog(face?: string) {
 
   async function loadSysVnc() {
     await withSysBusy(async () => {
-      const r = await fetch(apiUrl("/api/extensions/aiti-ui-env/vnc"), {
+      const r = await fetch(api("/api/extensions/aiti-ui-env/vnc"), {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ action: "sys-scan" }),
       });
@@ -432,7 +446,7 @@ function renderUiEnvDialog(face?: string) {
   }
   async function openSys(v: any) {
     await withSysBusy(async () => {
-      const r = await fetch(apiUrl("/api/extensions/aiti-ui-env/vnc"), {
+      const r = await fetch(api("/api/extensions/aiti-ui-env/vnc"), {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ action: "sys-open", port: v.port, label: v.kind + v.display }),
       });
@@ -445,7 +459,7 @@ function renderUiEnvDialog(face?: string) {
   async function stopSys(v: any) {
     if (!(await uiConfirm({ message: t("确定停止系统 VNC 进程（") + (v.cmd || v.kind) + t("）？该操作只发停止信号，权限不足会失败。"), danger: true }))) return;
     await withSysBusy(async () => {
-      const r = await fetch(apiUrl("/api/extensions/aiti-ui-env/vnc"), {
+      const r = await fetch(api("/api/extensions/aiti-ui-env/vnc"), {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ action: "sys-stop", pid: v.pid }),
       });
@@ -457,7 +471,7 @@ function renderUiEnvDialog(face?: string) {
   async function headlessAction(action: string) {
     await withBusy("headless", async () => {
       if (action === "start" && isWindowsEnv() && !(await ensureVncPassword())) return; // 用户取消
-      const r = await fetch(apiUrl("/api/extensions/aiti-ui-env/headless"), {
+      const r = await fetch(api("/api/extensions/aiti-ui-env/headless"), {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ action }),
       });
@@ -476,7 +490,7 @@ function renderUiEnvDialog(face?: string) {
     });
     if (pw == null || !pw.trim()) return;
     await withBusy("vnc", async () => {
-      const r = await fetch(apiUrl("/api/extensions/aiti-ui-env/vnc-password"), {
+      const r = await fetch(api("/api/extensions/aiti-ui-env/vnc-password"), {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ password: pw.trim() }),
       });
@@ -488,7 +502,7 @@ function renderUiEnvDialog(face?: string) {
 
   async function saveDispCfg() {
     await withBusy("disp", async () => {
-      const r = await fetch(apiUrl("/api/extensions/aiti-ui-env/display-config"), {
+      const r = await fetch(api("/api/extensions/aiti-ui-env/display-config"), {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ mode: dispMode === "fixed" ? "fixed" : "auto", num: dispMode === "fixed" ? Number(dispNum) : undefined }),
       });
@@ -501,7 +515,7 @@ function renderUiEnvDialog(face?: string) {
 
   async function loadPreview() {
     try {
-      const r = await fetch(apiUrl("/api/extensions/aiti-ui-env/resolve"), { cache: "no-store" });
+      const r = await fetch(api("/api/extensions/aiti-ui-env/resolve"), { cache: "no-store" });
       setPreview(await r.json());
     } catch (e: any) { setPreview({ error: String(e && e.message || e) }); }
   }
@@ -541,8 +555,8 @@ function renderUiEnvDialog(face?: string) {
             title/mode-chip shrink (chip ellipsizes) so fixed-width right buttons stay in view. */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 16px", borderBottom: "1px solid " + C.border, flexShrink: 0, minWidth: 0 }}>
           <span style={{ fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}><Ic size={15} paths={ICONS.monitor} />{t("uiEnv.title")}</span>
-          {modeLabel ? <span style={{ ...chip("#a5b4fc", "rgba(99,102,241,0.16)"), flexShrink: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{t("当前：") + modeLabel.label}</span> : null}
-          <span style={{ marginLeft: "auto", fontSize: 10.5, color: C.dim, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t(t("作用于新启动的 MCP / 应用"))}</span>
+          {modeLabel ? <span style={{ ...chip("#a5b4fc", "rgba(99,102,241,0.16)"), flexShrink: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{t("当前：") + tx("mode." + modeLabel.id, modeLabel.label)}</span> : null}
+          <span style={{ marginLeft: "auto", fontSize: 10.5, color: C.dim, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t("作用于新启动的 MCP / 应用")}</span>
           {err ? <span style={{ color: C.bad, fontSize: 10.5 }}>{String(err)}</span> : null}
           {floating && (
             <button onClick={() => setPanelOpen(false)} title={t("uiEnv.close")} aria-label={t("uiEnv.close")}
@@ -564,7 +578,7 @@ function renderUiEnvDialog(face?: string) {
               {(d.modes || []).map((m: any) => {
                 const active = mode === m.id;
                 return (
-                  <button key={m.id} onClick={() => setMode(m.id)} disabled={busy} title={m.desc}
+                  <button key={m.id} onClick={() => setMode(m.id)} disabled={busy} title={tx("mode." + m.id + ".desc", m.desc)}
                     style={{
                       display: "flex", alignItems: "flex-start", gap: 8, textAlign: "left",
                       padding: "8px 10px", borderRadius: 9, cursor: "pointer", flex: 1, minWidth: 0,
@@ -579,8 +593,8 @@ function renderUiEnvDialog(face?: string) {
                       display: "inline-block",
                     }} />
                     <span style={{ minWidth: 0 }}>
-                      <span style={{ fontSize: 12, fontWeight: 600, color: active ? "#c7d2fe" : C.text, display: "block" }}>{m.label}</span>
-                      <span style={{ fontSize: 10.5, color: C.dim, lineHeight: 1.45, display: "block", marginTop: 2 }}>{m.desc}</span>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: active ? "#c7d2fe" : C.text, display: "block" }}>{tx("mode." + m.id, m.label)}</span>
+                      <span style={{ fontSize: 10.5, color: C.dim, lineHeight: 1.45, display: "block", marginTop: 2 }}>{tx("mode." + m.id + ".desc", m.desc)}</span>
                     </span>
                   </button>
                 );
@@ -599,14 +613,14 @@ function renderUiEnvDialog(face?: string) {
           <div style={card({ marginBottom: 12 })}>
             <div style={secTitle()}>
               <span style={accentBar("var(--warn, #f59e0b)")} />{t("DISPLAY 号配置")}
-              {d.randomDisplayFeature === false ? <span style={chip(C.dim)}>{t(t("feature 关：不随机"))}</span> : null}
+              {d.randomDisplayFeature === false ? <span style={chip(C.dim)}>{t("feature 关：不随机")}</span> : null}
               {d.envOverrides?.UI_ENV_DISPLAY_NUM ? <span style={chip(C.warn)}>{t("env 覆盖：UI_ENV_DISPLAY_NUM=") + d.envOverrides.UI_ENV_DISPLAY_NUM}</span> : null}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <button onClick={() => setDispMode("auto")} disabled={busy} style={{ ...btn(), ...(dispMode === "auto" ? { color: "#a5b4fc", border: "1px solid rgba(99,102,241,0.4)", background: "rgba(99,102,241,0.12)" } : {}) }}>{t(t("auto · 随机空闲"))}</button>
-              <button onClick={() => setDispMode("fixed")} disabled={busy} style={{ ...btn(), ...(dispMode === "fixed" ? { color: "#a5b4fc", border: "1px solid rgba(99,102,241,0.4)", background: "rgba(99,102,241,0.12)" } : {}) }}>{t(t("指定数字"))}</button>
+              <button onClick={() => setDispMode("auto")} disabled={busy} style={{ ...btn(), ...(dispMode === "auto" ? { color: "#a5b4fc", border: "1px solid rgba(99,102,241,0.4)", background: "rgba(99,102,241,0.12)" } : {}) }}>{t("auto · 随机空闲")}</button>
+              <button onClick={() => setDispMode("fixed")} disabled={busy} style={{ ...btn(), ...(dispMode === "fixed" ? { color: "#a5b4fc", border: "1px solid rgba(99,102,241,0.4)", background: "rgba(99,102,241,0.12)" } : {}) }}>{t("指定数字")}</button>
               {dispMode === "fixed" ? (
-                <input type="number" min={1} max={65535} value={dispNum} placeholder={t(t("如 99"))}
+                <input type="number" min={1} max={65535} value={dispNum} placeholder={t("如 99")}
                   onChange={(e) => setDispNum(e.target.value)}
                   style={{ width: 70, padding: "3px 7px", borderRadius: 7, fontSize: 11, background: C.panel2, border: "1px solid " + C.border, color: C.text }} />
               ) : null}
@@ -638,7 +652,7 @@ function renderUiEnvDialog(face?: string) {
               ["WM", desktop.wm || "—"],
               ["AT-SPI", desktop.atspi ? t("在跑") : t("无")],
             ])}
-            {headless.kind === "macos" ? envCard(<><Ic size={13} paths={ICONS.cloud} />{" "}{t(t("无头层（屏幕共享 VNC）"))}</>, headless, headless.available, [
+            {headless.kind === "macos" ? envCard(<><Ic size={13} paths={ICONS.cloud} />{" "}{t("无头层（屏幕共享 VNC）")}</>, headless, headless.available, [
               ["VNC server", headless.available ? t("屏幕共享 :5900 在跑") : t("未开启"), headless.available ? C.ok : C.warn],
               [t("分辨率"), fmtRes(headless.resolution)],
               [t("说明"), t("GUI 落控制台桌面（mac 无进程隔离）；无头 = 屏幕共享 VNC 远程查看通道")],
@@ -646,7 +660,7 @@ function renderUiEnvDialog(face?: string) {
               <div style={{ marginTop: "auto", paddingTop: 6, display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }}>
                 {!headless.available ? (
                   <button onClick={() => headlessAction("start")} disabled={busy}
-                    title={t(t("开启屏幕共享（免密 sudo 自动开；否则给手动步骤）"))}
+                    title={t("开启屏幕共享（免密 sudo 自动开；否则给手动步骤）")}
                     style={{ ...btn({ color: "#a5b4fc", border: "1px solid rgba(99,102,241,0.4)", background: "rgba(99,102,241,0.12)" }), cursor: busy ? "wait" : "pointer" }}>
                     {busyWhat === "headless" ? t("开启中…") : t("▶ 开启屏幕共享")}
                   </button>
@@ -655,7 +669,7 @@ function renderUiEnvDialog(face?: string) {
                 )}
                 {feats.autostart === false ? <span style={{ fontSize: 10, color: C.dim }}>{t("autostart 关：未开启时需手动点上方按钮")}</span> : null}
               </div>
-            )) : headless.kind === "windows" ? envCard(<><Ic size={13} paths={ICONS.cloud} />{" "}{t(t("虚拟屏（驱动+VNC）"))}</>, headless, headless.available, [
+            )) : headless.kind === "windows" ? envCard(<><Ic size={13} paths={ICONS.cloud} />{" "}{t("虚拟屏（驱动+VNC）")}</>, headless, headless.available, [
               [t("虚拟驱动"), headless.wm ? t("已装（") + headless.wm + "）" : t("未检测到"), headless.wm ? C.ok : C.warn],
               ["VNC server", headless.vnc?.tcp ? t(":5900 回环在跑") : t("未起"), headless.vnc?.tcp ? C.ok : C.warn],
               [t("说明"), t("GUI 落交互桌面（无进程隔离），虚拟屏 = 无屏可用 + VNC 查看通道")],
@@ -671,18 +685,18 @@ function renderUiEnvDialog(face?: string) {
               <div style={{ marginTop: "auto", paddingTop: 6, display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }}>
                 {headless.available ? (
                   <button onClick={async () => { if (await uiConfirm({ message: t("确定停止虚拟屏？将关闭 VNC 与虚拟桌面上的所有程序（仅虚拟屏，不动真实桌面）。"), danger: true })) headlessAction("stop"); }} disabled={busy}
-                    title={t(t("停止 Xvfb+openbox+dbus+AT-SPI 及 VNC 实例（仅虚拟屏，不碰真实桌面）"))}
+                    title={t("停止 Xvfb+openbox+dbus+AT-SPI 及 VNC 实例（仅虚拟屏，不碰真实桌面）")}
                     style={{ ...btn({ color: "var(--danger, #f87171)", borderColor: "color-mix(in srgb, var(--danger, #ef4444) 45%, transparent)", background: "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)" }), cursor: busy ? "wait" : "pointer" }}>
                     {busyWhat === "headless" ? t("停止中…") : t("■ 停止虚拟屏")}
                   </button>
                 ) : (
                   <button onClick={() => headlessAction("start")} disabled={busy}
-                    title={t(t("拉起 Xvfb+openbox+dbus+AT-SPI（幂等，已在跑则直接返回就绪）"))}
+                    title={t("拉起 Xvfb+openbox+dbus+AT-SPI（幂等，已在跑则直接返回就绪）")}
                     style={{ ...btn({ color: "#a5b4fc", border: "1px solid rgba(99,102,241,0.4)", background: "rgba(99,102,241,0.12)" }), cursor: busy ? "wait" : "pointer" }}>
                     {busyWhat === "headless" ? t("启动中…") : t("▶ 启动虚拟屏")}
                   </button>
                 )}
-                {feats.autostart === false ? <span style={{ fontSize: 10, color: C.dim }}>{t(t("autostart 关：未启动时需手动点上方按钮启动"))}</span> : null}
+                {feats.autostart === false ? <span style={{ fontSize: 10, color: C.dim }}>{t("autostart 关：未启动时需手动点上方按钮启动")}</span> : null}
               </div>
             ))}
           </div>
@@ -692,19 +706,19 @@ function renderUiEnvDialog(face?: string) {
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
               <span style={accentBar("var(--ok, #22c55e)")} />
               <span style={{ fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 5 }}><Ic size={13} paths={ICONS.monitorPlay} />VNC-on-web</span>
-              <button onClick={() => setVncTab("own")} style={{ ...btn(), ...(vncTab === "own" ? { color: "#a5b4fc", border: "1px solid rgba(99,102,241,0.4)", background: "rgba(99,102,241,0.12)" } : {}) }}>{t(t("扩展 VNC"))}</button>
-              <button onClick={() => { setVncTab("sys"); if (!sysVnc) loadSysVnc(); }} style={{ ...btn(), ...(vncTab === "sys" ? { color: "#a5b4fc", border: "1px solid rgba(99,102,241,0.4)", background: "rgba(99,102,241,0.12)" } : {}) }}>{t(t("系统 VNC"))}</button>
+              <button onClick={() => setVncTab("own")} style={{ ...btn(), ...(vncTab === "own" ? { color: "#a5b4fc", border: "1px solid rgba(99,102,241,0.4)", background: "rgba(99,102,241,0.12)" } : {}) }}>{t("扩展 VNC")}</button>
+              <button onClick={() => { setVncTab("sys"); if (!sysVnc) loadSysVnc(); }} style={{ ...btn(), ...(vncTab === "sys" ? { color: "#a5b4fc", border: "1px solid rgba(99,102,241,0.4)", background: "rgba(99,102,241,0.12)" } : {}) }}>{t("系统 VNC")}</button>
               <span style={chip(vnc.tcpRunning ? C.ok : C.dim, vnc.tcpRunning ? "color-mix(in srgb, var(--ok, #22c55e) 12%, transparent)" : undefined)}>{vnc.tcpRunning ? <Ic size={11} paths={ICONS.check} /> : <Ic size={11} paths={ICONS.x} />} RFB</span>
               <span style={chip(vnc.webRunning ? C.ok : C.dim, vnc.webRunning ? "color-mix(in srgb, var(--ok, #22c55e) 12%, transparent)" : undefined)}>{vnc.webRunning ? <Ic size={11} paths={ICONS.check} /> : <Ic size={11} paths={ICONS.x} />} Web</span>
               {vncTab === "sys" ? (
                 <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-                  <button style={btn()} onClick={loadSysVnc} disabled={sysBusy}>{t(t("刷新"))}</button>
+                  <button style={btn()} onClick={loadSysVnc} disabled={sysBusy}>{t("刷新")}</button>
                 </span>
               ) : (
                 <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-                  {isWindowsEnv() ? <button style={btn()} onClick={changeVncPassword} disabled={busy} title={t(t("设置/修改 VNC 密码（写入 UltraVNC 配置并重启 VNC 生效）"))}>{t("密码")}</button> : null}
-                  <button style={btn()} onClick={() => vncAction("start")} disabled={busy}>{t(t("▶ 启动/新实例"))}</button>
-                  <button style={btn()} onClick={() => vncAction("stop")} disabled={busy}>{t(t("■ 停默认"))}</button>
+                  {isWindowsEnv() ? <button style={btn()} onClick={changeVncPassword} disabled={busy} title={t("设置/修改 VNC 密码（写入 UltraVNC 配置并重启 VNC 生效）")}>{t("密码")}</button> : null}
+                  <button style={btn()} onClick={() => vncAction("start")} disabled={busy}>{t("▶ 启动/新实例")}</button>
+                  <button style={btn()} onClick={() => vncAction("stop")} disabled={busy}>{t("■ 停默认")}</button>
                 </span>
               )}
             </div>
@@ -713,12 +727,12 @@ function renderUiEnvDialog(face?: string) {
             {vncTab === "sys" ? (
               <>
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
-                <ConnForm trigger={t(t("手动连接 host:port"))} defaultHost="127.0.0.1" defaultPort="5900"
+                <ConnForm trigger={t("手动连接 host:port")} defaultHost="127.0.0.1" defaultPort="5900"
                   busy={sysBusy} onStart={connectVnc}
-                  placeholder={t(t("外部/远程 VNC（如 10.203.10.20:5900）；也可连本机未扫描到的端口"))} />
+                  placeholder={t("外部/远程 VNC（如 10.203.10.20:5900）；也可连本机未扫描到的端口")} />
               </div>
-              {sysVnc === null ? <div style={{ fontSize: 11, color: C.dim, padding: "6px 0" }}>{t(t("扫描系统 VNC 中…"))}</div> :
-              sysVnc.length === 0 ? <div style={{ fontSize: 11, color: C.dim, padding: "6px 0" }}>{t(t("未发现系统 VNC server（本扩展自启的已排除）。点「刷新」重扫。"))}</div> :
+              {sysVnc === null ? <div style={{ fontSize: 11, color: C.dim, padding: "6px 0" }}>{t("扫描系统 VNC 中…")}</div> :
+              sysVnc.length === 0 ? <div style={{ fontSize: 11, color: C.dim, padding: "6px 0" }}>{t("未发现系统 VNC server（本扩展自启的已排除）。点「刷新」重扫。")}</div> :
                 sysVnc.map((v) => (
                   <div key={v.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid " + C.border, flexWrap: "wrap" }}>
                     <span style={{ fontSize: 11, fontWeight: 600, fontFamily: C.mono }}>{v.kind}</span>
@@ -729,14 +743,14 @@ function renderUiEnvDialog(face?: string) {
                       <button style={btn()} onClick={() => openSys(v)} disabled={sysBusy || !v.listening} title={v.listening ? "" : t("端口无监听（-loop 等待中/未运行），无法连接")}>{v.listening ? t("打开") : t("不可连")}</button>
                       <button style={btn()} onClick={() => resetSysPassword(v)} disabled={sysBusy || !v.passwordResettable}
                         title={v.passwordNote || t("该 VNC server 的密码本扩展不能改")}>{v.passwordResettable ? t("重设密码") : t("不可改")}</button>
-                      {v.stoppable && v.pid ? <button style={{ ...btn(), color: C.bad }} onClick={() => stopSys(v)} disabled={sysBusy}>{t(t("停止"))}</button> : null}
+                      {v.stoppable && v.pid ? <button style={{ ...btn(), color: C.bad }} onClick={() => stopSys(v)} disabled={sysBusy}>{t("停止")}</button> : null}
                     </span>
                   </div>
                 ))}
               </>
             ) : (
               /* ── 扩展 VNC 视图：多实例列表 ── */
-              vncInsts.length === 0 ? <div style={{ fontSize: 11, color: C.dim, padding: "6px 0" }}>{t(t("无实例（点 ▶ 启动创建；端口每次随机分配，避免与桌面/其他服务冲突）"))}</div> :
+              vncInsts.length === 0 ? <div style={{ fontSize: 11, color: C.dim, padding: "6px 0" }}>{t("无实例（点 ▶ 启动创建；端口每次随机分配，避免与桌面/其他服务冲突）")}</div> :
                 vncInsts.map((inst: any) => (
                   <div key={inst.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid " + C.border, flexWrap: "wrap" }}>
                     <span style={{ fontSize: 11, fontWeight: 600, color: inst.id === "default" ? "#a5b4fc" : C.text, fontFamily: C.mono }}>{inst.id === "default" ? "default" : inst.id}</span>
@@ -744,9 +758,9 @@ function renderUiEnvDialog(face?: string) {
                     <span style={chip(inst.tcp ? C.ok : C.dim, inst.tcp ? "color-mix(in srgb, var(--ok, #22c55e) 10%, transparent)" : undefined)}>{"RFB :" + inst.rfbPort}</span>
                     <span style={chip(inst.web ? C.ok : C.dim, inst.web ? "color-mix(in srgb, var(--ok, #22c55e) 10%, transparent)" : undefined)}>{"Web :" + inst.webPort}</span>
                     <span style={{ marginLeft: "auto", display: "flex", gap: 5 }}>
-                      <button style={btn()} onClick={() => { openViewSafe(buildVncUrl, inst.id).catch(() => {}); }}>{t(t("打开"))}</button>
-                      <button style={btn()} onClick={() => { buildVncUrl(inst.id).then((u) => copyText(u)).catch(() => setErr(t("会话建立失败"))); }}>{t(t("复制"))}</button>
-                      {inst.id !== "default" ? <button style={btn()} onClick={() => vncAction("stop", inst.id)} disabled={busy}>{t(t("停止"))}</button> : null}
+                      <button style={btn()} onClick={() => { openViewSafe(buildVncUrl, inst.id).catch(() => {}); }}>{t("打开")}</button>
+                      <button style={btn()} onClick={() => { buildVncUrl(inst.id).then((u) => copyText(u)).catch(() => setErr(t("会话建立失败"))); }}>{t("复制")}</button>
+                      {inst.id !== "default" ? <button style={btn()} onClick={() => vncAction("stop", inst.id)} disabled={busy}>{t("停止")}</button> : null}
                     </span>
                   </div>
                 ))
@@ -755,13 +769,13 @@ function renderUiEnvDialog(face?: string) {
             {vncTab === "sys" ? (
               <div style={{ marginTop: 8, fontSize: 10.5, color: C.dim, lineHeight: 1.6 }}>
                 {t("系统 VNC = 机器上已有的 VNC server（如真实桌面 :0 的 x11vnc、vncserver 起的虚拟桌面），本扩展起临时 bridge 转发，noVNC 直接连。")}
-                {t(t("有密码的会在 noVNC 里提示输入；「停止」仅对本用户启动的进程生效（root/gdm 的无权限会自动失败）。"))}
-                {t(t("「打开」产生的临时实例也出现在扩展 VNC 列表（id 以 sys- 开头），可在那边停止。"))}
+                {t("有密码的会在 noVNC 里提示输入；「停止」仅对本用户启动的进程生效（root/gdm 的无权限会自动失败）。")}
+                {t("「打开」产生的临时实例也出现在扩展 VNC 列表（id 以 sys- 开头），可在那边停止。")}
               </div>
             ) : (
               <div style={{ marginTop: 8, fontSize: 10.5, color: C.dim, lineHeight: 1.6 }}>
-                {t(t("多实例：每次「▶ 启动」新实例随机分配 RFB/Web 端口，URL 路径段 = 实例真随机 token（代表该实例/端口，不落目标地址，定期轮换）。"))}
-                {t(t("URL 零凭据——会话走 HttpOnly cookie（30 分钟，从本面板打开即自动建立），复制到别处无 cookie 打不开（防泄露）"))}
+                {t("多实例：每次「▶ 启动」新实例随机分配 RFB/Web 端口，URL 路径段 = 实例真随机 token（代表该实例/端口，不落目标地址，定期轮换）。")}
+                {t("URL 零凭据——会话走 HttpOnly cookie（30 分钟，从本面板打开即自动建立），复制到别处无 cookie 打不开（防泄露）")}
                 {t(" · noVNC 目录：") + (vnc.noVncDir || t("未找到（跑 setup-linux.sh 下载）"))}
               </div>
             )}
@@ -774,8 +788,8 @@ function renderUiEnvDialog(face?: string) {
               <span style={{ fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 5 }}><Ic size={13} paths={ICONS.monitorPlay} />RDP-on-web</span>
               <span style={chip((rdpInsts[0] || {}).web ? C.ok : C.dim, (rdpInsts[0] || {}).web ? "color-mix(in srgb, var(--ok, #22c55e) 12%, transparent)" : undefined)}>{(rdpInsts[0] || {}).web ? <Ic size={11} paths={ICONS.check} /> : <Ic size={11} paths={ICONS.x} />} Web</span>
               <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-                <ConnForm trigger={t(t("▶ 启动 (host:port)"))} defaultHost="127.0.0.1" defaultPort="3389" busy={busy} onStart={startRdp} />
-                <button style={btn()} onClick={() => rdpAction("stop")} disabled={busy}>{t(t("■ 停默认"))}</button>
+                <ConnForm trigger={t("▶ 启动 (host:port)")} defaultHost="127.0.0.1" defaultPort="3389" busy={busy} onStart={startRdp} />
+                <button style={btn()} onClick={() => rdpAction("stop")} disabled={busy}>{t("■ 停默认")}</button>
               </span>
             </div>
             {rdpInsts.length === 0 ? <div style={{ fontSize: 11, color: C.dim, padding: "6px 0" }}>{t("无实例（点「▶ 启动」填 RDP 目标 host:port，如 127.0.0.1:3390）")}</div> :
@@ -789,7 +803,7 @@ function renderUiEnvDialog(face?: string) {
                     <button style={btn()} onClick={async () => {
                       if (!inst.web) {
                         await withBusy("rdp", async () => {
-                          const r = await fetch(apiUrl("/api/extensions/aiti-ui-env/rdp"), {
+                          const r = await fetch(api("/api/extensions/aiti-ui-env/rdp"), {
                             method: "POST", headers: { "content-type": "application/json" },
                             body: JSON.stringify({ action: "start", id: inst.id, host: inst.host, port: inst.port, sysPort: inst.sys ? inst.sys.port : undefined, sysLabel: inst.sys ? inst.sys.label : undefined }),
                           });
@@ -799,14 +813,14 @@ function renderUiEnvDialog(face?: string) {
                       }
                       openViewSafe(buildRdpUrl, inst.id).catch(() => {});
                     }} disabled={busy}>{inst.web ? t("打开") : t("重连打开")}</button>
-                    <button style={btn()} onClick={() => { buildRdpUrl(inst.id).then((u) => copyText(u)).catch(() => setErr(t("会话建立失败"))); }}>{t(t("复制"))}</button>
-                    {inst.id !== "default" ? <button style={btn()} onClick={() => rdpAction("stop", inst.id)} disabled={busy}>{t(t("停止"))}</button> : null}
+                    <button style={btn()} onClick={() => { buildRdpUrl(inst.id).then((u) => copyText(u)).catch(() => setErr(t("会话建立失败"))); }}>{t("复制")}</button>
+                    {inst.id !== "default" ? <button style={btn()} onClick={() => rdpAction("stop", inst.id)} disabled={busy}>{t("停止")}</button> : null}
                   </span>
                 </div>
               ))}
             <div style={{ marginTop: 8, fontSize: 10.5, color: C.dim, lineHeight: 1.6 }}>
               {t("RDP 经 grdpwasm WASM 客户端（浏览器 WebCodecs H.264 解码）桥接。目标 host:port 不落 URL——路径段是实例真随机 token（代表该实例/端口，定期轮换）。")}
-              {t(t("打开前先点本卡「打开/复制」建立 30min HttpOnly cookie 会话；复制到别处无 cookie 打不开（防泄露）"))}
+              {t("打开前先点本卡「打开/复制」建立 30min HttpOnly cookie 会话；复制到别处无 cookie 打不开（防泄露）")}
             </div>
           </div>
 
@@ -814,8 +828,8 @@ function renderUiEnvDialog(face?: string) {
           <div style={card({})}>
             <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
               <span style={accentBar(C.warn)} />
-              <span style={{ fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 5 }}><Ic size={13} paths={ICONS.flask} />{t(t("环境裁决预览"))}</span>
-              <button style={{ ...btn(), marginLeft: "auto" }} onClick={loadPreview}>{t(t("运行 resolve"))}</button>
+              <span style={{ fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 5 }}><Ic size={13} paths={ICONS.flask} />{t("环境裁决预览")}</span>
+              <button style={{ ...btn(), marginLeft: "auto" }} onClick={loadPreview}>{t("运行 resolve")}</button>
             </div>
             {preview ? (
               preview.ok || preview.error === undefined ? (
@@ -841,7 +855,7 @@ function renderUiEnvDialog(face?: string) {
           <div style={card({ marginBottom: 0 })}>
             <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 9 }}>
               <span style={accentBar(C.muted)} />
-              <span style={{ fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 5 }}><Ic size={13} paths={ICONS.wrench} />{t(t("组件安装状态"))}</span>
+              <span style={{ fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 5 }}><Ic size={13} paths={ICONS.wrench} />{t("组件安装状态")}</span>
               <span style={{ marginLeft: "auto", fontSize: 10.5, color: C.dim }}>{"OS: " + (install.os || "?")}</span>
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 8 }}>
@@ -859,28 +873,28 @@ function renderUiEnvDialog(face?: string) {
             </div>
             <div style={{ fontSize: 10, color: C.dim, lineHeight: 1.6, marginTop: 6 }}>
               {install.os === "windows"
-                ? "Windows：依赖自检可自动安装便携 UltraVNC（免管理员）；虚拟显示驱动可选装（IddSampleDriver/usbmmidd，需管理员一次）；Home 版无 RDP 服务端（被看用 VNC）。"
+                ? t("Windows：依赖自检可自动安装便携 UltraVNC（免管理员）；虚拟显示驱动可选装（IddSampleDriver/usbmmidd，需管理员一次）；Home 版无 RDP 服务端（被看用 VNC）。")
                 : install.os === "macos"
                   ? t("macOS：核心 = Aqua 会话 + 屏幕共享 VNC（系统设置 → 通用 → 共享 → 屏幕共享；免密 sudo 时「启动虚拟屏」可自动开）；可选增强走 brew（cliclick/XQuartz）。")
-                  : "安装：scripts/linux/setup-linux.sh（apt + justget 兜底）· 服务化：install-service.sh · Windows：setup-windows.ps1 · macOS：scripts/macos/setup-macos.sh"}
+                  : t("安装：scripts/linux/setup-linux.sh（apt + justget 兜底）· 服务化：install-service.sh · Windows：setup-windows.ps1 · macOS：scripts/macos/setup-macos.sh")}
             </div>
             {/* ── 依赖自检 + 自动安装（多 OS） ── */}
             {deps ? (
               <div style={{ borderTop: "1px solid " + C.border, marginTop: 9, paddingTop: 8 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
                   <span style={dot(deps.allInstalled ? C.ok : C.warn)} />
-                  <span style={{ fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", gap: 5 }}><Ic size={11} paths={ICONS.check} />{t(t("依赖自检"))}</span>
-                  <button style={{ ...btn(), marginLeft: "auto" }} onClick={loadDeps} disabled={busy}>{t(t("重新自检"))}</button>
+                  <span style={{ fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", gap: 5 }}><Ic size={11} paths={ICONS.check} />{t("依赖自检")}</span>
+                  <button style={{ ...btn(), marginLeft: "auto" }} onClick={loadDeps} disabled={busy}>{t("重新自检")}</button>
                 </div>
                 <div style={{ fontSize: 10, color: C.dim, marginBottom: 6 }}>
                   {(deps.distro || "?") + t(" · 包管理器 ") + (deps.pkgMgr || t("无")) + (deps.sudo ? t(" · 有 sudo") : t(" · 无免密 sudo"))}
                 </div>
                 {deps.allInstalled ? (
-                  <div style={{ fontSize: 10.5, color: C.ok, marginBottom: 4 }}>{t(t("全部组件已就绪 ✓"))}</div>
+                  <div style={{ fontSize: 10.5, color: C.ok, marginBottom: 4 }}>{t("全部组件已就绪 ✓")}</div>
                 ) : (
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 6 }}>
-                    {(deps.coreMissing || []).map((i: any) => <span key={"c-" + i.bin} style={chip(C.bad, "color-mix(in srgb, var(--danger, #ef4444) 10%, transparent)")}><Ic size={10} paths={ICONS.x} />{i.label}（必需）</span>)}
-                    {(deps.uiMissing || []).map((i: any) => <span key={"u-" + i.bin} style={chip(C.warn)}><Ic size={10} paths={ICONS.x} />{i.label}（可选）</span>)}
+                    {(deps.coreMissing || []).map((i: any) => <span key={"c-" + i.bin} style={chip(C.bad, "color-mix(in srgb, var(--danger, #ef4444) 10%, transparent)")}><Ic size={10} paths={ICONS.x} />{i.label}{t("（必需）")}</span>)}
+                    {(deps.uiMissing || []).map((i: any) => <span key={"u-" + i.bin} style={chip(C.warn)}><Ic size={10} paths={ICONS.x} />{i.label}{t("（可选）")}</span>)}
                   </div>
                 )}
                 {!deps.allInstalled && ((deps.sudo && deps.pkgMgr) || deps.os === "windows" || deps.os === "macos") ? (

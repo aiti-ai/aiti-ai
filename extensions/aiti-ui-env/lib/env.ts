@@ -24,6 +24,7 @@ import * as path from "node:path";
 import { ensureRdpWasm, wasmCachePath } from "./rdp-wasm-assets.js";
 import * as win from "./win.js";
 import * as mac from "./mac.js";
+import { probeErrorText, probeFail, tr, trOr } from "./i18n.js";
 
 export const LIB_VERSION = "0.3.1"; // 单例 key 用：lib 逻辑变更时 bump，reload 即换新实例
 
@@ -42,6 +43,11 @@ export const MODES: { id: UeMode; label: string; desc: string }[] = [
   { id: "always-headless", label: "总是无头虚拟环境", desc: "强制虚拟屏，未启动给出启动指引" },
 ];
 
+/** Localized mode list for the panel / API consumers (ids stay locale-neutral). */
+export function modesFor(locale?: string | null): { id: UeMode; label: string; desc: string }[] {
+  return MODES.map((m) => ({ id: m.id, label: tr(locale, "mode." + m.id), desc: tr(locale, "mode." + m.id + ".desc") }));
+}
+
 export const DEFAULT_DISPLAY_NUM = 99;
 
 /** 探测结果（一次探测的完整快照） */
@@ -51,11 +57,16 @@ export interface ProbeInfo {
   kind?: "x11" | "wayland" | "windows" | "macos";
   xauthority?: string;
   resolution?: string;
+  /** Semantic key for a locale-dependent resolution label (see srv.probe.* in lib/i18n.ts). */
+  resolutionKey?: string;
   wm?: string;
   dbusBus?: string;      // AT-SPI session bus（headless）
   atspi: boolean;        // at-spi 总线进程在跑
   vnc?: { tcp: boolean; web: boolean; tcpPort?: number; webPort?: number };
+  /** Fallback text (zh-CN); API responses return the localized text via probeErrorText(). */
   error?: string;
+  errorCode?: string;    // stable code (see srv.probe.* in lib/i18n.ts)
+  errorParams?: Record<string, string | number>;
   consoleUser?: string;  // macOS：控制台登录用户（root = 停在登录窗口）
 }
 
@@ -217,8 +228,7 @@ async function probeDesktop(): Promise<ProbeInfo> {
 
   // 1) socket 证据（Xorg 进程对应的显示号必须有 socket）
   if (num === null || !findSocket(Number(num))) {
-    info.error = "未发现桌面 X server 进程（仅 Xvfb 不算桌面）";
-    return info;
+    return probeFail(info, "no-xserver");
   }
   if (xProc) {
     const m = xProc.match(/-auth\s+(\S+)/);
@@ -246,7 +256,7 @@ async function probeDesktop(): Promise<ProbeInfo> {
   info.atspi = args.some((l) => /at-spi-bus-launcher/.test(l) && !/grep/.test(l));
 
   info.available = true;
-  if (!info.xauthority) info.error = "桌面可达但未找到 Xauthority（启动 GUI 可能被拒，需授权）";
+  if (!info.xauthority) probeFail(info, "desktop-no-xauthority");
   return info;
 }
 
@@ -258,14 +268,12 @@ async function probeHeadless(): Promise<ProbeInfo> {
   const info: ProbeInfo = { display, available: false, atspi: false, error: undefined };
 
   if (!findSocket(num)) {
-    info.error = `虚拟屏未运行：/tmp/.X11-unix/X${num} 不存在`;
-    return info;
+    return probeFail(info, "headless-not-running", { num });
   }
   const args = await psArgs();
   const xProc = args.find((l) => /Xvfb|Xvnc/.test(l) && new RegExp(`:${num}`).test(l) && !/grep/.test(l));
   if (!xProc) {
-    info.error = `${display} socket 存在但未找到 Xvfb/Xvnc 进程`;
-    return info;
+    return probeFail(info, "headless-no-process", { display });
   }
   const m = xProc.match(/-screen\s+\S+\s+(\S+)/);
   if (m) info.resolution = m[1];
@@ -292,7 +300,7 @@ async function probeHeadless(): Promise<ProbeInfo> {
   info.atspi = args.some((l) => /at-spi-bus-launcher/.test(l) && !/grep/.test(l)) || !!info.dbusBus;
 
   info.wm = args.find((l) => /openbox/.test(l) && !/grep/.test(l)) ? "openbox" : undefined;
-  if (!info.wm) info.error = "虚拟屏无 openbox（WM 缺失会限制语义操作的 foreground 激活）";
+  if (!info.wm) probeFail(info, "headless-no-wm");
 
   // VNC 层：多实例感知（优先第一个实例的随机端口；注册表空时回退固定端口探测）
   const insts = vncInstances();
@@ -469,7 +477,7 @@ function ensureDir(p: string, mode = 0o700): void {
   try { fs.mkdirSync(p, { recursive: true, mode }); } catch { /* ignore */ }
 }
 
-export function buildEnv(target: UeTarget, probes: { desktop: ProbeInfo; headless: ProbeInfo }): { env: Record<string, string>; warnings: string[] } {
+export function buildEnv(target: UeTarget, probes: { desktop: ProbeInfo; headless: ProbeInfo }, locale?: string | null): { env: Record<string, string>; warnings: string[] } {
   const warnings: string[] = [];
   if (IS_WIN) {
     // Windows：GUI 子进程继承 pi-web 交互会话即落桌面，无 DISPLAY/X11 键；
@@ -483,7 +491,7 @@ export function buildEnv(target: UeTarget, probes: { desktop: ProbeInfo; headles
     };
     if (target === "headless") {
       env.UI_ENV_VNC_PORT = "5900";
-      if (!probes.headless.available) warnings.push("Windows 虚拟屏层未就绪：GUI 将落交互会话桌面，浏览器查看请先启动 VNC（ui_env_vnc start）");
+      if (!probes.headless.available) warnings.push(tr(locale, "srv.warn.win-headless-layer"));
     }
     return { env, warnings };
   }
@@ -498,7 +506,7 @@ export function buildEnv(target: UeTarget, probes: { desktop: ProbeInfo; headles
     // macOS：Aqua 应用不需要 DISPLAY/X11 键；GUI 子进程继承 pi-web（LaunchAgent=用户 GUI 会话）
     // 落控制台桌面。「无头」档 = 诚实降级（同 Windows）：GUI 仍落桌面，区别在屏幕共享 VNC 查看通道。
     if (target === "headless") {
-      if (!probes.headless.available) warnings.push("屏幕共享 VNC 未就绪：GUI 将落控制台桌面，浏览器查看请先开启屏幕共享（ui_env_headless start）");
+      if (!probes.headless.available) warnings.push(tr(locale, "srv.warn.mac-screensharing-layer"));
       env.UI_ENV_VNC_PORT = "5900";
     }
     return { env, warnings };
@@ -509,9 +517,9 @@ export function buildEnv(target: UeTarget, probes: { desktop: ProbeInfo; headles
     const { num, authFile, busFile, runtimeDir } = headlessBase();
     env.DISPLAY = h.display || `:${num}`;
     if (h.xauthority) env.XAUTHORITY = h.xauthority;
-    else { env.XAUTHORITY = authFile; warnings.push(`未探测到虚拟屏 Xauthority，用默认 ${authFile}`); }
+    else { env.XAUTHORITY = authFile; warnings.push(tr(locale, "srv.warn.headless-xauthority", { file: authFile })); }
     if (h.dbusBus) env.DBUS_SESSION_BUS_ADDRESS = `unix:path=${h.dbusBus}`;
-    else warnings.push("未找到 AT-SPI session bus（语义树不可用；跑 setup/install-service 补）");
+    else warnings.push(tr(locale, "srv.warn.headless-atspi"));
     ensureDir(runtimeDir, 0o700);
     env.XDG_RUNTIME_DIR = runtimeDir;
     env.XDG_SESSION_TYPE = "x11";
@@ -540,12 +548,94 @@ export function buildEnv(target: UeTarget, probes: { desktop: ProbeInfo; headles
     }
     if (d.xauthority) env.XAUTHORITY = d.xauthority;
     else if (envStr("XAUTHORITY", "")) env.XAUTHORITY = process.env.XAUTHORITY!;
-    else warnings.push("桌面未探测到 Xauthority；启动 GUI 被拒时执行：xhost +SI:localuser:$USER");
+    else warnings.push(tr(locale, "srv.warn.desktop-xauthority"));
   }
   return { env, warnings };
 }
 
-export async function resolve(prefer?: UeTarget, refresh = false): Promise<Resolved> {
+// ── Session-env snapshot (consumed by _shared/agent-spawn-env.ts) ──
+// Written on every resolution change so freshly spawned agent sessions inherit
+// the display environment chosen by the mode arbiter (DISPLAY/XAUTHORITY/DBUS
+// for the Xvfb headless display, or the real desktop). Removed when nothing is
+// available — a stale pointer to a dead display must never survive.
+
+export interface SessionEnvSnapshot {
+  target: UeTarget;
+  mode: UeMode;
+  rationale: string;
+  env: Record<string, string>;
+  updatedAt: string;
+}
+
+let lastSnapshotSig: string | null = null;
+
+// ── In-process session env ──
+// pi-web runs local pi sessions IN-PROCESS (createAgentSessionFromServices); the
+// SDK has no per-session env hook, and bash/MCP children build their env from
+// process.env at every spawn (getShellEnv). So the arbiter decision reaches
+// in-process sessions by writing the display keys into the pi-web process env.
+// Deliberately conservative whitelist: X11-client keys and VNC info only — no
+// DBUS_SESSION_BUS_ADDRESS / XDG_RUNTIME_DIR / GTK_* (those point at the AT-SPI
+// side bus and could break unrelated pi-web internals when set process-wide).
+
+const PROC_ENV_KEYS = [
+  "DISPLAY", "XAUTHORITY", "GDK_BACKEND", "XDG_SESSION_TYPE", "WAYLAND_DISPLAY",
+  "UI_ENV_VNC_PORT", "UI_ENV_VNC_WEB_PORT",
+] as const;
+
+const procEnvOriginal = new Map<string, string | null>(); // null = key was absent before we touched it
+
+function applyProcessEnvDisplay(env: Record<string, string>): void {
+  for (const k of PROC_ENV_KEYS) {
+    if (!procEnvOriginal.has(k)) procEnvOriginal.set(k, process.env[k] ?? null);
+    const v = env[k];
+    if (typeof v === "string" && v !== "") process.env[k] = v;
+    else delete process.env[k]; // e.g. WAYLAND_DISPLAY="" in the headless profile means "clear residue"
+  }
+}
+
+function restoreProcessEnvDisplay(): void {
+  for (const k of PROC_ENV_KEYS) {
+    if (!procEnvOriginal.has(k)) continue;
+    const prev = procEnvOriginal.get(k);
+    if (prev === null) delete process.env[k];
+    else process.env[k] = prev;
+  }
+  procEnvOriginal.clear();
+}
+
+function sessionEnvSnapshotFile(): string { return cachePath("session-env.json"); }
+
+/** Persist (or drop) the snapshot; signature-deduped, atomic tmp+rename, best effort. */
+export function writeSessionEnvSnapshot(
+  r: { ok: boolean; target?: UeTarget | null; mode?: UeMode; rationale?: string; env?: Record<string, string> },
+): void {
+  if (!configDir) return;
+  const file = sessionEnvSnapshotFile();
+  const usable = r.ok && (r.target === "headless" || r.target === "desktop") && r.env && Object.keys(r.env).length > 0;
+  const sig = usable ? `${r.target}|${JSON.stringify(r.env)}` : "none";
+  if (sig === lastSnapshotSig) return;
+  try {
+    if (!usable) {
+      try { fs.unlinkSync(file); } catch { /* absent */ }
+    } else {
+      ensureDir(path.dirname(file), 0o755);
+      const snap: SessionEnvSnapshot = {
+        target: r.target as UeTarget,
+        mode: r.mode || "prefer-headless",
+        rationale: r.rationale || "",
+        env: r.env as Record<string, string>,
+        updatedAt: new Date().toISOString(),
+      };
+      const tmp = `${file}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(snap, null, 2));
+      fs.renameSync(tmp, file);
+    }
+    lastSnapshotSig = sig;
+  } catch { /* best effort — snapshot is an optimization, resolve() remains the source of truth */ }
+}
+
+export async function resolve(prefer?: UeTarget, refresh = false, locale?: string | null): Promise<Resolved> {
   const probes = await probeAll(refresh);
   const mode = loadMode();
   const warnings: string[] = [];
@@ -559,62 +649,85 @@ export async function resolve(prefer?: UeTarget, refresh = false): Promise<Resol
   };
   // 无头层缺失时的指引（三平台各自表述）
   const headlessHint = (): string => IS_WIN
-    ? "虚拟屏未运行。启动：ui_env_headless start（自管 VNC；首次先 ui_env_deps install 装便携 winvnc）"
+    ? tr(locale, "srv.hint.headless-win")
     : IS_MAC
-      ? "macOS 无头层 = 屏幕共享 VNC。开启：系统设置 → 通用 → 共享 → 屏幕共享；或 ui_env_headless start（免密 sudo 自动开）；或 scripts/macos/setup-macos.sh enable"
-      : "虚拟屏未运行。启动：scripts/linux/install-service.sh 或 setup-linux.sh --bare（或开 behavior.autostart-headless 自动拉起）";
+      ? tr(locale, "srv.hint.headless-mac")
+      : tr(locale, "srv.hint.headless-linux");
   const bothUnavailableHint = (): string => IS_MAC
-    ? "桌面（Aqua 会话）与屏幕共享 VNC 均不可用：登录 Mac GUI 会话 + 开启屏幕共享（ui_env_headless start / setup-macos.sh）"
-    : "桌面与虚拟屏均不可用，先跑 setup 安装 Xvfb/openbox";
+    ? tr(locale, "srv.hint.both-mac")
+    : tr(locale, "srv.hint.both-linux");
 
   // 决策：显式 prefer 是单次软覆盖（目标不够好→回退并 warning）；
   // mode 的 always-* 是硬约束（目标缺失→报错不回退）。
   if (prefer === "desktop") {
     target = probes.desktop.available ? "desktop" : (probes.headless.available ? "headless" : null);
-    if (target === "desktop") rationale = "调用方指定桌面：可用";
-    else if (target === "headless") { warnings.push("调用方指定桌面但不可用，已回退虚拟屏"); rationale = "指定桌面→回退虚拟屏"; }
+    if (target === "desktop") rationale = tr(locale, "srv.rationale.caller-desktop-ok");
+    else if (target === "headless") { warnings.push(tr(locale, "srv.warn.caller-desktop-fallback")); rationale = tr(locale, "srv.rationale.caller-desktop-fallback"); }
   } else if (prefer === "headless") {
-    if (probes.headless.available) { target = "headless"; rationale = "调用方指定虚拟屏：可用"; }
-    else if (probes.desktop.available) { target = "desktop"; warnings.push("调用方指定虚拟屏但不可用，已回退桌面"); rationale = "指定虚拟屏→回退桌面"; }
-    else if (needAutoHeadless() && (await ensureHeadless())) { target = "headless"; rationale = "指定虚拟屏：自动拉起成功"; }
-    else { error = "headless unavailable"; hint = headlessHint(); rationale = "指定虚拟屏但不可用"; }
+    if (probes.headless.available) { target = "headless"; rationale = tr(locale, "srv.rationale.caller-headless-ok"); }
+    else if (probes.desktop.available) { target = "desktop"; warnings.push(tr(locale, "srv.warn.caller-headless-fallback")); rationale = tr(locale, "srv.rationale.caller-headless-fallback"); }
+    else if (needAutoHeadless() && (await ensureHeadless())) { target = "headless"; rationale = tr(locale, "srv.rationale.caller-headless-autostart"); }
+    else { error = tr(locale, "srv.error.headless-unavailable"); hint = headlessHint(); rationale = tr(locale, "srv.rationale.caller-headless-unavailable"); }
   } else if (mode === "always-desktop") {
-    if (probes.desktop.available) { target = "desktop"; rationale = "总是桌面：桌面可用"; }
-    else { error = "requires desktop"; warnings.push(`桌面不可用：${probes.desktop.error ?? "无套接字"}`); rationale = "总是桌面但桌面不可用（不自动回退）"; }
+    if (probes.desktop.available) { target = "desktop"; rationale = tr(locale, "srv.rationale.always-desktop-ok"); }
+    else { error = tr(locale, "srv.error.requires-desktop"); warnings.push(tr(locale, "srv.warn.desktop-unavailable", { error: probeErrorText(locale, probes.desktop) || tr(locale, "srv.warn.no-socket") })); rationale = tr(locale, "srv.rationale.always-desktop-unavailable"); }
   } else if (mode === "always-headless") {
-    if (probes.headless.available) { target = "headless"; rationale = "总是无头：虚拟屏可用"; }
-    else if (needAutoHeadless() && (await ensureHeadless())) { target = "headless"; rationale = "总是无头：虚拟屏自动拉起成功"; }
-    else { error = "requires headless"; hint = headlessHint(); warnings.push(`虚拟屏不可用：${probes.headless.error ?? "无套接字"}`); rationale = "总是无头但虚拟屏不可用（不自动回退）"; }
+    if (probes.headless.available) { target = "headless"; rationale = tr(locale, "srv.rationale.always-headless-ok"); }
+    else if (needAutoHeadless() && (await ensureHeadless())) { target = "headless"; rationale = tr(locale, "srv.rationale.always-headless-autostart"); }
+    else { error = tr(locale, "srv.error.requires-headless"); hint = headlessHint(); warnings.push(tr(locale, "srv.warn.headless-unavailable", { error: probeErrorText(locale, probes.headless) || tr(locale, "srv.warn.no-socket") })); rationale = tr(locale, "srv.rationale.always-headless-unavailable"); }
   } else if (mode === "prefer-desktop") {
-    if (probes.desktop.available) { target = "desktop"; rationale = "优先桌面：桌面可用"; }
-    else if (probes.headless.available) { target = "headless"; warnings.push("桌面不可用，已回退虚拟屏"); rationale = "优先桌面→回退虚拟屏"; }
-    else { error = "both unavailable"; hint = bothUnavailableHint(); rationale = "两侧都不可用"; }
+    if (probes.desktop.available) { target = "desktop"; rationale = tr(locale, "srv.rationale.prefer-desktop-ok"); }
+    else if (probes.headless.available) { target = "headless"; warnings.push(tr(locale, "srv.warn.desktop-fallback")); rationale = tr(locale, "srv.rationale.prefer-desktop-fallback"); }
+    else { error = tr(locale, "srv.error.both-unavailable"); hint = bothUnavailableHint(); rationale = tr(locale, "srv.rationale.none"); }
   } else { // prefer-headless（默认）
-    if (probes.headless.available) { target = "headless"; rationale = "优先无头：虚拟屏可用"; }
-    else if (probes.desktop.available) { target = "desktop"; warnings.push("虚拟屏不可用，已回退桌面"); rationale = "优先无头→回退桌面"; }
-    else if (needAutoHeadless() && (await ensureHeadless())) { target = "headless"; rationale = "优先无头：自动拉起成功"; }
-    else { error = "both unavailable"; hint = bothUnavailableHint(); rationale = "两侧都不可用"; }
+    if (probes.headless.available) { target = "headless"; rationale = tr(locale, "srv.rationale.prefer-headless-ok"); }
+    else if (probes.desktop.available) { target = "desktop"; warnings.push(tr(locale, "srv.warn.headless-fallback")); rationale = tr(locale, "srv.rationale.prefer-headless-fallback"); }
+    else if (needAutoHeadless() && (await ensureHeadless())) { target = "headless"; rationale = tr(locale, "srv.rationale.prefer-headless-autostart"); }
+    else { error = tr(locale, "srv.error.both-unavailable"); hint = bothUnavailableHint(); rationale = tr(locale, "srv.rationale.none"); }
   }
 
   if (!target) {
-    if (!error) error = "both unavailable";
-    warnings.push(`桌面: ${probes.desktop.error ?? "不可用"}`);
-    warnings.push(`虚拟屏: ${probes.headless.error ?? "不可用"}`);
+    if (!error) error = tr(locale, "srv.error.both-unavailable");
+    warnings.push(tr(locale, "srv.warn.desktop-line", { error: probeErrorText(locale, probes.desktop) || tr(locale, "srv.warn.unavailable") }));
+    warnings.push(tr(locale, "srv.warn.headless-line", { error: probeErrorText(locale, probes.headless) || tr(locale, "srv.warn.unavailable") }));
   } else {
     // 目标已选但带降级告警（如桌面无 Xauthority / 虚拟屏无 openbox）
     const chosen = target === "desktop" ? probes.desktop : probes.headless;
-    if (chosen.error) warnings.push(chosen.error);
+    if (chosen.error) warnings.push(probeErrorText(locale, chosen));
   }
 
-  const { env, warnings: envWarnings } = target ? buildEnv(target, probes) : { env: {}, warnings: [] };
+  const { env, warnings: envWarnings } = target ? buildEnv(target, probes, locale) : { env: {}, warnings: [] };
   warnings.push(...envWarnings);
   const exportLines = Object.entries(env).map(([k, v]) => v === "" ? `unset ${k}` : `export ${k}="${v}"`);
+
+  // Keep the session-env snapshot in sync with the arbiter decision (deduped inside),
+  // and mirror the display keys into the pi-web process env so IN-PROCESS local pi
+  // sessions (whose bash/MCP children inherit process.env at spawn time) land on the
+  // chosen display too. External-CLI sessions go through agent-spawn-env's snapshot
+  // read instead — same source, either side wins consistently.
+  if (!error && target) applyProcessEnvDisplay(env);
+  else restoreProcessEnvDisplay();
+  writeSessionEnvSnapshot({ ok: !error && !!target, target, mode, rationale, env });
 
   return {
     ok: !error && !!target,
     mode, target, env, exportLines, rationale,
     warnings: [...new Set(warnings)], error: error || undefined, hint,
     probes,
+  };
+}
+
+/** Joins names with the list separator that matches the locale. */
+function joinList(locale: string | undefined | null, parts: string[]): string {
+  return parts.join(String(locale ?? "").toLowerCase().startsWith("zh") ? "、" : ", ");
+}
+
+/** Localized copy of a probe result (the API hands this to the panel; errorCode is kept for tooling). */
+export function localizeProbe<T extends ProbeInfo>(locale: string | undefined | null, info: T): T {
+  return {
+    ...info,
+    error: probeErrorText(locale, info) || undefined,
+    resolution: info.resolutionKey ? tr(locale, info.resolutionKey) : info.resolution,
   };
 }
 
@@ -708,22 +821,26 @@ export async function ensureHeadless(): Promise<boolean> {
 
 /** 手动拉起无头虚拟屏（与 resolve 自动拉起同一条 ensureHeadless 链路；幂等，已在跑则直接返回就绪）。
  *  界面「启动虚拟屏」按钮 / API / agent 工具共用此入口。 */
-export async function startHeadless(): Promise<{ ok: boolean; available: boolean; error?: string; hint?: string; needPassword?: boolean }> {
+export async function startHeadless(locale?: string | null): Promise<{ ok: boolean; available: boolean; error?: string; hint?: string; needPassword?: boolean }> {
   const ok = await ensureHeadless();
   const p = await probeHeadless();
+  // Headless just became available → refresh the session-env snapshot so new
+  // sessions pick the display up immediately. Safe against auto-start loops:
+  // resolve() sees the display as available and never re-runs ensureHeadless here.
+  if (ok && p.available) { try { await resolve(undefined, true); } catch { /* ignore */ } }
   const needPassword = !p.available && !!winHeadlessLastError?.needPassword;
   return {
     ok: ok && p.available,
     available: p.available,
-    error: p.error || winHeadlessLastError?.error,
+    error: probeErrorText(locale, p) || winHeadlessLastError?.error,
     needPassword,
     hint: p.available ? undefined : (needPassword
       ? "需要 VNC 密码：请让用户提供一个 1~8 位密码，然后用 ui_env_headless start { password } 重试（或 POST /vnc-password 设置）"
       : IS_WIN
-        ? "启动失败：查看 configDir/logs/winvnc.log；确认便携 winvnc 存在（ui_env_deps install 可自动安装到 configDir/ultravnc）"
+        ? tr(locale, "srv.start.fail-win")
         : IS_MAC
-          ? "开启失败：屏幕共享需授权——系统设置 → 通用 → 共享 → 屏幕共享；有免密 sudo 时重试 ui_env_headless start"
-          : "启动失败：请查看 configDir/logs/ensure-headless.log；或跑 scripts/linux/setup-linux.sh --bare 手动拉一次"),
+          ? tr(locale, "srv.start.fail-mac")
+          : tr(locale, "srv.start.fail-linux")),
   };
 }
 
@@ -754,7 +871,7 @@ export interface ResetVncPasswordResult {
  *  Windows：自管便携 winvnc 写 ini 并重启；系统版 UltraVNC/TightVNC 写注册表（需管理员）。
  *  Linux：x11vnc 的 -rfbauth 密码文件 或 ~/.vnc/passwd（都走标准 vncpasswd 格式）。
  *  macOS：屏幕共享用系统账号密码，不支持（返回明确说明）。 */
-export async function resetVncPassword(pw: string, opts: { id?: string } = {}): Promise<ResetVncPasswordResult> {
+export async function resetVncPassword(pw: string, opts: { id?: string; locale?: string | null } = {}): Promise<ResetVncPasswordResult> {
   const p = String(pw ?? "").trim().slice(0, 8);
   if (!p) return { ok: false, error: "密码不能为空" };
   if (IS_WIN) {
@@ -762,7 +879,7 @@ export async function resetVncPassword(pw: string, opts: { id?: string } = {}): 
     return {
       ok: r.ok, password: p, applied: r.applied, errors: r.errors,
       restartRequired: r.restartRequired,
-      note: r.restartRequired ? "已写注册表：需重启该 VNC 服务（UltraVNC/TightVNC 服务）后生效" : undefined,
+      note: r.restartRequired ? tr(opts.locale, "srv.pwd.registry-note") : undefined,
       error: r.ok ? undefined : r.error,
     };
   }
@@ -802,10 +919,10 @@ async function readProcCmdline(pid: number): Promise<string> {
   try { return (await fs.promises.readFile(`/proc/${pid}/cmdline`, "utf8")).split("\0").join(" ").trim(); } catch { return ""; }
 }
 
-async function linuxResetVncPassword(pw: string, opts: { id?: string }): Promise<ResetVncPasswordResult> {
-  const list = await systemVncScan();
+async function linuxResetVncPassword(pw: string, opts: { id?: string; locale?: string | null }): Promise<ResetVncPasswordResult> {
+  const list = await systemVncScan(opts.locale);
   let entry = opts.id ? list.find((e) => e.id === opts.id) : undefined;
-  if (opts.id && !entry) return { ok: false, error: `未找到系统 VNC 条目 ${opts.id}（刷新系统 VNC 列表后重试）` };
+  if (opts.id && !entry) return { ok: false, error: tr(opts.locale, "srv.pwd.entry-missing", { id: opts.id }) };
   if (!entry) entry = list.find((e) => e.passwordResettable) || list[0];
   if (!entry) return { ok: false, error: "本机未发现系统 VNC server" };
   if (!entry.passwordResettable) return { ok: false, error: entry.passwordNote || "该 VNC server 的密码不由本扩展管理" };
@@ -818,14 +935,14 @@ async function linuxResetVncPassword(pw: string, opts: { id?: string }): Promise
   } else if (entry.kind === "vncserver") {
     file = path.join(homeDir(), ".vnc", "passwd");
   } else {
-    return { ok: false, error: entry.passwordNote || `暂不支持重设 ${entry.kind} 的密码` };
+    return { ok: false, error: entry.passwordNote || tr(opts.locale, "srv.pwd.unsupported", { kind: entry.kind }) };
   }
 
   const w = await linuxWriteVncPasswdFile(pw, file);
   if (!w.ok) return { ok: false, error: w.error };
   return {
-    ok: true, applied: [`${file}（${w.how}）`], restartRequired: true,
-    note: `已写密码文件 ${file}：需重启该 ${entry.kind} 进程后生效（本扩展不擅自动系统进程）`,
+    ok: true, applied: [tr(opts.locale, "srv.pwd.applied-file", { file, how: w.how })], restartRequired: true,
+    note: tr(opts.locale, "srv.pwd.file-note", { file, kind: entry.kind }),
   };
 }
 
@@ -893,12 +1010,19 @@ async function stopHeadlessNums(nums: Set<number>): Promise<{ ok: boolean; avail
     ok: stillRunning.length === 0,
     available: stillRunning.length > 0,
     stopped,
-    note: stillRunning.length ? `虚拟屏未完全退出（残留：${stillRunning.map((n) => `:${n}`).join("、")}）` : `已停止：${stopped.join("、") || "（无）"}`,
+    note: stillRunning.length
+      ? tr(locale, "srv.stop.headless-partial", { list: joinList(locale, stillRunning.map((n) => `:${n}`)) })
+      : tr(locale, "srv.stop.stopped", { list: stopped.length ? joinList(locale, stopped) : tr(locale, "srv.stop.none") }),
   };
 }
 
 /** 手动停止无头虚拟屏（Windows: 只停自管 winvnc；macOS: 无自管进程，屏幕共享是系统服务不启停；Linux: 按实际运行号）。 */
-export async function stopHeadless(): Promise<{ ok: boolean; available: boolean; stopped: string[]; note?: string }> {
+export async function stopHeadless(locale?: string | null): Promise<{ ok: boolean; available: boolean; stopped: string[]; note?: string }> {
+  // Explicit stop must not leave the process env (or the snapshot file) pointing at
+  // a dead display. The next resolve() (status / run / set-mode) rebuilds both if
+  // some target is still usable.
+  try { restoreProcessEnvDisplay(); } catch { /* ignore */ }
+  try { writeSessionEnvSnapshot({ ok: false }); } catch { /* ignore */ }
   if (IS_MAC) {
     const stopped = await mac.macStopHeadless();
     // 顺带停 VNC 实例 bridge（mac 实例全是「桥接系统屏幕共享」型，停了 RFB 也没了）
@@ -906,7 +1030,9 @@ export async function stopHeadless(): Promise<{ ok: boolean; available: boolean;
       try { await vncStop(inst.id); } catch { /* ignore */ }
     }
     const still = await mac.macPortListening(5900);
-    return { ok: true, available: still, stopped, note: still ? "屏幕共享 VNC 5900 仍在监听（系统服务，本扩展不启停，仅桥接）" : `已停止：${stopped.join("、") || "（无自管进程；屏幕共享未开）"}` };
+    return { ok: true, available: still, stopped, note: still
+      ? tr(locale, "srv.stop.mac-still")
+      : tr(locale, "srv.stop.mac-stopped", { list: stopped.length ? joinList(locale, stopped) : "-" }) };
   }
   if (IS_WIN) {
     const stopped = await win.winStopHeadless(configDir);
@@ -915,7 +1041,9 @@ export async function stopHeadless(): Promise<{ ok: boolean; available: boolean;
       try { await vncStop(inst.id); } catch { /* ignore */ }
     }
     const still = await win.winPortListening(5900);
-    return { ok: !still, available: still, stopped, note: still ? "5900 仍在监听（可能为系统 VNC，未接管不停）" : `已停止：${stopped.join("、") || "（无）"}` };
+    return { ok: !still, available: still, stopped, note: still
+      ? tr(locale, "srv.stop.win-still")
+      : tr(locale, "srv.stop.stopped", { list: stopped.length ? joinList(locale, stopped) : tr(locale, "srv.stop.none") }) };
   }
   return stopHeadlessNums(await actualHeadlessNums());
 }
@@ -1039,10 +1167,10 @@ function execFilePromise(cmd: string, args: string[], timeoutMs: number): Promis
 
 let runSeq = 0;
 
-export async function run(cmd: string, opts: { prefer?: UeTarget; env?: Record<string, string> } = {}): Promise<RunResult> {
-  const resolved = await resolve(opts.prefer, true);
+export async function run(cmd: string, opts: { prefer?: UeTarget; env?: Record<string, string>; locale?: string | null } = {}): Promise<RunResult> {
+  const resolved = await resolve(opts.prefer, true, opts.locale);
   if (!resolved.ok || !resolved.target) {
-    return { ok: false, error: resolved.error || "resolve 失败", hint: resolved.hint };
+    return { ok: false, error: resolved.error || tr(opts.locale, "srv.error.resolve-failed"), hint: resolved.hint };
   }
   const env = { ...process.env, ...resolved.env, ...(opts.env || {}) };
   const logDir = cachePath("logs");
@@ -1166,9 +1294,9 @@ async function rfbPortsToPids(): Promise<Map<number, number[]>> {
   return map;
 }
 
-export async function systemVncScan(): Promise<SysVncEntry[]> {
-  if (IS_WIN) return win.winSystemVncScan(configDir);
-  if (IS_MAC) return mac.macSystemVncScan();
+export async function systemVncScan(locale?: string | null): Promise<SysVncEntry[]> {
+  if (IS_WIN) return win.winSystemVncScan(configDir, locale);
+  if (IS_MAC) return mac.macSystemVncScan(locale);
   const out = await runCmd("ps", ["-eo", "pid,user,args"]).catch(() => "");
   const list: SysVncEntry[] = [];
   const seenPorts = new Set<number>();
@@ -1208,7 +1336,7 @@ export async function systemVncScan(): Promise<SysVncEntry[]> {
         id: "sys-" + pid, kind: "x11vnc", display, port, pid, ours, stoppable: user === process.env.USER, cmd: cmd.slice(0, 110),
         passwordResettable: !!rfbauth,
         passwordNote: rfbauth
-          ? `写密码文件 ${rfbauth}（标准 vncpasswd 格式）；需重启该 x11vnc 后生效`
+          ? tr(locale, "srv.pwd.note-rfbauth", { file: rfbauth })
           : (/(^|\s)-passwd(\s|$)/.test(cmd)
             ? "该 x11vnc 用 -passwd 明文参数启动，改密码需改启动命令后重启"
             : "该 x11vnc 未使用密码文件（无 -rfbauth），无密码可重设；如需密码请以其启动配置为准"),
@@ -1222,7 +1350,7 @@ export async function systemVncScan(): Promise<SysVncEntry[]> {
         passwordResettable: user === process.env.USER,
         passwordNote: user === process.env.USER
           ? "写 ~/.vnc/passwd（标准 vncpasswd 格式）；重启该 vncserver 会话后生效"
-          : `该 vncserver 属用户 ${user}，非当前用户，无权限改` });
+          : tr(locale, "srv.pwd.note-vncserver-other", { user }) });
     }
   }
   // 监听 5900-5910 的未识别 VNC（进程没匹配到）
@@ -1531,22 +1659,22 @@ export async function vncCreate(id: string | undefined, displayNum = envDisplayN
 
 /** 停止实例：杀进程 + 移除注册（systemd unit 若安装则一并停）
  *  target=systemd（服务模式合成条目）→ 只停 unit，不删注册表（合成条目不在表里）。 */
-export async function vncStop(id?: string): Promise<{ ok: boolean; message: string }> {
+export async function vncStop(id?: string, locale?: string | null): Promise<{ ok: boolean; message: string }> {
   const ins = loadInstances();
   const target = id || defaultInstanceId();
   const inst = ins[target];
   if (target === "systemd") {
     await stopSystemdUnit();
-    return { ok: true, message: "systemd 服务模式实例已请求停止（ui-env-vnc unit）" };
+    return { ok: true, message: tr(locale, "srv.vnc.service-stop") };
   }
-  if (!inst) return { ok: true, message: `实例 ${target} 不存在（无操作）` };
+  if (!inst) return { ok: true, message: tr(locale, "srv.vnc.instance-missing", { id: target }) };
   for (const pid of [inst.x11vncPid, inst.bridgePid]) {
     if (pidAlive(pid)) { try { process.kill(pid!, "SIGTERM"); } catch { /* 已退出 */ } }
   }
   if (target === "default") await stopSystemdUnit();
   delete ins[target];
   saveInstances(ins);
-  return { ok: true, message: `实例 ${target} 已停止（RFB :${inst.rfbPort} / Web :${inst.webPort}）` };
+  return { ok: true, message: tr(locale, "srv.vnc.stopped", { id: target, rfb: inst.rfbPort, web: inst.webPort }) };
 }
 
 /** 停 systemd unit（若安装） */
@@ -1675,12 +1803,13 @@ async function rfbPortOwner(port: number): Promise<string | null> {
 }
 
 /** 服务端直读/直写不可用时的诊断文案：说清目标是什么、为什么不行、可用什么替代。 */
-async function clipboardUnavailable(inst: VncInstance, verb: string): Promise<string> {
+async function clipboardUnavailable(inst: VncInstance, action: "read" | "write", locale?: string | null): Promise<string> {
   const owner = await rfbPortOwner(inst.rfbPort);
+  const verb = tr(locale, action === "read" ? "srv.clip.verb-read" : "srv.clip.verb-write");
   if (owner && /^qemu-system/.test(owner)) {
-    return `目标 VNC 由 ${owner}（虚拟机，无本机 X 会话）提供：机内剪贴板需 guest 代理（vdagent）支持，服务端无法${verb}`;
+    return tr(locale, "srv.clip.unavailable-vm", { owner, verb });
   }
-  return `目标 VNC 不是本机 X 会话（${owner || "未知监听进程"}），服务端无法${verb}`;
+  return tr(locale, "srv.clip.unavailable", { owner: owner || tr(locale, "srv.clip.owner-unknown"), verb });
 }
 
 /** 写 Linux X 剪贴板（xclip -in）：xclip 读入 stdin 后 fork 后台进程持有 selection（父进程立即退出），
@@ -1706,62 +1835,62 @@ async function writeXClipboard(display: string, auth: string | null | undefined,
 /** 读指定 VNC 实例目标桌面的当前剪贴板（按 token 或 id 定位实例）。
  *  Linux=直读目标 X display；Windows=Get-Clipboard；macOS=pbpaste（自管 winvnc/屏幕共享服务的就是系统剪贴板）。
  *  sys 实例指向远程主机时无法代读，明确报错。 */
-export async function vncClipboardRead(tokenOrId: string): Promise<{ ok: boolean; text?: string; error?: string }> {
+export async function vncClipboardRead(tokenOrId: string, locale?: string | null): Promise<{ ok: boolean; text?: string; error?: string }> {
   const inst = clipboardInstance(tokenOrId);
-  if (!inst) return { ok: false, error: "未知 VNC 实例（token/id 无效或已轮换过期）" };
+  if (!inst) return { ok: false, error: tr(locale, "srv.vnc.unknown-instance") };
   if (!instanceIsLocal(inst)) {
-    return { ok: false, error: `目标 VNC 在远程主机 ${inst.sys!.host}，服务端无法直读其剪贴板` };
+    return { ok: false, error: tr(locale, "srv.clip.read-remote", { host: inst.sys!.host }) };
   }
 
   if (IS_WIN) {
     const out = await win.winPwsh("(Get-Clipboard -Raw)", 5000);
-    return out ? { ok: true, text: out.replace(/\r?\n$/, "") } : { ok: false, error: "Get-Clipboard 为空或读取失败" };
+    return out ? { ok: true, text: out.replace(/\r?\n$/, "") } : { ok: false, error: tr(locale, "srv.clip.win-empty") };
   }
   if (IS_MAC) {
     const r = await mac.macExec("pbpaste", [], 5000);
-    return r.code === 0 && r.out ? { ok: true, text: r.out } : { ok: false, error: "pbpaste 为空或读取失败" };
+    return r.code === 0 && r.out ? { ok: true, text: r.out } : { ok: false, error: tr(locale, "srv.clip.mac-empty") };
   }
 
   const attempts = await xClipboardTargets(inst);
-  if (!attempts.length) return { ok: false, error: `读取失败：${await clipboardUnavailable(inst, "直读")}（可改用查看页「⌨ 输入到远程」）` };
+  if (!attempts.length) return { ok: false, error: tr(locale, "srv.clip.read-failed", { detail: await clipboardUnavailable(inst, "read", locale) }) };
   for (const a of attempts) {
     const text = await readXClipboard(a.display, a.auth);
     if (text !== null) return { ok: true, text };
   }
-  return { ok: false, error: "读取失败：xclip 缺失、剪贴板为空，或该 X 会话无访问权限" };
+  return { ok: false, error: tr(locale, "srv.clip.read-failed-x11") };
 }
 
 /** 写指定 VNC 实例目标桌面的剪贴板（view.html「发送到远程」主通道）：
  *  本机 X → xclip 直写 CLIPBOARD（Unicode 安全、无 x11vnc selwin 8s 窗口、QEMU 等无 X 目标明确报错）；
  *  Windows=Set-Clipboard；macOS=pbcopy。失败时客户端回退 noVNC 协议通道。
  *  说明：只写 CLIPBOARD（Ctrl+V）；不写 PRIMARY（Linux 中键粘贴）——避免把远程主选择区搅乱。 */
-export async function vncClipboardWrite(tokenOrId: string, text: string): Promise<{ ok: boolean; error?: string }> {
+export async function vncClipboardWrite(tokenOrId: string, text: string, locale?: string | null): Promise<{ ok: boolean; error?: string }> {
   const inst = clipboardInstance(tokenOrId);
-  if (!inst) return { ok: false, error: "未知 VNC 实例（token/id 无效或已轮换过期）" };
+  if (!inst) return { ok: false, error: tr(locale, "srv.vnc.unknown-instance") };
   const value = String(text == null ? "" : text);
-  if (!value) return { ok: false, error: "剪贴板内容为空" };
-  if (value.length > 1 << 20) return { ok: false, error: `内容过大（${value.length} 字符，上限 1048576）` };
+  if (!value) return { ok: false, error: tr(locale, "srv.clip.empty") };
+  if (value.length > 1 << 20) return { ok: false, error: tr(locale, "srv.clip.too-large", { size: value.length }) };
   if (!instanceIsLocal(inst)) {
-    return { ok: false, error: `目标 VNC 在远程主机 ${inst.sys!.host}，服务端无法直写其剪贴板` };
+    return { ok: false, error: tr(locale, "srv.clip.write-remote", { host: inst.sys!.host }) };
   }
 
   if (IS_WIN) {
     const b64 = Buffer.from(value, "utf8").toString("base64");
     const out = await win.winPwsh(`$b=[Convert]::FromBase64String('${b64}'); Set-Clipboard -Value ([Text.Encoding]::UTF8.GetString($b)); 'ok'`, 6000);
-    return out.includes("ok") ? { ok: true } : { ok: false, error: "Set-Clipboard 写入失败" };
+    return out.includes("ok") ? { ok: true } : { ok: false, error: tr(locale, "srv.clip.win-write-failed") };
   }
   if (IS_MAC) {
     const b64 = Buffer.from(value, "utf8").toString("base64");
     const r = await mac.macExec("/bin/sh", ["-c", `printf %s '${b64}' | base64 -D | pbcopy`], 5000);
-    return r.code === 0 ? { ok: true } : { ok: false, error: "pbcopy 写入失败" };
+    return r.code === 0 ? { ok: true } : { ok: false, error: tr(locale, "srv.clip.mac-write-failed") };
   }
 
   const attempts = await xClipboardTargets(inst);
-  if (!attempts.length) return { ok: false, error: `写入失败：${await clipboardUnavailable(inst, "直写")}` };
+  if (!attempts.length) return { ok: false, error: tr(locale, "srv.clip.write-failed", { detail: await clipboardUnavailable(inst, "write", locale) }) };
   for (const a of attempts) {
     if (await writeXClipboard(a.display, a.auth, value)) return { ok: true };
   }
-  return { ok: false, error: "写入失败：xclip 缺失或该 X 会话无访问权限" };
+  return { ok: false, error: tr(locale, "srv.clip.write-failed-x11") };
 }
 
 export async function vncList(): Promise<(VncInstance & { tcp: boolean; web: boolean })[]> {
@@ -1793,20 +1922,20 @@ export async function vncStatus(): Promise<VncState & { instances: (VncInstance 
 
 export async function vncAction(
   action: "start" | "stop" | "status",
-  opts: { id?: string; displayNum?: number } = {},
+  opts: { id?: string; displayNum?: number; locale?: string | null } = {},
 ): Promise<VncState & { action: string; message?: string; instances?: (VncInstance & { tcp: boolean; web: boolean })[] }> {
   if (action === "start") {
     try {
       const inst = await vncCreate(opts.id, opts.displayNum);
       const s = await vncStatus();
-      return { ...s, action, message: `实例 ${inst.id} 就绪（RFB :${inst.rfbPort} / Web :${inst.webPort}，display :${inst.displayNum}）` };
+      return { ...s, action, message: tr(opts.locale, "srv.vnc.ready", { id: inst.id, rfb: inst.rfbPort, web: inst.webPort, display: inst.displayNum }) };
     } catch (e) {
       const s = await vncStatus();
-      return { ...s, action, message: "启动失败：" + String((e as Error).message) };
+      return { ...s, action, message: tr(opts.locale, "srv.any.start-failed", { error: String((e as Error).message) }) };
     }
   }
   if (action === "stop") {
-    const r = await vncStop(opts.id);
+    const r = await vncStop(opts.id, opts.locale);
     const s = await vncStatus();
     return { ...s, action, message: r.message };
   }
@@ -1840,9 +1969,9 @@ function stTmpAuth(num: number): string | null {
 
 export interface InstallStatus { os: string; tools: Record<string, boolean>; units: Record<string, "active" | "inactive" | "missing">; }
 
-export async function installStatus(): Promise<InstallStatus> {
+export async function installStatus(locale?: string | null): Promise<InstallStatus> {
   const osName = process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux";
-  if (osName === "macos") return mac.macInstallStatus(configDir);
+  if (osName === "macos") return mac.macInstallStatus(configDir, locale);
   if (osName === "windows") {
     // Windows：检查项 = node / 便携 winvnc / noVNC / bridge / 虚拟显示驱动；units 无意义
     const d = await win.winCheckDeps(configDir);
@@ -1851,12 +1980,12 @@ export async function installStatus(): Promise<InstallStatus> {
     const winvncPortable = !d.coreMissing.some((c) => c.bin === "winvnc(便携)");
     const tools: Record<string, boolean> = {
       node: true,
-      "winvnc(便携)": winvncPortable,
-      "winvnc(系统安装)": !winvncPortable && !!d.winvncPath,
+      [tr(locale, "srv.dep.win.winvnc(便携)")]: winvncPortable,
+      [tr(locale, "srv.install.winvnc-system")]: !winvncPortable && !!d.winvncPath,
       novnc: hasNovnc,
       "vnc/rdp-bridge": hasBridge,
-      "虚拟显示驱动": !!d.vddDriver,
-      "vnc-server在跑": d.winvncRunning,
+      [tr(locale, "srv.dep.win.vdd-driver")]: !!d.vddDriver,
+      [tr(locale, "srv.install.vnc-running")]: d.winvncRunning,
     };
     return { os: osName, tools, units: {} };
   }
@@ -1969,51 +2098,56 @@ async function detectPlatform(): Promise<{ os: string; distro: string; pkgMgr: s
   return { os: "linux", distro: pretty || id || "Linux", pkgMgr, sudo };
 }
 
-function buildManualHints(plat: { os: string; pkgMgr: string | null; sudo: boolean }, coreMissing: DepStatusItem[], uiMissing: DepStatusItem[]): string[] {
+function buildManualHints(plat: { os: string; pkgMgr: string | null; sudo: boolean }, coreMissing: DepStatusItem[], uiMissing: DepStatusItem[], locale?: string | null): string[] {
   const hints: string[] = [];
   if (plat.os === "macos") {
     // 理论上到不了（macOS 已在 checkDeps 前置分支走 macCheckDeps），保险兜底
-    hints.push("macOS：核心 = Aqua 会话 + 屏幕共享 VNC（系统设置 → 通用 → 共享 → 屏幕共享）；可选增强走 brew（cliclick/XQuartz）。详见 docs/aiti-ui-env-macos-support-plan.md。");
+    hints.push(tr(locale, "srv.dep.hint.mac"));
     return hints;
   }
   if (plat.os === "windows") {
     // 理论上到不了（Windows 已在 checkDeps 前置分支），保险兑底
-    hints.push("Windows：本扩展支持自管便携 UltraVNC（免安装免管理员）；虚拟显示驱动可装 IddSampleDriver/usbmmidd；Home 版无系统 RDP 服务端（被看用 VNC）。");
+    hints.push(tr(locale, "srv.dep.hint.win"));
     return hints;
   }
   if (coreMissing.length) {
     const pkgs = coreMissing.map((i) => i.pkg).filter(Boolean).join(" ");
-    if (plat.pkgMgr && plat.sudo) hints.push(`可自动安装：${plat.pkgMgr} ${pkgs}`);
-    else if (plat.pkgMgr) hints.push(`需 root 手动安装（本进程无免密 sudo，请在终端执行）：sudo ${plat.pkgMgr} install -y ${pkgs}`);
-    else hints.push(`未知包管理器，手动安装：${coreMissing.map((i) => i.manual).join("；")}`);
+    if (plat.pkgMgr && plat.sudo) hints.push(tr(locale, "srv.dep.hint.auto-install", { tool: plat.pkgMgr, pkgs }));
+    else if (plat.pkgMgr) hints.push(tr(locale, "srv.dep.hint.manual-root", { tool: plat.pkgMgr, pkgs }));
+    else hints.push(tr(locale, "srv.dep.hint.unknown-pm", { list: coreMissing.map((i) => i.manual).join(localeStartsWithZh(locale) ? "；" : "; ") }));
   }
-  if (uiMissing.length) hints.push(`可选增强缺失：${uiMissing.map((i) => `${i.label}(${i.pkg || "无包可自动装"})`).join("、")}`);
+  if (uiMissing.length) hints.push(tr(locale, "srv.dep.hint.optional-missing", { list: uiMissing.map((i) => `${i.label}(${i.pkg || tr(locale, "srv.dep.hint.no-pkg")})`).join(localeStartsWithZh(locale) ? "、" : ", ") }));
   return hints;
 }
 
+/** List-separator picker: zh uses full-width separators, en uses ASCII ones. */
+function localeStartsWithZh(locale?: string | null): boolean {
+  return String(locale ?? "").toLowerCase().startsWith("zh");
+}
+
 /** 自检依赖（多 OS）：返回缺失清单 + 包管理器 + sudo 状态 + 手动指引 */
-export async function checkDeps(refresh = false): Promise<DepsStatus> {
+export async function checkDeps(refresh = false, locale?: string | null): Promise<DepsStatus> {
   void refresh;
   if (IS_WIN) {
-    const w = await win.winCheckDeps(configDir);
+    const w = await win.winCheckDeps(configDir, locale);
     return { os: w.os, distro: w.distro, pkgMgr: w.pkgMgr, sudo: w.sudo, coreMissing: w.coreMissing, uiMissing: w.uiMissing, allInstalled: w.allInstalled, manualHints: w.manualHints };
   }
   if (IS_MAC) {
-    const m = await mac.macCheckDeps(configDir);
+    const m = await mac.macCheckDeps(configDir, locale);
     return { os: m.os, distro: m.distro, pkgMgr: m.pkgMgr, sudo: m.sudo, coreMissing: m.coreMissing, uiMissing: m.uiMissing, allInstalled: m.allInstalled, manualHints: m.manualHints };
   }
   const plat = await detectPlatform();
   const items: DepStatusItem[] = [];
   for (const d of DEPS) {
     const installed = !!(await resolveBin(d.bin));
-    items.push({ bin: d.bin, label: d.label, group: d.group, installed, pkg: plat.pkgMgr ? (d.pkg[plat.pkgMgr] || null) : null, manual: d.manual });
+    items.push({ bin: d.bin, label: tr(locale, "srv.dep." + d.bin), group: d.group, installed, pkg: plat.pkgMgr ? (d.pkg[plat.pkgMgr] || null) : null, manual: trOr(locale, "srv.dep.manual." + d.bin, d.manual) });
   }
   const coreMissing = items.filter((i) => !i.installed && i.group === "core");
   const uiMissing = items.filter((i) => !i.installed && i.group === "ui");
   return {
     os: plat.os, distro: plat.distro, pkgMgr: plat.pkgMgr, sudo: plat.sudo,
     coreMissing, uiMissing, allInstalled: coreMissing.length === 0 && uiMissing.length === 0,
-    manualHints: buildManualHints(plat, coreMissing, uiMissing),
+    manualHints: buildManualHints(plat, coreMissing, uiMissing, locale),
   };
 }
 
@@ -2025,37 +2159,37 @@ function installExec(cmd: string, args: string[], timeoutMs: number): Promise<st
 }
 
 /** 自动安装缺失组件（Unix 需免密 sudo；Windows = 下载便携 UltraVNC 到 configDir/ultravnc） */
-export async function installDeps(): Promise<DepsInstallResult> {
-  const check = await checkDeps(true);
+export async function installDeps(locale?: string | null): Promise<DepsInstallResult> {
+  const check = await checkDeps(true, locale);
   if (check.os === "windows") {
     const r = await win.winInstallDeps(configDir);
-    const after = await checkDeps(true);
+    const after = await checkDeps(true, locale);
     if (!r.ran) return { ...after, installRan: false, note: r.log || r.error };
     if (r.error) return { ...after, installRan: true, error: r.error };
     return { ...after, installRan: true, installLog: r.log };
   }
   if (check.os === "macos") {
     const r = await mac.macInstallDeps(configDir);
-    const after = await checkDeps(true);
+    const after = await checkDeps(true, locale);
     if (!r.ran) return { ...after, installRan: false, note: r.log || r.error };
     if (r.error) return { ...after, installRan: true, error: r.error };
     return { ...after, installRan: true, installLog: r.log };
   }
   if (!check.pkgMgr) {
-    return { ...check, installRan: false, error: `${check.os} 不支持自动安装：${check.manualHints.join("；") || "无可用包管理器"}` };
+    return { ...check, installRan: false, error: tr(locale, "srv.dep.install-unsupported", { os: check.os, hints: check.manualHints.join(localeStartsWithZh(locale) ? "；" : "; ") || check.pkgMgr || "-" }) };
   }
   if (!check.sudo) {
     const all = [...check.coreMissing, ...check.uiMissing];
     const pkgs = [...new Set(all.map((i) => i.pkg).filter(Boolean))].join(" ");
-    return { ...check, installRan: false, error: `无免密 sudo，无法自动安装。手动执行：sudo ${check.pkgMgr} install -y ${pkgs}` };
+    return { ...check, installRan: false, error: tr(locale, "srv.dep.install-no-sudo", { tool: check.pkgMgr, pkgs }) };
   }
   const all = [...check.coreMissing, ...check.uiMissing];
-  if (!all.length) return { ...check, installRan: false, note: "无缺失组件，无需安装" };
+  if (!all.length) return { ...check, installRan: false, note: tr(locale, "srv.dep.install-nothing") };
   const pkgs = [...new Set(all.map((i) => i.pkg).filter(Boolean))] as string[];
   const noPkg = all.filter((i) => !i.pkg).map((i) => i.label);
-  if (!pkgs.length) return { ...check, installRan: false, error: `缺失组件无对应包（无法自动装）：${noPkg.join("、")}。${check.manualHints.join("；")}` };
+  if (!pkgs.length) return { ...check, installRan: false, error: tr(locale, "srv.dep.install-no-pkg", { list: noPkg.join(localeStartsWithZh(locale) ? "、" : ", "), hints: check.manualHints.join(localeStartsWithZh(locale) ? "；" : "; ") }) };
   const cmd = PKG_INSTALL[check.pkgMgr]?.(pkgs);
-  if (!cmd) return { ...check, installRan: false, error: `不支持的包管理器：${check.pkgMgr}` };
+  if (!cmd) return { ...check, installRan: false, error: tr(locale, "srv.dep.install-unknown-pm", { tool: check.pkgMgr }) };
   const log = await installExec("sudo", ["sh", "-c", cmd], 180000);
   const after = await checkDeps(true);
   return { ...after, installRan: true, installLog: log.slice(-1500) };
@@ -2308,15 +2442,15 @@ export async function rdpCreate(id: string | undefined, host: string, port: numb
   }
 }
 
-export async function rdpStop(id?: string): Promise<{ ok: boolean; message: string }> {
+export async function rdpStop(id?: string, locale?: string | null): Promise<{ ok: boolean; message: string }> {
   const ins = loadRdpInstances();
   const target = id || defaultRdpInstanceId();
   const inst = ins[target];
-  if (!inst) return { ok: true, message: `实例 ${target} 不存在（无操作）` };
+  if (!inst) return { ok: true, message: tr(locale, "srv.vnc.instance-missing", { id: target }) };
   if (pidAlive(inst.bridgePid)) { try { process.kill(inst.bridgePid!, "SIGTERM"); } catch {} }
   delete ins[target];
   saveRdpInstances(ins);
-  return { ok: true, message: `实例 ${target} 已停止（→ ${inst.host}:${inst.port} / Web :${inst.webPort}）` };
+  return { ok: true, message: tr(locale, "srv.rdp.stopped", { id: target, host: inst.host, port: inst.port, web: inst.webPort }) };
 }
 
 async function rdpInstanceLive(inst: RdpInstance): Promise<RdpInstance & { web: boolean }> {
@@ -2365,29 +2499,29 @@ export async function rdpStatus(): Promise<RdpState> {
 
 export async function rdpAction(
   action: "start" | "stop" | "status" | "list",
-  opts: { id?: string; host?: string; port?: number; sysPort?: number; sysLabel?: string } = {},
+  opts: { id?: string; host?: string; port?: number; sysPort?: number; sysLabel?: string; locale?: string | null } = {},
 ): Promise<RdpState & { action: string; message?: string }> {
   if (action === "start") {
-    if (!opts.host && !opts.sysPort) throw new Error("start 需要 host（RDP 目标主机）");
+    if (!opts.host && !opts.sysPort) throw new Error(tr(opts.locale, "srv.rdp.host-required"));
     try {
       const inst = opts.sysPort
         ? await rdpCreate(opts.id, "127.0.0.1", 0, { sysPort: opts.sysPort, sysLabel: opts.sysLabel })
         : await rdpCreate(opts.id, opts.host!, opts.port ?? 3389);
       const s = await rdpStatus();
-      return { ...s, action, message: `实例 ${inst.id} 就绪（→ ${inst.host}:${inst.port} / Web :${inst.webPort}）` };
+      return { ...s, action, message: tr(opts.locale, "srv.rdp.ready", { id: inst.id, host: inst.host, port: inst.port, web: inst.webPort }) };
     } catch (e) {
       const s = await rdpStatus();
-      return { ...s, action, message: "启动失败：" + String((e as Error).message) };
+      return { ...s, action, message: tr(opts.locale, "srv.any.start-failed", { error: String((e as Error).message) }) };
     }
   }
   if (action === "stop") {
-    const r = await rdpStop(opts.id);
+    const r = await rdpStop(opts.id, opts.locale);
     const s = await rdpStatus();
     return { ...s, action, message: r.message };
   }
   if (action === "list") {
     const s = await rdpStatus();
-    return { ...s, action, message: `共 ${s.instances.length} 个 RDP 实例` };
+    return { ...s, action, message: tr(opts.locale, "srv.rdp.count", { count: s.instances.length }) };
   }
   return { ...(await rdpStatus()), action };
 }

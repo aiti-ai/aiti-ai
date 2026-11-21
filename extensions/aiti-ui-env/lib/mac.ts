@@ -24,6 +24,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { ProbeInfo, SysVncEntry } from "./env.js";
+import { probeFail, tr } from "./i18n.js";
 
 /** 数据分层（三目录对称 2026-09-13）：configDir = <extRoot>/config，cache 在 <extRoot>/cache 下。 */
 function cachePath(configDir: string, ...segments: string[]): string {
@@ -116,18 +117,16 @@ export function macDisplayResolution(): string | undefined {
 export async function macProbeDesktop(): Promise<ProbeInfo> {
   const info: ProbeInfo = { display: "aqua", available: false, atspi: false, kind: "macos", error: undefined };
   const [ws, consoleUser, mgr] = await Promise.all([windowServerRunning(), macConsoleUser(), macManagerName()]);
-  if (!ws) { info.error = "WindowServer 未运行：无 GUI 会话"; return info; }
+  if (!ws) return probeFail(info, "mac-no-windowserver");
   if (!consoleUser || consoleUser === "root") {
-    info.error = "停在登录窗口：无人登录 GUI 桌面（/dev/console 属主 root），GUI 应用无法显示；登录用户会话后恢复";
-    return info;
+    return probeFail(info, "mac-login-window");
   }
   if (me() && consoleUser !== me()) {
-    info.error = `控制台登录用户是 ${consoleUser}，本扩展以 ${me()} 运行：GUI 应用无法显示到他人会话`;
-    return info;
+    return probeFail(info, "mac-other-console-user", { user: consoleUser, me: me() });
   }
   info.consoleUser = consoleUser;
   // Aqua 上下文非硬性（ssh 会话 spawn 的 GUI 有时也能连上 WindowServer）——降级为 warning 随探测带出
-  if (mgr && mgr !== "Aqua") info.error = `本进程 launchd 上下文为 ${mgr}（非 Aqua）：GUI 可能无法显示；pi-web 请以 LaunchAgent 方式跑在用户 GUI 会话`;
+  if (mgr && mgr !== "Aqua") probeFail(info, "mac-non-aqua", { manager: mgr });
   info.resolution = macDisplayResolution();
   info.wm = "WindowServer";
   info.available = true;
@@ -142,8 +141,7 @@ export async function macProbeHeadless(): Promise<ProbeInfo> {
     info.resolution = macDisplayResolution();
     return info;
   }
-  info.error = "屏幕共享（VNC server）未开启：系统设置 → 通用 → 共享 → 屏幕共享；或 sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist（有免密 sudo 时 ui_env_headless start 可自动开启）";
-  return info;
+  return probeFail(info, "mac-screensharing-off");
 }
 
 // ─────────────────────────── 无头层（= 屏幕共享 VNC） ───────────────────────────
@@ -174,7 +172,7 @@ export async function macStopHeadless(): Promise<string[]> {
 
 /** 系统 VNC 探测：screensharingd / ARDAgent（屏幕共享）+ 5900-5910 端口兜底。
  *  屏幕共享是系统服务：stoppable=false（本扩展只桥接不启停）。 */
-export async function macSystemVncScan(): Promise<SysVncEntry[]> {
+export async function macSystemVncScan(locale?: string | null): Promise<SysVncEntry[]> {
   const list: SysVncEntry[] = [];
   const { out } = await runMac("ps", ["-axo", "pid,user,comm"], 6000);
   for (const line of out.split("\n")) {
@@ -194,7 +192,7 @@ export async function macSystemVncScan(): Promise<SysVncEntry[]> {
       listening,
       cmd: `macOS 屏幕共享（${name}${listening ? "，5900 监听中" : "，5900 未监听"}）`,
       passwordResettable: false,
-      passwordNote: "macOS 屏幕共享用**系统账号密码**（不是 VNC 自己的密码）：请在『系统设置 → 通用 → 共享 → 屏幕共享』里改该用户的登录密码",
+      passwordNote: tr(locale, "srv.pwd.note-mac-account"),
     });
     break;
   }
@@ -215,8 +213,8 @@ export async function macSystemVncScan(): Promise<SysVncEntry[]> {
         cmd: isSharingPort ? "macOS 屏幕共享（launchd socket 激活：连接时才 spawn 进程）或第三方 VNC" : undefined,
         passwordResettable: false,
         passwordNote: isSharingPort
-          ? "macOS 屏幕共享用系统账号密码，请在『系统设置 → 共享 → 屏幕共享』里改；若为第三方 VNC 请在它自己的配置里改"
-          : "未识别到已知 VNC server 进程，密码请在其自身配置里改",
+          ? tr(locale, "srv.pwd.note-mac-sharing")
+          : tr(locale, "srv.pwd.note-unknown-vnc"),
       });
     }
   }
@@ -266,7 +264,7 @@ async function xQuartzInstalled(): Promise<boolean> {
   return false;
 }
 
-export async function macCheckDeps(configDir: string): Promise<MacDepsStatus> {
+export async function macCheckDeps(configDir: string, locale?: string | null): Promise<MacDepsStatus> {
   const [ver, consoleUser, manager, vncOn, sudoOk] = await Promise.all([
     macExec("/usr/bin/sw_vers", ["-productVersion"], 4000).then((r) => r.out.trim() || "macOS"),
     macConsoleUser(),
@@ -279,36 +277,36 @@ export async function macCheckDeps(configDir: string): Promise<MacDepsStatus> {
   const hasBridges = ["vnc-bridge.mjs", "rdp-bridge.mjs"].every((f) => { try { return fs.existsSync(cachePath(configDir, f)); } catch { return false; } });
 
   const core: MacDepItem[] = [
-    { bin: "node", label: "Node.js（pi-web 运行环境）", group: "core", installed: true, pkg: null, manual: "pi-web 自带" },
+    { bin: "node", label: tr(locale, "srv.dep.node"), group: "core", installed: true, pkg: null, manual: tr(locale, "srv.dep.manual.mac.node") },
     {
-      bin: "aqua-session", label: "Aqua GUI 会话（pi-web 与控制台登录用户一致）", group: "core",
+      bin: "aqua-session", label: tr(locale, "srv.dep.mac.aqua-session"), group: "core",
       installed: !!(consoleUser && consoleUser !== "root" && (!me() || consoleUser === me())),
       pkg: null,
-      manual: `控制台登录用户=${consoleUser || "无（登录窗口）"}；pi-web 请以 LaunchAgent 跑在该用户 GUI 会话`,
+      manual: tr(locale, "srv.dep.manual.mac.aqua-session", { user: consoleUser || tr(locale, "srv.dep.hint.login-window") }),
     },
     {
-      bin: "screensharing", label: "屏幕共享 VNC server（5900，浏览器查看层）", group: "core",
+      bin: "screensharing", label: tr(locale, "srv.dep.mac.screensharing"), group: "core",
       installed: vncOn, pkg: null,
-      manual: "系统设置 → 通用 → 共享 → 屏幕共享；或 sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist；或 scripts/macos/setup-macos.sh enable",
+      manual: tr(locale, "srv.dep.manual.mac.screensharing"),
     },
-    { bin: "novnc", label: "noVNC 静态页（浏览器查看层）", group: "core", installed: hasNovnc, pkg: null, manual: "重新部署扩展（deploy.mjs 拷贝 vendor 副本）" },
-    { bin: "vnc/rdp-bridge", label: "VNC/RDP bridge（部署产物）", group: "core", installed: hasBridges, pkg: null, manual: "重新部署扩展" },
+    { bin: "novnc", label: tr(locale, "srv.dep.novnc"), group: "core", installed: hasNovnc, pkg: null, manual: tr(locale, "srv.dep.manual.mac.novnc") },
+    { bin: "vnc/rdp-bridge", label: tr(locale, "srv.dep.mac.vnc/rdp-bridge"), group: "core", installed: hasBridges, pkg: null, manual: tr(locale, "srv.dep.manual.mac.vnc/rdp-bridge") },
   ];
   const ui: MacDepItem[] = [
-    { bin: "brew", label: "Homebrew（可选工具安装通道）", group: "ui", installed: !!brew, pkg: null, manual: "https://brew.sh（Intel 默认 /usr/local）" },
-    { bin: "cliclick", label: "CLI 鼠标键盘自动化（mac 版 xdotool）", group: "ui", installed: !!cliclick, pkg: null, manual: "brew install cliclick" },
-    { bin: "xquartz", label: "XQuartz（X11 应用支持，可选）", group: "ui", installed: xquartz, pkg: null, manual: "brew install --cask xquartz（装完有 /tmp/.X11-unix，可跑 x11vnc/xdotool）" },
-    { bin: "screencapture", label: "系统截屏（排障快照；宿主 App 需屏幕录制权限）", group: "ui", installed: true, pkg: null, manual: "系统自带 /usr/sbin/screencapture" },
+    { bin: "brew", label: tr(locale, "srv.dep.mac.brew"), group: "ui", installed: !!brew, pkg: null, manual: tr(locale, "srv.dep.manual.mac.brew") },
+    { bin: "cliclick", label: tr(locale, "srv.dep.mac.cliclick"), group: "ui", installed: !!cliclick, pkg: null, manual: tr(locale, "srv.dep.manual.mac.cliclick") },
+    { bin: "xquartz", label: tr(locale, "srv.dep.mac.xquartz"), group: "ui", installed: xquartz, pkg: null, manual: tr(locale, "srv.dep.manual.mac.xquartz") },
+    { bin: "screencapture", label: tr(locale, "srv.dep.mac.screencapture"), group: "ui", installed: true, pkg: null, manual: tr(locale, "srv.dep.manual.mac.screencapture") },
   ];
   const coreMissing = core.filter((c) => !c.installed);
   const uiMissing = ui.filter((c) => !c.installed);
 
   const hints: string[] = [];
-  if (consoleUser === "root") hints.push("Mac 停在登录窗口（无人登录 GUI）：登录用户会话后桌面才可用");
-  else if (consoleUser && me() && consoleUser !== me()) hints.push(`控制台用户 ${consoleUser} ≠ 扩展用户 ${me()}：GUI 无法落到桌面`);
-  if (manager && manager !== "Aqua") hints.push(`pi-web 进程 launchd 上下文 = ${manager}（非 Aqua）：建议以 LaunchAgent（gui 域）运行`);
-  if (!vncOn) hints.push(sudoOk ? "屏幕共享未开：ui_env_headless start 可自动开启（有免密 sudo）" : "屏幕共享未开：系统设置 → 通用 → 共享 → 屏幕共享（无免密 sudo，无法自动开启）");
-  if (!brew) hints.push("未装 Homebrew：cliclick/XQuartz 等可选工具装不了（不影响核心链路）");
+  if (consoleUser === "root") hints.push(tr(locale, "srv.dep.mac.hint.login-window"));
+  else if (consoleUser && me() && consoleUser !== me()) hints.push(tr(locale, "srv.dep.mac.hint.other-user", { user: consoleUser, me: me() }));
+  if (manager && manager !== "Aqua") hints.push(tr(locale, "srv.dep.mac.hint.non-aqua", { manager }));
+  if (!vncOn) hints.push(sudoOk ? tr(locale, "srv.dep.mac.hint.vnc-off-sudo") : tr(locale, "srv.dep.mac.hint.vnc-off-manual"));
+  if (!brew) hints.push(tr(locale, "srv.dep.mac.hint.no-brew"));
 
   return {
     os: "macos",
@@ -347,7 +345,7 @@ export async function macInstallDeps(configDir: string): Promise<{ ran: boolean;
 
 // ─────────────────────────── 安装状态（面板 tools 徽章） ───────────────────────────
 
-export async function macInstallStatus(configDir: string): Promise<{ os: string; tools: Record<string, boolean>; units: Record<string, "active" | "inactive" | "missing"> }> {
+export async function macInstallStatus(configDir: string, locale?: string | null): Promise<{ os: string; tools: Record<string, boolean>; units: Record<string, "active" | "inactive" | "missing"> }> {
   const [consoleUser, vncOn, brew] = await Promise.all([
     macConsoleUser(),
     macPortListening(5900),
@@ -359,8 +357,8 @@ export async function macInstallStatus(configDir: string): Promise<{ os: string;
     os: "macos",
     tools: {
       node: true,
-      "Aqua会话": !!(consoleUser && consoleUser !== "root" && (!me() || consoleUser === me())),
-      "屏幕共享VNC": vncOn,
+      [tr(locale, "srv.install.mac-aqua")]: !!(consoleUser && consoleUser !== "root" && (!me() || consoleUser === me())),
+      [tr(locale, "srv.install.mac-screen-sharing")]: vncOn,
       noVNC: hasNovnc,
       "vnc/rdp-bridge": hasBridges,
       brew: !!brew,

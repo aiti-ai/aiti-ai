@@ -485,7 +485,7 @@ export const LOCALE_CHANGED_EVENT = "pi-web:locale-changed";
 export function currentUiLocale(): string {
   try {
     const v = window.localStorage.getItem("pi-locale");
-    if (v === "zh-CN" || v === "en") return v;
+    if (v === "zh-CN" || v === "zh-TW" || v === "en") return v;
   } catch { /* fall back to the default when storage is unavailable */ }
   return "en";
 }
@@ -498,6 +498,20 @@ export function currentUiLocale(): string {
  * (zero-bundle) entries verbatim, so this is the only way a lazy extension's
  * pre-materialization label can follow the UI locale.
  */
+/**
+ * Extension i18n table cascade: exact locale → language subtag → zh-CN for any other zh-*
+ * variant (extensions ship en + zh-CN; zh-TW users get the zh-CN text rather than English) → en → first table.
+ */
+function extTableFor(ui18n: Record<string, Record<string, string>>, loc: string): Record<string, string> {
+  const short = loc.split("-")[0];
+  return ui18n[loc]
+    ?? ui18n[short]
+    ?? (short === "zh" ? ui18n["zh-CN"] : undefined)
+    ?? ui18n.en
+    ?? Object.values(ui18n)[0]
+    ?? EMPTY_I18N_TABLE;
+}
+
 export function translateExtItemText(extId: string | undefined, text: string | undefined): string {
   if (!text) return "";
   if (!extId || !text.startsWith("i18n:")) return text;
@@ -505,7 +519,7 @@ export function translateExtItemText(extId: string | undefined, text: string | u
   const ui18n = manifestCache.get(extId)?.ui?.i18n;
   if (!ui18n) return key;
   const loc = currentUiLocale();
-  const table = ui18n[loc] ?? ui18n[loc.split("-")[0]] ?? ui18n.en ?? Object.values(ui18n)[0];
+  const table = extTableFor(ui18n, loc);
   if (table?.[key]) return table[key];
   // Missing key in the active table → fall back to any table that has it (partial
   // translations degrade to the other language instead of a bare key).
@@ -521,8 +535,7 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
   const ui18n = ext.ui?.i18n;
   const tableFor = (): Record<string, string> => {
     if (!ui18n) return EMPTY_I18N_TABLE;
-    const loc = currentUiLocale();
-    return ui18n[loc] ?? ui18n[loc.split("-")[0]] ?? ui18n.en ?? Object.values(ui18n)[0] ?? EMPTY_I18N_TABLE;
+    return extTableFor(ui18n, currentUiLocale());
   };
   // t() with a cross-table fallback: a key missing from the active table resolves
   // against the extension's other tables before degrading to the bare key.
