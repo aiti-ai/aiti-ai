@@ -11,6 +11,7 @@
  *        frontend rev poller)
  */
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
@@ -21,7 +22,7 @@ const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 // silently with status=null; run vite.js directly via node on every platform
 // (the real target behind the .bin shim — what npm scripts do internally).
 const viteJs = resolve(root, "node_modules", "vite", "bin", "vite.js");
-const viteBin = existsSync(viteJs) ? viteJs : "vite";
+const viteBin = existsSync(viteJs) ? viteJs : resolve(createRequire(import.meta.url).resolve("vite/package.json"), "..", "bin", "vite.js");
 
 const r = spawnSync(process.execPath, [viteBin, "build", "--config", resolve(root, "vite.config.ts")], {
   cwd: root,
