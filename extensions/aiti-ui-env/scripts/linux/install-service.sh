@@ -57,7 +57,7 @@ sysctl_cmd() {
 
 if [ "$STOP" = 1 ]; then
   [ "$MODE" = "user" ] || SD="sudo "
-  for u in ui-env.target ui-env-vnc ui-env-wm ui-env-bus ui-env-xvfb; do
+  for u in ui-env.target ui-env-vnc ui-env-compositor ui-env-wm ui-env-bus ui-env-xvfb; do
     ${SD}systemctl $([ "$MODE" = "user" ] && echo --user) disable --now "$u" >/dev/null 2>&1 || true
   done
   echo "[aiti-ui-env] 已停止并禁用全部 ui-env units（文件保留在 $UNIT_DIR 或 /etc/systemd/system）"
@@ -136,6 +136,27 @@ RestartSec=2
 WantedBy=default.target
 "
 
+unit_compositor="[Unit]
+Description=aiti-ui-env ARGB compositor (picom) on :$DISPLAY_NUM
+After=ui-env-xvfb.service ui-env-wm.service
+Requires=ui-env-xvfb.service
+Wants=ui-env-wm.service
+
+[Service]
+Type=simple
+Environment=DISPLAY=:$DISPLAY_NUM
+Environment=XAUTHORITY=$XAUTH
+Environment=XDG_RUNTIME_DIR=$RT
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=$BUS
+ExecStartPre=/bin/sh -c 'command -v picom >/dev/null 2>&1 || echo warn-missing-picom'
+ExecStart=/bin/sh -c 'if command -v picom >/dev/null 2>&1; then exec picom --backend xrender --no-vsync; elif command -v compton >/dev/null 2>&1; then exec compton --backend xrender; elif command -v xcompmgr >/dev/null 2>&1; then exec xcompmgr; else echo no-compositor >&2; sleep infinity; fi'
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
+"
+
 # VNC：x11vnc 只回环；node vnc-bridge 把 6080 的 WS 转发到 5900 并 serve noVNC 静态页
 # （零依赖 node 脚本；token 经 env 传入，不落命令行）
 unit_vnc="[Unit]
@@ -160,7 +181,8 @@ WantedBy=default.target
 unit_target="[Unit]
 Description=aiti-ui-env virtual display stack target
 Requires=ui-env-xvfb.service ui-env-bus.service ui-env-wm.service ui-env-vnc.service
-After=ui-env-xvfb.service ui-env-bus.service ui-env-wm.service ui-env-vnc.service
+Wants=ui-env-compositor.service
+After=ui-env-xvfb.service ui-env-bus.service ui-env-wm.service ui-env-compositor.service ui-env-vnc.service
 
 [Install]
 WantedBy=default.target
@@ -170,6 +192,7 @@ if [ "$MODE" = "user" ]; then
   cat_unit "$UNIT_DIR" "ui-env-xvfb.service" "$unit_xvfb"
   cat_unit "$UNIT_DIR" "ui-env-bus.service" "$unit_bus"
   cat_unit "$UNIT_DIR" "ui-env-wm.service" "$unit_wm"
+  cat_unit "$UNIT_DIR" "ui-env-compositor.service" "$unit_compositor"
   cat_unit "$UNIT_DIR" "ui-env-vnc.service" "$unit_vnc"
   cat_unit "$UNIT_DIR" "ui-env.target" "$unit_target"
   systemctl --user daemon-reload
@@ -185,6 +208,7 @@ else
   cat_unit /etc/systemd/system "ui-env-xvfb.service" "$unit_xvfb"
   cat_unit /etc/systemd/system "ui-env-bus.service" "$unit_bus"
   cat_unit /etc/systemd/system "ui-env-wm.service" "$unit_wm"
+  cat_unit /etc/systemd/system "ui-env-compositor.service" "$unit_compositor"
   cat_unit /etc/systemd/system "ui-env-vnc.service" "$unit_vnc"
   cat_unit /etc/systemd/system "ui-env.target" "$unit_target"
   sudo systemctl daemon-reload
@@ -197,5 +221,6 @@ echo "验证："
 echo "  ss -tln | grep -E ':$VNC_PORT|:$WEB_PORT'      # VNC TCP + web（均应只在 127.0.0.1）"
 echo "  ls /tmp/.X11-unix/X$DISPLAY_NUM                 # 虚拟屏 socket"
 echo "  DISPLAY=:$DISPLAY_NUM xdpyinfo | head -3        # 屏可达"
+echo "  systemctl --user status ui-env-compositor        # ARGB compositor（picom）"
 echo "浏览器：打开 pi-web 🖥️ 显示环境面板 → VNC-on-web（当前站点路径下直访，无新端口）"
 echo "CLI：eval \"\$(ui-env env)\"  → 拿当前模式裁决的显示环境"
