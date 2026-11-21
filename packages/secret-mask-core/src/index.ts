@@ -28,6 +28,7 @@
 
 export * from "./hash.ts";
 export * from "./detect.ts";
+export * from "./encode.ts";
 export * from "./placeholder.ts";
 export * from "./mask.ts";
 export * from "./spans.ts";

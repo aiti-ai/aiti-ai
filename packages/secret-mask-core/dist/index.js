@@ -1009,6 +1009,7 @@ function previewValue(value) {
 // src/encode.ts
 var encoder = new TextEncoder();
 var MIN_VARIANT_BYTES = 16;
+var MAX_VARIANT_BYTES = 4096;
 function bytesToHex(bytes) {
   let out = "";
   for (let i = 0; i < bytes.length; i++) out += bytes[i].toString(16).padStart(2, "0");
@@ -1035,7 +1036,7 @@ function foldLines(s, cols) {
 }
 function encodedVariants(value) {
   const bytes = encoder.encode(value);
-  if (bytes.length < MIN_VARIANT_BYTES) return [];
+  if (bytes.length < MIN_VARIANT_BYTES || bytes.length > MAX_VARIANT_BYTES) return [];
   const b64 = bytesToBase64(bytes);
   const b64url = b64.replace(/\+/g, "-").replace(/\//g, "_");
   const hex = bytesToHex(bytes);
@@ -3029,6 +3030,7 @@ export {
   EXTRACT_MIN_LENGTH,
   LANDING_MODES,
   MASK_LANDING_MODES,
+  MAX_VARIANT_BYTES,
   MIN_REDACT_LENGTH,
   MIN_VARIANT_BYTES,
   PERSIST_FILE_NAME,

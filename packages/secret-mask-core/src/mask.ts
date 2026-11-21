@@ -21,6 +21,7 @@
  */
 
 import { scan } from "./detect.ts";
+import { encodedVariants } from "./encode.ts";
 import { fnv1a } from "./hash.ts";
 import { PLACEHOLDER_RE, STABLE_NAMESPACE, placeholderFromHash } from "./placeholder.ts";
 
@@ -83,10 +84,15 @@ function stringLeaves(node: unknown, out: string[] = []): string[] {
  * Forms of one value that should all be redacted: the value itself, its
  * trimmed form, JSON leaves (key files), and 20+ char runs inside multi-part
  * values (PEM bodies split by line numbers / diff marks / JSON escapes).
+ *
+ * Also includes pre-computed encodings (base64 / hex / percent) of the whole
+ * value, so tool output that pipes a mounted secret through an encoder is
+ * redacted to the same placeholder instead of leaking the encoded secret.
  */
 export function redactForms(value: string): string[] {
   const trimmed = value.trim();
   const forms = new Set([value, trimmed]);
+  for (const variant of encodedVariants(trimmed)) forms.add(variant);
   let parts: string[] | null = null;
   if (/^[[{]/.test(trimmed)) {
     try {
@@ -490,13 +496,20 @@ export function auditPayload(payload: unknown, registry: Registry): PayloadAudit
   let placeholders = 0;
   let leaks = 0;
   const placeholderRe = new RegExp(PLACEHOLDER_RE.source, "g");
+  // One probe list per entry: raw value + encoded variants (base64/hex/pct),
+  // so the audit also catches secrets that left through an encoder. A string
+  // leaf counts at most one leak per entry regardless of how many forms hit.
+  const probes = registry.entries()
+    .filter((e) => e.value.length >= MIN_REDACT_LENGTH)
+    .map((e) => ({ label: e.label, forms: [e.value, ...encodedVariants(e.value)] }));
   const walk = (node: unknown): void => {
     if (typeof node === "string") {
       strings++;
-      for (const entry of registry.entries()) {
-        if (entry.value.length >= MIN_REDACT_LENGTH && node.includes(entry.value)) {
+      for (const probe of probes) {
+        if (probe.forms.some((form) => node.includes(form))) {
           leaks++;
-          leaksByLabel.set(entry.label, (leaksByLabel.get(entry.label) ?? 0) + 1);
+          leaksByLabel.set(probe.label, (leaksByLabel.get(probe.label) ?? 0) + 1);
+          break;
         }
       }
       placeholders += (node.match(placeholderRe) ?? []).length;

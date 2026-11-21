@@ -187,3 +187,125 @@ test("remove keeps a redirect; clear drops everything", () => {
   assert.equal(r.size, 0);
   assert.equal(r.restore(ph1).count, 0);
 });
+
+// ---------------------------------------------------------------------------
+// encoded variants (base64 / hex / pct) — exit-path symmetry
+// ---------------------------------------------------------------------------
+
+import { encodedVariants, MIN_VARIANT_BYTES, MAX_VARIANT_BYTES } from "../src/encode.ts";
+import { auditPayload } from "../src/mask.ts";
+
+const LONG_SECRET = "ark-1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d-9f8e"; // 45 bytes, like a real API key
+const b64of = (s) => Buffer.from(s, "utf8").toString("base64");
+const hexof = (s) => Buffer.from(s, "utf8").toString("hex");
+
+test("encodedVariants matches Node Buffer reference encodings", () => {
+  const variants = encodedVariants(LONG_SECRET);
+  const b64 = b64of(LONG_SECRET);
+  const hex = hexof(LONG_SECRET);
+  assert.ok(variants.includes(b64), "padded base64");
+  assert.ok(variants.includes(b64.replace(/=+$/, "")), "unpadded base64");
+  assert.ok(variants.includes(hex), "lowercase hex");
+  assert.ok(variants.includes(hex.toUpperCase()), "uppercase hex");
+  assert.ok(variants.includes(b64.replace(/\+/g, "-").replace(/\//g, "_")), "base64url");
+  // 45 bytes -> 60 chars: no folding kicks in for either column width
+  assert.ok(!variants.some((v) => v.includes("\n")), "no folded forms when single-line");
+});
+
+test("encoder is byte-exact vs Node for multi-byte content and folding", () => {
+  const value = "s3cr3t-with-ünïcødé-and-emoji-🔑-padded-payload-xyz-0123456789-abcdefghij";
+  const variants = encodedVariants(value);
+  const b64 = b64of(value);
+  assert.ok(variants.includes(b64));
+  assert.ok(variants.includes(b64.replace(/(.{76})/g, "$1\n")), "fold76 form");
+  assert.ok(variants.includes(b64.replace(/(.{64})/g, "$1\n")), "fold64 form");
+});
+
+test("redact replaces base64/hex/base64url forms with the same placeholder", () => {
+  const r = new Registry();
+  r.salt = "s1";
+  const { entry } = r.registerManual(LONG_SECRET, "ark-key");
+  const b64 = b64of(LONG_SECRET);
+  const hex = hexof(LONG_SECRET);
+  for (const [name, encoded] of [
+    ["base64", b64],
+    ["base64 unpadded", b64.replace(/=+$/, "")],
+    ["hex lower", hex],
+    ["hex upper", hex.toUpperCase()],
+    ["base64url", b64.replace(/\+/g, "-").replace(/\//g, "_")],
+  ]) {
+    const res = r.redact(`pipe it: ${encoded}`);
+    assert.equal(res.count, 1, `${name} should be redacted`);
+    assert.ok(!res.text.includes(encoded), `${name} must not survive`);
+    assert.ok(res.text.includes(entry.placeholder), `${name} maps to the same placeholder`);
+  }
+});
+
+test("line-folded base64 output is redacted", () => {
+  const r = new Registry();
+  r.salt = "s1";
+  const value = "k".repeat(80) + LONG_SECRET; // long enough that base64 wraps
+  const { entry } = r.registerManual(value, "long-key");
+  const b64 = b64of(value);
+  for (const cols of [76, 64]) {
+    const folded = b64.replace(new RegExp(`(.{${cols}})`, "g"), "$1\n");
+    const res = r.redact(folded);
+    assert.equal(res.count, 1, `fold${cols} should be redacted`);
+    assert.ok(res.text.includes(entry.placeholder));
+  }
+});
+
+test("values below the variant byte threshold get no encodings", () => {
+  const short = "x".repeat(MIN_VARIANT_BYTES - 1);
+  assert.deepEqual(encodedVariants(short), []);
+  const r = new Registry();
+  r.salt = "s1";
+  r.registerManual(short, "short");
+  assert.equal(r.redact(hexof(short)).count, 0, "hex of a short value is not redacted");
+  assert.equal(r.redact(b64of(short)).count, 0, "base64 of a short value is not redacted");
+  assert.equal(encodedVariants("y".repeat(MIN_VARIANT_BYTES)).length > 0, true);
+});
+
+test("percent-encoding variant only when it differs from the value", () => {
+  const plain = "abcdefghij0123456789"; // all URI-unreserved -> pct equals value
+  const special = "abc def/ghi=jkl-0123456789";
+  assert.ok(!encodedVariants(plain).includes(encodeURIComponent(plain)));
+  assert.ok(encodedVariants(special).includes(encodeURIComponent(special)));
+});
+
+test("redact is idempotent with raw value + encoded variant in one text", () => {
+  const r = new Registry();
+  r.salt = "s1";
+  const { entry } = r.registerManual(LONG_SECRET, "ark-key");
+  const res = r.redact(`raw ${LONG_SECRET} and b64 ${b64of(LONG_SECRET)}`);
+  assert.equal(res.count, 2);
+  assert.equal((res.text.match(new RegExp(entry.placeholder, "g")) ?? []).length, 2);
+  assert.ok(!res.text.includes(LONG_SECRET) && !res.text.includes(b64of(LONG_SECRET)));
+});
+
+test("auditPayload flags base64-encoded leaks", () => {
+  const r = new Registry();
+  r.salt = "s1";
+  r.registerManual(LONG_SECRET, "ark-key");
+  const clean = auditPayload({ out: `b64: ${b64of(LONG_SECRET)}` }, r);
+  assert.equal(clean.leaks, 1);
+  assert.deepEqual(clean.leakedLabels, ["ark-key"]);
+  const mixed = auditPayload({ out: `${LONG_SECRET} + ${hexof(LONG_SECRET)}` }, r);
+  assert.equal(mixed.leaks, 1, "raw + encoded in one leaf counts once per entry");
+  const ok = auditPayload({ out: "no secrets here" }, r);
+  assert.equal(ok.leaks, 0);
+});
+
+test("encodedVariants: bounded for very large values, raw redaction still applies", () => {
+  assert.deepEqual(encodedVariants("x".repeat(MAX_VARIANT_BYTES + 1)), [], "above the cap → no variants");
+  assert.ok(encodedVariants("y".repeat(MAX_VARIANT_BYTES)).length > 0, "at the cap → still encoded");
+
+  // the raw value is still redacted (forms fall back to raw + long runs)
+  const big = "Zq4" + "mN9pQrStUvWx3y4z5A6b7C8d9E0".repeat(300);
+  const r = new Registry();
+  r.salt = "s1";
+  const { entry } = r.registerManual(big, "big");
+  const res = r.redact(`leak ${big}`);
+  assert.equal(res.count, 1);
+  assert.ok(res.text.includes(entry.placeholder));
+});
