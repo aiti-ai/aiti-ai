@@ -713,7 +713,7 @@ export async function resolve(prefer?: UeTarget, refresh = false, locale?: strin
     ok: !error && !!target,
     mode, target, env, exportLines, rationale,
     warnings: [...new Set(warnings)], error: error || undefined, hint,
-    probes,
+    probes: { desktop: localizeProbe(locale, probes.desktop), headless: localizeProbe(locale, probes.headless) },
   };
 }
 

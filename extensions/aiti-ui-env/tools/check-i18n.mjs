@@ -19,11 +19,12 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (p) => readFileSync(join(root, p), "utf8");
 
-const { uiI18n } = await import(join(root, "lib/i18n.ts"));
+const { uiI18n } = await import(pathToFileURL(join(root, "lib/i18n.ts")).href);
 const en = uiI18n.en;
 const zh = uiI18n["zh-CN"];
 const has = (table, key) => Object.prototype.hasOwnProperty.call(table, key);
