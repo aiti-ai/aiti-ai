@@ -97,7 +97,17 @@ export default function register(ctx: Record<string, unknown>) {
     // 开旧式文件夹 tab——不在 dock 状态机里，tab 条无 ⇱ 浮窗/停靠菜单）。拦截 onSelect
     // 纯扩展侧闭环：宿主 onSelect 仅用于无本扩展时的兜底路径，此处覆盖后不再触达。
     render: (props: Record<string, unknown>) => (
-      <FolderSwitcher {...(props as any)} onSelect={(p: string) => openFolderDocked(p, "right-panel")} />
+      // Host topbar passes onSelect (open the folder); generic consumers (e.g. the
+      // video studio workspace picker) pass their own callback. Only fall back to the
+      // dock behavior when no caller callback was supplied.
+      <FolderSwitcher {...(props as any)} onSelect={(p: string) => {
+        // The host topbar passes compact=true and historically the folder extension
+        // docked the picked folder; preserve that. Embedded pickers (video studio
+        // workspace dialog) pass no compact and receive the path via onSelect.
+        if ((props as any).compact === true) openFolderDocked(p, "right-panel");
+        else if (typeof (props as any).onSelect === "function") (props as any).onSelect(p);
+        else openFolderDocked(p, "right-panel");
+      }} />
     ),
     meta: { label: "i18n:it.folder-picker.label", title: "aiti-folder: directory switcher (no cwd change)" },
   }]);

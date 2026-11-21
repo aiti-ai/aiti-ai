@@ -15,7 +15,7 @@ import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
 import { runEsbuild } from "../../../_shared/esbuild-bin.ts";
-import { existsSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -92,8 +92,12 @@ function esbuildBin() {
 async function loadFolderDock(t, opts = {}) {
   const dir = mkdtempSync(join(tmpdir(), "afd-test-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const reactStub = join(dir, "react-stub.js");
-  writeFileSync(reactStub,
+  // react stub must be a DIRECTORY: the root tsconfig sets jsx:"react-jsx", so esbuild's automatic
+  // runtime emits `react/jsx-runtime` subpath imports — a single-file alias would resolve to
+  // react-stub.js/jsx-runtime and fail. index.js carries the hooks; jsx-runtime.js the JSX functions.
+  const reactStub = join(dir, "react-stub");
+  mkdirSync(reactStub, { recursive: true });
+  writeFileSync(join(reactStub, "index.js"),
     "export const useEffect = () => {};\n" +
     "export const useState = (v) => [v, () => {}];\n" +
     "export const useLayoutEffect = () => {};\n" +
@@ -103,6 +107,11 @@ async function loadFolderDock(t, opts = {}) {
     "export const memo = (f) => f;\n" +
     "export const createElement = () => null;\n" +
     "export const Fragment = null;\n");
+  writeFileSync(join(reactStub, "jsx-runtime.js"),
+    "export const Fragment = null;\n" +
+    "export const jsx = () => null;\n" +
+    "export const jsxs = () => null;\n" +
+    "export const jsxDEV = () => null;\n");
   const outfile = join(dir, "bundle.mjs");
   // 派生形态（Linux 原生 ELF / Windows 官方 .exe，或 node 直跑 JS 入口）由 esbuild-bin 收口
   await runEsbuild(esbuildBin(), [join(here, "folder-dock.tsx"), "--bundle", "--format=esm", "--platform=node",

@@ -20,6 +20,8 @@
  */
 import { renameSync, rmSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { groupHeuristic, loadPlan, savePlan, newPlan, learn } from "./server/git-plan";
+import { folderWatchApi } from "./server/watch";
+import { contentSearchApi } from "./server/search";
 import { dirname, isAbsolute, join, normalize, sep } from "node:path";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -279,6 +281,21 @@ export default {
         "sidebar.fullScopeAll": "全 workspace",
         "sidebar.fulltextHint": "限文档中心已收录 md",
         "sidebar.fulltextHintTitle": "仅搜索文档中心已收录的 workspace md；收录为定期/手动扫描，最新文件可能未入库",
+        "sidebar.searchTabContent": "内容",
+        "sidebar.contentHint": "rg · 智能大小写 · 忽略 gitignore/node_modules",
+        "sidebar.contentHintTitle": "工作区文件内容搜索（ripgrep）：智能大小写（全小写=不敏感，含大写=精确）、尊重 .gitignore、跳过 node_modules/.git/超 2MB 文件；上限 200 条/60 文件，超限显式标注",
+        "sidebar.searchingContent": "搜索内容中…",
+        "sidebar.noMatchingContent": "没有匹配的内容",
+        "sidebar.contentTruncated": "结果超限已截断（≤200 条 / 60 文件，已扫 {files} 个文件）——可加限定词缩小范围",
+        "sidebar.locateInTree": "在树中定位",
+        "sidebar.openHitFile": "打开文件",
+        "sidebar.multiselectTitle": "多选模式：勾选文件后批量 @ 到新会话 / 批量回收站",
+        "sidebar.selectedCount": "已选 {n}",
+        "sidebar.batchAtTitle": "把所选文件作为 @ 引用带入新会话（每行一个）",
+        "sidebar.batchTrash": "回收站",
+        "sidebar.batchTrashTitle": "把所选文件移入系统回收站（可恢复）",
+        "sidebar.batchCancel": "取消多选",
+        "sidebar.batchTrashDone": "已移入回收站 {n} 项",
         "sidebar.useDefaultDirectory": "使用默认目录",
         "i18n.networkError": "网络错误",
       },
@@ -399,6 +416,21 @@ export default {
         "sidebar.docCenterUnavailable": "Doc center unavailable",
         "sidebar.fullScopeAll": "All workspaces",
         "sidebar.fulltextHint": "doc-center indexed md only",
+        "sidebar.searchTabContent": "Code",
+        "sidebar.contentHint": "rg · smart case · ignores gitignore/node_modules",
+        "sidebar.contentHintTitle": "Workspace file content search (ripgrep): smart case (all-lowercase = insensitive, any uppercase = exact), respects .gitignore, skips node_modules/.git/files over 2MB; caps 200 matches / 60 files with explicit truncation notice",
+        "sidebar.searchingContent": "Searching content…",
+        "sidebar.noMatchingContent": "No matching content",
+        "sidebar.contentTruncated": "Results truncated (≤200 matches / 60 files, {files} files scanned) — narrow the query for more",
+        "sidebar.locateInTree": "Locate in tree",
+        "sidebar.openHitFile": "Open file",
+        "sidebar.multiselectTitle": "Multi-select: check files, then batch @-mention into a new session / batch trash",
+        "sidebar.selectedCount": "{n} selected",
+        "sidebar.batchAtTitle": "Bring the selected files into a new session as @-mentions (one per line)",
+        "sidebar.batchTrash": "Trash",
+        "sidebar.batchTrashTitle": "Move the selected files to the system trash (recoverable)",
+        "sidebar.batchCancel": "Exit multi-select",
+        "sidebar.batchTrashDone": "{n} item(s) moved to trash",
         "sidebar.fulltextHintTitle": "Only workspace md indexed by aiti-doc-center; collection is periodic/manual, newest files may be missing",
         "sidebar.useDefaultDirectory": "Use default directory",
         "i18n.networkError": "Network error",
@@ -414,6 +446,13 @@ export default {
       const u = new URL(req.url);
       const p = u.pathname.split("/").filter(Boolean);
       const route = p[p.length - 1];
+
+      // Directory live watch (borrow plan §2.4): /watch issues an id, /watch-stop removes it (self-contained server/watch.ts)
+      const wRes = await folderWatchApi(req, ctx, route);
+      if (wRes) return wRes;
+      // Content search (borrow plan §2.5): bounded ripgrep endpoint (self-contained server/search.ts)
+      const cRes = await contentSearchApi(req, ctx, route);
+      if (cRes) return cRes;
 
       // POST /create-file { dir, name, content? } → 新建文件（可带初始内容；已存在 409）
       if (route === "create-file" && req.method === "POST") {

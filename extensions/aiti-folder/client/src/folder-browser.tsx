@@ -9,7 +9,8 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { apiUrl, t, getFileTabs, closeFileTabs, extSvc, extEnsureMaterialized, openFileDiff } from "./host-shim";
 import { useDockCommands, useDockHeaderState, useDockHeaderMenuItems, writeBlockCollapsed, usePresent, closePanel } from "../../../_shared/ext-float-dock";
 import type { DockMenuItem } from "../../../_shared/ext-float-dock";
-import { lastSeg, normSlash, dirOf, relTo, relFromBase, joinPath, buildGitByPath, buildChangedDirs, fetchEntries, peekEntries, fetchList, peekList, recentProjects, displayCwd, buildSearchTree, type SearchTreeNode } from "./lib";
+import { lastSeg, normSlash, dirOf, relTo, relFromBase, joinPath, buildGitByPath, buildChangedDirs, fetchEntries, peekEntries, fetchList, peekList, recentProjects, displayCwd, buildSearchTree, invalidateEntries, groupContentMatches, type SearchTreeNode } from "./lib";
+import { watchDir } from "./folder-watch";
 import { GitBadge, FolderIcon, FileIcon, CaretIcon, CheckIcon, MiRefresh, MiExternal, MiPencil, MiMove, MiAt, MiInfo, MiDownload, MiUpload, MiTrash, MiFilePlus, MiFolderPlus, MiFolderUp, MiCopy, MiCopyTo, MiArrowUp, MiSearch, MiPin, MiPinOff, MiEyeOff, MiPlus, MiMinus, MiGitCompare, MiUndo, MiX, MiCloseLeft, MiCloseRight, MiCloseAll, PlusIcon, TerminalIcon, ChangesIcon } from "./icons";
 import { EXT_LANG, LANG_COLOR } from "./lib";
 import { FolderSwitcher } from "./folder-switcher";
@@ -151,6 +152,24 @@ function MarkedText({ text }: { text: string }) {
     if (m.index > last) parts.push(text.slice(last, m.index));
     parts.push(<span key={k++} style={{ background:"rgba(79,142,247,0.22)", borderRadius:2 }}>{m[1]}</span>);
     last = m.index + m[0].length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return <>{parts}</>;
+}
+
+// ── Content-search line highlight: wraps query hits in highlight spans (case-insensitive split, zero innerHTML, MarkedText-style) ──
+function HighlightedLine({ text, query }: { text: string; query: string }) {
+  const q = query.trim();
+  if (!q) return <>{text}</>;
+  const lower = text.toLowerCase();
+  const needle = q.toLowerCase();
+  const parts: any[] = [];
+  let last = 0, k = 0, idx = lower.indexOf(needle);
+  while (idx >= 0) {
+    if (idx > last) parts.push(text.slice(last, idx));
+    parts.push(<span key={k++} style={{ background:"rgba(79,142,247,0.22)", borderRadius:2 }}>{text.slice(idx, idx + needle.length)}</span>);
+    last = idx + needle.length;
+    idx = lower.indexOf(needle, last);
   }
   if (last < text.length) parts.push(text.slice(last));
   return <>{parts}</>;
@@ -774,6 +793,9 @@ function ChangedFileRow(o: { st: any; root: string; cwd: string; onOpenFile: (p:
 
 function TreeNode(o: any) {
   const node=o.node, depth=o.depth, cwd=o.cwd, expanded=o.expanded, onToggle=o.onToggle, onOpenFile=o.onOpenFile, onOpenFolder=o.onOpenFolder, onAtMention=o.onAtMention, onTrash=o.onTrash, onChanged=o.onChanged, gitByPath=o.gitByPath, changedDirs=o.changedDirs, hlPath=o.highlightPath, tt=o.t, root=o.root;
+  const selMode: boolean = o.selMode === true;
+  const selSelected: boolean = o.selSelected === true;
+  const onSelectRow: undefined | ((fp: string, on: boolean) => void) = o.onSelectRow;
   const showIgnored: boolean = o.showIgnored === true;
   const showIgnoredRef = useRef(showIgnored); showIgnoredRef.current = showIgnored;
   const refreshKey: number = o.refreshKey ?? 0;
@@ -804,6 +826,19 @@ function TreeNode(o: any) {
     if(loaded){ loadChildren(true); downSeqRef.current+=1; setDownSeq(downSeqRef.current); }
     else loadChildren(true);
   }, [loaded, loadChildren]);
+  // Directory live watch (borrow plan §2.4): watch expanded dirs only (DSH perf discipline); frame →
+  // invalidate cache + force-reload this subtree; 400ms throttle merges bursts (own writes already go through refreshKey).
+  const watchThrottleRef = useRef(0);
+  useEffect(()=>{
+    if(!open || !loaded) return;
+    return watchDir(node.fullPath, ()=>{
+      const now = Date.now();
+      if(now - watchThrottleRef.current < 400) return;
+      watchThrottleRef.current = now;
+      invalidateEntries(node.fullPath);
+      loadChildren(true);
+    });
+  }, [open, loaded, node.fullPath, loadChildren]);
   // 点击处理：点前半段（文件名附近）开文件/展开；点后部触发操作区（小屏无悬停等效）。
   // 搜索结果里的命中目录同样展开（懒加载真实内容）；要新 tab 打开用 hover 的「打开」按钮。
   const handleClick = useCallback(()=>{ if(node.isDir){ const n=!open; onToggle(node.fullPath, n); if(n&&!loaded) loadChildren(); } else { onOpenFile(node.fullPath); } }, [node, open, loaded, loadChildren, onOpenFile, onToggle]);
@@ -823,7 +858,15 @@ function TreeNode(o: any) {
   return (
     <div key="row">
       <div key="row-inner" data-file-node={node.fullPath} onClick={node.isDir?handleClick:handleRowClick} onMouseEnter={()=>setHovered(true)} onMouseLeave={()=>setHovered(false)}
-        style={{ position:"relative", display:"flex", alignItems:"center", gap:4, paddingLeft:8+depth*14, paddingRight:8, height:24, cursor:"pointer", background: node.fullPath===hlPath ? "rgba(79,142,247,0.18)" : (hovered?"var(--bg-hover)":"transparent"), borderRadius:4, userSelect:"none" }}>
+        draggable={!node.isDir}
+        onDragStart={(e:any)=>{ try { e.dataTransfer.setData("text/plain", buildAtText(node.fullPath) + " "); e.dataTransfer.setData("application/x-aiti-file-path", node.fullPath); e.dataTransfer.effectAllowed = "copyLink"; } catch { /* noop */ } }}
+        style={{ position:"relative", display:"flex", alignItems:"center", gap:4, paddingLeft:8+depth*14, paddingRight:8, height:24, cursor:"pointer", background: node.fullPath===hlPath ? "rgba(79,142,247,0.18)" : (selSelected?"rgba(79,142,247,0.10)":(hovered?"var(--bg-hover)":"transparent")), borderRadius:4, userSelect:"none" }}>
+        {selMode && !node.isDir ? (
+          <input type="checkbox" checked={selSelected} aria-label={tt("sidebar.multiselect")}
+            onClick={(e:any)=>e.stopPropagation()}
+            onChange={(e:any)=>onSelectRow?.(node.fullPath, e.target.checked === true)}
+            style={{ width:11, height:11, margin:0, flexShrink:0, accentColor:"var(--accent)", cursor:"pointer" }} />
+        ) : null}
         {node.isDir ? (
           <svg width={10} height={10} viewBox="0 0 10 10" fill="none" stroke="var(--text-dim)" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0, transform:open?"rotate(90deg)":"none", transition:"transform 0.1s"}}><polyline points="3 2 7 5 3 8"/></svg>
         ) : <span style={{width:10,flexShrink:0}} />}
@@ -853,7 +896,7 @@ function TreeNode(o: any) {
       </div>
       {(node.isDir && open) ? (
         <div key="tree">
-          {children.map((ch:any)=> <TreeNode key={ch.fullPath} node={ch} depth={depth+1} cwd={cwd} expanded={expanded} refreshSeq={downSeq} onToggle={onToggle} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} onAtMention={onAtMention} onTrash={onTrash} onChanged={onChanged} gitByPath={gitByPath} changedDirs={changedDirs} highlightPath={hlPath} t={tt} root={root} showIgnored={showIgnored} />)}
+          {children.map((ch:any)=> <TreeNode key={ch.fullPath} node={ch} depth={depth+1} cwd={cwd} expanded={expanded} refreshSeq={downSeq} onToggle={onToggle} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} onAtMention={onAtMention} onTrash={onTrash} onChanged={onChanged} gitByPath={gitByPath} changedDirs={changedDirs} highlightPath={hlPath} t={tt} root={root} showIgnored={showIgnored} selMode={selMode} selSelected={selSelected} onSelectRow={onSelectRow} />)}
           {(children.length===0 && loaded) ? <div key="empty" style={{paddingLeft:8+(depth+1)*14,fontSize:11,color:"var(--text-dim)",height:22,display:"flex",alignItems:"center"}}>{tt("files.noFiles")}</div> : null}
         </div>
       ) : null}
@@ -996,17 +1039,53 @@ export function FolderBrowser(props: any) {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const hasSearchQuery = searchQuery.trim().length > 0;
   // ── 正文模式（P2 文档全文检索，复用 aiti-doc-center services.docs，经本扩展 server 代理）──
-  const [searchMode, setSearchMode] = useState<"files" | "fulltext">("files");
+  const [searchMode, setSearchMode] = useState<"files" | "fulltext" | "content">("files");
+  // ── Content mode (borrow plan §2.5: workspace ripgrep bounded search via this extension's server content-search) ──
+  const [contentMatches, setContentMatches] = useState<any[]>([]);
+  const [contentTruncated, setContentTruncated] = useState(false);
+  const [contentFiles, setContentFiles] = useState(0);
+  const [rgAvailable, setRgAvailable] = useState<boolean | null>(null); // null = unknown; false = rg absent (hide the content tab)
   const [docItems, setDocItems] = useState<any[]>([]);
   const [docsAvailable, setDocsAvailable] = useState<boolean | null>(null); // null=未知（页签默认显示；首次请求后由 server available 定）
   const [fullScope, setFullScope] = useState(false); // 跳过当前 root 前缀过滤，看全部 workspace 的命中
+  // ── Multi-select batch actions (borrow plan §2.6: check arbitrary files → @ new session / trash; file-row checkboxes) ──
+  const [selMode, setSelMode] = useState(false);
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
+  const [selBusy, setSelBusy] = useState(false);
+  const toggleSelectRow = useCallback((fp: string, on: boolean) => {
+    setSelectedPaths(prev => { const n = new Set(prev); if (on) n.add(fp); else n.delete(fp); return n; });
+  }, []);
+  const exitSelMode = useCallback(() => { setSelMode(false); setSelectedPaths(new Set()); }, []);
+  // Batch @ into a new session: one @-mention per line (multi-line text brought in at once)
+  const batchAtNew = useCallback(async () => {
+    if (selectedPaths.size === 0) return;
+    try {
+      const text = [...selectedPaths].map((p) => buildAtText(p)).join("\n");
+      await openNewSessionWithExtSvc({ text, targetDir: root, targetPath: root, currentCwd: cwd, apiUrl, extSvc });
+    } catch { /* noop */ }
+  }, [selectedPaths, root, cwd]);
+  // Batch trash: POST /trash {paths[]} (system trash, recoverable) → invalidate cache + refresh + clear selection
+  const batchTrash = useCallback(async () => {
+    if (selectedPaths.size === 0 || selBusy) return;
+    setSelBusy(true);
+    try {
+      const r = await fetch(apiUrl("/api/extensions/aiti-folder/trash"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ paths: [...selectedPaths] }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) { setUploadMsg({ err: d.error || ("HTTP " + r.status) }); return; }
+      setUploadMsg({ ok: t("sidebar.batchTrashDone", { n: selectedPaths.size }) });
+      setSelectedPaths(new Set());
+      invalidateEntries(root);
+      setRefreshKey(k => k + 1); // the /api/git/status effect depends on refreshKey — badges re-pull with it
+    } catch (e: any) { setUploadMsg({ err: e && e.message ? e.message : String(e) }); }
+    finally { setSelBusy(false); }
+  }, [selectedPaths, selBusy, root]);
   // 最新 root/expanded 镜像：卸载/切根时写快照用
   const stateRef = useRef({ root, expanded });
   stateRef.current = { root, expanded };
   useEffect(() => () => saveExpandedSnapshot(stateRef.current.root, stateRef.current.expanded), []);
   useEffect(()=>{ setRoot(root0); }, [root0]);
   // 切换目录/工作区：搜索展开集按绝对路径存，旧 root 的集合全部失效，清空（输入保留，防抖请求按新 root 自动重发）
-  useEffect(()=>{ setSearchExpanded(new Set()); setDirHits(new Set()); setDocItems([]); }, [root0]);
+  useEffect(()=>{ setSearchExpanded(new Set()); setDirHits(new Set()); setDocItems([]); setContentMatches([]); }, [root0]);
   // 搜索请求（文件模式）：150ms 防抖 + AbortController（仅输入变化竞态取消；切目录立即重搜）。
   // 文件与目录条目都保留——目录命中可展开查看真实全量内容。
   useEffect(() => {
@@ -1068,6 +1147,38 @@ export function FolderBrowser(props: any) {
     }, 150);
     return () => { clearTimeout(timer); controller.abort(); };
   }, [root, searchOpen, searchMode, searchQuery]);
+  // Content-mode request (borrow plan §2.5): same debounce; server ripgrep bounded (≤200 matches / 60 files / 8s),
+  // rg absent → hide the tab and fall back to files mode; stale responses dropped via request seq (spawn cannot AbortController).
+  const contentReqSeq = useRef(0);
+  useEffect(() => {
+    if (!searchOpen || searchMode !== "content") return;
+    const query = searchQuery.trim();
+    if (!query) { setContentMatches([]); setContentTruncated(false); setContentFiles(0); setSearchLoading(false); setSearchError(false); return; }
+    const seq = ++contentReqSeq.current;
+    setSearchLoading(true); setSearchError(false);
+    const timer = setTimeout(() => {
+      fetch(apiUrl("/api/extensions/aiti-folder/content-search"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ root, q: query }),
+      })
+        .then(r => r.json().then((d: any) => ({ status: r.status, d })).catch(() => ({ status: r.status, d: null })))
+        .then(({ status, d }) => {
+          if (seq !== contentReqSeq.current) return; // stale
+          if (d && d.rgMissing) { setRgAvailable(false); setSearchMode("files"); setUploadMsg({ err: t("sidebar.rgUnavailable") }); return; }
+          if (status !== 200 || !d?.ok) { setContentMatches([]); setSearchError(true); return; }
+          setRgAvailable(true);
+          setContentMatches(Array.isArray(d.matches) ? d.matches : []);
+          setContentTruncated(d.truncated === true);
+          setContentFiles(Number(d.files) || 0);
+        })
+        .catch(() => { if (seq === contentReqSeq.current) { setContentMatches([]); setSearchError(true); } })
+        .finally(() => { if (seq === contentReqSeq.current) setSearchLoading(false); });
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [root, searchOpen, searchMode, searchQuery]);
+  // Group content results (keep rg relevance order; 3 preview lines per file)
+  const contentGroups = useMemo(() => groupContentMatches(contentMatches, 3), [contentMatches]);
   // 打开搜索条时自动聚焦输入框
   useEffect(() => { if (searchOpen) searchInputRef.current?.focus(); }, [searchOpen]);
   // 结果渲染成树：含匹配文件的祖先目录自动展开（只增不删，保留用户手动折叠）
@@ -1096,13 +1207,23 @@ export function FolderBrowser(props: any) {
   }, [root, searchPaths, dirHits]);
   // 开/关搜索：关闭时清空输入与结果、模式复位文件（下次打开是干净状态）
   const toggleSearch = useCallback(() => {
-    if (searchOpen) { setSearchOpen(false); setSearchQuery(""); setSearchPaths([]); setDirHits(new Set()); setDocItems([]); setSearchError(false); setSearchLoading(false); setSearchExpanded(new Set()); setSearchMode("files"); }
+    if (searchOpen) { setSearchOpen(false); setSearchQuery(""); setSearchPaths([]); setDirHits(new Set()); setDocItems([]); setSearchError(false); setSearchLoading(false); setSearchExpanded(new Set()); setSearchMode("files"); setContentMatches([]); setContentTruncated(false); setContentFiles(0); }
     else setSearchOpen(true);
   }, [searchOpen]);
+  // Locate in tree (borrow plan §2.5): close search (normal tree renders again) → reuse the folder-reveal chain (expand ancestors + highlight + scroll)
+  const locateInTree = useCallback((target: string) => {
+    if (searchOpen) { setSearchOpen(false); setSearchQuery(""); setSearchPaths([]); setDirHits(new Set()); setDocItems([]); setSearchError(false); setSearchLoading(false); setSearchExpanded(new Set()); setSearchMode("files"); setContentMatches([]); setContentTruncated(false); setContentFiles(0); }
+    try {
+      const detail = { root, target };
+      window.dispatchEvent(new CustomEvent("pi-web:folder-reveal", { detail }));
+      (window as any).__piFolderRevealLast = { ...detail, ts: Date.now() };
+    } catch { /* noop */ }
+  }, [searchOpen, root]);
   // 切换文件/正文模式：清两模式各自结果（输入保留，防抖请求按新模式自动重发）
-  const switchSearchMode = useCallback((m: "files" | "fulltext") => {
+  const switchSearchMode = useCallback((m: "files" | "fulltext" | "content") => {
     if (m === searchMode) return;
     setSearchMode(m); setSearchPaths([]); setDirHits(new Set()); setDocItems([]); setSearchError(false); setSearchLoading(false);
+    setContentMatches([]); setContentTruncated(false); setContentFiles(0);
   }, [searchMode]);
   // 正文模式可见集：默认限当前 root 前缀（doc-center 的 under 按收集时 root 前缀匹配，子目录 root 下搜不到父 workspace 的文档，故在客户端过滤）；fullScope 开关看全部
   const visibleDocs = useMemo(() => {
@@ -1244,6 +1365,17 @@ export function FolderBrowser(props: any) {
     fetchList(apiUrl, root, { force: true, showIgnored }).then(l=>{ if(!c){ setRoots(l.entries); setParent(l.parentPath ?? null); } }).catch(e=>{ if(!c) setError(e&&e.message?e.message:String(e)); }).finally(()=>{ if(!c) setLoading(false); });
     return ()=>{ c=true; };
   }, [root, refreshKey, showIgnored]);
+  // Root live watch (borrow plan §2.4): frame → doRefresh (root list reload + refreshKey propagation into subtrees)
+  const rootWatchThrottleRef = useRef(0);
+  useEffect(()=>{
+    return watchDir(root, ()=>{
+      const now = Date.now();
+      if(now - rootWatchThrottleRef.current < 400) return;
+      rootWatchThrottleRef.current = now;
+      invalidateEntries(root);
+      setRefreshKey(k=>k+1);
+    });
+  }, [root]);
   // 「显示忽略项」切换 → 强刷根（默认列表不含 ignored 条目，开启后需重拉带标记列表）；
   // ref 防首挂误刷（初始值相等跳过）
   const showIgnoredPrevRef = useRef(showIgnored);
@@ -1379,6 +1511,7 @@ export function FolderBrowser(props: any) {
     search: () => { try { writeBlockCollapsed(dockItemKey, false); } catch { /* ignore */ } toggleSearch(); },
     terminal: () => { void openTerminal(root).then((err) => { if (err) setUploadMsg({ err }); }); },
     refresh: () => doRefresh(),
+    multiselect: () => { if (selMode) exitSelMode(); else setSelMode(true); },
     changes: () => setChangesOpen((v) => !v),
     at: () => { try { if (onAtMention) onAtMention(relTo(root, cwd || root), false); } catch { /* ignore */ } },
     plus: (payload?: unknown) => {
@@ -1398,7 +1531,7 @@ export function FolderBrowser(props: any) {
     parent: () => doOpenParent(),
   } : null);
   useDockHeaderState(dockItemKey, dockItemKey ? {
-    searchOpen, refreshDone, root, gitCount: gitFiles.length, changesOpen, hasParent: parent != null,
+    searchOpen, refreshDone, root, gitCount: gitFiles.length, changesOpen, hasParent: parent != null, selMode,
   } : null);
   useDockHeaderMenuItems(dockItemKey, dockItemKey ? buildDockMenuItems() : null);
 
@@ -1423,6 +1556,8 @@ export function FolderBrowser(props: any) {
         <input ref={uploadInputRef} type="file" multiple hidden onChange={e=>void handleUploadInput(e)} />
         <input ref={dirUploadInputRef} type="file" multiple hidden webkitdirectory="" onChange={e=>void handleDirUploadInput(e)} />
         {TBtn({ key:"srch", onClick:toggleSearch, title:t("sidebar.searchFiles"), pressed:searchOpen, color:searchOpen?"var(--accent)":"var(--text-dim)", bg:searchOpen?"var(--bg-selected)":"transparent", children:<MiSearch/> })}
+        {TBtn({ key:"sel", onClick:()=>{ if (selMode) exitSelMode(); else setSelMode(true); }, title:t("sidebar.multiselectTitle"), pressed:selMode, color:selMode?"var(--accent)":"var(--text-dim)", bg:selMode?"var(--bg-selected)":"transparent",
+          children:<svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden><rect x="3" y="3" width="7" height="7" rx="1"/><path d="m6.5 6.5.01 0"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 17h7M17.5 13.5v7"/></svg> })}
         {gitFiles.length>0 ? TBtn({ key:"ch", onClick:()=>setChangesOpen(v=>!v), title:t("sidebar.changedFiles",{count:gitFiles.length}), pressed:changesOpen, color:changesOpen?"var(--accent)":"var(--text-dim)", bg:changesOpen?"var(--bg-selected)":"transparent",
           children: <span style={{position:"relative",display:"inline-flex"}}>
             <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden><circle cx="12" cy="12" r="3"/><path d="M3 12h6"/><path d="M15 12h6"/></svg>
@@ -1555,11 +1690,11 @@ export function FolderBrowser(props: any) {
                 </button>
               ) : null}
             </div>
-            {/* 模式页签 + 全 workspace 开关（doc-center 不可用时页签行不渲染） */}
-            {docsAvailable !== false ? (
+            {/* Mode tabs (files/content always; docs tab only when doc-center is present) + per-mode hints */}
+            {rgAvailable !== false ? (
               <div style={{ display:"flex", alignItems:"center", gap:2, padding:"4px 2px 0" }}>
-                {(["files", "fulltext"] as const).map((m) => {
-                  const label = m === "files" ? t("sidebar.searchTabFiles") : t("sidebar.searchTabFulltext");
+                {(["files", "fulltext", "content"] as const).filter((m) => m !== "fulltext" || docsAvailable !== false).map((m) => {
+                  const label = m === "files" ? t("sidebar.searchTabFiles") : m === "fulltext" ? t("sidebar.searchTabFulltext") : t("sidebar.searchTabContent");
                   const on = searchMode === m;
                   return <button key={m} type="button" onClick={()=>switchSearchMode(m)}
                     style={{ height:18, padding:"0 8px", fontSize:10, border:"none", borderRadius:4, cursor:"pointer", fontWeight:on?600:400,
@@ -1568,6 +1703,10 @@ export function FolderBrowser(props: any) {
                 {searchMode==="fulltext" ? (
                   <span title={t("sidebar.fulltextHintTitle")}
                     style={{ fontSize:9, color:"var(--text-dim)", opacity:0.85, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", minWidth:0, flexShrink:1, marginLeft:2 }}>{t("sidebar.fulltextHint")}</span>
+                ) : null}
+                {searchMode==="content" ? (
+                  <span title={t("sidebar.contentHintTitle")}
+                    style={{ fontSize:9, color:"var(--text-dim)", opacity:0.85, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", minWidth:0, flexShrink:1, marginLeft:2 }}>{t("sidebar.contentHint")}</span>
                 ) : null}
                 <span style={{ flex:1 }} />
                 {searchMode==="fulltext" ? (
@@ -1580,16 +1719,16 @@ export function FolderBrowser(props: any) {
             ) : null}
             {hasSearchQuery ? (
               <div style={{ paddingTop:3 }}>
-                {searchLoading ? <div role="status" style={{ padding:"6px 2px", fontSize:10, color:"var(--text-dim)" }}>{searchMode==="fulltext" ? t("sidebar.searchingDocs") : t("sidebar.searchingFiles")}</div> : null}
+                {searchLoading ? <div role="status" style={{ padding:"6px 2px", fontSize:10, color:"var(--text-dim)" }}>{searchMode==="fulltext" ? t("sidebar.searchingDocs") : searchMode==="content" ? t("sidebar.searchingContent") : t("sidebar.searchingFiles")}</div> : null}
                 {!searchLoading && searchError ? <div role="alert" style={{ padding:"6px 2px", fontSize:10, color:"var(--danger, #f87171)" }}>{t("i18n.networkError")}</div> : null}
-                {!searchLoading && !searchError && (searchMode==="files" ? searchPaths.length===0 : visibleDocs.length===0) ? <div style={{ padding:"6px 2px", fontSize:10, color:"var(--text-dim)" }}>{searchMode==="fulltext" ? t("sidebar.noMatchingDocs") : t("sidebar.noMatchingFiles")}</div> : null}
+                {!searchLoading && !searchError && (searchMode==="files" ? searchPaths.length===0 : searchMode==="content" ? contentGroups.length===0 : visibleDocs.length===0) ? <div style={{ padding:"6px 2px", fontSize:10, color:"var(--text-dim)" }}>{searchMode==="fulltext" ? t("sidebar.noMatchingDocs") : searchMode==="content" ? t("sidebar.noMatchingContent") : t("sidebar.noMatchingFiles")}</div> : null}
                 {!searchLoading && !searchError && searchMode==="files" && searchPaths.length>0 ? (
                   <div>
                     {searchRoots.map((node:any)=> (
                       <TreeNode key={searchQuery+":"+node.fullPath} node={node} depth={0} cwd={cwd||root} expanded={searchExpanded}
                         onToggle={(fp:string,o:boolean)=>setSearchExpanded(prev=>{ const n=new Set(prev); if(o) n.add(fp); else n.delete(fp); return n; })}
                         onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} onAtMention={onAtMention} onTrash={setPendingTrash} onChanged={doRefresh}
-                        gitByPath={gitByPath} changedDirs={changedDirs} t={t} root={root} />
+                        gitByPath={gitByPath} changedDirs={changedDirs} t={t} root={root} selMode={selMode} selSelected={selectedPaths.has(node.fullPath)} onSelectRow={toggleSelectRow} />
                     ))}
                   </div>
                 ) : null}
@@ -1607,6 +1746,40 @@ export function FolderBrowser(props: any) {
                         {d.snippet ? <span style={{ fontSize:11, color:"var(--text-muted)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}><MarkedText text={d.snippet} /></span> : null}
                       </div>
                     ))}
+                  </div>
+                ) : null}
+                {!searchLoading && !searchError && searchMode==="content" && contentGroups.length>0 ? (
+                  <div style={{ display:"flex", flexDirection:"column", gap:1 }}>
+                    {contentGroups.map((g:any) => {
+                      const rel = relTo(g.path, root) || g.path;
+                      return (
+                        <div key={g.path} style={{ padding:"2px 4px" }}>
+                          {/* File group header: click = locate in tree (close search + expand ancestors + highlight/scroll); opens the file via title row */}
+                          <div className="gitops-row" onClick={()=>locateInTree(g.path)}
+                            title={t("sidebar.locateInTree") + " · " + g.path}
+                            style={{ display:"flex", alignItems:"center", gap:6, padding:"3px 6px", borderRadius:4, cursor:"pointer", userSelect:"none" }}
+                            onMouseEnter={e=>(e.currentTarget.style.background="var(--bg-hover)")} onMouseLeave={e=>(e.currentTarget.style.background="transparent")}>
+                            <span style={{ fontSize:11.5, color:"var(--text)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", flex:1, fontFamily:"var(--font-mono)" }}>{rel}</span>
+                            <span style={{ fontSize:9.5, color:"var(--text-dim)", flexShrink:0 }}>{g.count}</span>
+                            <span title={t("sidebar.locateInTree")} style={{ fontSize:9.5, color:"var(--text-dim)", flexShrink:0, border:"1px solid var(--border)", borderRadius:4, padding:"0 4px" }}>⌖</span>
+                          </div>
+                          {g.previews.map((m:any, mi:number) => (
+                            <div key={mi} className="gitops-row" onClick={()=>onOpenFile(m.path)}
+                              title={t("sidebar.openHitFile") + " · L" + m.line}
+                              style={{ display:"flex", alignItems:"baseline", gap:6, padding:"1.5px 6px 1.5px 16px", cursor:"pointer", borderRadius:4, minHeight:16 }}
+                              onMouseEnter={e=>(e.currentTarget.style.background="var(--bg-hover)")} onMouseLeave={e=>(e.currentTarget.style.background="transparent")}>
+                              <span style={{ fontSize:9.5, color:"var(--text-dim)", fontFamily:"var(--font-mono)", flexShrink:0, minWidth:26, textAlign:"right" }}>{m.line}</span>
+                              <span style={{ fontSize:10.5, color:"var(--text-muted)", fontFamily:"var(--font-mono)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", flex:1, minWidth:0 }}>
+                                <HighlightedLine text={m.text} query={searchQuery} />
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })}
+                    {contentTruncated ? (
+                      <div style={{ padding:"4px 10px", fontSize:9.5, color:"var(--warn, #f59e0b)", opacity:0.9 }}>{t("sidebar.contentTruncated", { files: contentFiles })}</div>
+                    ) : null}
                   </div>
                 ) : null}
               </div>
@@ -1667,7 +1840,7 @@ export function FolderBrowser(props: any) {
         {!hasSearchQuery ? (loading ? <div style={{padding:"12px",fontSize:12,color:"var(--text-dim)"}}>{t("files.loading")}</div>
         : error ? <div style={{padding:"12px",fontSize:12,color:"var(--danger, #f87171)"}}>{error}</div>
         : roots.length===0 ? <div style={{padding:"12px",fontSize:12,color:"var(--text-dim)"}}>{t("files.noFiles")}</div>
-        : roots.map((node:any)=> <TreeNode key={node.fullPath} node={node} depth={0} cwd={cwd||root} expanded={expanded} refreshKey={refreshKey} onToggle={toggle} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} onAtMention={onAtMention} onTrash={setPendingTrash} onChanged={doRefresh} gitByPath={gitByPath} changedDirs={changedDirs} highlightPath={highlightPath} t={t} root={root} showIgnored={showIgnored} />)) : null}
+        : roots.map((node:any)=> <TreeNode key={node.fullPath} node={node} depth={0} cwd={cwd||root} expanded={expanded} refreshKey={refreshKey} onToggle={toggle} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} onAtMention={onAtMention} onTrash={setPendingTrash} onChanged={doRefresh} gitByPath={gitByPath} changedDirs={changedDirs} highlightPath={highlightPath} t={t} root={root} showIgnored={showIgnored} selMode={selMode} selSelected={selectedPaths.has(node.fullPath)} onSelectRow={toggleSelectRow} />)) : null}
       </div>
       {/* 「放弃更改」页内确认弹窗（替代 window.confirm——2026-11-24 用户拍板） */}
       {pendingDiscard ? (
@@ -1683,6 +1856,19 @@ export function FolderBrowser(props: any) {
         </div>
       ) : null}
       {/* 删除确认弹窗（移入系统回收站，可恢复） */}
+      {/* Multi-select batch bar (borrow plan §2.6): sticky bottom bar with selected count + actions; rows toggled via checkboxes */}
+      {selMode ? (
+        <div style={{ flexShrink:0, display:"flex", alignItems:"center", gap:6, padding:"5px 10px", borderTop:"1px solid var(--border)", background:"var(--bg-panel)", fontSize:11 }}>
+          <span style={{ color: selectedPaths.size ? "var(--accent)" : "var(--text-dim)", fontWeight:600, flexShrink:0 }}>{t("sidebar.selectedCount", { n: selectedPaths.size })}</span>
+          <span style={{ flex:1 }} />
+          <button type="button" disabled={selectedPaths.size === 0 || selBusy} onClick={()=>void batchAtNew()} title={t("sidebar.batchAtTitle")}
+            style={{ height:22, padding:"0 9px", borderRadius:5, border:"1px solid var(--border)", background:"var(--bg)", color: selectedPaths.size ? "var(--accent)" : "var(--text-dim)", fontSize:11, cursor: selectedPaths.size ? "pointer" : "not-allowed", fontWeight:600 }}>@</button>
+          <button type="button" disabled={selectedPaths.size === 0 || selBusy} onClick={()=>void batchTrash()} title={t("sidebar.batchTrashTitle")}
+            style={{ height:22, padding:"0 9px", borderRadius:5, border:"1px solid var(--border)", background:"var(--bg)", color: selectedPaths.size ? "var(--danger, #ef4444)" : "var(--text-dim)", fontSize:11, cursor: selectedPaths.size ? "pointer" : "not-allowed" }}>{selBusy ? "…" : t("sidebar.batchTrash")}</button>
+          <button type="button" onClick={exitSelMode} title={t("sidebar.batchCancel")}
+            style={{ height:22, padding:"0 9px", borderRadius:5, border:"1px solid var(--border)", background:"transparent", color:"var(--text-muted)", fontSize:11, cursor:"pointer" }}>{t("sidebar.batchCancel")}</button>
+        </div>
+      ) : null}
       {pendingTrash ? (
         <div onClick={(e)=>{ if(e.target===e.currentTarget && !trashBusy) setPendingTrash(null); }} style={{ position:"fixed", inset:0, zIndex:400, background:"rgba(0,0,0,0.35)", display:"flex", alignItems:"center", justifyContent:"center" }}>
           <div style={{ width:360, padding:"16px 18px", borderRadius:12, background:"var(--bg,#fff)", border:"1px solid var(--border,#ddd)", boxShadow:"0 12px 40px rgba(0,0,0,0.25)", fontSize:13, display:"flex", flexDirection:"column", gap:10 }}>

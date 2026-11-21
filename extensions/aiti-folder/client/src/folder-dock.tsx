@@ -18,7 +18,7 @@ import { useState, useEffect } from "react";
 import { openFile, openFolder, getFeatures, apiUrl, t } from "./host-shim";
 import { ct } from "./comp-i18n";
 import { lastSeg } from "./lib";
-import { FolderIcon, CaretIcon, MiSearch, MiRefresh, CheckIcon, PlusIcon, TerminalIcon, ChangesIcon, MiEye } from "./icons";
+import { FolderIcon, CaretIcon, MiSearch, MiRefresh, CheckIcon, PlusIcon, TerminalIcon, ChangesIcon, MiEye, SelIcon } from "./icons";
 import { WorkspaceDropdown } from "./folder-switcher";
 import {
   DockBody, closePanel, present, useGate, useGateSidebar,
@@ -454,6 +454,7 @@ export function FolderDockBlock(props: FolderFaceProps) {
     { id: "plus", title: t("files.newFile") + " / " + t("files.uploadFile"), icon: <PlusIcon/>, visibility: "expanded", onClick: (ev?: unknown) => { requestDockCommand(itemKey, "plus", { anchor: anchorRectOf(ev) }); } },
     { id: "changes", title: t("sidebar.changedFiles", { count: gitCount }), icon: <ChangesIcon/>, badge: gitCount > 0 ? gitCount : undefined, active: st.changesOpen === true, visibility: "expanded", onClick: () => { requestDockCommand(itemKey, "changes"); } },
     { id: "at", title: t("files.insertPathTitle"), icon: <span style={{ fontSize: 12, fontWeight: 700, lineHeight: 1 }}>@</span>, visibility: "expanded", onClick: () => { requestDockCommand(itemKey, "at"); } },
+    { id: "multiselect", title: t("sidebar.multiselectTitle"), icon: <SelIcon/>, active: st.selMode === true, visibility: "expanded", onClick: () => { requestDockCommand(itemKey, "multiselect"); } },
   ];
   return (
     <DockBody
