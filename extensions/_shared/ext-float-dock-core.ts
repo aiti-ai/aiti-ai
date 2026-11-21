@@ -97,6 +97,27 @@ export function seedBlockCollapsedDefault(blockKey: string, collapsed: boolean):
   } catch { /* ignore */ }
 }
 
+/* ── Dismissed record (user close, 2026-11-21 ruling: "a closed block stays closed
+ *  across refresh")──
+ *  User close actions (⋮ Close / TabBar ✕) land in the present state machine's close
+ *  branch, which writes 1; an explicit open (non-auto present landing in the sidebar
+ *  family) clears it. Restorative auto-dock call sites ("refresh restores default
+ *  presence") check this record before presenting, so a closed block is no longer
+ *  resurrected by a refresh.
+ *  Readers = per-extension auto-dock call points (aiti-sysmon entry, session-manager
+ *  Tasks, ...); the sole writer/clearer = the present state machine (aiti-float
+ *  dock.ts + localPresent below). */
+export const SIDEBAR_DISMISS_PREFIX = "pi:sidebar-dock:dismissed:";
+export function readBlockDismissed(blockKey: string): boolean {
+  try { return localStorage.getItem(SIDEBAR_DISMISS_PREFIX + blockKey) === "1"; } catch { return false; }
+}
+export function writeBlockDismissed(blockKey: string, dismissed: boolean): void {
+  try {
+    if (dismissed) localStorage.setItem(SIDEBAR_DISMISS_PREFIX + blockKey, "1");
+    else localStorage.removeItem(SIDEBAR_DISMISS_PREFIX + blockKey);
+  } catch { /* ignore */ }
+}
+
 export function readDockOrder(): string[] {
   try {
     const raw = JSON.parse(localStorage.getItem(SIDEBAR_ORDER_KEY) ?? "[]");
@@ -463,13 +484,18 @@ function localPresent(k: string, mode: "open" | "float" | `dock:${string}` | "cl
       next = (zone ? `docked:${zone}` : "floating") as PresentState;
     }
   } else if (mode === "float") next = "floating";
-  else if (mode === "close") next = "closed";
-  else if (mode.startsWith("dock:")) {
+  else if (mode === "close") {
+    next = "closed";
+    writeBlockDismissed(k, true); // programmatic closes recorded too — harmless, explicit reopen clears
+  } else if (mode.startsWith("dock:")) {
     const zone = mode.slice(5);
     // 与 float 状态机 dock.ts 同语义：用户显式停靠即记忆偏好（下次 open 回该位）
     try { localStorage.setItem(DOCKPREF_KEY(k), zone); } catch { /* ignore */ }
     next = `docked:${zone}` as PresentState; // 规范态 docked:<zone>（旧实现误存 dock:<zone> → gate 永假，停靠 face 不渲染）
   }
+  // Explicit (non-auto) landing in the sidebar family = user actively bringing the
+  // block back → clear the dismissed record (mirrors dock.ts).
+  if (!opts?.auto && next !== "closed" && isSidebarDockState(next)) writeBlockDismissed(k, false);
   if (next === prev) {
     // 同态 docked 再打开：与 float 状态机同语义——广播 activate 供宿主置前。
     // auto 透传（与 dock.ts 一致）：恢复性入栈的 activate 不得把宿主小屏抽屉拉起。
