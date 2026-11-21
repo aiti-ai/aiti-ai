@@ -1234,9 +1234,35 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
     return () => { cancelled = true; };
   }, [selectedCwd, wtRefreshKey, refreshKey]);
 
+  // [restore watchdog] If the sessions list never lands (extension server restarting
+  // during a hot-reload window), settle the URL restore through the host by-id open
+  // after the grace period instead of sitting on the "Opening session…" placeholder
+  // forever. restoredRef latches, so a late list landing is a no-op.
+  const restoreWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (restoreWatchdogRef.current != null) window.clearTimeout(restoreWatchdogRef.current);
+  }, []);
+
   // Auto-select cwd and restore session from URL on first load
   useEffect(() => {
-    if (allSessions.length === 0 || skipInitialProjectSelection) return;
+    if (skipInitialProjectSelection) return;
+    if (initialSessionId && !restoredRef.current && allSessions.length === 0) {
+      if (restoreWatchdogRef.current == null) {
+        restoreWatchdogRef.current = setTimeout(() => {
+          restoreWatchdogRef.current = null;
+          if (restoredRef.current) return;
+          restoredRef.current = true;
+          void onOpenById?.(initialSessionId, { initialRestore: true });
+          onInitialRestoreDone?.();
+        }, 5000);
+      }
+      return;
+    }
+    if (restoreWatchdogRef.current != null) {
+      window.clearTimeout(restoreWatchdogRef.current);
+      restoreWatchdogRef.current = null;
+    }
+    if (allSessions.length === 0) return;
 
     if (selectedCwd === null) {
       // If restoring a session, set cwd to match that session
