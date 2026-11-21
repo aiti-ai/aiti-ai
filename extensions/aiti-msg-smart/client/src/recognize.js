@@ -110,6 +110,30 @@ const ZH_YESNO_END = new RegExp(`(?:吗|吧|呢)[？?。！]?${TAIL_CLOSERS}\\s*
 // punct, EOF — so "v1...3" or "A——B" codes stay intact.
 const AFTER_GUARD = /[\s\u3000-\u9fff\uff00-\uffef"”’)\]】」』]/u;
 
+// Abbreviations that never end an English sentence; single-letter words (initials,
+// "e.g.", "U.S.") are handled separately. Checked lowercase on the word before the dot.
+const EN_ABBREV = new Set(["mr", "mrs", "ms", "dr", "prof", "sr", "jr", "vs", "etc", "fig", "no", "inc", "ltd", "co", "st", "ave", "approx", "dept", "est", "al", "vol", "pp", "cf"]);
+
+/** Is this "." an English sentence end? Guards paths/versions/abbreviations so
+ *  "docs/a.md", "v1.2.3", "Mr. Smith", "A.PNG" stay intact while "Done. Then" splits.
+ *  Sentence starts must look like "Then"/"A " (capital + lowercase, or lone capital). */
+function englishSentenceDot(t, i) {
+  if (t[i - 1] === "." || t[i + 1] === ".") return false; // part of an ellipsis run
+  let j = i - 1;
+  while (j >= 0 && /[A-Za-z]/.test(t[j])) j--;
+  const word = t.slice(j + 1, i);
+  if (word.length === 1) return false; // initials / e.g. / U.S.
+  if (word && EN_ABBREV.has(word.toLowerCase())) return false;
+  const m = /^(\s*)([A-Za-z][A-Za-z0-9_'’-]*)/.exec(t.slice(i + 1, i + 48));
+  if (!m) return false; // digit after the dot → version/decimal, not a sentence
+  const spaced = m[1].length > 0;
+  const w = m[2];
+  const sentenceStart = /^[A-Z][a-z]/.test(w) || /^[A-Z](?![A-Za-z0-9])/.test(w);
+  if (!sentenceStart) return false; // "PNG"/"MD"/"md" are not sentence starts
+  if (!spaced && !/[a-z]/.test(t[i - 1] ?? "")) return false; // "A.PNG"/"README.MD"
+  return true;
+}
+
 /** Strip one pair of *matched* wrapper quotes/brackets surrounding the whole text
  *  ("Should I proceed?" / a quoted CJK question) so signals see the bare sentence. */
 function stripWrapperQuotes(t) {
@@ -122,17 +146,27 @@ function stripWrapperQuotes(t) {
   return t;
 }
 
+/** Drop quoted/bracketed spans so signals never fire from quoted prose
+ *  (a statement quoting a question is still a statement). */
+function stripProtected(t) {
+  const mask = protectedMask(t);
+  let out = "";
+  for (let i = 0; i < t.length; i++) if (!mask[i]) out += t[i];
+  return out;
+}
+
 /** Would this sentence produce question actions? Gates soft boundaries (。！…—)
  *  so plain multi-sentence statements stay one compact row. */
 function looksLikeQuestion(s) {
   const t = stripWrapperQuotes(String(s || "").trim());
   if (!t) return false;
+  const bare = stripProtected(t); // quoted/bracketed content must not vote
   return (
-    Q_END.test(t) ||
-    ZH_YESNO_END.test(t) ||
-    /是否|要不要|能不能|可不可以|要不要我|需要我/u.test(t) ||
-    EN_INVERSION.test(t) ||
-    EN_OFFER_SIGNAL.test(t)
+    Q_END.test(bare) ||
+    ZH_YESNO_END.test(bare) ||
+    /是否|要不要|能不能|可不可以|要不要我|需要我/u.test(bare) ||
+    EN_INVERSION.test(bare) ||
+    EN_OFFER_SIGNAL.test(bare)
   );
 }
 
@@ -153,10 +187,18 @@ export function splitQuestions(text) {
     let cut = -1;
     let soft = false;
     if (ch === "。" || ch === "！") { cut = i; soft = true; }
-    else if ((ch === "？" || ch === "?") && (!next || /[\s\u3000-\u9fff\uff00-\uffef"'”’)\]]/u.test(next))) cut = i;
+    else if (ch === "？" || ch === "?") {
+      const prev = t[i - 1] ?? "";
+      if (!next || /[\s\u3000-\u9fff\uff00-\uffef"'”’)\]]/u.test(next)) cut = i;
+      // "Really?OK" / "proceed?Yes": a word starts right after the mark. A token that
+      // touches "/" (URL or path) is exempt so "/api?Q=1" survives.
+      else if (/[A-Za-z]/.test(next) && !/[^\s]*\/[^\s]*$/.test(t.slice(Math.max(0, i - 24), i)) &&
+               (/[\u3000-\u9fff\uff00-\uffef]/u.test(prev) || (/[a-z]/.test(prev) && /[A-Z]/.test(next)))) cut = i;
+    }
     else if ((ch === "；" || ch === ";") && /\p{Script=Han}/u.test(t.slice(chunkStart, i))) cut = i;
     else if ((ch === "…" || ch === "—") && next !== ch && (!next || AFTER_GUARD.test(next))) { cut = i; soft = true; }
     else if (ch === "." && t.startsWith("...", i) && t[i + 3] !== "." && (!t[i + 3] || AFTER_GUARD.test(t[i + 3]))) { cut = i + 2; soft = true; }
+    else if (ch === "." && englishSentenceDot(t, i)) { cut = i; soft = true; }
     if (cut < 0) continue;
     cand.push({ cut, soft, start: chunkStart });
     chunkStart = cut + 1;
@@ -278,15 +320,16 @@ export function detectOptions(seg, labelMax = 12) {
   //    Signals run on `probe` (wrapper quotes stripped) so a quoted question
   //    ("Should I proceed?" / a quoted CJK question) still gets actions and a clean label.
   const probe = stripWrapperQuotes(t);
+  const bare = stripProtected(probe); // signals ignore quoted/bracketed prose
   //    English open-ended set adds when/whose/whom plus request verbs ("Can you explain …")
   //    so imperative/wh-questions do not degrade into Yes/No buttons.
-  const openEnded = /怎么|如何|怎样|哪个|哪些|什么|为什么|为何|谁|多少|几(个|点|时)?|\b(?:what|how|why|who|whose|whom|when|where|which)\b|\b(?:explain|describe|list|summari[sz]e|outline|show\s+me|tell\s+me|help\s+me|walk\s+me\s+through)\b/iu.test(probe);
+  const openEnded = /怎么|如何|怎样|哪个|哪些|什么|为什么|为何|谁|多少|几(个|点|时)?|\b(?:what|how|why|who|whose|whom|when|where|which)\b|\b(?:explain|describe|list|summari[sz]e|outline|show\s+me|tell\s+me|help\s+me|walk\s+me\s+through)\b/iu.test(bare);
   // English subject-auxiliary inversion ("Should I proceed", "Do you want me to add tests")
   // is a yes/no question even without a trailing "?" — streaming text often drops it.
   // "Let me know if you'd like me to <action>" is an explicit offer — treat it as a
   // yes/no question (wins over openEnded: the wh-word sits in the offered action itself).
   const enOffer = probe.match(EN_OFFER_ACTION);
-  const yesNo = !!enOffer || (!openEnded && (Q_END.test(probe) || ZH_YESNO_END.test(probe) || /是否|要不要|能不能|可不可以|要不要我|需要我/u.test(probe) || EN_INVERSION.test(probe)));
+  const yesNo = !!enOffer || (!openEnded && (Q_END.test(bare) || ZH_YESNO_END.test(bare) || /是否|要不要|能不能|可不可以|要不要我|需要我/u.test(bare) || EN_INVERSION.test(bare)));
   if (yesNo) {
     const hasHan = /\p{Script=Han}/u.test(probe);
     if (hasHan) {

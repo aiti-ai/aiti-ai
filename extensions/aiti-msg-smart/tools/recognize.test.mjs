@@ -136,12 +136,16 @@ test("label truncation keeps brackets balanced (no dangling opener)", () => {
   assert.equal(opts[0].label, "A（这是一个很长的说明文…）");
 });
 
-test("question: English multi-sentence → action frame found in the last sentence", () => {
-  assert.deepEqual(parseParagraph("Tests pass. Should I proceed?")[0].options.map((o) => o.label), ["Yes, proceed", "No"]);
-  assert.deepEqual(
-    parseParagraph("The build is green. Would you like me to deploy it?")[0].options.map((o) => o.label),
-    ["Yes, deploy it", "No"],
-  );
+test("question: English multi-sentence → per-sentence rows, question keeps its action", () => {
+  const segs = parseParagraph("Tests pass. Should I proceed?");
+  assert.deepEqual(segs.map((s) => s.text), ["Tests pass.", "Should I proceed?"]);
+  assert.deepEqual(segs[1].options.map((o) => o.label), ["Yes, proceed", "No"]);
+  const build = parseParagraph("The build is green. Would you like me to deploy it?");
+  assert.deepEqual(build.map((s) => s.text), ["The build is green.", "Would you like me to deploy it?"]);
+  assert.deepEqual(build[1].options.map((o) => o.label), ["Yes, deploy it", "No"]);
+  // no space after the dot (typed fast) still splits when a question follows
+  const tight = parseParagraph("Tests pass.Proceed?");
+  assert.deepEqual(tight.map((s) => s.text), ["Tests pass.", "Proceed?"]);
 });
 
 test("question: Chinese '要 A 还是 B' strips the bare lead-in", () => {
@@ -195,9 +199,44 @@ test("question: enumeration supports 3+ items and ASCII brackets", () => {
   assert.deepEqual(en.map((o) => o.value), ["A (fast)", "B (slow)"]);
 });
 
+test("question: quoted question inside prose does not vote (no false yes/no)", () => {
+  // Found in a real message: a statement quoting a CJK yes/no phrase used to
+  // become a yes/no card with the whole paragraph as the action label.
+  const t = "另外 RFC 5780 的 Filtering 测试本身就在顺带回答「外部新源能不能打进来」——NAT3（APDF）的判定 = STUN 服务器换源回包失败 = 已知入站受限。也就是说可达性预判不需要额外服务器，探测阶段就带出来了。";
+  assert.equal(splitQuestions(t).length, 1);
+  assert.deepEqual(parseParagraph(t).map((s) => s.options), [null]);
+  assert.equal(parseParagraph('He said "Should I proceed?"')[0].options, null);
+  // …but a real question after a parenthetical still fires
+  assert.deepEqual(parseParagraph("（提示）要我改吗？")[0].options.map((o) => o.value), ["是的", "不用了"]);
+});
+
 test("truncation: ASCII bracket notes also close when cut", () => {
   const opts = parseParagraph("Use A (a very long explanatory note that keeps going and going) or B (short)?")[0].options;
   assert.equal(opts[0].label, "A (a very lo…)");
+});
+
+test("splitQuestions: English '.' splits only at real sentence ends (paths/versions/abbrev safe)", () => {
+  // sentence dot before a question → split; plain statement sentences stay merged
+  assert.deepEqual(
+    splitQuestions("This is an apple. This is a pan. Should I proceed?"),
+    ["This is an apple. This is a pan.", "Should I proceed?"],
+  );
+  // paths / versions / uppercase-extensions / abbreviations are not sentence ends
+  assert.deepEqual(splitQuestions("看 docs/a.md 和 v1.2.3 的说明吗？"), ["看 docs/a.md 和 v1.2.3 的说明吗？"]);
+  assert.deepEqual(splitQuestions("A.PNG 和 B.MD 两张图。要打包吗？"), ["A.PNG 和 B.MD 两张图。", "要打包吗？"]);
+  assert.deepEqual(
+    splitQuestions("Mr. Smith 和 Fig. 3、No. 5 都在。要合并吗？"),
+    ["Mr. Smith 和 Fig. 3、No. 5 都在。", "要合并吗？"],
+  );
+  assert.deepEqual(splitQuestions("版本 v1...3 发布了吗？"), ["版本 v1...3 发布了吗？"]);
+});
+
+test("question: word right after ? (no space) still splits, URL/path query exempt", () => {
+  assert.deepEqual(splitQuestions("确认？OK 我等你"), ["确认？", "OK 我等你"]);
+  assert.deepEqual(splitQuestions("Is it done?Yes"), ["Is it done?", "Yes"]);
+  // URL/path token before the ? → never split (query strings stay whole)
+  assert.deepEqual(splitQuestions("看 /api?Q=1 这个接口吗？"), ["看 /api?Q=1 这个接口吗？"]);
+  assert.deepEqual(splitQuestions("调用 foo(a?b:c) 还是 bar()？"), ["调用 foo(a?b:c) 还是 bar()？"]);
 });
 
 test("splitQuestions: straight double quotes protect their content", () => {
