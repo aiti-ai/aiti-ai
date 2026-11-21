@@ -1043,6 +1043,7 @@ function previewValue(value) {
   if (value.length <= 10) return "*".repeat(value.length);
   return `${value.slice(0, 6)}\u2026${value.slice(-4)}`;
 }
+var encoder = new TextEncoder();
 var MIN_REDACT_LENGTH = 6;
 var EXTRACT_MAX_BYTES = 256 * 1024;
 var WEAK_PASSWORDS = /* @__PURE__ */ new Set([
