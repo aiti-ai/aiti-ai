@@ -2162,6 +2162,261 @@ export async function previewLocalVoice(voiceId) {
   }
 }
 
+// ── one-shot announcements (cross-extension `aiti-ai-speek.speak`) ────────────
+// Other extensions need "say this now" without touching the follow-read queue/settings.
+// This path owns its own <audio>, reuses the server cache, and opens the settings panel when the
+// local service cannot be started (the panel is where venv/model problems get fixed).
+let settingsOpener = null;
+/** components.tsx registers the panel opener once the heavy chunk loads. */
+export function setSettingsOpener(fn) { settingsOpener = typeof fn === "function" ? fn : null; }
+/** Open the read-aloud settings dialog (failure recovery entry for other extensions). */
+export function openSettingsUI() {
+  try { settingsOpener?.(); return !!settingsOpener; } catch { return false; }
+}
+
+let announceAudio = null;
+let announceToken = 0;
+let announceResumeMain = false;
+
+function killAnnounceAudio() {
+  try { if (announceAudio) { announceAudio.pause(); announceAudio = null; } } catch { /* noop */ }
+  try { if (typeof window !== "undefined") window.speechSynthesis?.cancel?.(); } catch { /* noop */ }
+}
+function resumeMainAnnouncePause() {
+  if (!announceResumeMain) return;
+  announceResumeMain = false;
+  try { resume(); } catch { /* noop */ }
+}
+/** Stop the current one-shot announcement (follow-read state is restored). */
+export function stopAnnounce() {
+  announceToken++;
+  killAnnounceAudio();
+  resumeMainAnnouncePause();
+  notify();
+}
+
+/**
+ * Wait for the local service to reach `ready` via the prepare.json SSE stream.
+ * Event driven (no polling); resolves on ready / failed / idle-stop / timeout.
+ */
+function waitLocalReady(ms = 0) {
+  if (localReady()) return Promise.resolve({ ready: true });
+  if (!ms || ms <= 0 || typeof EventSource === "undefined") return Promise.resolve({ ready: false });
+  return new Promise((resolve) => {
+    let es = null;
+    let done = false;
+    let timer = 0;
+    const finish = (r) => {
+      if (done) return;
+      done = true;
+      try { es?.close(); } catch { /* noop */ }
+      if (timer) clearTimeout(timer);
+      resolve(r);
+    };
+    try {
+      es = new EventSource(state.apiUrl("/api/extensions/aiti-ai-speek/tts/progress"));
+      es.addEventListener("prepare", (ev) => {
+        let p = null;
+        try { p = JSON.parse(ev.data || "null"); } catch { /* bad frame */ }
+        const phase = String(p?.phase || "");
+        if (phase === "ready") { state.localStatus = "ready"; finish({ ready: true }); }
+        else if (phase === "failed") { state.localStatus = "error"; state.lastError = p?.message || "local TTS failed"; finish({ ready: false, failed: true, error: p?.message }); }
+        else if (phase === "idle-stop") finish({ ready: false });
+      });
+      es.onerror = () => { /* EventSource reconnects; the timeout closes the loop */ };
+    } catch { /* EventSource unavailable */ }
+    timer = setTimeout(() => finish({ ready: false, timeout: true }), Math.max(1000, ms));
+  });
+}
+
+/**
+ * Make an engine ready for an announcement.
+ * Only the local engine can be "started" (it bootstraps its own venv/model); edge/browser are probed.
+ */
+export async function ensureSpeak(opts = {}) {
+  const want = String(opts.engine || "").trim();
+  let engine;
+  if (want === "local") engine = "local";
+  else if (want === "edge" || want === "browser") engine = want;
+  else engine = localReady() ? "local" : resolvedEngine(); // auto: never bootstrap on its own
+  if (engine !== "local") {
+    if (engine === "edge" && !state.edgeAvailable) return { ok: false, engine, code: "edge-unavailable", error: "edge-tts is not installed" };
+    if (engine === "browser" && state.browserUnsupported) return { ok: false, engine, code: "browser-unsupported", error: "browser speech is unavailable" };
+    return { ok: true, engine };
+  }
+  const r = await ensureLocal(opts.provider);
+  if (r?.running) return { ok: true, engine: "local", provider: r.provider, baseUrl: r.baseUrl };
+  if (r?.starting) {
+    const w = await waitLocalReady(opts.waitMs ?? 0);
+    if (w.ready) return { ok: true, engine: "local", provider: r.provider };
+    if (w.failed) return { ok: false, engine: "local", code: "service-start-failed", error: w.error || "local TTS preparation failed" };
+    return { ok: false, engine: "local", starting: true, code: "starting", error: "local TTS is being prepared" };
+  }
+  return { ok: false, engine: "local", code: "service-start-failed", error: r?.error || "local TTS failed to start" };
+}
+
+/** Snapshot for consumers (no side effects). */
+export function speakStatus() {
+  return {
+    engine: resolvedEngine(),
+    followOn: state.followOn,
+    playing: state.playing,
+    paused: state.paused,
+    edgeAvailable: !!state.edgeAvailable,
+    browserSupported: !state.browserUnsupported,
+    local: {
+      status: state.localStatus,
+      provider: state.localProvider || "",
+      baseUrl: state.localBaseUrl || "",
+    },
+  };
+}
+
+function playAudioOnce(src, token, rate) {
+  return new Promise((resolve, reject) => {
+    if (token !== announceToken) { resolve({ cancelled: true }); return; }
+    const a = new Audio(src);
+    a.preload = "auto";
+    try { a.playbackRate = clampRate(rate); a.preservesPitch = true; } catch { /* older browsers */ }
+    announceAudio = a;
+    const done = () => { if (announceAudio === a) announceAudio = null; resolve({}); };
+    a.onended = done;
+    a.onerror = () => { if (announceAudio === a) announceAudio = null; reject(new Error("audio playback failed")); };
+    a.play().catch((e) => { if (announceAudio === a) announceAudio = null; reject(new Error(String(e?.message || e))); });
+  });
+}
+
+function speakBrowserOnce(text, token) {
+  return new Promise((resolve, reject) => {
+    if (token !== announceToken) { resolve({ cancelled: true }); return; }
+    try {
+      const synth = window.speechSynthesis;
+      if (!synth) throw new Error("speechSynthesis unavailable");
+      const u = new SpeechSynthesisUtterance(text);
+      const v = pickBrowserVoice();
+      if (v) { u.voice = v; u.lang = v.lang || "zh-CN"; }
+      u.rate = clampRate(state.settings.rate);
+      const myToken = announceToken;
+      u.onend = () => resolve({});
+      u.onerror = () => { if (myToken === announceToken) reject(new Error("browser speech failed")); else resolve({ cancelled: true }); };
+      synth.speak(u);
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
+/** Synthesize one segment through the extension endpoint and play it (cache hit = instant). */
+async function announceServerSeg(seg, engine, voice, token, rate) {
+  const body = engine === "local"
+    ? { texts: [seg.text], voice, engine: "local" }
+    : { texts: [seg.text], voice, rate };
+  const res = await fetch(state.apiUrl("/api/extensions/aiti-ai-speek/tts-batch"), {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+  });
+  const d = await res.json().catch(() => null);
+  const it = d && Array.isArray(d.items) ? d.items[0] : null;
+  if (!it || !it.cached) {
+    const err = new Error((it && it.error) || (d && d.error) || "synthesis failed");
+    err.code = (it && it.code) || (d && d.code);
+    throw err;
+  }
+  const src = state.apiUrl("/api/extensions/aiti-ai-speek/tts-cache/" + it.key);
+  return playAudioOnce(src, token, rate);
+}
+
+/**
+ * Speak a piece of text once (cross-extension API).
+ *
+ * opts: {
+ *   engine?: "auto" | "edge" | "local" | "browser"   // default: the user's resolved engine
+ *   voice?: string                                   // default: the current voice setting
+ *   rate?: number                                    // default: the current speed setting
+ *   start?: boolean                                  // allow bootstrapping the local service
+ *   waitMs?: number                                  // how long to wait for the service (default 10000)
+ *   interrupt?: boolean                              // stop the previous announcement (default true)
+ *   wait?: boolean                                   // false = return as soon as playback starts
+ *   showSettingsOnError?: boolean                    // open the settings panel on startup failure (default true)
+ * }
+ * @returns {Promise<{ok: boolean, engine?: string, segments?: number, code?: string, error?: string}>}
+ */
+export async function speakOnce(rawText, opts = {}) {
+  const text = String(rawText || "").trim();
+  if (!text) return { ok: false, code: "empty", error: "empty text" };
+  const token = ++announceToken;
+  killAnnounceAudio();
+  resumeMainAnnouncePause();
+  const showPanel = opts.showSettingsOnError !== false;
+  const fail = (code, error) => {
+    failToast(error || code);
+    if (code === "service-start-failed" && showPanel) openSettingsUI();
+    return { ok: false, code, error };
+  };
+
+  // Engine resolution: explicit > user setting (auto = edge -> local -> browser).
+  const want = String(opts.engine || "").trim();
+  let engine = want && want !== "auto" ? want : resolvedEngine();
+  if (engine === "browser" && state.browserUnsupported) engine = localReady() ? "local" : (state.edgeAvailable ? "edge" : "local");
+  if (engine !== "edge" && engine !== "local" && engine !== "browser") engine = "browser";
+
+  if (engine === "local" || engine === "edge") {
+    const allowStart = opts.start !== false && (engine === "local" || want === "" || want === "auto");
+    if (engine === "local") {
+      if (!localReady()) {
+        if (!allowStart) return fail("not-ready", "local TTS is not running");
+        const ready = await ensureSpeak({ engine: "local", waitMs: opts.waitMs ?? 10000 });
+        if (!ready.ok) {
+          if (ready.code === "service-start-failed") return fail("service-start-failed", ready.error);
+          return fail(ready.code || "starting", ready.error || "local TTS is starting");
+        }
+      }
+    } else if (!state.edgeAvailable) {
+      return fail("edge-unavailable", "edge-tts is not installed");
+    }
+  }
+
+  const segs = filterSegments(toSpeechSegments(text), "full");
+  if (!segs.length) return { ok: false, code: "empty", error: "nothing speakable" };
+
+  // Take the audio channel: pause an ongoing follow-read and restore it afterwards.
+  if (state.playing && !state.paused) { announceResumeMain = true; try { pause(); } catch { /* noop */ } }
+
+  const rate = opts.rate ?? state.settings.rate;
+  const voice = String(opts.voice || state.settings.voice || "");
+
+  const run = async () => {
+    for (const seg of segs) {
+      if (token !== announceToken) return { ok: true, cancelled: true };
+      if (engine === "browser") await speakBrowserOnce(seg.text, token);
+      else await announceServerSeg(seg, engine, voice, token, rate);
+    }
+    if (token === announceToken) { killAnnounceAudio(); resumeMainAnnouncePause(); notify(); }
+    return { ok: true, engine, segments: segs.length };
+  };
+
+  if (opts.wait === false) {
+    run().catch((e) => { console.log("[speek][announce]", String(e?.message || e)); });
+    return { ok: true, engine, started: true, segments: segs.length };
+  }
+  try {
+    return await run();
+  } catch (e) {
+    const code = (e && e.code) || "playback-failed";
+    resumeMainAnnouncePause();
+    if (code === "not-ready" || code === "network") {
+      // The service died mid-announcement: report the preparation reason when we have one, wake
+      // the service once, and let fail() open the panel so the user can fix it.
+      const prep = state.localPrepare;
+      const reason = prep && prep.phase === "failed" ? String(prep.message || "") : "";
+      state.localStatus = "error";
+      notify();
+      void ensureLocal();
+      return fail("service-start-failed", reason || String(e?.message || e));
+    }
+    return fail(code, String(e?.message || e));
+  }
+}
+
 // ── 兼容旧名（组件层可能仍引用） ──
 /** 旧 enqueue 接口：直接以单条文本塞入当前 curSegs 末尾 */
 export function enqueue(text, sessionId, sourceId, startSeg) {

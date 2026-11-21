@@ -415,9 +415,77 @@ interface ApiCtxLike {
   core?: { readSession?: (id: string) => Promise<{ messages?: Array<{ role?: string; content?: unknown }> } | null> };
   services?: { get?: (name: string) => unknown };
 }
-function ttsPaths(ctx: ApiCtxLike) {
+type TtsDirs = Pick<ApiCtxLike, "configDir" | "cacheDir" | "stateDir">;
+function ttsPaths(ctx: TtsDirs) {
   return localPaths({ configDir: ctx.configDir, cacheDir: ctx.cacheDir, stateDir: ctx.stateDir });
 }
+// ── cross-extension backend service (`aiti-ai-speek.tts`) ────────────────────
+// Other extensions (e.g. aiti-video-studio) need the local TTS engine without going through the
+// panel: ensure/status/stop/restart/synthesize. The sound itself is played by the browser, which
+// is what the *client* service `aiti-ai-speek.speak` is for.
+let svcState: { dirs: TtsDirs; services?: ApiCtxLike["services"] } = { dirs: {} };
+/** Context-shaped object for the shared helpers (dirs always, services when the host provides them). */
+function svcCtx() {
+  return { ...svcState.dirs, services: svcState.services };
+}
+/** Build the backend service object handed to ctx.services.provide(). */
+function buildTtsService() {
+  const dirs = () => svcState.dirs;
+  return {
+    version: 1,
+    /** Probe/launch the local service (bootstrap included). `starting` means "come back later". */
+    ensure: async (opts?: { provider?: string }) => {
+      const st = await localEnsure(svcCtx(), opts?.provider);
+      return { ...st, baseUrl: st.baseUrl };
+    },
+    status: async () => {
+      const paths = ttsPaths(dirs());
+      const cfg = localCfg();
+      const health = await localHealth(paths, cfg);
+      return {
+        running: !!health?.ok,
+        status: health?.status || "stopped",
+        provider: health?.provider || cfg.provider,
+        providerLabel: health?.providerLabel || null,
+        baseUrl: localBaseUrl(paths, cfg),
+        prepare: readPrepare(paths),
+        voices: (health?.voiceCount as number) || 0,
+      };
+    },
+    stop: () => stopService(ttsPaths(dirs())),
+    restart: async (opts?: { provider?: string }) => {
+      await stopService(ttsPaths(dirs()));
+      await new Promise((r) => setTimeout(r, 800));
+      localStart = { status: "idle", at: 0 };
+      localProbeCache = { at: 0, baseUrl: "", health: null };
+      const st = await localEnsure(svcCtx(), opts?.provider);
+      return { ...st };
+    },
+    /** Synthesize into the extension cache; returns per-item cache keys (serve via /tts-cache/<key>). */
+    synthesize: async (opts: { texts: string[]; voice?: string }) => {
+      const texts = (opts?.texts || []).map((t) => String(t || "").trim()).filter(Boolean);
+      if (!texts.length) return { ok: false, code: "bad-input", error: "need texts", items: [] as unknown[] };
+      return localSynthesizeBatch(dirs(), texts, opts?.voice);
+    },
+    voices: async () => localVoices(ttsPaths(dirs()), localCfg(), true),
+    /** Read a synthesized file straight from the cache (no HTTP auth hop for backend consumers). */
+    readCached: async (key: string) => {
+      const k = String(key || "");
+      if (!/^[a-f0-9]{64}$/.test(k)) return null;
+      const hit = findCacheFile(ttsCacheDir(svcState.dirs.configDir), k);
+      if (!hit) return null;
+      try {
+        return { buffer: readFileSync(hit.file), ext: hit.ext, contentType: contentTypeOf(hit.ext) };
+      } catch {
+        return null;
+      }
+    },
+    baseUrl: () => localBaseUrl(ttsPaths(dirs()), localCfg()),
+    /** Where a consumer should point the user when the service cannot start. */
+    panel: { extId: "aiti-ai-speek", dialog: "settings", localFeature: "tts.local" },
+  };
+}
+
 /** Persist a feature value through the host registry (same store the panel writes). */
 function setFeatureValueSafe(id: string, value: string): void {
   try {
@@ -482,7 +550,7 @@ let localStartInFlight = false;
 const LOCAL_START_TTL_MS = 20 * 60_000; // first run downloads venv + model; do not give up early
 const LOCAL_START_COOLDOWN_MS = 60_000;
 
-async function localLaunch(ctx: ApiCtxLike, provider: string, prepping = false): Promise<{ ok: boolean; sessionId?: string; mode?: string; error?: string }> {
+async function localLaunch(ctx: TtsDirs & Pick<ApiCtxLike, "services">, provider: string, prepping = false): Promise<{ ok: boolean; sessionId?: string; mode?: string; error?: string }> {
   const paths = ttsPaths(ctx);
   const cfg = localCfg();
   const runner = (ctx.services?.get?.("aiti-cmd.runner") || undefined) as { run?: (o: Record<string, unknown>) => unknown } | undefined;
@@ -505,7 +573,7 @@ async function localLaunch(ctx: ApiCtxLike, provider: string, prepping = false):
 }
 
 /** Probe -> ready | starting (launch) | stopped. Never blocks for the whole bootstrap. */
-async function localEnsure(ctx: ApiCtxLike, providerHint?: string) {
+async function localEnsure(ctx: TtsDirs & Pick<ApiCtxLike, "services">, providerHint?: string) {
   const paths = ttsPaths(ctx);
   const cfg = localCfg();
   const provider = (providerHint || cfg.provider || "hojo-40m").trim();
@@ -583,7 +651,7 @@ async function localEnsure(ctx: ApiCtxLike, providerHint?: string) {
 interface LocalItem { text: string; key: string; cached: boolean; ext?: string; speakable: boolean; code?: string; retryable?: boolean; error?: string; degraded?: boolean }
 
 /** Synthesize a batch through the local service (serial: local inference is CPU bound). */
-async function localSynthesizeBatch(ctx: ApiCtxLike, texts: string[], voiceIn?: string): Promise<{
+async function localSynthesizeBatch(ctx: TtsDirs, texts: string[], voiceIn?: string): Promise<{
   ok: boolean; engine: "local"; voice: string; provider: string; items: LocalItem[]; error?: string; code?: string;
 }> {
   const paths = ttsPaths(ctx);
@@ -1203,8 +1271,25 @@ export default {
   ],
 
   server: {
-    async startup(ctx?: { configDir?: string; features?: { get(extIdOrFid?: string, fid?: string): boolean | string | undefined } }) {
+    async startup(ctx?: {
+      configDir?: string;
+      stateDir?: string;
+      cacheDir?: string;
+      features?: { get(extIdOrFid?: string, fid?: string): boolean | string | undefined };
+      services?: ApiCtxLike["services"];
+    }) {
       hostFeatures = (ctx as any)?.features ?? null; // DI 方案 P1
+      // Capture dirs + the service locator so the cross-extension TTS API works without a request.
+      svcState = {
+        dirs: { configDir: ctx?.configDir, stateDir: ctx?.stateDir, cacheDir: ctx?.cacheDir },
+        services: ctx?.services,
+      };
+      try {
+        (ctx?.services as { provide?: (name: string, impl: unknown) => void } | undefined)?.provide?.("aiti-ai-speek.tts", buildTtsService());
+        console.log("[aiti-ai-speek] services 已注册：aiti-ai-speek.tts（ensure/status/stop/restart/synthesize/voices/readCached）");
+      } catch (e) {
+        console.warn("[aiti-ai-speek] services.provide(aiti-ai-speek.tts) 失败", e);
+      }
       // edge-tts 已装 → 自动开 tts.edge feature（仅一次；用户此后显式关掉不会被覆盖）
       try { autoEnableEdge(ctx?.configDir); } catch { /* 不阻塞启动 */ }
       console.log("[aiti-ai-speek] 跟读模式就绪 · onAgentSettled→SSE + steer + edge-tts" + (edgeInstalled() ? "(已安装)" : "(未安装)") + " + 本地引擎(按需启动)");
