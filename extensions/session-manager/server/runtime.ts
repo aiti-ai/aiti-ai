@@ -178,13 +178,15 @@ export async function syncIndex(configDir: string, core: ExtCoreLike, opts: { re
   return { indexed: result.indexed };
 }
 
-/** Run one archive pass; returns what happened. skippedIds = requested ids held back by the open-session guard (running ∪ alive). */
+/** Run one archive pass; returns what happened. skippedIds = requested ids held back by the open-session guard
+ *  (running ∪ still-alive ∪ unindexed). alreadyArchived = requested ids digested idempotently: they already live
+ *  in an archive package and their (idle ghost) handles were released — reported as success, not a skip. */
 export async function runArchive(
   configDir: string,
   core: ExtCoreLike,
   overrides?: Partial<Pick<Settings, "archiveAgeDays" | "maxLiveSizeMb">>,
   ids?: string[],
-): Promise<{ archived: number; deleted: number; packageName: string | null; sizeBytes: number; candidates: number; skippedIds?: string[]; archivedIds?: string[] }> {
+): Promise<{ archived: number; deleted: number; packageName: string | null; sizeBytes: number; candidates: number; skippedIds?: string[]; archivedIds?: string[]; alreadyArchived?: string[] }> {
   // Sync the index first: sessions created since the last sync must be indexed
   // before archiving, or they'd vanish from the merged list (not live, not archived).
   // refresh = 强制重扫磁盘（绕过 5s 缓存）：落盘但未被缓存的会话必须入索引，
@@ -221,12 +223,27 @@ export async function runArchive(
   // §14.4 batch archive: explicit session ids win over age/size heuristics.
   // Running sessions are NEVER archived (they'd be deleted mid-run) — filtered both here and client-side.
   let skippedIds: string[] | undefined;
+  const alreadyArchived: string[] = [];
   if (ids && ids.length) {
     const byId = new Map(sessions.map((s) => [s.id, s]));
     skippedIds = ids.filter((id) => {
       const s = byId.get(id);
       return !s || alive.has(id);
     });
+    // Idempotent digest: ids already living in an archive package (index archived=1, no live file
+    // on disk). Typical loop: an archived session is reopened via its old URL — the wrapper cannot
+    // find the file and spins up a same-id empty in-memory session (ghost row in the host's active
+    // list); archiving it again used to trip the "not indexed" guard and report a misleading
+    // "open/running" error. The idle ghost handle was already released by the stopAliveSession pass
+    // above; here we downgrade the residual skip into a success. A live file under the same id
+    // (restored/recreated session) still takes the normal archive path; a still-alive or running
+    // ghost stays skipped (conservative — its in-memory content is not consumable as an archive).
+    const digest = skippedIds.filter((id) => !byId.has(id) && !!r.index.getSession(id)?.archived && !alive.has(id));
+    if (digest.length) {
+      skippedIds = skippedIds.filter((id) => !digest.includes(id));
+      alreadyArchived.push(...digest);
+      ids = ids.filter((id) => !digest.includes(id));
+    }
     candidates = ids.map((id) => byId.get(id)).filter((x): x is NonNullable<typeof x> => !!x)
       .filter((s) => !alive.has(s.id))
       .map((s) => ({ sessionId: s.id, cwd: s.cwd, modified: s.modified, path: s.path, sizeBytes: 0, ageDays: 0 }));
@@ -237,7 +254,7 @@ export async function runArchive(
       skippedIds = [...skippedIds, ...unindexed.map((c) => c.sessionId)];
       candidates = candidates.filter((c) => !unindexed.includes(c));
     }
-    if (candidates.length === 0) return { archived: 0, deleted: 0, packageName: null, sizeBytes: 0, candidates: 0, skippedIds };
+    if (candidates.length === 0) return { archived: 0, deleted: 0, packageName: null, sizeBytes: 0, candidates: 0, skippedIds, ...(alreadyArchived.length ? { alreadyArchived } : {}) };
   }
   if (candidates.length === 0) return { archived: 0, deleted: 0, packageName: null, sizeBytes: 0, candidates: 0 };
 
@@ -293,7 +310,7 @@ export async function runArchive(
     lastPkg = pkg;
     lastPkgBytes = existsSync(pkgPath) ? statSync(pkgPath).size : 0;
   }
-  return { archived, deleted, packageName: lastPkg, sizeBytes: lastPkgBytes, candidates: candidates.length, ...(skippedIds ? { skippedIds } : {}), archivedIds };
+  return { archived, deleted, packageName: lastPkg, sizeBytes: lastPkgBytes, candidates: candidates.length, ...(skippedIds ? { skippedIds } : {}), archivedIds, ...(alreadyArchived.length ? { alreadyArchived } : {}) };
 }
 
 export async function archiveStatus(
