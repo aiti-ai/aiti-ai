@@ -3463,6 +3463,29 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   const [storedOrder, setStoredOrder] = useState<TopbarOrderItem[] | null>(null);
   const [storedHidden, setStoredHidden] = useState<TopbarItemId[]>([]);
 
+  // Container-width compact tier for the session-stats button (2026-11-21, user
+  // request): the viewport breakpoints (isCompact = 641–959px) miss the case where
+  // a WIDE window has a NARROW chat column — sidebar/dock/panels squeeze the chat
+  // column and its top bar runs out of room.
+  //
+  // Decision is driven by the CHAT COLUMN width only (topBar.clientWidth), never by
+  // how many extension buttons happen to be on the bar. Rationale (user report):
+  // an icon-count-driven budget made a long, icon-packed toolbar collapse the stats
+  // row (screen showed 20+ icons and a lone "19%"), i.e. the least important
+  // elements won the space. Correct priority: the full session row (tokens · cost ·
+  // context · CPU/MEM chips) is kept as long as the chat column has room for it;
+  // surplus toolbar buttons overflow into the ⋯ menu (the pre-existing mechanism);
+  // the stats row itself only collapses to the single context percentage once the
+  // column is genuinely too narrow for both.
+  //
+  // Budget: FIXED_CHROME (sidebar toggle 36 + ⋯ 36 + file-panel toggle padding 52)
+  // + FULL_STATS (~515px measured for the full row incl. extension chips) +
+  // MIN_TOOLBAR (room the toolbar keeps for its own buttons before overflowing).
+  // Hysteresis keeps the tier stable while dragging the sidebar divider. A
+  // ResizeObserver on the top bar is event-driven — zero polling.
+  const [statsRowCompact, setStatsRowCompact] = useState(false);
+  const statsBtnRef = useRef<HTMLButtonElement>(null);
+
   // hydration: localStorage is only readable after mount (SSR-safe); initial value
   // is the default order
   useEffect(() => {
@@ -3473,8 +3496,35 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   // Extension slot items (flattened into the top-bar item list; ids reuse the
   // ext-ui-store extId:itemId convention)
   const toolbarExtItems = useExtSlotItems("toolbar");
+
+  useEffect(() => {
+    const topBar = topBarRef.current;
+    if (!topBar || typeof ResizeObserver === "undefined") return;
+    const FIXED_CHROME = 124;   // sidebar toggle 36 + ⋯ 36 + file-panel toggle padding 52
+    const FULL_STATS = 515;     // full stats row incl. extension chips (measured live)
+    const MIN_TOOLBAR = 240;    // width the toolbar keeps before buttons overflow into ⋯
+    const ENTER_AT = FULL_STATS + MIN_TOOLBAR;  // 755: below this the column can't hold both
+    const EXIT_AT = ENTER_AT + 140;             // 895: headroom before expanding again
+    const compute = () => {
+      const chatColumn = topBar.clientWidth - FIXED_CHROME;
+      setStatsRowCompact((prev) => (prev ? chatColumn < EXIT_AT : chatColumn < ENTER_AT));
+    };
+    compute();
+    const ro = new ResizeObserver(compute);
+    ro.observe(topBar);
+    return () => ro.disconnect();
+    // Re-arm on: the stats button mounting or updating (showChat/sessionStats/
+    // contextUsage flip — sessionStats/context arrive after the session opens and
+    // stream width-changing updates). Toolbar icon count deliberately does NOT
+    // feed the decision: icon overflow is the ⋯ menu's job, not the stats row's.
+  }, [showChat, sessionStats, contextUsage]);
   const noWorkspaceGuideItems = useExtSlotItems("noWorkspaceGuide").filter(hasExtRender);
   const sessionTopbarExtItems = useExtSlotItems("sessionTopbar");
+  // Inline stat items (sessionStatsInline): rendered inside the stats button, and
+  // their meta.tooltip contributors are appended to that button's own tooltip —
+  // the row shows `… C8% M88%` and its hover text carries the full CPU/memory
+  // detail from the owning extension instead of only from each chip's title.
+  const sessionStatsInlineItems = useExtSlotItems("sessionStatsInline");
   // Declarative static entries (no render) that lazy extensions place in
   // sidebarFooter: the host renders a standard bottom button; clicks go through
   // meta.onClick (staticClickForwarder → materialize → forward to the registered
@@ -5050,7 +5100,12 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
           {showChat && (sessionStats || contextUsage) && (() => {
              const tokens = sessionStats?.tokens;
             const c = sessionStats?.cost ?? 0;
-            const fmt = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(0)}k` : String(n);
+            // Container-width compact tier (statsRowCompact, see the ResizeObserver
+            // above) merges with the viewport compact tier: a narrow TOP BAR (wide
+            // window, squeezed chat column) compresses the row the same way the
+            // 641–959px viewport tier does — context % only, extension chips hidden.
+            const rowCompact = isCompact || statsRowCompact;
+            const fmt = (n: number) => n >= 10_000_000 ? `${Math.round(n / 1_000_000)}M` : n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 100_000 ? `${Math.round(n / 1000)}k` : n >= 1000 ? `${(n / 1000).toFixed(0)}k` : String(n);
             const costStr = c > 0 ? (c >= 0.01 ? fmtMoney(c, 2) : fmtMoneySmall()) : null;
 
             // Single source of truth for the urgency color scale: lib/context-urgency.ts
@@ -5058,25 +5113,42 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
             const ctxUrg = contextUrgency(contextUsage?.contextWindow ? contextUsage.percent : null);
             const ctxColor = ctxUrg.color;
             const ctxBreathe = ctxUrg.level === "critical" ? CTX_BREATHE_CSS : undefined;
+            // Displayed form is the bare percentage (the window size lives in the
+            // tooltip); the raw `X% / window` form was retired with the density tier.
             let ctxStr: string | null = null;
             if (contextUsage?.contextWindow) {
               const pct = contextUsage.percent;
-              ctxStr = pct !== null ? `${pct.toFixed(0)}% / ${fmt(contextUsage.contextWindow)}` : `? / ${fmt(contextUsage.contextWindow)}`;
+              ctxStr = pct !== null ? `${pct.toFixed(0)}%` : "?%";
             }
 
-            const tooltipParts: string[] = [];
-             if (tokens) {
-               tooltipParts.push(`in: ${tokens.input.toLocaleString(locale)}`);
-               tooltipParts.push(`out: ${tokens.output.toLocaleString(locale)}`);
-               tooltipParts.push(`cache read: ${tokens.cacheRead.toLocaleString(locale)}`);
-               tooltipParts.push(`cache write: ${tokens.cacheWrite.toLocaleString(locale)}`);
-              if (c > 0) tooltipParts.push(`cost: ${fmtMoney(c, 4)}${fxNote() ? ` · ${fxNote()}` : ""}`);
+            // Tooltip layout: one line per topic (browsers render \n in title as
+            // multiple lines). Previously everything was packed onto a single
+            // `  |  `-separated string, which was unreadable at this density.
+            // Zero-valued cache entries are dropped instead of padded with "0".
+            const tokenParts: string[] = [];
+            if (tokens) {
+              tokenParts.push(`in ${tokens.input.toLocaleString(locale)}`);
+              tokenParts.push(`out ${tokens.output.toLocaleString(locale)}`);
+              if (tokens.cacheRead > 0) tokenParts.push(`cache-read ${tokens.cacheRead.toLocaleString(locale)}`);
+              if (tokens.cacheWrite > 0) tokenParts.push(`cache-write ${tokens.cacheWrite.toLocaleString(locale)}`);
             }
+            const tooltipLines: string[] = [];
+            if (tokenParts.length) tooltipLines.push(`tokens: ${tokenParts.join(" · ")}`);
+            if (c > 0) tooltipLines.push(`cost: ${fmtMoney(c, 4)}${fxNote() ? ` · ${fxNote()}` : ""}`);
             if (contextUsage?.contextWindow) {
               const pct = contextUsage.percent;
-              tooltipParts.push(`context: ${pct !== null ? pct.toFixed(1) + "%" : "unknown"} of ${contextUsage.contextWindow.toLocaleString()} tokens`);
+              tooltipLines.push(`context: ${pct !== null ? pct.toFixed(1) + "%" : "unknown"} of ${contextUsage.contextWindow.toLocaleString()} tokens`);
             }
-            const tooltip = tooltipParts.join("  |  ");
+            const baseTooltip = tooltipLines.join("\n");
+            // Inline-slot contributors (e.g. the sysmon chips' CPU/memory line). Read
+            // on hover so the latest sample is shown; failures never break the title.
+            const inlineTooltipLines = (): string[] => sessionStatsInlineItems
+              .map((it) => {
+                try { return (it.meta as { tooltip?: () => string | null | undefined } | undefined)?.tooltip?.(); }
+                catch { return null; }
+              })
+              .filter((s): s is string => typeof s === "string" && s.trim().length > 0);
+            const tooltip = [baseTooltip, ...inlineTooltipLines()].filter(Boolean).join("\n");
 
             // Whether any stat is displayable (in/out/cache/cost/context) — when all are
             // empty the button falls back to a clock icon, avoiding a blank 24px.
@@ -5089,6 +5161,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
             return (
               <button
                 type="button"
+                ref={statsBtnRef}
                 onClick={() => {
                   // Fetch fresh stats once when opening (idle sessions have no live
                   // state; contextUsage would be missing)
@@ -5101,11 +5174,11 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
                 style={{
                   marginLeft: "auto",
                   flexShrink: 0, // not squeezed on narrow screens: otherwise the nowrap content overflows onto the ⋯ button to its right (percent overlapping ⋯); when space is short, clip itemsRow first (its overflowX is hidden)
-                  display: "flex", alignItems: "center", gap: isMobile ? 7 : 10,
-                  paddingLeft: isMobile ? 6 : 12,
+                  display: "flex", alignItems: "center", gap: isMobile ? 7 : 7,
+                  paddingLeft: isMobile ? 6 : 8,
                   // the ⋯ button occupies the right end after it; stats no longer need
                   // a large margin reserved for the file-panel toggle
-                  paddingRight: isMobile ? 6 : 12,
+                  paddingRight: isMobile ? 6 : 8,
                   height: "100%",
                   background: activeTopPanel === "session" ? "var(--bg-selected)" : "none",
                   borderLeft: "none", borderRight: "none", borderBottom: "none",
@@ -5116,13 +5189,19 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
                   fontVariantNumeric: "tabular-nums",
                   transition: "color 0.1s, background 0.1s",
                 }}
-                onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.color = "var(--text)";
+                  // Refresh the title so inline contributors (CPU/memory) reflect the
+                  // sample taken after this row's last render.
+                  const live = inlineTooltipLines();
+                  if (live.length) e.currentTarget.title = [baseTooltip, ...live].filter(Boolean).join("\n");
+                }}
                 onMouseLeave={(e) => { e.currentTarget.style.color = activeTopPanel === "session" ? "var(--text)" : "var(--text-muted)"; }}
               >
                 {/* Empty-state fallback: when all stats (in/out/cache/cost/context) are empty, show a clock icon
                     as the "session info" entry; otherwise the button is just a blank 24px area. Also shown on
                     the compact tier / mobile when there is no context percentage. */}
-                {((isCompact && !ctxStr) || (isMobile && contextUsage?.percent == null) || !hasAnyStatValue) ? (
+                {((rowCompact && !ctxStr) || (isMobile && contextUsage?.percent == null) || !hasAnyStatValue) ? (
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" />
                   </svg>
@@ -5139,56 +5218,60 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
                     <span style={{ fontWeight: 700, fontSize: 11.5 }}>{contextUsage.percent.toFixed(0)}%</span>
                   </span>
                 )}
-                {/* Compact tier (portrait pad 641–959px): keep only the context usage
-                    (the most useful at-a-glance figure), leaving row width to the tag
-                    area etc. */}
-                {!isMobile && !isCompact && tokens && tokens.input > 0 && (
-                  <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                    <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-                      <line x1="5" y1="8.5" x2="5" y2="1.5" /><polyline points="2 4 5 1.5 8 4" />
-                    </svg>
-                     {fmt(tokens.input)}
-                  </span>
-                )}
-                 {!isMobile && !isCompact && tokens && tokens.output > 0 && (
-                  <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                    <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-                      <line x1="5" y1="1.5" x2="5" y2="8.5" /><polyline points="2 6 5 8.5 8 6" />
-                    </svg>
-                     {fmt(tokens.output)}
-                  </span>
-                )}
-                 {!isMobile && !isCompact && tokens && tokens.cacheRead > 0 && (
-                  <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                    <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M8.5 5a3.5 3.5 0 1 1-1-2.45" /><polyline points="6.5 1.5 8.5 2.5 7.5 4.5" />
-                    </svg>
-                     {fmt(tokens.cacheRead)}
-                  </span>
-                )}
-                {!isMobile && !isCompact && costStr && (
-                  <span style={{ display: "flex", alignItems: "center", color: "var(--text)", fontWeight: 500 }}>
-                    {costStr}
-                  </span>
-                )}
-                {!isMobile && ctxStr && (
-                  <span style={{ display: "flex", alignItems: "center", gap: 4, color: ctxColor, animation: ctxBreathe }}>
-                    <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M1 9 L1 5 Q1 1 5 1 Q9 1 9 5 L9 9" /><line x1="1" y1="9" x2="9" y2="9" />
-                    </svg>
-                    {/* When space is short / in compact tier show only the context
-                        percentage (the most useful at-a-glance figure); wide screens
-                        show the full X% / total */}
-                    {isCompact ? contextUsage?.percent != null ? contextUsage.percent.toFixed(0) + "%" : "?%" : ctxStr}
-                  </span>
-                )}
+                {/* Density tier (plan: pi-work docs/pi-web-topbar-stats-density-plan.md §2 方案 E):
+                    the whole row is ONE nowrap text flow instead of one flex item per stat. The
+                    5 flex gaps (10px each) were 50 of the row's 311px; joining the parts into a
+                    single inline flow reclaims them. in/out share one ⇅ glyph with an `a/b` pair
+                    (input/output, the conventional order — full names stay in the tooltip), and
+                    separator dots keep the groups scannable without costing a gap each.
+                    Values keep their own colour spans (context urgency + cost emphasis), so the
+                    compression costs nothing in signalling. */}
+                {!isMobile && !rowCompact && (() => {
+                  // Groups are collected first and the separator is emitted BETWEEN
+                  // rendered groups only — a plain "always prefix ·" would leave a
+                  // dangling leading dot on backends that report cache without in/out.
+                  const groups: { key: string; node: React.ReactNode }[] = [];
+                  if (tokens && (tokens.input > 0 || tokens.output > 0)) {
+                    groups.push({
+                      key: "tok",
+                      node: (
+                        <span style={{ display: "inline-flex", alignItems: "center" }}>
+                          <svg width="11" height="11" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginRight: 3 }} aria-hidden="true">
+                            <line x1="3.2" y1="8" x2="3.2" y2="2" /><polyline points="1.4 3.8 3.2 2 5 3.8" />
+                            <line x1="6.8" y1="2" x2="6.8" y2="8" /><polyline points="5 6.2 6.8 8 8.6 6.2" />
+                          </svg>
+                          {fmt(tokens.input)}/{fmt(tokens.output)}
+                        </span>
+                      ),
+                    });
+                  }
+                  if (tokens && tokens.cacheRead > 0) {
+                    groups.push({ key: "cache", node: <span>{fmt(tokens.cacheRead)}</span> });
+                  }
+                  if (costStr) {
+                    groups.push({ key: "cost", node: <span style={{ color: "var(--text)", fontWeight: 500 }}>{costStr}</span> });
+                  }
+                  if (ctxStr) {
+                    groups.push({ key: "ctx", node: <span style={{ color: ctxColor, animation: ctxBreathe }}>{ctxStr}</span> });
+                  }
+                  return (
+                    <span style={{ display: "inline-flex", alignItems: "center", whiteSpace: "nowrap" }}>
+                      {groups.map((g, i) => (
+                        <span key={g.key} style={{ display: "inline-flex", alignItems: "center" }}>
+                          {i > 0 && <span aria-hidden="true" style={{ opacity: 0.45, margin: "0 3px" }}>·</span>}
+                          {g.node}
+                        </span>
+                      ))}
+                    </span>
+                  );
+                })()}
                 {/* sessionStatsInline extension point: inline trailing indicators at the tail of
                     the stats row (e.g. the sysmon extension's CPU/memory chips). Items must render
                     inline content only — no block elements or nested interactive elements (this is
                     a <button>; clicks bubble and open the session panel, which is expected). extra
                     carries tier flags only (slot-extra data red line); narrow tiers return null so
                     the row width stays with the context percentage. Zero items → zero render. */}
-                <ExtSlot name="sessionStatsInline" extra={{ isMobile, isCompact }} />
+                <ExtSlot name="sessionStatsInline" extra={{ isMobile, isCompact: rowCompact }} />
               </button>
             );
           })()}
