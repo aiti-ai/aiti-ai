@@ -34,6 +34,9 @@ const VALID_SLOTS = new Set([
   "composerTools", "queuePanel", "recoveryDialog", "workspacePickerActions",
   "newSessionContextTrailing", "modelSelector", "modelSelectorFooter",
   "settingsModels", "settingsAgentsFeature", "settingsAgents", "terminalDock",
+  // sessionStatsInline (2026-11-21): inline tail inside the session-info stats button;
+  // recorded by the host (types.ts + registry.ts UI_SLOT_KEYS); first user = aiti-sysmon top-bar chips
+  "sessionStatsInline",
   "sidebarExplorerDock", "rightFileDock", "sidebarTasks", "composerAffix",
   "modelInfoLead", "compactLead", "sessionRequestCard", "newSessionSelectors",
   "newSessionPreparers", "newSessionWidgets", "newSessionWorkspacePicker",

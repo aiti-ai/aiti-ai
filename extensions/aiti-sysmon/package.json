@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-sysmon",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Server status viewer — sidebar dock panel for the pi-web host machine: CPU / memory / disk / network / temperature (systeminformation based)",
   "soul": "服务器忙不忙，开左栏看一眼就知道。",
   "scripts": {
