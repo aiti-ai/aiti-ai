@@ -99,7 +99,7 @@ paths, write paths and mineable content; `registerValueSecrets` mines nested `de
 - Session-scoped by default: fresh salt per session; session values live in memory. Vault entries use a stable namespace instead so resume/rotation keeps the same token.
 - Placeholder strings look like credentials on purpose (`rsec_<hash8>`): models stop refusing to use them; the digest reveals nothing about the value.
 - No-keyword bare high-entropy strings are NOT auto-detected (deliberate: bare entropy detection false-positives on minified JS) — expose manual registration or custom rules. A bare value after an assignment verb (`设为 X`, `set it to X`) is the one exception, and it still needs a credential keyword in the same passage.
-- Transform escapes (string slicing, re-encoded base64) beyond `redactForms` remain a real limit.
+- Encoded forms of registered values — base64 padded/unpadded, base64url, hex lower/upper, the two common line folds (64/76 chars), percent-encoding — are pre-computed in `redactForms` and redact to the same placeholder. Transform escapes beyond that (string slicing/truncation, offset-annotated hex dumps like `xxd`/`hexdump` default output, arbitrary custom transforms) remain a real limit.
 - Prevents accidental leaks, not malicious agents; the audit layer detects raw values at the model boundary, not post-restore exfiltration through network-executing tools.
 - Images are not scanned.
 
