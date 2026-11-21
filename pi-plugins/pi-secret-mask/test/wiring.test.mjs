@@ -317,3 +317,46 @@ test("mask wiring: yields to the vault handshake", async () => {
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("tool_result extract never registers encoded forms of mounted values", async () => {
+  const home = mkdtempSync(join(tmpdir(), "mask-wiring-extract-"));
+  try {
+    const cwd = join(home, "proj");
+    const factory = await loadExtension(home);
+    const host = makeHost();
+    await factory(host.pi);
+    const ctx = makeCtx(cwd);
+    await host.run("session_start", { reason: "startup" }, ctx);
+
+    // register the value through the context hook (auto-detect)
+    const messages = [{ role: "user", content: `my token: ${SECRET}`, timestamp: 1 }];
+    await host.run("context", { messages }, ctx);
+    const ph = String(messages[0].content).match(/rsec_[0-9a-f]{8}/)?.[0];
+    assert.ok(ph, "context hook registered the value");
+
+    const list = async () => {
+      const c = makeCtx(cwd);
+      await host.commands.get("secret").handler("list", c);
+      return c.notices.map((n) => n.text).join("\n");
+    };
+    const before = await list();
+
+    // bash-style output carrying the base64 form of the mounted value
+    const encoded = Buffer.from(SECRET).toString("base64");
+    const res = await host.run(
+      "tool_result",
+      { toolName: "bash", content: [{ type: "text", text: `api_key = ${encoded}` }] },
+      ctx,
+    );
+    assert.ok(res, "encoded form should be redacted");
+    const outText = JSON.stringify(res);
+    assert.ok(!outText.includes(encoded), "encoded form must not survive");
+    assert.ok(outText.includes(ph), "replaced with the mounted placeholder");
+
+    // the core regression: extract ran on the redacted text, so no junk
+    // auto entry for the encoded form was registered — list is unchanged
+    assert.equal(await list(), before);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
