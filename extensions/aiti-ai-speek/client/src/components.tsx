@@ -454,12 +454,12 @@ export function PlaybackBar(props) {
   // filename truncation (progress area shows "📖 name · block x/y · sentence a/b")
   const fbName = fb ? (fb.name.length > 18 ? fb.name.slice(0, 17) + "…" : fb.name) : "";
   const queueInfo = st.starting
-    ? (fb ? `📖 ${fbName} · 启动中…` : "启动中…")
+    ? (fb ? t("speek.bar.startingFile", { name: fbName }) : t("speek.bar.starting"))
     : item
       ? (fb
         ? `📖 ${fbName} · ${msgPos}/${msgTotal} · ${segPos}/${segTotal}`
         : `${msgPos}/${msgTotal} · ${segPos}/${segTotal}`)
-      : (totalMsgs ? (fb ? `📖 ${fbName} · 0/${totalMsgs}` : `0/${totalMsgs}`) : "等待");
+      : (totalMsgs ? (fb ? `📖 ${fbName} · 0/${totalMsgs}` : `0/${totalMsgs}`) : t("speek.bar.waiting"));
   const extra = st.backlog > 0 ? ` +${st.backlog}` : "";
 
   const ctl = (title, fn, d, cls, disabled) => (
@@ -530,7 +530,7 @@ export function PlaybackBar(props) {
 
   const body = (
     <div ref={barRef} className="aisp-bar" style={barStyle}>
-      <span className="aisp-grip" title="拖动移动 · 双击复位" aria-hidden onPointerDown={onGripDown} onDoubleClick={onGripDbl}>⠿</span>
+      <span className="aisp-grip" title={t("speek.bar.grip")} aria-hidden onPointerDown={onGripDown} onDoubleClick={onGripDbl}>⠿</span>
       {/* ⏮ previous: navigable as long as the current bucket has a list (file bucket = blocks; AI session = messages), not limited to playing */}
       {ctl(t("speek.prev"), prev, ICON.prev, "", !listLen)}
       {st.paused
@@ -542,13 +542,13 @@ export function PlaybackBar(props) {
       {ctl(t("speek.stop"), () => setFollow(false), ICON.stop, "stop", false)}
       {st.starting
         ? (
-          <span className="aisp-queue" role="status" title="启动中…">{queueInfo}{extra}</span>
+          <span className="aisp-queue" role="status" title={t("speek.bar.starting")}>{queueInfo}{extra}</span>
         )
         : (
           <span className="aisp-queue">
             <span
               className="aisp-xy"
-              title="点按弹出：跳转到任意消息（树形分组）"
+              title={t("speek.bar.picker")}
               role="button"
               style={{ cursor: "pointer", borderBottom: "1px dotted var(--text-dim,#999)" }}
               onClick={(e) => { e.currentTarget.blur(); openMessagePicker(true); }}
@@ -559,7 +559,7 @@ export function PlaybackBar(props) {
                 ? (
                   <span
                     className="aisp-ab aisp-ab-jump"
-                    title="跳回当前朗读位置（不影响朗读）"
+                    title={t("speek.bar.driftJump")}
                     role="button"
                     onClick={(e) => { e.currentTarget.blur(); jumpBack(); }}
                   >{segPos}/{segTotal}</span>
@@ -567,7 +567,7 @@ export function PlaybackBar(props) {
                 : (
                   <span
                     className="aisp-ab"
-                    title="点按弹出：跳转到任意消息"
+                    title={t("speek.bar.picker")}
                     role="button"
                     style={{ cursor: "pointer", borderBottom: "1px dotted var(--text-dim,#999)" }}
                     onClick={(e) => { e.currentTarget.blur(); openMessagePicker(true); }}
@@ -581,15 +581,15 @@ export function PlaybackBar(props) {
       {drifted && !st.fileBucket && (
         <span className="aisp-drift">
           <button
-            title="从当前页第一条可见消息开始读"
+            title={t("speek.bar.readPageTitle")}
             onClick={(e) => { e.currentTarget.blur(); if (sessionId) { try { resolveDrift(); startFollowFromPageTop(sessionId); } catch { /* noop */ } } }}
-          >读本页</button>
+          >{t("speek.bar.readPage")}</button>
         </span>
       )}
       <button className="aisp-btn" title={t("speek.settings")} onClick={(e) => { e.currentTarget.blur(); openSettings(true); }}>
         <Icon d={ICON.gear} size={14} />
       </button>
-      <button className="aisp-btn" title="隐藏播放条（跟读继续）" onClick={(e) => { e.currentTarget.blur(); setBarVisible(false); }}>
+      <button className="aisp-btn" title={t("speek.bar.hide")} onClick={(e) => { e.currentTarget.blur(); setBarVisible(false); }}>
         <Icon d="M18 6 6 18 M6 6l12 12" size={14} />
       </button>
     </div>
@@ -638,8 +638,8 @@ function PickerNodes({ nodes, path, setPath, level, curIdx, onPick, summaries, l
           onClick={() => setPath((p) => { const np = p.slice(0, level); if (np[level] === node.start) np[level] = undefined; else np[level] = node.start; return np; })}
         >
           <span className="aisp-pk-caret">{opened ? "▾" : "▸"}</span>
-          <span>消息 {node.start}–{node.end - 1} ·</span>
-          <span className="aisp-pk-cnt">{isGroup ? node.nodes.length + " 组" : (node.end - node.start) + " 条"}</span>
+          <span>{t("speek.picker.group", { start: node.start, end: node.end - 1, count: "" })}</span>
+          <span className="aisp-pk-cnt">{isGroup ? t("speek.picker.groups", { n: node.nodes.length }) : t("speek.picker.items", { n: node.end - node.start })}</span>
         </button>
         {opened ? (
           <div className="aisp-pk-sub">
@@ -656,11 +656,11 @@ function PickerNodes({ nodes, path, setPath, level, curIdx, onPick, summaries, l
                     className={"aisp-pk-item" + (j === curIdx ? " on" : "")}
                     onClick={() => onPick(j)}
                     onMouseEnter={() => loadGroup(node)}
-                    title={s ? s.replace(/\s+/g, " ").slice(0, 120) : "（划过加载概要…）"}
+                    title={s ? s.replace(/\s+/g, " ").slice(0, 120) : t("speek.picker.hover")}
                   >
-                    <span className="aisp-pk-n2">消息 {j}</span>
+                    <span className="aisp-pk-n2">{t("speek.picker.msg", { n: j })}</span>
                     {short ? <span className="aisp-pk-sum">{short}</span> : null}
-                    {j === curIdx ? <span className="aisp-pk-cur">当前</span> : null}
+                    {j === curIdx ? <span className="aisp-pk-cur">{t("speek.picker.current")}</span> : null}
                     <span className="aisp-pk-go">▸</span>
                   </button>
                 );
@@ -782,15 +782,15 @@ function MessagePicker({ sessionId }) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="aisp-pk-hd">
-          <span>跳转到消息（共 {len} 条 · 每组 {PICKER_GROUP}）</span>
-          <button className="aisp-btn" onClick={() => openMessagePicker(false)} title="关闭">
+          <span>{t("speek.picker.title", { n: len, g: PICKER_GROUP })}</span>
+          <button className="aisp-btn" onClick={() => openMessagePicker(false)} title={t("speek.common.close")}>
             <Icon d="M18 6 6 18 M6 6l12 12" size={14} />
           </button>
         </div>
         <div className="aisp-pk-bd">
           {st.curIndex >= 0 && (
             <button className="aisp-pk-item on" onClick={() => onPick(st.curIndex)}>
-              <span className="aisp-pk-n2">消息 {st.curIndex} · 当前播放位置</span>
+              <span className="aisp-pk-n2">{t("speek.picker.currentPos", { n: st.curIndex })}</span>
             </button>
           )}
           <PickerNodes nodes={levels[top]} path={path} setPath={setPath} level={0} curIdx={st.curIndex} onPick={onPick} summaries={summaries} loadGroup={loadGroup} />
@@ -802,25 +802,50 @@ function MessagePicker({ sessionId }) {
 }
 
 // ── local engine helpers (shared by the settings dialog and the voices dialog) ──
-const LOCAL_PHASE_LABEL: Record<string, string> = {
-  venv: "Python 环境", deps: "依赖安装", download: "模型下载", load: "模型加载",
-  ready: "就绪", failed: "失败", "idle-stop": "已空闲退出",
+const LOCAL_PHASE_KEY: Record<string, string> = {
+  venv: "speek.local.phase.venv",
+  deps: "speek.local.phase.deps",
+  download: "speek.local.phase.download",
+  load: "speek.local.phase.load",
+  ready: "speek.local.phase.ready",
+  failed: "speek.local.phase.failed",
+  "idle-stop": "speek.local.phase.idle",
 };
-const LOCAL_PROVIDERS: Array<{ id: string; label: string }> = [
-  { id: "hojo-40m", label: "Hojo 40M · CPU · 17 内置音色（~240MB）" },
-  { id: "hojo-80m", label: "Hojo 80M · 克隆音色（~458MB）" },
-  { id: "qwen3-0.6b", label: "Qwen3 0.6B · 需 torch（GPU 推荐）" },
-  { id: "stub", label: "stub · 链路排障（无模型）" },
+const LOCAL_PROVIDERS: Array<{ id: string; labelKey: string }> = [
+  { id: "hojo-40m", labelKey: "speek.local.provider.hojo40" },
+  { id: "hojo-80m", labelKey: "speek.local.provider.hojo80" },
+  { id: "qwen3-0.6b", labelKey: "speek.local.provider.qwen3" },
+  { id: "stub", labelKey: "speek.local.provider.stub" },
 ];
+
+const LOCAL_VOICE_ID = /^hojo_([a-z]{2})_([fm])_(\d+)$/;
+/** Built-in Hojo voice labels are data from the service; re-render them in the UI language. */
+function localVoiceLabel(v: any): string {
+  const fallback = String(v?.label || v?.id || "");
+  if (!v || v.builtin === false) return fallback;
+  const m = LOCAL_VOICE_ID.exec(String(v.id || ""));
+  if (!m) return fallback;
+  const lang = m[1] === "zh" ? t("speek.voice.lang.zh") : t("speek.voice.lang.en");
+  const sex = m[2] === "f" ? t("speek.voice.sex.f") : t("speek.voice.sex.m");
+  return t("speek.voice.builtin", { lang, sex, n: Number(m[3]) });
+}
+
+/** "zh"/"en"/"auto" -> localized language name (unknown values pass through). */
+function voiceLangLabel(lang: any): string {
+  const v = String(lang || "").toLowerCase();
+  if (v === "zh" || v === "chinese") return t("speek.voice.lang.zh");
+  if (v === "en" || v === "english") return t("speek.voice.lang.en");
+  return String(lang || "");
+}
 
 function localBadge(st: any) {
   const status = st.localStatus;
   if (status === "ready") {
-    return { text: "● 运行中" + (st.localProvider ? " · " + st.localProvider : ""), color: "#16a34a", bg: "color-mix(in srgb,#16a34a 14%,transparent)" };
+    return { text: t("speek.local.running") + (st.localProvider ? " · " + st.localProvider : ""), color: "#16a34a", bg: "color-mix(in srgb,#16a34a 14%,transparent)" };
   }
-  if (status === "loading") return { text: "◌ 准备中", color: "var(--accent,#3b82f6)", bg: "color-mix(in srgb,var(--accent,#3b82f6) 14%,transparent)" };
-  if (status === "error") return { text: "⚠ 失败", color: "var(--danger,#ef4444)", bg: "color-mix(in srgb,var(--danger,#ef4444) 14%,transparent)" };
-  return { text: "○ 未运行", color: "var(--text-dim,#888)", bg: "color-mix(in srgb,var(--text-dim,#888) 14%,transparent)" };
+  if (status === "loading") return { text: t("speek.local.preparing"), color: "var(--accent,#3b82f6)", bg: "color-mix(in srgb,var(--accent,#3b82f6) 14%,transparent)" };
+  if (status === "error") return { text: t("speek.local.failed"), color: "var(--danger,#ef4444)", bg: "color-mix(in srgb,var(--danger,#ef4444) 14%,transparent)" };
+  return { text: t("speek.local.stopped"), color: "var(--text-dim,#888)", bg: "color-mix(in srgb,var(--text-dim,#888) 14%,transparent)" };
 }
 
 function SettingsDialog() {
@@ -837,7 +862,7 @@ function SettingsDialog() {
     try {
       const synth = window.speechSynthesis;
       if (!synth) return;
-      const load = () => setVoices(sortBrowserVoices(synth.getVoices().filter((v) => /zh/i.test(v.lang || ""))));
+      const load = () => setVoices(sortBrowserVoices(synth.getVoices().filter((v) => /zh|^en/i.test(v.lang || ""))));
       load();
       synth.addEventListener?.("voiceschanged", load);
       return () => synth.removeEventListener?.("voiceschanged", load);
@@ -857,7 +882,7 @@ function SettingsDialog() {
   const edgeVoices = st.edgeVoices || [];
   const localVoices = st.localVoices || [];
   const voices = localSelected
-    ? localVoices.map((v) => ({ name: v.id, label: v.label || v.id }))
+    ? localVoices.map((v) => ({ name: v.id, label: localVoiceLabel(v) }))
     : useEdgeNow ? edgeVoices.map((v) => ({ name: v.id, label: v.label })) : browserVoices.map((v) => ({ name: v.name, label: v.name }));
   const edgeOk = !!(st.edgeStatus?.installed ?? st.edgeAvailable);
   const localRunning = st.localStatus === "ready";
@@ -873,9 +898,17 @@ function SettingsDialog() {
   const localIdle = Number(info?.idleTimeout ?? health?.idleTimeout ?? 1800) || 0;
   const rtfText = health && health.rtfLast != null ? Number(health.rtfLast).toFixed(2) + "×" : "—";
   const rssText = health && health.rssMb != null ? Math.round(Number(health.rssMb)) + "MB" : "—";
-  const lastActText = health && health.lastActivity ? new Date(Number(health.lastActivity) * 1000).toLocaleTimeString() : "—";
+  const uiLocale = (() => { try { return localStorage.getItem("pi-locale") || undefined; } catch { return undefined; } })();
+  const lastActText = health && health.lastActivity ? new Date(Number(health.lastActivity) * 1000).toLocaleTimeString(uiLocale) : "—";
   const prepareFailed = String(prepare?.phase || "") === "failed";
   const idleStopped = String(prepare?.phase || "") === "idle-stop";
+  const phaseText = prepare
+    ? (LOCAL_PHASE_KEY[String(prepare.phase || "")] ? t(LOCAL_PHASE_KEY[String(prepare.phase || "")]) : String(prepare.phase || ""))
+      + (preparePct != null ? " · " + preparePct + "%" : "")
+      + (prepare?.message ? " · " + prepare.message : "")
+    : t("speek.local.phase.unknown");
+  const firstLocalLabel = localVoices[0] ? localVoiceLabel(localVoices[0]).split("·")[0].trim() : "";
+  const firstEdgeLabel = edgeVoices[0] ? String(edgeVoices[0].label).split("·")[0].trim() : "";
 
   // Switching engines clears the voice (ids are engine specific) and starts the local service on demand.
   const setEngine = (engine: string) => {
@@ -905,9 +938,9 @@ function SettingsDialog() {
   const toggleLog = async () => {
     if (showLog) { setShowLog(false); return; }
     setShowLog(true);
-    setLogText("加载中…");
+    setLogText("…");
     const d = await fetchLocalInfo({ log: true });
-    setLogText(d?.logTail || "（暂无日志）");
+    setLogText(d?.logTail || "—");
   };
   const saveBaseUrl = async (v: string) => {
     await setFeatureValueApi("tts.local.baseUrl", v.trim());
@@ -922,33 +955,33 @@ function SettingsDialog() {
       <div className="aisp-dlg aisp-dialog" role="dialog" aria-modal="true" data-ext-float="1" data-ext-float-w={580} data-ext-float-autoh="1" data-ext-float-full="1" onClick={(e) => e.stopPropagation()}>
         <div className="aisp-dlg-hd">
           <span>🔊 {t("speek.settings")}</span>
-          <button className="aisp-btn" onClick={close} title="关闭">
+          <button className="aisp-btn" onClick={close} title={t("speek.common.close")}>
             <Icon d="M18 6 6 18 M6 6l12 12" size={14} />
           </button>
         </div>
         <div className="aisp-dlg-bd">
           <div className="aisp-row">
-            <label title="自动 = edge-tts 可用则用它，其次本地引擎，最后浏览器 Web Speech">引擎</label>
+            <label title={t("speek.engine.title")}>{t("speek.engine.label")}</label>
             <span className="aisp-seg">
-              <button className={s.engine === "auto" ? "on" : ""} onClick={() => setEngine("auto")}>自动</button>
-              <button className={s.engine === "browser" ? "on" : ""} disabled={st.browserUnsupported} onClick={() => setEngine("browser")}>浏览器</button>
-              <button className={s.engine === "edge" ? "on" : ""} disabled={!st.edgeAvailable} onClick={() => setEngine("edge")}>edge-tts</button>
-              <button className={s.engine === "local" ? "on" : ""} onClick={() => setEngine("local")}>本地</button>
+              <button className={s.engine === "auto" ? "on" : ""} onClick={() => setEngine("auto")}>{t("speek.engine.auto")}</button>
+              <button className={s.engine === "browser" ? "on" : ""} disabled={st.browserUnsupported} onClick={() => setEngine("browser")}>{t("speek.engine.browser")}</button>
+              <button className={s.engine === "edge" ? "on" : ""} disabled={!st.edgeAvailable} onClick={() => setEngine("edge")}>{t("speek.engine.edge")}</button>
+              <button className={s.engine === "local" ? "on" : ""} onClick={() => setEngine("local")}>{t("speek.engine.local")}</button>
             </span>
           </div>
           {st.browserUnsupported && (
             <div className="aisp-row" style={{ color: "var(--danger, #ef4444)", fontSize: 11 }}>
-              ⚠ 当前浏览器不支持本地朗读（Web Speech），已自动切换到服务端语音生成。
+              {t("speek.browserUnsupported")}
             </div>
           )}
 
           <div className="aisp-row">
-            <label>音色</label>
+            <label>{t("speek.voice.label")}</label>
             <select className="aisp-sel" value={s.voice || ""} onChange={(e) => { const v = e.target.value; setSettings({ voice: v }); if (v) previewVoice(v); }}>
               <option value="">
                 {localSelected
-                  ? (localVoices[0] ? "默认（" + String(localVoices[0].label || localVoices[0].id).split("·")[0].trim() + "）" : "本地默认音色")
-                  : useEdgeNow ? (edgeVoices[0] ? "默认（" + String(edgeVoices[0].label).split("·")[0].trim() + "）" : "默认") : "浏览器默认中文"}
+                  ? (firstLocalLabel ? t("speek.voice.defaultName", { name: firstLocalLabel }) : t("speek.voice.defaultLocal"))
+                  : useEdgeNow ? (firstEdgeLabel ? t("speek.voice.defaultName", { name: firstEdgeLabel }) : t("speek.voice.defaultLocal")) : t("speek.voice.defaultBrowser")}
               </option>
               {voices.map((v) => (
                 <option key={v.name} value={v.name}>{v.label}</option>
@@ -957,66 +990,66 @@ function SettingsDialog() {
           </div>
           {localSelected && (
             <div className="aisp-row" style={{ marginTop: -6 }}>
-              <span className="aisp-mini">本地音色在下方「音色管理」中查看/新建/删除（克隆音色需 Hojo 80M 或 Qwen3）。</span>
+              <span className="aisp-mini">{t("speek.voice.localHint")}</span>
             </div>
           )}
 
           {/* ── local engine block ── */}
           <div className="aisp-box">
             <div className="aisp-box-hd">
-              <span>本地 TTS 服务</span>
+              <span>{t("speek.local.title")}</span>
               <span className="aisp-badge" style={{ background: badge.bg, color: badge.color }}>{badge.text}</span>
             </div>
             {localPreparing && (
               <>
                 <div className="aisp-prog"><i style={{ width: (preparePct ?? 15) + "%" }} /></div>
-                <div className="aisp-mini">
-                  正在准备：{LOCAL_PHASE_LABEL[String(prepare?.phase || "")] || String(prepare?.phase || "启动中")}
-                  {preparePct != null ? " · " + preparePct + "%" : ""}
-                  {prepare?.message ? " · " + prepare.message : ""}
-                </div>
+                <div className="aisp-mini">{t("speek.local.preparingLine", { text: phaseText })}</div>
               </>
             )}
             <div className="aisp-row" style={{ gap: 8 }}>
-              <label style={{ flex: "0 0 auto" }}>provider</label>
+              <label style={{ flex: "0 0 auto" }}>{t("speek.local.provider")}</label>
               <select className="aisp-sel" value={providerValue} onChange={(e) => { applyProvider(e.target.value); }}>
-                {LOCAL_PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+                {LOCAL_PROVIDERS.map((p) => <option key={p.id} value={p.id}>{t(p.labelKey)}</option>)}
               </select>
             </div>
             <div className="aisp-row" style={{ gap: 8 }}>
-              <label>服务地址</label>
+              <label>{t("speek.local.baseUrl")}</label>
               <input
                 className="aisp-in"
-                placeholder="留空 = 127.0.0.1:8768（自动选端口）"
+                placeholder={t("speek.local.baseUrlPh")}
                 defaultValue={st.localInfo?.baseUrl || ""}
                 key={"url-" + (st.localInfo?.baseUrl || "")}
                 onBlur={(e) => saveBaseUrl(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
               />
             </div>
-            <div className="aisp-mini">{info?.installHint || "选中「本地」引擎会自动准备并启动服务（首次联网约 300MB）。"}</div>
             <div className="aisp-mini">
-              model {localModel} · 端口 {health?.port ?? info?.runtime?.port ?? "—"} · pid {health?.pid ?? "—"} · RTF {rtfText} · RSS {rssText} · 最近活动 {lastActText}
-              {info?.sizes ? ` · 模型占用 ${info.sizes.modelsMB}MB` : ""}
+              {health?.ok
+                ? t("speek.local.runningHint", { label: health.providerLabel || health.provider || providerValue, pid: health.pid ?? "?" })
+                : t("speek.local.stoppedHint", { provider: providerValue })}
+            </div>
+            <div className="aisp-mini">
+              {t("speek.local.meta", { model: localModel, port: health?.port ?? info?.runtime?.port ?? "—", pid: health?.pid ?? "—", rtf: rtfText, rss: rssText, time: lastActText })}
+              {info?.sizes ? t("speek.local.modelSize", { mb: info.sizes.modelsMB }) : ""}
             </div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              <button className="aisp-btnw primary" disabled={busy || localRunning || localPreparing} onClick={startLocal}>启动</button>
-              <button className="aisp-btnw" disabled={busy || !localRunning} onClick={stopLocal}>停止</button>
-              <button className="aisp-btnw" disabled={busy} onClick={restartLocal}>重启</button>
-              <button className="aisp-btnw" disabled={busy || localPreparing} onClick={ensureNow} title="探测并准备（venv/依赖/模型），不动已在运行的服务">检查/准备</button>
-              <button className="aisp-btnw" onClick={() => setVoicesOpen(true)}>音色管理</button>
-              <button className="aisp-btnw" onClick={toggleLog}>{showLog ? "隐藏日志" : "查看日志"}</button>
+              <button className="aisp-btnw primary" disabled={busy || localRunning || localPreparing} onClick={startLocal}>{t("speek.local.start")}</button>
+              <button className="aisp-btnw" disabled={busy || !localRunning} onClick={stopLocal}>{t("speek.local.stop")}</button>
+              <button className="aisp-btnw" disabled={busy} onClick={restartLocal}>{t("speek.local.restart")}</button>
+              <button className="aisp-btnw" disabled={busy || localPreparing} onClick={ensureNow} title={t("speek.local.ensureTitle")}>{t("speek.local.ensure")}</button>
+              <button className="aisp-btnw" onClick={() => setVoicesOpen(true)}>{t("speek.local.voices")}</button>
+              <button className="aisp-btnw" onClick={toggleLog}>{showLog ? t("speek.local.logHide") : t("speek.local.logShow")}</button>
             </div>
             {showLog && <div className="aisp-log">{logText}</div>}
             {prepareFailed && (
               <div className="aisp-mini" style={{ color: "var(--danger,#ef4444)" }}>
-                ⚠ 准备失败：{prepare?.message || "未知错误"}
-                <br />可复现命令：bash {String(info?.paths?.service || "")}/start-tts.sh start --provider {providerValue}
+                {t("speek.local.failedTitle", { msg: prepare?.message || "—" })}
+                <br />{t("speek.local.repro", { cmd: "bash " + String(info?.paths?.service || "") + "/start-tts.sh start --provider " + providerValue })}
               </div>
             )}
-            {idleStopped && <div className="aisp-mini">空闲已退出（模型已释放）；下次朗读或点「检查/准备」会自动再起。</div>}
+            {idleStopped && <div className="aisp-mini">{t("speek.local.idleStopped")}</div>}
             <div className="aisp-row" style={{ gap: 8 }}>
-              <label style={{ flex: "0 0 auto" }}>空闲自动退出（秒，0=常驻）</label>
+              <label style={{ flex: "0 0 auto" }}>{t("speek.local.idleTimeout")}</label>
               <input
                 className="aisp-sel"
                 type="number"
@@ -1028,62 +1061,67 @@ function SettingsDialog() {
               />
             </div>
             <div className="aisp-row">
-              <label title="选中「本地」引擎时自动准备并启动服务（关闭后只探测，不自动下载/安装）">自动准备并启动</label>
+              <label title={t("speek.local.autoStartTitle")}>{t("speek.local.autoStart")}</label>
               <input type="checkbox" checked={localAutoStart} onChange={async (e) => { await setFeatureFlagApi("tts.local.autoStart", e.target.checked); await fetchLocalInfo(); }} />
             </div>
-            <div className="aisp-mini">启动脚本：server/tts-service/start-tts.sh（Windows 为 .ps1）；空闲退出后下次使用自动再起。</div>
+            <div className="aisp-mini">{t("speek.local.hint")}</div>
           </div>
 
           <div className="aisp-row">
-            <label title="edge-tts 是微软 Edge 的服务端语音合成，音质比浏览器 Web Speech 更自然；已安装时默认优先使用">后端引擎状态（edge-tts）</label>
+            <label>{t("speek.edge.status")}</label>
             <span className="aisp-badge" style={{ background: edgeOk ? "color-mix(in srgb,#16a34a 14%,transparent)" : "color-mix(in srgb,var(--danger, #ef4444) 16%,transparent)", color: edgeOk ? "#16a34a" : "var(--danger, #ef4444)" }}>
-              {edgeOk ? "● 已安装" : "○ 未安装"}
+              {edgeOk ? t("speek.edge.installed") : t("speek.edge.missing")}
             </span>
           </div>
-          {st.edgeStatus?.installHint && (
-            <div className="aisp-row" style={{ fontSize: 11, color: edgeOk ? "var(--text-dim,#888)" : "var(--danger, #ef4444)", marginTop: -4 }}>
-              <span style={{ wordBreak: "break-all" }}>{st.edgeStatus.installHint}</span>
+          {edgeOk && (
+            <div className="aisp-row" style={{ fontSize: 11, color: "var(--text-dim,#888)", marginTop: -4 }}>
+              <span style={{ wordBreak: "break-all" }}>
+                {t("speek.edge.installedLine", {
+                  version: st.edgeStatus?.version ? "v" + st.edgeStatus.version : "edge-tts",
+                  bin: st.edgeStatus?.bin || "—",
+                })}
+              </span>
             </div>
           )}
           {edgeOk && st.edgeStatus?.featureOn === false && (
             <div className="aisp-row" style={{ color: "var(--danger, #ef4444)", fontSize: 11, marginTop: -4 }}>
-              ⚠ tts.edge feature 未开启（可在扩展管理器开启；已装会自动开）
+              {t("speek.edge.featureOff")}
             </div>
           )}
           {!edgeOk && (
             <div className="aisp-row" style={{ fontSize: 11, color: "var(--text-dim,#888)", marginTop: -4 }}>
-              点右上角 🤖，让 AI 按你的平台（Linux/macOS/Windows）帮我安装 edge-tts。
+              {t("speek.edge.installHint")}
             </div>
           )}
           <div className="aisp-row" style={{ alignItems: "center" }}>
-            <label title="留空自动探测 ~/.local/bin、PATH、pipx；Windows 可填 pip install 后的 Scripts 路径" style={{ flex: "0 0 auto" }}>edge-tts 路径（可空）</label>
+            <label title={t("speek.edge.binTitle")} style={{ flex: "0 0 auto" }}>{t("speek.edge.binLabel")}</label>
             <span style={{ display: "inline-flex", gap: 6, alignItems: "center", flex: "1 1 auto", minWidth: 0 }}>
               <input
                 className="aisp-sel"
                 type="text"
                 style={{ flex: "1 1 auto", minWidth: 0, width: 240, maxWidth: "none" }}
-                placeholder="自动探测"
+                placeholder={t("speek.edge.binPh")}
                 defaultValue={st.edgeStatus?.edgeBin ?? ""}
                 key={st.edgeStatus?.edgeBin ?? ""}
                 onBlur={(e) => setEdgeBinPath(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
               />
-              <button className="aisp-btn" style={{ flexShrink: 0, width: "auto", minWidth: 0, padding: "0 8px", whiteSpace: "nowrap", height: 28 }} title="绕过缓存重新探测 edge-tts（AI 刚帮你装好时点这个）" onClick={async () => { await setEdgeBinPath((st.edgeStatus?.edgeBin ?? "")); fetchEdgeInfo(true); }}>重新探测</button>
+              <button className="aisp-btn" style={{ flexShrink: 0, width: "auto", minWidth: 0, padding: "0 8px", whiteSpace: "nowrap", height: 28 }} title={t("speek.edge.reprobeTitle")} onClick={async () => { await setEdgeBinPath((st.edgeStatus?.edgeBin ?? "")); fetchEdgeInfo(true); }}>{t("speek.edge.reprobe")}</button>
             </span>
           </div>
           <div className="aisp-row">
-            <label title="把 AI 的中间叙述也读出来（如「让我看一下…」「我先确认…」）；跳过思考与工具执行">朗读过程</label>
+            <label title={t("speek.process.title")}>{t("speek.process.label")}</label>
             <input type="checkbox" checked={!!st.processOn} onChange={() => toggleProcess()} />
           </div>
           <div className="aisp-row">
-            <label>朗读内容</label>
+            <label>{t("speek.content.label")}</label>
             <span className="aisp-seg">
-              <button className={s.mode === "full" ? "on" : ""} onClick={() => setSettings({ mode: "full" })}>全文概要化</button>
-              <button className={s.mode === "essentials" ? "on" : ""} onClick={() => setSettings({ mode: "essentials" })}>仅要点</button>
+              <button className={s.mode === "full" ? "on" : ""} onClick={() => setSettings({ mode: "full" })}>{t("speek.content.full")}</button>
+              <button className={s.mode === "essentials" ? "on" : ""} onClick={() => setSettings({ mode: "essentials" })}>{t("speek.content.essentials")}</button>
             </span>
           </div>
           <div className="aisp-row">
-            <label title={localSelected ? "本地引擎用 audio.playbackRate 实现，不进缓存 key" : "edge-tts 服务端语速"}>语速</label>
+            <label title={localSelected ? t("speek.speed.titleLocal") : t("speek.speed.titleEdge")}>{t("speek.speed.label")}</label>
             <span className="aisp-seg">
               {[0.75, 1, 1.25, 1.5, 2].map((r) => (
                 <button key={r} className={s.rate === r ? "on" : ""} onClick={() => setSettings({ rate: r })}>{r}x</button>
@@ -1092,11 +1130,11 @@ function SettingsDialog() {
           </div>
           {s.engine === "edge" && !st.edgeAvailable && (
             <div className="aisp-row" style={{ color: "var(--danger, #ef4444)", fontSize: 11 }}>
-              ⚠ edge-tts 后端未就绪（未装或 feature 未开启），将自动回落浏览器朗读。
+              {t("speek.edge.notReady")}
             </div>
           )}
           <div className="aisp-row">
-            <label>忽略短回复（少于 N 字不读）</label>
+            <label>{t("speek.minChars.label")}</label>
             <input
               className="aisp-sel"
               type="number"
@@ -1107,15 +1145,15 @@ function SettingsDialog() {
             />
           </div>
           <div className="aisp-row">
-            <label>开启跟读时注入「朗读模式」提示词（让 AI 输出自带朗读优化）</label>
+            <label>{t("speek.steer.label")}</label>
             <input type="checkbox" checked={!!s.steer} onChange={(e) => setSettings({ steer: e.target.checked })} />
           </div>
           <div className="aisp-row">
-            <label title="浏览器标签页切换到后台时，是否允许继续朗读（默认会暂停）">允许后台继续朗读</label>
+            <label title={t("speek.background.title")}>{t("speek.background.label")}</label>
             <input type="checkbox" checked={!!s.backgroundContinue} onChange={(e) => setSettings({ backgroundContinue: e.target.checked })} />
           </div>
           <div className="aisp-row" style={{ fontSize: 11, color: "var(--text-dim,#999)" }}>
-            队列语义：新回复进队尾不打断当前朗读；⏹ 停止清队列；关闭 🔊 即恢复纯阅读。
+            {t("speek.queue.label")}
           </div>
         </div>
       </div>
@@ -1171,14 +1209,14 @@ function LocalVoicesDialog({ open, onClose, provider, onProviderBlocked }) {
         const blob = new Blob(chunks, { type });
         setFile(new File([blob], "record." + ext, { type }));
         setRecording(false);
-        setMsg("录音完成（" + Math.round(blob.size / 1024) + "KB）— 建议 3-10 秒");
+        setMsg(t("speek.voices.recorded", { kb: Math.round(blob.size / 1024) }));
       };
       recRef.current = rec;
       rec.start();
       setRecording(true);
       recTimer.current = setTimeout(() => { try { rec.stop(); } catch { /* noop */ } }, 15000);
     } catch (e: any) {
-      setErr("无法访问麦克风：" + String(e?.message || e));
+      setErr(t("speek.voices.micError", { err: String(e?.message || e) }));
     }
   };
   const stopRec = () => {
@@ -1188,20 +1226,21 @@ function LocalVoicesDialog({ open, onClose, provider, onProviderBlocked }) {
 
   const submit = async () => {
     setErr(""); setMsg("");
-    if (!name.trim()) { setErr("请填写音色名"); return; }
-    if (!file) { setErr("请上传参考音频或现场录音（3-30 秒）"); return; }
-    if (!entryProvider.startsWith("qwen3") && !refText.trim()) { setErr("请填写参考音频对应的文字（转录）"); return; }
+    if (!name.trim()) { setErr(t("speek.voices.errName")); return; }
+    if (!file) { setErr(t("speek.voices.errAudio")); return; }
+    if (!entryProvider.startsWith("qwen3") && !refText.trim()) { setErr(t("speek.voices.errRefText")); return; }
     setBusy(true);
     const r = await createLocalVoice({
       name: name.trim(), refText: refText.trim(), language, xvecOnly: xvec,
       provider: entryProvider, blob: file, filename: file.name,
     });
     setBusy(false);
-    if (!r || !r.ok) { setErr((r && r.error) || "保存失败"); return; }
-    setName(""); setRefText(""); setFile(null); setMsg("已保存音色：" + (r.voice?.label || name));
+    if (!r || !r.ok) { setErr((r && r.error) || t("speek.voices.errSave")); return; }
+    setName(""); setRefText(""); setFile(null);
+    setMsg(t("speek.voices.saved", { name: r.voice?.label || name }));
     await fetchLocalVoices(true);
     if (entryProvider !== (st.localProvider || provider)) {
-      setMsg("已保存。切换到 provider " + entryProvider + " 后即可使用该克隆音色。");
+      setMsg(t("speek.voices.savedProvider", { provider: entryProvider }));
     }
   };
 
@@ -1218,28 +1257,31 @@ function LocalVoicesDialog({ open, onClose, provider, onProviderBlocked }) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="aisp-dlg-hd">
-          <span>🎙 本地音色管理（{st.localProvider || provider || "—"}）</span>
-          <button className="aisp-btn" onClick={onClose} title="关闭">
+          <span>{t("speek.voices.title", { provider: st.localProvider || provider || "—" })}</span>
+          <button className="aisp-btn" onClick={onClose} title={t("speek.common.close")}>
             <Icon d="M18 6 6 18 M6 6l12 12" size={14} />
           </button>
         </div>
         <div className="aisp-dlg-bd">
-          <div className="aisp-mini">
-            内置音色由 provider 直接提供（不可删除）；克隆音色保存在 state 目录（voices.json + 参考音频），切换 provider 后仍可复用。
-          </div>
+          <div className="aisp-mini">{t("speek.voices.intro")}</div>
           <div>
-            {voices.length === 0 && <div className="aisp-mini">（服务未运行或该 provider 暂无音色 — 先启动本地服务）</div>}
+            {voices.length === 0 && <div className="aisp-mini">{t("speek.voices.empty")}</div>}
             {voices.map((v: any) => (
               <div className="aisp-vrow" key={v.id}>
-                <span>{v.label || v.id}</span>
-                <span className="aisp-mini">{v.builtin === false ? "克隆" : v.language || ""}</span>
+                <span>{localVoiceLabel(v)}</span>
+                <span className="aisp-mini">{v.builtin === false ? t("speek.voices.clone") : voiceLangLabel(v.language)}</span>
                 <span className="aisp-vo">
-                  <button className="aisp-btnw" disabled={!running} onClick={() => previewLocalVoice(v.id)}>▶ 试听</button>
+                  <button className="aisp-btnw" disabled={!running} onClick={() => previewLocalVoice(v.id)}>{t("speek.voices.preview")}</button>
                   {v.builtin === false && (
-                    <button className="aisp-btnw danger" onClick={async () => {
-                      const r = await deleteLocalVoice(v.id);
-                      if (!r || !r.ok) setErr((r && r.error) || "删除失败"); else setMsg("已删除 " + v.id);
-                    }}>🗑</button>
+                    <button
+                      className="aisp-btnw danger"
+                      title={t("speek.voices.deleteTitle")}
+                      onClick={async () => {
+                        const r = await deleteLocalVoice(v.id);
+                        if (!r || !r.ok) setErr((r && r.error) || t("speek.voices.errDelete"));
+                        else setMsg(t("speek.voices.deleted", { id: v.id }));
+                      }}
+                    >🗑</button>
                   )}
                 </span>
               </div>
@@ -1247,58 +1289,57 @@ function LocalVoicesDialog({ open, onClose, provider, onProviderBlocked }) {
           </div>
 
           <div className="aisp-box">
-            <div className="aisp-box-hd"><span>＋ 新建克隆音色</span></div>
+            <div className="aisp-box-hd"><span>{t("speek.voices.create")}</span></div>
             <div className="aisp-row" style={{ gap: 8 }}>
-              <label style={{ flex: "0 0 auto" }}>音色名</label>
-              <input className="aisp-in" value={name} placeholder="如 我的声音" onChange={(e) => setName(e.target.value)} />
+              <label style={{ flex: "0 0 auto" }}>{t("speek.voices.name")}</label>
+              <input className="aisp-in" value={name} placeholder={t("speek.voices.namePh")} onChange={(e) => setName(e.target.value)} />
             </div>
             <div className="aisp-row" style={{ gap: 8 }}>
-              <label style={{ flex: "0 0 auto" }}>用于 provider</label>
+              <label style={{ flex: "0 0 auto" }}>{t("speek.voices.provider")}</label>
               <select className="aisp-sel" value={entryProvider} onChange={(e) => setEntryProvider(e.target.value)}>
                 <option value="hojo-80m">Hojo 80M</option>
                 <option value="qwen3-0.6b">Qwen3 0.6B</option>
                 <option value="qwen3-1.7b">Qwen3 1.7B</option>
               </select>
               {entryProvider !== (st.localProvider || provider) && (
-                <button className="aisp-btnw" onClick={() => onProviderBlocked(entryProvider)}>切到该 provider</button>
+                <button className="aisp-btnw" onClick={() => onProviderBlocked(entryProvider)}>{t("speek.voices.switchProvider")}</button>
               )}
             </div>
             <div className="aisp-row" style={{ alignItems: "center", gap: 8 }}>
-              <label style={{ flex: "0 0 auto" }}>参考音频</label>
-              <input ref={fileRef} type="file" accept="audio/*" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) { setFile(f); setMsg("已选择：" + f.name); } }} />
-              <button className="aisp-btnw" onClick={() => fileRef.current?.click()}>上传文件</button>
-              <button className={"aisp-btnw"} disabled={!micSupported || recording} onClick={startRec}>🎙 录音 15s</button>
-              {recording && <button className="aisp-btnw danger" onClick={stopRec}>停止录音</button>}
-              {!micSupported && <span className="aisp-mini">（非安全上下文/不支持录音 → 请上传 wav）</span>}
+              <label style={{ flex: "0 0 auto" }}>{t("speek.voices.refAudio")}</label>
+              <input ref={fileRef} type="file" accept="audio/*" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) { setFile(f); setMsg(t("speek.voices.fileSelected", { name: f.name })); } }} />
+              <button className="aisp-btnw" onClick={() => fileRef.current?.click()}>{t("speek.voices.upload")}</button>
+              <button className="aisp-btnw" disabled={!micSupported || recording} onClick={startRec}>{t("speek.voices.record")}</button>
+              {recording && <button className="aisp-btnw danger" onClick={stopRec}>{t("speek.voices.stopRecord")}</button>}
+              {!micSupported && <span className="aisp-mini">{t("speek.voices.micUnsupported")}</span>}
             </div>
-            <div className="aisp-mini">{file ? "已选：" + file.name + "（" + Math.round(file.size / 1024) + "KB）" : "支持 wav/mp3/webm（webm 需服务端有 ffmpeg）；时长 3-30 秒、≤10MB。"}</div>
+            <div className="aisp-mini">{file ? t("speek.voices.selected", { name: file.name, kb: Math.round(file.size / 1024) }) : t("speek.voices.refHint")}</div>
             <div>
-              <div className="aisp-mini" style={{ marginBottom: 4 }}>参考文本（音频里说的内容；克隆质量关键）</div>
-              <textarea className="aisp-ta" value={refText} placeholder="例：现在的外卖确实坑多，要不咱换家稍微贵点的？" onChange={(e) => setRefText(e.target.value)} />
+              <div className="aisp-mini" style={{ marginBottom: 4 }}>{t("speek.voices.refText")}</div>
+              <textarea className="aisp-ta" value={refText} placeholder={t("speek.voices.refTextPh")} onChange={(e) => setRefText(e.target.value)} />
             </div>
             <div className="aisp-row" style={{ gap: 8 }}>
-              <label style={{ flex: "0 0 auto" }}>语言</label>
+              <label style={{ flex: "0 0 auto" }}>{t("speek.voices.language")}</label>
               <select className="aisp-sel" value={language} onChange={(e) => setLanguage(e.target.value)}>
-                <option value="Chinese">中文</option>
-                <option value="English">English</option>
-                <option value="Auto">自动</option>
+                <option value="Chinese">{t("speek.voices.lang.zh")}</option>
+                <option value="English">{t("speek.voices.lang.en")}</option>
+                <option value="Auto">{t("speek.voices.lang.auto")}</option>
               </select>
               {entryProvider.startsWith("qwen3") && (
                 <>
-                  <label style={{ flex: "0 0 auto", marginLeft: 8 }}>仅音色向量</label>
+                  <label style={{ flex: "0 0 auto", marginLeft: 8 }}>{t("speek.voices.xvec")}</label>
                   <input type="checkbox" checked={xvec} onChange={(e) => setXvec(e.target.checked)} />
                 </>
               )}
             </div>
             <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <button className="aisp-btnw primary" disabled={busy} onClick={submit}>{busy ? "保存中…" : "保存音色"}</button>
+              <button className="aisp-btnw primary" disabled={busy} onClick={submit}>{busy ? t("speek.voices.saving") : t("speek.voices.save")}</button>
               {msg && <span className="aisp-mini" style={{ color: "#16a34a" }}>{msg}</span>}
               {err && <span className="aisp-mini" style={{ color: "var(--danger,#ef4444)" }}>⚠ {err}</span>}
             </div>
+            {recording && <div className="aisp-mini aisp-rec on">{t("speek.voices.recording")}</div>}
             {!canCloneNow && (
-              <div className="aisp-mini">
-                提示：当前 provider 为 {st.localProvider || provider || "—"}，克隆音色需要 Hojo 80M 或 Qwen3；保存后可在上方「启动/重启」切换。
-              </div>
+              <div className="aisp-mini">{t("speek.voices.providerHint", { provider: st.localProvider || provider || "—" })}</div>
             )}
           </div>
         </div>
@@ -1309,6 +1350,7 @@ function LocalVoicesDialog({ open, onClose, provider, onProviderBlocked }) {
 }
 
 export { SettingsDialog };
+
 
 
 // ═══ [D2 拆包] 重 chunk 自注册（薄壳首载本模块时调用一次）═══
