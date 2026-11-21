@@ -226,3 +226,18 @@ test("opening a PDF without a page fragment clears a previous jump", () => {
   assert.equal(next.page, undefined);
   assert.equal(next.viewerRevision, 1);
 });
+
+test("revision tabs carry atRevision and are distinct per ref", () => {
+  const rev1 = { ref: "aaaaaaaaaaaaaaaaaaaa", gitDir: "/repo/.aiti-trace" };
+  const rev2 = { ref: "bbbbbbbbbbbbbbbbbbbb", gitDir: "/repo/.aiti-trace" };
+  const open1 = { ...openA, atRevision: rev1, tabId: "file:/repo/a.ts@aaaaaaaaaaaa" };
+  const open2 = { ...openA, atRevision: rev2, tabId: "file:/repo/a.ts@bbbbbbbbbbbb" };
+  const [t1] = openFileTab([], open1);
+  assert.deepEqual(t1.atRevision, rev1);
+  const two = openFileTab([t1], open2);
+  assert.equal(two.length, 2, "different refs → distinct tabs");
+  // Reopening the same revision is idempotent (no duplicate, no revision bump).
+  const again = openFileTab(two, open1);
+  assert.equal(again.length, 2);
+  assert.equal(again.find((tab) => tab.id === open1.tabId).viewerRevision ?? 0, 0);
+});

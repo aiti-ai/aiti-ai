@@ -62,7 +62,7 @@ test("markdown preview links forward a PDF page fragment to the viewer", () => {
   // Upstream's inline FileViewer JSX became the TabBody dispatch in this fork; the
   // page hop now lives in the host file-open chain: handleOpenFile accepts page,
   // openHostFileTab threads it into openFileTab, handleOpenLinkedFile forwards it.
-  assert.match(appShell, /options\?: \{ sourceSessionId\?: string \| null; modeHint\?: "diff"; select\?: boolean; page\?: number \}/);
-  assert.match(appShell, /\{\n      fileName,\n      filePath,\n      modeHint,\n      page,\n      sourceSessionId,\n      tabId,\n    \}\)/);
+  assert.match(appShell, /options\?: \{ sourceSessionId\?: string \| null; modeHint\?: "diff"; select\?: boolean; page\?: number; atRevision\?: RevisionRef \}/);
+  assert.match(appShell, /\{\n      fileName: label,\n      filePath,\n      modeHint,\n      page,\n      sourceSessionId,\n      atRevision,\n      tabId,\n    \}\)/);
   assert.match(appShell, /const handleOpenLinkedFile = useCallback\(\(filePath: string, page\?: number\)/);
 });

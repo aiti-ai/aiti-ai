@@ -109,6 +109,7 @@ export function TabBody({ tab, host, ctx }: { tab: Tab; host: "panel" | "window"
       filePath={tab.filePath}
       cwd={ctx.cwd ?? undefined}
       sourceSessionId={tab.sourceSessionId}
+      atRevision={tab.atRevision}
       gitRefreshKey={ctx.gitRefreshKey}
       initialDisplayMode={tab.initialDisplayMode}
       initialState={tab.viewerState}

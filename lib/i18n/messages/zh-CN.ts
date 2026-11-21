@@ -834,6 +834,7 @@ export const zhCNLocale: LocalePlugin = {
     "files.skippedCount": "已跳过 {count} 个",
     "files.failedCount": "{count} 个上传失败",
     "files.imageLoadFailed": "图片加载失败",
+    "files.revisionUnsupported": "历史版本暂不支持此媒体类型的预览。",
     "files.audioLoadFailed": "音频加载失败",
     "files.videoLoadFailed": "视频加载失败",
     "chat.moreControls": "更多控件",

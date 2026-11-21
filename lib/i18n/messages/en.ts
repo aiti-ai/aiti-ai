@@ -833,6 +833,7 @@ export const enLocale: LocalePlugin = {
     "files.skippedCount": "{count} skipped",
     "files.failedCount": "{count} failed",
     "files.imageLoadFailed": "Failed to load image",
+    "files.revisionUnsupported": "Preview of this media type is not available for historical revisions.",
     "files.audioLoadFailed": "Failed to load audio",
     "files.videoLoadFailed": "Failed to load video",
     "chat.moreControls": "More controls",

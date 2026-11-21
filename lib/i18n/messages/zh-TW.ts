@@ -783,6 +783,7 @@ export const zhTWLocale: LocalePlugin = {
     "files.skippedCount": "已略過 {count} 個",
     "files.failedCount": "{count} 個上傳失敗",
     "files.imageLoadFailed": "圖片載入失敗",
+    "files.revisionUnsupported": "歷史版本暫不支援此媒體類型的預覽。",
     "files.audioLoadFailed": "音訊載入失敗",
     "files.videoLoadFailed": "影片載入失敗",
     "chat.moreControls": "更多控制項",
