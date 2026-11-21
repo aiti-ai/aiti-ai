@@ -283,6 +283,12 @@ function VaultPanel() {
     h("div", { style: headStyle },
       h("span", { style: { fontWeight: 700, fontSize: 14, display: "flex", alignItems: "center", gap: 6 } }, Ic(15, ICONS.key), t("sv.panel.label")),
       h("span", { style: { flex: 1 } }),
+      h("button", { key: "pf", onClick: function () {
+          setPreflightEnabled(!preflightEnabled());
+          setPreflightAuto(null);
+          setOpenTick(openTick + 1); // re-render the chip label
+        }, title: t("sv.pf.toggleTitle"), style: btn("var(--bg)") },
+        t("sv.pf.toggle") + ": " + (preflightEnabled() ? t("sv.on") : t("sv.off"))),
       tabBtn("vault", t("sv.tab.vault")),
       tabBtn("sessions", t("sv.tab.sessions")),
       h("button", { onClick: function () { setOpen(false); }, "aria-label": "close", style: { background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)" } }, Ic(13, ICONS.x))),
@@ -305,22 +311,38 @@ function VaultPanel() {
 // ---------------------------------------------------------------------------
 
 var PF_OFF_KEY = "aiti-secret-vault:preflight-off";
+var PF_AUTO_KEY = "aiti-secret-vault:preflight-auto";
 
+/** Persistent off-switch (panel toggle). */
 function preflightEnabled() {
   try { return window.localStorage.getItem(PF_OFF_KEY) !== "1"; } catch (e) { return true; }
 }
+function setPreflightEnabled(on) {
+  try { window.localStorage.setItem(PF_OFF_KEY, on ? "0" : "1"); } catch (e) {}
+}
+/** Session-scoped auto answer ("mask" | "raw" | null) remembered from the dialog. */
+function preflightAuto() {
+  try { return window.sessionStorage.getItem(PF_AUTO_KEY) || null; } catch (e) { return null; }
+}
+function setPreflightAuto(mode) {
+  try {
+    if (mode) window.sessionStorage.setItem(PF_AUTO_KEY, mode);
+    else window.sessionStorage.removeItem(PF_AUTO_KEY);
+  } catch (e) {}
+}
 
-/** Three-way decision dialog. Resolves: "mask" | "raw" | "cancel". */
+/** Three-way decision dialog. Resolves: { decision: "mask"|"raw"|"cancel", remember: boolean }. */
 function preflightDialog(candidates, locked) {
   return new Promise(function (resolve) {
     var settled = false;
+    var remember = false;
     var dlg = document.createElement("dialog");
     function done(v) {
       if (settled) return;
       settled = true;
       try { dlg.close(); } catch (e) {}
       try { dlg.remove(); } catch (e) {}
-      resolve(v);
+      resolve({ decision: v, remember: remember });
     }
     var wrap = { padding: "18px 20px", fontFamily: "inherit", fontSize: 13, color: "var(--text,#e8e8ec)",
       background: "var(--bg-panel,#1c1c20)", border: "1px solid var(--border,#3a3a42)", borderRadius: 12,
@@ -373,6 +395,17 @@ function preflightDialog(candidates, locked) {
     });
     box.appendChild(list);
 
+    // "remember this answer" — session scoped, so a long paste-heavy session is
+    // not interrupted every time while a reload forgets it again.
+    var rememberRow = document.createElement("label");
+    rememberRow.style.cssText = "display:flex;align-items:center;gap:6px;margin:2px 0 10px;color:var(--text-muted,#9a9aa4);font-size:12px;cursor:pointer;";
+    var cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.addEventListener("change", function () { remember = !!cb.checked; });
+    rememberRow.appendChild(cb);
+    rememberRow.appendChild(document.createTextNode(t("sv.pf.remember")));
+    box.appendChild(rememberRow);
+
     var foot = document.createElement("div");
     foot.style.cssText = "display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;";
     foot.appendChild(mkBtn(t("sv.pf.cancel"), false, function () { done("cancel"); }));
@@ -399,10 +432,17 @@ function pfPost(path, body) {
 async function preflightGate(text) {
   if (!preflightEnabled() || !text || text.length < 8) return undefined;
   if (text.indexOf("rsec_") >= 0) return undefined; // already masked
+  var auto = preflightAuto();
+  if (auto === "raw") return undefined;             // asked and answered "send as-is" this session
   var scan;
   try { scan = await pfPost("/preflight/scan", { text: text, strict: true }); } catch (e) { return undefined; }
   if (!scan || !scan.ok || !scan.candidates || scan.candidates.length === 0) return undefined;
-  var decision = await preflightDialog(scan.candidates, !!scan.locked);
+  var decision = auto || "ask";
+  if (decision === "ask") {
+    var answer = await preflightDialog(scan.candidates, !!scan.locked);
+    decision = answer.decision;
+    if (answer.remember && (decision === "mask" || decision === "raw")) setPreflightAuto(decision);
+  }
   if (decision === "cancel") return { cancel: true };
   if (decision !== "mask") return undefined;
   try {
