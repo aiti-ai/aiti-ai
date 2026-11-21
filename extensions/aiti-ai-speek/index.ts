@@ -973,6 +973,7 @@ export default {
         "speek.local.idleTimeout": "空闲自动退出（秒，0=常驻）",
         "speek.local.tn": "文本归一化（数字/日期读成中文）",
         "speek.local.tnTitle": "关闭可让 venv 从约 1.3GB 降到约 0.3GB（已装的文件不回收）；改动需重启服务生效",
+        "speek.local.tnUnavailable": "当前环境不支持文本归一化（Windows 无 pynini 预编译包），已自动跳过；合成不受影响。",
         "speek.local.autoStart": "自动准备并启动",
         "speek.local.autoStartTitle": "选中「本地」引擎时自动准备并启动服务（关闭后只探测，不自动下载/安装）",
         "speek.local.hint": "启动脚本：server/tts-service/start-tts.sh（Windows 为 .ps1）；空闲退出后下次使用自动再起。",
@@ -1167,6 +1168,7 @@ export default {
         "speek.local.idleTimeout": "Idle exit (seconds, 0 = stay resident)",
         "speek.local.tn": "Text normalization (numbers/dates read aloud)",
         "speek.local.tnTitle": "Off keeps the venv at ~0.3GB instead of ~1.3GB (already-installed files stay); restart the service to apply",
+        "speek.local.tnUnavailable": "Text normalization is unavailable here (no pynini wheel on Windows) and was skipped; synthesis still works.",
         "speek.local.autoStart": "Prepare and start automatically",
         "speek.local.autoStartTitle": "Bootstrap and start the service when \u201cLocal\u201d is selected (off = probe only, never download/install)",
         "speek.local.hint": "Launcher: server/tts-service/start-tts.sh (start-tts.ps1 on Windows); it starts again on next use after an idle exit.",
@@ -1416,6 +1418,7 @@ export default {
           autoStart: cfg.autoStart,
           idleTimeout: cfg.idleTimeout,
           tn: cfg.tn,
+          tnEffective: ready?.tn ?? null,
           model: health?.model || null,
           running: !!health?.ok,
           health,
@@ -1499,6 +1502,15 @@ export default {
         if (!id) return json({ ok: false, error: "name must contain letters or digits" }, 400);
         const cloneCapable = /hojo-80m|qwen3/.test(provider);
         if (!cloneCapable) return json({ ok: false, error: `provider ${provider} does not support voice cloning` }, 400);
+        // A clone must not shadow an existing clone (silent overwrite) or a built-in voice id.
+        const existing = readVoiceEntries(paths);
+        if (existing.some((v) => v.id === id)) {
+          return json({ ok: false, error: `a voice named "${id}" already exists - choose another name` }, 409);
+        }
+        const current = await localVoices(paths, cfg, true);
+        if ((current?.voices || []).some((v) => v.id === id && v.builtin !== false)) {
+          return json({ ok: false, error: `"${id}" collides with a built-in voice - choose another name` }, 409);
+        }
         if (!refText && !(xvecOnly && provider.startsWith("qwen3"))) {
           return json({ ok: false, error: "need refText (transcript of the reference audio)" }, 400);
         }

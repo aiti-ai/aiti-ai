@@ -1,5 +1,5 @@
 # =============================================================================
-# aiti-ai-speek · local TTS service bootstrap (idempotent, zero manual steps) - Windows
+# aiti-ai-speek - local TTS service bootstrap (idempotent, zero manual steps) - Windows
 #
 # Windows counterpart of bootstrap.sh: same phases, same prepare.json protocol, same
 # exit codes. Pure ASCII so Windows PowerShell 5.1 parses it correctly without a BOM.
@@ -219,7 +219,7 @@ $stampHash = ""
 if (Test-Path $Stamp) { $stampHash = ([IO.File]::ReadAllText($Stamp)).Trim() }
 
 function Invoke-PipInstall([string[]]$pipArgs) {
-  # $pipArgs starts with the subcommand ("install"); keep it right after `pip` — passing it after
+  # $pipArgs starts with the subcommand ("install"); keep it right after `pip` - passing it after
   # `install --python X` makes uv treat "install" as a package name (No solution found).
   $sub = $pipArgs[0]
   $rest = @()
@@ -237,7 +237,7 @@ function Invoke-PipInstall([string[]]$pipArgs) {
 }
 
 if ($ForceDeps -or !(Test-Path $Stamp) -or $stampHash -ne $DepsHash) {
-  $viaLabel = if ($PipIndex) { " · via " + (($PipIndex -split "/")[2]) } else { "" }
+  $viaLabel = if ($PipIndex) { " via " + (($PipIndex -split "/")[2]) } else { "" }
   Write-Prepare "deps" 18 ("installing python deps (first run may take a few minutes$viaLabel)")
   if (-not $script:UvExe) { Invoke-Quiet { & $script:Py -m pip install --upgrade pip -q } | Out-Null }
   $pipExtra = @()
@@ -259,24 +259,30 @@ Write-Prepare "deps" 40 "python deps ready"
 # --- optional text normalization (Hojo only; failure degrades to --no-tn) ----------------------
 # Windows note: pynini/WeTextProcessing usually has no prebuilt wheel, so this is expected to
 # degrade to tn-disabled there; the service then runs without text normalization.
-# Windows: pynini (WeTextProcessing) has no prebuilt wheel for CPython 3.12 and the source build
-# fails with the stock MSVC toolchain -> skip by default (fast) unless explicitly forced with
-# AITI_TTS_TN=1. Synthesis still works, numbers/dates are read as written.
-$ForceTn = ($env:AITI_TTS_TN -eq "1")
-if ($Family -eq "hojo" -and -not $SkipTn -and -not $ForceTn) {
-  Write-Log "text normalization skipped on Windows (no pynini wheel; set AITI_TTS_TN=1 to force)"
-  Write-Utf8NoBom (Join-Path $HomeDir "tn-disabled") "no-tn"
-}
-if ($Family -eq "hojo" -and -not $SkipTn -and $ForceTn) {
+if ($Family -eq "hojo" -and -not $SkipTn) {
   if ((Invoke-Quiet { & $script:Py -c "import tn" }) -ne 0) {
-    Write-Prepare "deps" 44 "installing text normalization (optional)"
-    $pipExtra = @()
-    if ($PipIndex) { $pipExtra += @("--index-url", $PipIndex) }
-    if ((Invoke-PipInstall (@("install", "-q", "WeTextProcessing>=1.0.4.1") + $pipExtra)) -eq 0) {
-      Write-Log "WeTextProcessing installed"
-    } else {
-      Write-Log "WeTextProcessing install failed -> synthesis runs without text normalization"
+    # WeTextProcessing depends on pynini, which historically ships no Windows wheel -> a source
+    # build fails with the stock MSVC toolchain (40-60s wasted). Probe for a *binary* wheel first
+    # (cheap) and only then install; otherwise record the degradation and move on.
+    $probeDir = Join-Path $HomeDir (".probe-pynini-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Force -Path $probeDir | Out-Null
+    $probeArgs = @("-m", "pip", "download", "--no-cache-dir", "--no-deps", "--only-binary=:all:", "-q", "-d", $probeDir, "pynini")
+    if ($PipIndex) { $probeArgs += @("--index-url", $PipIndex) }
+    $hasWheel = ((Invoke-Quiet { & $script:Py @probeArgs }) -eq 0)
+    Remove-Item -Recurse -Force $probeDir -ErrorAction SilentlyContinue
+    if (-not $hasWheel) {
+      Write-Log "no prebuilt pynini wheel for this Python -> text normalization disabled (synthesis still works)"
       Write-Utf8NoBom (Join-Path $HomeDir "tn-disabled") "no-tn"
+    } else {
+      Write-Prepare "deps" 44 "installing text normalization (optional)"
+      $pipExtra = @()
+      if ($PipIndex) { $pipExtra += @("--index-url", $PipIndex) }
+      if ((Invoke-PipInstall (@("install", "-q", "WeTextProcessing>=1.0.4.1") + $pipExtra)) -eq 0) {
+        Write-Log "WeTextProcessing installed"
+      } else {
+        Write-Log "WeTextProcessing install failed -> synthesis runs without text normalization"
+        Write-Utf8NoBom (Join-Path $HomeDir "tn-disabled") "no-tn"
+      }
     }
   }
 }
