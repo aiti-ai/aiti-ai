@@ -313,6 +313,17 @@ var RULES = [
     source: GITLEAKS
   },
   {
+    id: "ark-token",
+    label: "ARK_KEY",
+    kind: "secret",
+    // volcengine Ark API key: `ark-` + UUID hex groups + optional short hex
+    // suffix (`ark-f17fc284-58df-45a7-9649-ac0e76ef9190-104bc`). Distinctive
+    // enough to catch keyword-less shell forms (`K='ark-...'`).
+    pattern: /\bark-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:-[0-9a-f]{2,12})*\b/gi,
+    verify: notFiller,
+    source: "https://www.volcengine.com/docs/82379/1330676"
+  },
+  {
     id: "azure-storage-key",
     label: "AZURE_STORAGE_KEY",
     kind: "secret",
@@ -372,7 +383,7 @@ var RULES = [
     kind: "secret",
     // keyword then either an assignment operator or the natural-language copula
     // (`password is "xxx"`, `密码是"xxx"`) before the quoted value // cjk-ok
-    pattern: /(?:api[_-]?key|secret(?:[_-]?key)?|token|password|passwd|pwd|auth|credential|密码|密钥|秘钥|口令|令牌|授权码|授权密钥|访问令牌|访问密钥|凭证|凭据|私钥)s?["'`]?(?:[ \t]{0,5}(?::=|=>|[=:]|：)|(?:[ \t]+is\b|是)[ \t]{0,5}(?::=|=>|[=:]|：)?)[ \t]{0,5}["'`]([^\s"'`]{8,256})["'`]/gi,
+    pattern: /(?:api[ _-]?key|secret(?:[ _-]?key)?|token|password|passwd|pwd|auth|credential|密码|密钥|秘钥|口令|令牌|授权码|授权密钥|访问令牌|访问密钥|凭证|凭据|私钥)s?["'`]?(?:[ \t]{0,5}(?::=|=>|[=:]|：)|(?:[ \t]+is\b|[ \t]{0,3}是)[ \t]{0,5}(?::=|=>|[=:]|：)?)[ \t]{0,5}["'`]([^\s"'`]{8,256})["'`]/gi,
     group: 1,
     verify: quotedSecret,
     before: keywordStart,
@@ -383,7 +394,7 @@ var RULES = [
     label: "SECRET",
     kind: "secret",
     // keyword then an assignment verb: `密码改成 X`, `new password X`, `set the password to X` // cjk-ok
-    pattern: /(?:api[_-]?key|secret(?:[_-]?key)?|token|password|passwd|pwd|passphrase|auth|credential|新密码|新口令|新的密码|密码|密钥|秘钥|口令|令牌|授权码|授权密钥|访问令牌|访问密钥|凭证|凭据|私钥)s?["'`]?(?:[ \t]+to\b|[ \t]{0,5}(?:改为|改到|改成|修改为|设置为|设置成|设为|设成|置为|配置为|配置成|换成|换为|变为|变成|重置为|重设为|更改为|更新为))[ \t:：]{0,5}["'`]?((?:[^\s"'`;,(){}<>[\]\\，。、；：！？“”‘’（）]|\\(?![nrt])){8,256})(?!(?!\\[nrt])[^\s"'`;,(){}<>[\]，。、；：！？“”‘’（）])/gi,
+    pattern: /(?:api[ _-]?key|secret(?:[ _-]?key)?|token|password|passwd|pwd|passphrase|auth|credential|新密码|新口令|新的密码|密码|密钥|秘钥|口令|令牌|授权码|授权密钥|访问令牌|访问密钥|凭证|凭据|私钥)s?["'`]?(?:[ \t]+to\b|[ \t]{0,5}(?:改为|改到|改成|修改为|设置为|设置成|设为|设成|置为|配置为|配置成|换成|换为|变为|变成|重置为|重设为|更改为|更新为))[ \t:：]{0,5}["'`]?((?:[^\s"'`;,(){}<>[\]\\，。、；：！？“”‘’（）]|\\(?![nrt])){8,256})(?!(?!\\[nrt])[^\s"'`;,(){}<>[\]，。、；：！？“”‘’（）])/gi,
     group: 1,
     verify: (v) => bareSecret(v) || assignedSecret(v),
     before: keywordStart,
@@ -419,9 +430,23 @@ var RULES = [
     // a literal \n, \r or \t (backslash and letter) ends the value, as in a dotenv string inside source code;
     // fullwidth CJK punctuation also ends the value (`密码：abc123，请记好` must not swallow the trailing prose) // cjk-ok
     // keyword then either an assignment operator or the natural-language copula (`password is xxx`, `密码是xxx`) // cjk-ok
-    pattern: /(?:api[_-]?key|secret(?:[_-]?key)?|token|password|passwd|pwd|auth|credential|密码|密钥|秘钥|口令|令牌|授权码|授权密钥|访问令牌|访问密钥|凭证|凭据|私钥)s?["'`]?(?:[ \t]{0,5}(?::=|=>|[=:]|：)|(?:[ \t]+is\b|是)[ \t]{0,5}(?::=|=>|[=:]|：)?)[ \t]{0,5}((?:[^\s"'`;,(){}<>[\]\\，。、；：！？“”‘’（）]|\\(?![nrt])){8,256})(?!(?!\\[nrt])[^\s"'`;,(){}<>[\]，。、；：！？“”‘’（）])/gi,
+    pattern: /(?:api[ _-]?key|secret(?:[ _-]?key)?|token|password|passwd|pwd|auth|credential|密码|密钥|秘钥|口令|令牌|授权码|授权密钥|访问令牌|访问密钥|凭证|凭据|私钥)s?["'`]?(?:[ \t]{0,5}(?::=|=>|[=:]|：)|(?:[ \t]+is\b|[ \t]{0,3}是)[ \t]{0,5}(?::=|=>|[=:]|：)?)[ \t]{0,5}((?:[^\s"'`;,(){}<>[\]\\，。、；：！？“”‘’（）]|\\(?![nrt])){8,256})(?!(?!\\[nrt])[^\s"'`;,(){}<>[\]，。、；：！？“”‘’（）])/gi,
     group: 1,
     verify: bareSecret,
+    before: keywordStart,
+    source: GITLEAKS
+  },
+  {
+    id: "generic-secret-bare",
+    label: "SECRET",
+    kind: "secret",
+    // keyword + whitespace + value with NO operator/copula/quote — the most
+    // common chat paste shape (see the bare-form cases in test/detect.test.mjs).
+    // A bare keyword binds prose loosely, so date-phrase-shaped values are
+    // rejected and the operator forms' entropy/shape bars still apply.
+    pattern: /(?:api[ _-]?key|secret(?:[ _-]?key)?|token|password|passwd|pwd|passphrase|credential|密码|密钥|秘钥|口令|令牌|授权码|授权密钥|访问令牌|访问密钥|凭证|凭据|私钥)s?[ \t]{1,5}["'`]?((?:[^\s"'`;,(){}<>[\]\\，。、；：！？“”‘’（）]|\\(?![nrt])){8,256})(?!(?!\\[nrt])[^\s"'`;,(){}<>[\]，。、；：！？“”‘’（）])/gi,
+    group: 1,
+    verify: (v) => !/^\d{1,4}[月日年]/.test(v) && (bareSecret(v) || assignedSecret(v)),
     before: keywordStart,
     source: GITLEAKS
   }
@@ -442,6 +467,7 @@ var WRAPPABLE = /* @__PURE__ */ new Set([
   "huggingface-token",
   "npm-token",
   "pypi-token",
+  "ark-token",
   "private-key",
   "private-key-truncated",
   "db-connection-url",
