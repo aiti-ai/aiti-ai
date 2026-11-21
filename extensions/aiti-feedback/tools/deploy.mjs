@@ -3,9 +3,9 @@
  * aiti-feedback · deploy to ~/.pi/web/extensions/ and ~/.pi/web-dev/extensions/
  *
  * 0) build the JSX client bundle (client/src → dist/aiti-feedback-client.mjs)
- * 1) copy server files (index.ts / package.json / icon.svg) to both instances
+ * 1) copy server files (index.ts / package.json) to both instances
  * 2) copy the client bundle to dist/
- * 3) icons from _shared/icons (message-circle)
+ * 3) icons from _shared/icons (discussion / message-square-text)
  * 4) deploy commit + dual-instance hot reload (env ports per machine)
  */
 import { copyFileSync, mkdirSync, existsSync } from "node:fs";
@@ -39,7 +39,7 @@ try {
 
 for (const extDir of targets) {
   mkdirSync(extDir, { recursive: true });
-  for (const f of ["package.json", "index.ts", "icon.svg"]) {
+  for (const f of ["package.json", "index.ts"]) {
     copyFileSync(resolve(root, f), resolve(extDir, f));
     console.log("[deploy] src → " + resolve(extDir, f));
   }
@@ -49,7 +49,7 @@ for (const extDir of targets) {
   console.log("[deploy] client → " + resolve(clientDir, "aiti-feedback-client.mjs"));
 }
 
-for (const t of targets) copyIcons(resolve(t, "icons"), ["discussion"], { log: (m) => console.log(m) });
+for (const t of targets) copyIcons(resolve(t, "icons"), ["discussion", "message-square-text"], { log: (m) => console.log(m) });
 
 deployCommit({ repo: extRepo, name: "aiti-feedback", paths: ["aiti-feedback"], ident: true, log: (m) => console.log("[deploy] " + m) });
 

@@ -9,7 +9,7 @@
 export default {
   id: "aiti-feedback",
   name: "报告问题",
-  icon: "icon.svg",
+  icon: "icons/message-square-text.svg",
   client: "dist/aiti-feedback-client.mjs",
 
   ui: {
