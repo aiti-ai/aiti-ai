@@ -173,9 +173,31 @@ function consumeUploadSvcPending(): { onSelect: (root: string) => void; onClose:
  *  拉起既有 UploadDialog lazy chunk——第三方 open() 的唯一渲染面）。 */
 function UploadDialogServiceHost() {
   const [open, setOpen] = useState(false);
+  /** Callback supplied by the cross-extension `uploadWorkspace.open()` service.
+   *  It must receive the extracted root; only the legacy direct-use path falls
+   *  back to switching the new-session cwd. */
+  const pendingRef = useRef<{ onSelect: (root: string) => void; onClose: () => void } | null>(null);
+  const finish = (root?: string) => {
+    const cb = pendingRef.current;
+    pendingRef.current = null;
+    setOpen(false);
+    if (root === undefined) { cb?.onClose(); return; }
+    try {
+      if (cb) cb.onSelect(root);
+      else {
+        const svc = getExtService<{ setCwd?: (path: string) => void }>("pi-web.newSession");
+        if (svc?.setCwd) svc.setCwd(root);
+        else showToast(t("sm.uploadSwitchHint"));
+      }
+      cb?.onClose();
+    } catch { showToast(t("sm.uploadSwitchHint")); }
+  };
   useEffect(() => {
     const onOpen = () => {
-      if (consumeUploadSvcPending()) setOpen(true);
+      const cb = consumeUploadSvcPending();
+      if (!cb) return;
+      pendingRef.current = cb;
+      setOpen(true);
     };
     try { window.addEventListener("sm:open-upload-dialog", onOpen); } catch { /* ignore */ }
     return () => { try { window.removeEventListener("sm:open-upload-dialog", onOpen); } catch { /* ignore */ } };
@@ -185,15 +207,8 @@ function UploadDialogServiceHost() {
     load: workspaceUploadRef,
     pick: "UploadDialog",
     props: {
-      onCloseDialog: () => setOpen(false),
-      onSelect: (root: string) => {
-        setOpen(false);
-        try {
-          const svc = getExtService<{ setCwd?: (path: string) => void }>("pi-web.newSession");
-          if (svc?.setCwd) svc.setCwd(root);
-          else showToast(t("sm.uploadSwitchHint"));
-        } catch { showToast(t("sm.uploadSwitchHint")); }
-      },
+      onCloseDialog: () => finish(),
+      onSelect: (root: string) => finish(root),
     },
   });
   return open ? <>{dialog}</> : null;
