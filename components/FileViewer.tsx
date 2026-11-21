@@ -310,10 +310,9 @@ async function downloadViaTicket(filePath: string, params: Record<string, string
   });
   const data = await res.json().catch(() => ({})) as { ticket?: string; error?: string };
   if (!res.ok || !data.ticket) throw new Error(data.error ?? `HTTP ${res.status}`);
-  const search = new URLSearchParams(params);
-  const qs = search.toString();
+  // ref/gitDir stay in the ticket payload (path-channel contract); the GET URL carries nothing sensitive.
   const a = document.createElement("a");
-  a.href = apiUrl(`/api/files/_t/${encodeURIComponent(data.ticket)}${qs ? `?${qs}` : ""}`);
+  a.href = apiUrl(`/api/files/_t/${encodeURIComponent(data.ticket)}`);
   a.download = getFileName(filePath);
   document.body.appendChild(a);
   a.click();
@@ -1503,7 +1502,7 @@ export function FileViewer({
       initialDisplayMode={initialDisplayMode}
       initialState={initialState}
       onStateChange={onStateChange}
-      watchEnabled={watchEnabled}
+      watchEnabled={watchEnabled && !atRevision}
     />
   );
 }

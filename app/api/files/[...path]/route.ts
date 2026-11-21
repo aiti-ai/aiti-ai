@@ -298,7 +298,7 @@ export async function POST(
           }
           const kind = body?.kind === "folder" || body?.kind === "file" ? body.kind : undefined;
           const cwd = typeof body?.cwd === "string" && body.cwd ? body.cwd : undefined;
-          const revTicket = issueFileTicket(p, type, { kind, cwd });
+          const revTicket = issueFileTicket(p, type, { kind, cwd, ref: revRef, gitDir: revGitDir });
           return NextResponse.json({ ...revTicket });
         }
         // read/download/meta/preview require the target to be a file (read's image/audio/document streaming and text content all need a file)
@@ -341,11 +341,16 @@ export async function POST(
     //   /upload-check→ upload conflict check; body { directory, fileNames }
     //   /upload      → upload; multipart FormData(files..., directory); the conflict query param stays (not a path)
     if (segments[0] === "get") {
-      const body = await request.json().catch(() => null) as { path?: unknown; type?: unknown; sessionId?: unknown; probe?: unknown } | null;
+      const body = await request.json().catch(() => null) as { path?: unknown; type?: unknown; sessionId?: unknown; probe?: unknown; ref?: unknown; gitDir?: unknown } | null;
       const p = resolveBodyPath(body?.path);
       if (!p) return NextResponse.json({ error: "path must be absolute" }, { status: 400 });
       const rawType = typeof body?.type === "string" ? body.type : "read";
       const type = parseFileRequestType(rawType);
+      // Revision tuple rides the body (same channel as path): both values must be strings
+      // or the branch is skipped (regular working-tree read).
+      const revRef = typeof body?.ref === "string" && body.ref ? body.ref : null;
+      const revGitDir = typeof body?.gitDir === "string" && body.gitDir ? body.gitDir : null;
+      const revision = revRef && revGitDir ? { ref: revRef, gitDir: revGitDir } : null;
       // watch is SSE/EventSource and must be GET → exchange via /token and use the _e channel; POST not accepted
       if (!type || type === "watch") {
         return NextResponse.json({ error: "Invalid file request type" }, { status: 400 });
@@ -356,7 +361,7 @@ export async function POST(
       // the browser's console noise over 4xx). Permission checks still apply (probing must not
       // enable unauthorized enumeration).
       const probe = body?.probe === true;
-      return handleFileRequest(request, p, type, sessionId, probe);
+      return handleFileRequest(request, p, type, sessionId, probe, revision);
     }
 
     if (segments[0] === "upload-check") {
@@ -550,6 +555,7 @@ function revisionBlobResponse(filePath: string, blob: Buffer, contentType: strin
  * docs/pi-web-file-open-revision-plan.md §2.6).
  */
 async function handleRevisionRequest(
+  request: NextRequest,
   filePath: string,
   type: FileRequestType,
   allowedRoots: Set<string>,
@@ -610,7 +616,16 @@ async function handleRevisionRequest(
       return NextResponse.json({ error: "Revision too large for text preview (>5MB)" }, { status: 413 });
     }
     const blob = await revisionBlobContent(gitDirReal, ref, relPath);
-    const chunk = revisionTextChunk(blob, size);
+    // Same offset validation as the regular branch's text chunker.
+    const rawOffset = request.nextUrl.searchParams.get("offset");
+    if (rawOffset !== null && !/^\d+$/.test(rawOffset)) {
+      return NextResponse.json({ error: "Invalid text preview offset" }, { status: 400 });
+    }
+    const offset = Number(rawOffset ?? 0);
+    if (!Number.isSafeInteger(offset) || offset > size) {
+      return NextResponse.json({ error: "Invalid text preview offset" }, { status: 400 });
+    }
+    const chunk = revisionTextChunk(blob, size, offset);
     return NextResponse.json({ ...chunk, language: getLanguage(filePath), size });
   } catch {
     return NextResponse.json({ error: "Revision read failed" }, { status: 500 });
@@ -754,6 +769,7 @@ export async function GET(
     // Exchange POST /api/files/ticket { path } for a ticket first (5-minute TTL, reusable); see lib/file-ticket.ts.
     let filePath: string;
     let rawType: string;
+    let ticketRevision: { ref: string; gitDir: string } | null = null;
     if (segments[0] === "_t" && segments.length === 2) {
       const t = redeemFileTicket(segments[1]);
       if (!t) {
@@ -761,6 +777,8 @@ export async function GET(
       }
       filePath = t.path;
       rawType = t.type;
+      // Revision tickets carry the tuple in the payload (same channel as path — never in a URL).
+      if (t.ref && t.gitDir) ticketRevision = { ref: t.ref, gitDir: t.gitDir };
     } else {
       // Design contract: file paths never enter URLs. GET keeps only the ticket (_t) opaque channel;
       // all other reads/writes go through POST /api/files/get (path in the body). Bare path-segment access is rejected outright.
@@ -773,7 +791,8 @@ export async function GET(
     if (!type) {
       return NextResponse.json({ error: "Invalid file request type" }, { status: 400 });
     }
-    return handleFileRequest(request, filePath, type, request.nextUrl.searchParams.get("sessionId"));
+    // Revision tickets carry the tuple in the payload (same channel as path — never in a URL).
+    return handleFileRequest(request, filePath, type, request.nextUrl.searchParams.get("sessionId"), false, ticketRevision);
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
@@ -786,6 +805,7 @@ async function handleFileRequest(
   type: FileRequestType,
   sessionId: string | null,
   probe = false,
+  revision?: { ref: string; gitDir: string } | null,
 ): Promise<Response> {
   try {
     const allowedRoots = await getAllowedFileRoots();
@@ -822,10 +842,10 @@ async function handleFileRequest(
     // working-tree file. The path is often a deleted file (stat impossible), so this
     // must run before the fs.stat gate. Only read/download are served here; other
     // types (watch/preview/meta) make no sense for a historical blob.
-    const revRef = request.nextUrl.searchParams.get("ref");
-    const revGitDir = request.nextUrl.searchParams.get("gitDir");
-    if (revRef !== null || revGitDir !== null) {
-      return handleRevisionRequest(filePath, type, allowedRoots, revRef, revGitDir);
+    // ref/gitDir arrive inside the POST body or the ticket payload (same channel as
+    // path — they are local filesystem paths and must never land in a URL/access log).
+    if (revision) {
+      return handleRevisionRequest(request, filePath, type, allowedRoots, revision.ref, revision.gitDir);
     }
 
     let stat: fs.Stats | undefined;
