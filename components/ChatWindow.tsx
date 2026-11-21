@@ -2,7 +2,7 @@
 import { registerAbortHandler } from "@/hooks/useKeyboardShortcuts";
 import { isHiddenRelation, SIDE_BOUNDARY_MESSAGE_TYPE } from "@/lib/session-family";
 import Image from "next/image";
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { AgentMessage, AssistantContentBlock, AssistantMessage, BashExecutionMessage, BlockingExtensionUiRequest, CustomMessage, ExtensionUiRequest, SessionInfo, SessionTreeNode, ToolResultMessage, UserMessage } from "@/lib/types";
 import type { AttachedFile } from "@/hooks/useAgentSession";
@@ -547,7 +547,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     isCompacting, compactError, compactResult, compactQueued, cancelCompactQueue, modelSwitchPending, displayModel: displayModelValue, sessionStats, modelSwitching,
     slashCommands, slashCommandsLoading, queuedMessages, sessionTasks,
     pendingRecovery, recoveryIsImport, resolveRecovery, exportQueueData, importQueueData, stageImport, moveQueuedMessage, convertQueuedMessage, recallQueuedMessage, requeueAt, removeQueuedMessage, queueTrash, restoreQueueItem, purgeQueueTrash, trashComposerInput, restoreComposerTrash,
-    notices, extensionDialog, waitingExtensionDialogCount, extensionCustomUi, waitingExtensionCustomUiCount, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput, setNoticePaused,
+    notices, extensionDialog, waitingExtensionDialogCount, extensionCustomUi, waitingExtensionCustomUiCount, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput, setNoticePaused, dismissNotice,
     switchPermissionMode, sessionCapabilities, backendSource, backendUsage,
     sessionRequest, respondToSessionRequest,
     isAutoModelSelection,
@@ -1812,7 +1812,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
           pointerEvents: "none",
         }}
       >
-        <NoticeShelf notices={notices} floating onPauseChange={setNoticePaused} onAskAi={askAiAboutNotice} />
+        <NoticeShelf notices={notices} floating onPauseChange={setNoticePaused} onAskAi={askAiAboutNotice} onDismiss={dismissNotice} />
       </div>
 
       {/* Session request card takeover seam (agent-capability UI moved out of core):
@@ -2616,8 +2616,274 @@ const NOTICE_TEXT_PADDING_Y_PX = (NOTICE_MIN_HEIGHT_PX - 2 - NOTICE_LINE_BOX_PX)
 const NOTICE_MAX_HEIGHT_PX = 500;
 const NOTICE_TEXT_MAX_HEIGHT_PX = NOTICE_MAX_HEIGHT_PX - 2;
 
-function NoticeShelf({ notices, floating = false, align = "left", onPauseChange, onAskAi }: { notices: NoticeItem[]; floating?: boolean; align?: "left" | "right"; onPauseChange?: (id: string | null) => void; onAskAi?: (message: string) => void }) {
+// Vertical distance (px) an upward swipe must cover before the toast is dismissed.
+const NOTICE_SWIPE_DISMISS_PX = 40;
+
+function currentSelectionText(): string {
+  try {
+    return window.getSelection()?.toString() ?? "";
+  } catch {
+    return "";
+  }
+}
+
+/** One toast card: tap anywhere to dismiss, flick up to dismiss, ✕ in the corner. */
+function NoticeToastCard({ notice, floating = false, onPauseChange, onAskAi, onDismiss }: {
+  notice: NoticeItem;
+  floating?: boolean;
+  onPauseChange?: (id: string | null) => void;
+  onAskAi?: (message: string) => void;
+  onDismiss?: (id: string) => void;
+}) {
   const { t } = useI18n();
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  // Follow-finger feedback while flicking up; reset (spring back) when the swipe is too short.
+  const [dragY, setDragY] = useState(0);
+  const [dragging, setDragging] = useState(false);
+  // Mutable gesture bookkeeping — native listeners (non-passive, to allow preventDefault)
+  // write here, click/touch handlers read here. Kept in a ref so nothing re-subscribes.
+  const gestureRef = useRef({ active: false, startX: 0, startY: 0, insideText: false, dragged: false, swiped: false });
+
+  useEffect(() => {
+    const el = cardRef.current;
+    if (!el || !onDismiss) return;
+    const gesture = gestureRef.current;
+    const onTouchStart = (event: TouchEvent) => {
+      const touch = event.touches[0];
+      if (!touch) return;
+      gesture.active = true;
+      gesture.swiped = false;
+      gesture.dragged = false;
+      gesture.startX = touch.clientX;
+      gesture.startY = touch.clientY;
+      // A touch inside the text area scrolls the text (native); only the rest of the card flicks.
+      gesture.insideText = !!(event.target instanceof Element && event.target.closest("[data-notice-scroll]"));
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      if (!gesture.active || gesture.insideText) return;
+      const touch = event.touches[0];
+      if (!touch) return;
+      const dx = touch.clientX - gesture.startX;
+      const dy = touch.clientY - gesture.startY;
+      if (dy < 0 && Math.abs(dy) > Math.abs(dx)) {
+        // Upward flick on the card: follow the finger and keep the page from scrolling along.
+        gesture.dragged = true;
+        event.preventDefault();
+        setDragging(true);
+        setDragY(Math.max(dy, -NOTICE_SWIPE_DISMISS_PX * 2));
+      }
+    };
+    const onTouchEnd = () => {
+      if (!gesture.active) return;
+      gesture.active = false;
+      setDragging(false);
+      if (!gesture.dragged) return;
+      gesture.swiped = true;
+      gesture.dragged = false;
+      setDragY((current) => {
+        if (-current >= NOTICE_SWIPE_DISMISS_PX) onDismiss?.(notice.id);
+        return 0;
+      });
+    };
+    const onTouchCancel = () => {
+      gesture.active = false;
+      gesture.dragged = false;
+      setDragging(false);
+      setDragY(0);
+    };
+    el.addEventListener("touchstart", onTouchStart, { passive: true });
+    el.addEventListener("touchmove", onTouchMove, { passive: false });
+    el.addEventListener("touchend", onTouchEnd, { passive: true });
+    el.addEventListener("touchcancel", onTouchCancel, { passive: true });
+    return () => {
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
+      el.removeEventListener("touchend", onTouchEnd);
+      el.removeEventListener("touchcancel", onTouchCancel);
+    };
+  }, [notice.id, onDismiss]);
+
+  const handleClick = (event: ReactMouseEvent) => {
+    if (!onDismiss) return;
+    const target = event.target instanceof Element ? event.target : null;
+    // Links and buttons (Ask AI, ✕) keep their own behaviour
+    if (target?.closest("a, button")) return;
+    // The touchend of a flick lands here too — it already dismissed or sprang back
+    if (gestureRef.current.swiped) {
+      gestureRef.current.swiped = false;
+      return;
+    }
+    // Selecting text to copy is not a dismiss tap
+    if (currentSelectionText()) return;
+    onDismiss(notice.id);
+  };
+
+  const color = notice.type === "error"
+    ? "#ef4444"
+    : notice.type === "warning"
+      ? "#d97706"
+      : notice.type === "success"
+        ? "#10b981"
+        : "var(--accent)";
+  const lift = Math.min(-dragY, NOTICE_SWIPE_DISMISS_PX);
+  return (
+    <div
+      ref={cardRef}
+      className="notice-shelf-item"
+      onClick={onDismiss ? handleClick : undefined}
+      onMouseEnter={() => onPauseChange?.(notice.id)}
+      onMouseLeave={(event) => {
+        if (!event.currentTarget.contains(document.activeElement)) onPauseChange?.(null);
+      }}
+      onFocus={() => onPauseChange?.(notice.id)}
+      onBlur={(event) => {
+        if (!event.currentTarget.matches(":hover")) onPauseChange?.(null);
+      }}
+      style={{
+        display: "flex",
+        // Top-align children so the type dot sits by the first line on multi-line toasts
+        alignItems: "flex-start",
+        gap: 10,
+        minHeight: NOTICE_MIN_HEIGHT_PX,
+        height: "auto",
+        // Overall height cap: overflow is handled by inner scrolling in the text
+        // area (see the span's overflowY below); the container itself stays hidden,
+        // keeping the dot pinned at the top instead of scrolling with the text
+        maxHeight: NOTICE_MAX_HEIGHT_PX,
+        // The floating wrapper is pointerEvents:"none" (click-through by design),
+        // so the toast itself must opt back into interactivity or hover events never reach it
+        pointerEvents: "auto",
+        marginBottom: 0,
+        overflow: "hidden",
+        borderRadius: 14,
+        border: "1px solid color-mix(in srgb, var(--border) 70%, transparent)",
+        background: "var(--bg)",
+        color: "var(--text-muted)",
+        width: "fit-content",
+        maxWidth: "min(100%, 620px)",
+        boxShadow: floating
+          ? "0 1px 2px rgba(15,23,42,0.05), 0 10px 28px -14px rgba(15,23,42,0.24)"
+          : "0 1px 2px rgba(15,23,42,0.04), 0 8px 24px -12px rgba(15,23,42,0.10)",
+        fontSize: 14,
+        lineHeight: 1.5,
+        transformOrigin: "top right",
+        transform: dragY !== 0 ? `translateY(${dragY}px)` : undefined,
+        transition: dragging ? "none" : "transform 0.16s ease",
+        opacity: dragging ? Math.max(0.5, 1 - (lift / NOTICE_SWIPE_DISMISS_PX) * 0.5) : undefined,
+        cursor: onDismiss ? "pointer" : undefined,
+        // Use backwards fill for the entrance animation so height styles return to
+        // inline styles once it finishes; otherwise the keyframe's fixed 60px would
+        // stick around in fill mode and permanently clamp the expanded toast
+        animation: notice.exiting
+          ? "notice-shelf-out 0.18s ease-in forwards"
+          : "notice-shelf-in 0.18s ease-out backwards",
+        padding: "0 12px",
+      }}
+    >
+      <span
+        style={{
+          width: 7,
+          height: 7,
+          borderRadius: "50%",
+          background: color,
+          flexShrink: 0,
+          // Align with the optical center of the first text line: the text's
+          // vertical padding + (21px line box - 7px dot) / 2
+          marginTop: NOTICE_TEXT_PADDING_Y_PX + 7,
+        }}
+      />
+      {/* Full text by default: pre-line preserves \n (nowrap/normal collapse
+          newlines into spaces) and long lines wrap instead of truncating;
+          content taller than the cap scrolls inside the text area */}
+      <span
+        tabIndex={0}
+        style={{ padding: `${NOTICE_TEXT_PADDING_Y_PX}px 0`, minWidth: 0, maxWidth: "100%", maxHeight: NOTICE_TEXT_MAX_HEIGHT_PX, overflowY: "auto", scrollbarWidth: "thin", whiteSpace: "pre-line", wordBreak: "break-word" }}
+        data-notice-scroll="1"
+      >
+        {splitNoticeText(notice.message).map((part, partIndex) => part.kind === "art" ? (
+          // A terminal QR code or bar (#755): every space kept, rows touching, and a
+          // font stack whose first font has the blocks too (the bundled Noto subset
+          // has none, so spaces and blocks would come from fonts of different widths).
+          <span
+            key={partIndex}
+            style={{
+              display: "inline-block",
+              verticalAlign: "top",
+              maxWidth: "100%",
+              overflowX: "auto",
+              whiteSpace: "pre",
+              fontFamily: "Menlo, Consolas, 'DejaVu Sans Mono', monospace",
+              lineHeight: 1,
+              color: "var(--text)",
+            }}
+          >
+            {part.text}
+          </span>
+        ) : <Fragment key={partIndex}>{splitNoticeLinks(part.text).map((piece, pieceIndex) => piece.kind === "link" ? (
+          <a
+            key={`${partIndex}-${pieceIndex}`}
+            href={piece.text}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: "var(--accent)", textDecoration: "underline", textUnderlineOffset: 2, wordBreak: "break-all" }}
+          >
+            {piece.text}
+          </a>
+        ) : piece.text)}</Fragment>)}
+      </span>
+      {(notice.type === "error" || notice.type === "warning") && onAskAi && (
+        <button
+          type="button"
+          onClick={() => onAskAi(notice.message)}
+          title={t("chat.noticeAskAiTitle")}
+          style={{
+            flexShrink: 0,
+            alignSelf: "flex-start",
+            // Optically centre on the first text line: the compact button is
+            // ~22px tall against the 21px line box, so it starts a hair above it.
+            marginTop: NOTICE_TEXT_PADDING_Y_PX - 1,
+            padding: "2px 10px",
+            fontSize: 12,
+            lineHeight: 1.5,
+            borderRadius: 999,
+            border: "1px solid color-mix(in srgb, var(--border) 80%, transparent)",
+            background: "color-mix(in srgb, var(--bg) 90%, var(--accent) 10%)",
+            color: "var(--accent)",
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {t("chat.noticeAskAi")}
+        </button>
+      )}
+      {onDismiss && (
+        <button
+          type="button"
+          aria-label={t("common.close")}
+          title={t("common.close")}
+          onClick={(event) => {
+            event.stopPropagation();
+            onDismiss(notice.id);
+          }}
+          style={{
+            flexShrink: 0,
+            alignSelf: "flex-start",
+            marginTop: NOTICE_TEXT_PADDING_Y_PX - 1,
+            background: "none",
+            border: "none",
+            color: "var(--text-dim)",
+            cursor: "pointer",
+            fontSize: 13,
+            lineHeight: 1,
+            padding: "4px 2px",
+          }}
+        >✕</button>
+      )}
+    </div>
+  );
+}
+
+function NoticeShelf({ notices, floating = false, align = "left", onPauseChange, onAskAi, onDismiss }: { notices: NoticeItem[]; floating?: boolean; align?: "left" | "right"; onPauseChange?: (id: string | null) => void; onAskAi?: (message: string) => void; onDismiss?: (id: string) => void }) {
   if (notices.length === 0) return null;
   return (
     <div
@@ -2628,141 +2894,11 @@ function NoticeShelf({ notices, floating = false, align = "left", onPauseChange,
         marginBottom: floating ? 0 : 10,
       }}
     >
-      {notices.map((notice, index) => {
-        const color = notice.type === "error"
-          ? "#ef4444"
-          : notice.type === "warning"
-            ? "#d97706"
-            : notice.type === "success"
-              ? "#10b981"
-              : "var(--accent)";
-        return (
-          <div
-            key={notice.id}
-            className="notice-shelf-item"
-            onMouseEnter={() => onPauseChange?.(notice.id)}
-            onMouseLeave={(event) => {
-              if (!event.currentTarget.contains(document.activeElement)) onPauseChange?.(null);
-            }}
-            onFocus={() => onPauseChange?.(notice.id)}
-            onBlur={(event) => {
-              if (!event.currentTarget.matches(":hover")) onPauseChange?.(null);
-            }}
-            style={{
-              display: "flex",
-              // Top-align children so the type dot sits by the first line on multi-line toasts
-              alignItems: "flex-start",
-              gap: 10,
-              minHeight: NOTICE_MIN_HEIGHT_PX,
-              height: "auto",
-              // Overall height cap: overflow is handled by inner scrolling in the text
-              // area (see the span's overflowY below); the container itself stays hidden,
-              // keeping the dot pinned at the top instead of scrolling with the text
-              maxHeight: NOTICE_MAX_HEIGHT_PX,
-              // The floating wrapper is pointerEvents:"none" (click-through by design),
-              // so the toast itself must opt back into interactivity or hover events never reach it
-              pointerEvents: "auto",
-              marginBottom: index === notices.length - 1 ? 0 : 6,
-              overflow: "hidden",
-              borderRadius: 14,
-              border: "1px solid color-mix(in srgb, var(--border) 70%, transparent)",
-              background: "var(--bg)",
-              color: "var(--text-muted)",
-              width: "fit-content",
-              maxWidth: "min(100%, 620px)",
-              boxShadow: floating
-                ? "0 1px 2px rgba(15,23,42,0.05), 0 10px 28px -14px rgba(15,23,42,0.24)"
-                : "0 1px 2px rgba(15,23,42,0.04), 0 8px 24px -12px rgba(15,23,42,0.10)",
-              fontSize: 14,
-              lineHeight: 1.5,
-              transformOrigin: "top right",
-              // Use backwards fill for the entrance animation so height styles return to
-              // inline styles once it finishes; otherwise the keyframe's fixed 60px would
-              // stick around in fill mode and permanently clamp the expanded toast
-              animation: notice.exiting
-                ? "notice-shelf-out 0.18s ease-in forwards"
-                : "notice-shelf-in 0.18s ease-out backwards",
-              padding: "0 12px",
-            }}
-          >
-            <span
-              style={{
-                width: 7,
-                height: 7,
-                borderRadius: "50%",
-                background: color,
-                flexShrink: 0,
-                // Align with the optical center of the first text line: the text's
-                // vertical padding + (21px line box - 7px dot) / 2
-                marginTop: NOTICE_TEXT_PADDING_Y_PX + 7,
-              }}
-            />
-            {/* Full text by default: pre-line preserves \n (nowrap/normal collapse
-                newlines into spaces) and long lines wrap instead of truncating;
-                content taller than the cap scrolls inside the text area */}
-            <span
-              tabIndex={0}
-              style={{ padding: `${NOTICE_TEXT_PADDING_Y_PX}px 0`, minWidth: 0, maxWidth: "100%", maxHeight: NOTICE_TEXT_MAX_HEIGHT_PX, overflowY: "auto", scrollbarWidth: "thin", whiteSpace: "pre-line", wordBreak: "break-word" }}
-            >
-              {splitNoticeText(notice.message).map((part, partIndex) => part.kind === "art" ? (
-                // A terminal QR code or bar (#755): every space kept, rows touching, and a
-                // font stack whose first font has the blocks too (the bundled Noto subset
-                // has none, so spaces and blocks would come from fonts of different widths).
-                <span
-                  key={partIndex}
-                  style={{
-                    display: "inline-block",
-                    verticalAlign: "top",
-                    maxWidth: "100%",
-                    overflowX: "auto",
-                    whiteSpace: "pre",
-                    fontFamily: "Menlo, Consolas, 'DejaVu Sans Mono', monospace",
-                    lineHeight: 1,
-                    color: "var(--text)",
-                  }}
-                >
-                  {part.text}
-                </span>
-              ) : <Fragment key={partIndex}>{splitNoticeLinks(part.text).map((piece, pieceIndex) => piece.kind === "link" ? (
-                <a
-                  key={`${partIndex}-${pieceIndex}`}
-                  href={piece.text}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{ color: "var(--accent)", textDecoration: "underline", textUnderlineOffset: 2, wordBreak: "break-all" }}
-                >
-                  {piece.text}
-                </a>
-              ) : piece.text)}</Fragment>)}
-            </span>
-            {(notice.type === "error" || notice.type === "warning") && onAskAi && (
-              <button
-                type="button"
-                onClick={() => onAskAi(notice.message)}
-                title={t("chat.noticeAskAiTitle")}
-                style={{
-                  flexShrink: 0,
-                  alignSelf: "flex-start",
-                  // Optically centre on the first text line: the compact button is
-                  // ~22px tall against the 21px line box, so it starts a hair above it.
-                  marginTop: NOTICE_TEXT_PADDING_Y_PX - 1,
-                  padding: "2px 10px",
-                  fontSize: 12,
-                  lineHeight: 1.5,
-                  borderRadius: 999,
-                  border: "1px solid color-mix(in srgb, var(--border) 80%, transparent)",
-                  background: "color-mix(in srgb, var(--bg) 90%, var(--accent) 10%)",
-                  color: "var(--accent)",
-                  cursor: "pointer",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {t("chat.noticeAskAi")}
-              </button>
-            )}
-          </div>
-        );
-      })}
+      {notices.map((notice, index) => (
+        <div key={notice.id} style={{ marginBottom: index === notices.length - 1 ? 0 : 6 }}>
+          <NoticeToastCard notice={notice} floating={floating} onPauseChange={onPauseChange} onAskAi={onAskAi} onDismiss={onDismiss} />
+        </div>
+      ))}
     </div>
   );
 }

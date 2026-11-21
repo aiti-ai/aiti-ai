@@ -265,6 +265,7 @@ type NoticeState = {
 type NoticeAction =
   | { type: "add"; notice: NoticeItem }
   | { type: "mark_oldest_exiting" }
+  | { type: "dismiss"; id: string }
   | { type: "remove"; id: string };
 
 export type AgentPhase =
@@ -531,6 +532,14 @@ function noticeReducer(state: NoticeState, action: NoticeAction): NoticeState {
     }
     case "mark_oldest_exiting":
       return { ...state, visible: markOldestNoticeExiting(state.visible) };
+    case "dismiss":
+      // Manual close (tap / swipe / ✕): exit only the touched notice, keep the rest counting down
+      return {
+        ...state,
+        visible: state.visible.map((notice) => (
+          notice.id === action.id && !notice.exiting ? { ...notice, exiting: true } : notice
+        )),
+      };
     case "remove": {
       const visible = state.visible.filter((notice) => notice.id !== action.id);
       return fillPendingNotices(visible, state.pending);
@@ -2185,6 +2194,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         type: notice.type ?? "info",
       },
     });
+  }, []);
+  const dismissNotice = useCallback((id: string) => {
+    dispatchNotice({ type: "dismiss", id });
   }, []);
   const translateRef = useRef(opts.t);
   translateRef.current = opts.t;
@@ -5894,6 +5906,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     // Present only while a history edit is pending.
     cancelEdit: editEntryId ? cancelEdit : undefined,
     addNotice,
+    dismissNotice,
     setNoticePaused: setPausedNoticeId,
     refreshSessionStats,
     handleToolPresetChange, handleThinkingLevelChange, handleSetDefaultModel, handleSetDefaultThinkingLevel, loadTools, loadSlashCommands, loadAllModels, setActiveLeafId, setData, setMessages, loadContext,
