@@ -896,6 +896,8 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
   const [subList, setSubList] = useState<any[] | null>(null);
   const [subActive, setSubActive] = useState<string | null>(null);
   const [keyRows, setKeyRows] = useState<any[]>([]);        // 多 key（可选）：[{name, key, rpm, minIntervalMs}]
+  const [mkOpen, setMkOpen] = useState(false);              // multi-key card collapsed by default (declutter)
+  const [regOpenId, setRegOpenId] = useState("");           // info-card register note expanded id (single-line ellipsis by default)
   const [keyTests, setKeyTests] = useState<any>({});        // 编辑流多 key 测试：provider → {busy, results?, error?}
   const [testRes, setTestRes] = useState<any>(null);
   const [testing, setTesting] = useState(false);
@@ -1342,7 +1344,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     setSel({ ...p, id: "plan-" + pl.id, name: p.name, cnName: p.cnName || "", baseUrl: p.baseUrl, apiType: p.apiType, doc: p.doc || "", signupUrl: p.signupUrl || "", tokenUrl: p.tokenUrl || "", register: p.register || "", models: p.models || [] });
     setToken(""); setTestRes(null); setChecked([]); setManual(""); setSavedMsg(""); setSearchDetect(null); setReverseRes(null);
     setKnown((p.models || []).map((m: any) => m.id));
-    setMsg(ti("mw.a.150") + pl.label + "」：" + p.baseUrl + "（" + p.apiType + ti("mw.a.151"));
+    // declutter: no more guidance msg here (address/api live in the info card, actions live in step headings)
   };
   // 清空选择回到搜索/推荐（已选状态不再显示列表，避免无从配置）
   const resetSel = () => { setSel(null); setToken(""); setTestRes(null); setChecked([]); setManual(""); setModelFilter(""); setSavedMsg(""); setSearchDetect(null); setReverseRes(null); setResults(null); setProbeKey(""); setProvName(""); setSaveDlg(null); setMsg(""); setDiscMsg(""); setProvHeaders([]); setHeadersTouched(false); setCustomDetect(null); setProvNameTouched(false); };
@@ -2145,17 +2147,16 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         <select className="amw-input" style={{width: "100%", marginBottom: 6}} value={eff("api", p.api || "openai-completions")} onChange={(e) => setField("api", e.target.value)}>
           {apiOpts.map((o) => <option key={o} value={o}>{o}</option>)}
         </select>
-        <label style={{ fontSize: 11, color: "var(--text-subtle,#666)", display: "block", marginBottom: 3 }}>{ti("mw.tx.47")} <code className="amw-mono">{ti("mw.tx.48")}</code>）</label>
+        <label style={{ fontSize: 11, color: "var(--text-subtle,#666)", display: "block", marginBottom: 3 }} title={ti("mw.tx.47") + ti("mw.tx.48") + "）"}>{ti("mw.tx.229")}</label>
         <input className="amw-input" style={{width: "100%", fontFamily: "ui-monospace,monospace"}} type="password" placeholder={p.apiKeyMasked ? ti("mw.a.267") + p.apiKeyMasked + "）" : ti("mw.a.268")} value={editTok[p.provider] || ""} onChange={(e) => setEditTok((prev: any) => ({ ...prev, [p.provider]: e.target.value }))} />
         <label style={{ fontSize: 11, color: "var(--text-subtle,#666)", display: "block", margin: "8px 0 3px" }}>{ti("mw.tx.49")}</label>
         <EditHeadersEditor key={p.provider} initialHeaders={eff("headers", p.headers)} initialMasked={eff("headersMasked", p.maskedHeaders)}
           onChange={(headers, maskedHeaders) => setEditFields((prev: any) => ({ ...prev, [p.provider]: { ...(prev[p.provider] || {}), headers, headersMasked } }))} />
         {/* ── 连接测试（用已配置的全部 key，逐个测）── */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
-          <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff", padding: "3px 10px" }} disabled={!!(keyTests[p.provider] && keyTests[p.provider].busy)} onClick={() => doTestStored(p)}>
+          <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff", padding: "3px 10px" }} title={ti("mw.tx.51")} disabled={!!(keyTests[p.provider] && keyTests[p.provider].busy)} onClick={() => doTestStored(p)}>
             {(keyTests[p.provider] && keyTests[p.provider].busy) ? ti("mw.a.76") : (<>{ti("mw.tx.50")}</>)}
           </button>
-          <span style={{ color: "var(--text-subtle,#666)", fontSize: 10 }}>{ti("mw.tx.51")}</span>
         </div>
         {keyTests[p.provider] && keyTests[p.provider].error ? <div className="amw-note is-err" style={{marginTop: 4}}>❌ {keyTests[p.provider].error}</div> : null}
         {keyTests[p.provider] && keyTests[p.provider].results ? testBadge({ multiKey: true, results: keyTests[p.provider].results, passCount: keyTests[p.provider].passCount, total: keyTests[p.provider].total }) : null}
@@ -2184,6 +2185,8 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     const hasChips = !!p.baseUrl || !!(p.models && p.models.length);
     const hasLinks = !!(p.doc || p.signupUrl || p.tokenUrl);
     if (!hasChips && !hasLinks && !p.register) return null; // 自定义端点初值全空 → 不渲染空壳卡片
+    const regPid = String(p.id || p.baseUrl || "reg");
+    const regOpen = regOpenId === regPid;
     return (
       <div style={{ border: "1px solid var(--border,#eee)", borderRadius: 10, padding: "10px 12px", background: "var(--bg-subtle,#fafafa)", marginBottom: 2 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
@@ -2197,7 +2200,9 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             {p.tokenUrl ? infoLink(ICONS.key, ti("mw.a.272"), p.tokenUrl) : null}
           </div>
         ) : null}
-        {p.register ? <div style={{ marginTop: 8, fontSize: 11, lineHeight: 1.55, color: "var(--text-subtle,#666)" }}>{p.register}</div> : null}
+        {/* register note: single-line ellipsis by default (full text on hover, click to expand) */}
+        {p.register ? <div title={p.register} onClick={() => setRegOpenId(regOpen ? "" : regPid)}
+          style={{ marginTop: 8, fontSize: 11, lineHeight: 1.55, color: "var(--text-subtle,#666)", cursor: regOpen ? "auto" : "pointer", ...(regOpen ? {} : { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }) }}>{p.register}</div> : null}
       </div>
     );
   };
@@ -2603,30 +2608,34 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           <div style={{ borderBottom: "1px solid var(--border,#eee)", margin: "12px 0 2px" }} />
         </>
       ) : null}
-      <StepHead n={1} title={ti("mw.a.324")} hint={ti("mw.a.325")} />
-      <input className="amw-input" style={{width: "100%", height: 32, fontWeight: 600}} value={provName || genName(p.baseUrl) || "custom"} onChange={(e) => { setProvName(e.target.value); setProvNameTouched(true); }} placeholder={ti("mw.a.326")} />
+      <StepHead n={1} title={ti("mw.a.324")} />
+      <input className="amw-input" style={{width: "100%", height: 32, fontWeight: 600}} title={ti("mw.a.325")} value={provName || genName(p.baseUrl) || "custom"} onChange={(e) => { setProvName(e.target.value); setProvNameTouched(true); }} placeholder={ti("mw.a.326")} />
 
       <StepHead n={2} title={ti("mw.a.327")}
         hint={ti("mw.a.328")}
         right={testRes ? <span style={{ fontSize: 11, fontWeight: 700, color: testRes.pass ? "#16a34a" : "#dc2626", whiteSpace: "nowrap" }}>{testRes.pass ? ti("mw.a.329") : ti("mw.a.330")}</span> : null} />
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <input className="amw-input" style={{flex: 1, height: 32, fontFamily: "ui-monospace,monospace"}} type="password" placeholder={ti("mw.a.331")} value={token} onChange={(e) => setToken(e.target.value)} />
+        <input className="amw-input" style={{flex: 1, height: 32, fontFamily: "ui-monospace,monospace"}} type="password" placeholder={ti("mw.a.331")}
+          title={ti("mw.tx.76") + ti("mw.tx.48") + ti("mw.tx.77")}
+          value={token} onChange={(e) => setToken(e.target.value)} />
         <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff", height: 32, flexShrink: 0 }} title={ti("mw.a.332")}
           onClick={() => doTestCreds(p.baseUrl, p.apiType, hdrs)} disabled={testing || (!token.trim() && !validKeyRows.length)}>
           {testing ? ti("mw.a.76") : (<><Ic size={13} paths={ICONS.search} />{ti("mw.tx.75")}</>)}
         </button>
       </div>
-      <div style={{ color: "var(--text-subtle,#999)", fontSize: 10.5, marginTop: 4 }}>{ti("mw.tx.76")} <code className="amw-mono">{ti("mw.tx.48")}</code>{ti("mw.tx.77")}</div>
 
-      {/* ── 多 Key 轮转：产品亮点，常驻卡片展示（不再藏进折叠区）── */}
+      {/* ── multi-key rotation: collapsed one-liner by default; expand for editor + note ── */}
       <div style={{ marginTop: 12, border: "1px solid rgba(99,102,241,.45)", borderRadius: 10, background: "rgba(99,102,241,.05)", padding: "10px 12px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+        <div onClick={() => setMkOpen((v) => !v)} title={ti("mw.tx.80")}
+          style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", cursor: "pointer" }}>
           <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontWeight: 700, fontSize: 12.5, color: "#4f46e5" }}><Ic size={14} paths={ICONS.key} />{ti("mw.tx.78")}</span>
-          <span style={{ padding: "1px 8px", borderRadius: 999, background: "#4f46e5", color: "#fff", fontSize: 9.5, fontWeight: 700 }}>{ti("mw.tx.79")}</span>
+          <span style={{ padding: "1px 8px", borderRadius: 999, border: "1px solid rgba(79,70,229,.35)", color: "#4f46e5", fontSize: 9.5 }}>{ti("mw.tx.228")}</span>
           {validKeyRows.length ? <span style={{ padding: "1px 8px", borderRadius: 999, background: "rgba(79,70,229,.14)", color: "#4f46e5", fontSize: 10.5, fontWeight: 700 }}>{validKeyRows.length + ti("mw.a.190")}</span> : null}
-          <span style={{ fontSize: 10.5, color: "var(--text-subtle,#777)", flex: 1, minWidth: 180 }}>{ti("mw.tx.80")}</span>
+          <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--text-subtle,#777)" }}>{mkOpen ? "▾" : "▸"}</span>
         </div>
-        <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+        {mkOpen ? <>
+          <div style={{ marginTop: 6, fontSize: 10.5, color: "var(--text-subtle,#777)" }}>{ti("mw.tx.80")}</div>
+          <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
           {keyRows.map((r, i) => (
             <div key={i} style={{ display: "flex", gap: 4, alignItems: "center" }}>
               <input className="amw-input" style={{width: 64, fontFamily: "ui-monospace,monospace"}} placeholder={ti("mw.a.6")} value={r.name} onChange={(e) => setKeyRows((prev) => prev.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} />
@@ -2637,7 +2646,8 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             </div>
           ))}
           <button className="amw-btn" style={{ padding: "3px 12px", fontSize: 11, alignSelf: "flex-start" }} onClick={() => setKeyRows((prev) => [...prev, { name: "key-" + (prev.length + 1), key: "", rpm: "", minIntervalMs: "" }])}>{ti("mw.tx.81")}</button>
-        </div>
+          </div>
+        </> : null}
       </div>
       {testBadge(testRes)}
 
@@ -2672,7 +2682,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         </div>
       ) : <div className="amw-note">{ti("mw.tx.83")}</div>}
       <div style={{ display: "flex", gap: 6, marginBottom: 2, alignItems: "center" }}>
-        <input className="amw-input" style={{flex: 1}} placeholder={ti("mw.a.343")} value={manual} onChange={(e) => setManual(e.target.value)} />
+        <input className="amw-input" style={{flex: 1}} placeholder={ti("mw.a.343")} title={ti("mw.a.630")} value={manual} onChange={(e) => setManual(e.target.value)} />
         <button className="amw-btn" onClick={addManual}>{ti("mw.tx.36")}</button>
       </div>
 
@@ -2682,7 +2692,6 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           {checked.length ? ti("mw.a.339") + checked.length + ti("mw.a.198") : ti("mw.a.344")}
           {validKeyRows.length ? ti("mw.a.345") + validKeyRows.length + ti("mw.a.190") : ""}
           {!token && !validKeyRows.length ? ti("mw.a.346") : ""}
-          <br />{ti("mw.tx.197")}
         </span>
         <button className="amw-btn is-ok" style={{ height: 36, padding: "0 20px", fontSize: 13.5, fontWeight: 700, flexShrink: 0 }}
           onClick={() => { setSaveForce(false); setSaveDlg({ name: (provName || genName(p.baseUrl) || "custom"), baseUrl: p.baseUrl, api: p.apiType, modelCount: checked.length }); }}
@@ -3004,9 +3013,9 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         </div>
       ) : (
         <div>
-          <StepHead n={1} title={ti("mw.a.401")} hint={ti("mw.a.402")} />
+          <StepHead n={1} title={ti("mw.a.401")} />
           <form style={{ display: "flex", gap: 8, marginBottom: 10 }} onSubmit={doSearch}>
-            <input className="amw-input" style={{flex: 1}} placeholder={ti("mw.a.403")} value={q} onChange={(e) => { setQ(e.target.value); setSearchDetect(null); setReverseRes(null); }} />
+            <input className="amw-input" style={{flex: 1}} title={ti("mw.a.402")} placeholder={ti("mw.a.403")} value={q} onChange={(e) => { setQ(e.target.value); setSearchDetect(null); setReverseRes(null); }} />
             <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff" }} disabled={searching}>{searching ? ti("mw.a.404") : <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><Ic size={13} paths={ICONS.search} />{ti("mw.tx.103")}</span>}</button>
             {/* 常驻「＋ 自定义」：不搜索也能直接进面板（2026-09-17 拍板） */}
             <button type="button" className="amw-btn" style={{ flexShrink: 0 }} title={ti("mw.a.405")} onClick={startCustom}>{ti("mw.tx.104")}</button>
@@ -3028,7 +3037,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           {/* 浏览目录开启 → 替换热门推荐区位置；关闭时未搜索才展示推荐卡片。 */}
           {!results && browse ? renderBrowse() : (!results && rec && rec.length ? (
             <div style={{ marginBottom: 4 }}>
-              <div className="amw-section" style={{marginTop: 4}}>{ti("mw.tx.105")}</div>
+              <div className="amw-section" style={{marginTop: 4}} title={ti("mw.tx.227")}>{ti("mw.tx.105")}</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(228px,1fr))", gap: 7 }}>
                 {rec.map((c: any) => {
                   const logo = (c.main.cnName || c.main.name || "?").trim().charAt(0).toUpperCase();
@@ -3043,7 +3052,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                           <div style={{ fontSize: 10, color: "var(--text-subtle,#999)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.main.name || ""}</div>
                         </div>
                       </div>
-                      <div style={{ fontSize: 10.5, color: "var(--text-subtle,#777)", margin: "0 0 5px", lineHeight: 1.4, height: 29, overflow: "hidden" }}>{(c.main.register || ti("mw.a.421")).slice(0, 110)}</div>
+                      <div title={c.main.register || ti("mw.a.421")} style={{ fontSize: 10.5, color: "var(--text-subtle,#777)", margin: "0 0 5px", lineHeight: 1.4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.main.register || ti("mw.a.421")}</div>
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
                         {c.main.doc ? <a href={LINK(c.main.doc)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid var(--border,#e0e0e0)", background: "var(--bg,#fff)", color: "var(--accent,#2563eb)", fontSize: 12, textDecoration: "none" }} title={ti("mw.a.396")}>{ti("mw.tx.106")}</a> : null}
                         {c.main.signupUrl ? <a href={LINK(c.main.signupUrl)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid color-mix(in srgb, var(--ok, #22c55e) 40%, transparent)", background: "color-mix(in srgb, var(--ok, #22c55e) 6%, transparent)", color: "#15803d", fontSize: 12, fontWeight: 600, textDecoration: "none" }} title={ti("mw.a.397")}>{ti("mw.tx.99")}</a> : null}
@@ -3074,7 +3083,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                   <span style={{ fontWeight: 600 }}>{[p.cnName, p.name].filter(Boolean).join(" / ")}{p.hasCn ? <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 8, background: "rgba(37,99,235,.1)", color: "var(--accent,#2563eb)", fontSize: 10 }}>{ti("mw.tx.96")}</span> : null}{p.native ? <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 8, background: "rgba(22,163,74,.12)", color: "#15803d", fontSize: 10 }}>{ti("mw.tx.109")}</span> : null}{p.matched && p.matched !== "text" ? <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 8, background: "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)", color: "#b45309", fontSize: 10 }}><Ic size={10} paths={ICONS.refresh} />{ti("mw.a.423") + p.reverseScore}</span> : null}</span>
                   <span className="amw-mono" style={{ color: "var(--text-subtle,#666)", fontSize: 11 }}>{p.matchedBaseUrl || p.baseUrl || ""}</span>
                 </div>
-                <div style={{ color: "var(--text-subtle,#555)", fontSize: 11, marginTop: 4, maxHeight: 30, overflow: "hidden" }}>{p.native ? ti("mw.a.424") + p.modelCount + ti("mw.a.425") : ([p.register || p.doc || ""].filter(Boolean)[0] || (p.models && p.models.length ? ti("mw.a.426") + p.models.length + ti("mw.a.9") : ti("mw.a.427")))}</div>
+                <div title={p.native ? ti("mw.a.424") + p.modelCount + ti("mw.a.425") : ([p.register || p.doc || ""].filter(Boolean)[0] || "")} style={{ color: "var(--text-subtle,#555)", fontSize: 11, marginTop: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.native ? ti("mw.a.424") + p.modelCount + ti("mw.a.425") : ([p.register || p.doc || ""].filter(Boolean)[0] || (p.models && p.models.length ? ti("mw.a.426") + p.models.length + ti("mw.a.9") : ti("mw.a.427")))}</div>
               </div>
             ))}
           {searchDetect ? <div style={{ marginTop: 8 }}>{renderDetectCard(searchDetect, applySearchDetect)}</div> : null}
