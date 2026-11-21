@@ -337,7 +337,9 @@ async function probeHeadless(): Promise<ProbeInfo> {
   }
   info.atspi = args.some((l) => /at-spi-bus-launcher/.test(l) && !/grep/.test(l)) || !!info.dbusBus;
 
-  info.wm = args.find((l) => /openbox/.test(l) && !/grep/.test(l)) ? "openbox" : undefined;
+  // WM status: only an openbox attached to THIS display counts (global match would report
+  // another display's WM as running here)
+  info.wm = (await procOnDisplay("openbox", display)) ? "openbox" : undefined;
   if (!info.wm) probeFail(info, "headless-no-wm");
 
   // VNC 层：多实例感知（优先第一个实例的随机端口；注册表空时回退固定端口探测）
@@ -834,17 +836,18 @@ export async function ensureHeadless(): Promise<boolean> {
       `[ -S ${busFile} ] || (dbus-daemon --session --fork --address=unix:path=${busFile} --print-address >/dev/null 2>&1 || true); ` +
       `export DBUS_SESSION_BUS_ADDRESS=unix:path=${busFile}; DISPLAY=:${num} at-spi-bus-launcher --launch-immediately >/dev/null 2>&1 || true`],
       { detached: true, stdio: "ignore" }).unref();
-    // openbox（无 WM 则起）
+    // openbox (spawn when no WM; per-display check only — a global pgrep would be fooled
+    // by an openbox on another display and wrongly skip ours, leaving this screen WM-less;
+    // mirrors setup-linux.sh's per-display WM detection)
     ensureOpenboxMenu(); // 菜单终端指向 Xvfb 可跑的模拟器（见下），已有配置不覆盖
-    const args = await psArgs();
-    if (!args.some((l) => /openbox/.test(l) && !/grep/.test(l))) {
+    if (!(await procOnDisplay("openbox", `:${num}`))) {
       spawn("sh", ["-c",
         `export DISPLAY=:${num}; export XAUTHORITY=${authFile}; export XDG_RUNTIME_DIR=${runtimeDir}; ` +
         `export DBUS_SESSION_BUS_ADDRESS=unix:path=${busFile}; nohup openbox >/dev/null 2>&1 & true`],
         { detached: true, stdio: "ignore" }).unref();
     }
-    // tint2 面板（随 openbox 一起起；没在跑才起，幂等）—— stopHeadless 会停它，start 要补回来
-    if (!args.some((l) => /^tint2(\s|$)/.test(l) && !/grep/.test(l))) {
+    // tint2 panel (starts with openbox; idempotent per display) — stopHeadless kills it, start brings it back
+    if (!(await procOnDisplay("tint2", `:${num}`))) {
       if (await resolveBin("tint2")) {
         ensureTint2Config(); // launcher 确保含 终端/文件管理器（已存在只补缺，不覆盖用户定制）
         spawn("sh", ["-c",
@@ -995,6 +998,23 @@ async function procDisplayIs(pid: number, display: string): Promise<boolean> {
     const env = fs.readFileSync(`/proc/${pid}/environ`, "utf8");
     return env.split("\0").some((e) => e === `DISPLAY=${display}`);
   } catch { return false; }
+}
+
+/** Whether a process named `comm` is attached to this exact display (/proc environ scan).
+ *  Per-display check: a global pgrep would be fooled by a WM running on another display
+ *  (e.g. a leftover headless screen) and wrongly skip spawning ours / misreport status. */
+async function procOnDisplay(comm: string, display: string): Promise<boolean> {
+  try {
+    for (const d of fs.readdirSync("/proc")) {
+      if (!/^\d+$/.test(d)) continue;
+      try {
+        if (fs.readFileSync(`/proc/${d}/comm`, "utf8").trim() !== comm) continue;
+        const env = fs.readFileSync(`/proc/${d}/environ`, "utf8");
+        if (env.split("\0").some((e) => e === `DISPLAY=${display}`)) return true;
+      } catch { /* gone or unreadable */ }
+    }
+  } catch { /* ignore */ }
+  return false;
 }
 
 /** 实际运行中的本扩展虚拟屏号：resolve 号 + 扫描 /tmp/ui-env-<n>/ 特征目录（配置变更后旧号残留也能抓到）。 */
