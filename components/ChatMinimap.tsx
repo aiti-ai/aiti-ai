@@ -748,7 +748,7 @@ export function ChatMinimap({
         className={styles.lock}
         data-minimap-lock={locked ? "on" : "off"}
         title={t(locked ? "chatMinimap.unlockPreview" : "chatMinimap.lockPreview")}
-        aria-label={t("chatMinimap.lockPreview")}
+        aria-label={t(locked ? "chatMinimap.unlockPreview" : "chatMinimap.lockPreview")}
         onMouseDown={(event) => event.stopPropagation()}
         onClick={(event) => {
           event.stopPropagation();

@@ -134,7 +134,7 @@ export function AgentMiniStrip({ rootSession, members, selectedSessionId, runnin
         iconSize={14}
         onClick={onToggleLock}
         onFocus={() => setFocusedId(LOCK_FOCUS_KEY)}
-        aria-label={t("agentSwitcher.lockStrip")}
+        aria-label={locked ? t("agentSwitcher.unlockStrip") : t("agentSwitcher.lockStrip")}
         title={locked ? t("agentSwitcher.unlockStrip") : t("agentSwitcher.lockStrip")}
         tabIndex={tabStopId === LOCK_FOCUS_KEY ? 0 : -1}
         style={{ flexShrink: 0, width: 24, height: 24, borderRadius: 6 }}
