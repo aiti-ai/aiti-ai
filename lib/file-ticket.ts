@@ -20,6 +20,10 @@ export interface FileTicket {
   kind?: string;
   /** Viewer working directory (present only when type="view") */
   cwd?: string;
+  /** Revision tuple (present only for revision tickets, OpenFileOptions.atRevision): kept in the
+   *  ticket payload — same channel as path — so the local gitDir never lands in a URL/access log. */
+  ref?: string;
+  gitDir?: string;
   exp: number;
 }
 
@@ -30,11 +34,19 @@ function sweep(now: number): void {
   for (const [k, v] of tickets) if (v.exp <= now) tickets.delete(k);
 }
 
-export function issueFileTicket(path: string, type = "download", extra?: { kind?: string; cwd?: string }): { ticket: string; expiresIn: number } {
+export function issueFileTicket(path: string, type = "download", extra?: { kind?: string; cwd?: string; ref?: string; gitDir?: string }): { ticket: string; expiresIn: number } {
   const now = Date.now();
   sweep(now);
   const ticket = randomBytes(24).toString("base64url");
-  tickets.set(ticket, { path, type, ...(extra?.kind ? { kind: extra.kind } : {}), ...(extra?.cwd ? { cwd: extra.cwd } : {}), exp: now + TICKET_TTL_MS });
+  tickets.set(ticket, {
+    path,
+    type,
+    ...(extra?.kind ? { kind: extra.kind } : {}),
+    ...(extra?.cwd ? { cwd: extra.cwd } : {}),
+    ...(extra?.ref ? { ref: extra.ref } : {}),
+    ...(extra?.gitDir ? { gitDir: extra.gitDir } : {}),
+    exp: now + TICKET_TTL_MS,
+  });
   return { ticket, expiresIn: Math.round(TICKET_TTL_MS / 1000) };
 }
 

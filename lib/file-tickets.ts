@@ -16,7 +16,7 @@ import { apiUrl } from "@/lib/base-path";
 export type FileGetType = "list" | "read" | "meta" | "preview" | "download";
 export type FileTicketType = "read" | "download" | "preview" | "watch" | "list" | "meta";
 
-/** Exchanges for a short-lived ticket (reusable within its TTL). Extra params ride the POST body (server-side validation/gating, e.g. revision ref/gitDir) and are echoed back into the GET query by buildTicketUrl. Throws on failure. */
+/** Exchanges for a short-lived ticket (reusable within its TTL). Revision ref/gitDir ride the POST body and are stored in the ticket payload (same channel as path — never in a URL/access log). Throws on failure. */
 export function resolveFileTicket(filePath: string, type: FileTicketType, params: Record<string, string | number | undefined> = {}): Promise<string> {
   const body: Record<string, unknown> = { path: filePath, type };
   for (const [k, v] of Object.entries(params)) {
@@ -42,15 +42,16 @@ export async function buildTicketUrl(
 ): Promise<string> {
   // ref/gitDir must ride the POST body too: the ticket issuer stat-checks the path and
   // would 404 a deleted file before the revision branch of the GET handler ever runs.
+  // They are stored in the ticket payload; the GET URL only carries type + benign params.
   const ticket = await resolveFileTicket(filePath, type, params);
   const searchParams = new URLSearchParams({ type });
   for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined) searchParams.set(key, String(value));
+    if (value !== undefined && key !== "ref" && key !== "gitDir") searchParams.set(key, String(value));
   }
   return apiUrl(`/api/files/_t/${encodeURIComponent(ticket)}?${searchParams.toString()}`);
 }
 
-/** fetch-style file request (list/read/meta/preview/download): the path goes in the body. Only non-sensitive pagination/format params travel as URL query; the path never enters a URL. */
+/** fetch-style file request (list/read/meta/preview/download): the path AND revision tuple (ref/gitDir) go in the body; only benign pagination/format params travel as URL query. */
 export function fetchFileGet(
   filePath: string,
   type: FileGetType,
@@ -58,13 +59,17 @@ export function fetchFileGet(
   params: Record<string, string | number | undefined> = {},
 ): Promise<Response> {
   const search = new URLSearchParams();
+  const body: Record<string, unknown> = { path: filePath, type };
   for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined) search.set(key, String(value));
+    if (value === undefined) continue;
+    if (key === "ref" || key === "gitDir") body[key] = String(value);
+    else search.set(key, String(value));
   }
+  if (sessionId) body.sessionId = sessionId;
   const qs = search.toString();
   return fetch(apiUrl(`/api/files/get${qs ? `?${qs}` : ""}`), {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ path: filePath, type, sessionId: sessionId || undefined }),
+    body: JSON.stringify(body),
   });
 }
