@@ -401,3 +401,47 @@ test("preflight tokens: a web-masked message mounts from the vault on arrival", 
   await host.run("tool_call", { toolName: "bash", input }, ctx);
   assert.ok(input.command.includes(secret), "token restored to the real value");
 });
+
+test("tool_result extract never registers encoded forms of mounted values", async () => {
+  const home = HOME;
+  {
+    writeSettings([]);
+    const cwd = join(home, "proj-extract");
+    mkdirSync(cwd, { recursive: true });
+    const factory = await loadExtension();
+    const host = makeHost();
+    await factory(host.pi);
+    const ctx = makeCtx(cwd);
+    await host.run("session_start", { reason: "startup" }, ctx);
+    await tick();
+
+    // mount one value via the input hook (landing=vault default)
+    const input = await host.run("input", { text: `my token: ${SECRET}`, source: "interactive" }, ctx);
+    assert.ok(input);
+    const token = input.text.match(/rsec_[0-9a-f]{8}/)?.[0];
+    assert.ok(token);
+
+    const list = async () => {
+      const c = makeCtx(cwd);
+      await host.commands.get("secret").handler("list", c);
+      return c.notices.map((n) => n.text).join("\n");
+    };
+    const before = await list();
+
+    // bash-style output carrying the base64 form of the mounted value
+    const encoded = Buffer.from(SECRET).toString("base64");
+    const res = await host.run(
+      "tool_result",
+      { toolName: "bash", content: [{ type: "text", text: `api_key = ${encoded}` }] },
+      ctx,
+    );
+    assert.ok(res, "encoded form should be redacted");
+    const outText = JSON.stringify(res);
+    assert.ok(!outText.includes(encoded), "encoded form must not survive");
+    assert.ok(outText.includes(token), "replaced with the mounted placeholder");
+
+    // the core regression: extract ran on the redacted text, so no junk
+    // auto entry for the encoded form was registered — list is unchanged
+    assert.equal(await list(), before);
+  }
+});

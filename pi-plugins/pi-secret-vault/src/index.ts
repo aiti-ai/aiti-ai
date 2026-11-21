@@ -475,12 +475,17 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     if (joined) state.lastToolOutput = joined.slice(0, 65_536);
     if (state.extract !== false) {
       let extracted = 0;
-      if (joined) extracted += registerExtractedSecrets(joined, state.registry, state.salt).count;
+      // Extract from the REDACTED text: registered values (incl. encoded
+      // variants) are placeholders by now, so detect cannot re-register an
+      // encoded form of a mounted secret as a new entry. Unregistered fresh
+      // values pass through redact unchanged and are still found.
+      const scanText = joined ? state.registry.redact(joined).text : joined;
+      if (scanText) extracted += registerExtractedSecrets(scanText, state.registry, state.salt).count;
       if (eventAny0.details !== undefined && eventAny0.details !== null) {
-        extracted += registerValueSecrets(eventAny0.details, state.registry, state.salt).count;
+        extracted += registerValueSecrets(redactDeep(eventAny0.details, state.registry).value, state.registry, state.salt).count;
       }
       if (eventAny0.structuredContent !== undefined && eventAny0.structuredContent !== null) {
-        extracted += registerValueSecrets(eventAny0.structuredContent, state.registry, state.salt).count;
+        extracted += registerValueSecrets(redactDeep(eventAny0.structuredContent, state.registry).value, state.registry, state.salt).count;
       }
       const sensitive = sensitiveReadTargets(eventAny0.toolName ?? "", eventAny0.input);
       const dedicated = sensitive.find((x) => x.info.dedicated);
