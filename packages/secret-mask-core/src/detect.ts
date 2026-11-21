@@ -106,7 +106,11 @@ export function plausibleSecret(v: string): boolean {
   if (/^(?:\/|\.{1,2}\/|~\/|[A-Za-z]:\\|\.\w)/.test(v)) return false;
   if (/^(?:https?|file):\/\//i.test(lower)) return false;
   if (/^(?:process\.env|os\.environ|env\.|import\.meta\.env)/.test(v)) return false;
+  // lockfile integrity / checksum digests are long and random but never secrets
+  // (`sha256~` is an OpenShift *token* prefix and is deliberately not listed)
+  if (/^(?:sha\d{0,3}[-_]|md5[-_]|h1[-:]|integrity)/i.test(v)) return false;
   if (/^(.)\1*$/.test(v)) return false;
+  if (/^v?\d+(?:\.\d+){2,}(?:[-+][A-Za-z0-9.-]+)?$/.test(v)) return false;
   if (/x{4,}|\*{3,}|\.{3}|your[_-]?|example|placeholder|changeme|redacted|dummy|sample|insert[_-]?/i.test(v)) return false;
   return true;
 }
@@ -141,6 +145,17 @@ function codeExpression(v: string): boolean {
   return parts.length > 1 && parts.every((p) => /^[A-Za-z_$][\w$]*$/.test(p) && p.replace(/\D/g, "").length <= 2);
 }
 
+/** Assignment fragments, URL fragments and member-call punctuation are code, not credentials. */
+function codeishValue(v: string): boolean {
+  if (v.includes("=") && !/={1,2}$/.test(v)) return true;
+  if (v.includes("#")) return true;
+  if (v.includes("|")) return true;
+  if (/[!?]$/.test(v)) return true;
+  if (/\.[a-z_$][\w$]*\s*\(/i.test(v)) return true;
+  if (/^[a-z_$][\w$]*(?:\.[a-z_$][\w$]*){1,}$/i.test(v)) return true;
+  return false;
+}
+
 function bareSecret(v: string): boolean {
   // Entropy gate 2.5 (aligned with notFiller). cc-redact's 3.0 was tuned for its
   // file-scan corpus; in the chat + CJK scene it only ever rejected human-chosen
@@ -149,11 +164,28 @@ function bareSecret(v: string): boolean {
   // Measured cost of 2.5 on 212k local repo files: ~8-10 new hit shapes, all
   // keyword+colon prose or minified-code artifacts, no real credentials.
   if (!plausibleSecret(v) || placeholderShaped(v) || entropy(v) < 2.5) return false;
-  // a code identifier or member chain with no digit (getToken, process.env.KEY, my-secret-name) is not a value
-  if (!/\d/.test(v) && /^[A-Za-z_$][\w$]*(?:[.\-][A-Za-z_$][\w$]*)*$/.test(v)) return false;
+  // A code identifier or member chain with no digit (getToken, process.env.KEY,
+  // my-secret-name) is not a value -- but letter-only credentials exist (base62
+  // and base32 keys without digits), so a long high-entropy run with no
+  // word-like lowercase stretch is still accepted. Word-shaped text has runs of
+  // lowercase; random key material does not.
+  if (!/\d/.test(v) && /^[A-Za-z_$][\w$]*(?:[.\-][A-Za-z_$][\w$]*)*$/.test(v)) {
+    // Key material mixes case almost uniformly (or is base32 upper only); a
+    // camelCase identifier keeps most letters lowercase.
+    const upperRatio = (segment) => {
+      const letters = segment.replace(/[^A-Za-z]/g, "");
+      return letters.length < 6 ? 0 : segment.replace(/[^A-Z]/g, "").length / letters.length;
+    };
+    const dense = Math.max(...v.split(/[-_.]+/).map(upperRatio));
+    // screaming-snake constants (`SYSTEM_ENCRYPTION_BY_PASSWORD`) are code names
+    const snakeConstant = /^[A-Z][A-Z0-9_]*$/.test(v) && v.includes("_");
+    const randomish = v.length >= 20 && entropy(v) >= 3.2 && dense >= 0.4 && !snakeConstant;
+    if (!randomish) return false;
+  }
   // English prose after a keyword ("no token is configured.", "the token is expired."): a single
   // lowercase word (optionally with sentence punctuation) and no digit is a sentence, not a value
   if (!/\d/.test(v) && /^[a-z][a-z_-]*[.,;:!?]?$/.test(v)) return false;
+  if (codeishValue(v)) return false;
   return !codeExpression(v);
 }
 
@@ -222,6 +254,306 @@ function insideTemplate(text: string, at: number): boolean {
 
 const GITLEAKS = "https://github.com/gitleaks/gitleaks";
 const GITHUB_PATTERNS = "https://docs.github.com/code-security/secret-scanning";
+
+// ---------------------------------------------------------------------------
+// Layer 1 — shape rules: the credential is recognizable by itself
+// ---------------------------------------------------------------------------
+// A data-driven prefix table (one line per provider) instead of a regex per
+// vendor. Prefix + charset + length is what gitleaks/TruffleHog call a
+// "detector"; it needs no surrounding prose, so it survives any phrasing the
+// user invents (`token X`, `K='X'`, `curl -H ...`, a bare paste, base64).
+
+interface VendorSpec {
+  id: string;
+  label: string;
+  /** Regex fragment for the prefix (authored; may use groups and classes). */
+  prefix?: string;
+  /** Charset of the random body after the prefix. */
+  chars?: string;
+  min?: number;
+  max?: number;
+  /** Full pattern source; skips the prefix/charset assembly. */
+  re?: string;
+  ci?: boolean;
+  verify?: (v: string) => boolean;
+  source?: string;
+}
+
+function vendorRule(spec: VendorSpec): Rule {
+  const src =
+    spec.re ??
+    `${spec.prefix}[${spec.chars ?? "A-Za-z0-9"}]{${spec.min ?? 20},${spec.max ?? 300}}`;
+  return {
+    id: spec.id,
+    label: spec.label,
+    kind: "secret",
+    pattern: new RegExp(`(?<![A-Za-z0-9_])${src}(?![A-Za-z0-9_-])`, spec.ci ? "gi" : "g"),
+    verify: spec.verify ?? notFiller,
+    source: spec.source ?? GITLEAKS,
+  };
+}
+
+/** Provider prefixes whose own shape identifies a credential. */
+const VENDOR_SPECS: VendorSpec[] = [
+  // --- AI providers -------------------------------------------------------
+  // `sk-` covers OpenAI-compatible vendors (DeepSeek, Moonshot, DashScope,
+  // Zhipu paas, SiliconFlow, StepFun, ...). The body must be one contiguous
+  // alnum run so words like `sk-configuration-example` never match.
+  { id: "sk-generic", label: "API_KEY", prefix: "sk-", min: 20, max: 200 },
+  { id: "openrouter-key", label: "OPENROUTER_KEY", prefix: "sk-or-v1-", min: 40, max: 100 },
+  { id: "groq-key", label: "GROQ_KEY", prefix: "gsk_", min: 40, max: 80 },
+  { id: "xai-key", label: "XAI_KEY", prefix: "xai-", min: 40, max: 100 },
+  { id: "perplexity-key", label: "PERPLEXITY_KEY", prefix: "pplx-", min: 30, max: 80 },
+  { id: "replicate-key", label: "REPLICATE_KEY", prefix: "r8_", min: 30, max: 48 },
+  { id: "together-key", label: "TOGETHER_KEY", prefix: "tgp_v1_", min: 30, max: 80 },
+  // `ark-` = volcengine Ark (doubao): UUID hex groups + optional short suffix
+  {
+    id: "ark-token",
+    label: "ARK_KEY",
+    re: String.raw`\bark-[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}(?:-[0-9a-f]{2,12})*\b`,
+    ci: true,
+  },
+  // Zhipu / bigmodel style `<32-hex-id>.<32-alnum-secret>` pair
+  {
+    id: "dotted-id-secret",
+    label: "API_KEY",
+    re: String.raw`\b[0-9a-z]{16,40}\.[A-Za-z0-9]{16,64}\b`,
+    verify: (v) => {
+      const [, secret = ""] = v.split(".");
+      return /[0-9]/.test(v.split(".")[0] ?? "") && /[A-Za-z]/.test(secret) && /[0-9]/.test(secret) && entropy(secret) >= 3;
+    },
+  },
+  // China cloud providers with fixed AK prefixes
+  { id: "tencent-ak", label: "TENCENT_AK", prefix: "AKID", chars: "A-Za-z0-9", min: 13, max: 40 },
+  { id: "baidu-ak", label: "BAIDU_AK", prefix: String.raw`bce-v3/ALTAK-`, chars: "A-Za-z0-9_\-", min: 16, max: 80 },
+  { id: "alibaba-ak", label: "ALIBABA_AK", prefix: "LTAI", chars: "A-Za-z0-9", min: 12, max: 30 },
+
+  // --- source hosts -------------------------------------------------------
+  { id: "github-fine-grained", label: "GITHUB_TOKEN", prefix: "github_pat_", chars: "A-Za-z0-9_", min: 60, max: 255 },
+  { id: "github-app", label: "GITHUB_TOKEN", prefix: "gh[suro]_", chars: "A-Za-z0-9", min: 30, max: 255 },
+  { id: "gitlab-token", label: "GITLAB_TOKEN", prefix: "gl(?:pat|rt|dt|ft|ptt|cbt|imt|soat|oas|agent|ffct)-", chars: "A-Za-z0-9_-", min: 16, max: 300 },
+  { id: "gitlab-legacy", label: "GITLAB_TOKEN", prefix: "GR1348941", chars: "A-Za-z0-9_-", min: 16, max: 60 },
+  { id: "gitee-token", label: "GITEE_TOKEN", prefix: "gitee_", chars: "A-Za-z0-9", min: 20, max: 60 },
+  { id: "bitbucket-token", label: "BITBUCKET_TOKEN", prefix: "ATBB", chars: "A-Za-z0-9", min: 20, max: 60 },
+  { id: "atlassian-token", label: "ATLASSIAN_TOKEN", prefix: "ATATT", chars: "A-Za-z0-9_=\\-/", min: 40, max: 400 },
+  { id: "npm-token-v", label: "NPM_TOKEN", prefix: "npm_", chars: "A-Za-z0-9", min: 30, max: 60 },
+  { id: "rubygems-token", label: "RUBYGEMS_TOKEN", prefix: "rubygems_", chars: "A-Za-z0-9", min: 40, max: 60 },
+  { id: "clojars-token", label: "CLOJARS_TOKEN", prefix: "CLOJARS_", chars: "A-Za-z0-9", min: 50, max: 80, ci: true },
+
+  // --- cloud / infra ------------------------------------------------------
+  { id: "aws-bedrock-key", label: "AWS_KEY", prefix: "ABSK", chars: "A-Za-z0-9+/=", min: 80, max: 300 },
+  { id: "digitalocean-token", label: "DIGITALOCEAN_TOKEN", prefix: "do[rpo]_v1_", chars: "a-f0-9", min: 60, max: 64 },
+  { id: "heroku-key", label: "HEROKU_KEY", prefix: "HRKU-AA", chars: "A-Za-z0-9_-", min: 50, max: 70 },
+  { id: "flyio-token", label: "FLY_TOKEN", prefix: "fo1_", chars: "A-Za-z0-9_-", min: 40, max: 60 },
+  { id: "flyio-machines", label: "FLY_TOKEN", prefix: "fm[12]_[a-z]*", chars: "A-Za-z0-9+/=", min: 90, max: 300 },
+  { id: "netlify-token", label: "NETLIFY_TOKEN", prefix: "nfp_", chars: "A-Za-z0-9", min: 30, max: 60 },
+  { id: "render-token", label: "RENDER_TOKEN", prefix: "rnd_", chars: "A-Za-z0-9", min: 20, max: 50 },
+  { id: "cloudflare-origin-ca", label: "CLOUDFLARE_KEY", prefix: String.raw`v1\.0-[a-f0-9]{24}-`, chars: "a-f0-9", min: 100, max: 200 },
+  { id: "openshift-token", label: "OPENSHIFT_TOKEN", prefix: "sha256~", chars: "A-Za-z0-9_-", min: 40, max: 60 },
+  { id: "hashicorp-vault", label: "VAULT_TOKEN", prefix: "hv[bs]\.", chars: "A-Za-z0-9_-", min: 90, max: 300 },
+  { id: "terraform-cloud", label: "TF_TOKEN", prefix: String.raw`[a-z0-9]{14}\.atlasv1\.`, chars: "A-Za-z0-9_=\\-", min: 50, max: 80 },
+  { id: "pulumi-token", label: "PULUMI_TOKEN", prefix: "pul-", chars: "a-f0-9", min: 40, max: 44 },
+
+  // --- observability / dev SaaS ------------------------------------------
+  { id: "sentry-user-token", label: "SENTRY_TOKEN", prefix: "sntryu_", chars: "a-f0-9", min: 60, max: 64 },
+  { id: "sentry-org-token", label: "SENTRY_TOKEN", prefix: "sntrys_", chars: "A-Za-z0-9+/=", min: 60, max: 300 },
+  { id: "grafana-cloud-token", label: "GRAFANA_TOKEN", prefix: "gl[cs]a?_", chars: "A-Za-z0-9+/", min: 30, max: 400 },
+  { id: "grafana-api-key", label: "GRAFANA_KEY", prefix: "eyJrIjoi", chars: "A-Za-z0-9", min: 60, max: 400 },
+  { id: "newrelic-key", label: "NEWRELIC_KEY", prefix: "NRAK-", chars: "A-Z0-9", min: 20, max: 40 },
+  { id: "sonar-token", label: "SONAR_TOKEN", prefix: "squ_", chars: "a-f0-9", min: 40, max: 48 },
+  { id: "postman-token", label: "POSTMAN_TOKEN", prefix: "PMAK-", chars: "a-fA-F0-9-", min: 40, max: 80 },
+  { id: "doppler-token", label: "DOPPLER_TOKEN", prefix: "dp\\.pt\\.", chars: "a-z0-9", min: 40, max: 50 },
+  { id: "contentful-token", label: "CONTENTFUL_TOKEN", prefix: "CFPAT-", chars: "A-Za-z0-9_-", min: 40, max: 80 },
+
+  // --- payments / commerce ------------------------------------------------
+  { id: "square-token", label: "SQUARE_TOKEN", prefix: "sq0atp-", chars: "A-Za-z0-9_-", min: 20, max: 60 },
+  { id: "shopify-token", label: "SHOPIFY_TOKEN", prefix: "shp(?:at|ca|pa|ss)_", chars: "a-fA-F0-9", min: 32, max: 32 },
+  { id: "plaid-token", label: "PLAID_TOKEN", prefix: "access-(?:sandbox|development|production)-", chars: "A-Za-z0-9-", min: 20, max: 60 },
+  { id: "mapbox-token", label: "MAPBOX_TOKEN", prefix: "p[ks]\\.eyJ", chars: "A-Za-z0-9_=.\\-", min: 30, max: 200 },
+
+  // --- productivity -------------------------------------------------------
+  { id: "notion-token", label: "NOTION_TOKEN", prefix: "(?:ntn_|secret_)", chars: "A-Za-z0-9", min: 40, max: 60 },
+  { id: "linear-token", label: "LINEAR_TOKEN", prefix: "lin_api_", chars: "A-Za-z0-9", min: 40, max: 60 },
+  { id: "1password-key", label: "ONEPASSWORD_KEY", prefix: "A3-", chars: "A-Z0-9-", min: 40, max: 60 },
+  { id: "1password-token", label: "ONEPASSWORD_TOKEN", prefix: "ops_eyJ", chars: "A-Za-z0-9+/=", min: 200, max: 400 },
+  { id: "age-key", label: "AGE_KEY", prefix: "AGE-SECRET-KEY-1", chars: "A-Z0-9", min: 50, max: 70 },
+  { id: "docker-pat", label: "DOCKER_TOKEN", prefix: "dckr_pat_", chars: "A-Za-z0-9_-", min: 20, max: 60 },
+];
+// airtable: `pat` + 14 alnum + `.` + 64 hex (the plain `pat…` form above is the
+// tolerant half; the dotted form is matched by the full entry below)
+VENDOR_SPECS.push({
+  id: "airtable-pat",
+  label: "AIRTABLE_TOKEN",
+  re: String.raw`\bpat[A-Za-z0-9]{14}\.[a-f0-9]{64}\b`,
+});
+
+/** Bots and webhooks: the URL itself is the credential. */
+const WEBHOOK_RULES: Rule[] = [
+  {
+    id: "discord-webhook",
+    label: "DISCORD_WEBHOOK",
+    kind: "secret",
+    pattern: /https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\/\d{15,25}\/[A-Za-z0-9_-]{60,90}/g,
+    source: "https://discord.com/developers/docs/resources/webhook",
+  },
+  {
+    id: "telegram-bot-url",
+    label: "TELEGRAM_TOKEN",
+    kind: "secret",
+    pattern: /https:\/\/api\.telegram\.org\/bot\d{8,12}:[A-Za-z0-9_-]{30,40}/g,
+    source: "https://core.telegram.org/bots/api#authorizing-your-bot",
+  },
+  {
+    id: "feishu-webhook",
+    label: "FEISHU_WEBHOOK",
+    kind: "secret",
+    pattern: /https:\/\/open\.(?:feishu\.cn|larksuite\.com)\/open-apis\/bot\/v2\/hook\/[0-9a-f-]{36}/g,
+    source: "https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot",
+  },
+  {
+    id: "dingtalk-webhook",
+    label: "DINGTALK_WEBHOOK",
+    kind: "secret",
+    pattern: /https:\/\/oapi\.dingtalk\.com\/robot\/send\?access_token=[0-9a-f]{64}/g,
+    source: "https://open.dingtalk.com/document/orgapp/custom-robot-access",
+  },
+  {
+    id: "wecom-webhook",
+    label: "WECOM_WEBHOOK",
+    kind: "secret",
+    pattern: /https:\/\/qyapi\.weixin\.qq\.com\/cgi-bin\/webhook\/send\?key=[0-9a-f-]{36}/g,
+    source: "https://developer.work.weixin.qq.com/document/path/91770",
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Layer 2 — context grammar: keyword + connector soup + credential-shaped value
+// ---------------------------------------------------------------------------
+// The old rules each spelled out one separator (=, :, is, 是, quoted). Any // cjk-ok
+// phrasing outside that enumeration leaked. This rule does not enumerate:
+// after a credential keyword it accepts up to 20 connector TOKENS (spaces,
+// newlines, quotes, brackets, any operator, arrows, parentheses, the copulas
+// and link verbs) and then takes the first credential-shaped value. `token X`,
+// `token X`, `token\nX`, `KEY => X`, `密钥如下：X`, `| token | X |` all collapse // cjk-ok
+// into one grammar. The value still has to survive bareSecret (entropy, no
+// identifiers, no prose words), which is what keeps false positives down.
+
+const KEYWORD_ALT = String.raw`(?:api[ _-]?key|access[ _-]?key(?:[ _-]?(?:id|secret))?|secret[ _-]?access[ _-]?key|secret[ _-]?key|private[ _-]?key|public[ _-]?key|client[ _-]?(?:secret|id)|app[ _-]?(?:key|secret)|appid|appsecret|consumer[ _-]?(?:key|secret)|license[ _-]?key|signing[ _-]?key|encryption[ _-]?key|master[ _-]?key|api[ _-]?secret|access[ _-]?token|refresh[ _-]?token|id[ _-]?token|session[ _-]?token|auth[ _-]?token|apikey|key|bearer|passphrase|password|passwd|passw|pwd|creds|credential|secret|token|auth|webhook|dsn|salt|ak|sk|密码|密钥|秘钥|口令|令牌|凭证|凭据|私钥|公钥|通行码|授权码|访问密钥|访问令牌|签名密钥|加密密钥|パスワード|トークン|秘密鍵|비밀번호|토큰|пароль|токен)`;
+
+/** A value must start with an alphanumeric and may not contain whitespace/CJK prose. */
+const VALUE_BODY = String.raw`((?:[A-Za-z0-9](?:[^\s"'\u0060;,(){}<>[\]\\，。、；：！？“”‘’（）「」『』【】]|\\(?![nrt])){7,299}))`;
+const VALUE_TAIL = String.raw`(?!(?!\\[nrt])[^\s"'\u0060;,(){}<>[\]，。、；：！？“”‘’（）「」『』【】])`;
+
+/** Strong connector: an operator, a copula, a quote, a line break or a table cell. */
+const STRONG_SEP = String.raw`(?:(?:(?:[ \t]{0,5}(?::=|=>|->|→|[=:：]{1,3})|[ \t]{0,5}(?:是|为|就是|如下|分别为|即|等于|\bis\b|\bare\b|\bwas\b|\bwere\b|\bequals?\b|\bnamed\b|\bcalled\b)[ \t]{0,5}(?::=|=>|[=:：])?|[ \t]{0,4}[|,;，。、]|\s*\n\s*)[ \t]{0,3}["'\u0060“”‘’「」『』【】]?[ \t]{0,3})|(?:[ \t]{0,2}["'\u0060“”‘’「」『』【】][ \t]{0,3}))`;
+/** Weak connector: whitespace (optionally one quote) only. */
+const WEAK_SEP = String.raw`[ \t]{1,5}["'\u0060“”‘’「」『』【】]?[ \t]{0,4}`;
+
+/**
+ * Keyword boundary: a real word boundary, a CJK neighbour, or a camelCase
+ * compound whose head is a known credential qualifier (`dbPassword`,
+ * `clientSecret`). A random hump (`CryptoKey`, `KeyboardEvent`) is not a
+ * credential keyword.
+ */
+function keywordBoundary(text: string, at: number): boolean {
+  if (at === 0) return true;
+  const prev = text.charAt(at - 1);
+  if (prev === ":") return false;
+  if (!/[A-Za-z0-9]/.test(prev)) return true;
+  if (!/[A-Za-z]/.test(prev)) return false;
+  const head = /([A-Za-z][A-Za-z0-9]*)$/.exec(text.slice(Math.max(0, at - 24), at))?.[1] ?? "";
+  return /^(?:api|db|client|app|access|secret|private|public|auth|session|refresh|id|user|admin|master|license|signing|encryption|consumer|service|server|account|proxy)$/i.test(head);
+}
+
+/** Weak (whitespace-only) evidence demands a machine-generated shape. */
+function contextValue(v: string): boolean {
+  if (/[\u3040-\u30ff\uac00-\ud7af\u4e00-\u9fff]/.test(v)) return false;
+  if (/^\d{1,4}[月日年]/.test(v)) return false;
+  return credentialShape(v) || assignedSecret(v);
+}
+
+/** Strong evidence: the operator/copula already names the field. */
+function strongValue(v: string): boolean {
+  if (/[\u3040-\u30ff\uac00-\ud7af\u4e00-\u9fff]/.test(v)) return false;
+  if (/^\d{1,4}[月日年]/.test(v)) return false;
+  return bareSecret(v) || assignedSecret(v) || credentialShape(v);
+}
+
+const CONTEXT_RULES: Rule[] = [
+  {
+    id: "keyword-value",
+    label: "SECRET",
+    kind: "secret",
+    pattern: new RegExp(`${KEYWORD_ALT}${STRONG_SEP}${VALUE_BODY}${VALUE_TAIL}`, "gi"),
+    group: 1,
+    verify: strongValue,
+    before: keywordBoundary,
+    source: GITLEAKS,
+  },
+  {
+    // The old rules enumerated separators; this one does not. `token X`,
+    // `token\nX`, `KEY => X`, `密钥如下：X`, `| token | X |` all reach the value; // cjk-ok
+    // because the evidence here is only whitespace, the value must pass the
+    // strict machine-generated shape gate.
+    id: "keyword-bare-value",
+    label: "SECRET",
+    kind: "secret",
+    pattern: new RegExp(`${KEYWORD_ALT}${WEAK_SEP}${VALUE_BODY}${VALUE_TAIL}`, "gi"),
+    group: 1,
+    verify: contextValue,
+    before: keywordBoundary,
+    source: GITLEAKS,
+  },
+];
+
+/** `?api_key=X`, `&access_token=X`, `?sig=X` in any URL. */
+const URL_PARAM_RULE: Rule = {
+  id: "url-param",
+  label: "SECRET",
+  kind: "secret",
+  pattern:
+    /[?&](?:api[_-]?key|apikey|access[_-]?token|auth[_-]?token|session[_-]?token|id[_-]?token|token|key|secret|password|passwd|pwd|sig|signature|client[_-]?secret|code)=([^&\s"'<>#]{8,300})/gi,
+  group: 1,
+  verify: (v) => plausibleSecret(v) && entropy(v) >= 2.6 && !placeholderShaped(v),
+  source: GITLEAKS,
+};
+
+// ---------------------------------------------------------------------------
+// Layer 3 — a standalone credential-shaped token on its own line
+// ---------------------------------------------------------------------------
+// Covers "the user pastes only the key" and providers whose prefix we do not
+// know. Gated hard (line dominance + multi-class shape + entropy), so git
+// SHAs, UUIDs, checksums, versions, data-URI base64 and code stay untouched.
+
+const VALUE_ONLY_RE =
+  /(?<=^|[\s"'`(\[{<>,;:：，。、=])([A-Za-z0-9][A-Za-z0-9_\-+.\/~]{15,117}(?:={1,2})?)(?=$|[\s"'`)\]}>;,：，。、])/gm;
+
+/** Shapes that are long and random but are not credentials. */
+const NOT_CREDENTIAL =
+  /^(?:sha(?:1|224|256|384|512)?[-_]|md5[-_]|integrity|etag|data:|blob:|file:|https?:|git\+|npm:|docker:|oci:|sha256~|iVBORw0KGgo|R0lGOD|JVBERi|UEsDB|\/9j\/|v?\d+(?:\.\d+){2})/;
+
+/** True when a standalone token has the shape of a credential. */
+function credentialShape(v: string): boolean {
+  if (v.length < 16 || v.length > 120) return false;
+  if (!/[A-Za-z]/.test(v) || !/\d/.test(v)) return false;
+  if (!plausibleSecret(v) || placeholderShaped(v)) return false;
+  if (NOT_CREDENTIAL.test(v)) return false;
+  // hex-only: git sha, md5, uuid body, byte blobs
+  if (/^[0-9a-f]+$/i.test(v)) return false;
+  // canonical uuid
+  if (/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(v)) return false;
+  if (entropy(v) < 3.1) return false;
+  const classes = (/[a-z]/.test(v) ? 1 : 0) + (/[A-Z]/.test(v) ? 1 : 0) + (/\d/.test(v) ? 1 : 0);
+  if (classes < 2) return false;
+  // A dotted chain with three or more parts is code or a host name, not a key.
+  if (/^[A-Za-z0-9]+(?:\.[A-Za-z0-9]+){2,}$/.test(v)) return false;
+  const segments = v.split(/[-_.]+/).filter(Boolean);
+  const longSegment = segments.some((s) => s.length >= 16 && /[A-Za-z]/.test(s) && /\d/.test(s));
+  // Either long mixed-case randomness (no separator needed), or a prefixed
+  // form whose random part is one long segment (`provider-<32 base62>`).
+  if (classes === 3) return true;
+  return longSegment && entropy(v) >= 3.2;
+}
 
 export const RULES: readonly Rule[] = [
   {
@@ -352,17 +684,8 @@ export const RULES: readonly Rule[] = [
     pattern: /\bpypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{50,1000}(?![\w-])/g,
     source: GITLEAKS,
   },
-  {
-    id: "ark-token",
-    label: "ARK_KEY",
-    kind: "secret",
-    // volcengine Ark API key: `ark-` + UUID hex groups + optional short hex
-    // suffix (`ark-f17fc284-58df-45a7-9649-ac0e76ef9190-104bc`). Distinctive
-    // enough to catch keyword-less shell forms (`K='ark-...'`).
-    pattern: /\bark-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:-[0-9a-f]{2,12})*\b/gi,
-    verify: notFiller,
-    source: "https://www.volcengine.com/docs/82379/1330676",
-  },
+  ...VENDOR_SPECS.map(vendorRule),
+  ...WEBHOOK_RULES,
   {
     id: "azure-storage-key",
     label: "AZURE_STORAGE_KEY",
@@ -488,12 +811,20 @@ export const RULES: readonly Rule[] = [
     // common chat paste shape (see the bare-form cases in test/detect.test.mjs).
     // A bare keyword binds prose loosely, so date-phrase-shaped values are
     // rejected and the operator forms' entropy/shape bars still apply.
-    pattern: /(?:api[ _-]?key|secret(?:[ _-]?key)?|token|password|passwd|pwd|passphrase|credential|密码|密钥|秘钥|口令|令牌|授权码|授权密钥|访问令牌|访问密钥|凭证|凭据|私钥)s?[ \t]{1,5}["'`]?((?:[^\s"'`;,(){}<>[\]\\，。、；：！？“”‘’（）]|\\(?![nrt])){8,256})(?!(?!\\[nrt])[^\s"'`;,(){}<>[\]，。、；：！？“”‘’（）])/gi,
+    // The value must start with an alphanumeric (CLI flags like `--secret-id`
+    // and template slots are not values) and CJK prose never is one.
+    pattern: /(?:api[ _-]?key|secret(?:[ _-]?key)?|token|password|passwd|pwd|passphrase|credential|密码|密钥|秘钥|口令|令牌|授权码|授权密钥|访问令牌|访问密钥|凭证|凭据|私钥)s?[ \t]{1,5}["'`]?([A-Za-z0-9](?:[^\s"'`;,(){}<>[\]\\，。、；：！？“”‘’（）]|\\(?![nrt])){7,255})(?!(?!\\[nrt])[^\s"'`;,(){}<>[\]，。、；：！？“”‘’（）])/gi,
     group: 1,
-    verify: (v) => !/^\d{1,4}[月日年]/.test(v) && (bareSecret(v) || assignedSecret(v)),
+    verify: (v) =>
+      !/[\u3040-\u30ff\uac00-\ud7af\u4e00-\u9fff]/.test(v) &&
+      !/^\d{1,4}[月日年]/.test(v) &&
+      (bareSecret(v) || assignedSecret(v)),
     before: keywordStart,
     source: GITLEAKS,
   },
+  // Broad context grammar + URL parameters (see Layer 2 above).
+  ...CONTEXT_RULES,
+  URL_PARAM_RULE,
 ];
 
 // ---------------------------------------------------------------------------
@@ -503,7 +834,8 @@ export const RULES: readonly Rule[] = [
 const WRAPPABLE = new Set([
   "aws-access-key", "github-token", "gitlab-pat", "slack-token", "slack-webhook", "stripe-live-key", "sendgrid-key",
   "twilio-key", "google-api-key", "google-oauth-secret", "anthropic-key", "openai-key", "huggingface-token",
-  "npm-token", "pypi-token", "ark-token", "private-key", "private-key-truncated", "db-connection-url", "jwt",
+  "npm-token", "pypi-token", "ark-token", "sk-generic", "openrouter-key", "github-fine-grained", "gitlab-token",
+  "private-key", "private-key-truncated", "db-connection-url", "jwt",
 ]);
 const B64_MIN = 24;
 const B64_MAX = 8192;
@@ -683,6 +1015,42 @@ export function scan(text: string, opts: ScanOptions = {}): Hit[] {
     if (order < 0) continue;
     const rule = RULES[order]!;
     found.push({ id: `${rule.id}-base64`, label: rule.label, kind: rule.kind, start, end, value: head.slice(start, end), order });
+  }
+
+  // Layer 3: a standalone credential-shaped token that dominates its own line
+  // (bare paste, or a labelled value the context grammar did not reach). Line
+  // dominance — at most 24 chars of other content — is what keeps minified
+  // code, log lines and prose paragraphs out.
+  if (!opts.off?.has("value-only")) {
+    // Bare-paste mode only: a short, one-or-two-line user text. A pasted file
+    // or log is left to the shape and context layers -- flagging every random
+    // token inside a file is noise, not protection.
+    const nonEmptyLines = masked.split("\n").filter((line) => line.trim()).length;
+    const trimmedLength = masked.trim().length;
+    if (nonEmptyLines <= 2 && trimmedLength <= 200) {
+      VALUE_ONLY_RE.lastIndex = 0;
+      for (let m = VALUE_ONLY_RE.exec(masked); m !== null; m = VALUE_ONLY_RE.exec(masked)) {
+        const value = m[1]!;
+        const start = m.index + m[0].indexOf(value);
+        const end = start + value.length;
+        const lineStart = Math.max(masked.lastIndexOf("\n", start - 1) + 1, 0);
+        const nextBreak = masked.indexOf("\n", end);
+        const lineEnd = nextBreak === -1 ? masked.length : nextBreak;
+        const line = masked.slice(lineStart, lineEnd).trim();
+        if (line.length - value.length > 24) continue;
+        if (spans.some(([s, e]) => start < e && end > s)) continue;
+        if (!credentialShape(value)) continue;
+        found.push({
+          id: "value-only",
+          label: "SECRET",
+          kind: "secret",
+          start,
+          end,
+          value: head.slice(start, end),
+          order: RULES.length,
+        });
+      }
+    }
   }
 
   found.sort((a, b) => a.start - b.start || b.end - a.end || a.order - b.order);
