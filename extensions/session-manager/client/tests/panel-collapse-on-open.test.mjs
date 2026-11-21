@@ -1,11 +1,18 @@
 /**
- * collapsePanelIfCovering —— 「All Sessions 里点开会话不该关掉 All Sessions」回归（2026-09-22）。
+ * collapsePanelIfCovering — "clicking a session inside All Sessions must not trap the user" (2026-09-22,
+ * extended 2026-11-21 with the geometry rule).
  *
- * 旧行为：任何点开会话的入口都无条件 panelOpen.onClose()，面板每次都要重开才能连点。
- * 新行为：只有浮窗铺满视口（小屏 ≤640px，aiti-float data-ext-float-full 同款断点）才会
- * 盖住刚打开的会话/查看器 → 那种场合让位；桌面浮窗、右栏停靠、面板未开都保持不动。
+ * History:
+ *   - old behaviour: every entry that opens a session unconditionally called panelOpen.onClose(), so
+ *     users had to reopen the panel for each pick.
+ *   - 2026-09: only a float that fills the viewport (small screen ≤640px) yields; desktop float and
+ *     right-panel dock stay open.
+ *   - 2026-11-21 (field report): a **maximized / dragged-nearly-full** float also hides the target
+ *     ("clicked, nothing happened, but the session opened behind it"), so the decision now also asks
+ *     aiti-float whether the panel is full and measures the panel area against the viewport
+ *     (thresholds in float-yield.pure.ts, unit-tested separately).
  *
- * 运行：node client/tests/panel-collapse-on-open.test.mjs（秒级）
+ * Run: node client/tests/panel-collapse-on-open.test.mjs (seconds)
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -27,7 +34,8 @@ const HOST_SHIM_STUB = [
   "export function t(k: string) { return k; }",
   "export function getLocale() { return \"en\"; }",
 ].join("\n");
-// dock 展示态与小屏断点都由 globalThis 上的开关驱动（每个用例改写一次）
+// Dock presentation state and the small-screen breakpoint are driven from globalThis switches
+// (each case rewrites them).
 const EXT_FLOAT_STUB = [
   "export function present() { return {} as Record<string, unknown>; }",
   "export function presentState() { return (globalThis as any).__panelState; }",
@@ -41,6 +49,7 @@ function setupIsolation() {
   const clientSrc = join(sm, "client", "src");
   mkdirSync(join(clientSrc, "sidebar"), { recursive: true });
   writeFileSync(join(clientSrc, "store.ts"), readFileSync(join(srcRoot, "store.ts"), "utf8"));
+  writeFileSync(join(clientSrc, "float-yield.pure.ts"), readFileSync(join(srcRoot, "float-yield.pure.ts"), "utf8"));
   writeFileSync(join(clientSrc, "host-shim.ts"), HOST_SHIM_STUB);
   writeFileSync(join(clientSrc, "sidebar", "pure.ts"), readFileSync(join(srcRoot, "sidebar", "pure.ts"), "utf8"));
   mkdirSync(join(dir, "_shared"), { recursive: true });
@@ -66,45 +75,99 @@ const { collapsePanelIfCovering } = mod;
 let closes = 0;
 mod.panelOpen.onClose = () => { closes++; };
 
-/** @param state 浮窗/停靠/关闭态；@param small 是否命中 ≤640px；@param dom 有无 window.matchMedia */
-function scene(state, small, dom = true) {
+/**
+ * Build a scene.
+ * @param state   float/dock/closed presentation state
+ * @param small   whether the ≤640px breakpoint matches
+ * @param opts    { dom:false } → no window at all; { rect, isFull, vw, vh } → panel geometry + aiti-float
+ */
+function scene(state, small, opts = {}) {
   closes = 0;
   globalThis.__panelState = state;
-  if (dom) {
-    globalThis.window = { matchMedia: () => ({ matches: small }) };
-  } else {
+  const { dom = true, rect = null, isFull = false, vw = 1600, vh = 900 } = opts;
+  if (!dom) {
     delete globalThis.window;
+    delete globalThis.document;
+    return;
   }
+  globalThis.window = {
+    matchMedia: () => ({ matches: small }),
+    innerWidth: vw,
+    innerHeight: vh,
+    // aiti-float global API (isFull drives the maximize / small-screen-full case)
+    __piweFloat: { isFull: () => isFull, raise: () => true },
+  };
+  // The panel element is looked up through the host wrapper（data-ext-id + composite data-ext-item）
+  const el = rect ? { getBoundingClientRect: () => rect, isConnected: true } : null;
+  globalThis.document = {
+    querySelector(sel) {
+      if (!el) return null;
+      // only the wrapper selector matches (findFloatPanel's second route)
+      return /session-manager/.test(sel) ? el : null;
+    },
+  };
 }
 
-test("浮窗 + 桌面宽屏：点开会话不收面板（可以连着点）", () => {
-  scene("floating", false);
-  collapsePanelIfCovering();
-  assert.equal(closes, 0, "浮窗没铺满视口 → 不遮挡 → 保持打开");
+const rect = (left, top, width, height) => ({
+  left, top, width, height, right: left + width, bottom: top + height,
 });
 
-test("浮窗 + 小屏全屏：收面板（否则盖住刚打开的会话/查看器）", () => {
-  scene("floating", true);
+test("desktop float, default size (680×700): panel stays open (consecutive picks)", () => {
+  scene("floating", false, { rect: rect(460, 100, 680, 700) });
+  collapsePanelIfCovering();
+  assert.equal(closes, 0, "a normal float does not cover the main area → keep it open");
+});
+
+test("desktop float, maximized (aiti-float isFull): collapses", () => {
+  scene("floating", false, { rect: rect(0, 0, 1600, 857), isFull: true });
+  collapsePanelIfCovering();
+  assert.equal(closes, 1, "maximized All Sessions hid the session that just opened");
+});
+
+test("desktop float, dragged to ≥60% of the viewport: collapses", () => {
+  scene("floating", false, { rect: rect(100, 50, 1400, 700) }); // 63%
   collapsePanelIfCovering();
   assert.equal(closes, 1);
 });
 
-test("右栏停靠 + 小屏：不收面板（嵌入态不遮挡）", () => {
-  scene("docked:right-panel", true);
+test("desktop float, just under the threshold (46%): stays open", () => {
+  scene("floating", false, { rect: rect(500, 300, 1100, 600) });
   collapsePanelIfCovering();
   assert.equal(closes, 0);
 });
 
-test("面板未开：不收（也不因读不到展示态而炸）", () => {
-  scene("closed", true);
+test("small screen float: collapses (old breakpoint rule still applies)", () => {
+  scene("floating", true, { rect: rect(-20, -110, 680, 700), vw: 640, vh: 480 });
+  collapsePanelIfCovering();
+  assert.equal(closes, 1);
+});
+
+test("right-panel dock: never collapses, even on small screens", () => {
+  scene("docked:right-panel", true, { rect: rect(0, 0, 1600, 900), isFull: true });
+  collapsePanelIfCovering();
+  assert.equal(closes, 0, "a docked panel is embedded in the layout, it covers nothing");
+});
+
+test("panel closed: no crash, no collapse", () => {
+  scene("closed", true, {});
   collapsePanelIfCovering();
   assert.equal(closes, 0);
 });
 
-test("无 DOM（matchMedia 取不到）：保守不关", () => {
-  scene("floating", true, false);
+test("no DOM at all: conservative, no collapse", () => {
+  scene("floating", true, { dom: false });
   collapsePanelIfCovering();
   assert.equal(closes, 0);
+});
+
+test("floating but panel element not found yet (first frame): falls back to the breakpoint", () => {
+  scene("floating", false, { rect: null }); // panel not in the DOM yet
+  collapsePanelIfCovering();
+  assert.equal(closes, 0, "desktop + unknown geometry → keep open");
+
+  scene("floating", true, { rect: null });
+  collapsePanelIfCovering();
+  assert.equal(closes, 1, "small screen → the breakpoint still collapses it");
 });
 
 rmSync(isoDir, { recursive: true, force: true });

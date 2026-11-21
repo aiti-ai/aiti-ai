@@ -924,8 +924,10 @@ export function install(): () => void {
 
   // ── 全局 API（扩展自备最大化按钮时调用；float 管盒子，扩展只管按钮 UI）──
   //    window.__piweFloat.toggleMax(panelEl) → 返回切换后是否最大化
-  //    window.__piweFloat.setMax(panelEl, v) / .isMax(panelEl)
-  type MaxApi = { version: string; toggleMax(p: HTMLElement): boolean; setMax(p: HTMLElement, v: boolean): boolean; isMax(p: HTMLElement): boolean };
+  //    window.__piweFloat.setMax(panelEl, v) / .isMax(panelEl) / .isFull(panelEl)
+  //    window.__piweFloat.raise(panelEl) → explicit raise (for an already-open panel that
+  //      another layer covers; e.g. All Sessions opens a viewer that was already floating)
+  type MaxApi = { version: string; toggleMax(p: HTMLElement): boolean; setMax(p: HTMLElement, v: boolean): boolean; isMax(p: HTMLElement): boolean; isFull(p: HTMLElement): boolean; raise(p: HTMLElement): boolean };
   const api: MaxApi = ((window as any).__piweFloat ||= {} as MaxApi);
   api.version = VERSION;
   // dock 展示状态机出口（_shared/ext-float-dock.ts 委托到这里；方案 §5.2）。
@@ -950,6 +952,15 @@ export function install(): () => void {
   api.setMax = (p, v) => { const c = maxControls.get(p); if (c && c.isMax() !== v) c.toggle(); };
   api.isMax = (p) => maxControls.get(p)?.isMax() ?? false;
   api.isFull = (p) => maxControls.get(p)?.isFull?.() ?? false;
+  // Explicit raise: enhanced panels only. An un-enhanced panel means float is absent or the
+  // panel has not been scanned yet — a freshly mounted panel is raised by scan's "appear-to-front".
+  api.raise = (p) => {
+    try {
+      if (!p || !p.isConnected || !enhancedPanels.has(p)) return false;
+      bringToFront(p);
+      return true;
+    } catch { return false; }
+  };
 
   // v3：安装完成广播（_shared 的 dock 头 store 探测据此从本地回落切到宿主服务）
   try { window.dispatchEvent(new Event(FLOAT_INSTALLED_EVENT)); } catch { /* ignore */ }

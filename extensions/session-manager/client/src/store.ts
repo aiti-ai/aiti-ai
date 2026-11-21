@@ -9,6 +9,7 @@ import { useState, useEffect, apiUrl, getExtService, t } from "./host-shim";
 import { present as presentDock, presentState, openFloat, closePanel } from "../../../_shared/ext-float-dock-lite";
 import { dedupeFetch } from "../../../_shared/dedupe-fetch";
 import { decodeSessionsPayload, decodeArchivedPayload, decodeRowV2 } from "../../server/payload.ts";
+import { coversMainArea } from "./float-yield.pure";
 import type { SessionInfo } from "./sidebar/pure";
 import {
   PIN_TAG_NAME, findPinTagId, isSessionPinned,
@@ -1693,14 +1694,88 @@ export const panelOpen = makeFlag();
 // （entry.tsx 双 face），flag.value 仅遗留读取不再驱动渲染。
 panelOpen.onOpen = function () { presentDock("session-manager:panel", "open"); };
 panelOpen.onClose = function () { presentDock("session-manager:panel", "close"); };
-/** 点开会话后面板是否让位：仅小屏全屏浮窗（aiti-float data-ext-float-full 同款断点）
- *  会铺满视口盖住刚打开的会话/查看器，此时才收起；桌面浮窗与右栏停靠不遮挡 →
- *  面板保持打开，可连续点选会话。 */
+
+/** aiti-float global handle (absent when the extension is not installed/ready → optional chain at call sites) */
+function floatApi(): any {
+  try { return (window as any).__piweFloat; } catch { return undefined; }
+}
+
+/** Locate the aiti-float-enhanced panel element for an itemKey.
+ *  dialogs/pages items may omit data-ext-float-key (float falls back to closest([data-ext-item])
+ *  for the persistence key and never writes it back), so the second route goes through the host
+ *  wrapper — where data-ext-item carries the **composite id** ("extId:itemId"); the plain itemId
+ *  form is kept for older hosts. */
+export function findFloatPanel(key: string): HTMLElement | null {
+  try {
+    const explicit = document.querySelector<HTMLElement>(`[data-ext-float-key="${key}"]`);
+    if (explicit) return explicit;
+    const i = key.indexOf(":");
+    if (i <= 0) return null;
+    const extId = key.slice(0, i), itemId = key.slice(i + 1);
+    return document.querySelector<HTMLElement>(
+      `[data-ext-id="${extId}"][data-ext-item="${key}"] [data-ext-float]`)
+      ?? document.querySelector<HTMLElement>(
+        `[data-ext-id="${extId}"][data-ext-item="${itemId}"] [data-ext-float]`);
+  } catch { return null; }
+}
+
+/** Explicit raise (aiti-float `raise`): the panel is already open but another layer covers it.
+ *  Freshly mounted panels are handled by float's "appear-to-front"; this covers the
+ *  "already open, clicked again" path. */
+export function raisePanel(key: string): void {
+  const api = floatApi();
+  if (!api || typeof api.raise !== "function") return;
+  const el = findFloatPanel(key);
+  try { if (el) api.raise(el); } catch { /* ignore */ }
+}
+/** The panel may have mounted this very frame, before float's scan ran → one extra raise next
+ *  frame (a single rAF, not a poll). */
+export function raisePanelNextFrame(key: string): void {
+  try { requestAnimationFrame(() => raisePanel(key)); } catch { raisePanel(key); }
+}
+
+/** Does the floating panel cover the main area? Thresholds live in float-yield.pure.ts (tested).
+ *  A default 680×700 float is ~1/3 of a desktop viewport (main area still visible); only
+ *  maximizing or dragging it nearly full-screen counts as covering. Values that cannot be
+ *  read (no DOM / no viewport in custom hosts) degrade to "does not cover" — the small-screen
+ *  breakpoint below is the final fallback. */
+function floatingPanelCoversMainArea(el: HTMLElement | null): boolean {
+  if (!el) return false;
+  try {
+    const api = floatApi();
+    const isFull = typeof api?.isFull === "function" ? !!api.isFull(el) : false;
+    const w = Number(window.innerWidth), h = Number(window.innerHeight);
+    const r = el.getBoundingClientRect();
+    return coversMainArea(r, {
+      width: Number.isFinite(w) ? w : 0,
+      height: Number.isFinite(h) ? h : 0,
+    }, isFull);
+  } catch { return false; }
+}
+
+/** Yield before opening a session/viewer: collapse only when the panel floats AND covers the
+ *  main area (otherwise the user cannot see what just opened). Docked / closed / normal-size
+ *  floats stay open so consecutive picks keep working. */
 export function collapsePanelIfCovering() {
-  if (presentState("session-manager:panel") !== "floating") return;
-  let fullscreen = false;
-  try { fullscreen = window.matchMedia("(max-width: 640px)").matches; } catch { /* 非 DOM 环境 */ }
-  if (fullscreen) panelOpen.onClose();
+  const key = "session-manager:panel";
+  if (presentState(key) !== "floating") return;
+  let covering = floatingPanelCoversMainArea(findFloatPanel(key));
+  if (!covering) {
+    // Fallback: below the aiti-float small-screen breakpoint (≤640px) a float always fills the viewport
+    try { covering = window.matchMedia("(max-width: 640px)").matches; } catch { /* non-DOM env */ }
+  }
+  if (covering) panelOpen.onClose();
+}
+
+/** Yield when a viewer (archived / external) sits in front: the click targets a session in the
+ *  main chat area, so leaving the viewer on top reads as "nothing happened". */
+export function collapseViewersIfCovering() {
+  for (const key of [ARCHIVED_VIEWER_KEY, EXT_VIEWER_KEY]) {
+    if (presentState(key) !== "floating") continue;
+    if (floatingPanelCoversMainArea(findFloatPanel(key))) {
+      if (key === ARCHIVED_VIEWER_KEY) closeViewer(); else closeExtViewer();
+    }
+  }
 }
 export const managerOpen = makeFlag();
 export const kanbanOpen = makeFlag();
@@ -1759,6 +1834,11 @@ export function openViewer(id: string) {
   viewerState.sessionId = id;
   for (const l of viewerState.subs) l();
   openFloat(ARCHIVED_VIEWER_KEY);
+  // Same viewer already open (switched to another archived session): openFloat is idempotent
+  // and the panel may sit under another float → raise explicitly; the first-mount frame is
+  // covered by float's "appear-to-front", hence both paths.
+  raisePanel(ARCHIVED_VIEWER_KEY);
+  raisePanelNextFrame(ARCHIVED_VIEWER_KEY);
 }
 export function closeViewer() {
   viewerState.sessionId = null;
@@ -1777,6 +1857,10 @@ export function openExtViewer(id: string) {
   extViewerState.id = id;
   for (const l of extViewerState.subs) l();
   openFloat(EXT_VIEWER_KEY);
+  // Same as above: docked state is flashed by openFloat; a floating one is raised to the top
+  // so a click never lands on a viewer the user cannot see
+  raisePanel(EXT_VIEWER_KEY);
+  raisePanelNextFrame(EXT_VIEWER_KEY);
 }
 export function closeExtViewer() {
   extViewerState.id = null;
