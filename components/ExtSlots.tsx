@@ -491,14 +491,6 @@ export function currentUiLocale(): string {
 }
 
 /**
- * Static-item text i18n: text prefixed with "i18n:" is resolved against the declaring
- * extension's manifest i18n table (same cascade as makeClientContext's t(): current
- * locale → short code → en → first available table). Non-prefixed text passes through
- * unchanged; a missing key falls back to the bare key. The host renders static
- * (zero-bundle) entries verbatim, so this is the only way a lazy extension's
- * pre-materialization label can follow the UI locale.
- */
-/**
  * Extension i18n table cascade: exact locale → language subtag → zh-CN for any other zh-*
  * variant (extensions ship en + zh-CN; zh-TW users get the zh-CN text rather than English) → en → first table.
  */
@@ -512,6 +504,14 @@ function extTableFor(ui18n: Record<string, Record<string, string>>, loc: string)
     ?? EMPTY_I18N_TABLE;
 }
 
+/**
+ * Static-item text i18n: text prefixed with "i18n:" is resolved against the declaring
+ * extension's manifest i18n table (same cascade as makeClientContext's t(): current
+ * locale → short code → zh-CN for other zh variants → en → first available table).
+ * Non-prefixed text passes through unchanged; a missing key falls back to the bare key.
+ * The host renders static (zero-bundle) entries verbatim, so this is the only way a lazy
+ * extension's pre-materialization label can follow the UI locale.
+ */
 export function translateExtItemText(extId: string | undefined, text: string | undefined): string {
   if (!text) return "";
   if (!extId || !text.startsWith("i18n:")) return text;
