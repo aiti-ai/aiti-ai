@@ -172,8 +172,10 @@ export function setEdgeInfo(available, voices) {
   state.edgeAvailable = !!available;
   if (Array.isArray(voices)) {
     state.edgeVoices = voices;
-    // 已选音色不在可用列表（下架/失效如 Yunfeng）→ 重置回默认，避免选择列表无此项却仍请求坏音色
-    if (state.edgeAvailable && state.settings.voice && !voices.some((v) => v && v.id === state.settings.voice)) {
+    // Prune a stale edge voice only while the edge engine is actually the one playing.
+    // Local/clone voice ids never appear in the edge list, so validating unconditionally reset
+    // the user's local selection to default on every /voices refresh (settings open / init).
+    if (resolvedEngine() === "edge" && state.settings.voice && !voices.some((v) => v && v.id === state.settings.voice)) {
       state.settings.voice = "";
       persist();
     }
@@ -193,7 +195,6 @@ export function setEdgeStatus(status) {
 /** Apply the `engines.local` block returned by /voices (or /engine-status). */
 export function setLocalStatus(block) {
   if (!block || typeof block !== "object") return;
-  const prev = state.localStatus;
   state.localVm = block;
   state.localProvider = block.provider || state.localProvider || "";
   state.localProviderLabel = block.providerLabel || state.localProviderLabel || "";
@@ -204,12 +205,21 @@ export function setLocalStatus(block) {
   else if (block.status === "loading" || block.status === "starting") state.localStatus = "loading";
   else if (block.status === "error") state.localStatus = "error";
   else state.localStatus = "stopped";
-  if (prev !== state.localStatus) notify();
-  else notify();
+  notify();
 }
 /** Replace the local voice list (keep the previous result while the service is not ready). */
 export function setLocalVoices(list) {
-  if (Array.isArray(list)) state.localVoices = list;
+  if (Array.isArray(list)) {
+    state.localVoices = list;
+    // Symmetric pruning: a local provider switch (40M <-> 80M) invalidates built-in ids.
+    // Only prune while local is playing and the list is non-empty (a stopped service keeps
+    // the previous list so the dropdown is never blanked out).
+    if (resolvedEngine() === "local" && list.length && state.settings.voice
+        && !list.some((v) => v && v.id === state.settings.voice)) {
+      state.settings.voice = "";
+      persist();
+    }
+  }
   notify();
 }
 /** Voice list for the active engine (settings panel dropdown). */
@@ -2038,18 +2048,27 @@ export async function initEngine() {
   // Probe both server engines (/voices carries edge + local status); auto-enable features once.
   await fetchEdgeInfo();
   const s = state.settings.engine;
-  if (state.edgeAvailable) {
-    if (s === "auto" || (s === "browser" && !state.engineUpgraded)) {
-      // auto (default) stays auto (resolved prefers edge); legacy browser default upgrades once
-      state.engineUpgraded = true;
-      if (s === "browser") { state.settings.engine = "auto"; state.lastError = "已检测到 edge-tts，引擎默认切到 edge-tts（更自然）。"; }
-    }
-    if (state.browserUnsupported) { state.settings.engine = "edge"; state.lastError = "浏览器不支持本地朗读，已自动切换到服务端语音生成。"; }
+  if (state.edgeAvailable && (s === "auto" || (s === "browser" && !state.engineUpgraded))) {
+    // auto (default) stays auto (resolved prefers edge); legacy browser default upgrades once
+    state.engineUpgraded = true;
+    if (s === "browser") { state.settings.engine = "auto"; state.lastError = "已检测到 edge-tts，引擎默认切到 edge-tts（更自然）。"; }
   } else if (s === "auto") {
     // auto = edge -> local -> browser: keep "auto" so a later local start is picked up on reload
     state.settings.engine = localReady() ? "auto" : "browser";
   }
-  if (state.browserUnsupported && !state.edgeAvailable && !localReady()) {
+  // No Web Speech on this device (common on mobile): an engine that needs the browser must be
+  // replaced by a server-side one — but never override an explicit "local" choice (it is the
+  // user's persistent selection and would look like the settings reset on every reload).
+  if (state.browserUnsupported && (state.settings.engine === "auto" || state.settings.engine === "browser")) {
+    if (state.edgeAvailable) {
+      state.settings.engine = "edge";
+      state.lastError = "浏览器不支持本地朗读，已自动切换到服务端语音生成。";
+    } else if (localReady()) {
+      state.settings.engine = "local";
+      state.lastError = "浏览器不支持本地朗读，已切换到本地 TTS 引擎。";
+    }
+  }
+  if (state.browserUnsupported && !state.edgeAvailable && !localReady() && state.settings.engine === "browser") {
     state.lastError = "浏览器不支持本地朗读，且服务端语音（edge-tts / 本地 TTS）未就绪，无法朗读。请安装 edge-tts 或在设置里启动本地引擎。";
   }
   persist();
