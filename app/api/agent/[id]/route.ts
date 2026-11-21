@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { resolveSessionPath } from "@/lib/session-reader";
 import { getOfflineSessionStats, startRpcSession, getRpcSession, setRpcSessionTools } from "@/lib/rpc-manager";
 import { cwdMissingBody, missingCwdFromBody } from "@/lib/missing-cwd";
+import { applyQueuedFlag, cancelCompactQueue, parkCompactIfBusy, type CompactQueueWrapper } from "@/lib/compact-queue";
 import { resolveAnySession, resolveAttachBySessionId, resolveDetachedSession, attachIfBridged, resolvePlaceholderSession, resolveExternalCompositeSession, openDetachedPreferred, prefersDetached } from "@/lib/session";
 import { HandleSessionAdapter } from "@/lib/session";
 import { sendWithAcceptWindow } from "@/lib/agent-command-accept";
@@ -27,6 +28,32 @@ async function sendAccepted(
   if ("error" in outcome) throw outcome.error;
   onAccepted();
   return NextResponse.json({ success: true, data: outcome.result });
+}
+
+/**
+ * Compact-queue intercept (lib/compact-queue): answers a NextResponse when the
+ * command is compact/cancel_compact_queue and a live wrapper is available —
+ * busy sessions get their compaction parked server-side (survives page reloads
+ * and session switches, which the old client-only queue lost); idle sessions
+ * fall through to the ordinary blocking execute path. Null = not handled.
+ */
+async function compactQueueResponse(
+  id: string,
+  wrapper: CompactQueueWrapper,
+  body: { type?: unknown; queueIfBusy?: unknown; customInstructions?: unknown },
+): Promise<NextResponse | null> {
+  if (body.type === "cancel_compact_queue") {
+    return NextResponse.json({ success: true, data: { cleared: cancelCompactQueue(id) } });
+  }
+  if (body.type === "compact" && body.queueIfBusy === true) {
+    const parked = await parkCompactIfBusy(id, wrapper, {
+      customInstructions: typeof body.customInstructions === "string" ? body.customInstructions : undefined,
+    });
+    if (parked) {
+      return NextResponse.json({ success: true, data: { queued: true, queuedAt: parked.queuedAt } });
+    }
+  }
+  return null;
 }
 
 // POST /api/agent/[id] - Send a command to an existing session
@@ -70,6 +97,8 @@ export async function POST(
         throw e;
       }
       if (bridged?.isAlive()) {
+        const queued = await compactQueueResponse(id, bridged, body);
+        if (queued) return queued;
         return await sendAccepted(bridged, body, () => { promptAccepted = body.type === "prompt"; });
       }
     }
@@ -104,6 +133,15 @@ export async function POST(
       });
     }
     if (existing?.isAlive()) {
+      // get_state short-circuit: OR in the parked-compaction flag (registry-owned,
+      // not part of the wrapper state) so pending-state mirrors see server truth.
+      if (body.type === "get_state") {
+        const state = await existing.send({ type: "get_state" }) as Record<string, unknown>;
+        applyQueuedFlag(id, state);
+        return NextResponse.json({ success: true, data: state });
+      }
+      const queued = await compactQueueResponse(id, existing, body);
+      if (queued) return queued;
       return await sendAccepted(existing, body, () => { promptAccepted = body.type === "prompt"; });
     }
 
@@ -229,6 +267,9 @@ export async function GET(
     }
 
     const state = await session.send({ type: "get_state" }) as Record<string, unknown>;
+    // Parked-compaction flag (lib/compact-queue): lets a reopened page restore the
+    // pending indicator that the old client-only queue lost on reload.
+    applyQueuedFlag(id, state);
     // Status reads leave out the system prompt, most of the reply: fork `?light=1`,
     // upstream `?systemPrompt=0` (agentStatusUrl()). Same field, two spellings.
     const url = new URL(req.url);

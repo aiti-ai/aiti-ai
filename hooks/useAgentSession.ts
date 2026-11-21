@@ -162,6 +162,8 @@ type AgentStateResponse = {
   runStartedAt?: number;
   isBashRunning?: boolean;
   isCompacting?: boolean;
+  /** Compaction parked server-side (lib/compact-queue); absent from older servers — treat as "no park". */
+  compactQueued?: boolean;
   autoCompactionEnabled?: boolean;
   extensionStatuses?: ExtensionStatusItem[];
   extensionWidgets?: ExtensionWidgetItem[];
@@ -851,9 +853,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [autoCompactionEnabled, setAutoCompactionEnabled] = useState(true);
   const [compactError, setCompactError] = useState<string | null>(null);
   const [compactResult, setCompactResult] = useState<CompactResultInfo | null>(null);
-  /** Manual compaction queued while the agent was running; fires on next idle. */
+  /** Compaction parked server-side while the agent was running (lib/compact-queue);
+   *  the server flushes it at idle and get_state carries the flag, so the pending
+   *  state survives page reloads and session switches — the old client-only queue lost both. */
   const [compactQueued, setCompactQueued] = useState(false);
-  const pendingCompactRef = useRef(false);
+  /** True while the compact POST is in flight: state mirrors must not clear the just-set
+   *  pending flag with a snapshot that predates the park. */
+  const compactPostingRef = useRef(false);
   const [agentPhase, setAgentPhase] = useState<AgentPhase>(null);
   /** "Settling" wait state: agent_end fired (the run's final message is fully on screen) but the SDK's
    *  post-run teardown (compaction estimate on big sessions / extension settle hooks) has not delivered
@@ -1583,6 +1589,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           if (liveState.pendingRecovery !== undefined) setPendingRecovery(liveState.pendingRecovery ?? []);
           if (liveState.queueTrash !== undefined) setQueueTrash(liveState.queueTrash ?? []);
           if (liveState.autoCompactionEnabled !== undefined) setAutoCompactionEnabled(liveState.autoCompactionEnabled ?? true);
+          // Parked-compaction mirror (lib/compact-queue): server truth wins, except while
+          // our own compact POST is in flight (its snapshot may predate the park).
+          if (liveState.compactQueued === true) setCompactQueued(true);
+          else if (!compactPostingRef.current) setCompactQueued(false);
         } else if (!agentState.running) {
           setQueuedMessages({ steering: [], followUp: [] });
           // Dormancy fallback: the state route brings back the latest task snapshot via the extension's sessionDormantState service (empty if none)
@@ -2528,6 +2538,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       // would otherwise leave the "Stop compaction" UI stuck. No state
       // (wrapper destroyed) means nothing is compacting.
       setIsCompacting(state?.isCompacting ?? false);
+      // Parked-compaction mirror (lib/compact-queue): the run-scoped guard above drops stale
+      // usage snapshots; the flag mirror here is idempotent and only mirrors server truth.
+      if (state?.compactQueued === true) setCompactQueued(true);
+      else if (!compactPostingRef.current) setCompactQueued(false);
       applyQueuedSnapshot(state?.queuedMessages);
       setPendingRecovery(state?.pendingRecovery ?? []);
       setQueueTrash(state?.queueTrash ?? []);
@@ -2787,7 +2801,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             void fetch(apiUrl(`/api/agent/${encodeURIComponent(connectedSid)}?light=1`))
               .then((r) => (r.ok ? r.json() : null))
               .then((d: { state?: AgentStateResponse } | null) => {
-                if (d?.state && sessionIdRef.current === connectedSid) applyQueuedSnapshot(d.state.queuedMessages);
+                if (d?.state && sessionIdRef.current === connectedSid) {
+                  applyQueuedSnapshot(d.state.queuedMessages);
+                  // Reconnect snapshot also carries the parked-compaction flag
+                  // (lib/compact-queue) — restore the pending indicator after a reload.
+                  if (d.state.compactQueued === true) setCompactQueued(true);
+                  else if (!compactPostingRef.current) setCompactQueued(false);
+                }
               })
               .catch(() => { /* reconnect snapshot failure is non-blocking: the 15s reconcile backstops */ });
           }
@@ -2950,6 +2970,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         }
         const wasRunning = settleUiStage();
         setIsCompacting(false);
+        // The backend died: a parked compaction cannot outlive its wrapper (the registry
+        // drops it) — clear the local pending indicator to match.
+        setCompactQueued(false);
         if (sid) {
           void loadSession(sid);
           scheduleEventStreamClose(sid);
@@ -3225,6 +3248,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         setIsCompacting(true);
         setCompactError(null);
         setCompactResult(null);
+        // A started compaction consumed the pending request — covers compactions the
+        // server flushed from the park (lib/compact-queue) that this tab never POSTed.
+        setCompactQueued(false);
         // Compaction is "busy" too: a manual compact aborts the current run first (agent_settled already settled
         // it); without setting this, the chat window shows idle during compaction (no Stop/running label),
         // inconsistent with the sidebar's running set.
@@ -4121,11 +4147,21 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     setIsCompacting(true);
     setCompactError(null);
     setCompactResult(null);
+    compactPostingRef.current = true;
     try {
-      const result = await sendAgentCommand<CompactCommandResult>(sid, {
+      const result = await sendAgentCommand<CompactCommandResult & { queued?: boolean }>(sid, {
         type: "compact",
+        queueIfBusy: true,
         ...(customInstructions ? { customInstructions } : {}),
       });
+      if (result?.queued === true) {
+        // The server parked the compaction (session was busy): lib/compact-queue
+        // flushes it at idle and the compaction's own start/end events report the
+        // run over the normal stream. Pending state, not an in-flight compaction
+        // (the finally below already drops the optimistic spinner).
+        setCompactQueued(true);
+        return true;
+      }
       setCompactResult(readCompactResult(result, "manual"));
       // No showLoading: flipping `loading` unmounts the whole chat (including
       // ChatInput) and silently discards the message the user is typing.
@@ -4137,6 +4173,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setCompactResult(null);
       return false;
     } finally {
+      compactPostingRef.current = false;
       setIsCompacting(false);
     }
   }, [loadSession, promoteNewSession]);
@@ -4144,17 +4181,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const handleCompact = useCallback(async (customInstructions?: string): Promise<boolean> => {
     const sid = sessionIdRef.current;
     if (!sid || isCompacting) return true;
-    // Agent running (streaming OR executing a tool call): compacting now
-    // would race the active agent loop (both rewrite context + session file).
-    // Queue it for the next idle window.
-    if (agentRunning) {
-      pendingCompactRef.current = true;
-      setCompactQueued(true);
-      setCompactError(null);
-      return true;
-    }
+    // One POST for both idle and running sessions: the server executes when idle
+    // and parks the request when busy (lib/compact-queue), flushing it when the
+    // session settles. The pending state is server-owned, so it survives page
+    // reloads and session switches — the previous client-side queue lost both.
     return runCompactNow(customInstructions);
-  }, [isCompacting, agentRunning, runCompactNow]);
+  }, [isCompacting, runCompactNow]);
 
   // The banner otherwise stays until the next compaction, e.g. "Nothing to compact".
   const dismissCompactError = useCallback(() => setCompactError(null), []);
@@ -4175,21 +4207,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentRunning]);
 
-  // Drain a queued compaction as soon as the agent is truly idle (covers SSE
-  // events, reconcile, and visibility/online recovery — all paths that clear
-  // isStreaming). prompt_done alone is not enough: retries, auto-compaction,
-  // and queued follow-ups can extend a logical run.
-  useEffect(() => {
-    if (pendingCompactRef.current && !agentRunning && !isCompacting) {
-      pendingCompactRef.current = false;
-      setCompactQueued(false);
-      void runCompactNow();
-    }
-  }, [agentRunning, isCompacting, runCompactNow]);
-
   const cancelCompactQueue = useCallback(() => {
-    pendingCompactRef.current = false;
+    const sid = sessionIdRef.current;
     setCompactQueued(false);
+    // Server-owned park: cancel it there too (fire-and-forget — the button's
+    // feedback is the local clear; the POST just makes the server agree).
+    if (sid) void sendAgentCommand(sid, { type: "cancel_compact_queue" }).catch(() => {});
   }, []);
 
   /** /api/models response → component state (cache replay and network results share the same mapping). */
@@ -5373,6 +5396,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
     if (agentState?.state) {
       if (agentState.state.isCompacting !== undefined) setIsCompacting(agentState.state.isCompacting);
+      // Parked-compaction mirror (lib/compact-queue) — same in-flight-POST guard as loadSession.
+      if (agentState.state.compactQueued === true) setCompactQueued(true);
+      else if (!compactPostingRef.current) setCompactQueued(false);
       if (agentState.state.systemPrompt !== undefined) setSystemPrompt(agentState.state.systemPrompt ?? null);
       if (agentState.state.extensionStatuses !== undefined) setExtensionStatuses(agentState.state.extensionStatuses ?? []);
       if (agentState.state.extensionWidgets !== undefined) setExtensionWidgets(agentState.state.extensionWidgets ?? []);
