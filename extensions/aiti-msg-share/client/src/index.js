@@ -284,7 +284,10 @@ function targetCard(target, selected, badge) {
       border: "1px solid " + (selected ? "var(--accent, #4d8dff)" : "var(--border, #34363c)"), borderRadius: 8,
       background: selected ? "rgba(77, 141, 255, 0.15)" : "var(--bg-hover, #25272c)", color: disabled ? "var(--text-muted, #8b909b)" : "var(--text, #d8dade)",
       fontSize: 12, cursor: "pointer", opacity: disabled ? 0.45 : 1 } },
-    h("span", null, STATUS_ICONS[badge] || "🔗"),
+    h("span", null, target.icon || STATUS_ICONS[badge] || "🔗"),
+    // Provider glyph first; the source marker (recent/recommended) stays as a small secondary hint.
+    ...(target.icon && STATUS_ICONS[badge]
+      ? [h("span", { style: { fontSize: 10, color: "var(--text-muted, #8b909b)" } }, STATUS_ICONS[badge])] : []),
     target.name || target.id,
     ...(target.kinds?.length ? [h("span", { style: { color: "var(--text-muted, #8b909b)", fontSize: 10 } },
       target.kinds.map(kindLabel).join("/"))] : []),
@@ -869,7 +872,7 @@ function managerDialog() {
       form: { ...((t.values && !Array.isArray(t.values)) ? t.values : {}) } }),
     style: { display: "flex", alignItems: "center", gap: 7, padding: "5px 8px", borderRadius: 7, cursor: "pointer",
       background: state.editing === t.id ? "rgba(77, 141, 255, 0.15)" : "none", opacity: t.status === "dead" ? 0.5 : 1 } },
-    h("span", null, t.status === "dead" ? "💀" : t.category === "archive" ? "📓" : "🔗"),
+    h("span", null, t.status === "dead" ? "💀" : (t.icon || (t.category === "archive" ? "📓" : "🔗"))),
     h("div", { style: { flex: 1, minWidth: 0 } },
       h("div", { style: { fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, t.name || t.id),
       h("div", { style: { fontSize: 10, color: "var(--text-muted, #8b909b)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } },
