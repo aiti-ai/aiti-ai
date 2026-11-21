@@ -33,6 +33,10 @@ let dirCache = "";
 const aliveMap = new Map<string, number>();
 const ALIVE_TIMEOUT_MS = 45_000;
 
+// Server-side exit event fan-out (aiti-ai-schedule process-exit trigger): listeners registered
+// via the `aiti-cmd.on-exit` service get every session exit frame published on `cmd-<id>` topics.
+const exitListeners = new Set<(info: { sessionId: string; code: number | null; signal: string | null; durationMs?: number; cmd?: string; source?: string; cwd?: string; cancelled?: boolean }) => void>();
+
 // 词库分类展示（/commands/dict）
 function COMMAND_DICT_GROUPS() {
   return COMMAND_DICT.map((g) => ({ group: g.group, names: g.names, phrases: g.phrases.slice(0, 30) }));
@@ -1886,6 +1890,13 @@ export default {
         try {
           const last = aliveMap.get(type);
           if (last !== undefined && Date.now() - last > ALIVE_TIMEOUT_MS) return; // 订阅已停止：停推
+          // exit frame → server-side listeners (aiti-cmd.on-exit service; the alive/stop-push gate does not affect this fan-out)
+          if (data && (data as { evt?: string }).evt === "exit" && type.startsWith("cmd-")) {
+            const d = data as { code?: number | null; signal?: string | null; durationMs?: number; cmd?: string; source?: string; cwd?: string; cancelled?: boolean };
+            for (const l of exitListeners) {
+              try { l({ sessionId: type.slice(4), code: d.code ?? null, signal: d.signal ?? null, durationMs: d.durationMs, cmd: d.cmd, source: d.source, cwd: d.cwd, cancelled: d.cancelled === true }); } catch {}
+            }
+          }
           const svc = (ctx.services as { get?: (n: string) => { publish?: (t: string, d: Record<string, unknown>) => void } | undefined } | undefined);
           (svc?.get?.("aiti-event-bus.publish-local") ?? svc?.get?.("aiti-event-bus.publish"))?.publish?.(type, data);
         } catch {}
@@ -1925,7 +1936,15 @@ export default {
           buffered: (id: string) => runner!.buffered(id),
           sessions: () => runner!.list(), // 与 list 同源（codebuddy 清单二者并列，保持兼容）
         });
-        console.log("[aiti-cmd] services 已注册：aiti-cmd.runner（跨扩展后端建会话统一出口）");
+        // Server-side exit subscription (schedule process-exit trigger; event/callback, zero polling)
+        (ctx.services as { provide?: (n: string, s: unknown) => void } | undefined)?.provide?.("aiti-cmd.on-exit", {
+          subscribe: (fn: (info: { sessionId: string; code: number | null; signal: string | null; durationMs?: number; cmd?: string; source?: string; cwd?: string; cancelled?: boolean }) => void) => {
+            if (typeof fn !== "function") return () => {};
+            exitListeners.add(fn);
+            return () => { exitListeners.delete(fn); };
+          },
+        });
+        console.log("[aiti-cmd] services 已注册：aiti-cmd.runner（跨扩展后端建会话统一出口）+ aiti-cmd.on-exit（进程退出事件）");
       } catch (e) {
         console.warn("[aiti-cmd] services.provide(aiti-cmd.runner) 失败（旧 core 无 services？）", e);
       }

@@ -155,7 +155,10 @@ export class Engine {
   upsertPlanEntry(p: Plan, persist = true) {
     // 先按原始形态解析（字符串/对象/数组均可），再把 plan.timezone 附加到每个 spec
     // （修复：此前对字符串 schedule 做 {...spread} 展开出字符索引对象 → 解析失败 → 条目静默丢弃）
-    const parsed = parseSchedules(p.schedule);
+    let parsed = parseSchedules(p.schedule);
+    // Trigger-only plans (borrow plan §2.3): schedule optional when plan.trigger is set —
+    // empty spec list, nextRunAt = MAX_SAFE_INTEGER so tick never fires them.
+    if (!parsed && p.trigger) parsed = [];
     const specs = parsed && p.timezone
       ? parsed.map((sp) => (sp.type === "once" ? sp : { ...sp, tz: p.timezone }))
       : parsed;
@@ -171,14 +174,14 @@ export class Engine {
     // 否则（新建/编辑改了 schedule）→ 重算：单 spec 走 initialNext（含水位补跑/missed），多 spec 从 now 起算各时点。
     const sameShape = prev && prev.enabled === enabled && prev.specs.length === specs.length
       && specs.every((s, i) => JSON.stringify(s) === JSON.stringify(prev.specs[i]));
-    const specAt = sameShape ? prev!.specAt : this.initialSpecAt(specs, wm, p.name, p);
+    const specAt = sameShape ? prev!.specAt : (specs.length ? this.initialSpecAt(specs, wm, p.name, p) : []);
     this.entries.set(key, {
       key, kind: "ai", name: p.name,
       enabled,
-      spec: specs[0],
+      spec: specs[0] as ScheduleSpec,
       specs,
       specAt,
-      nextRunAt: Math.min(...specAt),
+      nextRunAt: specs.length ? Math.min(...specAt) : Number.MAX_SAFE_INTEGER,
       lastRunAt: wm.lastRunAt,
       runCount: p.runCount || 0,
       running: false,
@@ -377,6 +380,8 @@ export class Engine {
         cc: e.kind === "ai" ? e.plan!.cc ?? null : undefined,
         mailTo: e.kind === "ai" ? e.plan!.mailTo ?? null : undefined,
         sendOn: e.kind === "ai" ? e.plan!.sendOn ?? "all" : undefined,
+        // trigger config echo (borrow plan §2.3: list ⚡ badge + webhook URL data source)
+        trigger: e.kind === "ai" ? e.plan!.trigger ?? null : undefined,
         nextRunAt: e.nextRunAt, lastRunAt: e.lastRunAt, runCount: e.runCount,
         running: e.running,
         triggerEnabled: this.triggerEnabled(),
@@ -390,6 +395,47 @@ export class Engine {
     if (!e || e.running) return e || null;
     void this.execute(e, true);
     return e;
+  }
+
+  // ---- Event triggers (borrow plan §2.3: fs-watch / process-exit / webhook) ----
+  /** trigger source → last fired at (cooldown window; in-memory only, reset on restart is harmless) */
+  private lastTriggerAt = new Map<string, number>();
+
+  /** Event trigger fire. Automatic semantics: respects the master gate, cooldown per
+   *  trigger config (type defaults: fs-watch 5s / process-exit 2s / webhook 0), the
+   *  daily budget, and maxRuns self-stop (execute with manual=false). */
+  fireTrigger(planId: string, source: string): { ok: boolean; reason?: string } {
+    const k = this.entries.has("plan:" + planId) ? "plan:" + planId : this.findKey(planId);
+    const e = k ? this.entries.get(k) : null;
+    if (!e || e.kind !== "ai" || !e.plan) return { ok: false, reason: "not-found" };
+    if (!e.enabled) return { ok: false, reason: "disabled" };
+    if (e.running) return { ok: false, reason: "busy" };
+    if (!this.triggerEnabled()) return { ok: false, reason: "trigger-disabled" };
+    const trig = e.plan.trigger as { cooldownSec?: number; type?: string } | null | undefined;
+    const defaults: Record<string, number> = { "fs-watch": 5, "process-exit": 2 };
+    // explicit numeric cooldownSec (incl. 0 = off) wins; unset falls back to the type default
+    const cdRaw = trig?.cooldownSec;
+    const cooldownSec = cdRaw !== undefined && Number.isFinite(Number(cdRaw)) && Number(cdRaw) >= 0
+      ? Math.floor(Number(cdRaw))
+      : (trig?.type ? defaults[trig.type] || 0 : 0);
+    const now = Date.now();
+    if (cooldownSec > 0 && now - (this.lastTriggerAt.get(e.key) || 0) < cooldownSec * 1000) {
+      return { ok: false, reason: "cooldown" };
+    }
+    if (this.dailyRemaining(e) <= 0) {
+      this.store.appendRun({
+        id: "r_" + now.toString(36) + Math.random().toString(36).slice(2, 6),
+        targetId: e.key, kind: e.kind, name: e.name,
+        at: new Date().toISOString(), status: "skipped", ms: 0,
+        error: "事件触发命中但已达每日执行预算（trigger=" + source + "）",
+        trigger: source,
+      });
+      this.events.emit("run", { targetId: e.key, kind: e.kind, name: e.name, at: new Date().toISOString(), status: "skipped", error: "事件触发已达每日预算" });
+      return { ok: false, reason: "budget" };
+    }
+    this.lastTriggerAt.set(e.key, now);
+    void this.execute(e, false, source);
+    return { ok: true };
   }
 
   private findKey(id: string): string | undefined {
@@ -421,7 +467,7 @@ export class Engine {
     try { this.outbound(e.plan, r); } catch { /* 送达失败不影响任务 */ }
   }
 
-  private async execute(e: Entry, manual = false) {
+  private async execute(e: Entry, manual = false, triggerSource?: string) {
     e.running = true;
     this.executing++;
     const started = Date.now();
@@ -433,6 +479,7 @@ export class Engine {
     const base: Omit<RunRecord, "status"> = {
       id: "r_" + started.toString(36) + Math.random().toString(36).slice(2, 6),
       targetId: e.key, kind: e.kind, name: e.name, at: new Date().toISOString(), mode: e.kind === "ai" ? e.plan!.mode : "hook",
+      ...(triggerSource ? { trigger: triggerSource } : {}),
     };
     try {
       if (e.kind === "hook") {
