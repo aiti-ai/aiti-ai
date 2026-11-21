@@ -60,14 +60,14 @@ function candidatesOf(store: VaultStore, text: string, opts: PreflightScanOption
  * carries a masked preview plus whether the vault already stores that value.
  */
 export function preflightScan(store: VaultStore, text: string, opts: PreflightScanOptions = {}): PreflightScanResult {
-  // A fresh store is not locked: the first write creates the keyfile. Only an
-  // existing vault whose key is missing/unreadable blocks masking.
+  // `status().locked` only means "no key loaded yet" (lazy). Probe the key so the
+  // UI hint is accurate: a fresh store is not locked (the first write creates the
+  // keyfile); an existing keyfile that cannot load is genuinely locked.
   let locked = false;
   try {
-    const st = store.status();
-    locked = st.initialized && st.locked;
+    store.keyFor(false);
   } catch {
-    locked = true;
+    locked = store.initialized;
   }
   const candidates = candidatesOf(store, text, opts).map((hit, index) => ({
     index,
