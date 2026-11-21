@@ -30,6 +30,7 @@ import {
   moveBlockKey,
   moveBlockTo,
   readBlockCollapsed,
+  readBlockDismissed,
   readDockOrder,
   sidebarZoneOf,
   splitBlockAlign,
@@ -202,6 +203,7 @@ export function createDockStackApi(ctx: Record<string, any>) {
       const key = String(it.id);
       if (seen.has(key)) continue;
       seen.add(key);
+      if (readBlockDismissed(key)) continue; // dismissed: user ⋮-close on record → no refresh resurrection (2026-11-21)
       const pref = dockPref(key);
       if (pref && isSidebarDockState(`docked:${pref}`) && presented(key) === "closed") {
         present(key, "open", { auto: true });
