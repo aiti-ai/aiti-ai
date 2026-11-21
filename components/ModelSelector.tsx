@@ -215,24 +215,6 @@ export function filterModelOptions(options: ModelSelectorOption[], query: string
 }
 
 /**
- * Removes entries already shown in the "recents" section from the main list — the same model no
- * longer appears twice in the panel
- * (2026-09-14 user report: the zcode list showed two identical adjacent rows, the recents section
- * duplicating the grouped list below. Only removed in non-filtering mode: search must be able to
- * hit every model, including recents).
- * provider/modelId joined field-wise as the key; with no match / an empty recents section,
- * options are returned unchanged.
- */
-export function excludeRecentOptions(
-  options: ModelSelectorOption[],
-  recentOptions: ModelSelectorOption[],
-): ModelSelectorOption[] {
-  if (recentOptions.length === 0) return options;
-  const recentKeys = new Set(recentOptions.map((option) => `${option.provider}/${option.modelId}`));
-  return options.filter((option) => !recentKeys.has(`${option.provider}/${option.modelId}`));
-}
-
-/**
  * A keyboard-navigable row of the selector panel, in visual order: the "default/clear" row first,
  * then the recents section, then the grouped list. Group headers and the refresh row are not
  * navigable (not selectable); refreshing rows stay listed but activation is guarded in the caller.
@@ -433,19 +415,17 @@ export function ModelSelector({
     () => pickRecentOptions(recentList, options, { open, filter }),
     [open, filter, options, recentList],
   );
-  // Entries already shown in the recents section are removed from the main list (each model appears once; while filtering recentOptions=[] so nothing is removed)
-  const mainOptions = useMemo(
-    () => excludeRecentOptions(filteredOptions, recentOptions),
-    [filteredOptions, recentOptions],
-  );
-  const modelsByProvider = groupModelOptions(mainOptions);
+  // The recents section is an accelerator, not a removal: every model also stays listed under
+  // its provider group (2026-11-21 user request, reversing the 2026-09-14 dedup — users browse
+  // by provider and must always find the model there). While filtering recentOptions=[] anyway.
+  const modelsByProvider = groupModelOptions(filteredOptions);
 
   // Keyboard navigation rows: selectable rows in visual order (clear / recents / grouped list).
   // Group headers and the refresh row are not navigable; activation is guarded in activateNavRow.
   const hasClearRow = Boolean(onClear) && !filter.trim();
   const navRows = useMemo(
-    () => buildSelectorNavRows({ hasClear: hasClearRow, recentOptions, mainOptions }),
-    [hasClearRow, recentOptions, mainOptions],
+    () => buildSelectorNavRows({ hasClear: hasClearRow, recentOptions, mainOptions: filteredOptions }),
+    [hasClearRow, recentOptions, filteredOptions],
   );
   const navIndexByKey = useMemo(() => {
     const map = new Map<string, number>();
