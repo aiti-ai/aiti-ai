@@ -665,7 +665,16 @@ async function localSynthesizeBatch(ctx: TtsDirs, texts: string[], voiceIn?: str
   const providerId = String(health?.provider || cfg.provider);
   const voice = await localResolveVoice(paths, cfg, voiceIn);
   if (!voice) {
-    return { ok: false, engine: "local", voice: "", provider: providerId, items: [], error: "local TTS has no voices (service not ready?)", code: "not-ready" };
+    // A provider without voices is NOT "starting": hojo-80m has no built-ins, so cloning is a
+    // prerequisite. Report it separately so the UI can guide the user instead of waiting.
+    const ready = !!health?.ok;
+    return {
+      ok: false, engine: "local", voice: "", provider: providerId, items: [],
+      code: ready ? "no-voice" : "not-ready",
+      error: ready
+        ? `provider ${providerId} has no voices yet (create a cloned voice in the settings panel)`
+        : "local TTS is not running",
+    };
   }
   const items: LocalItem[] = [];
   for (const text of texts) {
@@ -687,6 +696,8 @@ async function localSynthesizeBatch(ctx: TtsDirs, texts: string[], voiceIn?: str
         voice,
         format: (cfg.format as "pcm" | "wav" | "mp3"),
         sampleRate: cfg.sampleRate,
+        // 80M on CPU runs ~1x realtime and the first request after startup also loads the model.
+        timeoutMs: 45000,
       });
       writeFileSync(join(cacheDir, key + r.ext), r.buf);
       items.push({ text, key, cached: true, ext: r.ext, speakable });
@@ -919,6 +930,10 @@ export default {
         "speek.voice.defaultName": "默认（{name}）",
         "speek.voice.defaultBrowser": "浏览器默认中文",
         "speek.voice.localHint": "本地音色在下方「音色管理」中查看/新建/删除（克隆音色需 Hojo 80M 或 Qwen3）。",
+        "speek.voice.noVoices": "无可用音色（需新建克隆音色）",
+        "speek.local.noVoicesHint": "当前 provider 没有可用音色：Hojo 80M 只有克隆音色，请在「音色管理」新建后再朗读。",
+        "speek.toast.noVoice": "本地 provider（{provider}）还没有可用音色：Hojo 80M 只有克隆音色，请到设置 → 音色管理新建。",
+        "speek.toast.unknownVoice": "本地音色「{voice}」不存在（provider 可能已切换），请在音色管理里重新选择。",
         "speek.voice.lang.zh": "中文",
         "speek.voice.lang.en": "English",
         "speek.voice.sex.f": "女声",
@@ -1107,6 +1122,10 @@ export default {
         "speek.voice.defaultName": "Default ({name})",
         "speek.voice.defaultBrowser": "Browser default (Chinese)",
         "speek.voice.localHint": "Manage local voices in \u201cVoice management\u201d below (cloned voices need Hojo 80M or Qwen3).",
+        "speek.voice.noVoices": "No voices yet (create a cloned voice)",
+        "speek.local.noVoicesHint": "This provider has no voices: Hojo 80M only has cloned voices — create one in Voice management before reading.",
+        "speek.toast.noVoice": "The local provider ({provider}) has no voices yet — Hojo 80M only has cloned voices; create one in Settings → Voice management.",
+        "speek.toast.unknownVoice": "Local voice \"{voice}\" does not exist (the provider may have changed); pick another one in Voice management.",
         "speek.voice.lang.zh": "Chinese",
         "speek.voice.lang.en": "English",
         "speek.voice.sex.f": "Female",

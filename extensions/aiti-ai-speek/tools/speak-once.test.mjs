@@ -156,3 +156,38 @@ test("speakStatus exposes the engine snapshot for consumers", () => {
   assert.equal(typeof st.local.status, "string");
   assert.equal(st.edgeAvailable, true);
 });
+
+test("a provider without voices (hojo-80m) reports no-voice and opens the panel", async () => {
+  store.setLocalStatus({ available: true, provider: "hojo-80m", baseUrl: "http://127.0.0.1:8768" });
+  state.localStatus = "ready";
+  state.localProvider = "hojo-80m";
+  store.setSettings({ engine: "local", voice: "" });
+  let opened = 0;
+  store.setSettingsOpener(() => { opened++; });
+  const stub = stubFetch([
+    ["/tts-batch", () => ({ ok: false, engine: "local", voice: "", provider: "hojo-80m", items: [], code: "no-voice", error: "provider hojo-80m has no voices yet" })],
+  ]);
+  try {
+    const r = await store.speakOnce("没有音色时不应假装在启动。", { engine: "local" });
+    assert.equal(r.ok, false);
+    assert.equal(r.code, "no-voice");
+    assert.equal(opened, 1, "voice management entry opened via the panel opener");
+    assert.ok(state.failToast && state.failToast.text, "toast explains the missing voice");
+  } finally { stub.restore(); }
+});
+
+test("a stale voice id (provider switched) reports unknown-voice and opens the panel", async () => {
+  store.setLocalStatus({ available: true, provider: "hojo-80m", baseUrl: "http://127.0.0.1:8768" });
+  state.localStatus = "ready";
+  let opened = 0;
+  store.setSettingsOpener(() => { opened++; });
+  const stub = stubFetch([
+    ["/tts-batch", () => ({ ok: true, engine: "local", voice: "hojo_zh_f_01", provider: "hojo-80m", items: [{ text: "x", key: "d".repeat(64), cached: false, speakable: true, code: "unknown-voice", error: "voice not found", retryable: false }] })],
+  ]);
+  try {
+    const r = await store.speakOnce("旧音色测试。", { engine: "local", voice: "hojo_zh_f_01" });
+    assert.equal(r.ok, false);
+    assert.equal(r.code, "unknown-voice");
+    assert.equal(opened, 1);
+  } finally { stub.restore(); }
+});
