@@ -47,7 +47,7 @@ const _req = createRequire(import.meta.url);
 const extNm = resolve(extRoot, "node_modules");
 let esbuildPkg;
 try {
-  esbuildPkg = dirname(_req.resolve("esbuild/package.json", { paths: [extNm, extRoot] }));
+  esbuildPkg = dirname(_req.resolve("esbuild/package.json", { paths: [extNm, extRoot, repoRoot] }));
 } catch {
   throw new Error("[build-client] esbuild 未找到——请先 npm install（devDependencies.esbuild）");
 }
