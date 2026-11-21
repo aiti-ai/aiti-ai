@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * test-trigger.mjs — event-trigger tests (zero-dep: node --test tools/test-trigger.mjs)
+ * test-trigger.mjs — event-trigger tests (zero-dep: node --test --test-force-exit tools/test-trigger.mjs;
+ * force-exit is required — remaining Engine/store timers would keep the test process alive)
  *
  * Covers (dsh-better-sidebar borrow plan §2.3):
  *   - TriggerManager fs-watch: declared paths get a watch → change fires (debounced); undeclared/non-absolute/disallowed paths get none
