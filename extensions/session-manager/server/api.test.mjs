@@ -589,6 +589,40 @@ test("archive/run keeps a running ghost (same-id live wrapper over an archived i
   }
 });
 
+test("sessions assembly suppresses a composite-id ghost row whose bare id is archived — no double-bucket resurrection on refresh", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "sm-arc-"));
+  const { writeFileSync } = await import("fs");
+  try {
+    const now = new Date().toISOString();
+    const header = (id) => JSON.stringify({ type: "session", version: 3, id, timestamp: now, cwd: "/w" });
+    const msg = (id, text, ts) => JSON.stringify({ type: "message", id, parentId: null, timestamp: ts, message: { role: "user", content: text } });
+    const sDup = join(dir, "dup.jsonl");
+    writeFileSync(sDup, header("dup-id") + "\n" + msg("m1", "hi", now) + "\n");
+    const { runArchive } = await import("./runtime.ts");
+    const core0 = {
+      async listSessions() { return [{ id: "dup-id", path: sDup, cwd: "/w", modified: now }]; },
+      async getRunningSessionIds() { return []; },
+    };
+    await runArchive(cfgOf(dir), core0, undefined, ["dup-id"]);
+    assert.ok(!existsSync(sDup), "archived: source file gone");
+    // ghost loop: the host's active list still reports the same id under its composite
+    // spelling ("pi:<uuid>") — the live bucket must not resurrect the archived row
+    const core1 = {
+      async listSessions() { return [{ id: "pi:dup-id", path: sDup, cwd: "/w", modified: now }]; },
+      async getRunningSessionIds() { return []; },
+    };
+    const res = await api(req("http://x/?fmt=2"), { configDir: cfgOf(dir), path: ["sessions"], searchParams: new URLSearchParams({ fmt: "2" }), core: core1 });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    const liveIds = (body.sessions ?? []).map((r) => String(r.id));
+    assert.ok(!liveIds.some((id) => id.includes("dup-id")), "no live row under either spelling");
+    const archIds = (body.archived ?? []).map((r) => String(r.id));
+    assert.ok(archIds.includes("dup-id"), "archived bucket holds the bare-id row");
+  } finally {
+    await rmRf(dir, { closeSessionIndex: true, sessionIndexConfigDir: cfgOf(dir) });
+  }
+});
+
 test("archive removes the queue sidecar (<file>.queue.json) along with the source file", async () => {
   const dir = mkdtempSync(join(tmpdir(), "sm-arc-"));
   const { writeFileSync } = await import("fs");
