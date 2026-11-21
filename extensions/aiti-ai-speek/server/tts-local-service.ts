@@ -169,7 +169,7 @@ export async function startService(opts: StartOptions): Promise<{
 
       + `${opts.hfEndpoint ? `AITI_TTS_HF_ENDPOINT=${sshQuote(opts.hfEndpoint)} ` : ""}`
       + `bash ${sshQuote(file)} start --provider ${sshQuote(opts.provider)} --port ${opts.port} --idle-timeout ${opts.idleTimeout}`;
-    const winCmd = `powershell -NoProfile -ExecutionPolicy Bypass -File "${file}" start -Provider ${opts.provider} -Port ${opts.port} -IdleTimeout ${opts.idleTimeout}`;
+    const winCmd = `powershell -NoProfile -ExecutionPolicy Bypass -File "${file}" start -Provider "${opts.provider}" -Port ${opts.port} -IdleTimeout ${opts.idleTimeout} -HomeDir "${paths.home}" -VoicesJson "${paths.voicesJson}"${opts.hfEndpoint ? ` -HfEndpoint "${opts.hfEndpoint}"` : ""}`;
     try {
       const r = await Promise.resolve(opts.runner.run({
         command: process.platform === "win32" ? winCmd : posixCmd,
@@ -187,7 +187,13 @@ export async function startService(opts: StartOptions): Promise<{
   }
   // Fallback: detached spawn; the script itself tees to <home>/logs/tts.log.
   try {
-    const child = spawn(cmd, [...args, file, "start", "--provider", opts.provider, "--port", String(opts.port), "--idle-timeout", String(opts.idleTimeout)], {
+    // Windows uses named parameters (-Provider ...); the POSIX script uses long flags.
+    const startArgs = process.platform === "win32"
+      ? [...args, file, "start", "-Provider", opts.provider, "-Port", String(opts.port),
+          "-IdleTimeout", String(opts.idleTimeout), "-HomeDir", paths.home, "-VoicesJson", paths.voicesJson,
+          ...(opts.hfEndpoint ? ["-HfEndpoint", opts.hfEndpoint] : [])]
+      : [...args, file, "start", "--provider", opts.provider, "--port", String(opts.port), "--idle-timeout", String(opts.idleTimeout)];
+    const child = spawn(cmd, startArgs, {
       cwd: SERVICE_DIR,
       env,
       detached: true,

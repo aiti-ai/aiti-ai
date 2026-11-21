@@ -170,9 +170,44 @@ if (!(Test-Path $Py)) {
 }
 Write-Prepare "venv" 15 "python env ready"
 
+# --- pip index resolution (CN networks stall on pypi.org; probe the real download speed) ------
+function Resolve-PipIndex {
+  if ($env:AITI_TTS_PIP_INDEX) { return "$env:AITI_TTS_PIP_INDEX" }
+  if ($env:PIP_INDEX_URL) { return "" }          # respect the user's own configuration
+  $cfg = ""
+  try { $cfg = (@(& $script:Py -m pip config get global.index-url 2>$null) -join "").Trim() } catch {}
+  if ($cfg) { Write-Log "pip config index in use: $cfg"; return "" }
+
+  $probe = {
+    param([string]$idx)
+    $tmp = Join-Path $HomeDir (".probe-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+    $dl = @("-m", "pip", "download", "--no-cache-dir", "--no-deps", "-q", "-d", $tmp, "six", "--timeout", "8", "--retries", "0")
+    if ($idx) { $dl += @("--index-url", $idx) }
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $code = Invoke-Quiet { & $script:Py @dl }
+    $sw.Stop()
+    Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+    if ($code -ne 0) { return -1 }
+    return [int]$sw.ElapsedMilliseconds
+  }
+
+  $best = ""; $bestMs = [int]::MaxValue
+  foreach ($cand in @("", "https://mirrors.aliyun.com/pypi/simple/", "https://pypi.tuna.tsinghua.edu.cn/simple/")) {
+    $ms = & $probe $cand
+    if ($ms -ge 0) {
+      $label = if ($cand) { $cand } else { "default" }
+      Write-Log ("pip index probe {0}: {1}ms" -f $label, $ms)
+      if ($ms -lt $bestMs) { $bestMs = $ms; $best = $cand }
+    }
+  }
+  if ($best) { Write-Log "pip index: $best (auto-selected; override with AITI_TTS_PIP_INDEX)" }
+  return $best
+}
+
 # --- dependencies (fingerprinted, skipped when unchanged) -------------------------------------
 if (!(Test-Path $Req)) { Write-Log "missing requirements: $Req"; exit 3 }
-$PipIndex = "$env:AITI_TTS_PIP_INDEX"
+$PipIndex = Resolve-PipIndex
 $sha = [System.Security.Cryptography.SHA256]::Create()
 try {
   # Same fingerprint recipe as bootstrap.sh: requirements text + family line + pip index line.
@@ -184,21 +219,22 @@ $stampHash = ""
 if (Test-Path $Stamp) { $stampHash = ([IO.File]::ReadAllText($Stamp)).Trim() }
 
 function Invoke-PipInstall([string[]]$pipArgs) {
-  # Prefer the venv pip; fall back to `uv pip install --python` for seed-less uv venvs.
-  if ((Invoke-Quiet { & $script:Py -m pip --version }) -eq 0) {
-    & $script:Py -m pip @pipArgs
-    return $LASTEXITCODE
-  }
+  # Prefer uv's parallel installer (5-10x faster); it also works for seed-less uv venvs.
   if ($script:UvExe) {
     & $script:UvExe pip install --python $script:Py @pipArgs
+    return $LASTEXITCODE
+  }
+  if ((Invoke-Quiet { & $script:Py -m pip --version }) -eq 0) {
+    & $script:Py -m pip @pipArgs
     return $LASTEXITCODE
   }
   return 1
 }
 
 if ($ForceDeps -or !(Test-Path $Stamp) -or $stampHash -ne $DepsHash) {
-  Write-Prepare "deps" 18 "installing python deps (first run may take a few minutes)"
-  Invoke-Quiet { & $script:Py -m pip install --upgrade pip -q } | Out-Null
+  $viaLabel = if ($PipIndex) { " · via " + (($PipIndex -split "/")[2]) } else { "" }
+  Write-Prepare "deps" 18 ("installing python deps (first run may take a few minutes$viaLabel)")
+  if (-not $script:UvExe) { Invoke-Quiet { & $script:Py -m pip install --upgrade pip -q } | Out-Null }
   $pipExtra = @()
   if ($PipIndex) { $pipExtra += @("--index-url", $PipIndex) }
   $ok = $false
@@ -241,10 +277,12 @@ $out = @(& $script:Py @modelArgs)
 $ModelDir = [string]$out[$out.Count - 1]
 
 # --- record the resolved environment for the extension -----------------------------------------
-$TnEnabled = -not (Test-Path (Join-Path $HomeDir "tn-disabled"))
+# Report the *effective* TN state (importable), not just "the install step ran".
+$TnEnabled = ((Invoke-Quiet { & $script:Py -c "import tn" }) -eq 0)
 $ready = [ordered]@{
   provider = $Provider; family = $Family; venv = $Venv; modelDir = $ModelDir
-  depsHash = $DepsHash; tn = $TnEnabled; at = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+  depsHash = $DepsHash; pipIndex = $PipIndex; tn = $TnEnabled
+  at = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 }
 Write-Utf8NoBom (Join-Path $HomeDir "ready.json") ($ready | ConvertTo-Json -Compress)
 Write-Prepare "download" 88 "model ready"

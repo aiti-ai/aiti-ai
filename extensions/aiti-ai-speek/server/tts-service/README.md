@@ -18,7 +18,7 @@ bash bootstrap.sh --provider hojo-40m --force-deps  # re-run preparation only
 | `tts_server.py` | HTTP shell: `/v1/audio/speech`, `/health`, `/voices`, `/admin/load`, `/admin/stats`; lazy model load; idle-exit watchdog (in-flight requests are never truncated) |
 | `providers/` | `base.py` (TTSEngine contract + registry), `hojo.py` (40M built-in voices / 80M cloning), `stub.py` (pipeline debugging), `qwen3.py` (torch; CUDA ideal) |
 | `vendor/hojo40`, `vendor/hojo80` | Official Hojo inference code, vendored verbatim (Apache-2.0, LICENSE included) |
-| `bootstrap.sh` / `bootstrap_models.py` | Idempotent preparation: uv Python 3.12 venv, fingerprinted deps, `snapshot_download` with automatic source resolution (explicit → `HF_ENDPOINT` → huggingface.co probe → hf-mirror) |
+| `bootstrap.sh` / `bootstrap.ps1` / `bootstrap_models.py` | Idempotent preparation (Windows: `powershell -File bootstrap.ps1`): uv Python 3.12 venv (self-bootstrapped into the service home when missing), fingerprinted deps, `snapshot_download` with automatic source resolution (explicit → `HF_ENDPOINT` → huggingface.co probe → hf-mirror) |
 | `start-tts.sh` / `start-tts.ps1` | start/status/stop/restart; exact port-based kills; writes `prepare.json` (panel progress) + `runtime.json` (actual port) |
 | `prep.py` | Atomic `prepare.json` writer shared by bootstrap and the server |
 
