@@ -182,6 +182,32 @@ function notTemplated(text: string, at: number): boolean {
   return text.slice(Math.max(0, at - 2), at) !== "{{";
 }
 
+/** Words that make a nearby value a credential when no operator binds them. */
+const NEAR_KEYWORD =
+  /(?:api[_-]?key|secret(?:[_-]?key)?|token|passw(?:or)?d|passwd|pwd|passphrase|credential|密码|密钥|秘钥|口令|令牌|授权码|授权密钥|访问令牌|访问密钥|凭证|凭据|私钥)/i;
+/** How far back (chars) a credential keyword still counts for a bare assignment. */
+const NEAR_WINDOW = 160;
+
+/** The credential keyword sits in the same passage (a few sentences back at most). */
+function keywordNear(text: string, at: number): boolean {
+  return NEAR_KEYWORD.test(text.slice(Math.max(0, at - NEAR_WINDOW), at));
+}
+
+/**
+ * cjk-ok-next (code sample)
+ * Bare value handed over by an assignment verb (`设为 X`, `set it to X`). No
+ * operator binds it, so the bar is higher than for `= value`: ASCII only, both
+ * letters and digits, and never a file name or an identifier.
+ */
+function assignedSecret(v: string): boolean {
+  if (v.length < 8 || !/[A-Za-z]/.test(v) || !/\d/.test(v)) return false;
+  if (!plausibleSecret(v) || placeholderShaped(v) || entropy(v) < 2.8) return false;
+  // word-hump identifiers are NOT filtered here on purpose: human-chosen passwords look exactly
+  // like them (Kx7dyn4b91, Qz8wEr7t) and the surrounding keyword already names the value
+  // config values are often names: `report2024.md`, `release_v2.json`
+  return !/\.(?:md|txt|json|ya?ml|toml|ini|conf|cfg|log|ts|tsx|js|jsx|mjs|cjs|py|go|rs|rb|java|sh|zsh|lock|env|html?|css|sql|xml|csv)$/i.test(v);
+}
+
 /** True when the offset is inside a `${...}` expression (template default, not a literal). */
 function insideTemplate(text: string, at: number): boolean {
   const open = text.lastIndexOf("${", at);
@@ -394,6 +420,40 @@ export const RULES: readonly Rule[] = [
     group: 1,
     verify: quotedSecret,
     before: keywordStart,
+    source: GITLEAKS,
+  },
+  {
+    id: "generic-secret-assign",
+    label: "SECRET",
+    kind: "secret",
+    // keyword then an assignment verb: `密码改成 X`, `new password X`, `set the password to X` // cjk-ok
+    pattern: /(?:api[_-]?key|secret(?:[_-]?key)?|token|password|passwd|pwd|passphrase|auth|credential|新密码|新口令|新的密码|密码|密钥|秘钥|口令|令牌|授权码|授权密钥|访问令牌|访问密钥|凭证|凭据|私钥)s?["'`]?(?:[ \t]+to\b|[ \t]{0,5}(?:改为|改到|改成|修改为|设置为|设置成|设为|设成|置为|配置为|配置成|换成|换为|变为|变成|重置为|重设为|更改为|更新为))[ \t:：]{0,5}["'`]?((?:[^\s"'`;,(){}<>[\]\\，。、；：！？“”‘’（）]|\\(?![nrt])){8,256})(?!(?!\\[nrt])[^\s"'`;,(){}<>[\]，。、；：！？“”‘’（）])/gi,
+    group: 1,
+    verify: (v) => bareSecret(v) || assignedSecret(v),
+    before: keywordStart,
+    source: GITLEAKS,
+  },
+  {
+    id: "new-password",
+    label: "SECRET",
+    kind: "secret",
+    // a declared new password: `new password X`, `新密码 X` (no operator needed) // cjk-ok
+    pattern: /(?:新密码|新的密码|新口令|new[ _-]?pass(?:word|phrase))[ \t]{0,5}["'`]?(?:[=:：]|是|为)?[ \t]{0,5}["'`]?((?:[^\s"'`;,(){}<>[\]\\，。、；：！？“”‘’（）]|\\(?![nrt])){8,256})(?!(?!\\[nrt])[^\s"'`;,(){}<>[\]，。、；：！？“”‘’（）])/gi,
+    group: 1,
+    verify: assignedSecret,
+    before: keywordStart,
+    source: GITLEAKS,
+  },
+  {
+    id: "assigned-value",
+    label: "SECRET",
+    kind: "secret",
+    // assignment verb without an operator, gated by a credential keyword in the same passage
+    // (`帮我设为 Kx7dyn4b91` after a sentence about 密码, `set it to ...`) // cjk-ok
+    pattern: /(?:改为|改到|改成|修改为|设置为|设置成|设为|设成|置为|配置为|配置成|换成|换为|变为|变成|重置为|重设为|更改为|更新为|\b(?:reset|change|update|set)[ \t]+(?:it|them|this|that|the[ \t]+\w+)?[ \t]*to)[ \t:：]{0,5}["'`]?([A-Za-z0-9!@#$%^&*_+=~-]{8,128})["'`]?(?![A-Za-z0-9!@#$%^&*_+=~-])/g,
+    group: 1,
+    verify: assignedSecret,
+    before: keywordNear,
     source: GITLEAKS,
   },
   {

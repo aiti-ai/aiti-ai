@@ -64,6 +64,9 @@ const SECTION_TEXT = [
   "verbatim in tool arguments (bash/edit/write/MCP). Copy the token exactly. Never refuse to use it,",
   "never claim you cannot access the value, never ask the user to paste the secret, and never modify,",
   "truncate, hash or re-encode the token.",
+  "Never present a token to the user as if it were the secret value: it only resolves inside tool",
+  "arguments, so a user cannot type it into a login prompt. When the user asks what the value is, say",
+  "it is masked and point to where the real one lives (the value they supplied, or the secret vault).",
 ].join("\n");
 
 interface ExtensionState extends SecretState {
@@ -185,9 +188,12 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
   // Input boundary: in vault/ephemeral landing the user's own message must be
   // redacted BEFORE it becomes a session entry (message_end alone fires after
-  // the raw prompt would already be persisted).
+  // the raw prompt would already be persisted). In plain landing the text is
+  // kept verbatim but detection still runs here, because the placeholder
+  // contract (before_agent_start) is composed BEFORE the context hook — a value
+  // first seen at send time would reach the model's first turn unexplained.
   pi.on("input", (event, ctx) => {
-    if (!active(state) || !redactOnDisk(state.landing)) return { action: "continue" as const };
+    if (!active(state)) return { action: "continue" as const };
     if ((event as { source?: string }).source === "extension") return { action: "continue" as const };
     const rules = currentRules();
     let text = event.text ?? "";
@@ -196,7 +202,8 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       rules,
       weak: weakOptions(ctx),
     });
-    return res.changed ? { action: "transform" as const, text } : { action: "continue" as const };
+    if (!redactOnDisk(state.landing) || !res.changed) return { action: "continue" as const };
+    return { action: "transform" as const, text };
   });
 
   // Send-boundary redaction. The event carries a deep copy: edits here never
@@ -221,12 +228,19 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     return res.changed ? { messages: event.messages } : undefined;
   });
 
-  // Tell the model what the tokens mean (idempotent keyed section).
+  // Tell the model what the tokens mean (idempotent keyed section). The key is
+  // shared with the vault, so a mask that yielded to it must leave the section
+  // alone — hook order puts the vault first, and deleting here would wipe the
+  // contract it just wrote.
   pi.on("before_agent_start", (event) => {
     const sections = event.systemPromptOptions?.sections as Record<string, string> | undefined;
     if (!sections) return undefined;
-    if (active(state) && state.registry.size > 0) sections[SECTION_KEY] = SECTION_TEXT;
-    else if (SECTION_KEY in sections) delete sections[SECTION_KEY];
+    if (active(state)) {
+      if (state.registry.size > 0) sections[SECTION_KEY] = SECTION_TEXT;
+      else if (SECTION_KEY in sections) delete sections[SECTION_KEY];
+    } else if (!state.disabledBy && SECTION_KEY in sections) {
+      delete sections[SECTION_KEY];
+    }
     return undefined;
   });
 

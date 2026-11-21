@@ -8,7 +8,7 @@ import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-// ../packages/secret-mask-core/dist/index.js
+// ../../packages/secret-mask-core/dist/index.js
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { appendFileSync, chmodSync, existsSync, mkdirSync as mkdirSync2, readFileSync as readFileSync2, statSync as fileStat, writeFileSync as writeFileSync2 } from "node:fs";
@@ -154,6 +154,16 @@ function dbUrlHasRealPassword(url) {
 }
 function notTemplated(text, at) {
   return text.slice(Math.max(0, at - 2), at) !== "{{";
+}
+var NEAR_KEYWORD = /(?:api[_-]?key|secret(?:[_-]?key)?|token|passw(?:or)?d|passwd|pwd|passphrase|credential|密码|密钥|秘钥|口令|令牌|授权码|授权密钥|访问令牌|访问密钥|凭证|凭据|私钥)/i;
+var NEAR_WINDOW = 160;
+function keywordNear(text, at) {
+  return NEAR_KEYWORD.test(text.slice(Math.max(0, at - NEAR_WINDOW), at));
+}
+function assignedSecret(v) {
+  if (v.length < 8 || !/[A-Za-z]/.test(v) || !/\d/.test(v)) return false;
+  if (!plausibleSecret(v) || placeholderShaped(v) || entropy(v) < 2.8) return false;
+  return !/\.(?:md|txt|json|ya?ml|toml|ini|conf|cfg|log|ts|tsx|js|jsx|mjs|cjs|py|go|rs|rb|java|sh|zsh|lock|env|html?|css|sql|xml|csv)$/i.test(v);
 }
 function insideTemplate(text, at) {
   const open = text.lastIndexOf("${", at);
@@ -356,6 +366,40 @@ var RULES = [
     group: 1,
     verify: quotedSecret,
     before: keywordStart,
+    source: GITLEAKS
+  },
+  {
+    id: "generic-secret-assign",
+    label: "SECRET",
+    kind: "secret",
+    // keyword then an assignment verb: `密码改成 X`, `new password X`, `set the password to X` // cjk-ok
+    pattern: /(?:api[_-]?key|secret(?:[_-]?key)?|token|password|passwd|pwd|passphrase|auth|credential|新密码|新口令|新的密码|密码|密钥|秘钥|口令|令牌|授权码|授权密钥|访问令牌|访问密钥|凭证|凭据|私钥)s?["'`]?(?:[ \t]+to\b|[ \t]{0,5}(?:改为|改到|改成|修改为|设置为|设置成|设为|设成|置为|配置为|配置成|换成|换为|变为|变成|重置为|重设为|更改为|更新为))[ \t:：]{0,5}["'`]?((?:[^\s"'`;,(){}<>[\]\\，。、；：！？“”‘’（）]|\\(?![nrt])){8,256})(?!(?!\\[nrt])[^\s"'`;,(){}<>[\]，。、；：！？“”‘’（）])/gi,
+    group: 1,
+    verify: (v) => bareSecret(v) || assignedSecret(v),
+    before: keywordStart,
+    source: GITLEAKS
+  },
+  {
+    id: "new-password",
+    label: "SECRET",
+    kind: "secret",
+    // a declared new password: `new password X`, `新密码 X` (no operator needed) // cjk-ok
+    pattern: /(?:新密码|新的密码|新口令|new[ _-]?pass(?:word|phrase))[ \t]{0,5}["'`]?(?:[=:：]|是|为)?[ \t]{0,5}["'`]?((?:[^\s"'`;,(){}<>[\]\\，。、；：！？“”‘’（）]|\\(?![nrt])){8,256})(?!(?!\\[nrt])[^\s"'`;,(){}<>[\]，。、；：！？“”‘’（）])/gi,
+    group: 1,
+    verify: assignedSecret,
+    before: keywordStart,
+    source: GITLEAKS
+  },
+  {
+    id: "assigned-value",
+    label: "SECRET",
+    kind: "secret",
+    // assignment verb without an operator, gated by a credential keyword in the same passage
+    // (`帮我设为 Kx7dyn4b91` after a sentence about 密码, `set it to ...`) // cjk-ok
+    pattern: /(?:改为|改到|改成|修改为|设置为|设置成|设为|设成|置为|配置为|配置成|换成|换为|变为|变成|重置为|重设为|更改为|更新为|\b(?:reset|change|update|set)[ \t]+(?:it|them|this|that|the[ \t]+\w+)?[ \t]*to)[ \t:：]{0,5}["'`]?([A-Za-z0-9!@#$%^&*_+=~-]{8,128})["'`]?(?![A-Za-z0-9!@#$%^&*_+=~-])/g,
+    group: 1,
+    verify: assignedSecret,
+    before: keywordNear,
     source: GITLEAKS
   },
   {
@@ -570,14 +614,13 @@ function redactForms(value) {
   return [...forms].filter((form) => form.length >= MIN_REDACT_LENGTH);
 }
 var Registry = class {
-  /** Session salt used for v2 placeholder hashing (set by the host). */
-  salt = "";
-  byValue = /* @__PURE__ */ new Map();
-  byPlaceholder = /* @__PURE__ */ new Map();
-  /** Old placeholder → entry, kept when a value is re-registered under a new alias. */
-  redirects = /* @__PURE__ */ new Map();
-  /** value forms sorted longest-first, so a value containing another is replaced whole. */
-  forms = [];
+  constructor() {
+    this.salt = "";
+    this.byValue = /* @__PURE__ */ new Map();
+    this.byPlaceholder = /* @__PURE__ */ new Map();
+    this.redirects = /* @__PURE__ */ new Map();
+    this.forms = [];
+  }
   get size() {
     return this.byValue.size;
   }
@@ -1453,7 +1496,7 @@ var WEAK_PASSWORDS = /* @__PURE__ */ new Set([
   "january",
   "february"
 ]);
-var WEAK_CONTEXT = /(password|passwd|pwd|passphrase|密码|口令|令牌|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|credential)s?["'`]?[ \t]{0,5}(?::=|=>|[=:]|：|(?:[ \t]+is\b)|是)[ \t]{0,5}["'`]?([^\s"'`;,(){}<>[\]\\，。、；：！？“”‘’（）]{3,64})/gi;
+var WEAK_CONTEXT = /(password|passwd|pwd|passphrase|密码|口令|令牌|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|credential)s?["'`]?[ \t]{0,5}(?::=|=>|[=:]|：|(?:[ \t]+is\b)|是|(?:[ \t]+to\b)|改为|改到|改成|修改为|设置为|设置成|设为|设成|置为|配置为|配置成|换成|换为|变成|重置为|更改为|更新为)[ \t:：]{0,5}["'`]?([^\s"'`;,(){}<>[\]\\，。、；：！？“”‘’（）]{3,64})/gi;
 function weakPasswordCandidates(text) {
   const out = [];
   const seen = /* @__PURE__ */ new Set();
@@ -1611,12 +1654,9 @@ function mergeRules(file, scope) {
   return out;
 }
 var RulesSource = class {
-  cache;
-  stamp = "";
-  errors = [];
-  path;
-  scope;
   constructor(path, scope) {
+    this.stamp = "";
+    this.errors = [];
     this.path = path;
     this.scope = scope;
   }
@@ -2325,7 +2365,10 @@ var SECTION_TEXT = [
   "Each token IS a working credential: the runtime substitutes the real secret when the token",
   "appears verbatim in tool arguments. Copy the token exactly. Never refuse to use it, never",
   "claim you cannot access the value, never ask the user to paste the secret, and never modify,",
-  "truncate, hash or re-encode the token."
+  "truncate, hash or re-encode the token.",
+  "Never present a token to the user as if it were the secret value: it only resolves inside tool",
+  "arguments, so a user cannot type it into a login prompt. When the user asks what the value is, say",
+  "it is masked and point to where the real one lives."
 ].join("\n");
 function registerSection(ctx, cfg) {
   ctx.systemPrompt.section({

@@ -108,6 +108,7 @@ test("mask wiring: send-boundary redaction, guard/restore, message_end, compact,
     const sections = {};
     await host.run("before_agent_start", { systemPromptOptions: { sections } }, ctx);
     assert.match(sections.secret_masking, /working credential/);
+    assert.match(sections.secret_masking, /Never present a token to the user/);
 
     // 3) tool_call restores; unknown placeholder is blocked
     const input = { command: `curl -H "Authorization: Bearer ${ph}"` };
@@ -250,6 +251,50 @@ test("mask wiring: structured extraction, sensitive files, weak values, learn", 
   }
 });
 
+test("mask wiring: a password handed over by an assignment verb never reaches the model", async () => {
+  // regression: "帮我设为 X" used to pass through undetected — the value reached the model, // cjk-ok
+  // was echoed back in plaintext and only got registered once a tool call carried it. // cjk-ok
+  const home = mkdtempSync(join(tmpdir(), "mask-wiring-assign-"));
+  try {
+    const password = "Kx7dyn4b91";
+    const factory = await loadExtension(home);
+    const host = makeHost();
+    await factory(host.pi);
+    const ctx = makeCtx(join(home, "proj"));
+    await host.run("session_start", { reason: "startup" }, ctx);
+
+    const messages = [{ role: "user", content: `wind的密码无法登录 了grd使用的自己的密码吗？帮我设为 ${password}` }];
+    // the token contract must be declared on the FIRST turn: input detection runs before
+    // before_agent_start, so the model never meets an unexplained token // cjk-ok
+    const sections = {};
+    await host.run("input", { text: messages[0].content, source: "interactive" }, ctx);
+    await host.run("before_agent_start", { systemPromptOptions: { sections } }, ctx);
+    assert.match(sections.secret_masking, /Never present a token to the user/, "first-turn contract");
+
+    const changed = await host.run("context", { messages }, ctx);
+    assert.ok(changed);
+    const ph = messages[0].content.match(/rsec_[0-9a-f]{8}/)?.[0];
+    assert.ok(ph, "value replaced by a placeholder before the provider sees it");
+    assert.ok(!messages[0].content.includes(password));
+
+    // the model copies the token into a tool call → the real value is materialized
+    const input = { command: `grdctl rdp set-credentials wind ${ph}` };
+    await host.run("tool_call", { toolName: "bash", toolCallId: "a1", input }, ctx);
+    assert.ok(input.command.includes(password), "tool argv restored");
+
+    // and the tool output is redacted on the way back
+    const result = await host.run(
+      "tool_result",
+      { toolName: "bash", toolCallId: "a1", input, content: [{ type: "text", text: `Password: ${password}` }], isError: false },
+      ctx,
+    );
+    assert.ok(result);
+    assert.ok(!JSON.stringify(result).includes(password));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("mask wiring: yields to the vault handshake", async () => {
   const home = mkdtempSync(join(tmpdir(), "mask-wiring-2-"));
   try {
@@ -262,6 +307,10 @@ test("mask wiring: yields to the vault handshake", async () => {
     host.pi.events.emit("aiti-secret:hello", { ext: "vault", active: true });
     const messages = [{ role: "user", content: `my token: ${SECRET}` }];
     assert.equal(await host.run("context", { messages }, ctx), undefined, "redaction disabled");
+    // the section key is shared: a yielded mask must not wipe the vault's contract
+    const sections = { secret_masking: "<secret_masking>vault owns this</secret_masking>" };
+    await host.run("before_agent_start", { systemPromptOptions: { sections } }, ctx);
+    assert.match(sections.secret_masking, /vault owns this/, "yielded mask leaves the section alone");
     await host.commands.get("secret").handler("status", ctx);
     assert.match(ctx.notices.at(-1).text, /DISABLED \(by pi-secret-vault\)/);
   } finally {

@@ -105,7 +105,7 @@ credential, so entropy/length rules miss it. Three context signals close that ga
    credential paths: structured values are redacted; a dedicated unstructured secret file is
    registered as a whole and **withheld** from the model (placeholder notice). `block` refuses
    the read before execution; `off` disables the path policy.
-3. **Weak-password candidates** — after a strong context (`password is`, `PWD=`, `密码是`), a
+3. **Weak-password candidates** — after a strong context (`password is`, `PWD=`, `密码是`, `密码改成`), a
    small embedded dictionary (`qwerty`, `123abc`, `1qaz2wsx`, …) registers automatically; other
    weak-shaped values only raise a one-time notice (`/secret weak auto` to register them).
 
@@ -119,6 +119,8 @@ hit cannot be detected reliably; the complete fix is to keep such files away fro
 ## Detection rules
 
 Deterministic regex + checksum rules, no network, no model calls: AWS, GitHub, GitLab, Slack (tokens + webhooks), Stripe live, SendGrid, Twilio, Google API/OAuth, Anthropic, OpenAI, Hugging Face, npm, PyPI, Azure storage, JWT (alg-header validated), PEM private keys (complete + truncated), DB URLs with real passwords, `Authorization` header values, generic `key = "value"` / `key = value` assignments guarded by Shannon-entropy thresholds and code-identifier/template/URL exclusion. Base64-wrapped prefix tokens are decoded and caught whole. Values shorter than 6 characters are ignored (noise guard).
+
+**Assignment verbs** (chat hand-over, no operator): `密码改成 X` / `密码设为 X` / `密码重置为 X` / `新密码 X` / `set the password to X` / `new password X`, plus a bare `设为 X` / `改成 X` / `set it to X` whose credential keyword sits in the same passage (160 chars back, so a keyword from the previous sentence still counts). The bare form needs ASCII letters **and** digits, ≥8 chars, entropy ≥2.8 and a non-file-name tail; config prose (`端口改成 8080`, `分支改成 feature/login2`, `文件名改成 report2024.md`, `主题设置为 dark2night`) stays untouched.
 
 **CJK keywords**: the generic-assignment keyword table includes `密码 / 密钥 / 秘钥 / 口令 / 令牌 / 授权码 / 授权密钥 / 访问令牌 / 访问密钥 / 凭证 / 凭据 / 私钥`; assignment separators accept the fullwidth colon (`密码：xxx`, `授权码：xxx`, `Authorization：Bearer xxx`); latin–CJK adjacency (`API密钥`, `db密码`) and pure-CJK prefixes (`数据库密码`) both count as word boundaries. The bare-value entropy floor is **2.5 bits/char**. Fullwidth CJK punctuation terminates a bare value (`密码：xxx，请记好` does not swallow the trailing prose).
 
