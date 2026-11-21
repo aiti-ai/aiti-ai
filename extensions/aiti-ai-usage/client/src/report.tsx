@@ -4,6 +4,12 @@
  */
 import { useState, useEffect, useMemo, useRef } from "react";
 import { t, apiUrl, extSvc } from "./host-shim";
+
+/** Glob → RegExp for excludeTools display matching (client-local copy; catalog.ts carries node:fs). */
+function globToRegExp(pattern: string): RegExp {
+  const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[\\s\\S]*");
+  return new RegExp("^" + escaped + "$", "i");
+}
 import { fmtUsdCny, fxNote, isCnyBillingProvider, useMoneyTick } from "./money";
 // aiti-float dock v3（position-picker-plan §3.2 P1）：面板接停靠状态机——浮窗 face 走
 // useGate 门控；打开/关闭收口 openFloat/closePanel；右栏停靠 face 用 DockBody 包同一内容。
@@ -1922,6 +1928,176 @@ const Empty = () => <div style={{ padding: 20, textAlign: "center", color: "var(
 const Err = ({ msg }: { msg: string }) => <div style={{ padding: 24, color: "var(--danger, #f87171)", fontSize: 12 }}>{msg}</div>;
 const PickHint = () => <div style={{ padding: 24, textAlign: "center", color: "var(--text-dim)", fontSize: 12 }}>{t("au.range.pick")}</div>;
 
+// ---------------------------------------------------------------- Catalog billing (borrow plan §2.7B/C)
+
+/** Catalog billing: MCP catalog (mcp-cache × mcp.json enabled) × 30-day calls + skills surface.
+ *  Governance = manual toggles (MCP server → POST /api/mcp enable/disable; skill → PATCH /api/skills);
+ *  they only affect model visibility (manual slash/mention paths stay). New installs get a ~7-day
+ *  trial — display-only hints, never auto-disable. */
+function CatalogTab() {
+  // cwd → server forwards to same-origin /api/skills (cwd required there; project skills included)
+  const cwd = (() => {
+    try {
+      const ui = extSvc?.("pi-web.ui") as { get?: (k: string) => unknown } | undefined;
+      const v = ui?.get?.("selectedCwd");
+      return typeof v === "string" && v ? v : "";
+    } catch { return ""; }
+  })();
+  const { data, err, reload } = useFetch<any>("/catalog" + (cwd ? "?cwd=" + encodeURIComponent(cwd) : ""), []);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [openSrv, setOpenSrv] = useState<string | null>(null);
+  const cat = data && data.ok !== false ? data : null;
+  const act = async (key: string, fn: () => Promise<unknown>) => {
+    setBusyKey(key);
+    try { await fn(); reload(); } catch { /* toggle failure stays silent; next reload reflects reality */ }
+    finally { setBusyKey(null); }
+  };
+  const toggleServer = (name: string, enabled: boolean) =>
+    act("srv:" + name, () => fetch(apiUrl("/api/mcp"), {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: enabled ? "enable" : "disable", scope: "global", name }),
+    }));
+  // per-tool exclusion (borrow plan §2.7C-②): writes mcp.json excludeTools via the host /api/mcp;
+  // effective when the adapter registers tools next session. restore strips exact + matching globs.
+  const setExcluded = (server: any, nextPatterns: string[]) =>
+    act("srv:" + server.name, () => fetch(apiUrl("/api/mcp"), {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "set-excluded-tools", scope: "global", name: server.name, excludeTools: nextPatterns }),
+    }));
+  const excludeTool = (server: any, toolName: string) => {
+    const cur: string[] = server.excludedPatterns || [];
+    if (cur.some((p) => p.toLowerCase() === toolName.toLowerCase())) return;
+    void setExcluded(server, [...cur, toolName]);
+  };
+  const restoreTool = (server: any, toolName: string) => {
+    const cur: string[] = server.excludedPatterns || [];
+    void setExcluded(server, cur.filter((p) => {
+      try { return !globToRegExp(p).test(toolName); } catch { return true; }
+    }));
+  };
+  const toggleSkill = (filePath: string, disabled: boolean) =>
+    act("sk:" + filePath, () => fetch(apiUrl("/api/skills"), {
+      method: "PATCH", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ filePath, disableModelInvocation: disabled }),
+    }));
+  if (err) return <div style={{ padding: 16, color: "var(--danger, #ef4444)", fontSize: 12 }}>{err}</div>;
+  if (!cat) return <div style={{ padding: 16, color: "var(--text-muted)", fontSize: 12 }}>{t("ui.loading")}</div>;
+  const thStyle: React.CSSProperties = { textAlign: "left", padding: "4px 8px", borderBottom: "1px solid var(--border)", color: "var(--text-dim)", fontSize: 10.5, fontWeight: 600 };
+  const tdStyle: React.CSSProperties = { padding: "4px 8px", borderBottom: "1px solid var(--border)", fontSize: 11.5, verticalAlign: "top" };
+  return (
+    <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "10px 12px" }}>
+      <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 8, lineHeight: 1.5 }}>{t("au.catalog.intro", { n: cat.mcpTotalTools, tok: cat.mcpTotalTokens })}</div>
+      {(cat.notes || []).map((note: string, i: number) => (
+        <div key={i} style={{ fontSize: 10.5, color: "var(--text-dim)", marginBottom: 4 }}>· {note}</div>
+      ))}
+      {/* MCP servers */}
+      <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--text-dim)", margin: "8px 0 4px" }}>{t("au.catalog.mcp")}</div>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead><tr>
+          {[t("au.catalog.server"), t("au.catalog.state"), t("au.catalog.tools"), t("au.catalog.estTok"), t("au.catalog.used30d"), ""].map((h, i) => <th key={i} style={thStyle}>{h}</th>)}
+        </tr></thead>
+        <tbody>
+          {(cat.mcp || []).map((s: any) => (
+            <CatalogMcpRow key={s.name} s={s} open={openSrv === s.name} onOpen={() => setOpenSrv(openSrv === s.name ? null : s.name)}
+              busy={busyKey === "srv:" + s.name} onToggle={() => toggleServer(s.name, !s.enabled)} tdStyle={tdStyle}
+              onExcludeTool={(tool: string) => excludeTool(s, tool)} onRestoreTool={(tool: string) => restoreTool(s, tool)}
+              onDropPattern={(p: string) => setExcluded(s, (s.excludedPatterns || []).filter((x: string) => x !== p))}
+              busyKey={busyKey} />
+          ))}
+          {(cat.mcp || []).length === 0 && <tr><td style={tdStyle} colSpan={6}>{t("au.catalog.noMcp")}</td></tr>}
+        </tbody>
+      </table>
+      {/* skills */}
+      <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--text-dim)", margin: "14px 0 4px" }}>{t("au.catalog.skills")}</div>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead><tr>
+          {[t("au.catalog.skillName"), t("au.catalog.state"), t("au.catalog.used30d"), ""].map((h, i) => <th key={i} style={thStyle}>{h}</th>)}
+        </tr></thead>
+        <tbody>
+          {(cat.skills || []).map((sk: any) => (
+            <tr key={sk.filePath || sk.name}>
+              <td style={tdStyle}>
+                <span style={{ fontFamily: "var(--font-mono)" }}>{sk.name}</span>
+                {sk.filePath ? <span title={sk.filePath} style={{ fontSize: 10, color: "var(--text-dim)", marginLeft: 6 }}>{sk.filePath.split("/").slice(-2).join("/")}</span> : null}
+              </td>
+              <td style={tdStyle}>
+                <button disabled={busyKey === "sk:" + sk.filePath} onClick={() => toggleSkill(sk.filePath, !sk.disabled)}
+                  style={{ ...ghostBtn, padding: "1px 8px", fontSize: 10.5 }}>
+                  {sk.disabled ? t("au.catalog.enable") : t("au.catalog.disable")}
+                </button>
+              </td>
+              <td style={{ ...tdStyle, color: sk.calls30d === 0 ? "var(--text-dim)" : undefined }}>{sk.calls30d}</td>
+              <td style={tdStyle}>{sk.disabled ? <span style={{ fontSize: 10, color: "var(--text-dim)" }}>{t("au.catalog.disabledNote")}</span> : null}</td>
+            </tr>
+          ))}
+          {(cat.skills || []).length === 0 && <tr><td style={tdStyle} colSpan={4}>{t("au.catalog.noSkills")}</td></tr>}
+        </tbody>
+      </table>
+      <div style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 10, lineHeight: 1.5 }}>{t("au.catalog.rules")}</div>
+    </div>
+  );
+}
+
+/** MCP server row (summary + expandable per-tool detail: schema tokens × 30-day calls × exclude toggle; glob pattern chips) */
+function CatalogMcpRow({ s, open, onOpen, busy, onToggle, tdStyle, onExcludeTool, onRestoreTool, onDropPattern, busyKey }: {
+  s: any; open: boolean; onOpen: () => void; busy: boolean; onToggle: () => void; tdStyle: React.CSSProperties;
+  onExcludeTool: (tool: string) => void; onRestoreTool: (tool: string) => void;
+  onDropPattern: (pattern: string) => void; busyKey: string | null;
+}) {
+  const globPatterns: string[] = (s.excludedPatterns || []).filter((p: string) => p.includes("*"));
+  const chipStyle: React.CSSProperties = { fontSize: 9.5, padding: "1px 6px", borderRadius: 4, border: "1px solid var(--border)", color: "var(--text-muted)", background: "none", cursor: "pointer" };
+  return (
+    <>
+      <tr>
+        <td style={tdStyle}>
+          <span role="button" tabIndex={0} onClick={onOpen} style={{ cursor: "pointer", fontFamily: "var(--font-mono)", color: "var(--text)" }}>
+            {open ? "▾ " : "▸ "}{s.name}
+          </span>
+        </td>
+        <td style={tdStyle}>
+          <button disabled={busy} onClick={onToggle} style={{ ...ghostBtn, padding: "1px 8px", fontSize: 10.5 }}>
+            {busy ? "…" : s.enabled ? t("au.catalog.disable") : t("au.catalog.enable")}
+          </button>
+        </td>
+        <td style={{ ...tdStyle, color: s.toolCount === 0 ? "var(--text-dim)" : undefined }}>{s.toolCount}</td>
+        <td style={tdStyle}>{s.estTokens ? `~${s.estTokens}` : "—"}</td>
+        <td style={{ ...tdStyle, color: s.calls30d === 0 ? "var(--danger, #ef4444)" : undefined }}>{s.calls30d}</td>
+        <td style={tdStyle}>{s.enabled ? "" : <span style={{ fontSize: 10, color: "var(--text-dim)" }}>{t("au.catalog.disabledNote")}</span>}</td>
+      </tr>
+      {open && globPatterns.length > 0 ? (
+        <tr style={{ background: "var(--bg-hover)" }}>
+          <td style={{ ...tdStyle, paddingLeft: 26, fontSize: 10, color: "var(--text-dim)" }} colSpan={6}>
+            {t("au.catalog.patterns")}：{globPatterns.map((p: string) => (
+              <button key={p} type="button" title={t("au.catalog.dropPattern")} style={{ ...chipStyle, marginRight: 4 }}
+                onClick={() => onDropPattern(p)}>{p} ✕</button>
+            ))}
+          </td>
+        </tr>
+      ) : null}
+      {open && (s.tools || []).map((tool: any) => (
+        <tr key={tool.name} style={{ background: tool.excluded ? "color-mix(in srgb, var(--danger, #ef4444) 6%, transparent)" : "var(--bg-hover)" }}>
+          <td style={{ ...tdStyle, paddingLeft: 26, fontFamily: "var(--font-mono)", fontSize: 10.5, color: tool.excluded ? "var(--text-dim)" : undefined }}>
+            {tool.name}
+            {tool.excluded ? <span style={{ fontSize: 9, color: "var(--text-dim)", marginLeft: 6, border: "1px solid var(--border)", borderRadius: 4, padding: "0 4px" }}>{t("au.catalog.excludedBadge")}</span> : null}
+            {tool.phantom ? <span title={t("au.catalog.phantomNote")} style={{ fontSize: 9, color: "var(--text-dim)", marginLeft: 4 }}>?</span> : null}
+          </td>
+          <td style={{ ...tdStyle, fontSize: 10, color: "var(--text-dim)" }} colSpan={3}>
+            {t("au.catalog.toolMeta", { tok: tool.estTokens, n: tool.calls30d })}
+          </td>
+          <td style={tdStyle}>
+            <button type="button" disabled={busyKey === "srv:" + s.name} onClick={() => (tool.excluded ? onRestoreTool(tool.name) : onExcludeTool(tool.name))}
+              title={tool.excluded ? t("au.catalog.restoreNote") : t("au.catalog.excludeNote")}
+              style={{ ...chipStyle, color: tool.excluded ? "var(--text)" : "var(--text-muted)" }}>
+              {busyKey === "srv:" + s.name ? "…" : tool.excluded ? t("au.catalog.restore") : t("au.catalog.exclude")}
+            </button>
+          </td>
+          <td style={tdStyle} />
+        </tr>
+      ))}
+    </>
+  );
+}
+
 // ---------------------------------------------------------------- 主面板
 
 /** 报表内容（头行工具栏 + 六标签体）：浮窗/停靠两面共用。inDock=true 时隐藏自身关闭钮
@@ -1929,7 +2105,7 @@ const PickHint = () => <div style={{ padding: 24, textAlign: "center", color: "v
  *  useState 丢失 = §7 状态自管语义（可接受，与 demo 一致）。 */
 function ReportBody({ inDock = false }: { inDock?: boolean }) {
   useMoneyTick(); // 汇率到位/切语言时重渲染（fmtCost 双币显示）
-  const [tab, setTab] = useState<"overview" | "models" | "keys" | "pivot" | "trend" | "sessions" | "input">("overview");
+  const [tab, setTab] = useState<"overview" | "models" | "keys" | "pivot" | "trend" | "sessions" | "input" | "catalog">("overview");
   const [range, setRange] = useState<RangeKey>("30d");
   const [custom, setCustom] = useState<CustomRange>(() => ({ from: dayStr(-30), to: dayStr(0) }));
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS); // provider/model 筛选（总览/模型/Keys/维度四页共用）
@@ -1942,7 +2118,7 @@ function ReportBody({ inDock = false }: { inDock?: boolean }) {
   // 小屏全屏（data-ext-float-full）与最大化按钮（⛶/❐ 自动注入）都由 aiti-float 托管
   const tabs: Array<[typeof tab, string]> = [
     ["overview", t("au.tabOverview")], ["models", t("au.tabModels")],
-    ["keys", t("au.tabKeys")], ["pivot", t("au.tabPivot")], ["trend", t("au.tabTrend")], ["input", t("au.tabInput")], ["sessions", t("au.tabSessions")],
+    ["keys", t("au.tabKeys")], ["pivot", t("au.tabPivot")], ["trend", t("au.tabTrend")], ["input", t("au.tabInput")], ["sessions", t("au.tabSessions")], ["catalog", t("au.tabCatalog")],
   ];
   const ranges: Array<[RangeKey, string]> = [
     ["today", t("au.range.today")], ["7d", t("au.range.7d")], ["30d", t("au.range.30d")],
@@ -1973,7 +2149,7 @@ function ReportBody({ inDock = false }: { inDock?: boolean }) {
           ))}
         </div>
         <span style={{ width: 1, height: 18, background: "var(--border)", margin: "0 4px" }} />
-        {tab !== "sessions" && tab !== "input" && (
+        {tab !== "sessions" && tab !== "input" && tab !== "catalog" && (
           <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
             {ranges.map(([id, label]) => (
               <button key={id} onClick={() => setRange(id)}
@@ -2020,6 +2196,7 @@ function ReportBody({ inDock = false }: { inDock?: boolean }) {
         {tab === "trend" && <TrendTab key={`td-${range}-${custom.from}~${custom.to}`} range={range} custom={custom} filters={filters} />}
         {tab === "input" && <InputTab key={`in-${range}-${custom.from}~${custom.to}`} range={range} custom={custom} />}
         {tab === "sessions" && <SessionsTab />}
+        {tab === "catalog" && <CatalogTab />}
       </div>
     </>
   );

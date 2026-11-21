@@ -546,6 +546,30 @@ export async function handleApi(req: Request, ctx: ExtApiCtx): Promise<Response 
     case "sessions": return sessionsList(sp);
     case "userstat": return userStat(sp);
     case "session-keys": return rest.length ? sessionKeys(rest[0]) : null;
+    case "catalog": return catalog(sp);
     default: return null;
   }
+}
+
+/** Catalog billing (borrow plan §2.7B/C): MCP catalog (mcp-cache × mcp.json enabled) × 30-day calls
+ *  + skills surface (same-origin /api/skills needs cwd → forwarded from the client's selectedCwd). */
+async function catalog(sp: URLSearchParams): Promise<Response> {
+  const { collectCatalog } = await import("../lib/catalog.ts");
+  const rt = runtime();
+  const agentDir = process.env.PI_CODING_AGENT_DIR || (process.env.HOME ? process.env.HOME + "/.pi/agent" : "");
+  const origin = process.env.AITI_AI_SCHEDULE_API_ORIGIN || "http://127.0.0.1:" + (process.env.PORT || "3000");
+  const basePath = process.env.PI_WEB_BASE_PATH || "";
+  // cwd fallback: when the client sends none (new-session page with empty selectedCwd) use the most recent session's cwd
+  let cwd = sp.get("cwd") || "";
+  if (!cwd) {
+    try {
+      const row = rt.usage.db.prepare("SELECT cwd FROM sessions WHERE cwd != '' ORDER BY last_ts DESC LIMIT 1").get() as { cwd?: string } | undefined;
+      if (row?.cwd) cwd = row.cwd;
+    } catch { /* sessions table unreadable: skip the fallback */ }
+  }
+  const cat = await collectCatalog(rt.usage, {
+    agentDir,
+    sameOrigin: (p: string) => origin + basePath + p + (cwd && p.startsWith("/api/skills") ? (p.includes("?") ? "&" : "?") + "cwd=" + encodeURIComponent(cwd) : ""),
+  });
+  return json({ ok: true, ...cat, generatedAt: new Date().toISOString() });
 }
