@@ -17,6 +17,12 @@
  *   - data-ext-float-max="0"      → 豁免最大化按钮注入（小确认框不需要）
  *   - data-ext-float-persist="0"  → 不做位置持久化（一次性弹窗不污染持久化槽）
  * 同一时刻只显示一个弹窗（内部 Promise 链排队），保证不叠罗汉。
+ *
+ * Layering: mount prefers <dialog>.showModal() — the browser top layer beats any
+ * self-managed huge z-index an extension panel may set (e.g. model wizard 2147483101 /
+ * extman 2147483645 used to bury the confirm dialog, so it only showed up after closing
+ * the panel). Environments without showModal (legacy browsers / DOM stubs) fall back to a
+ * top-level body div with Z_BASE=2147483600 (same tier as session-manager confirm-dialog).
  */
 
 export type UiDialogKind = "info" | "success" | "error" | "warn";
@@ -49,7 +55,11 @@ export interface UiPromptOptions {
   required?: boolean;
 }
 
-const Z_BASE = 6000;
+/** Fallback stacking tier (top-level body div when showModal is unavailable): must sit above
+ * the huge z-indices extension panels manage themselves (model wizard 2147483101 / schedule
+ * 2147483300 / menus 2147483500 / dock + session menus 2147483600) — same tier as the
+ * session-manager confirm dialog. With showModal the tier is irrelevant (top layer wins). */
+const Z_BASE = 2147483600;
 
 /** 常用 CSS 变量兜底（宿主一定是 pi-web 主题页；fallback 仅为防御） */
 const V = {
@@ -149,12 +159,39 @@ function drain() {
   }
 }
 
-/** 顶层挂载点：直接 document.body（最高层级，不依赖扩展面板 DOM） */
+/* Modal-hosting capability probe (once per mount; stubs / legacy browsers → false → z-index fallback) */
+function canUseTopLayer(): boolean {
+  try {
+    const probe = document.createElement("dialog") as any;
+    return !!probe && typeof probe.showModal === "function";
+  } catch { return false; }
+}
+
+/** The modal host draws its own rgba mask; the UA `::backdrop` would darken the page twice
+ * (0.45 + ~0.1) and drift from the pre-top-layer look. One idempotent rule, injected once. */
+const BACKDROP_STYLE_ID = "ui-dialogs-backdrop";
+function ensureBackdropStyle(): void {
+  try {
+    if (document.getElementById(BACKDROP_STYLE_ID)) return;
+    const st = document.createElement("style");
+    st.id = BACKDROP_STYLE_ID;
+    st.textContent = "[data-ui-dialog-overlay]::backdrop{background:transparent;}";
+    (document.head || document.body).appendChild(st);
+  } catch { /* headless / stub: the mask alone still reads fine */ }
+}
+
+/** Top-level mount: document.body level, independent of any extension panel DOM.
+ * With <dialog> → showModal() enters the browser top layer (above every z-index, so a dialog
+ * opened from an ultra-high-z panel stays visible); otherwise a div + Z_BASE fallback. */
 function mount(): { overlay: HTMLDivElement; panel: HTMLDivElement } {
-  const overlay = document.createElement("div");
+  const modal = canUseTopLayer();
+  const overlay = document.createElement(modal ? "dialog" : "div") as HTMLDivElement;
   overlay.setAttribute("data-ui-dialog-overlay", "1");
+  // dialog UA defaults (border/padding/margin/max-width, width/height fit-content) must be reset —
+  // inset:0 + width/height auto is what makes the overlay fill the viewport; display:flex serves the fallback path
   overlay.style.cssText =
-    "position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;padding:20px;z-index:" + Z_BASE + ";";
+    "position:fixed;inset:0;margin:0;border:0;padding:20px;width:auto;height:auto;max-width:none;max-height:none;" +
+    "background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:" + Z_BASE + ";";
   const panel = document.createElement("div");
   panel.setAttribute("data-ext-float", "1");
   panel.setAttribute("data-ext-float-w", "440");
@@ -169,6 +206,14 @@ function mount(): { overlay: HTMLDivElement; panel: HTMLDivElement } {
     ";color:" + V.text + ";font-family:inherit;font-size:13px;box-shadow:0 20px 60px rgba(0,0,0,0.35);outline:none;overflow:hidden;";
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
+  if (modal) {
+    ensureBackdropStyle();
+    try {
+      (overlay as any).showModal();   // top layer: above any in-page z-index
+    } catch {
+      /* already in a modal stack / headless: keep the plain-block semantics (display:flex + Z_BASE) */
+    }
+  }
   return { overlay, panel };
 }
 
@@ -272,10 +317,18 @@ function showDialog(spec: PendingSpec, done: () => void) {
     if (settled) return;
     settled = true;
     spec.resolve(v);
+    try { (overlay as any).close?.(); } catch {}   // leave the top layer (div fallback has no close)
     try { overlay.remove(); } catch {}
     try { prevFocus && typeof prevFocus.focus === "function" && prevFocus.focus(); } catch {}
     setTimeout(done, 0);
   };
+  // Native Esc (modal dialog "cancel"): intercept the browser close and route through finish
+  try {
+    (overlay as any).addEventListener?.("cancel", (e: any) => {
+      try { e?.preventDefault?.(); } catch {}
+      finish(spec.kind === "prompt" ? null : spec.kind === "confirm" ? false : undefined);
+    });
+  } catch { /* no event system in DOM stubs */ }
   const input = buildBody(panel, spec, finish);
   // 初始焦点：prompt → 输入框（全选）；confirm/alert → 主按钮
   setTimeout(() => {
