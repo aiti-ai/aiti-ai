@@ -85,3 +85,61 @@ test("cleanup restores the global fetch", () => {
   globalThis.fetch = prevFetch;
   rmSync(root, { recursive: true, force: true });
 });
+
+// ── voice management handler (multipart) ───────────────────────────────────────────────────
+function sineWav(seconds = 3, rate = 24000) {
+  const n = seconds * rate;
+  const data = Buffer.alloc(n * 2);
+  for (let i = 0; i < n; i++) data.writeInt16LE(Math.round(Math.sin((2 * Math.PI * 220 * i) / rate) * 8000), i * 2);
+  const h = Buffer.alloc(44);
+  h.write("RIFF", 0, "ascii"); h.writeUInt32LE(36 + data.length, 4); h.write("WAVE", 8, "ascii");
+  h.write("fmt ", 12, "ascii"); h.writeUInt32LE(16, 16); h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22);
+  h.writeUInt32LE(rate, 24); h.writeUInt32LE(rate * 2, 28); h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34);
+  h.write("data", 36, "ascii"); h.writeUInt32LE(data.length, 40);
+  return Buffer.concat([h, data]);
+}
+
+async function callApi(method, path, { body, form } = {}) {
+  const url = `http://internal/api/extensions/aiti-ai-speek/${path}`;
+  const init = { method };
+  if (form) init.body = form;
+  else if (body !== undefined) { init.body = JSON.stringify(body); init.headers = { "content-type": "application/json" }; }
+  const res = await ext.default.server.api(new Request(url, init), {
+    method, path: path.split("/"), searchParams: new URL(url).searchParams,
+    configDir, cacheDir, stateDir, core: {}, services: { get: () => undefined },
+  });
+  return { status: res.status, json: await res.json().catch(() => null) };
+}
+
+function voiceForm(name, provider) {
+  const fd = new FormData();
+  fd.append("name", name);
+  fd.append("refText", "这是一段用于克隆的参考文本。");
+  fd.append("language", "Chinese");
+  fd.append("provider", provider);
+  fd.append("audio", new File([sineWav()], "ref.wav", { type: "audio/wav" }));
+  return fd;
+}
+
+test("voice create: rejects non-clone providers, then stores, then refuses duplicates", async () => {
+  const bad = await callApi("POST", "tts/voices", { form: voiceForm("demo", "hojo-40m") });
+  assert.equal(bad.status, 400);
+  assert.match(String(bad.json.error), /does not support voice cloning/);
+
+  const ok = await callApi("POST", "tts/voices", { form: voiceForm("Demo Voice", "hojo-80m") });
+  assert.equal(ok.status, 200, JSON.stringify(ok.json));
+  assert.equal(ok.json.voice.id, "demo-voice");
+
+  const dup = await callApi("POST", "tts/voices", { form: voiceForm("Demo Voice", "hojo-80m") });
+  assert.equal(dup.status, 409);
+  assert.match(String(dup.json.error), /already exists/);
+});
+
+test("voice delete: refuses unknown ids and bad keys", async () => {
+  const del = await callApi("DELETE", "tts/voices/demo-voice");
+  assert.equal(del.status, 200);
+  const again = await callApi("DELETE", "tts/voices/demo-voice");
+  assert.equal(again.status, 404);
+  const bad = await callApi("DELETE", "tts/voices/..%2Fescape");
+  assert.ok([400, 404].includes(bad.status), `unexpected status ${bad.status}`);
+});

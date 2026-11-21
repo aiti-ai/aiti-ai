@@ -222,13 +222,6 @@ export function setLocalVoices(list) {
   }
   notify();
 }
-/** Voice list for the active engine (settings panel dropdown). */
-export function engineVoices() {
-  return ttsBackendNow() === "local"
-    ? (state.localVoices || []).map((v) => ({ id: v.id, label: v.label || v.id, sample: v.sample }))
-    : (state.edgeVoices || []).map((v) => ({ id: v.id, label: v.label, sample: v.sample }));
-}
-
 /** GET /tts/info — full local service snapshot (health/prepare/paths/sizes). */
 export async function fetchLocalInfo(opts) {
   try {
@@ -2302,7 +2295,10 @@ function speakBrowserOnce(text, token) {
       const synth = window.speechSynthesis;
       if (!synth) throw new Error("speechSynthesis unavailable");
       const u = new SpeechSynthesisUtterance(text);
-      const v = pickBrowserVoice();
+      // state.voices is filled by the settings dialog; a one-shot announcement may run before it
+      // ever opened, so fall back to the engine's own list.
+      const v = pickBrowserVoice()
+        || preferLangVoice(sortBrowserVoices((synth.getVoices?.() || []).filter((x) => /zh/i.test(x.lang || ""))));
       if (v) { u.voice = v; u.lang = v.lang || "zh-CN"; }
       u.rate = clampRate(state.settings.rate);
       const myToken = announceToken;

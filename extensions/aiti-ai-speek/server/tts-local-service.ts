@@ -13,7 +13,7 @@
  */
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync, rmSync, openSync, closeSync, appendFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync, openSync, closeSync, readSync, appendFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -160,7 +160,8 @@ export async function startService(opts: StartOptions): Promise<{
     AITI_TTS_PORT: String(opts.port),
     AITI_TTS_IDLE_TIMEOUT: String(opts.idleTimeout),
     AITI_TTS_VOICES_JSON: paths.voicesJson,
-    ...(opts.tn === false ? { AITI_TTS_TN: "0" } : {}),
+    // Explicit both ways: Windows defaults TN off, so "on" must be able to force the attempt.
+    AITI_TTS_TN: opts.tn === false ? "0" : "1",
     ...(opts.hfEndpoint ? { AITI_TTS_HF_ENDPOINT: opts.hfEndpoint } : {}),
     ...(opts.source ? { AITI_TTS_SOURCE: opts.source } : {}),
     ...(opts.format ? { AITI_TTS_FORMAT: opts.format } : {}),
@@ -170,11 +171,11 @@ export async function startService(opts: StartOptions): Promise<{
     const posixCmd = `AITI_TTS_HOME=${sshQuote(paths.home)} AITI_TTS_PROVIDER=${sshQuote(opts.provider)} `
       + `AITI_TTS_PORT=${opts.port} AITI_TTS_IDLE_TIMEOUT=${opts.idleTimeout} `
       + `AITI_TTS_VOICES_JSON=${sshQuote(paths.voicesJson)} `
-      + `${opts.tn === false ? "AITI_TTS_TN=0 " : ""}`
+      + `${opts.tn === false ? "AITI_TTS_TN=0 " : "AITI_TTS_TN=1 "}`
 
       + `${opts.hfEndpoint ? `AITI_TTS_HF_ENDPOINT=${sshQuote(opts.hfEndpoint)} ` : ""}`
       + `bash ${sshQuote(file)} start --provider ${sshQuote(opts.provider)} --port ${opts.port} --idle-timeout ${opts.idleTimeout}`;
-    const winCmd = `powershell -NoProfile -ExecutionPolicy Bypass -File "${file}" start -Provider "${opts.provider}" -Port ${opts.port} -IdleTimeout ${opts.idleTimeout} -HomeDir "${paths.home}" -VoicesJson "${paths.voicesJson}"${opts.hfEndpoint ? ` -HfEndpoint "${opts.hfEndpoint}"` : ""}`;
+    const winCmd = `powershell -NoProfile -ExecutionPolicy Bypass -File "${file}" start -Provider "${opts.provider}" -Port ${opts.port} -IdleTimeout ${opts.idleTimeout} -HomeDir "${paths.home}" -VoicesJson "${paths.voicesJson}" -Tn ${opts.tn === false ? "0" : "1"}${opts.hfEndpoint ? ` -HfEndpoint "${opts.hfEndpoint}"` : ""}`;
     try {
       const r = await Promise.resolve(opts.runner.run({
         command: process.platform === "win32" ? winCmd : posixCmd,
@@ -203,6 +204,7 @@ export async function startService(opts: StartOptions): Promise<{
     const startArgs = process.platform === "win32"
       ? [...args, file, "start", "-Provider", opts.provider, "-Port", String(opts.port),
           "-IdleTimeout", String(opts.idleTimeout), "-HomeDir", paths.home, "-VoicesJson", paths.voicesJson,
+          "-Tn", opts.tn === false ? "0" : "1",
           ...(opts.hfEndpoint ? ["-HfEndpoint", opts.hfEndpoint] : [])]
       : [...args, file, "start", "--provider", opts.provider, "--port", String(opts.port), "--idle-timeout", String(opts.idleTimeout)];
     // Record the exact launch line: a silent child (launcher/PATH problems) is otherwise invisible.
@@ -218,7 +220,10 @@ export async function startService(opts: StartOptions): Promise<{
     // dev-server restart.
     const child = spawn(cmd, startArgs, {
       cwd: SERVICE_DIR,
-      env,
+      // Windows: inherit the host environment. A filtered env dropped profile vars (LOCALAPPDATA,
+      // APPDATA, ...) that uv/pip need and made every install attempt fail; every path we care
+      // about is already passed as an explicit argument there.
+      ...(process.platform === "win32" ? {} : { env }),
       detached: process.platform !== "win32",
       stdio: spawnOut === "ignore" ? "ignore" : ["ignore", spawnOut, spawnOut],
       windowsHide: true,
@@ -260,7 +265,14 @@ export async function stopService(paths: ServicePaths): Promise<{ ok: boolean; e
 export function tailLog(paths: ServicePaths, lines = 20): string {
   try {
     if (!existsSync(paths.log)) return "";
-    const buf = readFileSync(paths.log);
+    const st = statSync(paths.log);
+    const start = Math.max(0, st.size - 64 * 1024);   // only the tail: venv/pip logs can grow large
+    const fd = openSync(paths.log, "r");
+    let buf: Buffer;
+    try {
+      buf = Buffer.alloc(Math.max(0, st.size - start));
+      if (buf.length) readSync(fd, buf, 0, buf.length, start);
+    } finally { closeSync(fd); }
     // PowerShell 5.1 wrote UTF-16LE logs before we switched to Out-File -Encoding utf8; keep old
     // files readable (BOM FF FE) so the panel never shows NUL-separated garbage.
     const text = buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe
@@ -308,6 +320,7 @@ export function slugifyVoice(name: string): string {
   if (ascii) return ascii;
   // Non-latin names (e.g. one written in CJK) keep a stable, filesystem-safe id; the label stays readable.
   if (!raw) return "";
+  if (ascii === "." || ascii === "..") return "";
   const digest = createHash("sha1").update(raw).digest("hex").slice(0, 8);
   return `voice-${digest}`;
 }
@@ -390,6 +403,9 @@ export async function saveVoice(opts: SaveVoiceOptions): Promise<VoiceEntry> {
       }
       await runFfmpeg(["-hide_banner", "-loglevel", "error", "-y", "-i", tmp, "-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le", target]);
     }
+  } catch (e) {
+    try { unlinkSync(target); } catch { /* nothing written yet */ }
+    throw e;
   } finally {
     try { unlinkSync(tmp); } catch { /* already moved */ }
   }
@@ -425,14 +441,4 @@ export function deleteVoiceEntry(paths: ServicePaths, id: string): boolean {
     try { unlinkSync(hit.ref_audio); } catch { /* already gone */ }
   }
   return true;
-}
-
-/** Wipe the local service cache (venv + models); requires explicit user action in the panel. */
-export function purgeServiceCache(paths: ServicePaths): { removed: boolean } {
-  try {
-    if (existsSync(paths.home)) rmSync(paths.home, { recursive: true, force: true });
-    return { removed: true };
-  } catch {
-    return { removed: false };
-  }
 }

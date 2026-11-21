@@ -899,6 +899,7 @@ function SettingsDialog() {
   const localModel = info?.model || health?.model || info?.ready?.model || "—";
   const localAutoStart = info?.autoStart !== false;
   const localTn = info?.tn !== false;
+  const tnDegraded = localTn && info?.tnEffective === false;
   const localIdle = Number(info?.idleTimeout ?? health?.idleTimeout ?? 1800) || 0;
   const rtfText = health && health.rtfLast != null ? Number(health.rtfLast).toFixed(2) + "×" : "—";
   const rssText = health && health.rssMb != null ? Math.round(Number(health.rssMb)) + "MB" : "—";
@@ -1080,6 +1081,7 @@ function SettingsDialog() {
               <label title={t("speek.local.tnTitle")}>{t("speek.local.tn")}</label>
               <input type="checkbox" checked={localTn} onChange={async (e) => { await setFeatureFlagApi("tts.local.tn", e.target.checked); await fetchLocalInfo(); }} />
             </div>
+            {tnDegraded && <div className="aisp-mini">{t("speek.local.tnUnavailable")}</div>}
             {localRunning && !localVoices.length && (
               <div className="aisp-mini" style={{ color: "var(--danger,#ef4444)" }}>
                 {t("speek.local.noVoicesHint")}
@@ -1258,6 +1260,7 @@ function LocalVoicesDialog({ open, onClose, provider, onProviderBlocked }) {
     setBusy(false);
     if (!r || !r.ok) { setErr((r && r.error) || t("speek.voices.errSave")); return; }
     setName(""); setRefText(""); setFile(null);
+    try { if (fileRef.current) fileRef.current.value = ""; } catch { /* non-DOM */ }
     setMsg(t("speek.voices.saved", { name: r.voice?.label || name }));
     await fetchLocalVoices(true);
     if (entryProvider !== (st.localProvider || provider)) {

@@ -18,7 +18,9 @@ param(
   [int]$IdleTimeout = $(if ($env:AITI_TTS_IDLE_TIMEOUT) { [int]$env:AITI_TTS_IDLE_TIMEOUT } else { 1800 }),
   [string]$HomeDir = $(if ($env:AITI_TTS_HOME) { $env:AITI_TTS_HOME } else { "" }),
   [string]$VoicesJson = $(if ($env:AITI_TTS_VOICES_JSON) { $env:AITI_TTS_VOICES_JSON } else { "" }),
-  [string]$BootSource = $(if ($env:AITI_TTS_SOURCE) { $env:AITI_TTS_SOURCE } else { "hf" })
+  [string]$BootSource = $(if ($env:AITI_TTS_SOURCE) { $env:AITI_TTS_SOURCE } else { "hf" }),
+  # "1" forces the optional text-normalization attempt (pynini has no Windows wheel by default)
+  [string]$Tn = $(if ($env:AITI_TTS_TN) { $env:AITI_TTS_TN } else { "" })
 )
 
 $ErrorActionPreference = "Stop"
@@ -28,6 +30,7 @@ Set-Location $ScriptDir
 if (-not $HomeDir) { $HomeDir = Join-Path $HOME ".pi\web\data\aiti-ai-speek\cache\tts-service" }
 $env:AITI_TTS_HOME = $HomeDir
 if ($VoicesJson) { $env:AITI_TTS_VOICES_JSON = $VoicesJson }
+if ($Tn -ne "") { $env:AITI_TTS_TN = $Tn }
 $LogDir = Join-Path $HomeDir "logs"
 $LogFile = Join-Path $LogDir "tts.log"
 $Prepare = Join-Path $HomeDir "prepare.json"
@@ -144,17 +147,29 @@ function Start-Tts {
     if (-not $ready.tn) { $TnFlag = @("--no-tn") }
   }
 
+  $hfEnv = Join-Path $HomeDir "hf-env.json"
+  if (Test-Path $hfEnv) {
+    try {
+      $hf = Get-Content $hfEnv -Raw | ConvertFrom-Json
+      if ($hf.HF_ENDPOINT) { $env:HF_ENDPOINT = "$($hf.HF_ENDPOINT)" }
+      if ($hf.HF_HUB_DISABLE_XET) { $env:HF_HUB_DISABLE_XET = "$($hf.HF_HUB_DISABLE_XET)" }
+    } catch {}
+  }
+
   ([ordered]@{ port = $UsePort; provider = $Provider; pid = $PID; at = [int][double]::Parse((Get-Date -UFormat %s)) } | ConvertTo-Json -Compress) |
     Set-Content -Path $Runtime -Encoding utf8
   Write-Prepare "load" 90 "starting service on port $UsePort"
   Write-Host "[tts] starting uvicorn @127.0.0.1:$UsePort | provider=$Provider | log: $LogFile"
   Write-Host "[tts] stop: powershell -File $ScriptDir\start-tts.ps1 stop"
+  # NB: PS 5.1 drops empty strings from native argument lists -> only add --voices-json when set,
+  # otherwise argparse would consume the next flag as its value.
   $srvArgs = @(
     (Join-Path $ScriptDir "tts_server.py"), "--provider", $Provider, "--host", "127.0.0.1",
     "--port", "$UsePort", "--model-dir", $ModelDir,
-    "--voices-json", "$VoicesJson", "--prepare-json", $Prepare,
-    "--idle-timeout", "$IdleTimeout"
-  ) + $TnFlag
+    "--prepare-json", $Prepare, "--idle-timeout", "$IdleTimeout"
+  )
+  if ($VoicesJson) { $srvArgs += @("--voices-json", $VoicesJson) }
+  $srvArgs += $TnFlag
   # uvicorn writes INFO to stderr; with ErrorActionPreference=Stop PS 5.1 turns that into a
   # terminating NativeCommandError and kills the server right after startup. Keep it as data.
   # Out-File -Encoding utf8 (Tee-Object writes UTF-16 in PS 5.1, unreadable for the panel tail).
