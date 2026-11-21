@@ -857,7 +857,7 @@ export default {
   // 帮助点：edge-tts 各平台安装/验证/排障——设置面板右上角 🤖 即可呼起
   ai: {
     manage: true,
-    intro: "AI 能帮我：安装/验证 edge-tts 后端（各平台）、查看跟读模式引擎状态、排障",
+    intro: "AI 能帮我：一键开启/配置本地 TTS 服务（Hojo 40M/80M）、设置/克隆音色、安装 edge-tts 后端、查看引擎状态与排障",
     skills: "skills",
   },
 
