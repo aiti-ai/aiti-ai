@@ -9,6 +9,10 @@ bash start-tts.sh start          # bootstrap (venv -> deps -> model) + serve
 bash start-tts.sh status|stop|restart
 bash start-tts.sh start --provider hojo-80m        # voice cloning variant
 bash bootstrap.sh --provider hojo-40m --force-deps  # re-run preparation only
+
+# Windows (PowerShell 5.1+): the .ps1 pair mirrors the shell scripts (bootstrap.ps1 = .sh phases)
+powershell -NoProfile -ExecutionPolicy Bypass -File start-tts.ps1 start -Provider hojo-40m
+powershell -NoProfile -ExecutionPolicy Bypass -File start-tts.ps1 status|stop|restart
 ```
 
 ## Layout

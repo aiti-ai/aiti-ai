@@ -102,8 +102,14 @@ function Invoke-Bootstrap {
   $env:AITI_TTS_HOME = $HomeDir
   $env:AITI_TTS_PROVIDER = $Provider
   $env:AITI_TTS_VOICES_JSON = $VoicesJson
-  $out = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $boot @bootArgs 2>&1)
-  $code = $LASTEXITCODE
+  # Native stderr becomes an ErrorRecord; with ErrorActionPreference=Stop that would abort this
+  # script on the first uv/pip warning (seen with the pynini build failure). Capture it instead.
+  $prevEap = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    $out = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $boot @bootArgs 2>&1)
+    $code = $LASTEXITCODE
+  } finally { $ErrorActionPreference = $prevEap }
   $out | ForEach-Object { Write-Host $_ } 
   try { $out | Out-File -FilePath $LogFile -Append -Encoding utf8 } catch {}
   if ($code -ne 0) {
@@ -143,14 +149,22 @@ function Start-Tts {
   Write-Prepare "load" 90 "starting service on port $UsePort"
   Write-Host "[tts] starting uvicorn @127.0.0.1:$UsePort | provider=$Provider | log: $LogFile"
   Write-Host "[tts] stop: powershell -File $ScriptDir\start-tts.ps1 stop"
-  $args = @(
+  $srvArgs = @(
     (Join-Path $ScriptDir "tts_server.py"), "--provider", $Provider, "--host", "127.0.0.1",
     "--port", "$UsePort", "--model-dir", $ModelDir,
     "--voices-json", "$VoicesJson", "--prepare-json", $Prepare,
     "--idle-timeout", "$IdleTimeout"
   ) + $TnFlag
-  & $Py @args 2>&1 | Tee-Object -FilePath $LogFile -Append
-  exit $LASTEXITCODE
+  # uvicorn writes INFO to stderr; with ErrorActionPreference=Stop PS 5.1 turns that into a
+  # terminating NativeCommandError and kills the server right after startup. Keep it as data.
+  # Out-File -Encoding utf8 (Tee-Object writes UTF-16 in PS 5.1, unreadable for the panel tail).
+  $prevEap = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    & $Py @srvArgs 2>&1 | Out-File -FilePath $LogFile -Append -Encoding utf8
+    $code = $LASTEXITCODE
+  } finally { $ErrorActionPreference = $prevEap }
+  exit $code
 }
 
 function Stop-Tts {

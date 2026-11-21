@@ -69,6 +69,8 @@ outputs:
 | 提示「本地语音未就绪」 | 服务被空闲退出或崩溃：点「检查/准备」或朗读一次即自动再起（扩展会 ensure 一次） |
 | 端口 8768 被别的进程占用 | 启动脚本会自动顺延到 8769-8778，实际端口见 `tts/info.baseUrl` 与 `runtime.json` |
 | 手机上没有 Web Speech | 扩展会自动改用服务端引擎（edge 或本地），不影响使用 |
+| Windows 上「文本归一化」不可用 | pynini 没有 Windows wheel（源码编译失败）→ bootstrap 默认跳过并记 `tn-disabled`；如需强制尝试设 `AITI_TTS_TN=1` |
+| Windows 上服务启动失败/无日志 | 看 `<cache>\tts-service\logs\spawn.log`（启动命令行/pid/退出码）与 `logs\tts.log`（UTF-8）；Windows 上服务与 pi-web 同寿命 |
 
 ## 4. 首次准备/网络（只在 AI 自己排查时用）
 
