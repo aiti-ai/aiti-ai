@@ -273,7 +273,7 @@ export function hideApp(appId: string): void {
 export function currentUiLocale(): string {
   try {
     const v = localStorage.getItem("pi-locale");
-    if (v === "zh-CN" || v === "en") return v;
+    if (v === "zh-CN" || v === "zh-TW" || v === "en") return v;
   } catch { /* ignore */ }
   return "en";
 }
@@ -281,7 +281,8 @@ export function currentUiLocale(): string {
 /** 表级联：当前 locale → 同语短码（zh）→ en → 任一可用表。 */
 export function i18nTableFor(ui18n: Record<string, Record<string, string>> | undefined | null, locale: string): Record<string, string> {
   if (!ui18n) return {};
-  return ui18n[locale] ?? ui18n[locale.split("-")[0]] ?? ui18n.en ?? Object.values(ui18n)[0] ?? {};
+  const short = locale.split("-")[0];
+  return ui18n[locale] ?? ui18n[short] ?? (short === "zh" ? ui18n["zh-CN"] : undefined) ?? ui18n.en ?? Object.values(ui18n)[0] ?? {};
 }
 
 /**

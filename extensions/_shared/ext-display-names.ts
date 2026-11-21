@@ -19,10 +19,10 @@
  */
 
 /** Current UI locale (localStorage pi-locale, same source as host useI18n; defaults to en). */
-export function currentUiLocale(): "zh-CN" | "en" {
+export function currentUiLocale(): "zh-CN" | "zh-TW" | "en" {
   try {
     const v = window.localStorage.getItem("pi-locale");
-    if (v === "zh-CN" || v === "en") return v;
+    if (v === "zh-CN" || v === "zh-TW" || v === "en") return v;
   } catch { /* 存储不可用时用缺省 */ }
   return "en";
 }

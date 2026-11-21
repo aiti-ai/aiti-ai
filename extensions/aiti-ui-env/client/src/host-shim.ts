@@ -88,6 +88,13 @@ export function apiUrl(p: string): string {
   const fn = _ctx?.apiUrl as ((p: string) => string) | undefined;
   return typeof fn === "function" ? fn(p) : p;
 }
+/** Current host UI locale (en / zh-CN / zh-TW …; falls back to "en" on older hosts). */
+export function currentLocale(): string {
+  const fn = _ctx?.getLocale as (() => string) | undefined;
+  const loc = typeof fn === "function" ? String(fn() || "") : "";
+  return loc || "en";
+}
+
 /** t(key, params?)：扩展 i18n 翻译（index.ts ui.i18n 里的词条）。 */
 export function t(key: string, params?: Record<string, unknown>): string {
   const fn = _ctx?.t as ((key: string, params?: Record<string, unknown>) => string) | undefined;

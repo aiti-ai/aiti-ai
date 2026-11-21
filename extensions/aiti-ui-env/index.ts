@@ -18,6 +18,7 @@
  * 只依赖 Node 内建模块；探测/裁决核心在 lib/env.ts（跨 reload 保活用 globalThis 单例）。
  */
 import * as env from "./lib/env.js";
+import { normalizeLocale, tr, uiI18n } from "./lib/i18n.js";
 import { promises as fsPromises } from "node:fs";
 import { join as pathJoin, dirname as pathDirname } from "node:path";
 
@@ -207,6 +208,118 @@ var MINZ = 0.25, MAXZ = 5;
 
 // ---- 连接参数：query 的 path=<token 前缀>/ws；缺省从 pathname 推导 ----
 var qs = new URLSearchParams(location.search);
+
+// ---- UI language: ?lang= (panel locale) > <html lang> > browser language; English dict keyed by the zh source text ----
+var VIEW_EN = {
+  "连接中…": "Connecting…",
+  "⟳ 旋转": "⟳ Rotate",
+  "重置": "Reset",
+  "剪贴板": "Clipboard",
+  "虚拟": "Virtual",
+  "系统": "System",
+  "快捷键": "Shortcuts",
+  "单指操作远程 · 双指捏合缩放 · 双指拖动平移 · Ctrl+滚轮缩放": "One finger drives the remote · pinch to zoom · two-finger drag to pan · Ctrl+wheel to zoom",
+  "顺时针旋转 90°": "Rotate 90° clockwise",
+  "放大": "Zoom in",
+  "缩小": "Zoom out",
+  "复位旋转与缩放": "Reset rotation and zoom",
+  "与远程互传剪贴板": "Exchange clipboard with the remote",
+  "发送 Ctrl+Alt+Del 到远程": "Send Ctrl+Alt+Del to the remote",
+  "全屏": "Fullscreen",
+  "设置：仅观看/共享/画质/压缩/自动重连": "Settings: view-only / shared / quality / compression / auto-reconnect",
+  "虚拟键盘（触屏友好，修饰键可锁定）": "Virtual keyboard (touch-friendly, modifiers can be locked)",
+  "召喚系统原生软键盘（移动端输入法）": "Summon the system soft keyboard (mobile IME)",
+  "快捷键条（Ctrl+Alt+T / Alt+Tab …）": "Shortcut bar (Ctrl+Alt+T / Alt+Tab …)",
+  "关闭": "Close",
+  "读取远程当前剪贴板（远程复制只在内容变化时推送，页面后连或同内容重拷用此拉取）": "Read the remote clipboard now (remote copies are only pushed on change; use this after connecting or to re-fetch the same content)",
+  "写入远程剪贴板：本机目标直写 X/系统剪贴板（Unicode 安全，远程 Ctrl+V 即可）；远程主机/虚拟机等无法直写时自动回退 VNC 协议通道": "Write the remote clipboard: local targets get a direct X/system clipboard write (Unicode-safe, Ctrl+V on the remote); remote hosts / VMs fall back to the VNC protocol channel",
+  "逐字键入到远程（键盘事件兜底：QEMU 虚拟机、x11vnc 刚连接、无剪贴板通道时可用；仅 ASCII，中文/emoji 跳过；再点一次停止）": "Type character by character (key-event fallback for QEMU VMs, fresh x11vnc connections or missing clipboard channels; ASCII only, Chinese/emoji are skipped; click again to stop)",
+  "剪贴板互通": "Clipboard bridge",
+  "远程复制自动进本地剪贴板；下方编辑后可发送到远程": "Remote copies land in your local clipboard; edit below and send it back",
+  "获取远程": "Fetch remote",
+  "发送到远程": "Send to remote",
+  "输入到远程": "Type to remote",
+  "发送到远程 = 写目标机剪贴板（支持中文，远程 Ctrl+V）；输入到远程 = 逐字敲键（剪贴板不可用时兜底，仅 ASCII）": "Send to remote = write the target clipboard (Chinese supported, Ctrl+V on the remote); Type to remote = per-character keys (fallback when the clipboard channel is unavailable, ASCII only)",
+  "设置": "Settings",
+  "仅观看（不发送键鼠）": "View only (no keyboard/mouse)",
+  "共享连接（重连后生效）": "Shared connection (applies after reconnect)",
+  "自动重连（异常断开后最多 5 次）": "Auto-reconnect (up to 5 attempts after an abnormal disconnect)",
+  "画质": "Quality",
+  "压缩": "Compression",
+  "0=最好/最慢 · 即时生效": "0 = best/slowest · applies immediately",
+  "断开": "Disconnect",
+  "重连": "Reconnect",
+  "服务器要求认证": "Server requires authentication",
+  "用户名": "Username",
+  "密码": "Password",
+  "登录": "Log in",
+  "VNC 查看 · 旋转/缩放": "VNC viewer · rotate/zoom",
+  "无法定位实例 token": "Instance token not found",
+  "获取远程剪贴板…": "Fetching the remote clipboard…",
+  "已获取远程剪贴板（": "Remote clipboard fetched (",
+  " 字符）": " chars)",
+  "远程剪贴板为空": "The remote clipboard is empty",
+  "获取失败：": "Fetch failed: ",
+  "未知错误": "unknown error",
+  "获取失败（网络错误）": "Fetch failed (network error)",
+  "已通过 VNC 协议发送（": "Sent via the VNC protocol (",
+  "）；远程粘不到就改用下面的「⌨ 输入到远程」": "); if the remote cannot paste, use “⌨ Type to remote” below",
+  "发送失败：": "Send failed: ",
+  "剪贴板为空": "The clipboard is empty",
+  "发送中…": "Sending…",
+  "已发送到远程剪贴板（": "Sent to the remote clipboard (",
+  " 字符）——在远程 Ctrl+V 粘贴": " chars) — press Ctrl+V on the remote",
+  "服务端不能直写": "the server cannot write it directly",
+  "网络错误": "network error",
+  "停止输入…": "Stopping…",
+  "未连接，无法输入": "Not connected; cannot type",
+  "仅观看模式不能输入（设置里关闭「仅观看」）": "View-only mode cannot type (turn off “View only” in Settings)",
+  "没有可键入的 ASCII 字符（中文/emoji 需远程输入法）": "No ASCII characters to type (Chinese/emoji need a remote IME)",
+  "停止输入": "Stop typing",
+  "已停止输入 ": "Typing stopped after ",
+  "已键入 ": "Typed ",
+  " 键": " keys",
+  "（跳过 ": " (skipped ",
+  " 个非 ASCII）": " non-ASCII)",
+  "输入到远程 ": "Type to remote ",
+  "输入到远程 0/": "Type to remote 0/",
+  "默认": "Default",
+  "认证中…": "Authenticating…",
+  "初始化失败：": "Initialization failed: ",
+  "已连接": "Connected",
+  "已断开": "Disconnected",
+  "连接断开，": "Connection lost, ",
+  "s 后重连…（剩余 ": "s until reconnect… (remaining ",
+  " 次）": " attempts)",
+  "连接断开（异常）": "Connection lost (abnormal)",
+  "安全失败：": "Security failure: ",
+  "未知原因": "unknown reason",
+  "重连中…": "Reconnecting…"
+};
+var VIEW_LANG = (qs.get("lang") || document.documentElement.lang || navigator.language || "en").toLowerCase();
+var VIEW_EN_MODE = VIEW_LANG.indexOf("zh") !== 0;
+function T(text) { return VIEW_EN_MODE ? (VIEW_EN[text] || text) : text; }
+function translateViewDom(root) {
+  if (!VIEW_EN_MODE) return;
+  var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  var node;
+  while ((node = walker.nextNode())) {
+    var raw = node.nodeValue, key = raw.trim();
+    if (!key || !Object.prototype.hasOwnProperty.call(VIEW_EN, key)) continue;
+    node.nodeValue = raw.replace(key, VIEW_EN[key]);
+  }
+  var attr = function (sel, name) {
+    root.querySelectorAll(sel).forEach(function (el) {
+      var v = el.getAttribute(name);
+      if (v && Object.prototype.hasOwnProperty.call(VIEW_EN, v)) el.setAttribute(name, VIEW_EN[v]);
+    });
+  };
+  attr("[title]", "title");
+  attr("[placeholder]", "placeholder");
+}
+document.documentElement.lang = VIEW_EN_MODE ? "en" : "zh-CN";
+document.title = T("VNC 查看 · 旋转/缩放");
+translateViewDom(document.body);
 var wsPath = qs.get("path") || location.pathname.replace(/view\\.html$/, "ws").replace(/^\\/+/, "");
 var wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/" + wsPath.replace(/^\\/+/, "");
 
@@ -556,9 +669,9 @@ function setClipMsg(t, level) {
 }
 function fetchRemoteClip(silent) {
   if (clipFetching) return;
-  if (!PAGE_TOKEN) { if (!silent) setClipMsg("无法定位实例 token", "err"); return; }
+  if (!PAGE_TOKEN) { if (!silent) setClipMsg(T("无法定位实例 token"), "err"); return; }
   clipFetching = true;
-  if (!silent) setClipMsg("获取远程剪贴板…", "info");
+  if (!silent) setClipMsg(T("获取远程剪贴板…"), "info");
   fetch(API_BASE + "/api/extensions/aiti-ui-env/vnc-clipboard?token=" + encodeURIComponent(PAGE_TOKEN), { cache: "no-store" })
     .then(function (r) { return r.json(); })
     .then(function (d) {
@@ -567,11 +680,11 @@ function fetchRemoteClip(silent) {
         if (d.text) {
           $("cliptext").value = d.text;
           try { if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(d.text).catch(function () {}); } catch (e) {}
-          setClipMsg("已获取远程剪贴板（" + d.text.length + " 字符）", "ok");
-        } else if (!silent) setClipMsg("远程剪贴板为空", "warn");
-      } else if (!silent) setClipMsg("获取失败：" + ((d && d.error) || "未知错误"), "err");
+          setClipMsg(T("已获取远程剪贴板（") + d.text.length + T(" 字符）"), "ok");
+        } else if (!silent) setClipMsg(T("远程剪贴板为空"), "warn");
+      } else if (!silent) setClipMsg(T("获取失败：") + ((d && d.error) || T("未知错误")), "err");
     })
-    .catch(function () { clipFetching = false; if (!silent) setClipMsg("获取失败（网络错误）", "err"); });
+    .catch(function () { clipFetching = false; if (!silent) setClipMsg(T("获取失败（网络错误）"), "err"); });
 }
 $("clipbtn").onclick = function () {
   var clip = $("clip");
@@ -590,25 +703,25 @@ var clipSending = false;
 function sendViaVnc(reason) {
   if (rfb && connOk) {
     try { rfb.clipboardPasteFrom($("cliptext").value); } catch (e) {}
-    setClipMsg("已通过 VNC 协议发送（" + reason + "）；远程粘不到就改用下面的「⌨ 输入到远程」", "warn");
+    setClipMsg(T("已通过 VNC 协议发送（") + reason + T("）；远程粘不到就改用下面的「⌨ 输入到远程」"), "warn");
   } else {
-    setClipMsg("发送失败：" + reason, "err");
+    setClipMsg(T("发送失败：") + reason, "err");
   }
 }
 function sendRemoteClip() {
   if (clipSending) return;
   var text = $("cliptext").value;
-  if (!text) { setClipMsg("剪贴板为空", "warn"); return; }
-  if (!PAGE_TOKEN) { sendViaVnc("无法定位实例 token"); return; }
+  if (!text) { setClipMsg(T("剪贴板为空"), "warn"); return; }
+  if (!PAGE_TOKEN) { sendViaVnc(T("无法定位实例 token")); return; }
   clipSending = true;
-  setClipMsg("发送中…", "info");
+  setClipMsg(T("发送中…"), "info");
   fetch(API_BASE + "/api/extensions/aiti-ui-env/vnc-clipboard?token=" + encodeURIComponent(PAGE_TOKEN), {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: text }), cache: "no-store",
   }).then(function (r) { return r.json(); }).then(function (d) {
     clipSending = false;
-    if (d && d.ok) { setClipMsg("已发送到远程剪贴板（" + text.length + " 字符）——在远程 Ctrl+V 粘贴", "ok"); return; }
-    sendViaVnc((d && d.error) || "服务端不能直写");
-  }).catch(function () { clipSending = false; sendViaVnc("网络错误"); });
+    if (d && d.ok) { setClipMsg(T("已发送到远程剪贴板（") + text.length + T(" 字符）——在远程 Ctrl+V 粘贴"), "ok"); return; }
+    sendViaVnc((d && d.error) || T("服务端不能直写"));
+  }).catch(function () { clipSending = false; sendViaVnc(T("网络错误")); });
 }
 $("clipsend").onclick = sendRemoteClip;
 
@@ -618,26 +731,26 @@ $("clipsend").onclick = sendRemoteClip;
 var typing = null, TYPE_INTERVAL = 50, TYPE_ENTER_EXTRA = 150;
 function typeRemoteClip() {
   var btn = $("cliptype");
-  if (typing) { typing.stop = true; setClipMsg("停止输入…", "warn"); return; }
-  if (!rfb || !connOk) { setClipMsg("未连接，无法输入", "err"); return; }
-  if (cfg.viewOnly) { setClipMsg("仅观看模式不能输入（设置里关闭「仅观看」）", "warn"); return; }
+  if (typing) { typing.stop = true; setClipMsg(T("停止输入…"), "warn"); return; }
+  if (!rfb || !connOk) { setClipMsg(T("未连接，无法输入"), "err"); return; }
+  if (cfg.viewOnly) { setClipMsg(T("仅观看模式不能输入（设置里关闭「仅观看」）"), "warn"); return; }
   var text = $("cliptext").value;
-  if (!text) { setClipMsg("剪贴板为空", "warn"); return; }
+  if (!text) { setClipMsg(T("剪贴板为空"), "warn"); return; }
   var mapped = textToKeys(text);
   var keys = mapped.keys;
-  if (!keys.length) { setClipMsg("没有可键入的 ASCII 字符（中文/emoji 需远程输入法）", "warn"); return; }
+  if (!keys.length) { setClipMsg(T("没有可键入的 ASCII 字符（中文/emoji 需远程输入法）"), "warn"); return; }
   var i = 0;
   typing = { stop: false };
   btn.classList.add("on");
-  btn.textContent = "停止输入";
+  btn.textContent = T("停止输入");
   function end() {
     try { if (rfb && connOk) rfb.sendKey(SHIFT_KEYSYM, "ShiftLeft", false); } catch (e) {} // 防 Shift 卡住
     var done = i, stopped = !!(typing && typing.stop);
     typing = null;
     btn.classList.remove("on");
-    btn.textContent = "输入到远程";
-    setClipMsg((stopped ? "已停止输入 " : "已键入 ") + done + "/" + keys.length + " 键" +
-      (mapped.skipped ? "（跳过 " + mapped.skipped + " 个非 ASCII）" : ""), stopped ? "warn" : "ok");
+    btn.textContent = T("输入到远程");
+    setClipMsg((stopped ? T("已停止输入 ") : T("已键入 ")) + done + "/" + keys.length + T(" 键") +
+      (mapped.skipped ? T("（跳过 ") + mapped.skipped + T(" 个非 ASCII）") : ""), stopped ? "warn" : "ok");
   }
   function step() {
     if (!typing || typing.stop || i >= keys.length) { end(); return; }
@@ -648,10 +761,10 @@ function typeRemoteClip() {
       rfb.sendKey(k.keysym, k.code, false);
       if (k.shift) rfb.sendKey(SHIFT_KEYSYM, "ShiftLeft", false);
     } catch (e) {}
-    setClipMsg("输入到远程 " + i + "/" + keys.length + (mapped.skipped ? "（跳过 " + mapped.skipped + " 个非 ASCII）" : ""), "info");
+    setClipMsg(T("输入到远程 ") + i + "/" + keys.length + (mapped.skipped ? T("（跳过 ") + mapped.skipped + T(" 个非 ASCII）") : ""), "info");
     setTimeout(step, k.code === "Enter" ? TYPE_INTERVAL + TYPE_ENTER_EXTRA : TYPE_INTERVAL);
   }
-  setClipMsg("输入到远程 0/" + keys.length + "…", "info");
+  setClipMsg(T("输入到远程 0/") + keys.length + "…", "info");
   step();
 }
 $("cliptype").onclick = typeRemoteClip;
@@ -684,7 +797,7 @@ $("cfgauto").onchange = function () { cfg.autoReconnect = this.checked; saveCfg(
 (function initCfgUI() {
   $("cfgview").checked = cfg.viewOnly; $("cfgshared").checked = cfg.shared; $("cfgauto").checked = cfg.autoReconnect;
   var q = $("cfgquality"), c = $("cfgzcomp");
-  q.appendChild(new Option("默认", "-1")); c.appendChild(new Option("默认", "-1"));
+  q.appendChild(new Option(T("默认"), "-1")); c.appendChild(new Option(T("默认"), "-1"));
   for (var i = 0; i <= 9; i++) { q.appendChild(new Option(String(i), String(i))); c.appendChild(new Option(String(i), String(i))); }
   q.value = String(cfg.quality); c.value = String(cfg.compression);
   q.onchange = function () { cfg.quality = parseInt(this.value, 10); saveCfg(); applyLiveCfg(); };
@@ -704,7 +817,7 @@ function askCreds(types) {
   $("credpass").value = "";
   setTimeout(function () { $(needUser ? "creduser" : "credpass").focus(); }, 80);
   $("cred").hidden = false;
-  setStatus("服务器要求认证");
+  setStatus(T("服务器要求认证"));
 }
 $("credform").addEventListener("submit", function (e) {
   e.preventDefault();
@@ -715,7 +828,7 @@ $("credform").addEventListener("submit", function (e) {
   $("cred").hidden = true;
   savedCreds = creds;
   try { rfb.sendCredentials(needUser ? creds : { password: creds.password }); } catch (err) {}
-  setStatus("认证中…");
+  setStatus(T("认证中…"));
 });
 
 function connect() {
@@ -728,7 +841,7 @@ function connect() {
   if (ro) { ro.disconnect(); ro = null; }
   try {
     rfb = new RFB(box, wsUrl, { shared: !!cfg.shared });
-  } catch (err) { rfb = null; setStatus("初始化失败：" + err); return; }
+  } catch (err) { rfb = null; setStatus(T("初始化失败：") + err); return; }
   rfb.scaleViewport = false;
   rfb.resizeSession = false;
   rfb.viewOnly = !!cfg.viewOnly;
@@ -747,20 +860,20 @@ function connect() {
 
   rfb.addEventListener("connect", function () {
     if (gen !== connGen) return;
-    connOk = true; retryLeft = MAX_RETRY; applyLiveCfg(); setStatus("已连接"); relayout();
+    connOk = true; retryLeft = MAX_RETRY; applyLiveCfg(); setStatus(T("已连接")); relayout();
   });
   rfb.addEventListener("disconnect", function (e) {
     if (gen !== connGen) return;
     connOk = false; rfbLive = false;
     var clean = e.detail && e.detail.clean;
-    if (wantClose) { wantClose = false; setStatus("已断开"); return; }
+    if (wantClose) { wantClose = false; setStatus(T("已断开")); return; }
     if (cfg.autoReconnect && retryLeft > 0) {
       retryLeft--;
       var delay = 1500 + (MAX_RETRY - retryLeft) * 1000;
-      setStatus("连接断开，" + Math.round(delay / 1000) + "s 后重连…（剩余 " + retryLeft + " 次）");
+      setStatus(T("连接断开，") + Math.round(delay / 1000) + T("s 后重连…（剩余 ") + retryLeft + T(" 次）"));
       setTimeout(connect, delay);
     } else {
-      setStatus(clean ? "已断开" : "连接断开（异常）");
+      setStatus(clean ? T("已断开") : T("连接断开（异常）"));
     }
   });
   // 远端剪贴板变化 → 显示在剪贴板面板 + 尽力写入本地系统剪贴板（免开面板即可本地 Ctrl+V）；
@@ -784,7 +897,7 @@ function connect() {
     if (savedCreds && savedCreds.password) {
       try {
         rfb.sendCredentials(types.indexOf("username") !== -1 ? savedCreds : { password: savedCreds.password });
-        setStatus("认证中…");
+        setStatus(T("认证中…"));
         return;
       } catch (err) {}
     }
@@ -794,12 +907,12 @@ function connect() {
     if (gen !== connGen) return;
     savedCreds = null; // 密码错/认证失败：弃用记住的凭据，重连后重新询问
     $("cred").hidden = true;
-    setStatus("安全失败：" + ((e.detail && e.detail.reason) || "未知原因"));
+    setStatus(T("安全失败：") + ((e.detail && e.detail.reason) || T("未知原因")));
   });
 }
 connect();
-$("rcbtn").onclick = function () { retryLeft = MAX_RETRY; setStatus("重连中…"); connect(); };
-$("dcbtn").onclick = function () { wantClose = true; if (rfb && rfbLive) { try { rfb.disconnect(); } catch (e) {} } else { setStatus("已断开"); } };
+$("rcbtn").onclick = function () { retryLeft = MAX_RETRY; setStatus(T("重连中…")); connect(); };
+$("dcbtn").onclick = function () { wantClose = true; if (rfb && rfbLive) { try { rfb.disconnect(); } catch (e) {} } else { setStatus(T("已断开")); } };
 </script>
 </body>
 </html>`;
@@ -828,35 +941,35 @@ export default {
 
   // 功能管理（extman 逐项启停）：behavior.* 由代码自查，tool.* 由 core 自动过滤+execute 包装
   features: [
-    { id: "behavior.vnc", label: "VNC-on-web", group: "虚拟屏行为", default: true,
+    { id: "behavior.vnc", label: "VNC-on-web", group: "i18n:feat.group.behavior", default: true,
       description: "虚拟屏带 x11vnc + node vnc-bridge/noVNC，可在浏览器查看/操作虚拟桌面" },
-    { id: "behavior.atspi", label: "AT-SPI 语义总线", group: "虚拟屏行为", default: true,
+    { id: "behavior.atspi", label: "AT-SPI 语义总线", group: "i18n:feat.group.behavior", default: true,
       description: "虚拟屏环境注入 GTK/Qt a11y 开关（语义树可见，供 cua.ai 等独立扩展）" },
-    { id: "behavior.autostart-headless", label: "虚拟屏未运行时自动拉起", group: "虚拟屏行为", default: false,
+    { id: "behavior.autostart-headless", label: "虚拟屏未运行时自动拉起", group: "i18n:feat.group.behavior", default: false,
       description: "resolve/run 时虚拟屏未启动→自动拉起 Xvfb+openbox（systemd 或裸进程）" },
-    { id: "behavior.random-display", label: "DISPLAY 随机避让", group: "虚拟屏行为", default: true,
+    { id: "behavior.random-display", label: "DISPLAY 随机避让", group: "i18n:feat.group.behavior", default: true,
       description: "启动虚拟屏自动选空闲 DISPLAY 号（auto 随机，避免固定 :99 被占冲突）；关闭则固定用面板配置/默认号" },
     // ── agent 工具 ──
-    { id: "tool.ui_env_status", label: "ui_env_status · 环境状态", group: "agent 工具", default: true,
+    { id: "tool.ui_env_status", label: "ui_env_status · 环境状态", group: "i18n:feat.group.tools", default: true,
       description: "报告当前模式、桌面/虚拟屏探测、VNC 链接、安装状态" },
-    { id: "tool.ui_env_set_mode", label: "ui_env_set_mode · 切换模式", group: "agent 工具", default: true,
+    { id: "tool.ui_env_set_mode", label: "ui_env_set_mode · 切换模式", group: "i18n:feat.group.tools", default: true,
       description: "切换显示模式（1优先桌面/2优先无头/3总是桌面/4总是无头），对新启动的 MCP/应用生效" },
-    { id: "tool.ui_env_resolve", label: "ui_env_resolve · 生成启动环境", group: "agent 工具", default: true,
+    { id: "tool.ui_env_resolve", label: "ui_env_resolve · 生成启动环境", group: "i18n:feat.group.tools", default: true,
       description: "按当前模式裁决目标屏，返回环境变量 JSON + export 行（给应用/MCP 启动器）" },
-    { id: "tool.ui_env_run", label: "ui_env_run · 代启动应用/MCP", group: "agent 工具", default: true,
+    { id: "tool.ui_env_run", label: "ui_env_run · 代启动应用/MCP", group: "i18n:feat.group.tools", default: true,
       description: "用裁决后的环境启动命令（后台运行），返回 pid/目标屏/日志文件" },
-    { id: "tool.ui_env_headless", label: "ui_env_headless · 虚拟屏启停/查询", group: "agent 工具", default: true,
+    { id: "tool.ui_env_headless", label: "ui_env_headless · 虚拟屏启停/查询", group: "i18n:feat.group.tools", default: true,
       description: "启动/停止/查询无头虚拟屏（Xvfb+openbox+dbus+AT-SPI）；start 幂等，stop 仅虚拟屏相关不碰真实桌面" },
-    { id: "tool.ui_env_deps", label: "ui_env_deps · 依赖自检/安装", group: "agent 工具", default: true,
+    { id: "tool.ui_env_deps", label: "ui_env_deps · 依赖自检/安装", group: "i18n:feat.group.tools", default: true,
       description: "自检/自动安装虚拟屏依赖组件（多发行版自适应）；action=check 只自检，install 需免密 sudo" },
-    { id: "tool.ui_env_vnc", label: "ui_env_vnc · VNC 查看/启停", group: "agent 工具", default: true,
+    { id: "tool.ui_env_vnc", label: "ui_env_vnc · VNC 查看/启停", group: "i18n:feat.group.tools", default: true,
       description: "查询/启动/停止 VNC-on-web（浏览器看虚拟桌面的地址）" },
     // ── RDP ──
-    { id: "behavior.rdp", label: "RDP-on-web", group: "远程桌面行为", default: true,
+    { id: "behavior.rdp", label: "RDP-on-web", group: "i18n:feat.group.remote", default: true,
       description: "webRDP：通过 rdp-bridge 把 RDP 协议经 WebSocket 透传到浏览器（需 webRDP 静态资源 + 目标 RDP 服务器）" },
-    { id: "tool.ui_env_rdp", label: "ui_env_rdp · RDP 查看/启停", group: "agent 工具", default: true,
+    { id: "tool.ui_env_rdp", label: "ui_env_rdp · RDP 查看/启停", group: "i18n:feat.group.tools", default: true,
       description: "探测系统 RDP（xrdp）、启动/停止 RDP-on-web 桥、获取访问 URL" },
-    { id: "agentTools.enabled", type: "boolean", label: "AI 工具（UI 环境）", group: "AI", default: false,
+    { id: "agentTools.enabled", type: "boolean", label: "AI 工具（UI 环境）", group: "i18n:feat.group.ai", default: false,
       description: "会话内注入 ui_env_* 工具（默认关；需要时经 aiti-helper 帮助点（🤖）临时启用，或扩展管理器开启）" },
   ],
 
@@ -874,352 +987,7 @@ export default {
     // aiti-float dock v3：停靠槽静态声明（懒扩展物化触发 + 静态入口；id 与 client 注册一致）
     rightFileDock: [{ id: "panel", label: "i18n:uiEnv.open" }],
     dialogs: [{ id: "ui-env-dialog", label: "i18n:it.ui-env-dialog.label" }],
-    i18n: {
-      en: {
-      "取消": "Cancel",
-      "Aqua 桌面（控制台会话）": "Aqua desktop (console session)",
-      "屏幕共享为系统服务：本扩展只桥接不启停（查看走下方 VNC 卡）": "Screen sharing is a system service: this extension only bridges it, no start/stop (view via the VNC card below)",
-      "autostart 关：未开启时需手动点上方按钮": "autostart off: if not enabled, start manually with the button above",
-      "密码": "Password",
-      "无实例（点「▶ 启动」填 RDP 目标 host:port，如 127.0.0.1:3390）": "No instances (click “▶ Start” and fill in the RDP target host:port, e.g. 127.0.0.1:3390)",
-      "RDP 经 grdpwasm WASM 客户端（浏览器 WebCodecs H.264 解码）桥接。目标 host:port 不落 URL——路径段是实例真随机 token（代表该实例/端口，定期轮换）。": "RDP bridges through the grdpwasm WASM client (browser WebCodecs H.264 decoding). The target host:port never lands in the URL — the path segment is a truly random token per instance/port, rotated periodically.",
-      "Windows：依赖自检可自动安装便携 UltraVNC（免管理员）；虚拟显示驱动可选装（IddSampleDriver/usbmmidd，需管理员一次）；Home 版无 RDP 服务端（被看用 UltraVNC）。": "Windows: dependency self-check can auto-install portable UltraVNC (no admin); the virtual display driver is optional (IddSampleDriver/usbmmidd, admin once); Home edition has no RDP server (viewed via UltraVNC).",
-      "macOS：核心 = Aqua 会话 + 屏幕共享 VNC（系统设置 → 通用 → 共享 → 屏幕共享；免密 sudo 时「启动虚拟屏」可自动开）；可选增强走 brew（cliclick/XQuartz）。": "macOS: core = Aqua session + screen-sharing VNC (System Settings → General → Sharing → Screen Sharing; with password-less sudo \"Start virtual display\" can enable it); optional extras via brew (cliclick/XQuartz).",
-      "安装：scripts/linux/setup-linux.sh（apt + justget 兜底）· 服务化：install-service.sh · Windows：setup-windows.ps1（含便携 UltraVNC）。": "Install: scripts/linux/setup-linux.sh (apt + justget fallback) · Service: install-service.sh · Windows: setup-windows.ps1 (includes portable UltraVNC).",
-      "系统 VNC = 机器上已有的 VNC server（如真实桌面 :0 的 x11vnc、vncserver 起的虚拟桌面），本扩展起临时 bridge 转发，": "System VNC = a VNC server already on the machine (e.g. x11vnc on the real desktop :0, or a vncserver virtual desktop); this extension starts a temporary bridge to forward it. ",
-      "RDP 经 grdpwasm WASM 客户端（浏览器 WebCodecs H.264 解码）桥接。目标 host:port 不落 URL——路径段是实例真随机": "RDP bridges through the grdpwasm WASM client (browser WebCodecs H.264 decoding). The target host:port never lands in the URL — the path segment is a per-instance random token",
-      "Windows：依赖自检可自动安装便携 UltraVNC（免管理员）；虚拟显示驱动可选装（IddSampleDriver/usbmmidd，需管理员一次）；Ho": "Windows: dependency self-check can auto-install portable UltraVNC (no admin); the virtual display driver is optional (IddSampleDriver/usbmmidd, admin once); Ho",
-      "macOS：核心 = Aqua 会话 + 屏幕共享 VNC（系统设置 → 通用 → 共享 → 屏幕共享；免密 sudo 时「启动虚拟屏」可自动开）；可选增强走 ": "macOS: core = Aqua session + screen-sharing VNC (System Settings → General → Sharing → Screen Sharing; with password-less sudo \"Start virtual display\" can enable it); optional extras via ",
-      "安装：scripts/linux/setup-linux.sh（apt + justget 兜底）· 服务化：install-service.sh · Wind": "Install: scripts/linux/setup-linux.sh (apt + justget fallback) · Service: install-service.sh · Wind",
-      "系统 VNC = 机器上已有的 VNC server（如真实桌面 :0 的 x11vnc、vncserver 起的虚拟桌面），本扩展起临时 ": "System VNC = a VNC server already on the machine (e.g. x11vnc on the real desktop :0, or a vncserver virtual desktop); this extension starts a temporary ",
-      "RDP 经 grdpwasm WASM 客户端（浏览器 WebCodecs H.264 解码）桥接。目标 host:port 不落 URL—": "RDP bridges through the grdpwasm WASM client (browser WebCodecs H.264 decoding). The target host:port never lands in the URL—",
-      "Windows：依赖自检可自动安装便携 UltraVNC（免管理员）；虚拟显示驱动可选装（IddSampleDriver/usbmmidd，": "Windows: dependency self-check can auto-install portable UltraVNC (no admin); the virtual display driver is optional (IddSampleDriver/usbmmidd, ",
-      "macOS：核心 = Aqua 会话 + 屏幕共享 VNC（系统设置 → 通用 → 共享 → 屏幕共享；免密 sudo 时「启动虚拟屏」可自": "macOS: core = Aqua session + screen-sharing VNC (System Settings → General → Sharing → Screen Sharing; with password-less sudo \"Start virtual display\" can ",
-      "安装：scripts/linux/setup-linux.sh（apt + justget 兜底）· 服务化：install-service": "Install: scripts/linux/setup-linux.sh (apt + justget fallback) · Service: install-service",
-      "系统 RDP = xrdp / gnome-remote-desktop 等监听 3389 的 RDP 服务——noVNC 不能直连 RDP": "System RDP = xrdp / gnome-remote-desktop and other RDP services listening on 3389 — noVNC cannot reach RDP directly",
-      "多实例：每次「▶ 启动」新实例随机分配 RFB/Web 端口（避免与桌面 gdm 或其他服务冲突），URL 走 /vnc/ws/<实例id>": "Multi-instance: each \"▶ Start\" spins a new instance with random RFB/Web ports (avoiding the desktop gdm and other services); URLs go through /vnc/ws/<instance-id>",
-      "系统 VNC = 机器上已有的 VNC server（如真实桌面 :0 的 x11vnc、vncserver 起的虚拟桌面），本扩展起临时 bridge 转发，noVNC 直接连。": "System VNC = a VNC server already on the machine (e.g. x11vnc on the real desktop :0, or a vncserver virtual desktop); this extension starts a temporary bridge to forward it — noVNC connects directly.",
-      "多实例：每次「▶ 启动」新实例随机分配 RFB/Web 端口（避免与桌面 gdm 或其他服务冲突），URL 走 /vnc/ws/<实例id> 路由。": "Multi-instance: each \"▶ Start\" spins a new instance with random RFB/Web ports (avoiding the desktop gdm and other services); URLs go through the /vnc/ws/<instance-id> route.",
-      " · noVNC 目录：": " · noVNC dir: ",
-      " · 包管理器 ": "· package manager ",
-      " · 无免密 sudo": "· no password-less sudo",
-      " · 有 sudo": "· sudo available",
-      " · 默认 auto：启动时自动选空闲号（随机 90–189），避免固定 :99 被其他 X 服务占用": " · default auto: a free number is auto-picked at start (random 90-189) so the fixed :99 is not taken by other X services",
-      "1~8 位密码": "Password (1-8 chars)",
-      "1~8 位（UltraVNC 上限 8 位）。写入本机 VNC server 配置并重启 VNC 使其生效。": "1-8 chars (UltraVNC max 8). Written to the local VNC server config; VNC restarts to apply.",
-      ":5900 回环在跑": ":5900 loopback running",
-      "AT-SPI 总线": "AT-SPI bus",
-      "DISPLAY 号配置": "DISPLAY number config",
-      "GUI 落交互桌面（无进程隔离），虚拟屏 = 无屏可用 + VNC 查看通道": "GUI goes to the interactive desktop (no process isolation); virtual display = no screen available + VNC view channel",
-      "GUI 落控制台桌面（mac 无进程隔离）；无头 = 屏幕共享 VNC 远程查看通道": "GUI goes to the console desktop (mac has no process isolation); headless = the screen-sharing VNC remote-view channel",
-      "RDP 连接地址已复制：": "RDP address copied: ",
-      "URL 零凭据——会话走 HttpOnly cookie（30 分钟，从本面板打开即自动建立），复制到别处无 cookie 打不开（防泄露）": "Zero-credential URLs — sessions ride an HttpOnly cookie (30 min, established automatically when opened from this panel); pasted elsewhere without the cookie they will not open (anti-leak)",
-      "VNC 连接需要密码（1~8 位，UltraVNC 最长 8 位）。该密码写入本机 VNC server 配置，之后在浏览器查看时输入即可。": "VNC connection requires a password (1-8 chars, UltraVNC max 8). It is written to the local VNC server config; enter it when viewing in the browser.",
-      "Windows 交互会话": "Windows interactive session",
-      "auto · 随机空闲": "auto · random free",
-      "autostart 关：未启动时需手动点上方按钮启动": "autostart off: if not running, start it manually with the button above",
-      "env 覆盖：UI_ENV_DISPLAY_NUM=": "env override: UI_ENV_DISPLAY_NUM=",
-      "env 覆盖：UI_ENV_MODE=": "env override: UI_ENV_MODE=",
-      "feature 关：不随机": "feature off: no random pick",
-      "rdp-session 失败": "rdp-session failed",
-      "resolve 失败": "resolve failed",
-      "vnc-session 失败": "vnc-session failed",
-      "·未监听": "· not listening",
-      "■ 停止虚拟屏": "■ Stop virtual display",
-      "■ 停默认": "■ Stop default",
-      "▶ 启动 (host:port)": "▶ Start (host:port)",
-      "▶ 启动/新实例": "▶ Start / new instance",
-      "▶ 启动虚拟屏": "▶ Start virtual display",
-      "▶ 开启屏幕共享": "▶ Enable screen sharing",
-      "▶ 自动安装缺失组件": "▶ Auto-install missing components",
-      "「打开」产生的临时实例也出现在扩展 VNC 列表（id 以 sys- 开头），可在那边停止。": "Temp instances from \"Open\" also appear in the extension VNC list (ids starting with sys-) and can be stopped there.",
-      "不可改": "locked",
-      "不可用": "unavailable",
-      "不可连": "unreachable",
-      "会话": "Sessions",
-      "会话建立失败": "Session setup failed",
-      "会话建立失败：": "Session setup failed: ",
-      "作用于新启动的 MCP / 应用": "Applies to newly started MCP / apps",
-      "依赖自检": "Dependency self-check",
-      "保存": "Save",
-      "保存中…": "Saving…",
-      "停止": "Stop",
-      "停止 Xvfb+openbox+dbus+AT-SPI 及 VNC 实例（仅虚拟屏，不碰真实桌面）": "Stop Xvfb+openbox+dbus+AT-SPI and VNC instances (virtual display only, real desktop untouched)",
-      "停止中…": "Stopping…",
-      "停止失败": "Stop failed",
-      "全部组件已就绪 ✓": "All components ready ✓",
-      "分辨率": "Resolution",
-      "刷新": "Refresh",
-      "可用": "available",
-      "启动中…": "Starting…",
-      "在跑": "running",
-      "复制": "Copy",
-      "复制 RDP 连接地址（需 RDP 客户端连接）": "Copy the RDP address (requires an RDP client)",
-      "复制地址": "Copy address",
-      "外部/远程 VNC（如 192.168.1.20:5900）；也可连本机未扫描到的端口": "External / remote VNC (e.g. 192.168.1.20:5900); also connects to local ports the scan missed",
-      "多实例：每次「▶ 启动」新实例随机分配 RFB/Web 端口，URL 路径段 = 实例真随机 token（代表该实例/端口，不落目标地址，定期轮换）。": "Multi-instance: each \"▶ Start\" spins a new instance with random RFB/Web ports; the URL path segment is a truly random token per instance/port (never the target address, rotated periodically).",
-      "如 99": "e.g. 99",
-      "安装中…（可能需 1-3 分钟）": "Installing… (may take 1-3 minutes)",
-      "屏幕共享 :5900 在跑": "screen sharing :5900 running",
-      "已装（": "installed (",
-      "已重设 VNC 密码。": "VNC password reset.",
-      "开启中…": "Enabling…",
-      "开启屏幕共享（免密 sudo 自动开；否则给手动步骤）": "Enable screen sharing (auto with password-less sudo; otherwise manual steps)",
-      "弹窗被拦截：": "Popup blocked: ",
-      "弹窗被拦截：查看 URL 已复制，可粘到新标签页打开（30 分钟内有效）": "Popup blocked: the view URL was copied — paste it into a new tab (valid for 30 minutes)",
-      "当前 DISPLAY：": "Current DISPLAY: ",
-      "当前裁决：": "Current decision: ",
-      "当前：": "Current: ",
-      "手动连接 host:port": "Connect manually host:port",
-      "打开": "Open",
-      "打开前先点本卡「打开/复制」建立 30min HttpOnly cookie 会话；复制到别处无 cookie 打不开（防泄露）": "Before opening, click \"Open / Copy\" on this card to establish a 30-min HttpOnly cookie session; pasted elsewhere without the cookie it will not open (anti-leak)",
-      "打开失败": "Open failed",
-      "扩展 VNC": "Extension VNC",
-      "扫描系统 VNC 中…": "Scanning system VNC…",
-      "拉起 Xvfb+openbox+dbus+AT-SPI（幂等，已在跑则直接返回就绪）": "Start Xvfb+openbox+dbus+AT-SPI (idempotent; returns ready if already running)",
-      "指定数字": "specific number",
-      "操作超时（60s）——后端无响应，已复位面板；请重试或刷新": "Operation timed out (60s) — backend not responding, panel reset; retry or refresh",
-      "操作超时（60s）——后端无响应，已复位；请重试": "Operation timed out (60s) — backend not responding, reset; retry",
-      "断开 :": "Disconnect : ",
-      "无": "none",
-      "无头层（屏幕共享 VNC）": "Headless layer (screen-sharing VNC)",
-      "无头虚拟屏 ": "Headless virtual display ",
-      "无实例（点 ▶ 启动创建；端口每次随机分配，避免与桌面/其他服务冲突）": "No instances (click ▶ Start to create; ports are randomized each time to avoid clashing with the desktop / other services)",
-      "显示模式": "Display mode",
-      "有密码的会在 noVNC 里提示输入；「停止」仅对本用户启动的进程生效（root/gdm 的无权限会自动失败）。": "Password-protected ones will prompt in noVNC; \"Stop\" only affects processes started by this user (root/gdm ones fail automatically for lack of permission).",
-      "有密码的会在 noVNC/RDP 客户端里提示输入；「停止」仅对本用户启动的进程生效（root/gdm 的无权限会自动失败）。": "Password-protected ones will prompt in noVNC / RDP clients; \"Stop\" only affects processes started by this user (root/gdm ones fail automatically for lack of permission).",
-      "未发现系统 VNC server（本扩展自启的已排除）。点「刷新」重扫。": "No system VNC servers found (ones started by this extension are excluded). Click \"Refresh\" to rescan.",
-      "未开启": "not enabled",
-      "未找到（跑 setup-linux.sh 下载）": "not found (run setup-linux.sh to download)",
-      "未检测到": "not detected",
-      "未起": "not started",
-      "环境裁决预览": "Environment decision preview",
-      "目标：": "Target: ",
-      "真实桌面": "Real desktop",
-      "确定停止系统 VNC 进程（": "Stop the system VNC process (",
-      "确定停止虚拟屏？将关闭 VNC 与虚拟桌面上的所有程序（仅虚拟屏，不动真实桌面）。": "Stop the virtual display? This closes VNC and all programs on the virtual desktop (virtual display only, real desktop untouched).",
-      "端口无监听（-loop 等待中/未运行），无法连接": "Port not listening (-loop waiting / not running) — cannot connect",
-      "端口需为 1-65535": "Port must be 1-65535",
-      "类型": "Type",
-      "系统 VNC": "System VNC",
-      "系统 VNC 扫描失败": "System VNC scan failed",
-      "系统:": "System: ",
-      "组件安装状态": "Component install status",
-      "虚拟屏（驱动+VNC）": "Virtual display (driver + VNC)",
-      "虚拟驱动": "Virtual driver",
-      "设置 VNC 密码": "Set VNC password",
-      "设置 VNC 密码失败 HTTP ": "Set VNC password failed, HTTP ",
-      "设置/修改 VNC 密码": "Set / change VNC password",
-      "设置/修改 VNC 密码（写入 UltraVNC 配置并重启 VNC 生效）": "Set / change VNC password (written to UltraVNC config; VNC restarts to apply)",
-      "该 VNC server 的密码本扩展不能改": "This VNC server's password cannot be changed by this extension",
-      "说明": "Notes",
-      "运行 resolve": "Run resolve",
-      "连接": "Connect",
-      "连接中…": "Connecting…",
-      "重新自检": "Re-run self-check",
-      "重设 VNC 密码": "Reset VNC password",
-      "重设密码": "Reset password",
-      "重连打开": "reconnect & open",
-      "需要目标主机": "Target host required",
-      "（可选）": "(optional)",
-      "（必需）": "(required)",
-      "（无输出）": "(no output)",
-      "（用 Windows 远程桌面 / Remmina / FreeRDP 等 RDP 客户端连接）": "(connect with an RDP client such as Windows Remote Desktop / Remmina / FreeRDP)",
-      "（非本用户，不可停）": "(not owned by this user, cannot stop)",
-      "）？该操作只发停止信号，权限不足会失败。": ")? This only sends a stop signal; insufficient permissions will fail.",
-      "；feature 关时不随机，用固定号": "; when the feature is off, no random pick — the fixed number is used",
-        "it.ui-env-toolbar.label": "Display env",
-        "feat.behavior.vnc.desc": "Virtual display with x11vnc + node vnc-bridge/noVNC — view/operate the virtual desktop from the browser",
-        "feat.behavior.atspi.desc": "Injects GTK/Qt a11y switches into the virtual display environment (semantic tree visible, for assistive/AI reading)",
-        "feat.behavior.autostart-headless.desc": "resolve/run auto-starts Xvfb when the virtual display isn't running",
-        "feat.behavior.random-display.desc": "Auto-picks a free DISPLAY number for the virtual display (auto random avoidance, avoids conflicts with the local :0)",
-        "feat.tool.ui_env_status.desc": "Reports current mode, desktop/virtual display probe, VNC links, dependency health",
-        "feat.tool.ui_env_set_mode.desc": "Switches display mode (1 prefer desktop / 2 prefer headless / 3 always headless)",
-        "feat.tool.ui_env_resolve.desc": "Decides the target display by current mode, returns env-var JSON + probe info",
-        "feat.tool.ui_env_run.desc": "Launches a command with the resolved environment (background), returns pid/log path",
-        "feat.tool.ui_env_headless.desc": "Starts/stops/queries the headless virtual display (Xvfb+openbox+dbus+AT-SPI)",
-        "feat.tool.ui_env_deps.desc": "Self-checks/auto-installs virtual display dependencies (multi-distro adaptive)",
-        "feat.tool.ui_env_vnc.desc": "Queries/starts/stops VNC-on-web (browser view of the virtual desktop)",
-        "feat.behavior.rdp.desc": "webRDP: tunnels the RDP protocol to the browser via rdp-bridge over WebSocket (requires xrdp on this machine)",
-        "feat.tool.ui_env_rdp.desc": "Probes system RDP (xrdp), starts/stops the RDP-on-web bridge, returns browser links",
-        "feat.agentTools.enabled.desc": "Injects ui_env_* tools into sessions (off by default; enable temporarily via the AI helper 🤖 or the extension manager)",
-        "it.ui-env-dialog.label": "Display environment manager",
-        "ext.displayName": "UI Environment",
-        "ext.description": "Virtual display with x11vnc + node vnc-bridge/noVNC — view/operate the virtual desktop from the browser",
-        "feat.behavior.atspi": "AT-SPI semantic bus",
-        "feat.behavior.autostart-headless": "Auto-start the virtual display when not running",
-        "feat.behavior.random-display": "Random DISPLAY avoidance",
-        "feat.tool.ui_env_status": "ui_env_status · environment status",
-        "feat.tool.ui_env_set_mode": "ui_env_set_mode · switch mode",
-        "feat.tool.ui_env_resolve": "ui_env_resolve · build launch env",
-        "feat.tool.ui_env_run": "ui_env_run · launch app/MCP on behalf",
-        "feat.tool.ui_env_headless": "ui_env_headless · virtual display start/stop/query",
-        "feat.tool.ui_env_deps": "ui_env_deps · dependency self-check/install",
-        "feat.tool.ui_env_vnc": "ui_env_vnc · VNC view/start-stop",
-        "feat.tool.ui_env_rdp": "ui_env_rdp · RDP view/start-stop",
-        "feat.agentTools.enabled": "AI tool (UI environment)",
-        "feat.ui-env-dialog": "Show environment manager",
-        "uiEnv.toolbarTitle": "UI env manager: desktop/headless virtual displays + VNC-on-web",
-        "uiEnv.title": "Display environment",
-        "uiEnv.open": "Display env",
-        "uiEnv.modeTitle": "Mode (applies to newly started MCP / apps)",
-        "uiEnv.close": "Close",
-      },
-      "zh-CN": {
-      "Windows：依赖自检可自动安装便携 UltraVNC（免管理员）；虚拟显示驱动可选装（IddSampleDriver/usbmmidd，需管理员一次）；Home 版无 RDP 服务端（被看用 UltraVNC）。": "Windows：依赖自检可自动安装便携 UltraVNC（免管理员）；虚拟显示驱动可选装（IddSampleDriver/usbmmidd，需管理员一次）；Home 版无 RDP 服务端（被看用 UltraVNC）。",
-      "macOS：核心 = Aqua 会话 + 屏幕共享 VNC（系统设置 → 通用 → 共享 → 屏幕共享；免密 sudo 时「启动虚拟屏」可自动开）；可选增强走 brew（cliclick/XQuartz）。": "macOS：核心 = Aqua 会话 + 屏幕共享 VNC（系统设置 → 通用 → 共享 → 屏幕共享；免密 sudo 时「启动虚拟屏」可自动开）；可选增强走 brew（cliclick/XQuartz）。",
-      "安装：scripts/linux/setup-linux.sh（apt + justget 兜底）· 服务化：install-service.sh · Windows：setup-windows.ps1（含便携 UltraVNC）。": "安装：scripts/linux/setup-linux.sh（apt + justget 兜底）· 服务化：install-service.sh · Windows：setup-windows.ps1（含便携 UltraVNC）。",
-      "系统 VNC = 机器上已有的 VNC server（如真实桌面 :0 的 x11vnc、vncserver 起的虚拟桌面），本扩展起临时 bridge 转发，": "系统 VNC = 机器上已有的 VNC server（如真实桌面 :0 的 x11vnc、vncserver 起的虚拟桌面），本扩展起临时 bridge 转发，",
-      "RDP 经 grdpwasm WASM 客户端（浏览器 WebCodecs H.264 解码）桥接。目标 host:port 不落 URL——路径段是实例真随机": "RDP 经 grdpwasm WASM 客户端（浏览器 WebCodecs H.264 解码）桥接。目标 host:port 不落 URL——路径段是实例真随机",
-      "Windows：依赖自检可自动安装便携 UltraVNC（免管理员）；虚拟显示驱动可选装（IddSampleDriver/usbmmidd，需管理员一次）；Ho": "Windows：依赖自检可自动安装便携 UltraVNC（免管理员）；虚拟显示驱动可选装（IddSampleDriver/usbmmidd，需管理员一次）；Ho",
-      "macOS：核心 = Aqua 会话 + 屏幕共享 VNC（系统设置 → 通用 → 共享 → 屏幕共享；免密 sudo 时「启动虚拟屏」可自动开）；可选增强走 ": "macOS：核心 = Aqua 会话 + 屏幕共享 VNC（系统设置 → 通用 → 共享 → 屏幕共享；免密 sudo 时「启动虚拟屏」可自动开）；可选增强走 ",
-      "安装：scripts/linux/setup-linux.sh（apt + justget 兜底）· 服务化：install-service.sh · Wind": "安装：scripts/linux/setup-linux.sh（apt + justget 兜底）· 服务化：install-service.sh · Wind",
-      "系统 VNC = 机器上已有的 VNC server（如真实桌面 :0 的 x11vnc、vncserver 起的虚拟桌面），本扩展起临时 ": "系统 VNC = 机器上已有的 VNC server（如真实桌面 :0 的 x11vnc、vncserver 起的虚拟桌面），本扩展起临时 ",
-      "RDP 经 grdpwasm WASM 客户端（浏览器 WebCodecs H.264 解码）桥接。目标 host:port 不落 URL—": "RDP 经 grdpwasm WASM 客户端（浏览器 WebCodecs H.264 解码）桥接。目标 host:port 不落 URL—",
-      "Windows：依赖自检可自动安装便携 UltraVNC（免管理员）；虚拟显示驱动可选装（IddSampleDriver/usbmmidd，": "Windows：依赖自检可自动安装便携 UltraVNC（免管理员）；虚拟显示驱动可选装（IddSampleDriver/usbmmidd，",
-      "macOS：核心 = Aqua 会话 + 屏幕共享 VNC（系统设置 → 通用 → 共享 → 屏幕共享；免密 sudo 时「启动虚拟屏」可自": "macOS：核心 = Aqua 会话 + 屏幕共享 VNC（系统设置 → 通用 → 共享 → 屏幕共享；免密 sudo 时「启动虚拟屏」可自",
-      "安装：scripts/linux/setup-linux.sh（apt + justget 兜底）· 服务化：install-service": "安装：scripts/linux/setup-linux.sh（apt + justget 兜底）· 服务化：install-service",
-      "系统 RDP = xrdp / gnome-remote-desktop 等监听 3389 的 RDP 服务——noVNC 不能直连 RDP": "系统 RDP = xrdp / gnome-remote-desktop 等监听 3389 的 RDP 服务——noVNC 不能直连 RDP",
-      "多实例：每次「▶ 启动」新实例随机分配 RFB/Web 端口（避免与桌面 gdm 或其他服务冲突），URL 走 /vnc/ws/<实例id>": "多实例：每次「▶ 启动」新实例随机分配 RFB/Web 端口（避免与桌面 gdm 或其他服务冲突），URL 走 /vnc/ws/<实例id>",
-      "系统 VNC = 机器上已有的 VNC server（如真实桌面 :0 的 x11vnc、vncserver 起的虚拟桌面），本扩展起临时 bridge 转发，noVNC 直接连。": "系统 VNC = 机器上已有的 VNC server（如真实桌面 :0 的 x11vnc、vncserver 起的虚拟桌面），本扩展起临时 bridge 转发，noVNC 直接连。",
-      "多实例：每次「▶ 启动」新实例随机分配 RFB/Web 端口（避免与桌面 gdm 或其他服务冲突），URL 走 /vnc/ws/<实例id> 路由。": "多实例：每次「▶ 启动」新实例随机分配 RFB/Web 端口（避免与桌面 gdm 或其他服务冲突），URL 走 /vnc/ws/<实例id> 路由。",
-      " · noVNC 目录：": " · noVNC 目录：",
-      " · 包管理器 ": " · 包管理器 ",
-      " · 无免密 sudo": " · 无免密 sudo",
-      " · 有 sudo": " · 有 sudo",
-      " · 默认 auto：启动时自动选空闲号（随机 90–189），避免固定 :99 被其他 X 服务占用": " · 默认 auto：启动时自动选空闲号（随机 90–189），避免固定 :99 被其他 X 服务占用",
-      "1~8 位密码": "1~8 位密码",
-      "1~8 位（UltraVNC 上限 8 位）。写入本机 VNC server 配置并重启 VNC 使其生效。": "1~8 位（UltraVNC 上限 8 位）。写入本机 VNC server 配置并重启 VNC 使其生效。",
-      ":5900 回环在跑": ":5900 回环在跑",
-      "AT-SPI 总线": "AT-SPI 总线",
-      "DISPLAY 号配置": "DISPLAY 号配置",
-      "GUI 落交互桌面（无进程隔离），虚拟屏 = 无屏可用 + VNC 查看通道": "GUI 落交互桌面（无进程隔离），虚拟屏 = 无屏可用 + VNC 查看通道",
-      "GUI 落控制台桌面（mac 无进程隔离）；无头 = 屏幕共享 VNC 远程查看通道": "GUI 落控制台桌面（mac 无进程隔离）；无头 = 屏幕共享 VNC 远程查看通道",
-      "RDP 连接地址已复制：": "RDP 连接地址已复制：",
-      "URL 零凭据——会话走 HttpOnly cookie（30 分钟，从本面板打开即自动建立），复制到别处无 cookie 打不开（防泄露）": "URL 零凭据——会话走 HttpOnly cookie（30 分钟，从本面板打开即自动建立），复制到别处无 cookie 打不开（防泄露）",
-      "VNC 连接需要密码（1~8 位，UltraVNC 最长 8 位）。该密码写入本机 VNC server 配置，之后在浏览器查看时输入即可。": "VNC 连接需要密码（1~8 位，UltraVNC 最长 8 位）。该密码写入本机 VNC server 配置，之后在浏览器查看时输入即可。",
-      "Windows 交互会话": "Windows 交互会话",
-      "auto · 随机空闲": "auto · 随机空闲",
-      "autostart 关：未启动时需手动点上方按钮启动": "autostart 关：未启动时需手动点上方按钮启动",
-      "env 覆盖：UI_ENV_DISPLAY_NUM=": "env 覆盖：UI_ENV_DISPLAY_NUM=",
-      "env 覆盖：UI_ENV_MODE=": "env 覆盖：UI_ENV_MODE=",
-      "feature 关：不随机": "feature 关：不随机",
-      "rdp-session 失败": "rdp-session 失败",
-      "resolve 失败": "resolve 失败",
-      "vnc-session 失败": "vnc-session 失败",
-      "·未监听": "·未监听",
-      "■ 停止虚拟屏": "■ 停止虚拟屏",
-      "■ 停默认": "■ 停默认",
-      "▶ 启动 (host:port)": "▶ 启动 (host:port)",
-      "▶ 启动/新实例": "▶ 启动/新实例",
-      "▶ 启动虚拟屏": "▶ 启动虚拟屏",
-      "▶ 开启屏幕共享": "▶ 开启屏幕共享",
-      "▶ 自动安装缺失组件": "▶ 自动安装缺失组件",
-      "「打开」产生的临时实例也出现在扩展 VNC 列表（id 以 sys- 开头），可在那边停止。": "「打开」产生的临时实例也出现在扩展 VNC 列表（id 以 sys- 开头），可在那边停止。",
-      "不可改": "不可改",
-      "不可用": "不可用",
-      "不可连": "不可连",
-      "会话": "会话",
-      "会话建立失败": "会话建立失败",
-      "会话建立失败：": "会话建立失败：",
-      "作用于新启动的 MCP / 应用": "作用于新启动的 MCP / 应用",
-      "依赖自检": "依赖自检",
-      "保存": "保存",
-      "保存中…": "保存中…",
-      "停止": "停止",
-      "停止 Xvfb+openbox+dbus+AT-SPI 及 VNC 实例（仅虚拟屏，不碰真实桌面）": "停止 Xvfb+openbox+dbus+AT-SPI 及 VNC 实例（仅虚拟屏，不碰真实桌面）",
-      "停止中…": "停止中…",
-      "停止失败": "停止失败",
-      "全部组件已就绪 ✓": "全部组件已就绪 ✓",
-      "分辨率": "分辨率",
-      "刷新": "刷新",
-      "可用": "可用",
-      "启动中…": "启动中…",
-      "在跑": "在跑",
-      "复制": "复制",
-      "复制 RDP 连接地址（需 RDP 客户端连接）": "复制 RDP 连接地址（需 RDP 客户端连接）",
-      "复制地址": "复制地址",
-      "外部/远程 VNC（如 192.168.1.20:5900）；也可连本机未扫描到的端口": "外部/远程 VNC（如 192.168.1.20:5900）；也可连本机未扫描到的端口",
-      "多实例：每次「▶ 启动」新实例随机分配 RFB/Web 端口，URL 路径段 = 实例真随机 token（代表该实例/端口，不落目标地址，定期轮换）。": "多实例：每次「▶ 启动」新实例随机分配 RFB/Web 端口，URL 路径段 = 实例真随机 token（代表该实例/端口，不落目标地址，定期轮换）。",
-      "如 99": "如 99",
-      "安装中…（可能需 1-3 分钟）": "安装中…（可能需 1-3 分钟）",
-      "屏幕共享 :5900 在跑": "屏幕共享 :5900 在跑",
-      "已装（": "已装（",
-      "已重设 VNC 密码。": "已重设 VNC 密码。",
-      "开启中…": "开启中…",
-      "开启屏幕共享（免密 sudo 自动开；否则给手动步骤）": "开启屏幕共享（免密 sudo 自动开；否则给手动步骤）",
-      "弹窗被拦截：": "弹窗被拦截：",
-      "弹窗被拦截：查看 URL 已复制，可粘到新标签页打开（30 分钟内有效）": "弹窗被拦截：查看 URL 已复制，可粘到新标签页打开（30 分钟内有效）",
-      "当前 DISPLAY：": "当前 DISPLAY：",
-      "当前裁决：": "当前裁决：",
-      "当前：": "当前：",
-      "手动连接 host:port": "手动连接 host:port",
-      "打开": "打开",
-      "打开前先点本卡「打开/复制」建立 30min HttpOnly cookie 会话；复制到别处无 cookie 打不开（防泄露）": "打开前先点本卡「打开/复制」建立 30min HttpOnly cookie 会话；复制到别处无 cookie 打不开（防泄露）",
-      "打开失败": "打开失败",
-      "扩展 VNC": "扩展 VNC",
-      "扫描系统 VNC 中…": "扫描系统 VNC 中…",
-      "拉起 Xvfb+openbox+dbus+AT-SPI（幂等，已在跑则直接返回就绪）": "拉起 Xvfb+openbox+dbus+AT-SPI（幂等，已在跑则直接返回就绪）",
-      "指定数字": "指定数字",
-      "操作超时（60s）——后端无响应，已复位面板；请重试或刷新": "操作超时（60s）——后端无响应，已复位面板；请重试或刷新",
-      "操作超时（60s）——后端无响应，已复位；请重试": "操作超时（60s）——后端无响应，已复位；请重试",
-      "断开 :": "断开 :",
-      "无": "无",
-      "无头层（屏幕共享 VNC）": "无头层（屏幕共享 VNC）",
-      "无头虚拟屏 ": "无头虚拟屏 ",
-      "无实例（点 ▶ 启动创建；端口每次随机分配，避免与桌面/其他服务冲突）": "无实例（点 ▶ 启动创建；端口每次随机分配，避免与桌面/其他服务冲突）",
-      "显示模式": "显示模式",
-      "有密码的会在 noVNC 里提示输入；「停止」仅对本用户启动的进程生效（root/gdm 的无权限会自动失败）。": "有密码的会在 noVNC 里提示输入；「停止」仅对本用户启动的进程生效（root/gdm 的无权限会自动失败）。",
-      "有密码的会在 noVNC/RDP 客户端里提示输入；「停止」仅对本用户启动的进程生效（root/gdm 的无权限会自动失败）。": "有密码的会在 noVNC/RDP 客户端里提示输入；「停止」仅对本用户启动的进程生效（root/gdm 的无权限会自动失败）。",
-      "未发现系统 VNC server（本扩展自启的已排除）。点「刷新」重扫。": "未发现系统 VNC server（本扩展自启的已排除）。点「刷新」重扫。",
-      "未开启": "未开启",
-      "未找到（跑 setup-linux.sh 下载）": "未找到（跑 setup-linux.sh 下载）",
-      "未检测到": "未检测到",
-      "未起": "未起",
-      "环境裁决预览": "环境裁决预览",
-      "目标：": "目标：",
-      "真实桌面": "真实桌面",
-      "确定停止系统 VNC 进程（": "确定停止系统 VNC 进程（",
-      "确定停止虚拟屏？将关闭 VNC 与虚拟桌面上的所有程序（仅虚拟屏，不动真实桌面）。": "确定停止虚拟屏？将关闭 VNC 与虚拟桌面上的所有程序（仅虚拟屏，不动真实桌面）。",
-      "端口无监听（-loop 等待中/未运行），无法连接": "端口无监听（-loop 等待中/未运行），无法连接",
-      "端口需为 1-65535": "端口需为 1-65535",
-      "类型": "类型",
-      "系统 VNC": "系统 VNC",
-      "系统 VNC 扫描失败": "系统 VNC 扫描失败",
-      "系统:": "系统:",
-      "组件安装状态": "组件安装状态",
-      "虚拟屏（驱动+VNC）": "虚拟屏（驱动+VNC）",
-      "虚拟驱动": "虚拟驱动",
-      "设置 VNC 密码": "设置 VNC 密码",
-      "设置 VNC 密码失败 HTTP ": "设置 VNC 密码失败 HTTP ",
-      "设置/修改 VNC 密码": "设置/修改 VNC 密码",
-      "设置/修改 VNC 密码（写入 UltraVNC 配置并重启 VNC 生效）": "设置/修改 VNC 密码（写入 UltraVNC 配置并重启 VNC 生效）",
-      "该 VNC server 的密码本扩展不能改": "该 VNC server 的密码本扩展不能改",
-      "说明": "说明",
-      "运行 resolve": "运行 resolve",
-      "连接": "连接",
-      "连接中…": "连接中…",
-      "重新自检": "重新自检",
-      "重设 VNC 密码": "重设 VNC 密码",
-      "重设密码": "重设密码",
-      "重连打开": "重连打开",
-      "需要目标主机": "需要目标主机",
-      "（可选）": "（可选）",
-      "（必需）": "（必需）",
-      "（无输出）": "（无输出）",
-      "（用 Windows 远程桌面 / Remmina / FreeRDP 等 RDP 客户端连接）": "（用 Windows 远程桌面 / Remmina / FreeRDP 等 RDP 客户端连接）",
-      "（非本用户，不可停）": "（非本用户，不可停）",
-      "）？该操作只发停止信号，权限不足会失败。": "）？该操作只发停止信号，权限不足会失败。",
-      "；feature 关时不随机，用固定号": "；feature 关时不随机，用固定号",
-        "it.ui-env-toolbar.label": "显示环境",
-        "it.ui-env-dialog.label": "显示环境管理",
-        "ext.displayName": "UI 环境（桌面/无头虚拟屏）",        "uiEnv.toolbarTitle": "UI 环境管理：桌面/无头虚拟屏 + VNC-on-web",
-        "uiEnv.title": "UI 环境（桌面/无头虚拟屏）",
-        "uiEnv.open": "显示环境",
-        "uiEnv.modeTitle": "显示模式（作用于新启动的 MCP / 应用）",
-        "uiEnv.close": "关闭",
-      },
-    },
+    i18n: uiI18n,
   },
 
   server: {
@@ -1274,21 +1042,24 @@ export default {
       const m = manager();
       const p = (ctx.path || []).filter(Boolean);
       const action = p[0];
+      // UI locale for every human-readable string this API returns (\u003f). The panel passes ?locale=;
+      // agent tools / CLI fall back to Accept-Language so a Chinese session still gets Chinese text.
+      const locale = normalizeLocale(ctx.searchParams.get("locale") || req.headers.get("accept-language"));
 
       if (action === "status") {
         const refresh = ctx.searchParams.get("refresh") === "1";
         const probes = await m.probeAll(refresh);
         const vnc = await m.vncStatus();
-        const install = await m.installStatus().catch(() => null);
+        const install = await m.installStatus(locale).catch(() => null);
         const mode = m.loadMode();
         // VNC 公开 URL：客户端基于 apiUrl 推导 basePath 生成（无新端口/域名，经 middleware 代理）；
         // 服务端只提供 token + 内部状态。
         return json({
           mode,
-          modes: env.MODES,
-          target: await m.resolve(undefined, refresh).then((r) => ({ rationale: r.rationale, warnings: r.warnings })),
-          desktop: probes.desktop,
-          headless: probes.headless,
+          modes: m.modesFor(locale),
+          target: await m.resolve(undefined, refresh, locale).then((r) => ({ rationale: r.rationale, warnings: r.warnings })),
+          desktop: m.localizeProbe(locale, probes.desktop),
+          headless: m.localizeProbe(locale, probes.headless),
           vnc: { ...vnc, external: true },
           rdp: await m.rdpStatus(),
           install,
@@ -1312,7 +1083,7 @@ export default {
         if (req.method === "POST") {
           const body = await parseBody(req);
           const cfg = m.saveDisplayConfig({ mode: String(body.mode || "auto"), num: body.num });
-          return json({ ok: true, config: cfg, note: "已保存。下次启动虚拟屏生效（当前运行中的不受影响）" });
+          return json({ ok: true, config: cfg, note: tr(locale, "srv.api.display-saved") });
         }
         return json({ ok: true, config: m.loadDisplayConfig(), randomDisplayFeature: m.featureEnabled("behavior.random-display") });
       }
@@ -1320,9 +1091,12 @@ export default {
       if (action === "set-mode" && req.method === "POST") {
         const body = await parseBody(req);
         const mode = String(body.mode || "");
-        if (!env.MODES.some((x) => x.id === mode)) return json({ ok: false, error: "mode 必须是 " + env.MODES.map((x) => x.id).join(" / ") }, 400);
+        if (!env.MODES.some((x) => x.id === mode)) return json({ ok: false, error: tr(locale, "srv.api.mode-invalid", { ids: env.MODES.map((x) => x.id).join(" / ") }) }, 400);
         m.saveMode(mode as env.UeMode);
-        return json({ ok: true, mode: m.loadMode(), note: "即时生效，作用于下一次启动（resolve/run/CLI）" });
+        // Refresh the session-env snapshot so mode switches reach NEW agent sessions
+        // immediately (agent-spawn-env merges this snapshot into spawn env).
+        try { await m.resolve(undefined, false, locale); } catch { /* keep serving; snapshot stays at last good value */ }
+        return json({ ok: true, mode: m.loadMode(), note: tr(locale, "srv.api.mode-saved") });
       }
 
       // 手动拉起无头虚拟屏：POST /headless {action:start} 启动；GET /headless 查状态。
@@ -1331,31 +1105,31 @@ export default {
         if (req.method === "POST") {
           const body = await parseBody(req);
           const act = String(body.action || "start");
-          if (act === "start") return json(await m.startHeadless());
-          if (act === "stop") return json(await m.stopHeadless());
+          if (act === "start") return json(await m.startHeadless(locale));
+          if (act === "stop") return json(await m.stopHeadless(locale));
           if (act === "status") {
             const p = await m.probeAll(false);
-            return json({ ok: p.headless.available, available: p.headless.available, error: p.headless.error });
+            return json({ ok: p.headless.available, available: p.headless.available, error: m.localizeProbe(locale, p.headless).error });
           }
-          return json({ ok: false, error: "action 只能是 start|stop|status" }, 400);
+          return json({ ok: false, error: tr(locale, "srv.api.action-headless") }, 400);
         }
         const p = await m.probeAll(false);
-        return json({ ok: p.headless.available, available: p.headless.available, error: p.headless.error });
+        return json({ ok: p.headless.available, available: p.headless.available, error: m.localizeProbe(locale, p.headless).error });
       }
 
       if (action === "resolve") {
         const prefer = (req.method === "POST" ? (await parseBody(req)).prefer : ctx.searchParams.get("prefer")) || undefined;
         const refresh = (req.method === "POST" ? false : ctx.searchParams.get("refresh") === "1");
-        if (prefer && !["desktop", "headless"].includes(prefer)) return json({ ok: false, error: "prefer 只能是 desktop|headless" }, 400);
-        const r = await m.resolve(prefer as env.UeTarget | undefined, refresh);
+        if (prefer && !["desktop", "headless"].includes(prefer)) return json({ ok: false, error: tr(locale, "srv.api.prefer-invalid") }, 400);
+        const r = await m.resolve(prefer as env.UeTarget | undefined, refresh, locale);
         return json(r, r.ok ? 200 : 409);
       }
 
       if (action === "run" && req.method === "POST") {
         const body = await parseBody(req);
         const cmd = String(body.cmd || "").trim();
-        if (!cmd) return json({ ok: false, error: "需要 cmd（要启动的完整命令）" }, 400);
-        const r = await m.run(cmd, { prefer: body.prefer, env: body.env || undefined });
+        if (!cmd) return json({ ok: false, error: tr(locale, "srv.api.cmd-required") }, 400);
+        const r = await m.run(cmd, { prefer: body.prefer, env: body.env || undefined, locale });
         return json(r, r.ok ? 200 : 409);
       }
 
@@ -1364,33 +1138,34 @@ export default {
           const body = await parseBody(req);
           const act = String(body.action || "status");
           if (act === "list") return json({ ok: true, instances: await m.vncList() });
-          if (act === "sys-scan") return json({ ok: true, sysVnc: await m.systemVncScan() });
+          if (act === "sys-scan") return json({ ok: true, sysVnc: await m.systemVncScan(locale) });
           if (act === "sys-open") {
             const port = Number(body.port);
             // 外部 VNC：host 可选（缺省本机）；本机用 ss 探活，远程用 TCP 探测
             const host = (body.host ? String(body.host).trim() : "") || "127.0.0.1";
             const local = host === "127.0.0.1" || host === "localhost" || host === "::1";
-            if (!Number.isFinite(port) || port <= 0) return json({ ok: false, error: "需要有效的 port" }, 400);
+            if (!Number.isFinite(port) || port <= 0) return json({ ok: false, error: tr(locale, "srv.api.port-invalid") }, 400);
             const reachable = local ? await m.portListening(port) : await m.tcpReachable(host, port);
-            if (!reachable) return json({ ok: false, error: `目标 ${host}:${port} 端口无监听（系统 VNC 可能未运行或处于 -loop 等待），无法连接` }, 400);
+            if (!reachable) return json({ ok: false, error: tr(locale, "srv.api.port-unreachable", { host, port }) }, 400);
             try {
               const inst = await m.vncCreate("sys-" + Date.now().toString(36), 0, {
                 sysPort: port, sysHost: host, sysLabel: String(body.label || (local ? "sys" : `${host}:${port}`)),
               });
               return json({ ok: true, inst: { id: inst.id, rfbPort: inst.rfbPort, webPort: inst.webPort, sys: inst.sys } });
-            } catch (e) { return json({ ok: false, error: "打开失败：" + String((e as Error).message) }, 400); }
+            } catch (e) { return json({ ok: false, error: tr(locale, "srv.api.open-failed", { error: String((e as Error).message) }) }, 400); }
           }
           if (act === "sys-stop") {
             const pid = Number(body.pid);
-            if (!Number.isFinite(pid) || pid <= 0) return json({ ok: false, error: "需要 pid" }, 400);
-            try { process.kill(pid, "SIGTERM"); return json({ ok: true, message: "已向系统 VNC 进程发送停止信号" }); }
-            catch (e) { return json({ ok: false, error: "停止失败（可能无权限）：" + String((e as Error).message) }, 400); }
+            if (!Number.isFinite(pid) || pid <= 0) return json({ ok: false, error: tr(locale, "srv.api.pid-required") }, 400);
+            try { process.kill(pid, "SIGTERM"); return json({ ok: true, message: tr(locale, "srv.api.vnc-stop-signal") }); }
+            catch (e) { return json({ ok: false, error: tr(locale, "srv.api.stop-failed", { error: String((e as Error).message) }) }, 400); }
           }
-          if (!["start", "stop", "status"].includes(act)) return json({ ok: false, error: "action 只能是 start|stop|status|list|sys-scan|sys-open|sys-stop" }, 400);
+          if (!["start", "stop", "status"].includes(act)) return json({ ok: false, error: tr(locale, "srv.api.action-vnc") }, 400);
           // start = 默认/指定实例（随机端口）；stop {id} 停指定；多实例用重复 start（首实例 id=default，其后自动新实例）
           const r = await m.vncAction(act as "start" | "stop" | "status", {
             id: body.id ? String(body.id) : undefined,
             displayNum: body.displayNum ? Number(body.displayNum) : undefined,
+            locale,
           });
           return json(r);
         }
@@ -1442,18 +1217,18 @@ export default {
           if (act === "sys-scan") return json({ ok: true, sysRdp: await m.systemRdpScan() });
           if (act === "sys-open") {
             const port = Number(body.port);
-            if (!Number.isFinite(port) || port <= 0) return json({ ok: false, error: "需要有效的 port" }, 400);
-            if (!(await m.portListening(port))) return json({ ok: false, error: `目标端口 ${port} 无监听，无法连接` }, 400);
+            if (!Number.isFinite(port) || port <= 0) return json({ ok: false, error: tr(locale, "srv.api.port-invalid") }, 400);
+            if (!(await m.portListening(port))) return json({ ok: false, error: tr(locale, "srv.api.port-no-listen", { port }) }, 400);
             try {
               const inst = await m.rdpCreate("sys-" + Date.now().toString(36), "127.0.0.1", 0, { sysPort: port, sysLabel: String(body.label || "sys") });
               return json({ ok: true, inst: { id: inst.id, port: inst.port, webPort: inst.webPort, sys: inst.sys } });
-            } catch (e) { return json({ ok: false, error: "打开失败：" + String((e as Error).message) }, 400); }
+            } catch (e) { return json({ ok: false, error: tr(locale, "srv.api.open-failed", { error: String((e as Error).message) }) }, 400); }
           }
           if (act === "sys-stop") {
             const pid = Number(body.pid);
-            if (!Number.isFinite(pid) || pid <= 0) return json({ ok: false, error: "需要 pid" }, 400);
-            try { process.kill(pid, "SIGTERM"); return json({ ok: true, message: "已向系统 RDP 进程发送停止信号" }); }
-            catch (e) { return json({ ok: false, error: "停止失败（可能无权限）：" + String((e as Error).message) }, 400); }
+            if (!Number.isFinite(pid) || pid <= 0) return json({ ok: false, error: tr(locale, "srv.api.pid-required") }, 400);
+            try { process.kill(pid, "SIGTERM"); return json({ ok: true, message: tr(locale, "srv.api.rdp-stop-signal") }); }
+            catch (e) { return json({ ok: false, error: tr(locale, "srv.api.stop-failed", { error: String((e as Error).message) }) }, 400); }
           }
           if (act === "start") {
             let host = String(body.host || "").trim();
@@ -1461,7 +1236,7 @@ export default {
             // 允许 host 直接写 "host:port"（如 127.0.0.1:3389），拆开解析
             if (host.includes(":")) {
               const t = parseRdpTarget(host, 3389);
-              if (!t) return json({ ok: false, error: "host 无效：应为 host 或 host:port（如 127.0.0.1:3389）" }, 400);
+              if (!t) return json({ ok: false, error: tr(locale, "srv.api.host-invalid") }, 400);
               host = t.host;
               if (!port) port = t.port;
             }
@@ -1474,13 +1249,14 @@ export default {
                 sysLabel: body.sysLabel ? String(body.sysLabel) : undefined,
               });
               return json(r);
-            } catch (e) { return json({ ok: false, error: "启动失败：" + String((e as Error).message) }, 500); }
+            } catch (e) { return json({ ok: false, error: tr(locale, "srv.api.start-failed", { error: String((e as Error).message) }) }, 500); }
           }
-          if (!["start", "stop", "status", "list"].includes(act)) return json({ ok: false, error: "action 只能是 start|stop|status|list|sys-scan|sys-open|sys-stop" }, 400);
+          if (!["start", "stop", "status", "list"].includes(act)) return json({ ok: false, error: tr(locale, "srv.api.action-rdp") }, 400);
           const r = await m.rdpAction(act as "start" | "stop" | "status" | "list", {
             id: body.id ? String(body.id) : undefined,
             host: body.host ? String(body.host) : undefined,
             port: body.port ? Number(body.port) : undefined,
+            locale,
           });
           return json(r);
         }
@@ -1504,16 +1280,16 @@ export default {
       }
 
       if (action === "install-status") {
-        return json(await m.installStatus().catch(() => null));
+        return json(await m.installStatus(locale).catch(() => null));
       }
 
       // 依赖自检/自动安装（多 OS）：GET /deps = 自检；POST /deps {action:install} = 自动安装
       if (action === "deps") {
         if (req.method === "POST") {
           const body = await parseBody(req);
-          if (String(body.action || "") === "install") return json(await m.installDeps());
+          if (String(body.action || "") === "install") return json(await m.installDeps(locale));
         }
-        return json(await m.checkDeps(true));
+        return json(await m.checkDeps(true, locale));
       }
 
       // VNC 密码（自管 winvnc / 系统 VNC server）：GET 查自管密码是否已设；POST {password, id?} 重设
@@ -1521,11 +1297,11 @@ export default {
       if (action === "vnc-password") {
         if (req.method === "POST") {
           const body = await parseBody(req);
-          const r = await m.resetVncPassword(String(body.password || ""), { id: body.id ? String(body.id) : undefined });
+          const r = await m.resetVncPassword(String(body.password || ""), { id: body.id ? String(body.id) : undefined, locale });
           return json(r, r.ok ? 200 : 400);
         }
         const set = !!m.vncPassword();
-        return json({ set, hint: set ? undefined : "尚未设置 VNC 密码（Windows 自管 winvnc 需要）" });
+        return json({ set, hint: set ? undefined : tr(locale, "srv.api.vnc-password-unset") });
       }
 
       return null; // 404

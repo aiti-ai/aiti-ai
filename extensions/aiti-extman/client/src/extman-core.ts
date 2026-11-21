@@ -28,7 +28,8 @@ function primeExtI18n(): void {
 }
 function tableFor(ui18n: Record<string, Record<string, string>> | undefined, locale: string): Record<string, string> {
   if (!ui18n) return {};
-  return ui18n[locale] ?? ui18n[locale.split("-")[0]] ?? ui18n.en ?? Object.values(ui18n)[0] ?? {};
+  const short = locale.split("-")[0];
+  return ui18n[locale] ?? ui18n[short] ?? (short === "zh" ? ui18n["zh-CN"] : undefined) ?? ui18n.en ?? Object.values(ui18n)[0] ?? {};
 }
 /** 解析 "i18n:" 前缀文案；无前缀/缺表/缺键原样（裸 key）。 */
 export function resolveExtItemText(extId: string | undefined, text: string | undefined): string {
@@ -37,7 +38,7 @@ export function resolveExtItemText(extId: string | undefined, text: string | und
   primeExtI18n();
   const key = text.slice("i18n:".length);
   let locale = "en";
-  try { const v = localStorage.getItem("pi-locale"); if (v === "zh-CN" || v === "en") locale = v; } catch { /* ignore */ }
+  try { const v = localStorage.getItem("pi-locale"); if (v === "zh-CN" || v === "zh-TW" || v === "en") locale = v; } catch { /* ignore */ }
   return tableFor(extI18nTables?.[extId], locale)[key] ?? key;
 }
 /** Current-locale-only table for one extension (NO cascade — manifest text is the
@@ -46,9 +47,15 @@ export function resolveExtItemText(extId: string | undefined, text: string | und
 export function extUi18nExact(extId: string | undefined): Record<string, string> {
   primeExtI18n();
   let locale = "en";
-  try { const v = localStorage.getItem("pi-locale"); if (v === "zh-CN" || v === "en") locale = v; } catch { /* ignore */ }
+  try { const v = localStorage.getItem("pi-locale"); if (v === "zh-CN" || v === "zh-TW" || v === "en") locale = v; } catch { /* ignore */ }
   return extI18nTables?.[extId ?? ""]?.[locale] ?? {};
 }
+/** Feature group heading: manifests may declare `group: "i18n:<key>"` (same convention as slot
+ *  labels); the key resolves through the declaring extension's ui.i18n table. Plain text passes through. */
+export function featureGroupText(extId: string | undefined, group: unknown): string {
+  return resolveExtItemText(extId, group == null ? "" : String(group));
+}
+
 /** 条目展示名（label 优先 title 兑底，i18n key 已解析）——direct-open 匹配与提示文案共用。 */
 function resolveItemLabel(extId: string | undefined, item: any): string {
   return resolveExtItemText(extId, item && item.label) || resolveExtItemText(extId, item && item.title) || (item && item.id) || "";

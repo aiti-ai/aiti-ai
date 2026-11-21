@@ -20,6 +20,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { ProbeInfo, SysVncEntry, SysRdpEntry } from "./env.js";
+import { probeFail, tr } from "./i18n.js";
 
 /** 数据分层（三目录对称 2026-09-13）：configDir = <extRoot>/config，cache 在 <extRoot>/cache 下。 */
 function cachePath(configDir: string, ...segments: string[]): string {
@@ -233,8 +234,9 @@ export async function winVncWriteIni(vncDir: string, configDir: string, pw: stri
 export async function winResetVncPassword(
   configDir: string,
   pw: string,
-  _opts: { id?: string } = {},
+  opts: { id?: string; locale?: string | null } = {},
 ): Promise<{ ok: boolean; applied: string[]; errors: string[]; restartRequired: boolean; error?: string }> {
+  const locale = opts.locale;
   const applied: string[] = [];
   const errors: string[] = [];
   const set = winVncPasswordSet(configDir, pw);
@@ -245,8 +247,8 @@ export async function winResetVncPassword(
   const portable = findPortableWinVnc(configDir);
   if (portable) {
     const r = await winVncEnsure(configDir);
-    if (r.ok) applied.push(`自管便携 winvnc（${path.dirname(portable)}）已重写并重启`);
-    else errors.push("自管便携 winvnc：" + (r.error || "未知错误"));
+    if (r.ok) applied.push(tr(locale, "srv.winpwd.self-applied", { dir: path.dirname(portable) }));
+    else errors.push(tr(locale, "srv.winpwd.self-error", { error: r.error || tr(locale, "srv.common.unknown-error") }));
   }
 
   // 2) 系统安装的 UltraVNC / TightVNC：写注册表（需管理员；HKLM 双视图都试）
@@ -256,19 +258,19 @@ export async function winResetVncPassword(
       "HKLM:\\SOFTWARE\\UltraVNC\\Server",
       "HKLM:\\SOFTWARE\\WOW6432Node\\UltraVNC\\Server",
     ], "passwd", p, "E8 4A D6 60 C4 72 1A E0"); // UltraVNC 专有 DES 钥匙
-    if (r.ok) applied.push(`系统安装 UltraVNC（${sys.path}）注册表已写`);
-    else errors.push("系统安装 UltraVNC 注册表写入失败" + (r.error ? "：" + r.error : "（需管理员权限）"));
+    if (r.ok) applied.push(tr(locale, "srv.winpwd.uvnc-applied", { path: sys.path }));
+    else errors.push(tr(locale, "srv.winpwd.registry-failed", { kind: "UltraVNC", detail: r.error || tr(locale, "srv.winpwd.admin-hint") }));
   } else if (sys?.kind === "tightvnc") {
     const r = await winSetRegistryVncPassword([
       "HKLM:\\SOFTWARE\\TightVNC\\Server",
       "HKLM:\\SOFTWARE\\WOW6432Node\\TightVNC\\Server",
     ], "Password", p, "17 52 6B 06 23 4E 58 07"); // TightVNC 走标准 VNC 钥匙
-    if (r.ok) applied.push(`系统安装 TightVNC（${sys.path}）注册表已写`);
-    else errors.push("系统安装 TightVNC 注册表写入失败" + (r.error ? "：" + r.error : "（需管理员权限）"));
+    if (r.ok) applied.push(tr(locale, "srv.winpwd.registry-applied", { kind: "TightVNC", path: sys.path }));
+    else errors.push(tr(locale, "srv.winpwd.registry-failed", { kind: "TightVNC", detail: r.error || tr(locale, "srv.winpwd.admin-hint") }));
   }
 
   if (!portable && !sys) {
-    return { ok: false, applied, errors, restartRequired: false, error: "未找到 winvnc/tvnserver（先跑 ui_env_deps install 或安装系统版）" };
+    return { ok: false, applied, errors, restartRequired: false, error: tr(locale, "srv.winpwd.not-found") };
   }
   return { ok: applied.length > 0, applied, errors, restartRequired: !portable && !!sys };
 }
@@ -390,20 +392,18 @@ export async function winProbeDesktop(): Promise<ProbeInfo> {
   const expSid = parts[1] && parts[1] !== "none" ? Number(parts[1]) : null;
   if (expSid === null) {
     info.display = "session:" + mySid;
-    info.error = "无 explorer.exe（Shell 未运行），桌面不可用";
-    return info;
+    return probeFail(info, "win-no-shell");
   }
   if (mySid !== expSid) {
     info.display = "session:" + mySid;
-    info.error = `扩展进程在 Session ${mySid}（非交互，如服务上下文 Session 0），而桌面 Shell 在 Session ${expSid}：GUI 应用无法显示。请把 pi-web 跑在用户登录会话内（schtasks onlogon / 手动启动）`;
-    return info;
+    return probeFail(info, "win-session-mismatch", { mine: mySid, shell: expSid });
   }
   info.display = "session:" + mySid;
   const res = await winPwsh(
     `Add-Type -AssemblyName System.Windows.Forms; $b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds; Write-Output ("$($b.Width)x$($b.Height)"); Write-Output ([System.Windows.Forms.Screen]::AllScreens.Count)`,
     10000);
   const lines = res.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
-  if (lines[0]) info.resolution = lines[0] + (lines[1] ? ` x${lines[1]}屏` : "");
+  if (lines[0]) info.resolution = lines[0] + (lines[1] ? tr("zh-CN", "srv.probe.win-screens-suffix", { count: lines[1] }) : "");
   info.kind = "windows";
   info.wm = "explorer";
   info.available = true;
@@ -419,20 +419,17 @@ export async function winProbeHeadless(configDir: string): Promise<ProbeInfo> {
   const selfPid = winVncSelfPid(configDir);
   if (rfbOn) {
     info.available = true;
-    info.resolution = vdd ? undefined : "物理/虚拟屏共享";
-    if (!vdd) info.error = "VNC 就绪但未检测到虚拟显示驱动：无物理显示器时可能黑屏（可跑 setup-windows.ps1 装虚拟驱动，或 UltraVNC 自带 UVncVirtualDisplay 驱动）";
+    if (!vdd) { info.resolutionKey = "srv.probe.win-resolution-shared"; probeFail(info, "win-vnc-ready"); }
     return info;
   }
-  info.error = selfPid
-    ? "自管 winvnc 已 spawn 但 5900 未监听（启动中或失败，看 configDir/logs/winvnc.log）"
-    : "Windows 虚拟屏（虚拟显示驱动 + VNC server）未就绪：跑 ui_env_headless start 拉起自管 VNC（headless 档）";
+  probeFail(info, selfPid ? "win-vnc-starting" : "win-vnc-not-ready");
   return info;
 }
 
 /** 停 Windows 虚拟屏相关自管进程（仅自管 winvnc；bridge 由 env.ts 统一停） */
 export async function winStopHeadless(configDir: string): Promise<string[]> {
   const stopped: string[] = [];
-  if (await winVncKillSelf(configDir)) stopped.push("winvnc(自管)");
+  if (await winVncKillSelf(configDir)) stopped.push(tr("zh-CN", "srv.proc.winvnc-self"));
   await new Promise((r) => setTimeout(r, 500));
   return stopped;
 }
@@ -465,7 +462,7 @@ export async function winRun(cmd: string, env: Record<string, string>, logFile: 
 
 const VNC_PROCS = ["winvnc.exe", "tvnserver.exe", "vncserver.exe", "winvnc4.exe"];
 
-export async function winSystemVncScan(configDir?: string): Promise<SysVncEntry[]> {
+export async function winSystemVncScan(configDir?: string, locale?: string | null): Promise<SysVncEntry[]> {
   const list: SysVncEntry[] = [];
   // 自管便携 winvnc 也跑 winvnc.exe → 单独识别，给出准确的重设说明（写 ini + 自动重启，而非注册表）
   const selfPortable = configDir ? findPortableWinVnc(configDir) : null;
@@ -493,8 +490,8 @@ export async function winSystemVncScan(configDir?: string): Promise<SysVncEntry[
       cmd: name,
       passwordResettable: true,
       passwordNote: isSelf
-        ? "本扩展自管便携 winvnc：重设会重写 ultravnc.ini 并自动重启（立即生效）"
-        : "写 HKLM 注册表（UltraVNC 用其专有 DES 钥匙 / TightVNC 用标准钥匙），需管理员权限；重启该服务后生效",
+        ? tr(locale, "srv.pwd.note-win-self")
+        : tr(locale, "srv.pwd.note-win-registry"),
     });
     break; // 5900 只有一个 owner
   }
@@ -532,7 +529,7 @@ export async function winSystemRdpScan(): Promise<SysRdpEntry[]> {
 
 // ─────────────────────────── deps 检测 / 安装 ───────────────────────────
 
-export async function winCheckDeps(configDir: string): Promise<WinDepsStatus> {
+export async function winCheckDeps(configDir: string, locale?: string | null): Promise<WinDepsStatus> {
   // 交互会话检查（SessionId 对比，与 winProbeDesktop 同逻辑）
   const sessOut = await winPwsh(
     `$my=[System.Diagnostics.Process]::GetCurrentProcess().SessionId; ` +
@@ -554,21 +551,21 @@ export async function winCheckDeps(configDir: string): Promise<WinDepsStatus> {
   const hasBridges = ["vnc-bridge.mjs", "rdp-bridge.mjs"].every((f) => { try { return fs.existsSync(path.join(configDir, f)); } catch { return false; } });
 
   const core = [
-    { bin: "node", label: "Node.js（pi-web 运行环境）", installed: true, manual: "pi-web 自带" },
-    { bin: "winvnc(便携)", label: "VNC server（便携 UltraVNC，自管）", installed: !!portable, manual: `ui_env_deps install 自动下载便携包 → ${cachePath(configDir, "ultravnc")}；或 UI_ENV_WINVNC_EXE 指向已有 winvnc.exe` },
-    { bin: "novnc", label: "noVNC 静态页（浏览器查看层）", installed: hasNovnc, manual: "重新部署扩展（deploy.mjs 拷贝 vendor 副本）" },
-    { bin: "vnc-bridge", label: "VNC/RDP bridge（部署产物）", installed: hasBridges, manual: "重新部署扩展" },
+    { bin: "node", label: tr(locale, "srv.dep.node"), installed: true, manual: tr(locale, "srv.dep.manual.win.node") },
+    { bin: "winvnc(便携)", label: tr(locale, "srv.dep.win.winvnc(便携)"), installed: !!portable, manual: tr(locale, "srv.dep.manual.win.winvnc(便携)", { cache: cachePath(configDir, "ultravnc") }) },
+    { bin: "novnc", label: tr(locale, "srv.dep.novnc"), installed: hasNovnc, manual: tr(locale, "srv.dep.manual.win.novnc") },
+    { bin: "vnc-bridge", label: tr(locale, "srv.dep.vnc-bridge"), installed: hasBridges, manual: tr(locale, "srv.dep.manual.win.vnc-bridge") },
   ];
   const ui = [
-    { bin: "vdd-driver", label: "虚拟显示驱动（无物理屏时出画面）", installed: !!vdd, manual: "已检测到: " + (vdd || "无——setup-windows.ps1 安装 IddSampleDriver/usbmmidd，或 UltraVNC 自带 UVncVirtualDisplay（winvnc.exe -installdriver，需管理员）") },
+    { bin: "vdd-driver", label: tr(locale, "srv.dep.win.vdd-driver"), installed: !!vdd, manual: tr(locale, "srv.dep.manual.win.vdd-driver", { path: vdd || tr(locale, "srv.dep.hint.vdd-absent") }) },
   ];
   const coreMissing = core.filter((c) => !c.installed).map((c) => ({ ...c, group: "core" as const, pkg: null }));
   const uiMissing = ui.filter((c) => !c.installed).map((c) => ({ ...c, group: "ui" as const, pkg: null }));
   const hints: string[] = [];
-  if (!session) hints.push("扩展进程不在交互会话（SessionId 与 explorer 不一致）：GUI 应用无法落桌面，请在用户登录会话内运行 pi-web");
-  if (!portable && !sys) hints.push(`缺 VNC server：ui_env_deps install 自动安装便携 UltraVNC 到 ${cachePath(configDir, "ultravnc")}`);
-  else if (!portable && sys) hints.push(`检测到系统安装 VNC（${sys.path}）：本扩展只复用不接管；建议安装便携版以获得自管能力`);
-  if (!vdd) hints.push("虚拟显示驱动未装（可选）：无物理显示器时需要它出画面");
+  if (!session) hints.push(tr(locale, "srv.dep.win.hint.no-session"));
+  if (!portable && !sys) hints.push(tr(locale, "srv.dep.win.hint.no-vnc", { cache: cachePath(configDir, "ultravnc") }));
+  else if (!portable && sys) hints.push(tr(locale, "srv.dep.win.hint.system-vnc", { path: sys.path }));
+  if (!vdd) hints.push(tr(locale, "srv.dep.win.hint.no-vdd"));
   return {
     os: "windows",
     distro: "Windows",
