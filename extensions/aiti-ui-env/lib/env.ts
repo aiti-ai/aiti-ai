@@ -531,9 +531,10 @@ async function displayHasWm(display: string, authFile?: string): Promise<boolean
     const wid = out.match(/window id #\s*(0x[0-9a-fA-F]+)/)?.[1];
     if (wid) {
       const probe = await runCmd("sh", ["-c", `${pre} ${xprop} -id ${wid} _NET_WM_NAME 2>/dev/null`]).catch(() => "");
-      return !!probe.trim() && !/BadWindow|error/i.test(probe);
+      if (probe.trim() && !/BadWindow|error/i.test(probe)) return true;
     }
-    if (/not found/i.test(out)) return false;
+    // No property, a stale one, or unreadable output: EWMH absence does NOT prove there is no
+    // WM (ICCCM-only WMs like twm never set _NET_SUPPORTING_WM_CHECK) — fall through and scan.
   }
   return (await wmOnDisplay(display)) !== null;
 }
@@ -970,9 +971,12 @@ export async function ensureHeadless(): Promise<boolean> {
     ensureOpenboxMenu(); // openbox root-menu fixup (only fills in when missing; openbox-only concern)
     const wmSel = resolveWm();
     const curWm = await wmOnDisplay(`:${num}`);
-    if (curWm && curWm.comm !== wmSel.wm) {
-      try { process.kill(curWm.pid, "SIGTERM"); } catch { /* already gone */ }
-      try { fs.appendFileSync(logFile, `[${new Date().toISOString()}] WM switch on :${num}: stopped ${curWm.comm}, starting ${wmSel.wm}${wmSel.fallbackReason ? ` (${wmSel.fallbackReason})` : ""}\n`); } catch { /* ignore */ }
+    // Only a whitelisted WM is ours to replace. A WM the user started by hand (i3, marco,
+    // twm, …) stays: it is detected by displayHasWm() below, so no spawn happens either.
+    const curIsWhitelisted = !!curWm && (WM_CHOICES as readonly string[]).includes(curWm.comm);
+    if (curIsWhitelisted && curWm!.comm !== wmSel.wm) {
+      try { process.kill(curWm!.pid, "SIGTERM"); } catch { /* already gone */ }
+      try { fs.appendFileSync(logFile, `[${new Date().toISOString()}] WM switch on :${num}: stopped ${curWm!.comm}, starting ${wmSel.wm}${wmSel.fallbackReason ? ` (${wmSel.fallbackReason})` : ""}\n`); } catch { /* ignore */ }
       await sleep(600);
     }
     if (!(await displayHasWm(`:${num}`, authFile))) {
@@ -2379,8 +2383,11 @@ export async function checkDeps(refresh = false, locale?: string | null): Promis
   const wmSel = resolveWm();
   let activeWm: string | null = null;
   for (const cand of wmCandidates(wmSel.wm)) { if (await resolveBin(cand)) { activeWm = cand; break; } }
+  // When nothing in the chain is installed, keep the requested WM and openbox visible so the
+  // panel actually reports the missing window manager instead of silently checking no WM at all.
+  const wmToCheck = activeWm ? [activeWm] : [wmSel.wm, "openbox"];
   for (const d of DEPS) {
-    if ((WM_CHOICES as readonly string[]).includes(d.bin) && d.bin !== activeWm) continue;
+    if ((WM_CHOICES as readonly string[]).includes(d.bin) && !wmToCheck.includes(d.bin)) continue;
     const installed = !!(await resolveBin(d.bin));
     items.push({ bin: d.bin, label: tr(locale, "srv.dep." + d.bin), group: d.group, installed, pkg: plat.pkgMgr ? (d.pkg[plat.pkgMgr] || null) : null, manual: trOr(locale, "srv.dep.manual." + d.bin, d.manual) });
   }
