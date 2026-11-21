@@ -679,10 +679,10 @@ function renderUiEnvDialog(face?: string) {
               ["Xauthority", headless.xauthority || "—"],
               [t("AT-SPI 总线"), headless.dbusBus || "—"],
               [t("窗口管理器"), headless.wm ? (headless.wm === "external" ? t("非白名单 WM 在跑") : headless.wm + " " + t("在跑")) : t("无"), headless.wm ? C.ok : C.warn],
-              ...(data.wm ? [[t("WM 配置"),
-                data.wm.requested + (data.wm.resolved && data.wm.resolved !== data.wm.requested ? " → " + data.wm.resolved : "") +
-                (data.wm.installedChain?.length ? "" : " " + t("（无可用 WM）")),
-                data.wm.resolved ? C.ok : C.warn]] : []),
+              ...(d.wm ? [[t("WM 配置"),
+                String(d.wm.requested ?? "?") + (d.wm.resolved && d.wm.resolved !== d.wm.requested ? " → " + d.wm.resolved : "") +
+                (d.wm.installedChain?.length ? "" : " " + t("（无可用 WM）")),
+                d.wm.resolved ? C.ok : C.warn]] : []),
               [t("分辨率"), fmtRes(headless.resolution)],
               ["VNC TCP", headless.vnc?.tcp ? `:${headless.vnc.tcpPort}` : t("未起"), headless.vnc?.tcp ? C.ok : C.warn],
               ["VNC web", headless.vnc?.web ? `:${headless.vnc.webPort}` : t("未起"), headless.vnc?.web ? C.ok : C.warn],
