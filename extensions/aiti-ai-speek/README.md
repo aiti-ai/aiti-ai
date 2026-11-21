@@ -33,6 +33,21 @@ The local service listens on `127.0.0.1:8768` (auto 8769-8778 when busy) and spe
 progress/log/voice management live in the extension settings panel; `skills/tts-local-install`
 documents the one-command workflow (`bash server/tts-service/start-tts.sh start`).
 
+## Cross-extension API
+
+Other extensions can speak a one-off message or reuse the local engine without bootstrapping it
+themselves:
+
+```js
+// browser side (one-shot announcement; opens the settings panel if the service fails to start)
+await ctx.getExtService("aiti-ai-speek.speak").speak("Build finished", { engine: "local" });
+// backend side (synthesize into the cache, then read the bytes)
+const tts = ctx.services.get("aiti-ai-speek.tts");
+await tts.ensure({});
+const { items } = await tts.synthesize({ texts: ["Hello"] });
+const audio = await tts.readCached(items[0].key); // { buffer, ext, contentType }
+```
+
 ## Documentation
 
 - Documentation (English): <https://aiti.pw/en/extensions/aiti-ai-speek.html>

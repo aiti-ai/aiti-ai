@@ -22,6 +22,8 @@ import { regSvc, t } from "./host-shim";
 // 薄壳内联最小状态（点击后与重 chunk 的 speaker.store 经 loadHeavy 同步）
 const shell = { followOn: false, pendingOn: false, apiUrlSet: false, features: {} };
 let heavyPromise = null;
+/** Live status getter from the heavy chunk (null until it loads). */
+let heavyStatus = null;
 async function loadHeavy(ctx) {
   if (!heavyPromise) {
     heavyPromise = import("./speaker").then((sp) => {
@@ -34,6 +36,7 @@ async function loadHeavy(ctx) {
       return sp;
     }).then((sp) => import("./components").then((m) => {
       m.initHeavySlots(ctx); // 重注册：HeavyFollowToggle 接管 + bar/settings/read 就位
+      heavyStatus = sp.speakStatus;
       return { sp, m };
     }));
   }
@@ -52,6 +55,38 @@ export default function register(ctx) {
       .then(({ sp }) => sp.readFileText(payload))
       .catch((e) => ({ ok: false, error: String(e && e.message ? e.message : e) })),
   });
+
+  // Cross-extension client service: "temporarily speak this" one-shot announcements.
+  //   await ctx.getExtService("aiti-ai-speek.speak").speak("build finished", { engine: "local" })
+  // Registration stays in the thin shell so consumers can call it before anything is loaded;
+  // the heavy chunk is imported on first use, and `speak` bootstraps the local service on
+  // demand (engine "local"). If that startup fails, the settings panel opens automatically.
+  const speakApi = {
+    speak: (text, opts) => loadHeavy(ctx)
+      .then(({ sp }) => sp.speakOnce(text, opts))
+      .catch((e) => ({ ok: false, code: "load-failed", error: String(e && e.message ? e.message : e) })),
+    ensure: (opts) => loadHeavy(ctx)
+      .then(({ sp }) => sp.ensureSpeak(opts))
+      .catch((e) => ({ ok: false, code: "load-failed", error: String(e && e.message ? e.message : e) })),
+    status: () => (heavyStatus ? heavyStatus() : { loaded: false, followOn: shell.followOn }),
+    stop: () => loadHeavy(ctx).then(({ sp }) => { sp.stopAnnounce(); return { ok: true }; }),
+    /** Temporarily turn the read-aloud mode on/off (same state as the 🔊 toolbar toggle). */
+    follow: (on) => loadHeavy(ctx).then(({ sp }) => {
+      sp.setFollow(!!on);
+      const st = sp.getState();
+      return { ok: true, followOn: !!st.followOn, playing: !!st.playing };
+    }),
+    openSettings: () => loadHeavy(ctx).then(({ m }) => { m.openSettings(true); return { ok: true }; }),
+  };
+  regSvc("aiti-ai-speek.speak", speakApi);
+  // Host round-trip self-check (fails loudly if the registration/prefix contract breaks).
+  try {
+    const self = typeof ctx.getExtService === "function" ? ctx.getExtService("aiti-ai-speek.speak") : null;
+    if (self) console.log("[aiti-ai-speek] client service ready: aiti-ai-speek.speak", Object.keys(self));
+    else console.warn("[aiti-ai-speek] client service aiti-ai-speek.speak 未就绪（宿主 getExtService 返回空）");
+  } catch { /* older host */ }
+  // Diagnostics mirror only — never a cross-extension contract (consumers use ctx.getExtService).
+  try { (window as unknown as Record<string, unknown>).__aitiSpeak = speakApi; } catch { /* non-DOM */ }
 
   // features：薄壳期收集（重 chunk 加载时经 setSettings 透传）
   const syncFeatures = () => {

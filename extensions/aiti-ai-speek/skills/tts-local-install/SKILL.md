@@ -49,6 +49,33 @@ curl -s -X POST .../tts/control -H 'content-type: application/json' -d '{"action
 curl -s .../tts/voices
 ```
 
+## 跨扩展接口（别的扩展要“临时说一句话”）
+
+其它扩展**不需要**自己启动服务或装依赖，直接调用本扩展提供的服务：
+
+```js
+// 浏览器端（一次性播报；默认跟随用户当前引擎）
+const speak = ctx.getExtService("aiti-ai-speek.speak");
+await speak.speak("构建完成了", { engine: "local" });   // 需要本地音质时指定 local
+await speak.ensure({ engine: "local", waitMs: 15000 }); // 只准备/启动，不朗读
+speak.status();                                         // { engine, local: { status, provider }, ... }
+speak.stop();                                           // 停止当前播报（跟读会自动恢复）
+speak.follow(true);                                     // 临时打开/关闭跟读模式（等价 🔊 开关）
+speak.openSettings();                                   // 打开设置面板（排障入口）
+```
+
+```js
+// 服务端（后端合成，例如视频/播客流水线）
+const tts = ctx.services.get("aiti-ai-speek.tts");
+await tts.ensure({});                                  // 探测→不通则自举+启动
+const { items } = await tts.synthesize({ texts: ["第一句", "第二句"], voice: "hojo_zh_f_01" });
+const file = await tts.readCached(items[0].key);        // { buffer, ext, contentType } | null
+```
+
+- **启动失败会自动弹出设置面板**（`speak()`/`ensure()` 返回 `{ ok:false, code:"service-start-failed", error }`），面板里有阶段进度、日志和可复现命令——不要让用户去命令行猜。
+- 一次性播报会短暂暂停正在进行的跟读，播完自动恢复；不会改动用户的音色/引擎设置。
+- 键名必须是 `<extId>.<name>`（宿主 anti-impersonation 校验）。
+
 ## 环境要求与已知约束
 
 | 项 | 说明 |
