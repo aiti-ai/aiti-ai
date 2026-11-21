@@ -1006,6 +1006,54 @@ function previewValue(value) {
   return `${value.slice(0, 6)}\u2026${value.slice(-4)}`;
 }
 
+// src/encode.ts
+var encoder = new TextEncoder();
+var MIN_VARIANT_BYTES = 16;
+function bytesToHex(bytes) {
+  let out = "";
+  for (let i = 0; i < bytes.length; i++) out += bytes[i].toString(16).padStart(2, "0");
+  return out;
+}
+var B64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+function bytesToBase64(bytes) {
+  let out = "";
+  for (let i = 0; i < bytes.length; i += 3) {
+    const b0 = bytes[i];
+    const b1 = bytes[i + 1];
+    const b2 = bytes[i + 2];
+    out += B64_ALPHABET[b0 >> 2];
+    out += B64_ALPHABET[(b0 & 3) << 4 | (b1 ?? 0) >> 4];
+    out += b1 === void 0 ? "=" : B64_ALPHABET[(b1 & 15) << 2 | (b2 ?? 0) >> 6];
+    out += b2 === void 0 ? "=" : B64_ALPHABET[b2 & 63];
+  }
+  return out;
+}
+function foldLines(s, cols) {
+  const lines = [];
+  for (let i = 0; i < s.length; i += cols) lines.push(s.slice(i, i + cols));
+  return lines.join("\n");
+}
+function encodedVariants(value) {
+  const bytes = encoder.encode(value);
+  if (bytes.length < MIN_VARIANT_BYTES) return [];
+  const b64 = bytesToBase64(bytes);
+  const b64url = b64.replace(/\+/g, "-").replace(/\//g, "_");
+  const hex = bytesToHex(bytes);
+  const out = /* @__PURE__ */ new Set([
+    b64,
+    b64.replace(/=+$/, ""),
+    b64url,
+    b64url.replace(/=+$/, ""),
+    hex,
+    hex.toUpperCase(),
+    foldLines(b64, 76),
+    foldLines(b64, 64)
+  ]);
+  const pct = encodeURIComponent(value);
+  if (pct !== value) out.add(pct);
+  return [...out];
+}
+
 // src/mask.ts
 var MIN_REDACT_LENGTH = 6;
 function stringLeaves(node, out = []) {
@@ -1016,6 +1064,7 @@ function stringLeaves(node, out = []) {
 function redactForms(value) {
   const trimmed = value.trim();
   const forms = /* @__PURE__ */ new Set([value, trimmed]);
+  for (const variant of encodedVariants(trimmed)) forms.add(variant);
   let parts = null;
   if (/^[[{]/.test(trimmed)) {
     try {
@@ -1348,13 +1397,15 @@ function auditPayload(payload, registry) {
   let placeholders = 0;
   let leaks = 0;
   const placeholderRe = new RegExp(PLACEHOLDER_RE.source, "g");
+  const probes = registry.entries().filter((e) => e.value.length >= MIN_REDACT_LENGTH).map((e) => ({ label: e.label, forms: [e.value, ...encodedVariants(e.value)] }));
   const walk = (node) => {
     if (typeof node === "string") {
       strings++;
-      for (const entry of registry.entries()) {
-        if (entry.value.length >= MIN_REDACT_LENGTH && node.includes(entry.value)) {
+      for (const probe of probes) {
+        if (probe.forms.some((form) => node.includes(form))) {
           leaks++;
-          leaksByLabel.set(entry.label, (leaksByLabel.get(entry.label) ?? 0) + 1);
+          leaksByLabel.set(probe.label, (leaksByLabel.get(probe.label) ?? 0) + 1);
+          break;
         }
       }
       placeholders += (node.match(placeholderRe) ?? []).length;
@@ -2979,6 +3030,7 @@ export {
   LANDING_MODES,
   MASK_LANDING_MODES,
   MIN_REDACT_LENGTH,
+  MIN_VARIANT_BYTES,
   PERSIST_FILE_NAME,
   PLACEHOLDER_HASH_LEN,
   PLACEHOLDER_PREFIX,
@@ -3002,6 +3054,7 @@ export {
   deepMapStrings,
   describePasswordWeakness,
   describePlaceholder,
+  encodedVariants,
   entropy,
   extractStructuredSecrets,
   findPlaceholders,
