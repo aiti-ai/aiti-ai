@@ -297,6 +297,122 @@ function VaultPanel() {
         } })));
 }
 
+// ---------------------------------------------------------------------------
+// Pre-send preflight: the message is checked in the browser before it leaves the
+// composer. Detection here is deliberately stricter than auto-masking (a human
+// confirms), and "mask" encrypts into the vault first, so the model never sees
+// the plaintext — not in the session log, not in the provider payload.
+// ---------------------------------------------------------------------------
+
+var PF_OFF_KEY = "aiti-secret-vault:preflight-off";
+
+function preflightEnabled() {
+  try { return window.localStorage.getItem(PF_OFF_KEY) !== "1"; } catch (e) { return true; }
+}
+
+/** Three-way decision dialog. Resolves: "mask" | "raw" | "cancel". */
+function preflightDialog(candidates, locked) {
+  return new Promise(function (resolve) {
+    var settled = false;
+    var dlg = document.createElement("dialog");
+    function done(v) {
+      if (settled) return;
+      settled = true;
+      try { dlg.close(); } catch (e) {}
+      try { dlg.remove(); } catch (e) {}
+      resolve(v);
+    }
+    var wrap = { padding: "18px 20px", fontFamily: "inherit", fontSize: 13, color: "var(--text,#e8e8ec)",
+      background: "var(--bg-panel,#1c1c20)", border: "1px solid var(--border,#3a3a42)", borderRadius: 12,
+      maxWidth: "min(560px, 92vw)", minWidth: "min(360px, 92vw)" };
+    var row = { display: "flex", alignItems: "flex-start", gap: 8, padding: "4px 0" };
+    var mono = { fontFamily: "var(--font-mono, ui-monospace, monospace)", fontSize: 12,
+      background: "var(--bg-hover,#2a2a30)", borderRadius: 4, padding: "1px 6px" };
+    var mkBtn = function (label, primary, on) {
+      var b = document.createElement("button");
+      b.textContent = label;
+      b.style.cssText = "padding:6px 14px;border-radius:6px;font-size:13px;cursor:pointer;font-family:inherit;" +
+        (primary ? "background:var(--accent,#4f8ef7);border:1px solid transparent;color:#fff;font-weight:600;"
+                 : "background:var(--bg-hover,#2a2a30);border:1px solid var(--border,#3a3a42);color:var(--text,#e8e8ec);");
+      b.addEventListener("click", on);
+      return b;
+    };
+
+    var box = document.createElement("div");
+    box.setAttribute("style", ""); // placeholder, styles applied below
+    Object.assign(box.style, wrap);
+
+    var title = document.createElement("div");
+    title.textContent = t("sv.pf.title");
+    title.style.cssText = "font-size:15px;font-weight:700;margin-bottom:6px;";
+    box.appendChild(title);
+
+    var hint = document.createElement("div");
+    hint.textContent = locked ? t("sv.pf.locked") : t("sv.pf.hint");
+    hint.style.cssText = "color:var(--text-muted,#9a9aa4);line-height:1.5;margin-bottom:8px;";
+    box.appendChild(hint);
+
+    var list = document.createElement("div");
+    list.style.cssText = "max-height:34vh;overflow:auto;margin-bottom:10px;";
+    candidates.forEach(function (c) {
+      var r = document.createElement("div");
+      r.setAttribute("style", "");
+      Object.assign(r.style, row);
+      var dot = document.createElement("span");
+      dot.textContent = c.confidence === "high" ? "●" : "○";
+      dot.title = c.confidence === "high" ? t("sv.pf.high") : t("sv.pf.medium");
+      dot.style.cssText = "color:" + (c.confidence === "high" ? "var(--danger,#ef4444)" : "var(--warn,#f59e0b)") + ";";
+      var pv = document.createElement("code");
+      pv.textContent = c.preview;
+      Object.assign(pv.style, mono);
+      var lab = document.createElement("span");
+      lab.textContent = c.label + (c.stored ? " · " + t("sv.pf.stored") : "");
+      lab.style.cssText = "color:var(--text-muted,#9a9aa4);font-size:11.5px;";
+      r.appendChild(dot); r.appendChild(pv); r.appendChild(lab);
+      list.appendChild(r);
+    });
+    box.appendChild(list);
+
+    var foot = document.createElement("div");
+    foot.style.cssText = "display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;";
+    foot.appendChild(mkBtn(t("sv.pf.cancel"), false, function () { done("cancel"); }));
+    foot.appendChild(mkBtn(t("sv.pf.raw"), false, function () { done("raw"); }));
+    foot.appendChild(mkBtn(t("sv.pf.mask"), true, function () { done("mask"); }));
+    box.appendChild(foot);
+    dlg.appendChild(box);
+
+    dlg.addEventListener("cancel", function (e) { e.preventDefault(); done("cancel"); });
+    document.body.appendChild(dlg);
+    try { dlg.showModal(); } catch (e) { done("cancel"); }
+  });
+}
+
+function pfPost(path, body) {
+  return fetch(API(path), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  }).then(function (r) { return r.json(); });
+}
+
+/** Composer pre-send gate: returns replacement text, or {cancel}. */
+async function preflightGate(text) {
+  if (!preflightEnabled() || !text || text.length < 8) return undefined;
+  if (text.indexOf("rsec_") >= 0) return undefined; // already masked
+  var scan;
+  try { scan = await pfPost("/preflight/scan", { text: text, strict: true }); } catch (e) { return undefined; }
+  if (!scan || !scan.ok || !scan.candidates || scan.candidates.length === 0) return undefined;
+  var decision = await preflightDialog(scan.candidates, !!scan.locked);
+  if (decision === "cancel") return { cancel: true };
+  if (decision !== "mask") return undefined;
+  try {
+    var res = await pfPost("/preflight/mask", { text: text, indices: scan.candidates.map(function (c) { return c.index; }), strict: true });
+    if (res && res.ok && typeof res.text === "string") return { text: res.text };
+  } catch (e) {}
+  // Masking failed (locked / write error): do not silently send plaintext.
+  return { cancel: true };
+}
+
 function register(ctx) {
   __setCtx(ctx);
   ctx.registerItems("toolbar", [{
@@ -309,6 +425,13 @@ function register(ctx) {
     },
   }]);
   ctx.registerItems("dialogs", [{ id: "aiti-secret-vault-panel", render: VaultPanel }]);
+  // Pre-send gate (composer contract v0.3 onBeforeSend): stricter detection than
+  // auto-masking, human decision, vault-first masking.
+  try {
+    if (typeof ctx.registerComposerEnhancement === "function") {
+      ctx.registerComposerEnhancement({ id: "aiti-secret-vault-preflight", onBeforeSend: preflightGate });
+    }
+  } catch (e) {}
   try { console.log("[aiti-secret-vault] management dialog attached (toolbar key icon → dialog)"); } catch (e) {}
 }
 

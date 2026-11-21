@@ -13,7 +13,7 @@
 // All values below are generated fakes, never real credentials.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { scan } from "../src/detect.ts";
+import { previewValue, scan, scanCandidates } from "../src/detect.ts";
 
 // Deterministic PRNG (mulberry32) so failures reproduce.
 function rng(seed) {
@@ -271,4 +271,34 @@ test("prose and code that must not be masked", () => {
   ];
   const hits = negatives.filter((t) => scan(t).length > 0);
   assert.deepEqual(hits, []);
+});
+
+test("preflight candidates: auto hits are high, loose guesses are medium", () => {
+  const KEY = "Zx8Kp2Lm9Qr4Tv7Wn3Yb6Cd1";
+  // auto-detectable → high, and strict must not duplicate it
+  const high = scanCandidates(`token ${KEY}`, { strict: true });
+  assert.equal(high.length, 1);
+  assert.equal(high[0].confidence, "high");
+
+  // auto-mode refuses short keyword-bound values; the confirmed path offers them
+  for (const text of ["token ab12cd", "我的密钥 q7Kd92", "key: 9f8e7d", "password 123456"]) {
+    assert.equal(scanCandidates(text, { strict: false }).length, 0, text);
+    const got = scanCandidates(text, { strict: true });
+    assert.equal(got.length, 1, text);
+    assert.equal(got[0].confidence, "medium", text);
+  }
+
+  // auto-mode refuses short standalone tokens too
+  assert.equal(scanCandidates("Xy7Kq2mZ9pRt", { strict: false }).length, 0);
+  assert.equal(scanCandidates("Xy7Kq2mZ9pRt", { strict: true })[0].confidence, "medium");
+
+  // prose and non-credentials stay empty even in strict mode
+  for (const text of ["the token is invalid", "key point is performance", "看下 https://example.com/a/b 这个", "release-2024-12-01-final"]) {
+    assert.deepEqual(scanCandidates(text, { strict: true }), [], text);
+  }
+
+  // previews never carry the value
+  const preview = previewValue(KEY);
+  assert.ok(!preview.includes(KEY));
+  assert.match(preview, /^Zx8Kp2…6Cd1$/);
 });

@@ -30,8 +30,8 @@
     "test": "node --test"
   },
   "dependencies": {
-    "@aiti-ai/secret-mask-core": "^0.3.0",
-    "@aiti-ai/secret-vault-core": "^0.2.0"
+    "@aiti-ai/secret-mask-core": "^0.4.0",
+    "@aiti-ai/secret-vault-core": "^0.3.0"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"

@@ -32,6 +32,13 @@ export interface ComposerEnhancement {
   /** Last step before send (before clearing). May return replacement text (chained); returning void/undefined = pass the original text through. */
   onSubmit?(text: string, imageCount: number): { text: string } | void;
   /**
+   * Asynchronous pre-send gate: runs BEFORE onSubmit, may await the user (a
+   * confirmation dialog) and may either replace the text or cancel the send.
+   * The composer keeps its content on cancel, so the user can edit and resend.
+   * Returning void/undefined = pass through. Errors are isolated (send proceeds).
+   */
+  onBeforeSend?(text: string, imageCount: number): Promise<ComposerGateResult | void> | ComposerGateResult | void;
+  /**
    * Called on input × clear (core invokes it before clearInput, with a snapshot of the
    * cleared content). Registered by the queue-keeper extension: it writes the content
    * straight to the recycle bin (trash_direct_add); if unregistered, clearing only
@@ -40,6 +47,14 @@ export interface ComposerEnhancement {
    * extension), the mechanism lives in core (RPC).
    */
   onClearToTrash?(snapshot: ComposerSnapshot): void;
+}
+
+/** What a pre-send gate decided. `cancel` keeps the composer untouched. */
+export interface ComposerGateResult {
+  /** Replacement text (e.g. credential masked to a vault placeholder). */
+  text?: string;
+  /** Abort this send; the composer content is preserved. */
+  cancel?: boolean;
 }
 
 /** The controlled write entry point core provides to the enhancement flow (held via the bus; assembled by ChatInput). */

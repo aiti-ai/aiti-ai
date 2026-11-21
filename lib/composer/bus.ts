@@ -12,11 +12,12 @@
  */
 import type {
   ComposerEnhancement,
+  ComposerGateResult,
   ComposerSnapshot,
   ComposerWriter,
 } from "./types.ts";
 
-export type { ComposerEnhancement, ComposerSnapshot, ComposerWriter };
+export type { ComposerEnhancement, ComposerGateResult, ComposerSnapshot, ComposerWriter };
 
 const enhancers: ComposerEnhancement[] = [];
 let writer: ComposerWriter | null = null;
@@ -138,6 +139,29 @@ export function runComposerSubmit(text: string, imageCount: number): string {
     }
   }
   return current;
+}
+
+/**
+ * Asynchronous pre-send gate: each enhancer may await the user (confirmation
+ * dialog) before the message leaves the composer. Sequential in registration
+ * order, so a later link sees the text a previous link produced. A link that
+ * throws is isolated (console.warn) and the send continues with the text it was
+ * given — a broken confirmation must never block sending forever.
+ */
+export async function runComposerGate(text: string, imageCount: number): Promise<{ text: string; cancel: boolean }> {
+  let current = text;
+  for (const enh of enhancers) {
+    if (!enh.onBeforeSend) continue;
+    try {
+      const out = (await enh.onBeforeSend(current, imageCount)) as ComposerGateResult | void;
+      if (!out) continue;
+      if (out.cancel === true) return { text: current, cancel: true };
+      if (typeof out.text === "string") current = out.text;
+    } catch (e) {
+      console.warn(`[composer] enhancement "${enh.id}" onBeforeSend failed:`, e);
+    }
+  }
+  return { text: current, cancel: false };
 }
 
 /** Test helper: clear all state (never call from production code). */

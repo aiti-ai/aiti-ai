@@ -46,6 +46,24 @@ export interface UiAlertOptions {
   confirmText?: string;
 }
 
+export interface UiChoiceItem {
+  /** Resolved value for this button ("cancel" is normally null/default). */
+  id: string;
+  label: string;
+  /** Visual weight: primary = accent fill, danger = red fill, default = plain. */
+  tone?: "primary" | "danger" | "default";
+}
+
+export interface UiChoiceOptions {
+  title?: string;
+  message?: string;
+  detail?: string;
+  /** Buttons in display order (right-aligned). */
+  choices: UiChoiceItem[];
+  /** Esc / backdrop behaviour: resolved value for the "cancel" path (default null). */
+  cancelId?: string | null;
+}
+
 export interface UiPromptOptions {
   title?: string;
   message?: string;
@@ -124,7 +142,7 @@ const btnBase = {
 } as const;
 
 interface PendingSpec {
-  kind: "confirm" | "alert" | "prompt";
+  kind: "confirm" | "alert" | "prompt" | "choice";
   opts: any;
   resolve: (v: unknown) => void;
 }
@@ -234,7 +252,7 @@ function buildBody(panel: HTMLDivElement, spec: PendingSpec, finish: (v: unknown
   head.appendChild(icon);
   const titleEl = document.createElement("div");
   titleEl.style.cssText = "flex:1;min-width:0;font-size:15px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
-  titleEl.textContent = o.title || (spec.kind === "confirm" ? (o.danger ? "危险操作确认" : "确认操作") : spec.kind === "prompt" ? "输入" : "提示");
+  titleEl.textContent = o.title || (spec.kind === "confirm" ? (o.danger ? "危险操作确认" : "确认操作") : spec.kind === "prompt" ? "输入" : spec.kind === "choice" ? "请选择" : "提示");
   head.appendChild(titleEl);
   panel.appendChild(head);
 
@@ -286,11 +304,17 @@ function buildBody(panel: HTMLDivElement, spec: PendingSpec, finish: (v: unknown
     foot.appendChild(b);
     return b;
   };
-  if (spec.kind === "alert") {
+  if (spec.kind === "choice") {
+    const items: UiChoiceItem[] = Array.isArray(o.choices) ? o.choices : [];
+    for (const item of items) {
+      mk(item.label || item.id, item.tone === "primary", item.tone === "danger", () => finish(item.id));
+    }
+    if (items.length === 0) finish(o.cancelId ?? null);
+  } else if (spec.kind === "alert") {
     const ok = mk(o.confirmText || "确定", true, false, () => finish(undefined));
     (ok as any).__primary = true;
   } else {
-    mk(o.cancelText || "取消", false, false, () => finish(spec.kind === "prompt" ? null : false));
+    mk(o.cancelText || "取消", false, false, () => finish(spec.kind === "prompt" ? null : spec.kind === "choice" ? (o.cancelId ?? null) : false));
     const ok = mk(o.confirmText || (spec.kind === "confirm" && o.danger ? "确认执行" : "确定"), true, !!(spec.kind === "confirm" && o.danger), () =>
       finish(spec.kind === "prompt" ? (input && o.required && !input.value.trim() ? undefined : input!.value) : true));
     (ok as any).__primary = true;
@@ -299,7 +323,7 @@ function buildBody(panel: HTMLDivElement, spec: PendingSpec, finish: (v: unknown
 
   // 键盘：Esc=取消；Enter=确认（焦点在非按钮元素时）
   panel.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") { e.stopPropagation(); finish(spec.kind === "prompt" ? null : spec.kind === "confirm" ? false : undefined); }
+    if (e.key === "Escape") { e.stopPropagation(); finish(spec.kind === "prompt" || spec.kind === "choice" ? null : spec.kind === "confirm" ? false : undefined); }
     else if (e.key === "Enter" && !(e.target instanceof HTMLButtonElement)) {
       e.preventDefault();
       (foot.querySelector("button") ? Array.from(foot.querySelectorAll("button")).at(-1) : null)?.click();
@@ -326,7 +350,7 @@ function showDialog(spec: PendingSpec, done: () => void) {
   try {
     (overlay as any).addEventListener?.("cancel", (e: any) => {
       try { e?.preventDefault?.(); } catch {}
-      finish(spec.kind === "prompt" ? null : spec.kind === "confirm" ? false : undefined);
+      finish(spec.kind === "prompt" || spec.kind === "choice" ? null : spec.kind === "confirm" ? false : undefined);
     });
   } catch { /* no event system in DOM stubs */ }
   const input = buildBody(panel, spec, finish);
@@ -360,4 +384,13 @@ export function uiAlert(opts: UiAlertOptions | string): Promise<void> {
 export function uiPrompt(opts: UiPromptOptions | string): Promise<string | null> {
   const o = typeof opts === "string" ? { message: opts } : opts;
   return enqueue<string | null>("prompt", o);
+}
+
+/**
+ * Multi-choice dialog (three-way decisions such as mask / send as-is / cancel).
+ * Clicking an item resolves its id; Esc or the mask resolves `cancelId` (default
+ * null). One dialog at a time (queued internally).
+ */
+export function uiChoice(opts: UiChoiceOptions): Promise<string | null> {
+  return enqueue<string | null>("choice", opts);
 }

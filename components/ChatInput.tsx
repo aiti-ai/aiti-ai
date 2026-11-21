@@ -34,7 +34,7 @@ import {
   type AtQueryMatch, type FileIndexEntry,
 } from "@/lib/file-fuzzy";
 import {
-  emitComposerChange, emitComposerKeyChange, emitComposerClearToTrash, runComposerSubmit,
+  emitComposerChange, emitComposerKeyChange, emitComposerClearToTrash, runComposerSubmit, runComposerGate,
   setComposerWriter, setComposerTrashWriter, subscribeComposerEnhancers, getComposerEnhancersVersion,
 } from "@/lib/composer/bus";
 import type { QueuePanelActions, QueuePanelProps } from "@/lib/composer/queue-api";
@@ -2816,8 +2816,13 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     // sendQueued, whose `!` guard sends shell drafts back here; the fork pipeline
     // below then applies to the admitted `!` draft too).
     if (isStreaming && !(msg.startsWith("!") && !attachedImages.length)) return;
+    // Pre-send gate (async): an enhancer may await the user (e.g. "this looks like
+    // a credential — mask / send as-is / cancel"). Cancelling keeps the composer
+    // untouched so the user can edit instead of losing the draft.
+    const gate = await runComposerGate(msg, attachedImages.length);
+    if (gate.cancel) return;
     // Composer enhancement contract: pre-send chained hooks → extension chat hooks (the existing [element N]/[answer N]/[error N] replacement)
-    const submittedMsg = runComposerSubmit(msg, attachedImages.length);
+    const submittedMsg = runComposerSubmit(gate.text, attachedImages.length);
     const finalMsg = applyChatHooks(submittedMsg);
     onSend(finalMsg, attachedImages.length ? attachedImages : undefined, attachedFiles.length ? attachedFiles : undefined);
     setAttachedFiles([]);

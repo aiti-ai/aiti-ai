@@ -367,3 +367,37 @@ test("incident regression: chat phrasings reach the vault", async () => {
   assert.ok(!JSON.stringify(messages).includes(arkKey));
   assert.ok(!JSON.stringify(messages).includes(opaque));
 });
+
+// The web pre-send gate stores the value and substitutes the *stable* vault
+// placeholder. This process never saw that mount, so the input/context hooks
+// must resolve it from the vault on demand — otherwise the guard (correctly)
+// refuses to run with an unmounted token.
+test("preflight tokens: a web-masked message mounts from the vault on arrival", async () => {
+  const cwd = join(HOME, "proj-preflight");
+  mkdirSync(cwd, { recursive: true });
+  writeSettings([]);
+  const factory = await loadExtension();
+  const host = makeHost();
+  await factory(host.pi);
+  const ctx = makeCtx(cwd);
+  await host.run("session_start", { reason: "startup" }, ctx);
+  await tick();
+
+  const { VaultStore } = await import("@aiti-ai/secret-vault-core");
+  const { preflightMask } = await import("@aiti-ai/secret-vault-core");
+  const store = new VaultStore({ cwd });
+  const secret = "ark-7f7f7f7f-1111-4222-8333-944455556666-abc1";
+  const masked = preflightMask(store, `看下这个 ${secret} 能用吗`, [0]);
+  assert.ok(!masked.text.includes(secret));
+  const token = masked.text.match(/rsec_[0-9a-f]{8}/)?.[0];
+  assert.ok(token, masked.text);
+
+  // arriving message: hook must mount the alias behind the stable token
+  await host.run("input", { text: masked.text, source: "interactive" }, ctx);
+  const call = await host.run("tool_call", { toolName: "bash", input: { command: `curl -H "x-key: ${token}"` } }, ctx);
+  assert.equal(call, undefined, "guard no longer blocks the token");
+  const restored = `curl -H "x-key: ${token}"`;
+  const input = { command: restored };
+  await host.run("tool_call", { toolName: "bash", input }, ctx);
+  assert.ok(input.command.includes(secret), "token restored to the real value");
+});
