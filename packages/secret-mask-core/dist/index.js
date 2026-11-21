@@ -892,7 +892,17 @@ function relaxedValue(v) {
   if (!/\d/.test(v) && /^[a-z][a-z_-]*$/.test(v)) return false;
   return true;
 }
+function keywordCandidateValue(v) {
+  if (v.length < 6) return false;
+  if (!plausibleSecret(v) || placeholderShaped(v)) return false;
+  if (NOT_CREDENTIAL.test(v)) return false;
+  if (/[|#]/.test(v)) return false;
+  return true;
+}
 var VALUE_BODY_MIN6 = VALUE_BODY.replace("{7,299}", "{5,299}");
+var SYM_ASSIGN_SEP = String.raw`(?:[ \t]{0,5}(?::=|=>|->|→|[=:：]{1,3})[ \t]{0,3}["'\u0060“”‘’「」『』【】]?[ \t]{0,3})`;
+var CJK_KEYWORD_ALT = String.raw`(?:密码|密钥|秘钥|口令|凭证|凭据|私钥|公钥|通行码|授权码|访问密钥|访问令牌|签名密钥|加密密钥|パスワード|トークン|秘密鍵|비밀번호|토큰|пароль)`;
+var TOKEN_BODY_MIN6 = String.raw`((?:[^\s"'\u0060;,(){}<>[\]\\，。、；：！？“”‘’（）「」『』【】](?:[^\s"'\u0060;,(){}<>[\]\\，。、；：！？“”‘’（）「」『』【】]|\\(?![nrt])){5,299}))`;
 var RELAXED_CONTEXT_RULES = [
   {
     id: "candidate-keyword",
@@ -911,6 +921,32 @@ var RELAXED_CONTEXT_RULES = [
     pattern: new RegExp(`${KEYWORD_ALT}${WEAK_SEP}${VALUE_BODY_MIN6}${VALUE_TAIL}`, "gi"),
     group: 1,
     verify: relaxedValue,
+    before: keywordBoundary,
+    source: GITLEAKS
+  },
+  {
+    id: "candidate-keyword-symbol",
+    label: "SECRET",
+    kind: "secret",
+    // explicit operator after the keyword (`密码=thisismycode`): the operator is // cjk-ok
+    // strong evidence, so a lowercase no-digit value is still offered
+    pattern: new RegExp(`${KEYWORD_ALT}${SYM_ASSIGN_SEP}${VALUE_BODY_MIN6}${VALUE_TAIL}`, "gi"),
+    group: 1,
+    verify: keywordCandidateValue,
+    before: keywordBoundary,
+    source: GITLEAKS
+  },
+  {
+    id: "candidate-cjk-keyword-token",
+    label: "SECRET",
+    kind: "secret",
+    // CJK credential word + one token that may start with a symbol
+    // (`密码 thisismycode`, `密码 *ZE6=...`): these words are never ordinary // cjk-ok
+    // nouns, so the shape check is light; CJK-only because English keyword
+    // collisions ("key point", "token is") would flood prose
+    pattern: new RegExp(`${CJK_KEYWORD_ALT}${WEAK_SEP}${TOKEN_BODY_MIN6}${VALUE_TAIL}`, "gi"),
+    group: 1,
+    verify: keywordCandidateValue,
     before: keywordBoundary,
     source: GITLEAKS
   }
