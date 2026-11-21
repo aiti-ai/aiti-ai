@@ -11,7 +11,7 @@
  *   - Agent 管理器（dialogs）：内置/自定义 agent 列表 + 编辑器（执行器接管/新建/删除）
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { __setCtx, apiUrl, createElement, t } from "./host-shim";
 import { SidebarTasksSection } from "./sidebar-tasks";
 
@@ -52,11 +52,24 @@ import { dockIconDecl } from "../../../_shared/dock-icons";
 // dock 头工具条 v3（方案 pi-web-dock-header-toolbar-plan）：face 声明按钮、内容实现命令+状态
 import { useDockCommands, useDockHeaderState, useDockHeaderStateOf, requestDockCommand } from "../../../_shared/ext-float-dock";
 import type { DockHeaderAction } from "../../../_shared/ext-float-dock";
+import { buildTopology, topologyLayers } from "./fleet-topology.mjs";
 
 const FLEET_KEY = "aiti-subagents:fleet";
 // Group collapse state (module-level: shared by the float/dock faces; key = parentSessionFile, all expanded by default)
 const fleetCollapsedGroups = new Set<string>();
 function setFleetOpen(v: boolean) { if (v) openFloat(FLEET_KEY); else closePanel(FLEET_KEY); }
+
+// Fleet view mode: grouped list ("tree", default) vs layered DAG ("graph"; borrow plan §2.2)
+type FleetViewMode = "tree" | "graph";
+let fleetViewMode: FleetViewMode = (() => {
+  try { return localStorage.getItem("pi:subagents:fleet-view") === "graph" ? "graph" : "tree"; } catch { return "tree"; }
+})();
+const fleetViewListeners = new Set<(v: FleetViewMode) => void>();
+function setFleetViewMode(v: FleetViewMode) {
+  fleetViewMode = v;
+  try { localStorage.setItem("pi:subagents:fleet-view", v); } catch { /* private mode */ }
+  for (const l of fleetViewListeners) l(v);
+}
 
 let inspectorOpen = false;
 let activeRunId: string | null = null;
@@ -724,7 +737,14 @@ function FleetBody(props?: { dockItemKey?: string }) {
     const bT = Math.max(...b.runs.map((r) => r.createdAt || 0));
     return bT - aT;
   });
-  const openSession = (file: string) => { try { window.dispatchEvent(new CustomEvent("pi-web:open-session", { detail: { file } })); } catch {} };
+  const openSession = (file: string) => { void openSessionByFile(file); };
+  // tree/graph dual mode (borrow plan §2.2; persisted per install)
+  const [viewMode, setViewModeLocal] = useState<FleetViewMode>(fleetViewMode);
+  useEffect(() => {
+    const l = (v: FleetViewMode) => setViewModeLocal(v);
+    fleetViewListeners.add(l);
+    return () => { fleetViewListeners.delete(l); };
+  }, []);
 
   // dock 头工具条 v3：命令实现 + 状态上报（按钮由 face 声明；跑动数经 count 徽标显示）
   useDockCommands(dockKey, dockKey ? {
@@ -735,12 +755,14 @@ function FleetBody(props?: { dockItemKey?: string }) {
 
   return (
     <>
-      {/* 运行列表（父会话分组树：父会话组头 → 子代理行，对齐上游 TUI fleetView） */}
+      {/* Run list (parent-session grouped tree: group header → subagent rows, aligned with upstream TUI fleetView); graph = layered topology */}
       <div style={{ flex: 1, overflowY: "auto", padding: 6, minHeight: 0 }}>
         {all.length === 0 ? (
           <div style={{ textAlign: "center", color: "var(--text-muted)", padding: 40, fontSize: 12, whiteSpace: "pre-line" }}>
             {t("暂无子代理运行。\n在 AI 会话中调用 subagent 工具，或让模型使用 scout/worker/reviewer。")}
           </div>
+        ) : viewMode === "graph" ? (
+          <FleetGraph runs={all} />
         ) : (
           groupList.map((group) => {
             const runningCount = group.runs.filter((r) => r.status === "running").length;
@@ -821,6 +843,12 @@ function FleetBody(props?: { dockItemKey?: string }) {
       {/* 底部 */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", borderTop: "1px solid var(--border)", fontSize: 11, color: "var(--text-muted)" }}>
         <span style={{ flex: 1 }}>{t("sa.totalRuns", { n: state.runCount })}</span>
+        <span style={{ display: "flex", border: "1px solid var(--border)", borderRadius: 4, overflow: "hidden", flexShrink: 0 }}>
+          <button title={t("分组列表视图")} onClick={() => setFleetViewMode("tree")}
+            style={{ background: viewMode === "tree" ? "var(--bg-hover)" : "none", border: "none", color: viewMode === "tree" ? "var(--text)" : "var(--text-muted)", padding: "1px 8px", fontSize: 11, cursor: "pointer" }}>{t("树")}</button>
+          <button title={t("分层拓扑图（列 = 深度，边 = 父子调用链）")} onClick={() => setFleetViewMode("graph")}
+            style={{ background: viewMode === "graph" ? "var(--bg-hover)" : "none", border: "none", borderLeft: "1px solid var(--border)", color: viewMode === "graph" ? "var(--text)" : "var(--text-muted)", padding: "1px 8px", fontSize: 11, cursor: "pointer" }}>{t("图")}</button>
+        </span>
         <button title={t("刷新")} aria-label={t("刷新")} onClick={() => setReloadKey((k) => k + 1)} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 13, padding: 2 }}>⟳</button>
         <button onClick={() => setAgentsOpen(true)} title={t("管理/自定义 agent 定义")} style={{ background: "none", border: "1px solid var(--border)", color: "var(--text-muted)", borderRadius: 4, padding: "1px 8px", fontSize: 11, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
           {FLEET_ICON(11)}
@@ -833,6 +861,71 @@ function FleetBody(props?: { dockItemKey?: string }) {
         </span>
       </div>
     </>
+  );
+}
+
+/** Topology graph face (§2.2): parentSessionFile chains → layered DAG (column = depth, edge = parent→child call).
+ *  Node = run (status dot + agent + task snippet); click opens the child session via openSessionByFile;
+ *  SVG draws edges only, nodes are DOM. */
+function FleetGraph({ runs }: { runs: FleetRun[] }) {
+  const topology = useMemo(() => buildTopology(runs), [runs]);
+  const layers = useMemo(() => topologyLayers(topology), [topology]);
+  const NODE_W = 196;
+  const NODE_H = 48;
+  const GAP_X = 34;
+  const GAP_Y = 10;
+  const pos = new Map<FleetRun, { x: number; y: number }>();
+  const totalH = Math.max(...layers.map((l) => l.length * (NODE_H + GAP_Y)), NODE_H + 4);
+  layers.forEach((layer, i) => {
+    let y = Math.max(0, (totalH - layer.length * (NODE_H + GAP_Y)) / 2);
+    for (const n of layer) { pos.set(n.run, { x: i * (NODE_W + GAP_X), y }); y += NODE_H + GAP_Y; }
+  });
+  const width = Math.max(layers.length * (NODE_W + GAP_X) - GAP_X + 8, 120);
+  return (
+    <div style={{ overflow: "auto", width: "100%", height: "100%" }}>
+      <div style={{ position: "relative", width, height: totalH }}>
+        <svg width={width} height={totalH} style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+          {layers.flatMap((layer) => layer.map((n) => {
+            const p = n.parent ? pos.get(n.parent.run) : null;
+            const c = pos.get(n.run);
+            if (!p || !c) return null;
+            const color = statusMeta(n.run.status);
+            const x1 = p.x + NODE_W;
+            const y1 = p.y + NODE_H / 2;
+            const x2 = c.x;
+            const y2 = c.y + NODE_H / 2;
+            const dx = Math.max((x2 - x1) / 2, 4);
+            return (
+              <path key={"e" + String(n.run.id ?? c.y)} d={`M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`}
+                fill="none" stroke={color} strokeWidth={1.3} opacity={0.55} />
+            );
+          }))}
+        </svg>
+        {layers.flatMap((layer, i) => layer.map((n) => {
+          const p = pos.get(n.run)!;
+          const run = n.run;
+          const color = statusMeta(run.status);
+          const wsBase = run.cwd ? String(run.cwd).split("/").filter(Boolean).pop() || "" : "";
+          return (
+            <div key={"n" + String(run.id ?? i + "-" + p.y)} title={`${run.agent || "subagent"} · ${run.task || ""}`}
+              onClick={() => { if (run.sessionFile) void openSessionByFile(run.sessionFile); }}
+              style={{ position: "absolute", left: p.x, top: p.y, width: NODE_W, height: NODE_H, boxSizing: "border-box" as const,
+                borderRadius: 7, border: `1px solid ${color}`, background: "var(--bg)", cursor: "pointer",
+                padding: "5px 8px", overflow: "hidden" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                <span style={{ width: 7, height: 7, borderRadius: 99, background: color, flexShrink: 0, animation: run.status === "running" ? "pi-spin 1s linear infinite" : undefined }} />
+                <span style={{ fontSize: 11.5, fontWeight: 600, color: "var(--text)", flexShrink: 0 }}>{run.agent || "subagent"}</span>
+                {wsBase ? <span style={{ fontSize: 9, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{wsBase}</span> : null}
+                <span style={{ fontSize: 9.5, color: "var(--text-dim)", marginLeft: "auto", flexShrink: 0 }}>{run.status === "running" && run.startedAt ? fmtDuration(Date.now() - Number(run.startedAt)) : fmtDuration(run.durationMs)}</span>
+              </div>
+              <div style={{ fontSize: 10, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, marginTop: 2 }}>
+                {(run.task || "").slice(0, 60) || t("（无任务文本）")}
+              </div>
+            </div>
+          );
+        }))}
+      </div>
+    </div>
   );
 }
 
