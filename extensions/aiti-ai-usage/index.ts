@@ -61,6 +61,7 @@ export default {
               try { cur = runtime(); } catch { return; } // runtime 未初始化（shutdown 窗口）→ 跳过该条
               try {
                 liveIngest(cur, info.sessionId, event.message);
+                recordLiveToolCalls(cur.usage, info.sessionId, event.message); // borrow plan §2.7A: tool calls recorded live in passing (file scans fill in ok/duration)
               } catch (e) {
                 console.error("[aiti-ai-usage] live ingest:", e instanceof Error ? e.message : e);
               }
@@ -106,6 +107,31 @@ export default {
         "au.tabPivot": "Pivot",
         "au.tabTrend": "Trend",
         "au.tabSessions": "Sessions",
+        "au.tabCatalog": "Catalog",
+        "au.catalog.intro": "Fixed per-session injection cost: MCP schema ≈{tok} tokens across {n} tools, repeated with every API request. Paired with 30-day call counts (MCP calls attributed at server level — pi's recording caliber) — cost × usage shows the waste at a glance.",
+        "au.catalog.mcp": "MCP servers",
+        "au.catalog.server": "Server",
+        "au.catalog.state": "State",
+        "au.catalog.tools": "Tools",
+        "au.catalog.estTok": "Est. tokens",
+        "au.catalog.used30d": "Calls 30d",
+        "au.catalog.noMcp": "No MCP cache found (pi generates it on first session)",
+        "au.catalog.skills": "Skills",
+        "au.catalog.skillName": "Skill",
+        "au.catalog.enable": "Enable",
+        "au.catalog.disable": "Disable",
+        "au.catalog.disabledNote": "hidden from the model",
+        "au.catalog.noSkills": "No skills found",
+        "au.catalog.toolMeta": "~{tok} tok · {n} calls in 30d",
+        "au.catalog.patterns": "Exclude patterns",
+        "au.catalog.dropPattern": "Drop this pattern (restores matching tools)",
+        "au.catalog.exclude": "Exclude",
+        "au.catalog.restore": "Restore",
+        "au.catalog.excludedBadge": "excluded",
+        "au.catalog.excludeNote": "Hide this tool from the model's tool list (writes mcp.json excludeTools; effective next session; model visibility only)",
+        "au.catalog.restoreNote": "Remove this tool from the exclusion list (effective next session)",
+        "au.catalog.phantomNote": "Already excluded and absent from the current cache (list row kept for restore)",
+        "au.catalog.rules": "Governance notes: toggles only affect model visibility (manual slash/mention paths stay); give newly installed servers/skills a ~7-day trial before judging usage; never auto-disable — evidence first.",
         "au.range.today": "Today",
         "au.range.7d": "7 days",
         "au.range.30d": "30 days",
@@ -239,6 +265,31 @@ export default {
         "au.tabPivot": "维度",
         "au.tabTrend": "趋势",
         "au.tabSessions": "会话",
+        "au.tabCatalog": "目录账单",
+        "au.catalog.intro": "会话固定注入成本：MCP schema ≈{tok} tokens / {n} 个工具，随每次 API 请求重复发送。与最近 30 天调用次数并排（MCP 调用按 server 级归因——pi 记录口径）——成本 × 使用率一眼看出浪费项。",
+        "au.catalog.mcp": "MCP servers",
+        "au.catalog.server": "Server",
+        "au.catalog.state": "状态",
+        "au.catalog.tools": "工具数",
+        "au.catalog.estTok": "估算 tokens",
+        "au.catalog.used30d": "30 天调用",
+        "au.catalog.noMcp": "未发现 MCP 缓存（pi 首次会话后生成）",
+        "au.catalog.skills": "Skills",
+        "au.catalog.skillName": "Skill",
+        "au.catalog.enable": "启用",
+        "au.catalog.disable": "禁用",
+        "au.catalog.disabledNote": "模型不可见",
+        "au.catalog.noSkills": "未发现 skills",
+        "au.catalog.toolMeta": "≈{tok} tok · 30 天 {n} 次",
+        "au.catalog.patterns": "排除规则",
+        "au.catalog.dropPattern": "删除此规则（恢复匹配的工具）",
+        "au.catalog.exclude": "排除",
+        "au.catalog.restore": "恢复",
+        "au.catalog.excludedBadge": "已排除",
+        "au.catalog.excludeNote": "从模型工具清单排除此工具（写 mcp.json excludeTools；下次会话生效，只影响模型可见性）",
+        "au.catalog.restoreNote": "从排除名单移除此工具（下次会话生效）",
+        "au.catalog.phantomNote": "此工具已被排除且不在当前缓存中（名单行，供恢复）",
+        "au.catalog.rules": "治理纪律：开关只影响模型可见性（人工 slash/引用路径保留）；新装 server/skill 先给约 7 天试用期再判使用率；绝不自动禁用——证据先行。",
         "au.range.today": "今天",
         "au.range.7d": "近7天",
         "au.range.30d": "近30天",
@@ -366,7 +417,7 @@ export default {
 // ---------------------------------------------------------------- live ingest
 
 import { localDay } from "./lib/db.ts";
-import { noteDirtyDay, scheduleFlush } from "./lib/ingest.ts";
+import { noteDirtyDay, scheduleFlush, recordLiveToolCalls } from "./lib/ingest.ts";
 
 function liveIngest(rt: ReturnType<typeof init>, sessionId: string, msg: Record<string, any>): void {
   const u = msg.usage;

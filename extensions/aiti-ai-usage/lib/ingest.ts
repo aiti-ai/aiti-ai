@@ -44,6 +44,38 @@ export function withTx<T>(db: DatabaseSync, fn: () => T): T {
 
 // ---------------------------------------------------------------- JSONL 解析
 
+/** Tool usage row (tool_usage table; borrow plan §2.7A). ok=NULL = call recorded only (result message fills it in by key) */
+export interface ToolUsageRow {
+  session_id: string;
+  call_id: string;
+  ts: number;
+  day: string;
+  tool: string;
+  ok: number | null;
+  duration_ms: number | null;
+}
+
+/** Skill invocation row (skill_usage table) */
+export interface SkillUsageRow {
+  session_id: string;
+  msg_id: string;
+  ts: number;
+  day: string;
+  skill: string;
+}
+
+/** pi skill invocation discriminator: <skill name="…"> blocks embedded in user text (possibly several) */
+const SKILL_BLOCK_RE = /<skill name="([^"\n]+)"[^>]*>/g;
+function skillNamesIn(text: string): string[] {
+  const out: string[] = [];
+  SKILL_BLOCK_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = SKILL_BLOCK_RE.exec(text)) !== null) {
+    if (m[1]) out.push(m[1]);
+  }
+  return out;
+}
+
 interface ParsedRow {
   session_id: string;
   ts: number;
@@ -76,7 +108,8 @@ export interface UserMsgRow {
 
 export async function parseSessionJsonl(text: string, fallbackId: string): Promise<{
   id: string; cwd: string; title: string;
-  rows: ParsedRow[]; userRows: UserMsgRow[]; firstTs: number; lastTs: number;
+  rows: ParsedRow[]; userRows: UserMsgRow[]; toolRows: ToolUsageRow[]; skillRows: SkillUsageRow[];
+  firstTs: number; lastTs: number;
 }> {
   let id = fallbackId;
   let cwd = "";
@@ -86,6 +119,9 @@ export async function parseSessionJsonl(text: string, fallbackId: string): Promi
   let lastTs = 0;
   // 用户输入消息暂存（末尾会话上下文齐备后统一判定 kind）
   const pendingUser: Array<{ msgId: string; ts: number; text: string; image: boolean }> = [];
+  // tool/skill usage rows (borrow plan §2.7A: stats collected in passing during ingest)
+  const toolRows: ToolUsageRow[] = [];
+  const skillRows: SkillUsageRow[] = [];
   // 会话级归因：session_info（外部导入会话 / subagent 子会话名）
   let infoName = "";
   let infoExternal = false;
@@ -96,13 +132,28 @@ export async function parseSessionJsonl(text: string, fallbackId: string): Promi
     const ts = Number(m.timestamp) || Date.parse(String(e?.timestamp ?? "")) || 0;
     const msgId = String(e?.id ?? "") || `anon:${fallbackId}:${ts}:${userSeq}`;
     pendingUser.push({ msgId, ts, text, image });
+    // skill invocation: pi prepends skill content to the user message as a <skill name="…"> block (same discriminator as slash-display)
+    for (const sm of skillNamesIn(text)) {
+      skillRows.push({ session_id: id, msg_id: msgId, ts, day: localDay(ts), skill: sm });
+    }
     userSeq++;
   };
 
   const pushAssistant = (m: Record<string, any>) => {
+    const ts = Number(m.timestamp) || 0;
+    // toolCall blocks: record the call row first (ok=NULL placeholder; the toolResult message fills ok/duration by key)
+    if (Array.isArray(m.content)) {
+      for (const c of m.content) {
+        if (c?.type === "toolCall" && c.toolName) {
+          toolRows.push({
+            session_id: id, call_id: String(c.toolCallId || `anon:${ts}:${toolRows.length}`),
+            ts, day: localDay(ts), tool: String(c.toolName), ok: null, duration_ms: null,
+          });
+        }
+      }
+    }
     const u = m.usage;
     if (!u || !m.model) return;
-    const ts = Number(m.timestamp) || 0;
     rows.push({
       session_id: id,
       ts,
@@ -119,6 +170,18 @@ export async function parseSessionJsonl(text: string, fallbackId: string): Promi
     });
     if (!firstTs || (ts && ts < firstTs)) firstTs = ts;
     if (ts > lastTs) lastTs = ts;
+  };
+
+  const pushToolResult = (m: Record<string, any>, e: Record<string, any>) => {
+    const callId = String(m.toolCallId || "");
+    if (!callId) return;
+    const ts = Number(m.timestamp) || Date.parse(String(e?.timestamp ?? "")) || 0;
+    toolRows.push({
+      session_id: id, call_id: callId, ts, day: localDay(ts),
+      tool: m.toolName ? String(m.toolName) : "",
+      ok: m.isError === true ? 0 : 1,
+      duration_ms: Number.isFinite(Number(m.durationMs)) ? Math.round(Number(m.durationMs)) : null,
+    });
   };
 
   let scanned = 0;
@@ -140,6 +203,7 @@ export async function parseSessionJsonl(text: string, fallbackId: string): Promi
     if (e.type === "message") {
       const m = e.message;
       if (m?.role === "assistant") pushAssistant(m);
+      else if (m?.role === "toolResult") pushToolResult(m, e);
       else if (m?.role === "user") {
         pushUser(m, e);
         if (!title) {
@@ -183,7 +247,7 @@ export async function parseSessionJsonl(text: string, fallbackId: string): Promi
       quote_kinds: st.kinds.join(","),
     };
   });
-  return { id, cwd, title, rows, userRows, firstTs, lastTs };
+  return { id, cwd, title, rows, userRows, toolRows, skillRows, firstTs, lastTs };
 }
 
 // ---------------------------------------------------------------- 写入 + 汇总
@@ -225,6 +289,55 @@ export function insertUserRows(usage: UsageDb, rows: UserMsgRow[]): void {
   for (const r of rows) {
     ins.run(r.msg_id, r.ts, r.day, r.session_id, r.kind, r.chars, r.lines, r.image,
       r.quote_lines, r.quote_head, r.quote_kinds);
+  }
+}
+
+/**
+ * Tool usage rows (borrow plan §2.7A): PK=(session_id, call_id), safe under replay.
+ * call rows (ok=NULL) land first; the toolResult message UPSERTs the same key and only fills
+ * ok/duration/tool — repeated rescans overwrite with identical values, never inflating counts.
+ */
+export function insertToolRows(usage: UsageDb, rows: ToolUsageRow[]): void {
+  if (rows.length === 0) return;
+  const ins = usage.db.prepare(`
+    INSERT INTO tool_usage (session_id, call_id, ts, day, tool, ok, duration_ms)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(session_id, call_id) DO UPDATE SET
+      ok=COALESCE(excluded.ok, tool_usage.ok),
+      duration_ms=COALESCE(excluded.duration_ms, tool_usage.duration_ms),
+      tool=CASE WHEN excluded.tool != '' THEN excluded.tool ELSE tool_usage.tool END`);
+  for (const r of rows) {
+    ins.run(r.session_id, r.call_id, r.ts, r.day, r.tool, r.ok, r.duration_ms);
+  }
+}
+
+/** Skill invocations: PK=(session_id, msg_id, skill), idempotent. */
+export function insertSkillRows(usage: UsageDb, rows: SkillUsageRow[]): void {
+  if (rows.length === 0) return;
+  const ins = usage.db.prepare(`
+    INSERT OR IGNORE INTO skill_usage (session_id, msg_id, ts, day, skill)
+    VALUES (?, ?, ?, ?, ?)`);
+  for (const r of rows) {
+    ins.run(r.session_id, r.msg_id, r.ts, r.day, r.skill);
+  }
+}
+
+/** Live toolCall blocks (from message_end assistant events): call rows only; file scans fill in results. */
+export function recordLiveToolCalls(usage: UsageDb, sessionId: string, msg: Record<string, any>): void {
+  if (!Array.isArray(msg.content)) return;
+  const ts = Number(msg.timestamp) || Date.now();
+  const day = localDay(ts);
+  const rows: ToolUsageRow[] = [];
+  for (const c of msg.content) {
+    if (c?.type === "toolCall" && c.toolName) {
+      rows.push({
+        session_id: sessionId, call_id: String(c.toolCallId || `anon:${ts}:${rows.length}`),
+        ts, day, tool: String(c.toolName), ok: null, duration_ms: null,
+      });
+    }
+  }
+  if (rows.length) {
+    withTx(usage.db, () => insertToolRows(usage, rows));
   }
 }
 
@@ -403,6 +516,8 @@ export async function syncLiveSessions(ctx: IngestCtx, opts: { force?: boolean }
       }
       insertMsgRows(usage, parsed.rows);
       insertUserRows(usage, parsed.userRows);
+      insertToolRows(usage, parsed.toolRows);
+      insertSkillRows(usage, parsed.skillRows);
       // 会话行：保留实时状态字段（state），只覆盖内容字段
       db.prepare(`
         INSERT INTO sessions (id, cwd, title, started_at, last_ts, msgs, total_tokens, cost_total, archived, state, source_file)
