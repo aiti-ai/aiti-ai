@@ -41,6 +41,7 @@ const osCache = new core.TTLCache(600_000);
 const diskCache = new core.TTLCache(30_000);
 const tempCache = new core.TTLCache(5_000);
 const hwmonCache = new core.TTLCache(5_000);
+const briefCache = new core.TTLCache(2_000);
 let tempMissStreak = 0;
 
 interface HwmonSensor { chip: string; label: string; temp: number }
@@ -189,6 +190,40 @@ async function buildSnapshot() {
   return out;
 }
 
+async function buildBrief() {
+  const cached = briefCache.get("brief");
+  if (cached) return cached;
+  const s = loadSi();
+  if (!s) {
+    const err: any = new Error("systeminformation is not installed yet (extman reconcile pending): " + siError);
+    err.code = "SI_MISSING";
+    throw err;
+  }
+  // Two cheap reads only (cpu load delta + memory) — the top-bar chips need no
+  // disks/sensors/net. The 2s TTL merges concurrent consumers (chips + dock
+  // panel polling independently) into at most one real sample per window.
+  let load: any = null;
+  try { load = await s.currentLoad(); } catch { load = null; }
+  let mem: any = null;
+  try { mem = await s.mem(); } catch { mem = null; }
+  const brief = {
+    ts: Date.now(),
+    cpu: { load: core.pct(load?.currentLoad) },
+    mem: mem
+      ? {
+        pct: mem.total ? Math.round(core.pct((mem.used / mem.total) * 100) * 10) / 10 : 0,
+        used: mem.used,
+        total: mem.total,
+        swapPct: mem.swaptotal ? Math.round(core.pct((mem.swapused / mem.swaptotal) * 100) * 10) / 10 : null,
+        swapUsed: mem.swapused,
+        swapTotal: mem.swaptotal,
+      }
+      : null,
+  };
+  briefCache.set("brief", brief);
+  return brief;
+}
+
 export default {
   id: "aiti-sysmon",
   name: "系统状态（服务器 CPU/内存/磁盘/网络/温度）",
@@ -200,7 +235,7 @@ export default {
   // AI self-management (aiti-helper): intro only — no skills in v1.
   ai: {
     manage: true,
-    intro: "AI 能帮我查看 pi-web 所在服务器的实时状态（CPU/内存/磁盘/网络/温度），并在温度显示 N/A 时指导安装 lm-sensors 启用温度监控（aiti-sysmon）",
+    intro: "AI 能帮我查看 pi-web 所在服务器的实时状态（CPU/内存/磁盘/网络/温度，含顶部会话信息里的 CPU/内存占用指示），并在温度显示 N/A 时指导安装 lm-sensors 启用温度监控（aiti-sysmon）",
   },
 
   ui: {
@@ -209,11 +244,14 @@ export default {
     clientImmediately: true,
     // Left sidebar dock static slot (registered item takes over on load).
     sidebarExplorerDock: [{ id: "panel", label: "i18n:sy.panel.label", icon: "icons/gauge.svg" }],
+    // Session-info stats-button trailing chips (registered item takes over on load).
+    sessionStatsInline: [{ id: "chips", label: "i18n:sy.chips.label" }],
     i18n: {
       // Bilingual tables (zh-CN identity + en) per the model-check convention:
       // client copy keys are the raw Chinese strings; en table hand-translated.
       "zh-CN": {
         "sy.panel.label": "系统状态",
+        "sy.chips.label": "顶栏 CPU/内存",
         "系统状态": "系统状态",
         "ext.displayName": "服务器状态查看器",
         "暂停": "暂停",
@@ -225,6 +263,7 @@ export default {
         "核": "核",
         "温度": "温度",
         "温度不可用": "温度不可用",
+        "内存占用": "内存占用",
         "已暂停": "已暂停",
         "快照错误": "快照错误",
         "传感器": "传感器",
@@ -234,6 +273,7 @@ export default {
       },
       en: {
         "sy.panel.label": "System Status",
+        "sy.chips.label": "Top-bar CPU/MEM",
         "系统状态": "System Status",
         "ext.displayName": "Server Status Viewer",
         "暂停": "Pause",
@@ -245,6 +285,7 @@ export default {
         "核": "cores",
         "温度": "TEMP",
         "温度不可用": "Temp N/A",
+        "内存占用": "MEM",
         "已暂停": "paused",
         "快照错误": "snapshot error",
         "传感器": "Sensors",
@@ -273,6 +314,14 @@ export default {
       description: "显示 CPU 温度（Linux 需安装 lm-sensors；读不到时显示 N/A 并给出配置指引链接）。",
       default: true,
     },
+    {
+      id: "topbarChips",
+      type: "boolean",
+      label: "顶栏会话信息显示 CPU/内存",
+      group: "采样",
+      description: "在顶部会话信息尾部常驻显示服务器 CPU 负载与内存占用百分比（默认开；关闭即零渲染零采样，可在扩展管理里切换）。仅宽屏档显示，窄屏自动隐藏；采样间隔同「轮询间隔」。",
+      default: true,
+    },
   ],
 
   server: {
@@ -292,6 +341,14 @@ export default {
       if (action === "snapshot") {
         try {
           return json(await buildSnapshot());
+        } catch (e: any) {
+          if (e?.code === "SI_MISSING") return json({ error: e.message }, 503);
+          return json({ error: String(e?.message || e) }, 500);
+        }
+      }
+      if (action === "brief") {
+        try {
+          return json(await buildBrief());
         } catch (e: any) {
           if (e?.code === "SI_MISSING") return json({ error: e.message }, 503);
           return json({ error: String(e?.message || e) }, 500);

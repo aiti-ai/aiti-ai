@@ -5182,6 +5182,13 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
                     {isCompact ? contextUsage?.percent != null ? contextUsage.percent.toFixed(0) + "%" : "?%" : ctxStr}
                   </span>
                 )}
+                {/* sessionStatsInline extension point: inline trailing indicators at the tail of
+                    the stats row (e.g. the sysmon extension's CPU/memory chips). Items must render
+                    inline content only — no block elements or nested interactive elements (this is
+                    a <button>; clicks bubble and open the session panel, which is expected). extra
+                    carries tier flags only (slot-extra data red line); narrow tiers return null so
+                    the row width stays with the context percentage. Zero items → zero render. */}
+                <ExtSlot name="sessionStatsInline" extra={{ isMobile, isCompact }} />
               </button>
             );
           })()}

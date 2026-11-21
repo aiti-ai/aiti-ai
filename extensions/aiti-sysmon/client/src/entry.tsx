@@ -16,6 +16,7 @@ import {
   present, FLOAT_INSTALLED_EVENT,
 } from "../../../_shared/ext-float-dock";
 import { SysmonDockFace, SY_KEY, gaugeIconUrl } from "./sysmon-app";
+import { TopChips } from "./topchips";
 
 const DOCK_STACK_SERVICE = "aiti-float.dockstack";
 
@@ -56,6 +57,14 @@ export default function register(ctx: Record<string, any>) {
     id: "panel",
     render: SysmonDockFace,
     meta: { title: "i18n:sy.panel.label", icon: { url: gaugeIconUrl() }, priority: 4 },
+  }]);
+
+  // Session-info stats-button trailing chips (same item id "chips" as the
+  // manifest static slot; narrow-tier gating + feature toggle live in TopChips).
+  ctx.registerItems?.("sessionStatsInline", [{
+    id: "chips",
+    render: TopChips,
+    meta: { label: "i18n:sy.chips.label" },
   }]);
 
   try { console.log("[aiti-sysmon] client mounted (sidebar dock panel, auto-docked)"); } catch { /* noop */ }
