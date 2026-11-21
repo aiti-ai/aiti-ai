@@ -14,7 +14,7 @@
  */
 
 import { toSpeechSegments, filterSegments, chunkFileForSpeech } from "./toSpeechText.js";
-import { extSvc } from "./host-shim.ts";
+import { extSvc, t } from "./host-shim.ts";
 
 const LS_SETTINGS = "aiti-ai-speek:settings";
 const LS_FOLLOW = "aiti-ai-speek:follow";
@@ -1066,7 +1066,7 @@ function speakBrowser(seg) {
     notify();
   } catch (e) {
     // 引擎不可用：弹提示并停止（不降级、不空转）
-    failToast("当前环境无法朗读：浏览器语音不可用。请在设置中开启 edge-tts 后端，或换用支持 Web Speech 的浏览器。");
+    failToast(t("speek.toast.browserUnavailable"));
   }
 }
 
@@ -1411,11 +1411,11 @@ function speakEdge(seg) {
     if (r && r.skip) { clearStarting(); advanceToNextMessage(); return; } // unreadable sentence: skip
     if (r && r.ok && r.src) { playEdgeAudio(r.src, seg, clearStarting); return; }
     clearStarting();
-    failToast("语音合成失败（edge-tts 无法生成音频），请检查后端或换引擎。");
+    failToast(t("speek.toast.edgeFailed"));
   }).catch(() => {
     if (!state.playing || myToken !== playToken) return;
     clearStarting();
-    failToast("语音合成失败（edge-tts 无法生成音频），请检查后端或换引擎。");
+    failToast(t("speek.toast.edgeFailed"));
   });
 }
 
@@ -1447,15 +1447,15 @@ function speakLocal(seg) {
       state.localStatus = "loading";
       notify();
       ensureLocal();
-      failToast("本地语音未就绪（正在自动启动），这句先用浏览器朗读；稍后再读即可用本地音色。");
+      failToast(t("speek.toast.localNotReady"));
     } else {
-      failToast("本地语音合成失败：" + String((r && r.error) || "服务未就绪") + "（已用浏览器朗读这句）");
+      failToast(t("speek.toast.localFailed", { err: String((r && r.error) || t("speek.local.stopped")) }));
     }
     speakBrowser(seg);
   }).catch(() => {
     if (!state.playing || myToken !== playToken) return;
     clearStarting();
-    failToast("本地语音合成失败（已用浏览器朗读这句）");
+    failToast(t("speek.toast.localFailedShort"));
     speakBrowser(seg);
   });
 }
@@ -1478,12 +1478,12 @@ function playLocalAudio(src, seg, onStart) {
     audio.onerror = () => {
       if (attempts < 1) { attempts++; try { audio.load(); audio.play().catch(() => {}); } catch { /* noop */ } return; }
       try { onStart && onStart(); } catch { /* noop */ }
-      failToast("语音播放失败。");
+      failToast(t("speek.toast.playFailed"));
     };
     audio.play().catch(() => {
       if (attempts < 1) { attempts++; try { audio.load(); audio.play().catch(() => {}); } catch { /* noop */ } return; }
       try { onStart && onStart(); } catch { /* noop */ }
-      failToast("语音播放失败。");
+      failToast(t("speek.toast.playFailed"));
     });
   };
   tryPlay();
@@ -1504,12 +1504,12 @@ function playEdgeAudio(src, seg, onStart) {
     audio.onerror = () => {
       if (attempts < 1) { attempts++; try { audio.load(); audio.play().catch(() => {}); } catch { /* noop */ } return; }
       try { onStart && onStart(); } catch { /* noop */ }
-      failToast("语音播放失败。");
+      failToast(t("speek.toast.playFailed"));
     };
     audio.play().catch(() => {
       if (attempts < 1) { attempts++; try { audio.load(); audio.play().catch(() => {}); } catch { /* noop */ } return; }
       try { onStart && onStart(); } catch { /* noop */ }
-      failToast("语音播放失败。");
+      failToast(t("speek.toast.playFailed"));
     });
   };
   tryPlay();
@@ -2051,7 +2051,7 @@ export async function initEngine() {
   if (state.edgeAvailable && (s === "auto" || (s === "browser" && !state.engineUpgraded))) {
     // auto (default) stays auto (resolved prefers edge); legacy browser default upgrades once
     state.engineUpgraded = true;
-    if (s === "browser") { state.settings.engine = "auto"; state.lastError = "已检测到 edge-tts，引擎默认切到 edge-tts（更自然）。"; }
+    if (s === "browser") { state.settings.engine = "auto"; state.lastError = t("speek.notice.edgeDetected"); }
   } else if (s === "auto") {
     // auto = edge -> local -> browser: keep "auto" so a later local start is picked up on reload
     state.settings.engine = localReady() ? "auto" : "browser";
@@ -2062,14 +2062,14 @@ export async function initEngine() {
   if (state.browserUnsupported && (state.settings.engine === "auto" || state.settings.engine === "browser")) {
     if (state.edgeAvailable) {
       state.settings.engine = "edge";
-      state.lastError = "浏览器不支持本地朗读，已自动切换到服务端语音生成。";
+      state.lastError = t("speek.notice.noWebSpeechEdge");
     } else if (localReady()) {
       state.settings.engine = "local";
-      state.lastError = "浏览器不支持本地朗读，已切换到本地 TTS 引擎。";
+      state.lastError = t("speek.notice.noWebSpeechLocal");
     }
   }
   if (state.browserUnsupported && !state.edgeAvailable && !localReady() && state.settings.engine === "browser") {
-    state.lastError = "浏览器不支持本地朗读，且服务端语音（edge-tts / 本地 TTS）未就绪，无法朗读。请安装 edge-tts 或在设置里启动本地引擎。";
+    state.lastError = t("speek.notice.noEngineAtAll");
   }
   persist();
   notify();
