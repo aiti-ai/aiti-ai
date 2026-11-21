@@ -508,6 +508,7 @@ function renderUiEnvDialog(face?: string) {
       });
       if (!r.ok) throw new Error("HTTP " + r.status);
       const d = await r.json();
+      if (d.ok === false) throw new Error(d.error || "save failed");
       setData((prev: any) => ({ ...prev, displayConfig: d.config }));
       await refresh(); // 重新解析 DISPLAY（配置变更后下次启动生效）
     });
@@ -677,7 +678,7 @@ function renderUiEnvDialog(face?: string) {
               ["DISPLAY", headless.display],
               ["Xauthority", headless.xauthority || "—"],
               [t("AT-SPI 总线"), headless.dbusBus || "—"],
-              ["openbox", headless.wm ? t("在跑") : t("无")],
+              [t("窗口管理器"), headless.wm ? (headless.wm === "external" ? t("非白名单 WM 在跑") : headless.wm + " " + t("在跑")) : t("无"), headless.wm ? C.ok : C.warn],
               [t("分辨率"), fmtRes(headless.resolution)],
               ["VNC TCP", headless.vnc?.tcp ? `:${headless.vnc.tcpPort}` : t("未起"), headless.vnc?.tcp ? C.ok : C.warn],
               ["VNC web", headless.vnc?.web ? `:${headless.vnc.webPort}` : t("未起"), headless.vnc?.web ? C.ok : C.warn],

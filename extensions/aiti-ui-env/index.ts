@@ -949,6 +949,12 @@ export default {
       description: "resolve/run 时虚拟屏未启动→自动拉起 Xvfb+openbox（systemd 或裸进程）" },
     { id: "behavior.random-display", label: "DISPLAY 随机避让", group: "i18n:feat.group.behavior", default: true,
       description: "启动虚拟屏自动选空闲 DISPLAY 号（auto 随机，避免固定 :99 被占冲突）；关闭则固定用面板配置/默认号" },
+    { id: "behavior.wm", type: "string", label: "虚拟屏窗口管理器", group: "i18n:feat.group.behavior", value: "openbox",
+      placeholder: "openbox | xfwm4 | fluxbox | marco | icewm | metacity",
+      description: "虚拟屏 WM（EWMH 兼容白名单；白名单外值自动回退 openbox）。改动在下次虚拟屏 start 时生效；systemd 服务路径需重装 service" },
+    { id: "behavior.display-num", type: "string", label: "固定 DISPLAY 号", group: "i18n:feat.group.behavior", value: "",
+      placeholder: "留空 = auto 随机；如 154",
+      description: "非空数字 → 固定用该 DISPLAY 号（被外来占用才避让）；与「DISPLAY 随机避让」开关叠加：本值优先" },
     // ── agent 工具 ──
     { id: "tool.ui_env_status", label: "ui_env_status · 环境状态", group: "i18n:feat.group.tools", default: true,
       description: "报告当前模式、桌面/虚拟屏探测、VNC 链接、安装状态" },
@@ -959,7 +965,7 @@ export default {
     { id: "tool.ui_env_run", label: "ui_env_run · 代启动应用/MCP", group: "i18n:feat.group.tools", default: true,
       description: "用裁决后的环境启动命令（后台运行），返回 pid/目标屏/日志文件" },
     { id: "tool.ui_env_headless", label: "ui_env_headless · 虚拟屏启停/查询", group: "i18n:feat.group.tools", default: true,
-      description: "启动/停止/查询无头虚拟屏（Xvfb+openbox+dbus+AT-SPI）；start 幂等，stop 仅虚拟屏相关不碰真实桌面" },
+      description: "启动/停止/查询无头虚拟屏（Xvfb + 可配置 WM + dbus + AT-SPI；WM 经扩展管理器 behavior.wm 配置，默认 openbox）；start 幂等，stop 仅虚拟屏相关不碰真实桌面" },
     { id: "tool.ui_env_deps", label: "ui_env_deps · 依赖自检/安装", group: "i18n:feat.group.tools", default: true,
       description: "自检/自动安装虚拟屏依赖组件（多发行版自适应）；action=check 只自检，install 需免密 sudo" },
     { id: "tool.ui_env_vnc", label: "ui_env_vnc · VNC 查看/启停", group: "i18n:feat.group.tools", default: true,
@@ -1007,6 +1013,7 @@ export default {
         }
       } catch { /* 不阻塞启动 */ }
       try { env.setFeatureSource((ctx as any)?.features); } catch {} // DI 方案 P1
+      try { (ctx as any)?.features?.on?.(() => env.invalidateResolvedConfig()); } catch {} // feature changes → re-resolve wm/display-num
       // 存量实例补发令牌（迁移：旧实例无 token）
       try { m.ensureInstanceTokens("vnc"); m.ensureInstanceTokens("rdp"); } catch { /* 迁移失败不致命 */ }
       // 实例令牌定期轮换（真随机防碰撞；旧令牌 prevToken 宽限一个周期，已开页面不立即失效）
@@ -1072,18 +1079,20 @@ export default {
             UI_ENV_MODE: process.env.UI_ENV_MODE || null,
             UI_ENV_DISPLAY_NUM: process.env.UI_ENV_DISPLAY_NUM || null,
             UI_ENV_RESOLUTION: process.env.UI_ENV_RESOLUTION || null,
+            UI_ENV_WM: process.env.UI_ENV_WM || null,
           },
+          wm: m.resolveWm(),
           displayConfig: m.loadDisplayConfig(),
           randomDisplayFeature: m.featureEnabled("behavior.random-display"),
         });
       }
 
-      // DISPLAY 号配置：GET 读；POST {mode, num} 写（默认 auto 随机，可指定固定数字）
+      // DISPLAY number config: GET reads; POST {mode, num} writes — storage lives in the host feature store (features.json)
       if (action === "display-config") {
         if (req.method === "POST") {
           const body = await parseBody(req);
           const cfg = m.saveDisplayConfig({ mode: String(body.mode || "auto"), num: body.num });
-          return json({ ok: true, config: cfg, note: tr(locale, "srv.api.display-saved") });
+          return json(cfg.ok ? { ok: true, config: cfg.config, note: tr(locale, "srv.api.display-saved") } : { ok: false, error: cfg.error || "save failed" }, cfg.ok ? 200 : 400);
         }
         return json({ ok: true, config: m.loadDisplayConfig(), randomDisplayFeature: m.featureEnabled("behavior.random-display") });
       }

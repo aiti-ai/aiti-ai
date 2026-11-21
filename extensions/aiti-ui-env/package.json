@@ -55,7 +55,6 @@
   "aitiConfigs": {
     "configFiles": [
       "env-mode.json",
-      "display-config.json",
       "vnc-token",
       "rdp-token",
       "vnc-rfb-passwd"
