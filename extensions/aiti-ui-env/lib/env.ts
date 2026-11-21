@@ -337,9 +337,11 @@ async function probeHeadless(): Promise<ProbeInfo> {
   }
   info.atspi = args.some((l) => /at-spi-bus-launcher/.test(l) && !/grep/.test(l)) || !!info.dbusBus;
 
-  // WM status: only an openbox attached to THIS display counts (global match would report
-  // another display's WM as running here)
-  info.wm = (await procOnDisplay("openbox", display)) ? "openbox" : undefined;
+  // WM status: show the actual WM attached to THIS display (whitelisted comm, or
+  // "external" when a non-whitelisted WM owns the screen — xprop is authoritative).
+  const curWm = await wmOnDisplay(display);
+  info.wm = curWm?.comm ?? undefined;
+  if (!info.wm && (await displayHasWm(display, info.xauthority))) info.wm = "external";
   if (!info.wm) probeFail(info, "headless-no-wm");
 
   // VNC 层：多实例感知（优先第一个实例的随机端口；注册表空时回退固定端口探测）
@@ -403,6 +405,99 @@ export function featureEnabled(id: string): boolean {
 
 let resolvedDisplayNum: number | null = null;
 
+// ── WM (window manager) choice: whitelist + resolution + per-display detection ──
+
+/** Window managers allowed for the headless virtual display: EWMH-compatible X11 WMs only
+ *  (agent semantic actions — foreground activation, window enumeration — rely on EWMH).
+ *  kwin_x11/mutter pull half a desktop stack; i3/sway are not (fully) EWMH/X11 — excluded. */
+export const WM_CHOICES = ["openbox", "xfwm4", "fluxbox", "marco", "icewm", "metacity"] as const;
+
+let resolvedWm: string | null = null;
+
+/** Drop process-cached config resolutions (called on feature changes / writes). */
+export function invalidateResolvedConfig(): void {
+  resolvedDisplayNum = null;
+  resolvedWm = null;
+}
+
+/** Read a string-type feature value (explicit setting wins, else declared default).
+ *  ctx.features (captured at startup) first, host registry global as fallback. */
+function featureValueString(id: string): string | null {
+  try {
+    const v = hostFeatures?.get?.("aiti-ui-env", id);
+    if (typeof v === "string") return v;
+    const reg = (globalThis as Record<string, any>).__piWebExt;
+    const v2 = reg?.featureValue?.("aiti-ui-env", id);
+    if (typeof v2 === "string") return v2;
+  } catch { /* ignore */ }
+  return null;
+}
+
+/** Write a feature value via the host registry — the same path the extension-manager
+ *  panel uses, so edits from either surface land in the shared features.json store. */
+export function setFeatureValueExt(id: string, value: string): { ok: boolean; error?: string } {
+  try {
+    const reg = (globalThis as Record<string, any>).__piWebExt;
+    if (reg && typeof reg.setFeatureValue === "function") {
+      reg.setFeatureValue("aiti-ui-env", id, value);
+      invalidateResolvedConfig();
+      return { ok: true };
+    }
+  } catch (e) { return { ok: false, error: String((e as Error).message || e) }; }
+  return { ok: false, error: "host registry unavailable — edit this setting in the extension manager instead" };
+}
+
+/** Resolve the WM for the headless virtual display: env UI_ENV_WM > feature behavior.wm > openbox.
+ *  Whitelist-external values fall back to openbox (reason surfaced in the probe/status). */
+export function resolveWm(): { wm: string; fromEnv: boolean; fallbackReason?: string } {
+  const envWm = process.env.UI_ENV_WM?.trim().toLowerCase();
+  if (envWm) {
+    if ((WM_CHOICES as readonly string[]).includes(envWm)) return { wm: envWm, fromEnv: true };
+    return { wm: "openbox", fromEnv: true, fallbackReason: `UI_ENV_WM=${envWm} is not in the whitelist` };
+  }
+  const v = (resolvedWm ?? (featureValueString("behavior.wm") || "openbox")).trim().toLowerCase();
+  if ((WM_CHOICES as readonly string[]).includes(v)) { resolvedWm = v; return { wm: v, fromEnv: false }; }
+  resolvedWm = "openbox";
+  return { wm: "openbox", fromEnv: false, fallbackReason: `configured WM "${v}" is not in the whitelist` };
+}
+
+/** Which whitelisted WM is attached to this exact display (/proc environ scan).
+ *  Returns comm+pid so a config-switch can stop the old one; null = none detected. */
+async function wmOnDisplay(display: string): Promise<{ comm: string; pid: number } | null> {
+  try {
+    for (const d of fs.readdirSync("/proc")) {
+      if (!/^\d+$/.test(d)) continue;
+      let comm = "";
+      try { comm = fs.readFileSync(`/proc/${d}/comm`, "utf8").trim(); } catch { continue; }
+      if (!(WM_CHOICES as readonly string[]).includes(comm)) continue;
+      try {
+        const env = fs.readFileSync(`/proc/${d}/environ`, "utf8");
+        if (env.split("\0").some((e) => e === `DISPLAY=${display}`)) return { comm, pid: Number(d) };
+      } catch { /* gone or unreadable */ }
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
+/** Whether THIS display is already managed by a live window manager.
+ *  Authoritative: EWMH _NET_SUPPORTING_WM_CHECK — but the root property can outlive its WM
+ *  (e.g. xfwm4 killed by SIGTERM leaves a stale pointer), so the pointed-to window is
+ *  verified alive via _NET_WM_NAME before trusting it. Fallback: /proc whitelist scan. */
+async function displayHasWm(display: string, authFile?: string): Promise<boolean> {
+  const xprop = await resolveBin("xprop");
+  if (xprop) {
+    const pre = `DISPLAY=${display}${authFile ? ` XAUTHORITY=${authFile}` : ""}`;
+    const out = await runCmd("sh", ["-c", `${pre} ${xprop} -root _NET_SUPPORTING_WM_CHECK 2>/dev/null`]).catch(() => "");
+    const wid = out.match(/window id #\s*(0x[0-9a-fA-F]+)/)?.[1];
+    if (wid) {
+      const probe = await runCmd("sh", ["-c", `${pre} ${xprop} -id ${wid} _NET_WM_NAME 2>/dev/null`]).catch(() => "");
+      return !!probe.trim() && !/BadWindow|error/i.test(probe);
+    }
+    if (/not found/i.test(out)) return false;
+  }
+  return (await wmOnDisplay(display)) !== null;
+}
+
 /** 该 display 是否属于本扩展的虚拟屏（/tmp/ui-env-<n>/ 特征目录存在）。 */
 function isOursDisplay(num: number): boolean {
   try {
@@ -416,7 +511,6 @@ function isOursDisplay(num: number): boolean {
  *  - 缺省 → 从 99 起找空闲（被别的程序占则递增）；本扩展正在跑的号（isOursDisplay）视为己有沿用 */
 function resolveDisplayNumSync(): number {
   if (resolvedDisplayNum !== null) return resolvedDisplayNum;
-  const cfg = loadDisplayConfig();
   const explicit = process.env.UI_ENV_DISPLAY_NUM;
   const randomOk = featureEnabled("behavior.random-display");
   const persistFile = configDir ? cachePath("display-num") : null;
@@ -436,9 +530,11 @@ function resolveDisplayNumSync(): number {
     return resolvedDisplayNum;
   }
 
-  // 2) 面板配置 fixed + 指定数字（用户指定优先，被外来占用才避让）
-  if (cfg.mode === "fixed" && cfg.num) {
-    let n = cfg.num;
+  // 2) Fixed number (feature behavior.display-num with a non-empty digit; user setting wins,
+  //    only yields to genuine foreign occupancy)
+  const cfgNum = Number((featureValueString("behavior.display-num") || "").trim());
+  if (Number.isFinite(cfgNum) && cfgNum > 0) {
+    let n = Math.floor(cfgNum);
     while (findSocket(n) && !isOursDisplay(n)) n++;
     resolvedDisplayNum = n;
     if (persistFile) { try { fs.writeFileSync(persistFile, String(n)); } catch {} }
@@ -468,31 +564,22 @@ function resolveDisplayNumSync(): number {
   return n;
 }
 
-// ── DISPLAY 号配置（默认 auto 随机；用户可指定固定数字） ──
+// ── DISPLAY number config (host feature store: behavior.display-num; auto-random by default) ──
 
-export interface DisplayConfig { mode: "auto" | "fixed"; num?: number; }
-function displayConfigFile(): string { return path.join(configDir || "", "display-config.json"); }
-
-export function loadDisplayConfig(): DisplayConfig {
-  try {
-    if (!configDir || !fs.existsSync(displayConfigFile())) return { mode: "auto" };
-    const d = JSON.parse(fs.readFileSync(displayConfigFile(), "utf8"));
-    return { mode: d.mode === "fixed" ? "fixed" : "auto", num: d.num };
-  } catch { return { mode: "auto" }; }
+/** Panel/agent view: shape the feature value back into {mode,num} (empty = auto, digit = fixed). */
+export function loadDisplayConfig(): { mode: "auto" | "fixed"; num?: number } {
+  const v = Number((featureValueString("behavior.display-num") || "").trim());
+  return Number.isFinite(v) && v > 0 ? { mode: "fixed", num: Math.floor(v) } : { mode: "auto" };
 }
 
-export function saveDisplayConfig(cfg: DisplayConfig): DisplayConfig {
-  const c: DisplayConfig = { mode: cfg.mode === "fixed" ? "fixed" : "auto" };
-  if (c.mode === "fixed") {
-    const n = Number(cfg.num);
-    if (Number.isFinite(n) && n > 0) c.num = Math.floor(n);
-  }
-  if (configDir) {
-    ensureDir(configDir, 0o755);
-    try { fs.writeFileSync(displayConfigFile(), JSON.stringify(c, null, 2)); } catch {}
-  }
-  resolvedDisplayNum = null; // 配置变更 → 下次 resolve 重新解析
-  return c;
+/** Panel/agent write: goes through the host registry into the shared features.json store.
+ *  The old extension-managed display-config.json file is gone entirely (no fallback). */
+export function saveDisplayConfig(cfg: { mode?: string; num?: unknown }): { ok: boolean; config: { mode: "auto" | "fixed"; num?: number }; error?: string } {
+  const fixed = String(cfg.mode || "auto") === "fixed";
+  const n = Number(cfg.num);
+  const numVal = fixed && Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  const r = setFeatureValueExt("behavior.display-num", numVal > 0 ? String(numVal) : "");
+  return { ok: r.ok, error: r.error, config: numVal > 0 ? { mode: "fixed", num: numVal } : { mode: "auto" } };
 }
 
 function envDisplayNum(): number { return resolveDisplayNumSync(); }
@@ -836,15 +923,25 @@ export async function ensureHeadless(): Promise<boolean> {
       `[ -S ${busFile} ] || (dbus-daemon --session --fork --address=unix:path=${busFile} --print-address >/dev/null 2>&1 || true); ` +
       `export DBUS_SESSION_BUS_ADDRESS=unix:path=${busFile}; DISPLAY=:${num} at-spi-bus-launcher --launch-immediately >/dev/null 2>&1 || true`],
       { detached: true, stdio: "ignore" }).unref();
-    // openbox (spawn when no WM; per-display check only — a global pgrep would be fooled
-    // by an openbox on another display and wrongly skip ours, leaving this screen WM-less;
-    // mirrors setup-linux.sh's per-display WM detection)
-    ensureOpenboxMenu(); // 菜单终端指向 Xvfb 可跑的模拟器（见下），已有配置不覆盖
-    if (!(await procOnDisplay("openbox", `:${num}`))) {
-      spawn("sh", ["-c",
-        `export DISPLAY=:${num}; export XAUTHORITY=${authFile}; export XDG_RUNTIME_DIR=${runtimeDir}; ` +
-        `export DBUS_SESSION_BUS_ADDRESS=unix:path=${busFile}; nohup openbox >/dev/null 2>&1 & true`],
-        { detached: true, stdio: "ignore" }).unref();
+    // WM（per-display check — a global pgrep would be fooled by a WM on another display and
+    // wrongly skip ours; mirrors setup-linux.sh's per-display WM detection）。
+    // Configured WM changed: a whitelisted WM other than the current one is on this display
+    // → stop it and let the new one take over (takes effect on next start, not hot-switch).
+    ensureOpenboxMenu(); // openbox root-menu fixup (only fills in when missing; openbox-only concern)
+    const wm = resolveWm();
+    const curWm = await wmOnDisplay(`:${num}`);
+    if (curWm && curWm.comm !== wm.wm) {
+      try { process.kill(curWm.pid, "SIGTERM"); } catch { /* already gone */ }
+      try { fs.appendFileSync(logFile, `[${new Date().toISOString()}] WM switch on :${num}: stopped ${curWm.comm}, starting ${wm.wm}${wm.fallbackReason ? ` (${wm.fallbackReason})` : ""}\n`); } catch { /* ignore */ }
+      await sleep(600);
+    }
+    if (!(await displayHasWm(`:${num}`, authFile))) {
+      if (await resolveBin(wm.wm)) {
+        spawn("sh", ["-c",
+          `export DISPLAY=:${num}; export XAUTHORITY=${authFile}; export XDG_RUNTIME_DIR=${runtimeDir}; ` +
+          `export DBUS_SESSION_BUS_ADDRESS=unix:path=${busFile}; nohup ${wm.wm} >/dev/null 2>&1 & true`],
+          { detached: true, stdio: "ignore" }).unref();
+      }
     }
     // tint2 panel (starts with openbox; idempotent per display) — stopHeadless kills it, start brings it back
     if (!(await procOnDisplay("tint2", `:${num}`))) {
@@ -856,7 +953,7 @@ export async function ensureHeadless(): Promise<boolean> {
           { detached: true, stdio: "ignore" }).unref();
       }
     }
-    fs.writeFileSync(logFile, `[${new Date().toISOString()}] ensureHeadless: bare start on :${num}\n`);
+    try { fs.appendFileSync(logFile, `[${new Date().toISOString()}] ensureHeadless: bare start on :${num}\n`); } catch { /* ignore */ }
     await sleep(1000);
     return findSocket(num);
   } catch (e) {
@@ -1059,7 +1156,7 @@ async function stopHeadlessNums(nums: Set<number>, locale?: string | null): Prom
       //   含 sys 实例（桌面 VNC / QEMU 虚拟机等非本虚拟屏目标）的桥——只能按注册表 pid 精确杀
       //   （上面 step 1 的 vncStop(inst.id) 已做）。2026-09-15 教训：曾把用户正在看的
       //   QEMU 虚拟机视图桥一并杀掉。
-      if (/^openbox(\s|$)/.test(cmd) && await procDisplayIs(pid, display)) { await kill(pid, `openbox:${num}`); break; }
+      if (new RegExp(`^(${WM_CHOICES.join("|")})(\\s|$)`).test(cmd) && await procDisplayIs(pid, display)) { await kill(pid, `${cmd.split(/\s+/)[0]}:${num}`); break; }
       if (/at-spi-bus-launcher/.test(cmd) && await procDisplayIs(pid, display)) { await kill(pid, `at-spi:${num}`); break; }
       if (/^tint2(\s|$)/.test(cmd) && await procDisplayIs(pid, display)) { await kill(pid, `tint2:${num}`); break; }
       if (cmd.includes(`ui-env-${num}/bus`)) { await kill(pid, `dbus:${num}`); break; }
@@ -2103,6 +2200,16 @@ const DEPS: DepDef[] = [
     pkg: { apt: "xvfb", dnf: "xorg-x11-server-Xvfb", yum: "xorg-x11-server-Xvfb", pacman: "xorg-server-xvfb", apk: "xorg-server-xvfb", zypper: "xorg-x11-server" } },
   { bin: "openbox", label: "窗口管理器", group: "core", manual: "openbox（各发行版同名）",
     pkg: { apt: "openbox", dnf: "openbox", yum: "openbox", pacman: "openbox", apk: "openbox", zypper: "openbox" } },
+  { bin: "xfwm4", label: "窗口管理器（备选，当前配置时必装）", group: "ui", manual: "apt/dnf: xfwm4 · pacman: xfwm4",
+    pkg: { apt: "xfwm4", dnf: "xfwm4", yum: "xfwm4", pacman: "xfwm4", apk: "xfwm4", zypper: "xfwm4" } },
+  { bin: "fluxbox", label: "窗口管理器（备选，当前配置时必装）", group: "ui", manual: "fluxbox（各发行版同名）",
+    pkg: { apt: "fluxbox", dnf: "fluxbox", yum: "fluxbox", pacman: "fluxbox", apk: "fluxbox", zypper: "fluxbox" } },
+  { bin: "marco", label: "窗口管理器（备选，当前配置时必装）", group: "ui", manual: "apt: marco · dnf: marco · pacman: marco",
+    pkg: { apt: "marco", dnf: "marco", yum: "marco", pacman: "marco", apk: "marco", zypper: "marco" } },
+  { bin: "icewm", label: "窗口管理器（备选，当前配置时必装）", group: "ui", manual: "icewm（各发行版同名）",
+    pkg: { apt: "icewm", dnf: "icewm", yum: "icewm", pacman: "icewm", apk: "icewm", zypper: "icewm" } },
+  { bin: "metacity", label: "窗口管理器（备选，当前配置时必装）", group: "ui", manual: "apt: metacity · dnf: metacity · pacman: metacity",
+    pkg: { apt: "metacity", dnf: "metacity", yum: "metacity", pacman: "metacity", apk: "metacity", zypper: "metacity" } },
   { bin: "x11vnc", label: "VNC 服务", group: "core", manual: "x11vnc（各发行版同名）",
     pkg: { apt: "x11vnc", dnf: "x11vnc", yum: "x11vnc", pacman: "x11vnc", apk: "x11vnc", zypper: "x11vnc" } },
   { bin: "at-spi-bus-launcher", label: "AT-SPI 语义总线", group: "core", manual: "at-spi2-core",
@@ -2204,7 +2311,11 @@ export async function checkDeps(refresh = false, locale?: string | null): Promis
   }
   const plat = await detectPlatform();
   const items: DepStatusItem[] = [];
+  const activeWm = resolveWm().wm;
   for (const d of DEPS) {
+    // Alternative WMs: only check the currently configured one (other whitelist members stay
+    // out of the deps panel to avoid a wall of "missing" noise)
+    if ((WM_CHOICES as readonly string[]).includes(d.bin) && d.bin !== "openbox" && d.bin !== activeWm) continue;
     const installed = !!(await resolveBin(d.bin));
     items.push({ bin: d.bin, label: tr(locale, "srv.dep." + d.bin), group: d.group, installed, pkg: plat.pkgMgr ? (d.pkg[plat.pkgMgr] || null) : null, manual: trOr(locale, "srv.dep.manual." + d.bin, d.manual) });
   }

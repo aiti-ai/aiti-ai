@@ -18,6 +18,7 @@ set -u
 
 DISPLAY_NUM="${UI_ENV_DISPLAY_NUM:-99}"
 RESOLUTION="${UI_ENV_RESOLUTION:-1920x1080x24}"
+WM="${UI_ENV_WM:-openbox}"
 AUTH_DIR="${UI_ENV_XAUTH_DIR:-/tmp/ui-env-$DISPLAY_NUM}"
 VNC_PORT="${UI_ENV_VNC_PORT:-5900}"
 WEB_PORT="${UI_ENV_VNC_WEB_PORT:-6080}"
@@ -32,8 +33,17 @@ for a in "$@"; do
     --system) MODE="system" ;;
     --user) MODE="user" ;;
     --stop) STOP=1 ;;
+    --wm) WM_PENDING=1 ;;
+    --*) ;;
+    *) if [ "${WM_PENDING:-0}" = "1" ]; then WM="$a"; WM_PENDING=0; fi ;;
   esac
 done
+
+case "$WM" in
+  openbox|xfwm4|fluxbox|marco|icewm|metacity) ;;
+  *) echo "[aiti-ui-env] WM '$WM' is not in the whitelist (openbox xfwm4 fluxbox marco icewm metacity), falling back to openbox" >&2; WM="openbox" ;;
+esac
+command -v "$WM" >/dev/null 2>&1 || { echo "[aiti-ui-env] warning: $WM not found on PATH, unit will still be written (install it before starting)" >&2; }
 
 is_active() { # $1=unit 名
   if [ "$MODE" = "user" ]; then systemctl --user is-active "$1" >/dev/null 2>&1
@@ -106,7 +116,7 @@ WantedBy=default.target
 "
 
 unit_wm="[Unit]
-Description=aiti-ui-env openbox window manager on :$DISPLAY_NUM
+Description=aiti-ui-env $WM window manager on :$DISPLAY_NUM
 After=ui-env-xvfb.service ui-env-bus.service
 Requires=ui-env-xvfb.service
 
@@ -116,7 +126,7 @@ Environment=DISPLAY=:$DISPLAY_NUM
 Environment=XAUTHORITY=$XAUTH
 Environment=XDG_RUNTIME_DIR=$RT
 Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=$BUS
-ExecStart=/usr/bin/openbox
+ExecStart=/usr/bin/$WM
 Restart=on-failure
 RestartSec=2
 
