@@ -185,7 +185,41 @@ function detectDesktopDisplayNum(): number | null {
 }
 
 function findSocket(displayNum: number): boolean {
-  return fs.existsSync(`/tmp/.X11-unix/X${displayNum}`);
+  // Strict socket check: a real X server socket is a unix-domain socket.
+  // existsSync() also accepts a stale regular file or a symlink that aliases
+  // another display (e.g. X154 -> X1). Such an alias made the virtual display
+  // look "running", so the Xvfb spawn was skipped and x11vnc attached to the
+  // user's real desktop instead.
+  try { return fs.lstatSync(`/tmp/.X11-unix/X${displayNum}`).isSocket(); } catch { return false; }
+}
+
+/** Entry present at the socket path that is not a unix socket (symlink / regular file). */
+function socketJunk(displayNum: number): { path: string; target: string | null } | null {
+  const p = `/tmp/.X11-unix/X${displayNum}`;
+  let st: fs.Stats;
+  try { st = fs.lstatSync(p); } catch { return null; }
+  if (st.isSocket()) return null;
+  let target: string | null = null;
+  try { if (st.isSymbolicLink()) target = fs.readlinkSync(p); } catch { /* ignore */ }
+  return { path: p, target };
+}
+
+/** Drop a stale non-socket entry we own so Xvfb can claim the display number again. */
+function clearSocketJunk(displayNum: number): boolean {
+  const junk = socketJunk(displayNum);
+  if (!junk) return false;
+  try {
+    const st = fs.lstatSync(junk.path);
+    if (st.uid !== process.getuid?.()) return false; // never touch other users' entries
+    fs.rmSync(junk.path, { force: true });
+    return true;
+  } catch { return false; }
+}
+
+/** True when an Xvfb/Xvnc process really serves this display number. */
+async function hasVirtualXServer(displayNum: number): Promise<boolean> {
+  const args = await psArgs();
+  return args.some((l) => /Xvfb|Xvnc/.test(l) && new RegExp(`:${displayNum}(?!\\d)`).test(l) && !/grep/.test(l));
 }
 
 const XAUTH_HINTS = [
@@ -268,10 +302,14 @@ async function probeHeadless(): Promise<ProbeInfo> {
   const info: ProbeInfo = { display, available: false, atspi: false, error: undefined };
 
   if (!findSocket(num)) {
+    // A stale alias must not be reported as "socket exists but no process":
+    // it is not a virtual display at all (reported explicitly for diagnosis).
+    const junk = socketJunk(num);
+    if (junk) return probeFail(info, "headless-socket-stale", { display, target: junk.target || junk.path });
     return probeFail(info, "headless-not-running", { num });
   }
   const args = await psArgs();
-  const xProc = args.find((l) => /Xvfb|Xvnc/.test(l) && new RegExp(`:${num}`).test(l) && !/grep/.test(l));
+  const xProc = args.find((l) => /Xvfb|Xvnc/.test(l) && new RegExp(`:${num}(?!\\d)`).test(l) && !/grep/.test(l));
   if (!xProc) {
     return probeFail(info, "headless-no-process", { display });
   }
@@ -773,6 +811,11 @@ export async function ensureHeadless(): Promise<boolean> {
     }
     // 3) 裸拉起（与 setup-linux.sh --bare 同构）
     const num = envDisplayNum();
+    // Clear a stale alias/file at X<num> first: findSocket() would otherwise skip
+    // the Xvfb spawn and a later x11vnc could be pointed at the real desktop.
+    if (clearSocketJunk(num)) {
+      try { fs.appendFileSync(logFile, `[${new Date().toISOString()}] removed stale entry at /tmp/.X11-unix/X${num}\n`); } catch { /* ignore */ }
+    }
     const { authFile, busFile, runtimeDir } = headlessBase();
     ensureDir(path.dirname(authFile), 0o700); ensureDir(runtimeDir, 0o700);
     if (fs.existsSync(authFile)) fs.rmSync(authFile, { force: true });
@@ -969,7 +1012,7 @@ async function actualHeadlessNums(): Promise<Set<number>> {
 
 /** 停止指定 display 号的虚拟屏进程（VNC + Xvfb + x11vnc + bridge + openbox + at-spi + dbus + tint2）。
  *  按 /proc/<pid>/environ 的 DISPLAY=:num 或强命令行特征精确匹配，绝不碰真实桌面。 */
-async function stopHeadlessNums(nums: Set<number>): Promise<{ ok: boolean; available: boolean; stopped: string[]; note?: string }> {
+async function stopHeadlessNums(nums: Set<number>, locale?: string | null): Promise<{ ok: boolean; available: boolean; stopped: string[]; note?: string }> {
   const stopped: string[] = [];
 
   // 1) VNC 实例（x11vnc + bridge）：虚拟屏停掉后它们失去意义
@@ -1045,7 +1088,7 @@ export async function stopHeadless(locale?: string | null): Promise<{ ok: boolea
       ? tr(locale, "srv.stop.win-still")
       : tr(locale, "srv.stop.stopped", { list: stopped.length ? joinList(locale, stopped) : tr(locale, "srv.stop.none") }) };
   }
-  return stopHeadlessNums(await actualHeadlessNums());
+  return stopHeadlessNums(await actualHeadlessNums(), locale);
 }
 
 /** 虚拟屏 openbox 菜单修复：默认菜单「Terminal emulator」调 x-terminal-emulator，
@@ -1623,7 +1666,10 @@ export async function vncCreate(id: string | undefined, displayNum = envDisplayN
       // X11VNC_AVOID_WINDOWS=never：跳过「等显示器管理器消失再建 selection 窗口」的启发式
       // （默认客户端连上后要等 8~45s 才建 selwin，此窗口内客户端 ClientCutText 被静默丢弃
       //  → 查看页「发送到远程」刚打开就发会失败；本扩展的虚拟屏无 DM，立即建窗无副作用）。
-      if (findSocket(displayNum)) {
+      // Socket existence alone is not enough: only attach x11vnc when a real
+      // Xvfb/Xvnc serves the display, otherwise the "virtual" screen could end
+      // up mirroring the user's real desktop through a stale alias.
+      if (findSocket(displayNum) && await hasVirtualXServer(displayNum)) {
         const auth = stTmpAuth(displayNum);
         const pid = await safeSpawnBin("x11vnc", ["-display", `:${displayNum}`, "-forever", "-shared", "-rfbport", String(rfbPort), "-localhost", ...(auth ? ["-auth", auth] : [])], { X11VNC_AVOID_WINDOWS: "never" });
         if (pid) inst.x11vncPid = pid;
