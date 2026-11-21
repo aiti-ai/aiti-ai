@@ -1091,8 +1091,35 @@ function relaxedValue(v: string): boolean {
   return true;
 }
 
+/** Same sanity checks without the "sentence word" heuristic: used where the
+ * context itself is the evidence (explicit symbol assignment after the keyword,
+ * or a CJK credential word followed by a bare token). `密码=thisismycode` and // cjk-ok
+ * `密码 *ZE6=...` must reach the human confirmation gate; scan() stays quiet. */ // cjk-ok
+function keywordCandidateValue(v: string): boolean {
+  if (v.length < 6) return false;
+  if (!plausibleSecret(v) || placeholderShaped(v)) return false;
+  if (NOT_CREDENTIAL.test(v)) return false;
+  if (/[|#]/.test(v)) return false;
+  return true;
+}
+
 /** Same value grammar, 6-char floor (the confirmed path may offer short ids). */
 const VALUE_BODY_MIN6 = VALUE_BODY.replace("{7,299}", "{5,299}");
+
+/** Symbol-assignment separator only (STRONG_SEP minus the copula/prose
+ * branches): `=`, `:=`, `=>`, `->`, `→`, CJK/ASCII colons. An operator after a
+ * credential keyword is code-level evidence, unlike `key point is ...`. */
+const SYM_ASSIGN_SEP = String.raw`(?:[ \t]{0,5}(?::=|=>|->|→|[=:：]{1,3})[ \t]{0,3}["'\u0060“”‘’「」『』【】]?[ \t]{0,3})`;
+
+/** Credential keywords that are never ordinary nouns (CJK/JA/KO/RU): a bare
+ * token after them is worth a confirmation. English keywords stay out —
+ * "key point", "token is" collide with prose. */
+const CJK_KEYWORD_ALT = String.raw`(?:密码|密钥|秘钥|口令|凭证|凭据|私钥|公钥|通行码|授权码|访问密钥|访问令牌|签名密钥|加密密钥|パスワード|トークン|秘密鍵|비밀번호|토큰|пароль)`;
+
+/** Single-token value that may start with a symbol (`密码 *ZE6=AkNQ=^@8*$p`): // cjk-ok
+ * the first char is any non-separator, the rest follows the standard value
+ * body. Same 6-char floor as VALUE_BODY_MIN6 (first char + {5,299}). */
+const TOKEN_BODY_MIN6 = String.raw`((?:[^\s"'\u0060;,(){}<>[\]\\，。、；：！？“”‘’（）「」『』【】](?:[^\s"'\u0060;,(){}<>[\]\\，。、；：！？“”‘’（）「」『』【】]|\\(?![nrt])){5,299}))`;
 
 const RELAXED_CONTEXT_RULES: Rule[] = [
   {
@@ -1112,6 +1139,32 @@ const RELAXED_CONTEXT_RULES: Rule[] = [
     pattern: new RegExp(`${KEYWORD_ALT}${WEAK_SEP}${VALUE_BODY_MIN6}${VALUE_TAIL}`, "gi"),
     group: 1,
     verify: relaxedValue,
+    before: keywordBoundary,
+    source: GITLEAKS,
+  },
+  {
+    id: "candidate-keyword-symbol",
+    label: "SECRET",
+    kind: "secret",
+    // explicit operator after the keyword (`密码=thisismycode`): the operator is // cjk-ok
+    // strong evidence, so a lowercase no-digit value is still offered
+    pattern: new RegExp(`${KEYWORD_ALT}${SYM_ASSIGN_SEP}${VALUE_BODY_MIN6}${VALUE_TAIL}`, "gi"),
+    group: 1,
+    verify: keywordCandidateValue,
+    before: keywordBoundary,
+    source: GITLEAKS,
+  },
+  {
+    id: "candidate-cjk-keyword-token",
+    label: "SECRET",
+    kind: "secret",
+    // CJK credential word + one token that may start with a symbol
+    // (`密码 thisismycode`, `密码 *ZE6=...`): these words are never ordinary // cjk-ok
+    // nouns, so the shape check is light; CJK-only because English keyword
+    // collisions ("key point", "token is") would flood prose
+    pattern: new RegExp(`${CJK_KEYWORD_ALT}${WEAK_SEP}${TOKEN_BODY_MIN6}${VALUE_TAIL}`, "gi"),
+    group: 1,
+    verify: keywordCandidateValue,
     before: keywordBoundary,
     source: GITLEAKS,
   },

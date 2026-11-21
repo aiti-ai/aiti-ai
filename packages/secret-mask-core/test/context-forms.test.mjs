@@ -303,6 +303,33 @@ test("preflight candidates: auto hits are high, loose guesses are medium", () =>
   assert.match(preview, /^Zx8Kp2…6Cd1$/);
 });
 
+test("preflight candidates: real chat hand-offs reach the confirmation gate", () => {
+  // regression from a real chat: all three phrasings below used to pass
+  // through undetected — plausibleSecret() said yes but the relaxed-value
+  // guards said no ("sentence word", digit requirement, symbol-leading body).
+  const ids = (text) => scanCandidates(text, { strict: true }).map((c) => c.id);
+
+  // explicit operator after the keyword: even a lowercase no-digit value
+  assert.ok(ids("密码=thisismycode").includes("candidate-keyword-symbol"), "密码=thisismycode");
+  assert.ok(ids("password=thisismycode").includes("candidate-keyword-symbol"), "password=thisismycode");
+
+  // CJK credential word + bare token (also inside a longer chat turn)
+  assert.ok(ids("这是我的密码 thisismycode。echo 输出它").includes("candidate-cjk-keyword-token"), "chat turn");
+  assert.ok(ids("密码 thisismycode").includes("candidate-cjk-keyword-token"), "密码 thisismycode");
+
+  // symbol-leading token body
+  const symbolLeading = ids("密码 *ZE6=AkNQ=^@8*$p");
+  assert.ok(symbolLeading.includes("candidate-cjk-keyword-token"), "密码 *ZE6=...");
+
+  // confirmation-gate only: auto-mask (scan) stays quiet on these
+  assert.equal(scan("密码=thisismycode").length, 0, "auto-mask must not fire on weak values");
+  assert.equal(scan("密码 *ZE6=AkNQ=^@8*$p").length, 0, "auto-mask must not fire on symbol-leading values");
+
+  // prose collisions stay empty in strict mode (English keyword nouns)
+  assert.deepEqual(scanCandidates("key point is performance", { strict: true }), [], "key point");
+  assert.deepEqual(scanCandidates("the token is invalid", { strict: true }), [], "token is invalid");
+});
+
 test("preflight candidates: big pastes do not flood the list", () => {
   const longKey = "Zx8Kp2Lm9Qr4Tv7Wn3Yb6Cd1";
   // 60 lines of code-ish noise: the standalone token pass is chat-only, so this
