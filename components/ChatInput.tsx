@@ -2849,9 +2849,13 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     // content is cleared, never newer input.
     const snapshotValue = msg;
     const snapshotImages = attachedImages;
+    // Forking into a new session is a send path: same pre-send gate. Cancelling
+    // keeps the input so the user can edit instead of losing the draft.
+    const gate = await runComposerGate(msg, attachedImages.length);
+    if (gate.cancel || !gate.text.trim()) return;
     try {
       const ok = await onForkNew?.(
-        msg,
+        gate.text,
         attachedImages.length ? attachedImages : undefined,
         attachedFiles.length ? attachedFiles : undefined,
       );
@@ -3321,11 +3325,14 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     // such instead of putting the recalled entry back into the queue.
     recalledRef.current = null;
     setRecalledVisible(false);
-    // Extension chat hooks: steer/queue (follow-up) sends run the same
-    // [element N]/[answer N]/[error N] replacement (consistent with Enter)
-    const finalMsg = applyChatHooks(msg);
     const images = attachedImages.length ? attachedImages : undefined;
-    const dispatch = () => {
+    // Steer / follow-up is a send path too: run the same pre-send gate (mask or
+    // cancel) before anything leaves the composer, then the extension chat hooks
+    // ([element N]/[answer N]/[error N]) on whatever survived the gate.
+    const dispatch = async () => {
+      const gate = await runComposerGate(msg, attachedImages.length);
+      if (gate.cancel || !gate.text.trim()) return;
+      const finalMsg = applyChatHooks(gate.text);
       const streamingBehavior = mode === "steer" ? "steer" : "followUp";
       if (finalMsg.startsWith("/") && onPromptWithStreamingBehavior) {
         clearInput();
@@ -3343,11 +3350,11 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     // extension's /mcp is dispatched as before. Unhandled (or failed) → still dispatch.
     if (!attachedImages.length && onBuiltinCommand && isBareMcpCommand(msg)) {
       void runBuiltinCommand(msg).then((handled) => {
-        if (!handled) dispatch();
-      }, () => dispatch());
+        if (!handled) void dispatch();
+      }, () => void dispatch());
       return;
     }
-    dispatch();
+    void dispatch();
   }, [value, attachedImages, queuedMessages, onPromptWithStreamingBehavior, onSteer, onFollowUp, onQueueSteerSend, handleRemoveQueueItem, clearInput, onAudioUnlock, applyChatHooks, onBuiltinCommand, runBuiltinCommand, handleSend]);
 
   const getNextSlashIndex = useCallback((direction: "up" | "down" | "left" | "right") => {
