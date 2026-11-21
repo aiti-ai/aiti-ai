@@ -7,7 +7,7 @@ import { t } from "./host-shim";
 import {
   store, useStore, kanbanOpen, refreshSessions, ensureTags,
   useSharedFilter, toggleSharedFilter, clearSharedFilter, displayCwd, EMPTY_TAGS,
-  hidePendingRow, subscribePendingRemovals,
+  hidePendingRow, subscribePendingRemovals, collapsePanelIfCovering, collapseViewersIfCovering,
 } from "./store";
 import { byIdMap, tagPath, sessionTagIds, matchesTags, sessionTitle, fmtRelative, descendantsLocal, selectStyle, ghostBtn, SIc } from "./helpers";
 import { StarButton, TagEditPopover } from "./tag-ui";
@@ -93,8 +93,10 @@ export function KanbanPage(props: any) {
     <div
       key={sess.id}
       onClick={() => {
-        if (sess.archived) openViewer(sess.id);
-        else { props.onSelectSession?.(sess); kanbanOpen.onClose(); }
+        // The kanban page may cover (or be covered by) All Sessions — yield first so the
+        // target is never opened behind a layer the user cannot see past.
+        if (sess.archived) { collapsePanelIfCovering(); openViewer(sess.id); }
+        else { collapsePanelIfCovering(); collapseViewersIfCovering(); props.onSelectSession?.(sess); kanbanOpen.onClose(); }
       }}
       style={{
         padding: "8px 10px", borderRadius: 9, cursor: "pointer",

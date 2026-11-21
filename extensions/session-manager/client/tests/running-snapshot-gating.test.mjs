@@ -46,6 +46,7 @@ const isoDir = mkdtempSync(join(tmpdir(), "sm-runsnap-test-"));
   const clientSrc = join(sm, "client", "src");
   mkdirSync(join(clientSrc, "sidebar"), { recursive: true });
   writeFileSync(join(clientSrc, "store.ts"), readFileSync(join(srcRoot, "store.ts"), "utf8"));
+  writeFileSync(join(clientSrc, "float-yield.pure.ts"), readFileSync(join(srcRoot, "float-yield.pure.ts"), "utf8"));
   writeFileSync(join(clientSrc, "host-shim.ts"), HOST_SHIM_STUB);
   writeFileSync(join(clientSrc, "sidebar", "pure.ts"), readFileSync(join(srcRoot, "sidebar", "pure.ts"), "utf8"));
   mkdirSync(join(isoDir, "_shared"), { recursive: true });

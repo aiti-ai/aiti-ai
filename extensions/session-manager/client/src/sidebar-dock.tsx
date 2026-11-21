@@ -19,7 +19,7 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { apiUrl, t, getLocale } from "./host-shim";
-import { useStore, refreshSessions, refreshListChannels, refreshWorkspaces, refreshProjectSessions, isProjectSessionsLoaded, noteDraftSession, removePendingDraft, ensureTags, togglePinSession, togglePinProject, hidePendingRow, hasLoadedSessionsOnce, subscribePendingRemovals, type WorkspaceEntry } from "./store";
+import { useStore, refreshSessions, refreshListChannels, refreshWorkspaces, refreshProjectSessions, isProjectSessionsLoaded, noteDraftSession, removePendingDraft, ensureTags, togglePinSession, togglePinProject, hidePendingRow, hasLoadedSessionsOnce, subscribePendingRemovals, collapsePanelIfCovering, type WorkspaceEntry } from "./store";
 import { matchesTags, tagPath } from "./helpers";
 import {
   SESSION_LIST_ITEM_HEIGHT,
@@ -569,7 +569,10 @@ export function SidebarList(props: SidebarDockProps) {
   }, []);
 
   // 行点击：cwd 联动 + 上报宿主（宿主 handleSelectSessionFromList 已含，直接透传）
+  // Whichever path opens a session: first let a main-area-covering All Sessions float yield
+  // (otherwise the host switch happens behind the full-screen panel and looks like a no-op).
   const handleSelectSessionFromList = useCallback((s: SessionInfo, entryId?: string, blockIndex?: number) => {
+    collapsePanelIfCovering();
     onSelectSession?.(s, entryId, blockIndex);
   }, [onSelectSession]);
 
