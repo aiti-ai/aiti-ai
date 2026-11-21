@@ -2249,10 +2249,9 @@ function candidatesOf(store, text, opts) {
 function preflightScan(store, text, opts = {}) {
   let locked = false;
   try {
-    const st = store.status();
-    locked = st.initialized && st.locked;
+    store.keyFor(false);
   } catch {
-    locked = true;
+    locked = store.initialized;
   }
   const candidates = candidatesOf(store, text, opts).map((hit, index) => ({
     index,
