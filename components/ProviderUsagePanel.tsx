@@ -27,7 +27,9 @@ type Overview = { capturedAt: number; providers: OverviewEntry[] };
 
 export function ProviderUsagePanel({ currentProviderId }: { currentProviderId?: string | null }) {
   const [overview, setOverview] = useState<Overview | null>(null);
-  const [querying, setQuerying] = useState(false);
+  // Start as querying so the section shows a loading placeholder before the
+  // first fetch resolves (instead of rendering nothing until data arrives).
+  const [querying, setQuerying] = useState(true);
   const [refreshDone, setRefreshDone] = useState(false);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { t } = useI18n();
@@ -73,10 +75,8 @@ export function ProviderUsagePanel({ currentProviderId }: { currentProviderId?: 
     };
   }, [query]);
 
-  if (!overview) return null;
-  const ready = overview.providers.filter((entry) => entry.status === "ready" && entry.report);
-  if (!ready.length) return null;
-  const current = currentProviderId ? ready.find((entry) => entry.providerId === currentProviderId) : undefined;
+  const ready = overview ? overview.providers.filter((entry) => entry.status === "ready" && entry.report) : [];
+  const current = overview && currentProviderId ? ready.find((entry) => entry.providerId === currentProviderId) : undefined;
   // Flat list: current-session provider pinned on top, the rest follow in overview
   // order — no intermediate "other providers" group (one row per provider).
   const rows = [...ready].sort((a, b) => (a === current ? -1 : b === current ? 1 : 0));
@@ -99,12 +99,20 @@ export function ProviderUsagePanel({ currentProviderId }: { currentProviderId?: 
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={querying ? { animation: "spin 0.8s linear infinite" } : undefined} aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></svg>
           )}
         </button>
-        <span style={{ fontSize: 10, color: "var(--text-dim)", whiteSpace: "nowrap" }}>{formatUpdated(overview.capturedAt)}</span>
+        {overview && <span style={{ fontSize: 10, color: "var(--text-dim)", whiteSpace: "nowrap" }}>{formatUpdated(overview.capturedAt)}</span>}
       </div>
 
-      {rows.map((entry) => (
-        <ProviderRow key={entry.providerId} entry={entry} isCurrent={entry === current} />
-      ))}
+      {rows.length ? (
+        rows.map((entry) => (
+          <ProviderRow key={entry.providerId} entry={entry} isCurrent={entry === current} />
+        ))
+      ) : (
+        // Placeholder while the first fetch is in flight (or when nothing is
+        // queryable yet) — keeps the section visible instead of popping in later.
+        <div style={{ fontSize: 11, color: "var(--text-dim)", padding: "2px 0" }}>
+          {querying ? t("providerUsage.loading") : t("providerUsage.notQueried")}
+        </div>
+      )}
     </section>
   );
 }
