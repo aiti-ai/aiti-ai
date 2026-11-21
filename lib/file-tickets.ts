@@ -16,12 +16,16 @@ import { apiUrl } from "@/lib/base-path";
 export type FileGetType = "list" | "read" | "meta" | "preview" | "download";
 export type FileTicketType = "read" | "download" | "preview" | "watch" | "list" | "meta";
 
-/** Exchanges for a short-lived ticket (reusable within its TTL). Throws on failure. */
-export function resolveFileTicket(filePath: string, type: FileTicketType): Promise<string> {
+/** Exchanges for a short-lived ticket (reusable within its TTL). Extra params ride the POST body (server-side validation/gating, e.g. revision ref/gitDir) and are echoed back into the GET query by buildTicketUrl. Throws on failure. */
+export function resolveFileTicket(filePath: string, type: FileTicketType, params: Record<string, string | number | undefined> = {}): Promise<string> {
+  const body: Record<string, unknown> = { path: filePath, type };
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && (k === "ref" || k === "gitDir")) body[k] = String(v);
+  }
   return fetch(apiUrl("/api/files/ticket"), {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ path: filePath, type }),
+    body: JSON.stringify(body),
   })
     .then((r) => r.json().catch(() => ({})))
     .then((d: { ticket?: string; error?: string }) => {
@@ -36,7 +40,9 @@ export async function buildTicketUrl(
   type: FileTicketType,
   params: Record<string, string | number | undefined> = {},
 ): Promise<string> {
-  const ticket = await resolveFileTicket(filePath, type);
+  // ref/gitDir must ride the POST body too: the ticket issuer stat-checks the path and
+  // would 404 a deleted file before the revision branch of the GET handler ever runs.
+  const ticket = await resolveFileTicket(filePath, type, params);
   const searchParams = new URLSearchParams({ type });
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined) searchParams.set(key, String(value));
