@@ -68,14 +68,24 @@ export function createWindow(kit, store) {
         return h("button", {
           key: id,
           type: "button",
-          title: t(m.labelKey) + (active ? "" : " · " + t("cmd.app.switch")),
+          title: t(m.labelKey) + " · " + t("cmd.app.switch"),
           "aria-label": t(m.labelKey),
           "aria-pressed": active ? "true" : "false",
           className: "cmd-switch-btn",
-          onClick: (e) => { e.stopPropagation(); if (!active) store.openApp(id); },
+          onClick: (e) => {
+            e.stopPropagation();
+            // no interlock: clicking the active app is allowed too — it raises that
+            // window via aiti-float's native pointerdown hook (the panel may be
+            // buried under another cmd window). Freshly-mounted windows are
+            // brought to front by aiti-float's own scan, so only an already-mounted
+            // panel needs the synthetic raise here.
+            store.openApp(id);
+            const panel = document.querySelector('[data-cmd-app="' + id + '"]');
+            if (panel) { try { panel.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })); } catch { /* pre-PointerEvent browser — aiti-float scan still raises new windows */ } }
+          },
           style: {
             display: "inline-flex", alignItems: "center", gap: 4, flexShrink: 0,
-            height: 20, padding: "0 7px", borderRadius: 5, cursor: active ? "default" : "pointer",
+            height: 20, padding: "0 7px", borderRadius: 5, cursor: "pointer",
             border: "1px solid " + (active ? "var(--accent)" : "transparent"),
             background: active ? "color-mix(in srgb, var(--accent) 16%, transparent)" : "transparent",
             color: active ? "var(--accent)" : "var(--text-muted)",
@@ -103,6 +113,7 @@ export function createWindow(kit, store) {
     },
       h("div", {
         "data-ext-float": "1",
+        "data-cmd-app": app,
         "data-ext-float-w": width || m.w,
         "data-ext-float-h": height || m.h,
         ...(autoh ? { "data-ext-float-autoh": "1" } : {}),
