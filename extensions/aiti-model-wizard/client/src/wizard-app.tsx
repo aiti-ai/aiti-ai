@@ -2151,7 +2151,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         <input className="amw-input" style={{width: "100%", fontFamily: "ui-monospace,monospace"}} type="password" placeholder={p.apiKeyMasked ? ti("mw.a.267") + p.apiKeyMasked + "）" : ti("mw.a.268")} value={editTok[p.provider] || ""} onChange={(e) => setEditTok((prev: any) => ({ ...prev, [p.provider]: e.target.value }))} />
         <label style={{ fontSize: 11, color: "var(--text-subtle,#666)", display: "block", margin: "8px 0 3px" }}>{ti("mw.tx.49")}</label>
         <EditHeadersEditor key={p.provider} initialHeaders={eff("headers", p.headers)} initialMasked={eff("headersMasked", p.maskedHeaders)}
-          onChange={(headers, maskedHeaders) => setEditFields((prev: any) => ({ ...prev, [p.provider]: { ...(prev[p.provider] || {}), headers, headersMasked } }))} />
+          onChange={(headers, maskedHeaders) => setEditFields((prev: any) => ({ ...prev, [p.provider]: { ...(prev[p.provider] || {}), headers, headersMasked: maskedHeaders } }))} />
         {/* ── 连接测试（用已配置的全部 key，逐个测）── */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
           <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff", padding: "3px 10px" }} title={ti("mw.tx.51")} disabled={!!(keyTests[p.provider] && keyTests[p.provider].busy)} onClick={() => doTestStored(p)}>
