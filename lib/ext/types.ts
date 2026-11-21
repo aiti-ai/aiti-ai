@@ -370,6 +370,19 @@ export interface ExtUiItem {
   /** The menu already carries full content (e.g. a search input); the host adds no text label */
   noMenuLabel?: boolean;
   /**
+   * Parent-tooltip contributor (inline slots): the host renders a container
+   * (e.g. the session-info stats button) whose own tooltip describes host data
+   * only. An inline item whose values belong to that same summary declares this
+   * callback and the host appends its result on hover — so `CPU 8% · MEM 87%`
+   * shows next to the token/cost/context lines instead of only in the chip's
+   * own title.
+   *
+   * Contract: return ONE line of plain text (the host owns line breaks), or
+   * null/undefined when there is nothing to add. Called on hover, so the
+   * implementation may read live state without re-registering.
+   */
+  tooltip?: () => string | null | undefined;
+  /**
    * Declarative icon (toolbar slot; the host renders it in the standard grayscale line style —
    * looks are normalized by the host to stop per-extension drawing drift):
    * - { svg }: inner SVG markup string with a 24×24 viewBox (lucide line style, stroke=currentColor,
