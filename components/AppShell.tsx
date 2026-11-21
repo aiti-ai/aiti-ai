@@ -1534,6 +1534,20 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     initialSessionRestoredRef.current = typeof v === "function" ? v(initialSessionRestoredRef.current) : v;
     setInitialSessionRestoredState(v);
   }, []);
+  // [restore watchdog] The ?session= restore normally settles in well under a second.
+  // If it is still pending after the grace period (an extension hot-reload window can
+  // stall the sidebar lists / by-id fetches), surface a retry affordance under the
+  // placeholder instead of an endless spinner. The placeholder clears by itself if
+  // the restore lands late, so this is purely additive UI.
+  const [restoreStalled, setRestoreStalled] = useState(false);
+  useEffect(() => {
+    if (initialSessionRestored || !initialSessionId) {
+      setRestoreStalled(false);
+      return;
+    }
+    const t = setTimeout(() => setRestoreStalled(true), 15000);
+    return () => clearTimeout(t);
+  }, [initialSessionRestored, initialSessionId]);
   const sideTabOwner = activeSessionFamily?.root.id ?? null;
   useEffect(() => {
     if (!catalogLoaded || !initialSessionRestored) return;
@@ -2200,52 +2214,70 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   }, []);
 
   const handleOpenSession = useCallback(async (sessionId: string, options?: { initialRestore?: boolean }) => {
-    try {
-      // The by-id restore is part of the initial ?session= restore. If the user
-      // picked another session while this fetch was in flight (slow sessions
-      // list / slow backend), yield to that pick: selecting the restored id here
-      // would yank the user back and the 404 branch below would wipe their URL.
-      if (options?.initialRestore && userPickedSessionRef.current) return false;
-      const response = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}`), { cache: "no-store" });
-      const data = await response.json() as { info?: SessionInfo; error?: string };
-      // Re-check after the await: the pick typically happens while this fetch is
-      // in flight (the restore only reaches this by-id path when the list does
-      // not contain the id, and the fetch is what the user races against).
-      if (options?.initialRestore && userPickedSessionRef.current) return false;
-      if (!response.ok || !data.info) {
-        // The initial ?session= restore pointed at a deleted session (404): clear the
-        // stale last-open record + clear the URL immediately. On the normal path the
-        // URL is cleaned by the "default project pick → handleCwdChange → replace"
-        // chain; this is the failure-path fallback (does not wait for the next list
-        // refresh). The check is "requested id === URL id being restored" rather than
-        // just the initialRestore flag — some restore callers drop the flag, and the
-        // cost of clearing the wrong thing (wiping someone else's URL session param)
-        // far outweighs missing a clear.
-        if (response.status === 404 && (options?.initialRestore || sessionId === initialSessionIdRef.current)) {
-          clearLastOpenSessionById(sessionId);
-          // Restore failed: release the authority guard so the normal
-          // last-open behavior applies for the rest of this page load.
-          urlRestoredSessionRef.current = null;
-          replaceLocationIfChanged(router, inAppPathname("/"), { scroll: false });
+    // [restore resilience] A by-id request landing inside an extension hot-reload window
+    // can fail transiently (extension routes flap while the layer restarts). Retry
+    // non-404 failures a couple of times so a server hiccup does not drop the initial
+    // ?session= restore onto the default project with a misleading "not found" toast.
+    // 404 is authoritative (session really gone) and never retried.
+    const maxAttempts = options?.initialRestore ? 3 : 1;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        // The by-id restore is part of the initial ?session= restore. If the user
+        // picked another session while this fetch was in flight (slow sessions
+        // list / slow backend), yield to that pick: selecting the restored id here
+        // would yank the user back and the 404 branch below would wipe their URL.
+        if (options?.initialRestore && userPickedSessionRef.current) return false;
+        const signal = typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(12000) : undefined;
+        const response = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}`), { cache: "no-store", signal });
+        const data = await response.json() as { info?: SessionInfo; error?: string };
+        // Re-check after the await: the pick typically happens while this fetch is
+        // in flight (the restore only reaches this by-id path when the list does
+        // not contain the id, and the fetch is what the user races against).
+        if (options?.initialRestore && userPickedSessionRef.current) return false;
+        if (!response.ok || !data.info) {
+          // The initial ?session= restore pointed at a deleted session (404): clear the
+          // stale last-open record + clear the URL immediately. On the normal path the
+          // URL is cleaned by the "default project pick → handleCwdChange → replace"
+          // chain; this is the failure-path fallback (does not wait for the next list
+          // refresh). The check is "requested id === URL id being restored" rather than
+          // just the initialRestore flag — some restore callers drop the flag, and the
+          // cost of clearing the wrong thing (wiping someone else's URL session param)
+          // far outweighs missing a clear.
+          if (response.status === 404 && (options?.initialRestore || sessionId === initialSessionIdRef.current)) {
+            clearLastOpenSessionById(sessionId);
+            // Restore failed: release the authority guard so the normal
+            // last-open behavior applies for the rest of this page load.
+            urlRestoredSessionRef.current = null;
+            replaceLocationIfChanged(router, inAppPathname("/"), { scroll: false });
+          }
+          const err = new Error(data.error ?? `HTTP ${response.status}`) as Error & { status?: number };
+          err.status = response.status;
+          throw err;
         }
-        throw new Error(data.error ?? `HTTP ${response.status}`);
+        handleSelectSession(data.info);
+        // The by-id fallback of the initial ?session= restore (id not in the
+        // sidebar list) is part of the URL restore: anchor the guard AFTER
+        // handleSelectSession — it selects with isRestore=false and would
+        // otherwise clear the anchor set here.
+        if (options?.initialRestore) {
+          urlRestoredSessionRef.current = { id: data.info.id, cwd: data.info.cwd };
+        }
+        return true;
+      } catch (err) {
+        const status = (err as { status?: number }).status;
+        const yielded = options?.initialRestore && userPickedSessionRef.current;
+        if (attempt < maxAttempts && status !== 404 && !yielded) {
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+          continue;
+        }
+        // Next.js dev surfaces console.error as an error overlay, but a failed open is a
+        // normal, recoverable condition (e.g. ?session= pointing at an archived/deleted
+        // session after a reload) — a toast is enough, no error-level noise.
+        piWebToastService.show(translate("sidebar.sessionNotFound"));
+        return false;
       }
-      handleSelectSession(data.info);
-      // The by-id fallback of the initial ?session= restore (id not in the
-      // sidebar list) is part of the URL restore: anchor the guard AFTER
-      // handleSelectSession — it selects with isRestore=false and would
-      // otherwise clear the anchor set here.
-      if (options?.initialRestore) {
-        urlRestoredSessionRef.current = { id: data.info.id, cwd: data.info.cwd };
-      }
-      return true;
-    } catch {
-      // Next.js dev surfaces console.error as an error overlay, but a failed open is a
-      // normal, recoverable condition (e.g. ?session= pointing at an archived/deleted
-      // session after a reload) — a toast is enough, no error-level noise.
-      piWebToastService.show(translate("sidebar.sessionNotFound"));
-      return false;
     }
+    return false;
   }, [handleSelectSession, router, translate]);
 
   // pi-web.session.open(id) delegation backfill (same pattern as hostUiRef: refresh
@@ -5933,6 +5965,18 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
               style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: 24, color: "var(--text-muted)", textAlign: "center" }}
             >
               <div style={{ fontSize: 14, color: "var(--text)" }}>{translate("workspace.openingSession")}</div>
+              {restoreStalled && (
+                <>
+                  <div style={{ maxWidth: 460, fontSize: 12 }}>{translate("workspace.openingSessionStalled")}</div>
+                  <button
+                    type="button"
+                    onClick={() => window.location.reload()}
+                    style={{ padding: "6px 18px", borderRadius: 8, border: "1px solid var(--border)", background: "transparent", color: "var(--text)", fontSize: 13, cursor: "pointer" }}
+                  >
+                    {translate("workspace.openingSessionRetry")}
+                  </button>
+                </>
+              )}
             </div>
           ) : showPlaceholder ? (
             activeCwd ? (

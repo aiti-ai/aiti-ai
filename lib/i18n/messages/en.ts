@@ -570,6 +570,8 @@ export const enLocale: LocalePlugin = {
     "debug.overlay.starts": "started {count}×",
     "workspace.opening": "Opening workspace...",
     "workspace.openingSession": "Opening session...",
+    "workspace.openingSessionStalled": "Still opening — the service may be mid-reload. You can retry.",
+    "workspace.openingSessionRetry": "Retry",
     "workspace.unable": "Unable to open workspace",
     "workspace.selectSession": "Select a session from the sidebar",
     "workspace.getStarted": "Get Started",

@@ -268,11 +268,62 @@ export function SidebarContentDock(props: Record<string, any>) {
   useEffect(() => {
     restorePendingRef.current = Boolean(initialSessionId);
   }, [initialSessionId]);
+  // [restore watchdog] Fires when the sessions/workspaces lists have not landed within
+  // the grace period (extension hot-reload window): settles the URL restore through the
+  // host by-id open (core endpoint, independent of this extension's server) instead of
+  // sitting on the host "Opening session…" placeholder forever. See the restore effect.
+  const restoreWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (restoreWatchdogRef.current != null) window.clearTimeout(restoreWatchdogRef.current);
+  }, []);
+  // Host by-id open (also how live-bridge sessions attach). The initialRestore flag
+  // makes the host clear the stale last-open record + URL on 404. The outcome is
+  // awaited: while a restore is in flight the default project pick must not fire,
+  // or onCwdChange would flip the right pane to the new-session composer first and
+  // a ?session= reload would flash "new session, then jump". Restore success stops
+  // here; only failure falls through to the default project pick below (invalid
+  // ?session= cleanup is owned by the host 404 branch + the post-restore
+  // onCwdChange chain; semantics aligned with the fallback SessionSidebar).
+  const runByIdRestore = useCallback(async (
+    sessions: SessionInfo[],
+    workspaces: WorkspaceEntry[],
+    sessionId: string,
+  ) => {
+    let ok = false;
+    try {
+      ok = Boolean(await onOpenById?.(sessionId, { initialRestore: true }));
+    } catch {
+      ok = false;
+    }
+    onInitialRestoreDone?.();
+    restorePendingRef.current = false; // settled: stop on success; default pick only on failure
+    // The user picked a session while this by-id restore was in flight (host
+    // yields and returns false in that case): skip the default project pick
+    // too — any cwd notification now would fight the user's pick.
+    if (selectedSessionIdRef.current && selectedSessionIdRef.current !== sessionId) return;
+    if (ok) return;
+    if (cwdRef.current === null) {
+      const projects = sessions.length > 0
+        ? getRecentProjects(sessions)
+        : workspaces.map((w) => ({ key: w.key, root: w.root }));
+      if (projects.length > 0) {
+        cwdRef.current = projects[0].root;
+        setCwdState(projects[0].root);
+        onCwdChangeRef.current?.(projects[0].root);
+      }
+    }
+  }, [onOpenById, onInitialRestoreDone]);
+
   useEffect(() => {
     const sessions = (store.sessions ?? []) as SessionInfo[];
     const workspaces = (store.workspaces ?? []) as WorkspaceEntry[];
-    // [通道拆分] 快通道 workspaces 先落地即可进行默认项目自动选（不等待 1MB 全量）
-    if ((sessions.length === 0 && workspaces.length === 0) || skipInitialProjectSelection) return;
+    if (skipInitialProjectSelection) return;
+    const clearWatchdog = () => {
+      if (restoreWatchdogRef.current != null) {
+        window.clearTimeout(restoreWatchdogRef.current);
+        restoreWatchdogRef.current = null;
+      }
+    };
     // URL 恢复优先（?session= 可能晚于首帧到达——宿主 post-hydration 才派生 initialSessionId）
     if (initialSessionId && !restoredRef.current) {
       // A genuine user pick landed while the restore was still waiting for the
@@ -280,10 +331,32 @@ export function SidebarContentDock(props: Record<string, any>) {
       // now would switch the user off the session they just opened and rewrite
       // ?session= back to the URL id. Settle as done, skip restore AND default pick.
       if (selectedSessionId && selectedSessionId !== initialSessionId) {
+        clearWatchdog();
         restoredRef.current = true;
         restorePendingRef.current = false;
         return;
       }
+      // [restore watchdog] Grace fallback for never-landing lists: inside an extension
+      // hot-reload window the sessions/workspaces fetches can hang without a response
+      // (no fetch timeout; chained refreshes queue behind the stuck in-flight request),
+      // so this effect keeps early-returning and the host "Opening session…"
+      // placeholder never clears. After the grace period, settle the restore through
+      // the host by-id open — that path hits the core /api/sessions endpoint and does
+      // not depend on this extension's server. restoredRef latches here, so a late
+      // list landing cannot re-restore (same-session re-select is idempotent).
+      if (sessions.length === 0 && workspaces.length === 0) {
+        if (restoreWatchdogRef.current == null) {
+          restoreWatchdogRef.current = window.setTimeout(() => {
+            restoreWatchdogRef.current = null;
+            if (restoredRef.current) return;
+            if (selectedSessionIdRef.current && selectedSessionIdRef.current !== initialSessionId) return;
+            restoredRef.current = true;
+            void runByIdRestore(sessions, workspaces, initialSessionId);
+          }, 5000);
+        }
+        return;
+      }
+      clearWatchdog();
       restoredRef.current = true;
       const target = sessions.find((s) => s.id === initialSessionId);
       if (target) {
@@ -294,39 +367,10 @@ export function SidebarContentDock(props: Record<string, any>) {
         return;
       }
       // 列表未命中 → 宿主按 id 打开（live-bridge 会话 socket attach 可中）。
-      // initialRestore 标记：宿主 404 时据此清失效 last-open 记录 + 立即清 URL。
-      // **await 结果**：恢复挂起期间不做默认项目自动选——否则 onCwdChange 会先把
-      // 右侧切到新建会话窗口，?session= 刷新呈现「先新会话后跳转」的闪现。恢复
-      // 成功（宿主已选中会话）即 return；失败才 fall through 下方默认项目自动选
-      //（无效 ?session= 的清理由宿主 404 分支 + 恢复完成后的 onCwdChange 链承担，
-      // 语义与回退态 SessionSidebar 对齐）。
-      void (async () => {
-        let ok = false;
-        try {
-          ok = Boolean(await onOpenById?.(initialSessionId, { initialRestore: true }));
-        } catch {
-          ok = false;
-        }
-        onInitialRestoreDone?.();
-        restorePendingRef.current = false; // 定案：恢复成功即止，失败才补默认选
-        // The user picked a session while this by-id restore was in flight (host
-        // yields and returns false in that case): skip the default project pick
-        // too — any cwd notification now would fight the user's pick.
-        if (selectedSessionIdRef.current && selectedSessionIdRef.current !== initialSessionId) return;
-        if (ok) return;
-        if (cwdRef.current === null) {
-          const projects = sessions.length > 0
-            ? getRecentProjects(sessions)
-            : workspaces.map((w) => ({ key: w.key, root: w.root }));
-          if (projects.length > 0) {
-            cwdRef.current = projects[0].root;
-            setCwdState(projects[0].root);
-            onCwdChangeRef.current?.(projects[0].root);
-          }
-        }
-      })();
+      void runByIdRestore(sessions, workspaces, initialSessionId);
       return; // 恢复挂起：默认项目自动选延后到恢复结果
     }
+    clearWatchdog();
     // 恢复挂起中：默认项目自动选不得触发（effect 随 store 落地重跑的防护）
     if (restorePendingRef.current) return;
     // 默认项目自动选。原宿主语义并非「仅本地展示」：回退态 selectedCwd 变化会经
@@ -344,7 +388,7 @@ export function SidebarContentDock(props: Record<string, any>) {
         onCwdChangeRef.current?.(projects[0].root);
       }
     }
-  }, [store.sessions, store.workspaces, initialSessionId, skipInitialProjectSelection, onSelectSession, onOpenById, onInitialRestoreDone, selectedSessionId]);
+  }, [store.sessions, store.workspaces, initialSessionId, skipInitialProjectSelection, onSelectSession, runByIdRestore, selectedSessionId]);
 
   /* ── running/unread（store 权威；宿主过渡逻辑的接管态迁移）── */
   const runningSessionIds = store.running as Set<string>;

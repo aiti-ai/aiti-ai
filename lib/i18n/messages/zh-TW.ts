@@ -500,6 +500,8 @@ export const zhTWLocale: LocalePlugin = {
     "debug.overlay.starts": "啟動 {count} 次",
     "workspace.opening": "正在開啟工作區...",
     "workspace.openingSession": "正在開啟工作階段...",
+    "workspace.openingSessionStalled": "仍在開啟……服務可能正在熱載入，可點擊重試。",
+    "workspace.openingSessionRetry": "重試",
     "workspace.unable": "無法開啟工作區",
     "workspace.selectSession": "從側邊欄選擇工作階段",
     "workspace.getStarted": "開始使用",
