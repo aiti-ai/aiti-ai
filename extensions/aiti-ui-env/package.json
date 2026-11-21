@@ -42,7 +42,8 @@
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",
-    "deploy": "node tools/deploy.mjs"
+    "deploy": "node tools/deploy.mjs",
+    "check:i18n": "node --experimental-strip-types tools/check-i18n.mjs"
   },
   "devDependencies": {
     "vite": "^6.4.3"

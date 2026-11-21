@@ -65,3 +65,13 @@
 - `SysVncEntry` 带 `passwordResettable` / `passwordNote`：面板「系统 VNC」每条显示 🔑 重设密码（不可改的置灰并把原因放 title）。
 - 密码文件写入**不自实现 DES**：优先 `x11vnc -storepasswd` → `vncpasswd -f`（stdin→二进制 stdout）→ `openssl enc -des-ecb -provider legacy`；Win 注册表在 PowerShell/.NET 里算。
 - 注意还是那把钥匙的区别：**UltraVNC 自有 `E84AD660C4721AE0` vs 标准 vncpasswd `17526B06234E5807`**，哪个目标用哪把不能弄错。
+
+## 多语（i18n）契约（2026-11-21 定）
+
+- **单一词表** `lib/i18n.ts`：既是 manifest `ui.i18n`（宿主 client `t()`），也是服务端 `tr(locale, key, params)` 的唯一来源。禁止再往 `index.ts` 内联词表。
+- **键形态**：客户端 UI 文案用中文源串作 key（zh-CN 由 `derivedZh` 自动派生 identity，**新增文案只需补 en**）；描述类/服务端消息用语义 key（`ext.` / `feat.` / `mode.` / `srv.`），必须同时写 en + zh-CN。
+- **服务端必须带 locale**：API 每个请求解析一次 `?locale=`（缺省 `Accept-Language`，无则 en），传给 `env.*`；返回给面板的人类可读串（模式、裁决、告警、依赖标签、错误）一律 `tr(locale, …)`。探测结果缓存跨 locale —— 所以探测错误只存 `errorCode`（`srv.probe.*`），出 API 前用 `localizeProbe()` 翻译。
+- **面板请求**走 client `api()`（自动拼 `?locale=`）；查看页 view.html 带 `&lang=`。
+- **manifest 分组**：`features[].group` 用 `i18n:feat.group.<x>` 前缀，宿主/extman 走 `resolveExtItemText` 级联解析（纯文本 group 原样显示）。
+- **自检**：`npm run check:i18n`（或 `node --experimental-strip-types tools/check-i18n.mjs`）——校验 client/service 键全覆盖、zh-CN 完整、无死键。改文案后必跑。
+- **例外**：`extensions/aiti-ui-env/index.ts` 的 agent 工具描述、`ai.intro`、`skills/*` 属 AI 面文案，暂不参与面板多语。
