@@ -19,7 +19,6 @@ const {
   readRecentModels,
   rememberRecentModel,
   pickRecentOptions,
-  excludeRecentOptions,
   recentRowHint,
   buildSelectorNavRows,
   selectorRowKey,
@@ -159,17 +158,13 @@ test("pickRecentOptions hidden while panel closed or filtering", () => {
   assert.deepEqual(pickRecentOptions(recent, CATALOG, { open: true, filter: "  " }).length, 1); // whitespace-only filter = no filter
 });
 
-test("excludeRecentOptions drops entries already shown in the recent section from the main list (each model appears once)", () => {
-  const recent = [CATALOG[0], CATALOG[2]];
-  assert.deepEqual(excludeRecentOptions(CATALOG, recent), [CATALOG[1]]);
-  assert.deepEqual(excludeRecentOptions(CATALOG, []), CATALOG, "main list untouched when no recent section");
-  assert.deepEqual(excludeRecentOptions(CATALOG, [opt("gone", "x")]), CATALOG, "list untouched when no overlap");
-  // same display name but different provider must not be dropped by mistake (key = provider/modelId)
-  const twin = [...CATALOG, opt("other", "glm-flash", "GLM-5.3-Flash")];
-  assert.deepEqual(
-    excludeRecentOptions(twin, [CATALOG[0]]).map((o) => `${o.provider}/${o.modelId}`),
-    ["deepseek/v4-flash", "modelscope/ZhipuAI/GLM-5.2", "other/glm-flash"],
-  );
+test("recent models stay listed under their provider group (2026-11-21: reversed the 2026-09-14 dedup — users browse by provider)", () => {
+  const recent = [CATALOG[0]];
+  // The panel shows the recents section AND keeps every model under its provider group.
+  const keys = buildSelectorNavRows({ hasClear: true, recentOptions: recent, mainOptions: CATALOG })
+    .map(selectorRowKey);
+  assert.ok(keys.includes("recent:zai:glm-flash"), "recents section present");
+  assert.ok(keys.includes("main:zai:glm-flash"), "recent model must also stay under its provider group");
 });
 
 test("filterModelOptions matches provider name as well as display name and id", async () => {
@@ -353,6 +348,10 @@ test("keeps the server's model order (#783)", () => {
   // /api/models already returns pi's /model order; sorting by name here would
   // scatter a models.json provider's hand-ordered models again.
   assert.doesNotMatch(source, /\.sort\(/);
+});
+
+test("main grouped list is not filtered by the recents section (no exclusion call in the component)", () => {
+  assert.doesNotMatch(source, /excludeRecentOptions\(/);
 });
 
 test("filters model options by model name, id, provider, and provider/id", () => {
