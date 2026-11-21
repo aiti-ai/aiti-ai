@@ -73,7 +73,7 @@ if [ -z "$JUSTGET" ] && [ "$BARE" = 0 ]; then
 fi
 
 # 工具检查清单
-tools=(Xvfb openbox x11vnc dbus-daemon at-spi-bus-launcher xauth xdpyinfo xdotool wmctrl)
+tools=(Xvfb openbox picom x11vnc dbus-daemon at-spi-bus-launcher xauth xdpyinfo xdotool wmctrl)
 # VNC web 层用自写 node vnc-bridge（零依赖）；需 node + 部署扩展
 has node || say "注意: 缺 node（pi-web 运行环境自带；独立部署需装）"
 missing=()
@@ -89,13 +89,13 @@ if [ ${#missing[@]} -gt 0 ]; then
     if has apt-get; then
       DEBIAN_FRONTEND=noninteractive apt-get update -y >>"$LOG" 2>&1
       DEBIAN_FRONTEND=noninteractive apt-get install -y \
-        xvfb openbox x11vnc novnc dbus-x11 at-spi2-core \
+        xvfb openbox picom x11vnc novnc dbus-x11 at-spi2-core \
         xauth x11-utils xdotool wmctrl tigervnc-common >>"$LOG" 2>&1 || {
           warn "apt 安装部分失败，看 $LOG"
           [ "$ASK_AI" = 1 ] && ask_ai "apt 安装失败" "$(tail -30 "$LOG")"
         }
     elif has dnf; then
-      dnf install -y xorg-x11-server-Xvfb openbox x11vnc novnc at-spi2-core dbus-x11 xauth xorg-x11-utils xdotool wmctrl >>"$LOG" 2>&1
+      dnf install -y xorg-x11-server-Xvfb openbox picom x11vnc novnc at-spi2-core dbus-x11 xauth xorg-x11-utils xdotool wmctrl >>"$LOG" 2>&1
     else
       warn "无 apt/dnf；走 justget 兜底或手动安装（--ask-ai 求助）"
       [ "$ASK_AI" = 1 ] && ask_ai "无系统包管理器" "当前发行版: $(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME")"
@@ -151,6 +151,28 @@ if [ "$DRY" = 0 ]; then
       openbox >>"$LOG" 2>&1 &
     disown
     say "OK openbox 已起"
+  fi
+  # ARGB compositor: transparent Tauri/GTK caption needs one on Xvfb+openbox.
+  compositor_running=0
+  for proc in picom compton xcompmgr; do
+    for pid in $(pgrep -x "$proc" 2>/dev/null || true); do
+      if tr '\0' '\n' <"/proc/$pid/environ" 2>/dev/null | grep -qx "DISPLAY=:$DISPLAY_NUM"; then
+        compositor_running=1
+      fi
+    done
+  done
+  if [ "$compositor_running" = 0 ]; then
+    for c in picom compton xcompmgr; do
+      if has "$c"; then
+        [ "$c" = xcompmgr ] && cflags="" || cflags="--backend xrender --no-vsync"
+        nohup env DISPLAY=":$DISPLAY_NUM" XAUTHORITY="$AUTH_DIR/Xauthority" \
+          XDG_RUNTIME_DIR="$AUTH_DIR/runtime" DBUS_SESSION_BUS_ADDRESS="unix:path=$AUTH_DIR/bus" \
+          "$c" $cflags >>"$LOG" 2>&1 &
+        disown
+        say "OK compositor $c 已起（ARGB 透明）"
+        break
+      fi
+    done
   fi
   # 5900 被占（桌面 gdm 等）时换随机端口，避免起不来/连错屏；本段仅回环兜底，主路径用扩展面板（随机端口+注册表）
   if (ss -tln 2>/dev/null || netstat -tln 2>/dev/null) | grep -q ":$VNC_PORT "; then

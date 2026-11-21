@@ -61,8 +61,8 @@ const serverFiles = ["lib/env.ts", "lib/win.ts", "lib/mac.ts", "index.ts"];
 const serverKeys = new Set();
 // dynamic families whose suffixes are enumerated in code rather than written as literals
 const dynamicPrefixes = [
-  ["srv.dep.", ["Xvfb", "openbox", "x11vnc", "at-spi-bus-launcher", "xauth", "xdpyinfo", "dbus-daemon", "tint2", "xfce4-terminal", "thunar", "xdotool", "xterm", "obamenu"]],
-  ["srv.dep.manual.", ["Xvfb", "openbox", "x11vnc", "at-spi-bus-launcher", "xauth", "xdpyinfo", "dbus-daemon", "tint2", "xfce4-terminal", "thunar", "xdotool", "xterm", "obamenu"]],
+  ["srv.dep.", ["Xvfb", "openbox", "picom", "x11vnc", "at-spi-bus-launcher", "xauth", "xdpyinfo", "dbus-daemon", "tint2", "xfce4-terminal", "thunar", "xdotool", "xterm", "obamenu"]],
+  ["srv.dep.manual.", ["Xvfb", "openbox", "picom", "x11vnc", "at-spi-bus-launcher", "xauth", "xdpyinfo", "dbus-daemon", "tint2", "xfce4-terminal", "thunar", "xdotool", "xterm", "obamenu"]],
   ["mode.", ["prefer-desktop", "prefer-headless", "always-desktop", "always-headless"]],
 ];
 for (const file of serverFiles) {
