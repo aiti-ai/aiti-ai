@@ -1018,8 +1018,9 @@ function scanCandidates(text, opts = {}) {
   };
   collect(RELAXED_CONTEXT_RULES, RULES.length);
   const tokenOrder = RULES.length + RELAXED_CONTEXT_RULES.length;
+  const chatSized = masked.split("\n").filter((line) => line.trim()).length <= 20 && masked.trim().length <= 4e3;
   CANDIDATE_TOKEN_RE.lastIndex = 0;
-  for (let m = CANDIDATE_TOKEN_RE.exec(masked); m !== null; m = CANDIDATE_TOKEN_RE.exec(masked)) {
+  for (let m = chatSized ? CANDIDATE_TOKEN_RE.exec(masked) : null; m !== null; m = CANDIDATE_TOKEN_RE.exec(masked)) {
     const value = m[1];
     const start = m.index + m[0].indexOf(value);
     const end = start + value.length;
@@ -1035,8 +1036,9 @@ function scanCandidates(text, opts = {}) {
     out.push(hit);
     lastEnd = h.end;
   }
-  return out;
+  return out.slice(0, CANDIDATE_LIMIT);
 }
+var CANDIDATE_LIMIT = 40;
 function previewValue(value) {
   if (value.length <= 10) return "*".repeat(value.length);
   return `${value.slice(0, 6)}\u2026${value.slice(-4)}`;
@@ -2246,6 +2248,23 @@ function writeSessionRecord(path, sessionId, record) {
 function candidatesOf(store, text, opts) {
   return scanCandidates(text, { strict: opts.strict ?? true });
 }
+function valueIndex(store) {
+  const index = /* @__PURE__ */ new Map();
+  let entries;
+  try {
+    entries = store.list();
+  } catch {
+    return index;
+  }
+  for (const info of entries) {
+    try {
+      const value = store.get(info.alias).value;
+      if (!index.has(value)) index.set(value, info.alias);
+    } catch {
+    }
+  }
+  return index;
+}
 function preflightScan(store, text, opts = {}) {
   let locked = false;
   try {
@@ -2253,13 +2272,14 @@ function preflightScan(store, text, opts = {}) {
   } catch {
     locked = store.initialized;
   }
-  const candidates = candidatesOf(store, text, opts).map((hit, index) => ({
-    index,
+  const index = locked ? /* @__PURE__ */ new Map() : valueIndex(store);
+  const candidates = candidatesOf(store, text, opts).map((hit, position) => ({
+    index: position,
     label: hit.label,
     ruleId: hit.id,
     confidence: hit.confidence,
     preview: previewValue(hit.value),
-    stored: locked ? false : findAliasForValue(store, hit.value) !== void 0
+    stored: index.has(hit.value)
   }));
   return { candidates, locked };
 }
@@ -2269,12 +2289,14 @@ function preflightMask(store, text, indices, opts = {}) {
   if (wanted.length === 0) return { text, aliases: [] };
   let masked = text;
   const aliases = [];
+  const known = valueIndex(store);
   for (const index of wanted) {
     const hit = hits[index];
-    let alias = findAliasForValue(store, hit.value);
+    let alias = known.get(hit.value);
     if (!alias) {
       alias = suggestAutoAlias(hit.label || hit.id, hit.value);
-      store.add(alias, hit.value, { desc: "pre-send preflight", tags: opts.tags ?? ["preflight"] });
+      const res = store.add(alias, hit.value, { desc: "pre-send preflight", tags: opts.tags ?? ["preflight"] });
+      known.set(hit.value, res.alias ?? alias);
     }
     const token = stablePlaceholder(STABLE_NAMESPACE, alias);
     masked = masked.slice(0, hit.start) + token + masked.slice(hit.end);

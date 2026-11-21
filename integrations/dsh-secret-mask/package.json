@@ -47,7 +47,7 @@
   },
   "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "devDependencies": {
-    "@aiti-ai/secret-mask-core": "^0.3.0"
+    "@aiti-ai/secret-mask-core": "^0.4.0"
   },
   "engines": {
     "dsh": ">=0.1.1-rc.0"

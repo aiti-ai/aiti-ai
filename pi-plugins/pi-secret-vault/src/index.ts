@@ -215,6 +215,21 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     cwd: state.cwd,
   });
 
+  const hasPlaceholderToken = (node: unknown, depth = 0): boolean => {
+    if (depth > 12) return false;
+    if (typeof node === "string") return node.includes("rsec_");
+    if (Array.isArray(node)) return node.some((v) => hasPlaceholderToken(v, depth + 1));
+    if (node && typeof node === "object") return Object.values(node as Record<string, unknown>).some((v) => hasPlaceholderToken(v, depth + 1));
+    return false;
+  };
+  const collectStrings = (node: unknown, out: string[] = [], depth = 0): string[] => {
+    if (depth > 12) return out;
+    if (typeof node === "string") out.push(node);
+    else if (Array.isArray(node)) for (const v of node) collectStrings(v, out, depth + 1);
+    else if (node && typeof node === "object") for (const v of Object.values(node as Record<string, unknown>)) collectStrings(v, out, depth + 1);
+    return out;
+  };
+
   /**
    * The web pre-send gate masks with the *stable* vault placeholder
    * (`rsec_<fnv1a("vault:"+alias)>`) after the value is encrypted. This process
@@ -380,7 +395,9 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
   pi.on("context", (event) => {
     if (!active(state)) return undefined;
-    mountPreflightTokens(JSON.stringify(event.messages ?? ""));
+    // Cheap probe: only build the joined text when some message actually carries
+    // a placeholder (stringifying a long history on every turn is wasteful).
+    if (hasPlaceholderToken(event.messages)) mountPreflightTokens(collectStrings(event.messages).join("\n"));
     const before = new Set(state.registry.entries().map((e) => e.placeholder));
     const res = redactMessages(event.messages as unknown[], state.registry, state.salt, {
       rules: currentRules(),

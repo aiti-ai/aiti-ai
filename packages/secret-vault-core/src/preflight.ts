@@ -20,7 +20,7 @@ import {
   stablePlaceholder,
   type Candidate,
 } from "@aiti-ai/secret-mask-core";
-import { findAliasForValue, suggestAutoAlias } from "./entries.ts";
+import { suggestAutoAlias } from "./entries.ts";
 import type { VaultStore } from "./store.ts";
 
 export interface PreflightCandidate {
@@ -56,6 +56,30 @@ function candidatesOf(store: VaultStore, text: string, opts: PreflightScanOption
 }
 
 /**
+ * value → alias for the whole vault, one decryption per entry. Looking up each
+ * candidate separately (value × entries decryptions) makes the confirmation
+ * dialog wait on AES for no reason.
+ */
+function valueIndex(store: VaultStore): Map<string, string> {
+  const index = new Map<string, string>();
+  let entries: ReturnType<VaultStore["list"]>;
+  try {
+    entries = store.list();
+  } catch {
+    return index;
+  }
+  for (const info of entries) {
+    try {
+      const value = store.get(info.alias).value;
+      if (!index.has(value)) index.set(value, info.alias);
+    } catch {
+      // locked/undecryptable entry: simply not offered as "already stored"
+    }
+  }
+  return index;
+}
+
+/**
  * Candidates for a confirmation list. Values never leave the server: each entry
  * carries a masked preview plus whether the vault already stores that value.
  */
@@ -69,13 +93,14 @@ export function preflightScan(store: VaultStore, text: string, opts: PreflightSc
   } catch {
     locked = store.initialized;
   }
-  const candidates = candidatesOf(store, text, opts).map((hit, index) => ({
-    index,
+  const index = locked ? new Map<string, string>() : valueIndex(store);
+  const candidates = candidatesOf(store, text, opts).map((hit, position) => ({
+    index: position,
     label: hit.label,
     ruleId: hit.id,
     confidence: hit.confidence,
     preview: previewValue(hit.value),
-    stored: locked ? false : findAliasForValue(store, hit.value) !== undefined,
+    stored: index.has(hit.value),
   }));
   return { candidates, locked };
 }
@@ -97,12 +122,14 @@ export function preflightMask(
 
   let masked = text;
   const aliases: string[] = [];
+  const known = valueIndex(store);
   for (const index of wanted) {
     const hit = hits[index]!;
-    let alias = findAliasForValue(store, hit.value);
+    let alias = known.get(hit.value);
     if (!alias) {
       alias = suggestAutoAlias(hit.label || hit.id, hit.value);
-      store.add(alias, hit.value, { desc: "pre-send preflight", tags: opts.tags ?? ["preflight"] });
+      const res = store.add(alias, hit.value, { desc: "pre-send preflight", tags: opts.tags ?? ["preflight"] });
+      known.set(hit.value, res.alias ?? alias);
     }
     const token = stablePlaceholder(STABLE_NAMESPACE, alias);
     // Replace from the end so earlier offsets stay valid.

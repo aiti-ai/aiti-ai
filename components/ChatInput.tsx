@@ -2819,6 +2819,9 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     // Pre-send gate (async): an enhancer may await the user (e.g. "this looks like
     // a credential — mask / send as-is / cancel"). Cancelling keeps the composer
     // untouched so the user can edit instead of losing the draft.
+    // Snapshot first: the gate can stay open for seconds (confirmation dialog) and
+    // the user may keep typing meanwhile — that new text must survive.
+    const snapshotValue = msg;
     const gate = await runComposerGate(msg, attachedImages.length);
     if (gate.cancel) return;
     // Composer enhancement contract: pre-send chained hooks → extension chat hooks (the existing [element N]/[answer N]/[error N] replacement)
@@ -2827,7 +2830,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     onSend(finalMsg, attachedImages.length ? attachedImages : undefined, attachedFiles.length ? attachedFiles : undefined);
     setAttachedFiles([]);
 
-    clearInput();
+    // Only clear what was actually sent (same guard as the fork path).
+    if (valueRef.current.trim() === snapshotValue) clearInput();
   }, [value, attachedImages, attachedFiles, isStreaming, runBuiltinCommand, onSend, clearInput, onAudioUnlock, onRequeueAt, applyChatHooks]);
 
   /** "New session" fork (right-edge group button in the input row): uses the
@@ -3288,8 +3292,13 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const sendToSideChat = useCallback(() => {
     const msg = value.trim();
     if (!msg || attachedImages.length || !onSideChat) return;
-    clearInput();
-    onSideChat(msg);
+    // Side chat is another destination for composer text: same pre-send gate.
+    void (async () => {
+      const gate = await runComposerGate(msg, 0);
+      if (gate.cancel || !gate.text.trim()) return;
+      if (valueRef.current.trim() === msg) clearInput();
+      onSideChat(gate.text);
+    })();
   }, [value, attachedImages, onSideChat, clearInput]);
 
   const sendQueued = useCallback((mode: "steer" | "followup") => {
@@ -3334,12 +3343,13 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       if (gate.cancel || !gate.text.trim()) return;
       const finalMsg = applyChatHooks(gate.text);
       const streamingBehavior = mode === "steer" ? "steer" : "followUp";
+      const clearSent = () => { if (valueRef.current.trim() === msg) clearInput(); };
       if (finalMsg.startsWith("/") && onPromptWithStreamingBehavior) {
-        clearInput();
+        clearSent();
         onPromptWithStreamingBehavior(finalMsg, streamingBehavior, images);
         return;
       }
-      clearInput();
+      clearSent();
       if (mode === "steer" && onSteer) {
         onSteer(finalMsg, images);
       } else if (mode === "followup" && onFollowUp) {
