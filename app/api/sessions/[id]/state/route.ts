@@ -3,6 +3,7 @@ import { getRpcSession } from "@/lib/rpc-manager";
 import { resolveAnySession, attachIfBridged } from "@/lib/session";
 import { resolveSessionPath } from "@/lib/session-reader";
 import { getRegistry } from "@/lib/ext/registry";
+import { applyQueuedFlag } from "@/lib/compact-queue";
 
 export async function GET(
   _req: Request,
@@ -24,7 +25,9 @@ export async function GET(
           throw e;
         }
         if (bridged?.isAlive()) {
-          const state = await bridged.send({ type: "get_state" }).catch(() => null);
+          const state = (await bridged.send({ type: "get_state" }).catch(() => null)) as Record<string, unknown> | null;
+          // Parked-compaction flag (lib/compact-queue) — pending indicator survives reload.
+          applyQueuedFlag(id, state);
           return NextResponse.json({
             running: true,
             state,
@@ -41,7 +44,8 @@ export async function GET(
     }
     const rpc = getRpcSession(id);
     if (rpc?.isAlive()) {
-      const state = await rpc.send({ type: "get_state" });
+      const state = (await rpc.send({ type: "get_state" })) as Record<string, unknown>;
+      applyQueuedFlag(id, state);
       return NextResponse.json({ running: true, state });
     }
 
@@ -49,6 +53,7 @@ export async function GET(
     const wrapped = resolveAnySession(id);
     if (wrapped?.isAlive()) {
       const state = (await wrapped.send({ type: "get_state" })) as Record<string, unknown> | null;
+      applyQueuedFlag(id, state);
       return NextResponse.json({
         running: true,
         state: {
