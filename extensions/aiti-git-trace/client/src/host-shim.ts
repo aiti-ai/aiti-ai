@@ -111,8 +111,8 @@ export function appendText(text: string): void {
   const fn = getCtx()?.appendText as ((text: string) => void) | undefined;
   try { if (typeof fn === "function") fn(text); } catch { /* 宿主未就绪时忽略 */ }
 }
-/** openFile(path, fileName?)：右侧文件标签页打开（ctx.openFile，与 aiti-doc-center / aiti-folder 同款 dock；旧宿主无此方法 → 静默跳过）。 */
-export function openFile(path: string, fileName?: string): void {
-  const fn = getCtx()?.openFile as ((path: string, fileName?: string) => void) | undefined;
-  try { if (typeof fn === "function") fn(path, fileName); } catch { /* 宿主未就绪时忽略 */ }
+/** openFile(path, fileName?, options?): open a file tab in the right dock (ctx.openFile, same dock as aiti-doc-center / aiti-folder; silently skipped on hosts without the capability). options.atRevision opens a historical version (read-only). */
+export function openFile(path: string, fileName?: string, options?: Record<string, unknown>): void {
+  const fn = getCtx()?.openFile as ((path: string, fileName?: string, options?: Record<string, unknown>) => void) | undefined;
+  try { if (typeof fn === "function") fn(path, fileName, options); } catch { /* host not ready — ignore */ }
 }

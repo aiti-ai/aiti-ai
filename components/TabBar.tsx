@@ -7,6 +7,7 @@ import { renderExtItemIcon } from "./ExtItemIcon";
 import type { ExtUiItemIcon } from "@/lib/ext/types";
 import { useI18n } from "@/hooks/useI18n";
 import type { FileViewerDisplayMode, FileViewerState } from "@/lib/file-viewer-state";
+import type { RevisionRef } from "@/lib/file-revision";
 
 /** Scroll step in px when the left/right scroll buttons are clicked. */
 const SCROLL_STEP = 240;
@@ -99,7 +100,9 @@ export function filePosMenuItems(
   },
 ): FilePosMenuItem[] {
   const items: FilePosMenuItem[] = [];
-  if (handlers.onOpenViewerWindow) {
+  // Revision views have no standalone-/viewer form: the child window exchange carries the
+  // path only and would lose the ref → the window would read the (often deleted) work-tree file.
+  if (handlers.onOpenViewerWindow && !tab.atRevision) {
     const fn = handlers.onOpenViewerWindow;
     items.push({ key: "new-window", icon: "new-window", label: t("files.posNewWindow"), run: () => fn(tab) });
   }
@@ -167,6 +170,8 @@ export interface Tab {
    *  windows; a restored tab must not silently start a shell */
   restored?: boolean;
   sourceSessionId?: string | null;
+  /** Revision view (OpenFileOptions.atRevision): the tab shows a historical blob, not the working-tree file. */
+  atRevision?: RevisionRef;
   initialDisplayMode?: FileViewerDisplayMode;
   /** PDF page requested by the link that opened this tab (`#page=N`). */
   page?: number;

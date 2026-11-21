@@ -1,4 +1,5 @@
 import type { FileViewerState } from "@/lib/file-viewer-state";
+import type { RevisionRef } from "@/lib/file-revision";
 import type { Tab } from "./TabBar.tsx";
 
 export interface FileWorkspaceState {
@@ -36,6 +37,8 @@ interface OpenFileTabInput {
   modeHint?: "diff";
   page?: number;
   sourceSessionId?: string | null;
+  /** Revision view identity (tab id already carries the ref suffix — see AppShell openHostFileTab). */
+  atRevision?: RevisionRef;
   tabId: string;
 }
 
@@ -53,6 +56,7 @@ export function openFileTab(tabs: Tab[], input: OpenFileTabInput): Tab[] {
       label: input.fileName,
       filePath: input.filePath,
       sourceSessionId: input.sourceSessionId,
+      atRevision: input.atRevision,
       initialDisplayMode: input.modeHint,
       page: input.page,
       viewerState: input.modeHint ? {

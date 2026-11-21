@@ -51,6 +51,7 @@ import {
   type FileViewerDisplayMode as DisplayMode,
   type FileViewerState,
 } from "@/lib/file-viewer-state";
+import type { RevisionRef } from "@/lib/file-revision";
 
 export type { FileViewerState } from "@/lib/file-viewer-state";
 
@@ -58,6 +59,8 @@ interface Props {
   filePath: string;
   cwd?: string;
   sourceSessionId?: string | null;
+  /** Revision view (OpenFileOptions.atRevision): read a git blob instead of the working-tree file (read-only; no watch, no git diff tab). */
+  atRevision?: RevisionRef;
   /** "file" (default) or "folder" — folder kind delegates to a fileViewer slot takeover (the folder-viewer extension). */
   kind?: "file" | "folder";
   onOpenFile?: (filePath: string, page?: number) => void;
@@ -295,8 +298,8 @@ function useTicketUrl(
   return url;
 }
 
-/** Two-step download: POST to exchange a ticket (path stays out of the URL, keeping it out of tunnel/proxy access logs) → ticketed GET streaming download */
-async function downloadViaTicket(filePath: string): Promise<void> {
+/** Two-step download: POST to exchange a ticket (path stays out of the URL, keeping it out of tunnel/proxy access logs) → ticketed GET streaming download. Extra params (revision ref/gitDir) ride the ticketed GET query. */
+async function downloadViaTicket(filePath: string, params: Record<string, string> = {}): Promise<void> {
   const res = await fetch(apiUrl("/api/files/ticket"), {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -304,8 +307,10 @@ async function downloadViaTicket(filePath: string): Promise<void> {
   });
   const data = await res.json().catch(() => ({})) as { ticket?: string; error?: string };
   if (!res.ok || !data.ticket) throw new Error(data.error ?? `HTTP ${res.status}`);
+  const search = new URLSearchParams(params);
+  const qs = search.toString();
   const a = document.createElement("a");
-  a.href = apiUrl(`/api/files/_t/${encodeURIComponent(data.ticket)}`);
+  a.href = apiUrl(`/api/files/_t/${encodeURIComponent(data.ticket)}${qs ? `?${qs}` : ""}`);
   a.download = getFileName(filePath);
   document.body.appendChild(a);
   a.click();
@@ -318,7 +323,7 @@ function MarkdownImage({ filePath, alt, ...props }: { filePath: string; alt: str
   return <img src={src ?? undefined} alt={alt} loading="lazy" {...props} />;
 }
 
-function DownloadLink({ filePath, sourceSessionId }: { filePath: string; sourceSessionId?: string | null }) {
+function DownloadLink({ filePath, sourceSessionId, params }: { filePath: string; sourceSessionId?: string | null; params?: Record<string, string> }) {
   const { t } = useI18n();
   return (
     <a
@@ -326,7 +331,7 @@ function DownloadLink({ filePath, sourceSessionId }: { filePath: string; sourceS
       download={getFileName(filePath)}
       onClick={(e) => {
         e.preventDefault();
-        downloadViaTicket(filePath).catch((err) => console.error("Download failed:", err));
+        downloadViaTicket(filePath, params ?? {}).catch((err) => console.error("Download failed:", err));
       }}
       title={t("i18n.downloadFile")}
       aria-label={t("i18n.downloadFile")}
@@ -620,7 +625,7 @@ function useWatchRecovery(): [number, (es: EventSource) => () => void] {
   return [attempt, superviseWatch];
 }
 
-function ImageViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Props) {
+function ImageViewer({ filePath, cwd, sourceSessionId, watchEnabled = true, atRevision }: Props) {
   const { t } = useI18n();
   const [watching, setWatching] = useState(false);
   const [bust, setBust] = useState(0);
@@ -728,7 +733,12 @@ function ImageViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
     };
   }, [filePath, sourceSessionId, watchEnabled, connStarved, connEpoch, watchAttempt]);
 
-  const src = useTicketUrl(filePath, "read", bust ? { v: bust } : {});
+  // Revision reads: the ticketed GET must carry ref/gitDir so the server serves the git blob.
+  const revParams = useMemo((): Record<string, string> => {
+    if (!atRevision) return {};
+    return { ref: atRevision.ref, gitDir: atRevision.gitDir };
+  }, [atRevision]);
+  const src = useTicketUrl(filePath, "read", { ...(bust ? { v: bust } : {}), ...revParams });
 
   const formatSizeStr = size != null ? formatSize(size) : null;
 
@@ -769,7 +779,7 @@ function ImageViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
           />
           {watching ? "live" : "static"}
         </span>
-        <DownloadLink filePath={filePath} sourceSessionId={sourceSessionId} />
+        <DownloadLink filePath={filePath} sourceSessionId={sourceSessionId} params={revParams} />
       </div>
       <div
         style={{
@@ -1387,6 +1397,7 @@ export function FileViewer({
   filePath,
   cwd,
   sourceSessionId,
+  atRevision,
   kind = "file",
   onOpenFile,
   onOpenFolder,
@@ -1426,6 +1437,9 @@ export function FileViewer({
   const takeover = takeoverItems.find((item) => {
     // after render became optional (declarative toolbar entries), narrow uniformly: registered items without a render don't participate in takeover
     if (!hasExtRender(item)) return false;
+    // Revision views never take over: extension viewers read the working-tree file via their
+    // own channels and cannot serve a historical blob (they'd 404 on the deleted file).
+    if (atRevision) return false;
     const match = item.meta?.match;
     return typeof match === "function" && match(filePath, { cwd, kind });
   });
@@ -1457,7 +1471,12 @@ export function FileViewer({
     );
   }
   if (isImagePath(filePath)) {
-    return <ImageViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} watchEnabled={watchEnabled} />;
+    // Revision image: no disk file → no watch; the ticketed read carries ref/gitDir.
+    return <ImageViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} atRevision={atRevision} watchEnabled={watchEnabled && !atRevision} />;
+  }
+  // Revision media/doc previews are out of scope for now (v1): text + images only.
+  if (atRevision && (isAudioPath(filePath) || isVideoPath(filePath) || isDocumentPreviewPath(filePath))) {
+    return <RevisionUnsupported filePath={filePath} />;
   }
   if (isAudioPath(filePath)) {
     return <AudioViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} watchEnabled={watchEnabled} />;
@@ -1473,6 +1492,7 @@ export function FileViewer({
       filePath={filePath}
       cwd={cwd}
       sourceSessionId={sourceSessionId}
+      atRevision={atRevision}
       onOpenFile={onOpenFile}
       onMentionLines={onMentionLines}
       onAtMention={onAtMention}
@@ -1485,10 +1505,22 @@ export function FileViewer({
   );
 }
 
+/** Revision v1 scope guard: audio/video/docx historical blobs render an explicit notice instead of a broken viewer. */
+function RevisionUnsupported({ filePath }: { filePath: string }) {
+  const { t } = useI18n();
+  return (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, color: "var(--text-dim)", fontSize: 12, padding: 24, textAlign: "center" }}>
+      <span style={{ fontFamily: "var(--font-mono)", wordBreak: "break-all" }}>{filePath}</span>
+      <span>{t("files.revisionUnsupported")}</span>
+    </div>
+  );
+}
+
 function TextFileViewer({
   filePath,
   cwd,
   sourceSessionId,
+  atRevision,
   onOpenFile,
   onMentionLines,
   onAtMention,
@@ -1500,6 +1532,11 @@ function TextFileViewer({
 }: Props) {
   const { isDark } = useTheme();
   const { t } = useI18n();
+  // Revision reads: ref/gitDir ride every read request so the server serves the git blob.
+  const revQuery = useMemo((): Record<string, string> => {
+    if (!atRevision) return {};
+    return { ref: atRevision.ref, gitDir: atRevision.gitDir };
+  }, [atRevision]);
   const [data, setData] = useState<FileData | null>(null);
   const [gitDiff, setGitDiff] = useState<GitFileDiffResponse | null>(null);
   const [gitDiffLoading, setGitDiffLoading] = useState(false);
@@ -1582,7 +1619,7 @@ function TextFileViewer({
 
   const fetchContent = useCallback((filePath: string, offset = 0) => {
     const requestId = ++contentRequestRef.current;
-    return fetchFileGet(filePath, "read", sourceSessionId, { offset: offset || undefined })
+    return fetchFileGet(filePath, "read", sourceSessionId, { offset: offset || undefined, ...revQuery })
       .then((r) => r.json())
       .then((d: FileData & { mtime?: string; error?: string }) => {
         if (requestId !== contentRequestRef.current) return null;
@@ -1602,7 +1639,7 @@ function TextFileViewer({
         setError(String(e));
         return null;
       });
-  }, [sourceSessionId]);
+  }, [sourceSessionId, revQuery]);
 
   const fetchGitDiff = useCallback(async (targetPath: string) => {
     const requestId = ++gitDiffRequestRef.current;
@@ -1728,8 +1765,10 @@ function TextFileViewer({
   }, [filePath, fetchContent, fetchGitDiff, sourceSessionId, watchEnabled, connStarved, connEpoch, watchAttempt]);
 
   useEffect(() => {
+    // Revision blobs have no working-tree git diff — the Diff tab is not offered at all.
+    if (atRevision) return;
     void fetchGitDiff(filePath);
-  }, [fetchGitDiff, filePath, gitRefreshKey]);
+  }, [fetchGitDiff, filePath, gitRefreshKey, atRevision]);
 
   const isBinary = data?.binary === true;
   const isDelimitedTable = !isBinary && isDelimitedTablePath(filePath);
@@ -2009,16 +2048,21 @@ function TextFileViewer({
   const lines = sourceLines;
   const displayModes: DisplayMode[] = isDeletedDiff
     ? ["diff"]
-    : [
-        "source",
-        ...(hasPreview ? ["preview" as const] : []),
-        ...(hasGitDiff ? ["diff" as const] : []),
-      ];
+    : atRevision
+      ? // Historical blob: no working-tree git diff → no Diff tab (file-level diff lives in review).
+        ["source", ...(hasPreview ? ["preview" as const] : [])]
+      : [
+          "source",
+          ...(hasPreview ? ["preview" as const] : []),
+          ...(hasGitDiff ? ["diff" as const] : []),
+        ];
   const metadata = isDeletedDiff
     ? t("files.deleted")
-    : isBinary
-      ? `${t("files.binary")} · ${formatSize(data!.size)}`
-      : `${language} · ${lines.length} lines · ${formatSize(data!.size)}`;
+    : atRevision
+      ? `@${atRevision.ref.slice(0, 7)} · ${isBinary ? `${t("files.binary")} · ${formatSize(data!.size)}` : `${language} · ${lines.length} lines · ${formatSize(data!.size)}`}`
+      : isBinary
+        ? `${t("files.binary")} · ${formatSize(data!.size)}`
+        : `${language} · ${lines.length} lines · ${formatSize(data!.size)}`;
 
   return (
     <div className="file-viewer-shell" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", position: "relative" }}>
@@ -2153,7 +2197,7 @@ function TextFileViewer({
             )}
           </div>
 
-          {!isDeletedDiff && <DownloadLink filePath={filePath} sourceSessionId={sourceSessionId} />}
+          {!isDeletedDiff && <DownloadLink filePath={filePath} sourceSessionId={sourceSessionId} params={revQuery} />}
         </div>
       </div>
 

@@ -35,6 +35,17 @@ import { parseFormDataWithinLimit, RequestBodyTooLargeError } from "@/lib/bounde
 import { filePathFromApiSegments, samePath } from "@/lib/paths";
 import { issueFileTicket, redeemFileTicket } from "@/lib/file-ticket";
 import { readTextPreviewChunk } from "@/lib/text-preview";
+import {
+  REVISION_DOWNLOAD_MAX_BYTES,
+  REVISION_IMAGE_MAX_BYTES,
+  REVISION_TEXT_READ_MAX_BYTES,
+  isRevisionRef,
+  resolveRevisionGitDir,
+  revisionBlobContent,
+  revisionBlobSize,
+  revisionRelPath,
+  revisionTextChunk,
+} from "@/lib/file-revision";
 import { registerFileWatch, startFileWatch, stopFileWatch } from "@/lib/file-watch-registry";
 import { isIgnored } from "@/lib/file-ignore";
 import { FILE_WATCH_HEARTBEAT_MS } from "@/lib/file-version";
@@ -251,7 +262,7 @@ export async function POST(
     //     (An older design used steady-state _e tokens, but a permanently valid token leaks forever once it
     //     lands in an access log, hence the switch to short tickets.)
     if (segments[0] === "ticket") {
-      const body = await request.json().catch(() => null) as { path?: unknown; type?: unknown; kind?: unknown; cwd?: unknown; ticket?: unknown; wantWatch?: unknown } | null;
+      const body = await request.json().catch(() => null) as { path?: unknown; type?: unknown; kind?: unknown; cwd?: unknown; ticket?: unknown; wantWatch?: unknown; ref?: unknown; gitDir?: unknown } | null;
       if (typeof body?.ticket === "string" && body.ticket) {
         const t = redeemFileTicket(body.ticket);
         if (!t) {
@@ -272,6 +283,24 @@ export async function POST(
         return NextResponse.json({ error: "Invalid file request type" }, { status: 400 });
       }
       if (type !== "watch" && type !== "list") {
+        // Revision tickets (OpenFileOptions.atRevision): the target is often a deleted file —
+        // validate the revision tuple (hex sha + allowlisted gitDir + contained relpath) instead
+        // of requiring the file on disk; the GET handler re-validates before serving the blob.
+        const revRef = typeof body?.ref === "string" ? body.ref : "";
+        const revGitDir = typeof body?.gitDir === "string" ? body.gitDir : "";
+        if (revRef || revGitDir) {
+          if (!revRef || !revGitDir || !isRevisionRef(revRef)) {
+            return NextResponse.json({ error: "Invalid revision ticket request" }, { status: 400 });
+          }
+          const gitDirReal = resolveRevisionGitDir(revGitDir, allowedRoots);
+          if (!gitDirReal || !revisionRelPath(p, gitDirReal)) {
+            return NextResponse.json({ error: "Access denied" }, { status: 403 });
+          }
+          const kind = body?.kind === "folder" || body?.kind === "file" ? body.kind : undefined;
+          const cwd = typeof body?.cwd === "string" && body.cwd ? body.cwd : undefined;
+          const revTicket = issueFileTicket(p, type, { kind, cwd });
+          return NextResponse.json({ ...revTicket });
+        }
         // read/download/meta/preview require the target to be a file (read's image/audio/document streaming and text content all need a file)
         let st: fs.Stats;
         try { st = fs.statSync(p); } catch {
@@ -494,6 +523,100 @@ function getContentDisposition(filePath: string, asDownload = false): string {
   return `${disposition}; filename="${fallback}"; filename*=UTF-8''${encodeHeaderValue(fileName)}`;
 }
 
+/** Blob response for revision reads/downloads — same header policy as streamFile (incl. the SVG CSP). */
+function revisionBlobResponse(filePath: string, blob: Buffer, contentType: string, asDownload = false): Response {
+  const headers: Record<string, string> = {
+    "Content-Type": contentType,
+    "Cache-Control": "no-cache",
+    "Content-Disposition": getContentDisposition(filePath, asDownload),
+    "X-Content-Type-Options": "nosniff",
+  };
+  // Same document-rendering hardening as streamFile: a repo-controlled SVG opened
+  // directly must not run script in the Pi Web origin (<img> embedding ignores these).
+  if (contentType === "image/svg+xml") {
+    headers["Content-Security-Policy"] =
+      "default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
+    headers["Referrer-Policy"] = "no-referrer";
+  }
+  return new Response(new Uint8Array(blob), { headers: { ...headers, "Content-Length": String(blob.length) } });
+}
+
+/**
+ * Revision branch of the file pipeline (query params ref + gitDir): serve a git
+ * blob (cat-file, pure object-store read, no work-tree access) instead of the
+ * working-tree file. read = image bytes or a text-preview-shaped JSON chunk;
+ * download = raw bytes. Other types are rejected — watch/preview/meta have no
+ * meaning for a historical blob (v1 scope, see pi-work
+ * docs/pi-web-file-open-revision-plan.md §2.6).
+ */
+async function handleRevisionRequest(
+  filePath: string,
+  type: FileRequestType,
+  allowedRoots: Set<string>,
+  ref: string | null,
+  gitDir: string | null,
+): Promise<Response> {
+  if (!ref || !gitDir) {
+    return NextResponse.json({ error: "Revision read requires both ref and gitDir" }, { status: 400 });
+  }
+  if (type !== "read" && type !== "download") {
+    return NextResponse.json({ error: `Revision access not available for type "${type}"` }, { status: 400 });
+  }
+  if (!isRevisionRef(ref)) {
+    return NextResponse.json({ error: "Invalid revision ref" }, { status: 400 });
+  }
+  // The file path itself must still be lexically inside an allowed root (no stat
+  // possible for deleted files — the allowlist check is the same one the regular
+  // branch applies before its stat gate).
+  if (!isFilePathAllowed(filePath, allowedRoots)) {
+    return NextResponse.json({ error: "Access denied" }, { status: 403 });
+  }
+  const gitDirReal = resolveRevisionGitDir(gitDir, allowedRoots);
+  if (!gitDirReal) {
+    return NextResponse.json({ error: "Access denied" }, { status: 403 });
+  }
+  const relPath = revisionRelPath(filePath, gitDirReal);
+  if (!relPath) {
+    return NextResponse.json({ error: "Access denied" }, { status: 403 });
+  }
+
+  let size: number;
+  try {
+    size = await revisionBlobSize(gitDirReal, ref, relPath);
+  } catch {
+    return NextResponse.json({ error: "Revision not found" }, { status: 404 });
+  }
+
+  try {
+    if (type === "download") {
+      if (size > REVISION_DOWNLOAD_MAX_BYTES) {
+        return NextResponse.json({ error: "Revision too large for download (>25MB)" }, { status: 413 });
+      }
+      const blob = await revisionBlobContent(gitDirReal, ref, relPath);
+      const mime = getImageMime(filePath) || "application/octet-stream";
+      return revisionBlobResponse(filePath, blob, mime, true);
+    }
+
+    const imageMime = getImageMime(filePath);
+    if (imageMime) {
+      if (size > REVISION_IMAGE_MAX_BYTES) {
+        return NextResponse.json({ error: "Image too large (>10MB)" }, { status: 413 });
+      }
+      const blob = await revisionBlobContent(gitDirReal, ref, relPath);
+      return revisionBlobResponse(filePath, blob, imageMime);
+    }
+
+    if (size > REVISION_TEXT_READ_MAX_BYTES) {
+      return NextResponse.json({ error: "Revision too large for text preview (>5MB)" }, { status: 413 });
+    }
+    const blob = await revisionBlobContent(gitDirReal, ref, relPath);
+    const chunk = revisionTextChunk(blob, size);
+    return NextResponse.json({ ...chunk, language: getLanguage(filePath), size });
+  } catch {
+    return NextResponse.json({ error: "Revision read failed" }, { status: 500 });
+  }
+}
+
 function streamFile(filePath: string, stat: fs.Stats, contentType: string, rangeHeader: string | null, asDownload = false): Response {
   const headers: Record<string, string> = {
     "Content-Type": contentType,
@@ -693,6 +816,16 @@ async function handleFileRequest(
           return NextResponse.json({ error: "Access denied" }, { status: 403 });
         }
       }
+    }
+
+    // Revision branch (OpenFileOptions.atRevision): serve a git blob instead of the
+    // working-tree file. The path is often a deleted file (stat impossible), so this
+    // must run before the fs.stat gate. Only read/download are served here; other
+    // types (watch/preview/meta) make no sense for a historical blob.
+    const revRef = request.nextUrl.searchParams.get("ref");
+    const revGitDir = request.nextUrl.searchParams.get("gitDir");
+    if (revRef !== null || revGitDir !== null) {
+      return handleRevisionRequest(filePath, type, allowedRoots, revRef, revGitDir);
     }
 
     let stat: fs.Stats | undefined;
