@@ -374,7 +374,7 @@ var CONTEXT_RULES = [
   },
   {
     // The old rules enumerated separators; this one does not. `token X`,
-    // `token\nX`, `KEY => X`, `密钥如下：X`, `| token | X |` all reach the value;
+    // `token\nX`, `KEY => X`, `密钥如下：X`, `| token | X |` all reach the value; // cjk-ok
     // because the evidence here is only whitespace, the value must pass the
     // strict machine-generated shape gate.
     id: "keyword-bare-value",
@@ -883,6 +883,125 @@ function scan(text, opts = {}) {
     lastEnd = h.end;
   }
   return hits;
+}
+function relaxedValue(v) {
+  if (v.length < 6) return false;
+  if (!plausibleSecret(v) || placeholderShaped(v)) return false;
+  if (NOT_CREDENTIAL.test(v)) return false;
+  if (/[|#]/.test(v)) return false;
+  if (!/\d/.test(v) && /^[a-z][a-z_-]*$/.test(v)) return false;
+  return true;
+}
+var VALUE_BODY_MIN6 = VALUE_BODY.replace("{7,299}", "{5,299}");
+var RELAXED_CONTEXT_RULES = [
+  {
+    id: "candidate-keyword",
+    label: "SECRET",
+    kind: "secret",
+    pattern: new RegExp(`${KEYWORD_ALT}${STRONG_SEP}${VALUE_BODY_MIN6}${VALUE_TAIL}`, "gi"),
+    group: 1,
+    verify: relaxedValue,
+    before: keywordBoundary,
+    source: GITLEAKS
+  },
+  {
+    id: "candidate-keyword-bare",
+    label: "SECRET",
+    kind: "secret",
+    pattern: new RegExp(`${KEYWORD_ALT}${WEAK_SEP}${VALUE_BODY_MIN6}${VALUE_TAIL}`, "gi"),
+    group: 1,
+    verify: relaxedValue,
+    before: keywordBoundary,
+    source: GITLEAKS
+  }
+];
+var CANDIDATE_TOKEN_RE = /(?<=^|[\s"'`(\[{<>,;:：，。、=])([A-Za-z0-9][A-Za-z0-9_\-+.\/~]{11,199}(?:={1,2})?)(?=$|[\s"'`)\]}>;,：，。、])/gm;
+function candidateShaped(v) {
+  if (v.length < 12 || v.length > 200) return false;
+  if (!/[A-Za-z]/.test(v) || !/\d/.test(v)) return false;
+  if (!plausibleSecret(v) || placeholderShaped(v)) return false;
+  if (NOT_CREDENTIAL.test(v)) return false;
+  if (entropy(v) < 2.6) return false;
+  if (v.includes("=") && !/={1,2}$/.test(v)) return false;
+  if (/[|#]/.test(v)) return false;
+  if (/^(?:[0-9a-f]{32}|[0-9a-f]{40}|[0-9a-f]{64})$/i.test(v)) return false;
+  if (/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(v)) return false;
+  if (/[-_.]/.test(v)) {
+    const segs = v.split(/[-_.]+/).filter(Boolean);
+    if (!segs.some((seg) => seg.length >= 12 && /[A-Za-z]/.test(seg) && /\d/.test(seg))) return false;
+  }
+  return true;
+}
+function scanCandidates(text, opts = {}) {
+  const high = scan(text).map((h) => ({ ...h, confidence: "high" }));
+  if (!opts.strict) return high;
+  const spans = [];
+  PLACEHOLDER_RE.lastIndex = 0;
+  let masked = text;
+  for (let m = PLACEHOLDER_RE.exec(text); m !== null; m = PLACEHOLDER_RE.exec(text)) {
+    spans.push([m.index, m.index + m[0].length]);
+  }
+  if (spans.length > 0) {
+    let out2 = "";
+    let at = 0;
+    for (const [s, e] of spans) {
+      out2 += text.slice(at, s) + " ".repeat(e - s);
+      at = e;
+    }
+    masked = out2 + text.slice(at);
+  }
+  const found = high.map((h, order) => ({ ...h, order }));
+  const inPlaceholder = (start, end) => spans.some(([s, e]) => start < e && end > s);
+  const covered = (start, end) => inPlaceholder(start, end) || found.some((h) => start < h.end && end > h.start);
+  const collect = (rules, orderBase) => {
+    rules.forEach((rule, index) => {
+      const { re, indexed } = compile(rule.pattern);
+      const g = rule.group ?? 0;
+      re.lastIndex = 0;
+      for (let m = re.exec(masked); m !== null; m = re.exec(masked)) {
+        const raw = m[g];
+        if (!raw) {
+          if (m[0] === "") re.lastIndex++;
+          continue;
+        }
+        const start = indexed ? m.indices?.[g]?.[0] ?? -1 : m.index + m[0].lastIndexOf(raw);
+        if (start < 0) continue;
+        const end = start + raw.length;
+        const value = text.slice(start, end);
+        if (covered(start, end) || insideTemplate(masked, start) || rule.before && !rule.before(masked, m.index) || rule.verify && !rule.verify(value)) {
+          re.lastIndex = m.index + 1;
+          continue;
+        }
+        found.push({ id: rule.id, label: rule.label, kind: rule.kind, start, end, value, confidence: "medium", order: orderBase + index });
+        re.lastIndex = m.index + raw.length;
+      }
+      re.lastIndex = 0;
+    });
+  };
+  collect(RELAXED_CONTEXT_RULES, RULES.length);
+  const tokenOrder = RULES.length + RELAXED_CONTEXT_RULES.length;
+  CANDIDATE_TOKEN_RE.lastIndex = 0;
+  for (let m = CANDIDATE_TOKEN_RE.exec(masked); m !== null; m = CANDIDATE_TOKEN_RE.exec(masked)) {
+    const value = m[1];
+    const start = m.index + m[0].indexOf(value);
+    const end = start + value.length;
+    if (covered(start, end) || !candidateShaped(value)) continue;
+    found.push({ id: "candidate-token", label: "SECRET", kind: "secret", start, end, value, confidence: "medium", order: tokenOrder });
+  }
+  found.sort((a, b) => a.start - b.start || b.end - a.end || a.order - b.order);
+  const out = [];
+  let lastEnd = -1;
+  for (const h of found) {
+    if (h.start < lastEnd) continue;
+    const { order: _order, ...hit } = h;
+    out.push(hit);
+    lastEnd = h.end;
+  }
+  return out;
+}
+function previewValue(value) {
+  if (value.length <= 10) return "*".repeat(value.length);
+  return `${value.slice(0, 6)}\u2026${value.slice(-4)}`;
 }
 
 // src/mask.ts
@@ -2905,6 +3024,7 @@ export {
   placeholderFromHash,
   placeholderShaped,
   plausibleSecret,
+  previewValue,
   readAuditTail,
   readRulesFile,
   redactDeep,
@@ -2927,6 +3047,7 @@ export {
   savePersist,
   saveSnapshot,
   scan,
+  scanCandidates,
   sensitiveReadTargets,
   sessionPlaceholder,
   spanOf,

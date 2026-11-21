@@ -43,6 +43,7 @@ import {
   restoreDeepInPlace,
   sensitiveReadTargets,
   unmountedInValue,
+  unmountedPlaceholders,
   inspectToolTargets,
   fnv1a,
   LANDING_MODES,
@@ -51,10 +52,12 @@ import {
   type WeakCandidate,
 } from "@aiti-ai/secret-mask-core";
 import { appendAuditLog, handleSecretCommand } from "@aiti-ai/secret-mask-core";
+import { STABLE_NAMESPACE, stablePlaceholder } from "@aiti-ai/secret-mask-core";
 import {
   VaultStore,
   handleVaultCommand,
   landValueInVault,
+  mountAlias,
   vaultGet,
   vaultList,
   writeSessionRecord,
@@ -212,6 +215,41 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     cwd: state.cwd,
   });
 
+  /**
+   * The web pre-send gate masks with the *stable* vault placeholder
+   * (`rsec_<fnv1a("vault:"+alias)>`) after the value is encrypted. This process
+   * never saw that alias mount, so resolve unmounted tokens against the vault on
+   * demand: the alias space is small and local, and the token is a pure function
+   * of the alias. Fail-closed when the vault is locked — the guard then keeps the
+   * literal token out of tool arguments.
+   */
+  const mountPreflightTokens = (text: string): number => {
+    if (!text || !text.includes("rsec_")) return 0;
+    let tokens: string[];
+    try {
+      tokens = unmountedPlaceholders(text, state.registry);
+    } catch {
+      return 0;
+    }
+    if (tokens.length === 0) return 0;
+    let mounted = 0;
+    try {
+      for (const info of store.list()) {
+        if (!tokens.includes(stablePlaceholder(STABLE_NAMESPACE, info.alias))) continue;
+        try {
+          mountAlias(toolState(), info.alias);
+          mounted++;
+        } catch {
+          // locked / undecryptable: leave it unmounted (guard blocks its use)
+        }
+      }
+    } catch {
+      // vault unreadable: same fail-closed path
+    }
+    if (mounted > 0) persistSessionState();
+    return mounted;
+  };
+
   const persistSessionState = (): void => {
     try {
       writeSessionRecord(SESSION_STATE_PATH, state.sessionId || "unknown", {
@@ -304,6 +342,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   pi.on("input", (event) => {
     if (!active(state)) return { action: "continue" as const };
     if ((event as { source?: string }).source === "extension") return { action: "continue" as const };
+    mountPreflightTokens(event.text ?? "");
     const rules = currentRules();
     let text = event.text ?? "";
     const res = redactTextSpans([{ get: () => text, set: (t) => { text = t; } }], state.registry, state.salt, {
@@ -341,6 +380,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
   pi.on("context", (event) => {
     if (!active(state)) return undefined;
+    mountPreflightTokens(JSON.stringify(event.messages ?? ""));
     const before = new Set(state.registry.entries().map((e) => e.placeholder));
     const res = redactMessages(event.messages as unknown[], state.registry, state.salt, {
       rules: currentRules(),

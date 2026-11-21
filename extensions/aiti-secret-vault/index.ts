@@ -36,6 +36,15 @@ import * as secretVaultCore from "@aiti-ai/secret-vault-core";
 // the records (7 days matches the core constant).
 const SESSION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
+// Preflight lives in secret-vault-core >= 0.3. Resolve it through the namespace so
+// an older installed copy degrades to 501 instead of failing the module load.
+const corePreflight = secretVaultCore as unknown as {
+  preflightScan?: (store: VaultStore, text: string, opts?: { strict?: boolean }) => unknown;
+  preflightMask?: (store: VaultStore, text: string, indices: number[], opts?: { strict?: boolean }) => unknown;
+};
+const preflightAvailable = (): boolean =>
+  typeof corePreflight.preflightScan === "function" && typeof corePreflight.preflightMask === "function";
+
 // Weak-password assessment lives here so the dialog works with any installed
 // core version (the pi side uses the richer core helper; UI warnings must not
 // depend on a staged dependency refresh).
@@ -210,6 +219,28 @@ export function createVaultApi(deps: VaultApiDeps) {
         return json({ ok: true, result: res, status: store.status() });
       }
 
+      // Pre-send preflight: stricter candidate scan + mask. Values never travel
+      // back to the browser: scan returns masked previews only, and mask takes
+      // the candidate indices from a deterministic re-scan of the same text.
+      if (req.method === "POST" && head === "preflight" && second === "scan") {
+        const body = (await req.json().catch(() => null)) as { text?: string; strict?: boolean } | null;
+        if (typeof body?.text !== "string") return json({ ok: false, error: "text required" }, 400);
+        if (!preflightAvailable()) return json({ ok: false, error: "preflight-unavailable" }, 501);
+        const res = corePreflight.preflightScan!(store, body.text, { strict: body.strict !== false }) as Record<string, unknown>;
+        return json({ ok: true, ...res });
+      }
+
+      if (req.method === "POST" && head === "preflight" && second === "mask") {
+        const body = (await req.json().catch(() => null)) as
+          | { text?: string; indices?: unknown; strict?: boolean }
+          | null;
+        if (typeof body?.text !== "string") return json({ ok: false, error: "text required" }, 400);
+        const indices = Array.isArray(body.indices) ? body.indices.filter((i): i is number => typeof i === "number") : [];
+        if (!preflightAvailable()) return json({ ok: false, error: "preflight-unavailable" }, 501);
+        const res = corePreflight.preflightMask!(store, body.text, indices, { strict: body.strict !== false }) as Record<string, unknown>;
+        return json({ ok: true, ...res });
+      }
+
       if (req.method === "GET" && head === "sessions" && !second) {
         return json({ ok: true, sessions: liveSessions(readSessionState(deps.sessionStatePath).sessions) });
       }
@@ -252,6 +283,15 @@ export default {
         "sv.unlock": "解锁",
         "sv.refresh": "刷新",
         "sv.add": "新增 / 轮换",
+        "sv.pf.title": "这条消息里可能有密钥",
+        "sv.pf.hint": "● 高置信（自动打码也会处理）　○ 低置信（仅本次确认）",
+        "sv.pf.locked": "密钥库已锁定：先解锁才能打码，否则只能原样发送或取消。",
+        "sv.pf.high": "高置信",
+        "sv.pf.medium": "低置信",
+        "sv.pf.stored": "库中已存",
+        "sv.pf.mask": "打码后发送（先存入密钥库）",
+        "sv.pf.raw": "原样发送",
+        "sv.pf.cancel": "取消发送",
         "sv.alias": "别名",
         "sv.desc": "说明",
         "sv.tags": "标签（逗号分隔）",
@@ -296,6 +336,15 @@ export default {
         "sv.unlock": "Unlock",
         "sv.refresh": "Refresh",
         "sv.add": "Add / rotate",
+        "sv.pf.title": "This message may contain a credential",
+        "sv.pf.hint": "● high confidence (auto-masking would handle it)　○ low confidence (this send only)",
+        "sv.pf.locked": "The vault is locked: unlock to mask, otherwise send as-is or cancel.",
+        "sv.pf.high": "high confidence",
+        "sv.pf.medium": "low confidence",
+        "sv.pf.stored": "already stored",
+        "sv.pf.mask": "Mask and send (store in vault first)",
+        "sv.pf.raw": "Send as-is",
+        "sv.pf.cancel": "Cancel",
         "sv.alias": "Alias",
         "sv.desc": "Description",
         "sv.tags": "Tags (comma separated)",
