@@ -18,8 +18,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-/** DOM 桩：足够 ui-dialogs 的创建/事件/查询路径 */
-function makeDomStub() {
+/** DOM stub: enough for ui-dialogs' create / event / query paths.
+ * opts.dialog=true gives createElement("dialog") showModal/close (browser top-layer path);
+ * omitted by default (legacy browser / no showModal → z-index fallback path). */
+function makeDomStub(opts) {
+  const withDialog = !!(opts && opts.dialog);
   const mkEl = (tag = "div") => {
     const el = {
       tag, style: new Proxy({}, { get: (t, k) => (k === "cssText" ? t.cssText : t[k]), set: (t, k, v) => { t[k] = v; return true; } }),
@@ -52,6 +55,11 @@ function makeDomStub() {
         return out;
       },
     };
+    if (withDialog && tag === "dialog") {
+      el.open = false;
+      el.showModal = function () { this.open = true; (this.modalCalls ||= []).push("showModal"); };
+      el.close = function () { this.open = false; (this.modalCalls ||= []).push("close"); };
+    }
     return el;
   };
   const body = mkEl("body");
@@ -64,10 +72,10 @@ function makeDomStub() {
   return { document, body };
 }
 
-async function loadModule() {
+async function loadModule(opts = {}) {
   const dir = mkdtempSync(join(tmpdir(), "uidlg-test-"));
   const stub = `
-const { document } = (${makeDomStubSource})();
+const { document } = (${makeDomStubSource})(${JSON.stringify(opts)});
 globalThis.document = document;
 export * from ${JSON.stringify(join(here, "ui-dialogs.ts"))};
 `;
@@ -127,6 +135,16 @@ test("ui-confirm-alert-prompt", async (t) => {
     const pre = panel.children.find((c) => c.tag === "pre");
     assert.ok(pre && pre.textContent.includes("rm -rf"), "detail 块应展示命令文本");
     btns[0].click();
+    assert.equal(await p, false);
+  });
+
+  await t.test("no showModal: top-level body div + highest z-index fallback", async () => {
+    const p = mod.uiConfirm("fallback tier");
+    await new Promise((r) => setTimeout(r, 150));
+    const overlay = overlayOf(body);
+    assert.equal(overlay.tag, "div", "without showModal the host is a plain div");
+    assert.ok(overlay.style.cssText.includes("2147483600"), "fallback tier must beat self-managed panel z-indices");
+    buttons(overlay.children[0])[0].click();
     assert.equal(await p, false);
   });
 
@@ -194,5 +212,42 @@ test("ui-confirm-alert-prompt", async (t) => {
     assert.notEqual(panel2, panel1, "第二个是新实例");
     buttons(panel2)[0].click();
     assert.equal(await p2, false);
+  });
+});
+
+test("top-layer path (<dialog>.showModal): escapes z-index stacking and closes on settle", async (t) => {
+  const { mod, cleanup } = await loadModule({ dialog: true });
+  t.after(cleanup);
+  const body = globalThis.document.body;
+
+  await t.test("showModal on mount, same semantics as the fallback (confirm/cancel/Esc)", async () => {
+    const p1 = mod.uiConfirm({ message: "Sign out this subscription?", danger: true, confirmText: "Sign out" });
+    await new Promise((r) => setTimeout(r, 150));
+    const overlay = overlayOf(body);
+    assert.equal(overlay.tag, "dialog", "showModal available → dialog modal host");
+    assert.equal(overlay.open, true, "should enter modal (top layer)");
+    assert.deepEqual(overlay.modalCalls, ["showModal"]);
+    buttons(overlay.children[0]).at(-1).click();
+    assert.equal(await p1, true);
+    assert.equal(body.children.length, 0, "overlay leaves after confirm");
+    assert.equal(overlay.open, false, "settle must close() to exit the top layer");
+    assert.deepEqual(overlay.modalCalls, ["showModal", "close"]);
+
+    // cancel → null
+    const p2 = mod.uiPrompt({ message: "Input:", value: "x" });
+    await new Promise((r) => setTimeout(r, 150));
+    buttons(overlayOf(body).children[0])[0].click();
+    assert.equal(await p2, null);
+
+    // native Esc (dialog cancel event) → cancel; browser must not close on its own
+    const p3 = mod.uiConfirm("Esc cancel");
+    await new Promise((r) => setTimeout(r, 150));
+    const ov = overlayOf(body);
+    let prevented = false;
+    for (const fn of ov.handlers.cancel || []) fn({ preventDefault() { prevented = true; } });
+    assert.equal(await p3, false);
+    assert.equal(prevented, true, "cancel must preventDefault (this module owns the settle path)");
+    assert.equal(ov.open, false);
+    assert.equal(ov.removed, true);
   });
 });
