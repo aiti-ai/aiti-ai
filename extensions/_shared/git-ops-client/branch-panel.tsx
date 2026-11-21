@@ -15,6 +15,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { clampToViewport, fixedOrigin, zoomFactorOf } from "../popup-anchor";
 import { buildAtText, openNewSessionWithExtSvc } from "../new-session-cwd";
 import { createGitOpsApi } from "./api.mjs";
+import { assignLanes, laneColor, parseGraphRows } from "./graph-lanes.mjs";
 import { makeT } from "./i18n.mjs";
 
 /* ── chip 徽标（折叠头右端；非 git / 引擎缺席由消费方门控不渲染）── */
@@ -102,6 +103,8 @@ export function BranchPanel(p: BranchPanelProps) {
   const [remotesOpen, setRemotesOpen] = useState(false);
   const [log, setLog] = useState<{ lines: string[]; nextCursor: number | null }>({ lines: [], nextCursor: null });
   const [logCursor, setLogCursor] = useState(0);
+  // graph view branch filter ("" = HEAD; dsh-better-sidebar borrow plan §2.1)
+  const [logRef, setLogRef] = useState("");
   const [stash, setStash] = useState<any[]>([]);
   const [stashFiles, setStashFiles] = useState<Record<number, { tracked: string[]; untracked: string[] }>>({});
   const [expandedStash, setExpandedStash] = useState<number | null>(null);
@@ -143,7 +146,7 @@ export function BranchPanel(p: BranchPanelProps) {
     setLoadError(null);
     const [r, g, s] = await Promise.all([
       api.refs(p.cwd),
-      api.log(p.cwd, 0),
+      api.log(p.cwd, 0, { ref: logRef }),
       api.stashList(p.cwd),
     ]);
     if (r.status === 404 || r.status === 0) { setLoadError(r.data?.error || "HTTP " + r.status); return; }
@@ -152,7 +155,7 @@ export function BranchPanel(p: BranchPanelProps) {
     setLog({ lines: g.data?.lines ?? [], nextCursor: g.data?.nextCursor ?? null });
     setLogCursor(0);
     setStash(s.data?.items ?? []);
-  }, [api, p.cwd]);
+  }, [api, p.cwd, logRef]);
 
   // 打开拉一次（cwd 变了重拉）
   useEffect(() => {
@@ -162,12 +165,20 @@ export function BranchPanel(p: BranchPanelProps) {
 
   const loadMoreLog = useCallback(async () => {
     if (!p.cwd || log.nextCursor == null) return;
-    const g = await api.log(p.cwd, log.nextCursor);
+    const g = await api.log(p.cwd, log.nextCursor, { ref: logRef });
     if (g.status === 200) {
       setLog((prev) => ({ lines: [...prev.lines, ...(g.data?.lines ?? [])], nextCursor: g.data?.nextCursor ?? null }));
       setLogCursor(log.nextCursor);
     }
-  }, [api, p.cwd, log.nextCursor]);
+  }, [api, p.cwd, log.nextCursor, logRef]);
+
+  // graph branch filter switch: clearing lines + bumping refreshData identity reloads page 0 with the ref
+  const switchGraphRef = useCallback((ref: string) => {
+    setLogRef(ref);
+    setLog({ lines: [], nextCursor: null });
+  }, []);
+
+  const graphRows = useMemo(() => assignLanes(parseGraphRows(log.lines)), [log.lines]);
 
   // 定位：右对齐 chip、展开其下；下方装不下则压缩高度（面板内滚，不上翻——mockup 形态）
   useLayoutEffect(() => {
@@ -767,24 +778,35 @@ export function BranchPanel(p: BranchPanelProps) {
                 </div>
               )}
 
-              {/* 图谱 */}
+              {/* graph (borrow plan §2.1: lane-rendered --graph + ref badges + branch filter) */}
               {sectionHead("graph", t("graph"))}
               {!collapsed.has("graph") && (
                 <div style={{ paddingBottom: 2 }}>
+                  <div style={{ display: "flex", alignItems: "center", padding: "0 12px 4px" }}>
+                    <select value={logRef} title={t("graphBranch")} onChange={(e) => switchGraphRef(e.target.value)}
+                      style={{ height: 20, maxWidth: "100%", boxSizing: "border-box" as const, fontSize: 10,
+                        fontFamily: "var(--font-mono)", color: "var(--text-muted)", background: "var(--bg-hover)",
+                        border: "1px solid var(--border)", borderRadius: 5, padding: "0 4px", outline: "none", cursor: "pointer" }}>
+                      <option value="">{t("graphBranchHead")}</option>
+                      {(refsData?.branches ?? []).map((b: string) => <option key={b} value={b}>{b}</option>)}
+                    </select>
+                  </div>
                   {log.lines.length === 0 && <div style={{ padding: "2px 12px 4px", fontSize: 11, color: "var(--text-dim)" }}>{t("graphEmpty")}</div>}
-                  {log.lines.map((line, i) => {
-                    const m = line.match(/^([*|\\/ ]+\s*)([0-9a-f]{7,})( .*)?$/);
-                    if (!m) return <div key={i} style={{ ...graphLineStyle, opacity: 0.7 }}>{line}</div>;
-                    const sha = m[2].slice(0, 7);
-                    return (
-                      <div key={i} className="gitops-row" onClick={() => void openCommit(sha)} title={t("commitView")}
-                        style={{ ...graphLineStyle, cursor: "pointer" }}>
-                        <span style={{ color: "var(--text-dim)" }}>{m[1]}</span>
-                        <span style={{ color: "var(--accent)" }}>{sha}</span>
-                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{m[3] ?? ""}</span>
-                      </div>
-                    );
-                  })}
+                  {graphRows.map((row, i) => row.raw !== undefined ? (
+                    <div key={i} style={{ ...graphLineStyle, opacity: 0.7 }}>{row.raw}</div>
+                  ) : (
+                    <div key={i} className="gitops-row" onClick={row.sha ? () => void openCommit(row.sha.slice(0, 7)) : undefined}
+                      title={row.sha ? t("commitView") : undefined}
+                      style={{ ...graphLineStyle, cursor: row.sha ? "pointer" : "default", alignItems: "center" }}>
+                      <GraphLaneArt graph={row.graph} lanes={row.lanes} prevLanes={row.prevLanes}
+                        nodeCol={row.nodeCol} nodeLane={row.nodeLane} isHead={row.refs.some((r) => r.startsWith("HEAD"))} />
+                      {row.sha ? <span style={{ color: "var(--accent)", flexShrink: 0 }}>{row.sha.slice(0, 7)}</span> : null}
+                      {row.refs.map((r, ri) => <GraphRefChip key={ri} text={r} headLabel={t("graphRefHead")} />)}
+                      {row.subject ? (
+                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, color: "var(--text-muted)" }}>{row.subject}</span>
+                      ) : null}
+                    </div>
+                  ))}
                   {log.nextCursor != null && (
                     <button type="button" disabled={busy} onClick={() => void loadMoreLog()} style={{ display: "block", width: "100%", textAlign: "center" as const, padding: "5px 0", fontSize: 10, color: "var(--text-dim)", background: "none", border: "none", cursor: "pointer" }}>
                       {t("graphMore")}
@@ -986,3 +1008,75 @@ const graphLineStyle = {
   display: "flex", gap: 7, padding: "2.5px 12px", fontFamily: "var(--font-mono)", fontSize: 10.5,
   color: "var(--text-muted)", overflow: "hidden",
 } as const;
+
+/* ── graph lane rendering (§2.1): one SVG per row, geometry decoded from git's own ASCII art ── */
+
+const LANE_W = 8;
+const ROW_H = 15;
+
+function GraphRefChip({ text, headLabel }: { text: string; headLabel: string }) {
+  const isHead = text === "HEAD" || text.startsWith("HEAD ->");
+  const isTag = text.startsWith("tag:");
+  const label = text === "HEAD" ? headLabel
+    : isHead && text.startsWith("HEAD -> ") ? text.slice("HEAD -> ".length)
+    : isTag ? text.slice(4).trim()
+    : text;
+  return (
+    <span style={{
+      fontFamily: "var(--font-mono)", fontSize: 9.5, lineHeight: 1, padding: "2.5px 5px", borderRadius: 4,
+      flexShrink: 0, whiteSpace: "nowrap" as const,
+      color: isHead ? "var(--accent)" : isTag ? "var(--text)" : "var(--text-muted)",
+      background: isHead ? "color-mix(in srgb, var(--accent) 14%, transparent)" : "var(--bg-hover)",
+      border: "1px solid " + (isHead ? "color-mix(in srgb, var(--accent) 45%, transparent)" : "var(--border)"),
+    }}>{label}</span>
+  );
+}
+
+function GraphLaneArt(p: {
+  graph: string;
+  lanes: [number, number][];
+  prevLanes: [number, number][];
+  nodeCol: number;
+  nodeLane: number;
+  isHead: boolean;
+}) {
+  const laneMap = new Map(p.lanes);
+  const prevMap = new Map(p.prevLanes);
+  const w = Math.max(p.graph.length, 1) * LANE_W;
+  const x = (i: number) => (i + 0.5) * LANE_W;
+  const segs: { x1: number; y1: number; x2: number; y2: number; c: string }[] = [];
+  let node: { x: number; c: string } | null = null;
+  for (let i = 0; i < p.graph.length; i++) {
+    const ch = p.graph[i];
+    if (ch === "|" || ch === "*") {
+      const c = laneColor(laneMap.get(i) ?? 0);
+      segs.push({ x1: x(i), y1: 0, x2: x(i), y2: ROW_H, c });
+      if (ch === "*") node = { x: x(i), c };
+    } else if (ch === "\\") {
+      // branch-out edge: colored by the new branch lane below (i+1)
+      const c = laneColor(laneMap.get(i + 1) ?? 0);
+      segs.push({ x1: x(i - 1), y1: 0, x2: x(i + 1), y2: ROW_H, c });
+    } else if (ch === "/") {
+      // merge-in edge: colored by the collapsing lane above (i+1)
+      const c = laneColor(prevMap.get(i + 1) ?? laneMap.get(i + 1) ?? 0);
+      segs.push({ x1: x(i + 1), y1: 0, x2: x(i - 1), y2: ROW_H, c });
+    } else if (ch === "-" || ch === "_") {
+      const c = laneColor(laneMap.get(i) ?? 0);
+      segs.push({ x1: x(i) - LANE_W / 2, y1: ROW_H / 2, x2: x(i) + LANE_W / 2, y2: ROW_H / 2, c });
+    } else if (ch === ".") {
+      const c = laneColor(laneMap.get(i) ?? 0);
+      segs.push({ x1: x(i), y1: ROW_H / 2, x2: x(i) + 0.01, y2: ROW_H / 2, c });
+    }
+  }
+  return (
+    <svg width={w} height={ROW_H} viewBox={`0 0 ${w} ${ROW_H}`} style={{ flexShrink: 0 }}>
+      {segs.map((s, si) => <line key={si} x1={s.x1} y1={s.y1} x2={s.x2} y2={s.y2} stroke={s.c} strokeWidth={1.3} />)}
+      {node ? (
+        <>
+          <circle cx={node.x} cy={ROW_H / 2} r={p.isHead ? 3.4 : 2.6} fill="var(--bg)" stroke={node.c} strokeWidth={p.isHead ? 1.6 : 1} />
+          {p.isHead ? <circle cx={node.x} cy={ROW_H / 2} r={1.4} fill={node.c} /> : null}
+        </>
+      ) : null}
+    </svg>
+  );
+}
