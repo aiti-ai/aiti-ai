@@ -37,11 +37,46 @@ function chipColor(v: number | null | undefined): string {
   return "var(--text-muted,#9aa0a6)";
 }
 
-/** Unified chip design: text label + percentage, NO icon. Two different glyphs
- *  (chip / stick) read as inconsistent at 12px, and a processor chip collides
- *  with the model-selector's icon — plain text labels keep both chips pixel-
- *  identical in structure (status-bar convention: CPU 12% · MEM 61%), stay
- *  compact, and color still carries the load state. */
+/** Unified chip design: single-letter label + percentage, NO icon. Two different
+ *  glyphs (chip / stick) read as inconsistent at 12px, and a processor chip
+ *  collides with the model-selector's icon — plain text keeps both chips
+ *  pixel-identical in structure and lets them join the host stats row's
+ *  compressed flow (density plan, scheme E: `11% · C17% · M88%`).
+ *  Full words (CPU load / memory) stay in each chip's title tooltip. */
+
+/**
+ * Latest brief sample, kept at module scope so the registered slot item's
+ * `meta.tooltip` callback can read it on hover (the host appends that line to the
+ * session-info button's own tooltip). Updated by the sampling loop below.
+ */
+let latestBrief: any = null;
+let latestAt = 0;
+
+/** One-line system summary for the host's session-info tooltip, e.g.
+ *  `system: CPU 8% · MEM 87% · 49.9 GB / 58.6 GB · swap 16.8 GB / 34.0 GB`.
+ *  Returns null until the first sample lands (the host then shows its own lines only). */
+export function sysmonTooltipLine(): string | null {
+  // Respect the feature switch: a user who turned the chips off should not still
+  // see CPU/memory in the stats tooltip.
+  if (extFeatures().topbarChips === false) return null;
+  const d = latestBrief;
+  // Sampling stops while the tab is hidden (and while the feature is off), so the
+  // last sample can go stale. Refuse to report a reading older than 90s instead of
+  // showing a number that no longer reflects the machine.
+  if (!d || Date.now() - latestAt > 90_000) return null;
+  const cpu = d.cpu && Number.isFinite(Number(d.cpu.load)) ? Math.round(Number(d.cpu.load)) + "%" : "—";
+  const m = d.mem;
+  // `system:` prefix keeps the line in step with the host's own `tokens:` / `cost:`
+  // / `context:` topics (the host owns the line breaks, not the labels).
+  if (!m) return "system: CPU " + cpu;
+  const parts = [
+    "CPU " + cpu,
+    t("内存占用") + " " + Math.round(m.pct) + "%",
+    fmtBytes(m.used) + " / " + fmtBytes(m.total),
+  ];
+  if (m.swapTotal > 0) parts.push("swap " + fmtBytes(m.swapUsed) + " / " + fmtBytes(m.swapTotal));
+  return "system: " + parts.join(" · ");
+}
 
 export function TopChips(props: { isMobile?: boolean; isCompact?: boolean }) {
   const [featTick, setFeatTick] = useState(0);
@@ -74,7 +109,13 @@ export function TopChips(props: { isMobile?: boolean; isCompact?: boolean }) {
         const r = await fetch(apiUrl("/api/extensions/aiti-sysmon/brief"), { cache: "no-store" });
         if (stopped) return;
         if (!r.ok) setErr(true);
-        else { setErr(false); setData(await r.json()); }
+        else {
+          const brief = await r.json();
+          setErr(false);
+          setData(brief);
+          latestBrief = brief; // feeds meta.tooltip (read on hover)
+          latestAt = Date.now();
+        }
       } catch { if (!stopped) setErr(true); }
       if (!stopped) timer = setTimeout(tick, intervalSec * 1000);
     };
@@ -95,15 +136,17 @@ export function TopChips(props: { isMobile?: boolean; isCompact?: boolean }) {
     // metadata, not competing content (user feedback: 11px letters looked loud).
     fontSize: 10, fontVariantNumeric: "tabular-nums" as const, whiteSpace: "nowrap" as const,
   };
-
+  // One wrapper span for both chips: the host stats button is a flex container with
+  // a 7px gap, so returning two siblings would pay that gap between the chips too.
+  // A single wrapper pays it once (host→chips) and keeps C·M tight at 6px.
   return (
-    <>
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
       <span
         data-sysmon-chip="cpu"
         title={"CPU " + (cpuLoad != null ? Math.round(cpuLoad) + "%" : "—") + errSuffix}
         style={{ ...chipBase, color: chipColor(cpuLoad) }}
       >
-        CPU {cpuLoad != null ? Math.round(cpuLoad) : "—"}%
+        C{cpuLoad != null ? Math.round(cpuLoad) : "—"}%
       </span>
       <span
         data-sysmon-chip="mem"
@@ -116,8 +159,8 @@ export function TopChips(props: { isMobile?: boolean; isCompact?: boolean }) {
         }
         style={{ ...chipBase, color: chipColor(mem?.pct) }}
       >
-        MEM {mem ? Math.round(mem.pct) : "—"}%
+        M{mem ? Math.round(mem.pct) : "—"}%
       </span>
-    </>
+    </span>
   );
 }

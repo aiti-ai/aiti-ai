@@ -244,6 +244,9 @@ export default {
     clientImmediately: true,
     // Left sidebar dock static slot (registered item takes over on load).
     sidebarExplorerDock: [{ id: "panel", label: "i18n:sy.panel.label", icon: "icons/gauge.svg" }],
+    // Toolbar gauge button: re-open entry after a user ⋮-close (dismissed blocks
+    // skip the restorative auto-dock; registered item takes over on load).
+    toolbar: [{ id: "aiti-sysmon-open", label: "i18n:sy.toolbar.label", title: "i18n:sy.toolbar.title", icon: "icons/gauge.svg" }],
     // Session-info stats-button trailing chips (registered item takes over on load).
     sessionStatsInline: [{ id: "chips", label: "i18n:sy.chips.label" }],
     i18n: {
@@ -251,6 +254,8 @@ export default {
       // client copy keys are the raw Chinese strings; en table hand-translated.
       "zh-CN": {
         "sy.panel.label": "系统状态",
+        "sy.toolbar.label": "系统状态",
+        "sy.toolbar.title": "打开系统状态面板",
         "sy.chips.label": "顶栏 CPU/内存",
         "系统状态": "系统状态",
         "ext.displayName": "服务器状态查看器",
@@ -273,6 +278,8 @@ export default {
       },
       en: {
         "sy.panel.label": "System Status",
+        "sy.toolbar.label": "System Status",
+        "sy.toolbar.title": "Open the system status panel",
         "sy.chips.label": "Top-bar CPU/MEM",
         "系统状态": "System Status",
         "ext.displayName": "Server Status Viewer",
