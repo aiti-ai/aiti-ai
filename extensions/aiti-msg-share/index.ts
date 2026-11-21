@@ -118,11 +118,12 @@ function findTarget(reg, id) {
   return entry ? { id: entry.id, provider: entry.id, values: {}, name: entry.name, kinds: entry.kinds, category: entry.category } : null;
 }
 
-/** Container selection capability surfaced to the client (picker visibility + label). */
+/** Provider UI metadata surfaced to the client: container picker visibility/label
+ *  and the favicon icon (external sites only — local services fall back client-side). */
 function containerInfo(reg: any, providerId: string) {
-  const c = reg.get(providerId)?.containers;
-  return c ? { supportsContainers: true, containerLabel: c.label || null }
-    : { supportsContainers: false, containerLabel: null };
+  const p = reg.get(providerId);
+  const c = p?.containers;
+  return { supportsContainers: !!c, containerLabel: c?.label || null, icon: p?.icon || null };
 }
 
 export default {
