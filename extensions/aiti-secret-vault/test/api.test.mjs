@@ -188,7 +188,7 @@ test("preflight: bad payloads are rejected, empty list is a no-op", async (t) =>
   if (!coreHasPreflight) return t.skip("secret-vault-core in the shared root is older than 0.3");
   await withTmp(async ({ call }) => {
     assert.equal((await call("POST", "preflight/scan", {})).status, 400);
-    assert.equal((await call("POST", "preflight/mask", { text: "x" })).status, 400);
+    assert.equal((await call("POST", "preflight/mask", { indices: [] })).status, 400);
     const text = "nothing secret here, just words";
     const res = await (await call("POST", "preflight/mask", { text, indices: [] })).json();
     assert.equal(res.ok, true);
