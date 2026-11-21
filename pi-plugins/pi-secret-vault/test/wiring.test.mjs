@@ -318,3 +318,52 @@ test("vault wiring: legacy mask (no handshake) makes the vault yield", async () 
     assert.match(ctx.notices.at(-1).text, /DISABLED/);
   }
 });
+
+// Incident regression: a credential pasted in a chat-shaped sentence must be
+// masked AND landed, whatever the phrasing. The original leak was
+// `...，token <ark key>，报错 ...` — keyword, a space, the value, then Chinese // cjk-ok
+// punctuation — which the old separator-enumerating rules never matched.
+test("incident regression: chat phrasings reach the vault", async () => {
+  const cwd = join(HOME, "proj-incident");
+  mkdirSync(cwd, { recursive: true });
+  writeSettings([]);
+  const factory = await loadExtension();
+  const host = makeHost();
+  await factory(host.pi);
+  const ctx = makeCtx(cwd);
+  await host.run("session_start", { reason: "startup" }, ctx);
+  await tick();
+
+  const arkKey = "ark-1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d-9f8e";
+  const opaque = "Zx8Kp2Lm9Qr4Tv7Wn3Yb6Cd1Fg7H"; // no known vendor prefix
+  const cases = [
+    `https://ark.cn-beijing.volces.com/api/plan/v3 豆包 无法使用，token ${arkKey}，报错 Failed (HTTP 404）`,
+    `我的密钥是 ${opaque}`,
+    `密钥如下：${opaque}`,
+    opaque, // bare paste: nothing but the value
+  ];
+
+  for (const text of cases) {
+    const res = await host.run("input", { text, source: "interactive" }, ctx);
+    assert.ok(res, `input hook transformed: ${text.slice(0, 24)}`);
+    assert.equal(res.action, "transform");
+    assert.ok(!res.text.includes(arkKey) && !res.text.includes(opaque), "value removed from the prompt");
+    assert.match(res.text, /rsec_[0-9a-f]{8}/);
+  }
+
+  // Every value must be retrievable from the vault (encrypted at rest), which is
+  // what "the vault did not cache it" was about.
+  const list = await host.tools.get("vault_list").execute("t", {}, null, null, ctx);
+  const listed = JSON.stringify(list);
+  assert.equal(listed.includes(arkKey), false, "vault_list never reveals a value");
+  assert.equal(listed.includes(opaque), false, "vault_list never reveals a value");
+  // one alias per distinct value: the incident key + the opaque one
+  assert.ok(/4 alias/.test(listed), `expected four landed aliases, got ${listed.slice(0, 160)}`);
+
+  // A later turn that contains the same values is redacted without the input hook.
+  const messages = [{ role: "user", content: `retry with ${arkKey} and ${opaque}` }];
+  const ctxRes = await host.run("context", { messages }, ctx);
+  assert.ok(ctxRes, "context hook redacted a known value");
+  assert.ok(!JSON.stringify(messages).includes(arkKey));
+  assert.ok(!JSON.stringify(messages).includes(opaque));
+});
