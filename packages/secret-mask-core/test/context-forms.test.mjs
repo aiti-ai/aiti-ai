@@ -13,7 +13,7 @@
 // All values below are generated fakes, never real credentials.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { previewValue, scan, scanCandidates } from "../src/detect.ts";
+import { CANDIDATE_LIMIT, previewValue, scan, scanCandidates } from "../src/detect.ts";
 
 // Deterministic PRNG (mulberry32) so failures reproduce.
 function rng(seed) {
@@ -301,4 +301,20 @@ test("preflight candidates: auto hits are high, loose guesses are medium", () =>
   const preview = previewValue(KEY);
   assert.ok(!preview.includes(KEY));
   assert.match(preview, /^Zx8Kp2…6Cd1$/);
+});
+
+test("preflight candidates: big pastes do not flood the list", () => {
+  const longKey = "Zx8Kp2Lm9Qr4Tv7Wn3Yb6Cd1";
+  // 60 lines of code-ish noise: the standalone token pass is chat-only, so this
+  // must not produce a candidate per line
+  const big = Array.from({ length: 60 }, (_, i) => `const value${i} = build(${i}); // key=${i}abc`).join("\n");
+  assert.equal(scanCandidates(big, { strict: true }).length, 0, "no standalone candidates in a code paste");
+
+  // the same tokens with an explicit keyword are still offered
+  const labeled = `token ${longKey}\n` + big;
+  assert.ok(scanCandidates(labeled, { strict: true }).length >= 1);
+
+  // and the list is capped so a pathological input stays reviewable
+  const many = Array.from({ length: 200 }, (_, i) => `password: Abc${i}def${i}Gh`).join("\n");
+  assert.ok(scanCandidates(many, { strict: true }).length <= CANDIDATE_LIMIT);
 });

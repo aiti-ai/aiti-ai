@@ -980,8 +980,9 @@ function scanCandidates(text, opts = {}) {
   };
   collect(RELAXED_CONTEXT_RULES, RULES.length);
   const tokenOrder = RULES.length + RELAXED_CONTEXT_RULES.length;
+  const chatSized = masked.split("\n").filter((line) => line.trim()).length <= 20 && masked.trim().length <= 4e3;
   CANDIDATE_TOKEN_RE.lastIndex = 0;
-  for (let m = CANDIDATE_TOKEN_RE.exec(masked); m !== null; m = CANDIDATE_TOKEN_RE.exec(masked)) {
+  for (let m = chatSized ? CANDIDATE_TOKEN_RE.exec(masked) : null; m !== null; m = CANDIDATE_TOKEN_RE.exec(masked)) {
     const value = m[1];
     const start = m.index + m[0].indexOf(value);
     const end = start + value.length;
@@ -997,8 +998,9 @@ function scanCandidates(text, opts = {}) {
     out.push(hit);
     lastEnd = h.end;
   }
-  return out;
+  return out.slice(0, CANDIDATE_LIMIT);
 }
+var CANDIDATE_LIMIT = 40;
 function previewValue(value) {
   if (value.length <= 10) return "*".repeat(value.length);
   return `${value.slice(0, 6)}\u2026${value.slice(-4)}`;
@@ -2970,6 +2972,7 @@ function legacyPersistExists(path) {
 }
 export {
   AUDIT_FILE_NAME,
+  CANDIDATE_LIMIT,
   DEFAULT_LANDING,
   EXTRACT_MAX_BYTES,
   EXTRACT_MIN_LENGTH,

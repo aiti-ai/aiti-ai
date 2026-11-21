@@ -1202,8 +1202,12 @@ export function scanCandidates(text: string, opts: { strict?: boolean } = {}): C
 
   collect(RELAXED_CONTEXT_RULES, RULES.length);
   const tokenOrder = RULES.length + RELAXED_CONTEXT_RULES.length;
+  // Standalone tokens only for chat-sized text: a pasted file or log would fill
+  // the confirmation list with every random string on the page. Keyword-bound
+  // candidates above still work for big pastes, so nothing real is lost.
+  const chatSized = masked.split("\n").filter((line) => line.trim()).length <= 20 && masked.trim().length <= 4000;
   CANDIDATE_TOKEN_RE.lastIndex = 0;
-  for (let m = CANDIDATE_TOKEN_RE.exec(masked); m !== null; m = CANDIDATE_TOKEN_RE.exec(masked)) {
+  for (let m = chatSized ? CANDIDATE_TOKEN_RE.exec(masked) : null; m !== null; m = CANDIDATE_TOKEN_RE.exec(masked)) {
     const value = m[1]!;
     const start = m.index + m[0].indexOf(value);
     const end = start + value.length;
@@ -1220,8 +1224,13 @@ export function scanCandidates(text: string, opts: { strict?: boolean } = {}): C
     out.push(hit);
     lastEnd = h.end;
   }
-  return out;
+  // A confirmation list has to stay reviewable: keep the first CANDIDATE_LIMIT
+  // and let callers report the remainder (the host shows "and N more").
+  return out.slice(0, CANDIDATE_LIMIT);
 }
+
+/** Upper bound on candidates offered in one confirmation dialog. */
+export const CANDIDATE_LIMIT = 40;
 
 /** Masked preview for a confirmation list (`ark-1a2b…c5d`), never the value. */
 export function previewValue(value: string): string {

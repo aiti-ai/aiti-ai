@@ -428,10 +428,22 @@ function pfPost(path, body) {
   }).then(function (r) { return r.json(); });
 }
 
+// Serialize gate invocations: two quick Enters must not stack two modal dialogs.
+var gateChain = Promise.resolve();
+
 /** Composer pre-send gate: returns replacement text, or {cancel}. */
-async function preflightGate(text) {
+function preflightGate(text) {
+  var run = gateChain.then(function () { return preflightGateNow(text); });
+  gateChain = run.then(function () {}, function () {});
+  return run;
+}
+
+async function preflightGateNow(text) {
   if (!preflightEnabled() || !text || text.length < 8) return undefined;
   if (text.indexOf("rsec_") >= 0) return undefined; // already masked
+  // Very large paste: the confirmation list would be unreviewable and the round
+  // trip costly. Auto-masking (shape + context rules) still runs agent-side.
+  if (text.length > 20000) return undefined;
   var auto = preflightAuto();
   if (auto === "raw") return undefined;             // asked and answered "send as-is" this session
   var scan;
