@@ -106,6 +106,7 @@ curl -s -o /tmp/t.wav -X POST http://127.0.0.1:8768/v1/audio/speech \
 | 卡在 `download` 阶段 | 查网络：`curl -I https://hf-mirror.com`；用 `--hf-endpoint` 或代理重跑（断点续传，重跑即续） |
 | `status=error` / 模型加载失败 | 看 `tts/info?log=1`；常见：模型文件不全（删 `<cache>/tts-service/models` 重跑）、onnxruntime 版本不对 |
 | 端口被占 | 脚本自动选 8769-8778；面板 `/tts/info.baseUrl` / `runtime.json` 可看实际端口 |
+| 切到 Hojo 80M 后没有声音 | **80M 没有内置音色**，必须先建克隆音色：面板切到 80M 会自动弹出「音色管理」；建好后选它再朗读（代码返回 `no-voice` 并弹面板，不会再假装“正在启动”） |
 | 克隆音色报 400 | 需要 `hojo-80m` 或 `qwen3-*` provider（面板切换会自动重启服务）；参考文本必须与音频一致 |
 | 面板一直「准备中」 | `prepare.json` 的 `phase` 就是当前阶段；日志尾见 `tts/info?log=1` |
 | WebM 录音保存失败 | 系统没有 ffmpeg：`sudo apt install ffmpeg`（或改上传 wav） |

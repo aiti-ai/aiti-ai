@@ -932,6 +932,12 @@ function SettingsDialog() {
     await setFeatureValueApi("tts.local.provider", p);
     if (s.voice) setSettings({ voice: "" });
     await controlLocal(localRunning ? "restart" : "start", p);
+    // Clone-only providers (80M / Qwen3) have no built-in voices: without one nothing can play,
+    // so open the voice manager right away instead of leaving a silent engine.
+    if (/hojo-80m|qwen3/.test(p)) {
+      const d = await fetchLocalVoices(true);
+      if (!d || !Array.isArray(d.voices) || !d.voices.length) setVoicesOpen(true);
+    }
   };
 
   const startLocal = async () => { setBusy(true); await controlLocal("start", providerValue); setBusy(false); };
@@ -983,7 +989,7 @@ function SettingsDialog() {
             <select className="aisp-sel" value={s.voice || ""} onChange={(e) => { const v = e.target.value; setSettings({ voice: v }); if (v) previewVoice(v); }}>
               <option value="">
                 {localSelected
-                  ? (firstLocalLabel ? t("speek.voice.defaultName", { name: firstLocalLabel }) : t("speek.voice.defaultLocal"))
+                  ? (firstLocalLabel ? t("speek.voice.defaultName", { name: firstLocalLabel }) : t("speek.voice.noVoices"))
                   : useEdgeNow ? (firstEdgeLabel ? t("speek.voice.defaultName", { name: firstEdgeLabel }) : t("speek.voice.defaultLocal")) : t("speek.voice.defaultBrowser")}
               </option>
               {voices.map((v) => (
@@ -993,7 +999,9 @@ function SettingsDialog() {
           </div>
           {localSelected && (
             <div className="aisp-row" style={{ marginTop: -6 }}>
-              <span className="aisp-mini">{t("speek.voice.localHint")}</span>
+              <span className="aisp-mini">
+                {localVoices.length ? t("speek.voice.localHint") : t("speek.local.noVoicesHint")}
+              </span>
             </div>
           )}
 
@@ -1067,6 +1075,11 @@ function SettingsDialog() {
               <label title={t("speek.local.autoStartTitle")}>{t("speek.local.autoStart")}</label>
               <input type="checkbox" checked={localAutoStart} onChange={async (e) => { await setFeatureFlagApi("tts.local.autoStart", e.target.checked); await fetchLocalInfo(); }} />
             </div>
+            {localRunning && !localVoices.length && (
+              <div className="aisp-mini" style={{ color: "var(--danger,#ef4444)" }}>
+                {t("speek.local.noVoicesHint")}
+              </div>
+            )}
             <div className="aisp-mini">{t("speek.local.hint")}</div>
           </div>
 

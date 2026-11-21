@@ -1442,8 +1442,17 @@ function speakLocal(seg) {
     if (r && r.skip) { clearStarting(); advanceToNextMessage(); return; }
     if (r && r.ok && r.src) { playLocalAudio(r.src, seg, clearStarting); return; }
     clearStarting();
-    // Service asleep -> wake it once and tell the user; the current sentence uses the browser.
-    if (r && (r.code === "not-ready" || r.code === "network")) {
+    const code = r && r.code;
+    if (code === "no-voice" || code === "unknown-voice") {
+      // Actionable: the provider has no usable voice (hojo-80m only ships cloned voices) or the
+      // selected id no longer exists. Guide the user to the panel instead of pretending to start.
+      failToast(t(code === "no-voice" ? "speek.toast.noVoice" : "speek.toast.unknownVoice", {
+        provider: state.localProvider || "—",
+        voice: activeVoiceId() || "—",
+      }));
+      openSettingsUI();
+    } else if (code === "not-ready" || code === "network") {
+      // Service asleep/loading -> wake it once and tell the user; this sentence uses the browser.
       state.localStatus = "loading";
       notify();
       ensureLocal();
@@ -2347,9 +2356,10 @@ export async function speakOnce(rawText, opts = {}) {
   killAnnounceAudio();
   resumeMainAnnouncePause();
   const showPanel = opts.showSettingsOnError !== false;
-  const fail = (code, error) => {
-    failToast(error || code);
-    if (code === "service-start-failed" && showPanel) openSettingsUI();
+  const ACTIONABLE = new Set(["service-start-failed", "no-voice", "unknown-voice"]);
+  const fail = (code, error, message) => {
+    failToast(message || error || code);
+    if (showPanel && ACTIONABLE.has(code)) openSettingsUI();
     return { ok: false, code, error };
   };
 
@@ -2403,6 +2413,13 @@ export async function speakOnce(rawText, opts = {}) {
   } catch (e) {
     const code = (e && e.code) || "playback-failed";
     resumeMainAnnouncePause();
+    if (code === "no-voice" || code === "unknown-voice") {
+      const msg = t(code === "no-voice" ? "speek.toast.noVoice" : "speek.toast.unknownVoice", {
+        provider: state.localProvider || "—",
+        voice: String(opts.voice || state.settings.voice || "—"),
+      });
+      return fail(code, String(e?.message || e), msg);
+    }
     if (code === "not-ready" || code === "network") {
       // The service died mid-announcement: report the preparation reason when we have one, wake
       // the service once, and let fail() open the panel so the user can fix it.
