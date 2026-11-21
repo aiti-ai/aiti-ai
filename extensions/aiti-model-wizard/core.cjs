@@ -1398,11 +1398,29 @@ async function detectBrands(base, models, index, { api, apiKey, timeoutMs = 5000
 }
 
 // ---------------- 测试连接（2xx / 429 都算通过） ----------------
+/** Subscription-plan endpoints that expose no /models list (measured 2026-11: Ark Agent Plan
+ *  /api/plan/v3/models -> 404). These endpoints validate the key format before routing, so a 404
+ *  only means "no such path" and is NOT evidence that the key works. Without a model there is
+ *  nothing to verify, so probe the plan-wide alias (ark-code-latest) instead of listing models. */
+const NO_LIST_ENDPOINTS = [
+  {
+    re: /\/api\/plan(?:\/v\d+)?\/?$/i,
+    label: "火山方舟 Agent 套餐",
+    probeModel: "ark-code-latest",
+    keyHint: "该端点只受理套餐控制台「获取专属 API Key」签发的 key，普通方舟按量 API Key 在这里一律 401",
+  },
+];
+function matchNoListEndpoint(baseUrl) {
+  const b = String(baseUrl || "").replace(/\/+$/, "");
+  return NO_LIST_ENDPOINTS.find((x) => x.re.test(b)) || null;
+}
 async function testConnection({ baseUrl, api = "openai-completions", apiKey, model }, opts = {}) {
   const base = String(baseUrl || "").replace(/\/+$/, "");
   const t0 = Date.now();
   const timeoutMs = opts.timeoutMs || 12000;
   const xh = opts.extraHeaders || {}; // provider 自定义请求头（2026-09-17）：测试/发现/探测链路与运行时同源
+  const noList = matchNoListEndpoint(base);
+  if (!model && noList) model = noList.probeModel; // no list endpoint: probe the plan-wide alias (a list call would only 404)
   let r;
   if (model) {
     if (api === "anthropic-messages") {
@@ -1424,7 +1442,13 @@ async function testConnection({ baseUrl, api = "openai-completions", apiKey, mod
   let detail;
   if (r.status === 429) detail = extractRateLimitText(r);
   else if (r.status >= 200 && r.status < 300) detail = model ? "探针返回正常" : "端点可访问，key 有效";
-  else if (r.status === 401) detail = "API Key 无效或无权限（401）";
+  else if (r.status === 401) {
+    const raw = extractErrorText(r);
+    const planScope = !!noList && /missing or invalid|api key or ak\/sk|not authorized for this (?:plan|endpoint)/i.test(raw);
+    detail = planScope
+      ? "API Key 不被该套餐端点受理（401）——" + noList.keyHint + "；上游：" + raw.slice(0, 80)
+      : "API Key 无效或无权限（401）";
+  }
   else if (r.status === 403) {
     const modelBlocked = isModelLevelBlocked(r);
     if (model && modelBlocked) {
@@ -1444,7 +1468,13 @@ async function testConnection({ baseUrl, api = "openai-completions", apiKey, mod
   }
   else if (r.status === 404 || r.status === 405) {
     const hasBody = (r.text || "").trim().length > 0;
-    if (model && hasBody) {
+    const upCode = String((r.body && r.body.error && (r.body.error.code || r.body.error.type)) || "");
+    if (/UnsupportedModel/i.test(upCode)) {
+      // plan endpoints only accept whitelisted models (Ark Agent Plan answers 404 UnsupportedModel for others)
+      detail = "模型 " + model + " 不在该套餐支持清单（404 UnsupportedModel）"
+        + (noList ? "——" + noList.label + "只受理套餐清单内模型，如 " + noList.probeModel + " / doubao-seed-2.1-pro / glm-5.3" : "")
+        + "；上游：" + (extractErrorText(r).slice(0, 80) || "");
+    } else if (model && hasBody) {
       const listUrl = api === "anthropic-messages" ? (base.endsWith("/v1") ? base + "/models" : base + "/v1/models") : api === "google-generative-ai" ? base + "/v1beta/models" : base + "/models";
       const r2 = await httpGet(listUrl, { apiKey, apiType: api, timeoutMs, extraHeaders: xh });
       if (r2.status >= 200 && r2.status < 300) {
@@ -1456,16 +1486,20 @@ async function testConnection({ baseUrl, api = "openai-completions", apiKey, mod
         detail = "模型不可用（404 · " + (extractErrorText(r).slice(0, 80) || "未知原因") + "），列表验证异常 HTTP " + r2.status;
       }
     } else {
-      detail = "地址/路径不对（404），可能漏了 /v1 或 /v2";
+      detail = noList
+        ? noList.label + " 端点不提供 /models 列表（404），请填一个模型再测（如 " + noList.probeModel + "）"
+        : "地址/路径不对（404），可能漏了 /v1 或 /v2";
     }
   }
   else if (r.status === 0) detail = "网络不可达：" + (r.error || "");
   else {
     const raw = extractErrorText(r);
-    // 上游「模型在列表但推理后端不受理」类错误（如 ModelScope 的 has no provider supported）→
-    // 给明确结论而非裸透传：列表有≠可推理，换模型或刷新实时列表
+    const upCode = String((r.body && r.body.error && (r.body.error.code || r.body.error.type)) || "");
     const low = raw.toLowerCase();
-    if (model && (/no provider supported|provider.*not support/.test(low)
+    // plan not subscribed / expired (Ark Coding/Agent Plan: 400 InvalidSubscription) -> say so, do not blame the key
+    if (/InvalidSubscription/i.test(upCode) || /does not have a valid .{0,30}subscription|subscription has expired/i.test(raw)) {
+      detail = "该账号没有有效的套餐订阅（" + (upCode || "InvalidSubscription") + "，HTTP " + r.status + "）——请在方舟控制台开通对应套餐（Coding / Agent），或改用按量端点 /api/v3；上游：" + raw.slice(0, 80);
+    } else if (model && (/no provider supported|provider.*not support/.test(low)
       || /not exist|does not exist|unsupported model|invalid model|模型不存在/.test(low))) {
       detail = "模型 " + model + " 该服务商当前不受理（上游：" + raw.slice(0, 80) + "）—— /models 列表有≠可推理，请换一个模型或点「刷新模型」拉最新列表";
     } else detail = raw;
@@ -1592,7 +1626,16 @@ async function discoverModels({ baseUrl, api = "openai-completions", apiKey }, o
     return { ok: true, from: "endpoint", models, count: models.length, listUrl, raw: rawList };
   }
   if (r.status === 401 || r.status === 403) return { ok: false, error: "API Key 无效或无权限（" + r.status + "）", listUrl };
-  if (r.status === 404 || r.status === 405) return { ok: false, error: "列表端点 404（可能漏了 /v1 /v2）：" + listUrl, listUrl };
+  if (r.status === 404 || r.status === 405) {
+    const noList = matchNoListEndpoint(base);
+    return {
+      ok: false,
+      error: noList
+        ? noList.label + " 端点不提供 /models 列表（404）——模型 id 请按套餐支持清单手填，如 " + noList.probeModel + " / doubao-seed-2.1-pro / glm-5.3"
+        : "列表端点 404（可能漏了 /v1 /v2）：" + listUrl,
+      listUrl,
+    };
+  }
   return { ok: false, error: "拉取模型列表失败：HTTP " + r.status + " " + String(r.error || "").slice(0, 100), listUrl };
 }
 
@@ -2803,7 +2846,7 @@ module.exports = {
   loadAux, ensureAuxAll, modelListExtra, findOpenRouterModel, mapOpenRouterModel, findLiteLlmEntry, mapLiteLlmModel, isOpenRouterBase, updateAuxFromScan, auxBackfillWithRetry,
   loadChinaCatalog, buildIndex, searchProviders,
   normalizeBaseUrl, reverseMatch, reverseDetect, extractUrls, detectBrands, probeOpenApi, brandFromText, brandFromModels,
-  detectApi, endpointApiHint, normalizeBaseForApi, testConnection, discoverModels, probeModelCap, knownMaxTokensCap, MODEL_MAX_OUTPUT_TOKEN_CORRECTIONS, resolveSecretValue, parseMaxTokensFromError, stripEndpointPath,
+  detectApi, endpointApiHint, normalizeBaseForApi, testConnection, discoverModels, matchNoListEndpoint, NO_LIST_ENDPOINTS, probeModelCap, knownMaxTokensCap, MODEL_MAX_OUTPUT_TOKEN_CORRECTIONS, resolveSecretValue, parseMaxTokensFromError, stripEndpointPath,
   loadModelsJson, saveModelsJson, loadModelsStore, modelsStorePath, providersStatus, modelParams, providerScanParams, upsertProvider, deleteProvider, upsertProviderData, deleteProviderData, setModelOverrideData, getModelOverrides, comboPageData, comboSaveProviderData, modelsJsonPath, initPiRuntime, piReady, piError, runtimeEntries,
   extractDomain, buildDomainIndex, domainProviderGuess, resetDomainIndex, probeServerHeaders,
   stashUndo, loadUndo, restoreUndoData, undoPath,

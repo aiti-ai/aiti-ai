@@ -668,12 +668,18 @@
       "doc": "https://www.volcengine.com/docs/82379/1925114",
       "signupUrl": "https://console.volcengine.com/ark",
       "tokenUrl": "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey",
-      "register": "火山引擎开通方舟「Coding 套餐」（订阅制）：与按量服务（api/v3）相互独立，coding key 不适用于按量端点。同一套餐支持 OpenAI 兼容（/api/coding/v3/chat/completions）与 Responses 兼容（/api/coding/v3/responses）；Anthropic 兼容形式需支持该形式的 key。有 5 小时用量配额。",
+      "register": "火山引擎开通方舟「Coding 套餐」（订阅制）：与按量服务（api/v3）相互独立，coding key 不适用于按量端点。同一套餐支持 OpenAI 兼容（/api/coding/v3/chat/completions）与 Responses 兼容（/api/coding/v3/responses）；Anthropic 兼容形式需支持该形式的 key。有 5 小时用量配额。未开通/已过期时上游报 400 InvalidSubscription。模型 id 用点号形态（doubao-seed-2.1-pro / glm-5.3），ark-code-latest = 跟随控制台当前所选模型。",
       "env": "ARK_API_KEY",
       "models": [
+        "ark-code-latest",
+        "doubao-seed-2.1-pro",
+        "doubao-seed-2.1-lite",
+        "glm-5.3",
+        "deepseek-v4-pro",
+        "deepseek-v4-flash",
+        "glm-latest",
         "deepseek-v4-pro-ga-260813",
         "deepseek-v4-flash-ga-260731",
-        "doubao-seed-2-0-code-preview-260215",
         "glm-5-2-260617"
       ]
     },
@@ -692,12 +698,27 @@
       ],
       "baseUrl": "https://ark.cn-beijing.volces.com/api/plan/v3",
       "apiType": "openai-completions",
-      "doc": "https://www.volcengine.com/docs/82379/2366394",
-      "signupUrl": "https://console.volcengine.com/ark",
-      "tokenUrl": "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey",
-      "register": "火山引擎开通方舟「Agent 套餐」（豆包 aagent，订阅制）：独立于按量（api/v3）与 Coding 套餐（api/coding/v3），key 互不通用。端点 https://ark.cn-beijing.volces.com/api/plan/v3（OpenAI 兼容）。",
+      "doc": "https://www.volcengine.com/docs/82379/2666474",
+      "signupUrl": "https://ark.volcengine.com/region:cn-beijing/subscription/agent-plan",
+      "tokenUrl": "https://ark.volcengine.com/region:cn-beijing/subscription/agent-plan",
+      "register": "火山引擎开通方舟「Agent 套餐」（豆包 aagent，订阅制）：与按量（api/v3）、Coding 套餐（api/coding/v3）三套 key 互不通用。OpenAI 兼容端点 https://ark.cn-beijing.volces.com/api/plan/v3；Anthropic 兼容用 https://ark.cn-beijing.volces.com/api/plan（不带 /v3）。Key 必须用套餐控制台的「获取专属 API Key」——普通方舟按量 API Key 在此一律 401。该端点不提供 /models 列表，模型 id 用点号且须在套餐清单内（ark-code-latest = 跟随控制台当前所选模型）。",
       "env": "ARK_API_KEY",
-      "models": []
+      "models": [
+        "ark-code-latest",
+        "doubao-seed-2.1-pro",
+        "doubao-seed-2.1-lite",
+        "doubao-seed-2.0-mini",
+        "doubao-seed-evolving",
+        "glm-5.3",
+        "glm-5.3-flash",
+        "glm-latest",
+        "deepseek-v4-pro",
+        "deepseek-v4-flash",
+        "deepseek-v4.1-flash",
+        "deepseek-v4.1-flash-economy",
+        "kimi-k3.1-pro",
+        "kimi-k2.8-preview"
+      ]
     },
     "modelscope": {
       "cnName": "魔搭社区（ModelScope）",
