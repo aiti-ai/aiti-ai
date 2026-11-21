@@ -75,7 +75,13 @@ export function EnabledScopeBlock({ providerId, cwd }: { providerId: string; cwd
   const queuedRef = useRef<{ key: string; body: any } | null>(null);
   const deadRef = useRef(false);
 
-  useEffect(() => () => { deadRef.current = true; }, []);
+  useEffect(() => {
+    // Reset on every effect run: React dev StrictMode double-invokes effects on the
+    // same instance (mount → cleanup → mount), so a ref set in cleanup must be
+    // cleared on re-mount or every later fetch result is dropped (card stuck on loading).
+    deadRef.current = false;
+    return () => { deadRef.current = true; };
+  }, []);
 
   const load = useCallback(() => {
     setLoading(true);
