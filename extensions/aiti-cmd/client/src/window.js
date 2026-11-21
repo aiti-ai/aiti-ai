@@ -23,12 +23,45 @@ export function appMeta(kit) {
   };
 }
 
+/**
+ * Narrow-screen title-bar wrap. The window itself goes fullscreen on small screens
+ * via data-ext-float-full (aiti-float, ≤640px), but the fixed-width title-bar items
+ * (app switcher labels + ai-helper/extman injected buttons + close) can exceed a
+ * phone viewport, so the single row overflows and the close button gets clipped off
+ * the right edge (the panel has overflow hidden) — nothing to click.
+ * Same house pattern as other small-screen dialogs: everything after the subtitle
+ * wraps onto a second row, right-aligned. The .cmd-titlebar-break anchor (hidden on
+ * desktop, flexBasis:100% under 640px) forces the wrap; margin-left:auto on the
+ * switcher right-aligns that second row. The 640px breakpoint matches aiti-float's
+ * FULL_MQ and the rest of the codebase's small-screen convention. Labeled switcher
+ * buttons don't always share that row with the injected buttons (long English labels
+ * overflow again), so under 480px they collapse to icon-only as a second tier.
+ */
+const WINDOW_STYLE_ID = "aiti-cmd-window-css";
+const windowCss = [
+  "@media (max-width: 640px) {",
+  "  .cmd-titlebar { flex-wrap: wrap; }",
+  "  .cmd-titlebar-break { display: block !important; }",
+  "  .cmd-switchwrap { margin-left: auto; }",
+  "}",
+  "@media (max-width: 480px) {",
+  "  .cmd-switch-label { display: none; }",
+  "  .cmd-switch-btn { padding-left: 5px !important; padding-right: 5px !important; }",
+  "}",
+].join("\n");
+if (typeof document !== "undefined" && !document.getElementById(WINDOW_STYLE_ID)) {
+  const style = document.createElement("style");
+  style.id = WINDOW_STYLE_ID;
+  style.textContent = windowCss;
+  document.head.appendChild(style);
+}
+
 export function createWindow(kit, store) {
   const { h, t, Ic } = kit;
   const META = appMeta(kit);
 
   function Switcher({ app }) {
-    return h("div", { style: { display: "flex", gap: 2, alignItems: "center", flexShrink: 0 } },
+    return h("div", { className: "cmd-switchwrap", style: { display: "flex", gap: 2, alignItems: "center", flexShrink: 0 } },
       ...APP_ORDER.map((id) => {
         const m = META[id];
         const active = id === app;
@@ -38,16 +71,17 @@ export function createWindow(kit, store) {
           title: t(m.labelKey) + (active ? "" : " · " + t("cmd.app.switch")),
           "aria-label": t(m.labelKey),
           "aria-pressed": active ? "true" : "false",
+          className: "cmd-switch-btn",
           onClick: (e) => { e.stopPropagation(); if (!active) store.openApp(id); },
           style: {
-            display: "inline-flex", alignItems: "center", gap: 4,
+            display: "inline-flex", alignItems: "center", gap: 4, flexShrink: 0,
             height: 20, padding: "0 7px", borderRadius: 5, cursor: active ? "default" : "pointer",
             border: "1px solid " + (active ? "var(--accent)" : "transparent"),
             background: active ? "color-mix(in srgb, var(--accent) 16%, transparent)" : "transparent",
             color: active ? "var(--accent)" : "var(--text-muted)",
             fontSize: 12, lineHeight: 1, fontFamily: "inherit", fontWeight: active ? 700 : 400,
           },
-        }, Ic(12, m.icon), h("span", null, t(m.labelKey)));
+        }, Ic(12, m.icon), h("span", { className: "cmd-switch-label", style: { whiteSpace: "nowrap" } }, t(m.labelKey)));
       }));
   }
 
@@ -77,10 +111,14 @@ export function createWindow(kit, store) {
         onClick: (e) => e.stopPropagation(),
       },
         // title bar (compact single row): icon + app name + subtitle + actions + app switcher + close
-        h("div", { style: { display: "flex", alignItems: "center", gap: 6, padding: "3px 8px", borderBottom: "1px solid var(--border)", flexShrink: 0, minHeight: 28, lineHeight: 1 } },
+        h("div", { className: "cmd-titlebar", style: { display: "flex", alignItems: "center", gap: 6, padding: "3px 8px", borderBottom: "1px solid var(--border)", flexShrink: 0, minHeight: 28, lineHeight: 1 } },
           h("span", { style: { width: 18, height: 18, borderRadius: 5, background: "var(--bg-hover)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, color: "var(--accent)" } }, Ic(12, m.icon)),
-          h("span", { style: { fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", flexShrink: 0 } }, t(m.labelKey)),
+          // shrinkable title: absorbs overflow after the subtitle collapses, keeping close/max reachable
+          h("span", { style: { fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", flexShrink: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" } }, t(m.labelKey)),
           h("span", { title: subtitle || t(m.titleKey), style: { fontSize: 12, color: "var(--text-muted)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, subtitle || t(m.titleKey)),
+          // small screens only (CSS media query): 100%-basis anchor pushes the switcher
+          // and every injected button (🤖 🔧 ⛶ ✕) onto a second, right-aligned row
+          h("div", { className: "cmd-titlebar-break", "aria-hidden": true, style: { display: "none", flexBasis: "100%", height: 0 } }),
           actions || null,
           h(Switcher, { app }),
           // aria-label="close" is the anchor the ai-helper dialog 🤖 injection looks for
