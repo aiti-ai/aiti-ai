@@ -313,7 +313,7 @@ export function createRunner(audit: { append: (r: AuditRecord) => void; writeOut
     };
     audit.append(rec);
     if (s.commandId) { try { store.touchRun(s.commandId); } catch {} }
-    pub(ptyTopic(s.id), { evt: "exit", code: s.exitCode, signal: s.signal, durationMs, truncated: out.outputTruncated });
+    pub(ptyTopic(s.id), { evt: "exit", code: s.exitCode, signal: s.signal, durationMs, truncated: out.outputTruncated, cmd: s.cmd, source: s.source, cwd: s.cwd });
     // Queue: start the first waiter whose own pool has a free slot (this session already left the running set)
     const idx = queue.findIndex((q) => { const sh = isShellSource(q.source); return runningCount(sh) < poolCap(sh); });
     if (idx >= 0) spawnSession(queue.splice(idx, 1)[0]);

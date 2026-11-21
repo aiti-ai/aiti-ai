@@ -20,7 +20,8 @@ import { join as pathJoin } from "node:path";
 import { Engine } from "./sched/engine.ts";
 import { parseSchedules, nextRunAt } from "./sched/cron.ts";
 import { makeOutbound, resolveCcConfig, CC_TIMEOUT_MS, type CcConfig } from "./sched/outbound.ts";
-import type { Plan } from "./sched/store.ts";
+import { TriggerManager } from "./sched/trigger.ts";
+import type { Plan, PlanTrigger } from "./sched/store.ts";
 
 // ---- 进程内接线（startup 时由 ctx 填充）----
 
@@ -33,6 +34,7 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 });
 
 let engine: Engine | null = null;
+let triggers: TriggerManager | null = null;
 
 function emit(type: string, payload: any) {
   // 帧上总线唯一通道（sched:* 前缀；2026-09-09 拍板：自建 SSE 双轨已删，订阅端 topics 唯一、禁止任何兜底）。
@@ -217,6 +219,18 @@ export default {
         "ed.autoNote": "注：auto 模式注入活会话时，送达的是「已注入通知」而非任务结果（真实结果随活会话异步产生）——需要真结果送达请选 invokeAI 或 session（总是新会话）模式",
         "ed.notify": "通知",
         "ed.notifyLabel": "完成后浏览器通知",
+        "ed.trig": "事件触发",
+        "ed.trig.none": "无（按 schedule 定时）",
+        "ed.trig.fs": "文件变化（fs-watch）",
+        "ed.trig.exit": "终端命令退出（process-exit）",
+        "ed.trig.hook": "Webhook（外部系统回调）",
+        "ed.trig.pathsPh": "每行一个绝对路径，如 /home/me/project/dist",
+        "ed.trig.debouncePh": "防抖毫秒（缺省 300）",
+        "ed.trig.cooldownPh": "冷却秒（缺省按类型）",
+        "ed.trig.cmdPh": "命令子串过滤（留空 = 任意命令退出都触发）",
+        "ed.trig.copy": "复制 URL",
+        "ed.trig.hookSaveFirst": "保存后生成带 token 的 URL（编辑弹窗可复制）",
+        "ed.trig.note": "注：触发即按执行模式运行一次（占每日预算/受 maxRuns 约束）；与 schedule 并存可同时生效；冷却防抖动连发",
         "ed.saveFail": "保存失败：{e}",
         "ed.validateFail": "校验失败",
         "ed.fixSuffix": "（保存前请修正）",
@@ -256,6 +270,12 @@ export default {
         "dlg.last": "上次",
         "dlg.never": "未跑",
         "dlg.ranCount": "已跑 {n} 次",
+        "dlg.trigOnly": "事件触发",
+        "dlg.trig.fs-watch": "文件变化 ×{n}",
+        "dlg.trig.process-exit": "命令退出",
+        "dlg.trig.webhook": "Webhook",
+        "dlg.trigHookTip": "外部系统回调触发；URL/token 在编辑弹窗复制",
+        "dlg.trigExitTip": "aiti-cmd 终端命令退出时触发",
         "dlg.dailyTip": "今日已自动执行/每日上限",
         "dlg.daily": "日预算 {n}/{cap}",
         "dlg.tzTip": "cron 按此时区计算",
@@ -403,6 +423,18 @@ export default {
         "ed.autoNote": "Note: in auto mode with a live session, what gets delivered is an \"injected\" notice, not the task result (results are produced asynchronously by the live session) — for real results pick invokeAI or session (always new) mode",
         "ed.notify": "Notify",
         "ed.notifyLabel": "Browser notification on completion",
+        "ed.trig": "Event trigger",
+        "ed.trig.none": "None (time schedule only)",
+        "ed.trig.fs": "File change (fs-watch)",
+        "ed.trig.exit": "Command exit (process-exit)",
+        "ed.trig.hook": "Webhook (external callback)",
+        "ed.trig.pathsPh": "One absolute path per line, e.g. /home/me/project/dist",
+        "ed.trig.debouncePh": "Debounce ms (default 300)",
+        "ed.trig.cooldownPh": "Cooldown sec (default per type)",
+        "ed.trig.cmdPh": "Command substring filter (empty = any command exit)",
+        "ed.trig.copy": "Copy URL",
+        "ed.trig.hookSaveFirst": "The token URL is generated after saving (copy it in the edit dialog)",
+        "ed.trig.note": "Note: each trigger runs once in the plan's execution mode (counts toward the daily budget / maxRuns); it can coexist with a schedule; cooldown guards against fs storms",
         "ed.saveFail": "Save failed: {e}",
         "ed.validateFail": "Validation failed",
         "ed.fixSuffix": " (fix before saving)",
@@ -442,6 +474,12 @@ export default {
         "dlg.last": "Last",
         "dlg.never": "Never ran",
         "dlg.ranCount": "Ran {n}×",
+        "dlg.trigOnly": "event-triggered",
+        "dlg.trig.fs-watch": "fs-watch ×{n}",
+        "dlg.trig.process-exit": "process-exit",
+        "dlg.trig.webhook": "Webhook",
+        "dlg.trigHookTip": "Fired by external webhook callback; copy the URL/token in the edit dialog",
+        "dlg.trigExitTip": "Fired when an aiti-cmd terminal command exits",
         "dlg.dailyTip": "Auto runs today / daily cap",
         "dlg.daily": "Budget {n}/{cap}",
         "dlg.tzTip": "cron evaluated in this time zone",
@@ -472,10 +510,26 @@ export default {
       const all = reg && typeof reg.all === "function" ? reg.all() : [];
       engine.registerHooks(all.map((e: any) => ({ id: e?.id, configDir: e?.configDir, schedules: e?.ext?.schedules })));
       engine.start();
+      // Event triggers (borrow plan §2.3): fs-watch watches only plan-declared paths (event-driven, zero polling);
+      // process-exit reuses aiti-cmd's on-exit service; webhook route lives in the api below
+      triggers = new TriggerManager({
+        fireTrigger: (planId, source) => engine!.fireTrigger(planId, source),
+        isPathAllowed: (p) => {
+          try { return !!(ctx as any)?.core?.fileAccess?.isAllowed?.(p); }
+          catch { return true; } // fileAccess absent (tests / old core) → do not block
+        },
+      });
+      try {
+        const svc = (ctx as any)?.services?.get?.("aiti-cmd.on-exit");
+        if (svc) triggers.attachCmdExitService(svc);
+      } catch { /* aiti-cmd not loaded: process-exit trigger re-attaches on next sync */ }
+      triggers.sync(engine.store.plans);
 
       console.log("[aiti-ai-schedule] 就绪 · configDir=" + engine.store.dir);
     },
     shutdown() {
+      triggers?.stop();
+      triggers = null;
       engine?.stop();
     },
 
@@ -537,6 +591,19 @@ export default {
         }
       }
 
+      // ---- Webhook trigger (borrow plan §2.3): /webhook/<planId>?token=…; GET/POST both fine ----
+      // Active while the plan is enabled; disabled plans return 404. Token mismatch is always 403 (no existence leak).
+      if (p[0] === "webhook" && p.length === 2) {
+        const plan = engine.store.getPlan(p[1]!);
+        const trig = plan?.trigger;
+        const bodyToken = req.method === "POST" ? (await req.json().catch(() => ({} as any)))?.token : null;
+        const token = url.searchParams.get("token") || bodyToken;
+        if (!plan || !plan.enabled || trig?.type !== "webhook") return json({ ok: false, error: "not found" }, 404);
+        if (!token || String(token) !== trig.token) return json({ ok: false, error: "forbidden" }, 403);
+        const r = triggers?.fireWebhook(plan.id) ?? { ok: false, reason: "engine-not-ready" };
+        return json({ ok: true, fired: r.ok === true, reason: r.reason });
+      }
+
       // ---- Plans CRUD（方案 §6/§7 数据面）----
       if (p[0] === "plans") {
         // GET /plans —— 列表（含 hook 任务一起返回，UI 一屏管理）
@@ -549,6 +616,7 @@ export default {
           const err = validatePlanInput(b);
           if (err) return json({ ok: false, error: err }, 400);
           const delivery = sanitizeDelivery(b);
+          const trigger = sanitizeTrigger(b);
           const plan: Plan = {
             id: "p_" + randomUUID().slice(0, 8),
             name: String(b.name).slice(0, 100),
@@ -563,6 +631,7 @@ export default {
             dailyCap: b.dailyCap ? Number(b.dailyCap) : undefined,
             timezone: (b.timezone || b.tz) ? String(b.timezone || b.tz).trim() : undefined,
             notify: b.notify === true,
+            ...(trigger !== undefined ? { trigger } : {}),
             ...delivery,
             createdAt: new Date().toISOString(),
             createdBy: b.createdBy === "agent" ? "agent" : "user",
@@ -570,12 +639,19 @@ export default {
           engine.store.plans.push(plan);
           engine.store.savePlans();
           engine.upsertPlanEntry(plan);
+          triggers?.sync(engine.store.plans);
           emit("plans", {});
           return json({ ok: true, plan });
         }
         // POST /plans/validate —— 失焦即时校验（前端 blur 调用；与保存校验同一权威逻辑）
         if (req.method === "POST" && p[1] === "validate" && p.length === 2) {
           const b = await req.json().catch(() => null);
+          const tErr = validateTriggerInput(b?.trigger);
+          if (tErr) return json({ ok: false, error: tErr }, 400);
+          const hasTrigger = !!sanitizeTrigger(b ?? {});
+          const schedEmpty = b?.schedule === undefined || b?.schedule === null || b?.schedule === ""
+            || (Array.isArray(b?.schedule) && b.schedule.length === 0);
+          if (schedEmpty && hasTrigger) return json({ ok: true }); // trigger-only plans may omit schedule
           const sErr = validateSchedule(b?.schedule);
           return sErr ? json({ ok: false, error: sErr }, 400) : json({ ok: true });
         }
@@ -592,6 +668,7 @@ export default {
           const merged = { ...plan, ...b, id: plan.id };
           const err = validatePlanInput(merged);
           if (err) return json({ ok: false, error: err }, 400);
+          const putTrigger = sanitizeTrigger(merged); // merged without a trigger field = undefined (keep current); explicit null/none = clear
           Object.assign(plan, {
             name: String(merged.name).slice(0, 100), schedule: merged.schedule, prompt: String(merged.prompt || ""),
             cwd: merged.cwd ? String(merged.cwd) : undefined, model: merged.model ? String(merged.model) : undefined,
@@ -601,10 +678,12 @@ export default {
             dailyCap: merged.dailyCap ? Number(merged.dailyCap) : undefined,
             timezone: (merged.timezone || merged.tz) ? String(merged.timezone || merged.tz).trim() : undefined,
             notify: merged.notify === true,
+            ...(putTrigger !== undefined ? { trigger: putTrigger } : {}),
             ...sanitizeDelivery(b), // 白名单合并：缺省 undefined 即保持原值（旧计划兼容，方案 §4.2）
           });
           engine.store.savePlans();
           engine.upsertPlanEntry(plan);
+          triggers?.sync(engine.store.plans);
           emit("plans", {});
           return json({ ok: true, plan });
         }
@@ -613,6 +692,7 @@ export default {
           engine.store.plans = engine.store.plans.filter((x) => x.id !== planId);
           engine.store.savePlans();
           engine.removePlan(planId!);
+          triggers?.sync(engine.store.plans);
           emit("plans", {});
           return json({ ok: true });
         }
@@ -625,12 +705,12 @@ export default {
               return json({ ok: false, error: "该计划由 AI 创建且未批准——请先在 ⏰调度 管理页「✓ 批准」后再启用" }, 403);
             }
             plan.enabled = true; plan.autoApprove = plan.autoApprove || p[2] === "approve";
-            engine.store.savePlans(); engine.upsertPlanEntry(plan); emit("plans", {});
+            engine.store.savePlans(); engine.upsertPlanEntry(plan); triggers?.sync(engine.store.plans); emit("plans", {});
             return json({ ok: true, plan });
           }
           if (p[2] === "disable") {
             plan.enabled = false;
-            engine.store.savePlans(); engine.upsertPlanEntry(plan); emit("plans", {});
+            engine.store.savePlans(); engine.upsertPlanEntry(plan); triggers?.sync(engine.store.plans); emit("plans", {});
             return json({ ok: true, plan });
           }
         }
@@ -666,7 +746,8 @@ export default {
             action: { type: "string", enum: ["add", "list", "get", "update", "disable", "remove", "run-now"], description: "操作（启用/批准不在工具能力内——需用户在 ⏰调度 管理页操作）" },
             id: { type: "string", description: "计划 id（list/get/update/disable/remove/run-now 用；先 list 拿到）" },
             name: { type: "string", description: "计划名（add/update）" },
-            schedule: { type: ["string", "array"], items: { type: "string" }, description: '调度：cron 表达式字符串、"30m"/"+30m" 间隔/一次性、ISO 时间；多调度=数组（如 ["0 9 * * 1-5","0 10 * * 0,6"]，任一到达即执行；每元素与单值同格式）' },
+            schedule: { type: ["string", "array"], items: { type: "string" }, description: '调度：cron 表达式字符串、"30m"/"+30m" 间隔/一次性、ISO 时间；多调度=数组（如 ["0 9 * * 1-5","0 10 * * 0,6"]，任一到达即执行；每元素与单值同格式）。配置了 trigger 时可省略' },
+            trigger: { type: "object", description: '事件触发（可选，与 schedule 二选一或并用）：{type:"fs-watch",paths:["/绝对路径",...]} 文件变化触发 / {type:"process-exit",cmd:"命令子串"} 终端命令退出触发 / {type:"webhook"} 创建后从管理页复制 webhook URL；均可选 cooldownSec 防抖冷却' },
             prompt: { type: "string", description: "目标+验收标准的完整提示词（add/update）" },
             mode: { type: "string", enum: ["auto", "invokeAI", "session"], description: "执行模式（缺省 auto）" },
             model: { type: "string", description: "可选模型（provider/modelId）" },
@@ -702,18 +783,20 @@ export default {
               return hit ? { ok: true, plan: hit } : { ok: false, error: "not found: " + args.id };
             }
             if (a === "add") {
-              if (!args.name || args.schedule === undefined || !args.prompt) return { ok: false, error: "add 需要 name + schedule + prompt" };
+              const hasTrig = args.trigger && typeof args.trigger === "object";
+              if (!args.name || (args.schedule === undefined && !hasTrig) || !args.prompt) return { ok: false, error: "add 需要 name + prompt +（schedule 或 trigger 二者其一）" };
               const d = await call("/plans", "POST", {
                 name: args.name, schedule: args.schedule, prompt: args.prompt,
                 mode: args.mode || "auto", model: args.model, cwd: args.cwd || info.cwd,
                 notify: args.notify === true, maxRuns: args.maxRuns, enabled: false, autoApprove: false,
                 createdBy: "agent",
+                ...(args.trigger !== undefined ? { trigger: args.trigger } : {}),
                 ...(args.ccProject && args.ccSessionKey ? { cc: { project: args.ccProject, sessionKey: args.ccSessionKey } } : {}),
                 ...(args.mailTo !== undefined ? { mailTo: args.mailTo } : {}),
                 ...(args.sendOn !== undefined ? { sendOn: args.sendOn } : {}),
               });
               if (!d.ok) return d;
-              return { ok: true, plan: { id: d.plan.id, name: d.plan.name }, note: "已创建（待确认生效）——请告知用户在 ⏰调度 管理页批准后才会自动执行" };
+              return { ok: true, plan: { id: d.plan.id, name: d.plan.name, trigger: d.plan.trigger ?? null }, note: "已创建（待确认生效）——请告知用户在 ⏰调度 管理页批准后才会自动执行" + (d.plan.trigger?.type === "webhook" ? "；webhook URL 在管理页编辑弹窗复制" : "") };
             }
             if (a === "update") {
               if (!args.id) return { ok: false, error: "update 需要 id" };
@@ -798,10 +881,17 @@ function validateSchedule(raw: unknown): string | null {
 
 function validatePlanInput(b: any): string | null {  if (!b || typeof b !== "object") return "请求体必须是 JSON 对象";
   if (!b.name || !String(b.name).trim()) return "name 必填";
-  if (b.schedule === undefined || b.schedule === null || b.schedule === "") return "schedule 必填（cron 表达式 / 间隔 \"30m\" / 一次性 \"+30m\"）；多调度用数组/多行";
+  const tErr = validateTriggerInput(b.trigger);
+  if (tErr) return tErr;
+  const schedEmpty = b.schedule === undefined || b.schedule === null || b.schedule === ""
+    || (Array.isArray(b.schedule) && b.schedule.length === 0);
+  // borrow plan §2.3: schedule is optional when a trigger is configured
+  if (schedEmpty && !sanitizeTrigger(b)) return "schedule 必填（cron 表达式 / 间隔 \"30m\" / 一次性 \"+30m\"），或配置事件触发 trigger；多调度用数组/多行";
   if (!b.prompt || !String(b.prompt).trim()) return "prompt 必填（目标+验收标准的完整提示词）";
-  const sErr = validateSchedule(b.schedule);
-  if (sErr) return sErr;
+  if (!schedEmpty) {
+    const sErr = validateSchedule(b.schedule);
+    if (sErr) return sErr;
+  }
   // timezone：IANA 名校验
   const tz = b.timezone || b.tz;
   if (tz) {
@@ -809,5 +899,58 @@ function validatePlanInput(b: any): string | null {  if (!b || typeof b !== "obj
     catch { return "timezone 非法（需 IANA 名称，如 Asia/Shanghai）：" + String(tz); }
   }
   if (b.dailyCap !== undefined && b.dailyCap !== null && (!(Number(b.dailyCap) >= 1))) return "dailyCap 需为 ≥1 的整数";
+  return null;
+}
+
+// ---- trigger whitelist (borrow plan §2.3) ----
+
+/** trigger shape validation (human-readable errors); null/none/absent = no trigger, valid. */
+function validateTriggerInput(raw: unknown): string | null {
+  if (raw === undefined || raw === null || raw === "" || raw === "none") return null;
+  if (typeof raw !== "object") return "trigger 必须是对象或 null";
+  const t = raw as Record<string, any>;
+  if (t.type === "fs-watch") {
+    const list = Array.isArray(t.paths) ? t.paths : (typeof t.paths === "string" ? t.paths.split("\n") : []);
+    const paths = list.map((s: any) => String(s).trim()).filter(Boolean);
+    if (!paths.length) return "trigger.fs-watch 需至少一个绝对路径（paths 数组或多行字符串）";
+    if (paths.some((s: string) => !s.startsWith("/"))) return "trigger.fs-watch paths 必须是绝对路径（以 / 开头）";
+    if (paths.length > 20) return "trigger.fs-watch 最多 20 个路径";
+    return null;
+  }
+  if (t.type === "process-exit") return null; // cmd substring filter is optional
+  if (t.type === "webhook") return null;      // token is generated/kept by sanitizeTrigger
+  if (t.type === "none") return null;
+  return "未知 trigger.type（支持 fs-watch / process-exit / webhook / none）";
+}
+
+/** trigger whitelist: undefined = keep current (PUT merge), null = clear, otherwise normalized shape. */
+function sanitizeTrigger(b: any): PlanTrigger | null | undefined {
+  if (!b || typeof b !== "object") return undefined;
+  const raw = b.trigger;
+  if (raw === undefined) return undefined;
+  if (raw === null || raw === "" || raw === "none" || (typeof raw === "object" && raw.type === "none")) return null;
+  if (typeof raw !== "object") return null;
+  const t = raw as Record<string, any>;
+  const cd = Number(t.cooldownSec);
+  // explicit 0 = cooldown off; undefined = engine applies per-type default (fs-watch 5s / process-exit 2s)
+  const cooldown = Number.isFinite(cd) && cd >= 0 ? Math.floor(cd) : undefined;
+  if (t.type === "fs-watch") {
+    const list = Array.isArray(t.paths) ? t.paths : (typeof t.paths === "string" ? t.paths.split("\n") : []);
+    const paths = [...new Set(list.map((s: any) => String(s).trim()).filter((s: string) => s.startsWith("/")))].slice(0, 20);
+    if (!paths.length) return null;
+    const out: PlanTrigger = { type: "fs-watch", paths, cooldownSec: cooldown };
+    const events = Array.isArray(t.events) ? t.events.filter((e: any) => e === "change" || e === "rename") : [];
+    if (events.length) (out as any).events = events;
+    if (Number.isFinite(Number(t.debounceMs))) (out as any).debounceMs = Math.max(50, Math.min(10_000, Math.floor(Number(t.debounceMs))));
+    return out;
+  }
+  if (t.type === "process-exit") {
+    return { type: "process-exit", cmd: t.cmd ? String(t.cmd).trim().slice(0, 200) || undefined : undefined, cooldownSec: cooldown };
+  }
+  if (t.type === "webhook") {
+    // token: keep when valid (PUT must not break external callers); invalid/absent generates a new one
+    const token = typeof t.token === "string" && /^[A-Za-z0-9_-]{8,64}$/.test(t.token) ? t.token : randomUUID().replace(/-/g, "").slice(0, 24);
+    return { type: "webhook", token, cooldownSec: cooldown };
+  }
   return null;
 }

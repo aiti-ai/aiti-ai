@@ -13,11 +13,25 @@ export const RUNS_KEEP = 500;
 
 // ---- Plan（AI 计划，方案 §3）----
 
+/**
+ * Event trigger (dsh-better-sidebar borrow plan §2.3): plans can run on events instead of
+ * (or alongside) a time schedule. schedule becomes optional when trigger is present.
+ *  - fs-watch: user-declared paths only (fs.watch per path, debounced; zero polling)
+ *  - process-exit: aiti-cmd session exit frames (aiti-cmd.on-exit service), cmd substring filter
+ *  - webhook: one registered route /webhook/<planId>?token=…, active while the plan is enabled
+ */
+export type PlanTrigger =
+  | { type: "fs-watch"; paths: string[]; events?: ("change" | "rename")[]; debounceMs?: number; cooldownSec?: number }
+  | { type: "process-exit"; cmd?: string; cooldownSec?: number }
+  | { type: "webhook"; token: string; cooldownSec?: number };
+
 export interface Plan {
   id: string;
   name: string;
-  schedule: any;                 // ScheduleSpec 输入形态（cron/interval/once）或数组（多调度：每元素一个时点）
+  schedule: any;                 // ScheduleSpec input shape (cron/interval/once) or array (multi-schedule: one slot per element); optional for trigger plans
   prompt: string;                // 目标 + 执行提示词
+  /** Event trigger (may coexist with schedule; schedule optional when trigger is set) */
+  trigger?: PlanTrigger | null;
   cwd?: string;
   model?: string;                // "provider/modelId" 或 modelId
   mode: "session" | "invokeAI" | "auto";
@@ -61,6 +75,8 @@ export interface RunRecord {
   /** 送达备注（集成方案 §4.4/§4.5）："ok" | "error: …"；不新增记录行，outbound 完成后就地补记 */
   ccSent?: string;
   mailSent?: string;
+  /** Event trigger source (trigger plans only; e.g. "fs-watch:/path", "process-exit", "webhook") */
+  trigger?: string;
 }
 
 export class Store {
