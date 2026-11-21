@@ -858,6 +858,13 @@ function EditForm({ initial, onDone }: { initial: any; onDone: (saved: boolean) 
   const [ccOpen, setCcOpen] = useState(false);
   const [mailTo, setMailTo] = useState<string>(initial?.mailTo || "");
   const [sendOn, setSendOn] = useState<string>(initial?.sendOn || "all");
+  // Event trigger (borrow plan §2.3): can coexist with schedule; schedule optional when trigger is set
+  const trig0 = initial?.trigger || null;
+  const [trigType, setTrigType] = useState<string>(trig0?.type || "none");
+  const [trigPaths, setTrigPaths] = useState<string>(Array.isArray(trig0?.paths) ? trig0.paths.join("\n") : "");
+  const [trigCmd, setTrigCmd] = useState<string>(trig0?.cmd || "");
+  const [trigDebounce, setTrigDebounce] = useState<string>(trig0?.debounceMs ? String(trig0.debounceMs) : "");
+  const [trigCooldown, setTrigCooldown] = useState<string>(trig0?.cooldownSec !== undefined && trig0?.cooldownSec !== null ? String(trig0.cooldownSec) : "");
   const [busy, setBusy] = useState(false);
 
   // ---- 引用插入（光标处；插入后补一个空格）----
@@ -917,6 +924,16 @@ function EditForm({ initial, onDone }: { initial: any; onDone: (saved: boolean) 
       // 多调度：每行一个，非空行 → 数组；单行 → 字符串（向后兼容存储形态）
       const schedLines = sched.split("\n").map((x) => x.trim()).filter(Boolean);
       const body: any = { name, schedule: schedLines.length === 1 ? schedLines[0] : schedLines, prompt, mode, notify };
+      // Event trigger: none = clear (null); other types carry whitelisted fields (token generated/kept server-side)
+      const cool = trigCooldown.trim() !== "" && Number(trigCooldown) >= 0 ? { cooldownSec: Number(trigCooldown) } : {};
+      body.trigger = trigType === "none" ? null
+        : trigType === "fs-watch" ? {
+          type: "fs-watch", paths: trigPaths.split("\n").map((s) => s.trim()).filter(Boolean),
+          ...(trigDebounce ? { debounceMs: Number(trigDebounce) } : {}), ...cool,
+        }
+        : trigType === "process-exit" ? { type: "process-exit", ...(trigCmd.trim() ? { cmd: trigCmd.trim() } : {}), ...cool }
+        : trigType === "webhook" ? { type: "webhook", ...cool }
+        : undefined;
       if (cwd.trim()) body.cwd = cwd.trim();
       if (model.trim()) body.model = model.trim();
       if (maxRuns) body.maxRuns = Number(maxRuns);
@@ -966,6 +983,52 @@ function EditForm({ initial, onDone }: { initial: any; onDone: (saved: boolean) 
           <button key={val} style={btnStyle("var(--bg-hover)", "var(--text-muted)")} onClick={() => { setSched(val); setSchedErr(""); }}>{label}</button>
         ))}
       </div>
+      {row(t("ed.trig"), (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <select value={trigType} onChange={(e) => setTrigType(e.target.value)} style={inputStyle}>
+            <option value="none">{t("ed.trig.none")}</option>
+            <option value="fs-watch">{t("ed.trig.fs")}</option>
+            <option value="process-exit">{t("ed.trig.exit")}</option>
+            <option value="webhook">{t("ed.trig.hook")}</option>
+          </select>
+          {trigType === "fs-watch" && (
+            <>
+              <textarea value={trigPaths} onChange={(e) => setTrigPaths(e.target.value)} rows={2}
+                placeholder={t("ed.trig.pathsPh")} title={t("ed.trig.pathsPh")}
+                style={{ ...inputStyle, resize: "vertical", fontFamily: "var(--font-mono)", fontSize: 11 }} />
+              <div style={{ display: "flex", gap: 6 }}>
+                <input value={trigDebounce} onChange={(e) => setTrigDebounce(e.target.value.replace(/\D/g, ""))}
+                  placeholder={t("ed.trig.debouncePh")} style={{ ...inputStyle, flex: 1 }} />
+                <input value={trigCooldown} onChange={(e) => setTrigCooldown(e.target.value.replace(/[^\d]/g, ""))}
+                  placeholder={t("ed.trig.cooldownPh")} style={{ ...inputStyle, flex: 1 }} />
+              </div>
+            </>
+          )}
+          {trigType === "process-exit" && (
+            <>
+              <input value={trigCmd} onChange={(e) => setTrigCmd(e.target.value)} placeholder={t("ed.trig.cmdPh")}
+                style={{ ...inputStyle, fontFamily: "var(--font-mono)" }} />
+              <input value={trigCooldown} onChange={(e) => setTrigCooldown(e.target.value.replace(/[^\d]/g, ""))}
+                placeholder={t("ed.trig.cooldownPh")} style={inputStyle} />
+            </>
+          )}
+          {trigType === "webhook" && (initial?.id && initial?.trigger?.type === "webhook" && initial?.trigger?.token ? (
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <input readOnly value={(() => {
+                try { return location.origin + apiUrl(API("/webhook/" + initial.id)) + "?token=" + initial.trigger.token; }
+                catch { return API("/webhook/" + initial.id) + "?token=" + initial.trigger.token; }
+              })()} onFocus={(e) => e.currentTarget.select()} style={{ ...inputStyle, flex: 1, fontSize: 10.5, fontFamily: "var(--font-mono)" }} />
+              <button style={btnStyle("var(--bg-hover)", "var(--text)")} onClick={() => {
+                const url = (() => { try { return location.origin + apiUrl(API("/webhook/" + initial.id)) + "?token=" + initial.trigger.token; } catch { return API("/webhook/" + initial.id) + "?token=" + initial.trigger.token; } })();
+                void navigator.clipboard?.writeText(url).catch(() => {});
+              }}>{t("ed.trig.copy")}</button>
+            </div>
+          ) : (
+            <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{t("ed.trig.hookSaveFirst")}</div>
+          ))}
+          {trigType !== "none" && <div style={{ fontSize: 10.5, color: "var(--text-muted)", lineHeight: 1.4 }}>{t("ed.trig.note")}</div>}
+        </div>
+      ))}
       {row(t("ed.prompt"), (
         <div>
           <textarea ref={promptRef} value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={5}
@@ -1042,8 +1105,8 @@ function EditForm({ initial, onDone }: { initial: any; onDone: (saved: boolean) 
       ))}
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
         <button style={btnStyle("transparent", "var(--text-muted)")} onClick={() => onDone(false)}>{t("ui.cancel")}</button>
-        <button disabled={busy || !name.trim() || !sched.trim() || !prompt.trim() || !!schedErr}
-          style={{ ...btnStyle("#3b82f6", "#fff"), opacity: busy || !name.trim() || !sched.trim() || !prompt.trim() || !!schedErr ? 0.5 : 1 }}
+        <button disabled={busy || !name.trim() || (!sched.trim() && trigType === "none") || !prompt.trim() || !!schedErr}
+          style={{ ...btnStyle("#3b82f6", "#fff"), opacity: busy || !name.trim() || (!sched.trim() && trigType === "none") || !prompt.trim() || !!schedErr ? 0.5 : 1 }}
           onClick={save}>{busy ? t("ui.saving") : t("ui.save")}</button>
       </div>
     </div>
@@ -1280,7 +1343,12 @@ function ScheduleDialog({ onClose, initialEditing, embedded, dockItemKey }: { on
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 14, marginTop: 6, fontSize: 11.5, color: "var(--text-muted)", flexWrap: "wrap" }}>
-                    <span>⏱ {scheduleHuman(task)}</span>
+                    <span>⏱ {scheduleHuman(task) || (task.trigger?.type ? t("dlg.trigOnly") : "—")}</span>
+                    {isAi && task.trigger?.type && (
+                      <span title={task.trigger.type === "fs-watch" ? (task.trigger.paths || []).join("\n") : task.trigger.type === "webhook" ? t("dlg.trigHookTip") : t("dlg.trigExitTip")}>
+                        ⚡ {t("dlg.trig." + task.trigger.type, { n: (task.trigger.paths || []).length })}
+                      </span>
+                    )}
                     <span>{t("dlg.next")} {!task.enabled ? "—" : fmtTime(task.nextRunAt)}</span>
                     <span>{t("dlg.last")} {task.lastRunAt ? fmtTime(task.lastRunAt) + " (" + relTime(task.lastRunAt) + ")" : t("dlg.never")}</span>
                     <span>{t("dlg.ranCount", { n: task.runCount || 0 })}{task.maxRuns ? "/" + task.maxRuns : ""}</span>
