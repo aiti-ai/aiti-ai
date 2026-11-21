@@ -488,7 +488,11 @@
         var cls = String(el.attributes.class || '').trim().split(/\s+/).filter(Boolean).slice(0, 3);
         if (cls.length) lines.push('  · class: .' + cls.join('.'));
         if (el.attributes.id) lines.push('  · id: #' + el.attributes.id);
-        var aria = Object.keys(el.attributes).filter(function (k) { return /^aria-|^data-/.test(k); }).slice(0, 5);
+        // title first: it is the tooltip the user actually sees on hover
+        var aria = [];
+        if (el.attributes.title != null && el.attributes.title !== '') aria.push('title');
+        Object.keys(el.attributes).forEach(function (k) { if (/^aria-|^data-/.test(k) && aria.indexOf(k) < 0) aria.push(k); });
+        aria = aria.slice(0, 5);
         if (aria.length) lines.push('  · ' + aria.map(function (k) { return k + '=' + String(el.attributes[k]).slice(0, 60); }).join(' '));
       }
       if (el.computed && inc(el, 'computed')) {
@@ -587,6 +591,7 @@
       var cls = el.attributes ? String(el.attributes.class || '').trim() : '';
       if (cls) rows.push(['class', '.' + cls.split(/\s+/).filter(Boolean).join('.')]);
       if (el.attributes && el.attributes.id) rows.push(['id', '#' + el.attributes.id]);
+      if (el.attributes && el.attributes.title) rows.push(['title', String(el.attributes.title).slice(0, 80)]);
       if (el.rect) rows.push(['尺寸', el.rect.w + '×' + el.rect.h + (el.rect.x !== undefined ? ' @(' + el.rect.x + ',' + el.rect.y + ')' : '')]);
       if (el.docRect) rows.push(['文档位置', '(' + el.docRect.x + ',' + el.docRect.y + ')' + (el.scroll ? '（滚动偏移 ' + el.scroll.x + ',' + el.scroll.y + '）' : '')]);
       if (el.pageId && !String(el.pageId).endsWith('/host')) rows.push(['来源页', el.pageId]);
