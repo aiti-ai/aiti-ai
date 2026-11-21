@@ -34,10 +34,12 @@ for a in "$@"; do
     --user) MODE="user" ;;
     --stop) STOP=1 ;;
     --wm) WM_PENDING=1 ;;
-    --*) ;;
-    *) if [ "${WM_PENDING:-0}" = "1" ]; then WM="$a"; WM_PENDING=0; fi ;;
+    --wm=*) WM="${a#--wm=}" ;;
+    *) if [ "${WM_PENDING:-0}" = "1" ]; then WM="$a"; WM_PENDING=0
+       else echo "[aiti-ui-env] ignoring unknown argument: $a" >&2; fi ;;
   esac
 done
+[ "${WM_PENDING:-0}" = "1" ] && { echo "[aiti-ui-env] --wm needs a value, using ${WM}" >&2; }
 
 case "$WM" in
   openbox|xfwm4|fluxbox|icewm|jwm|metacity|pekwm|blackbox) ;;

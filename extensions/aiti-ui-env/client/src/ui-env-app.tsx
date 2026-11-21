@@ -678,7 +678,7 @@ function renderUiEnvDialog(face?: string) {
               ["DISPLAY", headless.display],
               ["Xauthority", headless.xauthority || "—"],
               [t("AT-SPI 总线"), headless.dbusBus || "—"],
-              [t("窗口管理器"), headless.wm ? (headless.wm === "external" ? t("非白名单 WM 在跑") : headless.wm + " " + t("在跑")) : t("无"), headless.wm ? C.ok : C.warn],
+              [t("窗口管理器"), headless.wm ? (headless.wm === "external" ? t("未识别的 WM 在跑") : headless.wm + " " + t("在跑")) : t("无"), headless.wm ? C.ok : C.warn],
               ...(d.wm ? [[t("WM 配置"),
                 String(d.wm.requested ?? "?") + (d.wm.resolved && d.wm.resolved !== d.wm.requested ? " → " + d.wm.resolved : "") +
                 (d.wm.installedChain?.length ? "" : " " + t("（无可用 WM）")),
