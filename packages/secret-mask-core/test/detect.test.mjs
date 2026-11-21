@@ -175,6 +175,36 @@ test("CJK keywords: 密码/密钥/授权码/令牌 with fullwidth colon and lati
   assert.equal(ids(scan(`密码 = abc123`)).length, 0, "short low-entropy value");
 });
 
+test("assignment verbs: keyword-bound and bare verbs with a keyword in the passage", () => {
+  // the reported miss: the value was handed over after 设为, the keyword sat in the previous sentence // cjk-ok
+  const P = "Kx7dyn4b91";
+  assert.equal(scan(`我遇到无法登录的问题。wind的密码无法登录 了grd使用的自己的密码吗？帮我设为 ${P}`)[0].value, P);
+  assert.equal(ids(scan(`帮我设为 ${P}`)).length, 0, "no keyword in the passage → not a credential");
+  // keyword + assignment verb (no operator)
+  for (const t of [`把密码改成 ${P}`, `密码设成 ${P}`, `密码重置为 ${P}`, `密码换成 ${P}`, `set the password to ${P}`, `new password ${P}`, `新密码 ${P}`, `新密码是 ${P}`]) {
+    assert.ok(ids(scan(t)).some((id) => /^(generic-secret-assign|new-password)$/.test(id)), t);
+  }
+  // human-chosen shapes that the identifier guard used to swallow
+  assert.ok(ids(scan("密码改成 Qz8wEr7t")).includes("generic-secret-assign"), "two digits + sparse capitals");
+  assert.ok(ids(scan("密码设为 xR4tY7uI9o")).includes("generic-secret-assign"), "mixed case");
+  // near misses: config prose, units, short values, paths and file names stay untouched
+  for (const t of [
+    "把端口改成 8080",
+    "把超时时间改为 30000",
+    "把分支改成 feature/login2",
+    "把日志级别改成 debug2",
+    "把文件名改成 report2024.md",
+    "把主题设置为 dark2night",
+    "密码改成什么了?",
+    "密码设置规则：至少8位",
+    "新密码策略要求至少12位",
+    "set it to true",
+    "密码改成 abc123",
+  ]) {
+    assert.equal(ids(scan(t)).length, 0, t);
+  }
+});
+
 test("entropy helper sanity", () => {
   assert.ok(entropy("aaaaaaaaaaaa") < 0.1);
   assert.ok(entropy("7fJk2mN9pQrStUvWx3y4") > 3.5);

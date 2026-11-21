@@ -61,7 +61,7 @@ import { homedir as homedir2 } from "node:os";
 import { chmodSync as chmodSync3, existsSync as existsSync2, readFileSync as readFileSync3, renameSync as renameSync2, rmSync as rmSync2 } from "node:fs";
 import { join as join2 } from "node:path";
 
-// ../secret-mask-core/dist/index.js
+// node_modules/@aiti-ai/secret-mask-core/dist/index.js
 function fnv1a(s) {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) {
@@ -456,7 +456,6 @@ var GLOBAL_FILE = "global.json";
 var CHECK_PLAINTEXT = "aiti-secret-vault:check:v1";
 var ALIAS_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 var VaultError = class extends Error {
-  code;
   constructor(code, message) {
     super(message);
     this.code = code;
@@ -472,12 +471,6 @@ function readVaultFile(path) {
   return raw;
 }
 var VaultStore = class {
-  dir;
-  cwd;
-  keyPath;
-  modePath;
-  keychain;
-  key;
   constructor(opts = {}) {
     this.dir = opts.dir ?? DEFAULT_VAULT_DIR;
     this.cwd = opts.cwd ?? process.cwd();
@@ -925,7 +918,7 @@ function suggestAutoAlias(label, value) {
 }
 
 // src/tools.ts
-var VAULT_GET_NOTE = "This token IS a working credential: pass it verbatim into tool arguments \u2014 the runtime materializes the real secret at execution time. Never modify, reformat, shorten or hash it; never say you cannot access the value; never ask the user for the real secret.";
+var VAULT_GET_NOTE = "This token IS a working credential: pass it verbatim into tool arguments \u2014 the runtime materializes the real secret at execution time. Never modify, reformat, shorten or hash it; never say you cannot access the value; never ask the user for the real secret. Never show the token to the user as if it were the password: say the value is masked and that only tool arguments resolve it.";
 function formatEntryLine(info, weak = false) {
   const tags = info.tags?.length ? ` (${info.tags.join(",")})` : "";
   const desc = info.desc ? ` \u2014 ${info.desc}` : "";

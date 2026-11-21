@@ -80,6 +80,9 @@ const SECTION_TEXT = [
   "verbatim in tool arguments (bash/edit/write/MCP). Copy the token exactly. Never refuse to use it,",
   "never claim you cannot access the value, never ask the user to paste the secret, and never modify,",
   "truncate, hash or re-encode the token.",
+  "Never present a token to the user as if it were the secret value: it only resolves inside tool",
+  "arguments, so a user cannot type it into a login prompt. When the user asks what the value is, say",
+  "it is masked (vault_list / vault_get give you a token, never plaintext).",
   "The secret vault is human-writable only: use vault_list to discover aliases and vault_get to obtain a",
   "token. You cannot add, rotate, remove or reveal vault entries — ask the user to run the /vault command.",
 ].join("\n");
@@ -294,8 +297,12 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
   // Input boundary: redact the user's own message before it becomes a session
   // entry (message_end would run after the raw prompt is already persisted).
+  // Detection runs on every landing mode: vault/ephemeral must redact the text
+  // before it is persisted, plain keeps the text but still mounts the value so
+  // the placeholder contract (before_agent_start) covers the model's first turn
+  // — the contract is composed before the context hook runs.
   pi.on("input", (event) => {
-    if (!active(state) || !redactOnDisk(state.landing)) return { action: "continue" as const };
+    if (!active(state)) return { action: "continue" as const };
     if ((event as { source?: string }).source === "extension") return { action: "continue" as const };
     const rules = currentRules();
     let text = event.text ?? "";
@@ -305,8 +312,9 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       weak: weakOptions(),
       onDetected: state.landing === "vault" ? landOnDetect : undefined,
     });
-    if (res.changed && state.landing === "vault") persistSessionState();
-    return res.changed ? { action: "transform" as const, text } : { action: "continue" as const };
+    if (!redactOnDisk(state.landing) || !res.changed) return { action: "continue" as const };
+    if (state.landing === "vault") persistSessionState();
+    return { action: "transform" as const, text };
   });
 
   // The in-memory registry dies with the process; clear the mounted list so the
@@ -358,11 +366,17 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     return res.changed ? { messages: event.messages } : undefined;
   });
 
+  // The section key is shared with the mask: a vault that yielded to a legacy
+  // mask must not delete the contract the mask wrote.
   pi.on("before_agent_start", (event) => {
     const sections = event.systemPromptOptions?.sections as Record<string, string> | undefined;
     if (!sections) return undefined;
-    if (active(state) && state.registry.size > 0) sections[SECTION_KEY] = SECTION_TEXT;
-    else if (SECTION_KEY in sections) delete sections[SECTION_KEY];
+    if (active(state)) {
+      if (state.registry.size > 0) sections[SECTION_KEY] = SECTION_TEXT;
+      else if (SECTION_KEY in sections) delete sections[SECTION_KEY];
+    } else if (!state.disabledBy && SECTION_KEY in sections) {
+      delete sections[SECTION_KEY];
+    }
     return undefined;
   });
 
