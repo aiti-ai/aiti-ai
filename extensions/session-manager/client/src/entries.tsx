@@ -9,7 +9,7 @@ import {
   store, useStore, panelOpen, kanbanOpen,
   refreshRunning, refreshSessions, refreshWorkspaces, emit, setPendingSearch, displayCwd,
   applyRunningFrame, subscribeRunningFrames, isRunningSseHealthy,
-  hidePendingRow, subscribePendingRemovals,
+  hidePendingRow, subscribePendingRemovals, collapsePanelIfCovering,
 } from "./store";
 import { sessionTitle, agentBadge, fmtRelative } from "./helpers";
 
@@ -216,6 +216,8 @@ function SidebarSessionsMenu(props: { anchor: DOMRect; onClose: () => void }) {
 
   const pick = (id: string) => {
     props.onClose();
+    // Yield before opening: a full-screen/maximized All Sessions panel would hide the switch.
+    collapsePanelIfCovering();
     // 复用宿主 pi-web:open-session 通道：AppShell 按 id 从 /api/sessions 解析并
     // 走 handleSelectSession（SPA 内切换，无整页跳转）。
     try { window.dispatchEvent(new CustomEvent("pi-web:open-session", { detail: { id } })); } catch { /* 非 DOM 环境 */ }

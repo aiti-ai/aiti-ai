@@ -7,6 +7,7 @@ import type { ReactNode } from "react";
 import { t, apiUrl, openFile, getExtService } from "./host-shim";
 import {
   store, useStore, panelOpen, managerOpen, refreshSessions, refreshListChannels, ensureTags, collapsePanelIfCovering,
+  collapseViewersIfCovering,
   archiveSessions, restoreSession, deleteArchivedSession, act, notifySessionsChanged, hideExtSession,
   sharedFilter, clearSharedFilter, useSharedFilter, toggleSharedFilter, setPendingSearch, consumePendingSearch,
   displayCwd, EMPTY_TAGS, moveSession, deleteLiveSession, detectSessionCwd,
@@ -1371,13 +1372,19 @@ export function SessionsPanel(props: any) {
     <div
       key={sess.id}
       onClick={() => {
-        // 点开会话不再顺带关掉启动器：桌面浮窗与右栏停靠都不遮挡，面板留着可连续点选。
-        // 仅小屏（≤640px）浮窗会铺满视口盖住刚打开的会话/查看器（表现为「点了没反应，
-        // 还在看 All Sessions」）——那种场合才让位。
-        if (sess.archived) openViewer(sess.id);
-        else if (sess.agent && sess.agent !== "pi") openExtViewer(sess.id);
-        else resolveSelectSession(props)?.(sess);
+        // Yield before opening (field report): while All Sessions is full-screen/maximized
+        // (or dragged nearly full), the newly opened session / archived viewer / external
+        // viewer lands behind the panel — "nothing happened, but the session did open".
+        // Collapse first (geometry check, store.collapsePanelIfCovering), then open; docked
+        // and normal-size floats stay open so consecutive picks keep working.
+        const archived = !!sess.archived;
+        const external = !archived && !!sess.agent && sess.agent !== "pi";
         collapsePanelIfCovering();
+        // Main-chat targets also get archived/external viewers out of the way when they cover it
+        if (!archived && !external) collapseViewersIfCovering();
+        if (archived) openViewer(sess.id);
+        else if (external) openExtViewer(sess.id);
+        else resolveSelectSession(props)?.(sess);
       }}
       style={{
         display: "flex", alignItems: "center", gap: 8, padding: "7px 10px",
