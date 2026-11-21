@@ -299,6 +299,9 @@ for (const { dir, pkgDir, pjPath, p } of pkgs) {
   if (ONLY && !ONLY.includes(dir)) continue;
   if (!p.version) { report.push(`-  ${dir}: 无 version，跳过`); continue; }
   if (p.private) { skippedPrivate++; report.push(`P  ${dir}: private，保持 private，跳过`); continue; }
+  // Packages with their own tag-triggered release workflow (native binaries must be
+  // published before the wrapper) opt out of contentHash auto-bump/publish here.
+  if (p.aitiDisableAutoPublish === true) { report.push(`-  ${dir}: 独立发布（aitiDisableAutoPublish），跳过`); continue; }
   // v3 元数据注入（幂等，缺失才写）：repository/homepage/bugs 指向 aiti-ai org、
   // license 补 MIT——npm 页面展示与消费者溯源需要；跳过的包同样补齐。写回不改
   // contentHash（package.json 已排除出哈希计算）→ 跳过判断不受影响。

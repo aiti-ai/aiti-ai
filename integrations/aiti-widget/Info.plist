@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Full plist: Tauri merges it into the .app bundle, and build.rs embeds it into
+       the bare executable's __TEXT,__info_plist section so `cargo build` output can
+       load http:// loopback pages without an app bundle (ATS exception + agent UI). -->
+  <key>CFBundleExecutable</key>
+  <string>aiti-widget</string>
+  <key>CFBundleIdentifier</key>
+  <string>ai.aiti.widget</string>
+  <key>CFBundleName</key>
+  <string>aiti-widget</string>
+  <key>CFBundleDisplayName</key>
+  <string>aiti-widget</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleVersion</key>
+  <string>0.2.0</string>
+  <key>CFBundleShortVersionString</key>
+  <string>0.2.0</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>11.0</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsArbitraryLoads</key>
+    <true/>
+    <key>NSAllowsLocalNetworking</key>
+    <true/>
+  </dict>
+  <key>LSUIElement</key>
+  <true/>
+</dict>
+</plist>
