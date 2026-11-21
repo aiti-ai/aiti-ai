@@ -8,6 +8,8 @@
 import { join, dirname } from "node:path";
 // @ts-ignore pure JS core shared with tests
 import { ShareStore, makeRedactor, publicTarget, exportSessionMarkdown, classifyFile, MAX_SHARE_FILE_BYTES } from "./lib/share-core.mjs";
+// @ts-ignore pure JS icon rules shared with tests
+import { resolveProviderIcon } from "./lib/provider-icons.mjs";
 
 let configDir = "";
 let stateDir = "";
@@ -119,11 +121,13 @@ function findTarget(reg, id) {
 }
 
 /** Provider UI metadata surfaced to the client: container picker visibility/label
- *  and the favicon icon (external sites only — local services fall back client-side). */
+ *  and the picker glyph. The catalog has no icon metadata, so the glyph comes from
+ *  curated keyword rules (lib/provider-icons.mjs); null lets the client fall back
+ *  to its category/status glyph. */
 function containerInfo(reg: any, providerId: string) {
   const p = reg.get(providerId);
   const c = p?.containers;
-  return { supportsContainers: !!c, containerLabel: c?.label || null, icon: p?.icon || null };
+  return { supportsContainers: !!c, containerLabel: c?.label || null, icon: resolveProviderIcon(providerId, p) };
 }
 
 export default {
