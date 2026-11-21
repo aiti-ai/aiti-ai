@@ -200,6 +200,33 @@ export function openUsageDb(dbPath: string): UsageDb {
         SELECT agent, session_id, ts, day, provider, model, input, output,
                cache_read, cache_write, reasoning, total_tokens, cost_total, credits
         FROM ext_usage;
+
+        -- tool 调用明细（borrow plan §2.7A：ingest 顺带增量统计，不重扫）。
+        -- 行粒度 = 一次工具调用；PK=(session_id, call_id) 幂等重放安全。
+        -- assistant toolCall 块先记 call（ok=NULL 占位），toolResult 结果消息按同键 UPSERT 补 ok/duration。
+        CREATE TABLE IF NOT EXISTS tool_usage (
+          session_id TEXT NOT NULL,
+          call_id TEXT NOT NULL,
+          ts INTEGER NOT NULL,
+          day TEXT NOT NULL,
+          tool TEXT NOT NULL,
+          ok INTEGER,
+          duration_ms INTEGER,
+          PRIMARY KEY (session_id, call_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_tool_usage_day ON tool_usage(day, tool);
+
+        -- skill 唤起明细：user 消息 text 内嵌 <skill name="…"> 块（pi skill invocation）。
+        -- PK=(session_id, msg_id, skill) 幂等；calls 统计 = 行计数。
+        CREATE TABLE IF NOT EXISTS skill_usage (
+          session_id TEXT NOT NULL,
+          msg_id TEXT NOT NULL,
+          ts INTEGER NOT NULL,
+          day TEXT NOT NULL,
+          skill TEXT NOT NULL,
+          PRIMARY KEY (session_id, msg_id, skill)
+        );
+        CREATE INDEX IF NOT EXISTS idx_skill_usage_day ON skill_usage(day, skill);
       `);
 
       // daily_model 旧 schema 迁移（2026-09-12 外部 agent 摄入）：缺 agent 列 → 重建含 agent 的新表
