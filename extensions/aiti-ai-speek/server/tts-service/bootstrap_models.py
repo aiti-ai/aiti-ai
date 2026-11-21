@@ -64,7 +64,8 @@ MIRROR = "https://hf-mirror.com"
 
 
 def log(msg: str) -> None:
-    print(f"[bootstrap] {msg}", flush=True)
+    # stdout is reserved for --print-dir (the caller captures it); diagnostics go to stderr.
+    print(f"[bootstrap] {msg}", file=sys.stderr, flush=True)
 
 
 def probe(url: str, timeout: float = 3.0) -> bool:

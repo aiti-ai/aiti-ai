@@ -60,6 +60,8 @@ outputs:
 
 | 症状 | 处理 |
 |---|---|
+| 最小镜像（Docker/Alpine-like）没有 python3.12 或 uv | 不用管：bootstrap 会自动装 uv 并 `uv python install 3.12`（需要 curl 或 wget + 外网）；装了多个 Python 时优先用 venv 可用的那个 |
+| 依赖安装很慢/卡住 | 会自动测速选 pip 镜像（官方 → 阿里云 → 清华，取最快）；也可 `AITI_TTS_PIP_INDEX=<url>` 指定 |
 | 首次准备卡在 `download` | 网络/镜像问题。面板「重启」会断点续传；仍失败则让用户配代理或换源（见 §4），**不要手工下模型** |
 | `status=error` / 启动失败 | 看 `tts/info?log=1`；模型文件损坏就删 `<cache>/tts-service/models` 后重启（会自动重下）；onnxruntime 版本不对也在这里暴露 |
 | 面板一直「准备中」 | `prepare.json` 的 phase 就是当前阶段；超过 10 分钟先看日志尾，再决定重启 |
@@ -90,7 +92,7 @@ bash start-tts.sh stop
 | 端口 | 127.0.0.1:8768，只回环；占用则顺延 8769-8778 |
 | 空闲退出 | 默认 1800 秒（面板可改，0 = 常驻）；退出后下次使用自动再起 |
 | 内存 | 40M ≈0.95GB、80M ≈2.2GB（含 fp32 提升）；低配机器优先 40M |
-| 磁盘 | 40M 全量约 1.5GB；再加 80M 约 2.5GB（venv 共享） |
+| 磁盘 | 40M：模型 241MB + venv 0.98GB（含文本归一化 pynini ~0.7GB；面板关闭「文本归一化」后 **0.26GB**）+ uv/Python 0.11GB；再加 80M 约 +0.44GB（venv 共享） |
 | 日志 | `<cache>/tts-service/logs/tts.log`（面板「查看日志」/ 经 aiti-cmd 启动时也在 ⚡命令 面板） |
 
 ## 6. 跨扩展接口（别的扩展要“临时说一句”）

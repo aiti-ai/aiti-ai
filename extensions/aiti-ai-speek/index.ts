@@ -388,6 +388,7 @@ interface LocalCfg {
   idleTimeout: number;
   hfEndpoint: string;
   threads: number;
+  tn: boolean;
 }
 function localCfg(): LocalCfg {
   return {
@@ -403,6 +404,7 @@ function localCfg(): LocalCfg {
     idleTimeout: parseInt(featureValue("aiti-ai-speek", "tts.local.idleTimeout"), 10) || 1800,
     hfEndpoint: featureValue("aiti-ai-speek", "tts.local.hfEndpoint").trim(),
     threads: parseInt(featureValue("aiti-ai-speek", "tts.local.threads"), 10) || 0,
+    tn: featureEnabled("aiti-ai-speek", "tts.local.tn"),
   };
 }
 interface ApiCtxLike {
@@ -560,6 +562,7 @@ async function localLaunch(ctx: TtsDirs & Pick<ApiCtxLike, "services">, provider
     port: Number(readRuntime(paths)?.port) || 8768,
     idleTimeout: cfg.idleTimeout,
     hfEndpoint: cfg.hfEndpoint,
+    tn: cfg.tn,
     runner,
   });
   if (r.ok) {
@@ -968,6 +971,8 @@ export default {
         "speek.local.repro": "可复现命令：{cmd}",
         "speek.local.idleStopped": "空闲已退出（模型已释放）；下次朗读或点「检查/准备」会自动再起。",
         "speek.local.idleTimeout": "空闲自动退出（秒，0=常驻）",
+        "speek.local.tn": "文本归一化（数字/日期读成中文）",
+        "speek.local.tnTitle": "关闭可让 venv 从约 1.3GB 降到约 0.3GB（已装的文件不回收）；改动需重启服务生效",
         "speek.local.autoStart": "自动准备并启动",
         "speek.local.autoStartTitle": "选中「本地」引擎时自动准备并启动服务（关闭后只探测，不自动下载/安装）",
         "speek.local.hint": "启动脚本：server/tts-service/start-tts.sh（Windows 为 .ps1）；空闲退出后下次使用自动再起。",
@@ -1160,6 +1165,8 @@ export default {
         "speek.local.repro": "Reproduce with: {cmd}",
         "speek.local.idleStopped": "Exited while idle (model released); the next playback or \u201cCheck / prepare\u201d starts it again.",
         "speek.local.idleTimeout": "Idle exit (seconds, 0 = stay resident)",
+        "speek.local.tn": "Text normalization (numbers/dates read aloud)",
+        "speek.local.tnTitle": "Off keeps the venv at ~0.3GB instead of ~1.3GB (already-installed files stay); restart the service to apply",
         "speek.local.autoStart": "Prepare and start automatically",
         "speek.local.autoStartTitle": "Bootstrap and start the service when \u201cLocal\u201d is selected (off = probe only, never download/install)",
         "speek.local.hint": "Launcher: server/tts-service/start-tts.sh (start-tts.ps1 on Windows); it starts again on next use after an idle exit.",
@@ -1285,6 +1292,7 @@ export default {
     { id: "tts.local.idleTimeout", type: "string", label: "空闲自动退出秒数（0 = 常驻；默认 1800 = 30 分钟）", group: "本地引擎", value: "1800" },
     { id: "tts.local.hfEndpoint", type: "string", label: "模型下载源（留空自动探测：官方 → hf-mirror；也可填镜像/代理地址）", group: "本地引擎", value: "" },
     { id: "tts.local.threads", type: "string", label: "ONNX 线程数（0 = 自动；CPU 少核机器可调低）", group: "本地引擎", value: "0" },
+    { id: "tts.local.tn", label: "文本归一化（数字/日期读成中文；首次多装约 700MB，关闭后 venv 约 0.3GB）", group: "本地引擎", default: true },
     { id: "process.enabled", label: "朗读过程（把 AI 的中间叙述也读出来，如「让我看一下…」「我先确认…」；跳过 thinking 与工具执行）", group: "朗读内容", default: false },
     { id: "minChars", type: "string", label: "忽略阈值（回复少于 N 字不朗读，避免“好的”“收到”刷屏）", group: "队列", value: "8", placeholder: "8" },
   ],
@@ -1407,6 +1415,7 @@ export default {
           providerActual: health?.provider || ready?.provider || null,
           autoStart: cfg.autoStart,
           idleTimeout: cfg.idleTimeout,
+          tn: cfg.tn,
           model: health?.model || null,
           running: !!health?.ok,
           health,
@@ -1726,7 +1735,7 @@ export default {
           "process.enabled", "steer.enabled", "tts.edge", "tts.edge.bin",
           "tts.local", "tts.local.provider", "tts.local.baseUrl", "tts.local.model", "tts.local.voice",
           "tts.local.format", "tts.local.sampleRate", "tts.local.apiKey", "tts.local.autoStart",
-          "tts.local.idleTimeout", "tts.local.hfEndpoint", "tts.local.threads",
+          "tts.local.idleTimeout", "tts.local.hfEndpoint", "tts.local.threads", "tts.local.tn",
         ]);
         if (!ALLOWED.has(id)) return json({ ok: false, error: "unknown id" }, 400);
         const reg = (globalThis as Record<string, unknown>).__piWebExt as

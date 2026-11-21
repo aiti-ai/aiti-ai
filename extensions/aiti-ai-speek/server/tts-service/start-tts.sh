@@ -54,28 +54,81 @@ done
 
 log() { echo "[tts] $*"; }
 
-# ── port helpers (Linux: ss, macOS: lsof) ───────────────────────────────────
+# ── port helpers ────────────────────────────────────────────────────────────
+# Portable across hosts: ss (Linux) -> lsof (macOS) -> raw TCP connect via Python.
+# Minimal images (e.g. the aiti docker base) ship neither ss nor netstat, so a pure-Python
+# probe is the last resort and keeps auto-start working there.
+has() { command -v "$1" >/dev/null 2>&1; }
+
+py_bin() { if has python3; then echo python3; else echo python; fi; }
+
+port_open_py() {
+  local p="$1"
+  "$(py_bin)" - "$p" <<'PYEOF' 2>/dev/null
+import socket, sys
+s = socket.socket()
+s.settimeout(0.4)
+try:
+    s.connect(("127.0.0.1", int(sys.argv[1])))
+    print("1")
+except Exception:
+    print("0")
+finally:
+    s.close()
+PYEOF
+}
+
 is_up() {
   local p="$1"
-  if [[ "$(uname -s)" == "Darwin" ]]; then
-    lsof -iTCP:"$p" -sTCP:LISTEN -t >/dev/null 2>&1
-  else
-    ss -tln 2>/dev/null | grep -qE "[:.]$p\s"
+  if has ss; then ss -tln 2>/dev/null | grep -qE "[:.]$p\s" && return 0 || return 1; fi
+  if has lsof; then lsof -iTCP:"$p" -sTCP:LISTEN -t >/dev/null 2>&1 && return 0 || return 1; fi
+  [[ "$(port_open_py "$p")" == "1" ]]
+}
+
+# Best-effort pid lookup for a listening port (only needed for status/stop messages).
+port_pids() {
+  local p="$1"
+  if has ss; then ss -tlnp 2>/dev/null | grep "[:.]$p\s" | grep -oP 'pid=\K[0-9]+' | sort -u || true; return; fi
+  if has lsof; then lsof -iTCP:"$p" -sTCP:LISTEN -t 2>/dev/null | sort -u || true; return; fi
+  local rp
+  rp="$(runtime_port 2>/dev/null || true)"
+  if [[ -n "${rp:-}" && "$rp" == "$p" ]]; then
+    local pid
+    pid="$(runtime_pid 2>/dev/null || true)"
+    [[ -n "${pid:-}" ]] && echo "$pid"
   fi
 }
 
-port_pids() {
-  local p="$1"
-  if [[ "$(uname -s)" == "Darwin" ]]; then
-    lsof -iTCP:"$p" -sTCP:LISTEN -t 2>/dev/null | sort -u || true
-  else
-    ss -tlnp 2>/dev/null | grep "[:.]$p\s" | grep -oP 'pid=\K[0-9]+' | sort -u || true
-  fi
+# Our own server processes (fallback when the port->pid tools are missing).
+scan_tts_pids() {
+  local d pid c
+  for d in /proc/[0-9]*; do
+    [[ -d "$d" ]] || continue
+    pid="${d#/proc/}"
+    [[ "$pid" == "$$" ]] && continue
+    c="$(tr '\0' ' ' 2>/dev/null < "$d/cmdline")" || continue
+    case "$c" in *"$SCRIPT_DIR/tts_server.py"*) echo "$pid" ;; esac
+  done
+}
+
+runtime_pid() {
+  [[ -f "$RUNTIME" ]] || return 1
+  "$(py_bin)" - "$RUNTIME" <<'PYEOF' 2>/dev/null
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    p = int(d.get("pid") or 0)
+    if not p:
+        sys.exit(1)
+    print(p)
+except Exception:
+    sys.exit(1)
+PYEOF
 }
 
 service_healthy() {
   local p="$1"
-  "$(python3 -c 'import sys;print(sys.executable)' 2>/dev/null || echo python3)" - "$p" <<'PY' 2>/dev/null
+  "$(py_bin)" - "$p" <<'PY' 2>/dev/null
 import json, sys, urllib.request
 port = sys.argv[1]
 try:
@@ -106,7 +159,7 @@ free_port() {
 
 runtime_port() {
   [[ -f "$RUNTIME" ]] || return 1
-  python3 - "$RUNTIME" <<'PY' 2>/dev/null || return 1
+  "$(py_bin)" - "$RUNTIME" <<'PY' 2>/dev/null || return 1
 import json, sys
 try:
     d = json.load(open(sys.argv[1]))
@@ -168,11 +221,15 @@ start() {
   fi
 
   # Bootstrap (venv/deps/model) — writes prepare.json; cheap when everything is ready.
+  # Tee to the service log as well: the panel's "view log" reads that file, so preparation
+  # failures must be visible there (not only in the aiti-cmd PTY).
+  set -o pipefail
   bash "$SCRIPT_DIR/bootstrap.sh" \
     --provider "$PROVIDER" \
     ${HF_ENDPOINT_ARG:+--hf-endpoint "$HF_ENDPOINT_ARG"} \
     --source "$SOURCE" \
-    || { log "bootstrap 失败（详见上方输出）"; exit 4; }
+    2>&1 | tee -a "$LOG_FILE" \
+    || { log "bootstrap 失败（详见上方输出 / logs/tts.log）"; exit 4; }
 
   local venv="$HOME_DIR/venv-$( [[ "$PROVIDER" == qwen3-* ]] && echo qwen3 || echo hojo )"
   local py="$venv/bin/python"
@@ -233,17 +290,21 @@ stop() {
       if service_healthy "$p"; then targets+=("$p"); fi
     fi
   done
-  if [[ ${#targets[@]} -eq 0 ]]; then
+  local scanned
+  scanned="$(scan_tts_pids | sort -u | tr '\n' ' ')"
+  if [[ ${#targets[@]} -eq 0 && -z "${scanned// /}" ]]; then
     log "没有在监听的 TTS 服务，无需停止"
     rm -f "$RUNTIME"
     exit 0
   fi
+  local killed=0
   for p in "${targets[@]}"; do
     local pids
     pids="$(port_pids "$p")"
     [[ -z "$pids" ]] && continue
     log "停止 $p → TERM: $(echo $pids | tr '\n' ' ')"
     for pid in $pids; do kill -TERM "$pid" 2>/dev/null || true; done
+    killed=1
     local waited=0
     while is_up "$p" && [[ $waited -lt 10 ]]; do sleep 1; waited=$((waited + 1)); done
     if is_up "$p"; then
@@ -251,6 +312,23 @@ stop() {
       for pid in $pids; do kill -KILL "$pid" 2>/dev/null || true; done
     fi
   done
+  # Fallback path (no ss/lsof): kill by cmdline, then by the pid recorded at startup.
+  if [[ ${#targets[@]} -eq 0 && -n "${scanned// /}" ]]; then
+    log "停止（按进程扫描）→ TERM: $scanned"
+    for pid in $scanned; do kill -TERM "$pid" 2>/dev/null || true; done
+    killed=1
+  fi
+  local rpid
+  rpid="$(runtime_pid 2>/dev/null || true)"
+  if [[ -n "${rpid:-}" ]] && kill -0 "$rpid" 2>/dev/null; then
+    kill -TERM "$rpid" 2>/dev/null || true
+    killed=1
+  fi
+  if [[ "$killed" == "0" ]]; then
+    log "未能定位 TTS 进程（端口/进程扫描均无结果）"
+  fi
+  sleep 1
+  for pid in $scanned $rpid; do [[ -n "${pid:-}" ]] && kill -KILL "$pid" 2>/dev/null || true; done
   rm -f "$RUNTIME"
   log "已停止"
 }

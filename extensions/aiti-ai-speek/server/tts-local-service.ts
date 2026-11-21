@@ -130,6 +130,8 @@ export interface StartOptions {
   format?: string;
   hfEndpoint?: string;
   source?: string;
+  /** Text normalization (WeTextProcessing). Off = leaner venv (~0.3GB instead of ~1.3GB). */
+  tn?: boolean;
   /** aiti-cmd runner (ctx.services "aiti-cmd.runner"); when absent a detached spawn is used. */
   runner?: { run?: (opts: Record<string, unknown>) => unknown };
 }
@@ -153,6 +155,7 @@ export async function startService(opts: StartOptions): Promise<{
     AITI_TTS_PORT: String(opts.port),
     AITI_TTS_IDLE_TIMEOUT: String(opts.idleTimeout),
     AITI_TTS_VOICES_JSON: paths.voicesJson,
+    ...(opts.tn === false ? { AITI_TTS_TN: "0" } : {}),
     ...(opts.hfEndpoint ? { AITI_TTS_HF_ENDPOINT: opts.hfEndpoint } : {}),
     ...(opts.source ? { AITI_TTS_SOURCE: opts.source } : {}),
     ...(opts.format ? { AITI_TTS_FORMAT: opts.format } : {}),
@@ -162,6 +165,8 @@ export async function startService(opts: StartOptions): Promise<{
     const posixCmd = `AITI_TTS_HOME=${sshQuote(paths.home)} AITI_TTS_PROVIDER=${sshQuote(opts.provider)} `
       + `AITI_TTS_PORT=${opts.port} AITI_TTS_IDLE_TIMEOUT=${opts.idleTimeout} `
       + `AITI_TTS_VOICES_JSON=${sshQuote(paths.voicesJson)} `
+      + `${opts.tn === false ? "AITI_TTS_TN=0 " : ""}`
+
       + `${opts.hfEndpoint ? `AITI_TTS_HF_ENDPOINT=${sshQuote(opts.hfEndpoint)} ` : ""}`
       + `bash ${sshQuote(file)} start --provider ${sshQuote(opts.provider)} --port ${opts.port} --idle-timeout ${opts.idleTimeout}`;
     const winCmd = `powershell -NoProfile -ExecutionPolicy Bypass -File "${file}" start -Provider ${opts.provider} -Port ${opts.port} -IdleTimeout ${opts.idleTimeout}`;
