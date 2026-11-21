@@ -110,6 +110,7 @@ export {
   SIDEBAR_COLLAPSE_PREFIX, SIDEBAR_ORDER_KEY,
   SIDEBAR_COLLAPSE_EVENT, SIDEBAR_ORDER_EVENT, SIDEBAR_MOVE_EVENT, FLOAT_INSTALLED_EVENT,
   readBlockCollapsed, writeBlockCollapsed, seedBlockCollapsedDefault,
+  SIDEBAR_DISMISS_PREFIX, readBlockDismissed, writeBlockDismissed,
   readDockOrder, writeDockOrder,
   effectiveBlockOrder, moveBlockKey, migrateLegacyCollapseKeys,
   createDockHeaderStore, localDockHeaderStore, DOCK_HEADER_PENDING_TTL,

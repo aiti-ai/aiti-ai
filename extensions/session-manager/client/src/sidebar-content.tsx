@@ -25,7 +25,7 @@ import { SidebarList } from "./sidebar-dock";
 import { getRecentProjects, getProjectActivity, normalizeWorkspaceKey, type SessionInfo } from "./sidebar/pure";
 import { useWorktree } from "./sidebar/use-worktree";
 import { useBranchChip } from "./sidebar/branch-chip";
-import { DockBody, readBlockCollapsed, writeBlockCollapsed, seedBlockCollapsedDefault, present, sidebarZoneOf, SIDEBAR_COLLAPSE_PREFIX, dockIconEl } from "../../../_shared/ext-float-dock";
+import { DockBody, readBlockCollapsed, writeBlockCollapsed, seedBlockCollapsedDefault, present, readBlockDismissed, sidebarZoneOf, SIDEBAR_COLLAPSE_PREFIX, dockIconEl } from "../../../_shared/ext-float-dock";
 import { dedupeFetch } from "../../../_shared/dedupe-fetch";
 // 跨扩展复用（构建期内联，DirectoryBrowser 先例）：aiti-folder 的文件夹多实例生命周期。
 // 区块 faces（左栏栈/浮窗/右栏）由 aiti-folder entry 动态注册（folder-dock v2）；
@@ -459,7 +459,14 @@ export function SidebarContentDock(props: Record<string, any>) {
     // [开页方案 §1 F4] 不再等 ensureMaterialized：静态壳即区块本体；present 只需同步（入栈后
     // 壳可见、默认折叠），展开时才拉 aiti-ai-schedule。
     // auto 标记：恢复性入栈（非用户打开）——小屏侧栏 overlay 不被刷新拉起。
-    try { present(SCHED_KEY, `dock:${sidebarZoneOf(SCHED_KEY)}`, { auto: true }); } catch { /* ignore */ }
+    // Dismissed check (2026-11-21 ruling: "a closed block stays closed across
+    // refresh"): a user ⋮/TabBar ✕ close is recorded by the state machine
+    // (pi:sidebar-dock:dismissed:*), so the restorative auto-dock no longer
+    // resurrects the block; re-open goes through the toolbar clock button
+    // (requestOpen presents explicitly — non-auto sidebar landing clears the record).
+    if (!readBlockDismissed(SCHED_KEY)) {
+      try { present(SCHED_KEY, `dock:${sidebarZoneOf(SCHED_KEY)}`, { auto: true }); } catch { /* ignore */ }
+    }
   }, [stackApi]);
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
 

@@ -30,6 +30,26 @@ const COMMAND_EVENT = "piwe-float-present-command";
 export const DOCK_MENU_EVENT = "piwe-float-dock-menu";
 
 const DOCKPREF_PREFIX = "pi-web:ext-float:dockpref:v1:";
+/** Dismissed-record key prefix — same-name contract with _shared/ext-float-dock-core.ts
+ *  (this module keeps a zero-import discipline, so the read/write helpers are inlined;
+ *  readers are the readBlockDismissed calls at per-extension auto-dock sites).
+ *  Semantics mirror the core section of the same name: close writes 1, a non-auto
+ *  landing in the sidebar family clears it. */
+const DISMISS_PREFIX = "pi:sidebar-dock:dismissed:";
+function readDismissed(key: string): boolean {
+  try { return localStorage.getItem(DISMISS_PREFIX + key) === "1"; } catch { return false; }
+}
+function writeDismissed(key: string, dismissed: boolean): void {
+  try {
+    if (dismissed) localStorage.setItem(DISMISS_PREFIX + key, "1");
+    else localStorage.removeItem(DISMISS_PREFIX + key);
+  } catch { /* ignore */ }
+}
+/** sidebar-family docked-state predicate (same semantics as core isSidebarDockState:
+ *  canonical sidebar:<key> + legacy sidebar-explorer). */
+function isSidebarDockedState(state: PresentState): boolean {
+  return state === "docked:sidebar-explorer" || state.startsWith("docked:sidebar:");
+}
 
 const states = new Map<string, PresentState>();
 /** 扩展声明默认落位（float.ts 增强面板时读 data-ext-float-dock-default 注册；内存态不持久化） */
@@ -70,12 +90,26 @@ export function present(key: string, mode: PresentMode, opts?: { auto?: boolean 
     }
   }
   else if (mode === "float") { setPref(key, "float"); setState(key, "floating", opts); return; } // v3：选浮窗=记忆偏好（Q1）
-  else if (mode === "close") { setState(key, "closed", opts); return; } // dockPref 不清（重开=上次偏好）
+  else if (mode === "close") {
+    // Dismissed record (2026-11-21 ruling: "a closed block stays closed across
+    // refresh"): every close writes it — programmatic closes included, which is
+    // harmless since an explicit reopen clears it (below). Restorative auto-dock
+    // call sites check the record and skip. dockPref is kept (reopen = last zone).
+    writeDismissed(key, true);
+    setState(key, "closed", opts);
+    return;
+  }
   else if (mode.startsWith("dock:")) {
     const zone = mode.slice(5);
     try { localStorage.setItem(DOCKPREF_PREFIX + key, zone); } catch { /* ignore */ }
     setState(key, `docked:${zone}`, opts); // auto 必须透传：恢复性同步入栈不拉小屏抽屉
   }
+  // Explicit (non-auto) landing in the sidebar family = user actively bringing the
+  // block back → clear the dismissed record (degraded localPresent mirrors this).
+  // Placed before the same-state activate broadcast: reopening an already-docked
+  // block (activation) counts as bringing it back too.
+  const afterForDismiss = states.get(key) ?? "closed";
+  if (!opts?.auto && isSidebarDockedState(afterForDismiss)) writeDismissed(key, false);
   // 同态 docked 再打开（重复 open / dock:同区 / TabBar 菜单选当前区）：无状态迁移可广播，
   // 但用户语义 = 「带到面前」——发激活事件，宿主右栏据此置前对应 tab（floating 幂等不发）。
   // auto 透传：恢复性入栈（autoDock/项目联动同步）的激活不得把宿主小屏抽屉拉起。
