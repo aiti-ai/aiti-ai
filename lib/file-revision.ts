@@ -122,19 +122,19 @@ function trimUtf8Boundary(buffer: Buffer, end: number): number {
 }
 
 /**
- * First text-preview chunk of a revision blob — same shape/semantics as
- * readTextPreviewChunk (binary sniff on the head, boundary-safe UTF-8 cut,
- * truncated/nextOffset against the full blob size). Caller has already capped
- * size via revisionBlobSize (≤ REVISION_TEXT_READ_MAX_BYTES).
+ * Text-preview chunk of a revision blob — same shape/semantics as
+ * readTextPreviewChunk (boundary-safe UTF-8 cut, truncated/nextOffset against the
+ * full blob size; binary sniff only at offset 0, mirroring the disk chunker).
+ * Caller has already capped size via revisionBlobSize (≤ REVISION_TEXT_READ_MAX_BYTES).
  */
-export function revisionTextChunk(blob: Buffer, size: number): TextPreviewChunk {
-  if (looksBinary(blob, Math.min(blob.length, 8000))) {
+export function revisionTextChunk(blob: Buffer, size: number, offset = 0): TextPreviewChunk {
+  if (offset === 0 && looksBinary(blob, Math.min(blob.length, 8000))) {
     return { content: "", nextOffset: 0, truncated: false, binary: true };
   }
-  let end = Math.min(blob.length, TEXT_PREVIEW_MAX_BYTES);
+  let end = Math.min(blob.length, offset + TEXT_PREVIEW_MAX_BYTES);
   if (end < blob.length) end = trimUtf8Boundary(blob, end);
   return {
-    content: blob.toString("utf8", 0, end),
+    content: blob.toString("utf8", offset, end),
     nextOffset: end,
     truncated: end < size,
     binary: false,
