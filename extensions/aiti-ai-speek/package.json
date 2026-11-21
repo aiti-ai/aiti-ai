@@ -1,8 +1,8 @@
 {
   "name": "@aiti-ai/aiti-ai-speek",
-  "version": "0.1.8",
+  "version": "0.2.0",
   "type": "module",
-  "description": "Voice reading of AI output — switchable voice/pause/skip/stop; browser Web Speech by default, optional edge-tts",
+  "description": "Voice reading of AI output — browser Web Speech / edge-tts / local TTS (Hojo-TTS-Light, OpenAI-compatible) with cache, voice cloning and pause/skip/stop",
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",
@@ -16,7 +16,8 @@
   "aitiConfigs": {
     "configFiles": [
       "steer-injected.json",
-      "edge-auto-enabled.json"
+      "edge-auto-enabled.json",
+      "local-auto-enabled.json"
     ]
   },
   "aitiExtProtocol": "1.0",
