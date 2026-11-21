@@ -489,7 +489,6 @@ async function ensureExtDeps() {
   const link = join(EXT_ROOT, "node_modules");
   if (NO_INSTALL) {
     if (!existsSync(link)) warn("extensions/node_modules is missing (--no-install) — extensions may fail to load");
-    linkLocalExtShared();
     return;
   }
   if (existsSync(link)) {
@@ -508,8 +507,10 @@ async function ensureExtDeps() {
   if (res.code !== 0) {
     warn("extension dependency reconcile failed — retrying package-by-package");
     await installSharedDepsDegraded();
+    // Only in degraded mode: a healthy registry install keeps its published
+    // ext-shared, so instances sharing this root (dev/prod) are untouched.
+    linkLocalExtShared();
   }
-  linkLocalExtShared();
 }
 
 // ── 4. extension client builds ──────────────────────────────────────────────
