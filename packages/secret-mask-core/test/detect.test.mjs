@@ -205,6 +205,52 @@ test("assignment verbs: keyword-bound and bare verbs with a keyword in the passa
   }
 });
 
+test("ark token (volcengine): prefix-shaped, keyword optional", () => {
+  const v = "ark-f17fc284-58df-45a7-9649-ac0e76ef9190-104bc";
+  const h = scan(`token ${v}，报错`);
+  assert.ok(ids(h).includes("ark-token"), JSON.stringify(ids(h)));
+  assert.ok(ids(scan(`K='${v}'`)).includes("ark-token"), "keyword-less shell var form");
+  assert.ok(ids(scan(`Authorization: Bearer ${v}`)).includes("ark-token"), "bearer form");
+  for (const t of [
+    "https://ark.cn-beijing.volces.com/api/v3/models",
+    "ark-coding provider alias",
+    "ark-coding-plan 套餐",
+    "ep-20241212123456 endpoint id",
+    "ark-f17fc284-58df-45a7 short",
+  ]) {
+    assert.equal(ids(scan(t)).includes("ark-token"), false, t);
+  }
+});
+
+test("bare keyword form: `token <值>` without operator", () => {
+  assert.ok(ids(scan("token hunter2sec，请查收")).includes("generic-secret-bare"));
+  assert.ok(ids(scan("密码 ab12cd34ef56")).includes("generic-secret-bare"), "cjk keyword + space");
+  assert.ok(ids(scan("令牌 9f8e7d6c5b4a")).includes("generic-secret-bare"), "cjk keyword bare 2");
+  assert.ok(ids(scan("API key sk1234567890abcdef")).includes("generic-secret-bare"), "space-in-keyword");
+  assert.ok(ids(scan("secret key myp4ssw0rd!")).includes("generic-secret-bare"), "space-in-secret-key");
+  assert.ok(ids(scan("密码 12345678")).includes("generic-secret-bare"), "numeric password");
+  // near misses stay untouched
+  for (const t of [
+    "token bucket algorithm",
+    "token authentication required",
+    "password expires next month",
+    "password policy requires 12 chars",
+    "secret santa 2024 edition",
+    "api key rotation happens quarterly",
+    "token 12月3日过期",
+    "token 用量统计",
+    "token abcdefgh",
+  ]) {
+    assert.equal(ids(scan(t)).length, 0, t);
+  }
+});
+
+test("copula 是 tolerates surrounding spaces", () => {
+  assert.ok(ids(scan("token 是 ab12cd34ef56")).includes("generic-secret"), "copula with spaces");
+  assert.ok(ids(scan(`密码 是 "ab12cd34ef56"`)).includes("generic-secret-quoted"), "copula with spaces, quoted");
+  assert.ok(ids(scan("token是ab12cd34ef56")).includes("generic-secret"), "copula glued (unchanged)");
+});
+
 test("entropy helper sanity", () => {
   assert.ok(entropy("aaaaaaaaaaaa") < 0.1);
   assert.ok(entropy("7fJk2mN9pQrStUvWx3y4") > 3.5);
