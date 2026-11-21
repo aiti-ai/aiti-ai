@@ -547,6 +547,14 @@ async function attachIfBridgedUncached(
   // replay rebuilds the stream — no extension registry (ownsFile) involved.
   const detachedUuid = sessionFile.match(/_([0-9a-f-]{36})\.jsonl$/)?.[1];
   if (detachedUuid) {
+    // Reuse first (2026-11-22 queue-echo regression): a wrapper serves a SINGLE client —
+    // every fresh attach supersedes the previous connection, killing the live handle
+    // the open SSE stream is subscribed to (queue_update frames died with it; the
+    // queue panel only recovered after a full page reload). The file-path reuse below
+    // never hits spawn handles (they are keyed by uuid only), so check the uuid key
+    // here: an alive handle already attached to this wrapper IS the current client.
+    const existingByUuid = lookupHandle(detachedUuid);
+    if (existingByUuid?.alive()) return new HandleSessionAdapter(existingByUuid);
     const recovery = await attachDetachedSession(detachedUuid, sessionFile);
     if (recovery.status === "blocked") {
       // Fail loud: the agent is alive elsewhere, opening locally would double-write.
