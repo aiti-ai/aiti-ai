@@ -3474,7 +3474,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                 {p.enabled === false ? ti("mw.a.494") : ti("mw.a.495")}
               </button>
             )}
-            {p.runtime ? null : <button className="amw-btn is-danger" style={{ padding: "3px 8px" }} title={ti("mw.a.496")} onClick={() => doDelete(p.provider)}><Ic size={12} paths={ICONS.trash} /></button>}
+            {p.runtime || p.authType === "oauth" ? null : <button className="amw-btn is-danger" style={{ padding: "3px 8px" }} title={ti("mw.a.496")} onClick={() => doDelete(p.provider)}><Ic size={12} paths={ICONS.trash} /></button>}
           </div>
           {p.combo ? (
             <div className="amw-note" style={{ marginBottom: 0, display: "flex", alignItems: "center", gap: 8 }}>
@@ -3485,6 +3485,13 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           {p.authType === "oauth" ? (
             <div className="amw-note" style={{ marginBottom: 0, display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ flex: 1 }}>{ti("mw.tx.130")}</span>
+              {p.hasKey ? (
+                <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11, color: "#dc2626" }} disabled={logoutBusy === p.provider}
+                  title={ti("mw.a.316")}
+                  onClick={() => void doOauthLogout(p.provider, p.name || p.provider)}>
+                  {logoutBusy === p.provider ? ti("mw.a.305") : ti("mw.a.121")}
+                </button>
+              ) : null}
               <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} onClick={() => { setTab("subs"); loadSubs(); }}>{ti("mw.tx.131")}</button>
             </div>
           ) : null}
