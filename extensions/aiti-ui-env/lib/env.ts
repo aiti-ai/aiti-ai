@@ -419,6 +419,8 @@ let resolvedDisplayNum: number | null = null;
  *   - kwin_x11/mutter: pull half a desktop stack; i3/sway-class tilers: no decorations and
  *     auto-tiling makes the virtual desktop hard to read for humans */
 export const WM_CHOICES = ["openbox", "xfwm4", "fluxbox", "icewm", "jwm", "metacity", "pekwm", "blackbox"] as const;
+/** Compositors that provide ARGB/transparent windows for Tauri/GTK captions. */
+export const COMPOSITORS = ["picom", "compton", "xcompmgr"] as const;
 
 /** Every WM name we recognise for detection/cleanup — a superset of the whitelist so that
  *  stopping a display also cleans up WMs a user started by hand. */
@@ -1015,6 +1017,24 @@ export async function ensureHeadless(): Promise<boolean> {
           { detached: true, stdio: "ignore" }).unref();
       }
     }
+    // ARGB compositor: transparent Tauri caption needs one; GNOME provides its own,
+    // while Xvfb+openbox needs picom/compton/xcompmgr. Idempotent per display.
+    const compositorRunning = (await Promise.all(COMPOSITORS.map((c) => procOnDisplay(c, `:${num}`)))).some(Boolean);
+    if (!compositorRunning) {
+      for (const cand of COMPOSITORS) {
+        if (!(await resolveBin(cand))) continue;
+        const flags = cand === "xcompmgr" ? "" : "--backend xrender --no-vsync";
+        spawn("sh", ["-c",
+          `export DISPLAY=:${num}; export XAUTHORITY=${authFile}; export XDG_RUNTIME_DIR=${runtimeDir}; ` +
+          `export DBUS_SESSION_BUS_ADDRESS=unix:path=${busFile}; nohup ${cand} ${flags} >/dev/null 2>&1 & true`],
+          { detached: true, stdio: "ignore" }).unref();
+        await sleep(600);
+        if (await procOnDisplay(cand, `:${num}`)) {
+          try { fs.appendFileSync(logFile, `[${new Date().toISOString()}] compositor ${cand} started on :${num}\n`); } catch { /* ignore */ }
+          break;
+        }
+      }
+    }
     try { fs.appendFileSync(logFile, `[${new Date().toISOString()}] ensureHeadless: bare start on :${num}\n`); } catch { /* ignore */ }
     await sleep(1000);
     return findSocket(num);
@@ -1221,6 +1241,7 @@ async function stopHeadlessNums(nums: Set<number>, locale?: string | null): Prom
       if (new RegExp(`^(${KNOWN_WMS.join("|")})(\\s|$)`).test(cmd) && await procDisplayIs(pid, display)) { await kill(pid, `${cmd.split(/\s+/)[0]}:${num}`); break; }
       if (/at-spi-bus-launcher/.test(cmd) && await procDisplayIs(pid, display)) { await kill(pid, `at-spi:${num}`); break; }
       if (/^tint2(\s|$)/.test(cmd) && await procDisplayIs(pid, display)) { await kill(pid, `tint2:${num}`); break; }
+      if (/^(picom|compton|xcompmgr)(\s|$)/.test(cmd) && await procDisplayIs(pid, display)) { await kill(pid, `${cmd.split(/\s+/)[0]}:${num}`); break; }
       if (cmd.includes(`ui-env-${num}/bus`)) { await kill(pid, `dbus:${num}`); break; }
     }
   }
@@ -2260,6 +2281,8 @@ interface DepDef {
 const DEPS: DepDef[] = [
   { bin: "Xvfb", label: "虚拟显示服务器", group: "core", manual: "apt: xvfb · dnf: xorg-x11-server-Xvfb · pacman: xorg-server-xvfb",
     pkg: { apt: "xvfb", dnf: "xorg-x11-server-Xvfb", yum: "xorg-x11-server-Xvfb", pacman: "xorg-server-xvfb", apk: "xorg-server-xvfb", zypper: "xorg-x11-server" } },
+  { bin: "picom", label: "ARGB 合成器", group: "core", manual: "picom（推荐；无 picom 可用 compton/xcompmgr）",
+    pkg: { apt: "picom", dnf: "picom", yum: "picom", pacman: "picom", apk: "picom", zypper: "picom" } },
   { bin: "openbox", label: "窗口管理器", group: "core", manual: "openbox（各发行版同名）",
     pkg: { apt: "openbox", dnf: "openbox", yum: "openbox", pacman: "openbox", apk: "openbox", zypper: "openbox" } },
   { bin: "xfwm4", label: "窗口管理器（备选，当前配置时必装）", group: "ui", manual: "apt/dnf: xfwm4 · pacman: xfwm4",
