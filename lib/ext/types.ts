@@ -406,6 +406,7 @@ export type ExtSlotName =
   | "sidebar"
   | "sidebarFooter"  // Sidebar bottom quick-action row (models/skills/plugins on one line; the extension manager's entry point)
   | "sessionTopbar"
+  | "sessionStatsInline" // Inline trailing indicators inside the session-info stats button (tail of the in/out/cache/cost/context row; e.g. the sysmon extension's CPU/memory chips)
   | "sessionRowActions"
   | "sessionRowLeading"
   | "sessionRowMeta"  // Per-session-row meta (end of the second line holding the spinner/message count): e.g. the plan-tracking extension's plan badge + tags
@@ -815,6 +816,14 @@ export interface AssistantMessageFooterSlotProps {
   writtenFiles?: string[];
 }
 
+/** sessionStatsInline slot extra — render-state data only (host tier flags; the extension decides whether to render). */
+export interface SessionStatsInlineSlotProps {
+  /** Host mobile tier (<641px): the stats row collapses to the battery-style context chip — extensions should render nothing. */
+  isMobile?: boolean;
+  /** Host compact tier (641–959px): row width is reserved for the context percentage — extensions should render nothing. */
+  isCompact?: boolean;
+}
+
 export interface ExtSlotContractMap {
   /** Queue panel (de-fork P3): the core → ext live/trash/actions primitives.
    *  Contract defined in lib/composer/queue-api.ts (single implementation of download-export/import-parse);
@@ -852,6 +861,8 @@ export interface ExtSlotContractMap {
   /** Top/bottom widget area of the new-session welcome page (built-in recent sessions / extension widgets; mobile-desktop widget semantics). */
   noWorkspaceGuide: { props: NoWorkspaceGuideSlotProps };
   newSessionWidgets: { props: NewSessionWidgetSlotProps };
+  /** Inline trailing indicators inside the session-info stats button (aiti-sysmon CPU/memory chips). */
+  sessionStatsInline: { props: SessionStatsInlineSlotProps };
   /** End of the assistant message content area (the git-trace extension: change-file lines captured by trace;
    *  git-trace message-files extension plan §3.2). */
   assistantMessageFooter: { props: AssistantMessageFooterSlotProps };
@@ -968,6 +979,12 @@ export interface ExtUiDefinition {
   /** Sidebar bottom quick-action row (same row as the built-in models/skills/plugins). */
   sidebarFooter?: ExtUiItem[];
   sessionTopbar?: ExtUiItem[];
+  /** Inline trailing indicators inside the session-info stats button (tail of the tokens/cost/context row; e.g. the sysmon extension's CPU/memory chips).
+   *  Contract: inline content only — no block elements or nested interactive elements (renders inside a <button>; clicks bubble and open the
+   *  session panel, which is expected). extra = SessionStatsInlineSlotProps (pure render-state tier flags, extension decides whether to render).
+   *  Declarers must load immediately (clientImmediately !== false): the slot mounts on first paint and the host auto-materializes only
+   *  immediate extensions on always-mounted slots (components/ext-client-loader.ts pendingForSlotAuto) — a lazy declarer would never render. */
+  sessionStatsInline?: ExtUiItem[];
   sessionRowActions?: ExtUiItem[];
   /** Per-session-row meta (second line · end of spinner/message count; e.g. the plan-tracking extension's plan binding badge + front-matter tags). */
   sessionRowMeta?: ExtUiItem[];

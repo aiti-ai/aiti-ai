@@ -68,6 +68,7 @@ const UI_SLOT_KEYS = [
   "sessionTopbar",
   "sessionRowActions",
   "sessionRowMeta",
+  "sessionStatsInline", // inline tail of the session-info stats button (aiti-sysmon top-bar CPU/memory chips)
   "sidebarProjects", // sidebar "Projects" session list fully taken over (session-manager SidebarClone)
   "dialogs",
   "banners",
