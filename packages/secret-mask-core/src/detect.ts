@@ -1063,3 +1063,168 @@ export function scan(text: string, opts: ScanOptions = {}): Hit[] {
   }
   return hits;
 }
+
+// ---------------------------------------------------------------------------
+// Preflight candidates — the human-confirmed path is allowed to be looser
+// ---------------------------------------------------------------------------
+// Automatic masking must not guess (a wrong guess rewrites the user's words
+// silently). A pre-send confirmation can afford to guess, because the user sees
+// the list and decides. So this pass returns MEDIUM-confidence candidates on
+// top of the normal hits:
+//   - keyword-adjacent values with relaxed shape bars (short ids, hex, etc.)
+//   - standalone machine-looking tokens that auto-mode refuses to touch
+// The host shows `preview` (never the value) and masks only what was accepted.
+
+export type CandidateConfidence = "high" | "medium";
+
+export interface Candidate extends Hit {
+  confidence: CandidateConfidence;
+}
+
+/** Medium evidence, keyword-bound: still not a path/URL/template/checksum. */
+function relaxedValue(v: string): boolean {
+  if (v.length < 6) return false;
+  if (!plausibleSecret(v) || placeholderShaped(v)) return false;
+  if (NOT_CREDENTIAL.test(v)) return false;
+  if (/[|#]/.test(v)) return false;
+  if (!/\d/.test(v) && /^[a-z][a-z_-]*$/.test(v)) return false; // a sentence word
+  return true;
+}
+
+/** Same value grammar, 6-char floor (the confirmed path may offer short ids). */
+const VALUE_BODY_MIN6 = VALUE_BODY.replace("{7,299}", "{5,299}");
+
+const RELAXED_CONTEXT_RULES: Rule[] = [
+  {
+    id: "candidate-keyword",
+    label: "SECRET",
+    kind: "secret",
+    pattern: new RegExp(`${KEYWORD_ALT}${STRONG_SEP}${VALUE_BODY_MIN6}${VALUE_TAIL}`, "gi"),
+    group: 1,
+    verify: relaxedValue,
+    before: keywordBoundary,
+    source: GITLEAKS,
+  },
+  {
+    id: "candidate-keyword-bare",
+    label: "SECRET",
+    kind: "secret",
+    pattern: new RegExp(`${KEYWORD_ALT}${WEAK_SEP}${VALUE_BODY_MIN6}${VALUE_TAIL}`, "gi"),
+    group: 1,
+    verify: relaxedValue,
+    before: keywordBoundary,
+    source: GITLEAKS,
+  },
+];
+
+/** Standalone token, medium evidence: machine-looking but not auto-maskable. */
+const CANDIDATE_TOKEN_RE =
+  /(?<=^|[\s"'`(\[{<>,;:：，。、=])([A-Za-z0-9][A-Za-z0-9_\-+.\/~]{11,199}(?:={1,2})?)(?=$|[\s"'`)\]}>;,：，。、])/gm;
+
+function candidateShaped(v: string): boolean {
+  if (v.length < 12 || v.length > 200) return false;
+  if (!/[A-Za-z]/.test(v) || !/\d/.test(v)) return false;
+  if (!plausibleSecret(v) || placeholderShaped(v)) return false;
+  if (NOT_CREDENTIAL.test(v)) return false;
+  if (entropy(v) < 2.6) return false;
+  if (v.includes("=") && !/={1,2}$/.test(v)) return false;
+  if (/[|#]/.test(v)) return false;
+  // a pasted commit id or digest is usually not a credential; keyword-attached
+  // hex is still offered through the rules above
+  if (/^(?:[0-9a-f]{32}|[0-9a-f]{40}|[0-9a-f]{64})$/i.test(v)) return false;
+  if (/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(v)) return false;
+  // With separators, one segment must be long and alphanumeric: a kebab of
+  // short words/dates (`release-2024-12-01-final`) is a name, not a token.
+  if (/[-_.]/.test(v)) {
+    const segs = v.split(/[-_.]+/).filter(Boolean);
+    if (!segs.some((seg) => seg.length >= 12 && /[A-Za-z]/.test(seg) && /\d/.test(seg))) return false;
+  }
+  return true;
+}
+
+/**
+ * Detection for a human-confirmed gate. `strict` adds medium-confidence
+ * candidates; results keep positional order and are de-duplicated (a high hit
+ * always wins over a medium one covering the same span).
+ */
+export function scanCandidates(text: string, opts: { strict?: boolean } = {}): Candidate[] {
+  const high: Candidate[] = scan(text).map((h) => ({ ...h, confidence: "high" }));
+  if (!opts.strict) return high;
+
+  // Placeholders already in the text are not new secrets: protect them the same
+  // way scan() does (equal-length spaces keep every offset stable).
+  const spans: Array<[number, number]> = [];
+  PLACEHOLDER_RE.lastIndex = 0;
+  let masked = text;
+  for (let m = PLACEHOLDER_RE.exec(text); m !== null; m = PLACEHOLDER_RE.exec(text)) {
+    spans.push([m.index, m.index + m[0].length]);
+  }
+  if (spans.length > 0) {
+    let out = "";
+    let at = 0;
+    for (const [s, e] of spans) {
+      out += text.slice(at, s) + " ".repeat(e - s);
+      at = e;
+    }
+    masked = out + text.slice(at);
+  }
+
+  type Ranked = Candidate & { order: number };
+  const found: Ranked[] = high.map((h, order) => ({ ...h, order }));
+  const inPlaceholder = (start: number, end: number) => spans.some(([s, e]) => start < e && end > s);
+  const covered = (start: number, end: number) => inPlaceholder(start, end) || found.some((h) => start < h.end && end > h.start);
+
+  const collect = (rules: readonly Rule[], orderBase: number) => {
+    rules.forEach((rule, index) => {
+      const { re, indexed } = compile(rule.pattern);
+      const g = rule.group ?? 0;
+      re.lastIndex = 0;
+      for (let m = re.exec(masked); m !== null; m = re.exec(masked)) {
+        const raw = m[g];
+        if (!raw) {
+          if (m[0] === "") re.lastIndex++;
+          continue;
+        }
+        const start = indexed ? (m.indices?.[g]?.[0] ?? -1) : m.index + m[0].lastIndexOf(raw);
+        if (start < 0) continue;
+        const end = start + raw.length;
+        const value = text.slice(start, end);
+        if (covered(start, end) || insideTemplate(masked, start) || (rule.before && !rule.before(masked, m.index)) || (rule.verify && !rule.verify(value))) {
+          re.lastIndex = m.index + 1;
+          continue;
+        }
+        found.push({ id: rule.id, label: rule.label, kind: rule.kind, start, end, value, confidence: "medium", order: orderBase + index });
+        re.lastIndex = m.index + raw.length;
+      }
+      re.lastIndex = 0;
+    });
+  };
+
+  collect(RELAXED_CONTEXT_RULES, RULES.length);
+  const tokenOrder = RULES.length + RELAXED_CONTEXT_RULES.length;
+  CANDIDATE_TOKEN_RE.lastIndex = 0;
+  for (let m = CANDIDATE_TOKEN_RE.exec(masked); m !== null; m = CANDIDATE_TOKEN_RE.exec(masked)) {
+    const value = m[1]!;
+    const start = m.index + m[0].indexOf(value);
+    const end = start + value.length;
+    if (covered(start, end) || !candidateShaped(value)) continue;
+    found.push({ id: "candidate-token", label: "SECRET", kind: "secret", start, end, value, confidence: "medium", order: tokenOrder });
+  }
+
+  found.sort((a, b) => a.start - b.start || b.end - a.end || a.order - b.order);
+  const out: Candidate[] = [];
+  let lastEnd = -1;
+  for (const h of found) {
+    if (h.start < lastEnd) continue;
+    const { order: _order, ...hit } = h;
+    out.push(hit);
+    lastEnd = h.end;
+  }
+  return out;
+}
+
+/** Masked preview for a confirmation list (`ark-1a2b…c5d`), never the value. */
+export function previewValue(value: string): string {
+  if (value.length <= 10) return "*".repeat(value.length);
+  return `${value.slice(0, 6)}…${value.slice(-4)}`;
+}

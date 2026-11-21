@@ -133,3 +133,65 @@ test("sessions endpoint returns the zero-value records", async () => {
     assert.ok(status.sessions["sess-1"]);
   });
 });
+
+// The preflight routes need secret-vault-core >= 0.3 in the shared root. Locally
+// that install can lag behind the workspace package, so the flow test is
+// skipped (not failed) until the dependency is reconciled.
+const coreHasPreflight = await (async () => {
+  const core = await import("@aiti-ai/secret-vault-core");
+  return typeof core.preflightScan === "function" && typeof core.preflightMask === "function";
+})();
+
+test("preflight: unavailable core degrades to 501, never to a silent pass", async () => {
+  if (coreHasPreflight) return;
+  await withTmp(async ({ call }) => {
+    const res = await call("POST", "preflight/scan", { text: "token abc" });
+    assert.equal(res.status, 501);
+    assert.equal((await res.json()).error, "preflight-unavailable");
+  });
+});
+
+test("preflight: scan returns previews only; mask lands values and returns text", async (t) => {
+  if (!coreHasPreflight) return t.skip("secret-vault-core in the shared root is older than 0.3");
+  await withTmp(async ({ call }) => {
+    const ark = "ark-2b3c4d5e-6f70-4a8b-9c0d-1e2f3a4b5c6d-ab12";
+    const opaque = "Qz7Wp2Lm9Rr4Tv6Yn3Xb8Cd1Fg5H"; // no vendor prefix
+    const text = `这个 key 还能用吗 ${ark}，还有 ${opaque}`;
+
+    const scanned = await (await call("POST", "preflight/scan", { text })).json();
+    assert.equal(scanned.ok, true);
+    assert.ok(scanned.candidates.length >= 2, JSON.stringify(scanned));
+    assert.equal(JSON.stringify(scanned).includes(ark), false, "no value in the scan response");
+    assert.equal(JSON.stringify(scanned).includes(opaque), false, "no value in the scan response");
+    for (const c of scanned.candidates) assert.match(c.preview, /…|^\*+$/);
+
+    const indices = scanned.candidates.map((c) => c.index);
+    const masked = await (await call("POST", "preflight/mask", { text, indices })).json();
+    assert.equal(masked.ok, true);
+    assert.ok(!masked.text.includes(ark));
+    assert.ok(!masked.text.includes(opaque));
+    assert.match(masked.text, /rsec_[0-9a-f]{8}/);
+    assert.ok(masked.aliases.length >= 2);
+
+    // values are in the vault (metadata only is listed)
+    const list = await (await call("GET", "entries")).json();
+    assert.ok(list.entries.length >= 2);
+    assert.equal(JSON.stringify(list).includes(ark), false);
+
+    // a second scan of the masked text offers nothing (placeholders are protected)
+    const again = await (await call("POST", "preflight/scan", { text: masked.text })).json();
+    assert.deepEqual(again.candidates, []);
+  });
+});
+
+test("preflight: bad payloads are rejected, empty list is a no-op", async (t) => {
+  if (!coreHasPreflight) return t.skip("secret-vault-core in the shared root is older than 0.3");
+  await withTmp(async ({ call }) => {
+    assert.equal((await call("POST", "preflight/scan", {})).status, 400);
+    assert.equal((await call("POST", "preflight/mask", { text: "x" })).status, 400);
+    const text = "nothing secret here, just words";
+    const res = await (await call("POST", "preflight/mask", { text, indices: [] })).json();
+    assert.equal(res.ok, true);
+    assert.equal(res.text, text);
+  });
+});

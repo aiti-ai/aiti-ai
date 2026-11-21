@@ -24,3 +24,4 @@ export * from "./tools.ts";
 export * from "./landing.ts";
 export * from "./commands.ts";
 export * from "./session-state.ts";
+export * from "./preflight.ts";
