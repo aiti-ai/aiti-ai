@@ -23,6 +23,11 @@ import { copyIcons } from "../../_shared/ext-icons-deploy.mjs";
 
 const root = resolve(import.meta.dirname, ".."); // pi-web-ext/aiti-ui-env
 
+// i18n table coverage check (client t() / server tr() keys, zh completeness, dead keys; FAIL aborts the deploy)
+{
+  execSync("node --experimental-strip-types tools/check-i18n.mjs", { cwd: root, stdio: "inherit" });
+}
+
 // 0) 客户端 bundle 构建（client/src/*.tsx → client/aiti-ui-env-client.mjs）
 console.log("[deploy] 构建 JSX client bundle…");
 try {

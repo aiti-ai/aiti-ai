@@ -188,8 +188,8 @@ const en: Record<string, string> = {
   "srv.proc.winvnc-self": "winvnc (self-managed)",
   "srv.pwd.entry-missing": "System VNC entry {id} not found (refresh the system VNC list and retry)",
   "srv.pwd.file-note": "Password file written: {file}. Restart the {kind} process to apply (this extension does not restart system processes).",
-  "srv.pwd.note-rfbauth": "写密码文件 {file}（标准 vncpasswd 格式）；需重启该 x11vnc 后生效",
-  "srv.pwd.note-vncserver-other": "该 vncserver 属用户 {user}，非当前用户，无权限改",
+  "srv.pwd.note-rfbauth": "Writes the password file {file} (standard vncpasswd format); restart that x11vnc to apply",
+  "srv.pwd.note-vncserver-other": "This vncserver belongs to user {user} (not the current user); no permission to change it",
   "srv.pwd.unsupported": "Resetting the password of {kind} is not supported yet",
   "srv.rationale.always-desktop-ok": "Always desktop: desktop available",
   "srv.rationale.always-desktop-unavailable": "Always desktop but the desktop is unavailable (no automatic fallback)",
@@ -457,10 +457,10 @@ const zhCN: Record<string, string> = {
   "srv.dep.xdpyinfo": "分辨率探测",
   "srv.dep.xfce4-terminal": "终端模拟器",
   "srv.dep.xterm": "备用终端",
-  "srv.error.both-unavailable": "both unavailable",
-  "srv.error.headless-unavailable": "headless unavailable",
-  "srv.error.requires-desktop": "requires desktop",
-  "srv.error.requires-headless": "requires headless",
+  "srv.error.both-unavailable": "桌面与虚拟屏均不可用",
+  "srv.error.headless-unavailable": "无头虚拟屏不可用（请先启动虚拟屏）",
+  "srv.error.requires-desktop": "该模式需要桌面，但桌面不可用",
+  "srv.error.requires-headless": "该模式需要虚拟屏，但虚拟屏不可用",
   "srv.error.resolve-failed": "resolve 失败",
   "srv.hint.both-linux": "桌面与虚拟屏均不可用，先跑 setup 安装 Xvfb/openbox",
   "srv.hint.both-mac": "桌面（Aqua 会话）与屏幕共享 VNC 均不可用：登录 Mac GUI 会话 + 开启屏幕共享（ui_env_headless start / setup-macos.sh）",
@@ -592,7 +592,7 @@ Object.assign(en, {
   "srv.api.action-rdp": "action must be start|stop|status|list",
   "srv.api.host-invalid": "host is invalid: expected host or host:port (e.g. 127.0.0.1:3389)",
   "srv.api.start-failed": "Start failed: {error}",
-  "srv.api.vnc-password-unset": "尚未设置 VNC 密码（Windows 自管 winvnc 需要）",
+  "srv.api.vnc-password-unset": "No VNC password is set yet (the self-managed winvnc needs one)",
   "srv.clip.owner-unknown": "unknown listening process",
   "srv.clip.verb-read": "read its clipboard",
   "srv.clip.verb-write": "write its clipboard",
@@ -603,11 +603,11 @@ Object.assign(en, {
   "srv.install.vnc-running": "vnc-server running",
   "srv.install.winvnc-system": "winvnc (system install)",
   "srv.probe.win-screens-suffix": " x{count} screens",
-  "srv.pwd.note-mac-account": "macOS 屏幕共享用**系统账号密码**（不是 VNC 自己的密码）：请在『系统设置 → 通用 → 共享 → 屏幕共享』里改该用户的登录密码",
-  "srv.pwd.note-mac-sharing": "macOS 屏幕共享用系统账号密码，请在『系统设置 → 共享 → 屏幕共享』里改；若为第三方 VNC 请在它自己的配置里改",
-  "srv.pwd.note-unknown-vnc": "未识别到已知 VNC server 进程，密码请在其自身配置里改",
-  "srv.pwd.note-win-registry": "写 HKLM 注册表（UltraVNC 用其专有 DES 钥匙 / TightVNC 用标准钥匙），需管理员权限；重启该服务后生效",
-  "srv.pwd.note-win-self": "本扩展自管便携 winvnc：重设会重写 ultravnc.ini 并自动重启（立即生效）",
+  "srv.pwd.note-mac-account": "macOS screen sharing uses the system account password (not a VNC password); change it in System Settings → Sharing → Screen Sharing",
+  "srv.pwd.note-mac-sharing": "macOS screen sharing uses the system account password — change it in System Settings → Sharing → Screen Sharing; for a third-party VNC server change it in that server's own config",
+  "srv.pwd.note-unknown-vnc": "No known VNC server process was identified; change the password in its own configuration",
+  "srv.pwd.note-win-registry": "Writes the HKLM registry (UltraVNC uses its own DES key / TightVNC the standard key); administrator rights required; takes effect after restarting that service",
+  "srv.pwd.note-win-self": "This extension's self-managed portable winvnc: resetting rewrites ultravnc.ini and restarts it automatically",
   "srv.rdp.host-required": "start requires host (the RDP target host)"
 });
 Object.assign(zhCN, {
@@ -630,7 +630,7 @@ Object.assign(zhCN, {
   "srv.api.action-rdp": "action 只能是 start|stop|status|list|sys-scan|sys-open|sys-stop",
   "srv.api.host-invalid": "host 无效：应为 host 或 host:port（如 127.0.0.1:3389）",
   "srv.api.start-failed": "启动失败：{error}",
-  "srv.api.vnc-password-unset": "尚未设置 VNC 密码（Windows 自管 winvnc 需要）",
+  "srv.api.vnc-password-unset": "尚未设置 VNC 密码（自管 winvnc 连接需要密码）",
   "srv.clip.owner-unknown": "未知监听进程",
   "srv.clip.verb-read": "直读其剪贴板",
   "srv.clip.verb-write": "直写其剪贴板",
@@ -641,11 +641,11 @@ Object.assign(zhCN, {
   "srv.install.vnc-running": "vnc-server在跑",
   "srv.install.winvnc-system": "winvnc(系统安装)",
   "srv.probe.win-screens-suffix": " x{count}屏",
-  "srv.pwd.note-mac-account": "macOS 屏幕共享用**系统账号密码**（不是 VNC 自己的密码）：请在『系统设置 → 通用 → 共享 → 屏幕共享』里改该用户的登录密码",
+  "srv.pwd.note-mac-account": "macOS 屏幕共享用系统账号密码（不是 VNC 密码），请在『系统设置 → 共享 → 屏幕共享』里修改",
   "srv.pwd.note-mac-sharing": "macOS 屏幕共享用系统账号密码，请在『系统设置 → 共享 → 屏幕共享』里改；若为第三方 VNC 请在它自己的配置里改",
   "srv.pwd.note-unknown-vnc": "未识别到已知 VNC server 进程，密码请在其自身配置里改",
   "srv.pwd.note-win-registry": "写 HKLM 注册表（UltraVNC 用其专有 DES 钥匙 / TightVNC 用标准钥匙），需管理员权限；重启该服务后生效",
-  "srv.pwd.note-win-self": "本扩展自管便携 winvnc：重设会重写 ultravnc.ini 并自动重启（立即生效）",
+  "srv.pwd.note-win-self": "本扩展自管的便携 winvnc：重设会重写 ultravnc.ini 并自动重启",
   "srv.rdp.host-required": "start 需要 host（RDP 目标主机）"
 });
 for (const deadKey of ["srv.pwd.empty","srv.pwd.mac-unmanaged","srv.pwd.no-rfbauth","srv.pwd.no-tool","srv.pwd.not-managed","srv.pwd.note-no-rfbauth","srv.pwd.note-passwd-arg","srv.pwd.note-unknown","srv.pwd.note-vncserver","srv.pwd.registry-note","srv.pwd.sys-missing","srv.pwd.sys-none","srv.clip.probe-failed","srv.dep.label.mac","srv.dep.label.windows"]) { delete en[deadKey]; delete zhCN[deadKey]; }
@@ -654,7 +654,7 @@ for (const deadKey of ["srv.pwd.empty","srv.pwd.mac-unmanaged","srv.pwd.no-rfbau
 // ── win password messages ──
 Object.assign(en, {
   "srv.common.unknown-error": "Unknown error",
-  "srv.pwd.applied-file": "{file} ({how})",
+  "srv.pwd.applied-file": "Password file written: {file} ({how})",
   "srv.winpwd.admin-hint": " (administrator rights required)",
   "srv.winpwd.not-found": "winvnc/tvnserver not found (run ui_env_deps install or install the system build first)",
   "srv.winpwd.registry-applied": "System-installed {kind} ({path}) registry written",
@@ -677,8 +677,8 @@ Object.assign(zhCN, {
 
 
 // ── registry password note ──
-Object.assign(en, { "srv.pwd.registry-note": "已写注册表：需重启该 VNC 服务（UltraVNC/TightVNC 服务）后生效" });
-Object.assign(zhCN, { "srv.pwd.registry-note": "已写注册表：需重启该 VNC 服务（UltraVNC/TightVNC 服务）后生效" });
+Object.assign(en, { "srv.pwd.registry-note": "Restart that service to apply" });
+Object.assign(zhCN, { "srv.pwd.registry-note": "重启该服务后生效" });
 
 const derivedZh: Record<string, string> = {};
 for (const key of Object.keys(en)) if (CJK.test(key)) derivedZh[key] = key;

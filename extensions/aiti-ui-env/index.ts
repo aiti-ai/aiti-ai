@@ -672,7 +672,7 @@ function fetchRemoteClip(silent) {
   if (!PAGE_TOKEN) { if (!silent) setClipMsg(T("无法定位实例 token"), "err"); return; }
   clipFetching = true;
   if (!silent) setClipMsg(T("获取远程剪贴板…"), "info");
-  fetch(API_BASE + "/api/extensions/aiti-ui-env/vnc-clipboard?token=" + encodeURIComponent(PAGE_TOKEN), { cache: "no-store" })
+  fetch(API_BASE + "/api/extensions/aiti-ui-env/vnc-clipboard?token=" + encodeURIComponent(PAGE_TOKEN) + "&locale=" + encodeURIComponent(VIEW_LANG), { cache: "no-store" })
     .then(function (r) { return r.json(); })
     .then(function (d) {
       clipFetching = false;
@@ -715,7 +715,7 @@ function sendRemoteClip() {
   if (!PAGE_TOKEN) { sendViaVnc(T("无法定位实例 token")); return; }
   clipSending = true;
   setClipMsg(T("发送中…"), "info");
-  fetch(API_BASE + "/api/extensions/aiti-ui-env/vnc-clipboard?token=" + encodeURIComponent(PAGE_TOKEN), {
+  fetch(API_BASE + "/api/extensions/aiti-ui-env/vnc-clipboard?token=" + encodeURIComponent(PAGE_TOKEN) + "&locale=" + encodeURIComponent(VIEW_LANG), {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: text }), cache: "no-store",
   }).then(function (r) { return r.json(); }).then(function (d) {
     clipSending = false;
@@ -1180,9 +1180,9 @@ export default {
         const key = ctx.searchParams.get("token") || ctx.searchParams.get("id") || "";
         if (req.method === "POST") {
           const body = await parseBody(req);
-          return json(await m.vncClipboardWrite(key, String(body.text ?? body.value ?? "")));
+          return json(await m.vncClipboardWrite(key, String(body.text ?? body.value ?? ""), locale));
         }
-        return json(await m.vncClipboardRead(key));
+        return json(await m.vncClipboardRead(key, locale));
       }
 
       // VNC 会话：发 HttpOnly cookie（30min，HMAC 签名）——URL 无任何凭据，刷新/重复打开可用；
@@ -1247,6 +1247,7 @@ export default {
                 id: body.id ? String(body.id) : undefined, host, port,
                 sysPort: body.sysPort ? Number(body.sysPort) : undefined,
                 sysLabel: body.sysLabel ? String(body.sysLabel) : undefined,
+                locale,
               });
               return json(r);
             } catch (e) { return json({ ok: false, error: tr(locale, "srv.api.start-failed", { error: String((e as Error).message) }) }, 500); }
