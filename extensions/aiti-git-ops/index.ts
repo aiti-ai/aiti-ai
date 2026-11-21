@@ -52,7 +52,7 @@ export default {
       try {
         ctx.services?.provide?.("aiti-git-ops.api", {
           refs: (cwd: string) => engine.gitRefs(cwd),
-          log: (cwd: string, cursor: number) => engine.gitLog(cwd, cursor),
+          log: (cwd: string, cursor: number, ref?: string) => engine.gitLog(cwd, cursor, 50, ref),
           checkout: (cwd: string, ref: string, mode?: string) => engine.gitCheckout(cwd, ref, mode),
           branchCreate: (cwd: string, name: string, from?: string, checkout?: boolean) => engine.gitBranchCreate(cwd, name, from, checkout),
           branchDelete: (cwd: string, name: string) => engine.gitBranchDelete(cwd, name),
@@ -103,7 +103,7 @@ export default {
       try {
         switch (p[1]) {
           case "refs": return json({ ok: true, ...(await engine.gitRefs(cwd)) });
-          case "log": return json({ ok: true, ...(await engine.gitLog(cwd, body?.cursor ?? 0)) });
+          case "log": return json({ ok: true, ...(await engine.gitLog(cwd, body?.cursor ?? 0, 50, body?.ref)) });
           case "checkout": return json(await engine.gitCheckout(cwd, body?.ref, body?.mode));
           case "branch-create": return json(await engine.gitBranchCreate(cwd, body?.name, body?.from, body?.checkout !== false));
           case "branch-delete": return json(await engine.gitBranchDelete(cwd, body?.name));

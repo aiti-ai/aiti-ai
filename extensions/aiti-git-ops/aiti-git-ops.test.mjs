@@ -310,6 +310,24 @@ test("log 分页：--graph 无 --skip 语义下翻页完整（55 空提交）", 
   assert.equal(tail.body.lines.length, 0); // 越界空页不炸
 });
 
+test("log: decorate always on + ref filter (graph view branch filter, borrow plan 2.1)", async () => {
+  git(["checkout", "-b", "graphview-x"]);
+  git(["commit", "--allow-empty", "-m", "gvx-1"]);
+  git(["commit", "--allow-empty", "-m", "gvx-2"]);
+  const r = await call(["git", "log"], { cwd: repo, ref: "graphview-x" });
+  assert.equal(r.status, 200);
+  const tip = r.body.lines.find((l) => l.includes("gvx-2"));
+  assert.ok(/\(HEAD -> graphview-x\)/.test(tip)); // --decorate=short badge inline
+  assert.ok(r.body.lines.some((l) => l.includes("gvx-1")));
+  const back = await call(["git", "log"], { cwd: repo, ref: "main", cursor: 0 });
+  assert.equal(back.status, 200);
+  assert.ok(!back.body.lines.some((l) => l.includes("gvx-2"))); // main view excludes branch-only commits
+  assert.ok(back.body.lines.some((l) => l.includes("c55"))); // shared history still visible
+  const bad = await call(["git", "log"], { cwd: repo, ref: "-U executing" });
+  assert.equal(bad.status, 400); // same assertSafeRef gate as checkout
+  git(["checkout", "main"]);
+});
+
 test("审计 jsonl 已写入（state 分层路径）", async () => {
   const auditPath = join(tmp, "ext", "config", "state", "aiti-git-ops", "git-ops.jsonl");
   assert.equal(existsSync(auditPath), true);
