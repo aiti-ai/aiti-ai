@@ -259,6 +259,11 @@ export function deleteOriginals(paths: string[]): number {
       unlinkSync(p);
       n++;
     } catch { /* already gone */ }
+    // Queue sidecar (<file>.queue.json) belongs to the source file: archiving means the
+    // session is closed out and leftover queue entries have no consumer (restore never
+    // resurrects old queues) — remove it too, or it stays behind as an orphan sidecar
+    // next to a session id that no longer has a live file.
+    try { unlinkSync(`${p}.queue.json`); } catch { /* no sidecar */ }
   }
   return n;
 }

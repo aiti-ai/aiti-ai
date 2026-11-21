@@ -514,6 +514,104 @@ test("archive/run keeps an idle session skipped when stopAliveSession fails to r
   }
 });
 
+test("archive/run digests an already-archived ghost id idempotently: idle wrapper released, no misleading skip", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "sm-arc-"));
+  const { writeFileSync } = await import("fs");
+  try {
+    const now = new Date().toISOString();
+    const header = (id) => JSON.stringify({ type: "session", version: 3, id, timestamp: now, cwd: "/w" });
+    const msg = (id, text, ts) => JSON.stringify({ type: "message", id, parentId: null, timestamp: ts, message: { role: "user", content: text } });
+    const sGhost = join(dir, "ghost.jsonl");
+    writeFileSync(sGhost, header("ghost-id") + "\n" + msg("m1", "hello", now) + "\n");
+    const { runtime, runArchive } = await import("./runtime.ts");
+    // first pass: a normal archive — source file moves into the package
+    const core0 = {
+      async listSessions() { return [{ id: "ghost-id", path: sGhost, cwd: "/w", modified: now }]; },
+      async getRunningSessionIds() { return []; },
+    };
+    const first = await runArchive(cfgOf(dir), core0, undefined, ["ghost-id"]);
+    assert.equal(first.archived, 1);
+    assert.ok(!existsSync(sGhost), "archived: source file gone");
+    assert.equal(runtime(cfgOf(dir)).index.getSession("ghost-id").archived, 1);
+    // ghost loop: the old URL spins the wrapper back up as a same-id empty in-memory session;
+    // archiving it again must succeed idempotently instead of reporting "open/running (or unindexed)"
+    let stopped = [];
+    let aliveIds = ["ghost-id"];
+    const core1 = {
+      async listSessions() { return []; }, // file lives in the package now — disk scan finds nothing
+      async getRunningSessionIds() { return []; },
+      async getAliveSessionIds() { return [...aliveIds]; },
+      async stopAliveSession(id) { stopped.push(id); aliveIds = aliveIds.filter((x) => x !== id); return "stopped"; },
+    };
+    const res = await api(req("http://x/", "POST", { ids: ["ghost-id"] }), { configDir: cfgOf(dir), path: ["archive", "run"], searchParams: new URLSearchParams(), core: core1 });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.deepEqual(body.skippedIds, []);
+    assert.deepEqual(body.alreadyArchived, ["ghost-id"]);
+    assert.deepEqual(stopped, ["ghost-id"], "idle ghost handle released");
+    assert.equal(body.archived, 0);
+  } finally {
+    await rmRf(dir, { closeSessionIndex: true, sessionIndexConfigDir: cfgOf(dir) });
+  }
+});
+
+test("archive/run keeps a running ghost (same-id live wrapper over an archived id) skipped — in-memory content wins", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "sm-arc-"));
+  const { writeFileSync } = await import("fs");
+  try {
+    const now = new Date().toISOString();
+    const header = (id) => JSON.stringify({ type: "session", version: 3, id, timestamp: now, cwd: "/w" });
+    const msg = (id, text, ts) => JSON.stringify({ type: "message", id, parentId: null, timestamp: ts, message: { role: "user", content: text } });
+    const sGhost = join(dir, "busy.jsonl");
+    writeFileSync(sGhost, header("busy-id") + "\n" + msg("m1", "hi", now) + "\n");
+    const { runArchive } = await import("./runtime.ts");
+    const core0 = {
+      async listSessions() { return [{ id: "busy-id", path: sGhost, cwd: "/w", modified: now }]; },
+      async getRunningSessionIds() { return []; },
+    };
+    await runArchive(cfgOf(dir), core0, undefined, ["busy-id"]);
+    let stopped = [];
+    const core1 = {
+      async listSessions() { return []; },
+      async getRunningSessionIds() { return ["busy-id"]; }, // user is actively writing into the ghost
+      async getAliveSessionIds() { return ["busy-id"]; },
+      async stopAliveSession(id) { stopped.push(id); return "running"; },
+    };
+    const res = await api(req("http://x/", "POST", { ids: ["busy-id"] }), { configDir: cfgOf(dir), path: ["archive", "run"], searchParams: new URLSearchParams(), core: core1 });
+    const body = await res.json();
+    assert.deepEqual(stopped, [], "running ghost never touched");
+    assert.deepEqual(body.skippedIds, ["busy-id"]);
+    assert.equal(body.alreadyArchived, undefined);
+  } finally {
+    await rmRf(dir, { closeSessionIndex: true, sessionIndexConfigDir: cfgOf(dir) });
+  }
+});
+
+test("archive removes the queue sidecar (<file>.queue.json) along with the source file", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "sm-arc-"));
+  const { writeFileSync } = await import("fs");
+  try {
+    const now = new Date().toISOString();
+    const header = (id) => JSON.stringify({ type: "session", version: 3, id, timestamp: now, cwd: "/w" });
+    const msg = (id, text, ts) => JSON.stringify({ type: "message", id, parentId: null, timestamp: ts, message: { role: "user", content: text } });
+    const sQ = join(dir, "q.jsonl");
+    const sidecar = `${sQ}.queue.json`;
+    writeFileSync(sQ, header("q-id") + "\n" + msg("m1", "hi", now) + "\n");
+    writeFileSync(sidecar, JSON.stringify({ version: 2, entries: [], trash: [] }));
+    const { runArchive } = await import("./runtime.ts");
+    const core = {
+      async listSessions() { return [{ id: "q-id", path: sQ, cwd: "/w", modified: now }]; },
+      async getRunningSessionIds() { return []; },
+    };
+    const r = await runArchive(cfgOf(dir), core, undefined, ["q-id"]);
+    assert.equal(r.archived, 1);
+    assert.ok(!existsSync(sQ), "source archived");
+    assert.ok(!existsSync(sidecar), "orphan queue sidecar removed with the source");
+  } finally {
+    await rmRf(dir, { closeSessionIndex: true, sessionIndexConfigDir: cfgOf(dir) });
+  }
+});
+
 test("guardedSessionIds falls back to running-only on old cores", async () => {
   const { guardedSessionIds } = await import("./runtime.ts");
   const old = { async getRunningSessionIds() { return ["r1"]; } };
