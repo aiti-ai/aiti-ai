@@ -36,6 +36,11 @@ test("compact tier (rowCompact = viewport compact OR narrow chat column) collaps
   // …and the context value is the bare percentage, never the "X% / window" form.
   assert.match(statsSource, /ctxStr = pct !== null \? `\$\{pct\.toFixed\(0\)\}%` : "\?%";/);
   assert.doesNotMatch(statsSource, /`\$\{pct\.toFixed\(0\)\}% \/ \$\{fmt\(contextUsage\.contextWindow\)\}`/);
+  // The percentage itself MUST be rendered on the desktop compact tier. This was
+  // once missing (the only render sites were the !rowCompact groups flow and the
+  // mobile dome block) and the button went fully blank on compact — regression
+  // guard for the render site, not just the tier definition.
+  assert.match(statsSource, /!isMobile && rowCompact && ctxStr && \(/);
 });
 
 test("density plan 方案 E: the stats row is a single nowrap flow (no per-stat flex gaps)", () => {
