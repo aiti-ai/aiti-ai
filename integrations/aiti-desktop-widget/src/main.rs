@@ -222,7 +222,28 @@ fn hydrate_linux_session_env() {
     }
 }
 
+/// Windows release builds are GUI-subsystem binaries, so a direct launch from cmd or
+/// PowerShell has no stdout and `--version`/`--help` look empty. Attach to the caller's
+/// console when one exists (launched from Explorer there is none and this is a no-op).
+/// GUI parents (aiti-dialog, video-studio) pass pipes explicitly and are unaffected.
+#[cfg(windows)]
+fn attach_parent_console() {
+    if std::env::var_os("AITI_DESKTOP_WIDGET_NO_CONSOLE").is_some() {
+        return;
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn AttachConsole(process_id: u32) -> i32;
+    }
+    const ATTACH_PARENT_PROCESS: u32 = 0xFFFF_FFFF;
+    unsafe {
+        AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+}
+
 fn main() {
+    #[cfg(windows)]
+    attach_parent_console();
     #[cfg(target_os = "linux")]
     hydrate_linux_session_env();
     let raw: Vec<String> = std::env::args().skip(1).collect();
