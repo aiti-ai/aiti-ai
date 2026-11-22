@@ -75,6 +75,9 @@ export default {
     clientImmediately: false, // [懒加载 v2] M1 已同步生产，懒化重启用
     // id 与 client 注册对齐（aiti-channels-open——原 channels 为历史错位，M1 审计发现）
     toolbar: [{ id: "aiti-channels-open", label: "i18n:channels.open", title: "i18n:channels.app.title", icon: "icons/message-circle.svg" }],
+    // aiti-float dock: three-face registration (floating / left block / right tab); ids match the client.
+    sidebarExplorerDock: [{ id: "panel", label: "i18n:it.aiti-channels-panel.label", icon: "message-circle" }],
+    rightFileDock: [{ id: "panel", label: "i18n:it.aiti-channels-panel.label" }],
     dialogs: [{ id: "aiti-channels-panel", label: "i18n:it.aiti-channels-panel.label" }],
     i18n: {
       en: {
