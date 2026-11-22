@@ -23,6 +23,7 @@ import {
   extractUrls, mergeExternalRoots, candidatesFromRoots, selfNameCandidates,
 } from "./recognize.js";
 import { FILE_ACTION_ORDER, sortFileActions } from "./file-actions.js";
+import { elToDom as miniToDom } from "./el-to-dom.js";
 import { openNewSession } from "../../../_shared/new-session-cwd";
 
 const state = { opening: null };
@@ -637,7 +638,9 @@ export default function register(ctx) {
   }
 
   function setInlineSafe(info, node) {
-    try { info.setInline(node); } catch (e) {}
+    // A card that fails to build must not vanish silently (it did: a function-component child
+    // blanked the popover right after the async path probe re-rendered it) — surface it in console.
+    try { info.setInline(node); } catch (e) { try { console.error("[aiti-msg-smart] card render failed", e); } catch {} }
   }
 
   // 关闭时清浮层引用（tr/pre 卡片）：scroll/resize 监听不再更新已关闭卡片
@@ -647,43 +650,23 @@ export default function register(ctx) {
     removeFloatListener();
   }
 
-  const UNITLESS_STYLE = new Set(["opacity", "zIndex", "flex", "flexGrow", "flexShrink", "order", "lineHeight", "fontWeight", "zoom", "scale", "aspectRatio"]);
   // ── 迷你 React 元素 → DOM（委托场景无 react-dom：buildCardNode 产出的元素树
   //    （{type, props, children}）用 DOM API 重建挂到 body，复用整套卡片/浮层/高亮逻辑）
-  function elToDom(node) {
-    if (node == null || node === false || node === true) return null;
-    const doc = rcx.doc || document;
-    if (typeof node === "string" || typeof node === "number") return doc.createTextNode(String(node));
-    if (Array.isArray(node)) {
-      const frag = doc.createDocumentFragment();
-      for (const n of node) { const d = elToDom(n); if (d) frag.appendChild(d); }
-      return frag;
-    }
-    const el = doc.createElement(node.type);
-    const props = node.props || {};
-    for (const k of Object.keys(props)) {
-      if (k === "children" || k === "key") continue;
-      const v = props[k];
-      if (v == null) continue;
-      if (k === "style" && typeof v === "object") {
-        for (const sk of Object.keys(v)) {
-          let sv = v[sk];
-          // React style 数字自动补 px（unitless 属性除外）——DOM 直接赋值需手动补
-          if (typeof sv === "number" && !UNITLESS_STYLE.has(sk)) sv = sv + "px";
-          try { el.style[sk] = sv; } catch {}
-        }
-      }
-      else if (k === "className") el.className = String(v);
-      else if (k.startsWith("on") && typeof v === "function") {
-        const ev = k.slice(2).toLowerCase();
-        el.addEventListener(ev, v); // 原生事件（stopPropagation/currentTarget 与 React 合成兼容）
-      }
-      else if (v !== false) { try { el.setAttribute(k, String(v)); } catch {} }
-    }
-    const kids = props.children;
-    const kd = elToDom(kids);
-    if (kd) el.appendChild(kd);
-    return el;
+  // Implementation lives in ./el-to-dom.js (function components such as FolderOpenIcon/SegmentRow
+  // must be expanded there — passing one to createElement throws and blanks the card).
+  const elToDom = (node) => miniToDom(node, rcx.doc || document);
+
+  // Code fences render gutter numbers as inline spans inside the <pre>
+  // (react-syntax-highlighter: userSelect:none, but still in textContent). Reading them would
+  // pollute quotes and path detection with the number ("1~/workspace/x.png", "1docs/x.md"),
+  // so the line text is read from a clone without those spans. Line breaks are untouched, so
+  // row indexes still match the caret-derived row; caret offsets keep using the live node.
+  function preText(lineHost) {
+    const raw = lineHost.textContent || "";
+    if (!lineHost.querySelector || !lineHost.querySelector(".react-syntax-highlighter-line-number")) return raw;
+    const clone = lineHost.cloneNode(true);
+    for (const n of clone.querySelectorAll(".react-syntax-highlighter-line-number")) n.remove();
+    return clone.textContent || "";
   }
   // pre 行点击委托层（扩展全权：无 core 行点击挂载）——弹层复用 buildCardNode + elToDom
   let lineClickSeq = 0;
@@ -747,7 +730,7 @@ export default function register(ctx) {
       if (!lineHost) return;
       if (!lineHost.closest("[data-chat-msg-role]")) return; // 只管消息区内的代码块/思考块：扩展面板里的 pre 不劫持（stopPropagation 会吞宿主点击）
       if (lineHost.closest(".markdown-user-message")) return; // user 消息 pre 不弹层（同段落策略）
-      const lines = (lineHost.textContent || "").split("\n");
+      const lines = preText(lineHost).split("\n");
       // 行号用 caret 定位：pre-wrap + break-all 下长行自动换行，像素行号会与逻辑行错位
       const { row, offset } = clickedLineInfo(lineHost, e.clientX, e.clientY);
       if (row < 0 || row >= lines.length) return;
