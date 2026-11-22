@@ -199,6 +199,94 @@ function request(port, path, headers = {}) {
 }
 
 const fixture = mkdtempSync(join(tmpdir(), "aiti-desktop-widget-test-"));
+
+// 1x1 transparent PNG used by the capability probe page.
+const PNG_1X1 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=";
+const CAPABILITY_PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>WIDGET-CAP</title></head>
+<body>capability probe</body>
+<script>
+(async () => {
+  const api = window.__TAURI__ || {};
+  const report = { calls: {}, errors: {}, modules: {} };
+  const call = async (name, fn) => {
+    try {
+      report.calls[name] = String(await fn());
+    } catch (error) {
+      report.errors[name] = String((error && error.message) || error);
+    }
+  };
+  const png = Uint8Array.from(atob("${PNG_1X1}"), (char) => char.charCodeAt(0));
+  await call("version", () => api.app.getVersion());
+  await call("identifier", () => api.app.getIdentifier());
+  await call("pathJoin", () => api.path.join("a", "b"));
+  await call("eventUnlisten", async () => typeof (await api.event.listen("capability-probe", () => {})));
+  await call("outerSize", async () => JSON.stringify(await api.window.getCurrentWindow().outerSize()));
+  await call("imagePng", async () => {
+    const size = await (await api.image.Image.fromBytes(png)).size();
+    return size.width + "x" + size.height;
+  });
+  await call("menuNew", async () => typeof (await api.menu.Menu.new({ items: [] })));
+  await call("trayNew", async () => typeof (await api.tray.TrayIcon.new({ id: "capability-probe" })));
+  report.modules.dialog = typeof (api.dialog && api.dialog.open);
+  await fetch("/report?payload=" + encodeURIComponent(JSON.stringify(report))).catch(() => {});
+})();
+</script></html>`;
+
+/** Loopback page + report sink for the capability probe. */
+function startCapabilityServer() {
+  const reports = [];
+  const waiters = [];
+  const server = http.createServer((req, res) => {
+    const url = new URL(req.url || "/", "http://127.0.0.1");
+    if (url.pathname === "/report") {
+      let report = {};
+      try {
+        report = JSON.parse(url.searchParams.get("payload") || "{}");
+      } catch {
+        report = { parseError: true };
+      }
+      reports.push(report);
+      for (const waiter of [...waiters]) {
+        waiters.splice(waiters.indexOf(waiter), 1);
+        clearTimeout(waiter.timer);
+        waiter.resolve(report);
+      }
+      res.writeHead(204).end();
+      return;
+    }
+    if (url.pathname === "/cap.html") {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(CAPABILITY_PAGE);
+      return;
+    }
+    res.writeHead(404).end();
+  });
+  return new Promise((resolveServer) => {
+    server.listen(0, "127.0.0.1", () => {
+      resolveServer({
+        port: server.address().port,
+        reports,
+        nextReport(timeoutMs = 15000) {
+          if (reports.length) return Promise.resolve(reports[reports.length - 1]);
+          return new Promise((resolveReport, rejectReport) => {
+            const waiter = { resolve: resolveReport, timer: null };
+            waiter.timer = setTimeout(() => {
+              const index = waiters.indexOf(waiter);
+              if (index >= 0) waiters.splice(index, 1);
+              rejectReport(new Error("timeout waiting for the capability report"));
+            }, timeoutMs);
+            waiters.push(waiter);
+          });
+        },
+        close() {
+          for (const waiter of waiters.splice(0)) clearTimeout(waiter.timer);
+          return new Promise((resolveClose) => server.close(resolveClose));
+        },
+      });
+    });
+  });
+}
+
 writeFileSync(
   join(fixture, "index.html"),
   '<!doctype html><html><head><meta charset="utf-8"><title>WIDGET TEST</title>' +
@@ -303,6 +391,32 @@ test("--config carries html/display/center", { skip: guiSkip }, async () => {
     assert.deepEqual({ x: moved.x, y: moved.y }, { x: 560, y: 490 });
   } finally {
     await widget.close();
+  }
+});
+
+test("loopback pages get the full page-control capability", { skip: guiSkip }, async () => {
+  const page = await startCapabilityServer();
+  const widget = startWidget([
+    "--url", `http://127.0.0.1:${page.port}/cap.html`,
+    "--width", "600", "--height", "300",
+    "--title", "WIDGET-CAP",
+  ]);
+  try {
+    await widget.wait((event) => event.t === "ready", "ready");
+    const report = await page.nextReport();
+    assert.deepEqual(report.errors, {}, JSON.stringify(report.errors));
+    assert.match(report.calls.version, /^\d+\.\d+\.\d+$/);
+    assert.equal(report.calls.identifier, "ai.aiti.desktop-widget");
+    assert.match(report.calls.pathJoin, /^a[\\/]b$/);
+    assert.equal(report.calls.eventUnlisten, "function");
+    assert.deepEqual(JSON.parse(report.calls.outerSize), { width: 600, height: 300 });
+    assert.equal(report.calls.imagePng, "1x1");
+    assert.equal(report.calls.menuNew, "object");
+    assert.equal(report.calls.trayNew, "object");
+    assert.equal(report.modules.dialog, "function");
+  } finally {
+    await widget.close();
+    await page.close();
   }
 });
 

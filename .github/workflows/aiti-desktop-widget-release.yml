@@ -71,6 +71,9 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -86,9 +89,8 @@ jobs:
         run: |
           cargo fmt --manifest-path "integrations/aiti-desktop-widget/Cargo.toml" -- --check
           cargo test --manifest-path "integrations/aiti-desktop-widget/Cargo.toml" --all-targets
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
+      - name: Capability allow-list matches the Tauri ACL manifest
+        run: node integrations/aiti-desktop-widget/scripts/check-capabilities.mjs
       - name: npm launcher tests (offline fake release server)
         run: |
           npm install --prefix "integrations/aiti-desktop-widget/npm" --no-audit --no-fund --ignore-scripts --registry https://registry.npmjs.org
