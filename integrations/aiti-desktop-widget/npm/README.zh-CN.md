@@ -123,6 +123,8 @@ loopback 字幕页（`caption-bar.html?bubble=1`），通过 SSE 推送字幕；
 - Windows 需要 WebView2 运行时（Windows 10/11 已预装，含 ARM64）。
 - macOS 可执行文件把 `Info.plist` 嵌入 `__TEXT,__info_plist`（ATS localhost 例外 +
   `LSUIElement`），裸二进制即可加载 `http://127.0.0.1` 页面，无需 `.app` bundle。
+  最低版本：**Intel macOS 10.15+** / **Apple Silicon 11.0+**；`--zoom` 需要 macOS 11+。
+  实测在 macOS 11.7；10.15 是声明/编译目标下限，未在 10.15 实机跑过。
 - Windows 二进制未签名；手动下载可能触发 SmartScreen。npm 下载路径不会写入
   Mark-of-the-Web。
 - 没有 `postinstall` 下载：安装阶段离线安全，首次实际运行才拉取二进制。可用

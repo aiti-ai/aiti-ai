@@ -399,7 +399,7 @@ fn print_help() {
     println!("  --focusable <bool>       default false");
     println!("  --shadow <bool>          default false");
     println!("  --resizable <bool>       default false (size locked via min=max constraints)");
-    println!("  --zoom <factor>          page zoom 0.1..5.0 (default 1.0)");
+    println!("  --zoom <factor>          page zoom 0.1..5.0 (default 1.0; macOS 11+)");
     println!("  --allow-remote <bool>    allow non-localhost URLs (default false)");
     println!("  --config <path>          runtime JSON config");
     println!("  --config-json <json>     inline runtime JSON config");

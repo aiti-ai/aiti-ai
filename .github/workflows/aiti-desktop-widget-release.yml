@@ -37,7 +37,6 @@ concurrency:
 
 env:
   DESKTOP_WIDGET_DIR: integrations/aiti-desktop-widget
-  MACOSX_DEPLOYMENT_TARGET: "11.0"
 
 jobs:
   validate:
@@ -105,31 +104,37 @@ jobs:
             target: x86_64-unknown-linux-gnu
             platform: linux-x64
             asset: aiti-desktop-widget-linux-x64
+            deployment: ""
             ext: ""
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             platform: win32-x64
             asset: aiti-desktop-widget-win32-x64.exe
+            deployment: ""
             ext: ".exe"
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             platform: linux-arm64
             asset: aiti-desktop-widget-linux-arm64
+            deployment: ""
             ext: ""
           - os: windows-11-arm
             target: aarch64-pc-windows-msvc
             platform: win32-arm64
             asset: aiti-desktop-widget-win32-arm64.exe
+            deployment: ""
             ext: ".exe"
           - os: macos-15-intel
             target: x86_64-apple-darwin
             platform: darwin-x64
             asset: aiti-desktop-widget-darwin-x64
+            deployment: "10.15"
             ext: ""
           - os: macos-15
             target: aarch64-apple-darwin
             platform: darwin-arm64
             asset: aiti-desktop-widget-darwin-arm64
+            deployment: "11.0"
             ext: ""
     runs-on: ${{ matrix.os }}
     steps:
@@ -152,6 +157,8 @@ jobs:
           workspaces: "${{ env.DESKTOP_WIDGET_DIR }} -> target"
 
       - name: Build
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment }}
         run: cargo build --release --manifest-path "integrations/aiti-desktop-widget/Cargo.toml" --target "${{ matrix.target }}"
 
       - name: Ad-hoc sign (macOS, no bundle)

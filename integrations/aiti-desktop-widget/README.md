@@ -232,10 +232,11 @@ grants only `core:window:allow-start-dragging` to `http://127.0.0.1:*` / `http:/
   `$sid=(Get-Process explorer|Select -First 1).SessionId; PsExec64 -accepteula -i $sid -d powershell -File test.ps1`
   (or a scheduled task with `/it`). In that context `CopyFromScreen` throws (invalid handle) —
   capture window contents with `PrintWindow` instead.
-- **macOS 11 (Intel)**: built with Rust 1.100.0 + Xcode 12; **verified visually** — the
-  bubble renders on the desktop frameless/transparent/always-on-top, and two instances
-  coexist (one click-through + one draggable). Requirements recap:
-  The bare binary now embeds `Info.plist` in `__TEXT,__info_plist` (see `build.rs`), so
+- **macOS 10.15+ (Intel) / 11.0+ (arm64)**: built with Rust 1.100.0 + Xcode 12 and
+  `MACOSX_DEPLOYMENT_TARGET=10.15`; **verified visually on 11.7** — the bubble renders on
+  the desktop frameless/transparent/always-on-top, and two instances coexist (one
+  click-through + one draggable). `--zoom` is best-effort below macOS 11.
+  The bare binary embeds `Info.plist` in `__TEXT,__info_plist` (see `build.rs`), so
   `http://127.0.0.1` pages load without an `.app` bundle (verified on macOS 11.7: the page's
   JS ran and hit the local server). `Info.plist` is also merged when building a `.app` with
   Tauri; launch that with `open -n app --args ...` if you ship a bundle.

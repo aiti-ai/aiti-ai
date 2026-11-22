@@ -127,6 +127,8 @@ can host floating status cards, desktop pets or any local HTML page.
 - Windows requires the WebView2 runtime (preinstalled on Windows 10/11, including ARM64).
 - The macOS executable embeds `Info.plist` in `__TEXT,__info_plist` (ATS localhost exception,
   `LSUIElement`), so the bare binary loads `http://127.0.0.1` pages without an `.app` bundle.
+  Deployment floor: **macOS 10.15+ (Intel)** / **11.0+ (Apple Silicon)**; `--zoom` needs macOS 11+.
+  Tested on macOS 11.7; 10.15 is the declared/targeted floor, not a tested machine.
 - Windows binaries are unsigned; SmartScreen may warn on manual downloads. The npm download path
   does not set the Mark-of-the-Web.
 - No `postinstall` download: installation stays offline-safe; the first actual run fetches the
