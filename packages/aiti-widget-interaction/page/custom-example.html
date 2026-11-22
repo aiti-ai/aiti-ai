@@ -37,11 +37,9 @@
  */
 const params = new URLSearchParams(location.search);
 const base = (params.get("base") || location.origin).replace(/\/+$/, "");
-const { connectInteraction } = await import(`${base}/interaction-client.js`);
-const client = await connectInteraction({ baseUrl: base });
-
 const $ = (id) => document.getElementById(id);
 const NEGATIVE = new Set(["cancel", "reject", "no", "deny"]);
+let client = null;
 
 function render(request) {
   $("title").textContent = request.title || `Custom · ${request.kind}`;
@@ -75,10 +73,17 @@ function render(request) {
   }
 }
 
-client.onRequest(render);
-client.onUpdate((id, state) => { $("result").textContent = `update: ${JSON.stringify(state)}`; });
-client.onResolved((id, result) => { $("result").textContent = `resolved: ${result.status}`; });
-client.onSnapshot((requests) => { if (requests.length) render(requests[requests.length - 1]); });
+async function start() {
+  const { connectInteraction } = await import(`${base}/interaction-client.js`);
+  client = await connectInteraction({ baseUrl: base });
+  client.onRequest(render);
+  client.onUpdate((id, state) => { $("result").textContent = `update: ${JSON.stringify(state)}`; });
+  client.onResolved((id, result) => { $("result").textContent = `resolved: ${result.status}`; });
+  client.onSnapshot((requests) => { if (requests.length) render(requests[requests.length - 1]); });
+}
+
+// No top-level await: macOS 11 WKWebView skips such module scripts entirely.
+start().catch((error) => { $("result").textContent = `connect failed: ${error.message || error}`; });
 </script>
 </body>
 </html>

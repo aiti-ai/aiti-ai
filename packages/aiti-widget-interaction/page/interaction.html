@@ -362,6 +362,9 @@ $("input").addEventListener("keydown", (event) => {
   }
 });
 
+// NOTE: no top-level await here — the macOS 11 WKWebView silently skips a module
+// script that uses TLA (the page then renders but never connects).
+async function start() {
 try {
   client = await connectInteraction();
   client.onSnapshot((requests) => {
@@ -386,6 +389,8 @@ try {
   $("title").textContent = "Interaction unavailable";
   $("message").textContent = error?.message || String(error);
 }
+}
+void start();
 </script>
 </body>
 </html>
