@@ -44,6 +44,12 @@ function feedResponse(handle, id, data) {
   feed(handle, { id, type: "response", command: "?", success: true, data });
 }
 
+/** Id of the Nth request frame the child received (0-based, write order) — tests must
+ *  not assume the wire's id format (ids carry a per-instance salt since 2026-11-22). */
+function requestId(handle, n) {
+  return handle.child.frames()[n].id;
+}
+
 async function later(ms = 20) {
   await new Promise((r) => setTimeout(r, ms));
 }
@@ -54,12 +60,12 @@ test("pi spec：request/response id 相关 + 错误帧 reject", async () => {
   const p = h.request({ type: "get_state" });
   await later();
   assert.equal(child.frames()[0].type, "get_state");
-  feedResponse(h, "r1", { ok: 1 });
+  feedResponse(h, requestId(h, 0), { ok: 1 });
   assert.deepEqual(await p, { ok: 1 });
 
   const p2 = h.request({ type: "get_state" });
   await later();
-  feed(h, { id: "r2", type: "response", command: "get_state", success: false, error: "boom" });
+  feed(h, { id: requestId(h, 1), type: "response", command: "get_state", success: false, error: "boom" });
   await assert.rejects(p2, /boom/);
 });
 
@@ -110,18 +116,18 @@ test("fork 命令映射：先反查 entries 再发 fork + 换绑广播（分支�
   await later();
   // resolveForkTarget 先 get_entries 反查真实 entry id
   assert.equal(child.frames()[0].type, "get_entries");
-  feedResponse(h, "r1", { entries: [
+  feedResponse(h, requestId(h, 0), { entries: [
     { id: "um-1", type: "message", message: { role: "user", content: "hi" } },
     { id: "as-1", type: "message", message: { role: "assistant", content: [] } },
   ] });
   await later();
   assert.equal(child.frames()[1].type, "fork");
   assert.equal(child.frames()[1].entryId, "um-1");
-  feedResponse(h, "r2", { cancelled: false });
+  feedResponse(h, requestId(h, 1), { cancelled: false });
   await later();
   // fork 成功后读 get_state 发现换绑到了子会话（新 id）→ announce session_backend_ready
   assert.equal(child.frames()[2].type, "get_state");
-  feedResponse(h, "r3", { sessionId: "branched-child" });
+  feedResponse(h, requestId(h, 2), { sessionId: "branched-child" });
   assert.deepEqual(await p, { cancelled: false, newSessionFile: "branched-child" });
   assert.equal(h.id, "branched-child", "handle id 换绑到子会话");
   const ready = events.find((e) => e.type === "session_backend_ready");
@@ -136,16 +142,16 @@ test("fork reset（编辑从此处）：fork 目标 = editEntryId（被编辑的
   const p = h.fork("assistant-branch-point", { reset: true, editEntryId: "user-msg-being-edited" });
   await later();
   assert.equal(child.frames()[0].type, "get_entries");
-  feedResponse(h, "r1", { entries: [
+  feedResponse(h, requestId(h, 0), { entries: [
     { id: "user-msg-being-edited", type: "message", message: { role: "user", content: "hi" } },
     { id: "assistant-branch-point", type: "message", message: { role: "assistant", content: [] } },
   ] });
   await later();
   assert.equal(child.frames()[1].type, "fork");
   assert.equal(child.frames()[1].entryId, "user-msg-being-edited", "pi fork(before) 只认 user 消息，用 editEntryId");
-  feedResponse(h, "r2", { cancelled: false });
+  feedResponse(h, requestId(h, 1), { cancelled: false });
   await later();
-  feedResponse(h, "r3", { sessionId: "child-1" });
+  feedResponse(h, requestId(h, 2), { sessionId: "child-1" });
   assert.deepEqual(await p, { cancelled: false, newSessionFile: "child-1" });
 });
 
@@ -155,7 +161,7 @@ test("fork 目标 ext-N：按 UI 消息序反查真实 user entry", async () => 
   const p = h.fork("", { reset: true, editEntryId: "ext-1" });
   await later();
   assert.equal(child.frames()[0].type, "get_entries");
-  feedResponse(h, "r1", { entries: [
+  feedResponse(h, requestId(h, 0), { entries: [
     { id: "info-1", type: "model_change", message: { role: "assistant", content: [] } },
     { id: "um-0", type: "message", message: { role: "user", content: "first" } },
     { id: "um-1", type: "message", message: { role: "user", content: "second" } },
@@ -164,9 +170,9 @@ test("fork 目标 ext-N：按 UI 消息序反查真实 user entry", async () => 
   // model_change 不进 UI 消息列表：ext-1 = 第二条 user 消息
   assert.equal(child.frames()[1].type, "fork");
   assert.equal(child.frames()[1].entryId, "um-1");
-  feedResponse(h, "r2", { cancelled: false });
+  feedResponse(h, requestId(h, 1), { cancelled: false });
   await later();
-  feedResponse(h, "r3", { sessionId: "t4c" }); // same id → no rebind announce
+  feedResponse(h, requestId(h, 2), { sessionId: "t4c" }); // same id → no rebind announce
   assert.deepEqual(await p, { cancelled: false });
 });
 
@@ -175,7 +181,7 @@ test("fork 目标解析失败：显式报错，绝不瞎猜 entry", async () => 
   const h = createHandleForTest(PI_SPEC, "t4d", child);
   const p = h.fork("", { reset: true, editEntryId: "ext-9" });
   await later();
-  feedResponse(h, "r1", { entries: [] });
+  feedResponse(h, requestId(h, 0), { entries: [] });
   await assert.rejects(p, /cannot resolve entry/, "解析失败必须显式抛错");
   assert.equal(child.frames().some((f) => f.type === "fork"), false, "解析失败绝不发 fork");
 });
@@ -187,11 +193,11 @@ test("fork 后子会话 id 与记录一致（或 get_state 失败）→ 不广�
   h.subscribe((e) => events.push(e));
   const p = h.fork("entry-1");
   await later();
-  feedResponse(h, "r1", { entries: [{ id: "entry-1", type: "message", message: { role: "user", content: "hi" } }] });
+  feedResponse(h, requestId(h, 0), { entries: [{ id: "entry-1", type: "message", message: { role: "user", content: "hi" } }] });
   await later();
-  feedResponse(h, "r2", { cancelled: false });
+  feedResponse(h, requestId(h, 1), { cancelled: false });
   await later();
-  feedResponse(h, "r3", { sessionId: "same-id" });
+  feedResponse(h, requestId(h, 2), { sessionId: "same-id" });
   assert.deepEqual(await p, { cancelled: false });
   assert.equal(events.find((e) => e.type === "session_backend_ready"), undefined);
 });
@@ -202,7 +208,7 @@ test("getMessages：pi 走 get_entries 原样", async () => {
   const ppi = hpi.getMessages();
   await later();
   assert.equal(cpi.frames()[0].type, "get_entries");
-  feedResponse(hpi, "r1", { entries: [{ id: "e1", type: "message", message: { role: "user", content: "hi" } }] });
+  feedResponse(hpi, requestId(hpi, 0), { entries: [{ id: "e1", type: "message", message: { role: "user", content: "hi" } }] });
   assert.equal((await ppi)[0].id, "e1");
 });
 
@@ -212,7 +218,7 @@ test("pi getCommands 仍发 get_commands", async () => {
   const p = h.getCommands();
   await later();
   assert.equal(child.frames()[0].type, "get_commands");
-  feedResponse(h, "r1", { commands: [{ name: "foo", source: "project" }] });
+  feedResponse(h, requestId(h, 0), { commands: [{ name: "foo", source: "project" }] });
   assert.equal((await p)[0].name, "foo");
 });
 

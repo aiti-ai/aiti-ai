@@ -3,9 +3,9 @@ import { resolveSessionPath } from "@/lib/session-reader";
 import { getOfflineSessionStats, startRpcSession, getRpcSession, setRpcSessionTools } from "@/lib/rpc-manager";
 import { cwdMissingBody, missingCwdFromBody } from "@/lib/missing-cwd";
 import { applyQueuedFlag, cancelCompactQueue, parkCompactIfBusy, type CompactQueueWrapper } from "@/lib/compact-queue";
-import { resolveAnySession, resolveAttachBySessionId, resolveDetachedSession, attachIfBridged, resolvePlaceholderSession, resolveExternalCompositeSession, openDetachedPreferred, prefersDetached } from "@/lib/session";
+import { resolveAnySession, resolveAttachBySessionId, resolveDetachedSession, attachIfBridged, resolvePlaceholderSession, resolveExternalCompositeSession, openDetachedPreferred, prefersDetached, resolveProviderOwnedSession } from "@/lib/session";
 import { HandleSessionAdapter } from "@/lib/session";
-import { sendWithAcceptWindow } from "@/lib/agent-command-accept";
+import { sendWithAcceptWindow, PROMPT_FAMILY_TYPES } from "@/lib/agent-command-accept";
 import { EXTENSION_REPORTED_CODE } from "@/lib/agent-client";
 
 /**
@@ -19,15 +19,24 @@ async function sendAccepted(
   wrapper: Parameters<typeof sendWithAcceptWindow>[0],
   body: { type?: unknown; [key: string]: unknown },
   onAccepted: () => void,
+  /** Which resolution path answered (forensics: a prompt answered by a non-standard session object = the twin/steer-loss bug class). */
+  via?: string,
 ): Promise<NextResponse> {
   const outcome = await sendWithAcceptWindow(wrapper, body as Record<string, unknown>);
+  const type = String(body.type ?? "");
+  if (PROMPT_FAMILY_TYPES.has(type)) {
+    // Forensics anchor (2026-11-22 steer-loss): one line per prompt-family send,
+    // recording which resolution path answered — a non-standard `via` on a
+    // session whose events never reach the page = the twin bug class.
+    console.log(`[agent-send] ${type} via=${via || "unknown"} settled=${outcome.settled}`);
+  }
   if (!outcome.settled) {
     onAccepted();
-    return NextResponse.json({ success: true, accepted: true, pending: true }, { status: 202 });
+    return NextResponse.json({ success: true, accepted: true, pending: true, ...(via ? { via } : {}) }, { status: 202 });
   }
   if ("error" in outcome) throw outcome.error;
   onAccepted();
-  return NextResponse.json({ success: true, data: outcome.result });
+  return NextResponse.json({ success: true, data: outcome.result, ...(via ? { via } : {}) });
 }
 
 /**
@@ -64,6 +73,12 @@ export async function POST(
   const { id } = await params;
   let commandType: string | undefined;
   let promptAccepted = false;
+  // Which resolution path answered (forensics, 2026-11-22 steer-loss): a
+  // prompt-family command answered by anything other than the standard
+  // session object for this backend = the twin bug class — surface it in the
+  // response body ("via") and the server log.
+  let via = "";
+  const viaTag = (tag: string) => { via = tag; return tag; };
 
   try {
     const body = await req.json() as { type: string; [key: string]: unknown };
@@ -99,24 +114,36 @@ export async function POST(
       if (bridged?.isAlive()) {
         const queued = await compactQueueResponse(id, bridged, body);
         if (queued) return queued;
-        return await sendAccepted(bridged, body, () => { promptAccepted = body.type === "prompt"; });
+        return await sendAccepted(bridged, body, () => { promptAccepted = body.type === "prompt"; }, viaTag("bridge"));
       }
     }
 
     // Fast path: already-running session (local registry, then provider handles)
-    let existing = getRpcSession(id)?.isAlive() ? getRpcSession(id) : resolveAnySession(id);
+    const localWrapper = getRpcSession(id);
+    let existing = localWrapper?.isAlive() ? localWrapper : resolveAnySession(id);
+    if (existing?.isAlive()) viaTag(localWrapper?.isAlive() ? "local-registry" : "handle-store");
     // Placeholder uuid (the persistent pi anchor for external agent sessions): on a registry miss,
     // route to the real backend via the placeholder file — never start a local runtime for a
     // placeholder file (that would run it as an empty-shell pi session).
     if (!existing?.isAlive()) {
       const ph = await resolvePlaceholderSession(id).catch(() => undefined);
-      if (ph?.isAlive()) existing = ph;
+      if (ph?.isAlive()) { existing = ph; viaTag("placeholder"); }
     }
     // Detached wrapper (file-less backends included): the agent outlived a
     // restart/reload, so drive the live process instead of starting a new one.
     if (!existing?.isAlive()) {
       const detached = await resolveDetachedSession(id).catch(() => undefined);
-      if (detached?.isAlive()) existing = detached;
+      if (detached?.isAlive()) { existing = detached; viaTag("detached-attach"); }
+    }
+    // Spawn/attach-owned session files must never fall through to the local
+    // runtime below: startRpcSession would open a SECOND writer on the same
+    // file (the "twin"), whose events and replies bypass the chat page — the
+    // steer-loss bug class (2026-11-22 forensics). Hand the file back to its
+    // claiming provider: adopt the live wrapper, or resume a fresh subprocess
+    // with the native id.
+    if (!existing?.isAlive() && filePath) {
+      const owned = await resolveProviderOwnedSession(id, filePath).catch(() => undefined);
+      if (owned?.isAlive()) { existing = owned; viaTag("provider-resume"); }
     }
 
     // Upstream v0.8.10: set_tools hot-updates the tool set (rebuilds from the file path when the session isn't running).
@@ -142,7 +169,7 @@ export async function POST(
       }
       const queued = await compactQueueResponse(id, existing, body);
       if (queued) return queued;
-      return await sendAccepted(existing, body, () => { promptAccepted = body.type === "prompt"; });
+      return await sendAccepted(existing, body, () => { promptAccepted = body.type === "prompt"; }, via || "fast-path");
     }
 
     // Local path: file missing and no live session → 404; file present → start a local runtime
@@ -154,7 +181,8 @@ export async function POST(
       if (/^[a-z][\w-]*:/.test(id) && !id.startsWith("pi:")) {
         const ext = await resolveExternalCompositeSession(id).catch(() => undefined);
         if (ext?.isAlive()) {
-          return await sendAccepted(ext, body, () => { promptAccepted = body.type === "prompt"; });
+          viaTag("external-composite");
+          return await sendAccepted(ext, body, () => { promptAccepted = body.type === "prompt"; }, via);
         }
         return NextResponse.json({
           error: `Session backend unavailable: ${id} (the service may have just restarted, the agent provider is not ready, or the session can no longer be resumed)`,
@@ -191,14 +219,15 @@ export async function POST(
       const hosted = await openDetachedPreferred(id, filePath).catch(() => undefined);
       const adapter = hosted ? new HandleSessionAdapter(hosted) : undefined;
       if (adapter?.isAlive()) {
-        return await sendAccepted(adapter, body, () => { promptAccepted = body.type === "prompt"; });
+        return await sendAccepted(adapter, body, () => { promptAccepted = body.type === "prompt"; }, viaTag("detached-preferred"));
       }
     }
 
     const { session } = await startRpcSession(id, filePath, undefined, {
       ...(toolNames !== undefined ? { toolNames } : {}),
     });
-    return await sendAccepted(session, body, () => { promptAccepted = body.type === "prompt"; });
+    viaTag("local-runtime");
+    return await sendAccepted(session, body, () => { promptAccepted = body.type === "prompt"; }, via);
   } catch (error) {
     // Read by its fields: the wrapper that threw may come from another route's bundle.
     const missingCwd = missingCwdFromBody(error);

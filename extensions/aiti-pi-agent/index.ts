@@ -54,6 +54,17 @@ function loadSpawnIndex(): SpawnIndex {
   return spawnIndex;
 }
 
+/** Session id from a pi session file path ("<ISO timestamp>_<uuid>.jsonl"); null when the
+ *  name shape carries none (fork run files "session.jsonl", sidecars, etc.). */
+function sessionIdFromSessionFile(sessionFile: string): string | null {
+  const base = sessionFile.split("/").pop() ?? sessionFile;
+  if (!base.endsWith(".jsonl")) return null;
+  const stem = base.slice(0, -".jsonl".length);
+  const idx = stem.lastIndexOf("_");
+  const id = idx >= 0 ? stem.slice(idx + 1) : stem;
+  return /^[A-Za-z0-9_-]{8,}$/.test(id) ? id : null;
+}
+
 /** Record a session id this backend spawned (idempotent; best-effort persist). */
 function recordSpawnSession(id: string, cwd?: string): void {
   if (!id) return;
@@ -116,6 +127,8 @@ export default {
           agentKey?: string;
           /** Opt-in: host the agent in a detachable wrapper (survives pi-web restarts). */
           detachable?: boolean;
+          /** Single-writer claim on session files this backend spawned (blocks the core's local-runtime twin). */
+          ownsFile?: (sessionFile: string) => boolean | Promise<boolean>;
           maxCapabilities: SessionCapabilitiesLike;
           createSession(options: {
             sessionId?: string;
@@ -162,6 +175,16 @@ export default {
           // handle adopts the live process on reattach (see PiSpawnHandle.attach).
           detachable: true,
           maxCapabilities: capabilitiesFor(spec),
+          // Single-writer claim (2026-11-22 steer-loss forensics): a session file
+          // this backend spawned must NEVER be opened by the core's local runtime
+          // (startRpcSession twin) — the twin accepts prompts into a session whose
+          // events and replies bypass the chat page. Claim = the core routes the
+          // file back here (resolveProviderOwnedSession → attach or subprocess
+          // resume). Durable basis: the spawn index recorded at spawn time.
+          ownsFile: (sessionFile: string) => {
+            const sid = sessionIdFromSessionFile(sessionFile);
+            return Boolean(sid && loadSpawnIndex().sessions[sid]);
+          },
           createSession: (options) => {
             // Resume-without-cwd recovery (composite-id restore after a host restart):
             // the caller only knows the session id — the workspace lives in the spawn

@@ -42,6 +42,12 @@ function feed(handle, obj) {
   handle.child.stdout.write(JSON.stringify(obj) + "\n");
 }
 
+/** Id of the Nth request frame the child received (0-based, write order) — tests must
+ *  not assume the wire's id format (ids carry a per-instance salt since 2026-11-22). */
+function requestId(handle, n) {
+  return handle.child.frames()[n].id;
+}
+
 function feedResponse(handle, id, data) {
   feed(handle, { id, type: "response", command: "?", success: true, data });
 }
@@ -73,7 +79,7 @@ test("fork 命令映射：omp 发 branch", async () => {
   const p = h.fork("entry-1");
   await later();
   assert.equal(child.frames()[0].type, "branch");
-  feedResponse(h, "r1", { text: "sel", cancelled: false });
+  feedResponse(h, requestId(h, 0), { text: "sel", cancelled: false });
   assert.deepEqual(await p, { cancelled: false });
 });
 
@@ -83,7 +89,7 @@ test("getMessages：omp 走 get_messages 并包装为 pi entry", async () => {
   const pom = hom.getMessages();
   await later();
   assert.equal(com.frames()[0].type, "get_messages");
-  feedResponse(hom, "r1", { messages: [{ role: "user", content: "hi" }, { role: "assistant", content: [{ type: "text", text: "yo" }] }] });
+  feedResponse(hom, requestId(hom, 0), { messages: [{ role: "user", content: "hi" }, { role: "assistant", content: [{ type: "text", text: "yo" }] }] });
   const msgs = await pom;
   assert.equal(msgs.length, 2);
   assert.deepEqual(msgs[0], { id: "omp-m0", type: "message", message: { role: "user", content: "hi" } });
@@ -96,7 +102,7 @@ test("getCommands：omp 发 get_available_commands 并归一化 aliases/细节",
   const p = h.getCommands();
   await later();
   assert.equal(child.frames()[0].type, "get_available_commands");
-  feedResponse(h, "r1", {
+  feedResponse(h, requestId(h, 0), {
     commands: [
       { name: "compact", description: "压缩", aliases: ["c"], source: "builtin", subcommands: [] },
       { name: "review" },
@@ -126,7 +132,7 @@ test("omp getAllTools/getContextUsage：get_state 预热后同步可读", async 
   const p = h.getAllTools();
   await later();
   assert.equal(child.frames()[0].type, "get_state");
-  feedResponse(h, "r1", {
+  feedResponse(h, requestId(h, 0), {
     sessionId: "omp-sid-1",
     dumpTools: [{ name: "read", description: "读文件", parameters: {} }, { name: "bash" }],
     contextUsage: { tokens: 1000, contextWindow: 100000, percent: 1 },
@@ -135,7 +141,7 @@ test("omp getAllTools/getContextUsage：get_state 预热后同步可读", async 
   // 事件预热路径：agent_end 触发 refreshStateUsage（第二次 get_state）
   feed(h, { type: "agent_end" });
   await later();
-  feedResponse(h, "r2", { sessionId: "omp-sid-1", contextUsage: { tokens: 2000, contextWindow: 100000, percent: 2 } });
+  feedResponse(h, requestId(h, 1), { sessionId: "omp-sid-1", contextUsage: { tokens: 2000, contextWindow: 100000, percent: 2 } });
   await later();
   assert.deepEqual(h.getContextUsage(), { percent: 2, contextWindow: 100000, tokens: 2000 });
   assert.equal(h.rpcSessionId, "omp-sid-1");

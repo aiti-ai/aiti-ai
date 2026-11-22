@@ -50,12 +50,13 @@ test("wire：request/response id 关联 + 错误帧 reject", async () => {
   const p = h.request({ type: "get_state" });
   await later();
   assert.equal(child.frames()[0].type, "get_state");
-  feed(h, { id: "r1", type: "response", command: "?", success: true, data: { ok: 1 } });
+  // Ids carry a per-instance salt (2026-11-22): read the id off the wire instead of assuming a format.
+  feed(h, { id: child.frames()[0].id, type: "response", command: "?", success: true, data: { ok: 1 } });
   assert.deepEqual(await p, { ok: 1 });
 
   const p2 = h.request({ type: "get_state" });
   await later();
-  feed(h, { id: "r2", type: "response", command: "get_state", success: false, error: "boom" });
+  feed(h, { id: child.frames()[1].id, type: "response", command: "get_state", success: false, error: "boom" });
   await assert.rejects(p2, /boom/);
 });
 
@@ -156,7 +157,7 @@ test("wire：request 超时 reject + 响应/死亡清定时器（审查 P1-4 回
   // 正常响应路径不受超时影响
   const p = h.request({ type: "get_state" }, { timeoutMs: 5_000 });
   await later();
-  feed(h, { id: "r2", type: "response", command: "get_state", success: true, data: { ok: 1 } });
+  feed(h, { id: child.frames()[1].id, type: "response", command: "get_state", success: true, data: { ok: 1 } });
   assert.deepEqual(await p, { ok: 1 });
 });
 
