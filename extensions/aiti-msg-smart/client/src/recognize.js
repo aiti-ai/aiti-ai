@@ -186,7 +186,10 @@ export function splitQuestions(text) {
     const next = t[i + 1] ?? "";
     let cut = -1;
     let soft = false;
-    if (ch === "。" || ch === "！") { cut = i; soft = true; }
+    // A block boundary from the renderer (list item / paragraph / <br>): always its own row.
+    // DOM text used to arrive glued together, which turned a whole list into one "sentence".
+    if (ch === "\n") cut = i;
+    else if (ch === "。" || ch === "！") { cut = i; soft = true; }
     else if (ch === "？" || ch === "?") {
       const prev = t[i - 1] ?? "";
       if (!next || /[\s\u3000-\u9fff\uff00-\uffef"'”’)\]]/u.test(next)) cut = i;
