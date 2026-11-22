@@ -65,12 +65,13 @@ export default defineConfig({
       external: [/^node:/],
       output: {
         entryFileNames: "[name].mjs",
-        // ext-lazy pick 坑（2026-09-16）：chunk 若同时被静态 import（如 move-cwd-picker
-        // 静态引 directory-browser）又被 lazy pick 字符串访问（sidebar-content 的
-        // dirBrowserRef），rollup 默认 minifyInternalExports 会把该 chunk 导出改名成
-        // A/C/D…——静态引用点会配对改写（安全），但 mod["DirectoryBrowser"] 字符串取值
-        // 永远 miss → LazyMount 静默渲染 null（「添加文件夹」弹窗消失无任何报错）。
-        // 关掉内部导出改名，保证 pick 字符串永远匹配源码导出名。
+        // ext-lazy pick pitfall (2026-09-16): when a chunk is both statically imported
+        // (e.g. move-cwd-picker imports directory-browser) and reached by a lazy pick
+        // string (sidebar-dock's dirPickerRef), rollup's default minifyInternalExports
+        // renames the chunk's exports to A/C/D… — static reference sites are rewritten in
+        // pairs (safe), but mod["DirectoryPicker"] lookups always miss → LazyMount renders
+        // null silently (the add-folder dialog just never appears). Disabling internal
+        // export renaming guarantees pick strings always match the source export names.
         minifyInternalExports: false,
       },
     },

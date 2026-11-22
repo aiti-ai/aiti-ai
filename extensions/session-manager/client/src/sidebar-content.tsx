@@ -21,7 +21,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { t, apiUrl, getExtService, onExtServiceChange, ensureMaterialized, renderSlot } from "./host-shim";
 import { useStore, refreshSessions, refreshWorkspaces, refreshProjectSessions, getProjectSessionsTarget, panelOpen, type WorkspaceEntry } from "./store";
-import { SidebarList } from "./sidebar-dock";
+import { SidebarList, dirPickerRef } from "./sidebar-dock";
 import { getRecentProjects, getProjectActivity, normalizeWorkspaceKey, type SessionInfo } from "./sidebar/pure";
 import { useWorktree } from "./sidebar/use-worktree";
 import { useBranchChip } from "./sidebar/branch-chip";
@@ -37,11 +37,11 @@ import {
   folderItemKey,
   INSTANCES_EVENT,
 } from "../../../aiti-folder/client/src/folder-dock";
-// 薄壳拆分（§5.1）：加文件夹的 aiti-folder DirectoryBrowser 懒 chunk——folderPickerOpen
-// 门控才 import（跨扩展复用件不随首屏；aiti-folder host-shim 副本仍在 entry chunk
-// （setAitiFolderCtx 注入），本 chunk 复用同一实例，ctx 单实例不受拆包影响）
-import { createLazyModule, LazyMount } from "../../../_shared/ext-lazy";
-const dirBrowserRef = createLazyModule(() => import("../../../aiti-folder/client/src/directory-browser"));
+// Thin-shell split (§5.1): "Add folder" mounts the sidebar/directory-picker lazy chunk —
+// imported only while folderPickerOpen. The ref is reused from sidebar-dock, so the
+// project switcher and this dialog share one singleton/chunk (same Explorer-style path
+// breadcrumb + "New folder" row).
+import { LazyMount } from "../../../_shared/ext-lazy";
 
 /* ── 未读标记（宿主同 key 持久化：pi-web:unread-session-ids——回退/接管两态共享）── */
 const UNREAD_KEY = "pi-web:unread-session-ids";
@@ -760,12 +760,12 @@ export function SidebarContentDock(props: Record<string, any>) {
       {/* 分支面板弹层（portal 到 body；git-ops 方案 §2） */}
       {chip.overlay}
 
-      {/* ＋ 添加文件夹（aiti-folder DirectoryBrowser；选择即追加实例（含配额），已存在则重新带到面前） */}
+      {/* ＋ add folder (sidebar/directory-picker; a pick opens an instance — quota-checked — and re-focuses an existing one) */}
       {folderPickerOpen ? (
         <LazyMount
           active={folderPickerOpen}
-          load={dirBrowserRef}
-          pick="DirectoryBrowser"
+          load={dirPickerRef}
+          pick="DirectoryPicker"
           initialPath={cwdState ?? undefined}
           onSelect={(p: string) => { setFolderPickerOpen(false); openFolderInstance(p); }}
           onCancel={() => setFolderPickerOpen(false)}
