@@ -18,6 +18,7 @@
     --bar: rgba(255,255,255,.16);
   }
   html, body { height: 100%; margin: 0; background: transparent; }
+  audio { display: none; }
   * { box-sizing: border-box; }
   body {
     color: var(--fg);
@@ -154,6 +155,60 @@
   #play:hover { color: #fff; background: linear-gradient(145deg, #b7a4ff, #8b5cf6); }
   #meta-line { color: var(--faint); font-size: 10px; margin-left: auto; max-width: 45%;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #compact { display: none; flex: 1 1 auto; min-height: 0; flex-direction: column; justify-content: center; width: 100%; }
+  body[data-layout="line"] #meta,
+  body[data-layout="line"] #lyrics,
+  body[data-layout="line"] #footer { display: none; }
+  body[data-layout="line"] #compact { display: flex; }
+  body[data-layout="line"] #app { justify-content: center; }
+  #compact-row { display: flex; align-items: center; gap: clamp(6px, 1.5vmin, 12px); min-width: 0; width: 100%; }
+  #compact-play {
+    flex: 0 0 auto; width: 32px; height: 32px; border-radius: 50%; color: #fff;
+    background: linear-gradient(145deg, var(--accent), #7c3aed); font-size: 13px;
+    box-shadow: 0 4px 16px rgba(124,58,237,.3); border: 0; cursor: pointer;
+    display: grid; place-items: center; transition: transform .12s ease, background .15s ease;
+  }
+  #compact-play:hover { background: linear-gradient(145deg, #b7a4ff, #8b5cf6); }
+  #compact-play:active { transform: scale(.94); }
+  #compact-viewport {
+    position: relative; flex: 1 1 auto; min-width: 0; overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    padding: 2px 0 9px; cursor: pointer;
+  }
+  #compact-viewport.overflow { justify-content: flex-start; }
+  #compact-text {
+    display: inline-block; white-space: nowrap; max-width: none;
+    font-size: clamp(16px, 3.2vmin, 27px); font-weight: 800; line-height: 1.25;
+    letter-spacing: -.01em; color: var(--fg); text-shadow: 0 2px 14px rgba(0,0,0,.38);
+    transition: transform .08s linear; will-change: transform;
+  }
+  #compact-track {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 3px;
+    border-radius: 999px; background: var(--bar); overflow: hidden;
+  }
+  #compact-fill {
+    height: 100%; width: 0%; border-radius: inherit;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    box-shadow: 0 0 12px rgba(167,139,250,.5);
+  }
+  #compact-mute {
+    flex: 0 0 auto; width: 26px; height: 26px; border-radius: 8px; border: 0;
+    background: transparent; color: var(--muted); cursor: pointer; font-size: 13px;
+    display: grid; place-items: center; padding: 0;
+  }
+  #compact-mute:hover { background: rgba(255,255,255,.09); color: var(--fg); }
+  body[data-theme="light"] #compact-mute:hover { background: rgba(23,21,31,.08); }
+  #compact-time {
+    flex: 0 0 auto; color: var(--muted); font-size: clamp(10px, 1.5vmin, 12px);
+    font-variant-numeric: tabular-nums; letter-spacing: .03em;
+  }
+  body[data-layout="line"] #app { padding-top: 8px; padding-bottom: 8px; }
+  @media (max-height: 150px) {
+    body[data-layout="line"] #app { padding-top: 5px; padding-bottom: 5px; }
+    #compact-play { width: 28px; height: 28px; font-size: 11px; }
+    #compact-time { display: none; }
+    #compact-viewport { padding-bottom: 7px; }
+  }
   #status {
     position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
     max-width: 90%; padding: 7px 14px; border-radius: 999px;
@@ -217,6 +272,14 @@
       <span id="meta-line"></span>
     </div>
   </footer>
+  <section id="compact" aria-live="polite">
+    <div id="compact-row">
+      <button id="compact-play" type="button" aria-label="Play">▶</button>
+      <div id="compact-viewport"><span id="compact-text">♪</span><div id="compact-track"><div id="compact-fill"></div></div></div>
+      <span id="compact-time">0:00</span>
+      <button id="compact-mute" type="button" aria-label="Mute" title="Mute">🔊</button>
+    </div>
+  </section>
 </main>
 <div id="status" role="status"></div>
 <audio id="audio" preload="metadata"></audio>
@@ -254,7 +317,7 @@
   const theme = first("theme") === "light" ? "light" : "dark";
   const bg = (first("bg") || "transparent").toLowerCase();
   const bare = first("bare") === "1";
-  const autoplay = first("autoplay") === "1";
+  const autoplay = first("autoplay") !== "0";
   const loop = first("loop") === "1";
   const volumeParam = Number(first("volume"));
   const volume = Number.isFinite(volumeParam) ? Math.max(0, Math.min(1, volumeParam)) : 1;
@@ -282,10 +345,19 @@
   const sourceEl = document.getElementById("source");
   const metaLine = document.getElementById("meta-line");
   const statusEl = document.getElementById("status");
+  const compactEl = document.getElementById("compact");
+  const compactPlayBtn = document.getElementById("compact-play");
+  const compactViewport = document.getElementById("compact-viewport");
+  const compactText = document.getElementById("compact-text");
+  const compactFill = document.getElementById("compact-fill");
+  const compactTime = document.getElementById("compact-time");
+  const compactMuteBtn = document.getElementById("compact-mute");
 
   let lines = [];
   let distributed = false;
   let active = -1;
+  let compactRenderedText = "";
+  let autoplayPending = false;
   let dragging = false;
   let statusTimer = 0;
   let raf = 0;
@@ -448,6 +520,52 @@
     });
     const current = rows[index];
     if (current) current.scrollIntoView({ block: "center", behavior: "smooth" });
+    updateCompact();
+  }
+
+  function findActiveLine() {
+    if (!lines.length) return null;
+    return active >= 0 ? lines[active] : lines[0];
+  }
+
+  function updateCompact() {
+    if (document.body.dataset.layout !== "line") return;
+    const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
+    const current = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
+    const line = findActiveLine();
+    if (!line) {
+      compactText.textContent = "♪";
+      compactFill.style.width = "0%";
+      compactTime.textContent = fmt(current);
+      return;
+    }
+    const index = lines.indexOf(line);
+    const start = Math.max(0, Number(line.time) || 0);
+    const end = Math.max(start + 0.1, lines[index + 1]?.time ?? duration ?? start + 5);
+    const progress = Math.max(0, Math.min(1, (current - start) / (end - start)));
+    if (compactRenderedText !== line.text) {
+      compactRenderedText = line.text;
+      compactText.textContent = line.text || "♪";
+      compactViewport.classList.remove("overflow");
+      compactText.style.transform = "translateX(0)";
+    }
+    const overflow = compactText.scrollWidth - compactViewport.clientWidth;
+    if (overflow > 2) {
+      compactViewport.classList.add("overflow");
+      compactText.style.transform = `translateX(${(-overflow * progress).toFixed(1)}px)`;
+    } else {
+      compactViewport.classList.remove("overflow");
+      compactText.style.transform = "translateX(0)";
+    }
+    compactFill.style.width = `${(progress * 100).toFixed(2)}%`;
+    compactTime.textContent = fmt(current);
+  }
+
+  function applyLayout() {
+    const explicit = first("layout");
+    const compact = explicit === "line" || (explicit !== "card" && window.innerHeight <= 220);
+    document.body.dataset.layout = compact ? "line" : "card";
+    updateCompact();
   }
 
   function updateProgress() {
@@ -460,6 +578,7 @@
     track.setAttribute("aria-valuetext", `${fmt(current)} of ${fmt(duration)}`);
     timeEl.textContent = `${fmt(current)} / ${fmt(duration)}`;
     if (!dragging) setActive(findActive(current));
+    updateCompact();
   }
 
   function frame() {
@@ -475,6 +594,8 @@
   function updatePlayIcon() {
     playBtn.textContent = audio.paused ? "▶" : "❚❚";
     playBtn.setAttribute("aria-label", audio.paused ? "Play" : "Pause");
+    compactPlayBtn.textContent = audio.paused ? "▶" : "❚❚";
+    compactPlayBtn.setAttribute("aria-label", audio.paused ? "Play" : "Pause");
   }
 
   function togglePlay() {
@@ -517,20 +638,67 @@
   playBtn.addEventListener("click", togglePlay);
   backBtn.addEventListener("click", () => seekTo(audio.currentTime - 5));
   forwardBtn.addEventListener("click", () => seekTo(audio.currentTime + 5));
-  muteBtn.addEventListener("click", () => {
+  function updateMuteIcons() {
+    const icon = audio.muted ? "🔇" : "🔊";
+    const label = audio.muted ? "Unmute" : "Mute";
+    muteBtn.textContent = icon;
+    muteBtn.setAttribute("aria-label", label);
+    compactMuteBtn.textContent = icon;
+    compactMuteBtn.setAttribute("aria-label", label);
+  }
+  function toggleMute() {
     audio.muted = !audio.muted;
-    muteBtn.textContent = audio.muted ? "🔇" : "🔊";
-    muteBtn.setAttribute("aria-label", audio.muted ? "Unmute" : "Mute");
-  });
+    updateMuteIcons();
+  }
+  muteBtn.addEventListener("click", toggleMute);
+  compactMuteBtn.addEventListener("click", (event) => { event.stopPropagation(); toggleMute(); });
   document.addEventListener("keydown", (event) => {
     if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
     if (event.code === "Space") { event.preventDefault(); togglePlay(); }
+    if (event.key === "m" || event.key === "M") { event.preventDefault(); toggleMute(); }
     if (event.key === "ArrowLeft") { event.preventDefault(); seekTo(audio.currentTime - 5); }
     if (event.key === "ArrowRight") { event.preventDefault(); seekTo(audio.currentTime + 5); }
   });
 
+  compactPlayBtn.addEventListener("click", (event) => { event.stopPropagation(); togglePlay(); });
+  compactViewport.addEventListener("click", togglePlay);
+  window.addEventListener("resize", applyLayout);
+
+  function attemptAutoplay() {
+    if (!audio.paused || autoplayPending) return;
+    autoplayPending = true;
+    // Browsers only allow audible autoplay after a gesture. Start muted (always
+    // allowed), then unmute immediately; if the browser keeps it silent, the
+    // speaker button is the explicit recovery path.
+    const wasMuted = audio.muted;
+    audio.muted = true;
+    updateMuteIcons();
+    const promise = audio.play();
+    if (!promise) return;
+    promise.then(() => {
+      autoplayPending = false;
+      if (!wasMuted) {
+        audio.muted = false;
+        updateMuteIcons();
+      }
+    }).catch(() => {
+      autoplayPending = false;
+      audio.muted = wasMuted;
+      updateMuteIcons();
+      status("Press play to start");
+    });
+  }
+
+  const startOnGesture = (event) => {
+    const control = event.target instanceof Element && event.target.closest("button, a, [role='slider']");
+    if (!control && autoplay && audio.paused) attemptAutoplay();
+    document.removeEventListener("pointerdown", startOnGesture);
+  };
+  document.addEventListener("pointerdown", startOnGesture);
+
   audio.addEventListener("loadedmetadata", () => {
     updateProgress();
+    if (autoplay && audio.paused) attemptAutoplay();
     if (distributed) {
       lines = distributeLyrics(lines.map((line) => line.text).join("\n"));
       renderLyrics();
@@ -549,8 +717,10 @@
   audio.loop = loop;
   audio.src = file;
   updatePlayIcon();
+  updateMuteIcons();
   renderLyrics();
   setTrackMeta({});
+  applyLayout();
 
   if (coverUrl) {
     coverEl.src = coverUrl;
@@ -574,16 +744,16 @@
       .then((text) => {
         lines = parseLyrics(text, lyricsUrl).sort((a, b) => a.time - b.time);
         renderLyrics();
-        if (autoplay) audio.play().catch(() => status("Press play to start"));
+        if (autoplay) attemptAutoplay();
       })
       .catch((error) => {
         status(`Lyrics unavailable: ${error.message}`, true);
         renderLyrics();
-        if (autoplay) audio.play().catch(() => {});
+        if (autoplay) attemptAutoplay();
       });
   } else {
     renderLyrics();
-    if (autoplay) audio.play().catch(() => status("Press play to start"));
+    if (autoplay) attemptAutoplay();
   }
 })();
 </script>

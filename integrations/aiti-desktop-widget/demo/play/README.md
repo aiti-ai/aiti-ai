@@ -42,7 +42,8 @@ older shell without query forwarding, start `serve.mjs` and pass `--url
 | `theme` | — | `dark` (default) or `light` |
 | `bg` | — | `transparent` (default), `none`, or any CSS background value |
 | `bare` | — | `1` = remove the card background/border (text/cover only) |
-| `autoplay` | — | `1` tries to autoplay (browsers may require a click) |
+| `autoplay` | — | **default `1`** (start on open); `0` disables. Browsers may still require a click; the page then shows the play state |
+| `layout` | — | `auto` (default; one-line mode when height ≤220px), `card`, or `line` |
 | `loop` | — | `1` loops the audio |
 | `volume` | — | `0..1` initial volume |
 
@@ -96,6 +97,10 @@ are distributed evenly across the audio duration.
 - `⌘/Ctrl` not required; buttons are keyboard-focusable.
 - The page is transparent by default (`html,body{background:transparent}`); use `bare=1`
   to remove the translucent card entirely, or `bg=<color>` for a solid card.
+- **One-line / marquee mode**: when the window is short (height ≤220px, or `layout=line`),
+  the card switches to a single lyric line. Long lines scroll horizontally with the line
+  progress; a thin progress bar sits **on the lyric line** (current line progress). Only the
+  play/pause, lyric, time and mute controls remain.
 - Missing lyrics/audio show an inline status, not a crash.
 
 ## Bundled sample
