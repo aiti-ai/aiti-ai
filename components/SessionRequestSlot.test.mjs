@@ -166,3 +166,30 @@ test("source contract: the SessionRequestSlot mount point and the useAgentSessio
   assert.match(hookSource, /const sessionRequest = useMemo<SessionRequestPayload \| null>/);
   assert.match(hookSource, /respondToSessionRequest/);
 });
+
+test("MinimalRequestCard: ask_user free text (empty options) renders a text field instead of throwing", () => {
+  const respond = async () => true;
+  // Regression: a fork-rpc input/editor projection used to arrive without `options`, so the
+  // fallback card threw on q.options.length and the request could never be answered.
+  const html = renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(MinimalRequestCard, {
+    request: {
+      requestId: "ft1", kind: "interaction:ask_user", family: "interaction", capability: "respondInteraction",
+      toolName: "extension_ui.input",
+      questions: [{ question: 'Value for "API_KEY"', options: [] }],
+    },
+    onRespond: respond,
+  })));
+  assert.match(html, /Value for &quot;API_KEY&quot;/);
+  assert.match(html, /<input/, "自由文本题必须给出输入框（否则挂起的 ask 没有作答出口）");
+  assert.match(html, /Submit/, "提交出口仍在");
+
+  // Same for a legacy projection that omits options entirely: degrade, never crash.
+  const legacyHtml = renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(MinimalRequestCard, {
+    request: {
+      requestId: "ft2", kind: "interaction:ask_user", family: "interaction", capability: "respondInteraction",
+      questions: [{ question: "Value?" }],
+    },
+    onRespond: respond,
+  })));
+  assert.match(legacyHtml, /<input/);
+});

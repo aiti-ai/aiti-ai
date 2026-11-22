@@ -205,6 +205,39 @@ test("toInteractionRequest：select（含 optionDetails description）→ ask_us
   assert.equal(ir.questions[0].options[1].description, "便宜");
 });
 
+test("toInteractionRequest：input/editor → ask_user 自由文本（options 必填，必须是空数组）", () => {
+  // Regression: the projection used to omit `options` entirely, so the session-request
+  // cards threw on options.map and the request had no way to be answered — /vault add
+  // (ctx.ui.input) never reached the store on subprocess backends.
+  const input = toInteractionRequest({
+    type: "extension_ui_request", id: "i1", method: "input",
+    title: "Value for \"API_KEY\"", placeholder: "Value never reaches the model",
+  });
+  assert.equal(input.kind, "ask_user");
+  assert.equal(input.toolName, "extension_ui.input");
+  assert.equal(input.questions.length, 1);
+  assert.equal(input.questions[0].question, 'Value for "API_KEY"');
+  assert.deepEqual(input.questions[0].options, [], "options 必填契约：自由文本题给空数组，不能缺字段");
+
+  const editor = toInteractionRequest({
+    type: "extension_ui_request", id: "e1", method: "editor", title: "", prefill: "secret",
+  });
+  assert.equal(editor.kind, "ask_user");
+  assert.equal(editor.toolName, "extension_ui.editor");
+  assert.deepEqual(editor.questions[0].options, []);
+  assert.equal(editor.questions[0].question, "Editor", "无标题时给稳定标签（answers 的键）");
+  assert.equal(editor.input.prefill, "secret");
+
+  // An untitled input still gets a stable label — it is the key the answer is addressed by
+  const untitled = toInteractionRequest({ type: "extension_ui_request", id: "i2", method: "input" });
+  assert.equal(untitled.questions[0].question, "Input");
+  // The free-text answer travels back as answers[question], the key the card renders
+  assert.deepEqual(
+    toExtensionUIResponse({ type: "extension_ui_request", id: "i2", method: "input" }, { action: "accept", answers: { Input: "typed-value" } }),
+    { type: "extension_ui_response", id: "i2", value: "typed-value" },
+  );
+});
+
 test("toExtensionUIResponse：select 无答案（decline）→ cancelled；纯函数直测", () => {
   assert.deepEqual(
     toExtensionUIResponse({ type: "extension_ui_request", id: "a", method: "select", title: "t", options: ["x"] }, { action: "decline" }),

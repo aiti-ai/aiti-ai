@@ -284,7 +284,8 @@ export const UI_METHODS_NEEDING_ANSWER = new Set(["select", "confirm", "input", 
 /**
  * 把 extension_ui_request 投影为 pi-web 统一 interaction_request 事件
  * （lib/session/types.ts InteractionRequestEvent）。
- *   select/confirm/input → kind "ask_user"（标准问题卡渲染）；
+ *   select/confirm → kind "ask_user" with real options;
+ *   input/editor → kind "ask_user" with an EMPTY options list (free-text answer);
  *   open_url → kind "open_url"（OAuth 登录专用卡：url/launchUrl 字段，单向无需作答）；
  *   其余（editor/notify/setStatus/...）→ kind "generic"（原始帧进 input）。
  */
@@ -343,14 +344,23 @@ export function toInteractionRequest(req: ExtensionUIRequest): Record<string, un
       input: req,
     };
   }
-  if (method === "input") {
+  if (method === "input" || method === "editor") {
+    // Free-text answer: `options` is required by the session-request contract, so a text
+    // question carries an EMPTY list instead of omitting it. An omitted field made the cards
+    // throw on options.map and left the request unanswerable (no way to type the value).
+    // The card renders a text field ("input": single line, "editor": textarea + prefill) and
+    // sends the typed text back as answers[question]; toExtensionUIResponse reads it there.
+    const label =
+      typeof req.title === "string" && req.title
+        ? req.title
+        : method === "input" ? "Input" : "Editor";
     return {
       type: "interaction_request",
       requestId: req.id,
       kind: "ask_user",
-      toolName: "extension_ui.input",
+      toolName: `extension_ui.${method}`,
       prompt: typeof req.title === "string" ? req.title : undefined,
-      questions: [{ question: typeof req.title === "string" ? req.title : "Input" }],
+      questions: [{ question: label, options: [] }],
       input: req,
     };
   }

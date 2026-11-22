@@ -15,7 +15,7 @@
  * 交互事件只有一轮生命周期：后端 resolve/清理/turn 收口广播 interaction_expired，宿主清 sessionRequest。
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { MiniMarkdown } from "./minimarkdown";
 import type { SessionRequestCardProps, SessionRequestQuestion } from "./types";
 
@@ -48,8 +48,23 @@ export default function InteractionRequestCard({ request, respond }: SessionRequ
   const [planFeedback, setPlanFeedback] = useState<string | null>(null);
   /** ask_user 附加说明（可选）——随回答经 respond message → zcode annotations.notes 回给 agent。 */
   const [note, setNote] = useState("");
-  /** 每题选中：单选存 label，多选存 label 集合（question 文本为键）。 */
-  const [picks, setPicks] = useState<Record<string, string | string[]>>({});
+  /** Per-question answer: the picked label (single / multi-select set) or the typed free-text value, keyed by question. */
+  const freeTextInput = request.input as { method?: unknown; prefill?: unknown; placeholder?: unknown } | null;
+  /** A single "editor" question seeds from its prefill (e.g. a value shown for copying). */
+  const freeTextSeed = (): Record<string, string | string[]> => {
+    const first = request.questions?.[0];
+    return freeTextInput?.method === "editor" && typeof freeTextInput.prefill === "string" && first
+      ? { [first.question]: freeTextInput.prefill }
+      : {};
+  };
+  const [picks, setPicks] = useState<Record<string, string | string[]>>(freeTextSeed);
+  // New request (same component instance) → reseed picks, so a stale answer never leaks
+  // into the next question.
+  useEffect(() => {
+    setPicks(freeTextSeed());
+    // Re-seed only on identity change of the request, not on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [request.requestId]);
   /** open_url 复制成功的瞬时反馈。 */
   const [copied, setCopied] = useState(false);
 
@@ -64,10 +79,19 @@ export default function InteractionRequestCard({ request, respond }: SessionRequ
   /** 打开登录页用完整 URL；复制优先本机短链（长 OAuth URL 手抄易截断）。 */
   const openUrlTarget = request.url ?? request.launchUrl;
   const copyUrlTarget = request.launchUrl ?? request.url;
-  const questions = useMemo(() => request.questions ?? [], [request.questions]);
-  /** ask_user 是否已答完所有题（多选至少一项；单选必选其一）。 */
+  const questions = useMemo(
+    // options is required by the slot contract; a backend that omits it degrades to
+    // "no choices" instead of throwing on options.map (the input/editor projections did).
+    () => (request.questions ?? []).map((q) => ({ ...q, options: Array.isArray(q.options) ? q.options : [] })),
+    [request.questions],
+  );
+  /** Free-text questions (no options) need a typed answer; the value rides answers[question]. */
+  const hasFreeText = questions.some((q) => q.options.length === 0);
+  const freeTextMultiline = freeTextInput?.method === "editor";
+  /** ask_user completeness: a multi-select needs >=1 pick, a single-select exactly one, a free-text question non-blank text. */
   const allAnswered = questions.length === 0 || questions.every((q) => {
     const v = picks[q.question];
+    if (q.options.length === 0) return typeof v === "string" && v.trim().length > 0;
     return Array.isArray(v) ? v.length > 0 : typeof v === "string";
   });
 
@@ -180,7 +204,40 @@ export default function InteractionRequestCard({ request, respond }: SessionRequ
                 {q.multiSelect && <span style={{ fontSize: 10, color: "var(--text-dim)", marginLeft: 6 }}>（多选）</span>}
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                {q.options.map((opt, oi) => {
+                {q.options.length === 0 ? (
+                  // Free-text answer: a text field instead of option buttons. Enter submits a
+                  // single-line answer (IME-safe); the textarea keeps Ctrl/Cmd+Enter free.
+                  freeTextMultiline ? (
+                    <textarea
+                      value={String(picks[q.question] ?? "")}
+                      onChange={(e) => setPicks((prev) => ({ ...prev, [q.question]: e.target.value }))}
+                      rows={6}
+                      autoFocus
+                      style={{
+                        width: "100%", padding: "8px 10px", borderRadius: 7, border: "1px solid var(--border)",
+                        background: "var(--bg)", color: "var(--text)", outline: "none", fontSize: 12,
+                        lineHeight: 1.55, resize: "vertical", fontFamily: "var(--font-mono)",
+                      }}
+                    />
+                  ) : (
+                    <input
+                      value={String(picks[q.question] ?? "")}
+                      placeholder={typeof freeTextInput?.placeholder === "string" ? freeTextInput.placeholder : undefined}
+                      onChange={(e) => setPicks((prev) => ({ ...prev, [q.question]: e.target.value }))}
+                      onKeyDown={(e) => {
+                        if (e.key !== "Enter" || e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+                        const typed = e.currentTarget.value;
+                        if (!typed.trim()) return;
+                        void respondWith("accept", { answers: { ...picks, [q.question]: typed } });
+                      }}
+                      autoFocus
+                      style={{
+                        width: "100%", padding: "8px 10px", borderRadius: 7, border: "1px solid var(--border)",
+                        background: "var(--bg)", color: "var(--text)", outline: "none", fontSize: 13,
+                      }}
+                    />
+                  )
+                ) : q.options.map((opt, oi) => {
                   const cur = picks[q.question];
                   const selected = Array.isArray(cur) ? cur.includes(opt.label) : cur === opt.label;
                   return (
@@ -220,8 +277,9 @@ export default function InteractionRequestCard({ request, respond }: SessionRequ
         </div>
       )}
 
-      {/* ask_user 附加说明（可选）：补充上下文/自定义回答，经 message → annotations.notes 回给 agent */}
-      {isAsk && (
+      {/* ask_user 附加说明（可选）：补充上下文/自定义回答，经 message → annotations.notes 回给 agent.
+          A free-text question already owns the answer field, so the note is hidden there. */}
+      {isAsk && !hasFreeText && (
         <textarea
           value={note}
           onChange={(e) => setNote(e.target.value)}
