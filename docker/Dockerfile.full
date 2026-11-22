@@ -22,12 +22,19 @@ RUN set -eux; \
     if [ -n "$APT_MIRROR" ]; then \
       sed -i "s|http://archive.ubuntu.com/ubuntu|http://${APT_MIRROR}/ubuntu|g; s|http://security.ubuntu.com/ubuntu|http://${APT_MIRROR}/ubuntu|g" /etc/apt/sources.list.d/ubuntu.sources; \
     fi; \
+    apt-get update; \
     if [ "$arch" = "amd64" ]; then \
-      wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
+      # aria2c multi-connection download for the Chrome deb: dl.google.com throttles per connection
+      # (CN link 2026-11-22: ~60 KB/s single-connection wget kept the ~145MB deb crawling for 25-50 min;
+      # ranged parallel connections land in single-digit minutes even with per-IP decay). aria2 comes
+      # from the apt mirror; wget single-connection stays as the fallback downloader.
+      apt-get install -y --no-install-recommends aria2; \
+      aria2c -x8 -s8 -k1M --file-allocation=none --console-log-level=warn --summary-interval=0 \
+        --show-console-readout=false --max-tries=5 --retry-wait=2 -d /tmp -o chrome.deb \
+        https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
         || wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb; \
       CHROME_DEB="/tmp/chrome.deb"; \
     fi; \
-    apt-get update; \
     apt-get install -y --no-install-recommends \
       xvfb openbox \
       x11vnc novnc tigervnc-common \
