@@ -405,12 +405,27 @@ export class PiSpawnHandle extends RpcChildHost {
   }
 
   async prompt(text: string, options?: { images?: unknown[]; streamingBehavior?: string }): Promise<void> {
-    await this.request({
+    const frame: Record<string, unknown> = {
       type: "prompt",
       message: text,
       ...(options?.images ? { images: options.images } : {}),
       ...(options?.streamingBehavior ? { streamingBehavior: options.streamingBehavior } : {}),
-    });
+    };
+    try {
+      await this.request(frame);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // A plain prompt (no explicit streamingBehavior) means the caller believed the
+      // child idle; when host state lags the subprocess truth the child rejects it
+      // mid-run with "Agent is already processing. Specify streamingBehavior...".
+      // Re-queue as followUp: the message and the current run are both preserved,
+      // pi drains it at settle (the child was streaming, so the queue will be
+      // consumed), and the enqueue emits a queue_update row the user can recall.
+      // Callers that chose a behavior explicitly still get their error verbatim.
+      if (options?.streamingBehavior || !msg.includes("Specify streamingBehavior")) throw err;
+      console.log(`[aiti-pi-agent] plain prompt raced a running child; re-queued as followUp`);
+      await this.request({ ...frame, streamingBehavior: "followUp" });
+    }
   }
 
   async abort(): Promise<void> {

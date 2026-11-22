@@ -248,6 +248,60 @@ test("pi 无 hasLogin：/login 照常透传 prompt", async () => {
   await p;
 });
 
+test("plain prompt 撞运行中子进程 → 以 followUp 重试一次（race 降级）", async () => {
+  const child = fakeChild();
+  const h = createHandleForTest(PI_SPEC, "t22", child);
+  const p = h.prompt("hello");
+  await later();
+  assert.equal(child.frames()[0].type, "prompt");
+  assert.equal(child.frames()[0].streamingBehavior, undefined);
+  // Child busy: the error frame rejects (SDK throws on isStreaming without streamingBehavior)
+  feed(h, { id: child.frames()[0].id, type: "response", command: "prompt", success: false,
+    error: "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message." });
+  await later();
+  // Retry frame carries followUp (message/images preserved)
+  assert.equal(child.frames()[1].type, "prompt");
+  assert.equal(child.frames()[1].streamingBehavior, "followUp");
+  assert.equal(child.frames()[1].message, "hello");
+  feedResponse(h, child.frames()[1].id, { disposition: "queued" });
+  await p;
+});
+
+test("plain prompt 撞运行中 + 带图片：重试帧保留 images；显式 behavior 报错不吞", async () => {
+  // Images race: images ride along on the retry frame
+  const child = fakeChild();
+  const h = createHandleForTest(PI_SPEC, "t23", child);
+  const img = [{ type: "image", data: "aGk=", mimeType: "image/png" }];
+  const p = h.prompt("look", { images: img });
+  await later();
+  feed(h, { id: child.frames()[0].id, type: "response", command: "prompt", success: false,
+    error: "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message." });
+  await later();
+  assert.deepEqual(child.frames()[1].images, img);
+  feedResponse(h, child.frames()[1].id, {});
+  await p;
+
+  // When the caller chose a behavior explicitly, the same error must propagate
+  // verbatim — that is a different failure, and downgrading would mask intent
+  const child2 = fakeChild();
+  const h2 = createHandleForTest(PI_SPEC, "t24", child2);
+  const p2 = h2.prompt("x", { streamingBehavior: "steer" });
+  await later();
+  feed(h2, { id: child2.frames()[0].id, type: "response", command: "prompt", success: false,
+    error: "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message." });
+  await assert.rejects(p2, /already processing/);
+  assert.equal(child2.frames().length, 1, "显式 behavior 不重试");
+
+  // Unrelated errors (timeout/death) miss the narrow match and propagate as-is
+  const child3 = fakeChild();
+  const h3 = createHandleForTest(PI_SPEC, "t25", child3);
+  const p3 = h3.prompt("y");
+  await later();
+  feed(h3, { id: child3.frames()[0].id, type: "response", command: "prompt", success: false, error: "boom" });
+  await assert.rejects(p3, /boom/);
+  assert.equal(child3.frames().length, 1);
+});
+
 test("进程 exit → pending reject + session_backend_dead 事件", async () => {
   const child = fakeChild();
   const h = createHandleForTest(PI_SPEC, "t15", child);
