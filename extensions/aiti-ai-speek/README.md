@@ -29,7 +29,10 @@ Manual install: place this package at `~/.pi/web/extensions/aiti-ai-speek/` and 
 | Local (Hojo-TTS-Light) | Python 3.10-3.12 (`uv` recommended) | 100% local, CPU-friendly; selecting it bootstraps venv + deps + model (~240MB) automatically, no manual download. 40M = 17 built-in voices; 80M = voice cloning from 3-30s reference audio. Idle-exits after 30 min. |
 
 The local service listens on `127.0.0.1:8768` (auto 8769-8778 when busy) and speaks the OpenAI
-`/v1/audio/speech` subset, so any OpenAI-compatible client can reuse it. Status/start/stop/
+`/v1/audio/speech` subset, so any OpenAI-compatible client can reuse it. The service is
+multi-model: `model` selects the provider per request (`hojo-40m`, `hojo-80m`, …), so one
+recording can use different models/voices per step without restarting or switching a global
+provider. Models are loaded lazily and kept resident. Status/start/stop/
 progress/log/voice management live in the extension settings panel; `skills/tts-local-install`
 documents the one-command workflow (`bash server/tts-service/start-tts.sh start`).
 
@@ -44,7 +47,7 @@ await ctx.getExtService("aiti-ai-speek.speak").speak("Build finished", { engine:
 // backend side (synthesize into the cache, then read the bytes)
 const tts = ctx.services.get("aiti-ai-speek.tts");
 await tts.ensure({});
-const { items } = await tts.synthesize({ texts: ["Hello"] });
+const { items } = await tts.synthesize({ texts: ["Hello"], model: "hojo-40m", voice: "hojo_zh_f_01" });
 const audio = await tts.readCached(items[0].key); // { buffer, ext, contentType }
 ```
 

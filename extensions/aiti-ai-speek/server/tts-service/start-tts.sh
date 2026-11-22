@@ -275,6 +275,8 @@ PYEOF
     --host 127.0.0.1 \
     --port "$use_port" \
     --model-dir "$model_dir" \
+    --models-root "$HOME_DIR/models" \
+    --qwen-python "$HOME_DIR/venv-qwen3/bin/python" \
     --voices-json "${VOICES_JSON:-}" \
     --prepare-json "$PREPARE" \
     --idle-timeout "$IDLE_TIMEOUT" \

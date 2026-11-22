@@ -166,6 +166,8 @@ function Start-Tts {
   $srvArgs = @(
     (Join-Path $ScriptDir "tts_server.py"), "--provider", $Provider, "--host", "127.0.0.1",
     "--port", "$UsePort", "--model-dir", $ModelDir,
+    "--models-root", (Join-Path $HomeDir "models"),
+    "--qwen-python", (Join-Path $HomeDir "venv-qwen3\Scripts\python.exe"),
     "--prepare-json", $Prepare, "--idle-timeout", "$IdleTimeout"
   )
   if ($VoicesJson) { $srvArgs += @("--voices-json", $VoicesJson) }
