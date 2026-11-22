@@ -269,7 +269,7 @@ exit-code/stdout mapping. Native file/folder picking uses `tauri-plugin-dialog`
 
 ## Page control (loopback pages, on by default)
 
-Loopback pages also get a **window-control capability** (`capabilities/widget-page-control.json`)
+Loopback pages also get a **page-control capability** (`capabilities/widget-page-control.json`)
 and `withGlobalTauri: true`, so a page can adapt its own window at runtime:
 
 ```js
@@ -284,14 +284,36 @@ await win.setPosition(new LogicalPosition(100, 200));
 await win.setAlwaysOnTop(true);
 ```
 
-Granted by default: geometry/monitor reads, `setSize`/`setPosition`/`center`, size constraints,
-`startDragging`/`startResizeDragging`, always-on-top, click-through, visible-on-all-workspaces,
-skip-taskbar, shadow, decorations, resizable, focusable, title, hide/show/close and webview zoom.
+The capability grants the complete `allow-*` set of every Tauri core plugin — `core:window`
+(geometry/monitor reads, size/position/center, constraints, dragging, always-on-top,
+click-through, all-workspaces, skip-taskbar, shadow, decorations, resizable, focusable, title,
+hide/show/close, fullscreen/maximize, icon/badge/progress, DevTools, create/destroy) plus
+`core:webview`, `core:app` (version/identifier/theme/exit), `core:event` (listen/emit),
+`core:image` (PNG/ICO decoding for icons), `core:menu`, `core:path`, `core:resources` and
+`core:tray` — and the dialog plugin's native `open`/`save`/`ask`/`confirm`/`message`.
+`Cargo.toml` enables the matching `tray-icon`, `image-png` and `image-ico` Tauri features, so a
+page can really build menus, tray icons and images (≈0.8 MB extra binary size).
+
+```js
+const version = await window.__TAURI__.app.getVersion();
+const tray = await window.__TAURI__.tray.TrayIcon.new({ id: "pet", icon: "icons/icon.png" });
+const image = await window.__TAURI__.image.Image.fromBytes(pngBytes);
+```
+
 The capability is **loopback-only**: with `--allow-remote true`, an external page can render but
-cannot invoke these commands. The default set is the complete **`core:window:*` + `core:webview:*`
-allow-list** (including create/destroy, fullscreen/maximize, icon/badge/progress, clear-data and
-DevTools). Treat every page loaded into the widget as trusted code; remove permissions from
-`capabilities/widget-page-control.json` if a deployment needs a smaller surface.
+cannot invoke any of these commands. Treat every page loaded into the widget as trusted code;
+remove permissions from `capabilities/widget-page-control.json` if a deployment needs a smaller
+surface, then run `node scripts/check-capabilities.mjs --check` (see below) to see what is no
+longer granted.
+
+`scripts/check-capabilities.mjs` keeps the allow-list honest: it diffs the capability against the
+ACL manifest Tauri generates during `cargo build`/`cargo test` and fails on missing (a Tauri
+upgrade added a command) or unknown (renamed/removed) permissions.
+
+```bash
+node scripts/check-capabilities.mjs          # verify; exit 1 on drift
+node scripts/check-capabilities.mjs --fix    # rewrite permissions from the manifest
+```
 
 `--resizable false` is implemented as min=max constraints. A page that changes its size must
 call `setMinSize`/`setMaxSize` (or `setSizeConstraints`) before `setSize`, otherwise the launch

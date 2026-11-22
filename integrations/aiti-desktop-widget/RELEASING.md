@@ -18,11 +18,17 @@ the two never collide).
 
 ```bash
 cargo test
+node scripts/check-capabilities.mjs           # capability allow-list vs the Tauri ACL manifest
 npm install --prefix npm --no-audit --no-fund --ignore-scripts --registry https://registry.npmjs.org
 node --test npm/test/download.test.mjs scripts/publish-gitee.test.mjs
 cargo build --release
-DISPLAY=:0 node --test tests/shell.test.mjs   # optional GUI checks
+DISPLAY=:0 node --test tests/shell.test.mjs   # optional GUI checks (includes the capability probe)
 ```
+
+`scripts/check-capabilities.mjs` diffs `capabilities/widget-page-control.json` against the ACL
+manifest Tauri generates in `target/**.json` (written by `cargo test`/`cargo build`). After a Tauri
+upgrade run it again; `--fix` rewrites the permission list, and the release workflow runs the
+check in its `test` job.
 
 ### Dev-machine install / cache (23/24/48)
 
