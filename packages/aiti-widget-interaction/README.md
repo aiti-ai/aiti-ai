@@ -16,6 +16,36 @@ npm run build
 node --test test/*.test.mjs
 ```
 
+## CLI
+
+```bash
+aiti-dialog confirm --text "Continue?" [--ok-label OK] [--cancel-label Cancel]
+aiti-dialog --dialog confirm --text "Continue?"          # same, zenity-ish flag form
+aiti-dialog input --text "Name:" [--default foo] [--password]
+aiti-dialog choose --text "Pick" --options "A,B,C"
+aiti-dialog file [--multiple] [--filter "*.png"]
+aiti-dialog directory
+aiti-dialog notify --text "Done" [--timeout 5]
+aiti-dialog custom --page http://127.0.0.1:PORT/page.html
+aiti-dialog --daemon [--port 18095] [--token T] [--ttl 600]
+```
+
+Shared flags: `--json` (print the full host envelope), `--timeout <seconds>`,
+`--title`, `--detail`, `--widget-bin`, `--no-window` (print the page URL instead of
+opening a window), `--width`, `--height`.
+
+Exit codes (zenity-compatible): `0` answered, `1` cancelled, `5` timeout,
+`2` usage error, `4` runtime error (no window / no widget binary).
+
+The daemon prints `{"ok":true,"port":N,"baseUrl":"…","token":"…"}` and accepts:
+
+```text
+POST /interactions            { kind, title, message, ... } -> { id }
+GET  /interactions/:id/wait   blocks until resolved
+GET  /interactions/pending
+GET  /interactions/events     SSE
+```
+
 ## Host API
 
 ```ts

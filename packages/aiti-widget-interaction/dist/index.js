@@ -46,7 +46,7 @@ var InteractionBroker = class {
     const id = this.idFactory();
     const request = normalizeRequest(input, id, this.now(), this.defaultTimeoutMs);
     let resolve;
-    const result = new Promise((r) => {
+    const promise = new Promise((r) => {
       resolve = r;
     });
     const entry = {
@@ -62,6 +62,7 @@ var InteractionBroker = class {
         tookMs: 0,
         timeoutMs: request.timeoutMs
       },
+      promise,
       resolve,
       timer: null,
       startedAt: this.now(),
@@ -79,7 +80,7 @@ var InteractionBroker = class {
       }, request.timeoutMs);
     }
     this.emit({ type: "request", request: clone(request) });
-    return { id, request: clone(request), result };
+    return { id, request: clone(request), result: promise };
   }
   /** Submit an answer from a renderer. Late/duplicate answers are rejected. */
   answer(id, input = {}) {
@@ -152,6 +153,11 @@ var InteractionBroker = class {
   /** Snapshot of all pending requests, oldest first. */
   pending() {
     return [...this.entries.values()].filter((entry) => !entry.done).sort((a, b) => a.startedAt - b.startedAt).map((entry) => clone(entry.request));
+  }
+  /** Await an existing request's final result (daemon / HTTP wait). */
+  wait(id) {
+    const entry = this.entries.get(String(id));
+    return entry && !entry.done ? entry.promise : null;
   }
   has(id) {
     return !!this.entries.get(String(id));
@@ -311,6 +317,50 @@ async function startInteractionServer(options) {
         };
         req.on("close", cleanup);
         req.on("error", cleanup);
+        return;
+      }
+      if (options.allowCreate && req.method === "POST" && url2.pathname === "/interactions") {
+        let body;
+        try {
+          body = await readJson(req);
+        } catch (error) {
+          json(res, 400, { error: String(error?.message || error) });
+          return;
+        }
+        const spec = body.request && typeof body.request === "object" ? body.request : body;
+        if (!spec || typeof spec.kind !== "string") {
+          json(res, 400, { error: "request.kind is required" });
+          return;
+        }
+        const opened = options.broker.open(spec);
+        try {
+          options.onCreate?.(opened.request);
+        } catch {
+        }
+        json(res, 200, { ok: true, id: opened.id, request: opened.request });
+        return;
+      }
+      const waitMatch = /^\/interactions\/([^/]+)\/wait$/.exec(url2.pathname);
+      if (req.method === "GET" && waitMatch) {
+        const id = decodeURIComponent(waitMatch[1]);
+        const pending = options.broker.wait(id);
+        if (!pending) {
+          json(res, 409, { error: "no pending interaction with that id" });
+          return;
+        }
+        const result = await pending;
+        json(res, 200, { ok: true, result });
+        return;
+      }
+      const oneMatch = /^\/interactions\/([^/]+)$/.exec(url2.pathname);
+      if (req.method === "GET" && oneMatch) {
+        const id = decodeURIComponent(oneMatch[1]);
+        const request = options.broker.pending().find((r) => r.id === id);
+        if (!request) {
+          json(res, 404, { error: "no pending interaction with that id" });
+          return;
+        }
+        json(res, 200, { ok: true, request });
         return;
       }
       const answerMatch = /^\/interactions\/([^/]+)\/answer$/.exec(url2.pathname);
@@ -613,10 +663,149 @@ async function handleMcpRequest(broker, request) {
   }
   return fail(-32601, `method not found: ${method}`);
 }
+
+// src/dialog-kinds.ts
+var DEFAULT_TITLES = {
+  confirm: "Confirm",
+  choose: "Choose",
+  input: "Input",
+  file: "Choose file",
+  directory: "Choose folder",
+  notify: "Notice"
+};
+function dialogToRequest(spec) {
+  const text2 = String(spec.text || "");
+  const title = String(spec.title || DEFAULT_TITLES[spec.kind] || "aiti-dialog");
+  const detail = String(spec.detail || "");
+  const timeoutMs = Math.max(0, Number(spec.timeoutMs) || 0);
+  const ok = String(spec.okLabel || (spec.kind === "confirm" ? "OK" : "OK"));
+  const cancel = String(spec.cancelLabel || "Cancel");
+  if (spec.kind === "confirm") {
+    return {
+      kind: "confirm",
+      title,
+      message: text2,
+      detail,
+      timeoutMs,
+      actions: [
+        { id: "approve", label: ok, kind: "primary", value: true },
+        { id: "reject", label: cancel, kind: "secondary", value: false }
+      ]
+    };
+  }
+  if (spec.kind === "choose") {
+    const options = (spec.options || []).map((option) => String(option)).filter(Boolean);
+    if (!options.length) throw new Error("choose requires at least one --options value");
+    return { kind: "choose", title, message: text2, detail, timeoutMs, options: options.map((option) => ({ id: option, label: option })), actions: [] };
+  }
+  if (spec.kind === "input") {
+    return {
+      kind: "input",
+      title,
+      message: text2,
+      detail,
+      timeoutMs,
+      input: {
+        placeholder: String(spec.placeholder || ""),
+        defaultValue: String(spec.defaultValue || ""),
+        secret: spec.password === true
+      },
+      actions: [{ id: "submit", label: ok, kind: "primary" }]
+    };
+  }
+  if (spec.kind === "file" || spec.kind === "directory") {
+    return {
+      kind: "pick_path",
+      title,
+      message: text2,
+      detail,
+      timeoutMs,
+      pick: {
+        mode: spec.kind === "directory" ? "directory" : "file",
+        multiple: spec.multiple === true,
+        extensions: (spec.filters || []).map((f) => String(f))
+      },
+      actions: [
+        { id: "pick", label: ok, kind: "primary" },
+        { id: "cancel", label: cancel, kind: "secondary" }
+      ]
+    };
+  }
+  if (spec.kind === "notify") {
+    return {
+      kind: "notify",
+      title,
+      message: text2,
+      detail,
+      timeoutMs,
+      actions: [{ id: "dismiss", label: ok, kind: "primary" }]
+    };
+  }
+  return {
+    kind: "custom",
+    title,
+    message: text2,
+    detail,
+    timeoutMs,
+    custom: { pageUrl: String(spec.page || ""), data: spec.data },
+    data: spec.data,
+    actions: []
+  };
+}
+function dialogExitCode(result) {
+  if (result.status === "timeout") return 5;
+  if (result.status === "cancelled") return 1;
+  if (result.status === "error") return 4;
+  if (result.action === "cancel" || result.action === "reject") return 1;
+  if (result.approved === false) return 1;
+  return 0;
+}
+function stringValue(value) {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (typeof value === "object") {
+    const record = value;
+    if (typeof record.label === "string") return record.label;
+    if (typeof record.text === "string") return record.text;
+    if (Array.isArray(record.paths)) return record.paths.map(String).join("\n");
+    if (typeof record.path === "string") return record.path;
+    if (typeof record.id === "string") return record.id;
+  }
+  return "";
+}
+function dialogStdout(result, spec) {
+  if (result.status !== "answered") return "";
+  if (spec.kind === "confirm") return "";
+  if (spec.kind === "notify") return "";
+  const fromValue = stringValue(result.value);
+  if (fromValue) return fromValue;
+  if (spec.kind === "input") return "";
+  return "";
+}
+function dialogWindowTitle(spec) {
+  return String(spec.title || DEFAULT_TITLES[spec.kind] || "aiti-dialog");
+}
+function dialogWindowSize(spec) {
+  if (spec.kind === "confirm") return { width: 420, height: 190 };
+  if (spec.kind === "notify") return { width: 400, height: 160 };
+  if (spec.kind === "input") return { width: 460, height: 230 };
+  if (spec.kind === "choose") {
+    const rows = Math.max(1, Math.min(8, (spec.options || []).length));
+    return { width: 460, height: 170 + rows * 34 };
+  }
+  if (spec.kind === "file" || spec.kind === "directory") return { width: 460, height: 210 };
+  return { width: 560, height: 300 };
+}
 export {
   InteractionBroker,
   InteractionWidgetWindow,
   MCP_TOOLS,
+  dialogExitCode,
+  dialogStdout,
+  dialogToRequest,
+  dialogWindowSize,
+  dialogWindowTitle,
   handleMcpRequest,
   resolveWidgetBinary,
   startInteractionServer

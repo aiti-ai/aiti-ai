@@ -456,6 +456,7 @@ fn run(cfg: Config) {
     let initial_url = cfg.url.clone();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
             let win = &cfg.window;
             let displays = displays_from_app(app.handle());

@@ -250,6 +250,23 @@ grants `core:window:allow-start-dragging` to `http://` **and `https://`** `127.0
 IPv6 literal, so a page loaded from `http://[::1]` can render but is **not** granted drag; use
 `localhost` when dragging matters.
 
+## Used by aiti-dialog (cross-platform zenity replacement)
+
+[`@aiti-ai/widget-interaction`](../../packages/aiti-widget-interaction) ships an
+`aiti-dialog` CLI that drives this shell:
+
+```bash
+aiti-dialog confirm --text "Continue?"     # exit 0 / 1 / 5
+aiti-dialog input --text "Name:"           # stdout
+aiti-dialog choose --options "A,B,C"       # stdout
+aiti-dialog file --multiple                # absolute paths, one per line
+```
+
+The shell stays a dumb window: the CLI owns the broker, the loopback SSE/HTTP page and the
+exit-code/stdout mapping. Native file/folder picking uses `tauri-plugin-dialog`
+(`dialog:allow-open`), granted only to loopback pages in
+`capabilities/widget-page-control.json`.
+
 ## Page control (loopback pages, on by default)
 
 Loopback pages also get a **window-control capability** (`capabilities/widget-page-control.json`)

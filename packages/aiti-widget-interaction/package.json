@@ -33,6 +33,7 @@
   },
   "homepage": "https://aiti.pw",
   "bin": {
+    "aiti-dialog": "bin/aiti-dialog.mjs",
     "widget-interaction-mcp": "bin/widget-interaction-mcp.mjs"
   }
 }
