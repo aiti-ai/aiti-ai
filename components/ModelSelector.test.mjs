@@ -344,6 +344,29 @@ test("does not autofocus the model filter on mobile", () => {
   assert.doesNotMatch(source, /^\s*autoFocus\s*$/m);
 });
 
+// ── Programmatic open (openRequest signal, 2026-11-22): the composer's command hints open the
+// dropdown without a pointer press (type "model" → run the "select model" command). SSR cannot run
+// effects, so the wiring is asserted at source level; the runtime behavior is covered by the dev E2E. ──
+test("openRequest: declares the signal prop, consumes each value once and honors locked", () => {
+  assert.match(source, /openRequest\?: number;/, "props contract exposes the incrementing open signal");
+  assert.match(source, /openRequest === undefined \|\| openRequest <= 0/, "ignores the idle default (0/undefined)");
+  assert.match(source, /lastOpenRequestRef\.current === openRequest/, "consumes each counter value exactly once");
+  assert.match(source, /if \(open \|\| locked\) return;/, "does not bypass the trigger's refusal to open, nor re-record focus while the panel is up");
+  // The focus hand-back path must stay the existing one: a programmatic open records the pre-open
+  // focus target (the composer textarea) so picking a model hands focus back to where the user types.
+  assert.match(source, /rememberFocusBeforeOpen\(\);\s*\n\s*setOpen\(true\);/, "reuses rememberFocusBeforeOpen before opening");
+});
+
+test("openRequest: wired by ChatInput on the desktop and mobile instances only", async () => {
+  const chatInput = await readFile(new URL("./ChatInput.tsx", import.meta.url), "utf8");
+  assert.match(chatInput, /openModelSelector: \(\) => \{/, "composer service exposes openModelSelector");
+  assert.match(chatInput, /setModelSelectorOpenRequest\(\(n\) => n \+ 1\)/, "openModelSelector bumps the counter");
+  // Desktop: refocusing would steal focus from the panel's auto-focused filter input.
+  assert.match(chatInput, /if \(isMobile\) refocusInput\(\);/, "only mobile focuses the composer before opening");
+  const bound = chatInput.match(/openRequest=\{modelSelectorOpenRequest\}/g) ?? [];
+  assert.equal(bound.length, 2, "desktop + mobile instances consume the signal; the InfoSheet copy does not");
+});
+
 test("keeps the server's model order (#783)", () => {
   // /api/models already returns pi's /model order; sorting by name here would
   // scatter a models.json provider's hand-ordered models again.

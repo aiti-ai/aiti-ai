@@ -66,9 +66,13 @@ export const HIDDEN_KEY = "pi:app-center:hidden:v1";
 /** 同 tab 定制变更广播（跨组件同步；跨 tab 走 storage 事件）。 */
 export const APP_STORE_EVENT = "pi:app-center:store";
 
-/* ── 覆盖表（APP_OVERRIDES，方案 §3.1）：存量扩展的初始归类 + 关键词补充。
- *    扩展 index.ts 顶层 category（经 manifest 透传）优先于本表；本表是
- *    「尚未声明 category 的存量扩展」的兜底归类——逐扩展铺量后表项可退役。 ── */
+/* ── Override table (APP_OVERRIDES, plan §3.1): fallback category + keywords for extensions that
+ *    have not declared their own yet. Precedence (each level overrides the one below): this table
+ *    → extension-level `category` / `keywords` (manifest pass-through) → item-level
+ *    `meta.category` / `meta.keywords`.
+ *    ⚠ New extensions must self-declare (top-level `category` + `keywords` in index.ts, item-level
+ *    `meta.keywords`). Never add keywords to this table again: it only covers extensions that have
+ *    not been migrated yet, and entries retire as each one declares its own vocabulary. ── */
 export const APP_OVERRIDES: Record<string, { category?: string; keywords?: string[] }> = {
   // session 会话与项目
   "session-manager": { category: "session", keywords: ["sessions", "会话"] },
@@ -137,6 +141,12 @@ export const APP_OVERRIDES: Record<string, { category?: string; keywords?: strin
 export function resolveCategory(itemLevel: string | undefined, extLevel: string | undefined, extId: string): string {
   const v = (itemLevel && String(itemLevel).trim()) || (extLevel && String(extLevel).trim()) || APP_OVERRIDES[extId]?.category || DEFAULT_CATEGORY;
   return String(v).trim() || DEFAULT_CATEGORY;
+}
+
+/** Keyword list sanitizer: declared keywords are author-supplied data (a malformed string would be
+ *  spread into single characters by `...`); only non-empty strings survive. */
+function keywordList(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((k): k is string => typeof k === "string" && k.trim().length > 0) : [];
 }
 
 export function isInternalCategory(id: string): boolean {
@@ -300,8 +310,8 @@ export function translateExtItemText(extId: string | undefined, text: string | u
 
 /** 组装输入：消费方（app-center.tsx hooks）从插槽/manifest 取数后传入；runs 是闭包。 */
 export function buildApps(input: {
-  exts: Array<{ id: string; name?: string; version?: string; description?: string; icon?: string | null; category?: string; ui?: { i18n?: Record<string, Record<string, string>> } | null; features?: Array<{ id: string; type?: string; label?: string; description?: string; category?: string; enabled: boolean }> | null }>;
-  slotItems: Array<{ slot: "toolbar" | "commands" | "sidebarFooter" | "rightFileDock" | "dialogs"; id: string; extId?: string; meta?: { label?: string; title?: string; icon?: unknown; onClick?: (e?: unknown) => void }; category?: string }>;
+  exts: Array<{ id: string; name?: string; version?: string; description?: string; icon?: string | null; category?: string; keywords?: string[]; ui?: { i18n?: Record<string, Record<string, string>> } | null; features?: Array<{ id: string; type?: string; label?: string; description?: string; category?: string; enabled: boolean }> | null }>;
+  slotItems: Array<{ slot: "toolbar" | "commands" | "sidebarFooter" | "rightFileDock" | "dialogs"; id: string; extId?: string; meta?: { label?: string; title?: string; icon?: unknown; onClick?: (e?: unknown) => void; keywords?: string[] }; category?: string }>;
   featureState: Record<string, boolean>;
   /** 面板打开原语（present 状态机语义糖；UI 层注入，rightFileDock 卡专用）。 */
   openPanel: (key: string) => void;
@@ -357,7 +367,14 @@ export function buildApps(input: {
       pinyin: input.pinyinMap?.[extId],
       extIcon: ext?.icon ?? undefined,
       icon: it.meta?.icon as AppDescriptor["icon"],
-      keywords: [...(APP_OVERRIDES[extId]?.keywords ?? [])],
+      // Search vocabulary, most specific first: item-declared keywords → extension-declared keywords
+      // (manifest pass-through) → the legacy override table (existing extensions only; new ones must
+      // self-declare — see the APP_OVERRIDES header). An extension that declares an (even empty) keywords
+      // array owns the vocabulary; the legacy table only fills in for extensions that declare nothing.
+      keywords: [
+        ...keywordList(it.meta?.keywords),
+        ...(Array.isArray(ext?.keywords) ? keywordList(ext.keywords) : keywordList(APP_OVERRIDES[extId]?.keywords)),
+      ],
       run: isPanel
         ? () => input.openPanel(fullId)
         : () => { try { it.meta!.onClick!(undefined); } catch { /* ignore */ } },
@@ -383,7 +400,9 @@ export function buildApps(input: {
         extDescription: extDescriptionFor(ext, locale) || undefined,
         pinyin: input.pinyinMap?.[ext.id],
         extIcon: ext.icon ?? undefined,
-        keywords: [...(APP_OVERRIDES[ext.id]?.keywords ?? []), f.id],
+        // Same precedence as item cards: extension keywords (self-declared) first, legacy table as fallback;
+        // the feature id itself stays searchable (it is the toggle's stable identifier).
+        keywords: [...(Array.isArray(ext.keywords) ? keywordList(ext.keywords) : keywordList(APP_OVERRIDES[ext.id]?.keywords)), f.id],
         on: input.featureState[`${ext.id}:${f.id}`] ?? f.enabled !== false,
         run: () => { /* toggle run 在 UI 层接线（异步 + 事件回灌） */ },
       });

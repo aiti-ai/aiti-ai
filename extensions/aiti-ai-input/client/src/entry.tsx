@@ -6,6 +6,7 @@
  *   - initSuggest(ctx.apiUrl)：收藏联想子系统（点按分派注入）
  *   - document capture 三监听（语音检测，在 React 受控 onChange 之前拿原始 inputType）
  *   - chatInputTop 四 slot：感知条 / 占位符 chips / 补全宿主 / 联想宿主
+ *   - commands slot: the two composer-hub commands (pick model / compact context)
  *   - sessionStats slot：其他辅助 AI 用量统计行（会话统计下拉内，原宿主 AiUsageRows 迁入）
  *   - preSend 钩子：展开 [名称] 占位符 + 清理语音/灰字状态
  *
@@ -17,7 +18,7 @@
  *
  * 构建：node tools/build-client.mjs   （或 npm run build:client）
  */
-import { __setCtx } from "./host-shim";
+import { __setCtx, extSvc, t } from "./host-shim";
 import {
   AC, BARP,
   onBeforeInput, onCompositionStart, onCompositionEnd,
@@ -152,6 +153,48 @@ export default function register(ctx: Record<string, unknown>) {
       onClick: openAsrPanel,
     },
   }]);
+  // Command catalog slot ("commands"): the composer as a command hub — select a model or compact the
+  // context without leaving the input box; focus returns to the composer when the action finishes.
+  // Plan: workspace-tools docs/aiti-input-command-hub-plan.md. Host chain = client services
+  // "pi-web.composer".get("openModelSelector") / "pi-web.ui".get("compactSession")
+  // (contract: lib/ext/host-ui-contract.ts). Missing on older hosts / standalone-bridge pages →
+  // silent no-op with one warn: a candidate click must never blow up the composer state.
+  const runHostCap = (svcName: string, capName: string) => {
+    let ok = false;
+    try {
+      const svc = extSvc<{ get?: (n: string) => unknown }>(svcName);
+      const fn = svc?.get?.(capName);
+      if (typeof fn === "function") { (fn as () => void)(); ok = true; }
+    } catch { ok = false; }
+    if (ok) return;
+    try { console.warn('[AI input] command unavailable: host capability "' + capName + '" is missing (older host or standalone-bridge page)'); } catch { /* ignore */ }
+  };
+  ctx.registerItems?.("commands", [
+    {
+      id: "pick-model",
+      meta: {
+        label: t("cmd.pick-model.label"),
+        title: t("cmd.pick-model.title"),
+        category: "ai",
+        // Self-declared search vocabulary: the app center merges item keywords ahead of extension-level
+        // ones and the legacy override table, so these never need to be hard-coded in aiti-app-center.
+        keywords: ["模型", "切换模型", "选择模型", "model", "switch", "pick"],
+        icon: { svg: '<rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 2v2"/><path d="M15 2v2"/><path d="M9 20v2"/><path d="M15 20v2"/><path d="M2 9h2"/><path d="M2 15h2"/><path d="M20 9h2"/><path d="M20 15h2"/>' },
+        onClick: () => runHostCap("pi-web.composer", "openModelSelector"),
+      },
+    },
+    {
+      id: "compact-context",
+      meta: {
+        label: t("cmd.compact.label"),
+        title: t("cmd.compact.title"),
+        category: "ai",
+        keywords: ["压缩", "压缩上下文", "上下文", "compact", "context", "summarize"],
+        icon: { svg: '<polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/>' },
+        onClick: () => runHostCap("pi-web.ui", "compactSession"),
+      },
+    },
+  ]);
   ctx.registerItems?.("dialogs", [{ id: "aiti-asr-panel", render: AsrPanelSlotLazy, meta: { open: openAsrPanel } }]);
   // aiti-float dock v3（P2 批）：ASR 服务器管理默认左栏（feature 行列表窄条）
   // zone 规范值 sidebar:<key>（v4；旧 sidebar-explorer 兼容读）

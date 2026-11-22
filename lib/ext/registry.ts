@@ -1101,6 +1101,9 @@ export class ExtRegistryImpl {
         // App-center category annotation (consumed by the app-center extension; absent
         // when undeclared — the client falls back to the default category)
         ...(e.ext.category ? { category: e.ext.category } : {}),
+        // Extension-level search keywords (consumed by the app-center extension): the
+        // extension declares its own vocabulary instead of the app center hard-coding it.
+        ...(e.ext.keywords?.length ? { keywords: [...e.ext.keywords] } : {}),
         // App-center info sheet description (absent when neither declared nor shipped)
         ...(desc ? { description: desc } : {}),
         // Dependency & capability model (§4 pass-through): runtime-probeable — with

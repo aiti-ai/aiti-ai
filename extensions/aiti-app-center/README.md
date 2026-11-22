@@ -14,6 +14,11 @@ This package is part of the **aiti** ecosystem — a personal AI development wor
 
 Category: System & admin · Tags: `app-center` · `launcher` · `start-menu` · `dock` · `spacer` · `category` · `apps`
 
+## Extension authors
+
+- **Commands are entries**: an item registered in the `commands` slot (with `meta.onClick` + `icon`) shows up in the App Center **and** in the composer's command suggestions — e.g. "Select model" / "Compact context" (registered by `aiti-ai-input`) let users finish work without leaving the input box.
+- **Keywords are self-declared**: put search vocabulary on the item (`meta.keywords`) or on the extension (`keywords` in `index.ts`, passed through the manifest). The app center only falls back to its legacy override table — new extensions must never be added there. Extension-level keywords apply to every card, so command aliases belong on the item.
+
 ## Install
 
 Bundled with **aiti-agent** (`@aiti-ai/pi-web`) — enable it from the in-app extension manager (ExtMan / App Center).

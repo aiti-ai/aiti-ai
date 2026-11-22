@@ -34,6 +34,8 @@ interface ManifestExt {
   description?: string;
   icon?: string | null;
   category?: string;
+  /** Self-declared extension-level search keywords (manifest pass-through). */
+  keywords?: string[];
   features?: Array<{ id: string; type?: string; label?: string; description?: string; category?: string; enabled: boolean }> | null;
 }
 
@@ -150,7 +152,7 @@ export function buildCommandHints(input: {
   q: string;
   limit?: number;
   exts: ManifestExt[];
-  slotItems: Array<{ slot: "toolbar" | "sidebarFooter" | "rightFileDock"; id: string; extId?: string; meta?: { label?: string; title?: string; icon?: unknown; onClick?: (e?: unknown) => void }; category?: string; feature?: string; static?: boolean }>;
+  slotItems: Array<{ slot: "toolbar" | "sidebarFooter" | "rightFileDock"; id: string; extId?: string; meta?: { label?: string; title?: string; icon?: unknown; onClick?: (e?: unknown) => void; keywords?: string[] }; category?: string; feature?: string; static?: boolean }>;
   featureState: Record<string, boolean>;
   pinned: string[];
   hidden: string[];
