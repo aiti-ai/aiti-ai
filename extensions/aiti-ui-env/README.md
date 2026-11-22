@@ -12,7 +12,7 @@ This package is part of the **aiti** ecosystem — a personal AI development wor
 - Ecosystem monorepo: <https://github.com/aiti-ai/aiti-ai>
 - Site: <https://aiti.pw>
 
-Category: Debugging · Tags: `headless` · `xvfb` · `vnc` · `rdp` · `atspi` · `display` · `virtual-desktop` · `noVNC` · `vnc-password`
+Category: Debugging · Tags: `headless` · `xvfb` · `vnc` · `rdp` · `atspi` · `audio` · `pipewire` · `pulseaudio` · `display` · `virtual-desktop` · `noVNC` · `vnc-password`
 
 ## Install
 
@@ -31,6 +31,19 @@ cd scripts/linux && ./setup-linux.sh && ./install-service.sh
 - Documentation (English): <https://aiti.pw/en/extensions/aiti-ui-env.html>
 - 文档（中文）: <https://aiti.pw/extensions/aiti-ui-env.html>
 - Extension registry: <https://aiti.pw/extensions.html> · machine-readable <https://aiti.pw/extensions.json>
+
+## Audio session (Linux, default on)
+
+GUI apps started through `resolve` / `run` / the headless virtual display inherit the user's
+PipeWire/Pulse session even when pi-web itself was launched by systemd or SSH:
+
+- `PULSE_SERVER=unix:/run/user/<uid>/pulse/native`
+- `PIPEWIRE_RUNTIME_DIR=/run/user/<uid>`
+
+The values are discovered from the current uid and only added when the sockets exist;
+an explicit parent value wins. Agent bash sessions also get the hydrated process env at
+extension startup. Toggle **音频输出（Linux PipeWire/Pulse）** in ExtMan → aiti-ui-env →
+Features; it is **on by default**. Turning it off leaves audio environment variables untouched.
 
 ## ARGB compositor (2026-11-21)
 
