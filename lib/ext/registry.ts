@@ -25,6 +25,7 @@ import type {
   LoadedExtension,
   ManifestExtension,
 } from "./types.ts";
+import { registerImageProvider as registerImageProviderForExt, unregisterImageProviders } from "../image-generation.ts";
 import { dataRoot, extensionsRoot, bundledExtensionsRoot, devExtensionsRoot, extraExtensionsRoots } from "./data-dir.ts";
 import { loadExtensionFromDir, scanExtensionDirs, compareExtVersions, snapshotJitiCache, countRetranspiled } from "./loader.ts";
 import { extProtocolInfo, EXT_PROTOCOL_VERSION, EXT_PROTOCOL_MIN_MAJOR, EXT_PROTOCOL_STRICT_BLOCKED, type ExtProtocolInfo } from "./protocol.ts";
@@ -1088,6 +1089,11 @@ export class ExtRegistryImpl {
   manifest(): ManifestExtension[] {
     return [...this.extensions.values()].map((e) => {
       const desc = this.extDescription(e);
+      // Self-declared search keywords: defensive filtering (extension entries are author-supplied
+      // data — a malformed string would otherwise be spread into single characters downstream).
+      const keywords = Array.isArray(e.ext.keywords)
+        ? e.ext.keywords.filter((k): k is string => typeof k === "string" && k.trim().length > 0)
+        : [];
       return {
         id: e.id,
         name: e.name,
@@ -1103,7 +1109,7 @@ export class ExtRegistryImpl {
         ...(e.ext.category ? { category: e.ext.category } : {}),
         // Extension-level search keywords (consumed by the app-center extension): the
         // extension declares its own vocabulary instead of the app center hard-coding it.
-        ...(e.ext.keywords?.length ? { keywords: [...e.ext.keywords] } : {}),
+        ...(keywords.length ? { keywords } : {}),
         // App-center info sheet description (absent when neither declared nor shipped)
         ...(desc ? { description: desc } : {}),
         // Dependency & capability model (§4 pass-through): runtime-probeable — with
@@ -1493,6 +1499,8 @@ export class ExtRegistryImpl {
     const ordered = [...this.extensions.values()].map((ext, i) => ({ ext, i }))
       .sort((a, b) => (a.ext.ext.startupPriority ?? 0) - (b.ext.ext.startupPriority ?? 0) || b.i - a.i)
       .map((x) => x.ext);
+    // Image-provider ledger cleanup needs the ids after startedIds is cleared below.
+    const stoppingIds = [...this.startedIds];
     for (const ext of ordered) {
       this.startedIds.delete(ext.id); // clear this cycle's startup ledger entry (re-recorded next cycle)
       try {
@@ -1507,6 +1515,13 @@ export class ExtRegistryImpl {
     // Session backend slot: unregister all providers an extension registered when
     // it is stopped (including shutdown callbacks).
     await cleanupAllExtensionProviders();
+    // Image providers live in a ledger per extension (lib/image-generation.ts);
+    // a reload cycle must not leave stale providers on the rebuilt runtime.
+    for (const extId of stoppingIds) {
+      try {
+        await unregisterImageProviders(extId);
+      } catch { /* best effort */ }
+    }
     // reload cycle cleanup: core.* preset services go offline too (startAll
     // re-provides them); listeners are cleared with the old cycle's closures
     this.services.clear();
@@ -1610,7 +1625,15 @@ export class ExtRegistryImpl {
 
   private serverContext(ext: LoadedExtension): ExtServerContext {
     const ctx: ExtServerContext = {
-      id: ext.id, dir: ext.dir, configDir: ext.configDir, stateDir: ext.stateDir, cacheDir: ext.cacheDir, core: this.core,
+      id: ext.id, dir: ext.dir, configDir: ext.configDir, stateDir: ext.stateDir, cacheDir: ext.cacheDir,
+      // The core is process-wide, but a registration must be attributed to the
+      // calling extension so shutdown can remove exactly those providers.
+      core: this.core.registerImageProvider
+        ? {
+          ...this.core,
+          registerImageProvider: (name: string, config: unknown) => registerImageProviderForExt(ext.id, name, config),
+        }
+        : this.core,
       // Session backend registration slot (multi-agent frontend): keys get an
       // automatic "<extId>/" prefix and are unregistered on shutdown.
       // open/canOpen delegate to openExternalSession (agentKey resolution +

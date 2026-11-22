@@ -19,7 +19,11 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 
-export interface InvokeAIMessage { role: "system" | "user" | "assistant"; content: string }
+/** Text, or a multimodal part list (images are base64 + mimeType, forwarded verbatim). */
+export type InvokeAIContent =
+  | string
+  | Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>;
+export interface InvokeAIMessage { role: "system" | "user" | "assistant"; content: InvokeAIContent }
 export interface InvokeAIUsage { input: number; output: number; cacheRead: number; cacheWrite: number }
 export interface InvokeAIInput {
   /** Model: provider/modelId (e.g. "opencode-go-2" / "deepseek-v4-pro"); defaults to the cheapest non-reasoning model globally */
@@ -133,7 +137,8 @@ export async function invokeAI(input: InvokeAIInput): Promise<InvokeAIResult> {
   if (input.reasoning) opts.reasoning = input.reasoning;
   const assistant = await registry.complete(model as never, {
     systemPrompt: input.system,
-    messages: input.messages.map((m) => ({ role: m.role, content: m.content, timestamp: 0 })) as never,
+    // String content stays byte-identical; part lists are passed through for vision models.
+    messages: input.messages.map((m) => ({ role: m.role, content: m.content as never, timestamp: 0 })) as never,
   }, opts as never);
   const text = (assistant.content ?? [])
     .filter((b): b is { type: "text"; text: string } => b.type === "text")

@@ -445,6 +445,58 @@ async function asrLaunchViaCmd(_req: Request): Promise<{ ok: boolean; sessionId?
 // 端口随机（listen(0)）：每个 pi-web 实例各起各的桥，不存在双实例抢端口；env 可指定固定端口便于调试
 const XF_BRIDGE_PORT = Number(process.env.AITI_XF_BRIDGE_PORT || 0);
 
+/**
+ * `aiti-ai-input.asr` service — cross-extension ASR facade (consumed by aiti-video-studio
+ * for subtitle transcription).
+ *
+ * The contract is only two things: read engine info + transcribe one audio blob.
+ * Chunking / VAD / timestamps stay with the caller (video subtitles bind to a visual
+ * timeline, which is caller semantics and does not belong in a generic ASR service).
+ */
+function buildAsrService() {
+  return {
+    version: 1,
+    /** Current engine id/label/capabilities plus readiness (never returns credentials). */
+    provider: () => {
+      const cfg = asrReadModelConfig();
+      const id = asrProviderId(cfg);
+      const spec = asrProviderSpec(id);
+      return { id, label: spec.label, capabilities: spec.capabilities, ready: asrProviderReady(cfg, id) };
+    },
+    /** Available engines for a caller's settings UI (secret fields only report `configured`). */
+    providers: () => asrProviderView(asrReadModelConfig()),
+    /**
+     * Transcribe one audio blob (WAV/MP3 container bytes) into text.
+     * Cloud engines share `spec.transcribe`; `builtin` talks to the local 8767 server
+     * (the caller must `ensure` it first).
+     */
+    transcribe: async (input: { audio: Uint8Array | ArrayBuffer; filename?: string; mime?: string; language?: string; hotwords?: string[]; mode?: AsrMode; timeoutMs?: number; signal?: AbortSignal }) => {
+      const cfg = asrReadModelConfig();
+      const id = asrProviderId(cfg);
+      const spec = asrProviderSpec(id);
+      if (!asrProviderReady(cfg, id)) return { ok: false as const, error: `${spec.label} is not configured`, provider: id };
+      const bytes = input.audio instanceof Uint8Array ? input.audio : new Uint8Array(input.audio);
+      const mode: AsrMode = input.mode || "final";
+      const { body, contentType } = encodeMultipart([
+        { name: "audio", value: bytes, filename: input.filename || "audio.wav", type: input.mime || "audio/wav" },
+        ...(input.language ? [{ name: "language", value: input.language }] : []),
+      ]);
+      const r = await spec.transcribe({
+        raw: body,
+        contentType,
+        mode,
+        base: process.env.AITI_ASR_STREAM_BASE || "http://127.0.0.1:8767",
+        ws: asrWsKey(),
+        pcfg: asrProviderCfg(cfg, id),
+        hotwords: input.hotwords,
+        timeoutMs: input.timeoutMs || spec.timeout[mode],
+        signal: input.signal,
+      });
+      return r.ok ? { ok: true as const, text: r.text, provider: id, label: spec.label } : { ...r, provider: id };
+    },
+  };
+}
+
 /** asr/ensure 核心：探测 → 已通则回 ready；不通则按状态机自动拉起 */
 async function asrEnsure(req: Request): Promise<{ running: boolean; starting: boolean; sessionId?: string; error?: string; hint?: string; data?: Record<string, unknown>; provider?: string; providerLabel?: string }> {
   // 云引擎：不需要本地 8767——探测/自愈/拉起整套跳过（客户端据此不弹「服务未运行」告警）
@@ -1130,6 +1182,12 @@ export default {
       // DI 方案 P1：features/services 通道捕获（featureGet 与 hotwords 消费走新通道）
       hostFeatures = ctx.features ?? null;
       hostSvc = ctx.services ?? null;
+      // Public ASR service: other extensions (aiti-video-studio subtitle transcription)
+      // transcribe audio through the engine contract. Credentials stay inside this
+      // extension's own asr-config.json; callers never see them.
+      try {
+        ctx.services?.provide?.("aiti-ai-input.asr", buildAsrService());
+      } catch (e) { console.warn("[aiti-ai-input] asr service expose failed:", e); }
       //（ASR 稳定器为被动模式：无定时器——见 asrEnsure 内的模型未加载自处理逻辑）
       // 初始化 ASR 模型配置文件（server/asr-config.json）——默认模型，服务启动据此加载；
       // 模型 feature 变化时重写（set-feature → asrControlRestart → asrWriteModelConfig）

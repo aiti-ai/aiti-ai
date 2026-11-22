@@ -161,6 +161,47 @@ export interface ExtDepResolution {
   providers?: string[];
 }
 
+/** One image-generation model known to the host (pi built-in catalog + extension-registered). */
+export interface ExtImageModelInfo {
+  provider: string;
+  id: string;
+  name?: string;
+  /** Output modalities (`image`, optionally `text`). */
+  output: string[];
+  /** The provider has usable credentials (env / auth.json / registered key). */
+  available: boolean;
+}
+
+export interface ExtImageGenerationInput {
+  /** `provider/modelId`; either alone is enough, both missing = first available image model. */
+  provider?: string;
+  modelId?: string;
+  prompt?: string;
+  /** Reference images (image-to-image), base64. */
+  images?: Array<{ mimeType: string; data: string }>;
+  /** Candidate count (1..8); the host loops the provider call. */
+  n?: number;
+  /** Provider-specific passthrough (size / seed decode it). */
+  size?: string;
+  seed?: number;
+  /** Caller-resolved credential override (e.g. from a secret vault). */
+  apiKey?: string;
+  timeoutMs?: number;
+  caller?: string;
+  signal?: AbortSignal;
+}
+
+export interface ExtImageGenerationResult {
+  ok: boolean;
+  provider: string;
+  model: string;
+  images: Array<{ mimeType: string; data: string }>;
+  texts: string[];
+  usage?: { input: number; output: number; cacheRead: number; cacheWrite: number };
+  /** Readable failure reason when ok=false (never a credential). */
+  error?: string;
+}
+
 /** Core data capabilities handed to extensions — no reimplementation of session access. */
 export interface ExtCoreApi {
   /** Optional refresh: force a rescan bypassing the 5s list-scan cache (when a session was just written to disk, right after archiving, etc. — anywhere the effect must be immediate). */
@@ -181,6 +222,25 @@ export interface ExtCoreApi {
   readModelsConfig(): Promise<Record<string, unknown>>;
   /** Write models.json (normalized + invalidateModelsCache invalidation; changes take effect immediately). */
   writeModelsConfig(data: Record<string, unknown>): Promise<void>;
+  /**
+   * Image generation (optional; older hosts do not provide it). Lists every
+   * image model the host knows: pi's built-in catalog plus providers that
+   * extensions registered through `registerImageProvider`.
+   */
+  listImageModels?(): Promise<ExtImageModelInfo[]>;
+  /**
+   * Generate images. Never rejects: a failed generation returns
+   * `{ ok: false, error }`. `apiKey` lets the caller supply its own credential
+   * (the host never reads a vault); `n > 1` loops the provider call.
+   */
+  generateImages?(input: ExtImageGenerationInput): Promise<ExtImageGenerationResult>;
+  /**
+   * Register an image provider (pi-ai `ProviderConfigInput` passthrough:
+   * `{ baseUrl, apiKey?, models: [{ type: "image", id, api, output, ... }], images: { <api>: { generateImages } } }`).
+   * The registration is ledgered per extension and replayed onto every runtime
+   * rebuild; it is removed automatically on extension shutdown.
+   */
+  registerImageProvider?(name: string, config: unknown): Promise<{ ok: boolean; error?: string }>;
   /** A03/B4: rebind a backend session id (backends whose process generates the id, e.g. omp —
    *  once the real id is read back, attach it to the handle as an alias key; the old placeholder
    *  key is kept so draft rows / existing references keep working). Returns false when newId is
@@ -253,7 +313,11 @@ export interface ExtServerContext {
    *  token accounting are entirely the calling extension's responsibility. */
   invokeAI?: (params: {
     provider?: string; modelId?: string; system?: string;
-    messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
+    messages: Array<{
+      role: "system" | "user" | "assistant";
+      /** Plain text, or a multimodal part list ({type:"text"} / {type:"image", data, mimeType}). */
+      content: string | Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>;
+    }>;
     maxTokens?: number; temperature?: number; reasoning?: string;
     /** Accounting dimension: extensions may break scenarios down (e.g. "myext-input/complete"); defaults to ext.id */
     caller?: string;
