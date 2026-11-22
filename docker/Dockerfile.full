@@ -79,17 +79,17 @@ RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64) garch="amd64"; garch_f="amd64";; arm64) garch="aarch64"; garch_f="arm64";; esac; \
     ACCEL="$(printf '%s' "$GH_ACCEL_MIRRORS" | tr ',' ' ')"; \
-    dl() { out="$1"; url="$2"; ge="$3"; \
+    dl() { out="$1"; url="$2"; ge="$3"; tmo="${4:-900000}"; \
       if command -v justget >/dev/null 2>&1; then \
-        set -- justget "$url" -o "$out" --min-size 1048576 --warmup 3000 --timeout 900000 --no-progress; \
+        set -- justget "$url" -o "$out" --min-size 1048576 --warmup 3000 --timeout "$tmo" --no-progress; \
         case "$url" in https://github.com/*) rel="${url#https://github.com/}"; for m in $ACCEL; do set -- "$@" -m "$m/$rel"; done;; esac; \
         if [ -n "$GITEE_BIN_BASE" ] && [ -n "$ge" ]; then set -- "$@" -m "$GITEE_BIN_BASE/$ge"; fi; \
         if "$@"; then return 0; fi; \
         echo "[full] WARN justget failed for $url — falling back to the sequential curl walk" >&2; \
       fi; \
-      if curl -fsSL --connect-timeout 20 --retry 2 -o "$out" "$url"; then return 0; fi; \
-      case "$url" in https://github.com/*) rel="${url#https://github.com/}"; for m in $ACCEL; do if curl -fsSL --connect-timeout 20 --retry 2 -o "$out" "$m/$rel"; then return 0; fi; done;; esac; \
-      if [ -n "$GITEE_BIN_BASE" ] && [ -n "$ge" ]; then if curl -fsSL --connect-timeout 20 --retry 2 -o "$out" "$GITEE_BIN_BASE/$ge"; then return 0; fi; fi; \
+      if curl -fsSL --connect-timeout 20 --max-time "$((tmo / 1000))" --retry 2 -o "$out" "$url"; then return 0; fi; \
+      case "$url" in https://github.com/*) rel="${url#https://github.com/}"; for m in $ACCEL; do if curl -fsSL --connect-timeout 20 --max-time "$((tmo / 1000))" --retry 2 -o "$out" "$m/$rel"; then return 0; fi; done;; esac; \
+      if [ -n "$GITEE_BIN_BASE" ] && [ -n "$ge" ]; then if curl -fsSL --connect-timeout 20 --max-time "$((tmo / 1000))" --retry 2 -o "$out" "$GITEE_BIN_BASE/$ge"; then return 0; fi; fi; \
       return 1; }; \
     gh() { dl "$1" "https://github.com/$2" "$3"; }; \
     # cloudflared (default tunnel, required) pinned 2026.8.3
@@ -100,13 +100,15 @@ RUN set -eux; \
     case "$arch" in amd64) tarch="x86_64";; arm64) tarch="aarch64";; esac; \
     gh /usr/local/bin/ttyd "tsl0922/ttyd/releases/download/1.7.7/ttyd.${tarch}" "ttyd.${tarch}"; \
     chmod +x /usr/local/bin/ttyd && ttyd --version; \
-    # ngrok (stable direct link, no GitHub release behind it and no gitee copy; users configure their own
-    # authtoken; failure non-blocking)
-    dl /tmp/ngrok.tgz "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-${garch}.tgz" "" \
+    # ngrok (stable direct link, no GitHub release behind it, no accelerator and no gitee copy — so it gets a
+    # short budget instead of the 15-minute default: it is optional and a hanging equinox CDN would otherwise eat
+    # the whole step; users configure their own authtoken)
+    dl /tmp/ngrok.tgz "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-${garch}.tgz" "" 120000 \
       || echo "[full] WARN ngrok download failed (optional)"; \
     (tar -xzf /tmp/ngrok.tgz -C /usr/local/bin ngrok && chmod +x /usr/local/bin/ngrok) || true; rm -f /tmp/ngrok.tgz; \
-    # frpc pinned 0.61.1 (frpc is a single binary inside the tar; failure non-blocking; no gitee mirror = "")
-    dl /tmp/frpc.tar.gz "https://github.com/fatedier/frp/releases/download/v0.61.1/frp_0.61.1_linux_${garch_f}.tar.gz" "" \
+    # frpc pinned 0.61.1 (frpc is a single binary inside the tar; failure non-blocking; no gitee mirror = "" — the
+    # gitee upload scanner rejects it, so it races github.com + the accelerators only)
+    dl /tmp/frpc.tar.gz "https://github.com/fatedier/frp/releases/download/v0.61.1/frp_0.61.1_linux_${garch_f}.tar.gz" "" 300000 \
       || echo "[full] WARN frpc download failed (optional)"; \
     (tar -xzf /tmp/frpc.tar.gz -C /tmp "frp_0.61.1_linux_${garch_f}/frpc" \
       && mv "/tmp/frp_0.61.1_linux_${garch_f}/frpc" /usr/local/bin/frpc && chmod +x /usr/local/bin/frpc) || true; \
