@@ -2979,7 +2979,11 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     const builtinCommands = isStreaming
       ? BUILTIN_SLASH_COMMANDS.filter((command) => command.availableWhileStreaming)
       : BUILTIN_SLASH_COMMANDS;
-    const commands = [...builtinCommands, ...(slashCommands ?? [])];
+    // A command the composer handles itself keeps its richer host action when
+    // an extension registers the same name (the `models` extension command vs
+    // the built-in `/model`): list one entry, never two identical-looking rows.
+    const builtinNames = new Set(builtinCommands.flatMap((command) => [command.name, ...(command.aliases ?? [])]));
+    const commands = [...builtinCommands, ...(slashCommands ?? []).filter((command) => !builtinNames.has(command.name))];
     return filterSlashCommands(commands, slashQuery, t);
   })();
 
