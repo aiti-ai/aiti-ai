@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/demo",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "homepage": "https://aiti.pw/extensions/demo.html",
   "description": "Reference extension demonstrating every extension point: two client styles side by side (plain hyperscript, and JSX with npm dependencies built by vite), config files, skills and server-side hooks. Meant to be read as the canonical example of how an aiti extension is put together.",
@@ -45,5 +45,5 @@
   "publishConfig": {
     "access": "public"
   },
-  "contentHash": "79dc93915f9520eb"
+  "contentHash": "4a372e5bf44b5d33"
 }

@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-testagent",
-  "version": "0.1.8",
+  "version": "0.1.10",
   "type": "module",
   "description": "; arbitrary in-JVM modification / Mock & SQL interception simulation / hot updates / diagnostic sampling; 57",
   "scripts": {

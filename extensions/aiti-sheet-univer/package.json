@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-sheet-univer",
-  "version": "0.1.8",
+  "version": "0.1.10",
   "description": "In-browser preview + editing for .xlsx/.xlsm (exceljs data layer + Univer view layer); read-only preview and one-click convert to .xlsx for .xls/.ods",
   "main": "index.ts",
   "scripts": {

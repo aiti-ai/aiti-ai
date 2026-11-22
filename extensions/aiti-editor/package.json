@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-editor",
-  "version": "1.0.11",
+  "version": "1.0.13",
   "description": "Extensible editor — Monaco editing take over + save (mtime conflict 409 + whitelist/size checks) + archive extraction + unified image viewer (message images and file images unified, zoom · pinch · info panel)",
   "main": "index.ts",
   "scripts": {

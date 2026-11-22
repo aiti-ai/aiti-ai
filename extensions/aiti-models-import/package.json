@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-models-import",
-  "version": "0.1.10",
+  "version": "0.1.12",
   "description": "; persistence always goes through aiti-model-wizard saveBatch (undoable in one step), neve",
   "type": "module",
   "scripts": {

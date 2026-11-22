@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-testagent-native",
-  "version": "0.1.10",
+  "version": "0.1.12",
   "type": "module",
   "description": "Visual panel for testagent-native (live Windows-native process control) — broker processes/sessions/hooks/event stream; formerly aiti-wintrace (renamed 2026-11-07)",
   "scripts": {

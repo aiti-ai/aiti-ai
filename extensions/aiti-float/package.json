@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-float",
-  "version": "0.5.10",
+  "version": "0.5.12",
   "type": "module",
   "description": "data-ext-float contract take-over — drag/edge resize/position persistence/click-to-front/double-click reset/auto maximize button, small-screen auto fullscreen + system back closes the float; the DockStack unified sidebar block-stack service",
   "scripts": {

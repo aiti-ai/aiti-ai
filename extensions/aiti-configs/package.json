@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-configs",
-  "version": "0.1.8",
+  "version": "0.1.10",
   "type": "module",
   "description": "; if the system crashes, a command-line watchdog recovers without relying on the broken system",
   "scripts": {

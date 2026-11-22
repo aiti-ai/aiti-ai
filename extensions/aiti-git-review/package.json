@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-git-review",
-  "version": "0.2.8",
+  "version": "0.2.10",
   "type": "module",
   "description": "Dedicated to reviewing uncommitted changes — Monaco diff workspace (side-by-side/merged/new-only/outline) + line-level annotations (must/suggest/question) + anchor flag-line re-mapping (stays valid while editing mid-review) + summary final-review ",
   "scripts": {

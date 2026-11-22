@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-agent-manager",
-  "version": "0.2.9",
+  "version": "0.2.11",
   "description": "Unified aggregation of external agent login states + login action proxying + multi-account profiles (backup/alias/one-click switch) + account quota display — implements no login protocol at all",
   "soul": "六家 agent 登录态，一屏看尽；多账号穿换，一键切换。",
   "scripts": {

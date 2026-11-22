@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-pair",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "type": "module",
   "description": "Device interconnect over the bridge — paired devices (phone browsers / other computers / agent sessions / injected pages) exchange messages and files.",
   "scripts": {

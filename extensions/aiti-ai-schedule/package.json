@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-ai-schedule",
-  "version": "0.4.8",
+  "version": "0.4.10",
   "type": "module",
   "description": "pi-web resident scheduler — extension declarative scheduled tasks + AI plans (cron/interval/one-shot) + three-mode execution engine + AI self-service plan tool + management page",
   "scripts": {

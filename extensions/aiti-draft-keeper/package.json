@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-draft-keeper",
-  "version": "0.1.8",
+  "version": "0.1.10",
   "description": "Draft persistence and crash recovery for the composer — the sole owner of the composer draft state machine (v2 intent contract), shared slots across tabs, 7-day stale pruning.",
   "soul": "崩溃可以带走页面，带不走你打到一半的话。",
   "scripts": {

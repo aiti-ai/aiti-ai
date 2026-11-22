@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-msg-anchor",
-  "version": "0.1.8",
+  "version": "0.1.10",
   "type": "module",
   "description": "A persistent banner at the top of the message area — shows \"the user input that generated the content currently at the top of your screen\", following turn segments as you scroll; switchable to first input / latest input / session title",
   "scripts": {

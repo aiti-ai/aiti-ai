@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-channels",
-  "version": "0.1.8",
+  "version": "0.1.10",
   "description": "IM channel integration + a full frontend shell for cc-connect — hosts the cc-connect process, overview/projects/channels/sessions panels, and a socket API for outbound messaging",
   "type": "module",
   "homepage": "https://aiti.pw/extensions/aiti-channels.html",

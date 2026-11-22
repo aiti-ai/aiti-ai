@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-model-recent",
-  "version": "0.1.9",
+  "version": "0.1.11",
   "type": "module",
   "description": "The model selector's \"recently used\" data provider — a pure service extension (zero UI); the panel's recent section fetches data synchronously and pick events feed the LRU; the localStorage key matches the original implementation, zero migration",
   "scripts": {
