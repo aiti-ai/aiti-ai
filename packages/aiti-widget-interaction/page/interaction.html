@@ -91,6 +91,7 @@ function renderState(request) {
 function renderActions(request) {
   const actions = $("actions");
   clear(actions);
+  if (request.kind === "choose" && request.options?.length) return;
   const list = request.actions?.length
     ? request.actions
     : request.kind === "confirm"
