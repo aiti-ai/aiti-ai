@@ -143,6 +143,25 @@ function main() {
     }
   }
 
+  // Replay only complete lines: the ring's tail can end mid-line (a huge RPC
+  // response truncated by the ring limit). A partial tail would glue onto the
+  // agent's next live line on every future attach, producing an unparseable
+  // or oversized frame client-side. Walk back to the last newline boundary.
+  function trimmedJournalForReplay() {
+    const items = journal.slice();
+    for (let i = items.length - 1; i >= 0; i--) {
+      const item = items[i];
+      if (item.channel !== CH_STDOUT && item.channel !== CH_STDERR) break;
+      const idx = item.buf.lastIndexOf(0x0a);
+      if (idx >= 0) {
+        if (idx + 1 < item.buf.length) items[i] = { channel: item.channel, buf: item.buf.subarray(0, idx + 1) };
+        break;
+      }
+      items.pop();
+    }
+    return items;
+  }
+
   let client = null;
   let handshakeSent = false;
   let child = null;
@@ -253,7 +272,7 @@ function main() {
       // replay to expect (diagnostics; the framing itself needs no metadata).
       parts.push(control(Object.assign({}, hello, { journalBytes: journalBytes, journalFrames: journal.length })));
     }
-    for (const item of journal) parts.push(encodeFrame(item.channel, item.buf));
+    for (const item of trimmedJournalForReplay()) parts.push(encodeFrame(item.channel, item.buf));
     if (exitInfo) parts.push(control({ t: "exit", code: exitInfo.code, signal: exitInfo.signal }));
     try {
       if (parts.length === 1) sock.write(parts[0]);

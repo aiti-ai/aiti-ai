@@ -3,6 +3,7 @@ import { existsSync, statSync } from "fs";
 import {
   attachSessionProjectInfo,
   openSessionManager,
+  preferDiskHistory,
   resolveSessionPath,
   resolveSessionIdByPath,
   invalidateSessionListCache,
@@ -97,7 +98,11 @@ export async function GET(
     const fpEarly = await resolveSessionPath(id);
     if (fpEarly) {
       const bridged = await attachIfBridged(fpEarly);
-      if (bridged?.isAlive()) {
+      // Oversized local file: a get_messages full dump would be a single JSONL line sized
+      // like the whole session (>8MB kills the wrapper client / wire reader — blank
+      // history + handle death + attach-race noise). The disk branch below serves paged
+      // history instead; the attached handle (if any) stays in the store for SSE/sends.
+      if (bridged?.isAlive() && !preferDiskHistory(fpEarly)) {
         return await bridgedOk(id, bridged, { tail: extTail, before: extBefore });
       }
     }
@@ -170,8 +175,10 @@ export async function GET(
     // Backend (provider-handle) sessions: no local file exists — serve a
     // minimal SessionData so the chat view loads instead of bouncing off a
     // 404. History replay depends on the backend's getMessages capability.
+    // (Oversized local files skip this too — same RPC-dump limit as the early
+    // branch above; their history comes from the disk branch below.)
     const rpc = getRpcSession(id);
-    if (!(rpc?.isAlive())) {
+    if (!(rpc?.isAlive()) && !(fpEarly && preferDiskHistory(fpEarly))) {
       const wrapped = resolveAnySession(id);
       if (wrapped?.isAlive()) {
         // History replay: pull entries through the handle's get_messages
@@ -304,7 +311,8 @@ export async function GET(
       );
     }
     // bridge-occupancy detection: the file is held by a TUI bridge → history comes back via the bridge's get_messages (no local open)
-    if (!liveRpc && resolvedPath) {
+    // (Oversized local files are excluded — same RPC-dump limit; disk branch serves them.)
+    if (!liveRpc && resolvedPath && !preferDiskHistory(resolvedPath)) {
       try {
         const bridged = await attachIfBridged(resolvedPath).catch((e: { name?: string }) => {
           if (e?.name === "BridgeOccupiedError") throw e;

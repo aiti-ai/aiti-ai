@@ -1392,6 +1392,31 @@ export function readSessionHeader(filePath: string): SessionHeader | null {
   }
 }
 
+/** Responses to a full `get_entries`/`get_messages` RPC travel as ONE JSONL line sized
+ *  like the whole session. Past this size the line is doomed before it is sent: the
+ *  wrapper tears the client down at 8MB (CLIENT_BUFFER_LIMIT) and the wire line reader
+ *  marks the handle dead at 10MB (DEFAULT_MAX_LINE_BYTES) — the handle dies, the UI
+ *  shows zero history, and the reattach cycle surfaces as spurious BridgeOccupiedError
+ *  noise (2026-11-22 blank-history incident, 10MB/82MB sessions). Above this threshold
+ *  routes must serve history from the paged disk read instead of the handle dump. */
+export const RPC_HISTORY_DUMP_MAX_BYTES = 6 * 1024 * 1024;
+
+/** True when `filePath` is a real local pi session large enough that its history must
+ *  come from the paged disk read rather than an agent RPC full dump. External anchors
+ *  (placeholder headers carrying an extId) are excluded — they must keep handle routing
+ *  even when big, since the local file is not the real history for them. */
+export function preferDiskHistory(filePath: string): boolean {
+  try {
+    if (statSync(filePath).size < RPC_HISTORY_DUMP_MAX_BYTES) return false;
+    const header = readSessionHeader(filePath);
+    if (!header?.id) return false;
+    const loose = header as SessionHeader & { extId?: string };
+    return !loose.extId;
+  } catch {
+    return false;
+  }
+}
+
 export function getSessionEntries(filePath: string): SessionEntry[] {
   const entries = openSessionManager(filePath).getEntries();
   return entries as unknown as SessionEntry[];

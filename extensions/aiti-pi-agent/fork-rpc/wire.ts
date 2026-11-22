@@ -118,6 +118,14 @@ export class RpcChildHost {
     child.stdout?.on("error", (err: Error) => this.markDead(`stdout error: ${err.message}`));
     child.stderr?.on("error", (err: Error) => console.log(`[rpc-child] stderr error: ${err.message}`));
     child.stdin?.on("error", (err: Error) => console.log(`[rpc-child] stdin error: ${err.message}`));
+    // Wrapper facades (SocketChild) report the real cause on "dropped" before the
+    // synthetic exit — "superseded" (single-writer slot taken by a newer client),
+    // "socket closed", or the socket error message. Listen first so markDead carries
+    // a diagnosable reason instead of the generic "process exited (signal)"
+    // (markDead is idempotent; the later exit event is a no-op).
+    (child as unknown as { once: (ev: string, cb: (reason: unknown) => void) => unknown }).once("dropped", (reason) => {
+      if (typeof reason === "string" && reason) this.markDead(reason);
+    });
     child.once("exit", (code) => this.markDead(`process exited (${code ?? "signal"})`));
     child.once("error", (err) => this.markDead(`process error: ${err.message}`));
   }
