@@ -5595,9 +5595,10 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
                     ];
                     const ctx = contextUsage ?? sessionStats.contextUsage;
                     const formatCompact = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(0)}k` : String(n);
-                    // Context row: percent colored by urgency + a 22px tri-state compact
-                    // button (same matrix as the large-screen/dialog buttons; i18n reuse,
-                    // zero new strings)
+                    // Context row: percent colored by urgency + a compact pill with icon AND
+                    // label (same tri-state matrix as the composer/dialog buttons; i18n reuse,
+                    // zero new strings). The label makes the action discoverable instead of
+                    // leaving an icon-only button next to the percentage.
                     const ctxUrg = contextUrgency(ctx?.contextWindow ? ctx.percent : null);
                     const compactBusyColor = compactControls?.isCompacting ? "#ef4444" : compactControls?.compactQueued ? "#d97706" : ctxUrg.color;
                     const compactTitle = compactControls?.isCompacting
@@ -5605,6 +5606,11 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
                       : compactControls?.compactQueued
                         ? translate("chat.cancelCompactQueue")
                         : translate("chat.compactContext");
+                    const compactLabel = compactControls?.isCompacting
+                      ? translate("chat.compacting")
+                      : compactControls?.compactQueued
+                        ? translate("chat.compactQueued")
+                        : translate("chat.compact");
                     const compactBtn = (compactControls?.compact && ctx?.contextWindow) ? (
                       <button
                         type="button"
@@ -5619,25 +5625,39 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
                           display: "inline-flex",
                           alignItems: "center",
                           justifyContent: "center",
-                          width: 22,
+                          gap: 5,
                           height: 22,
+                          padding: "0 8px",
+                          fontSize: 11,
+                          fontWeight: 600,
+                          lineHeight: 1,
+                          whiteSpace: "nowrap",
                           color: compactBusyColor,
                           background: compactControls?.isCompacting ? "rgba(239,68,68,0.08)" : compactControls?.compactQueued ? "rgba(217,119,6,0.1)" : "transparent",
                           border: `1px solid ${compactControls?.isCompacting ? "rgba(239,68,68,0.35)" : compactControls?.compactQueued ? "rgba(217,119,6,0.4)" : "var(--border)"}`,
-                          borderRadius: 4,
+                          borderRadius: 6,
                           cursor: "pointer",
                           flex: "0 0 auto",
                           animation: !compactControls?.isCompacting && !compactControls?.compactQueued && ctxUrg.level === "critical" ? CTX_BREATHE_CSS : undefined,
                           transition: "color 0.12s, border-color 0.12s, background 0.12s",
                         }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.color = compactControls?.isCompacting ? "#ef4444" : compactControls?.compactQueued ? "#d97706" : "var(--text)";
+                          e.currentTarget.style.background = compactControls?.isCompacting ? "rgba(239,68,68,0.16)" : compactControls?.compactQueued ? "rgba(217,119,6,0.2)" : "var(--bg-hover)";
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.color = compactBusyColor;
+                          e.currentTarget.style.background = compactControls?.isCompacting ? "rgba(239,68,68,0.08)" : compactControls?.compactQueued ? "rgba(217,119,6,0.1)" : "transparent";
+                        }}
                       >
                         {compactControls?.isCompacting ? (
                           <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true"><rect x="2" y="2" width="6" height="6" rx="1" fill="currentColor" /></svg>
                         ) : compactControls?.compactQueued ? (
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
                         ) : (
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" /><line x1="10" y1="14" x2="3" y2="21" /><line x1="21" y1="3" x2="14" y2="10" /></svg>
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" /><line x1="10" y1="14" x2="3" y2="21" /><line x1="21" y1="3" x2="14" y2="10" /></svg>
                         )}
+                        <span>{compactLabel}</span>
                       </button>
                     ) : null;
                     const extraTokenRows = [
