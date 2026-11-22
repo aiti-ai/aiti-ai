@@ -410,7 +410,11 @@ async function startInteractionServer(options) {
   const address = server.address();
   const actualPort = typeof address === "object" && address ? address.port : port;
   const baseUrl = `http://${host}:${actualPort}/`;
-  const url = token ? `${baseUrl}?token=${encodeURIComponent(token)}` : baseUrl;
+  const pageParams = new URLSearchParams();
+  if (token) pageParams.set("token", token);
+  if (options.autosize === false) pageParams.set("autosize", "0");
+  const query = pageParams.toString();
+  const url = query ? `${baseUrl}?${query}` : baseUrl;
   return {
     server,
     port: actualPort,
@@ -1138,6 +1142,22 @@ function dialogWindowSize(spec) {
   if (spec.kind === "file" || spec.kind === "directory") return { width: 460, height: 210 };
   return { width: 560, height: 300 };
 }
+function dialogWindowPlacement(input = {}) {
+  const number = (value) => {
+    if (value === void 0 || value === "") return void 0;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : void 0;
+  };
+  const display = input.display === void 0 || input.display === "" ? void 0 : input.display;
+  const placement = {};
+  const x = number(input.x);
+  const y = number(input.y);
+  if (x !== void 0) placement.x = x;
+  if (y !== void 0) placement.y = y;
+  if (display !== void 0) placement.display = display;
+  if (input.center === true) placement.center = true;
+  return placement;
+}
 export {
   DesktopCover,
   InteractionBroker,
@@ -1150,6 +1170,7 @@ export {
   dialogExitCode,
   dialogStdout,
   dialogToRequest,
+  dialogWindowPlacement,
   dialogWindowSize,
   dialogWindowTitle,
   handleMcpRequest,

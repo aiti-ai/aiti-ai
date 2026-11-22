@@ -27,7 +27,10 @@ aiti-dialog --daemon [--port 18095] [--ttl 600]
 ```
 
 公共参数：`--json`（输出完整 Host envelope）、`--timeout <秒>`、`--title`、`--detail`、
-`--widget-bin`、`--no-window`（只打印页面 URL）、`--width`、`--height`。
+`--widget-bin`、`--no-window`（只打印页面 URL）、`--width`、`--height`、`--x`/`--y`
+（绝对屏幕坐标）、`--display <序号|名称|primary>`（此时 x/y 变成该屏内的相对偏移）、`--center`。
+显式给了任一几何参数即“钉住”窗口：内置页面不再自动贴合内容（`?autosize=0`），卡片保持
+指定位/尺寸——放在录制区域外时这一点很关键。
 
 退出码（zenity 兼容）：`0` 已作答、`1` 取消、`5` 超时、`2` 参数错误、`4` 运行错误
 （无窗口/无 widget 二进制）。

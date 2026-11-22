@@ -32,7 +32,11 @@ aiti-dialog --daemon [--port 18095] [--token T] [--ttl 600]
 
 Shared flags: `--json` (print the full host envelope), `--timeout <seconds>`,
 `--title`, `--detail`, `--widget-bin`, `--no-window` (print the page URL instead of
-opening a window), `--width`, `--height`.
+opening a window), `--width`, `--height`, `--x`/`--y` (absolute screen coordinates),
+`--display <index|name|primary>` (x/y then become monitor-local offsets), `--center`.
+Passing any explicit geometry flag pins the window: the built-in page then skips auto-fit
+(`?autosize=0`) so the card stays exactly at the requested position/size, which matters when
+it was placed outside a recording rectangle.
 
 Exit codes (zenity-compatible): `0` answered, `1` cancelled, `5` timeout,
 `2` usage error, `4` runtime error (no window / no widget binary).

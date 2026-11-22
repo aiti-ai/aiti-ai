@@ -175,3 +175,40 @@ export function dialogWindowSize(spec: DialogSpec): { width: number; height: num
   return { width: 560, height: 300 };
 }
 
+/** Placement flags shared by every dialog kind (`--x/--y/--display/--center`). */
+export interface DialogPlacementInput {
+  x?: string | number;
+  y?: string | number;
+  display?: string | number;
+  center?: boolean;
+}
+
+export interface DialogPlacement {
+  x?: number;
+  y?: number;
+  display?: string | number;
+  center?: boolean;
+}
+
+/**
+ * Normalize CLI placement flags for the widget window.
+ *
+ * Duplicated/NaN coordinates are dropped instead of forwarding garbage to the shell;
+ * `--display` stays a string so monitor names ("HDMI-A-0", "primary") pass through.
+ */
+export function dialogWindowPlacement(input: DialogPlacementInput = {}): DialogPlacement {
+  const number = (value: string | number | undefined): number | undefined => {
+    if (value === undefined || value === "") return undefined;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  };
+  const display = input.display === undefined || input.display === "" ? undefined : input.display;
+  const placement: DialogPlacement = {};
+  const x = number(input.x);
+  const y = number(input.y);
+  if (x !== undefined) placement.x = x;
+  if (y !== undefined) placement.y = y;
+  if (display !== undefined) placement.display = display;
+  if (input.center === true) placement.center = true;
+  return placement;
+}

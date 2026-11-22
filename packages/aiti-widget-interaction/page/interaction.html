@@ -176,7 +176,11 @@ function showPicked(paths) {
 }
 
 let fitSeq = 0;
+// `?autosize=0` (pinned geometry) keeps the host-requested size: a script that placed the
+// card at an exact spot (e.g. outside a capture rect) must not have it grow afterwards.
+const AUTOSIZE = new URLSearchParams(location.search).get("autosize") !== "0";
 async function autoFit() {
+  if (!AUTOSIZE) return;
   const tauri = window.__TAURI__;
   const win = tauri && tauri.window && tauri.window.getCurrentWindow ? tauri.window.getCurrentWindow() : null;
   const dpi = tauri && tauri.dpi;

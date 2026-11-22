@@ -8,5 +8,5 @@ export * from "./mcp.ts";
 export * from "./placement.ts";
 export { DesktopCover, coverArgs, coverPageUrl } from "./cover.ts";
 export type { CoverOptions, CoverPattern } from "./cover.ts";
-export { dialogToRequest, dialogExitCode, dialogStdout, dialogWindowTitle, dialogWindowSize } from "./dialog-kinds.ts";
-export type { DialogKind, DialogSpec } from "./dialog-kinds.ts";
+export { dialogToRequest, dialogExitCode, dialogStdout, dialogWindowPlacement, dialogWindowTitle, dialogWindowSize } from "./dialog-kinds.ts";
+export type { DialogKind, DialogPlacement, DialogPlacementInput, DialogSpec } from "./dialog-kinds.ts";
