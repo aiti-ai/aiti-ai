@@ -5595,10 +5595,12 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
                     ];
                     const ctx = contextUsage ?? sessionStats.contextUsage;
                     const formatCompact = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(0)}k` : String(n);
-                    // Context row: percent colored by urgency + a compact pill with icon AND
-                    // label (same tri-state matrix as the composer/dialog buttons; i18n reuse,
-                    // zero new strings). The label makes the action discoverable instead of
-                    // leaving an icon-only button next to the percentage.
+                    // Context row: percent colored by urgency, with the compact control in a
+                    // separate action column on the right — the button keeps its original 22px
+                    // square (same look/alignment as before, matching the copy buttons) and the
+                    // label sits AFTER it, so the numeric column stays right-aligned across all
+                    // rows. Same tri-state matrix as the composer/dialog buttons (i18n reuse,
+                    // zero new strings).
                     const ctxUrg = contextUrgency(ctx?.contextWindow ? ctx.percent : null);
                     const compactBusyColor = compactControls?.isCompacting ? "#ef4444" : compactControls?.compactQueued ? "#d97706" : ctxUrg.color;
                     const compactTitle = compactControls?.isCompacting
@@ -5611,6 +5613,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
                       : compactControls?.compactQueued
                         ? translate("chat.compactQueued")
                         : translate("chat.compact");
+                    const compactBusyBg = compactControls?.isCompacting ? "rgba(239,68,68,0.08)" : compactControls?.compactQueued ? "rgba(217,119,6,0.1)" : "transparent";
                     const compactBtn = (compactControls?.compact && ctx?.contextWindow) ? (
                       <button
                         type="button"
@@ -5624,39 +5627,44 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
                         style={{
                           display: "inline-flex",
                           alignItems: "center",
-                          justifyContent: "center",
-                          gap: 5,
+                          gap: 6,
                           height: 22,
-                          padding: "0 8px",
+                          padding: 0,
+                          background: "transparent",
+                          border: "none",
+                          color: compactBusyColor,
+                          cursor: "pointer",
+                          flex: "0 0 auto",
                           fontSize: 11,
                           fontWeight: 600,
                           lineHeight: 1,
                           whiteSpace: "nowrap",
-                          color: compactBusyColor,
-                          background: compactControls?.isCompacting ? "rgba(239,68,68,0.08)" : compactControls?.compactQueued ? "rgba(217,119,6,0.1)" : "transparent",
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.color = compactControls?.isCompacting ? "#ef4444" : compactControls?.compactQueued ? "#d97706" : "var(--text)"; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.color = compactBusyColor; }}
+                      >
+                        <span style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          width: 22,
+                          height: 22,
+                          color: "inherit",
+                          background: compactBusyBg,
                           border: `1px solid ${compactControls?.isCompacting ? "rgba(239,68,68,0.35)" : compactControls?.compactQueued ? "rgba(217,119,6,0.4)" : "var(--border)"}`,
-                          borderRadius: 6,
-                          cursor: "pointer",
+                          borderRadius: 4,
                           flex: "0 0 auto",
                           animation: !compactControls?.isCompacting && !compactControls?.compactQueued && ctxUrg.level === "critical" ? CTX_BREATHE_CSS : undefined,
                           transition: "color 0.12s, border-color 0.12s, background 0.12s",
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.color = compactControls?.isCompacting ? "#ef4444" : compactControls?.compactQueued ? "#d97706" : "var(--text)";
-                          e.currentTarget.style.background = compactControls?.isCompacting ? "rgba(239,68,68,0.16)" : compactControls?.compactQueued ? "rgba(217,119,6,0.2)" : "var(--bg-hover)";
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.color = compactBusyColor;
-                          e.currentTarget.style.background = compactControls?.isCompacting ? "rgba(239,68,68,0.08)" : compactControls?.compactQueued ? "rgba(217,119,6,0.1)" : "transparent";
-                        }}
-                      >
-                        {compactControls?.isCompacting ? (
-                          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true"><rect x="2" y="2" width="6" height="6" rx="1" fill="currentColor" /></svg>
-                        ) : compactControls?.compactQueued ? (
-                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
-                        ) : (
-                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" /><line x1="10" y1="14" x2="3" y2="21" /><line x1="21" y1="3" x2="14" y2="10" /></svg>
-                        )}
+                        }}>
+                          {compactControls?.isCompacting ? (
+                            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true"><rect x="2" y="2" width="6" height="6" rx="1" fill="currentColor" /></svg>
+                          ) : compactControls?.compactQueued ? (
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
+                          ) : (
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" /><line x1="10" y1="14" x2="3" y2="21" /><line x1="21" y1="3" x2="14" y2="10" /></svg>
+                          )}
+                        </span>
                         <span>{compactLabel}</span>
                       </button>
                     ) : null;
@@ -5670,9 +5678,8 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
                              animation: ctxUrg.level === "critical" ? CTX_BREATHE_CSS : undefined,
                            }}>{ctx.percent !== null ? `${ctx.percent.toFixed(1)}%` : "?"}</span>
                            <span>/ {formatCompact(ctx.contextWindow)}</span>
-                           {compactBtn}
                          </span>
-                       )]] : []),
+                       ), compactBtn]] : []),
                        // Cache hit rate = cache reads / (input + cache writes + cache reads) — the denominator covers all input-class tokens.
                        ...(sessionStats.tokens.cacheRead + sessionStats.tokens.cacheWrite > 0 && sessionStats.tokens.cacheRead + sessionStats.tokens.cacheWrite + sessionStats.tokens.input > 0
                          ? [[translate("session.cacheHitRate"), `${(sessionStats.tokens.cacheRead / (sessionStats.tokens.cacheRead + sessionStats.tokens.cacheWrite + sessionStats.tokens.input) * 100).toFixed(1)}%`]]
@@ -5682,22 +5689,29 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
                     // voice correction etc.) is self-rendered in the AI-input extension's
                     // sessionStats slot item; the overall report entry lives in the
                     // AI-usage extension's item in the same slot.
+                    // Optional third column = row action (e.g. the compact button). It owns its own
+                    // column so the value column stays right-aligned no matter how wide the action is.
                     const section = (
                       title: string,
                       sectionRows: ReactNode[][],
                       valueAlign: "left" | "right" = "left",
                       compact = false,
-                    ) => (
+                    ) => {
+                      const hasAction = sectionRows.some((row) => row[2] != null);
+                      return (
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>{title}</div>
                           <div style={{
                             display: "grid",
-                            gridTemplateColumns: compact ? "max-content max-content" : "auto minmax(0, 1fr)",
+                            gridTemplateColumns: compact
+                              ? hasAction ? "max-content max-content max-content" : "max-content max-content"
+                              : hasAction ? "auto minmax(0, 1fr) max-content" : "auto minmax(0, 1fr)",
                             columnGap: compact ? 14 : 12,
                             rowGap: 4,
                             justifyContent: compact ? "start" : undefined,
+                            alignItems: hasAction ? "center" : undefined,
                           }}>
-                            {sectionRows.map(([label, value]) => (
+                            {sectionRows.map(([label, value, action]) => (
                               <div key={`${title}:${label}`} style={{ display: "contents" }}>
                                 <div style={{ color: "var(--text-dim)", whiteSpace: "nowrap" }}>{label}</div>
                                 <div style={{
@@ -5707,11 +5721,15 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
                                   textAlign: valueAlign,
                                   whiteSpace: valueAlign === "right" ? "nowrap" : "normal",
                                 }}>{value}</div>
+                                {hasAction ? (
+                                  <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-start", minWidth: 0 }}>{action ?? null}</div>
+                                ) : null}
                               </div>
                             ))}
                           </div>
                         </div>
                       );
+                    };
                     const copyTitleKey: Record<SessionCopyField, string> = {
                       file: "session.copyFile",
                       id: "session.copyId",
