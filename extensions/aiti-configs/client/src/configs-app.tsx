@@ -235,7 +235,7 @@ function App({ open, onClose }: { open: boolean; onClose: () => void }) {
             {tagList.tags.map((tag: any) => (
               <span key={tag.name} style={{ display: "inline-flex", alignItems: "center", gap: 4, margin: "0 6px 4px 0", padding: "2px 8px", borderRadius: 10, background: "#fef3c7", color: "#92400e", fontSize: 11, border: "1px solid #fcd34d" }}>
                 <Ic size={11} paths={ICONS.tag} />{" "}{tag.name}
-                <button style={{ border: "none", background: "transparent", cursor: "pointer", color: "#92400e", display: "flex" }} onClick={() => doDelTag(t.name)} aria-label="删除 tag">
+                <button style={{ border: "none", background: "transparent", cursor: "pointer", color: "#92400e", display: "flex" }} onClick={() => doDelTag(t.name)} aria-label={t("删除 tag")}>
                   <Ic size={10} paths={ICONS.x} />
                 </button>
               </span>
@@ -313,14 +313,14 @@ function App({ open, onClose }: { open: boolean; onClose: () => void }) {
     return (
       <div>
         <div style={warn}>
-          ⚠ {t("本仓包含 settings/models.json 等含 API Key 的敏感配置——")}<b>{t("严禁配置为公开仓库（GitHub/Gitee 公开仓、任意公网可见仓）")}</b>！只能配私有/自建 git 仓；url 内嵌 token 仅存本机，不写日志不展示明文。
+          ⚠ {t("本仓包含 settings/models.json 等含 API Key 的敏感配置——")}<b>{t("严禁配置为公开仓库（GitHub/Gitee 公开仓、任意公网可见仓）")}</b>{t("！只能配私有/自建 git 仓；url 内嵌 token 仅存本机，不写日志不展示明文。")}
         </div>
         <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4, marginTop: 4 }}>{t("远端同步（remote）")}</div>
         <div style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
           <input id="cfg-remote-url" type="text" placeholder={t("git@github.com:user/private-configs.git 或 https://token@…")} defaultValue={rc.url || ""} style={{ flex: 1, ...inp }} />
         </div>
         <div style={{ display: "flex", gap: 14, marginBottom: 8, fontSize: 12 }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 4 }}><input id="cfg-remote-push" type="checkbox" defaultChecked={rc.push === true} />提交后自动 push</label>
+          <label style={{ display: "flex", alignItems: "center", gap: 4 }}><input id="cfg-remote-push" type="checkbox" defaultChecked={rc.push === true} />{t("提交后自动 push")}</label>
           <label style={{ display: "flex", alignItems: "center", gap: 4 }}><input id="cfg-remote-pull" type="checkbox" defaultChecked={rc.autoPull !== false} />push {t("前")} pull --rebase</label>
         </div>
         <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
@@ -334,14 +334,14 @@ function App({ open, onClose }: { open: boolean; onClose: () => void }) {
         </div>
         <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4, marginTop: 10 }}>{t("密文 commit（encrypt）")}</div>
         <div style={warn}>
-          🔑 {t("开启后仓内为密文，push 到任何仓库（含公开仓）都安全；但密钥文件")}（{en.keyFile || "{repo}/.git/configs-key"}）<b>{t("丢失则永远无法恢复")}</b>！请备份密钥；密钥文件在 .git 下，git 永不跟踪、不入仓。
+          🔑 {t("开启后仓内为密文，push 到任何仓库（含公开仓）都安全；但密钥文件")}（{en.keyFile || "{repo}/.git/configs-key"}）<b>{t("丢失则永远无法恢复")}</b>{t("！请备份密钥；密钥文件在 .git 下，git 永不跟踪、不入仓。")}
         </div>
         <div style={{ display: "flex", gap: 14, marginBottom: 6, fontSize: 12, alignItems: "center" }}>
           <label style={{ display: "flex", alignItems: "center", gap: 4 }}><input id="cfg-enc-enabled" type="checkbox" defaultChecked={en.enabled === true} />{t("启用密文")} commit</label>
-          <span style={{ color: es.keyExists === true ? "#16a34a" : "#dc2626" }}>{es.keyExists === true ? t("密钥已生成（") + (es.keyFile || "") + "）" : "密钥未生成（先点生成密钥）"}</span>
+          <span style={{ color: es.keyExists === true ? "#16a34a" : "#dc2626" }}>{es.keyExists === true ? t("密钥已生成（") + (es.keyFile || "") + "）" : t("密钥未生成（先点生成密钥）")}</span>
         </div>
         <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
-          <input id="cfg-enc-patterns" type="text" defaultValue={(en.patterns || ["pi/agent/**"]).join(",")} placeholder="加密文件 glob（逗号分隔，如 pi/agent/**）" style={{ flex: 1, ...inp }} />
+          <input id="cfg-enc-patterns" type="text" defaultValue={(en.patterns || ["pi/agent/**"]).join(",")} placeholder={t("加密文件 glob（逗号分隔，如 pi/agent/**）")} style={{ flex: 1, ...inp }} />
         </div>
         <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
           <button style={{ ...C.btn, ...C.btnPrimary }} onClick={() => {
@@ -354,7 +354,7 @@ function App({ open, onClose }: { open: boolean; onClose: () => void }) {
         </div>
         <pre style={{ ...C.pre, maxHeight: 320 }}>{JSON.stringify(d.config || {}, null, 2)}</pre>
         <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-          <button style={{ ...C.btn, ...C.btnPrimary }} onClick={() => doSaveConfig({ sentry: { enabled: true } })}>开启自动哨兵</button>
+          <button style={{ ...C.btn, ...C.btnPrimary }} onClick={() => doSaveConfig({ sentry: { enabled: true } })}>{t("开启自动哨兵")}</button>
           <button style={C.btn} onClick={() => load("config")}>{t("↻ 刷新")}</button>
         </div>
       </div>
@@ -372,7 +372,7 @@ function App({ open, onClose }: { open: boolean; onClose: () => void }) {
     >
       <div style={headStyle}>
         <span style={{ fontWeight: 700, fontSize: 14, display: "flex", alignItems: "center", gap: 6 }}>
-          <Ic size={15} paths={ICONS.shield} />配置安全盾
+          <Ic size={15} paths={ICONS.shield} />{t("配置安全盾")}
         </span>
         <div style={C.tabs}>
           {[["status", t("状态")], ["log", t("历史")], ["selfcheck", t("自检")], ["config", t("配置")]].map(([k, label]) => (
