@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-quickstart",
-  "version": "0.2.2",
+  "version": "0.2.4",
   "type": "module",
   "description": "Blank-state onboarding extension — new-session welcome page widgets (getting-started steps / quick actions / while-it-runs concepts / sample prompts, via the host newSessionWidgets slot, ⚙ customizable) + a left sidebar DockStack fully-collapsed b",
   "scripts": {

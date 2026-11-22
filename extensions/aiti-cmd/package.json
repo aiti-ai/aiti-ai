@@ -14,7 +14,7 @@
     "shell-quote": "^1.10.0"
   },
   "soul": "大脑留给思考，命令交给收藏夹。",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "aitiConfigs": {
     "configFiles": [
       "commands.json",
@@ -23,7 +23,7 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "f0a2d5b12e9c4815",
+  "contentHash": "4dc7b6e69842a0d0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

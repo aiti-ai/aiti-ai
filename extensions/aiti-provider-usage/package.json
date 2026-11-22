@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-provider-usage",
-  "version": "0.1.9",
+  "version": "0.1.11",
   "type": "module",
   "description": ".AI/OpenCode Go/Kimi/Codex/Copilot etc.), session info panel \"remaining quota\" section with the current session pinned on top, 5min TTL overview + manual refresh, event-driven ze",
   "scripts": {

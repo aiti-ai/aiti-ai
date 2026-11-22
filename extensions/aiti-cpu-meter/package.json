@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-cpu-meter",
-  "version": "0.2.8",
+  "version": "0.2.10",
   "description": ". Ships as two artifacts: a pi-web extension (internal) and a standalone single-file injector you can register into any websit",
   "soul": "主线程一卡，读秒就停；流畅度一分，忙闲立见——挂在工作页角落，收工点开看平均。",
   "scripts": {
