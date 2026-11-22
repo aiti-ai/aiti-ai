@@ -4593,7 +4593,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
     const [, commandName, rawArgs = ""] = match;
     const args = rawArgs.trim();
-    const sid = sessionIdRef.current ?? await ensureNewSession();
     const complete = (result: BuiltinSlashCommandResult): BuiltinSlashCommandResult => {
       if (!result.handled) return result;
       if (result.error) {
@@ -4605,16 +4604,17 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       return result;
     };
 
+    // /model needs no session: it opens the composer's model dropdown (ChatInput
+    // bumps the openRequest signal on this action) and works while streaming too,
+    // since switching is a session-level command, never touching the running turn.
+    // Resolved before ensureNewSession so a fresh chat does not create a session
+    // just to show the picker.
+    if (commandName === "model") return complete({ handled: true, action: "openModelSelector" });
+
+    const sid = sessionIdRef.current ?? await ensureNewSession();
+
     try {
       switch (commandName) {
-        // pi's TUI /model opens a model selector; the web composer opens its model
-        // dropdown in place (ChatInput bumps the openRequest signal on this action).
-        // Works with or without a session and while streaming — model switching is
-        // a session-level command, never touching the running turn.
-        case "model": {
-          return complete({ handled: true, action: "openModelSelector" });
-        }
-
         case "compact": {
           if (!sid || isCompacting) return complete({ handled: true, error: "No active session to compact" });
           // Detached on purpose. This must resolve now: runBuiltinCommand holds
