@@ -216,8 +216,10 @@ The shell is stateless: persist the last `moved` position (and `display`) yourse
 no mouse events, so it cannot be dragged).
 
 Because pages are served from localhost (a "remote" origin for Tauri), the drag capability
-grants only `core:window:allow-start-dragging` to `http://127.0.0.1:*` / `http://localhost:*`
-(see `capabilities/widget-drag.json`).
+grants only `core:window:allow-start-dragging` to `http://` **and `https://`** `127.0.0.1` /
+`localhost` (see `capabilities/widget-drag.json`). Tauri's remote URL patterns cannot express
+an IPv6 literal, so a page loaded from `http://[::1]` can render but is **not** granted drag;
+use `localhost` when dragging matters.
 
 ## Platform notes
 

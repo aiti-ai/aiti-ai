@@ -2,11 +2,15 @@
   "identifier": "widget-drag",
   "description": "Allow localhost widget pages to start window dragging",
   "local": false,
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "remote": {
     "urls": [
       "http://127.0.0.1:*",
-      "http://localhost:*"
+      "https://127.0.0.1:*",
+      "http://localhost:*",
+      "https://localhost:*"
     ]
   },
   "permissions": [

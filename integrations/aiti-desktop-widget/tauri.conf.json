@@ -23,6 +23,9 @@
     ],
     "category": "Utility",
     "shortDescription": "Generic always-on-top desktop widget shell",
-    "longDescription": "Frameless transparent desktop widget host for captions, floating icons and desktop pets."
+    "longDescription": "Frameless transparent desktop widget host for captions, floating icons and desktop pets.",
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    }
   }
 }
