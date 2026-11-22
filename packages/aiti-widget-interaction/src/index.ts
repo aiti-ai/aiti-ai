@@ -5,3 +5,5 @@ export type { InteractionServerOptions, InteractionServerHandle } from "./server
 export { InteractionWidgetWindow, resolveWidgetBinary } from "./widget-window.ts";
 export type { WidgetWindowOptions } from "./widget-window.ts";
 export * from "./mcp.ts";
+export { dialogToRequest, dialogExitCode, dialogStdout, dialogWindowTitle, dialogWindowSize } from "./dialog-kinds.ts";
+export type { DialogKind, DialogSpec } from "./dialog-kinds.ts";

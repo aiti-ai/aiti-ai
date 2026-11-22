@@ -13,6 +13,34 @@ npm run build
 node --test test/*.test.mjs
 ```
 
+## CLI
+
+```bash
+aiti-dialog confirm --text "继续？" [--ok-label 继续] [--cancel-label 取消]
+aiti-dialog input --text "名称：" [--default foo] [--password]
+aiti-dialog choose --text "选择" --options "A,B,C"
+aiti-dialog file [--multiple] [--filter "*.png"]
+aiti-dialog directory
+aiti-dialog notify --text "完成" [--timeout 5]
+aiti-dialog custom --page http://127.0.0.1:PORT/page.html
+aiti-dialog --daemon [--port 18095] [--ttl 600]
+```
+
+公共参数：`--json`（输出完整 Host envelope）、`--timeout <秒>`、`--title`、`--detail`、
+`--widget-bin`、`--no-window`（只打印页面 URL）、`--width`、`--height`。
+
+退出码（zenity 兼容）：`0` 已作答、`1` 取消、`5` 超时、`2` 参数错误、`4` 运行错误
+（无窗口/无 widget 二进制）。
+
+daemon 输出 `{"ok":true,"port":N,"baseUrl":"…","token":"…"}`，接口：
+
+```text
+POST /interactions            { kind, title, message, ... } -> { id }
+GET  /interactions/:id/wait   阻塞到 resolved
+GET  /interactions/pending
+GET  /interactions/events     SSE
+```
+
 ## Host API
 
 ```ts

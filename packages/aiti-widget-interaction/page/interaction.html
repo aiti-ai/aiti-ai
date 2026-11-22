@@ -8,7 +8,7 @@
   :root { color-scheme: dark; --bg:#111522; --panel:#171d2d; --fg:#eef2ff; --muted:#9aa7c7; --line:#2a3550; --accent:#8b5cf6; --accent2:#22d3ee; --danger:#f87171; }
   * { box-sizing: border-box; }
   html,body { width:100%; height:100%; margin:0; background:transparent; color:var(--fg); font:14px/1.45 system-ui,-apple-system,"Segoe UI","Noto Sans CJK SC",sans-serif; }
-  body { display:flex; align-items:center; justify-content:center; padding:10px; overflow:hidden; }
+  body { display:flex; align-items:center; justify-content:center; padding:10px; overflow:auto; }
   #app { width:100%; max-width:560px; background:var(--panel); border:1px solid var(--line); border-radius:18px; padding:16px 18px; box-shadow:0 24px 80px rgba(0,0,0,.42); }
   #queue { color:var(--muted); font-size:11px; min-height:15px; text-align:right; }
   h1 { font-size:17px; line-height:1.3; margin:2px 0 8px; font-weight:750; }
@@ -26,6 +26,10 @@
   input, textarea { width:100%; box-sizing:border-box; border:1px solid var(--line); border-radius:9px; background:#0e1320; color:var(--fg); padding:9px 10px; font:inherit; }
   textarea { min-height:44px; resize:vertical; }
   #inputwrap { margin:10px 0; }
+  #pickwrap { margin:10px 0; display:flex; flex-direction:column; gap:8px; }
+  /* author display overrides [hidden] in the UA sheet — keep the attribute effective */
+  #pickwrap[hidden] { display:none; }
+  #picklist { color:var(--muted); font-size:12px; white-space:pre-wrap; word-break:break-all; }
   #comment { margin:8px 0; }
   #footer { display:flex; align-items:center; gap:8px; justify-content:flex-end; margin-top:10px; }
   #hint { color:var(--muted); font-size:11px; margin-right:auto; }
@@ -44,6 +48,11 @@
     <div id="state" hidden></div>
     <div id="options"></div>
     <div id="inputwrap" hidden><input id="input" autocomplete="off"></div>
+    <div id="pickwrap" hidden>
+      <button id="pickbtn" type="button">Choose…</button>
+      <div id="picklist"></div>
+      <input id="pickinput" type="file" hidden>
+    </div>
     <div id="comment"><textarea id="commentinput" placeholder="Optional comment / reason"></textarea></div>
     <div id="error"></div>
     <div id="actions"></div>
@@ -59,6 +68,7 @@ let client;
 let activeId = null;
 let busy = false;
 let lastList = [];
+let pickedPaths = [];
 
 function text(value) { return value == null ? "" : String(value); }
 function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
@@ -92,6 +102,15 @@ function renderActions(request) {
   const actions = $("actions");
   clear(actions);
   if (request.kind === "choose" && request.options?.length) return;
+  if (request.kind === "pick_path") {
+    actions.appendChild(button("Cancel", async () => { await submit(request.id, { action: "cancel" }); }, "secondary"));
+    actions.appendChild(button(request.actions?.find((a) => a.id === "pick")?.label || "OK", async () => {
+      const paths = pickedPaths.slice();
+      if (!paths.length) { showError("Nothing selected yet."); return; }
+      await submit(request.id, { action: "pick", value: { paths } });
+    }, "primary"));
+    return;
+  }
   const list = request.actions?.length
     ? request.actions
     : request.kind === "confirm"
@@ -126,6 +145,65 @@ function renderOptions(request) {
   }
 }
 
+function pickTauri() {
+  try {
+    const api = window.__TAURI__;
+    return api && api.dialog && typeof api.dialog.open === "function" ? api.dialog : null;
+  } catch { return null; }
+}
+
+function extensionFilters(extensions) {
+  const list = (extensions || []).map((item) => String(item).replace(/^\*\.?/, "").replace(/^\./, "")).filter(Boolean);
+  return list.length ? [{ name: "Supported", extensions: list }] : undefined;
+}
+
+async function pickWithTauri(request) {
+  const dialog = pickTauri();
+  if (!dialog) return null;
+  const directory = request.pick?.mode === "directory";
+  const picked = await dialog.open({
+    directory,
+    multiple: request.pick?.multiple === true,
+    title: text(request.title) || undefined,
+    filters: extensionFilters(request.pick?.extensions),
+  });
+  if (picked == null) return [];
+  return Array.isArray(picked) ? picked.map(String) : [String(picked)];
+}
+
+function showPicked(paths) {
+  $("picklist").textContent = paths.length ? paths.join("\n") : "";
+}
+
+let fitSeq = 0;
+async function autoFit() {
+  const tauri = window.__TAURI__;
+  const win = tauri && tauri.window && tauri.window.getCurrentWindow ? tauri.window.getCurrentWindow() : null;
+  const dpi = tauri && tauri.dpi;
+  if (!win || !dpi) return;
+  const seq = ++fitSeq;
+  await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+  if (seq !== fitSeq) return;
+  const rect = $("app").getBoundingClientRect();
+  const width = Math.max(240, Math.ceil(rect.width + 20));
+  const height = Math.max(120, Math.ceil(rect.height + 20));
+  if (Math.abs(width - window.innerWidth) < 4 && Math.abs(height - window.innerHeight) < 4) return;
+  try {
+    const size = new dpi.LogicalSize(width, height);
+    const position = await win.outerPosition();
+    const outer = await win.outerSize();
+    const scale = await win.scaleFactor();
+    const targetW = Math.round(width * scale);
+    const targetH = Math.round(height * scale);
+    const cx = position.x + outer.width / 2;
+    const cy = position.y + outer.height / 2;
+    await win.setMinSize(size);
+    await win.setMaxSize(size);
+    await win.setSize(size);
+    await win.setPosition(new dpi.PhysicalPosition(Math.round(cx - targetW / 2), Math.round(cy - targetH / 2)));
+  } catch { /* no page-control permission (plain browser) */ }
+}
+
 function render() {
   const request = activeId ? requestById(activeId) : nextRequest();
   if (!request) {
@@ -135,6 +213,7 @@ function render() {
     $("queue").textContent = "";
     return;
   }
+  if (activeId !== request.id) { pickedPaths = []; showPicked([]); }
   activeId = request.id;
   $("card").hidden = false;
   $("empty").hidden = true;
@@ -145,22 +224,33 @@ function render() {
   $("message").textContent = text(request.message);
   $("detail").textContent = text(request.detail);
   $("detail").hidden = !request.detail;
-  $("comment").hidden = request.kind === "notify";
+  const allowComment = request.data && typeof request.data === "object" && request.data.allowComment === true;
+  $("comment").hidden = !(allowComment || request.kind === "input");
   $("commentinput").placeholder = "Optional comment / reason";
   const inputWrap = $("inputwrap");
   inputWrap.hidden = request.kind !== "input";
+  const pickWrap = $("pickwrap");
+  pickWrap.hidden = request.kind !== "pick_path";
+  if (request.kind === "pick_path") {
+    const tauri = !!pickTauri();
+    $("pickbtn").textContent = request.pick?.mode === "directory" ? "Choose folder…" : "Choose file…";
+    $("pickbtn").title = tauri ? "Opens the system picker" : "Browser fallback: the page cannot read absolute paths";
+    $("picklist").textContent = tauri ? "" : "Browser mode: absolute paths are unavailable; the selected file name is returned.";
+  }
   if (request.kind === "input") {
     $("input").placeholder = text(request.input?.placeholder) || "Type here…";
     $("input").type = request.input?.secret ? "password" : "text";
     if (!$("input").value) $("input").value = text(request.input?.defaultValue);
   }
-  $("cancel").hidden = request.kind === "notify";
+  const hasCancelAction = (request.actions || []).some((a) => a.id === "cancel" || a.id === "reject");
+  $("cancel").hidden = request.kind === "notify" || hasCancelAction;
   $("hint").textContent = request.timeoutMs > 0 ? `Timeout ${Math.round(request.timeoutMs / 1000)}s` : "";
   renderState(request);
   renderOptions(request);
   renderActions(request);
   renderState(request);
   if (request.kind === "input") setTimeout(() => $("input").focus(), 30);
+  void autoFit();
 }
 
 async function submit(id, payload) {
@@ -182,6 +272,58 @@ async function submit(id, payload) {
     render();
   }
 }
+
+document.addEventListener("keydown", (event) => {
+  const request = activeId ? requestById(activeId) : null;
+  if (!request || busy) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    void submit(request.id, { action: "cancel" });
+    return;
+  }
+  if (event.key === "Enter" && request.kind !== "input" && request.kind !== "pick_path") {
+    const primary = $("actions").querySelector("button.primary");
+    if (primary) { event.preventDefault(); primary.click(); }
+  }
+});
+
+$("pickbtn").addEventListener("click", async () => {
+  const request = activeId ? requestById(activeId) : null;
+  if (!request || busy) return;
+  const dialog = pickTauri();
+  if (dialog) {
+    setBusy(true);
+    showError("");
+    try {
+      const paths = await pickWithTauri(request);
+      pickedPaths = paths || [];
+      showPicked(pickedPaths);
+      if (pickedPaths.length) {
+        await submit(request.id, { action: "pick", value: { paths: pickedPaths } });
+        return;
+      }
+    } catch (error) {
+      showError(error?.message || String(error));
+    } finally {
+      setBusy(false);
+      render();
+    }
+    return;
+  }
+  const input = $("pickinput");
+  input.multiple = request.pick?.multiple === true;
+  if (request.pick?.mode === "directory") input.setAttribute("webkitdirectory", "1");
+  else input.removeAttribute("webkitdirectory");
+  input.click();
+});
+
+$("pickinput").addEventListener("change", () => {
+  const input = $("pickinput");
+  const names = [...(input.files || [])].map((file) => file.webkitRelativePath || file.name);
+  pickedPaths = names;
+  showPicked(pickedPaths);
+  $("pickbtn").textContent = names.length ? "Choose again…" : $("pickbtn").textContent;
+});
 
 $("cancel").addEventListener("click", async () => {
   if (!activeId || busy) return;

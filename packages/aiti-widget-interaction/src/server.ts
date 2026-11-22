@@ -144,6 +144,49 @@ export async function startInteractionServer(options: InteractionServerOptions):
         req.on("error", cleanup);
         return;
       }
+      if (options.allowCreate && req.method === "POST" && url.pathname === "/interactions") {
+        let body: Record<string, unknown>;
+        try {
+          body = await readJson(req);
+        } catch (error) {
+          json(res, 400, { error: String((error as Error)?.message || error) });
+          return;
+        }
+        const spec = (body.request && typeof body.request === "object" ? body.request : body) as {
+          kind?: string;
+        };
+        if (!spec || typeof spec.kind !== "string") {
+          json(res, 400, { error: "request.kind is required" });
+          return;
+        }
+        const opened = options.broker.open(spec as never);
+        try { options.onCreate?.(opened.request); } catch { /* best effort */ }
+        json(res, 200, { ok: true, id: opened.id, request: opened.request });
+        return;
+      }
+      const waitMatch = /^\/interactions\/([^/]+)\/wait$/.exec(url.pathname);
+      if (req.method === "GET" && waitMatch) {
+        const id = decodeURIComponent(waitMatch[1]);
+        const pending = options.broker.wait(id);
+        if (!pending) {
+          json(res, 409, { error: "no pending interaction with that id" });
+          return;
+        }
+        const result = await pending;
+        json(res, 200, { ok: true, result });
+        return;
+      }
+      const oneMatch = /^\/interactions\/([^/]+)$/.exec(url.pathname);
+      if (req.method === "GET" && oneMatch) {
+        const id = decodeURIComponent(oneMatch[1]);
+        const request = options.broker.pending().find((r) => r.id === id);
+        if (!request) {
+          json(res, 404, { error: "no pending interaction with that id" });
+          return;
+        }
+        json(res, 200, { ok: true, request });
+        return;
+      }
       const answerMatch = /^\/interactions\/([^/]+)\/answer$/.exec(url.pathname);
       if (req.method === "POST" && answerMatch) {
         const id = decodeURIComponent(answerMatch[1]);

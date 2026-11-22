@@ -16,6 +16,7 @@ import type {
 interface Entry {
   request: InteractionRequest;
   result: InteractionResult;
+  promise: Promise<InteractionResult>;
   resolve: (result: InteractionResult) => void;
   timer: ReturnType<typeof setTimeout> | null;
   startedAt: number;
@@ -83,7 +84,7 @@ export class InteractionBroker {
     const id = this.idFactory();
     const request = normalizeRequest(input, id, this.now(), this.defaultTimeoutMs);
     let resolve!: (result: InteractionResult) => void;
-    const result = new Promise<InteractionResult>((r) => { resolve = r; });
+    const promise = new Promise<InteractionResult>((r) => { resolve = r; });
     const entry: Entry = {
       request,
       result: {
@@ -97,6 +98,7 @@ export class InteractionBroker {
         tookMs: 0,
         timeoutMs: request.timeoutMs,
       },
+      promise,
       resolve,
       timer: null,
       startedAt: this.now(),
@@ -114,7 +116,7 @@ export class InteractionBroker {
       }, request.timeoutMs);
     }
     this.emit({ type: "request", request: clone(request) });
-    return { id, request: clone(request), result };
+    return { id, request: clone(request), result: promise };
   }
 
   /** Submit an answer from a renderer. Late/duplicate answers are rejected. */
@@ -195,6 +197,12 @@ export class InteractionBroker {
       .filter((entry) => !entry.done)
       .sort((a, b) => a.startedAt - b.startedAt)
       .map((entry) => clone(entry.request));
+  }
+
+  /** Await an existing request's final result (daemon / HTTP wait). */
+  wait(id: string): Promise<InteractionResult> | null {
+    const entry = this.entries.get(String(id));
+    return entry && !entry.done ? entry.promise : null;
   }
 
   has(id: string): boolean {
