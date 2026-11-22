@@ -1760,7 +1760,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       pendingRequests.set(requestId, rec);
       if (rec.mcpReqId) mcpReqMap.set(rec.mcpReqId, requestId);
       if (rec.cancelId) cancelIdMap.set(rec.cancelId, requestId);
-      const srcExt = src && src.agentId ? { agentId: src.agentId || null, agentName: src.agentName || null, targetDevice: src.targetDevice || null } : {};
+      const srcExt = src && src.agentId ? { agentId: src.agentId || null, agentName: src.agentName || null, agentSessionUrl: src.agentSessionUrl || null, targetDevice: src.targetDevice || null } : {};
       rec.onAbort = () => cancelPending(requestId, "\u5DF2\u53D6\u6D88\uFF08agent \u505C\u6B62\uFF09");
       if (signal) {
         if (signal.aborted) {
@@ -2060,7 +2060,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
         const agentSrc = () => {
           const key = session && session.agentKey || (session && session.agentId ? session.agentId + (session.id ? "/" + session.id : "") : null) || a.agentId || null;
           const agRec = key ? agents.get(String(key)) : null;
-          return { agentId: key || null, agentName: agRec && agRec.name || null };
+          return { agentId: key || null, agentName: agRec && agRec.name || null, agentSessionUrl: agRec && agRec.sessionUrl || null };
         };
         const recToolCall = (text, ok, detail) => {
           if (!recAgentKey) return;
@@ -2290,7 +2290,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
         }
         if (params.name === "user_notify") {
           const srcN = agentSrc();
-          const notif = { kind: "notify", title: String(a.title || "\u{1F916} AI \u6709\u4E00\u6761\u6D88\u606F"), body: String(a.body || a.prompt || ""), timeoutMs: clampTimeout(a.timeout), agentId: srcN.agentId, agentName: srcN.agentName, targetDevice: deviceShort(pageId || boundPageIdFor(session)) };
+          const notif = { kind: "notify", title: String(a.title || "\u{1F916} AI \u6709\u4E00\u6761\u6D88\u606F"), body: String(a.body || a.prompt || ""), timeoutMs: clampTimeout(a.timeout), agentId: srcN.agentId, agentName: srcN.agentName, agentSessionUrl: srcN.agentSessionUrl, targetDevice: deviceShort(pageId || boundPageIdFor(session)) };
           const rid = "notify_" + Date.now();
           if (a.pageId) {
             const raw = String(a.pageId);
@@ -3385,13 +3385,14 @@ ${String(pl.stack).slice(0, 400)}` : "");
     const k = String(key || "");
     if (!k) return { ok: false, error: "bad key" };
     if (!agents.has(k)) {
-      agents.set(k, { agentId: k, sessionId: opts2.id || k, registered: true, name: opts2.name || k, cwd: opts2.cwd || null, offlineAt: null, conn: 0, transportKind: "inprocess", source: opts2.source || "extension", capabilities: opts2.capabilities || {}, stream: null, boundPageId: opts2.pageId || null, activeBoundPageId: null, subEvents: new Set(opts2.subEvents || []), outbox: [], lastSeen: Date.now(), agentStream: null, inProcessSink: null });
+      agents.set(k, { agentId: k, sessionId: opts2.id || k, registered: true, name: opts2.name || k, cwd: opts2.cwd || null, sessionUrl: opts2.sessionUrl || null, offlineAt: null, conn: 0, transportKind: "inprocess", source: opts2.source || "extension", capabilities: opts2.capabilities || {}, stream: null, boundPageId: opts2.pageId || null, activeBoundPageId: null, subEvents: new Set(opts2.subEvents || []), outbox: [], lastSeen: Date.now(), agentStream: null, inProcessSink: null });
     }
     const a = agents.get(k);
     a.lastSeen = Date.now();
     if (opts2.name && a.name === k) a.name = String(opts2.name);
     if (opts2.name) a.name = String(opts2.name);
     if (opts2.cwd) a.cwd = String(opts2.cwd);
+    if (opts2.sessionUrl) a.sessionUrl = String(opts2.sessionUrl);
     if (opts2.pageId) a.boundPageId = String(opts2.pageId);
     if (Array.isArray(opts2.subEvents)) a.subEvents = new Set(opts2.subEvents.map(String));
     if (!a.boundPageId) bindAgentFromAiSelfReverse(k, a);
