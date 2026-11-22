@@ -525,8 +525,6 @@ type BuiltinSlashCommand = {
   description: string;
   source: "builtin";
   availableWhileStreaming?: boolean;
-  /** Extra accepted spellings (`/models` answers the same command as `/model`). */
-  aliases?: string[];
 };
 
 type SlashCommandPaletteItem = SlashCommandInfo | BuiltinSlashCommand;
@@ -546,15 +544,15 @@ const BUILTIN_SLASH_COMMANDS: BuiltinSlashCommand[] = [
   // mid-stream. The fork is file-level, never touching the running agent.
   { name: "side", description: "chat.commandSide", source: "builtin", availableWhileStreaming: true },
   // pi's TUI `/model` opens a model selector; the web composer opens its model
-  // dropdown in place instead. `models` is accepted as a common spelling.
-  { name: "model", description: "chat.commandModel", source: "builtin", availableWhileStreaming: true, aliases: ["models"] },
+  // dropdown in place instead (the composer's own entry, so it works on every
+  // backend: the command never reaches the agent as text).
+  { name: "model", description: "chat.commandModel", source: "builtin", availableWhileStreaming: true },
 ];
 
 function getBuiltinSlashCommand(message: string): BuiltinSlashCommand | undefined {
   const match = message.trim().match(/^\/([^\s]+)(?:\s|$)/);
   if (!match) return undefined;
-  const name = match[1];
-  return BUILTIN_SLASH_COMMANDS.find((command) => command.name === name || command.aliases?.includes(name));
+  return BUILTIN_SLASH_COMMANDS.find((command) => command.name === match[1]);
 }
 
 const MODEL_FILTER_THRESHOLD = 8;
@@ -574,9 +572,7 @@ export function offersBuiltinSlashCommandWhileStreaming(message: string): boolea
 }
 
 export function isExactSlashCommand(message: string, command: SlashCommandPaletteItem): boolean {
-  if (command.source !== "builtin") return false;
-  const trimmed = message.trim();
-  return trimmed === `/${command.name}` || Boolean(command.aliases?.some((alias) => trimmed === `/${alias}`));
+  return command.source === "builtin" && message.trim() === `/${command.name}`;
 }
 
 /**
@@ -643,14 +639,8 @@ const SLASH_SOURCE_ORDER: Record<SlashCommandSource, number> = {
 function slashMatchRank(command: SlashCommandPaletteItem, query: string): number {
   const name = command.name.toLowerCase();
   const bareName = command.source === "skill" && name.startsWith("skill:") ? name.slice("skill:".length) : name;
-  // Built-in aliases rank like the name itself, so `/models` highlights the
-  // built-in model command (and one Enter submits it) instead of some
-  // longer-named extension command such as `subagents-models`.
-  const aliases = command.source === "builtin" && command.aliases ? command.aliases : undefined;
   if (bareName === query || name === query) return 0;
-  if (aliases?.some((alias) => alias === query)) return 0;
   if (bareName.startsWith(query) || name.startsWith(query)) return 1;
-  if (aliases?.some((alias) => alias.startsWith(query))) return 1;
   if (name.includes(query)) return 2;
   return 3;
 }
@@ -2826,9 +2816,9 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     try {
       const result = await onBuiltinCommand(msg);
       if (!result.handled) return false;
-      // /model (and /models) open the model dropdown in place: bump the
-      // programmatic-open signal ModelSelector consumes once (same path as the
-      // extension command hint "select model").
+      // /model opens the model dropdown in place: bump the programmatic-open
+      // signal ModelSelector consumes once (same path as the extension command
+      // hint "select model").
       if (result.action === "openModelSelector") setModelSelectorOpenRequest((n) => n + 1);
       if (!result.error && canClearBuiltinCommandInput(valueRef.current, attachedImagesRef.current.length, msg)) clearInput();
       return true;
@@ -2979,10 +2969,10 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     const builtinCommands = isStreaming
       ? BUILTIN_SLASH_COMMANDS.filter((command) => command.availableWhileStreaming)
       : BUILTIN_SLASH_COMMANDS;
-    // A command the composer handles itself keeps its richer host action when
-    // an extension registers the same name (the `models` extension command vs
-    // the built-in `/model`): list one entry, never two identical-looking rows.
-    const builtinNames = new Set(builtinCommands.flatMap((command) => [command.name, ...(command.aliases ?? [])]));
+    // A name the composer handles itself outranks an extension command of the
+    // same name (the built-in entry carries the richer host action), so the
+    // palette never lists two identical-looking rows.
+    const builtinNames = new Set(builtinCommands.map((command) => command.name));
     const commands = [...builtinCommands, ...(slashCommands ?? []).filter((command) => !builtinNames.has(command.name))];
     return filterSlashCommands(commands, slashQuery, t);
   })();

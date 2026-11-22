@@ -693,17 +693,6 @@ test("recognizes exact slash commands for one-Enter submission", () => {
   assert.equal(isExactSlashCommand("/copy", { ...builtin, source: "extension" }), false);
 });
 
-test("matches built-in aliases exactly (model/models)", () => {
-  const model = { name: "model", description: "", source: "builtin", aliases: ["models"] };
-  assert.equal(isExactSlashCommand("/model", model), true);
-  assert.equal(isExactSlashCommand("/models", model), true);
-  assert.equal(isExactSlashCommand("/model extra", model), false);
-  // Built-ins without aliases keep the old exact-name rule.
-  const copy = { name: "copy", description: "", source: "builtin" };
-  assert.equal(isExactSlashCommand("/copy", copy), true);
-  assert.equal(isExactSlashCommand("/copies", copy), false);
-});
-
 test("clears a completed built-in only while its submitted input is unchanged", () => {
   assert.equal(canClearBuiltinCommandInput("/copy", 0, "/copy"), true);
   assert.equal(canClearBuiltinCommandInput("new follow-up", 0, "/copy"), false);
