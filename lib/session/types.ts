@@ -190,6 +190,16 @@ export type PromptOptions = {
   streamingBehavior?: "steer" | "followUp";
 };
 
+/**
+ * What the backend did with a prompt.
+ *
+ * `queued: true` — the message waits in the backend's queue and starts no turn of
+ * its own (the run it joins will deliver it). A caller that assumed it started a
+ * run must not keep showing it as a sent message; the queue rows are its home
+ * until the backend delivers it.
+ */
+export type PromptSubmission = { queued?: boolean };
+
 /** Bash execution outcome, normalized across backends. */
 export type HandleBashResult = {
   output: string;
@@ -405,8 +415,12 @@ export interface SessionHandle {
 
   // ---- mandatory core ----------------------------------------------------
 
-  /** Send a user message. Triggers a turn when idle; queues per opts when running. */
-  prompt(text: string, options?: PromptOptions): Promise<void>;
+  /**
+   * Send a user message. Triggers a turn when idle; queues per opts when running.
+   * Returns a disposition when the backend queued the message instead of starting
+   * a turn (`{ queued: true }`) — backends with a plain `void` answer never do.
+   */
+  prompt(text: string, options?: PromptOptions): Promise<void | PromptSubmission>;
 
   /** Optional raw command channel (attach/socket backends): send a JSONL command frame and resolve its response data. */
   send?(command: Record<string, unknown>): Promise<unknown>;

@@ -404,15 +404,19 @@ export class PiSpawnHandle extends RpcChildHost {
     }
   }
 
-  async prompt(text: string, options?: { images?: unknown[]; streamingBehavior?: string }): Promise<void> {
+  async prompt(
+    text: string,
+    options?: { images?: unknown[]; streamingBehavior?: string },
+  ): Promise<void | { queued: true }> {
     const frame: Record<string, unknown> = {
       type: "prompt",
       message: text,
       ...(options?.images ? { images: options.images } : {}),
       ...(options?.streamingBehavior ? { streamingBehavior: options.streamingBehavior } : {}),
     };
+    let res: { disposition?: string } | undefined;
     try {
-      await this.request(frame);
+      res = await this.request<{ disposition?: string }>(frame);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       // A plain prompt (no explicit streamingBehavior) means the caller believed the
@@ -424,8 +428,14 @@ export class PiSpawnHandle extends RpcChildHost {
       // Callers that chose a behavior explicitly still get their error verbatim.
       if (options?.streamingBehavior || !msg.includes("Specify streamingBehavior")) throw err;
       console.log(`[aiti-pi-agent] plain prompt raced a running child; re-queued as followUp`);
-      await this.request({ ...frame, streamingBehavior: "followUp" });
+      res = await this.request<{ disposition?: string }>({ ...frame, streamingBehavior: "followUp" });
     }
+    // pi answers { disposition }: "queued" means the message waits in the child's
+    // queue instead of starting a turn (a retry can also report "started" — the run
+    // settled before it landed). Report it, or the caller keeps treating a queued
+    // message as a sent one and shows the same text twice: its optimistic bubble
+    // plus the queue row pi just created.
+    return res?.disposition === "queued" ? { queued: true } : undefined;
   }
 
   async abort(): Promise<void> {
