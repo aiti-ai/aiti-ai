@@ -923,7 +923,12 @@ export async function resolve(prefer?: UeTarget, refresh = false, locale?: strin
   // chosen display too. External-CLI sessions go through agent-spawn-env's snapshot
   // read instead — same source, either side wins consistently.
   if (!error && target) applyProcessEnvDisplay(env);
-  else restoreProcessEnvDisplay();
+  else {
+    restoreProcessEnvDisplay();
+    // Audio is independent of display resolution: keep the startup hydration even
+    // when no display target is available (e.g. a transient probe failure).
+    try { hydrateProcessAudioEnv(); } catch { /* best effort */ }
+  }
   writeSessionEnvSnapshot({ ok: !error && !!target, target, mode, rationale, env });
 
   return {
