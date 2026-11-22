@@ -275,6 +275,29 @@ test("formatQuote: prefixes each line with > and appends answer line", () => {
   assert.equal(out, "> 第一行\n> 第二行\n是的");
 });
 
+test("question: option rows quote the whole paragraph, not the split-off tail question", () => {
+  // Regression: the soft boundaries (。…—) peel the premise-bearing sentence off the
+  // tail question, so quoting only `segment.text` inserted a bare "sign off?" into the
+  // composer. Option rows must quote the paragraph they answer.
+  const msg = `确认「steer 不再抢跑」：严格 FIFO 优先于"插队立刻生效"（steer/FB 只决定投递方式，不决定跳过顺序）。这是你这条纠偏的直接结果 —— 拍板吗？`;
+  const segs = parseParagraph(msg);
+  assert.equal(segs.length, 2);
+  assert.equal(segs[1].text, "拍板吗？");
+  assert.deepEqual(segs[1].options.map((o) => o.label), ["好，拍板", "不用"]);
+  assert.equal(segs[1].quote, msg);
+  const out = formatQuote(segs[1].quote, segs[1].options[0].value);
+  assert.ok(out.includes("确认「steer 不再抢跑」"), out);
+  assert.ok(out.startsWith("> 确认"), out);
+  assert.ok(out.endsWith("\n是的"), out);
+  // Statement rows keep quoting their own sentence (single-row paragraphs too).
+  assert.equal(segs[0].quote, segs[0].text);
+  const single = parseParagraph("要我帮你修改这个文件吗？")[0];
+  assert.equal(single.quote, single.text);
+  const multi = parseParagraph("部署完成。要发布吗？我会等确认。");
+  assert.equal(multi[0].quote, multi[0].text);
+  assert.equal(multi[1].quote, "部署完成。要发布吗？我会等确认。");
+});
+
 test("extractFiles: dir/name.ext, bare source file, trailing-slash dir", () => {
   const out = extractFilePaths("看 docs/plan.md 和 src/main.ts，还有 assets/ 目录");
   const paths = out.map((p) => p.path);
