@@ -378,7 +378,7 @@ fn print_help() {
     println!();
     println!("Usage: aiti-desktop-widget <url> [options]");
     println!("       aiti-desktop-widget --url <url> [options]");
-    println!("       aiti-desktop-widget --html <file> [--root <dir>] [options]");
+    println!("       aiti-desktop-widget --html <file>[?query] [--root <dir>] [options]");
     println!("       aiti-desktop-widget --config <path> [options]");
     println!();
     println!("Core options:");
@@ -386,7 +386,7 @@ fn print_help() {
         "  --url <url>              page to load (http/https; or pass as the first positional arg)"
     );
     println!(
-        "  --html <file>            local HTML page, served over a loopback origin (no --url)"
+        "  --html <file>[?query]    local HTML page, served over a loopback origin (no --url)"
     );
     println!(
         "  --root <dir>             static root for --html (default: the HTML file's directory)"
