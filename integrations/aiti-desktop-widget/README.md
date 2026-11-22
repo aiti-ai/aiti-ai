@@ -165,7 +165,8 @@ binds loopback only and dies with the process.
 
 [`demo/play/play.html`](demo/play/play.html) is a dependency-free lyric player: audio URL,
 LRC/SRT/VTT lyrics, current-line highlight, seekable progress, keyboard controls, and a
-transparent card (or `bare=1` for text only). It reads query parameters, so the shell can
+transparent card (or `bare=1` for text only). Short windows automatically switch to a
+one-line marquee with the current-line progress drawn on the lyric; autoplay starts on open. It reads query parameters, so the shell can
 load it directly:
 
 ```bash
