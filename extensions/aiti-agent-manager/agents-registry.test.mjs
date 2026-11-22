@@ -36,6 +36,16 @@ test("collectAgents：动态收集（跳过未 provide/禁用/不合法），按
   assert.equal(got[0].extId, "aiti-codebuddy-agent");
 });
 
+test("collectAgents：descriptor label/dependencyHint 支持 { zh, en } 双语对象", () => {
+  const got = collectAgents({
+    status: { "aiti-acp-agent": {} },
+    getService: () => ({ agent: "acp", label: { zh: "ACP 家族", en: "ACP family" }, modes: ["tui"], dependencyHint: { zh: "按需接入", en: "Install to connect" } }),
+  });
+  assert.equal(got.length, 1);
+  assert.deepEqual(got[0].def.label, { zh: "ACP 家族", en: "ACP family" });
+  assert.deepEqual(got[0].def.dependencyHint, { zh: "按需接入", en: "Install to connect" });
+});
+
 test("collectAgents：status 缺失 → 空表（集群未就绪不炸）", () => {
   assert.deepEqual(collectAgents({ status: null, getService: () => undefined }), []);
   assert.deepEqual(collectAgents({ status: undefined, getService: () => undefined }), []);

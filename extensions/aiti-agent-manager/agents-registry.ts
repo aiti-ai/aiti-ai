@@ -20,6 +20,9 @@
 
 export type AuthState = "ready" | "missing" | "unknown";
 
+/** Display text supplied by an agent descriptor: plain string, or an en/zh pair. */
+export type LocalizedText = string | { en: string; zh?: string };
+
 export interface AuthProbeEntry {
   kind: "file" | "dir" | "env";
   /** file/dir: 相对 HOME 的路径段；env: 环境变量名 */
@@ -60,13 +63,13 @@ export interface AgentActionSpec {
 export interface AgentDescriptor {
   /** agent 唯一 key（/ctl/{agent} 与账号档分组用，如 "codebuddy"） */
   agent: string;
-  label: string;
+  label: LocalizedText;
   modes: AgentMode[];
   /** true = 本扩展 /login/status 返回 {state:"ready"|"missing"} 语义（优先于 fs 探测） */
   extReportsAuthState?: boolean;
   /** true = 支持官方账号额度查询（GET /login/quota；如 codebuddy credits） */
   accountQuota?: boolean;
-  dependencyHint?: string;
+  dependencyHint?: LocalizedText;
   /** fs/env 候选探测（任一命中 = ready）；缺省 = 只信扩展端点 */
   auth?: AuthProbeEntry[];
   /** 本家账号档凭据槽位（路径知识在本家；可闭包捕获 configDir） */
@@ -104,7 +107,10 @@ export function collectAgents(opts: {
       d = undefined;
     }
     if (!d || typeof d.agent !== "string" || !d.agent) continue;
-    if (typeof d.label !== "string" || !d.label) continue;
+    const label = d.label;
+    const labelOk = (typeof label === "string" && !!label)
+      || (!!label && typeof label === "object" && typeof label.en === "string" && !!label.en);
+    if (!labelOk) continue;
     if (!Array.isArray(d.modes)) d = { ...d, modes: [] };
     out.push({ extId, def: d });
   }

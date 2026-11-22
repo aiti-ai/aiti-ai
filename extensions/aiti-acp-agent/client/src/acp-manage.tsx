@@ -11,7 +11,7 @@
  */
 
 import { useState, useEffect } from "react";
-import { apiUrl } from "./host-shim";
+import { apiUrl, t } from "./host-shim";
 import { ACP_KEY, PlugIcon, setDialogOpen } from "./common";
 // dock v3（P2 批）：弹窗显隐收口展示状态机（左栏列表驻留，不接右栏）；渲染门控 usePresent
 import { usePresent, DockBody, isSidebarDockState, sidebarZoneOf } from "../../../_shared/ext-float-dock";
@@ -109,9 +109,9 @@ function renderAcpDialog(face?: string) {
       {floating && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderBottom: "1px solid var(--border)", cursor: "grab", userSelect: "none" }}>
           <span style={{ color: "var(--text-muted)", display: "flex" }}><PlugIcon size={15} /></span>
-          <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>ACP Backend Agents</span>
+          <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>{t("acp.manage.dialog.label")}</span>
           <button
-            title="Close" aria-label="Close"
+            title={t("acp.manage.close")} aria-label="Close"
             onClick={() => setDialogOpen(false)}
             style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, lineHeight: 1, padding: "2px 4px" }}
           >✕</button>
@@ -122,7 +122,7 @@ function renderAcpDialog(face?: string) {
           {!loaded ? (
             <div style={{ padding: "16px 0", color: "var(--text-dim)", fontSize: 12, textAlign: "center" }}>…</div>
           ) : agents.length === 0 ? (
-            <div style={{ padding: "16px 0", color: "var(--text-dim)", fontSize: 12, textAlign: "center" }}>No ACP agents found on PATH.</div>
+            <div style={{ padding: "16px 0", color: "var(--text-dim)", fontSize: 12, textAlign: "center" }}>{t("acp.manage.empty")}</div>
           ) : agents.map((a) => (
             <div key={a.name} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 0", borderBottom: "1px solid var(--border)", fontSize: 12 }}>
               <span style={{ width: 7, height: 7, borderRadius: "50%", background: a.registered ? "var(--ok, #22c55e)" : "#ef444455", flexShrink: 0 }} />
@@ -136,7 +136,7 @@ function renderAcpDialog(face?: string) {
               {!builtinSet.has(a.name) && (
                 <button
                   onClick={() => void doRemove(a.name)}
-                  title={`Remove ${a.name}`} aria-label={`Remove ${a.name}`}
+                  title={t("acp.manage.remove", { name: a.name })} aria-label={t("acp.manage.remove", { name: a.name })}
                   style={{ background: "none", border: "none", color: "var(--danger, #ef4444)", cursor: "pointer", fontSize: 13, padding: "0 2px" }}
                 >✕</button>
               )}
@@ -154,11 +154,11 @@ function renderAcpDialog(face?: string) {
               style={{ width: 80, padding: "4px 7px", border: "1px solid var(--border)", borderRadius: 5, background: "var(--bg)", color: "var(--text)", fontSize: 11 }} />
             <button onClick={() => void doAdd()} disabled={busy}
               style={{ padding: "4px 12px", border: "none", borderRadius: 5, background: "var(--accent)", color: "#fff", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>
-              {busy ? "…" : "+ Add"}
+              {busy ? "…" : t("acp.manage.add")}
             </button>
           </div>
           <div style={{ marginTop: 5, fontSize: 10, color: "var(--text-dim)" }}>
-            Reload extensions after adding to activate new backends.
+            {t("acp.manage.reloadHint")}
           </div>
         </div>
     </>
@@ -198,17 +198,17 @@ function renderAcpDialog(face?: string) {
   // 右栏 tab face（chrome="tab"：无头行）
   if (face === "right") {
     return (
-      <DockBody itemKey={ACP_KEY} zone="right-panel" title="ACP Backend Agents" chrome="tab"
+      <DockBody itemKey={ACP_KEY} zone="right-panel" title={t("acp.manage.dialog.label")} chrome="tab"
         zones={acpZones} defaultZone={sidebarZoneOf(ACP_KEY)}>{acpInner}</DockBody>
     );
   }
   // 左栏区块 face：统一头行（标题 + 业务按钮 + ⇱ detach + ⋮）；zone 用规范值 sidebar:<key>
   const acpCount = typeof hs.count === "number" ? hs.count : 0;
   const actions: DockHeaderAction[] = [
-    { id: "refresh", title: "刷新", icon: (<svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></svg>), visibility: "always", onClick: () => { requestDockCommand(ACP_KEY, "refresh"); } },
+    { id: "refresh", title: t("acp.manage.refresh"), icon: (<svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></svg>), visibility: "always", onClick: () => { requestDockCommand(ACP_KEY, "refresh"); } },
   ];
   return (
-    <DockBody itemKey={ACP_KEY} title="ACP Backend Agents" icon="plug" chrome="section" kind="dockable"
+    <DockBody itemKey={ACP_KEY} title={t("acp.manage.dialog.label")} icon="plug" chrome="section" kind="dockable"
       count={acpCount > 0 ? acpCount : undefined}
       zones={acpZones} defaultZone={sidebarZoneOf(ACP_KEY)}
       headerActions={actions}>
