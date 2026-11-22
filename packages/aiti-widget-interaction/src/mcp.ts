@@ -1,11 +1,75 @@
-import type { InteractionBroker } from "./broker.ts";
-import type { InteractionRequestInput } from "./types.ts";
+import type { InteractionRequestInput, InteractionResult } from "./types.ts";
 
 export interface McpRequest {
   jsonrpc: "2.0";
   id?: string | number;
   method: string;
   params?: Record<string, unknown>;
+}
+
+/**
+ * Ask/cancel surface used by the MCP adapter. `InteractionBroker` satisfies it directly;
+ * `createHttpInteractionTransport` talks to a running `aiti-dialog --daemon` instead,
+ * so an MCP client can share one window with local CLI callers.
+ */
+export interface InteractionTransport {
+  ask(input: InteractionRequestInput): Promise<InteractionResult>;
+  cancel(id: string): boolean | Promise<boolean>;
+}
+
+export interface HttpTransportOptions {
+  /** Daemon base URL, e.g. `http://127.0.0.1:18095/` (from `aiti-dialog --daemon`). */
+  baseUrl: string;
+  token?: string;
+  /** Injectable for tests. */
+  fetchImpl?: typeof fetch;
+}
+
+export function createHttpInteractionTransport(options: HttpTransportOptions): InteractionTransport {
+  const base = String(options.baseUrl || "").replace(/\/+$/, "");
+  if (!base) throw new Error("createHttpInteractionTransport: baseUrl is required");
+  const token = String(options.token || "");
+  const request = options.fetchImpl || fetch;
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (token) headers.authorization = `Bearer ${token}`;
+
+  const call = async (path: string, init: RequestInit = {}): Promise<Record<string, any>> => {
+    const response = await request(`${base}${path}`, { ...init, headers: { ...headers, ...(init.headers as Record<string, string> | undefined) } });
+    let body: Record<string, any> = {};
+    try {
+      body = (await response.json()) as Record<string, any>;
+    } catch {
+      body = {};
+    }
+    if (!response.ok) {
+      throw new Error(`interaction daemon ${path} failed (${response.status}): ${body.error || response.statusText || "unknown error"}`);
+    }
+    return body;
+  };
+
+  return {
+    async ask(input) {
+      const created = await call("/interactions", { method: "POST", body: JSON.stringify({ request: input }) });
+      const id = String(created.id || created.request?.id || "");
+      if (!id) throw new Error("interaction daemon returned no id");
+      const waited = await call(`/interactions/${encodeURIComponent(id)}/wait`);
+      return waited.result as InteractionResult;
+    },
+    async cancel(id) {
+      const response = await request(`${base}/interactions/${encodeURIComponent(id)}/cancel`, { method: "POST", headers });
+      if (response.status === 409) return false;
+      if (!response.ok) {
+        let message = response.statusText;
+        try {
+          message = (await response.json()).error || message;
+        } catch {
+          /* keep statusText */
+        }
+        throw new Error(`interaction daemon cancel failed (${response.status}): ${message}`);
+      }
+      return true;
+    },
+  };
 }
 
 export interface McpToolDefinition {
@@ -108,7 +172,7 @@ function toRequest(name: string, args: Record<string, unknown>): InteractionRequ
 }
 
 /** Minimal MCP stdio handler. The caller owns transport/JSON parsing. */
-export async function handleMcpRequest(broker: InteractionBroker, request: McpRequest): Promise<Record<string, unknown> | null> {
+export async function handleMcpRequest(transport: InteractionTransport, request: McpRequest): Promise<Record<string, unknown> | null> {
   const id = request.id;
   const respond = (result: unknown) => ({ jsonrpc: "2.0", id, result });
   const fail = (code: number, message: string) => ({ jsonrpc: "2.0", id, error: { code, message } });
@@ -129,13 +193,13 @@ export async function handleMcpRequest(broker: InteractionBroker, request: McpRe
     const name = asString(params.name);
     const args = (params.arguments && typeof params.arguments === "object" ? params.arguments : {}) as Record<string, unknown>;
     if (name === "widget_cancel") {
-      const ok = broker.cancel(asString(args.id), "cancelled by MCP");
+      const ok = await transport.cancel(asString(args.id));
       if (!ok) return fail(-32602, `no pending interaction ${asString(args.id)}`);
       return respond(text({ ok: true }));
     }
     const input = toRequest(name, args);
     if (!input) return fail(-32602, `unknown tool or invalid arguments: ${name}`);
-    const result = await broker.ask(input);
+    const result = await transport.ask(input);
     return respond(text(result));
   }
   return fail(-32601, `method not found: ${method}`);

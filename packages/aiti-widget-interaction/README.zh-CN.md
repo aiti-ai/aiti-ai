@@ -94,10 +94,30 @@ node bin/widget-interaction-mcp.mjs
 `widget_notify`、`widget_cancel`。工具调用会阻塞到页面作答或超时；stdout 只输出
 JSON-RPC，诊断走 stderr。
 
+### 与 daemon 共用一个窗口
+
+daemon 起一次，多个 MCP 客户端共用同一个 broker 和窗口，避免每次请求都付 WebView 启动成本：
+
+```bash
+# 终端 1：常驻 host + 窗口；输出 {ok, port, baseUrl, token}
+aiti-dialog --daemon --port 18095
+
+# 终端 2：代理到 daemon 的 MCP server
+node bin/widget-interaction-mcp.mjs --http http://127.0.0.1:18095/ --token <token>
+```
+
+HTTP 模式下工具映射为 `POST /interactions` + `GET /interactions/:id/wait`（迟到的 wait
+会重放已保存的 envelope），`widget_cancel` 映射为 `POST /interactions/:id/cancel`。
+非 MCP 代码可用同一个传输层：
+
+```ts
+import { createHttpInteractionTransport } from "@aiti-ai/widget-interaction";
+const transport = createHttpInteractionTransport({ baseUrl: "http://127.0.0.1:18095/", token });
+const answer = await transport.ask({ kind: "confirm", title: "继续？" });
+```
+
 ## 首版未包含
 
-- 原生文件/文件夹选择；
 - 自定义页面注册校验（当前仅接受显式 loopback URL）；
-- MCP 包装；
 - 桌面遮挡/实时马赛克；
 - aiti-devtools launcher UI 基础件复用。

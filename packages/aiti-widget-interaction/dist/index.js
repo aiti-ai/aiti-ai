@@ -30,6 +30,8 @@ function normalizeRequest(input, id, now, defaultTimeoutMs) {
 var InteractionBroker = class {
   constructor(options = {}) {
     this.entries = /* @__PURE__ */ new Map();
+    /** Recently resolved envelopes, so a late `wait()` (daemon HTTP) still gets the result. */
+    this.settled = /* @__PURE__ */ new Map();
     this.listeners = /* @__PURE__ */ new Set();
     this.closed = false;
     this.defaultTimeoutMs = Math.max(0, Number(options.timeoutMs) || 0);
@@ -157,7 +159,9 @@ var InteractionBroker = class {
   /** Await an existing request's final result (daemon / HTTP wait). */
   wait(id) {
     const entry = this.entries.get(String(id));
-    return entry && !entry.done ? entry.promise : null;
+    if (entry && !entry.done) return entry.promise;
+    const settled = this.settled.get(String(id));
+    return settled ? Promise.resolve(settled) : null;
   }
   has(id) {
     return !!this.entries.get(String(id));
@@ -192,6 +196,8 @@ var InteractionBroker = class {
     entry.timer = null;
     this.entries.delete(entry.request.id);
     entry.resolve(result);
+    this.settled.set(entry.request.id, result);
+    while (this.settled.size > 64) this.settled.delete(this.settled.keys().next().value);
     this.emit({ type: "resolved", id: entry.request.id, result });
   }
   emit(event) {
@@ -539,6 +545,49 @@ var InteractionWidgetWindow = class {
 };
 
 // src/mcp.ts
+function createHttpInteractionTransport(options) {
+  const base = String(options.baseUrl || "").replace(/\/+$/, "");
+  if (!base) throw new Error("createHttpInteractionTransport: baseUrl is required");
+  const token = String(options.token || "");
+  const request = options.fetchImpl || fetch;
+  const headers = { "content-type": "application/json" };
+  if (token) headers.authorization = `Bearer ${token}`;
+  const call = async (path, init = {}) => {
+    const response = await request(`${base}${path}`, { ...init, headers: { ...headers, ...init.headers } });
+    let body = {};
+    try {
+      body = await response.json();
+    } catch {
+      body = {};
+    }
+    if (!response.ok) {
+      throw new Error(`interaction daemon ${path} failed (${response.status}): ${body.error || response.statusText || "unknown error"}`);
+    }
+    return body;
+  };
+  return {
+    async ask(input) {
+      const created = await call("/interactions", { method: "POST", body: JSON.stringify({ request: input }) });
+      const id = String(created.id || created.request?.id || "");
+      if (!id) throw new Error("interaction daemon returned no id");
+      const waited = await call(`/interactions/${encodeURIComponent(id)}/wait`);
+      return waited.result;
+    },
+    async cancel(id) {
+      const response = await request(`${base}/interactions/${encodeURIComponent(id)}/cancel`, { method: "POST", headers });
+      if (response.status === 409) return false;
+      if (!response.ok) {
+        let message = response.statusText;
+        try {
+          message = (await response.json()).error || message;
+        } catch {
+        }
+        throw new Error(`interaction daemon cancel failed (${response.status}): ${message}`);
+      }
+      return true;
+    }
+  };
+}
 var text = (value) => ({ content: [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value) }] });
 var common = {
   prompt: { type: "string", description: "Question or instruction for the human." },
@@ -631,7 +680,7 @@ function toRequest(name, args) {
   }
   return null;
 }
-async function handleMcpRequest(broker, request) {
+async function handleMcpRequest(transport, request) {
   const id = request.id;
   const respond = (result) => ({ jsonrpc: "2.0", id, result });
   const fail = (code, message) => ({ jsonrpc: "2.0", id, error: { code, message } });
@@ -652,13 +701,13 @@ async function handleMcpRequest(broker, request) {
     const name = asString(params.name);
     const args = params.arguments && typeof params.arguments === "object" ? params.arguments : {};
     if (name === "widget_cancel") {
-      const ok = broker.cancel(asString(args.id), "cancelled by MCP");
+      const ok = await transport.cancel(asString(args.id));
       if (!ok) return fail(-32602, `no pending interaction ${asString(args.id)}`);
       return respond(text({ ok: true }));
     }
     const input = toRequest(name, args);
     if (!input) return fail(-32602, `unknown tool or invalid arguments: ${name}`);
-    const result = await broker.ask(input);
+    const result = await transport.ask(input);
     return respond(text(result));
   }
   return fail(-32601, `method not found: ${method}`);
@@ -801,6 +850,7 @@ export {
   InteractionBroker,
   InteractionWidgetWindow,
   MCP_TOOLS,
+  createHttpInteractionTransport,
   dialogExitCode,
   dialogStdout,
   dialogToRequest,

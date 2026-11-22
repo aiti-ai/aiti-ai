@@ -9,6 +9,7 @@ import { createInterface } from "node:readline";
 import {
   InteractionBroker,
   InteractionWidgetWindow,
+  createHttpInteractionTransport,
   handleMcpRequest,
   startInteractionServer,
 } from "../dist/index.js";
@@ -21,64 +22,95 @@ const argValue = (name, fallback = "") => {
 const has = (name) => args.includes(name);
 
 if (has("--help") || has("-h")) {
-  process.stderr.write("widget-interaction-mcp [--port N] [--token T] [--width N] [--height N] [--widget-bin PATH] [--no-widget]\n");
+  process.stderr.write("widget-interaction-mcp [--port N] [--token T] [--width N] [--height N] [--widget-bin PATH] [--no-widget]\n"      + "  --http <baseUrl>  proxy to a running `aiti-dialog --daemon` instead of owning the broker\n");
   process.exit(0);
 }
 
-const broker = new InteractionBroker();
-const server = await startInteractionServer({
-  broker,
-  port: Number(argValue("--port", "0")) || 0,
-  token: argValue("--token", undefined)
-});
-const window = new InteractionWidgetWindow({
-  bin: argValue("--widget-bin", ""),
-  width: Number(argValue("--width", "560")) || 560,
-  height: Number(argValue("--height", "260")) || 260,
-  title: "aiti interaction",
-});
-const wantWidget = !has("--no-widget");
-if (wantWidget) {
-  try {
-    const opened = await window.open(server.url);
-    if (!opened) process.stderr.write(`[widget-interaction] widget binary not found; open ${server.url}\n`);
-  } catch (error) {
-    process.stderr.write(`[widget-interaction] widget open failed: ${String(error?.message || error)}; open ${server.url}\n`);
-  }
-} else {
-  process.stderr.write(`[widget-interaction] server ready: ${server.url}\n`);
-}
-
-const write = (message) => {
-  process.stdout.write(`${JSON.stringify(message)}\n`);
-};
-
-const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
-let closing = false;
-const shutdown = async () => {
-  if (closing) return;
-  closing = true;
-  try { await window.close(); } catch { /* ignore */ }
-  try { await server.close(); } catch { /* ignore */ }
-  broker.close();
-  process.exit(0);
-};
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
-
-rl.on("line", (line) => {
-  if (closing || !line.trim()) return;
-  let request;
-  try {
-    request = JSON.parse(line);
-  } catch (error) {
-    write({ jsonrpc: "2.0", id: null, error: { code: -32700, message: `parse error: ${String(error?.message || error)}` } });
-    return;
-  }
-  void handleMcpRequest(broker, request).then((response) => {
-    if (response) write(response);
-  }).catch((error) => {
-    write({ jsonrpc: "2.0", id: request?.id ?? null, error: { code: -32603, message: String(error?.message || error) } });
+const remoteBase = argValue("--http", "");
+if (remoteBase) {
+  // Remote mode: a long-lived `aiti-dialog --daemon` owns the broker and the window,
+  // so several MCP clients and CLI callers share one interaction surface.
+  const transport = createHttpInteractionTransport({ baseUrl: remoteBase, token: argValue("--token", "") });
+  const writeRemote = (message) => {
+    process.stdout.write(`${JSON.stringify(message)}\n`);
+  };
+  process.on("SIGINT", () => process.exit(0));
+  process.on("SIGTERM", () => process.exit(0));
+  const remote = createInterface({ input: process.stdin, crlfDelay: Infinity });
+  remote.on("line", (line) => {
+    if (!line.trim()) return;
+    let request;
+    try {
+      request = JSON.parse(line);
+    } catch (error) {
+      writeRemote({ jsonrpc: "2.0", id: null, error: { code: -32700, message: `parse error: ${String(error?.message || error)}` } });
+      return;
+    }
+    void handleMcpRequest(transport, request)
+      .then((response) => {
+        if (response) writeRemote(response);
+      })
+      .catch((error) => {
+        writeRemote({ jsonrpc: "2.0", id: request?.id ?? null, error: { code: -32603, message: String(error?.message || error) } });
+      });
   });
-});
-rl.on("close", () => { void shutdown(); });
+  remote.on("close", () => process.exit(0));
+} else {
+  const broker = new InteractionBroker();
+  const server = await startInteractionServer({
+    broker,
+    port: Number(argValue("--port", "0")) || 0,
+    token: argValue("--token", undefined)
+  });
+  const window = new InteractionWidgetWindow({
+    bin: argValue("--widget-bin", ""),
+    width: Number(argValue("--width", "560")) || 560,
+    height: Number(argValue("--height", "260")) || 260,
+    title: "aiti interaction",
+  });
+  const wantWidget = !has("--no-widget");
+  if (wantWidget) {
+    try {
+      const opened = await window.open(server.url);
+      if (!opened) process.stderr.write(`[widget-interaction] widget binary not found; open ${server.url}\n`);
+    } catch (error) {
+      process.stderr.write(`[widget-interaction] widget open failed: ${String(error?.message || error)}; open ${server.url}\n`);
+    }
+  } else {
+    process.stderr.write(`[widget-interaction] server ready: ${server.url}\n`);
+  }
+
+  const write = (message) => {
+    process.stdout.write(`${JSON.stringify(message)}\n`);
+  };
+
+  const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
+  let closing = false;
+  const shutdown = async () => {
+    if (closing) return;
+    closing = true;
+    try { await window.close(); } catch { /* ignore */ }
+    try { await server.close(); } catch { /* ignore */ }
+    broker.close();
+    process.exit(0);
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+
+  rl.on("line", (line) => {
+    if (closing || !line.trim()) return;
+    let request;
+    try {
+      request = JSON.parse(line);
+    } catch (error) {
+      write({ jsonrpc: "2.0", id: null, error: { code: -32700, message: `parse error: ${String(error?.message || error)}` } });
+      return;
+    }
+    void handleMcpRequest(broker, request).then((response) => {
+      if (response) write(response);
+    }).catch((error) => {
+      write({ jsonrpc: "2.0", id: request?.id ?? null, error: { code: -32603, message: String(error?.message || error) } });
+    });
+  });
+  rl.on("close", () => { void shutdown(); });
+}

@@ -131,10 +131,31 @@ Tools: `widget_confirm`, `widget_choose`, `widget_input`, `widget_presence`,
 request times out); every tool returns the host envelope. `stdout` is JSON-RPC only;
 diagnostics go to stderr.
 
+### Share one window with a daemon
+
+Start the daemon once, then point any number of MCP clients at it — they all reuse the
+same broker and window instead of paying the WebView start-up cost per request:
+
+```bash
+# terminal 1: long-lived host + window; prints {ok, port, baseUrl, token}
+aiti-dialog --daemon --port 18095
+
+# terminal 2: MCP server that proxies to the daemon
+node bin/widget-interaction-mcp.mjs --http http://127.0.0.1:18095/ --token <token>
+```
+
+Over HTTP the tools map to `POST /interactions` + `GET /interactions/:id/wait`, so late
+waits replay the stored envelope; `widget_cancel` maps to `POST /interactions/:id/cancel`.
+In-process code can use the same transport without MCP:
+
+```ts
+import { createHttpInteractionTransport } from "@aiti-ai/widget-interaction";
+const transport = createHttpInteractionTransport({ baseUrl: "http://127.0.0.1:18095/", token });
+const answer = await transport.ask({ kind: "confirm", title: "Continue?" });
+```
+
 ## Not in this first version
 
-- Native file/folder picker.
 - Custom page validation/registration policy beyond an explicit loopback URL.
-- MCP server wrapper.
 - Desktop cover / real-time mosaic.
 - Reuse of aiti-devtools launcher UI primitives.
