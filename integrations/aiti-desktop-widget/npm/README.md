@@ -129,6 +129,14 @@ The repository includes a dependency-free **transparent lyric player** at
 keyboard controls, `bare=1` for text-only. The bundled sample is an original TTS intro
 with a synthesized bed — no third-party music.
 
+## Page control
+
+Loopback pages can control their own window by default (`window.__TAURI__.window`): resize,
+move, center, always-on-top, click-through, size constraints, monitor queries and webview zoom.
+`demo/play/play.html` uses this in one-line mode to auto-fit the lyric around a fixed center
+(`autosize=0` disables it). External pages loaded with `--allow-remote true` are outside the
+loopback capability and cannot invoke these commands.
+
 ## Notes
 
 - Linux requires glibc 2.35+ (built on Ubuntu 22.04) plus WebKitGTK 4.1 + GTK3 at runtime.

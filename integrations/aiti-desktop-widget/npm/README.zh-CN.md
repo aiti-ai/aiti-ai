@@ -123,6 +123,13 @@ loopback 字幕页（`caption-bar.html?bubble=1`），通过 SSE 推送字幕；
 `?file=audio.mp3&lyrics=song.lrc`（也支持 SRT/VTT），当前行高亮、可 seek 进度、键盘控制，
 `bare=1` 为纯文字。自带示例是原创 TTS + 合成伴奏，不含第三方音乐。
 
+## 页面控制
+
+loopback 页面默认可以控制自己的窗口（`window.__TAURI__.window`）：调整大小/位置、居中、置顶、
+点击穿透、尺寸约束、读取显示器、WebView 缩放等。`demo/play/play.html` 在单行模式下用它围绕
+固定中心自动适配歌词宽度（`autosize=0` 关闭）。通过 `--allow-remote true` 加载的外部页面不
+在 loopback capability 覆盖范围内，无法调用这些命令。
+
 ## 说明
 
 - Linux 需要 glibc 2.35+（在 Ubuntu 22.04 构建）以及运行时的 WebKitGTK 4.1 + GTK3。
