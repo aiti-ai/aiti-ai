@@ -623,8 +623,10 @@ export default function register(ctx) {
       ...options.map((opt, j) =>
         h("button", {
           key: j, type: "button",
-          onClick: (e) => { e.stopPropagation(); onPick(formatQuote(segment.text, opt.value || undefined)); },
-          title: segment.text.slice(0, 60),
+          // Quote the full paragraph for option rows (segment.quote): a split-off tail
+          // question would otherwise reach the composer without its premise.
+          onClick: (e) => { e.stopPropagation(); onPick(formatQuote(segment.quote || segment.text, opt.value || undefined)); },
+          title: (segment.quote || segment.text).slice(0, 60),
           style: {
             ...optionBtnBase,
             color: opt.value ? "var(--accent)" : "var(--text-muted)",

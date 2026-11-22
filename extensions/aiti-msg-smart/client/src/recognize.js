@@ -382,11 +382,22 @@ export function formatQuote(seg, value) {
   return value ? `${quote}\n${value}` : `${quote}\n`;
 }
 
-/** 段落级解析：逐段 → { text, options }（弹层每段一行按钮用）。
- *  opts.labelMax：选项按钮 label 截断预算（缺省 12；宽屏调用方可传更大值多显示文本）。 */
+/** Paragraph-level parse: one entry per row → { text, options, quote }.
+ *  opts.labelMax: option button label truncation budget (default 12; wide viewports pass more).
+ *
+ *  quote = what the row's buttons insert into the composer. Option rows answer the
+ *  whole paragraph, so they quote the full paragraph text: sentence splitting may peel
+ *  off a context-dependent tail question ("… the result — sign off?" → "sign off?"),
+ *  and quoting only that row would drop the premise it refers to. Rows without options
+ *  keep quoting their own sentence (the "quote line" button promises exactly that).
+ */
 export function parseParagraph(text, opts = {}) {
   const labelMax = opts && typeof opts === "object" ? opts.labelMax : undefined;
-  return splitQuestions(text).map((seg) => ({ text: seg, options: detectOptions(seg, labelMax) }));
+  const full = text == null ? "" : String(text).trim();
+  return splitQuestions(full).map((seg) => {
+    const options = detectOptions(seg, labelMax);
+    return { text: seg, options, quote: options ? full : seg };
+  });
 }
 
 // ── 跨仓分辨根（aiti-git-trace 协作）──┐
