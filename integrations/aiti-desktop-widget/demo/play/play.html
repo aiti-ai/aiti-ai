@@ -582,6 +582,7 @@
   /** Resize around the current window center, keeping the one-line bar centered. */
   async function fitWindowToLine() {
     if (!autoSize.enabled || !widgetTauri || document.body.dataset.layout !== "line") return;
+    if (!lines.length) return; // keep the caller's size until a lyric line exists
     const text = compactRenderedText || compactBase.textContent || "";
     if (!text) return;
     if (autoSize.busy) { autoSize.queued = true; return; }
