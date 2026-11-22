@@ -1,0 +1,34 @@
+{
+  "name": "@aiti-ai/widget-interaction",
+  "version": "0.1.0",
+  "description": "Host-owned async user interaction for aiti widgets: confirm/choose/input via SSE + HTTP, with queued pending requests and a browser renderer.",
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./client": "./page/interaction-client.js"
+  },
+  "license": "MIT",
+  "files": [
+    "dist",
+    "page",
+    "README.md",
+    "README.zh-CN.md"
+  ],
+  "scripts": {
+    "build": "../../node_modules/.bin/esbuild src/index.ts --bundle --format=esm --platform=node --target=node22 --outfile=dist/index.js",
+    "test": "npm run build && node --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "packages/aiti-widget-interaction"
+  },
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  },
+  "homepage": "https://aiti.pw"
+}
