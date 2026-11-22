@@ -16,6 +16,10 @@ npm run build
 node --test test/*.test.mjs
 ```
 
+`test/gui.test.mjs` drives a real window (cover geometry, pinned placement, daemon reopen);
+it starts a private `Xvfb :97` + openbox when no DISPLAY is set and skips itself when neither
+a display, xdotool nor the `aiti-desktop-widget` binary is available.
+
 ## CLI
 
 ```bash

@@ -13,6 +13,9 @@ npm run build
 node --test test/*.test.mjs
 ```
 
+`test/gui.test.mjs` 会开真窗口（遮挡窗几何、钉住定位、daemon 重开）；没有 DISPLAY 时自起
+私有 `Xvfb :97` + openbox，缺显示器/xdotool/widget 二进制时自动 skip。
+
 ## CLI
 
 ```bash
