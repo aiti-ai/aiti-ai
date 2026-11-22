@@ -88,7 +88,12 @@ export default {
 
   ui: {
     clientImmediately: false, // [懒加载 v2] M1 已同步生产，懒化重启用
-    toolbar: [{ id: "aiti-prompts-open", label: "i18n:pp.app.label", title: "i18n:pp.app.title", icon: "icons/bookmark.svg" }],
+    // Both toolbar buttons live in ONE array: a second `toolbar:` key in this object
+    // literal silently replaced the first (the open button never reached the host).
+    toolbar: [
+      { id: "aiti-prompts-open", label: "i18n:pp.app.label", title: "i18n:pp.app.title", icon: "icons/bookmark.svg" },
+      { id: "aiti-prompts-export", label: "i18n:pp.export.label", title: "i18n:pp.export.title", icon: "icons/import.svg" },
+    ],
     // aiti-float dock v3：停靠槽静态声明（懒扩展物化触发 + 静态入口；id 与 client 注册一致）
     sidebarExplorerDock: [{ id: "panel", label: "i18n:pp.library.label", icon: "library" }],
     rightFileDock: [{ id: "panel", label: "i18n:pp.library.label" }],
@@ -97,7 +102,6 @@ export default {
       { id: "aiti-prompts-save", label: "i18n:it.aiti-prompts-save.label" },
       { id: "aiti-prompts-export", label: "i18n:it.aiti-prompts-export.label" },
     ],
-    toolbar: [{ id: "aiti-prompts-export", label: "i18n:pp.export.label", title: "i18n:pp.export.title", icon: "icons/import.svg" }],
     i18n: {
       en: {
       "编辑 prompt": "Edit prompt",

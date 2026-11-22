@@ -432,7 +432,12 @@ export function getExtUiItems(slot: ExtSlotName): ExtUiItemRegistered[] {
       let merged = registered;
       if (statics.length > 0) {
         const regKeys = new Set(registered.map((it) => `${it.extId ?? ""}\u0000${it.id}`));
-        const tail = statics.filter((st) => !regKeys.has(`${st.extId ?? ""}\u0000${st.id}`));
+        // A per-instance face id (`<static id>:<instance>`, e.g. aiti-editor:file:<path>)
+        // materializes the extension's static declaration of its base id: the face IS the
+        // static entry, so it must not leave a second (empty) button behind.
+        const tail = statics.filter((st) =>
+          !regKeys.has(`${st.extId ?? ""}\u0000${st.id}`)
+          && !registered.some((it) => it.id.startsWith(`${st.id}:`)));
         if (tail.length > 0) {
           merged = [...registered, ...tail];
           // dev assertion: the same extension has registered items in this slot but none matches the static id → double-button risk
