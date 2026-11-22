@@ -2,6 +2,7 @@ import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { InteractionBroker, InteractionWidgetWindow, DesktopCover, resolveWidgetBinary, startInteractionServer } from "../dist/index.js";
 
 /**
@@ -57,6 +58,14 @@ after(() => {
 });
 
 const BIN = resolveWidgetBinary();
+const hasFfmpeg = (() => {
+  try {
+    execFileSync("ffmpeg", ["-version"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+})();
 const skip = !BIN
   ? "no aiti-desktop-widget binary (cargo build --release / npm install -g @aiti-ai/aiti-desktop-widget)"
   : !DISPLAY || !alive(DISPLAY)
@@ -104,7 +113,7 @@ function startDaemon(args = []) {
 }
 
 test("cover window sits at the requested rect and follows updates", { skip }, async () => {
-  const cover = new DesktopCover({ rect: { x: 200, y: 120, width: 900, height: 600 }, color: "#101216", pattern: "grid", title: "cover probe" });
+  const cover = new DesktopCover({ rect: { x: 200, y: 120, width: 900, height: 600 }, color: "#00ff00", pattern: "solid", title: "cover probe" });
   try {
     assert.equal(await cover.open(), true);
     await sleep(2200);
@@ -112,6 +121,16 @@ test("cover window sits at the requested rect and follows updates", { skip }, as
     assert.deepEqual({ x: first.x, y: first.y, width: first.width, height: first.height }, { x: 200, y: 120, width: 900, height: 600 });
     const extents = execFileSync("xprop", ["-id", first.id, "_NET_FRAME_EXTENTS"], { env: { ...process.env, DISPLAY }, encoding: "utf8" });
     assert.match(extents, /0, 0, 0, 0/);
+
+    if (hasFfmpeg) {
+      // The cover must actually paint its color: a transparent window on a compositor-less
+      // X11 renders black, and a missing opacity default once made the page fully transparent.
+      const shot = join(process.env.TMPDIR || "/tmp", `aiti-cover-${process.pid}.png`);
+      execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "x11grab", "-video_size", "400x300", "-i", `${DISPLAY}+150,60`, "-frames:v", "1", shot], { env: { ...process.env, DISPLAY }, timeout: 20000 });
+      const pixel = execFileSync("ffmpeg", ["-v", "error", "-i", shot, "-vf", "crop=1:1:250:240,format=rgb24", "-f", "rawvideo", "-"], { maxBuffer: 16 });
+      assert.ok(pixel[1] > 200 && pixel[0] < 90 && pixel[2] < 90, `cover should paint #00ff00, got rgb(${[...pixel].join(",")})`);
+      try { execFileSync("rm", ["-f", shot]); } catch { /* ignore */ }
+    }
 
     assert.equal(await cover.update({ rect: { x: 320, y: 240, width: 500, height: 300 }, color: "#000000", opacity: 0.5, pattern: "solid" }), true);
     await sleep(900);

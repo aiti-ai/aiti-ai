@@ -26,7 +26,9 @@
     const params = new URLSearchParams(location.search);
     const cover = document.getElementById("cover");
     const color = (params.get("color") || "").trim();
-    const opacity = Number(params.get("opacity"));
+    const rawOpacity = params.get("opacity");
+    // Number(null) === 0, so a missing param must not mean "fully transparent".
+    const opacity = rawOpacity === null ? 1 : Number(rawOpacity);
     const pattern = (params.get("pattern") || "solid").trim();
     const alpha = Number.isFinite(opacity) ? Math.min(1, Math.max(0, opacity)) : 1;
     if (color) {

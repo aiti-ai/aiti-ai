@@ -30,8 +30,14 @@ test("coverArgs is a click-through, focus-proof, always-on-top window", () => {
   assert.equal(value("--always-on-top"), "true");
   assert.equal(value("--all-workspaces"), "true");
   assert.equal(value("--resizable"), "false");
+  assert.equal(value("--transparent"), "false"); // opaque by default: no compositor needed
   assert.match(value("--html"), /cover\.html\?/);
   assert.ok(args.includes("--html"));
+});
+
+test("coverArgs can opt into an ARGB window", () => {
+  const args = coverArgs({ rect: { x: 0, y: 0, width: 10, height: 10 }, transparent: true });
+  assert.equal(args[args.indexOf("--transparent") + 1], "true");
 });
 
 test("coverArgs clamps the rect into the monitor", () => {

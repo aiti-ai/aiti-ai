@@ -973,7 +973,7 @@ function coverArgs(options) {
     "--decorations",
     "false",
     "--transparent",
-    "true",
+    options.transparent === true ? "true" : "false",
     "--always-on-top",
     "true",
     "--skip-taskbar",
