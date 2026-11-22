@@ -341,7 +341,7 @@ function haveSameRelevantToolEntries<T>(
 
 export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, toolClocks, modelNames, cwd, onOpenFile, onOpenSubagent, entryId, forkEntryId, searchBlock, onFork, forking, forkBashRunning, onNavigate, prevAssistantEntryId, onEditFromHere, editingFromStart, onCancelEditFromStart, onEditContent, onCancelEdit, isEditing, showTimestamp, prevTimestamp, sessionId, writtenFiles, turnAssistantEntryIds, suppressMessageFooter, onCompact, isCompacting, compactError }: Props) {
   if (message.role === "user") {
-    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} forkEntryId={entryId ?? forkEntryId} onFork={onFork} forking={forking} forkBashRunning={forkBashRunning} onNavigate={onNavigate} prevAssistantEntryId={prevAssistantEntryId} onEditFromHere={onEditFromHere} editingFromStart={editingFromStart} onCancelEditFromStart={onCancelEditFromStart} onEditContent={onEditContent} onCancelEdit={onCancelEdit} isEditing={isEditing} />;
+    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} forkEntryId={entryId ?? forkEntryId} onFork={onFork} forking={forking} forkBashRunning={forkBashRunning} onNavigate={onNavigate} prevAssistantEntryId={prevAssistantEntryId} onEditFromHere={onEditFromHere} editingFromStart={editingFromStart} onCancelEditFromStart={onCancelEditFromStart} onEditContent={onEditContent} onCancelEdit={onCancelEdit} isEditing={isEditing} sessionId={sessionId} />;
   }
   if (message.role === "assistant") {
     return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} toolClocks={toolClocks} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} onOpenSubagent={onOpenSubagent} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} searchBlock={searchBlock} writtenFiles={writtenFiles} turnAssistantEntryIds={turnAssistantEntryIds} suppressMessageFooter={suppressMessageFooter} onCompact={onCompact} isCompacting={isCompacting} compactError={compactError} />;
@@ -394,9 +394,10 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     && prev.compactError === next.compactError;
 });
 
-function UserMessageView({ message, cwd, onOpenFile, entryId, forkEntryId, onFork, forking, forkBashRunning, onNavigate, prevAssistantEntryId, onEditFromHere, editingFromStart, onCancelEditFromStart, onEditContent, onCancelEdit, isEditing }: {
+function UserMessageView({ message, cwd, onOpenFile, entryId, forkEntryId, onFork, forking, forkBashRunning, onNavigate, prevAssistantEntryId, onEditFromHere, editingFromStart, onCancelEditFromStart, onEditContent, onCancelEdit, isEditing, sessionId }: {
   message: UserMessage;
   cwd?: string;
+  sessionId?: string;
   onOpenFile?: (filePath: string, page?: number) => void;
   entryId?: string;
   onFork?: (entryId: string, message: UserMessage) => void;
@@ -632,15 +633,20 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, forkEntryId, onFor
               )}
                <span className="message-action-label">{copied ? t("i18n.copied") : t("i18n.copy")}</span>
             </button>
+            {/* Extension actions mount on the live fork id too: a prompt sent
+                mid-run has no file entry id yet (#1746), but Copy/Share (and
+                the prompt-library save) should still be offered next to it.
+                extra.text/sessionId match the assistantMessageActions contract
+                (aiti-msg-share share, aiti-prompts save-as-prompt read them). */}
+            {forkTarget && (
+              <ExtSlot
+                name="userMessageActions"
+                currentSession={null}
+                extra={{ entryId: forkTarget, sessionId, text: copyTarget }}
+              />
+            )}
             {(canFork || canNavigate || canEditFromHere || canEdit || canCancelEdit) && (
               <>
-                {entryId && (
-                  <ExtSlot
-                    name="userMessageActions"
-                    currentSession={null}
-                    extra={{ entryId }}
-                  />
-                )}
               {canEditFromHere && (
                 <button
                   onClick={() => {

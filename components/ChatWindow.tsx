@@ -1962,8 +1962,9 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                     entryId={entryIds[idx]}
                     searchBlock={entryIds[idx] === pendingSearchScroll?.entryId ? searchBlock : undefined}
                     onFork={isNew || !sessionCap("fork") ? undefined : forkFromMessage}
+                    forkEntryId={liveEntryId}
                     forkBashRunning={bashRunning}
-                    forking={forkingEntryId === entryIds[idx]}
+                    forking={forkingEntryId === (entryIds[idx] ?? liveEntryId)}
                     onNavigate={isNew ? undefined : handleNavigate}
                     prevAssistantEntryId={isNew ? undefined : prevAssistantEntryId}
                     onEditContent={sessionBusy ? undefined : handleEditContent}

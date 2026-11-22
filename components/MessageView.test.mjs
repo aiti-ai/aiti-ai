@@ -104,6 +104,32 @@ test("a prompt sent during the run offers New session from the entry the wrapper
   assert.equal(MessageView.compare({ message, onFork: props.onFork }, { message, ...props, onEditContent: undefined }), false);
 });
 
+test("userMessageActions renders on a prompt sent mid-run (live fork id) and carries text/sessionId", async () => {
+  const { registerExtUiItems } = await jiti.import("@/lib/ext-ui-store");
+  let seen = null;
+  const dispose = registerExtUiItems("userMessageActions", [
+    { id: "live-item", render: (props) => { seen = props; return React.createElement("span", null, "SHAREBTN"); } },
+  ], "ext-user-live-test");
+  try {
+    // No file entryId yet (#1746): only the wrapper's live id — Share/save-prompt still show next to Copy.
+    const html = renderMessage(
+      { role: "user", content: "Hi", timestamp: 1 },
+      { forkEntryId: "live-entry", onFork: () => {}, sessionId: "sess-1" },
+    );
+    assert.ok(html.includes("SHAREBTN"), "extension actions render on the live id");
+    assert.equal(seen.entryId, "live-entry");
+    assert.equal(seen.text, "Hi");
+    assert.equal(seen.sessionId, "sess-1");
+    // No id at all (the message object the wrapper has not named yet): no extension actions.
+    seen = null;
+    const bare = renderMessage({ role: "user", content: "Hi", timestamp: 1 }, { onFork: () => {} });
+    assert.ok(!bare.includes("SHAREBTN"));
+    assert.equal(seen, null);
+  } finally {
+    dispose();
+  }
+});
+
 test("streaming headers preserve counts and speed without showing empty metrics", () => {
   const renderHeader = (props) => renderToStaticMarkup(React.createElement(
     I18nProvider, null, React.createElement(AssistantMessageHeader, { modelName: "Test Model", ...props }),
