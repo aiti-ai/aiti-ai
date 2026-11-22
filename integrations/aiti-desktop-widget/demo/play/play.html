@@ -173,23 +173,23 @@
   #compact-viewport {
     position: relative; flex: 1 1 auto; min-width: 0; overflow: hidden;
     display: flex; align-items: center; justify-content: center;
-    padding: 2px 0 9px; cursor: pointer;
+    padding: 2px 0; cursor: pointer;
   }
   #compact-viewport.overflow { justify-content: flex-start; }
   #compact-text {
-    display: inline-block; white-space: nowrap; max-width: none;
+    position: relative; display: inline-block; white-space: nowrap; max-width: none;
     font-size: clamp(16px, 3.2vmin, 27px); font-weight: 800; line-height: 1.25;
-    letter-spacing: -.01em; color: var(--fg); text-shadow: 0 2px 14px rgba(0,0,0,.38);
+    letter-spacing: -.01em;
     transition: transform .08s linear; will-change: transform;
   }
-  #compact-track {
-    position: absolute; left: 0; right: 0; bottom: 0; height: 3px;
-    border-radius: 999px; background: var(--bar); overflow: hidden;
+  #compact-base, #compact-fill {
+    display: block; white-space: nowrap;
   }
+  #compact-base { color: var(--fg); text-shadow: 0 2px 14px rgba(0,0,0,.38); }
   #compact-fill {
-    height: 100%; width: 0%; border-radius: inherit;
-    background: linear-gradient(90deg, var(--accent), var(--accent-2));
-    box-shadow: 0 0 12px rgba(167,139,250,.5);
+    position: absolute; inset: 0; color: var(--accent-2);
+    text-shadow: 0 0 14px rgba(34,211,238,.45), 0 2px 14px rgba(0,0,0,.38);
+    pointer-events: none; clip-path: inset(0 100% 0 0); -webkit-clip-path: inset(0 100% 0 0);
   }
   #compact-mute {
     flex: 0 0 auto; width: 26px; height: 26px; border-radius: 8px; border: 0;
@@ -207,7 +207,7 @@
     body[data-layout="line"] #app { padding-top: 5px; padding-bottom: 5px; }
     #compact-play { width: 28px; height: 28px; font-size: 11px; }
     #compact-time { display: none; }
-    #compact-viewport { padding-bottom: 7px; }
+    #compact-viewport { padding: 2px 0; }
   }
   #status {
     position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
@@ -275,7 +275,7 @@
   <section id="compact" aria-live="polite">
     <div id="compact-row">
       <button id="compact-play" type="button" aria-label="Play">▶</button>
-      <div id="compact-viewport"><span id="compact-text">♪</span><div id="compact-track"><div id="compact-fill"></div></div></div>
+      <div id="compact-viewport"><span id="compact-text"><span id="compact-base">♪</span><span id="compact-fill" aria-hidden="true">♪</span></span></div>
       <span id="compact-time">0:00</span>
       <button id="compact-mute" type="button" aria-label="Mute" title="Mute">🔊</button>
     </div>
@@ -349,6 +349,7 @@
   const compactPlayBtn = document.getElementById("compact-play");
   const compactViewport = document.getElementById("compact-viewport");
   const compactText = document.getElementById("compact-text");
+  const compactBase = document.getElementById("compact-base");
   const compactFill = document.getElementById("compact-fill");
   const compactTime = document.getElementById("compact-time");
   const compactMuteBtn = document.getElementById("compact-mute");
@@ -534,8 +535,10 @@
     const current = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
     const line = findActiveLine();
     if (!line) {
-      compactText.textContent = "♪";
-      compactFill.style.width = "0%";
+      compactBase.textContent = "♪";
+      compactFill.textContent = "♪";
+      compactFill.style.clipPath = "inset(0 100% 0 0)";
+      compactFill.style.webkitClipPath = "inset(0 100% 0 0)";
       compactTime.textContent = fmt(current);
       return;
     }
@@ -545,7 +548,8 @@
     const progress = Math.max(0, Math.min(1, (current - start) / (end - start)));
     if (compactRenderedText !== line.text) {
       compactRenderedText = line.text;
-      compactText.textContent = line.text || "♪";
+      compactBase.textContent = line.text || "♪";
+      compactFill.textContent = line.text || "♪";
       compactViewport.classList.remove("overflow");
       compactText.style.transform = "translateX(0)";
     }
@@ -557,7 +561,9 @@
       compactViewport.classList.remove("overflow");
       compactText.style.transform = "translateX(0)";
     }
-    compactFill.style.width = `${(progress * 100).toFixed(2)}%`;
+    const clip = `inset(0 ${((1 - progress) * 100).toFixed(2)}% 0 0)`;
+    compactFill.style.clipPath = clip;
+    compactFill.style.webkitClipPath = clip;
     compactTime.textContent = fmt(current);
   }
 
