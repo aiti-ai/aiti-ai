@@ -59,6 +59,19 @@ export function lineReader(
 
 export type HostEventListener = (event: Record<string, unknown>) => void;
 
+/** Frame-level trace (request/response correlation, disposition included) — lost-message
+ *  forensics (2026-11-22 steer-loss). Default: on outside production builds; force with
+ *  PI_FORK_RPC_DEBUG=1, force off with =0. One line per frame, never logs message text. */
+function traceWire(line: string): void {
+  const flag = process.env.PI_FORK_RPC_DEBUG;
+  const enabled = flag === "1" || flag === "true"
+    ? true
+    : flag === "0" || flag === "false"
+      ? false
+      : process.env.NODE_ENV !== "production";
+  if (enabled) console.log(`[fork-rpc-wire] ${line}`);
+}
+
 interface PendingRequest {
   resolve(v: unknown): void;
   reject(e: Error): void;
@@ -79,6 +92,12 @@ export class RpcChildHost {
   protected child: ChildProcess;
   protected pending = new Map<string, PendingRequest>();
   protected seq = 0;
+  /** Per-instance id salt: an attach replays the wrapper journal into this wire —
+   *  the OLD handle's responses ("r1", "r2", …) would collide with this wire's
+   *  fresh ids and resolve pending requests with stale acks (2026-11-22
+   *  steer-loss forensics: replayed and live frames interleaved in the same
+   *  millisecond window). The salt makes replayed ids unmatchable. */
+  private seqSalt = Math.floor(Math.random() * 0xffffffff).toString(36);
   protected aliveFlag = true;
   private listeners = new Set<HostEventListener>();
   private detachReader: (() => void) | null = null;
@@ -128,13 +147,15 @@ export class RpcChildHost {
     if (!this.aliveFlag || !this.child.stdin?.writable) {
       return Promise.reject(new Error("[rpc-child] not running"));
     }
-    const id = `r${++this.seq}`;
+    const id = `r${this.seqSalt}-${++this.seq}`;
+    traceWire(`→ #${id} ${String(command.type ?? "?")}${command.streamingBehavior ? `:${String(command.streamingBehavior)}` : ""}`);
     return new Promise<T>((resolve, reject) => {
       const pending: PendingRequest = { resolve: resolve as (v: unknown) => void, reject };
       const timeoutMs = opts?.timeoutMs;
       if (timeoutMs && timeoutMs > 0) {
         const timer = setTimeout(() => {
           this.pending.delete(id);
+          traceWire(`⏱ #${id} ${String(command.type ?? "?")} timeout after ${timeoutMs}ms`);
           reject(new Error(`[rpc-child] timeout: ${String(command.type ?? "?")} after ${timeoutMs}ms`));
         }, timeoutMs);
         timer.unref?.();
@@ -145,6 +166,7 @@ export class RpcChildHost {
         this.child.stdin!.write(JSON.stringify({ ...command, id }) + "\n");
       } catch (e) {
         this.pending.delete(id);
+        traceWire(`✗ #${id} ${String(command.type ?? "?")} stdin write failed`);
         if (pending.timer) clearTimeout(pending.timer);
         reject(new Error(`[rpc-child] write failed: ${e instanceof Error ? e.message : String(e)}`));
       }
@@ -171,9 +193,16 @@ export class RpcChildHost {
     }
     if (msg.type === "response" && typeof msg.id === "string") {
       const p = this.pending.get(msg.id);
-      if (!p) return;
+      if (!p) {
+        // Replayed-journal response with no live pending (attach replay) — trace
+        // at debug level so lost-message forensics can tell replay apart from live.
+        traceWire(`← #${msg.id} response (no pending: replay or stale)`);
+        return;
+      }
       this.pending.delete(msg.id);
       if (p.timer) clearTimeout(p.timer);
+      const data = msg.data as Record<string, unknown> | undefined;
+      traceWire(`← #${msg.id} ${String(msg.command ?? "?")} ok=${msg.success === true}${data && typeof data === "object" && "disposition" in data ? ` disposition=${String((data as { disposition?: unknown }).disposition)}` : ""}`);
       if (msg.success === true) p.resolve(msg.data);
       else p.reject(new Error(String(msg.error ?? "request failed")));
       return;

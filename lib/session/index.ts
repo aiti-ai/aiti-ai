@@ -238,6 +238,36 @@ function watchBackendRebind(handle: SessionHandle, spawnKey: string): void {
  * is found by agentKey; the child process facade replays the wrapper's journal
  * before any new traffic, so the handle rebuilds the live stream.
  */
+// Single-flight for detached (wrapper) attaches: concurrent resolutions of the
+// same session (two tabs, POST racing GET, lease + command) would each call
+// wrapper.attach — the wrapper supersedes the first client, leaving a zombie
+// facade mid-stream whose frames die silently (2026-11-22 steer-loss
+// forensics). Share one in-flight attach per native session id. globalThis:
+// same dev/HMR rationale as __sessionProviders.
+declare global {
+  // eslint-disable-next-line no-var
+  var __detachedAttachInFlight: Map<string, Promise<DetachedRecovery>> | undefined;
+}
+
+function attachDetachedInFlightMap(): Map<string, Promise<DetachedRecovery>> {
+  if (!globalThis.__detachedAttachInFlight) globalThis.__detachedAttachInFlight = new Map();
+  return globalThis.__detachedAttachInFlight;
+}
+
+function attachDetachedSessionOnce(
+  sessionId: string,
+  sessionFile?: string,
+): Promise<DetachedRecovery> {
+  const map = attachDetachedInFlightMap();
+  const inflight = map.get(sessionId);
+  if (inflight) return inflight;
+  const attempt = attachDetachedSession(sessionId, sessionFile).finally(() => {
+    map.delete(sessionId);
+  });
+  map.set(sessionId, attempt);
+  return attempt;
+}
+
 async function attachDetachedSession(
   sessionId: string,
   sessionFile?: string,
@@ -336,7 +366,7 @@ export async function openExternalSession(
   }
   // Detached recovery first: a wrapper-hosted agent outlived the old instance, so
   // reopening the session must attach to it instead of spawning a second agent.
-  const recovery = await attachDetachedSession(sid);
+  const recovery = await attachDetachedSessionOnce(sid);
   if (recovery.status === "blocked") {
     throw new BridgeOccupiedError(compositeId, recovery.reason);
   }
@@ -555,7 +585,7 @@ async function attachIfBridgedUncached(
     // here: an alive handle already attached to this wrapper IS the current client.
     const existingByUuid = lookupHandle(detachedUuid);
     if (existingByUuid?.alive()) return new HandleSessionAdapter(existingByUuid);
-    const recovery = await attachDetachedSession(detachedUuid, sessionFile);
+    const recovery = await attachDetachedSessionOnce(detachedUuid, sessionFile);
     if (recovery.status === "blocked") {
       // Fail loud: the agent is alive elsewhere, opening locally would double-write.
       throw new BridgeOccupiedError(sessionFile, recovery.reason);
@@ -684,12 +714,51 @@ export async function resolveDetachedSession(id: string): Promise<WrappedSession
     if (!candidate) continue;
     const existingForCandidate = lookupHandle(candidate);
     if (existingForCandidate?.alive()) return new HandleSessionAdapter(existingForCandidate);
-    const recovery = await attachDetachedSession(candidate);
+    const recovery = await attachDetachedSessionOnce(candidate);
     if (recovery.status === "blocked") throw new BridgeOccupiedError(id, recovery.reason);
     if (recovery.status !== "attached") continue;
     putHandle(recovery.handle);
     if (candidate !== id) putHandleAt(id, recovery.handle);
     return recovery.handle.alive() ? new HandleSessionAdapter(recovery.handle) : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Re-open a spawn/attach-owned session through its claiming provider instead of
+ * letting the caller fall through to a local-runtime twin. A provider that
+ * answers ownsFile() claims single-writer rights on the file: the correct door
+ * is createSessionHandle (adopt the live wrapper, or resume a fresh subprocess
+ * with the native id) — NEVER startRpcSession, whose in-process twin would
+ * accept prompts into a session whose events and replies bypass the chat page
+ * entirely (2026-11-22 steer-loss forensics: a reload disposed the handle, a
+ * racing access created the twin, and the steer vanished into it).
+ */
+export async function resolveProviderOwnedSession(
+  id: string,
+  filePath: string | undefined,
+): Promise<WrappedSessionLike | undefined> {
+  if (!filePath) return undefined;
+  for (const provider of listProviders()) {
+    if (typeof provider.ownsFile !== "function") continue;
+    let claimed = false;
+    try {
+      claimed = await provider.ownsFile(filePath);
+    } catch {
+      /* a probing provider must never block the others */
+      continue;
+    }
+    if (!claimed) continue;
+    try {
+      const handle = await createSessionHandle({
+        providerType: provider.type,
+        sessionId: id,
+        sessionFile: filePath,
+      });
+      if (handle?.alive()) return new HandleSessionAdapter(handle);
+    } catch {
+      /* this claiming provider could not re-open it — try the next one */
+    }
   }
   return undefined;
 }
@@ -716,7 +785,7 @@ export async function createSessionHandle(
   // process on the same session file.
   const detached =
     options.sessionId && type !== DEFAULT_PROVIDER_TYPE
-      ? await attachDetachedSession(options.sessionId, options.sessionFile)
+      ? await attachDetachedSessionOnce(options.sessionId, options.sessionFile)
       : ({ status: "none" } as DetachedRecovery);
   if (detached.status === "blocked") {
     throw new BridgeOccupiedError(options.sessionFile ?? options.sessionId ?? type, detached.reason);

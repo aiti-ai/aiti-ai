@@ -134,6 +134,11 @@ export default {
         // The core may host this backend's process in a detachable wrapper; the
         // handle adopts the live process on reattach (see OmpSpawnHandle.attach).
         detachable: true,
+        // NO ownsFile here yet: omp's CLI lacks --session-id, so a claimed file
+        // could not be RESUMED through this provider — a reopen would spawn a
+        // fresh session (history diverges from the file). Add ownsFile only once
+        // omp grows resume-by-id; until then a reaped omp wrapper can still fall
+        // through to the core's local-runtime path (known limitation).
         // Availability snapshot: false = CLI missing → dropdown entry greyed out
         ...(ompReady ? {} : { available: false as const, installHint: "bun install -g @oh-my-pi/pi-coding-agent (bun ≥ 1.3.14, or OMP_CLI env)" }),
         createSession: (options) =>
