@@ -1,0 +1,30 @@
+{
+  "name": "@aiti-ai/aiti-qoder-agent",
+  "version": "0.4.10",
+  "description": "Exclusive Qoder CLI session backend (qodercli/qoderclicn): credits/quota (getUsage), WASM-signed model catalog (listModels), task-list mirror, run-queue management, and plan/permission-mode support.",
+  "soul": "别人走 ACP 大路，它偏要走签名的独木桥——因为风景在对面。",
+  "scripts": {
+    "build:client": "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});for(const f of fs.readdirSync('client/src'))if(f.endsWith('.mjs'))fs.copyFileSync('client/src/'+f,'dist/'+f)\""
+  },
+  "aitiConfigs": {
+    "configFiles": [
+      "zcode-api-key.json",
+      "controlled-login.json"
+    ]
+  },
+  "aitiExtProtocol": "1.0",
+  "dependencies": {
+    "@aiti-ai/ext-shared": "^0.1.12"
+  },
+  "license": "MIT",
+  "contentHash": "c149eaff7d2997e8",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-qoder-agent"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  }
+}

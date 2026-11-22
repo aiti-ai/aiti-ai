@@ -1,0 +1,48 @@
+{
+  "name": "@aiti-ai/example-vite",
+  "version": "0.1.0",
+  "description": "Reference integration: a minimal vite app with aiti-devtools attached through a single plugin call. Standalone — it does not ship or require the pi-web distribution.",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "aiti",
+    "aiti-devtools",
+    "vite",
+    "vite-plugin",
+    "example",
+    "reference",
+    "mcp",
+    "ai-devtools"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "examples/aiti-vite-demo"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai/tree/main/examples/aiti-vite-demo#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "index.html",
+    "vite.config.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@aiti-ai/aiti-devtools-vite": "^0.1.2",
+    "vite": "^6.0.0"
+  },
+  "contentHash": "91cf90350960056a"
+}

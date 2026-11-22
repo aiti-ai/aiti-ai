@@ -16,6 +16,7 @@ const outside = join(root, "outside");
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 const previousDisable = process.env.PI_WEB_DISABLE_MCP;
 process.env.PI_CODING_AGENT_DIR = agentDir;
+process.env.PI_WEB_FILE_SANDBOX = "1"; // 合并：上游安全测试假设文件沙箱强制执行（本地默认关，测试内显式开）
 delete process.env.PI_WEB_DISABLE_MCP;
 await mkdir(agentDir, { recursive: true });
 await mkdir(join(cwd, ".pi"), { recursive: true });

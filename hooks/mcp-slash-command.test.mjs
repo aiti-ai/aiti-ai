@@ -10,6 +10,8 @@ import { bareMcpOpensSettings } from "../lib/mcp-command.ts";
 
 const read = async (path) => (await readFile(new URL(path, import.meta.url), "utf8")).replace(/\r\n/g, "\n");
 const hookSource = await read("./useAgentSession.ts");
+const chatWindowSource = await read("../components/ChatWindow.tsx");
+const appShellSource = await read("../components/AppShell.tsx");
 const hookFile = ts.createSourceFile("useAgentSession.ts", hookSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 
 /** The function a `const <name> = useCallback(fn, deps)` declaration wraps, as JavaScript. */
@@ -33,7 +35,9 @@ function callbackSource(name) {
   assert.ok(found, `useCallback ${name} not found`);
   return ts.transpileModule(`(${found.getText(hookFile)})`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
-  }).outputText.trim().replace(/;$/, "");
+  }).outputText.trim().replace(/;$/, "")
+    // TS transpileModule 对语句形态的片段会前置 "use strict"; —— 剥掉，否则 with-scope 返回的是字符串
+    .replace(/^"use strict";\s*/, "");
 }
 
 const CALLBACKS = ["replaceSlashCommands", "clearSlashCommands", "requestSlashCommands", "slashCommandsForMcp", "handleBuiltinSlashCommand"];
@@ -220,4 +224,23 @@ test("without a way to open Settings, /mcp is sent", async () => {
   const { run, calls } = hook({ commands: [builtinMcp], openSettings: false });
   assert.deepEqual(await run("/mcp"), { handled: false });
   assert.deepEqual(calls.requests, []);
+});
+
+test("the /mcp case returns before anything a prompt does, and the list ref has one writer", () => {
+  const mcpCase = hookSource
+    .slice(hookSource.indexOf('        case "mcp": {'), hookSource.indexOf('        case "copy": {'))
+    .replace(/^\s*\/\/.*$/gm, "");
+  assert.match(mcpCase, /onOpenSettings\("mcp"\)/);
+  assert.doesNotMatch(mcpCase, /promoteNewSession|sendAgentCommand|setMessages|onSend/);
+  // set_tools clears the list through the same writer, so a cleared list is never read as loaded.
+  assert.equal(hookSource.match(/\bsetSlashCommands\(/g).length, 1);
+  assert.match(hookSource, /clearSlashCommands\(\);\n\s+setExtensionStatuses\(\[\]\)/);
+});
+
+test("AppShell opens Settings on the section the chat asks for", () => {
+  assert.match(chatWindowSource, /onOpenSettings\?: \(section: SettingsSection\) => void;/);
+  // 合并适配：合并件的解构序含 onDebugSnapshotReaderChange。
+  assert.match(chatWindowSource, /onSessionStatsPanelOpen,\n\s+onOpenSettings, onDebugSnapshotReaderChange, t,\n\s+deferInitialScroll/);
+  // 合并注：上游手机端设置加 openAtHome 归位行（settingsOpenAtHome）。
+  assert.match(appShellSource, /const openSettingsSection = useCallback\(\(section: SettingsSection\) => \{\n\s+(?:setSettingsOpenAtHome\(false\);\s+)?setSettingsSection\(section\);/);
 });

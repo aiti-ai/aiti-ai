@@ -1,0 +1,22 @@
+{
+  "name": "@aiti-ai/aiti-event-bus",
+  "version": "0.1.8",
+  "description": "The page event bus for pi-web: takes over `__piPageEvents`, topic subscriptions with server-side filtering, publish-local for high-frequency frames, load-priority guarantee, and STALE_CONN silent rebuild.",
+  "soul": "一条总线，全部帧。",
+  "scripts": {
+    "test": "node --test bus-core.test.mjs client-url.test.mjs stale-rebuild.test.mjs bus-id.test.mjs",
+    "build:client": "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});for(const f of fs.readdirSync('client/src'))if(f.endsWith('.mjs'))fs.copyFileSync('client/src/'+f,'dist/'+f)\""
+  },
+  "aitiExtProtocol": "1.0",
+  "license": "MIT",
+  "contentHash": "0e76e6857d52d0cd",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-event-bus"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  }
+}

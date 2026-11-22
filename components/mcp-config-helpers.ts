@@ -1,3 +1,4 @@
+import { apiUrl } from "@/lib/base-path";
 import type {
   CodemodeInlineBudgetSetting,
   CodemodeMode,
@@ -27,7 +28,7 @@ import type {
   ProjectTrustStatus,
 } from "@/lib/api-types";
 import type { McpImportFieldValue, McpImportNote } from "@/lib/mcp-import";
-import { itemsToSwitch } from "./settings-ui-helpers";
+import { itemsToSwitch } from "./settings-ui-helpers.ts";
 
 // Pure helpers for Settings › MCP (components/McpConfig.tsx): what each row
 // shows, how the groups are built, and how the overview is loaded. Client-safe:
@@ -868,7 +869,7 @@ function isMcpResponse(value: unknown): value is McpResponse {
 
 /** The URL of the overview: the global file alone without a project. */
 export function mcpOverviewUrl(cwd: string | null): string {
-  return cwd ? `/api/mcp?cwd=${encodeURIComponent(cwd)}` : "/api/mcp";
+  return apiUrl(cwd ? `/api/mcp?cwd=${encodeURIComponent(cwd)}` : "/api/mcp");
 }
 
 async function requestMcpOverview(cwd: string | null, fetchImpl: FetchLike, signal?: AbortSignal): Promise<McpLoadResult> {
@@ -954,7 +955,7 @@ async function requestToolSettingsChange<T>(
   fetchImpl: FetchLike,
   signal: AbortSignal,
 ): Promise<{ ok: true; stored: T } | { ok: false; error: McpLoadFailure }> {
-  const result = await requestMcpJson("/api/tools/settings", jsonRequest("PUT", change, signal), fetchImpl, (data) => (
+  const result = await requestMcpJson(apiUrl("/api/tools/settings"), jsonRequest("PUT", change, signal), fetchImpl, (data) => (
     data !== null && typeof data === "object" ? stored(data as Record<string, unknown>) : undefined
   ));
   return result.ok ? { ok: true, stored: result.data } : result;
@@ -1199,7 +1200,7 @@ export type McpActionResult = { ok: true; data: McpActionResponse } | { ok: fals
 export const MCP_ACTION_TIMEOUT_MS = 15_000;
 
 async function requestMcpAction(body: Record<string, unknown>, fetchImpl: FetchLike, signal: AbortSignal): Promise<McpActionResult> {
-  return requestMcpJson("/api/mcp", jsonRequest("POST", body, signal), fetchImpl, (data) => (isMcpResponse(data) ? data as McpActionResponse : undefined));
+  return requestMcpJson(apiUrl("/api/mcp"), jsonRequest("POST", body, signal), fetchImpl, (data) => (isMcpResponse(data) ? data as McpActionResponse : undefined));
 }
 
 /**
@@ -1452,7 +1453,7 @@ function isMcpTestResponse(value: unknown): value is McpTestResponse {
 }
 
 async function requestMcpTest(body: Record<string, unknown>, fetchImpl: FetchLike, signal: AbortSignal): Promise<McpTestRequestResult> {
-  return requestMcpJson("/api/mcp/test", jsonRequest("POST", body, signal), fetchImpl, (data) => (isMcpTestResponse(data) ? data : undefined));
+  return requestMcpJson(apiUrl("/api/mcp/test"), jsonRequest("POST", body, signal), fetchImpl, (data) => (isMcpTestResponse(data) ? data : undefined));
 }
 
 /**

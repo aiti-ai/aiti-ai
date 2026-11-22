@@ -1,8 +1,8 @@
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { AgentUsage, SessionEntry } from "./types";
-import { withTranscriptNotices, type TranscriptNotice } from "./transcript-notices";
+import type { AgentUsage, SessionEntry } from "./types.ts";
+import { withTranscriptNotices, type TranscriptNotice } from "./transcript-notices.ts";
 
 type CacheWarmNotice = Extract<TranscriptNotice, { kind: "cache_warm" }>;
 

@@ -1,0 +1,38 @@
+{
+  "name": "@aiti-ai/aiti-devtools-agent",
+  "version": "0.1.2",
+  "description": "Multi-agent host wiring framework: AgentBridgeClient (bridge HTTP/SSE client) + AgentHost contract + tool/interaction mapping templates \u2014 reused by the pi extension, the DSH host adapter and more.",
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./schema": "./src/schema.ts"
+  },
+  "license": "MIT",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "node tools/build.mjs"
+  },
+  "dependencies": {},
+  "peerDependencies": {
+    "typebox": "^0.35.0"
+  },
+  "peerDependenciesMeta": {
+    "typebox": {
+      "optional": true
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "packages/aiti-devtools-agent"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  },
+  "contentHash": "d3d6b1793c5ebc89"
+}

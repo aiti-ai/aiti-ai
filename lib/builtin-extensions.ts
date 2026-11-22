@@ -13,11 +13,11 @@ import {
   type LoadedMcpConfig,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { McpHost, type McpHostOptions } from "./mcp-host";
-import { createPiWebMcpTransportFactory } from "./mcp-transport";
-import { loadPiSdkInternals, type PiSdkInternals, type PiSdkInternalsResult } from "./pi-sdk-internals";
-import { mayReadProjectConfigNow } from "./project-trust";
-import { PROJECT_SETTINGS_MAX_BYTES, readRegularFileText } from "./regular-file";
+import { McpHost, type McpHostOptions } from "./mcp-host.ts";
+import { createPiWebMcpTransportFactory } from "./mcp-transport.ts";
+import { loadPiSdkInternals, type PiSdkInternals, type PiSdkInternalsResult } from "./pi-sdk-internals.ts";
+import { mayReadProjectConfigNow } from "./project-trust.ts";
+import { PROJECT_SETTINGS_MAX_BYTES, readRegularFileText } from "./regular-file.ts";
 
 // The built-in extensions the pi CLI prepends from a module the SDK does not
 // export (ADR 0006, "Loading"). Normal sessions load them under the CLI's

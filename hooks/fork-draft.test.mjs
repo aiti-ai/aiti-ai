@@ -32,7 +32,7 @@ function callbackSource(name) {
   visit(hookFile);
   assert.ok(found, `useCallback ${name} not found`);
   return ts.transpileModule(`(${found.getText(hookFile)})`, {
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, alwaysStrict: false },
   }).outputText.trim().replace(/;$/, "");
 }
 
@@ -54,6 +54,9 @@ function fork(reply) {
     setDraft: (key, draft) => calls.events.push(["draft", key, draft]),
     onSessionForked: (id) => calls.events.push(["switch", id]),
     addNotice: (notice) => calls.notices.push(notice),
+    // The fork's handleFork localizes the failure notice; the test only cares that
+    // the underlying error is surfaced, so t() hands the params through.
+    t: (key, params) => params?.error ?? key,
     console: { error: () => {} },
   };
   return { run: compileHandleFork(scope), calls };

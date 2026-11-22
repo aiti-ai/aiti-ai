@@ -472,32 +472,6 @@
   border-top: 1px solid var(--border);
 }
 
-/* Eight digits wide (ch follows the phones' 16px form text), and no taller
-   than the name and id beside it, so the row keeps its height. */
-.model-context-input {
-  flex-shrink: 0;
-  width: calc(8ch + 16px);
-  height: 24px;
-  box-sizing: border-box;
-  padding: 0 7px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  text-align: right;
-}
-
-.model-context-input:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
-.model-context-input::placeholder { color: var(--text-dim); }
-.model-context-input[aria-invalid="true"] { border-color: #ef4444; }
-.model-context-input:disabled { opacity: 0.6; }
-
 .enabled-models-row-text {
   min-width: 0;
   flex: 1;
@@ -1143,6 +1117,14 @@
   line-height: 1.5;
 }
 
+.skill-update-indicator {
+  flex-shrink: 0;
+  font-size: 13px;
+  line-height: 1;
+}
+
+/* The skill's own instructions: rendered markdown, so its first and last
+   blocks drop their margins and the pane keeps a steady rhythm. */
 .skill-instructions {
   font-size: 13px;
 }
@@ -1156,14 +1138,8 @@
 }
 
 .skill-instructions-status.is-error {
-  color: #ef4444;
+  color: var(--danger);
   overflow-wrap: anywhere;
-}
-
-.skill-update-indicator {
-  flex-shrink: 0;
-  font-size: 13px;
-  line-height: 1;
 }
 
 .config-footer {
@@ -1717,114 +1693,51 @@
   line-height: 1.5;
 }
 
-/* A note on the options above it, not an introduction to them. */
-.settings-chat-options + .settings-general-description {
-  margin: 6px 0 0;
-}
-
-/* Fifteen columns: System spans the first row; then five light themes and five dark ones
-   (three columns each), and a row of three wide tiles (five columns each). */
 .settings-theme-options {
   display: grid;
-  grid-template-columns: repeat(15, minmax(0, 1fr));
-  grid-auto-rows: 40px;
-  gap: 10px;
-  max-width: 428px;
-  padding: 4px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 3px;
+  width: 100%;
+  max-width: 420px;
+  padding: 3px;
 }
 
 .settings-theme-option {
   position: relative;
   display: flex;
-  grid-column: span 3;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
   min-width: 0;
-  border-radius: 9px;
+  min-height: 44px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
   cursor: pointer;
-}
-
-.settings-theme-option[data-system] {
-  grid-column: 1 / -1;
-}
-
-.settings-theme-option[data-wide] {
-  grid-column: span 5;
-}
-
-.settings-theme-swatch {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-}
-
-.settings-theme-fill {
-  position: relative;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  background: var(--bg);
-}
-
-.settings-theme-name {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  overflow: hidden;
-  color: var(--accent);
   font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-/* "High contrast light" outgrows a third of the row on a phone: let the wide names take two lines. */
-.settings-theme-option[data-wide] .settings-theme-name {
-  font-size: 11px;
-  line-height: 1.2;
-  text-align: center;
-  white-space: normal;
-}
-
-.settings-theme-system {
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  background: var(--bg-panel);
-}
-
-.settings-theme-chip {
-  width: 12px;
-  height: 12px;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  background: var(--bg);
-}
-
-.settings-theme-system-name {
-  margin-left: 6px;
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.settings-theme-option:not(:has(input:checked)):hover {
-  box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--border);
+  font-weight: 400;
 }
 
 .settings-theme-option:has(input:checked) {
-  box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+  background: var(--bg-selected);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.settings-theme-option:not(:has(input:checked)):hover {
+  background: var(--bg-hover);
 }
 
 .settings-theme-option:has(input:focus-visible) {
-  outline: 2px dashed var(--accent);
-  outline-offset: 6px;
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.settings-theme-option-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .settings-font-rows {
@@ -1897,12 +1810,40 @@
   }
 }
 
+/* The context window beside its model row: a short numeric field, monospace
+   and right-aligned so digits line up down the list. */
+.model-context-input {
+  flex-shrink: 0;
+  width: calc(8ch + 16px);
+  height: 24px;
+  box-sizing: border-box;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-align: right;
+}
+
+.model-context-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .settings-chat-options {
   display: flex;
   flex-direction: column;
   gap: 12px;
   width: 100%;
   max-width: 420px;
+}
+
+/* The description under the chat options reads as a caption for them, not as
+   another option: a tighter top margin keeps it attached. */
+.settings-chat-options + .settings-general-description {
+  margin: 6px 0 0;
 }
 
 .settings-chat-option {
@@ -2312,9 +2253,9 @@
   color: #d97706;
 }
 
-/* Secondary lines keep the pane's one text size; only the color steps back. */
 .mcp-config-line.is-dim {
   color: var(--text-dim);
+  font-size: 11px;
 }
 
 .mcp-config-line.is-error {
@@ -2349,8 +2290,10 @@
   min-width: 0;
 }
 
-/* Literal text (names, a URL or command line, a path) is one mono size across
-   the pane, whether in a chip or a row of its own (.mcp-config-code). */
+.config-detail-grid-value.mcp-config-code {
+  font-size: 11px;
+}
+
 .mcp-config-chip {
   max-width: 100%;
   padding: 0 5px;
@@ -2384,17 +2327,12 @@
   white-space: pre-wrap;
 }
 
-.config-detail-grid-value.mcp-config-code {
-  font-size: 11px;
-}
-
-/* Under the Tools row's choice: a little apart from its explanation. */
 .mcp-test-tools {
   display: flex;
   flex-direction: column;
   gap: 6px;
   min-width: 0;
-  margin: 4px 0 0;
+  margin: 0;
   padding: 0;
   list-style: none;
 }
@@ -2408,7 +2346,7 @@
 
 .mcp-test-tool-tag {
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: 10px;
   line-height: 18px;
   white-space: nowrap;
 }
@@ -2447,11 +2385,9 @@
   min-width: 0;
 }
 
-/* Its options are words, not literal text: the interface font, not .mcp-add-input's mono. */
 .mcp-add-input.mcp-exposure-select {
   width: auto;
   max-width: 100%;
-  font-family: inherit;
 }
 
 /* The add pane (components/McpAddServer.tsx). Notes, fields and the failure

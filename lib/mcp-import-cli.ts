@@ -11,10 +11,10 @@ import {
   UNION_GRAMMAR,
   validationProblem,
   type ValueGrammar,
-} from "./mcp-import-core";
-import { type EntryOutcome, isRecord, mapServerEntry, mapToolFilters, siblingMcpUrl, sseRefusal } from "./mcp-import-json";
-import { parseJsonc } from "./jsonc";
-import { literalWord, shellAssignment, type ShellWord, type ShellWordPart } from "./shell-words";
+} from "./mcp-import-core.ts";
+import { type EntryOutcome, isRecord, mapServerEntry, mapToolFilters, siblingMcpUrl, sseRefusal } from "./mcp-import-json.ts";
+import { parseJsonc } from "./jsonc.ts";
+import { literalWord, shellAssignment, type ShellWord, type ShellWordPart } from "./shell-words.ts";
 
 // Command lines: a server's own command (`npx -y @foo/server`, with
 // `NAME=value` prefixes), and `pi | claude | codex | gemini mcp add …`, plus

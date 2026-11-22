@@ -1,5 +1,6 @@
 "use client";
 
+import { apiUrl } from "@/lib/base-path";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import type { EnabledModelsView } from "@/lib/enabled-models";
@@ -9,9 +10,9 @@ import {
   filterEnabledModels,
   findProviderView,
   isLastEnabledModel,
-} from "./enabled-models-helpers";
-import { ConfigButton, ConfigSwitch } from "./SettingsUi";
-import { ModelContextWindow, type ModelContextSettings } from "./ModelContextWindow";
+} from "./enabled-models-helpers.ts";
+import { ConfigButton, ConfigSwitch } from "./SettingsUi.tsx";
+import { ModelContextWindow, type ModelContextSettings } from "./ModelContextWindow.tsx";
 import { readJsonOrThrow } from "@/lib/fetch-json";
 
 /**
@@ -90,7 +91,7 @@ export function useEnabledModels(cwd?: string | null): EnabledModelsController {
     const controller = new AbortController();
     setLoading(true);
     const query = cwd ? `?cwd=${encodeURIComponent(cwd)}` : "";
-    fetch(`/api/models/enabled${query}`, { signal: controller.signal })
+    fetch(apiUrl(`/api/models/enabled${query}`), { signal: controller.signal })
       .then(async (res) => {
         const data = await readJsonOrThrow<EnabledModelsView>(res);
         setView(data);
@@ -118,7 +119,7 @@ export function useEnabledModels(cwd?: string | null): EnabledModelsController {
     setFailure(null);
     void (async () => {
       try {
-        const res = await fetch("/api/models/enabled", {
+        const res = await fetch(apiUrl("/api/models/enabled"), {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ...body, ...(cwd ? { cwd } : {}) }),
@@ -130,6 +131,10 @@ export function useEnabledModels(cwd?: string | null): EnabledModelsController {
           return;
         }
         setView(data);
+        // Scope writes change the picker's model list and thinking pins: broadcast so
+        // AppShell clears the client model cache and refetches /api/models right away
+        // (previously the picker only caught up when the settings panel closed).
+        try { window.dispatchEvent(new CustomEvent("pi-web:models-changed")); } catch {}
       } catch (error) {
         setFailure({ message: error instanceof Error ? error.message : String(error) });
       } finally {
@@ -335,7 +340,7 @@ function useCatalogRefresh(providerId: string, onChanged: () => void) {
     setNote(null);
     void (async () => {
       try {
-        const res = await fetch("/api/models/refresh", {
+        const res = await fetch(apiUrl("/api/models/refresh"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ provider: providerId }),

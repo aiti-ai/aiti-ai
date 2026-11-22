@@ -1,4 +1,5 @@
 import type { CSSProperties } from "react";
+import { withBasePath } from "@/lib/base-path";
 
 
 interface IconProps {
@@ -39,7 +40,7 @@ type CatppuccinIconName =
   | "yaml"
   | "go";
 
-const CATPPUCCIN_ICONS_ROOT = "/icons/catppuccin";
+const CATPPUCCIN_ICONS_ROOT = withBasePath("/icons/catppuccin");
 
 function CatppuccinIcon({ name, size = 14 }: IconProps & { name: CatppuccinIconName }) {
   const style = {

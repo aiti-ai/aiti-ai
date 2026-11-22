@@ -1,14 +1,20 @@
 "use client";
 
-import { memo, useEffect, useState, useRef, useCallback, useMemo, type CSSProperties, type MouseEvent } from "react";
-import type { SyntaxHighlighterProps } from "react-syntax-highlighter";
-import SyntaxHighlighter from "react-syntax-highlighter/dist/esm/prism-light";
+import { lazy, memo, Suspense, useEffect, useState, useRef, useCallback, useMemo, useSyncExternalStore, type CSSProperties, type MouseEvent } from "react";
+import { apiUrl } from "@/lib/base-path";
+
+// Subpath imports (not via the main entry): the main entry re-exports the full Prism
+// (~1.24MB) whose CJS compat surface can't be tree-shaken; type-only imports are erased at
+// compile time, so no runtime cost. The highlighter is split out of the first paint via
+// React.lazy (P1.1).
 import renderSyntaxNode from "react-syntax-highlighter/dist/esm/create-element";
+import type { SyntaxHighlighterProps } from "react-syntax-highlighter";
 import { vs } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
+
+const SyntaxHighlighter = lazy(() => import("./SyntaxHighlighterLite"));
 import ReactMarkdown, { type Components } from "react-markdown";
 import { useTheme } from "@/hooks/useTheme";
-import { usePrismLanguages } from "@/hooks/usePrismLanguages";
 import {
   DOCX_PREVIEW_MAX_BYTES,
   HTML_PREVIEW_MAX_BYTES,
@@ -18,14 +24,18 @@ import {
   isImagePath,
   isVideoPath,
 } from "@/lib/file-types";
+import { usePrismLanguages } from "@/hooks/usePrismLanguages";
 import { encodeFilePathForApi, getFileDirectory, getFileName, getRelativeFilePath } from "@/lib/file-paths";
 import { FILE_WATCH_HEARTBEAT_MS, fileVersion, fileVersionChanged } from "@/lib/file-version";
 import { injectSandboxedHtmlPolyfill } from "@/lib/html-sandbox-polyfill";
 import { HIDDEN_PAGE_GRACE_MS, usePageHiddenFor } from "@/hooks/usePageHidden";
 import { pageId, trackEventSource } from "@/lib/page-debug";
 import { parsePdfPageFragment, resolveLocalFileHref, shouldOpenLocalFileInApp } from "@/lib/file-links";
+import { getExtUiItems, subscribeExtUi, hasExtRender, type ExtUiItemRegistered } from "@/lib/ext-ui-store";
+import { ExtItemBoundary, ensureExtSlotMaterialized } from "./ExtSlots";
 import { parseFrontmatter } from "@/lib/frontmatter";
 import { isExternalMarkdownHref, jumpToMarkdownFragment, markdownAppUrlTransform, markdownPreviewRehypePlugins, markdownPreviewRemarkPlugins, markdownUrlTransform, normalizeDisplayMath } from "@/lib/markdown";
+import { useMathMarkdownPlugins } from "@/lib/use-math-plugins";
 import { CodeBlock, MermaidBlock } from "./MermaidBlock";
 import { PlantUmlBlock } from "./PlantUmlBlock";
 import { isPlantUmlLang } from "@/lib/plantuml";
@@ -35,12 +45,15 @@ import { FrontmatterCard } from "./FrontmatterCard";
 import { diffGapLabel, parseUnifiedPatch, unifiedDiffLines, type SplitDiffGap, type UnifiedDiffLine } from "@/lib/patch";
 import type { GitFileDiffResponse } from "@/lib/git-types";
 import { useI18n } from "@/hooks/useI18n";
+import { useConnStarvation } from "@/hooks/useConnStarvation";
+import { openFileWatchBus } from "@/lib/file-watch-client";
 import {
   resolveInitialFileDisplayMode,
   resolveInitialWrapLines,
   type FileViewerDisplayMode as DisplayMode,
   type FileViewerState,
 } from "@/lib/file-viewer-state";
+import type { RevisionRef } from "@/lib/file-revision";
 
 export type { FileViewerState } from "@/lib/file-viewer-state";
 
@@ -48,7 +61,12 @@ interface Props {
   filePath: string;
   cwd?: string;
   sourceSessionId?: string | null;
+  /** Revision view (OpenFileOptions.atRevision): read a git blob instead of the working-tree file (read-only; no watch, no git diff tab). */
+  atRevision?: RevisionRef;
+  /** "file" (default) or "folder" — folder kind delegates to a fileViewer slot takeover (the folder-viewer extension). */
+  kind?: "file" | "folder";
   onOpenFile?: (filePath: string, page?: number) => void;
+  onOpenFolder?: (folderPath: string, folderName: string) => void;
   onMentionLines?: (relativePath: string, startLine: number, endLine: number) => void;
   /** Insert this file's relative path into the chat input (@ mention). */
   onAtMention?: (relativePath: string, isDir: boolean) => void;
@@ -78,6 +96,9 @@ const DISPLAY_MODE_LABELS: Record<DisplayMode, string> = {
   diff: "Diff",
 };
 
+/** Stable empty snapshot for the fileViewer takeover slot (no takeover during SSR/unregistered, avoiding a useSyncExternalStore re-render loop). */
+const FILE_VIEWER_NO_ITEMS: ExtUiItemRegistered[] = [];
+
 const FILE_CODE_STYLE: CSSProperties = {
   fontFamily: "var(--font-mono)",
   fontWeight: "var(--font-mono-weight)",
@@ -98,8 +119,6 @@ const fileViewerDarkTheme = {
 };
 delete fileViewerDarkTheme['pre[class*="language-"]'].background;
 
-// `lineHeight` is FILE_CODE_STYLE's 13px * 1.6, so both columns share one line
-// box; a code-font change must move it with fontSize.
 const FILE_LINE_NUMBER_STYLE: CSSProperties = {
   width: 48,
   minWidth: 48,
@@ -119,12 +138,8 @@ const FILE_LINE_NUMBER_STYLE: CSSProperties = {
   verticalAlign: "top",
 };
 
-// The gutter stays put while a wide line scrolls sideways: `position: sticky`
-// against the viewer's own scrolling box (`.file-viewer-content`; the
-// highlighted <pre> sets `overflow: visible`, so it is the nearest scroller in
-// every view). It has room to travel because every row spans the widest line
-// (the <pre> or wrapper is `width: max-content` and a row is `min-width:
-// 100%`), so no line's number scrolls away behind its text.
+// The pinned gutter is the same column, pinned to the left edge of the
+// viewer's `overflow: auto` content box above the tokens that slide behind it.
 // The browser repositions every sticky number on each scroll, vertical too, so
 // only views of at most SOURCE_HIGHLIGHT_MAX_LINES rows pin it: the highlighted
 // Source view and a diff that short. Pinned, a 24,000-line log in the plain
@@ -256,70 +271,72 @@ function SourceCodeRenderer({ rows, stylesheet, useInlineStyles, wrapLines }: So
   });
 }
 
-function getFileApiUrl(
-  filePath: string,
-  type: "read" | "download" | "meta" | "preview" | "watch",
-  sourceSessionId?: string | null,
+// —— Paths never enter URLs: fetch-style requests go through POST /api/files/get; consumers
+// that can only use GET URLs (<img>/<video>/EventSource etc.) use short-lived tickets
+// (POST /api/files/ticket to exchange → GET /api/files/_t/<ticket>). Tickets have a 5-minute
+// TTL, are random and irreversible, and expire (never reuse a permanent steady-state token —
+// once it lands in an access-log path it leaks forever).
+import { buildTicketUrl, fetchFileGet } from "@/lib/file-tickets";
+
+/** React hook: resolve a short-lived ticket URL for consumers that can only use GET URLs (<img>/<video>/EventSource). */
+
+function useTicketUrl(
+  filePath: string | undefined,
+  type: "read" | "download" | "preview" | "watch",
   params: Record<string, string | number | undefined> = {},
-): string {
-  const encoded = encodeFilePathForApi(filePath);
-  const searchParams = new URLSearchParams({ type });
-  if (sourceSessionId) searchParams.set("sessionId", sourceSessionId);
-  // A watch is a stream: the page that holds it, for the Debug panel's connected pages.
-  if (type === "watch") searchParams.set("holder", pageId());
-  for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined) searchParams.set(key, String(value));
-  }
-  return `/api/files/${encoded}?${searchParams.toString()}`;
+): string | null {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setUrl(null);
+    if (!filePath) return;
+    buildTicketUrl(filePath, type, params)
+      .then((u) => { if (alive) setUrl(u); })
+      .catch(() => { if (alive) setUrl(null); });
+    return () => { alive = false; };
+    // params is an unstable object → serialize it as the dependency key
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filePath, type, JSON.stringify(params)]);
+  return url;
 }
 
-// Each load of a media or document preview gets a URL new to this page. The
-// browser shows an image it already holds for a URL again, whatever the
-// response's Cache-Control, so a counter local to one viewer (1 on every mount)
-// showed a closed and reopened tab's old picture.
-let previewLoads = 0;
-function usePreviewUrl(filePath: string, type: "read" | "preview", sourceSessionId: string | null | undefined, bust: number): string {
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- a new `bust` asks for a new load
-  return useMemo(() => getFileApiUrl(filePath, type, sourceSessionId, { v: ++previewLoads }), [filePath, type, sourceSessionId, bust]);
+/** Two-step download: POST to exchange a ticket (path stays out of the URL, keeping it out of tunnel/proxy access logs) → ticketed GET streaming download. Revision params must ride the POST body too — the ticket issuer stat-checks the path and would 404 a deleted file. */
+async function downloadViaTicket(filePath: string, params: Record<string, string> = {}): Promise<void> {
+  const body: Record<string, string> = { path: filePath };
+  if (params.ref) body.ref = params.ref;
+  if (params.gitDir) body.gitDir = params.gitDir;
+  const res = await fetch(apiUrl("/api/files/ticket"), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({})) as { ticket?: string; error?: string };
+  if (!res.ok || !data.ticket) throw new Error(data.error ?? `HTTP ${res.status}`);
+  // ref/gitDir stay in the ticket payload (path-channel contract); the GET URL carries nothing sensitive.
+  const a = document.createElement("a");
+  a.href = apiUrl(`/api/files/_t/${encodeURIComponent(data.ticket)}`);
+  a.download = getFileName(filePath);
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
-/**
- * Keeps a viewer's file watch alive. The browser never retries an EventSource
- * whose reconnect got an HTTP error (a proxy's 502 while pi-web restarts), and a
- * half-open connection (sleep, a dropped NAT entry) goes quiet without one.
- * Either way the viewer opens a new watch; its `connected` reads the file again
- * if it changed meanwhile.
- */
-function useWatchRecovery(): [number, (es: EventSource) => () => void] {
-  const [attempt, setAttempt] = useState(0);
-  const failures = useRef(0);
-  const supervise = useCallback((es: EventSource) => {
-    let stale: ReturnType<typeof setTimeout> | undefined;
-    let retry: ReturnType<typeof setTimeout> | undefined;
-    const reopen = () => {
-      clearTimeout(stale);
-      es.close();
-      retry ??= setTimeout(() => setAttempt((n) => n + 1), Math.min(1000 * 2 ** failures.current++, FILE_WATCH_HEARTBEAT_MS));
-    };
-    const alive = () => {
-      clearTimeout(stale);
-      stale = setTimeout(reopen, FILE_WATCH_HEARTBEAT_MS * 2.5);
-    };
-    es.addEventListener("connected", () => { failures.current = 0; });
-    for (const name of ["connected", "change", "ping"]) es.addEventListener(name, alive);
-    es.addEventListener("error", () => { if (es.readyState === EventSource.CLOSED) reopen(); });
-    alive();
-    return () => { clearTimeout(stale); clearTimeout(retry); };
-  }, []);
-  return [attempt, supervise];
+function MarkdownImage({ filePath, alt, ...props }: { filePath: string; alt: string } & React.ImgHTMLAttributes<HTMLImageElement>) {
+  const src = useTicketUrl(filePath, "read");
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={src ?? undefined} alt={alt} loading="lazy" {...props} />;
 }
 
-function DownloadLink({ filePath, sourceSessionId }: { filePath: string; sourceSessionId?: string | null }) {
+function DownloadLink({ filePath, sourceSessionId, params }: { filePath: string; sourceSessionId?: string | null; params?: Record<string, string> }) {
   const { t } = useI18n();
   return (
     <a
-      href={getFileApiUrl(filePath, "download", sourceSessionId)}
+      href="#"
       download={getFileName(filePath)}
+      onClick={(e) => {
+        e.preventDefault();
+        downloadViaTicket(filePath, params ?? {}).catch((err) => console.error("Download failed:", err));
+      }}
       title={t("i18n.downloadFile")}
       aria-label={t("i18n.downloadFile")}
       className="file-viewer-icon-button"
@@ -351,15 +368,12 @@ function diffLines(patch: string): Array<DiffLine | DiffGap> {
   return files.flatMap(unifiedDiffLines);
 }
 
-// Renders one diff line's text through the same Prism pipeline the source view
-// uses. The red/green row background, gutter and +/- marker are drawn by the
-// row itself; this only colors the code tokens, with no <pre> wrapper so the
-// inline flow layout stays intact. The theme's <pre> rules (vs draws a border,
-// both set `white-space: pre` and their own font) would land on the wrapper
-// span: they are reset so the row keeps its 20.8px line box. The code span's
-// `white-space` is the highlighter's own (`wrapLongLines`), so the wrap toggle
-// reaches it as a prop. Memoized: a render of the view for any other reason
-// reuses each line's tokens instead of running Prism on every line again.
+/**
+ * One diff line's code through the same Prism pipeline the source view uses
+ * (upstream v0.16.0's per-line highlighter). Memoized per line: a re-render of
+ * the view for any other reason reuses each line's tokens instead of running
+ * Prism on every line again. Plain text until Prism languages are loaded.
+ */
 const DiffLineCode = memo(function DiffLineCode({
   text,
   language,
@@ -377,35 +391,37 @@ const DiffLineCode = memo(function DiffLineCode({
     return <>{text || "\u00a0"}</>;
   }
   return (
-    <SyntaxHighlighter
-      language={language}
-      style={isDark ? fileViewerDarkTheme : vs}
-      showLineNumbers={false}
-      wrapLongLines={wrapLines}
-      PreTag="span"
-      CodeTag="span"
-      customStyle={{
-        margin: 0,
-        padding: 0,
-        border: 0,
-        backgroundColor: "transparent",
-        display: "inline",
-        overflow: "visible",
-        fontFamily: "inherit",
-        fontSize: "inherit",
-        lineHeight: "inherit",
-        whiteSpace: "inherit",
-        overflowWrap: "inherit",
-      }}
-      codeTagProps={{
-        style: {
-          fontFamily: "var(--font-mono)",
-          fontWeight: "var(--font-mono-weight)",
-        },
-      }}
-    >
-      {text}
-    </SyntaxHighlighter>
+    <Suspense fallback={<>{text}</>}>
+      <SyntaxHighlighter
+        language={language}
+        style={isDark ? fileViewerDarkTheme : vs}
+        showLineNumbers={false}
+        wrapLongLines={wrapLines}
+        PreTag="span"
+        CodeTag="span"
+        customStyle={{
+          margin: 0,
+          padding: 0,
+          border: 0,
+          backgroundColor: "transparent",
+          display: "inline",
+          overflow: "visible",
+          fontFamily: "inherit",
+          fontSize: "inherit",
+          lineHeight: "inherit",
+          whiteSpace: "inherit",
+          overflowWrap: "inherit",
+        }}
+        codeTagProps={{
+          style: {
+            fontFamily: "var(--font-mono)",
+            fontWeight: "var(--font-mono-weight)",
+          },
+        }}
+      >
+        {text}
+      </SyntaxHighlighter>
+    </Suspense>
   );
 });
 
@@ -447,9 +463,9 @@ function DiffView({
   const lineNumberStyle = visible.size <= SOURCE_HIGHLIGHT_MAX_LINES
     ? FILE_PINNED_LINE_NUMBER_STYLE
     : FILE_LINE_NUMBER_STYLE;
-  // Highlight code tokens on every visible line once Prism languages are loaded,
-  // but fall back to plain text for oversized diffs (same ceiling as the source
-  // view, where react-syntax-highlighter is replaced by a row renderer).
+  // Highlight code tokens on every visible line once Prism languages are
+  // loaded, but fall back to plain text for oversized diffs (same ceiling as
+  // the source view, where the highlighter is replaced by a row renderer).
   const highlight = language !== "text" && prismReady && visible.size <= SOURCE_HIGHLIGHT_MAX_LINES;
 
   // Collapsed lines and the lines the patch leaves out between hunks share one
@@ -561,17 +577,7 @@ function DiffView({
                   color: "var(--text)",
                 }}
               >
-                {highlight
-                  ? (
-                    <DiffLineCode
-                      text={line.text || ""}
-                      language={language}
-                      prismReady={prismReady}
-                      isDark={isDark}
-                      wrapLines={wrapLines}
-                    />
-                  )
-                  : (line.text || "\u00a0")}
+                <DiffLineCode text={line.text} language={language} prismReady={highlight} isDark={isDark} wrapLines={wrapLines} />
               </span>
             </div>
           );
@@ -582,19 +588,56 @@ function DiffView({
   );
 }
 
-// Only primitive props: the viewer re-renders for reasons of its own (the
-// sidebar toggled, a watch reconnecting), which must not tokenize up to
-// SOURCE_HIGHLIGHT_MAX_LINES lines again.
 const MemoizedDiffView = memo(DiffView);
 
-function ImageViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Props) {
+/**
+ * Watch-recovery supervisor (upstream v0.16.0's useWatchRecovery, ported onto
+ * the fork's ticket-URL watch). A direct per-file EventSource has no other
+ * reconnection: a dropped SSE (phone off the network, an idle cut, a server
+ * restart) left the viewer stale until a manual refresh. The watch route's
+ * heartbeats ("connected"/"change"/"ping", one every FILE_WATCH_HEARTBEAT_MS)
+ * keep the supervision alive; silence past 2.5 heartbeats, or an error that
+ * closed the source, reopens it with an exponential backoff (capped at one
+ * heartbeat) by bumping `attempt`, which re-runs the watch effect and builds a
+ * fresh EventSource. The page's bus watch path is not supervised here: the
+ * event bus reconnects itself and reports so through its own status callback.
+ */
+function useWatchRecovery(): [number, (es: EventSource) => () => void] {
+  const [attempt, setAttempt] = useState(0);
+  const failures = useRef(0);
+  const superviseWatch = useCallback((es: EventSource) => {
+    let stale: ReturnType<typeof setTimeout> | undefined;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const reopen = () => {
+      clearTimeout(stale);
+      es.close();
+      retry ??= setTimeout(
+        () => setAttempt((n) => n + 1),
+        Math.min(1000 * 2 ** failures.current++, FILE_WATCH_HEARTBEAT_MS),
+      );
+    };
+    const alive = () => {
+      clearTimeout(stale);
+      stale = setTimeout(reopen, FILE_WATCH_HEARTBEAT_MS * 2.5);
+    };
+    es.addEventListener("connected", () => { failures.current = 0; });
+    for (const name of ["connected", "change", "ping"]) es.addEventListener(name, alive);
+    es.addEventListener("error", () => { if (es.readyState === EventSource.CLOSED) reopen(); });
+    alive();
+    return () => { clearTimeout(stale); clearTimeout(retry); };
+  }, []);
+  return [attempt, superviseWatch];
+}
+
+function ImageViewer({ filePath, cwd, sourceSessionId, watchEnabled = true, atRevision }: Props) {
   const { t } = useI18n();
   const [watching, setWatching] = useState(false);
-  const [watchAttempt, superviseWatch] = useWatchRecovery();
   const [bust, setBust] = useState(0);
   const [size, setSize] = useState<number | null>(null);
   const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Connection-pool starvation yields (anti-deadlock): starved/epoch are watch-effect deps; see useConnStarvation
+  const { starved: connStarved, epoch: connEpoch } = useConnStarvation();
   const esRef = useRef<EventSource | null>(null);
   const syncRequestRef = useRef(0);
   // The version on screen; a reconnect that finds it unchanged loads nothing.
@@ -611,6 +654,8 @@ function ImageViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
     shownVersionRef.current = null;
   }, [filePath, sourceSessionId]);
 
+  const [watchAttempt, superviseWatch] = useWatchRecovery();
+
   useEffect(() => {
     setWatching(false);
 
@@ -619,12 +664,13 @@ function ImageViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
       esRef.current = null;
     }
 
+    if (connStarved) return; // yield while starved: the old watch is closed, don't rebuild yet (unstarving bumps epoch and re-runs)
     if (!watchEnabled) return;
 
     let active = true;
     const synchronize = () => {
       const requestId = ++syncRequestRef.current;
-      fetch(getFileApiUrl(filePath, "meta", sourceSessionId))
+      fetchFileGet(filePath, "meta", sourceSessionId)
         .then((response) => response.json())
         .then((next: { size?: number; mtime?: string; error?: string }) => {
           if (!active || requestId !== syncRequestRef.current) return;
@@ -645,41 +691,58 @@ function ImageViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
         });
     };
 
-    const es = trackEventSource("file-watch", new EventSource(getFileApiUrl(filePath, "watch", sourceSessionId)), filePath);
-    esRef.current = es;
-    const stopSupervising = superviseWatch(es);
+    let es: EventSource | null = null;
+    let stopSupervisingWatch: (() => void) | null = null;
+      buildTicketUrl(filePath, "watch").then((watchUrl) => {
+        if (!active) return;
+        const busWatch = openFileWatchBus(filePath);
+        if (busWatch) {
+          // single-SSE convergence for page events: watch registration goes through the bus (named connected/change/error events field-identical to the original SSE)
+          es = busWatch as unknown as EventSource;
+          esRef.current = es;
+          return;
+        }
+        es = new EventSource(watchUrl);
+        esRef.current = es;
+        stopSupervisingWatch = superviseWatch(es);
 
-    es.addEventListener("connected", () => {
-      setWatching(true);
-      synchronize();
+      es.addEventListener("connected", () => {
+        setWatching(true);
+        synchronize();
+      });
+      es.addEventListener("change", (e) => {
+        syncRequestRef.current += 1;
+        shownVersionRef.current = null;
+        try {
+          const d = JSON.parse((e as MessageEvent).data) as { size?: number; mtime?: string };
+          shownVersionRef.current = fileVersion(d);
+          if (typeof d.size === "number") setSize(d.size);
+        } catch { /* ignore */ }
+        setNaturalSize(null);
+        setError(null);
+        setBust((b) => b + 1);
+      });
+      const markDisconnected = () => {
+        setWatching(false);
+      };
+      es.addEventListener("error", markDisconnected);
+      es.onerror = markDisconnected;
     });
-    es.addEventListener("change", (e) => {
-      syncRequestRef.current += 1;
-      shownVersionRef.current = null;
-      try {
-        const d = JSON.parse((e as MessageEvent).data) as { size?: number; mtime?: string };
-        shownVersionRef.current = fileVersion(d);
-        if (typeof d.size === "number") setSize(d.size);
-      } catch { /* ignore */ }
-      setNaturalSize(null);
-      setError(null);
-      setBust((b) => b + 1);
-    });
-    const markDisconnected = () => {
-      setWatching(false);
-    };
-    es.addEventListener("error", markDisconnected);
-    es.onerror = markDisconnected;
 
     return () => {
       active = false;
-      es.close();
-      stopSupervising();
+      stopSupervisingWatch?.();
+      if (es) es.close();
       if (esRef.current === es) esRef.current = null;
     };
-  }, [filePath, sourceSessionId, watchEnabled, watchAttempt, superviseWatch]);
+  }, [filePath, sourceSessionId, watchEnabled, connStarved, connEpoch, watchAttempt]);
 
-  const src = usePreviewUrl(filePath, "read", sourceSessionId, bust);
+  // Revision reads: the ticketed GET must carry ref/gitDir so the server serves the git blob.
+  const revParams = useMemo((): Record<string, string> => {
+    if (!atRevision) return {};
+    return { ref: atRevision.ref, gitDir: atRevision.gitDir };
+  }, [atRevision]);
+  const src = useTicketUrl(filePath, "read", { ...(bust ? { v: bust } : {}), ...revParams });
 
   const formatSizeStr = size != null ? formatSize(size) : null;
 
@@ -720,13 +783,15 @@ function ImageViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
           />
           {watching ? "live" : "static"}
         </span>
-        <DownloadLink filePath={filePath} sourceSessionId={sourceSessionId} />
+        <DownloadLink filePath={filePath} sourceSessionId={sourceSessionId} params={revParams} />
       </div>
       <div
         style={{
           flex: 1,
           overflow: "auto",
-          background: "var(--bg-panel)",
+          // Use the backgroundColor longhand to avoid a React shorthand-conflict warning from
+          // mixing with the backgroundImage/backgroundSize longhands below
+          backgroundColor: "var(--bg-panel)",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -742,7 +807,7 @@ function ImageViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
         ) : (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={src}
+            src={src ?? undefined}
             alt={filePath}
             onLoad={(e) => {
               const img = e.currentTarget;
@@ -773,11 +838,12 @@ function formatDuration(seconds: number): string {
 function AudioViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Props) {
   const { t } = useI18n();
   const [watching, setWatching] = useState(false);
-  const [watchAttempt, superviseWatch] = useWatchRecovery();
   const [bust, setBust] = useState(0);
   const [size, setSize] = useState<number | null>(null);
   const [duration, setDuration] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Connection-pool starvation yields (anti-deadlock): starved/epoch are watch-effect deps; see useConnStarvation
+  const { starved: connStarved, epoch: connEpoch } = useConnStarvation();
   const esRef = useRef<EventSource | null>(null);
   const syncRequestRef = useRef(0);
   // The version on screen; a reconnect that finds it unchanged loads nothing.
@@ -794,6 +860,8 @@ function AudioViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
     shownVersionRef.current = null;
   }, [filePath, sourceSessionId]);
 
+  const [watchAttempt, superviseWatch] = useWatchRecovery();
+
   useEffect(() => {
     setWatching(false);
 
@@ -802,12 +870,13 @@ function AudioViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
       esRef.current = null;
     }
 
+    if (connStarved) return; // yield while starved: the old watch is closed, don't rebuild yet (unstarving bumps epoch and re-runs)
     if (!watchEnabled) return;
 
     let active = true;
     const synchronize = () => {
       const requestId = ++syncRequestRef.current;
-      fetch(getFileApiUrl(filePath, "meta", sourceSessionId))
+      fetchFileGet(filePath, "meta", sourceSessionId)
         .then((response) => response.json())
         .then((next: { size?: number; mtime?: string; error?: string }) => {
           if (!active || requestId !== syncRequestRef.current) return;
@@ -828,41 +897,53 @@ function AudioViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
         });
     };
 
-    const es = trackEventSource("file-watch", new EventSource(getFileApiUrl(filePath, "watch", sourceSessionId)), filePath);
-    esRef.current = es;
-    const stopSupervising = superviseWatch(es);
+    let es: EventSource | null = null;
+    let stopSupervisingWatch: (() => void) | null = null;
+      buildTicketUrl(filePath, "watch").then((watchUrl) => {
+        if (!active) return;
+        const busWatch = openFileWatchBus(filePath);
+        if (busWatch) {
+          // single-SSE convergence for page events: watch registration goes through the bus (named connected/change/error events field-identical to the original SSE)
+          es = busWatch as unknown as EventSource;
+          esRef.current = es;
+          return;
+        }
+        es = new EventSource(watchUrl);
+        esRef.current = es;
+        stopSupervisingWatch = superviseWatch(es);
 
-    es.addEventListener("connected", () => {
-      setWatching(true);
-      synchronize();
+      es.addEventListener("connected", () => {
+        setWatching(true);
+        synchronize();
+      });
+      es.addEventListener("change", (e) => {
+        syncRequestRef.current += 1;
+        shownVersionRef.current = null;
+        try {
+          const d = JSON.parse((e as MessageEvent).data) as { size?: number; mtime?: string };
+          shownVersionRef.current = fileVersion(d);
+          if (typeof d.size === "number") setSize(d.size);
+        } catch { /* ignore */ }
+        setDuration(null);
+        setError(null);
+        setBust((b) => b + 1);
+      });
+      const markDisconnected = () => {
+        setWatching(false);
+      };
+      es.addEventListener("error", markDisconnected);
+      es.onerror = markDisconnected;
     });
-    es.addEventListener("change", (e) => {
-      syncRequestRef.current += 1;
-      shownVersionRef.current = null;
-      try {
-        const d = JSON.parse((e as MessageEvent).data) as { size?: number; mtime?: string };
-        shownVersionRef.current = fileVersion(d);
-        if (typeof d.size === "number") setSize(d.size);
-      } catch { /* ignore */ }
-      setDuration(null);
-      setError(null);
-      setBust((b) => b + 1);
-    });
-    const markDisconnected = () => {
-      setWatching(false);
-    };
-    es.addEventListener("error", markDisconnected);
-    es.onerror = markDisconnected;
 
     return () => {
       active = false;
-      es.close();
-      stopSupervising();
+      stopSupervisingWatch?.();
+      if (es) es.close();
       if (esRef.current === es) esRef.current = null;
     };
-  }, [filePath, sourceSessionId, watchEnabled, watchAttempt, superviseWatch]);
+  }, [filePath, sourceSessionId, watchEnabled, connStarved, connEpoch, watchAttempt]);
 
-  const src = usePreviewUrl(filePath, "read", sourceSessionId, bust);
+  const src = useTicketUrl(filePath, "read", bust ? { v: bust } : {});
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -923,7 +1004,7 @@ function AudioViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
             key={src}
             controls
             preload="metadata"
-            src={src}
+            src={src ?? undefined}
             onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
             onError={() => setError(t("files.audioLoadFailed"))}
             style={{ width: "100%" }}
@@ -937,11 +1018,12 @@ function AudioViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
 function VideoViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Props) {
   const { t } = useI18n();
   const [watching, setWatching] = useState(false);
-  const [watchAttempt, superviseWatch] = useWatchRecovery();
   const [bust, setBust] = useState(0);
   const [size, setSize] = useState<number | null>(null);
   const [duration, setDuration] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Connection-pool starvation yields (anti-deadlock): starved/epoch are watch-effect deps; see useConnStarvation
+  const { starved: connStarved, epoch: connEpoch } = useConnStarvation();
   const esRef = useRef<EventSource | null>(null);
   const syncRequestRef = useRef(0);
   // The version on screen; a reconnect that finds it unchanged loads nothing.
@@ -958,6 +1040,8 @@ function VideoViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
     shownVersionRef.current = null;
   }, [filePath, sourceSessionId]);
 
+  const [watchAttempt, superviseWatch] = useWatchRecovery();
+
   useEffect(() => {
     setWatching(false);
 
@@ -966,12 +1050,13 @@ function VideoViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
       esRef.current = null;
     }
 
+    if (connStarved) return; // yield while starved: the old watch is closed, don't rebuild yet (unstarving bumps epoch and re-runs)
     if (!watchEnabled) return;
 
     let active = true;
     const synchronize = () => {
       const requestId = ++syncRequestRef.current;
-      fetch(getFileApiUrl(filePath, "meta", sourceSessionId))
+      fetchFileGet(filePath, "meta", sourceSessionId)
         .then((response) => response.json())
         .then((next: { size?: number; mtime?: string; error?: string }) => {
           if (!active || requestId !== syncRequestRef.current) return;
@@ -992,41 +1077,53 @@ function VideoViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
         });
     };
 
-    const es = trackEventSource("file-watch", new EventSource(getFileApiUrl(filePath, "watch", sourceSessionId)), filePath);
-    esRef.current = es;
-    const stopSupervising = superviseWatch(es);
+    let es: EventSource | null = null;
+    let stopSupervisingWatch: (() => void) | null = null;
+    buildTicketUrl(filePath, "watch").then((watchUrl) => {
+      if (!active) return;
+      const busWatch = openFileWatchBus(filePath);
+      if (busWatch) {
+        // single-SSE convergence for page events: watch registration goes through the bus (named connected/change/error events field-identical to the original SSE)
+        es = busWatch as unknown as EventSource;
+        esRef.current = es;
+        return;
+      }
+      es = new EventSource(watchUrl);
+      esRef.current = es;
+      stopSupervisingWatch = superviseWatch(es);
 
-    es.addEventListener("connected", () => {
-      setWatching(true);
-      synchronize();
+      es.addEventListener("connected", () => {
+        setWatching(true);
+        synchronize();
+      });
+      es.addEventListener("change", (e) => {
+        syncRequestRef.current += 1;
+        shownVersionRef.current = null;
+        try {
+          const d = JSON.parse((e as MessageEvent).data) as { size?: number; mtime?: string };
+          shownVersionRef.current = fileVersion(d);
+          if (typeof d.size === "number") setSize(d.size);
+        } catch { /* ignore */ }
+        setDuration(null);
+        setError(null);
+        setBust((b) => b + 1);
+      });
+      const markDisconnected = () => {
+        setWatching(false);
+      };
+      es.addEventListener("error", markDisconnected);
+      es.onerror = markDisconnected;
     });
-    es.addEventListener("change", (e) => {
-      syncRequestRef.current += 1;
-      shownVersionRef.current = null;
-      try {
-        const d = JSON.parse((e as MessageEvent).data) as { size?: number; mtime?: string };
-        shownVersionRef.current = fileVersion(d);
-        if (typeof d.size === "number") setSize(d.size);
-      } catch { /* ignore */ }
-      setDuration(null);
-      setError(null);
-      setBust((b) => b + 1);
-    });
-    const markDisconnected = () => {
-      setWatching(false);
-    };
-    es.addEventListener("error", markDisconnected);
-    es.onerror = markDisconnected;
 
     return () => {
       active = false;
-      es.close();
-      stopSupervising();
+      stopSupervisingWatch?.();
+      if (es) es.close();
       if (esRef.current === es) esRef.current = null;
     };
-  }, [filePath, sourceSessionId, watchEnabled, watchAttempt, superviseWatch]);
+  }, [filePath, sourceSessionId, watchEnabled, connStarved, connEpoch, watchAttempt]);
 
-  const src = usePreviewUrl(filePath, "read", sourceSessionId, bust);
+  const src = useTicketUrl(filePath, "read", bust ? { v: bust } : {});
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -1085,11 +1182,11 @@ function VideoViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
             </div>
           )}
           <video
-            key={src}
+            key={src ?? "pending"}
             controls
             playsInline
             preload="metadata"
-            src={src}
+            src={src ?? undefined}
             onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
             onError={() => setError(t("files.videoLoadFailed"))}
             style={{ maxWidth: "100%", maxHeight: "100%" }}
@@ -1103,10 +1200,11 @@ function VideoViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
 function DocumentViewer({ filePath, cwd, sourceSessionId, initialPage, watchEnabled = true }: Props) {
   const { t } = useI18n();
   const [watching, setWatching] = useState(false);
-  const [watchAttempt, superviseWatch] = useWatchRecovery();
   const [bust, setBust] = useState(0);
   const [size, setSize] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Connection-pool starvation yields (anti-deadlock): starved/epoch are watch-effect deps; see useConnStarvation
+  const { starved: connStarved, epoch: connEpoch } = useConnStarvation();
   const esRef = useRef<EventSource | null>(null);
   const syncRequestRef = useRef(0);
   // The version on screen; a reconnect that finds it unchanged loads nothing.
@@ -1114,8 +1212,10 @@ function DocumentViewer({ filePath, cwd, sourceSessionId, initialPage, watchEnab
 
   const ext = getFileExt(filePath);
   const isPdf = ext === "pdf";
+  // PDF 跳页（上游 #page= 片段）叠在本地 ticket URL 之上——票据机制不变，解析后追加片段
   const pageFragment = isPdf && initialPage && initialPage > 0 ? `#page=${initialPage}` : "";
-  const previewUrl = `${usePreviewUrl(filePath, isPdf ? "read" : "preview", sourceSessionId, bust)}${pageFragment}`;
+  const ticketPreviewUrl = useTicketUrl(filePath, isPdf ? "read" : "preview", bust ? { v: bust } : {});
+  const previewUrl = ticketPreviewUrl ? `${ticketPreviewUrl}${pageFragment}` : null;
 
   useEffect(() => {
     setBust(0);
@@ -1126,7 +1226,7 @@ function DocumentViewer({ filePath, cwd, sourceSessionId, initialPage, watchEnab
 
     let active = true;
     const requestId = ++syncRequestRef.current;
-    fetch(getFileApiUrl(filePath, "meta", sourceSessionId))
+    fetchFileGet(filePath, "meta", sourceSessionId)
       .then((r) => r.json())
       .then((d: { size?: number; error?: string }) => {
         if (!active || requestId !== syncRequestRef.current) return;
@@ -1147,6 +1247,8 @@ function DocumentViewer({ filePath, cwd, sourceSessionId, initialPage, watchEnab
     };
   }, [filePath, isPdf, sourceSessionId]);
 
+  const [watchAttempt, superviseWatch] = useWatchRecovery();
+
   useEffect(() => {
     setWatching(false);
 
@@ -1155,12 +1257,13 @@ function DocumentViewer({ filePath, cwd, sourceSessionId, initialPage, watchEnab
       esRef.current = null;
     }
 
+    if (connStarved) return; // yield while starved: the old watch is closed, don't rebuild yet (unstarving bumps epoch and re-runs)
     if (!watchEnabled) return;
 
     let active = true;
     const synchronize = () => {
       const requestId = ++syncRequestRef.current;
-      fetch(getFileApiUrl(filePath, "meta", sourceSessionId))
+      fetchFileGet(filePath, "meta", sourceSessionId)
         .then((r) => r.json())
         .then((d: { size?: number; mtime?: string; error?: string }) => {
           if (!active || requestId !== syncRequestRef.current) return;
@@ -1186,44 +1289,56 @@ function DocumentViewer({ filePath, cwd, sourceSessionId, initialPage, watchEnab
         });
     };
 
-    const es = trackEventSource("file-watch", new EventSource(getFileApiUrl(filePath, "watch", sourceSessionId)), filePath);
-    esRef.current = es;
-    const stopSupervising = superviseWatch(es);
-
-    es.addEventListener("connected", () => {
-      setWatching(true);
-      synchronize();
-    });
-    es.addEventListener("change", (e) => {
-      syncRequestRef.current += 1;
-      shownVersionRef.current = null;
-      try {
-        const d = JSON.parse((e as MessageEvent).data) as { size?: number; mtime?: string };
-        shownVersionRef.current = fileVersion(d);
-        if (typeof d.size === "number") {
-          setSize(d.size);
-          if (!isPdf && d.size > DOCX_PREVIEW_MAX_BYTES) {
-            setError("DOCX too large for preview (>10MB)");
-            return;
-          }
+    let es: EventSource | null = null;
+    let stopSupervisingWatch: (() => void) | null = null;
+      buildTicketUrl(filePath, "watch").then((watchUrl) => {
+        if (!active) return;
+        const busWatch = openFileWatchBus(filePath);
+        if (busWatch) {
+          // single-SSE convergence for page events: watch registration goes through the bus (named connected/change/error events field-identical to the original SSE)
+          es = busWatch as unknown as EventSource;
+          esRef.current = es;
+          return;
         }
-      } catch { /* ignore */ }
-      setError(null);
-      setBust((b) => b + 1);
+        es = new EventSource(watchUrl);
+        esRef.current = es;
+        stopSupervisingWatch = superviseWatch(es);
+
+      es.addEventListener("connected", () => {
+        setWatching(true);
+        synchronize();
+      });
+      es.addEventListener("change", (e) => {
+        syncRequestRef.current += 1;
+        shownVersionRef.current = null;
+        try {
+          const d = JSON.parse((e as MessageEvent).data) as { size?: number; mtime?: string };
+          shownVersionRef.current = fileVersion(d);
+          if (typeof d.size === "number") {
+            setSize(d.size);
+            if (!isPdf && d.size > DOCX_PREVIEW_MAX_BYTES) {
+              setError("DOCX too large for preview (>10MB)");
+              return;
+            }
+          }
+        } catch { /* ignore */ }
+        setError(null);
+        setBust((b) => b + 1);
+      });
+      const markDisconnected = () => {
+        setWatching(false);
+      };
+      es.addEventListener("error", markDisconnected);
+      es.onerror = markDisconnected;
     });
-    const markDisconnected = () => {
-      setWatching(false);
-    };
-    es.addEventListener("error", markDisconnected);
-    es.onerror = markDisconnected;
 
     return () => {
       active = false;
-      es.close();
-      stopSupervising();
+      stopSupervisingWatch?.();
+      if (es) es.close();
       if (esRef.current === es) esRef.current = null;
     };
-  }, [filePath, isPdf, sourceSessionId, watchEnabled, watchAttempt, superviseWatch]);
+  }, [filePath, isPdf, sourceSessionId, watchEnabled, connStarved, connEpoch, watchAttempt]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -1271,7 +1386,7 @@ function DocumentViewer({ filePath, cwd, sourceSessionId, initialPage, watchEnab
         ) : (
           <iframe
             key={previewUrl}
-            src={previewUrl}
+            src={previewUrl ?? undefined}
             sandbox={isPdf ? undefined : "allow-same-origin"}
             title={t("i18n.previewFile", { file: getFileName(filePath) })}
             style={{ width: "100%", height: "100%", border: "none", background: isPdf ? "var(--bg)" : "#eef1f5" }}
@@ -1286,7 +1401,10 @@ export function FileViewer({
   filePath,
   cwd,
   sourceSessionId,
+  atRevision,
+  kind = "file",
   onOpenFile,
+  onOpenFolder,
   onMentionLines,
   onAtMention,
   gitRefreshKey,
@@ -1301,8 +1419,68 @@ export function FileViewer({
   // changed meanwhile.
   const pageHidden = usePageHiddenFor(HIDDEN_PAGE_GRACE_MS);
   const watchEnabled = watchRequested && !pageHidden;
+
+  // —— Extension takeover trampoline (the file-editor extension): when a fileViewer slot item's
+  //    meta.match(filePath) hits, hand rendering to the extension's takeover component; on no
+  //    hit (unregistered / not taking over) → fall through to the original viewer logic below,
+  //    zero behavior regression. Takeover items carry their own match contract (same shape as
+  //    the ExtSlots trampoline pattern, reactive via ext-ui-store).
+  const takeoverItems = useSyncExternalStore(
+    subscribeExtUi,
+    () => getExtUiItems("fileViewer"),
+    () => FILE_VIEWER_NO_ITEMS, // stable empty snapshot on the server (no takeover during SSR; takeover items kick in after hydration)
+  );
+  // [Lazy-load v2] takeover trampoline catch-up trigger: opening a file tab is a user-perceptible
+  // interaction moment — lazy extensions declaring fileViewer (editor/folder) are materialized
+  // once before the first takeover decision; if not yet in place, the takeover find above misses,
+  // the original core viewer covers it, and the materialization's store bump → re-render makes
+  // the takeover effective on the next render.
+  useEffect(() => {
+    void ensureExtSlotMaterialized("fileViewer");
+  }, []);
+  const takeover = takeoverItems.find((item) => {
+    // after render became optional (declarative toolbar entries), narrow uniformly: registered items without a render don't participate in takeover
+    if (!hasExtRender(item)) return false;
+    // Revision views never take over: extension viewers read the working-tree file via their
+    // own channels and cannot serve a historical blob (they'd 404 on the deleted file).
+    if (atRevision) return false;
+    const match = item.meta?.match;
+    return typeof match === "function" && match(filePath, { cwd, kind });
+  });
+  if (takeover && hasExtRender(takeover)) {
+    return (
+      <ExtItemBoundary extId={takeover.extId} slot="fileViewer" itemId={takeover.id}>
+        <takeover.render
+          currentSession={sourceSessionId ? { id: sourceSessionId, cwd: cwd ?? "" } : null}
+          filePath={filePath}
+          cwd={cwd}
+          kind={kind}
+          sourceSessionId={sourceSessionId}
+          gitRefreshKey={gitRefreshKey}
+          watchEnabled={watchEnabled}
+          onOpenFile={onOpenFile}
+          onOpenFolder={onOpenFolder}
+          onMentionLines={onMentionLines}
+          onAtMention={onAtMention}
+        />
+      </ExtItemBoundary>
+    );
+  }
+  if (kind === "folder") {
+    // no folder-viewer extension takeover → minimal placeholder (core open capability preserved)
+    return (
+      <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, color: "var(--text-dim)", fontSize: 12 }}>
+        <span>{filePath}</span>
+      </div>
+    );
+  }
   if (isImagePath(filePath)) {
-    return <ImageViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} watchEnabled={watchEnabled} />;
+    // Revision image: no disk file → no watch; the ticketed read carries ref/gitDir.
+    return <ImageViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} atRevision={atRevision} watchEnabled={watchEnabled && !atRevision} />;
+  }
+  // Revision media/doc previews are out of scope for now (v1): text + images only.
+  if (atRevision && (isAudioPath(filePath) || isVideoPath(filePath) || isDocumentPreviewPath(filePath))) {
+    return <RevisionUnsupported filePath={filePath} />;
   }
   if (isAudioPath(filePath)) {
     return <AudioViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} watchEnabled={watchEnabled} />;
@@ -1318,6 +1496,7 @@ export function FileViewer({
       filePath={filePath}
       cwd={cwd}
       sourceSessionId={sourceSessionId}
+      atRevision={atRevision}
       onOpenFile={onOpenFile}
       onMentionLines={onMentionLines}
       onAtMention={onAtMention}
@@ -1325,8 +1504,19 @@ export function FileViewer({
       initialDisplayMode={initialDisplayMode}
       initialState={initialState}
       onStateChange={onStateChange}
-      watchEnabled={watchEnabled}
+      watchEnabled={watchEnabled && !atRevision}
     />
+  );
+}
+
+/** Revision v1 scope guard: audio/video/docx historical blobs render an explicit notice instead of a broken viewer. */
+function RevisionUnsupported({ filePath }: { filePath: string }) {
+  const { t } = useI18n();
+  return (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, color: "var(--text-dim)", fontSize: 12, padding: 24, textAlign: "center" }}>
+      <span style={{ fontFamily: "var(--font-mono)", wordBreak: "break-all" }}>{filePath}</span>
+      <span>{t("files.revisionUnsupported")}</span>
+    </div>
   );
 }
 
@@ -1334,6 +1524,7 @@ function TextFileViewer({
   filePath,
   cwd,
   sourceSessionId,
+  atRevision,
   onOpenFile,
   onMentionLines,
   onAtMention,
@@ -1345,6 +1536,11 @@ function TextFileViewer({
 }: Props) {
   const { isDark } = useTheme();
   const { t } = useI18n();
+  // Revision reads: ref/gitDir ride every read request so the server serves the git blob.
+  const revQuery = useMemo((): Record<string, string> => {
+    if (!atRevision) return {};
+    return { ref: atRevision.ref, gitDir: atRevision.gitDir };
+  }, [atRevision]);
   const [data, setData] = useState<FileData | null>(null);
   const [gitDiff, setGitDiff] = useState<GitFileDiffResponse | null>(null);
   const [gitDiffLoading, setGitDiffLoading] = useState(false);
@@ -1359,7 +1555,8 @@ function TextFileViewer({
   const [displayMode, setDisplayMode] = useState<DisplayMode>(requestedInitialDisplayMode);
   const [wrapLines, setWrapLines] = useState(initialWrapLines);
   const [watching, setWatching] = useState(false);
-  const [watchAttempt, superviseWatch] = useWatchRecovery();
+  // Connection-pool starvation yields (anti-deadlock): starved/epoch are watch-effect deps; see useConnStarvation
+  const { starved: connStarved, epoch: connEpoch } = useConnStarvation();
   const esRef = useRef<EventSource | null>(null);
   const contentRequestRef = useRef(0);
   // The version of the content on screen; a reconnect that finds it unchanged
@@ -1380,7 +1577,7 @@ function TextFileViewer({
   });
   const onStateChangeRef = useRef(onStateChange);
   const [selectedLineRange, setSelectedLineRange] = useState<SelectedLineRange | null>(null);
-  // Whole file for an HTML preview whose source view is still chunked.
+  // Whole file for an HTML preview whose source view is still chunked (upstream #1494).
   const [htmlFull, setHtmlFull] = useState<{ text?: string; error?: string } | null>(null);
 
   onStateChangeRef.current = onStateChange;
@@ -1428,7 +1625,7 @@ function TextFileViewer({
 
   const fetchContent = useCallback((filePath: string, offset = 0) => {
     const requestId = ++contentRequestRef.current;
-    return fetch(getFileApiUrl(filePath, "read", sourceSessionId, { offset: offset || undefined }))
+    return fetchFileGet(filePath, "read", sourceSessionId, { offset: offset || undefined, ...revQuery })
       .then((r) => r.json())
       .then((d: FileData & { mtime?: string; error?: string }) => {
         if (requestId !== contentRequestRef.current) return null;
@@ -1448,7 +1645,7 @@ function TextFileViewer({
         setError(String(e));
         return null;
       });
-  }, [sourceSessionId]);
+  }, [sourceSessionId, revQuery]);
 
   const fetchGitDiff = useCallback(async (targetPath: string) => {
     const requestId = ++gitDiffRequestRef.current;
@@ -1461,8 +1658,11 @@ function TextFileViewer({
     }
 
     try {
-      const params = new URLSearchParams({ cwd, path: targetPath });
-      const response = await fetch(`/api/git/diff?${params.toString()}`);
+      const response = await fetch(apiUrl("/api/git/diff"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cwd, path: targetPath }),
+      });
       const next = await response.json() as GitFileDiffResponse & { error?: string };
       if (requestId !== gitDiffRequestRef.current) return;
       setGitDiff(response.ok && next.supported && typeof next.patch === "string" ? next : null);
@@ -1497,6 +1697,8 @@ function TextFileViewer({
     };
   }, [filePath, fetchContent, sourceSessionId]);
 
+  const [watchAttempt, superviseWatch] = useWatchRecovery();
+
   useEffect(() => {
     setWatching(false);
 
@@ -1505,6 +1707,7 @@ function TextFileViewer({
       esRef.current = null;
     }
 
+    if (connStarved) return; // yield while starved: the old watch is closed, don't rebuild yet (unstarving bumps epoch and re-runs)
     if (!watchEnabled) return;
 
     let active = true;
@@ -1513,52 +1716,65 @@ function TextFileViewer({
       void fetchGitDiff(filePath);
     };
 
-    const es = trackEventSource("file-watch", new EventSource(getFileApiUrl(filePath, "watch", sourceSessionId)), filePath);
-    esRef.current = es;
-    const stopSupervising = superviseWatch(es);
-
-    es.addEventListener("connected", () => {
-      setWatching(true);
-      // The server emits connected only after its watcher exists. Reading now
-      // closes the gap between the last snapshot and live events, unless the
-      // file on screen is still the one on disk (a reconnect). The diff is read
-      // again either way: a commit made meanwhile changes it, not the file.
-      const shown = shownVersionRef.current;
-      if (shown === null) {
-        synchronize();
+    let es: EventSource | null = null;
+    let stopSupervisingWatch: (() => void) | null = null;
+    buildTicketUrl(filePath, "watch").then((watchUrl) => {
+      const busWatch = openFileWatchBus(filePath);
+      if (busWatch) {
+        // single-SSE convergence for page events: watch registration goes through the bus (named connected/change/error events field-identical to the original SSE)
+        es = busWatch as unknown as EventSource;
+        esRef.current = es;
         return;
       }
-      fetch(getFileApiUrl(filePath, "meta", sourceSessionId))
-        .then((response) => response.json())
-        .then((meta: { size?: number; mtime?: string }) => {
-          if (!active) return;
-          if (fileVersionChanged(shownVersionRef.current, fileVersion(meta))) synchronize();
-          else void fetchGitDiff(filePath);
-        })
-        .catch(() => {
-          if (active) synchronize();
-        });
-    });
+      es = new EventSource(watchUrl);
+      esRef.current = es;
+      stopSupervisingWatch = superviseWatch(es);
 
-    es.addEventListener("change", synchronize);
+      es.addEventListener("connected", () => {
+        setWatching(true);
+        // The server emits connected only after its watcher exists. Reading now
+        // closes the gap between the last snapshot and live events, unless the
+        // file on screen is still the one on disk (a reconnect). The diff is read
+        // again either way: a commit made meanwhile changes it, not the file.
+        const shown = shownVersionRef.current;
+        if (shown === null) {
+          synchronize();
+          return;
+        }
+        fetchFileGet(filePath, "meta", sourceSessionId)
+          .then((response) => response.json())
+          .then((meta: { size?: number; mtime?: string }) => {
+            if (!active) return;
+            if (fileVersionChanged(shownVersionRef.current, fileVersion(meta))) synchronize();
+            else void fetchGitDiff(filePath);
+          })
+          .catch(() => {
+            if (active) synchronize();
+          });
+      });
 
-    const markDisconnected = () => {
-      setWatching(false);
-    };
-    es.addEventListener("error", markDisconnected);
-    es.onerror = markDisconnected;
+      es.addEventListener("change", synchronize);
+
+      const markDisconnected = () => {
+        setWatching(false);
+      };
+      es.addEventListener("error", markDisconnected);
+      es.onerror = markDisconnected;
+    }).catch(() => { /* watch unavailable */ });
 
     return () => {
       active = false;
-      es.close();
-      stopSupervising();
+      stopSupervisingWatch?.();
+      if (es) es.close();
       if (esRef.current === es) esRef.current = null;
     };
-  }, [filePath, fetchContent, fetchGitDiff, sourceSessionId, watchEnabled, watchAttempt, superviseWatch]);
+  }, [filePath, fetchContent, fetchGitDiff, sourceSessionId, watchEnabled, connStarved, connEpoch, watchAttempt]);
 
   useEffect(() => {
+    // Revision blobs have no working-tree git diff — the Diff tab is not offered at all.
+    if (atRevision) return;
     void fetchGitDiff(filePath);
-  }, [fetchGitDiff, filePath, gitRefreshKey]);
+  }, [fetchGitDiff, filePath, gitRefreshKey, atRevision]);
 
   const isBinary = data?.binary === true;
   const isDelimitedTable = !isBinary && isDelimitedTablePath(filePath);
@@ -1584,10 +1800,9 @@ function TextFileViewer({
     }
   }, [data, isDelimitedTable, updateDisplayMode]);
 
-  // Large HTML: the source view loads 256 KB chunks, but a half document cannot
-  // render, so the preview fetches the whole file once. A new `data` (watch
-  // change, reload) refetches it; the previous page stays up meanwhile, so a
-  // live change does not flash "Loading".
+  // Large HTML: the source view loads chunks, but a half document cannot
+  // render, so the preview fetches the whole file once (upstream #1494; fork
+  // channel: the ticket contract's download type — the path never enters a URL).
   const needsHtmlFull = displayMode === "preview"
     && data?.language === "html"
     && data.truncated
@@ -1597,16 +1812,17 @@ function TextFileViewer({
       setHtmlFull(null);
       return;
     }
-    const controller = new AbortController();
-    fetch(getFileApiUrl(filePath, "download", sourceSessionId), { signal: controller.signal })
+    let alive = true;
+    fetchFileGet(filePath, "download", sourceSessionId)
       .then(async (r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        setHtmlFull({ text: await r.text() });
+        const text = await r.text();
+        if (alive) setHtmlFull({ text });
       })
       .catch((e) => {
-        if (!controller.signal.aborted) setHtmlFull({ error: String(e) });
+        if (alive) setHtmlFull({ error: String(e) });
       });
-    return () => controller.abort();
+    return () => { alive = false; };
   }, [needsHtmlFull, data, filePath, sourceSessionId]);
 
   const hasGitDiff = gitDiff?.supported === true && typeof gitDiff.patch === "string";
@@ -1628,6 +1844,12 @@ function TextFileViewer({
   const markdownPreview = useMemo(
     () => (data?.language === "markdown" ? normalizeDisplayMath(data.content) : ""),
     [data],
+  );
+  // math plugins for the md preview load on demand (P1.2): no math markup → katex/remark-math are not fetched
+  const { remark: previewRemarkPlugins, rehype: previewRehypePlugins } = useMathMarkdownPlugins(
+    markdownPreview,
+    markdownPreviewRemarkPlugins,
+    markdownPreviewRehypePlugins,
   );
 
   const frontmatter = useMemo(
@@ -1663,9 +1885,16 @@ function TextFileViewer({
   // unrelated re-renders (panel open/close, selection changes) reuse them as-is.
   const highlightedSource = useMemo(
     () => (
-      <SyntaxHighlighter
+      <Suspense
+        fallback={
+          <pre className="file-source-view" style={{ ...FILE_CODE_STYLE, margin: 0 }}>
+            {viewerContent}
+          </pre>
+        }
+      >
+        <SyntaxHighlighter
         className={wrapLines ? "file-source-view is-wrapped" : "file-source-view"}
-        language={language === "text" || !prismReady ? "plaintext" : language}
+        language={language === "text" ? "plaintext" : language}
         style={isDark ? fileViewerDarkTheme : vs}
         showLineNumbers
         lineNumberStyle={{
@@ -1695,9 +1924,10 @@ function TextFileViewer({
         wrapLongLines={wrapLines}
       >
         {viewerContent}
-      </SyntaxHighlighter>
+        </SyntaxHighlighter>
+      </Suspense>
     ),
-    [isDark, language, prismReady, viewerContent, wrapLines],
+    [isDark, language, viewerContent, wrapLines],
   );
   const lightweightSourceLines = useMemo(
     () => useLightweightSource ? sourceLines.map((line, lineIndex) => (
@@ -1857,12 +2087,12 @@ function TextFileViewer({
         const imagePath = typeof src === "string"
           ? resolveLocalFileHref(src, markdownDirectory, cwd ?? markdownDirectory)
           : null;
-        const imageSrc = imagePath
-          ? getFileApiUrl(imagePath, "read", sourceSessionId)
-          : src;
-        // Dynamic local paths are served directly by the file API.
-        // eslint-disable-next-line @next/next/no-img-element
-        return <img src={imageSrc} alt={alt ?? ""} loading="lazy" {...props} />;
+        if (!imagePath) {
+          // eslint-disable-next-line @next/next/no-img-element
+          return <img src={src} alt={alt ?? ""} loading="lazy" {...props} />;
+        }
+        // A local image goes through a short-lived ticket, like every file read.
+        return <MarkdownImage filePath={imagePath} alt={alt ?? ""} {...props} />;
       },
     };
   }, [cwd, filePath, hasOpenFile, sourceSessionId]);
@@ -1889,16 +2119,21 @@ function TextFileViewer({
   const lines = sourceLines;
   const displayModes: DisplayMode[] = isDeletedDiff
     ? ["diff"]
-    : [
-        "source",
-        ...(hasPreview ? ["preview" as const] : []),
-        ...(hasGitDiff ? ["diff" as const] : []),
-      ];
+    : atRevision
+      ? // Historical blob: no working-tree git diff → no Diff tab (file-level diff lives in review).
+        ["source", ...(hasPreview ? ["preview" as const] : [])]
+      : [
+          "source",
+          ...(hasPreview ? ["preview" as const] : []),
+          ...(hasGitDiff ? ["diff" as const] : []),
+        ];
   const metadata = isDeletedDiff
     ? t("files.deleted")
-    : isBinary
-      ? `${t("files.binary")} · ${formatSize(data!.size)}`
-      : `${language} · ${lines.length} lines · ${formatSize(data!.size)}`;
+    : atRevision
+      ? `@${atRevision.ref.slice(0, 7)} · ${isBinary ? `${t("files.binary")} · ${formatSize(data!.size)}` : `${language} · ${lines.length} lines · ${formatSize(data!.size)}`}`
+      : isBinary
+        ? `${t("files.binary")} · ${formatSize(data!.size)}`
+        : `${language} · ${lines.length} lines · ${formatSize(data!.size)}`;
 
   return (
     <div className="file-viewer-shell" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", position: "relative" }}>
@@ -1932,6 +2167,29 @@ function TextFileViewer({
             }}
           />
         )}
+
+        {/* [P1-6 chain 4] file-timeline entry: dispatches the timeline-open custom event
+            consumed by the git-trace extension (it opens the file's change timeline when
+            present; with no listener when absent the button is a no-op — zero-coupling
+            dependency) */}
+        <button
+          type="button"
+          title={t("files.timelineTitle")}
+          onClick={() => {
+            try {
+              window.dispatchEvent(new CustomEvent("aiti-git-trace-open", {
+                detail: { kind: "timeline", data: { sessionId: sourceSessionId || undefined, view: "file", file: filePath } },
+              }));
+            } catch { /* noop */ }
+          }}
+          style={{
+            display: "inline-flex", alignItems: "center", gap: 3,
+            background: "transparent", border: "none", cursor: "pointer",
+            color: "var(--text-dim)", fontSize: 11, padding: "1px 4px",
+          }}
+          onMouseEnter={(e: MouseEvent<HTMLButtonElement>) => { e.currentTarget.style.color = "var(--text)"; }}
+          onMouseLeave={(e: MouseEvent<HTMLButtonElement>) => { e.currentTarget.style.color = "var(--text-dim)"; }}
+        >⎇</button>
 
         <div className="file-viewer-controls">
           {displayModes.length > 1 && (
@@ -2010,7 +2268,7 @@ function TextFileViewer({
             )}
           </div>
 
-          {!isDeletedDiff && <DownloadLink filePath={filePath} sourceSessionId={sourceSessionId} />}
+          {!isDeletedDiff && <DownloadLink filePath={filePath} sourceSessionId={sourceSessionId} params={revQuery} />}
         </div>
       </div>
 
@@ -2055,13 +2313,7 @@ function TextFileViewer({
         style={{ flex: 1, overflow: "auto", background: "var(--bg)", paddingBottom: showLoadMore ? 48 : undefined }}
       >
         {effectiveDisplayMode === "diff" && hasGitDiff ? (
-          <MemoizedDiffView
-            patch={gitDiff.patch!}
-            wrapLines={wrapLines}
-            language={language}
-            prismReady={prismReady}
-            isDark={isDark}
-          />
+          <MemoizedDiffView patch={gitDiff.patch!} wrapLines={wrapLines} language={language} prismReady={prismReady} isDark={isDark} />
         ) : isHtml && effectiveDisplayMode === "preview" && data?.truncated && !htmlFull?.text ? (
           <div style={{ padding: 24, color: "var(--text-dim)", fontSize: 12 }}>
             {htmlFull?.error ?? t("i18n.loading")}
@@ -2080,8 +2332,8 @@ function TextFileViewer({
           >
             {frontmatter?.data && <FrontmatterCard data={frontmatter.data} />}
             <ReactMarkdown
-              remarkPlugins={markdownPreviewRemarkPlugins}
-              rehypePlugins={markdownPreviewRehypePlugins}
+              remarkPlugins={previewRemarkPlugins}
+              rehypePlugins={previewRehypePlugins}
               urlTransform={onOpenFile ? markdownUrlTransform : markdownAppUrlTransform}
               components={markdownComponents}
             >
@@ -2099,14 +2351,14 @@ function TextFileViewer({
           // Decoded bytes are noise; opening a file never downloads it on its own (#1401).
           <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, padding: 24, color: "var(--text-muted)", fontSize: 13, textAlign: "center" }}>
             <span>{t("files.binaryNoPreview")}</span>
-            <a
-              href={getFileApiUrl(filePath, "download", sourceSessionId)}
-              download={getFileName(filePath)}
+            <button
+              type="button"
+              onClick={() => { void downloadViaTicket(filePath).catch(() => {}); }}
               className="file-viewer-mode-button"
-              style={{ display: "inline-flex", alignItems: "center", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", textDecoration: "none" }}
+              style={{ display: "inline-flex", alignItems: "center", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", textDecoration: "none", background: "none", cursor: "pointer" }}
             >
               {t("files.download")}
-            </a>
+            </button>
           </div>
         ) : useLightweightSource ? (
           <div

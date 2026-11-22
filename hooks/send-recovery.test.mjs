@@ -15,13 +15,34 @@ import { createJiti } from "jiti";
 // The text goes in front of what was typed since; another session's draft is
 // left alone.
 const shimPath = fileURLToPath(new URL("./__fixtures__/react-hook-shim.mjs", import.meta.url));
-const jiti = createJiti(import.meta.url, { tsconfigPaths: true, alias: { react: shimPath } });
+const jsxRuntimeShimPath = fileURLToPath(new URL("./__fixtures__/react-jsx-runtime-shim.mjs", import.meta.url));
+const i18nStubPath = fileURLToPath(new URL("./__fixtures__/use-i18n-stub.mjs", import.meta.url));
+const jiti = createJiti(import.meta.url, { jsx: { runtime: "automatic" }, alias: { react: shimPath, "react/jsx-runtime": jsxRuntimeShimPath, "@/hooks/useI18n": i18nStubPath, "@": process.cwd() } }); // jsx 选项 → jiti 强制转译（useAgentSession 传递依赖 useI18n.tsx）
 const { renderHook } = await import(pathToFileURL(shimPath).href);
 const { useAgentSession } = await jiti.import("./useAgentSession.ts");
 const { clearDraft, getDraft, setDraft } = await jiti.import("@/lib/draft-store");
+const { registerDraftApi } = await jiti.import("@/lib/composer/draft-api");
+
+// 迷你 draft-keeper 桩：核心只声明 rejected 意图（applyDraftIntent），真正写槽是扩展 keeper 的
+// 职责（composer 契约 v2）。单测环境无扩展，这里按契约语义补一个最小 keeper——提交文本并到
+// 槽位现有草稿前，与生产 keeper 的合并行为一致。
+registerDraftApi({
+  getDraft: (key) => getDraft(key),
+  clearAllDrafts: () => {},
+  flushAll: () => {},
+  restoreSubmission: (key, text, images) => {
+    const existing = getDraft(key);
+    const merged = existing?.value ? `${text}\n\n${existing.value}` : text;
+    const snapshot = { value: merged, images: images?.length ? images : existing?.images ?? [] };
+    setDraft(key, snapshot);
+    return snapshot;
+  },
+});
 const { deleteSessionViewSnapshot, getSessionViewSnapshot } = await jiti.import("@/lib/session-view-cache");
 
 globalThis.document ??= Object.assign(new EventTarget(), { visibilityState: "visible" });
+globalThis.requestAnimationFrame ??= (cb) => setTimeout(() => cb(0), 0);
+globalThis.cancelAnimationFrame ??= (id) => clearTimeout(id);
 globalThis.window ??= new EventTarget();
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });

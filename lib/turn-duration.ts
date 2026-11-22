@@ -1,4 +1,4 @@
-import type { AgentMessage } from "./types";
+import type { AgentMessage } from "./types.ts";
 
 function recordedMs(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;

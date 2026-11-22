@@ -260,6 +260,7 @@ function render(props = {}) {
     sessions: catalog,
     copied: false,
     onCopy() {},
+    onClose() {},
     t,
     ...props,
   }))));
@@ -280,6 +281,7 @@ test("a quiet page reads OK: no issue list, the meter's scale in its label, ever
   assert.doesNotMatch(html, /<dl|<dt|debug-panel-footer/);
   assert.match(html, /<span class="debug-panel-heading" title="Read-only: [^"]+">Debug<\/span>/);
   assert.match(html, /<button type="button" class="debug-panel-copy"[^>]*>Copy JSON<\/button>/);
+  assert.match(html, /<button type="button" class="debug-panel-close"[^>]*title="Close"[^>]*>/);
   // No live region: a screen reader would read every change out.
   assert.doesNotMatch(html, /role="status"|aria-live/);
 });
@@ -721,47 +723,6 @@ test("a tooltip holds the view still: the mouse on a titled element freezes what
   assert.match(panelSource, /const shown = held \?\? \{ page, server, samples \};/);
 });
 
-test("the Debug button only toggles its panel, left of the session stats", () => {
-  const button = between(shellSource, "const renderDebugButton = (mobile: boolean) => {", "const renderMainFileToggle");
-  assert.match(button, /onClick=\{\(\) => toggleTopPanel\("debug", mobile\)\}/);
-  assert.doesNotMatch(button, /handleSystemInfoToggle|sendAgentCommand|fetch\(|setSessionKey|loadSession|systemInfoLoaderRef/);
-  assert.match(button, /aria-label=\{translate\("debug\.title"\)\}/);
-  assert.match(button, /aria-pressed=\{open\}/);
-  assert.match(button, /data-mobile-toolbar-action=\{mobile \? "debug" : undefined\}/);
-  assert.match(button, /if \(!showChat\) return null;/);
-  assert.notEqual(enLocale.messages["debug.title"], enLocale.messages["session.title"], "e2e finds the stats button by its own name");
-
-  // Desktop: after the chat's actions, right before the stats, taking the free space.
-  assert.match(shellSource, /\{renderChatToolbarActions\(false\)\}\s*\{renderDebugButton\(false\)\}\s*\{renderSessionStatsButton\(false\)\}/);
-  assert.match(button, /marginLeft: mobile \? 0 : "auto"/);
-  const stats = between(shellSource, "const renderSessionStatsButton = (mobile: boolean) => {", "const renderDebugButton");
-  assert.match(stats, /\n\s*marginLeft: 0,/);
-  assert.match(shellSource, /marginLeft: !mobile && !showChat \? "auto" : 0,/);
-  // Phones: before the stats on a wide one, in the "more" overlay on a narrow one.
-  assert.match(shellSource, /\{!isNarrowMobile && renderChatToolbarActions\(true\)\}\s*\{!isNarrowMobile && renderDebugButton\(true\)\}\s*\{renderSessionStatsButton\(true\)\}/);
-  assert.match(shellSource, /\{renderChatToolbarActions\(true\)\}\s*\{renderDebugButton\(true\)\}\s*<\/div>/);
-});
-
-test("Escape with focus in the panel gives it back to the Debug button, after the panel left the page", () => {
-  assert.match(panelSource, /<section ref=\{sectionRef\} className="debug-panel"/);
-  assert.match(panelSource, /createDebugPanelEscapeListener\(\s*document,\s*\(\) => sectionRef\.current,\s*\(restoreFocus\) => onCloseRef\.current\(restoreFocus\),\s*\)/);
-  const button = between(shellSource, "const renderDebugButton = (mobile: boolean) => {", "const renderMainFileToggle");
-  assert.match(button, /<button\s+ref=\{debugButtonRef\}/);
-  const close = between(shellSource, "const closeDebugPanel = useCallback(", "}, []);");
-  assert.match(close, /\(restoreFocus: boolean\) => \{\s*setActiveTopPanel\(\(panel\) => panel === "debug" \? null : panel\);\s*if \(restoreFocus\) requestAnimationFrame\(\(\) => focusIfLost\(document, debugButtonRef\.current\)\);/);
-  assert.match(shellSource, /import \{ focusIfLost \} from "@\/lib\/stacked-dialog";/);
-  assert.match(shellSource, /onClose=\{closeDebugPanel\}/);
-
-  // What that frame does: focus that fell to the page goes to the button; focus put elsewhere stays.
-  const focused = [];
-  const debugButton = { focus: () => focused.push("debug") };
-  const body = { name: "body" };
-  assert.equal(focusIfLost({ activeElement: body, body }, debugButton), true);
-  assert.equal(focusIfLost({ activeElement: { name: "composer" }, body }, debugButton), false);
-  assert.equal(focusIfLost({ activeElement: body, body }, null), false, "no Debug button on screen (narrow phone, more closed)");
-  assert.deepEqual(focused, ["debug"]);
-});
-
 test("the sidebar's running poll records its request alone, not the session-list reload after it", () => {
   const poll = between(sidebarSource, "const poll = async () => {", "const onVisibilityChange = () => {");
   const json = poll.indexOf("await res.json()");
@@ -770,11 +731,6 @@ test("the sidebar's running poll records its request alone, not the session-list
   assert.ok(answered < poll.indexOf("if (stopped || controller !== current) return;"), "before a poll that lost the race returns");
   assert.ok(answered < poll.indexOf("await loadSessions();"), "before the reload");
   assert.match(poll, /\} finally \{[^]*?noteRunningPoll\(startedAt, outcome, httpStatus, answeredAt\);\s*\}/);
-});
-
-test("the narrow phone's more overlay scrolls the buttons it cannot fit instead of clipping the last", () => {
-  const overlay = between(shellSource, 'data-mobile-toolbar-actions="true"', "{renderChatToolbarActions(true)}");
-  assert.match(overlay, /overflowX: "auto",\s*overflowY: "hidden",\s*scrollbarWidth: "none",/);
 });
 
 test("AppShell keeps the chat's reader in a ref and the panel open across session switches", () => {

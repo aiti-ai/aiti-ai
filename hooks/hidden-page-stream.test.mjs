@@ -12,8 +12,10 @@ import { createJiti } from "jiti";
 // opens a released one again while the page is still hidden. The page's return
 // reopens it and shows what the server has under way.
 const shimPath = fileURLToPath(new URL("./__fixtures__/react-hook-shim.mjs", import.meta.url));
-const jiti = createJiti(import.meta.url, { tsconfigPaths: true, alias: { react: shimPath } });
-const { renderHook } = await import(pathToFileURL(shimPath).href);
+const jsxRuntimeShimPath = fileURLToPath(new URL("./__fixtures__/react-jsx-runtime-shim.mjs", import.meta.url)); // jsx: automatic 运行时的 jsx/jsx-dev-runtime 由 shim 提供（react 别名指向无 jsx-runtime 的 hook shim）
+const i18nStubPath = fileURLToPath(new URL("./__fixtures__/use-i18n-stub.mjs", import.meta.url));
+const jiti = createJiti(import.meta.url, { jsx: { runtime: "automatic" }, alias: { react: shimPath, "react/jsx-runtime": jsxRuntimeShimPath, "@/hooks/useI18n": i18nStubPath, "@": process.cwd() } }); // jsx 选项 → jiti 强制转译（Node 24 原生 strip 不支持 JSX；useAgentSession 传递依赖 useI18n.tsx）
+const { renderHook } = await import(shimPath);
 const { peekPageId, useAgentSession } = await jiti.import("./useAgentSession.ts");
 const { HIDDEN_PAGE_GRACE_MS } = await jiti.import("./usePageHidden.ts");
 // useAgentSession's SESSION_LEASE_RENEW_INTERVAL_MS.
@@ -27,6 +29,10 @@ const {
 const page = Object.assign(new EventTarget(), { visibilityState: "visible" });
 globalThis.document = page;
 globalThis.window ??= new EventTarget();
+// Fork: the composer batches streaming deltas through rAF (useAgentSession); the
+// upstream stub environment has no frame scheduler to lean on.
+globalThis.requestAnimationFrame ??= (cb) => setTimeout(() => cb(0), 0);
+globalThis.cancelAnimationFrame ??= (id) => clearTimeout(id);
 
 const json = (body) => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
 const settle = async () => { for (let index = 0; index < 10; index++) await new Promise((resolve) => setImmediate(resolve)); };
@@ -303,7 +309,9 @@ test("the return shows a command, a ! command and a compaction the server has un
     await settle();
     state.hook.flush();
     assert.equal(state.hook.result.agentRunning, true);
-    assert.equal(state.hook.result.agentPhase?.kind, "running_command");
+    // 合并适配：fork 的 phase 决策让 compaction 优先于 running_command（compaction 期间
+    // isStreaming 已被 abort 置 false，按上游规则会误显示 running_command/idle）。
+    assert.equal(state.hook.result.agentPhase?.kind, "compacting");
     assert.equal(state.hook.result.bashRunning, true);
     assert.equal(state.hook.result.isCompacting, true);
   } finally {
@@ -324,6 +332,28 @@ test("a pending extension dialog keeps the stream of a hidden page", async () =>
     state.hide();
     await state.tick(HIDDEN_PAGE_GRACE_MS * 2);
     assert.deepEqual(state.open(), [source], "the page keeps it without asking");
+  } finally {
+    await teardown(state);
+  }
+});
+
+test("a long-lived custom UI does not keep the stream of a hidden page (fork: slot renders never close)", async () => {
+  // [fork fix] Upstream counts extensionCustomUis toward eventStreamIdle, but the fork's
+  // extension ecosystem keeps slot renders (debug bridges, picker panels) open for hours —
+  // counting them suppressed the #1283 release permanently. Only blocking dialogs hold.
+  // Nothing is lost: reattach replays the server's pending UI requests.
+  const state = await setup();
+  try {
+    await connectIdle(state, { pendingExtensionUiIds: [] });
+    const source = state.open()[0];
+    source.emit({ type: "extension_ui_request", id: "panel-1", method: "custom", lines: ["bridge attached"] });
+    await settle();
+    state.hook.flush();
+    assert.equal(state.hook.result.extensionCustomUi?.id, "panel-1");
+
+    state.hide();
+    await state.tick(HIDDEN_PAGE_GRACE_MS);
+    assert.equal(state.open().length, 0, "a slot-render custom UI must not hold the stream");
   } finally {
     await teardown(state);
   }
@@ -419,7 +449,7 @@ test("the debug reader asks nothing and opens nothing, however often it reads", 
     assert.ok(state.requests.includes("/api/agent/s1/lease"), "the lease request carries no page id");
     assert.ok(!state.requests.some((url) => url.startsWith("/api/agent/s1/lease?")));
     // A Fast Refresh evaluates the module again; the page, and its open stream, keep their id.
-    const reloaded = await createJiti(import.meta.url, { tsconfigPaths: true, alias: { react: shimPath }, moduleCache: false })
+    const reloaded = await createJiti(import.meta.url, { jsx: { runtime: "automatic" }, alias: { react: shimPath, "react/jsx-runtime": jsxRuntimeShimPath, "@/hooks/useI18n": i18nStubPath, "@": process.cwd() }, moduleCache: false })
       .import("./useAgentSession.ts");
     assert.equal(reloaded.peekPageId(), pageId);
     assert.equal(snapshot.lease.requests, 1);

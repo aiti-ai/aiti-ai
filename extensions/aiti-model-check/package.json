@@ -1,0 +1,32 @@
+{
+  "name": "@aiti-ai/aiti-model-check",
+  "version": "0.1.8",
+  "type": "module",
+  "description": "; parses the rate-limit recovery time (Retry-After etc.), records history to identify availability windows; long-term rate-limit expi",
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "watch": "vite build --watch --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "soul": "模型在不在家，敲门问问它。",
+  "aitiConfigs": {
+    "configFiles": [
+      "config.json"
+    ]
+  },
+  "aitiExtProtocol": "1.0",
+  "license": "MIT",
+  "contentHash": "fdedd892ecddaf8d",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-model-check"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  }
+}

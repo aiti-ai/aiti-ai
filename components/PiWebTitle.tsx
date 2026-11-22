@@ -1,128 +1,123 @@
-"use client";
-
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+/**
+ * PiWebTitle — the host sidebar title (Pi Web + version easter egg + online docs link).
+ *
+ * Standalone module (unified dock design §7-2): AppShell lazy-loads SessionSidebar via
+ * next/dynamic (loaded only in the fallback state), but the takeover-state Header still
+ * needs this component — extracting it here allows a static import without dragging
+ * SessionSidebar/FileExplorer back into the main bundle.
+ */
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useI18n } from "@/hooks/useI18n";
 
-/**
- * The sidebar's brand with the files below the sessions (its toolbar row,
- * components/SessionSidebar.tsx; the tabs layout has its tabs there), with
- * the old sidebar's easter egg: a click scrambles "Pi Web" into the versions
- * (pi-web's, a "p", pi's) in the accent; they scramble back after
- * VERSION_SHOWN_MS, or at once on a second click.
- */
+const SCRAMBLE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
 
-export const BRAND_TEXT = "Pi Web";
-/** How long the versions stay, counted from the click that showed them. */
-export const VERSION_SHOWN_MS = 3000;
-/** The text settles left to right over its length times this many frames. */
-export const SCRAMBLE_FRAMES_PER_CHAR = 4;
-export const SCRAMBLE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
+function useScramble(target: string, running: boolean): string {
+  const [display, setDisplay] = useState(target);
+  const frameRef = useRef<number | null>(null);
+  const iterRef = useRef(0);
 
-/** The versions as the brand shows them: "0.11.0p1.1.0". */
-export function brandVersionText(appVersion: string | undefined, piVersion: string | undefined): string {
-  return `${appVersion ?? "0.0.0"}p${piVersion ?? "0.0.0"}`;
-}
-
-/** How many frames `target` takes to settle. */
-export function scrambleFrameCount(target: string): number {
-  return target.length * SCRAMBLE_FRAMES_PER_CHAR;
-}
-
-/**
- * The scramble's text at `frame` (from 0): spaces kept, the characters
- * settling left to right, every one not yet settled random; `target` itself
- * from the last frame on. The length never changes, so in the brand's code
- * type neither does the width while it scrambles.
- */
-export function scrambleFrame(target: string, frame: number, random: () => number = Math.random): string {
-  const total = scrambleFrameCount(target);
-  if (frame >= total) return target;
-  const settled = Math.floor((frame / total) * target.length);
-  let text = "";
-  for (let index = 0; index < target.length; index++) {
-    const char = target[index];
-    text += char === " " || index < settled ? char : SCRAMBLE_CHARS[Math.floor(random() * SCRAMBLE_CHARS.length)];
-  }
-  return text;
-}
-
-/**
- * `target`, scrambled into place whenever it changes (never on mount): one
- * frame at a time until every character has settled. Under
- * prefers-reduced-motion the text is swapped at once.
- */
-function useScramble(target: string): string {
-  const [text, setText] = useState(target);
-  const shownRef = useRef(target);
   useEffect(() => {
-    if (shownRef.current === target) return;
-    shownRef.current = target;
-    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
-      setText(target);
+    if (!running) {
+      setDisplay(target);
       return;
     }
-    const totalFrames = scrambleFrameCount(target);
-    let frame = 0;
-    let request = 0;
+    iterRef.current = 0;
+    const totalFrames = target.length * 4;
+
     const step = () => {
-      frame += 1;
-      setText(scrambleFrame(target, frame));
-      if (frame < totalFrames) request = requestAnimationFrame(step);
+      iterRef.current += 1;
+      const progress = iterRef.current / totalFrames;
+      const resolved = Math.floor(progress * target.length);
+
+      setDisplay(
+        target
+          .split("")
+          .map((char, i) => {
+            if (char === " ") return " ";
+            if (i < resolved) return char;
+            return SCRAMBLE_CHARS[Math.floor(Math.random() * SCRAMBLE_CHARS.length)];
+          })
+          .join("")
+      );
+
+      if (iterRef.current < totalFrames) {
+        frameRef.current = requestAnimationFrame(step);
+      } else {
+        setDisplay(target);
+      }
     };
-    // The new length at once, so the row is fitted to it before it paints.
-    setText(scrambleFrame(target, 0));
-    request = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(request);
-  }, [target]);
-  return text;
+
+    frameRef.current = requestAnimationFrame(step);
+    return () => { if (frameRef.current) cancelAnimationFrame(frameRef.current); };
+  }, [target, running]);
+
+  return display;
 }
 
-export function PiWebTitle({ onWidthChange }: {
-  /**
-   * After a commit that changed the text's length (in its code type, its
-   * width): the toolbar row fits its labels again, before that paints.
-   */
-  onWidthChange?: () => void;
-}) {
+/** Host sidebar title (Pi Web + version easter egg + docs link). In takeover state it is
+ *  passed through to the extension Header via the sidebarContent extra's renderTitle
+ *  factory (unified dock design §3.4 component factory contract). */
+export function PiWebTitle() {
   const { t } = useI18n();
-  const [versionShown, setVersionShown] = useState(false);
+  const [showVersion, setShowVersion] = useState(false);
+  const [scrambling, setScrambling] = useState(false);
   const revertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const appVersion = process.env.NEXT_PUBLIC_APP_VERSION;
-  const piVersion = process.env.NEXT_PUBLIC_PI_VERSION;
-  const text = useScramble(versionShown ? brandVersionText(appVersion, piVersion) : BRAND_TEXT);
 
-  useLayoutEffect(() => {
-    onWidthChange?.();
-  }, [text.length, onWidthChange]);
+  const target = showVersion ? `${process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0"}p${process.env.NEXT_PUBLIC_PI_VERSION ?? "0.0.0"}` : "Pi Web";
+  const display = useScramble(target, scrambling);
 
-  useEffect(() => () => {
-    if (revertTimerRef.current) clearTimeout(revertTimerRef.current);
+  const triggerScramble = useCallback((toVersion: boolean) => {
+    setShowVersion(toVersion);
+    setScrambling(true);
+    setTimeout(() => setScrambling(false), (toVersion ? 6 : 8) * 4 * (1000 / 60) + 100);
   }, []);
 
-  const handleClick = () => {
+  const handleClick = useCallback(() => {
     if (revertTimerRef.current) clearTimeout(revertTimerRef.current);
-    revertTimerRef.current = null;
-    if (versionShown) {
-      setVersionShown(false);
-      return;
-    }
-    setVersionShown(true);
-    revertTimerRef.current = setTimeout(() => {
-      revertTimerRef.current = null;
-      setVersionShown(false);
-    }, VERSION_SHOWN_MS);
-  };
 
-  // The name says what the click shows, so the versions need no click (and
-  // no scrambled text is ever read out: the name stays the same).
+    const next = !showVersion;
+    triggerScramble(next);
+
+    if (next) {
+      revertTimerRef.current = setTimeout(() => triggerScramble(false), 3000);
+    }
+  }, [showVersion, triggerScramble]);
+
+  useEffect(() => () => { if (revertTimerRef.current) clearTimeout(revertTimerRef.current); }, []);
+
   return (
-    <button
-      type="button"
-      className={`sidebar-brand${versionShown ? " is-version" : ""}`}
-      aria-label={t("sidebar.brandLabel", { app: appVersion ?? "0.0.0", pi: piVersion ?? "0.0.0" })}
-      onClick={handleClick}
-    >
-      {text}
-    </button>
+    <span style={{ display: "inline-flex", alignItems: "baseline", gap: 3, minWidth: "6ch" }}>
+      <button
+        onClick={handleClick}
+        style={{
+          background: "none", border: "none", padding: 0, cursor: "default",
+          fontWeight: 700, fontSize: 15, letterSpacing: "-0.01em",
+          color: showVersion ? "var(--accent)" : "var(--text)",
+          fontFamily: "var(--font-mono)",
+        }}
+      >
+        {display}
+      </button>
+      {/* Online docs link (NEXT_PUBLIC_DOCS_URL, hidden when unset) — clicking the title remains the version easter egg; ↗ is the external link */}
+      {process.env.NEXT_PUBLIC_DOCS_URL && (
+        <a
+          href={process.env.NEXT_PUBLIC_DOCS_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          title={t("topbar.docsLink")}
+          aria-label={t("topbar.docsLink")}
+          style={{
+            fontSize: 12, lineHeight: 1, padding: "0 1px",
+            color: "var(--text-muted)", textDecoration: "none", cursor: "pointer",
+            transition: "color 0.12s",
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = "var(--accent)"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}
+        >
+          ↗
+        </a>
+      )}
+    </span>
   );
 }
+

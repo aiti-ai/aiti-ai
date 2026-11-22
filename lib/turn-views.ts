@@ -1,6 +1,6 @@
-import type { AssistantContentBlock, AssistantMessage } from "./types";
-import { getAssistantErrorMessage, isAssistantAborted, isAssistantTruncated, splitFinalAssistantBlocks } from "./message-display";
-import type { WrittenFile } from "./turn-written-files";
+import type { AssistantContentBlock, AssistantMessage } from "./types.ts";
+import { getAssistantErrorMessage, isAssistantAborted, isAssistantTruncated, splitFinalAssistantBlocks } from "./message-display.ts";
+import type { WrittenFile } from "./turn-written-files.ts";
 
 /** What the chat shows of a turn's final assistant message, apart. */
 export interface FinalAnswerViews {

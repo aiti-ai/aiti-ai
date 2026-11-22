@@ -28,6 +28,7 @@ process.env.PI_CODING_AGENT_DIR = agentDir;
 // The list is served from the SDK's own data and the models.json below, so the route
 // never reaches for the network here.
 process.env.PI_OFFLINE = "1";
+process.env.PI_WEB_FILE_SANDBOX = "1"; // 合并：上游安全测试假设文件沙箱强制执行（本地默认关，测试内显式开）
 
 await mkdir(agentDir, { recursive: true });
 await writeFile(join(agentDir, "models.json"), JSON.stringify({

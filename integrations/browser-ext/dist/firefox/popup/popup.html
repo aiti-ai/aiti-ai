@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>aiti devtools</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="wrap">
+    <div class="head">
+      <span class="logo"><img src="../icons/logo.svg" alt="aiti" class="logo-img">aiti devtools</span>
+      <button class="btn mini" id="openOptions">⚙ 设置</button>
+    </div>
+
+    <div class="rows">
+      <div class="row">
+        <span class="k">本页状态</span>
+        <span class="v" id="siteState">—</span>
+      </div>
+      <div class="row">
+        <span class="k">AI 目标</span>
+        <span class="v" id="aiTarget">—</span>
+      </div>
+      <div class="row">
+        <span class="k">桥地址</span>
+        <span class="v mono" id="bridgeUrl" title="MCP 桥基地址">—</span>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn primary" id="once">⚡ 本页启用（本次）</button>
+      <button class="btn" id="always">★ 总是启用此站点</button>
+    </div>
+    <div class="actions">
+      <button class="btn primary" id="openAi">💬 打开 AI 窗</button>
+    </div>
+
+    <div class="doc"><a href="https://aiti.pw/devtools/browser-ext.html" target="_blank" rel="noopener">📖 使用文档</a></div>
+    <div class="foot" id="hint"></div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

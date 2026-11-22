@@ -1,0 +1,30 @@
+{
+  "name": "@aiti-ai/aiti-quickstart",
+  "version": "0.2.2",
+  "type": "module",
+  "description": "Blank-state onboarding extension — new-session welcome page widgets (getting-started steps / quick actions / while-it-runs concepts / sample prompts, via the host newSessionWidgets slot, ⚙ customizable) + a left sidebar DockStack fully-collapsed b",
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "watch": "vite build --watch --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "soul": "空白不可怕，第一句从这里开始。",
+  "aitiExtProtocol": "1.0",
+  "license": "MIT",
+  "contentHash": "5230ae563f61036d",
+  "dependencies": {
+    "@aiti-ai/ext-shared": "^0.1.12"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-quickstart"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  }
+}

@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createJiti } from "jiti";
 
-const jiti = createJiti(import.meta.url);
+// @/lib/base-path（fork basePath 特性）——jiti 别名解析（node 裸跑无 paths）
+const jiti = createJiti(import.meta.url, { alias: { "@": process.cwd() } });
 const { GET, dynamic } = await jiti.import("./manifest.webmanifest/route.ts");
 
 test("manifest route reads the app name at runtime without changing other metadata", async () => {

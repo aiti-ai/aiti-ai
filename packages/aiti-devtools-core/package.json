@@ -1,0 +1,31 @@
+{
+  "name": "@aiti-ai/aiti-devtools-core",
+  "version": "0.3.13",
+  "description": "Bridge core of aiti-devtools: the page \u21c4 agent message/session bridge (claim/SSE/result protocol), Streamable HTTP MCP endpoint, browser protocol (host-protocol/aiwin) and carrier-agnostic shared capabilities (mcp-config registration / endpoints negotiation / connect middleware / assets).",
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "license": "MIT",
+  "files": [
+    "dist",
+    "assets",
+    "src"
+  ],
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --format=esm --outfile=dist/index.js --target=es2022 --platform=node",
+    "test": "node test/endpoints.test.mjs && node test/connect.test.mjs && node test/mcp-config.test.mjs && node test/send-rewrite.test.mjs && node test/host-protocol-assets.test.mjs && node --experimental-strip-types --test --test-force-exit test/user-notify-target.test.mjs",
+    "prepublishOnly": "npm run build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "packages/aiti-devtools-core"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  },
+  "contentHash": "68c48ae54db0ed8e"
+}

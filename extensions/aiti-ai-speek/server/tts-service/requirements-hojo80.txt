@@ -1,0 +1,6 @@
+# aiti-ai-speek · local TTS deps for the Hojo-TTS-Light-80M variant (voice cloning)
+# Same interpreter as the 40M (ONNX, no torch) plus the audio stack the 80M graph needs
+# (librosa mel filters + scipy for iSTFT helpers).
+-r requirements-hojo.txt
+scipy>=1.11
+librosa>=0.11.0

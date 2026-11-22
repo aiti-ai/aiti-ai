@@ -2,11 +2,11 @@
 
 import { memo, useEffect, useRef, useState, useCallback, useMemo, type RefObject } from "react";
 import ReactMarkdown, { type Options as ReactMarkdownOptions } from "react-markdown";
-import rehypeKatex from "rehype-katex";
 import {
   markdownPreviewRemarkPlugins,
   normalizeDisplayMath,
 } from "@/lib/markdown";
+import { useMathMarkdownPlugins } from "@/lib/use-math-plugins";
 import { hasTurnRef, isHiddenCustomMessage, splitFinalAssistantBlocks } from "@/lib/message-display";
 import { loadMinimapPreviewLocked, saveMinimapPreviewLocked } from "@/lib/minimap-preview-lock";
 import type { AgentMessage, AssistantMessage, CustomMessage, TextContent, UserMessage } from "@/lib/types";
@@ -16,8 +16,7 @@ import { LockToggle } from "./LockToggle";
 
 interface Props {
   messages: AgentMessage[];
-  /** The reply being streamed, read when the turns are measured: it never re-renders the minimap. */
-  getStreamingMessage: () => Partial<AgentMessage> | null;
+  streamingMessage: Partial<AgentMessage> | null;
   scrollContainer: RefObject<HTMLDivElement | null>;
   messageRefs: RefObject<(HTMLDivElement | null)[]>;
   onRevealHistory: () => void;
@@ -148,9 +147,9 @@ const previewRemarkPlugins = [
   ...(markdownPreviewRemarkPlugins ?? []),
   remarkPreviewOutline,
 ];
-const previewRehypePlugins: ReactMarkdownOptions["rehypePlugins"] = [
-  [rehypeKatex, { throwOnError: false, strict: false }],
-];
+// The outline preview's base rehype plugin list is empty (previously just katex) — math plugins are
+// appended on demand via useMathMarkdownPlugins (P1.2)
+const previewRehypePluginsBase: ReactMarkdownOptions["rehypePlugins"] = [];
 
 function getPreviewHeadingIndex(node: unknown): number | null {
   const properties = (node as { properties?: Record<string, unknown> } | undefined)?.properties;
@@ -170,12 +169,18 @@ export const AssistantOutline = memo(function AssistantOutline({
   onAnswerClick?: () => void;
 }) {
   const normalizedMarkdown = useMemo(() => normalizeDisplayMath(markdown), [markdown]);
+  // Math plugins load on demand (P1.2) — must come before `if (!markdown) return null` (hook ordering)
+  const { remark: outlineRemarkPlugins, rehype: outlineRehypePlugins } = useMathMarkdownPlugins(
+    normalizedMarkdown,
+    previewRemarkPlugins,
+    previewRehypePluginsBase,
+  );
   if (!markdown) return null;
   return (
     <div className={styles.outline}>
       <ReactMarkdown
-        remarkPlugins={previewRemarkPlugins}
-        rehypePlugins={previewRehypePlugins}
+        remarkPlugins={outlineRemarkPlugins}
+        rehypePlugins={outlineRehypePlugins}
         components={{
           h1: ({ children, node }) => <PreviewHeading level={1} headingIndex={getPreviewHeadingIndex(node)} onClick={onHeadingClick}>{children}</PreviewHeading>,
           h2: ({ children, node }) => <PreviewHeading level={2} headingIndex={getPreviewHeadingIndex(node)} onClick={onHeadingClick}>{children}</PreviewHeading>,
@@ -249,9 +254,9 @@ function layoutNodes(allNodes: NodeInfo[], minimapHeight: number): NodeLayout {
   };
 }
 
-export const ChatMinimap = memo(function ChatMinimap({
+export function ChatMinimap({
   messages,
-  getStreamingMessage,
+  streamingMessage,
   scrollContainer,
   messageRefs,
   onRevealHistory,
@@ -352,7 +357,6 @@ export const ChatMinimap = memo(function ChatMinimap({
       let refIndex = 0;
       let currentTurn: TurnInfo | null = null;
 
-      const streamingMessage = getStreamingMessage();
       const allMessages: (AgentMessage | Partial<AgentMessage>)[] = streamingMessage
         ? [...messagesRef.current, streamingMessage]
         : messagesRef.current;
@@ -438,7 +442,7 @@ export const ChatMinimap = memo(function ChatMinimap({
         scrollEl.scrollTo({ top: Math.max(0, targetTop - targetOffset), behavior: "smooth" });
       }
     }, 150);
-  }, [getStreamingMessage, lockActiveNode, messageRefs, scrollContainer, syncActiveNode]);
+  }, [lockActiveNode, messageRefs, scrollContainer, syncActiveNode]);
 
   useEffect(() => {
     const el = scrollContainer.current;
@@ -744,7 +748,7 @@ export const ChatMinimap = memo(function ChatMinimap({
         className={styles.lock}
         data-minimap-lock={locked ? "on" : "off"}
         title={t(locked ? "chatMinimap.unlockPreview" : "chatMinimap.lockPreview")}
-        aria-label={t("chatMinimap.lockPreview")}
+        aria-label={t(locked ? "chatMinimap.unlockPreview" : "chatMinimap.lockPreview")}
         onMouseDown={(event) => event.stopPropagation()}
         onClick={(event) => {
           event.stopPropagation();
@@ -848,7 +852,7 @@ export const ChatMinimap = memo(function ChatMinimap({
       )}
     </div>
   );
-});
+}
 
 // Hook to create a stable array of refs for messages
 export function useMessageRefs(count: number): RefObject<(HTMLDivElement | null)[]> {

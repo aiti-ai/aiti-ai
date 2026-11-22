@@ -14,7 +14,7 @@ import type {
   McpServerInfo,
   McpTransportKind,
   McpVariableReference,
-} from "./api-types";
+} from "./api-types.ts";
 import {
   isMcpDisabledByOperator,
   MCP_DISABLE_VARIABLE,
@@ -22,7 +22,7 @@ import {
   readBuiltinExtensionSwitches,
   type BuiltinExtensionName,
   type BuiltinExtensionSwitch,
-} from "./builtin-extensions";
+} from "./builtin-extensions.ts";
 import {
   CODEMODE_INLINE_BUDGET_DEFAULT,
   CODEMODE_INLINE_BUDGET_MAX,
@@ -31,19 +31,19 @@ import {
   readProjectCodemodeInlineBudget,
   readProjectCodemodeMode,
   readProjectCodemodeOverride,
-} from "./codemode-settings";
-import { getGlobalSettingsPath } from "./global-settings-file";
-import { mcpConfigKey, mcpEntryConfigKey } from "./mcp-config-key";
-import { jsonErrorMessage } from "./mcp-json-error";
-import { isMcpOverrideEntry, MCP_OVERRIDE_KEYS, mcpOverrideRefusal } from "./mcp-override";
-import { maskArgs, maskCommand, maskUrl } from "./mcp-secrets";
-import { mcpOAuthStoreKeys } from "./mcp-sign-out";
-import { readMcpHostInactive, withMcpStatuses } from "./mcp-status";
-import { findWebPasswordField, resolvedConfigValues, WEB_PASSWORD_VARIABLE } from "./mcp-transport";
-import { samePath } from "./paths";
-import { hasParentDirectorySegment, isPathWithinRoots, resolveRealRoots } from "./path-security";
-import { loadPiSdkInternals, type PiSdkInternals } from "./pi-sdk-internals";
-import { freshFolderTrustBreadth, getProjectTrustStatus, hasTrustRelevantEntries } from "./project-trust";
+} from "./codemode-settings.ts";
+import { getGlobalSettingsPath } from "./global-settings-file.ts";
+import { mcpConfigKey, mcpEntryConfigKey } from "./mcp-config-key.ts";
+import { jsonErrorMessage } from "./mcp-json-error.ts";
+import { isMcpOverrideEntry, MCP_OVERRIDE_KEYS, mcpOverrideRefusal } from "./mcp-override.ts";
+import { maskArgs, maskCommand, maskUrl } from "./mcp-secrets.ts";
+import { mcpOAuthStoreKeys } from "./mcp-sign-out.ts";
+import { readMcpHostInactive, withMcpStatuses } from "./mcp-status.ts";
+import { findWebPasswordField, resolvedConfigValues, WEB_PASSWORD_VARIABLE } from "./mcp-transport.ts";
+import { samePath } from "./paths.ts";
+import { hasParentDirectorySegment, isPathWithinRoots, resolveRealRoots } from "./path-security.ts";
+import { loadPiSdkInternals, type PiSdkInternals } from "./pi-sdk-internals.ts";
+import { freshFolderTrustBreadth, getProjectTrustStatus, hasTrustRelevantEntries } from "./project-trust.ts";
 
 // What Settings › MCP and the trust dialog list (ADR 0006): the entries of the
 // global `mcp.json` and of a project's `.pi/mcp.json`, read from the files
@@ -441,6 +441,7 @@ function describeServer(
     sourcePath,
     configKey,
     enabled: config.enabled !== false,
+    excludedTools: Array.isArray(config.excludeTools) ? config.excludeTools.map(String) : [],
     validated: internals !== undefined,
     envNames: isRecord(config.env) ? Object.keys(config.env) : [],
     headerNames: isRecord(config.headers) ? Object.keys(config.headers) : [],

@@ -1,8 +1,8 @@
 import { LLAMA_CPP_PROVIDER_ID } from "./provider-listing";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { invalidateModelsCache } from "./models-cache";
-import { resolveVisibleModels, selectInitialModelScope, type InitialModelScopeOptions } from "./model-scope";
+import { invalidateModelsCache } from "./models-cache.ts";
+import { resolveVisibleModels, selectInitialModelScope, type InitialModelScopeOptions } from "./model-scope.ts";
 
 type RuntimeModel = Awaited<ReturnType<ModelRuntime["getAvailable"]>>[number];
 
@@ -40,7 +40,11 @@ export async function rememberProviderModels(runtime: ModelRuntime): Promise<voi
     if (!extensionProviders.has(model.provider)) {
       if (!runtime.getModel(model.provider, model.id) || runtime.getPhysicalModel(model.provider, model.id)) continue;
     }
-    byProvider.set(model.provider, [...(byProvider.get(model.provider) ?? []), model]);
+    // Idempotent per provider:model — an engine that re-registers its provider (combo groups do
+    // this on every models.json change) can hand the same model back more than once, and the
+    // catalog is replayed into /api/models on every load.
+    const seen = byProvider.get(model.provider) ?? [];
+    if (!seen.some((m) => m.id === model.id)) byProvider.set(model.provider, [...seen, model]);
   }
   globalThis.__piWebProviderNameCatalog ??= new Map();
   for (const provider of runtime.getProviders?.() ?? []) {

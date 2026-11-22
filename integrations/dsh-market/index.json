@@ -1,0 +1,122 @@
+{
+  "format": 1,
+  "title": {
+    "en": "aiti DSH Plugins",
+    "zh": "aiti DSH 插件"
+  },
+  "description": {
+    "en": "aiti ecosystem plugins for DeepSeek Harness: session-level secret redaction, in-process browser devtools, and more.",
+    "zh": "aiti 生态的 DeepSeek Harness 插件：会话级密钥脱敏、进程内浏览器调试等。"
+  },
+  "metadata": {
+    "categories": {
+      "security": {
+        "title": {
+          "en": "Security & Privacy",
+          "zh": "安全与隐私"
+        }
+      },
+      "devtools": {
+        "title": {
+          "en": "Developer Tools",
+          "zh": "开发调试"
+        }
+      }
+    },
+    "labels": {},
+    "sortKeys": {}
+  },
+  "plugins": [
+    {
+      "name": "@aiti-ai/dsh-secret-mask",
+      "title": {
+        "en": "Secret Mask (aiti)",
+        "zh": "密钥脱敏（aiti）"
+      },
+      "description": {
+        "en": "Paste-safe by default: pasted tokens/keys become [REDACTED:*] placeholders before the model sees them, restored inside tool arguments before execution; tool outputs are redacted and an opt-in audit proves no raw value reaches the provider.",
+        "zh": "随手贴不泄密：贴入的 token/密钥在进入模型前替换为 [REDACTED:*] 占位符，工具参数执行前自动还原；工具输出同步脱敏，可选审计证明无真值上线。"
+      },
+      "author": "aiti",
+      "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+      "repository": {
+        "url": "https://github.com/aiti-ai/aiti-ai",
+        "directory": "integrations"
+      },
+      "metadata": {
+        "category": "security",
+        "keywords": [
+          "secrets",
+          "redaction",
+          "privacy",
+          "dlp",
+          "aiti"
+        ],
+        "labels": [],
+        "sortKeys": {}
+      },
+      "versions": [
+        {
+          "version": "0.1.1",
+          "publishTimestamp": 1794729452,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {
+            "dsh": ">=0.1.1-rc.0"
+          }
+        },
+        {
+          "version": "0.1.0",
+          "publishTimestamp": 1794727239,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {
+            "dsh": ">=0.1.1-rc.0"
+          }
+        }
+      ]
+    },
+    {
+      "name": "@aiti-ai/aiti-devtools-dsh",
+      "title": {
+        "en": "aiti DevTools for DSH",
+        "zh": "aiti DevTools（DSH 版）"
+      },
+      "description": {
+        "en": "In-process aiti-devtools bridge for DSH: page-injection debugging (DOM/CSS/console/network), 16 aiti_* agent tools and the AI cockpit mounted on DSH's own web server — browser debugging for the coding agent.",
+        "zh": "DSH 进程内 aiti-devtools 桥：页面注入调试（DOM/CSS/控制台/网络）、16 个 aiti_* agent 工具与 AI 驾驶舱挂载在 DSH 同端口——给编码 agent 配上浏览器调试。"
+      },
+      "author": "aiti",
+      "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+      "repository": {
+        "url": "https://github.com/aiti-ai/aiti-ai",
+        "directory": "integrations/dsh-web-ext/aiti-devtools-dsh"
+      },
+      "metadata": {
+        "category": "devtools",
+        "keywords": [
+          "debugging",
+          "devtools",
+          "browser",
+          "aiti"
+        ],
+        "labels": [],
+        "sortKeys": {}
+      },
+      "versions": [
+        {
+          "version": "0.8.3",
+          "publishTimestamp": 1794727197,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {
+            "dsh": ">=0.1.1-rc.0"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "name": "@aiti-ai/session-manager",
+  "version": "0.2.17",
+  "type": "module",
+  "homepage": "https://aiti.pw/extensions/session-manager.html",
+  "description": "Cross-project session panel — tag tree + colors / favorites / search / archive / kanban / new-session branch·Worktree picker / history parsing for 23 agent families / DockStack orchestration",
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "watch": "vite build --watch --config vite.config.ts",
+    "test:store": "node client/tests/pending-drafts.test.mjs",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "soul": "会话不是用完即走的流水，是每天都在累积的资产。",
+  "dependencies": {
+    "@aiti-ai/ext-shared": "^0.1.12",
+    "@node-rs/jieba": "^2.0.2",
+    "yauzl": "^2.10.0"
+  },
+  "aitiConfigs": {
+    "configFiles": [
+      "settings.json",
+      "session-tags.json"
+    ]
+  },
+  "aitiExtProtocol": "1.0",
+  "license": "MIT",
+  "contentHash": "b90d791566bfe599",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/session-manager"
+  },
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  }
+}

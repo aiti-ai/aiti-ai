@@ -1,0 +1,253 @@
+#!/usr/bin/env bash
+# aiti-ui-env CLI — 显示环境裁决（shell 里给 MCP / GUI 应用启动器用）
+#
+# 用法：
+#   eval "$(ui-env env)"                # 输出 export 行（直接注入当前 shell）
+#   ui-env status                       # 完整状态（模式/双环境/裁决/VNC）
+#   ui-env set-mode always-headless     # 切换模式（1/2/3/4 或全名）
+#   ui-env resolve [--prefer desktop]   # 打印裁决 JSON
+#   ui-env run 'cmd ...'                # 用裁决环境后台启动并回显 pid
+#   ui-env vnc [start|stop|status]      # VNC-on-web 启停/查询
+#
+# 数据源优先级：UI_ENV_MODE env > dataDir/env-mode.json > 默认 prefer-headless
+# 本地 pi-web API 可达时走 API（权威 lib/env.ts 同一逻辑），否则本地最小裁决兜底
+# （契约一致：详见 docs/aiti-ui-env-extension-plan.md §3/§4）。
+set -u
+
+DATA_DIR="${UI_ENV_DATA_DIR:-$HOME/.pi/web/data/aiti-ui-env}"
+MODE_FILE="$DATA_DIR/env-mode.json"
+DISPLAY_NUM="${UI_ENV_DISPLAY_NUM:-99}"
+AUTH_DIR="${UI_ENV_XAUTH_DIR:-/tmp/ui-env-$DISPLAY_NUM}"
+BUS_FILE="$AUTH_DIR/bus"
+RUNTIME_DIR="$AUTH_DIR/runtime"
+VNC_PORT="${UI_ENV_VNC_PORT:-5900}"
+WEB_PORT="${UI_ENV_VNC_WEB_PORT:-6080}"
+
+IS_MAC=$([ "$(uname)" = "Darwin" ] && echo 1 || echo 0)
+
+# 端口监听探测（Linux: ss/netstat -tln；macOS: BSD netstat -an -p tcp，-tln 无效且 /usr/sbin 常不在 PATH）
+port_listening() {
+  if [ "$IS_MAC" = "1" ]; then
+    { /usr/sbin/netstat -an -p tcp 2>/dev/null || netstat -an -p tcp 2>/dev/null; } | grep -q "[:.]$1 .*LISTEN"
+  else
+    (ss -tln 2>/dev/null || netstat -tln 2>/dev/null) | grep -q ":$1 "
+  fi
+}
+
+# 择 API 端点（优先环境变量指定；其次常见本机 dev/prod 端口；都不可达则本地裁决）
+api_base() {
+  for u in "${UI_ENV_API:-}" "http://127.0.0.1:30142/dev/api/extensions/aiti-ui-env" "http://127.0.0.1:20341/api/extensions/aiti-ui-env"; do
+    [ -n "$u" ] || continue
+    if curl -fsS --max-time 1 "$u/status" >/dev/null 2>&1; then echo "$u"; return 0; fi
+  done
+  return 1
+}
+
+read_mode() {
+  if [ -n "${UI_ENV_MODE:-}" ]; then echo "$UI_ENV_MODE"; return; fi
+  if [ -f "$MODE_FILE" ]; then
+    sed -n 's/.*"mode"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$MODE_FILE" | head -1
+  fi
+}
+
+mode() { read_mode || echo "prefer-headless"; }
+
+# macOS 探测：桌面 = Aqua 会话（本进程 launchd 上下文 Aqua + console 属主非 root）；
+# 无头层 = 屏幕共享 VNC（5900；诚实降级，GUI 仍落桌面，详见 docs/aiti-ui-env-macos-support-plan.md）
+probe_local_mac() {
+  local d=0 h=0
+  [ "$(launchctl managername 2>/dev/null)" = "Aqua" ] && [ "$(/usr/bin/stat -f%Su /dev/console 2>/dev/null)" != "root" ] && d=1
+  port_listening "$VNC_PORT" && h=1
+  echo "desktop_ok=$d"
+  echo "headless_ok=$h"
+}
+
+probe_local() {
+  # 输出两行：desktop_ok=<0|1> headless_ok=<0|1>
+  [ "$IS_MAC" = "1" ] && { probe_local_mac; return; }
+  local d=0 h=0
+  [ -e "/tmp/.X11-unix/X0" ] || [ -n "$(ls /tmp/.X11-unix/ 2>/dev/null | grep -v X$DISPLAY_NUM | head -1)" ] && d=1
+  [ -e "/tmp/.X11-unix/X$DISPLAY_NUM" ] && h=1
+  echo "desktop_ok=$d"
+  echo "headless_ok=$h"
+}
+
+# macOS：GUI 落控制台 Aqua 会话（无 DISPLAY/X11 键，pi-web 在用户 GUI 会话内则子进程直接落桌面）；
+# 无头层 = 屏幕共享 VNC（GUI 仍落桌面，区别在浏览器查看通道）
+build_env_local_mac() {
+  local target="$1"
+  echo "export UI_ENV_SESSION=aqua"
+  [ "$target" = "headless" ] && echo "export UI_ENV_VNC_PORT=$VNC_PORT"
+  return 0
+}
+
+build_env_local() {
+  local target="$1" probe
+  [ "$IS_MAC" = "1" ] && { build_env_local_mac "$target"; return; }
+  probe=$(probe_local)
+  # shellcheck disable=SC2046
+  eval $(echo "$probe")
+  if [ "$target" = "headless" ]; then
+    mkdir -p "$RUNTIME_DIR" 2>/dev/null; chmod 700 "$RUNTIME_DIR" 2>/dev/null
+    echo "export DISPLAY=:$DISPLAY_NUM"
+    echo "export XAUTHORITY=$AUTH_DIR/Xauthority"
+    [ -e "$BUS_FILE" ] && echo "export DBUS_SESSION_BUS_ADDRESS=unix:path=$BUS_FILE"
+    echo "export XDG_RUNTIME_DIR=$RUNTIME_DIR"
+    echo "export XDG_SESSION_TYPE=x11"
+    echo "export GTK_MODULES=atk-bridge"
+    echo "export QT_ACCESSIBILITY=1"
+    echo "export NO_AT_BRIDGE=0"
+    echo "export GDK_BACKEND=x11"
+    echo "unset WAYLAND_DISPLAY"
+  else
+    echo "export DISPLAY=:0"
+    [ -f "$HOME/.Xauthority" ] && echo "export XAUTHORITY=$HOME/.Xauthority"
+    echo "export XDG_SESSION_TYPE=x11"
+    echo "unset WAYLAND_DISPLAY"
+  fi
+}
+
+resolve_local() {
+  local prefer="${1:-}" m target
+  m=$(mode)
+  # shellcheck disable=SC2046
+  eval $(probe_local)
+  if [ "$prefer" = "desktop" ]; then target="desktop"
+  elif [ "$prefer" = "headless" ]; then target="headless"
+  else
+    case "$m" in
+      always-desktop)  target="desktop" ;;
+      always-headless) target="headless" ;;
+      prefer-desktop)  [ "$desktop_ok" = 1 ] && target="desktop" || target="headless" ;;
+      *)               [ "$headless_ok" = 1 ] && target="headless" || target="desktop" ;;
+    esac
+  fi
+  [ "$target" = "desktop" ] && [ "$desktop_ok" != 1 ] && { echo "{\"ok\":false,\"error\":\"desktop unavailable\",\"target\":null}"; exit 1; }
+  [ "$target" = "headless" ] && [ "$headless_ok" != 1 ] && { echo "{\"ok\":false,\"error\":\"headless unavailable (run scripts/linux/install-service.sh)\",\"target\":null}"; exit 1; }
+  echo "$target"
+}
+
+cmd_env() {
+  local base out envobj
+  base=$(api_base)
+  if [ -n "$base" ]; then
+    out=$(curl -fsS --max-time 3 "$base/resolve?refresh=1") || return 1
+    # 从 JSON 中取 env 对象 → export 行（不支持 jq 时用 perl 提取）
+    envobj=$(echo "$out" | perl -0777 -ne 'if(/"env":\s*\{(.*?)\},\s*"exportLines"/s){print $1}')
+    [ -n "$envobj" ] && echo "$envobj" | perl -ne 'while(/"([A-Za-z_][A-Za-z0-9_]*)":"?([^",}]*)"?/g){print "export $1=\"$2\"\n"}'
+    return
+  fi
+  local target
+  target=$(resolve_local) || exit 1
+  build_env_local "$target"
+}
+
+cmd_status() {
+  local base
+  if base=$(api_base); then curl -fsS --max-time 5 "$base/status?refresh=1"; return; fi
+  local m probe target
+  m=$(mode); probe=$(probe_local); # shellcheck disable=SC2046
+  eval $(echo "$probe")
+  target=$(resolve_local 2>/dev/null || echo none)
+  cat <<EOF
+{"mode":"$m","local_fallback":true,"desktop":{"available":$([ "$desktop_ok" = 1 ] && echo true || echo false)},"headless":{"available":$([ "$headless_ok" = 1 ] && echo true || echo false)},"target":"$target","vnc":{"webUrl":"http://127.0.0.1:$WEB_PORT/vnc.html?autoconnect=true&resize=scale"}}
+EOF
+}
+
+cmd_set_mode() {
+  local v="$1"
+  case "$v" in
+    1|prefer-desktop)  v="prefer-desktop" ;;
+    2|prefer-headless|prefer-headless-virtual) v="prefer-headless" ;;
+    3|always-desktop)  v="always-desktop" ;;
+    4|always-headless|always-headless-virtual) v="always-headless" ;;
+    *) echo "无效模式: $v（1/2/3/4 或 prefer-desktop|prefer-headless|always-desktop|always-headless）" >&2; exit 1 ;;
+  esac
+  mkdir -p "$DATA_DIR"
+  printf '{"mode":"%s","updatedAt":"%s"}\n' "$v" "$(date -Is)" > "$MODE_FILE"
+  local base
+  if base=$(api_base); then curl -fsS --max-time 3 -X POST -H 'content-type: application/json' -d "{\"mode\":\"$v\"}" "$base/set-mode" >/dev/null 2>&1; fi
+  echo "模式已切换: $v（对新启动的 MCP/应用生效）"
+}
+
+cmd_run() {
+  local cmd="$*" base target
+  base=$(api_base)
+  if [ -n "$base" ]; then
+    curl -fsS --max-time 8 -X POST -H 'content-type: application/json' -d "$(printf '{"cmd":"%s"}' "$(printf '%s' "$cmd" | sed 's/"/\\"/g')")" "$base/run"
+    return
+  fi
+  target=$(resolve_local) || exit 1
+  eval "$(build_env_local "$target")"
+  nohup /bin/sh -c "$cmd" >/dev/null 2>&1 &
+  echo "{\"ok\":true,\"pid\":$!,\"target\":\"$target\",\"note\":\"当地裁决（api 不可达）\"}"
+}
+
+cmd_vnc() {
+  local act="${1:-status}" base inst_json
+  if base=$(api_base); then
+    case "$act" in
+      start|stop|status) curl -fsS --max-time 8 -X POST -H 'content-type: application/json' -d "{\"action\":\"$act\"${2:+,\"id\":\"$2\"}}" "$base/vnc" ;;
+      list) curl -fsS --max-time 5 "$base/vnc" -X POST -H 'content-type: application/json' -d '{"action":"list"}' ;;
+      *) echo "vnc: 无效 action（start|stop|list|status，stop 可带实例 id）" >&2; return 1 ;;
+    esac
+    # 会话 URL：无凭据（cookie 认证，30min；先在面板打开一次建立）
+    echo "{\"viewPath\":\"/aiti-ui-env/vnc/vnc.html?autoconnect=true&resize=scale&path=aiti-ui-env/vnc/ws\",\"note\":\"URL 无凭据：先在 pi-web 🖥️ 面板点打开（30min HttpOnly cookie），再访问 <站点根><viewPath>；多实例 path 用 ws/<id>\"}"
+    return
+  fi
+  case "$act" in
+    status)
+      echo "{\"webUrl\":\"http://127.0.0.1:$WEB_PORT/vnc.html?autoconnect=true&resize=scale\",\"tcp\":$(port_listening "$VNC_PORT" && echo true || echo false),\"web\":$(port_listening "$WEB_PORT" && echo true || echo false)}" ;;
+    start)
+      # 统一 node 方案：vnc-bridge（零依赖）；token 经 env 不落命令行
+      local bridge="$DATA_DIR/vnc-bridge.mjs"
+      if [ -e "/tmp/.X11-unix/X$DISPLAY_NUM" ]; then
+        x11vnc -display ":$DISPLAY_NUM" -forever -shared -rfbport "$VNC_PORT" -localhost >/dev/null 2>&1 &
+      fi
+      if [ -f "$bridge" ] && command -v node >/dev/null 2>&1; then
+        local tok; tok=$(cat "$DATA_DIR/vnc-token" 2>/dev/null || node -e "process.stdout.write(require('crypto').randomBytes(16).toString('hex'))")
+        [ -z "$tok" ] && tok=$(node -e "process.stdout.write(require('crypto').randomBytes(16).toString('hex'))")
+        UI_ENV_VNC_TOKEN="$tok" UI_ENV_VNC_WEB_PORT="$WEB_PORT" UI_ENV_VNC_PORT="$VNC_PORT" UI_ENV_NOVNC_DIR="${UI_ENV_NOVNC_DIR:-/usr/share/novnc}" nohup node "$bridge" >/dev/null 2>&1 &
+        echo "{\"ok\":true,\"note\":\"node vnc-bridge 已请求启动（仅回环，外部走 middleware；无 python 依赖）\"}"
+      else
+        echo "{\"ok\":false,\"note\":\"缺 $bridge（先部署扩展）或 node\"}"
+      fi
+      ;;
+    stop)  echo "{\"ok\":true,\"note\":\"请用系统服务管理（systemctl --user stop ui-env-vnc）\"}" ;;
+  esac
+}
+
+case "${1:-}" in
+  env) cmd_env ;;
+  status) cmd_status ;;
+  resolve)
+    # 兼容两种写法：resolve [--prefer] desktop|headless
+    local pref=""
+    case "${2:-}" in
+      --prefer) pref="${3:-}" ;;
+      desktop|headless) pref="${2}" ;;
+    esac
+    if base=$(api_base); then
+      # API 可达：输出完整裁决 JSON（与文档契约一致：resolve 打印裁决 JSON）
+      curl -fsS --max-time 5 "$base/resolve?refresh=1${pref:+&prefer=$pref}"
+      return
+    fi
+    target=$(resolve_local "$pref") || exit 1
+    env_json=""
+    while IFS= read -r line; do
+      case "$line" in
+        "export "*|"unset "*)
+          line="${line#export }"; line="${line#unset }"
+          k="${line%%=*}"; v="${line#*=}"; v="${v#\"}"; v="${v%\"}"
+          env_json="$env_json${env_json:+,}\"$k\":\"$v\""
+          ;;
+      esac
+    done < <(build_env_local "$target")
+    echo "{\"ok\":true,\"mode\":\"$(mode)\",\"target\":\"$target\",\"rationale\":\"local fallback（API 不可达）\",\"env\":{$env_json}}"
+    ;;
+  set-mode|mode-set|set_mode) cmd_set_mode "${2:-}" ;;
+  run) shift; cmd_run "$@" ;;
+  vnc) cmd_vnc "${2:-}" ;;
+  mode) mode ;;
+  *) echo "用法: $0 {env|status|resolve|set-mode|run|vnc|mode}" >&2; exit 1 ;;
+esac

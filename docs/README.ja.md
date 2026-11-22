@@ -1,12 +1,29 @@
-# Pi Web
+# AITI Web
 
-[English](../README.md) | [简体中文](./README.zh-CN.md) | [Русский](./README.ru.md)
+[English](https://github.com/aiti-ai/aiti-ai/blob/main/README.md) | [简体中文](https://github.com/aiti-ai/aiti-ai/blob/main/docs/README.zh-CN.md) | [Русский](https://github.com/aiti-ai/aiti-ai/blob/main/docs/README.ru.md)
 
-[pi コーディングエージェント](https://github.com/earendil-works/pi) のローカルブラウザー UI です。Pi Web は pi と同じローカル設定とセッションファイルを使用し、ブラウザーから会話の検索と再開、エージェントの実行、モデルやリソースの設定、プロジェクトファイルの確認を行えます。
+**AITI Web**（`@aiti-ai/pi-web`）は、[pi コーディングエージェント](https://github.com/earendil-works/pi) 向けのブラウザーワークベンチで、[aiti](https://aiti.pw/) ツールエコシステムの基盤です：ページインジェクション型 AI デバッグツール、AI エージェント向け MCP ブリッジ、そして拡大を続けるバンドル拡張機能ライブラリ。
 
-**[インタラクティブデモを試す →](https://agegr.github.io/pi-web/)**：実際の Pi Web UI がブラウザー内だけで動作し、サンプルのセッション、ファイル、モデルを確認できます。インストールは不要です。返信はあらかじめ用意された内容で、モデルは呼び出しません。
+### なぜフォークしたのか
 
-![構造化された Markdown、ツール呼び出し、プロジェクトナビゲーションとともに pi セッションを表示する Pi Web](https://raw.githubusercontent.com/agegr/pi-web/main/docs/screenshot2.png)
+上流の [pi-web](https://github.com/agegr/pi-web) は pi の優れたローカル UI ですが、完全な AI 開発ワークベンチには UI だけでは不十分です：拡張機能ランタイム、git とキューを取り巻くセッションツール、ローカルポートを共有するサービストンネル、ページレベルのデバッグインジェクション、AI ↔ ページ ↔ IDE の深い連携が必要です。上流のアーキテクチャではこれらの層のための余地がなかったため、このフォークではそれらを **63 以上のバンドル拡張機能**としてパッケージに同梱しています。`npm i -g @aiti-ai/pi-web` するだけでワークベンチ全体が揃い、拡張機能を個別にインストールする必要はありません。
+
+エンジンは pi のまま（JSONL セッションとローカル設定を共有）なので、上流のドキュメントの内容はそのまま適用されます。ドキュメント、プロダクトマップ、フォークの経緯は [aiti.pw](https://aiti.pw/) をご覧ください。
+
+プロジェクトの起源も一度読んでみる価値があります：15 年にわたる二つのプロジェクト——[TestAgent](https://aiti.pw/extensions/aiti-testagent.html)（Java ランタイムデバッガ）と [JustDB](https://justdb.ai)（データベース IDE）——が AI 時代に出会い、日常の開発は pi-web に移り、機能を追加するたびに上流から離れていき、aiti は独自ディストリビューションとして始まりました。すべては実際の日常利用から生まれたものです：通勤時間のコーディング、持ち運びデバイスでの開発、ひとつのかけらのトークンも無駄にしないこと。詳細は [aiti.pw/guide/origin.html](https://aiti.pw/guide/origin.html)。
+
+![構造化された Markdown、ツール呼び出し、プロジェクトナビゲーションとともに pi セッションを表示する AITI Web](https://raw.githubusercontent.com/agegr/pi-web/main/docs/screenshot2.png)
+
+### バンドル拡張機能（ハイライト）
+
+- **セッション & キュー** — `session-manager`（プロジェクト横断セッションマネージャー：カンバン/タグ/アーカイブ/全文検索/fork ツール）、`queue-keeper`（キューメッセージの編集/エクスポート/割り込み）、`aiti-recovery`（中断セッションの復旧ウィザード）ほか
+- **Git ツールチェーン** — `aiti-git-ops`（コミットグラフ、AI グループ化コミット計画、ワークツリー）、`aiti-git-review`（Monaco diff + 行アノテーション + AI プレビュー）、`aiti-git-trace`（AI 変更追跡タイムライン）
+- **ページインジェクションデバッグ（aiti-devtools）** — ローカル Web アプリ内での AI デバッグ：8 ドメイン 42 コマンドの CDP 風コマンドセット、Inspector、AI エージェントとページを繋ぐ MCP ブリッジ
+- **マルチエージェントバックエンド** — Claude Code、Codex、Cursor、Qoder、ZCode、OpenCode、Kimi、Gemini など（CLI + ACP ドライバー）、ログイン状態の統一管理、サブエージェント艦隊
+- **モデル & 使用量** — モデルウィザード（カタログ検索/マルチキーローテーション/集約）、429 検出付き可用性プローブ、残高・使用量レポート
+- **運用インフラ** — `service-tunnels`（DNS/トンネル経由のローカルポート共有 + 認証）、オンラインレジストリ付き拡張機能マネージャー、設定のバージョン管理 + クラッシュ自己診断、VNC UI 環境ほか約 40 機能
+
+ワークベンチに加え、[aiti エコシステム](https://aiti.pw/)は Vite/Vue/Next/React/Svelte 向けページインジェクション SDK、Chrome & IDE 拡張、MCP ブリッジ/サーバー（任意の AI エージェントから IDE ウィンドウへ）、ワンコマンドの Docker イメージ（core/full）を提供します。
 
 ## 機能
 
@@ -22,7 +39,7 @@
 Pi Web には Node.js 22.19.0 以降が必要です。`node --version` でバージョンを確認してから、次を実行します：
 
 ```bash
-npx @agegr/pi-web@latest
+npx @aiti-ai/pi-web@latest
 ```
 
 サーバーの準備が整うと、CLI はブラウザーを自動的に開こうとします。開かない場合は [http://127.0.0.1:30141](http://127.0.0.1:30141) にアクセスしてください。Pi Web はデフォルトで `127.0.0.1` のみをリッスンします。
@@ -32,7 +49,7 @@ npx @agegr/pi-web@latest
 `pi-web` コマンドをグローバルにインストールする場合：
 
 ```bash
-npm install -g @agegr/pi-web@latest
+npm install -g @aiti-ai/pi-web@latest --allow-scripts
 pi-web
 ```
 
@@ -46,7 +63,7 @@ pi-web open [--port N]  # 実行中のサーバーをブラウザーで開く
 pi-web update [--check] # グローバル npm インストールを更新
 ```
 
-更新時は `pi-web stop` を実行してから `pi-web update` を実行します（同じインストールコマンドの再実行でも構いません）。アンインストールするには `npm uninstall -g @agegr/pi-web` を実行します。
+更新時は `pi-web stop` を実行してから `pi-web update` を実行します（同じインストールコマンドの再実行でも構いません）。アンインストールするには `npm uninstall -g @aiti-ai/pi-web` を実行します。
 
 ## 設定
 
@@ -101,7 +118,7 @@ macOS または Linux：
 HTTP_PROXY=http://127.0.0.1:7890 \
 HTTPS_PROXY=http://127.0.0.1:7890 \
 NO_PROXY=localhost,127.0.0.1 \
-npx @agegr/pi-web@latest
+npx @aiti-ai/pi-web@latest
 ```
 
 Windows PowerShell：
@@ -110,7 +127,7 @@ Windows PowerShell：
 $env:HTTP_PROXY = "http://127.0.0.1:7890"
 $env:HTTPS_PROXY = "http://127.0.0.1:7890"
 $env:NO_PROXY = "localhost,127.0.0.1"
-npx @agegr/pi-web@latest
+npx @aiti-ai/pi-web@latest
 ```
 
 ## 注意事項
@@ -119,7 +136,7 @@ npx @agegr/pi-web@latest
 - **ファイルシステムへのアクセス**：Pi Web はエージェントデータディレクトリと、セッションに記録された作業ディレクトリを読み取れる必要があります。既存の pi セッションを共有する場合は、pi と同じファイルシステム環境で Pi Web を実行してください。
 - **共有設定**：Models パネルは pi のモデル、設定、認証情報ストレージを使用するため、変更は両方のインターフェースに反映されます。開いているセッションでは、保存したモデルの変更はそのモデルを選び直したときに適用されます。
 - **ファイルアクセスの範囲**：ファイルブラウザーは、Pi Web で選択した作業ディレクトリと、既知のプロジェクトまたはセッションルートに限定されます。汎用のファイルシステムブラウザーではありません。
-- **Git worktree**：スイッチャーの表示条件、worktree の作成、削除時の動作については [Worktrees in Pi Web](./worktrees.md) を参照してください。
+- **Git worktree**：スイッチャーの表示条件、worktree の作成、削除時の動作については [Worktrees in Pi Web](https://github.com/aiti-ai/aiti-ai/blob/main/docs/worktrees.md) を参照してください。
 - **連携フック**：Pi Web を組み込むアプリはセッション行のコンテキストメニューを置き換えられ、サーバー側の pi 拡張機能はセッションのアイドル終了を防げます。[Integration Hooks](./integrations.md) を参照してください。
 
 ## 開発
@@ -139,9 +156,9 @@ npm run lint
 
 通常の開発中は `next build` または `npm run build` を実行しないでください。`.next/` に書き込まれ、開発サーバーに影響する可能性があります。ビルドはリリース作業時にのみ実行してください。
 
-新機能に取りかかる前に、[Contributing](../CONTRIBUTING.md) で対象範囲とプルリクエスト前のチェック項目を確認してください。
+新機能に取りかかる前に、[Contributing](https://github.com/aiti-ai/aiti-ai/blob/main/CONTRIBUTING.md) で対象範囲とプルリクエスト前のチェック項目を確認してください。
 
-コントリビューター向けガイド：[Internationalization](./i18n.md) と [Release process](./release.md)。
+コントリビューター向けガイド：[Internationalization](https://github.com/aiti-ai/aiti-ai/blob/main/docs/i18n.md) と [Release process](https://github.com/aiti-ai/aiti-ai/blob/main/docs/release.md)。
 
 ## リポジトリ構成
 
@@ -156,8 +173,8 @@ docs/            ユーザーおよびコントリビューター向けの個別
 demo/            GitHub Pages で公開する静的デモ（demo/README.md を参照）
 ```
 
-アーキテクチャの説明、API ルート、トピックノートについては [AGENTS.md](../AGENTS.md) を参照してください。
+アーキテクチャの説明と詳細なファイルマップについては [AGENTS.md](https://github.com/aiti-ai/aiti-ai/blob/main/AGENTS.md) を参照してください。
 
 ## ライセンス
 
-[MIT](../LICENSE)
+[MIT](https://github.com/aiti-ai/aiti-ai/blob/main/LICENSE)

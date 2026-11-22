@@ -176,6 +176,8 @@ export interface AgentSessionLike {
       readonly systemPrompt?: string;
       thinkingLevel?: string;
       streamingMessage?: PiAgentMessage;
+      /** Live transcript array; to change the system prompt, rewrite the leading system message's content. */
+      readonly messages?: PiAgentMessage[];
       /** The declared tools, with the descriptions `prepareLoadout` hooks set for the model. */
       readonly tools?: readonly { readonly name: string; readonly description: string; readonly executionMode?: "parallel" | "sequential" }[];
     };

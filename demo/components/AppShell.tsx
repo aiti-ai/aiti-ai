@@ -2133,6 +2133,7 @@ export function AppShell() {
                   loading={systemInfoLoading}
                   prompt={systemPrompt}
                   translate={translate}
+                  onClose={() => setActiveTopPanel(null)}
                 />
               )}
               {activeTopPanel === "tools" && (
@@ -2140,6 +2141,7 @@ export function AppShell() {
                   loading={systemInfoLoading}
                   tools={systemTools}
                   translate={translate}
+                  onClose={() => setActiveTopPanel(null)}
                 />
               )}
               {activeTopPanel === "session" && (

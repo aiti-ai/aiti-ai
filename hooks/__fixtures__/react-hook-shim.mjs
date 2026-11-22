@@ -63,3 +63,19 @@ export function renderHook(hook, props) {
     unmount() { for (const entry of instance.slots) if (entry?.effect) entry.cleanup?.(); },
   };
 }
+
+// JSX-related exports (hook tests never render; these only need to exist so
+// JSX-compiled modules can resolve their react imports).
+export function createContext(defaultValue) {
+  const ctx = { defaultValue, _current: defaultValue };
+  ctx.Provider = function Provider(props) { ctx._current = props.value; return null; };
+  return ctx;
+}
+export function createElement(type, props, ...children) {
+  return { type, props: { ...props, children: children.length === 1 ? children[0] : children }, key: props?.key ?? null };
+}
+export function useContext(ctx) {
+  return ctx?._current ?? ctx?.defaultValue ?? null;
+}
+export function forwardRef(render) { return render; }
+export const Fragment = (props) => props?.children ?? null;

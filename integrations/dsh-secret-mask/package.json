@@ -1,0 +1,59 @@
+{
+  "name": "@aiti-ai/dsh-secret-mask",
+  "version": "0.3.1",
+  "description": "Paste-safe by default — session-level secret redaction for DSH (DeepSeek Harness): values pasted into prompts become opaque rsec_<hash8> tokens before a step enters the model and are restored inside whitelisted tool arguments before execution; unresolved tokens are guarded; sensitive-key extraction and a weak-password dictionary catch low-entropy passwords; tool results are redacted at tools/post-execute and an opt-in llm/stream audit proves no raw value reaches the provider. Detection/placeholder engine shared with the pi editions via @aiti-ai/secret-mask-core.",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "secrets",
+    "redaction",
+    "privacy",
+    "dlp"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "src",
+    "lib",
+    "cordis.patch.yml",
+    "THIRD-PARTY-NOTICES.md"
+  ],
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "node tools/build.mjs",
+    "test": "node --test"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/schemastery": "*"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "integrations/dsh-secret-mask"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "devDependencies": {
+    "@aiti-ai/secret-mask-core": "^0.4.0"
+  },
+  "engines": {
+    "dsh": ">=0.1.1-rc.0"
+  },
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  },
+  "contentHash": "bfc5773c88957da4"
+}

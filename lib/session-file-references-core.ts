@@ -1,5 +1,5 @@
-import type { SUBAGENT_CONTROL_TOOL_NAMES } from "./subagents";
-import type { SessionEntry, ToolResultMessage } from "./types";
+import type { SUBAGENT_CONTROL_TOOL_NAMES } from "./subagents.ts";
+import type { SessionEntry, ToolResultMessage } from "./types.ts";
 
 // Spelled out rather than imported: subagents.ts loads the SDK, and this module stays
 // importable on its own. The type rejects a name subagents.ts no longer registers.

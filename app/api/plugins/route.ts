@@ -417,6 +417,8 @@ export async function GET(req: Request) {
 }
 
 // POST /api/plugins body: { action, source?, scope?, cwd }
+// Query form: body with only cwd (no action) returns the plugin list, same semantics as GET ?cwd=;
+// cwd travels in the JSON body instead of the URL (kept out of access/proxy logs); new code should use POST.
 // enable/disable also take { packages: [{ source, scope }] } in place of
 // source/scope and add per-package `results` to the response.
 export async function POST(req: Request) {
@@ -435,6 +437,15 @@ export async function POST(req: Request) {
       packages?: unknown;
       cwd?: string;
     };
+    if (!body.action) {
+      // Query branch (no action): cwd is required; behaves like GET ?cwd=
+      if (!body.cwd) return NextResponse.json({ error: "cwd required" }, { status: 400 });
+      const allowedRoots = await getAllowedFileRoots();
+      if (!isExistingFilePathAllowed(body.cwd, allowedRoots)) {
+        return NextResponse.json({ error: "Access denied" }, { status: 403 });
+      }
+      return NextResponse.json(await readPlugins(body.cwd));
+    }
     if (!body.cwd) return NextResponse.json({ error: "cwd required" }, { status: 400 });
     if (!body.action) return NextResponse.json({ error: "action required" }, { status: 400 });
     const allowedRoots = await getAllowedFileRoots();

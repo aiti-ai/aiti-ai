@@ -3,8 +3,10 @@ import {
   isEventIncludedInSnapshot,
   toClientAgentEvent,
   type AgentEventLike,
-} from "./agent-event-wire";
-import type { DebugEventStream } from "./debug-types";
+} from "./agent-event-wire.ts";
+import { acquireSessionLivenessLease } from "./session-liveness.ts";
+import { withoutMessageSignatures } from "./message-signatures.ts";
+import type { DebugEventStream } from "./debug-types.ts";
 
 export interface AgentEventStreamSession {
   readonly isStreaming: boolean;
@@ -12,6 +14,9 @@ export interface AgentEventStreamSession {
   isAlive?(): boolean;
   isExtensionShutdownRequested?(): boolean;
   onEvent(listener: (event: AgentEventLike) => void): () => void;
+  /** Busy state (same accounting as the /api/agent/running set, including busy states beyond isStreaming such as compaction/queued follow-up rounds).
+   *  Optional: when absent, the connected frame falls back to isStreaming. */
+  isRunning?(): boolean;
 }
 
 /**
@@ -29,9 +34,9 @@ export interface AgentEventStreamSession {
  * this app never triggers (issue #923).
  *
  * The limit also has to absorb what a healthy client on a slow link has in
- * flight: one `read` of an image emits its base64 in the tool result's
- * `message_end` (its `message_start` goes as the role only), and that queues
- * up while earlier events are still being written to the socket.
+ * flight: one `read` of an image emits its base64 twice (the tool result's
+ * `message_start` and `message_end`), and the second queues up while the first
+ * one is still being written to the socket.
  */
 const STREAM_HIGH_WATER_MARK_BYTES = 512 * 1024;
 const DEFAULT_BACKLOG_LIMIT_BYTES = 16 * 1024 * 1024;
@@ -164,6 +169,64 @@ function errorMessage(error: unknown): string {
 }
 
 /**
+ * Lazy (pending-start) session handle (2026-09-15):
+ *
+ * Opening a session page no longer cold-starts the full runtime (viewing alone shouldn't spin up an
+ * agent); when no wrapper exists yet, this handle readies itself in an "idle" shape — SSE sends
+ * connected immediately (otherwise the client's 60s readiness timeout would misjudge the session as
+ * rejected); the real wrapper is brought up by later real interactions (send/steer etc.) and attaches
+ * via the waitForSession callback, its events forwarded to the stream through this handle.
+ *
+ * Lifecycle: createAgentEventStream calls the unsubscribe returned by onEvent on stream cleanup;
+ * this handle uses that to stop both the wait and the real subscription.
+ */
+export function createPendingAgentSessionHandle(
+  waitForSession: (onReady: (session: AgentEventStreamSession) => void) => () => void,
+): AgentEventStreamSession {
+  const listeners = new Set<(event: AgentEventLike) => void>();
+  let stopWaiting: (() => void) | null = null;
+  let detach: (() => void) | null = null;
+  let released = false;
+
+  const release = () => {
+    if (released) return;
+    released = true;
+    stopWaiting?.();
+    stopWaiting = null;
+    detach?.();
+    detach = null;
+    listeners.clear();
+  };
+
+  const attach = (session: AgentEventStreamSession) => {
+    if (released) return;
+    detach = session.onEvent((event) => {
+      for (const listener of listeners) {
+        try { listener(event); } catch { /* one failing listener doesn't affect the others */ }
+      }
+    });
+  };
+
+  return {
+    isStreaming: false,
+    streamingMessage: undefined,
+    // When the connected frame is served, nothing is really running (the session was opened just to view);
+    // once the wrapper appears, its event stream carries agent_start/agent_settled and other state
+    // frames, so no synthesis is needed here.
+    isRunning: () => false,
+    onEvent(listener) {
+      if (released) return () => {};
+      listeners.add(listener);
+      if (!stopWaiting) stopWaiting = waitForSession(attach);
+      return () => {
+        listeners.delete(listener);
+        if (listeners.size === 0) release();
+      };
+    },
+  };
+}
+
+/**
  * Open the SSE transport immediately, then publish the session snapshot only
  * after the agent is ready and its event listener has been installed.
  * `meta` (the page's id, the request's reported address and browser label) only labels the
@@ -183,6 +246,7 @@ export function createAgentEventStream(
       let closed = false;
       let heartbeat: ReturnType<typeof setInterval> | null = null;
       let unsubscribe: (() => void) | null = null;
+  let releaseLease: () => void = () => {}; // set when the session subscribes (fork liveness lease)
       let abortHandler: (() => void) | null = null;
       // Latest `tool_execution_update` per tool call id, waiting for the flush.
       const pendingToolUpdates = new Map<unknown, AgentEventLike>();
@@ -204,6 +268,7 @@ export function createAgentEventStream(
         if (heartbeat !== null) clearInterval(heartbeat);
         if (toolUpdateTimer !== null) clearTimeout(toolUpdateTimer);
         pendingToolUpdates.clear();
+        releaseLease();
         unsubscribe?.();
         unsubscribe = null;
         if (abortHandler) req.signal.removeEventListener("abort", abortHandler);
@@ -214,6 +279,9 @@ export function createAgentEventStream(
         }
       };
       cancelStream = cleanup;
+      // Fork: the stream holds a session-liveness lease while subscribed (the
+      // idle reaper must not tear down a wrapper a visible page is watching).
+      releaseLease = acquireSessionLivenessLease(sessionId).release;
       activeStreamClosers.add(cleanup);
 
       const backlogLimitBytes = resolveBacklogLimitBytes();
@@ -286,7 +354,15 @@ export function createAgentEventStream(
       const forwardEvent = (event: AgentEventLike, snapshot: unknown) => {
         if (isEventIncludedInSnapshot(event, snapshot)) return;
         const clientEvent = toClientAgentEvent(event);
-        if (clientEvent) sendClientEvent(clientEvent);
+        if (clientEvent) {
+          // Deep-clone message_start events to prevent the shared .content array
+          // (shallow-copied from the agent's live partialMessage) from being mutated
+          // by subsequent thinking_delta events before JSON.stringify serializes it.
+          const safeEvent = clientEvent.type === "message_start"
+            ? { ...clientEvent, message: structuredClone(clientEvent.message) }
+            : clientEvent;
+          sendClientEvent(safeEvent);
+        }
       };
 
       const publishSession = async () => {
@@ -329,11 +405,32 @@ export function createAgentEventStream(
           }
           unsubscribe = stopListening;
 
-          const snapshot = session.streamingMessage;
+          // Deep-clone the snapshot to decouple from the live streamingMessage
+          // whose .content array is shared with the agent's partialMessage and
+          // gets mutated in-place by subsequent thinking_delta events.
+          const rawSnapshot = session.streamingMessage;
+          const snapshot = (rawSnapshot !== undefined && rawSnapshot !== null)
+            ? withoutMessageSignatures(structuredClone(rawSnapshot))
+            : rawSnapshot;
+          // Canonical id echo: when the handle resolved from an alias/placeholder id (zcode:new-* etc.)
+          // has been rebound to the real composite id, tell the client via the connected frame —
+          // session_backend_ready is a one-shot event and streams that (re)connect after the rebind
+          // miss it forever, leaving the client pinned to the alias id (the sidebar would show two
+          // rows for the same session: the real one + the draft one). The wrapper carries sessionId,
+          // the extension handle carries id; echo only when obtainable and different from the requested id.
+          const asIded = session as { sessionId?: unknown; id?: unknown };
+          const canonicalId = typeof asIded.sessionId === "string" && asIded.sessionId
+            ? asIded.sessionId
+            : typeof asIded.id === "string" && asIded.id ? asIded.id : undefined;
           encode({
             type: "connected",
             sessionId,
+            ...(canonicalId && canonicalId !== sessionId ? { canonicalSessionId: canonicalId } : {}),
             isStreaming: session.isStreaming,
+            // Lets the frontend restore the "running" state immediately on reconnect/new page — isStreaming
+            // misses busy states such as mid-compaction (a manual compact aborts first, the run is no longer
+            // active), which would render as "shown as not running".
+            isRunning: session.isRunning?.() ?? session.isStreaming,
             // onEvent() has just replayed every request the session still holds,
             // so a reconnecting client can drop the ones closed while it was away.
             pendingExtensionUiIds: bufferedEvents
@@ -341,9 +438,25 @@ export function createAgentEventStream(
               .map((event) => event.id as string),
           });
           info.connectedAt = Date.now();
-          for (const event of bufferedEvents) forwardEvent(event, snapshot);
+          // [Root-cause fix for duplicated first characters] Events in the buffer (arriving between
+          // listener installation and snapshot publication) are already fully reflected in the snapshot
+          // (a clone of the live partialMessage): pi applies deltas to partialMessage before emitting
+          // message_update. If the buffer were replayed first and the snapshot sent after, the frontend
+          // would stitch the replayed deltas, then get overwritten by the snapshot, then stitch the
+          // rAF-flushed batch deltas on top of the snapshot → duplicated content at the start of the
+          // stream ("duplicated first letter/word"), only corrected by the full overwrite at
+          // thinking_end/text_end. Therefore: with a snapshot present, only non-content events are
+          // replayed (state events like agent_start); content events (message_update/message_start)
+          // always defer to the snapshot; only when there is no snapshot (streamingMessage not yet
+          // established) is the buffer replayed to rebuild.
           if (snapshot !== undefined && snapshot !== null) {
-            forwardEvent({ type: "message_start", message: snapshot }, undefined);
+            for (const event of bufferedEvents) {
+              if (event.type === "message_update" || event.type === "message_start") continue;
+              forwardEvent(event, rawSnapshot);
+            }
+            encode({ type: "message_start", message: snapshot });
+          } else {
+            for (const event of bufferedEvents) forwardEvent(event, rawSnapshot);
           }
           snapshotPublished = true;
         } catch (error) {
@@ -367,6 +480,13 @@ export function createAgentEventStream(
       }
       req.signal.addEventListener("abort", abortHandler, { once: true });
 
+      // The heartbeat must be a perceivable data event, not a comment line: comment lines (":\n\n")
+      // don't trigger EventSource.onmessage, so the client can't use them to judge channel liveness
+      // and would fall back to high-frequency state polling. A data event lets the client reliably
+      // treat "silence past the threshold" as a dead channel. droppable (upstream): under backpressure
+      // the heartbeat is the first thing to drop — liveness resumes with the next real event.
+      // (Event type "heartbeat" per upstream; the fork's AgentEventConnection refreshes its
+      // activity stamp on it just the same.)
       heartbeat = setInterval(() => encode({ type: "heartbeat" }, { droppable: true }), AGENT_EVENT_HEARTBEAT_MS);
 
       // Force the response headers through without claiming that the agent is

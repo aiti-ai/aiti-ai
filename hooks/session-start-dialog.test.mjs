@@ -7,7 +7,12 @@ import { createJiti } from "jiti";
 // and get_commands waits for session_start. A fresh composer holds the stream while get_commands
 // is out and lets go of it after, so a background tab that only typed "/" holds no connection.
 const shimPath = fileURLToPath(new URL("./__fixtures__/react-hook-shim.mjs", import.meta.url));
-const jiti = createJiti(import.meta.url, { tsconfigPaths: true, alias: { react: shimPath } });
+// Fork i18n layer: the import chain crosses useI18n.tsx, so the JSX syntax
+// plugin plus the fork's jsx-runtime and i18n stubs are required (same pattern
+// as hooks/agent-phase.test.mjs).
+const jsxRuntimeShimPath = fileURLToPath(new URL("./__fixtures__/react-jsx-runtime-shim.mjs", import.meta.url));
+const i18nStubPath = fileURLToPath(new URL("./__fixtures__/use-i18n-stub.mjs", import.meta.url));
+const jiti = createJiti(import.meta.url, { jsx: { runtime: "automatic" }, alias: { react: shimPath, "react/jsx-runtime": jsxRuntimeShimPath, "@/hooks/useI18n": i18nStubPath, "@": process.cwd() } });
 const { renderHook } = await import(pathToFileURL(shimPath).href);
 const { useAgentSession } = await jiti.import("./useAgentSession.ts");
 

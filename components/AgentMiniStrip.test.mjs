@@ -58,13 +58,13 @@ test("the Main agent chip sits outside the scrolling members, and only the curre
 
 test("the padlock sits after the scrolling members and says whether the strip is locked", () => {
   const unlocked = [...render("b").matchAll(/<button[^>]*>/g)].map(([tag]) => tag).at(-1);
-  assert.match(unlocked, /aria-label="Lock: show this strip on the main agent too"/);
+  assert.match(unlocked, /aria-label="Show this strip on the main agent too"/);
   assert.match(unlocked, /aria-pressed="false"/);
-  assert.match(unlocked, /title="Lock: show this strip on the main agent too"/);
+  assert.match(unlocked, /title="Show this strip on the main agent too"/);
 
   const locked = [...render("b", true).matchAll(/<button[^>]*>/g)].map(([tag]) => tag).at(-1);
   assert.match(locked, /aria-pressed="true"/);
-  assert.match(locked, /title="Unlock: show this strip only in a subagent or side chat"/);
+  assert.match(locked, /title="Show this strip only in a subagent or side chat"/);
   assert.ok(render("b").lastIndexOf("<button") > render("b").indexOf('class="tabbar-scroll"'));
 });
 

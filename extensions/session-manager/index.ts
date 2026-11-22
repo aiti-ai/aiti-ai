@@ -1,0 +1,1346 @@
+/**
+ * session-manager extension entry.
+ *
+ * Cross-project session management: flat all-sessions panel (running first,
+ * then recently completed, paginated + search + tag filter), tag tree with
+ * colors, favorites, top-bar tag area, tag manager, kanban-ready data model.
+ *
+ * See docs/all-sessions-panel.zh-CN.md. Framework contract: lib/ext/types.ts.
+ */
+import { api } from "./server/api.ts";
+import { readTagData } from "./server/tags-store.ts";
+import { runtime, syncIndex, runArchive, loadSettings, saveSettings, closeRuntime, type ExtCoreLike } from "./server/runtime.ts";
+import { bindActivityPublisher, publishSessionActivity, resetActivityBusState } from "./server/activity-bus.ts";
+import { ensureProviders, resolveExtId } from "./server/ext-sources.ts";
+import { requestIndexVacuum } from "./lib/session-index-async.ts";
+import { dirname, join } from "node:path";
+import { enrichForSession, probePlanSvc, writeAgentToolsKillswitch } from "./server/session-enrich.ts";
+
+let archiveTimer: ReturnType<typeof setInterval> | null = null;
+let smConfigDir = ""; // services.tags 出口用（startup 时填充）
+let smCoreRef: ExtCoreLike | null = null; // agentTools 懒同步用（startup 存 / shutdown 清）
+let lastToolSyncAt = 0; // agentTools 懒同步节流（5s 内不重复 sync）
+let smServicesGet: ((key: string) => unknown) | null = null; // enrich consumes aiti-plan-first.plans (the execute closure has no ctx; startup pins the lookup fn)
+
+// ── session-search tools（docs/pi-session-search-tools-plan.md §4）────────────
+// 给 pi 会话注入的只读检索工具：scope 三档（current/pi/all）+ 单/多 session id。
+// 数据 = session-manager 全家桶索引（SQLite FTS5 trigram，readOnly 查询，永不写）。
+// execute 每次现取 runtime(smConfigDir).index（不固化 db 句柄，reload 后 closed-db
+// 安全）；查前懒同步（syncIndex 增量 stat，5s 节流）保证刚压缩的内容可搜。
+
+/** Execute 闭包内现取索引门面（runtime Map 缓存；closeRuntime 后惰性重建）。 */
+function toolIndex() {
+  return runtime(smConfigDir).index;
+}
+
+/** 懒同步：5s 节流的增量 stat 比对（core.listSessions 自带 5s 扫描缓存，轻量）；
+ *  core 缺席（shutdown 后）或失败静默——检索退化为索引快照，不致命。 */
+async function lazySync(): Promise<void> {
+  if (!smConfigDir || !smCoreRef) return;
+  if (Date.now() - lastToolSyncAt < 5000) return;
+  try {
+    await syncIndex(smConfigDir, smCoreRef);
+    lastToolSyncAt = Date.now();
+  } catch { /* 快照语义，同步失败不阻塞查询 */ }
+}
+
+/** scope 参数归一（契约 §3）："current"|"pi"|"all"|单 id（uuid/前缀/path）|id 数组。 */
+function resolveScope(raw: unknown, currentSid: string): { ok: true; agents?: string[]; ids?: string[] } | { ok: false; error: string } {
+  const idx = toolIndex();
+  const scope = raw === undefined || raw === null || raw === "" ? "all" : raw;
+  if (Array.isArray(scope)) {
+    const r = idx.resolveSessionRefs(scope.map(String));
+    if (!r.ids.length) return { ok: false, error: `no session matched: ${r.unresolved.join(", ") || "(empty)"}` };
+    if (r.unresolved.length) return { ok: false, error: `ambiguous or unknown session refs: ${r.unresolved.join(", ")}（resolved: ${r.ids.join(", ")}）` };
+    return { ok: true, ids: r.ids };
+  }
+  const s = String(scope);
+  if (s === "current") {
+    if (!currentSid) return { ok: false, error: "scope=current unavailable: no session id bound to this conversation" };
+    return { ok: true, ids: [currentSid] };
+  }
+  if (s === "pi") return { ok: true, agents: ["pi"] };
+  if (s === "all") return { ok: true };
+  // 单 ref：uuid / uuid 前缀 / jsonl 绝对路径
+  const r = idx.resolveSessionRefs([s]);
+  if (r.ids.length === 1) return { ok: true, ids: r.ids };
+  return { ok: false, error: r.unresolved.length ? `no unique session matched "${s}"（ambiguous prefix or unknown id/path）` : `no session matched "${s}"` };
+}
+
+// ── enrich (docs/pi-session-search-enrich-tags-plan.md §3, 1:1 with the TUI-side pi-session-search) ──
+// Implementation lives in server/session-enrich.ts (injectable deps, directly testable); this module keeps
+// only a thin shell of state: planSvc probe (startup-pinned services.get first, byId fallback) + the enrich call.
+const planSvc = () => probePlanSvc(smServicesGet);
+const enrich = (sids: string[]) => enrichForSession(sids, smConfigDir, readTagData, planSvc());
+
+function sessionSearchTool(currentSid: string) {
+  return {
+    name: "session_search",
+    label: "session_search",
+    promptSnippet: "Search past sessions (session_search) and read their messages (session_read)",
+    promptGuidelines: [
+      "Use session_search when earlier conversation context was compacted away and you need details or decisions from the compacted part — search scope \"current\" first.",
+      "Use session_search when the user refers to previous sessions or past work (\"上次\", \"之前\", \"we discussed ...\").",
+      "Narrow iteratively: search scope \"all\" to locate candidates, then scope [ids] to refine, then session_read to pull the user's original requests.",
+    ],
+    description:
+      "Search past conversation history across all agents on this machine (pi, claude, codex, opencode, zcode, kimi, gemini, cursor, ...) by keyword. " +
+      "Use it when earlier context was compacted away, when the user refers to previous discussions or past work, or to find out how something was done before. " +
+      "Returns one hit per matching session (session id, agent, title, time, snippet). Follow up with session_read to pull full messages. " +
+      "CJK queries need >= 3 characters (trigram index); shorter queries fall back to substring match.",
+    parameters: {
+      type: "object",
+      properties: {
+        q: { type: "string", description: "Keyword or phrase; multi-word natural language and \"quoted exact phrases\" work. Chinese needs >= 3 chars." },
+        scope: {
+          type: ["string", "array"],
+          description: "Search range: \"current\" (this conversation only — use for recovering compacted-away context) | \"pi\" (pi sessions only) | \"all\" (default, every agent) | one session id (uuid, uuid prefix, or session jsonl path) | array of session ids to narrow a previous search",
+          items: { type: "string" },
+        },
+        agent: { type: "string", description: "Optional agent family filter: pi | claude | codex | opencode | zcode | kimi | gemini | cursor | ..." },
+        cwd: { type: "string", description: "Optional project directory prefix filter" },
+        role: { type: "string", enum: ["user", "assistant"], description: "Optional message role filter" },
+        limit: { type: "number", description: "Max sessions in result (default 8, cap 50)" },
+      },
+      required: ["q"],
+    },
+    async execute(_id: string, params: { q: string; scope?: unknown; agent?: string; cwd?: string; role?: string; limit?: number }) {
+      await lazySync();
+      const idx = toolIndex();
+      const scoped = resolveScope(params.scope, currentSid);
+      if (!scoped.ok) return { content: [{ type: "text", text: `session_search failed: ${scoped.error}` }], isError: true } as never;
+      const agents = scoped.agents ?? (params.agent ? [params.agent] : undefined);
+      const hits = idx.searchSessions(String(params.q ?? ""), {
+        agents,
+        sessionIds: scoped.ids,
+        role: params.role,
+        cwdPrefix: params.cwd ? String(params.cwd) : undefined,
+        limit: params.limit,
+      });
+      if (!hits.length) {
+        return { content: [{ type: "text", text: `no session matched query "${params.q}"（scope=${Array.isArray(params.scope) ? "[ids]" : String(params.scope ?? "all")}${agents ? `, agent=${agents.join("/")}` : ""}）. Try a different keyword, scope "all", or a >= 3-char Chinese phrase.` }] } as never;
+      }
+      const extraMap = enrich(hits.map((h) => h.sessionId));
+      const lines = hits.map((h, i) => {
+        const extra = extraMap.get(h.sessionId);
+        return `${i + 1}. ${h.sessionId} [${h.agent ?? "?"}]${h.title ? ` «${h.title}»` : ""} ${h.modified}${h.archived ? " (archived)" : ""}\n   cwd: ${h.cwd}${extra ? `\n   ${extra.replace(/\n/g, "\n   ")}` : ""}\n   ${h.role}@${h.ts ?? "?"}: ${h.text.replace(/\s+/g, " ").slice(0, 200)}\n   entry: ${h.entryId}`;
+      });
+      const text = `session_search: ${hits.length} hit(s)${scoped.ids ? ` in ${scoped.ids.length} scoped session(s)` : ""}（index synced ${new Date(lastToolSyncAt).toISOString() || "snapshot"}）\n${lines.join("\n")}\n(use session_read with the session id above; pass entry to anchor a single message)`;
+      return { content: [{ type: "text", text }] } as never;
+    },
+  };
+}
+
+function sessionReadTool(currentSid: string) {
+  return {
+    name: "session_read",
+    label: "session_read",
+    promptSnippet: "Read a past session's original messages (session_read)",
+    description:
+      "Read full messages of one past session (any agent family). Default returns the user's original messages — the fastest way to recover the user's exact earlier requests after context compaction. " +
+      "Pass entry (from session_search results) to anchor a single message; long texts are truncated at maxChars and can be continued with offset. " +
+      "session accepts \"current\" (this conversation), a session id / uuid prefix, or a session jsonl path.",
+    parameters: {
+      type: "object",
+      properties: {
+        session: { type: "string", description: '"current" | session id | uuid prefix | session jsonl absolute path' },
+        role: { type: "string", enum: ["user", "assistant", "all"], description: 'Message role filter, default "user"' },
+        limit: { type: "number", description: "Max messages per call (default 20, cap 200)" },
+        offset: { type: "number", description: "Skip first N messages (for paging through long sessions)" },
+        maxChars: { type: "number", description: "Per-message character cap before truncation (default 4000)" },
+        entry: { type: "string", description: "Anchor a single message by entry id (from session_search hits)" },
+      },
+      required: ["session"],
+    },
+    async execute(_id: string, params: { session: string; role?: string; limit?: number; offset?: number; maxChars?: number; entry?: string }) {
+      await lazySync();
+      const idx = toolIndex();
+      let ref = String(params.session ?? "").trim();
+      if (ref === "current") {
+        if (!currentSid) return { content: [{ type: "text", text: "session_read failed: \"current\" unavailable — no session id bound to this conversation" }], isError: true } as never;
+        ref = currentSid;
+      }
+      const res = idx.sessionMessages(ref, {
+        role: params.role ?? "user", // 工具契约：默认读用户输入（找回原始请求主场景）；数据层不传才返回全部
+        limit: params.limit,
+        offset: params.offset,
+        maxChars: params.maxChars,
+        entryId: params.entry,
+      });
+      if (!res) return { content: [{ type: "text", text: `session_read failed: no unique session matched "${params.session}"（use session_search to find exact ids）` }], isError: true } as never;
+      const { row, messages, total } = res;
+      if (!messages.length) return { content: [{ type: "text", text: `session ${row.id} has no matching messages（role=${params.role ?? "user"}, total=${total}）` }] } as never;
+      const extra = enrich([String(row.id)]).get(String(row.id));
+      const head = `session ${row.id} [${row.agent ?? "pi"}]${row.name ? ` «${row.name}»` : ""} cwd=${row.cwd} modified=${row.modified}${extra ? `\n${extra}` : ""}`;
+      const body = messages.map((m, i) => {
+        const label = params.entry ? "" : `[${(params.offset ?? 0) + i + 1}/${total}] `;
+        const meta = m.toolName ? ` (tool:${m.toolName})` : "";
+        const more = m.truncated ? " …continue with offset/maxChars" : "";
+        return `${label}${m.ts ?? "?"} ${m.role}${meta}: ${m.text}${more}`;
+      });
+      const text = `${head}\n${body.join("\n\n")}`;
+      return { content: [{ type: "text", text }] } as never;
+    },
+  };
+}
+
+// ── 会话活动广播（列表行数据实时化，2026-09-14；数据帧化 2026-09-15）──────────
+// 背景（用户实测「最新状态没及时更新，始终显示停止之前的状态」）：左栏列表此前只在
+// running 集变化（会话开始/结束）时刷新——会话持续运行期间消息数/modified 一路增长，
+// 却无任何刷新触发，行数据冻结在「开始运行那一刻」（实证：行显示 34 条/19 小时前，
+// 实际该会话已 300+ 条、正在跑）。修复走事件驱动：agent 每次 message_end 落盘后经
+// 总线广播 sm:session-activity，行数据随帧下发（服务端行缓存 + 事件增量更新，口径
+// 与列表组装对齐），client 直接 patch store——从「信号帧 + 收帧再拉列表」升级为
+// 「数据帧 + 零请求」。实现见 server/activity-bus.ts；总线缺席时静默（退化为原有行为，不致命）。
+
+// 命名为模块常量：server.startup 经 ext.services.* 接入 ctx.services 出口（DI 方案 P1）
+const ext = {
+  id: "session-manager",
+  name: "Session Manager",
+  icon: "icon.svg",
+  client: "dist/session-manager.mjs",
+
+  // 可选依赖（git-ops 方案 §3 软依赖）：aiti-git-ops 在位时折叠头出分支 chip + 共享面板；
+  // 缺席/禁用 → chip 防御性隐藏（refs 404 门控），本扩展其余功能零影响。
+  // aiti-app-center（应用中心，docs/aiti-app-center-plan.md）：DockStack 全折叠空白的填充物；
+  // 缺席 → 空白照旧（无应用中心），其余零影响。
+  // aiti-quickstart（快速上手）：全折叠空白的引导卡（filler 组合上半，应用中心在下）；
+  // 缺席/禁用/用户关闭 → 回退现状，其余零影响。
+  optionalDependsOn: ["aiti-git-ops", "aiti-app-center", "aiti-quickstart"],
+
+  // 功能级硬依赖（依赖与能力模型；sidebar 统一 dock 方案评审 5 拍板）：左栏整块接管
+  // 的 DockStack 区块栈容器由 aiti-float 提供（cap "aiti-float.dockstack"）。硬语义 =
+  // 本扩展启用时 aiti-float 不能被单独禁用（extman 硬阻止）——不存在「接管生效但
+  // DockStack 缺席」的运行态，故编排器无需 DockStack 缺席降级分支（代码仍保留兜底）。
+  dependsOn: ["aiti-float.dockstack"],
+
+  // AI 自管理清单：AI 能帮我归档旧会话 / 找会话 / 整理标签
+  ai: {
+    manage: true,
+    intro: "AI 能帮我归档旧会话、找到某个会话、整理会话标签",
+    skills: "skills",
+  },
+
+  // 功能管理（extman「功能管理」区块逐项启停；契约 lib/ext types.ts ExtFeature）：
+  // 顶栏搜索框默认关——全部会话面板内已有搜索，顶栏入口重复且挤占工具条空间；
+  // 客户端条目带 feature: "toolbar.search"，宿主按此过滤显隐（extman 切换即时生效）。
+  features: [
+    { id: "toolbar.search", label: "顶栏会话搜索框", description: "顶栏（含 ⋯ 菜单）的会话搜索框；全部会话面板内已有搜索", group: "界面", default: false },
+    { id: "behavior.favorite-icons", label: "收藏图标", description: "会话列表/看板/顶栏显示收藏（★）图标；关闭后收藏操作入口收敛到标签下拉的「收藏」项（标签下拉始终可用）", group: "界面", default: false },
+    { id: "behavior.session-timeline", label: "会话行时间线按钮", description: "侧栏会话行悬停操作里显示「⎇ 时间线」按钮（aiti-git-trace 打开该会话的变更时间线）；全部会话面板行「⋯」菜单的时间线入口不受此开关影响", group: "界面", default: false },
+    { id: "behavior.folder-quota", type: "string", label: "左栏文件夹区块保留数", group: "界面", value: "3", placeholder: "3",
+      description: "切换项目时自动打开的文件夹区块数量上限（未钉住的先进先出；钉住的不占配额）。默认 3，可填 1-9，非法值回落 3。在 extman「功能管理」里改。" },
+    { id: "agentTools.enabled", label: "会话检索工具（session_search / session_read）", group: "AI", default: true,
+      description: "给新建的 pi 会话注入两个只读工具：全文检索本机全部 agent 的历史会话、按会话读原始消息（压缩找回/翻旧账）。关闭后仅新建会话不再获得工具（存量会话在 wrapper 重建前仍持有）。" },
+  ],
+
+  // 跨扩展服务出口（additive，方案 aiti-doc-center-plan §4.7）：tag 词表 + 会话挂 tag 快照
+  services: {
+    get sessions() {
+      return {
+        version: 1,
+        /**
+         * 外部 agent 会话读取（唯一权威实现 = 本扩展 AgentAdapter 体系）。
+         * id = 复合 id（如 "zcode:sess_xxx"）→ { meta, messages }（IndexedMessage[]）。
+         * null = 未知 agent / 未激活源 / 解析失败。消费方（如 aiti-zcode-agent 回放）
+         * 缺席时 fail-silent，不得自行重实现各 agent 存储 读取。
+         */
+        async parseSession(id: string): Promise<{ meta: Record<string, unknown>; messages: Array<Record<string, unknown>> } | null> {
+          try {
+            await ensureProviders(smConfigDir);
+            const resolved = resolveExtId(smConfigDir, id);
+            if (!resolved) return null;
+            // 源未激活时 parse 依旧可用（读取无副作用；激活只影响索引同步面）。
+            // service: 伪路径对 DB 型 adapter（zcode/opencode 等）足够（其 parse 只认 sid）；
+            // 文件型 adapter（claude-like/codebuddy/codex）需要真实路径——首次 parse 必空，
+            // 回退 adapter.list() 按 sid 定位真实 ref（parseSession 恒走此路径，非热路径）。
+            type ParsedT = { meta: Record<string, unknown>; messages: Array<Record<string, unknown>> };
+            let parsed: ParsedT | null = null;
+            try {
+              parsed = (await resolved.adapter.parse({ sid: resolved.sid, path: `service:${id}` })) as ParsedT | null;
+            } catch {
+              parsed = null;
+            }
+            if (!parsed) {
+              try {
+                const hit = (await resolved.adapter.list()).find((r) => r.sid === resolved.sid);
+                if (hit) parsed = (await resolved.adapter.parse(hit)) as ParsedT | null;
+              } catch { /* list 不可用 → 保持 null */ }
+            }
+            return parsed;
+          } catch {
+            return null;
+          }
+        },
+        /**
+         * 已归档 session id 集合（archive 后原 jsonl 已进 .pwarc 容器，宿主 /api/sessions
+         * 扫不到 → pi-web:open-session 静默失败）。消费方（aiti-doc-center）据此把归档
+         * 会话的打开入口降级为 sm:open-archived 事件 → 本扩展 client 唤起归档查看器。
+         * sync + fail-silent（索引缺席/异常返回 []），additive 不影响既有消费方。
+         */
+        archivedIds(): string[] {
+          try {
+            return (runtime(smConfigDir).index.archivedRows() as Array<{ id: string }>).map((r) => String(r.id));
+          } catch {
+            return [];
+          }
+        },
+      };
+    },
+    get tags() {
+      return {
+        /** TagData 全量（{version, tags, sessionTags}）；version 为乐观锁，消费方做缓存 key */
+        snapshot() {
+          try { return readTagData(smConfigDir); } catch { return null; }
+        },
+      };
+    },
+  get hotwords() {
+    return {
+      async get(params = {}) {
+        try {
+          // 数据分层：configDir = <extRoot>/config，cache 在 extRoot 下
+          const dbPath = join(dirname(smConfigDir), "cache", "index.sqlite");
+          const { extractHotwordsFromDBAsync } = await import("./lib/hotwords.ts");
+          return extractHotwordsFromDBAsync(dbPath, {
+            cnCount: typeof params.cnCount === "number" ? params.cnCount : 20,
+            enCount: typeof params.enCount === "number" ? params.enCount : 20,
+            timeWeight: typeof params.timeWeight === "string" ? params.timeWeight : "none",
+            includeUser: typeof params.includeUser === "boolean" ? params.includeUser : undefined,
+            includeAi: typeof params.includeAi === "boolean" ? params.includeAi : undefined,
+            cwd: typeof params.cwd === "string" && params.cwd ? params.cwd : undefined,
+            paths: Array.isArray(params.paths) ? params.paths.filter((x: unknown) => typeof x === "string" && x) : undefined,
+          });
+        } catch (e) {
+          console.error("[session-manager] hotwords service failed:", e);
+          return { cn: [], en: [], stats: { totalMessages: 0, analyzedSessions: 0, timeRange: "none" } };
+        }
+      },
+    };
+  },
+  },
+  // 索引库瘦身（schedule hook 函数任务，aiti-ai-schedule 聚合执行——不自造轮询）：
+  // run 只做薄转发，真活在索引 worker 里跑（主线程零阻塞）；worker 不在场则本轮跳过。
+  schedules: [
+    {
+      id: "session-index-vacuum",
+      name: "会话索引库瘦身（回收删除残留空闲页，不删会话数据；长任务——经索引 worker 后台执行，主线程零阻塞）",
+      intervalSec: 86400,
+      enabled: true,
+      run: (sctx: { configDir?: string }) => {
+        const dir = sctx?.configDir || smConfigDir;
+        if (!dir) return;
+        const ok = requestIndexVacuum(join(dirname(dir), "cache", "index.sqlite"));
+        if (!ok) console.warn("[session-manager] vacuum 触发失败：索引 worker 不在场（bundle 缺失或已禁用），本轮跳过");
+      },
+    },
+  ],
+
+  server: {
+    api,
+
+    /** startup: open the index, kick the first sync off in the background, start the auto-archive timer. */
+    async startup(ctx) {
+      smConfigDir = ctx.configDir || "";
+      smCoreRef = ctx.core as ExtCoreLike | null;
+      lastToolSyncAt = 0;
+      smServicesGet = typeof ctx.services?.get === "function" ? (key: string) => ctx.services.get(key) : null;
+      // kill-switch persistence (pi-session-search B-side yield probe, docs/pi-session-search-enrich-tags-plan.md §4.2):
+      // feature switches go extman → reload → this startup rerun rewrites; new B-side sessions read the new value.
+      writeAgentToolsKillswitch(smConfigDir);
+      // 活动数据帧发布通道（总线缺席静默；帧构造/节流/行缓存见 server/activity-bus.ts）
+      bindActivityPublisher((type, data) => {
+        try {
+          const bus = ctx.services?.get?.<{ publish?: (t: string, d?: Record<string, unknown>) => void }>("aiti-event-bus.publish");
+          bus?.publish?.(type, data);
+        } catch { /* 总线缺席静默 */ }
+      });
+      // 数据分层（config/state/cache）：归档包落 state/archive（archivePackagesDir，见 session-archive.ts）；
+      // 存量迁移由部署流程的一次性脚本负责（scripts/migrate-state-tier.mjs），扩展不带运行时迁移。
+      // extDir → 索引 worker bundle 定位（dist/index-worker.mjs；缺失时门面自动回落主线程）
+      runtime(ctx.configDir, { extDir: (ctx as { dir?: string }).dir || "" }); // ensure dirs + open index
+      // 跨扩展服务出口（DI 方案 P1）：ctx.services 通道（sessions/tags 惰性 getter，
+      // 方法闭包引用模块变量，热重载/索引就绪均安全）；旧通道（__piWebExt.byId 穿透）
+      // 双轨保留至消费方迁完。hotwords 仅 ai-helper 经 HTTP 聚合，不经 services。
+      ctx.services?.provide?.("session-manager.sessions", ext.services.sessions);
+      ctx.services?.provide?.("session-manager.tags", ext.services.tags);
+      ctx.services?.provide?.("session-manager.hotwords", ext.services.hotwords); // aiti-ai-input 消费
+      // 首次同步在全量会话场景下实测 ~4s（跨项目全量扫描）：不阻塞全局 startAll（每
+      // 次扩展 reload 都会重跑），放后台执行，失败仅记日志。面板合并视图实时拉 live
+      // 会话（api mergedSessionsEndpoint），索引侧数据（归档/标签）在同步完成后几秒内
+      // 补齐——只影响本扩展自身功能的就绪速度，不影响其他扩展。
+      void syncIndex(ctx.configDir, ctx.core).catch((e) =>
+        console.error("[session-manager] background first sync failed:", e instanceof Error ? e.message : e));
+      // 帮助点已声明在 ai.helpers，由 ai-helper 主动聚合，无需在此注册
+      const settings = loadSettings(ctx.configDir);
+      if (settings.autoArchive && settings.autoArchiveIntervalH > 0) {
+        archiveTimer = setInterval(() => {
+          void runArchive(ctx.configDir, ctx.core).catch((e) => console.error("[session-manager] auto archive failed:", e));
+        }, settings.autoArchiveIntervalH * 3600 * 1000);
+        // don't hold the process open
+        if (archiveTimer.unref) archiveTimer.unref();
+      }
+    },
+
+    async shutdown(ctx) {
+      if (archiveTimer) {
+        clearInterval(archiveTimer);
+        archiveTimer = null;
+      }
+      smCoreRef = null;
+      try {
+        // closeRuntime = close + runtimes.delete：agentTools 的 execute 每次现取
+        // runtime()，不驱逐的话 reload 后会拿到已 close 的 SQLite 句柄（SQLITE_MISUSE）。
+        closeRuntime(ctx.configDir);
+      } catch { /* already closed */ }
+      // 活动广播清理：退订发布口 + 清行缓存/节流计时器（reload 后由新 startup 重注入）
+      bindActivityPublisher(null);
+      resetActivityBusState();
+    },
+
+    agent: {
+      /** 会话检索工具注入（docs/pi-session-search-tools-plan.md §4）：宿主在会话创建
+       *  时收集（agentTools.enabled feature 总开关，默认开）。返回的两个工具闭包只捕获
+       *  currentSid（字符串），db 句柄每次 execute 现取——会话存续期扩展 reload 安全。 */
+      agentTools(info?: { sessionId?: string; cwd?: string }) {
+        const sid = typeof info?.sessionId === "string" ? info.sessionId : "";
+        return [sessionSearchTool(sid), sessionReadTool(sid)];
+      },
+
+      /** 会话消息落盘 → 广播 sm:session-activity（列表行实时刷新，见 publishSessionActivity）。
+       *  ⚠ 可能被重复调用（idle GC → wrapper 重建 / 扩展 reload 重挂）——宿主订阅纪元
+       *  账本先回收上一轮订阅，本实现无需自行退订（幂等）。 */
+      onAgentSession(info?: {
+        sessionId?: string;
+        subscribeEvent?: (listener: (event: { type: string } & Record<string, unknown>) => void) => () => void;
+      }) {
+        const sid = typeof info?.sessionId === "string" ? info.sessionId : "";
+        if (!sid || typeof info?.subscribeEvent !== "function") return;
+        try {
+          info.subscribeEvent((event) => {
+            // message_end = 一条消息落盘（user/assistant/toolResult 均经此）——行数据
+            // （messageCount/modified）此刻起对下一次列表扫描可见。流式增量
+            // （message_update）刻意不触发：频率过高且行数据此刻尚未变化。
+            if (event?.type !== "message_end") return;
+            publishSessionActivity(sid, (event as { message?: unknown }).message);
+          });
+        } catch { /* subscribeEvent 不可用（旧宿主）→ 退化为 running 帧带动 */ }
+      },
+    },
+  },
+
+  ui: {
+    /** 能力接管声明（契约：pi-web lib/ext/types.ts 的 EXT_PROVIDES）：
+     *  会话删除由本扩展接管（先归档、再在归档记录上删除），
+     *  core 侧栏据此隐藏内置删除按钮。 */
+    provides: ["session-delete"],
+    toolbar: [{ id: "sessions", label: "Sessions", title: "i18n:sm.allSessions", icon: "icons/message-square.svg" }],
+    sidebar: [{ id: "sessions", label: "Sessions", title: "i18n:sm.allSessions", badge: true }],
+    sidebarProjects: [{ id: "clone", label: "项目 / Projects", title: "左侧会话列表接管（SidebarClone）" }],
+    // 左栏整块接管（sidebar 统一 dock 方案 §3.2）：AppShell 层 Header + DockStack + 底部行
+    sidebarContent: [{ id: "master", label: "i18n:feat.master", title: "i18n:feat.master.desc" }],
+    sessionTopbar: [{ id: "tags", label: "tags" }],
+    sessionRowMeta: [{ id: "session-tags", label: "i18n:feat.session-tags" }],
+    sessionRowActions: [{ id: "star", label: "star", title: "i18n:it.star.title" }],
+    workspacePickerActions: [{ id: "manage", label: "i18n:it.manage-workspaces.label" }],
+    newSessionContextTrailing: [{ id: "upload", label: "i18n:it.upload-workspace.label" }],
+    // 新建会话条 Workspace×Backend 盒子后面的尾随按钮（方案 session-manager-workspace-upload-plan.md §12）：
+    // 上传工作区捷径——上传/解压后经宿主 "pi-web.newSession" 服务 setCwd 把新会话切到解压目录；
+    // 旧宿主无此插槽/服务 → 静默降级（按钮不渲染 / 上传后仅 toast）。
+    // 新建会话「分支 / Worktree」选择器（欢迎页 Workspace×Backend 之间；方案
+    // docs/pi-web-new-session-branch-worktree-plan.md）：渲染插槽 + preparer 注册面成对声明。
+    // 旧宿主不认识这两个插槽键 → 仅多两个无人消费的声明，无害（版本错配降级）。
+    newSessionSelectors: [{ id: "picker", label: "分支 / Worktree" }],
+    newSessionPreparers: [{ id: "picker", label: "分支 / Worktree preparer" }],
+    // Welcome-page Workspace selector takeover (same project list/actions as the sidebar
+    // projects menu; picks still go through pi-web.newSession.setTarget = staged, switched after
+    // the session is created). An older host without this slot falls back to the native select.
+    newSessionWorkspacePicker: [{ id: "projects", label: "i18n:sidebar.workspacePicker" }],
+    dialogs: [{ id: "panel", label: "All sessions" }, { id: "tags-manager", label: "Tag manager" }, { id: "tag-popover", label: "Tag popover" }],
+    banners: [],
+    pages: [],
+    i18n: {
+      en: {
+        "it.sessions.label": "All Sessions",
+        "it.board.label": "Board",
+        "feat.toolbar.search.desc": "Session search box in the top bar (incl. ⋯ menu); searches all sessions",
+        "feat.behavior.favorite-icons.desc": "Shows favorite (★) icons in session lists/boards/top bar",
+        "feat.behavior.session-timeline.desc": "Shows the \"⎇ Timeline\" action in sidebar session-row hover actions",
+        "feat.behavior.folder-quota.desc": "Number of folder blocks auto-opened when switching projects",
+        "feat.agentTools.enabled.desc": "Injects two read-only tools into new pi sessions: full-text search (session_search) and session reader (session_read)",
+        "it.archived-viewer.title": "Archived Viewer",
+        "it.ext-viewer.title": "External Sessions",
+        "it.search.label": "Search sessions",
+        "it.tags.label": "Session tags",
+        "ext.displayName": "Session Manager",        "feat.toolbar.search": "Top-bar session search box",
+        "feat.behavior.favorite-icons": "Favorite icons",
+        "feat.behavior.session-timeline": "Session-row timeline button",
+        "feat.behavior.folder-quota": "Sidebar folder block retention",
+        "feat.agentTools.enabled": "Session search tools (session_search / session_read)",
+        "feat.clone": "Projects",
+        "feat.master": "Sidebar takeover",
+        "feat.master.desc": "Full left-sidebar takeover (SidebarContentDock)",
+        "feat.session-tags": "Session tags",
+        "it.star.title": "Favorite",
+        "it.manage-workspaces.label": "Manage workspaces",
+        "it.upload-workspace.label": "Upload workspace",
+        "feat.picker": "Branch / Worktree",
+        "sidebar.loading": "Loading...",
+        "sidebar.noSessions": "No sessions found",
+        "sidebar.new": "New",
+        "sidebar.newSessionTitle": "New session in {path}",
+        "sidebar.refresh": "Refresh",
+        "sidebar.hide": "Hide sidebar",
+        "sidebar.toggleSessionSearch": "Search conversations",
+        "sidebar.searchSessions": "Search all conversations...",
+        "sidebar.filterProjects": "Filter projects…",
+        "sidebar.noMatchingProjects": "No matching projects",
+        "sidebar.useDefaultDirectory": "Use default directory",
+        "sidebar.customPath": "Custom path…",
+        "sidebar.browseFolders": "Browse folders…",
+        "sidebar.browseFoldersTitle": "Open the folder browser to pick any directory",
+        "sidebar.workspacePicker": "Workspace",
+        "sidebar.newActivity": "New activity",
+        "sidebar.newSessionActivity": "New session activity",
+        "sidebar.agentRunning": "Agent running…",
+        "sidebar.messagesCount": "{count} msgs",
+        "sidebar.draft": "Draft",
+        "sidebar.draftTitle": "Not saved yet — appears once the agent replies",
+        "sidebar.rename": "Rename",
+        "sidebar.delete": "Delete",
+        "sidebar.cancel": "Cancel",
+        "sidebar.deleteSession": "Delete {title}?",
+        "sidebar.deleteWithShiftClick": "Delete (Shift+click to delete without confirmation)",
+        "sidebar.expandSubagents": "Expand sub-sessions",
+        "sidebar.collapseSubagents": "Collapse sub-sessions",
+        "sidebar.expandBranches": "Expand branch sessions",
+        "sidebar.collapseBranches": "Collapse branch sessions",
+        "sidebar.openRepoRoot": "Open repo root",
+        "sidebar.openRepoRootTitle": "Open the repository root to manage worktrees.",
+        "sidebar.gitRepoRootOnly": "Git repo root only",
+        "sidebar.gitRepoRootOnlyTitle": "Worktrees are available in Git repository roots.",
+        "sidebar.checkingWorktrees": "Checking worktrees for this directory.",
+        "sidebar.worktrees": "Worktrees...",
+        "sidebar.switchWorktree": "Switch worktree",
+        "sidebar.switchWorktreeTitle": "Switch worktree: {path}",
+        "sidebar.main": "main",
+        "sidebar.filterWorktrees": "Filter worktrees…",
+        "sidebar.noMatchingWorktrees": "No matching worktrees",
+        "sidebar.forceRemoveCheckout": "Uncommitted changes. Force remove checkout?",
+        "sidebar.force": "Force",
+        "sidebar.removeWorktreeTitle": "Remove worktree checkout {path}; the branch is kept",
+        "sidebar.createWorktreeTitle": "Create a worktree checkout for a branch",
+        "sidebar.newWorktree": "New worktree…",
+        "sidebar.branchName": "branch name",
+        "sidebar.creating": "Creating…",
+        "sidebar.create": "Create",
+        "sidebar.selectProject": "Select project…",
+        "sidebar.sessionSearching": "Searching...",
+        "sidebar.sessionSearchFailed": "Could not search conversations",
+        "sidebar.sessionSearchEmpty": "No matching conversations",
+        "sidebar.sessionSearchCount": "{count} matching conversations",
+        "sidebar.sessionSearchPartial": "Search limit reached. Results may be incomplete.",
+        "directoryPicker.selectDirectory": "Select directory",
+        "directoryPicker.goToParent": "Go to parent directory",
+        "directoryPicker.directoryPath": "Directory path",
+        "directoryPicker.editPath": "Edit path",
+        "directoryPicker.pathEditHint": "Click or type to edit the path (Alt+D / Ctrl+L)",
+        "directoryPicker.copyPath": "Copy path",
+        "directoryPicker.copied": "Path copied",
+        "directoryPicker.pathPlaceholder": "/path/to/project or ~/project",
+        "directoryPicker.goToDirectory": "Go to directory",
+        "directoryPicker.go": "Go",
+        "directoryPicker.loadingDirectories": "Loading directories…",
+        "directoryPicker.noDrives": "No drives found",
+        "directoryPicker.noSubdirectories": "No subdirectories",
+        "directoryPicker.selectCurrentDirectory": "Select current directory",
+        "directoryPicker.selectThisFolder": "Select this folder",
+        "directoryPicker.newFolder": "New folder",
+        "directoryPicker.newFolderIn": "Create a new folder in {path}",
+        "directoryPicker.folderName": "Folder name",
+        "i18n.close": "Close",
+        "i18n.cancel": "Cancel",
+        "i18n.checking": "Checking…",
+        "sm.allSessions": "All sessions",
+        "sm.dockProjects": "Projects",
+        "sm.dockProjectsHint": "Projects and sessions",
+        "sm.dockAddFolder": "Add folder to sidebar",
+        "sm.searchPlaceholder": "Search sessions…",
+        "sm.search": "Search",
+        "sm.favorites": "Favorites",
+        "sm.running": "Running",
+        "sm.runFailed": "Task failed",
+        "sm.runAborted": "Stopped",
+        "sm.runInterrupted": "Interrupted (did not finish)",
+        "sm.runFailedWithError": "Task failed: {error}",
+        "sm.runningSessions": "Running sessions",
+        "sm.noRunning": "No running sessions",
+        "sm.recent": "Recently completed",
+        "sm.openAll": "Open all sessions",
+        "sm.viewer.pickHint": "Opened from App Center without a session target — pick a session in All Sessions to view it here.",
+        "sm.noSessions": "No sessions yet",
+        "sm.noResults": "No matching sessions",
+        "sm.loading": "…",
+        "sm.loadMore": "Load more (+{n})",
+        "sm.favorite": "Favorite",
+        "sm.unfavorite": "Unfavorite",
+        "sm.addTag": "Add tag…",
+        "sm.tagPlaceholder": "tag, another/tag",
+        "sm.manageTags": "Manage tags…",
+        "sm.pageOf": "{page} / {pages}",
+        "sm.prev": "Prev",
+        "sm.next": "Next",
+        "sm.allTags": "All",
+        "sm.session": "Session: {id}",
+        "sm.noSession": "New session",
+        "sm.tags": "Tags",
+        "sm.newTag": "New tag",
+        "sm.newChild": "Add child",
+        "sm.rename": "Rename",
+        "sm.autoName": "Generate name",
+        "sm.autoNameFailed": "Auto-name failed",
+        "sm.autoNameBridged": "This session is owned by a terminal (TUI); auto name generation is unavailable while the terminal holds it. Please rename it manually.",
+        "sm.move": "Move to…",
+        "sm.moveTitle": "Move session",
+        "sm.moveTarget": "Target directory (cwd)",
+        "sm.moveHint": "Rewrites the session's cwd and relocates its file into the target project. History, favorites and tags are kept; the session id stays the same.",
+        "sm.moveConfirm": "Move",
+        "sm.detectCwd": "Detecting this session's real project directory…",
+        "sm.detectFiles": "{n} files touched",
+        "sm.detect": "Detected",
+        "sm.cur": "cur",
+        "sm.moveBatch": "Move selected to…",
+        "sm.moveBatchDefault": "Default target directory (cwd)",
+        "sm.moveBatchHint": "Set a default target; each row can override it individually. Running sessions are skipped.",
+        "sm.moveBatchDone": "Moved {count} session(s)",
+        "sm.moveBatchSkip": "{n} session(s) not movable (external agent / archived) skipped",
+        "sm.moveFailed": "Move failed",
+        "sm.uploadWorkspace": "Upload workspace",
+        "sm.acquireWorkspace": "Acquire workspace…",
+        "sm.acquireWorkspaceTitle": "Acquire a workspace: Git clone / upload archive / local directory / new empty folder",
+        "sm.uploadSwitchHint": "Extracted — pick it in the workspace dropdown to start a session there",
+        "sm.stageHint": "Target workspace staged — the switch happens when the session starts",
+        "sm.browseInvalid": "That folder could not be opened",
+        "sm.uploadWorkspaceTitle": "Upload a local archive (zip/tar/rar/7z), extract it into a target directory, and switch to it",
+        "sm.uploadHint": "If the archive has a single top-level folder it is extracted as-is; otherwise a folder named after the archive is created. Existing folders are never overwritten (auto -2 suffix).",
+        "sm.uploadFile": "Archive",
+        "sm.uploadChooseFile": "Choose file…",
+        "sm.uploadNoFile": "No file selected",
+        "sm.uploadTarget": "Extract to",
+        "sm.uploadBrowse": "Browse…",
+        "sm.uploadStart": "Upload & extract",
+        "sm.uploadWorking": "Working…",
+        "sm.uploadUploading": "Uploading",
+        "sm.uploadExtracting": "Extracting…",
+        "sm.uploadSuccess": "Extracted: {root}",
+        "sm.uploadSuccessRenamed": "Name taken — extracted as {final} ({root})",
+        "sm.uploadCreatedDir": "folder created from archive name",
+        "sm.uploadNoRar7z": "rar/7z depend on system tools (rar: {rar}, 7z: {sevenz}) — zip/tar always work",
+        "sm.uploadFailedPrefix": "Upload failed",
+        "sm.cancel": "Cancel",
+        "sm.manageWorkspaces": "Manage workspaces",
+        "sm.manageWorkspacesTitle": "Manage workspace list — select, hide, or delete a workspace",
+        "sm.manageWorkspacesHint": "Select a workspace to open it. Hide removes it from the sidebar dropdown (sessions are kept). Delete asks how to handle its sessions: move all to a new directory, or archive them.",
+        "sm.manageNoWorkspaces": "No workspaces yet",
+        "sm.manageHidden": "hidden",
+        "sm.manageSelect": "Select",
+        "sm.manageHide": "Hide",
+        "sm.manageShow": "Show",
+        "sm.manageDelete": "Delete",
+        "sm.manageDeleteTitle": "Delete workspace",
+        "sm.manageDeleteCount": "{count} live sessions in this workspace",
+        "sm.manageMoveAll": "Move all sessions to a new directory",
+        "sm.manageMoveAllHint": "Rewrites each session's cwd and relocates its file; running sessions are skipped.",
+        "sm.manageArchiveAll": "Archive all sessions",
+        "sm.manageArchiveAllHint": "Pack sessions into an archive (recoverable); running sessions are skipped.",
+        "sm.manageMoved": "Moved {moved} session(s); skipped {skipped} (running / not movable).",
+        "sm.manageMoveFailed": "Move failed",
+        "sm.manageArchived": "Archived {archived} session(s).",
+        "sm.manageArchiveFailed": "Archive failed",
+        "sm.more": "More actions",
+        "sm.pin": "Pin to top",
+        "sm.unpin": "Unpin",
+        "sm.pinned": "Pinned to top",
+        "sm.pinProject": "Pin project",
+        "sm.unpinProject": "Unpin project",
+        "sm.projectPinUp": "Move up among pinned projects",
+        "sm.projectPinDown": "Move down among pinned projects",
+        "sm.delete": "Delete",
+        "sm.deleteSubtree": "Delete subtree",
+        "sm.recolor": "Color",
+        "sm.resetColor": "Reset color",
+        "sm.confirmDelete": "Delete this tag?",
+        "sm.confirmDeleteSubtree": "Delete this tag and all children?",
+        "sm.close": "Close",
+        "sm.empty": "No sessions",
+        "sm.runningCount": "{count} running",
+        "sm.msgCount": "{count} msgs",
+        "sm.archived": "Archived",
+        "sm.archivedHidden": "{count} archived sessions hidden — click to show",
+        "sm.clearCache": "Clear archive cache",
+        "sm.chooseTag": "Choose a tag",
+        "sm.kanban": "Kanban",
+        "sm.allProjects": "All projects",
+        "sm.columns": "Columns:",
+        "sm.filter": "Filter",
+        "sm.noColumns": "No columns yet — pick tags above (or create tags in the panel)",
+        "sm.stats": "Stats",
+        "sm.model": "Model",
+        "sm.date": "Date",
+        "sm.dir": "Directory",
+        "sm.dir.all": "All dirs",
+        "sm.dir.pick": "Choose directory…",
+        "sm.dir.change": "Change directory…",
+        // 跨扩展内联的 aiti-folder DirectoryBrowser/WorkspaceDropdown 所用 key（ctx.t 只读本表，缺则显裸 key）
+        "sidebar.customPath": "Custom path…",
+        "sidebar.filterProjects": "Filter projects…",
+        "sidebar.noMatchingProjects": "No matching projects",
+        "sidebar.agentRunning": "Agent running…",
+        "sidebar.newSessionActivity": "New session activity",
+        "i18n.close": "Close",
+        "files.parentDir": "Parent directory",
+        "files.loading": "Loading files...",
+        "files.noSubdirs": "No subdirectories",
+        "files.selectFolder": "Select this folder",
+        "files.cancel": "Cancel",
+        "sm.sort": "Sort",
+        "sm.roleSearch": "Role (search)",
+        "sm.clearAll": "Clear all",
+        "sm.selectedCount": "{count} selected",
+        "sm.totalCount": "Total {count}",
+        "sm.selectAll": "Select all",
+        "sm.invertSelect": "Invert",
+        "sm.archive": "Archive",
+        "sm.archiveDialogTitle": "Archive session",
+        "sm.archiveResolved": "Archive as resolved",
+        "sm.archiveUnresolved": "Archive as unresolved",
+        "sm.archiveDirect": "Archive directly",
+        "sm.archiveDelete": "Delete permanently",
+        "sm.archiveTagResolved": "resolved",
+        "sm.archiveTagUnresolved": "unresolved",
+        "sm.delete": "Delete",
+        "sm.deleteArchive": "Delete permanently",
+        "sm.deleteLive": "Delete permanently (live session)",
+        "sm.confirmDeleteLive": "Permanently delete this LIVE session file? (not archived — bypasses archive, cannot be undone; running agents are stopped first)",
+        "sm.extRemove": "Remove from list",
+        "sm.extTrueArchive": "True archive (remove from source, restorable)",
+        "sm.pendingRemoval": "Removing…",
+        "sm.optSlow": "Still processing in the background — rows stay hidden until it lands; the list refreshes when done",
+        "sm.archiveFailed": "Archive failed",
+        "sm.archiveSkipped": "{count} session(s) open/running — skipped",
+        "sm.extRemoveTitle": "Move to the archived group; hidden from the list. Recoverable anytime — data inside ZCode/Cursor etc. is not touched.",
+        "sm.extChildrenTogetherBtn": "Remove the {count} children too",
+        "sm.extChildrenKeepBtn": "Remove the main session only",
+        "sm.extHintTogether": "together with the main session (hidden from list)",
+        "sm.extHintKeep": "children stay in the list",
+        "sm.extFlatTogether": "Remove from list (with {count} children)",
+        "sm.extFlatKeep": "Remove from list (self only)",
+        "sm.deleteFailed": "Delete failed",
+        "sm.deleteTitle": "Delete permanently",
+        "sm.confirmTitle": "Confirm",
+        "sm.gotIt": "Got it",
+        "sm.confirmOk": "OK",
+        "sm.batchDeleteTitle": "Batch delete",
+        "sm.batchDeleteMsg": "Permanently delete {count} unarchived sessions? Cannot be undone; running agents are stopped first.",
+        "sm.noLiveToDelete": "No unarchived sessions to delete (use the row's ⋮ menu for archived ones)",
+        "sm.batchDeleteFailed": "{count} session(s) failed to delete",
+        "sm.batchDeleteSkipped": "Skipped {count} archived session(s) (delete archive records from the archived rows)",
+        "sm.childrenTogetherBtnArchive": "Archive the {count} children too",
+        "sm.childrenTogetherBtnDelete": "Delete the {count} children too",
+        "sm.childrenHintTogether": "together with the main session (children first)",
+        "sm.childrenKeepBtnArchive": "Archive the main session only",
+        "sm.childrenKeepBtnDelete": "Delete the main session only",
+        "sm.childrenHintKeepArchive": "children stay live",
+        "sm.childrenHintKeepDelete": "children re-parent to the level above",
+        "sm.restore": "Restore to live sessions",
+        "sm.restoreShort": "Restore",
+        "sm.reopen": "Reopen (restore & open)",
+        "sm.reopenShort": "Reopen",
+        "sm.restoreFailed": "Restore failed",
+        "sm.reopenFailed": "Reopen failed",
+        "sm.relatedDocs": "Related docs",
+        "sm.relatedDocsShort": "Docs",
+        "sm.timeline": "Timeline",
+        "sm.timelineTip": "Open this session's timeline (aiti-git-trace)",
+        "sm.detachStart": "Start · survive restarts",
+        "sm.detachDone": "Started — agent survives pi-web restarts",
+        "sm.detachAlready": "Session is already running: hosting mode is fixed at start — stop it first and retry.",
+        "sm.detachFailed": "Survive-restart start failed",
+        "sm.detachUnsupported": "This pi-web build has no survive-restart hosting (upgrade or rebuild the host)",
+        "sm.inprocessStart": "Start in process",
+        "sm.inprocessDone": "Started in process (regular mode, no longer survives restarts)",
+        "sm.inprocessAlready": "Session is already running.",
+        "sm.inprocessFailed": "In-process start failed",
+        "sm.inprocessUnsupported": "This pi-web build has no in-process start (upgrade or rebuild the host)",
+        "sm.relatedDocsEmpty": "No docs were touched by this session",
+        "sm.relatedDocsHint": "Docs the session touched · collected by aiti-git-trace, related via aiti-doc-center",
+        "sm.docCenterAbsent": "Doc center not enabled (aiti-doc-center)",
+        "sm.confirmDeleteArchive": "Permanently delete this ARCHIVED session? (archive first, then delete — cannot be undone)",
+        "sm.confirmDeleteArchiveN": "Permanently delete {count} archived sessions? Cannot be undone.",
+        "sm.clear": "Clear",
+        "sm.msgCountLabel": "Messages",
+        "sm.modelDist": "Models",
+        "sm.activityHint": "Activity (click a day to filter)",
+        "sm.todayLine": "Today +{s} sessions · +{m} msgs",
+        "sm.weekLine": "7d {n} msgs",
+        "sm.sessions": "Sessions",
+        "sm.today": "Today",
+        "sm.last24h": "24h",
+        "sm.last2d": "2 days",
+        "sm.last7d": "7 days",
+        "sm.last30d": "30 days",
+        "sm.sourcesLabel": "Sources",
+        "sm.sources.found": "Found {count} · ",
+        "sm.sources.load": "Load",
+        "sm.sources.loading": "…",
+        "sm.sources.loaded": "Loaded",
+        "sm.sources.sync": "Sync",
+        "sm.sources.stale": "⟳ Update",
+        "sm.sources.staleHint": "New sessions detected — sync in the source strip below.",
+        "sm.sources.uninstalled": "Not installed",
+        "sm.sources.error": "Error",
+        "sm.import.button": "Import as pi session",
+        "sm.import.failed": "Import failed: external session has no cwd, or the pi sessions dir is not writable.",
+        "sm.viewerSearch": "Search messages…",
+        "sm.viewerNoMatch": "No matching messages",
+        // 查看器聊天式消息区（docs/session-manager-viewer-chat-plan.md §3.5）
+        "sm.viewer.user": "User",
+        "sm.viewer.assistant": "Assistant",
+        "sm.viewer.toolResult": "Tool result",
+        "sm.viewer.input": "Input",
+        "sm.viewer.output": "Output",
+        "sm.viewer.lines": "{n} lines",
+        "sm.viewer.expandAll": "Show all ({n} chars)",
+        "sm.viewer.collapse": "Collapse",
+        "sm.viewer.copy": "Copy",
+        "sm.viewer.copied": "Copied",
+        "sm.viewer.toTop": "Jump to top",
+        "sm.viewer.toBottom": "Jump to latest",
+        "sm.viewer.filterUser": "Show / hide user messages",
+        "sm.viewer.filterAssistant": "Show / hide assistant messages",
+        "sm.viewer.filterTool": "Show / hide tool results",
+        "sm.viewer.stats": "{total} shown · {user} user · {assistant} assistant · {tool} tool",
+        "sm.viewer.openImage": "click to open",
+        "sm.viewer.truncated": "… {n} more lines not shown",
+        "sm.viewer.extSession": "External session",
+        "sm.agentFilter.empty": "No source selected — pick agents from the chips above.",
+        "sm.dockAdv": "Adv",
+        "sm.dockAdvTitle": "Advanced filters (agents / tags)",
+        "sm.dockAdvAgents": "Agents",
+        "sm.dockAdvTags": "Tags",
+        "sm.tagDocs": "{count} related docs",
+        "sm.tagDocsTip": "Documents carrying this tag (from aiti-doc-center; includes subtree tags)",
+        "sm.dockAdvDoc": "Docs",
+        "sm.dockAdvDocPick": "Pick doc…",
+        "sm.dockAdvDocEmpty": "No docs (doc-center not ready or nothing indexed)",
+        "sm.dockAdvDocCount": "{count} sessions touched",
+        "sm.cloudsCollapsed": "Tags / sources collapsed",
+        "sm.expanded": "Expanded",
+        "sm.scrollToCollapse": "scroll down to collapse again",
+        "sm.expand": "Expand",
+        "sm.collapse": "Collapse",
+      },
+      "zh-TW": {
+        "sidebar.loading": "載入中...",
+        "sidebar.noSessions": "找不到工作階段",
+        "sidebar.new": "新增",
+        "sidebar.newSessionTitle": "在 {path} 中新增工作階段",
+        "sidebar.refresh": "重新整理",
+        "sidebar.hide": "隱藏側邊欄",
+        "sidebar.toggleSessionSearch": "搜尋對話",
+        "sm.dockProjects": "專案",
+        "sm.dockProjectsHint": "專案與會話列表",
+        "sm.runFailed": "任務失敗",
+        "sm.runAborted": "已停止",
+        "sm.runInterrupted": "已中斷（未正常結束）",
+        "sm.runFailedWithError": "任務失敗：{error}",
+        "sm.dockAddFolder": "加入資料夾到側欄",
+        "sm.stageHint": "目標工作區已暫存——將在建立工作階段時切換",
+        "sm.browseInvalid": "無法開啟該資料夾",
+        "sidebar.searchSessions": "搜尋所有對話...",
+        "sidebar.filterProjects": "篩選專案…",
+        "sidebar.noMatchingProjects": "找不到相符的專案",
+        "sidebar.useDefaultDirectory": "使用預設目錄",
+        "sidebar.customPath": "自訂路徑…",
+        "sidebar.browseFolders": "瀏覽資料夾…",
+        "sidebar.browseFoldersTitle": "開啟目錄瀏覽器，選擇任意資料夾",
+        "sidebar.workspacePicker": "工作區",
+        "sidebar.newActivity": "有新活動",
+        "sidebar.newSessionActivity": "工作階段有新活動",
+        "sidebar.agentRunning": "Agent 執行中…",
+        "sidebar.messagesCount": "{count} 則訊息",
+        "sidebar.draft": "草稿",
+        "sidebar.draftTitle": "尚未保存——agent 回复后正式写入",
+        "sidebar.rename": "重新命名",
+        "sidebar.delete": "刪除",
+        "sidebar.cancel": "取消",
+        "sidebar.deleteSession": "刪除 {title}？",
+        "sidebar.deleteWithShiftClick": "刪除（按住 Shift 點選可跳過確認）",
+        "sidebar.expandSubagents": "展開子會話",
+        "sidebar.collapseSubagents": "摺疊子會話",
+        "sidebar.expandBranches": "展開分支會話",
+        "sidebar.collapseBranches": "摺疊分支會話",
+        "sidebar.openRepoRoot": "開啟儲存庫根目錄",
+        "sidebar.openRepoRootTitle": "開啟儲存庫根目錄以管理 worktree。",
+        "sidebar.gitRepoRootOnly": "僅限 Git 儲存庫根目錄",
+        "sidebar.gitRepoRootOnlyTitle": "worktree 只能在 Git 儲存庫根目錄使用。",
+        "sidebar.checkingWorktrees": "正在檢查此目錄的 worktree。",
+        "sidebar.worktrees": "Worktrees...",
+        "sidebar.switchWorktree": "切換 worktree",
+        "sidebar.switchWorktreeTitle": "切換 worktree：{path}",
+        "sidebar.main": "主分支",
+        "sidebar.filterWorktrees": "篩選 worktree…",
+        "sidebar.noMatchingWorktrees": "找不到相符的 worktree",
+        "sidebar.forceRemoveCheckout": "有未提交的變更。要強制移除 checkout 嗎？",
+        "sidebar.force": "強制移除",
+        "sidebar.removeWorktreeTitle": "移除 worktree checkout {path}；保留分支",
+        "sidebar.createWorktreeTitle": "為分支建立 worktree checkout",
+        "sidebar.newWorktree": "新增 worktree…",
+        "sidebar.branchName": "分支名稱",
+        "sidebar.creating": "建立中…",
+        "sidebar.create": "建立",
+        "sidebar.selectProject": "選擇專案…",
+        "sidebar.sessionSearching": "搜尋中...",
+        "sidebar.sessionSearchFailed": "無法搜尋對話",
+        "sidebar.sessionSearchEmpty": "找不到相符的對話",
+        "sidebar.sessionSearchCount": "{count} 個相符的對話",
+        "sidebar.sessionSearchPartial": "已達搜尋上限，結果可能不完整。",
+        "directoryPicker.selectDirectory": "選擇目錄",
+        "directoryPicker.editPath": "編輯路徑",
+        "directoryPicker.pathEditHint": "點擊或直接鍵入以編輯路徑（Alt+D / Ctrl+L）",
+        "directoryPicker.copyPath": "複製路徑",
+        "directoryPicker.copied": "已複製路徑",
+        "directoryPicker.pathPlaceholder": "/路徑/到/專案 或 ~/專案",
+        "directoryPicker.goToParent": "前往上一層目錄",
+        "directoryPicker.directoryPath": "目錄路徑",
+        "directoryPicker.goToDirectory": "前往目錄",
+        "directoryPicker.go": "前往",
+        "directoryPicker.loadingDirectories": "正在載入目錄…",
+        "directoryPicker.noDrives": "找不到磁碟機代號",
+        "directoryPicker.noSubdirectories": "沒有子目錄",
+        "directoryPicker.selectCurrentDirectory": "選擇目前目錄",
+        "directoryPicker.selectThisFolder": "選擇此資料夾",
+        "directoryPicker.newFolder": "新增資料夾",
+        "directoryPicker.newFolderIn": "在 {path} 下新增資料夾",
+        "directoryPicker.folderName": "資料夾名稱",
+        "i18n.close": "關閉",
+        "i18n.cancel": "取消",
+        "i18n.checking": "檢查中…",
+        "sm.extRemove": "從列表移除",
+        "sm.extTrueArchive": "真歸檔（從來源移除，可放回）",
+        "sm.pin": "置頂",
+        "sm.unpin": "取消置頂",
+        "sm.pinned": "已置頂",
+        "sm.pinProject": "釘住專案",
+        "sm.unpinProject": "取消釘住專案",
+        "sm.projectPinUp": "在釘住項中上移",
+        "sm.projectPinDown": "在釘住項中下移",
+        "sm.pendingRemoval": "處理中…",
+        "sm.optSlow": "操作仍在背景處理，行會保持隱藏直到完成；完成後列表會自動重新整理",
+        "sm.archiveFailed": "歸檔失敗",
+        "sm.archiveSkipped": "{count} 個會話正在開啟/執行中，已跳過",
+        "sm.extRemoveTitle": "收進已封存分組，列表不再顯示；隨時可恢復接管，ZCode 等應用內資料不受影響。",
+        "sm.extChildrenTogetherBtn": "同時移除 {count} 個子會話",
+        "sm.extChildrenKeepBtn": "只移除主會話",
+        "sm.extHintTogether": "連同主會話一起移出列表（先子後主）",
+        "sm.extHintKeep": "子會話保留在列表",
+        "sm.extFlatTogether": "從列表移除（連同 {count} 個子會話）",
+        "sm.extFlatKeep": "從列表移除（僅自己）",
+        // 查看器聊天式消息區（docs/session-manager-viewer-chat-plan.md §3.5）
+        "sm.msgCount": "{count} 則訊息",
+        "sm.viewerSearch": "搜尋訊息…",
+        "sm.viewerNoMatch": "沒有相符的訊息",
+        "sm.viewer.user": "使用者",
+        "sm.viewer.assistant": "助手",
+        "sm.viewer.toolResult": "工具結果",
+        "sm.viewer.input": "輸入",
+        "sm.viewer.output": "輸出",
+        "sm.viewer.lines": "{n} 行",
+        "sm.viewer.expandAll": "展開全部（{n} 字）",
+        "sm.viewer.collapse": "收起",
+        "sm.viewer.copy": "複製",
+        "sm.viewer.copied": "已複製",
+        "sm.viewer.toTop": "回到頂部",
+        "sm.viewer.toBottom": "跳到最新",
+        "sm.viewer.filterUser": "顯示 / 隱藏使用者訊息",
+        "sm.viewer.filterAssistant": "顯示 / 隱藏助手訊息",
+        "sm.viewer.filterTool": "顯示 / 隱藏工具結果",
+        "sm.viewer.stats": "顯示 {total} 則 · 使用者 {user} · 助手 {assistant} · 工具 {tool}",
+        "sm.viewer.openImage": "點擊開啟",
+        "sm.viewer.truncated": "… 其餘 {n} 行未顯示",
+        "sm.viewer.extSession": "外部會話",
+      },
+      "zh-CN": {
+        "feat.master": "侧栏接管",
+        "feat.master.desc": "左侧栏整块接管（SidebarContentDock）",
+        "feat.session-tags": "会话标签",
+        "it.star.title": "收藏",
+        "it.manage-workspaces.label": "管理工作区",
+        "it.upload-workspace.label": "上传工作区",
+        "it.sessions.label": "全部会话",
+        "it.board.label": "看板",
+        "it.archived-viewer.title": "归档查看器",
+        "it.ext-viewer.title": "外部会话",
+        "it.search.label": "搜索会话",
+        "it.tags.label": "标签",
+        "ext.displayName": "会话管理器",        "sidebar.loading": "加载中...",
+        "sidebar.noSessions": "未找到会话",
+        "sidebar.new": "新建",
+        "sidebar.newSessionTitle": "在 {path} 中新建会话",
+        "sidebar.refresh": "刷新",
+        "sidebar.hide": "隐藏侧边栏",
+        "sidebar.toggleSessionSearch": "搜索对话",
+        "sidebar.searchSessions": "搜索所有对话...",
+        "sidebar.filterProjects": "筛选项目…",
+        "sidebar.noMatchingProjects": "没有匹配的项目",
+        "sidebar.useDefaultDirectory": "使用默认目录",
+        "sidebar.customPath": "自定义路径…",
+        "sidebar.browseFolders": "浏览文件夹…",
+        "sidebar.browseFoldersTitle": "打开目录浏览器，选择任意文件夹",
+        "sidebar.workspacePicker": "工作区",
+        "sidebar.newActivity": "有新活动",
+        "sidebar.newSessionActivity": "会话有新活动",
+        "sidebar.agentRunning": "Agent 运行中…",
+        "sidebar.messagesCount": "{count} 条消息",
+        "sidebar.draft": "草稿",
+        "sidebar.draftTitle": "尚未保存——agent 回复后正式写入",
+        "sidebar.rename": "重命名",
+        "sidebar.delete": "删除",
+        "sidebar.cancel": "取消",
+        "sidebar.deleteSession": "删除 {title}？",
+        "sidebar.deleteWithShiftClick": "删除（Shift+点击可直接删除，不确认）",
+        "sidebar.expandSubagents": "展开子会话",
+        "sidebar.collapseSubagents": "折叠子会话",
+        "sidebar.expandBranches": "展开分支会话",
+        "sidebar.collapseBranches": "折叠分支会话",
+        "sidebar.openRepoRoot": "打开仓库根目录",
+        "sidebar.openRepoRootTitle": "打开仓库根目录以管理 worktree。",
+        "sidebar.gitRepoRootOnly": "仅 Git 仓库根目录",
+        "sidebar.gitRepoRootOnlyTitle": "只能在 Git 仓库根目录使用 worktree。",
+        "sidebar.checkingWorktrees": "正在检查此目录的 worktree。",
+        "sidebar.worktrees": "Worktrees...",
+        "sidebar.switchWorktree": "切换 worktree",
+        "sidebar.switchWorktreeTitle": "切换 worktree：{path}",
+        "sidebar.main": "主分支",
+        "sidebar.filterWorktrees": "筛选 worktree…",
+        "sidebar.noMatchingWorktrees": "没有匹配的 worktree",
+        "sidebar.forceRemoveCheckout": "存在未提交的更改。强制移除 checkout？",
+        "sidebar.force": "强制移除",
+        "sidebar.removeWorktreeTitle": "移除 worktree checkout {path}；保留分支",
+        "sidebar.createWorktreeTitle": "为分支创建 worktree checkout",
+        "sidebar.newWorktree": "新建 worktree…",
+        "sidebar.branchName": "分支名称",
+        "sidebar.creating": "创建中…",
+        "sidebar.create": "创建",
+        "sidebar.selectProject": "选择项目…",
+        "sidebar.sessionSearching": "搜索中...",
+        "sidebar.sessionSearchFailed": "无法搜索对话",
+        "sidebar.sessionSearchEmpty": "没有匹配的对话",
+        "sidebar.sessionSearchCount": "{count} 个匹配的对话",
+        "sidebar.sessionSearchPartial": "已达到搜索上限，结果可能不完整。",
+        "directoryPicker.selectDirectory": "选择目录",
+        "directoryPicker.editPath": "编辑路径",
+        "directoryPicker.pathEditHint": "点击或直接键入以编辑路径（Alt+D / Ctrl+L）",
+        "directoryPicker.copyPath": "复制路径",
+        "directoryPicker.copied": "已复制路径",
+        "directoryPicker.pathPlaceholder": "/路径/到/项目 或 ~/项目",
+        "directoryPicker.goToParent": "转到上级目录",
+        "directoryPicker.directoryPath": "目录路径",
+        "directoryPicker.goToDirectory": "转到目录",
+        "directoryPicker.go": "转到",
+        "directoryPicker.loadingDirectories": "正在加载目录…",
+        "directoryPicker.noDrives": "未找到盘符",
+        "directoryPicker.noSubdirectories": "没有子目录",
+        "directoryPicker.selectCurrentDirectory": "选择当前目录",
+        "directoryPicker.selectThisFolder": "选择此文件夹",
+        "directoryPicker.newFolder": "新建文件夹",
+        "directoryPicker.newFolderIn": "在 {path} 下新建文件夹",
+        "directoryPicker.folderName": "文件夹名称",
+        "i18n.close": "关闭",
+        "i18n.cancel": "取消",
+        "i18n.checking": "检查中…",
+        "sm.allSessions": "全部会话",
+        "sm.dockProjects": "项目",
+        "sm.dockProjectsHint": "项目和会话列表",
+        "sm.dockAddFolder": "添加文件夹到侧栏",
+        "sm.searchPlaceholder": "搜索会话…",
+        "sm.search": "搜索",
+        "sm.favorites": "收藏",
+        "sm.running": "运行中",
+        "sm.runFailed": "任务失败",
+        "sm.runAborted": "已停止",
+        "sm.runInterrupted": "已中断（未正常结束）",
+        "sm.runFailedWithError": "任务失败：{error}",
+        "sm.runningSessions": "运行中的会话",
+        "sm.noRunning": "暂无运行中的会话",
+        "sm.recent": "最近完成",
+        "sm.openAll": "打开全部会话",
+        "sm.viewer.pickHint": "从应用中心打开，未指定目标会话——在「全部会话」里选择一个会话后在此查看。",
+        "sm.noSessions": "暂无会话",
+        "sm.noResults": "没有匹配的会话",
+        "sm.loading": "…",
+        "sm.loadMore": "加载更多 (+{n})",
+        "sm.favorite": "收藏",
+        "sm.unfavorite": "取消收藏",
+        "sm.addTag": "添加标签…",
+        "sm.tagPlaceholder": "标签, 分类/子标签",
+        "sm.manageTags": "管理标签…",
+        "sm.pageOf": "{page} / {pages}",
+        "sm.prev": "上一页",
+        "sm.next": "下一页",
+        "sm.allTags": "全部",
+        "sm.session": "会话：{id}",
+        "sm.noSession": "新建会话",
+        "sm.tags": "标签",
+        "sm.newTag": "新建标签",
+        "sm.newChild": "添加子标签",
+        "sm.rename": "重命名",
+        "sm.autoName": "生成名字",
+        "sm.autoNameFailed": "生成名字失败",
+        "sm.autoNameBridged": "该会话正由终端（TUI）占用，无法自动生成名字，请手动命名。",
+        "sm.move": "移动到…",
+        "sm.moveTitle": "移动会话",
+        "sm.moveTarget": "目标目录（cwd）",
+        "sm.moveHint": "改写会话的 cwd 并把会话文件移入目标项目；历史、收藏、标签全部保留，sessionId 不变。运行中的会话需等结束后再移。",
+        "sm.moveConfirm": "移动",
+        "sm.detectCwd": "识别该会话的真实项目目录…",
+        "sm.detectFiles": "触达 {n} 个文件",
+        "sm.detect": "检测",
+        "sm.cur": "当前",
+        "sm.moveBatch": "批量移动到…",
+        "sm.moveBatchDefault": "默认目标位置（cwd）",
+        "sm.moveBatchHint": "设置默认目标位置；每行可单独改目标覆盖默认值。运行中的会话会被跳过。",
+        "sm.moveBatchDone": "已移动 {count} 个会话",
+        "sm.moveBatchSkip": "{n} 个会话不可移动（外部 agent/归档）已跳过",
+        "sm.moveFailed": "移动失败",
+        "sm.uploadWorkspace": "上传工作区",
+        "sm.acquireWorkspace": "获取工作区…",
+        "sm.acquireWorkspaceTitle": "获取工作区：Git 克隆 / 上传压缩包 / 本地目录 / 新建空目录",
+        "sm.uploadSwitchHint": "解压完成——在工作区下拉中选择它即可在新目录开会话",
+        "sm.stageHint": "目标工作区已暂存——将在会话创建时切换",
+        "sm.browseInvalid": "无法打开该文件夹",
+        "sm.uploadWorkspaceTitle": "上传本地压缩包（zip/tar/rar/7z），解压到目标目录并切换过去",
+        "sm.uploadHint": "包内自带单个顶层目录则直接解压；否则按包名建目录再解压。已有同名目录永不覆盖（自动 -2 顺延）。",
+        "sm.uploadFile": "压缩包",
+        "sm.uploadChooseFile": "选择文件…",
+        "sm.uploadNoFile": "未选择文件",
+        "sm.uploadTarget": "解压到",
+        "sm.uploadBrowse": "浏览…",
+        "sm.uploadStart": "上传并解压",
+        "sm.uploadWorking": "处理中…",
+        "sm.uploadUploading": "上传中",
+        "sm.uploadExtracting": "解压中…",
+        "sm.uploadSuccess": "解压完成：{root}",
+        "sm.uploadSuccessRenamed": "重名已顺延：解压为 {final}（{root}）",
+        "sm.uploadCreatedDir": "已按包名建目录",
+        "sm.uploadNoRar7z": "rar/7z 依赖系统工具（rar: {rar}，7z: {sevenz}）——zip/tar 恒可用",
+        "sm.uploadFailedPrefix": "上传失败",
+        "sm.cancel": "取消",
+        "sm.manageWorkspaces": "管理工作区",
+        "sm.manageWorkspacesTitle": "管理工作区列表——选择 / 隐藏 / 删除",
+        "sm.manageWorkspacesHint": "选择项目直接打开。隐藏把它从侧边栏下拉里移除（会话保留）。删除需先选择处置方式：把全部会话移动到新目录，或全部归档。",
+        "sm.manageNoWorkspaces": "还没有工作区",
+        "sm.manageHidden": "已隐藏",
+        "sm.manageSelect": "选择",
+        "sm.manageHide": "隐藏",
+        "sm.manageShow": "显示",
+        "sm.manageDelete": "删除",
+        "sm.manageDeleteTitle": "删除工作区",
+        "sm.manageDeleteCount": "该工作区有 {count} 个 live 会话",
+        "sm.manageMoveAll": "把全部会话移动到新目录",
+        "sm.manageMoveAllHint": "逐会话改写 cwd 并搬移文件；运行中的会话跳过。",
+        "sm.manageArchiveAll": "归档全部会话",
+        "sm.manageArchiveAllHint": "打包进归档（可恢复）；运行中的会话跳过。",
+        "sm.manageMoved": "已移动 {moved} 个会话；跳过 {skipped} 个（运行中/不可移动）。",
+        "sm.manageMoveFailed": "移动失败",
+        "sm.manageArchived": "已归档 {archived} 个会话。",
+        "sm.manageArchiveFailed": "归档失败",
+        "sm.more": "更多操作",
+        "sm.pin": "置顶",
+        "sm.unpin": "取消置顶",
+        "sm.pinned": "已置顶",
+        "sm.pinProject": "钉住项目",
+        "sm.unpinProject": "取消钉住项目",
+        "sm.projectPinUp": "在钉住项中上移",
+        "sm.projectPinDown": "在钉住项中下移",
+        "sm.delete": "删除",
+        "sm.deleteSubtree": "删除子树",
+        "sm.recolor": "颜色",
+        "sm.resetColor": "恢复默认色",
+        "sm.confirmDelete": "删除该标签？",
+        "sm.confirmDeleteSubtree": "删除该标签及其子标签？",
+        "sm.close": "关闭",
+        "sm.empty": "暂无会话",
+        "sm.runningCount": "{count} 个运行中",
+        "sm.msgCount": "{count} 条消息",
+        "sm.archived": "已归档",
+        "sm.archivedHidden": "已隐藏 {count} 个已归档会话，点击查看",
+        "sm.clearCache": "清理归档缓存",
+        "sm.chooseTag": "选择标签",
+        "sm.kanban": "看板",
+        "sm.allProjects": "全部项目",
+        "sm.columns": "列：",
+        "sm.filter": "过滤",
+        "sm.noColumns": "还没有列——点击上方标签添加列（或先在面板里创建标签）",
+        "sm.stats": "统计",
+        "sm.model": "模型",
+        "sm.date": "日期",
+        "sm.dir": "目录",
+        "sm.dir.all": "全部目录",
+        "sm.dir.pick": "选择目录…",
+        "sm.dir.change": "更换目录…",
+        // 跨扩展内联的 aiti-folder DirectoryBrowser/WorkspaceDropdown 所用 key（与 aiti-folder i18n 对齐）
+        "sidebar.customPath": "自定义路径…",
+        "sidebar.filterProjects": "筛选项目…",
+        "sidebar.noMatchingProjects": "没有匹配的项目",
+        "sidebar.agentRunning": "Agent 运行中…",
+        "sidebar.newSessionActivity": "新会话动态",
+        "i18n.close": "关闭",
+        "files.parentDir": "上级目录",
+        "files.loading": "正在加载文件...",
+        "files.noSubdirs": "无子目录",
+        "files.selectFolder": "选择此文件夹",
+        "files.cancel": "取消",
+        "sm.sort": "排序",
+        "sm.roleSearch": "角色（搜索）",
+        "sm.clearAll": "清除全部",
+        "sm.selectedCount": "已选 {count} 个",
+        "sm.totalCount": "共 {count} 个",
+        "sm.selectAll": "全选",
+        "sm.invertSelect": "反选",
+        "sm.archive": "归档",
+        "sm.archiveDialogTitle": "归档会话",
+        "sm.archiveResolved": "已解决归档",
+        "sm.archiveUnresolved": "未解决归档",
+        "sm.archiveDirect": "直接归档",
+        "sm.archiveDelete": "彻底删除",
+        "sm.archiveTagResolved": "已解决",
+        "sm.archiveTagUnresolved": "未解决",
+        "sm.delete": "删除",
+        "sm.deleteArchive": "彻底删除",
+        "sm.deleteLive": "彻底删除（未归档）",
+        "sm.confirmDeleteLive": "彻底删除该会话文件？（未归档，不经过归档直接删除，删后不可恢复；运行中的 agent 会先停止）",
+        "sm.extRemove": "从列表移除",
+        "sm.extTrueArchive": "真归档（从源移除，可放回）",
+        "sm.pendingRemoval": "处理中…",
+        "sm.optSlow": "操作仍在后台处理，行会保持隐藏直到完成；完成后列表会自动刷新",
+        "sm.archiveFailed": "归档失败",
+        "sm.archiveSkipped": "{count} 个会话正在打开/运行中，已跳过",
+        "sm.extRemoveTitle": "收进已归档分组，列表不再显示；随时可恢复接管，ZCode 等应用内数据不受影响。",
+        "sm.extChildrenTogetherBtn": "同时移除 {count} 个子会话",
+        "sm.extChildrenKeepBtn": "只移除主会话",
+        "sm.extHintTogether": "连同主会话一起移出列表（先子后主）",
+        "sm.extHintKeep": "子会话保留在列表",
+        "sm.extFlatTogether": "从列表移除（连同 {count} 个子会话）",
+        "sm.extFlatKeep": "从列表移除（仅自己）",
+        "sm.deleteFailed": "删除失败",
+        "sm.deleteTitle": "彻底删除",
+        "sm.confirmTitle": "确认操作",
+        "sm.gotIt": "知道了",
+        "sm.confirmOk": "确认",
+        "sm.batchDeleteTitle": "批量删除",
+        "sm.batchDeleteMsg": "永久删除 {count} 个未归档会话，不可恢复；运行中会先停止。确定继续？",
+        "sm.noLiveToDelete": "没有未归档的会话可删除（已归档会话请到已归档行删除）",
+        "sm.batchDeleteFailed": "{count} 个删除失败",
+        "sm.batchDeleteSkipped": "跳过 {count} 个已归档会话（归档记录删除请到已归档行操作）",
+        "sm.childrenTogetherBtnArchive": "同时归档 {count} 个子会话",
+        "sm.childrenTogetherBtnDelete": "同时删除 {count} 个子会话",
+        "sm.childrenHintTogether": "连同主会话，先子后主",
+        "sm.childrenKeepBtnArchive": "只归档主会话",
+        "sm.childrenKeepBtnDelete": "只删除主会话",
+        "sm.childrenHintKeepArchive": "子会话保留",
+        "sm.childrenHintKeepDelete": "子会话重挂上层",
+        "sm.restore": "恢复为普通会话",
+        "sm.restoreShort": "恢复",
+        "sm.reopen": "重开（恢复并打开）",
+        "sm.reopenShort": "重开",
+        "sm.restoreFailed": "恢复失败",
+        "sm.reopenFailed": "重开失败",
+        "sm.relatedDocs": "相关文档",
+        "sm.relatedDocsShort": "文档",
+        "sm.timeline": "时间线",
+        "sm.timelineTip": "打开该会话的时间线（aiti-git-trace）",
+        "sm.detachStart": "跨重启启动",
+        "sm.detachDone": "已启动（agent 将跨重启存活）",
+        "sm.detachAlready": "该会话已在运行：启动方式只能在启动时定型，请先结束它再重试。",
+        "sm.detachFailed": "跨重启启动失败",
+        "sm.detachUnsupported": "此 pi-web 版本未提供跨重启托管（需升级/重新构建宿主）",
+        "sm.inprocessStart": "进程内启动",
+        "sm.inprocessDone": "已以进程内方式启动（常规模式，不再跨重启存活）",
+        "sm.inprocessAlready": "该会话已在运行。",
+        "sm.inprocessFailed": "进程内启动失败",
+        "sm.inprocessUnsupported": "此 pi-web 版本未提供进程内启动（需升级/重新构建宿主）",
+        "sm.relatedDocsEmpty": "该会话没有触达过文档",
+        "sm.relatedDocsHint": "会话触达过的文档 · aiti-git-trace 采集 → aiti-doc-center 关联",
+        "sm.docCenterAbsent": "文档中心未启用（aiti-doc-center）",
+        "sm.confirmDeleteArchive": "彻底删除该已归档会话？（先归档才能删除，删后不可恢复）",
+        "sm.confirmDeleteArchiveN": "彻底删除 {count} 个已归档会话？删后不可恢复。",
+        "sm.clear": "清除",
+        "sm.msgCountLabel": "消息数",
+        "sm.modelDist": "模型分布",
+        "sm.activityHint": "活动（点日期过滤）",
+        "sm.todayLine": "今天 +{s} 会话 · +{m} 消息",
+        "sm.weekLine": "近 7 天 {n} 消息",
+        "sm.sessions": "会话",
+        "sm.today": "今天",
+        "sm.last24h": "24h",
+        "sm.last2d": "2 天",
+        "sm.last7d": "7 天",
+        "sm.last30d": "30 天",
+        "sm.sourcesLabel": "来源",
+        "sm.sources.found": "发现 {count} · ",
+        "sm.sources.load": "加载",
+        "sm.sources.loading": "…",
+        "sm.sources.loaded": "已加载",
+        "sm.sources.sync": "同步",
+        "sm.sources.stale": "⟳ 有更新",
+        "sm.sources.staleHint": "检测到新会话——点击下方源区同步。",
+        "sm.sources.uninstalled": "未安装",
+        "sm.sources.error": "出错",
+        "sm.import.button": "导入为 pi 会话",
+        "sm.import.failed": "导入失败：外部会话缺少 cwd 或 pi sessions 目录不可写。",
+        "sm.agentFilter.empty": "未选择任何来源——点击上方来源 chips 选择要查看的 agent",
+        "sm.dockAdv": "高级",
+        "sm.dockAdvTitle": "高级过滤（来源 agent / 标签）",
+        "sm.dockAdvAgents": "来源",
+        "sm.dockAdvTags": "标签",
+        "sm.tagDocs": "{count} 篇关联文档",
+        "sm.tagDocsTip": "携带该 tag 的文档（来自文档中心，含子 tag）",
+        "sm.dockAdvDoc": "文档",
+        "sm.dockAdvDocPick": "选择文档…",
+        "sm.dockAdvDocEmpty": "无文档（文档中心未就绪或未收录）",
+        "sm.dockAdvDocCount": "触达 {count} 个会话",
+        "sm.viewerSearch": "搜索消息…",
+        "sm.viewerNoMatch": "无匹配消息",
+        // 查看器聊天式消息区（docs/session-manager-viewer-chat-plan.md §3.5）
+        "sm.viewer.user": "用户",
+        "sm.viewer.assistant": "助手",
+        "sm.viewer.toolResult": "工具结果",
+        "sm.viewer.input": "输入",
+        "sm.viewer.output": "输出",
+        "sm.viewer.lines": "{n} 行",
+        "sm.viewer.expandAll": "展开全部（{n} 字）",
+        "sm.viewer.collapse": "收起",
+        "sm.viewer.copy": "复制",
+        "sm.viewer.copied": "已复制",
+        "sm.viewer.toTop": "回到顶部",
+        "sm.viewer.toBottom": "跳到最新",
+        "sm.viewer.filterUser": "显示 / 隐藏用户消息",
+        "sm.viewer.filterAssistant": "显示 / 隐藏助手消息",
+        "sm.viewer.filterTool": "显示 / 隐藏工具结果",
+        "sm.viewer.stats": "显示 {total} 条 · 用户 {user} · 助手 {assistant} · 工具 {tool}",
+        "sm.viewer.openImage": "点击打开",
+        "sm.viewer.truncated": "… 其余 {n} 行未显示",
+        "sm.viewer.extSession": "外部会话",
+        "sm.cloudsCollapsed": "标签 / 来源已收拢",
+        "sm.expanded": "已展开",
+        "sm.scrollToCollapse": "再向下滚动自动收拢",
+        "sm.expand": "展开",
+        "sm.collapse": "收拢",
+      },
+    },
+  },
+};
+
+export default ext;
+

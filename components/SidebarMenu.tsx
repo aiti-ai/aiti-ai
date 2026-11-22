@@ -2,7 +2,7 @@
 
 import { Children, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref, type SyntheticEvent } from "react";
 import { createPortal } from "react-dom";
-import { CheckIcon } from "./SidebarIcons";
+import { CheckIcon } from "./SidebarIcons.tsx";
 
 /**
  * The session sidebar's popup menu: a row's ⋯ or right-click menu, a project

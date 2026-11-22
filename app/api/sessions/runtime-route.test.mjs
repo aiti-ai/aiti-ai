@@ -1,10 +1,23 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createJiti } from "jiti";
 
+// Session deletion now goes through the trash (lib/session-trash.ts): pin the Trash root to a
+// temp directory so test runs do not drop fixture files into the real ~/.local/share/Trash.
+const routeTestTrashRoot = mkdtempSync(join(tmpdir(), "pi-web-route-trash-"));
+process.env.PI_WEB_TRASH_DIR = routeTestTrashRoot;
+process.once("exit", () => {
+  try { rmSync(routeTestTrashRoot, { recursive: true, force: true }); } catch { /* ignore */ }
+});
+
+const listRoute = await readFile(new URL("./route.ts", import.meta.url), "utf8");
+const detailRoute = await readFile(new URL("./[id]/route.ts", import.meta.url), "utf8");
+const contextRoute = await readFile(new URL("./[id]/context/route.ts", import.meta.url), "utf8");
+const stateRoute = await readFile(new URL("./[id]/state/route.ts", import.meta.url), "utf8");
 const jiti = createJiti(import.meta.url, {
   alias: { "@": process.cwd() },
   interopDefault: true,
@@ -130,11 +143,9 @@ test("session listing leaves compression to Next when the client accepts gzip", 
   // The list carries at most 500 characters of each first message, so a few
   // sessions make the body larger than any compression threshold.
   const firstMessage = "compressible session content ".repeat(500);
-  for (let index = 0; index < 4; index++) {
-    const manager = SessionManager.create(dir);
-    manager.appendMessage({ role: "user", content: firstMessage, timestamp: Date.now() });
-    manager.appendMessage({ role: "assistant", content: [{ type: "text", text: "done" }], timestamp: Date.now() });
-  }
+  const manager = SessionManager.create(dir);
+  manager.appendMessage({ role: "user", content: firstMessage, timestamp: Date.now() });
+  manager.appendMessage({ role: "assistant", content: [{ type: "text", text: "done" }], timestamp: Date.now() });
   invalidateSessionListCache();
 
   const response = await getSessionList(new Request("http://localhost/api/sessions", {
@@ -192,6 +203,54 @@ test("deleting an unpersisted session shuts down its runtime and invalidates cac
     assert.ok((await (await getRunningSessions()).json()).sessionListVersion > before);
     await assert.rejects(readFile(filePath), { code: "ENOENT" });
   }
+});
+
+test("session listing supports cheap summaries and honors force refresh", () => {
+  assert.match(listRoute, /searchParams\.get\("summary"\) === "1"/);
+  assert.match(listRoute, /summary\s*\n?\s*\? listSessionSummaries\(\)/);
+  assert.match(listRoute, /searchParams\.get\("force"\) === "1"/);
+  assert.match(listRoute, /listAllSessions\(\{ force \}\)/);
+  assert.match(listRoute, /attachSessionProjectInfo\(getRpcSessionInfos\(\)\)/);
+  // TUI occupancy markers are negotiated via the extension (sessionAnnotations slot); the core
+  // does not read registry files
+  assert.match(listRoute, /dispatchSessionAnnotations\(sessions\)/);
+  assert.match(listRoute, /getHandleSessionInfos\(\)/);
+  // TUI-bridged sessions are marked in the merged list (agent badge)
+  assert.match(listRoute, /"Cache-Control": "no-store"/);
+});
+
+test("session reads use the live SessionManager before requiring a JSONL path", () => {
+  for (const source of [detailRoute, contextRoute]) {
+    // Live lookups precede the file-based fallback:
+    //   local registry (getRpcSession) and — in detail/state routes, where the
+    //   TUI single-writer rule applies — bridge attachment by path
+    //   (attachIfBridged; TUI owns the file so a stale wrapper yields to it)
+    //   plus provider handles (resolveAnySession).
+    assert.ok(source.includes("getRpcSession(id)"));
+    // openSessionManager is the cached read-only opener; the live wrapper's
+    // manager must still win over any disk read, cached or not. (The local
+    // route resolves the path early for bridge-occupancy detection, so no
+    // strict path-lookup ordering is asserted.)
+    assert.match(source, /liveRpc\?\.inner\.sessionManager \?\? openSessionManager\(/);
+  }
+  // The detail route additionally honors TUI ownership and provider handles.
+  assert.match(detailRoute, /attachIfBridged\(/);
+  assert.match(detailRoute, /resolveAnySession\(id\)/);
+});
+
+test("detail reads probe disk only on force/mount and evict a stale idle wrapper", () => {
+  assert.match(detailRoute, /searchParams\.get\("force"\) === "1"/);
+  assert.match(detailRoute, /force && liveWrapper\?\.evictIfDiskAhead\(\)/);
+  assert.doesNotMatch(contextRoute, /evictIfDiskAhead|readLatestSessionEntryId/);
+});
+
+test("live agent state is available before the session file is persisted", () => {
+  // Live sources (local registry / TUI bridge / provider handles) must all be
+  // consulted before falling back to a JSONL path.
+  assert.ok(stateRoute.includes("getRpcSession(id)"));
+  assert.match(stateRoute, /if \(rpc\?\.isAlive\(\)\)/);
+  assert.match(stateRoute, /resolveAnySession\(id\)/);
+  assert.match(stateRoute, /attachIfBridged\(/);
 });
 
 test("deleting a session removes all persisted subagent descendants", async (t) => {

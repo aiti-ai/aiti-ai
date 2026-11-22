@@ -36,6 +36,9 @@ test("switching main sessions swaps their side tabs without removing subagent ta
     catalogLoaded: true,
     initialSessionRestored: true,
     fileTabs: [], terminalTabs: [], sessionCatalog: sessions,
+    // The terminal-restore race gate (#695) makes this effect wait for the terminal
+    // restore to settle; the harness supplies the settled state (normal path).
+    terminalsRestored: true,
     restoreSideTabs, sideTabsKey,
     window: { sessionStorage: { getItem: (key) => store.get(key) ?? null } },
     rememberSideTabs(key) {

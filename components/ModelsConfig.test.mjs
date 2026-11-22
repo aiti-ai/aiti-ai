@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createJiti } from "jiti";
 
@@ -27,32 +28,57 @@ const {
   updateHeaderRow,
 } = await jiti.import("./models-config-helpers.ts");
 
+const source = await readFile(new URL("./ModelsConfig.tsx", import.meta.url), "utf8");
+const cssSource = await readFile(new URL("../app/settings.css", import.meta.url), "utf8");
+
+test("uses shared sidebar sizing for providers and matching indented model rows", () => {
+  const sidebar = source.slice(source.indexOf("<ConfigSidebar>"), source.indexOf("</ConfigSidebar>"));
+
+  assert.match(sidebar, /<ConfigSidebarItem[\s\S]*?active=\{isSelected\}/);
+  assert.match(sidebar, /<ConfigSidebarItem[\s\S]*?active=\{isProviderSelected\}/);
+  assert.match(sidebar, /className="models-sidebar-indented-item"/);
+  assert.match(sidebar, /className="models-sidebar-indented-item models-sidebar-add-item"/);
+  assert.match(cssSource, /\.models-sidebar-indented-item \{[\s\S]*?padding-left: 26px/);
+});
+
+test("ignores malformed auth provider responses", () => {
+  assert.match(
+    source,
+    /if \(Array\.isArray\(d\.oauthProviders\)\) setOauthProviders\(d\.oauthProviders\)/,
+  );
+  assert.match(
+    source,
+    /if \(Array\.isArray\(d\.apiKeyProviders\)\) setApiKeyProviders\(d\.apiKeyProviders\)/,
+  );
+});
+
+test("custom model config exposes provider-level request headers", () => {
+  const providerDetail = source.slice(
+    source.indexOf("function ProviderDetail"),
+    source.indexOf("// ── ThinkingLevelMap editor"),
+  );
+  assert.match(providerDetail, /<HeaderListEditor/);
+  assert.match(providerDetail, /headers=\{provider\.headers\}/);
+  assert.match(providerDetail, /set\("headers", headers\)/);
+});
+
+test("custom model config exposes model headers and supportsDeveloperRole compat flag", () => {
+  // Model-level headers editor, wired to the model entry.
+  assert.match(source, /headers=\{model\.headers\}/);
+  assert.match(source, /set\("headers", headers\)/);
+
+  // Model-level compat toggle reads the effective (provider+model) value so
+  // hand-edited models.json settings are reflected, while writes stay on the
+  // model entry as an explicit per-model override.
+  assert.match(source, /effectiveCompat\(provider, model\)\["supportsDeveloperRole"\] !== false/);
+  assert.match(source, /setCompatBool\(model, "supportsDeveloperRole", v\)/);
+});
+
 test("disabling the developer role writes an explicit false override", () => {
   assert.deepEqual(
     setCompatBool({ compat: { supportsStore: true } }, "supportsDeveloperRole", false),
     { compat: { supportsStore: true, supportsDeveloperRole: false } },
   );
-});
-
-test("switching adaptive thinking off removes the override instead of writing false", () => {
-  const on = setCompatFlag({ id: "claude-opus-5-5" }, "forceAdaptiveThinking", true);
-  assert.deepEqual(on, { id: "claude-opus-5-5", compat: { forceAdaptiveThinking: true } });
-  assert.deepEqual(setCompatFlag(on, "forceAdaptiveThinking", false), { id: "claude-opus-5-5", compat: undefined });
-  assert.deepEqual(
-    setCompatFlag({ compat: { supportsStore: true, forceAdaptiveThinking: true } }, "forceAdaptiveThinking", false),
-    { compat: { supportsStore: true } },
-  );
-});
-
-test("a model switches off adaptive thinking its provider turns on with an explicit false", () => {
-  assert.deepEqual(
-    setCompatFlag({ id: "claude-haiku-4-5" }, "forceAdaptiveThinking", false, true),
-    { id: "claude-haiku-4-5", compat: { forceAdaptiveThinking: false } },
-  );
-  const entry = { id: "claude-opus-5-5", compat: { forceAdaptiveThinking: false } };
-  assert.deepEqual(setCompatFlag(entry, "forceAdaptiveThinking", true, true), { id: "claude-opus-5-5", compat: undefined });
-  const plain = { id: "claude-opus-5-5" };
-  assert.equal(setCompatFlag(plain, "forceAdaptiveThinking", false), plain);
 });
 
 test("editing a header preserves row order and stable identities", () => {
@@ -115,6 +141,90 @@ test("model cost drafts default blank prices to zero unless all are blank", () =
   assert.equal(parseCompleteModelCost({ ...complete, output: "-1" }), undefined);
   assert.equal(hasModelCostDraftValue(modelCostToDraft()), false);
   assert.equal(hasModelCostDraftValue({ ...complete, cacheWrite: "" }), true);
+});
+
+test("manual price editing commits completed costs and removes only an all-blank group", () => {
+  const modelDetail = source.slice(
+    source.indexOf("function ModelDetail"),
+    source.indexOf("// ── OAuth detail"),
+  );
+
+  assert.match(modelDetail, /const completeCost = parseCompleteModelCost\(nextDraft\)/);
+  assert.match(modelDetail, /if \(completeCost\)/);
+  assert.match(modelDetail, /delete nextModel\.cost/);
+  assert.match(modelDetail, /const nextDraft = \{ \.\.\.costDraftRef\.current, \[key\]: value \}/);
+  assert.match(modelDetail, /costDraftRef\.current = nextDraft/);
+  assert.match(modelDetail, /costTemplateRef\.current/);
+  assert.match(modelDetail, /value=\{costDraft\[key\]\}/);
+});
+
+test("model specs keep catalog-filled prices visible outside advanced settings", () => {
+  const modelDetail = source.slice(
+    source.indexOf("function ModelDetail"),
+    source.indexOf("// ── OAuth detail"),
+  );
+  const specsIndex = modelDetail.indexOf('t("models.modelSpecs")');
+  const costIndex = modelDetail.indexOf('t("models.costPerMillion")');
+  const advancedIndex = modelDetail.indexOf('t("models.advancedSettings")');
+
+  assert.ok(specsIndex >= 0);
+  assert.ok(costIndex > specsIndex);
+  assert.ok(advancedIndex > costIndex);
+  assert.match(modelDetail, /setCostEditing\(false\)/);
+  assert.match(modelDetail, /formatCost\(key\)/);
+});
+
+test("per-model settings use one primary divider before advanced settings", () => {
+  const modelDetail = source.slice(
+    source.indexOf("function ModelDetail"),
+    source.indexOf("// ── OAuth detail"),
+  );
+
+  assert.equal(
+    (modelDetail.match(/borderTop: "1px solid var\(--border\)"/g) ?? []).length,
+    1,
+  );
+  assert.doesNotMatch(modelDetail, /borderBottom: "1px solid var\(--border\)"/);
+});
+
+test("brand-new discovered models get one minimal cap probe", () => {
+  // Metadata is the source of truth; the wizard seeds discovered maxTokens
+  // into the model entry, then verifies brand-new unknown models' caps with
+  // one minimal request against the real API.
+  assert.match(source, /probe-cap/);
+  assert.match(source, /MIN_PROBE_MAX_TOKENS/);
+  assert.match(source, /probeModelCap\(providerName, provider, model\)/);
+  assert.match(source, /applyProbeResult\(providerName, modelId, d\.confirmedMaxTokens\)/);
+  // Only completely-new models are probed; known corrections and small caps skip.
+  assert.match(source, /\.filter\(\(discoveredModel\) => !existingIds\.has\(discoveredModel\.id\)\)/);
+  assert.match(source, /model\.maxTokens > MIN_PROBE_MAX_TOKENS/);
+});
+
+test("max output tokens come from provider metadata; only known mismatches are corrected", () => {
+  // Metadata is the source of truth; the wizard seeds discovered maxTokens
+  // into the model entry, clamped only by a tiny verified-corrections map.
+  assert.match(source, /MODEL_MAX_OUTPUT_TOKEN_CORRECTIONS/);
+  assert.match(source, /"glm-5-2-260617": 128000/);
+  assert.match(source, /maxTokens: capMaxOutputTokens\(providerName, discoveredModel\.id, discoveredModel\.maxTokens\)/);
+  // Catalog preset fill and the central model update path apply the same rule.
+  assert.match(source, /capMaxOutputTokens\(providerName, model\.id, preset\.maxTokens\)/);
+  assert.match(source, /capMaxOutputTokens\(providerName, m\.id, m\.maxTokens\)/);
+});
+
+test("thinking level overrides keep explicit default, disabled, and custom controls", () => {
+  const editor = source.slice(
+    source.indexOf("function ThinkingLevelMapEditor"),
+    source.indexOf("// ── Model detail"),
+  );
+
+  assert.match(editor, /THINKING_LEVELS\.map/);
+  // 合并适配：fork 的按钮文案走 i18n 键（t("i18n.default") 等）。
+  assert.match(editor, /\{t\("i18n\.default"\)\}/);
+  assert.match(editor, /\{t\("i18n\.disabled"\)\}/);
+  assert.match(editor, /\{t\("i18n\.custom"\)\}/);
+  assert.match(editor, /state === "omit"/);
+  assert.match(editor, /state === "null"/);
+  assert.match(editor, /state === "string"/);
 });
 
 const draft = (models) => ({ providers: { stepfun: { models: models.map((id) => ({ id })) } } });
@@ -287,6 +397,59 @@ test("a provider added since the last save is renamed without a settings rewrite
   assert.deepEqual([...state.renames], []);
 });
 
+test("Save applies a provider name typed without pressing Rename", () => {
+  const providerDetail = source.slice(
+    source.indexOf("function ProviderDetail"),
+    source.indexOf("// ── ThinkingLevelMap editor"),
+  );
+  // The field edits the panel's draft, not state the Save button cannot see.
+  assert.doesNotMatch(providerDetail, /useState\(name\)/);
+  assert.match(providerDetail, /onChange=\{onEditingNameChange\}/);
+
+  const save = source.slice(
+    source.indexOf("const handleSave = useCallback"),
+    source.indexOf("const providers = Object.entries(config.providers"),
+  );
+  assert.match(save, /applyProviderRename\(config, providerNameDraft\.provider, pendingName\)/);
+  assert.match(save, /body: JSON\.stringify\(normalizedDraft\)/); // 合并：保存 post-probe 快照
+  assert.match(save, /collectModelRenames\(savedDraft,/); // 合并：savedDraft);
+});
+
+test("model discovery is not gated on a configured base URL", () => {
+  const providerDetail = source.slice(
+    source.indexOf("function ProviderDetail"),
+    source.indexOf("// ── ThinkingLevelMap editor"),
+  );
+  // pi resolves the endpoint for a provider that only lists models, so an empty
+  // Base URL must still let the user fetch the upstream list.
+  assert.match(providerDetail, /if \(discoveryState\.phase === "loading"\) return;/);
+  assert.match(providerDetail, /disabled=\{discoveryState\.phase === "loading"\}/);
+  assert.doesNotMatch(providerDetail, /!provider\.baseUrl\?\.trim\(\)/);
+  // 合并适配：上游 1280e4f6/b8a3ffc6 有意修剪了 Models 表单的 field notes（含这条
+  // Base URL 提示），discovery 不设 baseUrl 门槛的行为本身由上面两条断言钉住。
+});
+
+test("switching adaptive thinking off removes the override instead of writing false", () => {
+  const on = setCompatFlag({ id: "claude-opus-5-5" }, "forceAdaptiveThinking", true);
+  assert.deepEqual(on, { id: "claude-opus-5-5", compat: { forceAdaptiveThinking: true } });
+  assert.deepEqual(setCompatFlag(on, "forceAdaptiveThinking", false), { id: "claude-opus-5-5", compat: undefined });
+  assert.deepEqual(
+    setCompatFlag({ compat: { supportsStore: true, forceAdaptiveThinking: true } }, "forceAdaptiveThinking", false),
+    { compat: { supportsStore: true } },
+  );
+})
+
+test("a model switches off adaptive thinking its provider turns on with an explicit false", () => {
+  assert.deepEqual(
+    setCompatFlag({ id: "claude-haiku-4-5" }, "forceAdaptiveThinking", false, true),
+    { id: "claude-haiku-4-5", compat: { forceAdaptiveThinking: false } },
+  );
+  const entry = { id: "claude-opus-5-5", compat: { forceAdaptiveThinking: false } };
+  assert.deepEqual(setCompatFlag(entry, "forceAdaptiveThinking", true, true), { id: "claude-opus-5-5", compat: undefined });
+  const plain = { id: "claude-opus-5-5" };
+  assert.equal(setCompatFlag(plain, "forceAdaptiveThinking", false), plain);
+})
+
 test("deleting a renamed or saved provider forgets its rename tracking", () => {
   const config = {
     providers: {
@@ -308,7 +471,7 @@ test("deleting a renamed or saved provider forgets its rename tracking", () => {
   const movedAgain = renameProviderEntry(movedOther, state, "house", "final");
   assert.deepEqual(Object.keys(movedAgain.providers), ["final"]);
   assert.deepEqual([...state.renames], [["other", "final"]]);
-});
+})
 
 test("a new provider taking a renamed or deleted provider's old id stays untracked", () => {
   const config = { providers: { stepfun: { models: [{ id: "aaa" }] } } };
@@ -326,7 +489,7 @@ test("a new provider taking a renamed or deleted provider's old id stays untrack
   const readded = { providers: { ...afterDeletingSaved.providers, stepfun: {} } };
   renameProviderEntry(readded, state, "stepfun", "later");
   assert.deepEqual([...state.renames], []);
-});
+})
 
 test("Add provider's search matches a provider by id or name", () => {
   const oauth = { id: "fixture-subscription-id", name: "Fixture Subscription" };

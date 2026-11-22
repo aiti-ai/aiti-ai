@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useState, type FormEvent } from "react";
 import { I18nProvider, useI18n } from "@/hooks/useI18n";
+import { apiUrl, withBasePath } from "@/lib/base-path";
 import { safeLoginDestination } from "@/lib/login-destination";
 
 function safeDestination(): string {
@@ -28,7 +29,7 @@ function LoginForm() {
     setBusy(true);
     setError("");
     try {
-      const response = await fetch("/api/web-auth", {
+      const response = await fetch(apiUrl("/api/web-auth"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ password }),
@@ -37,7 +38,10 @@ function LoginForm() {
         setError(await failureMessage(response));
         return;
       }
-      window.location.replace(safeDestination());
+      // safeLoginDestination may return an absolute same-origin URL (open-redirect guard);
+      // only relative paths carry the configured base path.
+      const target = safeDestination();
+      window.location.replace(/^https?:\/\//i.test(target) ? target : withBasePath(target));
     } catch {
       setError(t("auth.loginFailed"));
     } finally {
@@ -49,7 +53,7 @@ function LoginForm() {
     <main className="web-login-page">
       <div className="web-login-shell">
         <header className="web-login-brand">
-          <Image src="/icons/apple-touch-icon.png" width={52} height={52} alt="" priority />
+          <Image src={withBasePath("/icons/apple-touch-icon.png")} width={52} height={52} alt="" priority />
           <div>
             <h1>Pi Web</h1>
             <p>{t("auth.prompt")}</p>

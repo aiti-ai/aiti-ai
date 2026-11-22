@@ -1,7 +1,7 @@
 import { readFileSync, realpathSync, statSync } from "fs";
 import { relative, resolve } from "path";
-import { isPathWithinRoots } from "./path-security";
-import { toSlashPath } from "./paths";
+import { isPathWithinRoots } from "./path-security.ts";
+import { toSlashPath } from "./paths.ts";
 
 export const MAX_SUBAGENT_INPUT_FILES = 8;
 export const MAX_SUBAGENT_INPUT_BYTES = 512 * 1024;

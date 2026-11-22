@@ -1,36 +1,144 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo } from "react";
+import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { apiUrl, inAppPathname, withBasePath } from "@/lib/base-path";
+import { openViewerWindowHost } from "@/lib/open-viewer-window-host";
+import { fmtMoney, fmtMoneySmall, fxNote, useMoneySynced } from "@/lib/money";
+import { homeDirService } from "@/lib/home-dir";
+
 import { useGlobalKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
-import { SessionSidebar, type SelectSessionOptions, type SessionSidebarControl } from "./SessionSidebar";
-import { ChatWindow } from "./ChatWindow";
-import { NewSessionContextBar, type NewSessionContextControl } from "./NewSessionContextBar";
+import { PiWebTitle } from "./PiWebTitle";
+import { ChatWindow, type CompactControls } from "./ChatWindow";
+import { contextUrgency, CTX_BREATHE_CSS } from "@/lib/context-urgency";
 import type { ChatScrollPosition } from "@/lib/chat-scroll-position";
 import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
+import { renderExtItemIcon as renderExtItemIconShared } from "./ExtItemIcon";
+import { TabBody, type TabBodyCtx } from "./TabBody";
+import { DetachedTabWindow } from "./DetachedTabWindow";
 import { movePanelTab, orderPanelTabs } from "@/lib/panel-tab-order";
-import { openFileTab, saveFileViewerState, saveParkedFileViewerState, switchFileWorkspace, type ParkedFileWorkspace } from "./file-tab-state";
+import { openFileTab, openFolderTab, saveFileViewerState, findDormantFileFacePath, saveParkedFileViewerState, switchFileWorkspace, type ParkedFileWorkspace } from "./file-tab-state";
 import { SettingsPanel, SettingsSectionIcon } from "./SettingsPanel";
+import dynamic from "next/dynamic";
+import { ExtSlotsProvider, ExtSlot, TakeoverSlot, useExtSlotItems, useExtMetas, dispatchChatSend, ExtItemBoundary, registerExtClientService, ensureExtMaterialized, translateExtItemText } from "./ExtSlots";
+import { ProviderUsagePanel } from "./ProviderUsagePanel";
+/** Lazy-loaded SessionSidebar (unified dock plan §7-2): in takeover mode (sidebarContent
+ *  has a taker) this component is not rendered at all and the chunk never loads, keeping
+ *  the main bundle slim; in fallback mode it is fetched on first render (local chunk,
+ *  millisecond-scale load window). ssr:false: the component depends on localStorage
+ *  two-phase restore, so server rendering adds nothing. */
+const SessionSidebarLazy = dynamic(
+  () => import("./SessionSidebar").then((m) => ({ default: m.SessionSidebar })),
+  { ssr: false, loading: () => null },
+);
+
+/** Waiting-window skeleton for the sidebarContent takeover (slow-flash fix):
+ *  block-shape placeholder mirroring the taker's layout (header + project rows
+ *  + folder block), shown instead of the native sidebar while the taker bundle
+ *  is still loading on a slow network. */
+function SidebarTakeoverSkeleton() {
+  return (
+    <div className="takeover-skeleton" aria-hidden="true">
+      <div className="takeover-skeleton-row takeover-skeleton-header" />
+      <div className="takeover-skeleton-block">
+        <div className="takeover-skeleton-row takeover-skeleton-head" />
+        <div className="takeover-skeleton-row takeover-skeleton-line" />
+        <div className="takeover-skeleton-row takeover-skeleton-line" />
+        <div className="takeover-skeleton-row takeover-skeleton-line" />
+        <div className="takeover-skeleton-row takeover-skeleton-line" />
+      </div>
+      <div className="takeover-skeleton-block">
+        <div className="takeover-skeleton-row takeover-skeleton-head" />
+        <div className="takeover-skeleton-row takeover-skeleton-line" />
+        <div className="takeover-skeleton-row takeover-skeleton-line" />
+        <div className="takeover-skeleton-row takeover-skeleton-line" />
+      </div>
+    </div>
+  );
+}
+import { hasExtRender } from "@/lib/ext-ui-store";
+import type { ExtRenderProps, ExtUiItemRegistered } from "@/lib/ext-ui-store";
+import { getExtUiItems, subscribeExtUi } from "@/lib/ext-ui-store";
+
+/** SSR-stable empty snapshot for the pathPicker slot (getServerSnapshot must return a
+ *  cached reference, otherwise it loops forever). */
+const NO_PATH_PICKER_ITEMS: ExtUiItemRegistered[] = [];
+
+/**
+ * A router.replace to the same URL triggers an App Router RSC refetch (observed in
+ * practice: opening a page adds 3 extra requests: /?_rsc=… + manifest.webmanifest +
+ * icons/icon-192.png — a soft-navigation metadata re-render). Skip entirely when the
+ * target location matches the current address (the URL is already in the target state,
+ * replace gains nothing). Query-string comparison is kept: real changes such as
+ * "clear ?session= and go home" still replace as usual.
+ */
+/** Trailing-slash-insensitive comparison for filesystem paths (cwd equality). */
+function normPath(p: string): string {
+  return p.replace(/[\\/]+$/, "");
+}
+
+function replaceLocationIfChanged(
+  router: ReturnType<typeof useRouter>,
+  href: string,
+  options?: { scroll?: boolean },
+): void {
+  if (typeof window !== "undefined") {
+    const queryOnly = href.startsWith("?");
+    const [rawPath, targetQuery = ""] = href.split("?");
+    const normalize = (p: string) => p.replace(/\/+$/, "") || "/";
+    // router.replace's href is app-relative (Next adds basePath itself) — restore it
+    // to the actual browser address before comparing ("/" vs current "/dev/" under a
+    // /dev deployment should compare equal).
+    const targetPath = queryOnly ? window.location.pathname : withBasePath(rawPath);
+    const samePath = normalize(window.location.pathname) === normalize(targetPath);
+    // Target href without a query string = intentionally clearing params (e.g. "clear
+    // ?session= and go home"): skip only if the current address truly has no query
+    // string. This used to read `!targetQuery ||` (always true) — every param-clearing
+    // replace was silently swallowed, the address bar kept the stale ?session=, and a
+    // refresh always restored that old session.
+    const sameQuery = targetQuery
+      ? `?${targetQuery}` === window.location.search
+      : !window.location.search;
+    if (samePath && sameQuery) return;
+  }
+  router.replace(href, options);
+}
+import { registerHostApi } from "@/lib/ext/host-api";
+import { HOST_UI_SERVICE } from "@/lib/ext/host-ui-contract";
+import { openImageInEditorViewer } from "./editor-image-preview";
 import { ProjectTrustDialog, type ProjectTrustFailure } from "./ProjectTrustDialog";
+import { BackendConnBanner } from "./BackendConnBanner";
+// 上游 SessionSidebarControl/SelectSessionOptions 仅类型引用：组件本体走下方
+// SessionSidebarLazy 动态加载（接管态不进主包），type-only import 运行时擦除、无打包代价。
+import type { SelectSessionOptions, SessionSidebarControl } from "./SessionSidebar";
+import { NewSessionContextBar, type NewSessionContextControl } from "./NewSessionContextBar";
 import { BranchNavigator, hasSessionBranches } from "./BranchNavigator";
 import { SystemPromptPanel } from "./SystemPromptPanel";
 import { ToolDefinitionsPanel } from "./ToolDefinitionsPanel";
-import { AgentMiniStrip } from "./AgentMiniStrip";
 import { AgentSessionPanel } from "./AgentSessionPanel";
 import { DebugPanel, DebugPanelBoundary } from "./DebugPanel";
+import { SubagentViewer } from "./SubagentViewer";
 import { SessionChatPanel } from "./SessionChatPanel";
+import { TerminalPanelBridge } from "./TerminalPanelBridge";
 import { TerminalPanel } from "./TerminalPanel";
 import { newTerminalTab, restoreTerminalTabs, TERMINAL_TABS_KEY, type TerminalTab } from "./terminal-tab-state";
 import { appendSideTab, restoreSideTabs, sideTabsKey } from "./side-tab-state";
 import { useTheme } from "@/hooks/useTheme";
+import { usePanelScale } from "@/hooks/usePanelScale";
 import { useFontPreferences } from "@/hooks/useFontPreferences";
+import { THEME_OPTIONS } from "@/lib/theme";
+import { ThemeIcon } from "./ThemeIcon";
 import { useI18n } from "@/hooks/useI18n";
-import { useIsMobile, useIsNarrowMobile } from "@/hooks/useIsMobile";
+import { isMobileViewport, useIsCompact, useIsMobile, useIsNarrowMobile } from "@/hooks/useIsMobile";
 import { useViewportHeight } from "@/hooks/useViewportHeight";
+import { useOverlayBack } from "@/hooks/useOverlayBack";
+import { acquireOverlayBack } from "@/lib/overlay-back";
 import { useResizablePanel } from "@/hooks/useResizablePanel";
 import { useAudio } from "@/hooks/useAudio";
 import { copyText } from "@/lib/clipboard";
+import { getDraftApi } from "@/lib/composer/draft-api";
+import { sendAgentCommand } from "@/lib/agent-client";
 import { getFileName } from "@/lib/file-paths";
 import { buildAtMentionText, buildFileAtMentionsText, buildFileLineMentionText } from "@/lib/file-fuzzy";
 import {
@@ -41,10 +149,10 @@ import {
 import { setupPushSubscription } from "@/lib/push-client";
 import { startPageVisibilityTracking } from "@/lib/page-debug";
 import type { DebugClientSession } from "@/lib/debug-types";
-import { getInitialNavigation, linkedSessionId, withTabOpen } from "@/lib/initial-navigation";
+import { runOutcomeNotifies, truncateRunError } from "@/lib/run-outcome";
+import { getInitialNavigation, linkedSessionId, withTabOpen, type InitialNavigation } from "@/lib/initial-navigation";
 import { clearTabOpenSession, getTabOpen, setTabOpenNewSession, setTabOpenSession } from "@/lib/tab-session";
 import { mergeCatalogRow } from "./session-catalog-helpers";
-import { clearDraft, getDraft, parkedNewSessionDraftKey, rekeyDraft } from "@/lib/draft-store";
 import {
   contextForCwd,
   type NewSessionContext,
@@ -54,11 +162,35 @@ import {
   type ProjectChoice,
 } from "@/lib/new-session-context";
 import {
+  SEPARATOR,
+  TOPBAR_HIDDEN_KEY,
+  TOPBAR_ORDER_KEY,
+  normalizeTopbarOrder,
+  readTopbarHidden,
+  readTopbarOrder,
+  resolveTopbarLayout,
+  writeTopbarHidden,
+  writeTopbarOrder,
+  type TopbarItemId,
+  type TopbarOrderItem,
+} from "@/lib/topbar-order";
+import {
   clearLastOpen,
+  clearLastOpenSessionById,
   getLastOpenSession,
   setLastOpenSession,
   workspaceKeyOf,
 } from "@/lib/workspace-memory";
+import { clearCachedModels, readMostRecentCachedCwd } from "@/lib/models-client-cache";
+import { prefetchModels } from "@/hooks/useAgentSession";
+import {
+  piWebSessionService,
+  publishSessionState,
+  setSessionOpener,
+  type PiWebSessionSource,
+} from "@/lib/pi-web-session-store";
+import { piWebToastService } from "@/lib/pi-web-toast-store";
+import { HostToastHost } from "./HostToastHost";
 import {
   getDefaultRightPanelWidth,
   getRightPanelMaxWidth,
@@ -69,21 +201,27 @@ import {
   SIDEBAR_DEFAULT_WIDTH,
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
+  SPLIT_PANEL_MIN_WIDTH,
 } from "@/lib/panel-layout";
 import type { BlockingExtensionUiRequest, SessionInfo, SessionTreeNode } from "@/lib/types";
 import type { McpErrorResponse, ProjectTrustStatus } from "@/lib/api-types";
-import type { ChatInputHandle } from "./ChatInput";
+import type { ChatInputHandle, AttachedImage } from "./ChatInput";
 import type { AgentEndInfo, NewSessionChoices } from "@/hooks/useAgentSession";
 import type { SessionStatsInfo } from "@/lib/pi-types";
-import { formatActiveDuration, formatCompactCount, formatCostShort } from "@/lib/session-stats-format";
+import type { QueueEntry } from "@/lib/queue-store";
+import { ExportDialog } from "./ExportDialog";
+import { SessionNameDialog } from "./SessionNameDialog";
+import type { FileExplorerHandle } from "./FileExplorer";
 import type { FileViewerState } from "@/lib/file-viewer-state";
+import type { RevisionRef } from "@/lib/file-revision";
 import { PRESET_READ_ONLY, type ToolEntry } from "@/lib/tool-presets";
 import { createSideChat, deleteSideChat } from "@/lib/side-chat-client";
+import { getAgentsBadge, getSessionFamily, isHiddenRelation, sideChatTitle } from "@/lib/session-family";
 import { sideChatHit } from "@/lib/session-search-hit";
-import { getAgentStripMembers, getAgentsBadge, getSessionFamily, isHiddenRelation, sideChatTitle } from "@/lib/session-family";
+import { getRecentProjects } from "@/lib/project-groups";
+import { skillExpansionToCommand } from "@/lib/slash-display";
 import { getLastSettingsSection, settingsSectionRequiresProject, type SettingsSection } from "@/lib/settings-navigation";
 import { focusIfLost } from "@/lib/stacked-dialog";
-import { loadAgentStripLocked, saveAgentStripLocked } from "@/lib/agent-strip-lock";
 import { claimDoneChime } from "@/lib/done-chime";
 import { readJsonOrThrow } from "@/lib/fetch-json";
 
@@ -94,12 +232,156 @@ type AutoNameStatus =
   | { kind: "success" }
   | { kind: "error"; message: string };
 
+declare global {
+  interface Window {
+    /**
+     * Close/switch confirmation interface injected by the file-editor extension
+     * (fileViewer takeover). Optional — absent when the extension has not taken over
+     * or is not loaded; the core always allows the action then. The core only
+     * consumes confirmClose; _restoreSession is a private extension method (restores
+     * the editing session when the panel reopens) — a fragile coupling the extension
+     * should turn into a public API soon.
+     */
+    __aitiEditor?: {
+      confirmClose?: (p: string, opts?: { isSwitch?: boolean }) => boolean | Promise<boolean>;
+      _restoreSession?: () => void;
+      /** File dock face (file-editor extension file-dock, 2026-09-16): optional —
+       *  absent when the extension is not deployed, and host guards/menu items
+       *  degrade gracefully. See the file-dock-face plan doc for semantics. */
+      hasFileFace?: (p: string) => boolean;
+      openFileFace?: (p: string, opts?: { auto?: boolean }) => void;
+      dockFile?: (p: string, zone: "sidebar" | "right-panel") => void;
+    };
+  }
+}
+
 // app/globals.css: 36px, 44px on a phone or touch screen.
 const TOP_BAR_ICON_BUTTON_SIZE = "var(--top-bar-height)";
 const AGENT_PANEL_WIDTH = 420;
 // pi's built-in tools that never change a file; any other tool may (#1144).
 const READ_ONLY_TOOL_NAMES = new Set(PRESET_READ_ONLY);
 const TOOL_END_REFRESH_MS = 1000;
+const SELECTION_MENU_WIDTH = 176;
+/** Right-panel tab keep-alive pool cap (see the right-dock keep-alive plan doc);
+ *  a localStorage override of 0 = evict everything (back to pure tombstone semantics). */
+const RIGHT_PANEL_ALIVE_MAX = 5;
+const RIGHT_PANEL_ALIVE_KEY = "pi-web:right-panel:alive-max";
+
+/** Notification text: truncate overlong summaries. */
+function truncateText(text: string, max: number): string {
+  const trimmed = text.trim();
+  return trimmed.length > max ? `${trimmed.slice(0, max)}…` : trimmed;
+}
+
+/** Session title for task-completion notifications: prefer the session name, fall back
+ *  to a summary of the first message when unnamed (avoids a generic "task finished"). */
+function notificationSessionTitle(session: SessionInfo | null, fallback: string): string {
+  const name = session?.name?.trim();
+  if (name) return name;
+  const first = session?.firstMessage?.trim();
+  if (first) return truncateText(first, 42);
+  return fallback;
+}
+
+/** Project context label in notifications: <project root name>(<branch>), omitted when unknown. */
+function notificationProjectLabel(session: SessionInfo | null): string {
+  const root = session?.projectRoot || session?.cwd;
+  const base = root ? root.split(/[\\/]/).filter(Boolean).pop() : null;
+  const parts: string[] = [];
+  if (base) parts.push(base);
+  if (session?.branch) parts.push(`(${session.branch})`);
+  return parts.join(" ");
+}
+
+/** Declarative extension item icon (meta.icon, ExtUiItemIcon) → standard grayscale line
+ *  rendering (16px, color follows currentColor). Three forms: { svg } inline markup
+ *  (24×24 viewBox, lucide line style) / emoji / an in-extension .svg file (CSS-mask).
+ *  Shared by the "⋯" menu icon slot and declarative toolbar buttons (ExtToolbarIconButton). */
+function renderExtItemIcon(icon: NonNullable<ExtUiItemRegistered["meta"]>["icon"], extId?: string): React.ReactNode {
+  return renderExtItemIconShared(icon, extId);
+}
+
+/** Declarative toolbar button (extension registerItems supplies meta.icon +
+ *  meta.onClick with no render): the host renders a standard 36×36 grayscale icon
+ *  button (right divider + hover tint), identical to each extension's own buttons —
+ *  the look belongs to the host, preventing per-extension style-constant drift
+ *  (2026-08 contract; see the docs extension-points reference). */
+function ExtToolbarIconButton({ item }: { item: ExtUiItemRegistered }) {
+  const icon = item.meta?.icon;
+  // label/title support "i18n:<key>" (translateExtItemText; manifest ui.i18n cascade) —
+  // extensions may ship either raw text or i18n keys on both static and registered items.
+  const title = translateExtItemText(item.extId, item.meta?.title) || translateExtItemText(item.extId, item.meta?.label) || item.id;
+  // [lazy-load v2] While a static item's click-triggered materialization is in
+  // flight: semi-transparent + click-guarded; static declarations without an icon
+  // render the label's first character as a placeholder (icons are required by the
+  // SOP; the placeholder is a fallback only).
+  const pending = item.pending === true;
+  return (
+    <button
+      type="button"
+      title={pending ? `${title} …` : title}
+      disabled={pending}
+      onClick={(e) => { if (!pending) { const cb = item.meta?.onClick; if (typeof cb === "function") cb(e); } }}
+      onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}
+      style={{
+        display: "flex", alignItems: "center", justifyContent: "center",
+        width: TOP_BAR_ICON_BUTTON_SIZE, height: "100%", padding: 0,
+        background: "none", borderTop: "none", borderBottom: "none", borderLeft: "none",
+        borderRight: "1px solid var(--border)",
+        color: "var(--text-muted)", cursor: "pointer", flexShrink: 0, fontSize: 16, lineHeight: 1,
+        transition: "color 0.12s",
+        opacity: pending ? 0.45 : 1,
+      }}
+    >
+      {icon != null
+        ? renderExtItemIcon(icon, item.extId)
+        : <span style={{ fontSize: 13, fontWeight: 600, lineHeight: 1 }}>{(translateExtItemText(item.extId, item.meta?.label) || item.id).slice(0, 1)}</span>}
+    </button>
+  );
+}
+
+// Unified session-state service (P3 plan §4.3): registered at module top level —
+// module evaluation happens before the effect phase, so the service is already
+// available whenever any extension client materializes (consumers should still
+// null-check and degrade for older hosts).
+// Snapshot publication is driven by the session-state effect inside AppShell.
+registerExtClientService("pi-web", "pi-web.session", piWebSessionService);
+// Shared home-directory singleton (dedupes the /api/home call on page open):
+// extensions consume ensure() via ctx.getExtService("pi-web.home") instead of
+// each fetching on their own.
+registerExtClientService("pi-web", "pi-web.home", homeDirService);
+// Unified toast service (2026-09-13): the host owns the top-right queue; extensions
+// consume it via ctx.getExtService("pi-web.toast").show — replacing per-extension
+// toasts (component state + setTimeout); rendering belongs to HostToastHost (mounted by AppShell).
+registerExtClientService("pi-web", "pi-web.toast", piWebToastService);
+// Small-screen "system back" overlay-close service (2026-09-14): the history back
+// stack has a single in-process writer; extensions must not listen to popstate on
+// their own. Floating dialogs from the floating-dialog extension join via
+// ctx.getExtService("pi-web.overlayBack").acquire(close); whether to enable on
+// small screens only is decided by the consumer (host built-in overlays use
+// useOverlayBack(isMobile && open, close)).
+registerExtClientService("pi-web", "pi-web.overlayBack", {
+  /** Register a layer that closes on system back; returns { release }. The caller
+   *  is responsible for small-screen gating. */
+  acquire: (close: () => void) => acquireOverlayBack(close),
+});
+
+function parkedNewSessionDraftKey(cwd: string): string {
+  return `parked-new:${cwd}`;
+}
+
+/** [新会话上下文栏 × 本地 draft-keeper 契约] 上游 #1047/#1107 的草稿驻留/搬回原实现是
+ *  lib/draft-store 直用；本地草稿存储已整体由 draft-keeper 扩展接管（composer 契约：
+ *  core 只声明意图），故物理搬移/探测统一走 DraftApi —— keeper 缺省时优雅降级为
+ *  no-op（搬运的是空草稿，无损失；bar 的 live 文本由 carryComposer 的 ChatInput
+ *  值通道携带，不依赖此处）。 */
+function apiRekeyDraft(previousKey: string, nextKey: string): void {
+  getDraftApi()?.rekeyDraft?.(previousKey, nextKey);
+}
+function apiHasDraft(key: string): boolean {
+  return Boolean(getDraftApi()?.getDraft(key));
+}
 
 /** Panel tab id of the last sub-agent tab, or null when there is none. */
 function lastAgentTabId(tabs: readonly { sessionId: string }[]): string | null {
@@ -107,16 +389,44 @@ function lastAgentTabId(tabs: readonly { sessionId: string }[]): string | null {
   return last ? `agent:${last.sessionId}` : null;
 }
 
-export function AppShell() {
+export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record<string, string[]> | null } = {}) {
+  // Hydration-complete signal: extensions (e.g. the draft-keeper extension) must
+  // apply their startup restore only after hydration, otherwise a dev-mode
+  // hydration-mismatch re-render would wipe the restored text using the server
+  // HTML (an empty box).
+  useEffect(() => {
+    (window as unknown as { __piWebHydrated?: boolean }).__piWebHydrated = true;
+    window.dispatchEvent(new Event("pi-web:hydrated"));
+  }, []);
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [initialNavigation, setInitialNavigation] = useState(() => getInitialNavigation(searchParams));
-  // Keep the system-theme subscription mounted for the lifetime of the app.
-  useTheme();
+  // useSearchParams returns an empty instance on the server render, and in
+  // dev without a Suspense boundary it stays empty after hydration — so the
+  // ?session=/?cwd= restore would never fire. Read the query string straight
+  // from the location on mount; a re-render after that is harmless.
+  const [initialNavigation, setInitialNavigation] = useState<InitialNavigation>(() => getInitialNavigation(searchParams));
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const nav = getInitialNavigation(new URLSearchParams(window.location.search));
+      setInitialNavigation(nav);
+      // Post-hydration the location is authoritative. A ?session= param means the
+      // URL restore is still pending: initialSessionRestored started true (SSR
+      // searchParams are empty), so reset it here or a refresh would render the
+      // placeholder/new-session page before jumping to the target conversation.
+      setInitialSessionRestored(!nav.sessionId);
+    }
+  }, []);
+  const { preference, setThemePreference } = useTheme();
+  const themeLabelKey = `theme.${preference}`;
+  const { locale, setLocale, t: translate, supportedLocales } = useI18n();
   // Restore fonts even when Settings and the chat composer have not been opened.
   useFontPreferences();
-  const { locale, t: translate } = useI18n();
+  // Restore the panel UI scale (--pi-panel-zoom) the same way.
+  usePanelScale();
   const isMobile = useIsMobile();
+  const isCompact = useIsCompact();
+  // Icon buttons are uniformly 36px wide (matching extension buttons); icon size is
+  // also fixed at 16px (iconDim inside renderTopbarItem)
   const isNarrowMobile = useIsNarrowMobile();
   useViewportHeight();
 
@@ -197,6 +507,34 @@ export function AppShell() {
     });
   }, []);
   const agentsBadge = activeSessionFamily ? getAgentsBadge(activeSessionFamily.subagents, runningSessionIds) : null;
+const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: boolean) => (
+    <span
+      aria-hidden="true"
+      style={{
+        position: "relative",
+        minWidth: 15, height: 15, padding: "0 4px", display: "grid", placeItems: "center",
+        borderRadius: 7,
+        background: badge.running ? "color-mix(in srgb, var(--accent) 22%, var(--bg-panel))" : "var(--bg-selected)",
+        color: "var(--accent)",
+        fontSize: 10, lineHeight: 1, fontVariantNumeric: "tabular-nums",
+        fontWeight: badge.running ? 600 : undefined,
+        ...(mobile ? { position: "absolute", top: 3, right: 3, minWidth: 13, height: 13, padding: "0 3px", fontSize: 9 } : {}),
+      }}
+    >
+      {badge.running && (
+        <svg
+          className="animate-spin motion-reduce:animate-none"
+          viewBox="0 0 24 24" fill="none" aria-hidden="true"
+          style={{ position: "absolute", top: -3, left: -3, width: "calc(100% + 6px)", height: "calc(100% + 6px)", pointerEvents: "none" }}
+        >
+          <circle cx="12" cy="12" r="11" stroke="currentColor" strokeWidth="2" opacity="0.2" />
+          <path d="M23 12a11 11 0 0 0-11-11" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        </svg>
+      )}
+      {badge.count}
+    </span>
+  );
+
   const agentsButtonLabel = agentsBadge?.running
     ? translate("agentSwitcher.titleRunning", { count: agentsBadge.count })
     : translate("agentSwitcher.title");
@@ -204,23 +542,15 @@ export function AppShell() {
   // It shows whenever the full switcher is closed, so the Agents button swaps the two there.
   // On the main agent only while this browser has it locked (the strip's own padlock);
   // otherwise the button opens and closes the switcher there as before.
-  const [agentStripLocked, setAgentStripLocked] = useState(loadAgentStripLocked);
-  const agentStripMembers = useMemo(
-    () => getAgentStripMembers(activeSessionFamily, selectedSession?.id, agentStripLocked),
-    [activeSessionFamily, selectedSession?.id, agentStripLocked],
-  );
   // The Agents button on screen (one of its places at a time): focus goes back to it when the
   // switcher closes on a pick or the strip leaves under the keyboard.
   const agentsButtonRef = useRef<HTMLButtonElement | null>(null);
-  const handleToggleAgentStripLock = useCallback(() => {
-    const next = !agentStripLocked;
-    setAgentStripLocked(next);
-    saveAgentStripLocked(next);
-    // Unlocked on the main agent, the strip and its padlock leave the page.
-    if (!next) requestAnimationFrame(() => focusIfLost(document, agentsButtonRef.current));
-  }, [agentStripLocked]);
   // The temporary id distinguishes consecutive fresh composers in one cwd.
   const [newSessionCwd, setNewSessionCwd] = useState<string | null>(null);
+  // Target cwd chosen on the new-session page's "workspace" selector (null = current
+  // workspace): the switch does not happen immediately on selection — only when the
+  // session is actually created (handleSessionCreated).
+  const [newSessionWorkspace, setNewSessionWorkspace] = useState<string | null>(null);
   const [newSessionDraftId, setNewSessionDraftId] = useState("initial");
   const activeNewSessionDraftKeyRef = useRef<string | null>(null);
   // The bar above a fresh composer (NewSessionContextBar): the sidebar reports
@@ -259,24 +589,39 @@ export function AppShell() {
     setSearchTarget((current) => current === target ? null : current);
   }, []);
   const [explorerRefreshKey, setExplorerRefreshKey] = useState(0);
+  const fileExplorerRef = useRef<FileExplorerHandle>(null);
   const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
   // The plain Settings button opens a phone's Settings on its list of sections; shortcuts open theirs.
   const [settingsOpenAtHome, setSettingsOpenAtHome] = useState(false);
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
   const [projectTrust, setProjectTrust] = useState<ProjectTrustStatus | null>(null);
   const [projectTrustDialogOpen, setProjectTrustDialogOpen] = useState(false);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const exportQueueDataRef = useRef<(() => Promise<{ live: QueueEntry[]; recovery: QueueEntry[] } | null>) | null>(null);
   const [projectTrustBusy, setProjectTrustBusy] = useState(false);
   const [projectTrustError, setProjectTrustError] = useState<ProjectTrustFailure | null>(null);
+  // "Directory does not exist" notice bar (made visible on trust-check 400
+  // "Directory does not exist", replacing a silent console error)
+  const [cwdMissingNotice, setCwdMissingNotice] = useState<string | null>(null);
+  // Upstream #712: collapse the sidebar initially when embedding with ?sidebar=collapsed
   const [sidebarOpen, setSidebarOpen] = useState(() => !initialNavigation.sidebarCollapsed);
   const desktopSidebarOpenRef = useRef(!initialNavigation.sidebarCollapsed);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
-  const [rightPanelExpanded, setRightPanelExpanded] = useState(false);
-  const rightPanelFullWidth = rightPanelOpen && rightPanelExpanded && !isMobile;
-  useEffect(() => {
-    if (!rightPanelOpen || isMobile) setRightPanelExpanded(false);
-  }, [rightPanelOpen, isMobile]);
-  const [mobileToolbarMoreOpen, setMobileToolbarMoreOpen] = useState(false);
-  const moreControlsLabel = mobileToolbarMoreOpen ? translate("chat.close") : translate("chat.moreControls");
+  // Right-panel layout size mode (tri-state expand button): "dock" (three-column
+  // default) → "wide" (sidebar collapsed, the right panel absorbs its width, chat
+  // width unchanged) → "full" (full-width overlay) → back to "dock". Plan:
+  // right-panel tri-state expand design.
+  const [rightPanelSizeMode, setRightPanelSizeMode] = useState<"dock" | "wide" | "full">("dock");
+  const rightPanelFullWidth = rightPanelOpen && rightPanelSizeMode === "full" && !isMobile;
+  // Snapshot taken when entering "wide"; restored when leaving it (sidebar open
+  // state + the user's right-panel width) so the wide layout never persists.
+  const wideSnapshotRef = useRef<{ sidebarOpen: boolean; rightWidth: number } | null>(null);
+  // Two-step wide entry: the target width is applied in an effect after the
+  // sidebarOpen=false commit so the resizer's max clamp already sees the sidebar
+  // as closed — same-batch it would clamp against the stale open-sidebar max and
+  // shrink the target width, which would change the chat width.
+  const widePendingWidthRef = useRef<number | null>(null);
   const [mobileSidebarReady, setMobileSidebarReady] = useState(false);
   const sidebarWidthRef = useRef(SIDEBAR_DEFAULT_WIDTH);
   const rightPanelWidthRef = useRef(RIGHT_PANEL_FALLBACK_WIDTH);
@@ -345,11 +690,90 @@ export function AppShell() {
     reclampSidebarWidth();
     reclampRightPanelWidth();
   }, [reclampRightPanelWidth, reclampSidebarWidth, rightPanelOpen]);
+  // ── Tri-state right-panel expand (dock → wide → full → dock) ──
+  // Leaves the wide layout: restores the snapshot (the user's right-panel width,
+  // and the sidebar when it was open before entering). forcePersist writes the
+  // user's size back over any wide width a drag or window resize stored meanwhile.
+  const exitRightPanelWide = useCallback((restoreSidebar: boolean) => {
+    const snapshot = wideSnapshotRef.current;
+    wideSnapshotRef.current = null;
+    widePendingWidthRef.current = null;
+    if (snapshot) {
+      rightPanelResizer.setWidth(snapshot.rightWidth, { persist: true, forcePersist: true });
+      if (restoreSidebar && snapshot.sidebarOpen && !isMobileViewport()) setSidebarOpen(true);
+    }
+    setRightPanelSizeMode("dock");
+  }, [rightPanelResizer]);
+  // Wide entry step two: apply the pending width now that sidebarOpen=false has
+  // committed (see widePendingWidthRef for why this must not be same-batch).
+  useEffect(() => {
+    if (rightPanelSizeMode !== "wide" || widePendingWidthRef.current === null) return;
+    const target = widePendingWidthRef.current;
+    widePendingWidthRef.current = null;
+    rightPanelResizer.setWidth(target);
+  }, [rightPanelSizeMode, rightPanelResizer]);
+  // Panel closed or the mobile band while wide/full: restore the snapshot and
+  // fall back to dock — those layouts only exist for an open panel on desktop.
+  useEffect(() => {
+    if (rightPanelOpen && !isMobile) return;
+    exitRightPanelWide(true);
+  }, [exitRightPanelWide, isMobile, rightPanelOpen]);
+  // The user re-opens the sidebar while wide: they want the three columns back.
+  // Drops the wide width (the sidebar stays as the user just set it).
+  useEffect(() => {
+    if (rightPanelSizeMode !== "wide" || !sidebarOpen) return;
+    exitRightPanelWide(false);
+  }, [exitRightPanelWide, rightPanelSizeMode, sidebarOpen]);
+  // Shrinking below the split-layout band while wide: the right panel becomes an
+  // overlay there — restore the snapshot immediately. Uses the window resize
+  // event (the path the panel resizer itself proves reliable here) rather than a
+  // matchMedia change listener; exit is idempotent, so repeated resize events
+  // below the band are harmless.
+  useEffect(() => {
+    const onResize = () => {
+      if (window.innerWidth < SPLIT_PANEL_MIN_WIDTH) exitRightPanelWide(true);
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [exitRightPanelWide]);
+  // Panel expansion immediately restores the files/folders the last session had open (aiti-editor session
+  // tombstone restore; the extension-side _sessionRestored one-shot guard prevents repeats and
+  // openFileTab/openFolderTab are idempotent). This logic was once inlined in the file-panel toggle button's
+  // onClick and got dropped by the upstream handleRightPanelToggle refactor → expanding the panel no longer
+  // loaded history. Converged into an effect: every expansion path (toggle/open file/open folder/extension
+  // openFile) triggers it. See AppShell.file-history-restore.test.mjs.
+  // [lazy-materialization window, aiti-editor clientImmediately:false] After a refresh the extension
+  // client is not mounted until some open action materializes it — the probe below would silently no-op
+  // and the one-shot restore would never happen (the effect deps stay unchanged, so a later
+  // materialization does not re-run it). Refresh → expand panel (no file opened yet) was exactly that
+  // dead window: the panel came up empty even though tombstones existed. When the probe misses,
+  // materialize the extension deterministically first, then restore (extension-side one-shot guard keeps
+  // it idempotent); materialization failure (extension removed/disabled) degrades to the old silent no-op.
+  useEffect(() => {
+    if (!rightPanelOpen) return;
+    const restore = window.__aitiEditor?._restoreSession;
+    if (typeof restore === "function") {
+      setTimeout(() => restore(), 0);
+      return;
+    }
+    let cancelled = false;
+    void ensureExtMaterialized("aiti-editor").then((ok) => {
+      if (cancelled || !ok) return;
+      const api = window.__aitiEditor;
+      if (api && typeof api._restoreSession === "function") api._restoreSession();
+    }).catch(() => { /* extension absent — stay silent, same as the probe path */ });
+    return () => { cancelled = true; };
+  }, [rightPanelOpen]);
   const chatInputRef = useRef<ChatInputHandle | null>(null);
   // `/side <prompt>`: the text that seeds the side chat's composer, until its panel consumes it.
   const [sideChatPrompts, setSideChatPrompts] = useState<Record<string, string>>({});
+  /** Quote-popover "Ask in new chat": the fork_branch's id → the composer prompt it replays (fork feature). */
+  const [pendingQuotePrompt, setPendingQuotePrompt] = useState<{ sessionId: string; text: string; images?: AttachedImage[] } | null>(null);
   const topBarRef = useRef<HTMLDivElement>(null);
-  const mobileToolbarRef = useRef<HTMLDivElement>(null);
+  const themeBtnRef = useRef<HTMLButtonElement>(null);
+  const languageBtnRef = useRef<HTMLButtonElement>(null);
+  const selectionMenuRef = useRef<HTMLDivElement>(null);
+
   // Branch navigator state — populated by ChatWindow via onBranchDataChange
   const [branchTree, setBranchTree] = useState<SessionTreeNode[]>([]);
   const [branchActiveLeafId, setBranchActiveLeafId] = useState<string | null>(null);
@@ -369,6 +793,9 @@ export function AppShell() {
   }, []);
 
   const [systemPrompt, setSystemPrompt] = useState<string | null>(null);
+  const [systemPromptLoading, setSystemPromptLoading] = useState(false);
+  const systemPromptLoaderRef = useRef<(() => Promise<void>) | null>(null);
+  const systemPromptLoadIdRef = useRef(0);
   const [systemTools, setSystemTools] = useState<ToolEntry[] | null>(null);
   const [systemInfoLoading, setSystemInfoLoading] = useState(false);
   const systemInfoLoaderRef = useRef<(() => Promise<void>) | null>(null);
@@ -403,8 +830,21 @@ export function AppShell() {
 
   // Session stats (tokens + cost) — populated by ChatWindow, displayed in top bar
   const [sessionStats, setSessionStats] = useState<SessionStatsInfo | null>(null);
+  // Top-bar money display: subscribe to FX rates only when there is a real cost
+  // (otherwise the page open does not fetch /api/fx; once cost arrives the flag
+  // flips true and the ¥ part is filled in on the next render after rates load).
+  useMoneySynced((sessionStats?.cost ?? 0) > 0);
   const [autoNameStatus, setAutoNameStatus] = useState<AutoNameStatus>({ kind: "idle" });
   const autoNameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Manual naming dialog for bridge-occupied sessions (fallback path when auto-name
+   *  cannot start a local runtime) */
+  const [bridgedNameDialog, setBridgedNameDialog] = useState<{ sessionId: string; defaultName: string } | null>(null);
+  /** "Fetch latest session stats" callback registered by ChatWindow (includes
+   *  contextUsage for idle sessions) */
+  const [sessionStatsRefresh, setSessionStatsRefresh] = useState<(() => void) | null>(null);
+  /** Compact-control tri-state registered by ChatWindow (compact/abort/cancelQueue +
+   *  isCompacting/compactQueued) — data source for the session-info panel's compact button */
+  const [compactControls, setCompactControls] = useState<CompactControls | null>(null);
   const activeSessionIdRef = useRef<string | null>(selectedSession?.id ?? null);
   activeSessionIdRef.current = selectedSession?.id ?? null;
   const handleSessionStatsChange = useCallback((stats: SessionStatsInfo | null) => {
@@ -429,14 +869,42 @@ export function AppShell() {
     };
   }, []);
 
+  // Model list warm-up: before the real cwd (session restore / default project pick)
+  // is ready, fire one /api/models request with the most recently used cwd (hits an
+  // in-flight/shared request; on success writes the client cache) — this moves the
+  // network round-trip ahead of mount so model names are already there when
+  // ChatWindow replays the cache. Runs once on mount only; loading and refreshing
+  // for the real cwd remain the responsibility of useAgentSession.
+  useEffect(() => {
+    const recentCwd = readMostRecentCachedCwd();
+    if (recentCwd) prefetchModels(recentCwd);
+  }, []);
+
+  // Model-config change broadcast: the model-wizard extension (aggregation/multi-key
+  // save) dispatches `pi-web:models-changed` → refresh the model list (useAgentSession
+  // re-fetches /api/models) without waiting for the 60s server cache or a manual refresh.
+  // Also clear the client cache: the next loadModels replay must reflect the new config.
+  useEffect(() => {
+    const onModelsChanged = () => {
+      clearCachedModels();
+      setModelsRefreshKey((key) => key + 1);
+    };
+    window.addEventListener("pi-web:models-changed", onModelsChanged);
+    return () => window.removeEventListener("pi-web:models-changed", onModelsChanged);
+  }, []);
+
   // Context usage — populated by ChatWindow, displayed in top bar
   const [contextUsage, setContextUsage] = useState<{ percent: number | null; contextWindow: number; tokens: number | null } | null>(null);
   const handleContextUsageChange = useCallback((usage: { percent: number | null; contextWindow: number; tokens: number | null } | null) => {
     setContextUsage(usage);
   }, []);
 
+  // Current display model — fed by ChatWindow, consumed by the session-info
+  // "remaining quota" block to pin the current provider on top.
+  const [currentModelInfo, setCurrentModelInfo] = useState<{ provider: string; modelId: string } | null>(null);
+
   // Single active panel — only one dropdown open at a time
-  const [activeTopPanel, setActiveTopPanel] = useState<"agents" | "branches" | "system" | "tools" | "session" | "debug" | null>(null);
+  const [activeTopPanel, setActiveTopPanel] = useState<"agents" | "branches" | "system" | "tools" | "session" | "language" | "theme" | "debug" | null>(null);
   const [topPanelPos, setTopPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
 
   useEffect(() => {
@@ -456,13 +924,11 @@ export function AppShell() {
   }, [rightPanelFullWidth]);
 
   const toggleTopPanel = useCallback((
-    panel: "agents" | "branches" | "system" | "tools" | "session" | "debug",
-    keepMobileToolbarOpen = false,
+    panel: "agents" | "branches" | "system" | "tools" | "session" | "language" | "theme" | "debug",
   ) => {
     if (isMobile) setSidebarOpen(false);
     setActiveTopPanel((cur) => cur === panel ? null : panel);
-    if (isMobile && isNarrowMobile && keepMobileToolbarOpen) setMobileToolbarMoreOpen(true);
-  }, [isMobile, isNarrowMobile]);
+  }, [isMobile]);
 
   // The Debug button on screen (one of its three places at a time); Escape gives focus back to it.
   const debugButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -477,10 +943,9 @@ export function AppShell() {
 
   const handleSystemInfoToggle = useCallback((
     panel: "system" | "tools",
-    keepMobileToolbarOpen = false,
   ) => {
     const opening = activeTopPanel !== panel;
-    toggleTopPanel(panel, keepMobileToolbarOpen);
+    toggleTopPanel(panel);
     if (!opening || systemInfoLoading) return;
 
     const load = systemInfoLoaderRef.current;
@@ -498,9 +963,37 @@ export function AppShell() {
 
   const openSessionStatsPanel = useCallback(() => {
     if (isMobile) setSidebarOpen(false);
-    setMobileToolbarMoreOpen(false);
+    // Idle sessions have no live state to read (the wrapper was idle-GC'd), so fetch
+    // get_session_stats once when the panel opens to make sure the context % row has
+    // a value (on mobile this is the only place to see it).
+    sessionStatsRefresh?.();
     setActiveTopPanel("session");
-  }, [isMobile]);
+  }, [isMobile, sessionStatsRefresh]);
+
+  /** Collapse all top-bar dropdown panels (pi-web.ui service member closeTopPanels) —
+   *  extension items inside a top-bar panel call this before opening another
+   *  full-screen surface (e.g. the AI-usage report dock): a panel left open would
+   *  cover the new surface on small screens (observed: only the tab header remained
+   *  visible). Same semantics as the panel ✕ button (setActiveTopPanel(null)). */
+  const closeTopPanels = useCallback(() => setActiveTopPanel(null), []);
+
+  /** Registration channel for ChatWindow's "fetch latest session stats" callback
+   *  (onSessionStatsRefresherRegister).
+   *  ⚠️ Do NOT pass setSessionStatsRefresh directly as the registration function:
+   *  ChatWindow registers a function, and React treats a function argument as a
+   *  functional update handed straight to basicStateReducer and executes it
+   *  immediately — opening a session would unexpectedly issue get_session_stats
+   *  (and without a wrapper even cold-start the whole runtime; observed in prod:
+   *  that is exactly how an idle wrapper was born), and the callback itself would
+   *  never be stored in state (its return value undefined is what gets stored).
+   *  Here an updater returns the callback itself, storing the "function" as a value. */
+  const handleSessionStatsRefresherRegister = useCallback((refresher: (() => void) | null) => {
+    if (!refresher) {
+      setSessionStatsRefresh(null);
+      return;
+    }
+    setSessionStatsRefresh(() => refresher);
+  }, []);
 
   // The composer opens Settings too: a bare /mcp opens Settings › MCP (useAgentSession).
   const openSettingsSection = useCallback((section: SettingsSection) => {
@@ -511,7 +1004,6 @@ export function AppShell() {
   const handleSidebarToggle = useCallback(() => {
     if (isMobile) {
       setActiveTopPanel(null);
-      setMobileToolbarMoreOpen(false);
     }
     setSidebarOpen((open) => {
       const next = !open;
@@ -520,57 +1012,65 @@ export function AppShell() {
     });
   }, [isMobile]);
 
-  const handleMobileToolbarMoreToggle = useCallback(() => {
-    setSidebarOpen(false);
-    setActiveTopPanel(null);
-    setMobileToolbarMoreOpen((open) => !open);
-  }, []);
-
   const handleRightPanelToggle = useCallback(() => {
     if (isMobile) {
       setSidebarOpen(false);
       setActiveTopPanel(null);
-      setMobileToolbarMoreOpen(false);
     }
     setRightPanelOpen((open) => !open);
   }, [isMobile]);
 
+  // Tri-state expand button: dock → wide (collapse sidebar, right panel absorbs
+  // its width, chat width unchanged) → full → dock (restore the snapshot).
+  // Outside the split band, or with the sidebar already closed, dock jumps
+  // straight to full (the legacy two-state loop).
   const handleRightPanelExpandToggle = useCallback(() => {
     setActiveTopPanel(null);
-    setRightPanelExpanded((expanded) => !expanded);
-  }, []);
+    if (rightPanelSizeMode === "wide") {
+      setRightPanelSizeMode("full");
+      return;
+    }
+    if (rightPanelSizeMode === "full") {
+      exitRightPanelWide(true);
+      return;
+    }
+    const splitBand = typeof window !== "undefined" && window.innerWidth >= SPLIT_PANEL_MIN_WIDTH;
+    if (splitBand && sidebarOpen) {
+      wideSnapshotRef.current = { sidebarOpen: true, rightWidth: rightPanelWidthRef.current };
+      widePendingWidthRef.current = sidebarWidthRef.current + rightPanelWidthRef.current;
+      setSidebarOpen(false);
+      setRightPanelSizeMode("wide");
+      return;
+    }
+    setRightPanelSizeMode("full");
+  }, [exitRightPanelWide, rightPanelSizeMode, sidebarOpen]);
 
-  useEffect(() => {
-    if (!mobileToolbarMoreOpen) return;
-
-    const handlePointerDown = (event: PointerEvent) => {
-      const toolbar = mobileToolbarRef.current;
-      if (toolbar && event.composedPath().includes(toolbar)) return;
-      setMobileToolbarMoreOpen(false);
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      event.stopPropagation();
-      setMobileToolbarMoreOpen(false);
-    };
-
-    document.addEventListener("pointerdown", handlePointerDown, true);
-    document.addEventListener("keydown", handleKeyDown, true);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown, true);
-      document.removeEventListener("keydown", handleKeyDown, true);
-    };
-  }, [mobileToolbarMoreOpen]);
-
-  useEffect(() => {
-    setMobileToolbarMoreOpen(false);
-  }, [isMobile, isNarrowMobile, selectedSession?.id, newSessionDraftId]);
 
   useEffect(() => {
     if (!activeTopPanel || !topBarRef.current) return;
+    const el = topBarRef.current;
     const update = () => {
-      const topBarRect = topBarRef.current!.getBoundingClientRect();
+      const topBarRect = el.getBoundingClientRect();
+      if ((activeTopPanel === "language" || activeTopPanel === "theme") && !isMobile) {
+        // The language/theme button may have been folded into the "⋯" overflow
+        // (no inline copy, ref is null) → anchor to the "⋯" button instead
+        const anchor = activeTopPanel === "theme"
+          ? (themeBtnRef.current ?? moreBtnRef.current)
+          : (languageBtnRef.current ?? moreBtnRef.current);
+        if (anchor) {
+          const buttonRect = anchor.getBoundingClientRect();
+          const width = Math.min(
+            SELECTION_MENU_WIDTH,
+            topBarRect.width,
+          );
+          const left = Math.min(
+            buttonRect.left - 1,
+            Math.max(topBarRect.left, topBarRect.right - width),
+          );
+          setTopPanelPos({ top: topBarRect.bottom, left, width });
+          return;
+        }
+      }
       if (activeTopPanel === "agents") {
         setTopPanelPos({
           top: topBarRect.bottom,
@@ -583,38 +1083,255 @@ export function AppShell() {
     };
     update();
     const ro = new ResizeObserver(update);
-    ro.observe(topBarRef.current);
-    return () => ro.disconnect();
+    ro.observe(el);
+    if (languageBtnRef.current) ro.observe(languageBtnRef.current);
+    if (moreBtnRef.current) ro.observe(moreBtnRef.current);
+    if (themeBtnRef.current) ro.observe(themeBtnRef.current);
+    return () => {
+      ro.disconnect();
+    };
   }, [activeTopPanel, isMobile]);
 
   // Files unmount when inactive; workspace terminals stay mounted until closed.
   const [fileTabs, setFileTabs] = useState<Tab[]>([]);
-  const [activeFileTabId, setActiveFileTabId] = useState<string | null>(null);
-  const fileWorkspaceStatesRef = useRef(new Map<string, ParkedFileWorkspace>());
-  // Bumped on every workspace switch. The active viewer reports its state as
-  // it unmounts, tagged with the generation it rendered in, so the report of a
-  // tab just parked goes to its workspace, not to a same-path tab restored.
-  const [fileWorkspaceGeneration, setFileWorkspaceGeneration] = useState(0);
-  const fileWorkspaceGenerationRef = useRef(0);
-  const [terminalTabs, setTerminalTabs] = useState<TerminalTab[]>([]);
-  const [terminalsRestored, setTerminalsRestored] = useState(false);
-  // Subagent tabs remain open within a project; side tabs follow their main session.
+
+  // Subagent work tabs are session-scoped and transient: no persistence, and
+  // they are dropped when the project changes (they belong to its sessions).
+  // [上游 #1107 file workspace parking + #1129 subagent tab 融合] 驻留态与 agent 标签
+  // 与本地 detached/keep-alive 体系并存：agent 项进 panelTabs，不进 detached 语义。
   const [agentTabs, setAgentTabs] = useState<{ sessionId: string; label: string; side?: boolean }[]>([]);
+  // Upstream side-tab persistence refs (#1469): side tabs follow their main session.
   const sideTabOwnerRef = useRef<string | null>(null);
   const sideTabsReadyRef = useRef(false);
   const sideTabsSavedOnWorkspaceSwitchRef = useRef(false);
-  const [activeCwd, setActiveCwd] = useState<string | null>(null);
-  const activeProjectKeyRef = useRef<string | null>(null);
   const [panelTabOrder, setPanelTabOrder] = useState<string[]>([]);
+  const [activeFileTabId, setActiveFileTabId] = useState<string | null>(null);
+  // Tab-bar auto-reveal token (TabBar revealToken): incremented only on
+  // "user-initiated open/activate" paths — opening a file/folder (select:true),
+  // clicking a tab, opening a terminal, foregrounding a dock panel, re-docking a
+  // detached tab. History restore (session tombstones opened silently in bulk with
+  // select:false), its fallback activation, and close/detach fallback never increment —
+  // background-opened tabs must not steal focus or move the tab-bar scroll position.
+  const [fileTabRevealToken, setFileTabRevealToken] = useState(0);
+  const revealFileTabOnOpen = useCallback(() => setFileTabRevealToken((n) => n + 1), []);
+
+  // ═══ [floating-dialog extension tab-detach v0.6.0] tabHost two-state machine (plan §3/§5.1) ═══
+  // detachedTabIds only records the "window" state (default is panel); not persisted —
+  // after a refresh everything returns to panel (tabs are transient work objects, and
+  // returning to the regular layout on refresh is a clean default; float-window
+  // position memory is keyed by tabId and naturally expires when keys mismatch after
+  // refresh). Single-instance invariant: a detached tab stays out of panelTabs, out of
+  // the right panel's always-mounted list, and out of the content area — the window
+  // list = existing tabs ∩ detached, structurally preventing double rendering.
+  const [detachedTabIds, setDetachedTabIds] = useState<Set<string>>(new Set());
+  // Right-panel content-area size at the instant of detach (initial geometry the
+  // window grows out of in place; falls back to 720×480 if measurement fails).
+  const rightPanelContentRef = useRef<HTMLDivElement | null>(null);
+  const [detachInitGeom, setDetachInitGeom] = useState({ w: 720, h: 480 });
+  // ═══ [tab-detach state end] ═══
+  // Restore companion: the extension's _restoreSession opens historical files in the
+  // background (select:false, leaving focus to the file the user just explicitly
+  // opened — see the extension's registry.ts comment). When only panel expansion
+  // triggered the restore there is no "just-opened file", which would leave the
+  // "tabs exist but none active" empty state. This state-driven fallback: panel open,
+  // tabs exist, none active → activate the last current tab (in the restore flow that
+  // is the first restored historical file; when later files open, activeId is already
+  // non-null and the guard guarantees no re-swap, so there is no timing race). The
+  // single-remaining-tab activation is already handled by performCloseFileTab; this
+  // state is unreachable outside the restore scenario and cannot steal user focus.
+  // E2E-verified: expand → content renders, no empty-state hint.
+  // This activation is a background fallback (not user-initiated) → fileTabRevealToken
+  // is not incremented: the tab bar does not scroll, and a position the user manually
+  // scrolled away from is not yanked back by history restore.
+  useEffect(() => {
+    // tab-detach: auto-activation only picks from tabs visible inside the panel (detached tabs take no right-panel activation slot)
+    const visibleTabs = fileTabs.filter((t) => !detachedTabIds.has(t.id));
+    if (!rightPanelOpen || visibleTabs.length === 0 || activeFileTabId !== null) return;
+    setActiveFileTabId(visibleTabs[visibleTabs.length - 1].id);
+  }, [activeFileTabId, fileTabs, detachedTabIds, rightPanelOpen]);
+  // pathPicker capability (FolderSwitcher from the folder extension): consumed by the
+  // top-bar "open folder". SSR-stable empty snapshot.
+  const pathPickerItems = useSyncExternalStore(
+    subscribeExtUi,
+    () => getExtUiItems("pathPicker"),
+    () => NO_PATH_PICKER_ITEMS,
+  );
+
+  // [extension] T2 takeover: workspace terminal tabs are kept (sessionStorage session-memory
+  // semantics unchanged); tab content is decided by a three-layer TerminalPanelBridge
+  // arbitration: the command-terminal extension's terminalDock takes priority; if the
+  // manifest is ready and nobody claims takeover → fall back to the native PTY panel
+  // (lib/terminal-manager + /api/terminal, see docs/terminal.md).
+  const [terminalTabs, setTerminalTabs] = useState<TerminalTab[]>([]);
+  const [terminalsRestored, setTerminalsRestored] = useState(false);
+
+  // ═══ [floating-dialog extension dock v0.5.0 batch A, 2026-09-08 re-added] right-panel dock tabs ═══
+  // ⚠ This block (dockPanelStates mirror / panelTabs dock derivation / present-change
+  // open coupling / activation fallback) was once lost entirely in a historical
+  // upstream merge (the handleCloseFileTab consumer and content dispatch survived but
+  // were unreachable). When re-adding, keep the whole block together; do not split it
+  // when editing AppShell — see the float-dock plan doc §4.3/§11.
+  // Data flow: the floating-dialog extension's dock.ts (or the _shared/ext-float-dock.ts
+  // fallback store when float is not installed) emits `piwe-float-present-change` →
+  // the host mirrors the shape → the derived surface renders only items in state
+  // docked:right-panel as tabs (id "dock:<extId>:<itemId>"); the host imports zero
+  // extension code (the decoupling channel = the same-named event + the
+  // `piwe-float-present-command` command event; see the dock branch of handleCloseFileTab).
+  const rightDockItems = useExtSlotItems("rightFileDock").filter(hasExtRender);
+  // Extension-level metadata (manifest name/icon) — used to label the extension in panels
+  // and as the dock-tab icon fallback (entry meta.icon absent → manifest icon).
+  const extMetas = useExtMetas();
+  const [dockPanelStates, setDockPanelStates] = useState<Map<string, string>>(new Map());
+  useEffect(() => {
+    const onPresent = (e: Event) => {
+      const detail = (e as CustomEvent<{ key: string; state: string; auto?: boolean }>).detail;
+      if (!detail?.key) return;
+      setDockPanelStates((prev) => {
+        const next = new Map(prev);
+        if (detail.state === "closed") {
+          // ✕ (after TabBar ✕ converts to a command event the state machine echoes
+          // closed): activation rests on the closed dock tab → fall back to other
+          // dock:right-panel tabs / the most recent file/terminal tab (same fallback
+          // semantics as performCloseFileTab). No visible tab left in the right panel
+          // → collapse the panel (closing the last tab auto-collapses, no "no open
+          // files" empty state is left behind).
+          const wasRightPanelTab = prev.get(detail.key) === "docked:right-panel";
+          next.delete(detail.key);
+          const remainingDockIds = [...next.entries()]
+            .filter(([, state]) => state === "docked:right-panel")
+            .map(([key]) => `dock:${key}`);
+          setActiveFileTabId((cur) => {
+            if (cur !== `dock:${detail.key}`) return cur;
+            return remainingDockIds.at(-1) ?? fileTabs.at(-1)?.id ?? terminalTabs.at(-1)?.id ?? lastAgentTabId(agentTabs) ?? null;
+          });
+          if (wasRightPanelTab && remainingDockIds.length === 0 && fileTabs.length === 0 && terminalTabs.length === 0 && agentTabs.length === 0) {
+            setRightPanelOpen(false);
+          }
+        } else {
+          next.set(detail.key, detail.state);
+        }
+        return next;
+      });
+      // Open coupling (triggered only by explicit dock commands; same-state idempotent
+      // dispatches emit no event → repeated open/floating after manually collapsing the
+      // right panel will not wrongly re-expand it): auto-expand the right panel and
+      // activate the corresponding dock tab.
+      if (detail.state === "docked:right-panel") {
+        // auto = restorative re-dock (persisted file/folder instances replayed against
+        // their dockpref after refresh): the small-screen right panel is a full-screen
+        // overlay, so loading must not pull it up — same gating as the sidebar branch
+        // and onActivate below. The tab is still activated, so whatever the user opens
+        // by hand shows the restored content.
+        if (!(detail.auto && isMobile)) {
+          setRightPanelOpen(true);
+          revealFileTabOnOpen(); // dock panel opened from the toolbar/extension → bring the target tab into view
+        }
+        setActiveFileTabId(`dock:${detail.key}`);
+      }
+      // Left-panel dock coupling (right-panel semantics mirrored for the left): when a
+      // panel docks into a left-panel block (docked:sidebar:*), expand the sidebar
+      // proactively — on small screens the sidebar is hidden as an overlay drawer by
+      // default (collapsed on mobile load), and without expanding it the user cannot
+      // see a panel docked there via plan/task buttons at all; on desktop the sidebar
+      // is always open and setSidebarOpen(true) is idempotent with no side effects.
+      // The legacy sidebar-explorer value is handled as well.
+      // auto flag = non-user-initiated restorative stacking (autoDock persistent
+      // blocks restored after refresh) → do not expand (otherwise the drawer would be
+      // wrongly pulled up by restorative stacking after load, breaking the "collapsed
+      // on mobile load" design).
+      if (!detail.auto && (detail.state === "docked:sidebar-explorer" || detail.state.startsWith("docked:sidebar:"))) {
+        setSidebarOpen(true);
+        // Docking into a COLLAPSED block keeps the panel invisible even with the
+        // sidebar open — expand the target block on first dock (same contract as the
+        // activate branch below; block key = the present key for docked:sidebar:<key>).
+        if (detail.state.startsWith("docked:sidebar:")) {
+          const blockKey = detail.state.slice("docked:sidebar:".length);
+          if (blockKey) {
+            try {
+              localStorage.setItem(`pi:sidebar-dock:collapsed:${blockKey}`, "0");
+              window.dispatchEvent(new CustomEvent("pi:sidebar-dock:collapsed-changed", { detail: { key: blockKey, collapsed: false } }));
+            } catch { /* ignore */ }
+          }
+        }
+      }
+    };
+    window.addEventListener("piwe-float-present-change", onPresent);
+    // v3.1 activation coupling: re-open/dock of an already-docked panel into the same
+    // zone (no state transition, no change event) → the state machine emits activate —
+    // expand the right panel and bring the corresponding tab to front (fixes "toolbar
+    // re-open of a background dock does not bring it forward").
+    // Only fires in docked state; floating is idempotent and emits no event, so
+    // "re-opening a float after manually collapsing the right panel does not wrongly
+    // expand it" is preserved.
+    const onActivate = (e: Event) => {
+      const detail = (e as CustomEvent<{ key: string; state: string; auto?: boolean }>).detail;
+      if (!detail?.key || !detail.state?.startsWith("docked:")) return;
+      // Restorative activation (auto: autoDock/project coupling replay after refresh)
+      // expands no panel: small-screen right-panel/sidebar overlays are not pulled up
+      // by the load process (same semantics as the auto gating in onPresent above).
+      if (detail.auto) return;
+      // Left-panel dock same-state re-activation (panel already docked in the sidebar,
+      // repeated open/switch back): expand the sidebar to pull up the small-screen
+      // overlay drawer — same semantics as the right-panel activation coupling below
+      // (the sidebar has no tab slot; expanding is all that is needed).
+      if (detail.state === "docked:sidebar-explorer" || detail.state.startsWith("docked:sidebar:")) {
+        setSidebarOpen(true);
+        // The sidebar has no per-panel tab: activation must also EXPAND the target
+        // dock block, or a collapsed block (e.g. the fleet's) swallows the re-open
+        // silently — the panel is "present" but nothing becomes visible. Block
+        // collapse lives in the dock stack's localStorage contract
+        // (pi:sidebar-dock:collapsed:<blockKey> + collapsed-changed event; the block
+        // key equals the present key for docked:sidebar:<key> panels).
+        if (detail.state.startsWith("docked:sidebar:")) {
+          const blockKey = detail.state.slice("docked:sidebar:".length);
+          if (blockKey) {
+            try {
+              localStorage.setItem(`pi:sidebar-dock:collapsed:${blockKey}`, "0");
+              window.dispatchEvent(new CustomEvent("pi:sidebar-dock:collapsed-changed", { detail: { key: blockKey, collapsed: false } }));
+            } catch { /* ignore */ }
+          }
+        }
+        return;
+      }
+      if (!detail.state.startsWith("docked:right-panel")) return;
+      setRightPanelOpen(true);
+      revealFileTabOnOpen(); // re-opening an already-docked panel brings it to front (user action) → bring the target tab into view
+      setActiveFileTabId(`dock:${detail.key}`);
+    };
+    window.addEventListener("piwe-float-present-activate", onActivate);
+    return () => {
+      window.removeEventListener("piwe-float-present-change", onPresent);
+      window.removeEventListener("piwe-float-present-activate", onActivate);
+    };
+  }, [fileTabs, terminalTabs, agentTabs, isMobile, revealFileTabOnOpen]);
+  // ═══ [floating-dialog extension dock batch A re-add end] ═══
+
   const panelTabs: Tab[] = orderPanelTabs([
-    ...fileTabs,
-    ...terminalTabs.map((tab) => ({
+    // detached tabs stay out of the right-panel render surface (rendered only once in
+    // the detached window — single-instance invariant §3)
+    ...fileTabs.filter((t) => !detachedTabIds.has(t.id)),
+    ...terminalTabs.filter((t) => !detachedTabIds.has(t.id)).map((tab) => ({
       id: tab.id,
       label: getFileName(tab.cwd) || tab.cwd,
       filePath: tab.cwd,
       kind: "terminal" as const,
       closing: Boolean(tab.closing),
+    // dock tabs (batch A): only items in docked:right-panel state render as tabs —
+    // ✕ close → the state machine echoes closed → mirror delete → the tab disappears;
+    // floating/closed/sidebar-docked occupy no tab slot. Activation reuses
+    // activeFileTabId (terminal tab precedent) and stays out of fileTabs/terminalTabs
+    // state (zero dedicated state).
     })),
+    ...rightDockItems
+      .filter((it) => dockPanelStates.get(it.id) === "docked:right-panel")
+      .map((it) => ({ id: `dock:${it.id}`, label: translateExtItemText(it.extId, it.meta?.title) || translateExtItemText(it.extId, it.meta?.label) || it.extId || it.id, filePath: "", kind: "dock" as const,
+        // Tab icon: the registering entry's meta.icon ({svg} / ".svg" path / emoji) when
+        // declared; otherwise falls back to the extension's manifest icon (every extension
+        // ships one, typically "icon.svg" — CSS-mask render, follows currentColor) so each
+        // docked panel shows its own extension identity instead of the generic grid glyph.
+        // Extensions still override per-panel via meta.icon.
+        icon: it.meta?.icon ?? extMetas[it.extId ?? ""]?.icon ?? undefined, extId: it.extId })),
+    // [上游 #1129/#1469] 子代理工作 tab + side chat tab：panel 承载与 handleOpenSubagentTab 挂载同源
     ...agentTabs.map((tab) => {
       const session = tab.side ? sessionCatalog.find((item) => item.id === tab.sessionId) : undefined;
       const label = session ? sideChatTitle(session, translate("agentSwitcher.sideChat"), activeSessionFamily?.subagents ?? []) : tab.label;
@@ -632,6 +1349,66 @@ export function AppShell() {
     const open = new Set(panelTabIds.split("\n"));
     setPanelTabOrder((order) => order.every((id) => open.has(id)) ? order : order.filter((id) => open.has(id)));
   }, [panelTabIds]);
+  // Detached-window list = existing tabs ∩ detached (file/folder/terminal; dock tab
+  // detaching goes through the state machine's present float, not this list). Removing
+  // a tab removes its window (performCloseFileTab need not know about detached).
+  const fileWorkspaceStatesRef = useRef(new Map<string, ParkedFileWorkspace>());
+  // Bumped on every workspace switch. The active viewer reports its state as
+  // it unmounts, tagged with the generation it rendered in, so the report of a
+  // tab just parked goes to its workspace, not to a same-path tab restored.
+  const [fileWorkspaceGeneration, setFileWorkspaceGeneration] = useState(0);
+  const fileWorkspaceGenerationRef = useRef(0);
+
+  const detachedWindows: Tab[] = [
+    ...fileTabs,
+    ...terminalTabs.map((tab) => ({
+      id: tab.id,
+      label: getFileName(tab.cwd) || tab.cwd,
+      filePath: tab.cwd,
+      kind: "terminal" as const,
+      closing: tab.closing,
+      restored: tab.restored,
+    })),
+  ].filter((t) => detachedTabIds.has(t.id));
+
+  // ── [right-panel tab keep-alive pool] FIFO keep-alive for file/folder/dock tabs
+  //   (see the right-dock keep-alive plan doc). The tombstone approach exists because
+  //   the right-panel content area mounts only the active tab's TabBody (switching
+  //   fully unloads/remounts Monaco). Pool semantics: the most recently activated
+  //   non-terminal tabs stay mounted (hidden for inactive ones), oldest evicted FIFO
+  //   past the cap; an evicted tab falls back to reload semantics the next time it is
+  //   switched to (EditorApp unmount cleanup still writes cache + dispose). Default
+  //   cap 5, overridable via localStorage.
+  const [panelKeepAlive, setPanelKeepAlive] = useState<string[]>([]);
+  // Freshest panelTabs snapshot (synced each render; the keep-alive effect reads the
+  // latest id set through it instead of listing panelTabs — a new reference every
+  // frame — in deps; reading a ref does not trip exhaustive-deps, standard React pattern)
+  const panelTabsRef = useRef(panelTabs);
+  panelTabsRef.current = panelTabs;
+  useEffect(() => {
+    if (!activeFileTabId) return;
+    if (terminalTabs.some((t) => t.id === activeFileTabId)) return; // terminal has its own always-mounted container; not pooled
+    setPanelKeepAlive((prev) => {
+      // Drop the current active first (it is re-appended below) + drop stale ids of
+      // closed/detached tabs (not in panelTabs; the render layer already filters them,
+      // this keeps dead ids from occupying the pool. When a non-active tab closes the
+      // active id is unchanged and this effect does not re-run, so a dead id lingers
+      // until the next activation switch cleans it up — no visible impact).
+      const ids = new Set(panelTabsRef.current.map((t) => t.id));
+      const next = prev.filter((id) => id !== activeFileTabId && ids.has(id));
+      next.push(activeFileTabId); // append = most recently used
+      let max = RIGHT_PANEL_ALIVE_MAX;
+      try {
+        const n = parseInt(localStorage.getItem(RIGHT_PANEL_ALIVE_KEY) ?? "", 10);
+        if (Number.isFinite(n) && n >= 0) max = n;
+      } catch { /* ignore */ }
+      while (next.length > max) {
+        const oldest = next.shift();
+        if (oldest === activeFileTabId) break; // never evict the current active tab
+      }
+      return next;
+    });
+  }, [activeFileTabId, terminalTabs]);
 
   useEffect(() => {
     try {
@@ -639,7 +1416,10 @@ export function AppShell() {
       setTerminalTabs(saved.tabs);
       if (saved.activeId) {
         setActiveFileTabId(saved.activeId);
-        setRightPanelOpen(saved.open);
+        // Small screens: the right panel is a full-screen overlay drawer — remembered
+        // open state must not pull it up on load (isMobile is still the desktop
+        // hydration snapshot here, hence the imperative query).
+        setRightPanelOpen(saved.open && !isMobileViewport());
       }
     } catch { /* storage is optional */ }
     setTerminalsRestored(true);
@@ -648,11 +1428,12 @@ export function AppShell() {
   useEffect(() => {
     if (!terminalsRestored) return;
     try {
-      window.sessionStorage.setItem(TERMINAL_TABS_KEY, JSON.stringify({
+      const payload = JSON.stringify({
         tabs: terminalTabs.map(({ id, cwd }) => ({ id, cwd })),
         activeId: activeFileTabId,
         open: rightPanelOpen,
-      }));
+      });
+      window.sessionStorage.setItem(TERMINAL_TABS_KEY, payload);
     } catch { /* storage is optional */ }
   }, [terminalTabs, activeFileTabId, rightPanelOpen, terminalsRestored]);
 
@@ -727,13 +1508,57 @@ export function AppShell() {
     if (isMobile) { setRightPanelOpen(false); setSidebarOpen(false); }
   }, [isMobile]);
 
+  // Reveal a directory in the sidebar file tree (from an @ mention popover).
+  const handleRevealDir = useCallback((absPath: string) => {
+    fileExplorerRef.current?.revealPath(absPath);
+    setSidebarOpen(true);
+  }, []);
+
   const initialSessionId = initialNavigation.sessionId;
+  const [activeCwd, setActiveCwd] = useState<string | null>(null);
+  // Unified session-state service (P3): source marker of the most recent session-state
+  // change (for diagnostics/extension decisions, e.g. url-failed = the URL ?session=
+  // was invalid).
+  const sessionSourceRef = useRef<PiWebSessionSource>(initialNavigation.sessionId ? "url" : "initial");
+  const activeProjectKeyRef = useRef<string | null>(null);
   const initialLinkedSessionId = linkedSessionId(initialNavigation);
   // True once the initial ?session= URL param has been resolved (or confirmed absent)
-  const [initialSessionRestored, setInitialSessionRestored] = useState<boolean>(() => !initialSessionId);
+  const [initialSessionRestored, setInitialSessionRestoredState] = useState<boolean>(() => !initialSessionId);
+  // Mirror ref written in the same task as the setter: the takeover-mode sidebar
+  // (session-manager SidebarContentDock) invokes onCwdChange synchronously right after
+  // onInitialRestoreDone() — before React re-renders — with its onCwdChangeRef still
+  // holding the previous commit's handleCwdChange closure. Guards must therefore read
+  // this ref (logical state), not the closure value (render state), or the failed
+  // ?session= restore leaves the shell stuck on the quickstart placeholder forever.
+  const initialSessionRestoredRef = useRef(initialSessionRestored);
+  const setInitialSessionRestored = useCallback((v: boolean | ((prev: boolean) => boolean)) => {
+    initialSessionRestoredRef.current = typeof v === "function" ? v(initialSessionRestoredRef.current) : v;
+    setInitialSessionRestoredState(v);
+  }, []);
+  // [restore watchdog] The ?session= restore normally settles in well under a second.
+  // If it is still pending after the grace period (an extension hot-reload window can
+  // stall the sidebar lists / by-id fetches), surface a retry affordance under the
+  // placeholder instead of an endless spinner. The placeholder clears by itself if
+  // the restore lands late, so this is purely additive UI.
+  const [restoreStalled, setRestoreStalled] = useState(false);
+  useEffect(() => {
+    if (initialSessionRestored || !initialSessionId) {
+      setRestoreStalled(false);
+      return;
+    }
+    const t = setTimeout(() => setRestoreStalled(true), 15000);
+    return () => clearTimeout(t);
+  }, [initialSessionRestored, initialSessionId]);
   const sideTabOwner = activeSessionFamily?.root.id ?? null;
   useEffect(() => {
     if (!catalogLoaded || !initialSessionRestored) return;
+    // [terminal-restore race] 同一 mount 批次内 effect 共享同一渲染快照：终端恢复 effect
+    // （TERMINAL_TABS_KEY）先排队 setState，本 effect 后跑时读到的 activeFileTabId 仍是初始
+    // null —— 若此时执行覆盖分支，会用 null/false 覆盖掉已排队的终端 tab 激活与右栏打开，
+    // 导致恢复的终端 tab 永远不 active（materialize 不触发 → 空壳），且持久化 effect 随后
+    // 把污染状态写回 storage，每次刷新复发。等 terminalsRestored（下一轮快照已含终端恢复值）
+    // 再跑，让位但不丢语义；依赖数组同步补 terminalsRestored。
+    if (!terminalsRestored) return;
     const previous = sideTabOwnerRef.current;
     if (!sideTabsReadyRef.current || previous !== sideTabOwner) {
       if (sideTabsReadyRef.current && previous && !sideTabsSavedOnWorkspaceSwitchRef.current) rememberSideTabs(previous);
@@ -755,7 +1580,7 @@ export function AppShell() {
     }
     if (sideTabOwner) rememberSideTabs(sideTabOwner);
     sideTabsSavedOnWorkspaceSwitchRef.current = false;
-  }, [activeFileTabId, catalogLoaded, fileTabs, initialSessionRestored, rememberSideTabs, rightPanelOpen, selectedSession?.id, sessionCatalog, sideTabOwner, terminalTabs]);
+  }, [activeFileTabId, catalogLoaded, fileTabs, initialSessionRestored, rememberSideTabs, rightPanelOpen, selectedSession?.id, sessionCatalog, sideTabOwner, terminalTabs, terminalsRestored]);
   // sessionStorage is empty during SSR. Applying the tab's remembered session
   // in the useState initializer made the first client tree differ from the
   // server HTML (sidebar "select project" vs ""). Restore after mount instead.
@@ -767,16 +1592,59 @@ export function AppShell() {
   }, [initialNavigation]);
   // Suppresses sessionKey bump in handleCwdChange during the initial URL restore
   const suppressCwdBumpRef = useRef(false);
-  // Set when the session the URL linked to is gone: the project the sidebar
-  // adopts next keeps a fresh composer instead of restoring its last session.
-  const skipWorkspaceRestoreRef = useRef(false);
+  // The session restored from ?session= is the authoritative pick for this page
+  // load: the last-open memory (shared localStorage, possibly rewritten by
+  // another window) must not yank it afterwards. The fallback sidebar → dock
+  // takeover handoff re-notifies the same cwd, and an identity mismatch in
+  // handleCwdChange misreads that as a project switch, firing
+  // restoreWorkspaceContext — on refresh this surfaced as "every session URL
+  // lands on the same fixed session". Cleared by a real user session pick or a
+  // genuine cross-project switch (different cwd).
+  const urlRestoredSessionRef = useRef<{ id: string; cwd: string | null } | null>(
+    initialSessionId ? { id: initialSessionId, cwd: null } : null,
+  );
   // Guards the async workspace restore so a slow response from an earlier
   // switch cannot resurrect a session into a project the user already left.
   const workspaceRestoreTokenRef = useRef(0);
+  // Latest pending ?session= id for the 404 cleanup inside handleOpenSession:
+  // some restore callers race past the initialRestore flag, so the failed id
+  // matching the URL param is the reliable signal.
+  const initialSessionIdRef = useRef<string | null>(initialSessionId);
+  initialSessionIdRef.current = initialSessionId;
 
   const invalidateWorkspaceRestore = useCallback(() => {
     workspaceRestoreTokenRef.current += 1;
   }, []);
+
+  // Unified session-state service (P3): derive a snapshot and publish it on real
+  // changes (publish internally dedupes on the phase/requestedId/sessionId/session
+  // summary, so repeated renders have no side effects).
+  useEffect(() => {
+    const phase = selectedSession
+      ? "active"
+      : (initialSessionId && !initialSessionRestored)
+        ? "resolving"
+        : "none";
+    publishSessionState({
+      phase,
+      requestedId: initialSessionId ?? null,
+      sessionId: selectedSession?.id ?? null,
+      session: selectedSession
+        ? {
+            id: selectedSession.id,
+            cwd: selectedSession.cwd,
+            name: selectedSession.name,
+            firstMessage: selectedSession.firstMessage,
+          }
+        : null,
+      // source normalization: while a URL ?session= exists but has not yet been
+      // attributed by any handler, the resolving phase records "url" (initial only
+      // applies to the first frame without a URL session).
+      source: sessionSourceRef.current === "initial" && initialSessionId
+        ? "url"
+        : sessionSourceRef.current,
+    });
+  }, [selectedSession, initialSessionId, initialSessionRestored]);
 
   // Persist every active-session transition, including new and forked sessions
   // that bypass the sidebar selection handler. Transient sessions do not yet
@@ -797,6 +1665,13 @@ export function AppShell() {
     if (newSessionCwd) setTabOpenNewSession(newSessionCwd);
   }, [newSessionCwd, selectedSession]);
 
+  // Expose the current session cwd for the global emergency indicator
+  // (ExtErrorIndicator 🚑 → /api/emergency); null when there is no session
+  // (emergency entries are user-filled or go through global-error)
+  useEffect(() => {
+    (window as unknown as { __piWebCwd?: string | null }).__piWebCwd = selectedSession?.cwd ?? null;
+  }, [selectedSession]);
+
   useEffect(() => {
     const requestedCwd = initialNavigation.requestedCwd;
     if (!requestedCwd) return;
@@ -805,7 +1680,7 @@ export function AppShell() {
     setInitialCwdStatus("validating");
     setInitialCwdError(null);
 
-    void fetch("/api/cwd/validate", {
+    void fetch(apiUrl("/api/cwd/validate"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ cwd: requestedCwd }),
@@ -820,14 +1695,20 @@ export function AppShell() {
         // The sidebar will notify us when it adopts this cwd. Avoid remounting
         // the just-created empty chat during that initial synchronization.
         suppressCwdBumpRef.current = true;
-        const draftId = `initial:${requestedCwd}`;
+        // If a live fresh composer already exists for the same cwd (handleCwdChange
+        // already generated the uuid), do not overwrite it: avoids draftId jitter
+        // scattering one input across multiple new: slots (draft scatter).
+        const draftId = activeNewSessionDraftKeyRef.current
+          && activeNewSessionDraftKeyRef.current.startsWith(`new:`)
+          && activeNewSessionDraftKeyRef.current.endsWith(`:${data.cwd}`)
+          ? activeNewSessionDraftKeyRef.current.slice(4, activeNewSessionDraftKeyRef.current.length - data.cwd.length - 1)
+          : `initial-${requestedCwd}`;
         setNewSessionDraftId(draftId);
         activeNewSessionDraftKeyRef.current = `new:${draftId}:${data.cwd}`;
         setNewSessionCwd(data.cwd);
         setInitialCwdStatus("ready");
-        if (!new URLSearchParams(window.location.search).get("cwd")) {
-          router.replace(`?cwd=${encodeURIComponent(data.cwd)}`, { scroll: false });
-        }
+        // [URL 规范] cwd 不进 URL（本地路径不入地址栏）：刷新恢复由 tab-session
+        // （pi-web:tab-open-session kind:"new"）承载，无需把工作区路径写回 query。
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
@@ -843,6 +1724,12 @@ export function AppShell() {
   // is looked up against the live list so a deleted or drifted session falls
   // back to the default welcome page instead of erroring.
   const restoreWorkspaceContext = useCallback((projectKey: string, cwd: string) => {
+    // While a ?session= restore is authoritative for this page load, the
+    // last-open memory must not override it: that memory is shared across
+    // windows and usually points at whichever session another window has
+    // open — overriding it is exactly the "refresh ignores my session URL"
+    // bug. A genuine user switch clears the guard first (see handleCwdChange).
+    if (urlRestoredSessionRef.current) return;
     const token = ++workspaceRestoreTokenRef.current;
     const lastOpenSessionId = getLastOpenSession(projectKey);
     if (!lastOpenSessionId) return;
@@ -862,12 +1749,14 @@ export function AppShell() {
         return;
       }
       // Keep the temporary composer's draft in its cwd, even when the
-      // remembered session belongs to another worktree of this project.
+      // remembered session belongs to another worktree of this project
+      // (upstream #1107; via the keeper's rekey).
       const activeDraftKey = activeNewSessionDraftKeyRef.current;
       if (activeDraftKey) {
-        rekeyDraft(activeDraftKey, parkedNewSessionDraftKey(cwd));
+        apiRekeyDraft(activeDraftKey, parkedNewSessionDraftKey(cwd));
       }
       activeNewSessionDraftKeyRef.current = null;
+      sessionSourceRef.current = "restore";
       // Selecting the session must remount the chat with the session
       // present: useAgentSession loads content in a mount-only effect, so
       // the null-session welcome mount from the switch would never load
@@ -875,7 +1764,7 @@ export function AppShell() {
       setSelectedSession(s);
       setSessionKey((k) => k + 1);
       if (new URLSearchParams(window.location.search).get("session") !== s.id) {
-        router.replace(`?session=${encodeURIComponent(s.id)}`, { scroll: false });
+        replaceLocationIfChanged(router, `?session=${encodeURIComponent(s.id)}`, { scroll: false });
       }
     };
     // Fast path: the sidebar already delivered the catalogue — restore
@@ -884,7 +1773,7 @@ export function AppShell() {
       adopt({ sessions: sessionCatalog });
       return;
     }
-    void fetch("/api/sessions")
+    void fetch(apiUrl("/api/sessions"))
       .then((r) => (r.ok ? (r.json() as Promise<{ sessions: SessionInfo[] }>) : null))
       .then(adopt)
       .catch(() => {
@@ -892,18 +1781,31 @@ export function AppShell() {
       });
   }, [router, sessionCatalog]);
 
+  /** The last user pick: its project key and cwd. The sidebar's cwd notification for
+   *  that pick must not be read as a user project switch (that path tears the just
+   *  selected session down and clears ?session=). One-shot: the first notification
+   *  consumes it, and it only suppresses when it actually matches the pick — a later
+   *  genuine switch arrives with another project/cwd and runs normally. */
+  const pickedSessionSyncRef = useRef<{ project: string; cwd: string | null } | null>(null);
+
   const handleCwdChange = useCallback((
     cwd: string | null,
     projectRoot?: string | null,
     projectKey?: string | null,
   ) => {
     invalidateWorkspaceRestore();
+    // URL 恢复挂起中：任何 cwd 通知都不得推进右侧 UI。handleCwdChange 开头的
+    // setActiveCwd 会让 effectiveNewSessionCwd 成立 → selectedSession 仍为 null 时
+    // 先渲染新会话 composer（「正在打开会话 → 新会话 → 会话」闪现的元凶之一：
+    // session-manager 默认项目自动选 / cwd 镜像在恢复期间都可能送达 cwd）。恢复
+    // 完成后由 handleSelectSession 权威决定 cwd，此间 cwd 一律忽略。
+    // Read via refs: the takeover sidebar's post-await notification can arrive with a
+    // stale closure (see initialSessionRestoredRef above).
+    if (initialSessionIdRef.current && !initialSessionRestoredRef.current) return;
     const currentFreshCwd = newSessionCwd ?? activeCwd;
     setActiveCwd(cwd);
     // Skip if cwd is null (initial mount).
     if (!cwd) return;
-    const skipWorkspaceRestore = skipWorkspaceRestoreRef.current;
-    skipWorkspaceRestoreRef.current = false;
     const newProject = projectKey ?? projectRoot ?? cwd;
     const currentProject = activeProjectKeyRef.current
       ?? (selectedSession ? workspaceKeyOf(selectedSession) : null);
@@ -914,6 +1816,17 @@ export function AppShell() {
     if (suppressCwdBumpRef.current) {
       suppressCwdBumpRef.current = false;
       return;
+    }
+    // The cwd notification that follows a user session pick belongs to that pick:
+    // the selection and the ?session= URL are already authoritative, so never run
+    // the cross-project teardown below (it sets selectedSession to null and clears
+    // the query). Judging this from `selectedSession` instead is a stale-closure
+    // race: the notification can arrive with the pre-pick render's value.
+    const picked = pickedSessionSyncRef.current;
+    if (picked !== null) {
+      pickedSessionSyncRef.current = null;
+      const sameCwd = Boolean(picked.cwd) && normPath(picked.cwd as string) === normPath(cwd);
+      if (newProject === picked.project || sameCwd) return;
     }
     // The server may hydrate a normalized key after a custom cwd is already
     // active. Updating identity for the exact same cwd is not a user switch.
@@ -927,19 +1840,34 @@ export function AppShell() {
     ) {
       return;
     }
+    // Cross-project switch. Cold start (currentProject === null) is the
+    // sidebar's first identity sync, not a user switch: restoring the
+    // remembered session here would yank a fresh composer (and its just
+    // recovered draft) away to a historical session on every reload, so the
+    // restore only fires when the user actually moves between projects.
+    setNewSessionWorkspace(null); // real workspace switch (not a same-cwd identity hydration) → drop the staged target
+    const isUserProjectSwitch = currentProject !== null && currentProject !== newProject;
     // Close any session that belongs to a different project — it no longer
     // matches the selected project directory.
+    // Park the outgoing fresh composer's draft in its cwd, then bring back the
+    // one parked for the workspace we are entering (upstream #1107; via the
+    // keeper's rekey so the on-disk flush/restore cycle stays single-owner).
     const previousDraftKey = activeNewSessionDraftKeyRef.current;
     if (previousDraftKey && currentFreshCwd) {
-      rekeyDraft(previousDraftKey, parkedNewSessionDraftKey(currentFreshCwd));
+      apiRekeyDraft(previousDraftKey, parkedNewSessionDraftKey(currentFreshCwd));
     }
     const draftId = typeof crypto.randomUUID === "function"
       ? crypto.randomUUID()
       : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     const draftKey = `new:${draftId}:${cwd}`;
-    rekeyDraft(parkedNewSessionDraftKey(cwd), draftKey);
+    apiRekeyDraft(parkedNewSessionDraftKey(cwd), draftKey);
     setNewSessionDraftId(draftId);
     activeNewSessionDraftKeyRef.current = draftKey;
+    // source attribution only on a genuine user project switch (the cold-start
+    // first sync must not overwrite — otherwise it would overwrite the url-failed
+    // marker left by a failed URL restore with cwd-switch, and extensions could
+    // no longer tell the two apart).
+    if (isUserProjectSwitch) sessionSourceRef.current = "cwd-switch";
     setSelectedSession(null);
     setNewSessionCwd((prev) => {
       if (prev && prev !== cwd) return null;
@@ -954,24 +1882,83 @@ export function AppShell() {
     setSystemInfoLoading(false);
     // The debug panel stays open across the switch: it follows whichever session is shown.
     setActiveTopPanel((panel) => panel === "debug" ? panel : null);
-    if (currentProject !== newProject) {
+    if (isUserProjectSwitch) {
       // Keep #281's project isolation, but park each workspace's file tabs
       // instead of discarding them so they return when the user switches back.
+      // [上游 #1107 融合] 丢弃改驻留：切回原工作区时文件标签原样恢复。
       changeFileWorkspace(currentProject, newProject);
+      // A genuinely different cwd is a real user project move: from here on
+      // the last-open restore of the new workspace applies again.
+      if (urlRestoredSessionRef.current?.cwd && cwd !== urlRestoredSessionRef.current.cwd) {
+        urlRestoredSessionRef.current = null;
+      }
       // Restore the workspace we switched to: its last open session, or keep
       // the default welcome page when none is remembered.
-      if (!skipWorkspaceRestore) restoreWorkspaceContext(newProject, cwd);
+      restoreWorkspaceContext(newProject, cwd);
     }
-    router.replace(typeof window !== "undefined" ? window.location.pathname : "/", { scroll: false });
-  }, [activeCwd, changeFileWorkspace, invalidateWorkspaceRestore, newSessionCwd, router, selectedSession, restoreWorkspaceContext]);
+    if (initialSessionRestoredRef.current || !initialSessionIdRef.current) {
+      const urlSession = new URLSearchParams(window.location.search).get("session");
+      if (!urlSession || urlSession !== selectedSession?.id) {
+        replaceLocationIfChanged(router, inAppPathname("/"), { scroll: false });
+      }
+    }
+  }, [activeCwd, activeFileTabId, changeFileWorkspace, invalidateWorkspaceRestore, newSessionCwd, router, selectedSession, restoreWorkspaceContext]);
 
+  // A genuine user session pick (handleSelectSession with isRestore=false) — once
+  // set, the still-in-flight ?session= restore must yield: restoring afterwards
+  // would yank the user off the session they just opened and rewrite ?session=
+  // back (observed as "clicked a sidelist row, the URL flashed the new id then
+  // snapped back to the URL session" while the sessions list was still loading).
+  const userPickedSessionRef = useRef(false);
+  /** Address the app wants after a view switch (app-relative href) and a tick that
+   *  triggers the writer effect below. Writes go through here instead of router.replace
+   *  because a router navigation started around a click is dropped on phones (the same
+   *  event commits state — the drawer closes — and Next then rewrites the bar from its
+   *  stale canonical URL). */
+  const pendingUrlRef = useRef<string | null>(null);
+  const [urlWriteTick, setUrlWriteTick] = useState(0);
+  const queueUrlWrite = useCallback((href: string) => {
+    pendingUrlRef.current = href;
+    setUrlWriteTick((t) => t + 1);
+  }, []);
+  // Post-commit address write. Timing is the whole point: the switch's own commits
+  // (chat remount, phone drawer/panel close) keep landing for a few hundred ms and each
+  // of them has Next rewrite the bar from its still-stale canonical URL — measured:
+  // writes inside ~400ms are undone, a write at 600ms holds. So write at 300ms and
+  // re-check at 600/900ms, touching the URL only while it has drifted. Nothing is
+  // written eagerly, which is what keeps the bar from flashing.
+  useEffect(() => {
+    const href = pendingUrlRef.current;
+    if (!href) return;
+    const absolute = href.startsWith("?") ? `${window.location.pathname}${href}` : withBasePath(href);
+    const writeIfDrifted = () => {
+      if (`${window.location.pathname}${window.location.search}` === absolute) return;
+      window.history.replaceState(null, "", absolute);
+    };
+    const timers = [300, 600, 900].map((delay) => window.setTimeout(writeIfDrifted, delay));
+    return () => timers.forEach((slot) => window.clearTimeout(slot));
+  }, [urlWriteTick]);
   const handleSelectSession = useCallback((session: SessionInfo, isRestore = false, entryId?: string, blockIndex?: number, options?: SelectSessionOptions) => {
+    if (!isRestore) {
+      userPickedSessionRef.current = true;
+      // Armed BEFORE the sidebar cwd-sync effect can fire (same tick as the pick).
+      pickedSessionSyncRef.current = { project: workspaceKeyOf(session), cwd: session.cwd ?? null };
+    }
     setSearchTarget(entryId ? { sessionId: session.id, entryId, blockIndex } : null);
+    // Advance the project identity to the selected session's project BEFORE the
+    // sidebar cwd-sync effect fires. Otherwise handleCwdChange sees a project
+    // change (e.g. picking a session from another project in the all-sessions
+    // panel / kanban) and tears the just-selected session down — the first click
+    // would always fail and only a second click (same project) would stick.
+    activeProjectKeyRef.current = workspaceKeyOf(session);
     invalidateWorkspaceRestore();
+    setNewSessionWorkspace(null); // explicit session pick clears the staged target workspace
+    // Leaving a fresh composer for a session parks its draft in that cwd (restored
+    // by "New" there later) — upstream #1107 semantics, via the keeper's rekey.
     const activeDraftKey = activeNewSessionDraftKeyRef.current;
     const activeDraftCwd = newSessionCwd ?? (selectedSession === null ? activeCwd : null);
     if (activeDraftKey && activeDraftCwd) {
-      rekeyDraft(activeDraftKey, parkedNewSessionDraftKey(activeDraftCwd));
+      apiRekeyDraft(activeDraftKey, parkedNewSessionDraftKey(activeDraftCwd));
     }
     activeNewSessionDraftKeyRef.current = null;
     // Adopt an explicitly selected session before the sidebar reports its cwd.
@@ -989,6 +1976,16 @@ export function AppShell() {
       const sameProject =
         workspaceKeyOf(selectedSession) === workspaceKeyOf(session);
       if (selectedSession.id === session.id && sameProject) {
+        // 重开「当前已打开的会话」不重建聊天，但仍要纠正地址栏。外链 agent 会话
+        // （qodercn/cursor…）在接管/创建时会把临时占位 id `<agent>:new-<uuid>` 写进
+        // ?session=，其后的 canonicalization 只在「URL 仍等于该占位 id」时才改写为真
+        // 实 id——一旦中途切过会话，URL 就滞留在这个刷新后无法复原的占位/旧 id 上，
+        // 用户点当前会话行命中本早退分支、永不自愈 → 刷新打开旧会话。这里补一次纠偏：
+        // 仅写真实（非 :new- 占位）id，占位 id 不可恢复故不回写。
+        const urlSession = new URLSearchParams(window.location.search).get("session");
+        if (urlSession !== session.id && !session.id.includes(":new-")) {
+          queueUrlWrite(`?session=${encodeURIComponent(session.id)}`);
+        }
         if (isMobile) setSidebarOpen(false);
         return;
       }
@@ -1016,27 +2013,87 @@ export function AppShell() {
     // replace in production Next.js triggers a Suspense remount loop.
     // Tab-memory restore lands on `/` and must write `?session=` so reload
     // and copy-link keep this session.
-    if (!isRestore || new URLSearchParams(window.location.search).get("session") !== session.id) {
-      router.replace(`?session=${encodeURIComponent(session.id)}`, { scroll: false });
+    if (!isRestore) {
+      // Queued: a router navigation started here is dropped on phones (see queueUrlWrite).
+      queueUrlWrite(`?session=${encodeURIComponent(session.id)}`);
+    } else if (new URLSearchParams(window.location.search).get("session") !== session.id) {
+      replaceLocationIfChanged(router, `?session=${encodeURIComponent(session.id)}`, { scroll: false });
     }
-  }, [activeCwd, changeFileWorkspace, invalidateWorkspaceRestore, router, isMobile, newSessionCwd, selectedSession]);
+  }, [activeCwd, changeFileWorkspace, invalidateWorkspaceRestore, router, isMobile, newSessionCwd, selectedSession, queueUrlWrite]);
+
+  // [extension] Extension-client open-session channel: pi-web:open-session { id } → resolve
+  // by id and reuse handleSelectSession (in-SPA switch, no full page navigation).
+  // Lets extension panels (e.g. the subagent fleet) open parent/child session message
+  // windows while keeping their own dialogs up.
+  const handleSelectSessionRef = useRef(handleSelectSession);
+  handleSelectSessionRef.current = handleSelectSession;
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const id = (e as CustomEvent).detail?.id;
+      if (typeof id !== "string" || !id) return;
+      // P0-A: a single request uses the lightweight meta endpoint (~1KB); on 404 fall
+      // back to the single /api/sessions/<id> (info shape, no full list pull and no
+      // forced rescan) — no longer falling back to a full refresh=1.
+      const selectById = (s: SessionInfo) => handleSelectSessionRef.current(s);
+      void fetch(apiUrl(`/api/sessions/${encodeURIComponent(id)}/meta`))
+        .then((r) => (r.status === 404 ? fetch(apiUrl(`/api/sessions/${encodeURIComponent(id)}`)) : r))
+        .then((r) => (r.ok ? (r.json() as Promise<{ session?: SessionInfo; info?: SessionInfo; sessions?: SessionInfo[] }>) : null))
+        .then((d) => {
+          const s = d?.session ?? d?.info ?? d?.sessions?.find((x) => x.id === id);
+          if (s) selectById(s);
+        })
+        .catch(() => { /* ignore */ });
+    };
+    window.addEventListener("pi-web:open-session", handler);
+    return () => window.removeEventListener("pi-web:open-session", handler);
+  }, []);
+
+  // [extension] Service-worker notification click → open the session inside the SPA: sw.js
+  // no longer client.navigate's an already-open window (that equals a full reload via
+  // the address bar); it postMessages the page instead, and this forwards to the
+  // pi-web:open-session channel above (fetch meta → selectById, zero reload).
+  // Only service-worker sources are handled (event.source is a ServiceWorker object);
+  // regular window postMessage (e.g. the viewer-extension composer protocol) goes
+  // through a separate listener, so the two never interfere.
+  useEffect(() => {
+    if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
+    const onSwMessage = (event: MessageEvent) => {
+      if (!(event.source instanceof ServiceWorker)) return;
+      const d = event.data as { type?: string; url?: string; sessionId?: string } | null;
+      if (!d || d.type !== "pi-web:open-session") return;
+      const id = d.sessionId
+        ?? (d.url ? new URL(d.url, window.location.origin).searchParams.get("session") : null);
+      if (id) {
+        window.dispatchEvent(new CustomEvent("pi-web:open-session", { detail: { id } }));
+      } else {
+        window.focus();
+      }
+    };
+    navigator.serviceWorker.addEventListener("message", onSwMessage);
+    return () => navigator.serviceWorker.removeEventListener("message", onSwMessage);
+  }, []);
 
   const handleNewSession = useCallback((sessionId: string, cwd: string, projectKey?: string | null, options?: NewSessionOptions) => {
     invalidateWorkspaceRestore();
+    sessionSourceRef.current = "cwd-switch";
+    setNewSessionWorkspace(null); // explicit new session → return to the current workspace, do not inherit a stale staged target
     const draftKey = `new:${sessionId}:${cwd}`;
     // Leaving a fresh composer for another cwd parks its draft there, as a
     // workspace switch does; New in the same cwd still starts empty. The bar
     // above the composer moves the composer instead: its draft (the live
     // text, as promoteNewSession takes it) and its model picks go along.
+    // [本地融合] 物理草稿搬移走 draft-keeper 契约（DraftApi.rekeyDraft，可缺省）。
     const activeDraftKey = activeNewSessionDraftKeyRef.current;
     const activeDraftCwd = newSessionCwd ?? (selectedSession === null ? activeCwd : null);
     if (options?.carryComposer && selectedSession === null && activeDraftKey) {
+      // A mounted composer moves its own live text (what promoteNewSession uses
+      // too); no composer mounted ( SSR / test) falls back to the stored slot.
       const input = chatInputRef.current;
       if (input) input.rekeyDraft(activeDraftKey, draftKey);
-      else rekeyDraft(activeDraftKey, draftKey);
+      else apiRekeyDraft(activeDraftKey, draftKey);
       setCarriedNewSessionChoices(newSessionChoicesRef.current);
     } else if (activeDraftKey && activeDraftCwd && activeDraftCwd !== cwd) {
-      rekeyDraft(activeDraftKey, parkedNewSessionDraftKey(activeDraftCwd));
+      apiRekeyDraft(activeDraftKey, parkedNewSessionDraftKey(activeDraftCwd));
     }
     // Adopt the target project before the sidebar reports its cwd, as an
     // explicit session pick does. Without a key (Ctrl+Alt+N) the current cwd
@@ -1048,7 +2105,7 @@ export function AppShell() {
     activeProjectKeyRef.current = targetProject;
     // A draft parked in this cwd comes back, unless one was carried here: it
     // stays parked for the next time, never merged into what was carried.
-    if (!getDraft(draftKey)) rekeyDraft(parkedNewSessionDraftKey(cwd), draftKey);
+    if (!apiHasDraft(draftKey)) apiRekeyDraft(parkedNewSessionDraftKey(cwd), draftKey);
     activeNewSessionDraftKeyRef.current = draftKey;
     setNewSessionDraftId(sessionId);
     setSelectedSession(null);
@@ -1062,7 +2119,11 @@ export function AppShell() {
     setSystemInfoLoading(false);
     setActiveTopPanel((panel) => panel === "debug" ? panel : null);
     if (isMobile) setSidebarOpen(false);
-    router.replace(`?cwd=${encodeURIComponent(cwd)}`, { scroll: false });
+    // [URL 规范] 新会话页 URL 只留裸应用路径：清掉残留 ?session=（否则重载会
+    // 压过 tab-session 的 kind:"new" 记忆回开旧会话）；cwd 由 tab-session 承载。
+    // Queued for the same reason as the pick write: on phones router.replace here is
+    // dropped by the switch's own commits and the param survived.
+    queueUrlWrite(inAppPathname("/"));
     // The fresh composer takes the caret once it renders (#1313), unless the
     // move came from the new-session bar, whose control keeps focus instead
     // (newSessionBarFocusRef), or a phone would raise the keyboard for it.
@@ -1073,7 +2134,7 @@ export function AppShell() {
         chatInputRef.current?.focus();
       });
     }
-  }, [activeCwd, changeFileWorkspace, invalidateWorkspaceRestore, isMobile, newSessionCwd, router, selectedSession]);
+  }, [activeCwd, changeFileWorkspace, invalidateWorkspaceRestore, isMobile, newSessionCwd, router, selectedSession, queueUrlWrite]);
 
   // Global keyboard shortcuts (handles Esc, Ctrl+Alt+N etc.)
   useGlobalKeyboardShortcuts({
@@ -1081,15 +2142,68 @@ export function AppShell() {
     activeCwd,
   });
 
+  // [extension] Extension-client new-session channel: pi-web:new-session { cwd } → switch
+  // to the new-session page (no server session is created; the first message is sent
+  // by the user on the welcome page). Serves "@ to a new session"-style features:
+  // the extension first writes window.__piWebPendingComposer with the prefill text
+  // (consumed once ChatInput mounts), then dispatches this event.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const cwd = (e as CustomEvent).detail?.cwd;
+      if (typeof cwd !== "string" || !cwd) return;
+      // On mobile collapse the sidebar/right panel (file tabs live in the right
+      // panel; leaving it open would cover the target composer — same as @ insertion)
+      setRightPanelOpen(false);
+      handleNewSession(`ext-${Date.now()}`, cwd);
+    };
+    window.addEventListener("pi-web:new-session", handler);
+    return () => window.removeEventListener("pi-web:new-session", handler);
+  }, [handleNewSession]);
+
+  // [extension] Standalone viewer child-window composer request (viewer-extension protocol
+  // reuse): the child window has no chat surface, so the extension's @ mentions /
+  // @ to a new session / selection AI postMessage back to the opener to execute.
+  // Message shape: see forwardComposerToOpener in app/viewer/page.tsx; origin check
+  // plus source/type gating.
+  useEffect(() => {
+    const handler = (ev: MessageEvent) => {
+      if (ev.origin !== window.location.origin) return;
+      const d = ev.data as { source?: string; type?: string; action?: string; text?: unknown; cwd?: unknown } | null;
+      if (!d || d.source !== "aiti-viewer" || d.type !== "composer") return;
+      const text = typeof d.text === "string" ? d.text : "";
+      if (!text) return;
+      if (d.action === "append") {
+        chatInputRef.current?.appendText(text);
+      } else if (d.action === "newSession") {
+        (window as unknown as { __piWebPendingComposer?: { text: string; at: number } }).__piWebPendingComposer = { text, at: Date.now() };
+        const cwd = typeof d.cwd === "string" && d.cwd ? d.cwd : activeCwd;
+        if (!cwd) return;
+        setRightPanelOpen(false);
+        handleNewSession(`ext-${Date.now()}`, cwd);
+      } else if (d.action === "steer") {
+        dispatchChatSend(text, "steer");
+      }
+    };
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  }, [handleNewSession, activeCwd]);
+
   // Client-built transient SessionInfo (new session / fork) lacks the
   // server-computed projectKey, which the same-project check in
   // handleCwdChange relies on. Hydrate it from the session list so switching
   // worktrees right after creating a session doesn't close the chat.
   const hydrateSelectedSession = useCallback((sessionId: string) => {
-    void fetch("/api/sessions", { cache: "no-store" })
-      .then((r) => (r.ok ? (r.json() as Promise<{ sessions: SessionInfo[] }>) : null))
+    // Use ?refresh=1 to bypass the 5s TTL cache: a new session's .jsonl may
+    // have just been persisted, and a stale cache hit would leave
+    // selectedSession as a transient draft (no name, transient=true).
+    // P0-A: a single hydrate uses the lightweight meta endpoint; on 404 fall back to
+    // the single /api/sessions/<id> (info shape, direct id lookup unaffected by list
+    // scan caching) — no longer falling back to a full refresh=1.
+    void fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}/meta`), { cache: "no-store" })
+      .then((r) => (r.status === 404 ? fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}`), { cache: "no-store" }) : r))
+      .then((r) => (r.ok ? (r.json() as Promise<{ session?: SessionInfo; info?: SessionInfo; sessions?: SessionInfo[] }>) : null))
       .then((d) => {
-        const full = d?.sessions.find((s) => s.id === sessionId);
+        const full = d?.session ?? d?.info ?? d?.sessions?.find((s) => s.id === sessionId);
         if (!full) return;
         setSelectedSession((prev) => (
           prev?.id === sessionId
@@ -1100,17 +2214,126 @@ export function AppShell() {
       .catch(() => {});
   }, []);
 
+  const handleOpenSession = useCallback(async (sessionId: string, options?: { initialRestore?: boolean }) => {
+    // [restore resilience] A by-id request landing inside an extension hot-reload window
+    // can fail transiently (extension routes flap while the layer restarts). Retry
+    // non-404 failures a couple of times so a server hiccup does not drop the initial
+    // ?session= restore onto the default project with a misleading "not found" toast.
+    // 404 is authoritative (session really gone) and never retried.
+    const maxAttempts = options?.initialRestore ? 3 : 1;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        // The by-id restore is part of the initial ?session= restore. If the user
+        // picked another session while this fetch was in flight (slow sessions
+        // list / slow backend), yield to that pick: selecting the restored id here
+        // would yank the user back and the 404 branch below would wipe their URL.
+        if (options?.initialRestore && userPickedSessionRef.current) return false;
+        const signal = typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(12000) : undefined;
+        const response = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}`), { cache: "no-store", signal });
+        const data = await response.json() as { info?: SessionInfo; error?: string };
+        // Re-check after the await: the pick typically happens while this fetch is
+        // in flight (the restore only reaches this by-id path when the list does
+        // not contain the id, and the fetch is what the user races against).
+        if (options?.initialRestore && userPickedSessionRef.current) return false;
+        if (!response.ok || !data.info) {
+          // The initial ?session= restore pointed at a deleted session (404): clear the
+          // stale last-open record + clear the URL immediately. On the normal path the
+          // URL is cleaned by the "default project pick → handleCwdChange → replace"
+          // chain; this is the failure-path fallback (does not wait for the next list
+          // refresh). The check is "requested id === URL id being restored" rather than
+          // just the initialRestore flag — some restore callers drop the flag, and the
+          // cost of clearing the wrong thing (wiping someone else's URL session param)
+          // far outweighs missing a clear.
+          if (response.status === 404 && (options?.initialRestore || sessionId === initialSessionIdRef.current)) {
+            clearLastOpenSessionById(sessionId);
+            // Restore failed: release the authority guard so the normal
+            // last-open behavior applies for the rest of this page load.
+            urlRestoredSessionRef.current = null;
+            replaceLocationIfChanged(router, inAppPathname("/"), { scroll: false });
+          }
+          const err = new Error(data.error ?? `HTTP ${response.status}`) as Error & { status?: number };
+          err.status = response.status;
+          throw err;
+        }
+        handleSelectSession(data.info);
+        // The by-id fallback of the initial ?session= restore (id not in the
+        // sidebar list) is part of the URL restore: anchor the guard AFTER
+        // handleSelectSession — it selects with isRestore=false and would
+        // otherwise clear the anchor set here.
+        if (options?.initialRestore) {
+          urlRestoredSessionRef.current = { id: data.info.id, cwd: data.info.cwd };
+        }
+        return true;
+      } catch (err) {
+        const status = (err as { status?: number }).status;
+        const yielded = options?.initialRestore && userPickedSessionRef.current;
+        if (attempt < maxAttempts && status !== 404 && !yielded) {
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+          continue;
+        }
+        // Next.js dev surfaces console.error as an error overlay, but a failed open is a
+        // normal, recoverable condition (e.g. ?session= pointing at an archived/deleted
+        // session after a reload) — a toast is enough, no error-level noise.
+        piWebToastService.show(translate("sidebar.sessionNotFound"));
+        return false;
+      }
+    }
+    return false;
+  }, [handleSelectSession, router, translate]);
+
+  // pi-web.session.open(id) delegation backfill (same pattern as hostUiRef: refresh
+  // each render to avoid a stale closure). Extensions (e.g. welcome-page widgets)
+  // consume it via the ctx service; host built-ins call openSessionById directly.
+  setSessionOpener(handleOpenSession);
+  useEffect(() => () => setSessionOpener(null), []);
+
+  // Canonicalization of external-session placeholder/alias ids (the server resolves
+  // zcode:new-* / aliases into real composite ids): migrate the selected id and URL
+  // in place without bumping sessionKey — the mounted chat/SSE keeps using the old
+  // registration (server-side double registration guarantees hits), and the next
+  // entry fully uses the canonical id. Sidebar row identities unify accordingly, so
+  // the same backend session no longer shows two rows (transient row + list row).
+  const handleSessionIdCanonicalized = useCallback((previousId: string, canonicalId: string) => {
+    sessionSourceRef.current = "canonicalized";
+    setSelectedSession((s) => (s && s.id === previousId ? { ...s, id: canonicalId } : s));
+    if (new URLSearchParams(window.location.search).get("session") === previousId) {
+      replaceLocationIfChanged(router, `?session=${encodeURIComponent(canonicalId)}`, { scroll: false });
+    }
+    // Notify the session-manager dock: the old id's unflushed draft row has been
+    // superseded by the canonical row (same session) and can be removed
+    try {
+      window.dispatchEvent(new CustomEvent("pi-web:session-id-canonicalized", { detail: { previousId, canonicalId } }));
+    } catch { /* ignore outside browser environments */ }
+  }, [router]);
+
   // Called by ChatWindow when a new session gets its real id from pi
   const handleSessionCreated = useCallback((session: SessionInfo, sourceDraftKey: string) => {
+    sessionSourceRef.current = "created";
     setRefreshKey((k) => k + 1);
     if (activeNewSessionDraftKeyRef.current !== sourceDraftKey) return;
     invalidateWorkspaceRestore();
     activeNewSessionDraftKeyRef.current = null;
     setNewSessionCwd(null);
+    setNewSessionWorkspace(null);
+    // "Workspace" selection on the new-session page: only after the session is
+    // successfully created in the chosen workspace does the app context (sidebar /
+    // file area / URL) formally switch to it. This must rewrite the project identity
+    // BEFORE the sidebar's selectedCwd (=session.cwd) sync fires, otherwise
+    // handleCwdChange would read it as a cross-project switch and tear down the
+    // session just created.
+    if (session.cwd && session.cwd !== activeCwd) {
+      setActiveCwd(session.cwd);
+      activeProjectKeyRef.current = workspaceKeyOf(session);
+      setFileTabs([]);
+      if (!activeFileTabId || activeFileTabId.startsWith("file:")) {
+        setActiveFileTabId(null);
+        setRightPanelOpen(false);
+      }
+    }
     setSelectedSession(session);
     hydrateSelectedSession(session.id);
-    router.replace(`?session=${encodeURIComponent(session.id)}`, { scroll: false });
-  }, [invalidateWorkspaceRestore, router, hydrateSelectedSession]);
+    replaceLocationIfChanged(router, `?session=${encodeURIComponent(session.id)}`, { scroll: false });
+  }, [activeCwd, activeFileTabId, invalidateWorkspaceRestore, router, hydrateSelectedSession]);
 
   const deliverSessionNotification = useCallback(({
     targetSession,
@@ -1126,7 +2349,7 @@ export function AppShell() {
     if (!("Notification" in window)) return;
 
     const fire = () => {
-      const sessionUrl = targetSession ? `/?session=${encodeURIComponent(targetSession.id)}` : "/";
+      const sessionUrl = targetSession ? withBasePath(`/?session=${encodeURIComponent(targetSession.id)}`) : withBasePath("/");
       void showBrowserNotification({
         title,
         body,
@@ -1153,10 +2376,9 @@ export function AppShell() {
   }, [handleSelectSession, locale]);
 
   const handleAgentEnd = useCallback((end: AgentEndInfo) => {
-    // The sidebar's reload merges the selected session's new row into it
-    // (handleSessionsChange), so no list fetch of its own here.
     setRefreshKey((k) => k + 1);
     setExplorerRefreshKey((k) => k + 1);
+    if (selectedSession) hydrateSelectedSession(selectedSession.id);
 
     if (end.aborted || end.subagentsActive || isHiddenRelation(selectedSession?.relation)) return;
     if (!shouldShowBrowserNotification()) return;
@@ -1169,13 +2391,58 @@ export function AppShell() {
         return next;
       });
     }
-    deliverSessionNotification({
+    // Include session context: title = task name (name/first-message summary), body =
+    // project(+branch) + status text, so the notification shows at a glance "which task
+    // in which project" and its result.
+    const projectLabel = notificationProjectLabel(targetSession);
+    const deliverCompleted = () => deliverSessionNotification({
       targetSession,
-      title: targetSession?.name ?? translate("i18n.sessionComplete"),
-      body: translate("i18n.taskFinished"),
+      title: notificationSessionTitle(targetSession, translate("i18n.sessionComplete")),
+      body: projectLabel
+        ? translate("i18n.taskFinishedWithContext", { project: projectLabel })
+        : translate("i18n.taskFinished"),
       tag: targetSession ? `pi-session-complete:${targetSession.id}` : "pi-session-complete",
     });
-  }, [deliverSessionNotification, selectedSession, translate]);
+
+    // Outcome triage (2026-09-15): the run's final status is derived from the session
+    // file (lightweight single /meta fetch) — failed → "task failed: <error summary>";
+    // user-stopped (aborted) / interrupted → no notification; success/unknown → keep
+    // the original "task finished". When the final status cannot be read (bridge /
+    // external session / request failure), conservatively notify as finished so the
+    // notification does not disappear entirely.
+    if (!targetSession) {
+      if (shouldShowBrowserNotification()) deliverCompleted();
+      return;
+    }
+    void fetch(apiUrl(`/api/sessions/${encodeURIComponent(targetSession.id)}/meta`), { cache: "no-store" })
+      .then((r) => (r.ok ? (r.json() as Promise<{ session?: SessionInfo }>) : null))
+      .then((d) => {
+        if (!shouldShowBrowserNotification()) return;
+        const lastRun = d?.session?.lastRun;
+        if (lastRun && !runOutcomeNotifies(lastRun.status)) return;
+        if (lastRun?.status === "failed") {
+          const error = truncateRunError(lastRun.error, 120);
+          deliverSessionNotification({
+            targetSession,
+            title: notificationSessionTitle(targetSession, translate("i18n.sessionFailed")),
+            body: projectLabel
+              ? (error
+                ? translate("i18n.taskFailedWithContextAndError", { project: projectLabel, error })
+                : translate("i18n.taskFailedWithContext", { project: projectLabel }))
+              : (error
+                ? translate("i18n.taskFailedWithError", { error })
+                : translate("i18n.taskFailed")),
+            tag: `pi-session-complete:${targetSession.id}`,
+          });
+          return;
+        }
+        deliverCompleted();
+      })
+      .catch(() => {
+        // Failed to read the final status: keep the old behavior (completion notification)
+        if (shouldShowBrowserNotification()) deliverCompleted();
+      });
+  }, [deliverSessionNotification, hydrateSelectedSession, selectedSession, translate]);
 
   // The badge is for an unseen tab: opening it puts the finished chat on screen.
   useEffect(() => {
@@ -1210,12 +2477,42 @@ export function AppShell() {
   const handleAutoName = useCallback(async () => {
     const sessionId = selectedSession?.id;
     if (!sessionId || autoNameStatus.kind === "naming") return;
+
+    // Probe for bridge occupancy up front: a session claimed by the TUI bridge cannot
+    // start a local runtime for the naming turn (it would double-write the jsonl, and
+    // the master gate raises BridgeOccupiedError → 409). Degrade directly to the manual
+    // naming dialog — PATCH /api/sessions/[id] supports the bridged scenario
+    // (set_session_name is forwarded to the bridge side).
+    try {
+      const probeRes = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}/state`));
+      const probeBody = (await probeRes.json().catch(() => ({}))) as { bridged?: boolean; code?: string };
+      const bridged = (probeRes.ok && probeBody.bridged === true)
+        || (!probeRes.ok && probeBody.code === "session_bridged_unreachable");
+      if (bridged) {
+        const displayFirst = skillExpansionToCommand(selectedSession?.firstMessage ?? "")
+          ?? selectedSession?.firstMessage ?? "";
+        setBridgedNameDialog({
+          sessionId,
+          defaultName: selectedSession?.name || displayFirst.trim().slice(0, 50) || sessionId.slice(0, 12),
+        });
+        // Toast explaining the degrade reason (the dialog itself also explains — double
+        // hint so users mid-switch don't miss it); routed through the host pi-web.toast
+        // service (rendered by HostToastHost)
+        piWebToastService.show(translate("title.bridgedToast"));
+        setActiveTopPanel(null);
+        return;
+      }
+    } catch {
+      // Probe failure does not block: continue the normal flow (the server still
+      // returns the 409 fallback on bridge occupancy)
+    }
+
     if (autoNameTimerRef.current) clearTimeout(autoNameTimerRef.current);
     setActiveTopPanel(null);
     setAutoNameStatus({ kind: "naming" });
 
     try {
-      const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/auto-name`, {
+      const response = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}/auto-name`), {
         method: "POST",
       });
       const body = (await response.json().catch(() => ({}))) as { title?: string; error?: string };
@@ -1236,7 +2533,18 @@ export function AppShell() {
       setAutoNameStatus({ kind: "error", message });
       autoNameTimerRef.current = setTimeout(() => setAutoNameStatus({ kind: "idle" }), 5000);
     }
-  }, [autoNameStatus.kind, selectedSession?.id]);
+  }, [autoNameStatus.kind, selectedSession]);
+
+  /** After a bridge-occupied session is named manually: refresh the list + sync the
+   *  top-bar title/stats (same as the auto-name success path). */
+  const handleBridgedNameSaved = useCallback((sessionId: string, title: string) => {
+    setRefreshKey((key) => key + 1);
+    if (activeSessionIdRef.current !== sessionId) return;
+    setSelectedSession((current) => current?.id === sessionId ? { ...current, name: title } : current);
+    setSessionStats((current) => current?.sessionId === sessionId ? { ...current, sessionName: title } : current);
+    setAutoNameStatus({ kind: "success" });
+    autoNameTimerRef.current = setTimeout(() => setAutoNameStatus({ kind: "idle" }), 1800);
+  }, []);
 
   useEffect(() => {
     if (autoNameTimerRef.current) clearTimeout(autoNameTimerRef.current);
@@ -1271,26 +2579,54 @@ export function AppShell() {
       return;
     }
     invalidateWorkspaceRestore();
+    sessionSourceRef.current = "fork";
     activeNewSessionDraftKeyRef.current = null;
     setRefreshKey((k) => k + 1);
     setSessionKey((k) => k + 1);
     setNewSessionCwd(null);
+    setNewSessionWorkspace(null);
     setSelectedSession((prev) => ({
       ...(prev ?? { path: "", cwd: "", created: "", modified: "", messageCount: 0, firstMessage: "" }),
       id: newSessionId,
       transient: false,
     }));
     hydrateSelectedSession(newSessionId);
-    router.replace(`?session=${encodeURIComponent(newSessionId)}`, { scroll: false });
+    replaceLocationIfChanged(router, `?session=${encodeURIComponent(newSessionId)}`, { scroll: false });
   }, [handleSelectSession, invalidateWorkspaceRestore, router, hydrateSelectedSession]);
 
+  // "Edit from here" on rebind-fork backends (pi spawn): the fork moved the session record
+  // to a branched child id, so the shell switches over and auto-sends the edited message
+  // there (same pipe as quote-fork: pendingQuotePrompt → initialPrompt on the new session).
+  const handleEditFromHereHandoff = useCallback((h: { sessionId: string; message: string; images?: AttachedImage[] }) => {
+    setPendingQuotePrompt({ sessionId: h.sessionId, text: h.message, images: h.images });
+    handleSessionForked(h.sessionId);
+  }, [handleSessionForked]);
+
   // The sidebar calls this when the initial session is not in its list.
+  const handleAskInNewChat = useCallback(async (
+    prompt: string,
+    sourceSessionId: string,
+    sourceEntryId: string,
+  ) => {
+    const result = await sendAgentCommand<{ newSessionId?: string }>(sourceSessionId, {
+      type: "fork_branch",
+      entryId: sourceEntryId,
+    });
+    if (!result?.newSessionId) throw new Error(translate("chat.quoteForkFailed"));
+    setPendingQuotePrompt({ sessionId: result.newSessionId, text: prompt });
+    handleSessionForked(result.newSessionId);
+  }, [handleSessionForked, translate]);
+
   const handleInitialRestoreDone = useCallback(() => {
+    // Called only on the failed ?session= URL-restore path (success goes through
+    // handleSelectSession("url")).
+    if (initialNavigation.sessionId) sessionSourceRef.current = "url-failed";
     setInitialSessionRestored(true);
-    if (initialLinkedSessionId) skipWorkspaceRestoreRef.current = true;
-  }, [initialLinkedSessionId]);
+  }, [initialNavigation.sessionId]);
 
   const handleSessionDeleted = useCallback((sessionId: string) => {
+    // Wipe any persisted drafts (all tabs' slots) for the deleted session.
+    getDraftApi()?.clearAllDrafts(sessionId);
     invalidateWorkspaceRestore();
     setRefreshKey((k) => k + 1);
     // The DELETE can outlive a session switch: this callback's captured
@@ -1299,6 +2635,7 @@ export function AppShell() {
     // the deleted session at the moment removal completes.
     const active = selectedSessionRef.current;
     if (active?.id === sessionId) {
+      sessionSourceRef.current = "deleted";
       clearTabOpenSession(sessionId);
       const cwd = active.cwd;
       const draftId = typeof crypto.randomUUID === "function"
@@ -1308,6 +2645,7 @@ export function AppShell() {
       activeNewSessionDraftKeyRef.current = cwd ? `new:${draftId}:${cwd}` : null;
       setSelectedSession(null);
       setNewSessionCwd(cwd ?? null);
+      setNewSessionWorkspace(null);
       setSessionKey((k) => k + 1);
       setBranchTree([]);
       setBranchActiveLeafId(null);
@@ -1316,45 +2654,293 @@ export function AppShell() {
       setSystemTools(null);
       setSystemInfoLoading(false);
       setActiveTopPanel((panel) => panel === "debug" ? panel : null);
-      router.replace(cwd ? `?cwd=${encodeURIComponent(cwd)}` : (typeof window !== "undefined" ? window.location.pathname : "/"), { scroll: false });
+      // [URL 规范] cwd 不进 URL：落裸应用路径，cwd 由 tab-session 承载（下方 setNewSessionCwd）。
+      replaceLocationIfChanged(router, inAppPathname("/"), { scroll: false });
     }
   }, [invalidateWorkspaceRestore, router]);
 
-  const handleOpenFile = useCallback((
+  const openHostFileTab = useCallback((
     filePath: string,
     fileName: string,
-    options?: { sourceSessionId?: string | null; modeHint?: "diff"; page?: number },
+    options?: { sourceSessionId?: string | null; modeHint?: "diff"; select?: boolean; page?: number; atRevision?: RevisionRef },
   ) => {
     const sourceSessionId = options?.sourceSessionId;
     const modeHint = options?.modeHint;
+    const select = options?.select !== false; // default true
     const page = options?.page;
-    const tabId = `file:${filePath}`;
+    const atRevision = options?.atRevision;
+    // Revision views are their own tab identity (same path, different blob); the
+    // ref suffix keeps a revision tab from colliding with the working-tree tab.
+    const tabId = atRevision ? `file:${filePath}@${atRevision.ref.slice(0, 12)}` : `file:${filePath}`;
+    const label = atRevision ? `${fileName}@${atRevision.ref.slice(0, 7)}` : fileName;
     setFileTabs((prev) => openFileTab(prev, {
-      fileName,
+      fileName: label,
       filePath,
       modeHint,
       page,
       sourceSessionId,
+      atRevision,
       tabId,
     }));
-    setActiveFileTabId(tabId);
-    setRightPanelOpen(true);
-    // On mobile the file panel is full-screen; close the drawer so it shows.
-    if (isMobile) setSidebarOpen(false);
-  }, [isMobile]);
+    if (select) {
+      setActiveFileTabId(tabId);
+      revealFileTabOnOpen(); // user opened a new tab → the tab bar follows it into view
+      setRightPanelOpen(true);
+      // On mobile the file panel is full-screen; close the drawer so it shows.
+      if (isMobile) setSidebarOpen(false);
+    }
+  }, [isMobile, revealFileTabOnOpen]);
+
+
+  const handleOpenFile = useCallback((
+    filePath: string,
+    fileName: string,
+    options?: { sourceSessionId?: string | null; modeHint?: "diff"; select?: boolean; page?: number; atRevision?: RevisionRef },
+  ) => {
+    // Revision views are host tabs only: the file-editor dock face guards below match by
+    // path alone and would hijack a historical blob into a working-tree editor face.
+    if (options?.atRevision) {
+      openHostFileTab(filePath, fileName, options);
+      return;
+    }
+    // File dock face guard (file-editor extension file-dock, 2026-09-16): the path is
+    // alive as a dock face (float window / left-panel block / right-panel dock tab) →
+    // bring it to the front (present open uses dockpref placement / same-state
+    // activation) instead of creating a host tab. auto = restorative open
+    // (select:false) must not pull up the small-screen drawer. When the extension is
+    // absent, hasFileFace is absent → a normal host tab is created.
+    const ed = window.__aitiEditor;
+    if (typeof ed?.hasFileFace === "function" && typeof ed.openFileFace === "function" && ed.hasFileFace(filePath)) {
+      ed.openFileFace(filePath, { auto: options?.select === false });
+      return;
+    }
+    // [lazy-materialization window guard, 2026-09-19] lazy loading of the file-editor
+    // extension (clientImmediately:false): after a refresh the face API is not yet
+    // mounted while the instance list (persistent localStorage) still exists. Falling
+    // straight through to a host tab here means the editor later materializes and
+    // auto-presents a float in front → the same file opens twice (host tab + float
+    // stacked over the message area; on mobile it looks like "opened but didn't
+    // switch / mixed content"). Dormant face hit → materialize the extension first,
+    // then openFileFace; on materialization failure (extension deleted/disabled) fall
+    // back to a host tab.
+    if (typeof ed?.hasFileFace !== "function" || typeof ed?.openFileFace !== "function") {
+      const facePath = findDormantFileFacePath(filePath);
+      if (facePath) {
+        void ensureExtMaterialized("aiti-editor").then((ok) => {
+          const api = window.__aitiEditor;
+          if (ok && typeof api?.hasFileFace === "function" && typeof api?.openFileFace === "function" && api.hasFileFace(facePath)) {
+            api.openFileFace(facePath, { auto: options?.select === false });
+          } else {
+            openHostFileTab(facePath, fileName, options);
+          }
+        }).catch(() => { openHostFileTab(filePath, fileName, options); });
+        return;
+      }
+    }
+    openHostFileTab(filePath, fileName, options);
+  }, [isMobile, revealFileTabOnOpen, openHostFileTab]);
 
   const handleOpenLinkedFile = useCallback((filePath: string, page?: number) => {
     handleOpenFile(filePath, getFileName(filePath), { sourceSessionId: selectedSession?.id ?? null, page });
   }, [handleOpenFile, selectedSession?.id]);
 
-  const handleOpenTerminal = useCallback((cwd: string) => {
-    const existing = terminalTabs.find((tab) => tab.cwd === cwd);
+  // "Open in file panel" for message images: the image tab mechanism was removed
+  // (image previews are now handled by the file-editor extension's unified viewer
+  // float; entry point in components/editor-image-preview.ts; falls back to the
+  // upstream lightbox when the extension is absent).
+
+  // File-editor extension session-files endpoint (folder tabs reuse the same tombstone
+  // record/restore pipeline as files — kind distinguishes them). Centralized
+  // here so only a real tab close removes (switch/refresh keep the tombstone).
+  const recordFolder = useCallback((
+    folderPath: string,
+    action: "add" | "remove",
+  ) => {
+    const sid = (window as unknown as { __aitiEditor?: { _sessionId?: string } }).__aitiEditor?._sessionId;
+    if (!sid || !folderPath) return;
+    void fetch(apiUrl("/api/extensions/aiti-editor/session-files"), {
+      method: "POST", cache: "no-store",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: sid, filePath: folderPath, kind: "folder", action }),
+    }).catch(() => {});
+  }, []);
+
+  const handleOpenFolder = useCallback((
+    folderPath: string,
+    folderName: string,
+    options?: { select?: boolean },
+  ) => {
+    // Folder dock face first (folders uniformly go through the dock state machine —
+    // the right-panel dock tab carries the full ⇱ position menu / ✕ / double-click
+    // detach; the legacy folder tab has none of these controls). Falls back to the
+    // legacy tab when the extension is not deployed/mounted. openFolderDocked
+    // internally presents dock:right-panel → the host auto-expands the right panel and
+    // activates the tab via piwe-float-present-change (including idempotent activate).
+    // select:false = restorative background open (the editor's tombstone restore) →
+    // forwarded as the state machine's auto marker, so it neither pulls up the
+    // small-screen panel nor steals the active tab (mirrors the legacy branch below).
+    const dockApi = (window as unknown as {
+      __aitiFolder?: { openFolderDocked?: (p: string, z: string, opts?: { auto?: boolean }) => void };
+    }).__aitiFolder;
+    if (dockApi && typeof dockApi.openFolderDocked === "function") {
+      dockApi.openFolderDocked(folderPath, "right-panel", { auto: options?.select === false });
+      recordFolder(folderPath, "add");
+      return;
+    }
+    const select = options?.select !== false; // default true
+    const tabId = `folder:${folderPath}`;
+    setFileTabs((prev) => openFolderTab(prev, { folderName, folderPath, tabId }));
+    if (select) {
+      setActiveFileTabId(tabId);
+      revealFileTabOnOpen(); // user opened a folder → the tab bar follows it into view
+      setRightPanelOpen(true);
+      // Session restore (tombstone reopen) is owned by the rightPanelOpen effect above.
+      if (isMobile) setSidebarOpen(false);
+    }
+    recordFolder(folderPath, "add");
+  }, [isMobile, recordFolder, revealFileTabOnOpen]);
+
+  // Right-panel empty state "open current working directory": open the CWD directly
+  // when activeCwd exists; otherwise fetch the default working directory
+  // (~/pi-cwd-YYYYMMDD, same semantics as the sidebar's "use default directory") and
+  // open that — no directory picker is shown.
+  const handleOpenCurrentWorkspace = useCallback(() => {
+    if (activeCwd) {
+      handleOpenFolder(activeCwd, getFileName(activeCwd));
+      return;
+    }
+    void fetch(apiUrl("/api/default-cwd"), { method: "POST" })
+      .then((res) => res.json())
+      .then((data: { cwd?: string; error?: string }) => {
+        if (data.cwd) {
+          handleCwdChange(data.cwd, null, null);
+          handleOpenFolder(data.cwd, getFileName(data.cwd));
+        }
+      })
+      .catch(() => {});
+  }, [activeCwd, handleCwdChange, handleOpenFolder]);
+
+  // ── Generic primitives (policy-free): low-level tab count/pin/bulk-close
+  //    capabilities for extensions ──
+  // getFileTabs: return the list of currently open tabs (array order = open order).
+  const handleGetFileTabs = useCallback(() =>
+    // fileTabs excludes terminal tabs (terminals are stored separately in
+    // terminalTabs); kind is narrowed to the two states declared by the host API.
+    fileTabs.map((t) => ({ id: t.id, filePath: t.filePath, kind: (t.kind === "terminal" || t.kind === "side" ? (t.kind === "side" ? "agent" : "file") : t.kind) ?? "file", pinned: t.pinned })),
+  [fileTabs]);
+  // closeFileTabs: remove from state only + re-seat activation; policies such as
+  // dirty confirmation / pin protection are the caller's (extension's) responsibility.
+  const handleCloseFileTabs = useCallback((ids: string[]) => {
+    const idSet = new Set(ids);
+    if (idSet.size === 0) return;
+    setFileTabs((prev) => {
+      const next = prev.filter((t) => !idSet.has(t.id));
+      if (next.length === 0) setRightPanelOpen(false);
+      return next;
+    });
+    setActiveFileTabId((cur) => {
+      if (cur && idSet.has(cur)) {
+        const remaining = fileTabs.filter((t) => !idSet.has(t.id));
+        return remaining.length > 0 ? remaining[remaining.length - 1].id : null;
+      }
+      return cur;
+    });
+  }, [fileTabs]);
+
+  // Extension host common API registration (capabilities as-is, no interpretation;
+  // AppShell stays message-free and enumeration-free)
+  registerHostApi({
+    openFile: handleOpenFile,
+    openFolder: handleOpenFolder,
+    revealDir: handleRevealDir,
+    getFileTabs: handleGetFileTabs,
+    closeFileTabs: handleCloseFileTabs,
+    appendText: (text) => chatInputRef.current?.appendText(text),
+    writeComposerValue: (text) => {
+      const c = chatInputRef.current;
+      if (!c) return false;
+      c.setValueTracked(text);
+      return true;
+    },
+    restoreComposerDraft: (draft) => {
+      const c = chatInputRef.current;
+      if (!c) return false; // composer not mounted: the caller must not consume the draft
+      c.restoreDraft(draft);
+      return true;
+    },
+  });
+
+  // File open requested by the devtools extension (in-browser view — file tab):
+  // "frontend open" clicked in a debug-target candidate detail
+  useEffect(() => {
+    const onAitiOpenFile = (e: MessageEvent) => {
+      const m = e.data;
+      if (m && m.__dbg === 1 && m.type === "aiti_open_file" && typeof m.payload?.filePath === "string") {
+        handleOpenFile(m.payload.filePath, getFileName(m.payload.filePath), { sourceSessionId: selectedSession?.id ?? null });
+      }
+    };
+    window.addEventListener("message", onAitiOpenFile);
+    return () => window.removeEventListener("message", onAitiOpenFile);
+  }, [handleOpenFile, selectedSession?.id]);
+
+  /**
+   * Async confirmation before closing/switching a file: the decision is handed to the
+   * current viewer (the file-editor extension or another takeover owner). The core is
+   * unaware of details like dirty state — it only calls the editor's
+   * confirmClose(path) → Promise<boolean>; true = allow, false = block. Without a
+   * confirmation capability (no takeover) the action is always allowed.
+   */
+  const askEditorClose = useCallback(async (filePath: string, isSwitch = false): Promise<boolean> => {
+    try {
+      const q = window.__aitiEditor?.confirmClose;
+      if (typeof q !== "function") return true;
+      return (await q(filePath, { isSwitch })) !== false;
+    } catch {
+      return true; // a confirmation error must not block closing
+    }
+  }, []);
+
+  const guardedSelectFileTab = useCallback(async (tabId: string) => {
+    if (tabId === activeFileTabId) return;
+    const prevId = activeFileTabId;
+    const cur = fileTabs.find((t) => t.id === prevId);
+    // Ask first, switch later: only switch when the editor allows; if blocked, stay
+    // on the original tab (avoids optimistic switching that unloads the viewer before
+    // a rejection, losing content). Without a confirmation capability (no takeover)
+    // the switch is allowed; folder tabs have no editing state (FolderViewer is not
+    // owned by the file-editor extension) and switch directly.
+    if (cur?.filePath && cur.kind !== "folder") {
+      const ok = await askEditorClose(cur.filePath, true);
+      if (!ok) return;
+    }
+    // User click/keyboard switch: bump the token so the tab bar scrolls the target
+    // into view (a clicked target is usually already visible → no-op; only keyboard
+    // Home/End jumps to an overflow tab actually scroll).
+    revealFileTabOnOpen();
+    // active may have been changed by another interaction while awaiting — switch
+    // only if still resting on the original tab
+    setActiveFileTabId((active) => (active === prevId ? tabId : active));
+  }, [activeFileTabId, fileTabs, askEditorClose, revealFileTabOnOpen]);
+
+  // [extension] T2 takeover: the sidebar "terminal" button → create a terminal tab (bridge
+  // takeover prefers the command-terminal extension's shell, falling back to the
+  // native PTY panel when absent — see TerminalPanelBridge); no longer connects to
+  // the legacy command global directly (single entry point prevents double opens).
+  const handleOpenTerminal = useCallback((cwd: string, forceNew?: boolean) => {
+    const existing = forceNew ? undefined : terminalTabs.find((tab) => tab.cwd === cwd);
     const tab = existing ?? newTerminalTab(cwd);
     if (!existing) setTerminalTabs((tabs) => [...tabs, tab]);
     setActiveFileTabId(tab.id);
+    revealFileTabOnOpen(); // user opened a terminal tab → the tab bar follows it into view
     setRightPanelOpen(true);
     if (isMobile) setSidebarOpen(false);
-  }, [terminalTabs, isMobile]);
+  }, [terminalTabs, isMobile, revealFileTabOnOpen]);
+
+  // closing finalization (upstream #695 semantics + local removal in takeover mode):
+  // restart swaps in a new id in place once termination completes (wait for the old
+  // process to die before creating the new one — docs/terminal.md Lifecycle); in
+  // takeover mode there is no restart, so closing is always "close" (local removal
+  // suffices; shell lifecycle belongs to the command-terminal extension).
 
   // Subagent work opens in a right-panel tab instead of hijacking the main chat.
   const handleOpenSubagentTab = useCallback((sessionId: string, label: string, side?: boolean) => {
@@ -1443,14 +3029,34 @@ export function AppShell() {
     const replacement = tab.closing === "restart" ? newTerminalTab(tab.cwd) : null;
     const remaining = terminalTabs.filter((item) => item.id !== tab.id);
     setTerminalTabs((tabs) => tabs.flatMap((item) => item.id !== tab.id ? [item] : replacement ? [replacement] : []));
-    setActiveFileTabId((current) => current !== tab.id ? current : replacement?.id ?? remaining.at(-1)?.id ?? fileTabs.at(-1)?.id ?? lastAgentTabId(agentTabs));
+    // Detached-window continuity: after a restart swaps the id, the window follows
+    // the new id (otherwise the terminal would drop back into the right panel).
+    if (replacement && detachedTabIds.has(tab.id)) {
+      setDetachedTabIds((prev) => {
+        const next = new Set(prev);
+        next.delete(tab.id);
+        next.add(replacement.id);
+        return next;
+      });
+    }
+    setActiveFileTabId((current) => current !== tab.id ? current : replacement?.id ?? remaining.at(-1)?.id ?? fileTabs.at(-1)?.id ?? lastAgentTabId(agentTabs) ?? null);
     if (!replacement && !remaining.length && !fileTabs.length && !agentTabs.length) setRightPanelOpen(false);
   };
 
-  const handleCloseFileTab = useCallback((tabId: string) => {
-    if (terminalTabs.some((tab) => tab.id === tabId)) {
-      setTerminalTabs((tabs) => tabs.map((tab) => tab.id === tabId && !tab.closing ? { ...tab, closing: "close" } : tab));
-      return;
+  // Native fallback layer: restart = finalize close with a restart marker
+  // (TerminalPanel calls back above once termination completes); on close failure
+  // (DELETE network failure etc.) clear the marker and keep the tab retryable.
+  const handleTerminalRestart = (tabId: string) => {
+    setTerminalTabs((tabs) => tabs.map((tab) => tab.id === tabId && !tab.closing ? { ...tab, closing: "restart" } : tab));
+  };
+  const handleTerminalCloseError = (tabId: string) => {
+    setTerminalTabs((tabs) => tabs.map((tab) => tab.id === tabId && tab.closing ? { ...tab, closing: undefined } : tab));
+  };
+
+  const performCloseFileTab = useCallback((tabId: string) => {
+    const closing = fileTabs.find((t) => t.id === tabId);
+    if (closing?.kind === "folder" && closing.filePath) {
+      recordFolder(closing.filePath, "remove");
     }
     if (tabId.startsWith("agent:")) {
       const remainingAgents = agentTabs.filter((tab) => `agent:${tab.sessionId}` !== tabId);
@@ -1472,7 +3078,132 @@ export function AppShell() {
       const remaining = fileTabs.filter((t) => t.id !== tabId);
       return remaining.at(-1)?.id ?? terminalTabs.at(-1)?.id ?? lastAgentTabId(agentTabs);
     });
-  }, [fileTabs, terminalTabs, agentTabs]);
+  }, [fileTabs, terminalTabs, recordFolder, agentTabs]);
+
+  const handleCloseFileTab = useCallback((tabId: string) => {
+    // dock tab (floating-dialog extension dock v0.5.0): ✕ = state-machine close
+    // (command event, zero host state cleanup — dock tabs never enter
+    // fileTabs/terminalTabs state; activation fallback is handled by the
+    // present-change closed branch)
+    if (tabId.startsWith("dock:")) {
+      const key = tabId.slice(5);
+      // File dock face (file-editor extension file-dock, 2026-09-16): ✕ = close file —
+      // run the editor's dirty confirmation first (confirmClose true-close semantics;
+      // dirty files get a custom dialog), and only send the close command once
+      // allowed; instance removal / dockPref cleanup is finalized by the extension's
+      // closed listener. Other dock tabs are sent straight through as before.
+      if (key.startsWith("aiti-editor:file:")) {
+        const facePath = key.slice("aiti-editor:file:".length);
+        void askEditorClose(facePath).then((ok) => {
+          if (!ok) return;
+          try { window.dispatchEvent(new CustomEvent("piwe-float-present-command", { detail: { key, mode: "close" } })); } catch { /* ignore */ }
+        });
+        return;
+      }
+      try { window.dispatchEvent(new CustomEvent("piwe-float-present-command", { detail: { key, mode: "close" } })); } catch { /* ignore */ }
+      return;
+    }
+    // terminal tabs go through closing finalization (bridge-local removal, see
+    // handleTerminalClosed)
+    if (terminalTabs.some((tab) => tab.id === tabId)) {
+      setTerminalTabs((tabs) => tabs.map((tab) => tab.id === tabId && !tab.closing ? { ...tab, closing: "close" } : tab));
+      return;
+    }
+    // file-editor close guard: asynchronously ask the file viewer whether closing is
+    // allowed (folder tabs have no editing state and close directly)
+    const closing = fileTabs.find((t) => t.id === tabId);
+    if (closing?.kind !== "folder" && closing?.filePath) {
+      void askEditorClose(closing.filePath).then((ok) => { if (ok) performCloseFileTab(tabId); });
+      return;
+    }
+    performCloseFileTab(tabId);
+  }, [fileTabs, terminalTabs, askEditorClose, performCloseFileTab]);
+
+  // ═══ [floating-dialog extension tab-detach v0.6.0] detach / re-dock (plan §5.1) ═══
+  const detachTab = useCallback((tabId: string) => {
+    // Initial geometry = the right-panel content area's size at the detach instant
+    // (the window grows in place); measured via ref before mount and stored in state.
+    const rect = rightPanelContentRef.current?.getBoundingClientRect();
+    setDetachInitGeom({ w: Math.round(rect?.width || 720), h: Math.round(rect?.height || 480) });
+    setDetachedTabIds((prev) => prev.has(tabId) ? prev : new Set(prev).add(tabId));
+    // Activation fallback: same algorithm as performCloseFileTab (remaining.at(-1)
+    // within the panel, across file/terminal).
+    setActiveFileTabId((cur) => {
+      if (cur !== tabId) return cur;
+      const remainingFiles = fileTabs.filter((t) => t.id !== tabId);
+      const remainingTerms = terminalTabs.filter((t) => t.id !== tabId);
+      return remainingFiles.at(-1)?.id ?? remainingTerms.at(-1)?.id ?? null;
+    });
+    // panelTabs fully empty → collapse the right panel (same semantics as "collapse
+    // when the last tab closes"; the detached window persists, independent of the
+    // right panel's open state).
+    const remainingPanel = fileTabs.filter((t) => t.id !== tabId).length + terminalTabs.filter((t) => t.id !== tabId).length;
+    if (remainingPanel === 0) setRightPanelOpen(false);
+  }, [fileTabs, terminalTabs]);
+
+  const dockBackTab = useCallback((tabId: string) => {
+    setDetachedTabIds((prev) => {
+      const next = new Set(prev);
+      next.delete(tabId);
+      return next;
+    });
+    // Activate on return so the user sees it immediately (re-open the right panel +
+    // activate the tab + scroll it into view).
+    setActiveFileTabId(tabId);
+    revealFileTabOnOpen();
+    setRightPanelOpen(true);
+  }, [revealFileTabOnOpen]);
+
+  // TabBar double click: detaching a dock tab = the state machine's existing
+  // present(k,"float") transition (zero new mechanisms, plan §5.8; the command-event
+  // channel matches the handleCloseFileTab dock branch, the host imports no extension
+  // code); file/folder/terminal = tabHost detach. The mobile right panel is an
+  // overlay drawer where detach semantics tangle → disabled.
+  const handleTabDoubleClick = useCallback((tab: Tab) => {
+    if (tab.kind === "dock") {
+      try { window.dispatchEvent(new CustomEvent("piwe-float-present-command", { detail: { key: tab.id.slice(5), mode: "float" } })); } catch { /* ignore */ }
+      return;
+    }
+    if (isMobile || tab.closing) return;
+    detachTab(tab.id);
+  }, [detachTab, isMobile]);
+
+  // File tab ⇱ "left panel · block / right panel · panel" (file dock face,
+  // 2026-09-16): explicit docking — handed to the extension's dockFile (add instance →
+  // close the host tab → present dock:zone). When the extension is absent the TabBar
+  // does not render these two entries (the prop is always passed; absence = no-op).
+  const handleDockFileTab = useCallback((tab: Tab, zone: "sidebar" | "right-panel") => {
+    const dock = window.__aitiEditor?.dockFile;
+    if (typeof dock !== "function" || !tab.filePath) return;
+    dock(tab.filePath, zone);
+  }, []);
+  // ═══ [tab-detach handling end] ═══
+
+  // TabBody host context (shared by the right panel and detached windows; handlers
+  // are passed through unchanged, no policy differences).
+  const tabBodyCtx: TabBodyCtx = {
+    cwd: activeCwd ?? null,
+    gitRefreshKey: explorerRefreshKey,
+    panelOpen: rightPanelOpen,
+    selectedSessionId: selectedSession?.id ?? null,
+    // [上游 #1107 融合适配] TabBody 按三参调用；generation 取 ref 当前值（分离窗口
+    // 可能持有旧 ctx，读 ref 保证驻留判定不落到陈旧闭包）。
+    onStateChange: (tabId, viewerRevision, viewerState) =>
+      handleFileViewerStateChange(fileWorkspaceGenerationRef.current, tabId, viewerRevision, viewerState),
+    onLineMention: handleFileLineMention,
+    onAtMention: handleAtMention,
+    openFile: handleOpenFile,
+    openFolder: handleOpenFolder,
+    onTerminalClosed: handleTerminalClosed,
+    onTerminalRestart: handleTerminalRestart,
+    onTerminalCloseError: handleTerminalCloseError,
+    onOpenShellTab: (openCwd) => handleOpenTerminal(openCwd, true),
+  };
+  // Content dispatch target: looked up directly in the panelTabs derived surface
+  // (detached excluded, dock tabs included — dock is not in fileTabs). Null when a
+  // terminal is active (its always-mounted container handles it; see the hidden
+  // container list below).
+  const activeTabForBody: Tab | null = panelTabs.find((t) => t.id === activeFileTabId) ?? null;
 
   // An extension's ctx.shutdown() ended the session's runtime, as pi quits: leave it the
   // way a deleted session is left (the refreshed list shows whether its file remains).
@@ -1487,7 +3218,7 @@ export function AppShell() {
   const handleDeleteSideChat = useCallback(async (sessionId: string, root: SessionInfo): Promise<string | null> => {
     const result = await deleteSideChat(sessionId);
     if (result) return result.error;
-    clearDraft(sessionId);
+    getDraftApi()?.clearAllDrafts(sessionId);
     handleCloseFileTab(`agent:${sessionId}`);
     if (selectedSessionRef.current?.id === sessionId) {
       handleSelectSession(root);
@@ -1507,14 +3238,47 @@ export function AppShell() {
   const handleViewFullHistory = useCallback(() => {
     if (!selectedSession) return;
     window.open(
-      `/api/sessions/${encodeURIComponent(selectedSession.id)}/export?inline=1`,
+      apiUrl(`/api/sessions/${encodeURIComponent(selectedSession.id)}/export?inline=1`),
       "_blank",
       "noopener,noreferrer",
     );
   }, [selectedSession]);
 
+  const handleExportPrompts = useCallback(() => {
+    if (!selectedSession) return;
+    setExportDialogOpen(true);
+  }, [selectedSession]);
+
   // Show chat area if a session is selected, or if we have a cwd to start a new session in
   const effectiveNewSessionCwd = newSessionCwd ?? (selectedSession === null && activeCwd ? activeCwd : null);
+  // Target workspace chosen on the new-session page (unselected = current). Used only
+  // as the target for session creation / models / trust checks; it does not
+  // participate in the sidebar's selectedCwd sync — so the app workspace does not
+  // switch immediately after choosing.
+  const targetNewSessionCwd = newSessionWorkspace ?? effectiveNewSessionCwd;
+  // Workspace dropdown candidates: recent projects (by activity) + the current cwd
+  // (always present); add the staged target when it is missing from the list.
+  const newSessionWorkspaceOptions = useMemo(() => {
+    const options = getRecentProjects(sessionCatalog).map((p) => ({ key: p.key, root: p.root }));
+    if (effectiveNewSessionCwd && !options.some((p) => p.root === effectiveNewSessionCwd)) {
+      options.unshift({ key: effectiveNewSessionCwd, root: effectiveNewSessionCwd });
+    }
+    if (newSessionWorkspace && !options.some((p) => p.root === newSessionWorkspace)) {
+      options.push({ key: newSessionWorkspace, root: newSessionWorkspace });
+    }
+    return options;
+  }, [sessionCatalog, effectiveNewSessionCwd, newSessionWorkspace]);
+  // Switch the target workspace: remount the composer (sessionKey) — if the old cwd's
+  // runtime was already ensured (e.g. the system-prompt panel or slash-command list
+  // was opened), it must not catch messages meant for the new workspace; drafts are
+  // restored across mounts by the draft-keeper extension (on mount with the same
+  // draftKey the keeper runs keyChange(first) + scan backfill).
+  const handleNewSessionWorkspaceChange = useCallback((cwd: string | null) => {
+    const next = cwd && cwd !== (newSessionCwd ?? activeCwd) ? cwd : null;
+    if (next === newSessionWorkspace) return;
+    setNewSessionWorkspace(next);
+    setSessionKey((k) => k + 1);
+  }, [activeCwd, newSessionCwd, newSessionWorkspace]);
   const newSessionDraftKey = selectedSession === null && effectiveNewSessionCwd
     ? `new:${newSessionDraftId}:${effectiveNewSessionCwd}`
     : null;
@@ -1537,6 +3301,32 @@ export function AppShell() {
   // The folder picker answers later: its pick runs the newest closure, guard included.
   const pickNewSessionContextRef = useRef(handlePickNewSessionContext);
   pickNewSessionContextRef.current = handlePickNewSessionContext;
+  // ── "pi-web.newSession" host service (slot-extra red line: data only in extra, callbacks live here):
+  //    extensions move the fresh composer to a cwd (session-manager's upload-workspace trailing button
+  //    on the new-session bar). Goes through handleNewSession directly — the same final action as the
+  //    sidebar's startNewSessionIn (draft parking/restore + composer remount), without depending on
+  //    sidebarControlRef (null while an extension takes over sidebarContent). Getter delegates to the
+  //    latest closure (same ref pattern as hostUiRef); registers once on mount; absent on older hosts.
+  const newSessionSvcRef = useRef({ setCwd: (_path: string) => {}, setTarget: (_path: string | null) => {} });
+  newSessionSvcRef.current.setCwd = (path: string) => {
+    if (typeof path !== "string" || !path) return;
+    const tempId = typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+    handleNewSession(tempId, path, null, { carryComposer: true });
+  };
+  // Staging (the welcome page selector's semantics): record the target only; the app workspace
+  // switches when the session is created (handleSessionCreated). The same path the native <select>
+  // takes (handleNewSessionWorkspaceChange), so an extension takeover keeps its behavior.
+  newSessionSvcRef.current.setTarget = (path: string | null) => {
+    handleNewSessionWorkspaceChange(typeof path === "string" && path ? path : null);
+  };
+  useEffect(() => {
+    return registerExtClientService("pi-web", "pi-web.newSession", {
+      get setCwd() { return newSessionSvcRef.current.setCwd; },
+      get setTarget() { return newSessionSvcRef.current.setTarget; },
+    });
+  }, []);
   const handleOpenFolderForNewSession = useCallback((opener: HTMLElement | null) => {
     sidebarControlRef.current?.openFolderForNewSession((target) => pickNewSessionContextRef.current(target, "project"), opener);
   }, []);
@@ -1571,7 +3361,7 @@ export function AppShell() {
     />
   ) : null;
   const showChat = selectedSession !== null || effectiveNewSessionCwd !== null;
-  const projectTrustCwd = selectedSession?.cwd ?? effectiveNewSessionCwd;
+  const projectTrustCwd = selectedSession?.cwd ?? targetNewSessionCwd;
   // While restoring initial session from URL, don't show the placeholder
   const showPlaceholder = initialSessionRestored && !showChat;
 
@@ -1587,17 +3377,27 @@ export function AppShell() {
     if (!projectTrustCwd) return;
 
     const controller = new AbortController();
-    // The answer also lists the project's MCP servers (`mcpFile`, `mcpServers`), unused here: the
-    // trust dialog fetches the listing again when it opens, since the file can change in between.
-    fetch(`/api/project-trust?cwd=${encodeURIComponent(projectTrustCwd)}`, {
+    fetch(apiUrl("/api/project-trust/status"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd: projectTrustCwd }),
       signal: controller.signal,
     })
       .then(async (response) => {
-        const data = await readJsonOrThrow<ProjectTrustStatus>(response);
+        const data = await response.json() as ProjectTrustStatus & { error?: string };
+        if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
+        setCwdMissingNotice(null);
         setProjectTrust(data);
       })
       .catch((error) => {
         if (error instanceof DOMException && error.name === "AbortError") return;
+        // Directory does not exist (a session directory that was moved/deleted):
+        // surface a visible notice bar instead of only a console error
+        const missing = /Directory does not exist/i.test(error instanceof Error ? error.message : String(error));
+        if (missing) {
+          setCwdMissingNotice(projectTrustCwd);
+          return;
+        }
         console.error("Failed to load project trust:", error);
       });
     return () => controller.abort();
@@ -1608,7 +3408,7 @@ export function AppShell() {
     setProjectTrustBusy(true);
     setProjectTrustError(null);
     try {
-      const response = await fetch("/api/project-trust", {
+      const response = await fetch(apiUrl("/api/project-trust"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd: projectTrustCwd }),
@@ -1660,165 +3460,1247 @@ export function AppShell() {
     return () => observer.disconnect();
   }, [windowTitle]);
 
-  const sidebarContent = (
-    <>
-      <SessionSidebar
-        selectedSessionId={selectedSession?.id ?? null}
-        onSelectSession={handleSelectSession}
-        onSelectSideChat={handleSelectSideChat}
-        onNewSession={handleNewSession}
-        controlRef={sidebarControlRef}
-        onNewSessionContextChange={handleSidebarNewSessionContext}
-        initialSessionId={initialSessionId}
-        initialSessionLinked={initialLinkedSessionId !== null}
-        skipInitialProjectSelection={initialNavigation.requestedCwd !== null}
-        onInitialRestoreDone={handleInitialRestoreDone}
-        refreshKey={refreshKey}
-        onSessionDeleted={handleSessionDeleted}
-        selectedCwd={selectedSession?.cwd ?? newSessionCwd ?? null}
-        onCwdChange={handleCwdChange}
-        onOpenFile={handleOpenFile}
-        onOpenTerminal={handleOpenTerminal}
-        explorerRefreshKey={explorerRefreshKey}
-        onExplorerRefresh={handleExplorerRefresh}
-        onAtMention={handleAtMention}
-        onAtMentions={handleAtMentions}
-        onBackgroundTaskDone={handleBackgroundTaskDone}
-        hiddenFinishedSessionIds={hiddenFinishedSessionIds}
-        onRunningSessionIdsChange={handleRunningSessionIdsChange}
-        onSessionsChange={handleSessionsChange}
-      />
-      <div style={{ padding: "8px", flexShrink: 0, display: "flex", justifyContent: "space-between", gap: 4 }}>
-        {([
-          ["models", translate("common.models")],
-          ["skills", translate("common.skills")],
-        ] as const).map(([section, label]) => {
-          const disabled = settingsSectionRequiresProject(section) && !projectTrustCwd;
-          return (
-            <button
-              key={section}
-              type="button"
-              onClick={() => openSettingsSection(section)}
-              disabled={disabled}
-              title={disabled ? translate("settings.projectRequired") : label}
-              aria-label={label}
-              style={{
-                flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-                height: 32, padding: 0, background: "none", border: "none",
-                borderRadius: 9, color: "var(--text-muted)", cursor: disabled ? "default" : "pointer",
-                fontSize: 12, opacity: disabled ? 0.35 : 1,
-                transition: "background 0.12s, color 0.12s",
-              }}
-              onMouseEnter={(event) => { if (!disabled) { event.currentTarget.style.background = "var(--bg-hover)"; event.currentTarget.style.color = "var(--text)"; } }}
-              onMouseLeave={(event) => { event.currentTarget.style.background = "none"; event.currentTarget.style.color = "var(--text-muted)"; }}
-            >
-              <SettingsSectionIcon section={section} size={14} strokeWidth={2} />
-              <span>{label}</span>
-            </button>
-          );
-        })}
-        <button
-          type="button"
-          onClick={() => {
-            setSettingsOpenAtHome(true);
-            setSettingsSection(getLastSettingsSection(projectTrustCwd));
-          }}
-          title={translate("common.settings")}
-          aria-label={translate("common.settings")}
-          style={{
-            flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-            height: 32, padding: 0, background: "none", border: "none",
-            borderRadius: 9, color: "var(--text-muted)", cursor: "pointer",
-            fontSize: 12, transition: "background 0.12s, color 0.12s",
-          }}
-          onMouseEnter={(event) => { event.currentTarget.style.background = "var(--bg-hover)"; event.currentTarget.style.color = "var(--text)"; }}
-          onMouseLeave={(event) => { event.currentTarget.style.background = "none"; event.currentTarget.style.color = "var(--text-muted)"; }}
-        >
-          <SettingsSectionIcon section="general" size={14} strokeWidth={2} />
-          <span>{translate("common.settings")}</span>
-        </button>
-      </div>
-    </>
+  // -------------------------------------------------------------------------
+  //  Top-bar tool buttons: custom order + hide + separators + "⋯" overflow
+  //  (one unified mechanism, no per-screen-size branches). Pure logic lives in
+  //  lib/topbar-order.ts (persistence + merge + separator normalization).
+  // -------------------------------------------------------------------------
+  const moreBtnRef = useRef<HTMLButtonElement>(null);
+  const itemsRowRef = useRef<HTMLDivElement>(null);
+  const measureStripRef = useRef<HTMLDivElement>(null);
+  const [customizeOpen, setCustomizeOpen] = useState(false);
+  const [moreRect, setMoreRect] = useState<{ top: number; right: number; topbarBottom: number } | null>(null);
+  const [storedOrder, setStoredOrder] = useState<TopbarOrderItem[] | null>(null);
+  const [storedHidden, setStoredHidden] = useState<TopbarItemId[]>([]);
+
+  // Container-width compact tier for the session-stats button (2026-11-21, user
+  // request): the viewport breakpoints (isCompact = 641–959px) miss the case where
+  // a WIDE window has a NARROW chat column — sidebar/dock/panels squeeze the chat
+  // column and its top bar runs out of room.
+  //
+  // Decision is driven by the CHAT COLUMN width only (topBar.clientWidth), never by
+  // how many extension buttons happen to be on the bar. Rationale (user report):
+  // an icon-count-driven budget made a long, icon-packed toolbar collapse the stats
+  // row (screen showed 20+ icons and a lone "19%"), i.e. the least important
+  // elements won the space. Correct priority: the full session row (tokens · cost ·
+  // context · CPU/MEM chips) is kept as long as the chat column has room for it;
+  // surplus toolbar buttons overflow into the ⋯ menu (the pre-existing mechanism);
+  // the stats row itself only collapses to the single context percentage once the
+  // column is genuinely too narrow for both.
+  //
+  // Budget: FIXED_CHROME (sidebar toggle 36 + ⋯ 36 + file-panel toggle padding 52)
+  // + FULL_STATS (~515px measured for the full row incl. extension chips) +
+  // MIN_TOOLBAR (room the toolbar keeps for its own buttons before overflowing).
+  // Hysteresis keeps the tier stable while dragging the sidebar divider. A
+  // ResizeObserver on the top bar is event-driven — zero polling.
+  const [statsRowCompact, setStatsRowCompact] = useState(false);
+  const statsBtnRef = useRef<HTMLButtonElement>(null);
+
+  // hydration: localStorage is only readable after mount (SSR-safe); initial value
+  // is the default order
+  useEffect(() => {
+    setStoredOrder(readTopbarOrder());
+    setStoredHidden(readTopbarHidden() ?? []);
+  }, []);
+
+  // Extension slot items (flattened into the top-bar item list; ids reuse the
+  // ext-ui-store extId:itemId convention)
+  const toolbarExtItems = useExtSlotItems("toolbar");
+
+  useEffect(() => {
+    const topBar = topBarRef.current;
+    if (!topBar || typeof ResizeObserver === "undefined") return;
+    const FIXED_CHROME = 124;   // sidebar toggle 36 + ⋯ 36 + file-panel toggle padding 52
+    const FULL_STATS = 515;     // full stats row incl. extension chips (measured live)
+    const MIN_TOOLBAR = 240;    // width the toolbar keeps before buttons overflow into ⋯
+    const ENTER_AT = FULL_STATS + MIN_TOOLBAR;  // 755: below this the column can't hold both
+    const EXIT_AT = ENTER_AT + 140;             // 895: headroom before expanding again
+    const compute = () => {
+      const chatColumn = topBar.clientWidth - FIXED_CHROME;
+      setStatsRowCompact((prev) => (prev ? chatColumn < EXIT_AT : chatColumn < ENTER_AT));
+    };
+    compute();
+    const ro = new ResizeObserver(compute);
+    ro.observe(topBar);
+    return () => ro.disconnect();
+    // Re-arm on: the stats button mounting or updating (showChat/sessionStats/
+    // contextUsage flip — sessionStats/context arrive after the session opens and
+    // stream width-changing updates). Toolbar icon count deliberately does NOT
+    // feed the decision: icon overflow is the ⋯ menu's job, not the stats row's.
+  }, [showChat, sessionStats, contextUsage]);
+  const noWorkspaceGuideItems = useExtSlotItems("noWorkspaceGuide").filter(hasExtRender);
+  const sessionTopbarExtItems = useExtSlotItems("sessionTopbar");
+  // Inline stat items (sessionStatsInline): rendered inside the stats button, and
+  // their meta.tooltip contributors are appended to that button's own tooltip —
+  // the row shows `… C8% M88%` and its hover text carries the full CPU/memory
+  // detail from the owning extension instead of only from each chip's title.
+  const sessionStatsInlineItems = useExtSlotItems("sessionStatsInline");
+  // Declarative static entries (no render) that lazy extensions place in
+  // sidebarFooter: the host renders a standard bottom button; clicks go through
+  // meta.onClick (staticClickForwarder → materialize → forward to the registered
+  // item's behavior). Same rules as toolbar declarative items; after materialization
+  // the registered item overrides the same id and the static entry retires naturally.
+  const sidebarFooterStaticItems = useExtSlotItems("sidebarFooter").filter((it) => it.static && !hasExtRender(it)
+    && (it.meta as { hidden?: boolean } | undefined)?.hidden !== true // hidden：仅收编/转发，不渲染按钮（快速上手闪现修复）
+    && !((it.meta as { hideOnMobile?: boolean } | undefined)?.hideOnMobile === true && isMobile)); // hideOnMobile：移动端视口不渲染（如手机访问扫码入口在手机上无意义）
+
+  const topbarBuiltinIds = useMemo<TopbarItemId[]>(() => {
+    // "services" was extracted into an extension along with the tunnel panels
+    // (extension items enter the top bar via toolbarExtItems)
+    const ids: TopbarItemId[] = ["theme", "language"];
+    if (showChat) ids.push("history", "export", "title", "branch", "system", "tools");
+    // debug joins the unified topbar-order system (was a hardcoded right-cluster
+    // button re-homed from upstream v0.13.0, f19b7398 — unmanaged by design no more)
+    ids.push("debug");
+    return ids;
+  }, [showChat]);
+  const topbarToolbarExtIds = useMemo(
+    () => toolbarExtItems.map((it) => it.id),
+    [toolbarExtItems],
+  );
+  const topbarSessionExtIds = useMemo(
+    () => sessionTopbarExtItems.map((it) => it.id),
+    [sessionTopbarExtItems],
+  );
+  const topbarExtIds = useMemo<TopbarItemId[]>(() => {
+    const seen = new Set<string>();
+    const out: TopbarItemId[] = [];
+    for (const it of [...toolbarExtItems, ...sessionTopbarExtItems]) {
+      if (seen.has(it.id)) continue; // dedupe same id across slots (keep first occurrence)
+      seen.add(it.id);
+      out.push(it.id as TopbarItemId);
+    }
+    return out;
+  }, [toolbarExtItems, sessionTopbarExtItems]);
+  const availableIds = useMemo(
+    () => [...topbarBuiltinIds, ...topbarExtIds],
+    [topbarBuiltinIds, topbarExtIds],
+  );
+  const topbarDefaultOrder = useMemo<TopbarOrderItem[]>(
+    () => [
+      "theme", "language",
+      // Session-level widgets (sessionTopbar: tags ★/chips/+) stay on the top-bar row
+      // by design — "the chat top-bar tag area stays visible"; on narrow screens the
+      // first overflowing ones become extension icon buttons (still reachable via ⋯)
+      ...topbarSessionExtIds,
+      ...topbarToolbarExtIds,
+      "history", "export", "title", "branch", "system", "tools", "debug",
+    ],
+    [topbarToolbarExtIds, topbarSessionExtIds],
   );
 
-  const renderProjectTrustWarning = (mobileBanner: boolean) => {
-    if (!showChat || !projectTrust?.requiresTrust || projectTrust.trusted) return null;
-    return (
-      <button
-        type="button"
-        onClick={openProjectTrustDialog}
-        title={translate("trust.resourcesNotLoaded")}
-        aria-label={translate("trust.resourcesNotLoaded")}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: mobileBanner ? "flex-start" : "center",
-          gap: 6,
-          width: mobileBanner ? "100%" : undefined,
-          minHeight: mobileBanner ? 32 : undefined,
-          height: mobileBanner ? undefined : "100%",
-          padding: mobileBanner ? "6px 12px" : "0 12px",
-          background: mobileBanner ? "color-mix(in srgb, #d97706 8%, var(--bg-panel))" : "none",
-          border: "none",
-          borderRight: mobileBanner ? "none" : "1px solid var(--border)",
-          borderBottom: mobileBanner ? "1px solid var(--border)" : "none",
-          color: "#d97706",
-          cursor: "pointer",
-          flexShrink: 0,
-          fontSize: 11,
-          lineHeight: 1.35,
-          textAlign: "left",
-        }}
-        data-mobile-trust-banner={mobileBanner ? "true" : undefined}
-      >
-        <svg
-          width="13"
-          height="13"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-          style={{ flexShrink: 0 }}
+  const layout = useMemo(
+    () => resolveTopbarLayout(storedOrder, storedHidden, availableIds, topbarDefaultOrder),
+    [storedOrder, storedHidden, availableIds, topbarDefaultOrder],
+  );
+
+  // Overflow measurement: the measure strip renders all visible items offscreen
+  // (same layout, real widths); the row renders only [0..cutoffIndex]. useLayoutEffect
+  // completes before paint, so there is no first-frame flicker.
+  const visibleItems = layout.visible;
+  const visibleKey = visibleItems.join("|");
+  const [cutoffIndex, setCutoffIndex] = useState<number>(
+    () => Math.max(0, visibleItems.length - 1),
+  );
+  useLayoutEffect(() => {
+    const row = itemsRowRef.current;
+    const strip = measureStripRef.current;
+    if (!row || !strip) return;
+    const measure = () => {
+      const cutoff = row.clientWidth - 4; // 4px tolerance
+      const children = Array.from(strip.children) as HTMLElement[];
+      let last = -1;
+      for (let i = 0; i < children.length; i++) {
+        const el = children[i];
+        if (el.offsetLeft + el.offsetWidth <= cutoff) last = i;
+        else break;
+      }
+      setCutoffIndex((cur) => (cur === last ? cur : last)); // avoid a re-render loop
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(row);
+    return () => ro.disconnect();
+  }, [visibleKey]);
+
+  const branchIndex = visibleItems.indexOf("branch");
+  const branchOverflowed = branchIndex >= 0 && branchIndex > cutoffIndex;
+  const overflowItems = visibleItems.slice(cutoffIndex + 1);
+
+  // "⋯" popup positioning (anchored to the ⋯ button, expanding to the bottom-right)
+  useEffect(() => {
+    if (!moreOpen && !customizeOpen) return;
+    const btn = moreBtnRef.current;
+    if (!btn) return;
+    const update = () => {
+      const r = btn.getBoundingClientRect();
+      const vw = window.innerWidth;
+      // Right-anchored: panel right edge hugs the button's right edge; clamped on
+      // small screens so the left edge stays on-screen
+      // (panel max width 300 + 8px margin → right cap vw-8-300)
+      const right = Math.max(4, Math.min(vw - r.right + 4, vw - 8 - 300));
+      const topbarBottom = topBarRef.current?.getBoundingClientRect().bottom ?? r.bottom;
+      setMoreRect({ top: r.bottom + 4, right, topbarBottom });
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(btn);
+    window.addEventListener("resize", update);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", update);
+    };
+  }, [moreOpen, customizeOpen]);
+
+  // Top-bar clicks close the popup first (except the ⋯ button, which toggles it): the
+  // overlay starts below the top bar so top-bar buttons (session stats included) stay
+  // clickable — a click closes the ⋯/customize panel before running its own action.
+  // ⚠ React 19: setState during the capture phase of a discrete event flushes
+  // SYNCHRONOUSLY — closing the menu directly would unmount the menu DOM before the
+  // click's target/bubble dispatch, killing the button's onClick (the click would do
+  // nothing). Deferred with setTimeout 0 until the current click finishes, so the
+  // button's own onClick runs first.
+  useEffect(() => {
+    const el = topBarRef.current;
+    if (!el) return;
+    const onCapture = (e: MouseEvent) => {
+      if (moreBtnRef.current?.contains(e.target as Node)) return;
+      if (moreOpen || customizeOpen) {
+        setTimeout(() => {
+          setMoreOpen(false);
+          setCustomizeOpen(false);
+        }, 0);
+      }
+    };
+    el.addEventListener("click", onCapture, true);
+    return () => el.removeEventListener("click", onCapture, true);
+  }, [moreOpen, customizeOpen]);
+
+  // Esc: capture-phase interception closes dropdowns/panels while open (does not
+  // trigger the global Esc stop-agent shortcut)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (moreOpen || customizeOpen || activeTopPanel) {
+        e.stopPropagation();
+        e.preventDefault();
+        setMoreOpen(false);
+        setCustomizeOpen(false);
+        setActiveTopPanel(null);
+      }
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+  }, [moreOpen, customizeOpen, activeTopPanel]);
+
+  // Top-bar dropdown panels (session info/tools/branches/agents/system prompt/language):
+  // any pointerdown outside the top bar collapses the panel (without swallowing the
+  // event; the click still takes effect normally). The panel itself is a DOM child of
+  // the top bar (position:fixed does not affect contains) → the contains check covers
+  // it naturally; clicks inside the top bar do not close here — the buttons' own
+  // toggle handles it (clicking the same button collapses / another button switches).
+  useEffect(() => {
+    if (!activeTopPanel) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (topBarRef.current?.contains(target)) return;
+      setActiveTopPanel(null);
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [activeTopPanel]);
+
+  // ---- Panel actions (take effect immediately + persisted to localStorage) ----
+  const persistOrder = useCallback((order: TopbarOrderItem[]) => {
+    const normalized = normalizeTopbarOrder(order);
+    setStoredOrder(normalized);
+    writeTopbarOrder(normalized);
+  }, []);
+  const moveItem = useCallback((idx: number, dir: -1 | 1) => {
+    const next = layout.order.slice();
+    const to = idx + dir;
+    if (to < 0 || to >= next.length) return;
+    [next[idx], next[to]] = [next[to], next[idx]];
+    persistOrder(next);
+  }, [layout.order, persistOrder]);
+  const toggleHidden = useCallback((id: TopbarItemId) => {
+    const nextSet = new Set(layout.hidden);
+    if (nextSet.has(id)) nextSet.delete(id);
+    else nextSet.add(id);
+    const next = [...nextSet];
+    setStoredHidden(next);
+    writeTopbarHidden(next);
+  }, [layout.hidden]);
+  const addSeparator = useCallback(() => {
+    const order = layout.order;
+    // Insert before the last button: appending at the end would be deleted by the
+    // trailing-separator normalization; inserting between buttons makes it visible
+    // immediately and survive (the user can then move it into place with ↑/↓)
+    let lastButtonIdx = -1;
+    for (let i = order.length - 1; i >= 0; i--) {
+      if (order[i] !== SEPARATOR) { lastButtonIdx = i; break; }
+    }
+    const next = [...order];
+    next.splice(lastButtonIdx >= 0 ? lastButtonIdx : order.length, 0, SEPARATOR);
+    persistOrder(next);
+  }, [layout.order, persistOrder]);
+  const removeSeparator = useCallback((idx: number) => {
+    const next = layout.order.slice();
+    next.splice(idx, 1);
+    persistOrder(next);
+  }, [layout.order, persistOrder]);
+  const resetTopbar = useCallback(() => {
+    setStoredOrder(null);
+    setStoredHidden([]);
+    if (typeof window !== "undefined") {
+      try {
+        window.localStorage.removeItem(TOPBAR_ORDER_KEY);
+        window.localStorage.removeItem(TOPBAR_HIDDEN_KEY);
+      } catch {
+        // ignore
+      }
+    }
+  }, []);
+  const closePopovers = useCallback(() => {
+    setMoreOpen(false);
+    setCustomizeOpen(false);
+    setActiveTopPanel(null);
+  }, []);
+  const openCustomize = useCallback(() => {
+    setMoreOpen(false);
+    setCustomizeOpen(true);
+  }, []);
+  const handleMoreToggle = useCallback(() => {
+    setCustomizeOpen(false);
+    setActiveTopPanel(null);
+    setMoreOpen((v) => !v);
+  }, []);
+
+  // ---- Top-bar button rendering (two shells: inline / ⋯ menu) ----
+  const topbarMenuRowStyle: React.CSSProperties = {
+    display: "flex", alignItems: "center", gap: 8,
+    width: "100%", height: 36, padding: "0 14px",
+    background: "none",
+    // longhands throughout: mixing with the inline buttons' borderRight/borderTop
+    // longhands would otherwise trigger React's "removing shorthand (border) when
+    // conflicting (borderRight)" warning
+    borderLeft: "none", borderRight: "none", borderTop: "none", borderBottom: "none",
+    color: "var(--text)", cursor: "pointer", textAlign: "left", fontSize: 13,
+  };
+  // ⋯ menu icon slot: built-in item icons are wrapped in a 36px slot (right divider),
+  // layout-identical to extension buttons (ExtComponent 36px + borderRight)
+  const topbarMenuIconSlotStyle: React.CSSProperties = {
+    display: "flex", alignItems: "center", justifyContent: "center",
+    width: 36, height: "100%", flexShrink: 0,
+    borderRight: "1px solid var(--border)",
+  };
+  const topbarRowBtnStyle = (): React.CSSProperties => ({
+    display: "flex", alignItems: "center", justifyContent: "center",
+    height: "100%", padding: 0,
+    background: "none", borderLeft: "none", borderTop: "none", borderBottom: "none",
+    borderRight: "1px solid var(--border)",
+    color: "var(--text-muted)", cursor: "pointer", flexShrink: 0, transition: "color 0.12s",
+  });
+  const menuEnter = (e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.background = "var(--bg-hover)"; };
+  const menuLeave = (e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.background = "transparent"; };
+  const rowEnter = (e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.color = "var(--text)"; };
+  const rowLeave = (e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.color = "var(--text-muted)"; };
+  const act = (fn: () => void) => (menu: boolean) => () => {
+    if (menu) setMoreOpen(false); // clicking inside ⋯ closes ⋯ first, then runs
+    fn();
+  };
+
+  const renderTopbarItem = (id: string, inRow: boolean, forMeasure = false, forPreview = false): React.ReactNode => {
+    const menu = !inRow;
+    // Icons uniformly 16px: matches extension buttons (topbarBtnStyle fixed 16px), no
+    // longer shrinks with isMobile
+    const iconDim = 16;
+    if (id === "theme") {
+      const active = activeTopPanel === "theme";
+      return (
+        <button
+          ref={!menu && !forMeasure ? themeBtnRef : undefined}
+          type="button"
+          onClick={act(() => toggleTopPanel("theme"))(menu)}
+          title={translate(themeLabelKey)}
+          aria-label={translate(themeLabelKey)}
+          aria-haspopup="menu"
+          aria-expanded={active}
+          aria-pressed={active}
+          style={menu
+            ? { ...topbarMenuRowStyle, ...(active ? { background: "var(--bg-selected)", color: "var(--text)" } : {}) }
+            : {
+              ...topbarRowBtnStyle(),
+              width: TOP_BAR_ICON_BUTTON_SIZE,
+              background: active ? "var(--bg-selected)" : "none",
+              color: active ? "var(--text)" : "var(--text-muted)",
+            }}
+          onMouseEnter={menu ? menuEnter : rowEnter}
+          onMouseLeave={menu ? menuLeave : rowLeave}
         >
-          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" />
-          <path d="M12 8v4" />
-          <path d="M12 16h.01" />
-        </svg>
-        <span>{translate("trust.resourcesNotLoaded")}</span>
-      </button>
+          <span style={menu ? topbarMenuIconSlotStyle : { display: "contents" }}>
+            <ThemeIcon preference={preference} size={iconDim} />
+          </span>
+        </button>
+      );
+    }
+    if (id === "language") {
+      const active = activeTopPanel === "language";
+      return (
+        <button
+          ref={!menu && !forMeasure ? languageBtnRef : undefined}
+          type="button"
+          onClick={act(() => toggleTopPanel("language"))(menu)}
+          title={translate("common.language")}
+          aria-label={translate("common.language")}
+          aria-haspopup="menu"
+          aria-expanded={active}
+          aria-pressed={active}
+          style={menu
+            ? { ...topbarMenuRowStyle, ...(active ? { background: "var(--bg-selected)", color: "var(--text)" } : {}) }
+            : {
+              ...topbarRowBtnStyle(),
+              width: TOP_BAR_ICON_BUTTON_SIZE,
+              background: active ? "var(--bg-selected)" : "none",
+              color: active ? "var(--text)" : "var(--text-muted)",
+            }}
+          onMouseEnter={menu ? menuEnter : rowEnter}
+          onMouseLeave={menu ? menuLeave : rowLeave}
+        >
+          <span style={menu ? topbarMenuIconSlotStyle : { display: "contents" }}>
+          <svg width={iconDim} height={iconDim} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="m5 8 6 6" />
+            <path d="m4 14 6-6 2-3" />
+            <path d="M2 5h12" />
+            <path d="M7 2h1" />
+            <path d="m22 22-5-10-5 10" />
+            <path d="M14 18h6" />
+          </svg>
+          </span>
+        </button>
+      );
+    }
+    if (id === "services") {
+      return null; // the services button moved out with the tunnel panels extension (rendered via toolbarExtItems)
+    }
+    if (id === "history") {
+      const disabled = !selectedSession;
+      const labelBtn = menu ? { ...topbarMenuRowStyle, justifyContent: "flex-start" } : {
+        display: "flex", alignItems: "center", gap: 6,
+        height: "100%", padding: isMobile ? "0 8px" : "0 12px",
+        background: "none", borderLeft: "none", borderTop: "none", borderBottom: "none",
+        borderRight: "1px solid var(--border)",
+        color: disabled ? "var(--text-dim)" : "var(--text-muted)",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.45 : 1, flexShrink: 0, fontSize: 11, whiteSpace: "nowrap",
+        transition: "color 0.1s, background 0.1s, opacity 0.1s",
+      };
+      return (
+        <button
+          type="button"
+          onClick={act(() => handleViewFullHistory())(menu)}
+          disabled={disabled}
+          title={selectedSession ? translate("history.full") : translate("history.unsaved")}
+          aria-label={translate("history.full")}
+          style={labelBtn}
+          onMouseEnter={(e) => {
+            if (disabled) return;
+            e.currentTarget.style.color = "var(--text)";
+            e.currentTarget.style.background = "var(--bg-hover)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = disabled ? "var(--text-dim)" : "var(--text-muted)";
+            e.currentTarget.style.background = "none";
+          }}
+        >
+          <span style={menu ? topbarMenuIconSlotStyle : { display: "contents" }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: disabled ? "var(--text-dim)" : "var(--text-muted)", flexShrink: 0 }}>
+            <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+            <path d="M3 3v5h5" />
+            <path d="M12 7v5l3 2" />
+          </svg>
+          </span>
+          {!forPreview && <span>{translate("history.label")}</span>}
+        </button>
+      );
+    }
+    if (id === "export") {
+      const disabled = !selectedSession;
+      return (
+        <button
+          type="button"
+          onClick={act(() => handleExportPrompts())(menu)}
+          disabled={disabled}
+          title={selectedSession ? translate("history.exportPrompts") : translate("history.unsaved")}
+          aria-label={translate("history.exportPrompts")}
+          style={menu ? { ...topbarMenuRowStyle, justifyContent: "flex-start" } : {
+            display: "flex", alignItems: "center", gap: 6,
+            height: "100%", padding: "0 12px",
+            background: "none", borderLeft: "none", borderTop: "none", borderBottom: "none",
+            borderRight: "1px solid var(--border)",
+            color: disabled ? "var(--text-dim)" : "var(--text-muted)",
+            cursor: disabled ? "not-allowed" : "pointer",
+            opacity: disabled ? 0.45 : 1, flexShrink: 0, fontSize: 11, whiteSpace: "nowrap",
+            transition: "color 0.1s, background 0.1s, opacity 0.1s",
+          }}
+          onMouseEnter={(e) => {
+            if (disabled) return;
+            e.currentTarget.style.color = "var(--text)";
+            e.currentTarget.style.background = "var(--bg-hover)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = disabled ? "var(--text-dim)" : "var(--text-muted)";
+            e.currentTarget.style.background = "none";
+          }}
+        >
+          <span style={menu ? topbarMenuIconSlotStyle : { display: "contents" }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+          </span>
+          {!forPreview && <span>{translate("history.exportPrompts")}</span>}
+        </button>
+      );
+    }
+    if (id === "title") {
+      const hasMessages = Boolean(
+        selectedSession
+        && ((sessionStats?.userMessages ?? 0) > 0 || selectedSession.messageCount > 0),
+      );
+      const disabled = !selectedSession || selectedSession.transient || !hasMessages || autoNameStatus.kind === "naming";
+      const isSuccess = autoNameStatus.kind === "success";
+      const isError = autoNameStatus.kind === "error";
+      const label = autoNameStatus.kind === "naming"
+        ? translate("title.generating")
+        : isSuccess
+          ? translate("title.updated")
+          : isError
+            ? translate("title.failed")
+            : translate("title.generate");
+      const title = !selectedSession
+        ? translate("title.unsaved")
+        : !hasMessages
+          ? translate("title.noMessages")
+          : isError
+            ? autoNameStatus.message
+            : translate("title.generateSession");
+      return (
+        <button
+          type="button"
+          onClick={act(() => void handleAutoName())(menu)}
+          disabled={disabled}
+          title={title}
+          aria-label={label}
+          style={menu ? { ...topbarMenuRowStyle, justifyContent: "flex-start" } : {
+            display: "flex", alignItems: "center", gap: 6,
+            height: "100%", padding: "0 12px",
+            background: "none", borderLeft: "none", borderTop: "none", borderBottom: "none",
+            borderRight: "1px solid var(--border)",
+            color: isError ? "#dc2626" : isSuccess ? "var(--accent)" : disabled ? "var(--text-dim)" : "var(--text-muted)",
+            cursor: disabled ? "not-allowed" : "pointer",
+            opacity: disabled && autoNameStatus.kind !== "naming" ? 0.45 : 1,
+            flexShrink: 0, fontSize: 11, whiteSpace: "nowrap",
+            transition: "color 0.1s, background 0.1s, opacity 0.1s",
+          }}
+          onMouseEnter={(e) => {
+            if (disabled) return;
+            e.currentTarget.style.color = isError ? "#dc2626" : "var(--text)";
+            e.currentTarget.style.background = "var(--bg-hover)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = isError ? "#dc2626" : isSuccess ? "var(--accent)" : disabled ? "var(--text-dim)" : "var(--text-muted)";
+            e.currentTarget.style.background = "none";
+          }}
+        >
+          <span style={menu ? topbarMenuIconSlotStyle : { display: "contents" }}>
+          {autoNameStatus.kind === "naming" ? (
+            <svg className="animate-spin" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" opacity="0.25" />
+              <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+          ) : isSuccess ? (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          ) : (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="m15 4 5 5L7 22l-5-5Z" />
+              <path d="m14 5 5 5" />
+              <path d="M6 4V2M5 3H3M19 19v3M17.5 20.5h3" />
+            </svg>
+          )}
+          </span>
+          {!forPreview && <span>{label}</span>}
+        </button>
+      );
+    }
+    if (id === "system") {
+      const active = activeTopPanel === "system";
+      return (
+        <button
+          type="button"
+          onClick={act(() => toggleTopPanel("system"))(menu)}
+          title={translate("system.prompt")}
+          aria-label={translate("system.prompt")}
+          aria-pressed={active}
+          style={menu ? { ...topbarMenuRowStyle, ...(active ? { background: "var(--bg-selected)", color: "var(--text)" } : {}) } : {
+            display: "flex", alignItems: "center", gap: 6,
+            height: "100%", padding: "0 12px",
+            background: active ? "var(--bg-selected)" : "none",
+            borderLeft: "none",
+            borderBottom: "none",
+            borderTop: "none",
+            borderRight: "1px solid var(--border)",
+            cursor: "pointer",
+            color: active ? "var(--text)" : "var(--text-muted)",
+            fontSize: 11, whiteSpace: "nowrap", transition: "color 0.1s, background 0.1s",
+          }}
+          onMouseEnter={menu ? menuEnter : rowEnter}
+          onMouseLeave={menu ? menuLeave : rowLeave}
+        >
+          <span style={menu ? topbarMenuIconSlotStyle : { display: "contents" }}>
+            <span style={{ color: systemPrompt ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="8" y1="13" x2="16" y2="13" />
+                <line x1="8" y1="17" x2="13" y2="17" />
+              </svg>
+            </span>
+          </span>
+          {!forPreview && <span>{translate("system.label")}</span>}
+        </button>
+      );
+    }
+    if (id === "debug") {
+      const active = activeTopPanel === "debug";
+      return (
+        <button
+          ref={!menu && !forMeasure ? debugButtonRef : undefined}
+          type="button"
+          onClick={act(() => toggleTopPanel("debug"))(menu)}
+          title={translate("debug.title")}
+          aria-label={translate("debug.title")}
+          aria-pressed={active}
+          style={menu ? { ...topbarMenuRowStyle, ...(active ? { background: "var(--bg-selected)", color: "var(--text)" } : {}) } : {
+            ...topbarRowBtnStyle(),
+            width: TOP_BAR_ICON_BUTTON_SIZE,
+            background: active ? "var(--bg-selected)" : "none",
+            color: active ? "var(--text)" : "var(--text-muted)",
+          }}
+          onMouseEnter={menu ? menuEnter : rowEnter}
+          onMouseLeave={menu ? menuLeave : rowLeave}
+        >
+          <span style={menu ? topbarMenuIconSlotStyle : { display: "contents" }}>
+            <svg width={iconDim} height={iconDim} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M8 2l1.9 1.9M16 2l-1.9 1.9M9 7.1v-1a3 3 0 0 1 6 0v1" />
+              <path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6zM12 20v-9" />
+              <path d="M6.5 9C4.6 8.8 3 7.1 3 5M6 13H2M3 21c0-2.1 1.7-3.9 3.8-4M21 5c0 2.1-1.6 3.8-3.5 4M22 13h-4M17.2 17c2.1.1 3.8 1.9 3.8 4" />
+            </svg>
+          </span>
+          {menu && <span>{translate("debug.title")}</span>}
+        </button>
+      );
+    }
+    if (id === "tools") {
+      const active = activeTopPanel === "tools";
+      return (
+        <button
+          type="button"
+          onClick={act(() => handleSystemInfoToggle("tools"))(menu)}
+          title={translate("tools.title")}
+          aria-label={translate("tools.title")}
+          aria-pressed={active}
+          style={menu ? { ...topbarMenuRowStyle, ...(active ? { background: "var(--bg-selected)", color: "var(--text)" } : {}) } : {
+            display: "flex", alignItems: "center", gap: 6,
+            height: "100%", padding: "0 12px",
+            background: active ? "var(--bg-selected)" : "none",
+            borderLeft: "none",
+            borderBottom: "none",
+            borderTop: "none",
+            borderRight: "1px solid var(--border)",
+            cursor: "pointer",
+            color: active ? "var(--text)" : "var(--text-muted)",
+            fontSize: 11, whiteSpace: "nowrap", transition: "color 0.1s, background 0.1s",
+          }}
+          onMouseEnter={menu ? menuEnter : rowEnter}
+          onMouseLeave={menu ? menuLeave : rowLeave}
+        >
+          <span style={menu ? topbarMenuIconSlotStyle : { display: "contents" }}>
+            <span style={{ color: systemTools?.some((tool) => tool.active) ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.9-7.9z" />
+              </svg>
+            </span>
+          </span>
+          {!forPreview && <span>{translate("tools.label")}</span>}
+        </button>
+      );
+    }
+    if (id === "branch") {
+      if (menu) {
+        return (
+          <button
+            type="button"
+            onClick={act(() => toggleTopPanel("branches"))(menu)}
+            aria-pressed={activeTopPanel === "branches"}
+            title={translate("i18n.branches")}
+            style={topbarMenuRowStyle}
+            onMouseEnter={menuEnter}
+            onMouseLeave={menuLeave}
+          >
+            <span style={menu ? topbarMenuIconSlotStyle : { display: "contents" }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <line x1="6" y1="3" x2="6" y2="15" />
+              <circle cx="18" cy="6" r="3" />
+              <circle cx="6" cy="18" r="3" />
+              <path d="M18 9a9 9 0 0 1-9 9" />
+            </svg>
+            </span>
+            <span>{translate("i18n.branches")}</span>
+          </button>
+        );
+      }
+      if (forPreview) {
+        // Panel preview: render only the branch icon (BranchNavigator is a full
+        // component; embedding it in a small preview is not appropriate)
+        return (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", padding: "0 12px" }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--text-dim)" }} aria-hidden="true">
+              <line x1="6" y1="3" x2="6" y2="15" />
+              <circle cx="18" cy="6" r="3" />
+              <circle cx="6" cy="18" r="3" />
+              <path d="M18 9a9 9 0 0 1-9 9" />
+            </svg>
+          </div>
+        );
+      }
+      return (
+        <BranchNavigator
+          tree={branchTree}
+          activeLeafId={branchActiveLeafId}
+          onLeafChange={handleBranchLeafChange}
+          inline
+          compact={isMobile}
+          containerRef={topBarRef}
+          open={activeTopPanel === "branches"}
+          onToggle={() => toggleTopPanel("branches")}
+          hasSession
+        />
+      );
+    }
+    // Extension items: rendered as React elements (same as ExtSlot), otherwise the
+    // hooks inside extension components (ctx.useState etc.) would be injected into
+    // AppShell's hook sequence → runtime error
+    const toolbarItem = toolbarExtItems.find((it) => it.id === id);
+    const sessionItem = sessionTopbarExtItems.find((it) => it.id === id);
+    const extItem = toolbarItem ?? sessionItem;
+    if (!extItem) return null;
+    const ExtComponent = extItem.render as React.ComponentType<ExtRenderProps>;
+    // toolbar, like sessionTopbar, passes down newSessionCwd (extensions such as the
+    // plan-first extension need a cwd during the new-session phase: pick a plan/doc
+    // first, auto-bound once the session is created); extensions that don't consume
+    // it just receive one extra prop, no impact.
+    const extProps = { currentSession: selectedSession, newSessionCwd: effectiveNewSessionCwd };
+    // ⚠ Extension render components must be mounted exactly once, only where actually used:
+    //   forMeasure (offscreen measure strip) / forPreview (customize-panel preview) never
+    //   mount them; placeholders are rendered instead.
+    //   (Otherwise 2-3 instances of an extension component mount at once and every
+    //     effect runs multiple times — the read-along "auto read" effect of the voice
+    //     extension once double-started with two instances and played double audio;
+    //     singleton guards like barSlotTaken only mitigate, they are not the root fix.)
+    if (forMeasure) {
+      // Offscreen measurement: fixed 36px placeholder (= standard extension button
+      // width TOP_BAR_ICON_BUTTON_SIZE). Portal-style components (e.g. a voice
+      // playback bar) take no inline width anyway; an error of ≤36px only slightly
+      // affects overflow clipping.
+      return (
+        <div aria-hidden style={{
+          width: TOP_BAR_ICON_BUTTON_SIZE, height: "100%",
+          display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+        }} />
+      );
+    }
+    if (forPreview) {
+      // Customize panel 30px icon preview: meta icon (same as the ⋯ menu icon slot) or
+      // a neutral placeholder; the component is not mounted.
+      const pIcon = extItem.meta?.icon;
+      return (
+        <div aria-hidden style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 16 }}>
+          {pIcon != null
+            ? <>{renderExtItemIcon(pIcon, extItem.extId)}</>
+            : <span style={{ width: 10, height: 10, border: "2px solid var(--text-dim, #999)", borderRadius: 3, opacity: 0.7 }} />}
+        </div>
+      );
+    }
+    if (menu) {
+      // Two forms for extension items in the ⋯ dropdown:
+      //  a) Declarative icon form: meta.icon + meta.onClick (2026-08 contract, no
+      //     render), or a render item that also carries meta.onClick (clicks go to
+      //     meta.onClick, the render is not mounted) — the icon slot is rendered by
+      //     the host (topbarMenuIconSlotStyle, same as built-in items).
+      //     Only "has meta.onClick or has no render" takes this form: self-drawn items
+      //     with a render but no meta.onClick (e.g. session-manager
+      //     sessions/kanban/search) that also draw only an icon would leave the menu
+      //     row without any clickable target (metaOnClick missing, delegateClick finds
+      //     no inner button) → clicks do nothing (fixed 2026-09).
+      //  b) Self-drawn component (legacy contract / interactive widget): embedded
+      //     as-is (menu=true) with meta.label text added, aligned with built-in items;
+      //     clicks delegate to the inner button (delegateClick)
+      const extItem2 = toolbarItem ?? sessionItem;
+      const metaIcon = extItem2?.meta?.icon;
+      const metaOnClick = extItem2?.meta?.onClick;
+      const declarativeIcon = metaIcon != null
+        && (typeof metaOnClick === "function" || typeof ExtComponent !== "function");
+      // noMenuLabel: the extension already provides full content in the ⋯ menu (e.g.
+      // a search input + button); the host adds no text label
+      const label = extItem2 && !extItem2.meta?.noMenuLabel
+        ? (translateExtItemText(extItem2.extId, extItem2.meta?.label) || translateExtItemText(extItem2.extId, extItem2.meta?.title) || id)
+        : null;
+      // Whole row clickable: the extension's inner button carries the action; clicks
+      // on text/blank areas delegate to it (same as built-in items' full-row button).
+      // Layout unified with built-in items: topbarMenuRowStyle (height 36 +
+      // padding 0 14px + gap 8), no divider in the middle
+      const delegateClick = (e: React.MouseEvent<HTMLDivElement>) => {
+        // input/textarea (e.g. a search box inside ⋯) handle their own clicks: no
+        // delegation, no menu close
+        if ((e.target as HTMLElement).closest("button, [role='button'], input, textarea")) return;
+        const inner = e.currentTarget.querySelector<HTMLElement>("button, [role='button']");
+        if (inner) inner.click();
+      };
+      return (
+        <div
+          role="menuitem"
+          onClick={(e) => {
+            if (typeof metaOnClick === "function") { metaOnClick(e); return; }
+            delegateClick(e);
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+          style={{ ...topbarMenuRowStyle, justifyContent: "flex-start" }}
+        >
+          {declarativeIcon ? (
+            <span style={{ ...topbarMenuIconSlotStyle, color: "var(--text-muted)" }} aria-hidden>
+              {renderExtItemIcon(metaIcon, extItem2?.extId)}
+            </span>
+          ) : typeof ExtComponent === "function" ? (
+            <div style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
+              {/* menu flag: extensions can switch rendering in the menu context
+                  (e.g. session-manager's search box → icon + text only in the menu) */}
+              <ExtItemBoundary extId={extItem.extId} slot={toolbarItem ? "toolbar" : "sessionTopbar"} itemId={`${id}/menu`}>
+                <ExtComponent {...extProps} menu />
+              </ExtItemBoundary>
+            </div>
+          ) : (
+            /* [lazy-load v2] Fallback for declarative static items (no render) without
+               an icon: label's first character as placeholder (ExtComponent is not
+               mounted — undefined would blow up the React element tree; icons are
+               required by the SOP, the placeholder is a fallback only) */
+            <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 16, height: 16, flexShrink: 0, fontSize: 12, fontWeight: 600, color: "var(--text-muted)" }} aria-hidden>
+              {(translateExtItemText(extItem2?.extId, extItem2?.meta?.label) || translateExtItemText(extItem2?.extId, extItem2?.meta?.title) || "?").slice(0, 1)}
+            </span>
+          )}
+          {label && (
+            <span style={{ fontSize: 13, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {label}
+            </span>
+          )}
+        </div>
+      );
+    }
+    // Declarative toolbar item (meta.icon + meta.onClick, no render): the host renders
+    // a standard 36×36 grayscale button; only the toolbar slot takes this path —
+    // sessionTopbar widgets must provide a render
+    if (toolbarItem && !toolbarItem.render) {
+      return <ExtToolbarIconButton item={toolbarItem} />;
+    }
+    if (!extItem.render) return null;
+    return (
+      <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
+        <ExtItemBoundary extId={extItem.extId} slot={toolbarItem ? "toolbar" : "sessionTopbar"} itemId={id}>
+          <ExtComponent {...extProps} menu={false} />
+        </ExtItemBoundary>
+      </div>
     );
   };
 
-  // While subagents run: their count, ringed by a spinner; otherwise all of them.
-  const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: boolean) => (
-    <span
-      aria-hidden="true"
+  const sepNode = (idx: number): React.ReactNode => (
+    <div
+      key={`sep:${idx}`}
+      data-topbar-sep
+      style={{ width: 1, height: "55%", alignSelf: "center", background: "var(--border)", margin: "0 6px", flexShrink: 0 }}
+    />
+  );
+  const entryNode = (item: TopbarOrderItem, idx: number): React.ReactNode =>
+    item === SEPARATOR
+      ? sepNode(idx)
+      : (
+        <div key={item} data-topbar-id={item} style={{ display: "flex", alignItems: "stretch", flexShrink: 0, height: "100%" }}>
+          {renderTopbarItem(item, true)}
+        </div>
+      );
+  const rowEntryNodes = visibleItems.slice(0, cutoffIndex + 1).map(entryNode);
+  const stripEntryNodes = visibleItems.map((item, idx) => (
+    <div key={idx} style={{ display: "flex", alignItems: "stretch", flexShrink: 0 }}>
+      {item === SEPARATOR ? sepNode(idx) : renderTopbarItem(item, true, true)}
+    </div>
+  ));
+  const overflowMenuNodes = overflowItems.map((item) =>
+    item === SEPARATOR ? null : (
+      // Button items: close ⋯ in the capture phase first (built-in onClick also
+      // closes, idempotent; this covers extension buttons' internal onClick);
+      // session-level widgets (sessionTopbar slot) are interactive components whose
+      // internal dialogs depend on the component staying alive — the click must not
+      // close ⋯, otherwise the widget unmounts with ⋯ and the dialog vanishes
+      // instantly ("+" add-tag becomes ineffective).
+      // ⚠ React 19 sync-flush fix: setMoreOpen directly in the capture phase unmounts
+      // the menu before the click's target dispatch (button onClick lost → click does
+      // nothing) — deferred until after the event handler.
+      <div
+        key={item}
+        onClickCapture={sessionTopbarExtItems.some((it) => it.id === item)
+          ? undefined
+          : (e) => { if ((e.target as HTMLElement).closest("input, textarea")) return; setTimeout(() => setMoreOpen(false), 0); }}
+      >
+        {renderTopbarItem(item, false)}
+      </div>
+    ),
+  );
+
+  // ---- Reorder/hide/separator panel ----
+  const extLabel = (id: string): string => {
+    const toolbarItem = toolbarExtItems.find((it) => it.id === id);
+    const sessionItem = sessionTopbarExtItems.find((it) => it.id === id);
+    const it = toolbarItem ?? sessionItem;
+    return translateExtItemText(it?.extId, it?.meta?.label) || translateExtItemText(it?.extId, it?.meta?.title) || id;
+  };
+  const topbarItemLabel = (id: TopbarItemId): string => {
+    switch (id) {
+      case "theme": return translate("topbar.theme");
+      case "language": return translate("common.language");
+      case "history": return translate("history.label");
+      case "export": return translate("history.exportPrompts");
+      case "title": return translate("title.generate");
+      case "branch": return translate("i18n.branches");
+      case "system": return translate("system.label");
+      case "tools": return translate("tools.label");
+      case "debug": return translate("debug.title");
+      default: return extLabel(id);
+    }
+  };
+  const panelArrowBtnStyle: React.CSSProperties = {
+    display: "flex", alignItems: "center", justifyContent: "center",
+    width: 22, height: 16, padding: 0, border: "none", background: "none",
+    color: "var(--text-muted)", cursor: "pointer", borderRadius: 4,
+  };
+  const panelSmallBtnStyle: React.CSSProperties = {
+    display: "flex", alignItems: "center", justifyContent: "center",
+    width: 26, height: 26, padding: 0, border: "none", background: "none",
+    color: "var(--text-muted)", cursor: "pointer", borderRadius: 4, flexShrink: 0,
+  };
+  const panelFooterBtnStyle: React.CSSProperties = {
+    display: "flex", alignItems: "center", gap: 8, width: "100%",
+    padding: "8px 14px", background: "none", border: "none",
+    color: "var(--text)", cursor: "pointer", textAlign: "left", fontSize: 12,
+  };
+  const panelMoveButtons = (idx: number, total: number): React.ReactNode => (
+    <div style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0 }}>
+      <button
+        type="button"
+        onClick={() => moveItem(idx, -1)}
+        disabled={idx === 0}
+        title={translate("topbar.moveUp")}
+        aria-label={translate("topbar.moveUp")}
+        style={panelArrowBtnStyle}
+      >
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><polyline points="2 6.5 5 3.5 8 6.5" /></svg>
+      </button>
+      <button
+        type="button"
+        onClick={() => moveItem(idx, 1)}
+        disabled={idx === total - 1}
+        title={translate("topbar.moveDown")}
+        aria-label={translate("topbar.moveDown")}
+        style={panelArrowBtnStyle}
+      >
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><polyline points="2 3.5 5 6.5 8 3.5" /></svg>
+      </button>
+    </div>
+  );
+
+  // ── Left-panel bottom row (models/skills/settings + sidebarFooter extension point):
+  //    fallback state renders directly; takeover state goes through the
+  //    renderSidebarFooter factory (unified dock plan §3.4 component-factory contract) ──
+  const sidebarFooterRow = (
+    <div style={{ padding: "8px", flexShrink: 0, display: "flex", justifyContent: "space-between", gap: 4 }}>
+      {([
+        ["models", translate("common.models")],
+        ["skills", translate("common.skills")],
+      ] as const).map(([section, label]) => {
+        const disabled = settingsSectionRequiresProject(section) && !projectTrustCwd;
+        return (
+          <button
+            key={section}
+            type="button"
+            onClick={() => setSettingsSection(section)}
+            disabled={disabled}
+            title={disabled ? translate("settings.projectRequired") : label}
+            aria-label={label}
+            style={{
+              flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+              height: 32, padding: 0, background: "none", border: "none",
+              borderRadius: 9, color: "var(--text-muted)", cursor: disabled ? "default" : "pointer",
+              fontSize: 12, opacity: disabled ? 0.35 : 1,
+              transition: "background 0.12s, color 0.12s",
+            }}
+            onMouseEnter={(event) => { if (!disabled) { event.currentTarget.style.background = "var(--bg-hover)"; event.currentTarget.style.color = "var(--text)"; } }}
+            onMouseLeave={(event) => { event.currentTarget.style.background = "none"; event.currentTarget.style.color = "var(--text-muted)"; }}
+          >
+            <SettingsSectionIcon section={section} size={14} strokeWidth={2} />
+            <span>{label}</span>
+          </button>
+        );
+      })}
+      <button
+        type="button"
+        onClick={() => setSettingsSection(getLastSettingsSection(projectTrustCwd))}
+        title={translate("common.settings")}
+        aria-label={translate("common.settings")}
+        style={{
+          flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+          height: 32, padding: 0, background: "none", border: "none",
+          borderRadius: 9, color: "var(--text-muted)", cursor: "pointer",
+          fontSize: 12, transition: "background 0.12s, color 0.12s",
+        }}
+        onMouseEnter={(event) => { event.currentTarget.style.background = "var(--bg-hover)"; event.currentTarget.style.color = "var(--text)"; }}
+        onMouseLeave={(event) => { event.currentTarget.style.background = "none"; event.currentTarget.style.color = "var(--text-muted)"; }}
+      >
+        <SettingsSectionIcon section="general" size={14} strokeWidth={2} />
+        <span>{translate("common.settings")}</span>
+      </button>
+      {/* Lazy-extension declarative entries (static items with no render) — same row
+          and same style as the built-in buttons; clicking brings up the extension via
+          meta.onClick and runs its original behavior (e.g. the extension manager
+          opening its management panel). */}
+      {sidebarFooterStaticItems.map((it) => {
+        // label/title support an "i18n:<key>" prefix resolved against the declaring
+        // extension's manifest i18n table (translateExtItemText); plain text passes through.
+        const label = translateExtItemText(it.extId, it.meta?.label) || translateExtItemText(it.extId, it.meta?.title) || it.extId || "?";
+        return (
+          <button
+            key={it.id}
+            type="button"
+            onClick={(event) => it.meta?.onClick?.(event)}
+            disabled={it.pending === true}
+            title={translateExtItemText(it.extId, it.meta?.title) || label}
+            aria-label={label}
+            style={{
+              flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+              height: 32, padding: 0, background: "none", border: "none",
+              borderRadius: 9, color: "var(--text-muted)", cursor: it.pending ? "default" : "pointer",
+              fontSize: 12, opacity: it.pending ? 0.5 : 1, transition: "background 0.12s, color 0.12s",
+            }}
+            onMouseEnter={(event) => { event.currentTarget.style.background = "var(--bg-hover)"; event.currentTarget.style.color = "var(--text)"; }}
+            onMouseLeave={(event) => { event.currentTarget.style.background = "none"; event.currentTarget.style.color = "var(--text-muted)"; }}
+          >
+            {renderExtItemIcon(it.meta?.icon, it.extId) ?? (
+              <span aria-hidden style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 14, height: 14, fontSize: 12, fontWeight: 600 }}>
+                {label.slice(0, 1)}
+              </span>
+            )}
+            <span>{label}</span>
+          </button>
+        );
+      })}
+      {/* Extension point: sidebar footer quick-action row (same row as the built-in
+          models/skills/settings; the extension-manager extension provides its management
+          entry here) */}
+      <ExtSlot name="sidebarFooter" />
+    </div>
+  );
+
+  // ── Whole-left-panel takeover contract (sidebar unified dock plan §3.4): extra is
+  //    passed through TakeoverSlot to the sidebarContent taker (the sessions extension's
+  //    SidebarContentDock) — the component factory emits host elements directly (with a
+  //    single render instance, element.type being a host component reference is
+  //    naturally legal), with data/callbacks passed through in full; in takeover state
+  //    the host SessionSidebar is not rendered. Fallback state = fallback (original
+  //    sidebar). ──
+  const sidebarContentExtra: Record<string, unknown> = {
+    // Component factories
+    renderTitle: () => <PiWebTitle />,
+    renderSidebarFooter: () => sidebarFooterRow,
+    // Session data
+    selectedSession,
+    selectedSessionId: selectedSession?.id ?? null,
+    selectedCwd: selectedSession?.cwd ?? newSessionCwd ?? null,
+    newSessionCwd: effectiveNewSessionCwd,
+    refreshKey,
+    explorerRefreshKey,
+    sessionListVersion: null,
+    // Initial restore (URL ?session= / default project auto-pick)
+    initialSessionId,
+    skipInitialProjectSelection: initialNavigation.requestedCwd !== null,
+    // Navigation callbacks
+    onSelectSession: handleSelectSession,
+    onNewSession: handleNewSession,
+    onOpenById: handleOpenSession,
+    onSessionDeleted: handleSessionDeleted,
+    onCwdChange: handleCwdChange,
+    onOpenFile: handleOpenFile,
+    onOpenFolder: handleOpenFolder,
+    onOpenTerminal: handleOpenTerminal,
+    onAtMention: handleAtMention,
+    onAtMentions: handleAtMentions,
+    onExplorerRefresh: handleExplorerRefresh,
+    onInitialRestoreDone: handleInitialRestoreDone,
+    onBackgroundTaskDone: handleBackgroundTaskDone,
+    onRunningSessionIdsChange: handleRunningSessionIdsChange,
+    onSessionsChange: handleSessionsChange,
+    // State/tools
+    translate,
+    settingsSection,
+    setSettingsSection,
+    isMobile,
+    // Collapse callback for the small-screen full-screen drawer (used by the taker's
+    // header collapse button; desktop has no drawer and ignores it)
+    onCloseSidebar: () => setSidebarOpen(false),
+  };
+
+  // ── §7-4 host component-factory registry (as a ctx service): the same contract as
+  //    the sidebarContent extra, exposed to all extensions through the "pi-web.ui"
+  //    service — consumers call getExtService("pi-web.ui") and fetch a factory by name.
+  //    The impl delegates to the latest render closure via a ref (AppShell refreshes
+  //    the ref on every render; the service registers only once on mount), avoiding
+  //    a stale closure registration; unregistered on unmount. ──
+  const hostUiRef = useRef<Record<string, unknown>>({});
+  hostUiRef.current = { ...sidebarContentExtra, sidebarFooterRow, onLineMention: handleFileLineMention, closeTopPanels, openImageInEditorViewer };
+  useEffect(() => {
+    return registerExtClientService(HOST_UI_SERVICE.provider, HOST_UI_SERVICE.name, {
+      /** Fetch a host factory by name (renderTitle/renderSidebarFooter/callbacks …
+       *  — the same set as the sidebarContent extra). */
+      get: (name: string) => hostUiRef.current[name],
+      /** List of factory names. */
+      names: () => Object.keys(hostUiRef.current),
+    });
+  }, []);
+
+  const sidebarContent = (
+    <TakeoverSlot
+      name="sidebarContent"
+      legacyKey="pi-web:sessions-takeover"
+      fallback={
+        <>
+          <SessionSidebarLazy
+            selectedSessionId={selectedSession?.id ?? null}
+            selectedSession={selectedSession}
+            onSelectSession={handleSelectSession}
+            onSelectSideChat={handleSelectSideChat}
+            onNewSession={handleNewSession}
+            controlRef={sidebarControlRef}
+            onNewSessionContextChange={handleSidebarNewSessionContext}
+            initialSessionId={initialSessionId}
+            skipInitialProjectSelection={initialNavigation.requestedCwd !== null}
+            onInitialRestoreDone={handleInitialRestoreDone}
+            onOpenById={handleOpenSession}
+            refreshKey={refreshKey}
+            onSessionDeleted={handleSessionDeleted}
+            selectedCwd={selectedSession?.cwd ?? newSessionCwd ?? null}
+            onCwdChange={handleCwdChange}
+            onOpenFile={handleOpenFile}
+            onOpenFolder={handleOpenFolder}
+            onOpenTerminal={handleOpenTerminal}
+            explorerRefreshKey={explorerRefreshKey}
+            onExplorerRefresh={handleExplorerRefresh}
+            onAtMention={handleAtMention}
+            onAtMentions={handleAtMentions}
+            fileExplorerRef={fileExplorerRef}
+            onBackgroundTaskDone={handleBackgroundTaskDone}
+            onRunningSessionIdsChange={handleRunningSessionIdsChange}
+            onSessionsChange={handleSessionsChange}
+          />
+          {sidebarFooterRow}
+        </>
+      }
+      placeholder={<SidebarTakeoverSkeleton />}
+      extra={sidebarContentExtra}
+    />
+  );
+
+  const renderThemeButton = (mobile: boolean) => (
+    <button
+      ref={themeBtnRef}
+      type="button"
+      onClick={() => toggleTopPanel("theme")}
+      title={translate(themeLabelKey)}
+      aria-label={translate(themeLabelKey)}
+      aria-haspopup="menu"
+      aria-expanded={activeTopPanel === "theme"}
+      aria-pressed={activeTopPanel === "theme"}
       style={{
-        position: "relative",
-        minWidth: 15, height: 15, padding: "0 4px", display: "grid", placeItems: "center",
-        borderRadius: 7,
-        background: badge.running ? "color-mix(in srgb, var(--accent) 22%, var(--bg-panel))" : "var(--bg-selected)",
-        color: "var(--accent)",
-        fontSize: 10, lineHeight: 1, fontVariantNumeric: "tabular-nums",
-        fontWeight: badge.running ? 600 : undefined,
-        ...(mobile ? { position: "absolute", top: 3, right: 3, minWidth: 13, height: 13, padding: "0 3px", fontSize: 9 } : {}),
+        display: "flex", alignItems: "center", justifyContent: "center",
+        width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
+        background: activeTopPanel === "theme" ? "var(--bg-selected)" : "none",
+        border: "none", borderRight: "1px solid var(--border)",
+        color: activeTopPanel === "theme" ? "var(--text)" : "var(--text-muted)",
+        cursor: "pointer", flexShrink: 0, transition: "color 0.12s",
       }}
+      onMouseEnter={(event) => { event.currentTarget.style.color = "var(--text)"; }}
+      onMouseLeave={(event) => { event.currentTarget.style.color = activeTopPanel === "theme" ? "var(--text)" : "var(--text-muted)"; }}
+      data-mobile-toolbar-action={mobile ? "theme" : undefined}
     >
-      {badge.running && (
-        <svg
-          className="animate-spin motion-reduce:animate-none"
-          viewBox="0 0 24 24" fill="none" aria-hidden="true"
-          style={{ position: "absolute", top: -3, left: -3, width: "calc(100% + 6px)", height: "calc(100% + 6px)", pointerEvents: "none" }}
-        >
-          <circle cx="12" cy="12" r="11" stroke="currentColor" strokeWidth="2" opacity="0.2" />
-          <path d="M23 12a11 11 0 0 0-11-11" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-        </svg>
-      )}
-      {badge.count}
-    </span>
+      <ThemeIcon preference={preference} size={16} />
+    </button>
+  );
+
+
+
+  const renderLanguageButton = (mobile: boolean) => (
+    <button
+      ref={languageBtnRef}
+      type="button"
+      onClick={() => toggleTopPanel("language")}
+      title={translate("common.language")}
+      aria-label={translate("common.language")}
+      aria-haspopup="menu"
+      aria-expanded={activeTopPanel === "language"}
+      aria-pressed={activeTopPanel === "language"}
+      style={{
+        display: "flex", alignItems: "center", justifyContent: "center",
+        width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
+        background: activeTopPanel === "language" ? "var(--bg-selected)" : "none",
+        border: "none", borderRight: "1px solid var(--border)",
+        color: activeTopPanel === "language" ? "var(--text)" : "var(--text-muted)",
+        cursor: "pointer", flexShrink: 0, transition: "color 0.12s",
+      }}
+      onMouseEnter={(event) => { event.currentTarget.style.color = "var(--text)"; }}
+      onMouseLeave={(event) => {
+        event.currentTarget.style.color = activeTopPanel === "language" ? "var(--text)" : "var(--text-muted)";
+      }}
+      data-mobile-toolbar-action={mobile ? "language" : undefined}
+    >
+      <svg
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="m5 8 6 6" />
+        <path d="m4 14 6-6 2-3" />
+        <path d="M2 5h12" />
+        <path d="M7 2h1" />
+        <path d="m22 22-5-10-5 10" />
+        <path d="M14 18h6" />
+      </svg>
+    </button>
   );
 
   // The Agents switcher's button. A narrow phone shows it left of the More button instead of
@@ -1828,7 +4710,7 @@ export function AppShell() {
       ref={agentsButtonRef}
       type="button"
       // On a narrow phone it sits outside the More menu, so it leaves that menu as it is.
-      onClick={() => toggleTopPanel("agents", mobile && !isNarrowMobile)}
+      onClick={() => toggleTopPanel("agents")}
       disabled={!activeSessionFamily}
       title={agentsButtonLabel}
       aria-label={agentsButtonLabel}
@@ -1857,493 +4739,32 @@ export function AppShell() {
     </button>
   );
 
-  const renderChatToolbarActions = (mobile: boolean) => {
-    if (!mobile && !showChat) return null;
-    return (
-      <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
-        <button
-          type="button"
-          onClick={() => {
-            handleViewFullHistory();
-            if (mobile && isNarrowMobile) setMobileToolbarMoreOpen(true);
-          }}
-          disabled={!selectedSession}
-          title={selectedSession ? translate("history.full") : translate("history.unsaved")}
-          aria-label={translate("history.full")}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 6,
-            width: mobile ? TOP_BAR_ICON_BUTTON_SIZE : undefined,
-            height: "100%",
-            padding: mobile ? 0 : "0 12px",
-            background: "none",
-            border: "none",
-            borderTop: "2px solid transparent",
-            borderRight: "1px solid var(--border)",
-            color: selectedSession ? "var(--text-muted)" : "var(--text-dim)",
-            cursor: selectedSession ? "pointer" : "not-allowed",
-            opacity: selectedSession ? 1 : 0.45,
-            flexShrink: 0,
-            fontSize: 11,
-            whiteSpace: "nowrap",
-            transition: "color 0.1s, background 0.1s, opacity 0.1s",
-          }}
-          onMouseEnter={(event) => {
-            if (!selectedSession) return;
-            event.currentTarget.style.color = "var(--text)";
-            event.currentTarget.style.background = "var(--bg-hover)";
-          }}
-          onMouseLeave={(event) => {
-            event.currentTarget.style.color = selectedSession ? "var(--text-muted)" : "var(--text-dim)";
-            event.currentTarget.style.background = "none";
-          }}
-          data-mobile-toolbar-action={mobile ? "history" : undefined}
-        >
-          <svg
-            width={mobile ? 16 : 12}
-            height={mobile ? 16 : 12}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            style={{
-              color: selectedSession ? "var(--text-muted)" : "var(--text-dim)",
-              flexShrink: 0,
-            }}
-            aria-hidden="true"
-          >
-            <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
-            <path d="M3 3v5h5" />
-            <path d="M12 7v5l3 2" />
-          </svg>
-          {!mobile && <span>{translate("history.label")}</span>}
-        </button>
-        {(() => {
-          // 上下文压缩后当前消息可能不再包含 user 消息，需同时参考会话文件的消息总数。
-          const hasMessages = Boolean(
-            selectedSession
-            && ((sessionStats?.userMessages ?? 0) > 0 || selectedSession.messageCount > 0),
-          );
-          const disabled = !selectedSession || selectedSession.transient || !hasMessages || autoNameStatus.kind === "naming";
-          const isSuccess = autoNameStatus.kind === "success";
-          const isError = autoNameStatus.kind === "error";
-          const label = autoNameStatus.kind === "naming"
-            ? translate("title.generating")
-            : isSuccess
-              ? translate("title.updated")
-              : isError
-                ? translate("title.failed")
-                : translate("title.generate");
-          const title = !selectedSession || selectedSession.transient
-            ? translate("title.unsaved")
-            : !hasMessages
-              ? translate("title.noMessages")
-              : isError
-                ? autoNameStatus.message
-                : translate("title.generateSession");
-
-          return (
-            <button
-              type="button"
-              onClick={() => {
-                void handleAutoName();
-                if (mobile && isNarrowMobile) setMobileToolbarMoreOpen(true);
-              }}
-              disabled={disabled}
-              title={title}
-              aria-label={label}
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-                width: mobile ? TOP_BAR_ICON_BUTTON_SIZE : undefined,
-                height: "100%", padding: mobile ? 0 : "0 12px",
-                background: "none", border: "none",
-                borderTop: "2px solid transparent",
-                borderRight: "1px solid var(--border)",
-                color: isError ? "#dc2626" : isSuccess ? "var(--accent)" : disabled ? "var(--text-dim)" : "var(--text-muted)",
-                cursor: disabled ? "not-allowed" : "pointer",
-                opacity: disabled && autoNameStatus.kind !== "naming" ? 0.45 : 1,
-                flexShrink: 0, fontSize: 11, whiteSpace: "nowrap",
-                transition: "color 0.1s, background 0.1s, opacity 0.1s",
-              }}
-              onMouseEnter={(event) => {
-                if (disabled) return;
-                event.currentTarget.style.color = isError ? "#dc2626" : "var(--text)";
-                event.currentTarget.style.background = "var(--bg-hover)";
-              }}
-              onMouseLeave={(event) => {
-                event.currentTarget.style.color = isError ? "#dc2626" : isSuccess ? "var(--accent)" : disabled ? "var(--text-dim)" : "var(--text-muted)";
-                event.currentTarget.style.background = "none";
-              }}
-              data-mobile-toolbar-action={mobile ? "name" : undefined}
-            >
-              {autoNameStatus.kind === "naming" ? (
-                <svg className="animate-spin" width={mobile ? 16 : 13} height={mobile ? 16 : 13} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" opacity="0.25" />
-                  <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                </svg>
-              ) : isSuccess ? (
-                <svg width={mobile ? 16 : 13} height={mobile ? 16 : 13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-              ) : (
-                <svg width={mobile ? 16 : 13} height={mobile ? 16 : 13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="m15 4 5 5L7 22l-5-5Z" />
-                  <path d="m14 5 5 5" />
-                  <path d="M6 4V2M5 3H3M19 19v3M17.5 20.5h3" />
-                </svg>
-              )}
-              {!mobile && <span>{label}</span>}
-            </button>
-          );
-        })()}
-        {!(mobile && isNarrowMobile) && renderAgentsButton(mobile)}
-        {sessionHasBranches && (mobile ? (
-          <button
-            type="button"
-            onClick={() => toggleTopPanel("branches", true)}
-            title={translate("i18n.branches")}
-            aria-label={translate("i18n.branches")}
-            aria-pressed={activeTopPanel === "branches"}
-            style={{
-              display: "flex", alignItems: "center", justifyContent: "center",
-              width: TOP_BAR_ICON_BUTTON_SIZE, height: "100%", padding: 0,
-              background: activeTopPanel === "branches" ? "var(--bg-selected)" : "none",
-              border: "none",
-              borderTop: activeTopPanel === "branches" ? "2px solid var(--accent)" : "2px solid transparent",
-              borderRight: "1px solid var(--border)",
-              color: activeTopPanel === "branches" ? "var(--text)" : "var(--text-muted)",
-              cursor: "pointer", flexShrink: 0,
-            }}
-            data-mobile-toolbar-action="branches"
-          >
-            <svg width={mobile ? 16 : 12} height={mobile ? 16 : 12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: branchTree.length > 0 ? "var(--accent)" : "var(--text-dim)" }} aria-hidden="true">
-              <line x1="6" y1="3" x2="6" y2="15" />
-              <circle cx="18" cy="6" r="3" />
-              <circle cx="6" cy="18" r="3" />
-              <path d="M18 9a9 9 0 0 1-9 9" />
-            </svg>
-          </button>
-        ) : (
-          <BranchNavigator
-            tree={branchTree}
-            activeLeafId={branchActiveLeafId}
-            onLeafChange={handleBranchLeafChange}
-            locked={branchSwitchLocked}
-            inline
-            containerRef={topBarRef}
-            open={activeTopPanel === "branches"}
-            onToggle={() => toggleTopPanel("branches")}
-            hasSession
-          />
-        ))}
-        <button
-          ref={systemBtnRef}
-          type="button"
-          onClick={() => handleSystemInfoToggle("system", mobile)}
-          disabled={mobile && !showChat}
-          title={translate("system.prompt")}
-          aria-label={translate("system.prompt")}
-          aria-pressed={activeTopPanel === "system"}
-          style={{
-            display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-            width: mobile ? TOP_BAR_ICON_BUTTON_SIZE : undefined,
-            height: "100%", padding: mobile ? 0 : "0 12px",
-            background: activeTopPanel === "system" ? "var(--bg-selected)" : "none",
-            border: "none",
-            borderTop: activeTopPanel === "system" ? "2px solid var(--accent)" : "2px solid transparent",
-            borderRight: "1px solid var(--border)",
-            cursor: mobile && !showChat ? "not-allowed" : "pointer",
-            color: activeTopPanel === "system" ? "var(--text)" : "var(--text-muted)",
-            opacity: mobile && !showChat ? 0.45 : 1,
-            fontSize: 11, whiteSpace: "nowrap", transition: "color 0.1s, background 0.1s",
-          }}
-          onMouseEnter={(event) => {
-            if (mobile && !showChat) return;
-            event.currentTarget.style.color = "var(--text)";
-          }}
-          onMouseLeave={(event) => {
-            event.currentTarget.style.color = activeTopPanel === "system" ? "var(--text)" : "var(--text-muted)";
-          }}
-          data-mobile-toolbar-action={mobile ? "system" : undefined}
-        >
-          <svg width={mobile ? 16 : 12} height={mobile ? 16 : 12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: systemPrompt ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }} aria-hidden="true">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-            <polyline points="14 2 14 8 20 8" />
-            <line x1="8" y1="13" x2="16" y2="13" />
-            <line x1="8" y1="17" x2="13" y2="17" />
-          </svg>
-          {!mobile && <span>{translate("system.label")}</span>}
-        </button>
-        <button
-          type="button"
-          onClick={() => handleSystemInfoToggle("tools", mobile)}
-          disabled={mobile && !showChat}
-          title={translate("tools.title")}
-          aria-label={translate("tools.title")}
-          aria-pressed={activeTopPanel === "tools"}
-          style={{
-            display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-            width: mobile ? TOP_BAR_ICON_BUTTON_SIZE : undefined,
-            height: "100%", padding: mobile ? 0 : "0 12px",
-            background: activeTopPanel === "tools" ? "var(--bg-selected)" : "none",
-            border: "none",
-            borderTop: activeTopPanel === "tools" ? "2px solid var(--accent)" : "2px solid transparent",
-            borderRight: "1px solid var(--border)",
-            cursor: mobile && !showChat ? "not-allowed" : "pointer",
-            color: activeTopPanel === "tools" ? "var(--text)" : "var(--text-muted)",
-            opacity: mobile && !showChat ? 0.45 : 1,
-            fontSize: 11, whiteSpace: "nowrap", transition: "color 0.1s, background 0.1s",
-          }}
-          onMouseEnter={(event) => {
-            if (mobile && !showChat) return;
-            event.currentTarget.style.color = "var(--text)";
-          }}
-          onMouseLeave={(event) => {
-            event.currentTarget.style.color = activeTopPanel === "tools" ? "var(--text)" : "var(--text-muted)";
-          }}
-          data-mobile-toolbar-action={mobile ? "tools" : undefined}
-        >
-          <svg width={mobile ? 16 : 12} height={mobile ? 16 : 12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: systemTools?.some((tool) => tool.active) ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }} aria-hidden="true">
-            <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.9-7.9z" />
-          </svg>
-          {!mobile && <span>{translate("tools.label")}</span>}
-        </button>
-      </div>
-    );
-  };
-
-  const renderSessionStatsButton = (mobile: boolean) => {
-    if (!mobile && (!showChat || (!sessionStats && !contextUsage))) return null;
-
-    const tokens = sessionStats?.tokens;
-    const cost = sessionStats?.cost ?? 0;
-    const formatCompact = formatCompactCount;
-    const costText = formatCostShort(cost);
-
-    let contextColor = "var(--text-muted)";
-    let desktopContextText: string | null = null;
-    let mobileContextText: string | null = null;
-    if (contextUsage?.contextWindow) {
-      const percent = contextUsage.percent;
-      if (percent !== null && percent > 90) contextColor = "#ef4444";
-      else if (percent !== null && percent > 70) contextColor = "rgba(234,179,8,0.95)";
-      desktopContextText = percent !== null
-        ? `${percent.toFixed(0)}% / ${formatCompact(contextUsage.contextWindow)}`
-        : `? / ${formatCompact(contextUsage.contextWindow)}`;
-      mobileContextText = percent !== null ? `${percent.toFixed(0)}%` : null;
-    }
-
-    const tooltipParts: string[] = [];
-    if (tokens) {
-      tooltipParts.push(`${translate("session.input")}: ${tokens.input.toLocaleString(locale)}`);
-      tooltipParts.push(`${translate("session.output")}: ${tokens.output.toLocaleString(locale)}`);
-      tooltipParts.push(`${translate("session.cacheRead")}: ${tokens.cacheRead.toLocaleString(locale)}`);
-      tooltipParts.push(`${translate("session.cacheWrite")}: ${tokens.cacheWrite.toLocaleString(locale)}`);
-      if (cost > 0) tooltipParts.push(`${translate("session.cost")}: $${cost.toFixed(4)}`);
-    }
-    if (contextUsage?.contextWindow) {
-      const percent = contextUsage.percent;
-      tooltipParts.push(`${translate("session.context")}: ${percent !== null ? `${percent.toFixed(1)}%` : "?"} / ${contextUsage.contextWindow.toLocaleString(locale)}`);
-    }
-    const tooltip = tooltipParts.join("  |  ");
-    const covered = mobile && isNarrowMobile && mobileToolbarMoreOpen;
-    const hasMobileValues = Boolean(
-      (tokens && (tokens.input > 0 || tokens.output > 0))
-      || costText
-      || mobileContextText,
-    );
-
-    return (
-      <button
-        type="button"
-        onClick={() => toggleTopPanel("session")}
-        disabled={!showChat || covered}
-        tabIndex={covered ? -1 : undefined}
-        title={tooltip || translate("session.title")}
-        aria-label={translate("session.title")}
-        aria-pressed={activeTopPanel === "session"}
-        aria-hidden={covered ? true : undefined}
-        className={mobile ? "mobile-session-stats" : undefined}
-        data-mobile-toolbar-stats={mobile ? "true" : undefined}
-        style={{
-          // The Debug button before it takes the free space (renderDebugButton).
-          marginLeft: 0,
-          display: "flex", alignItems: "center", justifyContent: "flex-end",
-          flex: mobile ? 1 : undefined,
-          minWidth: 0,
-          gap: mobile ? 7 : 10,
-          paddingLeft: mobile ? 6 : 12,
-          paddingRight: mobile ? 6 : 12,
-          height: "100%",
-          overflow: "hidden",
-          visibility: covered ? "hidden" : "visible",
-          pointerEvents: covered ? "none" : "auto",
-          background: activeTopPanel === "session" ? "var(--bg-selected)" : "none",
-          border: "none",
-          borderTop: activeTopPanel === "session" ? "2px solid var(--accent)" : "2px solid transparent",
-          fontSize: 11, color: "var(--text-muted)",
-          whiteSpace: "nowrap", cursor: showChat ? "pointer" : "default",
-          fontVariantNumeric: "tabular-nums",
-          transition: "color 0.1s, background 0.1s",
-        }}
-        onMouseEnter={(event) => {
-          if (showChat && !covered) event.currentTarget.style.color = "var(--text)";
-        }}
-        onMouseLeave={(event) => {
-          event.currentTarget.style.color = activeTopPanel === "session" ? "var(--text)" : "var(--text-muted)";
-        }}
-      >
-        {mobile ? (
-          <>
-            {tokens && tokens.input > 0 && (
-              <span className="mobile-session-stat-io" style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <line x1="5" y1="8.5" x2="5" y2="1.5" /><polyline points="2 4 5 1.5 8 4" />
-                </svg>
-                {formatCompact(tokens.input)}
-              </span>
-            )}
-            {tokens && tokens.output > 0 && (
-              <span className="mobile-session-stat-io" style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <line x1="5" y1="1.5" x2="5" y2="8.5" /><polyline points="2 6 5 8.5 8 6" />
-                </svg>
-                {formatCompact(tokens.output)}
-              </span>
-            )}
-            {costText && (
-              <span className="mobile-session-stat-cost" style={{ color: "var(--text)", fontWeight: 500, flexShrink: 0 }}>
-                {costText}
-              </span>
-            )}
-            {mobileContextText && (
-              <span style={{ color: contextColor, flexShrink: 0 }}>
-                {mobileContextText}
-              </span>
-            )}
-            {!hasMobileValues && showChat && (
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", color: "var(--text-dim)" }}>
-                {translate("session.title")}
-              </span>
-            )}
-          </>
-        ) : (
-          <>
-            {tokens && tokens.input > 0 && (
-              <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <line x1="5" y1="8.5" x2="5" y2="1.5" /><polyline points="2 4 5 1.5 8 4" />
-                </svg>
-                {formatCompact(tokens.input)}
-              </span>
-            )}
-            {tokens && tokens.output > 0 && (
-              <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <line x1="5" y1="1.5" x2="5" y2="8.5" /><polyline points="2 6 5 8.5 8 6" />
-                </svg>
-                {formatCompact(tokens.output)}
-              </span>
-            )}
-            {tokens && tokens.cacheRead > 0 && (
-              <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M8.5 5a3.5 3.5 0 1 1-1-2.45" /><polyline points="6.5 1.5 8.5 2.5 7.5 4.5" />
-                </svg>
-                {formatCompact(tokens.cacheRead)}
-              </span>
-            )}
-            {costText && (
-              <span style={{ display: "flex", alignItems: "center", color: "var(--text)", fontWeight: 500 }}>
-                {costText}
-              </span>
-            )}
-            {desktopContextText && (
-              <span style={{ display: "flex", alignItems: "center", gap: 4, color: contextColor }}>
-                <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M1 9 L1 5 Q1 1 5 1 Q9 1 9 5 L9 9" /><line x1="1" y1="9" x2="9" y2="9" />
-                </svg>
-                {desktopContextText}
-              </span>
-            )}
-          </>
-        )}
-      </button>
-    );
-  };
-
-  // Icon only, right of the chat's actions; on a desktop it takes the bar's free space, so it
-  // sits left of the session stats. It only opens or closes its panel: nothing is loaded here.
-  const renderDebugButton = (mobile: boolean) => {
-    if (!showChat) return null;
-    const open = activeTopPanel === "debug";
-    return (
-      <button
-        ref={debugButtonRef}
-        type="button"
-        onClick={() => toggleTopPanel("debug", mobile)}
-        title={translate("debug.title")}
-        aria-label={translate("debug.title")}
-        aria-pressed={open}
-        style={{
-          marginLeft: mobile ? 0 : "auto",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          width: TOP_BAR_ICON_BUTTON_SIZE, height: "100%", padding: 0,
-          background: open ? "var(--bg-selected)" : "none",
-          border: "none",
-          borderTop: open ? "2px solid var(--accent)" : "2px solid transparent",
-          ...(mobile ? { borderRight: "1px solid var(--border)" } : { borderLeft: "1px solid var(--border)" }),
-          color: open ? "var(--text)" : "var(--text-muted)",
-          cursor: "pointer", flexShrink: 0, transition: "color 0.1s, background 0.1s",
-        }}
-        onMouseEnter={(event) => {
-          event.currentTarget.style.color = "var(--text)";
-        }}
-        onMouseLeave={(event) => {
-          event.currentTarget.style.color = open ? "var(--text)" : "var(--text-muted)";
-        }}
-        data-mobile-toolbar-action={mobile ? "debug" : undefined}
-      >
-        <svg width={mobile ? 16 : 13} height={mobile ? 16 : 13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: open ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }} aria-hidden="true">
-          <path d="M8 2l1.9 1.9M16 2l-1.9 1.9M9 7.1v-1a3 3 0 0 1 6 0v1" />
-          <path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6zM12 20v-9" />
-          <path d="M6.5 9C4.6 8.8 3 7.1 3 5M6 13H2M3 21c0-2.1 1.7-3.9 3.8-4M21 5c0 2.1-1.6 3.8-3.5 4M22 13h-4M17.2 17c2.1.1 3.8 1.9 3.8 4" />
-        </svg>
-      </button>
-    );
-  };
-
   const renderMainFileToggle = (mobile: boolean) => {
-    const covered = mobile && isNarrowMobile && mobileToolbarMoreOpen;
     return (
       <button
         type="button"
         onClick={handleRightPanelToggle}
-        disabled={covered}
-        tabIndex={covered ? -1 : undefined}
         aria-controls="file-panel"
         aria-expanded={rightPanelOpen}
-        aria-hidden={covered ? true : undefined}
         title={rightPanelOpen ? translate("files.hidePanel") : translate("files.showPanel")}
         aria-label={rightPanelOpen ? translate("files.hidePanel") : translate("files.showPanel")}
         data-mobile-toolbar-file={mobile ? "true" : undefined}
         style={{
-          // With a chat the Debug button is right-aligned instead (renderDebugButton).
-          marginLeft: !mobile && !showChat ? "auto" : 0,
+          marginLeft: !mobile && !sessionStats && !contextUsage ? "auto" : 0,
+          // The top-bar container reserves 44px at the top-right corner (file-toggle
+          // placeholder + safe area); this button is the owner of that corner — a
+          // negative right margin cancels the reserved padding so the button hugs the
+          // container's right end (top-right). Desktop/mobile share the same container
+          // and the same reservation, keeping the accounting consistent.
+          marginRight: "calc(-44px - min(env(safe-area-inset-right), 8px))",
           display: "flex", alignItems: "center", justifyContent: "center",
           width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
-          visibility: covered ? "hidden" : "visible",
-          pointerEvents: covered ? "none" : "auto",
           background: rightPanelOpen ? "var(--bg-selected)" : "none",
           border: "none", borderLeft: "1px solid var(--border)",
           color: rightPanelOpen ? "var(--text)" : "var(--text-muted)",
           cursor: "pointer", flexShrink: 0, transition: "color 0.12s, background 0.12s",
         }}
-        onMouseEnter={(event) => { if (!covered) event.currentTarget.style.color = "var(--text)"; }}
+        onMouseEnter={(event) => { event.currentTarget.style.color = "var(--text)"; }}
         onMouseLeave={(event) => { event.currentTarget.style.color = rightPanelOpen ? "var(--text)" : "var(--text-muted)"; }}
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -2353,8 +4774,54 @@ export function AppShell() {
     );
   };
 
+  // ── Small-screen system back = close the topmost overlay (does not leave the site /
+  //    exit the PWA directly) ────────────────────────────────────────────────────────
+  // lib/overlay-back.ts is the single writer of the history back stack (same source as
+  // the pi-web.overlayBack service); each open state registers one back layer and close
+  // is the original close action. Desktop (≥641px) does not participate: the browser
+  // back semantics stay untouched. Declaration order equals effect order within the
+  // same commit, so both close-old-then-open-new orders are safe (see plan §3.1).
+  useOverlayBack(isMobile && mobileSidebarReady && sidebarOpen, () => setSidebarOpen(false));
+  useOverlayBack(isMobile && rightPanelOpen, () => setRightPanelOpen(false));
+  useOverlayBack(isMobile && settingsSection !== null, () => setSettingsSection(null));
+  useOverlayBack(isMobile && projectTrustDialogOpen, () => setProjectTrustDialogOpen(false));
+  useOverlayBack(isMobile && exportDialogOpen, () => setExportDialogOpen(false));
+  useOverlayBack(isMobile && (moreOpen || customizeOpen), () => {
+    setMoreOpen(false);
+    setCustomizeOpen(false);
+  });
+  useOverlayBack(isMobile && activeTopPanel !== null, () => setActiveTopPanel(null));
+  useOverlayBack(isMobile && bridgedNameDialog !== null, () => setBridgedNameDialog(null));
+
   return (
+    <ExtSlotsProvider serverSlotDeclarations={extSlotDeclarations}>
     <>
+    {cwdMissingNotice && (
+      <div
+        role="alert"
+        style={{
+          position: "fixed", top: 12, left: "50%", transform: "translateX(-50%)", zIndex: 300,
+          display: "flex", alignItems: "center", gap: 10,
+          maxWidth: "min(640px, 92vw)", padding: "10px 14px",
+          background: "var(--bg-panel)", border: "1px solid #f59e0b88", borderRadius: 12,
+          boxShadow: "0 8px 32px rgba(0,0,0,0.35)", fontSize: 12.5, color: "var(--text)",
+        }}
+      >
+        <span style={{ fontSize: 14 }}>📂</span>
+        <span style={{ minWidth: 0, wordBreak: "break-all" }}>
+          <strong>{translate("chat.cwdMissingTitle")}</strong>{cwdMissingNotice}
+          <span style={{ color: "var(--text-muted)" }}>{translate("chat.cwdMissingBody")}</span>
+        </span>
+        <button
+          type="button"
+          onClick={() => setCwdMissingNotice(null)}
+          title={translate("common.close")}
+          style={{ flexShrink: 0, background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 14, lineHeight: 1, padding: "0 2px" }}
+        >
+          ×
+        </button>
+      </div>
+    )}
     <style>{`
       @keyframes session-info-pop {
         0% {
@@ -2394,6 +4861,7 @@ export function AppShell() {
       .session-info-popover {
         position: relative;
         overflow: hidden;
+        overflow: clip; /* clip creates no scroll container: the inner sticky top bar's relative scroll container is the outer dropdown (sticky never moves while hidden) */
         transform-origin: top right;
         animation: session-info-pop 360ms ease-out both;
         will-change: transform, opacity, filter, background, box-shadow;
@@ -2415,19 +4883,6 @@ export function AppShell() {
           animation: none;
         }
       }
-      .mobile-session-stats {
-        container-type: inline-size;
-      }
-      @container (max-width: 158px) {
-        .mobile-session-stat-io {
-          display: none !important;
-        }
-      }
-      @container (max-width: 88px) {
-        .mobile-session-stat-cost {
-          display: none !important;
-        }
-      }
       @media (max-width: 640px) {
         .sidebar-overlay-backdrop.sidebar-mobile-pending {
           opacity: 0 !important;
@@ -2439,12 +4894,21 @@ export function AppShell() {
         }
       }
     `}</style>
-    <div style={{
+    <div
+      className="app-shell-row"
+      style={{
       display: "flex",
       width: "100%",
       height: "var(--app-viewport-height, 100dvh)",
-      paddingLeft: "env(safe-area-inset-left)",
-      paddingRight: "env(safe-area-inset-right)",
+      /* The safe-area padding layer is managed by .app-shell-row (globals.css) instead:
+         <641 keeps env(safe-area-inset-*) for the single-column mobile layout, ≥641
+         multi-column layout zeroes it — on pads the system-reported 38px right gesture
+         area would pad out the whole three-column layout, exposing a blank background
+         strip on the right (measured on a portrait pad at 777px: pad=[0,38], the main
+         column was squeezed 38px, "missing a chunk"; the insets differ between
+         orientation switches). In multi-column the content has its own margins (the
+         chat column centers itself with max-w + the right panel applies its own
+         right:env()), so no container-level padding layer is needed. */
       overflow: "hidden",
       background: "var(--bg)",
     }}>
@@ -2476,6 +4940,7 @@ export function AppShell() {
           display: "flex",
           flexDirection: "column",
           flexShrink: 0,
+          zoom: "var(--pi-panel-zoom, 1)",
           paddingTop: "env(safe-area-inset-top)",
           paddingBottom: "env(safe-area-inset-bottom)",
           zIndex: 200,
@@ -2497,16 +4962,44 @@ export function AppShell() {
       {/* Center: chat */}
       <div inert={rightPanelFullWidth} style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
         {/* Top bar with sidebar toggle */}
-        <div ref={topBarRef} style={{ flexShrink: 0, background: "var(--bg-panel)" }}>
-        <div style={{ display: "flex", alignItems: "center", position: "relative", borderBottom: "1px solid var(--border)", height: "calc(var(--top-bar-height) + env(safe-area-inset-top))", paddingTop: "env(safe-area-inset-top)" }}>
+        <div
+          ref={topBarRef}
+          style={{
+            display: "flex", alignItems: "center", flexShrink: 0, position: "relative",
+            // The divider is drawn with an inset box-shadow (takes no layout space):
+            // with global box-sizing: border-box, a 1px border would eat 1px of the
+            // content area → the container had to be 37px; with the inset shadow the
+            // container height returns to the 36px baseline and the content area is
+            // exactly 36px, isomorphic with buttons/icon slots/extensions.
+            borderBottom: "none",
+            boxShadow: "inset 0 -1px 0 var(--border)",
+            // Upstream's --top-bar-height (36px desktop / 44px phone, 57078bb5):
+            // the fork buttons already size to it via TOP_BAR_ICON_BUTTON_SIZE,
+            // so the container tracks the same variable — a phone gets the full
+            // 44px touch height instead of square buttons clipped to 36px.
+            height: "calc(var(--top-bar-height) + env(safe-area-inset-top))",
+            paddingTop: "env(safe-area-inset-top)",
+            background: "var(--bg-panel)",
+            overflowX: "hidden",
+            overflowY: "hidden",
+            // The top-right fixed file-panel toggle (36px + gap) would cover the right
+            // end; reserved padding prevents that. Plus the safe area (measured 38px on
+            // pads): after the button's margin-right avoids the gesture area it
+            // actually occupies safe-area+36+gap, so padding counts only 36+8 — avoids
+            // the chat column's right side being clipped another 38px on pads (the
+            // last source of "a big blank on the right").
+            paddingRight: "calc(44px + min(env(safe-area-inset-right), 8px))",
+          }}
+        >
           <button
             onClick={handleSidebarToggle}
              title={sidebarOpen ? translate("sidebar.hide") : translate("sidebar.show")}
              aria-label={sidebarOpen ? translate("sidebar.hide") : translate("sidebar.show")}
             style={{
               display: "flex", alignItems: "center", justifyContent: "center",
-              width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
-              background: "none", border: "none", borderRight: "1px solid var(--border)",
+              width: TOP_BAR_ICON_BUTTON_SIZE, height: "100%", padding: 0,
+              background: "none", borderLeft: "none", borderTop: "none", borderBottom: "none",
+              borderRight: "1px solid var(--border)",
               color: "var(--text-muted)", cursor: "pointer", flexShrink: 0, transition: "color 0.12s",
             }}
             onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
@@ -2517,100 +5010,325 @@ export function AppShell() {
                 <rect x="3" y="3" width="18" height="18" rx="2" /><line x1="9" y1="3" x2="9" y2="21" />
               </svg>
             ) : (
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                 <line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" />
               </svg>
             )}
           </button>
-          {isMobile && (
+          {/* Sortable/hideable/separable tool button row: the row renders only what
+              fits; the offscreen strip is used for measurement */}
+          <div
+            ref={itemsRowRef}
+            style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "stretch", height: "100%", overflowX: "hidden", position: "relative" }}
+          >
+            {rowEntryNodes}
             <div
-              ref={mobileToolbarRef}
-              data-mobile-toolbar="true"
+              ref={measureStripRef}
+              aria-hidden="true"
+              style={{ position: "absolute", left: -100000, top: 0, display: "flex", alignItems: "stretch", pointerEvents: "none", visibility: "hidden" }}
+            >
+              {stripEntryNodes}
+            </div>
+          </div>
+          {showChat && projectTrust?.requiresTrust && !projectTrust.trusted && (
+            <button
+              type="button"
+              onClick={openProjectTrustDialog}
+              title={translate("trust.resourcesNotLoaded")}
+              aria-label={translate("trust.resourcesNotLoaded")}
               style={{
-                position: "relative",
                 display: "flex",
-                alignItems: "stretch",
-                flex: 1,
-                minWidth: 0,
+                alignItems: "center",
+                gap: 6,
                 height: "100%",
+                padding: isMobile ? "0 10px" : "0 12px",
+                background: "none",
+                borderLeft: "none", borderTop: "none", borderBottom: "none",
+                borderRight: "1px solid var(--border)",
+                color: "#d97706",
+                cursor: "pointer",
+                flexShrink: 0,
+                fontSize: 11,
+                whiteSpace: "nowrap",
               }}
             >
-              {isNarrowMobile && renderAgentsButton(true)}
-              {isNarrowMobile && (
-                <button
-                  type="button"
-                  onClick={handleMobileToolbarMoreToggle}
-                  title={moreControlsLabel}
-                  aria-label={moreControlsLabel}
-                  aria-controls="mobile-toolbar-actions"
-                  aria-expanded={mobileToolbarMoreOpen}
-                  data-mobile-toolbar-more="true"
-                  style={{
-                    position: "relative",
-                    zIndex: mobileToolbarMoreOpen ? 21 : undefined,
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
-                    background: mobileToolbarMoreOpen ? "var(--bg-selected)" : "none",
-                    border: "none", borderRight: "1px solid var(--border)",
-                    color: mobileToolbarMoreOpen ? "var(--text)" : "var(--text-muted)",
-                    cursor: "pointer", flexShrink: 0, transition: "color 0.12s, background 0.12s",
-                  }}
-                >
-                  {mobileToolbarMoreOpen ? (
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-                      <line x1="5" y1="5" x2="19" y2="19" /><line x1="19" y1="5" x2="5" y2="19" />
-                    </svg>
-                  ) : (
-                    <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                      <circle cx="5" cy="12" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="19" cy="12" r="1.5" />
-                    </svg>
-                  )}
-                </button>
-              )}
-              {!isNarrowMobile && renderChatToolbarActions(true)}
-              {!isNarrowMobile && renderDebugButton(true)}
-              {renderSessionStatsButton(true)}
-              {renderMainFileToggle(true)}
-              {isNarrowMobile && mobileToolbarMoreOpen && (
-                <div
-                  id="mobile-toolbar-actions"
-                  role="toolbar"
-                  aria-label={translate("chat.moreControls")}
-                  data-mobile-toolbar-actions="true"
-                  style={{
-                    position: "absolute",
-                    top: 0,
-                    right: 0,
-                    bottom: 0,
-                    // Right of the Agents and More buttons, which stay in place.
-                    left: `calc(2 * ${TOP_BAR_ICON_BUTTON_SIZE})`,
-                    zIndex: 20,
-                    display: "flex",
-                    alignItems: "stretch",
-                    // More buttons than a 320px phone fits (the Debug button made seven): scroll, never clip.
-                    overflowX: "auto",
-                    overflowY: "hidden",
-                    scrollbarWidth: "none",
-                    background: "color-mix(in srgb, var(--bg-panel) 94%, var(--bg))",
-                    boxShadow: "4px 0 18px rgba(0,0,0,0.12)",
-                    backdropFilter: "blur(10px)",
-                  }}
-                >
-                  {renderChatToolbarActions(true)}
-                  {renderDebugButton(true)}
-                </div>
-              )}
-            </div>
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" />
+                <path d="M12 8v4" />
+                <path d="M12 16h.01" />
+              </svg>
+              {!isMobile && <span>{translate("trust.resourcesNotLoaded")}</span>}
+            </button>
           )}
-          {!isMobile && (
-            <>
-              {renderProjectTrustWarning(false)}
-              {renderChatToolbarActions(false)}
-              {renderDebugButton(false)}
-              {renderSessionStatsButton(false)}
-            </>
+          {/* The upstream mobile-toolbar tier (Agents beside More + the actions
+              overlay). Narrow phones only: its content is entirely narrow-gated,
+              and an unconditional flex:1 container would sit EMPTY between the
+              fork's own toolbar row and the right cluster on desktop/medium —
+              half the free space as blank top bar (found live on 1440px). */}
+          {isNarrowMobile && (
+          <div
+            data-mobile-toolbar="true"
+            style={{
+              position: "relative",
+              display: "flex",
+              alignItems: "stretch",
+              // Shrink to the Agents button only (no flex spring): the upstream
+              // narrow/medium inline rows are retired — the fork's custom-drawn
+              // top bar (renderTopbarItem + measured ⋯ overflow) is the single
+              // overflow mechanism on every width, and the session-stats button's
+              // margin-left:auto owns all leftover space, so the Agents button
+              // joins the right cluster instead of floating mid-bar.
+              flex: "0 0 auto",
+              height: "100%",
+              // Left edge rule: separates the tier from the sidebar toggle (empty
+              // items row) or from the last visible top-bar item. Overlaps that
+              // neighbor's own 1px border at the same x when present — renders as a
+              // single line either way.
+              borderLeft: "1px solid var(--border)",
+            }}
+          >
+          {renderAgentsButton(true)}
+              {/* The upstream narrow-band tier (a second, horizontal-••• "More controls"
+                  button + its floating actions overlay) was retired per the fork's
+                  single-overflow contract: the vertical-••• more menu already collects
+                  every top-bar item on every width, and the overlay duplicated those
+                  same actions (history/export/branches/system/tools) as a second set.
+                  Don't reintroduce it on merge — topbar-dedup.test.mjs pins its absence. */}
+          </div>
           )}
-          {!isMobile && renderMainFileToggle(false)}
+          {/* Session stats — right-aligned in top bar */}
+          {showChat && (sessionStats || contextUsage) && (() => {
+             const tokens = sessionStats?.tokens;
+            const c = sessionStats?.cost ?? 0;
+            // Container-width compact tier (statsRowCompact, see the ResizeObserver
+            // above) merges with the viewport compact tier: a narrow TOP BAR (wide
+            // window, squeezed chat column) compresses the row the same way the
+            // 641–959px viewport tier does — context % only, extension chips hidden.
+            const rowCompact = isCompact || statsRowCompact;
+            const fmt = (n: number) => n >= 10_000_000 ? `${Math.round(n / 1_000_000)}M` : n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 100_000 ? `${Math.round(n / 1000)}k` : n >= 1000 ? `${(n / 1000).toFixed(0)}k` : String(n);
+            const costStr = c > 0 ? (c >= 0.01 ? fmtMoney(c, 2) : fmtMoneySmall()) : null;
+
+            // Single source of truth for the urgency color scale: lib/context-urgency.ts
+            // (the top bar is the scale baseline; the critical tier gets the breathe animation)
+            const ctxUrg = contextUrgency(contextUsage?.contextWindow ? contextUsage.percent : null);
+            const ctxColor = ctxUrg.color;
+            const ctxBreathe = ctxUrg.level === "critical" ? CTX_BREATHE_CSS : undefined;
+            // Displayed form is the bare percentage (the window size lives in the
+            // tooltip); the raw `X% / window` form was retired with the density tier.
+            let ctxStr: string | null = null;
+            if (contextUsage?.contextWindow) {
+              const pct = contextUsage.percent;
+              ctxStr = pct !== null ? `${pct.toFixed(0)}%` : "?%";
+            }
+
+            // Tooltip layout: one line per topic (browsers render \n in title as
+            // multiple lines). Previously everything was packed onto a single
+            // `  |  `-separated string, which was unreadable at this density.
+            // Zero-valued cache entries are dropped instead of padded with "0".
+            const tokenParts: string[] = [];
+            if (tokens) {
+              tokenParts.push(`in ${tokens.input.toLocaleString(locale)}`);
+              tokenParts.push(`out ${tokens.output.toLocaleString(locale)}`);
+              if (tokens.cacheRead > 0) tokenParts.push(`cache-read ${tokens.cacheRead.toLocaleString(locale)}`);
+              if (tokens.cacheWrite > 0) tokenParts.push(`cache-write ${tokens.cacheWrite.toLocaleString(locale)}`);
+            }
+            const tooltipLines: string[] = [];
+            if (tokenParts.length) tooltipLines.push(`tokens: ${tokenParts.join(" · ")}`);
+            if (c > 0) tooltipLines.push(`cost: ${fmtMoney(c, 4)}${fxNote() ? ` · ${fxNote()}` : ""}`);
+            if (contextUsage?.contextWindow) {
+              const pct = contextUsage.percent;
+              tooltipLines.push(`context: ${pct !== null ? pct.toFixed(1) + "%" : "unknown"} of ${contextUsage.contextWindow.toLocaleString()} tokens`);
+            }
+            const baseTooltip = tooltipLines.join("\n");
+            // Inline-slot contributors (e.g. the sysmon chips' CPU/memory line). Read
+            // on hover so the latest sample is shown; failures never break the title.
+            const inlineTooltipLines = (): string[] => sessionStatsInlineItems
+              .map((it) => {
+                try { return (it.meta as { tooltip?: () => string | null | undefined } | undefined)?.tooltip?.(); }
+                catch { return null; }
+              })
+              .filter((s): s is string => typeof s === "string" && s.trim().length > 0);
+            const tooltip = [baseTooltip, ...inlineTooltipLines()].filter(Boolean).join("\n");
+
+            // Whether any stat is displayable (in/out/cache/cost/context) — when all are
+            // empty the button falls back to a clock icon, avoiding a blank 24px.
+            const hasAnyStatValue = Boolean(
+              (tokens && (tokens.input > 0 || tokens.output > 0 || tokens.cacheRead > 0 || tokens.cacheWrite > 0))
+              || costStr
+              || ctxStr
+            );
+
+            return (
+              <button
+                type="button"
+                ref={statsBtnRef}
+                onClick={() => {
+                  // Fetch fresh stats once when opening (idle sessions have no live
+                  // state; contextUsage would be missing)
+                  if (activeTopPanel !== "session") sessionStatsRefresh?.();
+                  toggleTopPanel("session");
+                }}
+               title={tooltip || translate("session.title")}
+                 aria-label={translate("session.title")}
+                aria-pressed={activeTopPanel === "session"}
+                style={{
+                  marginLeft: "auto",
+                  flexShrink: 0, // not squeezed on narrow screens: otherwise the nowrap content overflows onto the ⋯ button to its right (percent overlapping ⋯); when space is short, clip itemsRow first (its overflowX is hidden)
+                  display: "flex", alignItems: "center", gap: isMobile ? 7 : 7,
+                  paddingLeft: isMobile ? 6 : 8,
+                  // the ⋯ button occupies the right end after it; stats no longer need
+                  // a large margin reserved for the file-panel toggle
+                  paddingRight: isMobile ? 6 : 8,
+                  height: "100%",
+                  background: activeTopPanel === "session" ? "var(--bg-selected)" : "none",
+                  borderLeft: "none", borderRight: "none", borderBottom: "none",
+                  borderTop: "none",
+                  fontSize: 11, color: "var(--text-muted)",
+                  whiteSpace: "nowrap", cursor: "pointer",
+                  overflow: "hidden", // defensive: clip itself on extremely narrow screens, never overflow onto the adjacent ⋯ button
+                  fontVariantNumeric: "tabular-nums",
+                  transition: "color 0.1s, background 0.1s",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.color = "var(--text)";
+                  // Refresh the title so inline contributors (CPU/memory) reflect the
+                  // sample taken after this row's last render.
+                  const live = inlineTooltipLines();
+                  if (live.length) e.currentTarget.title = [baseTooltip, ...live].filter(Boolean).join("\n");
+                }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = activeTopPanel === "session" ? "var(--text)" : "var(--text-muted)"; }}
+              >
+                {/* Empty-state fallback: when all stats (in/out/cache/cost/context) are empty, show a clock icon
+                    as the "session info" entry; otherwise the button is just a blank 24px area. Also shown on
+                    the compact tier / mobile when there is no context percentage. */}
+                {((rowCompact && !ctxStr) || (isMobile && contextUsage?.percent == null) || !hasAnyStatValue) ? (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" />
+                  </svg>
+                ) : null}
+                {/* Mobile tier: battery-percentage-style context indicator (dome icon +
+                    color-graded percentage, >70% yellow / >90% red). Only this one
+                    compact indicator is shown; full stats (in/out/cost/cache…) are not
+                    crammed inline — open the dialog to see them. */}
+                {isMobile && contextUsage?.percent != null && (
+                  <span style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0, color: ctxColor, animation: ctxBreathe }}>
+                    <svg width="11" height="11" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
+                      <path d="M1 9 L1 5 Q1 1 5 1 Q9 1 9 5 L9 9" /><line x1="1" y1="9" x2="9" y2="9" />
+                    </svg>
+                    <span style={{ fontWeight: 700, fontSize: 11.5 }}>{contextUsage.percent.toFixed(0)}%</span>
+                  </span>
+                )}
+                {/* Desktop compact tier (viewport 641–959px or a squeezed chat column):
+                    the context percentage is the only survivor (same as the mobile dome
+                    block, minus the icon) — the full groups flow below is desktop-nonCompact
+                    only. Without this the button renders BLANK on the compact tier: the
+                    clock fallback is gated on !ctxStr, which is exactly the case here. */}
+                {!isMobile && rowCompact && ctxStr && (
+                  <span style={{ display: "flex", alignItems: "center", flexShrink: 0, color: ctxColor, animation: ctxBreathe, fontWeight: 700, fontSize: 11.5 }}>
+                    {ctxStr}
+                  </span>
+                )}
+                {/* Density tier (plan: workspace-tools docs/pi-web-topbar-stats-density-plan.md §2 方案 E)：
+                    the whole row is ONE nowrap text flow instead of one flex item per stat. The
+                    5 flex gaps (10px each) were 50 of the row's 311px; joining the parts into a
+                    single inline flow reclaims them. in/out share one ⇅ glyph with an `a/b` pair
+                    (input/output, the conventional order — full names stay in the tooltip), and
+                    separator dots keep the groups scannable without costing a gap each.
+                    Values keep their own colour spans (context urgency + cost emphasis), so the
+                    compression costs nothing in signalling. */}
+                {!isMobile && !rowCompact && (() => {
+                  // Groups are collected first and the separator is emitted BETWEEN
+                  // rendered groups only — a plain "always prefix ·" would leave a
+                  // dangling leading dot on backends that report cache without in/out.
+                  const groups: { key: string; node: React.ReactNode }[] = [];
+                  if (tokens && (tokens.input > 0 || tokens.output > 0)) {
+                    groups.push({
+                      key: "tok",
+                      node: (
+                        <span style={{ display: "inline-flex", alignItems: "center" }}>
+                          <svg width="11" height="11" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginRight: 3 }} aria-hidden="true">
+                            <line x1="3.2" y1="8" x2="3.2" y2="2" /><polyline points="1.4 3.8 3.2 2 5 3.8" />
+                            <line x1="6.8" y1="2" x2="6.8" y2="8" /><polyline points="5 6.2 6.8 8 8.6 6.2" />
+                          </svg>
+                          {fmt(tokens.input)}/{fmt(tokens.output)}
+                        </span>
+                      ),
+                    });
+                  }
+                  if (tokens && tokens.cacheRead > 0) {
+                    groups.push({ key: "cache", node: <span>{fmt(tokens.cacheRead)}</span> });
+                  }
+                  if (costStr) {
+                    groups.push({ key: "cost", node: <span style={{ color: "var(--text)", fontWeight: 500 }}>{costStr}</span> });
+                  }
+                  if (ctxStr) {
+                    groups.push({ key: "ctx", node: <span style={{ color: ctxColor, animation: ctxBreathe }}>{ctxStr}</span> });
+                  }
+                  return (
+                    <span style={{ display: "inline-flex", alignItems: "center", whiteSpace: "nowrap" }}>
+                      {groups.map((g, i) => (
+                        <span key={g.key} style={{ display: "inline-flex", alignItems: "center" }}>
+                          {i > 0 && <span aria-hidden="true" style={{ opacity: 0.45, margin: "0 3px" }}>·</span>}
+                          {g.node}
+                        </span>
+                      ))}
+                    </span>
+                  );
+                })()}
+                {/* sessionStatsInline extension point: inline trailing indicators at the tail of
+                    the stats row (e.g. the sysmon extension's CPU/memory chips). Items must render
+                    inline content only — no block elements or nested interactive elements (this is
+                    a <button>; clicks bubble and open the session panel, which is expected). extra
+                    carries tier flags only (slot-extra data red line); narrow tiers return null so
+                    the row width stays with the context percentage. Zero items → zero render. */}
+                <ExtSlot name="sessionStatsInline" extra={{ isMobile, isCompact: rowCompact }} />
+              </button>
+            );
+          })()}
+          {/* "⋯" more/customize entry (always rendered, one entry at every size) —
+              after the session stats, at the far right */}
+          <div style={{ position: "relative", display: "flex", alignItems: "center", flexShrink: 0, height: "100%" }}>
+            <button
+              ref={moreBtnRef}
+              type="button"
+              onClick={handleMoreToggle}
+              title={translate("common.more")}
+              aria-label={translate("common.more")}
+              aria-haspopup="menu"
+              aria-expanded={moreOpen || customizeOpen}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "center",
+                height: "100%", padding: "0 10px",
+                background: moreOpen || customizeOpen ? "var(--bg-selected)" : "none",
+                borderLeft: "none", borderBottom: "none",
+                borderTop: "none",
+                borderRight: "1px solid var(--border)",
+                color: "var(--text-muted)", cursor: "pointer", flexShrink: 0,
+              }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                <circle cx="12" cy="5" r="1.6" />
+                <circle cx="12" cy="12" r="1.6" />
+                <circle cx="12" cy="19" r="1.6" />
+              </svg>
+            </button>
+          </div>
+          {/* The Debug panel entry moved into the unified topbar-order system
+              (builtin id "debug", renderTopbarItem case) — sortable / hideable /
+              overflowable via the ⋯ menu like every other top-bar item. */}          {/* File-panel toggle pinned at the far right of the top bar (top-right
+              corner); the upstream mobile toolbar originally called
+              renderMainFileToggle(true), which was lost in the custom-order refactor */}
+          {renderMainFileToggle(isMobile)}
           {isMobile && sessionHasBranches && (
             <BranchNavigator
               tree={branchTree}
@@ -2619,36 +5337,149 @@ export function AppShell() {
               locked={branchSwitchLocked}
               inline
               compact
+              buttonHidden
+              containerRef={topBarRef}
+              // Panel open/close is controlled by the top-bar button (the branches item
+              // inside the ⋯ More toolbar); a merge conflict once turned this into a
+              // bare `open` (always true), leaving the panel permanently expanded
+              open={activeTopPanel === "branches"}
+              onToggle={() => toggleTopPanel("branches")}
+              hasSession={showChat}
+            />
+          )}
+          {/* Desktop branch-overflow fallback: when the branch item is squeezed out of
+              the top-bar row (into ⋯) there is no inline BranchNavigator; the ⋯ menu's
+              Branches item only toggles activeTopPanel — a hidden inline button copy
+              carries the rendering (anchored to topBarRef full-width, geometry matching
+              the shared dropdown; shows a No branches hint when the tree is empty) */}
+          {!isMobile && branchOverflowed && (
+            <BranchNavigator
+              tree={branchTree}
+              activeLeafId={branchActiveLeafId}
+              onLeafChange={handleBranchLeafChange}
+              inline
+              compact
+              buttonHidden
               containerRef={topBarRef}
               open={activeTopPanel === "branches"}
               onToggle={() => toggleTopPanel("branches")}
               hasSession={showChat}
-              hideInlineButton
             />
           )}
           {/* Top panel dropdown — shared, only one active at a time */}
           {activeTopPanel && topPanelPos && (
-            <div style={{
-              position: "fixed",
-              top: topPanelPos.top,
-              left: topPanelPos.left,
-              width: topPanelPos.width,
-              maxHeight: `calc(100dvh - ${topPanelPos.top}px)`,
-              overflowY: "auto",
-              zIndex: 500,
-            }}>
+            <div
+              data-topbar-dropdown
+              style={{
+                position: "fixed",
+                top: topPanelPos.top,
+                left: topPanelPos.left,
+                width: topPanelPos.width,
+                maxHeight: `calc(100dvh - ${topPanelPos.top}px)`,
+                overflowY: "auto",
+                zIndex: 500,
+              }}
+            >
+              {activeTopPanel === "language" && (
+                <div
+                  ref={selectionMenuRef}
+                  role="menu"
+                  aria-label={translate("common.language")}
+                  style={{
+                    background: "var(--bg-panel)",
+                    borderLeft: "1px solid var(--border)",
+                    borderRight: "1px solid var(--border)",
+                    borderBottom: "1px solid var(--border)",
+                    overflow: "hidden",
+                    padding: 4,
+                  }}
+                >
+                  {supportedLocales.map((plugin) => (
+                    <button
+                      key={plugin.id}
+                      type="button"
+                      onClick={() => {
+                        setLocale(plugin.id as typeof locale);
+                        languageBtnRef.current?.focus();
+                        setActiveTopPanel(null);
+                      }}
+                      role="menuitemradio"
+                      aria-checked={locale === plugin.id}
+                      style={{
+                        display: "flex", alignItems: "center",
+                        width: "100%", height: 34, padding: "0 10px",
+                        border: "none", borderRadius: 4,
+                        background: locale === plugin.id ? "var(--bg-selected)" : "transparent",
+                        color: "var(--text)", cursor: "pointer", textAlign: "left", fontSize: 12,
+                        transition: "background 0.1s",
+                      }}
+                      onMouseEnter={(e) => {
+                        if (locale !== plugin.id) e.currentTarget.style.background = "var(--bg-hover)";
+                      }}
+                      onMouseLeave={(e) => {
+                        if (locale !== plugin.id) e.currentTarget.style.background = "transparent";
+                      }}
+                    >
+                      <span>{plugin.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {activeTopPanel === "theme" && (
+                <div
+                  ref={selectionMenuRef}
+                  role="menu"
+                  aria-label={translate("settings.appearance")}
+                  style={{
+                    background: "var(--bg-panel)",
+                    borderLeft: "1px solid var(--border)",
+                    borderRight: "1px solid var(--border)",
+                    borderBottom: "1px solid var(--border)",
+                    overflow: "hidden",
+                    padding: 4,
+                  }}
+                >
+                  {THEME_OPTIONS.map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      onClick={() => {
+                        setThemePreference(option.id);
+                        themeBtnRef.current?.focus();
+                        setActiveTopPanel(null);
+                      }}
+                      role="menuitemradio"
+                      aria-checked={preference === option.id}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 8,
+                        width: "100%", minHeight: 34, padding: "0 10px",
+                        border: "none", borderRadius: 4,
+                        background: preference === option.id ? "var(--bg-selected)" : "transparent",
+                        color: "var(--text)", cursor: "pointer", textAlign: "left", fontSize: 12,
+                        transition: "background 0.1s",
+                      }}
+                      onMouseEnter={(event) => {
+                        if (preference !== option.id) event.currentTarget.style.background = "var(--bg-hover)";
+                      }}
+                      onMouseLeave={(event) => {
+                        if (preference !== option.id) event.currentTarget.style.background = "transparent";
+                      }}
+                    >
+                      <ThemeIcon preference={option.id} size={16} />
+                      <span>{translate(option.label)}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
               {activeTopPanel === "agents" && activeSessionFamily && selectedSession && (
                 <AgentSessionPanel
                   rootSession={activeSessionFamily.root}
                   subagents={activeSessionFamily.subagents}
                   selectedSessionId={selectedSession.id}
                   runningSessionIds={runningSessionIds}
-                  // A pick closes the switcher, so the strip (where it shows) takes over at once.
-                  onSelectSession={(session) => {
-                    setActiveTopPanel(null);
-                    handleSelectSession(session);
-                    requestAnimationFrame(() => focusIfLost(document, agentsButtonRef.current));
-                  }}
+                  // [fork] A pick switches sessions but keeps the Agents panel open — the fork's
+                  // switcher is for hopping between agents without losing the list.
+                  onSelectSession={handleSelectSession}
                   openSubagentTabIds={openSubagentTabIds}
                   onToggleSubagentTab={handleToggleSubagentTab}
                   onNewSideChat={() => handleNewSideChat(activeSessionFamily.root.id)}
@@ -2660,6 +5491,7 @@ export function AppShell() {
                   loading={systemInfoLoading}
                   prompt={systemPrompt}
                   translate={translate}
+                  onClose={() => setActiveTopPanel(null)}
                 />
               )}
               {activeTopPanel === "tools" && (
@@ -2667,6 +5499,7 @@ export function AppShell() {
                   loading={systemInfoLoading}
                   tools={systemTools}
                   translate={translate}
+                  onClose={() => setActiveTopPanel(null)}
                 />
               )}
               {activeTopPanel === "session" && (
@@ -2675,15 +5508,81 @@ export function AppShell() {
                   borderBottom: "1px solid var(--border)",
                   boxShadow: "0 10px 28px rgba(0,0,0,0.10)",
                   padding: "12px 16px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 10,
                 }}>
+                  {/* Top bar: title + close at the top-right (sticky + panel
+                      overflow:clip — the outer dropdown is the actual scroll container,
+                      so this row stays visible and clickable while content scrolls;
+                      closing equals clicking the session-info button again) */}
+                  <div style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 8,
+                    position: "sticky",
+                    top: 0,
+                    zIndex: 3,
+                    margin: "-12px -16px 0",
+                    padding: "8px 16px 7px",
+                    background: "var(--bg-panel)",
+                    borderBottom: "1px solid var(--border)",
+                  }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text)" }}>{translate("session.infoSection")}</span>
+                    <button
+                      type="button"
+                      title={translate("i18n.close")}
+                      aria-label={translate("i18n.close")}
+                      onClick={() => setActiveTopPanel(null)}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: 22,
+                        height: 22,
+                        padding: 0,
+                        color: "var(--text-muted)",
+                        background: "var(--bg-panel)",
+                        border: "1px solid var(--border)",
+                        borderRadius: 4,
+                        cursor: "pointer",
+                        flex: "0 0 auto",
+                        transition: "color 0.12s, border-color 0.12s",
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.color = "var(--accent)";
+                        e.currentTarget.style.borderColor = "var(--accent)";
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.color = "var(--text-muted)";
+                        e.currentTarget.style.borderColor = "var(--border)";
+                      }}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                      </svg>
+                    </button>
+                  </div>
                   {sessionStats ? (() => {
+                    const formatDuration = (ms: number) => {
+                      if (ms <= 0) return "0s";
+                      const totalSec = Math.floor(ms / 1000);
+                      const h = Math.floor(totalSec / 3600);
+                      const m = Math.floor((totalSec % 3600) / 60);
+                      const s = totalSec % 60;
+                      if (h > 0) return `${h}h ${m}m`;
+                      if (m > 0) return `${m}m ${s}s`;
+                      return `${s}s`;
+                    };
                     const totalActiveMs = sessionStats.totalActiveMs ?? 0;
                     const ws = selectedSession;
                     const sessionRows = [
                        ...(sessionStats.sessionName ? [{ label: translate("session.name"), value: sessionStats.sessionName, copyField: null }] : []),
                        { label: translate("session.file"), value: sessionStats.sessionFile ?? translate("session.inMemory"), copyField: "file" as const },
                        { label: translate("session.id"), value: sessionStats.sessionId, copyField: "id" as const },
-                       ...(totalActiveMs > 0 ? [{ label: translate("session.totalActive"), value: formatActiveDuration(totalActiveMs), copyField: null }] : []),
+                       ...(totalActiveMs > 0 ? [{ label: translate("session.totalActive"), value: formatDuration(totalActiveMs), copyField: null }] : []),
                     ];
                     const projectRows = [
                       ...(ws ? [{ label: translate("session.projectDir"), value: ws.projectRoot ?? ws.cwd, copyField: "projectDir" as const }] : []),
@@ -2705,30 +5604,124 @@ export function AppShell() {
                        [translate("session.total"), sessionStats.tokens.total.toLocaleString(locale)],
                     ];
                     const ctx = contextUsage ?? sessionStats.contextUsage;
+                    const formatCompact = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(0)}k` : String(n);
+                    // Context row: percent colored by urgency, with the compact control in a
+                    // separate action column on the right — the button keeps its original 22px
+                    // square (same look/alignment as before, matching the copy buttons) and the
+                    // label sits AFTER it, so the numeric column stays right-aligned across all
+                    // rows. Same tri-state matrix as the composer/dialog buttons (i18n reuse,
+                    // zero new strings).
+                    const ctxUrg = contextUrgency(ctx?.contextWindow ? ctx.percent : null);
+                    const compactBusyColor = compactControls?.isCompacting ? "#ef4444" : compactControls?.compactQueued ? "#d97706" : ctxUrg.color;
+                    const compactTitle = compactControls?.isCompacting
+                      ? translate("chat.stopCompaction")
+                      : compactControls?.compactQueued
+                        ? translate("chat.cancelCompactQueue")
+                        : translate("chat.compactContext");
+                    const compactLabel = compactControls?.isCompacting
+                      ? translate("chat.compacting")
+                      : compactControls?.compactQueued
+                        ? translate("chat.compactQueued")
+                        : translate("chat.compact");
+                    const compactBusyBg = compactControls?.isCompacting ? "rgba(239,68,68,0.08)" : compactControls?.compactQueued ? "rgba(217,119,6,0.1)" : "transparent";
+                    const compactBtn = (compactControls?.compact && ctx?.contextWindow) ? (
+                      <button
+                        type="button"
+                        title={compactTitle}
+                        aria-label={compactTitle}
+                        onClick={() => {
+                          if (compactControls!.isCompacting) compactControls!.abort?.();
+                          else if (compactControls!.compactQueued) compactControls!.cancelQueue?.();
+                          else void compactControls!.compact?.();
+                        }}
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 6,
+                          height: 22,
+                          padding: 0,
+                          background: "transparent",
+                          border: "none",
+                          color: compactBusyColor,
+                          cursor: "pointer",
+                          flex: "0 0 auto",
+                          fontSize: 11,
+                          fontWeight: 600,
+                          lineHeight: 1,
+                          whiteSpace: "nowrap",
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.color = compactControls?.isCompacting ? "#ef4444" : compactControls?.compactQueued ? "#d97706" : "var(--text)"; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.color = compactBusyColor; }}
+                      >
+                        <span style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          width: 22,
+                          height: 22,
+                          color: "inherit",
+                          background: compactBusyBg,
+                          border: `1px solid ${compactControls?.isCompacting ? "rgba(239,68,68,0.35)" : compactControls?.compactQueued ? "rgba(217,119,6,0.4)" : "var(--border)"}`,
+                          borderRadius: 4,
+                          flex: "0 0 auto",
+                          animation: !compactControls?.isCompacting && !compactControls?.compactQueued && ctxUrg.level === "critical" ? CTX_BREATHE_CSS : undefined,
+                          transition: "color 0.12s, border-color 0.12s, background 0.12s",
+                        }}>
+                          {compactControls?.isCompacting ? (
+                            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true"><rect x="2" y="2" width="6" height="6" rx="1" fill="currentColor" /></svg>
+                          ) : compactControls?.compactQueued ? (
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
+                          ) : (
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" /><line x1="10" y1="14" x2="3" y2="21" /><line x1="21" y1="3" x2="14" y2="10" /></svg>
+                          )}
+                        </span>
+                        <span>{compactLabel}</span>
+                      </button>
+                    ) : null;
                     const extraTokenRows = [
                        ...(sessionStats.cost > 0 ? [[translate("session.cost"), `$${sessionStats.cost.toFixed(4)}`]] : []),
-                       ...(ctx?.contextWindow ? [[translate("session.context"), `${ctx.percent !== null ? `${ctx.percent.toFixed(1)}%` : "?"} / ${formatCompactCount(ctx.contextWindow)}`]] : []),
+                       ...(ctx?.contextWindow ? [[translate("session.context"), (
+                         <span key="session-context" style={{ display: "inline-flex", alignItems: "center", gap: 6, justifyContent: "flex-end" }}>
+                           <span style={{
+                             color: ctxUrg.color,
+                             fontVariantNumeric: "tabular-nums",
+                             animation: ctxUrg.level === "critical" ? CTX_BREATHE_CSS : undefined,
+                           }}>{ctx.percent !== null ? `${ctx.percent.toFixed(1)}%` : "?"}</span>
+                           <span>/ {formatCompact(ctx.contextWindow)}</span>
+                         </span>
+                       ), compactBtn]] : []),
                        // Cache hit rate = cache reads / (input + cache writes + cache reads) — the denominator covers all input-class tokens.
                        ...(sessionStats.tokens.cacheRead + sessionStats.tokens.cacheWrite > 0 && sessionStats.tokens.cacheRead + sessionStats.tokens.cacheWrite + sessionStats.tokens.input > 0
                          ? [[translate("session.cacheHitRate"), `${(sessionStats.tokens.cacheRead / (sessionStats.tokens.cacheRead + sessionStats.tokens.cacheWrite + sessionStats.tokens.input) * 100).toFixed(1)}%`]]
                          : []),
                     ];
+                    // AI-usage rows moved to extensions: auxiliary AI usage (autocomplete/
+                    // voice correction etc.) is self-rendered in the AI-input extension's
+                    // sessionStats slot item; the overall report entry lives in the
+                    // AI-usage extension's item in the same slot.
+                    // Optional third column = row action (e.g. the compact button). It owns its own
+                    // column so the value column stays right-aligned no matter how wide the action is.
                     const section = (
                       title: string,
-                      sectionRows: string[][],
+                      sectionRows: ReactNode[][],
                       valueAlign: "left" | "right" = "left",
                       compact = false,
-                    ) => (
+                    ) => {
+                      const hasAction = sectionRows.some((row) => row[2] != null);
+                      return (
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>{title}</div>
                           <div style={{
                             display: "grid",
-                            gridTemplateColumns: compact ? "max-content max-content" : "auto minmax(0, 1fr)",
+                            gridTemplateColumns: compact
+                              ? hasAction ? "max-content max-content max-content" : "max-content max-content"
+                              : hasAction ? "auto minmax(0, 1fr) max-content" : "auto minmax(0, 1fr)",
                             columnGap: compact ? 14 : 12,
                             rowGap: 4,
                             justifyContent: compact ? "start" : undefined,
+                            alignItems: hasAction ? "center" : undefined,
                           }}>
-                            {sectionRows.map(([label, value]) => (
+                            {sectionRows.map(([label, value, action]) => (
                               <div key={`${title}:${label}`} style={{ display: "contents" }}>
                                 <div style={{ color: "var(--text-dim)", whiteSpace: "nowrap" }}>{label}</div>
                                 <div style={{
@@ -2738,11 +5731,15 @@ export function AppShell() {
                                   textAlign: valueAlign,
                                   whiteSpace: valueAlign === "right" ? "nowrap" : "normal",
                                 }}>{value}</div>
+                                {hasAction ? (
+                                  <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-start", minWidth: 0 }}>{action ?? null}</div>
+                                ) : null}
                               </div>
                             ))}
                           </div>
                         </div>
                       );
+                    };
                     const copyTitleKey: Record<SessionCopyField, string> = {
                       file: "session.copyFile",
                       id: "session.copyId",
@@ -2799,7 +5796,6 @@ export function AppShell() {
                     };
                     const sessionInfoSection = (
                       <div style={{ minWidth: 0 }}>
-                         <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>{translate("session.infoSection")}</div>
                         <div style={{ display: "grid", gridTemplateColumns: "auto minmax(0, 1fr) auto", columnGap: 12, rowGap: 8, alignItems: "start" }}>
                           {sessionRows.map((row) => (
                             <div key={`session-info:${row.label}`} style={{ display: "contents" }}>
@@ -2862,6 +5858,12 @@ export function AppShell() {
                        {translate("session.load")}
                     </div>
                   )}
+                  {/* sessionStats extension point: the host only opens the slot; all
+                      items are rendered by extensions themselves — the AI-usage
+                      extension (report entry button) / the AI-input extension (other
+                      auxiliary AI usage stat rows) */}
+                  <ProviderUsagePanel currentProviderId={currentModelInfo?.provider ?? null} />
+                  <ExtSlot name="sessionStats" extra={{ locale, sessionId: selectedSession?.id ?? null }} />
                 </div>
               )}
               {activeTopPanel === "debug" && (
@@ -2876,24 +5878,160 @@ export function AppShell() {
               )}
             </div>
           )}
+        </div>
 
-        </div>
-        {agentStripMembers && activeSessionFamily && selectedSession && activeTopPanel !== "agents" && (
-          <AgentMiniStrip
-            rootSession={activeSessionFamily.root}
-            members={agentStripMembers}
-            selectedSessionId={selectedSession.id}
-            runningSessionIds={runningSessionIds}
-            onSelectSession={handleSelectSession}
-            locked={agentStripLocked}
-            onToggleLock={handleToggleAgentStripLock}
-          />
+        {/* "⋯" more dropdown: overflow buttons + customize entry (separators stay out
+            of the dropdown) */}
+        {moreOpen && moreRect && (
+          <>
+            <div style={{ position: "fixed", top: moreRect.topbarBottom, left: 0, right: 0, bottom: 0, zIndex: 120 }} onClick={() => setMoreOpen(false)} />
+            <div
+              data-topbar-dropdown
+              style={{ position: "fixed", top: moreRect.top, right: moreRect.right, zIndex: 121, minWidth: 196, maxWidth: "min(300px, calc(100vw - 16px))", maxHeight: "calc(100dvh - 8px)", overflowY: "auto", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, boxShadow: "0 6px 20px rgba(0,0,0,0.12)", padding: 4 }}
+            >
+              {overflowMenuNodes.length > 0 && (
+                <>
+                  {overflowMenuNodes}
+                  <div style={{ height: 1, background: "var(--border)", margin: "4px 0" }} />
+                </>
+              )}
+              <button
+                type="button"
+                onClick={openCustomize}
+                style={topbarMenuRowStyle}
+                onMouseEnter={menuEnter}
+                onMouseLeave={menuLeave}
+              >
+                <span style={topbarMenuIconSlotStyle}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <line x1="4" y1="21" x2="4" y2="14" />
+                  <line x1="4" y1="10" x2="4" y2="3" />
+                  <line x1="12" y1="21" x2="12" y2="12" />
+                  <line x1="12" y1="8" x2="12" y2="3" />
+                  <line x1="20" y1="21" x2="20" y2="16" />
+                  <line x1="20" y1="12" x2="20" y2="3" />
+                  <line x1="1" y1="14" x2="7" y2="14" />
+                  <line x1="9" y1="8" x2="15" y2="8" />
+                  <line x1="17" y1="16" x2="23" y2="16" />
+                </svg>
+                </span>
+                {translate("topbar.customize")}
+              </button>
+            </div>
+          </>
         )}
-        {isMobile && renderProjectTrustWarning(true)}
-        </div>
+
+        {/* Customize order/hide/separator panel */}
+        {customizeOpen && moreRect && (
+          <>
+            <div style={{ position: "fixed", top: moreRect.topbarBottom, left: 0, right: 0, bottom: 0, zIndex: 120 }} onClick={closePopovers} />
+            <div
+              style={{ position: "fixed", top: moreRect.top, right: moreRect.right, zIndex: 121, width: 300, maxWidth: "min(340px, calc(100vw - 16px))", maxHeight: "calc(100dvh - 8px)", overflowY: "auto", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, boxShadow: "0 6px 20px rgba(0,0,0,0.12)", padding: "6px 0" }}
+            >
+              <div style={{ padding: "8px 14px 6px", fontSize: 11, fontWeight: 700, color: "var(--text)", borderBottom: "1px solid var(--border)", marginBottom: 4 }}>
+                {translate("topbar.customize")}
+              </div>
+              {layout.order.map((item, idx) =>
+                item === SEPARATOR ? (
+                  <div key={`sep:${idx}`} style={{ display: "flex", alignItems: "center", gap: 4, padding: "2px 8px 2px 4px" }}>
+                    {panelMoveButtons(idx, layout.order.length)}
+                    <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, color: "var(--text-dim)", fontSize: 12, minWidth: 0 }}>
+                      <div style={{ width: 14, borderTop: "1px solid var(--border)", flexShrink: 0 }} />
+                      <span>{translate("topbar.divider")}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeSeparator(idx)}
+                      title={translate("topbar.removeDivider")}
+                      aria-label={translate("topbar.removeDivider")}
+                      style={panelSmallBtnStyle}
+                    >
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                    </button>
+                  </div>
+                ) : (
+                  (() => {
+                    const hidden = layout.hidden.includes(item);
+                    // Extension item labeling: extId:itemId → owning extension (manifest name/icon)
+                    const colonIdx = item.indexOf(":");
+                    const extId = colonIdx > 0 ? item.slice(0, colonIdx) : null;
+                    const extMeta = extId ? extMetas[extId] : null;
+                    return (
+                      <div key={item} style={{ display: "flex", alignItems: "center", gap: 4, padding: "2px 8px 2px 4px", opacity: hidden ? 0.55 : 1 }}>
+                        {panelMoveButtons(idx, layout.order.length)}
+                        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--text)", minWidth: 0 }}>
+                          {/* Real icon preview for the item (reuses inline rendering;
+                              inert blocks focus/click/screen readers) */}
+                          <div inert aria-hidden="true" style={{ width: 30, height: 26, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, pointerEvents: "none" }}>
+                            {renderTopbarItem(item, true, false, true)}
+                          </div>
+                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{topbarItemLabel(item)}</span>
+                          {hidden && <span style={{ fontSize: 10, color: "var(--text-dim)", flexShrink: 0 }}>{translate("topbar.hidden")}</span>}
+                        </div>
+                        {extMeta && (
+                          <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+                            {/* Extension icons are fully displayed in the extension-manager
+                                panel; the host renders only emoji/text markers and does not
+                                resolve extension assets (icon.svg etc. are not shown by the host) */}
+                            {extMeta.icon && typeof extMeta.icon === "string" && !extMeta.icon.endsWith(".svg") && (
+                              <span
+                                title={extMeta.name}
+                                style={{ fontSize: 11, lineHeight: 1, color: "var(--text-muted)" }}
+                              >
+                                {extMeta.icon}
+                              </span>
+                            )}
+                            {/* Unified "from an extension" marker */}
+                            <span
+                              title={translate("topbar.fromExtension")}
+                              style={{ display: "inline-flex", alignItems: "center", color: "var(--text-dim)" }}
+                            >
+                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.23 8.77c.24-.24.581-.353.917-.303.515.077.877.528 1.073 1.01a2.5 2.5 0 1 0 3.259-3.259c-.482-.196-.933-.558-1.01-1.073-.05-.336.062-.676.303-.917l1.525-1.525A2.402 2.402 0 0 1 12 1.998c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z" />
+                              </svg>
+                            </span>
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => toggleHidden(item)}
+                          title={hidden ? translate("topbar.show") : translate("topbar.hide")}
+                          aria-label={hidden ? translate("topbar.show") : translate("topbar.hide")}
+                          aria-pressed={!hidden}
+                          style={panelSmallBtnStyle}
+                        >
+                          {hidden ? (
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><line x1="1" y1="1" x2="23" y2="23" /></svg>
+                          ) : (
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>
+                          )}
+                        </button>
+                      </div>
+                    );
+                  })()
+                ),
+              )}
+              <div style={{ position: "sticky", bottom: 0, background: "var(--bg)", borderTop: "1px solid var(--border)", marginTop: 6, paddingTop: 4 }}>
+              <button type="button" onClick={addSeparator} style={panelFooterBtnStyle}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
+                {translate("topbar.addDivider")}
+              </button>
+              <button type="button" onClick={resetTopbar} disabled={layout.isDefault} style={panelFooterBtnStyle}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /></svg>
+                {translate("topbar.reset")}
+              </button>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* The self-exposure no-auth warning moved out with the tunnel-panels
+            extension (rendered via <ExtSlot name="banners" />) */}
+        <ExtSlot name="banners" />
 
         {/* Chat content */}
         <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
+          <ExtSlot name="pages" extra={{ activeCwd, onSelectSession: handleSelectSession, sessionId: selectedSession?.id ?? null, sessionName: selectedSession?.name ?? null, sessionCwd: selectedSession?.cwd ?? null }} />
           {showChat ? (
             <ChatWindow
               key={sessionKey}
@@ -2903,7 +6041,10 @@ export function AppShell() {
               initialScrollPosition={selectedSession ? sessionScrollPositionsRef.current.get(selectedSession.id) ?? null : null}
               onScrollPositionChange={handleSessionScrollPositionChange}
               sessionRunning={Boolean(selectedSession && runningSessionIds.has(selectedSession.id))}
-              newSessionCwd={effectiveNewSessionCwd}
+              newSessionCwd={targetNewSessionCwd}
+              newSessionWorkspace={newSessionWorkspace}
+              workspaceOptions={newSessionWorkspaceOptions}
+              onNewSessionWorkspaceChange={handleNewSessionWorkspaceChange}
               newSessionDraftKey={newSessionDraftKey}
               newSessionContextBar={newSessionContextBar}
               initialNewSessionChoices={selectedSession === null ? carriedNewSessionChoices : null}
@@ -2914,7 +6055,13 @@ export function AppShell() {
               onAttentionNeeded={handleAttentionNeeded}
               onSessionCreated={handleSessionCreated}
               onSessionForked={handleSessionForked}
+              onEditFromHereHandoff={handleEditFromHereHandoff}
+              onSessionIdCanonicalized={handleSessionIdCanonicalized}
+              onInitialPromptConsumed={() => setPendingQuotePrompt((prev) => (prev && prev.sessionId === selectedSession?.id ? null : prev))}
               onSideSession={handleSideSession}
+              onAskInNewChat={handleAskInNewChat}
+              initialPrompt={pendingQuotePrompt?.sessionId === selectedSession?.id ? pendingQuotePrompt?.text : undefined}
+              initialPromptImages={pendingQuotePrompt?.sessionId === selectedSession?.id ? pendingQuotePrompt?.images : undefined}
               modelsRefreshKey={modelsRefreshKey}
               chatInputRef={chatInputRef}
               onBranchDataChange={handleBranchDataChange}
@@ -2925,7 +6072,11 @@ export function AppShell() {
               onSessionStatsChange={handleSessionStatsChange}
               onSessionStatsPanelOpen={openSessionStatsPanel}
               onOpenSettings={openSettingsSection}
+              onSessionStatsRefresherRegister={handleSessionStatsRefresherRegister}
+              onCompactControlsRegister={setCompactControls}
               onContextUsageChange={handleContextUsageChange}
+              onDisplayModelChange={setCurrentModelInfo}
+              onExportQueue={(resolver) => { exportQueueDataRef.current = resolver; }}
               onOpenFile={handleOpenLinkedFile}
               onFilesUploaded={handleExplorerRefresh}
               onOpenSubagent={handleOpenSubagentTab}
@@ -2934,7 +6085,6 @@ export function AppShell() {
               onSoundToggle={onSoundToggle}
               playDoneSound={playDoneSound}
               unlockAudio={unlockAudio}
-              holdAudio={holdAudio}
             />
           ) : initialCwdStatus === "validating" ? (
             <div
@@ -2957,10 +6107,37 @@ export function AppShell() {
               </div>
               <div style={{ maxWidth: 720, fontSize: 12 }}>{initialCwdError}</div>
             </div>
+          ) : !initialSessionRestored && initialSessionId ? (
+            <div
+              role="status"
+              style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: 24, color: "var(--text-muted)", textAlign: "center" }}
+            >
+              <div style={{ fontSize: 14, color: "var(--text)" }}>{translate("workspace.openingSession")}</div>
+              {restoreStalled && (
+                <>
+                  <div style={{ maxWidth: 460, fontSize: 12 }}>{translate("workspace.openingSessionStalled")}</div>
+                  <button
+                    type="button"
+                    onClick={() => window.location.reload()}
+                    style={{ padding: "6px 18px", borderRadius: 8, border: "1px solid var(--border)", background: "transparent", color: "var(--text)", fontSize: 13, cursor: "pointer" }}
+                  >
+                    {translate("workspace.openingSessionRetry")}
+                  </button>
+                </>
+              )}
+            </div>
           ) : showPlaceholder ? (
             activeCwd ? (
               <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", fontSize: 15 }}>
                  {translate("workspace.selectSession")}
+              </div>
+            ) : noWorkspaceGuideItems.length > 0 ? (
+              // [extension] no-workspace guide takes over the fresh first screen entirely (quickstart plan):
+              // items render centered; the built-in decoration only shows when no renderable item exists.
+              <div style={{ height: "100%", width: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, overflowY: "auto" }}>
+                <div style={{ width: "min(620px, 100%)" }}>
+                  <ExtSlot name="noWorkspaceGuide" extra={{ isMobile }} />
+                </div>
               </div>
             ) : (
               <div style={{ position: "absolute", top: 12, left: 12, display: "flex", alignItems: "flex-start", gap: 8, userSelect: "none", pointerEvents: "none" }}>
@@ -3000,6 +6177,7 @@ export function AppShell() {
       <div
         ref={rightPanelResizer.panelRef}
         id="file-panel"
+        data-ext-float-dock-zone="right-panel"
         className={`right-panel-container${rightPanelOpen ? " right-panel-open" : " right-panel-closed"}${rightPanelFullWidth ? " right-panel-full-width" : ""}${rightPanelResizer.isResizing ? " right-panel-resizing" : ""}`}
         style={{
           "--right-panel-width": `${rightPanelResizer.width}px`,
@@ -3009,7 +6187,8 @@ export function AppShell() {
           background: "var(--bg)",
         } as React.CSSProperties}
       >
-        {/* Right panel tab bar */}
+        {/* Right panel tab bar — same structure as the main top bar: 36px container
+            (divider drawn with inset box-shadow, no content-area cost) */}
         <div style={{
           display: "flex",
           alignItems: "center",
@@ -3017,28 +6196,81 @@ export function AppShell() {
           height: "calc(var(--top-bar-height) + env(safe-area-inset-top))",
           paddingTop: "env(safe-area-inset-top)",
           background: "var(--bg-panel)",
-          borderBottom: "1px solid var(--border)",
+          borderBottom: "none",
+          boxShadow: "inset 0 -1px 0 var(--border)",
         }}>
           <div style={{ flex: 1, overflow: "hidden" }}>
             <TabBar
               tabs={panelTabs}
               activeTabId={activeFileTabId ?? ""}
-              onSelectTab={setActiveFileTabId}
+              revealToken={fileTabRevealToken}
+              onSelectTab={guardedSelectFileTab}
               onCloseTab={handleCloseFileTab}
+              onDetachTab={handleTabDoubleClick}
+              onOpenViewerWindow={(tab) => { openViewerWindowHost(tab.filePath, activeCwd); }}
+              onDockFileTab={handleDockFileTab}
               onReorderTab={(source, target, after) => setPanelTabOrder(movePanelTab(panelTabs.map((tab) => tab.id), source, target, after))}
             />
           </div>
+          {(() => {
+            // pathPicker capability (FolderSwitcher from the folder extension); the
+            // fallback button opens the CWD when no takeover exists.
+            const picker = pathPickerItems.find(hasExtRender);
+            if (picker) {
+              return (
+                <ExtItemBoundary extId={picker.extId} slot="pathPicker" itemId={picker.id}>
+                  <picker.render
+                    path={activeCwd ?? ""}
+                    compact
+                    onSelect={(p: string) => handleOpenFolder(p, getFileName(p))}
+                  />
+                </ExtItemBoundary>
+              );
+            }
+            return (
+              <button
+                type="button"
+                onClick={() => activeCwd && handleOpenFolder(activeCwd, getFileName(activeCwd))}
+                title={translate("files.openFolder")}
+                aria-label={translate("files.openFolder")}
+                style={{
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
+                  background: "var(--bg-selected)", border: "none", borderLeft: "1px solid var(--border)",
+                  color: "var(--text)", cursor: "pointer", flexShrink: 0, transition: "color 0.12s",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = "var(--accent)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text)"; }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
+                  <line x1="12" y1="11" x2="12" y2="17" />
+                  <line x1="9" y1="14" x2="15" y2="14" />
+                </svg>
+              </button>
+            );
+          })()}
           <button
             type="button"
             className="file-panel-expand-button"
             onClick={handleRightPanelExpandToggle}
             aria-controls="file-panel"
-            aria-pressed={rightPanelFullWidth}
-            title={translate(rightPanelFullWidth ? "files.restorePanelWidth" : "files.expandPanel")}
-            aria-label={translate(rightPanelFullWidth ? "files.restorePanelWidth" : "files.expandPanel")}
+            aria-pressed={rightPanelSizeMode !== "dock"}
+            title={translate(rightPanelSizeMode === "wide"
+              ? "files.expandPanel"
+              : rightPanelSizeMode === "full"
+                ? "files.restorePanelWidth"
+                : "files.expandPanelWide")}
+            aria-label={translate(rightPanelSizeMode === "wide"
+              ? "files.expandPanel"
+              : rightPanelSizeMode === "full"
+                ? "files.restorePanelWidth"
+                : "files.expandPanelWide")}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d={rightPanelFullWidth
+              {/* One icon for both growing steps: dock → wide → full reads as a single
+                continuous enlargement; only the restore action gets the collapse icon. */}
+              <path d={rightPanelSizeMode === "full"
                 ? "M9 3v6H3m12-6v6h6M9 21v-6H3m12 6v-6h6M3 3l6 6m12-6-6 6M3 21l6-6m12 6-6-6"
                 : "M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M3 3l6 6m12-6-6 6M3 21l6-6m12 6-6-6"} />
             </svg>
@@ -3065,46 +6297,65 @@ export function AppShell() {
           </button>
         </div>
 
-        {/* Only the active viewer is mounted. Lightweight per-tab state is restored on activation. */}
-        <div style={{ flex: 1, minHeight: 0, overflow: "hidden", paddingBottom: "env(safe-area-inset-bottom)" }}>
-          {activeFileTab?.filePath ? (
-            <FileViewer
-              key={`${fileWorkspaceGeneration}:${activeFileTab.id}:${activeFileTab.viewerRevision ?? 0}`}
-              filePath={activeFileTab.filePath}
-              cwd={activeCwd ?? undefined}
-              sourceSessionId={activeFileTab.sourceSessionId}
-              gitRefreshKey={explorerRefreshKey}
-              initialDisplayMode={activeFileTab.initialDisplayMode}
-              initialPage={activeFileTab.page}
-              initialState={activeFileTab.viewerState}
-              watchEnabled={rightPanelOpen}
-              onStateChange={(viewerState) => handleFileViewerStateChange(
-                fileWorkspaceGeneration,
-                activeFileTab.id,
-                activeFileTab.viewerRevision ?? 0,
-                viewerState,
-              )}
-              onMentionLines={rightPanelOpen ? handleFileLineMention : undefined}
-              onAtMention={handleAtMention}
-              onOpenFile={(filePath, page) => handleOpenFile(
-                filePath,
-                getFileName(filePath),
-                { sourceSessionId: activeFileTab.sourceSessionId, page },
-              )}
-            />
-          ) : !terminalTabs.some((tab) => tab.id === activeFileTabId) && !activeAgentTab ? (
-            <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim)", fontSize: 12 }}>
-               {translate("files.noneOpen")}
+        {/* [right-panel keep-alive pool] the most recent N non-terminal tabs
+            (file/folder/dock) stay mounted, hidden for inactive ones — switching
+            rebuilds nothing; after FIFO eviction tabs fall back to reload semantics
+            (see the right-dock keep-alive plan doc). Terminals use the always-mounted
+            container below. */}
+        <div ref={rightPanelContentRef} style={{ flex: 1, minHeight: 0, overflow: "hidden", paddingBottom: "env(safe-area-inset-bottom)" }}>
+          {/* [tab-detach v0.6.0] content dispatch extracted into TabBody (three branches: file/folder/dock),
+              structurally identical to the detached window — behavior-equivalent refactor; before changing
+              render semantics, use this comment as the regression baseline */}
+          {/* [Upstream #1107/#1129 fusion] agent tabs go through the SubagentViewer's dedicated mount (below), excluded from TabBody;
+              wrapper key includes fileWorkspaceGeneration: remount the content area on workspace switch, parked state (viewerState) is regained via mount initialState. */}
+          {panelTabs
+            // Merge note (#1469 side chats): "side" tabs mount via the SessionChatPanel
+            // branch below, never through TabBody's file pipeline.
+            .filter((t) => t.kind !== "terminal" && t.kind !== "agent" && t.kind !== "side")
+            .filter((t) => t.id === activeFileTabId || panelKeepAlive.includes(t.id))
+            .map((tab) => (
+              <div key={`${fileWorkspaceGeneration}:${tab.id}`} hidden={tab.id !== activeFileTabId} style={{ width: "100%", height: "100%", zoom: "var(--pi-panel-zoom, 1)" }}>
+                <TabBody tab={tab} host="panel" ctx={tabBodyCtx} />
+              </div>
+            ))}
+          {!activeTabForBody && !terminalTabs.some((tab) => tab.id === activeFileTabId) && !activeAgentTab ? (
+            <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, color: "var(--text-dim)", fontSize: 12 }}>
+               {fileTabs.length > 0
+                 ? translate("files.clickTabToOpen")
+                 : <>
+                     <span>{translate("files.noneOpen")}</span>
+                     <button
+                       type="button"
+                       onClick={handleOpenCurrentWorkspace}
+                       title={translate("files.openCwd")}
+                       style={{
+                         display: "flex", alignItems: "center", gap: 6,
+                         padding: "6px 12px",
+                         background: "var(--bg-hover)", border: "1px solid var(--border)",
+                         borderRadius: 6, color: "var(--accent)", cursor: "pointer",
+                         fontSize: 12, fontWeight: 600,
+                       }}
+                     >
+                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                         <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
+                       </svg>
+                       {translate("files.openCwd")}
+                     </button>
+                   </>}
             </div>
           ) : null}
-          {terminalTabs.map((tab) => (
+          {/* Terminal always-mounted hidden container: detached tabs are removed here —
+              they render only once in the detached window, preventing double xterm
+              instances with double SSE connections (tab-detach §5.3/§5.7) */}
+          {terminalTabs.filter((tab) => !detachedTabIds.has(tab.id)).map((tab) => (
             <div key={tab.id} hidden={tab.id !== activeFileTabId} style={{ width: "100%", height: "100%" }}>
-              <TerminalPanel
+              <TerminalPanelBridge
                 tab={tab}
                 active={rightPanelOpen && tab.id === activeFileTabId}
-                onRestart={() => setTerminalTabs((tabs) => tabs.map((item) => item.id === tab.id ? { ...item, closing: "restart" } : item))}
                 onClosed={() => handleTerminalClosed(tab)}
-                onCloseError={() => setTerminalTabs((tabs) => tabs.map((item) => item.id === tab.id ? { ...item, closing: undefined } : item))}
+                onRestart={() => handleTerminalRestart(tab.id)}
+                onCloseError={() => handleTerminalCloseError(tab.id)}
+                onOpenShellTab={(openCwd) => handleOpenTerminal(openCwd, true)}
               />
             </div>
           ))}
@@ -3129,6 +6380,10 @@ export function AppShell() {
                 if (isMobile) setRightPanelOpen(false);
                 handleSessionForked(newSessionId, session);
               }}
+              onEditFromHereHandoff={(h) => {
+                if (isMobile) setRightPanelOpen(false);
+                handleEditFromHereHandoff(h);
+              }}
               onOpenSettings={openSettingsSection}
               onToolEnd={handleToolEnd}
               onFilesUploaded={handleExplorerRefresh}
@@ -3142,6 +6397,28 @@ export function AppShell() {
         </div>
       </div>
     </div>
+    {/* [floating-dialog extension tab-detach v0.6.0] Detached windows: persistent at
+        the React top level (independent of right-panel open state / isMobile — the
+        core value of detaching is that the editor is no longer imprisoned by the
+        right panel's width). The shell sets the data-ext-float attribute family → the
+        floating-dialog extension's scan() takes over drag/resize/maximize/bring-to-
+        front/persistence; ✕ goes through the existing handleCloseFileTab guard chain
+        (file-editor dirty check); ⇲ = dockBackTab returns it to the right panel and
+        activates it. */}
+    {detachedWindows.map((w) => (
+      <DetachedTabWindow
+        key={w.id}
+        tab={w}
+        initW={detachInitGeom.w}
+        initH={detachInitGeom.h}
+        dockBackLabel={translate("files.dockBack")}
+        closeLabel={translate("i18n.close")}
+        onDockBack={() => dockBackTab(w.id)}
+        onClose={() => handleCloseFileTab(w.id)}
+      >
+        <TabBody tab={w} host="window" ctx={tabBodyCtx} />
+      </DetachedTabWindow>
+    ))}
     {settingsSection && (
       <SettingsPanel
         cwd={projectTrustCwd}
@@ -3173,6 +6450,35 @@ export function AppShell() {
         onStatus={setProjectTrust}
       />
     )}
+    {/* The tunnel-ports dialog moved out with the tunnel-panels extension (rendered
+        via <ExtSlot name="dialogs" />) */}
+    {/* Restart recovery UI is owned by the aiti-recovery extension via the dialogs
+        slot (defork B3, sole-owner); the scanning/orchestration machinery
+        (running-journal / queue-store) stays in core. */}
+    {/* Backend disconnect/restore banner: prompts "please refresh" during a backend
+        restart window (SSE broker liveness check; renders null when connected) */}
+    <BackendConnBanner />
+    <ExtSlot name="dialogs" extra={{ onSelectSession: handleSelectSession, newSessionCwd: effectiveNewSessionCwd }}
+      currentSession={selectedSession ? { id: selectedSession.id, cwd: selectedSession.cwd, name: selectedSession.name, firstMessage: selectedSession.firstMessage } : null} />
+    {exportDialogOpen && selectedSession && (
+      <ExportDialog
+        sessionId={selectedSession.id}
+        onExportQueue={async () => (exportQueueDataRef.current ? await exportQueueDataRef.current() : null)}
+        onClose={() => setExportDialogOpen(false)}
+      />
+    )}
+    {bridgedNameDialog && (
+      <SessionNameDialog
+        sessionId={bridgedNameDialog.sessionId}
+        defaultName={bridgedNameDialog.defaultName}
+        onClose={() => setBridgedNameDialog(null)}
+        onSaved={(name) => handleBridgedNameSaved(bridgedNameDialog.sessionId, name)}
+      />
+    )}
+    {/* Host-unified toast rendering (pi-web.toast service queue; top-right,
+        auto-dismisses) */}
+    <HostToastHost />
     </>
+    </ExtSlotsProvider>
   );
 }

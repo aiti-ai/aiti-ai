@@ -1,0 +1,31 @@
+{
+  "name": "@aiti-ai/aiti-ai-usage",
+  "version": "0.1.8",
+  "type": "module",
+  "homepage": "https://aiti.pw/extensions/session-manager.html",
+  "description": "AI token usage statistics — multi-dimensional reports by workspace/provider/model/key/time-slot, pivot over any dimension combination + sankey diagram + CSV export, event-driven with zero polling, standalone SQLite storage",
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "build:server": "esbuild server/ingest-worker.ts --bundle --platform=node --format=esm --outfile=dist/ingest-worker.mjs --log-level=warning",
+    "watch": "vite build --watch --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "soul": "用量不是账单来了才知道——每一枚 token 都该有去向。",
+  "aitiConfigs": {
+    "configFiles": []
+  },
+  "aitiExtProtocol": "1.0",
+  "license": "MIT",
+  "contentHash": "a7e9c3c22a03432a",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-ai-usage"
+  },
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  }
+}

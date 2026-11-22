@@ -17,27 +17,19 @@
  * rest; in each band the projects without a place come first.
  */
 
-import { getSessionFamily, listSessionFamilies, type SessionFamily } from "./session-family";
-import { storedProjectName, type ProjectMovePosition, type SessionUiFamilyState, type SessionUiState } from "./session-ui-state-shared";
-import type { SessionInfo } from "./types";
-import { workspaceKeyOf } from "./workspace-memory";
+import { getSessionFamily, listSessionFamilies, type SessionFamily } from "./session-family.ts";
+import { storedProjectName, type ProjectMovePosition, type SessionUiFamilyState, type SessionUiState } from "./session-ui-state-shared.ts";
+import type { SessionInfo } from "./types.ts";
+import { workspaceKeyOf } from "./workspace-memory.ts";
 
 export type SidebarLayout = "desktop" | "mobile";
 export type SidebarRowKind =
   | "pinned-header" | "session" | "pinned-more" | "group" | "group-more" | "group-empty"
   | "spacer" | "footer-open" | "footer-archived" | "archive-group";
 
-/**
- * Per-kind row heights: one rhythm. Session rows, the section headers (a
- * project's, the pinned section's, the archive's projects), the empty
- * group's note and the footer are one height, 28px (44px on a phone, a
- * finger's minimum for the rows); only "show more" is a step shorter. A
- * spacer opens the list and parts the pinned section from the groups, one
- * group from the next and the groups from the footer.
- */
 export const SIDEBAR_ROW_HEIGHTS: Record<SidebarLayout, Record<SidebarRowKind, number>> = {
-  desktop: { "pinned-header": 28, session: 28, "pinned-more": 26, group: 28, "group-more": 26, "group-empty": 28, spacer: 8, "footer-open": 28, "footer-archived": 28, "archive-group": 28 },
-  mobile: { "pinned-header": 44, session: 44, "pinned-more": 36, group: 44, "group-more": 36, "group-empty": 44, spacer: 8, "footer-open": 44, "footer-archived": 44, "archive-group": 44 },
+  desktop: { "pinned-header": 26, session: 32, "pinned-more": 26, group: 28, "group-more": 26, "group-empty": 30, spacer: 8, "footer-open": 30, "footer-archived": 30, "archive-group": 26 },
+  mobile: { "pinned-header": 30, session: 44, "pinned-more": 36, group: 40, "group-more": 36, "group-empty": 40, spacer: 8, "footer-open": 44, "footer-archived": 44, "archive-group": 30 },
 };
 export const GROUP_VISIBLE_LIMIT = 6;
 export const PINNED_VISIBLE_LIMIT = 8;
@@ -57,12 +49,12 @@ export interface SidebarFamilyStatus { running: boolean; awaiting: boolean; unre
 // input counts as awaiting, not running.
 export type SidebarRow =
   | { kind: "pinned-header"; key: "pinned-header"; count: number; collapsed: boolean; running: number; awaiting: number; unread: number }
-  | { kind: "session"; key: string; family: SessionFamily; context: "pinned" | "group" | "archive"; project: SidebarProject; status: SidebarFamilyStatus }
-  | { kind: "pinned-more"; key: "pinned-more"; hidden: number; canShowLess: boolean; nextShown: number }
+  | { kind: "session"; key: string; family: SessionFamily; context: "pinned" | "group" | "archive"; project: SidebarProject; status: SidebarFamilyStatus; archivedAt: number | null }
+  | { kind: "pinned-more"; key: "pinned-more"; hidden: number; canShowLess: boolean }
   | { kind: "group"; key: string; project: SidebarProject; expanded: boolean; running: number; awaiting: number; unread: number }
-  | { kind: "group-more"; key: string; projectKey: string; hidden: number; canShowLess: boolean; nextShown: number }
+  | { kind: "group-more"; key: string; projectKey: string; hidden: number; canShowLess: boolean }
   | { kind: "group-empty"; key: string; project: SidebarProject }
-  | { kind: "spacer"; key: "top-spacer" | "pinned-spacer" | "footer-spacer" | `group-spacer:${string}` }
+  | { kind: "spacer"; key: string }
   | { kind: "footer-open"; key: "footer-open" }
   | { kind: "footer-archived"; key: "footer-archived"; count: number }
   | { kind: "archive-group"; key: string; project: SidebarProject; count: number; expanded: boolean };
@@ -78,10 +70,7 @@ export interface SessionTreeInput {
   selectedSessionId: string | null;
   /** projectFor(selectedCwd); shown as a group even without sessions. */
   currentProject: { key: string; root: string } | null;
-  /**
-   * Explicit user choices (from prefs) over the groups kept open for the
-   * page (effectiveGroupExpansion); see isGroupExpanded.
-   */
+  /** Explicit user choices only (from prefs); see isGroupExpanded. */
   groupExpansion: Readonly<Record<string, boolean>>;
   /** Families revealed beyond the base limit by "show more", per projectKey or PINNED_MORE_KEY. */
   moreShown: Readonly<Record<string, number>>;
@@ -184,57 +173,20 @@ export function isGroupExpanded(project: SidebarProject, groupExpansion: Readonl
 }
 
 /**
- * The groups kept open for the page once `outgoing`, the project that was
- * current, no longer is (`outgoing` as the new model has it). A group open
- * only by the "current" default would fold up at once: picking a session in
- * another group would move every row below it, the clicked one included,
- * from under the pointer. It stays open for the page's life instead, never
- * as a saved choice: saved, every project ever visited would come back open
- * after a reload. Returns `keptOpen` itself when nothing changes: an explicit
- * choice in `groupExpansion` (the saved ones), a group already kept open, a
- * pinned project (open by default anyway), a project still current, or one
- * without a group any more.
+ * Group choices once `outgoing`, the project that was current, no longer is
+ * (`outgoing` as the new model has it). A group open only by the "current"
+ * default would fold up at once: picking a session in another group would
+ * move every row below it, the clicked one included, from under the pointer.
+ * It stays open as an explicit choice instead. Returns `groupExpansion`
+ * itself when nothing changes: an explicit choice, a pinned project (open by
+ * default anyway), a project still current, or one without a group any more.
  */
 export function keepOutgoingGroupOpen(
-  keptOpen: ReadonlySet<string>,
   groupExpansion: Readonly<Record<string, boolean>>,
   outgoing: SidebarProject | undefined,
-): ReadonlySet<string> {
-  if (!outgoing || outgoing.current || outgoing.pinned) return keptOpen;
-  if (keptOpen.has(outgoing.key) || Object.hasOwn(groupExpansion, outgoing.key)) return keptOpen;
-  return new Set(keptOpen).add(outgoing.key);
-}
-
-/**
- * What the tree shows and every toggle reads: the saved choices over the
- * groups kept open for the page (keepOutgoingGroupOpen). Returns
- * `groupExpansion` itself while none is kept open. Never saved: only
- * explicit choices are.
- */
-export function effectiveGroupExpansion(
-  groupExpansion: Readonly<Record<string, boolean>>,
-  keptOpen: ReadonlySet<string>,
 ): Readonly<Record<string, boolean>> {
-  if (keptOpen.size === 0) return groupExpansion;
-  // fromEntries defines own properties, so no key can reach the prototype.
-  return Object.fromEntries([
-    ...[...keptOpen].filter((key) => !Object.hasOwn(groupExpansion, key)).map((key) => [key, true] as const),
-    ...Object.entries(groupExpansion),
-  ]);
-}
-
-/**
- * `keptOpen` without the groups an explicit choice now covers (`keys`; null
- * for a choice made for every group at once). Returns `keptOpen` itself
- * when none of them was in it.
- */
-export function forgetKeptOpenGroups(keptOpen: ReadonlySet<string>, keys: readonly string[] | null): ReadonlySet<string> {
-  if (keptOpen.size === 0) return keptOpen;
-  if (keys === null) return new Set();
-  if (!keys.some((key) => keptOpen.has(key))) return keptOpen;
-  const next = new Set(keptOpen);
-  for (const key of keys) next.delete(key);
-  return next;
+  if (!outgoing || outgoing.current || outgoing.pinned || Object.hasOwn(groupExpansion, outgoing.key)) return groupExpansion;
+  return { ...groupExpansion, [outgoing.key]: true };
 }
 
 function familyStatus(family: SessionFamily, input: FamilyFlagsInput): SidebarFamilyStatus {
@@ -316,6 +268,7 @@ function sessionRow(
   context: "pinned" | "group" | "archive",
   project: SidebarProject,
   input: FamilyFlagsInput,
+  archivedAt: number | null,
 ): SidebarRow {
   return {
     kind: "session",
@@ -324,77 +277,47 @@ function sessionRow(
     context,
     project,
     status: familyStatus(family, input),
+    archivedAt,
   };
 }
 
 /**
- * The first `limit` families, the `shown` positions "show more" opened past
- * them, and any later family that is running, unread or selected (sorted
- * order kept). Positions, not a budget: a family that turns selected, unread
- * or running inside the window keeps its place and frees nothing, so picking
- * the last revealed row never brings in an older one below it. `revealed`
- * counts the rows only the window shows (what "show less" would fold);
- * `nextShown` is the window a "show more" click opens, decided at the click:
- * SHOW_MORE_STEP more hidden families past this one (those that show anyway
- * do not use up the click), or all that are left, and a long project never
- * mounts all of its rows at once.
+ * The first `limit` families, any later one that is running, unread or
+ * selected, and the next `extra` of the others (sorted order kept). Families
+ * that show anyway do not use up `extra`, so each "show more" click reveals
+ * exactly SHOW_MORE_STEP more rows (or what is left), and a long project
+ * never mounts all of its rows at once. `revealed` counts what `extra` showed.
  */
 function visibleFamilies(
   families: readonly SessionFamily[],
   limit: number,
-  shown: number,
+  extra: number,
   input: FamilyFlagsInput,
-): { visible: SessionFamily[]; revealed: number; nextShown: number } {
-  const flagged = families.map((family, index) => {
-    if (index < limit) return false;
-    const status = familyStatus(family, input);
-    return status.running || status.unread || status.selected;
-  });
-  const end = limit + shown;
+): { visible: SessionFamily[]; revealed: number } {
   let revealed = 0;
-  const visible = families.filter((_family, index) => {
-    if (index < limit || flagged[index]) return true;
-    if (index < end) {
+  const visible = families.filter((family, index) => {
+    if (index < limit) return true;
+    const status = familyStatus(family, input);
+    if (status.running || status.unread || status.selected) return true;
+    if (revealed < extra) {
       revealed++;
       return true;
     }
     return false;
   });
-  let next = Math.max(limit, Math.min(end, families.length));
-  for (let hidden = 0; next < families.length && hidden < SHOW_MORE_STEP; next++) {
-    if (!flagged[next]) hidden++;
-  }
-  return { visible, revealed, nextShown: next - limit };
+  return { visible, revealed };
 }
 
-/** Positions "show more" has opened past the base limit for `key` (0 when none or malformed). */
+/** Families "show more" has revealed for `key` (0 when none or malformed). */
 export function shownMoreFor(moreShown: Readonly<Record<string, number>>, key: string): number {
   if (!Object.hasOwn(moreShown, key)) return 0;
   const value = moreShown[key];
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
-/** One "show more" click for `key`: the window its more row offers (`nextShown`). */
-export function showMoreFamilies(moreShown: Readonly<Record<string, number>>, key: string, nextShown: number): Record<string, number> {
-  return { ...moreShown, [key]: Math.max(shownMoreFor(moreShown, key), Math.floor(nextShown)) };
-}
-
-/**
- * `moreShown` without the windows of the groups an explicit choice folds
- * (`keys`, the groups it covers; null: every group in `choices`): a group
- * opened again shows its first rows only, not the window it had. Returns
- * `moreShown` itself when none of them had one.
- */
-export function forgetShownMoreOfFolded(
-  moreShown: Readonly<Record<string, number>>,
-  choices: Readonly<Record<string, boolean>>,
-  keys: readonly string[] | null,
-): Record<string, number> {
-  const folded = (keys ?? Object.keys(choices)).filter((key) => choices[key] === false && Object.hasOwn(moreShown, key));
-  if (folded.length === 0) return moreShown as Record<string, number>;
-  const next = { ...moreShown };
-  for (const key of folded) delete next[key];
-  return next;
+/** One "show more" click: SHOW_MORE_STEP more families for `key`. */
+export function showMoreFamilies(moreShown: Readonly<Record<string, number>>, key: string): Record<string, number> {
+  return { ...moreShown, [key]: shownMoreFor(moreShown, key) + SHOW_MORE_STEP };
 }
 
 /** "Show less": back to the base limit for `key`. */
@@ -448,8 +371,7 @@ export function buildSessionTree(input: SessionTreeInput): SessionTreeModel {
     else projectFamilies.set(key, [family]);
   }
 
-  // A spacer keeps the first section's header off the toolbar's line (#1338).
-  const rows: SidebarRow[] = [{ kind: "spacer", key: "top-spacer" }];
+  const rows: SidebarRow[] = [];
 
   // Pinned section: newest pin first; ties keep family activity order.
   if (pinnedFamilies.length > 0) {
@@ -461,13 +383,14 @@ export function buildSessionTree(input: SessionTreeInput): SessionTreeModel {
     const { running, awaiting, unread } = activityCounts(sorted, input);
     rows.push({ kind: "pinned-header", key: "pinned-header", count: sorted.length, collapsed: input.pinnedCollapsed, running, awaiting, unread });
     if (!input.pinnedCollapsed) {
-      const { visible, revealed, nextShown } = visibleFamilies(sorted, PINNED_VISIBLE_LIMIT, shownMoreFor(input.moreShown, PINNED_MORE_KEY), input);
+      const { visible, revealed } = visibleFamilies(sorted, PINNED_VISIBLE_LIMIT, shownMoreFor(input.moreShown, PINNED_MORE_KEY), input);
       for (const family of visible) {
-        rows.push(sessionRow(family, "pinned", resolver.get(familyProjectKey(family)), input));
+        rows.push(sessionRow(family, "pinned", resolver.get(familyProjectKey(family)), input, null));
       }
       const more = moreRowState(sorted.length, visible.length, revealed);
-      if (more) rows.push({ kind: "pinned-more", key: "pinned-more", ...more, nextShown });
+      if (more) rows.push({ kind: "pinned-more", key: "pinned-more", ...more });
     }
+    // Group spacers are "spacer:<projectKey>", so this key cannot collide.
     rows.push({ kind: "spacer", key: "pinned-spacer" });
   }
 
@@ -520,10 +443,7 @@ export function buildSessionTree(input: SessionTreeInput): SessionTreeModel {
     .filter((project) => !rank.has(project.key) && recordable(project))
     .map((project) => project.key);
 
-  for (const [index, project] of orderedProjects.entries()) {
-    // A gap between two groups, open or folded (#1338): headers right on the
-    // rows above them read as one list.
-    if (index > 0) rows.push({ kind: "spacer", key: `group-spacer:${project.key}` });
+  for (const project of orderedProjects) {
     const groupFamilies = projectFamilies.get(project.key) ?? [];
     const expanded = isGroupExpanded(project, input.groupExpansion);
     const { running, awaiting, unread } = activityCounts(groupFamilies, input);
@@ -533,17 +453,15 @@ export function buildSessionTree(input: SessionTreeInput): SessionTreeModel {
       if (groupFamilies.length === 0) {
         rows.push({ kind: "group-empty", key: `empty:${project.key}`, project });
       } else {
-        const { visible, revealed, nextShown } = visibleFamilies(groupFamilies, GROUP_VISIBLE_LIMIT, shownMoreFor(input.moreShown, project.key), input);
-        for (const family of visible) rows.push(sessionRow(family, "group", project, input));
+        const { visible, revealed } = visibleFamilies(groupFamilies, GROUP_VISIBLE_LIMIT, shownMoreFor(input.moreShown, project.key), input);
+        for (const family of visible) rows.push(sessionRow(family, "group", project, input, null));
         const more = moreRowState(groupFamilies.length, visible.length, revealed);
-        if (more) rows.push({ kind: "group-more", key: `more:${project.key}`, projectKey: project.key, ...more, nextShown });
+        if (more) rows.push({ kind: "group-more", key: `more:${project.key}`, projectKey: project.key, ...more });
       }
     }
+    rows.push({ kind: "spacer", key: `spacer:${project.key}` });
   }
 
-  // One spacer parts the groups from the footer, as one parts the pinned
-  // section from them.
-  if (orderedProjects.length > 0) rows.push({ kind: "spacer", key: "footer-spacer" });
   rows.push({ kind: "footer-open", key: "footer-open" });
   if (archivedCount > 0) rows.push({ kind: "footer-archived", key: "footer-archived", count: archivedCount });
 
@@ -567,8 +485,6 @@ export function nextProjectKeysToRecord(toRecord: readonly string[], sent: Reado
 /**
  * The archive view: archived families of every project, grouped by project.
  * Groups by their newest archivedAt (desc), families by archivedAt (desc).
- * A group is open unless its project key is in `collapsed` (the browser's
- * own choice, lib/sidebar-prefs.ts); folded, only its header shows.
  */
 export function buildArchiveRows(
   input: Pick<SessionTreeInput, "sessions" | "uiState" | "runningIds" | "awaitingIds" | "unreadIds" | "selectedSessionId" | "currentProject">
@@ -605,8 +521,8 @@ export function buildArchiveRows(
     const families = group.families
       .map((entry, index) => ({ ...entry, index }))
       .sort((a, b) => compareDesc(a.archivedAt, b.archivedAt) || a.index - b.index);
-    for (const { family } of families) {
-      rows.push(sessionRow(family, "archive", project, flags));
+    for (const { family, archivedAt } of families) {
+      rows.push(sessionRow(family, "archive", project, flags, archivedAt));
     }
   }
   return rows;
@@ -639,10 +555,9 @@ export function familiesToArchive(
 }
 
 /**
- * Root ids of the archived families the archive view's bulk actions take
- * (Restore all, Delete…): every archived family, or those of `projectKey`,
- * or those archived before `archivedBefore`. An archived family never runs
- * (isFamilyArchived) and always has a file.
+ * Root ids of the archived families of `projectKey` (all of them, or those
+ * archived before `archivedBefore`): an archive header's Restore all /
+ * Delete… (upstream #1351 follow-up).
  */
 export function archivedFamilyIds(
   input: Pick<SessionTreeInput, "sessions" | "uiState" | "runningIds">,
@@ -661,30 +576,6 @@ export function archivedFamilyIds(
   return ids;
 }
 
-/**
- * A project group's "Delete all sessions": root ids of every family of
- * `projectKey` that has a file, pinned and archived ones included (the
- * server deletes their subagent sessions with them), and how many families
- * it keeps because they run or wait for input: deleting one would stop its
- * run. Transient families have no file to delete.
- */
-export function familiesToDelete(
-  input: Pick<SessionTreeInput, "sessions" | "runningIds" | "awaitingIds">,
-  projectKey: string,
-): { ids: string[]; running: number } {
-  const ids: string[] = [];
-  let running = 0;
-  for (const family of listSessionFamilies(input.sessions)) {
-    if (familyProjectKey(family) !== projectKey || family.root.transient) continue;
-    if (anyMemberIn(family, input.runningIds) || (input.awaitingIds && anyMemberIn(family, input.awaitingIds))) {
-      running++;
-      continue;
-    }
-    ids.push(family.root.id);
-  }
-  return { ids, running };
-}
-
 /** Prefix sums of row heights: length rows.length + 1, offsets[0] = 0. */
 export function getRowOffsets(rows: readonly SidebarRow[], layout: SidebarLayout): number[] {
   const heights = SIDEBAR_ROW_HEIGHTS[layout];
@@ -696,45 +587,22 @@ export function getRowOffsets(rows: readonly SidebarRow[], layout: SidebarLayout
   return offsets;
 }
 
-/**
- * One project group as it is laid out: from its header row to the bottom of
- * its last row (its sessions, "show more", the empty note). `gapAbove` and
- * `gapBelow` are the spacer rows that part it from what is next to it: the
- * pinned section above the first, another group, the footer below the last.
- * Two neighbours share the spacer between them.
- */
-export interface GroupBlock { key: string; pinned: boolean; top: number; bottom: number; gapAbove: number; gapBelow: number }
+/** One project group as it is laid out: from its header row to the bottom of its spacer row. */
+export interface GroupBlock { key: string; pinned: boolean; top: number; bottom: number }
 
-/** A row that belongs to the group above it. */
-function isGroupMemberRow(row: SidebarRow): boolean {
-  return row.kind === "group-more" || row.kind === "group-empty" || (row.kind === "session" && row.context === "group");
-}
-
-/** The group blocks of `rows`, top to bottom. */
+/** The group blocks of `rows` (every group ends with its `spacer:<key>` row), top to bottom. */
 export function groupBlocks(rows: readonly SidebarRow[], offsets: readonly number[]): GroupBlock[] {
   const blocks: GroupBlock[] = [];
-  let index = 0;
-  while (index < rows.length) {
+  let open: GroupBlock | null = null;
+  for (let index = 0; index < rows.length; index++) {
     const row = rows[index];
-    if (row.kind !== "group") {
-      index++;
-      continue;
+    if (row.kind === "group") {
+      open = { key: row.project.key, pinned: row.project.pinned, top: offsets[index], bottom: offsets[index + 1] };
+      blocks.push(open);
+    } else if (open && row.kind === "spacer" && row.key === `spacer:${open.key}`) {
+      open.bottom = offsets[index + 1];
+      open = null;
     }
-    let above = index;
-    while (above > 0 && rows[above - 1].kind === "spacer") above--;
-    let end = index + 1;
-    while (end < rows.length && isGroupMemberRow(rows[end])) end++;
-    let below = end;
-    while (below < rows.length && rows[below].kind === "spacer") below++;
-    blocks.push({
-      key: row.project.key,
-      pinned: row.project.pinned,
-      top: offsets[index],
-      bottom: offsets[end],
-      gapAbove: offsets[index] - offsets[above],
-      gapBelow: offsets[below] - offsets[end],
-    });
-    index = end;
   }
   return blocks;
 }
@@ -742,6 +610,8 @@ export function groupBlocks(rows: readonly SidebarRow[], offsets: readonly numbe
 /** Where a dragged group would go: next to `anchorKey`, with its drop line at `lineY` (content coordinates). */
 export interface GroupDrop { anchorKey: string; position: ProjectMovePosition; lineY: number }
 
+/** Spacer rows are 8px: the drop line sits in the middle of one. */
+const DROP_LINE_INSET = 4;
 /** The line's 6px dot is centred on it: this low, at the top of the list, it is still whole. */
 const DROP_LINE_MIN_Y = 3;
 
@@ -753,9 +623,7 @@ const DROP_LINE_MIN_Y = 3;
  * before the first other block whose middle is below `y`. Null when that is
  * where it already is, or the band has no other group. Works from the rows
  * and offsets alone: collapsed groups, "show more" and rows not mounted
- * count as laid out. The line sits in the middle of the spacer it marks
- * (between two groups, after the pinned section or before the footer), and
- * never so high that its dot leaves the list.
+ * count as laid out.
  */
 export function groupDropAt(blocks: readonly GroupBlock[], draggedKey: string, y: number): GroupDrop | null {
   const dragged = blocks.find((block) => block.key === draggedKey);
@@ -766,8 +634,7 @@ export function groupDropAt(blocks: readonly GroupBlock[], draggedKey: string, y
   if (others.length === 0) return null;
   const to = others.filter((block) => (block.top + block.bottom) / 2 < y).length;
   if (to === from) return null;
-  const last = others[others.length - 1];
-  const lineY = Math.max(DROP_LINE_MIN_Y, to < others.length ? others[to].top - others[to].gapAbove / 2 : last.bottom + last.gapBelow / 2);
+  const lineY = Math.max(DROP_LINE_MIN_Y, to < others.length ? others[to].top - DROP_LINE_INSET : others[others.length - 1].bottom - DROP_LINE_INSET);
   return to > 0
     ? { anchorKey: others[to - 1].key, position: "after", lineY }
     : { anchorKey: others[0].key, position: "before", lineY };
@@ -931,7 +798,6 @@ export function revealScrollTop(
   if (!Number.isInteger(index) || index < 0 || index >= offsets.length - 1) return null;
   const top = offsets[index];
   const bottom = offsets[index + 1];
-  if (block === "start") return top === scrollTop ? null : top;
   if (top >= scrollTop && bottom <= scrollTop + viewportHeight) return null;
   if (block === "nearest" && bottom > scrollTop && top < scrollTop + viewportHeight) {
     return top < scrollTop || bottom - top > viewportHeight ? top : bottom - viewportHeight;

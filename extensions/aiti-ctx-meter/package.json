@@ -1,0 +1,21 @@
+{
+  "name": "@aiti-ai/aiti-ctx-meter",
+  "version": "0.1.13",
+  "description": "Input-area context ratio-bar indicator — desktop compactLead vertical bar + small-screen modelInfoLead leading slot, four-tier urgency color scale + critical breathing, click opens the host session stats panel",
+  "soul": "上下文还剩多少，看一眼电池就知道。",
+  "scripts": {
+    "build:client": "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});fs.copyFileSync('client/src/aiti-ctx-meter-client.mjs','dist/aiti-ctx-meter-client.mjs')\""
+  },
+  "aitiExtProtocol": "1.0",
+  "license": "MIT",
+  "contentHash": "b129acab81e97a46",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-ctx-meter"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  }
+}

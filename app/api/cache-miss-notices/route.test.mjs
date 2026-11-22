@@ -8,9 +8,21 @@ import { createJiti } from "jiti";
 const agentDir = await mkdtemp(path.join(os.tmpdir(), "pi-web-cache-miss-notices-route-"));
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 process.env.PI_CODING_AGENT_DIR = agentDir;
+// The pi-web host injects API_ALLOW_ORIGINS=* (and PI_WEB_BASE_DOMAIN etc.) into
+// child sessions; that widens isApiRequestAllowed and breaks the security
+// assertions below. Tests must run from the zero-config baseline.
+const savedHostEnv = {};
+for (const key of ["API_ALLOW_ORIGINS", "PI_WEB_BASE_DOMAIN", "PI_WEB_ALLOWED_HOSTS", "PI_WEB_HOSTNAME"]) {
+  savedHostEnv[key] = process.env[key];
+  delete process.env[key];
+}
 test.after(async () => {
   if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
   else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+  for (const [key, value] of Object.entries(savedHostEnv)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
   await rm(agentDir, { recursive: true, force: true });
 });
 

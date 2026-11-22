@@ -1,0 +1,24 @@
+{
+  "name": "@aiti-ai/aiti-codebuddy-agent",
+  "version": "0.1.7",
+  "description": "Tencent CodeBuddy Code CLI (cbc) driver — stream long connection (default) + exec fallback dual mode + --resume into All Sessions, control_request three channels, API-key env login",
+  "soul": "腾讯 CodeBuddy 会话，哪儿都能接上聊。",
+  "scripts": {
+    "build:client": "true"
+  },
+  "aitiExtProtocol": "1.0",
+  "dependencies": {
+    "@aiti-ai/ext-shared": "^0.1.12"
+  },
+  "license": "MIT",
+  "contentHash": "77c6587eb2e62a50",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-codebuddy-agent"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  }
+}

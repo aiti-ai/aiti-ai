@@ -1,12 +1,42 @@
-# Pi Web
+# AITI Web
 
-[中文文档](./docs/README.zh-CN.md) | [日本語](./docs/README.ja.md) | [Русский](./docs/README.ru.md)
+[中文文档](https://github.com/aiti-ai/aiti-ai/blob/main/docs/README.zh-CN.md) | [日本語](https://github.com/aiti-ai/aiti-ai/blob/main/docs/README.ja.md) | [Русский](https://github.com/aiti-ai/aiti-ai/blob/main/docs/README.ru.md)
 
-Local browser UI for the [pi coding agent](https://github.com/earendil-works/pi). Pi Web uses the same local configuration and session files as pi, so you can browse and resume conversations, run agent turns, configure models and resources, and inspect project files from a browser.
+**AITI Web** (`@aiti-ai/pi-web`) is a browser workbench for the [pi coding agent](https://github.com/earendil-works/pi) — and the base of the [aiti](https://aiti.pw/) tooling ecosystem: page-injected debugging tools, an MCP bridge for AI agents, and a growing library of bundled extensions.
 
-**[Try the interactive demo →](https://agegr.github.io/pi-web/)** The real Pi Web UI runs entirely in your browser, with sample sessions, files and models. There is nothing to install; replies are pre-written and no model is called.
+### Why this fork?
 
-![Pi Web displaying a pi session with structured Markdown, tool calls, and project navigation](https://raw.githubusercontent.com/agegr/pi-web/main/docs/screenshot2.png)
+Upstream [pi-web](https://github.com/agegr/pi-web) is an excellent local UI for pi — but building a full
+AI development workbench needs more than a UI: an extension runtime, session tooling around git and
+queues, service tunnels for sharing local ports, page-level debugging injection, and deep
+AI ↔ page ↔ IDE collaboration. Upstream's architecture didn't leave room for those layers, so this
+fork ships them as **63+ bundled extensions** that come with the package — `npm i -g @aiti-ai/pi-web`
+and the whole workbench is there, no per-extension installs.
+
+The engine stays pi (shared JSONL sessions, same local configuration), so everything upstream
+documents still applies.
+
+The origin story is worth a read: two 15-year-old projects — [TestAgent](https://aiti.pw/extensions/aiti-testagent.html), a Java runtime debugger, and [JustDB](https://justdb.ai), a database IDE — met the AI era, daily development moved onto pi-web, feature by feature it drifted from upstream, and aiti began as its own distribution. Built for real daily use first (commute-time coding, spare-device development, making every spare token count): full story at [aiti.pw/guide/origin.html](https://aiti.pw/guide/origin.html). Docs, the product map, and the story behind the fork live at
+[aiti.pw](https://aiti.pw/) ([source](https://github.com/aiti-ai/aiti-docs)).
+
+[中文文档](https://github.com/aiti-ai/aiti-ai/blob/main/docs/README.zh-CN.md) covers the same in Chinese.
+
+![AITI Web displaying a pi session with structured Markdown, tool calls, and project navigation](https://raw.githubusercontent.com/agegr/pi-web/main/docs/screenshot2.png)
+
+### What's bundled (highlights)
+
+The upstream UI remains; everything below ships as bundled extensions you get out of the box.
+
+- **Sessions & queues** — `session-manager` (cross-project All Sessions manager: kanban, tags, archives, full-text search, fork tooling), `queue-keeper` (edit/export/import/cut-in-line for queued messages), `aiti-recovery` (restart-recovery wizard for interrupted sessions), `aiti-draft-keeper`, `aiti-session-cards` (approval/permission cards)
+- **Git toolchain** — `aiti-git-ops` (commit graph, AI-grouped commit plans with rollback, worktrees, branch panel), `aiti-git-review` (Monaco diff workspace with line annotations and AI pre-review), `aiti-git-trace` (AI change tracking timeline)
+- **Page-injected debugging (aiti-devtools)** — AI debugging inside any local web app: FAB/HUD, an 8-domain 42-command CDP-like command set, Inspector, and the MCP bridge that lets AI agents talk to the page
+- **Multi-agent backends** — Claude Code, Codex, Cursor, CodeBuddy, Qoder, ZCode, OpenCode, Kimi, Gemini, Copilot, iFlow and more (CLI + ACP drivers), with unified login management, sub-agent fleets, and a custom-agent registry
+- **Models & usage** — model wizard (catalog search, multi-key rotation, aggregation), availability probing with 429 detection, provider balance/usage reports
+- **Ops infrastructure** — `service-tunnels` (expose local ports over DNS/tunnels with auth), extension manager with an online registry, config versioning + crash self-check, backups, event bus, VNC UI environments, mail, IM channels, docs center
+- **Reading & interaction** — message intelligence (click-to-quote, scroll nav, anchors), speech in/out, floating dialogs, context meter, prompt library, plan-first workflow, document viewers (docx/xlsx/pdf/pptx), and ~40 more
+
+Beyond the workbench, the [aiti ecosystem](https://aiti.pw/) adds page-injection SDKs for Vite/Vue/Next/React/Svelte, Chrome & IDE extensions, and MCP bridge/server so any AI agent can reach the IDE window — plus one-command Docker images (core/full).
+
 
 ## Features
 
@@ -22,7 +52,7 @@ Local browser UI for the [pi coding agent](https://github.com/earendil-works/pi)
 Pi Web requires Node.js 22.19.0 or newer. Check your version with `node --version`, then run:
 
 ```bash
-npx @agegr/pi-web@latest
+npx @aiti-ai/pi-web@latest
 ```
 
 The CLI opens a browser after the server is ready. If it does not, open [http://127.0.0.1:30141](http://127.0.0.1:30141). Pi Web listens only on `127.0.0.1` by default.
@@ -32,7 +62,7 @@ If no model provider is configured yet, open the **Models** panel to sign in or 
 To install the `pi-web` command globally:
 
 ```bash
-npm install -g @agegr/pi-web@latest
+npm install -g @aiti-ai/pi-web@latest --allow-scripts
 pi-web
 ```
 
@@ -46,7 +76,7 @@ pi-web open [--port N]  # open a running server in the browser
 pi-web update [--check] # update a global npm install
 ```
 
-To update, run `pi-web stop`, then `pi-web update` (or run the same install command again). To uninstall, run `npm uninstall -g @agegr/pi-web`.
+To update, run `pi-web stop`, then `pi-web update` (or run the same install command again). To uninstall, run `npm uninstall -g @aiti-ai/pi-web`.
 
 ## Configuration
 
@@ -89,7 +119,7 @@ With many chats, terminals or file previews active at once, plain HTTP limits th
 
 ### Docker
 
-Each release publishes an image to `ghcr.io/agegr/pi-web`. See [Running Pi Web in Docker](./docs/docker.md) for it, the Compose example and which volumes to keep.
+Each release publishes an image to `ghcr.io/aiti-ai/aiti-ai` (Docker Hub `aitiai/pi-web` and Aliyun ACR for the core/full variants). See [Running Pi Web in Docker](./docs/docker.md) for it, the Compose example and which volumes to keep.
 
 ### HTTP Proxy
 
@@ -101,7 +131,7 @@ On macOS or Linux:
 HTTP_PROXY=http://127.0.0.1:7890 \
 HTTPS_PROXY=http://127.0.0.1:7890 \
 NO_PROXY=localhost,127.0.0.1 \
-npx @agegr/pi-web@latest
+npx @aiti-ai/pi-web@latest
 ```
 
 On Windows PowerShell:
@@ -110,7 +140,7 @@ On Windows PowerShell:
 $env:HTTP_PROXY = "http://127.0.0.1:7890"
 $env:HTTPS_PROXY = "http://127.0.0.1:7890"
 $env:NO_PROXY = "localhost,127.0.0.1"
-npx @agegr/pi-web@latest
+npx @aiti-ai/pi-web@latest
 ```
 
 ## Notes
@@ -119,8 +149,86 @@ npx @agegr/pi-web@latest
 - **Filesystem access**: Pi Web must be able to read the agent data directory and the working directories recorded by its sessions. Run Pi Web in the same filesystem environment as pi when sharing existing sessions.
 - **Shared configuration**: the Models panel uses pi's model, settings, and credential storage, so changes are visible to both interfaces. An open session applies a saved edit of its model when you select the model again.
 - **File access boundary**: the file browser is limited to working directories selected in Pi Web and project or session roots it already knows about; it is not a general filesystem browser.
-- **Git worktrees**: see [Worktrees in Pi Web](./docs/worktrees.md) for switcher visibility, worktree creation, and removal behavior.
+- **Git worktrees**: see [Worktrees in Pi Web](https://github.com/aiti-ai/aiti-ai/blob/main/docs/worktrees.md) for switcher visibility, worktree creation, and removal behavior.
 - **Integration hooks**: apps that embed Pi Web can replace the session row's context menu, and server-side pi extensions can keep a session from idle shutdown; see [Integration Hooks](./docs/integrations.md).
+
+### Bundled pi plugins
+
+On first startup, Pi Web registers three first-party pi plugins in your pi settings
+(`~/.pi/agent/settings.json` → `packages`, pinned versions from `pi-plugins.manifest.json`)
+and installs them into pi's managed npm directory (`~/.pi/agent/npm`) via pi's own package
+manager:
+
+- `@aiti-ai/pi-models-combo` — model aggregation and multi-key rotation
+- `@aiti-ai/pi-git-trace` — AI change tracing in git
+- `@aiti-ai/pi-web-bridge` — pi ↔ aiti-bridge connectivity
+
+Because the declarations live in your pi settings, the same install is loaded by the pi
+TUI, Pi Web sessions and spawned pi CLI sessions alike — one install, every surface.
+Subsequent startups skip npm entirely (a fingerprint ledger makes it a no-op); npm runs
+again only when a Pi Web upgrade changes the pinned versions. The install streams progress
+to the terminal and never blocks startup: if it fails (offline, registry unreachable) the
+declarations persist and pi retries the install on its next start.
+
+The provisioner never touches package entries it did not add (an entry resolving to the
+same package name is left alone, in any version or local-path form), and an entry you
+removed via `pi remove` is not re-added until the next Pi Web upgrade. To opt out
+entirely, set `AITI_SKIP_PI_PLUGINS=1`; `AITI_PI_PLUGINS_REGISTRY` overrides the npm
+registry for the installs. `@aiti-ai/pi-plan-sandbox` is in development and ships in the
+manifest with `auto: false` — install it manually with
+`pi install npm:@aiti-ai/pi-plan-sandbox@0.1.7` if you want to try it.
+
+### Downstream Session Context Menu
+
+Electron wrappers and other downstream integrations can provide a session-row
+context menu without patching `SessionSidebar`. Listen for the cancelable
+`pi-web:session-row-contextmenu` browser event and call `preventDefault()`
+synchronously when the integration will handle it:
+
+```js
+window.addEventListener("pi-web:session-row-contextmenu", (event) => {
+  event.preventDefault();
+  const { id, path, cwd, name, clientX, clientY, refresh } = event.detail;
+
+  void openSessionMenu({ id, path, cwd, name, clientX, clientY }).then((changed) => {
+    if (changed) refresh();
+  });
+});
+```
+
+The detail object contains `id`, `path`, `cwd`, optional `name`, pointer
+coordinates, and a `refresh()` callback for actions that change the session
+list. If no listener cancels the extension event, Pi Web opens its built-in
+session menu (pin, rename, fork, mark read or unread, archive, open in new
+tab, delete) at the pointer instead of the browser's native context menu.
+The row's `⋯` button always opens the built-in menu and does not dispatch the
+event. Sessions not yet saved to disk get no built-in menu, so the native one
+still appears for them. This hook is browser-side and independent of Pi agent
+extensions.
+
+### Extension Session Liveness
+
+Server-side Pi extensions with detached work can prevent automatic idle
+session eviction through the versioned global registry:
+
+```js
+const liveness = globalThis[Symbol.for("@aiti-ai/pi-web/session-liveness/v1")];
+const release = liveness?.version === 1
+  ? liveness.register({
+      name: "my-extension",
+      sessionId,
+      sessionFile: sessionFile || undefined,
+      isActive: () => detachedJobs.size > 0,
+    })
+  : () => {};
+```
+
+Register once per active extension session and call the returned idempotent
+`release` function on session shutdown, replacement, or reload. `isActive`
+must be synchronous, cheap, and scoped to the supplied exact session id or
+file. Provider errors fail safe by preserving that session. This lease only
+affects automatic idle eviction; explicit shutdown and Stop fallback cleanup
+still take precedence.
 
 ## Development
 
@@ -139,9 +247,9 @@ npm run lint
 
 Do not run `next build` or `npm run build` during normal development. It writes to `.next/` and can interfere with the development server; leave builds for release work.
 
-Before starting on a feature, read [Contributing](./CONTRIBUTING.md) for what is in scope and the pull request checklist.
+Before starting on a feature, read [Contributing](https://github.com/aiti-ai/aiti-ai/blob/main/CONTRIBUTING.md) for what is in scope and the pull request checklist.
 
-Contributor guides: [Internationalization](./docs/i18n.md) and [Release process](./docs/release.md).
+Contributor guides: [Internationalization](https://github.com/aiti-ai/aiti-ai/blob/main/docs/i18n.md) and [Release process](https://github.com/aiti-ai/aiti-ai/blob/main/docs/release.md).
 
 ## Repository Layout
 
@@ -156,8 +264,8 @@ docs/            Focused user and contributor guides
 demo/            Static browser demo published to GitHub Pages (see demo/README.md)
 ```
 
-See [AGENTS.md](./AGENTS.md) for the architecture notes, API routes and topic notes.
+See **[ARCHITECTURE.md](https://github.com/aiti-ai/aiti-ai/blob/main/ARCHITECTURE.md)** for the full architecture map — including the bundled extension structure (anatomy, kinds, registration slots, loading & priority, runtime-dependency reconcile) — and [AGENTS.md](https://github.com/aiti-ai/aiti-ai/blob/main/AGENTS.md) for development notes.
 
 ## License
 
-[MIT](./LICENSE)
+[MIT](https://github.com/aiti-ai/aiti-ai/blob/main/LICENSE)

@@ -1,0 +1,23 @@
+# aiti-docker-rebuild.service / .timer — daily image rebuild + smoke (CI scaffolding, design §6-6)
+#
+# Install (local scheduled rebuild; not enabled by default — run as needed):
+#   sudo cp docker/systemd/aiti-docker-rebuild.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now aiti-docker-rebuild.timer
+# Status / logs:
+#   systemctl list-timers aiti-docker-rebuild.timer
+#   journalctl -u aiti-docker-rebuild.service -n 50
+
+[Unit]
+Description=aiti docker image daily rebuild + smoke
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=%i
+# Local (CN network) uses mirrors; GitHub and other non-CN CI omit this env (official sources directly)
+Environment=AITI_CN=1
+# The private registry is a temporary testing channel: delete this line once @aiti-ai/* is on public npm (fill in the URL as needed)
+Environment=AITI_PRIVATE_REGISTRY=<private-registry-url>
+ExecStart=/home/pi/workspace/aiti-ai/docker/scripts/rebuild-and-smoke.sh core full
+TimeoutStartSec=4h

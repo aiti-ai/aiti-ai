@@ -2,8 +2,8 @@ import { lstatSync, mkdirSync, readlinkSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import type { McpExposure } from "@earendil-works/pi-coding-agent";
 import lockfile from "proper-lockfile";
-import { writeFileExactModeAtomicSync } from "./atomic-file";
-import { serializeByKey } from "./key-serializer";
+import { writeFileExactModeAtomicSync } from "./atomic-file.ts";
+import { serializeByKey } from "./key-serializer.ts";
 import {
   globalMcpConfigPath,
   isMcpOverrideEntry,
@@ -12,7 +12,7 @@ import {
   PROJECT_MCP_CONFIG_MAX_BYTES,
   projectMcpConfigCreatePath,
   readResolvedConfigFile,
-} from "./mcp-config-read";
+} from "./mcp-config-read.ts";
 
 // Pi Web's `mcp.json` writer (ADR 0006, "Writes"). The SDK's editors
 // (`dist/extensions/mcp/config.js` add/update/removeMcpServerConfig, which the
@@ -41,6 +41,9 @@ export type McpConfigFileTarget =
 export interface McpServerConfigPatch {
   enabled?: boolean;
   exposure?: McpExposure;
+  /** Per-tool model-visibility filter honored by pi-mcp-adapter (`isToolAllowed` at registration).
+   *  `[]`/null removes the key (no exclusions); names are matched against the adapter's tool names. */
+  excludeTools?: string[] | null;
 }
 
 export type McpConfigWriteReason =
@@ -147,6 +150,22 @@ export function patchMcpServerEntry(entry: Record<string, unknown>, patch: McpSe
       }
     } else if (entry.exposure !== patch.exposure) {
       defineEntry(entry, "exposure", patch.exposure);
+      changed = true;
+    }
+  }
+  if (patch.excludeTools !== undefined) {
+    const list = Array.isArray(patch.excludeTools)
+      ? [...new Set(patch.excludeTools.map((t) => String(t).trim()).filter(Boolean))]
+      : [];
+    const current = Array.isArray(entry.excludeTools) ? entry.excludeTools.map(String) : undefined;
+    const same = current && current.length === list.length && list.every((t, i) => current[i] === t);
+    if (list.length === 0 && !keepDefaults) {
+      if (Object.hasOwn(entry, "excludeTools")) {
+        delete entry.excludeTools;
+        changed = true;
+      }
+    } else if (!same) {
+      defineEntry(entry, "excludeTools", list);
       changed = true;
     }
   }
@@ -437,6 +456,26 @@ export async function setMcpServerExposure(
     const entry = servers[name];
     if (!isRecord(entry)) return { changed: false, value: { name, outcome: "not-an-object" } };
     const changed = patchMcpServerEntry(entry, { exposure });
+    return { changed, value: { name, outcome: changed ? "changed" : "unchanged" } };
+  });
+}
+
+/**
+ * Sets a server's per-tool exclusion list (`excludeTools`), as the SDK would with
+ * `updateMcpServerConfig(path, name, { excludeTools })`. An empty list removes the
+ * key (default = every tool visible to the model). Takes effect when the adapter
+ * registers the server's tools — i.e. from the next session onward.
+ */
+export async function setMcpServerExcludedTools(
+  target: McpConfigFileTarget,
+  name: string,
+  excludeTools: string[],
+): Promise<McpConfigEditOutcome<McpEnabledOutcome<never>>> {
+  return editMcpConfigFile<McpEnabledOutcome<never>>(target, ({ servers }) => {
+    if (!servers || !Object.hasOwn(servers, name)) return { changed: false, value: { name, outcome: "missing" } };
+    const entry = servers[name];
+    if (!isRecord(entry)) return { changed: false, value: { name, outcome: "not-an-object" } };
+    const changed = patchMcpServerEntry(entry, { excludeTools });
     return { changed, value: { name, outcome: changed ? "changed" : "unchanged" } };
   });
 }

@@ -1,12 +1,12 @@
-import type { ClientAssistantMessageEvent } from "./agent-event-wire";
-import { normalizeStreamingToolCalls } from "./normalize";
+import type { ClientAssistantMessageEvent } from "./agent-event-wire.ts";
+import { normalizeStreamingToolCalls } from "./normalize.ts";
 import type {
   AgentMessage,
   AssistantContentBlock,
   AssistantMessage,
-} from "./types";
+} from "./types.ts";
 
-export type { ClientAssistantMessageEvent } from "./agent-event-wire";
+export type { ClientAssistantMessageEvent } from "./agent-event-wire.ts";
 
 export interface StreamingState {
   isStreaming: boolean;
@@ -18,6 +18,7 @@ export type StreamAction =
   | { type: "resume" }
   | { type: "snapshot"; message: AgentMessage }
   | { type: "delta"; event: ClientAssistantMessageEvent }
+  | { type: "delta-batch"; events: ClientAssistantMessageEvent[] }
   | { type: "end" };
 
 export const INITIAL_STREAMING_STATE: StreamingState = {
@@ -31,7 +32,12 @@ function updateContentBlock(
   update: (current: AssistantContentBlock | undefined) => AssistantContentBlock | null,
 ): StreamingState {
   const message = state.streamingMessage;
-  if (!message || !Number.isInteger(contentIndex) || contentIndex < 0) return state;
+  // Reject indices that point past the end of the content array. Assigning at
+  // `contentIndex > content.length` would create a sparse hole; the next
+  // `[...content]` spread densifies that hole into `undefined`, which every
+  // downstream `block.type` read then crashes on. `*_end` events carry the
+  // authoritative block, so a gap-creating `*_start` can be dropped safely.
+  if (!message || !Number.isInteger(contentIndex) || contentIndex < 0 || contentIndex > message.content.length) return state;
 
   const content = [...message.content];
   const nextBlock = update(content[contentIndex]);
@@ -144,6 +150,13 @@ export function streamReducer(
     }
     case "delta":
       return applyDelta(state, action.event);
+    case "delta-batch": {
+      // Events merged into the same frame are applied as one batch
+      // (one dispatch per chunk → one render per frame).
+      let next = state;
+      for (const event of action.events) next = applyDelta(next, event);
+      return next;
+    }
     case "end":
       return INITIAL_STREAMING_STATE;
     default:
