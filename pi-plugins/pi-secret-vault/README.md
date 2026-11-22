@@ -21,6 +21,7 @@ runtime: substitutes the real secret at tool-execution time
 - **Weak-password warnings**: `/vault add|set|capture|import` assess the value (dictionary, <8 chars, single character class, low entropy, sequences) and append `⚠ weak password (...)`, `/vault list` + `vault_list` mark weak aliases, `vault_get` adds a rotate suggestion. The pi-web dialog shows a warning banner, a weak-entry count and per-row badges.
 - **Weak values are discovered too**: structured extraction (`DB_PASSWORD=…`, JSON/YAML/header/URL), sensitive-file policy (`.env*`, `id_*`, `secret.txt`, …) and a weak-password dictionary after `密码是`/`password is`. `/secret files learn|block|off`, `/secret weak notify|auto|off`, `/secret learn [last|<file>]`.
 - **Encrypted at rest** with `~/.pi/agent/secret-vault/master.key` (0600) and atomic 0600 writes; fail-closed when the key does not match.
+- **Self-explaining tokens**: a `secret_masking` system-prompt section (shown whenever a token is mounted, or a token shape appears in the transcript) tells the model that a token may also surface in *its own* earlier messages, tool output and file contents — display, never corruption — so it keeps working instead of "repairing" the file. See [Model-side contract](#model-side-contract).
 
 This package is the **superset** of `@aiti-ai/pi-secret-mask` (same engine, shared via `@aiti-ai/secret-mask-core`): all session-level hooks are here too, plus the vault, the two AI tools, `/vault`, and a keyfile-backed store. Both packages can be installed; an events handshake makes the mask yield in the vault's favour in the same session.
 
@@ -63,6 +64,25 @@ Takes effect in new sessions. Recommended: install **one** of mask/vault globall
 | `vault_get {alias}` | The stable token `rsec_<hash8>` + a usage contract ("this token IS a working credential…"), and mounts it in the session registry. Errors are actionable (not initialized / locked / unknown alias). |
 
 There are intentionally **no** `vault_add` / `vault_set` / `vault_reveal` tools: a prompt-injected model must not be able to change or read the library.
+
+## Model-side contract
+
+Whenever a token is mounted — or any token shape shows up in the transcript — the extension injects the
+`secret_masking` system-prompt section. Besides "pass the token verbatim", it names the failure modes
+that used to make models distrust their own work:
+
+- A token may appear in the model's **own earlier messages and tool-call arguments**, in tool output and
+  in file contents it reads. That is the runtime rewriting text on its way into the context; the write
+  itself landed with the real value, so a token where plaintext was expected means it worked.
+- Tokens are deterministic (same value → same token, across turns and restarts), never randomly
+  generated garbage. Do not apologize for one, do not re-read a file to "verify" it, and never rewrite
+  the content as "clean text": writing the token again is a no-op, replacing it destroys the value.
+- A guard block (`unresolved placeholder`) means the value is not mounted *in this session* — the token
+  is still well-formed. Re-mount it with `vault_get` (or ask the user to unlock); never retype, invent
+  or substitute a token, and do not "clean" the file because of the block.
+
+The section is keyed (`secret_masking`) and shared with `@aiti-ai/pi-secret-mask`, so only the active
+package owns it in a given session.
 
 ## Storage & threat model (honest)
 

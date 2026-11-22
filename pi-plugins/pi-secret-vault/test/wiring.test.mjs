@@ -152,6 +152,7 @@ test("vault wiring: landing captures into the vault; tools and commands work", a
     const token = got.content[0].text.match(/rsec_[0-9a-f]{8}/)?.[0];
     assert.ok(token);
     assert.match(got.content[0].text, /working credential/);
+    assert.match(got.content[0].text, /normal display form/);
     const toolInput = { command: `echo ${token}` };
     assert.equal(await host.run("tool_call", { input: toolInput }, ctx), undefined);
     assert.equal(toolInput.command, `echo ${SECRET}`);
@@ -444,4 +445,27 @@ test("tool_result extract never registers encoded forms of mounted values", asyn
     // auto entry for the encoded form was registered — list is unchanged
     assert.equal(await list(), before);
   }
+});
+
+test("a stray token from another session still gets the usage contract", async () => {
+  // A token the model copied out of a foreign transcript (nothing mounted here):
+  // the section must still explain it so the model stops treating it as damage.
+  writeSettings([]);
+  // Build the token by concatenation: a literal token in this file would be rewritten by
+  // the masking layer while the test file itself is read or edited.
+  const strayToken = "rsec_" + "cf1e2d3a";
+  const cwd = join(HOME, "proj-stray");
+  mkdirSync(cwd, { recursive: true });
+  const factory = await loadExtension();
+  const host = makeHost();
+  await factory(host.pi);
+  const ctx = makeCtx(cwd);
+  await host.run("session_start", { reason: "startup" }, ctx);
+  await tick();
+
+  const sections = {};
+  await host.run("input", { text: `why did I write ${strayToken} there?`, source: "interactive" }, ctx);
+  await host.run("before_agent_start", { systemPromptOptions: { sections } }, ctx);
+  assert.match(sections.secret_masking ?? "", /normal output of the masking layer/);
+  assert.match(sections.secret_masking ?? "", /not that you broke it/);
 });
