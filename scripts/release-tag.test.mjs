@@ -53,7 +53,7 @@ test("checkNotesFile: missing / too short / TODO warn / clean pass", () => {
 
 // ---- 子进程端到端：真实 git fixture 仓 ----
 
-function makeFixtureRepo(t, version, notes = "## Highlights\n\n- Shipped the thing.\n- Fixed the other thing.\n") {
+function makeFixtureRepo(t, version, notes = "## Highlights\n\n- Shipped the thing.\n- Fixed the other thing.\n", extra = null) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "release-tag-fix-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8" });
@@ -65,6 +65,12 @@ function makeFixtureRepo(t, version, notes = "## Highlights\n\n- Shipped the thi
     fs.mkdirSync(path.join(dir, "releases"), { recursive: true });
     fs.writeFileSync(path.join(dir, "releases", `v${version}.md`), notes);
   }
+  if (extra) {
+    for (const [rel, content] of Object.entries(extra)) {
+      fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+      fs.writeFileSync(path.join(dir, rel), content);
+    }
+  }
   git("add", ".");
   git("commit", "-qm", "init");
   return dir;
@@ -75,6 +81,20 @@ test("end-to-end dry-run: clean fixture passes and prints the tag", (t) => {
   const out = execFileSync(process.execPath, [SCRIPT, "--dry-run"], { cwd: dir, encoding: "utf8" });
   assert.match(out, /tag=v0\.16\.0-aiti\.1/);
   assert.match(out, /--dry-run/);
+});
+
+test("end-to-end: missing external floors block the tag unless --skip-external", (t) => {
+  const dir = makeFixtureRepo(t, "0.16.0-aiti.1", undefined, {
+    "scripts/check-external-deps.mjs":
+      'console.error("✗ @aiti-ai/content-share — floor ^0.1.16 NOT satisfiable on npmjs");\nprocess.exit(1);\n',
+  });
+  const blocked = spawnSync(process.execPath, [SCRIPT, "--dry-run"], { cwd: dir, encoding: "utf8" });
+  assert.equal(blocked.status, 1, "a missing floor must block the tag");
+  assert.match(blocked.stderr, /external dependency floors/);
+  assert.match(blocked.stderr, /content-share/);
+  const waived = spawnSync(process.execPath, [SCRIPT, "--dry-run", "--skip-external"], { cwd: dir, encoding: "utf8" });
+  assert.equal(waived.status, 0, "--skip-external must waive the guard");
+  assert.match(waived.stderr, /waived via --skip-external/);
 });
 
 test("end-to-end: bare package.json version is refused", (t) => {

@@ -7,6 +7,7 @@
 //   node scripts/release-tag.mjs --suggest      # 只建议当前基线的下一个 -aiti.N 构建号
 //   node scripts/release-tag.mjs --force        # 工作树不干净时强行走（默认拒绝）
 //   node scripts/release-tag.mjs --skip-notes   # 豁免 release notes 文件守卫（热修场景，显式警告）
+//   node scripts/release-tag.mjs --skip-external # 豁免外部仓依赖地板校验（离线/已知缺失，显式警告）
 //
 // 版本约定（Debian/Ubuntu 后缀模型）：
 //   package.json version = "X.Y.Z-aiti.N"（fork 构建号；同上游基线重构建递增 N）
@@ -22,8 +23,8 @@
 //      TODO placeholder → soft warning; --skip-notes 豁免并显式警告）——
 //      draft via scripts/draft-release-notes.mjs
 
-import { readFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -144,6 +145,24 @@ async function main() {
     console.error(`[release-tag] ⚠ ${notes.warn}`);
   }
   if (notesContent != null) console.log(`[release-tag] notes: releases/${plan.tag}.md (${String(notesContent).split("\n").filter((l) => l.trim()).length} lines)`);
+
+  // Guard ⑥: external-repo dependency floors must already be on npmjs. Sibling repos
+  // (content-share etc.) are NOT published by this repo's workflows, so a consumer
+  // bump that lands before the provider's release only surfaces later as a raw npm
+  // ETARGET while the shared build root installs (2026-11-22 content-share incident).
+  const skipExternal = args.includes("--skip-external");
+  const checker = join(REPO, "scripts", "check-external-deps.mjs");
+  if (!skipExternal && existsSync(checker)) {
+    const r = spawnSync(process.execPath, [checker, "--target", "official"], { cwd: REPO, encoding: "utf8" });
+    if (r.status !== 0) {
+      const detail = `${r.stdout || ""}${r.stderr || ""}`.trim().split("\n").slice(-14).join("\n");
+      console.error(`[release-tag] ✗ external dependency floors are not satisfied on npmjs:\n${detail}`);
+      console.error("[release-tag] publish the owning repos first (commands above), or pass --skip-external (offline / knowingly waived)");
+      process.exit(1);
+    }
+  } else if (skipExternal) {
+    console.error("[release-tag] ⚠ external dependency floors guard waived via --skip-external");
+  }
 
   console.log(`[release-tag] version=${plan.version} → tag=${plan.tag}`);
   if (dryRun) {

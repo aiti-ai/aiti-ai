@@ -8,15 +8,17 @@
  * Release SOP: run before pushing (staging) and before dispatching the official
  * CI chain (official). Unsatisfiable floors = the consumer would 404 on install.
  *
- * Usage: node scripts/check-external-deps.mjs [--target staging|official] [--dispatch] [--json]
+ * Usage: node scripts/check-external-deps.mjs [--target staging|official|both] [--dispatch] [--json]
  *   --target staging   → the staging registry (default): $AITI_STAGING_REGISTRY,
  *                        falling back to `npm config get registry`
  *   --target official  → https://registry.npmjs.org
+ *   --target both      → staging first, then official (a green staging run alone can
+ *                        hide a floor that npmjs never received — the 2026-11-22 trap)
  *   --dispatch         → `gh workflow run` the owning repo's publish workflow for
  *                        each missing dependency (default: print the command only)
  */
 import { readdirSync, readFileSync, existsSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -35,8 +37,26 @@ const REGISTRY = { staging: STAGING_REGISTRY, official: OFFICIAL_REGISTRY };
 const args = process.argv.slice(2);
 const target = args.includes("--target") ? args[args.indexOf("--target") + 1] : "staging";
 const dispatch = args.includes("--dispatch");
+// `both` = run the check twice (staging, then official) and fail if either misses a
+// floor: the private staging mirror is always ahead of npmjs, so a staging-only green
+// result does not prove a release will install (content-share incident 2026-11-22).
+if (target === "both") {
+  const self = fileURLToPath(import.meta.url);
+  const rest = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--target") { i++; continue; }
+    if (args[i] === "both") continue;
+    rest.push(args[i]);
+  }
+  let rc = 0;
+  for (const t of ["staging", "official"]) {
+    const r = spawnSync(process.execPath, [self, "--target", t, ...rest], { stdio: "inherit" });
+    if (r.status) rc = r.status;
+  }
+  process.exit(rc);
+}
 if (!REGISTRY[target]) {
-  console.error(`unknown --target: ${target} (staging | official)`);
+  console.error(`unknown --target: ${target} (staging | official | both)`);
   process.exit(2);
 }
 const registry = REGISTRY[target];
