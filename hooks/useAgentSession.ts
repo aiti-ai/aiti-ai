@@ -299,7 +299,7 @@ export interface SlashCommandInfo {
 
 export type BuiltinSlashCommandResult =
   | { handled: false }
-  | { handled: true; message?: string; error?: string; action?: "openSessionStats" | "openSettings" | "compact" | "openSideChat" };
+  | { handled: true; message?: string; error?: string; action?: "openSessionStats" | "openSettings" | "compact" | "openSideChat" | "openModelSelector" };
 
 /**
  * A `!` command on its way into the transcript: running, or finished during a run, whose
@@ -4607,6 +4607,16 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
     try {
       switch (commandName) {
+        // pi's TUI /model opens a model selector; the web composer opens its model
+        // dropdown in place (ChatInput bumps the openRequest signal on this action).
+        // Works with or without a session and while streaming — model switching is
+        // a session-level command, never touching the running turn. `models` is the
+        // common alternate spelling (ChatInput lists it as an alias).
+        case "model":
+        case "models": {
+          return complete({ handled: true, action: "openModelSelector" });
+        }
+
         case "compact": {
           if (!sid || isCompacting) return complete({ handled: true, error: "No active session to compact" });
           // Detached on purpose. This must resolve now: runBuiltinCommand holds
