@@ -493,6 +493,10 @@ var InteractionWidgetWindow = class {
       String(this.options.height),
       "--title",
       this.options.title,
+      ...this.options.x !== void 0 ? ["--x", String(Math.round(this.options.x))] : [],
+      ...this.options.y !== void 0 ? ["--y", String(Math.round(this.options.y))] : [],
+      ...this.options.display !== void 0 ? ["--display", String(this.options.display)] : [],
+      ...this.options.center ? ["--center", "true"] : [],
       "--always-on-top",
       "true",
       "--focusable",
@@ -519,6 +523,28 @@ var InteractionWidgetWindow = class {
       return true;
     } catch {
       this.child = null;
+      return false;
+    }
+  }
+  /** Move the running window (absolute screen coordinates). */
+  move(x, y) {
+    if (!this.running) return false;
+    try {
+      this.child.stdin.write(`${JSON.stringify({ cmd: "move", x: Math.round(x), y: Math.round(y) })}
+`);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  /** Resize the running window; the shell re-locks min=max when not user-resizable. */
+  resize(width, height) {
+    if (!this.running) return false;
+    try {
+      this.child.stdin.write(`${JSON.stringify({ cmd: "resize", width: Math.round(width), height: Math.round(height) })}
+`);
+      return true;
+    } catch {
       return false;
     }
   }
@@ -572,13 +598,30 @@ function createHttpInteractionTransport(options) {
     }
     return body;
   };
+  const open = async (input) => {
+    const created = await call("/interactions", { method: "POST", body: JSON.stringify({ request: input }) });
+    const id = String(created.id || created.request?.id || "");
+    if (!id) throw new Error("interaction daemon returned no id");
+    return { id };
+  };
+  const wait = async (id) => {
+    const response = await request(`${base}/interactions/${encodeURIComponent(id)}/wait`, { headers });
+    if (response.status === 409) return null;
+    let body = {};
+    try {
+      body = await response.json();
+    } catch {
+      body = {};
+    }
+    if (!response.ok) throw new Error(`interaction daemon wait failed (${response.status}): ${body.error || response.statusText || "unknown error"}`);
+    return body.result;
+  };
   return {
+    open,
+    wait,
     async ask(input) {
-      const created = await call("/interactions", { method: "POST", body: JSON.stringify({ request: input }) });
-      const id = String(created.id || created.request?.id || "");
-      if (!id) throw new Error("interaction daemon returned no id");
-      const waited = await call(`/interactions/${encodeURIComponent(id)}/wait`);
-      return waited.result;
+      const created = await open(input);
+      return await wait(created.id);
     },
     async cancel(id) {
       const response = await request(`${base}/interactions/${encodeURIComponent(id)}/cancel`, { method: "POST", headers });
@@ -600,7 +643,8 @@ var common = {
   prompt: { type: "string", description: "Question or instruction for the human." },
   title: { type: "string", description: "Optional card title." },
   detail: { type: "string", description: "Optional secondary explanation." },
-  timeout: { type: "number", description: "Timeout in milliseconds; 0 or omitted means wait forever." }
+  timeout: { type: "number", description: "Timeout in milliseconds; 0 or omitted means wait forever." },
+  async: { type: "boolean", description: "Return {id, status:'pending'} immediately and collect the answer with widget_await." }
 };
 var MCP_TOOLS = [
   {
@@ -638,6 +682,32 @@ var MCP_TOOLS = [
     name: "widget_notify",
     description: "Show a blocking notification card until the human dismisses it. For fire-and-forget notifications use a host notification instead.",
     inputSchema: { type: "object", properties: { ...common, body: { type: "string" } }, required: ["prompt"] }
+  },
+  {
+    name: "widget_pick_path",
+    description: "Ask the human to pick files or a directory with the native picker. Returns {status, value:{paths:[...]}, tookMs}.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...common,
+        mode: { type: "string", enum: ["file", "directory"], description: "Defaults to file." },
+        multiple: { type: "boolean", description: "Allow selecting more than one path." },
+        extensions: { type: "array", items: { type: "string" }, description: 'File extension filters, e.g. ["png", "jpg"].' }
+      },
+      required: ["prompt"]
+    }
+  },
+  {
+    name: "widget_await",
+    description: "Wait for the result of a request created with async:true. Returns the same envelope as the blocking tools (status timeout + pending:true when the local wait expires).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Request id returned by an async tool call." },
+        timeout: { type: "number", description: "Client-side wait cap in milliseconds; the host request stays pending. 0 = wait until resolved." }
+      },
+      required: ["id"]
+    }
   },
   {
     name: "widget_cancel",
@@ -682,6 +752,18 @@ function toRequest(name, args) {
       }
     };
   }
+  if (name === "widget_pick_path") {
+    const mode = asString(args.mode) === "directory" ? "directory" : "file";
+    const extensions = Array.isArray(args.extensions) ? args.extensions.map(String).filter(Boolean).slice(0, 8) : void 0;
+    return {
+      kind: "pick_path",
+      title,
+      message: prompt,
+      detail,
+      timeoutMs,
+      pick: { mode, multiple: args.multiple === true, ...extensions?.length ? { extensions } : {} }
+    };
+  }
   if (name === "widget_notify") {
     return { kind: "notify", title, message: prompt, detail: prompt, timeoutMs: 0 };
   }
@@ -712,13 +794,216 @@ async function handleMcpRequest(transport, request) {
       if (!ok) return fail(-32602, `no pending interaction ${asString(args.id)}`);
       return respond(text({ ok: true }));
     }
+    if (name === "widget_await") {
+      const id2 = asString(args.id);
+      if (!id2) return fail(-32602, "widget_await requires an id");
+      const waiting = transport.wait(id2);
+      if (!waiting) return fail(-32602, `no pending interaction ${id2}`);
+      const cap = Math.max(0, asNumber(args.timeout, 0));
+      if (!cap) {
+        return respond(text(await waiting));
+      }
+      let timer;
+      const capped = await Promise.race([
+        waiting,
+        new Promise((resolveCap) => {
+          timer = setTimeout(() => resolveCap({ id: id2, status: "timeout", pending: true }), cap);
+        })
+      ]);
+      if (timer) clearTimeout(timer);
+      return respond(text(capped));
+    }
     const input = toRequest(name, args);
     if (!input) return fail(-32602, `unknown tool or invalid arguments: ${name}`);
+    if (args.async === true) {
+      const created = await transport.open(input);
+      return respond(text({ id: created.id, status: "pending" }));
+    }
     const result = await transport.ask(input);
     return respond(text(result));
   }
   return fail(-32601, `method not found: ${method}`);
 }
+
+// src/placement.ts
+var clamp = (value) => Math.max(0, Math.round(value));
+function placeOutside(avoid, size, options = {}) {
+  const gap = Math.max(0, Math.round(options.gap ?? 16));
+  const prefer = options.prefer?.length ? options.prefer : ["bottom", "top", "right", "left"];
+  const bounds = options.monitors?.length ? options.bounds ?? options.monitors[0] : options.bounds ?? null;
+  const slots = {
+    bottom: { x: avoid.x + Math.round((avoid.width - size.width) / 2), y: avoid.y + avoid.height + gap },
+    top: { x: avoid.x + Math.round((avoid.width - size.width) / 2), y: avoid.y - gap - size.height },
+    right: { x: avoid.x + avoid.width + gap, y: avoid.y + Math.round((avoid.height - size.height) / 2) },
+    left: { x: avoid.x - gap - size.width, y: avoid.y + Math.round((avoid.height - size.height) / 2) }
+  };
+  const fits = (slot) => {
+    if (slot.x < 0 || slot.y < 0) return false;
+    if (!bounds) return true;
+    return slot.x + size.width <= bounds.x + bounds.width && slot.y + size.height <= bounds.y + bounds.height && slot.x >= bounds.x && slot.y >= bounds.y;
+  };
+  for (const key of prefer) {
+    const slot = slots[key];
+    if (fits(slot)) return { x: clamp(slot.x), y: clamp(slot.y) };
+  }
+  const fallback = slots[prefer[0]];
+  const x = bounds ? Math.min(Math.max(fallback.x, bounds.x), bounds.x + bounds.width - size.width) : fallback.x;
+  const y = bounds ? Math.min(Math.max(fallback.y, bounds.y), bounds.y + bounds.height - size.height) : fallback.y;
+  return { x: clamp(x), y: clamp(y) };
+}
+function placeOnMonitor(monitor, size, offset = {}) {
+  return {
+    x: monitor.x + Math.round(offset.x ?? (monitor.width - size.width) / 2),
+    y: monitor.y + Math.round(offset.y ?? (monitor.height - size.height) / 2)
+  };
+}
+function monitorRect(monitor, rect) {
+  return { x: monitor.x + rect.x, y: monitor.y + rect.y, width: rect.width, height: rect.height };
+}
+function clampRect(rect, monitor) {
+  const x = Math.min(Math.max(rect.x, monitor.x), monitor.x + monitor.width - 1);
+  const y = Math.min(Math.max(rect.y, monitor.y), monitor.y + monitor.height - 1);
+  return {
+    x,
+    y,
+    width: Math.max(1, Math.min(rect.width, monitor.x + monitor.width - x)),
+    height: Math.max(1, Math.min(rect.height, monitor.y + monitor.height - y))
+  };
+}
+
+// src/cover.ts
+import { spawn as spawn2 } from "node:child_process";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
+var DEFAULT_PAGE = fileURLToPath2(new URL("../page/cover.html", import.meta.url));
+var DEFAULT_TITLE = "aiti cover";
+function coverPageUrl(options) {
+  const pageFile = options.pageFile || DEFAULT_PAGE;
+  const params = new URLSearchParams();
+  if (options.color) params.set("color", options.color);
+  if (options.opacity !== void 0 && Number.isFinite(Number(options.opacity))) params.set("opacity", String(options.opacity));
+  params.set("pattern", options.pattern || "solid");
+  return `${pageFile}?${params.toString()}`;
+}
+function coverRect(options) {
+  return options.monitor ? clampRect(options.rect, options.monitor) : options.rect;
+}
+function coverArgs(options) {
+  const rect = coverRect(options);
+  return [
+    "--html",
+    coverPageUrl(options),
+    "--width",
+    String(Math.max(1, Math.round(rect.width))),
+    "--height",
+    String(Math.max(1, Math.round(rect.height))),
+    "--x",
+    String(Math.round(rect.x)),
+    "--y",
+    String(Math.round(rect.y)),
+    "--title",
+    options.title || DEFAULT_TITLE,
+    "--decorations",
+    "false",
+    "--transparent",
+    "true",
+    "--always-on-top",
+    "true",
+    "--skip-taskbar",
+    "true",
+    "--focusable",
+    "false",
+    "--click-through",
+    "true",
+    "--resizable",
+    "false",
+    "--all-workspaces",
+    "true",
+    ...options.args || []
+  ];
+}
+var DesktopCover = class {
+  constructor(options) {
+    this.child = null;
+    this.options = { ...options };
+  }
+  get running() {
+    return !!this.child && this.child.exitCode === null && !this.child.killed;
+  }
+  /** Spawn the cover window. Returns false when the widget binary cannot be found. */
+  async open() {
+    if (this.running) return true;
+    const bin = resolveWidgetBinary(this.options.bin);
+    if (!bin) return false;
+    try {
+      const child = spawn2(bin, coverArgs(this.options), { stdio: ["pipe", "ignore", "ignore"], windowsHide: true });
+      this.child = child;
+      child.once("exit", () => {
+        if (this.child === child) this.child = null;
+      });
+      child.once("error", () => {
+        if (this.child === child) this.child = null;
+      });
+      return true;
+    } catch {
+      this.child = null;
+      return false;
+    }
+  }
+  /** Update the covered rectangle and/or the visual style. */
+  async update(patch) {
+    this.options = { ...this.options, ...patch };
+    if (!this.running) return false;
+    const rect = coverRect(this.options);
+    try {
+      this.child.stdin.write(`${JSON.stringify({ cmd: "navigate", url: coverPageUrl(this.options) })}
+`);
+      this.child.stdin.write(`${JSON.stringify({ cmd: "resize", width: Math.max(1, Math.round(rect.width)), height: Math.max(1, Math.round(rect.height)) })}
+`);
+      this.child.stdin.write(`${JSON.stringify({ cmd: "move", x: Math.round(rect.x), y: Math.round(rect.y) })}
+`);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  /** Move the cover without touching the style (cheap follow for scroll/drag). */
+  move(position) {
+    if (!this.running) return false;
+    const rect = { ...this.options.rect, ...position };
+    this.options = { ...this.options, rect };
+    const clamped = coverRect(this.options);
+    try {
+      this.child.stdin.write(`${JSON.stringify({ cmd: "move", x: Math.round(clamped.x), y: Math.round(clamped.y) })}
+`);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  async close() {
+    const child = this.child;
+    this.child = null;
+    if (!child) return;
+    try {
+      child.stdin.write(`${JSON.stringify({ cmd: "close" })}
+`);
+    } catch {
+    }
+    await new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        try {
+          child.kill();
+        } catch {
+        }
+        resolve();
+      }, 800);
+      child.once("exit", () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+  }
+};
 
 // src/dialog-kinds.ts
 var DEFAULT_TITLES = {
@@ -854,9 +1139,13 @@ function dialogWindowSize(spec) {
   return { width: 560, height: 300 };
 }
 export {
+  DesktopCover,
   InteractionBroker,
   InteractionWidgetWindow,
   MCP_TOOLS,
+  clampRect,
+  coverArgs,
+  coverPageUrl,
   createHttpInteractionTransport,
   dialogExitCode,
   dialogStdout,
@@ -864,6 +1153,9 @@ export {
   dialogWindowSize,
   dialogWindowTitle,
   handleMcpRequest,
+  monitorRect,
+  placeOnMonitor,
+  placeOutside,
   resolveWidgetBinary,
   startInteractionServer,
   withInteractionParams

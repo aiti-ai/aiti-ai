@@ -115,3 +115,34 @@ test("MCP over HTTP reports unknown tools and dead requests", async () => {
     broker.close();
   }
 });
+
+test("async tool calls and widget_await work over HTTP", async () => {
+  const broker = new InteractionBroker();
+  const handle = await startInteractionServer({ broker, port: 0, token: "daemon-token", allowCreate: true });
+  const transport = createHttpInteractionTransport({ baseUrl: handle.baseUrl, token: handle.token });
+  try {
+    const created = await handleMcpRequest(transport, {
+      jsonrpc: "2.0",
+      id: 11,
+      method: "tools/call",
+      params: { name: "widget_choose", arguments: { prompt: "Pick", options: ["A", "B"], async: true } },
+    });
+    const { id, status } = JSON.parse(created.result.content[0].text);
+    assert.equal(status, "pending");
+    assert.ok(id);
+
+    const waiting = handleMcpRequest(transport, { jsonrpc: "2.0", id: 12, method: "tools/call", params: { name: "widget_await", arguments: { id } } });
+    const answered = await answer(handle, id, { value: { id: "B", label: "B" } });
+    assert.equal(answered.status, 200);
+    const envelope = JSON.parse((await waiting).result.content[0].text);
+    assert.equal(envelope.status, "answered");
+    assert.deepEqual(envelope.value, { id: "B", label: "B" });
+
+    // A late wait replays the stored envelope instead of failing with 409.
+    const late = await handleMcpRequest(transport, { jsonrpc: "2.0", id: 13, method: "tools/call", params: { name: "widget_await", arguments: { id } } });
+    assert.equal(JSON.parse(late.result.content[0].text).status, "answered");
+  } finally {
+    await handle.close();
+    broker.close();
+  }
+});
