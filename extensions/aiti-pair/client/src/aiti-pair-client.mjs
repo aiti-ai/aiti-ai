@@ -70,6 +70,7 @@ function installGlobalPairMsgListener() {
 // widget 挂载去重（React 重渲染/StrictMode ref 双触发不重复 mount；AitiPair 实例模块级保活）
 let mounted = null; // { el, instance }
 let mountPromise = null; // 在途挂载（异步加载竞态去重：ref 回调可能并发触发多次）
+let libPromise = null; // single pair-client.js <script>: the warm-up and the first open share one request
 // Whether mounted.el is still attached to the DOM — when the panel closes / the face switches,
 // React unmounts the old host while the module-level mounted still holds the old el; reopening
 // the panel must remount based on isConnected (otherwise the second toolbar click sets ready=true
@@ -94,6 +95,7 @@ export default function register(ctx) {
   // i18n: host ctx.t with bare-key fallback (index.ts ui.i18n entries)
   const t = (k) => (typeof ctx.t === "function" ? ctx.t(k) : k);
   installGlobalPairMsgListener(); // C1: closed-state unread badge channel (B8 ordering: before any mount)
+  warmPairLib(); // preload the widget bundle so opening the panel never flashes a loading shell
 
   /* ── 深链：?pair=1 打开工作台即弹出本面板（QR/复制链接指向工作台 URL，与桌面「先开 pi-web → 点设备互连」同体验） ──
      一次性消费：开面板后从地址栏去掉参数（刷新不再自动弹；配对态在 localStorage，重开点工具条即可）。
@@ -107,7 +109,11 @@ export default function register(ctx) {
       globalThis.history?.replaceState?.(null, "", u.pathname + (u.searchParams.toString() ? "?" + u.searchParams : "") + u.hash);
       setTimeout(() => {
         try {
-          if (document.querySelector(".apair")) return;
+          // The dialog face renders at once (it only needs the present state); the widget itself mounts
+          // asynchronously, so "no .apair yet" does NOT mean "the shell has no dialogs slot". Check the
+          // dialog container too — otherwise the fallback stacked a second full-screen panel on top of the
+          // floating one and the deep link opened with a flash of two panels.
+          if (document.querySelector(".apair") || document.querySelector('[data-ext-float-key="aiti-pair:pair"]')) return;
           const sz = pairWindowSize();
           const host = document.createElement("div");
           host.style.cssText = "position:fixed;inset:0;z-index:310;background:rgba(0,0,0,0.35);display:flex;align-items:center;justify-content:center";
@@ -143,13 +149,24 @@ export default function register(ctx) {
 
   function loadPairLib() {
     if (globalThis.AitiPair) return Promise.resolve(globalThis.AitiPair);
-    return new Promise((resolve, reject) => {
+    if (libPromise) return libPromise; // one <script> per page: every reopen reused the in-flight/completed load
+    libPromise = new Promise((resolve, reject) => {
       const s = document.createElement("script");
       s.src = LIB_URL(); // asset endpoint negotiation cache (ETag/304): assets invalidate automatically on update; unchanged returns 304 instantly
       s.onload = () => (globalThis.AitiPair ? resolve(globalThis.AitiPair) : reject(new Error("pair-client.js 加载后未暴露 AitiPair")));
-      s.onerror = () => reject(new Error("pair-client.js 加载失败（aiti-devtools 扩展未部署？）"));
+      s.onerror = () => { libPromise = null; reject(new Error("pair-client.js 加载失败（aiti-devtools 扩展未部署？）")); }; // a failed load stays retryable
       document.head.appendChild(s);
     });
+    return libPromise;
+  }
+
+  /* Warm the widget bundle as soon as the extension registers (one cached request, async — never blocks
+     the page). Without it the first open of the panel painted its shell and only then swapped in the
+     widget: a visible flash after every page refresh (dev: seconds). Starting immediately (not on idle)
+     matters — the extension materializes early, while an idle callback may not run for seconds on a busy
+     first load, which is exactly when the user clicks the entry. */
+  function warmPairLib() {
+    setTimeout(() => { loadPairLib().catch(() => {}); }, 0);
   }
 
   function ensureWidget(host, faceTag) {
@@ -280,8 +297,8 @@ export default function register(ctx) {
           },
           style: { position: "absolute", top: 41, bottom: 0, left: 0, right: 0, display: ready ? "block" : "none" },
         }),
-        !ready && h("div", { style: { position: "absolute", top: 41, bottom: 0, left: 0, right: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, textAlign: "center", fontSize: 12, color: "var(--text-muted)", whiteSpace: "pre-wrap" } },
-          err || "加载 pair 组件…"),
+        !ready && err && h("div", { style: { position: "absolute", top: 41, bottom: 0, left: 0, right: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, textAlign: "center", fontSize: 12, color: "var(--text-muted)", whiteSpace: "pre-wrap" } },
+          err),
       ),
     );
   }
