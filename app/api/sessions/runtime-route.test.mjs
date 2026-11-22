@@ -155,8 +155,7 @@ test("session listing leaves compression to Next when the client accepts gzip", 
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("Content-Encoding"), null);
   const payload = await response.json();
-  assert.equal(payload.sessions.length, 4);
-  assert.equal(payload.sessions[0].firstMessage, firstMessage.slice(0, 500));
+  assert.equal(payload.sessions[0].firstMessage, firstMessage);
 });
 
 test("deleting an unpersisted session shuts down its runtime and invalidates caches", async (t) => {

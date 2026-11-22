@@ -8,7 +8,7 @@
  * validation/session queries etc.) signatures can be extended to
  * `void | Promise<T>`, with ctx passing the return value through.
  */
-import type { RevisionRef } from "../file-revision";
+import type { RevisionRef } from "../file-revision.ts";
 /**
  * Options for opening a file tab (passed through by extensions via ctx.openFile;
  * core as-is capability, not interpreted).

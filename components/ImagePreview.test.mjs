@@ -60,7 +60,7 @@ test("keeps the preview and Pi-style close button inside mobile safe areas", () 
 test("clicking delegates to the file-editor extension viewer, falling back to the upstream lightbox", () => {
   // Entry bridge: the file-editor extension's unified viewer (floating dialog; a lazily-loaded extension
   // is materialized first); the image tab mechanism has been removed
-  assert.match(source, /import \{ openImageInEditorViewer \} from "\.\/editor-image-preview"/);
+  assert.match(source, /import \{ openImageInEditorViewer \} from "\.\/editor-image-preview(?:\.ts)?"/);
   assert.match(
     source,
     /const openPreview = \(\) => \{[\s\S]*?void openImageInEditorViewer\(src, \{ alt \}\)\.then\(\(handled\) => \{[\s\S]*?if \(!handled\) setOpen\(true\);[\s\S]*?\}\);\s*\};/,

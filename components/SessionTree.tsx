@@ -33,11 +33,11 @@ import type { SessionInfo } from "@/lib/types";
 import { formatRelativeTime, formatShortRelativeTime } from "@/lib/i18n/format";
 import { skillExpansionToCommand } from "@/lib/slash-display";
 import { truncateRunError } from "@/lib/run-outcome";
-import { ExtSlot } from "./ExtSlots";
+import { ExtSlot } from "./ExtSlots.tsx";
 import { useGroupDrag, type GroupDragHandlers } from "@/hooks/useGroupDrag";
 import { useI18n } from "@/hooks/useI18n";
 import { useScrollbarVisibility } from "@/hooks/useScrollbarVisibility";
-import type { SidebarMenuAnchor } from "./SidebarMenu";
+import type { SidebarMenuAnchor } from "./SidebarMenu.tsx";
 import {
   ArchiveIcon,
   ChevronIcon,
@@ -48,7 +48,7 @@ import {
   RestoreIcon,
   SpinnerIcon,
   TrashIcon,
-} from "./SidebarIcons";
+} from "./SidebarIcons.tsx";
 
 /**
  * The sessions tab's tree: the pinned section, every project as a group of

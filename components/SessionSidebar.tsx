@@ -8,9 +8,10 @@ import { dispatchSessionRowContextMenu } from "@/lib/session-row-context-menu";
 import { getProjectActivity, getRecentProjects } from "@/lib/project-groups";
 import { workspaceKeyOf } from "@/lib/workspace-memory";
 import { loadHiddenWorkspaces, WORKSPACES_CHANGED_EVENT } from "@/lib/workspace-hide";
-import { ExtSlot, useExtProvides, useExtSlotItems } from "./ExtSlots";
+import { ExtSlot, useExtProvides, useExtSlotItems } from "./ExtSlots.tsx";
 import { EXT_PROVIDES, type WorkspacePickerActionsProps } from "@/lib/ext/types";
 import { apiUrl } from "@/lib/base-path";
+import { getDraftApi } from "@/lib/composer/draft-api";
 import { dedupeFetch } from "@/lib/dedupe-fetch";
 import { ensureHomeDir, getHomeDir } from "@/lib/home-dir";
 import {
@@ -93,14 +94,14 @@ import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useScrollbarVisibility } from "@/hooks/useScrollbarVisibility";
 import { useSessionUiState } from "@/hooks/useSessionUiState";
-import { DirectoryPicker } from "./DirectoryPicker";
-import { DismissButton } from "./DismissButton";
-import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
-import { ProjectWorktreePicker, type ProjectWorktreePickerHandle, type WorktreeRemoval } from "./ProjectWorktreePicker";
-import { SessionSearch } from "./SessionSearch";
-import { SessionTree, sessionRowTitle, type SessionTreeReveal } from "./SessionTree";
-import { SidebarMenu, type SidebarMenuAnchor, type SidebarMenuItem } from "./SidebarMenu";
-import { SidebarToast, type SidebarToastAction, type SidebarToastData } from "./SidebarToast";
+import { DirectoryPicker } from "./DirectoryPicker.tsx";
+import { DismissButton } from "./DismissButton.tsx";
+import { FileExplorer, type FileExplorerHandle } from "./FileExplorer.tsx";
+import { ProjectWorktreePicker, type ProjectWorktreePickerHandle, type WorktreeRemoval } from "./ProjectWorktreePicker.tsx";
+import { SessionSearch } from "./SessionSearch.tsx";
+import { SessionTree, sessionRowTitle, type SessionTreeReveal } from "./SessionTree.tsx";
+import { SidebarMenu, type SidebarMenuAnchor, type SidebarMenuItem } from "./SidebarMenu.tsx";
+import { SidebarToast, type SidebarToastAction, type SidebarToastData } from "./SidebarToast.tsx";
 import {
   ArchiveIcon,
   ChangesIcon,
@@ -122,7 +123,7 @@ import {
   TerminalIcon,
   TrashIcon,
   UploadIcon,
-} from "./SidebarIcons";
+} from "./SidebarIcons.tsx";
 
 interface FileManagerAvailability {
   supported: boolean;
@@ -1981,7 +1982,9 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
     setConfirmDeleteRootId((current) => (current === session.id ? null : current));
     try {
       // The server deletes the family's subagent sessions with it.
-      await fetch(apiUrl(`/api/sessions/${encodeURIComponent(session.id)}`), { method: "DELETE" });
+      const res = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(session.id)}`), { method: "DELETE" });
+      // Drafts are kept by the draft-keeper: they go with their sessions, once the server deleted them.
+      if (res.ok) [session, ...family.subagents].forEach((member) => getDraftApi()?.clearAllDrafts(member.id));
       onSessionDeleted?.(session.id);
       void loadSessions();
     } catch {

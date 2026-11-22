@@ -227,7 +227,6 @@ test("{ cwd } refusals: a relative or missing folder, a source whose folder stil
   assert.equal(side.status, 400);
 });
 
-test("the route refuses cross-origin requests itself", () => {
 test("the route never starts, prompts or forks an AgentSession", () => {
   assert.doesNotMatch(routeSource, /startRpcSession|\.send\(|\.fork\(|\.prompt\(|shutdown\(/);
   assert.match(routeSource, /if \(!isApiRequestAllowed\(req\)\) return refusal\(403, "request-denied"/);

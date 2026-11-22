@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useI18n } from "@/hooks/useI18n";
-import { openImageInEditorViewer } from "./editor-image-preview";
+import { openImageInEditorViewer } from "./editor-image-preview.ts";
 
 interface ImagePreviewProps {
   src: string;

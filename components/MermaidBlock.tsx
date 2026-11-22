@@ -24,7 +24,7 @@ const ZOOM_MAX = 3;
 // (SyntaxHighlighterLite only registers common languages); plain text is the
 // fallback until the chunk is ready, styled to match the streaming branch
 // (hydration focus P1.1).
-const SyntaxHighlighter = lazy(() => import("./SyntaxHighlighterLite"));
+const SyntaxHighlighter = lazy(() => import("./SyntaxHighlighterLite.tsx"));
 const PLAIN_CODE_PRE_STYLE: CSSProperties = {
   margin: 0,
   padding: "11px 13px",

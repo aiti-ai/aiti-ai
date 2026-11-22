@@ -5,7 +5,7 @@ import { useI18n } from "@/hooks/useI18n";
 import { apiUrl } from "@/lib/base-path";
 import { formatUpdatedTime } from "@/lib/i18n/format";
 import { isProviderUsageId } from "@/lib/provider-usage-ids";
-import { ProviderUsageReportView, type UsageReport } from "./ProviderUsageReportView";
+import { ProviderUsageReportView, type UsageReport } from "./ProviderUsageReportView.tsx";
 
 const STORAGE_PREFIX = "pi-web:provider-usage:";
 // Server overview cache is 5min; piggyback on it to avoid duplicate queries.

@@ -18,26 +18,26 @@ import { extractTurnWrittenFiles, type WrittenFile } from "@/lib/turn-written-fi
 import { getFinalAnswerViews, keepWrittenFiles, type FinalAnswerViews } from "@/lib/turn-views";
 import { formatTurnDuration, getTurnDurationMs } from "@/lib/turn-duration";
 import { summarizeCacheMisses, type CacheMissSummary } from "@/lib/transcript-notices";
-import { cacheMissSummaryText } from "./TranscriptNotices";
+import { cacheMissSummaryText } from "./TranscriptNotices.tsx";
 import { buildQuotedSelection } from "@/lib/quoted-selection";
 import { dropMentionText, splitDroppedItems, uploadFiles, type DroppedItem } from "@/lib/file-upload-client";
 import { buildFileAtMentionsText } from "@/lib/file-fuzzy";
-import { MessageView, estimateTokens } from "./MessageView";
-import { UpdateGuideDialog } from "./UpdateGuideDialog";
-import { SessionRequestCardHost } from "./SessionRequestSlot";
-import { MarkdownBody } from "./MarkdownBody";
-import { ChatInput, getUserMessageDraftImages, getUserMessageText, type AttachedImage, type ChatInputHandle } from "./ChatInput";
-import { DirectoryPicker } from "./DirectoryPicker";
-import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
-import { ExtSlot, useExtSlotItems } from "./ExtSlots";
-import { NewSessionWidgetZone, NewSessionWidgetsCustomize } from "./NewSessionWidgets";
+import { MessageView, estimateTokens } from "./MessageView.tsx";
+import { UpdateGuideDialog } from "./UpdateGuideDialog.tsx";
+import { SessionRequestCardHost } from "./SessionRequestSlot.tsx";
+import { MarkdownBody } from "./MarkdownBody.tsx";
+import { ChatInput, getUserMessageDraftImages, getUserMessageText, type AttachedImage, type ChatInputHandle } from "./ChatInput.tsx";
+import { DirectoryPicker } from "./DirectoryPicker.tsx";
+import { ChatMinimap, useMessageRefs } from "./ChatMinimap.tsx";
+import { ExtSlot, useExtSlotItems } from "./ExtSlots.tsx";
+import { NewSessionWidgetZone, NewSessionWidgetsCustomize } from "./NewSessionWidgets.tsx";
 import { hasExtRender } from "@/lib/ext-ui-store";
 import type { NewSessionPreparer } from "@/hooks/new-session-preparers";
 import type { PendingRecoveryItem, QueueEntry } from "@/lib/queue-store";
 import { useRecoveryProviderItems, routeRecoveryResolve } from "@/lib/composer/recovery";
 import { runSessionForkGates } from "@/lib/ext/fork-gates";
-import { ExtensionStatusBar, ExtensionStatusToast } from "./ExtensionStatusBar";
-import { AnsiText } from "./AnsiText";
+import { ExtensionStatusBar, ExtensionStatusToast } from "./ExtensionStatusBar.tsx";
+import { AnsiText } from "./AnsiText.tsx";
 import { useI18n } from "@/hooks/useI18n";
 import { phaseLabel } from "@/lib/chat-phase-label";
 import { useAgentSession, type AgentEndInfo, type NewSessionChoices, type NoticeItem } from "@/hooks/useAgentSession";
@@ -1895,7 +1895,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
           style={{ paddingBottom: bottomEyeRoom, visibility: pendingScrollRestore ? "hidden" : undefined }}
         >
           <div style={{ minWidth: 0, padding: `0 ${CHAT_COLUMN_PADDING}px` }}>
-            <div ref={messageContentRef} style={{ width: "100%", minWidth: 0, maxWidth: "var(--chat-content-max-width, 820px)", margin: "0 auto" }}>
+            <div ref={messageContentRef} onPointerUp={captureQuotedSelection} style={{ width: "100%", minWidth: 0, maxWidth: "var(--chat-content-max-width, 820px)", margin: "0 auto" }}>
             {(() => {
               let lastUserIdx = -1;
               for (let i = messages.length - 1; i >= 0; i--) {

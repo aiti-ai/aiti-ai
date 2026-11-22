@@ -48,8 +48,8 @@ import {
   ConfigStatusDot,
   ConfigSwitch,
   ConfigTrustNotice,
-} from "./SettingsUi";
-import { itemsToSwitch, projectTrustReloadKey } from "./settings-ui-helpers";
+} from "./SettingsUi.tsx";
+import { itemsToSwitch, projectTrustReloadKey } from "./settings-ui-helpers.ts";
 import { readJsonOrThrow } from "@/lib/fetch-json";
 
 type PluginScope = PluginPackageInfo["scope"];

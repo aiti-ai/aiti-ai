@@ -136,8 +136,10 @@ test("a deleted family's stored drafts go with it, only once the server deleted 
     const performDelete = vm.runInNewContext(code, {
       useCallback: (callback) => callback,
       encodeURIComponent,
+      apiUrl: (p) => p,
       fetch: async () => ({ ok }),
-      clearDraft: (id) => cleared.push(id),
+      // [fork] drafts go through the draft-keeper API.
+      getDraftApi: () => ({ clearAllDrafts: (id) => cleared.push(id) }),
       onSessionDeleted: (id) => deleted.push(id),
       setConfirmDeleteRootId() {},
       loadSessions: async () => {},
@@ -146,8 +148,8 @@ test("a deleted family's stored drafts go with it, only once the server deleted 
     assert.deepEqual(cleared, ok ? ["main", "side", "worker"] : []);
     assert.deepEqual(deleted, ["main"]);
   }
-  // A project's Delete all sessions clears what the server says it deleted.
-  assert.match(callbackBody("deleteFamilyIds"), /for \(const id of outcome\.deleted\) \{\s*clearDraft\(id\);/);
+  // A family's delete asks the server first: a refusal clears nothing.
+  assert.match(callbackBody("performDelete"), /const res = await fetch\(apiUrl\(`\/api\/sessions\/\$\{encodeURIComponent\(session\.id\)\}`\), \{ method: "DELETE" \}\);\s*\/\/ Drafts[\s\S]*?if \(res\.ok\) \[session, \.\.\.family\.subagents\]\.forEach\(/);
 });
 
 test("only Shift skips the session deletion confirmation", () => {
@@ -817,7 +819,7 @@ test("new projects are saved to the project order once, quietly, after real stat
   // Not from a failed GET's empty state (archived projects would look live), not from summary rows.
   assert.match(effect, /if \(loading \|\| !uiStateSynced \|\| !sessionDetailsLoaded\) return;/);
   assert.match(source, /synced: uiStateSynced,/);
-  assert.match(callbackBody("loadSessions"), /setAllSessions\(data\.sessions\);\s*if \(!summary\) setSessionDetailsLoaded\(true\);/);
+  assert.match(callbackBody("loadSessions"), /setAllSessions\(data\.sessions\);[\s\S]{0,400}?if \(!summary \|\| !needsDetails\) setSessionDetailsLoaded\(true\);/);
   // A full list takes nothing more: no request at all.
   assert.match(effect, /if \(storedOrderLength >= MAX_PROJECT_ORDER_KEYS\) return;/);
   // At most one request's worth, bottom first (lib/session-tree.test.mjs plays

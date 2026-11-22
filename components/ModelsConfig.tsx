@@ -40,7 +40,7 @@ import {
   type ModelCostDraft,
   type ModelCostKey,
   type ModelOrderChange,
-} from "./models-config-helpers";
+} from "./models-config-helpers.ts";
 import {
   ConfigButton,
   ConfigDetail,
@@ -60,7 +60,7 @@ import {
   ConfigSidebarText,
   ConfigSplitView,
   useConfigDetailNavigation,
-} from "./SettingsUi";
+} from "./SettingsUi.tsx";
 import {
   EnabledModelsBanner,
   EnabledModelsProviderSwitch,
@@ -68,13 +68,13 @@ import {
   EnabledModelsSection,
   useEnabledModels,
   type EnabledModelsController,
-} from "./EnabledModelsSection";
-import { providerBadgeLabel } from "./enabled-models-helpers";
-import { OAuthPastePanel } from "./OAuthPastePanel";
-import { ProviderIcon } from "./ProviderIcon";
-import { ProviderUsageSummary } from "./ProviderUsageSummary";
+} from "./EnabledModelsSection.tsx";
+import { providerBadgeLabel } from "./enabled-models-helpers.ts";
+import { OAuthPastePanel } from "./OAuthPastePanel.tsx";
+import { ProviderIcon } from "./ProviderIcon.tsx";
+import { ProviderUsageSummary } from "./ProviderUsageSummary.tsx";
 import { ContextWindowError, normalizeContextWindowOverrides, withContextWindowOverride } from "@/lib/model-context";
-import { ModelContextWindow, type ModelContextSettings } from "./ModelContextWindow";
+import { ModelContextWindow, type ModelContextSettings } from "./ModelContextWindow.tsx";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

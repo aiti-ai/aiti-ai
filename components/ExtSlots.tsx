@@ -83,7 +83,7 @@ import {
   reconcileGraph,
   registerDeclaredSlots,
   setBootGraph,
-} from "./ext-client-loader";
+} from "./ext-client-loader.ts";
 import type { PiWebBootGraph } from "@/lib/ext/client-modules";
 import { notifyExtBootSettled as notifyBootSignal, settleEventBusDeployed } from "@/lib/ext-boot-signal";
 

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObje
 import { createPortal } from "react-dom";
 import { buildQuotedSelection } from "@/lib/quoted-selection";
 import { useI18n } from "@/hooks/useI18n";
-import { ChatInput, type ChatInputHandle } from "./ChatInput";
+import { ChatInput, type ChatInputHandle } from "./ChatInput.tsx";
 
 interface Props {
   /** The transcript a selection must sit in for the popover to offer it. */

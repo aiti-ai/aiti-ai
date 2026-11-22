@@ -27,7 +27,7 @@ test("handleSelectSession reconciles the URL on the already-open-session early r
   const reconcile = after.slice(0, firstReturn);
 
   // Rewrites the URL to the selected session id before returning…
-  assert.match(reconcile, /replaceLocationIfChanged\(router, `\?session=\$\{encodeURIComponent\(session\.id\)\}`/);
+  assert.match(reconcile, /queueUrlWrite\(`\?session=\$\{encodeURIComponent\(session\.id\)\}`\)/);
   // …but never writes a non-restorable `:new-` placeholder back into the URL.
   assert.match(reconcile, /includes\(":new-"\)/);
 });

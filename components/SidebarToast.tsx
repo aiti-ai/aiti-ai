@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { CloseIcon } from "./SidebarIcons";
+import { CloseIcon } from "./SidebarIcons.tsx";
 
 /**
  * The session sidebar's one-line toast: "Archived “…”" with Undo and View, or

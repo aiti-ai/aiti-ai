@@ -5,7 +5,7 @@ import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useTheme } from "@/hooks/useTheme";
 import { THEME_OPTIONS } from "@/lib/theme";
-import { ThemeIcon } from "./ThemeIcon";
+import { ThemeIcon } from "./ThemeIcon.tsx";
 import {
   CHAT_CONTENT_WIDTH_DEFAULT,
   CHAT_CONTENT_WIDTH_MAX,
@@ -31,14 +31,14 @@ import {
   isThinkingExpandedByDefault,
   setThinkingExpandedByDefault,
 } from "@/lib/thinking-expansion-preference";
-import { ModelsConfig } from "./ModelsConfig";
+import { ModelsConfig } from "./ModelsConfig.tsx";
 import { setupPushSubscription } from "@/lib/push-client";
-import { SkillsConfig } from "./SkillsConfig";
-import { AgentsConfig } from "./AgentsConfig";
-import { PluginsConfig } from "./PluginsConfig";
-import { McpConfig } from "./McpConfig";
-import { ConfigButton, ConfigDetailNavigationContext, ConfigSwitch, type ConfigDetailNavigation } from "./SettingsUi";
-import { FontSettings } from "./FontSettings";
+import { SkillsConfig } from "./SkillsConfig.tsx";
+import { AgentsConfig } from "./AgentsConfig.tsx";
+import { PluginsConfig } from "./PluginsConfig.tsx";
+import { McpConfig } from "./McpConfig.tsx";
+import { ConfigButton, ConfigDetailNavigationContext, ConfigSwitch, type ConfigDetailNavigation } from "./SettingsUi.tsx";
+import { FontSettings } from "./FontSettings.tsx";
 import {
   PANEL_UI_SCALE_DEFAULT,
   PANEL_UI_SCALE_MAX,
@@ -46,7 +46,7 @@ import {
   PANEL_UI_SCALE_STEP,
   usePanelScale,
 } from "@/hooks/usePanelScale";
-import { useExtSlotItems, ExtItemBoundary } from "./ExtSlots";
+import { useExtSlotItems, ExtItemBoundary } from "./ExtSlots.tsx";
 import { hasExtRender } from "@/lib/ext-ui-store";
 import { readJsonOrThrow } from "@/lib/fetch-json";
 

@@ -21,8 +21,8 @@
 
 import { useMemo } from "react";
 import type { ReactNode } from "react";
-import { ExtSlot, useExtSlotItems } from "./ExtSlots";
-import { MarkdownBody } from "./MarkdownBody";
+import { ExtSlot, useExtSlotItems } from "./ExtSlots.tsx";
+import { MarkdownBody } from "./MarkdownBody.tsx";
 import { useI18n } from "@/hooks/useI18n";
 import type { SessionRequestAnswer, SessionRequestCardSlotProps, SessionRequestPayload } from "@/lib/ext/types";
 import { hasExtRender, type ExtUiItemRegistered } from "@/lib/ext-ui-store";

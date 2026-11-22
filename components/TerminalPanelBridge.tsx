@@ -2,10 +2,10 @@
 
 import { useEffect, useSyncExternalStore } from "react";
 import { useI18n } from "@/hooks/useI18n";
-import { useExtSlotItems, ExtItemBoundary, useExtSlotSettled, ensureExtSlotMaterialized } from "./ExtSlots";
+import { useExtSlotItems, ExtItemBoundary, useExtSlotSettled, ensureExtSlotMaterialized } from "./ExtSlots.tsx";
 import { hasExtRender, subscribeExtUi, extUiVersion } from "@/lib/ext-ui-store";
-import { TerminalPanel } from "./TerminalPanel";
-import type { TerminalTab } from "./terminal-tab-state";
+import { TerminalPanel } from "./TerminalPanel.tsx";
+import type { TerminalTab } from "./terminal-tab-state.ts";
 
 interface Props {
   tab: TerminalTab;

@@ -1,4 +1,4 @@
-import type { AppInstallInfo, AppInstallMode } from "./api-types";
+import type { AppInstallInfo, AppInstallMode } from "./api-types.ts";
 
 // App update version helpers.
 //
