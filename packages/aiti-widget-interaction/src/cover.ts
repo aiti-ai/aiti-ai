@@ -15,6 +15,12 @@ export interface CoverOptions {
   pattern?: CoverPattern;
   /** Optional monitor bounds; the rect is clamped into them. */
   monitor?: Rect;
+  /**
+   * Use an ARGB window (default false). Opaque windows paint the color reliably on
+   * X11 without a compositor; set true only when a compositor is guaranteed and the
+   * cover should blend into the desktop.
+   */
+  transparent?: boolean;
   title?: string;
   bin?: string;
   /** Path to the cover page; defaults to the packaged `page/cover.html`. */
@@ -51,7 +57,7 @@ export function coverArgs(options: CoverOptions): string[] {
     "--y", String(Math.round(rect.y)),
     "--title", options.title || DEFAULT_TITLE,
     "--decorations", "false",
-    "--transparent", "true",
+    "--transparent", options.transparent === true ? "true" : "false",
     "--always-on-top", "true",
     "--skip-taskbar", "true",
     "--focusable", "false",
