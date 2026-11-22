@@ -106,6 +106,9 @@ function waitForFile(path: string, dir: string, timeoutMs: number): Promise<bool
   if (existsSync(path)) return Promise.resolve(true);
   return new Promise((resolve) => {
     let watcher: ReturnType<typeof watch> | undefined;
+    // Assigned after the watch is established but cleared by finish() above it —
+    // const would hit the TDZ when the watch setup throws and finish(false) runs.
+    // eslint-disable-next-line prefer-const
     let timer: ReturnType<typeof setTimeout> | undefined;
     let done = false;
     const finish = (value: boolean) => {
@@ -139,6 +142,9 @@ function waitForFileGone(path: string, dir: string, timeoutMs: number): Promise<
   if (!existsSync(path)) return Promise.resolve(true);
   return new Promise((resolve) => {
     let watcher: ReturnType<typeof watch> | undefined;
+    // Assigned after the watch is established but cleared by finish() above it —
+    // const would hit the TDZ when the watch setup throws and finish(false) runs.
+    // eslint-disable-next-line prefer-const
     let timer: ReturnType<typeof setTimeout> | undefined;
     let done = false;
     const finish = (value: boolean) => {
