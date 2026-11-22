@@ -660,6 +660,46 @@ function createHttpInteractionTransport(options) {
     }
   };
 }
+function watchInteractionEvents(options) {
+  const base = String(options.baseUrl || "").replace(/\/+$/, "");
+  const token = String(options.token || "");
+  const request = options.fetchImpl || fetch;
+  const controller = new AbortController();
+  const url = new URL(`${base}/interactions/events`);
+  if (token) url.searchParams.set("token", token);
+  void (async () => {
+    try {
+      const response = await request(url.toString(), {
+        headers: token ? { authorization: `Bearer ${token}` } : {},
+        signal: controller.signal
+      });
+      if (!response.ok || !response.body) throw new Error(`event stream failed (${response.status})`);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      for (; ; ) {
+        const { value, done } = await reader.read();
+        if (done) return;
+        buffer += decoder.decode(value, { stream: true });
+        for (let index = buffer.indexOf("\n\n"); index >= 0; index = buffer.indexOf("\n\n")) {
+          const frame = buffer.slice(0, index);
+          buffer = buffer.slice(index + 2);
+          for (const line of frame.split("\n")) {
+            if (!line.startsWith("data:")) continue;
+            try {
+              options.onEvent(JSON.parse(line.slice(5).trim()));
+            } catch {
+            }
+          }
+        }
+      }
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      options.onError?.(error instanceof Error ? error : new Error(String(error)));
+    }
+  })();
+  return () => controller.abort();
+}
 var text = (value) => ({ content: [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value) }] });
 var common = {
   prompt: { type: "string", description: "Question or instruction for the human." },
@@ -1243,5 +1283,6 @@ export {
   placeOutside,
   resolveWidgetBinary,
   startInteractionServer,
+  watchInteractionEvents,
   withInteractionParams
 };

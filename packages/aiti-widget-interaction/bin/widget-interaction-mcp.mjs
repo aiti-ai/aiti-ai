@@ -10,6 +10,7 @@ import {
   InteractionBroker,
   InteractionWidgetWindow,
   createHttpInteractionTransport,
+  watchInteractionEvents,
   withInteractionParams,
   handleMcpRequest,
   startInteractionServer,
@@ -24,7 +25,7 @@ const has = (name) => args.includes(name);
 
 if (has("--help") || has("-h")) {
   process.stderr.write("widget-interaction-mcp [--port N] [--token T] [--width N] [--height N] [--widget-bin PATH] [--no-widget]\n"      + "  --http <baseUrl>  proxy to a running `aiti-dialog --daemon` instead of owning the broker\n"
-      + "  --notify          emit notifications/aiti/interaction when a request resolves (local mode)\n");
+      + "  --notify          emit notifications/aiti/interaction when a request resolves\n");
   process.exit(0);
 }
 
@@ -56,6 +57,17 @@ if (remoteBase) {
         writeRemote({ jsonrpc: "2.0", id: request?.id ?? null, error: { code: -32603, message: String(error?.message || error) } });
       });
   });
+  if (has("--notify")) {
+    watchInteractionEvents({
+      baseUrl: remoteBase,
+      token: argValue("--token", ""),
+      onEvent: (event) => {
+        if (event.type !== "resolved") return;
+        writeRemote({ jsonrpc: "2.0", method: "notifications/aiti/interaction", params: { id: event.id, result: event.result } });
+      },
+      onError: (error) => process.stderr.write(`[widget-interaction] event stream: ${error.message}\n`),
+    });
+  }
   remote.on("close", () => process.exit(0));
 } else {
   const broker = new InteractionBroker();
