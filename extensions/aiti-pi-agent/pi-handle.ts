@@ -360,8 +360,48 @@ export class PiSpawnHandle extends RpcChildHost {
     if (msg.type === "model_select" && msg.model) {
       this.model = msg.model as { id: string; provider: string };
     }
+    // pi appends the run's user entry right after this message_end but announces the
+    // entry id to no one (#1746): the chat's New-session/Share on that message need
+    // the id before the run's end reads the file. Local rpc sessions get this from
+    // rpc-manager's announceUserMessageEntry; the subprocess path mirrors it here by
+    // asking the child for its entries and matching the just-appended user tail.
+    if (msg.type === "message_end" && (msg as { message?: { role?: unknown } }).message?.role === "user") {
+      void this.announceUserMessageEntry((msg as { message?: { timestamp?: unknown } }).message);
+    }
     this.rq.observeFrame(msg); // queue_update 帧 → 镜像（原帧照常 emit 给前端）
     this.emit(msg);
+  }
+
+  /** Ask the child for its entries and emit `user_message_entry` for the one this
+   *  message_end just delivered (matched by timestamp — the IPC boundary strips
+   *  object identity, which is what the local path matches on). Failures are
+   *  silent: the run's end read still fills the id, this only speeds it up. */
+  private announceUserMessageEntryBusy = false;
+  private async announceUserMessageEntry(message: { timestamp?: unknown } | undefined): Promise<void> {
+    if (!message || this.announceUserMessageEntryBusy) return;
+    this.announceUserMessageEntryBusy = true;
+    try {
+      const res = await this.request<{ entries?: Array<{ type?: unknown; id?: unknown; message?: { role?: unknown; timestamp?: unknown } }> }>(
+        { type: "get_entries" },
+        { timeoutMs: RPC_CTRL_TIMEOUT_MS },
+      );
+      const entries = Array.isArray(res?.entries) ? res.entries : [];
+      for (let i = entries.length - 1; i >= 0; i--) {
+        const entry = entries[i];
+        if (entry?.type !== "message") continue;
+        const entryMessage = entry.message;
+        if (entryMessage?.role !== "user") return; // the tail moved past this prompt: never guess
+        if (entryMessage.timestamp !== message.timestamp) return;
+        if (typeof entry.id === "string") {
+          this.emit({ type: "user_message_entry", entryId: entry.id, timestamp: entryMessage.timestamp });
+        }
+        return;
+      }
+    } catch {
+      // child busy or dying: the run's end read still fills the id
+    } finally {
+      this.announceUserMessageEntryBusy = false;
+    }
   }
 
   async prompt(text: string, options?: { images?: unknown[]; streamingBehavior?: string }): Promise<void> {
