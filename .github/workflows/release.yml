@@ -362,8 +362,18 @@ jobs:
           AITI_GITEE_TOKEN: ${{ secrets.AITI_GITEE_TOKEN }}
         run: |
           git fetch --no-tags --depth=1 origin "refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}"
-          git push "https://git:${AITI_GITEE_TOKEN}@gitee.com/aiti-ai/aiti-ai.git" \
-            "+refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}"
+          LOCAL=$(git rev-parse "refs/tags/${{ github.ref_name }}")
+          REMOTE=$(git ls-remote "https://git:${AITI_GITEE_TOKEN}@gitee.com/aiti-ai/aiti-ai.git" \
+            "refs/tags/${{ github.ref_name }}" | cut -f1)
+          if [ "$LOCAL" = "$REMOTE" ]; then
+            echo "Gitee tag already points at $LOCAL — nothing to sync"
+            exit 0
+          fi
+          # An existing-but-different tag needs an explicit force: a bare (or even '+')
+          # update can be refused with "(would clobber existing tag)" on the mirror,
+          # which failed this step on v0.18.0-aiti.1 even though the tag was correct.
+          git push --force "https://git:${AITI_GITEE_TOKEN}@gitee.com/aiti-ai/aiti-ai.git" \
+            "refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}"
 
       - name: Failure note
         if: failure()
