@@ -7,7 +7,7 @@
  */
 import { useEffect, useState } from "react";
 import { DockBody, isSidebarDockState, sidebarZoneOf, usePresent } from "../../../_shared/ext-float-dock";
-import { apiUrl } from "./host-shim";
+import { apiUrl, t } from "./host-shim";
 // 键与开关的唯一所有 = entry 薄壳（薄壳拆分 §5.2：usageOpenSet/一次性清理收编 entry，
 // register 期偏好修正不依赖本懒 chunk 加载）
 import { USAGE_KEY, usageOpenSet } from "./entry";
@@ -31,10 +31,21 @@ const CARD: Record<string, string> = {
 const KPI_LABEL: Record<string, string> = { fontSize: 11, color: "var(--text-muted,#767676)" };
 const KPI_VALUE: Record<string, string> = { fontSize: 17, fontWeight: 600, marginTop: 2 };
 const PALETTE = ["#2563eb", "#10b981", "var(--warn, #f59e0b)", "var(--danger, #ef4444)", "#8b5cf6", "#06b6d4"];
-const MODE_LABEL: Record<string, string> = { quick: "分句快识（quick）", final: "整段精修（final）", vad: "真流式会话（vad）", other: "其它/旧数据" };
+const MODE_KEYS: Record<string, string> = {
+  quick: "asrUsage.mode.quick",
+  final: "asrUsage.mode.final",
+  vad: "asrUsage.mode.vad",
+  other: "asrUsage.mode.other",
+};
+const modeLabel = (m: string) => {
+  const key = MODE_KEYS[m];
+  if (!key) return m;
+  const label = t(key);
+  return label === key ? m : label;
+};
 
 const mins = (s?: number) => (s || 0) / 60;
-const fmtMin = (s?: number) => `${mins(s).toFixed(1)} 分钟`;
+const fmtMin = (s?: number) => t("asrUsage.minutes", { n: mins(s).toFixed(1) });
 const fmtYuan = (v?: number) => (v === undefined ? "—" : `¥${v.toFixed(2)}`);
 const cost = (r: DayRow | undefined, price?: number) => (r && price ? mins(r.seconds) * price : undefined);
 
@@ -63,7 +74,7 @@ function TrendBars({ days, ids, colorOf, hidden }: {
   const max = Math.max(1, ...days.map((d) => ids.filter((i) => !hidden.has(i)).reduce((n, i) => n + mins(d.providers[i]?.seconds), 0)));
   const bw = Math.max(1, (W - PAD * 2) / Math.max(1, days.length) - 1);
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none" role="img" aria-label="近 30 天语音识别时长">
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none" role="img" aria-label={t("asrUsage.trendAria")}>
       {days.map((d, di) => {
         let acc = 0;
         const x = PAD + di * (bw + 1);
@@ -76,7 +87,7 @@ function TrendBars({ days, ids, colorOf, hidden }: {
               acc += h;
               if (h <= 0) return null;
               return <rect key={id} x={x} y={y} width={bw} height={h} fill={colorOf(id)}>
-                <title>{`${d.day} · ${id} · ${v.toFixed(1)} 分钟`}</title>
+                <title>{`${d.day} · ${id} · ${t("asrUsage.minutes", { n: v.toFixed(1) })}`}</title>
               </rect>;
             })}
           </g>
@@ -113,7 +124,7 @@ function renderUsageReport(face?: string) {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "reset" }),
     });
     await r.json().catch(() => null);
-    setMsg("用量已清空");
+    setMsg(t("asrUsage.cleared"));
     setTimeout(() => setMsg(""), 2000);
     void load();
   };
@@ -156,15 +167,15 @@ function renderUsageReport(face?: string) {
   }
 
   const floating = face === "float";
-  const title = floating ? null : "语音流量统计";
+  const title = floating ? null : t("asrUsage.title");
   const head = !floating ? null : (
     <div style={{
       display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexShrink: 0,
       padding: "10px 14px", borderBottom: "1px solid var(--border,#e0e0e0)", background: "var(--bg-subtle,#f5f5f5)",
     }}>
-      <b style={{ fontSize: 14 }}>语音流量统计</b>
+      <b style={{ fontSize: 14 }}>{t("asrUsage.title")}</b>
       {/* ✕ 关闭：aiti-float 契约下关闭由本按钮负责；aria-label="close" 是全局 AI 按钮 🤖 的注入锚点 */}
-      <button onClick={() => usageOpenSet(false)} title="关闭" aria-label="close"
+      <button onClick={() => usageOpenSet(false)} title={t("asrUsage.close")} aria-label="close"
         style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted,#767676)", fontSize: 15, lineHeight: 1 }}>✕</button>
     </div>
   );
@@ -173,21 +184,21 @@ function renderUsageReport(face?: string) {
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <b style={{ fontSize: 13 }}>{title}</b>
         <button onClick={() => void load()} disabled={loading} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted,#767676)", fontSize: 12 }}>
-          {loading ? "刷新中…" : "⟳ 刷新"}
+          {loading ? t("asrUsage.refreshing") : t("asrUsage.refresh")}
         </button>
         {msg ? <span style={{ fontSize: 12, color: "var(--accent,#2563eb)" }}>{msg}</span> : null}
       </div>
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <div style={CARD}><div style={KPI_LABEL}>今日</div><div style={KPI_VALUE}>{todayAll.requests} 次</div><div style={KPI_LABEL}>{fmtMin(todayAll.seconds)}</div></div>
-        <div style={CARD}><div style={KPI_LABEL}>近 7 天</div><div style={KPI_VALUE}>{week.requests} 次</div><div style={KPI_LABEL}>{fmtMin(week.seconds)}</div></div>
-        <div style={CARD}><div style={KPI_LABEL}>累计</div><div style={KPI_VALUE}>{all.requests} 次</div><div style={KPI_LABEL}>{fmtMin(all.seconds)}</div></div>
-        <div style={CARD}><div style={KPI_LABEL}>估算费用（累计）</div><div style={KPI_VALUE}>{fmtYuan(costOf(totals))}</div><div style={KPI_LABEL}>今日 {fmtYuan(costOf(today?.providers || {}))} ｜ 7 天 {fmtYuan(costOf(weekPer))}</div></div>
+        <div style={CARD}><div style={KPI_LABEL}>{t("asrUsage.today")}</div><div style={KPI_VALUE}>{t("asrUsage.times", { n: todayAll.requests })}</div><div style={KPI_LABEL}>{fmtMin(todayAll.seconds)}</div></div>
+        <div style={CARD}><div style={KPI_LABEL}>{t("asrUsage.last7")}</div><div style={KPI_VALUE}>{t("asrUsage.times", { n: week.requests })}</div><div style={KPI_LABEL}>{fmtMin(week.seconds)}</div></div>
+        <div style={CARD}><div style={KPI_LABEL}>{t("asrUsage.total")}</div><div style={KPI_VALUE}>{t("asrUsage.times", { n: all.requests })}</div><div style={KPI_LABEL}>{fmtMin(all.seconds)}</div></div>
+        <div style={CARD}><div style={KPI_LABEL}>{t("asrUsage.estCost")}</div><div style={KPI_VALUE}>{fmtYuan(costOf(totals))}</div><div style={KPI_LABEL}>{t("asrUsage.costBreakdown", { today: fmtYuan(costOf(today?.providers || {})), week: fmtYuan(costOf(weekPer)) })}</div></div>
       </div>
 
       <div style={{ border: "1px solid var(--border,#e0e0e0)", borderRadius: 10, padding: "8px 10px", background: "var(--bg-subtle,#f5f5f5)" }}>
-        <div style={{ ...KPI_LABEL, marginBottom: 4 }}>近 30 天音频时长（分钟/天）</div>
-        {days.length ? <TrendBars days={days} ids={ids} colorOf={colorOf} hidden={hidden} /> : <span style={KPI_LABEL}>暂无数据</span>}
+        <div style={{ ...KPI_LABEL, marginBottom: 4 }}>{t("asrUsage.trend")}</div>
+        {days.length ? <TrendBars days={days} ids={ids} colorOf={colorOf} hidden={hidden} /> : <span style={KPI_LABEL}>{t("asrUsage.noData")}</span>}
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
           {ids.map((id) => (
             <button key={id} onClick={() => setHidden((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; })}
@@ -200,9 +211,9 @@ function renderUsageReport(face?: string) {
 
       {ids.length ? (
         <div style={{ border: "1px solid var(--border,#e0e0e0)", borderRadius: 10, padding: "8px 10px", background: "var(--bg-subtle,#f5f5f5)" }}>
-          <div style={{ ...KPI_LABEL, marginBottom: 4 }}>按引擎（累计 · 今日 · 单价元/分钟 · 估算费用）</div>
+          <div style={{ ...KPI_LABEL, marginBottom: 4 }}>{t("asrUsage.byProvider")}</div>
           {ids.map((pid) => {
-            const t = totals[pid];
+            const total = totals[pid];
             const d = today?.providers[pid];
             const p = data?.price?.[pid];
             return (
@@ -210,12 +221,12 @@ function renderUsageReport(face?: string) {
                 <span style={{ width: 8, height: 8, borderRadius: 2, background: colorOf(pid), flexShrink: 0 }} />
                 <span style={{ minWidth: 66 }}>{pid}</span>
                 <span style={{ flex: 1, color: "var(--text-muted,#767676)" }}>
-                  {t.requests} 次 · {fmtMin(t.seconds)} · 错 {t.errors} ｜ 今日 {d?.requests ?? 0} 次
+                  {t("asrUsage.times", { n: total.requests })} · {fmtMin(total.seconds)} · {t("asrUsage.errors", { n: total.errors })} ｜ {t("asrUsage.today")} {t("asrUsage.times", { n: d?.requests ?? 0 })}
                 </span>
                 <input defaultValue={p ? String(p) : ""} placeholder="0" spellCheck={false}
                   onBlur={(e) => void onPrice(pid, e.target.value)}
                   style={{ width: 46, padding: "1px 4px", fontSize: 11.5, background: "var(--bg,#fff)", color: "var(--text,#1a1a1a)", border: "1px solid var(--border,#e0e0e0)", borderRadius: 4 }} />
-                <span style={{ minWidth: 54, textAlign: "right" }}>{fmtYuan(cost(t, p))}</span>
+                <span style={{ minWidth: 54, textAlign: "right" }}>{fmtYuan(cost(total, p))}</span>
               </div>
             );
           })}
@@ -224,11 +235,11 @@ function renderUsageReport(face?: string) {
 
       {Object.keys(all.byMode || {}).length ? (
         <div style={{ border: "1px solid var(--border,#e0e0e0)", borderRadius: 10, padding: "8px 10px", background: "var(--bg-subtle,#f5f5f5)" }}>
-          <div style={{ ...KPI_LABEL, marginBottom: 4 }}>按链路模式（累计）</div>
+          <div style={{ ...KPI_LABEL, marginBottom: 4 }}>{t("asrUsage.byMode")}</div>
           {Object.entries(all.byMode || {}).map(([m, r]) => (
             <div key={m} style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, padding: "2px 0" }}>
-              <span>{MODE_LABEL[m] || m}</span>
-              <span style={{ color: "var(--text-muted,#767676)" }}>{r.requests} 次 · {fmtMin(r.seconds)}</span>
+              <span>{modeLabel(m)}</span>
+              <span style={{ color: "var(--text-muted,#767676)" }}>{t("asrUsage.times", { n: r.requests })} · {fmtMin(r.seconds)}</span>
             </div>
           ))}
         </div>
@@ -238,8 +249,8 @@ function renderUsageReport(face?: string) {
         <button onClick={() => void onReset()} style={{
           padding: "4px 10px", border: "1px solid var(--border,#e0e0e0)", borderRadius: 8,
           background: "var(--bg,#fff)", color: "var(--text,#1a1a1a)", cursor: "pointer", fontSize: 12,
-        }}>清空用量</button>
-        <span style={{ ...KPI_LABEL, fontSize: 11 }}>时长按 16k/16bit 估算；数据存 state 层，只保留 90 天</span>
+        }}>{t("asrUsage.clear")}</button>
+        <span style={{ ...KPI_LABEL, fontSize: 11 }}>{t("asrUsage.note")}</span>
       </div>
     </div>
   );
@@ -250,7 +261,7 @@ function renderUsageReport(face?: string) {
         display: "flex", flexDirection: "column", background: "var(--bg,#fff)", color: "var(--text,#1a1a1a)",
         border: "1px solid var(--border,#e0e0e0)", borderRadius: 16, boxShadow: "0 16px 64px rgba(0,0,0,.25)",
         width: 520, maxWidth: "94vw", maxHeight: "86vh", fontSize: 13, overflow: "hidden", zIndex: 2147483101,
-      }} data-ext-float="1" data-ext-float-key={USAGE_KEY} data-ext-float-w="520" data-ext-float-full="1" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="语音流量统计">
+      }} data-ext-float="1" data-ext-float-key={USAGE_KEY} data-ext-float-w="520" data-ext-float-full="1" onClick={(e) => e.stopPropagation()} role="dialog" aria-label={t("asrUsage.title")}>
         {head}
         {body}
       </div>
@@ -258,14 +269,14 @@ function renderUsageReport(face?: string) {
   }
   if (face === "right") {
     return (
-      <DockBody itemKey={USAGE_KEY} zone="right-panel" title="语音流量" chrome="tab"
+      <DockBody itemKey={USAGE_KEY} zone="right-panel" title={t("it.asr-usage.title")} chrome="tab"
         zones={[sidebarZoneOf(USAGE_KEY), "right-panel"]} defaultZone={sidebarZoneOf(USAGE_KEY)}>
         <div style={{ position: "relative", display: "flex", flexDirection: "column", minHeight: 0, height: "100%", background: "var(--bg,#fff)", color: "var(--text,#1a1a1a)", fontSize: 13 }}>{body}</div>
       </DockBody>
     );
   }
   return (
-    <DockBody itemKey={USAGE_KEY} title="语音流量" chrome="section" kind="dockable"
+    <DockBody itemKey={USAGE_KEY} title={t("it.asr-usage.title")} chrome="section" kind="dockable"
       zones={[sidebarZoneOf(USAGE_KEY), "right-panel"]} defaultZone={sidebarZoneOf(USAGE_KEY)}>
       <div style={{ position: "relative", display: "flex", flexDirection: "column", minHeight: 0, height: "100%", background: "var(--bg,#fff)", color: "var(--text,#1a1a1a)", fontSize: 13 }}>{body}</div>
     </DockBody>
