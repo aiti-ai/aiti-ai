@@ -664,6 +664,7 @@
   function toggleMute() {
     audio.muted = !audio.muted;
     updateMuteIcons();
+    if (!audio.muted) applyVolume();
   }
   muteBtn.addEventListener("click", toggleMute);
   compactMuteBtn.addEventListener("click", (event) => { event.stopPropagation(); toggleMute(); });
@@ -700,12 +701,17 @@
         await audio.play();
         autoplayPending = false;
         status("Autoplay muted — tap the speaker to unmute");
-        const unmuteOnce = () => {
+        const unmuteOnce = (event) => {
+          document.removeEventListener("pointerdown", unmuteOnce, true);
+          // The speaker button's own click handler unmutes; don't unmute here and
+          // let that handler toggle it straight back to muted.
+          const target = event.target instanceof Element ? event.target : null;
+          if (target && target.closest("#mute, #compact-mute")) return;
           if (audio.muted) {
             audio.muted = false;
             updateMuteIcons();
+            applyVolume();
           }
-          document.removeEventListener("pointerdown", unmuteOnce, true);
         };
         document.addEventListener("pointerdown", unmuteOnce, true);
       } catch {
