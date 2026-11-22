@@ -44,11 +44,12 @@ export function envInfo(nav?: { userAgent?: string; platform?: string; language?
 
 // Site-specific internal hostnames are injected, never hardcoded here:
 //   build time — VITE_FEEDBACK_INTERNAL_HOSTS="host1,host2"
-//   runtime    — globalThis.__AITI_FEEDBACK_INTERNAL_HOSTS (array or comma list)
+//   runtime    — <html data-aiti-feedback-internal-hosts="host1,host2">
 function injectedHosts(): string[] {
   const env = (import.meta as unknown as { env?: Record<string, string> })?.env ?? {};
-  const runtime = (globalThis as Record<string, unknown>).__AITI_FEEDBACK_INTERNAL_HOSTS;
-  const raw = [env.VITE_FEEDBACK_INTERNAL_HOSTS, ...(Array.isArray(runtime) ? runtime : [runtime])];
+  const doc = (globalThis as { document?: { documentElement?: { getAttribute?(n: string): string | null } } }).document;
+  const fromDom = doc?.documentElement?.getAttribute?.("data-aiti-feedback-internal-hosts") ?? "";
+  const raw = [env.VITE_FEEDBACK_INTERNAL_HOSTS, fromDom];
   const hosts = raw
     .flatMap((v) => String(v ?? "").split(","))
     .map((s) => s.trim())
