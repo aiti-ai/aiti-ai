@@ -16,6 +16,11 @@ npm run build
 node --test test/*.test.mjs
 ```
 
+`Pages must avoid **top-level await** in their module script: macOS 11's WKWebView
+silently skips such a script (the window renders, the page never connects). Put the
+bootstrap in an `async function start()` instead; `test/pages.test.mjs` guards the
+shipped pages.
+
 `AITI_WIDGET_DEBUG=1` streams the shell's stderr to the parent process; without it the
 adapter keeps the last 4 kB and exposes it as `window.stderr` (a "blank window / no page
 callbacks" is usually a locked session or a failed page load — check there first).
