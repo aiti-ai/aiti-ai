@@ -14,6 +14,12 @@ This package is part of the **aiti** ecosystem — a personal AI development wor
 
 ## Features
 
+### Composer as a command hub (type a word, do the thing)
+
+The composer's suggestions include **app commands** — type `model` (or 模型) to get **Select model**: click it and the host's model dropdown opens right above the composer; picking a model closes it and **hands focus back to the input box** (no detour to the toolbar, nothing is inserted into your text). Type `compact` (or 压缩) for **Compact context**, which triggers the same compaction path as the session-info button (no re-entry while compacting/queued).
+
+Under the hood this is a fixed pattern: any extension that registers an item in the `commands` slot (with `meta.onClick` + `icon` + `keywords` + `category`) automatically gets an App Center card **and** a composer command candidate — host-side zero changes. Command keywords are self-declared (item-level `meta.keywords`, extension-level `keywords`), so the app center never hard-codes them.
+
 ### Autocomplete (L0 local, instant → L1 AI)
 
 Typing pause of 700ms with the caret at the end → grey ghost text for the next sentence (Tab/→ accept, Esc/keep typing cancel). Two tiers:

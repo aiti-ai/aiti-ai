@@ -3009,6 +3009,11 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   // together with its open state. The selector mirrors its open state back here so
   // expansion is pinned for the panel's lifetime.
   const [modelPanelOpen, setModelPanelOpen] = useState(false);
+  // Programmatic-open counter for the model dropdown ("pi-web.composer".get("openModelSelector")).
+  // The extension command hints (type "model" → run "select model") bump this instead of
+  // clicking the trigger: ModelSelector consumes each new value once and opens itself, so the
+  // focus hand-back on pick stays on the existing restoreFocusAfterClose path.
+  const [modelSelectorOpenRequest, setModelSelectorOpenRequest] = useState(0);
   const mobileExpanded = !isMobile || inputFocused || hasContent || isStreaming || modelPanelOpen;
   // Opening the ⓘ sheet: first close other popups + cancel recording (S28
   // mutual exclusion), then position bottom from the input row's location.
@@ -3298,6 +3303,15 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     setInputValue,
     focusComposer: refocusInput,
     textareaRef,
+    // Programmatic model selection (extension command hints / any future command surface): on
+    // mobile the composer must be focused first — that is what expands it (the selector only
+    // renders in the expanded state) and what makes the textarea the focus target recorded by
+    // rememberFocusBeforeOpen. On desktop the selector is already mounted and the filter input
+    // auto-focuses on open, so focusing the composer here would steal focus back from the filter.
+    openModelSelector: () => {
+      if (isMobile) refocusInput();
+      setModelSelectorOpenRequest((n) => n + 1);
+    },
     // The entry inside the mobile InfoSheet must collapse the sheet before opening stats (no effect on desktop — InfoSheet is a mobile-only state)
     openSessionInfo: () => { setInfoSheetOpen(false); onSessionStatsPanelOpen?.(); },
     // Queue panel action primitives (same set as queuePanel extra.actions; consumed by the composerTools import entry etc.)
@@ -5154,6 +5168,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     refreshing={modelsRefreshing}
                     hideIcon
                     onOpenChange={setModelPanelOpen}
+                    openRequest={modelSelectorOpenRequest}
                   />
                 </div>
               )}
@@ -5572,6 +5587,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   onReselect={onModelChange}
                   allOptions={allModelList?.map((m) => ({ provider: m.provider, providerName: m.providerName, modelId: m.id, name: m.name }))}
                   onShowAll={onLoadAllModels}
+                  openRequest={modelSelectorOpenRequest}
                 />
               )
             )}

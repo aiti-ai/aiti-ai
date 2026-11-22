@@ -863,6 +863,10 @@ export default {
   name: "AI input",
   icon: "icon.svg",
   client: "dist/aiti-ai-input-client.mjs",
+  // Self-declared search vocabulary for the app center (manifest pass-through). Extension-level keywords
+  // describe the extension itself (they apply to every card), so command aliases belong on the item's
+  // meta.keywords instead — otherwise the "model" query would also match the unrelated "compact context" card.
+  keywords: ["input", "composer", "suggest", "autocomplete", "voice", "输入", "联想", "补全", "语音"],
 
   // AI 自管理清单（docs/aiti-ai-helper-plan.md §3.2）：skills/asr-server 分平台运维手册（一键修复）
   ai: {
@@ -898,6 +902,10 @@ export default {
         "it.asr.title": "语音识别引擎",
         "it.asr-usage.title": "语音流量",
         "it.aiti-asr-panel.label": "语音识别引擎管理",
+        "cmd.pick-model.label": "选择模型",
+        "cmd.pick-model.title": "在当前会话切换模型——不离开输入框，选完焦点自动回到输入框",
+        "cmd.compact.label": "压缩上下文",
+        "cmd.compact.title": "压缩当前会话的上下文（与会话信息面板的压缩按钮同一链路）",
         "ext.displayName": "AI 输入增强",        "asr.open.title": "语音识别引擎管理（状态 / 启停 / 热词）",
         "asr.open.label": "语音识别引擎管理",
         "asr.panel.label": "语音识别",
@@ -998,6 +1006,10 @@ export default {
         "asr.open.title": "ASR engine manager (status / toggle / hotwords)",
         "asr.open.label": "ASR engine manager",
         "it.aiti-asr-panel.label": "Speech engine manager",
+        "cmd.pick-model.label": "Select model",
+        "cmd.pick-model.title": "Switch the model for this session without leaving the composer (focus returns to the input after picking)",
+        "cmd.compact.label": "Compact context",
+        "cmd.compact.title": "Compact this session's context (same path as the session-info compact button)",
         "ext.displayName": "AI Input Enhancer",
         "feat.aiti-asr-panel": "Speech recognition engine manager",
         "feat.aiti-ai-input-voice-tag": "Voice/fast-input awareness bar (detects speech or fast typing · fix-in-progress hint)",

@@ -4577,7 +4577,22 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   //    the ref on every render; the service registers only once on mount), avoiding
   //    a stale closure registration; unregistered on unmount. ──
   const hostUiRef = useRef<Record<string, unknown>>({});
-  hostUiRef.current = { ...sidebarContentExtra, sidebarFooterRow, onLineMention: handleFileLineMention, closeTopPanels, openImageInEditorViewer };
+  hostUiRef.current = {
+    ...sidebarContentExtra,
+    sidebarFooterRow,
+    onLineMention: handleFileLineMention,
+    closeTopPanels,
+    openImageInEditorViewer,
+    // Compact the current session on behalf of an extension command (e.g. the composer command
+    // hints: type "compress" → run "compact context"). Same source and same guard as the
+    // session-info panel's tri-state button: no session / unsupported backend → no-op, and an
+    // in-flight or queued compaction is never restarted from a command click.
+    compactSession: () => {
+      const c = compactControls;
+      if (!c?.compact || c.isCompacting || c.compactQueued) return;
+      void c.compact();
+    },
+  };
   useEffect(() => {
     return registerExtClientService(HOST_UI_SERVICE.provider, HOST_UI_SERVICE.name, {
       /** Fetch a host factory by name (renderTitle/renderSidebarFooter/callbacks …

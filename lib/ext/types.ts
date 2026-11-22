@@ -397,6 +397,11 @@ export interface ExtUiItem {
    *  item's own feature takes over gating. Only meaningful for two-phase lazy items (manifest ui[slot][]
    *  declaration + client-registered onClick). */
   feature?: string;
+  /** Search keywords / aliases for this entry (optional): bilingual synonyms, abbreviations, model/domain
+   *  vocabulary. Consumed by the app center's app + command search, so an extension declares its own
+   *  vocabulary instead of depending on the app center's hard-coded override table. Item-level keywords are
+   *  merged before (i.e. rank ahead of) the extension-level `keywords`; both are optional. */
+  keywords?: string[];
 }
 
 /** Declarative icon for toolbar items (see ExtUiItem.icon). */
@@ -1078,6 +1083,13 @@ export interface PiWebExtension {
    */
   category?: string;
   /**
+   * Search keywords / aliases for the whole extension (optional, passed through on `manifest()`). The app center
+   * merges them into every card's search haystack (bilingual names, abbreviations, domain words), so extensions
+   * declare their own vocabulary instead of being listed in the app center's override table. Item-level
+   * `keywords` (ui items / features) stay separate and take precedence per entry.
+   */
+  keywords?: string[];
+  /**
    * One-line extension description (input side: entry declaration, optional). The app center's info sheet reads it;
    * absent → the host falls back to the extension's package.json `description`. Passed through on `manifest()`.
    */
@@ -1182,6 +1194,9 @@ export interface ManifestExtension {
   takeover?: string[];
   /** App-center category tag (passed through from PiWebExtension.category; absent = untagged). */
   category?: string;
+  /** Extension-level search keywords (passed through from PiWebExtension.keywords; absent = none declared).
+   *  The app center merges them into every card's search haystack; item-level keywords stay on the items. */
+  keywords?: string[];
   /** Extension description (app-center info sheet): entry declaration first, package.json `description` as fallback; absent when neither exists. */
   description?: string;
   /** Feature states (extension-manager managed): fetched together when the host client loads; extensions read a shared store, no separate requests. */

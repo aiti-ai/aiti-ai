@@ -61,6 +61,12 @@ interface ModelSelectorProps {
   onShowAll?: () => void;
   /** Open-state mirror (fires on every open/close). Mobile hosts pin the composer's expanded state while the fullscreen panel is up — see ChatInput mobileExpanded. */
   onOpenChange?: (open: boolean) => void;
+  /** Programmatic-open signal (monotonically increasing counter; absent = never triggered).
+   *  Extensions ask the host ("pi-web.composer".get("openModelSelector")) to open this dropdown
+   *  without a pointer press — e.g. the composer's command hints (type "model" → run the
+   *  "select model" command). Opening keeps the pre-open focus target, so picking a model
+   *  hands focus back to the composer through the existing restoreFocusAfterClose path. */
+  openRequest?: number;
 }
 
 const MODEL_FILTER_THRESHOLD = 8;
@@ -303,6 +309,7 @@ export function ModelSelector({
   allOptions,
   onShowAll,
   onOpenChange,
+  openRequest,
 }: ModelSelectorProps) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
@@ -364,6 +371,22 @@ export function ModelSelector({
     setShowAll(!showAll);
     setHighlightIndex(-1);
   };
+
+  // Programmatic open (openRequest signal): the composer's command hints (type "model" → run the
+  // "select model" command) ask the host to open this dropdown without a pointer press. The ref
+  // starts undefined so an instance mounted *after* the request (mobile expanded state renders it
+  // on demand) still consumes the current value; later increments are consumed once each. `locked`
+  // (disabled/busy) and an already-open panel are honored: a hint must not bypass the trigger's own
+  // refusal to open, and a repeat click must not re-record the focus target from inside the panel.
+  const lastOpenRequestRef = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (openRequest === undefined || openRequest <= 0) return;
+    if (lastOpenRequestRef.current === openRequest) return;
+    lastOpenRequestRef.current = openRequest;
+    if (open || locked) return;
+    rememberFocusBeforeOpen();
+    setOpen(true);
+  }, [openRequest, locked, open]);
 
   // Re-read recents each time the panel opens (other windows / other ModelSelector instances may have updated them)
   useEffect(() => {

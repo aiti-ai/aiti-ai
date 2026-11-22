@@ -16,6 +16,8 @@ export default {
   name: "应用中心",
   icon: "icons/layout-grid.svg",
   client: "dist/aiti-app-center-client.mjs",
+  // Self-declared search vocabulary (manifest pass-through): app center / launcher / start menu aliases.
+  keywords: ["apps", "launcher", "start-menu", "dock", "command", "应用", "命令", "开始菜单"],
 
   // 应用中心分类标注（v2 分类体系，本扩展以身作则；条目/feature 级标注优先于本值）
   category: "system",

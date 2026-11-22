@@ -78,6 +78,35 @@ test("buildCommandHints：q 匹配命中 label/keywords（matchApp 分词子串�
   assert.deepEqual(ids(buildCommandHints({ ...BASE, q: "不存在词" })), []);
 });
 
+test("buildCommandHints：关键词自声明优先（条目 → 扩展 → label）", () => {
+  // Item-declared keywords win (and merge ahead of the extension-level ones): a command entry may
+  // carry its own bilingual aliases without touching the app center's hard-coded table.
+  const withItem = buildCommandHints({
+    ...BASE,
+    slotItems: [
+      { slot: "commands", id: "ext-a:pick-model", extId: "ext-a", meta: { label: "选择模型", keywords: ["切换模型", "switch-model"], onClick: () => {} } },
+    ],
+    q: "switch-model",
+  });
+  assert.deepEqual(ids(withItem), ["action:ext-a:pick-model"], "条目级 keywords 应参与匹配");
+  // Extension-level keywords (manifest pass-through) work the same way; no override-table edit needed.
+  const withExt = buildCommandHints({
+    ...BASE,
+    exts: [{ id: "ext-c", name: "扩展C", keywords: ["compact", "压缩上下文"], category: "ai", features: null }],
+    slotItems: [{ slot: "commands", id: "ext-c:compact", extId: "ext-c", meta: { label: "压缩", onClick: () => {} } }],
+    q: "compact",
+  });
+  assert.deepEqual(ids(withExt), ["action:ext-c:compact"], "扩展级 keywords 应参与匹配");
+  // A declared extension keyword must NOT need the legacy table: unknown extensions match by label alone.
+  const byLabel = buildCommandHints({
+    ...BASE,
+    exts: [{ id: "aiti-words", name: "X", category: "ai", features: null }],
+    slotItems: [{ slot: "commands", id: "aiti-words:go", extId: "aiti-words", meta: { label: "去", onClick: () => {} } }],
+    q: "去",
+  });
+  assert.deepEqual(ids(byLabel), ["action:aiti-words:go"], "label 本身始终参与匹配");
+});
+
 test("buildCommandHints：hidden 只过滤非 toggle（应用视图语义）", () => {
   const hints = buildCommandHints({ ...BASE, hidden: ["action:ext-a:btn", "toggle:ext-a:feat-on"] });
   assert.ok(!ids(hints).includes("action:ext-a:btn"), "hidden 动作卡应被过滤");

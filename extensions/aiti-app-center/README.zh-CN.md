@@ -14,6 +14,11 @@
 
 分类: 系统与管理 · tags: `app-center` · `launcher` · `start-menu` · `dock` · `spacer` · `category` · `apps`
 
+## 扩展作者须知
+
+- **命令即条目**：注册在 `commands` 命令目录槽的条目（带 `meta.onClick` + `icon`）会同时出现在应用中心**和**输入框的命令联想里——例如「选择模型」「压缩上下文」（由 `aiti-ai-input` 注册），用户不离开输入框就能完成操作。
+- **关键词自声明**：搜索词写在条目 `meta.keywords` 或扩展顶层 `keywords`（`index.ts`，经 manifest 透传）。应用中心只对存量扩展兜底覆盖表——新扩展严禁再加表。扩展级关键词对该扩展所有卡片生效，命令别名请放条目级。
+
 ## 安装
 
 随 **aiti-agent**（`@aiti-ai/pi-web`）捆绑发行——在工作台内的扩展管理器（ExtMan / 应用中心）启用即可。
