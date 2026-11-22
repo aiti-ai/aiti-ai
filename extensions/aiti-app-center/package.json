@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-app-center",
-  "version": "0.2.11",
+  "version": "0.2.12",
   "type": "module",
   "description": "The app drawer (start menu) shown in the blank state after every left-column dock block is collapsed — a single-row switch between the Apps view (action/panel/manage entry cards, hover quick-pin + info page) and the Toggles view (feature toggles g",
   "scripts": {
@@ -14,7 +14,7 @@
   "soul": "所有插件入口的家——折叠即开始菜单。",
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "481a7d77f9f0c12e",
+  "contentHash": "62a1f45cb01ca8a7",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",
