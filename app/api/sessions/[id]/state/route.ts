@@ -4,6 +4,7 @@ import { resolveAnySession, attachIfBridged } from "@/lib/session";
 import { resolveSessionPath } from "@/lib/session-reader";
 import { getRegistry } from "@/lib/ext/registry";
 import { applyQueuedFlag } from "@/lib/compact-queue";
+import { mergeHandleState } from "@/lib/session/handle-state";
 
 export async function GET(
   _req: Request,
@@ -28,15 +29,19 @@ export async function GET(
           const state = (await bridged.send({ type: "get_state" }).catch(() => null)) as Record<string, unknown> | null;
           // Parked-compaction flag (lib/compact-queue) — pending indicator survives reload.
           applyQueuedFlag(id, state);
+          // Handle-backed adapters (attach/spawn recovery double-key) also flow through
+          // here — their capability declaration must ride *inside* `state`: the frontend
+          // reads liveState.capabilities/backendSource (AgentStateResponse), so a
+          // top-level copy left spawn sessions without capabilities and edit-from-here
+          // fell back to navigate_tree (rejected by the pi spawn backend).
+          const handleCapabilities = (bridged as { handle?: { capabilities?: unknown } }).handle
+            ?.capabilities ?? (bridged as unknown as { capabilities?: unknown }).capabilities;
           return NextResponse.json({
             running: true,
-            state,
+            state: mergeHandleState(state, handleCapabilities, bridged.source),
             bridged: true,
-            // Handle-backed adapters (attach/spawn recovery double-key) also flow through
-            // here — forward their capability declarations so the frontend gates controls
-            // (edit-from-here fork semantics etc.) on the real backend, not fallbacks.
-            capabilities: (bridged as { handle?: { capabilities?: unknown } }).handle
-              ?.capabilities ?? (bridged as unknown as { capabilities?: unknown }).capabilities,
+            // Kept at the top level for diagnostics/non-frontend readers.
+            capabilities: handleCapabilities,
             backendSource: bridged.source,
           });
         }
@@ -56,13 +61,13 @@ export async function GET(
       applyQueuedFlag(id, state);
       return NextResponse.json({
         running: true,
-        state: {
-          ...(state ?? {}),
-          // Pass capability declarations through to the frontend (capability-aware control rendering)
-          capabilities: (wrapped as { handle?: { capabilities?: unknown } }).handle
+        // Pass capability declarations through to the frontend (capability-aware control rendering)
+        state: mergeHandleState(
+          state,
+          (wrapped as { handle?: { capabilities?: unknown } }).handle
             ?.capabilities ?? (wrapped as unknown as { capabilities?: unknown }).capabilities,
-          backendSource: wrapped.source,
-        },
+          wrapped.source,
+        ),
       });
     }
 
