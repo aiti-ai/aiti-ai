@@ -252,6 +252,14 @@ test("live agent state is available before the session file is persisted", () =>
   assert.match(stateRoute, /attachIfBridged\(/);
 });
 
+test("bridged (attach/spawn) state declares capabilities inside `state` (read by the frontend)", () => {
+  // hooks/useAgentSession.ts reads liveState.capabilities / backendSource; a top-level
+  // copy left spawn sessions without them, so edit-from-here fell back to navigate_tree
+  // and the pi spawn backend answered 500 "Capability navigate_tree is not supported".
+  const bridgedBranch = stateRoute.slice(stateRoute.indexOf("attachIfBridged(fp)"), stateRoute.indexOf("getRpcSession(id)"));
+  assert.match(bridgedBranch, /state: mergeHandleState\(state, handleCapabilities, bridged\.source\)/);
+});
+
 test("deleting a session removes all persisted subagent descendants", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "pi-web-delete-reparent-"));
   const grandparentPath = join(dir, "grandparent.jsonl");
