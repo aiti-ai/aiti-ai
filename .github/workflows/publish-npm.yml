@@ -128,6 +128,15 @@ jobs:
               ;;
           esac
 
+      # External-repo dependency floors (content-share etc.) are NOT published by this
+      # workflow: they live in their own repos and must already be on npmjs. Check them
+      # BEFORE installing the shared build root — otherwise the first thing that sees a
+      # missing floor is a raw npm ETARGET inside that install (2026-11-22 content-share
+      # ^0.1.16 incident). The script prints the owning repo's dispatch command.
+      - name: External dependency floors (official)
+        if: ${{ inputs.registry == 'npmjs' }}
+        run: node scripts/check-external-deps.mjs --target official
+
       # 扩展 build:client 的依赖根（CI checkout 树无扩展 node_modules；dry-run 不跑构建所以
       # 只在实发暴露）——共享构建根 + 每扩展 symlink，同 release.yml prepare 机制
       - name: Prepare shared build root (extension devDeps)
