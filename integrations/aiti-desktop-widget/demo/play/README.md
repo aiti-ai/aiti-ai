@@ -44,6 +44,7 @@ older shell without query forwarding, start `serve.mjs` and pass `--url
 | `bare` | — | `1` = remove the card background/border (text/cover only) |
 | `autoplay` | — | **default `1`** (start on open); `0` disables. Browsers may still require a click; the page then shows the play state |
 | `layout` | — | `auto` (default; one-line mode when height ≤220px), `card`, or `line` |
+| `autosize` | — | **default `1`** in one-line mode: resize the widget window to the current lyric, keeping the window center fixed; `0` disables |
 | `loop` | — | `1` loops the audio |
 | `volume` | — | `0..1` initial volume |
 
@@ -95,6 +96,9 @@ are distributed evenly across the audio duration.
 - Click/drag the progress bar; keyboard `←`/`→` seeks ±5s, `Home`/`End` jumps, `Space`
   toggles play.
 - `⌘/Ctrl` not required; buttons are keyboard-focusable.
+- In one-line mode the page asks the shell to resize the window around its current center (Tauri
+  page-control); this makes a short lyric shorter and a long lyric wider without moving the
+  play button's center. Pass `autosize=0` to keep the caller-provided size.
 - The page is transparent by default (`html,body{background:transparent}`); use `bare=1`
   to remove the translucent card entirely, or `bg=<color>` for a solid card.
 - **One-line / marquee mode**: when the window is short (height ≤220px, or `layout=line`),
