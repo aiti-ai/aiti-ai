@@ -9,12 +9,13 @@ test("redact: private-network domains, hosts and ports", () => {
 });
 
 test("redact: injected internal hosts", () => {
-  globalThis.__AITI_FEEDBACK_INTERNAL_HOSTS = ["corp.example", "ops.example"];
+  const attrs = { "data-aiti-feedback-internal-hosts": "corp.example, ops.example" };
+  globalThis.document = { documentElement: { getAttribute: (n) => attrs[n] ?? null } };
   try {
     assert.equal(redact("open https://corp.example:8443/x"), "open https://<redacted-domain>/x");
     assert.equal(redact("see ops.example/y"), "see <redacted-domain>/y");
   } finally {
-    delete globalThis.__AITI_FEEDBACK_INTERNAL_HOSTS;
+    delete globalThis.document;
   }
 });
 
