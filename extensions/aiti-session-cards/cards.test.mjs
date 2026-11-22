@@ -21,7 +21,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const REACT_STUB = [
   "export const Fragment = Symbol.for('react.fragment');",
   "export const createElement = (type, props, ...children) => ({ type, props, children });",
-  "export const useState = (v) => [v, () => {}];",
+  "export const useState = (v) => [typeof v === 'function' ? v() : v, () => {}];",
   "export const useEffect = () => {};",
   "export const useLayoutEffect = () => {};",
   "export const useRef = () => ({ current: null });",
@@ -80,7 +80,7 @@ function collectText(node) {
 function collectButtons(node, out = []) {
   if (Array.isArray(node)) { for (const n of node) collectButtons(n, out); return out; }
   if (node == null || typeof node !== "object") return out;
-  if (node.type === "button" && node.props) out.push({ label: collectText(node.props.children), onClick: node.props.onClick });
+  if (node.type === "button" && node.props) out.push({ label: collectText(node.props.children), onClick: node.props.onClick, disabled: node.props.disabled });
   collectButtons(node.children ?? node.props?.children, out);
   return out;
 }
@@ -159,4 +159,71 @@ test("plan_approval 缺方案正文（ExitPlanMode 只带 allowedPrompts）→ �
   assert.match(card.text, /允许命令: run tests（Bash）/, "allowedPrompts 翻成人话，卡不空跑");
   assert.ok(card.buttons.some((b) => b.label === "批准方案"), "审批出口不得因缺正文而消失");
   assert.ok(card.buttons.some((b) => b.label === "拒绝"));
+});
+/** Element-tree walker: every input/textarea (the free-text answer control). */
+function collectFields(node, out = []) {
+  if (Array.isArray(node)) { for (const n of node) collectFields(n, out); return out; }
+  if (node == null || typeof node !== "object") return out;
+  if ((node.type === "input" || node.type === "textarea") && node.props) out.push({ type: node.type, props: node.props });
+  collectFields(node.children ?? node.props?.children, out);
+  return out;
+}
+
+/** Render one card and pull its input controls out of the element tree. */
+function renderFields(interactionItem, request) {
+  const element = interactionItem.render({ request, respond: async () => true });
+  const tree = typeof element?.type === "function" ? element.type(element.props) : element;
+  return { fields: collectFields(tree), card: renderCard(interactionItem, request) };
+}
+
+test("ask_user 自由文本（input 投影，options 空数组）→ 单行输入框 + 空值不得提交", async (t) => {
+  const registered = [];
+  const mod = await buildEntry(t);
+  mod.default(makeCtx({}, registered, []));
+  const interaction = registered[0].items.find((it) => it.id === "interaction");
+
+  // Regression: ctx.ui.input (/vault add's masked input) must have a place to type the value
+  // on subprocess backends — the projection used to omit options, the card threw on
+  // options.map, and the request could never be answered.
+  const { fields, card } = renderFields(interaction, {
+    requestId: "ft1", family: "interaction", kind: "interaction:ask_user",
+    capability: "respondInteraction", toolName: "extension_ui.input",
+    prompt: 'Value for "API_KEY" (input is kept out of the chat)',
+    questions: [{ question: 'Value for "API_KEY" (input is kept out of the chat)', options: [] }],
+    input: { type: "extension_ui_request", id: "ft1", method: "input", placeholder: "Value never reaches the model" },
+  });
+  assert.match(card.text, /Value for "API_KEY"/, "问题文本上卡");
+  assert.equal(fields.length, 1, "自由文本题渲染且仅渲染一个输入控件");
+  assert.equal(fields[0].type, "input", "input 方法 → 单行输入框");
+  assert.equal(fields[0].props.placeholder, "Value never reaches the model", "placeholder 透传主子进程");
+  const submit = card.buttons.find((b) => b.label === "提交回答");
+  assert.ok(submit, "自由文本题仍有提交出口");
+  assert.equal(submit.disabled, true, "未填值 → 提交门禁关闭（不会带着空值应答）");
+  assert.ok(card.buttons.some((b) => b.label === "跳过"), "跳过出口仍在（decline → cancelled）");
+});
+
+test("ask_user 自由文本：editor 投影 → textarea 预填 prefill；缺 options 的旧投影降级不崩", async (t) => {
+  const registered = [];
+  const mod = await buildEntry(t);
+  mod.default(makeCtx({}, registered, []));
+  const interaction = registered[0].items.find((it) => it.id === "interaction");
+
+  const { fields } = renderFields(interaction, {
+    requestId: "ft2", family: "interaction", kind: "interaction:ask_user",
+    capability: "respondInteraction", toolName: "extension_ui.editor",
+    questions: [{ question: "vault: API_KEY", options: [] }],
+    input: { type: "extension_ui_request", id: "ft2", method: "editor", prefill: "sk-prefilled" },
+  });
+  assert.equal(fields.length, 1);
+  assert.equal(fields[0].type, "textarea", "editor 方法 → 多行输入框");
+  assert.equal(fields[0].props.value, "sk-prefilled", "prefill 成为初值（/vault reveal 场景可直接复制）");
+
+  // Defence in depth: a backend that still omits options degrades to free text instead of throwing.
+  const legacy = renderCard(interaction, {
+    requestId: "ft3", family: "interaction", kind: "interaction:ask_user",
+    capability: "respondInteraction", toolName: "extension_ui.input",
+    questions: [{ question: "Value?" }],
+    input: { type: "extension_ui_request", id: "ft3", method: "input" },
+  });
+  assert.match(legacy.text, /Value\?/, "缺 options 不再让整卡崩掉");
 });

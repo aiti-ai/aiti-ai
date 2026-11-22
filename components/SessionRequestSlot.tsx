@@ -19,7 +19,7 @@
  * dispatch.
  */
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { ExtSlot, useExtSlotItems } from "./ExtSlots.tsx";
 import { MarkdownBody } from "./MarkdownBody.tsx";
@@ -145,6 +145,10 @@ export function MinimalRequestCard({ request, onRespond }: {
   const isToolAuth = request.kind === "interaction:tool_auth";
   const isGeneric = request.kind === "interaction:generic";
   const isOpenUrl = request.kind === "interaction:open_url";
+  /** A question without options is a free-text answer (input/editor projection): type it here. */
+  const freeTextQuestion = isAsk ? (request.questions ?? []).find((q) => (Array.isArray(q.options) ? q.options.length : 0) === 0) : undefined;
+  const [freeTextValue, setFreeTextValue] = useState("");
+  const freeTextReady = !freeTextQuestion || freeTextValue.trim().length > 0;
   /** 无专属正文的形态（tool_auth/generic/plan 缺方案正文）→ input 摘要兜底，卡不空跑。 */
   const showSummary = isToolAuth || isGeneric || (isPlan && !request.plan);
   /** 没有专属作答动作的形态，一律给默认 拒绝/允许——挂起的 ask 不能没有出口。 */
@@ -222,10 +226,27 @@ export function MinimalRequestCard({ request, onRespond }: {
             <div key={`${qi}-${q.question.slice(0, 24)}`} style={{ fontSize: 12, color: "var(--text)", marginBottom: 6, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
               {q.header && <span style={{ color: "var(--text-muted)", marginRight: 6 }}>[{q.header}]</span>}
               {q.question}
-              {q.options.length > 0 && (
+              {(Array.isArray(q.options) ? q.options.length : 0) > 0 && (
                 <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 2 }}>
                   {t("sessionReq.options", { options: q.options.map((o) => o.label).join(" / ") })}
                 </div>
+              )}
+              {(Array.isArray(q.options) ? q.options.length : 0) === 0 && (
+                <input
+                  value={freeTextValue}
+                  onChange={(e) => setFreeTextValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter" || e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+                    const typed = e.currentTarget.value;
+                    if (!typed.trim() || !freeTextQuestion) return;
+                    void onRespond({ action: "accept", answers: { [freeTextQuestion.question]: typed } });
+                  }}
+                  autoFocus
+                  style={{
+                    width: "100%", marginTop: 6, padding: "7px 9px", borderRadius: 6, fontSize: 12,
+                    border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", outline: "none",
+                  }}
+                />
               )}
             </div>
           ))}
@@ -261,7 +282,11 @@ export function MinimalRequestCard({ request, onRespond }: {
         </>)}
         {isAsk && (<>
           <button type="button" className={dangerButton} onClick={() => void onRespond({ action: "decline" })}>{t("sessionReq.skip")}</button>
-          <button type="button" className={primaryButton} onClick={() => void onRespond({ action: "accept" })}>{t("sessionReq.submit")}</button>
+          <button type="button" className={primaryButton} disabled={!freeTextReady}
+            onClick={() => void onRespond({
+              action: "accept",
+              ...(freeTextQuestion ? { answers: { [freeTextQuestion.question]: freeTextValue } } : {}),
+            })}>{t("sessionReq.submit")}</button>
         </>)}
         {defaultActions && (<>
           <button type="button" className={dangerButton} onClick={() => void onRespond({ action: "decline" })}>{t("sessionReq.deny")}</button>
