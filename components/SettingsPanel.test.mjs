@@ -102,6 +102,18 @@ test("Settings › MCP offers Trust through the page's trust dialog, which opens
   // Escape there closes only the dialog: ProjectTrustDialog.test.mjs and lib/stacked-dialog.test.mjs.
 });
 
+test("signing out removes the stored drafts once the server signed out", async () => {
+  const panelSource = await readFile(new URL("./SettingsPanel.tsx", import.meta.url), "utf8");
+  assert.match(
+    panelSource,
+    /if \(!response\.ok\) throw new Error\([^\n]*\);\n(?:\s*\/\/[^\n]*\n)*\s*clearStoredDrafts\(\);\n\s*window\.location\.replace\((?:withBasePath\()?"\/login"\)?\);/,
+  );
+});
+
+test("the login page returns only to a destination safeLoginDestination() accepts", () => {
+  assert.match(loginSource, /safeLoginDestination\(destination, window\.location\.origin\)/);
+});
+
 test("an Add in Settings › MCP hands the folder's new trust to the page, which every section reloads on", () => {
   // Adding a project server writes .pi/mcp.json (the folder now requires trust) and may trust a
   // fresh folder in the same step; the page takes that status only for the folder Settings shows.

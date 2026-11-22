@@ -38,7 +38,7 @@ test("adds collapse without replacing cancel", () => {
 });
 
 test("renders extension confirmation and options as markdown", () => {
-  assert.match(source, /import \{ MarkdownBody \} from "\.\/MarkdownBody"/);
+  assert.match(source, /import \{ MarkdownBody \} from "\.\/MarkdownBody(?:\.tsx?)?"/);
     // 合并适配：合并后的消息先 stripAnsi
   assert.match(dialogSource, /<MarkdownBody>\{stripAnsi\(request\.message\)\}<\/MarkdownBody>/);
   assert.match(dialogSource, /role="button"[\s\S]*?data-extension-option[\s\S]*?<div inert>[\s\S]*?<MarkdownBody>\{stripAnsi\(option\)\}<\/MarkdownBody>/);

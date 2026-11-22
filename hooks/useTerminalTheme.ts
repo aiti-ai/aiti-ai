@@ -1,4 +1,3 @@
-import { useSyncExternalStore } from "react";
 import {
   parseTerminalTheme,
   TERMINAL_THEME_DEFAULT,
@@ -6,6 +5,7 @@ import {
   TERMINAL_THEME_STORAGE_KEY,
   type TerminalTheme,
 } from "@/lib/terminal-theme";
+import { useSyncExternalStore } from "react";
 
 function readStoredTheme(): TerminalTheme {
   try {

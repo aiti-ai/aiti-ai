@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { createHash } from "crypto";
-import { jsonResponse } from "@/lib/json-response";
 import {
   attachSessionProjectInfo,
   getSessionListVersion,
@@ -119,14 +118,10 @@ export async function GET(req: Request) {
       const notModified = new Response(null, { status: 304, headers: { ETag: etag, "Cache-Control": "no-store" } });
       return perf ? perf.attach(notModified) : notModified;
     }
-    // jsonResponse sends plain JSON (no Next-layer gzip — see lib/json-response.ts for the
-    // Next 16.4.6 Content-Encoding regression it avoids); the ETag is computed over the body
-    // to match the client's If-None-Match.
-    return perf?.attach(jsonResponse(req, payload, {
-      headers: { ETag: etag, "Cache-Control": "no-store" },
-    })) ?? jsonResponse(req, payload, {
-      headers: { ETag: etag, "Cache-Control": "no-store" },
-    });
+    // The ETag is computed over the exact body NextResponse.json serializes, so the
+    // client's If-None-Match matches; Next compresses the response itself (16.4.6+).
+    const response = () => NextResponse.json(payload, { headers: { ETag: etag, "Cache-Control": "no-store" } });
+    return perf?.attach(response()) ?? response();
   } catch (error) {
     return NextResponse.json(
       { error: String(error) },

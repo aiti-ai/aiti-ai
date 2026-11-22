@@ -127,7 +127,7 @@ test("New restores the draft after session navigation and workspace auto-restore
         initialSessionIdRef: { current: null }, initialSessionRestoredRef: { current: true },
         useRef: (v) => ({ current: v }),
         useEffect: () => {}, useCallback: (fn) => fn, useMemo: (fn) => fn(), useState: (v) => [{ current: typeof v === "function" ? v() : v }, () => {}],
-        replaceLocationIfChanged() {}, sessionSourceRef: { current: null }, urlRestoredSessionRef: { current: null }, invalidateWorkspaceRestore() {}, inAppPathname: (p) => p, workspaceKeyOf: (v) => (v && typeof v === "object" ? v.projectKey ?? v.cwd : v),
+        replaceLocationIfChanged() {}, normPath: (value) => value, sessionSourceRef: { current: null }, urlRestoredSessionRef: { current: null }, invalidateWorkspaceRestore() {}, inAppPathname: (p) => p, workspaceKeyOf: (v) => (v && typeof v === "object" ? v.projectKey ?? v.cwd : v),
         apiUrl: (p) => p,
         apiRekeyDraft: (from, to) => { const d = draftStore.getDraft(from); if (d) { draftStore.setDraft(to, d); draftStore.clearDraft(from); } },
         apiHasDraft: (key) => Boolean(draftStore.getDraft(key)),

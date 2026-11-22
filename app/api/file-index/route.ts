@@ -9,6 +9,7 @@ import {
   isFilePathAllowed,
   isWindowsAbsolutePath,
 } from "@/lib/file-access";
+import { projectGitEnvironment } from "@/lib/git-environment";
 import { buildEntriesFromFiles, filterFileEntries, type FileIndexEntry } from "@/lib/file-fuzzy";
 import { isIgnored, isAitIgnored } from "@/lib/file-ignore";
 
@@ -60,7 +61,7 @@ async function listWithGit(cwd: string): Promise<FileListing | null> {
     const { stdout } = await execFileAsync(
       "git",
       ["-C", cwd, "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
-      { timeout: 10_000, maxBuffer: 64 * 1024 * 1024, env: { ...process.env, LC_ALL: "C" } },
+      { timeout: 10_000, maxBuffer: 64 * 1024 * 1024, env: projectGitEnvironment() },
     );
     const all = stdout.split("\0").filter(Boolean);
     // .gitignore 层由 --exclude-standard 承担；此处叠加 .aitignore（git 不认识它）

@@ -8,28 +8,28 @@ import { fmtMoney, fmtMoneySmall, fxNote, useMoneySynced } from "@/lib/money";
 import { homeDirService } from "@/lib/home-dir";
 
 import { useGlobalKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
-import { PiWebTitle } from "./PiWebTitle";
-import { ChatWindow, type CompactControls } from "./ChatWindow";
+import { PiWebTitle } from "./PiWebTitle.tsx";
+import { ChatWindow, type CompactControls } from "./ChatWindow.tsx";
 import { contextUrgency, CTX_BREATHE_CSS } from "@/lib/context-urgency";
 import type { ChatScrollPosition } from "@/lib/chat-scroll-position";
-import { FileViewer } from "./FileViewer";
-import { TabBar, type Tab } from "./TabBar";
-import { renderExtItemIcon as renderExtItemIconShared } from "./ExtItemIcon";
-import { TabBody, type TabBodyCtx } from "./TabBody";
-import { DetachedTabWindow } from "./DetachedTabWindow";
+import { FileViewer } from "./FileViewer.tsx";
+import { TabBar, type Tab } from "./TabBar.tsx";
+import { renderExtItemIcon as renderExtItemIconShared } from "./ExtItemIcon.tsx";
+import { TabBody, type TabBodyCtx } from "./TabBody.tsx";
+import { DetachedTabWindow } from "./DetachedTabWindow.tsx";
 import { movePanelTab, orderPanelTabs } from "@/lib/panel-tab-order";
-import { openFileTab, openFolderTab, saveFileViewerState, findDormantFileFacePath, saveParkedFileViewerState, switchFileWorkspace, type ParkedFileWorkspace } from "./file-tab-state";
-import { SettingsPanel, SettingsSectionIcon } from "./SettingsPanel";
+import { openFileTab, openFolderTab, saveFileViewerState, findDormantFileFacePath, saveParkedFileViewerState, switchFileWorkspace, type ParkedFileWorkspace } from "./file-tab-state.ts";
+import { SettingsPanel, SettingsSectionIcon } from "./SettingsPanel.tsx";
 import dynamic from "next/dynamic";
-import { ExtSlotsProvider, ExtSlot, TakeoverSlot, useExtSlotItems, useExtMetas, dispatchChatSend, ExtItemBoundary, registerExtClientService, ensureExtMaterialized, translateExtItemText } from "./ExtSlots";
-import { ProviderUsagePanel } from "./ProviderUsagePanel";
+import { ExtSlotsProvider, ExtSlot, TakeoverSlot, useExtSlotItems, useExtMetas, dispatchChatSend, ExtItemBoundary, registerExtClientService, ensureExtMaterialized, translateExtItemText } from "./ExtSlots.tsx";
+import { ProviderUsagePanel } from "./ProviderUsagePanel.tsx";
 /** Lazy-loaded SessionSidebar (unified dock plan §7-2): in takeover mode (sidebarContent
  *  has a taker) this component is not rendered at all and the chunk never loads, keeping
  *  the main bundle slim; in fallback mode it is fetched on first render (local chunk,
  *  millisecond-scale load window). ssr:false: the component depends on localStorage
  *  two-phase restore, so server rendering adds nothing. */
 const SessionSidebarLazy = dynamic(
-  () => import("./SessionSidebar").then((m) => ({ default: m.SessionSidebar })),
+  () => import("./SessionSidebar.tsx").then((m) => ({ default: m.SessionSidebar })),
   { ssr: false, loading: () => null },
 );
 
@@ -106,29 +106,29 @@ function replaceLocationIfChanged(
 }
 import { registerHostApi } from "@/lib/ext/host-api";
 import { HOST_UI_SERVICE } from "@/lib/ext/host-ui-contract";
-import { openImageInEditorViewer } from "./editor-image-preview";
-import { ProjectTrustDialog, type ProjectTrustFailure } from "./ProjectTrustDialog";
-import { BackendConnBanner } from "./BackendConnBanner";
+import { openImageInEditorViewer } from "./editor-image-preview.ts";
+import { ProjectTrustDialog, type ProjectTrustFailure } from "./ProjectTrustDialog.tsx";
+import { BackendConnBanner } from "./BackendConnBanner.tsx";
 // 上游 SessionSidebarControl/SelectSessionOptions 仅类型引用：组件本体走下方
 // SessionSidebarLazy 动态加载（接管态不进主包），type-only import 运行时擦除、无打包代价。
-import type { SelectSessionOptions, SessionSidebarControl } from "./SessionSidebar";
-import { NewSessionContextBar, type NewSessionContextControl } from "./NewSessionContextBar";
-import { BranchNavigator, hasSessionBranches } from "./BranchNavigator";
-import { SystemPromptPanel } from "./SystemPromptPanel";
-import { ToolDefinitionsPanel } from "./ToolDefinitionsPanel";
-import { AgentSessionPanel } from "./AgentSessionPanel";
-import { DebugPanel, DebugPanelBoundary } from "./DebugPanel";
-import { SubagentViewer } from "./SubagentViewer";
-import { SessionChatPanel } from "./SessionChatPanel";
-import { TerminalPanelBridge } from "./TerminalPanelBridge";
-import { TerminalPanel } from "./TerminalPanel";
-import { newTerminalTab, restoreTerminalTabs, TERMINAL_TABS_KEY, type TerminalTab } from "./terminal-tab-state";
-import { appendSideTab, restoreSideTabs, sideTabsKey } from "./side-tab-state";
+import type { SelectSessionOptions, SessionSidebarControl } from "./SessionSidebar.tsx";
+import { NewSessionContextBar, type NewSessionContextControl } from "./NewSessionContextBar.tsx";
+import { BranchNavigator, hasSessionBranches } from "./BranchNavigator.tsx";
+import { SystemPromptPanel } from "./SystemPromptPanel.tsx";
+import { ToolDefinitionsPanel } from "./ToolDefinitionsPanel.tsx";
+import { AgentSessionPanel } from "./AgentSessionPanel.tsx";
+import { DebugPanel, DebugPanelBoundary } from "./DebugPanel.tsx";
+import { SubagentViewer } from "./SubagentViewer.tsx";
+import { SessionChatPanel } from "./SessionChatPanel.tsx";
+import { TerminalPanelBridge } from "./TerminalPanelBridge.tsx";
+import { TerminalPanel } from "./TerminalPanel.tsx";
+import { newTerminalTab, restoreTerminalTabs, TERMINAL_TABS_KEY, type TerminalTab } from "./terminal-tab-state.ts";
+import { appendSideTab, restoreSideTabs, sideTabsKey } from "./side-tab-state.ts";
 import { useTheme } from "@/hooks/useTheme";
 import { usePanelScale } from "@/hooks/usePanelScale";
 import { useFontPreferences } from "@/hooks/useFontPreferences";
 import { THEME_OPTIONS } from "@/lib/theme";
-import { ThemeIcon } from "./ThemeIcon";
+import { ThemeIcon } from "./ThemeIcon.tsx";
 import { useI18n } from "@/hooks/useI18n";
 import { isMobileViewport, useIsCompact, useIsMobile, useIsNarrowMobile } from "@/hooks/useIsMobile";
 import { useViewportHeight } from "@/hooks/useViewportHeight";
@@ -152,7 +152,7 @@ import type { DebugClientSession } from "@/lib/debug-types";
 import { runOutcomeNotifies, truncateRunError } from "@/lib/run-outcome";
 import { getInitialNavigation, linkedSessionId, withTabOpen, type InitialNavigation } from "@/lib/initial-navigation";
 import { clearTabOpenSession, getTabOpen, setTabOpenNewSession, setTabOpenSession } from "@/lib/tab-session";
-import { mergeCatalogRow } from "./session-catalog-helpers";
+import { mergeCatalogRow } from "./session-catalog-helpers.ts";
 import {
   contextForCwd,
   type NewSessionContext,
@@ -190,7 +190,7 @@ import {
   type PiWebSessionSource,
 } from "@/lib/pi-web-session-store";
 import { piWebToastService } from "@/lib/pi-web-toast-store";
-import { HostToastHost } from "./HostToastHost";
+import { HostToastHost } from "./HostToastHost.tsx";
 import {
   getDefaultRightPanelWidth,
   getRightPanelMaxWidth,
@@ -205,13 +205,13 @@ import {
 } from "@/lib/panel-layout";
 import type { BlockingExtensionUiRequest, SessionInfo, SessionTreeNode } from "@/lib/types";
 import type { McpErrorResponse, ProjectTrustStatus } from "@/lib/api-types";
-import type { ChatInputHandle, AttachedImage } from "./ChatInput";
+import type { ChatInputHandle, AttachedImage } from "./ChatInput.tsx";
 import type { AgentEndInfo, NewSessionChoices } from "@/hooks/useAgentSession";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import type { QueueEntry } from "@/lib/queue-store";
-import { ExportDialog } from "./ExportDialog";
-import { SessionNameDialog } from "./SessionNameDialog";
-import type { FileExplorerHandle } from "./FileExplorer";
+import { ExportDialog } from "./ExportDialog.tsx";
+import { SessionNameDialog } from "./SessionNameDialog.tsx";
+import type { FileExplorerHandle } from "./FileExplorer.tsx";
 import type { FileViewerState } from "@/lib/file-viewer-state";
 import type { RevisionRef } from "@/lib/file-revision";
 import { PRESET_READ_ONLY, type ToolEntry } from "@/lib/tool-presets";
@@ -223,6 +223,7 @@ import { skillExpansionToCommand } from "@/lib/slash-display";
 import { getLastSettingsSection, settingsSectionRequiresProject, type SettingsSection } from "@/lib/settings-navigation";
 import { focusIfLost } from "@/lib/stacked-dialog";
 import { claimDoneChime } from "@/lib/done-chime";
+import { readJsonOrThrow } from "@/lib/fetch-json";
 
 type SessionCopyField = "file" | "id" | "projectDir" | "gitBranch" | "gitWorktree";
 type AutoNameStatus =
@@ -2568,7 +2569,15 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     if (toolEndRefreshTimerRef.current) clearTimeout(toolEndRefreshTimerRef.current);
   }, []);
 
-  const handleSessionForked = useCallback((newSessionId: string) => {
+  const handleSessionForked = useCallback((newSessionId: string, session?: SessionInfo) => {
+    if (session) {
+      // A fork into another folder is another project's session: opened as a
+      // pick from the list, so the shell adopts its project before the sidebar
+      // reports the new cwd (which would otherwise close it as stale).
+      setRefreshKey((k) => k + 1);
+      handleSelectSession(session);
+      return;
+    }
     invalidateWorkspaceRestore();
     sessionSourceRef.current = "fork";
     activeNewSessionDraftKeyRef.current = null;
@@ -2583,7 +2592,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     }));
     hydrateSelectedSession(newSessionId);
     replaceLocationIfChanged(router, `?session=${encodeURIComponent(newSessionId)}`, { scroll: false });
-  }, [invalidateWorkspaceRestore, router, hydrateSelectedSession]);
+  }, [handleSelectSession, invalidateWorkspaceRestore, router, hydrateSelectedSession]);
 
   // "Edit from here" on rebind-fork backends (pi spawn): the fork moved the session record
   // to a branched child id, so the shell switches over and auto-sends the edited message
@@ -3209,6 +3218,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   const handleDeleteSideChat = useCallback(async (sessionId: string, root: SessionInfo): Promise<string | null> => {
     const result = await deleteSideChat(sessionId);
     if (result) return result.error;
+    getDraftApi()?.clearAllDrafts(sessionId);
     handleCloseFileTab(`agent:${sessionId}`);
     if (selectedSessionRef.current?.id === sessionId) {
       handleSelectSession(root);
@@ -6366,9 +6376,9 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
               quoteSelectionEnabled={quoteSelectionEnabled}
               onOpenFile={handleOpenLinkedFile}
               onOpenSubagent={handleOpenSubagentTab}
-              onSessionForked={(newSessionId) => {
+              onSessionForked={(newSessionId, session) => {
                 if (isMobile) setRightPanelOpen(false);
-                handleSessionForked(newSessionId);
+                handleSessionForked(newSessionId, session);
               }}
               onEditFromHereHandoff={(h) => {
                 if (isMobile) setRightPanelOpen(false);

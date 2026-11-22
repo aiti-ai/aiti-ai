@@ -49,6 +49,7 @@ import {
 } from "./SettingsUi.tsx";
 import { itemsToSwitch, projectTrustReloadKey } from "./settings-ui-helpers.ts";
 import { MarkdownBody } from "./MarkdownBody.tsx";
+import { readJsonOrThrow } from "@/lib/fetch-json";
 
 type SkillScope = "global" | "project" | "path";
 type Translate = ReturnType<typeof useI18n>["t"];
@@ -736,11 +737,7 @@ export function SkillsConfig({
           scope: skill?.install?.scope,
         }),
       });
-      const data = (await res.json()) as {
-        updates?: SkillUpdateResult[];
-        error?: string;
-      };
-      if (!res.ok || data.error) throw new Error(data.error ?? `HTTP ${res.status}`);
+      const data = await readJsonOrThrow<{ updates?: SkillUpdateResult[] }>(res);
       setUpdateStatuses((current) => {
         const next = { ...current };
         for (const update of data.updates ?? []) {
@@ -857,8 +854,8 @@ export function SkillsConfig({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ filePaths, disableModelInvocation }),
       });
-      const d = (await res.json()) as { results?: SkillToggleResult[]; error?: string };
-      if (!res.ok || d.error || !d.results) throw new Error(d.error ?? `HTTP ${res.status}`);
+      const d = await readJsonOrThrow<{ results?: SkillToggleResult[] }>(res);
+      if (!d.results) throw new Error(`HTTP ${res.status}`);
       const results = d.results;
       setSkills((prev) => applySkillToggleResults(prev, results, disableModelInvocation));
       const failures = results.filter((result) => result.error);

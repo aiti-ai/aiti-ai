@@ -126,6 +126,32 @@ test("subagents fold into their main session row, which carries their running, u
   assert.doesNotMatch(source, /function SessionItem|function SessionTreeItem|getSessionListIndices/);
 });
 
+test("a deleted family's stored drafts go with it, only once the server deleted it", async () => {
+  const code = ts.transpileModule(`(${callbackBody("performDelete").replace(/^const performDelete = /, "").replace(/;\s*$/, "")})`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  for (const ok of [true, false]) {
+    const cleared = [];
+    const deleted = [];
+    const performDelete = vm.runInNewContext(code, {
+      useCallback: (callback) => callback,
+      encodeURIComponent,
+      apiUrl: (p) => p,
+      fetch: async () => ({ ok }),
+      // [fork] drafts go through the draft-keeper API.
+      getDraftApi: () => ({ clearAllDrafts: (id) => cleared.push(id) }),
+      onSessionDeleted: (id) => deleted.push(id),
+      setConfirmDeleteRootId() {},
+      loadSessions: async () => {},
+    });
+    await performDelete({ root: session("main"), subagents: [session("side"), session("worker")] });
+    assert.deepEqual(cleared, ok ? ["main", "side", "worker"] : []);
+    assert.deepEqual(deleted, ["main"]);
+  }
+  // A family's delete asks the server first: a refusal clears nothing.
+  assert.match(callbackBody("performDelete"), /const res = await fetch\(apiUrl\(`\/api\/sessions\/\$\{encodeURIComponent\(session\.id\)\}`\), \{ method: "DELETE" \}\);\s*\/\/ Drafts[\s\S]*?if \(res\.ok\) \[session, \.\.\.family\.subagents\]\.forEach\(/);
+});
+
 test("only Shift skips the session deletion confirmation", () => {
   assert.match(
     callbackBody("requestDelete"),
@@ -793,7 +819,7 @@ test("new projects are saved to the project order once, quietly, after real stat
   // Not from a failed GET's empty state (archived projects would look live), not from summary rows.
   assert.match(effect, /if \(loading \|\| !uiStateSynced \|\| !sessionDetailsLoaded\) return;/);
   assert.match(source, /synced: uiStateSynced,/);
-  assert.match(callbackBody("loadSessions"), /setAllSessions\(data\.sessions\);\s*if \(!summary\) setSessionDetailsLoaded\(true\);/);
+  assert.match(callbackBody("loadSessions"), /setAllSessions\(data\.sessions\);[\s\S]{0,400}?if \(!summary \|\| !needsDetails\) setSessionDetailsLoaded\(true\);/);
   // A full list takes nothing more: no request at all.
   assert.match(effect, /if \(storedOrderLength >= MAX_PROJECT_ORDER_KEYS\) return;/);
   // At most one request's worth, bottom first (lib/session-tree.test.mjs plays

@@ -17,7 +17,7 @@ import {
   ConfigField,
   ConfigSaveTarget,
   ConfigSectionTitle,
-} from "./SettingsUi";
+} from "./SettingsUi.tsx";
 import {
   MCP_ADD_BREADTH_KEYS,
   MCP_ADD_EXAMPLES,
@@ -38,8 +38,8 @@ import {
   mcpSuggestedVariableName,
   type McpAddDraft,
   type McpAddSubmitBlock,
-} from "./mcp-add-helpers";
-import type { McpActionFailure, McpActionRequest } from "./mcp-config-helpers";
+} from "./mcp-add-helpers.ts";
+import type { McpActionFailure, McpActionRequest } from "./mcp-config-helpers.ts";
 
 type Translate = ReturnType<typeof useI18n>["t"];
 export type McpAddActionRequest = Extract<McpActionRequest, { action: "add" }>;

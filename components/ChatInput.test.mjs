@@ -722,16 +722,24 @@ test("locks built-in command submission until it settles", async () => {
     onBuiltinCommand: async () => new Promise((resolve) => { callback.resolve = resolve; }),
     setBuiltinCommandPending(value) { callback.pendingStates.push(value); },
     valueRef: { current: "/reload" },
+    draftKeyRef: { current: "session-a" },
+    holdStoredDraft(key) {
+      callback.holds.push(key);
+      return () => callback.holds.push(`released ${key}`);
+    },
   });
   callback.pendingStates = [];
+  callback.holds = [];
 
   const first = callback("/reload");
   assert.deepEqual(callback.pendingStates, [true]);
   assert.equal(await callback("/reload"), true);
   assert.deepEqual(callback.pendingStates, [true]);
+  assert.deepEqual(callback.holds, ["session-a"], "a second press takes no second hold");
   callback.resolve({ handled: true });
   assert.equal(await first, true);
   assert.deepEqual(callback.pendingStates, [true, false]);
+  assert.deepEqual(callback.holds, ["session-a", "released session-a"]);
   assert.match(sourceText, /<fieldset\s+disabled=\{builtinCommandPending\}\s+aria-busy=\{builtinCommandPending\}/);
 });
 
@@ -790,7 +798,13 @@ function chatInputCallback(name, context) {
   }
   return new Script(ts.transpileModule(findCallback(source).getText(source), {
     compilerOptions: { target: ts.ScriptTarget.ES2020 },
-  }).outputText).runInNewContext(context);
+  }).outputText).runInNewContext({
+    // [fork] the composer bus gate runs first; these checks drive the send paths
+    // after it, so it lets every submission through.
+    runComposerGate: async (text) => ({ text, cancel: false }),
+    valueRef: { current: typeof context?.value === "string" ? context.value : "" },
+    ...context,
+  });
 }
 
 test("while a run streams, a bare /mcp opens Settings or is queued as before", async () => {

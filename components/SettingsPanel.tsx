@@ -5,7 +5,7 @@ import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useTheme } from "@/hooks/useTheme";
 import { THEME_OPTIONS } from "@/lib/theme";
-import { ThemeIcon } from "./ThemeIcon";
+import { ThemeIcon } from "./ThemeIcon.tsx";
 import {
   CHAT_CONTENT_WIDTH_DEFAULT,
   CHAT_CONTENT_WIDTH_MAX,
@@ -18,6 +18,7 @@ import {
 import { useEnterSendMode, setEnterSendMode } from "@/hooks/useEnterSendMode";
 import { apiUrl, withBasePath } from "@/lib/base-path";
 import { sendAgentCommand } from "@/lib/agent-client";
+import { clearStoredDrafts } from "@/lib/draft-store";
 import type { ProjectTrustStatus, ToolSettingsResponse } from "@/lib/api-types";
 import { SETTINGS_BUILTIN_TOOLS } from "@/lib/tool-presets";
 import {
@@ -30,14 +31,14 @@ import {
   isThinkingExpandedByDefault,
   setThinkingExpandedByDefault,
 } from "@/lib/thinking-expansion-preference";
-import { ModelsConfig } from "./ModelsConfig";
+import { ModelsConfig } from "./ModelsConfig.tsx";
 import { setupPushSubscription } from "@/lib/push-client";
-import { SkillsConfig } from "./SkillsConfig";
-import { AgentsConfig } from "./AgentsConfig";
-import { PluginsConfig } from "./PluginsConfig";
-import { McpConfig } from "./McpConfig";
-import { ConfigButton, ConfigDetailNavigationContext, ConfigSwitch, type ConfigDetailNavigation } from "./SettingsUi";
-import { FontSettings } from "./FontSettings";
+import { SkillsConfig } from "./SkillsConfig.tsx";
+import { AgentsConfig } from "./AgentsConfig.tsx";
+import { PluginsConfig } from "./PluginsConfig.tsx";
+import { McpConfig } from "./McpConfig.tsx";
+import { ConfigButton, ConfigDetailNavigationContext, ConfigSwitch, type ConfigDetailNavigation } from "./SettingsUi.tsx";
+import { FontSettings } from "./FontSettings.tsx";
 import {
   PANEL_UI_SCALE_DEFAULT,
   PANEL_UI_SCALE_MAX,
@@ -45,8 +46,9 @@ import {
   PANEL_UI_SCALE_STEP,
   usePanelScale,
 } from "@/hooks/usePanelScale";
-import { useExtSlotItems, ExtItemBoundary } from "./ExtSlots";
+import { useExtSlotItems, ExtItemBoundary } from "./ExtSlots.tsx";
 import { hasExtRender } from "@/lib/ext-ui-store";
+import { readJsonOrThrow } from "@/lib/fetch-json";
 
 interface Props {
   cwd: string | null;
@@ -120,6 +122,8 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
     try {
       const response = await fetch(apiUrl("/api/web-auth"), { method: "DELETE" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      // Unsent text stays in this browser storage otherwise.
+      clearStoredDrafts();
       window.location.replace(withBasePath("/login"));
     } catch {
       setLogoutError(t("auth.logoutFailed"));
@@ -132,8 +136,7 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
     let cancelled = false;
     void fetch(apiUrl("/api/tools/settings"))
       .then(async (response) => {
-        const data = await response.json() as ToolSettingsResponse & { error?: string };
-        if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
+        const data = await readJsonOrThrow<ToolSettingsResponse>(response);
         if (!cancelled) setShellSettings(data);
       })
       .catch((cause) => {
@@ -151,8 +154,7 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled }),
       });
-      const data = await response.json() as ToolSettingsResponse & { error?: string };
-      if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
+      const data = await readJsonOrThrow<ToolSettingsResponse>(response);
       setShellSettings(data);
       if (sessionId) {
         await sendAgentCommand(sessionId, { type: "reload" });
@@ -177,8 +179,7 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ builtinTools }),
       });
-      const data = await response.json() as ToolSettingsResponse & { error?: string };
-      if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
+      const data = await readJsonOrThrow<ToolSettingsResponse>(response);
       setShellSettings(data);
     } catch (cause) {
       setBuiltinToolsError(cause instanceof Error ? cause.message : String(cause));

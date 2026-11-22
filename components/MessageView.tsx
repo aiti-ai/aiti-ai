@@ -2,9 +2,9 @@
 
 import { Fragment, memo, useState, useRef, useEffect, useMemo, type CSSProperties, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
-import { MarkdownBody } from "./MarkdownBody";
-import { ImagePreview } from "./ImagePreview";
-import { ThinkingIcon } from "./ThinkingIcon";
+import { MarkdownBody } from "./MarkdownBody.tsx";
+import { ImagePreview } from "./ImagePreview.tsx";
+import { ThinkingIcon } from "./ThinkingIcon.tsx";
 import { copyText } from "@/lib/clipboard";
 import { apiUrl } from "@/lib/base-path";
 import { fmtMoney, useMoneySynced } from "@/lib/money";
@@ -12,6 +12,7 @@ import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
 import { getAssistantErrorMessage, getThinkingPreview, getThinkingTailPreview, hasAssistantAnswer, isAssistantAborted, isAssistantTruncated, isEmptyThinkingBlock, splitThinkingPieces } from "@/lib/message-display";
+import { stripAnsi } from "@/lib/ansi";
 import { formatTurnDuration } from "@/lib/turn-duration";
 import { toolClockMs, type ToolClock, type ToolClocks } from "@/lib/tool-clock";
 import { diffGapLabel, parseUnifiedPatch, unifiedDiffLines, type SplitDiffCell, type SplitDiffFile, type SplitDiffGap, type UnifiedDiffLine } from "@/lib/patch";
@@ -20,13 +21,13 @@ import { applyPatchPreviewToFiles, applyPatchResultHasFailures, extractApplyPatc
 import { isApplyPatchToolName, isEditToolName, isWriteToolName } from "@/lib/tool-names";
 import { isToolCallExpanded, setToolCallExpanded } from "@/lib/tool-call-expansion";
 import { isThinkingExpandedByDefault, THINKING_EXPANDED_EVENT } from "@/lib/thinking-expansion-preference";
-import { TurnWrittenFiles } from "./TurnWrittenFiles";
-import { ExtSlot } from "./ExtSlots";
+import { TurnWrittenFiles } from "./TurnWrittenFiles.tsx";
+import { ExtSlot } from "./ExtSlots.tsx";
 import type { WrittenFile } from "@/lib/turn-written-files";
 import { skillExpansionContent, skillExpansionToCommand } from "@/lib/slash-display";
 import type { SubagentToolDetails } from "@/lib/subagent-extension";
 import { CODEMODE_TOOL_NAME, codemodeCalls, codemodeScript, codemodeScriptPreview, stripCodemodeHeader } from "@/lib/codemode-view";
-import { CodemodeCallList } from "./CodemodeToolView";
+import { CodemodeCallList } from "./CodemodeToolView.tsx";
 import { toolFieldsOfInput, toolInputPreview, type ToolField } from "@/lib/tool-fields";
 import { parseStreamingJson } from "@earendil-works/pi-ai/utils/json-parse";
 import { mcpToolLabel, prettyMcpResultText } from "@/lib/mcp-tool-display";
@@ -211,6 +212,8 @@ interface Props {
   searchBlock?: AssistantContentBlock;
   /** `message` as the composer takes it back: pi's /fork puts the forked message in the editor. */
   onFork?: (entryId: string, message: UserMessage) => void;
+  /** The entry "New session" forks from while `entryId` is unknown: a user message sent during the run (#1746). */
+  forkEntryId?: string;
   forking?: boolean;
   /** A bash command is still running: the fork button stays visible but clicks are held until it settles. */
   forkBashRunning?: boolean;
@@ -336,9 +339,9 @@ function haveSameRelevantToolEntries<T>(
   return true;
 }
 
-export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, toolClocks, modelNames, cwd, onOpenFile, onOpenSubagent, entryId, searchBlock, onFork, forking, forkBashRunning, onNavigate, prevAssistantEntryId, onEditFromHere, editingFromStart, onCancelEditFromStart, onEditContent, onCancelEdit, isEditing, showTimestamp, prevTimestamp, sessionId, writtenFiles, turnAssistantEntryIds, suppressMessageFooter, onCompact, isCompacting, compactError }: Props) {
+export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, toolClocks, modelNames, cwd, onOpenFile, onOpenSubagent, entryId, forkEntryId, searchBlock, onFork, forking, forkBashRunning, onNavigate, prevAssistantEntryId, onEditFromHere, editingFromStart, onCancelEditFromStart, onEditContent, onCancelEdit, isEditing, showTimestamp, prevTimestamp, sessionId, writtenFiles, turnAssistantEntryIds, suppressMessageFooter, onCompact, isCompacting, compactError }: Props) {
   if (message.role === "user") {
-    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} forkBashRunning={forkBashRunning} onNavigate={onNavigate} prevAssistantEntryId={prevAssistantEntryId} onEditFromHere={onEditFromHere} editingFromStart={editingFromStart} onCancelEditFromStart={onCancelEditFromStart} onEditContent={onEditContent} onCancelEdit={onCancelEdit} isEditing={isEditing} />;
+    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} forkEntryId={entryId ?? forkEntryId} onFork={onFork} forking={forking} forkBashRunning={forkBashRunning} onNavigate={onNavigate} prevAssistantEntryId={prevAssistantEntryId} onEditFromHere={onEditFromHere} editingFromStart={editingFromStart} onCancelEditFromStart={onCancelEditFromStart} onEditContent={onEditContent} onCancelEdit={onCancelEdit} isEditing={isEditing} />;
   }
   if (message.role === "assistant") {
     return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} toolClocks={toolClocks} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} onOpenSubagent={onOpenSubagent} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} searchBlock={searchBlock} writtenFiles={writtenFiles} turnAssistantEntryIds={turnAssistantEntryIds} suppressMessageFooter={suppressMessageFooter} onCompact={onCompact} isCompacting={isCompacting} compactError={compactError} />;
@@ -369,6 +372,7 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     && prev.entryId === next.entryId
     && prev.searchBlock === next.searchBlock
     && prev.onFork === next.onFork
+    && prev.forkEntryId === next.forkEntryId
     && prev.forking === next.forking
     && prev.forkBashRunning === next.forkBashRunning
     && prev.onNavigate === next.onNavigate
@@ -390,12 +394,13 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     && prev.compactError === next.compactError;
 });
 
-function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, forkBashRunning, onNavigate, prevAssistantEntryId, onEditFromHere, editingFromStart, onCancelEditFromStart, onEditContent, onCancelEdit, isEditing }: {
+function UserMessageView({ message, cwd, onOpenFile, entryId, forkEntryId, onFork, forking, forkBashRunning, onNavigate, prevAssistantEntryId, onEditFromHere, editingFromStart, onCancelEditFromStart, onEditContent, onCancelEdit, isEditing }: {
   message: UserMessage;
   cwd?: string;
   onOpenFile?: (filePath: string, page?: number) => void;
   entryId?: string;
   onFork?: (entryId: string, message: UserMessage) => void;
+  forkEntryId?: string;
   forking?: boolean;
   forkBashRunning?: boolean;
   onNavigate?: (entryId: string) => Promise<boolean>;
@@ -439,7 +444,8 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, f
     : "";
 
   const time = formatTime(message.timestamp);
-  const canFork = !!entryId && !!onFork;
+  const forkTarget = forkEntryId ?? entryId;
+  const canFork = !!forkTarget && !!onFork;
   const copyTarget = commandText ?? content;
   const editTarget = commandText ? replaceUserMessageText(message, commandText) : message;
 
@@ -719,7 +725,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, f
               )}
               {canFork && (
                 <button
-                  onClick={() => { if (!forkBashRunning) onFork!(entryId!, editTarget); }}
+                  onClick={() => { if (!forkBashRunning) onFork!(forkTarget!, editTarget); }}
                   disabled={forking}
                    title={forking ? t("i18n.creatingSession") : forkBashRunning ? t("i18n.newSessionBashRunning") : t("i18n.newSessionTitle")}
                   style={{
@@ -906,7 +912,7 @@ function AssistantMessageView({
   const copyContent = () => {
     // A refused copy is silent: no "Copied", and the rejection is handled
     // so it never surfaces as an unhandled one (lib/clipboard.ts).
-    copyText(textContent).then(() => {
+    copyText(stripAnsi(textContent)).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     }, () => {});
@@ -1226,7 +1232,9 @@ function BlockView({ block, searchTarget, toolResults, toolsNotRun, isStreaming,
 
 function TextBlock({ block, isStreaming, cwd, onOpenFile, sessionId }: { block: TextContent; isStreaming?: boolean; cwd?: string; onOpenFile?: (filePath: string, page?: number) => void; sessionId?: string }) {
   // sessionId passthrough: paragraph-click extension point info.sessionId (the message-smart extension relies on it to resolve cross-repo files via the git-trace extension's session-to-repo mapping)
-  return <SafeMarkdownBody isStreaming={isStreaming} cwd={cwd} onOpenFile={onOpenFile} sessionId={sessionId}>{block.text}</SafeMarkdownBody>;
+  // pi's TUI hands the text to the terminal, which draws a model's escape sequences as styling;
+  // a browser would show them as raw "[38;5;5m" (#1753).
+  return <SafeMarkdownBody isStreaming={isStreaming} cwd={cwd} onOpenFile={onOpenFile} sessionId={sessionId}>{stripAnsi(block.text)}</SafeMarkdownBody>;
 }
 
 /** Marquee collapsed-row refresh throttle: update at most once per second (matching zcode
@@ -1415,7 +1423,7 @@ export function ThinkingBlock({ block, duration, isStreaming, sessionId, entryId
             overflowWrap: "anywhere",
           }}
         >
-           {loading ? t("i18n.loadingThinking") : error ?? (block.deferred ? content : block.thinking)}
+           {loading ? t("i18n.loadingThinking") : error ?? stripAnsi(block.deferred ? content ?? "" : block.thinking)}
         </div>
       )}
     </div>

@@ -41,6 +41,7 @@ import {
 } from "./SettingsUi.tsx";
 import { ModelSelector } from "./ModelSelector.tsx";
 import { projectTrustReloadKey } from "./settings-ui-helpers.ts";
+import { readJsonOrThrow } from "@/lib/fetch-json";
 
 const TOOL_OPTIONS = ["read", "bash", "edit", "write", "grep", "find", "ls"];
 const THINKING_OPTIONS = ["", "off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
@@ -262,10 +263,8 @@ export function AgentsConfig({
           cache: "no-store",
           signal: controller.signal,
         });
-        const data = await response.json() as Partial<SubagentSettingsResponse> & { error?: string };
-        if (!response.ok || data.error || typeof data.enabled !== "boolean") {
-          throw new Error(data.error ?? `HTTP ${response.status}`);
-        }
+        const data = await readJsonOrThrow<Partial<SubagentSettingsResponse>>(response);
+        if (typeof data.enabled !== "boolean") throw new Error(`HTTP ${response.status}`);
         setBuiltInEnabled(data.enabled);
         if (typeof data.maxConcurrent === "number") setMaxConcurrent(data.maxConcurrent);
       } catch (cause) {
@@ -357,8 +356,8 @@ export function AgentsConfig({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd, scope: targetScope, profile: draft }),
       });
-      const data = await response.json() as { profile?: SubagentProfile; error?: string };
-      if (!response.ok || data.error || !data.profile) throw new Error(data.error ?? `HTTP ${response.status}`);
+      const data = await readJsonOrThrow<{ profile?: SubagentProfile }>(response);
+      if (!data.profile) throw new Error(`HTTP ${response.status}`);
       await loadProfiles(profileKey(data.profile));
       setSavedOk(true);
       setTimeout(() => setSavedOk(false), 2000);
@@ -380,8 +379,7 @@ export function AgentsConfig({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd, scope: selected.scope, name: selected.name }),
       });
-      const data = await response.json() as { error?: string };
-      if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
+      await readJsonOrThrow(response);
       await loadProfiles();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -436,8 +434,8 @@ export function AgentsConfig({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd, scope: selected.scope, name: selected.name, enabled }),
       });
-      const data = await response.json() as { profile?: SubagentProfile; error?: string };
-      if (!response.ok || data.error || !data.profile) throw new Error(data.error ?? `HTTP ${response.status}`);
+      const data = await readJsonOrThrow<{ profile?: SubagentProfile }>(response);
+      if (!data.profile) throw new Error(`HTTP ${response.status}`);
       const saved = data.profile;
       setProfiles((current) => current.map((profile) => profileKey(profile) === profileKey(saved) ? saved : profile));
       setDraft((current) => ({ ...current, enabled: saved.enabled }));
@@ -457,10 +455,8 @@ export function AgentsConfig({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled }),
       });
-      const data = await response.json() as Partial<SubagentSettingsResponse> & { error?: string };
-      if (!response.ok || data.error || typeof data.enabled !== "boolean") {
-        throw new Error(data.error ?? `HTTP ${response.status}`);
-      }
+      const data = await readJsonOrThrow<Partial<SubagentSettingsResponse>>(response);
+      if (typeof data.enabled !== "boolean") throw new Error(`HTTP ${response.status}`);
       setBuiltInEnabled(data.enabled);
       setReloadNeeded(Boolean(sessionId));
     } catch (cause) {
@@ -479,8 +475,8 @@ export function AgentsConfig({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ maxConcurrent: value }),
       });
-      const data = await response.json() as Partial<SubagentSettingsResponse> & { error?: string };
-      if (!response.ok || data.error || typeof data.maxConcurrent !== "number") throw new Error(data.error ?? `HTTP ${response.status}`);
+      const data = await readJsonOrThrow<Partial<SubagentSettingsResponse>>(response);
+      if (typeof data.maxConcurrent !== "number") throw new Error(`HTTP ${response.status}`);
       setMaxConcurrent(data.maxConcurrent);
     } catch (cause) {
       setSettingsError(cause instanceof Error ? cause.message : String(cause));

@@ -2,8 +2,8 @@
 
 import { apiUrl } from "@/lib/base-path";
 import { useEffect, useRef, useState, type ComponentProps } from "react";
-import { ChatWindow } from "./ChatWindow";
-import type { ChatInputHandle } from "./ChatInput";
+import { ChatWindow } from "./ChatWindow.tsx";
+import type { ChatInputHandle } from "./ChatInput.tsx";
 import { useI18n } from "@/hooks/useI18n";
 import type { SessionInfo } from "@/lib/types";
 

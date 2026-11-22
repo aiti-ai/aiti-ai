@@ -12,6 +12,8 @@ import { useMathMarkdownPlugins } from "@/lib/use-math-plugins";
 import { ImagePreview } from "./ImagePreview.tsx";
 import { MermaidBlock, CodeBlock } from "./MermaidBlock.tsx";
 import { SvgBlock } from "./SvgBlock.tsx";
+import { PlantUmlBlock } from "./PlantUmlBlock.tsx";
+import { isPlantUmlLang } from "@/lib/plantuml.ts";
 import { useI18n } from "@/hooks/useI18n";
 import { copyText } from "@/lib/clipboard";
 import { useParagraphClickHandlers } from "./ExtSlots.tsx";
@@ -142,6 +144,9 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
         }
         if (lang === "svg") {
           return <SvgBlock code={raw.replace(/\n$/, "")} isStreaming={isStreaming} />;
+        }
+        if (isPlantUmlLang(lang)) {
+          return <PlantUmlBlock code={raw.replace(/\n$/, "")} lang={lang} isStreaming={isStreaming} />;
         }
         return <CodeBlock code={raw.replace(/\n$/, "")} lang={lang} isStreaming={isStreaming} messageRole={messageRole} cwd={cwd} sessionId={sessionId} messageId={messageId} />;      }
       return (

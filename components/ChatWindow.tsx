@@ -13,33 +13,38 @@ import { apiUrl, withBasePath } from "@/lib/base-path";
 import { useMoneySynced } from "@/lib/money";
 import { dedupeFetch } from "@/lib/dedupe-fetch";
 import { asBracketedPaste, toTerminalKeyData } from "@/lib/terminal-input";
-import { collapsesProcessDetails, countToolCallBlocks, getDisplayableAssistantBlocks, getTurnAnchors, hasAssistantAnswer, hasTurnRef, isHiddenCustomMessage, splitFinalAssistantBlocks, liveOutputPreview, LIVE_OUTPUT_PREVIEW_LINES } from "@/lib/message-display";
+import { collapsesProcessDetails, countToolCallBlocks, getDisplayableAssistantBlocks, getTurnAnchors, hasAssistantAnswer, hasTurnRef, isHiddenCustomMessage, splitFinalAssistantBlocks, liveOutputPreview, LIVE_OUTPUT_PREVIEW_LINES, sumCost } from "@/lib/message-display";
 import { extractTurnWrittenFiles, type WrittenFile } from "@/lib/turn-written-files";
 import { getFinalAnswerViews, keepWrittenFiles, type FinalAnswerViews } from "@/lib/turn-views";
+import { formatTurnDuration, getTurnDurationMs } from "@/lib/turn-duration";
+import { summarizeCacheMisses, type CacheMissSummary } from "@/lib/transcript-notices";
+import { cacheMissSummaryText } from "./TranscriptNotices.tsx";
 import { buildQuotedSelection } from "@/lib/quoted-selection";
 import { dropMentionText, splitDroppedItems, uploadFiles, type DroppedItem } from "@/lib/file-upload-client";
 import { buildFileAtMentionsText } from "@/lib/file-fuzzy";
-import { MessageView, estimateTokens } from "./MessageView";
-import { UpdateGuideDialog } from "./UpdateGuideDialog";
-import { SessionRequestCardHost } from "./SessionRequestSlot";
-import { MarkdownBody } from "./MarkdownBody";
-import { ChatInput, getUserMessageDraftImages, getUserMessageText, type AttachedImage, type ChatInputHandle } from "./ChatInput";
-import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
-import { ExtSlot, useExtSlotItems } from "./ExtSlots";
-import { NewSessionWidgetZone, NewSessionWidgetsCustomize } from "./NewSessionWidgets";
+import { MessageView, estimateTokens } from "./MessageView.tsx";
+import { UpdateGuideDialog } from "./UpdateGuideDialog.tsx";
+import { SessionRequestCardHost } from "./SessionRequestSlot.tsx";
+import { MarkdownBody } from "./MarkdownBody.tsx";
+import { ChatInput, getUserMessageDraftImages, getUserMessageText, type AttachedImage, type ChatInputHandle } from "./ChatInput.tsx";
+import { DirectoryPicker } from "./DirectoryPicker.tsx";
+import { ChatMinimap, useMessageRefs } from "./ChatMinimap.tsx";
+import { ExtSlot, useExtSlotItems } from "./ExtSlots.tsx";
+import { NewSessionWidgetZone, NewSessionWidgetsCustomize } from "./NewSessionWidgets.tsx";
 import { hasExtRender } from "@/lib/ext-ui-store";
 import type { NewSessionPreparer } from "@/hooks/new-session-preparers";
 import type { PendingRecoveryItem, QueueEntry } from "@/lib/queue-store";
 import { useRecoveryProviderItems, routeRecoveryResolve } from "@/lib/composer/recovery";
 import { runSessionForkGates } from "@/lib/ext/fork-gates";
-import { ExtensionStatusBar, ExtensionStatusToast } from "./ExtensionStatusBar";
-import { AnsiText } from "./AnsiText";
+import { ExtensionStatusBar, ExtensionStatusToast } from "./ExtensionStatusBar.tsx";
+import { AnsiText } from "./AnsiText.tsx";
 import { useI18n } from "@/hooks/useI18n";
 import { phaseLabel } from "@/lib/chat-phase-label";
 import { useAgentSession, type AgentEndInfo, type NewSessionChoices, type NoticeItem } from "@/hooks/useAgentSession";
 import { useDragDrop } from "@/hooks/useDragDrop";
 import { useIsMobile, useIsCompact } from "@/hooks/useIsMobile";
 import { useScrollbarVisibility } from "@/hooks/useScrollbarVisibility";
+import { useSkipOffscreenRows } from "@/hooks/useSkipOffscreenRows";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import type { DebugClientSession } from "@/lib/debug-types";
 import type { AppUpdateResponse } from "@/lib/api-types";
@@ -88,7 +93,7 @@ interface Props {
   onToolEnd?: (toolName: string) => void;
   onAttentionNeeded?: (request: BlockingExtensionUiRequest) => void;
   onSessionCreated?: (session: SessionInfo, sourceDraftKey: string) => void;
-  onSessionForked?: (newSessionId: string) => void;
+  onSessionForked?: (newSessionId: string, session?: SessionInfo) => void;
   /** "Edit from here" on forkRebindHandoff backends (pi spawn): switch the shell to the branched child session and auto-send there. */
   onEditFromHereHandoff?: (handoff: { sessionId: string; message: string; images?: AttachedImage[] }) => void;
   /** External-session placeholder/alias ids resolved by the server into real composite ids (e.g. zcode:new-* → zcode:sess_*). */
@@ -345,13 +350,18 @@ function getUserInputText(message: AgentMessage): string | null {
   return text.length > 0 ? text : null;
 }
 
-function ProcessDetailsGroup({ messageCount, toolCallCount, defaultExpanded = false, reveal = false, children, t }: { messageCount: number; toolCallCount: number; defaultExpanded?: boolean; reveal?: boolean; children: ReactNode; t: (key: string, params?: Record<string, string | number>) => string }) {
+function ProcessDetailsGroup({ messageCount, toolCallCount, durationMs, cost, cacheMisses, defaultExpanded = false, reveal = false, children, t }: { messageCount: number; toolCallCount: number; durationMs?: number; cost?: number; cacheMisses?: CacheMissSummary; defaultExpanded?: boolean; reveal?: boolean; children: ReactNode; t: (key: string, params?: Record<string, string | number>) => string }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   useLayoutEffect(() => {
     if (reveal) setExpanded(true);
   }, [reveal]);
   const parts = [t("chat.processDetails"), `${messageCount} ${t(messageCount === 1 ? "chat.message" : "chat.messages")}`];
   if (toolCallCount > 0) parts.push(`${toolCallCount} ${t(toolCallCount === 1 ? "chat.toolCall" : "chat.toolCalls")}`);
+  if (durationMs !== undefined) parts.push(t("chat.turnDuration", { time: formatTurnDuration(durationMs) }));
+  // Folded, the cost of the steps inside is added up here (#1768); open, each shows under its step.
+  if (cost !== undefined && !(expanded || reveal)) parts.push(`$${cost.toFixed(4)}`);
+  // Folded, the cache misses inside are added up here (#1265); open, each shows under its step.
+  const cacheMissText = cacheMisses && !(expanded || reveal) ? cacheMissSummaryText(t, cacheMisses) : undefined;
 
   return (
     <div style={{ marginBottom: 14 }}>
@@ -539,8 +549,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   const [restoreAnchorReady, setRestoreAnchorReady] = useState(false);
 
   const {
-    loading, error, messages, activeToolResults, toolClocks, entryIds, historyCursor, hasEarlierMessages, streamState,
-    agentRunning, settling, bashRunning, pendingBash, aborting, modelNames, modelList, modelError, missingCwd, modelScopeWarnings, isModelScopeActive, allModelList, modelThinkingLevels, modelThinkingLevelMaps, toolPreset, thinkingLevel,
+    loading, error, messages, activeToolResults, toolClocks, entryIds, messageKeys, liveUserEntryIds, historyCursor, hasEarlierMessages, earlierTurnCount, streamState,
+    agentRunning, settling, bashRunning, pendingBash, aborting, modelNames, modelList, modelError, missingCwd, canForkMissingCwd, modelScopeWarnings, isModelScopeActive, allModelList, modelThinkingLevels, modelThinkingLevelMaps, toolPreset, thinkingLevel,
     modelsRefreshing, modelsRefreshable, refreshModels,
     followPaused,
     retryInfo, contextUsage, forkingEntryId,
@@ -560,8 +570,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     sessionIdRef, messagesEndRef, scrollContainerRef,
     lastUserMsgRef, promptAnchorActive,
     editEntryId, cancelEdit,
-    showScrollToBottom, earlierTurnCount,
-    handleSend, handleAbort, startSideChat, handleFork, handleForkNew, handleNavigate, handleEditFromStartSend, handleModelChange,
+    showScrollToBottom,
+    handleSend, handleAbort, startSideChat, handleFork, handleForkNew, forkIntoCwd, handleNavigate, handleEditFromStartSend, handleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     dismissCompactError,
     refreshSessionStats,
@@ -612,6 +622,22 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     if (!agentRunning || !holdAudio) return;
     return holdAudio();
   }, [agentRunning, holdAudio]);
+  // The folder picker of the missing-folder banner's Fork, and its refusal.
+  const [forkPickerOpen, setForkPickerOpen] = useState(false);
+  const [forkPickerBusy, setForkPickerBusy] = useState(false);
+  const [forkPickerError, setForkPickerError] = useState<string | null>(null);
+  const openForkPicker = useCallback(() => {
+    setForkPickerError(null);
+    setForkPickerOpen(true);
+  }, []);
+  const handleForkPick = useCallback(async (cwd: string) => {
+    setForkPickerError(null);
+    setForkPickerBusy(true);
+    const error = await forkIntoCwd(cwd);
+    setForkPickerBusy(false);
+    if (error) setForkPickerError(error);
+    else setForkPickerOpen(false);
+  }, [forkIntoCwd]);
 
   // Expose the queue-export resolver to the parent (AppShell export dialog).
   useEffect(() => {
@@ -1054,6 +1080,10 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   // finished turn regrouped into more rows), and must get an observer then.
   const [sentinel, setSentinel] = useState<HTMLDivElement | null>(null);
   const messageContentRef = useRef<HTMLDivElement | null>(null);
+  // The transcript's rows, each a direct child: the scroll position is kept by
+  // one of them, and rows far off screen skip layout (useSkipOffscreenRows).
+  const transcriptRowsRef = useRef<HTMLElement | null>(null);
+  const attachTranscriptRows = useSkipOffscreenRows(transcriptRowsRef);
   const prevScrollDistanceRef = useRef<number | null>(null);
   const loadingOlderRef = useRef(false);
   const restoreStartedRef = useRef(false);
@@ -1087,8 +1117,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   useLayoutEffect(() => {
     const sessionId = session?.id;
     const container = scrollContainerRef.current;
-    const content = messageContentRef.current;
-    if (!sessionId || !onScrollPositionChange || !container || !content) return;
+    const rows = transcriptRowsRef.current;
+    if (!sessionId || !onScrollPositionChange || !container || !rows) return;
     return () => {
       if (pendingScrollRestoreRef.current) return;
       if (isScrollAtTail(container.scrollTop, container.clientHeight, container.scrollHeight)) {
@@ -1096,7 +1126,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
         return;
       }
       const viewportTop = container.getBoundingClientRect().top;
-      const candidates = Array.from(content.children).flatMap((element) => {
+      const candidates = Array.from(rows.children).flatMap((element) => {
         if (!(element instanceof HTMLElement) || !element.dataset.entryId) return [];
         const rect = element.getBoundingClientRect();
         return [{ entryId: element.dataset.entryId, top: rect.top, bottom: rect.bottom }];
@@ -1170,9 +1200,9 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
 
   useLayoutEffect(() => {
     const position = pendingScrollRestore;
-    const content = messageContentRef.current;
-    if (!position || !content || searchTarget) return;
-    const element = Array.from(content.children).find((candidate) => (
+    const rows = transcriptRowsRef.current;
+    if (!position || !rows || searchTarget) return;
+    const element = Array.from(rows.children).find((candidate) => (
       candidate instanceof HTMLElement && candidate.dataset.entryId === position.anchorEntryId
     ));
     if (element instanceof HTMLElement) {
@@ -1644,6 +1674,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       modelList={modelList}
       modelError={modelError}
       missingCwd={missingCwd}
+      onForkMissingCwd={canForkMissingCwd ? openForkPicker : undefined}
       modelScopeWarnings={modelScopeWarnings}
       onRefreshModels={isNew && modelsRefreshable ? refreshModels : undefined}
       modelsRefreshing={modelsRefreshing}
@@ -1916,6 +1947,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                   }
                 }
                 if (options.showTimestamp !== undefined) showTimestamp = options.showTimestamp;
+                // A prompt sent during the run: its entry id, for New session only (#1746).
+                const liveEntryId = entryIds[idx] === undefined ? liveUserEntryIds.get(messages[idx]) : undefined;
                 const view = (
                   <MessageView
                     key={`${keyPrefix}-view-${messageKey}`}
@@ -2075,6 +2108,9 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
 
                 if (processViews.length > 0) {
                   const answered = collapsesProcessDetails(finalAnswerMessage);
+                  // The steps inside the fold: the final message's own notices and usage go under its answer.
+                  const foldedMessages = messages.slice(userIdx + 1, finalAnswerMessage ? finalAssistantIdx : finalAssistantIdx + 1);
+                  const turnDurationMs = hasAnchor && entryIds[userIdx] ? getTurnDurationMs(messages, userIdx, endIdx) : undefined;
                   rendered.push(
                     <div
                       key={`process-group-${entryIds[groupStartIdx] ?? groupStartIdx}`}
@@ -2085,7 +2121,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                           would otherwise stay open once its answer shows up, e.g. when
                           switching between an answered and an unanswered leaf of the same
                           turn. Manual toggles survive every other re-render. */}
-                      <ProcessDetailsGroup key={answered ? "answered" : "unanswered"} messageCount={processViews.length} toolCallCount={processToolCount} defaultExpanded={!answered} reveal={revealProcess} t={t}>
+                      <ProcessDetailsGroup key={answered ? "answered" : "unanswered"} messageCount={processViews.length} toolCallCount={processToolCount} durationMs={turnDurationMs} cost={sumCost(foldedMessages)} cacheMisses={summarizeCacheMisses(foldedMessages)} defaultExpanded={!answered} reveal={revealProcess} t={t}>
                         {processViews}
                       </ProcessDetailsGroup>
                     </div>,
@@ -2129,7 +2165,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                        {t("chat.loadEarlier")}
                     </div>
                   )}
-                  {rendered.slice(startIndex)}
+                  <div ref={attachTranscriptRows}>{rendered.slice(startIndex)}</div>
                 </>
               );
             })()}
@@ -2574,6 +2610,18 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
           ? <ExtensionStatusToast statuses={extensionStatuses} />
           : <ExtensionStatusBar statuses={extensionStatuses} widgets={extensionWidgets} onCommand={handleSend} commandsDisabled={sessionBusy} />}
       </div>
+      {isEmptyNew && <div className="min-h-0 flex-1" />}
+      {forkPickerOpen && (
+        <DirectoryPicker
+          busy={forkPickerBusy}
+          error={forkPickerError}
+          onCancel={() => {
+            setForkPickerOpen(false);
+            setForkPickerError(null);
+          }}
+          onSelect={(path) => void handleForkPick(path)}
+        />
+      )}
       {/* New-session welcome-page widget zone · bottom (the old filler spot below the
           composer; returns an equivalent filler div when nothing is visible, so layout
           stays byte-identical) + the customize panel singleton (portal to body). */}

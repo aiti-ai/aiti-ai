@@ -12,6 +12,7 @@ import {
   getDraftApi,
 } from "@/lib/composer/draft-api";
 import { apiUrl } from "@/lib/base-path";
+import { holdStoredDraft } from "@/lib/draft-store";
 import type { ExtensionStatusItem, ExtensionWidgetItem } from "@/lib/types";
 import { stripAnsi } from "@/lib/ansi";
 import { contextUrgency, CTX_BREATHE_CSS, type CtxUrgency } from "@/lib/context-urgency";
@@ -173,6 +174,8 @@ interface Props {
   modelError?: string | null;
   /** The session's folder, when it no longer exists (moved or renamed): said instead of a model error (#1422). */
   missingCwd?: string | null;
+  /** Fork the session into another folder: offered while `missingCwd` is shown and the session can be forked. */
+  onForkMissingCwd?: () => void;
   /** Diagnostics from resolving `enabledModels`, e.g. a pattern that matched nothing. */
   modelScopeWarnings?: string[];
   /** Manually refresh the model catalog (passed by ChatWindow on the new-session page when the backend supports it; the refresh row is hidden by default) */
@@ -1005,7 +1008,7 @@ function NotchHandle({ capsule, count, onClick, title, variant = "bar" }: {
   );
 }
 
-function ModelNoticeBanner({ tone, title, body, onClose }: { tone: "error" | "warning"; title: string; body: string; onClose?: () => void }) {
+function ModelNoticeBanner({ tone, title, body, onClose, children }: { tone: "error" | "warning"; title: string; body: string; onClose?: () => void; children?: React.ReactNode }) {
   const { t } = useI18n();
   const color = tone === "error" ? "239,68,68" : "234,179,8";
   return (
@@ -1046,6 +1049,7 @@ function ModelNoticeBanner({ tone, title, body, onClose }: { tone: "error" | "wa
       <div style={{ minWidth: 0, flex: 1 }}>
         <div style={{ fontWeight: 600 }}>{title}</div>
         <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{body}</div>
+        {children}
       </div>
       {onClose && (
         <button
@@ -1071,11 +1075,36 @@ function ModelNoticeBanner({ tone, title, body, onClose }: { tone: "error" | "wa
   );
 }
 
-/** The session's folder no longer exists: nothing was sent, and no model was asked (#1422). */
-export function MissingCwdBanner({ cwd }: { cwd?: string | null }) {
+/**
+ * The session's folder no longer exists: nothing was sent, and no model was asked (#1422).
+ * `onFork` offers pi's Fork (pi 1.5.2): the session copied into a folder that exists.
+ */
+export function MissingCwdBanner({ cwd, onFork }: { cwd?: string | null; onFork?: () => void }) {
   const { t } = useI18n();
   if (!cwd) return null;
-  return <ModelNoticeBanner tone="error" title={t("chat.cwdMissingTitle")} body={t("chat.cwdMissingBody", { cwd })} />;
+  return (
+    <ModelNoticeBanner tone="error" title={t("chat.cwdMissingTitle")} body={t("chat.cwdMissingBody", { cwd })}>
+      {onFork && (
+        <button
+          type="button"
+          onClick={onFork}
+          style={{
+            display: "block",
+            marginTop: 6,
+            padding: "2px 8px",
+            border: "1px solid currentColor",
+            borderRadius: 5,
+            background: "transparent",
+            color: "inherit",
+            cursor: "pointer",
+            font: "inherit",
+          }}
+        >
+          {t("chat.cwdMissingFork")}
+        </button>
+      )}
+    </ModelNoticeBanner>
+  );
 }
 
 export function ModelErrorBanner({ error }: { error?: string | null }) {
@@ -1494,7 +1523,7 @@ let pendingFocusHandoff = false;
 
 const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   sessionId,
-  onSend, onAbort, aborting, onForkNew, onSteer, onSideChat, onFollowUp, onQueueFollowUp, onQueueSteerSend, canContinue, onContinue, onConvertQueueItem, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, missingCwd, modelScopeWarnings, allModelList, onLoadAllModels, onModelChange, modelSwitching, onRefreshModels, modelsRefreshing,
+  onSend, onAbort, aborting, onForkNew, onSteer, onSideChat, onFollowUp, onQueueFollowUp, onQueueSteerSend, canContinue, onContinue, onConvertQueueItem, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, missingCwd, onForkMissingCwd, modelScopeWarnings, allModelList, onLoadAllModels, onModelChange, modelSwitching, onRefreshModels, modelsRefreshing,
   sessionCapabilities, onSwitchPermissionMode, permissionMode,
   contextPercent, contextUsage, onSessionStatsPanelOpen, onCompact, onAbortCompaction, isCompacting, compactError, compactResult, compactQueued, onCancelCompactQueue, modelSwitchPending, toolPreset, onToolPresetChange,  thinkingLevel, isAutoThinkingSelection = false, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
   retryInfo, queuedMessages, tasks, inputHistory = [], onRecallQueue,
@@ -2770,12 +2799,16 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     builtinCommandFocusRef.current = document.activeElement === textareaRef.current ? textareaRef.current : null;
     builtinCommandPendingRef.current = true;
     setBuiltinCommandPending(true);
+    // The command stays in the composer while it runs, but it was already
+    // issued: a reload meanwhile must not bring it back to be run again.
+    const releaseStoredDraft = draftKeyRef.current ? holdStoredDraft(draftKeyRef.current) : null;
     try {
       const result = await onBuiltinCommand(msg);
       if (!result.handled) return false;
       if (!result.error && canClearBuiltinCommandInput(valueRef.current, attachedImagesRef.current.length, msg)) clearInput();
       return true;
     } finally {
+      releaseStoredDraft?.();
       builtinCommandPendingRef.current = false;
       setBuiltinCommandPending(false);
     }
@@ -4099,7 +4132,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
         }}
       />}
       <div style={{ ...(compact ? undefined : { display: "flex", flexDirection: "column", minHeight: 0, width: "100%" }), maxWidth: "var(--chat-content-max-width, 820px)", margin: "0 auto" }}>
-        <MissingCwdBanner cwd={missingCwd} />
+        <MissingCwdBanner cwd={missingCwd} onFork={onForkMissingCwd} />
         <ModelErrorBanner error={modelError} />
         <ModelScopeWarningBanner warnings={modelScopeWarnings} />
         {showImageUnsupportedWarning && (() => {
