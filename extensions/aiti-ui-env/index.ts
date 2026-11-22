@@ -945,6 +945,8 @@ export default {
       description: "虚拟屏带 x11vnc + node vnc-bridge/noVNC，可在浏览器查看/操作虚拟桌面" },
     { id: "behavior.atspi", label: "AT-SPI 语义总线", group: "i18n:feat.group.behavior", default: true,
       description: "虚拟屏环境注入 GTK/Qt a11y 开关（语义树可见，供 cua.ai 等独立扩展）" },
+    { id: "behavior.audio", label: "音频输出（Linux PipeWire/Pulse）", group: "i18n:feat.group.behavior", default: true,
+      description: "为虚拟屏/桌面启动的 GUI 应用注入 PULSE_SERVER + PIPEWIRE_RUNTIME_DIR（从 /run/user/<uid> 自动发现），让 SSH/agent 启动的 WebView、播放器能有声音；关闭则不改音频变量" },
     { id: "behavior.autostart-headless", label: "虚拟屏未运行时自动拉起", group: "i18n:feat.group.behavior", default: false,
       description: "resolve/run 时虚拟屏未启动→自动拉起 Xvfb+openbox（systemd 或裸进程）" },
     { id: "behavior.random-display", label: "DISPLAY 随机避让", group: "i18n:feat.group.behavior", default: true,
@@ -1013,7 +1015,12 @@ export default {
         }
       } catch { /* 不阻塞启动 */ }
       try { env.setFeatureSource((ctx as any)?.features); } catch {} // DI 方案 P1
-      try { (ctx as any)?.features?.on?.(() => env.invalidateResolvedConfig()); } catch {} // feature changes → re-resolve wm/display-num
+      // Audio session env is useful before the first resolve (agent bash children inherit process.env).
+      try { env.hydrateProcessAudioEnv(); } catch { /* best effort */ }
+      try { (ctx as any)?.features?.on?.(() => {
+        env.invalidateResolvedConfig(); // re-resolve wm/display-num
+        try { env.hydrateProcessAudioEnv(); } catch { /* best effort */ }
+      }); } catch {} // feature changes → re-resolve wm/display-num + audio env
       // 存量实例补发令牌（迁移：旧实例无 token）
       try { m.ensureInstanceTokens("vnc"); m.ensureInstanceTokens("rdp"); } catch { /* 迁移失败不致命 */ }
       // 实例令牌定期轮换（真随机防碰撞；旧令牌 prevToken 宽限一个周期，已开页面不立即失效）
@@ -1073,6 +1080,7 @@ export default {
           features: {
             vnc: m.featureEnabled("behavior.vnc"),
             atspi: m.featureEnabled("behavior.atspi"),
+            audio: m.featureEnabled("behavior.audio"),
             autostart: m.featureEnabled("behavior.autostart-headless"),
           },
           envOverrides: {

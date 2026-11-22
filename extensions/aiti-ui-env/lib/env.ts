@@ -26,7 +26,7 @@ import * as win from "./win.js";
 import * as mac from "./mac.js";
 import { probeErrorText, probeFail, tr, trOr } from "./i18n.js";
 
-export const LIB_VERSION = "0.3.1"; // 单例 key 用：lib 逻辑变更时 bump，reload 即换新实例
+export const LIB_VERSION = "0.3.2"; // singleton key: bump when lib logic changes; reload swaps in a fresh instance
 
 /** 平台分派：Windows/macOS 语义映射见 docs/aiti-ui-env-{windows-support,macos-support}-plan.md */
 export const IS_WIN = process.platform === "win32";
@@ -118,6 +118,27 @@ function runCmdBuf(cmd: string, args: string[], input?: Buffer, timeoutMs = 8000
 
 function uidOf(): number | string {
   try { return process.getuid?.() ?? os.userInfo().uid; } catch { return os.userInfo().uid; }
+}
+
+/** Linux audio session env for GUI children (opt-out via behavior.audio, default on).
+ *
+ * pi-web is often launched from systemd/SSH without XDG_RUNTIME_DIR/PULSE_SERVER.
+ * Xvfb apps inherit a temporary XDG_RUNTIME_DIR, so they cannot discover the user's
+ * PipeWire/Pulse socket by convention; pass explicit socket/runtime paths instead.
+ * Preserve values already present in the parent environment (user override wins). */
+function linuxAudioEnv(): Record<string, string> {
+  if (!IS_UNIX || !featureEnabled("behavior.audio")) return {};
+  const runtime = `/run/user/${uidOf()}`;
+  const out: Record<string, string> = {};
+  const pulseSocket = `${runtime}/pulse/native`;
+  const pipewireSocket = `${runtime}/pipewire-0`;
+  // Always include a usable value in the CHILD env: the parent process may already
+  // have it (hydrateProcessAudioEnv), but buildEnv starts from a small base env.
+  const pulseServer = process.env.PULSE_SERVER || (fs.existsSync(pulseSocket) ? `unix:${pulseSocket}` : "");
+  const pipewireRuntime = process.env.PIPEWIRE_RUNTIME_DIR || (fs.existsSync(pipewireSocket) ? runtime : "");
+  if (pulseServer) out.PULSE_SERVER = pulseServer;
+  if (pipewireRuntime) out.PIPEWIRE_RUNTIME_DIR = pipewireRuntime;
+  return out;
 }
 
 function homeDir(): string {
@@ -720,6 +741,7 @@ export function buildEnv(target: UeTarget, probes: { desktop: ProbeInfo; headles
     else if (envStr("XAUTHORITY", "")) env.XAUTHORITY = process.env.XAUTHORITY!;
     else warnings.push(tr(locale, "srv.warn.desktop-xauthority"));
   }
+  Object.assign(env, linuxAudioEnv());
   return { env, warnings };
 }
 
@@ -748,20 +770,37 @@ let lastSnapshotSig: string | null = null;
 // DBUS_SESSION_BUS_ADDRESS / XDG_RUNTIME_DIR / GTK_* (those point at the AT-SPI
 // side bus and could break unrelated pi-web internals when set process-wide).
 
-const PROC_ENV_KEYS = [
+const PROC_ENV_DISPLAY_KEYS = [
   "DISPLAY", "XAUTHORITY", "GDK_BACKEND", "XDG_SESSION_TYPE", "WAYLAND_DISPLAY",
   "UI_ENV_VNC_PORT", "UI_ENV_VNC_WEB_PORT",
 ] as const;
+// Audio keys are set-only: a missing value must not delete an inherited user setting.
+const PROC_ENV_AUDIO_KEYS = ["PULSE_SERVER", "PIPEWIRE_RUNTIME_DIR"] as const;
+const PROC_ENV_KEYS = [...PROC_ENV_DISPLAY_KEYS, ...PROC_ENV_AUDIO_KEYS] as const;
 
 const procEnvOriginal = new Map<string, string | null>(); // null = key was absent before we touched it
 
+function applyProcessEnvAudio(env: Record<string, string>): void {
+  for (const k of PROC_ENV_AUDIO_KEYS) {
+    if (!procEnvOriginal.has(k)) procEnvOriginal.set(k, process.env[k] ?? null);
+    const v = env[k];
+    if (typeof v === "string" && v !== "") process.env[k] = v;
+    else {
+      const prev = procEnvOriginal.get(k);
+      if (prev === null || prev === undefined) delete process.env[k];
+      else process.env[k] = prev;
+    }
+  }
+}
+
 function applyProcessEnvDisplay(env: Record<string, string>): void {
-  for (const k of PROC_ENV_KEYS) {
+  for (const k of PROC_ENV_DISPLAY_KEYS) {
     if (!procEnvOriginal.has(k)) procEnvOriginal.set(k, process.env[k] ?? null);
     const v = env[k];
     if (typeof v === "string" && v !== "") process.env[k] = v;
     else delete process.env[k]; // e.g. WAYLAND_DISPLAY="" in the headless profile means "clear residue"
   }
+  applyProcessEnvAudio(env);
 }
 
 function restoreProcessEnvDisplay(): void {
@@ -772,6 +811,14 @@ function restoreProcessEnvDisplay(): void {
     else process.env[k] = prev;
   }
   procEnvOriginal.clear();
+}
+
+/** Startup/feature-toggle hook: expose the user's PipeWire/Pulse socket to agent
+ *  bash children even before the first resolve(). Safe to call repeatedly. */
+export function hydrateProcessAudioEnv(): Record<string, string> {
+  const audio = linuxAudioEnv();
+  applyProcessEnvAudio(audio);
+  return audio;
 }
 
 function sessionEnvSnapshotFile(): string { return cachePath("session-env.json"); }

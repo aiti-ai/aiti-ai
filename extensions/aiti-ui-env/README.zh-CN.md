@@ -12,7 +12,7 @@
 - 生态仓库: <https://github.com/aiti-ai/aiti-ai>
 - 官网: <https://aiti.pw>
 
-分类: 调试 · tags: `headless` · `xvfb` · `vnc` · `rdp` · `atspi` · `display` · `virtual-desktop` · `noVNC` · `vnc-password`
+分类: 调试 · tags: `headless` · `xvfb` · `vnc` · `rdp` · `atspi` · `audio` · `pipewire` · `pulseaudio` · `display` · `virtual-desktop` · `noVNC` · `vnc-password`
 
 ## 安装
 
@@ -31,6 +31,19 @@ cd scripts/linux && ./setup-linux.sh && ./install-service.sh
 - 中文文档: <https://aiti.pw/extensions/aiti-ui-env.html>
 - Documentation (English): <https://aiti.pw/en/extensions/aiti-ui-env.html>
 - 扩展注册表: <https://aiti.pw/extensions.html> · machine-readable <https://aiti.pw/extensions.json>
+
+## 音频会话（Linux，默认开）
+
+经 `resolve` / `run` / 无头虚拟屏启动的 GUI 应用会继承用户的 PipeWire/Pulse 会话，
+即使 pi-web 本身由 systemd 或 SSH 启动：
+
+- `PULSE_SERVER=unix:/run/user/<uid>/pulse/native`
+- `PIPEWIRE_RUNTIME_DIR=/run/user/<uid>`
+
+路径按当前 uid 自动探测，只在 socket 存在时注入；父进程已显式设置的值优先。扩展启动时
+也会把音频环境 hydrate 到进程 env，agent bash 会话可直接继承。开关在扩展管理器
+（ExtMan）→ aiti-ui-env → 功能管理 → **音频输出（Linux PipeWire/Pulse）**，**默认开**；
+关闭后不改动任何音频环境变量。
 
 ## ARGB compositor（2026-11-21）
 
