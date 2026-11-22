@@ -169,8 +169,18 @@ export function readEntry(key: string): SessionEntry | undefined {
   }
 }
 
-export function deleteEntry(key: string): void {
+/**
+ * Remove one session's tracking files (entry, ready marker, launch config, socket).
+ *
+ * Destructive: a live wrapper whose files are unlinked becomes unreachable while
+ * its transient unit name stays taken — every later open then dies on
+ * `systemd-run: unit already loaded` (2026-11-23 orphan incident). Callers must
+ * only pass `reason` after proving the wrapper is dead, and the reason is logged
+ * so the next incident has an audit trail.
+ */
+export function deleteEntry(key: string, reason?: string): void {
   const socket = socketPath(key);
+  if (reason) console.warn(`[agent-starter] dropping registry files for ${key}: ${reason}`);
   for (const path of [entryPath(key), readyPath(key), launchConfigPath(key), ...(isPipeEndpoint(socket) ? [] : [socket])]) {
     try {
       unlinkSync(path);
@@ -224,39 +234,77 @@ export function findEntryBySession(sessionId: string): SessionEntry | undefined 
   return undefined;
 }
 
+/** How long an entry may stay "launching" before a dead socket counts as death. */
+export const LAUNCH_GRACE_MS = 20_000;
+
 /**
- * Is a unix socket accepting connections right now?
- * ENOENT / ECONNREFUSED / timeout all mean "no live wrapper".
+ * Is this entry a launch still in flight?
+ *
+ * `spawn` writes the entry BEFORE systemd-run/pty starts, and the wrapper only
+ * binds its socket afterwards. During that window the socket path is ENOENT —
+ * which a naive probe reads as "dead" and prunes, deleting a live launch's
+ * files (the other half of the 2026-11-23 orphan incident). Entries without a
+ * backfilled agent/wrapper pid and younger than the ready timeout are treated
+ * as in-flight, never as garbage.
  */
-export function isSocketAlive(path: string, timeoutMs = 500): Promise<boolean> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const done = (alive: boolean) => {
-      if (settled) return;
-      settled = true;
-      socket.destroy();
-      resolve(alive);
-    };
-    const socket = connect({ path });
-    socket.setTimeout(timeoutMs);
-    socket.once("connect", () => done(true));
-    socket.once("error", () => done(false));
-    socket.once("timeout", () => done(false));
-  });
+export function isLaunching(entry: SessionEntry, now = Date.now()): boolean {
+  return entry.pid === undefined && entry.wrapperPid === undefined && now - entry.createdAt < LAUNCH_GRACE_MS;
 }
 
 /**
- * Drop entries whose wrapper is gone (crash, machine reboot, manual cleanup).
- * Returns the removed entries. Cheap enough to run at startup; the probe is
- * bounded (500 ms per entry) and entries are independent.
+ * Result of probing a wrapper endpoint.
+ *
+ *   alive    a listener accepted the connection
+ *   dead     nothing can be at that path (ENOENT) or the file has no listener
+ *            (ECONNREFUSED) — the only states that justify deleting files
+ *   unknown  the probe timed out or failed ambiguously: the wrapper may be alive
+ *            but busy (single-threaded event loop, journal replay, GC pause)
+ */
+export type EndpointState = "alive" | "dead" | "unknown";
+
+/**
+ * Probe a unix socket / named pipe. Timeouts are deliberately NOT "dead": a
+ * 500 ms stall in a live wrapper must never license unlinking its registry entry
+ * and socket (that orphaned a running agent behind an occupied systemd unit on
+ * 2026-11-23 — the unit refuses re-spawn, so every reopen failed).
+ */
+export function probeEndpoint(path: string, timeoutMs = 500): Promise<EndpointState> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (state: EndpointState) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(state);
+    };
+    const socket = connect({ path });
+    socket.setTimeout(timeoutMs);
+    socket.once("connect", () => done("alive"));
+    socket.once("error", (err: NodeJS.ErrnoException) => {
+      done(err?.code === "ENOENT" || err?.code === "ECONNREFUSED" ? "dead" : "unknown");
+    });
+    socket.once("timeout", () => done("unknown"));
+  });
+}
+
+/** Is a unix socket accepting connections right now? (timeouts read as false — use probeEndpoint when the answer deletes files) */
+export function isSocketAlive(path: string, timeoutMs = 500): Promise<boolean> {
+  return probeEndpoint(path, timeoutMs).then((state) => state === "alive");
+}
+
+/**
+ * Drop entries whose wrapper is definitively gone (crash, reboot, manual cleanup).
+ * Returns the removed entries. A busy wrapper (probe timeout) is kept: unlinking
+ * its files would orphan a live agent behind a name systemd refuses to reuse.
  */
 export async function pruneDeadEntries(): Promise<SessionEntry[]> {
   const entries = listEntries();
   const dead: SessionEntry[] = [];
   await Promise.all(
     entries.map(async (entry) => {
-      if (await isSocketAlive(entry.socket)) return;
-      deleteEntry(entry.key);
+      if (isLaunching(entry)) return;
+      if ((await probeEndpoint(entry.socket)) !== "dead") return;
+      deleteEntry(entry.key, "pruned: wrapper endpoint definitively dead");
       dead.push(entry);
     }),
   );

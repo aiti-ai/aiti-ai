@@ -768,11 +768,47 @@ export async function resolveProviderOwnedSession(
  * Falls back to the default provider when `providerType` is omitted.
  * Non-default handles are stored in the global handle store; default ("local")
  * sessions stay in rpc-manager's registry.
+ *
+ * Single-flight per (provider, native id, file): opening a cold session fires
+ * several requests at once (get_state, get_commands, prompt, ...), and each one
+ * reaching provider.createSession starts its OWN detachable wrapper. Two
+ * systemd-run launches for one unit name race: the loser is refused ("unit
+ * already loaded") and its failure cleanup unlinks the winner's socket/registry
+ * → a live wrapper becomes unreachable while its unit name stays taken, so every
+ * reopen fails (2026-11-23 orphan incident). Concurrent callers now share one
+ * creation and receive the same handle.
  */
 export async function createSessionHandle(
   options: CreateSessionOptions & { providerType?: string },
 ): Promise<SessionHandle> {
   const type = options.providerType ?? DEFAULT_PROVIDER_TYPE;
+  const key = `${type}\u0000${options.sessionId ? `id:${options.sessionId}` : `file:${options.sessionFile ?? ""}`}`;
+  const flights = createSessionFlights();
+  const inflight = flights.get(key);
+  if (inflight) return inflight;
+  const flight = createSessionHandleUncached(options, type);
+  flights.set(key, flight);
+  try {
+    return await flight;
+  } finally {
+    if (flights.get(key) === flight) flights.delete(key);
+  }
+}
+
+declare global {
+  // globalThis: same dev/HMR rationale as __sessionProviders and the attach flight map.
+  var __createSessionHandleInFlight: Map<string, Promise<SessionHandle>> | undefined;
+}
+
+function createSessionFlights(): Map<string, Promise<SessionHandle>> {
+  if (!globalThis.__createSessionHandleInFlight) globalThis.__createSessionHandleInFlight = new Map();
+  return globalThis.__createSessionHandleInFlight;
+}
+
+async function createSessionHandleUncached(
+  options: CreateSessionOptions & { providerType?: string },
+  type: string,
+): Promise<SessionHandle> {
   const provider = getProvider(type);
   if (!provider) {
     throw new Error(

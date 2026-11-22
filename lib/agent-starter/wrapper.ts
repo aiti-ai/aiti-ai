@@ -36,8 +36,10 @@ import {
   ensureStarterDirs,
   entryPath,
   findEntryBySession,
+  isLaunching,
   isSocketAlive,
   launchConfigPath,
+  probeEndpoint,
   listEntries,
   logPath,
   rebindEntry,
@@ -52,7 +54,7 @@ import {
   type RunnerKind,
   type SessionEntry,
 } from "./registry.ts";
-import { launchWrapper, stopLauncher } from "./runner.ts";
+import { launchWrapper, stopLauncher, unitBusy, unitNameFor } from "./runner.ts";
 import { WRAPPER_SOURCE } from "./wrapper-source.ts";
 
 /** How long a freshly launched wrapper may take to start listening. */
@@ -320,15 +322,66 @@ export class LinuxMacWrapperStarter implements WrapperStarter {
     const agentKey = (options.agentKey ?? "").trim() || "agent";
     const key = sessionKey(agentKey, sessionId);
     ensureStarterDirs();
+    // One launch per session key per process: parallel open requests (get_state,
+    // get_commands, prompt …) of one cold session each used to reach spawn, and
+    // the second systemd-run refused the just-created unit while its failure
+    // cleanup unlinked the winner's socket → live wrapper unreachable + unit name
+    // occupied (2026-11-23). The loser now waits for the winner and reports the
+    // same "already hosted" verdict it would get a moment later.
+    const flights = spawnFlights();
+    const inflight = flights.get(key);
+    if (inflight) {
+      await inflight.catch(() => undefined);
+      throw new Error(`agent-starter: session ${sessionId} is already hosted by a detached wrapper (launch in flight)`);
+    }
+    const flight = this.spawnUnshared(command, args, options, key, sessionId, agentKey);
+    flights.set(key, flight);
+    try {
+      return await flight;
+    } finally {
+      if (flights.get(key) === flight) flights.delete(key);
+    }
+  }
 
+  private async spawnUnshared(
+    command: string,
+    args: string[],
+    options: AgentStarterSpawnOptions,
+    key: string,
+    sessionId: string,
+    agentKey: string,
+  ): Promise<ChildProcess> {
     // Refuse to double-own a live session: the registry entry + live socket is
-    // authoritative (a stale entry with a dead socket is pruned instead).
+    // authoritative. Only a definitively dead endpoint may be pruned — a probe
+    // timeout is not proof of death (see probeEndpoint).
     const previous = readEntry(key);
     if (previous) {
-      if (await isSocketAlive(previous.socket)) {
+      if (isLaunching(previous)) {
+        // Another instance wrote this entry moments ago and is waiting for its
+        // wrapper to bind (the socket does not exist yet). Deleting it would
+        // kill that launch's tracking files; refuse instead.
+        throw new Error(`agent-starter: session ${sessionId} is already launching a detached wrapper (in flight)`);
+      }
+      const state = await probeEndpoint(previous.socket);
+      if (state === "alive") {
         throw new Error(`agent-starter: session ${sessionId} is already hosted by a detached wrapper (${previous.socket})`);
       }
-      deleteEntry(key);
+      if (state === "unknown") {
+        throw new Error(
+          `agent-starter: a wrapper for session ${sessionId} is registered but did not answer (${previous.socket}); refusing to start a second agent on the same session`,
+        );
+      }
+      // Dead socket, but the transient unit may still be alive with its socket
+      // file lost (orphaned wrapper). Starting a duplicate unit is impossible
+      // (same name) and unlinking the entry would hide the process → report it.
+      const unit = previous.unit ?? (this.runner === "systemd-run" ? unitNameFor(key) : undefined);
+      if (unit && (await unitBusy(unit, this.runnerEnv))) {
+        throw new Error(
+          `agent-starter: session ${sessionId} is still hosted by systemd unit ${unit}, but its socket is gone; ` +
+            `stop it first (systemctl --user stop ${unit}) and reopen the session`,
+        );
+      }
+      deleteEntry(key, "stale registry entry (socket definitively dead, no live unit)");
     }
 
     const entry: SessionEntry = {
@@ -397,7 +450,7 @@ export class LinuxMacWrapperStarter implements WrapperStarter {
     const ready = await waitForFile(entry.ready, runDir(), READY_TIMEOUT_MS);
     if (!ready) {
       stopLauncher(this.runner, launched.unit, launched.launcherPid, this.runnerEnv);
-      this.drop(key);
+      this.drop(key, entry.createdAt);
       throw new Error(`agent-starter: wrapper for session ${sessionId} did not become ready within ${READY_TIMEOUT_MS}ms`);
     }
 
@@ -406,7 +459,7 @@ export class LinuxMacWrapperStarter implements WrapperStarter {
       handshake = await connectWithHandshake(entry.socket);
     } catch (err) {
       stopLauncher(this.runner, launched.unit, launched.launcherPid, this.runnerEnv);
-      this.drop(key);
+      this.drop(key, entry.createdAt);
       throw err;
     }
 
@@ -422,12 +475,18 @@ export class LinuxMacWrapperStarter implements WrapperStarter {
   // Recovery
   // --------------------------------------------------------------------------
 
-  /** Does a detached wrapper hold this session right now? Prunes dead entries. */
+  /** Does a detached wrapper hold this session right now? Prunes definitively dead entries. */
   async holds(sessionId: string): Promise<boolean> {
     const entry = findEntryBySession(sessionId);
     if (!entry) return false;
-    if (await isSocketAlive(entry.socket)) return true;
-    deleteEntry(entry.key);
+    // A launch in flight has no socket yet — that is not death.
+    if (isLaunching(entry)) return true;
+    const state = await probeEndpoint(entry.socket);
+    if (state === "alive") return true;
+    // A timeout says nothing about liveness (busy wrapper); removing the files
+    // would orphan a running agent behind a unit name systemd will not reuse.
+    if (state === "unknown") return true;
+    deleteEntry(entry.key, "recovery probe: socket definitively dead");
     return false;
   }
 
@@ -438,8 +497,14 @@ export class LinuxMacWrapperStarter implements WrapperStarter {
 
   /** Attach to a wrapper-hosted session (journal replay included). */
   async attach(sessionId: string): Promise<ChildProcess> {
-    const entry = findEntryBySession(sessionId);
+    let entry = findEntryBySession(sessionId);
     if (!entry) throw new Error(`agent-starter: no detached wrapper holds session ${sessionId}`);
+    // Another instance may be mid-launch (entry written, socket not bound yet):
+    // wait for its ready marker instead of probing a path that cannot exist yet.
+    if (isLaunching(entry)) {
+      await waitForFile(entry.ready, runDir(), READY_TIMEOUT_MS);
+      entry = findEntryBySession(sessionId) ?? entry;
+    }
     let handshake: Handshake;
     try {
       handshake = await connectWithHandshake(entry.socket);
@@ -448,7 +513,9 @@ export class LinuxMacWrapperStarter implements WrapperStarter {
       // failure (busy wrapper, backlog, timeout) must not unlink a live
       // wrapper's tracking files — the registry is the only path to reattach
       // or kill the process afterwards.
-      if (!(await isSocketAlive(entry.socket))) deleteEntry(entry.key);
+      if (!isLaunching(entry) && (await probeEndpoint(entry.socket)) === "dead") {
+        deleteEntry(entry.key, "attach: socket definitively dead");
+      }
       throw err;
     }
     const child = childFrom(handshake, {
@@ -493,13 +560,13 @@ export class LinuxMacWrapperStarter implements WrapperStarter {
     if (signalled) {
       const gone = await waitForFileGone(entry.socket, runDir(), 8000);
       if (gone) {
-        deleteEntry(entry.key);
+        deleteEntry(entry.key, "kill: wrapper removed its socket");
         return true;
       }
       // Hard signal (SIGKILL): the wrapper died without cleanup, leaving a
       // stale socket file. Nothing listens behind it — clear the leftovers.
-      if (!(await isSocketAlive(entry.socket))) {
-        deleteEntry(entry.key);
+      if ((await probeEndpoint(entry.socket)) === "dead") {
+        deleteEntry(entry.key, "kill: socket definitively dead after signal");
         return true;
       }
       // The wrapper is still shutting the agent down (orderly shutdown of a
@@ -514,15 +581,15 @@ export class LinuxMacWrapperStarter implements WrapperStarter {
       await this.sendKillFrame(entry.socket, signal);
       const gone = await waitForFileGone(entry.socket, runDir(), 8000);
       if (!gone) {
-        if (!(await isSocketAlive(entry.socket))) {
-          deleteEntry(entry.key);
+        if ((await probeEndpoint(entry.socket)) === "dead") {
+          deleteEntry(entry.key, "kill(frame): socket definitively dead");
           return true;
         }
         return false;
       }
     }
     // Socket dead: the wrapper exited (or was never there) — clear the leftovers.
-    deleteEntry(entry.key);
+    deleteEntry(entry.key, "kill: wrapper endpoint gone");
     return true;
   }
 
@@ -567,12 +634,28 @@ export class LinuxMacWrapperStarter implements WrapperStarter {
     return rebindEntry(oldSessionId, newSessionId);
   }
 
-  private drop(key: string): void {
-    deleteEntry(key);
+  private drop(key: string, createdAt?: number): void {
+    // Only remove tracking files this call actually wrote. Two launches for the
+    // same key (another pi-web instance, or an in-flight spawn) each write their
+    // own entry; a loser that cleaned up blindly would unlink the winner's live
+    // socket and leave its wrapper unreachable (2026-11-23 orphan incident).
+    const current = readEntry(key);
+    if (current && createdAt !== undefined && current.createdAt !== createdAt) return;
+    deleteEntry(key, "spawn failed before the wrapper became ready");
     try {
       unlinkSync(launchConfigPath(key));
     } catch {
       /* already consumed */
     }
   }
+}
+
+/** Per-key in-flight spawns (globalThis: survives dev HMR module recreation). */
+declare global {
+  var __agentStarterSpawnFlights: Map<string, Promise<ChildProcess>> | undefined;
+}
+
+function spawnFlights(): Map<string, Promise<ChildProcess>> {
+  if (!globalThis.__agentStarterSpawnFlights) globalThis.__agentStarterSpawnFlights = new Map();
+  return globalThis.__agentStarterSpawnFlights;
 }
