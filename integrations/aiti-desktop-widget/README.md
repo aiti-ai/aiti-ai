@@ -6,8 +6,18 @@ loopback origin — and knows nothing about captions, floating icons or desktop 
 provides the page (and its own data channel, usually SSE). Windows can be placed on a chosen
 monitor and re-placed at runtime.
 
-Used by `aiti-video-studio` as the live desktop caption window; also usable for floating
-icons, status cards, desktop pets, etc.
+## About aiti
+
+This project is part of the **aiti** ecosystem — a personal AI development workbench powered by
+[pi](https://pi.dev): **aiti-agent** (a self-hosted web workbench), debug injection into
+mainstream dev tools (aiti-devtools), and a rich extension system.
+
+- Ecosystem monorepo: <https://github.com/aiti-ai/aiti-ai>
+- Site: <https://aiti.pw> · docs: <https://aiti.pw/en/extensions/aiti-desktop-widget.html> ·
+  registry: <https://aiti.pw/extensions.html> (<https://aiti.pw/extensions.json>)
+- Primary consumer: **[aiti-video-studio](https://aiti.pw/en/extensions/aiti-desktop-widget.html#used-by-aiti-video-studio)**
+  uses aiti-desktop-widget as its live desktop caption window; it is also usable for floating
+  icons, status cards, desktop pets, etc.
 
 ## Build
 
