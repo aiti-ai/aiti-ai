@@ -284,6 +284,7 @@
   const statusEl = document.getElementById("status");
 
   let lines = [];
+  let distributed = false;
   let active = -1;
   let dragging = false;
   let statusTimer = 0;
@@ -385,6 +386,7 @@
   }
 
   function distributeLyrics(text) {
+    distributed = true;
     const rows = text.replace(/\r/g, "").split("\n").map((row) => row.trim()).filter(Boolean);
     if (!rows.length) return [];
     const duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : Math.max(rows.length * 3.2, 8);
@@ -529,7 +531,7 @@
 
   audio.addEventListener("loadedmetadata", () => {
     updateProgress();
-    if (!lines.some((line) => line.time > 0)) {
+    if (distributed) {
       lines = distributeLyrics(lines.map((line) => line.text).join("\n"));
       renderLyrics();
     }
