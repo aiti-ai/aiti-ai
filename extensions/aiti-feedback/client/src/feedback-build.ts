@@ -42,14 +42,33 @@ export function envInfo(nav?: { userAgent?: string; platform?: string; language?
   return out;
 }
 
+// Site-specific internal hostnames are injected, never hardcoded here:
+//   build time — VITE_FEEDBACK_INTERNAL_HOSTS="host1,host2"
+//   runtime    — globalThis.__AITI_FEEDBACK_INTERNAL_HOSTS (array or comma list)
+function injectedHosts(): string[] {
+  const env = (import.meta as unknown as { env?: Record<string, string> })?.env ?? {};
+  const runtime = (globalThis as Record<string, unknown>).__AITI_FEEDBACK_INTERNAL_HOSTS;
+  const raw = [env.VITE_FEEDBACK_INTERNAL_HOSTS, ...(Array.isArray(runtime) ? runtime : [runtime])];
+  const hosts = raw
+    .flatMap((v) => String(v ?? "").split(","))
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return [...new Set(hosts)];
+}
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 // Order matters: specific shapes first, generic long-secrets last.
 const REDACT_RULES: Array<[RegExp, string]> = [
-  [/[\w.-]+\.alot\.pw(?::\d+)?/g, "<redacted-domain>"],
+  // Self-hosted / private-network DNS suffixes (RFC 8375 .home.arpa included).
+  [/\b(?:[a-z0-9-]+\.)+(?:internal|intranet|lan|local|corp|home\.arpa)(?::\d+)?/gi, "<redacted-domain>"],
   [/\b192\.168\.\d{1,3}\.\d{1,3}\b/g, "<redacted-ip>"],
   [/\b10\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, "<redacted-ip>"],
   [/\b172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}\b/g, "<redacted-ip>"],
-  [/\bworkspace-tools\b/g, "<redacted>"],
-  [/\/home\/wind/g, "<redacted-path>"],
+  // Home directories: drop the user segment, keep the rest readable.
+  [/\/home\/[^/\s]+/g, "/home/<redacted>"],
+  [/\/Users\/[^/\s]+/g, "/Users/<redacted>"],
+  [/\b[A-Za-z]:\\Users\\[^\\\s]+/g, "<redacted-path>"],
   [/\bsk-[A-Za-z0-9_-]{8,}/g, "<redacted-key>"],
   [/\bgh[pousr]_[A-Za-z0-9]{20,}/g, "<redacted-token>"],
   [/\bgithub_pat_[A-Za-z0-9_]{20,}/g, "<redacted-token>"],
@@ -61,7 +80,14 @@ const REDACT_RULES: Array<[RegExp, string]> = [
 
 /** Best-effort sanitize: internal names/addresses and common secret shapes → placeholders. */
 export function redact(text: string): string {
-  return REDACT_RULES.reduce((s, [re, sub]) => s.replace(re, sub), text);
+  const rules: Array<[RegExp, string]> = [
+    ...injectedHosts().map((host): [RegExp, string] => [
+      new RegExp(`[\\w.-]*${escapeRe(host)}(?::\\d+)?`, "gi"),
+      "<redacted-domain>",
+    ]),
+    ...REDACT_RULES,
+  ];
+  return rules.reduce((s, [re, sub]) => s.replace(re, sub), text);
 }
 
 const KIND_LABEL: Record<FeedbackKind, string> = { bug: "bug", suggestion: "suggestion", other: "other" };

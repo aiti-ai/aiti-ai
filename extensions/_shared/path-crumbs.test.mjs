@@ -8,13 +8,13 @@ import test from "node:test";
 import { parentOfPath, splitPathSegments } from "./path-crumbs.ts";
 
 test("POSIX absolute path: root plus cumulative segments", () => {
-  assert.deepEqual(splitPathSegments("/home/wind/workspace"), {
+  assert.deepEqual(splitPathSegments("/home/alice/projects"), {
     sep: "/",
     root: { label: "/", path: "/" },
     segments: [
       { label: "home", path: "/home" },
-      { label: "wind", path: "/home/wind" },
-      { label: "workspace", path: "/home/wind/workspace" },
+      { label: "alice", path: "/home/alice" },
+      { label: "projects", path: "/home/alice/projects" },
     ],
   });
 });

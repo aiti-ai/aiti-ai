@@ -265,7 +265,7 @@ test("prose and code that must not be masked", () => {
     "https://ark.cn-beijing.volces.com/api/v3/models",
     "token 12月3日过期",
     "密码至少 12 位，包含大小写",
-    "本机 IP 10.203.10.20，端口 20341",
+    "本机 IP 10.203.10.48，端口 20341",
     "本仓库 42837 个文件",
     "édition française trésor",
   ];

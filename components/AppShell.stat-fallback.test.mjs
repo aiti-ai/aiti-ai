@@ -46,7 +46,7 @@ test("compact tier (rowCompact = viewport compact OR narrow chat column) collaps
 test("density plan 方案 E: the stats row is a single nowrap flow (no per-stat flex gaps)", () => {
   // One inline-flex container holds the whole row; the individual stats are inline
   // spans inside it with marginLeft/dot separators, not sibling flex items.
-  assert.match(statsSource, /Density tier \(plan: workspace-tools docs\/pi-web-topbar-stats-density-plan\.md §2 方案 E\)/);
+  assert.match(statsSource, /Density tier \(stats-row density plan §2, option E\)/);
   assert.match(statsSource, /display: "inline-flex", alignItems: "center", whiteSpace: "nowrap"/);
   // in/out share one glyph and render as an a/b pair.
   assert.match(statsSource, /\{fmt\(tokens\.input\)\}\/\{fmt\(tokens\.output\)\}/);

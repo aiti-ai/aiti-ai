@@ -5238,7 +5238,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
                     {ctxStr}
                   </span>
                 )}
-                {/* Density tier (plan: workspace-tools docs/pi-web-topbar-stats-density-plan.md §2 方案 E)：
+                {/* Density tier (stats-row density plan §2, option E):
                     the whole row is ONE nowrap text flow instead of one flex item per stat. The
                     5 flex gaps (10px each) were 50 of the row's 311px; joining the parts into a
                     single inline flow reclaims them. in/out share one ⇅ glyph with an `a/b` pair

@@ -67,6 +67,11 @@ if (!PRIV) console.warn("[release-audit] 未找到 ~/.aiti/release-redact.json�
 // REGISTRY declared after PRIV: the staging branch references PRIV (defining it before PRIV
 // made a direct `--target staging` run throw a TDZ ReferenceError; official never hit that
 // branch, so it stayed hidden)
+const STAGING_HOST = (PRIV?.stagingRegistry || process.env.AITI_STAGING_REGISTRY || "").replace(/^https?:\/\//, "").replace(/\/+$/, "");
+const STAGING_LOCK_RE =
+  STAGING_HOST && STAGING_HOST !== "registry.npmjs.org"
+    ? new RegExp(STAGING_HOST.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")
+    : null;
 const REGISTRY = TARGET === "official"
   ? "https://registry.npmjs.org/"
   : (PRIV?.stagingRegistry || process.env.AITI_STAGING_REGISTRY || "https://registry.npmjs.org/"); // staging registry is internal — loaded from the machine-local config, never committed
@@ -193,7 +198,7 @@ const checks = {
     const lock = join(pkgDir, "package-lock.json");
     if (!existsSync(lock)) return { state: "pass", detail: "无 lock" };
     const text = readFileSync(lock, "utf8");
-    const n = (text.match(/npm\.alot\.pw/g) || []).length;
+    const n = STAGING_LOCK_RE ? (text.match(STAGING_LOCK_RE) || []).length : 0;
     if (TARGET === "official" && n > 0) return { state: "fail", detail: `${n} 处私源 resolved URL` };
     return { state: "pass", detail: n ? `${n} 处（staging 口径允许）` : "" };
   },
@@ -201,7 +206,7 @@ const checks = {
     const lock = join(pkgDir, "package-lock.json");
     if (!existsSync(lock)) return 0;
     const text = readFileSync(lock, "utf8");
-    const t = text.replace(/https:\/\/npm\.alot\.pw/g, "https://registry.npmjs.org");
+    const t = STAGING_LOCK_RE ? text.replace(STAGING_LOCK_RE, "registry.npmjs.org") : text;
     if (t !== text) { writeFileSync(lock, t); return 1; }
     return 0;
   },

@@ -557,8 +557,8 @@ function revisionBlobResponse(filePath: string, blob: Buffer, contentType: strin
  * blob (cat-file, pure object-store read, no work-tree access) instead of the
  * working-tree file. read = image bytes or a text-preview-shaped JSON chunk;
  * download = raw bytes. Other types are rejected — watch/preview/meta have no
- * meaning for a historical blob (v1 scope, see workspace-tools
- * docs/pi-web-file-open-revision-plan.md §2.6).
+ * meaning for a historical blob (v1 scope, see the file-open
+ * revision plan §2.6).
  */
 async function handleRevisionRequest(
   request: NextRequest,
