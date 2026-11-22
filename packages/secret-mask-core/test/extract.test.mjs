@@ -190,6 +190,29 @@ test("learnFromText: structured first, whole-content fallback", () => {
   assert.equal(learnFromText("123abc", r3, "s").count, 0);
 });
 
+test("code statements in tool output are not credentials", () => {
+  // A source line captured as tool output (`token = await fetch(ak, sk);`)
+  // must not register its right-hand side: the outbound redactor would mask
+  // every view of the file and the placeholder would leak into rewrites.
+  const code = [
+    "      token = await fetchAccessToken(ak, sk, signal);",
+    "  token = accessToken",
+    "    token: res.data,",
+    "  token: Map<string, string> = new Map();",
+    "TOKEN_URL=https://api.example.com/v1/token",
+    "DB_PASSWORD=hunter2secret",
+    "  token: 'tok_12345678'",
+  ].join("\n");
+  const out = extractStructuredSecrets(code, { minLength: 2 });
+  assert.deepEqual(
+    out.map((x) => [x.key, x.value, x.format]),
+    [
+      ["DB_PASSWORD", "hunter2secret", "env"],
+      ["token", "tok_12345678", "yaml"],
+    ],
+  );
+});
+
 test("message tool-call mining and nested details mining", () => {
   const r = new Registry();
   const msg = {

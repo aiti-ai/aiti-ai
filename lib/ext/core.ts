@@ -11,6 +11,7 @@ import { listAllSessions, resolveSessionPath, getSessionEntries, buildSessionCon
 import { getRunningRpcSessionIds, getAliveRpcSessionIds, stopIdleRpcSession } from "../rpc-manager.ts";
 import { allowFileRoot, getAllowedFileRoots, isFilePathAllowed } from "../file-access.ts";
 import { readModelsConfig, writeModelsConfig } from "../models-config-store.ts";
+import { generateImages as coreGenerateImages, listImageModels as coreListImageModels, registerImageProvider as coreRegisterImageProvider } from "../image-generation.ts";
 import { readLiveHandleSession } from "./core-live-session.ts";
 import { getHandle, putHandleAt, rebindHandle } from "../session/handle-store.ts";
 import type { ExtCoreApi } from "./types.ts";
@@ -55,6 +56,17 @@ export function makeExtCore(): ExtCoreApi {
     },
     async writeModelsConfig(data) {
       writeModelsConfig(data);
+    },
+    async listImageModels() {
+      return coreListImageModels();
+    },
+    async generateImages(input) {
+      return coreGenerateImages(input);
+    },
+    async registerImageProvider(name, config) {
+      // Bound variant (see registry.serverContext) carries the extId; the bare
+      // core is only reachable from code that is not an extension.
+      return coreRegisterImageProvider("core", name, config);
     },
     rebindSessionBackend(oldId: string, newId: string): boolean {
       // A03/B4: once the real id is read back, attach an alias key to the handle (the old

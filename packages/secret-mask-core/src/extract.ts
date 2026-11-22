@@ -91,6 +91,16 @@ function cleanValue(raw: string, minLength: number): string | undefined {
     if (comment > 0) v = v.slice(0, comment).trim();
   }
   if (v.length < minLength || v.length > 4096) return undefined;
+  // Code and references, not credentials: call/bracket/generic punctuation and
+  // statement terminators mark source lines captured as tool output
+  // (`token = await fetchToken(ak, sk);`, `token: Map<string, x>`), and a
+  // digit-free identifier / dotted chain / URL is a variable, member
+  // expression or endpoint (`token = accessToken`, `key: res.data`,
+  // `TOKEN_URL=https://…`) — none of these are issued key material.
+  if (/[(){}\[\]<>]/.test(v) || /[,;]$/.test(v)) return undefined;
+  if (!/\d/.test(v) && /^[\w$.-]+$/.test(v) && (/[A-Z]/.test(v) || v.includes("."))) return undefined;
+  // endpoint URLs carry no credential; a URL with userinfo (DSN) does and stays
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(v) && !/^[a-z][a-z0-9+.-]*:\/\/[^/\s:@]*:[^/\s@]+@/i.test(v)) return undefined;
   if (isPlaceholderish(v)) return undefined;
   if (STOP_VALUES.has(v.toLowerCase())) return undefined;
   return v;
