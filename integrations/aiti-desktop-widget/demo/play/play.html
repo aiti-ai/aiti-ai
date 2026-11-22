@@ -178,7 +178,7 @@
   #compact-viewport.overflow { justify-content: flex-start; }
   #compact-text {
     position: relative; display: inline-block; white-space: nowrap; max-width: none;
-    font-size: clamp(16px, 3.2vh, 27px); font-weight: 800; line-height: 1.25;
+    font-size: clamp(16px, 3.2vmin, 27px); font-weight: 800; line-height: 1.25;
     letter-spacing: -.01em;
     transition: transform .08s linear; will-change: transform;
   }
@@ -640,6 +640,9 @@
       autoSize.currentHeight = size.height;
       autoSize.centerX = position.x + size.width / 2;
       autoSize.centerY = position.y + size.height / 2;
+      // Freeze the compact font at the launch size: vmin changes when the window
+      // width changes, which would make the measured lyric width oscillate.
+      compactText.style.fontSize = getComputedStyle(compactText).fontSize;
       // The initial window width is the caller's upper bound; auto-size only shrinks
       // and regrows within it. Cap at the card layout's CSS max-width.
       autoSize.maxWidth = Math.max(autoSize.minWidth, Math.min(980, Math.round(window.innerWidth)));
