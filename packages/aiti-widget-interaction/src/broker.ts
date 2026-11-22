@@ -61,6 +61,8 @@ function normalizeRequest(input: InteractionRequestInput, id: string, now: numbe
  */
 export class InteractionBroker {
   private readonly entries = new Map<string, Entry>();
+  /** Recently resolved envelopes, so a late `wait()` (daemon HTTP) still gets the result. */
+  private readonly settled = new Map<string, InteractionResult>();
   private readonly listeners = new Set<InteractionBrokerListener>();
   private readonly defaultTimeoutMs: number;
   private readonly idFactory: () => string
@@ -202,7 +204,10 @@ export class InteractionBroker {
   /** Await an existing request's final result (daemon / HTTP wait). */
   wait(id: string): Promise<InteractionResult> | null {
     const entry = this.entries.get(String(id));
-    return entry && !entry.done ? entry.promise : null;
+    if (entry && !entry.done) return entry.promise;
+    // Already finished: replay the envelope instead of reporting it as unknown.
+    const settled = this.settled.get(String(id));
+    return settled ? Promise.resolve(settled) : null;
   }
 
   has(id: string): boolean {
@@ -238,6 +243,8 @@ export class InteractionBroker {
     entry.timer = null;
     this.entries.delete(entry.request.id);
     entry.resolve(result);
+    this.settled.set(entry.request.id, result);
+    while (this.settled.size > 64) this.settled.delete(this.settled.keys().next().value as string);
     this.emit({ type: "resolved", id: entry.request.id, result });
   }
 
