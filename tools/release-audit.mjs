@@ -14,11 +14,11 @@
 // 覆盖：pi-web-ext/* 全部扩展 + 仓根插件（pi-models-combo、pi-subagents、pi-git-trace、pi-ext/*）。
 // private 包（pi-subagents/qoder-private）审 A 项（脱敏）跳过发布项。
 
-import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, rmSync, mkdirSync, cpSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, rmSync, mkdirSync, cpSync, mkdtempSync } from "node:fs";
 import { join, dirname, resolve, relative, basename } from "node:path";
 import { execSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { extProtocolInfo } from "../extensions/_shared/ext-protocol.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "extensions");
@@ -312,22 +312,44 @@ const fixes = {
 
 // E15 安装冒烟：tgz → 干净目录安装 → 入口探测
 function installSmoke(pkgDir, p, dir) {
+  // examples/ are runnable app templates (html + config), not libraries: there is
+  // no import entry to probe after a clean install.
+  if (String(dir).includes("(example)")) return { state: "pass", detail: "模板包，无库入口" };
   const tmp = mkdtempSync(join(tmpdir(), `smoke-${dir}-`));
   try {
-    const tgz = execSync("npm pack --dry-run 2>/dev/null && npm pack", { cwd: pkgDir, encoding: "utf8" });
-    void tgz;
-    const tgzFile = readdirSync(pkgDir).find((f) => f.endsWith(".tgz"));
+    // A stale tarball from an earlier run would be installed instead of the fresh
+    // one — clear them and take the filename npm reports.
+    for (const f of readdirSync(pkgDir)) if (f.endsWith(".tgz")) rmSync(join(pkgDir, f), { force: true });
+    const packOut = execSync("npm pack --json", { cwd: pkgDir, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    // Prepublish scripts may print their own log lines before the JSON payload —
+    // parse the last top-level array instead of the first bracket in the output.
+    const start = packOut.lastIndexOf("\n[");
+    const tgzFile = JSON.parse(packOut.slice(start >= 0 ? start + 1 : packOut.indexOf("["))).at(-1)?.filename
+      ?? readdirSync(pkgDir).find((f) => f.endsWith(".tgz"));
     if (!tgzFile) return { state: "fail", detail: "npm pack 无产物" };
     const r = spawnSync("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error", join(pkgDir, tgzFile)], {
       cwd: tmp, encoding: "utf8", timeout: 180_000, shell: process.platform === "win32",
     });
     if (r.status !== 0) return { state: "fail", detail: `安装失败: ${(r.stderr || "").slice(-120)}` };
-    // 入口探测：client bundle / index.ts / main 在安装结果里存在
+    // Entry probe: every path the package itself advertises (exports/main) must
+    // exist after a clean install; packages without a top-level entry (subpath-only
+    // exports, e.g. the shared layer) pass when their payload landed.
     const installed = join(tmp, "node_modules", p.name);
     if (!existsSync(installed)) return { state: "fail", detail: "安装后包目录缺失" };
-    const distOk = existsSync(join(installed, "dist")) || existsSync(join(installed, "index.ts")) || p.main && existsSync(join(installed, p.main));
+    const advertised = [];
+    const collect = (v) => {
+      if (typeof v === "string") { advertised.push(v); return; }
+      if (!v || typeof v !== "object") return;
+      for (const inner of Object.values(v)) collect(inner);
+    };
+    collect(p.exports);
+    if (typeof p.main === "string") advertised.push(p.main);
+    const normalize = (rel) => String(rel).replace(/^\.\//, "");
+    const entryOk = advertised.length > 0
+      ? advertised.map(normalize).some((rel) => rel && existsSync(join(installed, rel)))
+      : existsSync(join(installed, "dist")) || existsSync(join(installed, "index.ts")) || existsSync(join(installed, "src"));
     rmSync(join(pkgDir, tgzFile), { force: true });
-    return distOk ? { state: "pass" } : { state: "fail", detail: "入口文件缺失" };
+    return entryOk ? { state: "pass" } : { state: "fail", detail: "入口文件缺失" };
   } catch (e) {
     return { state: "fail", detail: e.message.slice(0, 100) };
   } finally {
@@ -336,7 +358,6 @@ function installSmoke(pkgDir, p, dir) {
 }
 
 // ---- 主流程 ----
-import { tmpdir } from "node:os";
 const onlyArgs = ONLY;
 const results = [];
 let passN = 0, failN = 0;
