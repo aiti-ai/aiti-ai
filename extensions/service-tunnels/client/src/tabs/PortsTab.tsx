@@ -23,7 +23,9 @@ export function PortsTab({
   suffixes, currentDomainSuffix,
   scheme, pagePort,
   injectSources, caps,
-  onGoManageUsers, refresh,
+  onGoManageUsers,
+  openContainer, containerByPort,
+  refresh,
 }: {
   t: (key: string, params?: Record<string, string>) => string;
   isMobile: boolean;
