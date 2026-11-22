@@ -206,17 +206,18 @@ fn apply_cli(cfg: &mut Config, key: &str, value: &str) {
 #[cfg(target_os = "linux")]
 fn hydrate_linux_session_env() {
     use std::path::Path;
+    let missing = |key: &str| std::env::var_os(key).map_or(true, |v| v.is_empty());
     let uid = unsafe { libc::getuid() };
     let runtime = format!("/run/user/{uid}");
-    if std::env::var_os("XDG_RUNTIME_DIR").is_none() && Path::new(&runtime).is_dir() {
+    if missing("XDG_RUNTIME_DIR") && Path::new(&runtime).is_dir() {
         std::env::set_var("XDG_RUNTIME_DIR", &runtime);
     }
     let bus = format!("{runtime}/bus");
-    if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_none() && Path::new(&bus).exists() {
+    if missing("DBUS_SESSION_BUS_ADDRESS") && Path::new(&bus).exists() {
         std::env::set_var("DBUS_SESSION_BUS_ADDRESS", format!("unix:path={bus}"));
     }
     let pulse = format!("{runtime}/pulse/native");
-    if std::env::var_os("PULSE_SERVER").is_none() && Path::new(&pulse).exists() {
+    if missing("PULSE_SERVER") && Path::new(&pulse).exists() {
         std::env::set_var("PULSE_SERVER", format!("unix:{pulse}"));
     }
 }
