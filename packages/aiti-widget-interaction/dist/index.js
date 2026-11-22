@@ -606,7 +606,7 @@ function createHttpInteractionTransport(options) {
     const created = await call("/interactions", { method: "POST", body: JSON.stringify({ request: input }) });
     const id = String(created.id || created.request?.id || "");
     if (!id) throw new Error("interaction daemon returned no id");
-    return { id };
+    return { id, request: created.request };
   };
   const wait = async (id) => {
     const response = await request(`${base}/interactions/${encodeURIComponent(id)}/wait`, { headers });
@@ -714,6 +714,20 @@ var MCP_TOOLS = [
     }
   },
   {
+    name: "widget_custom",
+    description: "Render a host-provided loopback page for a custom interaction. Requires the in-process MCP server (it navigates the window to `page`); the page receives {base, token} query params.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...common,
+        page: { type: "string", description: "Loopback page URL, e.g. http://127.0.0.1:9000/custom.html." },
+        data: { description: "Arbitrary JSON handed to the page as request.data." },
+        keepOpen: { type: "boolean", description: "Keep the request pending after an answer (host resolves it later)." }
+      },
+      required: ["page"]
+    }
+  },
+  {
     name: "widget_cancel",
     description: "Cancel a pending widget interaction by id. No-op/404 if already resolved.",
     inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] }
@@ -725,6 +739,17 @@ function asString(value, fallback = "") {
 function asNumber(value, fallback = 0) {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
+}
+function isLoopbackPage(page) {
+  if (!page) return false;
+  try {
+    const url = new URL(page);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+    const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    return host === "127.0.0.1" || host === "localhost" || host === "::1";
+  } catch {
+    return false;
+  }
 }
 function toRequest(name, args) {
   const prompt = asString(args.prompt || args.message);
@@ -768,12 +793,28 @@ function toRequest(name, args) {
       pick: { mode, multiple: args.multiple === true, ...extensions?.length ? { extensions } : {} }
     };
   }
+  if (name === "widget_custom") {
+    const page = asString(args.page);
+    if (!isLoopbackPage(page)) return null;
+    return {
+      kind: "custom",
+      title: title || "Custom interaction",
+      message: prompt,
+      detail,
+      timeoutMs,
+      keepOpen: args.keepOpen === true,
+      // `data` is the canonical host payload (pages read request.data); the custom spec
+      // only carries the page URL.
+      data: args.data,
+      custom: { pageUrl: page }
+    };
+  }
   if (name === "widget_notify") {
     return { kind: "notify", title, message: prompt, detail: prompt, timeoutMs: 0 };
   }
   return null;
 }
-async function handleMcpRequest(transport, request) {
+async function handleMcpRequest(transport, request, options = {}) {
   const id = request.id;
   const respond = (result) => ({ jsonrpc: "2.0", id, result });
   const fail = (code, message) => ({ jsonrpc: "2.0", id, error: { code, message } });
@@ -801,15 +842,15 @@ async function handleMcpRequest(transport, request) {
     if (name === "widget_await") {
       const id2 = asString(args.id);
       if (!id2) return fail(-32602, "widget_await requires an id");
-      const waiting = transport.wait(id2);
-      if (!waiting) return fail(-32602, `no pending interaction ${id2}`);
+      const waiting2 = transport.wait(id2);
+      if (!waiting2) return fail(-32602, `no pending interaction ${id2}`);
       const cap = Math.max(0, asNumber(args.timeout, 0));
       if (!cap) {
-        return respond(text(await waiting));
+        return respond(text(await waiting2));
       }
       let timer;
       const capped = await Promise.race([
-        waiting,
+        waiting2,
         new Promise((resolveCap) => {
           timer = setTimeout(() => resolveCap({ id: id2, status: "timeout", pending: true }), cap);
         })
@@ -817,14 +858,19 @@ async function handleMcpRequest(transport, request) {
       if (timer) clearTimeout(timer);
       return respond(text(capped));
     }
+    if (name === "widget_custom" && options.disableCustom) {
+      return fail(-32602, "widget_custom needs the in-process MCP server (a daemon cannot navigate its shared window)");
+    }
     const input = toRequest(name, args);
     if (!input) return fail(-32602, `unknown tool or invalid arguments: ${name}`);
+    const opened = await transport.open(input);
+    options.onOpened?.(opened);
     if (args.async === true) {
-      const created = await transport.open(input);
-      return respond(text({ id: created.id, status: "pending" }));
+      return respond(text({ id: opened.id, status: "pending" }));
     }
-    const result = await transport.ask(input);
-    return respond(text(result));
+    const waiting = transport.wait(opened.id);
+    if (!waiting) return fail(-32603, `interaction ${opened.id} disappeared before it could be awaited`);
+    return respond(text(await waiting));
   }
   return fail(-32601, `method not found: ${method}`);
 }

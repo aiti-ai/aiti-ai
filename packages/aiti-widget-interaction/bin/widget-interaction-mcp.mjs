@@ -10,6 +10,7 @@ import {
   InteractionBroker,
   InteractionWidgetWindow,
   createHttpInteractionTransport,
+  withInteractionParams,
   handleMcpRequest,
   startInteractionServer,
 } from "../dist/index.js";
@@ -22,7 +23,8 @@ const argValue = (name, fallback = "") => {
 const has = (name) => args.includes(name);
 
 if (has("--help") || has("-h")) {
-  process.stderr.write("widget-interaction-mcp [--port N] [--token T] [--width N] [--height N] [--widget-bin PATH] [--no-widget]\n"      + "  --http <baseUrl>  proxy to a running `aiti-dialog --daemon` instead of owning the broker\n");
+  process.stderr.write("widget-interaction-mcp [--port N] [--token T] [--width N] [--height N] [--widget-bin PATH] [--no-widget]\n"      + "  --http <baseUrl>  proxy to a running `aiti-dialog --daemon` instead of owning the broker\n"
+      + "  --notify          emit notifications/aiti/interaction when a request resolves (local mode)\n");
   process.exit(0);
 }
 
@@ -46,7 +48,7 @@ if (remoteBase) {
       writeRemote({ jsonrpc: "2.0", id: null, error: { code: -32700, message: `parse error: ${String(error?.message || error)}` } });
       return;
     }
-    void handleMcpRequest(transport, request)
+    void handleMcpRequest(transport, request, { disableCustom: true })
       .then((response) => {
         if (response) writeRemote(response);
       })
@@ -57,10 +59,12 @@ if (remoteBase) {
   remote.on("close", () => process.exit(0));
 } else {
   const broker = new InteractionBroker();
+  const requestedToken = argValue("--token", "");
   const server = await startInteractionServer({
     broker,
     port: Number(argValue("--port", "0")) || 0,
-    token: argValue("--token", undefined)
+    // Random token by default: every local process shares the loopback interface.
+    ...(requestedToken ? { token: requestedToken } : {}),
   });
   const window = new InteractionWidgetWindow({
     bin: argValue("--widget-bin", ""),
@@ -84,6 +88,31 @@ if (remoteBase) {
     process.stdout.write(`${JSON.stringify(message)}\n`);
   };
 
+  // Custom requests need the window on the host page; ordinary kinds return to the
+  // built-in page (which re-syncs pending state from the broker snapshot).
+  let currentPage = server.url;
+  const showPage = (url) => {
+    if (!url || url === currentPage) return;
+    currentPage = url;
+    void window.open(url);
+  };
+  const openCustomPage = (opened) => {
+    const request = opened?.request;
+    const page = request && request.kind === "custom" ? String(request.custom?.pageUrl || "") : "";
+    if (page) {
+      showPage(withInteractionParams(page, server.baseUrl, server.token));
+      return;
+    }
+    showPage(server.url);
+  };
+
+  if (has("--notify")) {
+    broker.subscribe((event) => {
+      if (event.type !== "resolved") return;
+      write({ jsonrpc: "2.0", method: "notifications/aiti/interaction", params: { id: event.id, result: event.result } });
+    });
+  }
+
   const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
   let closing = false;
   const shutdown = async () => {
@@ -106,7 +135,7 @@ if (remoteBase) {
       write({ jsonrpc: "2.0", id: null, error: { code: -32700, message: `parse error: ${String(error?.message || error)}` } });
       return;
     }
-    void handleMcpRequest(broker, request).then((response) => {
+    void handleMcpRequest(broker, request, { onOpened: openCustomPage }).then((response) => {
       if (response) write(response);
     }).catch((error) => {
       write({ jsonrpc: "2.0", id: request?.id ?? null, error: { code: -32603, message: String(error?.message || error) } });

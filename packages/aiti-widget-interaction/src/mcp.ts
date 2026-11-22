@@ -1,4 +1,4 @@
-import type { InteractionRequestInput, InteractionResult } from "./types.ts";
+import type { InteractionRequest, InteractionRequestInput, InteractionResult } from "./types.ts";
 
 export interface McpRequest {
   jsonrpc: "2.0";
@@ -16,7 +16,7 @@ export interface InteractionTransport {
   ask(input: InteractionRequestInput): Promise<InteractionResult>;
   cancel(id: string): boolean | Promise<boolean>;
   /** Create a pending request without waiting (MCP `async: true`). */
-  open(input: InteractionRequestInput): { id: string } | Promise<{ id: string }>;
+  open(input: InteractionRequestInput): { id: string; request?: InteractionRequest } | Promise<{ id: string; request?: InteractionRequest }>;
   /** Await a request by id; null when the id was never seen. */
   wait(id: string): Promise<InteractionResult> | null;
 }
@@ -55,7 +55,7 @@ export function createHttpInteractionTransport(options: HttpTransportOptions): I
     const created = await call("/interactions", { method: "POST", body: JSON.stringify({ request: input }) });
     const id = String(created.id || created.request?.id || "");
     if (!id) throw new Error("interaction daemon returned no id");
-    return { id };
+    return { id, request: created.request as InteractionRequest | undefined };
   };
 
   const wait: InteractionTransport["wait"] = async (id) => {
@@ -175,6 +175,20 @@ export const MCP_TOOLS: McpToolDefinition[] = [
     },
   },
   {
+    name: "widget_custom",
+    description: "Render a host-provided loopback page for a custom interaction. Requires the in-process MCP server (it navigates the window to `page`); the page receives {base, token} query params.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...common,
+        page: { type: "string", description: "Loopback page URL, e.g. http://127.0.0.1:9000/custom.html." },
+        data: { description: "Arbitrary JSON handed to the page as request.data." },
+        keepOpen: { type: "boolean", description: "Keep the request pending after an answer (host resolves it later)." },
+      },
+      required: ["page"],
+    },
+  },
+  {
     name: "widget_cancel",
     description: "Cancel a pending widget interaction by id. No-op/404 if already resolved.",
     inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
@@ -187,6 +201,19 @@ function asString(value: unknown, fallback = ""): string {
 function asNumber(value: unknown, fallback = 0): number {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
+}
+
+/** Custom pages carry the broker token, so only loopback origins are accepted. */
+function isLoopbackPage(page: string): boolean {
+  if (!page) return false;
+  try {
+    const url = new URL(page);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+    const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    return host === "127.0.0.1" || host === "localhost" || host === "::1";
+  } catch {
+    return false;
+  }
 }
 
 function toRequest(name: string, args: Record<string, unknown>): InteractionRequestInput | null {
@@ -227,14 +254,41 @@ function toRequest(name: string, args: Record<string, unknown>): InteractionRequ
       pick: { mode, multiple: args.multiple === true, ...(extensions?.length ? { extensions } : {}) },
     };
   }
+  if (name === "widget_custom") {
+    const page = asString(args.page);
+    if (!isLoopbackPage(page)) return null;
+    return {
+      kind: "custom",
+      title: title || "Custom interaction",
+      message: prompt,
+      detail,
+      timeoutMs,
+      keepOpen: args.keepOpen === true,
+      // `data` is the canonical host payload (pages read request.data); the custom spec
+      // only carries the page URL.
+      data: args.data,
+      custom: { pageUrl: page },
+    };
+  }
   if (name === "widget_notify") {
     return { kind: "notify", title, message: prompt, detail: prompt, timeoutMs: 0 };
   }
   return null;
 }
 
+export interface McpOptions {
+  /** Called right after a request is created; hosts use it to navigate a custom page. */
+  onOpened?: (opened: { id: string; request?: InteractionRequest }) => void;
+  /** Reject widget_custom: a daemon cannot navigate its shared window per request. */
+  disableCustom?: boolean;
+}
+
 /** Minimal MCP stdio handler. The caller owns transport/JSON parsing. */
-export async function handleMcpRequest(transport: InteractionTransport, request: McpRequest): Promise<Record<string, unknown> | null> {
+export async function handleMcpRequest(
+  transport: InteractionTransport,
+  request: McpRequest,
+  options: McpOptions = {},
+): Promise<Record<string, unknown> | null> {
   const id = request.id;
   const respond = (result: unknown) => ({ jsonrpc: "2.0", id, result });
   const fail = (code: number, message: string) => ({ jsonrpc: "2.0", id, error: { code, message } });
@@ -278,14 +332,19 @@ export async function handleMcpRequest(transport: InteractionTransport, request:
       if (timer) clearTimeout(timer);
       return respond(text(capped));
     }
+    if (name === "widget_custom" && options.disableCustom) {
+      return fail(-32602, "widget_custom needs the in-process MCP server (a daemon cannot navigate its shared window)");
+    }
     const input = toRequest(name, args);
     if (!input) return fail(-32602, `unknown tool or invalid arguments: ${name}`);
+    const opened = await transport.open(input);
+    options.onOpened?.(opened);
     if (args.async === true) {
-      const created = await transport.open(input);
-      return respond(text({ id: created.id, status: "pending" }));
+      return respond(text({ id: opened.id, status: "pending" }));
     }
-    const result = await transport.ask(input);
-    return respond(text(result));
+    const waiting = transport.wait(opened.id);
+    if (!waiting) return fail(-32603, `interaction ${opened.id} disappeared before it could be awaited`);
+    return respond(text(await waiting));
   }
   return fail(-32601, `method not found: ${method}`);
 }
