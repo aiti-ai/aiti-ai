@@ -34,6 +34,38 @@
   var sseReady = false; // 服务端已注册本连接（收到 ready 消息才算真正连上；EventSource 对象创建 ≠ 连接建立）
   var reconnectTimer = null; // 主动重连定时器（桥重启/网络瞬断后 EventSource 不会自动恢复——需显式重连）
   var reconnectAttempt = 0; // 重连退避次数（成功/收到 ready 后清零）
+  // Status text i18n: pi-web locale first (live read on each emit), then document/navigator language.
+  var STATUS_TEXT = {
+    'zh-CN': {
+      reconnect: function (n) { return '🔗 断线重连中（第 ' + n + ' 次）…'; },
+      starve: '🔗 连接拥挤，暂时让路…',
+      breaker: '⚠ 回桥熔断（15s 后重试）…',
+      busDown: '🔗 总线断开，重连中…',
+      connected: '🔗 已连接',
+      dropped: '🔗 断开，重连中…',
+      disconnected: '🔗 已断开',
+    },
+    en: {
+      reconnect: function (n) { return '🔗 Reconnecting (attempt ' + n + ')…'; },
+      starve: '🔗 Connection busy, yielding temporarily…',
+      breaker: '⚠ Bridge circuit breaker open (retry in 15s)…',
+      busDown: '🔗 Event bus disconnected, reconnecting…',
+      connected: '🔗 Connected',
+      dropped: '🔗 Disconnected, reconnecting…',
+      disconnected: '🔗 Disconnected',
+    },
+  };
+  function statusLocale() {
+    var loc = '';
+    try { loc = (global.localStorage && global.localStorage.getItem('pi-locale')) || ''; } catch (e) {}
+    if (!loc && global.document && global.document.documentElement) loc = global.document.documentElement.lang || '';
+    if (!loc && global.navigator) loc = global.navigator.language || '';
+    return String(loc || '').toLowerCase().indexOf('zh') === 0 ? 'zh-CN' : 'en';
+  }
+  function statusText(key, n) {
+    var v = STATUS_TEXT[statusLocale()][key];
+    return typeof v === 'function' ? v(n) : v;
+  }
   // ---- 统一 SSE 端口适配（下行改走 event-bus 专属 topic；无总线 fallback 自带 SSE）----
   var viaBus = false;      // 当前连接是否走总线（探测结果；重连时重新探测，可能切换模式）
   var busOff = null;       // 总线订阅退订函数
@@ -75,7 +107,7 @@
     reconnectTimer = setTimeout(function () {
       reconnectTimer = null;
       if (!cfg.base || cfg.disposed) return;
-      if (cfg.onStatus) cfg.onStatus('🔗 断线重连中（第 ' + reconnectAttempt + ' 次）…', '#f59e0b');
+      if (cfg.onStatus) cfg.onStatus(statusText('reconnect', reconnectAttempt), '#f59e0b');
       connect(cfg); // 复用当前配置重连（connect 内部会关闭旧 es 并新建）
     }, delay);
   }
@@ -100,7 +132,7 @@
         sseReady = false;
         try { if (es) es.close(); } catch (e) {}
         es = null;
-        if (cfg.onStatus) cfg.onStatus('🔗 连接拥挤，暂时让路…', '#f59e0b');
+        if (cfg.onStatus) cfg.onStatus(statusText('starve'), '#f59e0b');
       } else if (!es) {
         connect(cfg); // 恢复：立即重建（connect 幂等：内部先关旧 es；重建后 ready 重新登记）
       }
@@ -181,7 +213,7 @@
         if (httpFailStreak >= 5 && Date.now() >= httpBreakerUntil) {
           httpBreakerUntil = Date.now() + 15000;
           httpFailStreak = 0;
-          if (cfg.onStatus) cfg.onStatus('⚠ 回桥熔断（15s 后重试）…', '#f59e0b');
+          if (cfg.onStatus) cfg.onStatus(statusText('breaker'), '#f59e0b');
         }
         tryFlushPendingResults(); // 并发降了 → 补发队列
       }).catch(function () {
@@ -383,7 +415,7 @@
       }, [topic], function (status) {
         if (status !== 'up' && !cfg.disposed) {
           sseReady = false;
-          if (cfg.onStatus) cfg.onStatus('🔗 总线断开，重连中…', '#f87171');
+          if (cfg.onStatus) cfg.onStatus(statusText('busDown'), '#f87171');
           scheduleReconnect(); // 重连 = connect(cfg) 重新探测（可能切回 EventSource 模式）
         }
       });
@@ -435,11 +467,11 @@
     es = new EventSource(cfg.base + '/bridge/sse' + qs);
     es.onopen = function () {
       reconnectAttempt = 0; // 连接建立 → 退避归零
-      if (cfg.onStatus) cfg.onStatus('🔗 已连接', '#4ade80');
+      if (cfg.onStatus) cfg.onStatus(statusText('connected'), '#4ade80');
     };
     es.onerror = function () {
       sseReady = false;
-      if (cfg.onStatus) cfg.onStatus('🔗 断开，重连中…', '#f87171');
+      if (cfg.onStatus) cfg.onStatus(statusText('dropped'), '#f87171');
       // native EventSource：网络错误会自动重试，但 HTTP 非 2xx（如桥重启瞬间 404/502）会进入 CLOSED 且不再自动重试
       // → 统一显式调度重连（connect 幂等：重连会新建 EventSource，auto-reconnect 与主动重连不冲突）
       scheduleReconnect();
@@ -460,7 +492,7 @@
     try { if (es) es.close(); } catch (e) {}
     es = null;
     reqIds.clear();
-    if (cfg.onStatus) cfg.onStatus('🔗 已断开', '#9ca3af');
+    if (cfg.onStatus) cfg.onStatus(statusText('disconnected'), '#9ca3af');
   }
 
   // ---------- 解冻锚点：手机后台冻结兔底 ----------
