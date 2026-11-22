@@ -106,6 +106,9 @@ binary whose checksum is missing or mismatched.
 - macOS binaries are ad-hoc signed in CI (`codesign --force --sign -`) and embed
   `Info.plist` (`__TEXT,__info_plist`) for the ATS localhost exception; no `.app` bundle is
   required for the npm launcher.
+- macOS deployment target: **10.15 (x64)** / **11.0 (arm64)**. Building on a newer macOS runner
+  does not raise that floor; `Info.plist` `LSMinimumSystemVersion` must match. `--zoom` needs
+  macOS 11+.
 - Linux binaries are built on Ubuntu 22.04 (glibc 2.35 baseline) and require WebKitGTK 4.1 at
   runtime.
 - Windows binaries are unsigned; sign them in a future release if SmartScreen matters.
