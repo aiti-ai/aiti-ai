@@ -216,7 +216,7 @@ after(() => {
 
 test("--html serves a loopback page, blocks traversal and supports ranges", { skip: guiSkip }, async () => {
   const widget = startWidget([
-    "--html", join(fixture, "index.html"),
+    "--html", `${join(fixture, "index.html")}?mode=test&x=1`,
     "--width", "900", "--height", "140",
     "--display", "0", "--center", "true",
     "--title", "WIDGET-HTML",
@@ -227,6 +227,7 @@ test("--html serves a loopback page, blocks traversal and supports ranges", { sk
     assert.equal(ready.display, 0);
     assert.ok(Array.isArray(ready.monitors) && ready.monitors.length >= 1);
     assert.ok(ready.url.startsWith("http://127.0.0.1:"), ready.url);
+    assert.ok(ready.url.endsWith("?mode=test&x=1"), ready.url);
     const port = Number(ready.url.split(":")[2].split("/")[0]);
 
     const moved = await widget.wait((event) => event.t === "moved" && event.x === 510 && event.y === 470, "centered moved");

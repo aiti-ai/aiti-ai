@@ -1,0 +1,4 @@
+Hello, I'm aiti desktop widget.
+I turn any web page into a floating, transparent desktop layer.
+Play a song, follow the lyrics, and keep the progress bar right here.
+Bring your own audio and LRC file. Let's make the desktop sing.

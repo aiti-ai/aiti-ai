@@ -150,8 +150,9 @@ setups are reported, not yet exhaustively verified.
 
 ## Local HTML
 
-`--html <file>` starts a tiny loopback static server on `127.0.0.1:<random>` and loads the
-page from `http://127.0.0.1:<port>/...`. `--root <dir>` sets the served root (default: the HTML
+`--html '<file>[?query]'` starts a tiny loopback static server on `127.0.0.1:<random>` and
+loads the page from `http://127.0.0.1:<port>/...` with the optional query string forwarded
+(e.g. `play.html?file=...&lyrics=...`). `--root <dir>` sets the served root (default: the HTML
 file's directory). This keeps the shell's single content model (`http(s)` URLs, remote-origin
 capability for dragging) instead of introducing `file://` / custom-scheme special cases.
 
@@ -159,6 +160,23 @@ Server behaviour: GET/HEAD only, `index.html` for directories, single `Range` re
 media seeking, no directory listing, `no-store` caching. Paths that leave the root — `..`,
 `%2e%2e`, backslashes, or symlinks pointing outside — are rejected with 403/404. The listener
 binds loopback only and dies with the process.
+
+## Demo: transparent lyric player
+
+[`demo/play/play.html`](demo/play/play.html) is a dependency-free lyric player: audio URL,
+LRC/SRT/VTT lyrics, current-line highlight, seekable progress, keyboard controls, and a
+transparent card (or `bare=1` for text only). It reads query parameters, so the shell can
+load it directly:
+
+```bash
+aiti-desktop-widget \
+  --html '/abs/path/demo/play/play.html?file=assets/aiti-intro.mp3&lyrics=assets/aiti-intro.lrc' \
+  --width 900 --height 320
+```
+
+The bundled sample (`demo/play/assets/`) is an original TTS + synthesized-bed intro, so it
+is safe to redistribute. See [`demo/play/README.md`](demo/play/README.md) for parameters
+and formats.
 
 ## Transparency
 
