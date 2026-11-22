@@ -324,14 +324,25 @@ fn main() {
     }
     if has_html {
         let root = cfg.root.trim();
-        match local_server::start_page(cfg.html.trim(), Some(root).filter(|r| !r.is_empty())) {
+        let raw = cfg.html.trim();
+        // `--html <file>[?query]`: keep the query string on the generated loopback URL.
+        let (path, suffix) = if let Some((path, query)) = raw.split_once('?') {
+            (path, format!("?{query}"))
+        } else if let Some((path, fragment)) = raw.split_once('#') {
+            (path, format!("#{fragment}"))
+        } else {
+            (raw, String::new())
+        };
+        match local_server::start_page(path, Some(root).filter(|r| !r.is_empty())) {
             Ok(page) => {
+                let mut url = page.url;
+                url.push_str(&suffix);
                 eprintln!(
                     "aiti-desktop-widget: --html served from {} at {}",
                     page.root.display(),
-                    page.url
+                    url
                 );
-                cfg.url = page.url;
+                cfg.url = url;
             }
             Err(e) => die(&e),
         }

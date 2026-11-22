@@ -1,0 +1,589 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>aiti play</title>
+<style>
+  :root {
+    --fg: #f8f8ff;
+    --muted: #a9a9c2;
+    --faint: rgba(248,248,255,.34);
+    --accent: #a78bfa;
+    --accent-2: #22d3ee;
+    --card: rgba(12, 14, 24, .58);
+    --border: rgba(255,255,255,.13);
+    --shadow: 0 18px 70px rgba(0,0,0,.38);
+    --radius: 22px;
+    --bar: rgba(255,255,255,.16);
+  }
+  html, body { height: 100%; margin: 0; background: transparent; }
+  * { box-sizing: border-box; }
+  body {
+    color: var(--fg);
+    font-family: "Inter", "SF Pro Display", "Segoe UI", "Noto Sans", "Noto Sans CJK SC", sans-serif;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  body[data-theme="light"] {
+    --fg: #17151f;
+    --muted: #605d75;
+    --faint: rgba(23,21,31,.32);
+    --accent: #6d28d9;
+    --accent-2: #0891b2;
+    --card: rgba(255,255,255,.66);
+    --border: rgba(23,21,31,.12);
+    --shadow: 0 18px 60px rgba(40,30,80,.18);
+    --bar: rgba(23,21,31,.14);
+  }
+  #app {
+    width: 100%; height: 100%; max-width: 980px;
+    display: flex; flex-direction: column;
+    padding: clamp(10px, 2.2vmin, 28px);
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(18px) saturate(1.1);
+    -webkit-backdrop-filter: blur(18px) saturate(1.1);
+    overflow: hidden;
+  }
+  body[data-bg="none"] #app,
+  body[data-bg="transparent"][data-bare="1"] #app {
+    background: transparent; border-color: transparent; box-shadow: none;
+    backdrop-filter: none; -webkit-backdrop-filter: none;
+    padding-left: clamp(4px, 1vmin, 12px); padding-right: clamp(4px, 1vmin, 12px);
+  }
+  #meta { display: flex; align-items: center; gap: 12px; min-height: 0; flex: 0 0 auto; }
+  #cover {
+    width: clamp(44px, 9vmin, 86px); height: clamp(44px, 9vmin, 86px);
+    border-radius: 14px; object-fit: cover; flex: 0 0 auto;
+    box-shadow: 0 8px 26px rgba(0,0,0,.3); background: rgba(255,255,255,.08);
+  }
+  #cover-fallback {
+    width: clamp(44px, 9vmin, 86px); height: clamp(44px, 9vmin, 86px);
+    border-radius: 14px; flex: 0 0 auto; display: grid; place-items: center;
+    background: linear-gradient(145deg, rgba(167,139,250,.9), rgba(34,211,238,.65));
+    color: #fff; font-size: clamp(20px, 4vmin, 36px); font-weight: 800;
+    box-shadow: 0 8px 26px rgba(0,0,0,.28);
+  }
+  #meta-text { min-width: 0; flex: 1 1 auto; }
+  #title {
+    margin: 0; font-size: clamp(15px, 2.7vmin, 24px); font-weight: 750;
+    letter-spacing: -.01em; line-height: 1.2;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    text-shadow: 0 2px 12px rgba(0,0,0,.3);
+  }
+  #artist {
+    margin: 3px 0 0; color: var(--muted); font-size: clamp(11px, 1.8vmin, 14px);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  #time {
+    flex: 0 0 auto; color: var(--muted); font-variant-numeric: tabular-nums;
+    font-size: clamp(10px, 1.6vmin, 13px); letter-spacing: .03em; white-space: nowrap;
+  }
+  #lyrics {
+    flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden;
+    display: flex; flex-direction: column; justify-content: center;
+    gap: clamp(2px, .6vmin, 7px);
+    padding: clamp(4px, 1.4vmin, 14px) 2px;
+    scrollbar-width: none; -ms-overflow-style: none;
+    mask-image: linear-gradient(to bottom, transparent 0, #000 12%, #000 88%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 12%, #000 88%, transparent 100%);
+  }
+  #lyrics::-webkit-scrollbar { display: none; }
+  .lyric {
+    flex: 0 0 auto; text-align: center; color: var(--faint);
+    font-size: clamp(14px, 2.35vmin, 23px); font-weight: 650; line-height: 1.32;
+    padding: 2px 10px; border-radius: 10px; cursor: pointer;
+    transition: color .18s ease, transform .18s ease, opacity .18s ease;
+    transform: scale(.96); user-select: none;
+    text-wrap: balance;
+  }
+  .lyric:hover { color: var(--muted); }
+  .lyric.active {
+    color: var(--fg); opacity: 1; transform: scale(1);
+    font-size: clamp(17px, 3.1vmin, 31px); font-weight: 800;
+    text-shadow: 0 2px 18px rgba(167,139,250,.32);
+  }
+  .lyric.near { color: var(--muted); opacity: .78; }
+  .lyric.instrumental { letter-spacing: .18em; font-style: italic; }
+  #empty { color: var(--muted); text-align: center; font-size: 14px; padding: 16px; }
+  #footer { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; padding-top: 2px; }
+  #track {
+    position: relative; height: 18px; display: flex; align-items: center;
+    cursor: pointer; touch-action: none; outline: none;
+  }
+  #track-rail {
+    position: relative; height: 4px; width: 100%; border-radius: 999px;
+    background: var(--bar); overflow: hidden; transition: height .15s ease;
+  }
+  #track:hover #track-rail, #track.dragging #track-rail { height: 6px; }
+  #track-fill {
+    position: absolute; inset: 0 auto 0 0; width: 0%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    box-shadow: 0 0 14px rgba(167,139,250,.42);
+  }
+  #track-thumb {
+    position: absolute; top: 50%; left: 0%; width: 12px; height: 12px;
+    margin-left: -6px; border-radius: 50%; background: #fff;
+    box-shadow: 0 0 0 3px rgba(167,139,250,.3), 0 4px 12px rgba(0,0,0,.35);
+    transform: translateY(-50%) scale(0); transition: transform .15s ease;
+    pointer-events: none;
+  }
+  #track:hover #track-thumb, #track.dragging #track-thumb, #track:focus-visible #track-thumb { transform: translateY(-50%) scale(1); }
+  #track:focus-visible #track-rail { box-shadow: 0 0 0 3px rgba(167,139,250,.28); }
+  #controls { display: flex; align-items: center; gap: clamp(5px, 1.2vmin, 10px); }
+  .btn {
+    appearance: none; border: 0; background: transparent; color: var(--muted);
+    width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center;
+    cursor: pointer; font-size: 15px; line-height: 1; padding: 0;
+    transition: background .15s ease, color .15s ease, transform .12s ease;
+  }
+  .btn:hover { background: rgba(255,255,255,.09); color: var(--fg); }
+  body[data-theme="light"] .btn:hover { background: rgba(23,21,31,.08); }
+  .btn:active { transform: scale(.94); }
+  .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  #play {
+    width: 38px; height: 38px; border-radius: 50%; color: #fff;
+    background: linear-gradient(145deg, var(--accent), #7c3aed);
+    box-shadow: 0 6px 20px rgba(124,58,237,.35); font-size: 15px;
+  }
+  #play:hover { color: #fff; background: linear-gradient(145deg, #b7a4ff, #8b5cf6); }
+  #meta-line { color: var(--faint); font-size: 10px; margin-left: auto; max-width: 45%;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #status {
+    position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
+    max-width: 90%; padding: 7px 14px; border-radius: 999px;
+    background: rgba(18,18,28,.86); color: #e9e9f7; border: 1px solid rgba(255,255,255,.14);
+    font-size: 12px; opacity: 0; pointer-events: none; transition: opacity .2s ease;
+    z-index: 20; text-align: center;
+  }
+  #status.show { opacity: 1; }
+  #status.error { color: #fecaca; border-color: rgba(248,113,113,.4); }
+  body[data-theme="light"] #status { background: rgba(255,255,255,.94); color: #17151f; }
+  #toast[hidden] { display: none; }
+  @media (max-width: 560px) {
+    #app { padding: 10px 12px; border-radius: 16px; }
+    #cover, #cover-fallback { width: 46px; height: 46px; border-radius: 11px; }
+    #time { display: none; }
+    #meta-line { display: none; }
+    .lyric { font-size: 14px; }
+    .lyric.active { font-size: 18px; }
+  }
+  @media (max-height: 230px) {
+    #app { padding: 8px 12px; border-radius: 14px; }
+    #cover, #cover-fallback { width: 40px; height: 40px; border-radius: 10px; }
+    #lyrics { gap: 0; padding: 2px 0; }
+    .lyric { font-size: 13px; }
+    .lyric.active { font-size: 17px; }
+    #footer { gap: 1px; }
+    #time, #meta-line { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .lyric, #track-fill, #track-thumb, .btn, #status { transition: none !important; }
+  }
+</style>
+</head>
+<body data-theme="dark" data-bg="transparent">
+<main id="app">
+  <header id="meta">
+    <img id="cover" alt="" hidden>
+    <div id="cover-fallback" aria-hidden="true">♪</div>
+    <div id="meta-text">
+      <h1 id="title">aiti desktop widget</h1>
+      <p id="artist">aiti · demo player</p>
+    </div>
+    <div id="time">0:00 / 0:00</div>
+  </header>
+
+  <section id="lyrics" aria-live="polite">
+    <div id="empty">Loading lyrics…</div>
+  </section>
+
+  <footer id="footer">
+    <div id="track" role="slider" tabindex="0" aria-label="Playback position" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+      <div id="track-rail"><div id="track-fill"></div></div>
+      <div id="track-thumb"></div>
+    </div>
+    <div id="controls">
+      <button class="btn" id="back" type="button" aria-label="Rewind 5 seconds" title="Rewind 5s">−5s</button>
+      <button class="btn" id="play" type="button" aria-label="Play" title="Play / pause">▶</button>
+      <button class="btn" id="forward" type="button" aria-label="Forward 5 seconds" title="Forward 5s">+5s</button>
+      <button class="btn" id="mute" type="button" aria-label="Mute" title="Mute">🔊</button>
+      <a class="btn" id="source" href="#" target="_blank" rel="noopener noreferrer" aria-label="Open audio source" title="Audio source" hidden>↗</a>
+      <span id="meta-line"></span>
+    </div>
+  </footer>
+</main>
+<div id="status" role="status"></div>
+<audio id="audio" preload="metadata"></audio>
+
+<script>
+/* aiti play — a generic transparent song / lyric player.
+ *
+ * Query params (all optional):
+ *   file=/url/audio.mp3        audio source (aliases: audio, src)
+ *   lyrics=/url/song.lrc       LRC, SRT, VTT or plain text (aliases: lrc, srt, vtt, subtitle)
+ *   title=... artist=... cover=/url/cover.png
+ *   theme=dark|light  bg=transparent|none|CSS-color  bare=1
+ *   autoplay=1  loop=1  volume=0..1
+ *
+ * With no params, the bundled generated intro is used.
+ */
+(() => {
+  "use strict";
+  const q = new URLSearchParams(location.search);
+  const first = (...keys) => {
+    for (const key of keys) {
+      const value = q.get(key);
+      if (value !== null && value.trim()) return value.trim();
+    }
+    return "";
+  };
+  const DEFAULT_AUDIO = "assets/aiti-intro.mp3";
+  const DEFAULT_LYRICS = "assets/aiti-intro.lrc";
+  const DEFAULT_COVER = "assets/cover.png";
+  const file = first("file", "audio", "src") || DEFAULT_AUDIO;
+  const lyricsParam = first("lyrics", "lrc", "srt", "vtt", "subtitle");
+  const explicitNoLyrics = q.has("lyrics") && !q.get("lyrics").trim();
+  const lyricsUrl = lyricsParam || (file === DEFAULT_AUDIO && !explicitNoLyrics ? DEFAULT_LYRICS : "");
+  const coverUrl = first("cover") || (file === DEFAULT_AUDIO ? DEFAULT_COVER : "");
+  const theme = first("theme") === "light" ? "light" : "dark";
+  const bg = (first("bg") || "transparent").toLowerCase();
+  const bare = first("bare") === "1";
+  const autoplay = first("autoplay") === "1";
+  const loop = first("loop") === "1";
+  const volumeParam = Number(first("volume"));
+  const volume = Number.isFinite(volumeParam) ? Math.max(0, Math.min(1, volumeParam)) : 1;
+
+  document.body.dataset.theme = theme;
+  document.body.dataset.bg = bg === "none" || bg === "transparent" ? bg : "custom";
+  if (bare) document.body.dataset.bare = "1";
+  if (bg !== "none" && bg !== "transparent") document.getElementById("app").style.background = bg;
+
+  const audio = document.getElementById("audio");
+  const titleEl = document.getElementById("title");
+  const artistEl = document.getElementById("artist");
+  const coverEl = document.getElementById("cover");
+  const coverFallback = document.getElementById("cover-fallback");
+  const timeEl = document.getElementById("time");
+  const lyricsEl = document.getElementById("lyrics");
+  const emptyEl = document.getElementById("empty");
+  const track = document.getElementById("track");
+  const fill = document.getElementById("track-fill");
+  const thumb = document.getElementById("track-thumb");
+  const playBtn = document.getElementById("play");
+  const backBtn = document.getElementById("back");
+  const forwardBtn = document.getElementById("forward");
+  const muteBtn = document.getElementById("mute");
+  const sourceEl = document.getElementById("source");
+  const metaLine = document.getElementById("meta-line");
+  const statusEl = document.getElementById("status");
+
+  let lines = [];
+  let active = -1;
+  let dragging = false;
+  let statusTimer = 0;
+  let raf = 0;
+  let meta = {};
+
+  function status(text, isError = false) {
+    if (!text) { statusEl.classList.remove("show", "error"); return; }
+    statusEl.textContent = text;
+    statusEl.classList.toggle("error", isError);
+    statusEl.classList.add("show");
+    clearTimeout(statusTimer);
+    statusTimer = setTimeout(() => statusEl.classList.remove("show"), isError ? 6000 : 3200);
+  }
+
+  function fmt(seconds) {
+    const s = Math.max(0, Math.floor(Number(seconds) || 0));
+    const m = Math.floor(s / 60);
+    return `${m}:${String(s % 60).padStart(2, "0")}`;
+  }
+
+  function baseName(url) {
+    try {
+      const name = decodeURIComponent(new URL(url, location.href).pathname.split("/").pop() || "");
+      return name.replace(/\.[a-z0-9]{2,5}$/i, "").replace(/[_-]+/g, " ").trim() || "Untitled";
+    } catch {
+      return "Untitled";
+    }
+  }
+
+  function setTrackMeta(next) {
+    meta = { ...meta, ...next };
+    const title = first("title") || meta.title || baseName(file);
+    const artist = first("artist") || meta.artist || "aiti";
+    titleEl.textContent = title;
+    artistEl.textContent = meta.album ? `${artist} · ${meta.album}` : artist;
+    document.title = title;
+    document.querySelector('meta[name="description"]')?.setAttribute("content", `${title} — ${artist}`);
+  }
+
+  function stripTags(text) {
+    return String(text || "").replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+  }
+
+  function parseTime(value) {
+    const m = /^(?:(\d+):)?(\d{1,2}):(\d{2})(?:[.,](\d{1,3}))?$/.exec(value.trim());
+    if (!m) return null;
+    const h = m[1] ? Number(m[1]) : 0;
+    return h * 3600 + Number(m[2]) * 60 + Number(m[3]) + (m[4] ? Number(`0.${m[4]}`) : 0);
+  }
+
+  function parseLrc(text) {
+    const out = [];
+    let offset = 0;
+    let metaTitle = "";
+    let metaArtist = "";
+    let metaAlbum = "";
+    for (const raw of text.replace(/\r/g, "").split("\n")) {
+      const line = raw.trim();
+      if (!line) continue;
+      const metaMatch = /^\[(ti|ar|al|by|offset):\s*(.*?)\s*\]$/i.exec(line);
+      if (metaMatch) {
+        const key = metaMatch[1].toLowerCase();
+        const value = metaMatch[2];
+        if (key === "ti") metaTitle = value;
+        else if (key === "ar") metaArtist = value;
+        else if (key === "al") metaAlbum = value;
+        else if (key === "offset") offset = Number(value) || 0;
+        continue;
+      }
+      const stamps = [...line.matchAll(/\[(\d{1,3}):(\d{2}(?:[.:]\d{1,3})?)\]/g)];
+      if (!stamps.length) continue;
+      const body = line.replace(/\[[^\]]*\]/g, "").replace(/<\d{1,3}:\d{2}(?:[.:]\d{1,3})?>/g, "").trim();
+      for (const stamp of stamps) {
+        const seconds = parseTime(`${stamp[1]}:${stamp[2]}`.replace(":", ":").replace(".", "."));
+        if (seconds === null) continue;
+        out.push({ time: Math.max(0, seconds - offset / 1000), text: stripTags(body) });
+      }
+    }
+    setTrackMeta({ title: metaTitle, artist: metaArtist, album: metaAlbum });
+    return out;
+  }
+
+  function parseCues(text) {
+    const out = [];
+    const blocks = text.replace(/\r/g, "").split(/\n{2,}/);
+    for (const block of blocks) {
+      const rows = block.split("\n").filter((row) => row.trim());
+      const cueRow = rows.find((row) => row.includes("-->"));
+      if (!cueRow) continue;
+      const [from] = cueRow.split("-->");
+      const seconds = parseTime(from.trim().replace(",", "."));
+      if (seconds === null) continue;
+      const body = rows.filter((row) => row !== cueRow && !/^\d+$/.test(row.trim()))
+        .join(" ").replace(/\{\\[^}]*\}/g, "").trim();
+      if (body) out.push({ time: seconds, text: stripTags(body) });
+    }
+    return out.sort((a, b) => a.time - b.time);
+  }
+
+  function distributeLyrics(text) {
+    const rows = text.replace(/\r/g, "").split("\n").map((row) => row.trim()).filter(Boolean);
+    if (!rows.length) return [];
+    const duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : Math.max(rows.length * 3.2, 8);
+    const step = duration / rows.length;
+    return rows.map((text, index) => ({ time: index * step, text: stripTags(text) }));
+  }
+
+  function parseLyrics(text, url) {
+    const ext = (url.split("?")[0].split("#")[0].split(".").pop() || "").toLowerCase();
+    if (ext === "srt" || ext === "vtt") return parseCues(text);
+    if (ext === "txt") return distributeLyrics(text);
+    const lrc = parseLrc(text);
+    return lrc.length ? lrc : distributeLyrics(text);
+  }
+
+  function renderLyrics() {
+    lyricsEl.textContent = "";
+    if (!lines.length) {
+      emptyEl.textContent = lyricsUrl ? "No timed lyrics in this file." : "Add ?lyrics=your-song.lrc to show lyrics.";
+      lyricsEl.appendChild(emptyEl);
+      return;
+    }
+    for (let i = 0; i < lines.length; i += 1) {
+      const row = document.createElement("div");
+      row.className = "lyric";
+      row.dataset.index = String(i);
+      const text = lines[i].text || "♪";
+      row.textContent = text;
+      if (!lines[i].text) row.classList.add("instrumental");
+      row.addEventListener("click", () => {
+        audio.currentTime = Math.max(0, lines[i].time + 0.02);
+        update();
+      });
+      lyricsEl.appendChild(row);
+    }
+    setActive(findActive(audio.currentTime), true);
+  }
+
+  function findActive(time) {
+    if (!lines.length) return -1;
+    let lo = 0;
+    let hi = lines.length - 1;
+    let found = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (lines[mid].time <= time + 0.03) { found = mid; lo = mid + 1; }
+      else hi = mid - 1;
+    }
+    return found;
+  }
+
+  function setActive(index, force = false) {
+    if (index === active && !force) return;
+    active = index;
+    const rows = lyricsEl.querySelectorAll(".lyric");
+    rows.forEach((row, i) => {
+      row.classList.toggle("active", i === index);
+      row.classList.toggle("near", Math.abs(i - index) === 1);
+    });
+    const current = rows[index];
+    if (current) current.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+
+  function updateProgress() {
+    const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
+    const current = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
+    const ratio = duration > 0 ? Math.max(0, Math.min(1, current / duration)) : 0;
+    fill.style.width = `${ratio * 100}%`;
+    thumb.style.left = `${ratio * 100}%`;
+    track.setAttribute("aria-valuenow", String(Math.round(ratio * 100)));
+    track.setAttribute("aria-valuetext", `${fmt(current)} of ${fmt(duration)}`);
+    timeEl.textContent = `${fmt(current)} / ${fmt(duration)}`;
+    if (!dragging) setActive(findActive(current));
+  }
+
+  function frame() {
+    updateProgress();
+    if (!audio.paused && !audio.ended) raf = requestAnimationFrame(frame);
+    else raf = 0;
+  }
+
+  function startFrame() {
+    if (!raf) raf = requestAnimationFrame(frame);
+  }
+
+  function updatePlayIcon() {
+    playBtn.textContent = audio.paused ? "▶" : "❚❚";
+    playBtn.setAttribute("aria-label", audio.paused ? "Play" : "Pause");
+  }
+
+  function togglePlay() {
+    if (audio.paused) audio.play().catch((error) => status(`Playback blocked: ${error.message}`, true));
+    else audio.pause();
+  }
+
+  function seekTo(value) {
+    if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
+    audio.currentTime = Math.max(0, Math.min(audio.duration, value));
+    updateProgress();
+  }
+
+  function seekFromRatio(clientX) {
+    const rect = track.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    seekTo(ratio * audio.duration);
+  }
+
+  track.addEventListener("pointerdown", (event) => {
+    dragging = true;
+    track.classList.add("dragging");
+    track.setPointerCapture?.(event.pointerId);
+    seekFromRatio(event.clientX);
+    event.preventDefault();
+  });
+  track.addEventListener("pointermove", (event) => {
+    if (dragging) { seekFromRatio(event.clientX); event.preventDefault(); }
+  });
+  const endDrag = () => { dragging = false; track.classList.remove("dragging"); updateProgress(); };
+  track.addEventListener("pointerup", endDrag);
+  track.addEventListener("pointercancel", endDrag);
+  track.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowLeft") { event.preventDefault(); seekTo(audio.currentTime - 5); }
+    if (event.key === "ArrowRight") { event.preventDefault(); seekTo(audio.currentTime + 5); }
+    if (event.key === "Home") { event.preventDefault(); seekTo(0); }
+    if (event.key === "End") { event.preventDefault(); seekTo(audio.duration); }
+  });
+
+  playBtn.addEventListener("click", togglePlay);
+  backBtn.addEventListener("click", () => seekTo(audio.currentTime - 5));
+  forwardBtn.addEventListener("click", () => seekTo(audio.currentTime + 5));
+  muteBtn.addEventListener("click", () => {
+    audio.muted = !audio.muted;
+    muteBtn.textContent = audio.muted ? "🔇" : "🔊";
+    muteBtn.setAttribute("aria-label", audio.muted ? "Unmute" : "Mute");
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
+    if (event.code === "Space") { event.preventDefault(); togglePlay(); }
+    if (event.key === "ArrowLeft") { event.preventDefault(); seekTo(audio.currentTime - 5); }
+    if (event.key === "ArrowRight") { event.preventDefault(); seekTo(audio.currentTime + 5); }
+  });
+
+  audio.addEventListener("loadedmetadata", () => {
+    updateProgress();
+    if (!lines.some((line) => line.time > 0)) {
+      lines = distributeLyrics(lines.map((line) => line.text).join("\n"));
+      renderLyrics();
+    }
+  });
+  audio.addEventListener("play", () => { updatePlayIcon(); startFrame(); });
+  audio.addEventListener("pause", () => { updatePlayIcon(); updateProgress(); });
+  audio.addEventListener("timeupdate", updateProgress);
+  audio.addEventListener("ended", () => { updatePlayIcon(); updateProgress(); });
+  audio.addEventListener("error", () => {
+    status(`Audio failed to load: ${file}`, true);
+    playBtn.disabled = true;
+  });
+
+  audio.volume = volume;
+  audio.loop = loop;
+  audio.src = file;
+  updatePlayIcon();
+  renderLyrics();
+  setTrackMeta({});
+
+  if (coverUrl) {
+    coverEl.src = coverUrl;
+    coverEl.hidden = false;
+    coverFallback.hidden = true;
+    coverEl.addEventListener("error", () => { coverEl.hidden = true; coverFallback.hidden = false; });
+  } else {
+    coverFallback.hidden = false;
+  }
+
+  sourceEl.href = file;
+  sourceEl.hidden = !/^https?:/i.test(file);
+  if (audio.loop) metaLine.textContent = "loop";
+
+  if (lyricsUrl) {
+    fetch(lyricsUrl, { cache: "no-store" })
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.text();
+      })
+      .then((text) => {
+        lines = parseLyrics(text, lyricsUrl).sort((a, b) => a.time - b.time);
+        renderLyrics();
+        if (autoplay) audio.play().catch(() => status("Press play to start"));
+      })
+      .catch((error) => {
+        status(`Lyrics unavailable: ${error.message}`, true);
+        renderLyrics();
+        if (autoplay) audio.play().catch(() => {});
+      });
+  } else {
+    renderLyrics();
+    if (autoplay) audio.play().catch(() => status("Press play to start"));
+  }
+})();
+</script>
+</body>
+</html>
