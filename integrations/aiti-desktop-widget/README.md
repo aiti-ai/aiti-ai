@@ -19,8 +19,8 @@ DISPLAY=:0 node --test tests/shell.test.mjs   # optional GUI integration tests
 # npm launcher tests (offline fake release server, justget download path)
 npm install --prefix npm --ignore-scripts --registry https://registry.npmjs.org
 node --test npm/test/download.test.mjs
-# or, when bundling (.deb/.AppImage/.app/.msi):
-npx @tauri-apps/cli build
+# installers are not configured in this project (bundle.active=false);
+# the release artifacts are the bare per-platform binaries above
 ```
 
 Requirements: Rust toolchain + Tauri 2 system deps (Linux: `webkit2gtk-4.1`, GTK3;
