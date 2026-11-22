@@ -16,6 +16,11 @@ try:  # pragma: no cover - import cost only matters on the qwen3 venv
 except Exception:  # numpy missing etc. — keep the shell importable
     Qwen3Engine = None  # type: ignore[assignment]
 
+try:  # optional local Kokoro (kokoro-onnx in the same venv)
+    from .kokoro import KokoroEngine
+except Exception:
+    KokoroEngine = None  # type: ignore[assignment]
+
 
 #: provider id -> (label, required python package family, factory)
 PROVIDERS: dict[str, tuple[str, str, Callable[..., TTSEngine]]] = {
@@ -23,6 +28,8 @@ PROVIDERS: dict[str, tuple[str, str, Callable[..., TTSEngine]]] = {
     "hojo-80m": ("Hojo-TTS-Light-80M (CPU/GPU, voice cloning)", "hojo", lambda **kw: HojoEngine(variant=80, **kw)),
     "stub": ("Stub (pipeline debugging, no model)", "hojo", lambda **kw: StubEngine(**kw)),
 }
+if KokoroEngine is not None:
+    PROVIDERS["kokoro"] = ("Kokoro-82M (ONNX, optional)", "hojo", lambda **kw: KokoroEngine(**kw))
 if Qwen3Engine is not None:
     PROVIDERS["qwen3-0.6b"] = (
         "Qwen3-TTS-0.6B (torch, GPU recommended)", "qwen3",

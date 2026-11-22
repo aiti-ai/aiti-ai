@@ -40,6 +40,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import providers  # noqa: E402
 from prep import write_prepare  # noqa: E402
 from providers.base import TTSError, Unsupported  # noqa: E402
+from worker_engine import WorkerEngine  # noqa: E402
 
 APP_VERSION = "1.0.0"
 MAX_INPUT_CHARS = 4000
@@ -47,6 +48,10 @@ MAX_INPUT_CHARS = 4000
 state = SimpleNamespace(
     args=None,
     engine=None,
+    engines={},          # provider/model id -> loaded engine (multi-model registry)
+    default_provider="hojo-40m",
+    engine_lock=threading.Lock(),
+    models_root="",
     provider="hojo-40m",
     provider_label="",
     status="starting",
@@ -163,6 +168,77 @@ def mp3_bytes(wav: np.ndarray, sample_rate: int) -> bytes:
 
 
 # ── model lifecycle ────────────────────────────────────────────────────────
+def _model_dir_for(provider: str) -> str:
+    """Resolve a provider's model directory from the bootstrap layout.
+
+    The service is started with the default provider's --model-dir; sibling model
+    directories under its parent are the other local providers. An explicit
+    --models-root overrides the parent. This keeps one process able to serve
+    hojo-40m and hojo-80m simultaneously.
+    """
+    explicit = getattr(state.args, "model_dir", "") or ""
+    if provider == state.provider and explicit:
+        return explicit
+    root = state.models_root or (os.path.dirname(explicit) if explicit else "")
+    if not root:
+        return explicit
+    known = {
+        "hojo-40m": "HojoAI--Hojo-TTS-Light-40M-V2",
+        "hojo-80m": "HojoAI--Hojo-TTS-Light",
+        "qwen3-0.6b": "Qwen--Qwen3-TTS-12Hz-0.6B-Base",
+        "qwen3-1.7b": "Qwen--Qwen3-TTS-12Hz-1.7B-Base",
+    }
+    return os.path.join(root, known.get(provider, provider))
+
+
+def _create_engine(provider: str):
+    # qwen3.py imports numpy/base without torch, so providers.create() can succeed
+    # in the Hojo venv and fail only at load(). Force the separate-venv worker when
+    # the configured qwen interpreter differs from this service interpreter.
+    if provider.startswith("qwen3"):
+        python = getattr(state.args, "qwen_python", "") or ""
+        if not python:
+            python = os.path.join(os.path.dirname(os.path.abspath(__file__)), "venv-qwen3", "bin", "python")
+        try:
+            same = os.path.abspath(python) == os.path.abspath(sys.executable)
+        except Exception:
+            same = False
+        log(f"qwen worker decision python={python!r} same={same} exists={os.path.isfile(python)}")
+        if python and os.path.isfile(python) and not same:
+            return WorkerEngine(
+                provider=provider,
+                model_dir=_model_dir_for(provider),
+                voices_json=getattr(state.args, "voices_json", "") or "",
+                python=python,
+                worker_script=os.path.join(os.path.dirname(os.path.abspath(__file__)), "qwen_worker.py"),
+                num_threads=getattr(state.args, "num_threads", 0),
+            )
+    return providers.create(
+        provider,
+        model_dir=_model_dir_for(provider),
+        voices=state.voices_config,
+        num_threads=getattr(state.args, "num_threads", 0),
+        tn=not getattr(state.args, "no_tn", False),
+    )
+
+
+def engine_for_model(model: str | None):
+    """Lazy multi-model loader. A request's model selects the provider; missing
+    models are loaded on demand and kept resident (LRU is intentionally not used:
+    local models are large and switching mid-recording would be worse)."""
+    provider = providers.resolve(model or state.provider)
+    with state.engine_lock:
+        if provider in state.engines:
+            return state.engines[provider]
+        engine = _create_engine(provider)
+        engine.load()
+        state.engines[provider] = engine
+        if provider == state.provider:
+            state.engine = engine
+        log(f"model ready: {provider} · {getattr(engine, 'model_label', provider)} · voices={len(engine.voices())}")
+        return engine
+
+
 def load_engine() -> None:
     args = state.args
     prepare = getattr(args, "prepare_json", None)
@@ -171,6 +247,7 @@ def load_engine() -> None:
         write_prepare(prepare, "load", 92, "loading model into memory",
                       provider=state.provider, pid=os.getpid(), port=args.port)
         state.engine.load()
+        state.engines[state.provider] = state.engine
         state.status = "ready"
         state.loaded_at = time.time()
         voices = len(state.engine.voices())
@@ -255,36 +332,71 @@ def health() -> JSONResponse:
         "inFlight": state.in_flight,
         "rssMb": rss_mb(),
         "version": APP_VERSION,
+        "models": [
+            {
+                "id": pid,
+                "label": providers.label_of(pid),
+                "loaded": True,
+                "model": getattr(eng, "model_label", pid),
+                "sampleRate": int(getattr(eng, "sample_rate", 24000) or 24000),
+                "voiceCount": len(eng.voices()),
+                "supportsClone": bool(getattr(eng, "supports_clone", False)),
+            }
+            for pid, eng in state.engines.items()
+        ],
     }
     return JSONResponse(body, headers={"cache-control": "no-store"})
 
 
 @app.get("/voices")
-def voices() -> JSONResponse:
-    engine = state.engine
-    items = [v.as_dict() for v in engine.voices()] if state.status == "ready" else []
-    return JSONResponse({
-        "ok": True,
-        "provider": state.provider,
-        "providerLabel": state.provider_label,
-        "supportsClone": bool(getattr(engine, "supports_clone", False)),
-        "sampleRate": int(getattr(engine, "sample_rate", 24000) or 24000),
-        "voices": items,
-    }, headers={"cache-control": "no-store"})
+def voices(model: str | None = None) -> JSONResponse:
+    # No model: default provider's flat list for backward compatibility. With model:
+    # that model's voices, including lazily loaded models.
+    provider = providers.resolve(model or state.provider)
+    try:
+        engine = state.engines.get(provider) or (state.engine if provider == state.provider else None)
+        if engine is None:
+            # Do not force-load a model just to list voices; report an empty list but
+            # expose the provider so the caller can request it explicitly.
+            return JSONResponse({
+                "ok": True, "provider": provider, "providerLabel": providers.label_of(provider),
+                "supportsClone": False, "sampleRate": 24000, "voices": [],
+                "loaded": False,
+            }, headers={"cache-control": "no-store"})
+        items = [v.as_dict() for v in engine.voices()]
+        return JSONResponse({
+            "ok": True,
+            "provider": provider,
+            "providerLabel": providers.label_of(provider),
+            "supportsClone": bool(getattr(engine, "supports_clone", False)),
+            "sampleRate": int(getattr(engine, "sample_rate", 24000) or 24000),
+            "voices": items,
+            "loaded": True,
+        }, headers={"cache-control": "no-store"})
+    except Exception as e:
+        return JSONResponse({"ok": False, "provider": provider, "voices": [], "error": str(e)}, status_code=400)
 
 
 @app.post("/v1/audio/speech")
 async def speech(body: SpeechRequest, request: Request):
-    engine = state.engine
+    # Per-request model selection: each step can use a different local model and voice
+    # without restarting the service or switching a global provider.
+    selected = (body.model or state.provider).strip()
+    try:
+        engine = await run_in_threadpool(engine_for_model, selected)
+    except TTSError as e:
+        return JSONResponse({"error": {"message": str(e), "type": e.__class__.__name__}}, status_code=getattr(e, "status", 503))
+    except Exception as e:
+        return JSONResponse({"error": {"message": f"model '{selected}' unavailable: {e}", "type": "model_unavailable"}}, status_code=503)
     text = (body.input or "").strip()
     if not text:
         return JSONResponse({"error": {"message": "input is required", "type": "invalid_request_error"}}, status_code=400)
     if len(text) > MAX_INPUT_CHARS:
         return JSONResponse({"error": {"message": f"input too long ({len(text)} > {MAX_INPUT_CHARS})", "type": "invalid_request_error"}}, status_code=400)
-    if state.status != "ready":
+    if not getattr(engine, "loaded", False):
         return JSONResponse({
-            "error": {"message": f"model not ready ({state.status})", "type": "service_unavailable"},
-            "status": state.status,
+            "error": {"message": f"model {selected} not ready", "type": "service_unavailable"},
+            "status": "loading",
         }, status_code=503)
 
     fmt = (body.response_format or "pcm").strip().lower()
@@ -330,7 +442,7 @@ async def speech(body: SpeechRequest, request: Request):
     log(f"synth {len(text)}c -> {len(payload)}B {fmt} · {state.last_synth_ms}ms · RTF {state.last_rtf}")
     return Response(payload, media_type=media, headers={
         "cache-control": "no-store",
-        "x-tts-provider": state.provider,
+        "x-tts-provider": selected,
         "x-tts-sample-rate": str(sample_rate),
         "x-tts-rtf": str(state.last_rtf),
         "x-tts-synth-ms": str(state.last_synth_ms),
@@ -340,12 +452,13 @@ async def speech(body: SpeechRequest, request: Request):
 @app.post("/admin/load")
 def admin_load() -> JSONResponse:
     state.voices_config = read_voices_json(getattr(state.args, "voices_json", None))
-    engine = state.engine
     try:
-        engine.voices_config = state.voices_config
-        engine.reload()
+        for engine in state.engines.values():
+            engine.voices_config = state.voices_config
+            engine.reload()
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+    engine = state.engine
     items = [v.as_dict() for v in engine.voices()] if state.status == "ready" else []
     log(f"voices reloaded: {len(items)} total ({len(state.voices_config)} from voices.json)")
     return JSONResponse({"ok": True, "voices": items, "voicesFromJson": len(state.voices_config)})
@@ -374,6 +487,8 @@ def main() -> None:
     ap.add_argument("--host", default=os.environ.get("AITI_TTS_HOST", "127.0.0.1"))
     ap.add_argument("--port", type=int, default=int(os.environ.get("AITI_TTS_PORT", "8768")))
     ap.add_argument("--model-dir", default=os.environ.get("AITI_TTS_MODEL_DIR", ""))
+    ap.add_argument("--models-root", default=os.environ.get("AITI_TTS_MODELS_ROOT", ""))
+    ap.add_argument("--qwen-python", default=os.environ.get("AITI_TTS_QWEN_PYTHON", ""))
     ap.add_argument("--voices-json", default=os.environ.get("AITI_TTS_VOICES_JSON", ""))
     ap.add_argument("--prepare-json", default=os.environ.get("AITI_TTS_PREPARE_JSON", ""))
     ap.add_argument("--idle-timeout", type=int, default=int(os.environ.get("AITI_TTS_IDLE_TIMEOUT", "0")))
@@ -389,6 +504,8 @@ def main() -> None:
     pid = providers.resolve(args.provider)
     state.provider = pid
     state.provider_label = providers.label_of(pid)
+    state.default_provider = pid
+    state.models_root = args.models_root or os.path.dirname(args.model_dir or "")
     state.voices_config = read_voices_json(args.voices_json)
 
     try:
@@ -403,6 +520,7 @@ def main() -> None:
         log(f"provider init failed: {e}")
         raise SystemExit(2)
     state.engine = engine
+    state.engines[pid] = engine
 
     log(f"starting provider={pid} ({state.provider_label}) model_dir={args.model_dir or '(default)'} "
         f"port={args.port} tn={'off' if args.no_tn else 'on'} idle={args.idle_timeout}s")

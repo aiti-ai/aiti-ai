@@ -430,6 +430,40 @@ let svcState: { dirs: TtsDirs; services?: ApiCtxLike["services"] } = { dirs: {} 
 function svcCtx() {
   return { ...svcState.dirs, services: svcState.services };
 }
+/** Shared edge-tts synthesis used by the HTTP API and the cross-extension service. */
+async function edgeSynthToCache(
+  ctx: TtsDirs,
+  text: string,
+  voiceIn?: string,
+  rateIn?: number,
+): Promise<{ ok: boolean; key?: string; file?: string; cached?: boolean; error?: string; voice?: string; rate?: number }> {
+  if (!featureEnabled("aiti-ai-speek", "tts.edge")) return { ok: false, error: "edge-tts disabled by feature" };
+  const bin = resolveEdgeBin();
+  if (!bin) return { ok: false, error: "edge-tts not installed" };
+  const clean = String(text || "").trim();
+  if (!clean) return { ok: false, error: "empty text" };
+  const voice = String(voiceIn || defaultEdgeVoice());
+  const rate = Math.min(2, Math.max(0.5, Number(rateIn) || 1));
+  const cacheDir = ttsCacheDir(ctx.configDir);
+  const key = createHash("sha256").update(`edge|${voice}|${rate}|${clean}`).digest("hex");
+  const file = join(cacheDir, `${key}.mp3`);
+  if (existsSync(file)) {
+    const st = statSyncSafe(file);
+    if (st && st.size > 0) return { ok: true, key, file, cached: true, voice, rate };
+    try { unlinkSync(file); } catch { /* ignore */ }
+  }
+  try {
+    mkdirSync(cacheDir, { recursive: true });
+    await new Promise<void>((resolve, reject) => {
+      execFile(bin, ["--voice", voice, "--rate=" + ratePercent(rate), "--text", clean, "--write-media", file], { timeout: 30000 }, (err) => (err ? reject(err) : resolve()));
+    });
+  } catch (e) {
+    return { ok: false, error: "edge-tts synthesis failed: " + String(e) };
+  }
+  lruEvict(cacheDir);
+  return existsSync(file) ? { ok: true, key, file, cached: false, voice, rate } : { ok: false, error: "edge-tts produced no file" };
+}
+
 /** Build the backend service object handed to ctx.services.provide(). */
 function buildTtsService() {
   const dirs = () => svcState.dirs;
@@ -464,12 +498,23 @@ function buildTtsService() {
       return { ...st };
     },
     /** Synthesize into the extension cache; returns per-item cache keys (serve via /tts-cache/<key>). */
-    synthesize: async (opts: { texts: string[]; voice?: string }) => {
+    synthesize: async (opts: { texts: string[]; voice?: string; model?: string }) => {
       const texts = (opts?.texts || []).map((t) => String(t || "").trim()).filter(Boolean);
       if (!texts.length) return { ok: false, code: "bad-input", error: "need texts", items: [] as unknown[] };
-      return localSynthesizeBatch(dirs(), texts, opts?.voice);
+      return localSynthesizeBatch(dirs(), texts, opts?.voice, opts?.model);
     },
-    voices: async () => localVoices(ttsPaths(dirs()), localCfg(), true),
+    voices: async (opts?: { model?: string }) => localVoices(ttsPaths(dirs()), localCfg(), true, opts?.model),
+    /** Edge-tts is a local CLI; expose it through the same cache/readCached contract. */
+    synthesizeEdge: async (opts: { text: string; voice?: string; rate?: string }) => {
+      const rate = opts?.rate && /^[-+]?\d+(?:\.\d+)?%$/.test(String(opts.rate).trim())
+        ? 1 + Number(String(opts.rate).replace("%", "")) / 100
+        : 1;
+      return edgeSynthToCache(svcCtx(), String(opts?.text || ""), opts?.voice, rate);
+    },
+    edgeVoices: async () => {
+      const payload = await voicesPayloadAsync(true);
+      return { ok: true, installed: !!payload.installed, version: payload.version, voices: payload.voices || [] };
+    },
     /** Read a synthesized file straight from the cache (no HTTP auth hop for backend consumers). */
     readCached: async (key: string) => {
       const k = String(key || "");
@@ -521,28 +566,32 @@ async function localHealth(paths: ReturnType<typeof ttsPaths>, cfg: LocalCfg, fo
   return health;
 }
 let localVoicesCache: { at: number; baseUrl: string; data: { voices?: Array<{ id: string; label: string; sample?: string; builtin?: boolean; provider?: string; language?: string }>; provider?: string; providerLabel?: string; supportsClone?: boolean } | null } = { at: 0, baseUrl: "", data: null };
-async function localVoices(paths: ReturnType<typeof ttsPaths>, cfg: LocalCfg, force = false) {
+async function localVoices(paths: ReturnType<typeof ttsPaths>, cfg: LocalCfg, force = false, model?: string) {
   const baseUrl = localBaseUrl(paths, cfg);
   const now = Date.now();
-  if (!force && localVoicesCache.baseUrl === baseUrl && now - localVoicesCache.at < 60000) return localVoicesCache.data;
+  const cacheKey = `${baseUrl}|${model || ""}`;
+  if (!force && localVoicesCache.baseUrl === cacheKey && now - localVoicesCache.at < 60000) return localVoicesCache.data;
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 4000);
-    const res = await fetch(baseUrl + "/voices", { signal: ctrl.signal });
+    const q = new URLSearchParams();
+    if (model) q.set("model", model);
+    if (force) q.set("force", "1");
+    const res = await fetch(`${baseUrl}/voices${q.toString() ? `?${q}` : ""}`, { signal: ctrl.signal });
     clearTimeout(timer);
     const data = res.ok ? await res.json().catch(() => null) : null;
-    localVoicesCache = { at: now, baseUrl, data };
+    localVoicesCache = { at: now, baseUrl: cacheKey, data };
     return data;
   } catch {
-    localVoicesCache = { at: now, baseUrl, data: null };
+    localVoicesCache = { at: now, baseUrl: cacheKey, data: null };
     return null;
   }
 }
 /** Resolve the voice to synthesize with: explicit request > feature > first service voice. */
-async function localResolveVoice(paths: ReturnType<typeof ttsPaths>, cfg: LocalCfg, requested?: string): Promise<string> {
+async function localResolveVoice(paths: ReturnType<typeof ttsPaths>, cfg: LocalCfg, requested?: string, model?: string): Promise<string> {
   const wanted = (requested || cfg.voice || "").trim();
   if (wanted) return wanted;
-  const data = await localVoices(paths, cfg);
+  const data = await localVoices(paths, cfg, false, model);
   return String(data?.voices?.[0]?.id || "");
 }
 
@@ -654,7 +703,7 @@ async function localEnsure(ctx: TtsDirs & Pick<ApiCtxLike, "services">, provider
 interface LocalItem { text: string; key: string; cached: boolean; ext?: string; speakable: boolean; code?: string; retryable?: boolean; error?: string; degraded?: boolean }
 
 /** Synthesize a batch through the local service (serial: local inference is CPU bound). */
-async function localSynthesizeBatch(ctx: TtsDirs, texts: string[], voiceIn?: string): Promise<{
+async function localSynthesizeBatch(ctx: TtsDirs, texts: string[], voiceIn?: string, modelIn?: string): Promise<{
   ok: boolean; engine: "local"; voice: string; provider: string; items: LocalItem[]; error?: string; code?: string;
 }> {
   const paths = ttsPaths(ctx);
@@ -665,8 +714,8 @@ async function localSynthesizeBatch(ctx: TtsDirs, texts: string[], voiceIn?: str
   // The running service wins over the feature value: the cache key must describe the audio
   // that was actually produced (a provider can be started with an explicit override).
   const health = await localHealth(paths, cfg);
-  const providerId = String(health?.provider || cfg.provider);
-  const voice = await localResolveVoice(paths, cfg, voiceIn);
+  const providerId = String(modelIn || health?.provider || cfg.provider);
+  const voice = await localResolveVoice(paths, cfg, voiceIn, providerId);
   if (!voice) {
     // A provider without voices is NOT "starting": hojo-80m has no built-ins, so cloning is a
     // prerequisite. Report it separately so the UI can guide the user instead of waiting.
@@ -694,7 +743,7 @@ async function localSynthesizeBatch(ctx: TtsDirs, texts: string[], voiceIn?: str
       const r = await synthesizeLocal({
         baseUrl,
         apiKey: cfg.apiKey || undefined,
-        model: cfg.model || undefined,
+        model: providerId || cfg.model || undefined,
         text,
         voice,
         format: (cfg.format as "pcm" | "wav" | "mp3"),
@@ -1415,6 +1464,7 @@ export default {
           featureOn: cfg.enabled,
           provider: cfg.provider,
           providerActual: health?.provider || ready?.provider || null,
+          models: (health as any)?.models || [],
           autoStart: cfg.autoStart,
           idleTimeout: cfg.idleTimeout,
           tn: cfg.tn,
@@ -1476,10 +1526,13 @@ export default {
         const paths = ttsPaths(ctx);
         const cfg = localCfg();
         const health = await localHealth(paths, cfg);
-        const data = health?.ok ? await localVoices(paths, cfg, ctx.searchParams.get("force") === "1") : null;
+        const model = ctx.searchParams.get("model") || undefined;
+        const data = health?.ok ? await localVoices(paths, cfg, ctx.searchParams.get("force") === "1", model) : null;
         const entries = readVoiceEntries(paths);
         return json({
           ok: true, running: !!health?.ok, provider: health?.provider || cfg.provider,
+          model: model || health?.provider || cfg.provider,
+          models: (health as any)?.models || [],
           supportsClone: !!data?.supportsClone, voices: data?.voices || [],
           custom: entries.length, voicesJson: paths.voicesJson,
         });
@@ -1770,7 +1823,8 @@ export default {
         const engineParam = (ctx.searchParams.get("engine") || "edge").trim();
         if (engineParam === "local") {
           const voice = ctx.searchParams.get("voice") || undefined;
-          const r = await localSynthesizeBatch(ctx, [text], voice);
+          const model = ctx.searchParams.get("model") || undefined;
+          const r = await localSynthesizeBatch(ctx, [text], voice, model);
           const it = r.items[0];
           if (!it || !it.cached || !it.ext) {
             return json({ ok: false, engine: "local", error: it?.error || r.error || "local synthesis failed", code: it?.code || r.code, voice: r.voice }, it?.code === "not-ready" ? 503 : 502);
@@ -1865,13 +1919,13 @@ export default {
       // POST /tts-batch { texts: [], voice?, rate?, engine? } — batch synthesis (cache hits return instantly)
       //   Returns [{ key, text, cached, ext }]; the frontend plays /tts-cache/<key>.
       if (action === "tts-batch" && ctx.method === "POST") {
-        let body: { texts?: unknown; voice?: string; rate?: number; engine?: string; provider?: string; } = {};
+        let body: { texts?: unknown; voice?: string; rate?: number; engine?: string; provider?: string; model?: string; } = {};
         try { body = await req.json(); } catch { /* 空 JSON 容忍 */ }
         const texts = Array.isArray(body?.texts) ? body.texts.map((t) => String(t).trim()).filter(Boolean) : [];
         if (!texts.length) return json({ ok: false, error: "need texts" }, 400);
         // Local engine: same response shape, produced by the OpenAI-compatible local service.
         if (String(body?.engine || "").trim() === "local") {
-          return json(await localSynthesizeBatch(ctx, texts, body?.voice));
+          return json(await localSynthesizeBatch(ctx, texts, body?.voice, body?.model));
         }
         if (!featureEnabled("aiti-ai-speek", "tts.edge")) return json({ ok: false, error: "edge-tts disabled by feature" }, 409);
         const bin = resolveEdgeBin();

@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-ai-speek",
-  "version": "0.2.0",
+  "version": "0.2.3",
   "type": "module",
   "description": "Voice reading of AI output — browser Web Speech / edge-tts / local TTS (Hojo-TTS-Light, OpenAI-compatible) with cache, voice cloning and pause/skip/stop",
   "scripts": {
