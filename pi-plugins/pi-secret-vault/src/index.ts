@@ -78,11 +78,31 @@ const PEER = "mask";
 const HELLO_EVENT = "aiti-secret:hello";
 
 const SECTION_TEXT = [
-  "Some credentials in this conversation are replaced by opaque tokens like rsec_a1b2c3d4.",
-  "Such a token IS a working credential: the runtime substitutes the real secret when the token appears",
-  "verbatim in tool arguments (bash/edit/write/MCP). Copy the token exactly. Never refuse to use it,",
-  "never claim you cannot access the value, never ask the user to paste the secret, and never modify,",
-  "truncate, hash or re-encode the token.",
+  "Tokens of the form rsec_<8 hex> are how this session represents real credentials.",
+  "Such a token IS a working credential: the runtime substitutes the real secret whenever the token appears",
+  "verbatim in tool arguments (bash/edit/write/MCP), so files and commands receive the actual value.",
+  "",
+  "Tokens are normal output of the masking layer — never a mistake, corruption, hallucination, or a",
+  "randomizer gone wrong. They are deterministic: the same value always maps to the same token across",
+  "turns, tools and restarts, and that fixed shape is by design.",
+  "Tokens show up in user messages, tool output, file contents you read (read/cat/grep/diff/logs) — and",
+  "also in your OWN earlier messages and tool-call arguments, wherever you originally typed plaintext.",
+  "That is the runtime rewriting text on its way into your context; the write itself landed with the real",
+  "value. Seeing a token where you expected plaintext therefore means it worked, not that you broke it.",
+  "",
+  "So: copy the token exactly and pass it verbatim. Never refuse to use it, never claim you cannot access",
+  "the value, never ask the user to paste the secret, and never modify, truncate, hash, re-encode or",
+  "\"clean up\" a token.",
+  "Do not second-guess a token: never apologize for having written one, never re-read a file just to check",
+  "whether it is \"garbage\", and never rewrite content with \"clean text\". Writing the token again is a",
+  "no-op; replacing it with anything else silently destroys the real value.",
+  "",
+  "If a tool call is refused with \"unresolved placeholder\", the token is still well-formed — its value is",
+  "simply not mounted in this session. Call vault_list / vault_get <alias> to mount it, or ask the user to",
+  "unlock the vault. Do not retype, guess, drop or replace the token, and do not read that refusal as proof",
+  "that tokens are fake or random.",
+  "When writing docs, tests or examples ABOUT tokens, use the shape rsec_<8 hex>, never a literal token: a",
+  "literal is indistinguishable from a real reference and the guard will refuse it.",
   "Never present a token to the user as if it were the secret value: it only resolves inside tool",
   "arguments, so a user cannot type it into a login prompt. When the user asks what the value is, say",
   "it is masked (vault_list / vault_get give you a token, never plaintext).",
@@ -96,6 +116,8 @@ interface ExtensionState extends SecretState {
   sessionName?: string;
   peerSeen: boolean;
   peerExpected: boolean;
+  /** A token shape entered the transcript: keep the contract even when nothing is mounted. */
+  sawToken: boolean;
   weakNotified: Set<string>;
   notice?: (text: string, level?: "info" | "warning" | "error") => void;
 }
@@ -190,6 +212,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     sessionId: "",
     peerSeen: false,
     peerExpected: false,
+    sawToken: false,
     weakNotified: new Set(),
     extract: true,
     filePolicy: "learn",
@@ -358,6 +381,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     if (!active(state)) return { action: "continue" as const };
     if ((event as { source?: string }).source === "extension") return { action: "continue" as const };
     mountPreflightTokens(event.text ?? "");
+    if ((event.text ?? "").includes("rsec_")) state.sawToken = true;
     const rules = currentRules();
     let text = event.text ?? "";
     const res = redactTextSpans([{ get: () => text, set: (t) => { text = t; } }], state.registry, state.salt, {
@@ -397,7 +421,10 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     if (!active(state)) return undefined;
     // Cheap probe: only build the joined text when some message actually carries
     // a placeholder (stringifying a long history on every turn is wasteful).
-    if (hasPlaceholderToken(event.messages)) mountPreflightTokens(collectStrings(event.messages).join("\n"));
+    if (hasPlaceholderToken(event.messages)) {
+      state.sawToken = true;
+      mountPreflightTokens(collectStrings(event.messages).join("\n"));
+    }
     const before = new Set(state.registry.entries().map((e) => e.placeholder));
     const res = redactMessages(event.messages as unknown[], state.registry, state.salt, {
       rules: currentRules(),
@@ -429,7 +456,9 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     const sections = event.systemPromptOptions?.sections as Record<string, string> | undefined;
     if (!sections) return undefined;
     if (active(state)) {
-      if (state.registry.size > 0) sections[SECTION_KEY] = SECTION_TEXT;
+      // Also cover a token pasted in from another session/process: the model must
+      // learn the contract even when this process mounted nothing.
+      if (state.registry.size > 0 || state.sawToken) sections[SECTION_KEY] = SECTION_TEXT;
       else if (SECTION_KEY in sections) delete sections[SECTION_KEY];
     } else if (!state.disabledBy && SECTION_KEY in sections) {
       delete sections[SECTION_KEY];

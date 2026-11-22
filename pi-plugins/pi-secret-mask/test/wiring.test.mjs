@@ -109,6 +109,8 @@ test("mask wiring: send-boundary redaction, guard/restore, message_end, compact,
     await host.run("before_agent_start", { systemPromptOptions: { sections } }, ctx);
     assert.match(sections.secret_masking, /working credential/);
     assert.match(sections.secret_masking, /Never present a token to the user/);
+    assert.match(sections.secret_masking, /not that you broke it/);
+    assert.match(sections.secret_masking, /never re-read a file/i);
 
     // 3) tool_call restores; unknown placeholder is blocked
     const input = { command: `curl -H "Authorization: Bearer ${ph}"` };
@@ -356,6 +358,30 @@ test("tool_result extract never registers encoded forms of mounted values", asyn
     // the core regression: extract ran on the redacted text, so no junk
     // auto entry for the encoded form was registered — list is unchanged
     assert.equal(await list(), before);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a stray token from another session still gets the usage contract", async () => {
+  const home = mkdtempSync(join(tmpdir(), "mask-stray-"));
+  try {
+    const cwd = join(home, "proj");
+    const factory = await loadExtension(home);
+    const host = makeHost();
+    await factory(host.pi);
+    const ctx = makeCtx(cwd);
+    await host.run("session_start", { reason: "startup" }, ctx);
+
+    // Build the token by concatenation: a literal token here would be rewritten by the
+    // masking layer when this file is read or edited.
+    const strayToken = "rsec_" + "cf1e2d3a";
+
+    const sections = {};
+    await host.run("input", { text: `why did I write ${strayToken} there?`, source: "interactive" }, ctx);
+    await host.run("before_agent_start", { systemPromptOptions: { sections } }, ctx);
+    assert.match(sections.secret_masking ?? "", /normal output of the masking layer/);
+    assert.match(sections.secret_masking ?? "", /not that you broke it/);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

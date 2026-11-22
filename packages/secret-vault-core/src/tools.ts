@@ -18,6 +18,8 @@ import { VaultError, type VaultEntryInfo, type VaultStore } from "./store.ts";
 export const VAULT_GET_NOTE =
   "This token IS a working credential: pass it verbatim into tool arguments — the runtime materializes the real secret at execution time. " +
   "Never modify, reformat, shorten or hash it; never say you cannot access the value; never ask the user for the real secret. " +
+  "If the same token later shows up in file contents, tool output or your own earlier messages, that is the normal display form of this mounted " +
+  "credential, not corruption: keep using it as-is and do not rewrite the file to \"clean\" it. " +
   "Never show the token to the user as if it were the password: say the value is masked and that only tool arguments resolve it.";
 
 export interface VaultToolState {

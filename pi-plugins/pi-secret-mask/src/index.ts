@@ -59,11 +59,30 @@ const PEER = "vault";
 const HELLO_EVENT = "aiti-secret:hello";
 
 const SECTION_TEXT = [
-  "Some credentials in this conversation are replaced by opaque tokens like rsec_a1b2c3d4.",
-  "Each token IS a working credential: the runtime substitutes the real secret when the token appears",
-  "verbatim in tool arguments (bash/edit/write/MCP). Copy the token exactly. Never refuse to use it,",
-  "never claim you cannot access the value, never ask the user to paste the secret, and never modify,",
-  "truncate, hash or re-encode the token.",
+  "Tokens of the form rsec_<8 hex> are how this session represents real credentials.",
+  "Each token IS a working credential: the runtime substitutes the real secret whenever the token",
+  "appears verbatim in tool arguments (bash/edit/write/MCP), so files and commands receive the actual value.",
+  "",
+  "Tokens are normal output of the masking layer — never a mistake, corruption, hallucination, or a",
+  "randomizer gone wrong. They are deterministic: the same value always maps to the same token.",
+  "Tokens show up in user messages, tool output, file contents you read (read/cat/grep/diff/logs) — and",
+  "also in your OWN earlier messages and tool-call arguments, wherever you originally typed plaintext.",
+  "That is the runtime rewriting text on its way into your context; the write itself landed with the real",
+  "value. Seeing a token where you expected plaintext therefore means it worked, not that you broke it.",
+  "",
+  "So: copy the token exactly and pass it verbatim. Never refuse to use it, never claim you cannot access",
+  "the value, never ask the user to paste the secret, and never modify, truncate, hash, re-encode or",
+  "\"clean up\" a token.",
+  "Do not second-guess a token: never apologize for having written one, never re-read a file just to check",
+  "whether it is \"garbage\", and never rewrite content with \"clean text\". Writing the token again is a",
+  "no-op; replacing it with anything else silently destroys the real value.",
+  "",
+  "If a tool call is refused with \"unresolved placeholder\", the token is still well-formed — the value is",
+  "simply not registered in this session. Register it again with /secret add <label> or ask the user to",
+  "supply it; do not retype, guess or replace the token, and do not treat the refusal as proof that tokens",
+  "are fake or random.",
+  "When writing docs, tests or examples ABOUT tokens, use the shape rsec_<8 hex>, never a literal token: a",
+  "literal is indistinguishable from a real reference and the guard will refuse it.",
   "Never present a token to the user as if it were the secret value: it only resolves inside tool",
   "arguments, so a user cannot type it into a login prompt. When the user asks what the value is, say",
   "it is masked and point to where the real one lives (the value they supplied, or the secret vault).",
@@ -74,6 +93,8 @@ interface ExtensionState extends SecretState {
   peerSeen: boolean;
   legacyNotified: boolean;
   peerNoticeShown: boolean;
+  /** A token shape entered the transcript: keep the contract even when nothing is registered. */
+  sawToken: boolean;
   weakNotified: Set<string>;
   /** Established on session_start so the handshake can surface a notice. */
   notice?: (text: string, level?: "info" | "warning" | "error") => void;
@@ -103,6 +124,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     peerSeen: false,
     legacyNotified: false,
     peerNoticeShown: false,
+    sawToken: false,
     weakNotified: new Set(),
     extract: true,
     filePolicy: "learn",
@@ -186,6 +208,15 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     pi.events.emit(HELLO_EVENT, { ext: SELF, active: active(state) });
   });
 
+  /** Token shape anywhere in the message list (cheap walk, no stringify). */
+  const hasTokenShape = (node: unknown, depth = 0): boolean => {
+    if (depth > 12) return false;
+    if (typeof node === "string") return node.includes("rsec_");
+    if (Array.isArray(node)) return node.some((v) => hasTokenShape(v, depth + 1));
+    if (node && typeof node === "object") return Object.values(node as Record<string, unknown>).some((v) => hasTokenShape(v, depth + 1));
+    return false;
+  };
+
   // Input boundary: in vault/ephemeral landing the user's own message must be
   // redacted BEFORE it becomes a session entry (message_end alone fires after
   // the raw prompt would already be persisted). In plain landing the text is
@@ -197,6 +228,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     if ((event as { source?: string }).source === "extension") return { action: "continue" as const };
     const rules = currentRules();
     let text = event.text ?? "";
+    if (text.includes("rsec_")) state.sawToken = true;
     const res = redactTextSpans([{ get: () => text, set: (t) => { text = t; } }], state.registry, state.salt, {
       autoDetect: true,
       rules,
@@ -210,6 +242,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   // reach the session transcript, only the provider payload.
   pi.on("context", (event, ctx) => {
     if (!active(state)) return undefined;
+    if (!state.sawToken && hasTokenShape(event.messages)) state.sawToken = true;
     const res = redactMessages(event.messages as unknown[], state.registry, state.salt, {
       rules: currentRules(),
       weak: weakOptions(ctx),
@@ -236,7 +269,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     const sections = event.systemPromptOptions?.sections as Record<string, string> | undefined;
     if (!sections) return undefined;
     if (active(state)) {
-      if (state.registry.size > 0) sections[SECTION_KEY] = SECTION_TEXT;
+      if (state.registry.size > 0 || state.sawToken) sections[SECTION_KEY] = SECTION_TEXT;
       else if (SECTION_KEY in sections) delete sections[SECTION_KEY];
     } else if (!state.disabledBy && SECTION_KEY in sections) {
       delete sections[SECTION_KEY];

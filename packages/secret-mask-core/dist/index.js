@@ -2616,7 +2616,7 @@ function unmountedInValue(value, registry) {
 function guardReason(tokens, opts = {}) {
   const list = tokens.join(", ");
   const hint = opts.landing === "ephemeral" ? `/secret add <label> to register the value again (ephemeral landing keeps values in memory only) or ask the user to provide it` : `vault_get <alias> to re-mount the value, or /secret add <label> to register it in this session`;
-  return `secret-mask: refused to run with unresolved placeholder(s) ${list}. The value behind them is not mounted in this session \u2014 call ${hint}. Do not retype, guess or replace the placeholder yourself.`;
+  return `secret-mask: refused to run with unresolved placeholder(s) ${list}. The token(s) are well-formed \u2014 their values are simply not mounted in this session (other session, /vault forget, locked vault or resume) \u2014 call ${hint}. Do not retype, guess, drop or replace the placeholder yourself, and do not "clean" or rewrite any file because of this refusal.`;
 }
 
 // src/landing.ts
