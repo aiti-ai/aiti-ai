@@ -2610,7 +2610,6 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
           ? <ExtensionStatusToast statuses={extensionStatuses} />
           : <ExtensionStatusBar statuses={extensionStatuses} widgets={extensionWidgets} onCommand={handleSend} commandsDisabled={sessionBusy} />}
       </div>
-      {isEmptyNew && <div className="min-h-0 flex-1" />}
       {forkPickerOpen && (
         <DirectoryPicker
           busy={forkPickerBusy}
