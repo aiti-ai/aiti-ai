@@ -332,6 +332,10 @@ window property.
   `tray.TrayIcon.new` and saw `dialog.open` — all succeeded. Also verified: client rect == window
   rect (no titlebar), `WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE`,
   PrintWindow capture has no titlebar.
+  Release builds are GUI-subsystem binaries; on Windows a direct launch from cmd/PowerShell
+  attaches to the caller's console (so `--version`/`--help` print normally), while GUI parents
+  that pass pipes (`aiti-dialog`, video-studio) are unaffected. Set
+  `AITI_DESKTOP_WIDGET_NO_CONSOLE=1` to skip the attach.
   ⚠ SSH runs in **session 0** where WebView2 fails with `0x80070578 invalid window handle`, and
   session 0 cannot even *see* the window (`EnumWindows` / `MainWindowTitle` are empty). Run the
   widget in the logged-in desktop session — but as the **user**, not SYSTEM:
