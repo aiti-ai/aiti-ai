@@ -4610,10 +4610,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         // pi's TUI /model opens a model selector; the web composer opens its model
         // dropdown in place (ChatInput bumps the openRequest signal on this action).
         // Works with or without a session and while streaming — model switching is
-        // a session-level command, never touching the running turn. `models` is the
-        // common alternate spelling (ChatInput lists it as an alias).
-        case "model":
-        case "models": {
+        // a session-level command, never touching the running turn.
+        case "model": {
           return complete({ handled: true, action: "openModelSelector" });
         }
 
