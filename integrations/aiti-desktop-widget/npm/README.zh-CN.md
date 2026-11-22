@@ -117,6 +117,12 @@ console.log(releaseUrls());       // tag、asset、GitHub/Gitee/镜像 URL
 loopback 字幕页（`caption-bar.html?bubble=1`），通过 SSE 推送字幕；**窗口归壳，内容归
 视频工作室**。同一个壳也可承载悬浮状态卡、桌面宠物或任意本地 HTML 页面。
 
+## 演示
+
+仓库自带零依赖**透明歌词播放器**：[`demo/play/play.html`](https://github.com/aiti-ai/aiti-ai/tree/main/integrations/aiti-desktop-widget/demo/play)，
+`?file=audio.mp3&lyrics=song.lrc`（也支持 SRT/VTT），当前行高亮、可 seek 进度、键盘控制，
+`bare=1` 为纯文字。自带示例是原创 TTS + 合成伴奏，不含第三方音乐。
+
 ## 说明
 
 - Linux 需要 glibc 2.35+（在 Ubuntu 22.04 构建）以及运行时的 WebKitGTK 4.1 + GTK3。
