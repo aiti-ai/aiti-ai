@@ -1528,7 +1528,19 @@ export function FolderBrowser(props: any) {
       setRoot(p);
       setExpanded(loadExpandedSnapshot(p) ?? new Set());
     },
-    parent: () => doOpenParent(),
+    parent: () => {
+      // Dock-header switcher "↑ Parent directory" navigates THIS block in place
+      // (same semantics as the in-pane ↑ button / setRoot command): prefer the
+      // backend-allowed parentPath (naive string parent only as fallback), swap root
+      // with expanded-state snapshot round-trip. doOpenParent's "open parent as a new
+      // folder + locate" flow stays only for the More-menu "open parent" action.
+      const target = (parent ?? root.slice(0, root.lastIndexOf("/"))) || "/";
+      if (!target || target === root) { doOpenParent(); return; }
+      saveExpandedSnapshot(root, expanded);
+      setParent(null);
+      setRoot(target);
+      setExpanded(loadExpandedSnapshot(target) ?? new Set());
+    },
   } : null);
   useDockHeaderState(dockItemKey, dockItemKey ? {
     searchOpen, refreshDone, root, gitCount: gitFiles.length, changesOpen, hasParent: parent != null, selMode,
