@@ -7,8 +7,8 @@ import { countRunningSubagents, sideChatTitle } from "@/lib/session-family";
 import { MAX_SESSION_STATS_IDS, type SessionUsageSummary } from "@/lib/session-stats";
 import { formatActiveDuration, formatCompactCount, formatCostShort } from "@/lib/session-stats-format";
 import type { SessionInfo, SubagentSessionStatus } from "@/lib/types";
-import { DeleteConfirm } from "./SessionTree";
-import { TrashIcon } from "./SidebarIcons";
+import { DeleteConfirm } from "./SessionTree.tsx";
+import { TrashIcon } from "./SidebarIcons.tsx";
 
 interface Props {
   rootSession: SessionInfo;

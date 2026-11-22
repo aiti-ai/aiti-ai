@@ -1,8 +1,8 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { getFileIcon, FolderIcon } from "./FileIcons";
-import type { Tab } from "./TabBar";
+import { getFileIcon, FolderIcon } from "./FileIcons.tsx";
+import type { Tab } from "./TabBar.tsx";
 
 /**
  * Detached window shell (the floating-dialog extension's tab-detach design §5.5):

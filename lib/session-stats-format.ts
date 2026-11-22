@@ -1,7 +1,7 @@
 // Client-safe display of session usage: the toolbar's stats button and
 // popover, and the agent switcher's per-agent rows.
 
-import type { TranslationParams } from "./i18n/types";
+import type { TranslationParams } from "./i18n/types.ts";
 
 /** 950 · 18k · 1.2M */
 export function formatCompactCount(value: number): string {

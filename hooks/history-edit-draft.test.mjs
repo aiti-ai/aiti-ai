@@ -7,7 +7,14 @@ import { createJiti } from "jiti";
 // must not be stored meanwhile (#1718): after a reload, sending it would join
 // the branch instead of forking from the edited message.
 const shimPath = fileURLToPath(new URL("./__fixtures__/react-hook-shim.mjs", import.meta.url));
-const jiti = createJiti(import.meta.url, { tsconfigPaths: true, alias: { react: shimPath } });
+// [fork] the hook chain reaches the fork useI18n.tsx, so the loader needs JSX
+// and the shims the other hook tests use (see agent-phase.test.mjs).
+const jsxRuntimeShimPath = fileURLToPath(new URL("./__fixtures__/react-jsx-runtime-shim.mjs", import.meta.url));
+const i18nStubPath = fileURLToPath(new URL("./__fixtures__/use-i18n-stub.mjs", import.meta.url));
+const jiti = createJiti(import.meta.url, {
+  jsx: { runtime: "automatic" },
+  alias: { react: shimPath, "react/jsx-runtime": jsxRuntimeShimPath, "@/hooks/useI18n": i18nStubPath, "@": process.cwd() },
+});
 const { renderHook } = await import(pathToFileURL(shimPath).href);
 const { useAgentSession } = await jiti.import("./useAgentSession.ts");
 const { flushStoredDrafts, setDraft } = await jiti.import("@/lib/draft-store");

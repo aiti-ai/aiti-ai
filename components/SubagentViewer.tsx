@@ -2,9 +2,9 @@
 
 import { apiUrl } from "@/lib/base-path";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { MessageView } from "./MessageView";
-import { StatusIcon, statusColor } from "./AgentSessionPanel";
-import { buildToolResultsMap, EMPTY_TRANSCRIPT, mergeTailPage, prependOlderPage, type SubagentTranscript } from "./subagent-viewer-state";
+import { MessageView } from "./MessageView.tsx";
+import { StatusIcon, statusColor } from "./AgentSessionPanel.tsx";
+import { buildToolResultsMap, EMPTY_TRANSCRIPT, mergeTailPage, prependOlderPage, type SubagentTranscript } from "./subagent-viewer-state.ts";
 import { useI18n } from "@/hooks/useI18n";
 import type { SessionInfo } from "@/lib/types";
 

@@ -577,14 +577,16 @@ test("does not double-append the first user message when the optimistic key was 
   );
   // The original dedup path is kept (it consumes the optimistic bubble while optimisticKey is alive).
   assert.match(dedicatedSource, /optimisticKey && last\?\.role === "user" && userMessageKey\(last\) === optimisticKey/);
-  // Idempotent fallback: optimisticKey lost but a same-key user message still sits at the tail → return prev to skip.
-  assert.match(dedicatedSource, /userMessageKey\(last\) === deliveredKey/);
+  // Idempotent fallback: optimisticKey lost but the optimistic bubble still sits at the tail
+  // → return prev to skip. Identity, not text: a steer sent later may repeat the same words
+  // and is its own message (#1746).
+  assert.match(dedicatedSource, /optimisticBubblePendingRef\.current && last !== undefined && last === optimisticBubble/);
   assert.match(dedicatedSource, /Idempotent backstop/);
   assert.ok(
-    dedicatedSource.indexOf("userMessageKey(last) === deliveredKey") > dedicatedSource.indexOf("userMessageKey(last) === optimisticKey"),
+    dedicatedSource.indexOf("last === optimisticBubble") > dedicatedSource.indexOf("userMessageKey(last) === optimisticKey"),
     "the idempotent fallback must come after the original optimisticKey dedup path",
   );
-  assert.match(dedicatedSource, /if \(last\?\.role === "user" && userMessageKey\(last\) === deliveredKey\) \{\s*return prev;\s*\}/);
+  assert.match(dedicatedSource, /if \(!optimisticKey && optimisticBubblePendingRef\.current && last !== undefined && last === optimisticBubble\) \{\s*optimisticBubblePendingRef\.current = false;\s*return prev;\s*\}/);
 });
 
 test("restoring a running session does not clear an SSE snapshot", () => {
@@ -1034,7 +1036,7 @@ test("start-plan captcha bridge: event wiring, respond command, and sessionReque
   assert.match(source, /sessionRequest, respondToSessionRequest,/);
   assert.match(chatWindowSource, /sessionRequest, respondToSessionRequest/);
   assert.match(chatWindowSource, /<SessionRequestCardHost/);
-  assert.match(chatWindowSource, /import \{ SessionRequestCardHost \} from "\.\/SessionRequestSlot"/);
+  assert.match(chatWindowSource, /import \{ SessionRequestCardHost \} from "\.\/SessionRequestSlot(?:\.tsx?)?"/);
 });
 
 test("busy-state adoption covers compaction windows (state / connected / events)", () => {

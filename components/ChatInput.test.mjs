@@ -798,7 +798,13 @@ function chatInputCallback(name, context) {
   }
   return new Script(ts.transpileModule(findCallback(source).getText(source), {
     compilerOptions: { target: ts.ScriptTarget.ES2020 },
-  }).outputText).runInNewContext(context);
+  }).outputText).runInNewContext({
+    // [fork] the composer bus gate runs first; these checks drive the send paths
+    // after it, so it lets every submission through.
+    runComposerGate: async (text) => ({ text, cancel: false }),
+    valueRef: { current: typeof context?.value === "string" ? context.value : "" },
+    ...context,
+  });
 }
 
 test("while a run streams, a bare /mcp opens Settings or is queued as before", async () => {

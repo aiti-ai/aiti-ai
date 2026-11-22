@@ -123,7 +123,8 @@ test("a side chat's stored draft goes only once its delete succeeded", async () 
     const context = vm.createContext({
       useCallback: (callback) => callback,
       deleteSideChat: async () => refusal,
-      clearDraft: (id) => cleared.push(id),
+      // [fork] drafts go through the draft-keeper API, not lib/draft-store directly.
+      getDraftApi: () => ({ clearAllDrafts: (id) => cleared.push(id) }),
       handleCloseFileTab() {},
       selectedSessionRef: { current: null },
       handleSelectSession() {},

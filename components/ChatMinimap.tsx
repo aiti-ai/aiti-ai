@@ -12,7 +12,7 @@ import { loadMinimapPreviewLocked, saveMinimapPreviewLocked } from "@/lib/minima
 import type { AgentMessage, AssistantMessage, CustomMessage, TextContent, UserMessage } from "@/lib/types";
 import { useI18n } from "@/hooks/useI18n";
 import styles from "./ChatMinimap.module.css";
-import { LockToggle } from "./LockToggle";
+import { LockToggle } from "./LockToggle.tsx";
 
 interface Props {
   messages: AgentMessage[];

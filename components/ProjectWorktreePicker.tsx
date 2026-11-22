@@ -12,10 +12,10 @@ import {
   type WorktreeChoice,
 } from "@/lib/new-session-context";
 import { projectNameOf } from "@/lib/session-tree";
-import { ActivitySummary } from "./SessionTree";
-import { SidebarMenu, type SidebarMenuAnchor, type SidebarMenuItem } from "./SidebarMenu";
-import { BranchIcon, ChevronIcon, FolderIcon, FolderPlusIcon, PlusIcon, TrashIcon } from "./SidebarIcons";
-import { WorktreeCreateForm } from "./WorktreeCreateForm";
+import { ActivitySummary } from "./SessionTree.tsx";
+import { SidebarMenu, type SidebarMenuAnchor, type SidebarMenuItem } from "./SidebarMenu.tsx";
+import { BranchIcon, ChevronIcon, FolderIcon, FolderPlusIcon, PlusIcon, TrashIcon } from "./SidebarIcons.tsx";
+import { WorktreeCreateForm } from "./WorktreeCreateForm.tsx";
 
 /** The picker's two controls. A pick names the one it came from. */
 export type ProjectWorktreeControl = "project" | "worktree";

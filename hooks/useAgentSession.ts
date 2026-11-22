@@ -1087,6 +1087,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const optimisticUserMessageKeyRef = useRef<string | null>(null);
   // The optimistic bubble itself, set with its key.
   const optimisticUserMessageRef = useRef<AgentMessage | null>(null);
+  // True until the delivery that belongs to that bubble is shown: the key may be
+  // cleared early (connected-frame idle correction, settlement paths), so the
+  // bubble is identified by identity, never by its text alone.
+  const optimisticBubblePendingRef = useRef(false);
   // The last user message_end shown, until the wrapper's user_message_entry names its entry.
   const deliveredUserMessageRef = useRef<DeliveredUserMessage | null>(null);
   // The run whose prompt the server is known to have got: one of its events
@@ -3103,7 +3107,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           const deliveredKey = userMessageKey(delivered);
           const optimisticKey = optimisticUserMessageKeyRef.current;
           optimisticUserMessageKeyRef.current = null;
-          const bubble = optimisticKey === deliveredKey ? optimisticUserMessageRef.current : null;
+          const optimisticBubble = optimisticUserMessageRef.current;
+          const bubble = optimisticKey === deliveredKey ? optimisticBubble : null;
+          if (bubble) optimisticBubblePendingRef.current = false;
           deliveredUserMessageRef.current = { timestamp: delivered.timestamp, messages: bubble ? [bubble, delivered] : [delivered] };
           // While the run's own bubble waits, a delivered user message is its prompt.
           if (optimisticKey) markPromptLanded();
@@ -3116,11 +3122,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             }
             // Idempotent backstop: optimisticKey may have been cleared early — by the connected-frame idle
             // correction on a new session's first send (the SSE connected frame arrives before the prompt, server
-            // isRunning=false → the settlement branch clears the key; observed as the first message's user bubble
-            // rendering twice) and by settlement paths such as finishPromptWithoutStream. The optimistic bubble is
-            // still at the list tail then: if the last message is a user message with the same key, it is the
-            // bubble for this delivery — skip outright, never append a second identical user message.
-            if (last?.role === "user" && userMessageKey(last) === deliveredKey) {
+            // isRunning=false → the settlement branch clears the key) and by settlement paths such as
+            // finishPromptWithoutStream. The bubble still waits at the list tail then: it is the bubble for this
+            // delivery — skip outright, never append a second identical user message. Identity, not text: a
+            // steer sent later may repeat the same words and is its own message (#1746).
+            if (!optimisticKey && optimisticBubblePendingRef.current && last !== undefined && last === optimisticBubble) {
+              optimisticBubblePendingRef.current = false;
               return prev;
             }
             return [...prev, delivered];
@@ -3707,6 +3714,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     setMessages((prev) => [...prev, userMsg]);
     optimisticUserMessageKeyRef.current = userKey;
     optimisticUserMessageRef.current = userMsg;
+    optimisticBubblePendingRef.current = true;
     promptRunIdRef.current = promptRunId;
     agentRunningRef.current = true;
     // ??=: steer/follow-up sends during a run must not reset this run's elapsed-time origin (on an idle new run the ref is null and a fresh origin starts as usual)
@@ -4014,7 +4022,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const sid = sessionIdRef.current;
     if (!sid) return translate("sidebar.forkNotFound");
     try {
-      const res = await fetch(`/api/sessions/${encodeURIComponent(sid)}/fork`, {
+      const res = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sid)}/fork`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd }),

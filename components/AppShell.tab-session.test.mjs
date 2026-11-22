@@ -26,7 +26,7 @@ test("applies tab session memory after mount instead of suppressing hydration", 
 test("writes the session URL when tab memory restores onto an empty address bar", () => {
   assert.match(
     source,
-    /if \(!isRestore \|\| new URLSearchParams\(window\.location\.search\)\.get\("session"\) !== session\.id\) \{\s+replaceLocationIfChanged\(router, `\?session=\$\{encodeURIComponent\(session\.id\)\}`/,
+    /if \(!isRestore\) \{[\s\S]*?queueUrlWrite\(`\?session=\$\{encodeURIComponent\(session\.id\)\}`\);\s*\} else if \(new URLSearchParams\(window\.location\.search\)\.get\("session"\) !== session\.id\) \{\s+replaceLocationIfChanged\(router, `\?session=\$\{encodeURIComponent\(session\.id\)\}`/,
   );
 });
 
@@ -34,7 +34,7 @@ test("New session is remembered as this tab's selection", () => {
   const start = source.indexOf("  const handleNewSession = useCallback");
   const end = source.indexOf("  // Global keyboard shortcuts", start);
   const body = source.slice(start, end);
-  assert.ok(body.includes("replaceLocationIfChanged(router, inAppPathname(\"/\")")); // [URL 规范] cwd 不进 URL：裸应用路径（basePath 安全包装）
+  assert.ok(body.includes("queueUrlWrite(inAppPathname(\"/\"))")); // [URL 规范] cwd 不进 URL：裸应用路径（basePath 安全包装）
 });
 
 test("deleting the current session forgets its tab memory", () => {

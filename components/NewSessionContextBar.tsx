@@ -5,8 +5,8 @@ import { apiUrl } from "@/lib/base-path";
 import { useI18n } from "@/hooks/useI18n";
 import type { NewSessionContext, NewSessionTarget, ProjectChoice } from "@/lib/new-session-context";
 import { focusIfLost } from "@/lib/stacked-dialog";
-import { ExtSlot } from "./ExtSlots";
-import { ProjectWorktreePicker, type ProjectWorktreeControl, type ProjectWorktreePickerHandle } from "./ProjectWorktreePicker";
+import { ExtSlot } from "./ExtSlots.tsx";
+import { ProjectWorktreePicker, type ProjectWorktreeControl, type ProjectWorktreePickerHandle } from "./ProjectWorktreePicker.tsx";
 
 /** The bar's two controls. A move names the one it came from, which takes focus in the bar that replaces this one. */
 export type NewSessionContextControl = ProjectWorktreeControl;

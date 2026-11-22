@@ -3,7 +3,7 @@
 import { useI18n } from "@/hooks/useI18n";
 import { useFontPreferences } from "@/hooks/useFontPreferences";
 import { FONT_FAMILY_MAX_LENGTH, FONT_WEIGHT_DEFAULT, FONT_WEIGHT_OPTIONS } from "@/lib/font-preferences";
-import { ConfigButton } from "./SettingsUi";
+import { ConfigButton } from "./SettingsUi.tsx";
 
 const FONT_FIELDS = [
   { kind: "ui", label: "settings.uiFontFamily", placeholder: "settings.uiFontPlaceholder", reset: "settings.resetUiFont", weightLabel: "settings.uiFontWeight" },
