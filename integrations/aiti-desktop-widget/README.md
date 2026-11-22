@@ -359,10 +359,10 @@ window property.
   reports **physical pixels** (600×300 requested → 1200×600 on a 2× display).
   ⚠ SSH is a *Background* session; run GUI tests by handing the whole script to the Aqua
   session: `osascript -e 'tell application "Terminal" to do script "bash xxx.sh"'`.
-  ⚠ If a **screen saver / lock screen** is active, `screencapture` fails outright
-  (`could not create image from display`) and WebView pages in the Aqua session may never
-  finish loading — the shell still prints `ready`, so a "blank window + no page callbacks"
-  almost always means the session is locked; unlock and re-run.
+  ⚠ If the **display is asleep** (not necessarily locked), `screencapture` fails with
+  `could not create image from display`, `WebKitWebProcess` still spawns but the page never
+  loads — the shell prints `ready` regardless. Wake it first (`caffeinate -u -t 2`), then
+  re-run; a "blank window + no page callbacks" on macOS is almost always this.
   ⚠ If a **screen saver** is running, `screencapture` shows only the wallpaper — windows
   (including Finder) are invisible. Disable with
   `defaults -currentHost write com.apple.screensaver idleTime -int 0; killall ScreenSaverEngine`.
