@@ -1,4 +1,4 @@
-import type { InteractionRequest, InteractionRequestInput, InteractionResult } from "./types.ts";
+import type { InteractionBrokerEvent, InteractionRequest, InteractionRequestInput, InteractionResult } from "./types.ts";
 
 export interface McpRequest {
   jsonrpc: "2.0";
@@ -93,6 +93,55 @@ export function createHttpInteractionTransport(options: HttpTransportOptions): I
       return true;
     },
   };
+}
+
+/**
+ * Subscribe to a daemon's SSE event stream (remote mode: the daemon, not this process,
+ * owns the broker). Returns a stop function; reconnects are the caller's business.
+ */
+export function watchInteractionEvents(options: HttpTransportOptions & {
+  onEvent: (event: InteractionBrokerEvent) => void;
+  onError?: (error: Error) => void;
+}): () => void {
+  const base = String(options.baseUrl || "").replace(/\/+$/, "");
+  const token = String(options.token || "");
+  const request = options.fetchImpl || fetch;
+  const controller = new AbortController();
+  const url = new URL(`${base}/interactions/events`);
+  if (token) url.searchParams.set("token", token);
+  void (async () => {
+    try {
+      const response = await request(url.toString(), {
+        headers: token ? { authorization: `Bearer ${token}` } : {},
+        signal: controller.signal,
+      });
+      if (!response.ok || !response.body) throw new Error(`event stream failed (${response.status})`);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) return;
+        buffer += decoder.decode(value, { stream: true });
+        for (let index = buffer.indexOf("\n\n"); index >= 0; index = buffer.indexOf("\n\n")) {
+          const frame = buffer.slice(0, index);
+          buffer = buffer.slice(index + 2);
+          for (const line of frame.split("\n")) {
+            if (!line.startsWith("data:")) continue;
+            try {
+              options.onEvent(JSON.parse(line.slice(5).trim()) as InteractionBrokerEvent);
+            } catch {
+              /* ignore malformed frames */
+            }
+          }
+        }
+      }
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      options.onError?.(error instanceof Error ? error : new Error(String(error)));
+    }
+  })();
+  return () => controller.abort();
 }
 
 export interface McpToolDefinition {
