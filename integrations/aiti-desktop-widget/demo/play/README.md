@@ -99,8 +99,9 @@ are distributed evenly across the audio duration.
   to remove the translucent card entirely, or `bg=<color>` for a solid card.
 - **One-line / marquee mode**: when the window is short (height ≤220px, or `layout=line`),
   the card switches to a single lyric line. Long lines scroll horizontally with the line
-  progress; a thin progress bar sits **on the lyric line** (current line progress). Only the
-  play/pause, lyric, time and mute controls remain.
+  progress; a **text-width progress fill covers the current lyric** from left to right
+  (karaoke-style, same width as the text — not a full-width bar). Only the play/pause, lyric,
+  time and mute controls remain.
 - Missing lyrics/audio show an inline status, not a crash.
 
 ## Bundled sample
