@@ -49,6 +49,14 @@ test("注册表含 codex + cursor 条目（2026-11-08 接入）", () => {
   assert.equal(cursor.agentKey, "cursor");
 });
 
+test("pi 不 claim 原生 pi 的 agentKey（ACP 无 steer，接管会丢 steer/fork）", () => {
+  const pi = ACP_AGENTS.find((a) => a.name === "pi");
+  assert.ok(pi, "pi 后端存在");
+  assert.equal(pi.bin, "pi-acp");
+  assert.notEqual(pi.agentKey, "pi", "agentKey 必须避开原生 aiti-pi-agent 的 pi");
+  assert.equal(pi.agentKey, "pi-acp");
+});
+
 test("注册表卫生：name 唯一，每条有 resolve 或 bin", () => {
   const names = ACP_AGENTS.map((a) => a.name);
   assert.equal(new Set(names).size, names.length, "name 不重复");
