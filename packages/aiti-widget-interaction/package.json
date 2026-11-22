@@ -35,5 +35,6 @@
   "bin": {
     "aiti-dialog": "bin/aiti-dialog.mjs",
     "widget-interaction-mcp": "bin/widget-interaction-mcp.mjs"
-  }
+  },
+  "contentHash": "1c7d738ca085f876"
 }
