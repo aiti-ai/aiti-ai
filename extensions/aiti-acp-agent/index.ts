@@ -13,6 +13,8 @@
  *     cursor       cursor-agent acp          agentKey "cursor"
  *     antigravity/grok/auggie/deepseek/droid/hermes/junie/kiro/mistral/
  *     omp/openclaw/pi/qoder — 命令详见下方 ACP_AGENTS 注释（agent-shell 同款）
+ *     pi is keyed "pi-acp" (not "pi"): the native aiti-pi-agent backend owns the
+ *     "pi" agent key — ACP has no steering channel and must not claim its sessions.
  *
  * 协议面（v1，2026-08 经 claude-code-acp 0.16 实测；2026-11-05 复测
  * @agentclientprotocol/claude-agent-acp 0.100.0 全握手通过——initialize
@@ -188,8 +190,13 @@ export const ACP_AGENTS: Array<{
   // OpenClaw：`openclaw acp`（npm openclaw；gateway 未起时握手/会话行为见 README）。
   { name: "openclaw", bin: "openclaw", args: ["acp"], agentKey: "openclaw" },
   // Pi（pi-mono coding-agent）：`pi-acp` 适配器（npm pi-acp——pi CLI 本体无 acp 子命令，
-  // 适配器包一层；native aiti-pi-agent 并存）。
-  { name: "pi", bin: "pi-acp", args: [], agentKey: "pi" },
+  // 适配器包一层；native aiti-pi-agent 并存）。agentKey deliberately NOT "pi": ACP
+  // has no steering channel (steer:false), so claiming the native pi agent's history
+  // made the same session open through this provider depending on handle-store timing
+  // — its steer/fork controls then disappeared (observed 2026-11-22). The native
+  // backend owns agentKey "pi"; this member stays selectable as an explicit "pi-acp"
+  // agent and keys its own composite ids ("pi-acp:<sid>").
+  { name: "pi", bin: "pi-acp", args: [], agentKey: "pi-acp" },
   // Qoder CLI（国际版）：`qoder --acp`（native aiti-qoder-agent 双区域并存；CN 版可经
   // 自定义后端面板自行加 qoder-cn 条目）。
   { name: "qoder", bin: "qoder", args: ["--acp"], agentKey: "qoder", installHint: "Qoder standalone CLI (qodercli)" },
