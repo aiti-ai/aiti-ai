@@ -65,3 +65,49 @@ test("--page appends base and token to a loopback page", async () => {
   assert.match(url.searchParams.get("base"), /^http:\/\/127\.0\.0\.1:\d+\/$/);
   assert.ok(url.searchParams.get("token"));
 });
+
+function daemon(args) {
+  const child = spawn(process.execPath, [BIN, "--daemon", "--no-window", "--port", "0", ...args], { stdio: ["ignore", "pipe", "pipe"] });
+  const exited = new Promise((resolveExit) => child.once("exit", (code) => resolveExit(code)));
+  const ready = new Promise((resolveReady, rejectReady) => {
+    let buffer = "";
+    const timer = setTimeout(() => rejectReady(new Error("daemon did not print its address")), 5000);
+    child.stdout.on("data", (data) => {
+      buffer += data;
+      const line = buffer.split("\n").find((entry) => entry.trim().startsWith("{"));
+      if (!line) return;
+      clearTimeout(timer);
+      resolveReady(JSON.parse(line));
+    });
+  });
+  return { child, ready, exited };
+}
+
+const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+
+test("daemon exits after the idle TTL", async () => {
+  const instance = daemon(["--ttl", "0.3"]);
+  await instance.ready;
+  const code = await instance.exited;
+  assert.equal(code, 0);
+});
+
+test("daemon restarts the idle TTL on activity", async () => {
+  const instance = daemon(["--ttl", "0.5"]);
+  const info = await instance.ready;
+  try {
+    await sleep(350);
+    const created = await fetch(`${info.baseUrl}interactions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${info.token}` },
+      body: JSON.stringify({ kind: "confirm", title: "Activity" }),
+    });
+    assert.equal(created.status, 200);
+    await sleep(350); // 700ms total: past the original deadline, inside the restarted one
+    assert.equal(instance.child.exitCode, null);
+    const code = await instance.exited; // 350ms + 500ms
+    assert.equal(code, 0);
+  } finally {
+    if (instance.child.exitCode === null) instance.child.kill("SIGKILL");
+  }
+});

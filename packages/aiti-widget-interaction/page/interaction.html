@@ -208,8 +208,23 @@ async function autoFit() {
   } catch { /* no page-control permission (plain browser) */ }
 }
 
+let lastRaisedId = "";
+
+// Best effort: ask the WM for focus when a new card appears (some WMs refuse focus
+// stealing; that must not break the interaction).
+async function raiseWindow() {
+  const tauri = window.__TAURI__;
+  const win = tauri && tauri.window && tauri.window.getCurrentWindow ? tauri.window.getCurrentWindow() : null;
+  if (!win || typeof win.setFocus !== "function") return;
+  try { await win.setFocus(); } catch { /* focus is advisory */ }
+}
+
 function render() {
   const request = activeId ? requestById(activeId) : nextRequest();
+  if (request && request.id !== lastRaisedId) {
+    lastRaisedId = request.id;
+    void raiseWindow();
+  }
   if (!request) {
     activeId = null;
     $("card").hidden = true;
@@ -254,6 +269,7 @@ function render() {
   renderActions(request);
   renderState(request);
   if (request.kind === "input") setTimeout(() => $("input").focus(), 30);
+  if (request.kind !== "input") setTimeout(() => ($("actions").querySelector("button") || $("card")).focus?.(), 30);
   void autoFit();
 }
 

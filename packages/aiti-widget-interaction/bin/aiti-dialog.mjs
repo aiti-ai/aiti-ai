@@ -188,6 +188,8 @@ async function runDaemon(values, flags) {
   };
   process.on("SIGINT", () => { void shutdown(0); });
   process.on("SIGTERM", () => { void shutdown(0); });
+  // Idle TTL: every broker event (new request, answer, update, resolve) restarts the timer.
+  broker.subscribe(() => arm());
   arm();
   // Keep the process alive even without handles (stdin may be /dev/null).
   setInterval(() => {}, 1 << 30);
