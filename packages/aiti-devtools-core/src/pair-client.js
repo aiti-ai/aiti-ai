@@ -22,16 +22,26 @@
   'use strict';
 
   var CHUNK = 1024 * 1024; // 上传分块 1MB（服务端上限 2MB；≤1MB 不触 nginx client_max_body_size 常见默认）
+  var localeHookInstalled = false;
+  var localeRerender = null;
   // i18n for kind/"self" labels: browser language binary split (zh prefix → Chinese) — consumed by
   // both createPair and mountWidget (renderDevices / detail overlay). Must live at the IIFE top
   // level: it was once misplaced inside createPair and the mountWidget side hit a ReferenceError
   // directly (device list rendering blew up on load).
-  var langZh = !/^en/i.test(String((global.navigator && global.navigator.language) || 'zh'));
-  var KIND_LABELS = langZh
-    ? { page: '网页', agent: '代理', pair: '设备' }
-    : { page: 'page', agent: 'agent', pair: 'device' };
-  var SELF_LABEL = langZh ? '自己' : 'self';
-    var T = langZh ? {
+  // Follow the pi-web locale first; stand-alone pages fall back to navigator.language.
+  // Read on every render so a live language switch is reflected without a widget remount.
+  function isZh() {
+    var loc = '';
+    try { loc = (global.localStorage && global.localStorage.getItem('pi-locale')) || ''; } catch (e) {}
+    if (!loc) loc = (global.navigator && global.navigator.language) || 'zh';
+    return !/^en/i.test(String(loc));
+  }
+  function pick(zh, en) { return isZh() ? zh : en; }
+  var KIND_LABELS = {
+    zh: { page: '网页', agent: '代理', pair: '设备' },
+    en: { page: 'page', agent: 'agent', pair: 'device' },
+  };
+  var T_ZH = {
       allPages: '全部页面', allAgents: '全部代理', allPairDevices: '全部设备',
       save: '保存', send: '发送', copy: '复制', copied: '✓ 已复制', close: '关闭',
       copyLink: '复制链接', copyFail: '复制失败——请手动输入', copiedId: '✓ ID 已复制',
@@ -59,7 +69,19 @@
       lan: '内网', wan: '公网', today: '今天 ', queued: ' 条（掉线暂存，上线即投）',
       emptyState: '消息零服务端留存：设备在线直投<br>目标离线不排队，消息将丢弃',
       identifyTargetOff: '该设备不在通知通道内', identifySent: '🔔 识别请求已发给 ',
-    } : {
+      notInList: '设备已不在列表', ip: '来源 IP', firstSeen: '首次接入', title: '标题', session: '会话',
+      automation: '自动化', cores: ' 核', dateDay: '日', federated: ' · 联邦桥',
+      offlineQueued: '（离线，消息将暂存）', notNotify: '该设备不在 aiti-user-notify 通知通道内',
+      identifyFound: '🔎 找到我了——就是这台设备', identifyFail: '识别发送失败：',
+      chatExport: '# pair 聊天导出', me: '我', mdItems: ' 条（Markdown）',
+      unreachable: '目标不可达', renameFailShort: '改名失败', bridgeOff: '桥不可达',
+      reconnecting: '重连中', connected: '已连接', notifyTitle: '设备互连',
+      devicesWord: '设备', allWord: '全部', onlineCount: ' 台在线', queuedLabel: '排队消息', selected: '已选中 ',
+      broadcastPage: '群发：全部浏览器页面', broadcastAgent: '群发：全部 agent 会话', broadcastPair: '群发：全部 pair 设备',
+      notReady: '页面身份未就绪（bridge-client 未连接）', sendNet: '发送失败（网络）', notifyFail: 'user_notify 失败',
+      initFail: 'init 失败', chunkFail: 'chunk 失败', completeFail: 'complete 失败', renameNet: '改名失败（网络）',
+    };
+  var T_EN = {
       allPages: 'All pages', allAgents: 'All agents', allPairDevices: 'All devices',
       save: 'Save', send: 'Send', copy: 'Copy', copied: '✓ Copied', close: 'Close',
       copyLink: 'Copy link', copyFail: 'Copy failed — enter manually', copiedId: '✓ ID copied',
@@ -87,9 +109,25 @@
       lan: 'LAN', wan: 'WAN', today: 'Today ', queued: ' queued (delivered on reconnect)',
       emptyState: 'Messages relay live with zero server retention.<br>Offline targets do not queue — messages are dropped',
       identifyTargetOff: 'Device is not on the notify channel', identifySent: '🔔 Identify request sent to ',
+      notInList: 'Device no longer in list', ip: 'Source IP', firstSeen: 'First seen', title: 'Title', session: 'Session',
+      automation: 'Automation', cores: ' cores', dateDay: '', federated: ' · federated bridge',
+      offlineQueued: ' (offline, message queued)', notNotify: 'Device is not on the aiti-user-notify channel',
+      identifyFound: '🔎 Found me — this device', identifyFail: 'Identify failed: ',
+      chatExport: '# pair chat export', me: 'me', mdItems: ' items (Markdown)',
+      unreachable: 'target unreachable', renameFailShort: 'Rename failed', bridgeOff: 'Bridge unreachable',
+      reconnecting: 'Reconnecting', connected: 'Connected', notifyTitle: 'Device pairing',
+      devicesWord: 'Devices', allWord: 'All', onlineCount: ' online', queuedLabel: 'Queued messages', selected: 'Selected ',
+      broadcastPage: 'Broadcast: all browser pages', broadcastAgent: 'Broadcast: all agents', broadcastPair: 'Broadcast: all pair devices',
+      notReady: 'Page identity not ready (bridge-client disconnected)', sendNet: 'Send failed (network)', notifyFail: 'user_notify failed',
+      initFail: 'init failed', chunkFail: 'chunk failed', completeFail: 'complete failed', renameNet: 'Rename failed (network)',
     };
+  // Dynamic getters keep every T.* reference in sync with the active locale.
+  var T = {};
+  Object.keys(T_ZH).forEach(function (k) {
+    Object.defineProperty(T, k, { get: function () { return isZh() ? T_ZH[k] : (T_EN[k] !== undefined ? T_EN[k] : T_ZH[k]); } });
+  });
 
-  function kindLabel(k) { return KIND_LABELS[k] || k; }
+  function kindLabel(k) { var tbl = isZh() ? KIND_LABELS.zh : KIND_LABELS.en; return tbl[k] || k; }
   function createPair(opts) {
     opts = opts || {};
     var base = String(opts.base || inferBase()).replace(/\/+$/, '');
@@ -215,11 +253,11 @@
     // ---- 发送 ----
     function sendText(to, text, opts) {
       var idt = identity();
-      if (!idt) return Promise.reject(new Error('页面身份未就绪（bridge-client 未连接）'));
+      if (!idt) return Promise.reject(new Error(T.notReady));
       // notify=true → the bridge also pops an interaction card on the target page (🔔 send); it must
       // ride the request body — dropping it made the bell button behave like a plain send.
       return http('/bridge/pair/message', { instanceId: idt.instanceId, secret: idt.secret || '', pageId: getPageId(), to: to || 'all', text: String(text || ''), notify: !!(opts && opts.notify) }).then(function (r) {
-        if (!r) throw new Error('发送失败（网络）');
+        if (!r) throw new Error(T.sendNet);
         if (r.ok) {
           var pid = getPageId() || idt.instanceId;
           pushHistory({ id: 'local_' + Date.now(), type: 'text', from: { id: pid, kind: 'page', name: myName || pid }, to: to || 'all', text: String(text), ts: Date.now() }, true);
@@ -246,17 +284,17 @@
       }).then(function (r) { return r.json().catch(function () { return null; }); }).then(function (j) {
         var payload = j && j.result && j.result.content && j.result.content[0] ? j.result.content[0].text : null;
         var parsed = null; try { parsed = payload ? JSON.parse(payload) : null; } catch (e) {}
-        if (!parsed || !parsed.notified) throw new Error(parsed && parsed.error ? parsed.error : 'user_notify 失败');
+        if (!parsed || !parsed.notified) throw new Error(parsed && parsed.error ? parsed.error : T.notifyFail);
         return parsed;
       });
     }
 
     function sendFile(to, file, onProgress) {
       var idt = identity();
-      if (!idt) return Promise.reject(new Error('页面身份未就绪'));
+      if (!idt) return Promise.reject(new Error(pick('页面身份未就绪', 'Page identity not ready')));
       var mime = file.type || 'application/octet-stream';
       return http('/bridge/pair/file/init', { instanceId: idt.instanceId, secret: idt.secret || '', pageId: getPageId(), to: to || 'all', name: file.name, size: file.size, mime: mime }).then(function (r) {
-        if (!r || !r.ok) throw new Error((r && r.error) || 'init 失败');
+        if (!r || !r.ok) throw new Error((r && r.error) || T.initFail);
         var fileId = r.fileId;
         var off = 0;
         function next() {
@@ -265,7 +303,7 @@
           return fetch(base + '/bridge/pair/file/chunk/' + fileId + '?n=' + Math.floor(off / CHUNK), { method: 'POST', body: slice })
             .then(function (resp) { return resp.json().catch(function () { return null; }); })
             .then(function (cr) {
-              if (!cr || cr.error) throw new Error((cr && cr.error) || 'chunk 失败');
+              if (!cr || cr.error) throw new Error((cr && cr.error) || T.chunkFail);
               off = cr.bytes;
               if (onProgress) { try { onProgress(off, file.size); } catch (e) {} }
               return next();
@@ -273,7 +311,7 @@
         }
         function complete() {
           return http('/bridge/pair/file/complete/' + fileId, {}).then(function (cr) {
-            if (!cr || !cr.ok) throw new Error((cr && cr.error) || 'complete 失败');
+            if (!cr || !cr.ok) throw new Error((cr && cr.error) || T.completeFail);
             pushHistory({ id: 'local_' + Date.now(), type: 'file', from: { id: idt.instanceId, kind: 'page', name: myName }, to: to || 'all', file: { fileId: fileId, name: file.name, size: file.size, mime: mime }, ts: Date.now() }, true);
             return { fileId: fileId };
           });
@@ -315,10 +353,10 @@
       var clean = String(name || '').trim().slice(0, 40);
       if (!clean) return Promise.resolve({ ok: false, error: 'bad name' });
       var idt = identity();
-      if (!idt) return Promise.reject(new Error('页面身份未就绪（bridge-client 未连接）'));
+      if (!idt) return Promise.reject(new Error(T.notReady));
       return http('/bridge/pair/name', { instanceId: idt.instanceId, secret: idt.secret || '', pageId: getPageId(), name: clean }).then(function (r) {
         if (r && r.ok) { myName = r.name || clean; saveName(); }
-        return r || { ok: false, error: '改名失败（网络）' };
+        return r || { ok: false, error: T.renameNet };
       });
     }
     function getName() { return myName; }
@@ -527,7 +565,7 @@
       '    <span class="apair-target" data-act="side"></span>',
       '    <span class="sp"></span>',
       '    <button class="apair-hbtn hact" data-act="refresh" title="' + T.refreshTip + '">🔄</button>',
-      '    <button class="apair-hbtn hact" data-act="flt" title="' + (langZh ? '显示离线设备' : 'Show offline devices') + '">在线</button>',
+      '    <button class="apair-hbtn hact" data-act="flt" title="' + T.showOfflineTip + '">' + T.online + '</button>',
       '    <button class="apair-hbtn" data-act="phone" title="' + T.phoneTip + '"' + (createPairPiWeb(opts) ? '' : ' style="display:none"') + '>📱</button>',
       '    <button class="apair-hbtn" data-act="export" title="' + T.exportTip + '">⬇</button>',
       '    <span class="apair-count"></span>',
@@ -595,9 +633,9 @@
       return base.slice(-4);
     }
     function targetName(id, rows) {
-      if (id === 'all') return langZh ? '全部页面' : 'All pages';
-      if (id === 'agents') return langZh ? '全部代理' : 'All agents';
-      if (id === 'pairs') return langZh ? '全部设备' : 'All devices';
+      if (id === 'all') return T.allPages;
+      if (id === 'agents') return T.allAgents;
+      if (id === 'pairs') return T.allPairDevices;
       var all = rows || p.getDevices();
       var d = all.filter(function (x) { return x.id === id; })[0];
       // Row ids for pi-web pages are pageIds whose base may differ from the bridge instanceId; after an id
@@ -643,6 +681,46 @@
       });
     }
 
+    /** Keyed row patcher for the two scrolling lists (devices / messages).
+     *  A full `container.innerHTML = html` rebuild replaced every node: animations replayed (the message
+     *  bubble `ap-in` fade made the whole chat flash on each new message), hover/selection/scroll were
+     *  reset by any single row change, and an idle refresh that produced a 1-character diff looked like a
+     *  flicker. Here each row is keyed: a row whose html is unchanged keeps its DOM node; only changed rows
+     *  are replaced and reordering/insertion is minimal (no-op when the order already matches). */
+    function patchKeyed(container, items) {
+      var cache = container.__rowCache || (container.__rowCache = new Map());
+      var keep = {};
+      var prevEl = null;
+      items.forEach(function (it) {
+        keep[it.key] = 1;
+        var entry = cache.get(it.key);
+        if (!entry || entry.html !== it.html) {
+          var wrap = document.createElement('div');
+          wrap.innerHTML = it.html;
+          var nextEl = wrap.firstElementChild;
+          if (entry && entry.el && entry.el.parentNode === container) container.replaceChild(nextEl, entry.el);
+          entry = { html: it.html, el: nextEl };
+          cache.set(it.key, entry);
+        }
+        var want = prevEl ? prevEl.nextSibling : container.firstChild;
+        if (entry.el !== want) container.insertBefore(entry.el, want); // insertBefore(el, null) = append
+        prevEl = entry.el;
+      });
+      var stale = [];
+      cache.forEach(function (entry, key) { if (!keep[key]) stale.push(key); });
+      stale.forEach(function (key) {
+        var entry = cache.get(key);
+        if (entry && entry.el.parentNode === container) { try { container.removeChild(entry.el); } catch (e) {} }
+        cache.delete(key);
+      });
+      // Defensive: drop foreign nodes (legacy innerHTML writes / direct appends) so cache and DOM cannot diverge
+      var owned = new Set();
+      cache.forEach(function (entry) { owned.add(entry.el); });
+      Array.prototype.slice.call(container.children).forEach(function (c) {
+        if (!owned.has(c)) { try { container.removeChild(c); } catch (e) {} }
+      });
+    }
+
     /** Device row / detail card icon: kind first (agent 🤖 / pair 📱); page by form factor (mobile/tablet → 📱, desktop → 🖥) */
     function pageIcon(d) {
       if (d.kind === 'agent') return '💻';
@@ -669,16 +747,17 @@
       // list everything (self included, marked); no self-exclusion
       var all = withOnlineHysteresis(p.getDevices());
       var online = all.filter(function (d) { return d.online !== false; });
-      var countText = online.length + ' / ' + all.length + ' 台在线';
+      var countText = online.length + ' / ' + all.length + T.onlineCount;
       if (countEl.textContent !== countText) countEl.textContent = countText; // skip DOM writes when unchanged (silent refresh)
       // Header filter-button state sync (the desktop header merges device-row controls: online/all
       // toggle text and highlight; no write when unchanged)
       var headFltBtn = el.querySelector('.apair-head [data-act=flt]');
       if (headFltBtn) {
-        var fltTxt = showOffline ? '全部' : '在线';
+        var fltTxt = showOffline ? T.allWord : T.online;
         if (headFltBtn.textContent !== fltTxt) headFltBtn.textContent = fltTxt;
-        headFltBtn.classList[showOffline ? 'add' : 'remove']('on');
-        headFltBtn.title = showOffline ? T.hideOfflineTip : T.showOfflineTip;
+        if (headFltBtn.classList.contains('on') !== showOffline) headFltBtn.classList[showOffline ? 'add' : 'remove']('on');
+        var fltTip = showOffline ? T.hideOfflineTip : T.showOfflineTip;
+        if (headFltBtn.title !== fltTip) headFltBtn.title = fltTip;
       }
       var mySession = currentSessionId();
       var myIid = p.getInstanceId();
@@ -705,20 +784,20 @@
         if (sa !== sb) return sb - sa;
         return String(a.name).localeCompare(String(b.name)) || String(a.id).localeCompare(String(b.id));
       });
-      var rows = ['<div class="apair-sidehd"><span class="t">设备</span>'
-        + '<button class="apair-flt" data-act="refresh" title="刷新设备列表">🔄</button>'
-        + '<button class="apair-flt' + (showOffline ? ' on' : '') + '" data-act="flt" title="' + (showOffline ? '隐藏离线设备' : '显示离线设备') + '">' + (showOffline ? '全部' : '在线') + '</button></div>'];
-            var groups = [
-        { id: 'all', ic: '📄', nm: langZh ? '全部页面' : 'All pages', tip: langZh ? '群发：全部浏览器页面' : 'Broadcast: all browser pages' },
-        { id: 'agents', ic: '🤖', nm: langZh ? '全部代理' : 'All agents', tip: langZh ? '群发：全部 agent 会话' : 'Broadcast: all agents' },
-        { id: 'pairs', ic: '📱', nm: langZh ? '全部设备' : 'All devices', tip: langZh ? '群发：全部 pair 设备' : 'Broadcast: all pair devices' },
+      var rows = [{ key: 'hd', html: '<div class="apair-sidehd"><span class="t">' + T.devicesWord + '</span>'
+        + '<button class="apair-flt" data-act="refresh" title="' + T.refreshTip + '">🔄</button>'
+        + '<button class="apair-flt' + (showOffline ? ' on' : '') + '" data-act="flt" title="' + (showOffline ? T.hideOfflineTip : T.showOfflineTip) + '">' + (showOffline ? T.allWord : T.online) + '</button></div>' }];
+      var groups = [
+        { id: 'all', ic: '📄', nm: T.allPages, tip: T.broadcastPage },
+        { id: 'agents', ic: '🤖', nm: T.allAgents, tip: T.broadcastAgent },
+        { id: 'pairs', ic: '📱', nm: T.allPairDevices, tip: T.broadcastPair },
       ];
       groups.forEach(function (g) {
-        rows.push('<div class="apair-dev' + (target === g.id ? ' sel' : '') + '" data-id="' + g.id + '" title="' + g.tip + '">'
-          + '<span class="ic">' + g.ic + '</span><span class="nm">' + g.nm + '</span></div>');
+        rows.push({ key: 'g:' + g.id, html: '<div class="apair-dev' + (target === g.id ? ' sel' : '') + '" data-id="' + g.id + '" title="' + g.tip + '">'
+          + '<span class="ic">' + g.ic + '</span><span class="nm">' + g.nm + '</span></div>' });
       });
       if (!list.length) {
-        rows.push('<div style="font-size:11px;color:var(--ap-dim);padding:8px 4px;text-align:center;line-height:1.6">暂无在线设备</div>');
+        rows.push({ key: 'empty', html: '<div style="font-size:11px;color:var(--ap-dim);padding:8px 4px;text-align:center;line-height:1.6">' + T.noDevices + '</div>' });
       } else {
         // 同名消歧：同默认名的设备（多标签/多来源/同 CLI 多会话）追加 id 尾标区分，
         // 否则列表看起来全是重复项（name 相同时 cwd 副标题窄屏又看不见）。
@@ -734,31 +813,25 @@
           var info = isSelf ? '' : (d.deviceLabel || d.cwd || '');
           var dup = !isSelf && nameCount[d.name] > 1;
           var nm = d.name + (dup ? ' <span style="color:var(--ap-dim);font-weight:400">·' + esc(idTail(d)) + '</span>' : '');
-          rows.push('<div class="apair-dev' + (d.id === target ? ' sel' : '') + (!on ? ' off' : '') + '" data-id="' + esc(d.id) + '" title="' + esc(d.name) + (info ? ' · ' + info : '') + (on ? '' : '（离线）') + '">'
+          rows.push({ key: 'd:' + d.id, html: '<div class="apair-dev' + (d.id === target ? ' sel' : '') + (!on ? ' off' : '') + '" data-id="' + esc(d.id) + '" title="' + esc(d.name) + (info ? ' · ' + info : '') + (on ? '' : T.offlineRow) + '">'
             + '<span class="ic">' + pageIcon(d) + '</span>'
             + '<span class="nmc"><span class="nm">' + nm + '</span>'
             + (info ? '<span class="nm-info">' + esc(info.slice(0, 40)) + '</span>' : '')
             + '</span>'
-            + '<button class="apair-devinfo" data-info="' + esc(d.id) + '" title="设备详情"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></button>'
+            + '<button class="apair-devinfo" data-info="' + esc(d.id) + '" title="' + T.detailTitle + '"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></button>'
             + '<span class="dot' + (!on ? ' off' : '') + '"></span>'
             // 自己 occupies the kind slot: "page" tells the operator nothing about their own device
-            + '<span class="kd' + (isSelf ? ' self' : '') + '">' + esc(isSelf ? SELF_LABEL : kindLabel(d.kind)) + '</span></div>');
+            + '<span class="kd' + (isSelf ? ' self' : '') + '">' + esc(isSelf ? pick('自己', 'self') : kindLabel(d.kind)) + '</span></div>' });
         });
       }
-      var html = rows.join('');
-      // Empty-state grace: if a device list was rendered within the last 30s, a momentary all-empty
-      // (bridge restart / fed relay flap etc.) keeps the last list instead of switching to the empty state
+      // Empty-state grace: if a device list is on screen, a momentary all-empty (bridge restart / fed
+      // relay flap etc.) keeps the last list instead of switching to the empty state
       if (!list.length) {
-        if (sideEl.__lastHtml && sideEl.__lastHtml.indexOf('apair-dev" data-id') !== -1 && Date.now() - (sideEl.__lastNonEmptyAt || 0) < 30000) return;
+        if (sideEl.querySelector('.apair-dev[data-id]') && Date.now() - (sideEl.__lastNonEmptyAt || 0) < 30000) return;
       } else {
         sideEl.__lastNonEmptyAt = Date.now();
       }
-      if (sideEl.__lastHtml !== html) { // silent refresh: zero DOM ops when content unchanged; scroll position preserved on change (selection is driven by target, unaffected by refresh)
-        var st = sideEl.scrollTop;
-        sideEl.innerHTML = html;
-        sideEl.scrollTop = st;
-        sideEl.__lastHtml = html;
-      }
+      patchKeyed(sideEl, rows); // keyed patch: unchanged rows keep their nodes (zero DOM work on an idle refresh, selection/scroll never reset)
       var ph = T.msgTo + targetName(target, all) + '…';
       if (ta.placeholder !== ph) ta.placeholder = ph;
       // Small screens show the current send target at the top (tap opens the device-list drawer; hidden on desktop)
@@ -790,11 +863,15 @@
 
     function renderMsgs() {
       var hist = p.getHistory();
+      // B7: autoscroll only when user is near the bottom (<=40px) — reading history is not yanked down
+      var nearBottom = msgsEl.scrollHeight - msgsEl.scrollTop - msgsEl.clientHeight < 40;
       if (!hist.length) {
-        msgsEl.innerHTML = '<div class="apair-empty"><div class="big">💬</div><div>' + (langZh ? '消息零服务端留存：设备在线直投<br>目标离线不排队，消息将丢弃' : 'Messages relay live with zero server retention.<br>Offline targets do not queue — messages are dropped') + '</div></div>';
+        patchKeyed(msgsEl, [{ key: 'empty', html: '<div class="apair-empty"><div class="big">💬</div><div>' + T.emptyState + '</div></div>' }]);
         return;
       }
-      msgsEl.innerHTML = hist.map(function (m) {
+      // Keyed rows (`m:<id>`): an arriving message appends one bubble instead of rewriting the list, so the
+      // existing bubbles never replay the ap-in animation (that replay was the panel's refresh flicker)
+      patchKeyed(msgsEl, hist.map(function (m, i) {
         var mine = !!m.mine;
         var time = fmtTime(m.ts);
         var inner;
@@ -809,11 +886,9 @@
         // `mine` short-circuit, so the bug only showed on the receiving side). emit() swallows listener
         // errors, so the failure was silent: uplink worked, the peer's chat pane stayed empty.
         var who = mine ? '' : '<div class="apair-who">' + esc((m.from && m.from.name) || '?') + ' → ' + esc(targetName(m.to)) + '</div>';
-        return '<div class="apair-msg' + (mine ? ' mine' : '') + '">' + who + inner + '<div class="apair-meta">' + time + '</div></div>';
-      }).join('');
-      // B7: autoscroll only when user is near the bottom (<=40px) — reading history is not yanked down
-      var nearBottom = msgsEl.scrollHeight - msgsEl.scrollTop - msgsEl.clientHeight < 40;
-      msgsEl.scrollTop = nearBottom ? msgsEl.scrollHeight : msgsEl.scrollTop;
+        return { key: m.id ? 'm:' + m.id : 'i:' + i, html: '<div class="apair-msg' + (mine ? ' mine' : '') + '">' + who + inner + '<div class="apair-meta">' + time + '</div></div>' };
+      }));
+      if (nearBottom) msgsEl.scrollTop = msgsEl.scrollHeight;
     }
     msgsEl.addEventListener('click', function (e) {
       var fb = e.target.closest && e.target.closest('.fb');
@@ -839,53 +914,53 @@
       var existing = document.getElementById('apair-dev-detail');
       if (existing) { existing.remove(); return; }
       var d = p.getDevices().filter(function (x) { return String(x.id) === String(id); })[0];
-      if (!d) { toast_('设备已不在列表'); return; }
+      if (!d) { toast_(T.notInList); return; }
       var rows = [];
       var grp = function (t) { rows.push('<div class="apair-dgrp">' + esc(t) + '</div>'); };
       var kv = function (k, v, badge) {
         if (v === null || v === undefined || v === '') return;
         rows.push('<div class="apair-drow"><span class="k">' + esc(k) + '</span><span class="v">' + esc(String(v)) + (badge ? '<span class="apair-dbadge">' + esc(badge) + '</span>' : '') + '</span></div>');
       };
-      var kindCn = langZh ? { page: '注入页面', agent: 'Agent 会话', pair: '配对设备' } : { page: 'Injected page', agent: 'Agent session', pair: 'Paired device' };
+      var kindCn = pick({ page: '注入页面', agent: 'Agent 会话', pair: '配对设备' }, { page: 'Injected page', agent: 'Agent session', pair: 'Paired device' });
       var on = d.online !== false;
       var ipPrivate = /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1|fc|fd)/;
-      grp('连接');
-      rows.push('<div class="apair-drow"><span class="k">当前状态</span><span class="v"><span style="color:' + (on ? '#10b981' : '#94a3b8') + '">●</span> ' + (on ? '在线' : ('离线' + (d.offlineAt ? '（' + fmtFull(d.offlineAt) + ' 起）' : ''))) + '</span></div>');
-      if (d.lastSeen) kv('最后活跃', fmtFull(d.lastSeen));
-      if (d.ip) kv('来源 IP', d.ip, ipPrivate.test(d.ip) ? '内网' : '公网');
-      if (d.regAt) kv('首次接入', fmtFull(d.regAt));
-      if (d.pending != null) kv('排队消息', d.pending + ' 条（掉线暂存，上线即投）');
+      grp(T.conn);
+      rows.push('<div class="apair-drow"><span class="k">' + T.status + '</span><span class="v"><span style="color:' + (on ? '#10b981' : '#94a3b8') + '">●</span> ' + (on ? T.onlineS : (T.offlineS + (d.offlineAt ? T.sinceAgoP + fmtFull(d.offlineAt) + T.sinceAgoS : ''))) + '</span></div>');
+      if (d.lastSeen) kv(T.lastActive, fmtFull(d.lastSeen));
+      if (d.ip) kv(T.ip, d.ip, ipPrivate.test(d.ip) ? T.lan : T.wan);
+      if (d.regAt) kv(T.firstSeen, fmtFull(d.regAt));
+      if (d.pending != null) kv(T.queuedLabel, d.pending + T.queued);
       var dev = d.device && typeof d.device === 'object' ? d.device : null;
       if (dev && ((dev.browser && dev.browser !== '?') || (dev.os && dev.os !== '?'))) {
-        grp('系统与浏览器');
-        kv('浏览器', dev.browser && dev.browser !== '?' ? dev.browser + (dev.version ? ' ' + dev.version : '') : null);
-        kv('操作系统', dev.os && dev.os !== '?' ? dev.os + (dev.osVer ? ' ' + dev.osVer : '') : null);
-        kv('设备形态', dev.deviceType || null);
-        if (dev.webdriver) kv('自动化', 'webdriver=true（自动化控制中）');
+        grp(T.sysBrowser);
+        kv(T.browser, dev.browser && dev.browser !== '?' ? dev.browser + (dev.version ? ' ' + dev.version : '') : null);
+        kv(T.os, dev.os && dev.os !== '?' ? dev.os + (dev.osVer ? ' ' + dev.osVer : '') : null);
+        kv(T.deviceType, dev.deviceType || null);
+        if (dev.webdriver) kv(T.automation, T.webdriver);
       }
       if (dev && (dev.screen || dev.cores || dev.mem != null)) {
-        grp('硬件');
-        if (dev.screen) kv('屏幕', String(dev.screen) + (dev.dpr ? ' @' + dev.dpr + 'x' : ''));
-        if (dev.viewport) kv('视口', String(dev.viewport));
-        if (dev.cores || dev.mem) kv('CPU / 内存', (dev.cores ? dev.cores + ' 核' : '') + (dev.cores && dev.mem ? ' / ' : '') + (dev.mem ? dev.mem + 'GB' : ''));
-        if (dev.touch) kv('触摸点', String(dev.touch));
-        kv('语言 / 时区', dev.lang && dev.tz ? dev.lang + ' · ' + dev.tz : (dev.lang || dev.tz || null));
+        grp(T.hw);
+        if (dev.screen) kv(T.screen, String(dev.screen) + (dev.dpr ? ' @' + dev.dpr + 'x' : ''));
+        if (dev.viewport) kv(T.viewport, String(dev.viewport));
+        if (dev.cores || dev.mem) kv(T.cpu, (dev.cores ? dev.cores + T.cores : '') + (dev.cores && dev.mem ? ' / ' : '') + (dev.mem ? dev.mem + 'GB' : ''));
+        if (dev.touch) kv(T.touch, String(dev.touch));
+        kv(T.langTz, dev.lang && dev.tz ? dev.lang + ' · ' + dev.tz : (dev.lang || dev.tz || null));
       }
       kv('UA', d.ua || null);
       if (d.url || d.title) {
-        grp('页面');
+        grp(T.pageSec);
         kv('URL', d.url || null);
-        kv('标题', d.title || null);
+        kv(T.title, d.title || null);
       }
       if (d.cwd || d.source || d.transportKind || d.sessionId) {
-        grp('Agent');
-        kv('会话', d.sessionId ? String(d.sessionId).slice(0, 18) + (String(d.sessionId).length > 18 ? '…' : '') : null);
-        kv('工作目录', d.cwd || null);
-        kv('接入方式', d.source || null);
-        kv('传输通道', d.transportKind || null);
+        grp(T.agentSec);
+        kv(T.session, d.sessionId ? String(d.sessionId).slice(0, 18) + (String(d.sessionId).length > 18 ? '…' : '') : null);
+        kv(T.cwd, d.cwd || null);
+        kv(T.src, d.source || null);
+        kv(T.transport, d.transportKind || null);
       }
-      grp('标识');
-      rows.push('<div class="apair-drow"><span class="k">设备 ID</span><span class="v"><span style="word-break:break-all">' + esc(String(d.id)) + '</span> <button class="apair-flt" data-act="id-copy" style="border-color:var(--ap-line)">' + T.copyRow + '</button></span></div>');
+      grp(T.ident);
+      rows.push('<div class="apair-drow"><span class="k">' + T.deviceId + '</span><span class="v"><span style="word-break:break-all">' + esc(String(d.id)) + '</span> <button class="apair-flt" data-act="id-copy" style="border-color:var(--ap-line)">' + T.copyRow + '</button></span></div>');
       // No skin/backdrop: the card is the overlay itself (fixed top-right default, drag freely by
       // the header) — never blocks interaction with the page underneath
       var cardW = Math.min(460, Math.round(global.innerWidth * 0.92));
@@ -899,7 +974,7 @@
     panel.style.cssText = 'position:fixed;left:' + Math.max(12, global.innerWidth - cardW - 28) + 'px;top:84px;background:var(--ap-panel,#fff);color:var(--ap-fg,#111);border:1px solid var(--ap-line);border-radius:12px;padding:14px 16px;width:' + cardW + 'px;height:' + cardH + 'px;display:flex;flex-direction:column;gap:6px;box-shadow:0 12px 40px rgba(0,0,0,.28);overflow:hidden'
       panel.innerHTML = '<div style="display:flex;align-items:center;gap:8px;cursor:grab;user-select:none"><span style="font-size:16px">' + pageIcon(d) + '</span>'
         + '<span style="font-size:13px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(d.name) + '</span>'
-        + '<span style="font-size:10px;color:var(--ap-dim);flex-shrink:0">' + esc(kindCn[d.kind] || d.kind) + (d.fed ? ' · 联邦桥' : '') + '</span>'
+        + '<span style="font-size:10px;color:var(--ap-dim);flex-shrink:0">' + esc(kindCn[d.kind] || d.kind) + (d.fed ? T.federated : '') + '</span>'
         + '<span style="width:8px;height:8px;border-radius:50%;background:' + (on ? '#10b981' : '#cbd5e1') + ';flex-shrink:0"></span>'
         + '<button class="apair-btn" data-act="detail-close" style="padding:2px 9px;font-size:12px">✕</button></div>'
         + '<div class="apair-dl">' + rows.join('') + '</div>'
@@ -915,7 +990,7 @@
           renderDevices();
           panel.remove();
           if (mobileMq && mobileMq.matches) root.classList.remove('side-open');
-          toast_('已选中 ' + d.name + (on ? '' : '（离线，消息将暂存）'));
+          toast_(T.selected + d.name + (on ? '' : T.offlineQueued));
         }
         if (act === 'detail-identify') {
           var dev = d.device || {};
@@ -930,16 +1005,16 @@
           // identify = a user_notify command request (aiti-user-notify channel, card auto-closes after
           // 50s), content = the device's own info; only page devices (injected pages / AI windows) are
           // covered by this channel — if the target is not covered (e.g. a pair phone), show a hint instead
-          if (d.kind !== 'page') { toast_('该设备不在 aiti-user-notify 通知通道内'); }
+          if (d.kind !== 'page') { toast_(T.notNotify); }
           else {
-            p.callUserNotify(d.id, '🔎 找到我了——就是这台设备', (d.name || '') + '  ' + summary, 50000)
-              .then(function () { panel.remove(); toast_('🔔 识别请求已发给 ' + d.name); })
-              .catch(function (e) { toast_('识别发送失败：' + ((e && e.message) || e)); });
+            p.callUserNotify(d.id, T.identifyFound, (d.name || '') + '  ' + summary, 50000)
+              .then(function () { panel.remove(); toast_(T.identifySent + d.name); })
+              .catch(function (e) { toast_(T.identifyFail + ((e && e.message) || e)); });
           }
         }
         if (act === 'id-copy') {
           var txt = String(d.id);
-          try { navigator.clipboard.writeText(txt).then(function () { toast_('✓ ID 已复制'); }, function () { toast_(txt); }); } catch (err) { toast_(txt); }
+          try { navigator.clipboard.writeText(txt).then(function () { toast_(T.idCopied); }, function () { toast_(txt); }); } catch (err) { toast_(txt); }
         }
       });
     }
@@ -949,7 +1024,7 @@
       var d = new Date(n);
       var sameDay = new Date().toDateString() === d.toDateString();
       var hm = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
-      return sameDay ? '今天 ' + hm : (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + hm;
+      return sameDay ? T.today + hm : (d.getMonth() + 1 + (isZh() ? '月' : '/')) + d.getDate() + T.dateDay + ' ' + hm;
     }
 
     /** 📱 扫码面板：二维码 + URL + 复制（QR 内容 = 工作台深链 / pair 入口；大屏 QR 放大） */
@@ -974,11 +1049,11 @@
       panel.id = 'apair-qr-panel';
       panel.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;padding:16px';
       panel.innerHTML = '<div style="background:var(--ap-panel,#fff);border-radius:12px;padding:18px;display:flex;flex-direction:column;align-items:center;gap:10px;max-width:92vw">'
-        + '<div style="font-size:13px;font-weight:600;color:var(--ap-fg,#111)">📱 手机接入（降级：无出码服务）</div>'
+        + '<div style="font-size:13px;font-weight:600;color:var(--ap-fg,#111)">' + T.qrFallbackTitle + '</div>'
         + '<div style="font-size:11px;color:var(--ap-muted,#666);word-break:break-all;text-align:center;max-width:' + (big ? '420px' : '260px') + '">' + esc(url) + '</div>'
-        + '<div style="font-size:10px;color:var(--ap-dim)">手机打开此链接即弹出设备互连面板（?pair=1 深链）</div>'
-        + '<button class="apair-btn primary" data-act="qr-copy">复制链接</button>'
-        + '<button class="apair-btn" data-act="qr-close">关闭</button>'
+        + '<div style="font-size:10px;color:var(--ap-dim)">' + T.qrFallbackHint + '</div>'
+        + '<button class="apair-btn primary" data-act="qr-copy">' + T.copyLink + '</button>'
+        + '<button class="apair-btn" data-act="qr-close">' + T.close + '</button>'
         + '</div>';
       document.body.appendChild(panel);
       panel.addEventListener('click', function (e) {
@@ -986,7 +1061,7 @@
         var act = e.target.getAttribute && e.target.getAttribute('data-act');
         if (act === 'qr-close') panel.remove();
         if (act === 'qr-copy') {
-          try { navigator.clipboard.writeText(url).then(function () { toast_('✓ 已复制'); }, function () { toast_('复制失败——请手动输入'); }); } catch (err) { toast_(url); }
+          try { navigator.clipboard.writeText(url).then(function () { toast_(T.copied); }, function () { toast_(T.copyFail); }); } catch (err) { toast_(url); }
         }
       });
     }
@@ -994,10 +1069,10 @@
     function exportMd() {
       var hist = p.getHistory();
       if (!hist.length) { toast_(T.exportNone); return; }
-      var lines = ['# pair 聊天导出', '', '- 导出时间：' + new Date().toLocaleString(), '- 本端：' + (p.getName() || '?'), ''];
+      var lines = [T.chatExport, '', T.exportTime + new Date().toLocaleString(), T.exportSelf + (p.getName() || '?'), ''];
       hist.forEach(function (m) {
         var time = new Date(m.ts || Date.now()).toLocaleString();
-        var who = m.mine ? '我' : ((m.from && m.from.name) || '?');
+        var who = m.mine ? T.me : ((m.from && m.from.name) || '?');
         var to = targetName(m.to);
         if (m.type === 'file' && m.file) lines.push('- **[' + time + '] ' + who + ' → ' + to + '** · 📄 ' + m.file.name + '（' + fmtSize(m.file.size) + '）');
         else lines.push('- **[' + time + '] ' + who + ' → ' + to + '**：' + String(m.text || '').replace(/\n/g, '\n  '));
@@ -1008,7 +1083,7 @@
       a.download = 'pair-chat-' + new Date().toISOString().slice(0, 10) + '.md';
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(function () { try { URL.revokeObjectURL(a.href); } catch (e) {} }, 3000);
-      toast_(T.exportDone + hist.length + ' 条（Markdown）');
+      toast_(T.exportDone + hist.length + T.mdItems);
     }
 
     function doSend() {
@@ -1018,14 +1093,14 @@
       // 防御：QR 占位 id 混进 target 时回退群发（正常流已在点击侧排除）
       var to = target === '__qr__' ? 'all' : target;
       p.sendText(to, text).then(function (r) {
-        if (!r) { progEl.classList.add('show'); progT.textContent = '⚠ 发送失败（网络）'; progBar.style.width = '0%'; return; }
+        if (!r) { progEl.classList.add('show'); progT.textContent = T.sendFailNet; progBar.style.width = '0%'; return; }
         if (r.candidates && r.candidates.length) { // B1: ambiguous target -> ask to pick (message rejected)
           progEl.classList.add('show');
-          progT.textContent = '⚠ 目标匹配多个：' + r.candidates.map(function (c) { return c.name || c.id; }).join('、');
+          progT.textContent = T.multiMatch + r.candidates.map(function (c) { return c.name || c.id; }).join('、');
           progBar.style.width = '0%';
         } else if (!r.ok) { // B1: failures must be visible (previously silent — input cleared with zero feedback)
           progEl.classList.add('show');
-          progT.textContent = '⚠ 发送失败：' + (r.error || '目标不可达') + '（离线设备不排队，消息已丢弃）';
+          progT.textContent = T.sendFail + (r.error || T.unreachable) + T.offlineHint;
           progBar.style.width = '0%';
         }
       }).catch(function (e) { progEl.classList.add('show'); progT.textContent = '⚠ ' + (e.message || e); });
@@ -1034,14 +1109,14 @@
      *  bubble) + page devices additionally get a user_notify popup card */
     function doNotifySend() {
       var text = ta.value.trim();
-      if (!text) { toast_('先输入要弹窗的消息'); return; }
+      if (!text) { toast_(T.bellPrompt); return; }
       var to = target === '__qr__' ? 'all' : target;
       // 🔔: sendText({notify:true}) → bridge-side interaction notify card (popup on the receiving
       // page) + pair_* dispatch into both sides' chat streams
       p.sendText(to, text, { notify: true }).then(function () {
         ta.value = '';
         renderMsgs();
-        toast_('🔔 已弹窗发送 → ' + targetName(to));
+        toast_(T.bellSent + targetName(to));
       }).catch(function (e) { toast_('⚠ ' + ((e && e.message) || e)); });
     }
     el.querySelector('[data-act=send]').addEventListener('click', doSend);
@@ -1083,7 +1158,7 @@
       if (e.key === 'Enter') {
         p.setName(nameInput.value.trim()).then(function (r) {
           progEl.classList.add('show');
-          progT.textContent = r && r.ok ? '✓ 设备名已更新（全桥可见）' : '⚠ ' + ((r && r.error) || '改名失败');
+          progT.textContent = r && r.ok ? T.nameSaved : '⚠ ' + ((r && r.error) || T.renameFailShort);
           progBar.style.width = '0%';
           setTimeout(function () { progEl.classList.remove('show'); }, 1200);
           if (r && r.ok) { nameInput.value = r.name || nameInput.value.trim(); renderDevices(); }
@@ -1102,7 +1177,7 @@
           global.Notification.requestPermission();
         }
         if (global.Notification && global.Notification.permission === 'granted') {
-          var n = new global.Notification((m.from && m.from.name) || '设备互连', {
+          var n = new global.Notification((m.from && m.from.name) || T.notifyTitle, {
             body: m.type === 'file' ? '📎 ' + (m.file && m.file.name || '') : String(m.text || '').slice(0, 100),
             tag: 'apair-' + m.id,
           });
@@ -1114,14 +1189,21 @@
     p.on('devices', renderDevices);
     p.on('history', renderMsgs);
     p.on('status', function (s) {
-      dotEl.className = 'apair-dot' + (s.state === 'connected' ? '' : (s.state === 'reconnecting' ? ' mid' : ' off'));
-      dotEl.title = s.state === 'connected' ? '已连接' : (s.state === 'off' ? '桥不可达' : '重连中');
+      var cls = 'apair-dot' + (s.state === 'connected' ? '' : (s.state === 'reconnecting' ? ' mid' : ' off'));
+      var tip = s.state === 'connected' ? T.connected : (s.state === 'off' ? T.bridgeOff : T.reconnecting);
+      if (dotEl.className !== cls) dotEl.className = cls; // no DOM write when unchanged (silent refresh)
+      if (dotEl.title !== tip) dotEl.title = tip;
     });
 
     if (opts.name) nameInput.value = opts.name;
     p.on('devices', function () { if (!nameInput.value) nameInput.value = p.getName() || ''; });
     renderDevices();
     renderMsgs(); // 初始空态（history 事件仅在首条消息时触发）
+    localeRerender = function () { if (!root.isConnected) return; renderDevices(); renderMsgs(); };
+    if (!localeHookInstalled && global.addEventListener) {
+      localeHookInstalled = true;
+      global.addEventListener('pi-web:locale-changed', function () { if (localeRerender) localeRerender(); });
+    }
     p.start().then(function () {
       restoreTargetSelection(); // restore the last selection once the page identity is ready; the subsequent devices event re-renders with it
       renderDevices();
