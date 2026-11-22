@@ -319,8 +319,10 @@
   const bare = first("bare") === "1";
   const autoplay = first("autoplay") !== "0";
   const loop = first("loop") === "1";
-  const volumeParam = Number(first("volume"));
-  const volume = Number.isFinite(volumeParam) ? Math.max(0, Math.min(1, volumeParam)) : 1;
+  // `Number("")` is 0: keep 1.0 when the param is absent/invalid, never silence by default.
+  const volumeRaw = first("volume");
+  const volumeNumber = volumeRaw === "" ? NaN : Number(volumeRaw);
+  const volume = Number.isFinite(volumeNumber) ? Math.max(0, Math.min(1, volumeNumber)) : 1;
 
   document.body.dataset.theme = theme;
   document.body.dataset.bg = bg === "none" || bg === "transparent" ? bg : "custom";
@@ -597,6 +599,13 @@
     if (!raf) raf = requestAnimationFrame(frame);
   }
 
+  function applyVolume() {
+    // WebKitGTK/GStreamer can restore a stale stream volume (including 0) when the
+    // media pipeline is created. Nudge the property so the element volume wins.
+    audio.volume = Math.max(0.01, volume - 0.01);
+    requestAnimationFrame(() => { audio.volume = volume; });
+  }
+
   function updatePlayIcon() {
     playBtn.textContent = audio.paused ? "▶" : "❚❚";
     playBtn.setAttribute("aria-label", audio.paused ? "Play" : "Pause");
@@ -673,25 +682,38 @@
   function attemptAutoplay() {
     if (!audio.paused || autoplayPending) return;
     autoplayPending = true;
-    // Browsers only allow audible autoplay after a gesture. Start muted (always
-    // allowed), then unmute immediately; if the browser keeps it silent, the
-    // speaker button is the explicit recovery path.
+    // Try audible autoplay first (desktop webviews normally allow it). If a strict
+    // browser policy rejects it, fall back to muted playback so the lyrics still
+    // advance; the first gesture unmutes, and the speaker button is explicit.
     const wasMuted = audio.muted;
-    audio.muted = true;
-    updateMuteIcons();
     const promise = audio.play();
-    if (!promise) return;
+    if (!promise) {
+      autoplayPending = false;
+      return;
+    }
     promise.then(() => {
       autoplayPending = false;
-      if (!wasMuted) {
-        audio.muted = false;
+    }).catch(async () => {
+      try {
+        audio.muted = true;
         updateMuteIcons();
+        await audio.play();
+        autoplayPending = false;
+        status("Autoplay muted — tap the speaker to unmute");
+        const unmuteOnce = () => {
+          if (audio.muted) {
+            audio.muted = false;
+            updateMuteIcons();
+          }
+          document.removeEventListener("pointerdown", unmuteOnce, true);
+        };
+        document.addEventListener("pointerdown", unmuteOnce, true);
+      } catch {
+        autoplayPending = false;
+        audio.muted = wasMuted;
+        updateMuteIcons();
+        status("Press play to start");
       }
-    }).catch(() => {
-      autoplayPending = false;
-      audio.muted = wasMuted;
-      updateMuteIcons();
-      status("Press play to start");
     });
   }
 
@@ -704,13 +726,14 @@
 
   audio.addEventListener("loadedmetadata", () => {
     updateProgress();
+    applyVolume();
     if (autoplay && audio.paused) attemptAutoplay();
     if (distributed) {
       lines = distributeLyrics(lines.map((line) => line.text).join("\n"));
       renderLyrics();
     }
   });
-  audio.addEventListener("play", () => { updatePlayIcon(); startFrame(); });
+  audio.addEventListener("play", () => { updatePlayIcon(); startFrame(); applyVolume(); });
   audio.addEventListener("pause", () => { updatePlayIcon(); updateProgress(); });
   audio.addEventListener("timeupdate", updateProgress);
   audio.addEventListener("ended", () => { updatePlayIcon(); updateProgress(); });

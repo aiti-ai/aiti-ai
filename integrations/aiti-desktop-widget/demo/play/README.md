@@ -103,6 +103,10 @@ are distributed evenly across the audio duration.
   (karaoke-style, same width as the text — not a full-width bar). Only the play/pause, lyric,
   time and mute controls remain.
 - Missing lyrics/audio show an inline status, not a crash.
+- **No sound?** Check the speaker button (mute), pass `volume=1` explicitly, and check the
+  OS output device. Linux shells launched from SSH/agents fill the PipeWire/Pulse env from
+  `/run/user/<uid>` automatically; if the default sink is a disconnected Bluetooth device,
+  switch the system sink.
 
 ## Bundled sample
 
