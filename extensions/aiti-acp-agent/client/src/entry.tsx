@@ -12,7 +12,7 @@
  * 构建：node tools/build-client.mjs   部署：tools/deploy.mjs（先构建再整目录同步）
  */
 
-import { __setCtx } from "./host-shim";
+import { __setCtx, t } from "./host-shim";
 import { ACP_KEY, setDialogOpen, acpDefaultZone } from "./common";
 import { usePresent, isSidebarDockState, seedDockDefault, declareDockZones } from "../../../_shared/ext-float-dock-lite";
 import { dockIconDecl } from "../../../_shared/dock-icons";
@@ -36,35 +36,41 @@ export function AcpDockLeftSlot() {
   return lazyExtView({ active: isSidebarDockState(st), load: acpManageRef, pick: "AcpDockLeft" });
 }
 
+let localeListener: (() => void) | null = null;
+
 // 新会话欢迎页 Backend 下拉的扩展选项（不是后端条目：选中即打开管理弹窗，
 // 下拉值由宿主复位）——不再在 Backend 选择器外渲染按钮。
 export default function register(ctx: Record<string, unknown>) {
   // 重要：必须在任何 JSX 组件渲染前调用（host-shim 模块级持 ctx）
   __setCtx(ctx);
 
-  // 所有入口恒注册；工具条条目的 feature 字段交给宿主统一门控（关 → 不渲染），
-  // extman「打开」可经虚空创建触发
-  // 懒加载 v2 M3批②：声明式条目（无 render）；feature 门控仍在条目级（宿主统一过滤）
-  ctx.registerItems?.("toolbar", [{
-    id: "aiti-acp-manage-open",
-    // meta.open：extman「打开」的直开钩子（tryDirectOpen 只认 meta.open 不认 onClick）；
-    // 本条目 feature 默认关 → DOM 无按钮、声明式无 render，虚空创建也走不通 → 必须带 open
-    meta: { label: "ACP", title: "Manage ACP backend agents", icon: "icons/plug.svg", onClick: () => setDialogOpen(true), open: () => setDialogOpen(true) },
-    feature: "behavior.showAcpManager",
-  }]);
-  ctx.registerItems?.("newSessionBackendOptions", [{
-    id: "acp-manage-option",
-    meta: { label: "Manage ACP Agents…", title: "Manage ACP backend agents", onClick: () => setDialogOpen(true) },
-  }]);
-  ctx.registerItems?.("dialogs", [{
-    id: "acp-manage-dialog",
-    render: AcpDialogSlot,
-    meta: {
-      label: "ACP Backend Agents",
-      // 弹窗本体由展示状态机门控（非点击触发），extman「打开」需此钩子直开
-      open: () => setDialogOpen(true),
-    },
-  }]);
+  // Declarative item labels are captured at registration time; re-register on the
+  // host locale-change event so the dropdown option follows the active language.
+  const registerEntries = () => {
+    ctx.registerItems?.("toolbar", [{
+      id: "aiti-acp-manage-open",
+      meta: { label: "ACP", title: t("acp.manage.title"), icon: "icons/plug.svg", onClick: () => setDialogOpen(true), open: () => setDialogOpen(true) },
+      feature: "behavior.showAcpManager",
+    }]);
+    ctx.registerItems?.("newSessionBackendOptions", [{
+      id: "acp-manage-option",
+      meta: { label: t("acp.manage.option.label"), title: t("acp.manage.title"), onClick: () => setDialogOpen(true) },
+    }]);
+    ctx.registerItems?.("dialogs", [{
+      id: "acp-manage-dialog",
+      render: AcpDialogSlot,
+      meta: {
+        label: t("acp.manage.dialog.label"),
+        open: () => setDialogOpen(true),
+      },
+    }]);
+  };
+  registerEntries();
+  if (typeof window !== "undefined") {
+    if (localeListener) window.removeEventListener("pi-web:locale-changed", localeListener);
+    localeListener = registerEntries;
+    window.addEventListener("pi-web:locale-changed", registerEntries);
+  }
   // aiti-float dock v3（P2 批）：后端列表默认左栏（状态灯列表窄条）
   // zone 规范值 sidebar:<key>（v4；旧 sidebar-explorer 兼容读）
   seedDockDefault(ACP_KEY, acpDefaultZone());

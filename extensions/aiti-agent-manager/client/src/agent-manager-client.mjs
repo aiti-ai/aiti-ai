@@ -62,6 +62,21 @@ export function registerAgentManagerClient(ctx, config) {
   const jsonInit = (body) => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   // i18n: host ctx.t (index.ts ui.i18n entries, zh/en tables); falls back to the bare key on old hosts without it
   const t = (k, p2) => { const fn = ctx.t; return typeof fn === "function" ? fn(k, p2) : k; };
+  // Agent descriptors are provided by other extensions: their display fields may be
+  // plain strings or { en, zh } pairs. Resolve with the live host locale.
+  const locale = () => {
+    try {
+      const raw = typeof ctx.getLocale === "function" ? ctx.getLocale() : globalThis.localStorage?.getItem("pi-locale");
+      return String(raw || "");
+    } catch { return ""; }
+  };
+  const locText = (v) => {
+    if (v && typeof v === "object") {
+      const zh = locale().startsWith("zh");
+      return String((zh ? v.zh ?? v.en : v.en ?? v.zh) ?? "");
+    }
+    return typeof v === "string" ? v : "";
+  };
 
   ctx.registerItems("toolbar", [{
     id: `${config.extId}-panel`,
@@ -347,7 +362,7 @@ export function registerAgentManagerClient(ctx, config) {
         "div",
         { key, className: "am-row" },
         h("div", { className: "am-row-head" },
-          h("span", { className: "am-name" }, a.label),
+          h("span", { className: "am-name" }, locText(a.label)),
           badge(a.authState, a.flowState),
           a.authSource === "fs" && h("span", { className: "am-flag" }, t("am.flagProbe")),
           h("span", { className: "am-spacer" }),
@@ -355,7 +370,7 @@ export function registerAgentManagerClient(ctx, config) {
         ),
         h("div", { className: "am-meta" },
           t("am.modes", { modes: (a.modes ?? []).map((m) => ({ url: t("am.mode.url"), paste: t("am.mode.paste"), apikey: t("am.mode.apikey"), tui: t("am.mode.tui") }[m] ?? m)).join(" / ") })
-          + (a.dependencyHint ? t("am.dependency", { hint: a.dependencyHint }) : "")),
+          + (a.dependencyHint ? t("am.dependency", { hint: locText(a.dependencyHint) }) : "")),
         // 当前登录：展示账号/过期 + 保存入口紧贴（新增档从这里存，账号档卡片只列已存的）
         (ext?.account?.user || hasContent) && h("div", { className: "am-acct-line " + (ext?.account?.expired ? "is-warn" : "is-ok") },
           ext?.account?.user
