@@ -65,14 +65,21 @@ def main() -> None:
             mp3 = tmp / f"line{i}.mp3"
             wav = tmp / f"line{i}.wav"
             run(["edge-tts", "--voice", VOICE, "--text", text, "--write-media", str(mp3), "--no-progress"])
-            run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(mp3), "-ar", "44100", "-ac", "2", str(wav)])
+            run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(mp3),
+                 "-af", "silenceremove=start_periods=1:start_duration=0.02:start_threshold=-40dB:stop_periods=-1:stop_duration=0.08:stop_threshold=-40dB",
+                 "-ar", "44100", "-ac", "2", str(wav)])
             line_files.append(wav)
             durations.append(duration(wav))
 
         silence = tmp / "silence.wav"
         run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi",
              "-i", f"anullsrc=r=44100:cl=stereo", "-t", f"{GAP:.3f}", "-c:a", "pcm_s16le", str(silence)])
-        entries = []
+        lead = tmp / "lead.wav"
+        run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi",
+             "-i", f"anullsrc=r=44100:cl=stereo", "-t", f"{LEAD:.3f}", "-c:a", "pcm_s16le", str(lead)])
+        # The LRC first line starts at LEAD; the voice track must have the same lead
+        # silence, otherwise every lyric lags behind the voice by exactly LEAD.
+        entries = [lead]
         for i, wav in enumerate(line_files):
             entries.append(wav)
             if i < len(line_files) - 1:
@@ -104,7 +111,7 @@ def main() -> None:
         (ASSETS / "aiti-intro.lrc").write_text("\n".join(lrc) + "\n", encoding="utf-8")
 
         # SRT / VTT (end = next line start, last = total)
-        ends = [starts[i + 1] - 0.05 for i in range(len(starts) - 1)] + [max(starts[-1] + 1, total - 0.1)]
+        ends = [starts[i + 1] - 0.05 for i in range(len(starts) - 1)] + [starts[-1] + durations[-1] - 0.02]
         cue_rows = [(0.0, starts[0] - 0.04, "♪")] + list(zip(starts, ends, LINES))
         srt = []
         vtt = ["WEBVTT", ""]

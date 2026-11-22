@@ -3,17 +3,17 @@
 ♪
 
 2
-00:00,500 --> 00:04,220
+00:00,500 --> 00:03,034
 Hello, I'm aiti desktop widget.
 
 3
-00:04,270 --> 00:09,814
+00:03,084 --> 00:07,436
 I turn any web page into a floating, transparent desktop layer.
 
 4
-00:09,864 --> 00:15,264
+00:07,486 --> 00:11,601
 Play a song, follow the lyrics, and keep the progress bar right here.
 
 5
-00:15,314 --> 00:22,046
+00:11,651 --> 00:15,572
 Bring your own audio and LRC file. Let's make the desktop sing.
