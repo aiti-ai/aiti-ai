@@ -15,6 +15,10 @@ export interface McpRequest {
 export interface InteractionTransport {
   ask(input: InteractionRequestInput): Promise<InteractionResult>;
   cancel(id: string): boolean | Promise<boolean>;
+  /** Create a pending request without waiting (MCP `async: true`). */
+  open(input: InteractionRequestInput): { id: string } | Promise<{ id: string }>;
+  /** Await a request by id; null when the id was never seen. */
+  wait(id: string): Promise<InteractionResult> | null;
 }
 
 export interface HttpTransportOptions {
@@ -47,13 +51,32 @@ export function createHttpInteractionTransport(options: HttpTransportOptions): I
     return body;
   };
 
+  const open: InteractionTransport["open"] = async (input) => {
+    const created = await call("/interactions", { method: "POST", body: JSON.stringify({ request: input }) });
+    const id = String(created.id || created.request?.id || "");
+    if (!id) throw new Error("interaction daemon returned no id");
+    return { id };
+  };
+
+  const wait: InteractionTransport["wait"] = async (id) => {
+    const response = await request(`${base}/interactions/${encodeURIComponent(id)}/wait`, { headers });
+    if (response.status === 409) return null;
+    let body: Record<string, any> = {};
+    try {
+      body = (await response.json()) as Record<string, any>;
+    } catch {
+      body = {};
+    }
+    if (!response.ok) throw new Error(`interaction daemon wait failed (${response.status}): ${body.error || response.statusText || "unknown error"}`);
+    return body.result as InteractionResult;
+  };
+
   return {
+    open,
+    wait,
     async ask(input) {
-      const created = await call("/interactions", { method: "POST", body: JSON.stringify({ request: input }) });
-      const id = String(created.id || created.request?.id || "");
-      if (!id) throw new Error("interaction daemon returned no id");
-      const waited = await call(`/interactions/${encodeURIComponent(id)}/wait`);
-      return waited.result as InteractionResult;
+      const created = await open(input);
+      return (await wait(created.id)) as InteractionResult;
     },
     async cancel(id) {
       const response = await request(`${base}/interactions/${encodeURIComponent(id)}/cancel`, { method: "POST", headers });
@@ -85,6 +108,7 @@ const common = {
   title: { type: "string", description: "Optional card title." },
   detail: { type: "string", description: "Optional secondary explanation." },
   timeout: { type: "number", description: "Timeout in milliseconds; 0 or omitted means wait forever." },
+  async: { type: "boolean", description: "Return {id, status:'pending'} immediately and collect the answer with widget_await." },
 };
 
 export const MCP_TOOLS: McpToolDefinition[] = [
@@ -123,6 +147,32 @@ export const MCP_TOOLS: McpToolDefinition[] = [
     name: "widget_notify",
     description: "Show a blocking notification card until the human dismisses it. For fire-and-forget notifications use a host notification instead.",
     inputSchema: { type: "object", properties: { ...common, body: { type: "string" } }, required: ["prompt"] },
+  },
+  {
+    name: "widget_pick_path",
+    description: "Ask the human to pick files or a directory with the native picker. Returns {status, value:{paths:[...]}, tookMs}.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...common,
+        mode: { type: "string", enum: ["file", "directory"], description: "Defaults to file." },
+        multiple: { type: "boolean", description: "Allow selecting more than one path." },
+        extensions: { type: "array", items: { type: "string" }, description: "File extension filters, e.g. [\"png\", \"jpg\"]." },
+      },
+      required: ["prompt"],
+    },
+  },
+  {
+    name: "widget_await",
+    description: "Wait for the result of a request created with async:true. Returns the same envelope as the blocking tools (status timeout + pending:true when the local wait expires).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Request id returned by an async tool call." },
+        timeout: { type: "number", description: "Client-side wait cap in milliseconds; the host request stays pending. 0 = wait until resolved." },
+      },
+      required: ["id"],
+    },
   },
   {
     name: "widget_cancel",
@@ -165,6 +215,18 @@ function toRequest(name: string, args: Record<string, unknown>): InteractionRequ
       },
     };
   }
+  if (name === "widget_pick_path") {
+    const mode = asString(args.mode) === "directory" ? "directory" : "file";
+    const extensions = Array.isArray(args.extensions) ? args.extensions.map(String).filter(Boolean).slice(0, 8) : undefined;
+    return {
+      kind: "pick_path",
+      title,
+      message: prompt,
+      detail,
+      timeoutMs,
+      pick: { mode, multiple: args.multiple === true, ...(extensions?.length ? { extensions } : {}) },
+    };
+  }
   if (name === "widget_notify") {
     return { kind: "notify", title, message: prompt, detail: prompt, timeoutMs: 0 };
   }
@@ -197,8 +259,31 @@ export async function handleMcpRequest(transport: InteractionTransport, request:
       if (!ok) return fail(-32602, `no pending interaction ${asString(args.id)}`);
       return respond(text({ ok: true }));
     }
+    if (name === "widget_await") {
+      const id = asString(args.id);
+      if (!id) return fail(-32602, "widget_await requires an id");
+      const waiting = transport.wait(id);
+      if (!waiting) return fail(-32602, `no pending interaction ${id}`);
+      const cap = Math.max(0, asNumber(args.timeout, 0));
+      if (!cap) {
+        return respond(text(await waiting));
+      }
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const capped = await Promise.race([
+        waiting,
+        new Promise((resolveCap) => {
+          timer = setTimeout(() => resolveCap({ id, status: "timeout", pending: true }), cap);
+        }),
+      ]);
+      if (timer) clearTimeout(timer);
+      return respond(text(capped));
+    }
     const input = toRequest(name, args);
     if (!input) return fail(-32602, `unknown tool or invalid arguments: ${name}`);
+    if (args.async === true) {
+      const created = await transport.open(input);
+      return respond(text({ id: created.id, status: "pending" }));
+    }
     const result = await transport.ask(input);
     return respond(text(result));
   }

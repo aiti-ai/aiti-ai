@@ -8,6 +8,14 @@ export interface WidgetWindowOptions {
   width?: number;
   height?: number;
   title?: string
+  /** Absolute screen X (use `placeOutside`/`placeOnMonitor` to compute it). */
+  x?: number;
+  /** Absolute screen Y. */
+  y?: number;
+  /** Monitor index, name or "primary"; x/y become monitor-local offsets. */
+  display?: string | number;
+  /** Center on the selected monitor, overriding x/y. */
+  center?: boolean;
   /** Extra CLI args appended after the defaults. */
   args?: string[];
 }
@@ -83,6 +91,10 @@ export class InteractionWidgetWindow {
       "--width", String(this.options.width),
       "--height", String(this.options.height),
       "--title", this.options.title,
+      ...(this.options.x !== undefined ? ["--x", String(Math.round(this.options.x))] : []),
+      ...(this.options.y !== undefined ? ["--y", String(Math.round(this.options.y))] : []),
+      ...(this.options.display !== undefined ? ["--display", String(this.options.display)] : []),
+      ...(this.options.center ? ["--center", "true"] : []),
       "--always-on-top", "true",
       "--focusable", "true",
       "--click-through", "false",
@@ -101,6 +113,28 @@ export class InteractionWidgetWindow {
       return true;
     } catch {
       this.child = null;
+      return false;
+    }
+  }
+
+  /** Move the running window (absolute screen coordinates). */
+  move(x: number, y: number): boolean {
+    if (!this.running) return false;
+    try {
+      this.child!.stdin.write(`${JSON.stringify({ cmd: "move", x: Math.round(x), y: Math.round(y) })}\n`);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Resize the running window; the shell re-locks min=max when not user-resizable. */
+  resize(width: number, height: number): boolean {
+    if (!this.running) return false;
+    try {
+      this.child!.stdin.write(`${JSON.stringify({ cmd: "resize", width: Math.round(width), height: Math.round(height) })}\n`);
+      return true;
+    } catch {
       return false;
     }
   }

@@ -70,6 +70,49 @@ await broker.update(opened.id, { state: "paused", label: "已暂停" });
 await broker.resolve(opened.id, { status: "answered", action: "stop" });
 ```
 
+## 定位辅助
+
+壳只接受绝对屏幕坐标；包里带一组纯几何函数，Host 可以把卡片放在录制区域之外，并处理多屏：
+
+```ts
+import { monitorRect, placeOnMonitor, placeOutside } from "@aiti-ai/widget-interaction";
+
+const second = { x: 1920, y: 0, width: 2560, height: 1440 };
+const capture = monitorRect(second, { x: 200, y: 120, width: 1600, height: 1000 });
+const spot = placeOutside(capture, { width: 560, height: 260 }, { gap: 16, monitors: [second] });
+
+const win = new InteractionWidgetWindow({ width: 560, height: 260, x: spot.x, y: spot.y });
+await win.open(server.url);
+win.move(spot.x, spot.y + 40);   // 跟随目标窗口
+```
+
+`placeOutside` 依次尝试下 → 上 → 右 → 左，跳过与目标矩形重叠或越出显示器的位置，最后兜底
+夹取到可放置点；`placeOnMonitor` 把屏内偏移换算成绝对坐标（与 `--display` 同一套数学），
+`clampRect` 把矩形夹进显示器。放在录制区域外的卡片不会被录进去。
+
+## 桌面遮挡（cover）
+
+`DesktopCover` 用一块独立窗口遮住桌面录制里的敏感区域：点击穿透、不可聚焦、始终置顶，
+窗口像素就是遮挡内容。v1 只做纯色/纹理/半透明遮挡；实时马赛克需要屏幕采集，不在范围内。
+
+```ts
+import { DesktopCover, monitorRect } from "@aiti-ai/widget-interaction";
+
+const cover = new DesktopCover({
+  rect: monitorRect(display, { x: 200, y: 120, width: 900, height: 600 }),
+  color: "#101216",
+  opacity: 0.9,
+  pattern: "grid",          // solid | grid | stripes
+});
+await cover.open();          // 拉起 aiti-desktop-widget --html page/cover.html?...
+cover.move({ x: 320, y: 200 });                 // 跟随目标窗口
+await cover.update({ color: "#000000", opacity: 1 });
+await cover.close();
+```
+
+遮挡窗是独立进程：被录制的页面刷新/重绘/导航都删不掉它；它本来就在录制区域内——被录进去
+才是遮挡生效的方式。
+
 ## 页面协议
 
 ```text
@@ -121,9 +164,13 @@ node bin/widget-interaction-mcp.mjs --no-widget
 node bin/widget-interaction-mcp.mjs
 ```
 
-工具：`widget_confirm`、`widget_choose`、`widget_input`、`widget_presence`、
-`widget_notify`、`widget_cancel`。工具调用会阻塞到页面作答或超时；stdout 只输出
-JSON-RPC，诊断走 stderr。
+工具：`widget_confirm`、`widget_choose`、`widget_input`、`widget_pick_path`、
+`widget_presence`、`widget_notify`、`widget_await`、`widget_cancel`。工具调用会阻塞到
+页面作答或超时；stdout 只输出 JSON-RPC，诊断走 stderr。
+
+任意问答工具都可传 `async: true`：立即返回 `{id, status:"pending"}`，再用
+`widget_await({ id })` 取结果（可带客户端 `timeout`，到点返回 `{status:"timeout",
+pending:true}`，Host 侧请求仍保持 pending）。
 
 ### 与 daemon 共用一个窗口
 
@@ -150,5 +197,5 @@ const answer = await transport.ask({ kind: "confirm", title: "继续？" });
 ## 首版未包含
 
 - 表单构建器/声明式自定义 UI（自带页面即可）；
-- 桌面遮挡/实时马赛克；
+- 实时桌面马赛克（v1 只有遮挡窗）；
 - aiti-devtools launcher UI 基础件复用。

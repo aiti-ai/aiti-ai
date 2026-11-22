@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>aiti cover</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }
+  #cover { position: fixed; inset: 0; background: #101216; }
+  #cover.grid {
+    background-image:
+      linear-gradient(rgba(255, 255, 255, .06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, .06) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+  #cover.stripes {
+    background-image: repeating-linear-gradient(45deg, rgba(255, 255, 255, .05) 0 8px, transparent 8px 16px);
+  }
+</style>
+</head>
+<body>
+<div id="cover"></div>
+<script>
+  // Opened by DesktopCover as `page/cover.html?color=%23101216&opacity=1&pattern=solid`.
+  // The page owns only pixels; the host owns geometry (stdin move/resize) and lifetime.
+  (function () {
+    const params = new URLSearchParams(location.search);
+    const cover = document.getElementById("cover");
+    const color = (params.get("color") || "").trim();
+    const opacity = Number(params.get("opacity"));
+    const pattern = (params.get("pattern") || "solid").trim();
+    const alpha = Number.isFinite(opacity) ? Math.min(1, Math.max(0, opacity)) : 1;
+    if (color) {
+      cover.style.background = color;
+      if (alpha < 1) cover.style.opacity = String(alpha);
+    }
+    if (pattern === "grid" || pattern === "stripes") cover.classList.add(pattern);
+  })();
+</script>
+</body>
+</html>

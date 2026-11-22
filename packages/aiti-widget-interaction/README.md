@@ -87,6 +87,53 @@ await broker.resolve(opened.id, { status: "answered", action: "stop" });
 
 `open()` returns `{ id, request, result }`; `ask()` returns the result Promise directly.
 
+## Placement
+
+The shell takes absolute screen coordinates; the package ships pure geometry helpers so a
+host can keep cards outside a recording rectangle and handle multi-head layouts:
+
+```ts
+import { monitorRect, placeOnMonitor, placeOutside } from "@aiti-ai/widget-interaction";
+
+const second = { x: 1920, y: 0, width: 2560, height: 1440 };
+const capture = monitorRect(second, { x: 200, y: 120, width: 1600, height: 1000 });
+const spot = placeOutside(capture, { width: 560, height: 260 }, { gap: 16, monitors: [second] });
+
+const win = new InteractionWidgetWindow({ width: 560, height: 260, x: spot.x, y: spot.y });
+await win.open(server.url);
+win.move(spot.x, spot.y + 40);   // follow a moving target
+```
+
+`placeOutside` tries bottom → top → right → left, rejects slots that overlap the avoided
+rect or leave the monitor, and falls back to a clamped position. `placeOnMonitor` maps
+monitor-local offsets to absolute coordinates (the same math as `--display`); `clampRect`
+keeps a rect inside a monitor. Cards placed outside the capture rect are never recorded.
+
+## Desktop cover
+
+`DesktopCover` hides a region from a desktop recording: the widget opens a click-through,
+focus-proof, always-on-top window whose pixels are the cover. v1 covers (solid color /
+pattern / translucent); real-time mosaic needs screen capture and is out of scope.
+
+```ts
+import { DesktopCover, monitorRect } from "@aiti-ai/widget-interaction";
+
+const cover = new DesktopCover({
+  rect: monitorRect(display, { x: 200, y: 120, width: 900, height: 600 }),
+  color: "#101216",
+  opacity: 0.9,
+  pattern: "grid",          // solid | grid | stripes
+});
+await cover.open();          // spawns aiti-desktop-widget --html page/cover.html?...
+cover.move({ x: 320, y: 200 });                 // follow the target window
+await cover.update({ color: "#000000", opacity: 1 });
+await cover.close();
+```
+
+The cover is a separate process: refreshing/repainting the recorded page cannot remove it,
+and it survives page navigation. It is inside the capture area on purpose — being captured
+is what hides the pixels.
+
 ## Page protocol
 
 ```text
@@ -150,10 +197,14 @@ node bin/widget-interaction-mcp.mjs --no-widget   # print the page URL on stderr
 node bin/widget-interaction-mcp.mjs               # also opens aiti-desktop-widget
 ```
 
-Tools: `widget_confirm`, `widget_choose`, `widget_input`, `widget_presence`,
-`widget_notify`, `widget_cancel`. The tool call blocks until the page answers (or the
-request times out); every tool returns the host envelope. `stdout` is JSON-RPC only;
-diagnostics go to stderr.
+Tools: `widget_confirm`, `widget_choose`, `widget_input`, `widget_pick_path`,
+`widget_presence`, `widget_notify`, `widget_await`, `widget_cancel`. The tool call blocks
+until the page answers (or the request times out); every tool returns the host envelope.
+`stdout` is JSON-RPC only; diagnostics go to stderr.
+
+Pass `async: true` to any ask tool to get `{id, status:"pending"}` immediately; collect the
+answer with `widget_await({ id })` (optionally with a client-side `timeout`, which returns
+`{status:"timeout", pending:true}` and leaves the host request pending).
 
 ### Share one window with a daemon
 
@@ -181,5 +232,5 @@ const answer = await transport.ask({ kind: "confirm", title: "Continue?" });
 ## Not in this first version
 
 - Form builder / schema-driven custom UI (bring your own page instead).
-- Desktop cover / real-time mosaic.
+- Real-time desktop mosaic (the click-through cover window is v1).
 - Reuse of aiti-devtools launcher UI primitives.
