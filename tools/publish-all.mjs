@@ -17,7 +17,7 @@ import { readFileSync, writeFileSync, existsSync, readdirSync, mkdtempSync, rmSy
 import { tmpdir, homedir } from "node:os";
 import { join, basename, dirname, resolve, sep, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { execSync, spawnSync } from "node:child_process";
+import { execFileSync, execSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { extProtocolInfo } from "../extensions/_shared/ext-protocol.mjs";
 
@@ -175,6 +175,21 @@ if (
   process.exit(1);
 }
 const NPM_ENV_EXTRA = TARGET === "aliyun" ? { NPM_CONFIG_USERCONFIG: aliyunUserconfig() } : {};
+
+// Official publishes: external-repo floors (content-share etc.) must already be on
+// npmjs. Sibling repos are published by their own workflows; without this gate the
+// first symptom is a raw ETARGET while the shared build root installs.
+if (TARGET === "official" && !DRY) {
+  try {
+    execFileSync(process.execPath, [join(REPO, "scripts", "check-external-deps.mjs"), "--target", "official"], {
+      cwd: REPO,
+      stdio: "inherit",
+    });
+  } catch {
+    console.error("[publish-all] ✗ external dependency floors missing on npmjs — run the owning repo's publish workflow first (command above)");
+    process.exit(1);
+  }
+}
 // official 门禁：单包机械审核（--fix 关闭——门禁只拦不改；要改用 release-audit --fix 先行）
 const AUDIT_SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "release-audit.mjs");
 function officialAuditGate(dir) {
