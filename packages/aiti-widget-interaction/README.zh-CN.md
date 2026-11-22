@@ -13,6 +13,9 @@ npm run build
 node --test test/*.test.mjs
 ```
 
+`AITI_WIDGET_DEBUG=1` 会把壳的 stderr 透传出来；默认适配层保留最后 4 kB，可用
+`window.stderr` 读取（“窗口空白 / 页面没回调”通常是会话锁屏或页面加载失败，先看这里）。
+
 `test/gui.test.mjs` 会开真窗口（遮挡窗几何、钉住定位、daemon 重开）；没有 DISPLAY 时自起
 私有 `Xvfb :97` + openbox，缺显示器/xdotool/widget 二进制时自动 skip。
 

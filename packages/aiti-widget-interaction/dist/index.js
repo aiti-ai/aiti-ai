@@ -465,6 +465,7 @@ var InteractionWidgetWindow = class {
   constructor(options = {}) {
     this.child = null;
     this.lastUrl = "";
+    this.diagnostics = "";
     this.options = {
       ...options,
       width: Math.max(240, Math.round(Number(options.width) || 560)),
@@ -474,6 +475,14 @@ var InteractionWidgetWindow = class {
   }
   get running() {
     return !!this.child && this.child.exitCode === null && !this.child.killed;
+  }
+  /**
+   * Last stderr lines from the shell (up to 4 kB). The window can look alive while the
+   * page failed to load, so hosts should surface this when an interaction times out.
+   * Set `AITI_WIDGET_DEBUG=1` to also stream the shell's stderr to the parent process.
+   */
+  get stderr() {
+    return this.diagnostics;
   }
   async open(url) {
     this.lastUrl = url;
@@ -516,13 +525,22 @@ var InteractionWidgetWindow = class {
       ...this.options.args || []
     ];
     try {
-      const child = spawn(bin, args, { stdio: ["pipe", "ignore", "pipe"], windowsHide: true });
+      const debug = !!process.env.AITI_WIDGET_DEBUG;
+      const child = spawn(bin, args, { stdio: ["pipe", "ignore", debug ? "inherit" : "pipe"], windowsHide: true });
       this.child = child;
-      child.once("exit", () => {
-        if (this.child === child) this.child = null;
+      this.diagnostics = "";
+      child.stderr?.on("data", (data) => {
+        this.diagnostics = (this.diagnostics + data.toString()).slice(-4096);
       });
-      child.once("error", () => {
+      child.once("exit", (code) => {
         if (this.child === child) this.child = null;
+        if (code) this.diagnostics = `${this.diagnostics}
+[widget exited with code ${code}]`.slice(-4096);
+      });
+      child.once("error", (error) => {
+        if (this.child === child) this.child = null;
+        this.diagnostics = `${this.diagnostics}
+[widget spawn error: ${error.message}]`.slice(-4096);
       });
       return true;
     } catch {

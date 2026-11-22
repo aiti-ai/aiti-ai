@@ -59,6 +59,7 @@ export class InteractionWidgetWindow {
   private child: ChildProcessWithoutNullStreams | null = null;
   private readonly options: Required<Pick<WidgetWindowOptions, "width" | "height" | "title">> & WidgetWindowOptions;
   private lastUrl = "";
+  private diagnostics = "";
 
   constructor(options: WidgetWindowOptions = {}) {
     this.options = {
@@ -71,6 +72,15 @@ export class InteractionWidgetWindow {
 
   get running(): boolean {
     return !!this.child && this.child.exitCode === null && !this.child.killed;
+  }
+
+  /**
+   * Last stderr lines from the shell (up to 4 kB). The window can look alive while the
+   * page failed to load, so hosts should surface this when an interaction times out.
+   * Set `AITI_WIDGET_DEBUG=1` to also stream the shell's stderr to the parent process.
+   */
+  get stderr(): string {
+    return this.diagnostics;
   }
 
   async open(url: string): Promise<boolean> {
@@ -104,10 +114,21 @@ export class InteractionWidgetWindow {
       ...(this.options.args || []),
     ];
     try {
-      const child = spawn(bin, args, { stdio: ["pipe", "ignore", "pipe"], windowsHide: true });
+      const debug = !!process.env.AITI_WIDGET_DEBUG;
+      const child = spawn(bin, args, { stdio: ["pipe", "ignore", debug ? "inherit" : "pipe"], windowsHide: true });
       this.child = child;
-      child.once("exit", () => { if (this.child === child) this.child = null; });
-      child.once("error", () => { if (this.child === child) this.child = null; });
+      this.diagnostics = "";
+      child.stderr?.on("data", (data) => {
+        this.diagnostics = (this.diagnostics + data.toString()).slice(-4096);
+      });
+      child.once("exit", (code) => {
+        if (this.child === child) this.child = null;
+        if (code) this.diagnostics = `${this.diagnostics}\n[widget exited with code ${code}]`.slice(-4096);
+      });
+      child.once("error", (error) => {
+        if (this.child === child) this.child = null;
+        this.diagnostics = `${this.diagnostics}\n[widget spawn error: ${error.message}]`.slice(-4096);
+      });
       // Do not wait for `ready`: the shell emits it on stdout, which this adapter
       // intentionally ignores; the page can connect while it is still mounting.
       return true;

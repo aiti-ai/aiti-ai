@@ -131,7 +131,7 @@ async function runOnce(spec, values, flags) {
     if (!opened) {
       await server.close();
       broker.close();
-      exitWith(4, `cannot start aiti-desktop-widget (set --widget-bin or AITI_DESKTOP_WIDGET_BIN); page: ${pageUrl}`);
+      exitWith(4, `cannot start aiti-desktop-widget (set --widget-bin or AITI_DESKTOP_WIDGET_BIN); page: ${pageUrl}${win.stderr ? `\nwidget stderr: ${win.stderr}` : ""}`);
     }
   }
 
