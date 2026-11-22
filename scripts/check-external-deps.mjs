@@ -9,7 +9,8 @@
  * CI chain (official). Unsatisfiable floors = the consumer would 404 on install.
  *
  * Usage: node scripts/check-external-deps.mjs [--target staging|official] [--dispatch] [--json]
- *   --target staging   → https://registry.example.com (default)
+ *   --target staging   → the staging registry (default): $AITI_STAGING_REGISTRY,
+ *                        falling back to `npm config get registry`
  *   --target official  → https://registry.npmjs.org
  *   --dispatch         → `gh workflow run` the owning repo's publish workflow for
  *                        each missing dependency (default: print the command only)
@@ -19,7 +20,18 @@ import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const REGISTRY = { staging: "https://registry.example.com", official: "https://registry.npmjs.org" };
+const OFFICIAL_REGISTRY = "https://registry.npmjs.org";
+const STAGING_REGISTRY = (() => {
+  const fromEnv = process.env.AITI_STAGING_REGISTRY?.trim();
+  if (fromEnv) return fromEnv;
+  try {
+    // Local convention: the user-level npmrc already points at the staging mirror.
+    return execFileSync("npm", ["config", "get", "registry"], { encoding: "utf8" }).trim() || OFFICIAL_REGISTRY;
+  } catch {
+    return OFFICIAL_REGISTRY;
+  }
+})();
+const REGISTRY = { staging: STAGING_REGISTRY, official: OFFICIAL_REGISTRY };
 const args = process.argv.slice(2);
 const target = args.includes("--target") ? args[args.indexOf("--target") + 1] : "staging";
 const dispatch = args.includes("--dispatch");

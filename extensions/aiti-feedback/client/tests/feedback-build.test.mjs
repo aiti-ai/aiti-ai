@@ -2,9 +2,20 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { redact, buildMarkdown, buildIssueUrl, envInfo, BODY_SAFE } from "../src/feedback-build.ts";
 
-test("redact: internal domains, hosts and ports", () => {
-  const out = redact("open https://pi.alot.pw:57442/dev/ and https://docs.alot.pw/x");
-  assert.equal(out, "open https://<redacted-domain>/dev/ and https://<redacted-domain>/x");
+test("redact: private-network domains, hosts and ports", () => {
+  const out = redact("open https://dev.internal:57442/app/ and https://docs.home.arpa/x");
+  assert.equal(out, "open https://<redacted-domain>/app/ and https://<redacted-domain>/x");
+  assert.equal(redact("open https://corp.example/x"), "open https://corp.example/x");
+});
+
+test("redact: injected internal hosts", () => {
+  globalThis.__AITI_FEEDBACK_INTERNAL_HOSTS = ["corp.example", "ops.example"];
+  try {
+    assert.equal(redact("open https://corp.example:8443/x"), "open https://<redacted-domain>/x");
+    assert.equal(redact("see ops.example/y"), "see <redacted-domain>/y");
+  } finally {
+    delete globalThis.__AITI_FEEDBACK_INTERNAL_HOSTS;
+  }
 });
 
 test("redact: private IPv4 ranges only", () => {
@@ -15,9 +26,10 @@ test("redact: private IPv4 ranges only", () => {
   assert.equal(redact("a 8.8.8.8 b"), "a 8.8.8.8 b");
 });
 
-test("redact: internal repo name and home path", () => {
-  assert.equal(redact("see ~/workspace/workspace-tools/docs"), "see ~/workspace/<redacted>/docs");
-  assert.equal(redact("/home/wind/.pi/web"), "<redacted-path>/.pi/web");
+test("redact: home paths drop the user segment", () => {
+  assert.equal(redact("/home/alice/.pi/web"), "/home/<redacted>/.pi/web");
+  assert.equal(redact("/Users/alice/.pi/web"), "/Users/<redacted>/.pi/web");
+  assert.equal(redact(String.raw`C:\Users\alice\app`), String.raw`<redacted-path>\app`);
 });
 
 test("redact: token shapes", () => {
@@ -35,7 +47,7 @@ test("redact: normal text untouched", () => {
 
 test("buildMarkdown: sections and redaction", () => {
   const md = buildMarkdown({
-    kind: "bug", title: "t", desc: "crash at pi.alot.pw", steps: "1. open\n2. click",
+    kind: "bug", title: "t", desc: "crash at dev.internal", steps: "1. open\n2. click",
     contact: "", context: "", includeEnv: false,
   });
   assert.ok(md.includes("### Type\nbug"));

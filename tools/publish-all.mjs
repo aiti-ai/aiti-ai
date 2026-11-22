@@ -136,6 +136,12 @@ function aliyunUserconfig() {
   return f;
 }
 const REGISTRY = REGISTRIES[TARGET];
+// Private staging host for lock rewriting (machine-local config/env; never committed).
+const STAGING_HOST = REGISTRIES.staging.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+const STAGING_LOCK_RE =
+  STAGING_HOST && STAGING_HOST !== "registry.npmjs.org"
+    ? new RegExp(`https://${STAGING_HOST.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "g")
+    : null;
 
 // --help: enumerate usage instead of silently starting a publish run
 if (has("--help") || has("-h")) {
@@ -465,7 +471,7 @@ for (const { dir, pkgDir, pjPath, p } of pkgs) {
       const lockPath = join(pkgDir, "package-lock.json");
       if (existsSync(lockPath)) {
         const lockText = readFileSync(lockPath, "utf8");
-        const rewritten = lockText.replace(/https:\/\/npm\.alot\.pw/g, "https://registry.npmjs.org");
+        const rewritten = STAGING_LOCK_RE ? lockText.replace(STAGING_LOCK_RE, "https://registry.npmjs.org") : lockText;
         if (rewritten !== lockText) writeFileSync(lockPath, rewritten);
       }
     }
