@@ -67,3 +67,15 @@ test("directory picker address bar is the shared breadcrumb (no always-on input)
   // Selection waits for the bar to leave edit mode (the listed folder is the commit point).
   assert.match(directoryPicker, /!pathEditing/);
 });
+
+test("add folder to sidebar mounts the shared picker, not aiti-folder's browse dialog", async () => {
+  // One picker everywhere: the sidebar's ＋ reuses sidebar-dock's lazy ref (same chunk,
+  // Explorer-style path bar + new-folder row) instead of aiti-folder's DirectoryBrowser.
+  const sidebarContent = await readFile(new URL("sidebar-content.tsx", here), "utf8");
+  const sidebarDock = await readFile(new URL("sidebar-dock.tsx", here), "utf8");
+  assert.match(sidebarDock, /export const dirPickerRef = createLazyModule\(\(\) => import\("\.\/sidebar\/directory-picker"\)\)/);
+  assert.match(sidebarContent, /import \{ SidebarList, dirPickerRef \} from "\.\/sidebar-dock"/);
+  assert.match(sidebarContent, /load=\{dirPickerRef\}/);
+  assert.match(sidebarContent, /pick="DirectoryPicker"/);
+  assert.doesNotMatch(sidebarContent, /aiti-folder\/client\/src\/directory-browser/);
+});
