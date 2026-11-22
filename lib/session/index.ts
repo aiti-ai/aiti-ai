@@ -30,6 +30,7 @@ export type {
   HandleBashResult,
   HandleCommandInfo,
   PromptOptions,
+  PromptSubmission,
 } from "./types.ts";
 export {
   FULL_CAPABILITIES,

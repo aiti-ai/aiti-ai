@@ -270,7 +270,22 @@ test("plain prompt 撞运行中子进程 → 以 followUp 重试一次（race �
   assert.equal(child.frames()[1].streamingBehavior, "followUp");
   assert.equal(child.frames()[1].message, "hello");
   feedResponse(h, child.frames()[1].id, { disposition: "queued" });
-  await p;
+  // A queued message starts no turn: the caller must be told, or it keeps the
+  // optimistic bubble and the same text shows up twice (bubble + queue row).
+  assert.deepEqual(await p, { queued: true });
+});
+
+test("race retry that lands on an idle child reports started, not queued", async () => {
+  const child = fakeChild();
+  const h = createHandleForTest(PI_SPEC, "t26", child);
+  const p = h.prompt("hello");
+  await later();
+  feed(h, { id: child.frames()[0].id, type: "response", command: "prompt", success: false,
+    error: "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message." });
+  await later();
+  // The run settled before the retry landed: pi starts a turn, so the bubble is real.
+  feedResponse(h, child.frames()[1].id, { disposition: "started" });
+  assert.equal(await p, undefined);
 });
 
 test("plain prompt 撞运行中 + 带图片：重试帧保留 images；显式 behavior 报错不吞", async () => {
@@ -286,7 +301,6 @@ test("plain prompt 撞运行中 + 带图片：重试帧保留 images；显式 be
   assert.deepEqual(child.frames()[1].images, img);
   feedResponse(h, child.frames()[1].id, {});
   await p;
-
   // When the caller chose a behavior explicitly, the same error must propagate
   // verbatim — that is a different failure, and downgrading would mask intent
   const child2 = fakeChild();

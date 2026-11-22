@@ -3734,6 +3734,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         return index === -1 ? prev : [...prev.slice(0, index), ...prev.slice(index + 1)];
       });
       optimisticUserMessageKeyRef.current = null;
+      optimisticUserMessageRef.current = null;
+      optimisticBubblePendingRef.current = false;
     };
     const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
     let sentSessionId: string | null = null;

@@ -336,15 +336,20 @@ export class HandleSessionAdapter implements WrappedSessionLike {
     };
 
     switch (type) {
-      case "prompt":
-        await h.prompt(String(command.message ?? ""), {
+      case "prompt": {
+        const submission = await h.prompt(String(command.message ?? ""), {
           ...(Array.isArray(command.images) ? { images: command.images as never[] } : {}),
           ...(Array.isArray(command.files) ? { files: command.files as never[] } : {}),
           ...(command.streamingBehavior === "steer" || command.streamingBehavior === "followUp"
             ? { streamingBehavior: command.streamingBehavior }
             : {}),
         });
-        return null;
+        // A backend that queued the message (it was busy, the caller believed it idle)
+        // says so; answer like the in-process compaction parking does, so the page
+        // drops its optimistic bubble instead of showing the same text twice —
+        // once as a sent message, once as the queue row that will actually run.
+        return submission && submission.queued ? { queued: true } : null;
+      }
 
       case "steer":
         cap("steer");
