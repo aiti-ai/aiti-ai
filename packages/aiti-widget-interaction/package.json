@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/widget-interaction",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Host-owned async user interaction for aiti widgets: confirm/choose/input via SSE + HTTP, with queued pending requests and a browser renderer.",
   "type": "module",
   "main": "dist/index.js",
@@ -36,5 +36,5 @@
     "aiti-dialog": "bin/aiti-dialog.mjs",
     "widget-interaction-mcp": "bin/widget-interaction-mcp.mjs"
   },
-  "contentHash": "e527209cb95d8297"
+  "contentHash": "eeb11475b3da5333"
 }
