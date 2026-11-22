@@ -916,7 +916,8 @@ export interface LocaleNamespaceMap {}
  * extension nodes in-flow after the paragraph; tr rows are auto-ported to body).
  */
 export interface ParagraphClickInfo {
-  /** Paragraph plain text (textContent after render; table rows = cells joined with " | ") */
+  /** Paragraph plain text after render, with block boundaries as newlines (list items,
+   *  including nested ones, stay on separate lines; table rows = cells joined with " | "). */
   text: string;
   /** Session cwd (for resolving relative paths) */
   cwd?: string;

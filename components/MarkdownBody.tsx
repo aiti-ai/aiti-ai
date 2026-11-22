@@ -6,6 +6,7 @@ import ReactMarkdown, { type Components, type Options } from "react-markdown";
 import { parsePdfPageFragment, resolveLocalFileHref, shouldOpenLocalFileInApp } from "@/lib/file-links";
 import { buildTicketUrl } from "@/lib/file-tickets";
 import { encodeFilePathForApi } from "@/lib/file-paths";
+import { blockPlainText } from "@/lib/markdown-block-text";
 import { isAudioPath, isVideoPath } from "@/lib/file-types";
 import { createMarkdownUrlTransform, isExternalMarkdownHref, jumpToMarkdownFragment, markdownDocumentRehypePlugins, markdownRehypePlugins, markdownRemarkPlugins, markdownTextLayoutRemarkPlugins, markdownUserRemarkPlugins, normalizeDisplayMath, escapeRawHtmlTags } from "@/lib/markdown";
 import { useMathMarkdownPlugins } from "@/lib/use-math-plugins";
@@ -381,7 +382,12 @@ function ClickableParagraph({ children, as = "p", messageRole, cwd, sessionId, m
   // Detect touch capability lazily (same approach as useIsMobile but local).
   const [coarse] = useState(() => typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches);
 
-  const handleClick = () => {
+  const handleClick = (event: MouseEvent<HTMLElement>) => {
+    // Nested clickable blocks (a list item inside a list item, a paragraph inside a loose
+    // list item): the innermost block owns the click. Without this guard the event bubbles
+    // up and the outer block's popover replaces the inner one.
+    const host = (event.target as Element | null)?.closest?.("[data-clickable-paragraph]");
+    if (host && host !== event.currentTarget) return;
     // Paragraph plain text (table row = cells joined with " | "); the clone excludes transient UI children (the tip).
     const el = ref.current;
     const text = as === "tr" && el
@@ -390,7 +396,7 @@ function ClickableParagraph({ children, as = "p", messageRole, cwd, sessionId, m
         if (!el) return "";
         const clone = el.cloneNode(true) as HTMLElement;
         clone.querySelectorAll("[data-quote-tip]").forEach((n) => n.remove());
-        return clone.textContent ?? "";
+        return blockPlainText(clone);
       })();
     if (!text.trim()) return;
     const r = el?.getBoundingClientRect();
@@ -453,6 +459,7 @@ function ClickableParagraph({ children, as = "p", messageRole, cwd, sessionId, m
     <>
       <Tag
         ref={ref}
+        data-clickable-paragraph=""
         onMouseEnter={showTooltip}
         onMouseMove={coarse ? undefined : (e: MouseEvent<HTMLElement>) => moveTip(e.clientX, e.clientY)}
         onMouseLeave={() => setShowTip(false)}

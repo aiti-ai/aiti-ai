@@ -553,3 +553,25 @@ test("extractFiles: 自带名字路径（自引用）正常提取——首段是
     JSON.stringify(out),
   );
 });
+test("splitQuestions: block boundaries from the renderer (\\n) are their own rows", () => {
+  // Regression: paragraph text arrives as block lines (list item title / note / nested
+  // items). Without a newline boundary the whole list was recognized as one sentence and
+  // the popover offered a single truncated quote.
+  const li = [
+    "跨平台验证页面控制 + 自动宽度",
+    "目前只在 Linux/X11 + Xvfb 验证：window__TAURI__、setSize/setPosition、min/max 约束、中心保持、字幕自适应。",
+    "还要测：",
+    "Windows WebView2：高 DPI、多显示器、OuterPosition/Size 单位",
+    "macOS WKWebView：坐标/屏幕空间、透明窗",
+  ].join("\n");
+  const segs = splitQuestions(li);
+  assert.deepEqual(segs, [
+    "跨平台验证页面控制 + 自动宽度",
+    "目前只在 Linux/X11 + Xvfb 验证：window__TAURI__、setSize/setPosition、min/max 约束、中心保持、字幕自适应。",
+    "还要测：",
+    "Windows WebView2：高 DPI、多显示器、OuterPosition/Size 单位",
+    "macOS WKWebView：坐标/屏幕空间、透明窗",
+  ]);
+  // Statement rows quote their own line; the top-level quote button still gets the block.
+  assert.equal(parseParagraph(li)[0].quote, "跨平台验证页面控制 + 自动宽度");
+});
