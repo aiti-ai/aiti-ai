@@ -325,7 +325,9 @@ window property.
 - **Linux/X11**: `decorations(false)` + `transparent(true)` need a compositor for true
   transparency; without one the transparent area renders black (the widget itself still
   renders). Frameless and always-on-top work without a compositor.
-- **Windows 11**: built with Rust 1.93.1 + VS Build Tools 2022 + WebView2 157. Verified:
+- **Windows 11**: built with Rust 1.93.1 + VS Build Tools 2022 + WebView2 157. (The page-control
+  probe has not been re-run on Windows since the capability expansion; the 2026-11-23 check on
+  24 was blocked by a broken rustup junction — `C:\\Users\\keyea\\.rustup` → missing `D:\\dev\\rustup`.) Verified:
   client rect == window rect (no titlebar), `WS_EX_TOPMOST | WS_EX_LAYERED |
   WS_EX_TRANSPARENT | WS_EX_NOACTIVATE`, PrintWindow capture has no titlebar.
   ⚠ SSH sessions run in **session 0** where WebView2 fails with `0x80070578 invalid window
@@ -341,6 +343,11 @@ window property.
   `http://127.0.0.1` pages load without an `.app` bundle (verified on macOS 11.7: the page's
   JS ran and hit the local server). `Info.plist` is also merged when building a `.app` with
   Tauri; launch that with `open -n app --args ...` if you ship a bundle.
+  **Page-control capability verified on 11.7** (2026-11-23): a loopback probe page called
+  `app.getVersion/getIdentifier`, `path.join`, `event.listen`, `window.outerSize`,
+  `image.Image.fromBytes` (PNG), `menu.Menu.new`, `tray.TrayIcon.new` and saw `dialog.open` —
+  all succeeded with the `tray-icon`/`image-png`/`image-ico` features enabled. `outerSize`
+  reports **physical pixels** (600×300 requested → 1200×600 on a 2× display).
   ⚠ SSH is a *Background* session; run GUI tests by handing the whole script to the Aqua
   session: `osascript -e 'tell application "Terminal" to do script "bash xxx.sh"'`.
   ⚠ If a **screen saver** is running, `screencapture` shows only the wallpaper — windows
