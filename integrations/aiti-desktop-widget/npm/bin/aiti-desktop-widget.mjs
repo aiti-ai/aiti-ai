@@ -23,7 +23,7 @@ try {
     process.on(signal, () => forward(signal));
   }
   child.on("error", (error) => {
-    console.error(`aiti-widget: failed to start native binary: ${error.message}`);
+    console.error(`aiti-desktop-widget: failed to start native binary: ${error.message}`);
     process.exit(1);
   });
   child.on("exit", (code, signal) => {
@@ -38,6 +38,6 @@ try {
     process.exit(code ?? 0);
   });
 } catch (error) {
-  console.error(`aiti-widget: ${error.message}`);
+  console.error(`aiti-desktop-widget: ${error.message}`);
   process.exit(1);
 }

@@ -8,9 +8,9 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
- * Integration tests for the aiti-widget shell itself (screen behaviour, not JS).
+ * Integration tests for the aiti-desktop-widget shell itself (screen behaviour, not JS).
  *
- * Runs against `target/release/aiti-widget` by default; set `AITI_WIDGET_BIN` to
+ * Runs against `target/release/aiti-desktop-widget` by default; set `AITI_DESKTOP_WIDGET_BIN` to
  * test an installed binary. GUI assertions need a reachable DISPLAY + xdotool;
  * when DISPLAY is absent a private Xvfb + openbox is started on :98. Drag checks
  * additionally need a window manager (openbox) and are skipped without one.
@@ -32,11 +32,11 @@ const has = (bin) => {
 };
 
 function resolveBinary() {
-  const fromEnv = String(process.env.AITI_WIDGET_BIN || "").trim();
+  const fromEnv = String(process.env.AITI_DESKTOP_WIDGET_BIN || "").trim();
   if (fromEnv && existsSync(fromEnv)) return fromEnv;
-  const built = join(root, "target", "release", process.platform === "win32" ? "aiti-widget.exe" : "aiti-widget");
+  const built = join(root, "target", "release", process.platform === "win32" ? "aiti-desktop-widget.exe" : "aiti-desktop-widget");
   if (existsSync(built)) return built;
-  const installed = join(homedir(), ".pi", "bin", process.platform === "win32" ? "aiti-widget.exe" : "aiti-widget");
+  const installed = join(homedir(), ".pi", "bin", process.platform === "win32" ? "aiti-desktop-widget.exe" : "aiti-desktop-widget");
   return existsSync(installed) ? installed : "";
 }
 
@@ -94,7 +94,7 @@ after(() => {
 });
 
 const guiSkip = !BIN
-  ? "no aiti-widget binary (build: cargo build --release)"
+  ? "no aiti-desktop-widget binary (build: cargo build --release)"
   : !DISPLAY || !displayAlive(DISPLAY)
     ? "no reachable DISPLAY and Xvfb unavailable"
     : !has("xdotool")
@@ -198,7 +198,7 @@ function request(port, path, headers = {}) {
   });
 }
 
-const fixture = mkdtempSync(join(tmpdir(), "aiti-widget-test-"));
+const fixture = mkdtempSync(join(tmpdir(), "aiti-desktop-widget-test-"));
 writeFileSync(
   join(fixture, "index.html"),
   '<!doctype html><html><head><meta charset="utf-8"><title>WIDGET TEST</title>' +
@@ -332,7 +332,7 @@ test("drag region moves the window", { skip: guiSkip || !wm ? "needs a window ma
   }
 });
 
-test("unknown display and url/html conflicts exit with code 2", { skip: !BIN ? "no aiti-widget binary" : false }, () => {
+test("unknown display and url/html conflicts exit with code 2", { skip: !BIN ? "no aiti-desktop-widget binary" : false }, () => {
   const unknown = spawn(BIN, ["--url", "http://127.0.0.1:1/x", "--display", "99"], {
     env: { ...process.env, DISPLAY },
     stdio: ["ignore", "ignore", "pipe"],

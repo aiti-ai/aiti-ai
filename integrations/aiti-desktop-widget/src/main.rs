@@ -1,12 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-//! aiti-widget — a business-agnostic desktop widget shell.
+//! aiti-desktop-widget — a business-agnostic desktop widget shell.
 //!
 //! Loads an http(s) page into a frameless transparent always-on-top window and exposes a
 //! tiny JSONL control channel on stdin plus JSONL events on stdout. It knows nothing about
 //! captions, icons or pets: the caller provides the page (and its own data channel, e.g. SSE).
 //!
-//! CLI / runtime config: see `docs/aiti-widget-overlay-shell-plan.md`.
+//! CLI / runtime config: see `docs/aiti-desktop-widget-overlay-shell-plan.md`.
 //! Build: `cargo build --release` (or `npx tauri build` when bundling).
 
 mod display;
@@ -57,7 +57,7 @@ impl Default for WindowCfg {
             height: DEFAULT_HEIGHT,
             x: None,
             y: None,
-            title: "aiti-widget".to_string(),
+            title: "aiti-desktop-widget".to_string(),
             // Frameless by creation: runtime set_decorations is not honored by every WM.
             decorations: false,
             transparent: true,
@@ -105,7 +105,7 @@ impl Default for Config {
 }
 
 fn die(msg: &str) -> ! {
-    eprintln!("aiti-widget: {msg}");
+    eprintln!("aiti-desktop-widget: {msg}");
     std::process::exit(2);
 }
 
@@ -207,7 +207,7 @@ fn main() {
         return;
     }
     if raw.iter().any(|a| a == "--version" || a == "-V") {
-        println!("aiti-widget {}", env!("CARGO_PKG_VERSION"));
+        println!("aiti-desktop-widget {}", env!("CARGO_PKG_VERSION"));
         return;
     }
 
@@ -310,7 +310,7 @@ fn main() {
 
     if cfg.schema > 1 {
         eprintln!(
-            "aiti-widget: config schema {} is newer than supported (1); unknown fields ignored",
+            "aiti-desktop-widget: config schema {} is newer than supported (1); unknown fields ignored",
             cfg.schema
         );
     }
@@ -327,7 +327,7 @@ fn main() {
         match local_server::start_page(cfg.html.trim(), Some(root).filter(|r| !r.is_empty())) {
             Ok(page) => {
                 eprintln!(
-                    "aiti-widget: --html served from {} at {}",
+                    "aiti-desktop-widget: --html served from {} at {}",
                     page.root.display(),
                     page.url
                 );
@@ -361,14 +361,14 @@ fn main() {
 
 fn print_help() {
     println!(
-        "aiti-widget {} — frameless desktop widget shell",
+        "aiti-desktop-widget {} — frameless desktop widget shell",
         env!("CARGO_PKG_VERSION")
     );
     println!();
-    println!("Usage: aiti-widget <url> [options]");
-    println!("       aiti-widget --url <url> [options]");
-    println!("       aiti-widget --html <file> [--root <dir>] [options]");
-    println!("       aiti-widget --config <path> [options]");
+    println!("Usage: aiti-desktop-widget <url> [options]");
+    println!("       aiti-desktop-widget --url <url> [options]");
+    println!("       aiti-desktop-widget --html <file> [--root <dir>] [options]");
+    println!("       aiti-desktop-widget --config <path> [options]");
     println!();
     println!("Core options:");
     println!(
@@ -385,7 +385,7 @@ fn print_help() {
     println!("  --x <px> --y <px>        initial position (relative to --display when set)");
     println!("  --display <index|name>   monitor to place the window on; missing x/y are centered");
     println!("  --center <bool>          center on the selected/primary monitor (default false)");
-    println!("  --title <text>           window title (default aiti-widget)");
+    println!("  --title <text>           window title (default aiti-desktop-widget)");
     println!("  --click-through <bool>   pass mouse events through (default false)");
     println!(
         "  --draggable <bool>       enable drag (default false; exclusive with click-through)"
@@ -428,7 +428,7 @@ fn run(cfg: Config) {
                 match display::select_display(&displays, win.display.as_deref()) {
                     Ok(index) => Some(index),
                     Err(e) => {
-                        eprintln!("aiti-widget: {e}");
+                        eprintln!("aiti-desktop-widget: {e}");
                         std::process::exit(2);
                     }
                 }
@@ -509,7 +509,7 @@ fn run(cfg: Config) {
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("error while running aiti-widget");
+        .expect("error while running aiti-desktop-widget");
 }
 
 fn displays_from_app(app: &AppHandle) -> Vec<display::DisplayInfo> {
@@ -638,23 +638,23 @@ fn start_stdin(
             let value: Value = match serde_json::from_str(line) {
                 Ok(value) => value,
                 Err(e) => {
-                    eprintln!("aiti-widget: stdin JSON error: {e}");
+                    eprintln!("aiti-desktop-widget: stdin JSON error: {e}");
                     continue;
                 }
             };
             match value.get("cmd").and_then(Value::as_str).unwrap_or("") {
                 "navigate" => {
                     let Some(raw) = value.get("url").and_then(Value::as_str) else {
-                        eprintln!("aiti-widget: navigate needs url");
+                        eprintln!("aiti-desktop-widget: navigate needs url");
                         continue;
                     };
                     match allowed_url(raw, allow_remote) {
                         Ok(url) => {
                             if let Err(e) = window.navigate(url) {
-                                eprintln!("aiti-widget: navigate failed: {e}");
+                                eprintln!("aiti-desktop-widget: navigate failed: {e}");
                             }
                         }
-                        Err(e) => eprintln!("aiti-widget: {e}"),
+                        Err(e) => eprintln!("aiti-desktop-widget: {e}"),
                     }
                 }
                 "move" => {
@@ -669,12 +669,12 @@ fn start_stdin(
                             width,
                             height,
                         ) {
-                            eprintln!("aiti-widget: move failed: {e}");
+                            eprintln!("aiti-desktop-widget: move failed: {e}");
                         }
                     } else if let (Some(x), Some(y)) = (num(&value, "x"), num(&value, "y")) {
                         let _ = window.set_position(LogicalPosition::new(x, y));
                     } else {
-                        eprintln!("aiti-widget: move needs x and y (or a display)");
+                        eprintln!("aiti-desktop-widget: move needs x and y (or a display)");
                     }
                 }
                 "center" => {
@@ -688,7 +688,7 @@ fn start_stdin(
                         width,
                         height,
                     ) {
-                        eprintln!("aiti-widget: center failed: {e}");
+                        eprintln!("aiti-desktop-widget: center failed: {e}");
                     }
                 }
                 "displays" => {
@@ -715,7 +715,7 @@ fn start_stdin(
                         }
                         let _ = window.set_size(LogicalSize::new(width, height));
                     } else {
-                        eprintln!("aiti-widget: resize needs width and height");
+                        eprintln!("aiti-desktop-widget: resize needs width and height");
                     }
                 }
                 "set" => {
@@ -739,7 +739,7 @@ fn start_stdin(
                     let _ = window.close();
                     break;
                 }
-                other => eprintln!("aiti-widget: unknown stdin cmd {other:?}"),
+                other => eprintln!("aiti-desktop-widget: unknown stdin cmd {other:?}"),
             }
         }
     });

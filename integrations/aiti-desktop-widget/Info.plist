@@ -6,13 +6,13 @@
        the bare executable's __TEXT,__info_plist section so `cargo build` output can
        load http:// loopback pages without an app bundle (ATS exception + agent UI). -->
   <key>CFBundleExecutable</key>
-  <string>aiti-widget</string>
+  <string>aiti-desktop-widget</string>
   <key>CFBundleIdentifier</key>
-  <string>ai.aiti.widget</string>
+  <string>ai.aiti.desktop-widget</string>
   <key>CFBundleName</key>
-  <string>aiti-widget</string>
+  <string>aiti-desktop-widget</string>
   <key>CFBundleDisplayName</key>
-  <string>aiti-widget</string>
+  <string>aiti-desktop-widget</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleVersion</key>

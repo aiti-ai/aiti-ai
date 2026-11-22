@@ -1,4 +1,4 @@
-# aiti-widget
+# aiti-desktop-widget
 
 A business-agnostic desktop widget shell: frameless, transparent, always-on-top, optionally
 click-through or draggable. It loads an `http(s)` page — or a local HTML file served from a
@@ -12,8 +12,8 @@ icons, status cards, desktop pets, etc.
 ## Build
 
 ```bash
-cd integrations/aiti-widget
-cargo build --release          # -> target/release/aiti-widget
+cd integrations/aiti-desktop-widget
+cargo build --release          # -> target/release/aiti-desktop-widget
 cargo test                     # placement/static-server unit tests (no display needed)
 DISPLAY=:0 node --test tests/shell.test.mjs   # optional GUI integration tests
 # npm launcher tests (offline fake release server, justget download path)
@@ -35,42 +35,42 @@ Icons: `icons/icon.png` must be **RGBA** (Tauri rejects RGB PNGs on macOS) and W
 Install (shared location used by the video-studio extension):
 
 ```bash
-mkdir -p ~/.pi/bin && cp target/release/aiti-widget ~/.pi/bin/
+mkdir -p ~/.pi/bin && cp target/release/aiti-desktop-widget ~/.pi/bin/
 ```
 
 Or install the npm launcher (downloads the release binary with justget racing, sha256-verified):
 
 ```bash
-npm install -g @aiti-ai/aiti-widget
-aiti-widget --help
+npm install -g @aiti-ai/aiti-desktop-widget
+aiti-desktop-widget --help
 ```
 
 Release process / CI: see [`RELEASING.md`](RELEASING.md) and
 [`npm/README.md`](npm/README.md). For an offline/local npm install (pack + pre-seeded binary
 cache), see [npm/README.md#local--offline-install](npm/README.md#local--offline-install).
 The workflow is
-`.github/workflows/aiti-widget-release.yml` in the aiti-ai repo; the release matrix builds
+`.github/workflows/aiti-desktop-widget-release.yml` in the aiti-ai repo; the release matrix builds
 Linux x64/arm64, Windows x64/arm64 and macOS x64/arm64.
 
 ## Usage
 
 ```bash
 # URL as a positional argument — no config file needed for the common case
-aiti-widget http://127.0.0.1:8765/caption-bar.html?bubble=1 \
+aiti-desktop-widget http://127.0.0.1:8765/caption-bar.html?bubble=1 \
   --width 900 --height 140 --x 190 --y 650 \
   --title aiti-overlay --click-through true
 
 # place on the second monitor (0-based index or monitor name), centered there
-aiti-widget http://127.0.0.1:8765/caption-bar.html?bubble=1 \
+aiti-desktop-widget http://127.0.0.1:8765/caption-bar.html?bubble=1 \
   --display 1 --width 900 --height 140
 
 # local page: served from a loopback origin, root defaults to its directory
-aiti-widget --html ./pet/index.html --root ./pet --width 220 --height 220 \
+aiti-desktop-widget --html ./pet/index.html --root ./pet --width 220 --height 220 \
   --display HDMI-A-0 --x 24 --y 840 --draggable true
 
 # equivalent, and the full option list
-aiti-widget --url http://127.0.0.1:8765/caption-bar.html?bubble=1
-aiti-widget --help
+aiti-desktop-widget --url http://127.0.0.1:8765/caption-bar.html?bubble=1
+aiti-desktop-widget --help
 ```
 
 All core options are CLI flags (`--url/--html/--root/--width/--height/--x/--y/--display/
@@ -82,7 +82,7 @@ or `--url` and `--html` are given, the process exits with code 2.
 Run-time config file (`CLI > --config > defaults`):
 
 ```bash
-aiti-widget --config widget.json --x 200
+aiti-desktop-widget --config widget.json --x 200
 ```
 
 ```json
@@ -260,7 +260,7 @@ grants only `core:window:allow-start-dragging` to `http://127.0.0.1:*` / `http:/
 cargo test                                   # display math + static server (no GUI)
 node --test tests/shell.test.mjs             # GUI integration; starts a private Xvfb when needed
 DISPLAY=:0 node --test tests/shell.test.mjs  # or use an existing desktop
-AITI_WIDGET_BIN=~/.pi/bin/aiti-widget node --test tests/shell.test.mjs
+AITI_DESKTOP_WIDGET_BIN=~/.pi/bin/aiti-desktop-widget node --test tests/shell.test.mjs
 ```
 
 GUI tests skip themselves when no display/Xvfb/xdotool is available; the drag test also needs a
@@ -268,4 +268,4 @@ window manager (openbox).
 
 ## Design / status
 
-See `docs/aiti-widget-overlay-shell-plan.md` in the workspace repo.
+See `docs/aiti-desktop-widget-overlay-shell-plan.md` in the workspace repo.

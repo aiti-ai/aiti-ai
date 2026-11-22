@@ -34,7 +34,7 @@ test("publish-gitee mirrors release assets and notes", async () => {
       if (req.method === "POST" && url === "/gitee/repos/aiti-ai/aiti-ai/releases") {
         createBody = body.toString("utf8");
         res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ id: 7, tag_name: "aiti-widget-v0.2.0" }));
+        res.end(JSON.stringify({ id: 7, tag_name: "aiti-desktop-widget-v0.2.0" }));
         return;
       }
       if (req.method === "GET" && url.includes("/attach_files")) {
@@ -58,8 +58,8 @@ test("publish-gitee mirrors release assets and notes", async () => {
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const port = server.address().port;
   const assets = mkdtempSync(join(tmpdir(), "gitee-assets-"));
-  writeFileSync(join(assets, "aiti-widget-linux-x64"), "binary");
-  writeFileSync(join(assets, "checksums.txt"), `${"a".repeat(64)}  aiti-widget-linux-x64\n`);
+  writeFileSync(join(assets, "aiti-desktop-widget-linux-x64"), "binary");
+  writeFileSync(join(assets, "checksums.txt"), `${"a".repeat(64)}  aiti-desktop-widget-linux-x64\n`);
 
   try {
     const child = spawn(
@@ -67,7 +67,7 @@ test("publish-gitee mirrors release assets and notes", async () => {
       [
         fileURLToPath(new URL("./publish-gitee.mjs", import.meta.url)),
         "--tag",
-        "aiti-widget-v0.2.0",
+        "aiti-desktop-widget-v0.2.0",
         "--assets-dir",
         assets,
       ],
@@ -91,10 +91,10 @@ test("publish-gitee mirrors release assets and notes", async () => {
     });
     const code = await new Promise((resolve) => child.on("close", resolve));
     assert.equal(code, 0, `stderr=${stderr}\nstdout=${stdout}`);
-    assert.deepEqual(uploads.sort(), ["aiti-widget-linux-x64", "checksums.txt"]);
+    assert.deepEqual(uploads.sort(), ["aiti-desktop-widget-linux-x64", "checksums.txt"]);
     const params = new URLSearchParams(createBody);
-    assert.equal(params.get("tag_name"), "aiti-widget-v0.2.0");
-    assert.equal(params.get("name"), "aiti-widget v0.2.0");
+    assert.equal(params.get("tag_name"), "aiti-desktop-widget-v0.2.0");
+    assert.equal(params.get("name"), "aiti-desktop-widget v0.2.0");
     assert.match(params.get("body") || "", /Release notes from GitHub/);
     assert.equal(params.get("access_token"), "test-token");
   } finally {

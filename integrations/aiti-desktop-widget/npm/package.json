@@ -1,10 +1,10 @@
 {
-  "name": "@aiti-ai/aiti-widget",
+  "name": "@aiti-ai/aiti-desktop-widget",
   "version": "0.2.0",
   "description": "Cross-platform frameless desktop widget shell — native binary fetched on first run with justget multi-source racing",
   "type": "module",
   "bin": {
-    "aiti-widget": "bin/aiti-widget.mjs"
+    "aiti-desktop-widget": "bin/aiti-desktop-widget.mjs"
   },
   "exports": {
     ".": "./index.mjs"
@@ -26,9 +26,9 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",
-    "directory": "integrations/aiti-widget/npm"
+    "directory": "integrations/aiti-desktop-widget/npm"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-ai/tree/main/integrations/aiti-widget",
+  "homepage": "https://github.com/aiti-ai/aiti-ai/tree/main/integrations/aiti-desktop-widget",
   "bugs": {
     "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
