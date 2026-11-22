@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { resolveSessionPath, openSessionManager, buildSessionContext } from "@/lib/session-reader";
+import { resolveSessionPath, openSessionManager, buildSessionContext, preferDiskHistory } from "@/lib/session-reader";
 import { getRpcSession } from "@/lib/rpc-manager";
 import { resolveAttachBySessionId, attachIfBridged, handleModelToClient, resolveAnySession, resolveExternalCompositeSession } from "@/lib/session";
 import { buildExternalPagedContext } from "@/lib/external-session-paging";
@@ -53,9 +53,13 @@ export async function GET(
     // disk file may lag the bridge's in-memory state (an in-progress turn not yet
     // flushed). Otherwise, past the race window (the bridge registering later than the
     // web's first open) the context would forever read the local file/twin.
+    // Oversized local files skip this entirely: a get_messages full dump is a single
+    // JSONL line sized like the whole session (>8MB kills the wrapper client / wire
+    // reader) — the disk branch below serves upward-paged history without spawning
+    // an agent just to scroll (2026-11-22 blank-history incident).
     {
       const fpEarly = await resolveSessionPath(id);
-      if (fpEarly) {
+      if (fpEarly && !preferDiskHistory(fpEarly)) {
         let bridgedEarly;
         try {
           bridgedEarly = await attachIfBridged(fpEarly);
