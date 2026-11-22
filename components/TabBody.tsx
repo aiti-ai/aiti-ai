@@ -1,10 +1,10 @@
 "use client";
 
-import { FileViewer } from "./FileViewer";
-import { ExtSlot } from "./ExtSlots";
-import { TerminalPanelBridge } from "./TerminalPanelBridge";
-import type { TerminalTab } from "./terminal-tab-state";
-import type { Tab } from "./TabBar";
+import { FileViewer } from "./FileViewer.tsx";
+import { ExtSlot } from "./ExtSlots.tsx";
+import { TerminalPanelBridge } from "./TerminalPanelBridge.tsx";
+import type { TerminalTab } from "./terminal-tab-state.ts";
+import type { Tab } from "./TabBar.tsx";
 import type { FileViewerState } from "@/lib/file-viewer-state";
 import { getFileName } from "@/lib/file-paths";
 

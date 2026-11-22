@@ -50,6 +50,7 @@ import { registerFileWatch, startFileWatch, stopFileWatch } from "@/lib/file-wat
 import { isIgnored } from "@/lib/file-ignore";
 import { FILE_WATCH_HEARTBEAT_MS } from "@/lib/file-version";
 import { pageStreamLabel, registerPageStream } from "@/lib/page-stream-registry";
+import { contentDisposition } from "@/lib/content-disposition";
 
 // 忽略规则已改为纯文件驱动（.gitignore + .aitignore，见 lib/file-ignore.ts）——
 // 不再有硬编码忽略集合；无 ignore 文件时全部显示（所见即磁盘）。
@@ -484,6 +485,8 @@ function createFileBodyStream(filePath: string, range?: { start: number; end: nu
         if (closed) return;
         try {
           controller.enqueue(new Uint8Array(chunk));
+          // A client slower than the disk must not make the whole file pile up in memory.
+          if ((controller.desiredSize ?? 1) <= 0) fileStream.pause();
         } catch {
           closed = true;
           fileStream.destroy();
@@ -507,6 +510,9 @@ function createFileBodyStream(filePath: string, range?: { start: number; end: nu
           // The response was already abandoned by the client.
         }
       });
+    },
+    pull() {
+      if (!closed) fileStream.resume();
     },
     cancel() {
       closed = true;
@@ -635,9 +641,11 @@ async function handleRevisionRequest(
 function streamFile(filePath: string, stat: fs.Stats, contentType: string, rangeHeader: string | null, asDownload = false): Response {
   const headers: Record<string, string> = {
     "Content-Type": contentType,
-    "Cache-Control": "no-cache",
+    // no-transform: Next gzips compressible route responses (SVG among them), a 206 included,
+    // which turns a byte range into the range of a different body; file bytes go out as stored.
+    "Cache-Control": "no-cache, no-transform",
     "Accept-Ranges": "bytes",
-    "Content-Disposition": getContentDisposition(filePath, asDownload),
+    "Content-Disposition": contentDisposition(asDownload ? "attachment" : "inline", path.basename(filePath), "download"),
     "X-Content-Type-Options": "nosniff",
   };
   // SVG is the only preview type a browser executes as a document. A

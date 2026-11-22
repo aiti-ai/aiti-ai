@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { getFileIcon, FolderIcon } from "./FileIcons.tsx";
-import { renderExtItemIcon } from "./ExtItemIcon";
+import { renderExtItemIcon } from "./ExtItemIcon.tsx";
 import type { ExtUiItemIcon } from "@/lib/ext/types";
 import { useI18n } from "@/hooks/useI18n";
 import type { FileViewerDisplayMode, FileViewerState } from "@/lib/file-viewer-state";

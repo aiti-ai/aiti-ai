@@ -22,7 +22,7 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { apiUrl } from "@/lib/base-path";
-import { ExtSlot, useExtMetas, useExtSlotItems } from "./ExtSlots";
+import { ExtSlot, useExtMetas, useExtSlotItems } from "./ExtSlots.tsx";
 import {
   normalizeWidgetItem,
   resolveWidgetLayout,

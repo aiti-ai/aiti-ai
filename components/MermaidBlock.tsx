@@ -24,7 +24,7 @@ const ZOOM_MAX = 3;
 // (SyntaxHighlighterLite only registers common languages); plain text is the
 // fallback until the chunk is ready, styled to match the streaming branch
 // (hydration focus P1.1).
-const SyntaxHighlighter = lazy(() => import("./SyntaxHighlighterLite"));
+const SyntaxHighlighter = lazy(() => import("./SyntaxHighlighterLite.tsx"));
 const PLAIN_CODE_PRE_STYLE: CSSProperties = {
   margin: 0,
   padding: "11px 13px",
@@ -160,15 +160,18 @@ export function MermaidBlock({ code, isStreaming, defaultPreview = false }: Merm
   );
 }
 
-// What a previewed fence (mermaid here, svg in components/SvgBlock.tsx) shares:
+// What a previewed fence (mermaid here, svg in components/SvgBlock.tsx,
+// plantuml in components/PlantUmlBlock.tsx) shares:
 // the header with its toggle and download button, and the zoom viewer.
 
-export function PreviewToggleButton({ isStreaming, previewVisible, onToggle, title }: {
+export function PreviewToggleButton({ isStreaming, previewVisible, onToggle, title, previewLabel }: {
   isStreaming?: boolean;
   previewVisible: boolean;
   onToggle: () => void;
   /** What a click shows: the source while the preview is visible, else the preview. */
   title: string;
+  /** The label that turns the preview on, when "Preview" would not say enough. */
+  previewLabel?: string;
 }) {
   const { t } = useI18n();
   return (
@@ -179,7 +182,7 @@ export function PreviewToggleButton({ isStreaming, previewVisible, onToggle, tit
       title={isStreaming ? t("i18n.previewAfterStreaming") : title}
       className={["markdown-code-action", previewVisible ? "is-active" : ""].filter(Boolean).join(" ")}
     >
-      {previewVisible ? t("i18n.source") : t("i18n.preview")}
+      {previewVisible ? t("i18n.source") : previewLabel ?? t("i18n.preview")}
     </button>
   );
 }

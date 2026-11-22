@@ -13,6 +13,7 @@ import {
 } from "./enabled-models-helpers.ts";
 import { ConfigButton, ConfigSwitch } from "./SettingsUi.tsx";
 import { ModelContextWindow, type ModelContextSettings } from "./ModelContextWindow.tsx";
+import { readJsonOrThrow } from "@/lib/fetch-json";
 
 /**
  * Model switches backed by pi's `enabledModels` setting.
@@ -92,8 +93,7 @@ export function useEnabledModels(cwd?: string | null): EnabledModelsController {
     const query = cwd ? `?cwd=${encodeURIComponent(cwd)}` : "";
     fetch(apiUrl(`/api/models/enabled${query}`), { signal: controller.signal })
       .then(async (res) => {
-        const data = await res.json() as EnabledModelsView & { error?: string };
-        if (!res.ok || data.error) throw new Error(data.error ?? `HTTP ${res.status}`);
+        const data = await readJsonOrThrow<EnabledModelsView>(res);
         setView(data);
         setFailure(null);
       })
@@ -345,8 +345,7 @@ function useCatalogRefresh(providerId: string, onChanged: () => void) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ provider: providerId }),
         });
-        const data = await res.json() as CatalogRefreshResponse;
-        if (!res.ok || data.error) throw new Error(data.error ?? `HTTP ${res.status}`);
+        const data = await readJsonOrThrow<CatalogRefreshResponse>(res);
         if (data.reason === "offline") setNote("models.catalogOffline");
         else if (!data.completed) setNote("models.catalogUnreachable");
         else setNote(data.changed ? "models.catalogUpdated" : "models.catalogUnchanged");

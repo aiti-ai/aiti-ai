@@ -6,10 +6,10 @@ import { apiUrl } from "@/lib/base-path";
 import { copyText } from "@/lib/clipboard";
 import type { DebugClientSession, DebugEventConnectionSnapshot, DebugSessionDetail, DebugSessionSummary, DebugSnapshotResponse } from "@/lib/debug-types";
 import type { SessionInfo, SubagentSessionStatus } from "@/lib/types";
-import { StatusIcon } from "./AgentSessionPanel";
-import { MCP_SESSION_STATE_KEYS } from "./mcp-config-helpers";
-import { sessionRowTitle } from "./SessionTree";
-import { FolderIcon, SpinnerIcon } from "./SidebarIcons";
+import { StatusIcon } from "./AgentSessionPanel.tsx";
+import { MCP_SESSION_STATE_KEYS } from "./mcp-config-helpers.ts";
+import { sessionRowTitle } from "./SessionTree.tsx";
+import { FolderIcon, SpinnerIcon } from "./SidebarIcons.tsx";
 import {
   DEBUG_CLOSE_REASON_KEYS,
   DEBUG_LEASE_OUTCOME_KEYS,
@@ -78,7 +78,7 @@ import {
   type DebugTone,
   type DebugVerdict,
   type Translate,
-} from "./debug-panel-state";
+} from "./debug-panel-state.ts";
 
 /**
  * The top bar's Debug panel: how this page talks to the server (its event stream, its lease, the

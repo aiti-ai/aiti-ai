@@ -5,8 +5,8 @@ import { useHorizontalStrip } from "@/hooks/useHorizontalStrip";
 import { useI18n } from "@/hooks/useI18n";
 import { sideChatTitle } from "@/lib/session-family";
 import type { SessionInfo } from "@/lib/types";
-import { AgentKindIcon, StatusIcon, subagentTitle } from "./AgentSessionPanel";
-import { LockToggle } from "./LockToggle";
+import { AgentKindIcon, StatusIcon, subagentTitle } from "./AgentSessionPanel.tsx";
+import { LockToggle } from "./LockToggle.tsx";
 
 interface Props {
   rootSession: SessionInfo;

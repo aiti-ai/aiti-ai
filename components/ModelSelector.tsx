@@ -3,8 +3,8 @@
 import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
-import { ExtSlot } from "./ExtSlots";
-import type { SelectorRowStar } from "./SelectorRow";
+import { ExtSlot } from "./ExtSlots.tsx";
+import type { SelectorRowStar } from "./SelectorRow.tsx";
 
 export interface ModelSelectorOption {
   provider: string;

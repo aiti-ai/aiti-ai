@@ -18,7 +18,7 @@ import {
   severityColor,
   type UsageBucket,
   type UsageReport,
-} from "./ProviderUsageReportView";
+} from "./ProviderUsageReportView.tsx";
 
 const STORAGE_KEY = "pi-web:provider-usage:overview";
 

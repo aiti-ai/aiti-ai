@@ -8,9 +8,10 @@ import { dispatchSessionRowContextMenu } from "@/lib/session-row-context-menu";
 import { getProjectActivity, getRecentProjects } from "@/lib/project-groups";
 import { workspaceKeyOf } from "@/lib/workspace-memory";
 import { loadHiddenWorkspaces, WORKSPACES_CHANGED_EVENT } from "@/lib/workspace-hide";
-import { ExtSlot, useExtProvides, useExtSlotItems } from "./ExtSlots";
+import { ExtSlot, useExtProvides, useExtSlotItems } from "./ExtSlots.tsx";
 import { EXT_PROVIDES, type WorkspacePickerActionsProps } from "@/lib/ext/types";
 import { apiUrl } from "@/lib/base-path";
+import { getDraftApi } from "@/lib/composer/draft-api";
 import { dedupeFetch } from "@/lib/dedupe-fetch";
 import { ensureHomeDir, getHomeDir } from "@/lib/home-dir";
 import {
@@ -93,14 +94,14 @@ import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useScrollbarVisibility } from "@/hooks/useScrollbarVisibility";
 import { useSessionUiState } from "@/hooks/useSessionUiState";
-import { DirectoryPicker } from "./DirectoryPicker";
-import { DismissButton } from "./DismissButton";
-import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
-import { ProjectWorktreePicker, type ProjectWorktreePickerHandle, type WorktreeRemoval } from "./ProjectWorktreePicker";
-import { SessionSearch } from "./SessionSearch";
-import { SessionTree, sessionRowTitle, type SessionTreeReveal } from "./SessionTree";
-import { SidebarMenu, type SidebarMenuAnchor, type SidebarMenuItem } from "./SidebarMenu";
-import { SidebarToast, type SidebarToastAction, type SidebarToastData } from "./SidebarToast";
+import { DirectoryPicker } from "./DirectoryPicker.tsx";
+import { DismissButton } from "./DismissButton.tsx";
+import { FileExplorer, type FileExplorerHandle } from "./FileExplorer.tsx";
+import { ProjectWorktreePicker, type ProjectWorktreePickerHandle, type WorktreeRemoval } from "./ProjectWorktreePicker.tsx";
+import { SessionSearch } from "./SessionSearch.tsx";
+import { SessionTree, sessionRowTitle, type SessionTreeReveal } from "./SessionTree.tsx";
+import { SidebarMenu, type SidebarMenuAnchor, type SidebarMenuItem } from "./SidebarMenu.tsx";
+import { SidebarToast, type SidebarToastAction, type SidebarToastData } from "./SidebarToast.tsx";
 import {
   ArchiveIcon,
   ChangesIcon,
@@ -122,7 +123,7 @@ import {
   TerminalIcon,
   TrashIcon,
   UploadIcon,
-} from "./SidebarIcons";
+} from "./SidebarIcons.tsx";
 
 interface FileManagerAvailability {
   supported: boolean;
@@ -364,6 +365,8 @@ const RUNNING_SSE_FRESH_MS = 45_000; // heartbeat is 30s; any frame seen within 
 // badge reconciles at this cadence instead of the fallback interval.
 const RUNNING_RECONCILE_POLL_MS = 60_000;
 const SESSION_DETAILS_HYDRATION_DELAY_MS = 750;
+// How long the running poll leaves an unknown list version to the first summary (a cold disk).
+const INITIAL_SUMMARY_WAIT_MS = 15_000;
 /** "Archive sessions older than 7 days" in a project's menu. */
 const ARCHIVE_OLDER_THAN_MS = 7 * 24 * 60 * 60 * 1000;
 const TOAST_TITLE_MAX = 28;
@@ -509,6 +512,11 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
   // decide whether the list needs reloading, and no render reads it.
   const sessionListVersionRef = useRef<number | null>(null);
   const sessionLoadIdRef = useRef(0);
+  // While the first summary list is in flight, the running poll must not take the
+  // unknown list version for an invalidation and supersede it with a full scan.
+  // Bounded: a summary request that stalls (a dropped phone connection) must not
+  // keep the poll from loading the list forever.
+  const initialSummaryStartedAtRef = useRef<number | null>(null);
   const [loading, setLoading] = useState(true);
   // The first paint lists summary rows (their time is the file's mtime); the
   // project order is first saved from the full details.
@@ -738,10 +746,13 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
       // triggers from multiple points/timings send only one real request, repeats within the TTL
       // reuse the last result, and non-forced full requests get ETag/304 empty transfers.
       const data = await fetchSessionsList(sessionListUrl(summary, force), force);
-      if (loadId !== sessionLoadIdRef.current) return;
+      if (loadId !== sessionLoadIdRef.current) return false;
       sessionListVersionRef.current = data.sessionListVersion;
       setAllSessions(data.sessions);
-      if (!summary) setSessionDetailsLoaded(true);
+      // A summary row whose file changed since the last scan is the only one
+      // without its details; the others were checked against their file's stat.
+      const needsDetails = data.sessions.some((session) => session.detailsPending === true);
+      if (!summary || !needsDetails) setSessionDetailsLoaded(true);
       // Treat the fetched running set as an initial fallback only. Once the
       // lightweight poll is live, a slow session-list fetch cannot overwrite it.
       if (!runningPollAuthoritativeRef.current) {
@@ -772,8 +783,10 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
         if (manualRefreshDoneTimer.current) clearTimeout(manualRefreshDoneTimer.current);
         manualRefreshDoneTimer.current = setTimeout(() => setSessionRefreshDone(false), 1200);
       }
+      return needsDetails;
     } catch (e) {
       if (loadId === sessionLoadIdRef.current) setError(String(e));
+      return false;
     } finally {
       if (loadId === sessionLoadIdRef.current) setLoading(false);
     }
@@ -788,9 +801,12 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
     if (isFirst) {
       // Header/stat metadata is enough to select the URL session and paint the
       // sidebar. Hydrate exact counts, names, and first messages once the
-      // selected chat has had a chance to start loading.
-      void loadSessions(true, false, true).then(() => {
-        if (!active) return;
+      // selected chat has had a chance to start loading, and only when the
+      // summary has rows a full scan still owes.
+      initialSummaryStartedAtRef.current = Date.now();
+      void loadSessions(true, false, true).then((needsDetails) => {
+        initialSummaryStartedAtRef.current = null;
+        if (!active || !needsDetails) return;
         detailsHydrationTimerRef.current = setTimeout(() => {
           detailsHydrationTimerRef.current = null;
           if (active) void loadSessions(false, true);
@@ -981,7 +997,11 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
         setSubagentsActiveSessionIds((previous) => sameIdsOr(previous, data.subagentsActiveSessionIds ?? []));
         // Pins and archive changed in another window: reload them.
         noteUiRevision(data.sessionUiStateRevision);
-        if (data.sessionListVersion !== sessionListVersionRef.current) {
+        // The first summary may still be in flight (a cold disk): its version is
+        // unknown, not stale, so a full scan must not supersede it.
+        const summaryStartedAt = initialSummaryStartedAtRef.current;
+        const summaryInFlight = summaryStartedAt !== null && Date.now() - summaryStartedAt < INITIAL_SUMMARY_WAIT_MS;
+        if (!summaryInFlight && data.sessionListVersion !== sessionListVersionRef.current) {
           // Reuse the invalidated cache; forcing a scan would change the version again.
           await loadSessions();
         }
@@ -1962,7 +1982,9 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
     setConfirmDeleteRootId((current) => (current === session.id ? null : current));
     try {
       // The server deletes the family's subagent sessions with it.
-      await fetch(apiUrl(`/api/sessions/${encodeURIComponent(session.id)}`), { method: "DELETE" });
+      const res = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(session.id)}`), { method: "DELETE" });
+      // Drafts are kept by the draft-keeper: they go with their sessions, once the server deleted them.
+      if (res.ok) [session, ...family.subagents].forEach((member) => getDraftApi()?.clearAllDrafts(member.id));
       onSessionDeleted?.(session.id);
       void loadSessions();
     } catch {

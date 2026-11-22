@@ -13,8 +13,9 @@
  * each would read every file of the folder once per session.
  */
 
-import { readdirSync, readFileSync, statSync, writeFileSync } from "fs";
+import { readdirSync, readFileSync, statSync } from "fs";
 import { dirname, join } from "path";
+import { writeSessionFileAtomicSync } from "./atomic-file.ts";
 import { abortSubagent, getRpcSession, getRpcSessionInfos, getRunningRpcSessionIds } from "./rpc-manager.ts";
 import {
   invalidateSessionListCache,
@@ -250,7 +251,8 @@ export async function deleteSessions(
                 break;
               }
             }
-            writeFileSync(childPath, lines.join("\n"));
+            // Atomic: a process killed mid-write must not leave the child truncated.
+            writeSessionFileAtomicSync(childPath, lines.join("\n"));
           } catch { /* skip malformed */ }
         }
       } catch { /* skip if dir unreadable */ }

@@ -20,7 +20,7 @@ test("MessageView still declares the edit-from-here trio in its props interface"
 test("MessageView passes the trio through to UserMessageView", () => {
   assert.match(
     source,
-    /entryId=\{entryId\} onFork=\{onFork\} forking=\{forking\} forkBashRunning=\{forkBashRunning\} onNavigate=\{onNavigate\} prevAssistantEntryId=\{prevAssistantEntryId\} onEditFromHere=\{onEditFromHere\} editingFromStart=\{editingFromStart\} onCancelEditFromStart=\{onCancelEditFromStart\}/,
+    /entryId=\{entryId\} forkEntryId=\{[^}]*\} onFork=\{onFork\} forking=\{forking\} forkBashRunning=\{forkBashRunning\} onNavigate=\{onNavigate\} prevAssistantEntryId=\{prevAssistantEntryId\} onEditFromHere=\{onEditFromHere\} editingFromStart=\{editingFromStart\} onCancelEditFromStart=\{onCancelEditFromStart\}/,
   );
 });
 

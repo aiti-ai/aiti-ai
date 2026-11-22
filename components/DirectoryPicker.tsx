@@ -6,6 +6,7 @@ import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useOverlayBack } from "@/hooks/useOverlayBack";
 import { apiUrl } from "@/lib/base-path";
+import { readJsonOrThrow } from "@/lib/fetch-json";
 
 
 interface DirectoryEntry {
@@ -86,10 +87,8 @@ async function createDirectory(parentPath: string, name: string): Promise<string
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ path: parentPath, name }),
   });
-  const data = await response.json() as CreateDirectoryResponse;
-  if (!response.ok || data.error || !data.path) {
-    throw new Error(data.error ?? `HTTP ${response.status}`);
-  }
+  const data = await readJsonOrThrow<CreateDirectoryResponse>(response);
+  if (!data.path) throw new Error(`HTTP ${response.status}`);
   return data.path;
 }
 

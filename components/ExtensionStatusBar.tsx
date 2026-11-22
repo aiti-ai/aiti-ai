@@ -4,8 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { stripAnsi } from "@/lib/ansi";
 import type { ExtensionStatusItem, ExtensionWidgetItem } from "@/lib/types";
 import { useI18n } from "@/hooks/useI18n";
-import { AnsiText } from "./AnsiText";
-import { ExtensionWidgets } from "./ExtensionWidgets";
+import { AnsiText } from "./AnsiText.tsx";
+import { ExtensionWidgets } from "./ExtensionWidgets.tsx";
 
 /**
  * `ctx.ui.setStatus("command:/mode toggle", "Build")` shows "Build" as a button

@@ -126,8 +126,10 @@ test("the running poll carries the sidebar state revision and deleting a session
   assert.equal(await revision(), 2);
 });
 
-test("session listing returns plain JSON even when the client accepts gzip", async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "pi-web-list-gzip-"));
+// Next compresses responses itself and, from 16.4.6, drops a handler's own
+// Content-Encoding, so a body the handler gzips goes out gzipped twice (#1729).
+test("session listing leaves compression to Next when the client accepts gzip", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-web-list-encoding-"));
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = dir;
   invalidateSessionListCache();
@@ -138,6 +140,8 @@ test("session listing returns plain JSON even when the client accepts gzip", asy
     await rm(dir, { recursive: true, force: true });
   });
 
+  // The list carries at most 500 characters of each first message, so a few
+  // sessions make the body larger than any compression threshold.
   const firstMessage = "compressible session content ".repeat(500);
   const manager = SessionManager.create(dir);
   manager.appendMessage({ role: "user", content: firstMessage, timestamp: Date.now() });
@@ -149,8 +153,6 @@ test("session listing returns plain JSON even when the client accepts gzip", asy
   }));
 
   assert.equal(response.status, 200);
-  // No Next-layer gzip: Next 16.4.6 strips route-handler Content-Encoding headers (body kept),
-  // which made the edge re-compression layer double-gzip the payload. See lib/json-response.ts.
   assert.equal(response.headers.get("Content-Encoding"), null);
   const payload = await response.json();
   assert.equal(payload.sessions[0].firstMessage, firstMessage);
@@ -377,9 +379,9 @@ test("live detail and state routes work without a persisted JSONL file", async (
   });
 });
 
-test("session detail returns plain JSON even when the client accepts gzip", async (t) => {
+test("session detail leaves compression to Next when the client accepts gzip", async (t) => {
   const previousRegistry = globalThis.__piSessions;
-  const id = "live-route-gzip-test";
+  const id = "live-route-encoding-test";
   const timestamp = "2026-09-05T00:00:00.000Z";
   const firstMessage = "large session detail content ".repeat(500);
   const entry = {
@@ -395,7 +397,7 @@ test("session detail returns plain JSON even when the client accepts gzip", asyn
     getLeafId: () => entry.id,
     getTree: () => [],
     getSessionName: () => undefined,
-    getSessionFile: () => `/tmp/pi-web-live-route-gzip-${process.pid}.jsonl`,
+    getSessionFile: () => `/tmp/pi-web-live-route-encoding-${process.pid}.jsonl`,
   };
   globalThis.__piSessions = new Map([[id, {
     isAlive: () => true,
@@ -417,7 +419,6 @@ test("session detail returns plain JSON even when the client accepts gzip", asyn
   );
 
   assert.equal(response.status, 200);
-  // No Next-layer gzip — see lib/json-response.ts for the Next 16.4.6 regression.
   assert.equal(response.headers.get("Content-Encoding"), null);
   const payload = await response.json();
   assert.equal(payload.info.firstMessage, firstMessage);
