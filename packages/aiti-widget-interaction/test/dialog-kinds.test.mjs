@@ -4,6 +4,7 @@ import {
   dialogExitCode,
   dialogStdout,
   dialogToRequest,
+  dialogWindowPlacement,
   dialogWindowSize,
 } from "../dist/index.js";
 
@@ -59,4 +60,11 @@ test("stdout prints the chosen/typed value and nothing for confirm/notify", () =
 
 test("window sizes grow with the option count", () => {
   assert.ok(dialogWindowSize({ kind: "choose", options: ["A", "B", "C"] }).height > dialogWindowSize({ kind: "confirm" }).height);
+});
+
+test("placement flags are normalized for the widget window", () => {
+  assert.deepEqual(dialogWindowPlacement({ x: "100", y: "240.6", display: "primary" }), { x: 100, y: 240.6, display: "primary" });
+  assert.deepEqual(dialogWindowPlacement({ x: "nope", y: "", center: true }), { center: true });
+  assert.deepEqual(dialogWindowPlacement({}), {});
+  assert.equal(dialogWindowPlacement({ display: "" }).display, undefined);
 });

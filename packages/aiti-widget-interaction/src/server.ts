@@ -12,6 +12,8 @@ export interface InteractionServerOptions {
   port?: number;
   /** Bearer token. Omit for a random token; pass "" to disable auth (loopback dev only). */
   token?: string
+  /** Let the built-in page auto-size to its content (default true). Pinned geometry sets false. */
+  autosize?: boolean
   /** Directory containing interaction.html + interaction-client.js. */
   pageDir?: string
   pageFile?: string
@@ -230,7 +232,11 @@ export async function startInteractionServer(options: InteractionServerOptions):
   const address = server.address();
   const actualPort = typeof address === "object" && address ? address.port : port;
   const baseUrl = `http://${host}:${actualPort}/`;
-  const url = token ? `${baseUrl}?token=${encodeURIComponent(token)}` : baseUrl;
+  const pageParams = new URLSearchParams();
+  if (token) pageParams.set("token", token);
+  if (options.autosize === false) pageParams.set("autosize", "0");
+  const query = pageParams.toString();
+  const url = query ? `${baseUrl}?${query}` : baseUrl;
   return {
     server,
     port: actualPort,

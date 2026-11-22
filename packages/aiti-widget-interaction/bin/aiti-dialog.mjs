@@ -24,6 +24,7 @@ import {
   dialogExitCode,
   dialogStdout,
   dialogToRequest,
+  dialogWindowPlacement,
   dialogWindowSize,
   dialogWindowTitle,
   startInteractionServer,
@@ -85,12 +86,21 @@ function exitWith(code, message) {
 async function runOnce(spec, values, flags) {
   const broker = new InteractionBroker();
   const size = dialogWindowSize(spec);
-  const server = await startInteractionServer({ broker, port: 0 });
+  // Explicit geometry means "stay exactly there" (zenity-style scripts, capture-rect safety).
+  const pinned = ["x", "y", "display", "width", "height"].some((flag) => values[flag] !== undefined) || flags.has("center");
+  const server = await startInteractionServer({ broker, port: 0, autosize: !pinned });
+  const placement = dialogWindowPlacement({
+    x: values.x,
+    y: values.y,
+    display: values.display,
+    center: flags.has("center"),
+  });
   const win = new InteractionWidgetWindow({
     bin: values["widget-bin"],
     width: Number(values.width) || size.width,
     height: Number(values.height) || size.height,
     title: dialogWindowTitle(spec),
+    ...placement,
   });
 
   let pageUrl = server.url;

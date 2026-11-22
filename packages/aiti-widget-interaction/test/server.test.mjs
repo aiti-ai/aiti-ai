@@ -53,3 +53,21 @@ test("rejects API requests without the token", async () => {
     broker.close();
   }
 });
+
+test("autosize=0 rides in the page URL when geometry is pinned", async () => {
+  const broker = new InteractionBroker();
+  const pinned = await startInteractionServer({ broker, port: 0, token: "t1", autosize: false });
+  const auto = await startInteractionServer({ broker, port: 0, token: "t2" });
+  try {
+    const pinnedUrl = new URL(pinned.url);
+    assert.equal(pinnedUrl.searchParams.get("autosize"), "0");
+    assert.equal(pinnedUrl.searchParams.get("token"), "t1");
+    const autoUrl = new URL(auto.url);
+    assert.equal(autoUrl.searchParams.get("autosize"), null);
+    assert.equal(autoUrl.searchParams.get("token"), "t2");
+  } finally {
+    await pinned.close();
+    await auto.close();
+    broker.close();
+  }
+});
