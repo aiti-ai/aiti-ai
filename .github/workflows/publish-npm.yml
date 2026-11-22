@@ -156,7 +156,6 @@ jobs:
             --file "@aiti-ai/aiti-devtools-core=$CORE_TGZ" \
             --file "@aiti-ai/secret-mask-core=$SECRET_MASK_TGZ" \
             --file "@aiti-ai/secret-vault-core=$SECRET_VAULT_TGZ" \
-            --file "justget=$PWD/vendor/npm/justget-0.2.4.tgz" \
             --file "service-tunnels=$PWD/vendor/npm/service-tunnels-0.3.76.tgz" \
             --file "@aiti-ti/ddns=$PWD/vendor/npm/aiti-ti-ddns-0.2.0.tgz"
           npm install --prefix "$BUILD" --legacy-peer-deps --no-audit --no-fund --loglevel=error

@@ -8,7 +8,7 @@ import { join, resolve } from "node:path";
 const STAGE = process.argv[2];
 const NAMES = [
   "@aiti-ai/ext-shared", "@aiti-ai/aiti-bridge", "@aiti-ai/aiti-devtools-core",
-  "justget", "service-tunnels", "@aiti-ti/ddns",
+  "service-tunnels", "@aiti-ti/ddns",
 ];
 const VENDOR_SRC = join(STAGE, "vendor", "npm");
 const VENDOR_OUT = join(STAGE, "vendor", "rewritten");

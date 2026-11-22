@@ -145,6 +145,18 @@ docker volume rm aiti_data aiti_agent   # remove the data too (careful)
 ./docker/build.sh --target core --tag aitiai/pi-web:core --cn
 # Equivalent env: AITI_CN=1 (pre-set in the systemd unit template)
 
+# full target ④ (cloudflared/ttyd/ngrok/frpc) races sources with justget instead of walking them: github.com +
+# GH_ACCEL_MIRRORS + the gitee copy, so a throttled direct link no longer stalls the build. Defaults already work;
+# override only when a mirror dies:
+./docker/build.sh --target full --gh-accel "https://ghfast.top/https://github.com" \
+  --gitee-bins https://gitee.com/aiti-ai/tunnel-binaries/releases/download/vendor-v1
+# Re-publish the gitee copies after bumping a pin: node scripts/sync-tunnel-binaries.mjs [--arches amd64,arm64]
+
+# The justget CLI itself comes from the npm registry now (core ⑦, pinned by Dockerfile.core ARG
+# JUSTGET_VERSION = 0.2.5). No local ~/workspace/justget checkout and no vendored tgz is needed; to build against
+# a version that only exists on a mirror/private registry, point the build at it:
+./docker/build.sh --target core --tag aitiai/pi-web:core --npm-registry https://registry.example.com --justget-version 0.2.6
+
 ./docker/scripts/smoke.sh full [--keep]                  # 22-check smoke suite (exit = failure count)
 node docker/scripts/e2e-ui.mjs                           # UI journey E2E (needs playwright-core + chromium)
 node docker/scripts/gen-deps.mjs                         # S3 dependency matrix (reads extension `aiti` metadata blocks)
@@ -153,7 +165,7 @@ node docker/scripts/gen-deps.mjs                         # S3 dependency matrix 
 > `--cn` only affects public-source mirrors; **the `@aiti-ai/*` private registry is a separate temporary channel**: `--private-registry <private-registry-url>`
 > (or env `AITI_PRIVATE_REGISTRY`) — for local testing only. Once `@aiti-ai/*` is on public npm, omit it and the official registry is used.
 > Same at runtime: `docker run -e AITI_NPM_REGISTRY=<private-registry-url>` lets pi pull private packages on first boot (written into the in-container `~/.npmrc`).
-> Known limitations (see the test report's remaining-issues section): arm64 has no official Chrome (CDP missing; all other download layers ready); ngrok/frpc downloads occasionally need retries (the build carries a gh-mirror racing fallback); UI E2E depends on host chromium.
+> Known limitations (see the test report's remaining-issues section): arm64 has no official Chrome (CDP missing; all other download layers ready); the ④ tunnel binaries are raced by justget against github.com + GH_ACCEL_MIRRORS + the gitee mirror, so a slow GitHub no longer blocks the build (frp is not on the gitee mirror — gitee's upload scanner rejects it); UI E2E depends on host chromium.
 
 ## 9. Troubleshooting
 

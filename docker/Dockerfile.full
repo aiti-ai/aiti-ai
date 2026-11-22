@@ -58,44 +58,60 @@ RUN pip3 install --break-system-packages -i "${PIP_MIRROR}" edge-tts \
 # After the A12 fix speek locates edge-tts via PATH; in-container pip installs to /usr/local/bin (on PATH)
 
 # ── ④ tunnel binaries + ttyd (design §2.2.4/§2.2.5) ─────────────────────────────────────────
-# All versions pinned (latest redirects / asset drift caused silent absences); multi-source racing (github direct +
-# 3 gh mirrors — single sources proved flaky); if all four sources fail for cloudflared/ttyd the build fails (hard check);
-# ngrok/frpc tolerate failure (equinox has no mirror alternative — WARN, non-blocking).
+# All versions pinned (latest redirects / asset drift caused silent absences).
+# Sources are *raced* by justget (already bundled in the core image) instead of being walked one by one: the old curl
+# loop counted a slow github.com as success and only fell back on a hard failure, so one throttled asset could pin the
+# build for tens of minutes (measured on a CN link: direct ≈13 KB/s vs a live accelerator ≈2.8 MB/s). justget starts
+# the mirrors as soon as the primary drops below --min-speed and skips them entirely when the primary is fast
+# (--fast-primary-threshold), so a fast CI network keeps the plain direct path.
+# Thresholds are passed explicitly instead of relying on justget's defaults: the core image may carry an older
+# justget build (its historical default only started mirrors for ≥50 MB files), and every asset here is smaller.
+#   GH_ACCEL_MIRRORS: comma-separated GitHub prefix accelerators ("" = single-source download, mirrors off)
+#   GITEE_BIN_BASE:   optional gitee-hosted copies of the same assets — a mirror that does not depend on any
+#                     third-party accelerator (populated by scripts/sync-tunnel-binaries.mjs); "" = unused.
+#                     The <gitee-name> argument of dl is the asset name there; an empty name = no gitee copy
+#                     (frp is not mirrored: gitee's upload scanner rejects it).
+# cloudflared/ttyd are hard requirements (fail-fast); ngrok/frpc are optional (WARN, non-blocking).
+ARG GH_ACCEL_MIRRORS="https://ghfast.top/https://github.com,https://gh-proxy.com/https://github.com"
+ARG GITEE_BIN_BASE="https://gitee.com/aiti-ai/tunnel-binaries/releases/download/vendor-v1"
+
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64) garch="amd64"; garch_f="amd64";; arm64) garch="aarch64"; garch_f="arm64";; esac; \
-    try_dl() { out="$1"; shift; for u in "$@"; do curl -fsSL --connect-timeout 20 --retry 2 -o "$out" "$u" && return 0; done; return 1; }; \
-    GH="https://github.com"; P1="https://gh-proxy.com/https://github.com"; P2="https://ghproxy.net/https://github.com"; P3="https://ghfast.top/https://github.com"; \
+    ACCEL="$(printf '%s' "$GH_ACCEL_MIRRORS" | tr ',' ' ')"; \
+    dl() { out="$1"; url="$2"; ge="$3"; \
+      if command -v justget >/dev/null 2>&1; then \
+        set -- justget "$url" -o "$out" --min-size 1048576 --warmup 3000 --timeout 900000 --no-progress; \
+        case "$url" in https://github.com/*) rel="${url#https://github.com/}"; for m in $ACCEL; do set -- "$@" -m "$m/$rel"; done;; esac; \
+        if [ -n "$GITEE_BIN_BASE" ] && [ -n "$ge" ]; then set -- "$@" -m "$GITEE_BIN_BASE/$ge"; fi; \
+        if "$@"; then return 0; fi; \
+        echo "[full] WARN justget failed for $url — falling back to the sequential curl walk" >&2; \
+      fi; \
+      if curl -fsSL --connect-timeout 20 --retry 2 -o "$out" "$url"; then return 0; fi; \
+      case "$url" in https://github.com/*) rel="${url#https://github.com/}"; for m in $ACCEL; do if curl -fsSL --connect-timeout 20 --retry 2 -o "$out" "$m/$rel"; then return 0; fi; done;; esac; \
+      if [ -n "$GITEE_BIN_BASE" ] && [ -n "$ge" ]; then if curl -fsSL --connect-timeout 20 --retry 2 -o "$out" "$GITEE_BIN_BASE/$ge"; then return 0; fi; fi; \
+      return 1; }; \
+    gh() { dl "$1" "https://github.com/$2" "$3"; }; \
     # cloudflared (default tunnel, required) pinned 2026.8.3
-    try_dl /usr/local/bin/cloudflared \
-      "$GH/cloudflare/cloudflared/releases/download/2026.8.3/cloudflared-linux-${garch}" \
-      "$P1/cloudflare/cloudflared/releases/download/2026.8.3/cloudflared-linux-${garch}" \
-      "$P2/cloudflare/cloudflared/releases/download/2026.8.3/cloudflared-linux-${garch}" \
-      "$P3/cloudflare/cloudflared/releases/download/2026.8.3/cloudflared-linux-${garch}"; \
+    gh /usr/local/bin/cloudflared "cloudflare/cloudflared/releases/download/2026.8.3/cloudflared-linux-${garch}" "cloudflared-linux-${garch}"; \
     chmod +x /usr/local/bin/cloudflared; \
     # ttyd ([term] phase) pinned 1.7.7 (release assets are bare binaries; naming is kernel-style x86_64/aarch64,
     # not dpkg's amd64/arm64 — building URLs with amd64 once 404'd on every source)
     case "$arch" in amd64) tarch="x86_64";; arm64) tarch="aarch64";; esac; \
-    try_dl /usr/local/bin/ttyd \
-      "$GH/tsl0922/ttyd/releases/download/1.7.7/ttyd.${tarch}" \
-      "$P1/tsl0922/ttyd/releases/download/1.7.7/ttyd.${tarch}" \
-      "$P2/tsl0922/ttyd/releases/download/1.7.7/ttyd.${tarch}" \
-      "$P3/tsl0922/ttyd/releases/download/1.7.7/ttyd.${tarch}"; \
+    gh /usr/local/bin/ttyd "tsl0922/ttyd/releases/download/1.7.7/ttyd.${tarch}" "ttyd.${tarch}"; \
     chmod +x /usr/local/bin/ttyd && ttyd --version; \
-    # ngrok (stable direct link; users configure their own authtoken; failure non-blocking)
-    try_dl /tmp/ngrok.tgz "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-${garch}.tgz" \
+    # ngrok (stable direct link, no GitHub release behind it and no gitee copy; users configure their own
+    # authtoken; failure non-blocking)
+    dl /tmp/ngrok.tgz "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-${garch}.tgz" "" \
       || echo "[full] WARN ngrok download failed (optional)"; \
     (tar -xzf /tmp/ngrok.tgz -C /usr/local/bin ngrok && chmod +x /usr/local/bin/ngrok) || true; rm -f /tmp/ngrok.tgz; \
-    # frpc pinned 0.61.1 (frpc is a single binary inside the tar; failure non-blocking)
-    try_dl /tmp/frpc.tar.gz \
-      "$GH/fatedier/frp/releases/download/v0.61.1/frp_0.61.1_linux_${garch_f}.tar.gz" \
-      "$P1/fatedier/frp/releases/download/v0.61.1/frp_0.61.1_linux_${garch_f}.tar.gz" \
-      "$P2/fatedier/frp/releases/download/v0.61.1/frp_0.61.1_linux_${garch_f}.tar.gz" \
-      "$P3/fatedier/frp/releases/download/v0.61.1/frp_0.61.1_linux_${garch_f}.tar.gz" \
+    # frpc pinned 0.61.1 (frpc is a single binary inside the tar; failure non-blocking; no gitee mirror = "")
+    dl /tmp/frpc.tar.gz "https://github.com/fatedier/frp/releases/download/v0.61.1/frp_0.61.1_linux_${garch_f}.tar.gz" "" \
       || echo "[full] WARN frpc download failed (optional)"; \
     (tar -xzf /tmp/frpc.tar.gz -C /tmp "frp_0.61.1_linux_${garch_f}/frpc" \
       && mv "/tmp/frp_0.61.1_linux_${garch_f}/frpc" /usr/local/bin/frpc && chmod +x /usr/local/bin/frpc) || true; \
     rm -rf /tmp/frpc.tar.gz "/tmp/frp_0.61.1_linux_${garch_f}"; \
+    rm -f /usr/local/bin/.justget-* /tmp/.justget-* 2>/dev/null || true; \
     cloudflared --version; ttyd --version
 
 # ── ⑤ GUI autostart orchestration script (no systemd in containers → entrypoint phases, design §3.3 full branch) ──

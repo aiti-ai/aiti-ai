@@ -2,7 +2,7 @@
 # ubuntu:26.04 + Node 22 + core tools + aiti artifacts (pi-web fork production build + all extensions + pi engine + justget + aiti-bridge)
 # Preflight verified (2026-09-08, dev machine): docker pull ubuntu:26.04 works via registry-mirror — no 24.04 fallback needed.
 #
-# Build context = the staging dir assembled by build.sh (pi-web sources / pi-web-ext / packages / justget),
+# Build context = the staging dir assembled by build.sh (pi-web sources / pi-web-ext / packages / vendor),
 # layout documented in the build.sh header. Build args documented in the ARGs below.
 FROM ubuntu:26.04
 
@@ -18,6 +18,10 @@ ARG AITI_NPM_REGISTRY_USER=""
 ARG AITI_NPM_REGISTRY_PASS=""
 ARG NODE_MAJOR=22
 ARG TARGETPLATFORM
+# justget CLI version installed from the registry (extension deps declare ^0.2.4).
+# 0.2.5 lowered the mirror size threshold to 1 MB and fixed the ESM main-module guard, so the plain npm
+# bin symlink works — no wrapper script and no COPY'd source tree needed any more.
+ARG JUSTGET_VERSION=0.2.5
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8
@@ -115,17 +119,12 @@ RUN /tmp/30-install-pi.sh "${NPM_MIRROR}" && rm /tmp/30-install-pi.sh \
 # ── ⑥.5 vendor tgz (the file: dependency base until @aiti-ai/* is on the official registry) ────────────────
 COPY vendor/rewritten /opt/vendor
 
-# ── ⑦ justget tool market + aiti-bridge → /usr/local/bin ────────────────────────
-COPY justget /opt/aiti/src-justget
-# ⚠ wrapper, not symlink (smoke-verified): justget has an ESM main-module guard
-# (import.meta.url === pathToFileURL(argv[1])) — invoked via a symlink argv[1] is the link path,
-# the guard fails → silent exit 0. A wrapper exec'ing node <real path> satisfies the guard.
-RUN printf '#!/bin/sh\nexec node /opt/aiti/src-justget/dist/cli.js "$@"\n' > /usr/local/bin/justget \
-    && chmod +x /usr/local/bin/justget \
-    && cd /opt/aiti/src-justget \
-    && npm config set registry "${NPM_MIRROR}" \
-    && (npm ci --no-audit --no-fund || npm install --no-audit --no-fund) \
-    && rm -rf /opt/aiti/src-justget/node_modules/.cache \
+# ── ⑦ justget + aiti-bridge → PATH ────────────────────────
+# Installed from the registry instead of a COPY'd source tree: the image only needs the CLI, the version is
+# pinned by JUSTGET_VERSION, and `--npm-registry` (build.sh) can point at a mirror/private registry when the
+# pinned version is not on the public one yet.
+RUN npm config set registry "${NPM_MIRROR}" \
+    && npm install -g "justget@${JUSTGET_VERSION}" --no-audit --no-fund --loglevel=error \
     && justget --version
 COPY packages/aiti-bridge /opt/aiti/bridge
 # bridge.mjs references core sources via the ../../aiti-devtools-core relative path — copy in the same layout and install deps
@@ -154,7 +153,8 @@ ENV PI_WEB_EXTENSIONS_DIR=/opt/aiti/extensions \
 RUN touch /opt/aiti/.aiti-core
 # Wipe build-time credentials at the end of the image (the root .npmrc scope private-registry secret never enters the published image;
 # aiti's runtime .npmrc carries no credentials and uses public sources)
-RUN rm -f /root/.npmrc || true
+RUN rm -f /root/.npmrc \
+    && rm -rf /root/.npm/_cacache
 
 WORKDIR /workspace
 EXPOSE 30142 8777

@@ -3,22 +3,28 @@
 # Usage:
 #   ./docker/build.sh --target core --tag aiti/aiti:core
 #   ./docker/build.sh --target full --tag aiti/aiti:full
+#   ./docker/build.sh --target full --gh-accel "https://ghfast.top/https://github.com,..."   # GitHub download accelerators
+#   ./docker/build.sh --target full --gitee-bins https://gitee.com/<owner>/<repo>/releases/download/<tag>   # gitee asset mirror
 # Mechanism: this repo (aiti-ai) IS the release repo — app sources = repo root, extensions/ = the ported
 # extensions, packages/ = the aiti-bridge chain, pi-plugins/ = the pi plugin sources; assemble the staging
 # build context, then docker build (BuildKit).
 # The staging layout matches the historical one (pi-web/, pi-web-ext/, packages/, pi-ext/) — zero Dockerfile changes.
 # External dependency (env-overridable, with a sensible default):
-#   JUSTGET_SRC (default ~/workspace/justget, the standalone justdb/justget repo; if missing the image ships without justget, everything else proceeds)
+#   JUSTGET_VERSION (env or --justget-version, core target only) the justget CLI version installed from the registry;
+#     the default lives in Dockerfile.core (0.2.5). No local source tree or vendored tgz is needed any more.
+#   GH_ACCEL_MIRRORS (full target only; env or --gh-accel) comma-separated GitHub prefix accelerators for the
+#     tunnel-binary downloads — justget races them against github.com, so a throttled direct link no longer blocks
+#     the build. Empty = Dockerfile default; GH_ACCEL_MIRRORS="" via env disables mirrors.
+#   GITEE_BIN_BASE (full target only; env or --gitee-bins) gitee-hosted copies of those assets (scripts/sync-tunnel-binaries.mjs).
 #   PI_SUBAGENTS_NOTE: @aiti-ai/pi-subagents installs from the private npm source (source repo aiti-ai/pi-subagents-private, not this repo)
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$HERE/.." && pwd)"
-# Self-sufficient repo: app/extensions/bridge/plugins all come from this repo; justget remains an external source (standalone repo)
+# Self-sufficient repo: app/extensions/bridge/plugins all come from this repo (justget comes from the npm registry)
 PI_WEB_SRC="${PI_WEB_SRC:-$REPO_ROOT}"           # app sources = repo root
 PI_WEB_EXT_SRC="${PI_WEB_EXT_SRC:-$REPO_ROOT/extensions}"  # extensions = the ported mirror in this repo
 PACKAGES_SRC="${PACKAGES_SRC:-$REPO_ROOT/packages}"        # the aiti-bridge chain
 PI_EXT_SRC="${PI_EXT_SRC:-$REPO_ROOT/pi-plugins}"          # pi plugins (models-combo/git-trace/plan-sandbox; the qoder-family private plugins stay in the private source repo, not here)
-JUSTGET_SRC="${JUSTGET_SRC:-$HOME/workspace/justget}"
 
 TARGET="core"
 TAG=""
@@ -26,6 +32,7 @@ PLATFORM=""
 CN=0
 PRIVREG="${AITI_PRIVATE_REGISTRY:-}"
 NPM_REG="${NPM_REG:-}"   # override the global registry (when the private source is a proxying repo it can be used directly, covering public + private deps)
+GH_ACCEL_CLI=""; GITEE_BINS_CLI=""; JUSTGET_VERSION_CLI=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --target) TARGET="$2"; shift 2;;
@@ -34,6 +41,9 @@ while [[ $# -gt 0 ]]; do
     --cn) CN=1; shift;;
     --private-registry) PRIVREG="$2"; shift 2;;
     --npm-registry) NPM_REG="$2"; shift 2;;
+    --gh-accel) GH_ACCEL_CLI="$2"; shift 2;;
+    --gitee-bins) GITEE_BINS_CLI="$2"; shift 2;;
+    --justget-version) JUSTGET_VERSION_CLI="$2"; shift 2;;
     *) echo "unknown arg $1"; exit 1;;
   esac
 done
@@ -90,6 +100,8 @@ rsync -a --delete \
   --exclude '.aiti-trace' --exclude 'tsconfig.tsbuildinfo' \
   --exclude '/extensions' --exclude '/pi-plugins' --exclude '/packages' \
   --exclude '/docker' --exclude '/test-results' \
+  --exclude '/integrations' --exclude '/tmp' --exclude '/.venv' \
+  --exclude '*.tgz' --exclude 'aiti-web-v*-universal.*' --exclude '*.zip' \
   "$PI_WEB_SRC/" "$STAGE/pi-web/"
 # dev-only extensions (crash drills that sabotage core files) never enter the production
 # context; deploy-extensions.sh also skips them so a stray copy cannot slip into the image
@@ -106,16 +118,6 @@ rsync -a --delete \
 rsync -a --delete \
   --exclude 'node_modules' --exclude '.git' \
   "$HERE/" "$STAGE/docker/"
-if [ -d "$JUSTGET_SRC" ]; then
-  rsync -a --delete --exclude 'node_modules' --exclude '.git' "$JUSTGET_SRC/" "$STAGE/justget/"
-elif [ -f "$REPO_ROOT/vendor/npm/justget-0.2.4.tgz" ]; then
-  # CI / source-less fallback: the published form of vendor (package.json + dist/cli.js complete, satisfying Dockerfile ⑦)
-  echo "[build] JUSTGET_SRC missing → unpacking the vendor/npm/justget tgz"
-  mkdir -p "$STAGE/justget"
-  tar xzf "$REPO_ROOT/vendor/npm/justget-0.2.4.tgz" -C "$STAGE/justget" --strip-components=1
-else
-  echo "[build] ⚠ no justget source and no vendor tgz — the Dockerfile COPY justget will fail (fail-fast)"
-fi
 # ②.5 dependency source selection (official chain = registry: npm publish first → the container build pulls deps from the same registry;
 #  temporary test chain = vendor rewrite (file:/opt/vendor, zero registry), enabled with env AITI_DOCKER_VENDOR_REWRITE=1;
 #  default off = the official-repo path. Once @aiti-ai/* is on the official registry this section and the Dockerfile /opt/vendor can retire together)
@@ -132,10 +134,28 @@ fi
 # ③ Build (full requires core first: the docker build FROM aiti/aiti:core resolves the local image)
 PLATFORM_ARG=(); [[ -n "$PLATFORM" ]] && PLATFORM_ARG=(--platform "$PLATFORM")
 echo "[build] docker build --target ${TARGET} -> ${TAG}"
+if [[ "$TARGET" == "core" ]]; then
+  # justget CLI pin for Dockerfile.core ⑦ (the full image inherits it from the core image)
+  if [[ -n "$JUSTGET_VERSION_CLI" ]]; then
+    EXTRA_ARGS+=(--build-arg "JUSTGET_VERSION=${JUSTGET_VERSION_CLI}")
+    echo "[build] justget version: ${JUSTGET_VERSION_CLI}"
+  fi
+fi
 if [[ "$TARGET" == "full" ]]; then
   # The FROM base for full resolves by image name: if TAG moved repos (e.g. aitiai/pi-web:core), alias the freshly built core back to the default name
   docker tag "${TAG%:*}:core" "${CORE_IMAGE}" 2>/dev/null || docker tag "aiti/aiti:core" "${CORE_IMAGE}" || true
   EXTRA_ARGS+=(--build-arg "CORE_IMAGE=${CORE_IMAGE}")
+  # GitHub download acceleration for Dockerfile.full ④ (tunnel binaries). CLI flag > env > Dockerfile default.
+  GH_ACCEL_MIRRORS="${GH_ACCEL_CLI:-${GH_ACCEL_MIRRORS:-}}"
+  GITEE_BIN_BASE="${GITEE_BINS_CLI:-${GITEE_BIN_BASE:-}}"
+  if [[ -n "$GH_ACCEL_MIRRORS" ]]; then
+    EXTRA_ARGS+=(--build-arg "GH_ACCEL_MIRRORS=${GH_ACCEL_MIRRORS}")
+    echo "[build] gh accelerators: ${GH_ACCEL_MIRRORS}"
+  fi
+  if [[ -n "$GITEE_BIN_BASE" ]]; then
+    EXTRA_ARGS+=(--build-arg "GITEE_BIN_BASE=${GITEE_BIN_BASE}")
+    echo "[build] gitee binary mirror: ${GITEE_BIN_BASE}"
+  fi
 fi
 docker build ${PLATFORM_ARG+"${PLATFORM_ARG[@]}"} "${EXTRA_ARGS[@]}" \
   -f "$STAGE/docker/Dockerfile.${TARGET}" \
