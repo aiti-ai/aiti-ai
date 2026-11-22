@@ -82,8 +82,16 @@ export async function connectInteraction(opts = {}) {
 
   const refresh = async () => {
     const body = await requestJson(api("/interactions/pending"));
-    requests.clear();
-    for (const request of body.requests || []) upsert(request);
+    // Keep ids we already know: clearing first would re-emit `request` for the same
+    // pending card on every reconnect (double render, double answer attempt).
+    const seen = new Set();
+    for (const request of body.requests || []) {
+      seen.add(request.id);
+      upsert(request);
+    }
+    for (const id of [...requests.keys()]) {
+      if (!seen.has(id)) requests.delete(id);
+    }
     emit(snapshotListeners, listPending());
   };
 
