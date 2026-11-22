@@ -84,3 +84,36 @@ test("widget_pick_path maps mode/multiple/extensions onto a pick request", async
   assert.deepEqual(request.pick, { mode: "directory", multiple: true, extensions: ["png"] });
   broker.close();
 });
+
+test("widget_custom maps a loopback page and reports the opened request", async () => {
+  const broker = new InteractionBroker({ idFactory: () => "custom-mcp" });
+  const opened = [];
+  const created = await handleMcpRequest(
+    broker,
+    {
+      jsonrpc: "2.0",
+      id: 20,
+      method: "tools/call",
+      params: { name: "widget_custom", arguments: { page: "http://127.0.0.1:9000/custom.html?x=1", data: { project: "demo" }, prompt: "Review", async: true } },
+    },
+    { onOpened: (entry) => opened.push(entry) },
+  );
+  assert.deepEqual(toolEnvelope(created), { id: "custom-mcp", status: "pending" });
+  assert.equal(opened.length, 1);
+  assert.equal(opened[0].id, "custom-mcp");
+  const [request] = broker.pending();
+  assert.equal(request.kind, "custom");
+  assert.equal(request.message, "Review");
+  assert.equal(request.custom.pageUrl, "http://127.0.0.1:9000/custom.html?x=1");
+  assert.deepEqual(request.data, { project: "demo" });
+  assert.deepEqual(opened[0].request.data, { project: "demo" });
+
+  const remote = await handleMcpRequest(broker, {
+    jsonrpc: "2.0",
+    id: 21,
+    method: "tools/call",
+    params: { name: "widget_custom", arguments: { page: "https://example.com/custom.html" } },
+  });
+  assert.equal(remote.error.code, -32602);
+  broker.close();
+});

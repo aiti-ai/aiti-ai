@@ -171,12 +171,14 @@ node bin/widget-interaction-mcp.mjs
 ```
 
 工具：`widget_confirm`、`widget_choose`、`widget_input`、`widget_pick_path`、
-`widget_presence`、`widget_notify`、`widget_await`、`widget_cancel`。工具调用会阻塞到
-页面作答或超时；stdout 只输出 JSON-RPC，诊断走 stderr。
+`widget_presence`、`widget_notify`、`widget_custom`、`widget_await`、`widget_cancel`。
+工具调用会阻塞到页面作答或超时；stdout 只输出 JSON-RPC，诊断走 stderr。
 
 任意问答工具都可传 `async: true`：立即返回 `{id, status:"pending"}`，再用
 `widget_await({ id })` 取结果（可带客户端 `timeout`，到点返回 `{status:"timeout",
-pending:true}`，Host 侧请求仍保持 pending）。
+pending:true}`，Host 侧请求仍保持 pending）。`widget_custom` 会把窗口导航到 loopback 的
+`page`（`data` 以 `request.data` 下发），只能在进程内模式下用——daemon 无法按请求切换共享窗口。
+`--notify` 会在请求结束时向客户端发 `notifications/aiti/interaction`（`{id, result}`）。
 
 ### 与 daemon 共用一个窗口
 

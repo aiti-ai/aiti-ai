@@ -206,13 +206,16 @@ node bin/widget-interaction-mcp.mjs               # also opens aiti-desktop-widg
 ```
 
 Tools: `widget_confirm`, `widget_choose`, `widget_input`, `widget_pick_path`,
-`widget_presence`, `widget_notify`, `widget_await`, `widget_cancel`. The tool call blocks
-until the page answers (or the request times out); every tool returns the host envelope.
-`stdout` is JSON-RPC only; diagnostics go to stderr.
+`widget_presence`, `widget_notify`, `widget_custom`, `widget_await`, `widget_cancel`. The
+tool call blocks until the page answers (or the request times out); every tool returns the
+host envelope. `stdout` is JSON-RPC only; diagnostics go to stderr.
 
 Pass `async: true` to any ask tool to get `{id, status:"pending"}` immediately; collect the
 answer with `widget_await({ id })` (optionally with a client-side `timeout`, which returns
-`{status:"timeout", pending:true}` and leaves the host request pending).
+`{status:"timeout", pending:true}` and leaves the host request pending). `widget_custom`
+navigates the window to a loopback `page` (its `data` arrives as `request.data`) and needs
+the in-process server — a daemon cannot swap its shared window per request. `--notify` emits
+`notifications/aiti/interaction` with `{id, result}` whenever a request resolves.
 
 ### Share one window with a daemon
 
