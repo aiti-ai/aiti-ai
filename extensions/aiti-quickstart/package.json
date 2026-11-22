@@ -14,7 +14,7 @@
   "soul": "空白不可怕，第一句从这里开始。",
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "5230ae563f61036d",
+  "contentHash": "dd694579c247d292",
   "dependencies": {
     "@aiti-ai/ext-shared": "^0.1.12"
   },
