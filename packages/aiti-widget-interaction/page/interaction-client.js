@@ -25,9 +25,11 @@ function requestJson(url, options) {
  * @param {{ baseUrl?: string, token?: string, onError?: (e: Error) => void }} [opts]
  */
 export async function connectInteraction(opts = {}) {
-  const baseUrl = String(opts.baseUrl || location.origin).replace(/\/+$/, "");
-  const urlToken = new URLSearchParams(location.search).get("token") || "";
-  const token = opts.token !== undefined ? String(opts.token) : urlToken;
+  const params = new URLSearchParams(location.search);
+  // Custom pages are opened with ?base=<broker origin>&token=<token>; the built-in
+  // page is served by the broker itself and falls back to location.origin.
+  const baseUrl = String(opts.baseUrl || params.get("base") || location.origin).replace(/\/+$/, "");
+  const token = opts.token !== undefined ? String(opts.token) : params.get("token") || "";
   const requests = new Map();
   const requestListeners = new Set();
   const updateListeners = new Set();

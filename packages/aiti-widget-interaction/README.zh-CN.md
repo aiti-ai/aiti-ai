@@ -79,8 +79,39 @@ POST /interactions/:id/answer
 POST /interactions/:id/cancel
 ```
 
-内置页面在 `/`，支持 confirm / choose / input 和队列。自定义页面使用
-`/interaction-client.js` 的 `connectInteraction()`。
+内置页面在 `/`，支持 confirm / choose / input 和队列。
+
+### 自定义页面
+
+Host 可以自带 UI。页面打开时会自动附加 broker 坐标（`withInteractionParams`，
+`aiti-dialog custom --page <url>` 也走同一处理）：
+
+```text
+http://127.0.0.1:<页面端口>/custom.html?base=http://127.0.0.1:<broker端口>/&token=<token>
+```
+
+页面从 broker 源动态导入公开 client（静态资产带 `access-control-allow-origin: *`），
+用同一个 id 作答：
+
+```js
+const params = new URLSearchParams(location.search);
+const base = (params.get("base") || location.origin).replace(/\/+$/, "");
+const { connectInteraction } = await import(`${base}/interaction-client.js`);
+const client = await connectInteraction({ baseUrl: base });
+
+client.onRequest((request) => render(request));       // request.kind === "custom"
+client.onUpdate((id, state) => update(id, state));    // Host 持有的 UI 状态
+client.onResolved((id, result) => close(id, result));
+await client.answer(request.id, { action: "approve", approved: true, value: { ... } });
+```
+
+完整零依赖示例见 [`page/custom-example.html`](page/custom-example.html)。pending 仍在
+broker 侧，页面刷新/重开只丢渲染，不丢请求。
+
+`aiti-dialog custom --page <url>` 只接受 loopback URL：token 会随页面 URL 下发，远程源等于
+泄露 token。直接调 Host API（`broker.open({ kind: "custom", custom: { pageUrl } })` +
+`window.open(...)`）时也应遵守同样的规则，并用
+`withInteractionParams(pageUrl, server.baseUrl, server.token)` 拼接参数。
 
 ## MCP stdio
 
@@ -118,6 +149,6 @@ const answer = await transport.ask({ kind: "confirm", title: "继续？" });
 
 ## 首版未包含
 
-- 自定义页面注册校验（当前仅接受显式 loopback URL）；
+- 表单构建器/声明式自定义 UI（自带页面即可）；
 - 桌面遮挡/实时马赛克；
 - aiti-devtools launcher UI 基础件复用。

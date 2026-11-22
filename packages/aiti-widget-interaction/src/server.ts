@@ -64,7 +64,8 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
 function serveFile(res: ServerResponse, path: string, contentType: string): void {
   try {
     const body = readFileSync(path);
-    res.writeHead(200, { "content-type": contentType, "cache-control": "no-store" });
+    // Custom pages live on another loopback origin and import the client module.
+    res.writeHead(200, { "content-type": contentType, "cache-control": "no-store", "access-control-allow-origin": "*" });
     res.end(body);
   } catch {
     res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });

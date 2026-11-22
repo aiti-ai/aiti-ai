@@ -100,15 +100,39 @@ The built-in page is served at `/` (with `?token=` if auth is enabled). It suppo
 `confirm`, `choose`, `input` and a queue. The token is required for state endpoints;
 the static page/client assets are public.
 
-Custom page:
+### Custom pages
+
+A host can render its own UI instead of the built-in cards. The page is opened with the
+broker coordinates appended (`withInteractionParams`, also used by
+`aiti-dialog custom --page <url>`):
+
+```text
+http://127.0.0.1:<page-port>/custom.html?base=http://127.0.0.1:<broker-port>/&token=<token>
+```
+
+The page imports the public client module from the broker origin (static assets send
+`access-control-allow-origin: *`) and answers with the same id:
 
 ```js
-import { connectInteraction } from "/interaction-client.js";
-const client = await connectInteraction();
-client.onRequest((request) => render(request));
-client.onUpdate((id, state) => update(id, state));
-client.answer(id, { action: "continue", value: {} });
+const params = new URLSearchParams(location.search);
+const base = (params.get("base") || location.origin).replace(/\/+$/, "");
+const { connectInteraction } = await import(`${base}/interaction-client.js`);
+const client = await connectInteraction({ baseUrl: base });
+
+client.onRequest((request) => render(request));       // request.kind === "custom"
+client.onUpdate((id, state) => update(id, state));    // host-owned UI state
+client.onResolved((id, result) => close(id, result));
+await client.answer(request.id, { action: "approve", approved: true, value: { ... } });
 ```
+
+[`page/custom-example.html`](page/custom-example.html) is a complete, dependency-free
+example. Pending state still lives in the broker, so the custom page can be refreshed or
+reopened without losing the request; only the rendering restarts.
+
+`aiti-dialog custom --page <url>` requires a loopback URL: the token travels in the page
+URL, so a remote origin would receive it. Hosts that embed the API (`broker.open({ kind: "custom",
+custom: { pageUrl } })` + `window.open(...)`) should apply the same rule and pass the URL
+through `withInteractionParams(pageUrl, server.baseUrl, server.token)`.
 
 ## Guarantees
 
@@ -156,6 +180,6 @@ const answer = await transport.ask({ kind: "confirm", title: "Continue?" });
 
 ## Not in this first version
 
-- Custom page validation/registration policy beyond an explicit loopback URL.
+- Form builder / schema-driven custom UI (bring your own page instead).
 - Desktop cover / real-time mosaic.
 - Reuse of aiti-devtools launcher UI primitives.
