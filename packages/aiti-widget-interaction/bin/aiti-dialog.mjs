@@ -27,6 +27,7 @@ import {
   dialogWindowSize,
   dialogWindowTitle,
   startInteractionServer,
+  withInteractionParams,
 } from "../dist/index.js";
 
 const KINDS = new Set(["confirm", "choose", "input", "file", "directory", "notify", "custom"]);
@@ -92,14 +93,35 @@ async function runOnce(spec, values, flags) {
     title: dialogWindowTitle(spec),
   });
 
+  let pageUrl = server.url;
+  if (spec.page) {
+    let page;
+    try {
+      page = new URL(spec.page);
+    } catch {
+      await server.close();
+      broker.close();
+      exitWith(2, `--page must be an absolute loopback URL (got ${JSON.stringify(spec.page)})`);
+    }
+    // A remote page would receive the broker token (it rides in the URL), so custom
+    // pages stay loopback-only; hosts serve them from their own local port.
+    const host = page.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    if (!["127.0.0.1", "localhost", "::1"].includes(host)) {
+      await server.close();
+      broker.close();
+      exitWith(2, `--page must be loopback-only (got host ${page.hostname}); serve the page locally`);
+    }
+    pageUrl = withInteractionParams(page.toString(), server.baseUrl, server.token);
+  }
+
   if (flags.has("no-window")) {
-    process.stderr.write(`aiti-dialog: open ${server.url}\n`);
+    process.stderr.write(`aiti-dialog: open ${pageUrl}\n`);
   } else {
-    const opened = await win.open(server.url);
+    const opened = await win.open(pageUrl);
     if (!opened) {
       await server.close();
       broker.close();
-      exitWith(4, `cannot start aiti-desktop-widget (set --widget-bin or AITI_DESKTOP_WIDGET_BIN); page: ${server.url}`);
+      exitWith(4, `cannot start aiti-desktop-widget (set --widget-bin or AITI_DESKTOP_WIDGET_BIN); page: ${pageUrl}`);
     }
   }
 

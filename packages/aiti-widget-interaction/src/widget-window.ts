@@ -32,6 +32,21 @@ export function resolveWidgetBinary(explicit?: string): string | null {
  * The shell owns the window; the broker owns pending state. `open()` navigates an
  * existing window or spawns a new one. A closed window is recreated on the next call.
  */
+/**
+ * Append the broker coordinates to a host-provided custom page.
+ *
+ * A custom page is served from its own loopback origin, so it needs to know where the
+ * interaction broker lives (`base`, used for `/interaction-client.js` and the API) and
+ * which token to send. The built-in page does not need this (it is served by the broker).
+ */
+export function withInteractionParams(pageUrl: string, baseUrl: string, token = ""): string {
+  const url = new URL(pageUrl);
+  const base = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+  url.searchParams.set("base", base);
+  if (token) url.searchParams.set("token", token);
+  return url.toString();
+}
+
 export class InteractionWidgetWindow {
   private child: ChildProcessWithoutNullStreams | null = null;
   private readonly options: Required<Pick<WidgetWindowOptions, "width" | "height" | "title">> & WidgetWindowOptions;

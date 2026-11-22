@@ -42,3 +42,26 @@ test("--version prints the package version", async () => {
   assert.equal(result.code, 0);
   assert.match(result.stdout, /^aiti-dialog \d+\.\d+\.\d+/);
 });
+
+test("--page must be loopback", async () => {
+  const remote = await run(["custom", "--page", "https://example.com/dialog.html", "--no-window", "--timeout", "0.2"]);
+  assert.equal(remote.code, 2);
+  assert.match(remote.stderr, /loopback-only/);
+
+  const relative = await run(["custom", "--page", "dialog.html", "--no-window", "--timeout", "0.2"]);
+  assert.equal(relative.code, 2);
+  assert.match(relative.stderr, /absolute loopback URL/);
+});
+
+test("--page appends base and token to a loopback page", async () => {
+  const result = await run(["custom", "--page", "http://127.0.0.1:9000/dialog.html?theme=dark", "--no-window", "--timeout", "0.2"]);
+  assert.equal(result.code, 5); // nobody answers the headless page
+  const match = /aiti-dialog: open (\S+)/.exec(result.stderr);
+  assert.ok(match, result.stderr);
+  const url = new URL(match[1]);
+  assert.equal(url.hostname, "127.0.0.1");
+  assert.equal(url.port, "9000");
+  assert.equal(url.searchParams.get("theme"), "dark");
+  assert.match(url.searchParams.get("base"), /^http:\/\/127\.0\.0\.1:\d+\/$/);
+  assert.ok(url.searchParams.get("token"));
+});

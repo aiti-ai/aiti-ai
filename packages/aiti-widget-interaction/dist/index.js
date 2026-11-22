@@ -246,7 +246,7 @@ async function readJson(req) {
 function serveFile(res, path, contentType) {
   try {
     const body = readFileSync(path);
-    res.writeHead(200, { "content-type": contentType, "cache-control": "no-store" });
+    res.writeHead(200, { "content-type": contentType, "cache-control": "no-store", "access-control-allow-origin": "*" });
     res.end(body);
   } catch {
     res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
@@ -449,6 +449,13 @@ function resolveWidgetBinary(explicit) {
     }
   }
   return candidates.length ? candidates[0] : null;
+}
+function withInteractionParams(pageUrl, baseUrl, token = "") {
+  const url = new URL(pageUrl);
+  const base = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+  url.searchParams.set("base", base);
+  if (token) url.searchParams.set("token", token);
+  return url.toString();
 }
 var InteractionWidgetWindow = class {
   constructor(options = {}) {
@@ -858,5 +865,6 @@ export {
   dialogWindowTitle,
   handleMcpRequest,
   resolveWidgetBinary,
-  startInteractionServer
+  startInteractionServer,
+  withInteractionParams
 };
