@@ -325,16 +325,21 @@ window property.
 - **Linux/X11**: `decorations(false)` + `transparent(true)` need a compositor for true
   transparency; without one the transparent area renders black (the widget itself still
   renders). Frameless and always-on-top work without a compositor.
-- **Windows 11**: built with Rust 1.93.1 + VS Build Tools 2022 + WebView2 157. (The page-control
-  probe has not been re-run on Windows since the capability expansion; the 2026-11-23 check on
-  24 was blocked by a broken rustup junction — `C:\\Users\\keyea\\.rustup` → missing `D:\\dev\\rustup`.) Verified:
-  client rect == window rect (no titlebar), `WS_EX_TOPMOST | WS_EX_LAYERED |
-  WS_EX_TRANSPARENT | WS_EX_NOACTIVATE`, PrintWindow capture has no titlebar.
-  ⚠ SSH sessions run in **session 0** where WebView2 fails with `0x80070578 invalid window
-  handle`; run the widget inside the logged-in desktop session:
-  `$sid=(Get-Process explorer|Select -First 1).SessionId; PsExec64 -accepteula -i $sid -d powershell -File test.ps1`
-  (or a scheduled task with `/it`). In that context `CopyFromScreen` throws (invalid handle) —
-  capture window contents with `PrintWindow` instead.
+- **Windows 11**: built with Rust 1.93.1 + VS Build Tools 2022 + WebView2 157. **Page-control
+  capability verified on Windows 11 (2026-11-23, 150% scaling)**: a loopback probe page called
+  `app.getVersion/getIdentifier`, `path.join` (→ `a\\b`), `event.listen`, `window.outerSize`
+  (600×300 → 900×450 physical), `image.Image.fromBytes` (1×1 PNG), `menu.Menu.new`,
+  `tray.TrayIcon.new` and saw `dialog.open` — all succeeded. Also verified: client rect == window
+  rect (no titlebar), `WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE`,
+  PrintWindow capture has no titlebar.
+  ⚠ SSH runs in **session 0** where WebView2 fails with `0x80070578 invalid window handle`, and
+  session 0 cannot even *see* the window (`EnumWindows` / `MainWindowTitle` are empty). Run the
+  widget in the logged-in desktop session — but as the **user**, not SYSTEM:
+  `PsExec64 -i <sid> -d …` executes under SYSTEM and WebView2 starts no `msedgewebview2.exe`
+  children (blank window, title never changes); a scheduled task created with `/it` uses the user
+  token and works:
+  `schtasks /create /tn w /tr "D:\\path\\run.cmd" /sc once /st 23:59 /it /f && schtasks /run /tn w`.
+  In that context `CopyFromScreen` throws (invalid handle) — capture with `PrintWindow` instead.
 - **macOS 10.15+ (Intel) / 11.0+ (arm64)**: built with Rust 1.100.0 + Xcode 12 and
   `MACOSX_DEPLOYMENT_TARGET=10.15`; **verified visually on 11.7** — the bubble renders on
   the desktop frameless/transparent/always-on-top, and two instances coexist (one
