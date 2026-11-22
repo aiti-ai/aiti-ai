@@ -1,0 +1,112 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+// Regression protection (2026-09-17 new-session "branch / worktree" selector,
+// fork integration plan M1):
+//  1. the newSessionSelectors render slot: DOM order pinned between Workspace
+//     and Backend;
+//  2. the newSessionPreparers registration surface: ensureNewSession awaits
+//     them in order before the POST; {cwd} rewrites the target directory,
+//     {abort} goes through the existing throw→notice channel;
+//  3. the rewritten cwd is reported via promoteNewSession to
+//     onSessionCreated (AppShell switches the active workspace).
+const chatWindow = await readFile(new URL("./ChatWindow.tsx", import.meta.url), "utf8");
+const useAgentSession = await readFile(new URL("../hooks/useAgentSession.ts", import.meta.url), "utf8");
+const extTypes = await readFile(new URL("../lib/ext/types.ts", import.meta.url), "utf8");
+const preparers = await readFile(new URL("../hooks/new-session-preparers.ts", import.meta.url), "utf8");
+
+test("slot contract: newSessionSelectors + newSessionPreparers are declared in ExtSlotName/ui declarations/contract map", () => {
+  assert.match(extTypes, /"newSessionSelectors"/);
+  assert.match(extTypes, /"newSessionPreparers"/);
+  assert.match(extTypes, /newSessionSelectors: \{ props: NewSessionSelectorSlotProps \}/);
+  assert.match(extTypes, /newSessionSelectors\?: ExtUiItem\[\]/);
+  assert.match(extTypes, /newSessionPreparers\?: ExtUiItem\[\]/);
+  // extra only carries data (slot-extra red line): callback fields are not allowed in the contract
+  const contract = extTypes.slice(extTypes.indexOf("interface NewSessionSelectorSlotProps"), extTypes.indexOf("NewSessionPrepareResult"));
+  assert.match(contract, /cwd: string \| null/);
+  assert.match(contract, /isMobile: boolean/);
+});
+
+test("render-point DOM order: Workspace < newSessionSelectors < Backend", () => {
+  // Labels are localized now (chat.newSessionWorkspace / chat.newSessionBackend);
+  // locate them by their i18n key so the DOM-order contract survives copy changes.
+  const workspaceAt = chatWindow.indexOf('{t("chat.newSessionWorkspace")}');
+  const selectorsAt = chatWindow.indexOf('name="newSessionSelectors"');
+  const backendAt = chatWindow.indexOf('{t("chat.newSessionBackend")}');
+  assert.notEqual(workspaceAt, -1, "Workspace label missing");
+  assert.notEqual(selectorsAt, -1, "newSessionSelectors slot missing");
+  assert.notEqual(backendAt, -1, "Backend label missing");
+  assert.ok(workspaceAt < selectorsAt && selectorsAt < backendAt, "slot should render between Workspace and Backend");
+  // extra only carries data {cwd,isMobile}
+  assert.match(chatWindow, /extra=\{\{ cwd: newSessionCwd, isMobile \}\}/);
+  // the selector-row render gate includes the slot (the selector stays visible with no workspace/backend options);
+  // backendRescanable keeps the row (and the Backend dropdown) visible when only the rescan entry exists
+  assert.match(chatWindow, /backendExtraOptions\.length > 0 \|\| backendRescanable \|\| hasNewSessionSelectors/);
+});
+
+test("preparer collection and pass-through: ChatWindow collects meta.prepare → useAgentSession pipeline", () => {
+  assert.match(chatWindow, /useExtSlotItems\("newSessionPreparers"\)/);
+  assert.match(chatWindow, /typeof it\.meta\?\.prepare === "function"/);
+  assert.match(chatWindow, /newSessionPreparers,/);
+  assert.match(useAgentSession, /newSessionPreparers\?: NewSessionPreparer\[\]/);
+  // ref mirror (identity changes of slot items do not break callback stability)
+  assert.match(useAgentSession, /newSessionPreparersRef\.current = opts\.newSessionPreparers/);
+});
+
+test("ensureNewSession: preparer pipeline runs before the POST and the rewritten cwd goes into the request body", () => {
+  const pipelineAt = useAgentSession.indexOf("runNewSessionPreparers(newSessionPreparersRef.current");
+  const fetchAt = useAgentSession.indexOf('fetch(apiUrl("/api/agent/new")');
+  assert.notEqual(pipelineAt, -1, "preparer pipeline call not found inside ensureNewSession");
+  assert.notEqual(fetchAt, -1);
+  assert.ok(pipelineAt < fetchAt, "preparer pipeline must run before POST /api/agent/new");
+  // request body cwd = pipeline output (no longer the bare newSessionCwd)
+  assert.match(useAgentSession, /cwd: prepared\.cwd,/);
+  // abort = the existing throw channel: errors go through the handleSend catch → addNotice; no new display mechanism
+  assert.match(preparers, /if \(r\.abort\) throw new Error\(r\.abort\)/);
+  assert.match(preparers, /if \(r\.cwd\) target = r\.cwd/);
+});
+
+test("the rewritten cwd is reported on session creation (AppShell switches the active workspace to the worktree path)", () => {
+  assert.match(useAgentSession, /cwd: newSessionResolvedCwdRef\.current \?\? newSessionCwd,/);
+  // the resolved value lands in the ref before the POST (read by promote on success; not promoted on failure)
+  const resolvedAt = useAgentSession.indexOf("newSessionResolvedCwdRef.current = prepared.cwd");
+  const fetchAt = useAgentSession.indexOf('fetch(apiUrl("/api/agent/new")');
+  assert.ok(resolvedAt > -1 && resolvedAt < fetchAt, "resolved cwd must land in the ref before the POST");
+});
+
+test("Workspace selector takeover: declared contract + native fallback, staged through the service", () => {
+  assert.match(extTypes, /"newSessionWorkspacePicker"/);
+  assert.match(extTypes, /newSessionWorkspacePicker: \{ props: NewSessionWorkspacePickerSlotProps \}/);
+  assert.match(extTypes, /newSessionWorkspacePicker\?: ExtUiItem\[\]/);
+  const contract = extTypes.slice(extTypes.indexOf("interface NewSessionWorkspacePickerSlotProps"), extTypes.indexOf("/** noWorkspaceGuide"));
+  // data only (slot-extra red line): no callbacks in the contract
+  assert.match(contract, /cwd: string \| null/);
+  assert.match(contract, /selected: string \| null/);
+  assert.match(contract, /isMobile: boolean/);
+  assert.doesNotMatch(contract, /on[A-Z]\w*\??:/);
+
+  // takeover first, native <select> as the fallback
+  assert.match(chatWindow, /const hasNewSessionWorkspacePicker = useExtSlotItems\("newSessionWorkspacePicker"\)\.some\(hasExtRender\)/);
+  assert.match(chatWindow, /name="newSessionWorkspacePicker"/);
+  assert.match(chatWindow, /selected: newSessionWorkspace \?\? newSessionCwd \?\? null/);
+  // the row (and the takeover) renders with zero workspace options, unlike the native select
+  assert.match(chatWindow, /workspaceOptions\.length > 0 \|\| hasNewSessionWorkspacePicker/);
+  // order: Workspace label < takeover < newSessionSelectors < Backend label
+  const labelAt = chatWindow.indexOf('{t("chat.newSessionWorkspace")}');
+  const takeoverAt = chatWindow.indexOf('name="newSessionWorkspacePicker"');
+  const selectorsAt = chatWindow.indexOf('name="newSessionSelectors"');
+  assert.ok(labelAt !== -1 && takeoverAt > labelAt && takeoverAt < selectorsAt, "takeover slot sits inside the Workspace box, before newSessionSelectors");
+  // the native selector's own path is unchanged for hosts without the extension
+  assert.match(chatWindow, /onChange=\{\(e\) => onNewSessionWorkspaceChange\?\.\(e\.target\.value \|\| null\)\}/);
+});
+
+test("the takeover stages like the native selector: setTarget → handleNewSessionWorkspaceChange", () => {
+  const appShell = readFileSync(new URL("./AppShell.tsx", import.meta.url), "utf8");
+  assert.match(appShell, /newSessionSvcRef = useRef\(\{ setCwd: \(_path: string\) => \{\}, setTarget: \(_path: string \| null\) => \{\} \}\)/);
+  assert.match(appShell, /newSessionSvcRef\.current\.setTarget = \(path: string \| null\) => \{\n\s+handleNewSessionWorkspaceChange\(/);
+  assert.match(appShell, /get setTarget\(\) \{ return newSessionSvcRef\.current\.setTarget; \}/);
+  // setCwd keeps the immediate-move semantics for the upload flow
+  assert.match(appShell, /handleNewSession\(tempId, path, null, \{ carryComposer: true \}\)/);
+});

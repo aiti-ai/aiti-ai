@@ -7,7 +7,12 @@ import { createJiti } from "jiti";
 // reads the branch's newest entries and appends them after its window, keeping
 // the pages the reader loaded above, instead of putting back the newest window.
 const shimPath = fileURLToPath(new URL("./__fixtures__/react-hook-shim.mjs", import.meta.url));
-const jiti = createJiti(import.meta.url, { tsconfigPaths: true, alias: { react: shimPath } });
+const jsxRuntimeShimPath = fileURLToPath(new URL("./__fixtures__/react-jsx-runtime-shim.mjs", import.meta.url));
+const i18nStubPath = fileURLToPath(new URL("./__fixtures__/use-i18n-stub.mjs", import.meta.url));
+// jsx option forces jiti to transpile (useAgentSession transitively imports useI18n.tsx);
+// alias set follows the agent-phase.test.mjs convention (no tsconfigPaths: the paths
+// plugin would resolve "@/hooks/useI18n" to the real file before the alias applies).
+const jiti = createJiti(import.meta.url, { jsx: { runtime: "automatic" }, alias: { react: shimPath, "react/jsx-runtime": jsxRuntimeShimPath, "@/hooks/useI18n": i18nStubPath, "@": process.cwd() } });
 const { renderHook } = await import(pathToFileURL(shimPath).href);
 const { useAgentSession } = await jiti.import("./useAgentSession.ts");
 const { deleteSessionViewSnapshot, getSessionViewSnapshot } = await jiti.import("@/lib/session-view-cache");

@@ -24,28 +24,49 @@ function isDiffPathAllowed(filePath: string, allowedRoots: Set<string>): boolean
   return false;
 }
 
+async function handleDiff(cwd: string, filePath: string): Promise<NextResponse> {
+  if (!cwd || (!cwd.startsWith("/") && !isWindowsAbsolutePath(cwd))) {
+    return NextResponse.json({ error: "cwd must be an absolute path" }, { status: 400 });
+  }
+  if (!filePath || (!filePath.startsWith("/") && !isWindowsAbsolutePath(filePath))) {
+    return NextResponse.json({ error: "path must be an absolute path" }, { status: 400 });
+  }
+
+  const allowedRoots = await getAllowedFileRoots();
+  if (!isFilePathAllowed(cwd, allowedRoots) || !isFilePathAllowed(filePath, allowedRoots)) {
+    return NextResponse.json({ error: "Access denied" }, { status: 403 });
+  }
+  // Check the target as well as cwd: a directory junction inside a repository
+  // can otherwise expose an outside file through an apparently local path.
+  // The cwd must resolve inside an allowed root. The file itself may no
+  // longer exist when Git reports it as deleted; getGitFileDiff verifies
+  // that the requested path belongs to this repository and its status.
+  if (!isExistingFilePathAllowed(cwd, allowedRoots) || !isDiffPathAllowed(filePath, allowedRoots)) {
+    return NextResponse.json({ error: "Access denied" }, { status: 403 });
+  }
+
+  return NextResponse.json(await getGitFileDiff(cwd, filePath));
+}
+
+// GET /api/git/diff?cwd=&path= — the query-string form is kept for existing callers;
+// new code must use POST (cwd/path go in the JSON body, so they never land in URLs/access logs).
 export async function GET(request: NextRequest) {
   try {
     const cwd = request.nextUrl.searchParams.get("cwd") ?? "";
     const filePath = request.nextUrl.searchParams.get("path") ?? "";
-    if (!cwd || (!cwd.startsWith("/") && !isWindowsAbsolutePath(cwd))) {
-      return NextResponse.json({ error: "cwd must be an absolute path" }, { status: 400 });
-    }
-    if (!filePath || (!filePath.startsWith("/") && !isWindowsAbsolutePath(filePath))) {
-      return NextResponse.json({ error: "path must be an absolute path" }, { status: 400 });
-    }
+    return await handleDiff(cwd, filePath);
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
+  }
+}
 
-    const allowedRoots = await getAllowedFileRoots();
-    if (!isFilePathAllowed(cwd, allowedRoots) || !isFilePathAllowed(filePath, allowedRoots)) {
-      return NextResponse.json({ error: "Access denied" }, { status: 403 });
-    }
-    // Check the target as well as cwd: a directory junction inside a repository
-    // can otherwise expose an outside file through an apparently local path.
-    if (!isExistingFilePathAllowed(cwd, allowedRoots) || !isDiffPathAllowed(filePath, allowedRoots)) {
-      return NextResponse.json({ error: "Access denied" }, { status: 403 });
-    }
-
-    return NextResponse.json(await getGitFileDiff(cwd, filePath));
+// POST /api/git/diff  body: { cwd, path } — same semantics.
+export async function POST(request: NextRequest) {
+  try {
+    const body = (await request.json().catch(() => ({}))) as { cwd?: unknown; path?: unknown };
+    const cwd = typeof body.cwd === "string" ? body.cwd : "";
+    const filePath = typeof body.path === "string" ? body.path : "";
+    return await handleDiff(cwd, filePath);
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
   }

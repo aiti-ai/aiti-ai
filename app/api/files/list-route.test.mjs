@@ -14,6 +14,7 @@ process.env.GIT_CONFIG_NOSYSTEM = "1";
 process.env.GIT_CONFIG_GLOBAL = path.join(root, "gitconfig");
 process.env.XDG_CONFIG_HOME = path.join(root, "xdg");
 process.env.GIT_CEILING_DIRECTORIES = root;
+process.env.PI_WEB_FILE_SANDBOX = "1"; // 合并：上游安全测试假设文件沙箱强制执行（本地默认关，测试内显式开）
 test.after(() => fs.rmSync(root, { recursive: true, force: true }));
 
 const jiti = createJiti(import.meta.url, {
@@ -21,7 +22,7 @@ const jiti = createJiti(import.meta.url, {
   interopDefault: true,
   moduleCache: false,
 });
-const { GET } = await jiti.import("./[...path]/route.ts");
+const { GET, POST } = await jiti.import("./[...path]/route.ts");
 const { allowFileRoot } = await jiti.import("../../../lib/allowed-roots.ts");
 allowFileRoot(root);
 
@@ -30,11 +31,14 @@ function write(filePath, content = "") {
   fs.writeFileSync(filePath, content);
 }
 
-function request(filePath, type) {
-  const segments = filePath.replace(/\\/g, "/").split("/").filter(Boolean);
-  return GET(
-    new NextRequest(`http://localhost/api/files/x?type=${type}`),
-    { params: Promise.resolve({ path: segments }) },
+function request(filePath, type, query = "") {
+  // 合并契约：路径不进 URL，读走 POST /api/files/get（body 带 path+type；hidden 等开关仍走 query）
+  return POST(
+    new NextRequest(`http://localhost/api/files/get${query}`, {
+      method: "POST", headers: { host: "localhost", "Content-Type": "application/json" },
+      body: JSON.stringify({ path: filePath, type: type.split("&")[0] }),
+    }),
+    { params: Promise.resolve({ path: ["get"] }) },
   );
 }
 
@@ -79,22 +83,28 @@ test("hidden=1 also lists ignored and name-list entries with their reason, never
   execFileSync("git", ["-C", repo, "init", "-q"]);
   execFileSync("git", ["-C", repo, "add", ".gitignore", "src"]);
 
-  const response = await request(repo, "list&hidden=1");
+  const response = await request(repo, "list", "?hidden=1");
   assert.equal(response.status, 200);
   const { entries } = await response.json();
+  // 合并契约（本地特性）：.git 归入 ignored 原因，随 hidden 开关显隐（上游是永不列出）
   assert.deepEqual(
     entries.map(({ name, hidden }) => ({ name, hidden })),
     [
+      { name: ".git", hidden: "ignored" },
       { name: "dist", hidden: "ignored" },
       { name: "src", hidden: undefined },
       { name: ".gitignore", hidden: undefined },
     ],
   );
+  // 上游意图保留：不开 hidden=1 时 .git 与 ignored 一律不出现
+  const noHidden = await request(repo, "list");
+  assert.equal(noHidden.status, 200);
+  assert.deepEqual((await noHidden.json()).entries.map((e) => e.name), ["src", ".gitignore"]);
 
   const plain = path.join(root, "plain-hidden");
   write(path.join(plain, "node_modules/pkg/index.js"));
   write(path.join(plain, "src/main.ts"));
-  const plainResponse = await request(plain, "list&hidden=1");
+  const plainResponse = await request(plain, "list", "?hidden=1");
   const plainEntries = (await plainResponse.json()).entries;
   assert.deepEqual(
     plainEntries.map(({ name, hidden }) => ({ name, hidden })),

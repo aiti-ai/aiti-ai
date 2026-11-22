@@ -1,0 +1,32 @@
+{
+  "name": "@aiti-ai/aiti-helper",
+  "version": "0.5.11",
+  "type": "module",
+  "description": "The one-sentence AI capability entry for all extensions — declarative AI help points (pi skills standard) + input/result preview/review-and-fill-back + streaming progress bus delivery + multi-turn follow-ups + history and background tasks + user-d",
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "watch": "vite build --watch --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "soul": "AI 的工具该由 AI 自己接线、自己进化——人类的角色是掌舵，不是搬砖。",
+  "aitiConfigs": {
+    "configFiles": [
+      "user-skills"
+    ]
+  },
+  "aitiExtProtocol": "1.0",
+  "license": "MIT",
+  "contentHash": "c555b5e4822145cb",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-helper"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  }
+}

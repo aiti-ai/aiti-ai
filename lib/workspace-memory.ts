@@ -88,6 +88,36 @@ export function clearLastOpen(
   }
 }
 
+/**
+ * Drop every remembered entry whose session id equals the given one.
+ *
+ * Used when an initial `?session=` restore hits a deleted session: the
+ * workspace key is unknown at that point (the session record no longer
+ * resolves), so scan by value instead. Best-effort like the rest of this
+ * module; a no-op when nothing matches.
+ */
+export function clearLastOpenSessionById(
+  sessionId: string,
+  storage: StorageLike | null = getBrowserStorage(),
+): void {
+  if (!storage || !sessionId) return;
+  try {
+    const map = readMap(storage);
+    let changed = false;
+    for (const key of Object.keys(map)) {
+      if (map[key] === sessionId) {
+        delete map[key];
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    if (Object.keys(map).length === 0) storage.removeItem(STORAGE_KEY);
+    else storage.setItem(STORAGE_KEY, JSON.stringify(map));
+  } catch {
+    // ignore
+  }
+}
+
 /** Workspace identity for a session: resolved project root when known, else cwd. */
 export function workspaceKeyOf(session: {
   cwd: string;

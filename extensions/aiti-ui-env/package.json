@@ -1,0 +1,74 @@
+{
+  "name": "@aiti-ai/aiti-ui-env",
+  "version": "0.1.9",
+  "description": "Environment allocator for UI debugging on headless background servers — a 4-state mode arbiter decides whether newly launched MCP/apps land on a real desktop or an Xvfb headless virtual display (Xvfb+openbox+AT-SPI virtual display + VNC-on-web + R",
+  "type": "module",
+  "aiti": {
+    "kind": "ext",
+    "tier": "full",
+    "systemDeps": {
+      "linux-apt": [
+        "xvfb",
+        "openbox",
+        "picom",
+        "x11vnc",
+        "novnc",
+        "dbus-x11",
+        "at-spi2-core",
+        "xauth",
+        "x11-utils",
+        "xdotool",
+        "wmctrl",
+        "xterm"
+      ],
+      "darwin": "原生桌面即显示（macOS 支持：Aqua 会话探测 + 屏幕共享）"
+    },
+    "services": [
+      {
+        "name": "vnc",
+        "port": 5900,
+        "phase": "gui",
+        "cmd": "x11vnc -display :N -localhost -forever -shared"
+      },
+      {
+        "name": "vnc-web",
+        "port": 6080,
+        "phase": "gui",
+        "cmd": "node vnc-bridge --port 6080 --vnc 5900"
+      }
+    ]
+  },
+  "homepage": "https://aiti.pw/extensions/aiti-ui-env.html",
+  "license": "MIT",
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "watch": "vite build --watch --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs",
+    "check:i18n": "node --experimental-strip-types tools/check-i18n.mjs"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "dependencies": {
+    "justget": "^0.2.4"
+  },
+  "soul": "没有显示器，也可以有舞台。",
+  "aitiConfigs": {
+    "configFiles": [
+      "env-mode.json",
+      "vnc-token",
+      "rdp-token",
+      "vnc-rfb-passwd"
+    ]
+  },
+  "aitiExtProtocol": "1.0",
+  "contentHash": "8a565c15affee4bd",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-ui-env"
+  },
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  }
+}

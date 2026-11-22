@@ -13,10 +13,10 @@
  * each would read every file of the folder once per session.
  */
 
-import { readdirSync, readFileSync, unlinkSync } from "fs";
+import { readdirSync, readFileSync, statSync } from "fs";
 import { dirname, join } from "path";
-import { writeSessionFileAtomicSync } from "./atomic-file";
-import { abortSubagent, getRpcSession, getRpcSessionInfos, getRunningRpcSessionIds } from "./rpc-manager";
+import { writeSessionFileAtomicSync } from "./atomic-file.ts";
+import { abortSubagent, getRpcSession, getRpcSessionInfos, getRunningRpcSessionIds } from "./rpc-manager.ts";
 import {
   invalidateSessionListCache,
   invalidateSessionManagerCache,
@@ -25,12 +25,16 @@ import {
   mergeSessionLists,
   readSessionHeader,
   resolveSessionPath,
-} from "./session-reader";
-import { sessionPathKey } from "./session-path";
-import { forgetSessionUiState } from "./session-ui-state";
-import { readSubagentRun, SUBAGENT_META_TYPE } from "./subagents";
-import { readSideRelation } from "./side-session";
-import type { SessionEntry } from "./types";
+} from "./session-reader.ts";
+import { sessionPathKey } from "./session-path.ts";
+import { forgetSessionUiState } from "./session-ui-state.ts";
+import { readSubagentRun, SUBAGENT_META_TYPE } from "./subagents.ts";
+import { removeQueue } from "./queue-store.ts";
+import { trashFileSync } from "./session-trash.ts";
+import type { SessionEntry } from "./types.ts";
+import { readSideRelation } from "./side-session.ts";
+import { getWrapperStarter } from "./agent-starter/index.ts";
+import { getHandle, removeHandle } from "./session/handle-store.ts";
 
 /** Most ids one POST /api/sessions/delete takes; the sidebar sends a bigger project in parts. */
 export const MAX_SESSION_DELETE_IDS = 500;
@@ -42,6 +46,8 @@ export interface SessionDeleteResult {
   missing: string[];
   /** Named ids kept because a session of theirs runs (`keepRunning` only). */
   running: string[];
+  /** Sessions whose files were kept: written after the delete request (mtime guard). */
+  preserved?: string[];
 }
 
 function addChild(childrenByParent: Map<string, string[]>, parentId: string, childId: string): void {
@@ -59,14 +65,27 @@ export async function deleteSessions(
   ids: readonly string[],
   options: { keepRunning?: boolean } = {},
 ): Promise<SessionDeleteResult> {
+  // Timestamp of the delete request: a file whose mtime is newer was written by
+  // an agent that is still flushing (a detached process dying, a just-finished
+  // turn). Such a file is kept — losing a conversation is worse than a leftover.
+  const requestStartedAt = Date.now();
+  // Detached wrapper registry: an agent may be running with no session file at
+  // all (omp, codebuddy, ACP bridges) — deleting it still has to stop it.
+  const wrapper = await getWrapperStarter().catch(() => undefined);
+  const hosted = new Set(wrapper ? wrapper.list().map((entry) => entry.sessionId) : []);
+
   const targets = new Map<string, string>();
+  const pathless = new Set<string>();
   const missing: string[] = [];
   for (const id of new Set(ids)) {
     const filePath = await resolveSessionPath(id);
     if (filePath) targets.set(id, filePath);
+    // Live agent with no file to move: a detached wrapper session, or a provider
+    // handle whose backend never wrote a session file (spawn without a first turn).
+    else if (hosted.has(id) || getHandle(id)?.alive()) pathless.add(id);
     else missing.push(id);
   }
-  if (targets.size === 0) return { deleted: [], missing, running: [] };
+  if (targets.size === 0 && pathless.size === 0) return { deleted: [], missing, running: [] };
 
   // Read only the bounded headers before deleting.
   const parentPathByKey = new Map<string, string | undefined>();
@@ -128,6 +147,9 @@ export async function deleteSessions(
   // parent: wrappers are shut down in this order.
   const runningIds = options.keepRunning ? new Set(getRunningRpcSessionIds()) : new Set<string>();
   const deletedSessionIds = new Set<string>();
+  // File-less sessions (live agent, no file) are deleted too — nothing to move,
+  // but the agent below is stopped through the starter.
+  for (const id of pathless) deletedSessionIds.add(id);
   const running: string[] = [];
   for (const id of targets.keys()) {
     if (deletedSessionIds.has(id)) continue;
@@ -241,11 +263,55 @@ export async function deleteSessions(
     try { await abortSubagent(deletedId); } catch { /* ordinary session, idle or completed */ }
     await getRpcSession(deletedId)?.shutdown();
   }
-  for (const [deletedId, deletedPath] of deletedPaths) {
+  // Detached agents are owned by their wrapper, not by this process: stop them
+  // through the starter BEFORE touching the files (a live agent would keep
+  // writing, and the mtime guard below would then keep every file).
+  const preserved: string[] = [];
+  if (wrapper) {
+    const held = new Set(wrapper.list().map((entry) => entry.sessionId));
+    const hosted = [...deletedSessionIds].filter((id) => held.has(id));
+    await Promise.all(hosted.map((id) => wrapper.kill(id).catch(() => false)));
+  }
+  // Provider handles with no session file: dispose stops a plain child (a wrapper
+  // child was already stopped above and dispose/release is a no-op detach).
+  for (const id of pathless) {
+    const handle = getHandle(id);
+    if (!handle) continue;
     try {
-      unlinkSync(deletedPath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      await handle.dispose();
+    } catch {
+      /* best effort: the session is being deleted anyway */
+    }
+    removeHandle(id);
+  }
+
+  // Guard timestamp: taken AFTER the agents were stopped. Anything written
+  // clearly after that belongs to a writer we do not control (another pi-web
+  // instance resuming the file, a daemon) — keep the file, losing a
+  // conversation is worse than a leftover. The tolerance swallows this
+  // process's own final flush, whose IO callbacks can land a moment later.
+  const KEEP_TOLERANCE_MS = 1000;
+  const guardFrom = Math.max(requestStartedAt, Date.now()) + KEEP_TOLERANCE_MS;
+  for (const [deletedId, deletedPath] of deletedPaths) {
+    let keep = false;
+    try {
+      keep = statSync(deletedPath).mtimeMs > guardFrom;
+    } catch {
+      // stat failed: fall through to the trash call, which reports ENOENT
+    }
+    if (keep) {
+      preserved.push(deletedId);
+      console.warn(`[pi-web] kept "${deletedPath}": still being written after the stop`);
+    } else {
+      try {
+        // Session files go to the trash (recoverable after a slip) instead of a hard
+        // unlink; runtime session files that were never flushed (and thus don't
+        // exist) are silently skipped (upstream #440).
+        trashFileSync(deletedPath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      removeQueue(deletedPath);
     }
     invalidateSessionPathCache(deletedId);
     invalidateSessionManagerCache(deletedPath);
@@ -257,5 +323,8 @@ export async function deleteSessions(
     console.warn(`[pi-web] could not clear the sidebar state of deleted sessions: ${error instanceof Error ? error.message : String(error)}`);
   }
   invalidateSessionListCache();
-  return { deleted: [...deletedSessionIds], missing, running };
+  const deleted = [...deletedSessionIds];
+  return preserved.length > 0
+    ? { deleted, missing, running, preserved }
+    : { deleted, missing, running };
 }

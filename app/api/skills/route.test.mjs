@@ -9,6 +9,7 @@ const root = await mkdtemp(join(tmpdir(), "pi-web-skills-route-"));
 const agentDir = join(root, "agent");
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 process.env.PI_CODING_AGENT_DIR = agentDir;
+process.env.PI_WEB_FILE_SANDBOX = "1"; // 合并：上游安全测试假设文件沙箱强制执行（本地默认关，测试内显式开）
 
 const jiti = createJiti(import.meta.url, { alias: { "@": process.cwd() } });
 const { PATCH } = await jiti.import("./route.ts");

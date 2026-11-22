@@ -1,0 +1,33 @@
+{
+  "name": "@aiti-ai/aiti-devtools-nuxt",
+  "version": "0.1.0",
+  "description": "Nuxt carrier: one-line modules integration = dev-server-embedded MCP (bridge/MCP/launcher at same-origin /aiti/) + head auto-injection; no app files touched.",
+  "type": "module",
+  "main": "dist/module.js",
+  "exports": {
+    ".": "./dist/module.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@aiti-ai/aiti-devtools-vite": "^0.1.0"
+  },
+  "peerDependencies": {
+    "nuxt": "^3.0.0 || ^4.0.0"
+  },
+  "license": "MIT",
+  "scripts": {
+    "build": "esbuild src/module.ts --bundle --format=esm --outfile=dist/module.js --target=es2022 --platform=node --external:@aiti-ai/aiti-devtools-vite --external:nuxt"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "packages/aiti-devtools-nuxt"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  },
+  "contentHash": "65ab401e97d7bae3"
+}

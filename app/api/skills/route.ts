@@ -10,13 +10,8 @@ import { cwdAccessRefusal, getAllowedFileRoots, isExistingFilePathAllowed } from
 
 export const dynamic = "force-dynamic";
 
-// GET /api/skills?cwd=<path>
-// Uses DefaultResourceLoader (same logic as AgentSession startup) so settings.json
-// skill paths, package skills, and .agents/skills directories are all included.
-export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url);
-  const cwd = searchParams.get("cwd") ?? "";
-
+async function handleSkills(cwd: string | null): Promise<Response> {
+  if (!cwd) return NextResponse.json({ error: "cwd required" }, { status: 400 });
   try {
     const refused = await cwdAccessRefusal(cwd);
     if (refused) return refused;
@@ -24,6 +19,24 @@ export async function GET(req: Request) {
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }
+}
+
+// GET /api/skills?cwd=<path> — the query-string form is kept for existing callers;
+// new code must use POST (cwd goes in the JSON body, so it never lands in URLs/access logs).
+export async function GET(req: Request) {
+  return handleSkills(new URL(req.url).searchParams.get("cwd"));
+}
+
+// POST /api/skills  body: { cwd } — same semantics.
+export async function POST(req: Request) {
+  let bodyCwd: string | null = null;
+  try {
+    const body = (await req.json()) as { cwd?: unknown };
+    if (typeof body.cwd === "string") bodyCwd = body.cwd;
+  } catch {
+    /* fallthrough → cwd required */
+  }
+  return handleSkills(bodyCwd);
 }
 
 async function getSkillEditRoots(): Promise<Set<string>> {

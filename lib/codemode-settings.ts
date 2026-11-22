@@ -1,14 +1,14 @@
 import { join } from "node:path";
 import { CONFIG_DIR_NAME, SettingsManager } from "@earendil-works/pi-coding-agent";
-import type { CodemodeInlineBudgetSetting, CodemodeMode, CodemodeModeSetting } from "./api-types";
+import type { CodemodeInlineBudgetSetting, CodemodeMode, CodemodeModeSetting } from "./api-types.ts";
 import {
   defaultToolEntries,
   getGlobalSettingsPath,
   readGlobalSettings,
   updateGlobalSettings,
-} from "./global-settings-file";
-import { resolveDefaultToolEntries } from "./powershell-settings";
-import { PROJECT_SETTINGS_MAX_BYTES, readRegularFileText } from "./regular-file";
+} from "./global-settings-file.ts";
+import { resolveDefaultToolEntries } from "./powershell-settings.ts";
+import { PROJECT_SETTINGS_MAX_BYTES, readRegularFileText } from "./regular-file.ts";
 
 // Code mode offers one choice (ADR 0006, "Code mode"):
 // - "automatic" writes nothing: `codemode` registers inactive, and the MCP

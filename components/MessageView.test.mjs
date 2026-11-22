@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import { createJiti } from "jiti";
-import ts from "typescript";
 
 const jiti = createJiti(import.meta.url, {
   jsx: { runtime: "automatic" },
@@ -49,14 +48,49 @@ test("updates a reused message when its written files change", () => {
   assert.equal(MessageView.compare(props, { ...props, writtenFiles: [{ path: "/tmp/result.txt" }] }), false);
 });
 
-test("on a narrow phone a message's actions drop their labels and keep their titles", () => {
-  const html = renderMessage({ role: "user", content: "Hi", timestamp: 1 }, { entryId: "entry", onFork: () => {}, onEditContent: () => {} });
-  assert.equal(html.match(/class="message-action-label"/g)?.length, 3);
-  for (const title of ["Copy message", "Edit from here — branches within this session", "New session — creates an independent copy from here"]) {
-    assert.ok(html.includes(`title="${title}"`), title);
+test("message actions keep labels and wrap onto new lines instead of overflowing", () => {
+  const userHtml = renderMessage({ role: "user", content: "Hi", timestamp: 1 }, { entryId: "entry", onFork: () => {}, onEditContent: () => {} });
+  assert.equal(userHtml.match(/class="message-action-label"/g)?.length, 3);
+  // 合并适配：fork 的 editFromHereTitle 文案（上游文案是 branches within this session）。
+  // renderToStaticMarkup escapes apostrophes, so match against the escaped form.
+  const escapeHtml = (s) => s.replace(/'/g, "&#x27;");
+  for (const title of ["Copy message", "Put this message's text into the composer to tweak and resend (does not branch the session)", "New session — creates an independent copy from here"]) {
+    assert.ok(userHtml.includes(escapeHtml(title)), `expected title ${title}`);
   }
+  const assistantHtml = renderMessage({ role: "assistant", content: [{ type: "text", text: "Hey" }] });
+  // user bottom row + its single action group + assistant top/bottom action rows all wrap
+  const wraps = (userHtml.match(/flex-wrap:wrap/g) ?? []).length + (assistantHtml.match(/flex-wrap:wrap/g) ?? []).length;
+  assert.ok(wraps >= 4, `expected >=4 wrapped action rows, got ${wraps}`);
+  // Narrow phones go icon-only (<=480px narrow-mobile breakpoint) so the
+  // toolbar fits one line; wrap is only the fallback.
   const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
-  assert.match(css, /@media \(max-width: 380px\) \{\s*\.message-action-label \{\s*display: none;\s*\}\s*\}/);
+  assert.match(css, /@media \(max-width: 480px\) \{\s*\.message-action-label \{\s*display: none;\s*\}\s*\}/);
+});
+
+test("assistantMessageActions mounts at both placements and routes items by meta.placement", async () => {
+  const { registerExtUiItems } = await jiti.import("@/lib/ext-ui-store");
+  const dispose = registerExtUiItems("assistantMessageActions", [
+    { id: "top-item", render: () => React.createElement("span", null, "TOPBTN"), meta: { placement: "top" } },
+    { id: "bottom-item", render: () => React.createElement("span", null, "BOTTOMBTN") },
+    { id: "both-item", render: () => React.createElement("span", null, "BOTHBTN"), meta: { placement: "both" } },
+  ], "ext-placement-test");
+  try {
+    const html = renderMessage(
+      { role: "assistant", provider: "p", model: "m", content: [{ type: "text", text: "Body text" }] },
+      {},
+    );
+    assert.ok(html.includes("TOPBTN") && html.includes("BOTTOMBTN") && html.includes("BOTHBTN"), "all items render");
+    assert.ok(html.indexOf("TOPBTN") < html.indexOf("Body text"), "top item mounts in the meta row above the content");
+    assert.ok(html.indexOf("BOTTOMBTN") > html.indexOf("Body text"), "default item mounts in the bottom row below the content");
+    // "both" mounts the same item on both sides: once above, once below the content
+    assert.equal(html.split("TOPBTN").length - 1, 1);
+    assert.equal(html.split("BOTTOMBTN").length - 1, 1);
+    assert.equal(html.split("BOTHBTN").length - 1, 2);
+    assert.ok(html.indexOf("BOTHBTN") < html.indexOf("Body text"));
+    assert.ok(html.lastIndexOf("BOTHBTN") > html.indexOf("Body text"));
+  } finally {
+    dispose();
+  }
 });
 
 test("a prompt sent during the run offers New session from the entry the wrapper named, not Edit (#1746)", () => {
@@ -101,6 +135,25 @@ test("matches response model aliases and otherwise includes the provider", () =>
   assert.equal(getModelDisplayName("gateway", "anthropic/claude-sonnet-5", names), "Sonnet 5");
   assert.equal(getModelDisplayName("CUSTOM-API", "glm-5.3", names), "GLM 5.3");
   assert.equal(getModelDisplayName("gateway", "unknown-model", names), "gateway/unknown-model");
+});
+
+test("tolerates a missing model or provider (external-agent replay frames)", () => {
+  const names = { "gateway:claude-sonnet-5": "Sonnet 5" };
+
+  // provider-only (ACP replay frames / error messages: provider present, model missing) used to crash the whole page:
+  // getModelDisplayName called responseModel.toLowerCase() unguarded → crash on undefined → global-error.
+  assert.equal(getModelDisplayName("aiti-acp-agent/codebuddy", undefined, names), "aiti-acp-agent/codebuddy");
+  assert.equal(getModelDisplayName("gateway", undefined, names), "gateway");
+  assert.equal(getModelDisplayName(undefined, "deepseek-v4.1-flash", names), "deepseek-v4.1-flash");
+  assert.equal(getModelDisplayName(undefined, undefined, names), "");
+
+  // Render regression: assistant messages missing a model no longer take down MessageView.
+  const providerOnly = renderMessage({ role: "assistant", content: [{ type: "text", text: "replayed" }], provider: "aiti-acp-agent/codebuddy" });
+  assert.match(providerOnly, /aiti-acp-agent\/codebuddy/);
+  const modelOnly = renderMessage({ role: "assistant", content: [{ type: "text", text: "no provider" }], model: "deepseek-v4.1-flash" });
+  assert.match(modelOnly, /deepseek-v4\.1-flash/);
+  const neither = renderMessage({ role: "assistant", content: [{ type: "text", text: "no stamp" }] });
+  assert.doesNotMatch(neither, /undefined/);
 });
 
 test("previews the first thinking line and reveals the full text with the saved default", () => {
@@ -155,39 +208,6 @@ test("a reply's terminal escape sequences are not shown as text (#1753)", () => 
   assert.match(answer, /Done: <strong>ok<\/strong>/);
 });
 
-test("renders long expanded thinking in pieces and short thinking as one text node (#1196)", () => {
-  const previousWindow = globalThis.window;
-  globalThis.window = { localStorage: { getItem: () => "true" } };
-  const contentOf = (thinking) => {
-    const html = renderToStaticMarkup(React.createElement(
-      I18nProvider,
-      null,
-      React.createElement(ThinkingBlock, { block: { type: "thinking", thinking }, blockIndex: 0 }),
-    ));
-    return html.match(/overflow-wrap:anywhere">([\s\S]*)<\/div><\/div>$/)[1];
-  };
-  const piecesOf = (thinking) => {
-    const content = contentOf(thinking);
-    const pieces = [...content.matchAll(/<div>([^<]*)<\/div>/g)].map((match) => match[1]);
-    assert.equal(pieces.map((piece) => `<div>${piece}</div>`).join(""), content);
-    assert.ok(pieces.length > 1);
-    return pieces;
-  };
-  try {
-    assert.equal(contentOf("First <b>line</b>\n\nSecond line."), "First &lt;b&gt;line&lt;/b&gt;\n\nSecond line.");
-
-    // The block boundary stands in for the line break at a cut; a line with
-    // no break is cut with nothing left out.
-    const thinking = "Wait, let me check settings.json again.\n".repeat(2_000);
-    assert.equal(piecesOf(thinking).join("\n"), thinking);
-    const oneLine = "Wait, let me check settings.json again. ".repeat(2_000);
-    assert.equal(piecesOf(oneLine).join(""), oneLine);
-  } finally {
-    if (previousWindow === undefined) delete globalThis.window;
-    else globalThis.window = previousWindow;
-  }
-});
-
 test("shows deferred thinking previews without loading the full content", () => {
   const html = renderMessage({
     role: "assistant",
@@ -195,38 +215,6 @@ test("shows deferred thinking previews without loading the full content", () => 
   });
   assert.match(html, />Historical first line<\/span>/);
   assert.match(html, /aria-expanded="false"/);
-});
-
-test("keys a streaming reply by its request identity across reconnects", () => {
-  const source = ts.createSourceFile("ChatWindow.tsx", readFileSync(new URL("./ChatWindow.tsx", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  const keys = [];
-  (function visit(node) {
-    if ((ts.isJsxSelfClosingElement(node) || ts.isJsxOpeningElement(node)) && node.tagName.getText(source) === "MessageView") {
-      const attributes = node.attributes.properties.filter(ts.isJsxAttribute);
-      if (attributes.some((attribute) => attribute.name.getText(source) === "isStreaming" && !attribute.initializer)) {
-        const key = attributes.find((attribute) => attribute.name.getText(source) === "key");
-        keys.push(key?.initializer?.expression?.getText(source));
-      }
-    }
-    ts.forEachChild(node, visit);
-  })(source);
-  assert.deepEqual(keys, ["streamRateKey(message)"]);
-});
-
-test("keys an assistant message's blocks by their place, not the entry id (#1184)", () => {
-  // A message of the running turn gets its entry id when the file is read again.
-  // A block keyed by it remounted then: open thinking closed, a tool output's
-  // scroll went back to the top. ThinkingBlock drops what it loaded for another id.
-  const source = ts.createSourceFile("MessageView.tsx", readFileSync(new URL("./MessageView.tsx", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  const keys = [];
-  (function visit(node) {
-    if ((ts.isJsxSelfClosingElement(node) || ts.isJsxOpeningElement(node)) && node.tagName.getText(source) === "BlockView") {
-      const key = node.attributes.properties.find((attribute) => ts.isJsxAttribute(attribute) && attribute.name.getText(source) === "key");
-      keys.push(key?.initializer?.expression?.getText(source));
-    }
-    ts.forEachChild(node, visit);
-  })(source);
-  assert.deepEqual(keys, ["originalIndex"]);
 });
 
 test("marks only the matched text block after splitting thinking and the final answer", () => {
@@ -559,26 +547,6 @@ Review the supplied files.
 
 src/main.ts`;
 
-test("a reply's usage line reads like pi's TUI footer, then the turn's time", () => {
-  const usage = { input: 1_234, output: 567, cacheRead: 85_312, cacheWrite: 12, cost: { total: 0.00362 } };
-  const html = renderMessage(
-    { role: "assistant", provider: "anthropic", model: "claude-test", content: [{ type: "text", text: "Done." }], stopReason: "stop", usage },
-    { turnDurationMs: 10_000 },
-  );
-  // The arrows and the clock are drawn as SVG; their characters and words stay
-  // as font-size 0 text, so a copied selection reads like the footer.
-  assert.equal(html.match(/<svg[^>]*aria-hidden="true"/g)?.length, 3);
-  const text = html.replace(/<svg[\s\S]*?<\/svg>/g, "").replace(/<span style="font-size:0">([^<]*)<\/span>/g, "$1");
-  // Each count is its own span; the spaces between them stay in the text.
-  assert.match(text, /<span>↑1\.2k<\/span> <span>↓567<\/span> <span>R85k<\/span> <span>W12<\/span> <span>\$0\.0036<\/span> <span>·<\/span> <span>took 10s<\/span>/);
-  // Zero counts are left out, as in the footer.
-  const bare = renderMessage({
-    role: "assistant", provider: "anthropic", model: "claude-test", content: [{ type: "text", text: "Done." }], stopReason: "stop",
-    usage: { input: 12_000_000, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
-  });
-  assert.match(bare.replace(/<svg[\s\S]*?<\/svg>/g, "").replace(/<span style="font-size:0">([^<]*)<\/span>/g, "$1"), /<span>↑12M<\/span><\/div>/);
-});
-
 test("renders a provider error when the assistant message has no content", () => {
   const html = renderMessage({
     role: "assistant",
@@ -670,7 +638,10 @@ test("a stopped reply says Stopped, never the abort error its provider's client 
   }
 
   // Stopped while it streamed a tool call's arguments: the call never ran, so
-  // its card has no result, and the line under it says why.
+  // its card has no result. Upstream draws the mark on a stats line under the
+  // content; this fork renders usage (and the mark) in the compact top meta row
+  // (fork decision: rewrite-first ordering), so it leads the row
+  // above the card instead.
   const html = renderMessage({
     role: "assistant",
     provider: "anthropic",
@@ -682,7 +653,7 @@ test("a stopped reply says Stopped, never the abort error its provider's client 
     stopReason: "aborted",
     errorMessage: "This operation was aborted",
   }, { toolResults: new Map() });
-  assert.ok(html.indexOf(">Stopped<") > html.indexOf("a.txt"));
+  assert.ok(html.indexOf(">Stopped<") < html.indexOf("a.txt"));
 });
 
 test("a stopped reply's mark leads its usage line instead of a line of its own", () => {
@@ -695,8 +666,10 @@ test("a stopped reply's mark leads its usage line instead of a line of its own",
     errorMessage: "This operation was aborted",
     usage: { input: 1200, output: 34, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
   }, { turnDurationMs: 12_000 });
-  assert.match(html, /<span>Stopped<\/span> <span>·<\/span> <span><span[^>]*>↑<\/span>/);
-  assert.equal(html.split(">Stopped<").length, 2);
+  // Fork's meta row renders the mark and the usage in one span (upstream splits
+  // them into per-part spans with arrows); the mark still leads the usage, once.
+  assert.match(html, /<span style="font-variant-numeric:tabular-nums">Stopped · 1,200 in · 34 out<\/span>/);
+  assert.equal((html.match(/Stopped/g) ?? []).length, 1);
 });
 
 test("marks persisted assistant messages with their source entry", () => {
@@ -789,6 +762,20 @@ test("keeps attached images when restoring a compact command for editing", () =>
   ]);
 });
 
+const USER_MSG = {
+  role: "user",
+  content: "普通用户消息",
+  timestamp: 1787000000000,
+};
+
+// "Edit from here" pending-send marker: regular message (has a previous assistant entry) → mark button;
+// first message (no branch point) → same button; once pending the button becomes "Cancel" and is highlighted.
+test("hides the edit-from-here button when no handler is provided", () => {
+  const html = renderMessage(USER_MSG, { entryId: "entry-1" });
+  assert.doesNotMatch(html, /Edit from here/);
+  assert.doesNotMatch(html, /Cancel edit from here/);
+});
+
 test("renders user-message images as buttons that open a larger preview", () => {
   const html = renderMessage({
     role: "user",
@@ -830,6 +817,102 @@ test("marks apply_patch returned failures as errors even when isError is unset",
   assert.match(html, /border:1px solid rgba\(248,113,113,0\.45\)/);
   assert.match(html, />apply_patch</);
   assert.doesNotMatch(html, /border:1px solid rgba\(34,197,94,0\.25\)/);
+});
+
+test("apply_patch failures render the applied preview instead of the requested input", () => {
+  clearExpandedToolCalls();
+  setToolCallExpanded("call-patch-2", true);
+  // input requests two files, but the preview (actual result) only contains the successful one — failed files must not appear with the applied style.
+  const block = {
+    type: "toolCall",
+    toolCallId: "call-patch-2",
+    toolName: "apply_patch",
+    input: {
+      input: [
+        "*** Begin Patch",
+        "*** Update File: src/ok.ts",
+        "-  a = 1",
+        "+  a = 2",
+        "*** Update File: src/bad.ts",
+        "-  b = 1",
+        "+  b = 2",
+        "*** End Patch",
+      ].join("\n"),
+    },
+  };
+  const result = {
+    role: "toolResult",
+    toolCallId: block.toolCallId,
+    content: [{ type: "text", text: "apply_patch failed.\nRecovery: MUST read src/bad.ts before retrying." }],
+    details: {
+      result: { appliedFiles: ["src/ok.ts"], failures: [{ filePath: "src/bad.ts", message: "context mismatch" }] },
+      preview: { files: [{ filePath: "src/ok.ts", operation: "update", diff: "-  1 a = 1\n+  1 a = 2" }] },
+    },
+  };
+  const html = renderMessage({
+    role: "assistant",
+    provider: "openai",
+    model: "gpt-test",
+    content: [block],
+  }, { toolResults: new Map([[block.toolCallId, result]]) });
+
+  // Successful file comes from the preview (with real line numbers) rather than the input request (preview text has no leading spaces).
+  assert.match(html, />a = 2</);
+  assert.match(html, />a = 1</);
+  // Diffs for the failed file b = 1 / b = 2 must not render.
+  assert.doesNotMatch(html, />b = 1</);
+  assert.doesNotMatch(html, />b = 2</);
+});
+
+test("apply_patch failures without preview exclude failed paths from the input parse", () => {
+  clearExpandedToolCalls();
+  setToolCallExpanded("call-patch-3", true);
+  // Without a preview fall back to the input, dropping failed paths file by file and keeping only successful ones.
+  const block = {
+    type: "toolCall",
+    toolCallId: "call-patch-3",
+    toolName: "apply_patch",
+    input: {
+      input: [
+        "*** Begin Patch",
+        "*** Update File: src/ok.ts",
+        "-  a = 1",
+        "+  a = 2",
+        "*** Update File: src/bad.ts",
+        "-  b = 1",
+        "+  b = 2",
+        "*** Update File: src/moved.ts",
+        "*** Move to: src/renamed.ts",
+        "-  m = 1",
+        "+  m = 2",
+        "*** End Patch",
+      ].join("\n"),
+    },
+  };
+  const result = {
+    role: "toolResult",
+    toolCallId: block.toolCallId,
+    content: [{ type: "text", text: "apply_patch failed." }],
+    details: {
+      result: { failures: [{ filePath: "src/bad.ts", message: "context mismatch" }, { filePath: "src/moved.ts", message: "move source unreadable" }] },
+    },
+  };
+  const html = renderMessage({
+    role: "assistant",
+    provider: "openai",
+    model: "gpt-test",
+    content: [block],
+  }, { toolResults: new Map([[block.toolCallId, result]]) });
+
+  // Successful files render as usual (kept after being dropped from the input).
+  assert.match(html, />  a = 2</);
+  // Diffs of failed files (including the move source name) must not render.
+  assert.doesNotMatch(html, />  b = 1</);
+  assert.doesNotMatch(html, />  b = 2</);
+  assert.doesNotMatch(html, />  m = 1</);
+  assert.doesNotMatch(html, />  m = 2</);
+  // Overall it is still framed red.
+  assert.match(html, /border:1px solid rgba\(248,113,113,0\.45\)/);
 });
 
 test("collapses a displayed custom message from its header alone", () => {

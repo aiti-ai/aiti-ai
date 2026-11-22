@@ -1,0 +1,6 @@
+# aiti Docker build-context exclusions (the context = the staging root assembled by build.sh)
+# staging already rsync-excludes node_modules/.git/.next/dist; this file is the backstop for odds and ends.
+# ⚠ Do not exclude *.png — the pi-web/public/icons PWA icons (icon-192/512 etc.) are runtime assets.
+.docker-build-context/
+.playwright-mcp/
+*.log

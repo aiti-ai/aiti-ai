@@ -1,0 +1,13 @@
+# Python caches (the service is executed in place by start-tts.sh)
+__pycache__/
+*.pyc
+
+# Runtime state (lives in the cache area when installed; ignored here for in-place debugging)
+venv-hojo/
+venv-qwen3/
+models/
+logs/
+prepare.json
+runtime.json
+ready.json
+tn-disabled

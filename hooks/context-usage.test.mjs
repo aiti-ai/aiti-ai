@@ -25,10 +25,14 @@ function setup() {
     promptRunIdRef: { current: 1 }, contextUsageRequestIdRef: { current: 0 }, contextUsageAppliedIdRef: { current: 0 },
     agentRunningRef: { current: true }, sdkAgentActiveRef: { current: true }, rpcPromptPendingRef: { current: true },
     setContextUsage: (value) => writes.push(value),
+    // 合并：hook 的 reconcile 走 apiUrl() 包装（basePath）+ ?light=1
+    apiUrl: (p) => p,
     setLiveTotalActiveMs: (value) => activeWrites.push({ sessionId: value.sessionId, value: value.value }), agentStatusUrl,
     fetch: (url) => { const request = Promise.withResolvers(); requests.push({ ...request, url }); return request.promise; },
     syncLiveModel() {}, setIsCompacting() {}, setAutoCompactionEnabled() {}, setQueuedMessages() {},
     normalizeQueuedMessages: (value) => value, finishPromptWithoutStream: () => { throw new Error("busy run settled"); },
+    applyQueuedSnapshot() {}, setPendingRecovery() {},
+    dispatchStream() {}, closeEvents() {}, maintainEventsConnected() {},
   });
   context.applyLiveUsage = callback("applyLiveUsage").runInContext(context);
   context.refreshContextUsage = callback("refreshContextUsage").runInContext(context);
@@ -117,6 +121,7 @@ test("only completed assistant messages trigger an immediate usage read", () => 
       optimisticUserMessageRef: { current: null }, deliveredUserMessageRef: { current: null },
       isSystemMessageEvent: (event) => event.message.role === "system",
       normalizeToolCalls: (message) => message, userMessageKey: () => "user", setMessages() {}, dispatch() {}, setAgentPhase() {},
+      dispatchStream() {}, closeEvents() {}, maintainEventsConnected() {}, applyQueuedSnapshot() {}, setPendingRecovery() {},
       setToolClocks() {}, withoutToolClock: (clocks) => clocks, setActiveToolResults() {},
       refreshContextUsage: (sid) => reads.push(sid),
     });
@@ -132,7 +137,12 @@ test("each event stream connection reads usage, since connecting resumes an idle
     script.runInNewContext({
       event: { type: "connected", sessionId: sid ?? "pending", isStreaming },
       sessionIdRef: { current: sid }, sdkAgentActiveRef: { current: false }, agentRunningRef: { current: false },
-      dispatch() {}, cancelEventStreamGrace() {}, setAgentRunning() {}, setAgentPhase() {}, setToolClocks() {}, endedToolClocks: (clocks) => clocks, NO_TOOL_CLOCKS: new Map(),
+      dispatch() {}, cancelEventStreamGrace() {}, setAgentRunning() {}, setAgentPhase() {},
+      dispatchStream() {}, closeEvents() {}, maintainEventsConnected() {}, applyQueuedSnapshot() {}, setPendingRecovery() {}, apiUrl: (p) => p,
+      canonicalizeSessionId: (id) => id,
+      fetch: () => Promise.reject(new Error("unused")),
+      adoptRunStartedAt() {}, syncLiveModel() {}, setIsCompacting() {}, setAutoCompactionEnabled() {},
+      setToolClocks() {}, endedToolClocks: (clocks) => clocks, NO_TOOL_CLOCKS: new Map(),
       refreshContextUsage: (id) => reads.push(id),
     });
     assert.deepEqual(reads, sid ? [sid] : []);

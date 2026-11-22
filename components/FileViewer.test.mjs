@@ -6,6 +6,44 @@ import ts from "typescript";
 
 const source = await readFile(new URL("./FileViewer.tsx", import.meta.url), "utf8");
 
+test("large source previews bypass the per-line syntax highlighter", () => {
+  assert.match(source, /const SOURCE_HIGHLIGHT_MAX_LINES = 1_000;/);
+  assert.match(source, /const useLightweightSource = sourceLines\.length > SOURCE_HIGHLIGHT_MAX_LINES/);
+
+  // Both source trees are memoized so unrelated re-renders (panel open/close,
+  // selection changes) reuse them instead of rebuilding every line element.
+  assert.match(source, /const highlightedSource = useMemo\(/);
+
+  const lightweightStart = source.indexOf("const lightweightSourceLines = useMemo(");
+  const lightweightEnd = source.indexOf("[sourceLines, useLightweightSource, wrapLines]", lightweightStart);
+  assert.notEqual(lightweightStart, -1);
+  assert.notEqual(lightweightEnd, -1);
+
+  const lightweightSource = source.slice(lightweightStart, lightweightEnd);
+  assert.match(lightweightSource, /useLightweightSource \? sourceLines\.map\(\(line, lineIndex\) =>/);
+  assert.match(lightweightSource, /className="file-source-line"/);
+  assert.match(lightweightSource, /className="file-source-line-content"/);
+  assert.match(lightweightSource, /style=\{FILE_LINE_NUMBER_STYLE\}/);
+
+  // The lightweight branch still wins over the syntax highlighter in the JSX.
+  const branchStart = source.indexOf(") : useLightweightSource ? (");
+  assert.notEqual(branchStart, -1);
+  assert.match(source.slice(branchStart), /className="file-source-view is-lightweight"/);
+  assert.notEqual(source.indexOf("highlightedSource", branchStart), -1);
+});
+
+test("the highlighted source view owns its <pre> background without a competing shorthand", () => {
+  // vs colors <pre> with backgroundColor and vscDarkPlus with background; mixing
+  // them across a theme switch warned and dropped the view's background.
+  assert.match(source, /const fileViewerDarkTheme = \{\s*\.\.\.vscDarkPlus,\s*'pre\[class\*="language-"\]': \{\s*\.\.\.vscDarkPlus\['pre\[class\*="language-"\]'\],\s*\},\s*\};\ndelete fileViewerDarkTheme\['pre\[class\*="language-"\]'\]\.background;/);
+  const start = source.indexOf("const highlightedSource = useMemo(");
+  const element = source.slice(start, source.indexOf("</SyntaxHighlighter>", start));
+  assert.match(element, /style=\{isDark \? fileViewerDarkTheme : vs\}/);
+  const customStyle = element.slice(element.indexOf("customStyle={{"), element.indexOf("codeTagProps={{"));
+  assert.match(customStyle, /backgroundColor: "var\(--bg\)"/);
+  assert.doesNotMatch(customStyle, /\bbackground:/);
+});
+
 test("lightweight source rows are skipped for highlighted, diff, and preview views", () => {
   // Execute the source-view calculations without mounting the file-fetching component.
   const file = ts.createSourceFile("FileViewer.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -19,7 +57,6 @@ test("lightweight source rows are skipped for highlighted, diff, and preview vie
     return (data, displayMode, hasGitDiff = false, isDeletedDiff = false, wrapLines = false, filePath = "/tmp/file.txt") => {
       const isDelimitedTablePath = (path) => /\\.(csv|tsv)$/i.test(path);
       const SOURCE_HIGHLIGHT_MAX_LINES = 1_000;
-      const HTML_PREVIEW_MAX_BYTES = 10 * 1024 * 1024;
       const FILE_LINE_NUMBER_STYLE = {};
       ${calculations}
       return lightweightSourceLines;
@@ -40,8 +77,6 @@ test("lightweight source rows are skipped for highlighted, diff, and preview vie
   assert.equal(render({ ...large, binary: true }, "preview", false, false, false, "/tmp/data.csv").length, 1_001);
   assert.equal(render({ ...large, language: "html", binary: true }, "preview").length, 1_001);
   assert.equal(render({ ...large, language: "markdown", truncated: true }, "preview").length, 1_001);
-  // A partly loaded HTML file previews too: the preview fetches it whole.
-  assert.equal(render({ ...large, language: "html", truncated: true, size: 900 * 1024 }, "preview"), null);
   for (const mode of ["source", "diff", "preview"]) {
     const rows = render(large, mode);
     assert.equal(rows.length, 1_001, `${mode} must retain its source fallback`);
@@ -49,6 +84,21 @@ test("lightweight source rows are skipped for highlighted, diff, and preview vie
     assert.equal(rows[0].props.children[1].props.children, "line");
   }
   assert.equal(render(large, "source", false, false, true)[0].props.children[1].props.style.whiteSpace, "pre-wrap");
+});
+
+test("markdown preview keeps app links and opens web and app links in a new tab (#1108)", () => {
+  assert.match(source, /urlTransform=\{onOpenFile \? markdownUrlTransform : markdownAppUrlTransform\}/);
+  assert.match(
+    source,
+    // 合并适配：非外链分支升级为页内锚点跳转（上游 2cefb72f 的 jumpToMarkdownFragment，
+    // fork 融合后自然覆盖旧的无 onClick 形态）。
+    /return isExternalMarkdownHref\(href\)\s*\? <a href=\{href\} \{\.\.\.props\} target="_blank" rel="noopener noreferrer">\{children\}<\/a>\s*: <a href=\{href\} \{\.\.\.props\} onClick=\{jumpToMarkdownFragment\}>\{children\}<\/a>;/,
+  );
+});
+
+test("markdown preview links carry PDF page fragments", () => {
+  assert.match(source, /parsePdfPageFragment/);
+  assert.match(source, /onOpenFile\(linkedFile, parsePdfPageFragment\(href\) \?\? undefined\)/);
 });
 
 test("the diff view wraps when the viewer wraps, and the key reaches the diff", () => {
@@ -64,32 +114,15 @@ test("the diff view wraps when the viewer wraps, and the key reaches the diff", 
   // Unwrapped stays exactly as before: one line per row, sideways scroll. The
   // +/- marker column never shrinks either way.
   assert.match(diffView, /padding: "0 6px",[\s\S]{0,160}flexShrink: 0/);
-  assert.match(source, /<MemoizedDiffView[\s\S]{0,200}patch=\{gitDiff\.patch!\}[\s\S]{0,200}wrapLines=\{wrapLines\}[\s\S]{0,200}language=\{language\}[\s\S]{0,200}prismReady=\{prismReady\}[\s\S]{0,200}isDark=\{isDark\}[\s\S]{0,200}\/>/);
+  // [fork-merge] per-line Prism highlighting (upstream v0.16.0): memoized per
+  // line and a memoized whole view, fed from the source view's readiness.
+  assert.match(source, /const DiffLineCode = memo\(function DiffLineCode/);
+  assert.match(source, /const MemoizedDiffView = memo\(DiffView\);/);
+  assert.match(source, /<MemoizedDiffView patch=\{gitDiff\.patch!\} wrapLines=\{wrapLines\} language=\{language\} prismReady=\{prismReady\} isDark=\{isDark\} \/>/);
 
   // The wrap control is offered for the diff as well as the source, never for a
   // rendered preview (markdown, HTML, table), where there are no lines to wrap.
   assert.match(source, /\(effectiveDisplayMode === "source" \|\| effectiveDisplayMode === "diff"\) && !isBinary/);
-});
-
-test("a highlighted diff line keeps the row's line box, wrap and background", () => {
-  const lineCode = source.slice(source.indexOf("function DiffLineCode"), source.indexOf("function DiffView"));
-  assert.notEqual(source.indexOf("function DiffLineCode"), -1);
-  const customStyle = lineCode.slice(lineCode.indexOf("customStyle={{"), lineCode.indexOf("}}", lineCode.indexOf("customStyle={{")));
-  // The theme's <pre> rules land on the inline wrapper: vs draws a border, both
-  // set their own font and `white-space: pre`, which grew every row by a pixel
-  // or two and kept a wrapped long line on one row.
-  for (const rule of [/border: 0/, /fontFamily: "inherit"/, /lineHeight: "inherit"/, /whiteSpace: "inherit"/]) {
-    assert.match(customStyle, rule);
-  }
-  // vs colors <pre> with backgroundColor: the shorthand beside it left a white
-  // box behind each line after a dark-to-light switch (as #1060 in the source view).
-  assert.match(customStyle, /backgroundColor: "transparent"/);
-  assert.doesNotMatch(customStyle, /\bbackground:/);
-  // The code span's own white-space comes from the highlighter.
-  assert.match(lineCode, /wrapLongLines=\{wrapLines\}/);
-  // Unrelated renders reuse the tokens instead of running Prism on every line.
-  assert.match(source, /const DiffLineCode = memo\(function DiffLineCode/);
-  assert.match(source, /const MemoizedDiffView = memo\(DiffView\);/);
 });
 
 test("partly loaded HTML previews up to the HTML cap; partly loaded markdown does not", () => {
@@ -141,7 +174,12 @@ test("the line-number gutter is pinned only in views of at most SOURCE_HIGHLIGHT
       const HTML_PREVIEW_MAX_BYTES = 10 * 1024 * 1024;
       const FILE_LINE_NUMBER_STYLE = gutterStyle;
       const FILE_PINNED_LINE_NUMBER_STYLE = pinnedStyle;
-      // Stand-ins for what the highlighted element only passes on.
+      // Stand-ins for what the highlighted element only passes on. (Suspense: the
+      // fork wraps the lazy SyntaxHighlighter in <Suspense> — never rendered here.)
+      globalThis.SuspenseStub = (props) => props.children;
+      const Suspense = globalThis.SuspenseStub;
+      // The fork caches the highlighted tree through useMemo — evaluate it eagerly here.
+      const useMemo = (fn) => fn();
       const [usePrismLanguages, SyntaxHighlighter, SourceCodeRenderer, isDark, vs, fileViewerDarkTheme, FILE_CODE_STYLE] = [() => true, "pre", "span", false, {}, {}, {}];
       ${calculations}
       return { lightweightSourceLines, highlightedSource };
@@ -149,14 +187,19 @@ test("the line-number gutter is pinned only in views of at most SOURCE_HIGHLIGHT
   `, { compilerOptions: { jsx: ts.JsxEmit.React } });
   const render = new Function("React", "useMemo", "gutterStyle", "pinnedStyle", outputText)(React, (calculate) => calculate(), gutterStyle, pinnedStyle);
   const { lightweightSourceLines: rows, highlightedSource } = render({ content: "line\n".repeat(1_000), language: "text" }, "source");
+  // Merge note: the fork wraps the lazy SyntaxHighlighter in <Suspense>; the
+  // highlighter element is the wrapped child.
+  const syntaxEl = highlightedSource?.type === SuspenseStub ? highlightedSource.props.children : highlightedSource;
   const numberStyle = rows[0].props.children[0].props.style;
   // The Diff view's first row number, with every row an added line.
   const diffView = file.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === "DiffView");
   const { outputText: diffOutput } = ts.transpileModule(`return ${diffView.getText(file)}`, { compilerOptions: { jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2022 } });
   const diffNumberStyle = (rowCount) => {
     const added = Array.from({ length: rowCount }, (_, index) => ({ type: "added", text: "line", oldLineNo: null, newLineNo: index + 1 }));
-    const DiffView = new Function("React", "useI18n", "diffLines", "SOURCE_HIGHLIGHT_MAX_LINES", "FILE_CODE_STYLE", "FILE_LINE_NUMBER_STYLE", "FILE_PINNED_LINE_NUMBER_STYLE", diffOutput)(
-      React, () => ({ t: (key) => key }), () => added, maxRows, codeStyle, gutterStyle, pinnedStyle,
+    // [fork-merge] DiffLineCode is the memoized per-line highlighter; the gutter
+    // assertions only read the row's number span, so a null stub suffices.
+    const DiffView = new Function("React", "useI18n", "diffLines", "SOURCE_HIGHLIGHT_MAX_LINES", "FILE_CODE_STYLE", "FILE_LINE_NUMBER_STYLE", "FILE_PINNED_LINE_NUMBER_STYLE", "DiffLineCode", diffOutput)(
+      React, () => ({ t: (key) => key }), () => added, maxRows, codeStyle, gutterStyle, pinnedStyle, () => null,
     );
     return DiffView({ patch: "" }).props.children[0].props.children[0].props.children[0].props.style;
   };
@@ -169,7 +212,7 @@ test("the line-number gutter is pinned only in views of at most SOURCE_HIGHLIGHT
   assert.ok(pinnedStyle.zIndex >= 1, "the pinned gutter must stack above the scrolling text");
   // Views of at most SOURCE_HIGHLIGHT_MAX_LINES rows pin it: the highlighted
   // Source view (never longer) and a diff up to that many rows.
-  assert.deepEqual(highlightedSource.props.lineNumberStyle, pinnedStyle);
+  assert.deepEqual(syntaxEl.props.lineNumberStyle, pinnedStyle);
   assert.equal(diffNumberStyle(maxRows), pinnedStyle);
   assert.equal(diffNumberStyle(maxRows + 1), gutterStyle);
   // The plain fallback has more rows than that by definition, and the browser

@@ -11,10 +11,41 @@ import {
   shouldShowWindowsDrivePicker,
 } from "@/lib/directory-browser";
 
-// GET /api/cwd/browse?path=...：列出文件系统中的可读子目录。
-export async function GET(request: NextRequest) {
+// POST /api/cwd/browse — one endpoint, two operations dispatched on the body:
+// - { path? }: browse — lists readable subdirectories (the folder pickers).
+//   path goes in the body, not the URL — keeps local paths out of tunnel/proxy
+//   access logs.
+// - { path, name }: create — makes one direct child directory of the browsed
+//   folder (the "New folder" action in the pickers).
+export async function POST(request: NextRequest) {
+  if (!isApiRequestAllowed(request)) {
+    return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
+  }
+  if (!hasJsonContentType(request)) {
+    return NextResponse.json({ error: "Content-Type must be application/json" }, { status: 415 });
+  }
+
   try {
-    const requested = request.nextUrl.searchParams.get("path")?.trim();
+    const body = await request.json().catch(() => null) as { path?: unknown; name?: unknown } | null;
+
+    // --- create (upstream): { path, name } ---
+    if (typeof body?.name === "string") {
+      const parentPath = typeof body.path === "string" ? body.path.trim() : "";
+      const name = body.name.trim();
+
+      if (!parentPath) {
+        return NextResponse.json({ error: "Parent path is required" }, { status: 400 });
+      }
+      if (!name) {
+        return NextResponse.json({ error: "Directory name is required" }, { status: 400 });
+      }
+
+      const createdPath = await createDirectory(parentPath, name);
+      return NextResponse.json({ success: true, path: createdPath });
+    }
+
+    // --- browse (local): { path? } ---
+    const requested = typeof body?.path === "string" ? body.path.trim() : "";
 
     if (shouldShowWindowsDrivePicker(requested)) {
       return NextResponse.json({
@@ -46,35 +77,6 @@ export async function GET(request: NextRequest) {
       parentPath: getParentDirectory(resolved),
       directories,
     });
-  } catch (error) {
-    return NextResponse.json({ error: String(error) }, { status: 500 });
-  }
-}
-
-// POST /api/cwd/browse  body: { path: string, name: string }
-// Creates one direct child of the currently browsed directory.
-export async function POST(request: Request) {
-  if (!isApiRequestAllowed(request)) {
-    return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
-  }
-  if (!hasJsonContentType(request)) {
-    return NextResponse.json({ error: "Content-Type must be application/json" }, { status: 415 });
-  }
-
-  try {
-    const body = await request.json() as { path?: unknown; name?: unknown };
-    const parentPath = typeof body.path === "string" ? body.path.trim() : "";
-    const name = typeof body.name === "string" ? body.name.trim() : "";
-
-    if (!parentPath) {
-      return NextResponse.json({ error: "Parent path is required" }, { status: 400 });
-    }
-    if (!name) {
-      return NextResponse.json({ error: "Directory name is required" }, { status: 400 });
-    }
-
-    const createdPath = await createDirectory(parentPath, name);
-    return NextResponse.json({ success: true, path: createdPath });
   } catch (error) {
     const code = error && typeof error === "object" && "code" in error
       ? String(error.code)

@@ -1,0 +1,32 @@
+{
+  "name": "@aiti-ai/aiti-devtools-webpack",
+  "version": "0.1.0",
+  "description": "webpack-dev-server carrier plugin: bridge via setupMiddlewares + html-webpack-plugin injection; Rspack reuses it unchanged.",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src"
+  ],
+  "dependencies": {
+    "@aiti-ai/aiti-devtools-core": "^0.3.5"
+  },
+  "peerDependencies": {
+    "webpack": "^5.0.0",
+    "webpack-dev-server": "^4.0.0 || ^5.0.0",
+    "html-webpack-plugin": "^5.0.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "packages/aiti-devtools-webpack"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  },
+  "contentHash": "f091aec140e06f64"
+}

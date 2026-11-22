@@ -9,6 +9,7 @@ const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pi-web-uploa
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 const previousRoots = globalThis.__piAllowedRootsCache;
 process.env.PI_CODING_AGENT_DIR = path.join(base, "agent");
+process.env.PI_WEB_FILE_SANDBOX = "1"; // 合并：上游安全测试假设文件沙箱强制执行（本地默认关，测试内显式开）
 test.after(() => {
   if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
   else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
@@ -29,14 +30,71 @@ function fixture() {
   return { directory, destination };
 }
 
-async function upload(directory, strategy = "overwrite", names = ["important.txt"], contents = "replacement") {
+async function upload(directory, strategy = "overwrite", names = ["important.txt"], contentsOrEnsure = "replacement", ensure = false) {
+  // Upstream wire form: directory encoded into the URL path segments (lib/file-upload-client
+  // uploadFiles/upload-check). Regression: catch-all segments carry no leading slash, so a naive
+  // join turns unix absolute paths relative ("home/…" → "path must be absolute" 400) while windows
+  // drive-letter paths survive by luck — the route must restore them via filePathFromApiSegments.
+  // The multipart directory field (fork evolution) is also appended; the route accepts both forms.
+  const contents = contentsOrEnsure === true ? "replacement" : contentsOrEnsure;
+  const withEnsure = ensure || contentsOrEnsure === true;
   const encoded = encodeFilePathForApi(directory);
   const form = new FormData();
+  form.append("directory", directory);
   for (const name of names) form.append("files", new File([contents], name));
-  return POST(new NextRequest(`http://localhost/api/files/${encoded}?type=upload&conflict=${strategy}`, {
+  return POST(new NextRequest(`http://localhost/api/files/${encoded}?type=upload&conflict=${strategy}${withEnsure ? "&ensure=1" : ""}`, {
     method: "POST", headers: { host: "localhost" }, body: form,
   }), { params: Promise.resolve({ path: encoded.split("/").map(decodeURIComponent) }) });
 }
+
+async function uploadViaUrlPath(directory, type = "upload", names = ["important.txt"]) {
+  const form = new FormData();
+  for (const name of names) form.append("files", new File(["replacement"], name));
+  const encoded = encodeFilePathForApi(directory);
+  const segments = encoded.split("/").filter(Boolean).map((s) => decodeURIComponent(s));
+  return POST(new NextRequest(
+    `http://localhost/api/files/${encoded}?type=${type}&conflict=skip${type === "upload" ? "&ensure=1" : ""}`,
+    { method: "POST", headers: { host: "localhost" }, body: form },
+  ), { params: Promise.resolve({ path: segments }) });
+}
+
+test("url-path directory form restores the leading slash for unix absolute paths (upload)", async () => {
+  const { directory } = fixture();
+  const response = await uploadViaUrlPath(directory, "upload", ["important.txt", "fresh.txt"]);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { uploaded: ["fresh.txt"], skipped: ["important.txt"], errors: [] });
+  assert.equal(fs.readFileSync(path.join(directory, "fresh.txt"), "utf8"), "replacement");
+  assert.equal(fs.readFileSync(path.join(directory, "important.txt"), "utf8"), "original contents");
+});
+
+test("url-path directory form restores the leading slash for unix absolute paths (upload-check)", async () => {
+  const { directory } = fixture();
+  const form = new FormData(); // upload-check 无文件也不需要 body 文件，但 POST 需要 multipart 或 JSON
+  const encoded = encodeFilePathForApi(directory);
+  const segments = encoded.split("/").filter(Boolean).map((s) => decodeURIComponent(s));
+  const response = await POST(new NextRequest(
+    `http://localhost/api/files/${encoded}?type=upload-check&conflict=skip`,
+    { method: "POST", headers: { host: "localhost", "content-type": "application/json" }, body: JSON.stringify({ fileNames: ["important.txt"] }) },
+  ), { params: Promise.resolve({ path: segments }) });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.deepEqual(body.conflicts, ["important.txt"]);
+});
+
+test("windows drive-letter directory in url path stays absolute", async () => {
+  const fixtureRoot = path.dirname(fixture().directory);
+  globalThis.__piAllowedRootsCache = { roots: new Set(["C:/workspace/proj"]), expiresAt: Date.now() + 60_000 };
+  const form = new FormData();
+  form.append("files", new File(["replacement"], "important.txt"));
+  const response = await POST(new NextRequest(
+    "http://localhost/api/files/C:/workspace/proj?type=upload&conflict=skip&ensure=1",
+    { method: "POST", headers: { host: "localhost" }, body: form },
+  ), { params: Promise.resolve({ path: ["D:", "workspace", "proj"] }) });
+  // Linux 测试机上该目录不存在 → 404/403，但绝不能再是 "path must be absolute"（回归锚点）
+  const body = await response.json();
+  assert.notEqual(body.error, "path must be absolute");
+  void fixtureRoot;
+});
 
 for (const partial of [false, true]) {
   test(`failed overwrite preserves original and cleans staging (partial write: ${partial})`, async (t) => {
@@ -111,9 +169,11 @@ test("refuses a destination changed to a link while the replacement is staged", 
   assert.deepEqual(fs.readdirSync(directory), ["important.txt"]);
 });
 
-test("one file may fill the 100MB limit, and one byte more is refused", async () => {
+test("one file may fill the per-file limit, and one byte more is refused (fork hardening)", async () => {
+  // The fork's local-API hardening caps a single upload at 25MB on top of the
+  // upstream 100MB total (commit 3961834d), so the per-file cap fires first.
   const { directory } = fixture();
-  const limit = 100 * 1024 * 1024;
+  const limit = 25 * 1024 * 1024;
 
   const atLimit = await upload(directory, "error", ["full.bin"], Buffer.alloc(limit));
   assert.equal(atLimit.status, 200);
@@ -122,14 +182,25 @@ test("one file may fill the 100MB limit, and one byte more is refused", async ()
 
   const over = await upload(directory, "error", ["over.bin"], Buffer.alloc(limit + 1));
   assert.equal(over.status, 413);
-  assert.deepEqual(await over.json(), { error: "Uploads must total 100MB or less" });
+  assert.deepEqual(await over.json(), { error: "Each upload must be 25MB or smaller" });
   assert.deepEqual(fs.readdirSync(directory).sort(), ["full.bin", "important.txt"]);
 });
 
-test("files that pass the limit only together are refused before any is written", async () => {
+test("files that pass the per-file limit only together exceed the total, refused before any write", async () => {
+  // Four 25MB files plus a 1KB filler each clear nothing per-file but sum past
+  // the upstream 100MB total, while the multipart body stays under the 101MB
+  // request-parse cap so the refusal comes from the total check, before any
+  // file is written.
   const { directory } = fixture();
-  const half = Buffer.alloc(50 * 1024 * 1024 + 1);
-  const response = await upload(directory, "error", ["first.bin", "second.bin"], half);
+  const chunk = Buffer.alloc(25 * 1024 * 1024);
+  const encoded = encodeFilePathForApi(directory);
+  const form = new FormData();
+  form.append("directory", directory);
+  for (const name of ["a.bin", "b.bin", "c.bin", "d.bin"]) form.append("files", new File([chunk], name));
+  form.append("files", new File([Buffer.alloc(1024)], "e.bin"));
+  const response = await POST(new NextRequest(`http://localhost/api/files/${encoded}?type=upload&conflict=error`, {
+    method: "POST", headers: { host: "localhost" }, body: form,
+  }), { params: Promise.resolve({ path: encoded.split("/").map(decodeURIComponent) }) });
   assert.equal(response.status, 413);
   assert.deepEqual(await response.json(), { error: "Uploads must total 100MB or less" });
   assert.deepEqual(fs.readdirSync(directory), ["important.txt"]);
@@ -157,4 +228,38 @@ test("overwrite refuses directories and directory links without touching their t
   assert.deepEqual(body.errors.map((entry) => entry.name), ["folder", "linked"]);
   assert.equal(fs.lstatSync(path.join(directory, "linked")).isSymbolicLink(), true);
   assert.equal(fs.readFileSync(path.join(outside, "secret.txt"), "utf8"), "private contents");
+});
+
+test("ensure=1 creates the attachments directory on demand with a self-hiding .gitignore", async () => {
+  const { directory } = fixture();
+  const attachments = path.join(directory, ".pi-attachments");
+  assert.equal(fs.existsSync(attachments), false);
+  const response = await upload(attachments, "skip", ["spec.pdf"], true);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { uploaded: ["spec.pdf"], skipped: [], errors: [] });
+  // Directory auto-created; the inner .gitignore makes the whole directory —
+  // itself included — invisible to git status without touching the repo's own ignore files.
+  assert.equal(fs.readFileSync(path.join(attachments, "spec.pdf"), "utf8"), "replacement");
+  assert.equal(fs.readFileSync(path.join(attachments, ".gitignore"), "utf8"), "*\n");
+});
+
+test("ensure=1 never overwrites an existing .gitignore and stays symlink-safe", async () => {
+  const { directory } = fixture();
+  const attachments = path.join(directory, ".pi-attachments");
+  fs.mkdirSync(attachments);
+  fs.writeFileSync(path.join(attachments, ".gitignore"), "*.log\n");
+  const response = await upload(attachments, "skip", ["spec.pdf"], true);
+  assert.equal(response.status, 200);
+  // User-authored ignore rules are never touched (write flag wx).
+  assert.equal(fs.readFileSync(path.join(attachments, ".gitignore"), "utf8"), "*.log\n");
+
+  // A directory symlink pointing outside the allowed roots: rejected before
+  // anything (upload or the auto-.gitignore) lands outside.
+  fs.rmSync(attachments, { recursive: true });
+  const outside = fs.mkdtempSync(path.join(base, "outside-"));
+  fs.writeFileSync(path.join(outside, "secret.txt"), "private contents");
+  fs.symlinkSync(outside, attachments, process.platform === "win32" ? "junction" : "dir");
+  const escaped = await upload(attachments, "skip", ["spec.pdf"], true);
+  assert.equal(escaped.status, 403);
+  assert.deepEqual(fs.readdirSync(outside), ["secret.txt"]);
 });

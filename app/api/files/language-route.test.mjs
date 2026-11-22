@@ -17,7 +17,7 @@ const jiti = createJiti(import.meta.url, {
   interopDefault: true,
   moduleCache: false,
 });
-const { GET } = await jiti.import("./[...path]/route.ts");
+const { POST } = await jiti.import("./[...path]/route.ts");
 const { allowFileRoot } = await jiti.import("../../../lib/allowed-roots.ts");
 allowFileRoot(root);
 
@@ -36,13 +36,17 @@ const textExtensions = extensionMap.properties
   .filter((ext) => ext !== "pdf" && ext !== "docx");
 assert.ok(textExtensions.includes("ts") && textExtensions.every(Boolean), "EXT_TO_LANGUAGE keys not read");
 
+// 合并适配：fork 的红线——文件路径不进 URL，读请求一律走 POST /api/files/get（path 在 body）。
 async function languageOf(name) {
   const filePath = path.join(root, name);
   fs.writeFileSync(filePath, "x\n");
-  const segments = filePath.replace(/\\/g, "/").split("/").filter(Boolean);
-  const response = await GET(
-    new NextRequest("http://localhost/api/files/x?type=read"),
-    { params: Promise.resolve({ path: segments }) },
+  const response = await POST(
+    new NextRequest("http://localhost/api/files/get", {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "http://localhost", host: "localhost" },
+      body: JSON.stringify({ path: filePath, type: "read" }),
+    }),
+    { params: Promise.resolve({ path: ["get"] }) },
   );
   assert.equal(response.status, 200, name);
   return (await response.json()).language;
@@ -78,13 +82,17 @@ test("JSX gets its tags colored and an ambiguous extension stays plain", async (
 });
 
 test("a binary file without a preview answers binary, never its bytes as text (#1401)", async () => {
+  // 合并适配：fork 的红线——路径不进 URL，读走 POST /api/files/get。
   async function read(name, bytes) {
     const filePath = path.join(root, name);
     fs.writeFileSync(filePath, bytes);
-    const segments = filePath.replace(/\\/g, "/").split("/").filter(Boolean);
-    return GET(
-      new NextRequest("http://localhost/api/files/x?type=read"),
-      { params: Promise.resolve({ path: segments }) },
+    return POST(
+      new NextRequest("http://localhost/api/files/get", {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: "http://localhost", host: "localhost" },
+        body: JSON.stringify({ path: filePath, type: "read" }),
+      }),
+      { params: Promise.resolve({ path: ["get"] }) },
     );
   }
   const zip = await (await read("archive.zip", Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00]))).json();

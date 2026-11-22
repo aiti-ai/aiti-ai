@@ -10,11 +10,15 @@ import { createJiti } from "jiti";
 // `connected` is another matter: the server replays every call still running
 // right after it, so it starts from none and the replay is the whole list.
 const shimPath = fileURLToPath(new URL("./__fixtures__/react-hook-shim.mjs", import.meta.url));
-const jiti = createJiti(import.meta.url, { tsconfigPaths: true, alias: { react: shimPath } });
+const jsxRuntimeShimPath = fileURLToPath(new URL("./__fixtures__/react-jsx-runtime-shim.mjs", import.meta.url));
+const i18nStubPath = fileURLToPath(new URL("./__fixtures__/use-i18n-stub.mjs", import.meta.url));
+const jiti = createJiti(import.meta.url, { jsx: { runtime: "automatic" }, alias: { react: shimPath, "react/jsx-runtime": jsxRuntimeShimPath, "@/hooks/useI18n": i18nStubPath, "@": process.cwd() } }); // jsx 选项 → jiti 强制转译（useAgentSession 传递依赖 useI18n.tsx）
 const { renderHook } = await import(pathToFileURL(shimPath).href);
 const { useAgentSession } = await jiti.import("./useAgentSession.ts");
 
 globalThis.document ??= Object.assign(new EventTarget(), { visibilityState: "visible" });
+globalThis.requestAnimationFrame ??= (cb) => setTimeout(() => cb(0), 0);
+globalThis.cancelAnimationFrame ??= (id) => clearTimeout(id);
 globalThis.window ??= new EventTarget();
 
 // useAgentSession's EVENT_STREAM_RECONNECT_DELAY_MS.

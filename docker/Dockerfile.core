@@ -1,0 +1,167 @@
+# aiti/aiti:core — base image
+# ubuntu:26.04 + Node 22 + core tools + aiti artifacts (pi-web fork production build + all extensions + pi engine + justget + aiti-bridge)
+# Preflight verified (2026-09-08, dev machine): docker pull ubuntu:26.04 works via registry-mirror — no 24.04 fallback needed.
+#
+# Build context = the staging dir assembled by build.sh (pi-web sources / pi-web-ext / packages / justget),
+# layout documented in the build.sh header. Build args documented in the ARGs below.
+FROM ubuntu:26.04
+
+# Image sources (official by default — GitHub CI / official releases use them directly; CN local builds use `./docker/build.sh --cn`).
+# AITI_NPM_REGISTRY = the @aiti-ai scope private registry, **temporary** — local testing only (before the private packages are on public npm):
+#   Testing: build.sh --private-registry <private-registry-url> (or env AITI_PRIVATE_REGISTRY)
+#   Official release: omit it = no private registry, @aiti-ai/* resolves from public npm
+ARG APT_MIRROR=""
+ARG NPM_MIRROR=https://registry.npmjs.org
+ARG AITI_NPM_REGISTRY=""
+# scope private-registry auth (Aliyun artifact repo etc.; empty = anonymous/public. Credentials live only in the build-time root .npmrc, wiped at the end of the image)
+ARG AITI_NPM_REGISTRY_USER=""
+ARG AITI_NPM_REGISTRY_PASS=""
+ARG NODE_MAJOR=22
+ARG TARGETPLATFORM
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8
+
+# ── ① apt mirrors to CN + core tools + NodeSource node22 ─────────────────────────
+# ubuntu 26.04+ uses the deb822 sources format (/etc/apt/sources.list.d/ubuntu.sources)
+COPY docker/scripts/10-apt-mirror.sh /tmp/10-apt-mirror.sh
+RUN /tmp/10-apt-mirror.sh "${APT_MIRROR}" && rm /tmp/10-apt-mirror.sh
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl wget git unzip zip tar xz-utils \
+      build-essential make g++ python3 python3-dev python3-venv python3-pip openssh-client jq \
+      vim nano htop tmux procps \
+      fonts-noto-cjk \
+      gosu \
+      sudo \
+      locales \
+    && rm -rf /var/lib/apt/lists/* \
+    # LANG=zh_CN.UTF-8 must actually be generated (otherwise GUI components like openbox spam "Couldn't set locale")
+    && locale-gen zh_CN.UTF-8 && update-locale LANG=zh_CN.UTF-8
+
+# Node 22 (NodeSource official repo; Ubuntu's own nodejs is too old. pi-web engines >=22.19)
+RUN curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm config set registry "${NPM_MIRROR}" \
+    # Private registry injected for testing only (scope config written only when AITI_NPM_REGISTRY is set; empty at release = public npm)
+    && if [ -n "${AITI_NPM_REGISTRY}" ]; then npm config set "@aiti-ai:registry" "${AITI_NPM_REGISTRY}"; fi \
+    # scope auth (written only when the registry and credentials are both non-empty; the host path derives from the registry URL)
+    && if [ -n "${AITI_NPM_REGISTRY}" ] && [ -n "${AITI_NPM_REGISTRY_USER}" ]; then \
+         SCOPE_PATH=$(echo "${AITI_NPM_REGISTRY}" | sed -e "s|^https\?://||" -e "s|/$||") \
+         && npm config set "//${SCOPE_PATH}/:username" "${AITI_NPM_REGISTRY_USER}" \
+         && npm config set "//${SCOPE_PATH}/:_password" "$(printf %s "${AITI_NPM_REGISTRY_PASS}" | base64 -w0)" \
+         && npm config set "//${SCOPE_PATH}/:always-auth" "true" 2>/dev/null || npm config delete "//${SCOPE_PATH}/:always-auth" >/dev/null 2>&1 || true; fi \
+    && node -v
+
+# ── ② runtime user aiti (overridable via UID/GID env; entrypoint recreates as fallback) + passwordless sudo ──
+# ubuntu 24.04+ base images ship a uid/gid-1000 ubuntu user (first-run finding) — rename and reuse to avoid conflicts
+RUN set -eux; \
+    if getent passwd 1000 >/dev/null; then usermod -l aiti -d /home/aiti -m "$(id -nu 1000)"; else useradd -m -u 1000 -s /bin/bash aiti; fi; \
+    if [ "$(id -gn aiti)" != "aiti" ]; then groupmod -n aiti "$(id -gn aiti)"; fi; \
+    echo "aiti ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/aiti; \
+    chmod 0440 /etc/sudoers.d/aiti
+
+# aiti user npmrc: at runtime pi-web (user aiti) needs the same registry config to install settings.packages
+# (the build-time npm config set wrote root's ~/.npmrc; without config in aiti's home → public source 404s private packages → model listing breaks)
+RUN printf 'registry=%s\n@aiti-ai:registry=%s\n' \
+      "${NPM_MIRROR}" \
+      "${AITI_NPM_REGISTRY:-https://registry.npmjs.org/}" > /home/aiti/.npmrc \
+    && chown aiti:aiti /home/aiti/.npmrc
+
+# ── ③ aiti directory skeleton (data volumes at /opt/aiti; workspace at /workspace) ────────────────
+RUN mkdir -p /opt/aiti/extensions /opt/aiti/data /opt/aiti/agent /workspace \
+    && chown -R aiti:aiti /opt/aiti /workspace
+
+# ── ④ pi-web (fork) sources → /opt/aiti/app: npm ci + next build (standalone into the image) ──
+# 2026-09-10 slimming: NEXT_OUTPUT_STANDALONE=1 produces the minimal .next/standalone dependency tree
+# (162M) replacing the whole node_modules (1.6G) — core image -1.4GB. Startup path in the entrypoint
+# start_piweb (standalone/server.js first; AITI_DEV source mode still runs next dev).
+COPY pi-web /opt/aiti/app
+# TODO(first-run calibration 2026-09-08): pi-web lock vs package.json drifted once (@xterm/xterm) — fall back
+# from ci to install on failure; once lock-sync discipline is established, return to plain npm ci (reproducibility).
+RUN cd /opt/aiti/app \
+    && npm config set registry "${NPM_MIRROR}" \
+    && (npm ci --no-audit --no-fund || npm install --no-audit --no-fund) \
+    && NEXT_OUTPUT_STANDALONE=1 npm run build \
+    && cp -r .next/static .next/standalone/.next/static \
+    && cp -r public .next/standalone/public \
+    # Slimming key: standalone carries its own minimal dependency tree — node_modules and the .next body must be deleted in the same layer for real savings
+    && rm -rf node_modules .next/cache \
+    && find .next -maxdepth 1 -mindepth 1 ! -name standalone -exec rm -rf {} + \
+    && chown -R aiti:aiti /opt/aiti/app
+# Production start: `next start` (entrypoint overrides -H 0.0.0.0 -p 30142; AITI_DEV=1 mounts sources and runs next dev, see §3.3 R8)
+
+# ── ⑤ deployed extensions → /opt/aiti/extensions (PI_WEB_EXTENSIONS_DIR target, read-only in the image) ──
+# Currently each extension's tools/deploy.mjs runs (HOME redirected into the build dir, then copied out; deploy
+# commit/reload may fail inside the build container — deploy.mjs tolerates that by design). Once the S4 npm
+# publish chain lands, switch to `aiti-ext-install @aiti-ai/* --dir /opt/aiti/extensions` (design §3.2 ③ decision point).
+COPY pi-web-ext /opt/aiti/src/pi-web-ext
+COPY packages /opt/aiti/src/packages
+COPY pi-ext /opt/aiti/src/pi-ext
+# pi-plugin sources persisted (for local-path installs; pi-git-trace was never published to npm, the settings six reference local paths)
+COPY pi-ext /opt/aiti/pi-plugins
+COPY docker/scripts/deploy-extensions.sh /opt/aiti/src/deploy-extensions.sh
+# dev samples like demo/demo-lazy/crash-fatal/dev-exts stay out of the production image (design §8.1 allow-list)
+RUN cd /opt/aiti/src && bash deploy-extensions.sh /opt/aiti/extensions \
+    && rm -rf /opt/aiti/src \
+    && chown -R aiti:aiti /opt/aiti/extensions
+
+# ── ⑥ pi engine + pi-side extension packages → /opt/aiti/agent (PI_CODING_AGENT_DIR) ──────────
+COPY docker/scripts/30-install-pi.sh /tmp/30-install-pi.sh
+RUN /tmp/30-install-pi.sh "${NPM_MIRROR}" && rm /tmp/30-install-pi.sh \
+    && chown -R aiti:aiti /opt/aiti/agent
+
+# ── ⑥.5 vendor tgz (the file: dependency base until @aiti-ai/* is on the official registry) ────────────────
+COPY vendor/rewritten /opt/vendor
+
+# ── ⑦ justget tool market + aiti-bridge → /usr/local/bin ────────────────────────
+COPY justget /opt/aiti/src-justget
+# ⚠ wrapper, not symlink (smoke-verified): justget has an ESM main-module guard
+# (import.meta.url === pathToFileURL(argv[1])) — invoked via a symlink argv[1] is the link path,
+# the guard fails → silent exit 0. A wrapper exec'ing node <real path> satisfies the guard.
+RUN printf '#!/bin/sh\nexec node /opt/aiti/src-justget/dist/cli.js "$@"\n' > /usr/local/bin/justget \
+    && chmod +x /usr/local/bin/justget \
+    && cd /opt/aiti/src-justget \
+    && npm config set registry "${NPM_MIRROR}" \
+    && (npm ci --no-audit --no-fund || npm install --no-audit --no-fund) \
+    && rm -rf /opt/aiti/src-justget/node_modules/.cache \
+    && justget --version
+COPY packages/aiti-bridge /opt/aiti/bridge
+# bridge.mjs references core sources via the ../../aiti-devtools-core relative path — copy in the same layout and install deps
+COPY packages/aiti-devtools-core /opt/aiti/aiti-devtools-core
+# ⚠ bridge actually imports core sources by relative path (src/index.ts); the npm dependency only participates in
+# install-tree resolution. A local WIP core version can be ahead of the registry (0.3.5 worktree vs registry 0.3.4 →
+# ^0.3.5 ETARGET breaks the build) — relax to * inside the image; the registry resolves the older dist (nobody imports by name).
+RUN node -e "const fs=require('fs');const f='/opt/aiti/bridge/package.json';const j=JSON.parse(fs.readFileSync(f,'utf8'));if(j.dependencies&&j.dependencies['@aiti-ai/aiti-devtools-core'])j.dependencies['@aiti-ai/aiti-devtools-core']='*';fs.writeFileSync(f,JSON.stringify(j,null,2))" \
+    && printf '#!/bin/sh\nexec node /opt/aiti/bridge/bin/aiti-bridge.mjs "$@"\n' > /usr/local/bin/aiti-bridge \
+    && chmod +x /usr/local/bin/aiti-bridge \
+    && cd /opt/aiti/bridge && (npm ci --no-audit --no-fund --omit=dev 2>/dev/null || npm install --no-audit --no-fund --omit=dev) \
+    && cd /opt/aiti/aiti-devtools-core && (npm install --no-audit --no-fund --omit=dev --loglevel=error || true)
+
+# ── ⑧ entrypoint + environment variables (design §2.1.3) ────────────────────────────────────
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+ENV PI_WEB_EXTENSIONS_DIR=/opt/aiti/extensions \
+    PI_WEB_DATA_DIR=/opt/aiti/data \
+    PI_CODING_AGENT_DIR=/opt/aiti/agent \
+    AITI_PHASES=piweb,bridge \
+    AITI_PIWEB_PORT=30142 \
+    LANG=zh_CN.UTF-8
+
+# Layer marker: entrypoint/full probe the mode from this (design §3.3 MODE)
+RUN touch /opt/aiti/.aiti-core
+# Wipe build-time credentials at the end of the image (the root .npmrc scope private-registry secret never enters the published image;
+# aiti's runtime .npmrc carries no credentials and uses public sources)
+RUN rm -f /root/.npmrc || true
+
+WORKDIR /workspace
+EXPOSE 30142 8777
+# /api/models always 403s on a fresh container (allowed-roots only permits existing session cwds; a new container has none) —
+# use /api/home (lightweight JSON, no session dependency). The older diagnosis in the README first-run log (request-security
+# rejecting off-container probes) was inaccurate; it is the allowed-roots semantics.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=5 \
+  CMD curl -fsS "http://127.0.0.1:${AITI_PIWEB_PORT}/api/home" >/dev/null || exit 1
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

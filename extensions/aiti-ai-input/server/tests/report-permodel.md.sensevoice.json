@@ -1,0 +1,39 @@
+# ASR 模型对比测试报告
+
+- 时间: 2026-09-05 16:47:45
+- 录音: 30 段（目录 /home/pi/.pi/web/data/aiti-ai-input/recordings）
+- 热词: ['aiti', 'devtools', 'pi', '扩展', '认领', '模型', '改动', '文本']
+- 模型: ['qwen3-0.6b', 'qwen3-1.7b', 'nano', 'sensevoice']
+
+| 文件 | 时长s | qwen3-0.6b（ms/命中/复述） | qwen3-1.7b（ms/命中/复述） | nano（ms/命中/复述） | sensevoice（ms/命中/复述） |
+|---|---|---|---|---|---|
+| vad_20260905_155613.wav | 7.92 | 国务院发展研究中心市场经济研究所副所长，邓玉松认为。<br>19829ms ✗不中 | 国务院发展研究中心市场经济研究所副所长邓玉松认为。<br>16801ms ✗不中 | 国务院发展研究中心市场经济研究所副所长邓郁松认为<br>26733ms ✗不中 | 国务院发展研究中心市场经济研究所副所长邓玉松认为<br>2399ms ✗不中 |
+| vad_20260905_155847.wav | 13.56 | 我们现在来说说我们这边的专业术语：AIT、DevTool…<br>2605ms ✓devtools/认领 | 我们现在来说说我们这边专业术语：Aitai Devtoo…<br>4821ms ✓devtools | 我们现在来说说我们这边专业术语，PI DEVTOOLS …<br>2826ms ✓devtools/pi | for external high double i t…<br>446ms ✗不中 |
+| vad_20260905_155902.wav | 9.21 | 我再说一遍，我们有aiti、folder、file、pl…<br>2191ms ✓aiti/devtools | 我再说一遍，我们有 aiti folder file p…<br>3331ms ✓aiti/devtools | 我再说一遍，我们有IT FOLDER FILE PLAN…<br>3217ms ✗不中 | 我再说一遍我们有 i t plan review rev…<br>302ms ✗不中 |
+| vad_20260905_155917.wav | 11.09 | 我们现在有大量的专业术语，包括 AIITI、Input、…<br>1694ms ✗不中 | 我们现在有大量的专业术语，包括 aiti、ai inpu…<br>3405ms ✓aiti | 我们现在有大量的专业术语，包括ANTI、AI、INPUT…<br>2757ms ✗不中 | 我们现在有大量的专业数据包括 anti a i inpu…<br>359ms ✗不中 |
+| vad_20260905_155928.wav | 5.63 | Processor IT is LSP和PM。<br>905ms ✗不中 | Processor AIT is else it's a…<br>2145ms ✗不中 | Processor I T E S else recei…<br>1589ms ✗不中 | processor i e else it g r m<br>370ms ✗不中 |
+| vad_20260905_155937.wav | 2.22 | I L Four。<br>569ms ✗不中 | Hi, DevTools.<br>1343ms ✓devtools | I have four.<br>691ms ✗不中 | i没错<br>137ms ✗不中 |
+| vad_20260905_155952.wav | 1.96 | 我用了几段。<br>672ms ✗不中 | 我用了几段。<br>1381ms ✗不中 | 我弄了几段。<br>810ms ✗不中 | 我用了几段<br>144ms ✗不中 |
+| vad_20260905_160002.wav | 2.99 | 还是大量直接触屏审核。<br>792ms ✗不中 | 还是大量直接出去审核。<br>1526ms ✗不中 | 还是大量直接退出审核。<br>930ms ✗不中 | 还是大量直接出去审核<br>161ms ✗不中 |
+| vad_20260905_160505.wav | 16.64 | 怎么部署？我要怎么开发一个快扩展？我这个React的，我…<br>2973ms ✓扩展/模型 | 怎么部署？我要怎么开发一个扩展？我这个 respond …<br>6131ms ✓扩展/模型 | 我该怎么部署？我要怎么开发一个PAI扩展呢？我这个REF…<br>4679ms ✓扩展/模型 | 怎么我要怎么开发一个快扩展我这个 refund 法关提示…<br>562ms ✓扩展/模型 |
+| vad_20260905_160523.wav | 11.52 | 我再说一下这个项目，这个aiit，现在已经覆盖了过。<br>1633ms ✗不中 | 我再说一下这项，Aiti CMD 应付的过。<br>3001ms ✓aiti | 我再说一下这个项目，就是这个系统I T C M D已经部…<br>2849ms ✗不中 | tuah sexwayia jack i s d c m…<br>396ms ✗不中 |
+| vad_20260905_160532.wav | 5.97 | 嗨，老婆，AITI自动厢壁票卡。<br>1200ms ✓aiti | Hi，DevTools，IT酷，相地跳板。<br>2618ms ✓devtools | I F word I D是相闭漂白<br>1673ms ✗不中 | hi that work i t cook c m he…<br>381ms ✗不中 |
+| vad_20260905_160537.wav | 2.05 | 嗨，扩展。<br>574ms ✓扩展 | 派扩展。<br>1072ms ✓扩展 | PAI扩展<br>602ms ✓扩展 | hi拓<br>156ms ✗不中 |
+| vad_20260905_160542.wav | 2.47 | 嗨，作者。<br>585ms ✗不中 | 嗨，作者。<br>1218ms ✗不中 | 嗨，科长。<br>825ms ✗不中 | hi good<br>165ms ✗不中 |
+| vad_20260905_160548.wav | 3.75 | 嗨嗨嗨！作者。<br>734ms ✗不中 | 嗨，嗨，嗨！作者。<br>1836ms ✗不中 | 嗨嗨嗨破解版<br>899ms ✗不中 | hi hi hi boys<br>259ms ✗不中 |
+| vad_20260905_160607.wav | 8.62 | 太太太太，我要制作一些快速的AI生成的文本。<br>1344ms ✓文本 | 哎哎哎哎哎！我要注册一些快速的扩展，aiti，aiti，…<br>4071ms ✓aiti/扩展 | 快快拍iPad，我要注册一些快快卡，禁止ID的IP地址。<br>2431ms ✗不中 | 快怕他ip排在我要更多一些快特送据 i i<br>306ms ✗不中 |
+| vad_20260905_160621.wav | 8.53 | AITI、Hi、CMD、Helper、Hi、Folder…<br>1685ms ✓aiti | Aiti, hi, cmd, help, hi, fol…<br>3332ms ✓aiti | IE TI DMB ALBA TI BORDER PLA…<br>1579ms ✗不中 | i high c d al high border pl…<br>312ms ✗不中 |
+| vad_20260905_160712.wav | 3.07 | 这次没说术语有。<br>753ms ❗复述 | 这次没说数据。<br>1399ms ✗不中 | 这次没说数名员工。<br>1083ms ✗不中 | 这次没说数频的<br>152ms ✗不中 |
+| vad_20260905_160720.wav | 4.09 | 但还是输出了大量的名词。<br>772ms ✗不中 | 但还是付出了大量，努力。<br>1824ms ✗不中 | 但还是付出了大量的工资。<br>1210ms ✗不中 | 但还是付出了大量的的词<br>262ms ✗不中 |
+| vad_20260905_160734.wav | 0.43 | (空/失败)<br>297ms ✗不中 | (空/失败)<br>637ms ✗不中 | (空/失败)<br>496ms ✗不中 | (空/失败)<br>71ms ✗不中 |
+| vad_20260905_160911.wav | 14.67 | (空/失败)<br>737ms ✗不中 | (空/失败)<br>1098ms ✗不中 | (空/失败)<br>983ms ✗不中 | (空/失败)<br>494ms ✗不中 |
+| vad_20260905_161238.wav | 2.64 | 我现在可以用。<br>880ms ✗不中 | 我现在可以用。<br>1280ms ✗不中 | 我现在不一定要。<br>735ms ✗不中 | what you like you<br>147ms ✗不中 |
+| vad_20260905_161248.wav | 3.16 | (空/失败)<br>507ms ✗不中 | 你就是AI。<br>1266ms ✗不中 | 你给我搜AI发明。<br>965ms ✗不中 | 你给我啊<br>153ms ✗不中 |
+| vad_20260905_161325.wav | 4.44 | 嗨，这个扩展如何安装？<br>834ms ✓扩展 | 嗨，这个扩展如何安装？<br>1732ms ✓扩展 | PAI这个扩展如何安装部署？<br>1363ms ✓扩展 | hi这个拓长如何安装不<br>291ms ✗不中 |
+| vad_20260905_161334.wav | 3.58 | AITI这种扩展如何安装？部署。<br>975ms ✓aiti/扩展 | hi，这个扩展如何安装部署？<br>1840ms ✓扩展 | PAI这个扩展如何安装部署？<br>1231ms ✓扩展 | 快这个扩展如何安装不符<br>146ms ✓扩展 |
+| vad_20260905_161339.wav | 5.46 | (空/失败)<br>415ms ✗不中 | (空/失败)<br>763ms ✗不中 | (空/失败)<br>798ms ✗不中 | (空/失败)<br>354ms ✗不中 |
+| vad_20260905_161344.wav | 1.71 | (空/失败)<br>314ms ✗不中 | (空/失败)<br>656ms ✗不中 | 我不会唱。<br>751ms ✗不中 | (空/失败)<br>176ms ✗不中 |
+| vad_20260905_161351.wav | 4.61 | (空/失败)<br>908ms ✗不中 | (空/失败)<br>812ms ✗不中 | (空/失败)<br>749ms ✗不中 | (空/失败)<br>320ms ✗不中 |
+| vad_20260905_161359.wav | 9.73 | (空/失败)<br>464ms ✗不中 | (空/失败)<br>933ms ✗不中 | (空/失败)<br>838ms ✗不中 | (空/失败)<br>352ms ✗不中 |
+| vad_20260905_161427.wav | 3.58 | 我现在这个爱的扩展如何安装？<br>881ms ✓扩展 | 我现在这个爱的扩展无可动摇。<br>1851ms ✓扩展 | 我现在这个pad拓展无法安装。<br>1178ms ✗不中 | 我亲们这个ad的特展无可重要<br>166ms ✗不中 |
+| vad_20260905_161442.wav | 5.29 | 你确定了我女儿可能学的是孩子学的那款AI？<br>1463ms ✗不中 | 你确定吗？我怎么知道去还是去？<br>2366ms ✗不中 | 你确定你模拟的这个选一台机子，也是跟虚拟机打开？<br>2583ms ✗不中 | 你确定你 morning看的还是<br>408ms ✗不中 |

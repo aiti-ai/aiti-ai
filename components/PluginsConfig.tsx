@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { sendAgentCommand } from "@/lib/agent-client";
+import { apiUrl } from "@/lib/base-path";
+
 import type {
   PluginPackageInfo,
   PluginStandaloneExtensionInfo,
@@ -612,8 +614,13 @@ export function PluginsConfig({
     setError(null);
     setGroupStatus(null);
     try {
-      const res = await fetch(`/api/plugins?cwd=${encodeURIComponent(cwd)}`);
-      const next = await readJsonOrThrow<PluginsResponse>(res);
+      const res = await fetch(apiUrl("/api/plugins"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cwd }),
+      });
+      const next = (await res.json()) as PluginsResponse & { error?: string };
+      if (!res.ok || next.error) throw new Error(next.error ?? `HTTP ${res.status}`);
       setData(next);
       setAddMode((current) => (next.packages.length === 0 && next.standaloneExtensions.length === 0) || current);
       setSelected((current) => {
@@ -666,7 +673,7 @@ export function PluginsConfig({
     setCheckingUpdates((current) => new Set([...current, ...keys]));
     if (!pkg) setCheckingAll(true);
     try {
-      const res = await fetch("/api/plugins/check", {
+      const res = await fetch(apiUrl("/api/plugins/check"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -701,7 +708,7 @@ export function PluginsConfig({
     setActionMessage(null);
     setUpdateError(null);
     try {
-      const res = await fetch("/api/plugins", {
+      const res = await fetch(apiUrl("/api/plugins"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "update", cwd }),
@@ -727,7 +734,7 @@ export function PluginsConfig({
     setActionMessage(null);
     setGroupStatus(null);
     try {
-      const res = await fetch("/api/plugins", {
+      const res = await fetch(apiUrl("/api/plugins"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, source: pkg.source, scope: pkg.scope, cwd }),
@@ -789,7 +796,7 @@ export function PluginsConfig({
     const action = enabled ? "enable" : "disable";
     setBusyKey(`bulk:${scope}`);
     try {
-      const res = await fetch("/api/plugins", {
+      const res = await fetch(apiUrl("/api/plugins"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -834,7 +841,7 @@ export function PluginsConfig({
     setActionMessage(null);
     setGroupStatus(null);
     try {
-      const res = await fetch("/api/plugins", {
+      const res = await fetch(apiUrl("/api/plugins"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "install", source, scope: installScope, cwd }),

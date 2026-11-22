@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as undici from "undici";
-import { readRegularFileText } from "./regular-file";
+import { readRegularFileText } from "./regular-file.ts";
 
 export const DEFAULT_HTTP_IDLE_TIMEOUT_MS = 300_000;
 
@@ -132,18 +132,14 @@ export function configureHttpDispatcher(
   const dispatcher = withUndiciErrorListener(
     new undici.EnvHttpProxyAgent({
       allowH2: false,
-      // Reach an http:// origin through a CONNECT tunnel, as the pi SDK's own
-      // dispatcher does. A forwarded request is carried by a client that keeps
-      // undici's own 300 s bodyTimeout, so `httpIdleTimeoutMs` would not apply
-      // and a provider stream that stalls cannot be cut at the configured time.
-      proxyTunnel: true,
       bodyTimeout: normalizedTimeoutMs,
-      // Node's 250 ms default can terminate valid connection attempts on
-      // high-latency routes; the pi CLI's dispatcher waits two seconds here.
-      connect: { autoSelectFamilyAttemptTimeout: 2_000 },
       headersTimeout: normalizedTimeoutMs,
       clientFactory: createUndiciClient,
       factory: createUndiciOriginDispatcher,
+      connect: {
+        autoSelectFamily: true,
+        autoSelectFamilyAttemptTimeout: 500,
+      },
     }),
   );
   undici.setGlobalDispatcher(dispatcher);

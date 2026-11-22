@@ -124,8 +124,10 @@ test("the debug route only reads: no wrapper started, no liveness registered, th
   );
   assert.ok(withStreams.session.eventStreams.every((stream) => typeof stream.connectedAt === "number"));
   assert.ok(withStreams.server.pages.some((row) => row.holder === "page-debug" && row.agent === 1));
-  assert.equal(hasActiveSessionLivenessProvider({ sessionId: id }), false, "a stream registers no liveness");
-  assert.deepEqual(listRegisteredSessionLivenessProviders(), providersBefore);
+  // 合并适配：fork 的事件流持流即持活（acquireSessionLivenessLease），与上游"流不持活"相反——
+  // 这里只断言 debug 路由只读，不再断言上游的 liveness 语义。
+  assert.equal(hasActiveSessionLivenessProvider({ sessionId: id }), true, "fork: a stream holds the session alive");
+  assert.equal(listRegisteredSessionLivenessProviders()?.some((p) => p.name === "pi-web-selected-session"), true);
   labelled.abort();
   unlabelled.abort();
   assert.deepEqual(JSON.parse((await read(`?session=${encodeURIComponent(id)}`)).text).session.eventStreams, []);

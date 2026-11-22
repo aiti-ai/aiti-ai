@@ -1,0 +1,263 @@
+# publish-npm.yml — publish @aiti-ai packages.
+#
+# Trigger: workflow_dispatch (manual; no automatic publish anywhere in this repo).
+#
+# STAGING-FIRST POLICY (default): registry=staging publishes to the internal
+# private registry first — verify installability/content there, then re-run with
+# registry=npmjs to promote to the official registry. The contentHash decision
+# matrix converges versions on promotion (content already on staging publishes
+# to official without an extra bump). The staging registry URL resolves at
+# runtime from the AITI_RELEASE_REDACT secret (stagingRegistry field); auth uses
+# the AITI_STAGING_NPM_TOKEN secret. Neither value may be hardcoded here.
+#
+# Inputs:
+#   registry: "staging" (default, no audit gate — test channel) | "npmjs" (mapped to
+#     publish-all --target official: full release-audit gate + provenance + lock
+#     rewrite) | "aliyun" (needs ALIYUN_NPM_USERNAME/PASSWORD secrets).
+#   dry_run: true (default) — run the gates + contentHash decision matrix, audit only;
+#     false — publish for real.
+#   only: optional comma-separated dir name filter (e.g. "aiti-cmd,session-manager").
+#
+# Publish scope: extensions/ (63+ extensions) + pi-plugins/ + packages/ (the aiti-devtools family)
+# + integrations/ (external-agent carriers: integrations/<repo>/<pkg>, e.g. DSH plugins —
+#   @aiti-ai/aiti-devtools-dsh, @aiti-ai/dsh-secret-mask; no CI build needed, the mirror carries lib/).
+# Decision matrix (tools/publish-all.mjs): unchanged content skips; changed content auto-bumps the patch version; official-registry versions
+# without a contentHash count as changed and converge; every official publish is gated by release-audit, FAIL blocks it.
+#
+# Required secrets: NPM_TOKEN (npmjs), AITI_STAGING_NPM_TOKEN (staging publish),
+# AITI_RELEASE_REDACT (redact rules + stagingRegistry URL).
+
+name: NPM Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (audit + decision matrix, no publish)"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      only:
+        description: "Comma-separated dir names to publish (empty = all)"
+        required: false
+        default: ""
+      registry:
+        description: "Target registry — staging first (default); npmjs promotes to official"
+        required: false
+        default: "staging"
+        type: choice
+        options:
+          - "staging"
+          - "npmjs"
+          - "aliyun"
+
+permissions:
+  contents: read
+  id-token: write # npm provenance（official 发布自动带 --provenance）
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write private redact config (from AITI_RELEASE_REDACT secret; empty = rules degrade)
+        # NB: `secrets` is NOT available in `if:` conditionals — gate inside the shell via env instead.
+        env:
+          AITI_RELEASE_REDACT: ${{ secrets.AITI_RELEASE_REDACT }}
+        run: |
+          if [ -z "$AITI_RELEASE_REDACT" ]; then
+            echo "AITI_RELEASE_REDACT not set — redact rules degrade (structural rules only)"
+            exit 0
+          fi
+          mkdir -p ~/.aiti
+          printf '%s' "$AITI_RELEASE_REDACT" > ~/.aiti/release-redact.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org" # 写入 ~/.npmrc（NODE_AUTH_TOKEN 占位）
+
+      # Staging auth: write the private-registry token into ~/.npmrc. The host is
+      # resolved at runtime from AITI_RELEASE_REDACT.stagingRegistry — never hardcoded.
+      - name: Staging auth (token → ~/.npmrc, host from redact config)
+        if: ${{ inputs.registry == 'staging' }}
+        env:
+          STAGING_NPM_TOKEN: ${{ secrets.AITI_STAGING_NPM_TOKEN }}
+          AITI_RELEASE_REDACT: ${{ secrets.AITI_RELEASE_REDACT }}
+        run: |
+          if [ -z "$STAGING_NPM_TOKEN" ]; then
+            echo "::error::secret AITI_STAGING_NPM_TOKEN is not set (staging publish token)"
+            exit 1
+          fi
+          URL=$(node -e "const c=JSON.parse(process.env.AITI_RELEASE_REDACT||'null');process.stdout.write((c&&c.stagingRegistry)||'')")
+          if [ -z "$URL" ]; then
+            echo "::error::secret AITI_RELEASE_REDACT is missing or has no stagingRegistry — cannot resolve the staging registry"
+            exit 1
+          fi
+          HOST=${URL#*://}; HOST=${HOST%%/*}
+          echo "::add-mask::$URL"
+          echo "::add-mask::$STAGING_NPM_TOKEN"
+          printf '//%s/:_authToken=%s\n' "$HOST" "$STAGING_NPM_TOKEN" >> ~/.npmrc
+
+      - name: Preflight — registry identity
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          ALIYUN_NPM_USERNAME: ${{ secrets.ALIYUN_NPM_USERNAME }}
+          ALIYUN_NPM_PASSWORD: ${{ secrets.ALIYUN_NPM_PASSWORD }}
+          AITI_RELEASE_REDACT: ${{ secrets.AITI_RELEASE_REDACT }}
+        run: |
+          case "${{ inputs.registry }}" in
+            aliyun)
+              npm ping --registry https://packages.aliyun.com/63a415398d9a873a30aae528/npm/npm-registry/
+              ;;
+            staging)
+              URL=$(node -e "const c=JSON.parse(process.env.AITI_RELEASE_REDACT||'null');process.stdout.write((c&&c.stagingRegistry)||'')")
+              echo "::add-mask::$URL"
+              if ! npm whoami --registry "$URL" >/dev/null 2>&1; then
+                echo "::error::staging registry identity check failed — AITI_STAGING_NPM_TOKEN invalid or AITI_RELEASE_REDACT.stagingRegistry unset"
+                exit 1
+              fi
+              echo "staging registry identity ok"
+              ;;
+            *)
+              npm whoami --registry https://registry.npmjs.org
+              ;;
+          esac
+
+      # 扩展 build:client 的依赖根（CI checkout 树无扩展 node_modules；dry-run 不跑构建所以
+      # 只在实发暴露）——共享构建根 + 每扩展 symlink，同 release.yml prepare 机制
+      - name: Prepare shared build root (extension devDeps)
+        run: |
+          set -e
+          BUILD=/tmp/aiti-build-root
+          PKGS=/tmp/aiti-local-pkgs
+          mkdir -p "$PKGS"
+          (cd extensions/_shared && npm pack --pack-destination "$PKGS")
+          (cd packages/aiti-bridge && npm pack --pack-destination "$PKGS")
+          (cd packages/aiti-devtools-core && npm pack --pack-destination "$PKGS")
+          # secret-* engines are extension runtime deps (aiti-secret-vault) and are
+          # published by this same workflow — vendor them so a first publish (not yet
+          # on npmjs) can still build the shared extension root.
+          (cd packages/secret-mask-core && npm pack --pack-destination "$PKGS")
+          (cd packages/secret-vault-core && npm pack --pack-destination "$PKGS")
+          SHARED_TGZ=$(ls "$PKGS"/aiti-ai-ext-shared-*.tgz | head -1)
+          BRIDGE_TGZ=$(ls "$PKGS"/aiti-ai-aiti-bridge-*.tgz | head -1)
+          CORE_TGZ=$(ls "$PKGS"/aiti-ai-aiti-devtools-core-*.tgz | head -1)
+          SECRET_MASK_TGZ=$(ls "$PKGS"/aiti-ai-secret-mask-core-*.tgz | head -1)
+          SECRET_VAULT_TGZ=$(ls "$PKGS"/aiti-ai-secret-vault-core-*.tgz | head -1)
+          node scripts/collect-extension-deps.mjs --out "$BUILD/package.json" \
+            --override "@superdoc/docx-engine@0.31.0" \
+            --file "@aiti-ai/ext-shared=$SHARED_TGZ" \
+            --file "@aiti-ai/aiti-bridge=$BRIDGE_TGZ" \
+            --file "@aiti-ai/aiti-devtools-core=$CORE_TGZ" \
+            --file "@aiti-ai/secret-mask-core=$SECRET_MASK_TGZ" \
+            --file "@aiti-ai/secret-vault-core=$SECRET_VAULT_TGZ" \
+            --file "justget=$PWD/vendor/npm/justget-0.2.4.tgz" \
+            --file "service-tunnels=$PWD/vendor/npm/service-tunnels-0.3.76.tgz" \
+            --file "@aiti-ti/ddns=$PWD/vendor/npm/aiti-ti-ddns-0.2.0.tgz"
+          npm install --prefix "$BUILD" --legacy-peer-deps --no-audit --no-fund --loglevel=error
+          # 仓根 postcss.config.mjs（tailwind v4）被扩展 vite 向上搜索命中；PostCSS 从 config
+          # 所在目录（仓根）解析 @tailwindcss/postcss —— 扩展侧的 node_modules symlink 够不到，
+          # 必须把仓根 node_modules 也备好（aiti-sheet-univer / aiti-word-superdoc 实测 2026-11-14）
+          TW="@tailwindcss/postcss@$(node -p "require('./package.json').devDependencies['@tailwindcss/postcss']")"
+          npm install --no-save --legacy-peer-deps --no-audit --no-fund --loglevel=error "$TW"
+          npm install --prefix "$BUILD" --no-save --legacy-peer-deps --no-audit --no-fund --loglevel=error "$TW"
+          for ext in extensions/*/; do
+            [ -d "$ext" ] || continue
+            ln -sfn "$BUILD/node_modules" "${ext}node_modules"
+          done
+          # Pre-build every extension client bundle BEFORE publish-all runs: the
+          # release-audit --only match is substring-based (dir.includes), so a gate on
+          # "aiti-testagent" also audits "aiti-testagent-native" — sibling dists must
+          # exist at each gate or C9 false-rejects (2026-11-11 run 43047588826).
+          for ext in extensions/*/; do
+            [ -f "${ext}package.json" ] || continue
+            S=$(node -p "try{require('./${ext}package.json').scripts['build:client']||''}catch{}" 2>/dev/null) || true
+            [ -n "$S" ] && [ "$S" != "true" ] || continue
+            (cd "$ext" && npm run build:client --loglevel=error) || echo "::warning::build:client failed for $ext"
+          done
+          # packages/ 侧（npm run build 需要 node_modules；@aiti-ai/* 依赖经 inject 脚本改为
+          # vendor file + overrides 传递闭环——npmjs 无该 scope。install 后还原 package.json
+          # （发布内容保持 semver deps），已装 node_modules 供 publish-all 阶段的 build 使用
+          for d in packages/*/; do
+            pj="${d}package.json"
+            [ -f "$pj" ] || continue
+            rm -f "${d}package-lock.json"   # 构建注入态下 lock 与改写不符（精确 spec 撞 npmjs 404），发布包不需要它
+            cp "$pj" "$pj.orig"
+            node scripts/inject-vendor-deps.mjs "$pj" "$PWD/vendor/npm"
+            (cd "$d" && npm install --legacy-peer-deps --no-audit --no-fund --loglevel=error)
+            # esbuild 兜底（在还原前：file 态下 npm 全树可解析；还原后重算会撞精确 spec 的 npmjs 404）——
+            # 部分包无 deps 字段（esbuild 隐式靠仓根），prepublishOnly/build 需要
+            [ -x "${d}node_modules/.bin/esbuild" ] || (cd "$d" && npm install --no-save esbuild --legacy-peer-deps --no-audit --no-fund --loglevel=error)
+            mv "$pj.orig" "$pj"   # 还原（node_modules 保留）
+          done
+          # integrations/<repo>/<pkg>：镜像自带 lib/ 构建产物，CI 不构建；防御性去 lock（与 packages/ 同理，
+          # 发布不需要 lock，且镜像侧历史 lock 可能含私源 resolved）
+          for repo in integrations/*/; do
+            [ -d "$repo" ] || continue
+            for d in "$repo"*/; do
+              [ -f "${d}package.json" ] || continue
+              rm -f "${d}package-lock.json"
+            done
+          done
+          # dist 直塞：vendor tgz（48 构建的同版本产物）解出 dist 覆盖进包目录——
+          # publish-all 对非空 dist 跳过构建（绕开各包 build 脚本的 esbuild 解析差异）
+          for d in packages/*/; do
+            name=$(node -p "try{require('./${d}package.json').name.replace(/^@/,'').replace('/','-')}catch{}" 2>/dev/null || echo "")
+            tgz="vendor/npm/${name}.tgz"
+            [ -f "$tgz" ] || continue
+            mkdir -p /tmp/pkgdist "$d/dist"
+            rm -rf /tmp/pkgdist/* && tar xzf "$tgz" -C /tmp/pkgdist
+            if [ -d /tmp/pkgdist/package/dist ]; then cp -r /tmp/pkgdist/package/dist/. "$d/dist/"; fi
+            rm -rf /tmp/pkgdist
+          done
+
+
+      - name: Publish (registry target, gated)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          ALIYUN_NPM_USERNAME: ${{ secrets.ALIYUN_NPM_USERNAME }}
+          ALIYUN_NPM_PASSWORD: ${{ secrets.ALIYUN_NPM_PASSWORD }}
+        run: |
+          # staging (default) is the first hop — verify on the private registry, then
+          # re-run with registry=npmjs to promote. "npmjs" maps to publish-all's
+          # "official" (audit gate + provenance + lock rewrite); aliyun keeps its path.
+          ARGS="--target ${{ inputs.registry || 'staging' }}"
+          if [[ "${{ inputs.registry || 'staging' }}" == "npmjs" ]]; then ARGS="--target official"; fi
+          if [[ "${{ inputs.dry_run }}" != "false" ]]; then ARGS="$ARGS --dry-run"; fi
+          if [[ -n "${{ inputs.only }}" ]]; then ARGS="$ARGS --only ${{ inputs.only }}"; fi
+          set -o pipefail # node 的退出码不能被 tee 吐掉（崩溃/失败必须让 step 变红）
+          node tools/publish-all.mjs $ARGS 2>&1 | tee publish-report.txt
+          grep -qE "失败 [1-9]" publish-report.txt && echo "::error::有包发布失败，详见上方报告" && exit 1
+          true
+
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: publish-report
+          path: publish-report.txt
+          retention-days: 30
+
+  # After a real official publish, fire aiti-docs' sync-ext-versions workflow
+  # (repository_dispatch) so the docs-site extension catalog converges to the
+  # versions that just shipped. Needs AITI_DOCS_TOKEN: a fine-grained PAT with
+  # contents:write on aiti-ai/aiti-docs. staging/aliyun/dry-run must not touch docs.
+  trigger-docs-sync:
+    needs: publish
+    if: ${{ inputs.registry == 'npmjs' && inputs.dry_run == 'false' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger aiti-docs extension-version sync
+        env:
+          GH_TOKEN: ${{ secrets.AITI_DOCS_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::AITI_DOCS_TOKEN not set — skipping aiti-docs sync trigger (set it to a PAT with contents:write on aiti-ai/aiti-docs)"
+            exit 0
+          fi
+          gh api repos/aiti-ai/aiti-docs/dispatches -f event_type=pi-web-published
+          echo "aiti-docs sync-ext-versions dispatched"

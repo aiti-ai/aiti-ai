@@ -1,6 +1,6 @@
-import { type McpImportFormat, type McpImportNote, nameFromUrl, ServerDraft, setLiteralUrl } from "./mcp-import-core";
-import { type EntryOutcome, isRecord, mapServerEntry, readInputs, siblingMcpUrl, sseRefusal } from "./mcp-import-json";
-import { parseJsonc } from "./jsonc";
+import { type McpImportFormat, type McpImportNote, nameFromUrl, ServerDraft, setLiteralUrl } from "./mcp-import-core.ts";
+import { type EntryOutcome, isRecord, mapServerEntry, readInputs, siblingMcpUrl, sseRefusal } from "./mcp-import-json.ts";
+import { parseJsonc } from "./jsonc.ts";
 
 // A pasted address: an MCP endpoint, or an install link that carries a server
 // config (Cursor, LM Studio, VS Code and its web redirects, Visual Studio,

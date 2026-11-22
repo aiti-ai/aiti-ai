@@ -1,5 +1,6 @@
 "use client";
 
+import { apiUrl } from "@/lib/base-path";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { countRunningSubagents, sideChatTitle } from "@/lib/session-family";
@@ -40,7 +41,7 @@ export async function fetchAgentUsage(
 ): Promise<Record<string, SessionUsageSummary> | null> {
   const stats: Record<string, SessionUsageSummary> = {};
   for (let start = 0; start < ids.length; start += MAX_SESSION_STATS_IDS) {
-    const res = await fetchImpl("/api/sessions/stats", {
+    const res = await fetchImpl(apiUrl("/api/sessions/stats"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ids: ids.slice(start, start + MAX_SESSION_STATS_IDS) }),
@@ -305,10 +306,26 @@ function AgentRow({
     <div
       ref={rowRef}
       style={{
-        display: "flex",
+        width: "100%",
+        minHeight: 56,
+        display: "grid",
+        gridTemplateColumns: "28px minmax(0, 1fr) auto",
+        alignItems: "center",
+        gap: 9,
+        padding: "7px 12px",
+        border: "none",
         borderBottom: "1px solid var(--border)",
         borderLeft: selected ? "2px solid var(--accent)" : "2px solid transparent",
         background: selected ? "var(--bg-selected)" : "transparent",
+        color: "var(--text)",
+        cursor: "pointer",
+        textAlign: "left",
+      }}
+      onMouseEnter={(event) => {
+        if (!selected) event.currentTarget.style.background = "var(--bg-hover)";
+      }}
+      onMouseLeave={(event) => {
+        if (!selected) event.currentTarget.style.background = "transparent";
       }}
     >
       <button
@@ -533,7 +550,7 @@ export function AgentSessionPanel({ rootSession, subagents, selectedSessionId, r
               </span>
             )}
             {runningCount > 0 && (
-              <span style={{ color: "var(--accent)", fontSize: 11, whiteSpace: "nowrap" }}>
+              <span style={{ color: "var(--accent)", fontSize: 11 }}>
                 {t("agentSwitcher.runningCount", { count: runningCount })}
               </span>
             )}

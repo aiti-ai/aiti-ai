@@ -87,10 +87,9 @@ async function exportSession(filePath: string, outputPath: string): Promise<void
   if (!packageDir) throw new Error("pi CLI not found");
 
   const exporterUrl = pathToFileURL(join(packageDir, "dist", "core", "export-html", "index.js")).href;
-  // The specifier is a runtime file URL, so webpack cannot analyze it and warns
-  // "Critical dependency: the request of a dependency is an expression" (a
-  // static context module that could never match). The target always exists on
-  // disk at run time, so keep this import native for Node instead of bundling.
+  // webpackIgnore: exporterUrl is a runtime-computed file URL into an already
+  // externalized package. Without the comment, webpack replaces the dynamic
+  // import with a context stub that always throws MODULE_NOT_FOUND at runtime.
   const { exportFromFile } = (await import(/* webpackIgnore: true */ exporterUrl)) as ExportHtmlModule;
   await exportFromFile(filePath, outputPath);
 }

@@ -8,19 +8,36 @@ npm run dev   # port 30141
 
 Typecheck: `node_modules/.bin/tsc --noEmit` · Lint: `npm run lint`
 
-**Never run `next build` during dev**: it pollutes `.next/` and breaks `npm run dev`.
+**Never run `next build` during dev**: it pollutes `.next/` and breaks `npm run dev`. A build that fails mid-flight leaves `.next/` unusable (a leftover `dev/` tree and no `BUILD_ID`), after which every rebuild fails the same way and a running server starts answering 500 for `/_next/static/*`: `rm -rf .next` before rebuilding. To tell a product defect from a poisoned build directory, build a clean `git worktree` of the same commit — if that succeeds, the working directory is the problem, not the code.
 
 ### Dev server troubleshooting
 
 - First run `lsof -nP -iTCP:30141 -sTCP:LISTEN` and reuse a healthy Pi Web process. A second `next dev` on another port is no workaround: both contend for `.next/dev/lock`.
 - A browser-only `Module ... factory is not available` overlay usually means that tab has a stale Turbopack/HMR graph, not a broken server or source. Use the browser's explicit reload, then compare the server log and a direct HTTP/API request.
 - Restart only when the failure reproduces from a fresh page and the server-side checks fail too: stop that exact dev process gracefully, move `.next` into a `mktemp -d` backup, restart with `npm run dev`.
+- Turbopack panic (`/tmp/next-panic-*.log`) leaves the incremental graph poisoned: pages reload-loop or render the top bar / composer half-dressed while `tsc --noEmit` passes. A plain restart does not clear it — stop the process, move `.next` away, restart, and judge only after the full rebuild.
+- Do not trust `grep rescue` on served HTML: `rescue-hook.js` is injected into every page as a build-error probe; its mention appears on healthy pages too.
 - Never fall back to `next dev --webpack`: the dev graph can fail on `undici` imports such as `node:console`. Development uses Turbopack.
 - `next dev` may append a generated `BEGIN:nextjs-agent-rules` block to `AGENTS.md`. It is tooling output: check `git status` and keep it out of unrelated commits.
 
 ### Upgrading pi
 
 The published pi-web ships no lockfile, so its dependencies resolve afresh on install, and pi up to 1.2.0 linked its own packages with `^` ranges. Install every `@earendil-works/*` package the tree holds, the SDK's own dependencies included (`pi-codemode`, `pi-mcp`, `pi-telemetry`, …), with `npm install --save-exact`, so npm reuses those exact versions for the SDK's ranges. `lib/pi-packages.test.mjs` fails on any pi package that is not pinned that way.
+
+### Merging upstream (MUST READ before any origin/main merge)
+
+This fork carries intentional divergences (custom-drawn top bar, WeChat-style mobile send, mobile composer v4, provider names …). Four regression classes have already shipped to users from past merges (duplicated buttons, a collapsed composer, a Send key that inserted newlines). Before merging origin/main, follow the merge SOP: whole-commit conflict resolution (never mix hunks of one upstream commit), the single-owner table (each guarded UI region has exactly one owner), then the post-merge checks — full test run plus `node scripts/check-upstream-merge.mjs --base <old-tip> --upstream origin/main`, triaging every reported line as fork-intentional or merge-loss. The full written SOP lives in the private source workspace, not in this repo. The guard pins (`AppShell.topbar-dedup`, `ChatInput.composer-shrink-chain`, `ChatInput.mobile-send`) go red on reintroduction — a red pin means the merge is wrong, not the test.
+
+### Releases & version scheme (MUST READ before tagging/publishing)
+
+Fork releases use the Debian/Ubuntu-style build suffix, never bare versions:
+
+- Fork version = `X.Y.Z-aiti.N` where `X.Y.Z` is the **upstream core version** the build is based on; rebuilds increment `N`. Bare `X.Y.Z` is legacy and rejected by the release guard.
+- Ordering is dpkg semantics, not semver: the upstream core dominates and the suffix only breaks ties (`0.16.0-aiti.2 > 0.16.0-aiti.1 > 0.16.0`; `0.16.1 > 0.16.0-aiti.3`). All consumers implement this ordering — do not "fix" it to strict semver.
+- tag = `v<version>`; the npm package version and the `latest` dist-tag carry the same string.
+- The **sole release entry point** is `node scripts/release-tag.mjs` (guard: version must be `X.Y.Z-aiti.N`, tag must not exist anywhere, working tree must be clean; `--dry-run` / `--suggest` / `--force` to exempt a dirty tree). Never `git tag` by hand.
+- Full design and rationale: `docs/aiti-ai-fork-build-suffix-versioning-plan.md` lives in the private source workspace.
+- npm publishing: the official registry (registry.npmjs.org) goes through GitHub Actions (`publish.yml` / `publish-npm.yml`, OIDC trusted publishing); the private registry is published locally — always with `--tag latest`.
 
 ---
 
@@ -59,13 +76,23 @@ app/api/
   sessions/ui-state/route.ts       GET/POST sidebar pins, archive, project order and names, read times (set, restore, pin-project, add-projects, move-project, rename-project, read)
   sessions/[id]/auto-name/route.ts POST generate a session title
   sessions/search/route.ts         GET session search
+  sessions/[id]/meta/route.ts      GET one SessionInfo without messages/context/tree (lightweight refresh)
+  sessions/[id]/queue-recovery/route.ts GET a session's persisted queue awaiting recovery
+  sessions/[id]/entries/[entryId]/thinking/route.ts       GET one thinking block's full text
+  sessions/[id]/entries/[entryId]/tool-result-image/route.ts GET one tool-result image
   agent/new/route.ts               POST { cwd, type: prompt|ensure_session (start only), message?, toolNames?, provider?, modelId?, thinkingLevel? }
   agent/[id]/route.ts              GET state (?systemPrompt=0: without the prompt) | POST any command
   agent/[id]/events/route.ts       GET SSE stream
   agent/[id]/lease/route.ts        POST reset the selected session's idle timer (with or without its stream; never starts one); reply: running, awaitingInput, subagentsActive
+  agent/[id]/bash-output/route.ts  GET/POST read a session's bash output temp file (?path= legacy; POST keeps paths out of URLs)
   agent/running/route.ts           GET running + awaiting-input session ids, sidebar pins/archive revision, the server's clock
+  agent/running/events/route.ts    GET the page-wide single event SSE (running state + page events)
+  agent/recovery/interrupted/route.ts GET interrupted runs awaiting a recovery decision
+  agent/recovery/resolve/route.ts  POST resolve one interrupted run (keep / discard / continue)
   agent/debug/route.ts             GET ?session= the Debug panel's read-only snapshot: wrappers, streams, subagents, MCP, terminals, file watches
+  emergency/route.ts               POST { message, cwd?, sessionId? } minimal rescue AI (streaming)
   auth/api-key/[provider]/route.ts POST/DELETE stored provider API key
+  auth/all-providers/route.ts      GET API-key-capable providers incl. dual-auth ones
   auth/login/[provider]/route.ts   GET OAuth/device-code SSE | POST manual code
   auth/logout/[provider]/route.ts  POST OAuth logout
   auth/providers/route.ts          GET OAuth and API-key provider lists
@@ -79,13 +106,17 @@ app/api/
   git/status/route.ts              GET changed files for a cwd
   git/diff/route.ts                GET diff of one changed file
   worktrees/route.ts               GET/POST/DELETE git worktrees
+  worktrees/query/route.ts         POST { cwd } → { projectRoot, projectKey, isGit, isTopLevel, … }
   terminal/route.ts                POST create a terminal session
   terminal/[id]/route.ts           GET { id, cwd } (404 once closed; stream at [id]/events) | POST input/resize | DELETE kill
+  terminal/[id]/events/route.ts    GET terminal output SSE
+  terminal/[id]/buffered/route.ts  GET ?after=N terminal output snapshot (bus subscription)
   mcp/route.ts                     GET [?cwd=] Settings › MCP overview, files only | POST add/enable/disable/remove/undo/set-enabled/set-exposure/set-in-project/sign-out
   mcp/test/route.ts                POST { scope, name, cwd? } test one server once (entry read from its file)
   mcp/sign-in/route.ts             POST { scope, name, cwd? } start or join an OAuth sign-in
   mcp/sign-in/[flowId]/route.ts    GET flow state (polled) | POST { redirectUrl } | DELETE cancel
   project-trust/route.ts           GET trust status + project .pi/mcp.json servers (files only) | POST trust, rebuild the cwd's wrappers
+  project-trust/status/route.ts    POST { cwd } → project trust status
   tools/settings/route.ts          GET/PUT defaultTools switches: PowerShell (Windows), Code mode automatic/always; codemode.mode, codemode.inlineBudget
   cache-miss-notices/route.ts      GET/PUT pi's global showCacheMissNotices (Settings › General)
   models/route.ts                  GET ?cwd= { models, modelList, defaultModel, … }
@@ -96,18 +127,35 @@ app/api/
   models-config/catalog/route.ts   GET models.dev pricing presets
   models-config/discover/route.ts  POST fetch a configured provider's upstream model list
   models-config/test/route.ts      POST test a configured model/provider
+  models-config/probe-cap/route.ts POST probe a model's max output token cap
   plugins/route.ts                 GET/POST package plugin management
   plugins/check/route.ts           POST check plugin package updates
   skills/route.ts                  GET/PATCH loaded skills, disable-model-invocation
   skills/content/route.ts          GET one loaded skill's bounded Markdown source, or ?document= a Markdown file in its folder
   skills/install/route.ts          POST install skills via npx skills add
   skills/search/route.ts           POST skills.sh search
+  skills/check/route.ts            POST check skill updates
+  skills/update/route.ts           POST update a skill
   subagents/settings/route.ts      GET/PUT built-in subagent switch and maxConcurrent
+  subagents/profiles/route.ts      GET agent profiles for a cwd
+  subagents/[id]/route.ts          GET one subagent run | POST steer/abort
+  session-backends/route.ts        GET external agent session backends | POST manage
+  session-backends/[id]/route.ts   one backend's sessions
+  session-backends/rescan/route.ts POST re-run backend registration scans
+  relay/route.ts                   POST { to, message, timeoutMs? } agent-to-agent message relay
+  chat/ai-usage/route.ts           GET AI usage accounted by the core (?session=<id> to scope)
+  provider-usage/overview/route.ts POST provider usage overview
+  fx/route.ts                      GET USD→CNY exchange rate (24h lazy cache)
   web-auth/route.ts                GET status | POST login | DELETE logout (browser password)
   provider-usage/query/route.ts    POST provider usage quotas
   push/config/route.ts             GET VAPID public key
   push/subscribe/route.ts          POST register a push subscription
   app-update/route.ts              GET current vs latest published pi-web version
+  extensions/[...path]/route.ts    GET/POST/PUT/DELETE/PATCH extension api dispatch + assets (behind the security gates)
+  extensions/manifest/route.ts     GET client manifest (UI metadata + clientUrl + i18n)
+  extensions/client-bundle/route.ts GET ?rev= eager extension client bundle (one request, many extensions)
+  extensions/status/route.ts       GET full status (disabled/failed entries, insertion points, hooks, deps)
+  extensions/reload/route.ts       POST hot reload (shutdown → loadAll → startAll)
 ```
 
 ---
@@ -116,7 +164,7 @@ app/api/
 
 Design decisions and traps live in `docs/agents/`, one note per area. Read every note whose files a change touches before making it. Add new notes to the area's file, not here.
 
-- [sessions.md](docs/agents/sessions.md): AgentSession lifecycle, session file reads and rewrites, SSE and running state, the chat transcript's rendering (messages, tool cards, Markdown, code, notices), the session sidebar and new-session bar, the Debug panel. Files: `lib/rpc-manager.ts`, `lib/startup-issues.ts`, `lib/session-reader.ts`, `lib/session-fork*.ts`, `lib/session-delete.ts`, `lib/normalize.ts`, `lib/message-keys.ts`, `lib/idle-message-read.ts`, `lib/draft-store.ts`, `lib/session-tree.ts`, `lib/session-ui-state*.ts`, `lib/unread-markers.ts`, `lib/user-attention.ts`, `lib/sidebar-prefs.ts`, `lib/sidebar-actions.ts`, `lib/session-links.ts`, `lib/session-search*.ts`, `lib/favicon-badge.ts`, `lib/new-session-context.ts`, `hooks/useAgentSession.ts`, `hooks/useSessionUiState.ts`, `hooks/useSidebarMotion.ts`, `hooks/useGroupDrag.ts`, `hooks/useFilesPlacement.ts`, `hooks/useResizablePanel.ts`, `app/api/agent/**`, `app/api/sessions/**`, `components/SessionSidebar.tsx`, `components/PiWebTitle.tsx`, `components/SessionTree.tsx`, `components/SidebarMenu.tsx`, `components/SidebarToast.tsx`, `components/SidebarIcons.tsx`, `components/ProjectWorktreePicker.tsx`, `components/NewSessionContextBar.tsx`, `components/WorktreeCreateForm.tsx`, `handleNewSession`, `handleSelectSession` and the bar's handlers in `components/AppShell.tsx`, `components/BranchNavigator.tsx`, `components/MessageView.tsx`, `lib/message-display.ts`, `lib/patch.ts`, `components/FileViewer.tsx`, `components/MarkdownBody.tsx`, `lib/markdown.ts`, `lib/markdown-blocks.ts`, `lib/streaming-message.ts`, `hooks/useStreamingSelector.ts`, `hooks/useSkipOffscreenRows.ts`, `lib/turn-duration.ts`, `lib/tool-clock.ts`, `components/MermaidBlock.tsx`, `components/SvgBlock.tsx`, `lib/highlight-queue.ts`, `lib/prism-languages.ts`, `hooks/usePrismLanguages.ts`, `lib/session-view-cache.ts`, `components/CodemodeToolView.tsx`, `components/ExtensionStatusBar.tsx`, `components/ExtensionWidgets.tsx`, `lib/extension-ui-theme.ts`, `components/AnsiText.tsx`, `lib/transcript-notices*.ts`, `components/TranscriptNotices.tsx`, `app/api/cache-miss-notices/**`, `lib/tool-fields.ts`, `lib/debug-*.ts`, `lib/stream-client.ts`, `lib/page-stream-registry.ts`, `lib/page-debug.ts`, `lib/file-watch-registry.ts`, `components/DebugPanel.tsx`, `components/debug-panel-state.ts`.
+- [sessions.md](docs/agents/sessions.md): AgentSession lifecycle, session file reads and rewrites, SSE and running state, the chat transcript's rendering (messages, tool cards, Markdown, code, notices), the session sidebar and new-session bar, the Debug panel, queue persistence and recovery. Files: `lib/rpc-manager.ts`, `lib/queue-store.ts`, `lib/session-reader.ts`, `lib/session-fork*.ts`, `lib/session-delete.ts`, `lib/normalize.ts`, `lib/message-keys.ts`, `lib/session-tree.ts`, `lib/session-ui-state*.ts`, `lib/sidebar-prefs.ts`, `lib/sidebar-actions.ts`, `lib/session-links.ts`, `lib/favicon-badge.ts`, `lib/new-session-context.ts`, `hooks/useAgentSession.ts`, `hooks/useSessionUiState.ts`, `hooks/useSidebarMotion.ts`, `hooks/useGroupDrag.ts`, `hooks/useFilesPlacement.ts`, `hooks/useResizablePanel.ts`, `app/api/agent/**`, `app/api/sessions/**`, `components/SessionSidebar.tsx`, `components/PiWebTitle.tsx`, `components/SessionTree.tsx`, `components/SidebarMenu.tsx`, `components/SidebarToast.tsx`, `components/SidebarIcons.tsx`, `components/ProjectWorktreePicker.tsx`, `components/NewSessionContextBar.tsx`, `components/WorktreeCreateForm.tsx`, `handleNewSession`, `handleSelectSession` and the bar's handlers in `components/AppShell.tsx`, `components/BranchNavigator.tsx`, `components/MessageView.tsx`, `lib/message-display.ts`, `lib/patch.ts`, `components/FileViewer.tsx`, `components/MarkdownBody.tsx`, `lib/markdown.ts`, `lib/markdown-blocks.ts`, `lib/streaming-message.ts`, `hooks/useStreamingSelector.ts`, `lib/turn-duration.ts`, `components/MermaidBlock.tsx`, `components/SvgBlock.tsx`, `lib/highlight-queue.ts`, `lib/prism-languages.ts`, `hooks/usePrismLanguages.ts`, `lib/session-view-cache.ts`, `components/CodemodeToolView.tsx`, `components/ExtensionStatusBar.tsx`, `components/ExtensionWidgets.tsx`, `lib/extension-ui-theme.ts`, `components/AnsiText.tsx`, `lib/transcript-notices*.ts`, `components/TranscriptNotices.tsx`, `app/api/cache-miss-notices/**`, `lib/tool-fields.ts`, `lib/debug-*.ts`, `lib/stream-client.ts`, `lib/page-stream-registry.ts`, `lib/page-debug.ts`, `lib/file-watch-registry.ts`, `components/DebugPanel.tsx`, `components/debug-panel-state.ts`.
 - [tools.md](docs/agents/tools.md): tool presets and Chat only, exact system prompts, tool exposure, the codemode / tool-search / mcp built-ins, the read-only MCP policy, the Code mode and PowerShell switches. Files: `lib/tool-presets.ts`, `lib/tool-preset-preference.ts`, `lib/chat-only.ts`, `lib/exact-system-prompt.ts`, `lib/builtin-extensions.ts`, `lib/mcp-read-only-policy.ts`, `lib/codemode-settings.ts`, `lib/powershell-settings.ts`, `lib/global-settings-file.ts`, `app/api/agent/new/route.ts`, `app/api/tools/settings/route.ts`, tool selection in `lib/rpc-manager.ts`.
 - [mcp-runtime.md](docs/agents/mcp-runtime.md): the per-session MCP host and `/mcp` in the composer. Files: `lib/mcp-host.ts`, `lib/mcp-transport.ts`, `lib/mcp-status.ts`, `lib/mcp-command.ts`, `lib/mcp-config-key.ts`, MCP wiring in `lib/rpc-manager.ts` and `lib/builtin-extensions.ts`, `/mcp` handling in `hooks/useAgentSession.ts`.
 - [mcp-settings.md](docs/agents/mcp-settings.md): Settings › MCP: reads that run nothing, masking, row states and notices, the Code mode choice, trust, every `mcp.json` write and undo. Files: `app/api/mcp/route.ts`, `app/api/project-trust/route.ts`, `lib/mcp-config-read.ts`, `lib/mcp-config-file.ts`, `lib/mcp-override.ts`, `lib/mcp-undo.ts`, `lib/mcp-secrets.ts`, `lib/mcp-server-display.ts`, `lib/mcp-json-error.ts`, `lib/project-trust.ts`, `lib/regular-file.ts`, `lib/stacked-dialog.ts`, `lib/settings-navigation.ts`, `components/McpConfig.tsx`, `components/mcp-config-helpers.ts`, `components/ProjectTrustDialog.tsx`, `components/SettingsPanel.tsx`.
@@ -128,6 +176,25 @@ Design decisions and traps live in `docs/agents/`, one note per area. Read every
 - [side-sessions.md](docs/agents/side-sessions.md): side chats (ADR 0007): the fork copy, the tool allow-list, the hidden boundary message, the shared tab, usage. Files: `lib/side-session.ts`, `lib/session-fork.ts`, `lib/session-family.ts`, `lib/session-delete.ts`, `lib/session-reader.ts`, side handling in `lib/rpc-manager.ts`, `app/api/sessions/[id]/fork/route.ts`, `app/api/sessions/stats/route.ts`, `components/SessionChatPanel.tsx`, `components/TabBar.tsx`, `components/AgentSessionPanel.tsx`, `components/ChatInput.tsx`, `components/QuoteSelectionPopover.tsx`, `hooks/useAgentSession.ts`, `lib/side-chat-client.ts`, side handling in `components/AppShell.tsx`.
 - [subagents.md](docs/agents/subagents.md): the built-in subagent setting, profiles, run status, completion notifications, the subagent tab, the Agents strip. Files: `lib/subagent*.ts`, `app/api/subagents/**`, `components/AgentsConfig.tsx`, `components/SessionChatPanel.tsx`, `components/AgentMiniStrip.tsx`, `lib/agent-strip-lock.ts`, `components/LockToggle.tsx`.
 - [client-platform.md](docs/agents/client-platform.md): global shortcuts, the mobile keyboard and viewport, the terminal (shell, keys, theme, font size), the completion sound, the launcher. Files: `hooks/useKeyboardShortcuts.ts`, `hooks/useViewportHeight.ts`, `hooks/useAudio.ts`, `lib/done-chime.ts`, `terminalShell()` in `lib/terminal-manager.ts`, `components/TerminalExtraKeys.tsx`, `lib/terminal-extra-keys.ts`, `lib/terminal-theme.ts`, `hooks/useTerminalTheme.ts`, `terminalFontSize()` in `hooks/useChatAppearance.ts`, the keyboard-open CSS, `bin/browser-opener.js`, the browser opening in `bin/pi-web.js`.
+- [extensions.md](docs/agents/extensions.md): the fork's extension host (`lib/ext/`), client slots and bundles, `ui.provides` capability takeover, the extension routes, service-tunnels. Files: `lib/ext/**`, `lib/ext-ui-store.ts`, `components/ExtSlots.tsx`, `app/api/extensions/**`.
+
+---
+
+## Package trees (aiti ecosystem)
+
+This repo is the single source for the whole ecosystem: the Next app above, plus four independently published package trees. All four are **excluded from tsc/eslint and never bundled by `next build`** (see `tsconfig.json` / `eslint.config.mjs`), and each package has its own build and release lifecycle.
+
+| Tree | What it is | Notes |
+|---|---|---|
+| `extensions/` | 66 pi-web extensions (`@aiti-ai/aiti-*`), full sources | edit here; `_shared/` is `@aiti-ai/ext-shared`, `sm-demo-source/` the session-manager agent template |
+| `pi-plugins/` | pi CLI plugins (`@aiti-ai/pi-*`) | published from here; `pi-plugins.manifest.json` pins what the runtime auto-provisions |
+| `packages/` | shared libraries (`@aiti-ai/aiti-bridge`, `aiti-devtools-*`, `secret-*`) | consumed by extensions and by the app at runtime |
+| `integrations/` | carriers for other agents/hosts (`vscode-ext`, `browser-ext`, `dsh-*`, `opencode-ext`, `openclaw-web-ext`) | one level deeper than the others: `integrations/<carrier>/<pkg>` |
+
+- **These are the sources**: edit them here. There is no upstream mirror to sync back to and no redaction step.
+- Runtime dependency note: extensions declare repo dependencies in their own `package.json`; the installed `<webRoot>/node_modules` tree is reconciled by the extman extension — never hand-edit it.
+- `tools/` holds publish/release tooling (`publish-all.mjs`, `release-audit.mjs`, asset materializers); `scripts/` holds build/release automation (`deploy-all.mjs` and the release chain).
+- Code gates (protocol declarations, hand-written version lines, unregistered globals, comment language, release redaction) live in a separate policy workspace and run against this checkout: `node gates/gate-all.mjs --root <this repo>`.
 
 ---
 
@@ -161,9 +228,26 @@ Location: `~/.pi/agent/sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`
 --font-mono
 ```
 
+---
+
+## No internal addresses in code
+
+- **Real deployment addresses must never appear in code/tests/comments** (internal IPs, internal domains, production ports, …) — the repo is publicly visible and would leak the internal topology. Example hostnames use RFC 2606 reserved domains (`example.com`, `attacker.example`, …) and generic ports; loopback and RFC 1918 ranges are acceptable only as generic examples.
+- Deployment-specific configuration lives only in the runtime environment (systemd `Environment=`, nginx configs, …), never in the repo. This applies to AGENTS.md itself.
+- Sensitive patterns and private-registry URLs live in the machine-local `~/.aiti/release-redact.json` (CI injects the same JSON via `AITI_RELEASE_REDACT`) loaded at runtime by release-audit, publish-all, the prepack scrubber and the pack self-check. Never commit them as source literals — obfuscation is not redaction.
+- Published npm tarballs must not carry build-machine absolute paths: the prepack scrubber (`scripts/sanitize-npm-package.mjs`) + `files` excluding `.next/trace|trace-build|diagnostics` + the pack self-check are the backstop — do not bypass them when changing the release flow.
+- Official npmjs publishes go only through the GitHub Actions workflows (`publish.yml` / `publish-npm.yml`); local machines publish to the private registry for verification only.
+
+## Language discipline (commits & comments)
+
+- **Commit messages are English-only** across all repos. Technical terms, commit hashes, version numbers and file paths stay verbatim.
+- **Code comments default to English** for new code and rewritten sections. Formal localized content documents (README.zh-CN.md, Chinese pages under aiti-docs, Chinese SKILL.md bodies) are exempt — content language follows the document's purpose.
+- The public surface (github.com/aiti-ai/aiti-ai, Docker Hub) is English-only. Legacy Chinese comments in `extensions/` are anglicized opportunistically as files are touched — no bulk translation planned.
+- **Upstream-inherited commits are untouched**: the agegr/pi-web fork history (including its Chinese commits) belongs to the upstream community and is neither rewritten nor translated.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
-# This is NOT the Next.js you know
+## This is NOT the Next.js you know
 
 This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
 

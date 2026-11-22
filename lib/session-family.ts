@@ -1,4 +1,4 @@
-import type { SessionInfo } from "./types";
+import type { SessionInfo } from "./types.ts";
 
 /** The hidden message at the end of a side chat's inherited history; the chat draws its line there. */
 export const SIDE_BOUNDARY_MESSAGE_TYPE = "pi-web:side-boundary";
@@ -154,3 +154,4 @@ export function getAgentsBadge(
   const running = countRunningSubagents(subagents, runningSessionIds);
   return running > 0 ? { count: running, running: true } : { count: subagents.length, running: false };
 }
+

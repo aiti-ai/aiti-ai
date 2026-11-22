@@ -53,6 +53,7 @@ async function listProjectMcpServers(agentDir: string, cwd: string, allowedRoots
 // would connect before anyone trusts the folder (ADR 0006). The listing reads
 // the files only, like GET /api/mcp: no server is spawned, no value resolved,
 // no `!command` run, and env and header values never leave the server.
+// GET /api/project-trust?cwd= — kept in query-string form for existing callers; new code must use POST /api/project-trust/status (cwd goes in the JSON body, never in the URL/access logs).
 export async function GET(req: Request) {
   const result = await validateCwd(new URL(req.url).searchParams.get("cwd"));
   if ("response" in result) return result.response;

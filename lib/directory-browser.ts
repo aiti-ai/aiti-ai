@@ -78,7 +78,7 @@ export async function createDirectory(parentDirectory: string, name: string): Pr
 
 export async function listDirectories(directory: string): Promise<BrowsableDirectory[]> {
   const entries = await readdir(directory, { withFileTypes: true });
-  // 忽略损坏、不可访问或不指向目录的符号链接。
+  // Ignore broken, inaccessible, or non-directory symlinks.
   const candidates = await Promise.all(entries.map(async (entry) => {
     if (entry.isDirectory()) {
       return { name: entry.name, path: path.join(directory, entry.name) };

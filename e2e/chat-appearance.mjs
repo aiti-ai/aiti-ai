@@ -22,7 +22,7 @@ export async function checkChatAppearanceReset(page) {
     appliedWidth: document.documentElement.style.getPropertyValue("--chat-content-max-width"),
     appliedFontSize: document.documentElement.style.getPropertyValue("--chat-content-font-size"),
   })), { width: "820", fontSize: "14", appliedWidth: "820px", appliedFontSize: "14px" });
-  await page.reload({ waitUntil: "networkidle" });
+  await page.reload({ waitUntil: "domcontentloaded" });
   const showSidebar = page.getByRole("button", { name: "Show sidebar", exact: true });
   if (await showSidebar.isVisible()) await showSidebar.click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
@@ -73,7 +73,7 @@ export async function checkChatAppearance(page) {
   await closeSettings();
   assert.equal(await textarea.inputValue(), draft);
   assert.ok(await fittedHeight() < narrowHeight, "Widening must shrink the existing draft");
-  await page.reload({ waitUntil: "networkidle" });
+  await page.reload({ waitUntil: "domcontentloaded" });
   await page.locator(".markdown-code-block pre").waitFor();
   assert.equal(await font(textarea), "18px");
   assert.equal(await font(page.locator(".markdown-user-message")), "18px");
