@@ -121,6 +121,14 @@ mode runs this shell with a loopback caption page (`caption-bar.html?bubble=1`) 
 subtitles over SSE; the shell owns the window, Video Studio owns the content. The same window
 can host floating status cards, desktop pets or any local HTML page.
 
+## Demo
+
+The repository includes a dependency-free **transparent lyric player** at
+[`demo/play/play.html`](https://github.com/aiti-ai/aiti-ai/tree/main/integrations/aiti-desktop-widget/demo/play):
+`?file=audio.mp3&lyrics=song.lrc` (also SRT/VTT), current-line highlight, seekable progress,
+keyboard controls, `bare=1` for text-only. The bundled sample is an original TTS intro
+with a synthesized bed — no third-party music.
+
 ## Notes
 
 - Linux requires glibc 2.35+ (built on Ubuntu 22.04) plus WebKitGTK 4.1 + GTK3 at runtime.
