@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * Mirror an aiti-widget GitHub Release into the Gitee mirror.
+ * Mirror an aiti-desktop-widget GitHub Release into the Gitee mirror.
  *
- *   node scripts/publish-gitee.mjs --tag aiti-widget-v0.2.0 --assets-dir dist
+ *   node scripts/publish-gitee.mjs --tag aiti-desktop-widget-v0.2.0 --assets-dir dist
  *
  * Env:
  *   AITI_GITEE_TOKEN  required — Gitee personal access token (projects scope)
@@ -22,12 +22,12 @@ const opt = (flag) => {
 };
 const TAG = opt("--tag");
 if (!TAG) {
-  console.error("usage: publish-gitee.mjs --tag aiti-widget-v0.2.0 --assets-dir dist");
+  console.error("usage: publish-gitee.mjs --tag aiti-desktop-widget-v0.2.0 --assets-dir dist");
   process.exit(1);
 }
 const GH_REPO = opt("--repo") || "aiti-ai/aiti-ai";
 const GE_REPO = opt("--gitee") || "aiti-ai/aiti-ai";
-const TITLE = opt("--title") || `aiti-widget ${TAG.replace(/^aiti-widget-/, "")}`;
+const TITLE = opt("--title") || `aiti-desktop-widget ${TAG.replace(/^aiti-desktop-widget-/, "")}`;
 const GITEE_TOKEN = process.env.AITI_GITEE_TOKEN;
 if (!GITEE_TOKEN) {
   console.error("AITI_GITEE_TOKEN env required (Gitee personal access token)");
@@ -48,7 +48,7 @@ const giteeApi = (path, init = {}) =>
   });
 
 async function githubBody() {
-  const headers = { "User-Agent": "aiti-widget-release" };
+  const headers = { "User-Agent": "aiti-desktop-widget-release" };
   if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
   try {
     const response = await fetch(`${GH_API_BASE}/repos/${GH_REPO}/releases/tags/${TAG}`, {

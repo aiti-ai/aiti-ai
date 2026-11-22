@@ -21,7 +21,7 @@ import {
  */
 
 const asset = assetName();
-const binary = Buffer.from(`fake-aiti-widget-binary-${process.pid}`);
+const binary = Buffer.from(`fake-aiti-desktop-widget-binary-${process.pid}`);
 const checksum = createHash("sha256").update(binary).digest("hex");
 
 function sha256Hex(value) {
@@ -86,38 +86,38 @@ function startReleaseServer({ body = binary, checksums = `${checksum}  ${asset}\
 }
 
 async function withCache(fn) {
-  const dir = mkdtempSync(join(tmpdir(), "aiti-widget-npm-"));
-  const prevCache = process.env.AITI_WIDGET_CACHE_DIR;
-  const prevBase = process.env.AITI_WIDGET_RELEASE_BASE;
-  process.env.AITI_WIDGET_CACHE_DIR = dir;
+  const dir = mkdtempSync(join(tmpdir(), "aiti-desktop-widget-npm-"));
+  const prevCache = process.env.AITI_DESKTOP_WIDGET_CACHE_DIR;
+  const prevBase = process.env.AITI_DESKTOP_WIDGET_RELEASE_BASE;
+  process.env.AITI_DESKTOP_WIDGET_CACHE_DIR = dir;
   try {
     return await fn(dir);
   } finally {
-    if (prevCache === undefined) delete process.env.AITI_WIDGET_CACHE_DIR;
-    else process.env.AITI_WIDGET_CACHE_DIR = prevCache;
-    if (prevBase === undefined) delete process.env.AITI_WIDGET_RELEASE_BASE;
-    else process.env.AITI_WIDGET_RELEASE_BASE = prevBase;
+    if (prevCache === undefined) delete process.env.AITI_DESKTOP_WIDGET_CACHE_DIR;
+    else process.env.AITI_DESKTOP_WIDGET_CACHE_DIR = prevCache;
+    if (prevBase === undefined) delete process.env.AITI_DESKTOP_WIDGET_RELEASE_BASE;
+    else process.env.AITI_DESKTOP_WIDGET_RELEASE_BASE = prevBase;
     rmSync(dir, { recursive: true, force: true });
   }
 }
 
 test("platform mapping and asset names", () => {
   assert.equal(platformKey("linux", "x64"), "linux-x64");
-  assert.equal(assetName("linux", "x64"), "aiti-widget-linux-x64");
-  assert.equal(assetName("linux", "arm64"), "aiti-widget-linux-arm64");
-  assert.equal(assetName("darwin", "arm64"), "aiti-widget-darwin-arm64");
-  assert.equal(assetName("win32", "x64"), "aiti-widget-win32-x64.exe");
-  assert.equal(assetName("win32", "arm64"), "aiti-widget-win32-arm64.exe");
+  assert.equal(assetName("linux", "x64"), "aiti-desktop-widget-linux-x64");
+  assert.equal(assetName("linux", "arm64"), "aiti-desktop-widget-linux-arm64");
+  assert.equal(assetName("darwin", "arm64"), "aiti-desktop-widget-darwin-arm64");
+  assert.equal(assetName("win32", "x64"), "aiti-desktop-widget-win32-x64.exe");
+  assert.equal(assetName("win32", "arm64"), "aiti-desktop-widget-win32-arm64.exe");
   assert.equal(platformKey("sunos", "x64"), null);
   assert.throws(() => assetName("sunos", "x64"), /unsupported platform/);
 });
 
 test("release URLs prefer GitHub then Gitee and proxies", () => {
-  delete process.env.AITI_WIDGET_RELEASE_BASE;
+  delete process.env.AITI_DESKTOP_WIDGET_RELEASE_BASE;
   const urls = releaseUrls();
-  assert.equal(urls.tag, `aiti-widget-v${VERSION}`);
+  assert.equal(urls.tag, `aiti-desktop-widget-v${VERSION}`);
   assert.equal(urls.asset, asset);
-  assert.match(urls.binary[0], /^https:\/\/github\.com\/aiti-ai\/aiti-ai\/releases\/download\/aiti-widget-v/);
+  assert.match(urls.binary[0], /^https:\/\/github\.com\/aiti-ai\/aiti-ai\/releases\/download\/aiti-desktop-widget-v/);
   assert.match(urls.binary[1], /^https:\/\/gitee\.com\/aiti-ai\/aiti-ai\/releases\/download\//);
   assert.ok(urls.binary.length >= 3);
   assert.equal(urls.mirrors.length, urls.binary.length - 1);
@@ -131,7 +131,7 @@ test("checksum parser accepts sha256sum formats", () => {
 
 test("downloads via justget, verifies checksum and caches", async () => {
   const server = await startReleaseServer();
-  process.env.AITI_WIDGET_RELEASE_BASE = `http://127.0.0.1:${server.port}/aiti-widget-v${VERSION}`;
+  process.env.AITI_DESKTOP_WIDGET_RELEASE_BASE = `http://127.0.0.1:${server.port}/aiti-desktop-widget-v${VERSION}`;
   try {
     await withCache(async (dir) => {
       const path = await ensureBinary({ log: () => {} });
@@ -150,7 +150,7 @@ test("downloads via justget, verifies checksum and caches", async () => {
 
 test("checksum mismatch fails and leaves no cached binary", async () => {
   const server = await startReleaseServer({ checksums: `${sha256Hex("other")}  ${asset}\n` });
-  process.env.AITI_WIDGET_RELEASE_BASE = `http://127.0.0.1:${server.port}/aiti-widget-v${VERSION}`;
+  process.env.AITI_DESKTOP_WIDGET_RELEASE_BASE = `http://127.0.0.1:${server.port}/aiti-desktop-widget-v${VERSION}`;
   try {
     await withCache(async () => {
       await assert.rejects(() => ensureBinary({ log: () => {} }), /checksum|verif|mismatch/i);
@@ -162,17 +162,17 @@ test("checksum mismatch fails and leaves no cached binary", async () => {
   }
 });
 
-test("AITI_WIDGET_BIN overrides the download", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "aiti-widget-bin-"));
-  const fake = join(dir, process.platform === "win32" ? "aiti-widget.exe" : "aiti-widget");
+test("AITI_DESKTOP_WIDGET_BIN overrides the download", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "aiti-desktop-widget-bin-"));
+  const fake = join(dir, process.platform === "win32" ? "aiti-desktop-widget.exe" : "aiti-desktop-widget");
   writeFileSync(fake, "x");
-  const prev = process.env.AITI_WIDGET_BIN;
-  process.env.AITI_WIDGET_BIN = fake;
+  const prev = process.env.AITI_DESKTOP_WIDGET_BIN;
+  process.env.AITI_DESKTOP_WIDGET_BIN = fake;
   try {
     assert.equal(await ensureBinary({ log: () => {} }), fake);
   } finally {
-    if (prev === undefined) delete process.env.AITI_WIDGET_BIN;
-    else process.env.AITI_WIDGET_BIN = prev;
+    if (prev === undefined) delete process.env.AITI_DESKTOP_WIDGET_BIN;
+    else process.env.AITI_DESKTOP_WIDGET_BIN = prev;
     rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "aiti-widget",
+  "productName": "aiti-desktop-widget",
   "version": "0.2.0",
-  "identifier": "ai.aiti.widget",
+  "identifier": "ai.aiti.desktop-widget",
   "build": {
     "frontendDist": "dist"
   },

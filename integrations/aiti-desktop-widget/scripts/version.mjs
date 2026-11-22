@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * Keep the aiti-widget version in sync across Cargo.toml, Cargo.lock,
+ * Keep the aiti-desktop-widget version in sync across Cargo.toml, Cargo.lock,
  * tauri.conf.json, Info.plist and the npm launcher.
  *
  *   node scripts/version.mjs --print
- *   node scripts/version.mjs --check [--tag aiti-widget-v0.2.0]
+ *   node scripts/version.mjs --check [--tag aiti-desktop-widget-v0.2.0]
  *   node scripts/version.mjs --set 0.3.0
  *   node scripts/version.mjs --bump patch|minor|major
  */
@@ -29,7 +29,7 @@ const opt = (flag) => {
 };
 
 function fail(message) {
-  console.error(`aiti-widget version: ${message}`);
+  console.error(`aiti-desktop-widget version: ${message}`);
   process.exit(1);
 }
 
@@ -68,10 +68,10 @@ function check(tag) {
   }
   const version = current.cargo;
   if (!/^\d+\.\d+\.\d+$/.test(version)) fail(`version ${version} is not plain X.Y.Z`);
-  if (tag && tag !== `aiti-widget-v${version}`) {
-    fail(`tag ${tag} != aiti-widget-v${version}`);
+  if (tag && tag !== `aiti-desktop-widget-v${version}`) {
+    fail(`tag ${tag} != aiti-desktop-widget-v${version}`);
   }
-  console.log(`ok: aiti-widget ${version}${tag ? ` (tag ${tag})` : ""}`);
+  console.log(`ok: aiti-desktop-widget ${version}${tag ? ` (tag ${tag})` : ""}`);
   return version;
 }
 
@@ -92,7 +92,7 @@ function setVersion(version) {
   if (existsSync(files.lock)) {
     const lock = readFileSync(files.lock, "utf8");
     const next = lock.replace(
-      /(name = "aiti-widget"\r?\nversion = ")[^"]+(")/,
+      /(name = "aiti-desktop-widget"\r?\nversion = ")[^"]+(")/,
       `$1${version}$2`,
     );
     writeIfChanged(files.lock, next);
@@ -122,9 +122,9 @@ function setVersion(version) {
     );
   writeIfChanged(files.plist, nextPlist);
 
-  console.log(`aiti-widget version -> ${version}`);
-  console.log(`next: git add integrations/aiti-widget && git commit -m "release(widget): v${version}"`);
-  console.log(`      git tag aiti-widget-v${version} && git push origin main --tags`);
+  console.log(`aiti-desktop-widget version -> ${version}`);
+  console.log(`next: git add integrations/aiti-desktop-widget && git commit -m "release(widget): v${version}"`);
+  console.log(`      git tag aiti-desktop-widget-v${version} && git push origin main --tags`);
 }
 
 function bump(kind) {
@@ -140,6 +140,6 @@ else if (has("--set")) setVersion(opt("--set"));
 else if (has("--bump")) bump(opt("--bump"));
 else if (has("--print")) console.log(cargoVersion());
 else {
-  console.log(`aiti-widget ${cargoVersion()} (cargo/tauri/plist/npm: ${JSON.stringify(versions())})`);
+  console.log(`aiti-desktop-widget ${cargoVersion()} (cargo/tauri/plist/npm: ${JSON.stringify(versions())})`);
   console.log("usage: --print | --check [--tag TAG] | --set X.Y.Z | --bump patch|minor|major");
 }

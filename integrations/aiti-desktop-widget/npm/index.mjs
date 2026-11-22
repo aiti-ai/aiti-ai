@@ -1,19 +1,19 @@
 #!/usr/bin/env node
 /**
- * @aiti-ai/aiti-widget — native binary resolver for the aiti-widget shell.
+ * @aiti-ai/aiti-desktop-widget — native binary resolver for the aiti-desktop-widget shell.
  *
  * The npm package is a tiny launcher: the platform binary lives in GitHub/Gitee
  * release assets and is downloaded on first use with justget (multi-source racing,
  * chunked, checksum-verified) and cached per version/platform.
  *
  * Env:
- *   AITI_WIDGET_BIN             use this executable path (no download)
- *   AITI_WIDGET_CACHE_DIR       cache root (default: OS cache dir)
- *   AITI_WIDGET_RELEASE_BASE    single release base URL (tests/self-hosted mirror)
- *   AITI_WIDGET_MIRRORS         extra bases, comma-separated
- *   AITI_WIDGET_REPO            GitHub/Gitee repo (default aiti-ai/aiti-ai)
- *   AITI_WIDGET_TAG             release tag (default aiti-widget-v<package version>)
- *   AITI_WIDGET_VERBOSE=1       per-progress logging
+ *   AITI_DESKTOP_WIDGET_BIN             use this executable path (no download)
+ *   AITI_DESKTOP_WIDGET_CACHE_DIR       cache root (default: OS cache dir)
+ *   AITI_DESKTOP_WIDGET_RELEASE_BASE    single release base URL (tests/self-hosted mirror)
+ *   AITI_DESKTOP_WIDGET_MIRRORS         extra bases, comma-separated
+ *   AITI_DESKTOP_WIDGET_REPO            GitHub/Gitee repo (default aiti-ai/aiti-ai)
+ *   AITI_DESKTOP_WIDGET_TAG             release tag (default aiti-desktop-widget-v<package version>)
+ *   AITI_DESKTOP_WIDGET_VERBOSE=1       per-progress logging
  */
 import { createRequire } from "node:module";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
@@ -23,8 +23,8 @@ import { dirname, join } from "node:path";
 const require = createRequire(import.meta.url);
 const pkg = require("./package.json");
 export const VERSION = pkg.version;
-const REPO = String(process.env.AITI_WIDGET_REPO || "aiti-ai/aiti-ai").replace(/^\/+|\/+$/g, "");
-export const RELEASE_TAG = String(process.env.AITI_WIDGET_TAG || `aiti-widget-v${VERSION}`).trim();
+const REPO = String(process.env.AITI_DESKTOP_WIDGET_REPO || "aiti-ai/aiti-ai").replace(/^\/+|\/+$/g, "");
+export const RELEASE_TAG = String(process.env.AITI_DESKTOP_WIDGET_TAG || `aiti-desktop-widget-v${VERSION}`).trim();
 
 const PLATFORMS = new Map([
   ["linux-x64", "linux-x64"],
@@ -47,26 +47,26 @@ export function assetName(platform = process.platform, arch = process.arch) {
       `unsupported platform ${platform}/${arch}; supported: ${[...PLATFORMS.keys()].join(", ")}`,
     );
   }
-  return `aiti-widget-${key}${platform === "win32" ? ".exe" : ""}`;
+  return `aiti-desktop-widget-${key}${platform === "win32" ? ".exe" : ""}`;
 }
 
 export function cacheRoot() {
-  const override = String(process.env.AITI_WIDGET_CACHE_DIR || "").trim();
+  const override = String(process.env.AITI_DESKTOP_WIDGET_CACHE_DIR || "").trim();
   if (override) return override;
   if (process.platform === "win32") {
-    return join(process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "aiti-widget", "cache");
+    return join(process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "aiti-desktop-widget", "cache");
   }
-  if (process.platform === "darwin") return join(homedir(), "Library", "Caches", "aiti-widget");
-  return join(process.env.XDG_CACHE_HOME || join(homedir(), ".cache"), "aiti-widget");
+  if (process.platform === "darwin") return join(homedir(), "Library", "Caches", "aiti-desktop-widget");
+  return join(process.env.XDG_CACHE_HOME || join(homedir(), ".cache"), "aiti-desktop-widget");
 }
 
-/** Cached executable path (does not download; respects AITI_WIDGET_BIN). */
+/** Cached executable path (does not download; respects AITI_DESKTOP_WIDGET_BIN). */
 export function binaryPath(platform = process.platform, arch = process.arch) {
-  const override = String(process.env.AITI_WIDGET_BIN || "").trim();
+  const override = String(process.env.AITI_DESKTOP_WIDGET_BIN || "").trim();
   if (override) return override;
   const key = platformKey(platform, arch);
   if (!key) throw new Error(`unsupported platform ${platform}/${arch}`);
-  const exe = platform === "win32" ? "aiti-widget.exe" : "aiti-widget";
+  const exe = platform === "win32" ? "aiti-desktop-widget.exe" : "aiti-desktop-widget";
   return join(cacheRoot(), VERSION, key, exe);
 }
 
@@ -76,9 +76,9 @@ function normalizeBase(base) {
 
 /** Release base URLs, primary first. GitHub, Gitee, then CORS-free GitHub proxies. */
 export function releaseBases() {
-  const fixed = normalizeBase(process.env.AITI_WIDGET_RELEASE_BASE);
+  const fixed = normalizeBase(process.env.AITI_DESKTOP_WIDGET_RELEASE_BASE);
   if (fixed) {
-    const extra = String(process.env.AITI_WIDGET_MIRRORS || "")
+    const extra = String(process.env.AITI_DESKTOP_WIDGET_MIRRORS || "")
       .split(",")
       .map(normalizeBase)
       .filter(Boolean);
@@ -93,7 +93,7 @@ export function releaseBases() {
     `https://ghfast.top/${gh}`,
     `https://ghproxy.net/${gh}`,
   ];
-  for (const extra of String(process.env.AITI_WIDGET_MIRRORS || "").split(",")) {
+  for (const extra of String(process.env.AITI_DESKTOP_WIDGET_MIRRORS || "").split(",")) {
     const base = normalizeBase(extra);
     if (base && !bases.includes(base)) bases.push(base);
   }
@@ -101,7 +101,7 @@ export function releaseBases() {
 }
 
 export function releaseUrls(platform = process.platform, arch = process.arch) {
-  const base = normalizeBase(process.env.AITI_WIDGET_RELEASE_BASE);
+  const base = normalizeBase(process.env.AITI_DESKTOP_WIDGET_RELEASE_BASE);
   const bases = releaseBases();
   const asset = assetName(platform, arch);
   return {
@@ -132,7 +132,7 @@ async function loadJustget() {
   if (!justgetPromise) {
     justgetPromise = import("justget").catch((error) => {
       throw new Error(
-        `justget is required to download the aiti-widget binary (${error.message}); run: npm install justget`,
+        `justget is required to download the aiti-desktop-widget binary (${error.message}); run: npm install justget`,
       );
     });
   }
@@ -192,12 +192,12 @@ async function renameWithRetry(from, to) {
 
 /**
  * Ensure the platform binary is present and return its path.
- * Downloads once per version/platform; AITI_WIDGET_BIN bypasses the cache.
+ * Downloads once per version/platform; AITI_DESKTOP_WIDGET_BIN bypasses the cache.
  */
 export async function ensureBinary({ force = false, log = (message) => process.stderr.write(`${message}\n`) } = {}) {
-  const override = String(process.env.AITI_WIDGET_BIN || "").trim();
+  const override = String(process.env.AITI_DESKTOP_WIDGET_BIN || "").trim();
   if (override) {
-    if (!existsSync(override)) throw new Error(`AITI_WIDGET_BIN does not exist: ${override}`);
+    if (!existsSync(override)) throw new Error(`AITI_DESKTOP_WIDGET_BIN does not exist: ${override}`);
     return override;
   }
 
@@ -217,8 +217,8 @@ export async function ensureBinary({ force = false, log = (message) => process.s
   const key = platformKey();
   const dir = dirname(target);
   mkdirSync(dir, { recursive: true });
-  const verbose = String(process.env.AITI_WIDGET_VERBOSE || "") === "1";
-  log(`aiti-widget: downloading ${RELEASE_TAG} (${key}) — GitHub/Gitee racing via justget`);
+  const verbose = String(process.env.AITI_DESKTOP_WIDGET_VERBOSE || "") === "1";
+  log(`aiti-desktop-widget: downloading ${RELEASE_TAG} (${key}) — GitHub/Gitee racing via justget`);
 
   const checksumsPath = join(dir, "checksums.txt");
   if (!existsSync(checksumsPath)) {
@@ -244,7 +244,7 @@ export async function ensureBinary({ force = false, log = (message) => process.s
     if (!existsSync(temp) || statSync(temp).size === 0) throw new Error("downloaded binary is empty");
     if (process.platform !== "win32") chmodSync(temp, 0o755);
     await renameWithRetry(temp, target);
-    log(`aiti-widget: saved ${target}`);
+    log(`aiti-desktop-widget: saved ${target}`);
     return target;
   } catch (error) {
     rmSync(temp, { force: true });
