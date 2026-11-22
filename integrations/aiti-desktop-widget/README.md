@@ -271,8 +271,10 @@ Granted by default: geometry/monitor reads, `setSize`/`setPosition`/`center`, si
 `startDragging`/`startResizeDragging`, always-on-top, click-through, visible-on-all-workspaces,
 skip-taskbar, shadow, decorations, resizable, focusable, title, hide/show/close and webview zoom.
 The capability is **loopback-only**: with `--allow-remote true`, an external page can render but
-cannot invoke these commands. Destructive/multi-window permissions (`create`, `destroy`,
-`getAllWindows`, fullscreen/maximize, icon/badge/progress, clear-data/devtools) stay off.
+cannot invoke these commands. The default set is the complete **`core:window:*` + `core:webview:*`
+allow-list** (including create/destroy, fullscreen/maximize, icon/badge/progress, clear-data and
+DevTools). Treat every page loaded into the widget as trusted code; remove permissions from
+`capabilities/widget-page-control.json` if a deployment needs a smaller surface.
 
 `--resizable false` is implemented as min=max constraints. A page that changes its size must
 call `setMinSize`/`setMaxSize` (or `setSizeConstraints`) before `setSize`, otherwise the launch
