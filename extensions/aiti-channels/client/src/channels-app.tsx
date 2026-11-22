@@ -16,9 +16,11 @@
  */
 import { useState, useEffect, useRef } from "react";
 import { apiUrl, t } from "./host-shim";
+import { openFloat, closePanel, usePresent, DockBody, isSidebarDockState, sidebarZoneOf } from "../../../_shared/ext-float-dock";
 import { PLATFORM_SCHEMAS, platformSchema } from "../../lib/platform-schema.ts";
 
 const API = (p: string) => apiUrl(p);
+export const CHANNELS_KEY = "aiti-channels:panel";
 const state: Record<string, any> = {
   open: false,
   status: null,          // /status 载荷
@@ -47,7 +49,15 @@ const state: Record<string, any> = {
 };
 const listeners = new Set<() => void>();
 function notify() { for (const l of listeners) l(); }
-function setState(patch: Record<string, unknown>) { Object.assign(state, patch); notify(); }
+function setState(patch: Record<string, unknown>) {
+  if ("open" in patch) {
+    const { open, ...rest } = patch;
+    if (open) openFloat(CHANNELS_KEY); else closePanel(CHANNELS_KEY);
+    patch = rest;
+    if (Object.keys(patch).length === 0) return;
+  }
+  Object.assign(state, patch); notify();
+}
 
 // lucide 图标 path（与系统内建线条图标同风格）
 const Ic = ({ size, paths }: { size: number; paths: string[] }) => (
@@ -866,38 +876,55 @@ function TopBar() {
   );
 }
 
-// ---------- 面板主体 ----------
-function ChannelsPanel() {
-  const leftNav = state.nav === "left";
-  return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 2147483000, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.35)" }}>
-      <div style={panelBox(state)}>
-        <TopBar />
-        <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-          {/* 大屏：左侧导航 */}
-          {leftNav && (
-            <nav style={{ width: 132, flexShrink: 0, borderRight: C.border, display: "flex", flexDirection: "column", gap: 2, padding: 8, background: "var(--bg, #fff)", overflowY: "auto" }}>
-              <NavButtons vertical={true} />
-            </nav>
-          )}
-          {/* 内容区 */}
-          <div style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: 14 }}>
-            {renderTab()}
-          </div>
-        </div>
-        {/* 小屏：底部导航 */}
-        {!leftNav && (
-          <nav style={{ display: "flex", gap: 2, padding: "6px 8px calc(6px + env(safe-area-inset-bottom, 0px))", borderTop: C.border, background: "rgba(255,255,255,0.95)", overflowX: "auto", flexShrink: 0 }}>
-            <NavButtons vertical={false} />
+// ---------- Panel shell (float / left / right faces) ----------
+function ChannelsPanel({ face = "float" }: { face?: string }) {
+  const st = usePresent(CHANNELS_KEY);
+  const open = face === "float" ? st === "floating"
+    : face === "right" ? st === "docked:right-panel"
+      : isSidebarDockState(st);
+  if (!open) return null;
+  const floating = face === "float";
+  // Docked narrow containers always use the bottom nav bar (132px side nav eats too much width).
+  const leftNav = floating && state.nav === "left";
+  const content = (
+    <>
+      <TopBar />
+      <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+        {leftNav && (
+          <nav style={{ width: 132, flexShrink: 0, borderRight: C.border, display: "flex", flexDirection: "column", gap: 2, padding: 8, background: "var(--bg, #fff)", overflowY: "auto" }}>
+            <NavButtons vertical={true} />
           </nav>
         )}
+        <div style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: 14 }}>
+          {renderTab()}
+        </div>
       </div>
-    </div>
+      {!leftNav && (
+        <nav style={{ display: "flex", gap: 2, padding: "6px 8px calc(6px + env(safe-area-inset-bottom, 0px))", borderTop: C.border, background: "rgba(255,255,255,0.95)", overflowX: "auto", flexShrink: 0 }}>
+          <NavButtons vertical={false} />
+        </nav>
+      )}
+    </>
   );
+  if (floating) {
+    return (
+      <div style={{ position: "fixed", inset: 0, zIndex: 2147483000, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.35)" }}>
+        <div style={panelBox(state)} data-ext-float="1" data-ext-float-key={CHANNELS_KEY} data-ext-float-dock={`${sidebarZoneOf(CHANNELS_KEY)} right-panel`} data-ext-float-dock-default={sidebarZoneOf(CHANNELS_KEY)} data-ext-float-w={1100} data-ext-float-h={760} data-ext-float-min-w={480} data-ext-float-min-h={360} data-ext-float-full="1" onClick={(e) => e.stopPropagation()}>
+          {content}
+        </div>
+      </div>
+    );
+  }
+  const zones = [sidebarZoneOf(CHANNELS_KEY), "right-panel"];
+  const inner = <div style={{ display: "flex", flexDirection: "column", minHeight: 0, height: "100%", background: C.panelBg, overflow: "hidden" }}>{content}</div>;
+  if (face === "right") {
+    return <DockBody itemKey={CHANNELS_KEY} zone="right-panel" title={t("it.aiti-channels-panel.label")} chrome="tab" zones={zones} defaultZone={sidebarZoneOf(CHANNELS_KEY)}>{inner}</DockBody>;
+  }
+  return <DockBody itemKey={CHANNELS_KEY} title={t("it.aiti-channels-panel.label")} icon="message-circle" chrome="section" kind="dockable" zones={zones} defaultZone={sidebarZoneOf(CHANNELS_KEY)}>{inner}</DockBody>;
 }
 
 function panelBox(_s: Record<string, unknown>) {
-  return { width: "100vw", height: "100dvh", maxWidth: "100vw", maxHeight: "100dvh", display: "flex", flexDirection: "column", background: C.panelBg, overflow: "hidden" };
+  return { width: "min(1100px, 94vw)", height: "min(760px, 90vh)", maxWidth: "94vw", maxHeight: "90vh", display: "flex", flexDirection: "column", background: C.panelBg, overflow: "hidden", borderRadius: 12 };
 }
 
 // ---------- register 辅助（entry.tsx 调用；matchMedia 导航模式监听与手写版同位） ----------
@@ -943,8 +970,13 @@ export function ToolbarButton() {
   );
 }
 
-export function ChannelsPanelComp() {
+function SubscribedPanel({ face }: { face?: string }) {
   const [, force] = useState(0);
   useEffect(() => { const l = () => force((x) => x + 1); listeners.add(l); return () => { listeners.delete(l); }; }, []);
-  return state.open ? <ChannelsPanel /> : null;
+  return <ChannelsPanel face={face} />;
 }
+
+export function ChannelsPanelComp() { return <SubscribedPanel face="float" />; }
+export function ChannelsPanelSlot() { return <SubscribedPanel face="float" />; }
+export function ChannelsDockLeft() { return <SubscribedPanel face="left" />; }
+export function ChannelsDockRight() { return <SubscribedPanel face="right" />; }
