@@ -54,6 +54,18 @@ POST /interactions/:id/cancel
 内置页面在 `/`，支持 confirm / choose / input 和队列。自定义页面使用
 `/interaction-client.js` 的 `connectInteraction()`。
 
+## MCP stdio
+
+```bash
+npm run build
+node bin/widget-interaction-mcp.mjs --no-widget
+node bin/widget-interaction-mcp.mjs
+```
+
+工具：`widget_confirm`、`widget_choose`、`widget_input`、`widget_presence`、
+`widget_notify`、`widget_cancel`。工具调用会阻塞到页面作答或超时；stdout 只输出
+JSON-RPC，诊断走 stderr。
+
 ## 首版未包含
 
 - 原生文件/文件夹选择；

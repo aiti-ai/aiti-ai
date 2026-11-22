@@ -12,6 +12,7 @@
   "files": [
     "dist",
     "page",
+    "bin",
     "README.md",
     "README.zh-CN.md"
   ],
@@ -30,5 +31,8 @@
   "bugs": {
     "url": "https://github.com/aiti-ai/aiti-ai/issues"
   },
-  "homepage": "https://aiti.pw"
+  "homepage": "https://aiti.pw",
+  "bin": {
+    "widget-interaction-mcp": "bin/widget-interaction-mcp.mjs"
+  }
 }

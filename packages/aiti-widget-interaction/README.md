@@ -88,6 +88,19 @@ client.answer(id, { action: "continue", value: {} });
 - Timeout/cancel are host-owned; the page only displays them.
 - The HTTP server binds loopback by default and uses a random token.
 
+## MCP stdio
+
+```bash
+npm run build
+node bin/widget-interaction-mcp.mjs --no-widget   # print the page URL on stderr
+node bin/widget-interaction-mcp.mjs               # also opens aiti-desktop-widget
+```
+
+Tools: `widget_confirm`, `widget_choose`, `widget_input`, `widget_presence`,
+`widget_notify`, `widget_cancel`. The tool call blocks until the page answers (or the
+request times out); every tool returns the host envelope. `stdout` is JSON-RPC only;
+diagnostics go to stderr.
+
 ## Not in this first version
 
 - Native file/folder picker.
