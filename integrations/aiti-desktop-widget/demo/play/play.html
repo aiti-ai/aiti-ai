@@ -178,7 +178,7 @@
   #compact-viewport.overflow { justify-content: flex-start; }
   #compact-text {
     position: relative; display: inline-block; white-space: nowrap; max-width: none;
-    font-size: clamp(16px, 3.2vmin, 27px); font-weight: 800; line-height: 1.25;
+    font-size: clamp(16px, 3.2vh, 27px); font-weight: 800; line-height: 1.25;
     letter-spacing: -.01em;
     transition: transform .08s linear; will-change: transform;
   }
@@ -319,6 +319,7 @@
   const bare = first("bare") === "1";
   const autoplay = first("autoplay") !== "0";
   const loop = first("loop") === "1";
+  const autosize = first("autosize") !== "0";
   // `Number("")` is 0: keep 1.0 when the param is absent/invalid, never silence by default.
   const volumeRaw = first("volume");
   const volumeNumber = volumeRaw === "" ? NaN : Number(volumeRaw);
@@ -329,6 +330,7 @@
   if (bare) document.body.dataset.bare = "1";
   if (bg !== "none" && bg !== "transparent") document.getElementById("app").style.background = bg;
 
+  const appEl = document.getElementById("app");
   const audio = document.getElementById("audio");
   const titleEl = document.getElementById("title");
   const artistEl = document.getElementById("artist");
@@ -348,6 +350,7 @@
   const metaLine = document.getElementById("meta-line");
   const statusEl = document.getElementById("status");
   const compactEl = document.getElementById("compact");
+  const compactRow = document.getElementById("compact-row");
   const compactPlayBtn = document.getElementById("compact-play");
   const compactViewport = document.getElementById("compact-viewport");
   const compactText = document.getElementById("compact-text");
@@ -365,6 +368,31 @@
   let statusTimer = 0;
   let raf = 0;
   let meta = {};
+
+  // Optional Tauri window control. It is available to loopback pages through the
+  // widget-page-control capability (withGlobalTauri=true); a normal browser just
+  // has no __TAURI__ and this whole feature stays dormant.
+  const widgetTauri = (() => {
+    try {
+      const api = window.__TAURI__;
+      const win = api?.window?.getCurrentWindow?.();
+      return api?.dpi && win ? { win, dpi: api.dpi } : null;
+    } catch {
+      return null;
+    }
+  })();
+  const autoSize = {
+    enabled: false,
+    minWidth: 220,
+    maxWidth: 0,
+    currentWidth: 0,
+    currentHeight: 0,
+    centerX: 0,
+    centerY: 0,
+    busy: false,
+    queued: false,
+    lastText: "",
+  };
 
   function status(text, isError = false) {
     if (!text) { statusEl.classList.remove("show", "error"); return; }
@@ -531,6 +559,101 @@
     return active >= 0 ? lines[active] : lines[0];
   }
 
+  const isShown = (el) => !!el && getComputedStyle(el).display !== "none" && el.getBoundingClientRect().width > 2;
+
+  /** Width that keeps the one-line bar readable: controls + current lyric + gaps. */
+  function desiredLineWidth() {
+    const appStyle = getComputedStyle(appEl);
+    const rowStyle = getComputedStyle(compactRow);
+    const viewportStyle = getComputedStyle(compactViewport);
+    const gap = parseFloat(rowStyle.columnGap || rowStyle.gap) || 0;
+    const border = (parseFloat(appStyle.borderLeftWidth) || 0) + (parseFloat(appStyle.borderRightWidth) || 0);
+    const padding = (parseFloat(appStyle.paddingLeft) || 0) + (parseFloat(appStyle.paddingRight) || 0);
+    const viewportPadding = (parseFloat(viewportStyle.paddingLeft) || 0) + (parseFloat(viewportStyle.paddingRight) || 0);
+    const visible = [compactPlayBtn, compactViewport, compactTime, compactMuteBtn].filter(isShown);
+    const fixed = [compactPlayBtn, compactTime, compactMuteBtn].reduce(
+      (sum, el) => sum + (isShown(el) ? el.getBoundingClientRect().width : 0), 0);
+    const textWidth = Math.ceil(compactBase.getBoundingClientRect().width);
+    const target = padding + border + viewportPadding + fixed + textWidth +
+      gap * Math.max(0, visible.length - 1) + 6; // small breathing room
+    return Math.max(autoSize.minWidth, Math.min(autoSize.maxWidth, Math.ceil(target)));
+  }
+
+  /** Resize around the current window center, keeping the one-line bar centered. */
+  async function fitWindowToLine() {
+    if (!autoSize.enabled || !widgetTauri || document.body.dataset.layout !== "line") return;
+    const text = compactRenderedText || compactBase.textContent || "";
+    if (!text) return;
+    if (autoSize.busy) { autoSize.queued = true; return; }
+    if (text === autoSize.lastText) return;
+    autoSize.busy = true;
+    autoSize.lastText = text;
+    const { win, dpi } = widgetTauri;
+    try {
+      const desired = desiredLineWidth();
+      const logicalHeight = Math.max(1, Math.round(window.innerHeight));
+      const targetSize = new dpi.LogicalSize(desired, logicalHeight);
+      const scale = await win.scaleFactor();
+      const targetWidth = Math.round(desired * scale);
+      const targetHeight = Math.round(logicalHeight * scale);
+      // outerSize() can lag behind setSize() on X11; keep our own physical geometry
+      // and center instead of reading the (possibly stale) window API on every line.
+      if (Math.abs(targetWidth - autoSize.currentWidth) > 2) {
+        // --resizable false is implemented as min=max constraints; move them first
+        // so the programmatic size change is not clamped back to the launch size.
+        await win.setMinSize(targetSize);
+        await win.setMaxSize(targetSize);
+        await win.setSize(targetSize);
+        await win.setPosition(new dpi.PhysicalPosition(
+          Math.round(autoSize.centerX - targetWidth / 2),
+          Math.round(autoSize.centerY - targetHeight / 2),
+        ));
+        autoSize.currentWidth = targetWidth;
+        autoSize.currentHeight = targetHeight;
+      }
+    } catch {
+      // No Tauri permission / non-X11 WM refusing geometry: keep the page usable.
+      autoSize.enabled = false;
+    } finally {
+      autoSize.busy = false;
+      if (autoSize.queued) {
+        autoSize.queued = false;
+        requestAnimationFrame(() => { void fitWindowToLine(); });
+      }
+    }
+  }
+
+  function scheduleWindowFit(force = false) {
+    if (!autosize || !autoSize.enabled || document.body.dataset.layout !== "line") return;
+    if (force) autoSize.lastText = "";
+    requestAnimationFrame(() => { void fitWindowToLine(); });
+  }
+
+  async function initWindowAutoSize() {
+    if (!autosize || !widgetTauri || document.body.dataset.layout !== "line") return;
+    try {
+      const { win } = widgetTauri;
+      const position = await win.outerPosition();
+      const size = await win.outerSize();
+      autoSize.currentWidth = size.width;
+      autoSize.currentHeight = size.height;
+      autoSize.centerX = position.x + size.width / 2;
+      autoSize.centerY = position.y + size.height / 2;
+      // The initial window width is the caller's upper bound; auto-size only shrinks
+      // and regrows within it. Cap at the card layout's CSS max-width.
+      autoSize.maxWidth = Math.max(autoSize.minWidth, Math.min(980, Math.round(window.innerWidth)));
+      autoSize.enabled = true;
+      // Keep the center in sync after the user drags the widget.
+      try {
+        await win.onMoved(({ payload }) => {
+          autoSize.centerX = payload.x + autoSize.currentWidth / 2;
+          autoSize.centerY = payload.y + autoSize.currentHeight / 2;
+        });
+      } catch { /* event API unavailable: initial center still works */ }
+      scheduleWindowFit(true);
+    } catch { /* no page-control permission */ }
+  }
+
   function updateCompact() {
     if (document.body.dataset.layout !== "line") return;
     const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
@@ -554,6 +677,7 @@
       compactFill.textContent = line.text || "♪";
       compactViewport.classList.remove("overflow");
       compactText.style.transform = "translateX(0)";
+      scheduleWindowFit();
     }
     const overflow = compactText.scrollWidth - compactViewport.clientWidth;
     if (overflow > 2) {
@@ -572,8 +696,11 @@
   function applyLayout() {
     const explicit = first("layout");
     const compact = explicit === "line" || (explicit !== "card" && window.innerHeight <= 220);
-    document.body.dataset.layout = compact ? "line" : "card";
+    const nextLayout = compact ? "line" : "card";
+    const changed = document.body.dataset.layout !== nextLayout;
+    document.body.dataset.layout = nextLayout;
     updateCompact();
+    if (changed && nextLayout === "line" && autoSize.enabled) scheduleWindowFit(true);
   }
 
   function updateProgress() {
@@ -756,6 +883,12 @@
   renderLyrics();
   setTrackMeta({});
   applyLayout();
+  void initWindowAutoSize();
+  if (document.fonts?.ready) {
+    document.fonts.ready.then(() => {
+      if (document.body.dataset.layout === "line") scheduleWindowFit(true);
+    }).catch(() => {});
+  }
 
   if (coverUrl) {
     coverEl.src = coverUrl;

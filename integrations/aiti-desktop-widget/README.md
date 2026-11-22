@@ -245,10 +245,39 @@ The shell is stateless: persist the last `moved` position (and `display`) yourse
 no mouse events, so it cannot be dragged).
 
 Because pages are served from localhost (a "remote" origin for Tauri), the drag capability
-grants only `core:window:allow-start-dragging` to `http://` **and `https://`** `127.0.0.1` /
-`localhost` (see `capabilities/widget-drag.json`). Tauri's remote URL patterns cannot express
-an IPv6 literal, so a page loaded from `http://[::1]` can render but is **not** granted drag;
-use `localhost` when dragging matters.
+grants `core:window:allow-start-dragging` to `http://` **and `https://`** `127.0.0.1` /
+`localhost` (`capabilities/widget-drag.json`). Tauri's remote URL patterns cannot express an
+IPv6 literal, so a page loaded from `http://[::1]` can render but is **not** granted drag; use
+`localhost` when dragging matters.
+
+## Page control (loopback pages, on by default)
+
+Loopback pages also get a **window-control capability** (`capabilities/widget-page-control.json`)
+and `withGlobalTauri: true`, so a page can adapt its own window at runtime:
+
+```js
+const { getCurrentWindow } = window.__TAURI__.window;
+const { LogicalSize, LogicalPosition } = window.__TAURI__.dpi;
+const win = getCurrentWindow();
+
+const pos = await win.outerPosition();
+const size = await win.outerSize();
+await win.setSize(new LogicalSize(600, 220));
+await win.setPosition(new LogicalPosition(100, 200));
+await win.setAlwaysOnTop(true);
+```
+
+Granted by default: geometry/monitor reads, `setSize`/`setPosition`/`center`, size constraints,
+`startDragging`/`startResizeDragging`, always-on-top, click-through, visible-on-all-workspaces,
+skip-taskbar, shadow, decorations, resizable, focusable, title, hide/show/close and webview zoom.
+The capability is **loopback-only**: with `--allow-remote true`, an external page can render but
+cannot invoke these commands. Destructive/multi-window permissions (`create`, `destroy`,
+`getAllWindows`, fullscreen/maximize, icon/badge/progress, clear-data/devtools) stay off.
+
+`--resizable false` is implemented as min=max constraints. A page that changes its size must
+call `setMinSize`/`setMaxSize` (or `setSizeConstraints`) before `setSize`, otherwise the launch
+size clamps the request. `draggable` is still a DOM concern (`data-tauri-drag-region`), not a
+window property.
 
 ## Platform notes
 

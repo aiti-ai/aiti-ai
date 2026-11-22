@@ -11,9 +11,11 @@
     "security": {
       "csp": null,
       "capabilities": [
-        "widget-drag"
+        "widget-drag",
+        "widget-page-control"
       ]
-    }
+    },
+    "withGlobalTauri": true
   },
   "bundle": {
     "active": false,
