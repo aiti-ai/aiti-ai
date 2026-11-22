@@ -160,7 +160,9 @@ async function runDaemon(values, flags) {
     port: Number(values.port) || 0,
     token: values.token,
     allowCreate: true,
-    onCreate: () => { if (!flags.has("no-window")) void win.open(server.url); },
+    // Only (re)spawn a missing window: navigating an open one would reload the page
+    // (pending state survives, but it flickers) on every new request.
+    onCreate: () => { if (!flags.has("no-window") && !win.running) void win.open(server.url); },
   });
   const win = new InteractionWidgetWindow({
     bin: values["widget-bin"],
