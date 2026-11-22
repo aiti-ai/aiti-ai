@@ -126,6 +126,8 @@ export default function register(ctx: {
         onClose: () => setDialog(false),
         onOpenFile: (filePath: string, fileName?: string) => openFileInHost(filePath, fileName),
         initialTab: "ports",
+        openContainer: openContainerPanel,
+        containerByPort: containerPortMap(),
       }));
   }
 
