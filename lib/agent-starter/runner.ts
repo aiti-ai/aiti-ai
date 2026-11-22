@@ -94,6 +94,28 @@ export function unitNameFor(key: string): string {
 }
 
 /**
+ * Is a transient unit still loaded (active or on its way there/out)?
+ *
+ * A wrapper whose socket file was lost keeps the unit name taken; systemd-run
+ * refuses to start another unit with that name ("was already loaded or has a
+ * fragment file"), so the launcher must distinguish "unit busy" (report it) from
+ * "unit gone" (safe to spawn) instead of unlinking files and retrying blindly.
+ */
+export function unitBusy(unit: string, env: Record<string, string> = {}): Promise<boolean> {
+  return new Promise((resolve) => {
+    execFile(
+      "systemctl",
+      ["--user", "is-active", unit],
+      { env: { ...process.env, ...env }, timeout: 4000 },
+      (_err, stdout) => {
+        const state = String(stdout ?? "").trim();
+        resolve(state === "active" || state === "activating" || state === "reloading" || state === "deactivating");
+      },
+    );
+  });
+}
+
+/**
  * Start the wrapper program and return a handle on the launcher process (the
  * launcher exits immediately for systemd-run; for the plain variant it IS the
  * wrapper, detached and unref'ed).
