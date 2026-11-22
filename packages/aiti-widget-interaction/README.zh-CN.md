@@ -13,6 +13,10 @@ npm run build
 node --test test/*.test.mjs
 ```
 
+页面里的 module script **不要用顶层 await**：macOS 11 的 WKWebView 会静默跳过整段脚本
+（窗口正常但页面永不连接）。把启动逻辑包进 `async function start()`；`test/pages.test.mjs`
+已对随包页面做守卫。
+
 `AITI_WIDGET_DEBUG=1` 会把壳的 stderr 透传出来；默认适配层保留最后 4 kB，可用
 `window.stderr` 读取（“窗口空白 / 页面没回调”通常是会话锁屏或页面加载失败，先看这里）。
 
