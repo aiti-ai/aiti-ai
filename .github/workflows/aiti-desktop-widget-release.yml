@@ -177,7 +177,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: widget-${{ matrix.platform }}
+          name: desktop-widget-${{ matrix.platform }}
           path: dist/${{ matrix.asset }}
           if-no-files-found: error
 
@@ -191,7 +191,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          pattern: widget-*
+          pattern: desktop-widget-*
           merge-multiple: true
           path: dist
       - name: Checksums
@@ -228,7 +228,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          pattern: widget-*
+          pattern: desktop-widget-*
           merge-multiple: true
           path: dist
       - name: Mirror to Gitee
