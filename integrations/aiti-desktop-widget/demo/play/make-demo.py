@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parent
 ASSETS = ROOT / "assets"
 VOICE = "en-US-AriaNeural"
 LEAD = 0.50
-GAP = 0.65
+GAP = 0.15  # keep the karaoke fill close to the end of each spoken line
 LINES = [
     "Hello, I'm aiti desktop widget.",
     "I turn any web page into a floating, transparent desktop layer.",
