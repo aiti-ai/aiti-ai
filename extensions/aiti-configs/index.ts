@@ -333,9 +333,9 @@ export default {
 
   // 定时任务（注册给 aiti-ai-schedule 聚合执行；不重复造 setInterval）——具体行为由 ai-configs.json 的 sentry 段控制
   schedules: [
-    { id: "configs-sentry", name: "配置崩溃哨兵（自检指纹 + 可选桥检测）", intervalSec: 60, enabled: true, run: sentryTaskRun },
-    { id: "configs-stale-warn", name: "配置变更滞留提醒", intervalSec: 3600, enabled: true, run: staleWarnRun },
-    { id: "configs-auto-commit", name: "配置定时兜底提交", intervalSec: 86400, enabled: true, run: autoCommitRun },
+    { id: "configs-sentry", name: "i18n:cfg.sch.sentry", intervalSec: 60, enabled: true, run: sentryTaskRun },
+    { id: "configs-stale-warn", name: "i18n:cfg.sch.staleWarn", intervalSec: 3600, enabled: true, run: staleWarnRun },
+    { id: "configs-auto-commit", name: "i18n:cfg.sch.autoCommit", intervalSec: 86400, enabled: true, run: autoCommitRun },
   ],
 
   // AI 自管理清单（ai-helper 主动聚合）：AI 可说「帮我提交配置 / 回滚配置」
@@ -363,6 +363,10 @@ export default {
       //   short code → en → first table" would wrongly hit the en table, mixing languages in reverse).
       //   en table = translations. Static-slot entries (it.* / cfg.* / ext.*) get one copy in each table.
       "zh-CN": {
+        // Hook-task display names (consumed by aiti-ai-schedule page via the "i18n:" prefix)
+        "cfg.sch.sentry": "配置崩溃哨兵（自检指纹 + 可选桥检测）",
+        "cfg.sch.staleWarn": "配置变更滞留提醒",
+        "cfg.sch.autoCommit": "配置定时兜底提交",
         "it.open.label": "配置",
         "cfg.open.label": "配置",
         "cfg.open.title": "aiti-configs：配置版本化（status/commit/恢复）+ 自检报告 + 历史版本安全盾",
@@ -440,6 +444,9 @@ export default {
         "（请立即备份！）": "（请立即备份！）",
       },
       en: {
+        "cfg.sch.sentry": "Config crash sentinel (self-check fingerprint + optional bridge probe)",
+        "cfg.sch.staleWarn": "Uncommitted config-change reminder",
+        "cfg.sch.autoCommit": "Scheduled config fallback commit",
         "it.open.label": "Configs",
         "cfg.open.label": "Config",
         "cfg.open.title": "aiti-configs: config versioning (status/commit/restore) + self-check + history shield",

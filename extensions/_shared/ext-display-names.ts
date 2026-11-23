@@ -125,6 +125,23 @@ function localeText(map: Record<string, string> | null | undefined, locale: stri
   return family ? family[1] : "";
 }
 
+/** Cross-extension item-text resolution ("i18n:<key>" prefix → the declaring extension's manifest
+ *  ui.i18n table). Cascading table pick (current locale → language short → zh-CN for zh → en → first
+ *  table); non-prefixed text passes through; missing table/key falls back to the bare key. Consumers
+ *  prime the registry once at mount (primeExtRegistry(apiUrlFn)); until the cache lands the bare key
+ *  is returned. Same protocol as the host translateExtItemText / app-center / extman resolvers. */
+export function extItemText(extId: string | undefined, text: string | undefined, locale: string): string {
+  if (!text) return "";
+  if (!extId || !text.startsWith("i18n:")) return text;
+  primeExtRegistry();
+  const key = text.slice("i18n:".length);
+  const ui18n = registry?.[extId]?.ui?.i18n;
+  if (!ui18n) return key;
+  const short = locale.split("-")[0];
+  const tbl = ui18n[locale] ?? ui18n[short] ?? (short === "zh" ? ui18n["zh-CN"] : undefined) ?? ui18n.en ?? Object.values(ui18n)[0] ?? {};
+  return tbl[key] ?? key;
+}
+
 /** Feature label: "feat.<id>" entry → "i18n:<key>" prefix (host translateExtItemText cascade) → raw manifest text. */
 export function featureLabelFor(ext: { ui?: { i18n?: UiI18n } | null } | undefined | null, f: { id: string; label?: unknown }, locale: string): string {
   const ui18n = ext?.ui?.i18n;

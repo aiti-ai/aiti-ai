@@ -919,7 +919,7 @@ export default {
   schedules: [
     {
       id: "tts-cache-gc",
-      name: "tts 缓存清理（过期 30 天 + 1GB LRU）",
+      name: "i18n:speek.sch.ttsGc",
       intervalSec: 86400, // 1 天
       enabled: true,
       run: (ctx: { configDir?: string }) => {
@@ -948,6 +948,7 @@ export default {
         "it.settings.label": "跟读设置",
         "it.bar.label": "跟读播放条",
         "ext.displayName": "AI 语音朗读",        "speek.followMode.label": "跟读模式",
+        "speek.sch.ttsGc": "tts 缓存清理（过期 30 天 + 1GB LRU）",
         "speek.followMode.title": "跟读模式：AI 回复自动朗读（可暂停/跳过/切音色）",
         "speek.followOn": "跟读模式已开启，AI 回复将自动朗读",
         "speek.followOff": "开启跟读模式：AI 回复自动朗读",
@@ -1146,6 +1147,7 @@ export default {
         "it.read.label": "Read this reply aloud",
         "it.bar.label": "Read-aloud bar",
         "ext.displayName": "AI Read Aloud",
+        "speek.sch.ttsGc": "TTS cache GC (30-day expiry + 1GB LRU)",
         "feat.bar": "Read-aloud playback bar",
         "feat.read": "Read this reply aloud",
         "feat.settings": "Read-aloud settings",
