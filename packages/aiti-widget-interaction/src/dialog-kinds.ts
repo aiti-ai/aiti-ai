@@ -1,6 +1,6 @@
 import type { InteractionRequestInput, InteractionResult } from "./types.ts";
 
-export type DialogKind = "confirm" | "choose" | "input" | "file" | "directory" | "notify" | "custom";
+export type DialogKind = "confirm" | "choose" | "input" | "form" | "file" | "directory" | "notify" | "custom";
 
 export interface DialogSpec {
   kind: DialogKind;
@@ -15,6 +15,20 @@ export interface DialogSpec {
   defaultValue?: string;
   placeholder?: string;
   password?: boolean;
+  /** Multi-field form (zenity --forms). */
+  fields?: Array<{
+    label: string;
+    type?: "text" | "password" | "number" | "combo";
+    options?: string[];
+    required?: boolean;
+    placeholder?: string;
+    defaultValue?: string;
+    pattern?: string;
+  }>;
+  /** Joins form values on stdout (default "|"). */
+  separator?: string;
+  /** Input validation regex (kind=input). */
+  pattern?: string;
   multiple?: boolean;
   /** Glob filters, e.g. ["*.png", "*.jpg"]. */
   filters?: string[];
@@ -30,6 +44,7 @@ const DEFAULT_TITLES: Record<Exclude<DialogKind, "custom">, string> = {
   confirm: "Confirm",
   choose: "Choose",
   input: "Input",
+  form: "Form",
   file: "Choose file",
   directory: "Choose folder",
   notify: "Notice",
@@ -72,9 +87,38 @@ export function dialogToRequest(spec: DialogSpec): InteractionRequestInput {
       input: {
         placeholder: String(spec.placeholder || ""),
         defaultValue: String(spec.defaultValue || ""),
-        secret: spec.password === true
+        secret: spec.password === true,
+        pattern: spec.pattern ? String(spec.pattern) : undefined,
       },
       actions: [{ id: "submit", label: ok, kind: "primary" }],
+    };
+  }
+  if (spec.kind === "form") {
+    const fields = (spec.fields || []).map((field, index) => {
+      const type = field.type === "password" || field.type === "number" || field.type === "combo" ? field.type : "text";
+      return {
+        id: `f${index + 1}`,
+        label: String(field.label || `Field ${index + 1}`),
+        type,
+        placeholder: field.placeholder ? String(field.placeholder) : undefined,
+        defaultValue: field.defaultValue !== undefined ? String(field.defaultValue) : undefined,
+        options: type === "combo" ? (field.options || []).map(String) : undefined,
+        required: field.required === true,
+        pattern: field.pattern ? String(field.pattern) : undefined,
+      };
+    });
+    if (!fields.length) throw new Error("form requires at least one field");
+    return {
+      kind: "form",
+      title,
+      message: text,
+      detail,
+      timeoutMs,
+      form: { fields, separator: String(spec.separator || "|") },
+      actions: [
+        { id: "submit", label: ok, kind: "primary" },
+        { id: "cancel", label: cancel, kind: "secondary" },
+      ],
     };
   }
   if (spec.kind === "file" || spec.kind === "directory") {
@@ -151,6 +195,15 @@ export function dialogStdout(result: InteractionResult, spec: DialogSpec): strin
   if (result.status !== "answered") return "";
   if (spec.kind === "confirm") return "";
   if (spec.kind === "notify") return "";
+  if (spec.kind === "form") {
+    const form = result.value as { values?: Record<string, string>; order?: string[] } | undefined;
+    const separator = spec.separator ?? "|";
+    if (form && form.values) {
+      const order = form.order && form.order.length ? form.order : Object.keys(form.values);
+      return order.map((id) => String(form.values?.[id] ?? "")).join(separator);
+    }
+    return "";
+  }
   const fromValue = stringValue(result.value);
   if (fromValue) return fromValue;
   if (spec.kind === "input") return "";
@@ -170,6 +223,10 @@ export function dialogWindowSize(spec: DialogSpec): { width: number; height: num
   if (spec.kind === "choose") {
     const rows = Math.max(1, Math.min(8, (spec.options || []).length));
     return { width: 460, height: 170 + rows * 34 };
+  }
+  if (spec.kind === "form") {
+    const rows = Math.max(1, Math.min(10, (spec.fields || []).length));
+    return { width: 480, height: 190 + rows * 58 };
   }
   if (spec.kind === "file" || spec.kind === "directory") return { width: 460, height: 210 };
   return { width: 560, height: 300 };

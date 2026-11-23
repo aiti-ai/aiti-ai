@@ -31,13 +31,15 @@ import {
   withInteractionParams,
 } from "../dist/index.js";
 
-const KINDS = new Set(["confirm", "choose", "input", "file", "directory", "notify", "custom"]);
+const KINDS = new Set(["confirm", "choose", "input", "form", "file", "directory", "notify", "custom"]);
 const VALUE_FLAGS = new Set([
   "text", "title", "detail", "ok-label", "cancel-label", "options", "option",
   "default", "placeholder", "filter", "timeout", "page", "width", "height",
-  "x", "y", "display", "widget-bin", "port", "token", "ttl",
+  "x", "y", "display", "widget-bin", "port", "token", "ttl", "separator", "pattern",
 ]);
 const BOOL_FLAGS = new Set(["json", "password", "multiple", "daemon", "no-window", "center", "help", "version"]);
+// `--field*` flags are repeatable and carry their own value; parsed separately below.
+const FIELD_FLAGS = new Set(["field", "field-password", "field-number", "field-combo"]);
 
 function usage(code = 0) {
   const text = readFileSync(fileURLToPath(new URL("../README.md", import.meta.url)), "utf8");
@@ -57,6 +59,7 @@ function parseArgs(argv) {
   const values = {};
   const flags = new Set();
   const list = [];
+  const fields = [];
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (!arg.startsWith("--")) { list.push(arg); continue; }
@@ -64,6 +67,11 @@ function parseArgs(argv) {
     const eq = body.indexOf("=");
     const name = eq >= 0 ? body.slice(0, eq) : body;
     const inline = eq >= 0 ? body.slice(eq + 1) : null;
+    if (FIELD_FLAGS.has(name)) {
+      const value = inline !== null ? inline : (argv[i + 1] && !argv[i + 1].startsWith("--") ? (i += 1, argv[i]) : "");
+      fields.push({ kind: name.slice("field".length).replace(/^-/, "") || "text", value });
+      continue;
+    }
     if (VALUE_FLAGS.has(name)) {
       const value = inline !== null ? inline : (argv[i + 1] && !argv[i + 1].startsWith("--") ? (i += 1, argv[i]) : "");
       if (name === "option") (values.option ||= []).push(value);
@@ -75,7 +83,7 @@ function parseArgs(argv) {
       process.exit(2);
     }
   }
-  return { values, flags, list };
+  return { values, flags, list, fields };
 }
 
 function exitWith(code, message) {
@@ -197,7 +205,7 @@ async function runDaemon(values, flags) {
   setInterval(() => {}, 1 << 30);
 }
 
-const { values, flags, list } = parseArgs(process.argv.slice(2));
+const { values, flags, list, fields } = parseArgs(process.argv.slice(2));
 if (flags.has("help")) usage(0);
 if (flags.has("version")) version();
 
@@ -210,6 +218,18 @@ if (flags.has("daemon")) {
     process.exit(2);
   }
   if (kind === "choose" && !values.options && !values.option) exitWith(2, "choose requires --options");
+  if (kind === "form" && fields.length === 0) exitWith(2, "form requires at least one --field/--field-combo");
+  const formFields = fields.map(({ kind: fieldKind, value }) => {
+    const raw = String(value || "");
+    const [label, options] = raw.split(":");
+    return {
+      label: label.trim(),
+      type: fieldKind === "password" ? "password" : fieldKind === "number" ? "number" : fieldKind === "combo" ? "combo" : "text",
+      options: fieldKind === "combo" && options ? options.split(",").map((x) => x.trim()).filter(Boolean) : undefined,
+      required: label.trim().endsWith("*"),
+    };
+  });
+  if (kind === "form") formFields.forEach((f) => { if (f.label.endsWith("*")) f.label = f.label.slice(0, -1); });
   const spec = {
     kind,
     text: values.text,
@@ -224,6 +244,9 @@ if (flags.has("daemon")) {
     multiple: flags.has("multiple"),
     filters: values.filter ? [values.filter] : undefined,
     page: values.page,
+    pattern: values.pattern,
+    separator: values.separator,
+    fields: kind === "form" ? formFields : undefined,
   };
   await runOnce(spec, values, flags);
 }

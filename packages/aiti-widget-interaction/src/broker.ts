@@ -42,6 +42,7 @@ function normalizeRequest(input: InteractionRequestInput, id: string, now: numbe
     actions: Array.isArray(input.actions) ? input.actions.map((action) => ({ ...action })) : [],
     input: { ...(input.input || {}) },
     pick: { ...(input.pick || {}) },
+    form: { ...(input.form || {}) },
     custom: { ...(input.custom || {}) },
     timeoutMs: Math.max(0, Number.isFinite(Number(timeoutValue)) ? Number(timeoutValue) : 0),
     keepOpen: input.keepOpen === true,

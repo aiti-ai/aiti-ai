@@ -18,6 +18,7 @@ function normalizeRequest(input, id, now, defaultTimeoutMs) {
     actions: Array.isArray(input.actions) ? input.actions.map((action) => ({ ...action })) : [],
     input: { ...input.input || {} },
     pick: { ...input.pick || {} },
+    form: { ...input.form || {} },
     custom: { ...input.custom || {} },
     timeoutMs: Math.max(0, Number.isFinite(Number(timeoutValue)) ? Number(timeoutValue) : 0),
     keepOpen: input.keepOpen === true,
@@ -1118,6 +1119,7 @@ var DEFAULT_TITLES = {
   confirm: "Confirm",
   choose: "Choose",
   input: "Input",
+  form: "Form",
   file: "Choose file",
   directory: "Choose folder",
   notify: "Notice"
@@ -1157,9 +1159,38 @@ function dialogToRequest(spec) {
       input: {
         placeholder: String(spec.placeholder || ""),
         defaultValue: String(spec.defaultValue || ""),
-        secret: spec.password === true
+        secret: spec.password === true,
+        pattern: spec.pattern ? String(spec.pattern) : void 0
       },
       actions: [{ id: "submit", label: ok, kind: "primary" }]
+    };
+  }
+  if (spec.kind === "form") {
+    const fields = (spec.fields || []).map((field, index) => {
+      const type = field.type === "password" || field.type === "number" || field.type === "combo" ? field.type : "text";
+      return {
+        id: `f${index + 1}`,
+        label: String(field.label || `Field ${index + 1}`),
+        type,
+        placeholder: field.placeholder ? String(field.placeholder) : void 0,
+        defaultValue: field.defaultValue !== void 0 ? String(field.defaultValue) : void 0,
+        options: type === "combo" ? (field.options || []).map(String) : void 0,
+        required: field.required === true,
+        pattern: field.pattern ? String(field.pattern) : void 0
+      };
+    });
+    if (!fields.length) throw new Error("form requires at least one field");
+    return {
+      kind: "form",
+      title,
+      message: text2,
+      detail,
+      timeoutMs,
+      form: { fields, separator: String(spec.separator || "|") },
+      actions: [
+        { id: "submit", label: ok, kind: "primary" },
+        { id: "cancel", label: cancel, kind: "secondary" }
+      ]
     };
   }
   if (spec.kind === "file" || spec.kind === "directory") {
@@ -1227,6 +1258,15 @@ function dialogStdout(result, spec) {
   if (result.status !== "answered") return "";
   if (spec.kind === "confirm") return "";
   if (spec.kind === "notify") return "";
+  if (spec.kind === "form") {
+    const form = result.value;
+    const separator = spec.separator ?? "|";
+    if (form && form.values) {
+      const order = form.order && form.order.length ? form.order : Object.keys(form.values);
+      return order.map((id) => String(form.values?.[id] ?? "")).join(separator);
+    }
+    return "";
+  }
   const fromValue = stringValue(result.value);
   if (fromValue) return fromValue;
   if (spec.kind === "input") return "";
@@ -1242,6 +1282,10 @@ function dialogWindowSize(spec) {
   if (spec.kind === "choose") {
     const rows = Math.max(1, Math.min(8, (spec.options || []).length));
     return { width: 460, height: 170 + rows * 34 };
+  }
+  if (spec.kind === "form") {
+    const rows = Math.max(1, Math.min(10, (spec.fields || []).length));
+    return { width: 480, height: 190 + rows * 58 };
   }
   if (spec.kind === "file" || spec.kind === "directory") return { width: 460, height: 210 };
   return { width: 560, height: 300 };

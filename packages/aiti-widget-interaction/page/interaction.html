@@ -29,6 +29,12 @@
   #pickwrap { margin:10px 0; display:flex; flex-direction:column; gap:8px; }
   /* author display overrides [hidden] in the UA sheet — keep the attribute effective */
   #pickwrap[hidden] { display:none; }
+  #formwrap { margin:10px 0; display:flex; flex-direction:column; gap:8px; }
+  #formwrap[hidden] { display:none; }
+  .frow { display:flex; flex-direction:column; gap:4px; }
+  .frow label { font-size:11px; color:var(--muted); }
+  .frow .req { color:#fca5a5; margin-left:3px; }
+  .frow .err { font-size:11px; color:#fecaca; min-height:0; }
   #picklist { color:var(--muted); font-size:12px; white-space:pre-wrap; word-break:break-all; }
   #comment { margin:8px 0; }
   #footer { display:flex; align-items:center; gap:8px; justify-content:flex-end; margin-top:10px; }
@@ -48,6 +54,7 @@
     <div id="state" hidden></div>
     <div id="options"></div>
     <div id="inputwrap" hidden><input id="input" autocomplete="off"></div>
+    <div id="formwrap" hidden></div>
     <div id="pickwrap" hidden>
       <button id="pickbtn" type="button">Choose…</button>
       <div id="picklist"></div>
@@ -102,6 +109,17 @@ function renderActions(request) {
   const actions = $("actions");
   clear(actions);
   if (request.kind === "choose" && request.options?.length) return;
+  if (request.kind === "form") {
+    actions.appendChild(button(request.actions?.find((a) => a.id === "cancel")?.label || "Cancel", async () => {
+      await submit(request.id, { action: "cancel" });
+    }, "secondary"));
+    actions.appendChild(button(request.actions?.find((a) => a.id === "submit")?.label || "Submit", async () => {
+      const form = collectForm(request);
+      if (!form) return;
+      await submit(request.id, { action: "submit", value: form });
+    }, "primary"));
+    return;
+  }
   if (request.kind === "pick_path") {
     actions.appendChild(button("Cancel", async () => { await submit(request.id, { action: "cancel" }); }, "secondary"));
     actions.appendChild(button(request.actions?.find((a) => a.id === "pick")?.label || "OK", async () => {
@@ -121,7 +139,16 @@ function renderActions(request) {
   for (const action of list) {
     actions.appendChild(button(text(action.label || action.id), async () => {
       const payload = { action: action.id, value: action.value };
-      if (request.kind === "input") payload.value = { text: $("input").value };
+      if (request.kind === "input") {
+      const value = $("input").value;
+      const pattern = $("input").dataset.pattern || "";
+      if (pattern) {
+        let re = null;
+        try { re = new RegExp(pattern); } catch { re = null; }
+        if (re && !re.test(value)) { showError("Does not match " + pattern); return; }
+      }
+      payload.value = { text: value };
+    }
       if (request.kind === "confirm") payload.approved = action.id !== "reject" && action.id !== "cancel";
       const comment = $("commentinput").value.trim();
       if (comment) payload.comment = comment;
@@ -173,6 +200,83 @@ async function pickWithTauri(request) {
 
 function showPicked(paths) {
   $("picklist").textContent = paths.length ? paths.join("\n") : "";
+}
+
+function formInputs(request) {
+  return (request.form && request.form.fields) || [];
+}
+
+function renderForm(request) {
+  const wrap = $("formwrap");
+  wrap.textContent = "";
+  const fields = formInputs(request);
+  wrap.hidden = request.kind !== "form" || fields.length === 0;
+  if (wrap.hidden) return;
+  for (const field of fields) {
+    const row = document.createElement("div");
+    row.className = "frow";
+    const label = document.createElement("label");
+    label.textContent = field.label || field.id;
+    if (field.required) {
+      const req = document.createElement("span");
+      req.className = "req";
+      req.textContent = "*";
+      label.appendChild(req);
+    }
+    row.appendChild(label);
+    let input;
+    if (field.type === "combo" && Array.isArray(field.options) && field.options.length) {
+      input = document.createElement("select");
+      for (const option of field.options) {
+        const opt = document.createElement("option");
+        opt.value = String(option);
+        opt.textContent = String(option);
+        input.appendChild(opt);
+      }
+      if (field.defaultValue) input.value = field.defaultValue;
+    } else {
+      input = document.createElement("input");
+      input.type = field.type === "password" ? "password" : field.type === "number" ? "number" : "text";
+      if (field.placeholder) input.placeholder = field.placeholder;
+      if (field.defaultValue !== undefined) input.value = field.defaultValue;
+    }
+    input.dataset.fieldId = field.id;
+    row.appendChild(input);
+    const err = document.createElement("div");
+    err.className = "err";
+    err.dataset.fieldError = field.id;
+    row.appendChild(err);
+    wrap.appendChild(row);
+  }
+}
+
+/** Collect form values; returns null when a field fails validation (errors painted inline). */
+function collectForm(request) {
+  const values = {};
+  const order = [];
+  let ok = true;
+  for (const field of formInputs(request)) {
+    const input = document.querySelector('[data-field-id="' + field.id + '"]');
+    const err = document.querySelector('[data-field-error="' + field.id + '"]');
+    if (err) err.textContent = "";
+    const value = input ? String(input.value ?? "") : "";
+    order.push(field.id);
+    values[field.id] = value;
+    if (field.required && !value.trim()) {
+      if (err) err.textContent = "Required";
+      ok = false;
+      continue;
+    }
+    if (field.pattern) {
+      let re = null;
+      try { re = new RegExp(field.pattern); } catch { re = null; }
+      if (re && !re.test(value)) {
+        if (err) err.textContent = "Does not match " + field.pattern;
+        ok = false;
+      }
+    }
+  }
+  return ok ? { values, order } : null;
 }
 
 let fitSeq = 0;
@@ -245,6 +349,7 @@ function render() {
   $("detail").hidden = !request.detail;
   const allowComment = request.data && typeof request.data === "object" && request.data.allowComment === true;
   $("comment").hidden = !(allowComment || request.kind === "input");
+  renderForm(request);
   $("commentinput").placeholder = "Optional comment / reason";
   const inputWrap = $("inputwrap");
   inputWrap.hidden = request.kind !== "input";
@@ -258,6 +363,7 @@ function render() {
   }
   if (request.kind === "input") {
     $("input").placeholder = text(request.input?.placeholder) || "Type here…";
+    $("input").dataset.pattern = text(request.input?.pattern);
     $("input").type = request.input?.secret ? "password" : "text";
     if (!$("input").value) $("input").value = text(request.input?.defaultValue);
   }
@@ -301,7 +407,7 @@ document.addEventListener("keydown", (event) => {
     void submit(request.id, { action: "cancel" });
     return;
   }
-  if (event.key === "Enter" && request.kind !== "input" && request.kind !== "pick_path") {
+  if (event.key === "Enter" && request.kind !== "input" && request.kind !== "pick_path" && request.kind !== "form") {
     const primary = $("actions").querySelector("button.primary");
     if (primary) { event.preventDefault(); primary.click(); }
   }

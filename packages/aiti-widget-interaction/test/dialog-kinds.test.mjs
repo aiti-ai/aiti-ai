@@ -68,3 +68,37 @@ test("placement flags are normalized for the widget window", () => {
   assert.deepEqual(dialogWindowPlacement({}), {});
   assert.equal(dialogWindowPlacement({ display: "" }).display, undefined);
 });
+
+test("form maps --field* into typed fields and joins stdout", () => {
+  const request = dialogToRequest({
+    kind: "form",
+    separator: ";",
+    fields: [
+      { label: "Name", required: true },
+      { label: "Env", type: "combo", options: ["dev", "prod"] },
+      { label: "Token", type: "password" },
+    ],
+  });
+  assert.equal(request.kind, "form");
+  assert.equal(request.form.separator, ";");
+  assert.deepEqual(request.form.fields.map((f) => f.label), ["Name", "Env", "Token"]);
+  assert.equal(request.form.fields[0].required, true);
+  assert.deepEqual(request.form.fields[1].options, ["dev", "prod"]);
+  assert.equal(request.form.fields[2].type, "password");
+  const out = dialogStdout(
+    ok({ action: "submit", value: { values: { f1: "wind", f2: "prod", f3: "s3cret" }, order: ["f1", "f2", "f3"] } }),
+    { kind: "form", separator: ";" },
+  );
+  assert.equal(out, "wind;prod;s3cret");
+});
+
+test("form without fields throws", () => {
+  assert.throws(() => dialogToRequest({ kind: "form" }), /at least one field/);
+});
+
+test("input carries an optional validation pattern", () => {
+  const request = dialogToRequest({ kind: "input", text: "Port", pattern: "^\\d+$" });
+  assert.equal(request.input.pattern, "^\\d+$");
+  assert.equal(request.kind, "input");
+});
+
