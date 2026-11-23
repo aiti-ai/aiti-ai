@@ -6,10 +6,9 @@ English · [简体中文](./README.zh-CN.md)
 
 ## About aiti
 
-This package is part of the **aiti** ecosystem — a personal AI development workbench powered by [pi](https://pi.dev): **aiti-agent** (a self-hosted web workbench built on the open-source [pi-web](https://github.com/aiti-ai/pi-web)) plus debug injection into mainstream dev tools (aiti-devtools) and a rich extension system.
+This package is part of the **aiti** ecosystem — a personal AI development workbench powered by [pi](https://pi.dev): **aiti-agent** (a self-hosted web workbench built on the open-source [pi-web](https://github.com/aiti-ai/aiti-ai)) plus debug injection into mainstream dev tools (aiti-devtools) and a rich extension system.
 
-- Workbench (aiti-agent, built on pi-web): <https://github.com/aiti-ai/pi-web>
-- Ecosystem monorepo: <https://github.com/aiti-ai/aiti-ai>
+- Workbench & monorepo: <https://github.com/aiti-ai/aiti-ai>
 - Site: <https://aiti.pw>
 
 Category: AI capabilities · Tags: `model` · `probe` · `429` · `rate-limit` · `availability` · `recovery-notify`

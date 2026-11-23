@@ -12,7 +12,7 @@
 
 История происхождения стоит прочтения: два проекта с пятнадцатилетней историей — [TestAgent](https://aiti.pw/extensions/aiti-testagent.html) (отладчик Java-приложений) и [JustDB](https://justdb.ai) (IDE для баз данных) — встретили эру ИИ, ежедневная разработка переехала на pi-web, и с каждой новой функцией проект уходил от апстрима всё дальше, пока aiti не начал жизнь как собственный дистрибутив. Всё построено на реальном ежедневном использовании: кодирование в дороге, разработка с запасного устройства, ни один свободный токен не пропал зря. Полная история: [aiti.pw/guide/origin.html](https://aiti.pw/guide/origin.html).
 
-![AITI Web показывает сессию pi со структурированным Markdown, вызовами инструментов и навигацией по проекту](https://raw.githubusercontent.com/agegr/pi-web/main/docs/screenshot2.png)
+![AITI Web показывает сессию pi со структурированным Markdown, вызовами инструментов и навигацией по проекту](https://raw.githubusercontent.com/aiti-ai/aiti-ai/main/docs/assets/screenshot.png)
 
 ### Встроенные расширения (избранное)
 
@@ -49,7 +49,7 @@ npx @aiti-ai/pi-web@latest
 Чтобы установить команду `pi-web` глобально:
 
 ```bash
-npm install -g @aiti-ai/pi-web@latest --allow-scripts
+npm install -g @aiti-ai/pi-web@latest --allow-scripts=@aiti-ai/pi-web,esbuild,node-pty,@google/genai,protobufjs,unrs-resolver
 pi-web
 ```
 
@@ -106,7 +106,7 @@ PI_WEB_PASSWORD='длинный-случайный-пароль' pi-web --hostna
 
 ### Docker
 
-Каждый релиз публикует образ в `ghcr.io/agegr/pi-web`. Об образе, примере Compose и о том, какие тома сохранять, см. [Running Pi Web in Docker](./docker.md).
+Каждый релиз публикует образ в `ghcr.io/aiti-ai/aiti-ai`. Об образе, примере Compose и о том, какие тома сохранять, см. [Running Pi Web in Docker](./docker.md).
 
 ### HTTP-прокси
 

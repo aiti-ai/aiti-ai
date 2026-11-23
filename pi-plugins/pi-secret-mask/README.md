@@ -23,7 +23,7 @@ Why `rsec_<hash8>` instead of `[REDACTED:name]`: safety-trained models read `[RE
 
 This package is part of the **aiti** ecosystem — a personal AI development workbench powered by [pi](https://pi.dev).
 
-- **aiti Web workbench** (self-hosted, browser-first, this plugin ships pre-installed): npm package **`@aiti-ai/pi-web`** — <https://github.com/aiti-ai/pi-web> · site <https://aiti.pw>
+- **aiti Web workbench** (self-hosted, browser-first, this plugin ships pre-installed): npm package **`@aiti-ai/pi-web`** — <https://github.com/aiti-ai/aiti-ai> · site <https://aiti.pw>
 - Ecosystem monorepo (docs site, extensions, integrations): <https://github.com/aiti-ai/aiti-ai>
 
 **Works standalone**: any pi (coding agent) user can `pi install npm:@aiti-ai/pi-secret-mask` and get every capability on its own — no dependency on any other aiti component.

@@ -21,7 +21,7 @@ const terminals = new Map<string, FakeTerminal>();
 
 function prompt(terminal: FakeTerminal): string {
   const dir = terminal.cwd.startsWith(HOME) ? `~${terminal.cwd.slice(HOME.length)}` : terminal.cwd;
-  return `\x1b[32mdemo@pi-web\x1b[0m:\x1b[34m${dir}\x1b[0m$ `;
+  return `\x1b[32mdemo@aiti\x1b[0m:\x1b[34m${dir}\x1b[0m$ `;
 }
 
 function write(terminal: FakeTerminal, data: string): void {

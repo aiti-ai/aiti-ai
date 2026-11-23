@@ -6,9 +6,9 @@
 
 ## 关于 aiti
 
-本包是 **aiti** 生态的一部分——由 [pi](https://pi.dev) 驱动的个人 AI 开发工作台：**aiti-agent**（基于开源 [pi-web](https://github.com/aiti-ai/pi-web) 的自托管 Web 工作台），加上对主流开发工具的调试注入（aiti-devtools）与丰富的扩展体系。
+本包是 **aiti** 生态的一部分——由 [pi](https://pi.dev) 驱动的个人 AI 开发工作台：**aiti-agent**（基于开源 [pi-web](https://github.com/aiti-ai/aiti-ai) 的自托管 Web 工作台），加上对主流开发工具的调试注入（aiti-devtools）与丰富的扩展体系。
 
-- 工作台（aiti-agent，基于 pi-web）：<https://github.com/aiti-ai/pi-web>
+- 工作台（aiti-agent，基于 pi-web）：<https://github.com/aiti-ai/aiti-ai>
 - 生态主仓：<https://github.com/aiti-ai/aiti-ai>
 - 站点：<https://aiti.pw>
 
