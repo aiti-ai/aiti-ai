@@ -15,7 +15,7 @@ import {
 test("icon table is complete and well-formed", () => {
   assert.deepEqual(validateActionIconTable(), []);
   // The semantics the popover actually renders must all exist.
-  for (const name of ["copy", "quote", "new-session", "share", "file", "folder-open", "reveal", "command", "url", "bookmark", "code"]) {
+  for (const name of ["copy", "quote", "quote-line", "new-session", "share", "file", "folder-open", "reveal", "command", "url", "bookmark", "code"]) {
     assert.ok(ACTION_ICON_NODES[name], `missing built-in icon: ${name}`);
   }
 });
