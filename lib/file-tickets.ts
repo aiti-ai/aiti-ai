@@ -1,4 +1,5 @@
 import { apiUrl } from "@/lib/base-path";
+import { resolveMediaUrl } from "@/lib/demo-seam";
 
 // —— Unified channel that keeps file paths out of URLs ——
 //
@@ -48,7 +49,7 @@ export async function buildTicketUrl(
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined && key !== "ref" && key !== "gitDir") searchParams.set(key, String(value));
   }
-  return apiUrl(`/api/files/_t/${encodeURIComponent(ticket)}?${searchParams.toString()}`);
+  return resolveMediaUrl(apiUrl(`/api/files/_t/${encodeURIComponent(ticket)}?${searchParams.toString()}`));
 }
 
 /** fetch-style file request (list/read/meta/preview/download): the path AND revision tuple (ref/gitDir) go in the body; only benign pagination/format params travel as URL query. */

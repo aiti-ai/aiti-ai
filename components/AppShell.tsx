@@ -23,6 +23,7 @@ import { SettingsPanel, SettingsSectionIcon } from "./SettingsPanel.tsx";
 import dynamic from "next/dynamic";
 import { ExtSlotsProvider, ExtSlot, TakeoverSlot, useExtSlotItems, useExtMetas, dispatchChatSend, ExtItemBoundary, registerExtClientService, ensureExtMaterialized, translateExtItemText } from "./ExtSlots.tsx";
 import { ProviderUsagePanel } from "./ProviderUsagePanel.tsx";
+import { openFullHistory } from "@/lib/demo-seam";
 /** Lazy-loaded SessionSidebar (unified dock plan §7-2): in takeover mode (sidebarContent
  *  has a taker) this component is not rendered at all and the chunk never loads, keeping
  *  the main bundle slim; in fallback mode it is fetched on first render (local chunk,
@@ -3249,10 +3250,9 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
 
   const handleViewFullHistory = useCallback(() => {
     if (!selectedSession) return;
-    window.open(
+    openFullHistory(
+      selectedSession.id,
       apiUrl(`/api/sessions/${encodeURIComponent(selectedSession.id)}/export?inline=1`),
-      "_blank",
-      "noopener,noreferrer",
     );
   }, [selectedSession]);
 
