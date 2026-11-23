@@ -813,6 +813,13 @@ export default {
     // ⚠ 必须写在 ui.* 下——registry 读 e.ext.ui?.clientImmediately（原先误写在扩展顶层
     //   是从未生效的死配置，editor 此前实际一直是即时加载）。
     clientImmediately: false,
+    // [idle prefetch 2026-11-24] Host materializes this lazy extension in the first idle
+    // window after boot (ExtSlots.scheduleIdleMaterialized) so register() runs early and
+    // warmMonacoOnIdle (entry.tsx) can preload the Monaco AMD chain ahead of the first
+    // file open — without it the bundle + Monaco waterfall (~3s cold, worse on mobile)
+    // lands entirely on the first open, showing an empty editor for seconds.
+    // The editor has no connect side effects (pure UI registration), safe to load early.
+    prefetchOnIdle: true,
     fileViewer: [
       { id: "aiti-editor", label: "i18n:it.fileviewer.label", title: "i18n:it.fileviewer.title" },
     ],
@@ -1083,6 +1090,7 @@ export default {
         "正在加载…": "正在加载…",
         "正在加载压缩包内容…": "正在加载压缩包内容…",
         "正在加载文件内容…": "正在加载文件内容…",
+        "正在加载编辑器…": "正在加载编辑器…",
         "正在渲染 Mermaid 图表": "正在渲染 Mermaid 图表",
         "正在获取 HEAD 基线…": "正在获取 HEAD 基线…",
         "正在转换（soffice）…首次约需数秒": "正在转换（soffice）…首次约需数秒",
@@ -1554,6 +1562,7 @@ export default {
         "正在加载…": "Loading…",
         "正在加载压缩包内容…": "Loading archive contents…",
         "正在加载文件内容…": "Loading file content…",
+        "正在加载编辑器…": "Loading editor…",
         "正在渲染 Mermaid 图表": "Rendering Mermaid diagram",
         "正在获取 HEAD 基线…": "Getting HEAD baseline…",
         "正在转换（soffice）…首次约需数秒": "Converting (soffice)… first run takes a few seconds",
