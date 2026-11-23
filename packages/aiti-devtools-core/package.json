@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-devtools-core",
-  "version": "0.3.16",
+  "version": "0.3.17",
   "description": "Bridge core of aiti-devtools: the page ⇄ agent message/session bridge (claim/SSE/result protocol), Streamable HTTP MCP endpoint, browser protocol (host-protocol/aiwin) and carrier-agnostic shared capabilities (mcp-config registration / endpoints negotiation / connect middleware / assets).",
   "type": "module",
   "main": "dist/index.js",
@@ -27,5 +27,5 @@
   "bugs": {
     "url": "https://github.com/aiti-ai/aiti-ai/issues"
   },
-  "contentHash": "bce9f9c0c2780e55"
+  "contentHash": "4bc9db5d20615899"
 }
