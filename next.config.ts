@@ -118,6 +118,15 @@ const nextConfig: NextConfig = {
       test: /[\\/]mdast-util-gfm-autolink-literal[\\/]lib[\\/]index\.js$/,
       loader: gfmAutolinkEmailLoader,
     });
+    // Low-memory local-build fallback also shrinks the webpack cache/parallelism. It lives
+    // HERE, not in a second `webpack` key below: a later key in the same object literal
+    // replaces this function, which silently dropped the gfm loader on low-memory builds
+    // (Safari <16.4 then parses mdast's RegExp lookbehind and blanks the page, #753).
+    if (process.env.PI_WEB_BUILD_LOW_MEM === "1") {
+      const lowMem = config as typeof config & { parallelism?: number; cache?: boolean };
+      lowMem.parallelism = 1;
+      lowMem.cache = false;
+    }
     return config;
   },
   // Node modules keep the syntax they ship unless listed here, and mermaid's
@@ -229,11 +238,6 @@ const nextConfig: NextConfig = {
           // virtual memory boundaries repeatedly exit 134 (AddressSpaceReservation failure) on low-memory
           // Windows hosts — remove the worker and compile single-threaded in the main process.
           webpackBuildWorker: false,
-        },
-        webpack: (config: Record<string, unknown>) => {
-          config.parallelism = 1;
-          config.cache = false;
-          return config;
         },
       }
     : {}),

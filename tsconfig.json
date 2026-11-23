@@ -67,7 +67,9 @@
     ".next-local/types/**/*.ts",
     ".next-local/dev/types/**/*.ts",
     ".next-prod-sync/types/**/*.ts",
-    ".next-prod-sync/dev/types/**/*.ts"
+    ".next-prod-sync/dev/types/**/*.ts",
+    ".next-probe/types/**/*.ts",
+    ".next-probe/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",
