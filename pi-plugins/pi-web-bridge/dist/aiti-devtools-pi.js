@@ -1,6 +1,6 @@
-/* aiti-devtools-pi · pi 扩展（内嵌桥 + 工具直连）· 构建产物，勿手改 */
+/* aiti-devtools-pi · pi extension (embedded bridge + direct tool access) · generated bundle, do not edit */
 
-// src/index.ts
+// packages/aiti-devtools-pi/src/index.ts
 import { join as join5, resolve as resolve2, dirname as dirname5 } from "node:path";
 import { readFileSync as readFileSync4, existsSync as existsSync5, writeFileSync as writeFileSync3, openSync as openSync2, appendFileSync as appendFileSync3, mkdirSync as mkdirSync4 } from "node:fs";
 import { spawn as spawn2 } from "node:child_process";
@@ -8,13 +8,13 @@ import { homedir as homedir3 } from "node:os";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
-// ../aiti-devtools-core/src/bridge.ts
+// packages/aiti-devtools-core/src/bridge.ts
 import { randomBytes as randomBytes2, randomInt } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdirSync as mkdirSync2, appendFileSync as appendFileSync2, readdirSync as readdirSync2, readFileSync, existsSync as existsSync2, statSync as statSync2, rmSync as rmSync2, writeFileSync, renameSync, openSync, readSync, closeSync } from "node:fs";
 import { join as join2, dirname as dirname2 } from "node:path";
 
-// ../aiti-devtools-core/src/pair.ts
+// packages/aiti-devtools-core/src/pair.ts
 import { randomBytes } from "node:crypto";
 import { join, dirname } from "node:path";
 import { mkdirSync, appendFileSync, existsSync, statSync, rmSync, unlinkSync, readdirSync, createReadStream } from "node:fs";
@@ -435,7 +435,7 @@ function createPairModule(deps) {
   } };
 }
 
-// ../aiti-devtools-core/src/ua-parse.js
+// packages/aiti-devtools-core/src/ua-parse.js
 var BRAND_NAMES = [
   [/Microsoft Edge/i, "Edge"],
   [/Opera|Opera GX/i, "Opera"],
@@ -567,7 +567,7 @@ function parseUa(ua, nav) {
   return out;
 }
 
-// ../aiti-devtools-core/src/bridge.ts
+// packages/aiti-devtools-core/src/bridge.ts
 var ID_TTL = parseInt(process.env.AITI_BRIDGE_TTL || "600000", 10);
 var AGENT_TTL = parseInt(process.env.AITI_AGENT_TTL || "3600000", 10);
 var BROADCAST_TTL = parseInt(process.env.AITI_BROADCAST_TTL || "600000", 10);
@@ -3466,7 +3466,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
   return { handle, sessions: () => listSessions(), devices: () => listDevices(), routePairSend, pair: () => pair, tools: () => TOOLS, callTool, registerAgent: registerAgent2, bindAgentPage, setAgentSink, answer, clearAgent, pushAiEvent, close };
 }
 
-// ../aiti-devtools-core/src/mcp-config.ts
+// packages/aiti-devtools-core/src/mcp-config.ts
 import { homedir } from "node:os";
 import { join as join3, dirname as dirname3 } from "node:path";
 import { existsSync as existsSync3, readFileSync as readFileSync2, writeFileSync as writeFileSync2, renameSync as renameSync2, mkdirSync as mkdirSync3, rmSync as rmSync3 } from "node:fs";
@@ -3789,7 +3789,7 @@ function autoRegisterAitiShim(opts) {
   }
 }
 
-// ../aiti-devtools-agent/src/bridge-client.ts
+// packages/aiti-devtools-agent/src/bridge-client.ts
 var AgentBridgeClient = class {
   constructor(base) {
     this._bridgeUp = false;
@@ -3983,7 +3983,7 @@ var AgentBridgeClient = class {
   }
 };
 
-// ../aiti-devtools-agent/src/agent-host.ts
+// packages/aiti-devtools-agent/src/agent-host.ts
 function wrapToolResult(r) {
   if (!r.ok) {
     return { content: [{ type: "text", text: r.error || "未知错误" }], details: {}, isError: true };
@@ -3995,7 +3995,7 @@ function wrapToolResult(r) {
   };
 }
 
-// ../aiti-devtools-agent/src/schema.ts
+// packages/aiti-devtools-agent/src/schema.ts
 import { Type } from "typebox";
 function jsonSchemaToTypeBox(schema) {
   if (!schema || typeof schema !== "object") return Type.Object({});
@@ -4027,7 +4027,7 @@ function jsonSchemaToTypeBox(schema) {
   }
 }
 
-// src/bridge-url.ts
+// packages/aiti-devtools-pi/src/bridge-url.ts
 var PI_WEB_EXT_PATH_SIG = "/api/extensions/aiti-devtools";
 function normalizeBridgeBase(url) {
   try {
@@ -4041,7 +4041,7 @@ function normalizeBridgeBase(url) {
   }
 }
 
-// ../../extensions/aiti-attach-agent/registration-guard.mjs
+// extensions/aiti-attach-agent/registration-guard.mjs
 import { existsSync as existsSync4, readFileSync as readFileSync3, realpathSync } from "node:fs";
 import { homedir as homedir2 } from "node:os";
 import { dirname as dirname4, join as join4, resolve, sep } from "node:path";
@@ -4155,7 +4155,7 @@ function checkDuplicateRegistration(opts) {
   return result;
 }
 
-// src/index.ts
+// packages/aiti-devtools-pi/src/index.ts
 function logFile(msg) {
   try {
     const logDir = join5(getAgentDir(), "logs");
