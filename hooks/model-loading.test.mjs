@@ -49,14 +49,17 @@ function setup(fetchImpl, opts = {}) {
   const context = {
     Error, DOMException,
     controller: new AbortController(),
-    newSessionCwd: "/project", session: null, isNew: true, newSessionBackend: null,
-    sessionIdRef: { current: null }, thinkingLevelOverrideRef: { current: null }, newSessionModelOverrideRef: { current: null },
+    newSessionCwd: opts.newSessionCwd ?? "/project", session: opts.session ?? null, isNew: opts.isNew ?? true, newSessionBackend: opts.newSessionBackend ?? null,
+    sessionIdRef: { current: opts.sessionId ?? null }, thinkingLevelOverrideRef: { current: null }, newSessionModelOverrideRef: { current: null },
     // The fork wraps API addresses for sub-path deployments (/dev prefix) with apiUrl(); inside the sandbox it passes through.
     apiUrl: (path) => path,
     thinkingLevelPinsRef: { current: {} }, defaultThinkingLevelRef: { current: null }, allModelsLoadRef: { current: null },
     asConcreteThinkingLevel: (value) => (!value || value === "auto" ? null : value),
     fetch: fetchImpl,
     missingCwdFromBody,
+    // Backend sessions call this for the list_models capability; individual tests inject
+    // their own probe (the pi-family gate must never reach it).
+    sendAgentCommand: opts.sendAgentCommand ?? (async () => { throw new Error("backend catalog not available in this test"); }),
     delay: async (ms) => { delays.push(ms); },
   };
   // These snippets must be evaluated on the **same context object**: free variables of the
@@ -245,4 +248,64 @@ test("a picked model the folder offers keeps its pinned reasoning level; one it 
   started.context.newSessionModelOverrideRef.current = { provider: "other", modelId: "gone" };
   await started.run();
   assert.deepEqual(started.context.newSessionModelOverrideRef.current, { provider: "other", modelId: "gone" });
+});
+
+test("pi-family sessions never ask the backend for list_models (opening must not spawn)", async () => {
+  for (const agent of ["pi", undefined]) {
+    const commands = [];
+    const requests = [];
+    const state = setup(async (url, init) => {
+      requests.push({ url, method: init?.method, body: init?.body });
+      return Response.json({ models: { "custom:test": "Test" }, modelList: [{ provider: "custom", id: "test", name: "Test" }] });
+    }, {
+      isNew: false,
+      sessionId: "7f267d0b-1111-2222-3333-444455556666",
+      session: { id: "7f267d0b-1111-2222-3333-444455556666", ...(agent ? { agent } : {}), cwd: "/project" },
+      sendAgentCommand: async (id, cmd) => {
+        commands.push({ id, cmd });
+        return { models: [] };
+      },
+    });
+    await state.run();
+    assert.deepEqual(commands, [], `agent=${agent}: list_models must not be sent (a cold spawn session would start an agent process)`);
+    assert.ok(requests.some((r) => r.url === "/api/models" && r.method === "POST"), `agent=${agent}: the host catalog is the pi-family source`);
+    assert.ok(state.writes.some(([name, value]) => name === "ModelList" && value[0]?.id === "test"));
+  }
+});
+
+test("external backend sessions still use the list_models catalog", async () => {
+  const requests = [];
+  const calls = [];
+  const state = setup(async (url) => {
+    requests.push(url);
+    throw new Error("local catalog must not be requested for backend sessions");
+  }, {
+    isNew: false,
+    sessionId: "zcode:sess_1",
+    session: { id: "zcode:sess_1", agent: "zcode", cwd: "/project" },
+    sendAgentCommand: async (id, cmd) => {
+      calls.push({ id, type: cmd.type });
+      return { models: [{ id: "m1", provider: "zcode", label: "M1" }] };
+    },
+  });
+  await state.run();
+  assert.deepEqual(calls, [{ id: "zcode:sess_1", type: "list_models" }]);
+  assert.deepEqual(requests, []);
+  assert.ok(state.writes.some(([name, value]) => name === "ModelList" && value[0]?.id === "m1"));
+});
+
+test("tui-bridge sessions keep the backend catalog (socket attach, no spawn)", async () => {
+  const calls = [];
+  const state = setup(async () => { throw new Error("the bridge session has its own catalog"); }, {
+    isNew: false,
+    sessionId: "9a9a9a9a-1111-2222-3333-444455556666",
+    session: { id: "9a9a9a9a-1111-2222-3333-444455556666", agent: "tui-bridge", cwd: "/project" },
+    sendAgentCommand: async (id, cmd) => {
+      calls.push(cmd.type);
+      return { models: [{ id: "bridge-model", provider: "pi", label: "Bridge Model" }] };
+    },
+  });
+  await state.run();
+  assert.deepEqual(calls, ["list_models"]);
+  assert.ok(state.writes.some(([name, value]) => name === "ModelList" && value[0]?.id === "bridge-model"));
 });

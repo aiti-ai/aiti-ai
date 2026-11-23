@@ -2228,14 +2228,26 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
         // list / slow backend), yield to that pick: selecting the restored id here
         // would yank the user back and the 404 branch below would wipe their URL.
         if (options?.initialRestore && userPickedSessionRef.current) return false;
+        // P1: handleOpenSession only consumes `info`, so read the lightweight meta
+        // endpoint first (one JSONL header/incremental scan instead of a full read)
+        // and fall back to the full detail payload on 404 (bridge/handle-only rows).
         const signal = typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(12000) : undefined;
-        const response = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}`), { cache: "no-store", signal });
-        const data = await response.json() as { info?: SessionInfo; error?: string };
+        const metaResponse = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}/meta`), { cache: "no-store", signal });
+        const response = metaResponse.status === 404
+          ? await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}`), { cache: "no-store", signal })
+          : metaResponse;
+        const data = await response.json() as {
+          info?: SessionInfo;
+          session?: SessionInfo;
+          sessions?: SessionInfo[];
+          error?: string;
+        };
+        const info = data.info ?? data.session ?? data.sessions?.find((s) => s.id === sessionId);
         // Re-check after the await: the pick typically happens while this fetch is
         // in flight (the restore only reaches this by-id path when the list does
         // not contain the id, and the fetch is what the user races against).
         if (options?.initialRestore && userPickedSessionRef.current) return false;
-        if (!response.ok || !data.info) {
+        if (!response.ok || !info) {
           // The initial ?session= restore pointed at a deleted session (404): clear the
           // stale last-open record + clear the URL immediately. On the normal path the
           // URL is cleaned by the "default project pick → handleCwdChange → replace"
@@ -2255,13 +2267,13 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
           err.status = response.status;
           throw err;
         }
-        handleSelectSession(data.info);
+        handleSelectSession(info);
         // The by-id fallback of the initial ?session= restore (id not in the
         // sidebar list) is part of the URL restore: anchor the guard AFTER
         // handleSelectSession — it selects with isRestore=false and would
         // otherwise clear the anchor set here.
         if (options?.initialRestore) {
-          urlRestoredSessionRef.current = { id: data.info.id, cwd: data.info.cwd };
+          urlRestoredSessionRef.current = { id: info.id, cwd: info.cwd };
         }
         return true;
       } catch (err) {

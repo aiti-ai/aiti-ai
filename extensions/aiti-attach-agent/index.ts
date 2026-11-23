@@ -472,6 +472,11 @@ export default {
           type: string;
           label: string;
           maxCapabilities: SessionCapabilitiesLike;
+          /**
+           * createSession() only connects to an already-running TUI bridge and
+           * never spawns a process — read paths may attach live sessions.
+           */
+          attachOnly?: boolean;
           ownsFile?(sessionFile: string): Promise<boolean> | boolean;
           createSession(options: { sessionId?: string; sessionFile?: string; cwd?: string; socketPath?: string }): Promise<AttachSessionHandle>;
         }): string;
@@ -486,6 +491,10 @@ export default {
         type: "attach",
         label: "Attached agent (socket)",
         maxCapabilities: new AttachSessionHandle("cap-probe", "/nonexistent").capabilities,
+        // Socket attach only: createSession connects to the TUI bridge's live socket
+        // and never starts a process, so read-only paths (opening a session) may
+        // attach a running session instead of falling back to disk.
+        attachOnly: true,
         // 占用判定：查自家桥注册表（TUI 扩展写入；格式归本扩展所有）
         // 占用判定：查自家桥注册表（TUI 扩展写入；格式归本扩展所有）
         // ⚠️ 必须 await：findLiveBridgeEntry 返回 Promise，不 await 则

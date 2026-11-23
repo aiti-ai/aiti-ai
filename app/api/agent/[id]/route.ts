@@ -282,7 +282,9 @@ export async function GET(
     const bridgedFile = await resolveSessionPath(id).catch(() => null);
     if (bridgedFile) {
       try {
-        const bridged = await attachIfBridged(bridgedFile);
+        // Read path (state probe): attach only live sessions; a cold provider-owned
+        // session is answered as idle instead of being spawned just for a status poll.
+        const bridged = await attachIfBridged(bridgedFile, { create: false });
         if (bridged?.isAlive()) bridgedByPath = bridged;
       } catch {
         // bridge claimed it but attach failed (socket unreachable) → fall back to the other resolution paths, consistent with resolveAttachBySessionId's tolerance

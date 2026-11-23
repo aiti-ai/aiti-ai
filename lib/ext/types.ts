@@ -86,6 +86,19 @@ export interface ExtSessionProviderRegistration {
   detachable?: boolean;
   /** Static model catalog (fetchable without a session; feeds the picker when choosing a backend on the new-session page). Optional; falls back to the local catalog. */
   listModels?(): Promise<Array<{ id: string; provider: string; label?: string }>>;
+  /**
+   * Single-writer claim on a session file (e.g. a bridge registry hit). Claimed
+   * files are never opened locally; the core routes them through createSession.
+   */
+  ownsFile?(sessionFile: string): Promise<boolean> | boolean;
+  /** Drop this backend's durable claim so the core may open the file locally (explicit in-process switch). */
+  releaseOwnership?(sessionId: string): Promise<boolean> | boolean;
+  /**
+   * createSession() only connects to an already-running process and never
+   * spawns one (TUI bridge / live app server). Read paths may call it; without
+   * this flag a provider is skipped on read-only attaches.
+   */
+  attachOnly?: boolean;
   /** Manual model catalog refresh (force probe bypassing the cache; data source for the "refresh model list" button on the new-session page). Optional; the button is hidden when absent. */
   refreshModels?(): Promise<Array<{ id: string; provider: string; label?: string }>>;
   createSession(options: {

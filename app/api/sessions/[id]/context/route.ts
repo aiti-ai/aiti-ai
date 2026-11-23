@@ -71,7 +71,8 @@ export async function GET(
       if (fpEarly && !preferDiskHistory(fpEarly)) {
         let bridgedEarly;
         try {
-          bridgedEarly = await attachIfBridged(fpEarly);
+          // Read path: attach live sessions only (no process creation on open).
+          bridgedEarly = await attachIfBridged(fpEarly, { create: false });
         } catch (e) {
           if ((e as { name?: string }).name !== "BridgeOccupiedError") throw e;
           // Another web instance drives this detached (single-client) wrapper. History on

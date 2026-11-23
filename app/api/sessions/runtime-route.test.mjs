@@ -256,7 +256,7 @@ test("bridged (attach/spawn) state declares capabilities inside `state` (read by
   // hooks/useAgentSession.ts reads liveState.capabilities / backendSource; a top-level
   // copy left spawn sessions without them, so edit-from-here fell back to navigate_tree
   // and the pi spawn backend answered 500 "Capability navigate_tree is not supported".
-  const bridgedBranch = stateRoute.slice(stateRoute.indexOf("attachIfBridged(fp)"), stateRoute.indexOf("getRpcSession(id)"));
+  const bridgedBranch = stateRoute.slice(stateRoute.indexOf("attachIfBridged(fp"), stateRoute.indexOf("getRpcSession(id)"));
   assert.match(bridgedBranch, /state: mergeHandleState\(state, handleCapabilities, bridged\.source\)/);
 });
 
