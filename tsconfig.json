@@ -69,7 +69,9 @@
     ".next-prod-sync/types/**/*.ts",
     ".next-prod-sync/dev/types/**/*.ts",
     ".next-probe/types/**/*.ts",
-    ".next-probe/dev/types/**/*.ts"
+    ".next-probe/dev/types/**/*.ts",
+    ".next-capture/types/**/*.ts",
+    ".next-capture/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",
