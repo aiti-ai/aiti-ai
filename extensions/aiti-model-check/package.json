@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-model-check",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "type": "module",
   "description": "Model health probing — sends a tiny probe message to each model to check availability / 429 rate limiting / errors; parses the rate-limit recovery time (Retry-After etc.), records history to identify availability windows; long-term rate-limit expiry reminders (pure local time checks, zero probing)",
   "displayNameI18n": {
@@ -28,7 +28,7 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "28a8597eaff7857a",
+  "contentHash": "8735ca646fc73df8",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

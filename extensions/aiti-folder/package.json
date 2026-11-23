@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-folder",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "fileViewer folder take-over + pathPicker directory picker — browse / delete to trash + git toolbar and grouped commit plans (soft-depends on aiti-git-ops)",
   "displayNameI18n": {
     "en": "Folder Browser"
@@ -26,7 +26,7 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "549ce49ea57c874f",
+  "contentHash": "05b1bfa7adf44abd",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

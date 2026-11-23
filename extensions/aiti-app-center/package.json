@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-app-center",
-  "version": "0.2.12",
+  "version": "0.2.13",
   "type": "module",
   "description": "The app drawer (start menu) shown in the blank state after every left-column dock block is collapsed — a single-row switch between the Apps view (action/panel/manage entry cards, hover quick-pin + info page) and the Toggles view (feature toggles grouped by extension), tag-style categories (8 fixed internal categories with i18n + custom categories + default other), search scoped per view, and edit-mode reorder/hide/restore",
   "displayNameI18n": {
@@ -23,7 +23,7 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "62a1f45cb01ca8a7",
+  "contentHash": "03d4107a1b9165e2",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

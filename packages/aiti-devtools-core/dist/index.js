@@ -3882,6 +3882,54 @@ function resolveContainer(cfg, keyPath) {
   }
   return cur;
 }
+function normalizeMcpUrl(raw) {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  try {
+    const u = new URL(raw.trim());
+    const defaultPort = u.protocol === "http:" && u.port === "80" || u.protocol === "https:" && u.port === "443";
+    const port = u.port && !defaultPort ? ":" + u.port : "";
+    const path = u.pathname.replace(/\/+$/, "");
+    return `${u.protocol}//${u.hostname.toLowerCase()}${port}${path}${u.search}`;
+  } catch {
+    return null;
+  }
+}
+function findEquivalentEntry(map, serverName, url) {
+  const target = normalizeMcpUrl(url);
+  if (!target) return null;
+  for (const [name, entry] of Object.entries(map)) {
+    if (name === serverName) continue;
+    if (!isPlainContainer(entry)) continue;
+    const record = entry;
+    if (record.enabled === false) continue;
+    if (normalizeMcpUrl(record.url) === target) return name;
+  }
+  return null;
+}
+function auditMcpServers(files) {
+  const byName = /* @__PURE__ */ new Map();
+  const byUrl = /* @__PURE__ */ new Map();
+  for (const file of files) {
+    if (!existsSync3(file)) continue;
+    const cfg = readJson(file).cfg;
+    if (!isPlainContainer(cfg)) continue;
+    const det = detectStructureKey(cfg);
+    const container = cfg[det.key];
+    if (!isPlainContainer(container)) continue;
+    for (const [name, entry] of Object.entries(container)) {
+      if (!isPlainContainer(entry)) continue;
+      const url = typeof entry.url === "string" ? entry.url : null;
+      const norm = normalizeMcpUrl(url);
+      if (!url || !norm) continue;
+      byName.set(name, [...byName.get(name) || [], { file, url }]);
+      byUrl.set(norm, [...byUrl.get(norm) || [], { name, file }]);
+    }
+  }
+  return {
+    sameName: [...byName.entries()].filter(([, urls]) => urls.length > 1 && new Set(urls.map((u) => normalizeMcpUrl(u.url))).size > 1).map(([name, urls]) => ({ name, urls })),
+    sameUrl: [...byUrl.entries()].filter(([, entries]) => new Set(entries.map((e) => e.name)).size > 1).map(([url, entries]) => ({ url, entries }))
+  };
+}
 function patchFile(path, key, serverName, url, dryRun, log, keyPath, httpEntry) {
   if (!existsSync3(path)) return { changed: false, error: "\u6587\u4EF6\u4E0D\u5B58\u5728" };
   const r = readJson(path);
@@ -3909,6 +3957,11 @@ function patchFile(path, key, serverName, url, dryRun, log, keyPath, httpEntry) 
     return { changed: true };
   }
   if (prevUrl === url) return { changed: false };
+  const dupName = url === null ? null : findEquivalentEntry(map, serverName, url);
+  if (dupName) {
+    log(`  \u23ED ${path}\uFF1A\u5DF2\u6709\u7B49\u6548\u6761\u76EE "${dupName}"\uFF08\u540C\u4E00\u7AEF\u70B9\uFF09\u2192 \u8DF3\u5199\uFF0C\u907F\u514D\u53CC\u8FDE\u63A5`);
+    return { changed: false, duplicateOf: dupName };
+  }
   map[serverName] = { ...entry || {}, ...httpEntry ? httpEntry(url) : { type: "http", url } };
   if (!dryRun) {
     try {
@@ -3998,14 +4051,15 @@ function registerMcp(opts) {
       results.push({ target: w.target, path: w.path, changed: false, error: r.error });
       log(`  \u2717 ${w.target} \u2192 ${w.path}\uFF1A${r.error}`);
     } else {
-      results.push({ target: w.target, path: w.path, changed: r.changed });
+      results.push({ target: w.target, path: w.path, changed: r.changed, duplicateOf: r.duplicateOf });
       if (r.changed) changed = true;
-      if (!w.exists) log(`  \u2713 ${w.target} \u2192 ${w.path}\uFF08\u65B0\u5EFA\uFF09`);
+      if (r.duplicateOf) log(`  \u23ED ${w.target} \u2192 ${w.path}\uFF1A\u4E0E\u5DF2\u6709\u6761\u76EE "${r.duplicateOf}" \u540C\u4E00\u7AEF\u70B9\uFF08\u81EA\u68C0\u8DF3\u5199\uFF09`);
+      else if (!w.exists) log(`  \u2713 ${w.target} \u2192 ${w.path}\uFF08\u65B0\u5EFA\uFF09`);
       else log(`  ${r.changed ? "\u2713" : "\xB7"} ${w.target} \u2192 ${w.path}${r.changed ? "" : "\uFF08\u5DF2\u662F\u6700\u65B0\uFF09"}`);
     }
   }
   const ok = results.every((r) => !r.error);
-  const summary = `${dryRun ? "[dry-run] " : ""}MCP ${serverName} \u2192 ${opts.url}${results.length ? "\uFF1B" + results.map((r) => r.error ? r.target + " \u2717" : r.changed ? r.target + " \u2713" : r.target + " \xB7").join(" ") : "\uFF08\u65E0\u76EE\u6807\u6587\u4EF6\uFF09"}`;
+  const summary = `${dryRun ? "[dry-run] " : ""}MCP ${serverName} \u2192 ${opts.url}${results.length ? "\uFF1B" + results.map((r) => r.error ? r.target + " \u2717" : r.duplicateOf ? r.target + " \u23ED" : r.changed ? r.target + " \u2713" : r.target + " \xB7").join(" ") : "\uFF08\u65E0\u76EE\u6807\u6587\u4EF6\uFF09"}`;
   return { ok, changed, results, summary };
 }
 function unregisterMcp(opts) {
@@ -4394,6 +4448,7 @@ export {
   ORPHAN_NOTICE,
   PLACEHOLDER_RE,
   aitiMiddleware,
+  auditMcpServers,
   autoRegisterAitiShim,
   clipUrl,
   connectBridge,
@@ -4404,6 +4459,7 @@ export {
   launcherTag,
   loadAssets,
   normalizeBridgeUrl,
+  normalizeMcpUrl,
   patchProcessHttp,
   probeBridge,
   readBody,

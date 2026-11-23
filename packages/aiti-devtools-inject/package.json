@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-devtools-inject",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Launcher + client injection artifacts and SDK: local injection internals, three forms, host/iframe routing (the __dbg protocol, createDbgLauncher, dynamic iframe injection).",
   "type": "module",
   "main": "src/standalone.js",
@@ -22,5 +22,5 @@
   "bugs": {
     "url": "https://github.com/aiti-ai/aiti-ai/issues"
   },
-  "contentHash": "d9acb37141e288e0"
+  "contentHash": "9a01b90559bf7e2f"
 }

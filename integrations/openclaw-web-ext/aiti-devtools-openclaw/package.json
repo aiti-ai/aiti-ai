@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-devtools-openclaw",
-  "version": "0.6.10",
+  "version": "0.6.11",
   "description": "aiti-devtools OpenClaw 宿主 adapter：16 个 aiti_* 工具直连桥 REST（跳过 MCP）",
   "type": "module",
   "main": "./dist/index.js",
@@ -32,5 +32,5 @@
   "bugs": {
     "url": "https://github.com/aiti-ai/aiti-ai/issues"
   },
-  "contentHash": "363b21cdbf873ab9"
+  "contentHash": "a64244cadd80bfd1"
 }

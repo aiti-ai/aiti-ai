@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-queue-keeper",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "type": "module",
   "description": "Full queue panel for the composer (queuePanel-slot takeover): banners, row operations (move / drag / steer-send / to-followUp / recall / delete) and a recycle bin — fully client-side.",
   "displayNameI18n": {
@@ -23,7 +23,7 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "26d63f7350587ff9",
+  "contentHash": "2470964d61cf46da",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

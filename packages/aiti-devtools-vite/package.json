@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-devtools-vite",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Vite carrier plugin: dev-server-embedded bridge/MCP (same-origin /aiti/) + automatic launcher injection + MCP auto-registration at startup; works for SvelteKit and any Vite project; dev-only, zero injection in production builds.",
   "type": "module",
   "main": "dist/index.js",
@@ -33,5 +33,5 @@
   "bugs": {
     "url": "https://github.com/aiti-ai/aiti-ai/issues"
   },
-  "contentHash": "4a7d3b99fb89ec6c"
+  "contentHash": "51c6b749a3e68eae"
 }

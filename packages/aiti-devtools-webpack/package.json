@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-devtools-webpack",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "webpack-dev-server carrier plugin: bridge via setupMiddlewares + html-webpack-plugin injection; Rspack reuses it unchanged.",
   "type": "module",
   "main": "src/index.js",
@@ -28,5 +28,5 @@
   "bugs": {
     "url": "https://github.com/aiti-ai/aiti-ai/issues"
   },
-  "contentHash": "c53e2e4b105c2c15"
+  "contentHash": "65f56a7b898e5ad7"
 }

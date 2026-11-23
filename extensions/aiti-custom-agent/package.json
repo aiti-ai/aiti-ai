@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-custom-agent",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "Register custom session backends with a UI form — launch command + args prefix + member env + bridge mode, hot effective on save; generic driver one-shot spawn (dockerized / command wrapping / multiple configs for the same CLI)",
   "displayNameI18n": {
     "en": "Custom Agents"
@@ -26,7 +26,7 @@
     "@aiti-ai/ext-shared": "^0.1.12"
   },
   "license": "MIT",
-  "contentHash": "0faf40cd7197e5b4",
+  "contentHash": "1665db3081b14d78",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

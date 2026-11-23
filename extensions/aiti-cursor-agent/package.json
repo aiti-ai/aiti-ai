@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-cursor-agent",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "Drives Cursor Agent CLI sessions (agentKey: cursor) — stream-json print mode + --resume multi-turn; Cursor IDE sessions parsed read-only",
   "displayNameI18n": {
     "en": "Cursor CLI Session Backend"
@@ -26,7 +26,7 @@
     "@aiti-ai/ext-shared": "^0.1.12"
   },
   "license": "MIT",
-  "contentHash": "3f8e2c608b147478",
+  "contentHash": "aae6ee4b4e21cf51",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

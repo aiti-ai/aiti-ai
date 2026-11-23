@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-ai-input",
-  "version": "0.4.14",
+  "version": "0.4.15",
   "type": "module",
   "aiti": {
     "kind": "ext",
@@ -54,7 +54,7 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "aa55e3a966ccd240",
+  "contentHash": "b7a0794423f0aab8",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

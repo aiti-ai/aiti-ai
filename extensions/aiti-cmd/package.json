@@ -23,7 +23,7 @@
   "soulI18n": {
     "en": "Leave thinking to the brain; hand commands to the favorites."
   },
-  "version": "0.3.1",
+  "version": "0.3.2",
   "aitiConfigs": {
     "configFiles": [
       "commands.json",
@@ -32,7 +32,7 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "4dc7b6e69842a0d0",
+  "contentHash": "87ad67b994ea27e8",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

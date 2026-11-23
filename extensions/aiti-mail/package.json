@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-mail",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "type": "module",
   "description": "The general \"mail sending outlet\" inside pi-web — zero-dependency SMTP client + send log (node:sqlite) + management dialog (config/test/log)",
   "displayNameI18n": {
@@ -21,7 +21,7 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "e17a74b2846d9627",
+  "contentHash": "02d9dc4ada82d753",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

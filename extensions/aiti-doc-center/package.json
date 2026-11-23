@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-doc-center",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "type": "module",
   "description": "workspace markdown collection/organization/search — FTS5 trigram Chinese full-text + tag seven-source two-layer + 📚 float dialog four views",
   "displayNameI18n": {
@@ -24,7 +24,7 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "fd3a7b49a13556cd",
+  "contentHash": "849cc4d3f34a4412",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

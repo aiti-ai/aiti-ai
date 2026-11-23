@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-attach-agent",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "; supports full automation via environment variables (PI_WEB_BRIDGE_AUTO=1 auto-bridges any CLI session); followUp queue echo + image attachment passthrough + idle time",
   "displayNameI18n": {
     "en": "Attach Session Backend"
@@ -17,7 +17,7 @@
     "@aiti-ai/ext-shared": "^0.1.17"
   },
   "license": "MIT",
-  "contentHash": "8cb948cb573a3c2d",
+  "contentHash": "0f0f6492cce809ff",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

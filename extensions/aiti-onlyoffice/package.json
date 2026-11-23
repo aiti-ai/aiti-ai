@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-onlyoffice",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "Full-fidelity preview + editing for .docx/.xlsx/.pptx (OnlyOffice DocumentServer Docker backend). AGPL community edition, feature off by default",
   "displayNameI18n": {
     "en": "OnlyOffice Editor"
@@ -27,7 +27,7 @@
     ]
   },
   "aitiExtProtocol": "1.0",
-  "contentHash": "fa818f6d05a5e377",
+  "contentHash": "d5271c1e7a6a5412",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",
