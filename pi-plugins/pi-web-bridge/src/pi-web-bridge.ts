@@ -34,7 +34,14 @@
  *   - pi-web in-process agents (PI_WEB_CHILD_MARKER): never auto-bridge / never
  *     register /web (already inside the web).
  *
- * Install: cp this file to ~/.pi/agent/extensions/pi-web-bridge.ts
+ * Install: `pi install npm:@aiti-ai/pi-web-bridge` (or add the package dir to
+ * settings.json `packages`). Register it through ONE channel only — a package entry
+ * already loads both pi.extensions (this file + the aiti-devtools-pi.js bundle); also
+ * dropping a copy into ~/.pi/agent/extensions/ makes pi load everything twice
+ * ("Tool \"aiti_*\" conflicts with …", two /web bridges). aiti-attach-agent's
+ * tools/deploy.mjs detects the package entry and skips the legacy dir install, and at
+ * runtime registration-guard.mjs makes the non-authoritative copy stand down even when
+ * both copies are already present.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createServer, type Server, type Socket } from "node:net";
@@ -44,6 +51,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 // Shared bridge registry module (same package ../bridge-registry.ts; deployed along
 // with the directory when installed as a directory extension)
 import { registerBridge, unregisterBridge, bridgeSocketName } from "./bridge-registry";
+import { checkDuplicateRegistration } from "./registration-guard.mjs";
 
 // ── Protocol constants (aligned with aiti-attach-agent) ────────────────────────────────
 const FORWARDED_EVENTS = [
@@ -217,6 +225,17 @@ function openBrowser(url: string): void {
 }
 
 export default function (pi: ExtensionAPI) {
+  // ── Duplicate-load guard (load-time safe, no pi API) ──────────────────────────────
+  // pi can load this plugin twice (settings `packages` + the legacy extensions dir).
+  // The guard picks the authoritative copy from settings/fs, so the other copy — no
+  // matter which one pi loaded first — registers nothing here (no second /web command,
+  // no second auto-bridge socket). See registration-guard.mjs.
+  const duplicate = checkDuplicateRegistration({ selfUrl: import.meta.url });
+  if (duplicate.standDown) {
+    console.log("[pi-web-bridge] skipping duplicate load (" + duplicate.reason + ")");
+    return;
+  }
+
   // ── Auto-bridge mode (aiti fork, §5.4 + CLI full-auto) ────────────────────────────────
   // Switch = PI_WEB_BRIDGE_AUTO=1; two kinds of automation depending on process identity:
   // ① HEADLESS_AUTO (subagents): injected by the pi-web host (instrumentation.ts, spawn

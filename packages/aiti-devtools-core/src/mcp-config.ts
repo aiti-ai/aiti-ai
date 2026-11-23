@@ -94,7 +94,8 @@ export interface RegisterMcpResult {
   ok: boolean;
   /** 至少一处写入发生（未 dryRun） */
   changed: boolean;
-  results: { target: string; path: string; changed: boolean; error?: string }[];
+  /** duplicateOf: the file already has another entry for the same endpoint (same URL, different name) → skipped, so one bridge is never connected twice */
+  results: { target: string; path: string; changed: boolean; error?: string; duplicateOf?: string }[];
   summary: string;
 }
 
@@ -175,7 +176,79 @@ function resolveContainer(cfg: Record<string, unknown>, keyPath: string[]): Reco
   return cur;
 }
 
-/** 单个文件写入/删除条目（原子写 + 备份 .bak；幂等）；keyPath 显式给定时跳过结构识别 */
+/**
+ * Normalize an MCP endpoint URL for equality checks: lowercase scheme/host, drop default
+ * ports, ignore trailing slashes. Path case is preserved (endpoints can be case-sensitive).
+ */
+export function normalizeMcpUrl(raw: unknown): string | null {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  try {
+    const u = new URL(raw.trim());
+    const defaultPort = (u.protocol === "http:" && u.port === "80") || (u.protocol === "https:" && u.port === "443");
+    const port = u.port && !defaultPort ? ":" + u.port : "";
+    const path = u.pathname.replace(/\/+$/, "");
+    return `${u.protocol}//${u.hostname.toLowerCase()}${port}${path}${u.search}`;
+  } catch {
+    return null;
+  }
+}
+
+/** Find a different, enabled server entry in the same container that points at the same endpoint. */
+function findEquivalentEntry(map: Record<string, unknown>, serverName: string, url: string): string | null {
+  const target = normalizeMcpUrl(url);
+  if (!target) return null;
+  for (const [name, entry] of Object.entries(map)) {
+    if (name === serverName) continue;
+    if (!isPlainContainer(entry)) continue;
+    const record = entry as Record<string, unknown>;
+    // A disabled entry does not shadow the registration we are about to make.
+    if (record.enabled === false) continue;
+    if (normalizeMcpUrl(record.url) === target) return name;
+  }
+  return null;
+}
+
+/**
+ * Read-only MCP config audit (self-check, never writes): report the two duplicate shapes
+ * that make a client connect the same bridge more than once.
+ *   sameName — one server name defined in several files with different endpoints
+ *              (a stale copy silently shadows/merges the current one)
+ *   sameUrl  — one endpoint registered under several names (double connection,
+ *              duplicated tool namespaces)
+ */
+export function auditMcpServers(files: string[]): {
+  sameName: { name: string; urls: { file: string; url: string }[] }[];
+  sameUrl: { url: string; entries: { name: string; file: string }[] }[];
+} {
+  const byName = new Map<string, { file: string; url: string }[]>();
+  const byUrl = new Map<string, { name: string; file: string }[]>();
+  for (const file of files) {
+    if (!existsSync(file)) continue;
+    const cfg = readJson(file).cfg;
+    if (!isPlainContainer(cfg)) continue;
+    const det = detectStructureKey(cfg);
+    const container = cfg[det.key];
+    if (!isPlainContainer(container)) continue;
+    for (const [name, entry] of Object.entries(container)) {
+      if (!isPlainContainer(entry)) continue;
+      const url = typeof entry.url === "string" ? entry.url : null;
+      const norm = normalizeMcpUrl(url);
+      if (!url || !norm) continue;
+      byName.set(name, [...(byName.get(name) || []), { file, url }]);
+      byUrl.set(norm, [...(byUrl.get(norm) || []), { name, file }]);
+    }
+  }
+  return {
+    sameName: [...byName.entries()]
+      .filter(([, urls]) => urls.length > 1 && new Set(urls.map((u) => normalizeMcpUrl(u.url))).size > 1)
+      .map(([name, urls]) => ({ name, urls })),
+    sameUrl: [...byUrl.entries()]
+      .filter(([, entries]) => new Set(entries.map((e) => e.name)).size > 1)
+      .map(([url, entries]) => ({ url, entries })),
+  };
+}
+
+/** Write/remove one entry in a single file (atomic write + .bak backup; idempotent); an explicit keyPath skips structure detection. */
 function patchFile(
   path: string,
   key: string,
@@ -185,7 +258,7 @@ function patchFile(
   log: (l: string) => void,
   keyPath?: string[],
   httpEntry?: (url: string) => Record<string, unknown>
-): { changed: boolean; error?: string } {
+): { changed: boolean; error?: string; duplicateOf?: string } {
   if (!existsSync(path)) return { changed: false, error: "文件不存在" };
   const r = readJson(path);
   if (r.error) return { changed: false, error: "JSON 解析失败：" + r.error };
@@ -214,6 +287,14 @@ function patchFile(
     return { changed: true };
   }
   if (prevUrl === url) return { changed: false }; // 幂等
+  // Self-check: another entry in this file already points at the same endpoint (renamed
+  // registration, hand-written duplicate). Writing a second one would make the MCP client
+  // open two connections and expose the tools twice.
+  const dupName = url === null ? null : findEquivalentEntry(map, serverName, url);
+  if (dupName) {
+    log(`  ⏭ ${path}：已有等效条目 "${dupName}"（同一端点）→ 跳写，避免双连接`);
+    return { changed: false, duplicateOf: dupName };
+  }
   map[serverName] = { ...(entry || {}), ...(httpEntry ? httpEntry(url) : { type: "http", url }) };
   if (!dryRun) {
     try {
@@ -309,14 +390,15 @@ export function registerMcp(opts: RegisterMcpOptions): RegisterMcpResult {
       results.push({ target: w.target, path: w.path, changed: false, error: r.error });
       log(`  ✗ ${w.target} → ${w.path}：${r.error}`);
     } else {
-      results.push({ target: w.target, path: w.path, changed: r.changed });
+      results.push({ target: w.target, path: w.path, changed: r.changed, duplicateOf: r.duplicateOf });
       if (r.changed) changed = true;
-      if (!w.exists) log(`  ✓ ${w.target} → ${w.path}（新建）`);
+      if (r.duplicateOf) log(`  ⏭ ${w.target} → ${w.path}：与已有条目 "${r.duplicateOf}" 同一端点（自检跳写）`);
+      else if (!w.exists) log(`  ✓ ${w.target} → ${w.path}（新建）`);
       else log(`  ${r.changed ? "✓" : "·"} ${w.target} → ${w.path}${r.changed ? "" : "（已是最新）"}`);
     }
   }
   const ok = results.every((r) => !r.error);
-  const summary = `${dryRun ? "[dry-run] " : ""}MCP ${serverName} → ${opts.url}${results.length ? "；" + results.map((r) => (r.error ? r.target + " ✗" : r.changed ? r.target + " ✓" : r.target + " ·")).join(" ") : "（无目标文件）"}`;
+  const summary = `${dryRun ? "[dry-run] " : ""}MCP ${serverName} → ${opts.url}${results.length ? "；" + results.map((r) => (r.error ? r.target + " ✗" : r.duplicateOf ? r.target + " ⏭" : r.changed ? r.target + " ✓" : r.target + " ·")).join(" ") : "（无目标文件）"}`;
   return { ok, changed, results, summary };
 }
 

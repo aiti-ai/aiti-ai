@@ -26,7 +26,7 @@ export { connectBridge } from "./connect.ts";
 export type { ConnectBridgeOptions, ConnectMiddleware } from "./connect.ts";
 export { resolveEndpoints, normalizeBridgeUrl, hasBridgePathSignature, sameOrigin, probeBridge } from "./endpoints.ts";
 export type { ResolveEndpointsInput, ResolvedEndpoints, EndpointsKind } from "./endpoints.ts";
-export { registerMcp, unregisterMcp, registerAitiShim, unregisterAitiShim, autoRegisterAitiShim, resolveShimPathAuto, MCP_TARGETS, detectStructureKey } from "./mcp-config.ts";
+export { registerMcp, unregisterMcp, registerAitiShim, unregisterAitiShim, autoRegisterAitiShim, resolveShimPathAuto, MCP_TARGETS, detectStructureKey, auditMcpServers, normalizeMcpUrl } from "./mcp-config.ts";
 export type { RegisterMcpOptions, RegisterMcpResult, McpTargetFile, RegisterShimOptions, AutoRegisterAitiShimOptions } from "./mcp-config.ts";
 export { loadAssets, ASSET_NAMES } from "./assets.ts";
 export { aitiMiddleware, patchProcessHttp } from "./install.ts";

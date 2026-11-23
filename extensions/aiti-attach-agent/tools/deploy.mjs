@@ -8,6 +8,13 @@
  *      ├ index.ts              = pi-tui/pi-web-bridge.ts（唯一源，替代旧三副本手工同步）
  *      ├ bridge-registry.ts    共享注册表
  *      └ aiti-devtools-pi.js   连接器 bundle（packages/aiti-devtools-pi esbuild 产物）
+ *      ⚠ Only write this directory on machines WITHOUT a package-level registration:
+ *        when settings.json `packages` already contains @aiti-ai/pi-web-bridge (an npm spec
+ *        or a local dir such as /…/aiti-ai/pi-plugins/pi-web-bridge), pi loads the same
+ *        plugin through the package's own pi.extensions — writing this dir too would
+ *        register everything twice (pi reports `Tool "aiti_*" conflicts with …` and /web
+ *        starts two bridges). In that case this script only refreshes the package's
+ *        src/dist (sync-src) and moves a stale legacy dir out of the scan path.
  *   ② ~/.pi/web-dev/extensions/aiti-attach-agent/index.ts   pi-web dev（重启 dev 生效）
  *   ③ ~/.pi/web/extensions/aiti-attach-agent/index.ts       pi-web prod（重启 prod 生效）
  *   ④ ~/.pi/web{,-dev}/extensions/aiti-devtools/bridge-core.ts  桥核心（单例跨 reload，必须重启 pi-web）
@@ -22,15 +29,17 @@
  *   packages/aiti-devtools-core/src/bridge.ts  桥核心唯一源
  *   index.ts（本目录）                         pi-web 端 attach 后端唯一源
  */
-import { resolve, dirname, join, basename } from "node:path";
+import { resolve, dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { copyFileSync, mkdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, existsSync, writeFileSync, renameSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
+import { execFileSync } from "node:child_process";
+import { defaultSettingsFiles, findPluginEntry, isGeneratedLegacyDir } from "../registration-guard.mjs";
 import { notifyReconcile } from "../../_shared/reconcile-deps.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const pkg = resolve(here, "..");                       // pi-web-ext/aiti-attach-agent
-const repo = resolve(pkg, "..", "..");                 // repo root
+const pkg = resolve(here, "..");                       // extensions/aiti-attach-agent
+const repo = resolve(pkg, "..", "..");                 // aiti-ai repo root
 const coreBridge = resolve(repo, "packages", "aiti-devtools-core", "src", "bridge.ts");
 const piPkg = resolve(repo, "packages", "aiti-devtools-pi");
 const bundleSrc = resolve(piPkg, "dist", "aiti-devtools-pi.js");
@@ -41,6 +50,27 @@ const coreDirs = [join(agent, ".pi", "web-dev", "extensions", "aiti-devtools"), 
 
 const copy = (src, dest) => { mkdirSync(dirname(dest), { recursive: true }); copyFileSync(src, dest); console.log("  ✓ " + dest.replace(agent, "~")); };
 
+// ── Single-registration guard (the TUI plugin must have exactly one source) ────────
+// pi has two load channels: ① settings.json `packages[]` (npm specs or local dirs, loaded
+// via the package's pi.extensions) and ② directories under ~/.pi/agent/extensions/ (scanned
+// automatically). Hitting both registers the same /web bridge + aiti_* tools twice, so this
+// script treats ① as authoritative when it is present. Detection is shared with the runtime
+// guard (../registration-guard.mjs) that both entry points call at load time — this script
+// additionally cleans up a stale legacy dir so users do not need to.
+const piAgentDir = process.env.PI_CODING_AGENT_DIR || join(agent, ".pi", "agent");
+const settingsFiles = defaultSettingsFiles({ agentDir: piAgentDir });
+
+/** Refresh the registered local package view (src/ + dist/) so pi loads current code. */
+function refreshPackageView(dir) {
+  const sync = join(dir, "tools", "sync-src.mjs");
+  if (!existsSync(sync)) return;
+  try {
+    execFileSync(process.execPath, [sync], { stdio: "inherit", cwd: dir });
+  } catch (e) {
+    console.log("  ⚠ 包内 src/dist 刷新失败（不影响部署，可手动跑 node tools/sync-src.mjs）：" + String((e && e.message) || e));
+  }
+}
+
 console.log("── aiti-attach-agent 部署 ──");
 
 // 1) 连接器 bundle（esbuild：内联 core+agent，外置 pi SDK/typebox 由 jiti 提供）
@@ -49,21 +79,45 @@ if (process.argv.includes("--no-build")) {
   console.log("① 跳过 bundle 构建（--no-build）");
 } else {
   console.log("① 构建连接器 bundle…");
-  const { execFileSync } = await import("node:child_process");
   execFileSync(process.execPath, [resolve(piPkg, "tools", "build.mjs")], { stdio: "inherit", cwd: piPkg });
 }
 
-// 2) TUI 双入口目录
-console.log("② TUI 扩展 → " + tuiDir.replace(agent, "~"));
-mkdirSync(tuiDir, { recursive: true });
-copy(resolve(pkg, "pi-tui", "pi-web-bridge.ts"), join(tuiDir, "index.ts"));
-copy(resolve(pkg, "bridge-registry.ts"), join(tuiDir, "bridge-registry.ts"));
-copy(bundleSrc, join(tuiDir, "aiti-devtools-pi.js"));
-// pi 双入口清单：index.ts(/web 桥) + aiti-devtools-pi.js(aiti_* 连接器)
-writeFileSync(join(tuiDir, "package.json"), JSON.stringify({
-  name: "pi-web-bridge", private: true,
-  pi: { extensions: ["index.ts", "aiti-devtools-pi.js"] },
-}, null, 2) + "\n");
+// 2) TUI plugin: with a package registration only refresh that package, else install the dir
+const registered = findPluginEntry({ settingsFiles });
+if (registered) {
+  console.log("② TUI 扩展：已由 pi 包注册（" + registered.source + "）— 跳过目录安装");
+  if (existsSync(tuiDir) && isGeneratedLegacyDir(tuiDir)) {
+    if (process.argv.includes("--keep-legacy-tui")) {
+      console.log("  ⚠ 旧目录仍存在（--keep-legacy-tui）：会被 pi 当第二套扩展加载，工具名会冲突");
+    } else {
+      // Renaming inside the same extensions/ dir would still get scanned → move it out.
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const backup = join(agent, ".pi", "agent", "legacy-extensions-backup", "pi-web-bridge-" + stamp);
+      mkdirSync(dirname(backup), { recursive: true });
+      renameSync(tuiDir, backup);
+      console.log("  ⚠ 移走重复注册的旧目录 → " + backup.replace(agent, "~"));
+    }
+  }
+  if (registered.dir && (registered.dir + sep).startsWith(repo + sep)) refreshPackageView(registered.dir);
+} else {
+  console.log("② TUI 扩展 → " + tuiDir.replace(agent, "~"));
+  mkdirSync(tuiDir, { recursive: true });
+  // The deployed dir is flat, so rewrite the two "../" imports of the source file.
+  const tuiEntry = readFileSync(resolve(pkg, "pi-tui", "pi-web-bridge.ts"), "utf8")
+    .replace(/from "\.\.\/bridge-registry"/g, 'from "./bridge-registry"')
+    .replace(/from "\.\.\/registration-guard\.mjs"/g, 'from "./registration-guard.mjs"');
+  writeFileSync(join(tuiDir, "index.ts"), tuiEntry);
+  console.log("  ✓ " + join(tuiDir, "index.ts").replace(agent, "~"));
+  copy(resolve(pkg, "bridge-registry.ts"), join(tuiDir, "bridge-registry.ts"));
+  copy(resolve(pkg, "registration-guard.mjs"), join(tuiDir, "registration-guard.mjs"));
+  copy(resolve(pkg, "registration-guard.d.mts"), join(tuiDir, "registration-guard.d.mts"));
+  copy(bundleSrc, join(tuiDir, "aiti-devtools-pi.js"));
+  // pi multi-entry manifest: index.ts (/web bridge) + aiti-devtools-pi.js (aiti_* connector)
+  writeFileSync(join(tuiDir, "package.json"), JSON.stringify({
+    name: "pi-web-bridge", private: true,
+    pi: { extensions: ["index.ts", "aiti-devtools-pi.js"] },
+  }, null, 2) + "\n");
+}
 
 // 3) pi-web 端 attach 后端（dev 必重启；prod 重启生效）
 console.log("③ pi-web attach 后端…");

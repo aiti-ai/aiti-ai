@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // sync-src.mjs — assemble the published package sources from the single-owner sources.
 //
-// The development sources live inside the dev monorepo (pi-web-ext/aiti-attach-agent);
+// The development sources live inside the dev monorepo (extensions/aiti-attach-agent);
 // this package is the publishable view of them. One-way generation, always safe to re-run:
 //
-//   pi-web-ext/aiti-attach-agent/pi-tui/pi-web-bridge.ts  → src/pi-web-bridge.ts
+//   extensions/aiti-attach-agent/pi-tui/pi-web-bridge.ts  → src/pi-web-bridge.ts
 //       (the "../bridge-registry" import is rewritten to "./bridge-registry" — the two
 //        files are flattened into one src/ directory here)
-//   pi-web-ext/aiti-attach-agent/bridge-registry.ts        → src/bridge-registry.ts
+//   extensions/aiti-attach-agent/bridge-registry.ts        → src/bridge-registry.ts
 //   packages/aiti-devtools-pi/dist/aiti-devtools-pi.js     → dist/aiti-devtools-pi.js
 //       (the aiti_* connector bundle; build it first with
 //        `node packages/aiti-devtools-pi/tools/build.mjs` if missing)
@@ -19,17 +19,26 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pkg = resolve(here, "..");
-const repo = resolve(pkg, "..");
-const tuiSrc = join(repo, "pi-web-ext", "aiti-attach-agent", "pi-tui", "pi-web-bridge.ts");
-const registrySrc = join(repo, "pi-web-ext", "aiti-attach-agent", "bridge-registry.ts");
+// Repo root candidates: aiti-ai keeps the package at <repo>/pi-plugins/pi-web-bridge,
+// an older checkout layout had it at <repo>/pi-web-bridge — accept both.
+const repoRoots = [resolve(pkg, "..", ".."), resolve(pkg, "..")];
+// Single-source checkout = extensions/aiti-attach-agent (aiti-ai); older checkouts
+// (pi-web-ext/...) are still accepted so the tool keeps working from old trees.
+const srcRoot = repoRoots
+  .flatMap((r) => [join(r, "extensions", "aiti-attach-agent"), join(r, "pi-web-ext", "aiti-attach-agent")])
+  .find((d) => existsSync(d));
+const repo = repoRoots.find((r) => existsSync(join(r, "packages", "aiti-devtools-pi"))) || repoRoots[0];
+const tuiSrc = srcRoot ? join(srcRoot, "pi-tui", "pi-web-bridge.ts") : "";
+const registrySrc = srcRoot ? join(srcRoot, "bridge-registry.ts") : "";
+const guardSrc = srcRoot ? join(srcRoot, "registration-guard.mjs") : "";
+const guardTypes = srcRoot ? join(srcRoot, "registration-guard.d.mts") : "";
 const bundleSrc = join(repo, "packages", "aiti-devtools-pi", "dist", "aiti-devtools-pi.js");
 
-// Mirror-repo guard: inside the aiti-ai publish snapshot (pi-plugins/pi-web-bridge) the
-// monorepo sources are absent by design — src/dist are committed there already and were
-// assembled by the shared-source sync step. Skip silently when they exist; only
-// fail if the package is incomplete.
-if (!existsSync(tuiSrc)) {
-  if (existsSync(join(pkg, "src", "pi-web-bridge.ts")) && existsSync(join(pkg, "dist", "aiti-devtools-pi.js"))) {
+// Mirror-repo guard: inside a publish snapshot of this package the monorepo sources are
+// absent by design — src/dist are committed there already. Skip silently when they exist;
+// only fail if the package is incomplete.
+if (!srcRoot || !existsSync(tuiSrc)) {
+  if (existsSync(join(pkg, "src", "pi-web-bridge.ts")) && existsSync(join(pkg, "src", "registration-guard.mjs")) && existsSync(join(pkg, "dist", "aiti-devtools-pi.js"))) {
     console.log("[pi-web-bridge] mirror snapshot: src/dist already assembled, skipping regeneration");
     process.exit(0);
   }
@@ -37,7 +46,7 @@ if (!existsSync(tuiSrc)) {
   process.exit(1);
 }
 
-for (const f of [tuiSrc, registrySrc]) {
+for (const f of [tuiSrc, registrySrc, guardSrc]) {
   if (!existsSync(f)) {
     console.error(`[pi-web-bridge] missing source: ${f}`);
     process.exit(1);
@@ -46,17 +55,22 @@ for (const f of [tuiSrc, registrySrc]) {
 
 mkdirSync(join(pkg, "src"), { recursive: true });
 
-// Flatten the directory layout: pi-tui/ imports the registry via "../bridge-registry";
-// in this package both files sit side by side in src/, so rewrite to "./bridge-registry".
+// Flatten the directory layout: pi-tui/ imports the registry and the duplicate guard
+// from the extension root; in this package all files sit side by side in src/, so both
+// imports are rewritten to "./…".
 let bridge = readFileSync(tuiSrc, "utf8");
-const rewritten = bridge.replace(/from "\.\.\/bridge-registry"/g, 'from "./bridge-registry"');
-if (rewritten === bridge) {
-  console.error('[pi-web-bridge] expected to rewrite `from "../bridge-registry"` — import shape changed? Check pi-tui/pi-web-bridge.ts');
+const rewritten = bridge
+  .replace(/from "\.\.\/bridge-registry"/g, 'from "./bridge-registry"')
+  .replace(/from "\.\.\/registration-guard\.mjs"/g, 'from "./registration-guard.mjs"');
+if (!/from "\.\/bridge-registry"/.test(rewritten) || !/from "\.\/registration-guard\.mjs"/.test(rewritten)) {
+  console.error('[pi-web-bridge] expected to rewrite `../bridge-registry` and `../registration-guard.mjs` — import shape changed? Check pi-tui/pi-web-bridge.ts');
   process.exit(1);
 }
 writeFileSync(join(pkg, "src", "pi-web-bridge.ts"), rewritten);
 
 copyFileSync(registrySrc, join(pkg, "src", "bridge-registry.ts"));
+copyFileSync(guardSrc, join(pkg, "src", "registration-guard.mjs"));
+if (existsSync(guardTypes)) copyFileSync(guardTypes, join(pkg, "src", "registration-guard.d.mts"));
 
 mkdirSync(join(pkg, "dist"), { recursive: true });
 if (!existsSync(bundleSrc)) {
