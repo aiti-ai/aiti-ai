@@ -126,7 +126,7 @@ client entry. The host type union (`lib/ext/types.ts` `ExtSlotName`) lists all s
 the contract test `extensions/_shared/ext-entry-contracts.test.mjs` pins the mirror and
 fails on typos (a typo = a dead entry point). Major slots:
 
-- **Toolbar / top bar**: `toolbar`, `sessionTopbar`, `sidebarFooter`
+- **Toolbar / top bar**: `toolbar`, `sessionTopbar`, `topbarMobileLeading`, `sidebarFooter`
 - **Sessions**: `sidebarProjects`, `sessionRowActions`, `sessionRowLeading`, `sessionRowMeta`, `workspacePickerActions`
 - **Composer area**: `chatInputTop`, `chatOverlay`, `composerTools`, `composerAffix`, `userMessageActions`, `assistantMessageActions`, `assistantMessageFooter`, `compactLead`, `modelInfoLead`, `queuePanel`
 - **Docks & dialogs**: `dialogs`, `pages`, `rightFileDock`, `sidebarExplorerDock`, `sidebarTasks`, `terminalDock`

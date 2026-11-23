@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/session-manager",
-  "version": "0.2.18",
+  "version": "0.2.19",
   "type": "module",
   "homepage": "https://aiti.pw/extensions/session-manager.html",
   "description": "Cross-project session panel — tag tree + colors / favorites / search / archive / kanban / new-session branch·Worktree picker / history parsing for 23 agent families / DockStack orchestration",

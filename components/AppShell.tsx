@@ -5030,6 +5030,17 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
               </svg>
             )}
           </button>
+          {/* Small-screen leading actions (topbarMobileLeading): the actions a phone needs
+              even while the sidebar drawer is closed, at the top bar's start — right beside
+              the sidebar toggle, before the sortable/overflowing tool row (that row is
+              width-measured into ⋯, so an entry there could not stay visible). The host
+              knows nothing about what the actions do: extra carries data only (`cwd`), the
+              extension acts through client services (session-manager: pi-web.newSession).
+              Mobile-gated: desktop keeps the sidebar's own header buttons, so no action is
+              ever duplicated. */}
+          {isMobile && (
+            <ExtSlot name="topbarMobileLeading" extra={{ cwd: selectedSession?.cwd ?? effectiveNewSessionCwd ?? null }} />
+          )}
           {/* Sortable/hideable/separable tool button row: the row renders only what
               fits; the offscreen strip is used for measurement */}
           <div

@@ -440,6 +440,11 @@ const ext = {
     // 左栏整块接管（sidebar 统一 dock 方案 §3.2）：AppShell 层 Header + DockStack + 底部行
     sidebarContent: [{ id: "master", label: "i18n:feat.master", title: "i18n:feat.master.desc" }],
     sessionTopbar: [{ id: "tags", label: "tags" }],
+    // Small-screen leading top-bar action slot (host renders it only for isMobile, first
+    // slot after the sidebar toggle): the phone's new-session entry while the drawer is
+    // closed. The button renders from client entry.tsx; this static declaration lists the
+    // slot for the manifest / lazy-materialization contract.
+    topbarMobileLeading: [{ id: "new-session", label: "i18n:sm.newSession" }],
     sessionRowMeta: [{ id: "session-tags", label: "i18n:feat.session-tags" }],
     sessionRowActions: [{ id: "star", label: "star", title: "i18n:it.star.title" }],
     workspacePickerActions: [{ id: "manage", label: "i18n:it.manage-workspaces.label" }],
@@ -562,6 +567,8 @@ const ext = {
         "i18n.cancel": "Cancel",
         "i18n.checking": "Checking…",
         "sm.allSessions": "All sessions",
+        "sm.newSession": "New session",
+        "sm.newSessionIn": "New session in {path}",
         "sm.dockProjects": "Projects",
         "sm.dockProjectsHint": "Projects and sessions",
         "sm.dockAddFolder": "Add folder to sidebar",
@@ -849,6 +856,8 @@ const ext = {
         "sidebar.hide": "隱藏側邊欄",
         "sidebar.toggleSessionSearch": "搜尋對話",
         "sm.dockProjects": "專案",
+        "sm.newSession": "新增工作階段",
+        "sm.newSessionIn": "在 {path} 新增工作階段",
         "sm.dockProjectsHint": "專案與會話列表",
         "sm.runFailed": "任務失敗",
         "sm.runAborted": "已停止",
@@ -1060,6 +1069,8 @@ const ext = {
         "i18n.cancel": "取消",
         "i18n.checking": "检查中…",
         "sm.allSessions": "全部会话",
+        "sm.newSession": "新建会话",
+        "sm.newSessionIn": "在 {path} 新建会话",
         "sm.dockProjects": "项目",
         "sm.dockProjectsHint": "项目和会话列表",
         "sm.dockAddFolder": "添加文件夹到侧栏",

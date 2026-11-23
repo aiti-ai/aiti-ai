@@ -67,6 +67,7 @@ const UI_SLOT_KEYS = [
   "sidebar",
   "sidebarFooter",
   "sessionTopbar",
+  "topbarMobileLeading", // small-screen leading top-bar actions (after the sidebar toggle; session-manager: new session)
   "sessionRowActions",
   "sessionRowMeta",
   "sessionStatsInline", // inline tail of the session-info stats button (aiti-sysmon top-bar CPU/memory chips)
