@@ -8,10 +8,9 @@ Inject the aiti-devtools in-page AI debugging assistant into any webpage **on de
 
 ## Origin · aiti ecosystem
 
-This package is part of the **aiti** ecosystem — a personal AI development workbench powered by [pi](https://pi.dev): **aiti-agent** (a self-hosted web workbench built on the open-source [pi-web](https://github.com/aiti-ai/pi-web)) plus debug injection into mainstream dev tools (aiti-devtools) and a rich extension system.
+This package is part of the **aiti** ecosystem — a personal AI development workbench powered by [pi](https://pi.dev): **aiti-agent** (a self-hosted web workbench built on the open-source [pi-web](https://github.com/aiti-ai/aiti-ai)) plus debug injection into mainstream dev tools (aiti-devtools) and a rich extension system.
 
-- Workbench / workbench: <https://github.com/aiti-ai/pi-web>
-- Ecosystem monorepo / monorepo: <https://github.com/aiti-ai/aiti-ai>
+- Workbench & monorepo: <https://github.com/aiti-ai/aiti-ai>
 - Site / site: <https://aiti.pw>
 
 ## Quick start

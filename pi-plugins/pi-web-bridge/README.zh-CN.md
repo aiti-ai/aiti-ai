@@ -4,14 +4,13 @@
 
 [English](./README.md) · 简体中文
 
-一个小 [pi 包](https://pi.dev/packages)，与 [pi-web](https://github.com/aiti-ai/pi-web) 的 attach 后端（`aiti-attach-agent`）配对使用。
+一个小 [pi 包](https://pi.dev/packages)，与 [pi-web](https://github.com/aiti-ai/aiti-ai) 的 attach 后端（`aiti-attach-agent`）配对使用。
 
 ## 关于 aiti
 
-本包来自 [aiti](https://aiti.pw/)（GitHub org [aiti-ai](https://github.com/aiti-ai)）——以 [pi](https://pi.dev) 为引擎的个人 AI 开发工作台生态：**aiti-agent** Web 工作台（基于开源项目 [pi-web](https://github.com/aiti-ai/pi-web) 构建）+ 开发工具调试注入（aiti-devtools）+ 丰富的扩展体系。
+本包来自 [aiti](https://aiti.pw/)（GitHub org [aiti-ai](https://github.com/aiti-ai)）——以 [pi](https://pi.dev) 为引擎的个人 AI 开发工作台生态：**aiti-agent** Web 工作台（基于开源项目 [pi-web](https://github.com/aiti-ai/aiti-ai) 构建）+ 开发工具调试注入（aiti-devtools）+ 丰富的扩展体系。
 
-- 工作台（aiti-agent，基于 pi-web）: <https://github.com/aiti-ai/pi-web>
-- 生态仓库: <https://github.com/aiti-ai/aiti-ai>
+- 工作台 / 生态仓库（aiti-agent，基于 pi-web）: <https://github.com/aiti-ai/aiti-ai>
 
 ## 功能
 
@@ -39,7 +38,7 @@
 pi install npm:@aiti-ai/pi-web-bridge
 ```
 
-需要一个运行中的 [pi-web](https://github.com/aiti-ai/pi-web)（`aiti-attach-agent` 扩展随附）——即本桥配对的浏览器侧。运行方式见 pi-web README。
+需要一个运行中的 [pi-web](https://github.com/aiti-ai/aiti-ai)（`aiti-attach-agent` 扩展随附）——即本桥配对的浏览器侧。运行方式见 pi-web README。
 
 ## 配置（环境变量）
 

@@ -2,16 +2,15 @@
 
 > Bridge a [pi](https://pi.dev) TUI session to the browser with `/web` — the pi-web side opens the same session live, with bidirectional IO (prompt / steer / follow-up / abort / model switching), queued-message echo, and image attachment passthrough.
 
-A small [pi package](https://pi.dev/packages) that pairs with the [pi-web](https://github.com/aiti-ai/pi-web) attach backend (`aiti-attach-agent`).
+A small [pi package](https://pi.dev/packages) that pairs with the [pi-web](https://github.com/aiti-ai/aiti-ai) attach backend (`aiti-attach-agent`).
 
 English · [简体中文](./README.zh-CN.md)
 
 ## About aiti
 
-This package comes from [aiti](https://aiti.pw/) (GitHub org [aiti-ai](https://github.com/aiti-ai)) — a personal AI development workbench ecosystem powered by [pi](https://pi.dev): the **aiti-agent** web workbench (built on open-source [pi-web](https://github.com/aiti-ai/pi-web)), debug injection into dev tools (aiti-devtools), and a library of extensions.
+This package comes from [aiti](https://aiti.pw/) (GitHub org [aiti-ai](https://github.com/aiti-ai)) — a personal AI development workbench ecosystem powered by [pi](https://pi.dev): the **aiti-agent** web workbench (built on open-source [pi-web](https://github.com/aiti-ai/aiti-ai)), debug injection into dev tools (aiti-devtools), and a library of extensions.
 
-- Workbench (aiti-agent, built on pi-web): <https://github.com/aiti-ai/pi-web>
-- Ecosystem monorepo: <https://github.com/aiti-ai/aiti-ai>
+- Workbench & monorepo: <https://github.com/aiti-ai/aiti-ai>
 
 ## What it does
 
@@ -39,7 +38,9 @@ Export `PI_WEB_BRIDGE_AUTO=1` in your shell profile and every plain terminal `pi
 pi install @aiti-ai/pi-web-bridge
 ```
 
-Requires a running [pi-web](https://github.com/aiti-ai/pi-web) (the `aiti-attach-agent` extension ships with it) — that is the browser side this bridge pairs with. See the pi-web README for how to run it.
+Requires a running [pi-web](https://github.com/aiti-ai/aiti-ai) (the `aiti-attach-agent` extension ships with it) — that is the browser side this bridge pairs with. See the pi-web README for how to run it.
+
+Install it once, through one channel only: a settings `packages` entry already loads both entry points. If an older copy still sits in `~/.pi/agent/extensions/pi-web-bridge/`, the plugin's load-time guard detects it, makes the non-authoritative copy stand down (one line in the log) and keeps a single `/web` bridge plus a single set of `aiti_*` tools. Set `AITI_PLUGIN_DUP_FORCE=1` to load both anyway.
 
 ## Configuration (environment)
 

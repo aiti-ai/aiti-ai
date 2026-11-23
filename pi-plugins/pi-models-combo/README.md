@@ -10,8 +10,7 @@ English · [简体中文](./README.zh-CN.md)
 This package comes from [aiti](https://aiti.pw/) (GitHub org [aiti-ai](https://github.com/aiti-ai)) —
 a personal AI development workbench ecosystem powered by pi.
 
-- Workbench (aiti-agent, built on pi-web): <https://github.com/aiti-ai/pi-web>
-- Ecosystem monorepo (docs site, extensions, integrations): <https://github.com/aiti-ai/aiti-ai>
+- Workbench & monorepo: <https://github.com/aiti-ai/aiti-ai>
 
 **Works standalone**: any pi (coding agent) user can `pi install npm:@aiti-ai/pi-models-combo`
 to get every capability on its own — model filtering, sticky multi-key rotation,

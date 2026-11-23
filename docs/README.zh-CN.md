@@ -12,7 +12,7 @@
 
 项目缘起值得一读：两个十几年的老项目——[TestAgent](https://aiti.pw/extensions/aiti-testagent.html)（Java 运行时调试工具）与 [JustDB](https://justdb.ai)（数据库 IDE）——遇上 AI 时代，日常开发搬上了 pi-web，功能一个一个加着加着就与上游越走越远，aiti 便以自己的发行版开始了。一切源于真实日常使用：通勤路上写代码、spare 设备接着干、把每一个闲散 token 都用在刀刃上。完整故事见 [aiti.pw/guide/origin.html](https://aiti.pw/guide/origin.html)。文档、产品矩阵与 fork 背后的故事见 [aiti.pw](https://aiti.pw/)（[源码](https://github.com/aiti-ai/aiti-docs)）。
 
-![AITI Web 展示包含结构化 Markdown、工具调用和项目导航的 pi 会话](https://raw.githubusercontent.com/agegr/pi-web/main/docs/screenshot2.png)
+![AITI Web 展示包含结构化 Markdown、工具调用和项目导航的 pi 会话](https://raw.githubusercontent.com/aiti-ai/aiti-ai/main/docs/assets/screenshot.png)
 
 ### 内置扩展（精选）
 
@@ -53,7 +53,7 @@ npx @aiti-ai/pi-web@latest
 如需全局安装 `pi-web` 命令：
 
 ```bash
-npm install -g @aiti-ai/pi-web@latest --allow-scripts
+npm install -g @aiti-ai/pi-web@latest --allow-scripts=@aiti-ai/pi-web,esbuild,node-pty,@google/genai,protobufjs,unrs-resolver
 pi-web
 ```
 
@@ -110,7 +110,7 @@ PI_WEB_PASSWORD='足够长的随机密码' pi-web --hostname 0.0.0.0
 
 ### Docker
 
-每个版本都会向 `ghcr.io/agegr/pi-web` 发布镜像。镜像用法、Compose 示例以及需要保留哪些卷，见 [Running Pi Web in Docker](./docker.md)。
+每个版本都会向 `ghcr.io/aiti-ai/aiti-ai` 发布镜像。镜像用法、Compose 示例以及需要保留哪些卷，见 [Running Pi Web in Docker](./docker.md)。
 
 ### HTTP 代理
 

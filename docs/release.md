@@ -3,8 +3,8 @@
 This repo publishes three artifacts for each release:
 
 - npm package: `@aiti-ai/pi-web`, published by GitHub Actions (`.github/workflows/publish.yml`) when a `v*` tag is pushed
-- Docker image: `ghcr.io/agegr/pi-web`, tagged `<version>`, `<major>.<minor>` and `latest`, published by the same workflow on the same tag (see [docker.md](./docker.md))
-- GitHub Release: `agegr/pi-web`
+- Docker image: `ghcr.io/aiti-ai/aiti-ai`, tagged `<version>`, `<major>.<minor>` and `latest`, published by the same workflow on the same tag (see [docker.md](./docker.md))
+- GitHub Release: `aiti-ai/aiti-ai`
 
 Use this checklist from a clean `main` checkout.
 
@@ -14,8 +14,8 @@ The publish workflow authenticates to npm with Trusted Publishing (OIDC). No npm
 
 On npmjs.com, open `@aiti-ai/pi-web` → Settings → Trusted Publisher → GitHub Actions and enter:
 
-- Organization or user: `agegr`
-- Repository: `pi-web`
+- Organization or user: `aiti-ai`
+- Repository: `aiti-ai`
 - Workflow filename: `publish.yml`
 - Environment: leave empty
 - Permissions: `npm publish` only. The workflow publishes directly; `npm stage publish` (a staged version that waits for a maintainer's 2FA approval) is not used.
@@ -131,7 +131,7 @@ Notes:
 - A newly published version may take a few minutes to show up. `npm view @aiti-ai/pi-web@<version> version` can return E404 and `npm view @aiti-ai/pi-web version` can show the previous version even though the workflow log printed `+ @aiti-ai/pi-web@<version>`. This is registry propagation, not a failed publish: do not re-run the workflow. Poll the registry until the version appears:
 
 ```bash
-curl -s https://registry.npmjs.org/@agegr%2Fpi-web/<version> | head -c 80   # JSON once it exists, "version not found" before
+curl -s https://registry.npmjs.org/@aiti-ai%2Fpi-web/<version> | head -c 80   # JSON once it exists, "version not found" before
 npm view @aiti-ai/pi-web dist-tags --registry https://registry.npmjs.org/
 npm view @aiti-ai/pi-web versions --json --registry https://registry.npmjs.org/
 ```
@@ -160,7 +160,7 @@ If the tag went out before the release was ready (a commit still missing, say), 
 
 ```bash
 gh run cancel <run-id>
-curl -s https://registry.npmjs.org/@agegr%2Fpi-web/<version> | head -c 80   # still "version not found"
+curl -s https://registry.npmjs.org/@aiti-ai%2Fpi-web/<version> | head -c 80   # still "version not found"
 ```
 
 Then either move the tag once the fix is on `main`, as above, or release the next patch instead. The second leaves an unpublished `v<version>` tag on origin, as `v0.14.0` was: base the next release notes on the last version that was published, and say there that the skipped tag was never released.
@@ -179,7 +179,7 @@ Write the release notes from those commits, not from memory. Include both Chines
 
 - Check commands, flags and setting names against `README.md` and the code before writing them down.
 - Thank outside contributors by name: `git log --format='%h %an | %s' v<previous>..v<version>` lists authors, and the previous release's notes show the style.
-- Open with the install/upgrade command (`npm install -g @aiti-ai/pi-web@latest --allow-scripts`), as earlier releases did.
+- Open with the install/upgrade command (`npm install -g @aiti-ai/pi-web@latest --allow-scripts=@aiti-ai/pi-web,esbuild,node-pty,@google/genai,protobufjs,unrs-resolver`), as earlier releases did.
 - Write the notes to a file outside the repo (for example `NOTES=$(mktemp)`), or pass them through stdin as shown below. A `release-notes.md` in the repo root is an untracked file in the next release's `git status`.
 
 Suggested structure:
@@ -232,7 +232,7 @@ Create a new release:
 
 ```bash
 gh release create v<version> \
-  --repo agegr/pi-web \
+  --repo aiti-ai/aiti-ai \
   --verify-tag \
   --title "v<version>" \
   --notes-file "$NOTES"
@@ -242,14 +242,14 @@ If the release already exists and only the notes need updating:
 
 ```bash
 gh release edit v<version> \
-  --repo agegr/pi-web \
+  --repo aiti-ai/aiti-ai \
   --notes-file "$NOTES"
 ```
 
 You can avoid a temporary file by passing notes through stdin:
 
 ```bash
-gh release edit v<version> --repo agegr/pi-web --notes-file - <<'EOF'
+gh release edit v<version> --repo aiti-ai/aiti-ai --notes-file - <<'EOF'
 ## 中文
 
 ...
@@ -263,7 +263,7 @@ EOF
 ## 6. Final Verification
 
 ```bash
-gh release view v<version> --repo agegr/pi-web
+gh release view v<version> --repo aiti-ai/aiti-ai
 gh run list --workflow publish.yml --limit 1
 npm view @aiti-ai/pi-web@<version> version --registry https://registry.npmjs.org/
 npm view @aiti-ai/pi-web dist-tags --registry https://registry.npmjs.org/
@@ -275,12 +275,12 @@ git ls-remote --tags origin
 Check that the image can be pulled without signing in:
 
 ```bash
-T=$(curl -s "https://ghcr.io/token?scope=repository:agegr/pi-web:pull" | node -p 'JSON.parse(require("fs").readFileSync(0)).token')
+T=$(curl -s "https://ghcr.io/token?scope=repository:aiti-ai/aiti-ai:pull" | node -p 'JSON.parse(require("fs").readFileSync(0)).token')
 for tag in <version> <major>.<minor> latest; do
   printf '%s: ' "$tag"
   curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $T" \
     -H 'Accept: application/vnd.oci.image.index.v1+json' \
-    "https://ghcr.io/v2/agegr/pi-web/manifests/$tag"
+    "https://ghcr.io/v2/aiti-ai/aiti-ai/manifests/$tag"
 done
 ```
 

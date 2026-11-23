@@ -21,7 +21,7 @@ The origin story is worth a read: two 15-year-old projects — [TestAgent](https
 
 [中文文档](https://github.com/aiti-ai/aiti-ai/blob/main/docs/README.zh-CN.md) covers the same in Chinese.
 
-![AITI Web displaying a pi session with structured Markdown, tool calls, and project navigation](https://raw.githubusercontent.com/agegr/pi-web/main/docs/screenshot2.png)
+![AITI Web displaying a pi session with structured Markdown, tool calls, and project navigation](https://raw.githubusercontent.com/aiti-ai/aiti-ai/main/docs/assets/screenshot.png)
 
 ### What's bundled (highlights)
 
@@ -62,7 +62,7 @@ If no model provider is configured yet, open the **Models** panel to sign in or 
 To install the `pi-web` command globally:
 
 ```bash
-npm install -g @aiti-ai/pi-web@latest --allow-scripts
+npm install -g @aiti-ai/pi-web@latest --allow-scripts=@aiti-ai/pi-web,esbuild,node-pty,@google/genai,protobufjs,unrs-resolver
 pi-web
 ```
 
