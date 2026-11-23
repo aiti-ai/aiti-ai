@@ -8,7 +8,7 @@
  * deploy.mjs 在拷贝循环后调用：
  *   for (const t of targets) copyIcons(resolve(t, "icons"), ["mic", "history"], { log });
  */
-import { copyFileSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -18,7 +18,13 @@ export function copyIcons(destDir, names, { log } = {}) {
   mkdirSync(destDir, { recursive: true });
   for (const name of names) {
     const file = name.endsWith(".svg") ? name : name + ".svg";
-    copyFileSync(resolve(ICONS_DIR, file), resolve(destDir, file));
+    const src = resolve(ICONS_DIR, file);
+    if (!existsSync(src)) {
+      // A missing library icon must not break a deploy; deploy-all reports it separately.
+      log?.(`[deploy] 图标缺失 ${file}（跳过）`);
+      continue;
+    }
+    copyFileSync(src, resolve(destDir, file));
     log?.(`[deploy] 图标 ${file} → ${destDir}`);
   }
 }

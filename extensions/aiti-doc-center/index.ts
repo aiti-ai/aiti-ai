@@ -602,7 +602,7 @@ function writeTagsToPath(root: string, rel: string, add: string[], remove: strin
 const ext = {
   id: "aiti-doc-center",
   name: "文档中心",
-  icon: "icon.svg",
+  icon: "icons/book-open.svg",
   client: "dist/aiti-doc-center-client.mjs",
   ui: {
     clientImmediately: false, // [懒加载 v2] M1 已同步生产，懒化重启用
@@ -717,7 +717,6 @@ const ext = {
         "it.aiti-doc-center-page.label": "Doc Center",
         "it.docs.title": "Docs",
         "ext.displayName": "Doc Center",
-        "ext.description": "Searches the workspace doc center (FTS full-text + weighted fusion ranking). Params: query (required, ≥3 chars works best), tag (optional, e.g. plan, docs), limit (optional, default 8). Returns docs with snippet highlights (path/title/updated/tags).",
         "feat.aiti-doc-center-page": "Doc Center",
         "feat.scan.roots": "Scan roots",
         "feat.scan.excludes": "Excluded dirs",

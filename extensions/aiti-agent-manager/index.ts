@@ -403,7 +403,7 @@ async function accountsAction(agent: string, action: string, body: Record<string
 export default {
   id: "aiti-agent-manager",
   name: "Agent 管理界面",
-  icon: "🤖",
+  icon: "icons/users.svg",
   // 统一管理面板（零构建原生 h() client；client/ 下文件随 deploy 拷入 dist/）
   client: "dist/agent-manager-client.mjs",
   // 静态插入点声明（与 client registerItems 的 id 一一对应；extman 展示/懒加载对账用）
