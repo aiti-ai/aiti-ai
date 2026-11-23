@@ -137,12 +137,111 @@ function findNpmCli(): string | null {
   return null;
 }
 
-export async function runNpm(args: string[], cwd?: string): Promise<{ stdout: string; stderr: string }> {
+export async function runNpm(
+  args: string[],
+  cwd?: string,
+  options?: { env?: NodeJS.ProcessEnv; timeoutMs?: number },
+): Promise<{ stdout: string; stderr: string }> {
   const npmCli = findNpmCli();
   const { command, commandArgs } = npmCli
     ? { command: execPath, commandArgs: [npmCli, ...args] }
     : { command: "npm", commandArgs: args };
-  return execFileAsync(command, commandArgs, { timeout: 180_000, cwd, maxBuffer: 16 * 1024 * 1024 });
+  return execFileAsync(command, commandArgs, {
+    timeout: options?.timeoutMs ?? 180_000,
+    cwd,
+    maxBuffer: 16 * 1024 * 1024,
+    ...(options?.env ? { env: options.env } : {}),
+  });
+}
+
+// ── Install source metadata ──
+// Persisted beside the installed code so update checks can inspect git installs
+// (the deployed package.json alone cannot tell where the code came from).
+// Overwritten on every (re)install; removed with the directory on uninstall.
+
+export interface InstallMeta {
+  schemaVersion: 1;
+  id: string;
+  /** Raw install source as typed by the user (e.g. "npm:@scope/pkg@1.2.3"). */
+  source: string;
+  kind: InstallKind;
+  /** npm spec / git url / local path. */
+  ref: string;
+  branch?: string;
+  /** Version recorded at install time (from the installed package.json). */
+  version: string | null;
+  installedAt: string;
+}
+
+const INSTALL_META_FILE = ".aiti-extman.json";
+
+/**
+ * Compare the local git HEAD with the origin ref it tracks (or origin/HEAD).
+ * Used by update checks for git-installed extensions; `remote` is null when the
+ * remote cannot be resolved (offline, no origin, private repo without creds).
+ */
+export async function gitUpdateInfo(
+  dir: string,
+  options?: { env?: NodeJS.ProcessEnv; timeoutMs?: number },
+): Promise<{ head: string; remote: string | null } | null> {
+  const timeout = options?.timeoutMs ?? 12_000;
+  const env = options?.env ?? { ...process.env, GIT_TERMINAL_PROMPT: "0" };
+  const cwd = dir;
+  try {
+    const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd, env, timeout });
+    const head = stdout.trim();
+    if (!head) return null;
+    let ref = "HEAD";
+    try {
+      const { stdout: up } = await execFileAsync("git", ["rev-parse", "--abbrev-ref", "@{upstream}"], { cwd, env, timeout });
+      const name = up.trim();
+      if (name.startsWith("origin/")) ref = `refs/heads/${name.slice("origin/".length)}`;
+    } catch {
+      // No upstream configured: fall back to origin/HEAD.
+    }
+    const { stdout: remoteOut } = await execFileAsync("git", ["ls-remote", "origin", ref], { cwd, env, timeout });
+    const match = /^([0-9a-f]{40,64})\s+/m.exec(remoteOut);
+    return { head, remote: match?.[1] ?? null };
+  } catch {
+    return null;
+  }
+}
+
+export function readInstallMeta(dir: string): InstallMeta | null {
+  try {
+    const parsed = JSON.parse(readFileSync(join(dir, INSTALL_META_FILE), "utf8")) as Partial<InstallMeta>;
+    if (!parsed || parsed.schemaVersion !== 1) return null;
+    if (typeof parsed.source !== "string" || typeof parsed.kind !== "string") return null;
+    return {
+      schemaVersion: 1,
+      id: typeof parsed.id === "string" ? parsed.id : "",
+      source: parsed.source,
+      kind: parsed.kind as InstallKind,
+      ref: typeof parsed.ref === "string" ? parsed.ref : "",
+      ...(typeof parsed.branch === "string" ? { branch: parsed.branch } : {}),
+      version: typeof parsed.version === "string" ? parsed.version : null,
+      installedAt: typeof parsed.installedAt === "string" ? parsed.installedAt : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeInstallMeta(dir: string, meta: Omit<InstallMeta, "schemaVersion" | "installedAt" | "version">): void {
+  let version: string | null = null;
+  try {
+    const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { version?: unknown };
+    version = typeof pkg.version === "string" ? pkg.version : null;
+  } catch {
+    version = null;
+  }
+  const payload: InstallMeta = {
+    schemaVersion: 1,
+    ...meta,
+    version,
+    installedAt: new Date().toISOString(),
+  };
+  writeFileSync(join(dir, INSTALL_META_FILE), JSON.stringify(payload, null, 2) + "\n");
 }
 
 // ── 来源解析 ──
@@ -351,6 +450,13 @@ export async function installExtension(source: string, explicitId?: string, docs
     if (replaced) rmSync(target, { recursive: true, force: true });
     cpSync(entryDir, target, { recursive: true });
     if (docsUrl && /^https?:\/\//.test(docsUrl)) writeHomepage(target, docsUrl);
+    writeInstallMeta(target, {
+      id,
+      source: source.trim(),
+      kind: plan.kind,
+      ref: plan.ref,
+      ...(plan.branch ? { branch: plan.branch } : {}),
+    });
     return { id, dir: target, kind: plan.kind, replaced };
   } finally {
     rmSync(tmp, { recursive: true, force: true });
@@ -382,6 +488,7 @@ export async function installFromZipBuffer(buf: Buffer, explicitId?: string, doc
     if (replaced) rmSync(target, { recursive: true, force: true });
     cpSync(entryDir, target, { recursive: true });
     if (docsUrl && /^https?:\/\//.test(docsUrl)) writeHomepage(target, docsUrl);
+    writeInstallMeta(target, { id, source: "zip", kind: "zip", ref: "" });
     return { id, dir: target, kind: "zip", replaced };
   } finally {
     rmSync(tmp, { recursive: true, force: true });

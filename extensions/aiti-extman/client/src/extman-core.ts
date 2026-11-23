@@ -7,6 +7,7 @@
 import { t, apiUrl } from "./host-shim";
 import { typoMatch } from "../../../_shared/typo-search.mjs";
 import { openFloat, closePanel } from "../../../_shared/ext-float-dock";
+import { extDescriptionFor, extSoulFor, onExtRegistryReady, extDisplayName as sharedDisplayName } from "../../../_shared/ext-display-names";
 
 /* ── 跨扩展条目文案解析（"i18n:<key>" 前缀 → 声明扩展 manifest ui.i18n 表）──
  * 插槽条目 label/title 携带 i18n key 后，extman 的 direct-open 按 DOM 文案/title 匹配，
@@ -37,18 +38,51 @@ export function resolveExtItemText(extId: string | undefined, text: string | und
   if (!extId || !text.startsWith("i18n:")) return text;
   primeExtI18n();
   const key = text.slice("i18n:".length);
-  let locale = "en";
-  try { const v = localStorage.getItem("pi-locale"); if (v === "zh-CN" || v === "zh-TW" || v === "en") locale = v; } catch { /* ignore */ }
-  return tableFor(extI18nTables?.[extId], locale)[key] ?? key;
+  return tableFor(extI18nTables?.[extId], currentLocaleKey())[key] ?? key;
 }
 /** Current-locale-only table for one extension (NO cascade — manifest text is the
  *  zh-CN source; only the current locale's own table overrides it). Self-declared
  *  "ext.description" / "feat.<id>" overrides per the 2026-11-15 i18n convention. */
 export function extUi18nExact(extId: string | undefined): Record<string, string> {
   primeExtI18n();
-  let locale = "en";
-  try { const v = localStorage.getItem("pi-locale"); if (v === "zh-CN" || v === "zh-TW" || v === "en") locale = v; } catch { /* ignore */ }
-  return extI18nTables?.[extId ?? ""]?.[locale] ?? {};
+  return extI18nTables?.[extId ?? ""]?.[currentLocaleKey()] ?? {};
+}
+
+/** Current UI locale key (same source as the host i18n: localStorage pi-locale, default en). */
+export function currentLocaleKey(): string {
+  try {
+    const v = localStorage.getItem("pi-locale");
+    if (v === "zh-CN" || v === "zh-TW" || v === "en") return v;
+  } catch { /* ignore */ }
+  return "en";
+}
+
+/** Tagline for the current locale: ui.i18n["ext.soul"] → package.json soulI18n[locale] → bare soul.
+ *  Delegates to the shared resolver so every consumer (extension manager, app center…) agrees. */
+export function extSoulText(
+  extId: string | undefined,
+  pkg: { soul?: string; soulI18n?: Record<string, string>; soulEn?: string } | undefined,
+): string {
+  // Online registry rows carry a flat soulEn instead of a locale map.
+  const map = pkg?.soulI18n ?? (pkg?.soulEn ? { en: pkg.soulEn } : undefined);
+  return extSoulFor({ soul: pkg?.soul, soulI18n: map, ui: { i18n: extI18nTables?.[extId ?? ""] } }, currentLocaleKey());
+}
+
+/** One-line description for the current locale: ui.i18n["ext.description"] → descriptionI18n[locale] → raw.
+ *  Works for both local entries (packageInfo) and remote registry rows (plain description). */
+export function extDescriptionText(
+  extId: string | undefined,
+  pkg: { description?: string; descriptionI18n?: Record<string, string>; descriptionEn?: string } | undefined,
+  fallback?: string,
+): string {
+  // Online registry rows (aiti.pw/extensions.json) carry a flat descriptionEn instead of a locale map.
+  const map = pkg?.descriptionI18n ?? (pkg?.descriptionEn ? { en: pkg.descriptionEn } : undefined);
+  const text = extDescriptionFor({
+    description: pkg?.description ?? fallback,
+    descriptionI18n: map,
+    ui: { i18n: extI18nTables?.[extId ?? ""] },
+  }, currentLocaleKey());
+  return text || fallback || "";
 }
 /** Feature group heading: manifests may declare `group: "i18n:<key>"` (same convention as slot
  *  labels); the key resolves through the declaring extension's ui.i18n table. Plain text passes through. */
@@ -56,14 +90,60 @@ export function featureGroupText(extId: string | undefined, group: unknown): str
   return resolveExtItemText(extId, group == null ? "" : String(group));
 }
 
+/** Display name for an online registry row: nameEn for English, the manifest name otherwise. */
+export function onlineName(ext: { id: string; name?: string; nameEn?: string } | undefined | null): string {
+  if (!ext) return "";
+  const locale = currentLocaleKey();
+  if (locale.startsWith("zh")) return ext.name || extDisplayName(ext.id, ext.name);
+  return ext.nameEn || extDisplayName(ext.id, ext.name);
+}
+
 /** 条目展示名（label 优先 title 兑底，i18n key 已解析）——direct-open 匹配与提示文案共用。 */
 function resolveItemLabel(extId: string | undefined, item: any): string {
   return resolveExtItemText(extId, item && item.label) || resolveExtItemText(extId, item && item.title) || (item && item.id) || "";
 }
 // extman-ui.tsx 从本模块取展示名（保持旧 import 面不变）
-export { extDisplayName } from "../../../_shared/ext-display-names";
+/**
+ * Display name for the current locale.
+ *
+ * Order: shared resolver (manifest ui.i18n override, then manifest name / id rule) → package.json
+ * displayNameI18n. The package.json map is the only source for entries the manifest never lists
+ * (disabled or failed extensions), which would otherwise show "@scope/aiti-xxx" or the bare id.
+ */
+export function extDisplayName(id: string, fallbackName?: string | null): string {
+  const shared = sharedDisplayName(id, fallbackName);
+  // The manifest's ui.i18n entry is the author's declaration and wins; the package.json map is a
+  // fallback for entries the manifest never lists (disabled/failed extensions).
+  const resolved = Boolean(shared && shared !== id && !/^@[^/]+\//.test(shared));
+  if (resolved) return shared;
+  const locale = currentLocaleKey();
+  const local = state.status?.extensions?.[id]?.packageInfo?.displayNameI18n as Record<string, string> | undefined;
+  if (!local) return shared;
+  const exact = local[locale];
+  if (exact) return exact;
+  const family = Object.entries(local).find(([k]) => k.split("-")[0] === locale.split("-")[0]);
+  return family ? family[1] : shared;
+}
 
 // ---------- 模块级状态（跨组件共享；listener 模式） ----------
+
+/** One extension's dual-source update verdict (mirrors the server UpdateEntry). */
+export interface UpdateInfo {
+  id: string;
+  pkg: string | null;
+  installed: string | null;
+  npm: { latest: string; hasUpdate: boolean } | null;
+  registry: { version: string; hasUpdate: boolean; docsUrl: string | null } | null;
+  git: { head: string; remote: string | null; hasUpdate: boolean } | null;
+  latest: string;
+  source: "npm" | "registry" | "both" | "git" | "none";
+  state: "update-available" | "up-to-date" | "local-ahead" | "unpublished" | "unsupported" | "error" | "unknown";
+  hasUpdate: boolean;
+  localAhead: boolean;
+  /** `npm:<pkg>` / `git:<url>`; null = hint only (no installable newer source). */
+  installable: string | null;
+  message?: string;
+}
 export const state = {
   open: false,
   status: null as any,        // /status 载荷 { extensions: {id: entry}, extensionsRoot, ... }
@@ -78,8 +158,13 @@ export const state = {
   registryData: null as any,  // aiti.pw /extensions.json
   registryError: null as string | null,
   registryLoaded: false,
-  // npm 更新检查（pi package-manager 同策略）：{ <extId>: { pkg, installed, latest, hasUpdate } }
-  updates: null as Record<string, { pkg: string; installed: string; latest: string; hasUpdate: boolean }> | null,
+  // Dual-source update check (npm × aiti.pw registry × git); keyed by extension id.
+  updates: null as Record<string, UpdateInfo> | null,
+  // Registry-only phase rendered first; npm/git verdict not in yet (never show a ✓ yet).
+  updatesPartial: false,
+  // The last persisted verdict is being shown while a fresh check runs in the background
+  // (process restart / stale cache): show ↑ badges immediately, never a ✓ until refreshed.
+  updatesStale: false,
   updatesChecking: false,
   isMobile: false,
   // VSCode 式 trust：待确认的发行者（{kind:"source"|"zip", source, docsUrl?, id?, publisher, file?, zipName?}）
@@ -584,7 +669,8 @@ function openSlotItemNow(extId: string, slot: string, item: any, currentSession:
 // ---------- 数据操作 ----------
 export async function refreshStatus() {
   try {
-    const r = await fetch(apiUrl("/api/extensions/aiti-extman/status"), { cache: "no-store" });
+    // locale drives the server-side DESC.<locale>.md / DESC.<lang>.md markdown-description fallback.
+    const r = await fetch(apiUrl("/api/extensions/aiti-extman/status?locale=" + encodeURIComponent(currentLocaleKey())), { cache: "no-store" });
     if (!r.ok) throw new Error("HTTP " + r.status);
     const d = await r.json();
     let sel = state.selected;
@@ -629,26 +715,46 @@ export async function loadRegistry() {
 
 let updatesInFlight: Promise<void> | null = null;
 /**
- * npm 包更新检查（pi package-manager 同策略：打开面板/手动刷新时各查一次，非轮询；
- * 服务端 5min 缓存，force=1 绕过）。失败静默——更新提示是增强信息，不阻塞主流程。
+ * Dual-source update check. Phase 1 asks for the registry-only verdict (one HTTP
+ * round-trip) so the list updates immediately; phase 2 asks for the authoritative
+ * npm + git verdict and overrides it. Failures keep the previous/partial result — a
+ * failed check must never look like "up to date". No polling: panel open / refresh.
  */
 export async function loadUpdates(force = false) {
   if (updatesInFlight) return updatesInFlight;
   const p = (async () => {
     setState({ updatesChecking: true });
     try {
+      const pr = await fetch(apiUrl("/api/extensions/aiti-extman/updates?phase=registry" + (force ? "&force=1" : "")), { cache: "no-store" });
+      const pd = await pr.json();
+      if (pr.ok && !pd.error && pd.updates) {
+        setState({ updates: pd.updates, updatesPartial: !!pd.partial, updatesStale: !!pd.stale });
+      }
+    } catch { /* partial phase is an optimization only */ }
+    try {
       const r = await fetch(apiUrl("/api/extensions/aiti-extman/updates" + (force ? "?force=1" : "")), { cache: "no-store" });
       const d = await r.json();
       if (!r.ok || d.error) throw new Error(d.error || "HTTP " + r.status);
-      setState({ updates: d.updates || {}, updatesChecking: false });
+      setState({ updates: d.updates || {}, updatesPartial: !!d.partial, updatesStale: !!d.stale });
+      if (!force && d.stale) {
+        // The server replayed its persisted verdict: keep it on screen while the fresh
+        // check runs, then swap in the new one (badge stays visible either way).
+        const fr = await fetch(apiUrl("/api/extensions/aiti-extman/updates?force=1"), { cache: "no-store" });
+        const fd = await fr.json();
+        if (fr.ok && !fd.error) setState({ updates: fd.updates || {}, updatesPartial: !!fd.partial, updatesStale: false });
+      }
     } catch {
-      setState({ updatesChecking: false }); // 静默失败
+      // Keep whatever the partial phase produced (updatesPartial stays true).
     } finally {
-      updatesInFlight = null;
+      setState({ updatesChecking: false });
     }
   })();
   updatesInFlight = p;
-  return p;
+  try {
+    await p;
+  } finally {
+    updatesInFlight = null;
+  }
 }
 
 /** 轻量 semver gt（与服务端 semverGt 同逻辑：numeric x.y.z[-pre]，prerelease 逐段）。 */
@@ -765,6 +871,52 @@ export async function execOp(action: string, extra: Record<string, unknown>) {
   }
 }
 
+let updateAllInFlight: Promise<void> | null = null;
+/**
+ * Install every installable update (npm / git source) in one server-side pass.
+ * The server installs each target, reconciles shared deps and reloads once.
+ */
+export async function updateAll() {
+  if (updateAllInFlight) return updateAllInFlight;
+  const p = (async () => {
+    setState({ busyKey: "*", applying: t("ext.updatingAll"), error: null, message: null });
+    try {
+      const r = await fetch(apiUrl("/api/extensions/aiti-extman/update-all"), { method: "POST", cache: "no-store" });
+      const d = await r.json();
+      if (!r.ok || d.error) throw new Error(d.error || "HTTP " + r.status);
+      if (d.extensions) {
+        const ids = Object.keys(d.extensions).filter((id) => d.extensions[id].enabled !== false).sort();
+        const sel = state.selected;
+        setState({
+          status: d,
+          selected: sel && sel.kind === "local" && d.extensions[sel.id] ? sel : (ids[0] ? { kind: "local", id: ids[0] } : null),
+        });
+      } else {
+        await refreshStatus();
+      }
+      await syncClient();
+      const list = Array.isArray(d.updated) ? d.updated : [];
+      const failed = list.filter((u: any) => !u.ok);
+      setState({
+        message: failed.length
+          ? t("ext.msgUpdatedSome", { ok: String(list.length - failed.length), failed: String(failed.length) })
+          : t("ext.msgUpdatedAll", { count: String(list.length) }),
+        busyKey: null,
+        applying: null,
+      });
+      void loadUpdates(true);
+    } catch (e) {
+      setState({ error: String((e as any) && (e as any).message || e), busyKey: null, applying: null });
+    }
+  })();
+  updateAllInFlight = p;
+  try {
+    await p;
+  } finally {
+    updateAllInFlight = null;
+  }
+}
+
 async function syncClient() {
   // resyncOnly：extman 所有 ops（install/remove/enable/disable/reload）服务端都已在
   // 同一请求内完成全量重载并在响应里带了最新状态——这里只需补拉 manifest + 反卷
@@ -835,9 +987,13 @@ function installProtocolHint(base: string, protocolCheck: any): string {
 /** 订阅核心状态 + 界面语言变化：语言切换时也强刷（展示名/t() 文案跟随）。 */
 export function subscribeAll(fn: () => void): () => void {
   const unsubState = subscribe(fn);
-  const onLocale = () => fn();
+  // Locale switch must also re-fetch: DESC.<locale>.md markdown descriptions are resolved server-side.
+  const onLocale = () => { fn(); void refreshStatus().catch(() => { /* keep the last payload */ }); };
   window.addEventListener("pi-web:locale-changed", onLocale);
-  return () => { unsubState(); window.removeEventListener("pi-web:locale-changed", onLocale); };
+  // The shared display-name registry loads asynchronously (one manifest fetch); repaint when it lands,
+  // otherwise English mode keeps showing ids for Chinese-named extensions until something else changes.
+  const unsubRegistry = onExtRegistryReady(fn);
+  return () => { unsubState(); unsubRegistry(); window.removeEventListener("pi-web:locale-changed", onLocale); };
 }
 
 /** 本地条目是否命中搜索（id / name / 描述字段；双语名都参与匹配；错字容忍与拼音搜索见各 helper）。 */

@@ -10,13 +10,14 @@ import {
   SELF_ID, AITI_REGISTRY_PAGE, SOURCE_LABELS, SOURCE_COLORS, btnStyle, chipStyle,
   shortenPath, statusDotColor, statusDotTitle, looksLikeSource, publisherTrusted,
   publisherSourceLabel, findButtonByLabel, openSlotItem, dropToBack,
-  refreshTrusted, refreshStatus, sortedLocalIds, loadRegistry, loadUpdates, runOp, runInstallZip,
+  refreshTrusted, refreshStatus, sortedLocalIds, loadRegistry, loadUpdates, runOp, runInstallZip, updateAll,
   localMatches, onlineMatches, registryDocUrl, registryInstallSource, onlinePublisher, syncLoader, semverGt,
   extDisplayName, subscribeAll, dependentsOf, execOp, depEdges, hardDependents, clientDependents,
-  invokeHelper, extUi18nExact, featureGroupText,
+  invokeHelper, extUi18nExact, extSoulText, extDescriptionText, onlineName, featureGroupText,
   EXTMAN_KEY,
 } from "./extman-core";
 import { t, apiUrl } from "./host-shim";
+import { AITI_DOCS_BASE } from "./extman-core";
 import { MdDesc, extDescVars } from "./md-desc";
 // aiti-float dock v3（P1 批）：渲染门控 useGate + 停靠容器 DockBody（extman-core 的 setState
 // 已把 patch.open 路由到 openFloat/closePanel，本文件所有 setState({open:…}) 调用点零改动）
@@ -33,6 +34,53 @@ const ROOT_CHIP_COLORS: Record<string, [string, string]> = {
   dev: ["#059669", "rgba(5,150,105,0.12)"],
   bundled: ["#8b5cf6", "rgba(139,92,246,0.12)"],
 };
+
+/** Short source tag for update chips: npm / site (aiti.pw) / both / git. */
+function updateSourceLabel(source: string | undefined): string {
+  if (source === "registry") return "site";
+  if (source === "none" || !source) return "";
+  return source;
+}
+
+/** Full dual-source breakdown for tooltips: installed / npm / aiti.pw / git. */
+function updateTooltip(upd: any): string {
+  if (!upd) return "";
+  const parts: string[] = [];
+  if (upd.installed) parts.push("installed " + upd.installed);
+  if (upd.npm) parts.push("npm " + upd.npm.latest);
+  if (upd.registry) parts.push("aiti.pw " + upd.registry.version);
+  if (upd.git) parts.push("git " + String(upd.git.head).slice(0, 7) + (upd.git.remote ? " → " + String(upd.git.remote).slice(0, 7) : ""));
+  if (upd.message) parts.push(upd.message);
+  return parts.join(" · ");
+}
+
+const UPDATE_WARN = { color: "#d97706", bg: "rgba(217,119,6,0.12)" };
+const UPDATE_OK = {
+  color: "color-mix(in srgb, var(--ok, #10b981) 90%, transparent)",
+  bg: "color-mix(in srgb, var(--ok, #10b981) 12%, transparent)",
+};
+
+/** One-line verdict chip for a dual-source update entry (shared by list + detail). */
+function UpdateStatusChip({ upd }: { upd: any }) {
+  if (!upd) return null;
+  switch (upd.state) {
+    case "update-available":
+      return <span style={chipStyle(UPDATE_WARN.color, UPDATE_WARN.bg)} title={updateTooltip(upd)}>↑ {upd.latest}{upd.source !== "none" ? " · " + updateSourceLabel(upd.source) : ""}</span>;
+    case "unpublished":
+      return <span style={chipStyle(UPDATE_WARN.color, UPDATE_WARN.bg)} title={updateTooltip(upd)}>{t("ext.updateSiteOnly", { version: (upd.registry && upd.registry.version) || upd.latest })}</span>;
+    case "up-to-date":
+      // A replayed (stale) verdict must not claim "up to date" — show nothing until the
+      // background refresh lands; an ↑ badge from the same cached row stays visible.
+      if (state.updatesStale) return null;
+      return <span style={chipStyle(UPDATE_OK.color, UPDATE_OK.bg)} title={updateTooltip(upd)}>✓ {upd.latest}</span>;
+    case "local-ahead":
+      return <span style={chipStyle("var(--text-dim)", "var(--bg-panel)")} title={updateTooltip(upd)}>{t("ext.localAhead")}</span>;
+    case "error":
+      return <span style={chipStyle("var(--danger, #ef4444)", "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)")} title={updateTooltip(upd)}>! {t("ext.updateCheckFailed")}</span>;
+    default:
+      return null; // unsupported / unknown: no actionable verdict
+  }
+}
 
 function protocolChipSpec(proto: any): { icon: string; label: string; color: string; bg: string } | null {
   const state = proto?.state;
@@ -98,11 +146,35 @@ function VirtualClick({ vc }: { vc: { render: (props?: any) => any; key: number 
   );
 }
 
-/** 扩展图标渲染：icon 是相对扩展目录的图标文件（如 icon.svg）→ 资产 URL + CSS mask（颜色跟随 currentColor）；否则按 emoji/文本显示 */
+/** Neutral line-icon placeholder (Lucide \`box\`): online rows and emoji-declaring extensions. */
+function BoxPlaceholderIcon({ size }: { size: number }) {
+  return (
+    <svg aria-hidden width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"
+      style={{ flexShrink: 0, verticalAlign: "middle", opacity: 0.75 }}>
+      <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
+      <path d="m3.3 7 8.7 5 8.7-5" />
+      <path d="M12 22V12" />
+    </svg>
+  );
+}
+
+/**
+ * Extension icon rendering, in priority order:
+ *
+ *  1. The deployed extension's declared SVG (`icon.svg` or `icons/<name>.svg`), served under
+ *     /assets/ and painted with a CSS mask so the color follows currentColor. The icon comes from
+ *     the status payload, not from the row: a search result can be an online row whose icon is a
+ *     catalog emoji while the same id is installed locally.
+ *  2. The cloud-hosted icon of an online row (`iconUrl` from extensions.json) as a plain <img>,
+ *     so an extension can customise its icon without being installed.
+ *  3. A neutral line-icon placeholder (emoji declarations and rows with neither source).
+ */
 function extIconSpan(ext: any, size: number, id?: string) {
   const extId = id || (ext && ext.id);
-  if (ext && typeof ext.icon === "string" && ext.icon.endsWith(".svg") && extId) {
-    const url = apiUrl("/api/extensions/" + extId + "/assets/" + ext.icon);
+  const localIcon = extId ? state.status?.extensions?.[extId]?.icon : null;
+  if (extId && typeof localIcon === "string" && localIcon.endsWith(".svg")) {
+    const url = apiUrl("/api/extensions/" + extId + "/assets/" + localIcon);
     return (
       <span aria-hidden style={{
         display: "inline-block", width: size, height: size, flexShrink: 0, verticalAlign: "middle",
@@ -111,7 +183,13 @@ function extIconSpan(ext: any, size: number, id?: string) {
       }} />
     );
   }
-  return (ext && ext.icon) || "📦";
+  if (ext && typeof ext.iconUrl === "string" && ext.iconUrl) {
+    return (
+      <img aria-hidden alt="" src={AITI_DOCS_BASE + ext.iconUrl} width={size} height={size}
+        style={{ flexShrink: 0, verticalAlign: "middle", objectFit: "contain" }} />
+    );
+  }
+  return <BoxPlaceholderIcon size={size} />;
 }
 
 // ---------- 小组件 ----------
@@ -756,6 +834,10 @@ function ExtManContent(): any {
   for (const ext of regExts) registryById[ext.id] = ext;
 
   const busyAny = state.busyKey !== null;
+  const updateCount = state.updates
+    ? Object.keys(state.updates).filter((k) => state.updates && state.updates[k] && state.updates[k].hasUpdate).length
+    : 0;
+  const updatingAll = state.busyKey === "*" && !!state.applying;
 
   // 底部 roots 摘要：单行 chip 徽章（label 着色 + 路径），完整清单在 title tooltip。
   const rootChips: { label: string; value: string }[] = status ? [
@@ -827,6 +909,14 @@ function ExtManContent(): any {
               <button type="button" disabled={busyAny} onClick={() => void runOp("reload", {})} style={{ ...btnStyle, flex: 1 } as React.CSSProperties}>
                 {state.busyKey === "reload:" ? "…" : t("ext.reload")}
               </button>
+              {updateCount > 0 && (
+                <button type="button" disabled={busyAny}
+                  title={t("ext.updateAllHint")}
+                  onClick={async () => { if (await uiConfirm({ message: t("ext.updateAllConfirm", { count: String(updateCount) }) })) void updateAll(); }}
+                  style={{ ...btnStyle, flex: 1, background: "var(--accent)", color: "white", borderColor: "var(--accent)" } as React.CSSProperties}>
+                  {updatingAll ? "…" : t("ext.updateAll", { count: String(updateCount) })}
+                </button>
+              )}
               <button type="button" disabled={busyAny} onClick={() => { void refreshStatus(); void loadUpdates(true); }} style={{ ...btnStyle, flex: 1 } as React.CSSProperties}>{t("ext.refresh")}</button>
             </div>
           </div>
@@ -851,6 +941,14 @@ function ExtManContent(): any {
               <button type="button" disabled={busyAny} onClick={() => void runOp("reload", {})} style={btnStyle as React.CSSProperties}>
                 {state.busyKey === "reload:" ? "…" : t("ext.reload")}
               </button>
+              {updateCount > 0 && (
+                <button type="button" disabled={busyAny}
+                  title={t("ext.updateAllHint")}
+                  onClick={async () => { if (await uiConfirm({ message: t("ext.updateAllConfirm", { count: String(updateCount) }) })) void updateAll(); }}
+                  style={{ ...btnStyle, background: "var(--accent)", color: "white", borderColor: "var(--accent)" } as React.CSSProperties}>
+                  {updatingAll ? "…" : t("ext.updateAll", { count: String(updateCount) })}
+                </button>
+              )}
               <button type="button" disabled={busyAny} onClick={() => { void refreshStatus(); void loadUpdates(true); }} style={btnStyle as React.CSSProperties}>{t("ext.refresh")}</button>
               <button type="button" onClick={() => setState({ open: false })} title={t("ext.close")} aria-label={t("ext.close")} style={btnStyle as React.CSSProperties}><IconClose /></button>
             </div>
@@ -975,13 +1073,14 @@ function ExtManContent(): any {
                     const e = status.extensions[id];
                     const isSel = rowSelected("local", id);
                     const reg = registryById[id];
-                    // npm 更新检查（pi 同策略）优先；仅当 npm 数据缺失（未完成/非 npm 包）才回退注册表对比，
-                    // 且要求注册表版本 semver 大于已装版本——陈旧注册表的旧版本（如 0.3.9 vs 0.3.86）不提示
+                    // Dual-source verdict from /updates (npm × aiti.pw × git). Fall back to the
+                    // registry catalog only when the server has no entry yet (old server / partial
+                    // phase): a stale catalog version must never win over a newer npm one.
                     const upd = state.updates && state.updates[id];
-                    const npmUpd = upd && upd.hasUpdate;
-                    const regUpd = !upd && reg && reg.version && e.version && semverGt(reg.version, e.version);
-                    const updatable = npmUpd || regUpd;
-                    const upVer = npmUpd ? upd.latest : (reg && reg.version) || "";
+                    const regUpd = !upd && !state.updatesPartial && reg && reg.version && e.version && semverGt(reg.version, e.version);
+                    const updatable = upd ? upd.hasUpdate : !!regUpd;
+                    const upVer = upd ? upd.latest : (reg && reg.version) || "";
+                    const upSource = upd ? updateSourceLabel(upd.source) : "site";
                     const protoChip = protocolChipSpec(e.protocol);
                     const showDivider = !hasQuery && e.enabled === false && (i === 0 || status.extensions[localIds[i - 1]].enabled !== false);
                     const hovered = state.hoverLocal === id;
@@ -1026,7 +1125,7 @@ function ExtManContent(): any {
                               label={(e.enabled === false ? t("ext.enable") : t("ext.disable")) + " " + id} />
                           ) : [
                             hasQuery && <span key="inst" style={chipStyle("rgba(99,102,241,0.9)", "rgba(99,102,241,0.12)")}>{t("ext.installed")}</span>,
-                            updatable && <span key="up" title={npmUpd ? (upd.pkg + " " + upd.installed + " → " + upd.latest) : ""} style={chipStyle("#d97706", "rgba(217,119,6,0.12)")}>↑{upVer}</span>,
+                            updatable && <span key="up" title={upd ? updateTooltip(upd) : ""} style={chipStyle(UPDATE_WARN.color, UPDATE_WARN.bg)}>↑{upVer}{upSource ? " " + upSource : ""}</span>,
                             !hasQuery && <SourceTag key="src" source={e.source} />,
                           ]}
                         </div>
@@ -1059,21 +1158,21 @@ function ExtManContent(): any {
                           onMouseLeave={(ev) => { if (!isSel) ev.currentTarget.style.background = "none"; }}>
                           <div style={{ minWidth: 0, flex: 1 }}>
                             {/* 第一行：名字（中英文展示名优先，按界面语言切换；缺省回退包名） */}
-                            <div title={extUi18nExact(ext.id)["ext.description"] || ext.description || ext.id} style={{
+                            <div title={extDescriptionText(ext.id, ext) || ext.id} style={{
                               fontSize: 12, fontWeight: isSel ? 600 : 500, color: "var(--text)",
                               display: "flex", alignItems: "center", gap: 5, minWidth: 0,
                             }}>
                               <span title={t("ext.statusNotInstalled")} style={{ flexShrink: 0, width: 7, height: 7, borderRadius: "50%", background: "var(--border)" }} />
                               {extIconSpan(ext, 12)}
-                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, flex: 1 }}>{extDisplayName(ext.id, ext.name) + (ext.version ? " · v" + ext.version : "")}</span>
+                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, flex: 1 }}>{onlineName(ext) + (ext.version ? " · v" + ext.version : "")}</span>
                             </div>
                             {/* 第二行：纯英文包名（+描述；名字与包名相同时不重复显示包名） */}
                             <div style={{ fontSize: 11, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 2 }}>
                               {[
-                                extDisplayName(ext.id, ext.name) !== ext.id ? <span key="pkg" style={{ fontFamily: "var(--font-mono)" }}>{ext.id}</span> : null,
-                                (extUi18nExact(ext.id)["ext.description"] || ext.description || "")
-                                  ? (extDisplayName(ext.id, ext.name) !== ext.id ? " · " + (extUi18nExact(ext.id)["ext.description"] || ext.description) : (extUi18nExact(ext.id)["ext.description"] || ext.description))
-                                  : null,
+                                onlineName(ext) !== ext.id ? <span key="pkg" style={{ fontFamily: "var(--font-mono)" }}>{ext.id}</span> : null,
+                                (() => { const desc = extDescriptionText(ext.id, ext); return desc
+                                  ? (onlineName(ext) !== ext.id ? " · " + desc : desc)
+                                  : null; })(),
                               ]}
                             </div>
                           </div>
@@ -1209,6 +1308,8 @@ function LocalDetail({ id, entry }: { id: string; entry: any }) {
     return (rawSlots[slot] || []).map((itId: string) => ({ id: itId, label: itId, context: "global", where: "" }));
   };
   const pkg = entry.packageInfo || {};
+  // Registry catalog entry for this id (version / docs / npm name); used by the dual-source update row.
+  const registryEntry = ((state.registryData && state.registryData.extensions) || []).find((x: any) => x && x.id === id) || null;
   // 「被依赖」反向列表（全边类型，含禁用依赖者灰显）+ 每个依赖者的边类型标注（依赖与能力模型）
   const allDependents = dependentsOf(id, { includeDisabled: true, allKinds: true });
   const dependentEdgeKinds: Record<string, string[]> = {};
@@ -1260,7 +1361,7 @@ function LocalDetail({ id, entry }: { id: string; entry: any }) {
         )}
       </div>
 
-      {pkg.soul && <div style={{ fontSize: 12, fontStyle: "italic", color: "var(--text)", borderLeft: "3px solid var(--accent)", paddingLeft: 10, opacity: 0.92 } as React.CSSProperties}>❝ {pkg.soul} ❞</div>}
+      {(() => { const soul = extSoulText(id, pkg); return soul ? <div style={{ fontSize: 12, fontStyle: "italic", color: "var(--text)", borderLeft: "3px solid var(--accent)", paddingLeft: 10, opacity: 0.92 } as React.CSSProperties}>❝ {soul} ❞</div> : null; })()}
 
       {/* markdown 描述（DESC.md 约定；支持 {{aiti-url}} 等约定变量） */}
       {entry.descriptionMd && <MdDesc text={entry.descriptionMd} vars={extDescVars(id, entry)} />}
@@ -1314,32 +1415,69 @@ function LocalDetail({ id, entry }: { id: string; entry: any }) {
         <InfoRow label={t("ext.publisher")}><PublisherCell publisher={entry.publisher} /></InfoRow>
         <InfoRow label={t("ext.dir")}><span style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>{entry.dir ? shortenPath(entry.dir) : "—"}</span></InfoRow>
         <InfoRow label={t("ext.configDir")}><span style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>{entry.configDir ? shortenPath(entry.configDir) : "—"}</span></InfoRow>
-        {pkg.name && (
-          <InfoRow label="npm">
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap", minWidth: 0 }}>
-              <span style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>{pkg.name}</span>
-              {(() => {
-                const upd = state.updates && state.updates[id];
-                // 更新检查已出结果且就是本包 → npm 版本状态（pi 同策略：npm registry 为准）
-                if (!upd || upd.pkg !== pkg.name) return null;
-                if (upd.hasUpdate) {
-                  const installing = state.busyKey === "install:" + upd.pkg;
-                  return [
-                    <span key="chip" title={upd.installed + " → " + upd.latest} style={chipStyle("#d97706", "rgba(217,119,6,0.12)")}>↑ {upd.latest}</span>,
+        {(() => {
+          const upd = state.updates && state.updates[id];
+          const regVersion = (upd && upd.registry && upd.registry.version) || (registryEntry && registryEntry.version) || null;
+          if (!pkg.name && !regVersion && !upd) return null;
+          const installing = !!(upd && upd.installable && state.busyKey === "install:" + upd.installable);
+          const showBtn = !!(upd && upd.hasUpdate && upd.installable);
+          return (
+            <InfoRow label={t("ext.versionCheck")}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap", minWidth: 0 }}>
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>{pkg.name || id}</span>
+                  <span style={chipStyle("var(--text-muted)", "var(--bg-panel)")}>v{pkg.version || (upd && upd.installed) || "—"}</span>
+                </span>
+                {upd && upd.npm && (
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 11, color: "var(--text-dim)", minWidth: 46 }}>npm</span>
+                    <span style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>v{upd.npm.latest}</span>
+                    {upd.npm.hasUpdate && <span style={chipStyle(UPDATE_WARN.color, UPDATE_WARN.bg)}>↑</span>}
+                  </span>
+                )}
+                {upd && upd.registry && (
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 11, color: "var(--text-dim)", minWidth: 46 }}>aiti.pw</span>
+                    <span style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>v{upd.registry.version}</span>
+                    {upd.registry.hasUpdate && <span style={chipStyle(UPDATE_WARN.color, UPDATE_WARN.bg)}>↑</span>}
+                    {upd.registry.docsUrl && (
+                      <a href={upd.registry.docsUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)", textDecoration: "none", fontSize: 11 }}>{t("ext.docs")}</a>
+                    )}
+                  </span>
+                )}
+                {upd && upd.git && (
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 11, color: "var(--text-dim)", minWidth: 46 }}>git</span>
+                    <span style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>
+                      {String(upd.git.head).slice(0, 7)}{upd.git.remote ? " → " + String(upd.git.remote).slice(0, 7) : " (no remote)"}
+                    </span>
+                  </span>
+                )}
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                  {!upd ? (
+                    <span style={{ fontSize: 11, color: "var(--text-dim)" }}>{t("ext.updatesChecking")}</span>
+                  ) : (
+                    <UpdateStatusChip upd={upd} />
+                  )}
+                  {(state.updatesPartial || state.updatesStale) && (
+                    <span style={{ fontSize: 11, color: "var(--text-dim)" }} title={upd ? updateTooltip(upd) : ""}>
+                      {state.updatesPartial ? t("ext.updatesPartial") : t("ext.updatesStale")}
+                    </span>
+                  )}
+                  {showBtn && (
                     <button key="btn" type="button" disabled={installing || !enabled}
-                      title={t("ext.updateTo", { version: upd.latest })}
-                      onClick={() => void runOp("install", { source: "npm:" + upd.pkg, id })}
+                      title={t("ext.updateTo", { version: (upd as any).latest })}
+                      onClick={() => void runOp("install", { source: (upd as any).installable, id })}
                       style={{ ...btnStyle, background: "var(--accent)", color: "white", borderColor: "var(--accent)" } as React.CSSProperties}>
                       {installing ? "…" : t("ext.update")}
-                    </button>,
-                  ];
-                }
-                return <span style={chipStyle("color-mix(in srgb, var(--ok, #10b981) 90%, transparent)", "color-mix(in srgb, var(--ok, #10b981) 12%, transparent)")} title={t("ext.npmUpToDate", { version: upd.latest })}>✓ {upd.latest}</span>;
-              })()}
-              {state.updatesChecking && !state.updates && <span style={{ fontSize: 11, color: "var(--text-dim)" }}>{t("ext.updatesChecking")}</span>}
-            </span>
-          </InfoRow>
-        )}
+                    </button>
+                  )}
+                </span>
+                {upd && upd.message && <span style={{ fontSize: 11, color: "var(--text-dim)" }}>{upd.message}</span>}
+              </div>
+            </InfoRow>
+          );
+        })()}
         {entry.i18nLocales && entry.i18nLocales.length > 0 && (
           <InfoRow label="i18n"><span style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>{entry.i18nLocales.join(", ")}</span></InfoRow>
         )}
@@ -1650,8 +1788,8 @@ function OnlineDetail({ ext }: { ext: any }) {
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 180, flex: 1 }}>
           <span style={{ fontSize: 20, flexShrink: 0, display: "inline-flex" }}>{extIconSpan(ext, 20)}</span>
-          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{extDisplayName(ext.id, ext.name)}</span>
-          {extDisplayName(ext.id, ext.name) !== ext.id && (
+          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{onlineName(ext)}</span>
+          {onlineName(ext) !== ext.id && (
             <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-dim)" }}>{ext.id}</span>
           )}
           {installed && <span style={chipStyle("rgba(99,102,241,0.9)", "rgba(99,102,241,0.12)")}>{t("ext.installed")}</span>}
@@ -1665,14 +1803,14 @@ function OnlineDetail({ ext }: { ext: any }) {
         )}
       </div>
 
-      {ext.description && <div style={{ fontSize: 13, color: "var(--text)" }}>{ext.description}</div>}
-      {ext.soul && <div style={{ fontSize: 12, color: "var(--text-dim)", fontStyle: "italic" }}>❝ {ext.soul} ❞</div>}
+      {(() => { const desc = extDescriptionText(ext.id, ext); return desc ? <div style={{ fontSize: 13, color: "var(--text)" }}>{desc}</div> : null; })()}
+      {(() => { const soul = extSoulText(ext.id, ext); return soul ? <div style={{ fontSize: 12, color: "var(--text-dim)", fontStyle: "italic" }}>❝ {soul} ❞</div> : null; })()}
 
       {/* 在线注册表若提供 markdown 描述（descriptionMd），同样渲染（变量表不含目录类） */}
       {ext.descriptionMd && <MdDesc text={ext.descriptionMd} vars={extDescVars(ext.id)} />}
 
       <div style={gridStyle}>
-        {ext.name && <InfoRow label={t("ext.fieldName")}><span>{extDisplayName(ext.id, ext.name)}</span></InfoRow>}
+        {ext.name && <InfoRow label={t("ext.fieldName")}><span>{onlineName(ext)}</span></InfoRow>}
         {ext.version && <InfoRow label={t("ext.version")}><span style={{ fontFamily: "var(--font-mono)" }}>v{ext.version}</span></InfoRow>}
         {ext.type && <InfoRow label={t("ext.type")}>{ext.type}</InfoRow>}
         {ext.category && <InfoRow label={t("ext.category")}>{ext.category}</InfoRow>}
@@ -1807,7 +1945,7 @@ function AddPane() {
               <div key={ext.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg-panel)" }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", display: "inline-flex", alignItems: "center", gap: 5 }} title={ext.id}>{extIconSpan(ext, 12)}{extDisplayName(ext.id, ext.name)}</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", display: "inline-flex", alignItems: "center", gap: 5 }} title={ext.id}>{extIconSpan(ext, 12)}{onlineName(ext)}</span>
                     <span style={{ fontSize: 10, color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>{ext.id}</span>
                     {ext.version && <span style={{ fontSize: 10, color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>v{ext.version}</span>}
                     {ext.type && <span style={chipStyle("var(--text-muted)", "var(--bg-hover)")}>{ext.type}</span>}
@@ -1815,7 +1953,7 @@ function AddPane() {
                     {updatable && <span style={chipStyle("#d97706", "rgba(217,119,6,0.12)")}>{t("ext.updateTo", { version: ext.version })}</span>}
                   </div>
                   <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {ext.description || ext.name || ""}
+                    {extDescriptionText(ext.id, ext) || ext.name || ""}
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "center" }}>

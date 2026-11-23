@@ -18,6 +18,9 @@ function setHostIsMobile(v: boolean) { if (state.isMobile !== v) setState({ isMo
 export default function register(ctx: Record<string, any>) {
   // 重要：必须在任何 JSX 组件渲染前调用（host-shim 模块级持 ctx）
   __setCtx(ctx);
+  // Self-description registry: cache every extension's manifest ui.i18n once. Without this call the
+  // registry stays empty and extDisplayName falls back to the id for every Chinese-named extension.
+  primeExtRegistry((p) => apiUrl(p));
   // reloadExtensions / extLoaderState（optional 兼容旧宿主）
   setHostCaps({ reloadExtensions: ctx.reloadExtensions, extLoaderState: ctx.extLoaderState, ctx });
 

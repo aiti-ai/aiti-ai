@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 构建 aiti-extman JSX client bundle（Vite lib mode → client/aiti-extman-client.mjs）
+ * Build the aiti-extman JSX client bundle (Vite lib mode → dist/aiti-extman-client.mjs)
  *
  * 源码：client/src/*.tsx；配置：vite.config.ts。
  * 用法：node tools/build-client.mjs   （或 npm run watch 自动重建）
@@ -25,4 +25,4 @@ if (r.status !== 0) {
   console.error("[aiti-extman] vite build 失败（exit " + r.status + "）。若提示找不到 vite：cd pi-web-ext/aiti-extman && npm install");
   process.exit(r.status ?? 1);
 }
-console.log("[aiti-extman] JSX client bundle → client/aiti-extman-client.mjs");
+console.log("[aiti-extman] JSX client bundle → dist/aiti-extman-client.mjs");
