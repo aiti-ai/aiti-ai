@@ -83,7 +83,6 @@ export default {
       },
       en: {
         "ext.displayName": "Page Event Bus",
-        "ext.description": "Single funnel for page events: chain-takes over __piPageEvents; v0.2 topic subscriptions (whitelist by type, forwarded)",
       },
     },
   },

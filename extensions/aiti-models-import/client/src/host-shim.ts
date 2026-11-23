@@ -82,6 +82,31 @@ export function t(key: string, params?: Record<string, unknown>): string {
   const fn = _ctx?.t as ((key: string, params?: Record<string, unknown>) => string) | undefined;
   return typeof fn === "function" ? fn(key, params) : key;
 }
+/**
+ * Translate a server message envelope ("i18n:key|{params}", produced by core.msg) into the
+ * current UI language; anything else passes through unchanged. String params are resolved
+ * recursively, so a nested envelope (e.g. a source reason inside "source unavailable") translates too.
+ */
+export function tsrv(v: unknown): string {
+  const s = v == null ? "" : String(v);
+  if (!s.startsWith("i18n:")) return s;
+  const body = s.slice(5);
+  const bar = body.indexOf("|");
+  const key = bar < 0 ? body : body.slice(0, bar);
+  let params: Record<string, unknown> | undefined;
+  if (bar >= 0) {
+    try {
+      const raw = JSON.parse(body.slice(bar + 1)) as Record<string, unknown>;
+      for (const k of Object.keys(raw)) if (typeof raw[k] === "string") raw[k] = tsrv(raw[k]);
+      params = raw;
+    } catch { /* malformed envelope: fall through and show the key */ }
+  }
+  return t(key, params);
+}
+/** tsrv() over a list (notes / warnings / errors); non-arrays yield an empty list. */
+export function tsrvList(v: unknown): string[] {
+  return Array.isArray(v) ? v.map((x) => tsrv(x)) : [];
+}
 /** 跨扩展客户端服务读取（ctx.getExtService；提供方懒加载/缺席 → undefined，消费方必须降级）。 */
 export function extSvc<T = unknown>(key: string): T | undefined {
   return (_ctx as any)?.getExtService?.(key) as T | undefined;

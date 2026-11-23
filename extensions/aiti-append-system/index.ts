@@ -91,7 +91,6 @@ export default {
         "feat.behavior.showToolbar.desc": "Hidden by default: open the panel from the extension manager; a persistent toolbar button appears once opened",
         "it.aiti-append-system-panel.label": "Append system prompt",
         "ext.displayName": "Append System Prompt",
-        "ext.description": "Hidden by default: open the panel from the extension manager; a toolbar button appears once opened",
         "feat.aiti-append-system-panel": "Append system prompt",
         "feat.behavior.showToolbar": "Show the \"Prompt\" toolbar button",
       "ap.open.label": "Prompts",

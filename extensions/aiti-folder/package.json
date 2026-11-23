@@ -2,6 +2,12 @@
   "name": "@aiti-ai/aiti-folder",
   "version": "0.1.12",
   "description": "fileViewer folder take-over + pathPicker directory picker — browse / delete to trash + git toolbar and grouped commit plans (soft-depends on aiti-git-ops)",
+  "displayNameI18n": {
+    "en": "Folder Browser"
+  },
+  "descriptionI18n": {
+    "zh-CN": "fileViewer folder 接管 + pathPicker 目录选择器 —— 浏览/回收站删除 + git 工具条与分组提交计划（软依赖 aiti-git-ops）"
+  },
   "type": "module",
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
@@ -15,6 +21,9 @@
     "vite": "^6.4.3"
   },
   "soul": "目录树不是导航的终点，是操作的起点。",
+  "soulI18n": {
+    "en": "The directory tree is not the end of navigation — it is the start of action."
+  },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
   "contentHash": "549ce49ea57c874f",

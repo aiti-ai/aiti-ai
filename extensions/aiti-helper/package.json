@@ -2,7 +2,13 @@
   "name": "@aiti-ai/aiti-helper",
   "version": "0.5.13",
   "type": "module",
-  "description": "The one-sentence AI capability entry for all extensions — declarative AI help points (pi skills standard) + input/result preview/review-and-fill-back + streaming progress bus delivery + multi-turn follow-ups + history and background tasks + user-d",
+  "description": "The one-sentence AI capability entry for all extensions — declarative AI help points (pi skills standard) + input/result preview/review-and-fill-back + streaming progress bus delivery + multi-turn follow-ups + history and background tasks + user-defined skills (config versioning has been split out as aiti-configs)",
+  "displayNameI18n": {
+    "en": "AI Helper"
+  },
+  "descriptionI18n": {
+    "zh-CN": "全扩展的一句话 AI 能力入口 —— 声明式 AI 帮助点（pi skills 标准）+ 输入/结果预览/审核回填 + 流式进度总线交付 + 多轮追问 + 历史与后台任务 + 用户自定义 skills（配置版本化已独立为 aiti-configs）"
+  },
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",
@@ -12,6 +18,9 @@
     "vite": "^6.4.3"
   },
   "soul": "AI 的工具该由 AI 自己接线、自己进化——人类的角色是掌舵，不是搬砖。",
+  "soulI18n": {
+    "en": "AI's tools should be wired up and evolved by AI itself — humanity's role is to steer, not to haul bricks."
+  },
   "aitiConfigs": {
     "configFiles": [
       "user-skills"

@@ -1,7 +1,13 @@
 {
   "name": "@aiti-ai/aiti-models-import",
   "version": "0.1.12",
-  "description": "; persistence always goes through aiti-model-wizard saveBatch (undoable in one step), neve",
+  "description": "Imports model configs from other agents — scans codex / ZCode / OpenCode provider·model configs into drafts (first-launch dialog for a one-time import); persistence always goes through aiti-model-wizard saveBatch (undoable in one step), never writes models.json directly",
+  "displayNameI18n": {
+    "en": "Model Import"
+  },
+  "descriptionI18n": {
+    "zh-CN": "其他 agent models 配置导入——扫描 codex/ZCode/OpenCode 的 provider·模型配置成草稿，首启弹窗一次性引导导入；落盘一律经 aiti-model-wizard saveBatch（可一步撤销），绝不直写 models.json"
+  },
   "type": "module",
   "scripts": {
     "build:client": "vite build --config vite.config.ts",

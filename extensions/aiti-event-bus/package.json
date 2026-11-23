@@ -2,7 +2,16 @@
   "name": "@aiti-ai/aiti-event-bus",
   "version": "0.1.10",
   "description": "The page event bus for pi-web: takes over `__piPageEvents`, topic subscriptions with server-side filtering, publish-local for high-frequency frames, load-priority guarantee, and STALE_CONN silent rebuild.",
+  "displayNameI18n": {
+    "en": "Page Event Bus"
+  },
+  "descriptionI18n": {
+    "zh-CN": "页面事件总线归口——链式接管 __piPageEvents，v0.2 主题订阅（按 type 白名单过滤转发）+ publish-local 高频直连 + subscribe-topics 客户端出口，core 零改动；topics 唯一、禁止任何兜底"
+  },
   "soul": "一条总线，全部帧。",
+  "soulI18n": {
+    "en": "One bus, every frame."
+  },
   "scripts": {
     "test": "node --test bus-core.test.mjs client-url.test.mjs stale-rebuild.test.mjs bus-id.test.mjs",
     "build:client": "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});for(const f of fs.readdirSync('client/src'))if(f.endsWith('.mjs'))fs.copyFileSync('client/src/'+f,'dist/'+f)\""

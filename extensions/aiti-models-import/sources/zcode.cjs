@@ -36,11 +36,11 @@ module.exports = {
   },
   scan(io) {
     const p = path.join(io.home, ".zcode", "v2", "config.json");
-    if (!io.exists(p)) return { available: false, reason: "未安装（无 ~/.zcode/v2/config.json）", drafts: [], notes: [] };
+    if (!io.exists(p)) return { available: false, reason: core.msg("mi.srv.zcode.notInstalled"), drafts: [], notes: [] };
     const text = io.readText(p);
-    if (text == null) return { available: false, reason: "config.json 读取失败", drafts: [], notes: [] };
+    if (text == null) return { available: false, reason: core.msg("mi.srv.zcode.readFailed"), drafts: [], notes: [] };
     let cfg;
-    try { cfg = JSON.parse(text); } catch (e) { return { available: false, reason: "config.json 解析失败：" + String((e && e.message) || e), drafts: [], notes: [] }; }
+    try { cfg = JSON.parse(text); } catch (e) { return { available: false, reason: core.msg("mi.srv.zcode.parseFailed", { detail: String((e && e.message) || e) }), drafts: [], notes: [] }; }
 
     const channels = cfg && typeof cfg.provider === "object" && cfg.provider ? cfg.provider : {};
     const plan = readPlanStatus(io);
@@ -52,16 +52,16 @@ module.exports = {
     for (const [rawKey, raw] of Object.entries(channels)) {
       const rawChannel = rawKey.replace(/^builtin:/, ""); // 桌面端 config.json 通道键带 builtin: 前缀（readProviderRegistry 同款剥除）
       if (rawChannel.endsWith("-start-plan")) {
-        notes.push("通道 " + rawChannel + " 为套餐（start-plan）通道：验证码只能桌面端产生，pi-web 无法驱动，跳过");
+        notes.push(core.msg("mi.srv.zcode.planChannel", { channel: rawChannel }));
         continue;
       }
       if (hasPlanData && !entitledFamilies.has(rawChannel.split("-")[0])) {
-        notes.push("通道 " + rawChannel + " 无有效套餐授权，跳过");
+        notes.push(core.msg("mi.srv.zcode.noPlan", { channel: rawChannel }));
         continue;
       }
       const ch = raw && typeof raw === "object" ? raw : {};
       const baseUrl = core.normBaseUrl(ch.baseURL || (ch.options && ch.options.baseURL));
-      if (!baseUrl) { notes.push("通道 " + rawChannel + " 无 baseURL，跳过"); continue; }
+      if (!baseUrl) { notes.push(core.msg("mi.srv.zcode.noBaseUrl", { channel: rawChannel })); continue; }
       const modelIds = ch.models && typeof ch.models === "object" ? Object.keys(ch.models) : [];
       drafts.push(core.normalizeDraft({
         key: "zcode-" + core.sanitizeId(rawChannel),
@@ -73,10 +73,10 @@ module.exports = {
         apiKeyEnv: null,
         models: modelIds.map((id) => ({ id })),
         modelMeta: core.metaById(modelIds, (id) => (ch.models || {})[id]),
-        warnings: ["key 在 ZCode 桌面端加密存储（credentials.json），导入后请在 🧙 向导给该 provider 补 key"],
+        warnings: [core.msg("mi.srv.zcode.encryptedKey")],
       }));
     }
-    if (!drafts.length) notes.push("config.json 未配置可导入的 provider 通道");
+    if (!drafts.length) notes.push(core.msg("mi.srv.zcode.noProviders"));
     return { available: true, drafts, notes };
   },
 };

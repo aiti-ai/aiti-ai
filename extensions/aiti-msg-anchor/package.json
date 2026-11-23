@@ -3,6 +3,12 @@
   "version": "0.1.10",
   "type": "module",
   "description": "A persistent banner at the top of the message area — shows \"the user input that generated the content currently at the top of your screen\", following turn segments as you scroll; switchable to first input / latest input / session title",
+  "displayNameI18n": {
+    "en": "Message Anchor Banner"
+  },
+  "descriptionI18n": {
+    "zh-CN": "消息区顶部常驻横幅 —— 展示「生成当前屏幕上内容的那条用户输入」，滚动跟随回合段；可切换为第一条输入 / 最近输入 / 会话标题"
+  },
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "deploy": "node tools/deploy.mjs"
@@ -11,6 +17,9 @@
     "vite": "^6.4.3"
   },
   "soul": "回错了人的话，比叫错名字还尴尬。",
+  "soulI18n": {
+    "en": "Replying to the wrong person's words is more awkward than calling someone the wrong name."
+  },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
   "contentHash": "b4c1ecf684b62c6b",

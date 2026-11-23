@@ -3,7 +3,16 @@
   "version": "0.1.11",
   "type": "module",
   "description": "Full queue panel for the composer (queuePanel-slot takeover): banners, row operations (move / drag / steer-send / to-followUp / recall / delete) and a recycle bin — fully client-side.",
+  "displayNameI18n": {
+    "en": "Queue Keeper"
+  },
+  "descriptionI18n": {
+    "zh-CN": "队列面板接管 —— 完整队列 UI（横幅/行操作/拖拽排序/回收站/撤销条/导入导出），core 回到上游同形兜底"
+  },
   "soul": "排队不可怕，可怕的是排完队忘了自己要说什么。",
+  "soulI18n": {
+    "en": "Queuing isn't scary; what's scary is forgetting what you wanted to say after queuing."
+  },
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",

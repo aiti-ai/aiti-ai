@@ -2,6 +2,12 @@
   "name": "@aiti-ai/aiti-sheet-univer",
   "version": "0.1.10",
   "description": "In-browser preview + editing for .xlsx/.xlsm (exceljs data layer + Univer view layer); read-only preview and one-click convert to .xlsx for .xls/.ods",
+  "displayNameI18n": {
+    "en": "Excel Editor"
+  },
+  "descriptionI18n": {
+    "zh-CN": ".xlsx/.xlsm 在线预览+编辑（exceljs 数据面 + Univer 视图面）；.xls/.ods 只读预览与一键转 .xlsx"
+  },
   "main": "index.ts",
   "scripts": {
     "build": "vite build --config vite.config.ts",

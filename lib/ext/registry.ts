@@ -118,8 +118,8 @@ export interface ExtStatusEntry {
   agentHooks?: string[];
   /** Feature management: declarations + current on/off state (only when the extension declares features). */
   features?: ExtStatusFeature[];
-  /** Static info from the directory's package.json (no code executed). homepage = source/docs URL (written at install time or declared by the author); soul = tagline (shown by the extension manager); description = extension description (app-center info sheet fallback); protocol = raw aitiExtProtocol declaration. */
-  packageInfo?: { name?: string; version?: string; description?: string; dependencies?: string[]; homepage?: string; soul?: string; protocol?: string };
+  /** Static info from the directory's package.json (no code executed). homepage = source/docs URL (written at install time or declared by the author); soul = tagline (shown by the extension manager) with optional soulI18n locale overrides; description = extension description (app-center info sheet fallback) with optional descriptionI18n locale overrides; protocol = raw aitiExtProtocol declaration. */
+  packageInfo?: { name?: string; version?: string; displayNameI18n?: Record<string, string>; description?: string; descriptionI18n?: Record<string, string>; dependencies?: string[]; homepage?: string; soul?: string; soulI18n?: Record<string, string>; protocol?: string };
   /** Protocol declaration and compatibility state (adjudicated by the host; docs/pi-web-ext-protocol.md). */
   protocol?: ExtProtocolInfo;
   /** Hard dependency declarations (dependency & capability model: elements are extension ids or capability names). */
@@ -161,8 +161,25 @@ function protocolStrict(): boolean {
   return process.env.PI_WEB_EXT_PROTOCOL_STRICT === "1";
 }
 
+/**
+ * Normalize an optional package.json locale map ({"en": "…", "zh-TW": "…"}) into a clean record.
+ * Only trimmed, non-empty string values survive; anything else is dropped so a malformed map can
+ * never leak non-string values into the status payload.
+ */
+function readLocaleMap(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const out: Record<string, string> = {};
+  for (const [locale, text] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof text !== "string") continue;
+    const trimmed = text.trim();
+    if (!trimmed) continue;
+    out[locale] = trimmed;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 /** Read an extension directory's package.json without executing code (disabled entries still get name/version/deps/source URL). */
-function readPackageInfo(dir?: string): { name?: string; version?: string; description?: string; dependencies?: string[]; homepage?: string; soul?: string; protocol?: string } {
+function readPackageInfo(dir?: string): { name?: string; version?: string; displayNameI18n?: Record<string, string>; description?: string; descriptionI18n?: Record<string, string>; dependencies?: string[]; homepage?: string; soul?: string; soulI18n?: Record<string, string>; protocol?: string } {
   if (!dir) return {};
   try {
     const p = join(dir, "package.json");
@@ -176,6 +193,9 @@ function readPackageInfo(dir?: string): { name?: string; version?: string; descr
       url?: unknown;
       repository?: unknown;
       soul?: unknown;
+      soulI18n?: unknown;
+      displayNameI18n?: unknown;
+      descriptionI18n?: unknown;
       aitiExtProtocol?: unknown;
     };
     // homepage → url → repository (string or {url}), in descending priority.
@@ -187,7 +207,11 @@ function readPackageInfo(dir?: string): { name?: string; version?: string; descr
     return {
       name: typeof parsed.name === "string" ? parsed.name : undefined,
       version: typeof parsed.version === "string" ? parsed.version : undefined,
+      // Optional per-locale display names (used for entries the manifest never lists, e.g. disabled ones).
+      displayNameI18n: readLocaleMap(parsed.displayNameI18n),
       description: typeof parsed.description === "string" && parsed.description.trim() ? parsed.description.trim() : undefined,
+      // Optional per-locale description overrides; the bare `description` stays the default/fallback.
+      descriptionI18n: readLocaleMap(parsed.descriptionI18n),
       dependencies:
         parsed.dependencies && typeof parsed.dependencies === "object"
           ? Object.keys(parsed.dependencies as Record<string, unknown>)
@@ -196,6 +220,9 @@ function readPackageInfo(dir?: string): { name?: string; version?: string; descr
         : typeof parsed.url === "string" ? parsed.url
         : repoUrl,
       soul: typeof parsed.soul === "string" && parsed.soul.trim() ? parsed.soul.trim() : undefined,
+      // Optional per-locale tagline overrides ({"en": "…", "zh-TW": "…"}); the bare `soul` stays the
+      // default/fallback so the package metadata remains single-valued for docs sync and npm consumers.
+      soulI18n: readLocaleMap(parsed.soulI18n),
       // raw protocol declaration (string validation left to extProtocolInfo — non-string types like numbers count as invalid)
       protocol: parsed.aitiExtProtocol === undefined ? undefined : String(parsed.aitiExtProtocol),
     };

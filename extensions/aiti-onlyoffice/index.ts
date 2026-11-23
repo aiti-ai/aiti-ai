@@ -107,7 +107,7 @@ export default {
         "feat.onlyoffice.url.desc": "DS URL used by the local server/container (healthcheck and callbacks)",
         "feat.onlyoffice.publicUrl.desc": "DS URL the browser loads api.js from; empty = follow onlyoffice.url",
         "feat.onlyoffice.containerBase.desc": "Base URL for DS container callbacks (download/callback); auto-guessed when empty",
-        "ext.displayName": "OnlyOffice Editor",        "ext.description": "OnlyOffice DocumentServer deep-fidelity editing tier: .docx/.xlsx/.pptx preview + edit (Docker backend, feature off by default)",
+        "ext.displayName": "OnlyOffice Editor",
         "feat.onlyoffice.enabled": "Enable OnlyOffice",
         "feat.onlyoffice.url": "DocumentServer URL",
         "feat.onlyoffice.publicUrl": "Browser-side DS URL",

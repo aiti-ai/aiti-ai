@@ -30,7 +30,7 @@ interface SessionCapabilitiesLike extends Record<string, boolean> {}
 
 import { findLiveBridgeEntry, readBridgeRegistry } from "./bridge-registry.ts";
 import { createSessionRecycleApi } from "@aiti-ai/ext-shared/session-recycle";
-import { hostToolAllowed, hostToolsAllowFeature, parseHostToolsAllow, readHostToolsAllow } from "@aiti-ai/ext-shared/host-tools-allow";
+import { hostToolAllowed, hostToolsAllowFeature, parseHostToolsAllow, readHostToolsAllow, hostToolsAllowFeatureI18nEn } from "@aiti-ai/ext-shared/host-tools-allow";
 
 interface Socket {
   write(payload: string): boolean;
@@ -446,7 +446,7 @@ const recycleApi = createSessionRecycleApi({
 export default {
   id: "aiti-attach-agent",
   name: "Session Attach (socket 附着后端)",
-  icon: "🔌",
+  icon: "icons/radio-dot.svg",
 
   // G1：aiti_bridge_req 转发的桥工具白名单（缺省只读子集；* = 全量）
   features: [hostToolsAllowFeature()],
@@ -460,6 +460,7 @@ export default {
       },
       en: {
         "ext.displayName": "Attach Session Backend",
+        ...hostToolsAllowFeatureI18nEn(),
       },
     },
   },

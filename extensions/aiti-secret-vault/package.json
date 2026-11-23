@@ -3,6 +3,12 @@
   "version": "0.3.0",
   "type": "module",
   "description": "Encrypted secret vault management UI for pi-web: list / add / rotate / reveal / remove aliases, lock/unlock, switch between keyfile and OS-keychain unlock, and inspect which aliases are mounted per session. Values never enter the AI conversation.",
+  "displayNameI18n": {
+    "en": "Secret Vault"
+  },
+  "descriptionI18n": {
+    "zh-CN": "pi-web 的加密密钥库管理弹窗——别名查看/新增/轮换/查看明文/删除、锁定/解锁、keyfile ↔ 系统钥匙串切换、会话挂载总览；值只走浏览器→本机服务→加密库，不经过 AI 对话"
+  },
   "scripts": {
     "build:client": "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});for(const f of fs.readdirSync('client/src'))if(f.endsWith('.mjs'))fs.copyFileSync('client/src/'+f,'dist/'+f)\"",
     "deploy": "node tools/deploy.mjs",

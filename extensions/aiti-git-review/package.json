@@ -2,7 +2,13 @@
   "name": "@aiti-ai/aiti-git-review",
   "version": "0.2.10",
   "type": "module",
-  "description": "Dedicated to reviewing uncommitted changes — Monaco diff workspace (side-by-side/merged/new-only/outline) + line-level annotations (must/suggest/question) + anchor flag-line re-mapping (stays valid while editing mid-review) + summary final-review ",
+  "description": "Dedicated to reviewing uncommitted changes — Monaco diff workspace (side-by-side/merged/new-only/outline) + line-level annotations (must/suggest/question) + anchor flag-line re-mapping (stays valid while editing mid-review) + summary final-review checklist + AI pre-review (aiti_review_* tools injected only into review sessions, zero tools day-to-day)",
+  "displayNameI18n": {
+    "en": "Git Review"
+  },
+  "descriptionI18n": {
+    "zh-CN": "专职审核未提交变更 —— Monaco diff 工作区（并排/合并/纯新/大纲）+ 行级标注（必须/建议/疑问）+ anchor 标志行重映射（边审边改不失效）+ 汇总终审清单 + AI 预审（aiti_review_* 工具只注入评审会话，日常零工具）"
+  },
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",
@@ -12,6 +18,9 @@
     "vite": "^6.4.3"
   },
   "soul": "作为人类，这是我对抗ai的最后倔犟了",
+  "soulI18n": {
+    "en": "As a human, this is my last stubborn stand against AI."
+  },
   "aitiConfigs": {
     "configFiles": [
       "aiti-git-review/fixtures"

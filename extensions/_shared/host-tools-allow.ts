@@ -82,3 +82,22 @@ export function hostToolsAllowFeature(group?: string): {
     placeholder: "留空=只读子集；*=全量；或 aiti_inbox, page_snapshot, page_exec",
   };
 }
+
+/**
+ * English `ui.i18n.en` entries for the hostToolsAllow feature above.
+ *
+ * Shared by every consumer (omp / attach-agent …) so the label and the long G1 security note
+ * stay in one place:
+ *   `ui: { i18n: { en: { ...hostToolsAllowFeatureI18nEn(), … } } }`
+ */
+export function hostToolsAllowFeatureI18nEn(): Record<string, string> {
+  return {
+    "feat.hostToolsAllow": "Bridge tool allowlist",
+    "feat.hostToolsAllow.desc":
+      "Allowlist of bridge (aiti_*) tools injected into the agent. Empty = read-only subset (messages / page reads / " +
+      "human-in-the-loop; write-class tools such as page_exec and form_fill are withheld — G1 secure default). " +
+      "* = everything (restores the old behavior, including page execution and form writes). A precise list also works " +
+      "(comma/space separated, e.g. aiti_inbox, page_exec). Tools outside the list make the agent's call fail with " +
+      "unknown host tool; takes effect on the next session.",
+  };
+}

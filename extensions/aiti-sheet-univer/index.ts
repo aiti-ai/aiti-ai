@@ -44,7 +44,7 @@ export default {
       },
       en: {
         "feat.sheet.edit.desc": "When on, .xlsx/.xlsm get edit capability (saves via save-blob); off = preview only",
-        "ext.displayName": "Excel Editor",        "ext.description": "Excel spreadsheet editor (exceljs data layer + Univer view layer): .xlsx/.xlsm preview + edit, .xls/.ods read-only preview",
+        "ext.displayName": "Excel Editor",
         "feat.sheet.edit": "Excel edit & save",
       },
     },

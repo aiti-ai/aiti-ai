@@ -2,7 +2,13 @@
   "name": "@aiti-ai/aiti-testagent",
   "version": "0.1.10",
   "type": "module",
-  "description": "; arbitrary in-JVM modification / Mock & SQL interception simulation / hot updates / diagnostic sampling; 57",
+  "description": "AI debugging MCP + IDE for Java backends — scan Java processes / attach one-click bridge connect / tunnel-bridge multi-endpoint management; arbitrary in-JVM modification / Mock & SQL interception simulation / hot updates / diagnostic sampling; 57 tools in 10 groups exposed on demand, fully reversible",
+  "displayNameI18n": {
+    "en": "Test Agent"
+  },
+  "descriptionI18n": {
+    "zh-CN": "Java 后端 AI 调试 MCP + IDE —— 扫描 Java 进程/attach 一键连桥/Tunnel 桥多端点纳管，JVM 内任意修改/Mock·SQL 拦截模拟/热更新/诊断采样，58 工具 10 组按需暴露，全可逆"
+  },
   "scripts": {
     "build:client": "node tools/build-client.mjs",
     "watch": "node tools/build-client.mjs --watch"

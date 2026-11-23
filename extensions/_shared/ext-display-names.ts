@@ -69,8 +69,8 @@ export function ui18nExact(ui18n: UiI18n, locale: string): Record<string, string
 const CJK_RE = /[\u3400-\u4dbf\u4e00-\u9fff]/;
 
 /** Resolve the self-description name via the registry (id-only scenarios: AI Helper grouping,
- *  dialog 🤖 etc.). ext.displayName entry (current locale's exact table) → raw text in zh mode /
- *  non-CJK fallback in en mode → id. */
+ *  dialog 🤖 etc.). ext.displayName entry (current locale's exact table) → raw CJK manifest text for
+ *  every zh variant (zh-TW included, a Chinese name beats an id) / non-CJK fallback in en mode → id. */
 export function extDisplayName(id: string, fallbackName?: string | null): string {
   const locale = currentUiLocale();
   primeExtRegistry();
@@ -79,24 +79,50 @@ export function extDisplayName(id: string, fallbackName?: string | null): string
   if (over) return over;
   const name = fallbackName ?? entry?.name ?? "";
   if (!name) return id;
-  return locale === "zh-CN" ? name : CJK_RE.test(name) ? id : name;
+  return locale.startsWith("zh") ? name : CJK_RE.test(name) ? id : name;
 }
 
 /** Synchronous resolution when a full manifest object is available (pure-function scenarios like
- *  App Center buildApps). ext.displayName entry → raw text in zh mode / non-CJK raw in en mode → id. */
+ *  App Center buildApps). ext.displayName entry → raw CJK text for every zh variant / non-CJK raw in
+ *  en mode → id. */
 export function extNameFor(ext: { id: string; name?: string | null; ui?: { i18n?: UiI18n } | null } | undefined | null, locale: string): string {
   if (!ext) return "";
   const over = ui18nExact(ext.ui?.i18n, locale)["ext.displayName"];
   if (over) return over;
   const name = ext.name ?? "";
   if (!name) return ext.id;
-  return locale === "zh-CN" ? name : CJK_RE.test(name) ? ext.id : name;
+  return locale.startsWith("zh") ? name : CJK_RE.test(name) ? ext.id : name;
 }
 
-/** Extension description: overridden by the "ext.description" entry; falls back to the raw manifest. */
-export function extDescriptionFor(ext: { description?: string | null; ui?: { i18n?: UiI18n } | null } | undefined | null, locale: string): string {
+/** Extension description: "ext.description" ui.i18n override → package.json descriptionI18n[locale] → raw manifest. */
+export function extDescriptionFor(
+  ext: { description?: string | null; descriptionI18n?: Record<string, string> | null; ui?: { i18n?: UiI18n } | null } | undefined | null,
+  locale: string,
+): string {
   const over = ui18nExact(ext?.ui?.i18n, locale)["ext.description"];
-  return over || ext?.description || "";
+  if (over) return over;
+  return localeText(ext?.descriptionI18n, locale) || ext?.description || "";
+}
+
+/** Extension tagline (❝ … ❞): "ext.soul" ui.i18n override → package.json soulI18n[locale] → raw soul.
+ *  Manifest text stays the single-valued default so docs sync / npm consumers keep reading `soul`. */
+export function extSoulFor(
+  ext: { soul?: string | null; soulI18n?: Record<string, string> | null; ui?: { i18n?: UiI18n } | null } | undefined | null,
+  locale: string,
+): string {
+  const over = ui18nExact(ext?.ui?.i18n, locale)["ext.soul"];
+  if (over) return over;
+  return localeText(ext?.soulI18n, locale) || ext?.soul || "";
+}
+
+/** Pick the best entry from a package.json locale map: exact locale → same language family → "". */
+function localeText(map: Record<string, string> | null | undefined, locale: string): string {
+  if (!map || typeof map !== "object") return "";
+  const exact = map[locale];
+  if (typeof exact === "string" && exact) return exact;
+  const short = locale.split("-")[0];
+  const family = Object.entries(map).find(([k, v]) => typeof v === "string" && v && k.split("-")[0] === short);
+  return family ? family[1] : "";
 }
 
 /** Feature label: "feat.<id>" entry → "i18n:<key>" prefix (host translateExtItemText cascade) → raw manifest text. */

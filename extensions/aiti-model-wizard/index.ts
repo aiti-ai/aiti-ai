@@ -1785,7 +1785,6 @@ export default {
         "feat.tool.aiti_model_wizard_delete.desc": "Deletes a provider from models.json (with confirmation)",
         "feat.agentTools.enabled.desc": "Injects aiti_model_wizard_* tools into sessions (off by default; enable temporarily via the AI helper 🤖 or the extension manager)",
         "ext.displayName": "Model Wizard",
-        "ext.description": "Injects aiti_model_wizard_* tools into sessions (off by default; enable temporarily via the AI helper 🤖 or the extension manager)",
         "feat.aiti-model-wizard-banner": "aiti-model-wizard: no-model onboarding",
         "feat.aiti-model-wizard-multikey-status": "Aggregation / multi-key status",
         "feat.aiti-model-wizard-multikey-status.desc": "Inside the session-info dropdown — aggregation / multi-key proxy runtime status (thin shell via /proxy-status; heavy-chunk upgrade pending)",

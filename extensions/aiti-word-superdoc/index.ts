@@ -32,7 +32,7 @@ export default {
       },
       en: {
         "feat.word.edit.desc": "When on, .docx gets edit capability (saves via save-blob); off = preview only",
-        "ext.displayName": "Word Editor",        "ext.description": "Word document editor (SuperDoc: ProseMirror docx round-trip): .docx preview + edit. AGPL isolated in this extension; not installed = not present",
+        "ext.displayName": "Word Editor",
         "feat.word.edit": "Word edit & save",
       },
     },

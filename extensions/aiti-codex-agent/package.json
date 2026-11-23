@@ -2,7 +2,16 @@
   "name": "@aiti-ai/aiti-codex-agent",
   "version": "0.1.11",
   "description": "OpenAI Codex CLI driver — exec --json + resume integrated into All Sessions; dual-track auth (auth.json OAuth / openrouter env), live streaming and cold replay render identically-shaped native tool cards",
+  "displayNameI18n": {
+    "en": "Codex Session Backend"
+  },
+  "descriptionI18n": {
+    "zh-CN": "OpenAI Codex CLI driver —— exec --json + resume 接入 All Sessions；认证双轨（auth.json OAuth / openrouter env），直播与冷回放同形原生工具卡"
+  },
   "soul": "Codex 在哪儿跑，面板就在哪儿看。",
+  "soulI18n": {
+    "en": "Wherever Codex runs, the panel watches."
+  },
   "scripts": {
     "build:client": "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});for(const f of fs.readdirSync('client/src'))if(f.endsWith('.mjs'))fs.copyFileSync('client/src/'+f,'dist/'+f)\""
   },

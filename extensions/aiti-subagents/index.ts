@@ -658,6 +658,7 @@ export default {
 				"🟢 /web RPC 已连接 · ": "🟢 /web RPC 已连接 · ",
 			},
 			en: {
+				"ext.displayName": "Subagents",
 				" 存活": " alive",
 				" 已由 pi-web 后端 ": " is now taken over by the pi-web backend ",
 				" 已退出": " exited",

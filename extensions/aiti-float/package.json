@@ -3,6 +3,12 @@
   "version": "0.5.12",
   "type": "module",
   "description": "data-ext-float contract take-over — drag/edge resize/position persistence/click-to-front/double-click reset/auto maximize button, small-screen auto fullscreen + system back closes the float; the DockStack unified sidebar block-stack service",
+  "displayNameI18n": {
+    "en": "Dialog Float Enhancer"
+  },
+  "descriptionI18n": {
+    "zh-CN": "data-ext-float 契约接管 —— 拖拽/边缘缩放/位置持久化/点按置前/双击复位/自动最大化按钮，小屏自动全屏 + 系统返回关闭浮窗；DockStack 左栏统一区块栈服务"
+  },
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",
@@ -12,6 +18,9 @@
     "vite": "^6.4.3"
   },
   "soul": "面板只管标一个属性，浮起来的一切交给它。",
+  "soulI18n": {
+    "en": "The panel just sets one attribute; everything about floating is left to it."
+  },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
   "contentHash": "341a334f7e2bba7c",

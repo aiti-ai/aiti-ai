@@ -3,6 +3,12 @@
   "version": "0.1.12",
   "type": "module",
   "description": "workspace markdown collection/organization/search — FTS5 trigram Chinese full-text + tag seven-source two-layer + 📚 float dialog four views",
+  "displayNameI18n": {
+    "en": "Doc Center"
+  },
+  "descriptionI18n": {
+    "zh-CN": "workspace md 收集/整理/检索——FTS5 trigram 中文全文 + tag 七来源两层 + 📚 float 弹窗四视图"
+  },
   "scripts": {
     "test": "node --experimental-strip-types --test doc-core.test.mjs",
     "deploy": "node tools/deploy.mjs",

@@ -48,7 +48,7 @@ function resolveCodexBin(): string {
 }
 import { homedir, tmpdir } from "node:os";
 import { governanceEnv } from "./external-governance.ts";
-import { agentSpawnEnv, spawnEnvFeature, spawnDisplayEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, spawnEnvList, spawnCommand, spawnArgsPrefix, parseArgsLines, resolveCliLaunch, captureSpawnEnvFeatures } from "@aiti-ai/ext-shared/agent-spawn-env";
+import { agentSpawnEnv, spawnEnvFeature, spawnDisplayEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, spawnEnvList, spawnCommand, spawnArgsPrefix, parseArgsLines, resolveCliLaunch, captureSpawnEnvFeatures, spawnFeatureI18nEn } from "@aiti-ai/ext-shared/agent-spawn-env";
 import type { LaunchOverride } from "@aiti-ai/ext-shared/agent-spawn-env";
 // 队列共享实现层（权威源 pi-web-ext/_shared/backend-queue.ts，副本随扩展部署——改动须双向同步）
 import { createBackendQueueSupport, createQueueFilePersistence, migrateQueueSidecar } from "@aiti-ai/ext-shared/backend-queue";
@@ -827,11 +827,14 @@ function quotaRoute(req: Request, ctx: { path: string[]; method: string; searchP
 export default {
   id: "aiti-codex-agent",
   name: "Codex CLI",
-  icon: "🌀",
+  icon: "icons/terminal.svg",
   // 受控登录统一弹窗（零构建原生 h() client；client/ 下两文件随 deploy 拷贝）
   // 静态插入点声明（与 client registerItems 的 id 一一对应）
   // 登录 UI 已统一到 aiti-agent-manager（受控登录弹窗退役，2026-09-13）：不再声明
   // client/ui —— 服务端 /login/* 与 .agent 描述符保留（manager 代理消费）。
+
+  // English overrides for the shared spawn.* feature declarations (labels + descriptions).
+  ui: { i18n: { en: { ...spawnFeatureI18nEn() } } },
 
   features: [spawnEnvFeature("Codex"), spawnDisplayEnvFeature("Codex"), spawnCommandFeature("Codex"), spawnArgsPrefixFeature("Codex")],
 

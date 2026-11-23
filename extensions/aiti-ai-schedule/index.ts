@@ -293,7 +293,6 @@ export default {
       en: {
         "feat.agentTools.enabled.desc": "Injects the schedule_task tool into sessions (off by default; enable temporarily via the AI helper 🤖 or the extension manager)",
         "ext.displayName": "AI Schedule",
-        "ext.description": "Injects the schedule_task tool into sessions (off by default; enable temporarily via the AI helper 🤖 or the extension manager)",
         "feat.agentTools.enabled": "AI tool (scheduling)",
         "sh.app.label": "Schedule",
         "sh.app.title": "Schedule: timed tasks & plan management",

@@ -243,7 +243,6 @@ export default {
         "feat.agentTools.enabled.desc": "Injects aiti-im-* tools into sessions (off by default; enable temporarily via the AI helper 🤖 or the extension manager)",
         "it.aiti-channels-panel.label": "IM channels & cc-connect manager",
         "ext.displayName": "IM Channels",
-        "ext.description": "Manages the cc-connect process lifecycle (start/stop/restart/health checks; no systemd)",
         "feat.behavior.proxy-bridge": "cc-connect hosting",
         "feat.behavior.embed-ui": "Embed admin UI",
         "feat.tool.aiti-im-list": "aiti-im-list · channel/project/session list",

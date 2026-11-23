@@ -12,20 +12,21 @@
 const codex = require("./codex.cjs");
 const zcode = require("./zcode.cjs");
 const opencode = require("./opencode.cjs");
+const { msg } = require("../core.cjs");
 
-/** 固定不可导入来源（无文件化模型配置；列出以满足「列出所有 agent 配置」且说明原因）。 */
+/** Fixed non-importable sources (no file-backed model config; listed so "all agent configs" is complete, each with a reason). */
 const NOT_IMPORTABLE = [
   {
     id: "cursor",
     label: "Cursor",
     kind: "not-importable",
-    reason: "无文件化模型配置——登录态在 auth.json（加密），模型为会话内 lastUsedModel，无可导入项",
+    reason: msg("mi.srv.cursor.reason"),
   },
   {
     id: "qoder",
     label: "Qoder",
     kind: "not-importable",
-    reason: "凭据 WASM 加密、端点为区域常量，模型清单来自服务端 API 而非本地配置文件",
+    reason: msg("mi.srv.qoder.reason"),
   },
 ];
 

@@ -2,7 +2,16 @@
   "name": "@aiti-ai/aiti-codebuddy-agent",
   "version": "0.1.9",
   "description": "Tencent CodeBuddy Code CLI (cbc) driver — stream long connection (default) + exec fallback dual mode + --resume into All Sessions, control_request three channels, API-key env login",
+  "displayNameI18n": {
+    "en": "CodeBuddy Code (Tencent)"
+  },
+  "descriptionI18n": {
+    "zh-CN": "腾讯 CodeBuddy Code CLI（cbc）驱动 —— stream 长连接（默认）+ exec 兜底双模式 + --resume 接入 All Sessions，control_request 三通道，API-key env 登录"
+  },
   "soul": "腾讯 CodeBuddy 会话，哪儿都能接上聊。",
+  "soulI18n": {
+    "en": "Tencent CodeBuddy sessions, ready to chat anywhere."
+  },
   "scripts": {
     "build:client": "true"
   },

@@ -1,17 +1,19 @@
 /**
- * aiti-models-import · client 入口
+ * aiti-models-import · client entry
  *
- * register(ctx)：
- *   1. toolbar 按钮（icons/import.svg，手动打开导入弹窗）
- *   2. dialogs 插槽常驻条目（ImportDialogSlot，显隐模块内状态）
- *   3. 首启自动弹：register 时 fetch /status 一次（事件驱动，无轮询）——
- *      firstRun（无 completedAt/dismissedAt）且存在可用来源 → 打开弹窗（只打扰一次）
+ * register(ctx):
+ *   1. toolbar button (icons/import.svg, opens the import dialog manually)
+ *   2. a permanently mounted dialogs slot entry (ImportDialogSlot; the extension state controls
+ *      visibility)
+ *   3. first-run auto-open: one /status fetch at register time (event driven, no polling) —
+ *      firstRun (no completedAt / dismissedAt) with at least one available source → open the dialog
+ *      (interrupts the user only once)
  */
 import { __setCtx, t } from "./host-shim";
 import { ImportDialogSlot, setDialogOpen } from "./import-app";
 
 export default function register(ctx: Record<string, unknown>) {
-  __setCtx(ctx); // 必须在任何 JSX 渲染前
+  __setCtx(ctx); // must run before any JSX render
 
   function ImportButton() {
     return (
@@ -30,13 +32,15 @@ export default function register(ctx: Record<string, unknown>) {
   ctx.registerItems?.("toolbar", [{ id: "aiti-models-import-open", render: ImportButton, meta: { label: "i18n:mi.open.label", icon: "icons/import.svg" } }]);
   ctx.registerItems?.("dialogs", [{ id: "aiti-models-import-dialog", render: ImportDialogSlot, meta: { label: "i18n:it.import.label" } }]);
 
-  // 跨扩展打开服务（quickstart 引导卡「从 Agent 导入…」消费；ext-services 拍板正路）。
-  // 消费方探测式软依赖：本扩展缺席/旧版无服务 → 对方不渲染入口。
+  // Cross-extension open service (consumed by the quickstart card's "Import from an agent…"; the
+  // ext-services route is the sanctioned one). Consumers probe it as a soft dependency: when this
+  // extension is absent or too old to expose the service, they simply render no entry.
   try {
     ctx.registerExtService?.("aiti-models-import.open", { open: () => setDialogOpen(true) });
   } catch { /* ignore */ }
 
-  // 首启判定：每页面加载至多一次 /status；firstRun 且有可用来源 → 自动弹（关过/导过即不再弹）
+  // First-run decision: at most one /status per page load; firstRun with available sources → auto-open
+  // (never again once the user closed or imported)
   try {
     const base = typeof (ctx as any).apiUrl === "function" ? (ctx as any).apiUrl("/api/extensions/aiti-models-import/status") : "/api/extensions/aiti-models-import/status";
     fetch(base, { cache: "no-store" })
@@ -46,6 +50,6 @@ export default function register(ctx: Record<string, unknown>) {
           setDialogOpen(true);
         }
       })
-      .catch(() => { /* 状态不可得就不弹（手动入口仍在） */ });
-  } catch { /* 极端环境防御 */ }
+      .catch(() => { /* no status, no auto-open (the manual entry stays) */ });
+  } catch { /* defensive against hostile environments */ }
 }

@@ -2,7 +2,16 @@
   "name": "@aiti-ai/aiti-agent-manager",
   "version": "0.2.11",
   "description": "Unified aggregation of external agent login states + login action proxying + multi-account profiles (backup/alias/one-click switch) + account quota display — implements no login protocol at all",
+  "displayNameI18n": {
+    "en": "Agent Manager"
+  },
+  "descriptionI18n": {
+    "zh-CN": "统一聚合外部 agent 登录态 + 登录操作代理 + 多账号档（备份/别名/一键切换）+ 账号额度显示——不实现任何登录协议"
+  },
   "soul": "六家 agent 登录态，一屏看尽；多账号穿换，一键切换。",
+  "soulI18n": {
+    "en": "Six agents' login states on one screen; multi-account rotation, one-click switch."
+  },
   "scripts": {
     "build:client": "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});for(const f of fs.readdirSync('client/src'))if(f.endsWith('.mjs'))fs.copyFileSync('client/src/'+f,'dist/'+f)\""
   },

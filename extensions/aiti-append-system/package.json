@@ -3,7 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "pi-web 扩展：追加系统提示词管理（全局 ~/.pi/agent/APPEND_SYSTEM.md + 项目 <cwd>/.pi/APPEND_SYSTEM.md 在线编辑）",
+  "description": "Two-level appended system prompt management (APPEND_SYSTEM.md): global ~/.pi/agent (all projects) + project <cwd>/.pi (this project only), editable in the browser",
+  "displayNameI18n": {
+    "en": "Append System Prompt"
+  },
+  "descriptionI18n": {
+    "zh-CN": "管理 pi 的 APPEND_SYSTEM.md（会话启动时追加进 system prompt）——全局 ~/.pi/agent/ 与项目 <cwd>/.pi/ 两份，网页面板在线编辑保存，🤖 AI 帮你起草并直接写入"
+  },
   "aitiExtProtocol": "1.0",
   "scripts": {
     "build:client": "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});fs.copyFileSync('client/src/aiti-append-system-client.mjs','dist/aiti-append-system-client.mjs')\""

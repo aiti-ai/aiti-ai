@@ -2,6 +2,12 @@
   "name": "@aiti-ai/aiti-onlyoffice",
   "version": "0.1.10",
   "description": "Full-fidelity preview + editing for .docx/.xlsx/.pptx (OnlyOffice DocumentServer Docker backend). AGPL community edition, feature off by default",
+  "displayNameI18n": {
+    "en": "OnlyOffice Editor"
+  },
+  "descriptionI18n": {
+    "zh-CN": ".docx/.xlsx/.pptx 完整保真预览+编辑（OnlyOffice DocumentServer Docker 后端）。AGPL 社区版，feature 默认关"
+  },
   "main": "index.ts",
   "scripts": {
     "build": "vite build --config vite.config.ts",

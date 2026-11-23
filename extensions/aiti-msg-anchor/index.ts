@@ -49,7 +49,6 @@ export default {
         "feat.display.opacity.desc": "Banner opacity (0-100 number: 0 = fully transparent, 100 = opaque)",
         "feat.text.maxLen.desc": "Max characters for user input/title in the banner (truncated beyond this)",
         "ext.displayName": "Message Anchor Banner",
-        "ext.description": "current = user input owning the current viewport (follows scroll); first = session's first input; latest = most recent input; title = session title",
         "feat.show.banner": "Show the message anchor banner",
         "feat.display.mode": "Display mode",
         "feat.display.title": "Show session title row",

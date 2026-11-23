@@ -2,7 +2,16 @@
   "name": "@aiti-ai/aiti-pi-agent",
   "version": "0.1.10",
   "description": "Spawns a pi --mode rpc child process as a session — the main path of the multi-agent frontend",
+  "displayNameI18n": {
+    "en": "pi Session Backend"
+  },
+  "descriptionI18n": {
+    "zh-CN": "spawn pi --mode rpc 子进程作为会话 —— 多 agent 前端主路径"
+  },
   "soul": "All Sessions 里最正统的一条路——pi 自己驱动自己。",
+  "soulI18n": {
+    "en": "The most orthodox path in All Sessions — pi drives itself."
+  },
   "aitiExtProtocol": "1.0",
   "dependencies": {
     "@aiti-ai/ext-shared": "^0.1.12"

@@ -3,6 +3,12 @@
   "version": "0.1.11",
   "type": "module",
   "description": "Prompt snippet collection — favorites/groups/session extraction/save-as-you-type",
+  "displayNameI18n": {
+    "en": "Prompt Snippets"
+  },
+  "descriptionI18n": {
+    "zh-CN": "prompt 片段收藏 —— 收藏/分组/会话提取/输入即存"
+  },
   "scripts": {
     "build:client": "vite build --config vite.config.ts",
     "watch": "vite build --watch --config vite.config.ts",
@@ -12,6 +18,9 @@
     "vite": "^6.4.3"
   },
   "soul": "我的输入是我宝贵的财富——好话不说二遍。",
+  "soulI18n": {
+    "en": "My input is my precious fortune — good lines are never typed twice."
+  },
   "aitiConfigs": {
     "configFiles": [
       "prompts.json"

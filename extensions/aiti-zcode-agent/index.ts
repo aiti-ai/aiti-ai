@@ -24,7 +24,7 @@ import { DatabaseSync } from "node:sqlite";
 import { writeFile } from "node:fs/promises";
 import type { ChildProcess } from "node:child_process";
 import { governanceEnv } from "./external-governance.ts";
-import { agentSpawnEnv, spawnEnvFeature, spawnDisplayEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, captureSpawnEnvFeatures } from "@aiti-ai/ext-shared/agent-spawn-env";
+import { agentSpawnEnv, spawnEnvFeature, spawnDisplayEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, captureSpawnEnvFeatures, spawnFeatureI18nEn } from "@aiti-ai/ext-shared/agent-spawn-env";
 import type { LaunchOverride } from "@aiti-ai/ext-shared/agent-spawn-env";
 // 队列共享实现层（权威源 pi-web-ext/_shared/backend-queue.ts，副本随扩展部署——改动须双向同步）
 import { createBackendQueueSupport, createQueueFilePersistence, migrateQueueSidecar } from "@aiti-ai/ext-shared/backend-queue";
@@ -1549,7 +1549,7 @@ function quotaView(force: boolean): Response {
 export default {
   id: "aiti-zcode-agent",
   name: "ZCode CLI",
-  icon: "🟢",
+  icon: "icons/cpu.svg",
   // 受控登录统一弹窗（零构建原生 h() client；client/ 下两文件随 deploy 拷贝）
   // 静态插入点声明（与 client registerItems 的 id 一一对应）
   // 登录 UI 已统一到 aiti-agent-manager（受控登录弹窗退役，2026-09-13）：不再声明 ui ——
@@ -1633,6 +1633,7 @@ export default {
         "ext.displayName": "ZCode 会话后端",
       },
       en: {
+        ...spawnFeatureI18nEn(),
         "feat.zcode.transport.desc": "app-server = long-lived ZCode Protocol (same as desktop: streaming typewriter/tool cards/native steer/hot model switch, saves ~5-6s cold start per turn); oneshot = single-shot process per turn (legacy fallback). Empty defaults to app-server",
         "feat.zcode.runtimePath.desc": "ZCode runtime: zcode.cjs file, extracted dir, or executable; auto-probed when empty",
         "feat.zcode.autoDownload.desc": "Auto-downloads from the official site when the runtime isn't found (~30MB, cached)",
@@ -1640,7 +1641,8 @@ export default {
         "feat.zcode.model.desc": "Default model for new sessions (provider/model, e.g. bigmodel/GLM-5.3)",
         "feat.zcode.apiKeyOverride.desc": "Manually provides the coding-plan API key (skips desktop keychain reuse)",
         "feat.zcode.ultraGateway.desc": "app-server routes dynamically via the zcode.z.ai platform root (desktop-linked accounts)",
-        "ext.displayName": "ZCode Session Backend",        "ext.description": "app-server = long-lived ZCode Protocol (same as desktop: streaming typewriter/tool cards/native steer/hot model switch, saves ~5-6s cold start per turn); oneshot = single-shot process per turn (legacy fallback). Empty defaults to app-server.",
+        "ext.displayName": "ZCode Session Backend",
+        "feat.zcode.transport.desc": "app-server = long-lived ZCode Protocol (same as desktop: streaming typewriter/tool cards/native steer/hot model switch, saves ~5-6s cold start per turn); oneshot = single-shot process per turn (legacy fallback). Empty defaults to app-server.",
         "feat.zcode.transport": "Transport channel",
         "feat.zcode.runtimePath": "Runtime path",
         "feat.zcode.autoDownload": "Auto-download AppImage",

@@ -637,3 +637,37 @@ export function parseCustomAgents(raw: unknown): { agents: CustomAgentSpec[]; wa
 	});
 	return { agents, warnings };
 }
+
+/**
+ * English `ui.i18n.en` entries for the four spawn.* feature toggles above.
+ *
+ * The factory hands every agent backend the same Chinese manifest text, so each backend spreads this
+ * table into its own en table instead of hand-copying four labels + four descriptions:
+ *   `ui: { i18n: { en: { ...spawnFeatureI18nEn(), … } } }`
+ */
+export function spawnFeatureI18nEn(): Record<string, string> {
+	return {
+		"feat.spawn.env": "Spawn environment",
+		"feat.spawn.env.desc":
+			"One per line, injected when the agent subprocess is spawned (parsed by us, no shell dependency; works on Windows too): " +
+			"KEY=VALUE sets (supports $VAR / ${VAR} references — the current effective value first, then the parent process env; undefined becomes empty); " +
+			"-NAME removes that variable (emergency escape: one line drops a bad variable that leaked in); # and blank lines are ignored. " +
+			"This can override the auto-injected AITI_BRIDGE_URL, or remove it entirely with -AITI_BRIDGE_URL. Takes effect on the next spawn.",
+		"feat.spawn.displayEnv": "Display env injection",
+		"feat.spawn.displayEnv.desc":
+			"Injects the display environment decided by aiti-ui-env (DISPLAY/XAUTHORITY/DBUS etc.) into sessions spawned by this extension, " +
+			"so GUI programs and MCP inside new sessions land on the matching screen (viewable in the browser over VNC). " +
+			"Values: empty or auto = follow the display mode (inject when a snapshot exists); off = never; headless = virtual-screen snapshots only; desktop = real-desktop snapshots only. " +
+			"Takes effect on the next spawn; same-named variables in spawn.env still override (e.g. DISPLAY=:0) or can be excluded with -DISPLAY.",
+		"feat.spawn.command": "Spawn command override",
+		"feat.spawn.command.desc":
+			"Empty = use this extension's default CLI. When set, it replaces the default CLI command (docker wrapper: put docker here and use " +
+			"\"spawn argument prefix\" for run --rm -i … image CLI). Supports $VAR / ${cwd} references (expanded at spawn). Takes effect on the next spawn. " +
+			"Note: the command can run any local program, so only the machine owner should configure it (same trust level as spawn.env).",
+		"feat.spawn.argsPrefix": "Spawn argument prefix",
+		"feat.spawn.argsPrefix.desc":
+			"One argument per line, prepended before the driver's built-in arguments (docker: run / --rm / -i / -v mount / image name / CLI inside the container). " +
+			"Supports $VAR / ${VAR} / ${cwd} (session working directory) references, expanded at spawn; # and blank lines are ignored. Takes effect on the next spawn. " +
+			"The docker recipe needs -v ${cwd}:${cwd} -w ${cwd} so in-container paths match the host history.",
+	};
+}

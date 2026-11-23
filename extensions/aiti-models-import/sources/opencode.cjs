@@ -30,16 +30,16 @@ module.exports = {
   scan(io) {
     const dir = path.join(io.home, ".config", "opencode");
     const found = CONFIG_FILES.map((f) => path.join(dir, f)).filter((p) => io.exists(p));
-    if (!found.length) return { available: false, reason: "未安装（无 ~/.config/opencode/opencode.json）", drafts: [], notes: [] };
+    if (!found.length) return { available: false, reason: core.msg("mi.srv.opencode.notInstalled"), drafts: [], notes: [] };
 
     // 多配置文件合并 provider 段（同名后文件覆盖前文件，opencode 自身 merge 语义近似）
     const merged = {};
     const parseErrors = [];
     for (const p of found) {
       const text = io.readText(p);
-      if (text == null) { parseErrors.push(path.basename(p) + " 读取失败"); continue; }
+      if (text == null) { parseErrors.push(core.msg("mi.srv.opencode.fileReadFailed", { file: path.basename(p) })); continue; }
       let cfg;
-      try { cfg = JSON.parse(text); } catch (e) { parseErrors.push(path.basename(p) + " 解析失败：" + String((e && e.message) || e)); continue; }
+      try { cfg = JSON.parse(text); } catch (e) { parseErrors.push(core.msg("mi.srv.opencode.fileParseFailed", { file: path.basename(p), detail: String((e && e.message) || e) })); continue; }
       if (cfg && typeof cfg.provider === "object" && cfg.provider) Object.assign(merged, cfg.provider);
     }
     const notes = [...parseErrors];
@@ -51,7 +51,7 @@ module.exports = {
       try {
         const a = JSON.parse(io.readText(authPath) || "{}");
         if (a && typeof a === "object") auth = a;
-      } catch { notes.push("auth.json 解析失败，忽略其中的 key"); }
+      } catch { notes.push(core.msg("mi.srv.opencode.authParseFailed")); }
     }
 
     const drafts = [];
@@ -59,16 +59,16 @@ module.exports = {
       const prov = raw && typeof raw === "object" ? raw : {};
       const opts = prov.options && typeof prov.options === "object" ? prov.options : {};
       const baseUrl = core.normBaseUrl(opts.baseURL);
-      if (!baseUrl) { notes.push("provider " + rawId + " 无 options.baseURL，跳过"); continue; }
+      if (!baseUrl) { notes.push(core.msg("mi.srv.opencode.noBaseUrl", { provider: rawId })); continue; }
       const known = ["@ai-sdk/anthropic", "@ai-sdk/openai", "@ai-sdk/google"].some((p) => String(prov.npm || "").includes(p.split("/")[1]));
       const warnings = [];
-      if (prov.npm && !known) warnings.push("SDK 包 " + prov.npm + " 未识别，按 openai-completions 导入，请在向导确认协议");
+      if (prov.npm && !known) warnings.push(core.msg("mi.srv.opencode.unknownSdk", { npm: String(prov.npm) }));
       const modelsMap = prov.models && typeof prov.models === "object" ? prov.models : {};
       const modelIds = Object.keys(modelsMap);
-      if (!modelIds.length) warnings.push("本地无模型清单（opencode 依赖 models.dev 远端补全），导入后可在向导拉取 /models");
+      if (!modelIds.length) warnings.push(core.msg("mi.srv.opencode.noModels"));
       const authEntry = auth[rawId] && typeof auth[rawId] === "object" ? auth[rawId] : null;
       const apiKey = typeof opts.apiKey === "string" && opts.apiKey ? opts.apiKey : (authEntry && authEntry.type === "api" && typeof authEntry.key === "string" ? authEntry.key : null);
-      if (!apiKey) warnings.push("未找到 API key（options.apiKey / auth.json 均无），导入后需在向导补");
+      if (!apiKey) warnings.push(core.msg("mi.srv.opencode.noKey"));
       drafts.push(core.normalizeDraft({
         key: "opencode-" + core.sanitizeId(rawId),
         label: rawId,
@@ -85,7 +85,7 @@ module.exports = {
         warnings,
       }));
     }
-    if (!drafts.length) notes.push("配置里未发现带 baseURL 的 provider");
+    if (!drafts.length) notes.push(core.msg("mi.srv.opencode.noProviders"));
     return { available: true, drafts, notes };
   },
 };

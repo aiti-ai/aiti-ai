@@ -3,6 +3,12 @@
   "version": "0.1.4",
   "type": "module",
   "description": "Device interconnect over the bridge — paired devices (phone browsers / other computers / agent sessions / injected pages) exchange messages and files.",
+  "displayNameI18n": {
+    "en": "Device Pairing (temp chat / file transfer)"
+  },
+  "descriptionI18n": {
+    "zh-CN": "经桥的设备互连 —— 已配对设备（手机浏览器 / 其他电脑 / agent 会话 / 注入页面）互换消息与文件"
+  },
   "scripts": {
     "build:client": "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});for(const f of fs.readdirSync('client/src'))if(f.endsWith('.mjs'))fs.copyFileSync('client/src/'+f,'dist/'+f)\"",
     "deploy": "node tools/deploy.mjs"
