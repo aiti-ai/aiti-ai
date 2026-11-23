@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-draft-keeper",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "Draft persistence and crash recovery for the composer — the sole owner of the composer draft state machine (v2 intent contract), shared slots across tabs, 7-day stale pruning.",
   "displayNameI18n": {
     "en": "Draft Keeper"
@@ -17,7 +17,7 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "f9473b963808bd37",
+  "contentHash": "79878a7a785c72a4",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

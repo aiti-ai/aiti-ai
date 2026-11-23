@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-ai-schedule",
-  "version": "0.4.10",
+  "version": "0.4.11",
   "type": "module",
   "description": "pi-web resident scheduler — extension declarative scheduled tasks + AI plans (cron/interval/one-shot) + three-mode execution engine + AI self-service plan tool + management page",
   "displayNameI18n": {
@@ -19,7 +19,7 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "a720517697ecbc66",
+  "contentHash": "a554f99d115e48ed",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

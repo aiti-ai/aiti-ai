@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-event-bus",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "The page event bus for pi-web: takes over `__piPageEvents`, topic subscriptions with server-side filtering, publish-local for high-frequency frames, load-priority guarantee, and STALE_CONN silent rebuild.",
   "displayNameI18n": {
     "en": "Page Event Bus"
@@ -18,7 +18,7 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "3a0d6e0dde7b4248",
+  "contentHash": "e71584f7d940c727",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

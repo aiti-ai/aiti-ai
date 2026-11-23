@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-devtools-dsh",
-  "version": "0.8.4",
+  "version": "0.8.5",
   "description": "aiti-devtools DSH adapter: in-process bridge mounted at /aiti on ctx.webServer (launcher/cockpit/bridge/mcp assets + REST/SSE), 16 aiti_* tools via ctx.tools.register, and agent/pre-step placeholder rewrite ([元素N]→describe+source tag). Client face renders the candidates bar in conversation.input.overlay.",
   "type": "module",
   "main": "lib/index.js",
@@ -54,5 +54,5 @@
   "bugs": {
     "url": "https://github.com/aiti-ai/aiti-ai/issues"
   },
-  "contentHash": "b3a4e396b2a3cd5a"
+  "contentHash": "9a33b36e845a7aa4"
 }

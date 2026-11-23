@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-devtools-nuxt",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Nuxt carrier: one-line modules integration = dev-server-embedded MCP (bridge/MCP/launcher at same-origin /aiti/) + head auto-injection; no app files touched.",
   "type": "module",
   "main": "dist/module.js",
@@ -29,5 +29,5 @@
   "bugs": {
     "url": "https://github.com/aiti-ai/aiti-ai/issues"
   },
-  "contentHash": "154c0f46a37320f6"
+  "contentHash": "3dde39f7972c357d"
 }

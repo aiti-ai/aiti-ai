@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-prompts",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "type": "module",
   "description": "Prompt snippet collection — favorites/groups/session extraction/save-as-you-type",
   "displayNameI18n": {
@@ -28,7 +28,7 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "cbf4a55bd5564ebf",
+  "contentHash": "a807c806ebb80bec",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

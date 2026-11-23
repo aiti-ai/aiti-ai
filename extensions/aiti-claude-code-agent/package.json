@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-claude-code-agent",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "Drives Claude Code CLI sessions — restores history rows from All Sessions (agentKey: claude); claude 2.1.318+ keyring credentials with a three-tier login-state adjudication",
   "displayNameI18n": {
     "en": "Claude Code Session Backend"
@@ -26,7 +26,7 @@
     "@aiti-ai/ext-shared": "^0.1.12"
   },
   "license": "MIT",
-  "contentHash": "cbf5db8975f91399",
+  "contentHash": "6208f00519a0463b",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

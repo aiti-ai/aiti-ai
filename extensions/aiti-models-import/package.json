@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-models-import",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "Imports model configs from other agents — scans codex / ZCode / OpenCode provider·model configs into drafts (first-launch dialog for a one-time import); persistence always goes through aiti-model-wizard saveBatch (undoable in one step), never writes models.json directly",
   "displayNameI18n": {
     "en": "Model Import"
@@ -22,7 +22,7 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "3460a0fe5850575b",
+  "contentHash": "ee1dccb0507a6c04",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-agent-manager",
-  "version": "0.2.11",
+  "version": "0.2.12",
   "description": "Unified aggregation of external agent login states + login action proxying + multi-account profiles (backup/alias/one-click switch) + account quota display — implements no login protocol at all",
   "displayNameI18n": {
     "en": "Agent Manager"
@@ -25,7 +25,7 @@
     "@aiti-ai/ext-shared": "^0.1.12"
   },
   "license": "MIT",
-  "contentHash": "9e82fe77782e57c7",
+  "contentHash": "3c360585f7bdb31b",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

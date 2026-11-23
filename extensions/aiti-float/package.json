@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-float",
-  "version": "0.5.12",
+  "version": "0.5.13",
   "type": "module",
   "description": "data-ext-float contract take-over — drag/edge resize/position persistence/click-to-front/double-click reset/auto maximize button, small-screen auto fullscreen + system back closes the float; the DockStack unified sidebar block-stack service",
   "displayNameI18n": {
@@ -23,7 +23,7 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "341a334f7e2bba7c",
+  "contentHash": "a0f1f0d38887683d",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

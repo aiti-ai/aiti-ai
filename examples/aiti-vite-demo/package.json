@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/example-vite",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Reference integration: a minimal vite app with aiti-devtools attached through a single plugin call. Standalone — it does not ship or require the pi-web distribution.",
   "license": "MIT",
   "type": "module",
@@ -44,5 +44,5 @@
     "@aiti-ai/aiti-devtools-vite": "^0.1.2",
     "vite": "^6.0.0"
   },
-  "contentHash": "91cf90350960056a"
+  "contentHash": "40763234df2d8484"
 }

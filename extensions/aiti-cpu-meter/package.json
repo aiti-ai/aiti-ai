@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-cpu-meter",
-  "version": "0.2.10",
+  "version": "0.2.11",
   "description": "Main-thread smoothness detector — a seconds counter + 0–100 smoothness score + color tiers + minimize + AI jank debugging. Ships as two artifacts: a pi-web extension (internal) and a standalone single-file injector you can register into any website you develop.",
   "displayNameI18n": {
     "en": "CPU Meter"
@@ -19,7 +19,7 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "4fe14740af4108e3",
+  "contentHash": "a7d38d119d3b00f7",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

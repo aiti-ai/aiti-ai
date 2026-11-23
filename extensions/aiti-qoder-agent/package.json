@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-qoder-agent",
-  "version": "0.4.12",
+  "version": "0.4.13",
   "description": "Exclusive Qoder CLI session backend (qodercli/qoderclicn): credits/quota (getUsage), WASM-signed model catalog (listModels), task-list mirror, run-queue management, and plan/permission-mode support.",
   "displayNameI18n": {
     "en": "Qoder Session Backend"
@@ -26,7 +26,7 @@
     "@aiti-ai/ext-shared": "^0.1.12"
   },
   "license": "MIT",
-  "contentHash": "45ac37b44134bd98",
+  "contentHash": "7573d434be3f8278",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

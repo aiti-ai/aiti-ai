@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-git-ops",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "description": "Whitelisted git write engine — checkout precheck / stash / plan breakpoints / audit / changed topic, consumed by folder and session-manager",
   "displayNameI18n": {
     "en": "Git Ops (shared git operations engine)"
@@ -17,7 +17,7 @@
     "@aiti-ai/ext-shared": "^0.1.12"
   },
   "license": "MIT",
-  "contentHash": "af29f11dd3e18ac5",
+  "contentHash": "5d44e1528f360d9d",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",

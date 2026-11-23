@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/pi-session-search",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Give the pi agent session_search / session_read tools: full-text search across past sessions (optionally every agent family via a pi-web session-manager index) and read original messages — recover context lost to compaction, find how something was done before. A pi package.",
   "keywords": [
     "pi",
@@ -42,5 +42,5 @@
   "bugs": {
     "url": "https://github.com/aiti-ai/aiti-ai/issues"
   },
-  "contentHash": "b8ba958f28d5a39c"
+  "contentHash": "f63d8c99d021de47"
 }
