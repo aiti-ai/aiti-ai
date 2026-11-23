@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-configs",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "type": "module",
   "description": "A safety net for configuration — when AI/humans or extension changes break the config, there is a commit to revert, a diff to inspect, one-click restore; if the system crashes, a command-line watchdog recovers without relying on the broken system itself",
   "displayNameI18n": {
@@ -23,7 +23,7 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "739fa58b79c44ebf",
+  "contentHash": "fff74579e289de50",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aiti-ai/aiti-ai.git",
