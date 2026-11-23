@@ -54,7 +54,7 @@ test("message actions keep labels and wrap onto new lines instead of overflowing
   // 合并适配：fork 的 editFromHereTitle 文案（上游文案是 branches within this session）。
   // renderToStaticMarkup escapes apostrophes, so match against the escaped form.
   const escapeHtml = (s) => s.replace(/'/g, "&#x27;");
-  for (const title of ["Copy message", "Put this message's text into the composer to tweak and resend (does not branch the session)", "New session — creates an independent copy from here"]) {
+  for (const title of ["Copy message", "Put this message's text into the composer to tweak and resend (does not branch the session)", "Fork — creates an independent copy from this message"]) {
     assert.ok(userHtml.includes(escapeHtml(title)), `expected title ${title}`);
   }
   const assistantHtml = renderMessage({ role: "assistant", content: [{ type: "text", text: "Hey" }] });
@@ -93,13 +93,13 @@ test("assistantMessageActions mounts at both placements and routes items by meta
   }
 });
 
-test("a prompt sent during the run offers New session from the entry the wrapper named, not Edit (#1746)", () => {
+test("a prompt sent during the run offers Fork from the entry the wrapper named, not Edit (#1746)", () => {
   const props = { forkEntryId: "live-entry", onFork: () => {}, onEditContent: () => {} };
   const html = renderMessage({ role: "user", content: "Hi", timestamp: 1 }, props);
-  assert.ok(html.includes('title="New session — creates an independent copy from here"'));
+  assert.ok(html.includes('title="Fork — creates an independent copy from this message"'));
   assert.ok(!html.includes('title="Edit from here — branches within this session"'));
   const without = renderMessage({ role: "user", content: "Hi", timestamp: 1 }, { onFork: () => {} });
-  assert.ok(!without.includes('title="New session — creates an independent copy from here"'));
+  assert.ok(!without.includes('title="Fork — creates an independent copy from this message"'));
   const message = { role: "user", content: "Hi", timestamp: 1 };
   assert.equal(MessageView.compare({ message, onFork: props.onFork }, { message, ...props, onEditContent: undefined }), false);
 });

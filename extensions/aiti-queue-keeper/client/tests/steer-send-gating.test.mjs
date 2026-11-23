@@ -20,8 +20,19 @@ const read = (f) => readFileSync(join(srcRoot, f), "utf8");
 
 test("契约：steerSend 可选（core 无 steer 面时不下发，存在性即能力）", () => {
   const types = read("types.ts");
-  assert.match(types, /steerSend\?\(text: string, images\?: QueueImage\[\]\): void;/);
+  assert.match(types, /steerSend\?\(text: string, images\?: QueueImage\[\]\): void \| Promise<void>;/);
   assert.doesNotMatch(types, /^\s*steerSend\(text: string/m, "steerSend 不得退回必选——那样面板无从判断能力");
+});
+
+test("先发送后摘除：两个入口都走 steerSendThenRemove（清空+重注入不得吞掉刚插队的条目）", () => {
+  const panel = read("QueuePanel.tsx");
+  assert.match(panel, /steerSendThenRemove\(\{ actions, kind, index, text, images, getLive: \(\) => liveRef\.current, remove: actions\.remove \}\)/);
+  assert.match(panel, /void steerSendLive\("followUp", 0, followUp\[0\]\.text, followUp\[0\]\.images\);/);
+  const row = read("QueueRow.tsx");
+  assert.match(row, /void steerSendThenRemove\(\{ actions, kind: "followUp", index, text, images, getLive, remove: actions\.remove \}\);/);
+  const helper = read("steer-send.ts");
+  assert.match(helper, /await send\(text, images\);/);
+  assert.match(helper, /if \(found >= 0\) await remove\(kind, found, \{ permanent: true \}\);/);
 });
 
 test("折叠条：「插队首个排队项」按 steerSend 存在性显隐", () => {
@@ -31,7 +42,11 @@ test("折叠条：「插队首个排队项」按 steerSend 存在性显隐", () 
     /\{!\(steering\?\.\[0\]\) && followUp\?\.\[0\] && actions\.steerSend && \(/,
     "折叠条按钮的渲染条件必须带上 actions.steerSend",
   );
-  assert.match(panel, /actions\.steerSend\?\.\(followUp\[0\]\.text/, "调用点须是可选链");
+  assert.match(panel, /void steerSendLive\("followUp", 0, followUp\[0\]\.text, followUp\[0\]\.images\);/,
+    "调用点须带可选能力门（steerSend 未下发时不渲染按钮）");
+  // The optional-chain + capability guard lives in the shared helper now.
+  const helper = read("steer-send.ts");
+  assert.match(helper, /const send = actions\.steerSend;\n  if \(!send\) return;/, "helper 须以可选能力为门（无 steerSend 即 no-op）");
 });
 
 test("行内：follow-up 行的插队按钮按 steerSend 存在性显隐", () => {
@@ -41,7 +56,7 @@ test("行内：follow-up 行的插队按钮按 steerSend 存在性显隐", () =>
 });
 
 test("全量：不存在未门控的 steerSend 调用（漏一处就吞一次输入）", () => {
-  for (const f of ["QueuePanel.tsx", "QueueRow.tsx"]) {
+  for (const f of ["QueuePanel.tsx", "QueueRow.tsx", "steer-send.ts"]) {
     const bare = read(f).match(/actions\.steerSend\(/g) ?? [];
     assert.deepEqual(bare, [], `${f} 里仍有 actions.steerSend( 直调——改为可选链并补渲染门`);
   }

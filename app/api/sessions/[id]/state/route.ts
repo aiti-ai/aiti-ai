@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import { getRpcSession } from "@/lib/rpc-manager";
 import { resolveAnySession, attachIfBridged } from "@/lib/session";
 import { resolveSessionPath } from "@/lib/session-reader";
+import { getPlaceholder } from "@/lib/session/placeholder";
+import { waitForHostingSwitch } from "@/lib/session/hosting-lock";
+import { waitSessionReady } from "@/lib/session/ready";
+import { cachedSessionHistory } from "@/lib/session/history-cache";
 import { getRegistry } from "@/lib/ext/registry";
 import { applyQueuedFlag } from "@/lib/compact-queue";
 import { mergeHandleState } from "@/lib/session/handle-state";
@@ -12,6 +16,9 @@ export async function GET(
 ) {
   const { id } = await params;
   try {
+    // A hosting switch stops the old process before starting the new one;
+    // answer after the switch settles instead of 404ing mid-swap.
+    await waitForHostingSwitch(id);
     // Bridged-session detection first (same as above)
     {
       const fp = await resolveSessionPath(id);
@@ -20,10 +27,12 @@ export async function GET(
         try {
           bridged = await attachIfBridged(fp);
         } catch (e) {
-          if ((e as { name?: string }).name === "BridgeOccupiedError") {
-            return NextResponse.json({ error: String(e), code: "session_bridged_unreachable" }, { status: 409 });
-          }
-          throw e;
+          if ((e as { name?: string }).name !== "BridgeOccupiedError") throw e;
+          // Another web instance drives this detached (single-client) wrapper. Live state is
+          // not ours to read — answer the disk view (idle) instead of a 409 console error;
+          // sends still fail loud on the write path.
+          console.warn(`[sessions/state] ${id}: ${(e as Error).message} — answering from the disk view`);
+          bridged = undefined;
         }
         if (bridged?.isAlive()) {
           const state = (await bridged.send({ type: "get_state" }).catch(() => null)) as Record<string, unknown> | null;
@@ -57,8 +66,12 @@ export async function GET(
     // Backend (provider-handle) sessions: state via the wrapper adapter.
     const wrapped = resolveAnySession(id);
     if (wrapped?.isAlive()) {
+      await waitSessionReady(wrapped);
       const state = (await wrapped.send({ type: "get_state" })) as Record<string, unknown> | null;
       applyQueuedFlag(id, state);
+      const wrappedId = (wrapped as { sessionId?: string }).sessionId;
+      const cached = cachedSessionHistory([id, wrappedId ?? ""]);
+      if (state && cached && cached.length > Number(state.messageCount ?? 0)) state.messageCount = cached.length;
       return NextResponse.json({
         running: true,
         // Pass capability declarations through to the frontend (capability-aware control rendering)
@@ -94,7 +107,16 @@ export async function GET(
       return NextResponse.json({ running: false, state: dormantState });
     }
     if (!await resolveSessionPath(id)) {
-      return NextResponse.json({ error: "Session not found" }, { status: 404 });
+      // External placeholder sessions can be momentarily absent while the
+      // hosting switch rewrites their anchor file; the registry still knows
+      // them, so this is "idle", not a missing session.
+      let placeholderKnown = false;
+      try {
+        placeholderKnown = id.includes(":") && !!getPlaceholder(id);
+      } catch { /* registry unavailable → normal 404 */ }
+      if (!placeholderKnown) {
+        return NextResponse.json({ error: "Session not found" }, { status: 404 });
+      }
     }
     return NextResponse.json({ running: false });
   } catch (error) {

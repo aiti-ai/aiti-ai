@@ -85,11 +85,15 @@ export interface QueuePanelActions {
   restoreToComposer(id: string): Promise<boolean>;
   purge(ids?: string[]): Promise<boolean>;
   recallAll(): void;
-  /** 把队列头条目作为 steer 发出（扩展随后自行 remove(permanent) 摘除）。
-   *  可选是契约的一部分：**存在即「本会话有 steer 注入面」**——后端声明 steer:false 或未在
-   *  运行时 core 不下发，此时必须收起所有「插队此条目」的入口，不能照调用：条目被 remove
-   *  掉而消息没发出去 = 静默吞用户输入（与 pi-web queue-api.ts 契约镜像）。 */
-  steerSend?(text: string, images?: QueueImage[]): void;
+  /** Send the queue head as a steer (the extension then removes it itself via remove(permanent)).
+   *  Presence is the capability: core omits it when the backend declares steer:false or there is no
+   *  steer surface at runtime; the panel must then hide every "steer this entry" affordance — calling
+   *  through would remove the entry without sending it, i.e. silently swallow input (mirrors pi-web
+   *  lib/composer/queue-api.ts).
+   *  The returned promise resolves once the backend ACCEPTED the steer: the extension must await it
+   *  before removing the entry. On pi/omp a removal is clear + re-enqueue, so a removal racing the
+   *  send clears the row the send just created (the message disappears, never steered). */
+  steerSend?(text: string, images?: QueueImage[]): void | Promise<void>;
   exportAll(): Promise<{ live: QueueEntry[]; recovery: QueueEntry[] } | null>;
   downloadExport(entries: QueueEntry[], meta: QueueExportMeta, format: "md" | "json"): void;
   parseImport(content: string): QueueEntryInput[];

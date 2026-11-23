@@ -7,7 +7,8 @@
  */
 import { useRef, useState } from "react";
 import { ensureMaterialized, t } from "./host-shim";
-import type { QueuePanelActions, QueueImage } from "./types";
+import { steerSendThenRemove } from "./steer-send";
+import type { QueueLiveView, QueuePanelActions, QueueImage } from "./types";
 
 export interface QueueRowProps {
   kind: "steer" | "follow-up";
@@ -21,6 +22,10 @@ export interface QueueRowProps {
   index: number;
   total: number;
   actions: QueuePanelActions;
+  /** Reads the current live queue: the steer-send removal relocates its entry by
+   *  text, and the queue can move while the send is awaited (a render-time view
+   *  would be stale). */
+  getLive: () => QueueLiveView;
   /** 拖拽/触摸拖拽（与 core 同语义）。 */
   onDragStart?: (index: number) => void;
   onDragOver?: (index: number) => void;
@@ -121,7 +126,7 @@ export function AttachIcons({ hasImages, hasFiles, onImageClick }: { hasImages?:
   );
 }
 
-export function QueueRow({ kind, text, images, hasImages, hasFiles, index, total, actions, onDragStart, onDragOver, onDrop, onTouchMoveTo, dragging, isCoarsePointer, steerReadonly }: QueueRowProps) {
+export function QueueRow({ kind, text, images, hasImages, hasFiles, index, total, actions, getLive, onDragStart, onDragOver, onDrop, onTouchMoveTo, dragging, isCoarsePointer, steerReadonly }: QueueRowProps) {
   // 外部 agent 后端的 steer 条目：已注入后端 CLI 进程，撤回/移动/转换均不被协议支持
   // （backend-queue 对 steer 管理操作一律报错）——隐藏全部操作仅展示。
   const ro = kind === "steer" && Boolean(steerReadonly);
@@ -153,7 +158,11 @@ export function QueueRow({ kind, text, images, hasImages, hasFiles, index, total
   // 行内取回（append 合并）→ actions.recallOne（core 置 edit-intent + 写值）
   const doRecall = () => { void actions.recallOne(kind === "follow-up" ? "followUp" : "steer", index); };
   const doRemove = (permanent: boolean) => { void actions.remove(kind === "follow-up" ? "followUp" : "steer", index, permanent ? { permanent: true } : undefined); };
-  const doSteerSend = () => { actions.steerSend?.(text, images); doRemove(true); };
+  // Send first, remove only once the backend accepted the steer — and remove the
+  // entry by text (the live queue may have moved meanwhile). See steer-send.ts.
+  const doSteerSend = () => {
+    void steerSendThenRemove({ actions, kind: "followUp", index, text, images, getLive, remove: actions.remove });
+  };
   const doConvert = () => { void actions.convert(kind === "steer" ? "steer" : "followUp", index, kind === "steer" ? "followUp" : "steer"); };
   const doMove = (dir: -1 | 1) => { void actions.move(kind === "steer" ? "steer" : "followUp", index, index + dir); };
 

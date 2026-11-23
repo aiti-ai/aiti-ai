@@ -98,3 +98,58 @@ test("越界 / 未知 action / convert 同组 → 人话错误", async () => {
   await assert.rejects(() => t.support.queueManage({ action: "convert", kind: "steer", targetKind: "steer", index: 0 }), /targetKind/);
   await assert.rejects(() => t.support.queueManage({ action: "nope" }), /未知 action/);
 });
+
+test("并发入队：clear 抹掉的「快照之后新入队」条目补注入回去（steer-send 与 remove 赛跑不丢消息）", async () => {
+  const t = rig();
+  t.feed([], ["f1"]);
+  // The panel's steer-send: the steer prompt lands first, then the follow-up
+  // remove clears. clearRemote reports what it really removed: f1 plus S, which
+  // landed after the plan's base and is therefore absent from that base.
+  t.setClearResult({ steering: ["S-late"], followUp: ["f1"] });
+  const r = await t.support.queueManage({ action: "remove", kind: "followUp", index: 0 });
+  assert.deepEqual(t.reinjections, [{ text: "S-late", kind: "steer" }], "快照后新入队的 steer 必须被补注入");
+  assert.deepEqual(r.steering, ["S-late"], "返回视图包含补注入的条目");
+  assert.deepEqual(r.entry, { text: "f1" }, "被摘除的仍是目标条目");
+});
+
+test("变更串行：两个变更不交错 clear/重注入（第二变更以第一变更后的镜像为起点）", async () => {
+  const events = [];
+  let clears = 0;
+  const support = createRemotePiQueueSupport({
+    clearRemote: async () => {
+      clears += 1;
+      events.push(`clear${clears}`);
+      return { steering: [], followUp: [] };
+    },
+    reinject: async (text) => { events.push(`re:${text}`); },
+  });
+  support.observeFrame({ type: "queue_update", steering: [], followUp: ["a", "b"] });
+  const first = support.queueManage({ action: "move", kind: "followUp", from: 0, to: 1 });
+  const second = support.queueManage({ action: "remove", kind: "followUp", index: 0 });
+  await Promise.all([first, second]);
+  assert.deepEqual(events, ["clear1", "re:b", "re:a", "clear2", "re:a"]);
+  assert.equal((await second).entry.text, "b", "第二变更看到的是重排后的镜像（串行），不是旧快照");
+});
+
+test("重注入期间又入队的条目：以子进程帧为准，镜像与返回不被 plan 覆盖", async () => {
+  let childFollow = [];
+  let support;
+  support = createRemotePiQueueSupport({
+    clearRemote: async () => {
+      const before = [...childFollow];
+      childFollow = [];
+      support.observeFrame({ type: "queue_update", steering: [], followUp: [...childFollow] });
+      return { steering: [], followUp: before };
+    },
+    reinject: async (text) => {
+      childFollow.push(text);
+      // A new message lands mid-loop (the real child's next frame carries it)
+      if (text === "a") childFollow.push("late");
+      support.observeFrame({ type: "queue_update", steering: [], followUp: [...childFollow] });
+    },
+  });
+  support.observeFrame({ type: "queue_update", steering: [], followUp: ["a", "b"] });
+  const r = await support.queueManage({ action: "remove", kind: "followUp", index: 1 });
+  assert.deepEqual(r.followUp, ["a", "late"], "帧里存在的 late 不能被 plan 覆盖掉");
+  assert.deepEqual(support.snapshot().followUp, ["a", "late"]);
+});

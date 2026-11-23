@@ -49,27 +49,89 @@ export function createRemotePiQueueSupport(opts: {
   reinject(text: string, kind: "steer" | "followUp"): Promise<void>;
 }): RemotePiQueue {
   let mirror: { steering: string[]; followUp: string[] } = { steering: [], followUp: [] };
+  /** Observed queue_update frames: after a re-inject loop the child's own frames
+   *  are the authoritative state (they also carry entries enqueued meanwhile). */
+  let frameSeq = 0;
+  /** Mutation chain: every mutation is clear-all + re-inject, so two of them
+   *  interleaved would each wipe the other's entries (and the mirror). */
+  let mutationChain: Promise<unknown> = Promise.resolve();
 
   const snapshot = () => ({ steering: [...mirror.steering], followUp: [...mirror.followUp] });
 
   const observeFrame = (msg: Record<string, unknown>): void => {
     if (msg.type !== "queue_update") return;
+    frameSeq += 1;
     mirror = {
       steering: Array.isArray(msg.steering) ? (msg.steering as string[]).map(String) : [],
       followUp: Array.isArray(msg.followUp) ? (msg.followUp as string[]).map(String) : [],
     };
   };
 
-  /** 变更类共用骨架：对镜像副本计算新序 → 远端全量清空 → 按新序重注入 → 镜像落为新序。 */
-  const mutate = async (
-    plan: (cur: { steering: string[]; followUp: string[] }) => { steering: string[]; followUp: string[] },
-  ): Promise<void> => {
-    const next = plan(snapshot());
-    await opts.clearRemote();
-    for (const text of next.steering) await opts.reinject(text, "steer");
-    for (const text of next.followUp) await opts.reinject(text, "followUp");
-    mirror = { steering: [...next.steering], followUp: [...next.followUp] };
+  /** Multiset difference (a − b): entries of `a` not accounted for by `b` (pi queues are
+   *  plain text arrays; the same text may legitimately appear twice). */
+  const minus = (a: string[], b: string[]): string[] => {
+    const left = new Map<string, number>();
+    for (const text of b) left.set(text, (left.get(text) ?? 0) + 1);
+    const out: string[] = [];
+    for (const text of a) {
+      const n = left.get(text) ?? 0;
+      if (n > 0) left.set(text, n - 1);
+      else out.push(text);
+    }
+    return out;
   };
+
+  /** Run one mutation at a time; a failed turn must not break the chain. */
+  const serialized = <T>(run: () => Promise<T>): Promise<T> => {
+    const result = mutationChain.then(run, run);
+    mutationChain = result.catch(() => undefined);
+    return result;
+  };
+
+  /**
+   * Shared skeleton for mutating actions: plan the new order from the mirror,
+   * clear the child's queue, then re-inject in that order.
+   *
+   * The plan runs INSIDE the mutation chain, so it reads the mirror as it is when
+   * this mutation actually starts (never a snapshot taken while it was queued).
+   *
+   * The clear also wipes entries enqueued after the plan's base but before the
+   * clear itself (typical: the queue panel's steer-send prompt racing the remove
+   * that follows it). They are not in the plan, but clearRemote returns what it
+   * really removed — those entries must be re-injected, or the clear silently
+   * drops a message.
+   *
+   * The mirror is not overwritten with the plan at the end: the child emits
+   * queue_update on every clear/re-inject, and those frames are authoritative
+   * (they also carry entries enqueued while the re-inject loop ran).
+   */
+  const mutate = <T>(
+    plan: (cur: { steering: string[]; followUp: string[] }) => { next: { steering: string[]; followUp: string[] }; result: T },
+  ): Promise<T> => serialized(async () => {
+    const base = snapshot();
+    const { next, result } = plan({ steering: [...base.steering], followUp: [...base.followUp] });
+    const framesBefore = frameSeq;
+    const cleared = await opts.clearRemote();
+    const clearedSteering = (cleared.steering ?? []).map(String);
+    const clearedFollowUp = (cleared.followUp ?? []).map(String);
+    const extras = {
+      steering: minus(clearedSteering, base.steering),
+      followUp: minus(clearedFollowUp, base.followUp),
+    };
+    for (const text of next.steering) await opts.reinject(text, "steer");
+    for (const text of extras.steering) await opts.reinject(text, "steer");
+    for (const text of next.followUp) await opts.reinject(text, "followUp");
+    for (const text of extras.followUp) await opts.reinject(text, "followUp");
+    // Fallback for a backend whose clear/re-inject emits no queue_update at all:
+    // with frames observed the mirror is already authoritative (do not clobber it).
+    if (frameSeq === framesBefore) {
+      mirror = {
+        steering: [...next.steering, ...extras.steering],
+        followUp: [...next.followUp, ...extras.followUp],
+      };
+    }
+    return result;
+  });
 
   const at = (arr: string[], i: number | undefined): number => {
     const n = Number(i);
@@ -82,54 +144,64 @@ export function createRemotePiQueueSupport(opts: {
     switch (req.action) {
       case "clear": {
         // 远端权威清空：返回值 = 清空前文本（即「清掉了什么」，snapshot 语义不适用）
-        const cleared = await opts.clearRemote();
-        mirror = { steering: [], followUp: [] };
-        return { steering: (cleared.steering ?? []).map(String), followUp: (cleared.followUp ?? []).map(String) };
+        return await serialized(async () => {
+          const framesBefore = frameSeq;
+          const cleared = await opts.clearRemote();
+          if (frameSeq === framesBefore) mirror = { steering: [], followUp: [] };
+          return { steering: (cleared.steering ?? []).map(String), followUp: (cleared.followUp ?? []).map(String) };
+        });
       }
       case "remove":
       case "recall": {
-        const cur = snapshot();
-        const group = req.kind === "steer" ? cur.steering : cur.followUp;
-        const [picked] = group.splice(at(group, req.index), 1);
-        await mutate(() => cur);
+        const kind: "steer" | "followUp" = req.kind === "steer" ? "steer" : "followUp";
+        const picked = await mutate((cur) => {
+          const group = kind === "steer" ? cur.steering : cur.followUp;
+          const [removed] = group.splice(at(group, req.index), 1);
+          return { next: cur, result: removed };
+        });
+        const state = snapshot();
         return {
-          steering: cur.steering,
-          followUp: cur.followUp,
+          steering: state.steering,
+          followUp: state.followUp,
           entry: { text: picked },
           ...(req.action === "remove" ? { removed: { text: picked } } : {}),
         };
       }
       case "move": {
-        const cur = snapshot();
-        const group = req.kind === "steer" ? cur.steering : cur.followUp;
-        // 两个索引都在删除前对原长度校验（pi-web core move_queue 同款语义）
-        const from = at(group, req.from);
-        const to = at(group, req.to);
-        const [moved] = group.splice(from, 1);
-        group.splice(to, 0, moved);
-        await mutate(() => cur);
-        return { steering: cur.steering, followUp: cur.followUp };
+        await mutate((cur) => {
+          const group = req.kind === "steer" ? cur.steering : cur.followUp;
+          // Validate both indexes against the pre-move length (pi-web core move_queue semantics)
+          const from = at(group, req.from);
+          const to = at(group, req.to);
+          const [moved] = group.splice(from, 1);
+          group.splice(to, 0, moved);
+          return { next: cur, result: undefined };
+        });
+        return snapshot();
       }
       case "requeue": {
-        const cur = snapshot();
-        const group = req.kind === "steer" ? cur.steering : cur.followUp;
-        const i = Number(req.index);
-        const text = String(req.text ?? "");
-        if (!Number.isInteger(i) || i < 0 || i > group.length) throw new Error("队列索引越界");
-        if (!text.trim()) throw new Error("requeue 需要非空文本");
-        group.splice(i, 0, text);
-        await mutate(() => cur);
-        return { steering: cur.steering, followUp: cur.followUp };
+        await mutate((cur) => {
+          const group = req.kind === "steer" ? cur.steering : cur.followUp;
+          const i = Number(req.index);
+          const text = String(req.text ?? "");
+          if (!Number.isInteger(i) || i < 0 || i > group.length) throw new Error("队列索引越界");
+          if (!text.trim()) throw new Error("requeue 需要非空文本");
+          group.splice(i, 0, text);
+          return { next: cur, result: undefined };
+        });
+        return snapshot();
       }
       case "convert": {
         const target = req.targetKind === "followUp" ? "followUp" : "steer";
-        const kind = req.kind === "steer" ? "steer" : "followUp";
+        const kind: "steer" | "followUp" = req.kind === "steer" ? "steer" : "followUp";
         if (target === kind) throw new Error("convert 需要不同于当前的 targetKind");
-        const cur = snapshot();
-        const [picked] = (kind === "steer" ? cur.steering : cur.followUp).splice(at(kind === "steer" ? cur.steering : cur.followUp, req.index), 1);
-        (target === "steer" ? cur.steering : cur.followUp).push(picked);
-        await mutate(() => cur);
-        return { steering: cur.steering, followUp: cur.followUp, entry: { text: picked } };
+        const picked = await mutate((cur) => {
+          const [moved] = (kind === "steer" ? cur.steering : cur.followUp).splice(at(kind === "steer" ? cur.steering : cur.followUp, req.index), 1);
+          (target === "steer" ? cur.steering : cur.followUp).push(moved);
+          return { next: cur, result: moved };
+        });
+        const state = snapshot();
+        return { steering: state.steering, followUp: state.followUp, entry: { text: picked } };
       }
       default:
         throw new Error(`queueManage: 未知 action "${String(req.action)}"`);

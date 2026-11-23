@@ -693,7 +693,7 @@ export const zhCNLocale: LocalePlugin = {
     "i18n.editFromHere": "从此处编辑",
     "i18n.editFromHereTitle": "从此处编辑，此会话内创建分支",
     "i18n.newSession": "新会话",
-    "i18n.newSessionTitle": "新会话，从此处创建独立副本",
+    "i18n.newSessionTitle": "从此消息分叉，创建独立副本",
     "i18n.estimatedTokens": "流式输出期间的估算 Token 数",
     "i18n.noOutput": "（无输出）",
     "i18n.noSummary": "（无摘要）",

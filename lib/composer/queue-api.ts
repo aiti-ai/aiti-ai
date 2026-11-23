@@ -82,8 +82,10 @@ export interface QueuePanelActions {
   /** Send the queue head as a steer (the extension is responsible for afterwards removing the head via remove, permanent). Entries with images send their images along.
    *  Optional on purpose: presence *is* the steer capability. Core omits it when the session has no mid-run steer surface (backend declares steer:false, or the
    *  agent isn't running) — the extension must then hide every "steer this entry" affordance instead of calling through: the entry gets removed but never
-   *  delivered, i.e. silent input loss. */
-  steerSend?(text: string, images?: QueueImage[]): void;
+   *  delivered, i.e. silent input loss.
+   *  Returns a promise once the backend **accepted** the steer: the extension must await it before removing the entry. Removal is a clear + re-enqueue on the
+   *  pi/omp backends, so a removal racing the send can clear the queue row the send just created (the message disappears, never steered). */
+  steerSend?(text: string, images?: QueueImage[]): void | Promise<void>;
   /** Export (full live + recovery data). */
   exportAll(): Promise<{ live: QueueEntry[]; recovery: QueueEntry[] } | null>;
   /** Trigger a browser download (md/json; implemented in core, single source). */

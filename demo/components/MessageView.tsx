@@ -588,12 +588,13 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
                   onMouseLeave={(e) => { if (!forking) e.currentTarget.style.color = "var(--text-dim)"; }}
                 >
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="6" y1="3" x2="6" y2="15" />
+                    <circle cx="12" cy="18" r="3" />
+                    <circle cx="6" cy="6" r="3" />
                     <circle cx="18" cy="6" r="3" />
-                    <circle cx="6" cy="18" r="3" />
-                    <path d="M18 9a9 9 0 0 1-9 9" />
+                    <path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9" />
+                    <path d="M12 12v3" />
                   </svg>
-                   {forking ? t("i18n.creating") : t("i18n.newSession")}
+                  {forking ? t("i18n.creating") : t("i18n.newSession")}
                 </button>
               )}
             </div>

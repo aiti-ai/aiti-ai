@@ -41,6 +41,10 @@ test("adopt: no bootstrap, id from the native sid, history until replay_end", as
   const events = [];
   h.subscribe((e) => events.push(e.type));
   child.emit("replay_end");
+  // The boundary is awaited now: readiness (and the resumed agent_start) resolves only after
+  // the persisted history seed, so a page that opens with the boundary still gets a full
+  // transcript instead of an empty one (2026-11-23).
+  await new Promise((r) => setTimeout(r, 50));
   assert.equal(h.loading, false, "replay_end flips to live");
   assert.ok(events.includes("agent_start"), `agent_start should fire at the boundary, got ${JSON.stringify(events)}`);
   assert.equal(writes.length, 0, "adoption must not send any ACP request (no bootstrap)");

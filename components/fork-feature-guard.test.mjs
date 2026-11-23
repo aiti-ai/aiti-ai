@@ -201,7 +201,7 @@ const GUARDS = [
     must: [
       /onForkNew/,                                     // button contract (shown only when the composer has content)
       /fork: hasContent/,                              // mobile matrix: shown on "has content" whether running or idle
-      /function ForkNewIcon/,                          // button icon (shared by desktop/mobile)
+      /ForkNewIcon/,                                   // button icon (shared with SidebarIcons.tsx, also used by the message-bar fork action)
       /const handleForkNew = useCallback/,             // keep input on failure + clear on success
     ],
   },

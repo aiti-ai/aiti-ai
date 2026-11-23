@@ -30,6 +30,9 @@ import { readSubagentRun, readSubagentSessionResources } from "@/lib/subagents";
 import { readSideRelation, sideOwnEntries } from "@/lib/side-session";
 import { readSessionToolSelection } from "@/lib/session-tool-selection";
 import { deleteSessions } from "@/lib/session-delete";
+import { waitForHostingSwitch } from "@/lib/session/hosting-lock";
+import { waitSessionReady } from "@/lib/session/ready";
+import { cachedSessionHistory } from "@/lib/session/history-cache";
 import { attachTranscriptNotices, readSessionTranscriptNotices } from "@/lib/transcript-notices-server";
 
 /**
@@ -43,14 +46,44 @@ function canonicalExternalId(requested: string, handleSessionId?: string): strin
   return handleSessionId || requested;
 }
 
+/**
+ * Agent tag for a bridged/attached handle, derived from its provider source.
+ *
+ * `attachIfBridged` answers with two very different things: a TUI bridge attachment
+ * (aiti-attach-agent — the file is owned by a pi TUI) and a handle adapter for a backend
+ * that owns its own file (pi spawn via the agent-starter wrapper, or any provider whose
+ * ownsFile claimed it). Labelling every attachment "tui-bridge" mislabelled spawn sessions
+ * — the frontend reads this tag for the agent badge and for the model catalog.
+ */
+function handleAgentLabel(source: string | undefined): string {
+  const s = source ?? "";
+  if (s.includes("attach-agent")) return "tui-bridge";
+  if (s.includes("pi-agent")) return "pi";
+  return s.includes("/") ? s.split("/").pop()! : "tui-bridge";
+}
+
+/**
+ * Placeholder title for an attached handle with no user text yet.
+ */
+function bridgedFirstMessageFor(agent: string): string {
+  return agent === "tui-bridge" ? "(bridged session)" : "(backend session)";
+}
+
 /** Fixed response for bridged sessions (attach detection goes by socket/registry; the file is only for history replay). */
 function bridgedOk(
   id: string,
-  bridged: { isAlive(): boolean; send(c: unknown): Promise<unknown>; cwd?: string; getModel?(): { id: string; provider: string } | undefined },
+  bridged: { isAlive(): boolean; send(c: unknown): Promise<unknown>; cwd?: string; source?: string; getModel?(): { id: string; provider: string } | undefined },
   page: { tail: number; before?: string | null } = { tail: 0 },
 ) {
+  const agent = handleAgentLabel(bridged.source);
+  const bridgedFirstMessage = bridgedFirstMessageFor(agent);
   return bridged.send({ type: "get_messages" }).catch(() => null)
     .then((r) => {
+      // A dead/rebooting handle can fail this read right after an attach. Returning an empty
+      // transcript would shadow the file (real history on disk) — answer null so the caller
+      // falls through to the disk branch (2026-11-23: session showed blank while its jsonl
+      // held the whole conversation).
+      if (r === null) return null;
       // The bridge side (TUI sessionManager) emits the raw SDK shape (toolCall uses id/name/
       // arguments); without normalizing it to match the local file reader (session-reader
       // entryToUiMessage), ToolCallBlock names/previews come out empty and results can't be
@@ -68,9 +101,9 @@ function bridgedOk(
           created: new Date().toISOString(),
           modified: new Date().toISOString(),
           messageCount: paged.totalCount,
-          firstMessage: "(bridged session)",
+          firstMessage: extractFirstUserText(paged.messages as unknown[]) || bridgedFirstMessage,
           transient: true,
-          agent: "tui-bridge",
+          agent,
         },
         leafId: null,
         tree: [],
@@ -86,24 +119,47 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  // A hosting switch stops the old process before starting the new one; wait
+  // for it instead of answering from the half-switched window (404).
+  await waitForHostingSwitch(id);
   const perf = startServerPerf("GET /api/sessions/[id]");
   const fresh = new URL(req.url).searchParams.has("fresh");
   // paging params for external backend/bridged sessions (same semantics as local pi sessions; omitted = start from the tail 50)
   const extParams = new URL(req.url).searchParams;
   const extTail = clampTailParam(extParams.get("tail"));
   const extBefore = extParams.get("before");
+  // Read-path attach. A detached (single-client) wrapper can be held by another web instance;
+  // our adoption then dies mid-handshake ("pi started and exited at once: superseded") and used to answer
+  // 409. That is occupancy, not a fault: the on-disk copy is always safe to READ, so this
+  // route serves it instead of putting a console error in front of readable history. Write
+  // paths (POST /api/agent, /events) keep failing loud — two agents must never drive one file.
+  // One refusal per request: the later attach points skip the retry (a second adoption would
+  // just lose the same race and burn its handshake timeout).
+  let readAttachBlocked = false;
+  const attachForRead = async (sessionFile: string): Promise<Awaited<ReturnType<typeof attachIfBridged>>> => {
+    if (readAttachBlocked) return undefined;
+    try {
+      return await attachIfBridged(sessionFile);
+    } catch (e) {
+      if ((e as { name?: string }).name !== "BridgeOccupiedError") throw e;
+      readAttachBlocked = true;
+      console.warn(`[sessions] ${sessionFile}: ${(e as Error).message} — serving the disk view`);
+      return undefined;
+    }
+  };
   try {
     perf?.span("resolve");
     // bridge-occupancy detection comes first (the TUI owns the file; even a stale local wrapper yields)
     const fpEarly = await resolveSessionPath(id);
     if (fpEarly) {
-      const bridged = await attachIfBridged(fpEarly);
+      const bridged = await attachForRead(fpEarly);
       // Oversized local file: a get_messages full dump would be a single JSONL line sized
       // like the whole session (>8MB kills the wrapper client / wire reader — blank
       // history + handle death + attach-race noise). The disk branch below serves paged
       // history instead; the attached handle (if any) stays in the store for SSE/sends.
       if (bridged?.isAlive() && !preferDiskHistory(fpEarly)) {
-        return await bridgedOk(id, bridged, { tail: extTail, before: extBefore });
+        const handled = await bridgedOk(id, bridged, { tail: extTail, before: extBefore });
+        if (handled) return handled;
       }
     }
 
@@ -115,14 +171,21 @@ export async function GET(
     if (fpEarly) {
       const ph = await resolvePlaceholderSession(id).catch(() => undefined);
       if (ph?.isAlive()) {
+        await waitSessionReady(ph);
         let paged = { messages: [] as unknown[], entryIds: [] as string[], oldestEntryId: null as string | null, hasMore: false, totalCount: 0 };
         try {
           const r = (await ph.send({ type: "get_messages" })) as { entries?: unknown[] } | null;
           paged = buildExternalPagedContext(r?.entries ?? [], { tail: extTail, before: extBefore });
         } catch { /* get_messages unavailable → empty */ }
-        const { messages } = paged;
-        const firstText = extractFirstUserText(messages) || "(backend session)";
+        let { messages } = paged;
+        let entryIds = paged.entryIds;
         const phHeader = readSessionHeader(fpEarly) as unknown as { agent?: string; extId?: string } | null;
+        const cached = cachedSessionHistory([id, phHeader?.extId ?? "", phHeader?.extId?.split(":")[1] ?? ""]);
+        if (cached && cached.length > messages.length) {
+          messages = cached as typeof messages;
+          entryIds = cached.map((_, index) => `cached-${index}`);
+        }
+        const firstText = extractFirstUserText(messages) || "(backend session)";
         // real placeholder title (registry extId → name; written at open-live/replay)
         const phName = phHeader?.extId ? getPlaceholder(phHeader.extId)?.name : undefined;
         // cwd fallback (2026-11-09): a freshly-attached handle may still carry its
@@ -152,7 +215,7 @@ export async function GET(
           },
           leafId: null,
           tree: [],
-          context: { messages, entryIds: paged.entryIds, oldestEntryId: paged.oldestEntryId, hasMore: paged.hasMore, thinkingLevel: "off", model: handleModelToClient(ph.getModel?.()) },
+          context: { messages, entryIds, oldestEntryId: paged.oldestEntryId, hasMore: paged.hasMore, thinkingLevel: "off", model: handleModelToClient(ph.getModel?.()) },
           totalActiveMs: 0,
         });
       }
@@ -181,19 +244,35 @@ export async function GET(
     if (!(rpc?.isAlive()) && !(fpEarly && preferDiskHistory(fpEarly))) {
       const wrapped = resolveAnySession(id);
       if (wrapped?.isAlive()) {
+        await waitSessionReady(wrapped);
         // History replay: pull entries through the handle's get_messages
         // (capability-gated; backends without it serve an empty context and
         // the live SSE stream covers new turns).
         let paged = { messages: [] as unknown[], entryIds: [] as string[], oldestEntryId: null as string | null, hasMore: false, totalCount: 0 };
+        let readFailed = false;
         try {
           const r = (await wrapped.send({ type: "get_messages" })) as { entries?: unknown[] } | null;
           paged = buildExternalPagedContext(r?.entries ?? [], { tail: extTail, before: extBefore });
         } catch (e) {
+          readFailed = true;
           console.error("[sessions/[id]] backend get_messages failed:", e instanceof Error ? e.message : e);
         }
-        const { messages } = paged;
-        const firstText = extractFirstUserText(messages) || "(backend session)";
+        // A dead child still reports isAlive() true for a moment (stdin closed, no exit
+        // event yet). The handle then cannot answer — but the session file can: fall through
+        // to the disk branch instead of returning an empty transient row, which made a forked
+        // session look "unopenable" while its jsonl held the whole conversation (2026-11-23).
+        if (readFailed && fpEarly) {
+          // intentionally empty: the disk branch below serves the history
+        } else {
+        let { messages } = paged;
+        let entryIds = paged.entryIds;
         const cid = canonicalExternalId(id, wrapped.sessionId);
+        const cached = cachedSessionHistory([id, cid, wrapped.sessionId]);
+        if (cached && cached.length > messages.length) {
+          messages = cached as typeof messages;
+          entryIds = cached.map((_, index) => `cached-${index}`);
+        }
+        const firstText = extractFirstUserText(messages) || "(backend session)";
         return NextResponse.json({
           sessionId: cid,
           filePath: "",
@@ -216,9 +295,10 @@ export async function GET(
           },
           leafId: null,
           tree: [],
-          context: { messages, entryIds: paged.entryIds, oldestEntryId: paged.oldestEntryId, hasMore: paged.hasMore, thinkingLevel: "off", model: handleModelToClient(wrapped.getModel?.()) },
+          context: { messages, entryIds, oldestEntryId: paged.oldestEntryId, hasMore: paged.hasMore, thinkingLevel: "off", model: handleModelToClient(wrapped.getModel?.()) },
           totalActiveMs: 0,
         });
+        }
       }
     }
     const searchParams = new URL(req.url).searchParams;
@@ -248,7 +328,10 @@ export async function GET(
             if (e?.name === "BridgeOccupiedError") throw e;
             return undefined;
           });
-          if (bridgedById?.isAlive()) return await bridgedOk(id, bridgedById, { tail: extTail, before: extBefore });
+          if (bridgedById?.isAlive()) {
+            const handled = await bridgedOk(id, bridgedById, { tail: extTail, before: extBefore });
+            if (handled) return handled;
+          }
         } catch (e) {
           throw e;
         }
@@ -268,13 +351,20 @@ export async function GET(
           });
           const wrappedAfterOpen = handle?.alive() ? resolveHandle(id) : undefined;
           if (handle && wrappedAfterOpen?.isAlive()) {
+            await waitSessionReady(wrappedAfterOpen);
             const cid = canonicalExternalId(id, handle.id);
             let paged = { messages: [] as unknown[], entryIds: [] as string[], oldestEntryId: null as string | null, hasMore: false, totalCount: 0 };
             try {
               const r = (await wrappedAfterOpen.send({ type: "get_messages" })) as { entries?: unknown[] } | null;
               paged = buildExternalPagedContext(r?.entries ?? [], { tail: extTail, before: extBefore });
             } catch { /* get_messages unavailable → empty */ }
-            const { messages } = paged;
+            let { messages } = paged;
+            let entryIds = paged.entryIds;
+            const cached = cachedSessionHistory([id, cid, sid]);
+            if (cached && cached.length > messages.length) {
+              messages = cached as typeof messages;
+              entryIds = cached.map((_, index) => `cached-${index}`);
+            }
             return NextResponse.json({
               sessionId: cid,
               filePath: "",
@@ -293,7 +383,7 @@ export async function GET(
               },
               leafId: null,
               tree: [],
-              context: { messages, entryIds: paged.entryIds, oldestEntryId: paged.oldestEntryId, hasMore: paged.hasMore, thinkingLevel: "off", model: handleModelToClient(wrappedAfterOpen.getModel?.()) },
+              context: { messages, entryIds, oldestEntryId: paged.oldestEntryId, hasMore: paged.hasMore, thinkingLevel: "off", model: handleModelToClient(wrappedAfterOpen.getModel?.()) },
               totalActiveMs: 0,
             });
           }
@@ -314,14 +404,12 @@ export async function GET(
     // (Oversized local files are excluded — same RPC-dump limit; disk branch serves them.)
     if (!liveRpc && resolvedPath && !preferDiskHistory(resolvedPath)) {
       try {
-        const bridged = await attachIfBridged(resolvedPath).catch((e: { name?: string }) => {
-          if (e?.name === "BridgeOccupiedError") throw e;
-          return undefined;
-        });
+        const bridged = await attachForRead(resolvedPath);
         if (bridged?.isAlive()) {
           const r = (await bridged.send({ type: "get_messages" }).catch(() => null)) as { entries?: unknown[] } | null;
           const messages = normalizeRawMessages(r?.entries ?? []);
-          const firstUser = messages.find((m) => (m as { role?: string }).role === "user");
+          // Same tag derivation as bridgedOk(): a spawn handle attached here is not a TUI bridge.
+          const agent = handleAgentLabel(bridged.source);
           return NextResponse.json({
             sessionId: id,
             filePath: "",
@@ -333,9 +421,9 @@ export async function GET(
               created: new Date().toISOString(),
               modified: new Date().toISOString(),
               messageCount: messages.length,
-              firstMessage: firstUser ? "(bridged session)" : "(bridged session)",
+              firstMessage: extractFirstUserText(messages) || bridgedFirstMessageFor(agent),
               transient: true,
-              agent: "tui-bridge",
+              agent,
             },
             leafId: null,
             tree: [],

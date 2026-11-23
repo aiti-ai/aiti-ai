@@ -24,6 +24,10 @@ function QueuePanelSlot(props: QueuePanelProps & Record<string, unknown>) {
     actions: props.actions,
     isMobile: Boolean(props.isMobile),
     isCoarsePointer: Boolean(props.isCoarsePointer),
+    // Forward the steer-row readonly capability: without it every steer row stays
+    // editable on backends whose injected queue cannot be recalled/moved (zcode-style
+    // CLI backends answer those RPCs with an error).
+    steerReadonly: props.steerReadonly === true,
   };
   return <QueuePanel {...panelProps} />;
 }

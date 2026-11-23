@@ -11,7 +11,8 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AttachIcons, QueueRow } from "./QueueRow";
-import type { QueuePanelProps, QueueTrashItem } from "./types";
+import { steerSendThenRemove } from "./steer-send";
+import type { QueueImage, QueuePanelProps, QueueTrashItem } from "./types";
 import { t } from "./host-shim";
 import { setPanelCommands } from "./panel-bus";
 
@@ -24,6 +25,15 @@ export function QueuePanel(props: QueuePanelProps) {
   const { live, trash, queueCount, trashCount, actions, isMobile } = props;
   const steering = live.steering ?? [];
   const followUp = live.followUp ?? [];
+  // Event handlers need the queue as it is when they run (the send may be awaited):
+  // a render-time ref keeps the latest live view without rebuilding the handlers.
+  const liveRef = useRef(live);
+  liveRef.current = live;
+  const steerSendLive = useCallback(
+    (kind: "steer" | "followUp", index: number, text: string, images?: QueueImage[]) =>
+      steerSendThenRemove({ actions, kind, index, text, images, getLive: () => liveRef.current, remove: actions.remove }),
+    [actions],
+  );
 
   // ── 折叠态（用户手动折叠优先，不自动隐藏）──
   const [queueCollapsedUser, setQueueCollapsedUser] = useState<boolean | null>(null);
@@ -412,8 +422,9 @@ export function QueuePanel(props: QueuePanelProps) {
               title={t("chat.queueSteerSend")}
               onClick={(e) => {
                 e.stopPropagation();
-                actions.steerSend?.(followUp[0].text, followUp[0].images);
-                void handleRemoveQueueItem("followUp", 0, { permanent: true });
+                // Send first, remove after the backend accepted the steer (see
+                // steer-send.ts: a removal beside the send clears the new row).
+                void steerSendLive("followUp", 0, followUp[0].text, followUp[0].images);
               }}
               style={{
                 flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center",
@@ -447,6 +458,7 @@ export function QueuePanel(props: QueuePanelProps) {
               index={entry.index}
               total={steering.length}
               actions={panelActions}
+              getLive={() => liveRef.current}
               steerReadonly={props.steerReadonly === true}
               onDragStart={props.steerReadonly === true ? undefined : (idx) => handleDragStart("steer", idx)}
               onDragOver={props.steerReadonly === true ? undefined : (idx) => handleDragOver("steer", idx)}
@@ -467,6 +479,7 @@ export function QueuePanel(props: QueuePanelProps) {
               index={entry.index}
               total={followUp.length}
               actions={panelActions}
+              getLive={() => liveRef.current}
               onDragStart={(idx) => handleDragStart("followUp", idx)}
               onDragOver={(idx) => handleDragOver("followUp", idx)}
               onDrop={(idx) => handleDrop("followUp", idx)}
