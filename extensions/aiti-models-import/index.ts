@@ -101,6 +101,7 @@ export default {
     ],
     i18n: {
       "zh-CN": {
+        "ext.displayName": "模型导入",
         "n": "模型配置导入",
         "it.import.label": "模型配置导入",
         "mi.open.label": "导入模型配置",
@@ -316,6 +317,7 @@ export default {
         "mi.srv.qoder.reason": "Credentials are WASM-encrypted and endpoints are regional constants; the model list comes from a server API rather than a local config file",
       },
       "zh-TW": {
+        "ext.displayName": "模型匯入",
         "n": "模型設定匯入",
         "it.import.label": "模型設定匯入",
         "mi.open.label": "匯入模型設定",
