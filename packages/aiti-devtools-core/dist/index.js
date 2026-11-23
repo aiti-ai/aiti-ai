@@ -39,7 +39,7 @@ function createPairModule(deps) {
     const ip = (req.headers.get("x-real-ip") || "").trim();
     if (!ip || PRIVATE_IP.test(ip)) return null;
     if (pairToken && regToken && regToken === pairToken) return null;
-    return json({ ok: false, error: "pair \u4E0A\u7EBF\u9650\u5185\u7F51\uFF08\u5916\u7F51\u5F00\u653E\uFF1A\u8FC7 Authelia / AITI_PAIR_PUBLIC=1 / AITI_PAIR_TOKEN+regToken\uFF09" }, 403);
+    return json({ ok: false, error: "pair pairing is restricted to the private network (exposing it publicly: behind Authelia / AITI_PAIR_PUBLIC=1 / AITI_PAIR_TOKEN+regToken)" }, 403);
   }
   function broadcastToPeers(env) {
     for (const [, p] of peers) {
@@ -60,16 +60,16 @@ function createPairModule(deps) {
   }
   function register(msg, meta) {
     const now = Date.now();
-    const name = safeName(String(msg && msg.name || "")).slice(0, 40) || "\u8BBE\u5907";
+    const name = safeName(String(msg && msg.name || "")).slice(0, 40) || "Device";
     const pid = msg && msg.peerId && String(msg.peerId) || genId("p_");
     const dev = msg && msg.device && typeof msg.device === "object" ? msg.device : null;
     const devLabel = dev ? [dev.browser || "?", dev.os || "", dev.screen || ""].filter(Boolean).join(" \xB7 ") : null;
     let p = peers.get(pid);
     if (!p) {
-      if (devLabel) console.log(TAG + "   \u8BBE\u5907\uFF1A" + devLabel + (dev && dev.lang ? " \xB7 " + dev.lang : ""));
+      if (devLabel) console.log(TAG + "   device: " + devLabel + (dev && dev.lang ? " \xB7 " + dev.lang : ""));
       p = { peerId: pid, token: "t_" + randomBytes(18).toString("hex"), name, ua: String(msg && msg.ua || "").slice(0, 200), device: dev, deviceLabel: devLabel, lastSeen: now, writer: null, offlineAt: null, inbox: [], ip: meta && meta.ip || null, regAt: now };
       peers.set(pid, p);
-      console.log(TAG + " pair \u8BBE\u5907\u6CE8\u518C\uFF1A" + name + " (" + pid + ")" + (p.ip ? " @ " + p.ip : ""));
+      console.log(TAG + " pair device registered: " + name + " (" + pid + ")" + (p.ip ? " @ " + p.ip : ""));
       broadcastToPeers({ type: "peer-join", peer: { id: pid, kind: "pair", name } });
       deps.getDevices().length;
     } else {
@@ -144,7 +144,7 @@ function createPairModule(deps) {
     const clean = String(name || "").trim().slice(0, 40);
     if (!clean) return { ok: false, error: "bad name" };
     names.set(iid, { name: clean, at: Date.now() });
-    console.log(TAG + " pair \u9875\u9762\u6539\u540D\uFF1A" + iid + " \u2192 " + clean);
+    console.log(TAG + " pair page renamed: " + iid + " \u2192 " + clean);
     return { ok: true, name: clean };
   }
   function deliverToPeer(peerId, env) {
@@ -171,9 +171,9 @@ function createPairModule(deps) {
     return { none: true };
   }
   function fileInit(from, to, name, size, mime) {
-    if (!filesDir) return { error: "\u6865\u672A\u914D\u7F6E dataDir\uFF08\u6587\u4EF6\u4E2D\u8F6C\u4E0D\u53EF\u7528\uFF09" };
+    if (!filesDir) return { error: "bridge has no dataDir configured (file relay unavailable)" };
     if (!size || size <= 0) return { error: "bad size" };
-    if (size > PAIR_FILE_MAX) return { error: "\u6587\u4EF6\u8D85\u8FC7\u4E0A\u9650 " + Math.round(PAIR_FILE_MAX / 1024 / 1024) + "MB" };
+    if (size > PAIR_FILE_MAX) return { error: "file exceeds the " + Math.round(PAIR_FILE_MAX / 1024 / 1024) + "MB cap" };
     const fileId = genId("f_");
     const path = join(filesDir, fileId);
     const rec = { fileId, name: safeName(name), size, mime: String(mime || "application/octet-stream").slice(0, 100), from, to: String(to || ""), path, bytes: 0, status: "uploading", at: Date.now() };
@@ -203,7 +203,7 @@ function createPairModule(deps) {
     const f = files.get(String(fileId || ""));
     if (!f) return { error: "unknown fileId" };
     if (f.status !== "uploading") return { ok: true, file: publicFile(f) };
-    if (f.bytes !== f.size) return { error: "size mismatch\uFF08\u5DF2\u6536 " + f.bytes + "/" + f.size + "B\uFF0C\u8865\u4F20\u7F3A\u5931\u5757\u540E\u518D complete\uFF09" };
+    if (f.bytes !== f.size) return { error: "size mismatch (received " + f.bytes + "/" + f.size + "B; re-upload the missing chunks before complete)" };
     f.status = "ready";
     return { ok: true, file: publicFile(f) };
   }
@@ -289,7 +289,7 @@ function createPairModule(deps) {
       if (now - p.lastSeen <= 12e4) continue;
       if (!p.offlineAt) p.offlineAt = p.lastSeen;
       if (now - p.offlineAt > PAIR_PEER_TTL) {
-        console.log(TAG + " pair \u8BBE\u5907\u6E05\u7406\uFF08\u6389\u7EBF\u8D85\u65F6\uFF09\uFF1A" + p.name + " (" + pid + ")");
+        console.log(TAG + " pair device swept (offline timeout): " + p.name + " (" + pid + ")");
         peers.delete(pid);
         broadcastToPeers({ type: "peer-leave", peer: { id: pid, name: p.name } });
       }
@@ -361,16 +361,16 @@ function createPairModule(deps) {
     if (seg[0] === "name" && method === "POST") {
       const msg = await req.json().catch(() => null);
       const from = pageIdentity(msg);
-      if (!from) return json({ ok: false, error: "bad instanceId\uFF08\u9875\u9762\u672A\u5728\u6865\u4E0A\uFF09" }, 401);
+      if (!from) return json({ ok: false, error: "bad instanceId (page not on the bridge)" }, 401);
       const r = setName(from.id, String(msg && msg.name || ""));
       return json(r, r.ok ? 200 : 400);
     }
     if (seg[0] === "message" && method === "POST") {
       const msg = await req.json().catch(() => null);
       const from = requestIdentity(msg);
-      if (!from) return json({ ok: false, error: "bad instanceId\uFF08\u9875\u9762\u672A\u5728\u6865\u4E0A\uFF1B\u5916\u90E8\u8BBE\u5907\u8BF7\u5E26 register \u7684 peer/token\uFF09" }, 401);
+      if (!from) return json({ ok: false, error: "bad instanceId (page not on the bridge; external devices must send the register peer/token)" }, 401);
       const text = String(msg && msg.text || "").slice(0, 64e3);
-      if (!text.trim()) return json({ ok: false, error: "bad request\uFF08\u9700\u8981 text\uFF09" }, 400);
+      if (!text.trim()) return json({ ok: false, error: "bad request (text required)" }, 400);
       const r = deps.routeSend(from, String(msg && msg.to || "all"), { text, pageId: from.id, notify: !!(msg && msg.notify) });
       return json(r, r.ok ? 200 : r.candidates ? 300 : 400);
     }
@@ -378,7 +378,7 @@ function createPairModule(deps) {
       if (seg[1] === "init" && method === "POST") {
         const msg = await req.json().catch(() => null);
         const from = requestIdentity({ ...msg, name: void 0 });
-        if (!from) return json({ ok: false, error: "bad instanceId\uFF08\u9875\u9762\u672A\u5728\u6865\u4E0A\uFF1B\u5916\u90E8\u8BBE\u5907\u8BF7\u5E26 register \u7684 peer/token\uFF09" }, 401);
+        if (!from) return json({ ok: false, error: "bad instanceId (page not on the bridge; external devices must send the register peer/token)" }, 401);
         const denied = gateAdmission(req, null);
         if (denied) return denied;
         const r = fileInit(from, String(msg && msg.to || ""), String(msg && msg.name || ""), Number(msg && msg.size || 0), String(msg && msg.mime || ""));
@@ -568,42 +568,42 @@ var LEGACY_TOKEN = "dev";
 var BRIDGE_TOOLS = [
   {
     name: "page_exec",
-    description: "\u5728\u5DF2\u8FDE\u63A5\u9875\u9762\u6267\u884C\u7C7B CDP \u547D\u4EE4\uFF08DOM/CSS/Input/Page/Runtime/Storage/Performance/Browser \u57DF\uFF09\u3002pageId \u7F3A\u7701=\u6700\u65B0 AI \u4E3B\u7A97\u53E3\uFF08self:true\uFF09\uFF1B\u663E\u5F0F pageId \u4F18\u5148\u3002\u5371\u9669\u547D\u4EE4/\u6D4F\u89C8\u5668\u53D7\u9650\u64CD\u4F5C\u4F1A\u81EA\u52A8\u5F39\u7528\u6237\u786E\u8BA4\uFF1BPage.captureScreenshot \u622A\u5C4F\u4F1A\u5148\u5F39\u51C6\u5907\u5361\u5C55\u793A\u622A\u53D6\u610F\u56FE\uFF08args.reason\uFF0C\u8BF7\u52A1\u5FC5\u7528\u4E00\u53E5\u8BDD\u8BF4\u660E\u60F3\u622A\u4EC0\u4E48\uFF09\uFF0C\u7528\u6237\u8C03\u6574\u597D\u9875\u9762\u624D\u5F00\u59CB\u622A\u5C4F\uFF0C\u622A\u5B8C\u518D\u5F39\u9884\u89C8\u786E\u8BA4\uFF08\u5927\u56FE\u81EA\u52A8\u843D\u76D8\u8FD4\u56DE\u6587\u4EF6\u8DEF\u5F84\uFF09\uFF1B\u786E\u8BA4\u5361\u5012\u8BA1\u65F6\u53EF\u7528 args.timeout\uFF08ms\uFF09\u8C03\u6574\uFF08\u9ED8\u8BA4 280000\uFF0C\u670D\u52A1\u7AEF\u5B89\u5168\u7F51\u81EA\u52A8\u540C\u6B65 +30s \u4F59\u91CF\uFF09\u3002\u8C03\u8BD5\u4F1A\u8BDD\u4E2D\u4ECE\u88AB\u8C03\u8BD5\u9875\u9762\uFF08inject\uFF09\u53D1\u51FA\u7684\u6D88\u606F\u7EDF\u4E00\u5E26 [\u53D1\u81EA: <pageId> \xB7 <url>] \u6765\u6E90\u6807\u6CE8\u2014\u2014\u628A pageId \u503C\u4F20\u7ED9 pageId \u53C2\u6570\u5373\u64CD\u4F5C\u8BE5\u9875\u9762\u3002\n\niframe \u652F\u6301\uFF1APage.getFrameTree \u67E5\u770B frame \u6811\uFF08iframe src/name/title\uFF0C\u540C\u57DF\u542B url/readyState\uFF09\uFF1BRuntime.evaluate \u4F20 contextId\uFF08iframe \u7D22\u5F15\u4ECE 1 \u8D77\uFF0C\u540C\u57DF\u53EF eval\uFF09\u8FDB iframe \u4E0A\u4E0B\u6587\u6267\u884C\u3002",
+    description: "Run a CDP-like command on a connected page (DOM/CSS/Input/Page/Runtime/Storage/Performance/Browser domains). pageId defaults to the latest AI main window (self:true); an explicit pageId wins. Dangerous commands / browser-restricted operations pop a user confirmation first; Page.captureScreenshot first pops a prep card stating the screenshot intent (args.reason \u2014 always describe in one sentence what you want to capture), the user adjusts the page before capture starts, and a preview confirmation pops afterwards (large images are written to disk and returned as a file path); the confirmation countdown is tunable via args.timeout (ms, default 280000, the server-side safety net adds +30s). Messages from a debugged page (inject) carry a [\u53D1\u81EA: <pageId> \xB7 <url>] source annotation \u2014 pass that pageId value to the pageId parameter to operate that page.\n\niframe support: Page.getFrameTree inspects the frame tree (iframe src/name/title, same-origin includes url/readyState); pass contextId to Runtime.evaluate (iframe index starting at 1, same-origin eval) to run in an iframe context.",
     inputSchema: { type: "object", properties: {
       cmd: { type: "string" },
       args: { type: "object" },
-      pageId: { type: "string", description: "\u76EE\u6807\u9875\u9762\u5B8C\u6574 ID\u2014\u2014\u6765\u81EA AI \u6D88\u606F\u7684 [\u53D1\u81EA: xxx]\uFF08\u5982 3001/host\uFF09\uFF1B\u4E5F\u53EF /bridge/sessions \u67E5\u8BE2" }
+      pageId: { type: "string", description: "Full ID of the target page \u2014 from an AI message's [\u53D1\u81EA: xxx] annotation (e.g. 3001/host); also queryable via /bridge/sessions" }
     }, required: ["cmd"] }
   },
-  { name: "page_snapshot", description: "\u62C9\u53D6\u5DF2\u8FDE\u63A5\u9875\u9762\u57FA\u7840\u73B0\u573A\uFF08URL/\u9009\u533A/\u6A21\u62DF\u6761\u4EF6\uFF09\u3002pageId \u7F3A\u7701=\u6700\u65B0 AI \u4E3B\u7A97\u53E3\uFF08self:true\uFF09\uFF1B\u663E\u5F0F pageId \u4F18\u5148\u3002", inputSchema: { type: "object", properties: { pageId: { type: "string" } } } },
-  { name: "self_ui", description: "\u626B\u63CF\u76EE\u6807\u9875\u9762\uFF08\u7F3A\u7701 AI \u4E3B\u7A97\u53E3 xxx/ai\uFF09\u5F53\u524D\u6253\u5F00\u7684\u5F39\u7A97/dialog/\u8868\u5355\u5B57\u6BB5/\u6309\u94AE\u6E05\u5355\u2014\u2014ai-helper \u56DE\u586B\u5B9A\u4F4D\u7528\u3002\u8FD4\u56DE {dialogs:[{title, fields:[{label,selector,type}], buttons}]}\uFF0C\u65E0\u5F39\u7A97\u65F6 dialogs \u4E3A\u7A7A\u6570\u7EC4\u3002", inputSchema: { type: "object", properties: { pageId: { type: "string", description: "\u7F3A\u7701\u7528 AI \u4E3B\u7A97\u53E3\uFF08xxx/ai\uFF09\uFF1B\u4E5F\u53EF\u6307\u5B9A\u5176\u4ED6\u9875\u9762" } } } },
-  { name: "form_fill", description: "\u5728\u76EE\u6807\u9875\u9762\uFF08\u7F3A\u7701 AI \u4E3B\u7A97\u53E3 xxx/ai\uFF09\u7684\u5F39\u7A97/\u8868\u5355\u91CC\u56DE\u586B\u5B57\u6BB5\u503C\u2014\u2014AI \u7ED3\u679C\u76F4\u63A5\u64CD\u4F5C\u6269\u5C55\u5F39\u7A97\u8868\u5355\uFF08React \u517C\u5BB9\uFF1A\u539F\u751F value setter + dispatch input/change\uFF09\u3002\u914D\u5408 self_ui \u4F7F\u7528\uFF1A\u5148 self_ui \u62FF\u5B57\u6BB5 label/selector\uFF0C\u518D form_fill \u586B\u503C\u3002\u53C2\u6570\uFF1Adialog\uFF08\u5F39\u7A97\u6807\u8BC6\uFF1A\u6807\u9898\u5B50\u4E32\u6216\u5E8F\u53F7 0 \u8D77\uFF0C\u7F3A\u7701\u53D6\u9762\u79EF\u6700\u5927\u7684\u53EF\u89C1\u5F39\u7A97\uFF09\u3001fields[{selector|label, value}]\u3001button\uFF08\u53EF\u9009\uFF0C\u56DE\u586B\u540E\u70B9\u51FB\u7684\u6309\u94AE\u6587\u672C\u5982\u300E\u4FDD\u5B58\u300F\uFF09\u3002\u8FD4\u56DE {foundDialog, title, filled, missed, clicked}\u3002", inputSchema: { type: "object", properties: {
-    pageId: { type: "string", description: "\u7F3A\u7701\u7528 AI \u4E3B\u7A97\u53E3\uFF08xxx/ai\uFF09\uFF1B\u4E5F\u53EF\u6307\u5B9A\u5176\u4ED6\u9875\u9762" },
-    dialog: { type: "string", description: "\u5F39\u7A97\u6807\u8BC6\uFF1A\u6807\u9898\u5B50\u4E32\u6216\u5E8F\u53F7\uFF080 \u8D77\uFF09\uFF1B\u7F3A\u7701\u53D6\u9762\u79EF\u6700\u5927\u7684\u53EF\u89C1\u5F39\u7A97" },
-    fields: { type: "array", items: { type: "object", properties: { selector: { type: "string", description: "CSS \u9009\u62E9\u5668\uFF08\u4F18\u5148\uFF09" }, label: { type: "string", description: "\u5F39\u7A97\u5185\u6587\u672C\u5339\u914D\uFF08label[for]/\u5305\u88F9/\u6587\u672C\u5305\u542B\uFF09" }, value: { type: "string", description: "\u8981\u586B\u7684\u503C" } }, required: ["value"] }, description: "\u8981\u586B\u7684\u5B57\u6BB5\u5217\u8868" },
-    button: { type: "string", description: "\u56DE\u586B\u540E\u70B9\u51FB\u7684\u6309\u94AE\u6587\u672C\uFF08\u5982\u300E\u4FDD\u5B58\u300F\u300E\u786E\u5B9A\u300F\uFF09" }
+  { name: "page_snapshot", description: "Pull the basic live state of a connected page (URL / selection / emulation overrides). pageId defaults to the latest AI main window (self:true); an explicit pageId wins.", inputSchema: { type: "object", properties: { pageId: { type: "string" } } } },
+  { name: "self_ui", description: "Scan the target page (default: AI main window xxx/ai) for currently open dialogs / forms / fields / buttons \u2014 used by ai-helper to locate fields for backfill. Returns {dialogs:[{title, fields:[{label,selector,type}], buttons}]}; dialogs is empty when none are open.", inputSchema: { type: "object", properties: { pageId: { type: "string", description: "Defaults to the AI main window (xxx/ai); other pages allowed" } } } },
+  { name: "form_fill", description: "Backfill field values into a dialog/form on the target page (default: AI main window xxx/ai) \u2014 the AI directly operates extension dialog forms (React-compatible: native value setter + dispatched input/change). Pair with self_ui: first self_ui to get field label/selector, then form_fill to fill. Params: dialog (dialog id: title substring or 0-based index; defaults to the largest visible dialog), fields[{selector|label, value}], button (optional, button text to click after backfill, e.g. 'Save'). Returns {foundDialog, title, filled, missed, clicked}.", inputSchema: { type: "object", properties: {
+    pageId: { type: "string", description: "Defaults to the AI main window (xxx/ai); other pages allowed" },
+    dialog: { type: "string", description: "Dialog id: title substring or 0-based index; defaults to the largest visible dialog" },
+    fields: { type: "array", items: { type: "object", properties: { selector: { type: "string", description: "CSS selector (preferred)" }, label: { type: "string", description: "In-dialog text match (label[for]/wrapping/contains)" }, value: { type: "string", description: "Value to fill" } }, required: ["value"] }, description: "Fields to fill" },
+    button: { type: "string", description: "Button text to click after backfill (e.g. 'Save', 'OK')" }
   } } },
-  { name: "bridge_status", description: "\u67E5\u8BE2\u6865\u4E0A\u5168\u90E8\u8BBE\u5907\uFF08devices \u7EDF\u4E00\u89C6\u56FE\uFF1Akind=page \u6CE8\u5165\u9875\u9762\uFF08\u542B pageId/url/title + device \u6D4F\u89C8\u5668\xB7OS\xB7\u5C4F\u5E55\uFF09/kind=agent agent \u4F1A\u8BDD\uFF08\u542B cwd\uFF09/kind=pair web \u8BBE\u5907\u5982\u624B\u673A\uFF09+ \u5DF2\u8FDE\u63A5\u9875\u9762\u660E\u7EC6\uFF08sessions\uFF09\u4E0E\u6302\u8D77\u8BF7\u6C42\u3002\u7528\u6237\u63D0\u5230\u9875\u9762\u6807\u9898\u6216 URL \u65F6\u6309 title/url \u5339\u914D pageId\uFF1B\u63D0\u5230\u624B\u673A/\u8BBE\u5907\u65F6\u5728 devices \u91CC\u9009\uFF08id \u6216\u540D\u5B57\u4F20\u7ED9 aiti_pair_send/aiti_pair_file \u5373\u53EF\u4E92\u53D1\u6D88\u606F\u4E92\u4F20\u6587\u4EF6\uFF09\u3002", inputSchema: { type: "object", properties: {} } },
+  { name: "bridge_status", description: "Query every device on the bridge (devices unified view: kind=page injected pages (pageId/url/title + device browser\xB7OS\xB7screen) / kind=agent agent sessions (with cwd) / kind=pair web devices like phones) + connected page details (sessions) and pending requests. When the user mentions a page title or URL, match pageId by title/url; when they mention a phone/device, pick from devices (pass its id or name to aiti_pair_send/aiti_pair_file to exchange messages/files).", inputSchema: { type: "object", properties: {} } },
   {
     name: "page_logs",
-    description: "\u4ECE\u76EE\u6807\u9875\u9762\u62C9\u53D6\u672C\u5730\u7F13\u51B2\u7684 console \u65E5\u5FD7\uFF08log/debug/info/warn/error \u5168\u91CF\uFF0CCDP Runtime.evaluate \u8BFB\u53D6 window.__dbg.__consoleRing\uFF09\u3002pageId \u7F3A\u7701=\u6700\u65B0 AI \u4E3B\u7A97\u53E3\uFF08self:true\uFF09\uFF1B\u663E\u5F0F pageId \u4F18\u5148\u3002\u9875\u9762\u62A5\u9519\u6392\u67E5\u9996\u9009\uFF1A\u5148\u67E5 warn/error \u518D\u9010\u6B65\u653E\u5F00\u3002\u8FD4\u56DE {logs:[{ts,level,text,count}], bufferSize}\u3002",
+    description: "Pull locally buffered console logs from the target page (log/debug/info/warn/error, full ring; CDP Runtime.evaluate reads window.__dbg.__consoleRing). pageId defaults to the latest AI main window (self:true); an explicit pageId wins. First choice for page-error triage: start at warn/error, then widen. Returns {logs:[{ts,level,text,count}], bufferSize}.",
     inputSchema: { type: "object", properties: {
-      pageId: { type: "string", description: "\u76EE\u6807\u9875\u9762\u5B8C\u6574 ID\uFF08[\u53D1\u81EA: xxx] \u6216 /bridge/sessions\uFF09" },
-      level: { type: "string", description: "\u8FC7\u6EE4\u7EA7\u522B\uFF1Adebug/log/info/warn/error\uFF08\u9ED8\u8BA4\u5168\u90E8\uFF09" },
-      since: { type: "string", description: "ISO \u65F6\u95F4\uFF1A\u53EA\u8FD4\u56DE\u6B64\u65F6\u95F4\u4E4B\u540E\u7684\u65E5\u5FD7" },
-      limit: { type: "number", description: "\u6761\u6570\u4E0A\u9650\uFF08\u2264200\uFF0C\u9ED8\u8BA4 50\uFF0C\u53D6\u6700\u65B0\uFF09" },
+      pageId: { type: "string", description: "Full ID of the target page ([\u53D1\u81EA: xxx] annotation or /bridge/sessions)" },
+      level: { type: "string", description: "Filter level: debug/log/info/warn/error (default all)" },
+      since: { type: "string", description: "ISO time: only return logs after this moment" },
+      limit: { type: "number", description: "Max entries (\u2264200, default 50, newest kept)" },
       token: { type: "string" }
     } }
   },
   {
     name: "page_network",
-    description: "\u4ECE\u76EE\u6807\u9875\u9762\u62C9\u53D6\u672C\u5730\u7F13\u51B2\u7684 ajax/fetch \u8BF7\u6C42\u5B8C\u6210\u6001\uFF08CDP Runtime.evaluate \u8BFB\u53D6 window.__dbg.__netRing\uFF09\u3002pageId \u7F3A\u7701=\u6700\u65B0 AI \u4E3B\u7A97\u53E3\uFF08self:true\uFF09\uFF1B\u663E\u5F0F pageId \u4F18\u5148\u3002\u5931\u8D25\u6392\u67E5\uFF1Astatus \u4F20 400 \u6216 errorOnly:true\u3002\u6CE8\u610F\uFF1A\u4E0D\u542B\u9759\u6001\u8D44\u6E90\u52A0\u8F7D\uFF08\u90A3\u662F CDP Network \u7684\u80FD\u529B\uFF09\u3002\u8FD4\u56DE {requests:[{kind,method,url,status,statusText,durationMs,size,error,ts}], bufferSize}\u3002",
+    description: "Pull locally buffered ajax/fetch request completions from the target page (CDP Runtime.evaluate reads window.__dbg.__netRing). pageId defaults to the latest AI main window (self:true); an explicit pageId wins. For failure triage pass status 400 or errorOnly:true. Note: static asset loads are not included (that is CDP Network's territory). Returns {requests:[{kind,method,url,status,statusText,durationMs,size,error,ts}], bufferSize}.",
     inputSchema: { type: "object", properties: {
       pageId: { type: "string" },
-      url: { type: "string", description: "URL \u5B50\u4E32\u8FC7\u6EE4" },
-      status: { type: "number", description: "status >= \u6B64\u503C\u624D\u8FD4\u56DE\uFF08\u5982 400 \u53EA\u770B\u5931\u8D25\uFF09" },
-      errorOnly: { type: "boolean", description: "\u53EA\u770B\u5931\u8D25\uFF08error \u975E\u7A7A \u6216 status>=400\uFF09" },
-      limit: { type: "number", description: "\u6761\u6570\u4E0A\u9650\uFF08\u2264100\uFF0C\u9ED8\u8BA4 30\uFF0C\u53D6\u6700\u65B0\uFF09" },
+      url: { type: "string", description: "URL substring filter" },
+      status: { type: "number", description: "Only return entries with status >= this value (e.g. 400 for failures only)" },
+      errorOnly: { type: "boolean", description: "Failures only (error non-empty or status>=400)" },
+      limit: { type: "number", description: "Max entries (\u2264100, default 30, newest kept)" },
       token: { type: "string" }
     } }
   },
@@ -614,124 +614,124 @@ var BRIDGE_TOOLS = [
   // 响应信封：{ status:'answered'|'rejected'|'timeout'|'error', value?, reason?, error?, tookMs, timeoutMs }
   {
     name: "user_pick_element",
-    description: "\u8BF7\u5F53\u524D\u9875\u9762\u7684\u4EBA\u7C7B\u7528\u6237\u70B9\u9009\u4E00\u4E2A\u9875\u9762\u5143\u7D20\uFF08\u81EA\u52A8\u8FDB\u5165 Inspector \u70B9\u9009\u6A21\u5F0F\u3001\u6536\u8D77 AI \u7A97\u53E3\u3001\u5F39\u70B9\u9009\u9762\u677F\uFF1B\u7528\u6237\u53EF\u786E\u8BA4\u9009\u4E2D\u6216\u62D2\u7EDD\uFF09\u3002\u8FD4\u56DE\u5143\u7D20\u8F7D\u8377 {tag,rect,xpath,text,attributes,framework,selector}\u3002",
+    description: "Ask the human user of the current page to pick a page element (auto-enters Inspector pick mode, collapses the AI window, pops the pick panel; the user can confirm or decline). Returns the element payload {tag,rect,xpath,text,attributes,framework,selector}.",
     inputSchema: { type: "object", properties: {
-      prompt: { type: "string", description: "\u7ED9\u7528\u6237\u770B\u7684\u8BF4\u660E\uFF08\u4E3A\u4EC0\u4E48\u9700\u8981\u70B9\u9009\u8FD9\u4E2A\u5143\u7D20\uFF09" },
-      timeout: { type: "number", description: "\u53EF\u9009\u8D85\u65F6 ms\uFF085000-600000\uFF09\u3002\u4E0D\u4F20=\u6C38\u4E45\u7B49\u5F85\uFF1A\u9762\u677F\u5E38\u9A7B\u76F4\u5230\u7528\u6237\u64CD\u4F5C\uFF0C\u65E0\u8BFB\u79D2\uFF1B\u4F20\u4E86\u624D\u663E\u793A\u8BFB\u79D2\u5012\u8BA1\u65F6\uFF08\u53EF\u6682\u505C\uFF09\uFF0C\u5230\u70B9\u81EA\u52A8\u8FD4\u56DE timeout" },
-      rejectable: { type: "boolean", description: "\u662F\u5426\u5141\u8BB8\u7528\u6237\u62D2\u7EDD\uFF08\u9ED8\u8BA4 true\uFF09" },
-      async: { type: "boolean", description: "true=\u5F02\u6B65\uFF1A\u7ACB\u5373\u8FD4\u56DE\u5DF2\u5F02\u6B65\u53D1\u51FA\uFF0C\u7528\u6237\u4F5C\u7B54\u7ED3\u679C\u7ECF AI \u6D88\u606F\u7A97\u53D1\u9001\uFF1B\u7F3A\u7701=\u540C\u6B65\u7B49\u5F85" },
-      pageId: { type: "string", description: "\u76EE\u6807\u9875\u9762\u5B8C\u6574 ID\uFF08instanceId/frameId\uFF09" }
+      prompt: { type: "string", description: "Explanation shown to the user (why this element is needed)" },
+      timeout: { type: "number", description: "Optional timeout ms (5000-600000). Omit = wait forever: the panel stays until the user acts, no countdown; when passed, a pausable countdown shows and it auto-returns timeout on expiry" },
+      rejectable: { type: "boolean", description: "Whether the user may decline (default true)" },
+      async: { type: "boolean", description: "true = async: returns immediately once dispatched; the user's answer arrives via the AI message window; default = wait synchronously" },
+      pageId: { type: "string", description: "Full ID of the target page (instanceId/frameId)" }
     }, required: ["prompt"] }
   },
   {
     name: "user_confirm",
-    description: "\u5728 AI \u7A97\u53E3\u5185\u5411\u4EBA\u7C7B\u7528\u6237\u63D0\u4E00\u4E2A\u662F/\u5426\u95EE\u9898\uFF08\u5982\u201C\u786E\u8BA4\u6267\u884C\u6B64\u64CD\u4F5C\uFF1F\u201D\u201C\u662F\u5426\u7EE7\u7EED\uFF1F\u201D\uFF09\uFF0C\u7528\u6237\u70B9 \u2705/\u274C \u4F5C\u7B54\uFF0C\u5E76\u53EF\u9644\u300C\u8865\u5145\u8BF4\u660E\u300D\u81EA\u7531\u6587\u672C\uFF08value.comment\uFF09\uFF1B\u53E6\u6709\u56FA\u5B9A\u9009\u9879\u300C\u90FD\u4E0D\u9002\u5408\u300D\u2192 \u81EA\u5B9A\u4E49\u56DE\u7B54\uFF08approved:null, custom\uFF09\u3002\u8FD4\u56DE {status, approved, comment?, custom?, reason?}\u3002",
+    description: 'Ask the human user a yes/no question in the AI window (e.g. "confirm this action?" "continue?"); the user answers via \u2705/\u274C and may attach a free-text note (value.comment); a fixed "none of these fit" option leads to a custom answer (approved:null, custom). Returns {status, approved, comment?, custom?, reason?}.',
     inputSchema: { type: "object", properties: {
-      prompt: { type: "string", description: "\u95EE\u9898\u5185\u5BB9" },
-      timeout: { type: "number", description: "\u53EF\u9009\u8D85\u65F6 ms\uFF085000-600000\uFF09\u3002\u4E0D\u4F20=\u6C38\u4E45\u7B49\u5F85\uFF1A\u9762\u677F\u5E38\u9A7B\u76F4\u5230\u7528\u6237\u64CD\u4F5C\uFF0C\u65E0\u8BFB\u79D2\uFF1B\u4F20\u4E86\u624D\u663E\u793A\u8BFB\u79D2\u5012\u8BA1\u65F6\uFF08\u53EF\u6682\u505C\uFF09\uFF0C\u5230\u70B9\u81EA\u52A8\u8FD4\u56DE timeout" },
-      rejectable: { type: "boolean", description: "\u662F\u5426\u5141\u8BB8\u7528\u6237\u4EE5\u201C\u6682\u65F6\u65E0\u6CD5\u5904\u7406\u201D\u62D2\u7EDD\uFF08\u9ED8\u8BA4 true\uFF09" },
-      async: { type: "boolean", description: "true=\u5F02\u6B65\uFF1A\u7ACB\u5373\u8FD4\u56DE\u5DF2\u5F02\u6B65\u53D1\u51FA\uFF0C\u7528\u6237\u4F5C\u7B54\u7ED3\u679C\u7ECF AI \u6D88\u606F\u7A97\u53D1\u9001\uFF08\u4E0D\u963B\u585E\u672C\u8C03\u7528\uFF09\uFF1B\u7F3A\u7701=\u540C\u6B65\u7B49\u5F85" },
+      prompt: { type: "string", description: "The question text" },
+      timeout: { type: "number", description: "Optional timeout ms (5000-600000). Omit = wait forever: the panel stays until the user acts, no countdown; when passed, a pausable countdown shows and it auto-returns timeout on expiry" },
+      rejectable: { type: "boolean", description: `Whether the user may decline with "can't handle this right now" (default true)` },
+      async: { type: "boolean", description: "true = async: returns immediately once dispatched; the user's answer arrives via the AI message window (does not block this call); default = wait synchronously" },
       pageId: { type: "string" }
     }, required: ["prompt"] }
   },
   {
     name: "user_choose",
-    description: "\u5728 AI \u7A97\u53E3\u5185\u7ED9\u4EBA\u7C7B\u7528\u6237\u4E00\u7EC4\u9009\u9879\u8BA9\u5176\u9009\u62E9\uFF08\u5982\u4FEE\u590D\u65B9\u6848 A/B/C\uFF09\u3002\u5355\u9009\uFF08\u9ED8\u8BA4\uFF09\u2192 value:{index,label}\uFF1Bmultiple:true \u591A\u9009 \u2192 value:{indexes,labels}\u3002\u7528\u6237\u53EF\u9644\u300C\u8865\u5145\u8BF4\u660E\u300D\u81EA\u7531\u6587\u672C\uFF08value.comment\uFF09\uFF1B\u53E6\u6709\u56FA\u5B9A\u9009\u9879\u300C\u8FD9\u4E9B\u90FD\u4E0D\u9002\u5408\u300D\u2192 \u81EA\u5B9A\u4E49\u7B54\u6848\uFF08index:-1, custom:true\uFF09\u3002\u8FD4\u56DE {status, value, reason?}\u3002",
+    description: 'Offer the human user a set of options in the AI window (e.g. fix plans A/B/C). Single choice (default) \u2192 value:{index,label}; multiple:true \u2192 value:{indexes,labels}. The user may attach a free-text note (value.comment); a fixed "none of these fit" option leads to a custom answer (index:-1, custom:true). Returns {status, value, reason?}.',
     inputSchema: { type: "object", properties: {
       prompt: { type: "string" },
-      choices: { type: "array", items: { type: "string" }, description: "\u9009\u9879\u5217\u8868\uFF082-8 \u4E2A\uFF09" },
-      multiple: { type: "boolean", description: "\u662F\u5426\u5141\u8BB8\u591A\u9009\uFF08\u9ED8\u8BA4 false\uFF1Btrue \u65F6\u8FD4\u56DE indexes/labels\uFF09" },
-      timeout: { type: "number", description: "\u53EF\u9009\u8D85\u65F6 ms\uFF085000-600000\uFF09\u3002\u4E0D\u4F20=\u6C38\u4E45\u7B49\u5F85\uFF1A\u9762\u677F\u5E38\u9A7B\u76F4\u5230\u7528\u6237\u64CD\u4F5C\uFF0C\u65E0\u8BFB\u79D2\uFF1B\u4F20\u4E86\u624D\u663E\u793A\u8BFB\u79D2\u5012\u8BA1\u65F6\uFF08\u53EF\u6682\u505C\uFF09\uFF0C\u5230\u70B9\u81EA\u52A8\u8FD4\u56DE timeout" },
-      rejectable: { type: "boolean", description: "\u662F\u5426\u5141\u8BB8\u7528\u6237\u62D2\u7EDD\uFF08\u9ED8\u8BA4 true\uFF09" },
-      async: { type: "boolean", description: "true=\u5F02\u6B65\uFF1A\u7ACB\u5373\u8FD4\u56DE\u5DF2\u5F02\u6B65\u53D1\u51FA\uFF0C\u7528\u6237\u4F5C\u7B54\u7ED3\u679C\u7ECF AI \u6D88\u606F\u7A97\u53D1\u9001\uFF1B\u7F3A\u7701=\u540C\u6B65\u7B49\u5F85" },
+      choices: { type: "array", items: { type: "string" }, description: "Option list (2-8 items)" },
+      multiple: { type: "boolean", description: "Allow multiple selection (default false; returns indexes/labels when true)" },
+      timeout: { type: "number", description: "Optional timeout ms (5000-600000). Omit = wait forever: the panel stays until the user acts, no countdown; when passed, a pausable countdown shows and it auto-returns timeout on expiry" },
+      rejectable: { type: "boolean", description: "Whether the user may decline (default true)" },
+      async: { type: "boolean", description: "true = async: returns immediately once dispatched; the user's answer arrives via the AI message window; default = wait synchronously" },
       pageId: { type: "string" }
     }, required: ["prompt", "choices"] }
   },
   {
     name: "user_input",
-    description: "\u5728 AI \u7A97\u53E3\u5185\u8BF7\u4EBA\u7C7B\u7528\u6237\u8F93\u5165\u4E00\u6BB5\u6587\u672C\uFF08\u5982\u671F\u671B\u6587\u6848\u3001\u914D\u7F6E\u503C\u3001\u573A\u666F\u63CF\u8FF0\uFF09\uFF0C\u56DE\u8F66/\u70B9\u51FB\u5373\u53D1\u9001\u3002\u8FD4\u56DE {status, value:{text}, reason?}\u3002",
+    description: "Ask the human user to type a piece of text in the AI window (e.g. desired copy, a config value, a scenario description); sent on Enter/click. Returns {status, value:{text}, reason?}.",
     inputSchema: { type: "object", properties: {
       prompt: { type: "string" },
-      defaultValue: { type: "string", description: "\u9884\u586B\u9ED8\u8BA4\u503C\uFF08\u53EF\u9009\uFF09" },
-      timeout: { type: "number", description: "\u53EF\u9009\u8D85\u65F6 ms\uFF085000-600000\uFF09\u3002\u4E0D\u4F20=\u6C38\u4E45\u7B49\u5F85\uFF1A\u9762\u677F\u5E38\u9A7B\u76F4\u5230\u7528\u6237\u64CD\u4F5C\uFF0C\u65E0\u8BFB\u79D2\uFF1B\u4F20\u4E86\u624D\u663E\u793A\u8BFB\u79D2\u5012\u8BA1\u65F6\uFF08\u53EF\u6682\u505C\uFF09\uFF0C\u5230\u70B9\u81EA\u52A8\u8FD4\u56DE timeout" },
-      rejectable: { type: "boolean", description: "\u662F\u5426\u5141\u8BB8\u7528\u6237\u62D2\u7EDD\uFF08\u9ED8\u8BA4 true\uFF09" },
-      async: { type: "boolean", description: "true=\u5F02\u6B65\uFF1A\u7ACB\u5373\u8FD4\u56DE\u5DF2\u5F02\u6B65\u53D1\u51FA\uFF0C\u7528\u6237\u4F5C\u7B54\u7ED3\u679C\u7ECF AI \u6D88\u606F\u7A97\u53D1\u9001\uFF1B\u7F3A\u7701=\u540C\u6B65\u7B49\u5F85" },
+      defaultValue: { type: "string", description: "Optional pre-filled default" },
+      timeout: { type: "number", description: "Optional timeout ms (5000-600000). Omit = wait forever: the panel stays until the user acts, no countdown; when passed, a pausable countdown shows and it auto-returns timeout on expiry" },
+      rejectable: { type: "boolean", description: "Whether the user may decline (default true)" },
+      async: { type: "boolean", description: "true = async: returns immediately once dispatched; the user's answer arrives via the AI message window; default = wait synchronously" },
       pageId: { type: "string" }
     }, required: ["prompt"] }
   },
   {
     name: "user_presence",
-    description: "\u63A2\u6D4B\u4EBA\u7C7B\u7528\u6237\u662F\u5426\u5728\u573A/\u5728\u7EBF\uFF08AI \u9700\u8981\u7528\u6237\u914D\u5408\u957F\u4EFB\u52A1\u524D\u5148\u786E\u8BA4\uFF09\uFF0C\u7528\u6237\u70B9\u300C\u6211\u5728/\u7A0D\u540E\u300D\uFF0C\u53EF\u9644\u300C\u8865\u5145\u8BF4\u660E\u300D\uFF08value.comment\uFF09\u3002\u8FD4\u56DE {status, present, comment?}\uFF1B\u8D85\u65F6\u5373\u89C6\u4E3A\u4E0D\u5728\u7EBF\u3002",
+    description: 'Probe whether the human user is present/online (confirm before starting a long task that needs their cooperation); the user taps "here / later" and may attach a note (value.comment). Returns {status, present, comment?}; timeout means not present.',
     inputSchema: { type: "object", properties: {
-      prompt: { type: "string", description: "\u8BE2\u95EE\u6587\u6848\uFF08\u9ED8\u8BA4\u201C\u4F60\u5728\u5417\uFF1F\u9700\u8981\u4F60\u914D\u5408\u7EE7\u7EED\u5F00\u53D1\u201D\uFF09" },
-      timeout: { type: "number", description: "\u53EF\u9009\u8D85\u65F6 ms\uFF085000-600000\uFF09\u3002\u4E0D\u4F20=\u6C38\u4E45\u7B49\u5F85\uFF1A\u9762\u677F\u5E38\u9A7B\u76F4\u5230\u7528\u6237\u4F5C\u7B54\uFF1B\u4F20\u4E86\u624D\u663E\u793A\u8BFB\u79D2\u5012\u8BA1\u65F6\uFF08\u53EF\u6682\u505C\uFF09\uFF0C\u5230\u70B9\u8FD4\u56DE status:'timeout'\uFF08\u89C6\u4E3A\u4E0D\u5728\u7EBF\uFF09\u2014\u2014\u9700\u8981\u5FEB\u901F\u63A2\u6D4B\u5728\u573A/\u9650\u65F6\u7B49\u5F85\u65F6\u624D\u663E\u5F0F\u4F20" },
-      async: { type: "boolean", description: "true=\u5F02\u6B65\uFF1A\u7ACB\u5373\u8FD4\u56DE\u5DF2\u5F02\u6B65\u53D1\u51FA\uFF0C\u7528\u6237\u4F5C\u7B54\u7ED3\u679C\u7ECF AI \u6D88\u606F\u7A97\u53D1\u9001\uFF1B\u7F3A\u7701=\u540C\u6B65\u7B49\u5F85" },
+      prompt: { type: "string", description: 'Question text (default "are you there? I need your help to continue")' },
+      timeout: { type: "number", description: "Optional timeout ms (5000-600000). Omit = wait forever until the user answers; when passed, a pausable countdown shows and it returns status:'timeout' on expiry (treated as not present) \u2014 pass it explicitly only for quick presence probes / timeboxed waits" },
+      async: { type: "boolean", description: "true = async: returns immediately once dispatched; the user's answer arrives via the AI message window; default = wait synchronously" },
       pageId: { type: "string" }
     }, required: [] }
   },
   {
     name: "user_notify",
-    description: "\u975E\u963B\u585E\u901A\u77E5\uFF1A\u901A\u8FC7\u6D4F\u89C8\u5668 Notification \u544A\u8BC9\u7528\u6237\u4E00\u6761\u6D88\u606F\uFF08\u5982\u201C\u4FEE\u590D\u5B8C\u6210\uFF0C\u8BF7\u5237\u65B0\u9A8C\u8BC1\u201D\uFF09\uFF0C\u4E0D\u7B49\u5F85\u56DE\u7B54\u3002\u8FD4\u56DE {notified:true}\u3002",
+    description: 'Non-blocking notification: tell the user something via a browser Notification (e.g. "fix done, please refresh and verify") without waiting for an answer. Returns {notified:true}.',
     inputSchema: { type: "object", properties: {
-      title: { type: "string", description: "\u901A\u77E5\u6807\u9898" },
-      body: { type: "string", description: "\u901A\u77E5\u5185\u5BB9" },
-      timeout: { type: "number", description: "\u53EF\u9009\uFF1A\u901A\u77E5\u5361\u81EA\u52A8\u5173\u95ED\u65F6\u9650 ms\uFF085000-600000\uFF09\u3002\u4E0D\u4F20=\u5E38\u9A7B\u76F4\u5230\u7528\u6237\u5173\u95ED" },
-      async: { type: "boolean", description: "true=\u5F02\u6B65\uFF1A\u7ACB\u5373\u8FD4\u56DE\u5DF2\u5F02\u6B65\u53D1\u51FA\uFF0C\u7528\u6237\u4F5C\u7B54\u7ED3\u679C\u7ECF AI \u6D88\u606F\u7A97\u53D1\u9001\uFF1B\u7F3A\u7701=\u540C\u6B65\u7B49\u5F85" },
-      pageId: { type: "string", description: "\u76EE\u6807\u9875\u9762\uFF1A\u5B8C\u6574 pageId\uFF08iid/frameId\uFF09/url/title\uFF08resolvePageId \u540C\u6B3E\uFF09\u6216\u88F8 instanceId\uFF08pair \u8BBE\u5907 id \u540C\u6E90\uFF09\u3002\u7F3A\u7701=\u5E7F\u64AD\u5168\u90E8 AI \u7A97 + \u4F1A\u8BDD\u9ED8\u8BA4\u9875" }
+      title: { type: "string", description: "Notification title" },
+      body: { type: "string", description: "Notification body" },
+      timeout: { type: "number", description: "Optional: auto-dismiss time for the notification card ms (5000-600000). Omit = stays until the user closes it" },
+      async: { type: "boolean", description: "true = async: returns immediately once dispatched; the user's answer arrives via the AI message window; default = wait synchronously" },
+      pageId: { type: "string", description: "Target page: full pageId (iid/frameId) / url / title (same as resolvePageId) or bare instanceId (same namespace as pair device ids). Default = broadcast to all AI windows + the session's default page" }
     }, required: ["body"] }
   },
   // ---- 方案 G · P2：agent 接入 + 消息主通道 ----
   {
     name: "aiti_hello",
-    description: "agent \u81EA\u6211\u4ECB\u7ECD/\u6CE8\u518C\uFF1A\u8986\u76D6 agentId\uFF08\u9ED8\u8BA4 clientInfo.name\uFF09\u4E0E sessionId\uFF08\u9ED8\u8BA4 Mcp-Session-Id \u6216\u6865\u968F\u673A\uFF09\u3001\u7ED1\u5B9A\u9ED8\u8BA4\u76EE\u6807\u9875 pageId\u3001\u8BA2\u9605\u9875\u9762\u4E8B\u4EF6\uFF08page_error\uFF09\u3002\u6CE8\u610F\uFF1Apage_log/page_network \u4E0D\u518D\u5B9E\u65F6\u63A8\u9001\uFF0C\u6539\u7528 page_logs/page_network \u5DE5\u5177\u6309\u9700\u62C9\u53D6\u3002\u5EFA\u8BAE\u4F1A\u8BDD\u5F00\u59CB\u65F6\u8C03\u7528\u4E00\u6B21\u2014\u2014\u6CE8\u518C\u540E\u6D88\u606F\u53EF\u5B9A\u5411\u5230\u672C\u4F1A\u8BDD\uFF08agentKey=agentId/sessionId\uFF09\u3002",
+    description: "Agent self-introduction/registration: override agentId (default clientInfo.name) and sessionId (default Mcp-Session-Id or bridge-random), bind the default target pageId, subscribe page events (page_error). Note: page_log/page_network are no longer pushed live \u2014 pull them on demand with the page_logs/page_network tools. Call once at session start \u2014 once registered, messages can be routed to this session (agentKey=agentId/sessionId).",
     inputSchema: { type: "object", properties: {
-      agentId: { type: "string", description: "\u81EA\u5B9A\u4E49 agent \u6807\u8BC6\uFF08\u5982 pi / cc / qoder\uFF1B\u7F3A\u7701\u7528 clientInfo.name\uFF09" },
-      sessionId: { type: "string", description: "\u672C\u5B9E\u4F8B\u4F1A\u8BDD\u6807\u8BC6\uFF08\u591A\u5B9E\u4F8B/\u591A\u4F1A\u8BDD\u65F6\u533A\u5206\uFF1B\u7F3A\u7701\u7528 Mcp-Session-Id\uFF0C\u65E0\u5219\u6865\u751F\u6210\u968F\u673A\uFF09" },
-      name: { type: "string", description: "\u663E\u793A\u540D\uFF08\u53EF\u9009\uFF0C\u5982 'pi \xB7 \u5DE5\u4F5C\u533AA'\uFF09" },
-      cwd: { type: "string", description: "\u5DE5\u4F5C\u76EE\u5F55\uFF08\u53EF\u9009\uFF0C\u663E\u793A CWD . name (id)\uFF0C\u65B9\u4FBF\u8BC6\u522B agent \u8EAB\u4EFD\uFF09" },
-      pageId: { type: "string", description: "\u7ED1\u5B9A\u9ED8\u8BA4\u8C03\u8BD5\u76EE\u6807\u9875\uFF08pageId/url/title \u5747\u53EF\uFF0C\u7559\u7A7A\u4E0D\u7ED1\uFF09" },
-      subEvents: { type: "array", items: { type: "string" }, description: "\u8BA2\u9605\u5B9E\u65F6\u4E8B\u4EF6\uFF1Apage_error\uFF08\u9ED8\u8BA4\u4E0D\u6295\u9012\uFF0C\u663E\u5F0F\u8BA2\u9605\u624D\u63A8\uFF1Bpage_log/page_network \u4E0D\u518D\u5B9E\u65F6\u63A8\u9001\uFF0C\u6539\u7528 page_logs/page_network \u5DE5\u5177\u6309\u9700\u62C9\u53D6\uFF09" }
+      agentId: { type: "string", description: "Custom agent id (e.g. pi / cc / qoder; defaults to clientInfo.name)" },
+      sessionId: { type: "string", description: "Session id of this instance (distinguishes multi-instance/multi-session; defaults to Mcp-Session-Id, or bridge-random)" },
+      name: { type: "string", description: "Display name (optional, e.g. 'pi \xB7 workspace A')" },
+      cwd: { type: "string", description: "Working directory (optional; shown as CWD . name (id) to identify the agent)" },
+      pageId: { type: "string", description: "Bind the default debug target page (pageId/url/title all accepted; leave empty to skip)" },
+      subEvents: { type: "array", items: { type: "string" }, description: "Live events to subscribe: page_error (not delivered by default, only when explicitly subscribed; page_log/page_network are no longer pushed live \u2014 use page_logs/page_network to pull on demand)" }
     } }
   },
   {
     name: "file_stat",
-    description: "\u67E5\u8BE2\u6587\u4EF6\u5B58\u5728\u6027/\u7C7B\u578B/\u5927\u5C0F/\u4FEE\u6539\u65F6\u95F4\uFF08\u7EDD\u5BF9\u8DEF\u5F84\uFF1B\u7EC4\u4EF6\u6E90\u7801/\u8C03\u7528\u4F4D\u7F6E\u5B9A\u4F4D\u3001AI \u7A97\u300E\u540E\u7AEF\u6253\u5F00/\u524D\u7AEF\u6253\u5F00\u300F\u524D\u7F6E\u6821\u9A8C\u7528\uFF09\u3002\u4E0D\u5B58\u5728\u6216\u975E\u6CD5\u8DEF\u5F84\u8FD4\u56DE {exists:false}\u3002",
+    description: "Check file existence/type/size/mtime (absolute path; for locating component source / call sites, and as the pre-check for the AI window's backend/frontend open). Non-existent or invalid paths return {exists:false}.",
     inputSchema: { type: "object", properties: {
-      path: { type: "string", description: "\u7EDD\u5BF9\u8DEF\u5F84\uFF08\u5982 /home/user/src/App.vue\uFF09" }
+      path: { type: "string", description: "Absolute path (e.g. /home/user/src/App.vue)" }
     }, required: ["path"] }
   },
   {
     name: "aiti_inbox",
-    description: "\u6D88\u606F\u4E3B\u901A\u9053\uFF1A\u62C9\u53D6\u53D1\u7ED9\u672C agent \u4F1A\u8BDD\u7684\u6D88\u606F\uFF08\u4EBA\u4E3B\u52A8\u53D1\u8BDD user_message / \u5F02\u6B65 user_* \u4F5C\u7B54 user_answer / \u8BA2\u9605\u7684\u9875\u9762\u4E8B\u4EF6\uFF09\u3002\u5F00\u59CB\u65B0\u4E00\u8F6E\u6216\u9700\u8981\u6700\u65B0\u4FE1\u606F\u65F6\u5148\u8C03\u7528\uFF1B\u5904\u7406\u5B8C\u628A\u6D88\u606F id \u653E ack \u53C2\u6570\u786E\u8BA4\uFF08\u6807\u8BB0 consumed\uFF0C\u5386\u53F2\u4FDD\u7559\uFF09\u3002\u8FD4\u56DE agentKey\uFF08agentId/sessionId\uFF09\uFF0C\u672A\u6CE8\u518C\u65F6\u63D0\u793A\u8C03 aiti_hello \u6CE8\u518C\u3002",
+    description: "Main message channel: pull messages addressed to this agent session (human-initiated user_message / async user_* answers user_answer / subscribed page events). Call it when starting a new round or needing fresh info; after processing, pass the message ids in the ack param to confirm (marks consumed; history is kept). Returns agentKey (agentId/sessionId); when unregistered it suggests calling aiti_hello first.",
     inputSchema: { type: "object", properties: {
-      agentId: { type: "string", description: "agent \u6807\u8BC6\uFF08\u7F3A\u7701\u7528 aiti_hello \u6CE8\u518C\u503C\u6216 clientInfo.name\uFF09" },
-      sessionId: { type: "string", description: "\u672C\u5B9E\u4F8B\u4F1A\u8BDD\u6807\u8BC6\uFF08\u7F3A\u7701\u7528 Mcp-Session-Id \u6216 aiti_hello \u6CE8\u518C\u503C\uFF09" },
-      ack: { description: "\u5DF2\u5904\u7406\u6D88\u606F id \u5217\u8868\uFF0C\u6216 { ids: [...], summary: '\u6267\u884C\u603B\u7ED3' }\u2014\u2014summary\uFF08\u5FC5\u5E26\uFF09\u4F1A\u4F5C\u4E3A agent \u5904\u7406\u8BB0\u5F55\u663E\u793A\u5728\u64CD\u4F5C\u53F0\u6D88\u606F\u6D41", oneOf: [{ type: "array", items: { type: "string" } }, { type: "object", properties: { ids: { type: "array", items: { type: "string" } }, summary: { type: "string" } } }] }
+      agentId: { type: "string", description: "Agent id (defaults to the aiti_hello registration or clientInfo.name)" },
+      sessionId: { type: "string", description: "Session id of this instance (defaults to Mcp-Session-Id or the aiti_hello registration)" },
+      ack: { description: "Ids of processed messages, or { ids: [...], summary: 'execution summary' } \u2014 summary (required) is shown in the console message stream as the agent's handling record", oneOf: [{ type: "array", items: { type: "string" } }, { type: "object", properties: { ids: { type: "array", items: { type: "string" } }, summary: { type: "string" } } }] }
     } }
   },
-  // ---- pair 设备互连（临时聊天/互传文件；设备发现走 bridge_status 的 devices 统一视图） ----
+  // ---- pair device interconnect (temporary chat / file transfer; device discovery via bridge_status's devices view) ----
   {
     name: "aiti_pair_send",
-    description: "\u7ED9\u6865\u4E0A\u53E6\u4E00\u53F0\u8BBE\u5907\u53D1\u6587\u672C\u6D88\u606F\uFF08\u9875\u9762 / \u5176\u4ED6 agent \u4F1A\u8BDD / pair web \u8BBE\u5907\u5982\u624B\u673A\uFF09\u3002to \u4F20\u8BBE\u5907 id \u6216\u540D\u5B57\uFF08\u6A21\u7CCA\u5339\u914D\uFF0C\u552F\u4E00\u547D\u4E2D\u5373\u53D1\uFF0C\u591A\u4E2A/\u65E0\u547D\u4E2D\u8FD4\u56DE\u5019\u9009\u6E05\u5355\uFF09\uFF1Bto \u7701\u7565\u6216\u4F20 'all' = \u5168\u90E8\u9875\u9762\uFF08\u4E0D\u8DE8\u7C7B\uFF09\uFF1B'agents' = \u5168\u90E8 agent\uFF1B'pairs' = \u5168\u90E8 pair \u8BBE\u5907\u3002\u6587\u4EF6\u4F20\u8F93\u7528 aiti_pair_file\u3002",
+    description: "Send a text message to another device on the bridge (a page / another agent session / a pair web device like a phone). Pass the device id or name in to (fuzzy match; a unique hit sends, multiple/no hits return a candidate list); omitting to or passing 'all' = all pages (not cross-kind); 'agents' = all agents; 'pairs' = all pair devices. For file transfer use aiti_pair_file.",
     inputSchema: { type: "object", properties: {
-      to: { type: "string", description: "\u76EE\u6807\u8BBE\u5907 id \u6216\u540D\u5B57\uFF08bridge_status \u7684 devices \u91CC\u9009\uFF1B\u7F3A\u7701/'all'=\u5168\u90E8\u9875\u9762\uFF1B'agents'=\u5168\u90E8\u4EE3\u7406\uFF1B'pairs'=\u5168\u90E8 pair \u8BBE\u5907\uFF09" },
-      text: { type: "string", description: "\u6D88\u606F\u6587\u672C" }
+      to: { type: "string", description: "Target device id or name (pick from bridge_status devices; default/'all'=all pages; 'agents'=all agents; 'pairs'=all pair devices)" },
+      text: { type: "string", description: "Message text" }
     }, required: ["text"] }
   },
   {
     name: "aiti_pair_file",
-    description: "\u628A\u6865\u6240\u5728\u673A\u5668\u4E0A\u7684\u672C\u5730\u6587\u4EF6\u63A8\u7ED9\u53E6\u4E00\u53F0\u8BBE\u5907\uFF08pair web \u8BBE\u5907\u5728\u6D4F\u89C8\u5668\u91CC\u76F4\u63A5\u4E0B\u8F7D\uFF1Bagent \u6536\u5230 file-meta \u540E\u7528 aiti_pair_fetch \u53D6\u56DE\uFF09\u3002to \u4F20\u8BBE\u5907 id \u6216\u540D\u5B57\u3002\u5355\u6587\u4EF6\u4E0A\u9650 200MB\uFF0C\u4E2D\u8F6C\u6682\u5B58 1 \u5C0F\u65F6\u3002",
+    description: "Push a local file on the bridge's machine to another device (pair web devices download it directly in the browser; agents receive file-meta and fetch it back with aiti_pair_fetch). Pass the device id or name in to. Per-file cap 200MB, relay keeps it for 1 hour.",
     inputSchema: { type: "object", properties: {
-      to: { type: "string", description: "\u76EE\u6807\u8BBE\u5907 id \u6216\u540D\u5B57" },
-      path: { type: "string", description: "\u672C\u5730\u6587\u4EF6\u7EDD\u5BF9\u8DEF\u5F84" }
+      to: { type: "string", description: "Target device id or name" },
+      path: { type: "string", description: "Absolute path of the local file" }
     }, required: ["to", "path"] }
   },
   {
     name: "aiti_pair_fetch",
-    description: "\u628A\u6536\u5230\u7684 pair \u6587\u4EF6\u53D6\u56DE\u5230\u6865\u6240\u5728\u673A\u5668\u78C1\u76D8\uFF08fileId \u6765\u81EA aiti_inbox \u6D88\u606F payload.file.fileId\uFF09\u3002\u7F3A\u7701\u843D dataDir/aiti-bridge/pair-inbox/<\u539F\u6587\u4EF6\u540D>\uFF0C\u8FD4\u56DE\u53EF\u8BFB\u8DEF\u5F84\uFF1B\u4F20 savePath \u81EA\u5B9A\u4E49\u843D\u70B9\u3002",
+    description: "Fetch a received pair file back onto the bridge machine's disk (fileId comes from an aiti_inbox message payload.file.fileId). Defaults to dataDir/aiti-bridge/pair-inbox/<original name> and returns a readable path; pass savePath to choose the destination.",
     inputSchema: { type: "object", properties: {
-      fileId: { type: "string", description: "\u6587\u4EF6 id\uFF08aiti_inbox \u6D88\u606F payload.file.fileId\uFF09" },
-      savePath: { type: "string", description: "\u843D\u76D8\u7EDD\u5BF9\u8DEF\u5F84\uFF08\u7F3A\u7701 pair-inbox \u76EE\u5F55 + \u539F\u6587\u4EF6\u540D\uFF09" }
+      fileId: { type: "string", description: "File id (aiti_inbox message payload.file.fileId)" },
+      savePath: { type: "string", description: "Absolute destination path (default: pair-inbox dir + original name)" }
     }, required: ["fileId"] }
   }
 ];
@@ -820,7 +820,7 @@ function createBridge(dataDir = "", opts = {}) {
       const agSid = ag.sessionId || String(key).split("/").slice(1).join("/");
       if (agSid === sessionId) {
         ag.activeBoundPageId = pageId;
-        console.log(TAG + " AI \u4E3B\u7A97\u53E3\u6D3B\u8DC3\u7ED1\u5B9A\uFF1A" + key + " \u2192 " + pageId);
+        console.log(TAG + " AI main window active binding: " + key + " \u2192 " + pageId);
         break;
       }
     }
@@ -938,7 +938,7 @@ function createBridge(dataDir = "", opts = {}) {
         agentIdx.set(aid, idxSet);
       }
       idxSet.add(key);
-      console.log(TAG + " agent \u4F1A\u8BDD\u6CE8\u518C\uFF1A" + key + (a.registered ? "\uFF08\u663E\u5F0F\uFF09" : "\uFF08\u968F\u673A session\uFF0C\u5F15\u5BFC aiti_hello \u6CE8\u518C\uFF09") + " " + a.transportKind + " \u6062\u590D outbox " + a.outbox.length + " \u6761");
+      console.log(TAG + " agent session registered: " + key + (a.registered ? "(explicit)" : "(random session; prompt aiti_hello to register)") + " " + a.transportKind + " restored outbox " + a.outbox.length + " msg(s)");
     }
     a.lastSeen = Date.now();
     if (session) {
@@ -1019,7 +1019,7 @@ function createBridge(dataDir = "", opts = {}) {
         }
         if (now - mtime > AGENT_HISTORY_TTL) {
           rmSync2(p, { recursive: true, force: true });
-          console.log(TAG + " \u6E05\u7406\u5386\u53F2 session\uFF08> " + Math.round(AGENT_HISTORY_TTL / 864e5) + " \u5929\u65E0\u6D3B\u52A8\uFF09\uFF1A" + d);
+          console.log(TAG + " sweeping history session (> " + Math.round(AGENT_HISTORY_TTL / 864e5) + " days idle): " + d);
         }
       } catch {
       }
@@ -1038,7 +1038,7 @@ function createBridge(dataDir = "", opts = {}) {
       }
       if (!a.offlineAt) a.offlineAt = a.lastSeen;
       if (now - a.offlineAt > AGENT_TTL) {
-        console.log(TAG + " agent \u6E05\u7406\uFF08\u6389\u7EBF > " + Math.round(AGENT_TTL / 6e4) + "min\uFF09\uFF1A" + key + " " + (a.name || "") + "\uFF08offlineAt " + new Date(a.offlineAt).toISOString() + "\uFF09");
+        console.log(TAG + " agent swept (offline > " + Math.round(AGENT_TTL / 6e4) + "min): " + key + " " + (a.name || "") + " (offlineAt " + new Date(a.offlineAt).toISOString() + ")");
         agents.delete(key);
         const idx = agentIdx.get(a.agentId);
         if (idx) {
@@ -1055,7 +1055,7 @@ function createBridge(dataDir = "", opts = {}) {
     for (const [iid, p] of [...pages]) {
       if (p.writer?.viaBus && now - (p.writer.lastSeen || 0) > BUS_CONN_TTL) {
         pages.delete(iid);
-        console.log(TAG + " \u603B\u7EBF\u578B\u9875\u9762\u8FDE\u63A5\u8D85\u65F6\u6458\u9664\uFF1A" + iid);
+        console.log(TAG + " bus-type page connection timed out and removed: " + iid);
       }
     }
     for (const w of [...aiConns]) {
@@ -1088,7 +1088,7 @@ function createBridge(dataDir = "", opts = {}) {
   };
   const pushToAgents = (to, text, kind = "user_message", payload = {}, ref = null) => {
     const targets = resolvePushTargets(to);
-    if (!targets.length) return { ok: false, error: "\u65E0\u5DF2\u6CE8\u518C agent \u4F1A\u8BDD\uFF08agent \u8FDE\u6865\u5E76\u6CE8\u518C\u540E\u624D\u6709\u6536\u4EF6\u7BB1\uFF09" };
+    if (!targets.length) return { ok: false, error: "no registered agent sessions (an agent must connect to the bridge and register to have an inbox)" };
     const delivered = [];
     for (const t of targets) {
       const { a } = ensureAgent(t.split("/")[0], t.split("/").slice(1).join("/"), null);
@@ -1127,7 +1127,7 @@ function createBridge(dataDir = "", opts = {}) {
         if (srcUrl) parts.push(clipMid(srcUrl, 64));
         if (srcTitle) parts.push(clipMid(srcTitle, 40));
         if (srcDevice) parts.push(clipMid(srcDevice, 40));
-        tText = tText + "\n[\u53D1\u81EA: " + parts.join(" \xB7 ") + "\uFF08" + srcLabel + "\uFF1ApageId \u53C2\u6570\u7528\u5B83\uFF09]";
+        tText = tText + "\n[\u53D1\u81EA: " + parts.join(" \xB7 ") + " (" + srcLabel + "; use it as the pageId param)]";
       }
       payload = { ...payload || {}, source: payload.source || a && a.source || null, sourceLabel: payload.sourceLabel || srcLabel, pageId: srcPageId, url: srcUrl, title: srcTitle };
       const canSample = !!(a && a.stream && a.capabilities && a.capabilities.sampling && (kind === "user_message" || kind === "chat"));
@@ -1135,8 +1135,8 @@ function createBridge(dataDir = "", opts = {}) {
         const rid = "smp_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
         const done = (ok, result) => {
           if (!pendingSampling.delete(rid)) return;
-          const answer2 = ok ? samplingTextOf(result) : result && result.error || "sampling \u5931\u8D25";
-          console.log(TAG + " sampling \u4F5C\u7B54 \u2192 agent=" + t + " \xB7 " + String(answer2).slice(0, 80));
+          const answer2 = ok ? samplingTextOf(result) : result && result.error || "sampling failed";
+          console.log(TAG + " sampling answer \u2192 agent=" + t + " \xB7 " + String(answer2).slice(0, 80));
           for (const w of aiConns) w.write({ type: "agent_answer", agentKey: t, agentId: a.agentId, ok, text: answer2, requestId: rid, at: Date.now() });
         };
         pendingSampling.set(rid, { agentKey: t, done, at: Date.now() });
@@ -1146,12 +1146,12 @@ function createBridge(dataDir = "", opts = {}) {
           method: "sampling/createMessage",
           params: {
             messages: [{ role: "user", content: { type: "text", text: tText } }],
-            systemPrompt: "\uFF08\u8C03\u8BD5\u73B0\u573A\u7684\u4EBA\u901A\u8FC7 " + DISPLAY_NAME + " \u53D1\u6765\u7684\u6D88\u606F\u3002\u76EE\u6807\u9875 pageId=" + (payload.pageId || "?") + "\u3002\u76F4\u63A5\u56DE\u7B54\u5373\u53EF\uFF0C\u7B80\u77ED\u3002",
+            systemPrompt: "(Message from a human at the debug scene via " + DISPLAY_NAME + ". Target page pageId=" + (payload.pageId || "?") + ". Just answer, keep it brief.",
             maxTokens: 1024,
             temperature: 0.3
           }
         });
-        setTimeout(() => done(false, { error: "sampling \u8D85\u65F6\uFF08agent \u672A\u54CD\u5E94\u6216\u9700\u5BA1\u6279\u786E\u8BA4\uFF09" }), SAMPLING_TIMEOUT_MS);
+        setTimeout(() => done(false, { error: "sampling timed out (agent did not respond, or needs approval)" }), SAMPLING_TIMEOUT_MS);
         delivered.push({ agentKey: t, agentId: a.agentId, sessionId: a.sessionId, status: "sampling" });
       } else {
         const q = queueMsg(t, { kind, from: "window", text: tText, payload, pageId: payload && payload.pageId || null, source: payload.source, sourceLabel: payload.sourceLabel, ref });
@@ -1159,7 +1159,7 @@ function createBridge(dataDir = "", opts = {}) {
           try {
             a.inProcessSink(tText, kind, payload);
           } catch (e) {
-            console.error(TAG + " inProcessSink \u5931\u8D25", e);
+            console.error(TAG + " inProcessSink failed", e);
           }
           const m0 = q && q.msg;
           if (m0 && m0.status === "pending") {
@@ -1194,7 +1194,7 @@ function createBridge(dataDir = "", opts = {}) {
       try {
         a.inProcessSink(text, "user_answer", result);
       } catch (e) {
-        console.error(TAG + " inProcessSink \u5931\u8D25", e);
+        console.error(TAG + " inProcessSink failed", e);
       }
     }
     queueMsg(agentKey2, { kind: "user_answer", from: "page", text, payload: result });
@@ -1203,18 +1203,18 @@ function createBridge(dataDir = "", opts = {}) {
     const where = pageInfo && pageInfo.url ? pageInfo.pageId ? `[${pageInfo.pageId} \xB7 ${pageInfo.url}]` : `[${pageInfo.url}]` : "";
     if (eventType === "page_error") {
       const pl = payload || {};
-      return `\u26A0 \u9875\u9762\u62A5\u9519${where} ${pl.kind || ""} ${String(pl.message || "").slice(0, 300)}` + (pl.stack ? `
+      return `\u26A0 Page error${where} ${pl.kind || ""} ${String(pl.message || "").slice(0, 300)}` + (pl.stack ? `
 ${String(pl.stack).slice(0, 400)}` : "");
     }
     if (eventType === "page_log") {
       const items = ((payload || {}).logs || (payload || {}).batch || []).slice(0, 5);
-      return `\u{1F4CB} \u9875\u9762\u65E5\u5FD7${where}: ` + items.map((l) => `[${l.level}] ${String(l.text || "").slice(0, 120)}`).join(" | ");
+      return `\u{1F4CB} Page logs${where}: ` + items.map((l) => `[${l.level}] ${String(l.text || "").slice(0, 120)}`).join(" | ");
     }
     if (eventType === "page_network") {
       const items = ((payload || {}).requests || (payload || {}).batch || []).slice(0, 5);
-      return `\u{1F310} \u9875\u9762\u7F51\u7EDC${where}: ` + items.map((r) => `${r.method || "?"} ${String(r.url || "").slice(0, 80)} \u2192 ${r.status ?? "?"}${r.error ? " ERR" : ""}`).join(" | ");
+      return `\u{1F310} Page network${where}: ` + items.map((r) => `${r.method || "?"} ${String(r.url || "").slice(0, 80)} \u2192 ${r.status ?? "?"}${r.error ? " ERR" : ""}`).join(" | ");
     }
-    return `\u{1F4E2} \u9875\u9762\u4E8B\u4EF6${where}: ${JSON.stringify(payload).slice(0, 200)}`;
+    return `\u{1F4E2} Page event${where}: ${JSON.stringify(payload).slice(0, 200)}`;
   };
   const pushEventToSubscribers = (eventType, payload, pageInfo) => {
     const sigBase = eventType + ":" + JSON.stringify(payload).slice(0, 120);
@@ -1223,14 +1223,14 @@ ${String(pl.stack).slice(0, 400)}` : "");
       if (!a.subEvents || !a.subEvents.has(eventType)) continue;
       if (!agentOnline(a) && now - (a.offlineAt || a.lastSeen || 0) > BROADCAST_TTL) continue;
       if (pushDeduped(key, sigBase)) {
-        console.log(TAG + " push \u53BB\u91CD\uFF085s \u5185\u540C\u4E8B\u4EF6\uFF09" + key + " " + eventType);
+        console.log(TAG + " push deduped (same event within 5s) " + key + " " + eventType);
         continue;
       }
       const text = formatPageEvent(eventType, payload, pageInfo);
       if (a.agentStream) a.agentStream.write({ type: "page_event", event: eventType, text, pageId: pageInfo && pageInfo.pageId || null, url: pageInfo && pageInfo.url || null, at: Date.now() });
       else {
         queueMsg(key, { kind: "page_" + eventType, from: "page", text, payload });
-        console.log(TAG + " push \u65E0\u6D41 \u2192 outbox " + key + " " + eventType);
+        console.log(TAG + " push without stream \u2192 outbox " + key + " " + eventType);
       }
     }
   };
@@ -1477,7 +1477,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       const selfPageId = String(rec.instanceId) + "/ai";
       if (seen.has(selfPageId)) continue;
       seen.add(selfPageId);
-      const selfRow = { instanceId: rec.instanceId, frameId: "ai", pageId: selfPageId, url: rec.url || null, title: rec.title ? rec.title + " \xB7 AI \u4E3B\u7A97\u53E3" : "AI \u4E3B\u7A97\u53E3", frameworks: null, active: true, viaAI: true, self: true, lastSeen: rec.lastSeen };
+      const selfRow = { instanceId: rec.instanceId, frameId: "ai", pageId: selfPageId, url: rec.url || null, title: rec.title ? rec.title + " \xB7 AI main window" : "AI main window", frameworks: null, active: true, viaAI: true, self: true, lastSeen: rec.lastSeen };
       withDevice(selfRow, rec.device, rec.deviceLabel);
       addMine(selfRow);
       out.push(selfRow);
@@ -1521,7 +1521,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
     const result = { status: "cancelled", error: reason, cancelled: true, tookMs: Date.now() - (r.t0 || Date.now()), ...ist ? { timeoutMs: ist.ms, pausedMs: ist.pausedMs } : {} };
     settlePending(requestId, false, result);
     for (const w of aiConns) w.write({ type: "result", requestId, ok: false, result });
-    console.log(TAG + " \u2702 \u8BF7\u6C42\u5DF2\u53D6\u6D88\uFF1A" + requestId + " \xB7 " + reason);
+    console.log(TAG + " \u2702 request cancelled: " + requestId + " \xB7 " + reason);
     return true;
   };
   const SNAPSHOT_FALLBACK = `(() => {
@@ -1600,7 +1600,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
           if (!label && f.placeholder) label = String(f.placeholder).trim();
           if (!label && f.name) label = String(f.name);
           if (!label && f.id) label = '#' + f.id;
-          if (!label && isCE) label = String((f.getAttribute && (f.getAttribute('data-placeholder') || f.getAttribute('aria-label'))) || (f.innerText || '').trim()).slice(0, 40) || ('\u53EF\u7F16\u8F91\u533A\u57DF' + (n + 1));
+          if (!label && isCE) label = String((f.getAttribute && (f.getAttribute('data-placeholder') || f.getAttribute('aria-label'))) || (f.innerText || '').trim()).slice(0, 40) || ('editable area ' + (n + 1));
           var sel = f.id ? ('#' + String(f.id).replace(/([^a-zA-Z0-9_-])/g, '\\$1')) : (f.name ? ('[name="' + String(f.name).replace(/"/g, '\\"') + '"]') : (isCE ? null : ''));
           fields.push({ label: String(label).slice(0, 40), selector: sel, type: isCE ? 'contenteditable' : (f.type || 'text'), value: String(isCE ? ((f.innerText || f.textContent || '')) : (f.value || '')).slice(0, 60) });
         }
@@ -1648,7 +1648,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
         }
         dialog = best;
       }
-      if (!dialog) return { foundDialog: false, filled: 0, missed: 0, clicked: false, error: '\u672A\u627E\u5230\u53EF\u89C1\u5F39\u7A97\uFF08\u5148\u7528 self_ui \u786E\u8BA4\u5F39\u7A97\u5DF2\u6253\u5F00\uFF09' };
+      if (!dialog) return { foundDialog: false, filled: 0, missed: 0, clicked: false, error: 'no visible dialog found (use self_ui first to confirm the dialog is open)' };
       var setNative = function (el, value) {
         var text = String(value == null ? '' : value);
         // contenteditable\uFF08\u5BCC\u6587\u672C/<p> \u53EF\u7F16\u8F91\u5757\uFF09\uFF1A\u6D4F\u89C8\u5668\u539F\u751F\u8F93\u5165\u8DEF\u5F84\uFF08\u771F\u5B9E\u952E\u5165\uFF0C\u7B49\u4EF7 CDP Input.insertText\uFF09\u2014\u2014
@@ -1761,10 +1761,10 @@ ${String(pl.stack).slice(0, 400)}` : "");
       if (rec.mcpReqId) mcpReqMap.set(rec.mcpReqId, requestId);
       if (rec.cancelId) cancelIdMap.set(rec.cancelId, requestId);
       const srcExt = src && src.agentId ? { agentId: src.agentId || null, agentName: src.agentName || null, agentSessionUrl: src.agentSessionUrl || null, targetDevice: src.targetDevice || null } : {};
-      rec.onAbort = () => cancelPending(requestId, "\u5DF2\u53D6\u6D88\uFF08agent \u505C\u6B62\uFF09");
+      rec.onAbort = () => cancelPending(requestId, "cancelled (agent stopped)");
       if (signal) {
         if (signal.aborted) {
-          cancelPending(requestId, "\u5DF2\u53D6\u6D88\uFF08agent \u505C\u6B62\uFF09");
+          cancelPending(requestId, "cancelled (agent stopped)");
           return;
         }
         rec.signal = signal;
@@ -1776,7 +1776,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
           const irec = idRegistry.get(instanceId);
           if (irec) irec.lastSeen = Date.now();
           pages.delete(instanceId);
-          settlePending(requestId, false, { error: "\u9875\u9762\u8FDE\u63A5\u5DF2\u65AD\u5F00\uFF08\u91CD\u8FDE\u540E\u91CD\u8BD5\uFF09" });
+          settlePending(requestId, false, { error: "page connection lost (retry after reconnect)" });
           return;
         }
       } else if (frameId === "ai" && aiSelfReg.size > 0) {
@@ -1791,13 +1791,13 @@ ${String(pl.stack).slice(0, 400)}` : "");
           if (!target.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "self", ...srcExt })) {
             aiConns.delete(target);
             aiSelfReg.delete(target);
-            settlePending(requestId, false, { error: "\u76EE\u6807 AI \u4E3B\u7A97\u53E3\u8FDE\u63A5\u5DF2\u65AD\u5F00\uFF08\u5237\u65B0\u540E\u81EA\u52A8\u91CD\u8FDE\uFF09" });
+            settlePending(requestId, false, { error: "target AI main window connection lost (auto-reconnects after refresh)" });
             return;
           }
         } else if (aiConns.size > 0) {
           for (const w of aiConns) w.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "self", ...srcExt });
         } else {
-          setTimeout(() => settlePending(requestId, false, { error: "\u65E0\u6267\u884C\u7AEF\uFF08AI \u4E3B\u7A97\u53E3\u672A\u8FDE\u63A5\uFF09\uFF0C\u5148\u8FDE\u63A5\u6865" }), 100);
+          setTimeout(() => settlePending(requestId, false, { error: "no executor (AI main window not connected); connect the bridge first" }), 100);
           return;
         }
       } else if (aiPageReg.size > 0) {
@@ -1818,19 +1818,19 @@ ${String(pl.stack).slice(0, 400)}` : "");
           if (!target.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "ai", frameId: viaFrameId, ...srcExt })) {
             aiConns.delete(target);
             aiPageReg.delete(target);
-            settlePending(requestId, false, { error: "\u76EE\u6807 AI \u7A97\u8FDE\u63A5\u5DF2\u65AD\u5F00\uFF08\u9875\u9762\u5237\u65B0\u540E\u81EA\u52A8\u91CD\u8FDE\uFF0C\u7A0D\u540E\u91CD\u8BD5\uFF09" });
+            settlePending(requestId, false, { error: "target AI window connection lost (auto-reconnects after page refresh; retry shortly)" });
             return;
           }
         } else if (aiConns.size > 0) {
           for (const w of aiConns) w.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "ai", ...srcExt });
         } else {
-          setTimeout(() => settlePending(requestId, false, { error: "\u65E0\u6267\u884C\u7AEF\uFF08\u9875\u9762/AI \u901A\u9053\u5747\u672A\u8FDE\u63A5\uFF09\uFF0C\u5148\u8FDE\u63A5\u6865" }), 100);
+          setTimeout(() => settlePending(requestId, false, { error: "no executor (neither page nor AI channel connected); connect the bridge first" }), 100);
           return;
         }
       } else if (aiConns.size > 0) {
         for (const w of aiConns) w.write({ type: "exec", requestId, cmd, args: args || {}, pageId, via: "ai", ...srcExt });
       } else {
-        setTimeout(() => settlePending(requestId, false, { error: "\u65E0\u6267\u884C\u7AEF\uFF08\u9875\u9762/AI \u901A\u9053\u5747\u672A\u8FDE\u63A5\uFF09\uFF0C\u5148\u8FDE\u63A5\u6865" }), 100);
+        setTimeout(() => settlePending(requestId, false, { error: "no executor (neither page nor AI channel connected); connect the bridge first" }), 100);
         return;
       }
       const SLOW_EXEC_CMDS = /* @__PURE__ */ new Set([
@@ -1852,7 +1852,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
         }
         return 3e5;
       })();
-      setTimeout(() => settlePending(requestId, false, { error: "\u9875\u9762\u6267\u884C\u8D85\u65F6" + (SLOW_EXEC_CMDS.has(cmd) ? "\uFF08\u7528\u6237\u672A\u5B8C\u6210\u786E\u8BA4/\u9009\u62E9\uFF09" : "") }), slowNet);
+      setTimeout(() => settlePending(requestId, false, { error: "page execution timed out" + (SLOW_EXEC_CMDS.has(cmd) ? " (user did not finish confirming/choosing)" : "") }), slowNet);
     });
   }
   const INTERACTION_MAX_TIMEOUT_MS = 6e5;
@@ -1871,7 +1871,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
     st.remaining = Math.max(0, st.deadline - Date.now());
     st.paused = true;
     st.pausedAt = Date.now();
-    console.log(TAG + " interaction \u23F8 \u6682\u505C requestId=" + requestId + " remaining=" + st.remaining + "ms");
+    console.log(TAG + " interaction \u23F8 paused requestId=" + requestId + " remaining=" + st.remaining + "ms");
     return { ok: true, paused: true, remainingMs: st.remaining };
   };
   const resumeInteraction = (requestId) => {
@@ -1885,7 +1885,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
     st.deadline = Date.now() + st.remaining;
     const fire = () => {
       if (!interactionTimers.delete(requestId)) return;
-      const result = { status: "timeout", error: "\u7528\u6237\u65E0\u54CD\u5E94\uFF08\u4E0D\u5728\u7EBF\u6216\u672A\u5904\u7406\uFF09", tookMs: Date.now() - st.t0, timeoutMs: st.ms, pausedMs: st.pausedMs };
+      const result = { status: "timeout", error: "user not responding (offline or unhandled)", tookMs: Date.now() - st.t0, timeoutMs: st.ms, pausedMs: st.pausedMs };
       if (settlePending(requestId, false, result)) {
         for (const w of aiConns) w.write({ type: "result", requestId, ok: false, result });
       }
@@ -1895,7 +1895,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       return { ok: true, paused: false, remainingMs: 0, timedOut: true };
     }
     st.timer = setTimeout(fire, st.remaining);
-    console.log(TAG + " interaction \u25B6 \u7EE7\u7EED requestId=" + requestId + " remaining=" + st.remaining + "ms");
+    console.log(TAG + " interaction \u25B6 resumed requestId=" + requestId + " remaining=" + st.remaining + "ms");
     return { ok: true, paused: false, remainingMs: st.remaining };
   };
   const clearInteractionTimer = (requestId) => {
@@ -1932,27 +1932,27 @@ ${String(pl.stack).slice(0, 400)}` : "");
     return new Promise((resolve) => {
       const requestId = "ui_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
       if (isAsync) {
-        console.log(TAG + " interaction\uFF08\u5F02\u6B65\uFF09\u2192 kind=" + payload.kind + " \xB7 " + String(payload.prompt || "").slice(0, 60) + " \u2192 pageId=" + pageId + (payload.agentId ? " \xB7 agent=" + payload.agentId : ""));
-        resolve({ ok: true, result: { status: "async", message: "\u5DF2\u5F02\u6B65\u53D1\u51FA\uFF1A\u7528\u6237\u4F5C\u7B54\u540E\u7ED3\u679C\u5C06\u8FDB\u53D1\u8D77 agent\uFF08" + (payload.agentId || "?") + "\uFF09\u7684 aiti_inbox" } });
+        console.log(TAG + " interaction (async) \u2192 kind=" + payload.kind + " \xB7 " + String(payload.prompt || "").slice(0, 60) + " \u2192 pageId=" + pageId + (payload.agentId ? " \xB7 agent=" + payload.agentId : ""));
+        resolve({ ok: true, result: { status: "async", message: "dispatched async: once the user answers, the result lands in the initiating agent\u2019s (" + (payload.agentId || "?") + ") aiti_inbox" } });
       } else {
         const rec = { resolve, agentId: payload.agentId || null, t0: Date.now(), signal: null, onAbort: null, mcpReqId: mcpReqId || null, cancelId: cancelId || null };
         pendingRequests.set(requestId, rec);
         if (rec.mcpReqId) mcpReqMap.set(rec.mcpReqId, requestId);
         if (rec.cancelId) cancelIdMap.set(rec.cancelId, requestId);
-        rec.onAbort = () => cancelPending(requestId, "\u5DF2\u53D6\u6D88\uFF08agent \u505C\u6B62\uFF09");
+        rec.onAbort = () => cancelPending(requestId, "cancelled (agent stopped)");
         if (signal) {
           if (signal.aborted) {
-            cancelPending(requestId, "\u5DF2\u53D6\u6D88\uFF08agent \u505C\u6B62\uFF09");
+            cancelPending(requestId, "cancelled (agent stopped)");
             return;
           }
           rec.signal = signal;
           signal.addEventListener("abort", rec.onAbort, { once: true });
         }
-        console.log(TAG + " interaction \u2192 kind=" + payload.kind + " \xB7 " + String(payload.prompt || "").slice(0, 60) + " \u2192 pageId=" + pageId + " \xB7 timeout=" + (ms > 0 ? ms + "ms" : "\u221E\uFF08\u6C38\u4E45\u7B49\u5F85\uFF09") + (payload.agentId ? " \xB7 agent=" + payload.agentId : ""));
+        console.log(TAG + " interaction \u2192 kind=" + payload.kind + " \xB7 " + String(payload.prompt || "").slice(0, 60) + " \u2192 pageId=" + pageId + " \xB7 timeout=" + (ms > 0 ? ms + "ms" : "\u221E (wait forever)") + (payload.agentId ? " \xB7 agent=" + payload.agentId : ""));
       }
       const noExecutor = () => {
         clearInteractionTimer(requestId);
-        cancelPending(requestId, "\u65E0\u6267\u884C\u7AEF\uFF08\u9875\u9762/AI \u901A\u9053\u5747\u672A\u8FDE\u63A5\uFF09\uFF0C\u5148\u8FDE\u63A5\u6865");
+        cancelPending(requestId, "no executor (neither page nor AI channel connected); connect the bridge first");
       };
       if (aiTarget) {
         const env = { type: "interaction", requestId, interaction: payload, frameId: aiTargetFrameId };
@@ -1990,7 +1990,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
         interactionTimers.set(requestId, st);
         st.timer = setTimeout(() => {
           if (!interactionTimers.delete(requestId)) return;
-          const result = { status: "timeout", error: "\u7528\u6237\u65E0\u54CD\u5E94\uFF08\u4E0D\u5728\u7EBF\u6216\u672A\u5904\u7406\uFF09", tookMs: Date.now() - t0, timeoutMs: ms, pausedMs: st.pausedMs };
+          const result = { status: "timeout", error: "user not responding (offline or unhandled)", tookMs: Date.now() - t0, timeoutMs: ms, pausedMs: st.pausedMs };
           if (settlePending(requestId, false, result)) {
             for (const w of aiConns) w.write({ type: "result", requestId, ok: false, result });
           }
@@ -2007,16 +2007,16 @@ ${String(pl.stack).slice(0, 400)}` : "");
           capabilities: { tools: {} },
           serverInfo: { name: DISPLAY_NAME, version: "0.2" },
           instructions: [
-            "aiti-devtools\uFF1A\u9875\u9762\u5185 AI \u8C03\u8BD5\u52A9\u624B\uFF08\u6D4F\u89C8\u5668\u6865\uFF09\u3002",
-            "\u5DE5\u4F5C\u6D41\uFF1A\u9875\u9762\u53D1\u6765\u7684\u6D88\u606F\u901A\u5E38\u5E26 pageId\u3002\u6CA1\u6709\u4E5F\u53EF\u4EE5\u5148\u7528 bridge_status \u53D1\u73B0\u5DF2\u8FDE\u63A5\u9875\u9762\uFF08\u8FD4\u56DE sessions\uFF0C\u542B pageId/url/title/frameworks/device\u2014\u2014deviceLabel \u4E00\u884C\u7684\u6D4F\u89C8\u5668\xB7\u5C4F\u5E55\xB7\u5728\u7EBF\xB7\u8BED\u8A00\u53EF\u5FEB\u901F\u8BC6\u522B\u662F\u54EA\u53F0\u673A\u5668\u54EA\u4E2A\u6807\u7B7E\uFF09\u2192 \u628A pageId \u4F20\u7ED9\u76EE\u6807\u5DE5\u5177\u3002",
-            "pageId \u683C\u5F0F\u4E3A instanceId/frameId\uFF08\u5982 3001/host\uFF09\uFF1B\u4E5F\u53EF\u76F4\u63A5\u4F20 url \u6216\u9875\u9762\u6807\u9898\uFF1B\u547D\u4E2D\u591A\u4E2A\u65F6\u9700\u5177\u4F53 pageId \u6307\u5B9A\u3002",
-            "page_exec\uFF1A\u5728\u5DF2\u8FDE\u63A5\u9875\u9762\u6267\u884C\u7C7B CDP \u547D\u4EE4\uFF08DOM/CSS/Input/Page/Runtime/Storage/Performance/Browser \u57DF\uFF09\u3002args \u4E3A\u547D\u4EE4\u53C2\u6570\u5BF9\u8C61\u3002\u5371\u9669\u547D\u4EE4\uFF08\u5BFC\u822A/\u4E0B\u8F7D/\u5BF9\u8BDD\u6846\u7B49\uFF09\u4F1A\u81EA\u52A8\u5F39\u7528\u6237\u786E\u8BA4\u3002\u622A\u5C4F\uFF08Page.captureScreenshot\uFF09\u52A1\u5FC5\u5728 args \u5E26 reason\uFF08\u4E00\u53E5\u8BDD\u5411\u7528\u6237\u8BF4\u660E\u60F3\u622A\u4EC0\u4E48\uFF0C\u9875\u9762\u4F1A\u5148\u5F39\u51C6\u5907\u5361\u5C55\u793A\u8BE5\u8BF4\u660E\u3001\u7528\u6237\u8C03\u6574\u597D\u9875\u9762\u624D\u5F00\u59CB\u622A\u5C4F\uFF09\u3002",
-            "page_snapshot\uFF1A\u62C9\u53D6\u76EE\u6807\u9875\u9762\u57FA\u7840\u73B0\u573A\uFF08URL/\u9009\u533A/\u6A21\u62DF\u6761\u4EF6\uFF09\u3002",
-            "page_logs / page_network\uFF1A\u6392\u67E5\u9875\u9762\u62A5\u9519/\u8BF7\u6C42\u5931\u8D25\u9996\u9009\u2014\u2014page_logs \u67E5 console\uFF08\u53EF level/since/limit \u8FC7\u6EE4\uFF0C\u5148\u770B warn/error\uFF09\uFF1Bpage_network \u67E5 ajax/fetch \u5B8C\u6210\u6001\uFF08status\u2265400 \u6216 errorOnly:true \u53EA\u770B\u5931\u8D25\uFF09\u3002\u4E24\u8005\u5747\u8BFB\u9875\u9762\u672C\u5730\u7F13\u51B2\uFF08CDP Runtime.evaluate \u6309\u9700\u62C9\u53D6\uFF0C\u4E0D\u518D\u5B9E\u65F6\u4E0A\u62A5\uFF09\u3002",
-            "user_confirm / user_choose / user_input / user_pick_element / user_presence\uFF1AAI \u4E0E\u4EBA\u7C7B\u7528\u6237\u5728\u9875\u9762\u4E0A\u534F\u4F5C\u2014\u2014prompt \u7ED9\u7528\u6237\u770B\uFF0C\u9ED8\u8BA4\u540C\u6B65\u7B49\u5F85\u4E14\u6C38\u4E45\u7B49\u5F85\uFF08\u4E0D\u4F20 timeout\uFF1A\u9762\u677F\u5E38\u9A7B\u76F4\u5230\u7528\u6237\u4F5C\u7B54\uFF0C\u65E0\u8BFB\u79D2\uFF1B\u4EC5\u5728\u786E\u9700\u9650\u65F6\u50AC\u4FC3\u65F6\u4F20 timeout ms\uFF0C\u9762\u677F\u663E\u793A\u8BFB\u79D2\u5012\u8BA1\u65F6\u53EF\u6682\u505C\uFF0C\u5230\u70B9\u8FD4\u56DE status:'timeout'\uFF09\uFF0C\u54CD\u5E94\u4FE1\u5C01 {status:'answered'|'rejected'|'timeout'|'error', value?, reason?, tookMs, timeoutMs}\u3002\u4F20 async:true \u53EF\u7ACB\u5373\u8FD4\u56DE\uFF08\u7ED3\u679C\u7ECF AI \u6D88\u606F\u7A97\u9001\u8FBE\uFF09\u3002",
-            "user_notify\uFF1A\u975E\u963B\u585E\u6D4F\u89C8\u5668\u901A\u77E5\uFF0C\u4E0D\u7B49\u5F85\u56DE\u7B54\u3002",
-            "\u8BBE\u5907\u4E92\u8FDE\uFF1Abridge_status \u8FD4\u56DE devices\uFF08kind=page/agent/pair \u7EDF\u4E00\u8BBE\u5907\u89C6\u56FE\uFF09\u2014\u2014aiti_pair_send \u7ED9\u4EFB\u610F\u8BBE\u5907\u53D1\u6587\u672C\u3001aiti_pair_file \u63A8\u672C\u5730\u6587\u4EF6\u3001aiti_pair_fetch \u53D6\u56DE\u6536\u5230\u7684\u6587\u4EF6\uFF08fileId \u5728 aiti_inbox \u6D88\u606F payload.file\uFF09\uFF1B\u4EFB\u4F55\u6D4F\u89C8\u5668\u6253\u5F00 pi-web \u9875\u9762\u5373\u53EF\u5728\u8BBE\u5907\u4E92\u8FDE\u9762\u677F\u4E0A\u7EBF\u3002",
-            "\u5E38\u89C1\u7528\u6CD5\uFF1A\u9875\u9762\u62A5\u9519\u2192page_logs(level:warn/error) \u6216 page_network(errorOnly:true)\uFF1B\u64CD\u4F5C\u9875\u9762\u2192page_exec(cmd:'Runtime.evaluate', args:{expression:'...'})\uFF1B\u5B9A\u4F4D\u5143\u7D20\u2192page_snapshot \u540E\u518D page_exec \u6216\u8BF7\u7528\u6237 user_pick_element\u3002"
+            "aiti-devtools: in-page AI debug assistant (browser bridge).",
+            "Workflow: messages from pages usually carry a pageId. Without one, discover connected pages with bridge_status first (returns sessions with pageId/url/title/frameworks/device \u2014 the deviceLabel line's browser\xB7screen\xB7online\xB7language quickly tells which machine and which tab) \u2192 pass that pageId to the target tool.",
+            "pageId format is instanceId/frameId (e.g. 3001/host); url or page title also accepted; when several match, disambiguate with a concrete pageId.",
+            "page_exec: run a CDP-like command on a connected page (DOM/CSS/Input/Page/Runtime/Storage/Performance/Browser domains). args is the command params object. Dangerous commands (navigation/download/dialogs etc.) pop a user confirmation automatically. For screenshots (Page.captureScreenshot) always pass reason in args (one sentence telling the user what you want to capture \u2014 the page first pops a prep card with that note and capture starts only after the user adjusts the page).",
+            "page_snapshot: pull the target page's basic live state (URL / selection / emulation overrides).",
+            "page_logs / page_network: first choices for page-error / failed-request triage \u2014 page_logs reads the console (level/since/limit filters; start at warn/error); page_network reads ajax/fetch completions (status\u2265400 or errorOnly:true for failures only). Both read the page's local ring buffer (CDP Runtime.evaluate on demand; no longer reported live).",
+            "user_confirm / user_choose / user_input / user_pick_element / user_presence: collaborate with the human user on the page \u2014 prompt is shown to the user; by default synchronous and waiting forever (no timeout passed: the panel stays until the user answers, no countdown; only pass timeout ms when you truly need a timeboxed nudge \u2014 the panel then shows a pausable countdown and returns status:'timeout' on expiry), response envelope {status:'answered'|'rejected'|'timeout'|'error', value?, reason?, tookMs, timeoutMs}. Pass async:true to return immediately (the result arrives via the AI message window).",
+            "user_notify: non-blocking browser notification, does not wait for an answer.",
+            "Device interconnect: bridge_status returns devices (kind=page/agent/pair unified view) \u2014 aiti_pair_send texts any device, aiti_pair_file pushes local files, aiti_pair_fetch retrieves received files (fileId in an aiti_inbox message payload.file); opening the pi-web page in any browser brings it online in the device panel.",
+            "Common recipes: page error \u2192 page_logs(level:warn/error) or page_network(errorOnly:true); operate the page \u2192 page_exec(cmd:'Runtime.evaluate', args:{expression:'...'}); locate an element \u2192 page_snapshot then page_exec, or ask the user with user_pick_element."
           ].join("\n")
         };
       case "notifications/initialized":
@@ -2025,7 +2025,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
         const rid = params && params.requestId !== void 0 ? String(params.requestId) : "";
         if (rid) {
           const internalId = mcpReqMap.get(rid);
-          if (internalId) cancelPending(internalId, "\u5DF2\u53D6\u6D88\uFF08MCP notifications/cancelled\uFF09");
+          if (internalId) cancelPending(internalId, "cancelled (MCP notifications/cancelled)");
         }
         return null;
       }
@@ -2074,12 +2074,12 @@ ${String(pl.stack).slice(0, 400)}` : "");
           const sess = listSessions(boundPageId);
           const devices = listDevices();
           const resp = { sessions: sess, activePageId: boundPageId || null, devices };
-          recToolCall("\u{1F6E0} bridge_status \u2192 " + sess.length + " \u4E2A\u5DF2\u8FDE\u63A5\u9875\u9762 \xB7 " + devices.length + " \u53F0\u8BBE\u5907" + (boundPageId ? " \xB7 \u5F53\u524D\u7ED1\u5B9A: " + boundPageId : ""), true, resp);
+          recToolCall("\u{1F6E0} bridge_status \u2192 " + sess.length + " connected page(s) \xB7 " + devices.length + " device(s)" + (boundPageId ? " \xB7 bound: " + boundPageId : ""), true, resp);
           return { content: [{ type: "text", text: JSON.stringify(resp) }], isError: false };
         }
         if (params.name === "aiti_pair_send") {
           const text = String(a.text || "").slice(0, 64e3);
-          if (!text.trim()) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "bad request\uFF08\u9700\u8981 text\uFF09" }) }], isError: true };
+          if (!text.trim()) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "bad request (text required)" }) }], isError: true };
           const me = { id: recAgentKey || "agent", name: (recAgentKey && agents.get(recAgentKey) || {}).name || recAgentKey || "agent", kind: "agent" };
           if (!a.to || !String(a.to).trim()) {
             const cands = [
@@ -2087,26 +2087,26 @@ ${String(pl.stack).slice(0, 400)}` : "");
               ...listAgentSessions().filter((x) => x.agentKey !== recAgentKey).map((x) => ({ kind: "agent", id: x.agentKey, name: x.name })),
               ...pair.listPeers().map((pd) => ({ kind: "pair", id: pd.id, name: pd.name || pd.id }))
             ];
-            const resp = { ok: false, error: 'to \u672A\u6307\u5B9A\u2014\u2014\u4E0D\u518D\u9ED8\u8BA4\u7FA4\u53D1\uFF08\u5E7F\u64AD\u987B\u663E\u5F0F\u4F20 to:"all"\uFF09\uFF1B\u8BF7\u6309 bridge_status devices \u9009\u76EE\u6807 id/\u540D\u5B57\u91CD\u8C03', candidates: cands };
-            recToolCall('\u{1F6E0} aiti_pair_send \u2192 \u62D2\u7EDD\u7F3A\u7701\u7FA4\u53D1\uFF08\u5E7F\u64AD\u987B\u663E\u5F0F to:"all"\uFF09', false, resp);
+            const resp = { ok: false, error: 'to not specified \u2014 default broadcast is no longer allowed (broadcasting requires explicit to:"all"); pick a target id/name from bridge_status devices and retry', candidates: cands };
+            recToolCall('\u{1F6E0} aiti_pair_send \u2192 declined default broadcast (broadcasting requires explicit to:"all")', false, resp);
             return { content: [{ type: "text", text: JSON.stringify(resp) }], isError: true };
           }
           const r = routePairSend(me, String(a.to), { text });
-          recToolCall("\u{1F6E0} aiti_pair_send(" + a.to + ") \u2192 " + (r.ok ? "\u5DF2\u6295\u9012 " + (r.delivered || []).length + " \u7AEF" : r.error || "\u5931\u8D25"), !!r.ok, r);
+          recToolCall("\u{1F6E0} aiti_pair_send(" + a.to + ") \u2192 " + (r.ok ? "delivered to " + (r.delivered || []).length + " endpoint(s)" : r.error || "failed"), !!r.ok, r);
           return { content: [{ type: "text", text: JSON.stringify(r.ok ? { ok: true, delivered: r.delivered } : r) }], isError: !r.ok };
         }
         if (params.name === "aiti_pair_file") {
           const fp = String(a.path || "").trim();
           const to = String(a.to || "").trim();
-          if (!fp || !to) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "bad request\uFF08\u9700\u8981 to/path\uFF09" }) }], isError: true };
+          if (!fp || !to) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "bad request (to/path required)" }) }], isError: true };
           let st = null;
           try {
             st = statSync2(fp);
           } catch {
           }
           if (!st || !st.isFile()) {
-            recToolCall("\u{1F6E0} aiti_pair_file \u2192 \u6587\u4EF6\u4E0D\u5B58\u5728: " + fp, false);
-            return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "\u6587\u4EF6\u4E0D\u5B58\u5728: " + fp }) }], isError: true };
+            recToolCall("\u{1F6E0} aiti_pair_file \u2192 file not found: " + fp, false);
+            return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "file not found: " + fp }) }], isError: true };
           }
           const me = { id: recAgentKey || "agent", name: (recAgentKey && agents.get(recAgentKey) || {}).name || recAgentKey || "agent", kind: "agent" };
           const toId = to;
@@ -2136,12 +2136,12 @@ ${String(pl.stack).slice(0, 400)}` : "");
           }
           const meta = done.file;
           const r = routePairSend(me, to, { file: { ...meta, fromName: me.name } });
-          recToolCall("\u{1F6E0} aiti_pair_file(" + to + ") \u2192 " + meta.name + "\uFF08" + Math.round(st.size / 1024) + "KB\uFF09" + (r.ok ? " \u5DF2\u6295\u9012" : " \u6295\u9012\u5931\u8D25: " + (r.error || "")), !!r.ok, r);
+          recToolCall("\u{1F6E0} aiti_pair_file(" + to + ") \u2192 " + meta.name + " (" + Math.round(st.size / 1024) + "KB)" + (r.ok ? " delivered" : " delivery failed: " + (r.error || "")), !!r.ok, r);
           return { content: [{ type: "text", text: JSON.stringify(r.ok ? { ok: true, fileId: meta.fileId, name: meta.name, size: meta.size, delivered: r.delivered } : r) }], isError: !r.ok };
         }
         if (params.name === "aiti_pair_fetch") {
           const fileId = String(a.fileId || "").trim();
-          if (!fileId) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "bad request\uFF08\u9700\u8981 fileId\uFF09" }) }], isError: true };
+          if (!fileId) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "bad request (fileId required)" }) }], isError: true };
           const info = pair.getFileInfo(fileId);
           return pair.fetchToFile(fileId, a.savePath ? String(a.savePath) : null).then((r) => {
             recToolCall("\u{1F6E0} aiti_pair_fetch(" + fileId + (info ? " \xB7 " + info.name : "") + ") \u2192 " + (r.ok ? r.path : r.error), !!r.ok, r);
@@ -2162,7 +2162,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
             } catch {
             }
           }
-          recToolCall("\u{1F6E0} file_stat(" + (fp || "") + ") \u2192 " + (out.exists ? out.isFile ? "\u6587\u4EF6 " + out.size + "B" : "\u76EE\u5F55" : "\u4E0D\u5B58\u5728"), out.exists);
+          recToolCall("\u{1F6E0} file_stat(" + (fp || "") + ") \u2192 " + (out.exists ? out.isFile ? "file " + out.size + "B" : "directory" : "not found"), out.exists === true, out);
           return { content: [{ type: "text", text: JSON.stringify(out) }], isError: false };
         }
         if (params.name === "page_logs" || params.name === "page_network") {
@@ -2171,18 +2171,18 @@ ${String(pl.stack).slice(0, 400)}` : "");
           const target = pageId && String(pageId) || pickSelfPageId();
           const resolved = target ? resolvePageId(target) : { notFound: true };
           if (resolved.multiple) {
-            recToolCall("\u{1F6E0} " + params.name + " \u2192 \u26A0 \u9875\u9762\u5339\u914D\u591A\u4E2A", false);
-            return { content: [{ type: "text", text: "\u9875\u9762\u5339\u914D\u591A\u4E2A\uFF08\u6309 url/title\uFF09\uFF1A" + resolved.multiple.join(", ") + "\u2014\u2014\u8BF7\u7528\u5177\u4F53 pageId \u6307\u5B9A" }], isError: true };
+            recToolCall("\u{1F6E0} " + params.name + " \u2192 \u26A0 page matched multiple", false);
+            return { content: [{ type: "text", text: "page matched multiple (by url/title): " + resolved.multiple.join(", ") + " \u2014 specify a concrete pageId" }], isError: true };
           }
           if (resolved.notFound) {
-            recToolCall("\u{1F6E0} " + params.name + " \u2192 \u26A0 \u672A\u627E\u5230\u5339\u914D\u9875\u9762", false);
-            return { content: [{ type: "text", text: "\u672A\u627E\u5230\u5339\u914D\u9875\u9762\uFF08pageId/url/title \u5747\u672A\u547D\u4E2D\uFF09\u2014\u2014\u7528 bridge_status \u67E5\u770B\u53EF\u7528 pageId" }], isError: true };
+            recToolCall("\u{1F6E0} " + params.name + " \u2192 \u26A0 no matching page found", false);
+            return { content: [{ type: "text", text: "no matching page (pageId/url/title all missed) \u2014 use bridge_status to list available pageIds" }], isError: true };
           }
           const mcpReqId = req && req.id !== void 0 ? String(req.id) : null;
           const execSrc = { ...agentSrc(), targetDevice: deviceShort(resolved.pageId) };
           return execOnPage("Runtime.evaluate", { expression: ringExpr }, resolved.pageId, signal, mcpReqId, cancelId, execSrc).then((r) => {
-            const raw = r.ok && r.result && r.result.value !== void 0 ? r.result.value : [];
-            let rows = Array.isArray(raw) ? raw : [];
+            const raw2 = r.ok && r.result && r.result.value !== void 0 ? r.result.value : [];
+            let rows = Array.isArray(raw2) ? raw2 : [];
             if (isLog) {
               if (a.level) rows = rows.filter((l) => l.level === a.level);
               if (a.since) {
@@ -2196,8 +2196,8 @@ ${String(pl.stack).slice(0, 400)}` : "");
             }
             const limit = Math.min(parseInt(a.limit, 10) || (isLog ? 50 : 30), isLog ? 200 : 100);
             rows = rows.slice(-limit);
-            const out = isLog ? { logs: rows, bufferSize: Array.isArray(raw) ? raw.length : 0 } : { requests: rows, bufferSize: Array.isArray(raw) ? raw.length : 0 };
-            recToolCall("\u{1F6E0} " + params.name + "(" + resolved.pageId + ") \u2192 " + rows.length + " \u6761", true, out);
+            const out = isLog ? { logs: rows, bufferSize: Array.isArray(raw2) ? raw2.length : 0 } : { requests: rows, bufferSize: Array.isArray(raw2) ? raw2.length : 0 };
+            recToolCall("\u{1F6E0} " + params.name + "(" + resolved.pageId + ") \u2192 " + rows.length + " row(s)", true, out);
             return { content: [{ type: "text", text: JSON.stringify(out) }], isError: false };
           });
         }
@@ -2205,12 +2205,12 @@ ${String(pl.stack).slice(0, 400)}` : "");
           const target = pageId && String(pageId) || pickSelfPageId();
           const resolved = target ? resolvePageId(target) : { notFound: true };
           if (resolved.multiple) {
-            recToolCall("\u{1F6E0} " + params.name + " \u2192 \u26A0 \u9875\u9762\u5339\u914D\u591A\u4E2A\uFF1A" + resolved.multiple.join(", "), false);
-            return { content: [{ type: "text", text: "\u9875\u9762\u5339\u914D\u591A\u4E2A\uFF08\u6309 url/title\uFF09\uFF1A" + resolved.multiple.join(", ") + "\u2014\u2014\u8BF7\u7528\u5177\u4F53 pageId \u6307\u5B9A\uFF08bridge_status \u53EF\u67E5\uFF09" }], isError: true };
+            recToolCall("\u{1F6E0} " + params.name + " \u2192 \u26A0 page matched multiple\uFF1A" + resolved.multiple.join(", "), false);
+            return { content: [{ type: "text", text: "page matched multiple (by url/title): " + resolved.multiple.join(", ") + " \u2014 specify a concrete pageId (see bridge_status)" }], isError: true };
           }
           if (resolved.notFound) {
-            recToolCall("\u{1F6E0} " + params.name + (pageId ? "(" + pageId + ")" : "") + " \u2192 \u26A0 \u672A\u627E\u5230\u5339\u914D\u9875\u9762", false);
-            return { content: [{ type: "text", text: "\u672A\u627E\u5230\u5339\u914D\u9875\u9762\uFF08pageId/url/title \u5747\u672A\u547D\u4E2D\uFF09\u2014\u2014\u7528 bridge_status \u67E5\u770B\u53EF\u7528 pageId" }], isError: true };
+            recToolCall("\u{1F6E0} " + params.name + (pageId ? "(" + pageId + ")" : "") + " \u2192 \u26A0 no matching page found", false);
+            return { content: [{ type: "text", text: "no matching page (pageId/url/title all missed) \u2014 use bridge_status to list available pageIds" }], isError: true };
           }
           const mcpReqId = req && req.id !== void 0 ? String(req.id) : null;
           const runPageTool = params.name === "page_exec" ? execOnPage(cmd, cmdArgs, resolved.pageId, signal, mcpReqId, cancelId, { ...agentSrc(), targetDevice: deviceShort(resolved.pageId) }) : execOnPage("__snapshot__", {}, resolved.pageId, signal, mcpReqId, cancelId, { ...agentSrc(), targetDevice: deviceShort(resolved.pageId) }).then((r) => {
@@ -2230,7 +2230,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
             });
           });
           return runPageTool.then((r) => {
-            recToolCall("\u{1F6E0} " + params.name + "(" + resolved.pageId + ")" + (params.name === "page_exec" && cmd ? " \xB7 " + String(cmd).slice(0, 80) : "") + " \u2192 " + (r.ok ? "ok" : "\u5931\u8D25"), !!r.ok, { tool: params.name, request: params.name === "page_exec" ? { cmd, args: cmdArgs } : { pageId: resolved.pageId }, response: r.result || r, at: (/* @__PURE__ */ new Date()).toISOString() });
+            recToolCall("\u{1F6E0} " + params.name + "(" + resolved.pageId + ")" + (params.name === "page_exec" && cmd ? " \xB7 " + String(cmd).slice(0, 80) : "") + " \u2192 " + (r.ok ? "ok" : "failed"), !!r.ok, { tool: params.name, request: params.name === "page_exec" ? { cmd, args: cmdArgs } : { pageId: resolved.pageId }, response: r.result || r, at: (/* @__PURE__ */ new Date()).toISOString() });
             return { content: [{ type: "text", text: JSON.stringify(r.result || r) }], isError: !r.ok };
           });
         }
@@ -2238,13 +2238,13 @@ ${String(pl.stack).slice(0, 400)}` : "");
           const target = pageId && String(pageId) || pickSelfPageId();
           const resolved = target ? resolvePageId(target) : { notFound: true };
           if (!resolved.pageId) {
-            recToolCall("\u{1F6E0} self_ui \u2192 \u672A\u627E\u5230\u76EE\u6807\u9875\u9762\uFF08\u65E0 AI \u4E3B\u7A97\u53E3\u8FDE\u63A5\u6216 pageId \u672A\u547D\u4E2D\uFF09", false);
-            return { content: [{ type: "text", text: "\u672A\u627E\u5230\u76EE\u6807\u9875\u9762\u2014\u2014\u9700 AI \u4E3B\u7A97\u53E3\u5DF2\u8FDE\u63A5\uFF08bridge_status \u53EF\u89C1 xxx/ai\uFF09\uFF0C\u6216\u6307\u5B9A pageId" }], isError: true };
+            recToolCall("\u{1F6E0} self_ui \u2192 target page not found (no AI main window connected, or pageId did not match)", false);
+            return { content: [{ type: "text", text: "target page not found: no AI main window connected, or pageId did not match" }], isError: true };
           }
           const mcpReqId = req && req.id !== void 0 ? String(req.id) : null;
           return execOnPage("Runtime.evaluate", { expression: SELF_UI_SCAN }, resolved.pageId, signal, mcpReqId, cancelId, { ...agentSrc(), targetDevice: deviceShort(resolved.pageId) }).then((r) => {
             const val = r.ok && r.result && r.result.value !== void 0 ? r.result.value : r.result || r;
-            recToolCall("\u{1F6E0} self_ui(" + resolved.pageId + ") \u2192 " + (r.ok ? val && val.dialogs ? val.dialogs.length + " \u4E2A\u5F39\u7A97" : "\u65E0\u5F39\u7A97" : "\u5931\u8D25"), !!r.ok, { tool: "self_ui", pageId: resolved.pageId, response: val });
+            recToolCall("\u{1F6E0} self_ui(" + resolved.pageId + ") \u2192 " + (r.ok ? val && val.dialogs ? val.dialogs.length + " dialog(s)" : "no dialogs" : "failed"), !!r.ok, val);
             return { content: [{ type: "text", text: JSON.stringify(val) }], isError: !r.ok };
           });
         }
@@ -2252,15 +2252,15 @@ ${String(pl.stack).slice(0, 400)}` : "");
           const target = pageId && String(pageId) || pickSelfPageId();
           const resolved = target ? resolvePageId(target) : { notFound: true };
           if (!resolved.pageId) {
-            recToolCall("\u{1F6E0} form_fill \u2192 \u672A\u627E\u5230\u76EE\u6807\u9875\u9762", false);
-            return { content: [{ type: "text", text: "\u672A\u627E\u5230\u76EE\u6807\u9875\u9762\u2014\u2014\u9700 AI \u4E3B\u7A97\u53E3\u5DF2\u8FDE\u63A5\uFF0C\u6216\u6307\u5B9A pageId" }], isError: true };
+            recToolCall("\u{1F6E0} form_fill \u2192 target page not found", false);
+            return { content: [{ type: "text", text: "target page not found: no AI main window connected, or pageId did not match" }], isError: true };
           }
           const mcpReqId = req && req.id !== void 0 ? String(req.id) : null;
           const opts2 = { dialog: a.dialog || null, fields: a.fields || [], button: a.button || null };
           const expression = "(" + FORM_FILL_FN + ")(" + JSON.stringify(opts2) + ")";
           return execOnPage("Runtime.evaluate", { expression }, resolved.pageId, signal, mcpReqId, cancelId, { ...agentSrc(), targetDevice: deviceShort(resolved.pageId) }).then((r) => {
             const val = r.ok && r.result && r.result.value !== void 0 ? r.result.value : r.result || r;
-            recToolCall("\u{1F6E0} form_fill(" + resolved.pageId + ") \u2192 " + (r.ok ? val && val.foundDialog ? "\u586B " + val.filled + " \u5B57\u6BB5" + (val.clicked ? "\uFF0C\u70B9\u6309\u94AE" : "") : "\u672A\u627E\u5230\u5F39\u7A97" : "\u5931\u8D25"), !!r.ok, { tool: "form_fill", pageId: resolved.pageId, response: val });
+            recToolCall("\u{1F6E0} form_fill(" + resolved.pageId + ") \u2192 " + (r.ok ? val && val.foundDialog ? "filled " + val.filled + " field(s)" + (val.clicked ? ", clicked button" : "") : "no dialog found" : "failed"), !!r.ok, { tool: "form_fill", pageId: resolved.pageId, response: val });
             return { content: [{ type: "text", text: JSON.stringify(val) }], isError: !r.ok };
           });
         }
@@ -2268,51 +2268,51 @@ ${String(pl.stack).slice(0, 400)}` : "");
           const mcpReqId = req && req.id !== void 0 ? String(req.id) : null;
           const targetPageId = pageId || boundPageIdFor(session) || void 0;
           return interactOnPage({ ...interaction, ...agentSrc(), targetDevice: deviceShort(targetPageId) }, targetPageId, timeout, signal, mcpReqId, cancelId).then((r) => {
-            recToolCall("\u{1F6E0} " + interaction.kind + " \u2192 " + (r.ok ? "\u5DF2\u4F5C\u7B54" : r.result && r.result.status || "\u5931\u8D25/\u62D2\u7EDD"), !!r.ok);
+            recToolCall("\u{1F6E0} " + interaction.kind + " \u2192 " + (r.ok ? "answered" : r.result && r.result.status || "failed/declined"), !!r.ok);
             return { content: [{ type: "text", text: JSON.stringify(r.result || r) }], isError: !r.ok };
           });
         };
         if (params.name === "user_pick_element") {
-          return interact({ kind: "pick_element", prompt: String(a.prompt || "\u8BF7\u70B9\u51FB\u9875\u9762\u4E0A\u7684\u4E00\u4E2A\u5143\u7D20\uFF08AI \u9700\u8981\u4F60\u5E2E\u5FD9\u5B9A\u4F4D\uFF09"), rejectable: a.rejectable !== false, async: a.async === true }, a.timeout);
+          return interact({ kind: "pick_element", prompt: String(a.prompt || "Please click an element on the page (the AI needs your help locating it)"), rejectable: a.rejectable !== false, async: a.async === true }, a.timeout);
         }
         if (params.name === "user_confirm") {
-          return interact({ kind: "confirm", prompt: String(a.prompt || "\u8BF7\u786E\u8BA4"), rejectable: a.rejectable !== false, async: a.async === true }, a.timeout);
+          return interact({ kind: "confirm", prompt: String(a.prompt || "Please confirm"), rejectable: a.rejectable !== false, async: a.async === true }, a.timeout);
         }
         if (params.name === "user_choose") {
-          const choices = Array.isArray(a.choices) && a.choices.length ? a.choices.map(String).slice(0, 8) : ["\u9009\u9879 A", "\u9009\u9879 B"];
-          return interact({ kind: "choose", prompt: String(a.prompt || "\u8BF7\u9009\u62E9\u4E00\u9879"), choices, multiple: !!a.multiple, rejectable: a.rejectable !== false, async: a.async === true }, a.timeout);
+          const choices = Array.isArray(a.choices) && a.choices.length ? a.choices.map(String).slice(0, 8) : ["Option A", "Option B"];
+          return interact({ kind: "choose", prompt: String(a.prompt || "Please pick one"), choices, multiple: !!a.multiple, rejectable: a.rejectable !== false, async: a.async === true }, a.timeout);
         }
         if (params.name === "user_input") {
-          return interact({ kind: "input", prompt: String(a.prompt || "\u8BF7\u8F93\u5165"), defaultValue: String(a.defaultValue || ""), rejectable: a.rejectable !== false, async: a.async === true }, a.timeout);
+          return interact({ kind: "input", prompt: String(a.prompt || "Please type your answer"), defaultValue: String(a.defaultValue || ""), rejectable: a.rejectable !== false, async: a.async === true }, a.timeout);
         }
         if (params.name === "user_presence") {
-          return interact({ kind: "presence", prompt: String(a.prompt || "\u4F60\u5728\u5417\uFF1F\u9700\u8981\u4F60\u914D\u5408\u7EE7\u7EED\u5F00\u53D1"), rejectable: false, async: a.async === true }, a.timeout);
+          return interact({ kind: "presence", prompt: String(a.prompt || "Are you there? I need your help to continue"), rejectable: false, async: a.async === true }, a.timeout);
         }
         if (params.name === "user_notify") {
           const srcN = agentSrc();
-          const notif = { kind: "notify", title: String(a.title || "\u{1F916} AI \u6709\u4E00\u6761\u6D88\u606F"), body: String(a.body || a.prompt || ""), timeoutMs: clampTimeout(a.timeout), agentId: srcN.agentId, agentName: srcN.agentName, agentSessionUrl: srcN.agentSessionUrl, targetDevice: deviceShort(pageId || boundPageIdFor(session)) };
+          const notif = { kind: "notify", title: String(a.title || "\u{1F916} The AI has a message"), body: String(a.body || a.prompt || ""), timeoutMs: clampTimeout(a.timeout), pageId: raw, async: a.async === true, agentId: a.agentId || null, t0: Date.now() };
           const rid = "notify_" + Date.now();
           if (a.pageId) {
-            const raw = String(a.pageId);
+            const raw2 = String(a.pageId);
             let iid = "";
             let frameId = null;
             let fullPageId = "";
-            if (raw.indexOf("/") >= 0) {
-              const resolved = resolvePageId(raw);
+            if (raw2.indexOf("/") >= 0) {
+              const resolved = resolvePageId(raw2);
               if (resolved.multiple) {
-                recToolCall("\u{1F514} user_notify \u2192 \u26A0 \u9875\u9762\u5339\u914D\u591A\u4E2A", false);
-                return { content: [{ type: "text", text: "\u9875\u9762\u5339\u914D\u591A\u4E2A\uFF1A" + resolved.multiple.join(", ") + "\u2014\u2014\u8BF7\u7528\u5177\u4F53 pageId \u6307\u5B9A" }], isError: true };
+                recToolCall("\u{1F514} user_notify \u2192 \u26A0 page matched multiple", false);
+                return { content: [{ type: "text", text: "page matched multiple: " + resolved.multiple.join(", ") + " \u2014 specify a concrete pageId" }], isError: true };
               }
               if (resolved.notFound || !resolved.pageId) {
-                recToolCall("\u{1F514} user_notify(" + raw + ") \u2192 \u26A0 \u672A\u627E\u5230\u5339\u914D\u9875\u9762", false);
-                return { content: [{ type: "text", text: "\u672A\u627E\u5230\u5339\u914D\u9875\u9762\uFF08pageId/url/title \u5747\u672A\u547D\u4E2D\uFF09\u2014\u2014\u7528 bridge_status \u67E5\u770B\u53EF\u7528 pageId" }], isError: true };
+                recToolCall("\u{1F514} user_notify(" + raw2 + ") \u2192 \u26A0 no matching page found", false);
+                return { content: [{ type: "text", text: "no matching page (pageId/url/title all missed) \u2014 use bridge_status to list available pageIds" }], isError: true };
               }
               const pid = parsePageId(resolved.pageId);
               iid = pid.instanceId;
               frameId = pid.frameId;
               fullPageId = resolved.pageId;
             } else {
-              iid = raw;
+              iid = raw2;
             }
             let delivered = false;
             const tgt = fullPageId ? resolveAiTarget(fullPageId) : resolveAiTarget(iid + "/ai");
@@ -2337,8 +2337,8 @@ ${String(pl.stack).slice(0, 400)}` : "");
               if (pg2) delivered = !!pg2.writer.write({ type: "interaction", requestId: rid, interaction: notif, frameId, render: "notify-only" });
             }
             if (!delivered) {
-              recToolCall("\u{1F514} user_notify(" + iid + ") \u2192 \u26A0 \u76EE\u6807\u672A\u8FDE\u63A5", false);
-              return { content: [{ type: "text", text: "\u76EE\u6807\u9875\u9762\u672A\u8FDE\u63A5\uFF08instanceId \u672A\u547D\u4E2D\u6216\u5DF2\u6389\u7EBF\uFF09\u2014\u2014\u7528 bridge_status \u67E5\u770B\u53EF\u7528 pageId" }], isError: true };
+              recToolCall("\u{1F514} user_notify(" + iid + ") \u2192 \u26A0 target not connected", false);
+              return { content: [{ type: "text", text: "target page not connected (instanceId missed or offline) \u2014 use bridge_status to list available pageIds" }], isError: true };
             }
             recToolCall("\u{1F514} user_notify(" + iid + ") \u2192 " + String(notif.body).slice(0, 60), true);
             return { content: [{ type: "text", text: JSON.stringify({ status: "sent", notified: true, title: notif.title, pageId: fullPageId || iid }) }], isError: false };
@@ -2353,7 +2353,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
           const agentId = String(a.agentId || session && session.agentId || "pi");
           const sessionId = a.sessionId || session && session.id || null;
           const { a: agent, key } = ensureAgent(agentId, sessionId, session);
-          if (!agent) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "agent \u6CE8\u518C\u5931\u8D25" }) }], isError: true };
+          if (!agent) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "agent registration failed" }) }], isError: true };
           agent.registered = true;
           agent.name = a.name || agent.name;
           if (typeof a.cwd === "string" && a.cwd) agent.cwd = a.cwd;
@@ -2372,7 +2372,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
           const agentId = String(a.agentId || session && session.agentId || "pi");
           const sessionId = a.sessionId || session && session.id || (session && session.agentKey ? session.agentKey.split("/").slice(1).join("/") : null) || null;
           const { a: agent, key } = ensureAgent(agentId, sessionId, session);
-          if (!agent) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "unknown agent\uFF1A\u5148 aiti_hello \u6216\u5E26 agentId/sessionId" }) }], isError: true };
+          if (!agent) return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: "unknown agent: call aiti_hello first, or pass agentId/sessionId" }) }], isError: true };
           if (session && !session.agentKey) session.agentKey = key;
           if (Array.isArray(a.ack) || a.ack && typeof a.ack === "object") {
             const ackIds = Array.isArray(a.ack) ? a.ack.map(String) : (a.ack && a.ack.ids || []).map(String);
@@ -2389,7 +2389,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
               }
             }
             if (ackedAny) {
-              const text = summary || `\u2705 \u5DF2\u5904\u7406 ${ackIds.length} \u6761\u6D88\u606F\uFF08\u672A\u9644\u603B\u7ED3\u2014\u2014\u5EFA\u8BAE ack \u65F6\u5E26 summary\uFF09`;
+              const text = summary || `\u2705 handled ${ackIds.length} message(s) (no summary attached \u2014 passing a summary with ack is recommended)`;
               const rid = randomBytes2(4).toString("hex");
               const rec = { id: rid, kind: "agent_summary", from: "agent", agentKey: key, agentId, sessionId: agent.sessionId, text, ackedIds: ackIds, at: (/* @__PURE__ */ new Date()).toISOString(), status: "ok" };
               agent.outbox.push(rec);
@@ -2407,7 +2407,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
             out.push({ id: m.id, kind: m.kind, from: m.from, agentKey: key, agentId, sessionId: agent.sessionId, pageId: m.pageId || m.payload && m.payload.pageId || null, url: m.url || m.payload && m.payload.url || null, text: m.text ?? null, payload: m.payload || null, at: m.at, status: m.status });
           }
           for (const w of aiConns) w.write({ type: "event", from: "agent", event: "inbox_status", payload: { agentKey: key, queueSize: agent.outbox.filter((x) => x.status !== "consumed").length } });
-          const guide = agent.registered ? "" : " \u26A0 \u672A\u663E\u5F0F\u6CE8\u518C\uFF08\u968F\u673A session\uFF09\u2014\u2014\u5EFA\u8BAE\u8C03 aiti_hello \u4F20 agentId/sessionId \u6CE8\u518C\uFF0C\u6D88\u606F\u5C06\u7ED1\u5B9A\u5230\u8BE5\u4F1A\u8BDD";
+          const guide = agent.registered ? "" : " \u26A0 not explicitly registered (random session) \u2014 call aiti_hello with agentId/sessionId to register so messages can be routed to this session reliably";
           return { content: [{ type: "text", text: JSON.stringify({ agentKey: key, registered: agent.registered, messages: out, queueSize: agent.outbox.filter((x) => x.status !== "consumed").length, guide }) }], isError: false };
         }
         return { content: [{ type: "text", text: "unknown tool: " + params.name }], isError: true };
@@ -2472,7 +2472,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
   }
   function openFileInEditor(file, line) {
     return new Promise((resolve) => {
-      if (!file) return resolve({ ok: false, error: "\u7F3A\u5C11 file" });
+      if (!file) return resolve({ ok: false, error: "file param missing" });
       const platform = process.platform;
       const isWin = platform === "win32";
       const target = file + (line ? ":" + line : "");
@@ -2491,7 +2491,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
         child = spawn(exe, args, { detached: true, stdio: "ignore", windowsHide: true, env: { ...process.env, ...desktopEnv() }, ...isWin ? { shell: true } : {} });
       } else {
         if (!hasDesktopSession()) {
-          return resolve({ ok: false, error: "\u65E0\u684C\u9762\u4F1A\u8BDD\uFF08systemd/\u65E0\u5934\u670D\u52A1\uFF09\u2014\u2014\u540E\u7AEF\u6253\u5F00\u4E0D\u53EF\u7528\uFF1A\u8BF7\u7528\u300C\u524D\u7AEF\u6253\u5F00\u300D\uFF08pi-web \u6587\u4EF6\u6807\u7B7E\u9875\u5728\u7EBF\u67E5\u770B\uFF09\u6216\u8BBE\u7F6E AITI_OPEN_CMD \u6307\u5B9A\u6253\u5F00\u547D\u4EE4\uFF08\u5982 ssh \u56DE\u672C\u5730\u7F16\u8F91\u5668\uFF09" });
+          return resolve({ ok: false, error: "no desktop session (systemd/headless) \u2014 backend open unavailable: use the frontend-open path in the pi-web window" });
         }
         child = defaultOpen(file);
       }
@@ -2504,7 +2504,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       };
       child.on("error", () => {
         if (!hasDesktopSession()) {
-          return finish({ ok: false, error: "\u7F16\u8F91\u5668\u4E0E\u7CFB\u7EDF\u9ED8\u8BA4\u6253\u5F00\u5668\u5747\u4E0D\u53EF\u7528\uFF08\u65E0\u684C\u9762\u4F1A\u8BDD\uFF09\u2014\u2014\u8BF7\u914D\u7F6E AITI_OPEN_CMD \u6216\u4F7F\u7528\u524D\u7AEF\u6253\u5F00" });
+          return finish({ ok: false, error: "neither the editor nor the system default opener is available (no desktop session) \u2014 configure AITI_OPEN_CMD or use the frontend-open path" });
         }
         const c2 = defaultOpen(file);
         c2.on("error", (e2) => finish({ ok: false, error: String(e2 && e2.message || e2) }));
@@ -2677,7 +2677,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       const fromShown = fromName !== fromId ? fromName + "\uFF08" + fromId + "\uFF09" : fromId;
       const label = fromIsAgent ? "[\u53D1\u81EA session: " + fromShown + "]" : "[\u53D1\u81EA pair: " + fromName + "]";
       const pl = { source: "pair", sourceLabel: (fromIsAgent ? "Session \xB7 " : "Pair \xB7 ") + fromName, fromDevice: from };
-      const text = payload.file ? "\u{1F4CE} \u6536\u5230\u6587\u4EF6\uFF1A" + payload.file.name + "\uFF08" + Math.max(1, Math.round((payload.file.size || 0) / 1024)) + "KB\uFF09\u2014 \u8C03 aiti_pair_fetch {fileId:'" + payload.file.fileId + "'} \u53D6\u56DE\n" + label : String(payload.text || "") + "\n" + label;
+      const text = payload.file ? "\u{1F4CE} File received: " + payload.file.name + " (" + Math.max(1, Math.round((payload.file.size || 0) / 1024)) + "KB) \u2014 see the pair-inbox notes for how to fetch it" : String(payload.text || "") + "\n" + label;
       if (payload.file) pl.file = { fileId: payload.file.fileId, name: payload.file.name, size: payload.file.size, mime: payload.file.mime };
       const r = pushToAgents(target, text, payload.file ? "pair_file" : "user_message", pl);
       for (const d of r && r.delivered || []) delivered.push({ kind: "agent", id: d.agentKey, status: d.status });
@@ -2728,8 +2728,8 @@ ${String(pl.stack).slice(0, 400)}` : "");
       }
       return ok;
     };
-    const pushPageRaw = (raw) => {
-      const row = devRows.find((d) => d.id === raw);
+    const pushPageRaw = (raw2) => {
+      const row = devRows.find((d) => d.id === raw2);
       return row ? pushPageRow(row) : false;
     };
     const selfIid = pageInstanceFor(String(fromDev.id)) || (fromDev.id.indexOf("/") >= 0 ? fromDev.id.split("/")[0] : fromDev.id);
@@ -2789,13 +2789,13 @@ ${String(pl.stack).slice(0, 400)}` : "");
       pushPageRaw(devMatches[0].id);
       return { ok: delivered.length > 0, delivered };
     }
-    if (devMatches.length > 1) return { ok: false, candidates: devMatches.map((d) => ({ kind: "page", id: d.id, name: d.name })), error: "\u9875\u9762\u540D\u5339\u914D\u591A\u4E2A" };
+    if (devMatches.length > 1) return { ok: false, candidates: devMatches.map((d) => ({ kind: "page", id: d.id, name: d.name })), error: "page name matches multiple devices" };
     const agentRows = listAgentSessions().filter((a) => (a.name || "").includes(q) || a.agentKey.includes(q));
     if (agentRows.length === 1) {
       pushAgent(agentRows[0].agentKey);
       return { ok: delivered.length > 0, delivered };
     }
-    if (agentRows.length > 1) return { ok: false, candidates: agentRows.map((a) => ({ kind: "agent", id: a.agentKey, name: a.name })), error: "agent \u540D\u5339\u914D\u591A\u4E2A" };
+    if (agentRows.length > 1) return { ok: false, candidates: agentRows.map((a) => ({ kind: "agent", id: a.agentKey, name: a.name })), error: "agent name matches multiple sessions" };
     const pr = pair.resolvePeerFuzzy(q);
     if (pr && pr.hit) {
       const penv = env(payload.file ? "file" : "text", payload.file ? { file: payload.file } : { text: payload.text });
@@ -2805,8 +2805,8 @@ ${String(pl.stack).slice(0, 400)}` : "");
       }
       return { ok: delivered.length > 0, delivered };
     }
-    if (pr && pr.multiple) return { ok: false, candidates: pr.multiple, error: "pair \u8BBE\u5907\u540D\u5339\u914D\u591A\u4E2A" };
-    return { ok: false, error: "\u65E0\u5339\u914D\u8BBE\u5907\uFF08to \u652F\u6301\u8BBE\u5907 id/\u540D\u5B57\uFF1Bbridge_status \u6216 /bridge/pair/devices \u67E5\u770B\u5728\u7EBF\u8BBE\u5907\uFF09" };
+    if (pr && pr.multiple) return { ok: false, candidates: pr.multiple, error: "pair device name matches multiple devices" };
+    return { ok: false, error: "no matching device (to accepts a device id or name; use bridge_status or /bridge/pair/devices to list online devices)" };
   }
   async function handle(req, path, searchParams) {
     if (path[0] === "aiti") path = path.slice(1);
@@ -2823,13 +2823,13 @@ ${String(pl.stack).slice(0, 400)}` : "");
       const r = claimInstanceId(msg && msg.instanceId, msg && msg.secret, msg && msg.pageKey, msg && msg.hostUrl);
       const reused = !!(msg && msg.instanceId && r.instanceId === msg.instanceId && msg.secret);
       const portPref = portFromHostUrl(msg && msg.hostUrl);
-      console.log(TAG + " claim \u2192 instanceId=" + r.instanceId + (reused ? "\uFF08\u590D\u7528\uFF09" : "\uFF08\u65B0" + (portPref ? " \u7AEF\u53E3\u504F\u597D=" + portPref : "") + "\uFF09"));
+      console.log(TAG + " claim \u2192 instanceId=" + r.instanceId + (reused ? "(reused)" : "(new" + (portPref ? " port preference=" + portPref : "") + ")"));
       return json({ ok: true, instanceId: r.instanceId, secret: r.secret });
     }
     if (endpoint === "bridge" && sub === "sessions" && req.method === "GET") return json(listSessions());
     if (endpoint === "bridge" && sub === "ai" && path[2] === "page" && req.method === "POST") {
       const msg = await req.json().catch(() => null);
-      if (!msg || !msg.instanceId || !msg.pageId) return json({ ok: false, error: "\u7F3A\u5C11 instanceId/pageId" }, 400);
+      if (!msg || !msg.instanceId || !msg.pageId) return json({ ok: false, error: "instanceId/pageId missing" }, 400);
       let hit = null;
       for (const [w, rec] of aiPageReg) if (rec.instanceId === String(msg.instanceId)) {
         hit = w;
@@ -2843,12 +2843,12 @@ ${String(pl.stack).slice(0, 400)}` : "");
       const prev = aiPageReg.get(hit) || {};
       const fr = Array.isArray(msg.frames) ? msg.frames : prev.frames || null;
       aiPageReg.set(hit, { instanceId: String(msg.instanceId), pageId: String(msg.pageId), title: msg.title || prev.title || null, url: msg.url || prev.url || null, frames: fr, device: msg.device && typeof msg.device === "object" ? msg.device : prev.device || null, deviceLabel: msg.deviceLabel || prev.deviceLabel || null, lastSeen: Date.now() });
-      console.log(TAG + " AI \u5BBF\u4E3B\u9875\u6CE8\u518C\uFF1A" + msg.pageId + " \xB7 " + (msg.title || "") + (fr && fr.length ? " \xB7 frames=" + fr.length : "") + (msg.device ? " \xB7 " + (msg.deviceLabel || msg.device.browser) : ""));
+      console.log(TAG + " AI host page registered: " + msg.pageId + " \xB7 " + (msg.title || "") + (fr && fr.length ? " \xB7 frames=" + fr.length : "") + (msg.device ? " \xB7 " + (msg.deviceLabel || msg.device) : ""));
       return json({ ok: true, pageId: msg.pageId });
     }
     if (endpoint === "bridge" && sub === "self" && path[2] === "page" && req.method === "POST") {
       const msg = await req.json().catch(() => null);
-      if (!msg || !msg.instanceId) return json({ ok: false, error: "\u7F3A\u5C11 instanceId" }, 400);
+      if (!msg || !msg.instanceId) return json({ ok: false, error: "instanceId missing" }, 400);
       let hit = null;
       for (const [w, rec] of aiSelfReg) if (rec.instanceId === String(msg.instanceId)) {
         hit = w;
@@ -2858,18 +2858,18 @@ ${String(pl.stack).slice(0, 400)}` : "");
       const prev = aiSelfReg.get(hit) || {};
       aiSelfReg.set(hit, { instanceId: String(msg.instanceId), url: msg.url || prev.url || null, title: msg.title || prev.title || null, device: msg.device && typeof msg.device === "object" ? msg.device : prev.device || null, deviceLabel: msg.deviceLabel || prev.deviceLabel || null, lastSeen: Date.now() });
       bindAgentFromAiSelf(aiSelfReg.get(hit));
-      console.log(TAG + " AI \u4E3B\u7A97\u53E3 self \u6CE8\u518C\uFF1A" + msg.instanceId + "/ai \xB7 " + (msg.title || "") + (msg.device ? " \xB7 " + (msg.deviceLabel || msg.device.browser) : ""));
+      console.log(TAG + " AI main window self registered: " + msg.instanceId + "/ai \xB7 " + (msg.title || "") + (msg.device ? " \xB7 " + (msg.deviceLabel || msg.device) : ""));
       return json({ ok: true, pageId: String(msg.instanceId) + "/ai" });
     }
     if (endpoint === "bridge" && sub === "self" && path[2] === "active" && req.method === "POST") {
       const msg = await req.json().catch(() => null);
-      if (!msg || !msg.instanceId || !msg.sessionId) return json({ ok: false, error: "\u7F3A\u5C11 instanceId/sessionId" }, 400);
+      if (!msg || !msg.instanceId || !msg.sessionId) return json({ ok: false, error: "instanceId/sessionId missing" }, 400);
       bindAgentFromActive(String(msg.instanceId), String(msg.sessionId));
       return json({ ok: true, pageId: String(msg.instanceId) + "/ai" });
     }
     if (endpoint === "bridge" && sub === "ai" && path[2] === "frames" && req.method === "POST") {
       const msg = await req.json().catch(() => null);
-      if (!msg || !msg.pageId || !Array.isArray(msg.frames)) return json({ ok: false, error: "bad request\uFF08\u9700\u8981 pageId/frames\uFF09" }, 400);
+      if (!msg || !msg.pageId || !Array.isArray(msg.frames)) return json({ ok: false, error: "bad request (pageId/frames required)" }, 400);
       let hit = null;
       for (const [w, rec2] of aiPageReg) if (rec2.pageId === String(msg.pageId)) {
         hit = w;
@@ -2879,7 +2879,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       const rec = aiPageReg.get(hit);
       rec.frames = msg.frames;
       rec.lastSeen = Date.now();
-      console.log(TAG + " AI \u5BBF\u4E3B\u5E27\u6811\u66F4\u65B0\uFF1A" + msg.pageId + " frames=" + msg.frames.length);
+      console.log(TAG + " AI host frame tree updated: " + msg.pageId + " frames=" + msg.frames.length);
       return json({ ok: true, frames: msg.frames.length });
     }
     if (endpoint === "bridge" && sub === "register" && req.method === "POST") {
@@ -2907,7 +2907,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
     }
     if (endpoint === "bridge" && sub === "agent" && path[2] === "tools" && path[3] === "call" && req.method === "POST") {
       const msg = await req.json().catch(() => null);
-      if (!msg || !msg.tool) return json({ ok: false, error: "bad request\uFF08\u9700\u8981 tool\uFF09" }, 400);
+      if (!msg || !msg.tool) return json({ ok: false, error: "bad request (tool required)" }, 400);
       const agentId = msg.agentId ? String(msg.agentId) : "pi";
       const sessionId = msg.sessionId ? String(msg.sessionId) : null;
       const { a: ag, key } = ensureAgent(agentId, sessionId, null);
@@ -2926,7 +2926,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
     }
     if (endpoint === "bridge" && sub === "agent" && path[2] === "register" && req.method === "POST") {
       const msg = await req.json().catch(() => null);
-      if (!msg || !msg.agentId) return json({ ok: false, error: "bad request\uFF08\u9700\u8981 agentId\uFF09" }, 400);
+      if (!msg || !msg.agentId) return json({ ok: false, error: "bad request (agentId required)" }, 400);
       const { a: ag, key } = ensureAgent(String(msg.agentId), msg.sessionId ? String(msg.sessionId) : null, null);
       ag.registered = true;
       if (msg.name) ag.name = String(msg.name);
@@ -2951,12 +2951,12 @@ ${String(pl.stack).slice(0, 400)}` : "");
       });
       a.agentStream = writer;
       a.conn = (a.conn || 0) + 1;
-      console.log(TAG + " agent SSE \u5DF2\u5EFA\u7ACB\uFF1A" + resolvedKey + "\uFF08P3 \u63A8\u9001\u901A\u9053\uFF09");
+      console.log(TAG + " agent SSE established: " + resolvedKey + " (P3 push channel)");
       return response;
     }
     if (endpoint === "bridge" && sub === "agent" && path[2] === "answer" && req.method === "POST") {
       const msg = await req.json().catch(() => null);
-      if (!msg || !msg.agentKey || !msg.text) return json({ ok: false, error: "bad request\uFF08\u9700\u8981 agentKey/text\uFF09" }, 400);
+      if (!msg || !msg.agentKey || !msg.text) return json({ ok: false, error: "bad request (agentKey/text required)" }, 400);
       const parts = String(msg.agentKey).split("/");
       const { a, key: resolvedKey } = ensureAgent(parts[0], parts.slice(1).join("/") || null, null);
       for (const om of a.outbox) {
@@ -2970,7 +2970,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       const m = { id: randomBytes2(4).toString("hex"), kind: msg.kind || "agent_answer", from: "agent", agentId: parts[0], pageId: null, text: String(msg.text).slice(0, 4e3), payload: msg.payload || null, at: (/* @__PURE__ */ new Date()).toISOString(), status: "consumed" };
       appendMsgEvent(resolvedKey, { type: "message", id: m.id, parentId: null, timestamp: m.at, message: m });
       for (const w of aiConns) w.write({ type: "agent_answer", agentKey: resolvedKey, agentId: parts[0], text: m.text, at: m.at });
-      console.log(TAG + " agent \u56DE\u7B54 \u2192 " + resolvedKey + " \xB7 " + String(m.text).slice(0, 80) + "\uFF08\u5DF2\u6D88\u8D39\u5F85\u5904\u7406\u6D88\u606F " + a.outbox.filter((x) => x.status === "consumed").length + " \u6761\uFF09");
+      console.log(TAG + " agent answer \u2192 " + resolvedKey + " \xB7 " + String(m.text).slice(0, 80) + " (consumed pending messages: " + (a.outbox || []).length + ")");
       return json({ ok: true, message: m });
     }
     if (endpoint === "bridge" && sub === "agents" && req.method === "GET") return json({ ok: true, agents: listAgentSessions() });
@@ -3011,7 +3011,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
         aiPageReg.set(writer, { instanceId, pageId: null, title: null, url: null, frames: null, lastSeen: Date.now() });
         aiSelfReg.set(writer, { instanceId, url: searchParams.get("url") || null, title: searchParams.get("title") || null, frames: /* @__PURE__ */ new Set(["host"]), frameInfo: /* @__PURE__ */ new Map(), device: aiDev, deviceLabel: aiDev ? [aiDev.browser, aiDev.os].filter(Boolean).join(" \xB7 ") : null, lastSeen: Date.now() });
         bindAgentFromAiSelf(aiSelfReg.get(writer));
-        console.log(TAG + " AI \u63A7\u5236\u53F0\u5DF2\u8FDE\u63A5\uFF1AinstanceId=" + instanceId);
+        console.log(TAG + " AI console connected: instanceId=" + instanceId);
       } else {
         const existing = pages.get(instanceId);
         if (existing) {
@@ -3041,7 +3041,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
         });
         const rec = idRegistry.get(instanceId);
         if (rec) rec.lastSeen = Date.now();
-        console.log(TAG + " \u9875\u9762\u5DF2\u8FDE\u63A5\uFF1AinstanceId=" + instanceId + " frame=" + initialFrame);
+        console.log(TAG + " page connected: instanceId=" + instanceId + " frame=" + initialFrame);
       }
       writer.write({ type: "ready", bridge: "/api/extensions/aiti-devtools/mcp", instanceId, token: LEGACY_TOKEN, role });
       return response;
@@ -3084,7 +3084,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
         aiPageReg.set(writer, { instanceId, pageId: null, title: msg && msg.title || null, url: msg && msg.url || null, frames: null, lastSeen: Date.now() });
         aiSelfReg.set(writer, { instanceId, url: msg && msg.url || null, title: msg && msg.title || null, device: aiDev, deviceLabel: aiDev ? [aiDev.browser, aiDev.os].filter(Boolean).join(" \xB7 ") : null, lastSeen: Date.now() });
         bindAgentFromAiSelf(aiSelfReg.get(writer));
-        console.log(TAG + " AI \u63A7\u5236\u53F0\u5DF2\u8FDE\u63A5\uFF08\u603B\u7EBF\uFF09\uFF1AinstanceId=" + instanceId);
+        console.log(TAG + " AI console connected (bus): instanceId=" + instanceId);
       } else {
         const existing = pages.get(instanceId);
         if (existing) {
@@ -3111,7 +3111,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
         });
         const rec = idRegistry.get(instanceId);
         if (rec) rec.lastSeen = Date.now();
-        console.log(TAG + " \u9875\u9762\u5DF2\u8FDE\u63A5\uFF08\u603B\u7EBF\uFF09\uFF1AinstanceId=" + instanceId);
+        console.log(TAG + " page connected (bus): instanceId=" + instanceId);
       }
       writer.write({ type: "ready", bridge: "/api/extensions/aiti-devtools/mcp", instanceId, token: LEGACY_TOKEN, role, via: "bus" });
       return json({ ok: true, topic, via: "bus" });
@@ -3161,11 +3161,11 @@ ${String(pl.stack).slice(0, 400)}` : "");
           mkdirSync2(dir, { recursive: true });
           const file = join2(dir, (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-") + "-" + String(msg.requestId).replace(/[^\w-]/g, "").slice(0, 12) + "." + ext);
           writeFileSync(file, Buffer.from(r0.dataUrl.slice(r0.dataUrl.indexOf(",") + 1), "base64"));
-          msg.result = { file, width: r0.width, height: r0.height, format: r0.format, bytes: r0.bytes || 0, note: "\u622A\u5C4F\u5DF2\u5B58\u6587\u4EF6\uFF08dataUrl \u8FC7\u5927\u4E0D\u5185\u8054\uFF09\uFF1B\u524D\u7AEF\u6587\u4EF6\u6807\u7B7E\u9875\u53EF\u76F4\u63A5\u6253\u5F00\u67E5\u770B" };
-          console.log(TAG + " \u622A\u5C4F\u843D\u76D8\uFF1A" + file + "\uFF08" + Math.round((r0.bytes || 0) / 1024) + "KB\uFF09");
+          msg.result = { file, width: r0.width, height: r0.height, format: r0.format, bytes: r0.bytes || 0, note: "screenshot saved to file (dataUrl too large to inline); read it back via the file tools" };
+          console.log(TAG + " screenshot written: " + file + " (" + Math.round((r0.bytes || 0) / 1024) + "KB)");
         }
       } catch (e) {
-        console.warn(TAG + " \u622A\u5C4F\u843D\u76D8\u5931\u8D25\uFF08\u9000\u56DE\u5185\u8054\uFF09:", e.message);
+        console.warn(TAG + " screenshot write failed (falling back to inline):", e.message);
       }
       const r = pendingRequests.get(msg.requestId);
       if (r) {
@@ -3183,10 +3183,10 @@ ${String(pl.stack).slice(0, 400)}` : "");
           if (msg.result && typeof msg.result === "object" && !("pausedMs" in msg.result)) msg.result.pausedMs = ist.pausedMs;
         }
         r.resolve({ ok: msg.ok, result: msg.result });
-        console.log(TAG + " \u2190 \u7ED3\u679C\u56DE\u4F20 ok=" + msg.ok + (r.agentId ? " \u2192 agent=" + r.agentId : ""));
+        console.log(TAG + " \u2190 result posted back ok=" + msg.ok + (r.agentId ? " \u2192 agent=" + r.agentId : ""));
         if (r.agentId && msg.ok) deliverUserAnswer(r.agentId, msg.result);
       } else {
-        console.log(TAG + " \u26A0 \u7ED3\u679C\u56DE\u4F20\u4F46\u65E0 pending\uFF1A" + msg.requestId);
+        console.log(TAG + " \u26A0 result posted back but no pending request: " + msg.requestId);
         return new Response("ok", { headers: cors });
       }
       for (const w of aiConns) w.write({ type: "result", requestId: msg.requestId, ok: msg.ok, result: msg.result, pageId: msg.pageId });
@@ -3197,17 +3197,17 @@ ${String(pl.stack).slice(0, 400)}` : "");
       if (!msg) return json({ ok: false, error: "bad request" }, 400);
       const internalId = msg.requestId ? String(msg.requestId) : msg.cancelId ? cancelIdMap.get(String(msg.cancelId)) : null;
       if (!internalId) return json({ ok: false, error: "unknown request", cancelled: false });
-      return json({ ok: cancelPending(internalId, "\u5DF2\u53D6\u6D88\uFF08\u5BA2\u6237\u7AEF\u8BF7\u6C42\uFF09"), cancelled: true });
+      return json({ ok: cancelPending(internalId, "cancelled (client request)"), cancelled: true });
     }
     if (endpoint === "bridge" && sub === "push" && req.method === "POST") {
       const msg = await req.json().catch(() => null);
-      if (!msg || !msg.text) return json({ ok: false, error: "bad request\uFF08\u9700\u8981 text\uFF09" }, 400);
+      if (!msg || !msg.text) return json({ ok: false, error: "bad request (text required)" }, 400);
       return json(pushToAgents(msg.to, String(msg.text), msg.kind || "user_message", msg.payload || {}, msg.ref || null));
     }
     if (endpoint === "bridge" && sub === "picked" && req.method === "POST") {
       const msg = await req.json().catch(() => null);
       const list = msg && Array.isArray(msg.candidates) ? msg.candidates : null;
-      if (!list) return json({ ok: false, error: "bad request\uFF08\u9700\u8981 candidates \u6570\u7EC4\uFF09" }, 400);
+      if (!list) return json({ ok: false, error: "bad request (candidates array required)" }, 400);
       const key = String(msg && msg.to || "__all__");
       pickedReports.set(key, list.filter((c) => c && c.tag));
       persistPicked();
@@ -3220,7 +3220,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
     }
     if (endpoint === "bridge" && sub === "ai" && path[2] === "event" && req.method === "POST") {
       const msg = await req.json().catch(() => null);
-      if (!msg || !msg.event) return json({ ok: false, error: "bad request\uFF08\u9700\u8981 event\uFF09" }, 400);
+      if (!msg || !msg.event) return json({ ok: false, error: "bad request (event required)" }, 400);
       const ev = String(msg.event);
       if (ev === "aiti_consumed") {
         const tags = Array.isArray(msg.payload?.tags) ? msg.payload.tags.map(String) : null;
@@ -3270,10 +3270,10 @@ ${String(pl.stack).slice(0, 400)}` : "");
       const pageInfo = { pageId: msg.pageId || null, url: msg.payload && msg.payload.url || null };
       if (msg.type === "page_error") {
         pushEventToSubscribers("page_error", msg.payload || {}, pageInfo);
-        console.log(TAG + " page_error \u4E8B\u4EF6 \u2192 \u8BA2\u9605\u5206\u53D1\uFF08type=" + msg.type + " payload=" + JSON.stringify(msg.payload || {}).slice(0, 120) + "\uFF09");
+        console.log(TAG + " page_error event \u2192 subscribers: " + Object.keys(subsFor(instanceId)).length);
       }
       if (msg.type === "page_log" || msg.type === "page_network") {
-        return json({ ok: false, error: "page_log/page_network \u4E0D\u518D\u5B9E\u65F6\u4E0A\u62A5\uFF1B\u8BF7\u7528 page_logs/page_network \u5DE5\u5177\u6309\u9700\u62C9\u53D6" }, 410);
+        return json({ ok: false, error: "page_log/page_network are no longer reported live; use the page_logs/page_network tools to pull on demand" }, 410);
       }
       if (msg.type === "open_file") {
         const payload = msg.payload || {};
@@ -3314,7 +3314,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
             ag.conn = (ag.conn || 0) + 1;
           }
         }
-        console.log(TAG + " streamable GET \u6D41\u5DF2\u5EFA\u7ACB session=" + sid2.slice(0, 8) + " agent=" + (session2.agentId || "?"));
+        console.log(TAG + " streamable GET stream established session=" + sid2.slice(0, 8) + " agent=" + (session2.agentId || "?"));
         writer.write({ jsonrpc: "2.0", method: "notifications/initialized" });
         return response;
       }
@@ -3323,8 +3323,8 @@ ${String(pl.stack).slice(0, 400)}` : "");
       if (msg.id !== void 0 && !msg.method && pendingSampling.has(String(msg.id))) {
         const p = pendingSampling.get(String(msg.id));
         const ok = !(msg.error || msg.result && msg.result.isError);
-        p.done(ok, msg.error ? { error: String(msg.error.message || msg.error.code || "sampling \u62D2\u7EDD") } : msg.result || {});
-        console.log(TAG + " sampling \u54CD\u5E94\u56DE\u4F20 id=" + String(msg.id).slice(0, 12) + " agent=" + p.agentId + " ok=" + ok);
+        p.done(ok, msg.error ? { error: String(msg.error.message || msg.error.code || "sampling declined") } : msg.result || {});
+        console.log(TAG + " sampling response posted back id=" + String(msg.id).slice(0, 12) + " agent=" + p.agentId + " ok=" + ok);
         return new Response(null, { status: 202 });
       }
       const sid = req.headers.get("mcp-session-id") || req.headers.get("Mcp-Session-Id") || "";
@@ -3376,7 +3376,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       const sid = decodeURIComponent(m[1]);
       if (sid === agSid) {
         agent.boundPageId = String(rec.instanceId) + "/ai";
-        console.log(TAG + " agent \u6CE8\u518C\u65F6\u53CD\u5411\u7ED1\u5B9A AI \u4E3B\u7A97\u53E3\uFF1A" + agentKey2 + " \u2192 " + agent.boundPageId);
+        console.log(TAG + " agent registered with reverse-bound AI main window: " + agentKey2 + " \u2192 " + agent.boundPageId);
         break;
       }
     }
@@ -3682,13 +3682,13 @@ function connectBridge(bridge, opts = {}) {
 
 // src/endpoints.ts
 var MCP_PATH_SUFFIXES = ["/mcp/mcp", "/bridge", "/mcp"];
-function normalizeBridgeUrl(raw, prefix) {
+function normalizeBridgeUrl(raw2, prefix) {
   const notes = [];
   let u;
   try {
-    u = new URL(raw);
+    u = new URL(raw2);
   } catch {
-    return { origin: raw, notes: ["\u5730\u5740\u65E0\u6CD5\u89E3\u6790\uFF0C\u6309\u539F\u6837\u4F7F\u7528\uFF1A" + raw] };
+    return { origin: raw2, notes: ["address could not be parsed; using as-is: " + raw2] };
   }
   let path = u.pathname.replace(/\/+$/, "") || "/";
   let changed = true;
@@ -3696,24 +3696,24 @@ function normalizeBridgeUrl(raw, prefix) {
     changed = false;
     for (const suf of MCP_PATH_SUFFIXES) {
       if (path.endsWith(suf)) {
-        notes.push(`\u5265\u79BB\u8DEF\u5F84\u540E\u7F00 "${suf}"`);
+        notes.push(`stripped path suffix "${suf}"`);
         path = path.slice(0, -suf.length) || "/";
         changed = true;
         break;
       }
     }
     if (!changed && prefix && prefix !== "/" && path.endsWith(prefix)) {
-      notes.push(`\u5265\u79BB\u524D\u7F00 "${prefix}"`);
+      notes.push(`stripped prefix "${prefix}"`);
       path = path.slice(0, -prefix.length) || "/";
       changed = true;
     }
   }
-  if (path && path !== "/") notes.push(`\u5FFD\u7565\u591A\u4F59\u8DEF\u5F84 "${path}"\uFF08\u6309 origin ${u.origin} \u5904\u7406\uFF09`);
+  if (path && path !== "/") notes.push(`dropped extra path "${path}" (treated as origin ${u.origin})`);
   return { origin: u.origin, notes };
 }
-function hasBridgePathSignature(raw) {
+function hasBridgePathSignature(raw2) {
   try {
-    const p = new URL(raw).pathname;
+    const p = new URL(raw2).pathname;
     return /\/aiti(\/|$)/.test(p) || /\/bridge(\/|$)/.test(p) || /\/mcp(\/|$)/.test(p);
   } catch {
     return false;
@@ -3742,7 +3742,7 @@ function resolveEndpoints(input) {
     if (sameOrigin(origin, serverUrl)) kind = "same-origin";
     else {
       kind = "external-bridge";
-      if (!hasBridgePathSignature(input.bridgeUrl)) notes.push("\u8F93\u5165\u5730\u5740\u672A\u5E26\u6865\u8DEF\u5F84\u7279\u5F81\uFF08/aiti /bridge /mcp\uFF09\uFF0C\u6309\u6865\u5730\u5740\u5904\u7406\u2014\u2014\u82E5\u8FD9\u662F aiti-agent\uFF08AI \u7A97\uFF09\u5730\u5740\u8BF7\u6539\u7528 aiUrl \u53C2\u6570");
+      if (!hasBridgePathSignature(input.bridgeUrl)) notes.push("input address has no bridge path signature (/aiti /bridge /mcp); treating it as a bridge address \u2014 if it is an aiti-agent (AI window) address, switch to the aiUrl field instead");
     }
   }
   const bridgeBase = origin + prefix;
@@ -3831,7 +3831,7 @@ function readJson(path) {
       const clean = stripJsonComments(stripBom(readFileSync2(path, "utf8"))).replace(/,\s*([}\]])/g, "$1");
       return { cfg: JSON.parse(clean) };
     } catch (e) {
-      return { cfg: null, error: "JSON \u89E3\u6790\u5931\u8D25\uFF1A" + String(e?.message || e) };
+      return { cfg: null, error: "JSON parse failed: " + String(e?.message || e) };
     }
   }
 }
@@ -3882,10 +3882,10 @@ function resolveContainer(cfg, keyPath) {
   }
   return cur;
 }
-function normalizeMcpUrl(raw) {
-  if (typeof raw !== "string" || !raw.trim()) return null;
+function normalizeMcpUrl(raw2) {
+  if (typeof raw2 !== "string" || !raw2.trim()) return null;
   try {
-    const u = new URL(raw.trim());
+    const u = new URL(raw2.trim());
     const defaultPort = u.protocol === "http:" && u.port === "80" || u.protocol === "https:" && u.port === "443";
     const port = u.port && !defaultPort ? ":" + u.port : "";
     const path = u.pathname.replace(/\/+$/, "");
@@ -3931,14 +3931,14 @@ function auditMcpServers(files) {
   };
 }
 function patchFile(path, key, serverName, url, dryRun, log, keyPath, httpEntry) {
-  if (!existsSync3(path)) return { changed: false, error: "\u6587\u4EF6\u4E0D\u5B58\u5728" };
+  if (!existsSync3(path)) return { changed: false, error: "file not found" };
   const r = readJson(path);
-  if (r.error) return { changed: false, error: "JSON \u89E3\u6790\u5931\u8D25\uFF1A" + r.error };
+  if (r.error) return { changed: false, error: "JSON parse failed: " + r.error };
   let cfg = r.cfg;
-  if (!isPlainContainer(cfg)) return { changed: false, error: "\u914D\u7F6E\u4E0D\u662F\u5BF9\u8C61" };
+  if (!isPlainContainer(cfg)) return { changed: false, error: "config is not an object" };
   const map = keyPath ? resolveContainer(cfg, keyPath) : (() => {
     const det = detectStructureKey(cfg);
-    if (det.inferred) log(`  \u26A0 ${path}\uFF1A\u672A\u8BC6\u522B\u7ED3\u6784\uFF08\u65E0 mcpServers/servers/mcp \u5B57\u6BB5\uFF09\uFF0C\u6309 mcpServers \u5199\u5165`);
+    if (det.inferred) log(`  \u26A0 ${path}: unrecognized structure (no mcpServers/servers/mcp key); writing as mcpServers`);
     if (!isPlainContainer(cfg[det.key])) cfg[det.key] = {};
     return cfg[det.key];
   })();
@@ -3951,7 +3951,7 @@ function patchFile(path, key, serverName, url, dryRun, log, keyPath, httpEntry) 
       try {
         writeAtomic(path, cfg);
       } catch (e) {
-        return { changed: false, error: "\u5199\u5165\u5931\u8D25\uFF1A" + String(e?.message || e) };
+        return { changed: false, error: "write failed: " + String(e?.message || e) };
       }
     }
     return { changed: true };
@@ -3959,7 +3959,7 @@ function patchFile(path, key, serverName, url, dryRun, log, keyPath, httpEntry) 
   if (prevUrl === url) return { changed: false };
   const dupName = url === null ? null : findEquivalentEntry(map, serverName, url);
   if (dupName) {
-    log(`  \u23ED ${path}\uFF1A\u5DF2\u6709\u7B49\u6548\u6761\u76EE "${dupName}"\uFF08\u540C\u4E00\u7AEF\u70B9\uFF09\u2192 \u8DF3\u5199\uFF0C\u907F\u514D\u53CC\u8FDE\u63A5`);
+    log(`  \u23ED ${path}: equivalent entry "${dupName}" already exists (same endpoint) \u2192 skipping write to avoid a double connection`);
     return { changed: false, duplicateOf: dupName };
   }
   map[serverName] = { ...entry || {}, ...httpEntry ? httpEntry(url) : { type: "http", url } };
@@ -3967,7 +3967,7 @@ function patchFile(path, key, serverName, url, dryRun, log, keyPath, httpEntry) 
     try {
       writeAtomic(path, cfg);
     } catch (e) {
-      return { changed: false, error: "\u5199\u5165\u5931\u8D25\uFF1A" + String(e?.message || e) };
+      return { changed: false, error: "write failed: " + String(e?.message || e) };
     }
   }
   return { changed: true };
@@ -4116,10 +4116,10 @@ function registerAitiShim(opts) {
         cfg = {};
       } else {
         const r = readJson(w.path);
-        if (r.error) return { changed: false, error: "JSON \u89E3\u6790\u5931\u8D25\uFF1A" + r.error };
+        if (r.error) return { changed: false, error: "JSON parse failed: " + r.error };
         cfg = r.cfg;
       }
-      if (!isPlainContainer(cfg)) return { changed: false, error: "\u914D\u7F6E\u4E0D\u662F\u5BF9\u8C61" };
+      if (!isPlainContainer(cfg)) return { changed: false, error: "config is not an object" };
       const map = w.keyPath ? resolveContainer(cfg, w.keyPath) : (() => {
         const det = detectStructureKey(cfg);
         if (!isPlainContainer(cfg[det.key])) cfg[det.key] = {};
@@ -4147,7 +4147,7 @@ function registerAitiShim(opts) {
         try {
           writeAtomic(w.path, cfg);
         } catch (e) {
-          return { changed: false, error: "\u5199\u5165\u5931\u8D25\uFF1A" + String(e?.message || e) };
+          return { changed: false, error: "write failed: " + String(e?.message || e) };
         }
       }
       return { changed: true, note: hasLegacyField ? `\u8FC1\u79FB\uFF08\u9876\u5C42\u7248\u672C\u952E \u2192 ${envKey}.${SHIM_VERSION_ENV}\uFF09` : existing ? `\u5347\u7EA7 v${existingVer} \u2192 v${opts.version}` : "\u65B0\u5EFA" };

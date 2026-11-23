@@ -80,7 +80,7 @@ export function mapBridgeTools(bridgeTools: BridgeTool[], host: AgentHost, opts:
 /** 桥工具执行结果 → 宿主工具返回（content text + isError；供 pi 等多宿主直接用） */
 export function wrapToolResult(r: AgentCallResult): HostToolResult {
   if (!r.ok) {
-    return { content: [{ type: "text", text: r.error || "未知错误" }], details: {}, isError: true };
+    return { content: [{ type: "text", text: r.error || "unknown error" }], details: {}, isError: true };
   }
   return {
     content: [{ type: "text", text: r.result ?? "" }],

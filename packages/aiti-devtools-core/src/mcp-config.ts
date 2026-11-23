@@ -130,7 +130,7 @@ function readJson(path: string): { cfg: unknown; error?: string } {
       const clean = stripJsonComments(stripBom(readFileSync(path, "utf8"))).replace(/,\s*([}\]])/g, "$1");
       return { cfg: JSON.parse(clean) };
     } catch (e) {
-      return { cfg: null, error: "JSON 解析失败：" + String((e as Error)?.message || e) };
+      return { cfg: null, error: "JSON parse failed: " + String((e as Error)?.message || e) };
     }
   }
 }
@@ -259,16 +259,16 @@ function patchFile(
   keyPath?: string[],
   httpEntry?: (url: string) => Record<string, unknown>
 ): { changed: boolean; error?: string; duplicateOf?: string } {
-  if (!existsSync(path)) return { changed: false, error: "文件不存在" };
+  if (!existsSync(path)) return { changed: false, error: "file not found" };
   const r = readJson(path);
-  if (r.error) return { changed: false, error: "JSON 解析失败：" + r.error };
+  if (r.error) return { changed: false, error: "JSON parse failed: " + r.error };
   let cfg = r.cfg as Record<string, unknown> | null;
-  if (!isPlainContainer(cfg)) return { changed: false, error: "配置不是对象" };
+  if (!isPlainContainer(cfg)) return { changed: false, error: "config is not an object" };
   const map = keyPath
     ? resolveContainer(cfg, keyPath)
     : (() => {
         const det = detectStructureKey(cfg);
-        if (det.inferred) log(`  ⚠ ${path}：未识别结构（无 mcpServers/servers/mcp 字段），按 mcpServers 写入`);
+        if (det.inferred) log(`  ⚠ ${path}: unrecognized structure (no mcpServers/servers/mcp key); writing as mcpServers`);
         if (!isPlainContainer(cfg[det.key])) cfg[det.key] = {};
         return cfg[det.key] as Record<string, unknown>;
       })();
@@ -281,7 +281,7 @@ function patchFile(
       try {
         writeAtomic(path, cfg);
       } catch (e) {
-        return { changed: false, error: "写入失败：" + String((e as Error)?.message || e) };
+        return { changed: false, error: "write failed: " + String((e as Error)?.message || e) };
       }
     }
     return { changed: true };
@@ -292,7 +292,7 @@ function patchFile(
   // open two connections and expose the tools twice.
   const dupName = url === null ? null : findEquivalentEntry(map, serverName, url);
   if (dupName) {
-    log(`  ⏭ ${path}：已有等效条目 "${dupName}"（同一端点）→ 跳写，避免双连接`);
+    log(`  ⏭ ${path}: equivalent entry "${dupName}" already exists (same endpoint) → skipping write to avoid a double connection`);
     return { changed: false, duplicateOf: dupName };
   }
   map[serverName] = { ...(entry || {}), ...(httpEntry ? httpEntry(url) : { type: "http", url }) };
@@ -300,7 +300,7 @@ function patchFile(
     try {
       writeAtomic(path, cfg);
     } catch (e) {
-      return { changed: false, error: "写入失败：" + String((e as Error)?.message || e) };
+      return { changed: false, error: "write failed: " + String((e as Error)?.message || e) };
     }
   }
   return { changed: true };
@@ -317,13 +317,13 @@ function writeAtomic(path: string, cfg: unknown) {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(tmp, JSON.stringify(cfg, null, 2) + "\n"); // 先落 tmp：失败时原文件分毫未动
   if (existsSync(path)) {
-    try { renameSync(path, bak); } catch { /* 备份失败不阻断——原文件保持在位，换入照走 */ }
+    try { renameSync(path, bak); } catch { /* backup failure is non-blocking — original stays in place, swap-in proceeds */ }
   }
   try {
     renameSync(tmp, path);
   } catch (e) {
     if (existsSync(bak) && !existsSync(path)) {
-      try { renameSync(bak, path); } catch { /* 恢复尽力；.bak 仍在，数据没丢 */ }
+      try { renameSync(bak, path); } catch { /* best-effort restore; .bak remains, no data lost */ }
     }
     try { rmSync(tmp, { force: true }); } catch {}
     throw e;
@@ -499,10 +499,10 @@ export function registerAitiShim(opts: RegisterShimOptions): RegisterMcpResult {
       cfg = {};
     } else {
       const r = readJson(w.path);
-      if (r.error) return { changed: false, error: "JSON 解析失败：" + r.error };
+      if (r.error) return { changed: false, error: "JSON parse failed: " + r.error };
       cfg = r.cfg as Record<string, unknown> | null;
     }
-    if (!isPlainContainer(cfg)) return { changed: false, error: "配置不是对象" };
+    if (!isPlainContainer(cfg)) return { changed: false, error: "config is not an object" };
     const map = w.keyPath
       ? resolveContainer(cfg, w.keyPath)
       : (() => {
@@ -532,7 +532,7 @@ export function registerAitiShim(opts: RegisterShimOptions): RegisterMcpResult {
       try {
         writeAtomic(w.path, cfg);
       } catch (e) {
-        return { changed: false, error: "写入失败：" + String((e as Error)?.message || e) };
+        return { changed: false, error: "write failed: " + String((e as Error)?.message || e) };
       }
     }
     return { changed: true, note: hasLegacyField ? `迁移（顶层版本键 → ${envKey}.${SHIM_VERSION_ENV}）` : existing ? `升级 v${existingVer} → v${opts.version}` : "新建" };
