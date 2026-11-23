@@ -70,6 +70,7 @@ import { SidebarDock } from "./sidebar-dock";
 import { SidebarContentDock } from "./sidebar-content";
 import { NewSessionPicker, newSessionPrepare } from "./new-session-picker";
 import { NewSessionWorkspacePicker } from "./new-session-workspace-picker";
+import { TopbarNewSession } from "./topbar-new-session";
 import { useGate, usePresent, seedDockDefault } from "../../../_shared/ext-float-dock-lite";
 import { lazyExtView, createLazyModule } from "../../../_shared/ext-lazy";
 import { MenuActionRow } from "../../../_shared/menu-row";
@@ -497,6 +498,17 @@ export default function register(ctx: Record<string, unknown>) {
     // 全插槽唯一保留 render 的条目：真交互组件（输入框），⋯ 菜单内由宿主挂载（menu=true 窄版）。
     { id: "search", render: ToolbarSearch, meta: { label: "i18n:it.search.label", icon: "icons/search.svg", noMenuLabel: true }, feature: "toolbar.search" },
     { id: "kanban", meta: { label: t("sm.kanban"), icon: "icons/square-kanban.svg", onClick: () => kanbanOpen.onOpen() } },
+  ]);
+  // Small-screen leading top-bar action (host slot topbarMobileLeading, mobile-only, first
+  // slot after the sidebar toggle): on a phone the sidebars turn into drawers, so the drawer
+  // header's "+" is unreachable while the drawer is closed — this entry keeps the same action
+  // in the top bar. The host feeds data only (cwd, see lib/ext/types.ts
+  // TopbarMobileLeadingProps); the click goes through the host "pi-web.newSession" client
+  // service (setCwd, the same handleNewSession as the sidebar "+" and the workspace upload:
+  // draft parking, URL cleanup and closing the drawer stay in the host). Without a cwd
+  // (first run, no project yet) the component renders null.
+  ctx.registerItems?.("topbarMobileLeading", [
+    { id: "new-session", render: TopbarNewSession, meta: { label: "i18n:sm.newSession" } },
   ]);
   // aiti-float dock v3（P3 批）：三个面板接右栏停靠 face（主面板无 default；两个查看器默认右栏）
   seedDockDefault("session-manager:ext-viewer", "right-panel");

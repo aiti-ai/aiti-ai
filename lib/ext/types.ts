@@ -488,6 +488,10 @@ export type ExtSlotName =
   | "sidebar"
   | "sidebarFooter"  // Sidebar bottom quick-action row (models/skills/plugins on one line; the extension manager's entry point)
   | "sessionTopbar"
+  | "topbarMobileLeading" // Small screens only: leading top-bar actions, right after the sidebar toggle and before the
+                        //   sortable tool-button row (the row overflows into ⋯, so a by-width-measured slot there cannot
+                        //   guarantee an always-visible entry). Rendered only when the viewport is `isMobile`; desktop keeps
+                        //   the sidebar's own header buttons. extra: TopbarMobileLeadingProps (cwd only)
   | "sessionStatsInline" // Inline trailing indicators inside the session-info stats button (tail of the in/out/cache/cost/context row; e.g. the sysmon extension's CPU/memory chips)
   | "sessionRowActions"
   | "sessionRowLeading"
@@ -620,6 +624,13 @@ export type ExtSlotName =
 // and extensions add more via augmentation; both sides consume by structural contract
 // (extensions live out of repo — see the queue extension's client types).
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+/** topbarMobileLeading slot props (small-screen leading top-bar actions; e.g. session-manager's new-session button).
+ *  Data only (slot-extra red line): the extension acts through client services, not through extra callbacks. */
+export interface TopbarMobileLeadingProps {
+  /** The cwd a new session would start in (the selected session's, or the fresh composer's); null without a workspace. */
+  cwd: string | null;
+}
+
 /** newSessionContextTrailing slot props (trailing extension button(s) after the new-session Workspace×Backend boxes). */
 export interface NewSessionContextTrailingProps {
   /** The fresh composer's current target cwd (null when the bar has no cwd yet). */
@@ -913,6 +924,9 @@ export interface ExtSlotContractMap {
   queuePanel: { props: QueuePanelProps };
   /** Action area at the bottom of the CWD picker dropdown (session-manager: manage the workspace list). */
   workspacePickerActions: { props: WorkspacePickerActionsProps };
+  /** Small-screen leading top-bar action (session-manager: new session). The slot is mobile-gated by the host;
+   *  starting the session goes through the "pi-web.newSession" client service (setCwd). */
+  topbarMobileLeading: { props: TopbarMobileLeadingProps };
   /** Trailing extension button(s) after the new-session Workspace×Backend boxes (session-manager: upload-workspace shortcut).
    *  Moving the fresh composer after upload goes through the "pi-web.newSession" client service (setCwd). */
   newSessionContextTrailing: { props: NewSessionContextTrailingProps };

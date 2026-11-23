@@ -24,6 +24,9 @@ const workRoot = join(extRoot, "..");
 /** 宿主 ExtSlotName 联合镜像（pi-web lib/ext/types.ts；扩宿主插槽时同步此处）。 */
 const VALID_SLOTS = new Set([
   "toolbar", "sidebar", "sidebarFooter", "sessionTopbar", "sessionRowActions",
+  // topbarMobileLeading (2026-11-23): small-screen leading top-bar actions (host renders only when isMobile,
+  // right after the sidebar toggle); first user = session-manager's new-session button
+  "topbarMobileLeading",
   "sessionRowLeading", "sessionRowMeta", "sidebarProjects", "sidebarContent",
   "dialogs", "banners", "pages", "chatInputTop", "chatOverlay",
   // commands 目录槽：host registry.ts UI_SLOT_KEYS 已收录（ec06564a），消费方 = aiti-app-center /
