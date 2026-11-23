@@ -14,6 +14,10 @@
  *     返回动作列表 [{id, type, label, title, danger, onClick(text, element)}]。
  *     默认「复制」按钮内置，provider 添加额外动作（如收藏命令）。
  *
+ * Action icons (client side, see client/src/action-icons.js): provider actions may declare
+ *   icon: { svg: "<path …/>" } (inline markup) | "<semanticName>" | short text/emoji.
+ *   When absent, type acts as the semantic fallback ("command", "share", …).
+ *
  * 纯客户端扩展为主：file 存在性校验走 core /api/files（encodeFilePathForApi）；
  * 跨仓分辨（主 cwd 未命中时）经自身 server api 进程内消费 aiti-git-trace services.trace 出口。
  * features（recognizer.*）启停：extman 可见，前端 fetch /api/extensions/status 查询。

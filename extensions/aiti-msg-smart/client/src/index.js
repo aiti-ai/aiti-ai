@@ -10,10 +10,17 @@
  *     contract: registerTopicItem("msg-popover-top-action", { id, label, title?, onClick(text, cwd) })
  *   - provider 区：外部 msg-popover-action 主题 provider（aiti-cmd 命令识别等）
  *   - file section: external msg-file-action topic providers (e.g. aiti-msg-share)
- *     contract: registerTopicItem("msg-file-action", { id, label, title?, type?, order?, match(abs, isDir), onClick(abs, isDir) }) —
+ *     contract: registerTopicItem("msg-file-action", { id, label, title?, icon?, type?, order?, match(abs, isDir), onClick(abs, isDir) }) —
  *     the file card renders one button per matching item; providers own their gating.
  *     Row order: ascending `order` (built-ins: Open = 10, external default = 20, Reveal = 30 —
  *     see file-actions.js), so the default row reads Open → external (Share) → Reveal.
+ *   - icons: every action button renders one (see ./action-icons.js). Provider actions
+ *     resolve icon first, then type: icon {svg} inline markup | semantic name (copy/quote/
+ *     new-session/share/file/folder-open/reveal/command/url/bookmark/code) | short text/emoji;
+ *     type is the semantic fallback ("command" for aiti-cmd, "share" for msg-share).
+ *     "icons/x.svg" asset paths are not resolvable inside cards — they degrade to type.
+ *     Built-in buttons use fixed names: copy / quote / new-session / file (open) /
+ *     folder-open (directory) / reveal (locate) / url.
  *   - 复制全文：长段落附加动作
  * 异步（file 校验 / provider 识别）到达后重渲染同一卡片。
  * 「同一时刻只开一个」模块级 state（切段先关旧段、同段再点=关闭 toggle）。
@@ -23,6 +30,7 @@ import {
   extractUrls, mergeExternalRoots, candidatesFromRoots, selfNameCandidates,
 } from "./recognize.js";
 import { FILE_ACTION_ORDER, sortFileActions } from "./file-actions.js";
+import { ACTION_ICON_NODES, resolveActionIcon, actionIconReactAttrs } from "./action-icons.js";
 import { elToDom as miniToDom } from "./el-to-dom.js";
 import { openNewSession } from "../../../_shared/new-session-cwd";
 
@@ -53,30 +61,48 @@ function setRcx(info) {
   };
 }
 
-/** 动作类型 → lucide 线条图标（quote=问题回复 / file=文件 / command=命令；与系统内建同风格） */
-function typeIcon(type) {
-  const p = type === "quote" ? ["M7.9 20A9 9 0 1 0 4 16.1L2 22Z"]
-    : type === "file" ? ["M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z", "M14 2v4a2 2 0 0 0 2 2h4", "M10 9H8", "M16 13H8", "M16 17H8"]
-    : type === "command" ? ["M4 17l6-6-6-6", "M12 19h8"]
-    : type === "share" ? ["M18 8a3 3 0 1 0-3-3", "M6 15a3 3 0 1 0 3 3", "M18 16a3 3 0 1 0 3-3", "M8.6 13.5l6.8-4", "M8.6 10.5l6.8 4"]
-    : type === "url" ? ["M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71", "M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"] : null;
-  if (!p) return null;
-  const el = h("svg", { width: 12, height: 12, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true }, p.map((d, i) => h("path", { key: i, d })));
+// ── Action icons (data table: ./action-icons.js; one tree shared by the React and el-to-dom paths) ──
+// SVG root props shared by every icon (lucide line style, currentColor follows the
+// button text color: accent / muted / danger).
+const ICON_SVG_PROPS = {
+  viewBox: "0 0 24 24", fill: "none", stroke: "currentColor",
+  strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round",
+};
+
+function svgIconEl(children, size, inner) {
+  const props = {
+    width: size, height: size,
+    style: { flexShrink: 0 }, // text truncates first when the button hits maxWidth
+    "aria-hidden": "true",
+    ...ICON_SVG_PROPS,
+  };
+  if (inner) props.dangerouslySetInnerHTML = { __html: inner };
+  const el = h("svg", props, ...(inner ? [] : [children]));
   if (el._store) el._store.validated = 1;
   return el;
 }
 
-function FolderOpenIcon() {
-  // 打开状态文件夹（盖掀起），区别于 FolderIcon 的普通文件夹
-  return h("svg", { width: 12, height: 12, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2.2, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": "true" },
-    h("path", { d: "M6 14l1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5c0-1.1.9-2 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2" }));
-}
-function FolderIcon() {
-  return h("svg", { width: 12, height: 12, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2.2, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": "true" },
-    h("path", { d: "M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" }));
+/** Built-in semantic icon by table name ("copy" / "quote" / "reveal" / ...). */
+function iconEl(name, size = 13) {
+  const nodes = ACTION_ICON_NODES[name];
+  if (!nodes) return null;
+  return svgIconEl(nodes.map((n, i2) => h(n.tag, { key: i2, ...actionIconReactAttrs(n.attrs) })), size);
 }
 
-// 让 FolderOpenIcon 可用（h 在 register 内定义——延迟到模块加载后设置）
+/**
+ * Provider icon (external topic providers): item.icon first — {svg} inline markup /
+ * semantic table name / short text (emoji) — then item.type (with fallbackType for
+ * inline-code providers). Returns null when nothing applies; the button keeps its label.
+ */
+function providerIconEl(item, size = 13, fallbackType) {
+  const res = resolveActionIcon(item, fallbackType);
+  if (!res) return null;
+  if (res.kind === "name") return iconEl(res.value, size);
+  if (res.kind === "svg") return svgIconEl(null, size, res.value);
+  return h("span", { style: { flexShrink: 0, fontSize: size - 1, lineHeight: 1 }, "aria-hidden": "true" }, res.value);
+}
+
+// Icon helpers above only need h — defined once register() runs (module load order).
 let h = null;
 function setH(hh) { h = hh; }
 
@@ -415,15 +441,15 @@ export default function register(ctx) {
       h("button", {
         key: "copy-full", type: "button", title: view.isThought ? T.copyThought : view.isCode ? T.copyCode : view.isSelection ? T.copySelection : T.copyPara, style: abStyle,
         onClick: (e) => { e.stopPropagation(); try { navigator.clipboard.writeText(view.fullText); } catch (err) {} view.close(); },
-      }, T.copy),
+      }, iconEl("copy"), T.copy),
       h("button", {
         key: "quote-full", type: "button", title: view.isThought ? T.quoteThought : view.isCode ? T.quoteCode : view.isSelection ? T.quoteSelection : T.quotePara, style: abStyle,
         onClick: (e) => { e.stopPropagation(); view.onPick(formatQuote(view.fullText)); },
-      }, T.quote),
+      }, iconEl("quote"), T.quote),
       view.onNewSession && h("button", {
         key: "quote-new-session", type: "button", title: T.newSessionTip, style: abStyle,
         onClick: (e) => { e.stopPropagation(); view.onNewSession(formatQuote(view.fullText)); },
-      }, T.newSession),
+      }, iconEl("new-session"), T.newSession),
       // ── Top-row extension point: actions rendered right after new-session in the
       // first row (e.g. share). Contract: registerTopicItem("msg-popover-top-action",
       // { id, label, title?, onClick(text, cwd) }). Providers own their gating.
@@ -433,7 +459,7 @@ export default function register(ctx) {
           return items.map((a) => h("button", {
             key: "top-" + a.id, type: "button", title: a.title || a.label, style: abStyle,
             onClick: (e) => { e.stopPropagation(); a.onClick(view.fullText, info.cwd); view.close(); },
-          }, a.label));
+          }, providerIconEl(a), a.label));
         } catch { return []; }
       })(),
     ));
@@ -468,7 +494,7 @@ export default function register(ctx) {
                 key: "topic-" + (a.id || a.label), type: "button",
                 onClick: (e) => { e.stopPropagation(); a.onClick(abs, isDir); view.close(); },
                 title: a.title || a.label, style: abStyle,
-              }, a.type ? typeIcon(a.type) : null, `${a.label}: ${name}`),
+              }, providerIconEl(a), `${a.label}: ${name}`),
             });
           }
           if (!isDir) entries.push({
@@ -477,7 +503,7 @@ export default function register(ctx) {
               key: "open", type: "button",
               onClick: (e) => { e.stopPropagation(); ctx.openFile(abs, name); view.close(); },
               title: T.openFile, style: abStyle,
-            }, h(FolderOpenIcon), `${T.openFile}: ${name}`),
+            }, iconEl("file"), `${T.openFile}: ${name}`),
           });
           entries.push({
             order: FILE_ACTION_ORDER.reveal,
@@ -493,7 +519,7 @@ export default function register(ctx) {
                 view.close();
               },
               title: isDir ? T.openFolder : `${T.revealDir}: ${abs}`, style: abStyle,
-            }, h(FolderIcon), isDir
+            }, iconEl(isDir ? "folder-open" : "reveal"), isDir
               ? `${T.openFolder}: ${name}`
               : `${T.revealDir}: ${name}`),
           });
@@ -516,7 +542,7 @@ export default function register(ctx) {
             onMouseEnter: (e) => { if (view && view.element) highlightSegment(view, a.match || a.label); },
             onMouseLeave: () => { if (view) clearHighlight(view); },
             style: { ...abStyle, color: a.danger ? "var(--danger, #ef4444)" : a.unavailable ? "var(--text-muted)" : "var(--accent)", borderColor: a.danger ? "#fca5a5" : a.unavailable ? "var(--border)" : undefined, opacity: a.unavailable ? 0.75 : undefined },
-          }, typeIcon(a.type), a.unavailable ? " ❌" : null, a.danger ? " ⚠" : null, " " + a.label),
+          }, providerIconEl(a), a.unavailable ? " ❌" : null, a.danger ? " ⚠" : null, a.label),
         ),
       ));
     }
@@ -634,7 +660,8 @@ export default function register(ctx) {
           },
           onMouseEnter: onEnter,
           onMouseLeave: onLeave,
-        }, opt.label),
+          // Icon on the quote-line fallback only; answer options (yes/no/A/B) stay text-only.
+        }, ...(segment.options == null ? [iconEl("quote")] : []), opt.label),
       ),
     );
   }
@@ -654,7 +681,7 @@ export default function register(ctx) {
 
   // ── 迷你 React 元素 → DOM（委托场景无 react-dom：buildCardNode 产出的元素树
   //    （{type, props, children}）用 DOM API 重建挂到 body，复用整套卡片/浮层/高亮逻辑）
-  // Implementation lives in ./el-to-dom.js (function components such as FolderOpenIcon/SegmentRow
+  // Implementation lives in ./el-to-dom.js (function components such as SegmentRow
   // must be expanded there — passing one to createElement throws and blanks the card).
   const elToDom = (node) => miniToDom(node, rcx.doc || document);
 
@@ -1261,7 +1288,7 @@ export default function register(ctx) {
       },
       onMouseEnter: (e) => { e.currentTarget.style.color = "var(--accent)"; },
       onMouseLeave: (e) => { e.currentTarget.style.color = "var(--text-dim)"; },
-    }, h("span", { key: "icon", style: { display: "inline-flex" } }, typeIcon("quote")), " " + T.quote);
+    }, iconEl("quote"), T.quote);
   }
   try { ctx.registerItems("userMessageActions", [{ id: "aiti-msg-smart-quote", render: UserQuoteFull, meta: { label: "i18n:it.quote.label" } }]); } catch (e) {}
 
@@ -1370,7 +1397,7 @@ export default function register(ctx) {
           onClick: (e2) => { e2.stopPropagation(); try { navigator.clipboard.writeText(text); } catch (err) {} },
           title: T.copy,
           style: { ...abStyle, color: copied ? "var(--ok, #22c55e)" : "var(--accent)", background: "color-mix(in srgb, " + (copied ? "var(--ok, #22c55e)" : "var(--accent)") + " 10%, transparent)" },
-        }, copied ? T.copied : T.copy));
+        }, iconEl("copy"), copied ? T.copied : T.copy));
         // provider 动作
         for (const a of externalActions) {
           nodes.push(h("button", {
@@ -1378,7 +1405,7 @@ export default function register(ctx) {
             onClick: (e2) => { e2.stopPropagation(); a.onClick(text, el); closeLayer(); },
             title: a.title || "",
             style: { ...abStyle, color: a.danger ? "var(--danger, #ef4444)" : "var(--accent)", borderColor: a.danger ? "#fca5a5" : "var(--border)" },
-          }, typeIcon(a.type || "command"), a.label));
+          }, providerIconEl(a, 13, "command"), a.label));
         }
 
         const card = h("span", {
