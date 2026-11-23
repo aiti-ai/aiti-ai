@@ -1076,6 +1076,9 @@ export interface ExtUiDefinition {
   /** Sidebar bottom quick-action row (same row as the built-in models/skills/plugins). */
   sidebarFooter?: ExtUiItem[];
   sessionTopbar?: ExtUiItem[];
+  /** Small-screen leading top-bar action (host renders it only for isMobile, right after the
+   *  sidebar toggle; extra = TopbarMobileLeadingProps, data only). */
+  topbarMobileLeading?: ExtUiItem[];
   /** Inline trailing indicators inside the session-info stats button (tail of the tokens/cost/context row; e.g. the sysmon extension's CPU/memory chips).
    *  Contract: inline content only — no block elements or nested interactive elements (renders inside a <button>; clicks bubble and open the
    *  session panel, which is expected). extra = SessionStatsInlineSlotProps (pure render-state tier flags, extension decides whether to render).
