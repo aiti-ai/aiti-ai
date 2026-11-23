@@ -11,10 +11,18 @@ const path = require("path");
 
 const NPM_LATEST_URL = "https://registry.npmjs.org/@aiti-ai%2Fpi-web/latest";
 const FETCH_TIMEOUT_MS = 10_000;
-// npm ≥11.16 gates install scripts behind an allowScripts approval; without the
-// `--allow-scripts` flag, esbuild/node-pty platform binaries and pi-web's own
-// postinstall (patch-package) silently don't run. Older npm ignores the flag.
-const MANUAL_COMMAND = "npm install -g @aiti-ai/pi-web@latest --allow-scripts";
+// npm ≥11.16 gates install scripts behind an allowScripts approval; without an
+// explicit allowlist, esbuild/node-pty binaries and pi-web's own postinstall
+// (patch-package) silently don't run. Older npm ignores the flag.
+// `--allow-scripts` is a list-valued option: always use `=...` AFTER the
+// positional spec. A bare flag swallows the spec (npm installs the cwd instead)
+// or the next flag, producing obscure npm errors.
+const ALLOW_SCRIPTS = "@aiti-ai/pi-web,esbuild,node-pty,@google/genai,protobufjs,unrs-resolver";
+const MANUAL_COMMAND = `npm install -g @aiti-ai/pi-web@latest --allow-scripts=${ALLOW_SCRIPTS}`;
+
+function npmInstallArgs(spec) {
+  return ["install", "-g", spec, `--allow-scripts=${ALLOW_SCRIPTS}`];
+}
 const DEFAULT_RELEASE_REPO = "aiti-ai/aiti-ai";
 const DOWNLOAD_TIMEOUT_MS = 10 * 60_000; // universal archives are ~106-124 MB
 
@@ -109,7 +117,7 @@ function getGlobalNpmRoot() {
 }
 
 function runNpmInstall(version) {
-  const invocation = findNpmInvocation(["install", "-g", "--allow-scripts", `@aiti-ai/pi-web@${version}`]);
+  const invocation = findNpmInvocation(npmInstallArgs(`@aiti-ai/pi-web@${version}`));
   if (!invocation) return null;
   const result = spawnSync(invocation.command, invocation.args, { stdio: "inherit" });
   return result.status ?? 1;
@@ -469,12 +477,15 @@ async function runNpmUpdate({
 }
 
 module.exports = {
+  ALLOW_SCRIPTS,
+  MANUAL_COMMAND,
   archiveAssetName,
   findNpmInvocation,
   fetchLatestArchiveRelease,
   getInstallKind,
   isArchiveInstall,
   isNewerStableVersion,
+  npmInstallArgs,
   releasePlatform,
   runUpdate,
   sha256File,
