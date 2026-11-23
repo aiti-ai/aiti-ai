@@ -386,6 +386,17 @@ export function createAgentEventStream(
               cleanup(true);
               return;
             }
+            if (event.type === "session_backend_dead") {
+              // The handle behind this stream is gone (child crash, wrapper
+              // superseded, liveness probe on an old wrapper). Forward the frame,
+              // then end the response: the EventSource reconnects, the route
+              // re-resolves the session and binds the CURRENT handle. Without the
+              // close the page kept a healthy transport to a dead handle and
+              // missed every queue_update until a manual reload (2026-11-23).
+              encode(event);
+              cleanup(true);
+              return;
+            }
             if (!snapshotPublished) {
               bufferedEvents.push(event);
               return;

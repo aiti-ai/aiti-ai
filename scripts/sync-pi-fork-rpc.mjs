@@ -20,7 +20,9 @@ const consumers = [
   join(root, "extensions", "aiti-pi-agent", "fork-rpc"),
   join(root, "extensions", "aiti-omp-agent", "fork-rpc"),
 ];
-const FILES = ["spec.ts", "wire.ts", "cli-resolve.ts"];
+// remote-queue.ts is a copy too (added with the remote queueManage work); it was
+// missing here, so the three copies could silently drift apart.
+const FILES = ["spec.ts", "wire.ts", "cli-resolve.ts", "remote-queue.ts"];
 const checkOnly = process.argv.includes("--check");
 
 let dirty = false;

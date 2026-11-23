@@ -61,6 +61,7 @@ import { getRegistry as getExtRegistry } from "./ext/registry.ts";
 import type { AgentSessionInfo } from "./ext/types.ts";
 import { listProviders } from "./session/providers.ts";
 import { BridgeOccupiedError } from "./session/types.ts";
+import { getWrapperStarter } from "./agent-starter/index.ts";
 import { createHeadlessCustomUiTui, DEFAULT_CUSTOM_UI_COLUMNS, type HeadlessCustomUiTui } from "./custom-ui-terminal.ts";
 import { extensionUiTheme } from "./extension-ui-theme.ts";
 import {
@@ -4845,11 +4846,45 @@ export function getOfflineSessionStats(sessionId: string, sessionFile: string): 
  * thinking pin, and SDK scopedModels share one settings snapshot.
  * Pass options.toolNames to pre-configure active tools (empty = all disabled).
  */
-export async function startRpcSession(
+export function startRpcSession(
   sessionId: string,
   sessionFile: string,
   cwd: string | undefined,
   options: RpcSessionStartOptions = {},
+): Promise<{ session: AgentSessionWrapper; realSessionId: string }> {
+  // ── Reserve the in-flight lock before the first await ──
+  // The ownership probes in startReservedRpcSession() are asynchronous (a TUI bridge's
+  // ownsFile, a detached wrapper's registry lookup). A second caller arriving in that
+  // window used to see no in-flight lock and open the session again — two runtimes
+  // writing one session file (the blank-twin shape the detached-wrapper gate exists to
+  // prevent). The reservation is synchronous; startReservedRpcSession() releases it.
+  const registry = getRegistry();
+  const locks = getLocks();
+
+  const existing = registry.get(sessionId);
+  if (existing?.isAlive()) return Promise.resolve({ session: existing, realSessionId: sessionId });
+
+  const inflight = locks.get(sessionId);
+  if (inflight) return inflight;
+
+  const releaseLock = () => { if (locks.get(sessionId) === started) locks.delete(sessionId); };
+  // The outer finally covers the early returns inside startReservedRpcSession() (a wrapper
+  // that appeared while probing, a wrapper that owned the id all along): those never reach
+  // its startup finally, and a leaked lock would block every later caller of this session
+  // (setRpcSessionTools waits on it and re-enters on every turn).
+  const started: Promise<{ session: AgentSessionWrapper; realSessionId: string }> =
+    startReservedRpcSession(sessionId, sessionFile, cwd, options, releaseLock)
+      .finally(() => { releaseLock(); });
+  locks.set(sessionId, started);
+  return started;
+}
+
+async function startReservedRpcSession(
+  sessionId: string,
+  sessionFile: string,
+  cwd: string | undefined,
+  options: RpcSessionStartOptions,
+  releaseLock: () => void,
 ): Promise<{ session: AgentSessionWrapper; realSessionId: string }> {
   const { toolNames, initialModel, allowInitialModelFallback, thinkingLevel } = options;
   // Brand-new creation (empty sessionFile = the SessionManager.create branch)
@@ -4881,29 +4916,43 @@ export async function startRpcSession(
         console.error(`[rpc] ${p.type}.ownsFile failed:`, e instanceof Error ? e.message : e);
       }
     }
+    // A detached wrapper owns — or is still launching — this session: a local runtime
+    // here would be a SECOND writer. The ownsFile gate above cannot see it when the
+    // session file does not exist yet (brand-new session), which is exactly the
+    // 2026-11-23 blank-twin incident: the wrapper's pi created an empty session under
+    // the same id while the local runtime wrote the real one. The registry entry is
+    // the authority, and `holds()` also answers true for a launch in flight.
+    try {
+      const starter = await getWrapperStarter();
+      const entry = starter?.describe(sessionId);
+      if (starter && entry && (await starter.holds(sessionId))) {
+        throw new BridgeOccupiedError(
+          sessionFile || sessionId,
+          `agent-starter: session ${sessionId} is hosted by a detached wrapper (${entry.socket})`,
+        );
+      }
+    } catch (e) {
+      if (e instanceof BridgeOccupiedError) throw e;
+      // Probe failure must not block local opens (the wrapper family is an optimization).
+      console.error("[rpc] detached-wrapper check failed:", e instanceof Error ? e.message : e);
+    }
   }
 
   const requestedToolNames = options.toolNames === undefined
     ? undefined
     : validateSessionToolSelection(options.toolNames);
+  // The in-flight lock is already ours (startRpcSession reserved it), so only a wrapper
+  // that appeared during the probes above has to be honoured. A wrapper that started
+  // shutting down in that window still has to finish writing its file before a
+  // replacement opens the same path.
   const registry = getRegistry();
-  const locks = getLocks();
-
   const existing = registry.get(sessionId);
   if (existing?.isAlive()) return { session: existing, realSessionId: sessionId };
-
-  const inflight = locks.get(sessionId);
-  if (inflight) return inflight;
-
   const closingWait = closingRpcSessionWait(sessionId);
   if (closingWait) {
-    // Concurrent starts share this lock, then the one start that follows it.
-    const waiting: Promise<{ session: AgentSessionWrapper; realSessionId: string }> = closingWait.then(() => {
-      if (locks.get(sessionId) === waiting) locks.delete(sessionId);
-      return startRpcSession(sessionId, sessionFile, cwd, options);
-    });
-    locks.set(sessionId, waiting);
-    return waiting;
+    await closingWait;
+    const registeredWhileClosing = registry.get(sessionId);
+    if (registeredWhileClosing?.isAlive()) return { session: registeredWhileClosing, realSessionId: sessionId };
   }
 
   // ── Pre-broadcast running (old sessions light up "running" the moment
@@ -5408,7 +5457,7 @@ export async function startRpcSession(
     }
     return { session: wrapper, realSessionId };
   })().finally(() => {
-    locks.delete(sessionId);
+    releaseLock();
     forgetStartRegisteredId(sessionId);
     finishStartingSession();
     // Startup-outcome finalizing broadcast: on success the wrapper is
@@ -5419,7 +5468,6 @@ export async function startRpcSession(
     if (getStartingSessionIds().delete(sessionId)) notifyRunningChange();
   });
 
-  locks.set(sessionId, starting);
   return starting;
 }
 

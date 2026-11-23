@@ -20,6 +20,7 @@ import type { ContextUsage } from "@/lib/pi-types";
 import { formatExtensionStatusLine } from "./ExtensionStatusBar.tsx";
 import { AnsiText } from "./AnsiText.tsx";
 import { ImagePreview } from "./ImagePreview.tsx";
+import { ForkNewIcon } from "./SidebarIcons.tsx";
 import { ExtensionWidgets } from "./ExtensionWidgets.tsx";
 import { useChatHooks, ExtSlot, registerChatSend, useExtSlotItems, ExtItemBoundary, registerExtClientService } from "@/components/ExtSlots";
 import { hasExtRender } from "@/lib/ext-ui-store";
@@ -145,8 +146,10 @@ interface Props {
    *  ChatWindow wires only while the agent runs (for the hidden button) —
    *  onQueueFollowUp is always wired (the recovery path must enqueue while idle). */
   onQueueFollowUp?: (message: string, images?: AttachedImage[], files?: AttachedFile[]) => void;
-  /** Send a queued follow-up as a steer (interrupt now). Available even when idle. */
-  onQueueSteerSend?: (message: string, images?: AttachedImage[]) => void;
+  /** Send a queued follow-up as a steer (interrupt now). Available even when idle.
+   *  Resolves once the backend accepted the steer; the caller removes the entry
+   *  after that (a removal racing the send can clear the just-queued steer). */
+  onQueueSteerSend?: (message: string, images?: AttachedImage[]) => void | Promise<void>;
   /** Show the "Continue" button: appears when the AI is fully stopped (no streaming at all) and the input is empty. */
   canContinue?: boolean;
   /** Clicking "Continue": sends a "continue" message that makes the agent resume running. */
@@ -1351,21 +1354,6 @@ export function computeQueueSteerReadonly(caps: Record<string, boolean> | null |
  *  sessions pass no capabilities and keep the steer wording. */
 export function computeQueueOnlyBackend(caps: Record<string, boolean> | null | undefined): boolean {
   return caps != null && caps.steer !== true;
-}
-
-/** Fork-new-session icon (git-fork outline: three nodes converging) — shared by
- *  the desktop StreamingActionButton and the mobile MobileIconButton. Distinguish
- *  from "edit from here / branch": this one converges downward into a new node. */
-function ForkNewIcon({ size = 13 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="18" r="3" />
-      <circle cx="6" cy="6" r="3" />
-      <circle cx="18" cy="6" r="3" />
-      <path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9" />
-      <path d="M12 12v3" />
-    </svg>
-  );
 }
 
 /** Mobile matrix icon button: 32×32 hit area, no background, 120ms fade-in on
@@ -3375,8 +3363,12 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
           onAudioUnlock?.();
           recalledRef.current = null;
           setRecalledVisible(false);
-          onQueueSteerSend(fu);
-          void handleRemoveQueueItem("followUp", 0, { permanent: true });
+          // Take the entry out only after the steer was accepted: removal on the
+          // pi/omp backends is a clear + re-enqueue, so running it beside the send
+          // can clear the row the send just queued (the message vanishes, never
+          // steered). A rejected send keeps the row — nothing is lost.
+          const sent = onQueueSteerSend(fu);
+          void Promise.resolve(sent).then(() => handleRemoveQueueItem("followUp", 0, { permanent: true }));
         }
       }
       return;

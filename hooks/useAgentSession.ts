@@ -2870,6 +2870,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         break;
       }
       case "agent_start":
+        // An adopted/reconnected backend announces readiness with agent_start even though
+        // no turn is running (qoder ACP replay after a wrapper attach). Treating it as a
+        // real run start showed "Waiting for model…" for minutes with nothing running
+        // (observed 1m01s, 2026-11-23): keep the stream open but claim no run.
+        if ((event as { resumed?: unknown }).resumed === true) {
+          cancelEventStreamGrace();
+          break;
+        }
         markPromptLanded();
         cancelEventStreamGrace();
         sdkAgentActiveRef.current = true;
@@ -4767,6 +4775,16 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     // a follow-up explicitly instead of pretending to interrupt.
     const behavior: "steer" | "followUp" =
       behaviorWanted === "steer" && sessionCapabilities && !sessionCapabilities.steer ? "followUp" : behaviorWanted;
+    // A queued steer/follow-up only becomes visible as a queue row through this
+    // page's event stream: the backend emits queue_update, and a stream that was
+    // released while idle (hidden page / idle grace), starved by other SSE
+    // connections, or dropped without a reconnect yet would swallow it — the
+    // message waits in the backend queue with no row until a later resync.
+    // Open the stream first, as the plain prompt path does (b985a922e). Not
+    // awaited: an interrupt must not stall on the readiness handshake; the
+    // stream's `connected` handler re-reads the queue snapshot, so the row lands
+    // even when this prompt's own queue_update preceded the connection.
+    void ensureEventsConnected(sid).catch(() => { /* the send still queues */ });
     try {
       await sendAgentCommand(sid, {
         type: "prompt",
@@ -4795,7 +4813,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         addNotice({ type: "warning", message: t("chat.sendUnconfirmed") });
       }
     }
-  }, [addNotice, composerDraftKey, editEntryId, restoreSubmission, sessionCapabilities]);
+  }, [addNotice, composerDraftKey, editEntryId, ensureEventsConnected, restoreSubmission, sessionCapabilities]);
   const handleSteer = useCallback(async (message: string, images?: AttachedImage[]) => {
     await sendStreamingPrompt(message, "steer", images);
   }, [sendStreamingPrompt]);

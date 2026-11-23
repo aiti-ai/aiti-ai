@@ -409,6 +409,21 @@ test("streaming submissions cannot be stranded in an idle direct queue", () => {
   assert.doesNotMatch(queueSource, /type: "follow_up"/);
 });
 
+test("a steer/follow-up opens the event stream so its queue row is visible", () => {
+  // Regression (2026-11-23): the plain prompt path required SSE before sending
+  // (b985a922e), but the steer/follow-up path never did. A page whose stream was
+  // released while idle / starved / reconnecting queued the message invisibly:
+  // the backend's queue_update had no channel, and the row only appeared after a
+  // reload. Opening the stream is fire-and-forget so an interrupt is not stalled
+  // on the readiness handshake.
+  const queueSource = source.slice(
+    source.indexOf("  // Let AgentSession.prompt decide atomically"),
+    source.indexOf("  const handleAbortCompaction"),
+  );
+  assert.match(queueSource, /void ensureEventsConnected\(sid\)\.catch\(/);
+  assert.match(queueSource, /\[addNotice, composerDraftKey, editEntryId, ensureEventsConnected, restoreSubmission, sessionCapabilities\]/);
+});
+
 test("built-in clone switches to the independent child session", () => {
   const builtinSource = source.slice(
     source.indexOf("  const handleBuiltinSlashCommand"),
@@ -1256,4 +1271,37 @@ test("keeps the compaction control reachable while a turn is auto-compacting", (
   // 上游意图保留：auto-compaction 中点击走 onAbortCompaction（而非中止整个 prompt）
   assert.match(controlBlock, /if \(isCompacting\) onAbortCompaction\?\.\(\);/);
   assert.match(controlBlock, /cursor: "pointer"/);
+});
+
+test("a queued prompt ack drops the optimistic bubble (a plain prompt that raced a running agent)", () => {
+  // The subprocess backend answers { queued: true } when the message waited in pi's
+  // follow-up queue instead of starting a turn (#2026-11-23 race). Keeping the bubble
+  // for it printed the same text twice: the sent bubble plus the queue row pi created.
+  const sendSource = source.slice(
+    source.indexOf("  const handleSend = useCallback"),
+    source.indexOf("  const executeBash = useCallback"),
+  );
+  assert.equal(sendSource.match(/if \(queuedAck\?\.queued\) dropOptimisticUserMessage\(\);/g)?.length, 2);
+  const dropStart = sendSource.indexOf("const dropOptimisticUserMessage = () => {");
+  // Bound the slice by the next const after the helper (the better one, the
+  // compaction branch has its own earlier `piImages`).
+  const dropSource = sendSource.slice(dropStart, sendSource.indexOf("const piImages", dropStart));
+  // The dropped bubble leaves no ref behind: a later delivery of the same text must render.
+  assert.match(dropSource, /optimisticUserMessageKeyRef\.current = null;/);
+  assert.match(dropSource, /optimisticUserMessageRef\.current = null;/);
+  assert.match(dropSource, /optimisticBubblePendingRef\.current = false;/);
+});
+
+test("an adopted backend's readiness agent_start does not claim a run (no stuck 'Waiting for model')", async () => {
+  // qoder ACP adopt emits agent_start{resumed:true} when the wrapper replay ends. Treating it
+  // as a real run start set the phase to waiting_model with nothing running — the chip stayed
+  // for minutes (observed 1m01s, 2026-11-23). The handler must keep the stream and claim nothing.
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(new URL("./useAgentSession.ts", import.meta.url), "utf8");
+  const branch = source.slice(source.indexOf('case "agent_start":'), source.indexOf('case "model_select":'));
+  assert.match(branch, /resumed\?: unknown/);
+  assert.match(branch, /if \(\(event as \{ resumed\?: unknown \}\)\.resumed === true\) \{\n\s+cancelEventStreamGrace\(\);\n\s+break;\n\s+\}/);
+  const guardEnd = branch.indexOf("markPromptLanded();");
+  assert.ok(guardEnd > 0, "the guard must precede the run-start bookkeeping");
+  assert.ok(branch.indexOf("resumed") < guardEnd);
 });

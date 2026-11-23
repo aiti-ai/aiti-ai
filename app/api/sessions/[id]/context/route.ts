@@ -5,6 +5,7 @@ import { resolveAttachBySessionId, attachIfBridged, handleModelToClient, resolve
 import { buildExternalPagedContext } from "@/lib/external-session-paging";
 import { attachTranscriptNotices, readSessionTranscriptNotices } from "@/lib/transcript-notices-server";
 import type { SessionEntry } from "@/lib/types";
+import { waitSessionReady } from "@/lib/session/ready";
 
 type MsgHandle = { send(c: unknown): Promise<unknown>; getModel?(): { id: string; provider: string } | undefined };
 
@@ -12,9 +13,17 @@ type MsgHandle = { send(c: unknown): Promise<unknown>; getModel?(): { id: string
  *  tail/before cursors; semantics in lib/external-session-paging.ts. Previously these
  *  channels returned everything at once with hasMore always false -- upward paging for
  *  external sessions with thousands of entries was 404/unusable). */
-function externalContextOk(handle: MsgHandle, tail: number, before: string | null) {
+async function externalContextOk(handle: MsgHandle, tail: number, before: string | null) {
+  // A cold-opened backend handle answers get_messages before its bootstrap finishes:
+  // an adopted ACP session returns the wrapper-journal replay tail (often empty) while
+  // the persisted history is still being seeded — the page then renders an empty
+  // transcript and never re-reads (observed 2026-11-23, qoder: history showed, then
+  // vanished / stayed empty on reopen). Wait for the handle's readiness seam first
+  // (no-op for handles without one).
+  await waitSessionReady(handle);
   return handle.send({ type: "get_messages" }).catch(() => null)
     .then((r) => {
+      if (r === null) return null; // dead handle: let the caller fall back to the file
       const paged = buildExternalPagedContext(((r as { entries?: unknown[] } | null)?.entries ?? []) as unknown[], { tail, before });
       return NextResponse.json({
         context: {
@@ -64,13 +73,18 @@ export async function GET(
         try {
           bridgedEarly = await attachIfBridged(fpEarly);
         } catch (e) {
-          if ((e as { name?: string }).name === "BridgeOccupiedError") {
-            return NextResponse.json({ error: String(e), code: "session_bridged_unreachable" }, { status: 409 });
-          }
-          throw e;
+          if ((e as { name?: string }).name !== "BridgeOccupiedError") throw e;
+          // Another web instance drives this detached (single-client) wrapper. History on
+          // disk is safe to read; paging must keep working instead of a 409 console error.
+          console.warn(`[sessions/context] ${id}: ${(e as Error).message} — serving the disk view`);
+          bridgedEarly = undefined;
         }
         if (bridgedEarly?.isAlive()) {
-          return await externalContextOk(bridgedEarly, tail, before ?? null);
+          // A dead/empty handle must not shadow the file: fall through to the disk read
+          // (the handle's get_messages can fail right after an attach, e.g. when the
+          // wrapper reaped the agent — an empty transcript with real history on disk).
+          const handled = await externalContextOk(bridgedEarly, tail, before ?? null);
+          if (handled) return handled;
         }
       }
     }
@@ -86,7 +100,8 @@ export async function GET(
       attachHandle = await resolveAttachBySessionId(id);
     }
     if (attachHandle) {
-      return await externalContextOk(attachHandle, tail, before ?? null);
+      const handled = await externalContextOk(attachHandle, tail, before ?? null);
+      if (handled) return handled;
     }
 
     // External backend sessions (provider handles like zcode:... / composite-id cold
@@ -96,7 +111,8 @@ export async function GET(
       const wrapped = resolveAnySession(id)?.isAlive() ? resolveAnySession(id)
         : await resolveExternalCompositeSession(id).catch(() => undefined);
       if (wrapped?.isAlive()) {
-        return await externalContextOk(wrapped, tail, before ?? null);
+        const handled = await externalContextOk(wrapped, tail, before ?? null);
+        if (handled) return handled;
       }
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }

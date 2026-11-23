@@ -25,7 +25,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { agentSpawnEnv, spawnEnvFeature, spawnDisplayEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, spawnEnvList, spawnCommand, spawnArgsPrefix, parseArgsLines, resolveCliLaunch, captureSpawnEnvFeatures } from "@aiti-ai/ext-shared/agent-spawn-env";
+import { agentSpawnEnv, spawnEnvFeature, spawnDisplayEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, spawnEnvList, spawnCommand, spawnArgsPrefix, parseArgsLines, resolveCliLaunch, captureSpawnEnvFeatures, spawnFeatureI18nEn } from "@aiti-ai/ext-shared/agent-spawn-env";
 import type { LaunchOverride } from "@aiti-ai/ext-shared/agent-spawn-env";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -578,6 +578,38 @@ export interface AttachedChildOptions {
 /** Core signal: the wrapper's journal replay ended, live frames start here. */
 const REPLAY_END_EVENT = "replay_end";
 
+/** One entry of the persisted qoder history store (session-manager parse output). */
+type SeedHistoryMessage = { role?: unknown; text?: unknown; model?: unknown; provider?: unknown; tool?: unknown };
+
+/**
+ * IndexedMessage[] → liveHistory entries, without touching any handle state.
+ *
+ * Shared by seedHistory (append) and the adopt path (compare against a wrapper-journal
+ * replay and replace when the store is longer), so the two cannot drift in shape.
+ */
+function seedHistoryEntries(messages: SeedHistoryMessage[]): unknown[] {
+  const out: unknown[] = [];
+  const replay = createSeedToolReplay("qoder-tool");
+  for (const m of messages) {
+    const role = m.role === "assistant" ? "assistant" : "user";
+    const model = typeof m.model === "string" && m.model ? m.model : "";
+    const provider = typeof m.provider === "string" && m.provider ? m.provider : "aiti-qoder-agent";
+    const tool = role === "assistant" ? replay.entries(m.tool, { model, provider }) : null;
+    if (tool) {
+      out.push(...tool);
+      continue;
+    }
+    const text = typeof m.text === "string" ? m.text : "";
+    if (!text.trim()) continue;
+    out.push(
+      role === "assistant"
+        ? { role, content: [{ type: "text", text }], model, provider }
+        : { role, content: text },
+    );
+  }
+  return out;
+}
+
 export class QoderHandle {
   source: string;
   /** 能力表（ACP 驱动：steer 由 ACP 探针门控，未取证时运行中输入走本地队列）。 */
@@ -645,6 +677,26 @@ export class QoderHandle {
   /** initialize→session/new|load 完成前不受理 prompt：等待者挂 Promise（事件驱动，非轮询）。 */
   private sessionReady = false;
   private readyWaiters: Array<() => void> = [];
+  /** Hosting restart: replace partial live history with the previous handle's full copy. */
+  restoreHistory(messages: unknown[]): void {
+    if (!Array.isArray(messages) || messages.length <= this.liveHistory.length) return;
+    this.liveHistory = messages.slice();
+  }
+
+  /**
+   * Public readiness seam for hosting switches and read routes: resolves after
+   * session/new|load AND, for an adopted handle, after the persisted history seed.
+   *
+   * An adopt sets `sessionReady` immediately (the ACP session already exists), so the
+   * replay/history window used to be invisible to readers: the context route returned an
+   * empty transcript and the page never re-read (2026-11-23 qoder: messages appeared, then
+   * vanished / stayed empty on reopen).
+   */
+  async waitUntilReady(): Promise<void> {
+    await this.waitSessionReady();
+    if (this.historyReady) await this.historyReady;
+  }
+
   /** bootstrap 完成前挂起；markDead 时放行（后半段 aliveFlag 检查会 fail-loud）。 */
   private waitSessionReady(): Promise<void> {
     if (this.sessionReady) return Promise.resolve();
@@ -653,6 +705,9 @@ export class QoderHandle {
   }
   /** session/load 历史回放窗口：update 静默采集进 liveHistory，不发直播帧。 */
   private loading = false;
+  /** Replay + history seed of an adopted handle: watchers wait on it via waitUntilReady. */
+  private historyReady: Promise<void> | null = null;
+  private releaseHistoryReady: (() => void) | null = null;
   /** session/load 历史回放的 assistant 文本累积（回放完成时落一条 liveHistory）。 */
   private replayAssistant = "";
   /** session/new|load 响应的 ACP 目录快照（权限档 + 模型清单）。 */
@@ -1164,6 +1219,11 @@ export class QoderHandle {
     // spawn.command/launchOverride 只是外层 wrapper，换 wrapper 不该让探针结论失效。
     const handle = new QoderHandle(provisionalId, child, opts.client, cwd, opts.variant, cli);
     if (seedModel) handle.model = { id: seedModel, provider: "qoder" };
+    // Hosting switch restarts the process: if the CLI's session/load replay is
+    // empty, fall back to the source index so the reopened session is not blank.
+    if (Array.isArray(external?.messages) && external.messages.length > 0) {
+      handle.sourceHistory = external.messages as typeof handle.sourceHistory;
+    }
     // 接管既有会话：历史由 session/load 的 CLI 回放填充（比宿主索引 seedHistory 更权威——
     // 宿主侧历史是 CLI 会话的投影，双喂会重复）。metaCwd 已保证 load 在原项目目录里进行。
     // 启动即写状态文件（pi 目录快照 + selected），引导外部 agent
@@ -1204,25 +1264,58 @@ export class QoderHandle {
     // The ACP session already exists in the live process: no handshake to replay.
     handle.sessionReady = true;
     handle.loading = true; // replay = history, not live streaming
-    const endReplay = () => {
+    // Readers (context/state/hosting) wait for this, not just sessionReady: the replay tail
+    // and the history seed are what make the transcript complete.
+    handle.historyReady = new Promise<void>((resolve) => { handle.releaseHistoryReady = resolve; });
+    let replayEnded = false;
+    const endReplay = async () => {
+      if (replayEnded) return;
+      replayEnded = true;
       handle.loading = false;
       handle.flushStreamMessages();
       handle.flushReplayAssistant();
+      // The wrapper journal replays a bounded tail of the PREVIOUS client's live frames.
+      // After an adopt that tail is often shorter than the authoritative history store
+      // (observed 2026-11-23: replay landed 1 frame while the store held the whole
+      // conversation), and the old "seed only when the replay is empty" guard left the
+      // page with an empty/partial transcript — history visibly disappeared after a
+      // reconnect. Compare the two and let the longer one win: seed appends (empty
+      // replay), restoreHistory replaces (store longer; it only ever grows).
+      // AWAIT the seed: readiness (waitUntilReady / the context read's waitSessionReady) must
+      // not resolve before the transcript exists, or the page projects an empty history and
+      // never re-reads. The parse is local (ms) and failure is harmless.
+      try {
+        const external = await parseExternalSession(`${agentKey}:${nativeSessionId}`);
+        const stored = Array.isArray(external?.messages) ? external.messages.length : 0;
+        if (stored > 0) {
+          const messages = external!.messages as SeedHistoryMessage[];
+          if (handle.liveHistory.length === 0) handle.seedHistory(messages);
+          else {
+            const mapped = seedHistoryEntries(messages);
+            if (mapped.length > handle.liveHistory.length) handle.restoreHistory(mapped);
+          }
+        }
+      } catch { /* unreadable store: the replay tail is all we have */ }
+      handle.releaseHistoryReady?.();
+      handle.releaseHistoryReady = null;
       for (const w of handle.readyWaiters.splice(0)) w();
-      handle.emit({ type: "agent_start", sessionId: handle.id, model: handle.model });
+      // `resumed`: readiness announcement after an adopt, NOT a run start. A live run start
+      // carries the plain shape; the frontend must not show "Waiting for model…" for this
+      // one (an adopted idle backend otherwise looked like a run that never produced output).
+      handle.emit({ type: "agent_start", sessionId: handle.id, model: handle.model, resumed: true });
     };
     const facade = child as unknown as { detachable?: unknown; on?: (event: string, listener: () => void) => unknown };
     if (facade.detachable === true && typeof facade.on === "function") {
       // Wrapper child: history arrives first, then the boundary.
-      facade.on(REPLAY_END_EVENT, endReplay);
+      facade.on(REPLAY_END_EVENT, () => { void endReplay(); });
       // Older hosts predate the boundary event: the replay is one batch written
       // before any live traffic, so a short fallback keeps the session usable
       // (otherwise `loading` would swallow every update forever).
       setTimeout(() => {
-        if (handle.loading) endReplay();
+        if (handle.loading) void endReplay();
       }, 3000).unref?.();
     } else {
-      endReplay(); // plain child: no journal, live from the start
+      void endReplay(); // plain child: no journal, live from the start
     }
     return handle;
   }
@@ -1254,13 +1347,31 @@ export class QoderHandle {
       if (opts.sessionId) {
         // 接管：session/load（cwd 已按原会话归属解析——CLI 只在原项目目录里找历史）
         this.loading = true;
-        const res = await this.acp.request(
-          "session/load", { sessionId: opts.sessionId, cwd: this.cwd || undefined, mcpServers: [] }, 150_000,
-        ) as Record<string, unknown> | null;
+        let res: Record<string, unknown> | null = null;
+        // A hosting switch stops the previous qoder process right before this
+        // one starts; the CLI briefly reports "The operation was aborted" while
+        // releasing that session. One short retry avoids leaving the reopened
+        // session dead on the first attempt (observed 2026-11-23).
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            res = await this.acp.request(
+              "session/load", { sessionId: opts.sessionId, cwd: this.cwd || undefined, mcpServers: [] }, 150_000,
+            ) as Record<string, unknown> | null;
+            break;
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (attempt === 0 && /aborted|locked|busy|conflict/i.test(message)) {
+              await new Promise((resolve) => setTimeout(resolve, 1500));
+              continue;
+            }
+            throw error;
+          }
+        }
         this.applyAcpSessionMeta(res);
         this.loading = false;
         this.flushStreamMessages();
         this.flushReplayAssistant();
+        this.seedSourceHistoryIfEmpty();
       } else {
         const res = await this.acp.request(
           "session/new", { cwd: this.cwd || undefined, mcpServers: [] }, 60_000,
@@ -1302,6 +1413,14 @@ export class QoderHandle {
     } catch (e) {
       this.markDead(`acp bootstrap failed: ${e instanceof Error ? e.message : String(e)}`);
     }
+  }
+
+  /** Seed the source index when the CLI did not replay any history. */
+  private seedSourceHistoryIfEmpty(): void {
+    const source = this.sourceHistory;
+    this.sourceHistory = null;
+    if (!source?.length || this.liveHistory.length > 0) return;
+    this.seedHistory(source);
   }
 
   /** session/new|load 响应的目录快照（权限档清单 + 模型清单）。 */
@@ -1650,25 +1769,8 @@ export class QoderHandle {
    * ToolCallBlock 渲成 pi 自家工具卡片）；🛠 {json} 文本行只作结构化缺席时的兜底
    * （交棒上下文语义：老索引/未知格式不丢内容）。
    */
-  seedHistory(messages: Array<{ role?: unknown; text?: unknown; model?: unknown; provider?: unknown; tool?: unknown }>): void {
-    const replay = createSeedToolReplay("qoder-tool");
-    for (const m of messages) {
-      const role = m.role === "assistant" ? "assistant" : "user";
-      const model = typeof m.model === "string" && m.model ? m.model : "";
-      const provider = typeof m.provider === "string" && m.provider ? m.provider : "aiti-qoder-agent";
-      const tool = role === "assistant" ? replay.entries(m.tool, { model, provider }) : null;
-      if (tool) {
-        this.liveHistory.push(...tool);
-        continue;
-      }
-      const text = typeof m.text === "string" ? m.text : "";
-      if (!text.trim()) continue;
-      this.liveHistory.push(
-        role === "assistant"
-          ? { role, content: [{ type: "text", text }], model, provider }
-          : { role, content: text },
-      );
-    }
+  seedHistory(messages: SeedHistoryMessage[]): void {
+    this.liveHistory.push(...seedHistoryEntries(messages));
   }
 
   async abort(): Promise<void> {
@@ -2056,6 +2158,9 @@ const mkQoderProvider = (v: QoderVariantInfo, bin: string | null) => ({
   // The core may host this backend's `--acp` process in a detachable wrapper; the
   // handle adopts the live process on reattach (see QoderHandle.adopt).
   detachable: true,
+  // Restart clears old handles/wrappers and seeds source history on the new
+  // handle (hosting switch verification).
+  hostingSwitch: true,
   createSession: (options: {
     sessionId?: string;
     cwd?: string;
@@ -2108,7 +2213,7 @@ function scanQoderBackends(
 export default {
   id: "aiti-qoder-agent",
   name: "Qoder CLI (国际/CN 独立 CLI·非 IDE)",
-  icon: "🟠",
+  icon: "icons/terminal.svg",
   // 受控登录统一弹窗（零构建原生 h() client；client/ 下两文件随 deploy 拷贝）
   // 静态插入点声明（与 client registerItems 的 id 一一对应）
   // 登录 UI 已统一到 aiti-agent-manager（受控登录弹窗退役，2026-09-13）：不再声明
@@ -2126,6 +2231,7 @@ export default {
         "ext.displayName": "Qoder 会话后端",
       },
       en: {
+        ...spawnFeatureI18nEn(),
         "ext.displayName": "Qoder Session Backend",
       },
     },

@@ -5,6 +5,7 @@ import ReactMarkdown from "react-markdown";
 import { MarkdownBody } from "./MarkdownBody.tsx";
 import { ImagePreview } from "./ImagePreview.tsx";
 import { ThinkingIcon } from "./ThinkingIcon.tsx";
+import { ForkNewIcon } from "./SidebarIcons.tsx";
 import { copyText } from "@/lib/clipboard";
 import { apiUrl } from "@/lib/base-path";
 import { fmtMoney, useMoneySynced } from "@/lib/money";
@@ -733,7 +734,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, forkEntryId, onFor
                 <button
                   onClick={() => { if (!forkBashRunning) onFork!(forkTarget!, editTarget); }}
                   disabled={forking}
-                   title={forking ? t("i18n.creatingSession") : forkBashRunning ? t("i18n.newSessionBashRunning") : t("i18n.newSessionTitle")}
+                  title={forking ? t("chat.forkNewBusy") : forkBashRunning ? t("chat.forkFromMessageBashRunning") : t("chat.forkFromMessage")}
                   style={{
                     display: "flex", alignItems: "center", gap: 4,
                     padding: "3px 8px", height: 22,
@@ -749,13 +750,8 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, forkEntryId, onFor
                   onMouseEnter={(e) => { if (!forking) e.currentTarget.style.color = "var(--accent)"; }}
                   onMouseLeave={(e) => { if (!forking) e.currentTarget.style.color = "var(--text-dim)"; }}
                 >
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="6" y1="3" x2="6" y2="15" />
-                    <circle cx="18" cy="6" r="3" />
-                    <circle cx="6" cy="18" r="3" />
-                    <path d="M18 9a9 9 0 0 1-9 9" />
-                  </svg>
-                   <span className="message-action-label">{forking ? t("i18n.creating") : t("i18n.newSession")}</span>
+                  <ForkNewIcon size={11} />
+                  <span className="message-action-label">{t("chat.forkNew")}</span>
                 </button>
               )}
               </>
