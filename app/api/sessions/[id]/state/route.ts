@@ -25,7 +25,8 @@ export async function GET(
       if (fp) {
         let bridged;
         try {
-          bridged = await attachIfBridged(fp);
+          // Opening a session is a read: attach live processes only, never spawn.
+          bridged = await attachIfBridged(fp, { create: false });
         } catch (e) {
           if ((e as { name?: string }).name !== "BridgeOccupiedError") throw e;
           // Another web instance drives this detached (single-client) wrapper. Live state is

@@ -1,6 +1,7 @@
 import { createAgentEventStream, createPendingAgentSessionHandle } from "@/lib/agent-event-stream";
 import { resolveSessionPath } from "@/lib/session-reader";
-import { getRpcSession, startRpcSession, waitForRpcSession } from "@/lib/rpc-manager";
+import { getRpcSession, startRpcSession } from "@/lib/rpc-manager";
+import { waitForLiveSessionById } from "@/lib/session/live-wait";
 import { isValidLivenessHolder } from "@/lib/session-liveness";
 import { describeStreamClient } from "@/lib/stream-client";
 import { resolveAnySession, resolveAttachBySessionId, attachIfBridged, resolvePlaceholderSession, resolveExternalCompositeSession } from "@/lib/session";
@@ -25,7 +26,10 @@ export async function GET(
   if (filePath) {
     let bridged;
     try {
-      bridged = await attachIfBridged(filePath);
+      // Read path: attach live sessions only. A cold provider-owned session must
+      // NOT be spawned just to open its event stream; it falls through to the
+      // pending handle below and attaches once a real interaction starts it.
+      bridged = await attachIfBridged(filePath, { create: false });
     } catch (e) {
       if ((e as { name?: string }).name === "BridgeOccupiedError") {
         return new Response(JSON.stringify({ error: String(e), code: "bridge_occupied" }), {
@@ -69,8 +73,10 @@ export async function GET(
       // real interaction (send/steer etc.) triggers startRpcSession, and the running broadcast wakes this
       // stream to attach automatically. Ready as "idle" and send connected first, so the client's 60s
       // readiness timeout does not misfire.
+      // Provider-owned sessions: the backend handle (putHandle) is the wake signal —
+      // waitForLiveSessionById covers both the local running set and the handle store.
       sessionPromise = Promise.resolve(createPendingAgentSessionHandle(
-        (onReady) => waitForRpcSession(id, (wrapper) => onReady(wrapper)),
+        (onReady) => waitForLiveSessionById(id, onReady),
       ));
     }
   } else if (/^[a-z][\w-]*:/.test(id) && !id.startsWith("pi:")) {

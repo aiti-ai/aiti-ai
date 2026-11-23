@@ -14,7 +14,10 @@ test("agent SSE lazily creates the runtime: opening a session does not cold-star
   // wrapper is brought up by subsequent real interactions and attaches via the running broadcast.
   assert.doesNotMatch(agentEventsSource, /startRpcSession\(/);
   assert.match(agentEventsSource, /sessionPromise = Promise\.resolve\(createPendingAgentSessionHandle\(/);
-  assert.match(agentEventsSource, /waitForRpcSession\(id, \(wrapper\) => onReady\(wrapper\)\)/);
+  assert.match(agentEventsSource, /waitForLiveSessionById\(id, onReady\)/);
+  // Provider-owned cold sessions wake on handle registration (putHandle), not only on
+  // the local running broadcast — same lazy contract, both worlds covered.
+  assert.match(agentEventsSource, /attachIfBridged\(filePath, \{ create: false \}\)/);
   assert.match(agentEventsSource, /if \(req\.signal\.aborted\) return new Response\(null, \{ status: 204 \}\)/);
   assert.match(agentEventsSource, /"Cache-Control": "no-cache, no-transform"/);
   assert.match(agentEventsSource, /"X-Accel-Buffering": "no"/);

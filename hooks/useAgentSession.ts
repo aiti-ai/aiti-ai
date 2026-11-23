@@ -4400,7 +4400,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
     // ── Backend sessions (attach/spawn/extension): the model list comes from the list_models capability, not the
     //    local /api/models. Switching reuses the existing set_model command (adapter mapping).
-    if (!isNew && session?.agent && sessionIdRef.current) {
+    //    pi-family sessions (no agent tag, or the "pi" spawn badge) share the HOST model universe: asking a
+    //    cold session for list_models would spawn its agent process just to fill the picker. They use
+    //    /api/models like native in-process sessions (scoped list + the picker's "all" switch).
+    const backendCatalog = Boolean(session?.agent) && String(session?.agent ?? "").toLowerCase() !== "pi";
+    if (!isNew && backendCatalog && sessionIdRef.current) {
       try {
         const d = await sendAgentCommand<{ models?: Array<{ id: string; provider: string; label?: string; hint?: string }> }>(
           sessionIdRef.current,

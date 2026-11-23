@@ -139,7 +139,7 @@ export async function GET(
   const attachForRead = async (sessionFile: string): Promise<Awaited<ReturnType<typeof attachIfBridged>>> => {
     if (readAttachBlocked) return undefined;
     try {
-      return await attachIfBridged(sessionFile);
+      return await attachIfBridged(sessionFile, { create: false });
     } catch (e) {
       if ((e as { name?: string }).name !== "BridgeOccupiedError") throw e;
       readAttachBlocked = true;
@@ -324,7 +324,7 @@ export async function GET(
       const bridgeFile = await findBridgeSessionFileById(id);
       if (bridgeFile) {
         try {
-          const bridgedById = await attachIfBridged(bridgeFile).catch((e: { name?: string }) => {
+          const bridgedById = await attachIfBridged(bridgeFile, { create: false }).catch((e: { name?: string }) => {
             if (e?.name === "BridgeOccupiedError") throw e;
             return undefined;
           });
@@ -591,7 +591,8 @@ export async function PATCH(
     // single-writer red line: when a TUI bridge holds the file, it renames through the bridge
     // (set_session_name), never on disk behind the TUI's back.
     if (filePath) {
-      const bridged = await attachIfBridged(filePath);
+      // Read-only metadata operation: never spawn an agent just to rename.
+      const bridged = await attachIfBridged(filePath, { create: false });
       if (bridged?.isAlive()) {
         const r = (await bridged.send({ type: "set_session_name", name: trimmed }).catch(() => null)) as { success?: boolean } | null;
         if (r?.success) return NextResponse.json({ ok: true, via: "bridge" });

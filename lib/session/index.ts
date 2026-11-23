@@ -522,13 +522,23 @@ async function shutdownStrayLocalRuntime(sessionId: string, sessionFile: string)
   } catch { /* rpc-manager unavailable (heavily trimmed environments) — skip the cleanup */ }
 }
 
+/** Options for {@link attachIfBridged}. */
+export type AttachIfBridgedOptions = {
+  /**
+   * false = read-only attach: reuse live handles, adopt live detached wrappers and
+   * providers that can only CONNECT to an already-running process (`attachOnly`),
+   * but never let a provider create/spawn one. Default true (write paths).
+   */
+  create?: boolean;
+};
+
 /**
  * When a session file is owned by a running TUI bridge, lazily create an attach
  * handle and store it (key = file path). Ownership is negotiated through
  * provider.ownsFile — the registry format belongs to the extension; the core
  * knows nothing about it.
  *
- * Semantics (single-writer invariant):
+ * Semantics (single-writer invariant, read vs create): see AttachIfBridgedOptions.
  *   - no claim           → undefined (caller takes the local path)
  *   - claimed + attached → adapter
  *   - claimed + failed   → BridgeOccupiedError (refuse local open, never fork silently)
@@ -538,7 +548,11 @@ async function shutdownStrayLocalRuntime(sessionId: string, sessionFile: string)
  */
 export async function attachIfBridged(
   sessionFile: string,
+  options: AttachIfBridgedOptions = {},
 ): Promise<WrappedSessionLike | undefined> {
+  // Read paths (session open / history replay) must not pull an agent process up:
+  // a provider without `attachOnly` can only satisfy createSession by spawning.
+  const create = options.create !== false;
   // Reuse an already-attached handle — otherwise creating a new connection per
   // request would dispose the old handle currently watched by SSE (putHandle's
   // overwrite semantics). A wrapper serves ONE client: re-attaching on every
@@ -558,16 +572,19 @@ export async function attachIfBridged(
   // ("bridge unreachable") exactly on first view after a restart/reload/handle
   // eviction. Joining one flight makes the race a no-op: one attach, everyone
   // gets the same adapter. Same pattern as startRpcSession's locks.
-  const inflight = attachInflight().get(sessionFile);
+  // The dedupe key carries the create/attach mode: a read-only caller must never
+  // join a write flight (it would get a freshly spawned process) and vice versa.
+  const flightKey = `${create ? "create" : "attach"}:${sessionFile}`;
+  const inflight = attachInflight().get(flightKey);
   if (inflight) return inflight;
-  const flight = attachIfBridgedUncached(sessionFile);
-  attachInflight().set(sessionFile, flight);
+  const flight = attachIfBridgedUncached(sessionFile, { create });
+  attachInflight().set(flightKey, flight);
   try {
     return await flight;
   } finally {
     // Only clear while this flight is still the registered one (a newer flight
     // must not be dropped by a late settler).
-    if (attachInflight().get(sessionFile) === flight) attachInflight().delete(sessionFile);
+    if (attachInflight().get(flightKey) === flight) attachInflight().delete(flightKey);
   }
 }
 
@@ -583,6 +600,7 @@ function attachInflight(): Map<string, Promise<WrappedSessionLike | undefined>> 
 /** The actual attach body, guarded by attachIfBridged's in-flight dedupe. */
 async function attachIfBridgedUncached(
   sessionFile: string,
+  options: { create: boolean },
 ): Promise<WrappedSessionLike | undefined> {
   // Detached recovery (core-internal, before any provider probe): a session whose
   // agent is hosted by a wrapper is attached by uuid, and the wrapper's journal
@@ -626,6 +644,10 @@ async function attachIfBridgedUncached(
       continue;
     }
     if (!claimed) continue;
+    // Read-only attach: a provider that may spawn has no way to serve this file
+    // without starting a process. Skip it — the caller reads the JSONL from disk
+    // (same history/model; a live session still reuses its handle above).
+    if (!options.create && provider.attachOnly !== true) continue;
     try {
       // The attach handle's id must be the public session uuid (not the file path) —
       // /api/agent/[id]'s resolveAnySession(id) looks up the handle store by id; a

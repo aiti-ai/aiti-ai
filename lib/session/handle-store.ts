@@ -130,6 +130,7 @@ export function putHandle(handle: SessionHandle): void {
   store().set(handle.id, handle);
   watchHandleRunning(handle);
   armHandleIdle(handle);
+  notifyHandleStoreChange();
 }
 
 export function getHandle(id: string): SessionHandle | undefined {
@@ -140,6 +141,7 @@ export function getHandle(id: string): SessionHandle | undefined {
 /** Register the same handle under an additional key (e.g. real native id discovered late). */
 export function putHandleAt(key: string, handle: SessionHandle): void {
   store().set(key, handle);
+  notifyHandleStoreChange();
 }
 
 /**
@@ -237,6 +239,7 @@ function removeHandleEverywhere(h: SessionHandle): void {
     if (stored === h) store().delete(key);
   }
   void h.dispose().catch(() => {});
+  notifyHandleStoreChange();
   notifyHandleRunningChange();
 }
 
@@ -291,6 +294,7 @@ export function removeHandle(id: string): void {
   const h = store().get(id);
   if (h) void h.dispose().catch(() => {});
   store().delete(id);
+  notifyHandleStoreChange();
 }
 
 export function listHandleIds(): string[] {
@@ -333,6 +337,29 @@ const runningListeners = (): Set<RunningListener> =>
 export function subscribeRunningHandles(listener: RunningListener): () => void {
   runningListeners().add(listener);
   return () => runningListeners().delete(listener);
+}
+
+// ── handle-store change broadcast (registration / removal) ─────────────────────
+//
+// Distinct from the running set: a provider handle can be REGISTERED while idle
+// (adopted wrapper, first spawn), and a pending SSE must attach as soon as the
+// handle exists — not only when a turn starts. globalThis for the same HMR
+// cross-realm reason as the running listeners below/above.
+type StoreListener = () => void;
+const storeListeners = (): Set<StoreListener> =>
+  ((globalThis as { __piHandleStoreListeners?: Set<StoreListener> }).__piHandleStoreListeners ??= new Set());
+
+/** Subscribe to handle registration/removal. Returns an unsubscribe function. */
+export function subscribeHandleStore(listener: StoreListener): () => void {
+  storeListeners().add(listener);
+  return () => storeListeners().delete(listener);
+}
+
+/** Broadcast "the handle store changed" (after put/remove). */
+export function notifyHandleStoreChange(): void {
+  for (const listener of storeListeners()) {
+    try { listener(); } catch { /* one failing listener must not break registration */ }
+  }
 }
 
 /** Rebuild the handle running set and broadcast (mirrors rpc-manager.notifyRunningChange; broadcasts the merged full set). */

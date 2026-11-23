@@ -181,6 +181,15 @@ export interface SessionProvider {
   ownsFile?(sessionFile: string): Promise<boolean> | boolean;
 
   /**
+   * createSession() only CONNECTS to an already-running process (TUI bridge
+   * socket, live app server) and never spawns a new one. Read paths
+   * (`attachIfBridged(..., { create: false })`) call createSession for these
+   * providers; providers without the flag are skipped there so that opening a
+   * session for viewing cannot pull a process up. Default false.
+   */
+  readonly attachOnly?: boolean;
+
+  /**
    * Can the hosting switch safely restart this backend? External providers that
    * cannot resume their native session after a process restart should set false;
    * the hosting panel then stays read-only for them (default true).
