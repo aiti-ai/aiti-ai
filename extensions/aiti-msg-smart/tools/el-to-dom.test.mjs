@@ -16,12 +16,14 @@ import { elToDom } from "../client/src/el-to-dom.js";
 /** Minimal DOM: enough for elToDom, and strict about tag names (createElement(function) throws). */
 function fakeDoc() {
   const NAME = /^[A-Za-z][A-Za-z0-9-]*$/;
-  const makeEl = (tag) => {
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const makeEl = (tag, ns) => {
     if (!NAME.test(tag)) {
       throw new Error(`InvalidCharacterError: The tag name provided ('${String(tag).slice(0, 40)}') is not a valid name.`);
     }
     return {
       tagName: tag.toUpperCase(),
+      namespaceURI: ns || "http://www.w3.org/1999/xhtml",
       nodeType: 1,
       style: {},
       attrs: {},
@@ -50,6 +52,7 @@ function fakeDoc() {
   });
   return {
     createElement: makeEl,
+    createElementNS: (ns, tag) => makeEl(tag, ns),
     createTextNode: (t) => ({ nodeType: 3, text: t }),
     createDocumentFragment: frag,
   };
@@ -118,6 +121,46 @@ test("plain elements: numeric style → px, unitless style untouched, events, at
 test("a non-Name tag string still fails loudly (guard on the fake document itself)", () => {
   const doc = fakeDoc();
   assert.throws(() => elToDom({ type: "svg icon", props: {} }, doc), /InvalidCharacterError/);
+});
+
+test("svg subtrees use createElementNS (plain createElement yields HTMLUnknownElement in real DOM)", () => {
+  const doc = fakeDoc();
+  const dom = elToDom({
+    type: "svg",
+    props: { viewBox: "0 0 24 24", children: [{ type: "path", props: { d: "M1 1" } }, { type: "circle", props: { cx: 2 } }] },
+  }, doc);
+  assert.equal(dom.namespaceURI, "http://www.w3.org/2000/svg");
+  for (const c of dom.children) assert.equal(c.namespaceURI, "http://www.w3.org/2000/svg");
+  // HTML context stays untouched (no ns threading into non-svg siblings)
+  const btn = elToDom({ type: "button", props: { children: "x" } }, doc);
+  assert.equal(btn.namespaceURI, "http://www.w3.org/1999/xhtml");
+});
+
+test("dangerouslySetInnerHTML lands verbatim on the element (provider icon {svg})", () => {
+  const doc = fakeDoc();
+  const markup = '<circle cx="18" cy="5" r="3"/><path d="M1 1"/>';
+  const dom = elToDom({
+    type: "svg",
+    props: { dangerouslySetInnerHTML: { __html: markup } },
+  }, doc);
+  // fake doc: innerHTML assignment is a plain property write — asserts the branch ran and
+  // wrote the markup (a real SVG root parses this in SVG context into renderable children).
+  assert.equal(dom.innerHTML, markup);
+  // malformed values are skipped silently (no throw, element still built)
+  const bad = elToDom({ type: "svg", props: { dangerouslySetInnerHTML: { __html: 42 } } }, doc);
+  assert.equal(bad.tagName, "SVG");
+  // a tree with children and NO dangerouslySetInnerHTML keeps normal children
+  const withKids = elToDom({ type: "svg", props: { children: [{ type: "path", props: { d: "M2 2" } }] } }, doc);
+  assert.equal(withKids.children.length, 1);
+});
+
+test("function components receive the svg namespace context through recursion", () => {
+  const doc = fakeDoc();
+  const Icon = () => ({ type: "svg", props: { children: [{ type: "path", props: { d: "M3 3" } }] } });
+  const dom = elToDom({ type: "span", props: { children: [elLike(Icon)] } }, doc);
+  const svg = dom.children[0];
+  assert.equal(svg.namespaceURI, "http://www.w3.org/2000/svg");
+  assert.equal(svg.children[0].namespaceURI, "http://www.w3.org/2000/svg");
 });
 
 /** createElement(function) → { type: fn, props }, i.e. what ctx.h(h(FolderOpenIcon)) produces. */
