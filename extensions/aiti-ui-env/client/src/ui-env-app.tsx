@@ -93,12 +93,12 @@ function useSmallScreen(): boolean {
 }
 
 const card = (extra?: Record<string, unknown>): Record<string, unknown> => ({
-  background: C.panel, border: "1px solid " + C.border, borderRadius: 12,
-  padding: "12px 14px", marginBottom: 10, ...extra,
+  background: C.panel, border: "1px solid " + C.border, borderRadius: 10,
+  padding: "9px 12px", marginBottom: 8, ...extra,
 });
 const secTitle = () => ({
   display: "flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 700,
-  color: C.text, marginBottom: 10, letterSpacing: "0.01em",
+  color: C.text, marginBottom: 7, letterSpacing: "0.01em",
 });
 const accentBar = (color?: string) => ({ width: 3, height: 12, borderRadius: 2, background: color || C.accent, flexShrink: 0 });
 const dot = (color: string) => ({ width: 7, height: 7, borderRadius: 4, background: color, flexShrink: 0 });
@@ -107,11 +107,11 @@ const chip = (color: string, bg?: string) => ({
   color, whiteSpace: "nowrap", flexShrink: 0, border: "1px solid " + (bg ? "transparent" : C.border),
 });
 const btn = (extra?: Record<string, unknown>): Record<string, unknown> => ({
-  padding: "4px 11px", borderRadius: 7, fontSize: 11, cursor: "pointer",
+  padding: "3px 9px", borderRadius: 7, fontSize: 11, cursor: "pointer",
   background: C.panel2, border: "1px solid " + C.border, color: C.muted,
   whiteSpace: "nowrap", transition: "all .12s", ...extra,
 });
-const rowStyle = { display: "flex", alignItems: "baseline", gap: 8, padding: "2.5px 0" };
+const rowStyle = { display: "flex", alignItems: "baseline", gap: 8, padding: "2px 0" };
 
 function copyText(text: string) {
   try { navigator.clipboard.writeText(text).catch(() => {}); } catch {}
@@ -554,7 +554,7 @@ function renderUiEnvDialog(face?: string) {
       {/* ── 窗口标题栏：标题 + 模式徽章 + 关闭 ── */}
         {/* Title bar must never push the ✕ close button off-panel on narrow screens:
             title/mode-chip shrink (chip ellipsizes) so fixed-width right buttons stay in view. */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 16px", borderBottom: "1px solid " + C.border, flexShrink: 0, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 14px", borderBottom: "1px solid " + C.border, flexShrink: 0, minWidth: 0 }}>
           <span style={{ fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}><Ic size={15} paths={ICONS.monitor} />{t("uiEnv.title")}</span>
           {modeLabel ? <span style={{ ...chip("#a5b4fc", "rgba(99,102,241,0.16)"), flexShrink: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{t("当前：") + tx("mode." + modeLabel.id, modeLabel.label)}</span> : null}
           <span style={{ marginLeft: "auto", fontSize: 10.5, color: C.dim, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t("作用于新启动的 MCP / 应用")}</span>
@@ -567,74 +567,72 @@ function renderUiEnvDialog(face?: string) {
           )}
         </div>
         {/* ── 内容区（可滚动） ── */}
-        <div style={{ flex: 1, overflowY: "auto", padding: small ? "10px 10px 16px" : "14px 18px 20px" }}>
+        <div style={{ flex: 1, overflowY: "auto", padding: small ? "8px 8px 12px" : "10px 14px 14px" }}>
 
-          {/* ── 模式区 ── */}
-          <div style={card({ marginBottom: 12 })}>
+          {/* ── Mode section (with the DISPLAY-number row: Linux-only; hidden on Windows/macOS) ── */}
+          <div style={card({ marginBottom: 8 })}>
             <div style={secTitle()}>
               <span style={accentBar("#818cf8")} />{t("显示模式")}
               {d.envOverrides?.UI_ENV_MODE ? <span style={chip(C.warn)}>{t("env 覆盖：UI_ENV_MODE=") + d.envOverrides.UI_ENV_MODE}</span> : null}
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: 7 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: 6 }}>
               {(d.modes || []).map((m: any) => {
                 const active = mode === m.id;
                 return (
                   <button key={m.id} onClick={() => setMode(m.id)} disabled={busy} title={tx("mode." + m.id + ".desc", m.desc)}
                     style={{
-                      display: "flex", alignItems: "flex-start", gap: 8, textAlign: "left",
-                      padding: "8px 10px", borderRadius: 9, cursor: "pointer", flex: 1, minWidth: 0,
+                      display: "flex", alignItems: "center", gap: 7, textAlign: "left",
+                      padding: "5px 9px", borderRadius: 8, cursor: "pointer", flex: 1, minWidth: 0,
                       background: active ? "rgba(99,102,241,0.14)" : C.panel2,
                       border: active ? "1px solid #818cf8" : "1px solid " + C.border,
                       transition: "all .12s",
                     }}>
                     <span style={{
-                      width: 13, height: 13, borderRadius: 7, marginTop: 1, flexShrink: 0,
+                      width: 11, height: 11, borderRadius: 6, flexShrink: 0,
                       border: "2px solid " + (active ? "#818cf8" : C.dim),
                       background: active ? "#818cf8" : "transparent",
                       display: "inline-block",
                     }} />
-                    <span style={{ minWidth: 0 }}>
-                      <span style={{ fontSize: 12, fontWeight: 600, color: active ? "#c7d2fe" : C.text, display: "block" }}>{tx("mode." + m.id, m.label)}</span>
-                      <span style={{ fontSize: 10.5, color: C.dim, lineHeight: 1.45, display: "block", marginTop: 2 }}>{tx("mode." + m.id + ".desc", m.desc)}</span>
-                    </span>
+                    <span style={{ fontSize: 11.5, fontWeight: 600, color: active ? "#c7d2fe" : C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tx("mode." + m.id, m.label)}</span>
                   </button>
                 );
               })}
             </div>
             {d.target ? (
-              <div style={{ marginTop: 10, fontSize: 11, color: C.dim, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+              <div style={{ marginTop: 7, fontSize: 11, color: C.dim, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                 <span style={dot(C.accent)} />
                 {t("当前裁决：")}<b style={{ color: "#a5b4fc", fontWeight: 600 }}>{d.target.rationale}</b>
-                {d.target.warnings?.length ? <span style={{ color: C.warn }}><Ic size={11} paths={ICONS.alert} /> {" "}{d.target.warnings.slice(0, 2).join("；")}</span> : null}
+                {d.target.warnings?.length ? <span style={{ color: C.warn }} title={d.target.warnings.join("；")}><Ic size={11} paths={ICONS.alert} /> {d.target.warnings.slice(0, 1).join("；")}</span> : null}
+              </div>
+            ) : null}
+            {/* ── DISPLAY number (default auto-random; can pin a fixed number) — Linux X11/Wayland only ── */}
+            {headless.kind !== "windows" && headless.kind !== "macos" ? (
+              <div style={{ borderTop: "1px solid " + C.border, marginTop: 7, paddingTop: 7 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: C.text }}>
+                    <span style={{ ...accentBar("var(--warn, #f59e0b)"), height: 10 }} />{t("DISPLAY 号配置")}
+                  </span>
+                  <button onClick={() => setDispMode("auto")} disabled={busy} style={{ ...btn(), ...(dispMode === "auto" ? { color: "#a5b4fc", border: "1px solid rgba(99,102,241,0.4)", background: "rgba(99,102,241,0.12)" } : {}) }}>{t("auto · 随机空闲")}</button>
+                  <button onClick={() => setDispMode("fixed")} disabled={busy} style={{ ...btn(), ...(dispMode === "fixed" ? { color: "#a5b4fc", border: "1px solid rgba(99,102,241,0.4)", background: "rgba(99,102,241,0.12)" } : {}) }}>{t("指定数字")}</button>
+                  {dispMode === "fixed" ? (
+                    <input type="number" min={1} max={65535} value={dispNum} placeholder={t("如 99")}
+                      onChange={(e) => setDispNum(e.target.value)}
+                      style={{ width: 64, padding: "2px 6px", borderRadius: 7, fontSize: 11, background: C.panel2, border: "1px solid " + C.border, color: C.text }} />
+                  ) : null}
+                  <button onClick={saveDispCfg} disabled={busy} style={{ ...btn({ color: "#a5b4fc", border: "1px solid rgba(99,102,241,0.4)", background: "rgba(99,102,241,0.12)" }), cursor: busy ? "wait" : "pointer" }}>{busy ? t("保存中…") : t("保存")}</button>
+                  {d.randomDisplayFeature === false ? <span style={chip(C.dim)}>{t("feature 关：不随机")}</span> : null}
+                  {d.envOverrides?.UI_ENV_DISPLAY_NUM ? <span style={chip(C.warn)}>{t("env 覆盖：UI_ENV_DISPLAY_NUM=") + d.envOverrides.UI_ENV_DISPLAY_NUM}</span> : null}
+                </div>
+                <div style={{ fontSize: 10, color: C.dim, marginTop: 4, lineHeight: 1.45 }}>
+                  {t("当前 DISPLAY：") + (d.headless?.display || "—") + t(" · 默认 auto：启动时自动选空闲号（随机 90–189），避免固定 :99 被其他 X 服务占用") +
+                    (d.randomDisplayFeature === false ? t("；feature 关时不随机，用固定号") : "")}
+                </div>
               </div>
             ) : null}
           </div>
 
-          {/* ── DISPLAY 号配置（默认 auto 随机；可指定固定数字） ── */}
-          <div style={card({ marginBottom: 12 })}>
-            <div style={secTitle()}>
-              <span style={accentBar("var(--warn, #f59e0b)")} />{t("DISPLAY 号配置")}
-              {d.randomDisplayFeature === false ? <span style={chip(C.dim)}>{t("feature 关：不随机")}</span> : null}
-              {d.envOverrides?.UI_ENV_DISPLAY_NUM ? <span style={chip(C.warn)}>{t("env 覆盖：UI_ENV_DISPLAY_NUM=") + d.envOverrides.UI_ENV_DISPLAY_NUM}</span> : null}
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <button onClick={() => setDispMode("auto")} disabled={busy} style={{ ...btn(), ...(dispMode === "auto" ? { color: "#a5b4fc", border: "1px solid rgba(99,102,241,0.4)", background: "rgba(99,102,241,0.12)" } : {}) }}>{t("auto · 随机空闲")}</button>
-              <button onClick={() => setDispMode("fixed")} disabled={busy} style={{ ...btn(), ...(dispMode === "fixed" ? { color: "#a5b4fc", border: "1px solid rgba(99,102,241,0.4)", background: "rgba(99,102,241,0.12)" } : {}) }}>{t("指定数字")}</button>
-              {dispMode === "fixed" ? (
-                <input type="number" min={1} max={65535} value={dispNum} placeholder={t("如 99")}
-                  onChange={(e) => setDispNum(e.target.value)}
-                  style={{ width: 70, padding: "3px 7px", borderRadius: 7, fontSize: 11, background: C.panel2, border: "1px solid " + C.border, color: C.text }} />
-              ) : null}
-              <button onClick={saveDispCfg} disabled={busy} style={{ ...btn({ color: "#a5b4fc", border: "1px solid rgba(99,102,241,0.4)", background: "rgba(99,102,241,0.12)" }), cursor: busy ? "wait" : "pointer" }}>{busy ? t("保存中…") : t("保存")}</button>
-            </div>
-            <div style={{ fontSize: 10, color: C.dim, marginTop: 6, lineHeight: 1.5 }}>
-              {t("当前 DISPLAY：") + (d.headless?.display || "—") + t(" · 默认 auto：启动时自动选空闲号（随机 90–189），避免固定 :99 被其他 X 服务占用") +
-                (d.randomDisplayFeature === false ? t("；feature 关时不随机，用固定号") : "")}
-            </div>
-          </div>
-
           {/* ── 环境卡 ×2 ── */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: 10, marginBottom: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: 8, marginBottom: 8 }}>
             {desktop.kind === "macos" ? envCard(<><Ic size={13} paths={ICONS.monitor} />{" "}{t("Aqua 桌面（控制台会话）")}</>, desktop, desktop.available, [
               [t("会话"), desktop.display + (desktop.consoleUser ? " · " + desktop.consoleUser : "")],
               [t("类型"), "macOS Aqua（WindowServer）"],
@@ -648,10 +646,8 @@ function renderUiEnvDialog(face?: string) {
             ]) : envCard(<><Ic size={13} paths={ICONS.monitor} />{" "}{t("真实桌面")}</>, desktop, desktop.available, [
               ["DISPLAY", desktop.display],
               [t("类型"), desktop.kind === "wayland" ? "Wayland" : "X11"],
-              ["Xauthority", desktop.xauthority || "—"],
               [t("分辨率"), fmtRes(desktop.resolution)],
               ["WM", desktop.wm || "—"],
-              ["AT-SPI", desktop.atspi ? t("在跑") : t("无")],
             ])}
             {headless.kind === "macos" ? envCard(<><Ic size={13} paths={ICONS.cloud} />{" "}{t("无头层（屏幕共享 VNC）")}</>, headless, headless.available, [
               ["VNC server", headless.available ? t("屏幕共享 :5900 在跑") : t("未开启"), headless.available ? C.ok : C.warn],
@@ -676,13 +672,11 @@ function renderUiEnvDialog(face?: string) {
               [t("说明"), t("GUI 落交互桌面（无进程隔离），虚拟屏 = 无屏可用 + VNC 查看通道")],
             ]) : envCard(<><Ic size={13} paths={ICONS.cloud} />{" "}{t("无头虚拟屏 ") + (headless.display || ":99")}</>, headless, headless.available, [
               ["DISPLAY", headless.display],
-              ["Xauthority", headless.xauthority || "—"],
-              [t("AT-SPI 总线"), headless.dbusBus || "—"],
-              [t("窗口管理器"), headless.wm ? (headless.wm === "external" ? t("未识别的 WM 在跑") : headless.wm + " " + t("在跑")) : t("无"), headless.wm ? C.ok : C.warn],
-              ...(d.wm ? [[t("WM 配置"),
-                String(d.wm.requested ?? "?") + (d.wm.resolved && d.wm.resolved !== d.wm.requested ? " → " + d.wm.resolved : "") +
-                (d.wm.installedChain?.length ? "" : " " + t("（无可用 WM）")),
-                d.wm.resolved ? C.ok : C.warn]] : []),
+              ["WM", [
+                headless.wm ? (headless.wm === "external" ? t("未识别的 WM 在跑") : headless.wm + " " + t("在跑")) : t("无"),
+                d.wm && d.wm.resolved && d.wm.resolved !== d.wm.requested ? `(${String(d.wm.requested)}→${String(d.wm.resolved)})` : "",
+                d.wm && !d.wm.installedChain?.length ? t("（无可用 WM）") : "",
+              ].filter(Boolean).join(" "), (headless.wm || (d.wm && d.wm.resolved)) ? C.ok : C.warn],
               [t("分辨率"), fmtRes(headless.resolution)],
               ["VNC TCP", headless.vnc?.tcp ? `:${headless.vnc.tcpPort}` : t("未起"), headless.vnc?.tcp ? C.ok : C.warn],
               ["VNC web", headless.vnc?.web ? `:${headless.vnc.webPort}` : t("未起"), headless.vnc?.web ? C.ok : C.warn],
@@ -770,18 +764,16 @@ function renderUiEnvDialog(face?: string) {
                   </div>
                 ))
             )}
-            {/* 说明文字是独立子节点（不能放进 ternary 分支值里被吞掉） */}
+            {/* Note text is a separate child (must not be swallowed inside a ternary branch value); full copy lives in the hover title, one line in the panel */}
             {vncTab === "sys" ? (
-              <div style={{ marginTop: 8, fontSize: 10.5, color: C.dim, lineHeight: 1.6 }}>
-                {t("系统 VNC = 机器上已有的 VNC server（如真实桌面 :0 的 x11vnc、vncserver 起的虚拟桌面），本扩展起临时 bridge 转发，noVNC 直接连。")}
-                {t("有密码的会在 noVNC 里提示输入；「停止」仅对本用户启动的进程生效（root/gdm 的无权限会自动失败）。")}
-                {t("「打开」产生的临时实例也出现在扩展 VNC 列表（id 以 sys- 开头），可在那边停止。")}
+              <div style={{ marginTop: 6, fontSize: 10, color: C.dim, lineHeight: 1.5 }}
+                title={t("系统 VNC = 机器上已有的 VNC server（如真实桌面 :0 的 x11vnc、vncserver 起的虚拟桌面），本扩展起临时 bridge 转发，noVNC 直接连。") + t("有密码的会在 noVNC 里提示输入；「停止」仅对本用户启动的进程生效（root/gdm 的无权限会自动失败）。")}>
+                {t("机器上已有的 VNC server，临时 bridge 转发；「打开」的临时实例在扩展 VNC 列表（sys- 前缀）可停")}
               </div>
             ) : (
-              <div style={{ marginTop: 8, fontSize: 10.5, color: C.dim, lineHeight: 1.6 }}>
-                {t("多实例：每次「▶ 启动」新实例随机分配 RFB/Web 端口，URL 路径段 = 实例真随机 token（代表该实例/端口，不落目标地址，定期轮换）。")}
-                {t("URL 零凭据——会话走 HttpOnly cookie（30 分钟，从本面板打开即自动建立），复制到别处无 cookie 打不开（防泄露）")}
-                {t(" · noVNC 目录：") + (vnc.noVncDir || t("未找到（跑 setup-linux.sh 下载）"))}
+              <div style={{ marginTop: 6, fontSize: 10, color: C.dim, lineHeight: 1.5 }}
+                title={t("多实例：每次「▶ 启动」新实例随机分配 RFB/Web 端口，URL 路径段 = 实例真随机 token（代表该实例/端口，不落目标地址，定期轮换）。") + t("URL 零凭据——会话走 HttpOnly cookie（30 分钟，从本面板打开即自动建立），复制到别处无 cookie 打不开（防泄露）") + (vnc.noVncDir ? t(" · noVNC 目录：") + vnc.noVncDir : "")}>
+                {t("端口随机分配 · URL 路径段 = 随机 token · 30min HttpOnly cookie 会话（复制到别处打不开）")}
               </div>
             )}
           </div>
@@ -823,9 +815,9 @@ function renderUiEnvDialog(face?: string) {
                   </span>
                 </div>
               ))}
-            <div style={{ marginTop: 8, fontSize: 10.5, color: C.dim, lineHeight: 1.6 }}>
-              {t("RDP 经 grdpwasm WASM 客户端（浏览器 WebCodecs H.264 解码）桥接。目标 host:port 不落 URL——路径段是实例真随机 token（代表该实例/端口，定期轮换）。")}
-              {t("打开前先点本卡「打开/复制」建立 30min HttpOnly cookie 会话；复制到别处无 cookie 打不开（防泄露）")}
+            <div style={{ marginTop: 6, fontSize: 10, color: C.dim, lineHeight: 1.5 }}
+              title={t("RDP 经 grdpwasm WASM 客户端（浏览器 WebCodecs H.264 解码）桥接。目标 host:port 不落 URL——路径段是实例真随机 token（代表该实例/端口，定期轮换）。")}>
+              {t("grdpwasm WASM 桥接 · 目标不落 URL（随机 token）· 30min cookie 会话，复制到别处打不开")}
             </div>
           </div>
 

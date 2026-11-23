@@ -956,7 +956,131 @@ export function localizeProbe<T extends ProbeInfo>(locale: string | undefined | 
 /** 最近一次 Windows 无头启动失败的原因（供 startHeadless 回传 needPassword 等结构化信息）。 */
 let winHeadlessLastError: { error?: string; needPassword?: boolean } | null = null;
 
-/** 拉起虚拟屏（Windows: 自管便携 winvnc；macOS: 屏幕共享 VNC；Linux: systemd user 优先，失败回退裸 spawn）。返回是否就绪。 */
+// ── Survivor launcher: virtual-display helpers that survive pi-web restarts ──
+// spawn(..., { detached: true }) only leaves the process group — the child stays inside
+// pi-web's systemd cgroup, so `systemctl restart pi-web` (KillMode=control-group)
+// SIGTERMs every Xvfb/openbox/x11vnc/bridge helper with it. When a user manager bus is
+// reachable we launch helpers as transient user units (`systemd-run --user`), each in
+// its own cgroup outside pi-web's; otherwise fall back to a plain detached `sh -c`.
+// Shell lines run in the FOREGROUND (exec …): liveness belongs to the detached sh
+// (bare mode) or to systemd (unit mode), never to pi-web.
+
+type SurvivorMode = "unit" | "bare";
+let survivorMode: SurvivorMode | null = null;
+
+/** Env for talking to this user's systemd manager (pi-web runs as a system service
+ *  without these; explicit defaults keep it working from SSH sessions too). */
+function userManagerEnv(): Record<string, string> {
+  const uid = typeof process.getuid === "function" ? process.getuid() : 0;
+  return {
+    XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR || `/run/user/${uid}`,
+    DBUS_SESSION_BUS_ADDRESS: process.env.DBUS_SESSION_BUS_ADDRESS || `unix:path=/run/user/${uid}/bus`,
+  };
+}
+
+async function detectSurvivorMode(): Promise<SurvivorMode> {
+  if (survivorMode) return survivorMode;
+  survivorMode = "bare";
+  try {
+    if (!IS_UNIX || typeof process.getuid !== "function") return survivorMode;
+    const busPath = userManagerEnv().DBUS_SESSION_BUS_ADDRESS.replace(/^unix:path=/, "");
+    if (!fs.existsSync(busPath) || !(await resolveBin("systemd-run"))) return survivorMode;
+    const ok = await new Promise<boolean>((res) => {
+      const p = spawn("systemd-run", ["--user", `--unit=ui-env-probe-${Date.now().toString(36)}`, "--collect", "--", "true"],
+        { detached: true, stdio: "ignore", env: { ...process.env, ...userManagerEnv() } });
+      p.on("exit", (c) => res(c === 0));
+      p.on("error", () => res(false));
+      setTimeout(() => res(false), 6000).unref();
+    });
+    survivorMode = ok ? "unit" : "bare";
+  } catch { /* keep bare */ }
+  try { fs.appendFileSync(cachePath("logs", "ensure-headless.log"), `[${new Date().toISOString()}] survivor mode: ${survivorMode}\n`); } catch { /* ignore */ }
+  return survivorMode;
+}
+
+/** systemd-run argument prefix for a transient user unit; null when unavailable (bare fallback).
+ *  --collect drops the unit as soon as its main process exits; random suffix avoids clashes.
+ *  `env` lands in the unit via --setenv (the unit's environment is independent of pi-web's). */
+async function survivorUnitArgs(name: string, env: Record<string, string>): Promise<{ pre: string[]; unit: string; sd: string } | null> {
+  if ((await detectSurvivorMode()) !== "unit") return null;
+  const sd = await resolveBin("systemd-run");
+  if (!sd) return null;
+  const unit = `ui-env-${name}-${Math.random().toString(36).slice(2, 6)}`;
+  const pre = ["--user", `--unit=${unit}`, "--collect", `--setenv=PATH=${process.env.PATH || "/usr/local/bin:/usr/bin:/bin"}`];
+  for (const [k, v] of Object.entries(env)) pre.push(`--setenv=${k}=${v}`);
+  pre.push(`--setenv=XDG_RUNTIME_DIR=${userManagerEnv().XDG_RUNTIME_DIR}`, "--");
+  return { pre, unit, sd };
+}
+
+/** Run `shLine` (foreground!) in a restart-proof context. Bare fallback = plain detached sh. */
+async function spawnSurvivor(name: string, shLine: string, env: Record<string, string> = {}): Promise<void> {
+  try {
+    const u = await survivorUnitArgs(name, env);
+    if (u) {
+      const c = spawn(u.sd, [...u.pre, "sh", "-c", shLine], { detached: true, stdio: "ignore", env: { ...process.env, ...userManagerEnv() } });
+      c.on("error", () => { /* probe already validated the unit path */ });
+      c.unref();
+      return;
+    }
+  } catch { /* fall back */ }
+  const c = spawn("sh", ["-c", shLine], { detached: true, stdio: "ignore", env: { ...process.env, ...env } });
+  c.on("error", () => {});
+  c.unref();
+}
+
+/** Argv variant (no shell) — for Xvfb, no quoting concerns. */
+async function spawnSurvivorArgv(name: string, exe: string, args: string[], env: Record<string, string> = {}): Promise<void> {
+  try {
+    const u = await survivorUnitArgs(name, env);
+    if (u) {
+      const c = spawn(u.sd, [...u.pre, exe, ...args], { detached: true, stdio: "ignore", env: { ...process.env, ...userManagerEnv() } });
+      c.on("error", () => {});
+      c.unref();
+      return;
+    }
+  } catch { /* fall back */ }
+  const c = spawn(exe, args, { detached: true, stdio: ["ignore", "ignore", "ignore"], env: { ...process.env, ...env } });
+  c.on("error", () => {});
+  c.unref();
+}
+
+const shq = (s: string): string => `'` + String(s).replace(/'/g, `'\\''`) + `'`;
+
+/** MainPID of a transient user unit (pid bookkeeping for VNC/RDP instances). */
+async function unitMainPid(unit: string): Promise<number | null> {
+  const r = await execFilePromise("systemctl", ["--user", "show", "--property=MainPID", "--value", unit], 5000, userManagerEnv());
+  const n = Number(r.out.trim().split(/\s+/)[0]);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** Long-lived helper with a file log, returning its pid (spawnSurvivor + pid bookkeeping).
+ *  Unit mode reads MainPID from systemd (short retry only covers the start race — a
+ *  one-shot handshake, not a state poll); bare mode keeps the direct spawn + log fd. */
+async function spawnSurvivorPid(name: string, exe: string, args: string[], env: Record<string, string> = {}, logFile?: string): Promise<number | null> {
+  try {
+    const u = await survivorUnitArgs(name, env);
+    if (u) {
+      const inner = `exec ${shq(exe)} ${args.map(shq).join(" ")}` + (logFile ? ` >> ${shq(logFile)} 2>&1` : "");
+      const c = spawn(u.sd, [...u.pre, "sh", "-c", inner], { detached: true, stdio: "ignore", env: { ...process.env, ...userManagerEnv() } });
+      c.on("error", () => {});
+      c.unref();
+      for (let i = 0; i < 3; i++) { await sleep(400); const pid = await unitMainPid(u.unit); if (pid) return pid; }
+      return null;
+    }
+  } catch { /* fall back to bare */ }
+  let stdio: any = "ignore";
+  let logFd: number | undefined;
+  if (logFile) {
+    try { logFd = fs.openSync(logFile, "a"); stdio = ["ignore", logFd, logFd]; } catch { /* ignore */ }
+  }
+  const p = spawn(exe, args, { detached: true, stdio, env: { ...process.env, ...env } });
+  p.on("error", () => { /* missing binary etc.: port re-probe decides */ });
+  p.unref();
+  return p.pid ?? null;
+}
+
+/** Bring up the virtual display (Windows: self-managed portable winvnc; macOS: screen-sharing VNC;
+ *  Linux: systemd user units first, falling back to the survivor wrapper / bare spawn). True when ready. */
 export async function ensureHeadless(): Promise<boolean> {
   try {
     if (IS_WIN) {
@@ -1000,6 +1124,12 @@ export async function ensureHeadless(): Promise<boolean> {
     if (clearSocketJunk(num)) {
       try { fs.appendFileSync(logFile, `[${new Date().toISOString()}] removed stale entry at /tmp/.X11-unix/X${num}\n`); } catch { /* ignore */ }
     }
+    // Stale socket recovery: a leftover socket with no Xvfb/Xvnc serving it (e.g. after a
+    // pi-web restart killed the old cgroup) makes findSocket() true and would skip the
+    // spawn forever — drop it so Xvfb can claim the number again.
+    if (findSocket(num) && !(await hasVirtualXServer(num))) {
+      try { fs.rmSync(`/tmp/.X11-unix/X${num}`, { force: true }); fs.appendFileSync(logFile, `[${new Date().toISOString()}] removed stale socket at /tmp/.X11-unix/X${num} (no Xvfb/Xvnc process)\n`); } catch { /* ignore */ }
+    }
     const { authFile, busFile, runtimeDir } = headlessBase();
     ensureDir(path.dirname(authFile), 0o700); ensureDir(runtimeDir, 0o700);
     if (fs.existsSync(authFile)) fs.rmSync(authFile, { force: true });
@@ -1007,17 +1137,20 @@ export async function ensureHeadless(): Promise<boolean> {
     if (!findSocket(num)) {
       const xvfbBin = await resolveBin("Xvfb");
       if (xvfbBin) {
-        const xvfb = spawn(xvfbBin, [`:${num}`, "-screen", "0", envStr("UI_ENV_RESOLUTION", "1920x1080x24"), "-nolisten", "tcp", "-auth", authFile], { detached: true, stdio: ["ignore", "ignore", "ignore"] });
-        xvfb.on("error", () => {});
-        xvfb.unref();
+        await spawnSurvivorArgv(`xvfb-${num}`, xvfbBin,
+          [`:${num}`, "-screen", "0", envStr("UI_ENV_RESOLUTION", "1920x1080x24"), "-nolisten", "tcp", "-auth", authFile], {});
       }
     }
     await sleep(800);
-    // dbus + at-spi（幂等：重复跑无害）
-    spawn("sh", ["-c",
-      `[ -S ${busFile} ] || (dbus-daemon --session --fork --address=unix:path=${busFile} --print-address >/dev/null 2>&1 || true); ` +
-      `export DBUS_SESSION_BUS_ADDRESS=unix:path=${busFile}; DISPLAY=:${num} at-spi-bus-launcher --launch-immediately >/dev/null 2>&1 || true`],
-      { detached: true, stdio: "ignore" }).unref();
+    // dbus + at-spi (idempotent: reruns are harmless) — dbus-daemon --nofork / at-spi-bus-launcher run
+    // in the FOREGROUND, supervised by the survivor wrapper (unit mode = systemd MainPID; bare = the detached sh itself).
+    await spawnSurvivor(`dbus-${num}`, `[ -S ${busFile} ] || exec dbus-daemon --session --nofork --address=unix:path=${busFile}`,
+      { XDG_RUNTIME_DIR: runtimeDir });
+    const atspiBin = await resolveBin("at-spi-bus-launcher");
+    if (atspiBin) {
+      await spawnSurvivor(`at-spi-${num}`, `exec ${shq(atspiBin)} --launch-immediately`,
+        { DISPLAY: `:${num}`, XDG_RUNTIME_DIR: runtimeDir, DBUS_SESSION_BUS_ADDRESS: `unix:path=${busFile}` });
+    }
     // WM（per-display check — a global pgrep would be fooled by a WM on another display and
     // wrongly skip ours; mirrors setup-linux.sh's per-display WM detection）。
     // Configured WM changed: a whitelisted WM other than the current one is on this display
@@ -1039,10 +1172,8 @@ export async function ensureHeadless(): Promise<boolean> {
       const tried: string[] = [];
       for (const cand of wmCandidates(wmSel.wm)) {
         if (!(await resolveBin(cand))) { tried.push(`${cand}: not installed`); continue; }
-        spawn("sh", ["-c",
-          `export DISPLAY=:${num}; export XAUTHORITY=${authFile}; export XDG_RUNTIME_DIR=${runtimeDir}; ` +
-          `export DBUS_SESSION_BUS_ADDRESS=unix:path=${busFile}; nohup ${cand} >/dev/null 2>&1 & true`],
-          { detached: true, stdio: "ignore" }).unref();
+        await spawnSurvivor(`wm-${num}-${cand}`, `exec ${cand}`,
+          { DISPLAY: `:${num}`, XAUTHORITY: authFile, XDG_RUNTIME_DIR: runtimeDir, DBUS_SESSION_BUS_ADDRESS: `unix:path=${busFile}` });
         await sleep(1500);
         if (await displayHasWm(`:${num}`, authFile)) {
           if (cand !== wmSel.wm) {
@@ -1063,10 +1194,8 @@ export async function ensureHeadless(): Promise<boolean> {
     if (!(await procOnDisplay("tint2", `:${num}`))) {
       if (await resolveBin("tint2")) {
         ensureTint2Config(); // launcher 确保含 终端/文件管理器（已存在只补缺，不覆盖用户定制）
-        spawn("sh", ["-c",
-          `export DISPLAY=:${num}; export XAUTHORITY=${authFile}; export XDG_RUNTIME_DIR=${runtimeDir}; ` +
-          `export DBUS_SESSION_BUS_ADDRESS=unix:path=${busFile}; nohup tint2 >/dev/null 2>&1 & true`],
-          { detached: true, stdio: "ignore" }).unref();
+        await spawnSurvivor(`tint2-${num}`, "exec tint2",
+          { DISPLAY: `:${num}`, XAUTHORITY: authFile, XDG_RUNTIME_DIR: runtimeDir, DBUS_SESSION_BUS_ADDRESS: `unix:path=${busFile}` });
       }
     }
     // ARGB compositor: transparent Tauri caption needs one; GNOME provides its own,
@@ -1076,10 +1205,8 @@ export async function ensureHeadless(): Promise<boolean> {
       for (const cand of COMPOSITORS) {
         if (!(await resolveBin(cand))) continue;
         const flags = cand === "xcompmgr" ? "" : "--backend xrender --no-vsync";
-        spawn("sh", ["-c",
-          `export DISPLAY=:${num}; export XAUTHORITY=${authFile}; export XDG_RUNTIME_DIR=${runtimeDir}; ` +
-          `export DBUS_SESSION_BUS_ADDRESS=unix:path=${busFile}; nohup ${cand} ${flags} >/dev/null 2>&1 & true`],
-          { detached: true, stdio: "ignore" }).unref();
+        await spawnSurvivor(`comp-${num}-${cand}`, `exec ${cand} ${flags}`.trim(),
+          { DISPLAY: `:${num}`, XAUTHORITY: authFile, XDG_RUNTIME_DIR: runtimeDir, DBUS_SESSION_BUS_ADDRESS: `unix:path=${busFile}` });
         await sleep(600);
         if (await procOnDisplay(cand, `:${num}`)) {
           try { fs.appendFileSync(logFile, `[${new Date().toISOString()}] compositor ${cand} started on :${num}\n`); } catch { /* ignore */ }
@@ -1452,9 +1579,9 @@ background_color = #22222e 85
 
 function sleep(ms: number): Promise<void> { return new Promise((r) => setTimeout(r, ms)); }
 
-function execFilePromise(cmd: string, args: string[], timeoutMs: number): Promise<{ err: Error | null; out: string }> {
+function execFilePromise(cmd: string, args: string[], timeoutMs: number, env?: Record<string, string>): Promise<{ err: Error | null; out: string }> {
   return new Promise((resolve) => {
-    execFile(cmd, args, { timeout: timeoutMs, encoding: "utf8" }, (err, stdout) => resolve({ err, out: String(stdout) }));
+    execFile(cmd, args, { timeout: timeoutMs, encoding: "utf8", ...(env ? { env: { ...process.env, ...env } } : {}) }, (err, stdout) => resolve({ err, out: String(stdout) }));
   });
 }
 
@@ -1815,20 +1942,16 @@ async function safeSpawnBin(bin: string, args: string[], envExtra: Record<string
     : (bin === "node" ? process.execPath : await resolveBin(bin)); // Windows: node 用当前运行时进程
   if (!exe) return null;
   try {
-    // 子进程日志 → configDir/logs（跨平台路径；诊断 WS 断连等用）
-    let stdio: any = "ignore";
-    let logFd: number | undefined;
+    // child logs → configDir/logs (cross-platform; diagnosing WS drops; unit mode redirects via survivor,
+    // bare mode writes the fd directly)
+    let logFile: string | undefined;
     try {
       const fsMod = await import("node:fs");
       const logDir = configDir ? cachePath("logs") : ".";
       try { fsMod.mkdirSync(logDir, { recursive: true }); } catch { /* ignore */ }
-      logFd = fsMod.openSync(path.join(logDir, `bridge-${bin}-${envExtra.UI_ENV_RDP_WEB_PORT ?? envExtra.UI_ENV_VNC_WEB_PORT ?? Date.now()}.log`), "a");
-      stdio = ["ignore", logFd, logFd];
+      logFile = path.join(logDir, `bridge-${bin}-${envExtra.UI_ENV_RDP_WEB_PORT ?? envExtra.UI_ENV_VNC_WEB_PORT ?? Date.now()}.log`);
     } catch { /* fall back to ignore */ }
-    const p = spawn(exe, args, { detached: true, stdio, env: { ...process.env, ...envExtra } });
-    p.on("error", () => { /* 二进制缺失等：忽略，由端口重探判定 */ });
-    p.unref();
-    return p.pid ?? null;
+    return await spawnSurvivorPid(bin === "node" ? "bridge" : bin, exe, args, envExtra, logFile);
   } catch { return null; }
 }
 
