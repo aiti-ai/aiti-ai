@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-devtools-pi",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "pi (pi.dev CLI) side extension: stateless agent-side connector reusing the aiti-devtools-agent wiring framework to bring pi CLI sessions into aiti-devtools.",
   "type": "module",
   "main": "src/index.ts",
@@ -28,5 +28,5 @@
   "bugs": {
     "url": "https://github.com/aiti-ai/aiti-ai/issues"
   },
-  "contentHash": "c52b7899c7d6ed53"
+  "contentHash": "580d0885c4e1f916"
 }
