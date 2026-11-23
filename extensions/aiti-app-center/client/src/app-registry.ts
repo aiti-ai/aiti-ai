@@ -97,8 +97,7 @@ export const APP_OVERRIDES: Record<string, { category?: string; keywords?: strin
   "aiti-plan-first": { category: "ai", keywords: ["plan", "方案"] },
   "aiti-plan-review": { category: "ai", keywords: ["plan", "评审"] },
   "aiti-models-import": { category: "ai", keywords: ["models", "导入"] },
-  // auto 自动化与 Agent
-  "aiti-ai-schedule": { category: "auto", keywords: ["schedule", "定时", "任务"] },
+  // auto — automation & agents (aiti-ai-schedule now self-declares category+keywords; row retired)
   "aiti-subagents": { category: "auto", keywords: ["subagent", "子代理", "舰队"] },
   "aiti-agent-manager": { category: "auto", keywords: ["agent", "登录"] },
   "aiti-custom-agent": { category: "auto", keywords: ["agent", "自定义"] },

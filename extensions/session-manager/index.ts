@@ -324,7 +324,7 @@ const ext = {
   schedules: [
     {
       id: "session-index-vacuum",
-      name: "会话索引库瘦身（回收删除残留空闲页，不删会话数据；长任务——经索引 worker 后台执行，主线程零阻塞）",
+      name: "i18n:sm.sch.vacuum",
       intervalSec: 86400,
       enabled: true,
       run: (sctx: { configDir?: string }) => {
@@ -478,6 +478,7 @@ const ext = {
         "it.search.label": "Search sessions",
         "it.tags.label": "Session tags",
         "ext.displayName": "Session Manager",        "feat.toolbar.search": "Top-bar session search box",
+        "sm.sch.vacuum": "Session index vacuum (reclaims free pages left by deleted rows; never touches session data; runs in the index worker off the main thread)",
         "feat.behavior.favorite-icons": "Favorite icons",
         "feat.behavior.session-timeline": "Session-row timeline button",
         "feat.behavior.folder-quota": "Sidebar folder block retention",
@@ -993,6 +994,7 @@ const ext = {
         "it.search.label": "搜索会话",
         "it.tags.label": "标签",
         "ext.displayName": "会话管理器",        "sidebar.loading": "加载中...",
+        "sm.sch.vacuum": "会话索引库瘦身（回收删除残留空闲页，不删会话数据；经索引 worker 后台执行）",
         "sidebar.noSessions": "未找到会话",
         "sidebar.new": "新建",
         "sidebar.newSessionTitle": "在 {path} 中新建会话",

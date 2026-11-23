@@ -15,6 +15,21 @@ import {
 } from "../../../_shared/ext-float-dock";
 import type { DockHeaderAction } from "../../../_shared/ext-float-dock";
 import { uiAlert, uiConfirm } from "../../../_shared/ui-dialogs";
+import { extItemText, primeExtRegistry, onExtRegistryReady, currentUiLocale } from "../../../_shared/ext-display-names";
+
+// ---------- Hook-task display name (cross-extension i18n) ----------
+// Declarative hook tasks registered by other extensions carry "i18n:<key>" names, resolved against
+// the DECLARING extension's own manifest ui.i18n table (shared resolver; same protocol as the host
+// translateExtItemText). Legacy plain names — and historical run records already stored with the
+// old Chinese text — pass through untouched.
+function taskDisplayName(targetId: string | undefined, rawName: string): string {
+  if (!rawName || !rawName.startsWith("i18n:")) return rawName;
+  const bare = rawName.slice("i18n:".length);
+  if (!targetId || !targetId.startsWith("hook:")) return bare;
+  const rest = targetId.slice("hook:".length);
+  const extId = rest.slice(0, rest.indexOf(":"));
+  return extId ? extItemText(extId, rawName, currentUiLocale()) : bare;
+}
 
 /** 面板 itemKey（= rightFileDock 注册复合 id "aiti-ai-schedule:panel"） */
 export const SCHED_KEY = "aiti-ai-schedule:panel";
@@ -1140,7 +1155,7 @@ function RunsPanel({ onClose }: { onClose: () => void }) {
               return (
                 <tr key={r.id}>
                   <td style={tdStyle} title={r.at}>{new Date(r.at).toLocaleString()}</td>
-                  <td style={tdStyle}>{r.name}</td>
+                  <td style={tdStyle}>{taskDisplayName(r.targetId, r.name)}</td>
                   <td style={{ ...tdStyle, color: r.status === "ok" ? "var(--ok, #10b981)" : r.status === "error" ? "var(--danger, #ef4444)" : r.status === "missed" ? "var(--warn, #f59e0b)" : "inherit" }}>
                     {r.status}{r.retry ? t("run.retry") : ""}
                   </td>
@@ -1171,6 +1186,13 @@ function RunsPanel({ onClose }: { onClose: () => void }) {
 function ScheduleDialog({ onClose, initialEditing, embedded, dockItemKey }: { onClose: () => void; initialEditing?: any; embedded?: boolean; dockItemKey?: string }) {
   // 最大化按钮由 aiti-float 自动注入（⛶/❐，小屏全屏态自动隐藏）——不再自备
   const [tasks, setTasks] = useState<any[] | null>(null);
+  // Cross-extension i18n registry (hook-task names): prime once at mount; re-render when the
+  // manifest cache lands (async fetch) so "i18n:" hook names resolve in the current locale.
+  const [, setRegistryTick] = useState(0);
+  useEffect(() => {
+    primeExtRegistry(apiUrl);
+    return onExtRegistryReady(() => setRegistryTick((x) => x + 1));
+  }, []);
   const [editing, setEditing] = useState<any | undefined>(initialEditing); // undefined=关 | null=新建 | object=预填/编辑
   const [showRuns, setShowRuns] = useState(false);
   const [config, setConfig] = useState<any>(null);
@@ -1206,7 +1228,7 @@ function ScheduleDialog({ onClose, initialEditing, embedded, dockItemKey }: { on
       try {
         if (m.type === "run" && m.notify && typeof Notification !== "undefined" && Notification.permission === "granted") {
           const ok = m.status === "ok";
-          new Notification((ok ? "✅ " : "❌ ") + t("dlg.notify.title", { name: m.name }), {
+          new Notification((ok ? "✅ " : "❌ ") + t("dlg.notify.title", { name: taskDisplayName(m.targetId, String(m.name || "")) }), {
             body: ok ? t("dlg.notify.ok") : String(m.error || t("dlg.notify.fail")).slice(0, 120), tag: m.targetId,
           });
         }
@@ -1327,7 +1349,7 @@ function ScheduleDialog({ onClose, initialEditing, embedded, dockItemKey }: { on
                       <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 5, background: isAi ? "rgba(59,130,246,.15)" : "rgba(122,122,122,.15)", color: isAi ? "#60a5fa" : "var(--text-muted)" }}>
                         {isAi ? t("dlg.badge.ai") : t("dlg.badge.ext")}
                       </span>
-                      <strong style={{ fontSize: 13.5 }}>{task.name}</strong>
+                      <strong style={{ fontSize: 13.5 }}>{taskDisplayName(task.key, task.name)}</strong>
                       <span style={{ fontSize: 11, padding: "1px 6px", borderRadius: 5, background: badgeColor + "22", color: badgeColor }}>{badgeText}</span>
                     </div>
                     <div style={{ display: "flex", gap: 6, alignItems: "center" }}>

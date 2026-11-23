@@ -705,8 +705,10 @@ const ext = {
         "it.docs.title": "文档",
         "it.aiti-doc-center-page.label": "文档中心",
         "ext.displayName": "文档中心",
+        "dc.sch.scan": "文档中心定期收集整理",
       },
       en: {
+        "dc.sch.scan": "Doc center periodic scan & indexing",
         "it.docs.title": "Doc Center: workspace doc collection & full-text search",
         "feat.scan.roots.desc": "Comma/newline separated (supports ~). For precise tag layering use root|alias form; scans all workspace roots when empty",
         "feat.scan.excludes.desc": "Comma-separated dir names or globs (*.tmp); also honors .gitignore automatically",
@@ -836,7 +838,7 @@ const ext = {
   schedules: [
     {
       id: "doc-center-scan",
-      name: "文档中心定期收集整理",
+      name: "i18n:dc.sch.scan",
       intervalSec: 600,
       enabled: true,
       run: (_ctx: any) => { postWorker({ cmd: "scan", full: false }); },

@@ -225,7 +225,7 @@ export default {
 
   // 影子仓瘦身定时任务（注册给 aiti-ai-schedule 聚合执行；compact.enabled=false 可关）
   schedules: [
-    { id: "trace-compact", name: "影子仓按时间瘦身（默认保 30 天，删旧分支+回收对象+清无主台账）", intervalSec: 86400, enabled: true, run: compactTaskRun },
+    { id: "trace-compact", name: "i18n:gt.sch.compact", intervalSec: 86400, enabled: true, run: compactTaskRun },
   ],
 
   // §9 features 全表（7 项；关注路径/autoDiscover 是 workspace 级配置，不经 extman）
@@ -265,6 +265,7 @@ export default {
     ],
     i18n: {
       en: {
+        "gt.sch.compact": "Trace repo compaction (keeps 30 days by default: prune old branches, gc objects, clear orphan ledger)",
         "feat.trace.enabled.desc": "When on, AI session file changes are written into the .aiti-trace tracking repo (off by default)",
         "feat.trace.excludeExtra.desc": "Extra excludes on top of the built-in list (stacks with the project .gitignore)",
         "feat.trace.includeExtra.desc": "! patterns to rescue paths wrongly hit by built-in excludes (parent dirs need negating too)",
@@ -434,6 +435,7 @@ export default {
         "it.aiti-git-trace-timeline-dialog.label": "aiti-git-trace · 时间线",
         "it.aiti-git-trace-fork-dialog.label": "aiti-git-trace · 回撤",
         "ext.displayName": "AI 变更追踪",        "gt.timeline.short": "时间线",
+        "gt.sch.compact": "影子仓按时间瘦身（默认保 30 天，删旧分支+回收对象+清无主台账）",
         "gt.watch.app.title": "aiti-git-trace：关注路径管理（workspace 持久 + 本会话识别；只追 git 仓）",
         "gt.timeline.app.title": "aiti-git-trace：本会话 ops 时间线（回滚/看 diff）",
         "gt.watch.short": "关注路径",

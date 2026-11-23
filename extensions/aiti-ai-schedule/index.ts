@@ -68,6 +68,11 @@ export default {
   name: "AI 自调度（计划管理）",
   icon: "icon.svg",
   client: "dist/aiti-ai-schedule.mjs",
+  // App-center / launcher search vocabulary (self-declared; retires the legacy APP_OVERRIDES row).
+  // "task(s)" matters: the sidebar dock block is literally named Tasks (sb.tasks) — searching
+  // "task" must land here. English + Chinese synonyms both included (hay matches either locale).
+  category: "auto",
+  keywords: ["schedule", "task", "tasks", "cron", "timer", "job", "定时", "任务", "计划", "调度"],
 
   ai: {
     manage: true,
