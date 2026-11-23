@@ -199,6 +199,7 @@ export function EditorApp(props: Record<string, any>) {
 
   const [monacoErr, setMonacoErr] = useState<string | null>(null); // Monaco 加载失败（可重试）
   const [monacoRetry, setMonacoRetry] = useState(0); // 点重试 +1 → 重新触发 mount effect
+  const [monacoReady, setMonacoReady] = useState(false); // editor instance mounted into the container (spinner covers the blank window)
   const [meta, setMeta] = useState<any>(null);
   const [openEncoding, setOpenEncoding] = useState("auto"); // 以指定编码重新打开
   const [showEnc, setShowEnc] = useState(false); // 编码菜单
@@ -728,6 +729,7 @@ export function EditorApp(props: Record<string, any>) {
   useEffect(() => {
     if (status.phase !== "ready" || !meta || !containerRef.current) return;
     let cancelled = false;
+    setMonacoReady(false); // retry/remount cycle: back to loading state until an editor is mounted
     // 模型语言以客户端注册表推断为准（provider/扩展名表是权威来源）：meta.language 可能被
     // 缓存恢复路径的 language:"text" 或异步竞态污染 → 偶发模型建成 plaintext、
     // CSV 彩虹列/诊断等语言专属功能全部失效。detect 为 plaintext 时才回退 meta.language
@@ -751,6 +753,7 @@ export function EditorApp(props: Record<string, any>) {
           const same = m && m.getLanguageId() === modelLang && m.getValue() === meta.content;
           if (same) {
             editorRefHolder.ref = editorRef;
+            setMonacoReady(true); // reusing the existing instance: editor already in the container, no blank window
             return;
           }
           prev.dispose();
@@ -841,6 +844,7 @@ export function EditorApp(props: Record<string, any>) {
         });
         editorRef.current = editor;
         editorRefHolder.ref = editorRef; // 同步模块级引用（_getEditor）
+        setMonacoReady(true); // editor mounted: spinner off — previously seconds of silent blank canvas
         setEditorTick((n) => n + 1); // 新实例 → 触发选区监听 effect 重挂到新编辑器
         // 语言服务桥 + 语言专属功能：按模型【实际】语言门控（而非 meta 推导值）
         const actualLang = model.getLanguageId();
@@ -2364,6 +2368,18 @@ useEffect(() => {
               display: (canPreview && viewMode === "preview") || gitState.diffActive ? "none" : "block",
               overflow: "hidden",
             }} />
+          )}
+          {/* Loading overlay while the editor instance is not yet mounted (bundle/AMD chain
+              cold load takes seconds, worse on mobile — previously a silent blank canvas,
+              confirmed by user screenshot 2026-11-24). */}
+          {!isBinaryView && !monacoReady && !monacoErr && !gitState.diffActive && !(canPreview && viewMode === "preview") && (
+            <div style={{ position: "absolute", top: 0, bottom: 0, left: 0,
+                right: canPreview && viewMode === "split" ? "50%" : 0, zIndex: 500,
+                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14,
+                color: "var(--text-muted,#888)", fontSize: 14 }}>
+              <div style={{ width: 30, height: 30, border: "3px solid var(--border,#e0e0e0)", borderTopColor: "#4f8ef7", borderRightColor: "#4f8ef7", borderRadius: "50%", animation: "aiti-spin 0.6s linear infinite" }} />
+              {t("正在加载编辑器…")}
+            </div>
           )}
           {/* Monaco 加载失败遮罩（loadMonaco 已退避重试 3 次 → 手动兜底） */}
           {!isBinaryView && monacoErr && (

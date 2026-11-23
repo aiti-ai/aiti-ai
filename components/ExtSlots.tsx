@@ -378,7 +378,7 @@ interface ManifestExt {
   // ui is fully serialized with the manifest (registry.ts `ui: e.ext.ui ?? null`):
   // besides i18n/provides it also carries each slot's static item arrays
   // (ExtUiStaticSlots) — the zero-bundle entry data source of lazy loading v2.
-  ui: (ExtUiStaticSlots & { i18n?: Record<string, Record<string, string>>; provides?: string[]; clientImmediately?: boolean }) | null;
+  ui: (ExtUiStaticSlots & { i18n?: Record<string, Record<string, string>>; provides?: string[]; clientImmediately?: boolean; prefetchOnIdle?: boolean }) | null;
   icon?: string | null;
   features?: { id: string; type?: "boolean" | "string" | "textlist"; label?: string; placeholder?: string; enabled: boolean; value?: string }[] | null;
 }
@@ -863,9 +863,49 @@ async function loadExtensions(): Promise<void> {
     const [first, ...rest] = immediate;
     if (first) await matBoot(first);
     await Promise.allSettled(rest.map(matBoot));
+    // [idle prefetch 2026-11-24] Lazy extensions that opted in (ui.prefetchOnIdle)
+    // materialize in the first idle window after boot: their register() side effects
+    // mount the idle warm-up hooks (e.g. aiti-editor warmMonacoOnIdle preloads the
+    // Monaco AMD chain after the first interaction). Without this, the editor's
+    // whole waterfall (client bundle → Monaco chain, ~3s cold / worse on mobile)
+    // only starts when the user actually opens a file — the first open shows an
+    // empty editor area for seconds. Opt-in per extension (never blanket): some
+    // lazy extensions have connect side effects (ACP backends) that must stay
+    // on-demand. Media streams get priority on the connection pool (same guard
+    // as the extension-side warm-up); Data Saver skips entirely.
+    scheduleIdleMaterialize(data.extensions
+      .filter((e) => e.ui?.prefetchOnIdle
+        && !immediate.some((g) => g.id === e.id)
+        && e.clientUrl)
+      .map((e) => e.id));
   } finally {
     notifyExtBootSettled();
   }
+}
+
+const idleMaterializeScheduled = new Set<string>();
+/** Materialize opted-in lazy extensions in the first idle window (see loadExtensions).
+ *  Idempotent per page load; failures are silent (the slot trigger path remains). */
+function scheduleIdleMaterialize(ids: string[]): void {
+  const fresh = ids.filter((id) => !idleMaterializeScheduled.has(id));
+  if (fresh.length === 0) return;
+  for (const id of fresh) idleMaterializeScheduled.add(id);
+  const run = async () => {
+    // Connection-pool courtesy: while a media element is buffering, postpone —
+    // HTTP/1.1 hosts allow only 6 concurrent connections and a ~1.5MB prefetch
+    // would starve the stream (same guard as aiti-editor's own warm-up).
+    if (document.querySelector("video[src], audio[src]")) { setTimeout(run, 5000); return; }
+    for (const id of fresh) {
+      try { await ensureExtMaterialized(id); } catch { /* extension absent/disabled — stay silent */ }
+    }
+  };
+  try {
+    const conn = (navigator as unknown as { connection?: { saveData?: boolean } }).connection;
+    if (conn?.saveData) return;
+    const ric = (window as unknown as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => void }).requestIdleCallback;
+    if (typeof ric === "function") ric(() => { void run(); }, { timeout: 10000 });
+    else setTimeout(() => { void run(); }, 3000);
+  } catch { /* pure optimization — never block boot */ }
 }
 
 /** HMR precise invalidation: POST reload (server-side shutdown→loadAll→startAll)
