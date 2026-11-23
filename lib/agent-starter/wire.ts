@@ -118,7 +118,19 @@ export type SupersededFrame = { t: "superseded" };
 /** client → wrapper: terminate the agent (SIGTERM by default, SIGKILL after grace). */
 export type KillFrame = { t: "kill"; signal?: string };
 
-export type ControlFrame = HelloFrame | SpawnErrorFrame | ExitFrame | SupersededFrame | KillFrame;
+/**
+ * client → wrapper: this connection is a real host client (sent right after
+ * connect). Only an identified socket supersedes the current client — a
+ * liveness probe must never steal the single-writer slot (2026-11-23: a probe
+ * disconnected the live page, whose event stream then received no more
+ * queue_update frames).
+ */
+export type HelloAckFrame = { t: "hello_ack" };
+
+/** client → wrapper: liveness probe — never a client, never a supersede. */
+export type ProbeFrame = { t: "probe" };
+
+export type ControlFrame = HelloFrame | SpawnErrorFrame | ExitFrame | SupersededFrame | KillFrame | HelloAckFrame | ProbeFrame;
 
 export function encodeControl(frame: ControlFrame): Buffer {
   return encodeFrame(CH_CTRL, Buffer.from(JSON.stringify(frame), "utf8"));
@@ -129,7 +141,10 @@ export function decodeControl(payload: Buffer): ControlFrame | undefined {
     const value = JSON.parse(payload.toString("utf8")) as unknown;
     if (!value || typeof value !== "object") return undefined;
     const t = (value as { t?: unknown }).t;
-    if (t !== "hello" && t !== "spawn_error" && t !== "exit" && t !== "kill" && t !== "superseded") return undefined;
+    if (
+      t !== "hello" && t !== "spawn_error" && t !== "exit" && t !== "kill" && t !== "superseded"
+      && t !== "hello_ack" && t !== "probe"
+    ) return undefined;
     return value as ControlFrame;
   } catch {
     return undefined;

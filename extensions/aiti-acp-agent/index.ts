@@ -35,7 +35,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, accessSync, constan
 let queueStateDir: string | undefined;
 import { whichBin } from "@aiti-ai/ext-shared/exec-async";
 import { governanceEnv } from "./external-governance.ts";
-import { agentSpawnEnv, spawnEnvFeature, spawnDisplayEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, spawnEnvList, spawnCommand, spawnArgsPrefix, parseArgsLines, resolveCliLaunch, captureSpawnEnvFeatures } from "@aiti-ai/ext-shared/agent-spawn-env";
+import { agentSpawnEnv, spawnEnvFeature, spawnDisplayEnvFeature, spawnCommandFeature, spawnArgsPrefixFeature, spawnEnvList, spawnCommand, spawnArgsPrefix, parseArgsLines, resolveCliLaunch, captureSpawnEnvFeatures, spawnFeatureI18nEn } from "@aiti-ai/ext-shared/agent-spawn-env";
 import type { LaunchOverride } from "@aiti-ai/ext-shared/agent-spawn-env";
 import { readAgentLastUsedModel, readExtModelState, withLastUsedFirst, writeExtModelState, type ExtModelEntry } from "@aiti-ai/ext-shared/ext-model-state";
 // 队列共享实现层（权威源 pi-web-ext/_shared/backend-queue.ts，副本随扩展部署——改动须双向同步）
@@ -359,6 +359,24 @@ export interface AttachedChildOptions {
 /** Core signal: the wrapper's journal replay ended, live frames start here. */
 const REPLAY_END_EVENT = "replay_end";
 
+type SourceHistoryMessage = { role?: unknown; text?: unknown; model?: unknown; provider?: unknown; tool?: unknown };
+let hostSvc: { get?(key: string): unknown } | null = null;
+
+/** Source-index history for a resumed external session (best effort; session-manager is the reader). */
+async function parseExternalHistory(agentKey: string, sessionId: string): Promise<SourceHistoryMessage[] | null> {
+  try {
+    const reg = (globalThis as { __piWebExt?: { byId?(id: string): { ext?: { services?: Record<string, unknown> } } } }).__piWebExt;
+    const svc = (hostSvc?.get?.("session-manager.sessions")
+      ?? reg?.byId?.("session-manager")?.ext?.services?.sessions) as
+      { parseSession?(id: string): Promise<{ messages?: unknown[] } | null> } | undefined;
+    if (typeof svc?.parseSession !== "function") return null;
+    const parsed = await svc.parseSession(`${agentKey}:${sessionId}`);
+    return Array.isArray(parsed?.messages) ? (parsed.messages as SourceHistoryMessage[]) : null;
+  } catch {
+    return null;
+  }
+}
+
 export class AcpHandle {
   readonly source: string;
   /** 实例级拷贝（initialize 后按宿主宣告收敛：promptCapabilities.image 不支持 → fileAttachments=false） */
@@ -380,6 +398,11 @@ export class AcpHandle {
   starter?: AgentStarterLike;
   /** Registry key the host records (ACP session id / placeholder). */
   nativeKey = "";
+  /** Source-index history fallback when a resumed CLI replays only part of the history. */
+  sourceHistory: SourceHistoryMessage[] | null = null;
+  /** Bootstrap (initialize → session/new|load) completed; host switches wait on it. */
+  private sessionReady = false;
+  private readyWaiters: Array<() => void> = [];
   private detachReader: (() => void) | null = null;
   private listeners = new Set<Listener>();
   private pending = new Map<string | number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
@@ -461,6 +484,7 @@ export class AcpHandle {
         if (!this.loading) return;
         this.loading = false;
         this.flushReplayAssistant();
+        this.seedSourceHistoryIfShort();
       };
       if (facade.detachable === true && typeof facade.on === "function") {
         facade.on(REPLAY_END_EVENT, endReplay);
@@ -470,7 +494,10 @@ export class AcpHandle {
         setTimeout(endReplay, 3000).unref?.();
       } else {
         this.loading = false;
+        this.flushReplayAssistant();
+        this.seedSourceHistoryIfShort();
       }
+      this.markReady();
       return;
     }
     const resolvedBin = which(this.bin) ?? this.bin;
@@ -642,6 +669,7 @@ export class AcpHandle {
     this.applySessionMeta(result);
     await this.applyTrustMode();
     this.emit({ type: "agent_start", sessionId: this.id, backend: this.agentName });
+    this.markReady();
   }
 
   /**
@@ -659,14 +687,72 @@ export class AcpHandle {
         modes?: { currentModeId?: string; availableModes?: Array<{ id: string; name?: string }> };
         configOptions?: Array<{ id?: string; name?: string; currentValue?: unknown; options?: Array<{ value: unknown; name?: string; description?: string }> }>;
       } | null;
+      // The wrapper (when detachable) was spawned under a provisional native key
+      // before session/load revealed the real ACP session id. Announce the rebind
+      // so the host rekeys the registry entry to the native id; otherwise a
+      // detached switch starts a wrapper that `describe(nativeId)` can never find
+      // (observed: switch reported success but the panel stayed on direct).
+      const previousKey = this.nativeKey;
+      const previousId = this.id;
       this.id = `${this.agentKey}:${sessionId}`;
+      this.nativeKey = sessionId;
+      if (previousKey && previousKey !== sessionId) {
+        this.pendingAnnounce = { oldId: previousKey, id: this.id };
+        setImmediate(() => this.flushAnnounce());
+      } else if (previousId && previousId !== this.id) {
+        this.pendingAnnounce = { oldId: previousId, id: this.id };
+        setImmediate(() => this.flushAnnounce());
+      }
       if (result) this.applySessionMeta(result);
       this.flushReplayAssistant();
+      this.seedSourceHistoryIfShort();
       await this.applyTrustMode();
       this.emit({ type: "agent_start", sessionId: this.id, backend: this.agentName });
+      this.markReady();
     } finally {
       this.loading = false;
     }
+  }
+
+  /** Source-index history fallback after a partial session/load replay (also host-invoked). */
+  seedHistory(messages: SourceHistoryMessage[]): void {
+    if (!Array.isArray(messages) || messages.length <= this.liveHistory.length) return;
+    this.liveHistory = [];
+    for (const message of messages) {
+      const role = message.role === "assistant" ? "assistant" : "user";
+      const text = typeof message.text === "string" ? message.text : "";
+      if (!text.trim()) continue;
+      this.liveHistory.push(
+        role === "assistant"
+          ? { role, content: [{ type: "text", text }], ...(typeof message.model === "string" && message.model ? { model: message.model } : {}), ...(typeof message.provider === "string" && message.provider ? { provider: message.provider } : {}) }
+          : { role, content: text },
+      );
+    }
+  }
+
+  /** Fill missing history from the source index after a partial session/load replay. */
+  private seedSourceHistoryIfShort(): void {
+    const source = this.sourceHistory;
+    this.sourceHistory = null;
+    if (source?.length) this.seedHistory(source);
+  }
+
+  /** Hosting restart: replace partial live history with the previous handle's full copy. */
+  restoreHistory(messages: unknown[]): void {
+    if (!Array.isArray(messages) || messages.length <= this.liveHistory.length) return;
+    this.liveHistory = messages.slice();
+  }
+
+  /** Wait until the ACP bootstrap (initialize + session/new|load) finished. */
+  waitUntilReady(): Promise<void> {
+    if (this.sessionReady) return Promise.resolve();
+    if (!this.aliveFlag) return Promise.reject(new Error("[acp] not running"));
+    return new Promise((resolve) => this.readyWaiters.push(resolve));
+  }
+
+  private markReady(): void {
+    this.sessionReady = true;
+    for (const waiter of this.readyWaiters.splice(0)) waiter();
   }
 
   /** 回放 assistant 文本冲刷（下一条 user 回放或加载收口时落 liveHistory）。 */
@@ -687,6 +773,8 @@ export class AcpHandle {
   private markDead(reason: string): void {
     if (!this.aliveFlag) return;
     this.aliveFlag = false;
+    this.sessionReady = false;
+    for (const waiter of this.readyWaiters.splice(0)) waiter();
     this.detachReader?.();
     this.detachReader = null;
     this.child = null;
@@ -1428,7 +1516,7 @@ function scanAcpBackends(
       listModels: () => catalogListModels(agent.name, agent.agentKey ?? agent.name),
       refreshModels: () => catalogRefreshModels(agent.name, agent.agentKey ?? agent.name),
       // The core may host this backend's ACP process in a detachable wrapper; the
-      // handle adopts the live session on reattach (AcpHandle.start's attach path +
+      // handle adopts the live process on reattach (AcpHandle.start's attach path +
       // the replay boundary).
       //
       // Verified on claude-code (the flagship of 25 providers, same AcpHandle):
@@ -1439,6 +1527,9 @@ function scanAcpBackends(
       // not adopt failures — allow up to ~2 minutes for the first turn after a
       // reattach, when the agent re-registers its MCP bridge.
       detachable: true,
+      // Restart clears old handles/wrappers and seeds source history on the new
+      // handle (hosting switch verification).
+      hostingSwitch: true,
       async createSession(options) {
         // 接管既有会话：以原 cwd 优先（session/load）；新会话用宿主 cwd。
         // cwd 先算后构造：handle 信息面（/api/sessions info.cwd）在 start 完成前的
@@ -1446,10 +1537,15 @@ function scanAcpBackends(
         const restored = options.sessionId ? await restoreCwdFn?.(agent.agentKey ?? agent.name, options.sessionId) : undefined;
         const cwd = restored ?? options.cwd ?? process.cwd();
         const handle = new AcpHandle(agent.name, resolved.bin, resolved.args, agent.agentKey ?? agent.name, cwd);
+        // Resume: key the wrapper registry by the native session id from the
+        // start, so a detached switch is discoverable by describe(sid).
+        if (options.sessionId) handle.nativeKey = options.sessionId;
+        if (options.sessionId) handle.sourceHistory = await parseExternalHistory(agent.agentKey ?? agent.name, options.sessionId);
         handle.starter = options.agentStarter;
         if (options.attached) {
           // Recovery: the ACP session lives on in the wrapper's process — adopt it and
           // skip the handshake (start's adopt path, no session/new|load).
+          if (options.sessionId) handle.sourceHistory = await parseExternalHistory(agent.agentKey ?? agent.name, options.sessionId);
           await handle.start(cwd, { child: options.attached.child, sessionId: options.attached.sessionId });
           const saved = await readExtModelState(`acp-${agent.agentKey ?? agent.name}`, `${agent.agentKey ?? agent.name}:${options.attached.sessionId}`);
           if (saved?.selected?.id) handle.adoptModel(saved.selected.id);
@@ -1739,7 +1835,7 @@ function initModelCatalog(ctx: { configDir: string; cacheDir?: string }): void {
 export default {
   id: "aiti-acp-agent",
   name: "ACP Agents (通用 ACP 驱动)",
-  icon: "🔌",
+  icon: "icons/plug.svg",
   client: "dist/acp-manager.mjs",
   ui: {
     clientImmediately: true,
@@ -1750,7 +1846,6 @@ export default {
     i18n: {
       "zh-CN": {
         "ext.displayName": "ACP 会话后端",
-        "ext.description": "通用 ACP 会话后端：装机才接入 25 家 ACP 兼容 CLI，统一接管会话与模型。",
         "acp.manage.title": "ACP 后端 Agent 管理",
         "acp.manage.dialog.label": "ACP 后端 Agent 管理",
         "acp.manage.option.label": "管理 ACP Agent…",
@@ -1768,8 +1863,8 @@ export default {
         "feat.behavior.showAcpManager.desc": "默认隐藏。打开后在顶部工具栏显示 ACP 管理入口（弹窗）；新会话页 Backend 下拉里的「管理 ACP Agent…」选项不受此开关影响，始终显示",
       },
       en: {
+        ...spawnFeatureI18nEn(),
         "ext.displayName": "ACP Session Backend",
-        "ext.description": "Universal ACP session backend: connects 25 ACP-compatible CLIs on install, with unified session and model handling.",
         "acp.manage.title": "Manage ACP backend agents",
         "acp.manage.dialog.label": "ACP Backend Agents",
         "acp.manage.option.label": "Manage ACP Agents…",
@@ -1864,6 +1959,7 @@ export default {
       // ⚠ 服务必须按调用时动态解析：扩展 startup 顺序不保证 session-manager 已注册
       //（在 startup 缓存 get 结果会拿到 undefined → 恢复永远失败）。
       const hostServices = (ctx as { services?: { get(key: string): unknown } })?.services;
+      hostSvc = hostServices ?? null;
       restoreCwdFn = async (agentKey: string, sid: string): Promise<string | undefined> => {
         try {
           const reg = (globalThis as { __piWebExt?: { byId?(id: string): { ext?: { services?: Record<string, unknown> } } } }).__piWebExt;

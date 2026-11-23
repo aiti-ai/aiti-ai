@@ -4,7 +4,7 @@
  * Layout (root overridable via PI_AGENT_STARTER_DIR, shared by dev + prod so a
  * session spawned by one instance can be attached by the other):
  *
- *   <root>/wrapper.mjs                  published wrapper program (content-hash versioned)
+ *   (the wrapper program itself ships in the package: `pi-web wrapper`)
  *   <root>/registry/<key>.json          one entry file per session (single writer per file)
  *   <root>/run/<key>.sock               unix socket served by the wrapper
  *   <root>/run/<key>.ready              written once the wrapper is listening
@@ -75,10 +75,6 @@ export function logDir(): string {
 /** Per-session survive-restart preference marker ("this session was last hosted detached"). */
 export function prefsDir(): string {
   return join(starterRoot(), "prefs");
-}
-
-export function wrapperPath(): string {
-  return join(starterRoot(), "wrapper.mjs");
 }
 
 /** Create the directory skeleton (0700: launch files carry the full agent env). */
@@ -279,6 +275,11 @@ export function probeEndpoint(path: string, timeoutMs = 500): Promise<EndpointSt
     };
     const socket = connect({ path });
     socket.setTimeout(timeoutMs);
+    // A bare connect+close is enough: the wrapper only promotes an identified
+    // socket (hello_ack) or one that stays silent past its identify grace, so
+    // this probe never supersedes the live client (2026-11-23). Sending a
+    // frame here would leave the peer's half-open socket behind (server.close
+    // waits on it) for no benefit.
     socket.once("connect", () => done("alive"));
     socket.once("error", (err: NodeJS.ErrnoException) => {
       done(err?.code === "ENOENT" || err?.code === "ECONNREFUSED" ? "dead" : "unknown");
@@ -334,6 +335,13 @@ export function entryMtime(key: string): number {
  * when the user converts the session back to in-process hosting. Shared by dev
  * + prod like the rest of the starter root. */
 export type DetachedPreference = {
+  /**
+   * Hosting choice for the next cold start. Absent = legacy "survives restarts"
+   * (the marker existed before direct-subprocess preferences were added).
+   * External agents use "subprocess" to persist a non-wrapper child process;
+   * pi uses the marker only for the detached mode.
+   */
+  mode?: "subprocess" | "subprocess-detached";
   providerType?: string;
   agentKey?: string;
   cwd?: string;
@@ -371,11 +379,18 @@ export function clearDetachedPreference(sessionId: string): void {
   }
 }
 
-/** All session ids that currently carry a survive-restart marker. */
+/** All session ids that currently carry a survive-restart marker (direct-subprocess markers excluded). */
 export function listDetachedPreferenceIds(): Set<string> {
+  const out = new Set<string>();
   try {
-    return new Set(readdirSync(prefsDir()).filter((f) => f.endsWith(".json")).map((f) => f.slice(0, -".json".length)));
+    for (const file of readdirSync(prefsDir())) {
+      if (!file.endsWith(".json")) continue;
+      const id = file.slice(0, -".json".length);
+      if (getDetachedPreference(id)?.mode === "subprocess") continue;
+      out.add(id);
+    }
   } catch {
-    return new Set();
+    /* no prefs directory yet */
   }
+  return out;
 }

@@ -34,35 +34,53 @@ const { getPackageVersion, runCommand } = require("./pi-web-commands");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { formatReachableAddresses } = require("./network-addresses");
 
-let launchOptions;
-try {
-  launchOptions = parseCommandLine();
-} catch (error) {
-  fs.writeSync(
-    process.stderr.fd,
-    `${error instanceof Error ? error.message : String(error)}\n`,
-  );
-  process.exit(1);
-}
-
-if (launchOptions.help) {
-  fs.writeSync(process.stdout.fd, getHelpText());
-  process.exit(0);
-}
-
-if (launchOptions.command === "start") {
-  startServer(launchOptions).catch((error) => {
+// `pi-web wrapper --config <launch.json>`: run the detachable agent host.
+//
+// The wrapper is a subcommand of this installation's own CLI, so dev, prod and
+// every npm/archive install run the version shipped WITH their build. It used to
+// be materialized into `~/.pi/agent/agent-starter/wrapper.mjs`, which two builds
+// sharing $HOME overwrote with their own embedded copy — one build could silently
+// downgrade the other's wrapper. Server/Next modules must not load on this path.
+if (process.argv[2] === "wrapper") {
+  import("./agent-wrapper.mjs").catch((error) => {
     console.error(error && error.stack ? error.stack : error);
     process.exitCode = 1;
   });
 } else {
-  runCommand(launchOptions).then(
-    exitWhenIdle,
-    (error) => {
-      console.error(error instanceof Error ? error.message : String(error));
-      exitWhenIdle(1);
-    },
-  );
+  main();
+}
+
+function main() {
+  let launchOptions;
+  try {
+    launchOptions = parseCommandLine();
+  } catch (error) {
+    fs.writeSync(
+      process.stderr.fd,
+      `${error instanceof Error ? error.message : String(error)}\n`,
+    );
+    process.exit(1);
+  }
+
+  if (launchOptions.help) {
+    fs.writeSync(process.stdout.fd, getHelpText());
+    process.exit(0);
+  }
+
+  if (launchOptions.command === "start") {
+    startServer(launchOptions).catch((error) => {
+      console.error(error && error.stack ? error.stack : error);
+      process.exitCode = 1;
+    });
+  } else {
+    runCommand(launchOptions).then(
+      exitWhenIdle,
+      (error) => {
+        console.error(error instanceof Error ? error.message : String(error));
+        exitWhenIdle(1);
+      },
+    );
+  }
 }
 
 // Leave once the event loop drains instead of calling process.exit() right

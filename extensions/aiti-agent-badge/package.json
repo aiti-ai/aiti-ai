@@ -1,0 +1,35 @@
+{
+  "name": "@aiti-ai/aiti-agent-badge",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Agent badge for the composer toolbar: current session agent, live/running state, hosting mode (in-process / subprocess / subprocess-detached) with a compact switch panel.",
+  "displayNameI18n": {
+    "en": "Agent Badge"
+  },
+  "descriptionI18n": {
+    "zh-CN": "输入框工具条的 agent 徽标：当前会话 agent、运行状态、托管模式（进程内 / 子进程 / 子进程分离）+ 紧凑切换面板"
+  },
+  "soul": "先看清是谁在干活，再决定它怎么活。",
+  "soulI18n": {
+    "en": "See who is actually doing the work before deciding how it should work."
+  },
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "watch": "vite build --watch --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "aitiExtProtocol": "1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-agent-badge"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  }
+}

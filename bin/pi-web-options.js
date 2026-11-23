@@ -50,6 +50,7 @@ Commands:
   stop [--port <port>]       Stop a running server
   open [--port <port>]       Open a running server in the browser
   update [--check]           Self-update via the install channel (npm global / release archive)
+  wrapper --config <file>    (internal) Host a detachable agent process for this installation
 
 Options:
   -p, --port <port>          Server port (default: 30141, or PORT)

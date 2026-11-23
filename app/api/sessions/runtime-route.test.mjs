@@ -431,3 +431,17 @@ test("session detail leaves compression to Next when the client accepts gzip", a
   const payload = await response.json();
   assert.equal(payload.info.firstMessage, firstMessage);
 });
+
+test("bridged-detail label comes from the handle source, not a hardcoded tui-bridge", () => {
+  // attachIfBridged also answers with spawn-handle adapters (pi spawn / agent-starter):
+  // labelling them "tui-bridge" mislabelled the agent badge and the model catalog the
+  // frontend picks from that tag. Both attachment branches (the bridgedOk helper and the
+  // inline duplicate) must go through the same derivation.
+  assert.match(detailRoute, /function handleAgentLabel\(source: string \| undefined\): string \{/);
+  assert.match(detailRoute, /if \(s\.includes\("attach-agent"\)\) return "tui-bridge";/);
+  assert.match(detailRoute, /if \(s\.includes\("pi-agent"\)\) return "pi";/);
+  assert.match(detailRoute, /const agent = handleAgentLabel\(bridged\.source\);/);
+  assert.match(detailRoute, /agent,\n\s+\},\n\s+leafId: null,/, "payload uses the derived label");
+  assert.doesNotMatch(detailRoute, /agent: "tui-bridge",/, "no hardcoded label left in any payload");
+  assert.doesNotMatch(detailRoute, /firstUser \? "\(bridged session\)" : "\(bridged session\)"/, "real first message, not a placeholder both ways");
+});

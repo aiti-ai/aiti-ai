@@ -69,6 +69,15 @@ export interface SessionCapabilities {
   /** Fork the session from an entry into a new session file. */
   fork: boolean;
   /**
+   * `fork` / `fork_branch` are a FILE-level branch copy, executed by the host: the
+   * branch up to the target is written to a new session file and the backend process
+   * is never asked (it keeps running on the source). pi spawn: its RPC fork moves the
+   * subprocess to a NEW session file while the wrapper registry (key, socket, systemd
+   * unit) keeps the SOURCE id — reopening the source was then refused as "already
+   * hosted", and the copy could get a second agent on the same file.
+   */
+  forkFileBranch?: boolean;
+  /**
    * fork(reset) — the "edit from here" fork — rebinds the hosted record to a branched
    * child session and reports the new id via newSessionFile (pi spawn: the RPC fork moves
    * the subprocess to a new session file, so the old id would keep reading the stale
@@ -355,7 +364,11 @@ export class UnsupportedCapabilityError extends Error {
 export class BridgeOccupiedError extends Error {
   readonly sessionFile: string;
   constructor(sessionFile: string, detail: string) {
-    super(`Session is owned by another pi process (${detail}). Refusing to open locally.`);
+    // Actionable, not an internal invariant: the session is reachable, just not from
+    // this host process at this moment (another pi process or a cold-starting wrapper
+    // owns it). "Refusing to open locally" only told the user that something
+    // happened; a reload/retry actually attaches to the live owner.
+    super(`This session is hosted by a separate pi process (${detail}). Reload the page to attach to it, or try again in a few seconds.`);
     this.name = "BridgeOccupiedError";
     this.sessionFile = sessionFile;
   }
@@ -467,6 +480,9 @@ export interface SessionHandle {
   followUp?(text: string): Promise<void>;
   /** @capability getMessages */
   getMessages?(): Promise<unknown[]>;
+  /** Optional: replace this handle's in-memory history with a fuller snapshot
+   *  captured from the previous hosting process (switch/session restart). */
+  restoreHistory?(messages: unknown[]): void;
   /** @capability contextUsage */
   getContextUsage?():
     | { percent: number | null; contextWindow: number; tokens: number | null }

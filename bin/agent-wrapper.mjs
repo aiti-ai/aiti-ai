@@ -1,21 +1,8 @@
-/**
- * Source of the detachable agent wrapper program.
- *
- * Why inline: the wrapper must run under a plain `node` with no build step and
- * no dependency on pi-web's compile output. Shipping it as a .mjs asset breaks
- * in the npm package (only .next/bin/extensions/public are published), so the
- * program lives here as a string and is materialized to
- * `~/.pi/agent/agent-starter/wrapper.mjs` (content-hash versioned) on first use.
- *
- * The wrapper is deliberately written without template literals so it can live
- * inside a String.raw literal unescaped. Keep it dependency-free and platform
- * neutral (POSIX sockets; the Windows variant is a separate milestone).
- */
-export const WRAPPER_SOURCE = String.raw`#!/usr/bin/env node
+#!/usr/bin/env node
 /**
  * agent-starter wrapper — hosts one agent process outside pi-web's lifetime.
  *
- *   node wrapper.mjs --config <launch.json>
+ *   pi-web wrapper --config <launch.json>
  *
  * Responsibilities (each one is a facade detail — callers only see stdio):
  *   1. own the agent process lifecycle (spawn with the recorded options),
@@ -282,20 +269,73 @@ function main() {
     if (exitInfo || spawnError) finish(true);
   }
 
+  /**
+   * A liveness probe (registry.probeEndpoint: connect + destroy) and the
+   * stale-socket check must NOT take the single client slot: superseding the
+   * live connection on every probe killed the page's event stream (2026-11-23:
+   * a hosting badge probe disconnected the chat, queue_update frames never
+   * arrived, and the queue panel stayed empty until a reload).
+   *
+   * So a socket becomes the client only when it identifies itself — the host
+   * sends a control hello_ack right after connect; a {t:"probe"} frame closes
+   * the socket without touching the current client; and a socket that stays
+   * connected without a word past IDENTIFY_GRACE_MS is promoted anyway (older
+   * hosts never send hello_ack; their attach waits for our hello).
+   */
+  const IDENTIFY_GRACE_MS = 1000;
   function attachClient(sock) {
-    everConnected = true;
-    disarmIdle();
-    if (lingerTimer) { clearTimeout(lingerTimer); lingerTimer = null; }
-    if (client && client !== sock) {
-      const previous = client;
-      client = null;
-      try { previous.write(control({ t: "superseded" })); } catch (e) { /* ignore */ }
-      try { previous.end(); } catch (e) { /* ignore */ }
-      try { setTimeout(function () { previous.destroy(); }, 500).unref(); } catch (e) { /* ignore */ }
-    }
-    client = sock;
-    handshakeSent = false;
+    let promoted = false;
+    let identifyTimer = null;
     let pending = Buffer.alloc(0);
+    const buffered = [];
+    function applyFrame(channel, payload) {
+      if (channel === CH_STDIN) {
+        if (child && child.stdin && child.stdin.writable) child.stdin.write(payload);
+      } else if (channel === CH_CTRL) {
+        onControl(payload);
+      }
+    }
+    function promote() {
+      if (promoted || sock.destroyed) return;
+      promoted = true;
+      if (identifyTimer) { clearTimeout(identifyTimer); identifyTimer = null; }
+      everConnected = true;
+      disarmIdle();
+      if (lingerTimer) { clearTimeout(lingerTimer); lingerTimer = null; }
+      if (client && client !== sock) {
+        const previous = client;
+        client = null;
+        try { previous.write(control({ t: "superseded" })); } catch (e) { /* ignore */ }
+        try { previous.end(); } catch (e) { /* ignore */ }
+        try { setTimeout(function () { previous.destroy(); }, 500).unref(); } catch (e) { /* ignore */ }
+      }
+      client = sock;
+      handshakeSent = false;
+      // Handshake at promotion time: the journal replay is current (frames
+      // emitted while this socket was pending are in it, not lost to a gap).
+      if (hello || spawnError) sendHandshake(sock);
+      // Commands that arrived before identification (a real client's first
+      // request) run after the handshake, in order.
+      for (const frame of buffered) applyFrame(frame.channel, frame.payload);
+      buffered.length = 0;
+    }
+    function onFrame(channel, payload) {
+      if (!promoted) {
+        let ctrl = null;
+        if (channel === CH_CTRL) {
+          try { ctrl = JSON.parse(payload.toString("utf8")); } catch (e) { ctrl = null; }
+        }
+        if (ctrl && ctrl.t === "probe") {
+          // A liveness probe: never a client. No handshake, no supersede.
+          try { sock.destroy(); } catch (e) { /* ignore */ }
+          return;
+        }
+        if (!(ctrl && ctrl.t === "hello_ack")) buffered.push({ channel, payload });
+        promote();
+        return;
+      }
+      applyFrame(channel, payload);
+    }
     sock.on("data", function (chunk) {
       pending = pending.length === 0 ? chunk : Buffer.concat([pending, chunk]);
       let offset = 0;
@@ -307,21 +347,23 @@ function main() {
         if (pending.length < end) break;
         const payload = pending.subarray(offset + 5, end);
         offset = end;
-        if (channel === CH_STDIN) {
-          if (child && child.stdin && child.stdin.writable) child.stdin.write(payload);
-        } else if (channel === CH_CTRL) {
-          onControl(payload);
-        }
+        onFrame(channel, payload);
+        if (sock.destroyed) return;
       }
       if (offset > 0) pending = pending.subarray(offset);
     });
     sock.on("error", function () {
+      if (identifyTimer) { clearTimeout(identifyTimer); identifyTimer = null; }
       if (client === sock) { client = null; handshakeSent = false; armIdle(); }
     });
     sock.on("close", function () {
+      if (identifyTimer) { clearTimeout(identifyTimer); identifyTimer = null; }
       if (client === sock) { client = null; handshakeSent = false; armIdle(); }
     });
-    if (hello || spawnError) sendHandshake(sock);
+    // Compatibility: an older host attaches and only reads (never identifies).
+    // Promote it after the grace so its handshake still arrives.
+    identifyTimer = setTimeout(promote, IDENTIFY_GRACE_MS);
+    identifyTimer.unref?.();
   }
 
   function onControl(payload) {
@@ -488,4 +530,3 @@ function main() {
 }
 
 main();
-`;

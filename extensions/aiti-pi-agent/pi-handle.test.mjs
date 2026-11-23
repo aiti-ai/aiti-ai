@@ -413,3 +413,173 @@ test("handle 级：get_state 预热（sessionFile+contextWindow）→ getContext
   await later(60);
   assert.equal(h.getContextUsage()?.tokens, 5100, "轮末事件后刷新为新 assistant usage");
 });
+
+// ── navigateTree (in-place branch, 2026-11-23) ─────────────────────────────────
+// pi 1.6 RPC has no navigate_tree, and fork writes a new session file — "edit from here"
+// used to create a duplicate sidebar row. The handle restores pi's in-place tree move
+// with a branch-point custom anchor + switch_session reopening the same file (same id /
+// same file / old tail stays as a diverged branch).
+
+async function navFixture() {
+  const { writeFile, mkdtemp } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const dir = await mkdtemp(join(tmpdir(), "pi-nav-"));
+  const file = join(dir, "sess.jsonl");
+  const header = { type: "session", version: 3, id: "sess-1", timestamp: "2026-11-23T00:00:00.000Z", cwd: dir };
+  const entries = [
+    { type: "model_change", id: "mc-1", parentId: null, timestamp: "2026-11-23T00:00:01.000Z", provider: "p", modelId: "m" },
+    { type: "message", id: "um-1", parentId: "mc-1", timestamp: "2026-11-23T00:00:02.000Z", message: { role: "user", content: "first" } },
+    { type: "message", id: "as-1", parentId: "um-1", timestamp: "2026-11-23T00:00:03.000Z", message: { role: "assistant", content: [] } },
+    { type: "message", id: "um-2", parentId: "as-1", timestamp: "2026-11-23T00:00:04.000Z", message: { role: "user", content: "second" } },
+  ];
+  await writeFile(file, [header, ...entries].map((e) => JSON.stringify(e)).join("\n") + "\n");
+  return { file, header, entries };
+}
+
+test("navigateTree：user 消息目标 → 分支点 custom 锚点 + switch_session 同一文件", async () => {
+  const { file, entries } = await navFixture();
+  const { readFile } = await import("node:fs/promises");
+  const child = fakeChild();
+  const h = createHandleForTest(PI_SPEC, "sess-1", child);
+  const p = h.navigateTree("um-2");
+  await later();
+  assert.equal(child.frames()[0].type, "get_entries");
+  feedResponse(h, requestId(h, 0), { entries, leafId: "um-2" });
+  await later();
+  assert.equal(child.frames()[1].type, "get_state", "需要文件路径才能落锚点");
+  feedResponse(h, requestId(h, 1), { sessionFile: file });
+  await later();
+  assert.equal(child.frames()[2].type, "switch_session");
+  assert.equal(child.frames()[2].sessionPath, file, "重开的是同一个会话文件（不是新文件）");
+  feedResponse(h, requestId(h, 2), { cancelled: false });
+  assert.deepEqual(await p, { cancelled: false });
+
+  const lines = (await readFile(file, "utf8")).trimEnd().split("\n").map((l) => JSON.parse(l));
+  assert.equal(lines.length, entries.length + 2, "只追加一个锚点，原有条目不动");
+  const marker = lines.at(-1);
+  assert.equal(marker.type, "custom", "custom 条目不进 LLM 上下文、也不渲染");
+  assert.equal(marker.customType, "pi-web:branch-point");
+  assert.equal(marker.parentId, "as-1", "user 消息目标 = 回退到它的 parent（pi navigateTree 语义）");
+  assert.match(String(marker.id), /^[0-9a-f]{8}$/, "pi 的 entry id 形态");
+  assert.notEqual(marker.id, "um-1");
+  assert.ok(!entries.some((e) => e.id === marker.id), "id 不与已有条目冲突");
+  assert.equal(h.capabilities.navigateTree, true, "实例能力位声明 navigateTree");
+
+  // Teardown: the async get_state after switch (usage/model refresh) must not block the test.
+  feedResponse(h, requestId(h, 3), { sessionFile: file, model: { id: "m", provider: "p" } });
+  feedResponse(h, requestId(h, 4), { model: { id: "m2", provider: "p2" } });
+  await later(20);
+  assert.deepEqual(h.getModel(), { id: "m2", provider: "p2" }, "重开后模型按新分支回填");
+});
+
+test("navigateTree：非 user 目标 = 直接以该 entry 为叶子（分支导航）", async () => {
+  const { file, entries } = await navFixture();
+  const { readFile } = await import("node:fs/promises");
+  const child = fakeChild();
+  const h = createHandleForTest(PI_SPEC, "sess-1", child);
+  const p = h.navigateTree("as-1");
+  await later();
+  feedResponse(h, requestId(h, 0), { entries, leafId: "um-2" });
+  await later();
+  feedResponse(h, requestId(h, 1), { sessionFile: file });
+  await later();
+  feedResponse(h, requestId(h, 2), { cancelled: false });
+  await p;
+  const marker = JSON.parse((await readFile(file, "utf8")).trimEnd().split("\n").at(-1));
+  assert.equal(marker.parentId, "as-1");
+  assert.equal(marker.data.targetId, "as-1");
+  feedResponse(h, requestId(h, 3), { sessionFile: file });
+  feedResponse(h, requestId(h, 4), { model: { id: "m", provider: "p" } });
+});
+
+test("navigateTree：目标已在叶子上 → 不落锚点、不发 switch_session（pi 的 no-op）", async () => {
+  const { file, entries } = await navFixture();
+  const { readFile } = await import("node:fs/promises");
+  const before = await readFile(file, "utf8");
+  const child = fakeChild();
+  const h = createHandleForTest(PI_SPEC, "sess-1", child);
+  const p = h.navigateTree("as-1");
+  await later();
+  feedResponse(h, requestId(h, 0), { entries, leafId: "as-1" });
+  assert.deepEqual(await p, { cancelled: false });
+  assert.equal(child.frames().length, 1, "只有 get_entries");
+  assert.equal(await readFile(file, "utf8"), before, "文件未动");
+});
+
+test("navigateTree：session_before_switch 取消 → 锚点回滚（不留隐式叶子）", async () => {
+  const { file, entries } = await navFixture();
+  const { readFile, stat } = await import("node:fs/promises");
+  const sizeBefore = (await stat(file)).size;
+  const child = fakeChild();
+  const h = createHandleForTest(PI_SPEC, "sess-1", child);
+  const p = h.navigateTree("um-2");
+  await later();
+  feedResponse(h, requestId(h, 0), { entries, leafId: "um-2" });
+  await later();
+  feedResponse(h, requestId(h, 1), { sessionFile: file });
+  await later();
+  assert.equal(child.frames()[2].type, "switch_session");
+  feedResponse(h, requestId(h, 2), { cancelled: true });
+  assert.deepEqual(await p, { cancelled: true });
+  assert.equal((await stat(file)).size, sizeBefore, "文件长度复原：锚点不能留给下次加载当叶子");
+  assert.ok(!(await readFile(file, "utf8")).includes("pi-web:branch-point"));
+});
+
+test("navigateTree：运行中拒绝（pi 同样不让树移动与在跑的轮次交叠）", async () => {
+  const { file, entries } = await navFixture();
+  const child = fakeChild();
+  const h = createHandleForTest(PI_SPEC, "sess-1", child);
+  h.running = true;
+  await assert.rejects(() => h.navigateTree("um-2"), /Wait for the current response/);
+  assert.equal(child.frames().length, 0, "拒绝发生在任何 RPC 之前");
+  h.running = false;
+  assert.ok(Array.isArray(entries));
+  assert.ok(file);
+});
+
+test("navigateTree：分支摘要请求显式拒绝（RPC 线不跑模型回合）", async () => {
+  const child = fakeChild();
+  const h = createHandleForTest(PI_SPEC, "sess-1", child);
+  await assert.rejects(() => h.navigateTree("um-2", { summarize: true }), /branch summaries are not supported/);
+  assert.equal(child.frames().length, 0);
+});
+
+test("navigateTree 与 prompt 的先后：分支移动未完成前发出的 prompt 等它落地", async () => {
+  const { file, entries } = await navFixture();
+  const child = fakeChild();
+  const h = createHandleForTest(PI_SPEC, "sess-1", child);
+  const nav = h.navigateTree("um-2");
+  await later();
+  feedResponse(h, requestId(h, 0), { entries, leafId: "um-2" });
+  await later();
+  feedResponse(h, requestId(h, 1), { sessionFile: file });
+  await later();
+  // Branch navigation is fire-and-forget and the user sends immediately: prompt must be ordered after switch_session.
+  const send = h.prompt("edited");
+  await later(30);
+  const types = child.frames().map((f) => f.type);
+  assert.ok(!types.includes("prompt"), "移动未完成 → prompt 不得先写入子进程 stdin");
+  assert.equal(types[2], "switch_session");
+  feedResponse(h, requestId(h, 2), { cancelled: false });
+  await nav;
+  await later(20);
+  assert.ok(child.frames().some((f) => f.type === "prompt"), "移动落地后 prompt 才发出");
+  const promptFrame = child.frames().find((f) => f.type === "prompt");
+  feedResponse(h, promptFrame.id, { disposition: "prompt" });
+  await later(20);
+  feedResponse(h, requestId(h, 3), { sessionFile: file });
+  feedResponse(h, requestId(h, 4), { model: { id: "m", provider: "p" } });
+  await send;
+});
+
+test("alive(): a wrapper facade with a closed stdin is not alive (undrivable)", () => {
+  // The socket can close without an "exit" event: exitCode stays null while stdin is no longer
+  // writable. request() rejects such a handle as "not running", so alive() must agree — a dead
+  // handle left in the store served empty transcripts and swallowed prompts (2026-11-23).
+  const child = fakeChild();
+  const h = createHandleForTest(PI_SPEC, "t-alive", child);
+  assert.equal(h.alive(), true);
+  Object.defineProperty(child.stdin, "writable", { value: false, configurable: true });
+  assert.equal(h.alive(), false);
+});
