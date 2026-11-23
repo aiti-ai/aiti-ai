@@ -29,6 +29,12 @@ test("choose without options exits 2", async () => {
   assert.match(result.stderr, /requires --options/);
 });
 
+test("form without --field exits 2", async () => {
+  const result = await run(["form", "--text", "Fill"]);
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /at least one --field/);
+});
+
 test("--timeout maps to zenity exit 5", async () => {
   const result = await run(["confirm", "--text", "Timeout?", "--no-window", "--timeout", "0.2", "--json"]);
   assert.equal(result.code, 5);
@@ -111,3 +117,4 @@ test("daemon restarts the idle TTL on activity", async () => {
     if (instance.child.exitCode === null) instance.child.kill("SIGKILL");
   }
 });
+

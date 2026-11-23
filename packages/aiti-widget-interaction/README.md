@@ -36,12 +36,17 @@ aiti-dialog confirm --text "Continue?" [--ok-label OK] [--cancel-label Cancel]
 aiti-dialog --dialog confirm --text "Continue?"          # same, zenity-ish flag form
 aiti-dialog input --text "Name:" [--default foo] [--password]
 aiti-dialog choose --text "Pick" --options "A,B,C"
+aiti-dialog form --field "Name*" --field-password "Token" --field-combo "Env:dev,prod" --separator "|"
 aiti-dialog file [--multiple] [--filter "*.png"]
 aiti-dialog directory
 aiti-dialog notify --text "Done" [--timeout 5]
 aiti-dialog custom --page http://127.0.0.1:PORT/page.html
 aiti-dialog --daemon [--port 18095] [--token T] [--ttl 600]
 ```
+
+Forms: repeatable `--field` (text), `--field-password`, `--field-number`, `--field-combo "Label:a,b"`;
+a trailing `*` on the label marks it required; `--separator` joins stdout values (default `|`).
+`--pattern <regex>` validates a single `input` value before submit.
 
 Shared flags: `--json` (print the full host envelope), `--timeout <seconds>`,
 `--title`, `--detail`, `--widget-bin`, `--no-window` (print the page URL instead of
@@ -248,6 +253,14 @@ import { createHttpInteractionTransport } from "@aiti-ai/widget-interaction";
 const transport = createHttpInteractionTransport({ baseUrl: "http://127.0.0.1:18095/", token });
 const answer = await transport.ask({ kind: "confirm", title: "Continue?" });
 ```
+
+## Capacity
+
+Each window is a real WebView process (WebKitGTK / WebView2 / WKWebView): roughly
+**150–200 MB PSS** and 300–800 ms cold start per window. Use `aiti-dialog --daemon` (or the
+MCP `--http` mode) when dialogs are frequent, so one window is reused instead of spawning
+one WebView per question. `zenity`/`dialog` remain cheaper but are platform-bound and
+cannot render custom HTML.
 
 ## Not in this first version
 

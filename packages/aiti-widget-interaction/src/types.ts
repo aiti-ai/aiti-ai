@@ -6,7 +6,7 @@
  * losing the host-side callback.
  */
 
-export type InteractionKind = "confirm" | "choose" | "input" | "custom" | "notify" | "presence" | "pick_path";
+export type InteractionKind = "confirm" | "choose" | "input" | "form" | "custom" | "notify" | "presence" | "pick_path";
 
 export type InteractionStatus = "answered" | "cancelled" | "timeout" | "error";
 
@@ -26,9 +26,29 @@ export interface InteractionAction {
 
 export interface InteractionInputSpec {
   placeholder?: string
+  /** Optional validation pattern (ECMAScript). */
+  pattern?: string
   defaultValue?: string
   multiline?: boolean;
   secret?: boolean;
+}
+
+export interface InteractionFormField {
+  id: string;
+  label: string;
+  type?: "text" | "password" | "number" | "combo";
+  placeholder?: string;
+  defaultValue?: string;
+  options?: string[];
+  required?: boolean;
+  /** Client-side validation regex (ECMAScript, no flags). */
+  pattern?: string;
+}
+
+export interface InteractionFormSpec {
+  fields?: InteractionFormField[];
+  /** Joins the values for stdout (zenity --separator). */
+  separator?: string;
 }
 
 export interface InteractionPickSpec {
@@ -61,6 +81,7 @@ export interface InteractionRequestInput {
   options?: Array<string | InteractionOption>;
   actions?: InteractionAction[];
   input?: InteractionInputSpec;
+  form?: InteractionFormSpec;
   pick?: InteractionPickSpec;
   custom?: InteractionCustomSpec;
   /** 0 / undefined = wait indefinitely. */

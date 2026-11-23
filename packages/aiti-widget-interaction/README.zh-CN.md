@@ -29,12 +29,17 @@ node --test test/*.test.mjs
 aiti-dialog confirm --text "继续？" [--ok-label 继续] [--cancel-label 取消]
 aiti-dialog input --text "名称：" [--default foo] [--password]
 aiti-dialog choose --text "选择" --options "A,B,C"
+aiti-dialog form --field "Name*" --field-password "Token" --field-combo "Env:dev,prod" --separator "|"
 aiti-dialog file [--multiple] [--filter "*.png"]
 aiti-dialog directory
 aiti-dialog notify --text "完成" [--timeout 5]
 aiti-dialog custom --page http://127.0.0.1:PORT/page.html
 aiti-dialog --daemon [--port 18095] [--ttl 600]
 ```
+
+表单：可重复 `--field`（文本）、`--field-password`、`--field-number`、`--field-combo "标签:a,b"`；
+标签末尾 `*` 表示必填；`--separator` 决定 stdout 拼接符（默认 `|`）。`--pattern <regex>` 用于
+单字段 `input` 的提交前校验。
 
 公共参数：`--json`（输出完整 Host envelope）、`--timeout <秒>`、`--title`、`--detail`、
 `--widget-bin`、`--no-window`（只打印页面 URL）、`--width`、`--height`、`--x`/`--y`
@@ -209,6 +214,12 @@ import { createHttpInteractionTransport } from "@aiti-ai/widget-interaction";
 const transport = createHttpInteractionTransport({ baseUrl: "http://127.0.0.1:18095/", token });
 const answer = await transport.ask({ kind: "confirm", title: "继续？" });
 ```
+
+## 资源占用
+
+每个窗口是一套真实 WebView 进程（WebKitGTK / WebView2 / WKWebView）：约 **150–200 MB PSS**，
+冷启动 300–800 ms。弹窗频繁时用 `aiti-dialog --daemon`（或 MCP `--http` 模式）复用同一窗口，
+避免每次问答都新建 WebView。`zenity`/`dialog` 更轻，但受平台限制且不能渲染自定义 HTML。
 
 ## 首版未包含
 
